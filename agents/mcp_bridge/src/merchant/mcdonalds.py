@@ -115,9 +115,9 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
         stores = self._stores(stores_data)
         if not stores:
-            return AgentResult(
-                speech="没有找到可用的麦当劳门店。可以先在麦当劳官方应用选择常用门店，"
-                       "或提供更具体的门店名称。")
+            return self._reselect_store(
+                "没有找到可用的麦当劳门店。可以先在麦当劳官方应用选择常用门店，"
+                "或提供更具体的门店名称。")
         candidate_stores = self._matching_stores(stores, store_hint) or stores
         now = self._clock()
         open_stores = [store for store in candidate_stores
@@ -125,11 +125,11 @@ class McDonaldsWorkflow(MerchantWorkflow):
         if not open_stores:
             if any(self._store_status(store) is None
                    for store in candidate_stores):
-                return AgentResult(
-                    speech="商家没有返回可靠的门店营业状态，无法安全下单。"
-                           "请在麦当劳官方应用确认营业后再试。")
-            return AgentResult(
-                speech="找到的麦当劳门店均已打烊。可以换一家门店或稍后再试。")
+                return self._reselect_store(
+                    "商家没有返回可靠的门店营业状态，无法安全下单。"
+                    "请在麦当劳官方应用确认营业后再试。")
+            return self._reselect_store(
+                "找到的麦当劳门店均已打烊。可以换一家门店或稍后再试。")
         store_matches = self._matching_stores(open_stores, store_hint)
         if len(store_matches) != 1:
             choices = store_matches or open_stores
@@ -137,14 +137,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
         store = store_matches[0]
         store_code = str(store.get("storeCode") or "")
         if not store_code:
-            # NEED_SLOT 而非默认 OK：本工作流 require_confirm=true，中央确认闸会给
-            # 任何 OK 结果追加「确定继续吗？」，拒绝落在 OK 上就成了自相矛盾的一句。
-            # 与瑞幸侧 _reselect_store 同一处理，理由见那里的注释。
-            return AgentResult(
-                status=NEED_SLOT,
-                speech="门店信息不完整，不能继续下单，请换一家门店。",
-                follow_up="换一家麦当劳门店试试？",
-                missing_slots=["store_hint"])
+            return self._reselect_store("门店信息不完整，不能继续下单，请换一家门店。")
 
         try:
             store_context = self._store_context(store, slots, now=now)
@@ -760,6 +753,23 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 if start <= wanted_minutes <= end:
                     return True
         return False
+
+    @staticmethod
+    def _reselect_store(speech: str) -> AgentResult:
+        """「请换一家门店」类拒绝一律 NEED_SLOT，不能是默认的 OK。
+
+        本工作流 require_confirm=true，executor 的中央确认闸会给**任何 OK 结果**追加
+        「这个操作需要您确认后才会执行，确定继续吗？」——先说不能做、再问要不要做，
+        用户答「确认」还是同一句拒绝（2026-08-12 demo-2goetq 在瑞幸侧实证）。
+        修在拒绝侧不动那道闸：闸是安全件，而这几条本来就是要用户换门店。
+        与瑞幸 `LuckinWorkflow._reselect_store` 同形，差别只在槽位名——
+        麦当劳的门店是**文本线索** `store_hint`（官方 query-nearby-stores 按关键词查），
+        不像瑞幸要消费 nearby.search 的可信 POI 三元组。
+        """
+        return AgentResult(
+            status=NEED_SLOT, speech=speech,
+            follow_up="换一家麦当劳门店试试？说店名或商圈都行。",
+            missing_slots=["store_hint"])
 
     def _store_choices(self, stores: list[dict]) -> AgentResult:
         choices = [MerchantChoice(

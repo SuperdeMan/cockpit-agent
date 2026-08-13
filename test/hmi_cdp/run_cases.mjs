@@ -20,6 +20,78 @@ async function waitReply(cdp, keyword, timeoutMs = 60000) {
 }
 
 const CASES = {
+  // C10 只读选品卡 + 商品图（2026-08-13）：跨轮门店锚定 + luckin.menu + image_hosts。
+  // **不创建任何订单**——menu 与 prepare 全是只读工具；点一下商品只走到预览与确认气泡，
+  // 用例不点确认。图片那条断言看的是 naturalWidth 而不是 src 存在：
+  // 「卡里写了个图链」和「用户真的看见了图」是两件事，车机上一张裂图比没有图更糟。
+  async C10(cdp) {
+    // 等词必须是**只有助手会说**的：等「瑞幸」会命中用户自己那条消息，于是第二句
+    // 立刻发出去把第一轮打断（实测 turn1 status=cancelled、焦点没落盘，第二轮无从锚定）。
+    // 门店查询依赖真实 provider，偶发降级；重试一次，并把降级与卡片缺陷**分开报**——
+    // 否则前置不可用会被读成本用例的结论。
+    let listed = false
+    for (let attempt = 0; attempt < 2 && !listed; attempt += 1) {
+      await cdp.typeAndSend('帮我查一下附近的瑞幸咖啡')
+      try {
+        await cdp.waitFor(
+          `document.body.innerText.includes('为您找到')`, 45000, '瑞幸门店列表')
+        listed = true
+      } catch (e) {
+        const degraded = await cdp.eval(
+          `document.body.innerText.includes('周边搜索服务暂时不可用')`)
+        if (!degraded) throw e
+        await sleep(8000)
+      }
+    }
+    if (!listed) throw new Error('前置门店查询降级（provider 不可用），非选品卡结论')
+    await cdp.screenshot('C10-store-list')
+
+    await cdp.typeAndSend('在最近那家看看有什么可以点的')
+    await cdp.waitFor(
+      `document.body.innerText.includes('要哪一款')`, 90000, '选品卡话术')
+    // 卡真的渲染成按钮（不是只在气泡里念了一遍）
+    const optionCount = await cdp.eval(
+      // 判据刻意不写正则：这串要经**模板字符串**送进浏览器，`\d` 会被模板吃掉
+      // 变成 /d+.d{2} 元/ ——实测静默匹配 0 条（不报错，是判错）。用零反斜杠的写法。
+      `[...document.querySelectorAll('button')]
+        .filter(b => b.textContent.includes('元') && /[0-9]/.test(b.textContent)).length`)
+    if (!optionCount || optionCount < 1) throw new Error(`选品按钮数=${optionCount}`)
+
+    // 图是异步下载的（真机实测每张 ~148KB），渲染完立刻查 naturalWidth 必然是 0。
+    // 断言「真加载出来」而不是「src 写对了」：车机上一张裂图比没有图更糟，
+    // 而 src 正确、图却始终不显示，恰恰是最容易漏过去的那种坏体验。
+    await cdp.waitFor(
+      `[...document.querySelectorAll('img')]
+         .filter(i => i.src.includes('luckincoffeecdn.com'))
+         .some(i => i.complete && i.naturalWidth > 0)`,
+      25000, '商品图真的加载出来')
+    const imgs = await cdp.eval(`JSON.stringify(
+      [...document.querySelectorAll('img')]
+        .filter(i => i.src.includes('luckincoffeecdn.com'))
+        .map(i => ({ ok: i.complete && i.naturalWidth > 0, https: i.src.startsWith('https://') })))`)
+    const shots = JSON.parse(imgs)
+    if (!shots.length) throw new Error('选品卡没有渲染出任何商品图')
+    if (!shots.every((i) => i.https)) throw new Error('存在非 https 商品图')
+    const loaded = shots.filter((i) => i.ok).length
+    await cdp.screenshot('C10-merchant-choices')
+
+    // 点一款 → 帧是卡自带 send_text，且**不是**确认帧（确认只走全局气泡）
+    const t0 = Date.now()
+    const label = await cdp.eval(
+      `[...document.querySelectorAll('button')]
+        .filter(b => b.textContent.includes('元') && /[0-9]/.test(b.textContent))[0]
+        .innerText.split(String.fromCharCode(10))[0].trim()`)
+    await cdp.clickButtonByText(label)
+    const frame = await cdp.waitSentFrame(
+      (d) => typeof d.text === 'string' && d.text.includes(label),
+      10000, t0, '选品帧')
+    if (frame.is_confirmation === true) {
+      throw new Error('卡内选品不得是确认帧——确认只能走全局确认气泡')
+    }
+    await cdp.screenshot('C10-after-pick')
+    return `选品卡 ${optionCount} 款 / 商品图 ${loaded}/${shots.length} 张真加载 / 帧「${frame.text}」非确认帧`
+  },
+
   // C1 确认条：渲染 → 点「确认」→ 帧带 is_confirmation → 车况真变
   async C1(cdp) {
     await debugVehicle('gear', 'P'); await debugVehicle('speed_kmh', 0)
