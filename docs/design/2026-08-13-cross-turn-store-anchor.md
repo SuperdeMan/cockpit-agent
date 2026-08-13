@@ -110,7 +110,17 @@ last_places = {
 | P2 | 消费侧正则放行 + 同前缀同下标强断言 | ✅ 5 组混拼构造反例全部被拒（换下标／混两种来源／生产者不是 nearby／缺下标／换容器），且**拒绝在碰商户接口之前落定** |
 | P3 | 对抗语料补两轮上下文用例 | ⬜ 未做（`context_state.yaml` 的 route_flip 对）|
 
-### 实施差异（与原方案的两处偏离，都记在这里）
+### 真栈验收（2026-08-13）
+
+```
+Q1 帮我查一下附近的瑞幸咖啡        → 10 家瑞幸（place_list）
+Q2 在最近那家看看有什么可以点的    → merchant_choices
+   「…可以点这几款：标准美式（8.70 元）、埃塞金烘美式（8.70 元）、埃塞瑰夏冷萃（10.90 元）」
+   三条各带 img04.luckincoffeecdn.com 商品图
+日志 Step s1(luckin.menu): 门店取自上一轮 nearby.search 焦点（…）
+```
+
+### 实施差异（与原方案的三处偏离，都记在这里）
 
 1. **落点不是新写一条通路，而是接既有的那条。** 引擎里 `_apply_focus_meta` 已经确立了
    「用系统持有的会话焦点补全 Planner 省略的结构化上下文」这条既有做法，本批只是把
@@ -119,6 +129,23 @@ last_places = {
    它挡的是计划里的伪造值），而 `PlanContext` 是服务端对象，LLM 与客户端都写不到。
 2. **TTL 与 owner 校验沿用焦点态既有机制**，没有为门店单独造一套——
    `save_focus/load_focus` 已经带 `owner_user_id`，再加一层只会多一处要同步的地方。
+3. **挂点不止一处。** 方案只说了挂在 `_resolve_slot_refs`，落地时真栈打出来的诊断
+   一行都没有——`luckin.menu`（`require_confirm=false`）走的是 **D0 流式直通**，
+   那条路**绕过 executor**，那个函数根本没被调用。补在 D0 分支里显式解析一次，
+   并加了源码级回归探针（`test_streaming_direct_path_also_resolves_slots_before_dispatch`）。
+   **新增挂点必须枚举全部执行路径**——本项目第二次踩（M2 的 Verifier 同款）。
+
+### Planner 给的门店值只当线索（落地时新增的判据）
+
+真栈第二轮模型产出过两种形态，**都不能直接用**：
+- `slot_refs: {store_name: "s0.data.items.0.name"}` —— `s0` 是**上一轮**的步骤 id（悬空引用）；
+- `slots: {store_name: "<它从上下文抄来的店名>", store_longitude: "s1.data.items.0.lng"}`
+  —— 坐标是**没解析成的 ref 字面串**。
+
+两者都没有 provenance，消费侧本来就会拒，所以现状不是「已有门店」而是死路。
+判据：**名字当线索，值只从服务端持有的列表取**；名字对不上就不锚定（诚实失败，
+让用户重查），绝不拿第 0 条顶替用户点名的店。provenance 里的下标必须是**实际命中**
+那条的下标——写死 0 会让「同前缀同下标」变成一句谎话。
 
 ## 6. 风险
 

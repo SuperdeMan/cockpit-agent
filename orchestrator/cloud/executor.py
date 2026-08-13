@@ -46,6 +46,40 @@ def _dedup_enabled() -> bool:
     return os.getenv("PLANNER_DEDUP_SIDE_EFFECTS", "on").strip().lower() != "off"
 
 
+_REF_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+\.data\.items\.\d+\.[A-Za-z_]+$")
+
+
+def _looks_like_ref_path(value: str) -> bool:
+    """`s1.data.items.0.lng` 这种没解析成的引用字面串不是门店名，是残渣。"""
+    return bool(_REF_PATH_RE.match(str(value or "").strip()))
+
+
+def _normalize_store_name(value: str) -> str:
+    """门店名归一：去掉空白与常见的拉丁品牌前缀，只为**匹配**用，不改任何落地值。"""
+    text = "".join(str(value or "").split()).lower()
+    for prefix in ("luckincoffee", "luckin"):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+            break
+    return text
+
+
+def _match_place_index(places: list, hint: str):
+    """按名字在服务端持有的门店列表里找**下标**。找不到返回 None —— 不拿第一条顶替。
+
+    返回下标而不是元素：provenance 要写 `focus.last_places.<N>`，写死 0 会让
+    「同前缀同下标」这条约束变成一句谎话（值取自第 1 条、来源却声称第 0 条）。
+    """
+    needle = _normalize_store_name(hint)
+    if not needle:
+        return None
+    for index, place in enumerate(places):
+        name = _normalize_store_name(place.get("name") if isinstance(place, dict) else "")
+        if name and (name == needle or name in needle or needle in name):
+            return index
+    return None
+
+
 def _struct_dict(value) -> dict:
     if value is None:
         return {}
@@ -530,8 +564,6 @@ class DagExecutor:
         keys = ("store_name", "store_longitude", "store_latitude")
         if any(key in trusted for key in keys):
             return                          # 本轮 plan 内有生产者 → 让路
-        if any(str(step.slots.get(key) or "").strip() for key in keys):
-            return                          # 本轮已有门店 → 不覆盖
         # 声明了引用却没解析成功：要区分两种完全不同的情况。
         #   ① 生产者**在本轮 plan 里**（`done` 里有这个 id）却没给出值 → 计划有缺陷，
         #      不许被焦点悄悄补成「看起来正常」；
@@ -548,7 +580,19 @@ class DagExecutor:
         places = list(getattr(ctx, "focus_places", None) or [])
         if not places:
             return
-        place = places[0]                   # 与 plan 内 items.0 的既有行为一致，不新增歧义
+        # Planner 塞进 slots 的门店值**一律只当线索，不当值**。2026-08-13 真栈实测，
+        # 第二轮模型产的是：store_name = 它从上下文里抄来的店名，
+        # store_longitude/latitude = `s1.data.items.0.lng` 这种**没解析成的 ref 字面串**。
+        # 这些值没有 provenance，消费侧本来就会拒 —— 所以现状不是「已有门店」而是死路。
+        # 修法：拿名字去**服务端持有的**门店列表里找，找到就用那一条的三个值；
+        # 名字对不上就不锚定（诚实失败，让用户重查），绝不拿 places[0] 顶替用户点名的店。
+        hint = str(step.slots.get("store_name") or "").strip()
+        if _looks_like_ref_path(hint):
+            hint = ""
+        index = 0 if not hint else _match_place_index(places, hint)
+        if index is None:
+            return
+        place = places[index]
         try:
             name = str(place["name"]).strip()
             lng, lat = float(place["lng"]), float(place["lat"])
@@ -561,7 +605,7 @@ class DagExecutor:
         step.slots["store_latitude"] = str(lat)
         for slot_name, leaf in zip(keys, ("name", "lng", "lat")):
             trusted[slot_name] = {
-                "ref": f"focus.last_places.0.{leaf}",
+                "ref": f"focus.last_places.{index}.{leaf}",
                 "producer_intent": "nearby.search",
             }
         logger.info("Step %s(%s): 门店取自上一轮 nearby.search 焦点（%s）",

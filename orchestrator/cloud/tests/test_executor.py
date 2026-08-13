@@ -463,15 +463,52 @@ def test_in_plan_producer_always_wins_over_last_turn_focus():
                for ref in refs.values())
 
 
-def test_focus_anchor_never_overrides_a_store_the_user_named_this_turn():
+def test_a_store_name_not_in_the_server_held_list_is_never_substituted():
+    """名字对不上服务端持有的门店 → 不锚定，绝不拿第一条顶替用户点名的店。"""
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
-                slots={"store_name": "用户本轮点名的那家"})
+                slots={"store_name": "用户点名的另一家完全不同的店"})
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         step, {}, _focus_ctx(_LAST_PLACES))
 
-    assert step.slots["store_name"] == "用户本轮点名的那家"
     assert "_trusted_slot_refs" not in step.meta
+    assert "store_longitude" not in step.slots
+
+
+def test_planner_supplied_store_values_are_a_hint_not_a_value():
+    """Planner 塞进 slots 的门店值只当线索。
+
+    2026-08-13 真栈实测第二轮：`store_name` 是模型从上下文抄来的店名，
+    `store_longitude/latitude` 是 `s1.data.items.0.lng` 这种**没解析成的 ref 字面串**。
+    它们没有 provenance，消费侧本来就会拒 —— 现状不是「已有门店」而是死路。
+    名字命中服务端持有的那条时，三个值全部换成该条的值并盖同构 provenance。
+    """
+    step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.menu",
+                slots={"store_name": "瑞幸咖啡(前海印里店)",
+                       "store_longitude": "s1.data.items.0.lng",
+                       "store_latitude": "s1.data.items.0.lat"})
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        step, {}, _focus_ctx(_LAST_PLACES))
+
+    assert step.slots["store_name"] == "瑞幸咖啡(前海印里店)"
+    assert step.slots["store_longitude"] == "113.8981"   # 第 1 条，不是第 0 条
+    assert step.slots["store_latitude"] == "22.5301"
+    refs = json.loads(step.meta["_trusted_slot_refs"])
+    assert all(ref["ref"].startswith("focus.last_places.1.")
+               for ref in refs.values())
+
+
+def test_latin_brand_prefix_does_not_break_the_name_match():
+    """高德给的名字常带 `luckin coffee ` 前缀；归一只为匹配，不改落地值。"""
+    step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.menu",
+                slots={"store_name": "luckin coffee 瑞幸咖啡(前海华强金融大厦店)"})
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        step, {}, _focus_ctx(_LAST_PLACES))
+
+    assert step.slots["store_name"] == "瑞幸咖啡(前海华强金融大厦店)"
+    assert step.slots["store_longitude"] == "113.9004"
 
 
 def test_in_plan_producer_that_failed_is_a_defect_not_missing_context():
@@ -535,3 +572,28 @@ def test_malformed_focus_places_are_dropped_not_partially_applied():
         assert "store_name" not in step.slots, bad
         assert "store_longitude" not in step.slots, bad
         assert "_trusted_slot_refs" not in step.meta, bad
+
+
+def test_streaming_direct_path_also_resolves_slots_before_dispatch():
+    """D0 流式直通**绕过 executor.run**，所以挂在 `_resolve_slot_refs` 上的东西
+    在那条路上默认不生效——本用例是那个坑的回归探针。
+
+    2026-08-13 实证：跨轮门店锚定挂在 `_resolve_slot_refs`，而 `luckin.menu`
+    （require_confirm=false）恰好走流式直通，于是诊断日志一行都没打出来——
+    那个函数根本没被调用，两轮对话照旧走不通。
+    **新增挂点必须枚举全部执行路径**；这是本项目第二次踩（M2 的 Verifier 同款）。
+
+    用源码级断言而不是行为测试：这条要守的是「那个分支里有没有这一步」这个结构事实，
+    行为测试会被流式桩的实现细节稀释（同 test_verify.py 的中央挂点断言）。
+    """
+    import inspect
+
+    from orchestrator.cloud import engine as engine_module
+
+    source = inspect.getsource(engine_module)
+    marker = "# D0. 单步新规划走流式直通"
+    assert marker in source
+    branch = source.split(marker, 1)[1].split("_d0_start", 1)[0]
+    assert "_resolve_slot_refs" in branch, (
+        "D0 流式直通分支必须先解析槽位；漏了它，挂在 executor 上的槽位逻辑"
+        "（跨轮门店锚定等）在这条路上会静默失效")

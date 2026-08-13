@@ -461,6 +461,12 @@ class PlannerEngine:
                 # 流中 action 直接放行，绕开 executor 的确认兜底闸；走 executor 路径。
                 and not plan.steps[0].require_confirm):
             step = plan.steps[0]
+            # 流式直通**绕过 executor**，所以 executor 里挂的槽位解析在这条路上不生效。
+            # 2026-08-13 实证：跨轮门店锚定挂在 `_resolve_slot_refs` 上，而 `luckin.menu`
+            # （require_confirm=false）恰好走这条路 —— 诊断日志一行都没打出来，
+            # 因为那个函数根本没被调用。**新增挂点必须枚举全部执行路径**，
+            # 这是本项目第二次踩（M2 那批的 Verifier 也在这里漏过一次）。
+            self.executor._resolve_slot_refs(step, {}, ctx)
             _d0_start = time.monotonic()
             # B5 §4：流出面状态与「能不能回退 / 结果确不确定」的判定与 T2 共用一份
             # （`stream_state`）。此前 D0 一个 `streamed` 布尔、T2 三个布尔各写各的，
