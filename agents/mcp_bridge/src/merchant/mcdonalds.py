@@ -113,7 +113,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
         user_id, session_id = self._owner(ctx)
         if not user_id or not session_id:
-            return AgentResult(speech="当前会话身份不完整，暂时不能创建真实订单。")
+            return self.refused("当前会话身份不完整，暂时不能创建真实订单。")
 
         now = self._clock()
         store, store_code, refusal = await self._resolve_store(slots, now=now)
@@ -213,7 +213,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
             "takeWayCode": str(take_way.get("code") or ""),
         })
         if not self._required_present("create-order", upstream_args):
-            return AgentResult(speech="订单参数不完整，暂时不能创建真实订单。")
+            return self.refused("订单参数不完整，暂时不能创建真实订单。")
 
         fulfillment = str(take_way.get("title") or take_way.get("name") or "")
         if store_context.get("reservationDate"):
@@ -241,7 +241,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
             created_at=time.time(),
         )
         if not await self.drafts.put(draft):
-            return AgentResult(speech="订单预览暂时无法安全保存，请稍后重新下单。")
+            return self.refused("订单预览暂时无法安全保存，请稍后重新下单。")
         speech = self.preview_speech(draft, unpaid_expiry=True)
         speech += f"取餐方式：{draft.fulfillment}。"
         return AgentResult(
@@ -920,9 +920,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
         但用户说出的新门店应当**走一次完整规划**（planner 会重新填 store_hint），
         而不是被塞进一个几轮前挂起的步骤里。
         """
-        return AgentResult(
-            speech=speech,
-            follow_up="换一家麦当劳门店试试？说店名或商圈都行。")
+        return MerchantWorkflow.refused(
+            speech, "换一家麦当劳门店试试？说店名或商圈都行。")
 
     def _store_choices(self, stores: list[dict]) -> AgentResult:
         choices = [MerchantChoice(
@@ -1420,4 +1419,5 @@ class McDonaldsWorkflow(MerchantWorkflow):
     @staticmethod
     def _read_failure(action: str, exc: Exception) -> AgentResult:
         logger.warning("麦当劳%s失败：%s", action, type(exc).__name__)
-        return AgentResult(speech=f"暂时无法{action}，没有创建订单，请稍后再试。")
+        return MerchantWorkflow.refused(
+            f"暂时无法{action}，没有创建订单，请稍后再试。")

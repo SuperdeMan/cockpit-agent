@@ -442,6 +442,21 @@ class DagExecutor:
             return result
         if (step.meta or {}).get("confirmed") == "true":
             return result
+        # 保留键 `_refused`（§9.1）：Agent 明说「这一步我没做、也没有东西待确认」。
+        # 只有**同时没有动作**才认——闸扣的就是 actions，带着动作说自己是拒绝是自相矛盾，
+        # 那种情况照旧改判 NEED_CONFIRM 并大声记一笔。
+        # 为什么需要它：拒绝落在 OK 上会被下面那段拼成自相矛盾的一句
+        # 「…没有继续下单，请重新选择门店。这个操作需要您确认后才会执行，确定继续吗？」
+        # （2026-08-12 demo-2goetq 实证）。**上一次试图躲开它的做法（改 NEED_SLOT）
+        # 被真栈证否**——那会挂起会话、吞掉后续每一句（demo-f1hkwr），
+        # 判据见 `LuckinWorkflow._reselect_store`。所以这次走显式声明而不是换状态。
+        # 未声明该键的 Agent **逐字零行为变化**。
+        if (result.data or {}).get("_refused"):
+            if not result.actions:
+                return result
+            logger.warning(
+                "Step %s(%s): 结果自称 _refused 却带 %d 个动作，按未确认处理",
+                step.id, step.intent, len(result.actions))
         logger.warning(
             "Step %s(%s): capability requires confirm but agent returned OK unconfirmed; "
             "withholding %d action(s), forcing NEED_CONFIRM (manifest 兜底)",

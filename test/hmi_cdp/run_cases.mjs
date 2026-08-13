@@ -89,7 +89,23 @@ const CASES = {
       throw new Error('卡内选品不得是确认帧——确认只能走全局确认气泡')
     }
     await cdp.screenshot('C10-after-pick')
-    return `选品卡 ${optionCount} 款 / 商品图 ${loaded}/${shots.length} 张真加载 / 帧「${frame.text}」非确认帧`
+
+    // 点完之后**还能不能继续对话** —— 这正是 2026-08-13 被漏掉的盲区：
+    // 那次只验到「卡片渲染出来」，而 bug 恰好活在卡片之后（拒绝走 NEED_SLOT 挂起会话，
+    // 后续每一句被当补槽答案吞掉，问麦当劳答瑞幸）。
+    // 判据不看话术内容，只看**下一句有没有被独立处理**：换个完全无关的域，
+    // 回复必须落在那个域上。
+    await sleep(1500)
+    const t1 = Date.now()
+    await cdp.typeAndSend('今天天气怎么样')
+    await cdp.waitSentFrame(
+      (d) => d.text === '今天天气怎么样', 10000, t1, '续接帧')
+    await cdp.waitFor(
+      `document.body.innerText.includes('气温') || document.body.innerText.includes('天气')
+       || document.body.innerText.includes('温度') || document.body.innerText.includes('℃')`,
+      60000, '选品之后仍能正常换话题（会话没有被挂起吞掉）')
+    await cdp.screenshot('C10-followup-alive')
+    return `选品卡 ${optionCount} 款 / 商品图 ${loaded}/${shots.length} 张真加载 / 帧「${frame.text}」非确认帧 / 选品后换话题仍正常`
   },
 
   // C1 确认条：渲染 → 点「确认」→ 帧带 is_confirmation → 车况真变

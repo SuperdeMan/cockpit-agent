@@ -15,7 +15,7 @@ import asyncio
 from types import SimpleNamespace
 
 from orchestrator.cloud.executor import DagExecutor
-from orchestrator.cloud.models import Plan, Step, StepStatus
+from orchestrator.cloud.models import Plan, Step, StepResult, StepStatus
 from orchestrator.cloud.planning import PlanBuilder
 
 
@@ -152,3 +152,58 @@ def test_restore_whitelist_keeps_fingerprint():
     from orchestrator.cloud import engine as engine_mod
     assert "fingerprint" in engine_mod._RESULT_FIELDS, (
         "_RESULT_FIELDS 丢了 fingerprint——挂起恢复后 M2 防抖会对空串永不命中")
+
+
+def _confirm_step():
+    return Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
+                require_confirm=True, meta={})
+
+
+def test_declared_refusal_is_not_dressed_up_as_a_confirmation_prompt():
+    """`_refused` 保留键：拒绝不再被拼成「不能做…确定继续吗？」。
+
+    2026-08-12 实证的自相矛盾句：
+    「…没有继续下单，请重新选择门店。这个操作需要您确认后才会执行，确定继续吗？」
+    上一次改用 NEED_SLOT 躲它，被真栈证否——那会挂起会话、吞掉后续每一句
+    （demo-f1hkwr：问麦当劳详情答瑞幸）。所以改走**显式声明**。
+    """
+    refusal = StepResult(
+        step_id="s1", status=StepStatus.OK,
+        speech="没有找到与所选 POI 对应的瑞幸官方门店，请重新选择门店。",
+        data={"_refused": True})
+
+    out = DagExecutor._enforce_capability_confirm(_confirm_step(), refusal)
+
+    assert out.status == StepStatus.OK
+    assert "确定继续吗" not in out.speech
+    assert out is refusal, "透传原结果，不重建"
+
+
+def test_a_refusal_that_still_carries_actions_is_not_trusted():
+    """自称拒绝却带着动作 = 自相矛盾，照旧扣下动作并改判 NEED_CONFIRM。
+
+    这条是上面那把钥匙的锁：`_refused` 只免除「追加问句」，
+    **不免除闸真正在做的事——扣 actions**。
+    """
+    contradictory = StepResult(
+        step_id="s1", status=StepStatus.OK, speech="我没有下单。",
+        data={"_refused": True},
+        actions=[{"type": "vehicle.control", "payload": {"x": 1}}])
+
+    out = DagExecutor._enforce_capability_confirm(_confirm_step(), contradictory)
+
+    assert out.status == StepStatus.NEED_CONFIRM
+    assert out.actions == []
+    assert "确定继续吗" in out.speech
+
+
+def test_unmarked_results_keep_the_old_behaviour_verbatim():
+    """未声明保留键的 Agent 逐字零行为变化——这是本次改动的安全论证本身。"""
+    for data in (None, {}, {"_refused": False}, {"items": [1]}):
+        plain = StepResult(step_id="s1", status=StepStatus.OK,
+                           speech="已为您下单。", data=data)
+
+        out = DagExecutor._enforce_capability_confirm(_confirm_step(), plain)
+
+        assert out.status == StepStatus.NEED_CONFIRM, data
+        assert "确定继续吗" in out.speech, data

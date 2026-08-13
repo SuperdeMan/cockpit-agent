@@ -173,7 +173,7 @@ class LuckinWorkflow(MerchantWorkflow):
         slots = dict(getattr(intent, "slots", {}) or {})
         user_id, session_id = self._owner(ctx)
         if not user_id or not session_id:
-            return AgentResult(speech="当前会话身份不完整，暂时不能创建真实订单。")
+            return self.refused("当前会话身份不完整，暂时不能创建真实订单。")
         store = None
         trusted = self._trusted_store(slots, meta)
         if trusted is None:
@@ -270,7 +270,7 @@ class LuckinWorkflow(MerchantWorkflow):
             return self._read_failure("核对饮品规格和预览订单", exc)
 
         if not await self.drafts.put(draft):
-            return AgentResult(speech="订单预览暂时无法安全保存，请稍后重新下单。")
+            return self.refused("订单预览暂时无法安全保存，请稍后重新下单。")
         speech = self.preview_speech(draft)
         return AgentResult(
             status=NEED_CONFIRM, speech=speech,
@@ -1380,10 +1380,10 @@ class LuckinWorkflow(MerchantWorkflow):
                 # 同 `_reselect_store`：这三个槽用户填不了，声明成 missing_slots
                 # 会让会话挂起并吞掉后续每一句（真栈实证见那里的注释）。
                 # 这条是**改动前就存在**的，用户会话里循环的正是它。
-                return None, None, AgentResult(
-                    speech="请先查询附近的瑞幸门店并选择一家，"
-                           "我只会使用该公开门店 POI 的坐标。",
-                    follow_up="可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
+                return None, None, self.refused(
+                    "请先查询附近的瑞幸门店并选择一家，"
+                    "我只会使用该公开门店 POI 的坐标。",
+                    "可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
             store_name, longitude, latitude = trusted
             try:
                 shops = await self._read(
@@ -1568,9 +1568,8 @@ class LuckinWorkflow(MerchantWorkflow):
         「确定继续吗？」（只读的 *.menu 不受影响，它 require_confirm=false）——
         那是**话术不好看**，而挂起黑洞是**功能不可用**，两害相权。
         """
-        return AgentResult(
-            speech=speech,
-            follow_up="可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
+        return MerchantWorkflow.refused(
+            speech, "可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
 
     async def _store_choices(self, stores: list[dict], *, slots: dict,
                              user_id: str, session_id: str,
@@ -1835,4 +1834,5 @@ class LuckinWorkflow(MerchantWorkflow):
     @staticmethod
     def _read_failure(action: str, exc: Exception) -> AgentResult:
         logger.warning("瑞幸读链路失败（%s）：%s", action, type(exc).__name__)
-        return AgentResult(speech=f"暂时无法{action}，没有创建订单，请稍后再试。")
+        return MerchantWorkflow.refused(
+            f"暂时无法{action}，没有创建订单，请稍后再试。")

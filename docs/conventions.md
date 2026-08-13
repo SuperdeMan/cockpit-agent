@@ -544,6 +544,7 @@ owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
 
 | key | 声明方 | 消费方 | schema | 语义 |
 |---|---|---|---|---|
+| `_refused` | 商户 workflow（mcp-bridge；经 `MerchantWorkflow.refused()`）| executor `_enforce_capability_confirm` | `True` | 「这一步我没做、也没有东西待确认」。`require_confirm=true` 的步收到**任何 OK 结果**都会被追加「这个操作需要您确认后才会执行，确定继续吗？」，拒绝落在 OK 上就拼成自相矛盾的一句（2026-08-12 demo-2goetq 实证）。闸认这个键**只免除追加问句、不免除扣动作**——自称拒绝却带 actions 的结果照旧改判 NEED_CONFIRM 并记警告。**未声明该键的 Agent 逐字零行为变化。** ⚠ 曾试过改用 NEED_SLOT 躲这句话，被真栈证否：那三个门店槽用户永远填不了，声明成 missing_slots 会挂起会话、吞掉后续每一句（2026-08-13 demo-f1hkwr：问麦当劳详情答瑞幸）。契约测试 `test_capability_confirm.py` + `test_merchant_luckin.py` |
 | `_escalate` | 任意 Agent（现 chitchat 时效兜底） | engine D0/executor 两路径（每轮最多 **1 跳**；已流式播报过的结果忽略；escalated 结果里的二跳声明不消费——结构性防环） | `{"intent": str, "slots": {str:str}, "reason": str}` | 「这题我不该答，改派给该 intent 的 Agent」——engine 经 `_validated_steps` 装配单步 mini-plan 走 executor（heavy/预算/权限自动带出），过程区/挂起语义与正常步一致。设计：`docs/design/2026-07-12-mode-routing-and-answer-quality.md` P1-2，契约测试 `orchestrator/cloud/tests/test_engine_escalate.py` |
 | `_verify` | **编排核心**（`executor._verify_outcome`，非 Agent 声明） | 聚合器 `_append_verify_note`（确定性拼接诚实口径，不进 LLM） | `{"verdict": "unsat", "mode": str, "attempts": int}` | 「这步声称成功，但对账没通过」——执行后对账判定确凿未达成（M2 Outcome Verifier）。**状态保持 OK**（R9 §9.5：FAILED 上的话术会被聚合器吞成裸「处理失败」）。Agent 已按 R9 诚实降级（无卡无动作无 data）时不再补口径，防重复念。设计：`docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md` §3，契约测试 `orchestrator/cloud/tests/test_verify.py` |
 

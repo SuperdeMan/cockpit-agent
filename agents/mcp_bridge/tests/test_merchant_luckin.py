@@ -1963,3 +1963,24 @@ async def test_cross_turn_focus_anchor_is_accepted_but_mixing_sources_is_not():
         assert not denied.ui_card, refs
         assert not denied.missing_slots, f"{refs}：拒绝不得挂起会话"
         assert calls.calls == [], "拒绝必须在碰商户接口之前落定"
+
+
+@pytest.mark.asyncio
+async def test_refusals_declare_the_refused_key_so_no_confirm_prompt_is_appended():
+    """商户拒绝必须打 `_refused` 保留键 —— 这是跨层契约的另一半。
+
+    另一半在 `executor._enforce_capability_confirm`：`require_confirm=true` 的步
+    收到任何 OK 结果都会被追加「确定继续吗？」，拒绝落在 OK 上就自相矛盾。
+    **不能改用 NEED_SLOT 躲**（真栈证否：挂起会话吞掉后续每一句，demo-f1hkwr）。
+    """
+    workflow, _ = _workflow()
+    refusal = await workflow.menu(_intent(name="luckin.menu"), CTX, meta={})
+    assert (refusal.data or {}).get("_refused") is True
+    assert not refusal.actions, "拒绝带动作会让闸照旧改判（那是刻意的锁）"
+
+    for script in ([_ok([]), _ok([])],
+                   [_ok([{**SHOP_RESULT["data"]["data"][0],
+                          "workStatus": "已打烊"}])]):
+        flow, _c = _workflow(scripts={"queryShopList": script})
+        denied = await flow.prepare(_intent(), CTX, META)
+        assert (denied.data or {}).get("_refused") is True, script

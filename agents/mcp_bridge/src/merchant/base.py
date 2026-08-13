@@ -43,6 +43,21 @@ class MerchantWorkflow(ABC):
         """只读看菜单。默认不支持——诚实说，不猜、不回落到演示商户。"""
         return AgentResult(speech="这个商户暂不支持查看菜单。")
 
+    @staticmethod
+    def refused(speech: str, follow_up: str = "") -> AgentResult:
+        """诚实拒绝：这一步没做、也没有东西待确认。
+
+        打 `_refused` 保留键（§9.1）。`require_confirm=true` 的工作流里，executor 的
+        中央确认闸会给**任何 OK 结果**追加「这个操作需要您确认后才会执行，确定继续吗？」，
+        拒绝落在 OK 上就拼成自相矛盾的一句（2026-08-12 demo-2goetq 实证）。
+        闸认这个键**只免除追加问句、不免除扣动作**（带动作的「拒绝」照旧被改判）。
+
+        为什么不是 NEED_SLOT：试过，被真栈证否——那会挂起会话、吞掉后续每一句
+        （2026-08-13 demo-f1hkwr：问麦当劳详情答瑞幸）。见 `_reselect_store` 的注释。
+        """
+        return AgentResult(speech=speech, follow_up=follow_up,
+                           data={"_refused": True})
+
     def image_url(self, value) -> str:
         """商品图：**必须 https + 域名在该 server 的 `image_hosts` 精确白名单里**。
 
