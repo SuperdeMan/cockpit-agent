@@ -34,6 +34,12 @@ _POC_DEFAULT_SCOPES = [
     "location.read", "navigation.control",
     "network.external", "payment.invoke",
     "profile.read", "profile.write",
+    # 真实商户 MCP（麦当劳/瑞幸，§9.9/§9.17）：桥对 workflow 与查单工具校验这两个
+    # scope。PoC 里没有任何"商户授权"发放入口，漏在这里 = 能力永远不可达——
+    # 2026-08-12 实测每一句真实下单都回「当前账号缺少商户授权」，而 e2e 自己往 meta
+    # 塞 granted_scopes 所以一直是绿的。写操作的安全边界不在这里：require_confirm
+    # 中央闸 + 只创建未支付订单 + 支付独立走 payment-gateway，三道都不受本行影响。
+    "merchant.read", "merchant.write",
     # M4 P4 视觉：**单帧**（用户显式问「那是什么」时抓一张），不是 camera.read 连续流——
     # 后者在 conventions §3 维持 ❌ 禁。采集门控在端侧（默认不采），这里只是让能力可路由。
     "camera.frame",

@@ -45,6 +45,47 @@ def test_coarse_category_still_uses_restroom_semantics_from_raw_text():
         assert NearbyAgent._build_keyword(recovered, "", "", "") == "公共厕所"
 
 
+def test_named_brand_in_keyword_is_not_widened_into_its_category():
+    """用户点名的品牌不得被类目词吞掉（2026-08-12 demo-2goetq / trace e6a82c1d 实证）。
+
+    planner 那轮只填了 keyword=「瑞幸咖啡」没填 brand，非餐饮类目分支用「咖啡厅」
+    覆盖了它 → 高德返回一半非瑞幸门店，而同 plan 的 luckin.order 直接取 items.0
+    当下单门店。品牌丢失在这里是**静默**的，只有看话术「找到 10 家咖啡厅」才发现。
+    """
+    # 槽值取自那一轮 planner 的真实输出（llm_raw: slots={"keyword": "瑞幸咖啡"}）
+    for raw_text, kw_slot, expected in (
+            ("帮我在附近的瑞幸咖啡店点一杯美式，要冰的。", "瑞幸咖啡", "瑞幸咖啡"),
+            ("附近有特斯拉充电桩吗", "特斯拉充电桩", "特斯拉充电桩"),
+            ("附近的瑞幸咖啡店有什么可以点单的", "瑞幸咖啡", "瑞幸咖啡"),
+    ):
+        intent = SimpleNamespace(
+            slots={"keyword": kw_slot}, raw_text=raw_text)
+        recovered = NearbyAgent._resolve_category(intent)
+
+        assert NearbyAgent._build_keyword(
+            recovered, "", "", kw_slot) == expected
+
+
+def test_category_alias_and_leftover_sentence_still_use_the_clean_category_word():
+    """反向护栏：别名、残句都仍归一到干净类目词，别把上面那条修成「原样透传」。
+
+    末两条是**刻意保留的漏认**：planner 把整句灌进 keyword 时，品牌救不回来，
+    但绝不能把整句交给高德——那比丢品牌更糟。
+    """
+    for kw_slot, expected in (
+            ("帮我查一查人均百元的停车场", "停车场"),   # 剥壳剥不掉价位，仍是残句
+            ("附近的充电桩", "充电站"),                 # 别名 → 规范类目词
+            ("找个洗手间", "公共厕所"),
+            ("在瑞幸咖啡店点一杯美式", "咖啡厅"),       # 整句：漏认，退回类目
+            ("100元以内的停车场", "停车场"),
+    ):
+        intent = SimpleNamespace(slots={"keyword": kw_slot}, raw_text=kw_slot)
+        recovered = NearbyAgent._resolve_category(intent)
+
+        assert NearbyAgent._build_keyword(
+            recovered, "", "", kw_slot) == expected
+
+
 def test_unknown_explicit_category_never_silently_becomes_food():
     intent = SimpleNamespace(
         slots={"category": "公共设施"}, raw_text="帮我找公共服务设施")

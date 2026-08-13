@@ -133,6 +133,27 @@ def _strip_proximity(text: str) -> str:
     return _PROXIMITY_RE.sub("", text or "").strip(" 的，。、")
 
 
+_BRAND_PREFIX_MAX = 5          # 品牌名上限：瑞幸/星巴克/特斯拉/肯德基/蜜雪冰城
+_NON_BRAND_CHARS = set("的了吗呢吧啊呀吧 ，。、！？0123456789一二三四五六七八九十百千万元块")
+
+
+def _brand_qualified(cleaned: str) -> str:
+    """『品牌 + 类目别名』→ 原样返回；否则空串（调用方退回干净类目词）。
+
+    只认「短且不含虚词/数量词的前缀 + 已知类目别名」这一种形状：
+    『瑞幸咖啡』『特斯拉充电桩』认，『人均百元的停车场』『充电桩』不认。
+    宁可漏认（退回类目词＝今天的行为）也不能错认——错认会把整句灌给高德。
+    """
+    for alias in sorted(_CATEGORY_KEYWORD, key=len, reverse=True):
+        if not cleaned.endswith(alias) or cleaned == alias:
+            continue
+        prefix = cleaned[:-len(alias)]
+        if len(prefix) <= _BRAND_PREFIX_MAX and not (set(prefix) & _NON_BRAND_CHARS):
+            return cleaned
+        return ""              # 命中最长别名即定案，不再拿更短别名重试
+    return ""
+
+
 def _strip_qualifiers(text: str) -> str:
     """从关键词里剥掉价位/评分/营业/查询措辞，留核心类目/菜系词（『人均一百左右的火锅』→火锅）。"""
     s = _PRICE_RE.sub("", text or "")
@@ -252,7 +273,14 @@ class NearbyAgent(BaseAgent):
             return cuisine
         cat_kw = _CATEGORY_KEYWORD.get(category)
         if cat_kw and category not in _FOOD_CATS:      # 设施/非餐饮类目 → 干净类目词
-            return cat_kw
+            # 但『瑞幸咖啡』『特斯拉充电桩』这种**品牌 + 类目别名**是用户明确点名的东西，
+            # 比类目更具体——用类目词覆盖它是静默的信息丢失（2026-08-12 实测：
+            # 「附近的瑞幸咖啡店」被改写成「咖啡厅」，返回一半非瑞幸门店，而同 plan 的
+            # luckin.order 直接取 items.0 当下单门店）。
+            # 判据刻意收得很紧（见 _brand_qualified）：**不能靠 _strip_qualifiers 兜底**
+            # ——它只剥价位/评分/营业/查询措辞，『人均百元的停车场』剥完还是整句，
+            # 正是本分支当初存在的理由。剥不成品牌形状的一律退回类目词。
+            return _brand_qualified(_strip_qualifiers(kw_slot)) or cat_kw
         cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
             return cleaned

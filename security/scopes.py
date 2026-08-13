@@ -23,12 +23,17 @@ CAMERA_READ = "camera.read"
 # 沿 LOCATION_READ / LOCATION_PRECISE 的精度分级先例——把「问一句那是什么」和
 # 「持续看着你」区分开，前者可授、后者维持 ❌ 禁（conventions §3 权限表）。
 CAMERA_FRAME = "camera.frame"
+# 真实商户 MCP（§9.9）：读=查单，写=创建/取消未支付订单。与 PAYMENT_INVOKE 分开——
+# 下单和付款是两件事，本项目的商户链**只创建未支付订单**，付款始终另走 payment-gateway。
+MERCHANT_READ = "merchant.read"
+MERCHANT_WRITE = "merchant.write"
 
 ALL_SCOPES: set[str] = {
     VEHICLE_CONTROL_HVAC, VEHICLE_CONTROL_WINDOW, VEHICLE_CONTROL_SEAT,
     VEHICLE_READ_STATE, LOCATION_READ, LOCATION_PRECISE,
     NAVIGATION_CONTROL, MEDIA_CONTROL, PAYMENT_INVOKE, NETWORK_EXTERNAL,
     PROFILE_READ, PROFILE_WRITE, MICROPHONE_READ, CAMERA_READ, CAMERA_FRAME,
+    MERCHANT_READ, MERCHANT_WRITE,
 }
 
 # 车控类 scope 前缀
@@ -43,11 +48,17 @@ TRUST_LEVEL_CAPS: dict[str, set[str]] = {
         VEHICLE_READ_STATE, LOCATION_READ, LOCATION_PRECISE,
         NAVIGATION_CONTROL, MEDIA_CONTROL, PAYMENT_INVOKE, NETWORK_EXTERNAL,
         PROFILE_READ, PROFILE_WRITE, CAMERA_FRAME,
+        MERCHANT_READ, MERCHANT_WRITE,
     },
     "third_party": {
         VEHICLE_READ_STATE, LOCATION_READ,
         NAVIGATION_CONTROL, MEDIA_CONTROL, PAYMENT_INVOKE, NETWORK_EXTERNAL,
         PROFILE_READ,
+        # mcp-bridge 自身就是 third_party（外部服务一律）——商户能力若不在这一档，
+        # 硬上限表会把它剥掉，等于把整条真实商户链锁死。它不属于 THIRD_PARTY_DENY
+        # 那类（车控/摄像头/麦克风/精确位置）：那些是不可撤销的物理与隐私风险，
+        # 商户下单是可确认、可取消、且不含付款的商业写。
+        MERCHANT_READ, MERCHANT_WRITE,
     },
 }
 

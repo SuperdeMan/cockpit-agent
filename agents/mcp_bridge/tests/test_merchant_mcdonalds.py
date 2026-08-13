@@ -418,7 +418,12 @@ def test_default_clock_is_explicit_shanghai_time_and_past_reservation_is_rejecte
     workflow, _ = _workflow(clock=None)
     now = workflow._clock()
     assert now.utcoffset() == timedelta(hours=8)
-    assert now.tzname() == "Asia/Shanghai"
+    # 断时区**身份**不断 tzname：`_shanghai_timezone()` 两条分支的 tzname 天然不同
+    # （有 tzdata 的 Linux/CI 走 ZoneInfo → "CST"；无 tzdata 的 Windows 回退定偏移
+    # → "Asia/Shanghai"），断 tzname 等于只断了本机那条分支，CI 上必红。
+    # `str(tzinfo)` 两条分支都是 "Asia/Shanghai"（ZoneInfo 返回 key，定偏移返回 name），
+    # 且仍能区分"显式上海时区"与"随便一个 +8"——这正是本用例要守的东西。
+    assert str(now.tzinfo) == "Asia/Shanghai"
 
     options = [{
         "date": "2026-08-12", "today": True,
