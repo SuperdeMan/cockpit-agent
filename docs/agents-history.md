@@ -2085,3 +2085,152 @@ demo/外部商户订单仍按 external reference 生命周期处理。根 `.env`
 合成 Docker 真栈只直接 seed owner-bound SessionStore/RedisDraftStore，不调用任何商户业务工具：
 活跃租约存在时 ForgetUser 得到 503 pending；精确 release 后重试得到 200，最终 Planner 会话与
 商户草稿均为零、旧租约授权失败，并按本次随机 owner 的精确 key 清理合成证据。
+
+## 30. 商户 badcase 收口七批：授权链打通 + 门店菜单 + 跨轮锚定 + 两次自伤修复（2026-08-13）
+
+入口是泓舟给的三个现象（会话 `demo-2goetq`）：「当前账号还没完成商户授权」、附近的瑞幸里
+混着非瑞幸门店、「这家店的菜单」答出演示数据。七个提交推 main：`5819ca5` / `c2f8965` /
+`c595d99` / `4ba36db` / `50a5ee0` / `10e6074` / `1f16260`。
+
+### 30.1 三个现象的根因都不在它们看起来的地方
+
+**① 「缺少商户授权」——能力从来没被授予过，跟账号无关。**
+`luckin.order` / `mcd.order` 声明 `required_scopes: [merchant.write]`，而
+`merchant.read`/`merchant.write` **全仓没有任何发放入口**：不在 `security/scopes.py::ALL_SCOPES`，
+也不在 `orchestrator/cloud/context.py::_POC_DEFAULT_SCOPES`。运行时 audit 逐字为证
+（`event=fail_open_default_scopes` 的 `required` 列表只有 11 项）。
+而 `test/e2e_merchant_mcp.py:260` 自己往 meta 塞 `granted_scopes`——
+**唯一能抓到这个洞的检查，正好被测试自己短路了。**
+判据推广：**凡是测试「替被测系统提供了某个前提」，那条前提就不再被验证。**
+
+**② 附近的瑞幸混进非瑞幸——不是瑞幸 MCP，是高德，而且品牌是我们自己丢的。**
+span 写着 `provider.amap.place_around vendor=amap`，瑞幸 MCP 那轮根本没被调到。
+`nearby._build_keyword` 在非餐饮类目分支用干净类目词覆盖了 planner 只填在 `keyword` 里的
+「瑞幸咖啡」，实际检索词是「咖啡厅」（话术「找到 10 家**咖啡厅**」即证据）。
+下游更危险：同 plan 的 `luckin.order` 用 `slot_refs` 直取 `items.0` 当下单门店——
+品牌一丢就是拿别家咖啡店去瑞幸下单。
+修法收紧成「短前缀（无虚词/数量词）+ 已知类目别名」，宁可漏认退回类目词也不把整句灌给高德；
+**第一版曾假设 `_strip_qualifiers` 能剥掉整句，被同批写的反向护栏当场证否**
+（`人均百元的停车场` 剥完还是整句）。
+
+**③ 「这家店的菜单」答出演示数据——目录里没有更好的选项，模型没选错。**
+瑞幸/麦当劳都没有暴露「看菜单」的只读能力，「菜单」在整个能力目录里只对应演示商户的
+`shop.menu`。补了 `luckin.menu`（复用同一条门店可信链）与 `mcd.menu`（见 §30.4）。
+
+### 30.2 真机取证纠正的四处臆测（成本一个容器内脚本，收益四个真 bug）
+
+- `searchProductForMcp` 的 `query=""` 被商户判 `code=1000 非法参数` → 无 item_query 时给种子实词；
+- 它一次最多回 **3 条**，是「搜商品」不是「列全菜单」→ 话术不许说成菜单/全部；
+- 价格字段是 `estimatePrice`/`initialPrice`，第一版写的 price/salePrice/discountPrice
+  **真机一个都不存在**；
+- 高德 POI 名与瑞幸官方 `deptName` 是**两套写法**（官方认「瑞幸咖啡(前海华强金融大厦店)」，
+  不认「luckin coffee 瑞幸咖啡(华润前海23F内部店)」，而空名 + 同坐标返回 8 家）
+  → 按名查空时用**坐标**再查一次，可信链不放松（距离一致性 + 同名匹配两道闸原样生效）。
+
+判据：**照常见命名猜字段，是最容易被真机否掉的一类假设。**
+
+### 30.3 跨轮门店锚定：方案、两次落地失败、最终形态
+
+方案 `docs/design/2026-08-13-cross-turn-store-anchor.md`。核心判据一句话：
+**跨轮延续的是「服务端记得取回过哪些门店」，不是「让模型把坐标再说一遍」**——
+后者等于取消 provenance。落点接既有的 `_apply_focus_meta` 那条路，但 provenance 走
+`PlanContext.focus_places`（服务端对象，LLM 与客户端都写不到），因为 `step.meta` 会被
+`_resolve_slot_refs` 每轮 pop（那个 pop 本身是对的，它挡的是计划里的伪造值）。
+
+落地过程中被真栈连着否掉三个假设：
+
+1. **挂点漏了一条执行路径。** 锚定挂在 `executor._resolve_slot_refs` 上，加诊断日志后真栈
+   **一行都没打出来**——`luckin.menu`（`require_confirm=false`）走的是 **D0 流式直通**，
+   那条路绕过 executor。补在 D0 分支里显式解析一次，并加源码级回归探针。
+   **新增挂点必须枚举全部执行路径**——本项目第二次踩（M2 的 Outcome Verifier 同款）。
+2. **悬空引用是跨轮的表达方式，不是计划缺陷。** 第一版守卫「声明了 slot_ref 却没解析成功
+   → 让路」会让锚定永远不触发，因为第二轮模型产的正是 `slot_refs: {store_name:
+   "s0.data.items.0.name"}` 而 `s0` 是**上一轮**的步骤 id。正确判据看生产者在不在本轮 `done` 里。
+3. **Planner 给的门店值只当线索不当值。** 另一种真栈形态是
+   `slots: {store_name: "<抄来的店名>", store_longitude: "s1.data.items.0.lng"}`
+   ——坐标是没解析成的 ref 字面串。两者都没有 provenance，消费侧本来就会拒，
+   所以「slots 里已经有门店了」不是「已有门店」而是死路。改成：名字当线索、值只从服务端
+   持有的列表取；名字对不上就不锚定（诚实失败），**绝不拿第 0 条顶替用户点名的店**。
+   provenance 里的下标必须是**实际命中**那条——写死 0 会让「同前缀同下标」变成一句谎话。
+
+### 30.4 麦当劳同步：`mcd.menu` 让位给当店菜单
+
+对账后发现麦当劳只同步了一半。补齐拒绝话术后，两处真缺口用真机取证定了性：官方
+`query-meals` 返回的是真正的**全店菜单**（`categories` + `meals`，每条带
+`name`/`image`/`currentPrice`/`originalPrice`，图在 `menu-img.mcd.cn`），比营养表能回答用户
+真正在问的「有什么、多少钱」。于是 `mcd.menu` 让给当店菜单，营养成分表改名 `mcd.nutrition`
+——**它返回的一直是营养不是菜单**，旧名让「麦满分多少钱」只能回「这个接口里只有营养信息」
+（trace `c523c303`）。
+
+图片白名单沿用 `pay_url_hosts` 的既有形态（`image_hosts` 精确 hostname，不合规静默丢弃退回
+纯文字），判定提到 `MerchantWorkflow` 基类两家共用一份——两份判定必然漂移。
+
+真栈又抓到两处我方实现错误：`or products` 的兜底把无关餐品挂在用户问的名字下面
+（「猪柳蛋麦满分多少钱」答成「…的"猪柳蛋麦满分"有：蘸酱韩式甜辣酱鸡块…」，**比答不出来糟得多**）；
+planner 会把整句塞进 `item_query`，菜单路径补反向包含兜住、**下单路径刻意不放宽**。
+
+### 30.5 两次自伤：为躲一句话术换来功能不可用
+
+**这是本批最该记住的一段。** 「拒绝落在 OK 上会被中央确认闸拼成
+『…不能执行。这个操作需要您确认后才会执行，确定继续吗？』」是个真问题，但前两次修法都错了：
+
+| 做法 | 结果 |
+|---|---|
+| 拒绝落 OK（原状） | 自相矛盾的一句 |
+| 改用 `NEED_SLOT`（`c2f8965`） | **真栈证否**：挂起会话、吞掉后续每一句 |
+| 显式保留键 `_refused`（`1f16260`） | ✅ |
+
+`NEED_SLOT` 声明缺 `store_name/lng/lat`，而这三个槽**按设计只能来自 nearby.search 的可信 POI，
+用户永远填不了**。引擎据此挂起会话，此后每一句都被当补槽答案吃掉
+（`Resuming plan ... (slot fill step s1, text=看麦当劳(科苑南路餐厅)的详情)`）——
+问麦当劳答瑞幸，「第一个」「选择瑞幸门店：X」也全被吞（会话 `demo-f1hkwr` / `demo-r6qjf4`）。
+**拿「话术不好看」换来了「功能不可用」。** 同形态老账（「请先查询附近的瑞幸门店」那句在本批
+之前就是 `NEED_SLOT`）一并修掉。判据入库：**不许把用户填不了的东西声明成 `missing_slots`。**
+
+最终形态走显式保留键（§9.1 登记，与 `_escalate` 同族）：闸认这个键**只免除追加问句、
+不免除扣动作**——自称拒绝却带 `actions` 的结果照旧改判 `NEED_CONFIRM` 并记警告。
+动安全件的全部安全论证是一句可断言的话：**未声明该键的 Agent 逐字零行为变化**
+（`test_unmarked_results_keep_the_old_behaviour_verbatim`）。
+
+同批还修掉第二个自伤：**焦点每轮从当前 plan 重建**，turn 2 只要没有搜索步就把 turn 1 存的
+门店抹成空；再深一层，**salvage/replan 轮里引擎递给 `update_focus` 的是重规划后的 plan**，
+`nearby.search` 根本不在里面——这解释了同一句话走 `toolcall` 能通、走 `toolcall_salvage`
+就断。改成门店列表**粘性**（只有新的 nearby.search 才替换）+ 从 **results 的 `source_intent`**
+取（执行器盖的章，比调用方递来的 plan 可靠）。
+
+### 30.6 验证方式本身的教训
+
+两个自伤都是**泓舟打回来才发现的**，而我上一轮说过「真栈已验通」。原因是：
+**探针从来没测过「拒绝之后再说一句」**——全是干净会话或顺利路径，而挂起黑洞只在失败态之后
+才出现；两轮测试也测不出焦点覆盖，因为第二轮恰好紧邻搜索轮；CDP 用例同样只跑到
+「卡片渲染出来」，没跑「卡片之后还能不能继续对话」。
+
+沉淀成一条纪律：**验证多轮系统必须跑「失败态之后再说一句」和 ≥3 轮，
+happy path 和干净会话证明不了会话状态是对的。** 已钉成回归：
+`test_store_refusals_never_suspend_the_session`、
+`test_last_places_survive_a_turn_that_did_not_search`、
+`test_places_come_from_result_provenance_not_the_plan_object`、
+C10 的「选品后换话题仍正常」。
+
+### 30.7 门禁连着抓了五条（都不是我事先想到的）
+
+- 新增 active intent `luckin.menu` / `mcd.nutrition` 各要补 2 正 / 2 硬负 / 1 对照；
+- 新范例与 `unseen_transfer` 用例撞句 → **cohort leakage**（且是在我已跑绿一次之后才红的
+  ——新增的知识改变了前提）。规矩：范例保持自然说法，**改用例侧的措辞**；
+- 跨域近重复要求登记边界：「附近的**瑞幸**有什么可以点的」首步是 `nearby.search`、
+  「这家**麦当劳**有什么可以点的」直接 `mcd.menu`。判为**真边界不是地盘冲突**——瑞幸官方菜单
+  绑 `deptId` 只能由可信 POI 映射，麦当劳按 `store_hint` 文本查店，**是两家接口形态的差异**。
+  已登记 `luckin-mcd.menu-store-resolution` 并按契约补齐双向各 2 例；
+- 语料上界四次递进 560→564→568→570→571，每次的占用理由都写在 `suites.yaml` 头部；
+- CI 那条时区红灯：`assert now.tzname() == "Asia/Shanghai"` **只断了本机那条分支**
+  （Windows 无 tzdata 走定偏移 → `Asia/Shanghai`；Linux/CI 走 ZoneInfo → `CST`）。
+  改断 `str(tzinfo)`，两边实测过。
+
+### 30.8 环境侧留档
+
+- **高德间歇性不可达**：本机到 `restapi.amap.com` IPv4 连接超时、IPv6 无路由
+  （`connect=0.000000s`），而百度 90ms 正常、DNS 解析正常。**不是配额也不是代码**。
+  排查中一度误读成「配额被探针打光」并据此在 `c595d99` 的 commit message 里写了
+  「没跑通真栈整轮」，已在后续提交更正。判据：**拿不到结果时先分清「资源没了」和「这次没成」。**
+- CDP 安全用例集（C1/C3/C5/C6）在全栈重建后首轮红、复跑即绿——是**已记录的
+  registry 重注册期假红**形态，不是回归。

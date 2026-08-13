@@ -57,7 +57,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-12）
+### 4.0 当前快照（2026-08-13）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
@@ -66,21 +66,30 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5408 passed / 14 skipped / 0 failed**（2026-08-12 麦当劳/瑞幸官方 MCP 复合工作流
-收口后冻结态实测，退出码 0，用时 23m25s）。较 2026-08-11 支付四批后的 4996 净 **+412**，
-覆盖确定性商户 workflow、写入/响应/支付安全边界、Redis 草稿与隐私清除、可信 POI 跨步引用、
-确认恢复、HMI/意图资产及真栈测试契约；逐项证据见 history **§29** 与
-`docs/design/2026-08-12-merchant-mcp-full-flow.md` §11。上一批 4864→4960→4994→4996
-的四跳对账仍见 history **§28**。⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/
-出站验签代码先想编码两端。
+**5440 passed / 14 skipped / 0 failed**（2026-08-13 商户 badcase 收口七批后实测，
+退出码 0，用时 26m40s）。较 2026-08-12 的 5408 净 **+32**：商户 scope 发放、
+`luckin.menu` / `mcd.menu` 两条只读当店菜单、商品图域名白名单、跨轮门店锚定、
+`_refused` 保留键与两次自伤修复的回归探针；逐项证据见 history **§30** 与
+`docs/design/2026-08-13-cross-turn-store-anchor.md`。上一批 4996→5408 见 history §29，
+更早 4864→4960→4994→4996 的四跳对账见 **§28**。⚠ Windows GBK 宿主是本仓常驻放大器，
+新写子进程/出站验签代码先想编码两端。
 
-**2026-08-12 商户批聚焦实测**：mcp-bridge **385 passed**、隐私/旅程 manifest
+**2026-08-13 商户 badcase 批聚焦实测**：mcp-bridge **396 passed**、
+`orchestrator/cloud` 焦点/执行器新增回归 6 条、HMI node **254/254** 且 Vite build 通过；
+CDP **C10**（只读选品卡，不创建订单）端到端通过——选品卡 3 款 / 商品图 2/3 张
+**真加载**（`naturalWidth>0`，不是断言 `src` 存在）/ 帧文本正确且非确认帧 /
+**选品后换话题仍正常**。C1/C3/C5/C6 全绿（首轮红、复跑即绿 = registry 重注册期假红）。
+⚠ C2a/C10 会被高德间歇不可达阻塞——本机到 `restapi.amap.com` IPv4 超时、IPv6 无路由，
+百度 90ms 正常，**不是配额也不是代码**；用例把这种情况报成「前置降级，非卡片结论」。
+
+**2026-08-12 商户批聚焦实测**（上一批，留作对账）：mcp-bridge **385 passed**、隐私/旅程 manifest
 **168 passed**、HMI node **253/253** 且 Vite production build 通过；Redis 7 隔离 DB15
 覆盖 TTL、动作原子消费、owner 删除与对照用户隔离（确认操作在飞时返回 pending）。合成 Docker
 真栈进一步证明 ForgetUser 在活跃租约下先返回 `503 pending`，精确释放后重试返回 200，且
 Planner 会话与商户草稿均不可再读取；该验证未调用任何商户业务工具。L0 discovery **81/81**
 （599 条 / 560 唯一输入）、gate strict **25/25**；范例 **268 条 / 22 域**，域错配
 4/167=2.4%；skills 22/22、能力完整性与 route-hints/fast-intent 门禁均通过。
+（当前数见下方证据表——2026-08-13 已推进到 610 条 / 571 唯一输入、范例 272 条。）
 
 **2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
 agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
@@ -110,7 +119,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **81/81**，599 条 / **560 唯一输入**（2026-08-12 复合商户能力兑现正例、硬负例、对照与 relation 后，bounds [450,560] **恰好用满**；没有删除旧尺子压数字） |
+| L0 discovery | **81/81**，610 条 / **571 唯一输入**（2026-08-13 起 bounds [450,**571**]，仍**恰好用满**。四次递进 560→564→568→570→571，逐次占用理由写在 `suites.yaml` 头部：`luckin.menu` 覆盖、跨轮锚定双向对照、`mcd.nutrition` 覆盖、跨域边界台账双向各 2 例；没有删除旧尺子压数字） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -118,7 +127,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 分组数字见上方 2026-08-11 实测段（`orchestrator/` 合计 **1300** = edge 579 + cloud 721）；Skill / Exemplar（**254 条 / 20 域**——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 分组数字见上方 2026-08-11 实测段（`orchestrator/` 合计 **1300** = edge 579 + cloud 721）；Skill / Exemplar（**272 条 / 22 域**——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -159,6 +168,20 @@ transport/补偿两态/pay_url 闭环/speech_mode）；逐批流水 history **§
 均由商户自动取消；没有一笔付款。最终浏览器 C9 已分别精确命中瑞幸“已取消”和麦当劳
 “订单已取消”；旧版只断言“收到回复”的宽松 C9 截图不算查单终态证据。
 
+**商户 badcase 收口七批（2026-08-13，全部实施推 main）**：`5819ca5` / `c2f8965` /
+`c595d99` / `4ba36db` / `50a5ee0` / `10e6074` / `1f16260`。逐批流水与判据在
+history **§30**，跨轮锚定方案见
+[`docs/design/2026-08-13-cross-turn-store-anchor.md`](docs/design/2026-08-13-cross-turn-store-anchor.md)。
+能力状态一句话：真实商户链**在实栈里第一次可达**（`merchant.read/write` 此前全仓无发放入口，
+e2e 自己塞 `granted_scopes` 所以一直是绿的）；两家各有只读当店菜单
+（`luckin.menu` 3 条搜索结果 / `mcd.menu` 全店菜单，均带价格与商品图，域名走
+`servers.yaml::image_hosts` 精确白名单）；「这家店」跨轮可解析（`focus.last_places` +
+`PlanContext.focus_places`，provenance 同前缀同下标一字不松）。
+营养表已由 `mcd.menu` 改名 **`mcd.nutrition`**——问热量与问价钱是两个能力。
+
+⚠ 本批有**两次自伤**（为躲一句话术把拒绝改成 `NEED_SLOT`，挂起会话吞掉后续每一句；
+焦点每轮重建把门店列表抹空），都是泓舟打回来才发现的。沉淀的两条纪律已入 §4.3。
+
 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。
 
@@ -178,9 +201,9 @@ transport/补偿两态/pay_url 闭环/speech_mode）；逐批流水 history **§
 或该族再成主要矛盾），是泓舟 2026-08-11 直接指示推进的。两份方案的头部都留了痕——
 **别把它读成「条件曾经满足过」**，那会让下一次「条件启动」的分量被稀释。
 
-⚠ **对抗语料唯一输入 560 / 上界 560**——当前余量为 0。下次加 L0 语料必须先说明新增
+⚠ **对抗语料唯一输入 571 / 上界 571**——当前余量仍为 0。下次加 L0 语料必须先说明新增
 能力或边界为何值得占额度，再有原则地调整 `suites.yaml` 的 `max_cases`；不得删旧尺子压数字，
-也不得先加语料撞闸后再补理由。本次 540→560 的依据与逐项占用写在 `suites.yaml` 头部。
+也不得先加语料撞闸后再补理由。560→571 的四次递进与逐项占用写在 `suites.yaml` 头部。
 
 > 逐批流水在 [`docs/agents-history.md`](docs/agents-history.md) **§15–§27**，逐条证据在
 > `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§26**。
@@ -208,6 +231,14 @@ transport/补偿两态/pay_url 闭环/speech_mode）；逐批流水 history **§
 
 ### 4.3 读数纪律
 
+- **验证多轮系统必须跑「失败态之后再说一句」和 ≥3 轮**（2026-08-13 两次自伤的共同成因）。
+  happy path 与干净会话证明不了会话状态是对的：挂起黑洞只在**拒绝之后**才出现，
+  焦点覆盖只在**第三轮**才暴露（第二轮恰好紧邻搜索轮），CDP 用例也只验到「卡片渲染出来」
+  而 bug 活在卡片之后。同族推论：**测试若替被测系统提供了某个前提，那条前提就不再被验证**
+  （`e2e_merchant_mcp.py` 自己塞 `granted_scopes`，于是「scope 从没被发放过」绿了两个月）。
+- **拿不到结果时先分清「资源没了」和「这次没成」。** 2026-08-13 把高德的间歇性不可达
+  误读成「配额被探针打光」，并据此在提交信息里写了「没跑通真栈整轮」；实测本机到
+  `restapi.amap.com` IPv4 超时、IPv6 无路由而百度 90ms 正常——是环境不是配额也不是代码。
 - `110/116`、`113/117`、raw `6/117`、旧 seen/unseen 对比均是历史口径/批次，**不得当当前结果**。
 - `domain_hit_rate` 只要求命中交集；`exact_plan_set_rate` 要求必要组齐全、禁选为空、无额外项，二者不可直比。
 - L1/L2 的正式 gate 必须是两个独立进程、每进程 3 样本；同进程 repeat 3 不能替代第二进程。

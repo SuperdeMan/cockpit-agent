@@ -38,7 +38,7 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
-| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（低层工具与复合 workflow 分别准入；demo-coffee `shop.*` 四件 + 麦当劳 `mcd.menu/order_status/order` + 瑞幸 `luckin.order_status/menu/order/order_cancel`；麦当劳 `mcd.nutrition/order_status/menu/order`）——manifest 里 capabilities 故意留空，见 §9.9 |
+| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（低层工具与复合 workflow 分别准入；demo-coffee `shop.*` 四件 + 麦当劳 `mcd.nutrition/order_status/menu/order` + 瑞幸 `luckin.order_status/menu/order/order_cancel`，启动期实测合成 **12** 条）——manifest 里 capabilities 故意留空，见 §9.9 |
 | vision | vision | core | first_party | cloud | 50077 | vision.describe（单帧图片问答，M4 P4；契约见 §9.12）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。
@@ -71,7 +71,8 @@
 | `shop.order` | mcp-bridge | cloud | item, size | require_confirm；演示商户下单（描述已判别化：真实品牌不适用） |
 | `shop.order_status` | mcp-bridge | cloud | order_id | 演示商户查单（按订单号或幂等键，§9.9） |
 | `shop.order_cancel` | mcp-bridge | cloud | order_id | require_confirm；演示商户取消退款 |
-| `mcd.menu` | mcp-bridge | cloud | — | 麦当劳餐品/营养（真机 tools/list 核实激活，speech_mode=summarize，§9.9） |
+| `mcd.menu` | mcp-bridge | cloud | store_hint/city + 可选 item_query | 麦当劳**当店菜单**：官方 query-meals 的全店在售餐品与**价格**（带商品图，域名走 `image_hosts` 白名单）。2026-08-13 由营养表让位——它返回的一直是营养不是菜单，旧名让「麦满分多少钱」只能回「这个接口里只有营养信息」 |
+| `mcd.nutrition` | mcp-bridge | cloud | — | 麦当劳餐品**营养成分**（热量/蛋白质等，**不含价格**；真机 tools/list 核实激活，speech_mode=summarize，§9.9）。2026-08-13 由 `mcd.menu` 改名 |
 | `mcd.order_status` | mcp-bridge | cloud | order_id | 麦当劳订单查询（商家是订单状态真相源） |
 | `mcd.order` | mcp-bridge | cloud | item_query/quantity/store_hint/city/pickup_mode | 桥内确定性选店、菜单、详情、核价，确认后创建未支付订单；低层 typed items 不交给 Planner |
 | `luckin.order_status` | mcp-bridge | cloud | order_id | 瑞幸订单查询（商家是订单状态真相源） |
