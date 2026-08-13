@@ -612,9 +612,13 @@ async def test_store_coordinates_require_same_nearby_result_item(meta):
     # 把它声明成 missing_slots 就是向用户要一个他永远给不出的东西，
     # 而引擎会据此挂起会话、吞掉后续每一句（2026-08-13 真栈实证
     # demo-f1hkwr：「看麦当劳(科苑南路餐厅)的详情」被答成「请先查询附近的瑞幸门店…」）。
+    # 2026-08-13 demo-mkemhn 起：slots 里有店名线索时拒绝还带 `_escalate`
+    # 改派 nearby.search 按名把门店真实取回（engine 每轮一跳），不再打回死路。
     assert result.status == OK
     assert not result.missing_slots
-    assert "附近" in result.speech and result.follow_up
+    assert result.speech and result.follow_up
+    assert (result.data or {}).get("_escalate", {}).get(
+        "intent") == "nearby.search"
     assert not client.calls
 
 
@@ -703,13 +707,18 @@ async def test_menu_is_read_only_and_never_touches_write_tools():
 
 @pytest.mark.asyncio
 async def test_menu_requires_the_same_trusted_store_chain_as_ordering():
-    """没有可信 POI 就不给菜单——官方菜单绑定 deptId，绕不开选店这一步。"""
+    """没有可信 POI 就不给菜单——官方菜单绑定 deptId，绕不开选店这一步。
+
+    2026-08-13 demo-mkemhn 起：slots 里有店名线索时，拒绝带 `_escalate` 改派
+    nearby.search 按名取回门店（自愈），但**仍然不碰任何商户接口**。"""
     workflow, client = _workflow()
 
     result = await workflow.menu(_intent(name="luckin.menu"), CTX, meta={})
 
     assert result.status == OK and not result.missing_slots, "不得挂起会话"
-    assert "附近" in result.speech and result.follow_up
+    assert result.speech and result.follow_up
+    assert (result.data or {}).get("_escalate", {}).get(
+        "intent") == "nearby.search"
     assert client.calls == []
 
 
@@ -1963,6 +1972,82 @@ async def test_cross_turn_focus_anchor_is_accepted_but_mixing_sources_is_not():
         assert not denied.ui_card, refs
         assert not denied.missing_slots, f"{refs}：拒绝不得挂起会话"
         assert calls.calls == [], "拒绝必须在碰商户接口之前落定"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_store_with_name_hint_escalates_to_nearby_search():
+    """焦点/选店草稿双过期 + 用户点名门店：不再打回「请先查询」死路。
+
+    demo-mkemhn 78b635db/b69a16d9：候选卡按钮「选择瑞幸门店：X」和
+    「X店这家瑞幸我要看菜单」都在过期后撞上死路拒绝，且拒绝话术把
+    「公开门店 POI 坐标」这种内部术语原样说给了用户。修法：有店名线索时
+    用 `_escalate` 保留键（engine 每轮一跳）改派 nearby.search 按名取回门店
+    ——列表随即写回焦点，下一句锚定即可用；坐标可信链一分不松。
+    """
+    workflow, client = _workflow()
+    refusal = await workflow.menu(
+        _intent(name="luckin.menu",
+                store_name="瑞幸咖啡（迪美购物中心店）",
+                store_longitude="", store_latitude=""),
+        CTX, meta={})
+
+    assert (refusal.data or {}).get("_refused") is True
+    esc = (refusal.data or {}).get("_escalate")
+    assert esc == {"intent": "nearby.search",
+                   "slots": {"keyword": "瑞幸咖啡（迪美购物中心店）"},
+                   "reason": "merchant_store_unresolved"}
+    assert client.calls == [], "escalate 拒绝必须在碰商户接口之前落定"
+    assert "POI" not in refusal.speech and "坐标" not in refusal.speech
+    assert not refusal.missing_slots, "拒绝不得挂起会话"
+
+    # 店名不含品牌时补品牌词，让 nearby 的指名判定与检索都成立
+    flow2, _ = _workflow()
+    refusal2 = await flow2.menu(
+        _intent(name="luckin.menu", store_name="迪美购物中心店",
+                store_longitude="", store_latitude=""),
+        CTX, meta={})
+    assert (refusal2.data or {}).get("_escalate", {}).get("slots") == {
+        "keyword": "瑞幸咖啡 迪美购物中心店"}
+
+
+@pytest.mark.asyncio
+async def test_unresolved_store_without_hint_refuses_plainly_without_jargon():
+    """没有店名线索：普通诚实拒绝——不 escalate（没有可查的名字），
+    话术不出现 POI/坐标内部术语。ref 字面串（`s1.data.items.0.name`）是残渣
+    不是店名，同样不触发 escalate。"""
+    for store_name in ("", "s1.data.items.0.name"):
+        workflow, client = _workflow()
+        refusal = await workflow.menu(
+            _intent(name="luckin.menu", store_name=store_name,
+                    store_longitude="", store_latitude=""),
+            CTX, meta={})
+
+        assert (refusal.data or {}).get("_refused") is True, store_name
+        assert "_escalate" not in (refusal.data or {}), store_name
+        assert "POI" not in refusal.speech and "坐标" not in refusal.speech
+        assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_menu_whole_sentence_item_query_falls_back_to_seed_and_matches():
+    """只读菜单的整句放宽（对齐 mcd._menu_matches）：planner 把整句塞进
+    item_query 时，商户按整句搜是 0 条；退种子词重搜后做「商品名 ⊂ 整句」
+    反向包含。**只放宽菜单**，下单路径不碰。"""
+    workflow, client = _workflow(scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": [_ok([]), SEARCH_RESULT],
+    })
+    res = await workflow.menu(
+        _intent(name="luckin.menu",
+                item_query="深圳的瑞幸生椰拿铁（首创）多少钱"),
+        CTX, META)
+
+    assert res.status == OK
+    assert "生椰拿铁（首创）" in res.speech
+    search_calls = [args for name, args, _ in client.calls
+                    if name == "searchProductForMcp"]
+    assert len(search_calls) == 2
+    assert search_calls[1]["query"] != search_calls[0]["query"]
 
 
 @pytest.mark.asyncio

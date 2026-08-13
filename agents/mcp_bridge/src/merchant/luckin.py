@@ -1162,6 +1162,11 @@ class LuckinWorkflow(MerchantWorkflow):
         return (str(getattr(ctx, "user_id", "") or "").strip(),
                 str(getattr(ctx, "session_id", "") or "").strip())
 
+    # `s1.data.items.0.name` 这类没解析成的引用字面串不是门店名，是残渣——
+    # 不能当成「用户点名的门店」拿去 escalate 检索。
+    _REF_LITERAL_RE = re.compile(
+        r"^\$?\{?\s*[A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+\s*\}?$")
+
     @classmethod
     def _trusted_store(cls, slots: dict, meta) -> tuple[str, float, float] | None:
         name = str(slots.get("store_name") or "").strip()
@@ -1379,11 +1384,30 @@ class LuckinWorkflow(MerchantWorkflow):
             if trusted is None:
                 # 同 `_reselect_store`：这三个槽用户填不了，声明成 missing_slots
                 # 会让会话挂起并吞掉后续每一句（真栈实证见那里的注释）。
-                # 这条是**改动前就存在**的，用户会话里循环的正是它。
+                #
+                # 2026-08-13 demo-mkemhn 收口：①话术不再对用户输出「POI 坐标」这类
+                # 内部术语（78b635db/b69a16d9 原句照搬给了用户）；②slots 里有门店名
+                # 线索时（候选卡按钮「选择瑞幸门店：X」/用户点名门店，但焦点与选店
+                # 草稿都已过期）不再把用户打回「请先查询」死路——用 `_escalate`
+                # 保留键（§9.1，engine 每轮一跳）改派 nearby.search 按名把这家店
+                # 真实取回：门店列表随即写回焦点，下一句锚定即可用。
+                # 坐标可信链一分不松：本分支不碰任何商户接口，取回的 POI 仍走
+                # nearby.search 的权威产出与 provenance。
+                hint = str(slots.get("store_name") or "").strip()
+                if hint and not self._REF_LITERAL_RE.match(hint):
+                    keyword = hint if "瑞幸" in hint else f"瑞幸咖啡 {hint}"
+                    refusal = self.refused(
+                        "我这边还没有这家门店的位置信息，先帮你查一下这家瑞幸。",
+                        "从结果里选一家，我就能继续帮你看菜单或下单。")
+                    refusal.data["_escalate"] = {
+                        "intent": "nearby.search",
+                        "slots": {"keyword": keyword},
+                        "reason": "merchant_store_unresolved",
+                    }
+                    return None, None, refusal
                 return None, None, self.refused(
-                    "请先查询附近的瑞幸门店并选择一家，"
-                    "我只会使用该公开门店 POI 的坐标。",
-                    "可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
+                    "我还不知道你想去哪家瑞幸门店。",
+                    "说“查询附近的瑞幸咖啡”，我列出门店，你选一家就能继续。")
             store_name, longitude, latitude = trusted
             try:
                 shops = await self._read(
@@ -1483,6 +1507,27 @@ class LuckinWorkflow(MerchantWorkflow):
             return self._read_failure("查询该门店菜单", exc)
         products = [product for product in self._products(products_data)
                     if self._is_available_product(product)]
+        # 只读菜单的匹配放宽与 mcd._menu_matches 同款：planner 偶发把整句塞进
+        # item_query（「深圳的瑞幸生椰拿铁多少钱」），整句作为商户搜索词多半 0 命中；
+        # 菜单是只读展示，退种子词重搜一次、再做「商品名 ⊂ 整句」的反向包含是安全的。
+        # **只放宽在菜单路径**：下单路径（prepare）宁可追问也不能靠模糊包含选错商品。
+        if asked and not products:
+            try:
+                seed_data = await self._read(
+                    "searchProductForMcp",
+                    self._arguments("searchProductForMcp", {
+                        "deptId": dept_id, "query": _MENU_SEED_QUERY,
+                    }))
+            except Exception as exc:
+                return self._read_failure("查询该门店菜单", exc)
+            haystack = self._normalized(asked)
+            products = [
+                item for item in self._products(seed_data)
+                if self._is_available_product(item)
+                and len(self._normalized(
+                    str(item.get("productName") or ""))) >= 2
+                and self._normalized(
+                    str(item.get("productName") or "")) in haystack]
         if not products:
             return AgentResult(
                 status=NEED_SLOT,
@@ -1564,9 +1609,9 @@ class LuckinWorkflow(MerchantWorkflow):
         ——问麦当劳答瑞幸，「第一个」「选择瑞幸门店：X」也全被吞掉。
 
         所以这里回到普通 OK 结果 + 可执行的 follow_up：用户下一句照常走规划。
-        代价是 `require_confirm=true` 的下单步仍会被中央确认闸追加一句
-        「确定继续吗？」（只读的 *.menu 不受影响，它 require_confirm=false）——
-        那是**话术不好看**，而挂起黑洞是**功能不可用**，两害相权。
+        中央确认闸对带 `_refused` 键且无动作的结果**不追加**「确定继续吗？」
+        （executor._enforce_capability_confirm，2026-08-12 `_refused` 批引入）——
+        此前这里写的「仍会被追加」是那批之前的旧账，实现早已不追加。
         """
         return MerchantWorkflow.refused(
             speech, "可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")

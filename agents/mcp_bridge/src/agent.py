@@ -581,6 +581,60 @@ class McpBridgeAgent(BaseAgent):
             out[k] = s
         return out
 
+    @staticmethod
+    def _relevance_material(question: str, text: str, data,
+                            budget: int = 3000) -> str:
+        """summarize 话术的取材：超预算时按与问句的相关性优先打包，不再盲截前段。
+
+        营养表这类大列表被 `[:3000]` 盲截时，排在截断点之后的条目对 LLM 等于不存在
+        ——「蘸酱麦辣大四角的热量」查无正是这么来的（demo-mkemhn c47671f5：品项在
+        菜单与订单预览里都出现过，营养表 material 却截在它之前）。判据零领域字面量：
+        原文切成片段、按问句字符 bigram 重合度排序装包，问句点名的条目只要在数据里
+        就必然进 prompt；预算内装不下的才丢，最后按原文顺序拼回（保持可读性）。
+        问句太短提不出 bigram 时退回原有的头部截断——没有更好的依据就不假装有。"""
+        serialized = (str(text or "") + "\n"
+                      + json.dumps(data, ensure_ascii=False))
+        if len(serialized) <= budget:
+            return serialized
+        normalized_q = re.sub(r"[\s\W_]+", "", str(question or "").lower())
+        bigrams = {normalized_q[i:i + 2] for i in range(len(normalized_q) - 1)}
+        if len(bigrams) < 2:
+            return serialized[:budget]
+        # 行级切分；仍超长的行按定宽窗口再切（带少量重叠，防条目恰跨窗口边界）
+        segments: list[str] = []
+        for line in serialized.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if len(line) <= 160:
+                segments.append(line)
+            else:
+                step = 140
+                for start in range(0, len(line), step):
+                    segments.append(line[start:start + 160])
+        if len(segments) <= 1:
+            return serialized[:budget]
+
+        def _score(segment: str) -> int:
+            s = re.sub(r"[\s\W_]+", "", segment.lower())
+            return sum(1 for gram in bigrams if gram in s)
+
+        ranked = sorted(enumerate(segments),
+                        key=lambda pair: (-_score(pair[1]), pair[0]))
+        chosen: list[tuple[int, str]] = []
+        remaining = budget - 40                     # 留出结尾的筛选说明
+        for index, segment in ranked:
+            cost = len(segment) + 1
+            if cost > remaining:
+                continue
+            chosen.append((index, segment))
+            remaining -= cost
+        if not chosen:
+            return serialized[:budget]
+        chosen.sort(key=lambda pair: pair[0])
+        return ("\n".join(segment for _, segment in chosen)
+                + "\n（内容较长，已按与问题的相关性筛选）")
+
     async def _readable_speech(self, b, intent, res: dict, *, ok: bool) -> str:
         """话术形态（§9.9 speech_mode）。
 
@@ -592,14 +646,14 @@ class McpBridgeAgent(BaseAgent):
         if b.tool.speech_mode != "summarize":
             return text
         raw_q = str(getattr(intent, "raw_text", "") or "")
-        material = (text + "\n" + json.dumps(res.get("data") or {},
-                                             ensure_ascii=False))[:3000]
+        material = self._relevance_material(raw_q, text, res.get("data") or {})
         try:
             summary = (await self.llm.complete([
                 {"role": "system", "content":
                  "你是车载助手。根据外部服务的返回内容，用一两句中文口语直接回答"
                  "用户的问题；只答与问题相关的部分，不要念字段名或文档结构；"
-                 "内容答不了问题就说明没查到并给一句下一步建议。不要编造数据。"},
+                 "内容答不了问题就说明没查到并给一句下一步建议；没查到但内容里有"
+                 "名称相近的条目时，报出最接近的一两条供用户确认。不要编造数据。"},
                 {"role": "user", "content":
                  f"用户问：{raw_q}\n外部服务返回：\n{material}"},
             ], max_tokens=200, temperature=0.3) or "").strip()
