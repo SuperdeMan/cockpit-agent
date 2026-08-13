@@ -187,8 +187,19 @@ rulings:
       （demo 商户）；共享的只是「做好了吗」问句框架。无品牌歧义句的宽口径由对抗
       语料 cc.contrast.brandless-order-query 锁定（三家查单都算对）
 
+  - id: luckin-mcd.menu-store-resolution
+    texts: [附近的瑞幸有什么可以点的, 这家麦当劳有什么可以点的]
+    domains: [nearby, mcd]
+    why: 句式几乎相同，首步却**必须**不同——两家的选店机制本来就不是一回事。
+      瑞幸官方菜单绑 deptId，而 deptId 只能由 nearby.search 的**可信公开 POI**
+      （name+经纬度同条）映射出来，所以「附近的瑞幸…」首步必须是 nearby.search；
+      麦当劳按 `store_hint` 文本关键词查官方门店，不消费 POI，直接落 mcd.menu。
+      **这不是地盘冲突，是两家商户接口形态的差异**：把麦当劳也强行加一步 nearby
+      只会多一次无用检索，把瑞幸直接落 luckin.menu 则拿不到可信坐标、必然被拒。
+      判据见 docs/design/2026-08-13-cross-turn-store-anchor.md §1。
+
   - id: mcd-nearby.menu-vs-discovery
     texts: [麦当劳有什么吃的, 附近有什么好吃的]
     domains: [mcd, nearby]
-    why: 前者问品牌餐品目录（mcd.menu 营养/餐品知识），后者是周边发现（高德 POI）
+    why: 前者问品牌餐品目录（mcd.menu 当店菜单带价格 / mcd.nutrition 营养成分），后者是周边发现（高德 POI）
       ——「有什么吃的」是框架；带具体品牌名问商品归商户域，带「附近」问场所归 nearby

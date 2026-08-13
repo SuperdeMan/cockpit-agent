@@ -509,23 +509,6 @@ def extract_focus(plan, results) -> "Focus | None":
                 focus.last_choice_purpose = (
                     "waypoint" if isinstance(data.get("stops"), list) else "list"
                 )
-        # 跨轮门店锚定：只认 `nearby.search`，且只留三个标量。
-        # **不存 deptId 之类商户内部 id**——那是每次现查的事实，缓存它等于把商户的
-        # 内部状态当成我们的事实；也不存卡片/话术（同 §9.9「挂起步只留下游实际引用的标量」）。
-        if step.intent == "nearby.search":
-            places = []
-            for item in (data.get("items") or [])[:10]:
-                if not isinstance(item, dict):
-                    continue
-                name = str(item.get("name") or "").strip()
-                try:
-                    lng, lat = float(item.get("lng")), float(item.get("lat"))
-                except (TypeError, ValueError):
-                    continue
-                if name and -180 <= lng <= 180 and -90 <= lat <= 90:
-                    places.append({"name": name, "lng": lng, "lat": lat})
-            if places:
-                focus.last_places = places
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
         # 搜索结果里的同名字段误当成下一轮“那边”的目的地。
         if domain == "navigation":
@@ -541,6 +524,33 @@ def extract_focus(plan, results) -> "Focus | None":
                 pass
         if not focus.last_agent_id:
             focus.last_agent_id, focus.last_intent = step.agent_id, step.intent
+
+    # 跨轮门店锚定：只认 `nearby.search`，且只留三个标量。
+    # **按 results 的 `source_intent` 取，不按传进来的 plan 找步骤**——
+    # salvage/replan 轮里调用方给的是重规划后的 plan，`nearby.search` 那一步
+    # 根本不在里面，门店列表会从一开始就存不下（2026-08-13 真栈实证：
+    # 同一句话走 toolcall 时三轮通、走 toolcall_salvage 时第三轮回到「请先查询附近的瑞幸门店」）。
+    # `source_intent` 是**执行器**用权威 Step 盖的章（`_stamp_source`），比 plan 可靠。
+    # **不存 deptId 之类商户内部 id**——那是每次现查的事实，缓存它等于把商户的
+    # 内部状态当成我们的事实；也不存卡片/话术。
+    for result in results:
+        if str(getattr(result, "source_intent", "") or "") != "nearby.search":
+            continue
+        if getattr(getattr(result, "status", None), "value", "") != "ok":
+            continue
+        places = []
+        for item in ((getattr(result, "data", None) or {}).get("items") or [])[:10]:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            try:
+                lng, lat = float(item.get("lng")), float(item.get("lat"))
+            except (TypeError, ValueError):
+                continue
+            if name and -180 <= lng <= 180 and -90 <= lat <= 90:
+                places.append({"name": name, "lng": lng, "lat": lat})
+        if places:
+            focus.last_places = places
     return None if focus.is_empty() else focus
 
 
@@ -589,6 +599,15 @@ class ContextManager:
         try:
             focus = extract_focus(plan, results)
             if focus is not None:
+                # 门店列表是**粘性**的：只有新的 nearby.search 才该替换它。
+                # focus 每轮都从当前 plan 重建，不接力的话，紧跟其后的任何一轮
+                # （比如「第一个」直接落 luckin.menu）就会把上一轮取回的门店抹成空，
+                # 下一句「这家的菜单」又变回「请先查询附近的瑞幸门店」。
+                # 2026-08-13 真栈三轮实证；两轮测试测不出来——第二轮恰好紧邻搜索轮。
+                if not focus.last_places:
+                    previous = await self._load_focus(session_id, user_id)
+                    if previous is not None and previous.last_places:
+                        focus.last_places = list(previous.last_places)
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:

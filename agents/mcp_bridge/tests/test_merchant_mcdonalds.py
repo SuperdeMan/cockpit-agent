@@ -57,8 +57,10 @@ MENU_RESULT = _ok({
     }],
     "meals": {
         "M001": {
+            # 真机形状（2026-08-13）：每条 meal 带 https 图链，域名 menu-img.mcd.cn
             "name": "巨无霸套餐", "currentPrice": "36.9",
             "originalPrice": "39", "canWithOrder": False,
+            "image": "https://menu-img.mcd.cn/meal/M001.png",
         },
         "M002": {
             "name": "双层吉士堡套餐", "currentPrice": "32.9",
@@ -296,7 +298,7 @@ def _schema(*properties, required=()):
 
 
 def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
-              pay_url_hosts=None,
+              pay_url_hosts=None, image_hosts=None, workflow_intent="mcd.order",
               clock=lambda: datetime(2026, 8, 12, 12, 25)):
     scripts = scripts or {
         "query-nearby-stores": [STORE_RESULT],
@@ -365,8 +367,10 @@ def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
     server = SimpleNamespace(
         id="mcdonalds", demo=False,
         pay_url_hosts=(list(pay_url_hosts) if pay_url_hosts is not None
-                       else ["m.mcd.cn"]))
-    spec = SimpleNamespace(intent="mcd.order")
+                       else ["m.mcd.cn"]),
+        image_hosts=(list(image_hosts) if image_hosts is not None
+                     else ["menu-img.mcd.cn"]))
+    spec = SimpleNamespace(intent=workflow_intent)
     workflow = McDonaldsWorkflow(
         server, spec, tools, store or FakeDraftStore(),
         ledger if ledger is not None else FakeLedger(), payment=payment,
@@ -1263,3 +1267,103 @@ async def test_schema_change_after_preview_refuses_create():
 
     assert client.counts["create-order"] == 0
     assert "接口已更新" in result.speech
+
+
+@pytest.mark.asyncio
+async def test_store_menu_answers_price_and_never_touches_write_tools():
+    """当店菜单：只调两个读工具，答的是**价格**不是营养。
+
+    这条能力存在的理由是 trace c523c303（demo-2goetq）：
+    「早餐的猪柳蛋麦满分多少钱？」只能回「这个接口里只有营养信息」——
+    因为当时叫 mcd.menu 的能力返回的是营养成分表。官方 query-meals 才是当店菜单。
+    """
+    workflow, client = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+
+    intent = SimpleNamespace(name="mcd.menu",
+                             slots={"store_hint": "人民广场", "city": "上海"})
+    result = await workflow.menu(intent, CTX, META)
+
+    assert [name for name, _, _ in client.calls] == [
+        "query-nearby-stores", "query-meals"]
+    card = result.ui_card
+    assert card["type"] == "merchant_choices" and card["merchant"] == "麦当劳"
+    names = [item["name"] for item in card["items"]]
+    assert "巨无霸套餐" in names
+    big_mac = next(i for i in card["items"] if i["name"] == "巨无霸套餐")
+    # 价格取真机字段 currentPrice（**字符串**不是数字），不是猜的键名
+    assert big_mac["price"] == "36.90 元"
+    assert big_mac["image_url"] == "https://menu-img.mcd.cn/meal/M001.png"
+    assert "36.90 元" in result.speech
+
+
+@pytest.mark.asyncio
+async def test_store_menu_image_requires_https_and_an_allowlisted_host():
+    """商品图链是外部输入，且会变成 HMI 的一次网络请求——白名单在基类，两家共用一份。"""
+    for bad in ("http://menu-img.mcd.cn/x.png", "https://evil.example.com/x.png",
+                "https://user:pw@menu-img.mcd.cn/x.png", "/x.png", ""):
+        menu = copy.deepcopy(MENU_RESULT)
+        menu["data"]["data"]["meals"]["M001"]["image"] = bad
+        workflow, _ = _workflow(
+            workflow_intent="mcd.menu",
+            scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [menu]})
+        intent = SimpleNamespace(name="mcd.menu",
+                                 slots={"store_hint": "人民广场", "city": "上海"})
+        card = (await workflow.menu(intent, CTX, META)).ui_card
+        item = next(i for i in card["items"] if i["name"] == "巨无霸套餐")
+        assert "image_url" not in item, bad
+
+
+@pytest.mark.asyncio
+async def test_store_menu_declares_only_the_two_read_tools():
+    """逐 intent 工具契约：菜单 workflow 只拿到它自己声明的两个读工具就能构造。"""
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+    assert set(workflow.tools) >= {"query-nearby-stores", "query-meals"}
+    with pytest.raises(ValueError, match="tool contract"):
+        _workflow(workflow_intent="mcd.unknown")
+
+
+@pytest.mark.asyncio
+async def test_store_menu_never_relabels_unrelated_items_as_the_asked_one():
+    """问某一款而菜单里没有 → 诚实说没有，**绝不回落成整份菜单**。
+
+    2026-08-13 真栈抓到的形态：`or products` 的兜底让
+    「猪柳蛋麦满分多少钱」答成「…的“猪柳蛋麦满分”有：蘸酱韩式甜辣酱鸡块（11.90 元）…」
+    ——把一堆无关餐品挂在用户问的那个名字下面。比答不出来糟得多。
+    """
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "人民广场", "city": "上海", "item_query": "猪柳蛋麦满分"})
+
+    result = await workflow.menu(intent, CTX, META)
+
+    assert result.status == NEED_SLOT
+    assert "没查到" in result.speech and "猪柳蛋麦满分" in result.speech
+    assert result.ui_card is None, "没查到就不该出选品卡"
+    assert "巨无霸套餐" not in result.speech
+
+
+@pytest.mark.asyncio
+async def test_store_menu_recovers_when_planner_puts_the_whole_sentence_in_the_slot():
+    """planner 把整句塞进 item_query 时，菜单路径用反向包含兜住。
+
+    真栈实测 `item_query="深圳的麦当劳巨无霸多少钱"`——严格判据只做「查询词 ⊂ 商品名」，
+    整句必然落空。菜单是只读展示，放宽成「商品名 ⊂ 整句」安全；下单路径不放宽。
+    """
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "人民广场", "city": "上海",
+        "item_query": "上海人民广场的麦当劳巨无霸套餐多少钱"})
+
+    result = await workflow.menu(intent, CTX, META)
+
+    names = [item["name"] for item in result.ui_card["items"]]
+    assert names == ["巨无霸套餐"], names
+    assert "36.90 元" in result.speech

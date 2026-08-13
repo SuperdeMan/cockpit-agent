@@ -1,6 +1,7 @@
 # 范例库 · mcd 域（麦当劳官方 MCP，2026-08-11 真机核实激活）
 # 契约 skills/exemplars/README.md；只追加不插入（eid=<domain>#序号）。
-# 只读两件（mcd.menu=营养/餐品知识、mcd.order_status=订单查询）与复合下单
+# 只读三件（mcd.menu=**当店菜单带价格**、mcd.nutrition=营养成分、
+# mcd.order_status=订单查询）与复合下单
 # mcd.order 已接通；「附近有麦当劳」仍归 nearby.search（高德）——
 # 边界范例刻意各给一条，防新域把发现类话术吸走。
 domain: mcd
@@ -16,7 +17,7 @@ exemplars:
 - text: 巨无霸多少大卡
   plan:
   - agent: mcp-bridge
-    intent: mcd.menu
+    intent: mcd.nutrition
   source: manifest
   added: '2026-08-11'
   tags:
@@ -24,7 +25,7 @@ exemplars:
 - text: 麦当劳哪个套餐热量低一点
   plan:
   - agent: mcp-bridge
-    intent: mcd.menu
+    intent: mcd.nutrition
   source: manifest
   added: '2026-08-11'
   tags:
@@ -75,3 +76,22 @@ exemplars:
 # 域==文件域（放这里=域错配红灯）。该边界由对抗语料
 # cc.boundary.nearby-burger-place / nearby-fastfood 与 mode_routing_cases 锁定；
 # nearby 域自身的范例已覆盖发现类话术。
+- text: 麦当劳的猪柳蛋麦满分多少钱
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+  source: manual
+  added: '2026-08-13'
+  tags:
+  - merchant-menu
+- text: 这家麦当劳有什么可以点的
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+  source: manual
+  added: '2026-08-13'
+  tags:
+  - merchant-menu
+# mcd.menu（2026-08-13）从营养表改成**当店菜单**：官方 query-meals 带 currentPrice
+# 与商品图，能回答用户真正在问的「有什么、多少钱」。营养成分归 mcd.nutrition
+# ——「早餐的猪柳蛋麦满分多少钱」曾只能回「这个接口里只有营养信息」（trace c523c303）。

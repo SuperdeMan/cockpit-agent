@@ -1042,9 +1042,9 @@
 
 - text: 巨无霸多少大卡
   tags: [mode_typical, merchant_mcp]
-  expect_mode: other:mcd.menu
-  expect_intents: [mcd.menu]
-  source: "营养问法——list-nutrition-foods 的核心价值场景"
+  expect_mode: other:mcd.nutrition
+  expect_intents: [mcd.nutrition]
+  source: "营养问法——list-nutrition-foods 的核心价值场景；2026-08-13 改名 mcd.nutrition"
 
 - text: 我的麦当劳订单到哪了
   tags: [mode_typical, merchant_mcp]

@@ -358,7 +358,13 @@ def test_real_merchant_write_intents_have_discriminating_exemplars():
         }
     assert sum(item.intents() == ["luckin.order_cancel"]
                for item in by_domain["luckin"]) >= 2
-    assert any(item.intents() == ["mcd.menu"] and "热量" in item.text
+    # 2026-08-13：问热量归 mcd.nutrition，问价钱归 mcd.menu（当店菜单）——
+    # 两条一起断言，守的是「问热量和问价钱是两个能力」这条边界本身。
+    # 旧断言只写热量→mcd.menu，正是它让「麦满分多少钱」只能落到营养表
+    # （trace c523c303，demo-2goetq）。
+    assert any(item.intents() == ["mcd.nutrition"] and "热量" in item.text
+               for item in by_domain["mcd"])
+    assert any(item.intents() == ["mcd.menu"] and "多少钱" in item.text
                for item in by_domain["mcd"])
     assert any(item.intents() == ["luckin.order_status"]
                for item in by_domain["luckin"])

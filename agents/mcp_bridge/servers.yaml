@@ -123,9 +123,11 @@ servers:
     version: ""                    # 远程托管平台：版本不锁（自报 1.0.0），工具级 schema_sha 锁
     startup_timeout_ms: 20000
     pay_url_hosts: [m.mcd.cn]      # 二期下单用；只读工具不产链接
+    # 商品图 CDN（2026-08-13 真机取证：query-meals 的 meals.<code>.image 全在此域）
+    image_hosts: [menu-img.mcd.cn]
     tools:
       - name: list-nutrition-foods
-        intent: mcd.menu
+        intent: mcd.nutrition
         speech_mode: summarize
         write: false
         expose: true
@@ -136,9 +138,12 @@ servers:
         schema_sha: "9e2fcd061b03"
         # 诚实描述：这是常见餐品与营养成分（能量/蛋白质等），不是当店实时价目——
         # 带价格的当店菜单（query-meals）required storeCode，归二期多步链
-        description: 麦当劳常见餐品与营养成分（热量/蛋白质等；当店价格需选定门店后查询）
+        # 2026-08-13 由 mcd.menu 改名 mcd.nutrition：它返回的一直是营养成分不是菜单，
+        # 而「菜单」这个词被用户用来问价格——旧名让「麦满分多少钱」只能诚实回答
+        # 「这个接口里只有营养信息」（trace c523c303，demo-2goetq）。当店菜单归 mcd.menu。
+        description: 麦当劳餐品的营养成分（热量/蛋白质等）；**不含价格**，问价格或当店在售请用当店菜单
         slots: []
-        examples: ["麦当劳有什么吃的", "巨无霸多少大卡", "麦当劳哪个热量低"]
+        examples: ["巨无霸多少大卡", "麦当劳哪个热量低", "麦辣鸡腿堡的蛋白质"]
         timeout_ms: 12000
       - name: query-order
         intent: mcd.order_status
@@ -175,7 +180,7 @@ servers:
         write: false
         expose: false
         forward_owner: false
-        required_scopes: [merchant.write]
+        required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "235a50ac3f94"
@@ -186,7 +191,7 @@ servers:
         write: false
         expose: false
         forward_owner: false
-        required_scopes: [merchant.write]
+        required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "ccfacc629a1f"
@@ -244,12 +249,26 @@ servers:
           - query-meal-detail
           - calculate-price
           - create-order
-        required_scopes: [merchant.write]
+        required_scopes: [merchant.read, merchant.write]
         require_confirm: true
         expose: true
         description: 选择麦当劳门店和餐品、核价确认后创建未支付订单
         slots: [item_query, quantity, store_hint, city, pickup_mode, checkout_token]
         examples: ["在麦当劳点一份巨无霸套餐", "麦当劳来两份麦辣鸡腿堡到店自取"]
+      # 当店菜单（2026-08-13）：官方 query-meals 返回真正的全店菜单——categories +
+      # meals（每条带 name / image / currentPrice / originalPrice），比营养表能回答
+      # 用户真正在问的「有什么、多少钱」。与瑞幸 luckin.menu 对称，只读、不进确认闸。
+      - intent: mcd.menu
+        handler: mcdonalds
+        required_tools:
+          - query-nearby-stores
+          - query-meals
+        required_scopes: [merchant.read]
+        require_confirm: false
+        expose: true
+        description: 查看某家麦当劳门店在售的餐品与价格（只读，不下单）；不给门店时按当前城市就近选一家
+        slots: [store_hint, city, item_query]
+        examples: ["附近麦当劳有什么可以点的", "看看这家麦当劳的菜单", "麦当劳早餐多少钱"]
 
   # ── 瑞幸官方 MCP（2026-08-11 真机核实激活：serverInfo=luckyordermcpmaster 1.0.0，
   # 8 工具）。门店发现仍归 nearby.search；workflow 只接受同一公开 POI 的可信

@@ -851,7 +851,12 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # 左右各 2 条 reviewed 对照已由 validate_boundary_coverage 验证为零错误。
     assert ledger["charging-navigation.find-charger-vs-self-locate"] == (
         "charging", "navigation")
-    assert len(ledger) == 24
+    # 2026-08-13 24→25：登记 `luckin-mcd.menu-store-resolution`。
+    # 「附近的瑞幸有什么可以点的」与「这家麦当劳有什么可以点的」句式几乎相同、首步却
+    # 必须不同——瑞幸官方菜单绑 deptId、只能由 nearby.search 的可信 POI 映射，
+    # 麦当劳按 store_hint 文本查店。**不是地盘冲突，是两家商户接口形态的差异。**
+    assert ledger["luckin-mcd.menu-store-resolution"] == ("nearby", "mcd")
+    assert len(ledger) == 25
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):

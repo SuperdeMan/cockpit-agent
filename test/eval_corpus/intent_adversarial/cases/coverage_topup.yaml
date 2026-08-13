@@ -854,7 +854,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [nearby, luckin], layers: [l1]}
+    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [nearby, luckin], layers: [l1], boundary_ledger: luckin-mcd.menu-store-resolution, boundary_side: left}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
     turns:
       - input: {utterance: 就近那家瑞幸都卖些什么, context: {}}
@@ -887,7 +887,7 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A6], mechanisms: [paraphrase, capability_present, mcp], domains: [nearby, luckin], layers: [l1]}
+    tags: {attacks: [A6], mechanisms: [paraphrase, capability_present, mcp], domains: [nearby, luckin], layers: [l1], boundary_ledger: luckin-mcd.menu-store-resolution, boundary_side: left}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
     relation: {base_case: tu.merchant.luckin-menu-vs-order, type: invariant, expectation: {}}
     turns:
@@ -895,7 +895,7 @@ cases:
         expected:
           plan:
             required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.menu]}]
-            forbidden_intents: [luckin.order, shop.menu]
+            forbidden_intents: [luckin.order, shop.menu, mcd.menu]
             allow_extra_intents: false
   - id: tu.merchant.mcd-menu-not-luckin
     title: 问麦当劳的吃食不许去瑞幸取菜单
@@ -903,9 +903,21 @@ cases:
     cohort: unseen_transfer
     risk: medium
     status: reviewed
-    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [mcd, luckin], layers: [l1]}
+    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [mcd, luckin], layers: [l1], boundary_ledger: luckin-mcd.menu-store-resolution, boundary_side: right}
     provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
     turns:
       - input: {utterance: 麦当劳现在有些什么能吃的, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [luckin.menu, luckin.order, shop.menu], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [luckin.menu, luckin.order, shop.menu, nearby.search], allow_extra_intents: false}
+  - id: tu.merchant.mcd-menu-no-nearby-step
+    title: 问这家麦当劳能点什么不该先查周边
+    family_id: tu.merchant-brand-flip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [mcd, nearby], layers: [l1], boundary_ledger: luckin-mcd.menu-store-resolution, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 这家麦当劳都能点些什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, luckin.menu, shop.menu], allow_extra_intents: false}

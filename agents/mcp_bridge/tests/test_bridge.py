@@ -57,9 +57,15 @@ def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
     assert mcd.transport == "streamable_http" and mcd.url == "https://mcp.mcd.cn"
     assert not mcd.version, "远程托管平台版本不锁（工具级 schema_sha 锁）"
     assert "MCD_MCP_TOKEN" in mcd.env_error
+    # 2026-08-13：`mcd.menu` 让给**当店菜单 workflow**，营养成分表改名 mcd.nutrition
+    # ——它返回的一直是营养成分不是菜单，而用户说「菜单」时问的是价格。
     assert {t.intent for t in mcd.tools if t.expose} == {
-        "mcd.menu", "mcd.order_status"}
-    assert [w.intent for w in mcd.workflows] == ["mcd.order"]
+        "mcd.nutrition", "mcd.order_status"}
+    assert [w.intent for w in mcd.workflows] == ["mcd.order", "mcd.menu"]
+    mcd_menu = next(w for w in mcd.workflows if w.intent == "mcd.menu")
+    assert mcd_menu.required_scopes == ["merchant.read"]
+    assert mcd_menu.require_confirm is False
+    assert set(mcd_menu.required_tools) == {"query-nearby-stores", "query-meals"}
     assert {t.name for t in mcd.tools if not t.expose} == {
         "query-nearby-stores", "query-meals", "query-meal-detail",
         "calculate-price", "create-order"}
@@ -1786,4 +1792,5 @@ def test_every_declared_workflow_constructs_from_the_real_allowlist(monkeypatch)
 
     assert "luckin.menu" in constructed
     assert set(constructed) == {
-        "mcd.order", "luckin.order", "luckin.order_cancel", "luckin.menu"}
+        "mcd.order", "mcd.menu", "luckin.order", "luckin.order_cancel",
+        "luckin.menu"}

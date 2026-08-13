@@ -542,18 +542,45 @@ cases:
       - input: {utterance: 麦当劳都卖些什么吃的, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, mcd.order], allow_extra_intents: false}
+  # 2026-08-13：营养成分改叫 mcd.nutrition（它返回的一直是营养不是菜单），
+  # mcd.menu 让给带价格的当店菜单。**问热量和问价钱是两个能力**，这一对锁住边界。
   - id: cc.available.mcd-menu-calorie
-    title: 麦当劳营养问题应落餐品能力而非搜索
-    family_id: cc.available-mcd-menu
+    title: 麦当劳营养问题应落营养能力而非搜索或菜单
+    family_id: cc.available-mcd-nutrition
     cohort: unseen_transfer
     risk: medium
     status: reviewed
     tags: {attacks: [A8], mechanisms: [capability_present, mcp], domains: [mcd], layers: [l1], boundary_ledger: mcd-nearby.menu-vs-discovery, boundary_side: left}
-    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-12}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
     turns:
       - input: {utterance: 巨无霸热量多少大卡, context: {}}
         expected:
-          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, mcd.order], allow_extra_intents: false}
+          plan: {required_intent_groups: [{any_of: [mcd.nutrition]}], forbidden_intents: [nearby.search, mcd.order, mcd.menu], allow_extra_intents: false}
+  - id: cc.available.mcd-nutrition-protein
+    title: 问蛋白质同样落营养能力
+    family_id: cc.available-mcd-nutrition
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp], domains: [mcd], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: cc.available.mcd-menu-calorie, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 麦辣鸡腿堡的蛋白质有多少, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.nutrition]}], forbidden_intents: [nearby.search, mcd.order, mcd.menu], allow_extra_intents: false}
+  - id: cc.available.mcd-price-not-nutrition
+    title: 问价钱要落当店菜单，不能落营养表
+    family_id: cc.available-mcd-nutrition
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp], domains: [mcd], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 麦当劳板烧鸡腿堡现在卖多少钱, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [mcd.nutrition, nearby.search, mcd.order], allow_extra_intents: false}
   - id: cc.available.mcd-status
     title: 麦当劳订单查询能力在册时应当可用
     family_id: cc.available-mcd-status
@@ -601,7 +628,7 @@ cases:
     turns:
       - input: {utterance: 把我的麦当劳订单取消掉, context: {}}
         expected:
-          plan: {forbidden_intents: [mcd.order_status, mcd.menu, mcd.order, shop.order_cancel], allow_extra_intents: true}
+          plan: {forbidden_intents: [mcd.order_status, mcd.menu, mcd.nutrition, mcd.order, shop.order_cancel], allow_extra_intents: true}
   - id: cc.available.luckin-status
     title: 瑞幸订单查询能力在册时应当可用
     family_id: cc.available-luckin

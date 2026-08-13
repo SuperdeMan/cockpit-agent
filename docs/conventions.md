@@ -38,7 +38,7 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
-| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（低层工具与复合 workflow 分别准入；demo-coffee `shop.*` 四件 + 麦当劳 `mcd.menu/order_status/order` + 瑞幸 `luckin.order_status/menu/order/order_cancel`）——manifest 里 capabilities 故意留空，见 §9.9 |
+| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（低层工具与复合 workflow 分别准入；demo-coffee `shop.*` 四件 + 麦当劳 `mcd.menu/order_status/order` + 瑞幸 `luckin.order_status/menu/order/order_cancel`；麦当劳 `mcd.nutrition/order_status/menu/order`）——manifest 里 capabilities 故意留空，见 §9.9 |
 | vision | vision | core | first_party | cloud | 50077 | vision.describe（单帧图片问答，M4 P4；契约见 §9.12）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。

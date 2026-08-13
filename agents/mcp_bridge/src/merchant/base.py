@@ -1,11 +1,16 @@
 """商户复合工作流公共接口与确定性卡片/摘要。"""
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
+from urllib.parse import urlparse
 
 from agents._sdk import AgentResult
 
+from ..admission import normalize_hostname
 from .models import MerchantChoice, MerchantDraft
+
+logger = logging.getLogger("agent.mcp_bridge.merchant")
 
 
 class DeclaredBusinessRejected(RuntimeError):
@@ -37,6 +42,35 @@ class MerchantWorkflow(ABC):
     async def menu(self, intent, ctx, meta) -> AgentResult:
         """只读看菜单。默认不支持——诚实说，不猜、不回落到演示商户。"""
         return AgentResult(speech="这个商户暂不支持查看菜单。")
+
+    def image_url(self, value) -> str:
+        """商品图：**必须 https + 域名在该 server 的 `image_hosts` 精确白名单里**。
+
+        外部服务给的 URL 是不可信输入，而这个值最终会变成 HMI 发起的一次网络请求。
+        不合规返回空串——退回纯文字卡，不报错也不半渲染（商户换 CDN 该降级成没有图）。
+        **放在基类而不是各商户各写一份**：两份判定必然漂移，而漂移的那一份就是缺口。
+        """
+        raw = str(value or "").strip()
+        if not raw or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
+                          for ch in raw):
+            return ""
+        try:
+            parsed = urlparse(raw)
+        except ValueError:
+            return ""
+        if parsed.scheme != "https" or parsed.username or parsed.password:
+            return ""
+        allowed = {
+            normalize_hostname(host)
+            for host in (getattr(self.server, "image_hosts", []) or [])
+        }
+        allowed.discard("")
+        host = normalize_hostname(parsed.hostname or "")
+        if not host or host not in allowed:
+            logger.debug("[%s] 商品图域名不在白名单，丢弃：host=%s",
+                         self.merchant, host)
+            return ""
+        return raw
 
     @classmethod
     def choice_card(cls, kind: str, choices: list[MerchantChoice]) -> dict:

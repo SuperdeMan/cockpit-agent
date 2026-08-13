@@ -608,10 +608,13 @@ async def test_store_coordinates_require_same_nearby_result_item(meta):
 
     result = await workflow.prepare(_intent(), CTX, meta)
 
-    assert result.status == NEED_SLOT
-    assert set(result.missing_slots) == {
-        "store_name", "store_longitude", "store_latitude"}
-    assert "附近" in result.speech
+    # **不得挂起**：门店三元组按设计只能来自 nearby.search 的可信 POI，
+    # 把它声明成 missing_slots 就是向用户要一个他永远给不出的东西，
+    # 而引擎会据此挂起会话、吞掉后续每一句（2026-08-13 真栈实证
+    # demo-f1hkwr：「看麦当劳(科苑南路餐厅)的详情」被答成「请先查询附近的瑞幸门店…」）。
+    assert result.status == OK
+    assert not result.missing_slots
+    assert "附近" in result.speech and result.follow_up
     assert not client.calls
 
 
@@ -705,19 +708,21 @@ async def test_menu_requires_the_same_trusted_store_chain_as_ordering():
 
     result = await workflow.menu(_intent(name="luckin.menu"), CTX, meta={})
 
-    assert result.status == NEED_SLOT
-    assert "store_name" in result.missing_slots
+    assert result.status == OK and not result.missing_slots, "不得挂起会话"
+    assert "附近" in result.speech and result.follow_up
     assert client.calls == []
 
 
 @pytest.mark.asyncio
-async def test_store_refusals_are_need_slot_so_no_confirm_prompt_is_appended():
-    """门店类拒绝一律 NEED_SLOT —— 落在 OK 上会被中央确认闸接成自相矛盾的一句。
+async def test_store_refusals_never_suspend_the_session():
+    """门店类拒绝**不得挂起**：它要的槽用户填不了。
 
-    executor._enforce_capability_confirm 给**任何 OK 结果**追加「这个操作需要您确认后
-    才会执行，确定继续吗？」。2026-08-12 demo-2goetq 实测拼出：
-    「…没有继续下单，请重新选择门店。这个操作需要您确认后才会执行，确定继续吗？」
-    ——先说不能做、再问要不要做，用户答「确认」还是同一句拒绝。
+    2026-08-12 曾把这些拒绝改成 NEED_SLOT，为的是躲开中央确认闸追加的
+    「确定继续吗？」；2026-08-13 真栈证明那是**更糟的一换**——
+    NEED_SLOT 声明缺 store_name/lng/lat，而这三个槽按设计只能来自 nearby.search
+    的可信 POI，用户永远填不了，于是会话挂起、后续每一句被吞
+    （demo-f1hkwr：问麦当劳详情答瑞幸；demo-r6qjf4：「第一个」「选择瑞幸门店：X」全被吞）。
+    话术不好看 vs 功能不可用，两害相权。
     """
     far_away = _ok([{**SHOP_RESULT["data"]["data"][0],
                      "longitude": 116.4074, "latitude": 39.9042}])
@@ -734,9 +739,9 @@ async def test_store_refusals_are_need_slot_so_no_confirm_prompt_is_appended():
         workflow, client = _workflow(scripts={"queryShopList": script})
         result = await workflow.prepare(_intent(), CTX, META)
 
-        assert result.status == NEED_SLOT, label
-        assert result.speech and "确定继续吗" not in result.speech, label
-        assert "store_name" in (result.missing_slots or []), label
+        assert result.status == OK, label
+        assert not result.missing_slots, f"{label}：不许声明用户填不了的槽"
+        assert result.speech and result.follow_up, label
         # 拒绝必须**在**商品查询之前落定：没门店就不该再碰下游写链
         assert [name for name, _, _ in client.calls] == (
             ["queryShopList"] * shop_calls), label
@@ -1955,5 +1960,6 @@ async def test_cross_turn_focus_anchor_is_accepted_but_mixing_sources_is_not():
     for refs in mixed:
         flow, calls = _workflow()
         denied = await flow.menu(_intent(name="luckin.menu"), CTX, refs)
-        assert denied.status == NEED_SLOT, refs
+        assert not denied.ui_card, refs
+        assert not denied.missing_slots, f"{refs}：拒绝不得挂起会话"
         assert calls.calls == [], "拒绝必须在碰商户接口之前落定"

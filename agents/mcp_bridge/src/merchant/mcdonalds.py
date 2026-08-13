@@ -33,6 +33,15 @@ _READ_TOOLS = (
     "calculate-price",
 )
 _ALL_TOOLS = _READ_TOOLS + ("create-order",)
+# 只读当店菜单：选店 + 取菜单，**一个写工具都不需要**。
+_MENU_TOOLS = ("query-nearby-stores", "query-meals")
+# 逐 intent 的工具契约。用表不用「非 X 即全量」：新增 workflow intent 时漏配这里，
+# 桥在启动期就会以具名 ValueError 拒载——瑞幸侧 luckin.menu 首次上真栈时正是这样被抓到的
+# （单测给的是全量工具，只有容器里才走到这条校验）。
+_WORKFLOW_TOOL_CONTRACTS = {
+    "mcd.order": _ALL_TOOLS,
+    "mcd.menu": _MENU_TOOLS,
+}
 
 
 def _shanghai_timezone():
@@ -68,7 +77,7 @@ class _IncompleteResponse(_BusinessError):
 
 class McDonaldsWorkflow(MerchantWorkflow):
     merchant = "mcdonalds"
-    intents = ("mcd.order",)
+    intents = ("mcd.order", "mcd.menu")
 
     def __init__(self, server, workflow_spec, tools_by_name, draft_store,
                  ledger, payment, *, clock=None):
@@ -79,7 +88,12 @@ class McDonaldsWorkflow(MerchantWorkflow):
         self.ledger = ledger
         self.payment = payment
         self._clock = clock or _now_shanghai
-        missing = [name for name in _ALL_TOOLS if name not in self.tools]
+        intent_name = str(getattr(workflow_spec, "intent", "") or "")
+        expected = _WORKFLOW_TOOL_CONTRACTS.get(intent_name)
+        if expected is None:
+            raise ValueError(
+                f"mcdonalds workflow has no tool contract for intent {intent_name!r}")
+        missing = [name for name in expected if name not in self.tools]
         if missing:
             raise ValueError(f"mcdonalds workflow missing tools: {','.join(missing)}")
 
@@ -101,43 +115,10 @@ class McDonaldsWorkflow(MerchantWorkflow):
         if not user_id or not session_id:
             return AgentResult(speech="当前会话身份不完整，暂时不能创建真实订单。")
 
-        store_hint = self._choice_value(slots.get("store_hint"), "门店")
-        city = str(slots.get("city") or "").strip()
-        try:
-            stores_data = await self._read(
-                "query-nearby-stores",
-                self._arguments("query-nearby-stores", {
-                    "keyword": store_hint,
-                    "city": city,
-                }))
-        except Exception as exc:
-            return self._read_failure("查询麦当劳门店", exc)
-
-        stores = self._stores(stores_data)
-        if not stores:
-            return self._reselect_store(
-                "没有找到可用的麦当劳门店。可以先在麦当劳官方应用选择常用门店，"
-                "或提供更具体的门店名称。")
-        candidate_stores = self._matching_stores(stores, store_hint) or stores
         now = self._clock()
-        open_stores = [store for store in candidate_stores
-                       if self._store_orderable(store, slots, now=now)]
-        if not open_stores:
-            if any(self._store_status(store) is None
-                   for store in candidate_stores):
-                return self._reselect_store(
-                    "商家没有返回可靠的门店营业状态，无法安全下单。"
-                    "请在麦当劳官方应用确认营业后再试。")
-            return self._reselect_store(
-                "找到的麦当劳门店均已打烊。可以换一家门店或稍后再试。")
-        store_matches = self._matching_stores(open_stores, store_hint)
-        if len(store_matches) != 1:
-            choices = store_matches or open_stores
-            return self._store_choices(choices)
-        store = store_matches[0]
-        store_code = str(store.get("storeCode") or "")
-        if not store_code:
-            return self._reselect_store("门店信息不完整，不能继续下单，请换一家门店。")
+        store, store_code, refusal = await self._resolve_store(slots, now=now)
+        if refusal is not None:
+            return refusal
 
         try:
             store_context = self._store_context(store, slots, now=now)
@@ -754,22 +735,194 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     return True
         return False
 
+    async def _resolve_store(self, slots: dict, *, now):
+        """把 store_hint/city 解析成一家可下单的官方门店。
+
+        返回 `(store, store_code, refusal)`——`refusal` 非 None 时调用方原样返回。
+        下单与看菜单**共用这一份**判定：打烊、营业状态可靠性、同名多店消歧，
+        抄成两份就会漂移（B1 的成因）。
+        """
+        store_hint = self._choice_value(slots.get("store_hint"), "门店")
+        city = str(slots.get("city") or "").strip()
+        try:
+            stores_data = await self._read(
+                "query-nearby-stores",
+                self._arguments("query-nearby-stores", {
+                    "keyword": store_hint,
+                    "city": city,
+                }))
+        except Exception as exc:
+            return None, "", self._read_failure("查询麦当劳门店", exc)
+
+        stores = self._stores(stores_data)
+        if not stores:
+            return None, "", self._reselect_store(
+                "没有找到可用的麦当劳门店。可以先在麦当劳官方应用选择常用门店，"
+                "或提供更具体的门店名称。")
+        candidate_stores = self._matching_stores(stores, store_hint) or stores
+        open_stores = [store for store in candidate_stores
+                       if self._store_orderable(store, slots, now=now)]
+        if not open_stores:
+            if any(self._store_status(store) is None
+                   for store in candidate_stores):
+                return None, "", self._reselect_store(
+                    "商家没有返回可靠的门店营业状态，无法安全下单。"
+                    "请在麦当劳官方应用确认营业后再试。")
+            return None, "", self._reselect_store(
+                "找到的麦当劳门店均已打烊。可以换一家门店或稍后再试。")
+        store_matches = self._matching_stores(open_stores, store_hint)
+        if len(store_matches) != 1:
+            choices = store_matches or open_stores
+            return None, "", self._store_choices(choices)
+        store = store_matches[0]
+        store_code = str(store.get("storeCode") or "")
+        if not store_code:
+            return None, "", self._reselect_store(
+                "门店信息不完整，不能继续下单，请换一家门店。")
+        return store, store_code, None
+
+    async def menu(self, intent, ctx, meta) -> AgentResult:
+        """只读：看这家麦当劳在售什么、多少钱。**不建草稿、不碰任何写工具。**
+
+        存在的理由是 trace c523c303（demo-2goetq）：「早餐的猪柳蛋麦满分多少钱？」
+        只能诚实回答「这个接口里只有营养信息」——因为当时叫 `mcd.menu` 的那个能力
+        返回的是**营养成分表**。官方 query-meals 才是当店菜单（带 currentPrice 与图）。
+        """
+        slots = dict(getattr(intent, "slots", {}) or {})
+        now = self._clock()
+        store, store_code, refusal = await self._resolve_store(slots, now=now)
+        if refusal is not None:
+            return refusal
+        try:
+            store_context = self._store_context(store, slots, now=now)
+        except _SelectionRequired as exc:
+            return AgentResult(
+                status=NEED_SLOT, speech=str(exc),
+                follow_up="请选择该门店可用的预约时间，或改为立即取餐。",
+                missing_slots=["reservation_date"])
+        try:
+            menu_data = await self._read(
+                "query-meals", self._arguments("query-meals", store_context))
+        except Exception as exc:
+            return self._read_failure("查询该门店菜单", exc)
+
+        products = self._menu_products(menu_data)
+        store_name = str(store.get("storeName") or store.get("name") or "这家麦当劳")
+        asked = self._choice_value(slots.get("item_query"), "餐品")
+        if asked:
+            # **匹配不上就说匹配不上**，绝不回落成整份菜单。
+            # 2026-08-13 真栈抓到：`or products` 让「猪柳蛋麦满分多少钱」答成
+            # 「…的“猪柳蛋麦满分”有：蘸酱韩式甜辣酱鸡块（11.90 元）…」——
+            # 把一堆无关餐品挂在用户问的那个名字下面，比答不出来糟得多。
+            matched = self._menu_matches(products, asked)
+            if not matched:
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"{store_name}现在的在售餐单里没查到“{asked}”。",
+                    follow_up="换个餐品名，或者说“有什么可以点的”看看整份菜单？",
+                    missing_slots=["item_query"])
+            products = matched
+        if not products:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=f"{store_name}暂时没查到在售餐品。",
+                follow_up="换一家门店试试？",
+                missing_slots=["store_hint"])
+
+        items = [self._menu_item(product) for product in products[:20]]
+        listed = "、".join(
+            item["name"] + (f"（{item['price']}）" if item.get("price") else "")
+            for item in items[:5])
+        speech = (f"{store_name}的“{asked}”有：{listed}。" if asked
+                  else f"{store_name}可以点这几款：{listed}。")
+        if len(products) > 5:
+            speech += f"在售还有更多，共 {len(products)} 款。"
+        speech += "要哪一款？"
+        return AgentResult(
+            speech=speech,
+            ui_card={
+                "type": "merchant_choices",
+                "stage": "choices",
+                "choice_kind": "product",
+                "merchant": "麦当劳",
+                "store_name": store_name,
+                "title": f"{store_name} 在售餐品",
+                "items": items,
+                # options 与 items 同序但**各自自带 image_url**：靠下标去另一个数组
+                # 捞图会在任一端裁剪时错位。
+                "options": [
+                    {"label": item["name"], "subtitle": item.get("price", ""),
+                     "send_text": f"在{store_name}点一份{item['name']}",
+                     **({"image_url": item["image_url"]}
+                        if item.get("image_url") else {})}
+                    for item in items[:6]
+                ],
+            })
+
+    @classmethod
+    def _menu_matches(cls, products: list[dict], asked: str) -> list[dict]:
+        """只读菜单的商品匹配：先用下单那套严格判据，再补一次**反向包含**。
+
+        planner 有时把整句塞进 `item_query`（真栈实测
+        `item_query="深圳的麦当劳巨无霸多少钱"`），严格判据只做「查询词 ⊂ 商品名」，
+        整句必然落空。菜单是只读展示，这里放宽成「商品名 ⊂ 整句」是安全的。
+        **刻意只放宽在菜单路径**：下单路径宁可追问也不能靠模糊包含选错商品。
+        """
+        matched = cls._matching_products(products, asked)
+        if matched:
+            return matched
+        haystack = cls._normalized(asked)
+        if not haystack:
+            return []
+        return [item for item in products
+                if len(cls._normalized(cls._product_name(item))) >= 2
+                and cls._normalized(cls._product_name(item)) in haystack]
+
+    def _menu_item(self, product: dict) -> dict:
+        price = self._menu_price(product)
+        item = {
+            "id": str(product.get("code") or ""),
+            "name": self._product_name(product),
+            "price": price,
+            "subtitle": price,
+        }
+        image = self.image_url(product.get("image"))
+        if image:
+            item["image_url"] = image
+        return item
+
+    @staticmethod
+    def _menu_price(product: dict) -> str:
+        """价格只在**商家确实给了**的时候展示——猜价格是最不该犯的错。
+
+        字段名取自真机 query-meals 响应（`currentPrice` 现价优先、`originalPrice`
+        原价兜底），两者都是**字符串**不是数字。
+        """
+        for key in ("currentPrice", "originalPrice"):
+            raw = str(product.get(key) or "").strip()
+            if not raw:
+                continue
+            try:
+                value = float(raw)
+            except ValueError:
+                continue
+            if value > 0:
+                return f"{value:.2f} 元"
+        return ""
+
     @staticmethod
     def _reselect_store(speech: str) -> AgentResult:
-        """「请换一家门店」类拒绝一律 NEED_SLOT，不能是默认的 OK。
+        """「请换一家门店」类拒绝不挂起会话。
 
-        本工作流 require_confirm=true，executor 的中央确认闸会给**任何 OK 结果**追加
-        「这个操作需要您确认后才会执行，确定继续吗？」——先说不能做、再问要不要做，
-        用户答「确认」还是同一句拒绝（2026-08-12 demo-2goetq 在瑞幸侧实证）。
-        修在拒绝侧不动那道闸：闸是安全件，而这几条本来就是要用户换门店。
-        与瑞幸 `LuckinWorkflow._reselect_store` 同形，差别只在槽位名——
-        麦当劳的门店是**文本线索** `store_hint`（官方 query-nearby-stores 按关键词查），
-        不像瑞幸要消费 nearby.search 的可信 POI 三元组。
+        与瑞幸 `LuckinWorkflow._reselect_store` 同一处理、同一理由：NEED_SLOT 会让
+        引擎挂起，此后每一句都被当成补槽答案吞掉（2026-08-13 真栈实证
+        demo-f1hkwr / demo-r6qjf4）。麦当劳的 `store_hint` 虽然是用户能说的文本，
+        但用户说出的新门店应当**走一次完整规划**（planner 会重新填 store_hint），
+        而不是被塞进一个几轮前挂起的步骤里。
         """
         return AgentResult(
-            status=NEED_SLOT, speech=speech,
-            follow_up="换一家麦当劳门店试试？说店名或商圈都行。",
-            missing_slots=["store_hint"])
+            speech=speech,
+            follow_up="换一家麦当劳门店试试？说店名或商圈都行。")
 
     def _store_choices(self, stores: list[dict]) -> AgentResult:
         choices = [MerchantChoice(

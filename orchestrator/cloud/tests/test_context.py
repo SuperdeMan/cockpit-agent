@@ -441,7 +441,7 @@ def test_focus_keeps_last_turn_public_pois_for_cross_turn_store_anchoring():
     """
     plan = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search")])
     results = [StepResult(
-        step_id="s1", status=StepStatus.OK,
+        step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
         data={"items": [
             {"name": "瑞幸咖啡(前海印里店)", "lng": 113.8981, "lat": 22.5301,
              "deptId": 602825, "rating": 4.4},
@@ -463,6 +463,7 @@ def test_only_nearby_search_feeds_the_store_anchor():
                             intent="navigation.navigate_to")])
     results = [StepResult(
         step_id="s1", status=StepStatus.OK,
+        source_intent="navigation.navigate_to",
         data={"items": [{"name": "某个导航结果", "lng": 113.9, "lat": 22.5}]})]
 
     focus = extract_focus(plan, results)
@@ -473,3 +474,61 @@ def test_only_nearby_search_feeds_the_store_anchor():
 def test_places_only_focus_is_still_worth_persisting():
     """只有门店列表的焦点也必须落盘——它就是跨轮锚定的全部载体。"""
     assert not Focus(last_places=[{"name": "x", "lng": 1.0, "lat": 2.0}]).is_empty()
+
+
+def test_last_places_survive_a_turn_that_did_not_search():
+    """门店列表是粘性的：只有新的 nearby.search 才替换它。
+
+    focus 每轮从当前 plan 重建，不接力就会被紧随的任何一轮抹空——2026-08-13
+    真栈三轮实证：查门店 → 「第一个」（落 luckin.menu，无搜索步）→ 「这家的菜单」
+    又回到「请先查询附近的瑞幸门店」。**两轮测试测不出来**，第二轮恰好紧邻搜索轮。
+    """
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    search_plan = Plan(steps=[Step(id="s1", agent_id="nearby",
+                                   intent="nearby.search")])
+    search_results = [StepResult(
+        step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
+        data={"items": [{"name": "瑞幸咖啡(前海印里店)",
+                         "lng": 113.8981, "lat": 22.5301}]})]
+    menu_plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge",
+                                 intent="luckin.menu")])
+    menu_results = [StepResult(step_id="s1", status=StepStatus.OK,
+                               source_intent="luckin.menu", data={})]
+
+    async def _run():
+        await manager.update_focus("sess", search_plan, search_results,
+                                   user_id="u1")
+        await manager.update_focus("sess", menu_plan, menu_results,
+                                   user_id="u1")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+
+    assert focus is not None
+    assert [p["name"] for p in focus.last_places] == ["瑞幸咖啡(前海印里店)"]
+    assert focus.last_intent == "luckin.menu", "其余焦点字段仍按本轮刷新"
+
+
+def test_places_come_from_result_provenance_not_the_plan_object():
+    """salvage/replan 轮里，调用方给的 plan 是**重规划后的**，搜索步不在里面。
+
+    2026-08-13 真栈实证：同一句话走 toolcall 时三轮通、走 toolcall_salvage 时
+    第三轮回到「请先查询附近的瑞幸门店」——因为门店列表从第一轮起就没存下。
+    `source_intent` 是执行器用权威 Step 盖的章，比调用方递来的 plan 可靠。
+    """
+    replanned = Plan(steps=[Step(id="s2", agent_id="mcp-bridge",
+                                 intent="luckin.menu")])
+    results = [
+        StepResult(step_id="s1", status=StepStatus.OK,
+                   source_intent="nearby.search",
+                   data={"items": [{"name": "瑞幸咖啡(前海印里店)",
+                                    "lng": 113.8981, "lat": 22.5301}]}),
+        StepResult(step_id="s2", status=StepStatus.OK,
+                   source_intent="luckin.menu", data={}),
+    ]
+
+    focus = extract_focus(replanned, results)
+
+    assert focus is not None
+    assert [p["name"] for p in focus.last_places] == ["瑞幸咖啡(前海印里店)"]

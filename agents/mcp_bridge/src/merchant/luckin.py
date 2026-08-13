@@ -1377,13 +1377,13 @@ class LuckinWorkflow(MerchantWorkflow):
         """
         if store is None:
             if trusted is None:
+                # 同 `_reselect_store`：这三个槽用户填不了，声明成 missing_slots
+                # 会让会话挂起并吞掉后续每一句（真栈实证见那里的注释）。
+                # 这条是**改动前就存在**的，用户会话里循环的正是它。
                 return None, None, AgentResult(
-                    status=NEED_SLOT,
                     speech="请先查询附近的瑞幸门店并选择一家，"
                            "我只会使用该公开门店 POI 的坐标。",
-                    follow_up="可以说“查询附近的瑞幸咖啡”。",
-                    missing_slots=[
-                        "store_name", "store_longitude", "store_latitude"])
+                    follow_up="可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
             store_name, longitude, latitude = trusted
             try:
                 shops = await self._read(
@@ -1530,37 +1530,10 @@ class LuckinWorkflow(MerchantWorkflow):
             "price": price,
             "subtitle": price,
         }
-        image = self._image_url(product.get("pictureUrl"))
+        image = self.image_url(product.get("pictureUrl"))
         if image:
             item["image_url"] = image
         return item
-
-    def _image_url(self, value) -> str:
-        """商品图：**必须 https + 域名在 servers.yaml 的 image_hosts 精确白名单里**。
-
-        模型/外部服务给的 URL 是不可信输入，而这个值最终会变成 HMI 发起的一次网络请求。
-        不合规就返回空串——退回纯文字卡，不报错也不半渲染。
-        """
-        raw = str(value or "").strip()
-        if not raw or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
-                          for ch in raw):
-            return ""
-        try:
-            parsed = urlparse(raw)
-        except ValueError:
-            return ""
-        if parsed.scheme != "https" or parsed.username or parsed.password:
-            return ""
-        allowed = {
-            normalize_hostname(host)
-            for host in (getattr(self.server, "image_hosts", []) or [])
-        }
-        allowed.discard("")
-        host = normalize_hostname(parsed.hostname or "")
-        if not host or host not in allowed:
-            logger.debug("[瑞幸] 商品图域名不在白名单，丢弃：host=%s", host)
-            return ""
-        return raw
 
     @staticmethod
     def _menu_price(product: dict) -> str:
@@ -1581,20 +1554,23 @@ class LuckinWorkflow(MerchantWorkflow):
 
     @staticmethod
     def _reselect_store(speech: str) -> AgentResult:
-        """「请重新选择门店」类拒绝 —— 必须是 NEED_SLOT，不能是默认的 OK。
+        """门店类拒绝**不能是 NEED_SLOT**——它要的槽用户填不了。
 
-        本工作流的能力声明 require_confirm=true，executor 的中央确认闸
-        (`_enforce_capability_confirm`) 会给**任何 OK 结果**追加「这个操作需要您确认后
-        才会执行，确定继续吗？」。拒绝落在 OK 上就会拼成自相矛盾的一句：
-        「…没有继续下单，请重新选择门店。这个操作需要您确认后才会执行，确定继续吗？」
-        （2026-08-12 demo-2goetq 实证，换个拒绝理由照样复现 3/3）。
-        修在拒绝侧而不是动那道闸：闸是安全件，而这几条本来就是要用户补门店槽——
-        与本文件里既有的 NEED_SLOT 路径同形。
+        门店三元组按设计只能来自同一轮 `nearby.search` 的可信公开 POI；
+        把它声明成 `missing_slots` 等于向用户要一个他永远给不出的东西，而引擎会据此
+        **挂起会话**：此后每一句话都被当成补槽答案吞掉、再次失败、再次挂起。
+        2026-08-13 真栈实证（demo-f1hkwr / demo-r6qjf4）：「看麦当劳(科苑南路餐厅)的详情」
+        被答成「请先查询附近的瑞幸门店…」，日志 `Resuming plan ... (slot fill step s1)`
+        ——问麦当劳答瑞幸，「第一个」「选择瑞幸门店：X」也全被吞掉。
+
+        所以这里回到普通 OK 结果 + 可执行的 follow_up：用户下一句照常走规划。
+        代价是 `require_confirm=true` 的下单步仍会被中央确认闸追加一句
+        「确定继续吗？」（只读的 *.menu 不受影响，它 require_confirm=false）——
+        那是**话术不好看**，而挂起黑洞是**功能不可用**，两害相权。
         """
         return AgentResult(
-            status=NEED_SLOT, speech=speech,
-            follow_up="可以说“查询附近的瑞幸咖啡”再选一家。",
-            missing_slots=["store_name", "store_longitude", "store_latitude"])
+            speech=speech,
+            follow_up="可以说“查询附近的瑞幸咖啡”，我再按您选的那家继续。")
 
     async def _store_choices(self, stores: list[dict], *, slots: dict,
                              user_id: str, session_id: str,
