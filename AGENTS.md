@@ -66,12 +66,12 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5457 passed / 14 skipped / 0 failed**（2026-08-13 demo-mkemhn 复盘六批后实测，
-退出码 0，用时 20m08s）。较同日早间的 5440 净 **+17**，逐条点上号：planning
-线契约归一 3 + executor 锚定门控/限龄 3 + nearby 诚实降级 4 + summarize 相关性
-取材 4 + luckin 选店自愈 3；逐项证据见 history **§31** 与
-`docs/design/2026-08-13-demo-mkemhn-merchant-hmi-hardening.md`。
-上一批 5408→5440 见 §30，4996→5408 见 §29，更早四跳对账见 **§28**。
+**5464 passed / 14 skipped / 0 failed**（2026-08-13 demo-3ukshz 二轮后实测，
+退出码 0，用时 27m42s）。较六批后的 5457 净 **+7**，逐条点上号：mcd 附近接线/
+分类导航/默认店披露 4 + luckin 多种子聚合 2 + engine topic-change 新判据 1；
+逐项证据见 history **§32** 与设计文档 §5。
+上一批 5440→5457（demo-mkemhn 六批，+17=planning 3+executor 3+nearby 4+取材 4+
+luckin 3）见 **§31**；5408→5440 见 §30，4996→5408 见 §29，更早四跳对账见 **§28**。
 ⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/出站验签代码先想编码两端；
 本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
 （§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
