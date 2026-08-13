@@ -134,6 +134,10 @@ class ServerSpec:
     url: str = ""
     headers: dict = field(default_factory=dict)   # 值支持 ${ENV_VAR}，token 不进 yaml
     pay_url_hosts: list = field(default_factory=list)  # 支付链接域名白名单（第一层）
+    # 商品图片域名白名单：与 pay_url_hosts 同款**精确 hostname**（normalize_hostname
+    # 拒绝通配符/IP/非 ASCII）。不在名单内的图链**静默丢弃退回纯文字**，不是报错——
+    # 商户换 CDN 时该降级成没有图，不该让一张图毁掉整张选品卡。
+    image_hosts: list = field(default_factory=list)
     env_error: str = ""          # ${VAR} 展开失败的具名原因——bootstrap 据此整台拒载
     workflows: list[WorkflowSpec] = field(default_factory=list)
 
@@ -317,6 +321,8 @@ def load_servers(path: str) -> list:
             headers=headers,
             pay_url_hosts=[normalize_hostname(h)
                            for h in (s.get("pay_url_hosts") or [])],
+            image_hosts=[normalize_hostname(h)
+                         for h in (s.get("image_hosts") or [])],
             env_error=env_error, workflows=workflows))
     return out
 

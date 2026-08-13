@@ -334,6 +334,12 @@ class PlannerEngine:
             # 用系统持有的会话焦点补全 Planner 省略的结构化上下文，再记录 trace；
             # 这样观测到的是下游真正执行的计划，不是补全前的半成品。
             self._apply_focus_meta(plan, working_set.focus)
+            # 跨轮门店锚定的**唯一入口**：把上一轮 nearby.search 的公开 POI 放上
+            # PlanContext（服务端对象，LLM 与客户端都写不到）。executor 只在本轮 plan
+            # 内没有生产者时才用它补门店三元组，并写同构 provenance——
+            # 契约见 docs/design/2026-08-13-cross-turn-store-anchor.md。
+            ctx.focus_places = list(
+                getattr(working_set.focus, "last_places", None) or [])
 
             # C. 解析 endpoint（Registry）
             # badcase 排查内容级采集（OBS_CONTENT_CAPTURE 门控）：plan 结构 + LLM 原始输出。

@@ -1190,8 +1190,15 @@ class LuckinWorkflow(MerchantWorkflow):
                     item.get("producer_intent") != "nearby.search"):
                 return None
             ref = str(item.get("ref") or "")
+            # 两种合法来源，**同前缀同下标的约束对两者一字不改**：
+            #   ① 本轮 plan 内的 nearby.search 步骤   `<step>.data.items.<N>.<leaf>`
+            #   ② 跨轮焦点（2026-08-13）            `focus.last_places.<N>.<leaf>`
+            # ② 的值同样只可能由**执行器**从服务端持有的上一轮结果写入（PlanContext，
+            # LLM/客户端写不到）；放行的是来源，不是校验强度——name/lng/lat 仍必须
+            # 全部来自同一条 POI，混拼一律拒。
             match = re.fullmatch(
-                rf"([A-Za-z0-9_-]+\.data\.items\.\d+)\.{leaf}", ref)
+                rf"([A-Za-z0-9_-]+\.data\.items\.\d+)\.{leaf}", ref
+            ) or re.fullmatch(rf"(focus\.last_places\.\d+)\.{leaf}", ref)
             if match is None:
                 return None
             prefixes.add(match.group(1))
@@ -1504,22 +1511,56 @@ class LuckinWorkflow(MerchantWorkflow):
                 "store_name": store_name,
                 "title": f"{store_name} 可点商品",
                 "items": items,
+                # options 与 items 同序但**各自自带 image_url**：渲染端按 options 取，
+                # 靠下标去另一个数组捞图会在任一端裁剪时错位。
                 "options": [
                     {"label": item["name"], "subtitle": item.get("price", ""),
-                     "send_text": f"在{store_name}点一杯{item['name']}"}
+                     "send_text": f"在{store_name}点一杯{item['name']}",
+                     **({"image_url": item["image_url"]}
+                        if item.get("image_url") else {})}
                     for item in items[:6]
                 ],
             })
 
-    @classmethod
-    def _menu_item(cls, product: dict) -> dict:
-        price = cls._menu_price(product)
-        return {
+    def _menu_item(self, product: dict) -> dict:
+        price = self._menu_price(product)
+        item = {
             "id": str(product.get("productId") or ""),
             "name": str(product.get("productName") or "").strip(),
             "price": price,
             "subtitle": price,
         }
+        image = self._image_url(product.get("pictureUrl"))
+        if image:
+            item["image_url"] = image
+        return item
+
+    def _image_url(self, value) -> str:
+        """商品图：**必须 https + 域名在 servers.yaml 的 image_hosts 精确白名单里**。
+
+        模型/外部服务给的 URL 是不可信输入，而这个值最终会变成 HMI 发起的一次网络请求。
+        不合规就返回空串——退回纯文字卡，不报错也不半渲染。
+        """
+        raw = str(value or "").strip()
+        if not raw or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127
+                          for ch in raw):
+            return ""
+        try:
+            parsed = urlparse(raw)
+        except ValueError:
+            return ""
+        if parsed.scheme != "https" or parsed.username or parsed.password:
+            return ""
+        allowed = {
+            normalize_hostname(host)
+            for host in (getattr(self.server, "image_hosts", []) or [])
+        }
+        allowed.discard("")
+        host = normalize_hostname(parsed.hostname or "")
+        if not host or host not in allowed:
+            logger.debug("[瑞幸] 商品图域名不在白名单，丢弃：host=%s", host)
+            return ""
+        return raw
 
     @staticmethod
     def _menu_price(product: dict) -> str:

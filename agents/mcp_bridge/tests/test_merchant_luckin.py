@@ -147,6 +147,8 @@ SEARCH_RESULT = _ok([{
     "productId": 1262,
     "productName": "生椰拿铁（首创）",
     "skuCode": "SP2077-01134",
+    # 真机形状（2026-08-13）：每条商品带 https 图链，域名 img04.luckincoffeecdn.com
+    "pictureUrl": "https://img04.luckincoffeecdn.com/pic/1262.png",
     "productAttrs": [{
         "attributeId": 17, "attributeName": "温度",
         "productSubAttrs": [{
@@ -360,7 +362,7 @@ def _schema(properties, required):
 def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
               pay_url_locator="", pay_url_hosts=None, tool_names=None,
               workflow_intent="luckin.order", amount_locator="",
-              amount_unit="yuan"):
+              amount_unit="yuan", image_hosts=None):
     scripts = scripts or {
         "queryShopList": [SHOP_RESULT],
         "searchProductForMcp": [SEARCH_RESULT],
@@ -421,7 +423,9 @@ def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
     server = SimpleNamespace(
         id="luckin", demo=False,
         pay_url_hosts=(list(pay_url_hosts) if pay_url_hosts is not None
-                       else []))
+                       else []),
+        image_hosts=(list(image_hosts) if image_hosts is not None
+                     else ["img04.luckincoffeecdn.com"]))
     spec = SimpleNamespace(
         intent=workflow_intent, required_tools=[
             name for name in schemas if name in selected_names])
@@ -1883,3 +1887,73 @@ async def test_cancelled_cancel_never_detaches_ledger_close_past_lease_release()
     assert ledger.acked is True
     assert ledger.committed_after_ack is False
     assert client.counts["cancelOrder"] == 1
+
+
+@pytest.mark.asyncio
+async def test_menu_image_requires_https_and_an_allowlisted_host():
+    """商品图链是**外部服务给的不可信输入**，而它会变成 HMI 发起的一次网络请求。
+
+    只有 https + `servers.yaml::image_hosts` 精确白名单内的域名才落进卡片；
+    其余静默丢弃退回纯文字——商户换 CDN 该降级成没有图，不该毁掉整张选品卡。
+    """
+    workflow, _ = _workflow()
+    result = await workflow.menu(_intent(name="luckin.menu"), CTX, META)
+    first = next(i for i in result.ui_card["items"]
+                 if i["name"] == "生椰拿铁（首创）")
+    assert first["image_url"] == "https://img04.luckincoffeecdn.com/pic/1262.png"
+
+    for bad in ("http://img04.luckincoffeecdn.com/pic/1.png",   # 明文
+                "https://evil.example.com/pic/1.png",           # 域名不在名单
+                "https://user:pw@img04.luckincoffeecdn.com/1.png",  # 带凭据
+                "https://img04.luckincoffeecdn.com\n/1.png",    # 控制字符
+                "/pic/1.png", ""):
+        script = json.loads(json.dumps(SEARCH_RESULT))
+        script["data"]["data"][0]["pictureUrl"] = bad
+        flow, _c = _workflow(scripts={
+            "queryShopList": [SHOP_RESULT], "searchProductForMcp": [script]})
+        card = (await flow.menu(_intent(name="luckin.menu"), CTX, META)).ui_card
+        item = next(i for i in card["items"] if i["name"] == "生椰拿铁（首创）")
+        assert "image_url" not in item, bad
+
+    # 白名单为空 = 这个商户不给图，不是「随便什么图都行」
+    empty, _c = _workflow(image_hosts=[])
+    card = (await empty.menu(_intent(name="luckin.menu"), CTX, META)).ui_card
+    assert all("image_url" not in item for item in card["items"])
+
+
+def _focus_refs(name_ref="focus.last_places.0.name",
+                longitude_ref="focus.last_places.0.lng",
+                latitude_ref="focus.last_places.0.lat",
+                producer="nearby.search"):
+    return {"_trusted_slot_refs": json.dumps({
+        "store_name": {"ref": name_ref, "producer_intent": producer},
+        "store_longitude": {"ref": longitude_ref, "producer_intent": producer},
+        "store_latitude": {"ref": latitude_ref, "producer_intent": producer},
+    }, ensure_ascii=False)}
+
+
+@pytest.mark.asyncio
+async def test_cross_turn_focus_anchor_is_accepted_but_mixing_sources_is_not():
+    """跨轮焦点是**新增的合法来源**，不是放松的校验强度。
+
+    `focus.last_places.<N>` 的值同样只可能由执行器从服务端持有的上一轮 nearby.search
+    结果写入（PlanContext，LLM/客户端写不到）。放行的是来源；name/lng/lat 仍必须
+    全部来自同一条 POI——混拼一律拒，否则就是「在 A 店的名字下用 B 店的坐标下单」。
+    """
+    workflow, client = _workflow()
+    ok = await workflow.menu(_intent(name="luckin.menu"), CTX, _focus_refs())
+    assert ok.ui_card["type"] == "merchant_choices"
+    assert [name for name, _, _ in client.calls][0] == "queryShopList"
+
+    mixed = [
+        _focus_refs(longitude_ref="focus.last_places.1.lng"),      # 换了下标
+        _focus_refs(latitude_ref="s1.data.items.0.lat"),           # 混两种来源
+        _focus_refs(producer="luckin.order"),                      # 生产者不是 nearby
+        _focus_refs(name_ref="focus.last_places.name"),            # 缺下标
+        _focus_refs(name_ref="focus.other.0.name"),                # 换了容器
+    ]
+    for refs in mixed:
+        flow, calls = _workflow()
+        denied = await flow.menu(_intent(name="luckin.menu"), CTX, refs)
+        assert denied.status == NEED_SLOT, refs
+        assert calls.calls == [], "拒绝必须在碰商户接口之前落定"

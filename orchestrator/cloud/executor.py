@@ -118,7 +118,7 @@ class DagExecutor:
     async def _exec_step(self, step: Step, done: dict, ctx: PlanContext) -> StepResult:
         """执行单个 step。尾链：防抖(M2) → dispatch → _to_result → 确认兜底闸(M0a) → 对账(M2)。"""
         # 解析 slot_refs：用前序结果填 slot（**防抖判定必须在此之后**——指纹要含真实槽位）
-        self._resolve_slot_refs(step, done)
+        self._resolve_slot_refs(step, done, ctx)
 
         fingerprint = self._fingerprint(step)
         prior = self._find_duplicate(fingerprint, done)
@@ -426,7 +426,7 @@ class DagExecutor:
             data=result.data,
         )
 
-    def _resolve_slot_refs(self, step: Step, done: dict):
+    def _resolve_slot_refs(self, step: Step, done: dict, ctx=None):
         """用前序 step 的结果填充 slot_refs。"""
         # 该键是执行器本轮重建的 provenance；任何陈旧/伪造值先丢弃。meta 不在
         # Planner schema 内，但纵深防御仍不把既有值当真。下发 proto 是 map<string,string>，
@@ -505,9 +505,67 @@ class DagExecutor:
             else:
                 logger.warning("slot alias %s -> %s resolved to None", slot_name, alias)
 
+        self._anchor_store_from_focus(step, trusted, ctx, done.keys())
+
         if trusted:
             step.meta["_trusted_slot_refs"] = json.dumps(
                 trusted, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _anchor_store_from_focus(step: Step, trusted: dict, ctx,
+                                 done_ids=()) -> None:
+        """本轮 plan 内没有生产者时，用**上一轮 nearby.search 的公开 POI** 补门店三元组。
+
+        为什么这条是安全的：值来自 `ctx.focus_places`——服务端从上一轮 `nearby.search`
+        的成功结果里抽出并持久的三个标量，**LLM 与客户端都写不到它**。所以跨轮延续的是
+        「服务端记得取回过哪些门店」，不是「让模型把坐标再说一遍」；后者等于取消 provenance。
+
+        三条不放松（消费侧 `_trusted_store` 仍逐条校验）：
+        - 三个槽必须**同时**来自同一条 POI（同 `focus.last_places.<N>` 前缀、同下标）；
+        - 本轮 plan 内已有生产者时**一律让路**（`trusted` 非空即返回）——
+          本轮真实取回的结果永远比上一轮的记忆新；
+        - 用户本轮显式给了任一门店槽就不补（不覆盖本轮意图）。
+        契约与备选方案见 docs/design/2026-08-13-cross-turn-store-anchor.md。
+        """
+        keys = ("store_name", "store_longitude", "store_latitude")
+        if any(key in trusted for key in keys):
+            return                          # 本轮 plan 内有生产者 → 让路
+        if any(str(step.slots.get(key) or "").strip() for key in keys):
+            return                          # 本轮已有门店 → 不覆盖
+        # 声明了引用却没解析成功：要区分两种完全不同的情况。
+        #   ① 生产者**在本轮 plan 里**（`done` 里有这个 id）却没给出值 → 计划有缺陷，
+        #      不许被焦点悄悄补成「看起来正常」；
+        #   ② 生产者**根本不在本轮**（悬空引用）→ 这正是跨轮：2026-08-13 真栈实测，
+        #      第二轮模型产的是 `slot_refs: {store_name: "s0.data.items.0.name"}`，
+        #      而 `s0` 是**上一轮**的步骤 id。把这种也当缺陷让路，跨轮锚定就永远不触发。
+        producer_ids = {
+            str(ref).split(".", 1)[0]
+            for key in keys
+            for ref in [step.slot_refs.get(key)] if ref
+        }
+        if producer_ids & set(done_ids):
+            return
+        places = list(getattr(ctx, "focus_places", None) or [])
+        if not places:
+            return
+        place = places[0]                   # 与 plan 内 items.0 的既有行为一致，不新增歧义
+        try:
+            name = str(place["name"]).strip()
+            lng, lat = float(place["lng"]), float(place["lat"])
+        except (KeyError, TypeError, ValueError):
+            return
+        if not name or not (-180 <= lng <= 180 and -90 <= lat <= 90):
+            return
+        step.slots["store_name"] = name
+        step.slots["store_longitude"] = str(lng)
+        step.slots["store_latitude"] = str(lat)
+        for slot_name, leaf in zip(keys, ("name", "lng", "lat")):
+            trusted[slot_name] = {
+                "ref": f"focus.last_places.0.{leaf}",
+                "producer_intent": "nearby.search",
+            }
+        logger.info("Step %s(%s): 门店取自上一轮 nearby.search 焦点（%s）",
+                    step.id, step.intent, name)
 
     @staticmethod
     def _resolve_ref(ref_path: str, done: dict) -> object:

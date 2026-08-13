@@ -237,6 +237,13 @@ class Focus:
     last_choices: list[str] = field(default_factory=list)  # 最新候选名，按卡片顺序（最多 5 个）
     destination_lat: float | None = None                # 已解析目的地坐标（供“那边”确定性续接）
     destination_lng: float | None = None
+    # 上一轮 nearby.search 取回的公开 POI（只留 name/lng/lat 三标量，最多 10 条）。
+    # 真实商户下单/看菜单要求门店三元组来自「同一次 nearby.search 的同一条 item」，
+    # 而该 provenance 每轮被执行器清掉——于是「先查附近的瑞幸」「在最近那家点一杯」
+    # 两轮走不通。这一格把**服务端记得取回过哪些门店**这件事跨轮留住；
+    # **刻意不进 prompt**（`_render_focus` 不渲染它）：它是给执行器补槽用的结构化事实，
+    # 让模型看见只会诱导它自己编坐标。
+    last_places: list[dict] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -244,6 +251,7 @@ class Focus:
         return not (self.obj or self.positions or self.attr
                     or self.last_poi or self.last_destination or self.last_intent
                     or self.last_choice_purpose or self.last_choices
+                    or self.last_places
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
 
@@ -501,6 +509,23 @@ def extract_focus(plan, results) -> "Focus | None":
                 focus.last_choice_purpose = (
                     "waypoint" if isinstance(data.get("stops"), list) else "list"
                 )
+        # 跨轮门店锚定：只认 `nearby.search`，且只留三个标量。
+        # **不存 deptId 之类商户内部 id**——那是每次现查的事实，缓存它等于把商户的
+        # 内部状态当成我们的事实；也不存卡片/话术（同 §9.9「挂起步只留下游实际引用的标量」）。
+        if step.intent == "nearby.search":
+            places = []
+            for item in (data.get("items") or [])[:10]:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                try:
+                    lng, lat = float(item.get("lng")), float(item.get("lat"))
+                except (TypeError, ValueError):
+                    continue
+                if name and -180 <= lng <= 180 and -90 <= lat <= 90:
+                    places.append({"name": name, "lng": lng, "lat": lat})
+            if places:
+                focus.last_places = places
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
         # 搜索结果里的同名字段误当成下一轮“那边”的目的地。
         if domain == "navigation":

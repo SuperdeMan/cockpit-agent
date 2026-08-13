@@ -164,6 +164,11 @@ class PlanContext:
     # 刻意**不留 env 开关**：那会变成一个没人测过却随时可能被打开的分支；真要开就改代码，
     # 并且必须附 A/B 数据（性质由 test_edge_nlu_divergence.py 源码级断言守住）。
     edge_nlu: str = ""
+    # 跨轮门店锚定（2026-08-13）：上一轮 `nearby.search` 取回的公开 POI 列表
+    # （只留 name/lng/lat 三标量）。**服务端持有、LLM 写不到**——这正是它能充当
+    # 可信来源的全部理由：延续的是「服务端记得取回过哪些门店」，不是让模型把坐标再说一遍。
+    # 消费方 executor._resolve_slot_refs，契约见 docs/design/2026-08-13-cross-turn-store-anchor.md。
+    focus_places: list[dict] = field(default_factory=list)
 
 
 @dataclass

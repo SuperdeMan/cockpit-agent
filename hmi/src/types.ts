@@ -203,6 +203,9 @@ export type MerchantLineItem = {
   label?: string
   subtitle?: string
   send_text?: string
+  // 商品图（2026-08-13）：桥侧已过 servers.yaml::image_hosts 精确白名单，
+  // 渲染端仍再挡一次协议（merchantImageUrl）。缺省=这家商户没给图，渲染纯文字。
+  image_url?: string
   item_name?: string
   product_name?: string
   quantity?: number
@@ -248,7 +251,7 @@ export type MerchantCheckoutCard = {
   quantity?: number
   items?: MerchantLineItem[]
   products?: MerchantLineItem[]
-  options?: Array<{ label?: string; name?: string; subtitle?: string; send_text?: string }>
+  options?: Array<{ label?: string; name?: string; subtitle?: string; send_text?: string; image_url?: string }>
   buttons?: CardButton[]
   status?: string
   checkout_token?: string

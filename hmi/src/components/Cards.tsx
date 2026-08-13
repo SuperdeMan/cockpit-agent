@@ -14,6 +14,7 @@ import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
 import {
   merchantActionButtons,
+  merchantImageUrl,
   normalizeMerchantOrder,
   paymentPresentation,
 } from '../merchantUi.mjs'
@@ -1787,6 +1788,7 @@ function MerchantCheckoutCardView({ card, onAction }: {
         <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
           {optionButtons.map((button, index) => {
             const option = options[index]
+            const image = merchantImageUrl((option as { image_url?: string })?.image_url)
             return (
               <button
                 key={`${button.label}:${button.send_text}`}
@@ -1795,13 +1797,29 @@ function MerchantCheckoutCardView({ card, onAction }: {
                 disabled={!onAction}
                 style={{
                   minHeight: 52, width: '100%', padding: '9px 12px', borderRadius: 12,
-                  display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start',
+                  display: 'flex', flexDirection: 'row', justifyContent: 'flex-start', alignItems: 'center', gap: 10,
                   textAlign: 'left', cursor: onAction ? 'pointer' : 'default', fontFamily: 'inherit',
                   color: 'var(--au-text)', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)',
                 }}
               >
-                <span style={{ fontSize: 13, fontWeight: 700 }}>{button.label}</span>
-                {option?.subtitle && <span style={{ marginTop: 3, fontSize: 11, color: 'var(--au-text-3)' }}>{option.subtitle}</span>}
+                {image && (
+                  // 图加载失败就把自己摘掉——车机上一张裂图比没有图更糟
+                  <img
+                    src={image}
+                    alt=""
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                    style={{
+                      width: 40, height: 40, flexShrink: 0, borderRadius: 8,
+                      objectFit: 'cover', background: 'var(--au-line-2)',
+                    }}
+                  />
+                )}
+                <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                  <span style={{ fontSize: 13, fontWeight: 700 }}>{button.label}</span>
+                  {option?.subtitle && <span style={{ marginTop: 3, fontSize: 11, color: 'var(--au-text-3)' }}>{option.subtitle}</span>}
+                </span>
               </button>
             )
           })}

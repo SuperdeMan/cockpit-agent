@@ -30,3 +30,4 @@ export function normalizeMerchantOrder(card?: unknown): MerchantOrderView
 export function merchantActionButtons(card?: unknown): MerchantActionButton[]
 export function paymentPresentation(card?: unknown): PaymentPresentation
 export function confirmationPresentation(context?: unknown, cardType?: string): ConfirmationPresentation
+export function merchantImageUrl(value?: unknown): string

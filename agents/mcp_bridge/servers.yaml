@@ -265,6 +265,10 @@ servers:
     version: ""                    # 远程托管平台：版本不锁（自报 1.0.0），工具级 schema_sha 锁
     startup_timeout_ms: 20000
     pay_url_hosts: [open.lkcoffee.com]  # 2026-08-12 createOrder 真栈取证
+    # 商品图 CDN（2026-08-13 真机取证：searchProductForMcp 每条商品带 pictureUrl，
+    # 全部 https + img04.luckincoffeecdn.com + .png 无 query）。精确域名不写通配符：
+    # 商户换到 img05 时图会静默消失退回纯文字，这个降级方向是对的。
+    image_hosts: [img04.luckincoffeecdn.com]
     tools:
       - name: queryOrderDetailInfo
         intent: luckin.order_status

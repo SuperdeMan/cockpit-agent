@@ -5,6 +5,7 @@ import {
   actionFor,
   confirmationPresentation,
   merchantActionButtons,
+  merchantImageUrl,
   normalizeMerchantOrder,
   paymentPresentation,
 } from './merchantUi.mjs'
@@ -173,4 +174,22 @@ test('preserves the existing vehicle-control confirmation copy by default', () =
     detail: '危险操作需二次确认',
     confirmLabel: '确认',
   })
+})
+
+test('merchant product images render only from credential-free https urls', () => {
+  // 桥侧已过 servers.yaml::image_hosts 精确白名单；这里是渲染端的第二道
+  // ——卡片数据到了前端仍然只是一段别人给的 JSON，而它下一步会变成一次网络请求。
+  assert.equal(
+    merchantImageUrl('https://img04.luckincoffeecdn.com/pic/1262.png'),
+    'https://img04.luckincoffeecdn.com/pic/1262.png',
+  )
+  for (const bad of [
+    'http://img04.luckincoffeecdn.com/pic/1.png',          // 明文
+    'https://user:pw@img04.luckincoffeecdn.com/1.png',     // 带凭据
+    'javascript:alert(1)',                                  // 伪协议
+    'data:image/png;base64,AAAA',                           // 内联数据
+    '/pic/1.png', '', undefined, null, 42, {},
+  ]) {
+    assert.equal(merchantImageUrl(bad), '', String(bad))
+  }
 })

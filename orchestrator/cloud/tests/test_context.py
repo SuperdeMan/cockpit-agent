@@ -430,3 +430,46 @@ def test_legacy_two_arg_get_session_still_works():
     cm = ContextManager(_Clients([_agent("a", ["a.x"])], history=[{"role": "user", "text": "hi"}]))
     ws = asyncio.run(cm.assemble("hi", _ctx()))
     assert ws.history == [{"role": "user", "text": "hi"}]
+
+
+def test_focus_keeps_last_turn_public_pois_for_cross_turn_store_anchoring():
+    """只认 nearby.search，只留 name/lng/lat 三标量。
+
+    这一格让「先查附近的瑞幸」「在最近那家点一杯」两轮走得通——门店可信链原本
+    只在同一轮 plan 内成立。**刻意不存 deptId 之类商户内部 id**：那是每次现查的事实，
+    缓存它等于把商户的内部状态当成我们的事实。
+    """
+    plan = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search")])
+    results = [StepResult(
+        step_id="s1", status=StepStatus.OK,
+        data={"items": [
+            {"name": "瑞幸咖啡(前海印里店)", "lng": 113.8981, "lat": 22.5301,
+             "deptId": 602825, "rating": 4.4},
+            {"name": "坏数据", "lng": "abc", "lat": 22.5},
+            {"name": "", "lng": 113.9, "lat": 22.5},
+        ]})]
+
+    focus = extract_focus(plan, results)
+
+    assert focus.last_places == [
+        {"name": "瑞幸咖啡(前海印里店)", "lng": 113.8981, "lat": 22.5301}]
+    assert "deptId" not in focus.last_places[0]
+    assert "rating" not in focus.last_places[0]
+
+
+def test_only_nearby_search_feeds_the_store_anchor():
+    """别的域返回的同名字段不许冒充门店——那正是可信链要挡的事。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                            intent="navigation.navigate_to")])
+    results = [StepResult(
+        step_id="s1", status=StepStatus.OK,
+        data={"items": [{"name": "某个导航结果", "lng": 113.9, "lat": 22.5}]})]
+
+    focus = extract_focus(plan, results)
+
+    assert (focus is None) or not focus.last_places
+
+
+def test_places_only_focus_is_still_worth_persisting():
+    """只有门店列表的焦点也必须落盘——它就是跨轮锚定的全部载体。"""
+    assert not Focus(last_places=[{"name": "x", "lng": 1.0, "lat": 2.0}]).is_empty()

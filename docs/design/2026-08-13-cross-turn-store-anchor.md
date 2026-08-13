@@ -1,6 +1,6 @@
 # 跨轮门店锚定（真实商户）
 
-- **状态**：草案（待泓舟拍板后实施）
+- **状态**：✅ 已实施（2026-08-13，泓舟拍板「直接开做」）
 - **交付对象**：编排层（`orchestrator/cloud/executor.py` + `context.py`）与 mcp-bridge 商户 workflow
 - **关联**：`agents/mcp_bridge/src/merchant/luckin.py::_trusted_store`、
   `orchestrator/cloud/executor.py::_resolve_slot_refs`、`docs/conventions.md` §9.9、
@@ -105,10 +105,20 @@ last_places = {
 
 | 阶段 | 内容 | 验收 |
 |---|---|---|
-| P0 | `focus.last_places` 写入 + 单测 | nearby.search 后 focus 有 3 条标量；其他意图不写 |
-| P1 | executor 兜底解析 + provenance 同构写入 | 两轮对话真栈通过；plan 内有生产者时**不走**兜底（顺序断言）|
-| P2 | 消费侧正则放行 + 同前缀同下标强断言 | 混拼 name/lng/lat 的构造用例必须被拒 |
-| P3 | 对抗语料补两轮上下文用例 | `context_state.yaml` 补 route_flip 对 |
+| P0 | `focus.last_places` 写入 + 单测 | ✅ 只认 `nearby.search`、只留三标量；坏数据整条丢弃；「只有门店列表」的焦点也落盘 |
+| P1 | executor 兜底解析 + provenance 同构写入 | ✅ 5 条断言：补槽与同构 provenance／本轮生产者优先／不覆盖用户本轮门店／**声明了 ref 却没解析成功不许被补**／半条门店整条丢 |
+| P2 | 消费侧正则放行 + 同前缀同下标强断言 | ✅ 5 组混拼构造反例全部被拒（换下标／混两种来源／生产者不是 nearby／缺下标／换容器），且**拒绝在碰商户接口之前落定** |
+| P3 | 对抗语料补两轮上下文用例 | ⬜ 未做（`context_state.yaml` 的 route_flip 对）|
+
+### 实施差异（与原方案的两处偏离，都记在这里）
+
+1. **落点不是新写一条通路，而是接既有的那条。** 引擎里 `_apply_focus_meta` 已经确立了
+   「用系统持有的会话焦点补全 Planner 省略的结构化上下文」这条既有做法，本批只是把
+   门店三元组加进同一条路——但 provenance 走 `PlanContext.focus_places` 而不是
+   `step.meta`：后者会被 `_resolve_slot_refs` 每轮 pop 掉（那个 pop 本身是对的，
+   它挡的是计划里的伪造值），而 `PlanContext` 是服务端对象，LLM 与客户端都写不到。
+2. **TTL 与 owner 校验沿用焦点态既有机制**，没有为门店单独造一套——
+   `save_focus/load_focus` 已经带 `owner_user_id`，再加一层只会多一处要同步的地方。
 
 ## 6. 风险
 

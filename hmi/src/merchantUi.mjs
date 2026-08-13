@@ -150,6 +150,12 @@ const safeHttpsUrl = (value) => {
   }
 }
 
+export function merchantImageUrl(value) {
+  // 商品图在桥侧已过 image_hosts 精确白名单；渲染端再挡一次协议与凭据是纵深防御——
+  // 卡片数据到了这里仍然只是「一段别人给的 JSON」，而它下一步就会变成一次网络请求。
+  return safeHttpsUrl(value)
+}
+
 export function paymentPresentation(card = {}) {
   const qrSvg = text(card.qr_svg)
   const hasQr = qrSvg.startsWith('data:image/svg+xml')
