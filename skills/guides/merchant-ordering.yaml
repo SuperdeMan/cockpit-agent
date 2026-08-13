@@ -5,21 +5,27 @@ priority: 60
 capability_dependencies:
   - nearby.search
   - mcd.menu
+  - mcd.nutrition
   - mcd.order
   - mcd.order_status
+  - luckin.menu
   - luckin.order
   - luckin.order_status
   - luckin.order_cancel
   - shop.order
-keywords: [麦当劳, 瑞幸, 麦当劳点, 麦当劳下单, 瑞幸点, 瑞幸下单, 瑞幸取消, 生椰拿铁, 巨无霸套餐]
+keywords: [麦当劳, 瑞幸, 麦当劳点, 麦当劳下单, 瑞幸点, 瑞幸下单, 瑞幸取消, 生椰拿铁, 巨无霸套餐, 菜单, 热量]
 knowledge: |
-  - 麦当劳：下单→`mcd.order`；营养→`mcd.menu`；查单→`mcd.order_status`。
-    品牌单禁走 `shop.order`；营养不代下单。
-  - 瑞幸：下单→`luckin.order`；查单→`luckin.order_status`；取消→`luckin.order_cancel`。
-    创建/取消不互代；无品牌 demo→`shop.order`。
+  - 麦当劳：下单→`mcd.order`；菜单/价格→`mcd.menu`；热量/营养→`mcd.nutrition`；
+    查单→`mcd.order_status`。品牌单禁走 `shop.order`；营养不代下单。
+  - 瑞幸：菜单→`luckin.menu`；下单→`luckin.order`；查单→`luckin.order_status`；
+    取消→`luckin.order_cancel`。创建/取消不互代；无品牌 demo→`shop.order`。
+  - 「这家/刚才那家」看对话焦点：焦点门店是瑞幸→`luckin.*`、麦当劳→`mcd.*`；
+    `shop.*` 只服务演示商户，真实品牌一律不落它。
   - 仅问附近两品牌→`nearby.search`，禁下单。
-  - 瑞幸无门店：`nearby.search`→`luckin.order`；后者 `depends_on` 前者，
+  - 瑞幸无门店：`nearby.search`→`luckin.menu`/`luckin.order`；后者 `depends_on` 前者，
     从同一 `data.items.0` 取 `name/lng/lat`。禁填 `location_source`/车机位置。
+  - 用户点名门店（含「选择瑞幸门店：X」）：`nearby.search(keyword=瑞幸咖啡 X)` 再续
+    业务步；麦当劳直接 `store_hint=X`，不需要先搜。
 
 few_shots:
   - user: 生椰拿铁，找最近瑞幸，少冰半糖
@@ -56,8 +62,8 @@ golden:
     expect_not: [shop.order, luckin.order_status]
     holdout: true
   - text: 麦当劳薯条的热量是多少
-    expect_intents: [mcd.menu]
-    expect_not: [mcd.order]
+    expect_intents: [mcd.nutrition]
+    expect_not: [mcd.order, mcd.menu]
   - text: 把刚才那笔瑞幸订单取消
     expect_intents: [luckin.order_cancel]
     expect_not: [luckin.order, luckin.order_status]

@@ -141,3 +141,71 @@ exemplars:
 # luckin.menu（2026-08-13）：只读看菜单。在它之前「这家店的菜单」在能力目录里
 # 只对应演示商户 shop.menu，真实门店问句因此答出演示数据（trace 9899486a8773d577）。
 # 两条范例都带 nearby.search 前置——官方菜单绑 deptId，绕不开选店。
+# ── 2026-08-13 demo-mkemhn 收口：选店闭环三式 ────────────────────────────────
+# 焦点(300s)与选店草稿(600s)双过期后，候选卡按钮文本「选择瑞幸门店：X」与指名门店
+# 句都曾走进「请先查询附近的瑞幸门店」死路（78b635db/b69a16d9）。教 planner 用
+# nearby.search 按名把门店真实取回再续业务步——可信链当轮重建，不依赖任何过期状态。
+- text: 选择瑞幸门店：深铁金融科技大厦店
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 瑞幸咖啡 深铁金融科技大厦店
+  - id: menu
+    agent: mcp-bridge
+    intent: luckin.menu
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: demo-mkemhn 78b635db——候选卡按钮文本是固定句式，必须恒久可用（看菜单是选店后最安全的续接）
+- text: 科苑南路店这家瑞幸咖啡，我要看看菜单
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 瑞幸咖啡 科苑南路店
+  - id: menu
+    agent: mcp-bridge
+    intent: luckin.menu
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: demo-mkemhn b69a16d9——指名门店要菜单不许打回「请先查询附近」（说法换店名防语料原句变 seen）
+- text: 换一家瑞幸门店，还是点埃塞瑰夏冷萃
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      brand: 瑞幸
+      keyword: 瑞幸咖啡
+  - id: order
+    agent: mcp-bridge
+    intent: luckin.order
+    slots:
+      item_query: 埃塞瑰夏冷萃
+      quantity: '1'
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.1.name
+      store_longitude: store.data.items.1.lng
+      store_latitude: store.data.items.1.lat
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: demo-mkemhn 2fd09d52——「换一个」裸句是 HMI 按钮补全后的形态；换家=取次序靠前的另一家（items.1）

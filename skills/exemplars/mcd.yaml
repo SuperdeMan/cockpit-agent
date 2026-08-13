@@ -95,3 +95,37 @@ exemplars:
 # mcd.menu（2026-08-13）从营养表改成**当店菜单**：官方 query-meals 带 currentPrice
 # 与商品图，能回答用户真正在问的「有什么、多少钱」。营养成分归 mcd.nutrition
 # ——「早餐的猪柳蛋麦满分多少钱」曾只能回「这个接口里只有营养信息」（trace c523c303）。
+# ── 2026-08-13 demo-mkemhn 收口：选店闭环（麦当劳 store_hint 直达，无需坐标链）──
+- text: 选择麦当劳门店：碧海君庭餐厅
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+    slots:
+      store_hint: 碧海君庭餐厅
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: 候选卡按钮固定句式必须恒久可用；麦当劳按 store_hint 文本选店（看菜单是最安全续接）
+- text: 看看麦当劳科苑南路餐厅的菜单
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+    slots:
+      store_hint: 科苑南路餐厅
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - merchant-menu
+  note: 指名门店看菜单直达 store_hint，不需要先跑附近搜索
+- text: 换一家麦当劳门店，还是点蘸酱麦辣大四角
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.order
+    slots:
+      item_query: 蘸酱麦辣大四角
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: 换店保商品：不带 store_hint 走门店重选（桥内多店出候选卡），商品随句携带

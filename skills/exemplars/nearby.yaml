@@ -295,3 +295,19 @@ exemplars:
   tags:
   - badcase
   note: 附近公共设施查询归 nearby.search，不归任何车辆状态能力
+# ── 2026-08-13 补：品牌门店的**纯发现**句式（demo-mkemhn 3650e2b5）────────────
+# 「查询附近的瑞幸咖啡」被 planner 两连拒后掉进 chitchat，兜底凭历史编造
+# 「已为您找到 10 家门店，请选择其中一家」——无列表无卡片。纯门店发现归本域
+# （README「纯门店发现继续放 nearby.yaml」）；带下单/菜单目标的组合句归 luckin.yaml。
+- text: 查询附近的瑞幸咖啡
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      brand: 瑞幸
+      keyword: 瑞幸咖啡
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: demo-mkemhn 3650e2b5——纯发现句被 chitchat 编造门店列表

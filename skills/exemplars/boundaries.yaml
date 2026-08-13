@@ -203,3 +203,17 @@ rulings:
     domains: [mcd, nearby]
     why: 前者问品牌餐品目录（mcd.menu 当店菜单带价格 / mcd.nutrition 营养成分），后者是周边发现（高德 POI）
       ——「有什么吃的」是框架；带具体品牌名问商品归商户域，带「附近」问场所归 nearby
+
+  - id: nearby-luckin.pure-discovery-vs-discover-then-menu
+    texts: [查询附近的瑞幸咖啡, 附近的瑞幸有什么可以点的]
+    domains: [nearby, luckin]
+    why: 纯门店发现（只要列表）vs 发现+看单组合（「有什么可以点的」带菜单目标，
+      续接 luckin.menu 可信链）。共享的只是「附近的瑞幸」这个采集前缀；
+      README「纯门店发现继续放 nearby.yaml」正是这条边界的成文形态
+
+  - id: luckin-mcd.swap-store-keep-item
+    texts: [换一家瑞幸门店，还是点埃塞瑰夏冷萃, 换一家麦当劳门店，还是点蘸酱麦辣大四角]
+    domains: [luckin, mcd]
+    why: 句式同构但计划形态本质不同——瑞幸必须 nearby.search 重建坐标可信链
+      （官方门店绑 deptId），麦当劳走 store_hint 文本由桥内重选。品牌词就是判据，
+      两条各教各的接线方式，不构成地盘冲突

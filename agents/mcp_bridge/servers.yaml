@@ -39,7 +39,7 @@ servers:
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "f46214ddb414"
-        description: 查看咖啡店菜单与价格（演示商户）
+        description: 查看演示咖啡店的菜单与价格（演示商户，非真实品牌；瑞幸/麦当劳等真实门店的菜单请用对应品牌能力，不适用本工具）
         slots: []
         examples: ["咖啡有什么", "看看咖啡菜单", "咖啡多少钱"]
         timeout_ms: 8000
