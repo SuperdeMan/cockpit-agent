@@ -126,11 +126,15 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 同日再 +117 → 11789：麦当劳当店菜单 mcd.menu 上线 + 营养表改名并把描述写诚实
     # （「不含价格，问价格请用当店菜单」——旧描述让「多少钱」只能落到营养表）。
     # 16k 预算余量 4211。按上面那条纪律核过：涨的是有意新增的能力，不是重复项。
-    assert catalog.catalog_stats["chars_full"] == 11789
-    assert catalog.catalog_stats["chars_final"] == 11789
+    # 2026-08-13 demo-mkemhn 收口再 +39 → 11828：shop.menu 描述补真实品牌排除条款
+    # （「这家的菜单」在焦点是瑞幸门店时仍被规划到演示商户 shop.menu，trace c4a82439
+    # ——同 shop.order 那次「描述太像通用能力」的第二例，描述判别化是修法本体）。
+    # 涨的是既有能力的判别化描述，不是新增条目，条数 143 不变。
+    assert catalog.catalog_stats["chars_full"] == 11828
+    assert catalog.catalog_stats["chars_final"] == 11828
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4211
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4172
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

@@ -304,8 +304,13 @@ def test_merchant_ordering_guide_wires_one_nearby_result_into_luckin_order():
     """瑞幸选店必须消费同一 POI 项的 name/lng/lat，不能由模型拼三组来源。"""
     guide = next(d for d in sk.SkillStore().guides()
                  if d.name == "merchant-ordering")
+    # 2026-08-13 demo-mkemhn 收口：guide 知识新增 luckin.menu（只读菜单）与
+    # mcd.nutrition（营养口径从 mcd.menu 改名后 guide 一直在教旧账）——知识引用的
+    # 能力必须进 capability_dependencies，否则 refs 缺位时整条 guide 被 capability
+    # 阻断（见 test_skill_knowledge_uses_current_refs_or_is_capability_blocked）。
     assert set(guide.capability_dependencies) == {
-        "nearby.search", "mcd.order", "mcd.menu", "mcd.order_status",
+        "nearby.search", "mcd.order", "mcd.menu", "mcd.nutrition",
+        "mcd.order_status", "luckin.menu",
         "luckin.order", "luckin.order_status", "luckin.order_cancel",
         "shop.order",
     }

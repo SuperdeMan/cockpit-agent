@@ -381,6 +381,23 @@ def test_missing_container_step_fields_are_normalized_not_dropped():
     assert bare is not None and bare.steps[0].slots == {}
 
 
+def test_displaced_step_fields_at_wire_top_level_still_reject_the_plan():
+    """位移不是缺席：容器键出现在 wire 顶层=真值被放错了层，归一会让计划带空槽
+    静默执行——整份拒绝交给重试（对抗语料 required-step-fields-displaced-to-top-level
+    钉的就是这形态，本用例是它在单测层的同位角）。"""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search")])
+    ref = catalog.pair_to_ref[("nearby", "nearby.search")]
+    builder = planning.PlanBuilder(None, None)
+
+    displaced = builder._parse_and_validate_data({
+        "addressed": True,
+        "slots": {"keyword": "瑞幸咖啡"},
+        "steps": [{"id": "s1", "capability_ref": ref}],
+    }, catalog, "q")
+    assert displaced is None
+
+
 def test_unknown_step_fields_and_missing_identity_still_reject_the_plan():
     """归一只救缺席的容器键：多出的未知键是模型自造语法（真值可能放错字段名，
     接受等于静默错执行）；id/capability_ref 缺席是身份缺失，都整份拒绝。"""

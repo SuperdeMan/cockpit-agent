@@ -201,11 +201,11 @@ exemplars:
       quantity: '1'
     depends_on: [store]
     slot_refs:
-      store_name: store.data.items.1.name
-      store_longitude: store.data.items.1.lng
-      store_latitude: store.data.items.1.lat
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
   source: trace
   added: '2026-08-13'
   tags:
   - badcase
-  note: demo-mkemhn 2fd09d52——「换一个」裸句是 HMI 按钮补全后的形态；换家=取次序靠前的另一家（items.1）
+  note: demo-mkemhn 2fd09d52——「换一个」裸句是 HMI 按钮补全后的形态；重搜后仍取 items.0（refs 契约统一下标，换店语义由重搜本身承担）

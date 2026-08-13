@@ -1809,13 +1809,19 @@ class PlanBuilder:
                         clarify=misplaced_clarify,
                     )
 
+        # 位移防御（对抗语料 required-step-fields-displaced-to-top-level）：步骤容器键
+        # 出现在 wire **顶层**说明模型把真值放错了层——此时步内缺键不是「缺省=空」，
+        # 是值被丢在了外面；归一会让计划带着空槽被静默执行。整份拒绝交给重试，
+        # 只有「哪儿都没有这些值」的纯缺席才允许补空。
+        displaced_step_fields = _NORMALIZABLE_STEP_FIELDS & set(wire)
         resolved_steps = []
         for raw_step in raw_steps:
             if not isinstance(raw_step, dict):
                 logger.warning("Plan step is %s (not object), dropping plan for retry",
                                type(raw_step).__name__)
                 return None
-            raw_step = self._normalize_step_containers(raw_step)
+            if not displaced_step_fields:
+                raw_step = self._normalize_step_containers(raw_step)
             if set(raw_step) != set(_PLANNER_STEP_FIELDS):
                 logger.warning(
                     "Plan step fields differ from the exact wire contract, dropping plan for retry")

@@ -856,7 +856,15 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # 必须不同——瑞幸官方菜单绑 deptId、只能由 nearby.search 的可信 POI 映射，
     # 麦当劳按 store_hint 文本查店。**不是地盘冲突，是两家商户接口形态的差异。**
     assert ledger["luckin-mcd.menu-store-resolution"] == ("nearby", "mcd")
-    assert len(ledger) == 25
+    # 2026-08-13 25→27：demo-mkemhn 复盘落两条（范例库近重复检测触发，人裁为两回事）。
+    # 兑现物已证：`validate_boundary_coverage` 零错误——双向各 2 条 reviewed 对照
+    # （tu.merchant.luckin-pure-discovery{,-count} × tu.merchant.luckin-discover-then-menu
+    # {,-paraphrase}；tu.merchant.luckin-swap-store{,-paraphrase} ×
+    # tu.merchant.mcd-swap-store{,-paraphrase}），L0 strict 2/2 exit 0。
+    assert ledger["nearby-luckin.pure-discovery-vs-discover-then-menu"] == (
+        "nearby", "luckin")
+    assert ledger["luckin-mcd.swap-store-keep-item"] == ("luckin", "mcd")
+    assert len(ledger) == 27
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):
