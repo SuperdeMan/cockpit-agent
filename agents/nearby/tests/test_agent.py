@@ -5,6 +5,10 @@ from types import SimpleNamespace
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
 from agents.nearby.src.agent import NearbyAgent
 
+# 2026-08-13 起「附近发现」类检索**要求有搜索中心**（位置缺席不再全国检索冒充附近，
+# demo-mkemhn 北京店三连）。发现类用例统一带车辆位置；位置缺席的行为有专门用例。
+_LOC = {"current_lat": "22.54", "current_lng": "114.05"}
+
 
 def test_manifest_consistent():
     assert assert_manifest_consistent(NearbyAgent()) is True
@@ -98,7 +102,7 @@ def test_unknown_explicit_category_never_silently_becomes_food():
 def test_search_returns_place_list_card():
     res = asyncio.run(run_handle(
         NearbyAgent(), "nearby.search",
-        slots={"cuisine": "川菜"}, raw_text="附近的川菜馆"))
+        slots={"cuisine": "川菜"}, raw_text="附近的川菜馆", meta=_LOC))
     assert res.status == "ok"
     assert res.ui_card["type"] == "place_list"
     assert res.ui_card["items"]                       # 有结果
@@ -113,7 +117,8 @@ def test_search_incorporates_recalled_taste_preference():
         {"text": "用户不吃辣", "scope": "profile.taste",
          "predicate": "taste.spicy", "confidence": 0.9}]
     res = asyncio.run(run_handle(agent, "nearby.search",
-                                 slots={"cuisine": "川菜"}, raw_text="找家川菜馆", ctx=ctx))
+                                 slots={"cuisine": "川菜"}, raw_text="找家川菜馆",
+                                 ctx=ctx, meta=_LOC))
     assert res.status == "ok"
     assert "不吃辣" in res.speech                       # 召回偏好进了话术
     assert ctx._memory.recall.call_args.kwargs.get("predicate_prefix") == "taste."  # 精确读取
@@ -144,7 +149,8 @@ def test_search_non_food_category_no_taste():
     ctx._memory.recall.return_value = [
         {"text": "用户不吃辣", "predicate": "taste.spicy"}]
     res = asyncio.run(run_handle(agent, "nearby.search",
-                                 slots={"category": "酒店"}, raw_text="附近有什么酒店", ctx=ctx))
+                                 slots={"category": "酒店"}, raw_text="附近有什么酒店",
+                                 ctx=ctx, meta=_LOC))
     assert res.status == "ok"
     assert res.ui_card["type"] == "place_list"
     assert "不吃辣" not in res.speech                    # 非餐饮不带口味
@@ -209,7 +215,8 @@ def test_search_facility_keyword_stripped_from_whole_sentence():
     """route_hint 把整句灌进 keyword（停车场）：agent 剥壳成干净类目词 + 认出类目。"""
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"keyword": "附近的停车场"}, raw_text="附近的停车场"))
+                           slots={"keyword": "附近的停车场"}, raw_text="附近的停车场",
+                           meta=_LOC))
     assert seen["keyword"] == "停车场"
     assert seen["category"] == "停车"
 
@@ -217,7 +224,8 @@ def test_search_facility_keyword_stripped_from_whole_sentence():
 def test_search_facility_charging_keyword():
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"keyword": "附近的充电站"}, raw_text="附近哪里有充电站"))
+                           slots={"keyword": "附近的充电站"}, raw_text="附近哪里有充电站",
+                           meta=_LOC))
     assert seen["keyword"] == "充电站"
 
 
@@ -225,14 +233,16 @@ def test_search_price_parsed_from_raw_text_when_planner_missed_slot():
     """价位兜底：planner 没填 price_max，agent 从原话『一百以内』解析出 100。"""
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"cuisine": "火锅"}, raw_text="人均一百以内的火锅"))
+                           slots={"cuisine": "火锅"}, raw_text="人均一百以内的火锅",
+                           meta=_LOC))
     assert seen["price_max"] == 100.0
 
 
 def test_search_sort_parsed_from_raw_text():
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"cuisine": "火锅"}, raw_text="附近评分高的火锅"))
+                           slots={"cuisine": "火锅"}, raw_text="附近评分高的火锅",
+                           meta=_LOC))
     assert seen["sort"] == "rating"
 
 
@@ -241,7 +251,7 @@ def test_search_facility_keyword_strips_query_verbs():
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
                            slots={"keyword": "帮我查一查附近的停车场"},
-                           raw_text="帮我查一查附近的停车场"))
+                           raw_text="帮我查一查附近的停车场", meta=_LOC))
     assert seen["keyword"] == "停车场"
 
 
@@ -249,21 +259,22 @@ def test_search_price_band_from_left_right():
     """『人均一百左右』→ 区间 [约60,约140]（下限剔掉太便宜的 18/30，修『左右只当上限』）。"""
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={}, raw_text="附近人均一百左右的餐厅"))
+                           slots={}, raw_text="附近人均一百左右的餐厅", meta=_LOC))
     assert seen["price_min"] == 60.0 and seen["price_max"] == 140.0
 
 
 def test_search_price_within_is_upper_bound_only():
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={}, raw_text="人均一百以内的火锅"))
+                           slots={}, raw_text="人均一百以内的火锅", meta=_LOC))
     assert seen["price_min"] == 0.0 and seen["price_max"] == 100.0
 
 
 def test_search_open_now_parsed_from_raw_text():
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"cuisine": "火锅"}, raw_text="附近现在营业的火锅"))
+                           slots={"cuisine": "火锅"}, raw_text="附近现在营业的火锅",
+                           meta=_LOC))
     assert seen["open_now"] is True
 
 
@@ -271,7 +282,8 @@ def test_search_raw_price_band_overrides_llm_price_max_slot():
     """LLM 把『一百』填进 price_max 槽，但原话是『左右』→ 用原话区间(带下限)，不被纯上限盖过。"""
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"price_max": "100"}, raw_text="附近人均一百左右的餐厅"))
+                           slots={"price_max": "100"}, raw_text="附近人均一百左右的餐厅",
+                           meta=_LOC))
     assert seen["price_min"] == 60.0 and seen["price_max"] == 140.0
 
 
@@ -306,7 +318,7 @@ def test_indoor_search_fans_out_and_mixes_types():
     res = asyncio.run(run_handle(
         agent, "nearby.search",
         slots={"category": "室内", "weather_context": "雨"},
-        raw_text="这样的天气适合去哪玩啊"))
+        raw_text="这样的天气适合去哪玩啊", meta=_LOC))
     assert res.status == "ok"
     assert keywords == ["商场", "电影院", "博物馆"]          # 全类目扇出（串行）
     top3 = [it["name"] for it in res.data["items"][:3]]
@@ -318,7 +330,7 @@ def test_indoor_search_speech_acknowledges_rain():
     res = asyncio.run(run_handle(
         NearbyAgent(), "nearby.search",
         slots={"category": "室内", "weather_context": "中雨"},
-        raw_text="这样的天气适合去哪玩啊"))
+        raw_text="这样的天气适合去哪玩啊", meta=_LOC))
     assert res.status == "ok"
     assert "雨天不太适合户外" in res.speech
     assert "室内" in res.speech
@@ -341,7 +353,8 @@ def test_indoor_search_partial_provider_failure_still_answers():
 
     agent.place = _P()
     res = asyncio.run(run_handle(
-        agent, "nearby.search", slots={"category": "室内"}, raw_text="附近室内玩的"))
+        agent, "nearby.search", slots={"category": "室内"}, raw_text="附近室内玩的",
+        meta=_LOC))
     assert res.status == "ok"
     assert "商场1号" in res.speech and "博物馆1号" in res.speech
 
@@ -350,7 +363,8 @@ def test_outdoor_search_with_good_weather_context_leads_positively():
     """好天气 + 户外类目：话术带上『天气不错』的承接（planner 按 guide 填 weather_context）。"""
     res = asyncio.run(run_handle(
         NearbyAgent(), "nearby.search",
-        slots={"category": "景点", "weather_context": "晴"}, raw_text="今天去哪玩好"))
+        slots={"category": "景点", "weather_context": "晴"}, raw_text="今天去哪玩好",
+        meta=_LOC))
     assert res.status == "ok"
     assert res.speech.startswith("天气不错")
 
@@ -359,7 +373,8 @@ def test_mall_category_searches_mall_not_food():
     """『附近有什么商场』不再退化成默认餐饮/美食检索（同族潜伏缺陷）。"""
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={"category": "商场"}, raw_text="附近有什么商场"))
+                           slots={"category": "商场"}, raw_text="附近有什么商场",
+                           meta=_LOC))
     assert seen["keyword"] == "商场"
 
 
@@ -367,9 +382,88 @@ def test_parking_in_mall_still_parking():
     """类目优先级回归：『商场停车场』仍归停车（设施类目在室内组之前）。"""
     agent, seen = _capture_search()
     asyncio.run(run_handle(agent, "nearby.search",
-                           slots={}, raw_text="找个商场停车场"))
+                           slots={}, raw_text="找个商场停车场", meta=_LOC))
     assert seen["keyword"] == "停车场"
     assert seen["category"] == "停车"
+
+
+def test_discovery_search_without_any_center_degrades_honestly():
+    """位置缺席的品牌/品类发现（demo-mkemhn 59b34983/44943f00）：不做全国关键字
+    检索冒充「附近」——高德无位置时默认北京热门 POI，「离得最近的瑞幸」报出
+    什刹海店，用户说「不是北京哦」也无从纠正，因为系统不知道自己少了位置。"""
+    agent = NearbyAgent()
+    called = []
+
+    async def search(keyword, **kw):
+        called.append(keyword)
+        return []
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(
+        agent, "nearby.search",
+        slots={"brand": "瑞幸", "keyword": "瑞幸咖啡"},
+        raw_text="帮我看看我附近最近的瑞幸咖啡的菜单"))
+
+    assert res.status == "ok"
+    assert called == []                      # 压根不该打 provider
+    assert "位置" in res.speech
+    assert "附近" not in (res.speech.split("。")[0].split("没法")[0])  # 不冒充就近
+    assert res.data["center"] == "none"
+    assert res.data["items"] == []
+    assert res.ui_card is None
+
+
+def test_named_store_lookup_still_works_without_center():
+    """指名门店（候选卡按钮/用户点名）是**名字查找**，不依赖位置——放行按名检索，
+    但话术说「按名称找到」，不说「附近/为您找到」的就近暗示。"""
+    from agents.nearby.src.providers.base import Place
+
+    agent = NearbyAgent()
+
+    async def search(keyword, near=None, **kw):
+        assert near is None
+        return [Place(id="p1", name="瑞幸咖啡(深铁金融科技大厦店)",
+                      address="深大地铁站D口旁", lat=22.54, lng=113.95)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(
+        agent, "nearby.search",
+        slots={"keyword": "瑞幸咖啡 深铁金融科技大厦店"},
+        raw_text="选择瑞幸门店：深铁金融科技大厦店"))
+
+    assert res.status == "ok"
+    assert "按名称找到" in res.speech
+    assert "附近" not in res.speech
+    assert res.data["center"] == "none"
+    assert res.data["items"][0]["name"] == "瑞幸咖啡(深铁金融科技大厦店)"
+
+
+def test_named_poi_query_judgement():
+    from agents.nearby.src.agent import _named_poi_query
+
+    for named in ("瑞幸咖啡(深铁金融科技大厦店)", "luckin coffee 瑞幸咖啡（前海店）",
+                  "瑞幸咖啡 深铁金融科技大厦店", "麦当劳 碧海君庭餐厅"):
+        assert _named_poi_query(named), named
+    for generic in ("瑞幸咖啡", "咖啡店", "便利店", "停车场", "奶茶店", ""):
+        assert not _named_poi_query(generic), generic
+
+
+def test_indoor_search_without_center_degrades_honestly():
+    agent = NearbyAgent()
+    called = []
+
+    async def search(keyword, **kw):
+        called.append(keyword)
+        return []
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"category": "室内"}, raw_text="附近室内玩的"))
+
+    assert res.status == "ok"
+    assert called == []
+    assert "位置" in res.speech
+    assert res.data["center"] == "none"
 
 
 def test_focus_location_name_resolved_near_current_not_nationwide():

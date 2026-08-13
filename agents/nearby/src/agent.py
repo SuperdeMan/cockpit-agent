@@ -182,6 +182,24 @@ def _parse_sort(text: str) -> str:
     return "rating" if _SORT_RATING_RE.search(text or "") else ""
 
 
+_NAMED_POI_SUFFIXES = ("店", "餐厅", "门店", "分店")
+
+
+def _named_poi_query(keyword: str) -> bool:
+    """检索词是否指名了**具体门店/场所**（「瑞幸咖啡(深铁金融科技大厦店)」「麦当劳 国贸店」）。
+
+    指名场所按名检索不依赖位置——那是名字查找；而「咖啡店/停车场」这类品类词没有
+    位置就没有「附近」可言。判据刻意收紧：含括号（高德 POI 命名习惯），或以门店后缀
+    结尾且去掉后缀后仍 ≥4 字（「咖啡店」「便利店」这类纯品类词不算指名）。"""
+    kw = str(keyword or "").strip()
+    if not kw:
+        return False
+    if "(" in kw or "（" in kw:
+        return True
+    return any(kw.endswith(suffix) and len(kw) - len(suffix) >= 4
+               for suffix in _NAMED_POI_SUFFIXES)
+
+
 def _parse_open_now(text: str) -> bool:
     return bool(_OPEN_NOW_RE.search(text or ""))
 
@@ -271,6 +289,12 @@ class NearbyAgent(BaseAgent):
             return brand
         if cuisine:
             return cuisine
+        # 指名门店（「瑞幸咖啡 深铁金融科技大厦店」/「麦当劳(科苑南路餐厅)」）原样保留：
+        # 它比任何类目/品牌词都具体，被改写成「咖啡厅」是静默的信息丢失——
+        # 候选卡按钮/用户点名的选店句正是这种形状（demo-mkemhn 选店死路的一环）。
+        named = _strip_qualifiers(kw_slot)
+        if _named_poi_query(named):
+            return named
         cat_kw = _CATEGORY_KEYWORD.get(category)
         if cat_kw and category not in _FOOD_CATS:      # 设施/非餐饮类目 → 干净类目词
             # 但『瑞幸咖啡』『特斯拉充电桩』这种**品牌 + 类目别名**是用户明确点名的东西，
@@ -328,6 +352,23 @@ class NearbyAgent(BaseAgent):
         open_now = str(intent.slots.get("open_now") or "").lower() in ("1", "true", "yes") \
             or _parse_open_now(raw)
         near = await self._resolve_center(intent, meta)
+        label = cuisine or brand or keyword
+
+        # 位置缺席的诚实降级（demo-mkemhn 59b34983/cffc84fd/44943f00）：没有任何
+        # 搜索中心时，provider 会走**全国关键字检索**，高德默认把北京热门 POI 排前面
+        # ——把它播成「附近/最近」是在冒充，用户纠正（「不是北京哦」）也无从生效，
+        # 因为系统根本不知道自己少了什么。品牌/品类发现类检索没有位置就没有「附近」；
+        # **指名门店**（_named_poi_query）仍放行——那是名字查找，不依赖位置。
+        if near is None and not _named_poi_query(keyword):
+            logger.warning(
+                "nearby.search without center（诚实降级，不拿全国检索冒充附近）: %s",
+                keyword)
+            return AgentResult(
+                speech=f"我现在拿不到车辆的位置，没法确定哪家{label}算「附近」。"
+                       f"可以检查一下定位开关，或者告诉我一个参照位置，"
+                       f"比如「在科技园附近找{label}」。",
+                follow_up="说一个参照位置我就能继续找。",
+                data={"items": [], "center": "none"})
 
         skw = dict(category=category, near=near, rating_min=rating_min,
                    price_min=price_min, price_max=price_max, brand=brand,
@@ -340,8 +381,11 @@ class NearbyAgent(BaseAgent):
             logger.warning("place search failed（诚实降级，无 mock 回退）: %s", e)
             return AgentResult(speech="周边搜索服务暂时不可用，稍后再试一次？")
 
-        label = cuisine or brand or keyword
         if not results:
+            if near is None:
+                return AgentResult(
+                    speech=f"没找到叫「{label}」的门店，换个说法再试试？",
+                    follow_up="报出完整店名（如『瑞幸咖啡(科技园店)』）更容易找到")
             return AgentResult(
                 speech=f"附近暂时没找到{label}，换个说法或扩大范围再试试？",
                 follow_up="可以说『附近的火锅』或『评分高的川菜馆』")
@@ -364,10 +408,21 @@ class NearbyAgent(BaseAgent):
             lead = f"{word}户外体验会打折扣，" if word else "天气不错，适合出去走走，"
         card = attach({"type": "place_list", "category": category, "keyword": label,
                        "items": items, "display_priority": 1}, self.place)
+        # center 来源随数据落盘（观测/下游可辨）：slot=用户指定位置 / vehicle=车辆
+        # 位置 / none=指名门店按名检索。none 时话术不得出现「附近/为您找到」的
+        # 就近暗示——按名找到就说按名找到。
+        center_src = ("slot" if (intent.slots.get("location") or "").strip()
+                      else "vehicle" if near is not None else "none")
+        if center_src == "none":
+            speech = f"按名称找到 {len(results)} 家{label}，最匹配的是：{names}{extra_s}。"
+        else:
+            speech = (f"{lead}为您找到 {len(results)} 家{label}{pref_note}，"
+                      f"推荐：{names}{extra_s}。")
         return AgentResult(
-            speech=f"{lead}为您找到 {len(results)} 家{label}{pref_note}，推荐：{names}{extra_s}。",
+            speech=speech,
             ui_card=card,
-            data={"items": items},   # 供编排 slot_refs + HMI「第N个」handoff
+            # items 供编排 slot_refs + HMI「第N个」handoff；center 供下游判断就近语义
+            data={"items": items, "center": center_src},
             follow_up="说『看第 1 个详情』或『导航去第 2 个』",
         )
 
@@ -376,6 +431,13 @@ class NearbyAgent(BaseAgent):
         合并，商场/电影院/博物馆都露脸——比单类目更接近人对「室内去处」的期待。
         话术必须承接天气前提：badcase 三连的根源之一是回答与「下雨」这个语境完全脱节。"""
         near = await self._resolve_center(intent, meta)
+        if near is None:
+            # 同主路径的诚实降级：没有位置，「附近的室内去处」无从谈起。
+            return AgentResult(
+                speech="我现在拿不到车辆的位置，没法推荐附近的室内去处。"
+                       "可以检查一下定位开关，或者告诉我一个参照位置。",
+                follow_up="说一个参照位置我就能继续找。",
+                data={"items": [], "center": "none"})
         rating_min = _to_float(intent.slots.get("rating_min"))
         groups: list[list[Place]] = []
         for kw in _INDOOR_FANOUT:      # 串行：高德免费档 QPS 紧，并发会 CUQPS 超限

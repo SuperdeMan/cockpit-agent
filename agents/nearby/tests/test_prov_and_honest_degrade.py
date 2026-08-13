@@ -5,11 +5,14 @@ from agents._sdk.http import ProviderError
 from agents._sdk.testing import run_handle
 from agents.nearby.src.agent import NearbyAgent
 
+# 发现类检索 2026-08-13 起要求有搜索中心（无位置不再全国检索冒充「附近」）
+_LOC = {"current_lat": "22.54", "current_lng": "114.05"}
+
 
 def test_place_list_card_carries_prov_mock():
     res = asyncio.run(run_handle(
         NearbyAgent(), "nearby.search",
-        slots={"cuisine": "川菜"}, raw_text="附近的川菜馆"))
+        slots={"cuisine": "川菜"}, raw_text="附近的川菜馆", meta=_LOC))
     prov = (res.ui_card or {}).get("_prov")
     assert prov and prov["mode"] == "mock" and prov["vendor"] == "mock"
 
@@ -23,7 +26,8 @@ def test_search_runtime_failure_degrades_honestly_no_mock_items():
 
     agent.place.search = boom
     res = asyncio.run(run_handle(agent, "nearby.search",
-                                 slots={"cuisine": "川菜"}, raw_text="附近的川菜馆"))
+                                 slots={"cuisine": "川菜"}, raw_text="附近的川菜馆",
+                                 meta=_LOC))
     # M0a 对齐 R9 契约：诚实降级话术用 OK 返回——单步 FAILED 的 speech 会被聚合器
     # 吞成裸「抱歉，处理失败」（executor 不映射 error，aggregator 只读 r.error）。
     assert res.status == "ok"
