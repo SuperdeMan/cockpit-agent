@@ -18,6 +18,7 @@ import inspect
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext
@@ -244,6 +245,10 @@ class Focus:
     # **刻意不进 prompt**（`_render_focus` 不渲染它）：它是给执行器补槽用的结构化事实，
     # 让模型看见只会诱导它自己编坐标。
     last_places: list[dict] = field(default_factory=list)
+    # last_places 的取回时刻（epoch 秒）。粘性接力（update_focus）让列表跨任意多轮
+    # 存活，时效只能靠这枚时间戳兑现——executor 按它限龄，过龄不锚定（诚实回到
+    # 「请先查询附近门店」）。0 = 旧数据无时间戳，按过龄处理。
+    last_places_ts: float = 0.0
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -551,6 +556,7 @@ def extract_focus(plan, results) -> "Focus | None":
                 places.append({"name": name, "lng": lng, "lat": lat})
         if places:
             focus.last_places = places
+            focus.last_places_ts = time.time()
     return None if focus.is_empty() else focus
 
 
@@ -608,6 +614,10 @@ class ContextManager:
                     previous = await self._load_focus(session_id, user_id)
                     if previous is not None and previous.last_places:
                         focus.last_places = list(previous.last_places)
+                        # 接力**原样携带**取回时刻，不续期——时效从 nearby.search
+                        # 那一刻起算，接力多少轮都不能让「刚才那家」变成「上周那家」。
+                        focus.last_places_ts = float(
+                            getattr(previous, "last_places_ts", 0.0) or 0.0)
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:

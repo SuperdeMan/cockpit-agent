@@ -145,7 +145,10 @@ def result_summary(result: StepResult) -> str:
     data = result.data or {}
     ctype = card.get("type", "") if isinstance(card, dict) else ""
 
-    if ctype == "poi_list":
+    # place_list 与 poi_list 同族（nearby 出的是 place_list）：不进安全计数分支时，
+    # 门店列表话术会被 _first_sentence 按 60 字符硬截，把「瑞幸咖啡(什刹海新…。」
+    # 这种残句直接送进挂起前缀/TTS（demo-mkemhn cffc84fd/a3063711 实证）。
+    if ctype in ("poi_list", "place_list"):
         n = len(card.get("items") or [])
         if n:
             return f"已找到 {n} 个地点"

@@ -692,6 +692,10 @@ _SUBMIT_PLAN_NAME = "submit_plan"
 _PLANNER_STEP_FIELDS = (
     "id", "capability_ref", "slots", "depends_on", "slot_refs",
 )
+# 三个**容器**键缺席的含义是唯一的（空），补齐不是猜测；id/capability_ref 缺席是
+# 身份缺失，不可虚构。多出的未知键同样不救——那是模型自造语法，整份拒绝才挡得住
+# 「把真值放进错误字段名」这类静默错执行。
+_NORMALIZABLE_STEP_FIELDS = frozenset({"slots", "depends_on", "slot_refs"})
 
 _CLARIFICATION_TOOLCALL_SECTION = (
     "\n\n== 输出通道（澄清卡专用工具调用）==\n"
@@ -1691,6 +1695,24 @@ class PlanBuilder:
             return None
 
     @staticmethod
+    def _normalize_step_containers(raw_step: dict) -> dict:
+        """缺席的容器键按空值补齐，让线契约校验只挡真正有歧义的形态。
+
+        MiniMax 高频漏写 `slot_refs`/`depends_on`（偶发连 `slots`），此前一个键缺席
+        就整份丢弃计划——demo-mkemhn 三轮（f868a7ce / 3650e2b5 / cffc84fd）由此退成
+        chitchat 兜底，并在兜底里编造「已找到 10 家门店」。缺席容器键的含义唯一（空），
+        补齐不引入任何语义猜测；**多出的未知键与缺席的身份键（id/capability_ref）
+        照旧整份拒绝**——那两类才是要挡的。"""
+        missing = _NORMALIZABLE_STEP_FIELDS - set(raw_step)
+        if not missing or not set(raw_step) <= set(_PLANNER_STEP_FIELDS):
+            return raw_step
+        filled = dict(raw_step)
+        for key in missing:
+            filled[key] = [] if key == "depends_on" else {}
+        logger.info("normalized missing step fields: %s", sorted(missing))
+        return filled
+
+    @staticmethod
     def _looks_like_no_action(data) -> bool:
         """模型说「受话了，但不该做任何动作」的形态。
 
@@ -1793,6 +1815,7 @@ class PlanBuilder:
                 logger.warning("Plan step is %s (not object), dropping plan for retry",
                                type(raw_step).__name__)
                 return None
+            raw_step = self._normalize_step_containers(raw_step)
             if set(raw_step) != set(_PLANNER_STEP_FIELDS):
                 logger.warning(
                     "Plan step fields differ from the exact wire contract, dropping plan for retry")
@@ -2049,6 +2072,11 @@ class PlanBuilder:
                 verification=next(
                     (_verification_dict(c)
                      for c in manifest.capabilities if c.intent == intent), {}),
+                # capability 声明的槽位名（进程内，不下发）：executor 的跨轮门店锚定
+                # 据此门控——只有声明了门店三槽的商户 workflow 才吃焦点补槽。
+                declared_slots=next(
+                    (list(getattr(c, "slots", []) or [])
+                     for c in manifest.capabilities if c.intent == intent), []),
             )
             steps.append(step)
 

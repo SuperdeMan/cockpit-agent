@@ -340,6 +340,8 @@ class PlannerEngine:
             # 契约见 docs/design/2026-08-13-cross-turn-store-anchor.md。
             ctx.focus_places = list(
                 getattr(working_set.focus, "last_places", None) or [])
+            ctx.focus_places_ts = float(
+                getattr(working_set.focus, "last_places_ts", 0.0) or 0.0)
 
             # C. 解析 endpoint（Registry）
             # badcase 排查内容级采集（OBS_CONTENT_CAPTURE 门控）：plan 结构 + LLM 原始输出。

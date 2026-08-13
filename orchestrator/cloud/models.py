@@ -35,6 +35,12 @@ class Step:
     trust_level: str = ""
     context_scopes: list[str] = field(default_factory=list)
     heavy: bool = False           # 重域能力（capability.heavy）：命中即开思考+过程区（progress.is_complex）
+    # 该 capability 声明的槽位名（planning._validated_steps 从 manifest 装配）。
+    # **进程内字段**：不进 _serialize_plan、不随 ExecuteRequest 下发——目前唯一消费方是
+    # executor._anchor_store_from_focus 的门控（只有声明了门店三槽的商户 workflow 才吃
+    # 跨轮门店锚定；此前锚定对所有步骤生效，把门店槽注进了 chitchat/nearby，
+    # demo-mkemhn 2fd09d52/44943f00 实证）。
+    declared_slots: list[str] = field(default_factory=list)
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -169,6 +175,11 @@ class PlanContext:
     # 可信来源的全部理由：延续的是「服务端记得取回过哪些门店」，不是让模型把坐标再说一遍。
     # 消费方 executor._resolve_slot_refs，契约见 docs/design/2026-08-13-cross-turn-store-anchor.md。
     focus_places: list[dict] = field(default_factory=list)
+    # focus_places 的取回时刻（epoch 秒）。update_focus 的粘性接力让门店列表跨任意多轮
+    # 存活（防「第一个」抹空焦点，2026-08-13），代价是设计文档「过期即失效」的时效
+    # 承诺被架空——executor 按本字段限龄（MERCHANT_STORE_ANCHOR_MAX_AGE_S），
+    # 0 = 来源没有时间戳（旧焦点数据），按过期处理。
+    focus_places_ts: float = 0.0
 
 
 @dataclass

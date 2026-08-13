@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import AsyncIterator
 from collections import defaultdict, deque
 from google.protobuf.json_format import MessageToDict
@@ -44,6 +45,18 @@ _STREAM_LOST_FINAL_SPEECH = "操作指令已发出，结果暂时无法确认，
 def _dedup_enabled() -> bool:
     """重复副作用防抖总开关（M2 P2）。off = 回到 T2 放宽前的行为。"""
     return os.getenv("PLANNER_DEDUP_SIDE_EFFECTS", "on").strip().lower() != "off"
+
+
+def _store_anchor_max_age_s() -> float:
+    """跨轮门店锚定的最大可用龄（秒）。
+
+    `update_focus` 的粘性接力让 `last_places` 跨任意多轮存活（防「第一个」抹空焦点），
+    设计文档「过期即失效」的时效承诺只能由这枚上限兑现——开了半小时车之后的
+    「这家瑞幸」不该还锚在半小时前那条 POI 上。"""
+    try:
+        return float(os.getenv("MERCHANT_STORE_ANCHOR_MAX_AGE_S", "1800"))
+    except ValueError:
+        return 1800.0
 
 
 _REF_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+\.data\.items\.\d+\.[A-Za-z_]+$")
@@ -577,6 +590,14 @@ class DagExecutor:
         契约与备选方案见 docs/design/2026-08-13-cross-turn-store-anchor.md。
         """
         keys = ("store_name", "store_longitude", "store_latitude")
+        # 门控（2026-08-13 demo-mkemhn）：只有 capability 声明了门店三槽的商户
+        # workflow 才吃焦点锚定。此前对所有步骤生效，把门店三槽注进了
+        # `chitchat.talk` 与 `nearby.search` 的下发槽位（2fd09d52/44943f00 日志
+        # 「门店取自上一轮 nearby.search 焦点」出现在闲聊步上）——设计文档 §4.3
+        # 第 1 条本来就要求「本步 intent 属于声明了门店槽的商户 workflow」。
+        # 判据来自 manifest 声明（planning 装配 declared_slots），零领域路由硬编码。
+        if not set(keys) <= set(getattr(step, "declared_slots", []) or []):
+            return
         if any(key in trusted for key in keys):
             return                          # 本轮 plan 内有生产者 → 让路
         # 声明了引用却没解析成功：要区分两种完全不同的情况。
@@ -594,6 +615,13 @@ class DagExecutor:
             return
         places = list(getattr(ctx, "focus_places", None) or [])
         if not places:
+            return
+        # 时效：取回时刻超龄（或旧数据没有时间戳）不锚定——诚实回到「请先查询附近
+        # 门店」，比拿半小时前的列表当「刚才那家」可靠。
+        fetched_at = float(getattr(ctx, "focus_places_ts", 0.0) or 0.0)
+        if fetched_at <= 0 or time.time() - fetched_at > _store_anchor_max_age_s():
+            logger.info("Step %s(%s): 门店焦点超龄（fetched_at=%.0f），不锚定",
+                        step.id, step.intent, fetched_at)
             return
         # Planner 塞进 slots 的门店值**一律只当线索，不当值**。2026-08-13 真栈实测，
         # 第二轮模型产的是：store_name = 它从上下文里抄来的店名，

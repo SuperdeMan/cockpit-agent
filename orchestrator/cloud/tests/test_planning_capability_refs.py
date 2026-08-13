@@ -349,6 +349,60 @@ def test_cyclic_wire_plan_is_rejected_before_it_reaches_the_executor():
     assert builder._parse_and_validate_data(acyclic, catalog, "query") is not None
 
 
+def test_missing_container_step_fields_are_normalized_not_dropped():
+    """缺席容器键（slots/depends_on/slot_refs）按空值补齐——含义唯一，不是猜测。
+
+    demo-mkemhn 三轮实证（f868a7ce/3650e2b5/cffc84fd）：MiniMax 漏写 `slot_refs`/
+    `depends_on` 时整份计划被丢，两轮重试打光后退成 chitchat 兜底，
+    兜底又凭历史编造「已找到 10 家门店，请选择其中一家」——没有列表也没有卡片。
+    """
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search")])
+    ref = catalog.pair_to_ref[("nearby", "nearby.search")]
+    builder = planning.PlanBuilder(None, None)
+
+    plan = builder._parse_and_validate_data({
+        "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": ref,
+                   "slots": {"keyword": "瑞幸咖啡"}}],
+    }, catalog, "查询附近的瑞幸咖啡")
+
+    assert plan is not None
+    assert plan.steps[0].intent == "nearby.search"
+    assert plan.steps[0].slots == {"keyword": "瑞幸咖啡"}
+    assert plan.steps[0].depends_on == []
+    assert plan.steps[0].slot_refs == {}
+
+    # 连 slots 都漏了也一样：空槽计划由既有的 NEED_SLOT/校验机制接手。
+    bare = builder._parse_and_validate_data({
+        "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": ref}],
+    }, catalog, "q")
+    assert bare is not None and bare.steps[0].slots == {}
+
+
+def test_unknown_step_fields_and_missing_identity_still_reject_the_plan():
+    """归一只救缺席的容器键：多出的未知键是模型自造语法（真值可能放错字段名，
+    接受等于静默错执行）；id/capability_ref 缺席是身份缺失，都整份拒绝。"""
+    _, assemble = _ref_api()
+    catalog = assemble([_agent("nearby", "nearby.search")])
+    ref = catalog.pair_to_ref[("nearby", "nearby.search")]
+    builder = planning.PlanBuilder(None, None)
+
+    extra_key = builder._parse_and_validate_data({
+        "addressed": True,
+        "steps": [{"id": "s1", "capability_ref": ref, "slots": {},
+                   "parameters": {"keyword": "瑞幸"}}],
+    }, catalog, "q")
+    assert extra_key is None
+
+    no_identity = builder._parse_and_validate_data({
+        "addressed": True,
+        "steps": [{"slots": {"keyword": "瑞幸"}}],
+    }, catalog, "q")
+    assert no_identity is None
+
+
 def test_build_retry_and_replan_use_one_catalog_and_one_parse_seam(monkeypatch):
     _, assemble = _ref_api()
     alpha = _agent("alpha", "alpha.one")

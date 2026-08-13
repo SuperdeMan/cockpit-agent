@@ -1,5 +1,6 @@
 """Planner 引擎单元测试：拓扑分层、环检测、slot_refs、部分失败。"""
 import json
+import time
 
 import pytest
 from orchestrator.cloud.models import (Step, StepResult, StepStatus, Plan,
@@ -408,8 +409,15 @@ def test_run_seeded_failed_dep_skips_children():
     assert results == []
 
 
-def _focus_ctx(places):
-    return PlanContext(session_id="s", user_id="u", focus_places=list(places))
+def _focus_ctx(places, ts=None):
+    """锚定测试上下文：缺省带**新鲜**取回时刻——时效是另一组用例单独测的变量。"""
+    return PlanContext(session_id="s", user_id="u", focus_places=list(places),
+                       focus_places_ts=time.time() if ts is None else ts)
+
+
+# 锚定只对声明了门店三槽的商户 workflow 生效（demo-mkemhn 门控）；
+# 测试步骤按 servers.yaml 里 luckin.order/menu 的真实声明造。
+_STORE_SLOTS = ["item_query", "store_name", "store_longitude", "store_latitude"]
 
 
 _LAST_PLACES = [
@@ -426,7 +434,7 @@ def test_store_slots_fall_back_to_last_turn_places_with_focus_provenance():
     延续的是**服务端记得取回过哪些门店**，不是让模型把坐标再说一遍。
     """
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
-                slots={"item_query": "冰美式"})
+                slots={"item_query": "冰美式"}, declared_slots=_STORE_SLOTS)
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         step, {}, _focus_ctx(_LAST_PLACES))
@@ -450,6 +458,7 @@ def test_in_plan_producer_always_wins_over_last_turn_focus():
         step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
         data={"items": [{"name": "本轮门店", "lng": 121.47, "lat": 31.23}]})}
     step = Step(id="s2", agent_id="mcp-bridge", intent="luckin.order",
+                declared_slots=_STORE_SLOTS,
                 slot_refs={"store_name": "s1.data.items.0.name",
                            "store_longitude": "s1.data.items.0.lng",
                            "store_latitude": "s1.data.items.0.lat"})
@@ -466,7 +475,8 @@ def test_in_plan_producer_always_wins_over_last_turn_focus():
 def test_a_store_name_not_in_the_server_held_list_is_never_substituted():
     """名字对不上服务端持有的门店 → 不锚定，绝不拿第一条顶替用户点名的店。"""
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
-                slots={"store_name": "用户点名的另一家完全不同的店"})
+                slots={"store_name": "用户点名的另一家完全不同的店"},
+                declared_slots=_STORE_SLOTS)
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         step, {}, _focus_ctx(_LAST_PLACES))
@@ -486,7 +496,8 @@ def test_planner_supplied_store_values_are_a_hint_not_a_value():
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.menu",
                 slots={"store_name": "瑞幸咖啡(前海印里店)",
                        "store_longitude": "s1.data.items.0.lng",
-                       "store_latitude": "s1.data.items.0.lat"})
+                       "store_latitude": "s1.data.items.0.lat"},
+                declared_slots=_STORE_SLOTS)
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         step, {}, _focus_ctx(_LAST_PLACES))
@@ -502,7 +513,8 @@ def test_planner_supplied_store_values_are_a_hint_not_a_value():
 def test_latin_brand_prefix_does_not_break_the_name_match():
     """高德给的名字常带 `luckin coffee ` 前缀；归一只为匹配，不改落地值。"""
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.menu",
-                slots={"store_name": "luckin coffee 瑞幸咖啡(前海华强金融大厦店)"})
+                slots={"store_name": "luckin coffee 瑞幸咖啡(前海华强金融大厦店)"},
+                declared_slots=_STORE_SLOTS)
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         step, {}, _focus_ctx(_LAST_PLACES))
@@ -516,6 +528,7 @@ def test_in_plan_producer_that_failed_is_a_defect_not_missing_context():
     done = {"s1": StepResult(step_id="s1", status=StepStatus.FAILED,
                              source_intent="nearby.search", data={})}
     step = Step(id="s2", agent_id="mcp-bridge", intent="luckin.order",
+                declared_slots=_STORE_SLOTS,
                 slot_refs={"store_name": "s1.data.items.0.name"})
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
@@ -533,6 +546,7 @@ def test_dangling_ref_to_a_previous_turn_step_is_exactly_the_cross_turn_case():
     第一版把这种也当计划缺陷让路，跨轮锚定于是永远不触发——两轮对话照旧走不通。
     """
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.menu",
+                declared_slots=_STORE_SLOTS,
                 slot_refs={"store_name": "s0.data.items.0.name",
                            "store_longitude": "s0.data.items.0.lng",
                            "store_latitude": "s0.data.items.0.lat"})
@@ -548,7 +562,7 @@ def test_dangling_ref_to_a_previous_turn_step_is_exactly_the_cross_turn_case():
 
 def test_no_focus_places_means_no_anchor_at_all():
     step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
-                slots={"item_query": "冰美式"})
+                slots={"item_query": "冰美式"}, declared_slots=_STORE_SLOTS)
 
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         step, {}, _focus_ctx([]))
@@ -564,7 +578,7 @@ def test_malformed_focus_places_are_dropped_not_partially_applied():
                 [{"name": "越界", "lng": 999.0, "lat": 22.5}],
                 [{"name": "非数", "lng": "abc", "lat": 22.5}]):
         step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
-                    slots={"item_query": "冰美式"})
+                    slots={"item_query": "冰美式"}, declared_slots=_STORE_SLOTS)
 
         DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
             step, {}, _focus_ctx(bad))
@@ -572,6 +586,50 @@ def test_malformed_focus_places_are_dropped_not_partially_applied():
         assert "store_name" not in step.slots, bad
         assert "store_longitude" not in step.slots, bad
         assert "_trusted_slot_refs" not in step.meta, bad
+
+
+def test_steps_without_declared_store_slots_are_never_anchored():
+    """锚定门控（demo-mkemhn 2fd09d52/44943f00）：capability 没声明门店三槽的步骤
+    （chitchat/nearby/任何非商户步）绝不吃焦点补槽——此前门店三槽被注进了
+    `chitchat.talk` 的下发槽位，等于把商户上下文塞给开放域兜底模型。"""
+    for intent, declared in (("chitchat.talk", ["text"]),
+                             ("nearby.search", ["keyword", "brand"]),
+                             ("luckin.order", [])):
+        step = Step(id="s1", agent_id="x", intent=intent,
+                    slots={}, declared_slots=declared)
+
+        DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+            step, {}, _focus_ctx(_LAST_PLACES))
+
+        assert "store_name" not in step.slots, intent
+        assert "_trusted_slot_refs" not in step.meta, intent
+
+
+def test_stale_focus_places_are_not_anchored():
+    """时效（设计文档「刚才那家本来就有时效」）：粘性接力让 last_places 永生，
+    超龄列表不得再当「刚才那家」用——过期就诚实回到「请先查询附近门店」。"""
+    stale = time.time() - 3600 * 3
+    step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
+                slots={"item_query": "冰美式"}, declared_slots=_STORE_SLOTS)
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        step, {}, _focus_ctx(_LAST_PLACES, ts=stale))
+
+    assert "store_name" not in step.slots
+    assert "_trusted_slot_refs" not in step.meta
+
+
+def test_focus_places_without_timestamp_count_as_expired():
+    """旧焦点数据没有取回时刻（ts=0）：按过龄处理，不按新鲜处理——
+    「没有证据」不能与「证据为新鲜」压成同一个值。"""
+    step = Step(id="s1", agent_id="mcp-bridge", intent="luckin.order",
+                slots={"item_query": "冰美式"}, declared_slots=_STORE_SLOTS)
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        step, {}, _focus_ctx(_LAST_PLACES, ts=0.0))
+
+    assert "store_name" not in step.slots
+    assert "_trusted_slot_refs" not in step.meta
 
 
 def test_streaming_direct_path_also_resolves_slots_before_dispatch():
