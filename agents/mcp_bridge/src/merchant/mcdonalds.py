@@ -137,7 +137,14 @@ class McDonaldsWorkflow(MerchantWorkflow):
         store = store_matches[0]
         store_code = str(store.get("storeCode") or "")
         if not store_code:
-            return AgentResult(speech="门店信息不完整，不能继续下单，请换一家门店。")
+            # NEED_SLOT 而非默认 OK：本工作流 require_confirm=true，中央确认闸会给
+            # 任何 OK 结果追加「确定继续吗？」，拒绝落在 OK 上就成了自相矛盾的一句。
+            # 与瑞幸侧 _reselect_store 同一处理，理由见那里的注释。
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="门店信息不完整，不能继续下单，请换一家门店。",
+                follow_up="换一家麦当劳门店试试？",
+                missing_slots=["store_hint"])
 
         try:
             store_context = self._store_context(store, slots, now=now)
@@ -166,7 +173,10 @@ class McDonaldsWorkflow(MerchantWorkflow):
         product = product_matches[0]
         product_code = str(product.get("code") or "")
         if not product_code:
-            return AgentResult(speech="商品信息不完整，不能继续下单，请换一款商品。")
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="商品信息不完整，不能继续下单，请换一款商品。",
+                follow_up="换一款餐品试试？", missing_slots=["item_query"])
 
         try:
             detail_data = await self._read(

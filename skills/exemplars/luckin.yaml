@@ -95,6 +95,49 @@ exemplars:
   added: '2026-08-12'
   tags:
   - merchant-cancel
+- text: 附近的瑞幸有什么可以点的
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      brand: 瑞幸
+      keyword: 瑞幸咖啡
+  - id: menu
+    agent: mcp-bridge
+    intent: luckin.menu
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: manual
+  added: '2026-08-13'
+  tags:
+  - merchant-menu
+- text: 看看附近那家瑞幸的菜单都有啥
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      brand: 瑞幸
+      keyword: 瑞幸咖啡
+  - id: menu
+    agent: mcp-bridge
+    intent: luckin.menu
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: manual
+  added: '2026-08-13'
+  tags:
+  - merchant-menu
 # 纯发现边界「附近有没有瑞幸」→ nearby.search 不进本文件；上面两条是受控例外：
 # nearby 只负责可信采集门店，后续 luckin.order 通过 depends_on + slot_refs 消费结果。
 # 纯发现边界仍由对抗语料 cc.negative.luckin-nearby-not-status 与 mode_routing_cases 锁定。
+# luckin.menu（2026-08-13）：只读看菜单。在它之前「这家店的菜单」在能力目录里
+# 只对应演示商户 shop.menu，真实门店问句因此答出演示数据（trace 9899486a8773d577）。
+# 两条范例都带 nearby.search 前置——官方菜单绑 deptId，绕不开选店。

@@ -15,12 +15,18 @@ schema_version: 1
 # mcd.order / luckin.order 各一条独立正例和一条 relation 对照，luckin.order_cancel
 # 补两条正例和一条 relation 对照。翻转不增输入，新增恰好 7，distinct_inputs=560；
 # 没有删旧尺子压数字，现上界恰好用满。
+# 2026-08-13 放到 564：同一条理由的第四次适用——新增 active intent `luckin.menu`
+# （真实门店只读菜单；在它之前「这家店的菜单」在能力目录里只对应演示商户的
+# shop.menu，真实门店问句因此答出演示数据，trace 9899486a8773d577）。
+# 两对 route_flip 共 4 条唯一输入，一次性兑现 luckin.menu 的正2/硬负2/对照1
+# （其中一条既是第二正例又是 relation invariant，故 4 条而非 5 条）。
+# **上限跟着能力面走，不是反过来**——旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 560
+    max_cases: 564
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

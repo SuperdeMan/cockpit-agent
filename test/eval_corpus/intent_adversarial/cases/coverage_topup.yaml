@@ -841,3 +841,71 @@ cases:
       - input: {utterance: 后除雾不用了，关掉吧, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [rear_defogger.close]}], forbidden_intents: [front_defogger.close, accompany_home.close, hvac.off], allow_extra_intents: false}
+  # ── 真实商户：看菜单 vs 下单 vs 别家品牌 ────────────────────────────────
+  # luckin.menu 是 2026-08-13 新增的只读能力。在它之前，「这家店的菜单」在整个能力
+  # 目录里只对应演示商户的 shop.menu，真实门店的问句因此答出了演示数据
+  # （trace 9899486a8773d577）。两对 route_flip 钉住它的两条边界：
+  #   ① 看菜单 ≠ 下单（同一家店、同一个品牌，只差有没有要执行写操作）
+  #   ② 问哪家品牌就查哪家（问麦当劳不许去瑞幸取菜单）
+  # 门店锚定是硬前提：官方菜单绑定 deptId，所以正例都要求先经 nearby.search。
+  - id: tu.merchant.luckin-menu-vs-order
+    title: 看这家瑞幸有什么可点（只读）
+    family_id: tu.merchant-luckin-menu-order
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [nearby, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 就近那家瑞幸都卖些什么, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.menu]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.menu, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [luckin.order, shop.menu, mcd.menu]
+            allow_extra_intents: false
+  - id: tu.merchant.luckin-order-vs-menu
+    title: 在这家瑞幸点一杯（写操作）
+    family_id: tu.merchant-luckin-menu-order
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, write_action, mcp], domains: [nearby, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: tu.merchant.luckin-menu-vs-order, type: route_flip, expectation: {forbidden_after: [luckin.menu], required_change: true}}
+    turns:
+      - input: {utterance: 在最近那家瑞幸给我点一杯冰美式, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.order]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.order, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [luckin.menu, shop.order, luckin.order_cancel]
+            allow_extra_intents: false
+  - id: tu.merchant.luckin-menu-paraphrase
+    title: 换个说法看瑞幸菜单（invariant 对照）
+    family_id: tu.merchant-luckin-menu-order
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, capability_present, mcp], domains: [nearby, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: tu.merchant.luckin-menu-vs-order, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 瑞幸这家店都有哪些饮品, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.menu]}]
+            forbidden_intents: [luckin.order, shop.menu]
+            allow_extra_intents: false
+  - id: tu.merchant.mcd-menu-not-luckin
+    title: 问麦当劳的吃食不许去瑞幸取菜单
+    family_id: tu.merchant-brand-flip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, capability_present, mcp], domains: [mcd, luckin], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 麦当劳现在有些什么能吃的, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [luckin.menu, luckin.order, shop.menu], allow_extra_intents: false}

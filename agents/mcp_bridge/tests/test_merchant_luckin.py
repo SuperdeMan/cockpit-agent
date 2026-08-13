@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from agents._sdk import NEED_CONFIRM, NEED_SLOT
+from agents._sdk import NEED_CONFIRM, NEED_SLOT, OK
 from agents._sdk.ledger import DONE, FAILED, LedgerTask
 from agents.mcp_bridge.src import agent as agent_module
 from agents.mcp_bridge.src.admission import ServerSpec, ToolSpec, WorkflowSpec
@@ -660,6 +660,82 @@ async def test_multiple_or_closed_stores_stop_before_product_lookup():
     closed_result = await closed_flow.prepare(_intent(), CTX, META)
     assert "打烊" in closed_result.speech
     assert [name for name, _, _ in closed_client.calls] == ["queryShopList"]
+
+
+@pytest.mark.asyncio
+async def test_menu_is_read_only_and_never_touches_write_tools():
+    """只读看菜单：走完整门店可信链，但**只调两个读工具**、不建草稿。
+
+    这条能力存在的理由是 trace 9899486a8773d577——「这家店的菜单」当时只能落到
+    演示商户的 shop.menu，于是真实门店的问句答出了「（演示商户）拿铁 22 元起」。
+    """
+    workflow, client = _workflow()
+
+    result = await workflow.menu(_intent(name="luckin.menu"), CTX, META)
+
+    assert result.status == OK          # 只读 → 不进确认闸、不挂起
+    assert [name for name, _, _ in client.calls] == [
+        "queryShopList", "searchProductForMcp"]
+    # 真机取证：query="" 被商户判 code=1000 非法参数 → 无 item_query 时必须给种子实词
+    search_args = next(args for name, args, _ in client.calls
+                       if name == "searchProductForMcp")
+    assert str(search_args.get("query") or "").strip(), "空 query 会被商户拒"
+    # 一次最多 3 条，话术不许说成「全部菜单」
+    assert "菜单" not in result.speech and "全部" not in result.speech
+    card = result.ui_card
+    assert card["type"] == "merchant_choices"
+    assert card["choice_kind"] == "product"
+    assert card["merchant"] == "瑞幸"
+    assert "生椰拿铁（首创）" in [item["name"] for item in card["items"]]
+    # 价格取真机字段 estimatePrice（到手价），不是猜的键名
+    first = next(i for i in card["items"] if i["name"] == "生椰拿铁（首创）")
+    assert first["price"] == "16.60 元"
+    # 演示商户角标绝不该出现在真实商户的菜单上
+    assert "演示" not in result.speech
+
+
+@pytest.mark.asyncio
+async def test_menu_requires_the_same_trusted_store_chain_as_ordering():
+    """没有可信 POI 就不给菜单——官方菜单绑定 deptId，绕不开选店这一步。"""
+    workflow, client = _workflow()
+
+    result = await workflow.menu(_intent(name="luckin.menu"), CTX, meta={})
+
+    assert result.status == NEED_SLOT
+    assert "store_name" in result.missing_slots
+    assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_store_refusals_are_need_slot_so_no_confirm_prompt_is_appended():
+    """门店类拒绝一律 NEED_SLOT —— 落在 OK 上会被中央确认闸接成自相矛盾的一句。
+
+    executor._enforce_capability_confirm 给**任何 OK 结果**追加「这个操作需要您确认后
+    才会执行，确定继续吗？」。2026-08-12 demo-2goetq 实测拼出：
+    「…没有继续下单，请重新选择门店。这个操作需要您确认后才会执行，确定继续吗？」
+    ——先说不能做、再问要不要做，用户答「确认」还是同一句拒绝。
+    """
+    far_away = _ok([{**SHOP_RESULT["data"]["data"][0],
+                     "longitude": 116.4074, "latitude": 39.9042}])
+    # 按名查空会触发一次「只用坐标」重查（见 _resolve_store），故该用例排两条空响应
+    cases = {
+        "no_official_store": ([_ok([]), _ok([])], 2),
+        "all_closed": ([_ok([{**SHOP_RESULT["data"]["data"][0],
+                              "workStatus": "已打烊"}])], 1),
+        "poi_mismatch": ([far_away], 1),
+        "incomplete_official_store": ([_ok([
+            {**SHOP_RESULT["data"]["data"][0], "deptId": 0}])], 1),
+    }
+    for label, (script, shop_calls) in cases.items():
+        workflow, client = _workflow(scripts={"queryShopList": script})
+        result = await workflow.prepare(_intent(), CTX, META)
+
+        assert result.status == NEED_SLOT, label
+        assert result.speech and "确定继续吗" not in result.speech, label
+        assert "store_name" in (result.missing_slots or []), label
+        # 拒绝必须**在**商品查询之前落定：没门店就不该再碰下游写链
+        assert [name for name, _, _ in client.calls] == (
+            ["queryShopList"] * shop_calls), label
 
 
 @pytest.mark.asyncio

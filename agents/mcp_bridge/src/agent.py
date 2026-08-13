@@ -264,6 +264,11 @@ class McpBridgeAgent(BaseAgent):
             token = str((intent.slots or {}).get("checkout_token") or "")
             if intent.name.endswith("_cancel"):
                 return await workflow_binding.workflow.cancel(intent, ctx, meta)
+            # 只读看菜单：与 prepare/confirm 是**并列的第三条入口**，不建草稿、
+            # 不碰写工具。放在 confirmed 判定之前——菜单没有可确认的东西，
+            # 让它掉进 confirm 分支会拿一个不存在的 checkout_token 去核销。
+            if intent.name.endswith(".menu"):
+                return await workflow_binding.workflow.menu(intent, ctx, meta)
             if confirmed:
                 return await workflow_binding.workflow.confirm(
                     intent, ctx, meta, token=token)

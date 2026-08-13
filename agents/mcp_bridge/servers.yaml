@@ -305,7 +305,10 @@ servers:
         write: false
         expose: false
         forward_owner: false
-        required_scopes: [merchant.write]
+        # 只读工具归 merchant.read：luckin.menu（只读看菜单）才不必要求下单权限。
+        # 准入校验按「workflow 必须覆盖内部工具的 scope 并集」判，故 luckin.order
+        # 同步声明两者——它确实两样都用。
+        required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "cee4310bfb4d"
@@ -315,7 +318,7 @@ servers:
         write: false
         expose: false
         forward_owner: false
-        required_scopes: [merchant.write]
+        required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "c4426494a931"
@@ -397,12 +400,26 @@ servers:
           - previewOrder
           - createOrder
           - cancelOrder
-        required_scopes: [merchant.write]
+        required_scopes: [merchant.read, merchant.write]
         require_confirm: true
         expose: true
         description: 必须先消费 nearby.search 同一公开 POI 的可信门店名和坐标，再选商品规格、预览确认并创建未支付订单
         slots: [item_query, quantity, store_name, store_longitude, store_latitude, temperature, ice, sweetness, milk, checkout_token]
         examples: ["先查附近的瑞幸，再点一杯生椰拿铁少冰半糖", "先找到瑞幸迪美店，再来两杯热美式"]
+      # 只读看菜单（2026-08-13）：在此之前「这家店的菜单」在整个能力目录里只对应
+      # 演示商户的 shop.menu，于是真实门店的问句答出了演示数据（trace 9899486a8773d577）。
+      # 门店可信链与下单完全一致——官方菜单必须绑定 deptId，绕不开选店这一步。
+      - intent: luckin.menu
+        handler: luckin
+        required_tools:
+          - queryShopList
+          - searchProductForMcp
+        required_scopes: [merchant.read]
+        require_confirm: false
+        expose: true
+        description: 查看某家瑞幸门店在售的商品与价格（只读，不下单）；同样需要先由 nearby.search 选定门店
+        slots: [store_name, store_longitude, store_latitude, item_query]
+        examples: ["这家瑞幸有什么可以点的", "看看这家瑞幸的菜单", "瑞幸有哪些美式"]
       - intent: luckin.order_cancel
         handler: luckin
         required_tools: [queryOrderDetailInfo, cancelOrder]

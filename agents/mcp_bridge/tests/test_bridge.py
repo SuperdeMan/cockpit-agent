@@ -89,7 +89,13 @@ def test_allowlist_loads_and_locks_version_and_schema(monkeypatch):
     assert {t.intent for t in luckin.tools if t.expose} == {
         "luckin.order_status"}
     assert {w.intent for w in luckin.workflows} == {
-        "luckin.order", "luckin.order_cancel"}
+        "luckin.order", "luckin.order_cancel", "luckin.menu"}
+    # 只读看菜单不得要求下单权限，也不得进确认闸——它没有可确认的东西
+    menu_flow = next(w for w in luckin.workflows if w.intent == "luckin.menu")
+    assert menu_flow.required_scopes == ["merchant.read"]
+    assert menu_flow.require_confirm is False
+    assert set(menu_flow.required_tools) == {
+        "queryShopList", "searchProductForMcp"}
     assert {t.name for t in luckin.tools if not t.expose} == {
         "queryShopList", "searchProductForMcp", "queryProductDetailInfo",
         "switchProduct", "previewOrder", "createOrder", "cancelOrder"}
@@ -1742,3 +1748,42 @@ def test_bridge_core_has_no_domain_verbs_in_confirm_wording():
                 if isinstance(node, ast.Constant) and isinstance(node.value, str)}
     assert not any("准备下单" in lit for lit in literals),         "下单动词必须来自 servers.yaml 的 confirm_prompt"
     assert "confirm_prompt" in src
+
+
+def test_every_declared_workflow_constructs_from_the_real_allowlist(monkeypatch):
+    """每条 servers.yaml 里声明的 workflow 都必须能用**它自己声明的那几个工具**构造。
+
+    2026-08-13 真栈抓到的形态：`luckin.menu` 只声明两个读工具，而 codec 的
+    `__init__` 当时把「非 _cancel 即整套下单工具」写死，于是桥启动期
+    `workflow luckin.menu 初始化失败：ValueError`，能力**根本没进 capability 合成**
+    ——而单测全绿，因为测试 fixture 递的是全量工具字典。
+    本用例把构造参数换成真实清单里那条 workflow 自己的 required_tools，
+    这正是当时被短路掉的那一步。
+    """
+    monkeypatch.delenv("MCD_MCP_TOKEN", raising=False)
+    monkeypatch.delenv("LUCKIN_MCP_TOKEN", raising=False)
+    specs = load_servers(SERVERS_YAML)
+
+    constructed = []
+    for spec in specs:
+        for workflow in spec.workflows:
+            tools_by_name = {
+                name: SimpleNamespace(name=name)
+                for name in workflow.required_tools
+            }
+            agent = McpBridgeAgent.__new__(McpBridgeAgent)
+            agent._draft_store = None
+            agent.ledger = None
+            agent._payment = None
+            built = agent._make_workflow(
+                workflow.handler, spec, workflow, tools_by_name)
+            assert built is not None, workflow.intent
+            declared = getattr(built, "required_tools", None)
+            if declared is not None:      # 瑞幸 codec 把权威固化在实例上
+                assert set(declared) == set(workflow.required_tools), (
+                    f"{workflow.intent} 的 codec 权威必须等于它自己的声明")
+            constructed.append(workflow.intent)
+
+    assert "luckin.menu" in constructed
+    assert set(constructed) == {
+        "mcd.order", "luckin.order", "luckin.order_cancel", "luckin.menu"}

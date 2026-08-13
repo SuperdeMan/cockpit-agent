@@ -105,7 +105,9 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
 
     assert len(agents) == 17
     # 2026-08-12 138→141：三条受审复合商户能力激活；官方低层工具仍不入 catalog。
-    assert len(catalog.ref_to_pair) == 141
+    # 2026-08-13 141→142：新增 `luckin.menu`（真实门店只读菜单）——在它之前
+    # 「这家店的菜单」在目录里只对应演示商户 shop.menu，真实门店问句因此答出演示数据。
+    assert len(catalog.ref_to_pair) == 142
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -118,11 +120,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 但每次动它都要先确认涨的是有意新增的能力，而不是别处漏进来的重复项。
     # 2026-08-12：新增 mcd.order/luckin.order/luckin.order_cancel，且瑞幸下单描述明确锁定
     # nearby.search 可信公开 POI 依赖；完整 inventory 精确增加到 11529，仍未发生预算裁剪。
-    assert catalog.catalog_stats["chars_full"] == 11529
-    assert catalog.catalog_stats["chars_final"] == 11529
+    # 2026-08-13：新增 luckin.menu（只读门店菜单）+143 字符 → 11672，`dropped` 仍为空，
+    # 16k 预算余量 4328。按上面那条纪律核过：涨的是这一条有意新增的能力，不是重复项。
+    assert catalog.catalog_stats["chars_full"] == 11672
+    assert catalog.catalog_stats["chars_final"] == 11672
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4471
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4328
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
@@ -156,7 +160,8 @@ def test_merchant_workflow_capabilities_are_in_catalog_without_internal_tools():
     import eval_live
 
     intents = eval_live.known_intents()
-    assert {"mcd.order", "luckin.order", "luckin.order_cancel"} <= intents
+    assert {"mcd.order", "luckin.order", "luckin.order_cancel",
+            "luckin.menu"} <= intents
     assert not ({
         "query-nearby-stores", "query-meals", "create-order",
         "queryShopList", "searchProductForMcp", "createOrder", "cancelOrder",

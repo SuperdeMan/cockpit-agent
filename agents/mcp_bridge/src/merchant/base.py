@@ -34,6 +34,10 @@ class MerchantWorkflow(ABC):
     async def cancel(self, intent, ctx, meta) -> AgentResult:
         return AgentResult(speech="这个商户暂不支持取消。")
 
+    async def menu(self, intent, ctx, meta) -> AgentResult:
+        """只读看菜单。默认不支持——诚实说，不猜、不回落到演示商户。"""
+        return AgentResult(speech="这个商户暂不支持查看菜单。")
+
     @classmethod
     def choice_card(cls, kind: str, choices: list[MerchantChoice]) -> dict:
         selected = list(choices or [])[:3]

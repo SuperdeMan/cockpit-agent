@@ -46,6 +46,22 @@ _CANCEL_TOOLS = (
     "queryOrderDetailInfo",
     "cancelOrder",
 )
+# 只读看菜单：门店解析 + 商品检索，**一个写工具都不需要**。
+_MENU_TOOLS = (
+    "queryShopList",
+    "searchProductForMcp",
+)
+# 用户没说想喝什么时给商户检索的种子词。空串会被商户判「非法参数」（真机取证），
+# 所以必须给一个实词——挑最泛的品类词，不预设口味。
+_MENU_SEED_QUERY = "咖啡"
+# 逐 intent 的工具契约。用表不用 if 链：新增 workflow intent 时漏配这里，
+# 桥在启动期就会以具名 ValueError 拒载——2026-08-13 luckin.menu 首次上真栈时
+# 正是这样被抓到的（单测给的是全量工具，只有容器里才走到这条校验）。
+_WORKFLOW_TOOL_CONTRACTS = {
+    "luckin.order": _ORDER_TOOLS,
+    "luckin.order_cancel": _CANCEL_TOOLS,
+    "luckin.menu": _MENU_TOOLS,
+}
 _OPEN_STATUSES = {"营业中", "open", "opened", "1", "true"}
 _CLOSED_STATUSES = {
     "已打烊", "打烊", "停业", "休息中", "closed", "close", "closing", "0",
@@ -120,7 +136,7 @@ class _IncompleteSuccess(_BusinessError):
 
 class LuckinWorkflow(MerchantWorkflow):
     merchant = "luckin"
-    intents = ("luckin.order", "luckin.order_cancel")
+    intents = ("luckin.order", "luckin.order_cancel", "luckin.menu")
 
     def __init__(self, server, workflow_spec, tools_by_name, draft_store,
                  ledger, payment):
@@ -134,9 +150,11 @@ class LuckinWorkflow(MerchantWorkflow):
             getattr(workflow_spec, "required_tools", None) or ()))
         if not declared:
             raise ValueError("luckin workflow required_tools must not be empty")
-        expected = (_CANCEL_TOOLS if str(
-            getattr(workflow_spec, "intent", "") or "").endswith("_cancel")
-                    else _ORDER_TOOLS)
+        intent_name = str(getattr(workflow_spec, "intent", "") or "")
+        expected = _WORKFLOW_TOOL_CONTRACTS.get(intent_name)
+        if expected is None:
+            raise ValueError(
+                f"luckin workflow has no tool contract for intent {intent_name!r}")
         self.required_tools = declared
         missing = [name for name in self.required_tools if name not in available]
         if missing:
@@ -178,57 +196,11 @@ class LuckinWorkflow(MerchantWorkflow):
                 status=NEED_SLOT, speech="数量需要是 1 到 20 之间的整数。",
                 follow_up="请告诉我要几杯。", missing_slots=["quantity"])
 
-        if store is None:
-            if trusted is None:
-                return AgentResult(
-                    status=NEED_SLOT,
-                    speech="请先查询附近的瑞幸门店并选择一家，"
-                           "我只会使用该公开门店 POI 的坐标。",
-                    follow_up="可以说“查询附近的瑞幸咖啡”。",
-                    missing_slots=[
-                        "store_name", "store_longitude", "store_latitude"])
-            store_name, longitude, latitude = trusted
-            try:
-                shops = await self._read(
-                    "queryShopList",
-                    self._arguments("queryShopList", {
-                        "deptName": store_name,
-                        "longitude": longitude,
-                        "latitude": latitude,
-                    }))
-            except Exception as exc:
-                return self._read_failure("查询瑞幸门店", exc)
-
-            stores = self._stores(shops)
-            if not stores:
-                return AgentResult(
-                    speech="没有找到与所选 POI 对应的瑞幸官方门店，"
-                           "请重新选择门店。")
-            open_stores = [candidate for candidate in stores
-                           if self._is_open(candidate)]
-            if not open_stores:
-                return AgentResult(speech="找到的瑞幸门店已打烊，请换一家或稍后再试。")
-            nearby_stores = [
-                candidate for candidate in open_stores
-                if self._near_trusted_poi(candidate, longitude, latitude)]
-            if not nearby_stores:
-                return AgentResult(
-                    speech="官方门店的坐标或距离与所选 POI 不一致，"
-                           "没有继续下单，请重新选择门店。")
-            matched = self._matching_stores(nearby_stores, store_name)
-            if len(matched) != 1:
-                return await self._store_choices(
-                    matched or nearby_stores, slots=slots, user_id=user_id,
-                    session_id=session_id, source={
-                        "name": store_name, "longitude": longitude,
-                        "latitude": latitude,
-                    })
-            store = matched[0]
-        dept_id = self._positive_int(store.get("deptId"))
-        official_longitude = self._coordinate(store.get("longitude"), longitude=True)
-        official_latitude = self._coordinate(store.get("latitude"), longitude=False)
-        if dept_id is None or official_longitude is None or official_latitude is None:
-            return AgentResult(speech="官方门店信息不完整，不能继续下单，请换一家。")
+        store, dept_id, refusal = await self._resolve_store(
+            store, trusted, slots=slots,
+            user_id=user_id, session_id=session_id)
+        if refusal is not None:
+            return refusal
 
         try:
             products_data = await self._read(
@@ -251,7 +223,9 @@ class LuckinWorkflow(MerchantWorkflow):
         product = matches[0]
         product_id = self._positive_int(product.get("productId"))
         if product_id is None:
-            return AgentResult(speech="官方商品信息不完整，请换一款饮品。")
+            return AgentResult(
+                status=NEED_SLOT, speech="官方商品信息不完整，请换一款饮品。",
+                follow_up="请换一款饮品。", missing_slots=["item_query"])
 
         try:
             detail = await self._read(
@@ -1385,6 +1359,201 @@ class LuckinWorkflow(MerchantWorkflow):
     @staticmethod
     def _overlaps(left: str, right: str) -> bool:
         return bool(left and right and (left in right or right in left))
+
+    async def _resolve_store(self, store, trusted, *, slots: dict,
+                             user_id: str, session_id: str):
+        """把可信 POI 三元组解析成官方门店 + deptId。
+
+        返回 `(store, dept_id, refusal)`——`refusal` 非 None 时调用方原样返回。
+        下单与看菜单**共用这一份**判定：门店可信链（同一轮 nearby.search 的同一条
+        item）、打烊、坐标一致性、同名多店消歧，抄成两份就会漂移（B1 的成因）。
+        """
+        if store is None:
+            if trusted is None:
+                return None, None, AgentResult(
+                    status=NEED_SLOT,
+                    speech="请先查询附近的瑞幸门店并选择一家，"
+                           "我只会使用该公开门店 POI 的坐标。",
+                    follow_up="可以说“查询附近的瑞幸咖啡”。",
+                    missing_slots=[
+                        "store_name", "store_longitude", "store_latitude"])
+            store_name, longitude, latitude = trusted
+            try:
+                shops = await self._read(
+                    "queryShopList",
+                    self._arguments("queryShopList", {
+                        "deptName": store_name,
+                        "longitude": longitude,
+                        "latitude": latitude,
+                    }))
+                stores = self._stores(shops)
+                if not stores:
+                    # 高德的 POI 名与瑞幸官方 deptName 并不总是同一套写法
+                    # （2026-08-13 真机取证：「瑞幸咖啡(前海华强金融大厦店)」→1 家，
+                    # 「luckin coffee 瑞幸咖啡(华润前海23F内部店)」→0 家，
+                    # 空名 + 同一坐标 →8 家）。按名查不到就**只用坐标**再查一次。
+                    # 这不放松可信链：坐标仍然只来自那条公开 POI，且下面的
+                    # 距离一致性 + 同名匹配两道闸原样生效，匹配不到就出候选卡让用户选，
+                    # 比「没找到，请重新选择门店」这个死胡同诚实也有用。
+                    shops = await self._read(
+                        "queryShopList",
+                        self._arguments("queryShopList", {
+                            "deptName": "",
+                            "longitude": longitude,
+                            "latitude": latitude,
+                        }))
+                    stores = self._stores(shops)
+            except Exception as exc:
+                return None, None, self._read_failure("查询瑞幸门店", exc)
+
+            if not stores:
+                return None, None, self._reselect_store(
+                    "没有找到与所选 POI 对应的瑞幸官方门店，请重新选择门店。")
+            open_stores = [candidate for candidate in stores
+                           if self._is_open(candidate)]
+            if not open_stores:
+                return None, None, self._reselect_store(
+                    "找到的瑞幸门店已打烊，请换一家或稍后再试。")
+            nearby_stores = [
+                candidate for candidate in open_stores
+                if self._near_trusted_poi(candidate, longitude, latitude)]
+            if not nearby_stores:
+                return None, None, self._reselect_store(
+                    "官方门店的坐标或距离与所选 POI 不一致，没有继续下单，请重新选择门店。")
+            matched = self._matching_stores(nearby_stores, store_name)
+            if len(matched) != 1:
+                return None, None, await self._store_choices(
+                    matched or nearby_stores, slots=slots, user_id=user_id,
+                    session_id=session_id, source={
+                        "name": store_name, "longitude": longitude,
+                        "latitude": latitude,
+                    })
+            store = matched[0]
+        dept_id = self._positive_int(store.get("deptId"))
+        official_longitude = self._coordinate(store.get("longitude"), longitude=True)
+        official_latitude = self._coordinate(store.get("latitude"), longitude=False)
+        if dept_id is None or official_longitude is None or official_latitude is None:
+            return None, None, self._reselect_store(
+                "官方门店信息不完整，不能继续下单，请换一家。")
+        return store, dept_id, None
+
+    async def menu(self, intent, ctx, meta) -> AgentResult:
+        """只读：看这家瑞幸门店有什么可点。**不建草稿、不碰任何写工具。**
+
+        存在的理由是「这家店的菜单」以前只能落到演示商户的 shop.menu
+        （2026-08-12 trace 9899486a8773d577 答的是「（演示商户）拿铁 22 元起」）——
+        目录里没有真实商户的只读菜单能力，模型没有选错，是**目录里没有更好的选项**。
+        """
+        slots = dict(getattr(intent, "slots", {}) or {})
+        user_id, session_id = self._owner(ctx)
+        store = None
+        trusted = self._trusted_store(slots, meta)
+        if trusted is None:
+            resumed = await self._resume_store_choice(
+                slots, user_id=user_id, session_id=session_id)
+            if isinstance(resumed, AgentResult):
+                return resumed
+            if resumed is not None:
+                slots, store = resumed
+        store, dept_id, refusal = await self._resolve_store(
+            store, trusted, slots=slots,
+            user_id=user_id, session_id=session_id)
+        if refusal is not None:
+            return refusal
+
+        # 2026-08-13 真机取证：`query=""` 被商户判 `code=1000 非法参数`，`query=" "`
+        # 返回 0 条，任意实词返回**最多 3 条**——这个工具是「搜商品」不是「列全菜单」。
+        # 所以①用户没说要什么时用种子词而不是空串；②话术不许说成「全部菜单」。
+        asked = str(slots.get("item_query") or "").strip()
+        query = asked or _MENU_SEED_QUERY
+        try:
+            products_data = await self._read(
+                "searchProductForMcp",
+                self._arguments("searchProductForMcp", {
+                    "deptId": dept_id, "query": query,
+                }))
+        except Exception as exc:
+            return self._read_failure("查询该门店菜单", exc)
+        products = [product for product in self._products(products_data)
+                    if self._is_available_product(product)]
+        if not products:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=(f"这家门店没查到可售的“{asked}”。" if asked
+                        else "这家门店暂时没查到在售商品。"),
+                follow_up="换个说法或换一家门店试试？",
+                missing_slots=["item_query"])
+
+        store_name = str(store.get("deptName") or "这家瑞幸")
+        items = [self._menu_item(product) for product in products[:20]]
+        listed = "、".join(
+            item["name"] + (f"（{item['price']}）" if item.get("price") else "")
+            for item in items[:5])
+        # 用户问了什么就说什么；没问时说清这是「几款」而不是「全部」——
+        # 商户接口一次最多给 3 条，把它播成菜单就是替商户编了个完整性承诺。
+        speech = (f"{store_name}的“{asked}”有：{listed}。" if asked
+                  else f"{store_name}可以点这几款：{listed}。")
+        speech += "要哪一款？想喝别的直接说名字，我再帮你找。"
+        return AgentResult(
+            speech=speech,
+            ui_card={
+                "type": "merchant_choices",
+                "stage": "choices",
+                "choice_kind": "product",
+                "merchant": "瑞幸",
+                "store_name": store_name,
+                "title": f"{store_name} 可点商品",
+                "items": items,
+                "options": [
+                    {"label": item["name"], "subtitle": item.get("price", ""),
+                     "send_text": f"在{store_name}点一杯{item['name']}"}
+                    for item in items[:6]
+                ],
+            })
+
+    @classmethod
+    def _menu_item(cls, product: dict) -> dict:
+        price = cls._menu_price(product)
+        return {
+            "id": str(product.get("productId") or ""),
+            "name": str(product.get("productName") or "").strip(),
+            "price": price,
+            "subtitle": price,
+        }
+
+    @staticmethod
+    def _menu_price(product: dict) -> str:
+        """价格只在**商家确实给了**的时候展示——猜价格是最不该犯的错。
+
+        字段名取自真机 searchProductForMcp 响应（`estimatePrice` 到手价优先、
+        `initialPrice` 原价兜底），不是照常见命名猜的：第一版写了
+        price/salePrice/discountPrice 四个键，真实响应里一个都不存在。
+        """
+        for key in ("estimatePrice", "initialPrice"):
+            try:
+                value = float(product.get(key))
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return f"{value:.2f} 元"
+        return ""
+
+    @staticmethod
+    def _reselect_store(speech: str) -> AgentResult:
+        """「请重新选择门店」类拒绝 —— 必须是 NEED_SLOT，不能是默认的 OK。
+
+        本工作流的能力声明 require_confirm=true，executor 的中央确认闸
+        (`_enforce_capability_confirm`) 会给**任何 OK 结果**追加「这个操作需要您确认后
+        才会执行，确定继续吗？」。拒绝落在 OK 上就会拼成自相矛盾的一句：
+        「…没有继续下单，请重新选择门店。这个操作需要您确认后才会执行，确定继续吗？」
+        （2026-08-12 demo-2goetq 实证，换个拒绝理由照样复现 3/3）。
+        修在拒绝侧而不是动那道闸：闸是安全件，而这几条本来就是要用户补门店槽——
+        与本文件里既有的 NEED_SLOT 路径同形。
+        """
+        return AgentResult(
+            status=NEED_SLOT, speech=speech,
+            follow_up="可以说“查询附近的瑞幸咖啡”再选一家。",
+            missing_slots=["store_name", "store_longitude", "store_latitude"])
 
     async def _store_choices(self, stores: list[dict], *, slots: dict,
                              user_id: str, session_id: str,
