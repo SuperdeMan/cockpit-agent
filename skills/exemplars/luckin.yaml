@@ -209,3 +209,27 @@ exemplars:
   tags:
   - badcase
   note: demo-mkemhn 2fd09d52——「换一个」裸句是 HMI 按钮补全后的形态；重搜后仍取 items.0（refs 契约统一下标，换店语义由重搜本身承担）
+- text: 在科苑南路店点一杯埃塞瑰夏冷萃，要少甜
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 瑞幸咖啡 科苑南路店
+  - id: order
+    agent: mcp-bridge
+    intent: luckin.order
+    slots:
+      item_query: 埃塞瑰夏冷萃
+      quantity: '1'
+      sweetness: 少甜
+    depends_on: [store]
+    slot_refs:
+      store_name: store.data.items.0.name
+      store_longitude: store.data.items.0.lng
+      store_latitude: store.data.items.0.lat
+  source: manual
+  added: '2026-08-13'
+  tags:
+  - merchant-order
+  note: 预览卡规格 chip 句式「在{店}点一杯{品}，要{规格}」（demo-3ukshz #3）——规格词按 _SPEC_GROUPS 落对应槽

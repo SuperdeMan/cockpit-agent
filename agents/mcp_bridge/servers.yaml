@@ -266,9 +266,13 @@ servers:
         required_scopes: [merchant.read]
         require_confirm: false
         expose: true
-        description: 查看某家麦当劳门店在售的餐品与价格（只读，不下单）；不给门店时按当前城市就近选一家
-        slots: [store_hint, city, item_query]
-        examples: ["附近麦当劳有什么可以点的", "看看这家麦当劳的菜单", "麦当劳早餐多少钱"]
+        # 「就近」要靠 nearby.search 供门店名（store_hint）——本能力自己拿不到位置
+        # （GPS 不下发第三方桥），没有 hint 时商户接口给的是**默认店不是就近店**
+        # （demo-3ukshz：附近的麦当劳答成十公里外的碧海君庭）。examples 刻意不写
+        # 「附近」句式：那类话术该由范例教成 nearby.search→mcd.menu 两步。
+        description: 查看某家麦当劳门店在售的餐品与价格（只读，不下单，支持按分类浏览）；「附近的麦当劳」需先经周边搜索取得门店名再传入 store_hint
+        slots: [store_hint, city, item_query, category]
+        examples: ["看看这家麦当劳的菜单", "麦当劳早餐多少钱", "看看麦当劳的汉堡类"]
 
   # ── 瑞幸官方 MCP（2026-08-11 真机核实激活：serverInfo=luckyordermcpmaster 1.0.0，
   # 8 工具）。门店发现仍归 nearby.search；workflow 只接受同一公开 POI 的可信

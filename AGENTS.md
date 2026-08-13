@@ -76,6 +76,14 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
 （§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
 
+**2026-08-13 demo-3ukshz 二轮聚焦实测**：cloud+bridge+nearby+chitchat 合跑
+**1274 passed**（bridge 410 / cloud 788 含 topic-change 新判据）、HMI **258/258**+
+Vite build、四门禁全绿（catalog **11866**：mcd.menu 描述撤「就近选一家」假承诺
++category 槽）；真栈探针「附近的麦当劳」首次答出真附近门店（高新中五道，非默认店
+碧海君庭）+ 打烊全程零编造。三方案与探针抓到的挂起黑洞变体见设计文档 §5、
+history **§32**；遗留两条打磨项（聚合丢 `_refused` 句 / 菜单卡被 place_list 压后）
+记录在案未修。
+
 **2026-08-13 demo-mkemhn 六批聚焦实测**：mcp-bridge **404 passed**（+8）、
 `orchestrator/cloud` **786**（含锚定门控/限龄/线契约归一/位移防御新守卫）、
 nearby **56**（+4）、HMI node **257/257**（+3）且 Vite build 通过；四条 blocking

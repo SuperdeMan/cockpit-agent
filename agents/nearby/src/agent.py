@@ -480,13 +480,21 @@ class NearbyAgent(BaseAgent):
         )
 
     async def _taste_prefs(self, ctx) -> str:
-        """口味偏好：语义记忆召回（学到的，如「不吃辣」）。精确读取走 predicate_prefix；失败不挡主流程。"""
+        """口味偏好：语义记忆召回（学到的，如「不吃辣」）。精确读取走 predicate_prefix；失败不挡主流程。
+
+        逐字去重：同一条偏好被抽取两次时召回也会给两条（demo-3ukshz 实测
+        「美式中杯、美式中杯」原样播了两遍）——话术层去重，不动记忆层。"""
         try:
             mems = await ctx.recall("口味偏好", scopes=["profile.taste"],
                                     predicate_prefix="taste.", top_k=3)
         except Exception:
             mems = []
-        return "、".join(m.get("text", "") for m in mems if m.get("text"))[:60]
+        seen: list[str] = []
+        for m in mems:
+            text = str(m.get("text") or "").strip()
+            if text and text not in seen:
+                seen.append(text)
+        return "、".join(seen)[:60]
 
     async def _detail(self, intent, ctx, meta) -> AgentResult:
         # HMI「第N个详情」handoff 透传所选项的高德 POI id（meta.nearby_poi_id）→ 精确取详情，

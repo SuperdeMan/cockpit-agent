@@ -255,6 +255,16 @@ export type MerchantCheckoutCard = {
   buttons?: CardButton[]
   status?: string
   checkout_token?: string
+  // 菜单卡分类导航（demo-3ukshz #2）：桥侧从官方 categories 生成，chip 点按发 send_text
+  categories?: Array<{ label?: string; send_text?: string }>
+  // 菜单卡诚实总量：卡上只展示一页，total 是当前范围的在售总数
+  total?: number
+  // 预览卡规格 chips（demo-3ukshz #3）：只含下单链消费得动的组（_SPEC_GROUPS 四族）
+  spec_options?: Array<{
+    name?: string
+    selected?: string
+    options?: Array<{ label?: string; price_delta_cents?: number }>
+  }>
   _prov?: Provenance
   [key: string]: unknown
 }

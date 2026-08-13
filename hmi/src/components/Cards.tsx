@@ -18,6 +18,7 @@ import {
   normalizeMerchantOrder,
   paymentPresentation,
   placeMenuAction,
+  specChipAction,
 } from '../merchantUi.mjs'
 import { AQISection } from './aurora'
 import { Icon, type IconName } from './Icon'
@@ -1804,6 +1805,29 @@ function MerchantCheckoutCardView({ card, onAction }: {
 
       {isChoices ? (
         <div style={{ display: 'grid', gap: 8, marginTop: 12 }}>
+          {typeof card.total === 'number' && card.total > optionButtons.length && (
+            <div style={{ fontSize: 11, color: 'var(--au-text-3)' }}>
+              在售共 {card.total} 款，这里是一页——按分类看或直接报名字
+            </div>
+          )}
+          {Array.isArray(card.categories) && card.categories.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {card.categories.map((cat) => (cat?.label && cat?.send_text ? (
+                <button
+                  key={cat.label}
+                  type="button"
+                  disabled={!onAction}
+                  onClick={onAction ? () => onAction(cat.send_text!) : undefined}
+                  style={{
+                    padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                    fontFamily: 'inherit', cursor: onAction ? 'pointer' : 'default',
+                    color: 'var(--au-primary)', background: 'transparent',
+                    border: '1px solid var(--au-primary)',
+                  }}
+                >{cat.label}</button>
+              ) : null))}
+            </div>
+          )}
           {optionButtons.map((button, index) => {
             const option = options[index]
             const image = merchantImageUrl((option as { image_url?: string })?.image_url)
@@ -1857,6 +1881,42 @@ function MerchantCheckoutCardView({ card, onAction }: {
             ))}
             {order.fulfillment && <div style={{ marginTop: 8, fontSize: 11.5, color: 'var(--au-text-3)' }}>取餐方式 · {order.fulfillment}</div>}
           </div>
+          {Array.isArray(card.spec_options) && card.spec_options.length > 0 && (
+            // 规格 chips（demo-3ukshz #3）：只展示下单链消费得动的组（桥侧已按
+            // _SPEC_GROUPS 过滤）；点非当前项发「在{店}点一杯{品}，要{规格}」重出预览
+            <div style={{ marginTop: 10, display: 'grid', gap: 7 }}>
+              {card.spec_options.map((group) => (
+                <div key={group.name} style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 11, color: 'var(--au-text-3)', flexShrink: 0, minWidth: 28 }}>{group.name}</span>
+                  {(group.options || []).map((opt) => {
+                    if (!opt?.label) return null
+                    const active = opt.label === group.selected
+                    const action = specChipAction(card, group, opt.label)
+                    const clickable = !active && !!onAction && !!action
+                    return (
+                      <button
+                        key={opt.label}
+                        type="button"
+                        disabled={!clickable}
+                        onClick={clickable ? () => onAction!(action!.send_text) : undefined}
+                        style={{
+                          padding: '3px 10px', borderRadius: 999, fontSize: 11, fontWeight: 600,
+                          fontFamily: 'inherit', cursor: clickable ? 'pointer' : 'default',
+                          color: active ? 'var(--au-bg, #0d1117)' : 'var(--au-text-2)',
+                          background: active ? 'var(--au-primary)' : 'var(--au-fill)',
+                          border: `1px solid ${active ? 'var(--au-primary)' : 'var(--au-line-2)'}`,
+                        }}
+                      >
+                        {opt.label}
+                        {typeof opt.price_delta_cents === 'number' && opt.price_delta_cents > 0
+                          ? ` +${(opt.price_delta_cents / 100).toFixed(opt.price_delta_cents % 100 ? 1 : 0)}元` : ''}
+                      </button>
+                    )
+                  })}
+                </div>
+              ))}
+            </div>
+          )}
           {(discount || order.amount) && (
             <div style={{ marginTop: 10 }}>
               {discount && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--au-text-3)' }}><span>优惠</span><span>-{discount}</span></div>}

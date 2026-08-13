@@ -426,6 +426,23 @@ def test_slot_pending_full_navigation_command_is_topic_change():
     assert PlannerEngine._is_topic_change("带我去宝安机场") is True
 
 
+def test_slot_pending_midsentence_question_and_quantified_order_are_topic_change():
+    """demo-3ukshz 真栈探针：麦当劳选店挂起（wait_slot store_hint）把后面两句
+    **完整新意图**当成补槽答案吞掉——「附近的瑞幸有什么可以点的」（尾字「的」躲过
+    句尾问式判据）和「在瑞幸咖啡(科技园文化广场店)点一杯标准美式」（句首「在」不在
+    动作动词表）。补两条零领域字面量的语言学判据：句中问式（有什么/哪些）、
+    动词+数量+量词+宾语的完整点单结构。"""
+    assert PlannerEngine._is_topic_change("附近的瑞幸有什么可以点的") is True
+    assert PlannerEngine._is_topic_change("菜单上有哪些辣的") is True
+    assert PlannerEngine._is_topic_change(
+        "在瑞幸咖啡(科技园文化广场店)点一杯标准美式") is True
+    assert PlannerEngine._is_topic_change("来两份薯条加一个圣代") is True
+    # 真槽位答案不误判：名词短语/裸数量仍是补槽答案
+    assert PlannerEngine._is_topic_change("科苑南路店") is False
+    assert PlannerEngine._is_topic_change("标准美式") is False
+    assert PlannerEngine._is_topic_change("要两杯") is False
+
+
 def test_slot_pending_enroute_search_command_is_topic_change():
     """B5-1：句首带场景状语的完整搜索请求不能被旧 route 槽吞掉。"""
     assert PlannerEngine._is_topic_change("路上帮我找家咖啡店，顺路买一杯") is True

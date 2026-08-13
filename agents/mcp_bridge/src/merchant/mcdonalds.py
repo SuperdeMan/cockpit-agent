@@ -600,6 +600,28 @@ class McDonaldsWorkflow(MerchantWorkflow):
     def _store_name(store: dict) -> str:
         return str(store.get("storeName") or store.get("name") or "")
 
+    @staticmethod
+    def _store_keyword(hint: str) -> str:
+        """把高德 POI 名归一成官方门店检索词（demo-3ukshz #1）。
+
+        `nearby.search` 产出的名字形如「麦当劳(深圳科苑南路餐厅)」，而官方
+        query-nearby-stores 的 keyword 语义是官方店名子串（形如「深圳科苑南路餐厅」）
+        ——整串带品牌带括号发过去多半 0 命中，桥就静默退回默认店，「附近的麦当劳」
+        变成十公里外的碧海君庭。只做**保守剥壳**：取括号内层、去品牌前缀；
+        剥完为空退回原串（宁可 0 命中出候选卡，也不发明检索词）。"""
+        text = str(hint or "").strip()
+        if not text:
+            return ""
+        inner = re.findall(r"[（(]([^（）()]+)[）)]", text)
+        if inner:
+            text = inner[-1].strip()
+        for prefix in ("麦当劳", "McDonald's", "McDonalds", "mcdonald's",
+                       "mcdonalds"):
+            if text.lower().startswith(prefix.lower()):
+                text = text[len(prefix):].strip()
+                break
+        return text or str(hint or "").strip()
+
     @classmethod
     def _matching_stores(cls, stores: list[dict], hint: str) -> list[dict]:
         if not hint:
@@ -742,7 +764,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
         下单与看菜单**共用这一份**判定：打烊、营业状态可靠性、同名多店消歧，
         抄成两份就会漂移（B1 的成因）。
         """
-        store_hint = self._choice_value(slots.get("store_hint"), "门店")
+        store_hint = self._store_keyword(
+            self._choice_value(slots.get("store_hint"), "门店"))
         city = str(slots.get("city") or "").strip()
         try:
             stores_data = await self._read(
@@ -771,10 +794,12 @@ class McDonaldsWorkflow(MerchantWorkflow):
             return None, "", self._reselect_store(
                 "找到的麦当劳门店均已打烊。可以换一家门店或稍后再试。")
         store_matches = self._matching_stores(open_stores, store_hint)
-        if len(store_matches) != 1:
-            choices = store_matches or open_stores
-            return None, "", self._store_choices(choices)
-        store = store_matches[0]
+        candidates = store_matches or open_stores
+        if len(candidates) != 1:
+            return None, "", self._store_choices(candidates)
+        # 唯一候选没有可选性——直接选定，不挂起追问（demo-3ukshz 探针：单候选也出
+        # 「请选择一家」并挂起补槽，随后两句新意图全被当成补槽答案吞掉）。
+        store = candidates[0]
         store_code = str(store.get("storeCode") or "")
         if not store_code:
             return None, "", self._reselect_store(
@@ -808,7 +833,33 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
         products = self._menu_products(menu_data)
         store_name = str(store.get("storeName") or store.get("name") or "这家麦当劳")
+        # 分类清单在任何过滤**之前**采集——它是导航面，不该随过滤缩水
+        categories = []
+        for product in products:
+            for label in product.get("menu_categories") or []:
+                label = str(label).strip()
+                if label and label not in categories:
+                    categories.append(label)
+        total = len(products)
         asked = self._choice_value(slots.get("item_query"), "餐品")
+        asked_category = str(slots.get("category") or "").strip()
+        if asked_category:
+            # 分类导航（demo-3ukshz #2）：108 款一屏列不全，按官方分类分组浏览。
+            # 分类名子串匹配（「汉堡」命中「牛肉汉堡/鸡肉汉堡」两类），匹配不上诚实说。
+            needle = self._normalized(asked_category)
+            in_category = [
+                product for product in products
+                if any(needle in self._normalized(str(label))
+                       for label in product.get("menu_categories") or [])]
+            if not in_category:
+                listed_categories = "、".join(categories[:8]) or "暂无分类"
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"{store_name}的餐单里没有「{asked_category}」这一类。"
+                           f"现有分类：{listed_categories}。",
+                    follow_up="换个分类名，或直接报餐品名。",
+                    missing_slots=["category"])
+            products = in_category
         if asked:
             # **匹配不上就说匹配不上**，绝不回落成整份菜单。
             # 2026-08-13 真栈抓到：`or products` 让「猪柳蛋麦满分多少钱」答成
@@ -833,10 +884,25 @@ class McDonaldsWorkflow(MerchantWorkflow):
         listed = "、".join(
             item["name"] + (f"（{item['price']}）" if item.get("price") else "")
             for item in items[:5])
-        speech = (f"{store_name}的“{asked}”有：{listed}。" if asked
-                  else f"{store_name}可以点这几款：{listed}。")
+        scope = (f"{store_name}的「{asked_category}」" if asked_category
+                 else store_name)
+        # 默认店诚实化（demo-3ukshz #1）：没有任何门店线索时选出来的是商户接口的
+        # 默认店，不是「你附近」——不说破，用户会当成就近结果。
+        hinted = bool(self._store_keyword(
+            self._choice_value(slots.get("store_hint"), "门店")))
+        prefix = ("" if hinted
+                  else f"没指定门店，先按{store_name}给你看——要看你附近的，"
+                       f"说「附近的麦当劳」我先帮你找门店。")
+        if prefix:
+            scope = f"「{asked_category}」" if asked_category else "这里"
+        speech = (f"{prefix}{scope}的“{asked}”有：{listed}。" if asked
+                  else f"{prefix}{scope}可以点这几款：{listed}。")
         if len(products) > 5:
-            speech += f"在售还有更多，共 {len(products)} 款。"
+            speech += f"这一类共 {len(products)} 款。" if asked_category else \
+                f"在售共 {total} 款、{len(categories)} 个分类。"
+        if not asked and not asked_category and categories:
+            speech += ("说分类名可以按类看，比如"
+                       f"「看看{categories[0]}」。")
         speech += "要哪一款？"
         return AgentResult(
             speech=speech,
@@ -846,8 +912,17 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 "choice_kind": "product",
                 "merchant": "麦当劳",
                 "store_name": store_name,
-                "title": f"{store_name} 在售餐品",
+                "title": (f"{store_name} · {asked_category}" if asked_category
+                          else f"{store_name} 在售餐品"),
+                # 诚实总量：卡上只展示一页，总数与分类数是导航依据（demo-3ukshz #2）
+                "total": total,
                 "items": items,
+                # 分类导航 chips：点按发确定句式，按类过滤（≤8 个，防 chip 行溢出）
+                "categories": [
+                    {"label": label,
+                     "send_text": f"看看{store_name}的{label}"}
+                    for label in categories[:8]
+                ],
                 # options 与 items 同序但**各自自带 image_url**：靠下标去另一个数组
                 # 捞图会在任一端裁剪时错位。
                 "options": [
@@ -855,7 +930,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
                      "send_text": f"在{store_name}点一份{item['name']}",
                      **({"image_url": item["image_url"]}
                         if item.get("image_url") else {})}
-                    for item in items[:6]
+                    for item in items[:12]
                 ],
             })
 
@@ -944,6 +1019,23 @@ class McDonaldsWorkflow(MerchantWorkflow):
         details = data.get("meals") if isinstance(data, dict) else None
         if not isinstance(categories, list) or not isinstance(details, dict):
             return []
+        # 分类名随品带走（demo-3ukshz #2：108 款没有分类导航就列不全）。
+        # 真机上同一 code 会出现在多个分类（套餐×热门），去重后必须保留**全部**
+        # 归属——只归第一个分类会让「热门」这类聚合分类在导航面上消失或过滤成空。
+        code_categories: dict[str, list[str]] = {}
+        for category in categories:
+            if not isinstance(category, dict):
+                continue
+            category_name = str(category.get("name") or "").strip()
+            for category_item in category.get("meals") or []:
+                if not isinstance(category_item, dict):
+                    continue
+                code = str(category_item.get("code") or "").strip()
+                if not code or not category_name:
+                    continue
+                owned = code_categories.setdefault(code, [])
+                if category_name not in owned:
+                    owned.append(category_name)
         products = []
         seen_codes: set[str] = set()
         for category in categories:
@@ -960,6 +1052,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     seen_codes.add(code)
                     products.append({
                         "code": code,
+                        "menu_categories": list(code_categories.get(code, [])),
                         "tags": copy.deepcopy(category_item.get("tags") or []),
                         **copy.deepcopy(detail),
                     })

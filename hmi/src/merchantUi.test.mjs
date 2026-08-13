@@ -9,6 +9,7 @@ import {
   normalizeMerchantOrder,
   paymentPresentation,
   placeMenuAction,
+  specChipAction,
   swapStoreAction,
 } from './merchantUi.mjs'
 
@@ -140,6 +141,32 @@ test('never offers swap-store on cancel confirmations or unknown merchants', () 
     type: 'merchant_order_preview', merchant: '瑞幸',
     confirmation_context: 'merchant_create', items: [],
   }), null)
+})
+
+test('spec chips send the deterministic reorder sentence and skip the current choice', () => {
+  // demo-3ukshz #3：预览卡规格 chip 点非当前项 → 「在{店}点一杯{品}，要{规格}」
+  // 与范例句式闭环；当前选中项没有可改的余地，不出动作。
+  const preview = {
+    type: 'merchant_order_preview', merchant: '瑞幸',
+    confirmation_context: 'merchant_create', store_name: '科技园文化广场店',
+    items: [{ name: '埃塞瑰夏冷萃', quantity: 1, specifications: ['大杯', '冰'] }],
+  }
+  const group = { name: '温度', selected: '冰', options: [{ label: '冰' }, { label: '热' }] }
+  assert.deepEqual(specChipAction(preview, group, '热'), {
+    label: '热', send_text: '在科技园文化广场店点一杯埃塞瑰夏冷萃，要热',
+  })
+  assert.equal(specChipAction(preview, group, '冰'), null)   // 当前项不出动作
+  assert.equal(specChipAction({ ...preview, store_name: '' }, group, '热'), null)
+
+  // 麦当劳量词用「份」；数量 >1 原样带上
+  const mcd = {
+    type: 'merchant_order_preview', merchant: 'mcd',
+    confirmation_context: 'merchant_create', store_name: '人民广场麦当劳餐厅',
+    items: [{ name: '巨无霸套餐', quantity: 2 }],
+  }
+  assert.deepEqual(
+    specChipAction(mcd, { name: '口味', selected: '原味' }, '辣味'),
+    { label: '辣味', send_text: '在人民广场麦当劳餐厅点2份巨无霸套餐，要辣味' })
 })
 
 test('place rows expose brand menu shortcuts aligned with the exemplar sentence shapes', () => {

@@ -104,6 +104,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const lastWaypointChoiceRef = useRef<{ destination: string; names: string[] } | null>(null)
   // R4.4 澄清卡（intent_choice）选项：「第N个」或点按钮 → 回发 option.send_text（带 clarify_resume 深度=1）
   const lastIntentChoiceRef = useRef<{ options: Array<{ label: string; send_text: string }> } | null>(null)
+  // 商户菜单卡（merchant_choices·product）选项：「第N个」直达该款的下单句（demo-3ukshz T8：
+  // 「第三个」曾被规划成再看一遍菜单）。只登记 product 卡——门店选择卡由挂起补槽链自己消费序数。
+  const lastMerchantMenuRef = useRef<{ options: Array<{ label: string; send_text: string }> } | null>(null)
   // 就近类目候选（plain poi_list）上下文：供「换一批/换一个」翻页取下一批不同结果。
   // 只存类目关键词（如"粤菜馆"），换一批时重发干净的「导航去附近的{关键词}」——
   // 复杂指令下不会把原句里的车控（空调/座椅/氛围灯）又执行一遍。
@@ -451,6 +454,12 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           lastPoiNamesRef.current = null
           lastPlaceItemsRef.current = null
           lastIntentChoiceRef.current = null   // R4.4：新一轮 final 到达即互斥清空澄清卡（自然作废，母卡 D7）
+          lastMerchantMenuRef.current = null
+          if (c?.type === 'merchant_choices' && c.choice_kind === 'product') {
+            lastMerchantMenuRef.current = {
+              options: (c.options || []).filter((o: any) => o?.send_text && o?.label),
+            }
+          }
           if (c?.type === 'intent_choice') {
             lastIntentChoiceRef.current = { options: (c.options || []).filter((o: any) => o?.send_text) }
           } else if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
@@ -693,6 +702,17 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         return
       }
       // 不命中（用户换了话题）→ 继续正常路径；卡片在下一轮 final 到达时被互斥清空=自然作废
+    }
+    // 商户菜单卡「第N个」：直达该款的下单句（在{店}点一杯{品}）——语音序数与点按钮同语义
+    // （demo-3ukshz T8：「第三个」被规划成再看一遍菜单，用户在原地打转）。
+    const mm = lastMerchantMenuRef.current
+    if (mm && mm.options.length) {
+      const mi = ordinalSelectIn(text)
+      if (mi >= 0 && mi < mm.options.length) {
+        lastMerchantMenuRef.current = null
+        dispatch(mm.options[mi].send_text, false)
+        return
+      }
     }
     // 「换一批/换一个」：对上一条就近类目候选翻页，重发干净的「导航去附近的{关键词}」+ 下一页
     // （只重搜 POI，不会把复杂原句里的车控空调/座椅/氛围灯又执行一遍），并带最新定位。

@@ -54,6 +54,11 @@ _MENU_TOOLS = (
 # 用户没说想喝什么时给商户检索的种子词。空串会被商户判「非法参数」（真机取证），
 # 所以必须给一个实词——挑最泛的品类词，不预设口味。
 _MENU_SEED_QUERY = "咖啡"
+# 多种子聚合（demo-3ukshz #2）：searchProductForMcp 是「按词搜索、每词最多 3 条」，
+# **没有全量菜单接口**——单种子只有 3 款，「只有这三款吗」无从诚实回答。
+# 几个泛品类词各搜一次、productId 去重，能给出一页常点款；词表刻意短（串行调用，
+# 同高德 QPS 教训不并发打商户，一次菜单 ≤5 个读调用）。
+_MENU_SEED_QUERIES = ("咖啡", "拿铁", "美式", "瑞纳冰", "茶")
 # 逐 intent 的工具契约。用表不用 if 链：新增 workflow intent 时漏配这里，
 # 桥在启动期就会以具名 ValueError 拒载——2026-08-13 luckin.menu 首次上真栈时
 # 正是这样被抓到的（单测给的是全量工具，只有容器里才走到这条校验）。
@@ -272,9 +277,15 @@ class LuckinWorkflow(MerchantWorkflow):
         if not await self.drafts.put(draft):
             return self.refused("订单预览暂时无法安全保存，请稍后重新下单。")
         speech = self.preview_speech(draft)
+        card = self.preview_card(draft)
+        # 规格可改性外露（demo-3ukshz #3）：官方 productAttrs 里可选的组（杯型/温度/
+        # 糖度…）随预览卡下发，HMI 渲染成 chip、点非当前项发确定句式重出预览。
+        # 只是展示层——真正的规格落定仍走 _apply_specs 的官方 switchProduct 链。
+        card["spec_options"] = self._spec_options(detail)
         return AgentResult(
             status=NEED_CONFIRM, speech=speech,
-            ui_card=self.preview_card(draft),
+            ui_card=card,
+            follow_up="要调整规格直接说，比如「换成热的」「少糖」。",
             data={"checkout_token": draft.token, "summary": speech})
 
     async def confirm(self, intent, ctx, meta, token: str = "") -> AgentResult:
@@ -1168,6 +1179,48 @@ class LuckinWorkflow(MerchantWorkflow):
         r"^\$?\{?\s*[A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+\s*\}?$")
 
     @classmethod
+    def _spec_options(cls, detail: dict) -> list[dict]:
+        """从官方 productAttrs 提取**可改**的规格组（demo-3ukshz #3）。
+
+        「可改」有两个条件，缺一不上卡：①可选项 ≥2（唯一可选项没有改的余地，
+        canSelected!=1 的项不算）；②组名属于 `_SPEC_GROUPS` 声明的四族（温度/冰量/
+        糖度/奶底）——**那是下单链 `_apply_specs` 唯一消费得动的规格面**，把杯型/
+        咖啡豆这类改不动的组做成按钮就是给用户一个必然失败的入口。
+        每组带当前选中项与候选（含官方差价，分为单位）；值全部原样来自官方 detail。"""
+        changeable = {name for names in _SPEC_GROUPS.values() for name in names}
+        groups: list[dict] = []
+        for attr in (detail or {}).get("productAttrs") or []:
+            if not isinstance(attr, dict):
+                continue
+            name = str(attr.get("attributeName") or "").strip()
+            if cls._normalized_spec(name) not in changeable:
+                continue
+            subs = [sub for sub in attr.get("productSubAttrs") or []
+                    if isinstance(sub, dict) and sub.get("canSelected") == 1]
+            if not name or len(subs) < 2:
+                continue
+            selected = next(
+                (str(sub.get("attributeName") or "").strip()
+                 for sub in subs if sub.get("selected") is True), "")
+            options: list[dict] = []
+            for sub in subs[:6]:
+                label = str(sub.get("attributeName") or "").strip()
+                if not label:
+                    continue
+                option: dict = {"label": label}
+                try:
+                    delta = float(sub.get("price") or 0)
+                except (TypeError, ValueError):
+                    delta = 0.0
+                if delta > 0:
+                    option["price_delta_cents"] = int(round(delta * 100))
+                options.append(option)
+            if selected and len(options) >= 2:
+                groups.append(
+                    {"name": name, "selected": selected, "options": options})
+        return groups[:4]
+
+    @classmethod
     def _trusted_store(cls, slots: dict, meta) -> tuple[str, float, float] | None:
         name = str(slots.get("store_name") or "").strip()
         longitude = cls._coordinate(
@@ -1494,40 +1547,67 @@ class LuckinWorkflow(MerchantWorkflow):
 
         # 2026-08-13 真机取证：`query=""` 被商户判 `code=1000 非法参数`，`query=" "`
         # 返回 0 条，任意实词返回**最多 3 条**——这个工具是「搜商品」不是「列全菜单」。
-        # 所以①用户没说要什么时用种子词而不是空串；②话术不许说成「全部菜单」。
+        # 所以①用户没说要什么时多种子聚合而不是单种子；②话术不许说成「全部菜单」。
         asked = str(slots.get("item_query") or "").strip()
-        query = asked or _MENU_SEED_QUERY
-        try:
-            products_data = await self._read(
-                "searchProductForMcp",
-                self._arguments("searchProductForMcp", {
-                    "deptId": dept_id, "query": query,
-                }))
-        except Exception as exc:
-            return self._read_failure("查询该门店菜单", exc)
-        products = [product for product in self._products(products_data)
-                    if self._is_available_product(product)]
-        # 只读菜单的匹配放宽与 mcd._menu_matches 同款：planner 偶发把整句塞进
-        # item_query（「深圳的瑞幸生椰拿铁多少钱」），整句作为商户搜索词多半 0 命中；
-        # 菜单是只读展示，退种子词重搜一次、再做「商品名 ⊂ 整句」的反向包含是安全的。
-        # **只放宽在菜单路径**：下单路径（prepare）宁可追问也不能靠模糊包含选错商品。
-        if asked and not products:
+        if asked:
             try:
-                seed_data = await self._read(
+                products_data = await self._read(
                     "searchProductForMcp",
                     self._arguments("searchProductForMcp", {
-                        "deptId": dept_id, "query": _MENU_SEED_QUERY,
+                        "deptId": dept_id, "query": asked,
                     }))
             except Exception as exc:
                 return self._read_failure("查询该门店菜单", exc)
-            haystack = self._normalized(asked)
-            products = [
-                item for item in self._products(seed_data)
-                if self._is_available_product(item)
-                and len(self._normalized(
-                    str(item.get("productName") or ""))) >= 2
-                and self._normalized(
-                    str(item.get("productName") or "")) in haystack]
+            products = [product for product in self._products(products_data)
+                        if self._is_available_product(product)]
+            # 只读菜单的匹配放宽与 mcd._menu_matches 同款：planner 偶发把整句塞进
+            # item_query（「深圳的瑞幸生椰拿铁多少钱」），整句作为商户搜索词多半 0 命中；
+            # 菜单是只读展示，退种子词重搜一次、再做「商品名 ⊂ 整句」的反向包含是安全的。
+            # **只放宽在菜单路径**：下单路径（prepare）宁可追问也不能靠模糊包含选错商品。
+            if not products:
+                try:
+                    seed_data = await self._read(
+                        "searchProductForMcp",
+                        self._arguments("searchProductForMcp", {
+                            "deptId": dept_id, "query": _MENU_SEED_QUERY,
+                        }))
+                except Exception as exc:
+                    return self._read_failure("查询该门店菜单", exc)
+                haystack = self._normalized(asked)
+                products = [
+                    item for item in self._products(seed_data)
+                    if self._is_available_product(item)
+                    and len(self._normalized(
+                        str(item.get("productName") or ""))) >= 2
+                    and self._normalized(
+                        str(item.get("productName") or "")) in haystack]
+        else:
+            # 多种子聚合（demo-3ukshz #2「只有这三款吗」）：串行逐词搜、按
+            # productId 去重。某个种子失败时：一款都还没有→诚实报失败；
+            # 已有可展示的款→用已有的（残缺的一页好过整轮失败，且话术本就
+            # 声明「在售不止这些」）。
+            products = []
+            seen_ids: set = set()
+            for seed in _MENU_SEED_QUERIES:
+                try:
+                    seed_data = await self._read(
+                        "searchProductForMcp",
+                        self._arguments("searchProductForMcp", {
+                            "deptId": dept_id, "query": seed,
+                        }))
+                except Exception as exc:
+                    if not products:
+                        return self._read_failure("查询该门店菜单", exc)
+                    logger.warning("[luckin] 菜单种子「%s」检索失败（保留已聚合 %d 款）：%s",
+                                   seed, len(products), type(exc).__name__)
+                    break
+                for product in self._products(seed_data):
+                    product_id = product.get("productId")
+                    if (product_id in seen_ids
+                            or not self._is_available_product(product)):
+                        continue
+                    seen_ids.add(product_id)
+                    products.append(product)
         if not products:
             return AgentResult(
                 status=NEED_SLOT,
@@ -1541,11 +1621,17 @@ class LuckinWorkflow(MerchantWorkflow):
         listed = "、".join(
             item["name"] + (f"（{item['price']}）" if item.get("price") else "")
             for item in items[:5])
-        # 用户问了什么就说什么；没问时说清这是「几款」而不是「全部」——
-        # 商户接口一次最多给 3 条，把它播成菜单就是替商户编了个完整性承诺。
-        speech = (f"{store_name}的“{asked}”有：{listed}。" if asked
-                  else f"{store_name}可以点这几款：{listed}。")
-        speech += "要哪一款？想喝别的直接说名字，我再帮你找。"
+        # 用户问了什么就说什么；没问时说清这是「常点的一页」而不是「全部」——
+        # 商户接口按关键词搜索，把一页播成菜单就是替商户编了个完整性承诺。
+        # 「只有这几款吗」这类追问也由这句口径接住：在售不止这些。
+        if asked:
+            speech = (f"{store_name}的“{asked}”有：{listed}。"
+                      "要哪一款？想喝别的直接说名字，我再帮你找。")
+        else:
+            speech = (f"{store_name}常点的有：{listed}"
+                      f"{f' 等 {len(items)} 款' if len(items) > 5 else ''}。"
+                      "在售不止这些——菜单接口按关键词搜索，想喝什么报名字最准。"
+                      "要哪一款？")
         return AgentResult(
             speech=speech,
             ui_card={
@@ -1563,7 +1649,7 @@ class LuckinWorkflow(MerchantWorkflow):
                      "send_text": f"在{store_name}点一杯{item['name']}",
                      **({"image_url": item["image_url"]}
                         if item.get("image_url") else {})}
-                    for item in items[:6]
+                    for item in items[:12]
                 ],
             })
 

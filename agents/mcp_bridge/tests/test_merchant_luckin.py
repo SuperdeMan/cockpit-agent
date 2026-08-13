@@ -558,7 +558,21 @@ async def test_prepare_uses_trusted_nearby_store_and_last_switched_sku():
         "currency": "CNY",
         "confirmation_context": "merchant_create",
         "buttons": [],
+        # 规格可改性外露（demo-3ukshz #3）：上卡的组必须同时满足①可选项 ≥2
+        # ②属于 `_SPEC_GROUPS` 四族（下单链唯一消费得动的规格面）——杯型/咖啡豆/
+        # 咖啡浓度可选项再多也不上（点了也改不动=必然失败的按钮），奶油组唯一可选
+        # 也不上。selected 取**换规格后**的最终 detail。
+        "spec_options": [
+            {"name": "温度", "selected": "热", "options": [
+                {"label": "冰"}, {"label": "热"},
+            ]},
+            {"name": "糖度", "selected": "少甜", "options": [
+                {"label": "标准糖"}, {"label": "少甜"}, {"label": "少少甜"},
+                {"label": "微甜"}, {"label": "不另外加糖"},
+            ]},
+        ],
     }
+    assert result.follow_up
     assert "确认后只创建未支付订单" in result.speech
     assert client.counts["createOrder"] == 0
     assert [name for name, _, _ in client.calls] == [
@@ -2069,3 +2083,69 @@ async def test_refusals_declare_the_refused_key_so_no_confirm_prompt_is_appended
         flow, _c = _workflow(scripts={"queryShopList": script})
         denied = await flow.prepare(_intent(), CTX, META)
         assert (denied.data or {}).get("_refused") is True, script
+
+
+# ── demo-3ukshz 二轮：菜单多种子聚合 ────────────────────────────────────────────
+
+
+def _seed_product(pid: int, name: str) -> dict:
+    return {**_product(name=name, product_id=pid),
+            "productId": pid, "productName": name}
+
+
+@pytest.mark.asyncio
+async def test_menu_without_item_query_aggregates_multiple_seeds():
+    """多种子聚合（demo-3ukshz #2「只有这三款吗」）：searchProductForMcp 每词最多
+    3 条且无全量接口——单种子只有 3 款。无 item_query 时逐种子搜、productId 去重，
+    话术明说「在售不止这些」，不再把一页播成完整菜单。"""
+    seeds = [
+        _ok([_seed_product(1, "标准美式"), _seed_product(2, "加浓美式"),
+             _seed_product(3, "埃塞瑰夏冷萃")]),
+        _ok([_seed_product(4, "生椰拿铁"), _seed_product(1, "标准美式")]),  # 重复 1 去重
+        _ok([_seed_product(5, "厚乳拿铁")]),
+        _ok([_seed_product(6, "陨石瑞纳冰")]),
+        _ok([_seed_product(7, "茉莉轻乳茶")]),
+    ]
+    workflow, client = _workflow(scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": seeds,
+    })
+    result = await workflow.menu(
+        _intent(name="luckin.menu", item_query=""), CTX, META)
+
+    assert result.status == OK
+    search_calls = [args for name, args, _ in client.calls
+                    if name == "searchProductForMcp"]
+    assert len(search_calls) == 5
+    assert len({args["query"] for args in search_calls}) == 5   # 五个不同种子
+    names = [item["name"] for item in result.ui_card["items"]]
+    assert names == ["标准美式", "加浓美式", "埃塞瑰夏冷萃", "生椰拿铁",
+                     "厚乳拿铁", "陨石瑞纳冰", "茉莉轻乳茶"]
+    assert "在售不止这些" in result.speech
+    assert "全部" not in result.speech
+
+
+@pytest.mark.asyncio
+async def test_menu_seed_failure_keeps_already_aggregated_items():
+    """种子中途失败：已有可展示的款就用已有的（残缺一页好过整轮失败，话术本就
+    声明不完整）；一款都没有才诚实报失败。"""
+    workflow, _ = _workflow(scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": [
+            _ok([_seed_product(1, "标准美式")]),
+            McpError("seed boom"),
+        ],
+    })
+    result = await workflow.menu(
+        _intent(name="luckin.menu", item_query=""), CTX, META)
+
+    assert result.status == OK
+    assert [item["name"] for item in result.ui_card["items"]] == ["标准美式"]
+
+    flow2, _ = _workflow(scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": [McpError("seed boom")],
+    })
+    failed = await flow2.menu(
+        _intent(name="luckin.menu", item_query=""), CTX, META)
+    assert "暂时拿不到" in failed.speech or "稍后再试" in failed.speech

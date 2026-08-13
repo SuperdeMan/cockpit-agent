@@ -129,3 +129,56 @@ exemplars:
   tags:
   - badcase
   note: 换店保商品：不带 store_hint 走门店重选（桥内多店出候选卡），商品随句携带
+# ── 2026-08-13 demo-3ukshz 二轮：附近接线 + 分类导航 ─────────────────────────────
+# 「附近的麦当劳…」此前被教成单步 mcd.menu（servers.yaml 旧 example），而桥拿不到
+# 位置（GPS 不下发第三方），官方接口无线索时给**默认店**——「附近」答成十公里外的
+# 碧海君庭（trace ffecdf55）。正解与瑞幸同构：nearby.search（有车辆位置）供门店名，
+# store_hint 文本直达（麦当劳按名查店，无需坐标 provenance）。
+- text: 附近的麦当劳有什么菜单
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 麦当劳
+  - id: menu
+    agent: mcp-bridge
+    intent: mcd.menu
+    depends_on: [store]
+    slot_refs:
+      store_hint: store.data.items.0.name
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: demo-3ukshz ffecdf55——附近的麦当劳答成商户默认店碧海君庭
+- text: 我说的是我附近的麦当劳
+  plan:
+  - id: store
+    agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 麦当劳
+  - id: menu
+    agent: mcp-bridge
+    intent: mcd.menu
+    depends_on: [store]
+    slot_refs:
+      store_hint: store.data.items.0.name
+  source: trace
+  added: '2026-08-13'
+  tags:
+  - badcase
+  note: demo-3ukshz fb401678——用户纠正「我这里附近」曾落进拒识兜底
+- text: 看看麦当劳国贸店的甜品
+  plan:
+  - agent: mcp-bridge
+    intent: mcd.menu
+    slots:
+      store_hint: 国贸店
+      category: 甜品
+  source: manual
+  added: '2026-08-13'
+  tags:
+  - merchant-menu
+  note: 分类导航 chip 句式「看看{店}的{分类}」——store_hint 与 category 两槽分开填

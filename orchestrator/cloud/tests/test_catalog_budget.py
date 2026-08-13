@@ -130,11 +130,14 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # （「这家的菜单」在焦点是瑞幸门店时仍被规划到演示商户 shop.menu，trace c4a82439
     # ——同 shop.order 那次「描述太像通用能力」的第二例，描述判别化是修法本体）。
     # 涨的是既有能力的判别化描述，不是新增条目，条数 143 不变。
-    assert catalog.catalog_stats["chars_full"] == 11828
-    assert catalog.catalog_stats["chars_final"] == 11828
+    # 2026-08-13 demo-3ukshz 二轮再 +38 → 11866：mcd.menu 描述改写（「附近的麦当劳」
+    # 需先经周边搜索取门店名——旧描述「不给门店时就近选一家」是**假承诺**，桥拿不到
+    # 位置、给的是商户默认店）+ 新增 category 槽（分类导航）。条数 143 仍不变。
+    assert catalog.catalog_stats["chars_full"] == 11866
+    assert catalog.catalog_stats["chars_final"] == 11866
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4172
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4134
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

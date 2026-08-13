@@ -1367,3 +1367,105 @@ async def test_store_menu_recovers_when_planner_puts_the_whole_sentence_in_the_s
     names = [item["name"] for item in result.ui_card["items"]]
     assert names == ["巨无霸套餐"], names
     assert "36.90 元" in result.speech
+
+
+# ── demo-3ukshz 二轮：附近选店接线 + 分类导航 + 默认店诚实化 ────────────────────
+
+
+def test_store_keyword_normalizes_amap_poi_names():
+    """高德 POI 名（「麦当劳(深圳科苑南路餐厅)」）→ 官方检索词（「深圳科苑南路餐厅」）。
+
+    这是「附近的麦当劳」接线的关键一跳（demo-3ukshz #1）：整串带品牌带括号发给
+    query-nearby-stores 多半 0 命中，桥静默退回默认店，「附近」变成十公里外的碧海君庭。
+    """
+    kw = McDonaldsWorkflow._store_keyword
+    assert kw("麦当劳(深圳科苑南路餐厅)") == "深圳科苑南路餐厅"
+    assert kw("麦当劳（碧海君庭餐厅）") == "碧海君庭餐厅"
+    assert kw("McDonald's(人民广场餐厅)") == "人民广场餐厅"
+    assert kw("人民广场") == "人民广场"          # 无壳可剥原样保留
+    assert kw("麦当劳") == "麦当劳"              # 剥完为空退回原串，不发明检索词
+    assert kw("") == ""
+
+
+@pytest.mark.asyncio
+async def test_menu_amap_named_store_reaches_the_official_store():
+    """nearby.search 的门店名经 store_hint 直达官方门店（附近链路的桥侧一半）。"""
+    workflow, client = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "麦当劳(人民广场麦当劳餐厅)", "city": ""})
+    result = await workflow.menu(intent, CTX, META)
+
+    assert result.ui_card["store_name"] == "人民广场麦当劳餐厅"
+    nearby_args = next(args for name, args, _ in client.calls
+                       if name == "query-nearby-stores")
+    assert nearby_args["keyword"] == "人民广场麦当劳餐厅"
+    assert "没指定门店" not in result.speech
+
+
+@pytest.mark.asyncio
+async def test_menu_carries_categories_and_supports_category_browsing():
+    """分类导航（demo-3ukshz #2）：卡带 categories chips 与诚实总量；
+    category 槽按分类过滤；话术报「共 N 款、M 个分类」并给分类示范。"""
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu",
+                             slots={"store_hint": "人民广场", "city": "上海"})
+    result = await workflow.menu(intent, CTX, META)
+
+    card = result.ui_card
+    assert card["total"] == 2
+    assert card["categories"] == [
+        {"label": "套餐", "send_text": "看看人民广场麦当劳餐厅的套餐"},
+        {"label": "热门", "send_text": "看看人民广场麦当劳餐厅的热门"},
+    ]
+
+    flow2, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    in_category = await flow2.menu(SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "人民广场", "city": "上海", "category": "套餐"}), CTX, META)
+    names = [item["name"] for item in in_category.ui_card["items"]]
+    assert names == ["巨无霸套餐", "双层吉士堡套餐"]
+    assert "「套餐」" in in_category.speech
+
+    # 同 code 多分类：归属必须全保留——「热门」的唯一一款被「套餐」先去重走了，
+    # 按热门过滤仍要能命中它，否则聚合分类全是死链。
+    flow_hot, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    hot = await flow_hot.menu(SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "人民广场", "city": "上海", "category": "热门"}), CTX, META)
+    assert [item["name"] for item in hot.ui_card["items"]] == ["巨无霸套餐"]
+
+    flow3, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    missing = await flow3.menu(SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "人民广场", "city": "上海", "category": "甜品站"}), CTX, META)
+    assert missing.status == NEED_SLOT
+    assert "套餐" in missing.speech        # 给出现有分类，不留死胡同
+    assert missing.missing_slots == ["category"]
+
+
+@pytest.mark.asyncio
+async def test_menu_without_any_store_hint_discloses_the_default_store():
+    """默认店诚实化（demo-3ukshz #1）：没有任何门店线索时选出的是商户接口默认店，
+    不是「你附近」——必须说破并给出「附近的麦当劳」这条正路。"""
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    intent = SimpleNamespace(name="mcd.menu", slots={"store_hint": "", "city": ""})
+    result = await workflow.menu(intent, CTX, META)
+
+    assert "没指定门店" in result.speech
+    assert "人民广场麦当劳餐厅" in result.speech
+    assert "附近的麦当劳" in result.speech

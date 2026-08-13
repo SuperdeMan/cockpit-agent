@@ -130,6 +130,22 @@ export function swapStoreAction(card = {}) {
   return { label: '换一家门店', send_text: `换一家${order.brand}门店，还是点${item}` }
 }
 
+export function specChipAction(card = {}, group = {}, optionLabel) {
+  // 预览卡规格 chip（demo-3ukshz #3）：点非当前项发确定句式、重出预览。
+  // 句式与范例「在{店}点一{量词}{品}，要{规格}」闭环——规格词由 planner 按
+  // _SPEC_GROUPS 落对应槽（温度/冰量/糖度/奶底），真正的规格落定仍走官方
+  // switchProduct 链。当前选中项不出动作（没有可改的余地）。
+  const order = normalizeMerchantOrder(card)
+  const store = text(order.storeName)
+  const item = text(order.items[0]?.name)
+  const label = text(optionLabel)
+  if (!store || !item || !label || label === text(group && group.selected)) return null
+  const unit = order.brand === '麦当劳' ? '份' : '杯'
+  const q = Number(order.items[0]?.quantity)
+  const count = Number.isInteger(q) && q > 1 ? String(q) : '一'
+  return { label, send_text: `在${store}点${count}${unit}${item}，要${label}` }
+}
+
 export function placeMenuAction(name) {
   // 周边发现列表里的品牌门店补「看菜单」直达（发现→看单→点单三步全可点按）。
   // 句式与范例库对齐：瑞幸走「X这家瑞幸咖啡，我要看看菜单」（planner 按范例
