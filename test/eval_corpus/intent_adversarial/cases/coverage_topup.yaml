@@ -921,3 +921,126 @@ cases:
       - input: {utterance: 这家麦当劳都能点些什么, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [mcd.menu]}], forbidden_intents: [nearby.search, luckin.menu, shop.menu], allow_extra_intents: false}
+  # ── 2026-08-13 demo-mkemhn 复盘落的两条新边界（台账双向各 2 例）──────────────
+  # ① nearby-luckin.pure-discovery-vs-discover-then-menu：纯门店发现（只要列表，
+  #   不许自作主张续菜单/下单）vs 发现+看单组合（说了「看有什么/能点什么」就必须
+  #   把菜单步排进去，不许停在发现或详情卡）。左句「查询附近的瑞幸咖啡」在真栈曾
+  #   两连拒后掉 chitchat、被编造出门店列表（trace 3650e2b5）。
+  - id: tu.merchant.luckin-pure-discovery
+    title: 只查瑞幸门店列表不许自作主张续单
+    family_id: tu.merchant-pure-discovery
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute, mcp], domains: [nearby, luckin], layers: [l1], boundary_ledger: nearby-luckin.pure-discovery-vs-discover-then-menu, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 帮我搜下附近还有哪些瑞幸门店, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [luckin.menu, luckin.order], allow_extra_intents: false}
+  - id: tu.merchant.luckin-pure-discovery-count
+    title: 问周边瑞幸有几家仍是纯发现
+    family_id: tu.merchant-pure-discovery
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A4], mechanisms: [overroute, mcp], domains: [nearby, luckin], layers: [l1], boundary_ledger: nearby-luckin.pure-discovery-vs-discover-then-menu, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: tu.merchant.luckin-pure-discovery, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 周边一共有几家瑞幸咖啡, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [luckin.menu, luckin.order], allow_extra_intents: false}
+  - id: tu.merchant.luckin-discover-then-menu
+    title: 说了看有什么喝的就必须带菜单步
+    family_id: tu.merchant-pure-discovery
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A8], mechanisms: [capability_present, mcp], domains: [nearby, luckin], layers: [l1], boundary_ledger: nearby-luckin.pure-discovery-vs-discover-then-menu, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 找找附近的瑞幸，顺便看看都有什么喝的, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.menu]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.menu, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [nearby.detail, shop.menu, luckin.order]
+            allow_extra_intents: false
+  - id: tu.merchant.luckin-discover-then-menu-paraphrase
+    title: 换个说法的发现加看单（invariant 对照）
+    family_id: tu.merchant-pure-discovery
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, capability_present, mcp], domains: [nearby, luckin], layers: [l1], boundary_ledger: nearby-luckin.pure-discovery-vs-discover-then-menu, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: tu.merchant.luckin-discover-then-menu, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 看看周边瑞幸店里有什么能点的, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.menu]}]
+            forbidden_intents: [nearby.detail, shop.menu, luckin.order]
+            allow_extra_intents: false
+  # ② luckin-mcd.swap-store-keep-item：换店保商品。句式同构，接线本质不同——
+  #   瑞幸必须 nearby.search 重建坐标可信链（官方门店绑 deptId），麦当劳按
+  #   store_hint 文本由桥内重选，不需要周边搜索。HMI 预览卡「换一家门店」按钮
+  #   两个品牌各发各的句式，品牌词就是判据。
+  - id: tu.merchant.luckin-swap-store
+    title: 瑞幸换门店保商品要重建可信链
+    family_id: tu.merchant-swap-store
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, mcp], domains: [luckin, mcd], layers: [l1], boundary_ledger: luckin-mcd.swap-store-keep-item, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 瑞幸帮我换一家门店，咖啡还是生椰拿铁, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.order]}]
+            dependencies: [{producer: [nearby.search], consumer: luckin.order, carries: [store_name, store_longitude, store_latitude]}]
+            forbidden_intents: [mcd.order, shop.order, luckin.order_cancel]
+            allow_extra_intents: false
+  - id: tu.merchant.luckin-swap-store-paraphrase
+    title: 换家瑞幸店饮品不变（invariant 对照）
+    family_id: tu.merchant-swap-store
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, mcp], domains: [luckin, mcd], layers: [l1], boundary_ledger: luckin-mcd.swap-store-keep-item, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: tu.merchant.luckin-swap-store, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 换家瑞幸店，饮品不变还是冰美式, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [nearby.search]}, {any_of: [luckin.order]}]
+            forbidden_intents: [mcd.order, shop.order, luckin.order_cancel]
+            allow_extra_intents: false
+  - id: tu.merchant.mcd-swap-store
+    title: 麦当劳换门店走店名重选不查周边
+    family_id: tu.merchant-swap-store
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, mcp], domains: [mcd, luckin], layers: [l1], boundary_ledger: luckin-mcd.swap-store-keep-item, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    turns:
+      - input: {utterance: 麦当劳帮我换一家店，还是点巨无霸, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.order]}], forbidden_intents: [luckin.order, shop.order, nearby.search], allow_extra_intents: false}
+  - id: tu.merchant.mcd-swap-store-paraphrase
+    title: 换个麦当劳餐厅餐品不变（invariant 对照）
+    family_id: tu.merchant-swap-store
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase, mcp], domains: [mcd, luckin], layers: [l1], boundary_ledger: luckin-mcd.swap-store-keep-item, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-13}
+    relation: {base_case: tu.merchant.mcd-swap-store, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 换个麦当劳餐厅下单，餐品保持人气超值四件套, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [mcd.order]}], forbidden_intents: [luckin.order, shop.order, nearby.search], allow_extra_intents: false}

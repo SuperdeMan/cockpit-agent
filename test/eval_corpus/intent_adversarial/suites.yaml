@@ -34,12 +34,18 @@ schema_version: 1
 # 麦当劳侧补第二条「这家麦当劳都能点些什么」，机械地 +1。
 # 这条边界不是地盘冲突：瑞幸官方菜单绑 deptId、只能由 nearby.search 的可信 POI 映射，
 # 麦当劳按 store_hint 文本查店——**两家商户接口形态本来就不同**。
+# 2026-08-13 再放到 579：同一条理由的第五次适用——demo-mkemhn 十九轮复盘落两条新
+# 边界裁定（nearby-luckin.pure-discovery-vs-discover-then-menu：纯门店发现 vs
+# 发现+看单组合，「查询附近的瑞幸」曾被 chitchat 编造门店列表；
+# luckin-mcd.swap-store-keep-item：换店保商品的两家接线形态——瑞幸重建坐标可信链、
+# 麦当劳 store_hint 桥内重选，HMI 换店按钮两个品牌各发各的句式）。
+# 台账契约双向各 2 例，机械地 +8。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 571
+    max_cases: 579
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3
