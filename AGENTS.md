@@ -66,38 +66,28 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5464 passed / 14 skipped / 0 failed**（2026-08-13 demo-3ukshz 二轮后实测，
-退出码 0，用时 27m42s）。较六批后的 5457 净 **+7**，逐条点上号：mcd 附近接线/
-分类导航/默认店披露 4 + luckin 多种子聚合 2 + engine topic-change 新判据 1；
-逐项证据见 history **§32** 与设计文档 §5。
-上一批 5440→5457（demo-mkemhn 六批，+17=planning 3+executor 3+nearby 4+取材 4+
-luckin 3）见 **§31**；5408→5440 见 §30，4996→5408 见 §29，更早四跳对账见 **§28**。
+**5471 passed / 14 skipped / 0 failed**（2026-08-14 打磨+searchType 勘误批后实测，
+退出码 0，用时 31m36s）。较二轮后的 5464 净 **+7**，逐条点上号：aggregator
+`_refused` 恰好一次 2 + executor store_hint/city 补全 1 + planning store_hint
+依赖边 1 + mcd 分类兜底/查无不顶替 2 + 焦点 city 标量 1；证据 history
+**§32.1/§32.2** 与设计文档 §5/§5.1。⚠ 与并行 Docker build 同跑时
+`test_e2e_wrappers_ci` 会负载性假红（隔离复跑 6/6）——全量要单独跑。
+前三跳：5457→5464（二轮 +7）见 §32、5440→5457（六批 +17）见 §31、
+5408→5440 见 §30；更早对账见 **§28/§29**。
 ⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/出站验签代码先想编码两端；
 本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
 （§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
 
-**2026-08-13 demo-3ukshz 二轮聚焦实测**：cloud+bridge+nearby+chitchat 合跑
-**1274 passed**（bridge 410 / cloud 788 含 topic-change 新判据）、HMI **258/258**+
-Vite build、四门禁全绿（catalog **11866**：mcd.menu 描述撤「就近选一家」假承诺
-+category 槽）；真栈探针「附近的麦当劳」首次答出真附近门店（高新中五道，非默认店
-碧海君庭）+ 打烊全程零编造。三方案与探针抓到的挂起黑洞变体见设计文档 §5、
-history **§32**。
-
-**2026-08-14 打磨项收口（营业时段全旅程真栈）**：⑥聚合丢 `_refused` 句→确定性
-原样附加（不进 LLM 材料，恰好一次——「诚实约束写进 prompt 不等于诚实」）；
-⑥b 菜单卡标 `display_priority: 0` 不再被 place_list 压后；⑦「附近的麦当劳」静默
-换店连修。全旅程真栈：瑞幸聚合菜单主卡 10 款、预览温度 chips、**改规格生效
-（冰→热）**、换店/取消。流水 history **§32.1**。
-
-**2026-08-14 ⑦ 勘误（泓舟质疑推动，history §32.2 / 设计文档 §5.1）**：
-「测试账号仅碧海君庭一家」是**错误结论**——真因是 servers.yaml 把
-`query-nearby-stores` 的 **`searchType` 写死为 1（=搜索收藏餐厅）**，碧海君庭只是
-测试账号唯一收藏；`searchType=2` 按位置搜索（city+keyword 必填）官方深圳覆盖
-良好。四跳修复：动态选档 / `city` 成为焦点 `last_places` 第四个安全标量（跨品牌
-无错配面，坐标锚同款时效门控）/ city 补全独立于 hint / 裸 `$` 占位符残渣放行
-解析。真栈终态：「附近的麦当劳有什么菜单」→ **麦当劳深圳高新中五道餐厅**
-（109 款、8 分类）。判据：**「接口返回了数据」≠「接口在按你以为的语义工作」**，
-写死枚举值前先问另一档是什么意思。聚焦回归 **1261 绿**。
+**2026-08-13/14 商户链路收口聚焦实测**（demo-3ukshz 二轮 + 打磨 + searchType
+勘误，逐批流水 history **§32/§32.1/§32.2**、方案与勘误 设计文档 §5/§5.1）：
+最终态一句话——瑞幸：聚合菜单主卡（多种子 ≤12 款、「在售不止这些」口径）、
+预览规格 chips（只上 `_SPEC_GROUPS` 四族）、改规格真栈生效（冰→热）、换店/取消；
+麦当劳：**「附近的麦当劳」真栈答出高新中五道餐厅**（109 款、8 分类导航）——
+「仅碧海君庭」曾是错误结论，真因是 `searchType` 写死 1=**搜索收藏餐厅**（勘误
+§32.2；判据：**「接口返回了数据」≠「接口在按你以为的语义工作」**）；
+`_refused` 拒绝句由聚合器确定性附加（不进 LLM，恰好一次）；焦点 `last_places`
+扩第四个安全标量 `city`。聚焦回归 cloud+bridge+nearby **1261 绿**、
+HMI **258/258**+Vite build、四门禁全绿（catalog **11866**）。
 
 **2026-08-13 demo-mkemhn 六批聚焦实测**：mcp-bridge **404 passed**（+8）、
 `orchestrator/cloud` **786**（含锚定门控/限龄/线契约归一/位移防御新守卫）、
@@ -114,14 +104,7 @@ CDP **C10**（只读选品卡，不创建订单）端到端通过——选品卡
 ⚠ C2a/C10 会被高德间歇不可达阻塞——本机到 `restapi.amap.com` IPv4 超时、IPv6 无路由，
 百度 90ms 正常，**不是配额也不是代码**；用例把这种情况报成「前置降级，非卡片结论」。
 
-**2026-08-12 商户批聚焦实测**（上一批，留作对账）：mcp-bridge **385 passed**、隐私/旅程 manifest
-**168 passed**、HMI node **253/253** 且 Vite production build 通过；Redis 7 隔离 DB15
-覆盖 TTL、动作原子消费、owner 删除与对照用户隔离（确认操作在飞时返回 pending）。合成 Docker
-真栈进一步证明 ForgetUser 在活跃租约下先返回 `503 pending`，精确释放后重试返回 200，且
-Planner 会话与商户草稿均不可再读取；该验证未调用任何商户业务工具。L0 discovery **81/81**
-（599 条 / 560 唯一输入）、gate strict **25/25**；范例 **268 条 / 22 域**，域错配
-4/167=2.4%；skills 22/22、能力完整性与 route-hints/fast-intent 门禁均通过。
-（当前数见下方证据表——2026-08-13 已推进到 610 条 / 571 唯一输入、范例 272 条。）
+（2026-08-12 商户批的逐项读数已归档 history **§29/§30**，不再在本节留对账段。）
 
 **2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
 agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
@@ -151,7 +134,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **81/81**，610 条 / **571 唯一输入**（2026-08-13 起 bounds [450,**571**]，仍**恰好用满**。四次递进 560→564→568→570→571，逐次占用理由写在 `suites.yaml` 头部：`luckin.menu` 覆盖、跨轮锚定双向对照、`mcd.nutrition` 覆盖、跨域边界台账双向各 2 例；没有删除旧尺子压数字） |
+| L0 discovery | **81/81**，618 条 / **579 唯一输入**（2026-08-13 起 bounds [450,**579**]，仍**恰好用满**。五次递进 560→564→568→570→571→579，逐次占用理由写在 `suites.yaml` 头部：`luckin.menu` 覆盖、跨轮锚定双向对照、`mcd.nutrition` 覆盖、跨域边界台账双向各 2 例、demo-mkemhn 两条新边界双向各 2 例；没有删除旧尺子压数字） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -159,7 +142,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 分组数字见上方 2026-08-11 实测段（`orchestrator/` 合计 **1300** = edge 579 + cloud 721）；Skill / Exemplar（**272 条 / 22 域**——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 分组数字见上方 2026-08-11 实测段（`orchestrator/` 合计 **1300** = edge 579 + cloud 721）；Skill / Exemplar（**283 条 / 22 域**，2026-08-14 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -210,21 +193,19 @@ e2e 自己塞 `granted_scopes` 所以一直是绿的）；两家各有只读当�
 `servers.yaml::image_hosts` 精确白名单）；「这家店」跨轮可解析（`focus.last_places` +
 `PlanContext.focus_places`，provenance 同前缀同下标一字不松）。
 营养表已由 `mcd.menu` 改名 **`mcd.nutrition`**——问热量与问价钱是两个能力。
+demo-mkemhn/demo-3ukshz 两轮复盘与 searchType 勘误的全部批次见上方
+2026-08-13/14 聚焦实测段与
+[`2026-08-13-demo-mkemhn-merchant-hmi-hardening.md`](docs/design/2026-08-13-demo-mkemhn-merchant-hmi-hardening.md)
+（§5/§5.1），流水 history **§31–§32.2**。
 
 ⚠ 本批有**两次自伤**（为躲一句话术把拒绝改成 `NEED_SLOT`，挂起会话吞掉后续每一句；
 焦点每轮重建把门店列表抹空），都是泓舟打回来才发现的。沉淀的两条纪律已入 §4.3。
 
-**demo-mkemhn 十九轮复盘六批收口（2026-08-13，泓舟指示「系统性优化商户 MCP+HMI」）**：
-`d7829c3`（编排层：线契约容器键归一/锚定门控+限龄/聚合诚实约束/挂起前缀止截断）/
-`6362491`（nearby 位置缺席诚实降级+指名门店按名查找）/ `01e42ba`（桥：选店死路
-escalate 自愈/拒绝去术语/菜单整句放宽/营养相关性打包）/ `a1fd506`（范例选店闭环
-三式×两商户+guide 口径修正+chitchat 防编造）/ `c2910e6`（HMI 换店 chip+看菜单直达）
-+ 语料两条新边界双向各 2 例（上界 571→**579** 第五次递进）。方案与逐轮登记
-[`2026-08-13-demo-mkemhn-merchant-hmi-hardening.md`](docs/design/2026-08-13-demo-mkemhn-merchant-hmi-hardening.md)，
-流水 history **§31**。能力状态一句话：位置丢失不再报异地门店冒充「附近」；
-候选卡按钮/指名门店在焦点与草稿双过期后**自愈**（escalate 重取门店）而非死路；
-掉进 chitchat 的轮不再编造「已找到门店/请确认订单」；预览卡可一键换店保商品。
-坐标可信链与 S2S 红线零放松。
+能力状态一句话（demo-mkemhn/3ukshz 两轮复盘后）：位置丢失不再报异地门店冒充
+「附近」；候选卡按钮/指名门店在焦点与草稿双过期后**自愈**（escalate 重取门店）
+而非死路；掉进 chitchat 的轮不再编造「已找到门店/请确认订单」；预览卡可一键
+换店保商品、点选规格；两家菜单各有全量方案（麦当劳分类导航/瑞幸多种子聚合）。
+坐标可信链与 S2S 红线零放松。逐批提交号与证据只查 history §31–§32.2。
 
 外部评审六批 **B1/B2**（2026-08-10）、**B3/B4**、**B5/B6**
 （2026-08-11）全部实施合入并收口。✅ 冻结令已撤销，可以新增业务 Agent。
