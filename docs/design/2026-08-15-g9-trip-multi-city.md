@@ -107,3 +107,10 @@
   不变）；exemplars trip +1；L0 语料 +1 reviewed（cp.multicity.trip-sequential），
   `suites.yaml` 586→**587** 第八次适用。
 - **门禁**：check_intent_gate 2/2 exit 0（81/81、587 恰好用满）；exemplars PASS。
+
+**真栈验证（同日，重建 cloud-planner/navigation/trip 三容器 + WS 探针）**：
+「先去杭州再去苏州玩三天」→ trip_itinerary 卡 `cities=['杭州','苏州']`、三天城标
+`杭州/杭州/苏州` 全齐、天数遵从。**首轮探针抓修一处**：solve 顺延新建的天不带
+city（「玩三天」被日上限顺延成 4 天、第 4 天无城标，且首轮 LLM 还把杭州景点排进
+苏州天——坐标不错城的确定性防线在，排点质量属 LLM 软约束已知边界）——顺延新建
+Day 继承前一天 city（一行修 + `test_solve_overflow_day_inherits_city`），复验绿。

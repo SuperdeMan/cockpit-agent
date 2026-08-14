@@ -380,3 +380,15 @@ def test_narrate_marks_city_per_day():
     speech, card = pipeline.narrate(trip)
     assert "第1天（杭州）" in speech and "第2天（苏州）" in speech
     assert card["cities"] == ["杭州", "苏州"]
+
+
+def test_solve_overflow_day_inherits_city():
+    """顺延新建的天继承前一天的 city（真栈首验：「玩三天」顺延成 4 天第 4 天无城标）。"""
+    stops = [Stop(stop_id=f"s{i}", name=f"点{i}", grounded=True, dwell_min=300,
+                  poi={"lat": 31.30 + i * 0.01, "lng": 120.60}) for i in range(3)]
+    trip = Trip(destination="杭州、苏州", days=1, cities=["杭州", "苏州"],
+                itinerary=[Day(day_index=1, city="苏州", stops=stops)])
+    prov = FakePOI(route={"distance_km": 5.0, "duration_min": 20, "points": []})
+    solved = asyncio.run(pipeline.solve(prov, trip, 80.0, {}))
+    assert len(solved.itinerary) >= 2
+    assert solved.itinerary[1].city == "苏州"

@@ -551,7 +551,10 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
         while len(day.grounded_stops()) > 1 and await day_minutes(day) > cap:
             moved = day.stops.pop()
             if i + 1 >= len(trip.itinerary):
-                trip.itinerary.append(Day(day_index=len(trip.itinerary) + 1))
+                # G9：顺延新建的天继承前一天的 city——顺延的 stop 来自前一天，
+                # 城市跟着走（真栈首验实测：「玩三天」被顺延成 4 天，第 4 天无城标）。
+                trip.itinerary.append(Day(day_index=len(trip.itinerary) + 1,
+                                          city=day.city))
             trip.itinerary[i + 1].stops.insert(0, moved)
         i += 1
     for idx, day in enumerate(trip.itinerary, start=1):   # 顺延后重排 day_index

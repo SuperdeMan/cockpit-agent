@@ -430,3 +430,29 @@ def test_modify_replace_specific_stop_changes_it():
 
 def test_manifest_consistency():
     assert assert_manifest_consistent(TripPlannerAgent()) is True
+
+
+def test_theme_slot_sanitized_from_full_sentence():
+    """真栈首验：planner 把**整句**填进 theme 槽（「跟着《太平年》游杭州」原样进槽，
+    话术念出嵌套书名号「已按《跟着《太平年》游杭州》主题」）。走真 _plan 断言：
+    槽值带主题标记 → 提主体「太平年」进卡。"""
+    agent = TripPlannerAgent()
+    agent.poi = FakePOI(search_map={
+        "景点": [_poi("西湖", 30.25, 120.15), _poi("灵隐寺", 30.24, 120.10)],
+        "美食": [_poi("楼外楼", 30.25, 120.14)],
+        "河坊街": [_poi("河坊街", 30.24, 120.16)]})
+    agent.llm.complete = AsyncMock(side_effect=[
+        '["河坊街"]',                                    # 主题检索步：候选地名
+        '{"days":[{"day_index":1,"theme":"主题日","stops":'
+        '[{"name":"河坊街","type":"attraction"},{"name":"西湖","type":"attraction"}]}]}'])
+
+    res = asyncio.run(run_handle(
+        agent, "trip.plan",
+        slots={"destination": "杭州", "days": "1",
+               "theme": "跟着《太平年》游杭州"},        # planner 填的脏槽值
+        raw_text="跟着《太平年》游杭州"))
+
+    assert res.status == "need_confirm"
+    assert res.ui_card["theme"] == "太平年"              # 清洗后只留主题主体
+    assert "《太平年》" in res.speech
+    assert "《跟着" not in res.speech                    # 不再念嵌套书名号

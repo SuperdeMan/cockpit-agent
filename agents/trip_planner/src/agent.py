@@ -200,8 +200,16 @@ class TripPlannerAgent(BaseAgent):
         days = (intent.slots.get("days") or "").strip()
         prefs = (intent.slots.get("preferences") or "").strip()
         # G4：主题槽 planner 可直接填，原话确定性兜底（与 G1 arrive_by 同款双轨）。
-        theme = (intent.slots.get("theme") or "").strip() \
-            or extract_theme(intent.raw_text or "")
+        # slot 值必须清洗——真栈首验实测 planner 把**整句**填进 theme
+        # （「跟着《太平年》游杭州」原样进槽，话术念出嵌套书名号）：槽里带主题
+        # 标记就提主体；否则只接受不含行程动词的干净短语；再不行回落原话解析。
+        slot_theme = (intent.slots.get("theme") or "").strip()
+        theme = extract_theme(slot_theme)
+        if not theme and slot_theme and len(slot_theme) <= 16 \
+                and not re.search(r"游|去|玩|带|规划|行程", slot_theme):
+            theme = slot_theme
+        if not theme:
+            theme = extract_theme(intent.raw_text or "")
         if not dest:
             # 确定性路由（manifest route_hints）注入的 trip.plan 步 slots 为空——
             # 从原话抽取目的地/天数/偏好（原编排核心 _extract_trip 的领域逻辑，R2.1 搬回本 Agent）。
