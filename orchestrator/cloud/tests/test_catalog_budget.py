@@ -109,7 +109,9 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 「这家店的菜单」在目录里只对应演示商户 shop.menu，真实门店问句因此答出演示数据。
     # 2026-08-13 142→143：新增当店菜单 `mcd.menu`（营养表改名 mcd.nutrition 让位）——
     # 是**改名+新增**而不是净增两条，所以只 +1。
-    assert len(catalog.ref_to_pair) == 143
+    # 2026-08-15 143→144：G8 新增 `navigation.reroute`（增量改道——焦点 active_route
+    # 在场时「途经点不去了/换条路」改的是这次导航，此前被兑现成全新导航）。
+    assert len(catalog.ref_to_pair) == 144
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -137,11 +139,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 与判别化描述（时间约束/路线偏好教给 planner），减去批 A 摘除的死槽位
     # （nearby radius/price_level/datetime/party_size、charging departure_time）。
     # 条数 143 不变——涨的是有意新增的能力面，不是重复项。
-    assert catalog.catalog_stats["chars_full"] == 11928
-    assert catalog.catalog_stats["chars_final"] == 11928
+    # 2026-08-15 +321 → 12249：G8 `navigation.reroute` 上目录（判别化描述写清与
+    # trip.modify 的边界：这一趟在开的路线 vs 多日行程的第 N 天）。有意新增 +1 条。
+    assert catalog.catalog_stats["chars_full"] == 12249
+    assert catalog.catalog_stats["chars_final"] == 12249
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4072
+    assert 16000 - catalog.catalog_stats["chars_final"] == 3751
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

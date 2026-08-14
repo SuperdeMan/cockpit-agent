@@ -250,6 +250,11 @@ class Focus:
     # 存活，时效只能靠这枚时间戳兑现——executor 按它限龄，过龄不锚定（诚实回到
     # 「请先查询附近门店」）。0 = 旧数据无时间戳，按过龄处理。
     last_places_ts: float = 0.0
+    # G8 路线会话：navigation 成功发出 navigate 后经保留键 `_route_session` 声明的
+    # 活动路线 {destination,lat,lng,waypoints,strategy,arrive_by_ts,ts}。与 last_places
+    # 同三条纪律：粘性接力不续期、prompt 只渲染名字不渲染坐标、消费方（navigation
+    # reroute）按 ts 限龄。空 dict = 无活动路线。
+    active_route: dict = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -257,7 +262,7 @@ class Focus:
         return not (self.obj or self.positions or self.attr
                     or self.last_poi or self.last_destination or self.last_intent
                     or self.last_choice_purpose or self.last_choices
-                    or self.last_places
+                    or self.last_places or self.active_route
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
 
@@ -449,6 +454,24 @@ def _render_focus(focus) -> str:
         parts.append(f"最新候选用途={purpose}")
         parts.append("最新候选=" + "/".join(
             f"{idx}:{name}" for idx, name in enumerate(focus.last_choices, 1)))
+    # G8：活动路线只渲染名字与时限，**绝不渲染坐标**（坐标进 prompt 只会诱导模型
+    # 自己编——last_places 同款纪律）。这一行是 planner 分开「改当前路线
+    # （navigation.reroute）」与「改行程（trip.modify）」的会话状态判据。
+    route = focus.active_route or {}
+    if route.get("destination"):
+        seg = f"当前正在导航：目的地={route['destination']}"
+        wp_names = [str(w.get("name") or "") for w in (route.get("waypoints") or [])
+                    if isinstance(w, dict) and w.get("name")]
+        if wp_names:
+            seg += "（途经：" + "、".join(wp_names) + "）"
+        try:
+            ab = int(route.get("arrive_by_ts") or 0)
+        except (TypeError, ValueError):
+            ab = 0
+        if ab > 0:
+            lt = time.localtime(ab)
+            seg += f"，须{lt.tm_hour:02d}:{lt.tm_min:02d}前到达"
+        parts.append(seg)
     if not parts:
         return ""
     return ("当前对话焦点（用于指代消解，仅在用户话术含指代/省略式追问时参考）：\n"
@@ -475,6 +498,46 @@ def _first_poi(data: dict) -> str:
         it = items[0]
         return str(it.get("name") or it.get("title") or it.get("poi_name") or "")
     return str(data.get("name") or data.get("poi_name") or "")
+
+
+def _valid_route_session(raw) -> dict:
+    """校验并规范化 `_route_session` 保留键（G8）。非法返回空 dict。
+
+    模型输出是不可信输入的同款纪律（CLAUDE.md §6）：防御要防到真正被拿去消费的
+    那个值——waypoints 逐项校验，**非法元素直接丢、不做 str() 转换**。
+    （该键由 navigation Agent 服务端构造、不经 LLM，但 data 是自由 Struct 通道，
+    按不可信输入设防成本为零。）"""
+    if not isinstance(raw, dict):
+        return {}
+    dest = str(raw.get("destination") or "").strip()
+    try:
+        lat, lng = float(raw.get("lat")), float(raw.get("lng"))
+    except (TypeError, ValueError):
+        return {}
+    if not dest or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return {}
+    waypoints = []
+    for w in (raw.get("waypoints") or [])[:8]:
+        if not isinstance(w, dict):
+            continue
+        name = str(w.get("name") or "").strip()
+        try:
+            wlat, wlng = float(w.get("lat")), float(w.get("lng"))
+        except (TypeError, ValueError):
+            continue
+        if name and -90 <= wlat <= 90 and -180 <= wlng <= 180:
+            waypoints.append({"name": name, "lat": wlat, "lng": wlng})
+    out = {"destination": dest, "lat": lat, "lng": lng, "waypoints": waypoints,
+           "strategy": str(raw.get("strategy") or "")}
+    for key in ("arrive_by_ts", "ts"):
+        try:
+            v = int(raw.get(key) or 0)
+        except (TypeError, ValueError):
+            v = 0
+        if v > 0:
+            out[key] = v
+    out.setdefault("ts", int(time.time()))
+    return out
 
 
 def extract_focus(plan, results) -> "Focus | None":
@@ -565,6 +628,18 @@ def extract_focus(plan, results) -> "Focus | None":
         if places:
             focus.last_places = places
             focus.last_places_ts = time.time()
+
+    # G8 路线会话：任何成功步经保留键 `_route_session` 声明活动路线（通用契约，
+    # 编排不认识 navigation 的私有字段——与 `_escalate` 同族，登记 conventions §9.1）。
+    # 多步都声明时取最后一个成功声明（后发的 navigate 是最新路线）。
+    for result in results:
+        if getattr(getattr(result, "status", None), "value", "") != "ok":
+            continue
+        data = getattr(result, "data", None)
+        session = _valid_route_session(
+            data.get("_route_session") if isinstance(data, dict) else None)
+        if session:
+            focus.active_route = session
     return None if focus.is_empty() else focus
 
 
@@ -618,14 +693,21 @@ class ContextManager:
                 # （比如「第一个」直接落 luckin.menu）就会把上一轮取回的门店抹成空，
                 # 下一句「这家的菜单」又变回「请先查询附近的瑞幸门店」。
                 # 2026-08-13 真栈三轮实证；两轮测试测不出来——第二轮恰好紧邻搜索轮。
-                if not focus.last_places:
+                # G8 active_route 同款粘性：只有新的 navigate 才替换活动路线。
+                previous = None
+                if not focus.last_places or not focus.active_route:
                     previous = await self._load_focus(session_id, user_id)
-                    if previous is not None and previous.last_places:
-                        focus.last_places = list(previous.last_places)
-                        # 接力**原样携带**取回时刻，不续期——时效从 nearby.search
-                        # 那一刻起算，接力多少轮都不能让「刚才那家」变成「上周那家」。
-                        focus.last_places_ts = float(
-                            getattr(previous, "last_places_ts", 0.0) or 0.0)
+                if previous is not None and not focus.last_places \
+                        and previous.last_places:
+                    focus.last_places = list(previous.last_places)
+                    # 接力**原样携带**取回时刻，不续期——时效从 nearby.search
+                    # 那一刻起算，接力多少轮都不能让「刚才那家」变成「上周那家」。
+                    focus.last_places_ts = float(
+                        getattr(previous, "last_places_ts", 0.0) or 0.0)
+                if previous is not None and not focus.active_route \
+                        and getattr(previous, "active_route", None):
+                    # 原样携带（含 ts 不续期）：路线时效从 navigate 那一刻起算。
+                    focus.active_route = dict(previous.active_route)
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:

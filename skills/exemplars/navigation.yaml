@@ -303,3 +303,37 @@ exemplars:
   tags:
   - canonical
   note: 历史指代触发情景记忆召回（G6）；destination 只能取自召回的去过地点，召不到就追问，不猜
+- text: 刚才那个途经点不去了
+  plan:
+  - agent: navigation
+    intent: navigation.reroute
+    slots:
+      remove_waypoint: 途经点
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: G8 增量改道：焦点里有「当前正在导航」时改的是这次路线，不是多日行程（那是 trip.modify）
+- text: 咖啡不买了，先去趟加油站，别迟到
+  plan:
+  - agent: navigation
+    intent: navigation.reroute
+    slots:
+      remove_waypoint: 咖啡
+      add_waypoint: 加油站
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: G8 动态重规划：删+加途经点一轮完成，时限（别迟到=保持原 arrive_by）不丢
+- text: 换条避堵的路
+  plan:
+  - agent: navigation
+    intent: navigation.reroute
+    slots:
+      route_pref: 避开拥堵
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: G8 导航中换路线策略；同目的地同途经点重规划，不是发起新导航

@@ -30,6 +30,15 @@ capabilities:
     slots: [destination, stop_category, waypoint, place_address, arrive_by, route_pref]
     examples: ["导航去公司", "带我去首都机场", "回家", "导航去东方之门，附近找个吃饭的地方",
                "导航去东方之门途经肯德基", "去接孩子放学，五点前要到学校", "不走高速送我去机场"]
+  - intent: navigation.reroute
+    description: 增量调整**当前正在进行的这次导航**（对话焦点里有「当前正在导航」时用本条）——
+      去掉/加上途经点（「肯德基不去了」「顺路加个加油站」，remove_waypoint/add_waypoint）、
+      换条路（「换条避堵的路」，route_pref）、改目的地（「改去COCO Park」，destination）；
+      未点名的目的地/时限/其余途经点全部保持。多日行程或「第N天」停靠点的增删改归
+      trip.modify，本条只管这一趟在开的路线
+    slots: [remove_waypoint, add_waypoint, destination, route_pref]
+    examples: ["刚才那个途经点不去了", "换条路走", "咖啡不买了，先去加油站，别迟到",
+               "顺路再加个超市", "目的地改成宝安机场"]
   - intent: navigation.set_place
     description: 设置常用地点（家/公司/学校）的地址，记住后可直接『导航去家/公司』。只记录不导航。
     slots: [place, address]

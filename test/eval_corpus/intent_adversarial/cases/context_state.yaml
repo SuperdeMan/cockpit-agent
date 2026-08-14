@@ -968,3 +968,88 @@ cases:
             dependencies: [{producer: [nearby.search], consumer: luckin.order, carries: [store_name, store_longitude, store_latitude]}]
             forbidden_intents: [shop.order]
             allow_extra_intents: false
+  # ── G8 增量改道（2026-08-15）：navigation.reroute vs trip.modify 边界 ─────────
+  # 判据=对象与会话状态：焦点里有「当前正在导航」→ 改的是这次路线（reroute）；
+  # 行程语境 +「第N天」/行程景点 → 改的是多日行程（trip.modify）。
+  # 台账 navigation-trip.reroute-vs-modify；话术全部避开范例原句（教泛化不教背诵）。
+  - id: cs.reroute.drop-waypoint
+    title: 导航中说不去途经点（焦点带活动路线）
+    family_id: cs.reroute
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [navigation, trip], layers: [l1], boundary_ledger: navigation-trip.reroute-vs-modify, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input:
+          utterance: 那个顺路的点不去了
+          context:
+            focus: {last_intent: navigation.navigate_to, active_route: {destination: 万象天地, waypoints: [{name: 肯德基(海岸城店)}]}}
+            history: [{role: user, text: 导航去万象天地，顺路买杯咖啡}, {role: assistant, text: 已为您规划路线，途经肯德基(海岸城店)}]
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reroute]}], forbidden_intents: [trip.modify, navigation.navigate_to], allow_extra_intents: false}
+  - id: cs.reroute.add-stop
+    title: 导航中顺路加一站（焦点带活动路线）
+    family_id: cs.reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [navigation, trip], layers: [l1], boundary_ledger: navigation-trip.reroute-vs-modify, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: cs.reroute.drop-waypoint, type: invariant, expectation: {}}
+    turns:
+      - input:
+          utterance: 顺路再加个超市
+          context:
+            focus: {last_intent: navigation.navigate_to, active_route: {destination: 万象天地, waypoints: [{name: 肯德基(海岸城店)}]}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reroute]}], forbidden_intents: [trip.modify, nearby.search], allow_extra_intents: false}
+  - id: cs.reroute.change-route
+    title: 导航中换条路（焦点带活动路线）
+    family_id: cs.reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [navigation, trip], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: cs.reroute.drop-waypoint, type: invariant, expectation: {}}
+    turns:
+      - input:
+          utterance: 换条路走
+          context:
+            focus: {last_intent: navigation.navigate_to, active_route: {destination: 万象天地}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reroute]}], forbidden_intents: [navigation.navigate_to, trip.modify], allow_extra_intents: false}
+  - id: cs.reroute.trip-day-edit
+    title: 行程语境下第N天不去某景点（应落行程编辑）
+    family_id: cs.reroute-trip
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [navigation, trip], layers: [l1], boundary_ledger: navigation-trip.reroute-vs-modify, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input:
+          utterance: 第二天不去灵隐寺了
+          context:
+            focus: {last_intent: trip.plan}
+            history: [{role: user, text: 帮我排一个三天的杭州行程}, {role: assistant, text: 已为您排好三天行程}]
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.modify]}], forbidden_intents: [navigation.reroute, navigation.navigate_to], allow_extra_intents: false}
+  - id: cs.reroute.trip-drop-stop
+    title: 行程语境下不去某站换一个（应落行程编辑）
+    family_id: cs.reroute-trip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [focus, anaphora], domains: [navigation, trip], layers: [l1], boundary_ledger: navigation-trip.reroute-vs-modify, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: cs.reroute.trip-day-edit, type: invariant, expectation: {}}
+    turns:
+      - input:
+          utterance: 行程里的宋城不去了，换个别的
+          context:
+            focus: {last_intent: trip.plan}
+            history: [{role: user, text: 帮我安排杭州两日游}, {role: assistant, text: 已排好两天行程，含宋城}]
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.modify]}], forbidden_intents: [navigation.reroute], allow_extra_intents: false}

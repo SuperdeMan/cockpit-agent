@@ -1157,6 +1157,16 @@ class PlannerEngine:
                     slots["name"] = str(focus.last_poi)
                     step.slots = slots
 
+        # G8 路线会话下发：与 focus_destination_* 同一门控通道（只注给声明 location
+        # context_scope 的步；LLM 与客户端都写不到 step.meta），navigation.reroute
+        # 在 Agent 侧从这份 JSON 确定性读活动路线——坐标不经 prompt。
+        route = getattr(focus, "active_route", None) or {}
+        if route.get("destination"):
+            route_meta = {"focus_active_route": json.dumps(route, ensure_ascii=False)}
+            for step in plan.steps:
+                if "location" in (step.context_scopes or []):
+                    step.meta = {**step.meta, **route_meta}
+
         if focus.destination_lat is None or focus.destination_lng is None:
             return
         meta = {

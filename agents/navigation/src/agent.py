@@ -187,6 +187,25 @@ def _route_strategy(text: str) -> tuple[str, str]:
     return "", ""
 
 
+# ── G8 增量改道：话术的确定性解析（planner 未填槽时兜底）─────────────────
+# 删：「咖啡不买了」「刚才那个途经点不去了」（A：目标在删除词前）/「不去肯德基了」
+# 「取消途经点」（B：目标在删除词后）。捕获后 strip 尾部助词；泛指词（途经点/那个…）
+# 由消费侧兑现成「删最近加入的一个」。
+_REROUTE_REMOVE_A_RE = re.compile(
+    r"([^，。,、\s]{1,12}?)(?:就?先?不去了|不买了|不要了|不吃了|不喝了)")
+_REROUTE_REMOVE_B_RE = re.compile(r"(?:取消|删掉|去掉|不去)\s*([^，。,、\s]{1,12})")
+_REROUTE_GENERIC_WP_RE = re.compile(r"途经点|停靠点|那个|那里|那儿|刚才")
+# 加：「先去加油站」「顺路再加个超市」。「先…」语义=插到途经点首位。
+_REROUTE_ADD_RE = re.compile(
+    r"(?:先去|先到|先买杯?|先加个?|顺路去|顺路买杯?|顺路加个?|顺道去|加个|加一个|"
+    r"再加个?|多加个?|顺便去|再去)\s*([^，。,、\s]{1,12})")
+# 换路（无明确偏好）：「换条路」「别走这条」。带偏好的（避堵/不走高速）走 _route_strategy。
+_REROUTE_CHANGE_ROUTE_RE = re.compile(r"换条|换一条|换个路线|别走这|重新规划路线|换路")
+# 改目的地：「改去COCO Park」「目的地换成宝安机场」。
+_REROUTE_DEST_RE = re.compile(
+    r"(?:目的地)?(?:改去|改到|改成|换成)去?\s*([^，。,、]{2,20})")
+
+
 def _rating_policy(value, raw_text: str) -> tuple[float, bool]:
     """Normalize planner rating slots and retain superlative ordering semantics."""
     text = str(value or "").strip()
@@ -210,6 +229,7 @@ class NavigationAgent(BaseAgent):
         handlers = {
             "navigation.search_poi": self._search_poi,
             "navigation.navigate_to": self._navigate_to,
+            "navigation.reroute": self._reroute,
             "navigation.reverse_geocode": self._reverse_geocode,
             "navigation.poi_detail": self._poi_detail,
             "navigation.set_place": self._set_place,
@@ -334,10 +354,12 @@ class NavigationAgent(BaseAgent):
             # G6 轨迹写入也要挂这条自动导航路径——真栈「圆圆的湖→滴水湖」走的
             # 正是这里，漏挂则「上次去过的那个湖」无数据可召回（挂点枚举教训）。
             await self._remember_visited(ctx, first.name, first.lat, first.lng)
-            return AgentResult(
+            return self._stamp_route_session(AgentResult(
                 speech=f"识别到您说的是{first.name}（{first.address}）。已为您规划路线。",
                 ui_card=card, data={"items": items},
-            ).action("navigate", self._navigate_payload(first.name, first.lat, first.lng, meta))
+            ).action("navigate", self._navigate_payload(
+                first.name, first.lat, first.lng, meta)),
+                first.name, first.lat, first.lng)
 
         names = "、".join(r.name for r in results[:3])
         return AgentResult(
@@ -648,13 +670,14 @@ class NavigationAgent(BaseAgent):
         except Exception as e:
             logger.warning("save_profile places failed: %s", e)
         if navigate:
-            return AgentResult(
+            return self._stamp_route_session(AgentResult(
                 speech=f"已把{label}设为{first.name}，正在为您导航过去。",
                 ui_card=attach({"type": "poi_list", "keyword": label, "items": [record]},
                                self.poi),
                 data={"place": label, "item": record},
             ).action("navigate", self._navigate_payload(
-                first.name, first.lat, first.lng, meta))
+                first.name, first.lat, first.lng, meta)),
+                first.name, first.lat, first.lng)
         return AgentResult(
             speech=f"已把{label}设为{first.name}（{first.address}）。"
                    f"以后说『导航去{label}』就能直接出发。",
@@ -823,13 +846,15 @@ class NavigationAgent(BaseAgent):
         deadline_note, extra = self._deadline_note(
             (base_route or {}).get("duration_min"), arrive_by_ts)
         if not stops:
-            return AgentResult(
+            return self._stamp_route_session(AgentResult(
                 speech=f"{strategy_note}已为您导航到{dest_poi.name}。{deadline_note}"
                        f"沿途和目的地附近暂未找到{keyword}。",
                 ui_card=attach({"type": "poi_list", "keyword": resolved_name,
                                 "items": items}, self.poi),
                 data={"items": items, **extra},
-            ).action("navigate", payload)
+            ).action("navigate", payload),
+                dest_poi.name, dest_poi.lat, dest_poi.lng,
+                strategy=strategy, arrive_by_ts=arrive_by_ts)
         choice_items = [{"id": s.id, "name": s.name, "rating": s.rating,
                          "distance_km": s.distance_km, "address": s.address,
                          "lat": s.lat, "lng": s.lng} for s in stops]
@@ -859,7 +884,7 @@ class NavigationAgent(BaseAgent):
                 eta_hint = "；".join(hints) + "。"
         names = "、".join(s.name for s in stops[:3])
         # purpose=waypoint_choice 让 HMI 把"第N个"回填为途经点（派发"导航去X途经Y"），而非发起新导航
-        return AgentResult(
+        return self._stamp_route_session(AgentResult(
             speech=f"{strategy_note}已为您规划到{dest_poi.name}的路线。{deadline_note}"
                    f"{where}的{keyword}有：{names}。{eta_hint}"
                    f"想顺道去哪家？说『第几个』即可，不去也可以直接出发。",
@@ -869,7 +894,9 @@ class NavigationAgent(BaseAgent):
                             "destination": dest_poi.name, "items": choice_items},
                            self.poi),
             data={"destination": dest_poi.name, "stops": choice_items, **extra},
-        ).action("navigate", payload)
+        ).action("navigate", payload),
+            dest_poi.name, dest_poi.lat, dest_poi.lng,
+            strategy=strategy, arrive_by_ts=arrive_by_ts)
 
     @staticmethod
     def _fmt_dur(minutes) -> str:
@@ -903,12 +930,14 @@ class NavigationAgent(BaseAgent):
             (resolved.append(r[0]) if r else missing.append(w))
         payload = self._navigate_payload(dest_poi.name, dest_poi.lat, dest_poi.lng, meta)
         if not resolved:
-            return AgentResult(
+            return self._stamp_route_session(AgentResult(
                 speech=f"没找到「{'、'.join(missing) or waypoint}」，已先为您导航到{dest_poi.name}。",
                 ui_card=attach({"type": "poi_list", "keyword": resolved_name,
                                 "items": items}, self.poi),
                 data={"items": items},
-            ).action("navigate", payload)
+            ).action("navigate", payload),
+                dest_poi.name, dest_poi.lat, dest_poi.lng,
+                strategy=strategy, arrive_by_ts=arrive_by_ts)
 
         payload["waypoints"] = [{"name": w.name, "address": w.address,
                                  "lat": w.lat, "lng": w.lng} for w in resolved]
@@ -963,10 +992,13 @@ class NavigationAgent(BaseAgent):
                                      for w in resolved],
                        "distance_km": distance_km, "duration_min": duration_min,
                        **extra}, self.poi)
-        return AgentResult(
+        return self._stamp_route_session(AgentResult(
             speech=head + "。" + tail, ui_card=card,
             data={"waypoints": payload["waypoints"], **extra},
-        ).action("navigate", payload)
+        ).action("navigate", payload),
+            dest_poi.name, dest_poi.lat, dest_poi.lng,
+            waypoints=payload["waypoints"], strategy=strategy,
+            arrive_by_ts=arrive_by_ts)
 
     async def _route_plan_to(self, name: str, address: str, lat, lng, meta,
                              *, resolved_prefix: str = "", ctx=None,
@@ -1026,10 +1058,273 @@ class NavigationAgent(BaseAgent):
         card = attach({"type": "route_plan", "origin": "当前位置", "destination": name,
                        "waypoints": [], "distance_km": distance_km,
                        "duration_min": duration_min, **deadline_extra}, self.poi)
-        return AgentResult(
+        return self._stamp_route_session(AgentResult(
             speech=speech, ui_card=card,
             data={"destination": name, "lat": lat, "lng": lng, **deadline_extra},
+        ).action("navigate", payload),
+            name, lat, lng, strategy=strategy, arrive_by_ts=arrive_by_ts)
+
+    # ── G8 路线会话与增量改道 ────────────────────────────────────
+    # 过龄阈值取一次驾驶会话的量级（默认 2h）：与门店锚定的 15min 语义不同，路线会话
+    # 跟着「这趟在开」的时长走。PoC 无真实驾驶时长分母，先取不打扰的宽值。
+    _ROUTE_SESSION_MAX_AGE_S = int(os.getenv("ROUTE_SESSION_MAX_AGE_S", "7200"))
+
+    @staticmethod
+    def _stamp_route_session(result: AgentResult, destination: str, lat, lng, *,
+                             waypoints: list | None = None, strategy: str = "",
+                             arrive_by_ts=None) -> AgentResult:
+        """把本次导航的结构化路线写进结果保留键 `_route_session`（conventions §9.1）。
+
+        engine 的 extract_focus 通用消费它落 focus.active_route，下一轮「途经点不去了」
+        才有对象可指。**挂点必须枚举全部执行路径**（本仓第三次应验的教训）：每个发出
+        navigate action 的 return 都要盖章，漏一处那条路径的导航就无法被增量修改。
+        """
+        try:
+            lat_f, lng_f = float(lat), float(lng)
+        except (TypeError, ValueError):
+            return result
+        session = {
+            "destination": str(destination or ""), "lat": lat_f, "lng": lng_f,
+            "waypoints": [{"name": str(w.get("name")), "lat": w.get("lat"),
+                           "lng": w.get("lng")} for w in (waypoints or [])
+                          if isinstance(w, dict) and w.get("name")],
+            "strategy": str(strategy or ""), "ts": int(time.time())}
+        if arrive_by_ts:
+            session["arrive_by_ts"] = int(arrive_by_ts)
+        if result.data is None:
+            result.data = {}
+        result.data["_route_session"] = session
+        return result
+
+    @classmethod
+    def _active_route_from(cls, meta) -> dict | None:
+        """从 meta.focus_active_route（engine 按 location scope 注入的服务端事实，
+        LLM 与客户端都写不到）读活动路线。无/损坏/过龄 → None。坐标逐项校验，
+        非法途经点直接丢——防御防到真正被拿去规划的那个值。"""
+        raw = (meta or {}).get("focus_active_route", "")
+        if not raw:
+            return None
+        try:
+            d = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        if not isinstance(d, dict) or not str(d.get("destination") or "").strip():
+            return None
+        try:
+            lat, lng = float(d.get("lat")), float(d.get("lng"))
+        except (TypeError, ValueError):
+            return None
+        if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            return None
+        try:
+            ts = int(d.get("ts") or 0)
+        except (TypeError, ValueError):
+            ts = 0
+        if ts <= 0 or time.time() - ts > cls._ROUTE_SESSION_MAX_AGE_S:
+            return None      # 过龄：别把上周那趟当成「当前正在导航」
+        waypoints = []
+        for w in (d.get("waypoints") or []):
+            if not isinstance(w, dict) or not str(w.get("name") or "").strip():
+                continue
+            try:
+                wlat, wlng = float(w.get("lat")), float(w.get("lng"))
+            except (TypeError, ValueError):
+                continue
+            if -90 <= wlat <= 90 and -180 <= wlng <= 180:
+                waypoints.append({"name": str(w["name"]), "lat": wlat, "lng": wlng})
+        out = {"destination": str(d["destination"]).strip(), "lat": lat, "lng": lng,
+               "waypoints": waypoints, "strategy": str(d.get("strategy") or "")}
+        try:
+            ab = int(d.get("arrive_by_ts") or 0)
+        except (TypeError, ValueError):
+            ab = 0
+        if ab > 0:
+            out["arrive_by_ts"] = ab
+        return out
+
+    @staticmethod
+    def _parse_reroute_remove(raw: str) -> str:
+        for pattern in (_REROUTE_REMOVE_A_RE, _REROUTE_REMOVE_B_RE):
+            m = pattern.search(raw or "")
+            if m:
+                return m.group(1).strip("的了 ")
+        return ""
+
+    @staticmethod
+    def _parse_reroute_add(raw: str) -> tuple[str, bool]:
+        """→ (目标词, 是否插首位)。「先去/先买」带先后语义 → 插到途经点首位。"""
+        m = _REROUTE_ADD_RE.search(raw or "")
+        if not m:
+            return "", False
+        return m.group(1).strip("个的杯 "), m.group(0).startswith("先")
+
+    @staticmethod
+    def _pop_waypoint(waypoints: list, word: str) -> str:
+        """按名双向包含匹配删除一个途经点，返回被删名；未命中返回 ''。"""
+        for i, w in enumerate(waypoints):
+            nm = str(w.get("name") or "")
+            if nm and (word in nm or nm in word):
+                waypoints.pop(i)
+                return nm
+        return ""
+
+    async def _reroute(self, intent, ctx, meta) -> AgentResult:
+        """G8：增量调整当前活动路线（删/加途经点、换路线策略、改目的地）。
+
+        只动被点名的那一项，其余约束（目的地/时限/策略/其余途经点）保持并重出
+        G1 时限判定。产出仍是 navigate action（非危险动作，与 navigate_to 同级），
+        坐标全部来自 meta 注入的路线会话与本轮高德接地——不经 LLM 转手。
+        """
+        raw_text = (intent.raw_text or "").strip()
+        session = self._active_route_from(meta)
+        if not session:
+            return AgentResult(
+                speech="当前没有正在进行的导航。直接说「导航去某地」，我就为您规划路线。",
+                follow_up="例如『导航去万象天地，顺路买杯咖啡』")
+
+        orig_dest = session["destination"]
+        dest_name, dest_lat, dest_lng = orig_dest, session["lat"], session["lng"]
+        waypoints = list(session.get("waypoints") or [])
+        strategy = str(session.get("strategy") or "")
+        arrive_by_ts = session.get("arrive_by_ts")
+        new_arrive = self._arrive_by_from(intent, raw_text)
+        if new_arrive:                      # 本轮新说了时限则覆盖；「别迟到」保持原值
+            arrive_by_ts = new_arrive
+        notes: list[str] = []
+        changed = False
+
+        # ① 改目的地（slot 优先，raw 兜底）：新目的地走 _find_destination 全套接地
+        #    （R1 强校验/类目锚词/行政级判定全部生效），途经点保留。
+        new_dest = (intent.slots.get("destination") or "").strip()
+        if not new_dest:
+            m = _REROUTE_DEST_RE.search(raw_text)
+            if m:
+                new_dest = m.group(1).strip(" 。，,的")
+        if new_dest and not self._dest_matches(new_dest, orig_dest):
+            near = await self._current_position(ctx, meta)
+            _resolved, results = await self._find_destination(new_dest, meta, near=near)
+            if results:
+                first = results[0]
+                dest_name, dest_lat, dest_lng = first.name, first.lat, first.lng
+                notes.append(f"目的地已改为{first.name}")
+                changed = True
+            else:
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"暂时没找到「{new_dest}」，目的地保持{orig_dest}不变。"
+                           "请补充城市或换个说法。",
+                    missing_slots=["destination"])
+
+        # ② 删途经点：按名包含匹配；泛指（「那个途经点」）或单途经点时删最近加入的。
+        remove_word = (intent.slots.get("remove_waypoint") or "").strip() \
+            or self._parse_reroute_remove(raw_text)
+        if remove_word and not self._dest_matches(remove_word, orig_dest):
+            removed = self._pop_waypoint(waypoints, remove_word)
+            if not removed and waypoints and (
+                    _REROUTE_GENERIC_WP_RE.search(remove_word)
+                    or len(waypoints) == 1):
+                removed = waypoints.pop(-1).get("name", "")
+            if removed:
+                notes.append(f"已去掉途经点{removed}")
+                changed = True
+            elif waypoints:
+                notes.append(f"途经点里没找到「{remove_word}」，路线保持不变")
+            else:
+                notes.append("当前路线没有途经点")
+        elif remove_word and not new_dest:
+            # 点名不去的是目的地本身且没给新目的地：终止导航归 HMI/端侧，引导改道
+            return AgentResult(
+                speech=f"您是想不去{orig_dest}了吗？想改去别的地方，"
+                       "直接说「导航去某地」或「目的地改成某地」就行。",
+                follow_up="也可以说『取消途经点某某』只调整顺路安排")
+
+        # ③ 加途经点：类目词映射后就近解析（当前位置优先，其次目的地）。
+        add_word, prepend = "", False
+        slot_add = (intent.slots.get("add_waypoint") or "").strip()
+        if slot_add:
+            add_word, prepend = slot_add, ("先" in raw_text[:raw_text.find(slot_add) + 1]
+                                           if slot_add in raw_text else False)
+        else:
+            add_word, prepend = self._parse_reroute_add(raw_text)
+        if add_word and add_word not in (remove_word or ""):
+            keyword = self._stop_keyword(add_word)
+            current = current_location_from_meta(meta)
+            near = (GeoPoint(lat=current.lat, lng=current.lng) if current
+                    else GeoPoint(lat=dest_lat, lng=dest_lng))
+            try:
+                found = await self.poi.search(keyword, near=near, limit=1, meta=meta)
+            except ProviderError as e:
+                logger.warning("reroute add-waypoint search failed: %s", e)
+                found = []
+            if found:
+                wp = {"name": found[0].name, "lat": found[0].lat, "lng": found[0].lng}
+                if prepend:
+                    waypoints.insert(0, wp)
+                else:
+                    waypoints.append(wp)
+                notes.append(f"已顺路加上{found[0].name}")
+                changed = True
+            else:
+                notes.append(f"附近暂时没找到{add_word}")
+
+        # ④ 换路线：带偏好走 _route_strategy；裸「换条路」在避堵/不走高速间轮换。
+        pref_strategy, pref_note = _route_strategy(
+            f"{intent.slots.get('route_pref') or ''} {raw_text}")
+        if pref_strategy:
+            strategy, note = pref_strategy, pref_note.rstrip("。")
+            notes.append(note)
+            changed = True
+        elif _REROUTE_CHANGE_ROUTE_RE.search(raw_text):
+            strategy = "4" if strategy != "4" else "6"
+            notes.append("已按避开拥堵重新规划" if strategy == "4"
+                         else "已按不走高速重新规划")
+            changed = True
+
+        if not changed and not notes:
+            return AgentResult(
+                speech="您想怎么调整当前路线？可以说「某某不去了」「顺路加个加油站」"
+                       "「换条避堵的路」或「目的地改成某地」。",
+                follow_up="告诉我要调整哪一项即可")
+
+        # ⑤ 重算路线（当前位置 →（途经点）→ 目的地）+ G1 时限判定 + 写回会话。
+        payload = self._navigate_payload(dest_name, dest_lat, dest_lng, meta)
+        if waypoints:
+            payload["waypoints"] = [dict(w) for w in waypoints]
+        distance_km = duration_min = 0
+        current = current_location_from_meta(meta)
+        if current:
+            try:
+                route = await self.poi.get_route(
+                    GeoPoint(lat=current.lat, lng=current.lng),
+                    GeoPoint(lat=dest_lat, lng=dest_lng), meta=meta,
+                    strategy=strategy,
+                    waypoints=[GeoPoint(lat=w["lat"], lng=w["lng"])
+                               for w in waypoints] or None)
+                distance_km = route.get("distance_km") or 0
+                duration_min = route.get("duration_min") or 0
+            except Exception as e:       # best-effort：算不出只报调整结果
+                logger.debug("reroute route recalc unavailable: %s", e)
+        deadline_note, extra = self._deadline_note(duration_min, arrive_by_ts)
+        wp_names = "、".join(str(w["name"]) for w in waypoints)
+        head = "；".join(notes) + "。当前路线：当前位置 → " \
+            + (f"{wp_names} → " if wp_names else "") + dest_name
+        if distance_km:
+            dur = self._fmt_dur(duration_min)
+            head += f"，全程约{distance_km}公里" + (f"、约{dur}" if dur else "")
+        card = attach({"type": "route_plan", "origin": "当前位置",
+                       "destination": dest_name,
+                       "waypoints": [{"name": w["name"], "address": ""}
+                                     for w in waypoints],
+                       "distance_km": distance_km, "duration_min": duration_min,
+                       **extra}, self.poi)
+        result = AgentResult(
+            speech=head + "。" + deadline_note, ui_card=card,
+            data={"destination": dest_name, "lat": dest_lat, "lng": dest_lng,
+                  "waypoints": [dict(w) for w in waypoints], **extra},
         ).action("navigate", payload)
+        return self._stamp_route_session(
+            result, dest_name, dest_lat, dest_lng, waypoints=waypoints,
+            strategy=strategy, arrive_by_ts=arrive_by_ts)
 
     async def _remember_visited(self, ctx, name, lat, lng) -> None:
         """导航成功落一条轻量情景轨迹（G6「上次去的那个地方」数据源）。best-effort。
