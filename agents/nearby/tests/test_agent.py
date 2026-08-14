@@ -142,6 +142,67 @@ def test_search_uses_session_location_when_user_did_not_name_an_area():
     assert abs(near.lat - 39.92) < 1e-6 and abs(near.lng - 116.41) < 1e-6
 
 
+def test_search_deictic_uses_focus_destination_center():
+    """B1-3 确定性化：「那附近有停车场」→ 检索中心用焦点目的地坐标（engine 按
+    location scope 注入的 focus_destination_*），不是当前 GPS。此前靠 planner LLM
+    看焦点 prompt 填 location 槽——软路径方差，7/25 journeys 绿、8/14 两跑皆红。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(
+        agent, "nearby.search", slots={"keyword": "停车场"},
+        raw_text="那附近有停车场吗",
+        meta={"current_lat": "22.5410", "current_lng": "114.0579",       # 福田
+              "focus_destination": "华润城万象天地1期",
+              "focus_destination_lat": "22.5405", "focus_destination_lng": "113.9412"}))
+    near = seen["near"]
+    assert near is not None
+    assert abs(near.lng - 113.9412) < 1e-6, "中心应是焦点目的地（南山），不是当前 GPS"
+
+
+def test_search_plain_nearby_not_hijacked_by_focus_destination():
+    """守卫：普通「附近」无指代词 → 仍按当前 GPS，不被上次导航目的地劫持。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(
+        agent, "nearby.search", slots={"cuisine": "川菜"},
+        raw_text="附近有什么好吃的川菜",
+        meta={"current_lat": "22.5410", "current_lng": "114.0579",
+              "focus_destination": "华润城万象天地1期",
+              "focus_destination_lat": "22.5405", "focus_destination_lng": "113.9412"}))
+    near = seen["near"]
+    assert abs(near.lat - 22.5410) < 1e-6 and abs(near.lng - 114.0579) < 1e-6
+
+
+def test_search_deictic_without_focus_falls_back_to_gps():
+    """指代词在场但无焦点坐标（首轮就说「那附近」）→ 回落 GPS，不抛错。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.update(kwargs)
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(
+        agent, "nearby.search", slots={"keyword": "停车场"},
+        raw_text="那附近有停车场吗",
+        meta={"current_lat": "22.5410", "current_lng": "114.0579"}))
+    near = seen["near"]
+    assert abs(near.lat - 22.5410) < 1e-6
+
+
 def test_search_non_food_category_no_taste():
     """多类目：附近的酒店 → place_list；非餐饮不注入口味画像。"""
     agent = NearbyAgent()

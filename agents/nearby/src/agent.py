@@ -260,10 +260,21 @@ class NearbyAgent(BaseAgent):
                 return GeoPoint(lat=top.lat, lng=top.lng)
         return near
 
-    @staticmethod
-    def _near(intent, meta) -> GeoPoint | None:
-        """搜索中心：显式 location 槽位（坐标或地名）优先，否则本轮已授权 GPS。
-        无任何位置 → None（provider 走关键字检索，不拿任意城市冒充「附近」）。"""
+    # 地点指代词（旅程 B1-3「那附近有停车场」）：与 info 侧 `_DESTINATION_DEICTIC_RE`
+    # 同族（那边/那儿/那里/目的地/终点），nearby 再收「那附近」。只有话里带指代时才
+    # 消费焦点坐标——普通「附近有什么好吃的」必须仍按当前 GPS，不许被上次导航劫持。
+    _DEST_DEICTIC_RE = re.compile(r"那附近|那边|那儿|那里|目的地|终点")
+
+    @classmethod
+    def _near(cls, intent, meta) -> GeoPoint | None:
+        """搜索中心：显式 location 槽位（坐标或地名）> 地点指代+焦点目的地坐标 > 本轮
+        已授权 GPS。无任何位置 → None（provider 走关键字检索，不拿任意城市冒充「附近」）。
+
+        第二级（B1-3 确定性化，2026-08-14）：「导航去万象天地」→「那附近有停车场吗」
+        此前依赖 planner LLM 看焦点 prompt 填 location 槽——软路径方差（7/25 journeys
+        绿、8/14 两跑皆红），而同一枚焦点坐标 weather 侧早已确定性消费（B1-2 稳定绿）。
+        engine 按 manifest `context_scopes: [location]` 把 `focus_destination_*` 注进
+        meta，与 info `_deictic_destination` 同款：LLM 与客户端都写不到这三个键。"""
         loc = (intent.slots.get("location") or "").strip()
         if loc:
             parts = loc.split(",")
@@ -273,6 +284,16 @@ class NearbyAgent(BaseAgent):
                 except ValueError:
                     pass
             return GeoPoint(address=loc)
+        if cls._DEST_DEICTIC_RE.search(intent.raw_text or ""):
+            try:
+                lat = float((meta or {}).get("focus_destination_lat", ""))
+                lng = float((meta or {}).get("focus_destination_lng", ""))
+            except (TypeError, ValueError):
+                lat = lng = None
+            if lat is not None and -90 <= lat <= 90 and -180 <= lng <= 180:
+                logger.info("nearby center from focus destination %r",
+                            (meta or {}).get("focus_destination", ""))
+                return GeoPoint(lat=lat, lng=lng)
         cur = current_location_from_meta(meta)
         if cur:
             return GeoPoint(lat=cur.lat, lng=cur.lng)
