@@ -25,7 +25,7 @@ from .pipeline import (build_poi_pool, build_theme_pool, theme_hint,
                        propose, ground, solve, narrate,
                        plan_weather, _weather_hint, _norm_days,
                        _ground_one, _poi_to_dict)
-from .extract import extract_trip, extract_theme
+from .extract import extract_trip, extract_theme, extract_cities, _CITY_SPLIT_RE
 
 logger = logging.getLogger("agent.trip_planner")
 
@@ -117,12 +117,45 @@ class TripPlannerAgent(BaseAgent):
         except Exception as e:
             logger.warning("save trip failed: %s", e)
 
+    async def _pool_for_trip(self, trip: Trip, prefs: str, meta) -> list:
+        """修改类路径的候选池：多城市行程逐城并集（「杭州、苏州 景点」搜不出东西），
+        单城市走原样。"""
+        cities = [c for c in (trip.cities or []) if c]
+        if len(cities) < 2:
+            return await build_poi_pool(self.poi, trip.destination, prefs, None, meta)
+        pool, seen = [], set()
+        for c in cities:
+            for p in await build_poi_pool(self.poi, c, prefs, None, meta):
+                nm = (p.name or "").strip()
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    pool.append(p)
+        return pool
+
     # ── 规划流水线 ─────────────────────────────────────────────
     async def _run_pipeline(self, ctx, meta, dest: str, days: str, prefs: str,
-                            raw_text: str, theme: str = "") -> Trip:
-        """propose → ground → solve，产出结构化 Trip。"""
-        # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
-        pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
+                            raw_text: str, theme: str = "",
+                            cities: list[str] | None = None) -> Trip:
+        """propose → ground → solve，产出结构化 Trip。
+
+        G9 多城市（cities ≥2）：逐城建池（各「{city} 景点/美食」）、propose 按序分天
+        标 city、ground 按城取坐标；城市顺序=用户口述序（v1 不做顺路重排）。"""
+        cities = [c for c in (cities or []) if c]
+        pool_by_city: dict[str, list] = {}
+        if len(cities) >= 2:
+            pool, seen = [], set()
+            for c in cities:
+                cp = await build_poi_pool(self.poi, c, prefs, None, meta)
+                pool_by_city[c] = cp
+                for p in cp:
+                    nm = (p.name or "").strip()
+                    if nm and nm not in seen:
+                        seen.add(nm)
+                        pool.append(p)
+        else:
+            cities = []
+            # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
+            pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
         # G4 主题检索步：主题相关地点经 LLM 提议 + 高德接地验证后**并入**池
         # （去重按名，池的封闭纪律不变——只是入池来源多一路）。
         theme_names: list[str] = []
@@ -135,15 +168,17 @@ class TripPlannerAgent(BaseAgent):
                     seen.add(nm)
                     pool.append(tp)
         # 天气联动：先取目的地多日预报对齐到行程各天，织进 propose（雨天优先室内/就近景点）。
-        weather = await plan_weather(self.weather, dest, raw_text,
-                                     _norm_days(days) or 2, meta)
+        # 多城市按首城取（预报窗口本就 7 天、跨城对齐属 v2；首城覆盖头几天最准）。
+        weather = await plan_weather(self.weather, cities[0] if cities else dest,
+                                     raw_text, _norm_days(days) or 2, meta)
         skeleton = await propose(self.llm, dest, days, prefs,
                                  [p.name for p in pool], raw_text,
                                  weather_hint=_weather_hint(weather)
-                                 + theme_hint(theme, theme_names))
+                                 + theme_hint(theme, theme_names),
+                                 cities=cities, pool_by_city=pool_by_city)
         trip = await ground(self.poi, skeleton, pool, meta,
                             dest=dest, days=days, prefs=prefs, raw_text=raw_text,
-                            llm=self.llm)
+                            llm=self.llm, cities=cities, pool_by_city=pool_by_city)
         if theme and theme_names:
             trip.theme = theme          # 接地成功才标主题（narrate 据此带主题话术）
         soc = await self._soc_pct(ctx, meta)
@@ -177,8 +212,17 @@ class TripPlannerAgent(BaseAgent):
                 status=NEED_SLOT, speech="您想去哪里玩？",
                 follow_up="请告诉我目的地", missing_slots=["destination"])
 
+        # G9 多城市：destination 槽的连写（「杭州、苏州」）优先拆，原话保序抽取兜底。
+        cities = [c.strip() for c in _CITY_SPLIT_RE.split(dest) if c.strip()]
+        if len(cities) < 2:
+            raw_cities = extract_cities(intent.raw_text or "")
+            cities = raw_cities if len(raw_cities) >= 2 else []
+        if len(cities) >= 2:
+            dest = "、".join(cities)        # 话术/卡片可读；build_poi_pool 走逐城池
+
         trip = await self._run_pipeline(ctx, meta, dest, days, prefs,
-                                        intent.raw_text, theme=theme)
+                                        intent.raw_text, theme=theme,
+                                        cities=cities)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
         attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
@@ -227,7 +271,7 @@ class TripPlannerAgent(BaseAgent):
             n = self._modify_day(modification)
             if n and trip.day(n):
                 # ② 只重规划第 n 天：其余 Day 原样保留（结构化天然不漂移）。
-                pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
+                pool = await self._pool_for_trip(trip, prefs, meta)
                 # 跨天去重：重规划某天时排除其它天已用景点，避免改完与别天撞车。
                 used = {s.name for d in trip.itinerary if d.day_index != n for s in d.stops}
                 names = [p.name for p in pool if p.name not in used]
@@ -267,7 +311,7 @@ class TripPlannerAgent(BaseAgent):
         if not rainy:
             return AgentResult(
                 speech=f"看了下预报，{dest}这几天都没有雨，行程不用调整。")
-        pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
+        pool = await self._pool_for_trip(trip, prefs, meta)
         # 全部雨天**合并成一次** propose+ground（批次3 真栈：逐天各跑一轮 85.9s 撑爆
         # 90s 网关窗口→「处理超时」）；产出的第 i 天映射回第 i 个雨天。
         used = {s.name for d in trip.itinerary
@@ -366,8 +410,8 @@ class TripPlannerAgent(BaseAgent):
             poi = await _ground_one(self.poi,
                                     tm.group(1).strip(), None, meta, self.llm)
         else:                                    # 没指定 → 池里挑一个没用过的不同景点
-            pool = await build_poi_pool(self.poi, trip.destination,
-                                        "、".join(trip.preferences), None, meta)
+            pool = await self._pool_for_trip(
+                trip, "、".join(trip.preferences), meta)
             poi = next((p for p in pool if p.name not in used and p.lat and p.lng), None)
         if not (poi and poi.lat and poi.lng):
             return False

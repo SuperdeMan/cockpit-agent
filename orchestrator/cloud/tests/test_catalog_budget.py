@@ -143,11 +143,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # trip.modify 的边界：这一趟在开的路线 vs 多日行程的第 N 天）。有意新增 +1 条。
     # 同日 +91 → 12340：G4 trip.plan 加 theme 槽 + 主题行程判别化描述
     # （「跟着《某剧》游X」进目录；「只聊作品内容」显式排除）。条数 144 不变。
-    assert catalog.catalog_stats["chars_full"] == 12340
-    assert catalog.catalog_stats["chars_final"] == 12340
+    # 同日 +78 → 12418：G9 trip.plan 多城市描述（「先去A再去B」城市按口述序连写
+    # 进 destination，保序逐城安排+跨城驾驶段）。条数 144 不变。
+    assert catalog.catalog_stats["chars_full"] == 12418
+    assert catalog.catalog_stats["chars_final"] == 12418
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 3660
+    assert 16000 - catalog.catalog_stats["chars_final"] == 3582
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

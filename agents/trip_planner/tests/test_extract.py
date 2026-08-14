@@ -72,3 +72,22 @@ def test_no_theme_no_trigger_change():
     """无主题时出行判定不变：裸「游杭州」仍不成行（缺任何出行信号）。"""
     from agents.trip_planner.src.extract import extract_trip
     assert extract_trip("游杭州") == ("", "", "")
+
+
+# ─── G9 多城市抽取 ───
+
+def test_cities_sequential_keeps_spoken_order():
+    from agents.trip_planner.src.extract import extract_cities
+    assert extract_cities("先去杭州再去苏州玩四天") == ["杭州", "苏州"]
+    assert extract_cities("去大理，然后到丽江住两晚") == ["大理", "丽江"]
+
+
+def test_cities_enumerated_split():
+    from agents.trip_planner.src.extract import extract_cities
+    assert extract_cities("去杭州、苏州玩两天") == ["杭州", "苏州"]
+
+
+def test_cities_block_and_single():
+    from agents.trip_planner.src.extract import extract_cities
+    assert extract_cities("导航到公司") == []
+    assert extract_cities("去杭州玩两天") == ["杭州"]

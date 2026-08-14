@@ -211,3 +211,15 @@ exemplars:
   tags:
   - canonical
   note: 方向性模糊主题（北上追春天族）：落 trip.plan 后由缺目的地 NEED_SLOT 追问——追问是正确形态，不代用户选城市
+- text: 先去南京再去扬州，安排个三天的行程
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+    slots:
+      destination: 南京、扬州
+      days: '3'
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: G9 多城市序：城市按口述序连写进 destination（保序逐城安排+跨城驾驶段），不拆成多个独立导航

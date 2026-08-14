@@ -303,3 +303,80 @@ def test_theme_hint_and_narrate_theme():
     speech, card = pipeline.narrate(trip)
     assert "按《太平年》主题" in speech
     assert card["theme"] == "太平年"
+
+
+# ─── G9 多城市 ───
+
+def test_multi_city_skeleton_parses_and_converges_city():
+    """骨架 day 的 city 收敛到城市集内；列表外城市名置空由均摊兜底。"""
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value=(
+        '{"days":['
+        '{"day_index":1,"city":"杭州","stops":[{"name":"西湖","type":"attraction"}]},'
+        '{"day_index":2,"city":"火星","stops":[{"name":"拙政园","type":"attraction"}]}]}'))
+    sk = asyncio.run(pipeline.propose(
+        llm, "杭州、苏州", "2", "", ["西湖", "拙政园"],
+        cities=["杭州", "苏州"],
+        pool_by_city={"杭州": [_poi("西湖")], "苏州": [_poi("拙政园")]}))
+    assert sk["days"][0]["city"] == "杭州"
+    assert sk["days"][1]["city"] == "苏州"      # 「火星」被拒 → 按序均摊兜底
+
+
+def test_multi_city_fallback_splits_days_by_city():
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=RuntimeError("llm down"))
+    sk = asyncio.run(pipeline.propose(
+        llm, "杭州、苏州", "4", "", ["西湖", "拙政园"],
+        cities=["杭州", "苏州"],
+        pool_by_city={"杭州": [_poi("西湖"), _poi("灵隐寺")],
+                      "苏州": [_poi("拙政园"), _poi("虎丘")]}))
+    assert len(sk["days"]) == 4
+    assert [d["city"] for d in sk["days"]] == ["杭州", "杭州", "苏州", "苏州"]
+    assert all(d["stops"] for d in sk["days"])
+
+
+def test_multi_city_ground_uses_city_pool():
+    """接地按 day.city 的城池取坐标（同名 POI 两城并存时不拿错城的）。"""
+    hz = _poi("鼓楼", lat=30.25, lng=120.15)
+    sz = _poi("鼓楼", lat=31.30, lng=120.60)
+    sk = {"days": [
+        {"day_index": 1, "city": "苏州", "stops": [{"name": "鼓楼", "type": "attraction"}]}]}
+    trip = asyncio.run(pipeline.ground(
+        FakePOI(), sk, [hz, sz], {}, dest="杭州、苏州",
+        cities=["杭州", "苏州"],
+        pool_by_city={"杭州": [hz], "苏州": [sz]}))
+    stop = trip.itinerary[0].stops[0]
+    assert stop.grounded and stop.poi["lat"] == 31.30
+    assert trip.itinerary[0].city == "苏州"
+    assert trip.cities == ["杭州", "苏州"]
+
+
+def test_solve_builds_cross_day_leg_and_soc_continuity():
+    """跨天衔接 leg：前一天末站→当天首站建段，SoC 递推跨天连续。"""
+    d1 = Day(day_index=1, stops=[
+        Stop(stop_id="s1", name="西湖", grounded=True,
+             poi={"lat": 30.25, "lng": 120.15})])
+    d2 = Day(day_index=2, stops=[
+        Stop(stop_id="s2", name="拙政园", grounded=True,
+             poi={"lat": 31.32, "lng": 120.63})])
+    trip = Trip(destination="杭州、苏州", days=2, itinerary=[d1, d2])
+    prov = FakePOI(route={"distance_km": 160.0, "duration_min": 120, "points": []})
+    solved = asyncio.run(pipeline.solve(prov, trip, 80.0, {}))
+    legs2 = solved.itinerary[1].legs
+    assert legs2 and legs2[0].from_stop_id == "s1" and legs2[0].to_stop_id == "s2"
+    # SoC 连续：160km/500km 满续航 → 掉 32 个百分点
+    assert legs2[0].soc_before == 80
+    assert legs2[0].soc_after == 48
+
+
+def test_narrate_marks_city_per_day():
+    trip = Trip(destination="杭州、苏州", days=2, cities=["杭州", "苏州"], itinerary=[
+        Day(day_index=1, city="杭州", stops=[
+            Stop(stop_id="s1", name="西湖", grounded=True,
+                 poi={"lat": 30.2, "lng": 120.1})]),
+        Day(day_index=2, city="苏州", stops=[
+            Stop(stop_id="s2", name="拙政园", grounded=True,
+                 poi={"lat": 31.3, "lng": 120.6})])])
+    speech, card = pipeline.narrate(trip)
+    assert "第1天（杭州）" in speech and "第2天（苏州）" in speech
+    assert card["cities"] == ["杭州", "苏州"]

@@ -257,15 +257,33 @@ def _weather_hint(weather: list[dict | None]) -> str:
 
 async def propose(llm, dest: str, days: str, prefs: str,
                   pool_names: list[str], raw_text: str = "",
-                  weather_hint: str = "") -> dict:
-    """LLM 产结构化骨架；约束只选池内名字。解析失败/空 → 确定性兜底分配。"""
-    target_days = _norm_days(days)
-    if not pool_names:
-        return _fallback_skeleton(pool_names, target_days or 1, prefs)
+                  weather_hint: str = "", cities: list[str] | None = None,
+                  pool_by_city: dict | None = None) -> dict:
+    """LLM 产结构化骨架；约束只选池内名字。解析失败/空 → 确定性兜底分配。
 
-    user = (f"目的地：{dest}；天数：{target_days or '不限'}；偏好：{prefs or '无特别要求'}。\n"
-            f"原始需求：{raw_text}\n【可选景点】：{'、'.join(pool_names[:30])}"
-            + (weather_hint or ""))
+    G9 多城市（cities 非空）：prompt 按城列池、要求每天标 city 且按序编排；
+    骨架 day 的 city 被收敛到城市集内，缺标的按序均摊（确定性兜底，不臆造城市）。"""
+    target_days = _norm_days(days)
+    cities = [c for c in (cities or []) if c]
+    if not pool_names:
+        return _fallback_skeleton(pool_names, target_days or 1, prefs,
+                                  cities=cities, pool_by_city=pool_by_city)
+
+    if cities:
+        pools_txt = "\n".join(
+            f"【可选景点·{c}】：{'、'.join([p.name for p in (pool_by_city or {}).get(c, [])][:15]) or '（暂无）'}"
+            for c in cities)
+        user = (f"目的地（按此顺序途经）：{' → '.join(cities)}；"
+                f"天数：{target_days or '不限'}；偏好：{prefs or '无特别要求'}。\n"
+                f"原始需求：{raw_text}\n{pools_txt}"
+                + (weather_hint or "")
+                + f"\n每天的 stops 只选当天所在城市的可选景点，并给每天加"
+                  f'"city"字段（只能取：{"、".join(cities)}）；'
+                  "按城市顺序编排，不要来回跳城。")
+    else:
+        user = (f"目的地：{dest}；天数：{target_days or '不限'}；偏好：{prefs or '无特别要求'}。\n"
+                f"原始需求：{raw_text}\n【可选景点】：{'、'.join(pool_names[:30])}"
+                + (weather_hint or ""))
     try:
         out = await llm.complete(
             [{"role": "system", "content": _PROPOSE_SYSTEM},
@@ -273,22 +291,41 @@ async def propose(llm, dest: str, days: str, prefs: str,
             temperature=0.5, max_tokens=600)
     except Exception as e:
         logger.warning("propose LLM failed, deterministic fallback: %s", e)
-        return _fallback_skeleton(pool_names, target_days or 2, prefs)
+        return _fallback_skeleton(pool_names, target_days or 2, prefs,
+                                  cities=cities, pool_by_city=pool_by_city)
 
-    skeleton = _parse_skeleton(out, pool_names)
+    skeleton = _parse_skeleton(out, pool_names, cities=cities)
     if not skeleton.get("days"):
-        return _fallback_skeleton(pool_names, target_days or 2, prefs)
+        return _fallback_skeleton(pool_names, target_days or 2, prefs,
+                                  cities=cities, pool_by_city=pool_by_city)
     # 天数对齐：LLM 给少了用兜底补，给多了截断。
     if target_days:
         skeleton["days"] = skeleton["days"][:target_days]
         if len(skeleton["days"]) < target_days:
-            extra = _fallback_skeleton(pool_names, target_days, prefs)["days"]
+            extra = _fallback_skeleton(pool_names, target_days, prefs,
+                                       cities=cities,
+                                       pool_by_city=pool_by_city)["days"]
             skeleton["days"].extend(extra[len(skeleton["days"]):])
+    if cities:
+        _assign_missing_cities(skeleton, cities)
     return skeleton
 
 
-def _parse_skeleton(text: str, pool_names: list[str]) -> dict:
-    """解析 LLM JSON 骨架，并把 stop 名收敛到池内（拒列表外幻觉名）。"""
+def _assign_missing_cities(skeleton: dict, cities: list[str]) -> None:
+    """缺 city 的 day 按序均摊（LLM 漏标不炸、不臆造城市名）。原地修改。"""
+    days = skeleton.get("days") or []
+    if not days:
+        return
+    per = max(1, -(-len(days) // len(cities)))      # ceil
+    for i, day in enumerate(days):
+        if not (day.get("city") or "").strip():
+            day["city"] = cities[min(i // per, len(cities) - 1)]
+
+
+def _parse_skeleton(text: str, pool_names: list[str],
+                    cities: list[str] | None = None) -> dict:
+    """解析 LLM JSON 骨架，并把 stop 名收敛到池内（拒列表外幻觉名）。
+    G9：day 的 city 收敛到城市集内（列表外城市名置空，由按序均摊兜底）。"""
     block = _extract_json_block(text)
     if not block:
         return {"days": []}
@@ -297,6 +334,7 @@ def _parse_skeleton(text: str, pool_names: list[str]) -> dict:
     except (json.JSONDecodeError, TypeError):
         return {"days": []}
     pool_set = {n: n for n in pool_names}
+    city_set = set(cities or [])
     # 池名的宽松匹配：LLM 可能写「西湖景区」而池里是「西湖」
     days_out = []
     for i, day in enumerate(data.get("days") or [], start=1):
@@ -315,8 +353,10 @@ def _parse_skeleton(text: str, pool_names: list[str]) -> dict:
             stype = (s.get("type") or "attraction").strip() or "attraction"
             stops_out.append({"name": matched, "type": stype})
         if stops_out:
+            city = str(day.get("city") or "").strip()
             days_out.append({"day_index": i,
                              "theme": (day.get("theme") or "").strip(),
+                             "city": city if city in city_set else "",
                              "stops": stops_out})
     return {"days": days_out}
 
@@ -330,12 +370,34 @@ def _match_pool_name(name: str, pool_set: dict) -> str:
     return ""
 
 
-def _fallback_skeleton(pool_names: list[str], days: int, prefs: str) -> dict:
-    """确定性兜底：把池内景点按每天 N 个均匀分配，保证不空。"""
+def _fallback_skeleton(pool_names: list[str], days: int, prefs: str,
+                       cities: list[str] | None = None,
+                       pool_by_city: dict | None = None) -> dict:
+    """确定性兜底：把池内景点按每天 N 个均匀分配，保证不空。
+    G9 多城市：天数按城市序均摊，每城用自己的池（城池空则跳过该城不空转）。"""
     days = max(1, min(days or 2, _MAX_DAYS))
     per = per_day_count(prefs)
-    names = pool_names or []
+    cities = [c for c in (cities or []) if c]
     out = []
+    if cities and pool_by_city:
+        per_city = max(1, -(-days // len(cities)))      # ceil
+        d = 1
+        for c in cities:
+            names = [p.name for p in (pool_by_city.get(c) or []) if p.name]
+            idx = 0
+            for _ in range(per_city):
+                if d > days:
+                    break
+                chunk = names[idx:idx + per]
+                idx += per
+                if not chunk and names:
+                    chunk = names[:1]
+                out.append({"day_index": d, "theme": "", "city": c,
+                            "stops": [{"name": n, "type": "attraction"}
+                                      for n in chunk]})
+                d += 1
+        return {"days": out}
+    names = pool_names or []
     idx = 0
     for d in range(1, days + 1):
         chunk = names[idx:idx + per]
@@ -364,26 +426,35 @@ def _city_center(pool: list[POI]):
 
 async def ground(poi_provider, skeleton: dict, pool: list[POI],
                  meta, *, dest: str, days: str = "", prefs: str = "",
-                 raw_text: str = "", llm=None) -> Trip:
-    """把骨架接地为结构化 Trip：每个 stop 映射真实 POI。"""
+                 raw_text: str = "", llm=None,
+                 cities: list[str] | None = None,
+                 pool_by_city: dict | None = None) -> Trip:
+    """把骨架接地为结构化 Trip：每个 stop 映射真实 POI。
+    G9 多城市：按 day.city 优先在该城池取坐标；新搜索的 near 也锚在该城池中心。"""
     pool_by_name = {(p.name or "").strip(): p for p in pool}
     center = _city_center(pool)
     trip = Trip(destination=dest, days=_norm_days(days),
+                cities=[c for c in (cities or []) if c],
                 preferences=[w for w in _PREF_RELAXED if w in (prefs or "")],
                 raw_text=raw_text, ev={"full_range_km": FULL_RANGE_KM})
     sid = 0
     for day in skeleton.get("days") or []:
+        day_city = str(day.get("city") or "").strip()
+        city_pool = (pool_by_city or {}).get(day_city) or []
+        city_by_name = {(p.name or "").strip(): p for p in city_pool}
         d = Day(day_index=int(day.get("day_index", 1) or 1),
-                theme=(day.get("theme") or "").strip())
+                theme=(day.get("theme") or "").strip(), city=day_city)
         for s in day.get("stops") or []:
             sid += 1
             nm = (s.get("name") or "").strip()
             stype = (s.get("type") or "attraction").strip() or "attraction"
             stop = Stop(stop_id=f"s{sid}", name=nm, type=stype,
                         dwell_min=_DWELL_BY_TYPE.get(stype, 90), source="llm")
-            poi = pool_by_name.get(nm)
+            poi = city_by_name.get(nm) or pool_by_name.get(nm)
             if poi is None:
-                poi = await _ground_one(poi_provider, nm, center, meta, llm)
+                poi = await _ground_one(poi_provider, nm,
+                                        _city_center(city_pool) or center,
+                                        meta, llm)
             # 景点接地到住宿类（泛地点经 ground 新搜索易把民宿/别墅当景点）→ 整条丢弃，不进行程
             if (stype == "attraction" and poi is not None
                     and any(m in (poi.name or "") for m in _LODGING_MARKERS)):
@@ -488,16 +559,24 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
     trip.days = len(trip.itinerary)
 
     # 2) 逐 leg 建结构化驾驶段 + 充电编织 + SoC 递推。
+    # G9 跨天衔接：前一天末站 → 当天首站也建 leg（两端都已接地才建）——多城市行程
+    # 全程最长的恰是跨城段，此前它不进 leg，充电编织对它是盲的、SoC 天与天之间断开。
+    # 日上限顺延判定（上方 day_minutes）刻意不含跨天 leg：跨城赶路不该挤走景点。
     running = float(start_soc_pct or 0) or 50.0
     trip.ev["start_soc"] = round(running)
+    prev_last = None
     for day_index, day in enumerate(trip.itinerary):
         gs = day.grounded_stops()
         day.legs = []
         route_stops = (
             [origin, *gs]
             if day_index == 0 and origin is not None and gs
-            else gs
+            else list(gs)
         )
+        if day_index > 0 and prev_last is not None and gs:
+            route_stops = [prev_last, *route_stops]
+        if gs:
+            prev_last = gs[-1]
         for a, b in zip(route_stops, route_stops[1:]):
             dist, drive_min, points = await route(a, b)
             leg = Leg(from_stop_id=a.stop_id, to_stop_id=b.stop_id,
@@ -550,7 +629,8 @@ def narrate(trip: Trip) -> tuple[str, dict]:
             has_weather = True
             lo, hi = w.get("temp_low", ""), w.get("temp_high", "")
             wtag = f"（{w['text']}{f' {lo}-{hi}℃' if lo and hi else ''}）"
-        seg = f"第{day.day_index}天{wtag}：{names}"
+        ctag = f"（{day.city}）" if day.city else ""    # G9 多城市：每天标城
+        seg = f"第{day.day_index}天{ctag}{wtag}：{names}"
         if charge_n:
             seg += f"（途中补电{charge_n}次）"
         lines.append(seg)

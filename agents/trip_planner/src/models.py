@@ -53,6 +53,7 @@ class Day:
     day_index: int = 1
     theme: str = ""
     date: str = ""
+    city: str = ""                              # G9 多城市行程：这天在哪座城（空=单城市）
     stops: list = field(default_factory=list)   # list[Stop]
     legs: list = field(default_factory=list)    # list[Leg]
     weather: dict | None = None
@@ -70,6 +71,7 @@ class Trip:
     destination: str = ""
     days: int = 0
     theme: str = ""                 # G4 主题行程（《太平年》）；空=普通行程
+    cities: list = field(default_factory=list)  # G9 多城市保序（["杭州","苏州"]）；空=单城市
     preferences: list = field(default_factory=list)
     status: str = "draft"           # draft|confirmed|active|completed
     cursor: dict = field(default_factory=lambda: {"day_index": 0, "stop_index": 0})
@@ -97,6 +99,7 @@ class Trip:
             destination=d.get("destination", "") or "",
             days=int(d.get("days", 0) or 0),
             theme=d.get("theme", "") or "",
+            cities=[str(c) for c in (d.get("cities") or []) if str(c).strip()],
             preferences=list(d.get("preferences") or []),
             status=d.get("status", "draft") or "draft",
             cursor=dict(d.get("cursor") or {"day_index": 0, "stop_index": 0}),
@@ -151,6 +154,7 @@ def _day_from_dict(d: dict) -> Day:
         day_index=int(d.get("day_index", 1) or 1),
         theme=d.get("theme", "") or "",
         date=d.get("date", "") or "",
+        city=d.get("city", "") or "",
         stops=[_stop_from_dict(x) for x in (d.get("stops") or []) if isinstance(x, dict)],
         legs=[_leg_from_dict(x) for x in (d.get("legs") or []) if isinstance(x, dict)],
         weather=d.get("weather") if isinstance(d.get("weather"), dict) else None,

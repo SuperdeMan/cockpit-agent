@@ -9,10 +9,19 @@ DEST+SIGNAL 正则 + 反例守卫），真正的槽位抽取由本函数在 Agen
 from __future__ import annotations
 import re
 
-# 目的地：取『去/到/赴X』中的 X（懒匹配到 玩/住/游/标点/N天 前），通勤/固定点不算出行
+# 目的地：取『去/到/赴X』中的 X（懒匹配到 玩/住/游/标点/N天 前），通勤/固定点不算出行。
+# lookahead 含「再/然后/接着」（G9）：「先去杭州再去苏州」的第一城否则会被懒匹配
+# 吞成「杭州再去苏州」。
 _TRIP_DEST_RE = re.compile(
     r"(?:去|到|赴|游)\s*([一-鿿]{2,6}?)"
-    r"(?=玩|住|待|游|逛|的|附近|边|，|,|。|！|!|、|\s|[一二两三四五六七八九十0-9]+\s*[天日]|$)")
+    r"(?=玩|住|待|游|逛|的|附近|边|再|然后|接着|，|,|。|！|!|、|\s|[一二两三四五六七八九十0-9]+\s*[天日]|$)")
+# G9 顿号/连词连写多城市（「去杭州、苏州玩两天」）——捕获组不含分隔符抓不到第二城。
+# 末段 lazy + 与单城同款 lookahead，否则贪婪吞掉「玩两天」尾巴。
+_TRIP_MULTI_DEST_RE = re.compile(
+    r"(?:去|到|赴|游)\s*([一-鿿]{2,6}(?:[、和与][一-鿿]{2,6}?)+)"
+    r"(?=玩|住|待|游|逛|的|附近|边|再|然后|接着|，|,|。|！|!|、|\s"
+    r"|[一二两三四五六七八九十0-9]+\s*[天日]|$)")
+_CITY_SPLIT_RE = re.compile(r"[、和与,，]")
 # 退路：『杭州三日游』这类无『去』前缀、地名直接接 N日游
 _TRIP_DEST_BEFORE_DAYS_RE = re.compile(
     r"([一-鿿]{2,6}?)(?=[一二两三四五六七八九十0-9]+\s*[天日]游)")
@@ -60,6 +69,28 @@ def extract_theme(text: str) -> str:
             if theme:
                 return theme
     return ""
+
+
+def extract_cities(text: str) -> list[str]:
+    """G9：多城市序（保**提及序**、去重、BLOCK 过滤）。
+
+    「先去杭州再去苏州」逐个抓；「去杭州、苏州」连写拆分。顺序=用户口述序
+    （v1 刻意不做顺路重排序——不代用户优化）。单城/无城返回相应长度列表。"""
+    t = text or ""
+    out: list[str] = []
+
+    def _add(c: str) -> None:
+        c = c.strip()
+        if c and not any(c.startswith(b) for b in _TRIP_DEST_BLOCK) and c not in out:
+            out.append(c)
+
+    m = _TRIP_MULTI_DEST_RE.search(t)
+    if m:
+        for part in _CITY_SPLIT_RE.split(m.group(1)):
+            _add(part)
+    for m2 in _TRIP_DEST_RE.finditer(t):
+        _add(m2.group(1))
+    return out
 
 
 def extract_trip(text: str) -> tuple[str, str, str]:

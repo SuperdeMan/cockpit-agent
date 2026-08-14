@@ -49,12 +49,14 @@ schema_version: 1
 # 2026-08-15 同日放到 586：第七次适用——G4 主题行程（trip.plan 新增 theme 槽 +
 # 主题检索步：「跟着《X》游Y」此前连出行判定都进不去）。既有 intent 的全新话术族，
 # 一正（主题→trip.plan）一硬负（聊作品内容≠行程）锁两侧，机械地 +2。
+# 2026-08-15 同日放到 587：第八次适用——G9 trip 跨城市（「先去A再去B玩N天」
+# 此前会丢第二城；现保序逐城安排+跨城驾驶段）。既有 intent 的新话术族正例 +1。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 586
+    max_cases: 587
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

@@ -953,3 +953,16 @@ cases:
       - input: {utterance: 《琅琊榜》这部剧好看吗，讲的什么, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [info.search, chitchat.talk]}], forbidden_intents: [trip.plan, navigation.navigate_to], allow_extra_intents: false}
+  # ── G9 多城市行程（2026-08-15）：「先去A再去B玩N天」落单条 trip.plan 保序 ────
+  - id: cp.multicity.trip-sequential
+    title: 先去A再去B玩N天应落单条行程规划而非多个导航
+    family_id: cp.multicity-trip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [trip, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 先去武汉再去长沙，玩个四天, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], forbidden_intents: [navigation.navigate_to, navigation.reroute], allow_extra_intents: false}
