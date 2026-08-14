@@ -513,11 +513,22 @@ class NavigationAgent(BaseAgent):
             page = max(1, int((meta or {}).get("poi_page", 1)))
         except (TypeError, ValueError):
             page = 1
-        # strict=False：就近类目（「最近的粤菜馆」）的结果店名天然不含类目词，
-        # 不做 R1 强校验（否则每次类目导航都白跑一轮去偏置重搜 + 地标 LLM）。
-        resolved_name, results = await self._find_destination(
-            dest, meta, near=near, limit=5 if is_proximity else 3, page=page,
-            strict=not is_proximity)
+        # D4（接地卡 2026-08-14）：历史指代（「上次去过的那个湖」）→ episodic 轨迹
+        # 坐标直取，不重搜。planner 召回把 dest 填对了名（滴水湖），重搜却把最后
+        # 一跳交回就近偏置（真栈接到雅悦酒店）——去过的地方坐标本来就在轨迹里。
+        visited = None
+        if not is_proximity and self._HISTORY_REF_RE.search(raw_text):
+            visited = await self._visited_coords_from_memory(ctx, dest)
+        if visited:
+            resolved_name = visited[0]
+            results = [POI(id="episodic_place", name=visited[0],
+                           address="您去过的地方", lat=visited[1], lng=visited[2])]
+        else:
+            # strict=False：就近类目（「最近的粤菜馆」）的结果店名天然不含类目词，
+            # 不做 R1 强校验（否则每次类目导航都白跑一轮去偏置重搜 + 地标 LLM）。
+            resolved_name, results = await self._find_destination(
+                dest, meta, near=near, limit=5 if is_proximity else 3, page=page,
+                strict=not is_proximity)
         if not results:
             if is_proximity:
                 if page > 1:  # "换一批"翻到底了
@@ -690,6 +701,41 @@ class NavigationAgent(BaseAgent):
         "4": "记得您习惯避开拥堵，已按此规划。",
         "1": "记得您偏好少走收费路，已按此规划。",
     }
+
+    # D4：历史指代词形——与 orchestrator/cloud/context.py::_EPISODIC_REF_RE 同一组
+    # （planner 靠它放开 episodic 召回；端云各自部署，无法共享常量，改一处要对齐另一处）。
+    _HISTORY_REF_RE = re.compile(r"上次|上回|那次|上一次|之前去过?的?|前几天去")
+
+    async def _visited_coords_from_memory(self, ctx, dest: str) -> tuple[str, float, float] | None:
+        """episodic 轨迹坐标直取（D4）：「召回对了最后一跳歪」的根治。
+
+        名字对齐（_dest_matches 同款包含式）才直用——描述性 dest（planner 没解出名）
+        不做语义猜：接错比重搜更糟。坐标从 memory 确定性直取、不经 LLM 转手
+        （防模型编坐标——last_places 不进 prompt 的同款纪律）。查不到/失败回 None
+        走正常解析，绝不阻塞导航。search_poi 自动导航分支刻意未挂：历史指代经
+        planner episodic 召回都走 navigate_to（视觉地标才走 search_poi）。"""
+        if ctx is None or not dest:
+            return None
+        try:
+            mems = await ctx.recall(dest, scopes=["episodic.place"],
+                                    kinds=["episodic"], top_k=5)
+        except Exception as e:
+            logger.debug("visited coords recall skipped: %s", e)
+            return None
+        for m in mems or []:
+            try:
+                v = json.loads(m.get("value_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            name = str(v.get("name") or "")
+            lat, lng = v.get("lat"), v.get("lng")
+            if name and lat is not None and lng is not None \
+                    and self._dest_matches(dest, name):
+                try:
+                    return name, float(lat), float(lng)
+                except (TypeError, ValueError):
+                    continue
+        return None
 
     async def _route_pref_from_memory(self, ctx) -> tuple[str, str]:
         """路线偏好记忆 → 高德 strategy（G6：route.* 谓词的确定性消费出口）。
