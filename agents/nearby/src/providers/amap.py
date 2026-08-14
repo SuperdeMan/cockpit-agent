@@ -142,11 +142,13 @@ class AmapPlaceProvider(PlaceProvider):
             if open_now and is_open_now(place.open_today) is False:  # 明确闭店才剔，未知保留
                 continue
             results.append(place)
-            if len(results) >= limit:
+            # 按评分排序时必须吃满整页候选再排——先截后排会把「评分最高」
+            # 偷换成「最近 limit 家里评分最高」（2026-08-14 EVA 二轮批 A①）。
+            if sort != "rating" and len(results) >= limit:
                 break
         if sort == "rating":
             results.sort(key=lambda x: x.rating, reverse=True)
-        return results
+        return results[:limit]
 
     async def detail(self, place_id="", *, name="", near=None, meta=None) -> Place:
         if not place_id:

@@ -1016,3 +1016,14 @@ unary 回退。已流出 speech 或 action 之后 final 丢失，一律不重跑
 | 存储与隐私 | Redis hash `payment:order:{payment_id}` + `payment:idem:{key}` + zset `payment:poll`，内存兜底（Redis 不可达诚实降级+启动 warning）。隐私登记 `payment_order`（`runtime/privacy_registry.py`，backend=redis，lifecycle=retained_audit）：**改存储形态必须同步** store 头部 `PERSONAL_DATA_TARGETS` / privacy_registry `storage_variants` / `test/e2e_manifest.yaml` / `payment_redact_owner` 实现四处 |
 | GetStatus | 单不存在 `abort(NOT_FOUND)`（不再回 FAILED=4 冒充状态）；消费方按 gRPC 错误处理 |
 | 微信验签 | 公钥模式优先（`WECHATPAY_PUBLIC_KEY(_PATH)`+`_ID`）；平台证书懒加载兼容（12h 缓存+未知序列号即时重拉）。**v1 无支付回调、纯主动查单**——车机无公网入站，入站验签面为零 |
+
+### 9.18 条件提醒的求值时机（v1 语义边界，2026-08-14 记账）
+
+「如果明天下雨提醒我带伞」的条件在**创建时**（同一轮 `adaptive` T2 循环内，拿当时查到的
+预报当场拍板）求值，**不是触发时**求值——reminder 域没有条件概念（`reminder_item` 无
+condition 列），落库的只是普通定时提醒；治理器信封的 `conditions` 虽是投递时刻再求值
+（§9.8），但可引用键只有车况镜像 + `location.*`，**没有天气**，且 reminder fired 信封
+不带 conditions。实际后果：预报次日翻盘（当时说不下→没建但真下了 / 当时说下→建了但
+放晴照响）系统无从修正。这是 v1 的真实边界，不是 bug；把它当「触发时求值」承诺才是 bug。
+若未来要做触发时复核，落点是 fired 信封带天气类 conditions + `proactive/evaluate.py`
+扩键，不是在 reminder 里长出第二套条件求值。

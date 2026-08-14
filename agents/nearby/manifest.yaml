@@ -23,7 +23,9 @@ capabilities:
       要去哪、只需定位一个具体地点归 navigation.search_poi；**找充电桩归 charging.find**
       （它按真实电量+空闲状态排序）。用户已经说出设施/品类时，不得让 category 和 keyword
       同时为空：通用品类填 category，具体名称/品牌/设施词填 keyword。
-    slots: [category, keyword, cuisine, brand, rating_min, price_max, price_level, open_now, sort, location, radius, weather_context]
+    # 2026-08-14 摘除死槽位 radius/price_level（声明了但 provider 参数面与 agent 全程零消费，
+    # B4 纪律：无消费方的声明只会漂移；price_level 与 price_max 语义重复）。
+    slots: [category, keyword, cuisine, brand, rating_min, price_max, open_now, sort, location, weather_context]
     examples: ["附近有什么好吃的", "找家川菜馆", "附近评分高的火锅", "人均一百以内的川菜",
                "附近的餐厅", "附近的酒店", "附近的电影院", "找个停车场", "麦当劳在哪", "附近的景点",
                "下雨天去哪儿玩", "附近有什么商场"]
@@ -45,7 +47,9 @@ capabilities:
     examples: ["看第一个的详情", "这家怎么样", "它家电话多少", "几点关门", "人均多少"]
   - intent: nearby.order
     description: 在餐厅等商户点单/订位/预订座位（涉及费用/承诺，需二次确认；当前仅少数连锁接入，预留）
-    slots: [poi_id, name, datetime, party_size]
+    # 2026-08-14 摘除 datetime/party_size：诚实桩不读它们（订座属生态搁置面），
+    # 声明会让 LLM 白抽取；真实订座接入时随能力一起回来。
+    slots: [poi_id, name]
     examples: ["在这家点单", "订个餐厅", "帮我订一家川菜馆", "订今晚7点两位", "帮我订位"]
     require_confirm: true
 

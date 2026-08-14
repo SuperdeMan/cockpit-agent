@@ -379,6 +379,31 @@ async def test_same_window_merges_into_one_message():
 
 
 @pytest.mark.asyncio
+async def test_same_window_never_merges_across_owners():
+    """同窗不同乘员的消息不得合并成一条。
+
+    合并组只带 top 的 user_id——跨 owner 合并会把 B 的提醒记在 A 名下、只对 A 播报
+    （2026-08-14 EVA 二轮批 A③：reminder 侧刻意做的 owner 分组不该在治理器这跳被抵消）。
+    """
+    sink = Sink()
+    gov = Governor(sink.publish, state_fn=dict, emit=sink.emit, now_fn=lambda: 1000.0,
+                   merge_window_ms=30)
+    await gov.submit(msg(type="reminder_fired", user_id="owner-a",
+                         priority="user_contract", speech="A 的提醒。", dedup_key="ra"))
+    await gov.submit(msg(type="reminder_fired", user_id="owner-b",
+                         priority="user_contract", speech="B 的提醒。", dedup_key="rb"))
+    await asyncio.sleep(0.1)
+    assert len(sink.out) == 2, "跨 owner 必须各自成条"
+    assert sorted(o.get("user_id") for o in sink.out) == ["owner-a", "owner-b"]
+    assert not any("merged_from" in o for o in sink.out)
+    # 同 owner 的仍照常合并（分组不改变既有合并语义）
+    await gov.submit(msg(type="t-a1", user_id="owner-a", speech="话一。", dedup_key="a1"))
+    await gov.submit(msg(type="t-a2", user_id="owner-a", speech="话二。", dedup_key="a2"))
+    await asyncio.sleep(0.1)
+    assert len(sink.out) == 3 and "merged_from" in sink.out[2]
+
+
+@pytest.mark.asyncio
 async def test_critical_flushes_immediately_and_takes_pending_along():
     sink = Sink()
     gov = Governor(sink.publish, state_fn=dict, emit=sink.emit, now_fn=lambda: 1000.0,

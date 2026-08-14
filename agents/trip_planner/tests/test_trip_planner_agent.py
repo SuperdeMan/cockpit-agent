@@ -249,6 +249,32 @@ def test_navigate_without_trip_asks_to_plan():
     assert res.status == "need_slot"
 
 
+def test_navigate_global_ordinal_without_day():
+    """『导航到第一站』（不带天数）→ 全程第 1 个已接地停靠点。
+
+    回归（2026-08-14 EVA 二轮批 A②）：day_n=0 时序数分支被 `and day_n` 短路，
+    且剥壳残留「第一站」被当店名找 → 恒「没找到您说的那一站」。guide 与对抗语料
+    都期望「排个行程，然后导航到第一站」可用。
+    """
+    agent = TripPlannerAgent()
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="导航到第一站",
+        ctx=_persisted_ctx(_trip_2days())))
+    assert res.status == "ok"
+    navs = [a for a in res.actions if a["type"] == "navigate"]
+    assert navs and navs[0]["payload"]["destination"] == "西湖"
+
+
+def test_navigate_global_ordinal_crosses_days():
+    """『导航去第二站』全程序数跨天取第 2 个已接地停靠点。"""
+    agent = TripPlannerAgent()
+    res = asyncio.run(run_handle(
+        agent, "trip.navigate", slots={}, raw_text="导航去第二站",
+        ctx=_persisted_ctx(_trip_2days())))
+    navs = [a for a in res.actions if a["type"] == "navigate"]
+    assert navs and navs[0]["payload"]["destination"] == "灵隐寺"
+
+
 # ─── P1: trip.modify 结构化 edit-op（加/删具体停靠点）───
 
 def _trip_3days_beijing() -> Trip:

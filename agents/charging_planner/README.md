@@ -7,7 +7,7 @@
 | intent | 说明 | 槽位 |
 |---|---|---|
 | `charging.find` | 找附近的充电站 | destination, soc, prefer |
-| `charging.plan` | 规划长途充能策略 | destination, soc, departure_time |
+| `charging.plan` | 规划长途充能策略 | destination, soc |
 | `charging.status` | 查询当前充电状态 | — |
 
 ## 端口

@@ -25,7 +25,9 @@ capabilities:
     examples: ["找个充电站", "附近有充电桩吗", "快充在哪", "快没电了附近找个快充", "续航见底了帮我找补能点"]
   - intent: charging.plan
     description: 规划车辆长途充能策略（沿途分段充电）
-    slots: [destination, soc, departure_time]
+    # 2026-08-14 摘除死槽位 departure_time：声明以来 _plan 从未消费（B4 纪律），
+    # 出发时刻规划是另一道题（EVA 二轮 G1 的 arrive_by 落在 navigation），有真需求再声明。
+    slots: [destination, soc]
     heavy: true    # 长途充能沿途分段规划 → 开思考+过程区
     examples: ["去杭州怎么充电", "帮我规划充电"]
   - intent: charging.status

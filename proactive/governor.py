@@ -466,6 +466,17 @@ class Governor:
         items, self._pending = self._pending, []
         if not items:
             return
+        # 合并只在同一乘员内发生：合并组只带 top 的 user_id，跨 owner 合并会把
+        # B 的消息记在 A 名下、也只对 A 播报——reminder 侧刻意做的 owner 分组
+        # 不该在治理器这一跳被抵消（2026-08-14 EVA 二轮批 A③）。
+        # owner 键与频控/投递账本同源（payload.user_id，缺省空串归一组）。
+        groups: dict[str, list] = {}
+        for it in items:
+            groups.setdefault(str(it.payload.get("user_id") or ""), []).append(it)
+        for group in groups.values():
+            await self._flush_owner_group(group)
+
+    async def _flush_owner_group(self, items: list) -> None:
         items.sort(key=lambda i: i.rank)          # 稳定排序：同档保持到达序
         top = items[0]
         if len(items) == 1:

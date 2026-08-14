@@ -433,6 +433,10 @@ class TripPlannerAgent(BaseAgent):
                 picked = self._find_by_name(flat, name, day_n)
             if picked is None and day_n:
                 picked = self._find_by_day_ordinal(flat, day_n, ordinal or 1)
+            if picked is None and not day_n and ordinal:
+                # 「导航到第一站」不带天号：按全程序数跨天取（2026-08-14 批 A②，
+                # 此前被 `and day_n` 短路，剥壳残留「第N站」被当店名找 → 恒「没找到」）
+                picked = flat[min(ordinal, len(flat)) - 1]
 
         if picked is None:
             return AgentResult(
@@ -583,7 +587,7 @@ class TripPlannerAgent(BaseAgent):
                 t = t[len(p):]
                 break
         t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*天的?", "", t)
-        t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*个", "", t)
+        t = re.sub(r"^第\s*[一二两三四五六七八九十0-9]+\s*[个站]", "", t)
         t = re.sub(r"^行程(里|中)?的?", "", t).strip("的里中 ，。")
         return "" if t in ("下一站", "下个", "行程", "") else t
 

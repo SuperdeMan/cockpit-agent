@@ -89,6 +89,22 @@ def test_search_sort_by_rating():
     assert [r.rating for r in res] == [4.6, 4.2]
 
 
+def _poi(i, rating):
+    return {"id": f"P{i}", "name": f"店{i}", "location": "121.5,31.23",
+            "type": "餐饮", "distance": str(100 * i),
+            "business": {"rating": str(rating)}}
+
+
+def test_search_sort_rating_considers_beyond_limit():
+    """先截后排的回归：评分最高的一家在距离序第 12 位（默认 limit=10 之外）。
+    sort=rating 必须吃满整页候选再排——否则「评分最高」被偷换成「最近 10 家里评分最高」。"""
+    pois = [_poi(i, 4.0) for i in range(1, 12)] + [_poi(12, 4.9)]
+    p = _provider({"/v5/place/around": {"status": "1", "info": "OK", "pois": pois}})
+    res = asyncio.run(p.search("川菜", near=GeoPoint(lng=121.5, lat=31.23), sort="rating"))
+    assert res[0].name == "店12" and res[0].rating == 4.9
+    assert len(res) == 10                              # 仍只回 limit 家
+
+
 def test_status_not_one_raises():
     bad = {"status": "0", "info": "INVALID_USER_KEY", "infocode": "10001"}
     p = _provider({"/v5/place/around": bad})
