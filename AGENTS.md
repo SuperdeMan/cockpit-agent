@@ -57,7 +57,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-13）
+### 4.0 当前快照（2026-08-14）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
@@ -66,17 +66,35 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5471 passed / 14 skipped / 0 failed**（2026-08-14 打磨+searchType 勘误批后实测，
-退出码 0，用时 31m36s）。较二轮后的 5464 净 **+7**，逐条点上号：aggregator
-`_refused` 恰好一次 2 + executor store_hint/city 补全 1 + planning store_hint
-依赖边 1 + mcd 分类兜底/查无不顶替 2 + 焦点 city 标量 1；证据 history
-**§32.1/§32.2** 与设计文档 §5/§5.1。⚠ 与并行 Docker build 同跑时
-`test_e2e_wrappers_ci` 会负载性假红（隔离复跑 6/6）——全量要单独跑。
-前三跳：5457→5464（二轮 +7）见 §32、5440→5457（六批 +17）见 §31、
-5408→5440 见 §30；更早对账见 **§28/§29**。
+**5500 passed / 14 skipped / 0 failed**（2026-08-14 EVA 二轮五批后实测，退出码 0，
+用时 29m41s）。较打磨批的 5471 净 **+29**，逐套件点上号：navigation 11（arrive_by
+解析/策略映射/沿途采样/多途经/记忆消费/episodic）+ nearby 7（评分先排后截回归 1
++ 口味消费 4 + 类目/氛围 2…按套件 57→64）+ memory 4（subject/polarity/事件建议）
++ trip 2（全程序数）+ landmark 2（俗称/自然地物）+ proactive 1（跨 owner）
++ context 1（episodic 召回）+ reminder 1（出发/到达择项）；证据 history **§33**
+与实施计划 §7。⚠ 与并行 Docker build 同跑时 `test_e2e_wrappers_ci` 会负载性假红
+（隔离复跑 6/6）——全量要单独跑。前四跳：5464→5471 见 §32.1/§32.2、5457→5464
+见 §32、5440→5457 见 §31、5408→5440 见 §30。
 ⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/出站验签代码先想编码两端；
 本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
 （§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
+⚠ 同族第二形态（2026-08-14 实测烧掉一次全量）：**`python` 不在 PATH 的 shell 里跑
+全量会 192 条假红**——e2e manifest 校验要求 `python` 可执行存在（`case
+e2e_protocol_smoke.command executable does not exist: python`），scripts/tests 整族
+连坐；判据同款「红了先问是不是前提变了」，把解释器目录挂上 PATH 后同批 293 条全绿。
+
+**2026-08-14 EVA 指令集二轮对标五批**（缺口分析获批当日实施，流水 history **§33**、
+方案 `docs/design/2026-08-14-eva-round2-capability-gaps.md` + 实施计划同日档 §7）：
+批 A 存量七条（nearby 评分先排后截／trip「第一站」序数／主动治理器跨 owner 不合并／
+死槽位摘除／conventions §9.18）；批 B 导航五刀（`arrive_by` 时限求解+ETA 量化+出发提醒
+反向环／顺路候选真沿途 45% 采样／landmark 俗称+自然地物／`route_pref`→高德 strategy
+——该参数此前全仓从未使用／多途经点保序）；批 C 记忆消费面（proto `subject`/`polarity`
++ 四个确定性消费出口，修 nearby **假个性化**：口味检索前置+负偏好软降权+subject 并取）；
+批 D 未来事件→询问式提醒建议（`reminder_card` offer 态，零执行权不破）；批 E 类目扩展
+（动物园族）+「餐饮」默认仅饮食信号下成立+氛围软重排。catalog 锚点 11866→**11928**；
+HMI node **258** + Vite build；四门禁绿。**未做**：G4 主题行程/G8 导航会话状态/
+G9 trip 跨城市（P3 另立 RFC）、G10 订座票务（搁置）、真栈 journeys 全量重跑
+（memory proto 变更后首次 `make up` 需 `--build`）。
 
 **2026-08-13/14 商户链路收口聚焦实测**（demo-3ukshz 二轮 + 打磨 + searchType
 勘误，逐批流水 history **§32/§32.1/§32.2**、方案与勘误 设计文档 §5/§5.1）：

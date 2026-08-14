@@ -2377,3 +2377,51 @@ Place/items/焦点 `last_places` 增第四个安全标量 `city`（跨品牌无�
 聚焦回归 1261 绿（context 焦点 city 1 / executor city 兜底 2 / mcd escalate 1 /
 searchType 选档 2 新增或改写）；wrappers_ci 单红复核为并行 Docker build 的
 负载性假红（隔离复跑 6/6）。
+
+## §33 2026-08-14 EVA 指令集二轮对标：缺口分析 + 五批实施（批 A-E 全合入）
+
+**入口**：缺口分析 `docs/design/2026-08-14-eva-round2-capability-gaps.md`（25 条竞品语料
+逐条比对，缺失≈17，归 11 簇；定性=缺的是执行面维度不是规划智能）→ 实施计划
+`docs/design/2026-08-14-eva-round2-implementation.md`（§7 实施记录）。泓舟确认方向并
+授权 commit/push；P3 簇（G4 主题行程/G8 导航会话状态/G9 trip 跨城市）维持另立 RFC，
+G10 订座/票务维持搁置。
+
+**五批 commit**：
+- 批 A `51c4992` 存量问题七条：nearby 评分**先排后截**（此前「评分最高」被偷换成「最近
+  10 家里评分最高」）；trip.navigate「第一站」全程序数（`and day_n` 短路 + 剥壳残留
+  「第N站」当店名，两测试先红后绿实证）；主动治理器 `_flush` 按 owner 分组（跨乘员同窗
+  消息此前会合成一条记在一人名下）；死槽位五处摘除（B4 纪律）；conventions **§9.18**
+  条件提醒创建时求值记账 + navigation/parking README 勘正。
+- 批 B `04ff730` 导航域五刀：G1 `arrive_by` 到达时限（ETA 三档量化话术 + 绕行Δ + 顺路
+  候选逐家 ETA + REMINDABLE「出发前往」反向环，reminder 按出发/到达词形择项）；G2 顺路
+  候选改**真沿途**（路线 45% 里程采样点，回落目的地附近时话术如实说）；G3 landmark 扩
+  俗称封闭词表（秋裤/裤衩/小蛮腰/开瓶器）+自然地物×形容共现+prompt 城市约束最高优先；
+  G11 route_pref→高德 v3 strategy（该参数此前全仓从未使用；「风景」诚实降档）；G9 多
+  途经点 、/和 连写保序。范例 +5。
+- 批 C `ad0f2e8` 记忆消费面 G6：proto MemoryItem 加 `subject`（关于谁——「我爸不喜欢
+  空调冷」的「爸爸」此前只活在字符串里）与 `polarity`（like/dislike 闭集），
+  RecallRequest.subject 过滤，冲突 supersede 按 subject 收窄；抽取输出三新字段 +
+  route.* 谓词归一。四个消费出口逐环配「记忆改变行为」断言：①nearby 修**假个性化**
+  （口味从「搜完拼话术」改为检索前偏置 + 负偏好软降权 + 「和老婆吃饭」subject 并取）
+  ②navigation route.* 记忆→strategy（「以后都不走高速」持续生效）③导航成功落 episodic
+  轨迹④planner「上次/那次」放开 episodic 召回。catalog 锚点 11866→11928（净+62 留痕）。
+- 批 D `32fcdaf` G7 询问式主动：抽取当轮的未来事件（event_time 确定性校验：未来 90 天内）
+  → `reminder_card(context=offer)` 建议卡「要到时候提前提醒你吗」——**零执行权不破**：
+  不自动建 reminder，「要的」按钮 send_text 回发正常语音链；标题剥双时间词防解析咬错；
+  new_ids 门控只在抽取当轮建议一次；过去事件永不打扰。HMI reminder_card 扩 offer 态。
+- 批 E `7d47959` G5：类目表补动物园族（「带孩子看看动物」此前兜底错搜「美食」）；
+  「餐饮」默认改为仅饮食信号下成立、全无信号诚实追问；氛围词（安静）→环境标签+评分
+  软重排 + 「地图没有安静度数据」诚实话术。范例 +2。
+
+**四条实施期修正**（方案 vs 实测，详见实施计划 §7）：自埋「23点→3点」错拆被自己的
+测试抓住；饮食信号面首版过窄（「川菜馆/火锅」够不着）被两条既有测试打红——诚实追问的
+代价是把「本来就是餐饮」的判定面配齐；迟到话术首版引导「途经点不去了」（G8 未实施的
+能力）被改成「直接导航去X」——**话术只许诺今天走得通的路**；catalog 预算锚点按其自身
+纪律更新。
+
+**验证面**：分组全绿——navigation 96 / nearby 64 / reminder 157 / trip 47 /
+charging 42 / proactive 62 / memory 215 / orchestrator-cloud 全套（catalog 锚点 10）/
+_sdk 31 / HMI node 258 + Vite build；四门禁绿（L0 strict 2/2、能力完整性、范例 291 条
+域错配 2.4%、exemplars）。全量基线见 AGENTS.md §4.0（本批后重测）。Go 侧零改动未重测。
+真栈 journeys 全量与容器 rebuild 未在本批执行；memory proto 变更后首次 `make up`
+需 `--build` 重建 memory 及依赖 `_sdk` 的服务。

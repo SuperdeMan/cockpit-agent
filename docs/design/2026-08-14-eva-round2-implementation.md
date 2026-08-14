@@ -35,6 +35,23 @@
 
 G4 / G8 / G9-trip 跨城市（P3，另立 RFC）；G10 订座/票务（搁置）；真栈全量 journeys 重跑（本批后单独安排，先以单测+契约+门禁收口——涉及 proto/容器的改动在收尾批注明未经真栈项）。
 
-## 7. 实施记录
+## 7. 实施记录（2026-08-14，五批全部合入 main）
 
-（逐批回填）
+| 批 | commit | 落点摘要 | 验证 |
+|---|---|---|---|
+| A | `51c4992` | 七条存量问题：nearby 评分先排后截（回归测试钉死 limit 外高分店进前排）/ trip「第一站」全程序数（两测试先红后绿实证 bug）/ 治理器 `_flush` 按 owner 分组（跨乘员断言）/ 死槽位五处摘除 / conventions §9.18 + 两 README | nearby 58 / trip 47 / proactive 62 |
+| B | `04ff730` | 导航五刀：G1 `arrive_by`（slot+原话兜底、裸时刻未来最近消歧、ETA 三档量化话术、绕行Δ、候选 ETA、REMINDABLE 出发反向环+reminder 词形择项）；G2 沿途 45% 采样点（回落如实说）；G3 landmark 俗称词表+自然地物共现+prompt 城市约束最高优先；G11 route_pref→高德 strategy（风景诚实降档）；G9 多途经点保序 | navigation 92 / reminder 157 / trip+charging+sdk 172 / 范例门禁 / L0 2/2 |
+| C | `ad0f2e8` | G6：proto `subject`/`polarity` + `RecallRequest.subject`（缺省空=存量逐字不变）；冲突域按 subject 收窄；抽取输出 subject/polarity/event_time + route.* 谓词归一；**四个消费出口**——nearby 口味检索前置（修假个性化）+负偏好软降权+subject 感知、navigation route.* 记忆→strategy、导航落 episodic 轨迹、planner 历史指代放开 episodic 召回；catalog 锚点 11866→11928 留痕 | memory 213 / nearby 61 / navigation 96 / cloud 全套 |
+| D | `32fcdaf` | G7 询问式：抽取当轮的未来事件（event_time 确定性校验）→ `reminder_card(context=offer)` 建议卡，「要的」send_text 回发正常链建 reminder（**零执行权不破**、标题剥双时间词、new_ids 门控只建议一次、过去事件永不打扰） | memory 215 / HMI node 258 + Vite build |
+| E | `7d47959` | G5：类目表补动物园族；「餐饮」默认只在饮食信号下成立、否则诚实追问；氛围词软重排+「地图没有安静度数据」诚实话术 | nearby 64 / 范例门禁 291 / L0 2/2 |
+
+**实施期修正记账**（方案 vs 实测）：
+1. 批 B 自埋缺陷被自己的测试抓住：`N点` 数字时刻用单字符类会把「23点」错拆成「3点」——改 `\d{1,2}` 交替分支后回归钉死。
+2. 批 E 首版饮食信号词表过窄，「川菜馆/火锅」够不着被两条既有测试打红——信号面扩到 菜/火锅/烧烤 并计入 cuisine 槽。**「诚实追问」的代价是要把「本来就是餐饮」的判定面配齐**，否则诚实降级会误伤主流路径。
+3. 途经点迟到话术首版引导「说『途经点不去了』」——那是 G8（未实施）的能力，**话术只许诺今天走得通的路**，改为「直接导航去X」。
+4. catalog 预算锚点在批 A/B 后变红（+62），按该测试自身纪律更新并留痕——锚点测试守的是「完整 inventory 不超预算」，不是冻结条数。
+
+**遗留（本批范围外，维持缺口分析的 P3/搁置判定）**：G4 主题行程、G8 导航会话状态、
+G9 trip 跨城市（各需独立 RFC）；G10 订座/票务（搁置）。真栈 journeys 全量重跑与容器
+rebuild 未在本批执行（改动经单测/契约/门禁收口；memory proto 变更后首次 `make up`
+需 `--build` 重建 memory/cloud-planner/nearby/navigation/reminder 及依赖 `_sdk` 的服务）。
