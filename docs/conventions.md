@@ -56,7 +56,7 @@
 | `hvac.*` / `window.*` / `seat.*` / `sunroof.*` / `sunshade.*` / `trunk.*` / `door_lock.*` / `ambient_light.*` / `headlight.*` / `wiper.*` / `rear_view_mirror.*` / `fragrance.*` / `volume.*` / `fuel_tank_cover.*` / `charging_port.*` / `steering_wheel.*` / `energy_recovery.*` / `lane_*` / `scene_mode.*` / `power_mode.*` / `driving_mode.*` / `screen.*` / `accompany_home.*` / `tire_pressure.*` / `battery.query` / `dashcam.*` / `aircon.*` / `air_purifier.*` / `navi_broadcast.*` / `key_tone.*` / `front_defogger.*` / `rear_defogger.*` | 端侧车控 | edge | value/unit/positions/mode/tag | 经 VAL 知识库校验；端侧意图 pattern（R4.1 增气象/设置页族/空气净化·导航播报·按键音对象；2026-08-10 增前/后挡除雾——除雾此前只是 `aircon` 的一个 mode，**既进不了能力面也表达不了「关」**，详见 `commands.yaml` 的 `front_defogger` 注释）；新对象命名须 `.open/.close`（与主快路径 `classify()` 口径一致，见 `docs/design/2026-07-04-r4.1b-*`） |
 | `media.play` / `media.pause` / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL |
 | `navigation.search_poi` | navigation | cloud | keyword, category, near, rating_min | |
-| `navigation.navigate_to` | navigation | cloud | destination, stop_category, waypoint | 视觉地标描述（“像笋的建筑”）优先经 LLM 解析正式名称再由地图验证，不盲信高德模糊匹配；多 agent「导航+充电」时途经充电站经聚合器并入 navigate.payload.waypoints。顺路用餐：`stop_category`（吃饭/咖啡…）→ 导航到目的地+给该类目真实候选(waypoint_choice 卡)让用户二次选；`waypoint`（已选停靠点名/raw_text『途经X』）→ 该点 near 目的地解析坐标并入 navigate.waypoints，并出 **route_plan 路线规划卡**（出发地→途经点→目的地，best-effort 经 get_route(waypoints) 给全程距离/时长） |
+| `navigation.navigate_to` | navigation | cloud | destination, stop_category, waypoint, place_address, arrive_by, route_pref | 视觉地标描述（“像笋的建筑”，含俗称与自然地物「苏州大秋裤/圆圆的湖」）优先经 LLM 解析正式名称再由地图验证，不盲信高德模糊匹配；多 agent「导航+充电」时途经充电站经聚合器并入 navigate.payload.waypoints。顺路用餐：`stop_category`（吃饭/咖啡…）→ 导航到目的地+给**真沿途**候选（路线几何 45% 里程采样，拿不到几何回落目的地附近并如实说；waypoint_choice 卡）让用户二次选；`waypoint`（已选停靠点名/raw_text『途经X』，**支持 、/和 连写多个保口述序** ≤6）→ near 目的地解析坐标并入 navigate.waypoints，出 **route_plan 卡**（含绕行Δ分钟）。EVA 二轮（2026-08-14）：`arrive_by`（「五点前到」时限原话，slot 优先+原话兜底）→ ETA 三档量化判定进话术/卡片（eta_ts/arrive_by_ts/margin_min）+ REMINDABLE 增「出发前往X」反向事件；`route_pref`（不走高速/避堵/少收费/风景）→ 高德 v3 strategy（风景诚实降档为不走高速），槽缺省时消费记忆 route.* 偏好（**不按 polarity 过滤**——方向编码在谓词名里） |
 | `navigation.reverse_geocode` | navigation | cloud | lng, lat | 逆地理编码：给定坐标→地址 |
 | `navigation.poi_detail` | navigation | cloud | poi_id | POI 详情查询 |
 | `navigation.set_place` | navigation | cloud | place, address | 设置常用地点（家/公司/学校）地址，存入 `profile.places`（经 memory `UpsertProfile`）；只记不导航 |
@@ -64,7 +64,7 @@
 | `chitchat.talk` | chitchat | cloud | — | 系统兜底 fallback |
 | `nearby.search` | nearby | cloud | category, keyword, cuisine, brand, rating_min, price_max, sort, location | 高德 POI 2.0 富数据周边搜索（餐饮/酒店/景点/影院/停车/充电等多类目）；发现归 nearby、出行归 navigation |
 | `nearby.detail` | nearby | cloud | poi_id, name | 详情增强：评分/人均/电话/营业时间/特色/图片 |
-| `nearby.order` | nearby | cloud | poi_id, name, datetime, party_size | require_confirm；诚实预留桩（未接真实点单/订位，给电话+导航兜底） |
+| `nearby.order` | nearby | cloud | poi_id, name | require_confirm；诚实预留桩（未接真实点单/订位，给电话+导航兜底）。2026-08-14 摘除死槽位 datetime/party_size（桩不读，声明只让 LLM 白抽取；真实订座接入时随能力回来） |
 | `parking.query_fee` | parking-payment | cloud | order_id, plate | 只读，不产生支付动作 |
 | `parking.pay` | parking-payment | cloud | order_id, plate, amount | require_confirm；经 payment-gateway 幂等重取时序（§9.17，2026-08-11 真实化） |
 | `shop.menu` | mcp-bridge | cloud | — | 演示商户菜单（servers.yaml 合成；本表 2026-08-11 补登记——能力从 M3 起就在，登记漏了） |
@@ -520,7 +520,7 @@ Agent 无状态化：一次会话的临时状态落 **memory profile KV**，供�
 | `TRIP_ACTIVE`（`trip_active`） | trip-planner `_save_trip` | trip-planner `_load_trip`（有状态「改某天」） | `Trip.to_dict()` | 会话内；被覆盖 |
 | `REMINDERS_ACTIVE`（`reminders_active`） | reminder `_refresh_active`（list/create/complete/cancel/update 后刷新；多条命中澄清时写候选） | reminder `_resolve_targets`（「第N条」序号解析） | `{items:[{id,title}]}` | 会话内；被覆盖 |
 | `REMINDER_PENDING`（`reminder_pending`） | reminder `_save_pending`（缺时刻 NEED_SLOT 追问时写；update 缺新时间带 action/id） | reminder `_load_pending`（下轮 create 合并标题 / 续接改期） | `{title[, action:"update", id]}` | 一轮追问；消费即清 |
-| `REMINDABLE_ACTIVE`（`remindable_active`） | 产"未来事件"的域 opt-in（现 info sports `_save_remindable`；trip/charging 即插） | reminder `_from_remindable`（缺时间路径：「第N场/开赛前」→ 事件时刻-提前量） | `{source,label,ts,items:[{title,fire_at}]}`（items 序=卡片渲染序，含已开赛占位） | 会话内；被覆盖 |
+| `REMINDABLE_ACTIVE`（`remindable_active`） | 产"未来事件"的域 opt-in（现 info sports `_save_remindable` + navigation 路线规划后写「到达X」ETA 事件，带 `arrive_by` 时限时另写「出发前往X」反向事件 fire_at=时限-路程；trip/charging 即插） | reminder `_from_remindable`（缺时间路径：「第N场/开赛前」→ 事件时刻-提前量；多未来项先按话里「出发/到达」词形收窄标题再择项，唯一即直取） | `{source,label,ts,items:[{title,fire_at}]}`（items 序=卡片渲染序，含已开赛占位） | 会话内；被覆盖 |
 | `SCENE_ACTIVE`（`scene_active`） | scene-orchestrator `_dispatch`（激活写）/ `_deactivate`（退出清）/ `verify`（写 deferred） | scene-orchestrator `_deactivate`（恢复基准=solved_actions）；`verify` 代际校验；`triggers` 驻车补做投递 | `{scene_id,scene_name,activated_at,activation_id,snapshot{},solved_actions[],deferred[]}`；`activation_id` 是**激活代际**（异步 Verify 醒来先比对，防旧 task 给新场景错账/假警） | 会话内；被覆盖 |
 | `SCENE_PENDING`（`scene_pending`） | scene-orchestrator `_create`/`_update`（追问或回读时写草案） | scene-orchestrator 确认轮（取草案落库，**不重跑 LLM**——重编译会产出与用户确认时不一样的动作） | `{name,spec,draft{},overwrite}` | 一轮追问/确认；消费即清 |
 | `CHARGING_DEST_CHOICES`（`charging_dest_choices`） | charging-planner `_clarify_vague_destination`（泛目的地澄清时写候选） | charging-planner `_resolve_dest_ordinal`（续接轮 destination=「第N个」按序回填真名——引擎补槽灌的是用户字面，旅程 B2-3 真栈拿「第一个」搜 POI 选到无关站） | `{items:[{name,address}]}`（序=卡片渲染序） | 一轮澄清；消费即清 |
@@ -666,6 +666,7 @@ privacy_level/occupant_id）`memory_item` 全都有；建表会推翻 2026-06-25
 | 项 | 约定 |
 |---|---|
 | 新增列 | `memory_item.weight`（0-1 强度）/ `evidence_count`（独立证据轮次数）/ `half_life_days`（0=不衰减）/ `consent`（`''` \| `explicit`，v1 只写不读） |
+| **G6 追加列（EVA 二轮，2026-08-14）** | `subject`（**关于谁**：本人空串 / 家人 canonical 亲属称谓，经 `relation.normalize_kinship` 归一；与 `occupant_id`（说话人）**正交**——「我爸不喜欢空调冷」= occupant 是我、subject=爸爸）+ `polarity`（`like`\|`dislike`\|`''` 闭集，非法值归空）。`RecallRequest.subject` 精确过滤；抽取冲突 supersede 按 subject 收窄（爸爸的偏好不 supersede 本人同谓词）。**消费纪律**：route.\* 族谓词方向已编码在名字里（avoid=不喜欢），消费方不得再按 polarity 过滤（真栈实锤：抽取把「不要走高速」合理标 dislike，按极性排除会把偏好挡在门外）。四个消费出口=nearby 口味检索前置（含 subject 并取）/navigation route.\* → strategy/导航 episodic 轨迹/planner 历史指代放开 episodic 召回 |
 | 强度公式 | `clamp(base(provenance) + 0.1×(evidence_count-1), 0, 1) × 0.5^(age/half_life)`，实现 `memory/weighting.py`（纯函数）。base：user_stated 0.6 / agent_inferred 0.3；重复加成封顶 +0.4 |
 | 半衰期 | **显式偏好不衰减**（用户明说的凭什么因为久了就不算数）；推断类 90 天；临时偏好走既有 `expires_at` 硬过期 |
 | 存量兼容（硬要求）| `weight<=0`（M2 前写入的全部条目 + 非 semantic）→ 召回打分与注入渲染**逐字回到 confidence 口径**，不扰动已绿旅程 |

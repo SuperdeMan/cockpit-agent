@@ -173,6 +173,11 @@ M5 数据飞轮（落域范例库、hint 退役出口、RoutingBench、跨域边
 `luckin.menu`/`mcd.menu`（带价格与商品图，域名精确白名单）、营养表改名 `mcd.nutrition`、
 跨轮门店锚定；流水 history **§30**）。两家商户凭证当前仍是服务级全局 token/账号，
 支付 host 依赖运行时安全配置，均属于 PoC 限制而非多乘员量产账号模型。
+EVA 指令集二轮对标六批（2026-08-14，架构 **v1.24**：导航时限求解 `arrive_by`/真沿途
+候选/多途经保序/`route_pref`→高德 strategy、landmark 俗称与自然地物、记忆
+`subject`/`polarity` 维度与四个确定性消费出口（修 nearby「已参考您口味」假个性化）、
+未来事件询问式提醒建议——零执行权不破；真栈 13 轮探针+批 F 三修全通，流水 history
+**§33/§33.1**；目的地接地「就近包含误伤」家族已立卡待修）。
 
 三次全量验收留档，均通过：M0a→M4 总体验收
 `docs/reviews/2026-07-26-acceptance-review-m0a-m4.md`（其 §7 的 13 张主卡已于 2026-08-01 全部
