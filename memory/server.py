@@ -148,12 +148,13 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             ids = await self.store.consolidate(session_id, user_id, occupant_id, vehicle_id)
             if ids:
                 logger.info("consolidate: +%d memories", len(ids))
-            await self._derive_and_emit(user_id, occupant_id)
+            await self._derive_and_emit(user_id, occupant_id, new_ids=ids)
         except Exception as e:
             logger.debug("consolidate failed: %s", e)
 
-    async def _derive_and_emit(self, user_id, occupant_id):
-        """从情景记忆派生 routine，对新沉淀的 routine 发 agent.proactive 主动建议。"""
+    async def _derive_and_emit(self, user_id, occupant_id, new_ids=None):
+        """从情景记忆派生 routine，对新沉淀的 routine 发 agent.proactive 主动建议；
+        G7：本轮新抽到的**未来事件**发询问式提醒建议（只在抽取当轮发一次）。"""
         routines = await self.store.derive_routines(user_id, occupant_id)
         for r in routines:
             await self._emit_proactive(
@@ -162,6 +163,56 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 user_id,
                 occupant_id,
             )
+        if new_ids:
+            for ev in await self.store.future_events(user_id, occupant_id,
+                                                     only_ids=list(new_ids)):
+                await self._emit_event_offer(ev, user_id, occupant_id)
+
+    # 事件文本里的时间词（周六/下午三点…）在拼 send_text 时要剥掉——否则
+    # 「8月22日15:00提醒我女儿周六下午三点钢琴比赛」里有两个时间，reminder 的
+    # 确定性解析可能咬错一个。
+    _TIME_WORD_RE = re.compile(
+        r"周[一二三四五六日天]|礼拜[一二三四五六日天]|下下?周|本周|这周|明天|后天|今晚|"
+        r"[上下]午|晚上|早上|中午|傍晚|凌晨|"
+        r"(?:十一|十二|\d{1,2}|[一两二三四五六七八九十])\s*点(?:半|\d{1,2}分)?|"
+        r"\d{1,2}[:：]\d{2}")
+
+    async def _emit_event_offer(self, ev: dict, user_id: str, occupant_id: str):
+        """未来事件 → 询问式提醒建议卡（G7，EVA 二轮）。
+
+        **零执行权红线**：不自动建 reminder——建议只是一张卡，「要的」按钮
+        send_text 回发正常语音链，由 reminder 链路照常创建（确认/取消逐字生效）。
+        用户没答就什么都不发生（无契约即无打扰）。
+        """
+        nc = await self._ensure_nats()
+        if nc is None:
+            return
+        ts = int(ev.get("event_time") or 0)
+        text = (ev.get("text") or "").strip()
+        if not ts or not text:
+            return
+        lt = time.localtime(ts)
+        when = f"{lt.tm_mon}月{lt.tm_mday}日{lt.tm_hour:02d}:{lt.tm_min:02d}"
+        title = self._TIME_WORD_RE.sub("", text).strip(" ，。,、的") or text
+        owner_fingerprint = hashlib.sha256(
+            f"{user_id}\0{occupant_id}".encode("utf-8")).hexdigest()[:16]
+        payload = {
+            "type": "event_reminder_offer", "agent_id": "memory",
+            "speech": f"我记下了：{text}（{when}）。要到时候提前提醒你吗？",
+            "card": {"type": "reminder_card", "context": "offer",
+                     "item": {"title": title, "time_display": when},
+                     "actions": [
+                         {"label": "要的", "send_text": f"{when}提醒我{title}"},
+                         {"label": "不用", "send_text": "不用提醒"}]},
+            "user_id": user_id, "occupant_id": occupant_id,
+            "ts": int(time.time() * 1000),
+            "priority": P_ADVISORY,
+            # 同一事件条目只建议一次语义靠 new_ids 门控；dedup_key 兜同轮重复触发
+            "dedup_key": f"memory.event_offer|{owner_fingerprint}|{ev.get('id', '')}",
+            "ttl_ms": _ROUTINE_TTL_MS,
+        }
+        await publish_proactive(nc, payload)
+        logger.info("memory: 事件提醒建议 %s", text[:40])
 
     async def _ensure_nats(self):
         if self._nc is not None:

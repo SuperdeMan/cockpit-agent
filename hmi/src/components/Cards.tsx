@@ -1284,9 +1284,11 @@ function ReminderListCardView({ card }: { card: ReminderListCard }) {
 // ─── 智能提醒单条卡：created=创建回读 / updated=改期确认（P1a snooze/update）/ fired=到点触达（琥珀脉冲 + 完成/稍后 send_text 按钮）───
 function ReminderCardView({ card, onAction }: { card: ReminderCard; onAction?: (text: string) => void }) {
   const fired = card.context === 'fired'
+  const offer = card.context === 'offer'   // G7 询问式：记忆抽到未来事件 → 问要不要提醒
   const it = card.item
-  const accent = fired ? '#F59E0B' : 'var(--au-primary)'
-  const label = fired ? '提醒到点' : card.context === 'updated' ? '已改时间' : '已创建提醒'
+  const accent = fired || offer ? '#F59E0B' : 'var(--au-primary)'
+  const label = fired ? '提醒到点' : offer ? '要提醒你吗' :
+    card.context === 'updated' ? '已改时间' : '已创建提醒'
   return (
     <div className="au-glass" style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10,
       ...(fired ? { animation: 'au-proactive-pulse-amber 3s ease-in-out infinite', border: '1px solid rgba(245,158,11,0.35)' } : {}) }}>
@@ -1297,7 +1299,7 @@ function ReminderCardView({ card, onAction }: { card: ReminderCard; onAction?: (
         {it.time_display && <span className="au-num" style={{ marginLeft: 'auto', fontSize: 12.5, color: fired ? '#F59E0B' : 'var(--au-text-2)' }}>{it.time_display}</span>}
       </div>
       <div style={{ fontSize: 15, fontWeight: 600 }}>{it.title}</div>
-      {fired && (card.actions?.length || 0) > 0 && (
+      {(fired || offer) && (card.actions?.length || 0) > 0 && (
         <div style={{ display: 'flex', gap: 8 }}>
           {card.actions!.map((a) => (
             <button key={a.label} onClick={() => onAction?.(a.send_text)} className="au-glass"

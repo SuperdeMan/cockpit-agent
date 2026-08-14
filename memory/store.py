@@ -669,6 +669,35 @@ class MemoryStore:
         await vs.reinforce(cur["id"], weight=weight, evidence_count=count,
                            source_turn_ids=merged, half_life_days=half_life)
 
+    async def future_events(self, user_id: str, occupant_id: str = "primary",
+                            only_ids: list[str] | None = None) -> list[dict]:
+        """episodic 里带未来 event_time 的条目（G7 询问式提醒建议的数据源）。
+
+        only_ids 非 None 时只看这批新写入的条目——建议只在**抽取当轮**发一次，
+        不做后台扫描（memory 无定时器是刻意的，见 conventions §9.8 主动治理）。
+        """
+        if not user_id:
+            return []
+        vs = await self._vec()
+        pairs = await vs.recall(user_id, occupant_id=occupant_id, query="",
+                                kinds=["episodic"], top_k=50)
+        now = int(time.time())
+        out: list[dict] = []
+        for it, _score in pairs:
+            if only_ids is not None and it.get("id") not in only_ids:
+                continue
+            try:
+                vj = json.loads(it.get("value_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            try:
+                ts = int(vj.get("event_time") or 0)
+            except (TypeError, ValueError):
+                continue
+            if ts > now:
+                out.append({**it, "event_time": ts})
+        return out
+
     async def derive_routines(self, user_id: str, occupant_id: str = "primary",
                               min_count: int = 3) -> list[dict]:
         """从情景记忆派生 routine → 写 procedural 记忆（去重）+ 返回主动建议（供 agent.proactive）。

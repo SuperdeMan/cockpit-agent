@@ -432,3 +432,68 @@ def test_memory_gate_rejects_forged_and_expired_dedicated_capabilities(
             e2e_memory_capability=token,
         )
         assert svc._allows_synthetic_extraction(request) is False
+
+
+# ── EVA 二轮批 D（G7）：未来事件 → 询问式提醒建议 ─────────────────────────
+
+def test_future_event_emits_ask_style_reminder_offer():
+    """抽到带未来 event_time 的情景事件 → 发**询问式**提醒建议卡（零执行权：
+    不自动建 reminder，「要的」按钮 send_text 回发正常语音链）；send_text 里的
+    事件标题剥掉原时间词（防「8月X日15:00…周六下午三点…」双时间让解析咬错）；
+    建议只在抽取当轮（new_ids 门控）发一次。"""
+    import time as _time
+    svc = _servicer()
+    published = []
+
+    class _FakeNC:
+        async def publish(self, subject, data):
+            published.append((subject, json.loads(data)))
+
+    svc._nc = _FakeNC()
+    svc._nats_tried = True
+    future_ts = int(_time.time()) + 3 * 86400
+
+    async def go():
+        ids = await svc.store.remember([{
+            "user_id": "u1", "kind": "episodic", "text": "女儿周六下午三点钢琴比赛",
+            "scope": "episodic.general", "subject": "女儿",
+            "value_json": json.dumps({"event_time": future_ts}, ensure_ascii=False)}])
+        await svc._derive_and_emit("u1", "primary", new_ids=ids)
+        await svc._derive_and_emit("u1", "primary", new_ids=[])   # 非当轮 → 不再建议
+
+    asyncio.run(go())
+    offers = [p for _s, p in published if p["type"] == "event_reminder_offer"]
+    assert len(offers) == 1
+    p = offers[0]
+    assert "要到时候提前提醒你吗" in p["speech"]
+    card = p["card"]
+    assert card["type"] == "reminder_card" and card["context"] == "offer"
+    yes = card["actions"][0]
+    assert yes["label"] == "要的" and "提醒我" in yes["send_text"]
+    assert "周六" not in yes["send_text"] and "三点" not in yes["send_text"]
+    assert "钢琴比赛" in yes["send_text"]
+    assert p["priority"] == "advisory"
+
+
+def test_past_event_never_offered():
+    """事件时刻已过 → 不发建议（future_events 确定性过滤）。"""
+    import time as _time
+    svc = _servicer()
+    published = []
+
+    class _FakeNC:
+        async def publish(self, subject, data):
+            published.append(json.loads(data))
+
+    svc._nc = _FakeNC()
+    svc._nats_tried = True
+
+    async def go():
+        ids = await svc.store.remember([{
+            "user_id": "u1", "kind": "episodic", "text": "上周的钢琴比赛",
+            "scope": "episodic.general",
+            "value_json": json.dumps({"event_time": int(_time.time()) - 86400})}])
+        await svc._derive_and_emit("u1", "primary", new_ids=ids)
+
+    asyncio.run(go())
+    assert not [p for p in published if p["type"] == "event_reminder_offer"]

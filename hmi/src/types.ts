@@ -622,10 +622,11 @@ export type ReminderListCard = {
 }
 
 // 提醒单条卡：created=创建回读确认 / updated=改期确认（P1a snooze/update）/ fired=到点触达
-// （fired 带 完成/稍后 按钮，send_text 模式）
+// （fired 带 完成/稍后 按钮，send_text 模式）/ offer=记忆抽到未来事件后的询问式建议
+// （G7，EVA 二轮：「要的」按钮回发正常语音链建提醒，卡片本身零执行权）
 export type ReminderCard = {
   type: 'reminder_card'
-  context: 'created' | 'updated' | 'fired'
+  context: 'created' | 'updated' | 'fired' | 'offer'
   item: ReminderItem
   actions?: Array<{ label: string; send_text: string }>
 }
