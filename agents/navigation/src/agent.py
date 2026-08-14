@@ -330,6 +330,9 @@ class NavigationAgent(BaseAgent):
 
         if results and not is_category and self._is_navigation_phrase(raw_text):
             first = results[0]
+            # G6 轨迹写入也要挂这条自动导航路径——真栈「圆圆的湖→滴水湖」走的
+            # 正是这里，漏挂则「上次去过的那个湖」无数据可召回（挂点枚举教训）。
+            await self._remember_visited(ctx, first.name, first.lat, first.lng)
             return AgentResult(
                 speech=f"识别到您说的是{first.name}（{first.address}）。已为您规划路线。",
                 ui_card=card, data={"items": items},
@@ -690,7 +693,10 @@ class NavigationAgent(BaseAgent):
     async def _route_pref_from_memory(self, ctx) -> tuple[str, str]:
         """路线偏好记忆 → 高德 strategy（G6：route.* 谓词的确定性消费出口）。
 
-        谓词前缀精确读取；dislike 极性条目不参与（那是负反馈不是偏好声明）；
+        谓词前缀精确读取；**刻意不按 polarity 过滤**——route.* 族的方向已编码在
+        谓词名里（avoid_highway 本来就是「不喜欢高速」），抽取端把「不要走高速」
+        标成 dislike 是合理语义，按极性排除会把偏好挡在门外（2026-08-14 真栈
+        实锤：B2 种下的 route.avoid_highway 带 polarity=dislike，首版过滤直接漏掉）。
         召回失败/无记忆一律回默认，绝不阻塞导航。
         """
         if ctx is None:
@@ -699,8 +705,7 @@ class NavigationAgent(BaseAgent):
             mems = await ctx.recall("路线偏好", predicate_prefix="route.", top_k=3)
         except Exception:
             return "", ""
-        active = [m for m in (mems or [])
-                  if str(m.get("polarity") or "") != "dislike"]
+        active = list(mems or [])
         if not active:
             return "", ""
         strategy, note = _route_strategy(" ".join(str(m.get("text") or "") for m in active))
@@ -969,20 +974,8 @@ class NavigationAgent(BaseAgent):
                     "ts": now_ts, "items": remindable})
             except Exception as e:
                 logger.debug("navigation remindable save skipped: %s", e)
-        # G6 历史轨迹：导航成功落一条轻量情景记忆（「上次去的那个地方」的数据源——
-        # 此前全仓没有任何导航侧 episodic 写入方，历史指代永远无从召回）。
-        # 地点数据标 sensitive；best-effort 不挡导航。
-        if ctx is not None:
-            try:
-                await ctx.remember(
-                    f"{time.strftime('%Y-%m-%d')} 导航去过{name}",
-                    kind="episodic", scope="episodic.place",
-                    provenance="agent_inferred", confidence=0.9,
-                    privacy_level="sensitive",
-                    value={"name": name, "lat": lat, "lng": lng,
-                           "ts": int(time.time())})
-            except Exception as e:
-                logger.debug("navigation episodic save skipped: %s", e)
+        # G6 历史轨迹：导航成功落一条轻量情景记忆（「上次去的那个地方」的数据源）
+        await self._remember_visited(ctx, name, lat, lng)
         card = attach({"type": "route_plan", "origin": "当前位置", "destination": name,
                        "waypoints": [], "distance_km": distance_km,
                        "duration_min": duration_min, **deadline_extra}, self.poi)
@@ -990,6 +983,25 @@ class NavigationAgent(BaseAgent):
             speech=speech, ui_card=card,
             data={"destination": name, "lat": lat, "lng": lng, **deadline_extra},
         ).action("navigate", payload)
+
+    async def _remember_visited(self, ctx, name, lat, lng) -> None:
+        """导航成功落一条轻量情景轨迹（G6「上次去的那个地方」数据源）。best-effort。
+
+        挂点必须枚举全部执行路径（本仓第三次应验）：批 C 首版只挂 _route_plan_to，
+        而 search_poi 的「带我去X」自动导航分支绕过它——真栈「圆圆的湖→滴水湖」
+        走的正是那条路径，轨迹整条漏写。
+        """
+        if ctx is None or not name:
+            return
+        try:
+            await ctx.remember(
+                f"{time.strftime('%Y-%m-%d')} 导航去过{name}",
+                kind="episodic", scope="episodic.place",
+                provenance="agent_inferred", confidence=0.9,
+                privacy_level="sensitive",
+                value={"name": name, "lat": lat, "lng": lng, "ts": int(time.time())})
+        except Exception as e:
+            logger.debug("navigation episodic save skipped: %s", e)
 
     @staticmethod
     def _range_advisory(distance_km, meta) -> str:

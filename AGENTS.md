@@ -92,9 +92,15 @@ e2e_protocol_smoke.command executable does not exist: python`），scripts/tests
 + 四个确定性消费出口，修 nearby **假个性化**：口味检索前置+负偏好软降权+subject 并取）；
 批 D 未来事件→询问式提醒建议（`reminder_card` offer 态，零执行权不破）；批 E 类目扩展
 （动物园族）+「餐饮」默认仅饮食信号下成立+氛围软重排。catalog 锚点 11866→**11928**；
-HMI node **258** + Vite build；四门禁绿。**未做**：G4 主题行程/G8 导航会话状态/
-G9 trip 跨城市（P3 另立 RFC）、G10 订座票务（搁置）、真栈 journeys 全量重跑
-（memory proto 变更后首次 `make up` 需 `--build`）。
+HMI node **258** + Vite build；四门禁绿。**真栈已验**（同日 `make up --build` 30 容器
++ EVA 语料 13 轮 WS 探针，读数与批 F 三修见实施计划 **§8** / history **§33.1**）：
+样板轮「导航去东方之门，路上买杯咖啡，五点前要到」一轮给出时限判定+真沿途候选+
+逐家 ETA+记忆不走高速叠加；「老婆喜欢粤菜」subject 链抽取→消费全通。批 F 三修=
+demo 咖啡 hint 补导航语境让路词（整条计划曾被 replace 成 demo 下单）/route.* 记忆
+消费撤销极性过滤（方向在谓词名里）/轨迹写入补挂 search_poi 分支（挂点枚举第三次
+应验）。**留档未修**：目的地接地就近包含误伤家族一天三见（虹桥机场→如家停车场等，
+存量 R1 家族需单独取证）。**未做**：G4 主题行程/G8 导航会话状态/G9 trip 跨城市
+（P3 另立 RFC）、G10 订座票务（搁置）、journeys 全量回归未重跑。
 
 **2026-08-13/14 商户链路收口聚焦实测**（demo-3ukshz 二轮 + 打磨 + searchType
 勘误，逐批流水 history **§32/§32.1/§32.2**、方案与勘误 设计文档 §5/§5.1）：

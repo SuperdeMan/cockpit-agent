@@ -25,7 +25,12 @@ route_hints:
     # 带「杯」会命中本 pattern 被抢给 demo 咖啡店——品牌点单未接入时该由 planner
     # 诚实处理，不该被 demo 截胡。变更经全量路由回归验证（eval_route_hints +
     # eval_fast_intent + L0 门禁），guard 只增不减、对既有命中面零收缩。
-    guard: '附近|周边|哪里有|哪儿有|哪有|找.{0,3}(店|家|咖啡)|推荐|好喝|咖啡店|咖啡馆|瑞幸|麦当劳|星巴克|库迪|肯德基'
+    # 2026-08-14 guard 增**导航语境**让路词（EVA 二轮真栈实锤 trace 21f99cb3）：
+    # 「导航去东方之门，路上买杯咖啡，五点前要到」被本 hint 整条 replace 成
+    # demo 下单——导航步和五点时限全丢。顺路买咖啡是 navigate_to 的
+    # stop_category 语义（guide navigation-with-stop 教的正是它，但 hint 在
+    # LLM 之后动手，知识拦不住 replace）。命中导航语境即让路还给 planner。
+    guard: '附近|周边|哪里有|哪儿有|哪有|找.{0,3}(店|家|咖啡)|推荐|好喝|咖啡店|咖啡馆|瑞幸|麦当劳|星巴克|库迪|肯德基|导航|路上|顺路|顺道|沿途|途经|带我去|开车去|接完|然后去'
     slots: {size: "$2", item: "$3"}
 
 requires_permissions:

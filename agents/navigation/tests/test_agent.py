@@ -1022,9 +1022,12 @@ def test_route_pref_from_memory_when_not_stated():
     agent.poi = _RoutePoiProvider(
         {"虹桥机场": [POI(id="a", name="虹桥机场", address="上海", lat=31.19, lng=121.33)]})
     ctx = make_context()
+    # polarity=dislike 是真栈抽取的实际形态（「不要走高速」被合理标成不喜欢）：
+    # route.* 的方向编码在谓词名里，消费侧**不得**按极性过滤（2026-08-14 真栈
+    # B2 实锤：首版按 dislike 排除，把偏好挡在门外）。
     ctx._memory.recall.return_value = [
-        {"text": "以后导航别走高速", "predicate": "route.avoid_highway",
-         "polarity": "", "scope": "profile.route"}]
+        {"text": "导航都不要走高速", "predicate": "route.avoid_highway",
+         "polarity": "dislike", "scope": "profile.route"}]
     res = asyncio.run(run_handle(
         agent, "navigation.navigate_to",
         slots={"destination": "虹桥机场"}, raw_text="导航去虹桥机场", ctx=ctx,
@@ -1075,3 +1078,30 @@ def test_navigate_writes_episodic_place_memory():
     _, kw = hits[0]
     assert kw["kind"] == "episodic" and kw["scope"] == "episodic.place"
     assert kw["value"]["name"] == "深圳湾公园" and kw["value"]["lat"] == 22.52
+
+
+def test_search_poi_auto_navigate_also_writes_episodic_trail():
+    """G6 轨迹写入的挂点覆盖 search_poi 自动导航分支（挂点枚举教训第三次应验：
+    真栈「圆圆的湖→滴水湖」走这条路径，批 C 首版只挂 _route_plan_to 整条漏写）。"""
+    agent = NavigationAgent()
+
+    async def search(keyword, **kwargs):
+        return [POI(id="d", name="滴水湖", address="临港", lat=30.90, lng=121.93)]
+
+    agent.poi.search = search
+    ctx = make_context()
+    captured = []
+
+    async def cap(text, **kw):
+        captured.append((text, kw))
+        return True
+
+    ctx.remember = cap
+    asyncio.run(run_handle(
+        agent, "navigation.search_poi",
+        slots={"keyword": "滴水湖"}, raw_text="带我去滴水湖", ctx=ctx,
+        meta={"current_lat": "31.2", "current_lng": "121.4"}))
+
+    hits = [(t, kw) for t, kw in captured if "导航去过滴水湖" in t]
+    assert hits and hits[0][1]["kind"] == "episodic"
+    assert hits[0][1]["scope"] == "episodic.place"
