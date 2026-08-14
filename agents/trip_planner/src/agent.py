@@ -21,10 +21,11 @@ from agents._sdk.provenance import attach
 from agents.navigation.src.providers import build_poi_provider
 from agents.info.src.providers import build_weather_provider
 from .models import Trip, Stop
-from .pipeline import (build_poi_pool, propose, ground, solve, narrate,
+from .pipeline import (build_poi_pool, build_theme_pool, theme_hint,
+                       propose, ground, solve, narrate,
                        plan_weather, _weather_hint, _norm_days,
                        _ground_one, _poi_to_dict)
-from .extract import extract_trip
+from .extract import extract_trip, extract_theme
 
 logger = logging.getLogger("agent.trip_planner")
 
@@ -118,19 +119,33 @@ class TripPlannerAgent(BaseAgent):
 
     # ── 规划流水线 ─────────────────────────────────────────────
     async def _run_pipeline(self, ctx, meta, dest: str, days: str, prefs: str,
-                            raw_text: str) -> Trip:
+                            raw_text: str, theme: str = "") -> Trip:
         """propose → ground → solve，产出结构化 Trip。"""
         # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
         pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
+        # G4 主题检索步：主题相关地点经 LLM 提议 + 高德接地验证后**并入**池
+        # （去重按名，池的封闭纪律不变——只是入池来源多一路）。
+        theme_names: list[str] = []
+        if theme:
+            seen = {(p.name or "").strip() for p in pool}
+            for tp in await build_theme_pool(self.llm, self.poi, theme, dest, meta):
+                nm = (tp.name or "").strip()
+                theme_names.append(nm)
+                if nm and nm not in seen:
+                    seen.add(nm)
+                    pool.append(tp)
         # 天气联动：先取目的地多日预报对齐到行程各天，织进 propose（雨天优先室内/就近景点）。
         weather = await plan_weather(self.weather, dest, raw_text,
                                      _norm_days(days) or 2, meta)
         skeleton = await propose(self.llm, dest, days, prefs,
                                  [p.name for p in pool], raw_text,
-                                 weather_hint=_weather_hint(weather))
+                                 weather_hint=_weather_hint(weather)
+                                 + theme_hint(theme, theme_names))
         trip = await ground(self.poi, skeleton, pool, meta,
                             dest=dest, days=days, prefs=prefs, raw_text=raw_text,
                             llm=self.llm)
+        if theme and theme_names:
+            trip.theme = theme          # 接地成功才标主题（narrate 据此带主题话术）
         soc = await self._soc_pct(ctx, meta)
         trip = await solve(self.poi, trip, soc, meta)
         # 每天填天气（卡片/话术展示；按 day_index 对齐，超预报窗口的天保持 None）
@@ -149,6 +164,9 @@ class TripPlannerAgent(BaseAgent):
         dest = (intent.slots.get("destination") or "").strip()
         days = (intent.slots.get("days") or "").strip()
         prefs = (intent.slots.get("preferences") or "").strip()
+        # G4：主题槽 planner 可直接填，原话确定性兜底（与 G1 arrive_by 同款双轨）。
+        theme = (intent.slots.get("theme") or "").strip() \
+            or extract_theme(intent.raw_text or "")
         if not dest:
             # 确定性路由（manifest route_hints）注入的 trip.plan 步 slots 为空——
             # 从原话抽取目的地/天数/偏好（原编排核心 _extract_trip 的领域逻辑，R2.1 搬回本 Agent）。
@@ -159,7 +177,8 @@ class TripPlannerAgent(BaseAgent):
                 status=NEED_SLOT, speech="您想去哪里玩？",
                 follow_up="请告诉我目的地", missing_slots=["destination"])
 
-        trip = await self._run_pipeline(ctx, meta, dest, days, prefs, intent.raw_text)
+        trip = await self._run_pipeline(ctx, meta, dest, days, prefs,
+                                        intent.raw_text, theme=theme)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
         attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）

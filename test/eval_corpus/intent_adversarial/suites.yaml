@@ -46,12 +46,15 @@ schema_version: 1
 # navigation-trip.reroute-vs-modify（「不去X了」否定框架两侧：路线途经点 vs 行程
 # 停靠点，判据=宾语类型+会话状态）。左 3（正 2+「换条路」对照）右 2，
 # 全部 reviewed 不进 gate 池，机械地 +5。旧尺子一条没删。
+# 2026-08-15 同日放到 586：第七次适用——G4 主题行程（trip.plan 新增 theme 槽 +
+# 主题检索步：「跟着《X》游Y」此前连出行判定都进不去）。既有 intent 的全新话术族，
+# 一正（主题→trip.plan）一硬负（聊作品内容≠行程）锁两侧，机械地 +2。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 584
+    max_cases: 586
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

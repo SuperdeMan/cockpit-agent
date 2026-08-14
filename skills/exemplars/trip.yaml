@@ -189,3 +189,25 @@ exemplars:
   tags:
   - badcase
   note: 旅程 B3-1 曾降级成 chitchat/info 天气卡并口头假称已改行程
+- text: 跟着《长安十二时辰》玩一趟西安
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+    slots:
+      destination: 西安
+      theme: 长安十二时辰
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: G4 主题行程：影视 IP + 城市 → trip.plan 带 theme 槽（主题相关地点经高德接地后编入行程）
+- text: 想去南方追着春天玩几天
+  plan:
+  - agent: trip-planner
+    intent: trip.plan
+    slots: {}
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: 方向性模糊主题（北上追春天族）：落 trip.plan 后由缺目的地 NEED_SLOT 追问——追问是正确形态，不代用户选城市

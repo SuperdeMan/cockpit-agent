@@ -927,3 +927,29 @@ cases:
       - input: {utterance: 空调温度往下调两度，顺便看看空气质量, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [hvac.dec, hvac.set]}, {any_of: [info.air_quality]}], allow_extra_intents: false}
+  # ── G4 主题行程（2026-08-15）：影视/文化主题话术族落 trip.plan ────────────
+  - id: cp.theme.trip-follow-show
+    title: 跟着影视作品游城市应落行程规划
+    family_id: cp.theme-trip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [trip, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 跟着《琅琊榜》游一遍南京, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [trip.plan]}], forbidden_intents: [info.search, navigation.navigate_to, nearby.search], allow_extra_intents: false}
+  - id: cp.theme.talk-about-show-not-trip
+    title: 只聊作品内容本身不是行程规划
+    family_id: cp.theme-trip
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [trip, info], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: cp.theme.trip-follow-show, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 《琅琊榜》这部剧好看吗，讲的什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.search, chitchat.talk]}], forbidden_intents: [trip.plan, navigation.navigate_to], allow_extra_intents: false}

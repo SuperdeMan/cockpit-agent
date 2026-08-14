@@ -11,11 +11,14 @@ capabilities:
   - intent: trip.plan
     description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点。凡"去X玩N天/N日游"
       并带出行偏好(带老人/带娃/轻松/不要太累/悠闲)，即便同句还问天气/充电，行程规划也应单独成步。
-    slots: [destination, days, preferences]
+      「跟着《某剧》游X」「X同款打卡」这类影视/文化主题行程把主题名填 theme（会检索
+      主题相关真实地点编入行程）；只聊作品内容本身（好不好看/剧情）不是行程规划。
+    slots: [destination, days, preferences, theme]
     heavy: true    # 多日行程 LLM 重生成 → 开思考+过程区
     examples: ["规划周末去杭州两日游", "帮我安排去三亚的行程", "周末带娃去近郊玩",
                "周末去杭州两天带老人不要太累", "去成都玩三天轻松点",
-               "周末去杭州两天带老人，顺便看看天气和是否需要中途充电"]
+               "周末去杭州两天带老人，顺便看看天气和是否需要中途充电",
+               "跟着《太平年》游杭州"]
   - intent: trip.modify
     description: 修改已有行程（结构化局部编辑：换/加/删某个停靠点，只动受影响的天）
     slots: [modification]

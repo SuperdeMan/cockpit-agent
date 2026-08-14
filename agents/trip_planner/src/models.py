@@ -69,6 +69,7 @@ class Trip:
     user_id: str = ""
     destination: str = ""
     days: int = 0
+    theme: str = ""                 # G4 主题行程（《太平年》）；空=普通行程
     preferences: list = field(default_factory=list)
     status: str = "draft"           # draft|confirmed|active|completed
     cursor: dict = field(default_factory=lambda: {"day_index": 0, "stop_index": 0})
@@ -95,6 +96,7 @@ class Trip:
             user_id=d.get("user_id", "") or "",
             destination=d.get("destination", "") or "",
             days=int(d.get("days", 0) or 0),
+            theme=d.get("theme", "") or "",
             preferences=list(d.get("preferences") or []),
             status=d.get("status", "draft") or "draft",
             cursor=dict(d.get("cursor") or {"day_index": 0, "stop_index": 0}),

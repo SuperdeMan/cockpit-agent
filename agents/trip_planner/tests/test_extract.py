@@ -44,3 +44,31 @@ def test_signal_without_dest_returns_empty():
 def test_empty_input():
     assert extract_trip("") == ("", "", "")
     assert extract_trip(None) == ("", "", "")
+
+
+# ─── G4 主题抽取 ───
+
+def test_theme_from_title_marks():
+    from agents.trip_planner.src.extract import extract_theme
+    assert extract_theme("跟着《太平年》游杭州") == "太平年"
+    assert extract_theme("看看《长安十二时辰》里的西安") == "长安十二时辰"
+
+
+def test_theme_from_follow_and_tag():
+    from agents.trip_planner.src.extract import extract_theme
+    assert extract_theme("跟着琅琊榜游南京") == "琅琊榜"
+    assert extract_theme("去打卡繁花同款取景地") in ("繁花", "繁花同款")
+    assert extract_theme("导航去公司") == ""
+
+
+def test_theme_counts_as_trip_trigger():
+    """「跟着《太平年》游杭州」无天数/偏好/行程词——主题标记要让出行判定成立。"""
+    from agents.trip_planner.src.extract import extract_trip
+    dest, days, prefs = extract_trip("跟着《太平年》游杭州")
+    assert dest == "杭州"
+
+
+def test_no_theme_no_trigger_change():
+    """无主题时出行判定不变：裸「游杭州」仍不成行（缺任何出行信号）。"""
+    from agents.trip_planner.src.extract import extract_trip
+    assert extract_trip("游杭州") == ("", "", "")

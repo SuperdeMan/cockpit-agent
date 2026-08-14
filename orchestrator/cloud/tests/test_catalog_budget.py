@@ -141,11 +141,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 条数 143 不变——涨的是有意新增的能力面，不是重复项。
     # 2026-08-15 +321 → 12249：G8 `navigation.reroute` 上目录（判别化描述写清与
     # trip.modify 的边界：这一趟在开的路线 vs 多日行程的第 N 天）。有意新增 +1 条。
-    assert catalog.catalog_stats["chars_full"] == 12249
-    assert catalog.catalog_stats["chars_final"] == 12249
+    # 同日 +91 → 12340：G4 trip.plan 加 theme 槽 + 主题行程判别化描述
+    # （「跟着《某剧》游X」进目录；「只聊作品内容」显式排除）。条数 144 不变。
+    assert catalog.catalog_stats["chars_full"] == 12340
+    assert catalog.catalog_stats["chars_final"] == 12340
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 3751
+    assert 16000 - catalog.catalog_stats["chars_final"] == 3660
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

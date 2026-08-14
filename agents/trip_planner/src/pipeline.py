@@ -79,6 +79,91 @@ async def build_poi_pool(poi_provider, dest: str, prefs: str,
     return pool
 
 
+# ── G4 主题检索步：主题 → LLM 提议候选地名 → 高德接地验证 → 通过者入池 ────
+# 幻觉防线与 landmark_candidates 同款：LLM 只产「名字候选」，坐标/存在性由高德
+# 裁决（name_matches 校验，拒挂错名的非空结果）；接不到的候选直接丢，
+# 池的封闭纪律不变——只是入池来源多一路。
+
+_THEME_SYSTEM = (
+    "你了解影视/文化主题与真实地点的关联。列出与指定主题在指定城市**真实存在**的"
+    "具体地点（取景地/原型地/主题相关地标/故事发生地）。\n"
+    "只输出 JSON 数组（地名字符串，不带说明），最多 8 个；"
+    "不确定真实存在的**不要列**，宁少勿错。没有把握时输出 []。"
+)
+
+
+async def build_theme_pool(llm, poi_provider, theme: str, dest: str,
+                           meta) -> list[POI]:
+    """主题相关候选地名经高德接地验证后入池。LLM 失败/全部接不到 → 空列表
+    （普通池兜底，narrate 如实降级话术）。"""
+    if not (theme and dest):
+        return []
+    try:
+        out = await llm.complete(
+            [{"role": "system", "content": _THEME_SYSTEM},
+             {"role": "user", "content": f"主题：《{theme}》；城市：{dest}"}],
+            temperature=0.2, max_tokens=300)
+    except Exception as e:
+        logger.warning("theme candidates LLM failed（普通池兜底）: %s", e)
+        return []
+    block = _extract_json_block_array(out)
+    names: list[str] = []
+    if block:
+        try:
+            data = json.loads(block)
+        except (json.JSONDecodeError, TypeError):
+            data = []
+        for item in (data if isinstance(data, list) else [])[:8]:
+            nm = str(item).strip() if isinstance(item, (str, int, float)) else ""
+            if nm and nm not in names:
+                names.append(nm)
+    pool: list[POI] = []
+    for nm in names:
+        poi = await _ground_theme_name(poi_provider, nm, dest, meta)
+        if poi is not None:
+            pool.append(poi)
+    if names:
+        logger.info("theme pool《%s》: %d/%d candidates grounded",
+                    theme, len(pool), len(names))
+    return pool
+
+
+async def _ground_theme_name(poi_provider, name: str, dest: str, meta) -> POI | None:
+    """「{城市}{名}」优先（城市约束——「鼓楼」类多义名不带城市必然接错），
+    裸名兜底；两跳都过 name_matches 才收。"""
+    for kw in (f"{dest}{name}", name):
+        try:
+            results = await poi_provider.search(kw, near=None, limit=1, meta=meta)
+        except ProviderError as e:
+            logger.warning("theme ground '%s' failed（诚实丢弃，无 mock 回退）: %s",
+                           kw, e)
+            continue
+        if results and name_matches(name, results[0].name):
+            return results[0]
+    return None
+
+
+def _extract_json_block_array(text: str) -> str:
+    """从 LLM 输出抠第一个 [...] JSON 数组（容忍 ```json 包裹与前后噪声）。"""
+    if not text:
+        return ""
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```(?:json)?\s*", "", t).rstrip("` \n")
+    start = t.find("[")
+    end = t.rfind("]")
+    return t[start:end + 1] if start != -1 and end > start else ""
+
+
+def theme_hint(theme: str, theme_names: list[str]) -> str:
+    """主题池名字 → propose 的 LLM 提示（与 _weather_hint 同款织入）。空则 ''。"""
+    if not (theme and theme_names):
+        return ""
+    return (f"\n【主题】本次行程按《{theme}》主题编排。可选景点里这些与主题直接相关，"
+            f"请优先排入并合理串联：{'、'.join(theme_names[:8])}。"
+            "其余天数/空位用普通景点补齐。")
+
+
 # ─────────────────────────── propose ───────────────────────────
 
 _PROPOSE_SYSTEM = (
@@ -469,7 +554,10 @@ def narrate(trip: Trip) -> tuple[str, dict]:
         if charge_n:
             seg += f"（途中补电{charge_n}次）"
         lines.append(seg)
-    head = (f"已结合天气为您规划{trip.destination}{trip.days}天行程："
-            if has_weather else f"为您规划{trip.destination}{trip.days}天行程：")
+    theme_tag = f"按《{trip.theme}》主题" if trip.theme else ""
+    head = (f"已{theme_tag}结合天气为您规划{trip.destination}{trip.days}天行程："
+            if has_weather
+            else f"已{theme_tag}为您规划{trip.destination}{trip.days}天行程："
+            if theme_tag else f"为您规划{trip.destination}{trip.days}天行程：")
     speech = head + "；".join(lines) + "。"
     return speech, trip.card_dict()

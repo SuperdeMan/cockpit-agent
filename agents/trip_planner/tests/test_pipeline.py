@@ -250,3 +250,56 @@ def test_no_mock_fallback_field():
     assert "self._fallback" not in text
     ptext = inspect.getsource(pl)
     assert "fallback.search" not in ptext, "pipeline 不得保留 provider 级 mock 回退"
+
+
+# ─── G4 主题检索步 ───
+
+def test_theme_pool_grounds_candidates_and_rejects_mismatch():
+    """LLM 提议的候选逐个高德验证：接得到的入池，挂错名的非空结果被拒。"""
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value='["河坊街", "假想仙境阁"]')
+    prov = FakePOI(search_map={
+        "杭州河坊街": [_poi("河坊街")],
+        # 「假想仙境阁」搜出别的东西 → name_matches 拒
+        "假想仙境阁": [_poi("某某大厦")],
+        "杭州假想仙境阁": [_poi("某某大厦")],
+    })
+    pool = asyncio.run(pipeline.build_theme_pool(llm, prov, "太平年", "杭州", {}))
+    assert [p.name for p in pool] == ["河坊街"]
+
+
+def test_theme_pool_llm_failure_degrades_to_empty():
+    llm = AsyncMock()
+    llm.complete = AsyncMock(side_effect=RuntimeError("llm down"))
+    pool = asyncio.run(pipeline.build_theme_pool(llm, FakePOI(), "太平年", "杭州", {}))
+    assert pool == []
+
+
+def test_theme_pool_bad_json_degrades_to_empty():
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value="这个主题我不了解")
+    pool = asyncio.run(pipeline.build_theme_pool(llm, FakePOI(), "冷门剧", "杭州", {}))
+    assert pool == []
+
+
+def test_theme_pool_city_prefix_first():
+    """「{城市}{名}」优先——多义名（鼓楼）不带城市必然接错。"""
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value='["鼓楼"]')
+    prov = FakePOI(search_map={"杭州鼓楼": [_poi("鼓楼")],
+                               "鼓楼": [_poi("北京鼓楼")]})
+    pool = asyncio.run(pipeline.build_theme_pool(llm, prov, "某剧", "杭州", {}))
+    assert prov.calls[0] == "杭州鼓楼"
+    assert [p.name for p in pool] == ["鼓楼"]
+
+
+def test_theme_hint_and_narrate_theme():
+    assert "《太平年》" in pipeline.theme_hint("太平年", ["河坊街"])
+    assert pipeline.theme_hint("", []) == ""
+    trip = Trip(destination="杭州", days=1, theme="太平年", itinerary=[
+        Day(day_index=1, stops=[Stop(stop_id="s1", name="河坊街",
+                                     poi={"lat": 30.2, "lng": 120.1},
+                                     grounded=True)])])
+    speech, card = pipeline.narrate(trip)
+    assert "按《太平年》主题" in speech
+    assert card["theme"] == "太平年"
