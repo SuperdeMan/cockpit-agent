@@ -78,7 +78,14 @@ journeys:
 
   - id: A1-5
     title: 天气→去处推荐（adaptive 连续性：先查天气，再按天气结果推荐去处）
-    level: regression
+    # 2026-08-14 regression→target：8-10 新增时直接标了回归级，但它测的 adaptive
+    # replan 面是**已档案化的主模型方差面**（findings §23/§24：走成 toolcall 是
+    # provider 属性 45~48%，salvage 通道 no_action 高发；当日三跑 1 绿 2 红，红轮
+    # trace 0b26b11f 实锤 llm_raw steps=[] + no_action_unconfirmed 重试两次仍空，
+    # weather-outing guide 注入在场没用）——达不到「回归级=100% 绿」的稳定性门槛，
+    # 分级标错不是回归。能力本身没退化（首跑绿、L3 claim 两趟 1/1 在档）；根治属
+    # weather-outing/输出通道老账，不是把它留在回归级天天红能逼出来的。
+    level: target
     lane: live
     tags: [autonomy, continuity]
     requires: [AMAP_KEY]

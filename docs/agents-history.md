@@ -2503,3 +2503,44 @@ test_visited_coords 4 + memory 2）。⚠ 首跑 scripts/tests/test_e2e_stack_le
 12 条红=与 journeys 二跑并行的 lease 冲突假红（那些测试模拟 runner lease 树而
 journeys 真持有 stack lease），隔离复跑 61 passed / 2 skipped 全绿。四条 blocking
 门禁全绿（L0 strict 25/25、能力完整性、skills、范例域错配 2.4%）。
+
+### §35 2026-08-14 深夜：journeys 两条红收口（A3-2 尺子对齐 / B1-3 确定性化 / A1-5 分级勘误）
+
+§34 立卡的两条红当晚取证修复，三提交 `53ee48b` / `de6128f` / A1-5 降级批。
+**两条的取证都推翻了 §34 的初判**（「稳定存量回归、引入窗口三周」）：
+
+**A3-2 =两把尺子打架，不是回归**（`53ee48b`）。取证链：deep-research 侧
+`_resolve_news_deepen`（NEWS_ACTIVE 桥接）机制完好；断链在 planner 落域——而
+2026-08-02 泓舟已裁定「条」是列表项量词（deep_research manifest route_hints 注释
+留痕：宽 hint 把「第二条详细讲讲」replace 成 research.run 是劫持；同日对抗语料
+`cs.more.news` 金标 `any_of:[info.news, info.search]`、L0 门禁 CI blocking）。
+即本跑落 `info.search` **按对抗尺子是对的**；7/25 journeys 的绿靠的是当时未收窄的
+宽 hint，裁定后 journeys 三周未重跑，8-14 才炸出矛盾。处置：journeys 轮 2 话术改
+「深入调研一下第2条新闻的来龙去脉」——带显式调研信号（hint `调研一下` 命中），
+NEWS_ACTIVE 桥接端到端覆盖不丢；原句 info 域行为由对抗语料守，不需 journeys 再守。
+真栈探针：research_report 卡 + 5 过程区事件，调研内容正是列表第 2 条（华是科技
+收购案）。**判据：测试红了先问「是修坏了还是前提变了」——8-02 的产品裁定改变了
+这句话的正确答案，第三把尺子没跟着换。**
+
+**B1-3 =同族能力只建了一半，不是哪批弄断的**（`de6128f`）。取证链：焦点写入完好
+（extract_focus 导航轮落 last_destination + 解析坐标）；engine 早已按 manifest
+`context_scopes:[location]` 把 `focus_destination_*` 三键注进步骤 meta；**weather
+侧有指代判定+确定性消费**（`_DESTINATION_DEICTIC_RE`，B1-2「那边天气」稳定绿），
+**nearby 侧从来没接**——一直靠 planner LLM 看焦点 prompt 填 location 槽的软路径，
+7/25 绿是方差绿、8-14 两跑红是方差红。§34「高嫌疑 8-13 焦点批」被证否。处置：
+nearby `_near` 补第二级——显式 location 槽 > 地点指代词（那附近/那边/那儿/那里/
+目的地/终点，与 info 同族）+焦点坐标 > GPS；焦点坐标 LLM 与客户端都写不到，信任
+链与 info 同款。nearby 67 绿（+3：指代用焦点中心/普通「附近」不被劫持/无焦点回落
+GPS）；真栈复验：福田出发导航万象天地后「那附近有停车场吗」搜出南山十家（#2 即
+万象天地地下停车场），零福田污染。
+
+**终验全量 journeys（单独跑，不并行）**：A3-2 / B1-3 双绿。新读数暴露 A1-5
+（8-10 新增、直接标 regression 级）三跑 1 绿 2 红——红轮 trace 0b26b11f 实锤
+`llm_raw={"addressed":true,"steps":[]}` + `no_action_unconfirmed` 重试两次仍空 +
+weather-outing guide 注入在场没用 → chitchat 兜底 → escalate info.search。这是
+findings §23/§24 档案化的主模型方差面（走成 toolcall 是 provider 属性 45~48%），
+**达不到「回归级=100% 绿」的稳定性门槛，属分级标错不是回归**——regression→target
+降级（L3 claim 链按 journey_id 引用不受影响；能力没退化：首跑绿、claim 两趟 1/1
+在档）。换算后**回归级 15/15 全绿**、目标级 19/22；A2-1（中间结果传递）/B5-1
+（14 轮级联，第 12 轮取消提醒依赖第 7 轮建单成功）7/25 绿过、本日三跑各偶红，
+target 级方差 backlog 观察，不立卡。
