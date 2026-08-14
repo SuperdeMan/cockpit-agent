@@ -7,6 +7,7 @@ Phase 1：使用 Provider 适配层（mock/real 可切换）。
 from __future__ import annotations
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -1034,6 +1035,55 @@ class NavigationAgent(BaseAgent):
         a, b = norm(query), norm(poi_name)
         return bool(a) and bool(b) and (a in b or b in a)
 
+    # R1 二期（接地卡 2026-08-14）：类目锚词 → 期望高德 type 关键词族。
+    # 包含式校验的隐含假设「名字包含 ⇒ 是本体」被真栈证伪——酒店/停车场/餐馆借地标
+    # 之名命名（「如家…虹桥机场…停车场」「千岛湖·山野菜」），在就近距离序里天然顶掉
+    # 本体。query 以锚词结尾时，top1 还必须过类目复核，失配走去偏置重搜救济。
+    # 每加一行都要有真栈红例背书（机场=虹桥/浦东，湖=滴水湖/西湖/千岛湖/东湖，
+    # 滩=外滩），别让它长成第二个 fast_intent（B4 纪律）。
+    _DEST_CATEGORY_ANCHORS = (
+        ("机场", ("机场",)),
+        ("湖", ("风景名胜", "自然地名", "热点地名")),
+        ("滩", ("风景名胜", "自然地名", "热点地名")),
+    )
+
+    @classmethod
+    def _category_anchor(cls, query: str) -> tuple[str, tuple[str, ...]] | None:
+        """query 以类目锚词结尾 → (锚词, 期望类目关键词族)；否则 None。
+        要求严格长于锚词：纯类目词（「机场」=就近语义）维持现状距离序。"""
+        q = (query or "").strip()
+        for suffix, expect in cls._DEST_CATEGORY_ANCHORS:
+            if q.endswith(suffix) and len(q) > len(suffix):
+                return suffix, expect
+        return None
+
+    @staticmethod
+    def _category_ok(poi: POI, expect: tuple[str, ...]) -> bool:
+        return any(k in (poi.category or "") for k in expect)
+
+    @classmethod
+    def _grounds_to(cls, description: str, poi: POI, suffix: str,
+                    expect: tuple[str, ...]) -> bool:
+        """锚词在场时的双匹配判据：类目命中期望族，且名字过严格包含**或**主干包含。
+
+        主干级是给官方名的：「虹桥机场」与「上海虹桥国际机场」因中间的「国际」不构成
+        连续包含，严格校验够不着本体——剥掉锚词后的专名主干（「虹桥」）配上类目复核，
+        名字校验管专名、类目校验管类目。主干 ≥2 字才启用（「外滩」1 字主干太弱，
+        它的本体名严格包含已够）。"""
+        if not cls._category_ok(poi, expect):
+            return False
+        if cls._dest_matches(description, poi.name):
+            return True
+        stem = description.strip()[:-len(suffix)]
+        return len(stem) >= 2 and cls._dest_matches(stem, poi.name)
+
+    @staticmethod
+    def _rough_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+        """等距圆柱近似的两点距离（判「本地区县」的 150km 阈值足够，不求测地精度）。"""
+        dlat = (lat2 - lat1) * 111.0
+        dlng = (lng2 - lng1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
+        return math.hypot(dlat, dlng)
+
     async def _find_destination(self, description: str, meta, near=None,
                                 limit: int = 3, page: int = 1,
                                 strict: bool = True) -> tuple[str, list]:
@@ -1088,22 +1138,54 @@ class NavigationAgent(BaseAgent):
             if level in ("国家", "省", "市", "区县") and loc and "," in loc:
                 try:
                     lng_s, lat_s = loc.split(",")[:2]
+                    lat_f, lng_f = float(lat_s), float(lng_s)
+                except ValueError:
+                    lat_f = lng_f = None
+                # R1 二期（接地卡 2026-08-14）：区县级裸名多义面大——高德 geocode 的
+                # 全国唯一解会选错省的同名区划（实测「西湖」→台湾苗栗西湖乡、「金山」→
+                # 台湾新北金山区、「东湖」→南昌东湖区），而用户裸报区县名的心智是本地。
+                # 区县级仅在「有定位且 ≤150km」时可信，否则 fall through 到关键词搜索
+                # （类目锚词校验接手「西湖」这类景点同名）；市及以上唯一性好（佛山/惠州），
+                # 跨城导航合法，维持无条件直达。
+                trustworthy = level != "区县" or (
+                    lat_f is not None and near is not None
+                    and self._rough_km(near.lat, near.lng, lat_f, lng_f) <= 150)
+                if lat_f is not None and trustworthy:
                     admin_poi = POI(id=f"admin_{description}", name=description,
                                     address=f"{description}（市区中心）",
-                                    lat=float(lat_s), lng=float(lng_s))
+                                    lat=lat_f, lng=lng_f)
                     return description, [admin_poi]
-                except ValueError:
-                    pass
 
         results = await _direct(near)
         if results:
-            if not strict or self._dest_matches(description, results[0].name):
+            if not strict:
                 return description, results
-            # R1：就近弱匹配顶上了 top1 → 去偏置全国重搜（真地标全国序靠前）
+            # R1 二期：包含式名字校验之上叠类目锚词复核——「名字包含 ⇒ 是本体」被
+            # 真栈证伪（「虹桥机场」→如家…停车场、「滴水湖」→雅悦酒店、「千岛湖」→
+            # 上海的千岛湖鱼头馆，均名字包含放行、距离序顶掉本体，且本体根本不在
+            # near 候选集里）。锚词失配视同校验失败，走同一条去偏置重搜救济。
+            anchor = self._category_anchor(description)
+            top_named = self._dest_matches(description, results[0].name)
+            if top_named and (not anchor or self._category_ok(results[0], anchor[1])):
+                return description, results
+            if anchor:
+                # 先在候选集内找名字+类目双匹配（零 API）：「东湖」→#2 东湖绿地
+                # （风景名胜），比全国重搜接到 500km 外的武汉东湖更合就近意图。
+                for r in results[1:]:
+                    if self._grounds_to(description, r, *anchor):
+                        return description, [r] + [x for x in results if x is not r]
+            # R1：就近弱匹配/借名 POI 顶上了 top1 → 去偏置全国重搜（真地标全国序靠前）
             if near is not None:
                 wide = await _direct(None)
-                if wide and self._dest_matches(description, wide[0].name):
-                    return description, wide
+                if wide:
+                    if anchor:
+                        # 锚词在场时按名字+类目双匹配选（「滴水湖」全国序 #1 湖本体
+                        # #2 地铁站——只认 top1 会被同名亲戚卡住）；无锚词维持只看 top1。
+                        for r in wide:
+                            if self._grounds_to(description, r, *anchor):
+                                return description, [r] + [x for x in wide if x is not r]
+                    elif self._dest_matches(description, wide[0].name):
+                        return description, wide
             name, lm = await _via_landmark()
             if lm:
                 return name, lm
