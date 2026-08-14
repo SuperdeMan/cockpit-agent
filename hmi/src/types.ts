@@ -319,6 +319,7 @@ export type TripLeg = {
 export type TripDay = {
   day_index: number
   theme?: string
+  city?: string // G9 多城市：这天在哪座城（空=单城市行程）
   stops: TripStop[]
   legs: TripLeg[]
   weather?: { date?: string; text?: string; temp_high?: string; temp_low?: string } | null // #3 天气联动
@@ -328,6 +329,8 @@ export type TripItineraryCard = {
   type: 'trip_itinerary'
   destination: string
   days: number
+  theme?: string // G4 主题行程（《太平年》）；空=普通行程
+  cities?: string[] // G9 多城市保序；空=单城市
   preferences?: string[]
   status?: string
   itinerary: TripDay[]

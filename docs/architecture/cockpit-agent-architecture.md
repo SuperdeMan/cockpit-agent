@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.24（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-08-14（v1.24 定稿归档——EVA 二轮：记忆 subject/polarity 与消费面原则、询问式事件提醒）
+> 版本：v1.25（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-08-15（v1.25 定稿归档——EVA 二轮余项 P3 簇：导航路线会话状态与增量改道、trip 主题检索步与多城市化）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -531,6 +531,7 @@ sequenceDiagram
 
 设计要点：
 - **working/core 装配层**：每个规划轮由编排器 `ContextManager` 把 catalog（registry 语义预筛 top-K）、对话历史、长期记忆召回、焦点态在**统一 token 预算**下按优先级装配成 Planner 上下文；初规划与再规划（T2 replan）复用同一装配。详见上述上下文重构设计稿。
+- **活动任务的会话状态经结果保留键声明**（v1.25，G8）：Agent 用 `AgentResult.data` 的 `_route_session` 类保留键把「正在进行的任务」（如本次导航的目的地/途经点/时限/策略）交给焦点态，编排通用消费不认识领域字段；出口两个且分工固定——**prompt 只渲染名字与约束、绝不渲染坐标**（防模型转述时自己编），结构化事实经 `step.meta` 按 `context_scopes` 门控下发给消费 Agent（LLM 与客户端都写不到）。增量修改类意图（「途经点不去了/换条路」）据此有对象可指，做增量改道而非全新任务。契约 `docs/conventions.md` §9.1。
 - **上下文按引用传递**：Execute 请求只带 `context_ref`，Agent 按需向记忆服务拉取所需片段（最小权限）；敏感片段（精确位置等）按 Agent manifest 声明的 `context_scopes` 最小化下发，未声明不发。
 - **车书 Agent 的 RAG 知识库**属于"领域知识"而非用户记忆，单独建库（车型手册向量库）。
 - **可遗忘**：用户可一键清除画像（合规要求），记忆服务提供删除/导出接口。
@@ -1157,5 +1158,7 @@ agents/<name>/
 | v1.21 | 2026-08-11 | 内容性合入（外部评审末两批 B5/B6）：§5.2.1 的降级链路补上**声明层**——13 条重试/守卫规则从主循环的 if/elif 收敛为 `orchestrator/cloud/retry_policy.py` 的表（**加重试规则=改表不改主循环**，同 skill 层那条哲学；`plan_modes` 口径逐字不变以保既有读数可比，归因新增 `retry_policies` 一列）；D0/T2 流式判定统一到 `stream_state.py`（**判定抄两份正是 B1 那个 bug 的成因**——推进逻辑也必须共享，不只是判定函数），顺带把 D0「动作已发出却丢 final 时邀请用户重发」的同族缺陷补掉、`_outcome_uncertain` 接Outcome Verifier readback 并复用既有指纹（**不新造 command_id**）。§3.2 增第二个 shadow：**可执行性形态判定**（`actionability.py`）——裸对象澄清族三条检索式修法全败之后的第四条路，判据原文「**检索是内容通道，而裸对象是形态判据**」；主链零行为变化由源码断言钉死，REJECT 声明但 v1 不产出。三条判据入册：**分母挑得越干净假阳性越好看**（首版 0/472 是把端侧 ingress 挡在分母外，诚实分母是 4/574）／**确定性判据的 p 值分母是人为的**／**「代码里 import 得到」和「镜像里拷进去了」是两件事**（真栈全量重建抓到 collector 与proactive 两个服务 import 了 `runtime.profile` 却没 `COPY runtime`，加闸后 40 小时无症状，覆盖面断言已补到 Docker 层）|
 | v1.24 | 2026-08-14 | 内容性合入（EVA 指令集二轮对标六批，`51c4992`…`15eac3c`）：§7.1 增 G6/G7 演进——`memory_item.subject`（关于谁，与 occupant 说话人维度**正交**）与 `polarity`（闭集）入列 + **消费面原则**（存得下≠用得上：每加记忆维度须同批交付确定性消费出口并配「记忆改变了行为」断言；方向编码在谓词名里的族不得再按极性过滤）+ **记忆的主动出口是询问不是执行**（未来事件→询问式提醒建议卡，零执行权在记忆侧同样成立）。能力面同批：navigation `arrive_by` 时限求解/真沿途采样/多途经保序/route_pref→高德 strategy（该参数此前全仓从未使用）、landmark 俗称与自然地物扩域（城市约束最高优先）、nearby 类目扩展与「餐饮默认仅饮食信号下成立」的诚实追问。真栈 13 轮探针 + 批 F 三修的取证与判据见 `docs/design/2026-08-14-eva-round2-implementation.md` §8；目的地接地「就近包含误伤」家族立卡待修（`2026-08-14-dest-grounding-containment-card.md`） |
 | v1.23 | 2026-08-12 | 内容性合入：§7.3 将麦当劳/瑞幸从只读工具推进为受控复合工作流——Planner 只见复合 intent，官方低层工具隐藏并由确定性 codec 构造嵌套参数；Redis TTL 草稿 + 原子确认消费、Task Ledger/single-flight `local_at_most_once`、写 no-retry/timeout uncertain、声明式业务成功谓词与结果白名单、支付链接双层 host 白名单共同闭合。两家均到创建未支付订单/支付入口/查单，瑞幸支持再次确认取消，麦当劳无远程取消；明确不执行最终付款。服务级全局商户账号与运行时 host 配置保留为 PoC 边界。设计全文 `docs/design/2026-08-12-merchant-mcp-full-flow.md` |
+
+| v1.25 | 2026-08-15 | 内容性合入（EVA 二轮余项 P3 簇三 RFC，`74e6beb`/`d26705e`/`63a565b` + 边界收口 `03f7e33`）：§7 增**会话状态保留键**设计要点——G8 导航路线会话（`_route_session` → `Focus.active_route`，三条纪律复用门店锚定先例：粘性接力不续期/prompt 只渲染名字绝不渲染坐标/消费方限龄；`navigation.reroute` 增量改道，「途经点不去了/换条路/改去 Y」只动被点名项、其余约束保持并重出时限判定）。trip 侧两刀：G4 主题检索步（LLM 只产名字候选、高德接地 `name_matches` 校验后入池——池的封闭纪律不变、入池来源多一路；「跟着《X》游 Y」落域与出行判定同批打通）与 G9 多城市化（`Trip.cities` 保口述序 + `Day.city` + **跨天衔接 leg**——此前天与天之间不建驾驶段，充电编织对跨城长途是盲的、SoC 递推断开；v1 刻意不做顺路重排序）。落域面新增两条边界裁定入台账：`navigation-trip.reroute-vs-modify`（「不去 X 了」否定框架两侧）与 `chitchat-reminder.statement-vs-request`（顺嘴陈述未来事件由 G7 询问式 offer 接、planner 抢答成 reminder NEED_SLOT 是双通道抢话+挂起黑洞）。设计全文 `docs/design/2026-08-15-g8-navigation-route-session.md` / `-g4-trip-theme-retrieval.md` / `-g9-trip-multi-city.md` |
 
 > 校准记录（不 bump）：2026-07-02/03/10 同步 R1-R3 落地现状；2026-07-18 实现说明、§3.1 T0-T2 运行模型对应、点餐→周边发现、§13 目录映射校准；2026-08-02 附录 C 版本表整理（两表合一、按版本排序，无内容变化）；2026-08-09 §10 评测可信度同步跨进程意图基线落地状态。

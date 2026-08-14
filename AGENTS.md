@@ -66,10 +66,14 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5518 passed / 14 skipped**（2026-08-14 晚接地/G7 批后实测）。较 EVA 五批的 5500
-净 **+18** 逐条点上号：批 F `15eac3c` navigation test_agent +1、本批
-test_dest_grounding 11 + test_visited_coords 4 + memory 2（日期锚/时区显示）；
-证据 history **§34**。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
+**5559 passed / 14 skipped**（2026-08-15 P3 簇批后实测，单独跑 13m36s）。较留档
+5518 净 **+41** 逐条点上号：**+3 是基线陈旧**（5518 实测于 ca933f3，其后 `de6128f`
+B1-3 nearby 又加 3 条没刷新——「对不上先怀疑基线陈旧」§4.3 纪律第二次应验，
+worktree 对比取证）+ 本批 38（G8 test_route_session_focus 8 + test_reroute 13、
+G4 extract 4 + pipeline 5、G9 extract 3 + pipeline 5；989-951 分套件对比数吻合）。
+⚠ 全量执行中一条台账条数锚（`test_boundary_ledger_maps_...` 27→29）按其自述仪式
+红了一次——「裁定加了，兑现物加了吗」——兑现物已证后补断言即绿，不是回归。
+上一基线 5518 的构成见 history **§34**。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
 =与并行 journeys 的 **stack lease 冲突假红**（那些测试模拟 runner lease 树而
 journeys 真持有 lease），隔离复跑 61/61+2skip 全绿——与既有「并行 Docker build 时
 test_e2e_wrappers_ci 假红（隔离复跑 6/6）」同族：**全量要单独跑，不与任何 e2e/build
@@ -101,8 +105,16 @@ demo 咖啡 hint 补导航语境让路词（整条计划曾被 replace 成 demo 
 应验）。当日晚接手会话已收口两项：目的地接地就近包含误伤家族（R1 二期，见 §4.1 状态段）
 与 G7 询问式真栈补验（抓修抽取 prompt 日期锚缺失+offer 显示时区错一天两个真 bug，
 `cc7e5ba`——G7 通道真栈首次亮相「我记下了…要到时候提前提醒你吗？」）。
-**未做**：G4 主题行程/G8 导航会话状态/G9 trip 跨城市（P3 另立 RFC）、
-G10 订座票务（搁置）。
+
+**2026-08-15 EVA 二轮余项 P3 簇收口**（六提交 `36a0ff2`…`03f7e33`，三独立 RFC +
+待议项，流水 history **§36**）：G8 导航会话状态（`_route_session` 保留键→
+`Focus.active_route`→`navigation.reroute` 增量改道，「途经点不去了/换条路/改去Y」
+有对象可指；conventions §9.1 第五行）、G4 主题行程（`build_theme_pool` LLM 提议+
+高德接地入池，「跟着《X》游Y」通了）、G9 trip 跨城市（`Trip.cities` 保口述序+
+跨天衔接 leg——充电编织首次覆盖跨城段）、G7 双通道抢话边界收口（陈述 vs 请求
+入台账）。对抗语料 579→**591**（第六至九次适用，恰好用满）、catalog **144 条/
+12418 字符**、架构 **v1.25**。**仍未做**：G10 订座票务（搁置，诚实桩）、
+谓词别名清洗（条件触发未命中）。
 
 **2026-08-13/14 商户链路收口聚焦实测**（demo-3ukshz 二轮 + 打磨 + searchType
 勘误，逐批流水 history **§32/§32.1/§32.2**、方案与勘误 设计文档 §5/§5.1）：
@@ -218,8 +230,10 @@ route_hints 80/80、**真栈复验 5/5**（本卡四条 trace 全接到本体，
 真栈在案；样板轮与逐轮读数见
 [实施计划](docs/design/2026-08-14-eva-round2-implementation.md) **§7/§8**，流水
 history **§33/§33.1**。当日晚接手会话收口接地卡与 G7 补验（history **§34**）；
-journeys 全量已重跑（35/37，两条稳定存量红已立上方待办）。余项（P3 簇/搁置面）
-见 §4.2 索引行。
+journeys 全量已重跑（35/37，两条稳定存量红已立上方待办）。
+**余项 P3 簇已于 2026-08-15 三 RFC 收口**（G8 路线会话/G4 主题行程/G9 跨城市 +
+G7 双通道抢话边界，见 §4.0 段与 history **§36**）；只剩 G10 搁置与谓词别名条件
+触发，见 §4.2 索引行。
 
 **支付基础设施真实化（四批，2026-08-11，全部实施推 main）**：`d964e1d`（网关
 双渠道核心）/ `94f7afc`（parking 闭环+HMI 支付卡+桥 streamable_http）/ `4a5cab0`
@@ -302,7 +316,7 @@ demo-mkemhn/demo-3ukshz 两轮复盘与 searchType 勘误的全部批次见上�
 
 | 主题 | 当前状态 / 启动条件 | 权威入口 |
 |---|---|---|
-| **EVA 二轮余项**（P3 簇 / 搁置面） | ① **P3 簇各需独立 RFC 再动**：G4 主题行程（trip 候选池封闭是防幻觉的正确设计，需加「主题检索步入池」）、G8 导航会话状态（「途经点不去了/换条路」的增量改道，唯一要动编排核心的簇）、G9 trip 跨城市（Trip 模型演进）；② **G10 订座/票务维持搁置**：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，不为对标造假；③ 抽取谓词别名散置老账（u1 存量 coffee.brand/consume.coffee/beverage.coffee 并存）——`_PRED_CANON` 只治新增不治存量，出现消费方误伤再启动数据清洗。（原 ③G7 真栈补验 与 ④journeys 重跑已于 2026-08-14 晚收口：G7 通道真栈亮相并抓修两个真 bug `cc7e5ba`；journeys 读数见 history §34。**留档待议**：planner 把顺嘴未来事件陈述接成 reminder NEED_SLOT 追问，与 G7 offer 双通道抢话——落域宽度问题，处置默认走范例/边界台账不是 hint） | [缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md)、[实施计划](docs/design/2026-08-14-eva-round2-implementation.md) §7/§8 |
+| **EVA 二轮余项**（搁置面） | P3 簇三项已于 2026-08-15 三 RFC 收口（G8/G4/G9，history §36；「留档待议」的 G7 双通道抢话同批入台账 `chitchat-reminder.statement-vs-request`）。仍留两项：① **G10 订座/票务维持搁置**：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，不为对标造假；② 抽取谓词别名散置老账（u1 存量 coffee.brand/consume.coffee/beverage.coffee 并存）——`_PRED_CANON` 只治新增不治存量，出现消费方误伤再启动数据清洗 | [缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md)、三 RFC `docs/design/2026-08-15-g{8,4,9}-*.md` |
 | **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身 |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |

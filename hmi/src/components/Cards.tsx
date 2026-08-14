@@ -1135,7 +1135,7 @@ function TripItineraryCardView({ card, onAction }:
         <AIBadge label="AI · 行程规划" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="calendar-trip" size={17} color="var(--au-text)" />{card.destination} · {card.days}日行程</span>
-          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.status === 'confirmed' ? '已确认' : '自驾 · AI 规划'}</span>
+          <span style={{ fontSize: 11, color: 'var(--au-text-3)' }}>{card.status === 'confirmed' ? '已确认' : card.theme ? `《${card.theme}》主题` : '自驾 · AI 规划'}</span>
         </div>
       </div>
       <CardHR />
@@ -1154,7 +1154,7 @@ function TripItineraryCardView({ card, onAction }:
               )}
               <button onClick={() => toggle(day.day_index)} style={{ width: '100%', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--au-text)', fontFamily: 'inherit' }}>
                 <span style={{ width: 28, height: 20, borderRadius: 6, display: 'grid', placeItems: 'center', background: `${color}20`, border: `1px solid ${color}40`, fontFamily: 'var(--au-font-mono)', fontSize: 9.5, fontWeight: 700, color }}>D{day.day_index}</span>
-                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, textAlign: 'left' }}>{day.theme || `第${day.day_index}天`}</span>
+                <span style={{ flex: 1, fontSize: 13, fontWeight: 600, textAlign: 'left' }}>{day.city ? `${day.city} · ` : ''}{day.theme || `第${day.day_index}天`}</span>
                 {day.weather?.text && (
                   <span title={day.weather.text} style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--au-text-3)' }}>
                     {weatherGlyph(day.weather.text, 14)}

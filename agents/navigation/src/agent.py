@@ -983,9 +983,10 @@ class NavigationAgent(BaseAgent):
             direct_eta = int(time.time()) + int(float(direct_dur) * 60)
             if direct_eta <= int(arrive_by_ts):
                 # 话术只许诺今天走得通的路：「直接导航去X」=新一轮直达导航（现有链路）；
-                # 「途经点不去了」这类增量改道是 G8（另立 RFC），没实现就不引导。
+                # G8 已落地：增量改道（navigation.reroute）可引导——「途经点不去了」
+                # 会在保留目的地与时限的前提下改直达，比引导用户发起全新导航干净。
                 tail += (f"若不带途经点直达，预计{self._fmt_clock(direct_eta)}可准时到；"
-                         f"要改直达就说「直接导航去{dest_poi.name}」。")
+                         "要改直达就说「途经点不去了」。")
         card = attach({"type": "route_plan", "origin": "当前位置",
                        "destination": dest_poi.name,
                        "waypoints": [{"name": w.name, "address": w.address}

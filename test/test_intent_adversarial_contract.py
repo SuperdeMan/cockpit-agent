@@ -864,7 +864,16 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     assert ledger["nearby-luckin.pure-discovery-vs-discover-then-menu"] == (
         "nearby", "luckin")
     assert ledger["luckin-mcd.swap-store-keep-item"] == ("luckin", "mcd")
-    assert len(ledger) == 27
+    # 2026-08-15 27→29：EVA 二轮余项收口落两条。兑现物已证：
+    # `validate_boundary_coverage` 零错误、L0 strict 2/2 exit 0（591 唯一输入）——
+    # reroute-vs-modify 由 cs.reroute.{drop-waypoint,add-stop} ×
+    # cs.reroute.trip-{day-edit,drop-stop}（「不去X了」否定框架两侧：当前路线
+    # 途经点 vs 行程停靠点）；statement-vs-request 由 cp.event-stmt.{piano,wedding} ×
+    # cp.event-req.{deliver,airport}（陈述句由 G7 offer 询问式通道接，planner 抢答
+    # 成 reminder NEED_SLOT 是双通道抢话；批 D 已拍板创建入口=对 offer 的肯定答复）。
+    assert ledger["navigation-trip.reroute-vs-modify"] == ("navigation", "trip")
+    assert ledger["chitchat-reminder.statement-vs-request"] == ("chitchat", "reminder")
+    assert len(ledger) == 29
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):

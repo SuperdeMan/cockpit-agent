@@ -8,6 +8,7 @@
 |---|---|---|
 | `navigation.search_poi` | 定位**一个**可导航目标（多候选发现归 nearby.search）；含视觉地标描述解析 | keyword/category/near/rating_min |
 | `navigation.navigate_to` | 导航到目的地；`stop_category` 顺路候选（真沿途 45% 采样）二选、`waypoint` 途经点（、/和 连写多个保序）并入路线出 route_plan 卡；`arrive_by` 到达时限 ETA 判定+出发提醒；`route_pref` 路线策略（缺省消费记忆 route.* 偏好） | destination/stop_category/waypoint/place_address/arrive_by/route_pref |
+| `navigation.reroute` | G8 增量改道**当前导航**：删/加途经点（「先去X」插首位）、换路线策略、改目的地；活动路线从 `meta.focus_active_route` 读（engine 按焦点 `active_route` 注入，来源=本 Agent 每次 navigate 写的 `_route_session` 保留键，conventions §9.1）；未点名约束保持并重出时限判定；无会话/过龄（2h）诚实降级 | remove_waypoint/add_waypoint/destination/route_pref |
 | `navigation.set_place` | 设置常用地点（家/公司/学校），只记不导航 | place/address |
 | `navigation.reverse_geocode` | 坐标→地址 | lng/lat |
 | `navigation.locate` | 「我在哪」：当前位置逆地理 | — |

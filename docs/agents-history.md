@@ -2544,3 +2544,65 @@ findings §23/§24 档案化的主模型方差面（走成 toolcall 是 provider
 在档）。换算后**回归级 15/15 全绿**、目标级 19/22；A2-1（中间结果传递）/B5-1
 （14 轮级联，第 12 轮取消提醒依赖第 7 轮建单成功）7/25 绿过、本日三跑各偶红，
 target 级方差 backlog 观察，不立卡。
+
+## §36 2026-08-15 EVA 二轮余项 P3 簇收口：G8 路线会话 / G4 主题行程 / G9 跨城市 + 待议项
+
+泓舟授权处理 EVA 二轮余项（§4.2 索引行），当日闭环：三个 P3 簇各立独立 RFC 并实施
+合入，留档待议项（G7 双通道抢话）按默认方向收口，badcase 日报归档。提交序列：
+`36a0ff2`（日报归档）/ `74e6beb`（G8）/ `d26705e`（G4）/ `63a565b`（G9）/
+`03f7e33`（边界收口）+ 收尾文档批。G10 订座票务维持搁置（诚实桩，不为对标造假）；
+谓词别名清洗维持条件触发未启动。
+
+**G8 导航会话状态与增量改道**（RFC `2026-08-15-g8-navigation-route-session.md`，
+唯一动编排核心的簇）：结果保留键 `_route_session`（conventions §9.1 第五行）→
+`Focus.active_route`，三条纪律逐条复用门店锚定先例（粘性接力不续期 ts / prompt
+只渲染名字与时限绝不渲染坐标 / 消费方按 ts 限龄 `ROUTE_SESSION_MAX_AGE_S` 2h）；
+`_apply_focus_meta` 把 JSON 注给 location scope 步（LLM 与客户端写不到）；新 intent
+`navigation.reroute` 四操作（删/加途经点、换策略、改目的地走 `_find_destination`
+全套 R1 接地），未点名约束保持并重出 G1 时限判定；navigation 全部 **6 条** navigate
+路径盖章（挂点枚举教训这次先做）。落域：exemplars navigation#33-35、台账
+`navigation-trip.reroute-vs-modify`、L0 +5 reviewed（suites 579→584 第六次适用）、
+catalog 143→144 条。
+
+**G4 主题行程**（RFC `-g4-trip-theme-retrieval.md`）：`extract_theme` 三族（书名号/
+「跟着X游」/「同款/取景地」）+ 主题算出行 trigger（「跟着《太平年》游杭州」此前
+四信号一个不中）；`build_theme_pool` LLM 只产名字候选（≤8 宁少勿错）→「{城市}{名}」
+优先高德接地 + `name_matches` 拒错名 → 通过者并入池——**池的封闭纪律不变、入池
+来源多一路**；接地成功才标 `Trip.theme`。v1 刻意不做联网检索主题候选（接地校验
+才是质量闸门）。suites 584→586（第七次）。
+
+**G9 trip 跨城市**（RFC `-g9-trip-multi-city.md`）：`Trip.cities` 保口述序 +
+`Day.city`；`extract_cities`（逐抓+连写拆分+BLOCK）；propose 按城列池、day 标 city
+收敛到城市集（缺标按序均摊，不臆造）；ground 按城池取坐标；**solve 补跨天衔接
+leg**——此前天与天之间不建驾驶段，充电编织对全程最长的跨城段是盲的、SoC 递推
+断开（对单城市行程同样成立的改进）。既有 trip 测试零改动通过=单城市不变的证明。
+v1 刻意不做顺路重排序（城市序=口述序）。suites 586→587（第八次）。
+
+**待议项收口（G7 双通道抢话）**：不是新裁定——批 D（`32fcdaf`）已拍板 reminder 的
+创建入口是用户对 offer 卡的肯定答复；本批把它兑现到落域层：exemplars chitchat +2、
+台账 `chitchat-reminder.statement-vs-request`、L0 双向各 2 全部 reviewed 新增
+（**复用既有 stable 打标签需要改 forbidden、会碰 baseline 比对面——不动 gate
+案例集**），suites 587→591（第九次）。
+
+**读数**：后端全量 **5559 passed / 14 skipped**（单独跑 13m36s）。较留档 5518 净
++41 = **基线陈旧 3**（5518 实测于 ca933f3，其后 `de6128f` B1-3 nearby 又加 3 条
+没刷新——「对不上先怀疑基线陈旧」第二次应验，worktree 对比取证：改动三套件
+collect 989-951=38 与本批新测试数吻合）+ 本批 **38**（G8 route_session_focus 8 +
+reroute 13、G4 extract 4 + pipeline 5、G9 extract 3 + pipeline 5）。全量中台账
+条数锚（`test_boundary_ledger_maps_...` 27→29）按其自述仪式红一次——「裁定加了，
+兑现物加了吗」——兑现物已证（L0 strict 双向检查 exit 0）后补断言即绿，不是回归。
+`check_intent_gate` 2/2 exit 0（discovery 81/81、**591 唯一输入恰好用满**；gate
+25/25 不变）；能力完整性/eval_skills/route_hints 80/80/fast_intent 57/57/
+exemplars（299 条、域错配 2.4%）全绿；HMI **258/258** + Vite build（types.ts 扩
+`Day.city`/`theme`/`cities` 并渲染）。catalog 锚 **144 条 / 12418 字符**（三批各自
+更新，测试注释逐笔点上号）。架构 **v1.25**（§7 会话状态保留键设计要点 + 附录 C）。
+
+**四条实施发现**：① `_THEME_TAG_RE` lazy 捕获吞句首动词（「去打卡繁花同款」→
+「去打卡繁花」）——lazy 从**最左起点**扩张而不是从目标词起；② `_TRIP_DEST_RE`
+lookahead 缺「再/然后/接着」时「先去杭州再去苏州」第一城被吞成「杭州再去苏州」；
+③ `_TRIP_MULTI_DEST_RE` 末段贪婪把「玩两天」吞进城市名——三条同族：**中文无空格
+分词下，捕获组的边界只能靠 lookahead 白名单兑现，「反正 lazy 会停」是错觉**。
+④ 操作层：`grep pattern && cat >> file << EOF` 的 grep 无匹配会让整条 && 链短路、
+heredoc 静默不执行，而链尾独立的 `echo done` 照样打印成功——**「命令输出了 done」
+不等于「中间每一步都执行了」**，本批 §36 首次落盘就这么丢过一次（写后 grep 验证
+才发现）。
