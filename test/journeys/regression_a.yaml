@@ -181,7 +181,14 @@ journeys:
         expect:
           latency_s: 75
           cards_any: [news_brief]
-      - say: 详细讲讲第2条
+      # 轮 2 话术 2026-08-14 由「详细讲讲第2条」改为显式调研措辞——**对齐 2026-08-02
+      # 泓舟量词收窄裁定**（deep_research/manifest.yaml route_hints 注释 + 对抗语料
+      # cs.more.news）：「第N条详细讲讲」是列表项跟进、正确落域在 info（该形态由 L0
+      # 对抗门禁 CI blocking 守着），不该每次拉起重域调研。本旅程守的是 NEWS_ACTIVE
+      # 桥接端到端（用户**显式要调研**新闻列表某条时 deep-research 能接到列表标题），
+      # 于是话术必须带显式调研信号。7/25 存档的绿靠的是当时未收窄的宽 hint——裁定后
+      # 三周没重跑，2026-08-14 全量才炸出两把尺子打架（history §34）。
+      - say: 深入调研一下第2条新闻的来龙去脉
         expect:
           latency_s: 150
           cards_any: [research_report]
