@@ -152,3 +152,53 @@ def test_aggregate_honors_user_count_format_request():
     assert "三条结论" in captured["user"]                       # 用户原话进了 prompt
     assert ("分点" in captured["system"]) or ("条数" in captured["system"])  # system 指示分点
     assert "1." in out["speech"]
+
+
+def test_refused_step_speech_survives_aggregation_exactly_once():
+    """`_refused` 步的拒绝句是系统事实（demo-3ukshz 二轮探针：打烊拒绝被聚合 LLM
+    整句丢掉——诚实约束已在 system prompt 里仍然丢）。处置＝恰好一次：不进聚合
+    材料、确定性附加；follow_up 优先取拒绝步的恢复指引。"""
+    from orchestrator.cloud.models import StepResult, StepStatus
+
+    seen_prompts: list[str] = []
+
+    async def llm(messages, **kwargs):
+        seen_prompts.append(messages[-1]["content"])
+        return "附近找到 1 家瑞幸，就是科技园文化广场店。"
+
+    agg = Aggregator(llm)
+    nearby = StepResult(step_id="s1", status=StepStatus.OK,
+                        speech="为您找到 1 家瑞幸", follow_up="说看详情",
+                        ui_card={"type": "place_list", "items": [{"name": "x"}],
+                                 "display_priority": 1})
+    refused = StepResult(step_id="s2", status=StepStatus.OK,
+                         speech="找到的瑞幸门店已打烊，请换一家或稍后再试。",
+                         follow_up="可以问「附近哪家瑞幸还营业」。",
+                         data={"_refused": True})
+    out = asyncio.run(agg.compose("附近的瑞幸点一杯", [nearby, refused]))
+
+    assert out["speech"].count("已打烊") == 1
+    assert out["speech"].endswith("找到的瑞幸门店已打烊，请换一家或稍后再试。")
+    assert "已打烊" not in seen_prompts[0], "拒绝句不进 LLM 材料——恰好一次的另一半"
+    assert out["follow_up"] == "可以问「附近哪家瑞幸还营业」。"
+
+
+def test_all_refused_multi_step_skips_llm_and_dedupes():
+    """全员被拒（78b635db：两步同一句拒绝）：零 LLM、逐字去重后原样输出。"""
+    from orchestrator.cloud.models import StepResult, StepStatus
+
+    async def llm(messages, **kwargs):
+        raise AssertionError("全员被拒不该调聚合 LLM")
+
+    agg = Aggregator(llm)
+    line = "我还不知道你想去哪家瑞幸门店。"
+    results = [
+        StepResult(step_id="s1", status=StepStatus.OK, speech=line,
+                   data={"_refused": True}),
+        StepResult(step_id="s2", status=StepStatus.OK, speech=line,
+                   data={"_refused": True}),
+    ]
+    out = asyncio.run(agg.compose("选择瑞幸门店：X", results))
+
+    assert out["speech"] == line
+    assert out["speech"].count("瑞幸门店") == 1

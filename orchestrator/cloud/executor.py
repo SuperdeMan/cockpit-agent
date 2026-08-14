@@ -568,6 +568,7 @@ class DagExecutor:
                 logger.warning("slot alias %s -> %s resolved to None", slot_name, alias)
 
         self._anchor_store_from_focus(step, trusted, ctx, done.keys())
+        self._hint_store_from_plan(step, done, ctx)
 
         if trusted:
             step.meta["_trusted_slot_refs"] = json.dumps(
@@ -653,6 +654,37 @@ class DagExecutor:
             }
         logger.info("Step %s(%s): 门店取自上一轮 nearby.search 焦点（%s）",
                     step.id, step.intent, name)
+
+    @staticmethod
+    def _hint_store_from_plan(step: Step, done: dict, ctx) -> None:
+        """`store_hint` 文本槽的一致性补全（demo-3ukshz 二轮旅程探针）。
+
+        「附近的麦当劳有什么菜单」计划里 nearby.search 生产者在场、菜单步却漏了
+        slot_refs（MiniMax 高频形态）——商户拿不到线索就退回**默认店**，「附近」
+        又变成十公里外的碧海君庭。与 `_derive_depends_on_from_refs` 同族判据：
+        **把计划里自相矛盾的部分补成一致，不发明路由**——只在 capability 声明了
+        `store_hint`、本轮没填、且**本轮 plan 内**有 `nearby.search` 的 OK 结果时
+        才取其 items.0.name 补上。**刻意不吃跨轮焦点**：焦点里可能是另一个品牌的
+        门店（先查了瑞幸再问麦当劳），注进去会把「默认店」恶化成「查无门店」；
+        同轮组合计划里的 nearby 结果才是为这一步取的。文本 hint 不承载坐标
+        provenance——商户侧仍按名向官方接口查证，补错顶多出候选卡，不会静默下错单。"""
+        del ctx     # 签名与坐标锚对齐；跨轮焦点刻意不吃（见 docstring）
+        if "store_hint" not in (getattr(step, "declared_slots", None) or []):
+            return
+        if str(step.slots.get("store_hint") or "").strip():
+            return
+        for result in done.values():
+            if (str(getattr(result, "source_intent", "") or "") != "nearby.search"
+                    or getattr(getattr(result, "status", None), "value", "") != "ok"):
+                continue
+            items = (getattr(result, "data", None) or {}).get("items") or []
+            if items and isinstance(items[0], dict):
+                name = str(items[0].get("name") or "").strip()
+                if name:
+                    step.slots["store_hint"] = name
+                    logger.info("Step %s(%s): store_hint 取自本轮 nearby.search（%s）",
+                                step.id, step.intent, name)
+                    return
 
     @staticmethod
     def _resolve_ref(ref_path: str, done: dict) -> object:

@@ -794,11 +794,24 @@ class McDonaldsWorkflow(MerchantWorkflow):
             return None, "", self._reselect_store(
                 "找到的麦当劳门店均已打烊。可以换一家门店或稍后再试。")
         store_matches = self._matching_stores(open_stores, store_hint)
+        if store_hint and not store_matches:
+            # 点名的店官方查无：**绝不拿别的店顶替**（与瑞幸「名字对不上就不锚定」
+            # 同一判据）。二轮旅程探针实证：官方测试租户没有「高新中五道」，接口对
+            # 未命中 keyword 返回默认店列表，唯一候选直选就把用户点名的店静默换成了
+            # 碧海君庭——静默换店比诚实查无更糟。唯一可用店给出确定句式让用户自己定。
+            if len(open_stores) == 1:
+                available = self._store_name(open_stores[0]) or "麦当劳门店"
+                return None, "", self._reselect_store(
+                    f"麦当劳官方门店里没查到「{store_hint}」，"
+                    f"当前可用的是{available}。要用这家就说"
+                    f"“选择麦当劳门店：{available}”。")
+            return None, "", self._store_choices(open_stores)
         candidates = store_matches or open_stores
         if len(candidates) != 1:
             return None, "", self._store_choices(candidates)
-        # 唯一候选没有可选性——直接选定，不挂起追问（demo-3ukshz 探针：单候选也出
-        # 「请选择一家」并挂起补槽，随后两句新意图全被当成补槽答案吞掉）。
+        # 唯一候选且（无 hint 或 hint 已命中）——直接选定，不挂起追问
+        # （demo-3ukshz 探针：单候选也出「请选择一家」并挂起补槽，随后两句新意图
+        # 全被当成补槽答案吞掉）。
         store = candidates[0]
         store_code = str(store.get("storeCode") or "")
         if not store_code:
@@ -866,13 +879,26 @@ class McDonaldsWorkflow(MerchantWorkflow):
             # 「…的“猪柳蛋麦满分”有：蘸酱韩式甜辣酱鸡块（11.90 元）…」——
             # 把一堆无关餐品挂在用户问的那个名字下面，比答不出来糟得多。
             matched = self._menu_matches(products, asked)
-            if not matched:
-                return AgentResult(
-                    status=NEED_SLOT,
-                    speech=f"{store_name}现在的在售餐单里没查到“{asked}”。",
-                    follow_up="换个餐品名，或者说“有什么可以点的”看看整份菜单？",
-                    missing_slots=["item_query"])
-            products = matched
+            if matched:
+                products = matched
+            else:
+                # planner 偶发把分类词塞进 item_query（二轮旅程探针：「看看X的
+                # 人气热卖」→ item_query=人气热卖 → 「没查到这个餐品」）。商品
+                # 没命中时拿它去分类名里再试一次——槽位落哪都工作，不赌 planner。
+                needle = self._normalized(asked)
+                by_category = [
+                    product for product in products
+                    if any(needle in self._normalized(str(label))
+                           for label in product.get("menu_categories") or [])]
+                if by_category:
+                    products = by_category
+                    asked_category, asked = asked, ""
+                else:
+                    return AgentResult(
+                        status=NEED_SLOT,
+                        speech=f"{store_name}现在的在售餐单里没查到“{asked}”。",
+                        follow_up="换个餐品名，或者说“有什么可以点的”看看整份菜单？",
+                        missing_slots=["item_query"])
         if not products:
             return AgentResult(
                 status=NEED_SLOT,
@@ -912,6 +938,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 "choice_kind": "product",
                 "merchant": "麦当劳",
                 "store_name": store_name,
+                # 主卡（同 luckin.menu）：附近+菜单组合轮菜单卡不再被 place_list 压掉
+                "display_priority": 0,
                 "title": (f"{store_name} · {asked_category}" if asked_category
                           else f"{store_name} 在售餐品"),
                 # 诚实总量：卡上只展示一页，总数与分类数是导航依据（demo-3ukshz #2）

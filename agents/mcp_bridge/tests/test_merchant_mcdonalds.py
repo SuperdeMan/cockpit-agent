@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import pytest
 from datetime import timedelta, timezone
 
-from agents._sdk import NEED_CONFIRM, NEED_SLOT
+from agents._sdk import NEED_CONFIRM, NEED_SLOT, OK
 from agents._sdk.ledger import DONE, FAILED, LedgerTask
 from agents.mcp_bridge.src.mcp_client import McpTimeout
 from agents.mcp_bridge.src.merchant.mcdonalds import McDonaldsWorkflow
@@ -1453,6 +1453,45 @@ async def test_menu_carries_categories_and_supports_category_browsing():
     assert missing.status == NEED_SLOT
     assert "套餐" in missing.speech        # 给出现有分类，不留死胡同
     assert missing.missing_slots == ["category"]
+
+
+@pytest.mark.asyncio
+async def test_named_store_not_in_official_list_is_never_silently_replaced():
+    """点名的店官方查无 → 绝不拿别的店顶替（与瑞幸同判据）。
+
+    二轮旅程探针实证：官方测试租户没有「高新中五道」，接口对未命中 keyword 返回
+    默认店列表；「唯一候选直选」曾把点名的店静默换成碧海君庭。唯一可用店时给
+    确定句式（候选卡按钮同款）让用户自己定，且必须打 `_refused`——组合轮里这句
+    由聚合器确定性附加，不会再被 LLM 吞掉。"""
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    result = await workflow.menu(SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "麦当劳(高新中五道餐厅)", "city": ""}), CTX, META)
+
+    assert (result.data or {}).get("_refused") is True
+    assert "高新中五道餐厅" in result.speech and "没查到" in result.speech
+    assert "选择麦当劳门店：人民广场麦当劳餐厅" in result.speech
+    assert not result.missing_slots, "拒绝不得挂起会话"
+    assert "碧海君庭" not in result.speech or "人民广场" in result.speech
+
+
+@pytest.mark.asyncio
+async def test_menu_category_word_in_item_query_still_filters_by_category():
+    """planner 偶发把分类词塞进 item_query（二轮旅程探针：「看看X的人气热卖」→
+    item_query=人气热卖 → 「没查到这个餐品」死路）。商品没命中时拿它去分类名里
+    再试——槽位落哪都工作。"""
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    result = await workflow.menu(SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "人民广场", "city": "上海", "item_query": "热门"}), CTX, META)
+
+    assert result.status == OK
+    assert [item["name"] for item in result.ui_card["items"]] == ["巨无霸套餐"]
+    assert "「热门」" in result.speech
 
 
 @pytest.mark.asyncio

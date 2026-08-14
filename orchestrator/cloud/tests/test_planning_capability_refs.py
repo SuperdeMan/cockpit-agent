@@ -381,6 +381,50 @@ def test_missing_container_step_fields_are_normalized_not_dropped():
     assert bare is not None and bare.steps[0].slots == {}
 
 
+def test_store_hint_step_gains_an_edge_behind_in_plan_nearby():
+    """demo-3ukshz 二轮旅程探针第二跳：模型排了 nearby.search + mcd.menu 两步但
+    refs/depends_on 双缺 → 同层并行 → 菜单步解析时门店结果未回，`store_hint`
+    补全踩空退回默认店。声明了 store_hint 未填且计划含 nearby.search → 补依赖边。"""
+    _, assemble = _ref_api()
+    nearby = _agent("nearby", "nearby.search")
+    bridge = _agent("mcp-bridge", "mcd.menu")
+    bridge.manifest.capabilities[0].slots = ["store_hint", "city", "item_query"]
+    catalog = assemble([nearby, bridge])
+    builder = planning.PlanBuilder(None, None)
+
+    plan = builder._parse_and_validate_data({
+        "addressed": True,
+        "steps": [
+            {"id": "s1", "capability_ref":
+                catalog.pair_to_ref[("nearby", "nearby.search")],
+             "slots": {"keyword": "麦当劳"}, "depends_on": [], "slot_refs": {}},
+            {"id": "s2", "capability_ref":
+                catalog.pair_to_ref[("mcp-bridge", "mcd.menu")],
+             "slots": {}, "depends_on": [], "slot_refs": {}},
+        ],
+    }, catalog, "附近的麦当劳有什么菜单")
+
+    assert plan is not None
+    menu = next(s for s in plan.steps if s.intent == "mcd.menu")
+    assert menu.depends_on == ["s1"]
+
+    # 用户点名了门店（store_hint 已填）→ 不补边，保持可并行
+    named = builder._parse_and_validate_data({
+        "addressed": True,
+        "steps": [
+            {"id": "s1", "capability_ref":
+                catalog.pair_to_ref[("nearby", "nearby.search")],
+             "slots": {"keyword": "麦当劳"}, "depends_on": [], "slot_refs": {}},
+            {"id": "s2", "capability_ref":
+                catalog.pair_to_ref[("mcp-bridge", "mcd.menu")],
+             "slots": {"store_hint": "国贸店"}, "depends_on": [],
+             "slot_refs": {}},
+        ],
+    }, catalog, "q")
+    named_menu = next(s for s in named.steps if s.intent == "mcd.menu")
+    assert named_menu.depends_on == []
+
+
 def test_displaced_step_fields_at_wire_top_level_still_reject_the_plan():
     """位移不是缺席：容器键出现在 wire 顶层=真值被放错了层，归一会让计划带空槽
     静默执行——整份拒绝交给重试（对抗语料 required-step-fields-displaced-to-top-level

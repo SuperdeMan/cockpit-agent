@@ -588,6 +588,47 @@ def test_malformed_focus_places_are_dropped_not_partially_applied():
         assert "_trusted_slot_refs" not in step.meta, bad
 
 
+def test_store_hint_is_completed_from_in_plan_nearby_producer():
+    """`store_hint` 文本槽的一致性补全（demo-3ukshz 二轮旅程探针）：组合计划里
+    nearby.search 生产者在场、菜单步却漏了 slot_refs（MiniMax 高频形态）——
+    商户拿不到线索退回默认店，「附近的麦当劳」又变成十公里外的碧海君庭。
+    只认**本轮 plan 内**的 OK 生产者；跨轮焦点刻意不吃（可能是别的品牌）。"""
+    done = {"s1": StepResult(
+        step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
+        data={"items": [{"name": "麦当劳(高新中五道店)",
+                         "lng": 113.94, "lat": 22.54}]})}
+    step = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
+                slots={}, declared_slots=["store_hint", "city", "item_query"])
+
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        step, done, _focus_ctx(_LAST_PLACES))
+
+    assert step.slots["store_hint"] == "麦当劳(高新中五道店)"
+
+    # 用户显式给了 hint → 不覆盖
+    explicit = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
+                    slots={"store_hint": "国贸店"},
+                    declared_slots=["store_hint", "city", "item_query"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        explicit, done, _focus_ctx(_LAST_PLACES))
+    assert explicit.slots["store_hint"] == "国贸店"
+
+    # 本轮没有 nearby 生产者 → 不从跨轮焦点补（焦点里是瑞幸店，注给麦当劳会把
+    # 「默认店」恶化成「查无门店」）
+    lone = Step(id="s1", agent_id="mcp-bridge", intent="mcd.menu",
+                slots={}, declared_slots=["store_hint", "city", "item_query"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        lone, {}, _focus_ctx(_LAST_PLACES))
+    assert "store_hint" not in lone.slots
+
+    # 没声明 store_hint 的步不吃补全
+    plain = Step(id="s2", agent_id="chitchat", intent="chitchat.talk",
+                 slots={}, declared_slots=["text"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        plain, done, _focus_ctx(_LAST_PLACES))
+    assert "store_hint" not in plain.slots
+
+
 def test_steps_without_declared_store_slots_are_never_anchored():
     """锚定门控（demo-mkemhn 2fd09d52/44943f00）：capability 没声明门店三槽的步骤
     （chitchat/nearby/任何非商户步）绝不吃焦点补槽——此前门店三槽被注进了

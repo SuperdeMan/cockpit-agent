@@ -2096,6 +2096,7 @@ class PlanBuilder:
         for step in steps:
             step.depends_on = [dep for dep in step.depends_on if dep in valid_ids]
         PlanBuilder._derive_depends_on_from_refs(steps, valid_ids)
+        PlanBuilder._derive_store_hint_edges(steps)
         return steps
 
     # 引用了另一步的输出，**就是依赖的定义**。模型经常把引用写全、却把 `depends_on`
@@ -2109,6 +2110,38 @@ class PlanBuilder:
     # 把模型输出里**自相矛盾**的部分补成一致，不发明任何路由——被引用的步必须真实
     # 存在于本计划（`valid_ids`），自引用不补（那是环不是依赖）。
     _REF_HEAD_RE = re.compile(r"^\$?\{?\s*([A-Za-z_][A-Za-z0-9_]*)\.data\.")
+
+    @staticmethod
+    def _derive_store_hint_edges(steps: list) -> None:
+        """商户 `store_hint` 的依赖一致性（demo-3ukshz 二轮旅程探针第二跳）。
+
+        「附近的麦当劳有什么菜单」模型排了 nearby.search + mcd.menu 两步，却既不写
+        slot_refs 也不写 depends_on——两步进同一拓扑层并行，菜单步解析槽位时门店
+        结果还没回来，executor 的 `_hint_store_from_plan` 永远踩空，商户退回默认店。
+        与 `_derive_depends_on_from_refs` 同族：**「要门店线索的步」跟在「取门店的
+        步」之后**只是把组合计划里自相矛盾的部分补成一致，不发明路由——两步都是
+        模型自己排的。判据来自 capability 声明（declared_slots 含 store_hint 且
+        本步未填）；producer 字面量与跨轮锚定同一协议
+        （docs/design/2026-08-13-cross-turn-store-anchor.md）。
+        """
+        producer = next(
+            (s for s in steps if s.intent == "nearby.search"), None)
+        if producer is None:
+            return
+        for step in steps:
+            if step.id == producer.id or step.intent == "nearby.search":
+                continue
+            declared = getattr(step, "declared_slots", None) or []
+            if "store_hint" not in declared:
+                continue
+            if str(step.slots.get("store_hint") or "").strip():
+                continue
+            if producer.id not in step.depends_on:
+                step.depends_on.append(producer.id)
+                logger.info(
+                    "Step %s 声明 store_hint 未填且计划含 nearby.search；"
+                    "补依赖边 %s（防同层并行踩空门店补全）",
+                    step.id, producer.id)
 
     @staticmethod
     def _derive_depends_on_from_refs(steps: list, valid_ids: set) -> None:

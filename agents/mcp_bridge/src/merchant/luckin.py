@@ -1640,6 +1640,10 @@ class LuckinWorkflow(MerchantWorkflow):
                 "choice_kind": "product",
                 "merchant": "瑞幸",
                 "store_name": store_name,
+                # 主卡（display_priority=0）：「附近的瑞幸有什么可以点的」这类组合轮，
+                # 菜单是用户的目标，此前缺省 2 被 place_list（1）压掉——菜单内容只剩
+                # 话术（demo-3ukshz 二轮遗留②）。门店列表仍可语音「换一家」召回。
+                "display_priority": 0,
                 "title": f"{store_name} 可点商品",
                 "items": items,
                 # options 与 items 同序但**各自自带 image_url**：渲染端按 options 取，

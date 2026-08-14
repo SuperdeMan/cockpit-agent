@@ -187,15 +187,44 @@ class Aggregator:
                 "need_confirm": r.status == StepStatus.NEED_CONFIRM,
             }
 
-        # 多步：LLM 聚合
-        speech = await self._aggregate_speech(user_text, results, thinking)
+        # 多步：LLM 聚合。带 `_refused` 保留键的步是**系统持有的事实**（§9.1），
+        # 与 `_VERIFY_NOTE` 同一原则：不交给 LLM 改写——它会把拒绝整句略去或润色成
+        # 承诺（demo-mkemhn 78b635db「我现在去获取…」/ demo-3ukshz 二轮探针把打烊
+        # 拒绝整句丢掉，**在诚实约束已进 system prompt 之后仍然丢**）。
+        # 处置＝恰好一次：拒绝步不进聚合材料，确定性原样附加在末尾；全员被拒时
+        # 零 LLM 直接拼接。follow_up 优先取拒绝步的（那是可执行的恢复指引）。
+        refused = [r for r in results
+                   if isinstance(r.data, dict) and r.data.get("_refused")
+                   and (r.speech or "").strip()]
+        spoken = [r for r in results if r not in refused]
+        refused_lines: list[str] = []
+        for r in refused:
+            line = strip_markdown_speech(r.speech).strip()
+            if line and line not in refused_lines:
+                refused_lines.append(line)
+        if refused and not any((r.speech or "").strip() for r in spoken):
+            speech = "".join(self._sentence(line) for line in refused_lines)
+        else:
+            speech = strip_markdown_speech(
+                await self._aggregate_speech(user_text, spoken, thinking))
+            for line in refused_lines:
+                speech = self._sentence(speech) + line
+        refused_follow = next(
+            (r.follow_up for r in refused if r.follow_up), "")
         return {
-            "speech": self._append_verify_note(
-                strip_markdown_speech(speech), results),
+            "speech": self._append_verify_note(speech, results),
             "actions": actions,
             "ui_card": ui_card,
-            "follow_up": follow_ups[0] if follow_ups else "",
+            "follow_up": refused_follow or (follow_ups[0] if follow_ups else ""),
         }
+
+    @staticmethod
+    def _sentence(text: str) -> str:
+        """确定性拼接前的句读收口：非空且不以句末标点结尾时补句号。"""
+        s = (text or "").strip()
+        if s and s[-1] not in "。！？!?；;":
+            s += "。"
+        return s
 
     @staticmethod
     def _compose_actions(results: list[StepResult]) -> list[dict]:
