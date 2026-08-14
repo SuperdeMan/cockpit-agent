@@ -966,3 +966,56 @@ cases:
       - input: {utterance: 先去武汉再去长沙，玩个四天, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [trip.plan]}], forbidden_intents: [navigation.navigate_to, navigation.reroute], allow_extra_intents: false}
+  # ── G7 双通道收口（2026-08-15）：陈述未来事件 vs 显式提醒请求 ─────────────
+  # 台账 chitchat-reminder.statement-vs-request。陈述句由记忆抽取异步接（G7 offer
+  # 询问式建议卡），planner 抢答成 reminder NEED_SLOT = 双通道抢话 + 挂起会话。
+  - id: cp.event-stmt.piano
+    title: 顺嘴陈述孩子的比赛不是提醒请求
+    family_id: cp.event-stmt
+    cohort: unseen_transfer
+    risk: high
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [chitchat, reminder], layers: [l1], boundary_ledger: chitchat-reminder.statement-vs-request, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 儿子下周日上午有个足球比赛, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [reminder.create], allow_extra_intents: false}
+  - id: cp.event-stmt.wedding
+    title: 陈述家里的日程安排不是提醒请求
+    family_id: cp.event-stmt
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [chitchat, reminder], layers: [l1], boundary_ledger: chitchat-reminder.statement-vs-request, boundary_side: left}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: cp.event-stmt.piano, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 下个月五号我们家要办乔迁宴, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [reminder.create], allow_extra_intents: false}
+  - id: cp.event-req.deliver
+    title: 显式说提醒我才落提醒
+    family_id: cp.event-req
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [chitchat, reminder], layers: [l1], boundary_ledger: chitchat-reminder.statement-vs-request, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 周六下午三点提醒我送女儿去比赛, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [chitchat.talk], allow_extra_intents: false}
+  - id: cp.event-req.airport
+    title: 叫我出发同样是显式提醒请求
+    family_id: cp.event-req
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [chitchat, reminder], layers: [l1], boundary_ledger: chitchat-reminder.statement-vs-request, boundary_side: right}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: cp.event-req.deliver, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 下周三早上七点叫我出发去机场, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [chitchat.talk], allow_extra_intents: false}

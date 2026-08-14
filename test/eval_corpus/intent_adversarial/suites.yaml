@@ -51,12 +51,18 @@ schema_version: 1
 # 一正（主题→trip.plan）一硬负（聊作品内容≠行程）锁两侧，机械地 +2。
 # 2026-08-15 同日放到 587：第八次适用——G9 trip 跨城市（「先去A再去B玩N天」
 # 此前会丢第二城；现保序逐城安排+跨城驾驶段）。既有 intent 的新话术族正例 +1。
+# 2026-08-15 同日放到 591：第九次适用——EVA 二轮留档待议项收口：新边界裁定
+# chitchat-reminder.statement-vs-request（顺嘴陈述未来事件 vs 显式提醒请求——
+# 陈述句由 G7 offer 询问式通道接，planner 抢答成 reminder NEED_SLOT 是双通道
+# 抢话+挂起黑洞；批 D 已拍板创建入口=用户对 offer 的肯定答复）。台账契约
+# 双向各 2 例、全部 reviewed 新增（不动 stable/gate——复用打标签要改既有
+# forbidden 会碰 baseline 比对面），机械地 +4。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 587
+    max_cases: 591
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3
