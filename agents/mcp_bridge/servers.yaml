@@ -184,7 +184,10 @@ servers:
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "235a50ac3f94"
-        const_args: {beType: 1, searchType: 1}
+        # searchType **不写死**（2026-08-14 真机 schema 取证）：1=搜索**收藏餐厅**、
+        # 2=按位置搜索（city+keyword 必填）。此前写死 1，「附近的麦当劳」永远只会
+        # 查到测试账号收藏的碧海君庭一家——workflow 按有无位置线索动态选档。
+        const_args: {beType: 1}
         timeout_ms: 15000
       - name: query-meals
         intent: mcd.internal.query_meals

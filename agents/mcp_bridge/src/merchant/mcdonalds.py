@@ -767,13 +767,20 @@ class McDonaldsWorkflow(MerchantWorkflow):
         store_hint = self._store_keyword(
             self._choice_value(slots.get("store_hint"), "门店"))
         city = str(slots.get("city") or "").strip()
+        # searchType 语义（2026-08-14 真机 schema 取证）：1=搜索**收藏餐厅**、
+        # 2=按位置搜索（city+keyword 必填）。此前写死 1，keyword 传了也没人看，
+        # 「附近的麦当劳」永远只回测试账号收藏的碧海君庭——真机实测
+        # searchType=2 + city=深圳 + keyword=高新中五道餐厅 → top1 就是
+        # 麦当劳深圳高新中五道餐厅。位置线索齐（hint+city）走 2；缺任一退 1
+        # （收藏列表，行为=修复前），仍由本地 `_matching_stores` 与诚实查无兜底。
+        if store_hint and city:
+            search_args = {"searchType": 2, "keyword": store_hint, "city": city}
+        else:
+            search_args = {"searchType": 1}
         try:
             stores_data = await self._read(
                 "query-nearby-stores",
-                self._arguments("query-nearby-stores", {
-                    "keyword": store_hint,
-                    "city": city,
-                }))
+                self._arguments("query-nearby-stores", search_args))
         except Exception as exc:
             return None, "", self._read_failure("查询麦当劳门店", exc)
 
@@ -801,10 +808,20 @@ class McDonaldsWorkflow(MerchantWorkflow):
             # 碧海君庭——静默换店比诚实查无更糟。唯一可用店给出确定句式让用户自己定。
             if len(open_stores) == 1:
                 available = self._store_name(open_stores[0]) or "麦当劳门店"
-                return None, "", self._reselect_store(
+                refusal = self._reselect_store(
                     f"麦当劳官方门店里没查到「{store_hint}」，"
                     f"当前可用的是{available}。要用这家就说"
                     f"“选择麦当劳门店：{available}”。")
+                # 自愈一跳（镜像瑞幸 C2）：拿点名的店去 nearby.search 真实取回——
+                # 门店列表随即写回焦点（含 city），下一句「选择麦当劳门店：X」就有
+                # 城市可用（官方 searchType=2 城市必填）。残渣不当店名去检索。
+                if "$" not in store_hint and ".data." not in store_hint:
+                    refusal.data["_escalate"] = {
+                        "intent": "nearby.search",
+                        "slots": {"keyword": f"麦当劳 {store_hint}"},
+                        "reason": "mcd_store_unresolved",
+                    }
+                return None, "", refusal
             return None, "", self._store_choices(open_stores)
         candidates = store_matches or open_stores
         if len(candidates) != 1:

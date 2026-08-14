@@ -315,11 +315,12 @@ class NearbyAgent(BaseAgent):
 
     @staticmethod
     def _item(p: Place) -> dict:
-        # lat/lng 供 HMI「导航去第N个」handoff（同 navigation poi_list 形状）
+        # lat/lng 供 HMI「导航去第N个」handoff（同 navigation poi_list 形状）；
+        # city 供商户官方检索（麦当劳 searchType=2 按位置搜时城市必填）
         return {"id": p.id, "name": p.name, "category": p.category,
                 "rating": p.rating, "cost": p.cost, "distance_km": p.distance_km,
-                "address": p.address, "tags": p.tags, "open_today": p.open_today,
-                "lat": p.lat, "lng": p.lng}
+                "address": p.address, "city": p.city, "tags": p.tags,
+                "open_today": p.open_today, "lat": p.lat, "lng": p.lng}
 
     @staticmethod
     def _known_attrs(p: Place) -> str:

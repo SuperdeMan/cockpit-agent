@@ -457,6 +457,24 @@ def test_focus_keeps_last_turn_public_pois_for_cross_turn_store_anchoring():
     assert "rating" not in focus.last_places[0]
 
 
+def test_last_places_keep_city_but_still_reject_merchant_ids():
+    """city 是第四个下游实际引用的安全标量（麦当劳官方检索 searchType=2 城市必填，
+    直点句唯一的城市来源是焦点）；deptId/卡片/话术照旧不进焦点。"""
+    from orchestrator.cloud.models import StepResult, StepStatus
+
+    result = StepResult(
+        step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
+        data={"items": [{"name": "麦当劳(高新中五道餐厅)", "lng": 113.94,
+                         "lat": 22.54, "city": "深圳市", "deptId": 99,
+                         "rating": 4.6}]})
+    focus = extract_focus(Plan(steps=[]), [result])
+
+    assert focus.last_places == [{
+        "name": "麦当劳(高新中五道餐厅)", "lng": 113.94, "lat": 22.54,
+        "city": "深圳市",
+    }]
+
+
 def test_only_nearby_search_feeds_the_store_anchor():
     """别的域返回的同名字段不许冒充门店——那正是可信链要挡的事。"""
     plan = Plan(steps=[Step(id="s1", agent_id="navigation",

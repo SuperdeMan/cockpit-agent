@@ -25,6 +25,7 @@ class Place:
     name: str = ""
     category: str = ""          # 高德主类目（type 首段）
     address: str = ""
+    city: str = ""              # 高德 cityname（商户官方检索 searchType=2 需要城市）
     lat: float = 0.0
     lng: float = 0.0
     distance_km: float = 0.0

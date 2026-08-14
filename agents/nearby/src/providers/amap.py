@@ -103,6 +103,7 @@ class AmapPlaceProvider(PlaceProvider):
         return Place(
             id=_as_str(p.get("id")), name=_as_str(p.get("name")),
             category=_as_str(p.get("type")), address=_as_str(p.get("address")),
+            city=_as_str(p.get("cityname")),
             lat=lat, lng=lng, distance_km=dist_km, rating=rating,
             cost=_as_str(biz.get("cost")), tel=_as_str(biz.get("tel")),
             open_today=_as_str(biz.get("opentime_today")),

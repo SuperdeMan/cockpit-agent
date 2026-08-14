@@ -553,7 +553,14 @@ def extract_focus(plan, results) -> "Focus | None":
             except (TypeError, ValueError):
                 continue
             if name and -180 <= lng <= 180 and -90 <= lat <= 90:
-                places.append({"name": name, "lng": lng, "lat": lat})
+                place = {"name": name, "lng": lng, "lat": lat}
+                # city 是第四个下游实际引用的安全标量（2026-08-14）：麦当劳官方
+                # 检索 searchType=2 城市必填，而指名门店的直点句本轮没有 nearby
+                # 生产者——城市只能从跨轮焦点来。仍不存 deptId/卡片/话术。
+                city = str(item.get("city") or "").strip()
+                if city:
+                    place["city"] = city
+                places.append(place)
         if places:
             focus.last_places = places
             focus.last_places_ts = time.time()

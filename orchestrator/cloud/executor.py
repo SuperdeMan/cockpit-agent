@@ -60,6 +60,11 @@ def _store_anchor_max_age_s() -> float:
 
 
 _REF_PATH_RE = re.compile(r"^[A-Za-z0-9_-]+\.data\.items\.\d+\.[A-Za-z_]+$")
+# 引用残渣的宽形态（含 $ / ${} 包裹与任意 data 路径）：`$s1.data.items.0.name` 这类
+# 值是**没解析成的引用**，绝不能当成用户给的真值消费（2026-08-14 真栈：MiniMax
+# 产的裸 $ 形态穿过 ${} 专用正则，作为 store_hint 原样发给了商户）。
+_REF_RESIDUE_RE = re.compile(
+    r"^\$?\{?\s*[A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+\s*\}?$")
 
 
 def _looks_like_ref_path(value: str) -> bool:
@@ -513,7 +518,12 @@ class DagExecutor:
         for slot_name, raw_value in list(step.slots.items()):
             if not isinstance(raw_value, str):
                 continue
-            match = re.fullmatch(r"\$\{([^{}]+)\}", raw_value.strip())
+            # 两种线上实测的占位形态：`${s1.data...}` 与**裸 $ 前缀**
+            # `$s1.data.items.0.name`（2026-08-14 真栈：后者穿过 ${} 专用正则、
+            # 作为 store_hint 原样发给商户，被官方按非法关键词拒绝）。
+            match = (re.fullmatch(r"\$\{([^{}]+)\}", raw_value.strip())
+                     or re.fullmatch(r"\$([A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+)",
+                                     raw_value.strip()))
             if not match:
                 continue
             value = self._resolve_ref(match.group(1), done)
@@ -664,27 +674,51 @@ class DagExecutor:
         又变成十公里外的碧海君庭。与 `_derive_depends_on_from_refs` 同族判据：
         **把计划里自相矛盾的部分补成一致，不发明路由**——只在 capability 声明了
         `store_hint`、本轮没填、且**本轮 plan 内**有 `nearby.search` 的 OK 结果时
-        才取其 items.0.name 补上。**刻意不吃跨轮焦点**：焦点里可能是另一个品牌的
-        门店（先查了瑞幸再问麦当劳），注进去会把「默认店」恶化成「查无门店」；
-        同轮组合计划里的 nearby 结果才是为这一步取的。文本 hint 不承载坐标
-        provenance——商户侧仍按名向官方接口查证，补错顶多出候选卡，不会静默下错单。"""
-        del ctx     # 签名与坐标锚对齐；跨轮焦点刻意不吃（见 docstring）
-        if "store_hint" not in (getattr(step, "declared_slots", None) or []):
+        才取其 items.0.name 补上。**店名刻意不吃跨轮焦点**：焦点里可能是另一个
+        品牌的门店（先查了瑞幸再问麦当劳），注进去会把「默认店」恶化成「查无门店」；
+        `city` 例外——城市不是门店、跨品牌无错配面，允许从焦点补（见函数尾注释）。
+        文本 hint 不承载坐标 provenance——商户侧仍按名向官方接口查证，补错顶多
+        出候选卡，不会静默下错单。"""
+        declared = getattr(step, "declared_slots", None) or []
+        if "store_hint" not in declared:
             return
-        if str(step.slots.get("store_hint") or "").strip():
-            return
-        for result in done.values():
-            if (str(getattr(result, "source_intent", "") or "") != "nearby.search"
-                    or getattr(getattr(result, "status", None), "value", "") != "ok"):
-                continue
-            items = (getattr(result, "data", None) or {}).get("items") or []
-            if items and isinstance(items[0], dict):
-                name = str(items[0].get("name") or "").strip()
-                if name:
-                    step.slots["store_hint"] = name
-                    logger.info("Step %s(%s): store_hint 取自本轮 nearby.search（%s）",
-                                step.id, step.intent, name)
-                    return
+        item = next(
+            (items[0] for result in done.values()
+             if str(getattr(result, "source_intent", "") or "") == "nearby.search"
+             and getattr(getattr(result, "status", None), "value", "") == "ok"
+             for items in [(getattr(result, "data", None) or {}).get("items") or []]
+             if items and isinstance(items[0], dict)),
+            None)
+        if item is not None:
+            name = str(item.get("name") or "").strip()
+            current_hint = str(step.slots.get("store_hint") or "").strip()
+            # 引用残渣不算「已填」——那是没解析成的占位符，不是用户/模型给的真值
+            if name and (not current_hint or _REF_RESIDUE_RE.match(current_hint)):
+                step.slots["store_hint"] = name
+                logger.info("Step %s(%s): store_hint 取自本轮 nearby.search（%s）",
+                            step.id, step.intent, name)
+        # 城市补全**独立于 hint 是否已填**（2026-08-14 真栈踩到：模型自己用 ref
+        # 填了 store_hint，本函数早退，city 永远轮不到补 → searchType 退收藏档，
+        # 「附近的麦当劳」又只剩碧海君庭）。官方 searchType=2 按位置搜索时 city
+        # 必填。取值优先级：①本轮 nearby 同一条 POI 的 cityname；②跨轮焦点首条
+        # 的 city（带坐标锚同一份时效门控）——city 是城市不是门店，跨品牌无错配
+        # 面，这让「选择麦当劳门店：X」这类无 nearby 前置的直点句也能走位置检索。
+        # 门店名（store_hint）仍**只吃本轮**，跨轮品牌错配的判据不变。
+        if "city" in declared and not str(step.slots.get("city") or "").strip():
+            city = str((item or {}).get("city") or "").strip()
+            source = "本轮 nearby.search"
+            if not city:
+                places = list(getattr(ctx, "focus_places", None) or [])
+                fetched_at = float(getattr(ctx, "focus_places_ts", 0.0) or 0.0)
+                if (places and isinstance(places[0], dict) and fetched_at > 0
+                        and time.time() - fetched_at
+                        <= _store_anchor_max_age_s()):
+                    city = str(places[0].get("city") or "").strip()
+                    source = "上一轮 nearby.search 焦点"
+            if city:
+                step.slots["city"] = city
+                logger.info("Step %s(%s): city 取自%s（%s）",
+                            step.id, step.intent, source, city)
 
     @staticmethod
     def _resolve_ref(ref_path: str, done: dict) -> object:

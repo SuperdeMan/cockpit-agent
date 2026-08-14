@@ -595,7 +595,7 @@ def test_store_hint_is_completed_from_in_plan_nearby_producer():
     只认**本轮 plan 内**的 OK 生产者；跨轮焦点刻意不吃（可能是别的品牌）。"""
     done = {"s1": StepResult(
         step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
-        data={"items": [{"name": "麦当劳(高新中五道店)",
+        data={"items": [{"name": "麦当劳(高新中五道店)", "city": "深圳",
                          "lng": 113.94, "lat": 22.54}]})}
     step = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
                 slots={}, declared_slots=["store_hint", "city", "item_query"])
@@ -604,22 +604,49 @@ def test_store_hint_is_completed_from_in_plan_nearby_producer():
         step, done, _focus_ctx(_LAST_PLACES))
 
     assert step.slots["store_hint"] == "麦当劳(高新中五道店)"
+    # 城市顺带补上（官方按位置搜索 city 必填）——同一条 POI 的 cityname
+    assert step.slots["city"] == "深圳"
 
-    # 用户显式给了 hint → 不覆盖
+    # 用户显式给了 hint → 不覆盖；但 city 补全**独立生效**（模型/用户给了 hint
+    # 而没给 city 时，searchType 不能因此退回收藏档——真栈踩过）
     explicit = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
                     slots={"store_hint": "国贸店"},
                     declared_slots=["store_hint", "city", "item_query"])
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
         explicit, done, _focus_ctx(_LAST_PLACES))
     assert explicit.slots["store_hint"] == "国贸店"
+    assert explicit.slots["city"] == "深圳"
 
-    # 本轮没有 nearby 生产者 → 不从跨轮焦点补（焦点里是瑞幸店，注给麦当劳会把
-    # 「默认店」恶化成「查无门店」）
-    lone = Step(id="s1", agent_id="mcp-bridge", intent="mcd.menu",
-                slots={}, declared_slots=["store_hint", "city", "item_query"])
+    # 裸 $ 占位符残渣（2026-08-14 真栈：`$s1.data.items.0.name` 穿过 ${} 专用
+    # 正则原样发给商户被拒）：①解析层放行裸 $ 形态直接解成真值；②hint 补全把
+    # 残渣当未填
+    bare = Step(id="s2", agent_id="mcp-bridge", intent="mcd.menu",
+                slots={"store_hint": "$s1.data.items.0.name"},
+                declared_slots=["store_hint", "city", "item_query"])
     DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
-        lone, {}, _focus_ctx(_LAST_PLACES))
-    assert "store_hint" not in lone.slots
+        bare, done, _focus_ctx(_LAST_PLACES))
+    assert bare.slots["store_hint"] == "麦当劳(高新中五道店)"
+    assert bare.slots["city"] == "深圳"
+
+    # 本轮没有 nearby 生产者 → **店名**不从跨轮焦点补（焦点里是瑞幸店，注给
+    # 麦当劳会把「默认店」恶化成「查无门店」）；**city 例外**——城市跨品牌无
+    # 错配面，且官方按位置检索城市必填（直点句唯一的城市来源就是焦点）。
+    with_city = [{**_LAST_PLACES[0], "city": "深圳市"}, _LAST_PLACES[1]]
+    lone = Step(id="s1", agent_id="mcp-bridge", intent="mcd.menu",
+                slots={"store_hint": "国贸店"},
+                declared_slots=["store_hint", "city", "item_query"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        lone, {}, _focus_ctx(with_city))
+    assert lone.slots["store_hint"] == "国贸店"
+    assert lone.slots["city"] == "深圳市"
+
+    # 焦点超龄 → city 也不补（同坐标锚时效门控）
+    stale = Step(id="s1", agent_id="mcp-bridge", intent="mcd.menu",
+                 slots={"store_hint": "国贸店"},
+                 declared_slots=["store_hint", "city", "item_query"])
+    DagExecutor(call_agent_fn=lambda *_: None)._resolve_slot_refs(
+        stale, {}, _focus_ctx(with_city, ts=time.time() - 3600 * 3))
+    assert "city" not in stale.slots
 
     # 没声明 store_hint 的步不吃补全
     plain = Step(id="s2", agent_id="chitchat", intent="chitchat.talk",

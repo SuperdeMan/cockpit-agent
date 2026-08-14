@@ -347,7 +347,8 @@ def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
     schemas["create-order"]["properties"]["items"] = {
         "type": "array", "items": copy.deepcopy(item_schema)}
     consts = {
-        "query-nearby-stores": {"beType": 1, "searchType": 1},
+        # searchType 不写死（2026-08-14）：workflow 按位置线索动态选 1（收藏）/2（按位置）
+        "query-nearby-stores": {"beType": 1},
         "query-meals": {"orderType": 1, "beType": 1},
         "query-meal-detail": {"orderType": 1, "beType": 1},
         "calculate-price": {"orderType": 1, "beType": 1},
@@ -1389,20 +1390,39 @@ def test_store_keyword_normalizes_amap_poi_names():
 
 @pytest.mark.asyncio
 async def test_menu_amap_named_store_reaches_the_official_store():
-    """nearby.search 的门店名经 store_hint 直达官方门店（附近链路的桥侧一半）。"""
+    """nearby.search 的门店名经 store_hint 直达官方门店（附近链路的桥侧一半）。
+
+    searchType 语义（2026-08-14 真机 schema 取证）：hint+city 俱备才走 2
+    （按位置搜索，city/keyword 官方必填）；缺 city 退 1（收藏列表），由本地
+    `_matching_stores` 继续按名过滤。"""
     workflow, client = _workflow(
         workflow_intent="mcd.menu",
         scripts={"query-nearby-stores": [STORE_RESULT],
                  "query-meals": [MENU_RESULT]})
     intent = SimpleNamespace(name="mcd.menu", slots={
-        "store_hint": "麦当劳(人民广场麦当劳餐厅)", "city": ""})
+        "store_hint": "麦当劳(人民广场麦当劳餐厅)", "city": "上海"})
     result = await workflow.menu(intent, CTX, META)
 
     assert result.ui_card["store_name"] == "人民广场麦当劳餐厅"
     nearby_args = next(args for name, args, _ in client.calls
                        if name == "query-nearby-stores")
+    assert nearby_args["searchType"] == 2
     assert nearby_args["keyword"] == "人民广场麦当劳餐厅"
+    assert nearby_args["city"] == "上海"
     assert "没指定门店" not in result.speech
+
+    # 缺 city → 退收藏档（searchType=1，不传位置参数），本地匹配兜住
+    flow2, client2 = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT],
+                 "query-meals": [MENU_RESULT]})
+    no_city = await flow2.menu(SimpleNamespace(name="mcd.menu", slots={
+        "store_hint": "麦当劳(人民广场麦当劳餐厅)", "city": ""}), CTX, META)
+    args2 = next(args for name, args, _ in client2.calls
+                 if name == "query-nearby-stores")
+    assert args2["searchType"] == 1
+    assert "keyword" not in args2 and "city" not in args2
+    assert no_city.ui_card["store_name"] == "人民广场麦当劳餐厅"
 
 
 @pytest.mark.asyncio
@@ -1475,6 +1495,13 @@ async def test_named_store_not_in_official_list_is_never_silently_replaced():
     assert "选择麦当劳门店：人民广场麦当劳餐厅" in result.speech
     assert not result.missing_slots, "拒绝不得挂起会话"
     assert "碧海君庭" not in result.speech or "人民广场" in result.speech
+    # 自愈一跳（镜像瑞幸）：拿点名的店去 nearby.search 真实取回，
+    # 门店列表随即写回焦点（含 city），下一句选店就有城市可走位置检索
+    assert (result.data or {}).get("_escalate") == {
+        "intent": "nearby.search",
+        "slots": {"keyword": "麦当劳 高新中五道餐厅"},
+        "reason": "mcd_store_unresolved",
+    }
 
 
 @pytest.mark.asyncio
