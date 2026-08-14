@@ -343,6 +343,16 @@ class NearbyAgent(BaseAgent):
         kw_slot = (intent.slots.get("keyword") or "").strip()
         keyword = self._build_keyword(category, cuisine, brand, kw_slot)
         raw = intent.raw_text or ""
+        # G6：口味偏好在检索**前**生效。泛餐饮发现（用户没点菜系/品牌/关键词）时，
+        # 记忆里的喜好菜系直接偏置检索词；用户点名的东西永远优先于记忆。
+        taste = None
+        taste_notes: list[str] = []
+        if category in _FOOD_CATS:
+            taste = await self._taste_profile(ctx, raw)
+            if (taste and taste["like_cuisine"]
+                    and not (cuisine or brand or kw_slot.strip())):
+                keyword = taste["like_cuisine"]
+                taste_notes.append(f"按您的口味优先{taste['like_cuisine']}")
         rating_min = _to_float(intent.slots.get("rating_min"))
         # 价位/排序/营业中：原话解析优先（『一百左右』的区间语义只在原话里，LLM 填的 price_max
         # 槽位会丢下限 → 之前『左右』返回太便宜的）；原话无价位再退回 LLM 槽位。
@@ -391,12 +401,16 @@ class NearbyAgent(BaseAgent):
                 speech=f"附近暂时没找到{label}，换个说法或扩大范围再试试？",
                 follow_up="可以说『附近的火锅』或『评分高的川菜馆』")
 
-        # 口味画像（仅餐饮）：学到的偏好（如「不吃辣」）体现在话术
-        pref_note = ""
-        if category in _FOOD_CATS:
-            taste = await self._taste_prefs(ctx)
-            if taste:
-                pref_note = f"（已参考您口味：{taste}）"
+        # G6：负偏好软降权（忌辣/店名级差评 → 结果后移），话术只报**真实生效**的项
+        # ——此前这里是搜完才召回、只拼「已参考您口味」进话术，结果集一条没变（假个性化）。
+        if taste:
+            results, moved = self._taste_rerank(results, taste)
+            if moved:
+                taste_notes.append("不合口味的已排后")
+            caution = self._taste_caution(taste, cuisine or keyword)
+            if caution:
+                taste_notes.append(caution)
+        pref_note = f"（{'；'.join(taste_notes)}）" if taste_notes else ""
 
         items = [self._item(p) for p in results]
         names = "、".join(p.name for p in results[:3])
@@ -480,22 +494,89 @@ class NearbyAgent(BaseAgent):
             follow_up="说『看第 1 个详情』或『导航去第 2 个』",
         )
 
-    async def _taste_prefs(self, ctx) -> str:
-        """口味偏好：语义记忆召回（学到的，如「不吃辣」）。精确读取走 predicate_prefix；失败不挡主流程。
+    # ── G6（EVA 二轮）口味偏好的确定性消费面 ─────────────────────────────
+    # 修「假个性化」：此前偏好在 place.search **之后**才召回、只拼进话术
+    # 「（已参考您口味：…）」，结果集一条没变。现在检索前生效：泛餐饮查询按喜好
+    # 菜系偏置检索词、负偏好对结果软降权，话术只报**真实生效**的项。
+    _CUISINE_WORDS = ("粤菜", "川菜", "湘菜", "火锅", "日料", "日本菜", "韩国料理",
+                      "西餐", "江浙菜", "本帮菜", "东北菜", "新疆菜", "烧烤", "素食",
+                      "面馆", "早茶", "茶餐厅")
+    _SPICY_MARKS = ("川菜", "湘菜", "火锅", "串串", "麻辣烫", "冒菜", "麻辣")
+    _NO_SPICY_RE = re.compile(r"不(?:能|要|太)?(?:吃|沾)辣|怕辣|忌辣|别太辣|清淡")
+    _NEG_TASTE_RE = re.compile(r"不喜欢|不吃|不爱|讨厌|难吃|太[酸咸甜油腻辣]")
+    # 话里点名家人 → 并取该家人的口味记忆（subject 维度）。词表与 memory/relation.py
+    # 的亲属同义表同源——那边是权威登记，这里只做消费侧识别（跨服务不共享代码）。
+    _KIN_SUBJECTS = {
+        "老婆": ("老婆", "妻子", "太太", "媳妇"), "老公": ("老公", "丈夫"),
+        "爸爸": ("爸爸", "老爸", "父亲"), "妈妈": ("妈妈", "老妈", "母亲"),
+        "女儿": ("女儿", "闺女"), "儿子": ("儿子",), "孩子": ("孩子", "小孩", "娃"),
+    }
+    _KIN_PAIR = {"爸妈": ("爸爸", "妈妈"), "父母": ("爸爸", "妈妈")}
 
-        逐字去重：同一条偏好被抽取两次时召回也会给两条（demo-3ukshz 实测
-        「美式中杯、美式中杯」原样播了两遍）——话术层去重，不动记忆层。"""
+    @classmethod
+    def _person_subjects(cls, raw: str) -> list[str]:
+        """话里点名的家人 → canonical subject 列表（「和老婆吃饭」→ ["老婆"]）。"""
+        subs: list[str] = []
+        t = raw or ""
+        for word, pair in cls._KIN_PAIR.items():
+            if word in t:
+                subs.extend(p for p in pair if p not in subs)
+        for canon, syns in cls._KIN_SUBJECTS.items():
+            if canon not in subs and any(s in t for s in syns):
+                subs.append(canon)
+        return subs[:2]
+
+    async def _taste_profile(self, ctx, raw: str) -> dict | None:
+        """召回口味记忆（本人 + 话里点名家人的 subject 分区）→ 结构化信号。失败不挡主流程。"""
+        mems: list[dict] = []
         try:
-            mems = await ctx.recall("口味偏好", scopes=["profile.taste"],
-                                    predicate_prefix="taste.", top_k=3)
+            mems += await ctx.recall("口味偏好", scopes=["profile.taste"],
+                                     predicate_prefix="taste.", top_k=3)
+            for subj in self._person_subjects(raw):
+                mems += await ctx.recall("口味偏好", scopes=["profile.taste"],
+                                         predicate_prefix="taste.", top_k=3,
+                                         subject=subj)
         except Exception:
-            mems = []
-        seen: list[str] = []
+            pass
+        if not mems:
+            return None
+        like, dislikes, no_spicy = "", [], False
+        seen: set[str] = set()
         for m in mems:
             text = str(m.get("text") or "").strip()
-            if text and text not in seen:
-                seen.append(text)
-        return "、".join(seen)[:60]
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            negative = (str(m.get("polarity") or "") == "dislike"
+                        or bool(self._NEG_TASTE_RE.search(text)))
+            if self._NO_SPICY_RE.search(text):
+                no_spicy = True
+            hit = next((c for c in self._CUISINE_WORDS if c in text), "")
+            if hit and not negative and not like:
+                like = hit
+            if negative:
+                dislikes.append(text)
+        return {"like_cuisine": like, "dislikes": dislikes, "no_spicy": no_spicy}
+
+    def _taste_rerank(self, results: list, taste: dict) -> tuple[list, bool]:
+        """负偏好软降权：忌辣命中重辣菜系 / 店名级差评（「这家太酸」）→ 整体后移。
+        不删除、组内稳定序——负偏好是排序信号不是过滤器（记错了也只是排后）。"""
+        def demoted(p) -> bool:
+            hay = f"{p.name or ''} {p.category or ''} {p.tags or ''}"
+            if taste["no_spicy"] and any(w in hay for w in self._SPICY_MARKS):
+                return True
+            head = (p.name or "").split("(")[0].split("（")[0].strip()
+            return bool(head and len(head) >= 2
+                        and any(head in d for d in taste["dislikes"]))
+        front = [p for p in results if not demoted(p)]
+        back = [p for p in results if demoted(p)]
+        return (front + back), bool(front and back)
+
+    def _taste_caution(self, taste: dict, asked: str) -> str:
+        """用户点名要的正是记忆里忌口的（记得不吃辣却找川菜）→ 诚实提一句，不改结果。"""
+        if taste["no_spicy"] and any(w in (asked or "") for w in self._SPICY_MARKS):
+            return "记得您说过不吃辣，需要的话我可以换清淡些的"
+        return ""
 
     async def _detail(self, intent, ctx, meta) -> AgentResult:
         # HMI「第N个详情」handoff 透传所选项的高德 POI id（meta.nearby_poi_id）→ 精确取详情，

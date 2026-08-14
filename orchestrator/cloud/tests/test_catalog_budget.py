@@ -133,11 +133,15 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-08-13 demo-3ukshz 二轮再 +38 → 11866：mcd.menu 描述改写（「附近的麦当劳」
     # 需先经周边搜索取门店名——旧描述「不给门店时就近选一家」是**假承诺**，桥拿不到
     # 位置、给的是商户默认店）+ 新增 category 槽（分类导航）。条数 143 仍不变。
-    assert catalog.catalog_stats["chars_full"] == 11866
-    assert catalog.catalog_stats["chars_final"] == 11866
+    # 2026-08-14 EVA 二轮净 +62 → 11928：navigate_to 新增 arrive_by/route_pref 槽
+    # 与判别化描述（时间约束/路线偏好教给 planner），减去批 A 摘除的死槽位
+    # （nearby radius/price_level/datetime/party_size、charging departure_time）。
+    # 条数 143 不变——涨的是有意新增的能力面，不是重复项。
+    assert catalog.catalog_stats["chars_full"] == 11928
+    assert catalog.catalog_stats["chars_final"] == 11928
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 4134
+    assert 16000 - catalog.catalog_stats["chars_final"] == 4072
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

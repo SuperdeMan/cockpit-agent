@@ -550,3 +550,23 @@ def test_places_come_from_result_provenance_not_the_plan_object():
 
     assert focus is not None
     assert [p["name"] for p in focus.last_places] == ["瑞幸咖啡(前海印里店)"]
+
+
+# ── EVA 二轮 G6：历史指代 → episodic 召回放开 ─────────────────────────────
+
+def test_recall_expands_kinds_on_history_reference():
+    """「上次/上回」历史指代 → 召回放开 episodic；普通话术仍只召 semantic
+    （episodic 噪声大，无差别注入会挤掉偏好预算）。"""
+    seen = {}
+
+    class _C(_Clients):
+        async def recall(self, user_id, query="", **kw):
+            seen[query] = kw.get("kinds")
+            return []
+
+    agents = [_agent("a", ["a.x"])]
+    cm = ContextManager(_C(agents), top_k=12)
+    asyncio.run(cm.assemble("带我去上次看夜景的那个地方", _ctx()))
+    asyncio.run(cm.assemble("附近找个川菜馆", _ctx()))
+    assert seen["带我去上次看夜景的那个地方"] == ["semantic", "episodic"]
+    assert seen["附近找个川菜馆"] == ["semantic"]

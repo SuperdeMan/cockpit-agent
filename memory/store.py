@@ -445,13 +445,13 @@ class MemoryStore:
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
                      top_k: int = 0, include_superseded: bool = False,
                      predicate_prefix: str = "", min_score: float = 0.0,
-                     min_confidence: float = 0.0, max_age_days: int = 0
-                     ) -> list[tuple[dict, float]]:
+                     min_confidence: float = 0.0, max_age_days: int = 0,
+                     subject: str = "") -> list[tuple[dict, float]]:
         return await (await self._vec()).recall(
             user_id=user_id, occupant_id=occupant_id, query=query, scopes=scopes,
             kinds=kinds, top_k=top_k, include_superseded=include_superseded,
             predicate_prefix=predicate_prefix, min_score=min_score,
-            min_confidence=min_confidence, max_age_days=max_age_days)
+            min_confidence=min_confidence, max_age_days=max_age_days, subject=subject)
 
     async def delete_memory_item(self, user_id: str, occupant_id: str,
                                  item_id: str) -> dict:
@@ -608,9 +608,13 @@ class MemoryStore:
                 # 冲突查找按谓词等价类（B3-3 M2）：历史条目可能带 LLM 自由造的别名
                 # （hvac.temperature vs climate.temperature），精确匹配失手会让新旧偏好
                 # 并存、召回二义。命中类内任一别名即视为同一偏好做 supersede。
+                # G6：冲突域再按 subject 收窄——「爸爸不喜欢空调冷」不得 supersede
+                # 本人的空调温度偏好（两条独立记忆）。
+                subj = str(c.get("subject") or "").strip()
                 cur = None
                 for p in predicate_class(pred):
-                    cur = await vs.current_by_predicate(user_id, occupant_id, p)
+                    cur = await vs.current_by_predicate(user_id, occupant_id, p,
+                                                        subject=subj)
                     if cur:
                         break
                 if cur:

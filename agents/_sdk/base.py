@@ -87,16 +87,18 @@ class Context:
     async def recall(self, query: str = "", *, scopes: list[str] | None = None,
                      kinds: list[str] | None = None, top_k: int = 5,
                      predicate_prefix: str = "", min_score: float = 0.0,
-                     min_confidence: float = 0.0, max_age_days: int = 0) -> list[dict]:
+                     min_confidence: float = 0.0, max_age_days: int = 0,
+                     subject: str = "") -> list[dict]:
         """语义召回与当前问题相关的偏好/事件（如点餐前取口味）。无 user_id 返回空。
-        精确画像读取传 predicate_prefix（如 "place." "taste."）走谓词精确而非向量。"""
+        精确画像读取传 predicate_prefix（如 "place." "taste."）走谓词精确而非向量。
+        subject 非空=只取「关于该人」的记忆（G6，如 subject="老婆" 取老婆的口味）。"""
         if not self.user_id:
             return []
         return await self._memory.recall(
             self.user_id, query, occupant_id=self.occupant_id, scopes=scopes,
             kinds=kinds, top_k=top_k,
             predicate_prefix=predicate_prefix, min_score=min_score,
-            min_confidence=min_confidence, max_age_days=max_age_days)
+            min_confidence=min_confidence, max_age_days=max_age_days, subject=subject)
 
     async def resolve_person_place(self, person_word: str) -> dict | None:
         """人称词 → 常去地点（M2 记忆图谱 P1 关系边一跳，「去接孩子放学」）。

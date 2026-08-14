@@ -53,6 +53,16 @@ _PRED_CANON: dict[str, tuple[str, ...]] = {
         "light.color", "ambient.color", "ambient_light.color",
         "atmosphere.color", "light.ambient"),
     "seat.heating": ("seat.heat", "seat.heating_preference", "seat.warmer"),
+    # G6（EVA 二轮）路线偏好族：此前 route.avoid_highway 只在本 prompt 举例里出现过、
+    # 全仓零消费方；现在 navigation 按 route.* 前缀确定性消费（G11 strategy 面），
+    # 归一防 LLM 自由造词让消费方够不着。
+    "route.avoid_highway": ("route.no_highway", "navigation.avoid_highway",
+                            "route.highway_avoid", "route.highway"),
+    "route.avoid_congestion": ("route.no_congestion", "navigation.avoid_congestion",
+                               "route.avoid_jam", "route.congestion"),
+    "route.avoid_toll": ("route.no_toll", "navigation.avoid_toll", "route.toll"),
+    "route.preferred_road": ("route.road_preference", "route.prefer_road",
+                             "navigation.preferred_road", "route.preference"),
 }
 _PRED_ALIAS = {a: canon for canon, aliases in _PRED_CANON.items() for a in aliases}
 
@@ -102,7 +112,15 @@ _SYSTEM = (
     "以及**场景/模式配置里的参数**——『创建/修改/开启XX模式：空调22度、氛围灯蓝色』"
     "这类话里的 22 度/蓝色是该场景的配置，不是用户偏好（用户明说『记住/我最喜欢』的才是）。"
     "常用车控偏好的 predicate 统一用：climate.temperature（空调温度）、media.volume（音量）、"
-    "light.ambient_color（氛围灯颜色）、seat.heating（座椅加热）。"
+    "light.ambient_color（氛围灯颜色）、seat.heating（座椅加热）；"
+    "路线偏好统一用：route.avoid_highway（不走高速）、route.avoid_congestion（避堵）、"
+    "route.avoid_toll（少收费）、route.preferred_road（固定走某条路，text 里写清路名）。"
+    "偏好/事实类可选字段："
+    '"subject"=这条内容是关于谁的——用户本人**留空**；关于家人填亲属称谓'
+    "（爸爸/妈妈/老婆/老公/女儿/儿子/孩子，如『我爸不喜欢空调太冷』subject=爸爸）；"
+    '"polarity"="like"（喜欢）或"dislike"（不喜欢/嫌弃，如『这家咖啡太酸了』），非偏好留空。'
+    "episodic 事件若用户明说了**未来**的日期/星期与时刻（『女儿周六下午三点钢琴比赛』），"
+    '额外给 "event_time"（ISO 8601，如 2026-08-22T15:00:00）；没有明确未来时间的不要编造。'
     # M2 P1 关系边：与偏好共用同一个 JSON 数组（不改输出结构），靠 category 分流。
     "另可抽取【实体关系】：category=\"relation\"，额外给 "
     '{"subject":"实体名","rel":"关系","object":"对象"}。'
@@ -218,7 +236,37 @@ def _govern(c: dict, *, user_id: str, occupant_id: str, vehicle_id: str,
     else:
         # 未知类别：保守按推断处理（低置信）
         item.update(provenance="agent_inferred", confidence=min(conf, _INFERRED_MAX_CONF))
+
+    # ── G6（EVA 二轮）：关于谁 + 偏好极性 ─────────────────────────────
+    # subject 经亲属称谓归一（爸→爸爸）；「用户/我/本人」即本人 → 归空；polarity 闭集。
+    subj = relation.normalize_kinship(str(c.get("subject") or "").strip())
+    if subj in ("用户", "我", "本人", "自己"):
+        subj = ""
+    if subj and len(subj) <= 20:
+        item["subject"] = subj
+    pol = str(c.get("polarity") or "").strip().lower()
+    if pol in ("like", "dislike"):
+        item["polarity"] = pol
+    # ── G7：未来事件时刻（确定性校验：可解析、在未来、90 天内；不合格丢字段不猜）──
+    ev = str(c.get("event_time") or "").strip()
+    if item.get("kind") == "episodic" and ev:
+        ts = _parse_event_time(ev)
+        if ts and _now() < ts <= _now() + 90 * 86400:
+            item["value_json"] = json.dumps(
+                {"event_time": ts, "event_time_iso": ev}, ensure_ascii=False)
     return item
+
+
+def _parse_event_time(iso: str) -> int | None:
+    """ISO 8601 → epoch 秒；解析不出返回 None。无时区按车机默认 UTC+8。"""
+    from datetime import datetime, timezone, timedelta
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+    return int(dt.timestamp())
 
 
 def _parse(text: str) -> list[dict]:

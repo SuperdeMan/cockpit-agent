@@ -144,6 +144,14 @@ message MemoryItem {
   int32 evidence_count = 25;   // 支撑该偏好的独立证据轮次数（「说过一次」vs「每周三次」的区分依据）
   float half_life_days = 26;   // 0=不衰减（显式偏好）；推断类默认 90 天
   string consent = 27;         // ''=未特别声明（沿用 privacy_level）；'explicit'=用户显式授权的敏感画像
+  // EVA 二轮 G6（2026-08-14）：「关于谁」维度。此前「我爸不喜欢空调冷」只能以自然语言
+  // 存在 occupant=说话人名下，「爸爸」这个指向活在字符串里、确定性代码读不出。
+  // subject=这条记忆关于谁：空=用户本人；家人用 canonical 亲属称谓（经 relation
+  // 同义词表归一：爸爸/妈妈/老婆/老公/女儿/儿子/孩子）；occupant_id 仍是**说话人**维度，两者正交。
+  string subject = 28;
+  // 偏好极性：like | dislike | ''（非偏好/未知）。负反馈（「这家太酸了」）靠它被
+  // 消费方降权——weight 通道只增不减是刻意的（强度≠方向），方向单独立字段。
+  string polarity = 29;
 }
 
 message RememberRequest { repeated MemoryItem items = 1; }
@@ -162,6 +170,7 @@ message RecallRequest {
   float min_score = 9;             // 相关性下限（0=不限）
   float min_confidence = 10;       // 置信度下限（0=不限）
   uint32 max_age_days = 11;        // 最大年龄天数（0=不限）
+  string subject = 12;             // G6：只取关于某人的记忆（如 "老婆"）；空=不过滤
 }
 message RecallResponse {
   repeated MemoryItem items = 1;

@@ -499,3 +499,94 @@ def test_focus_location_name_resolved_near_current_not_nationwide():
     # 第二次调用（类目搜索）中心=解析出的万象天地坐标，而非当前 GPS/地名 geocode
     cat_near = calls[-1][1]
     assert cat_near is not None and abs(cat_near.lat - 22.535) < 1e-3
+
+
+# ─── EVA 二轮 G6：口味偏好的确定性消费（检索前生效，不再是话术装饰）───
+
+def test_taste_biases_generic_food_search_keyword():
+    """泛餐饮发现（没点菜系/品牌）→ 记忆里的喜好菜系直接偏置检索词（消费方证据）。"""
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "用户喜欢粤菜", "scope": "profile.taste",
+         "predicate": "taste.cuisine", "polarity": "like", "confidence": 0.9}]
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen["keyword"] = keyword
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"category": "餐饮"}, raw_text="晚上找地方吃饭",
+                           ctx=ctx, meta=_LOC))
+    assert seen["keyword"] == "粤菜"          # 偏好进了检索词，不是只进话术
+
+
+def test_taste_bias_never_overrides_explicit_cuisine():
+    """用户点名川菜时，记忆喜好不得覆盖（用户说的永远优先于记忆）。"""
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "用户喜欢粤菜", "predicate": "taste.cuisine", "polarity": "like",
+         "scope": "profile.taste"}]
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen["keyword"] = keyword
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"cuisine": "川菜"}, raw_text="找家川菜馆",
+                           ctx=ctx, meta=_LOC))
+    assert seen["keyword"] == "川菜"
+
+
+def test_taste_negative_feedback_demotes_named_store():
+    """「这家太咸」店名级负反馈 → 该店软降权后移（不删除）；话术如实报「已排后」。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "用户觉得老灶火锅太咸", "predicate": "taste.dislike",
+         "polarity": "dislike", "scope": "profile.taste"}]
+
+    async def search(keyword, **kwargs):
+        return [Place(id="a", name="老灶火锅(总店)", category="餐饮", rating=4.5),
+                Place(id="b", name="初色日料", category="餐饮", rating=4.2)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search",
+                                 slots={"cuisine": "日料"}, raw_text="附近吃点什么",
+                                 ctx=ctx, meta=_LOC))
+    assert [i["name"] for i in res.data["items"]] == ["初色日料", "老灶火锅(总店)"]
+    assert "已排后" in res.speech
+
+
+def test_taste_recall_includes_named_family_subject():
+    """「和老婆吃饭」→ 额外按 subject=老婆 召回她的口味（G6 subject 消费方证据）。"""
+    agent = NearbyAgent()
+    ctx = make_context()
+    calls = []
+
+    async def recall(user_id, query="", **kwargs):
+        calls.append(kwargs)
+        if kwargs.get("subject") == "老婆":
+            return [{"text": "老婆喜欢粤菜", "subject": "老婆", "polarity": "like",
+                     "predicate": "taste.cuisine", "scope": "profile.taste"}]
+        return []
+
+    ctx._memory.recall = recall
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen["keyword"] = keyword
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"category": "餐饮"}, raw_text="晚上找地方和老婆吃饭",
+                           ctx=ctx, meta=_LOC))
+    assert any(k.get("subject") == "老婆" for k in calls)
+    assert seen["keyword"] == "粤菜"          # 老婆的偏好真实进了检索

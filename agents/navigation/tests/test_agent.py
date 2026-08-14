@@ -1011,3 +1011,67 @@ def test_route_pref_maps_to_amap_strategy():
 
     assert any(c["strategy"] == "6" for c in agent.poi.route_calls)
     assert "避开高速" in res.speech
+
+
+# ─── EVA 二轮批 C（G6）：路线偏好记忆消费 + 历史轨迹落情景记忆 ───
+
+def test_route_pref_from_memory_when_not_stated():
+    """本轮没说偏好 → 记忆里的 route.avoid_highway 生效并如实说明来源。
+    这是 route.* 谓词的第一个消费出口（此前抽取 prompt 教了、全仓零消费方）。"""
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"虹桥机场": [POI(id="a", name="虹桥机场", address="上海", lat=31.19, lng=121.33)]})
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "以后导航别走高速", "predicate": "route.avoid_highway",
+         "polarity": "", "scope": "profile.route"}]
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "虹桥机场"}, raw_text="导航去虹桥机场", ctx=ctx,
+        meta={"current_lat": "31.2", "current_lng": "121.4"}))
+
+    assert any(c["strategy"] == "6" for c in agent.poi.route_calls)
+    assert "记得您平时不走高速" in res.speech
+
+
+def test_route_pref_slot_beats_memory():
+    """本轮明说「避堵」时记忆偏好让位（用户当下说的永远优先）。"""
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"虹桥机场": [POI(id="a", name="虹桥机场", address="上海", lat=31.19, lng=121.33)]})
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        {"text": "以后导航别走高速", "predicate": "route.avoid_highway"}]
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "虹桥机场", "route_pref": "避堵"},
+        raw_text="避开拥堵去虹桥机场", ctx=ctx,
+        meta={"current_lat": "31.2", "current_lng": "121.4"}))
+
+    assert any(c["strategy"] == "4" for c in agent.poi.route_calls)
+    assert not any(c["strategy"] == "6" for c in agent.poi.route_calls)
+
+
+def test_navigate_writes_episodic_place_memory():
+    """导航成功落一条 episodic 轨迹（「上次去的那个地方」的数据源）。"""
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"深圳湾公园": [POI(id="p", name="深圳湾公园", address="南山", lat=22.52, lng=113.94)]})
+    ctx = make_context()
+    captured = []
+
+    async def cap(text, **kw):
+        captured.append((text, kw))
+        return True
+
+    ctx.remember = cap
+    asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "深圳湾公园"}, raw_text="导航去深圳湾公园", ctx=ctx,
+        meta={"current_lat": "22.5", "current_lng": "113.9"}))
+
+    hits = [(t, kw) for t, kw in captured if "导航去过深圳湾公园" in t]
+    assert hits, f"episodic 轨迹未写入：{captured}"
+    _, kw = hits[0]
+    assert kw["kind"] == "episodic" and kw["scope"] == "episodic.place"
+    assert kw["value"]["name"] == "深圳湾公园" and kw["value"]["lat"] == 22.52

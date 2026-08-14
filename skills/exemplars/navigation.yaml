@@ -292,3 +292,14 @@ exemplars:
   tags:
   - canonical
   note: 自然地物的视觉描述与建筑同路：search_poi 的地标解析路径（→滴水湖），不逐字搜
+- text: 带我去上次我们看夜景的那个地方
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 记忆里上次去过的那个地点
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 历史指代触发情景记忆召回（G6）；destination 只能取自召回的去过地点，召不到就追问，不猜

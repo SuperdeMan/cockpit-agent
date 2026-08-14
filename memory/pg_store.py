@@ -100,6 +100,10 @@ def _normalize_item(item: dict) -> dict:
                                      half_life_days=out["half_life_days"])
     out["weight"] = float(w or 0)
     out["consent"] = out.get("consent") or ""
+    # G6（EVA 二轮）：关于谁 + 偏好极性。polarity 只认闭集，其他值一律归空（不猜）。
+    out["subject"] = str(out.get("subject") or "").strip()
+    pol = str(out.get("polarity") or "").strip().lower()
+    out["polarity"] = pol if pol in ("like", "dislike") else ""
     return out
 
 
@@ -281,10 +285,10 @@ class MemoryVectorStore:
                            confidence,review_status,scope,privacy_level,valid_from,valid_to,
                            expires_at,superseded_by,source_turn_ids,last_used_at,use_count,
                            salience,entities,source_ts,source_session,created_at,
-                           weight,evidence_count,half_life_days,consent)
+                           weight,evidence_count,half_life_days,consent,subject,polarity)
                         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULLIF($10,'')::jsonb,$11::vector,$12,
                                 $13,$14,$15,$16,$17,$18,$19,$20,NULLIF($21,''),$22,$23,$24,$25,
-                                NULLIF($26,'')::jsonb,$27,$28,$29,$30,$31,$32,$33)
+                                NULLIF($26,'')::jsonb,$27,$28,$29,$30,$31,$32,$33,$34,$35)
                         ON CONFLICT (id) DO UPDATE SET
                           text=EXCLUDED.text, value_json=EXCLUDED.value_json,
                           embedding=EXCLUDED.embedding, embedding_model=EXCLUDED.embedding_model,
@@ -292,7 +296,8 @@ class MemoryVectorStore:
                           superseded_by=EXCLUDED.superseded_by, valid_to=EXCLUDED.valid_to,
                           weight=EXCLUDED.weight, evidence_count=EXCLUDED.evidence_count,
                           half_life_days=EXCLUDED.half_life_days,
-                          source_turn_ids=EXCLUDED.source_turn_ids
+                          source_turn_ids=EXCLUDED.source_turn_ids,
+                          subject=EXCLUDED.subject, polarity=EXCLUDED.polarity
                     """, it["id"], it["kind"], it["tenant_id"], it["user_id"], it["occupant_id"],
                          it["vehicle_id"], it["memory_level"], it["predicate"], it["text"],
                          it["value_json"], str(emb) if emb else None, it["embedding_model"],
@@ -302,7 +307,7 @@ class MemoryVectorStore:
                          it["use_count"], it["salience"], it["entities"], it["source_ts"],
                          it["source_session"], it["created_at"],
                          it["weight"], it["evidence_count"], it["half_life_days"],
-                         it["consent"])
+                         it["consent"], it["subject"], it["polarity"])
         else:
             for it in norm:
                 self._mem[it["id"]] = it
@@ -348,23 +353,30 @@ class MemoryVectorStore:
         return True
 
     async def current_by_predicate(self, user_id: str, occupant_id: str,
-                                   predicate: str) -> dict | None:
-        """取某谓词的现行（未被取代）条目，供抽取去重/冲突判定。"""
+                                   predicate: str, subject: str = "") -> dict | None:
+        """取某谓词的现行（未被取代）条目，供抽取去重/冲突判定。
+
+        G6：按 subject 精确限定——「爸爸的空调偏好」与「本人的空调偏好」是两条独立
+        记忆，不加 subject 维会让关于家人的候选 supersede 掉本人的同谓词偏好。
+        """
         if not predicate:
             return None
         occ = occupant_id or "primary"
+        subj = (subject or "").strip()
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow("""
                     SELECT * FROM memory_item
                     WHERE user_id=$1 AND occupant_id=$2 AND predicate=$3
+                      AND COALESCE(subject,'')=$4
                       AND superseded_by IS NULL
                     ORDER BY valid_from DESC LIMIT 1
-                """, user_id, occ, predicate)
+                """, user_id, occ, predicate, subj)
             return _row_to_item(row) if row else None
         for v in self._mem.values():
             if (v["user_id"] == user_id and v["occupant_id"] == occ
-                    and v["predicate"] == predicate and not v["superseded_by"]):
+                    and v["predicate"] == predicate and not v["superseded_by"]
+                    and str(v.get("subject") or "") == subj):
                 return _strip(v)
         return None
 
@@ -373,27 +385,31 @@ class MemoryVectorStore:
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
                      top_k: int = 0, include_superseded: bool = False,
                      predicate_prefix: str = "", min_score: float = 0.0,
-                     min_confidence: float = 0.0, max_age_days: int = 0
-                     ) -> list[tuple[dict, float]]:
-        """召回现行记忆。occupant 空→默认 primary。语义召回需真实模型，否则 lexical。"""
+                     min_confidence: float = 0.0, max_age_days: int = 0,
+                     subject: str = "") -> list[tuple[dict, float]]:
+        """召回现行记忆。occupant 空→默认 primary。语义召回需真实模型，否则 lexical。
+        subject 非空=只取「关于该人」的记忆（G6，如老婆的口味）；空=不过滤。"""
         top_k = top_k or DEFAULT_TOP_K
         occ = occupant_id or "primary"
         scopes = list(scopes or [])
         kinds = list(kinds or [])
         flt = dict(occ=occ, scopes=scopes, kinds=kinds, predicate_prefix=predicate_prefix,
                    include_superseded=include_superseded, min_confidence=min_confidence,
-                   max_age_days=max_age_days, query=query, min_score=min_score, top_k=top_k)
+                   max_age_days=max_age_days, query=query, min_score=min_score, top_k=top_k,
+                   subject=(subject or "").strip())
         # 语义向量路径仅当有真实模型 + PG；否则一律走候选过滤 + lexical（诚实）。
         if self._pg_ok and query and self.semantic_available:
             rows = await self._fetch_pg_semantic(user_id, occ, query, scopes, kinds,
-                                                 predicate_prefix, include_superseded, top_k)
+                                                 predicate_prefix, include_superseded, top_k,
+                                                 subject=flt["subject"])
             cands = [_row_to_item(r) for r in rows]
             sims = {id(c): float(r["sim"]) for c, r in zip(cands, rows)}
             return self._score(cands, flt, vector_sims=sims)
         # 候选来源：PG（无模型/无 query）或内存
         if self._pg_ok:
             rows = await self._fetch_pg_candidates(user_id, occ, scopes, kinds,
-                                                   predicate_prefix, include_superseded)
+                                                   predicate_prefix, include_superseded,
+                                                   subject=flt["subject"])
             cands = [_row_to_item(r) for r in rows]
         else:
             cands = [c for c in self._mem.values() if c["user_id"] == user_id]
@@ -413,6 +429,9 @@ class MemoryVectorStore:
             if flt["scopes"] and it["scope"] not in flt["scopes"]:
                 continue
             if flt["predicate_prefix"] and not it["predicate"].startswith(flt["predicate_prefix"]):
+                continue
+            # G6：subject 过滤（关于谁）。要「老婆的偏好」时本人条目（subject 空）不混入。
+            if flt.get("subject") and str(it.get("subject") or "") != flt["subject"]:
                 continue
             # 隐私：高敏默认不参与泛化召回，除非显式定向（scope/predicate）
             if it.get("privacy_level") == "highly_sensitive" and not explicitly_targeted:
@@ -450,7 +469,8 @@ class MemoryVectorStore:
         return [(_strip(it), float(s)) for it, s in top]
 
     async def _fetch_pg_semantic(self, user_id, occ, query, scopes, kinds,
-                                 predicate_prefix, include_superseded, top_k):
+                                 predicate_prefix, include_superseded, top_k,
+                                 subject: str = ""):
         emb = await self._embed(query)
         async with self._pool.acquire() as conn:
             return await conn.fetch("""
@@ -460,12 +480,14 @@ class MemoryVectorStore:
                   AND (cardinality($5::text[])=0 OR kind = ANY($5))
                   AND (cardinality($6::text[])=0 OR scope = ANY($6))
                   AND ($7='' OR predicate LIKE $7 || '%')
+                  AND ($9='' OR COALESCE(subject,'')=$9)
                 ORDER BY embedding <=> $1::vector LIMIT $8
             """, str(emb), user_id, occ, include_superseded, kinds, scopes,
-                 predicate_prefix, top_k * 4)
+                 predicate_prefix, top_k * 4, subject or "")
 
     async def _fetch_pg_candidates(self, user_id, occ, scopes, kinds,
-                                   predicate_prefix, include_superseded):
+                                   predicate_prefix, include_superseded,
+                                   subject: str = ""):
         async with self._pool.acquire() as conn:
             return await conn.fetch("""
                 SELECT *, confidence AS sim FROM memory_item
@@ -474,8 +496,10 @@ class MemoryVectorStore:
                   AND (cardinality($4::text[])=0 OR kind = ANY($4))
                   AND (cardinality($5::text[])=0 OR scope = ANY($5))
                   AND ($6='' OR predicate LIKE $6 || '%')
+                  AND ($7='' OR COALESCE(subject,'')=$7)
                 ORDER BY valid_from DESC LIMIT 200
-            """, user_id, occ, include_superseded, kinds, scopes, predicate_prefix)
+            """, user_id, occ, include_superseded, kinds, scopes, predicate_prefix,
+                 subject or "")
 
     async def get_places(self, user_id: str, occupant_id: str = "primary") -> dict:
         """从 place.* 现行条目重建 profile.places 字典（家/公司）。

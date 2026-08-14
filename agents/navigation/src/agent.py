@@ -418,6 +418,10 @@ class NavigationAgent(BaseAgent):
         arrive_by_ts = self._arrive_by_from(intent, raw_text)
         strategy, strategy_note = _route_strategy(
             f"{intent.slots.get('route_pref') or ''} {raw_text}")
+        if not strategy:
+            # G6 消费环：本次没说偏好 → 查记忆里的路线偏好（「以后都不走高速」说过
+            # 一次就一直生效）。route.* 谓词此前全仓零消费方，这里是它的第一个出口。
+            strategy, strategy_note = await self._route_pref_from_memory(ctx)
 
         # planner 臆断修正：见 _correct_planner_landmark（把 planner 错猜的具体楼名换回真地标官方名）。
         dest = await self._correct_planner_landmark(dest, raw_text, meta)
@@ -676,6 +680,41 @@ class NavigationAgent(BaseAgent):
             return pk, lb, m.group(2).strip(" 。，,.")
         return None, "", ""
 
+    # 记忆路线偏好 → 话术（memory 来源要说清是「记住的」，不是本轮说的）
+    _MEM_PREF_NOTES = {
+        "6": "记得您平时不走高速，已按此规划。",
+        "4": "记得您习惯避开拥堵，已按此规划。",
+        "1": "记得您偏好少走收费路，已按此规划。",
+    }
+
+    async def _route_pref_from_memory(self, ctx) -> tuple[str, str]:
+        """路线偏好记忆 → 高德 strategy（G6：route.* 谓词的确定性消费出口）。
+
+        谓词前缀精确读取；dislike 极性条目不参与（那是负反馈不是偏好声明）；
+        召回失败/无记忆一律回默认，绝不阻塞导航。
+        """
+        if ctx is None:
+            return "", ""
+        try:
+            mems = await ctx.recall("路线偏好", predicate_prefix="route.", top_k=3)
+        except Exception:
+            return "", ""
+        active = [m for m in (mems or [])
+                  if str(m.get("polarity") or "") != "dislike"]
+        if not active:
+            return "", ""
+        strategy, note = _route_strategy(" ".join(str(m.get("text") or "") for m in active))
+        if not strategy:
+            # 谓词级兜底：text 措辞不含关键词，但谓词本身就是声明
+            preds = " ".join(str(m.get("predicate") or "") for m in active)
+            strategy = ("6" if "route.avoid_highway" in preds
+                        else "4" if "route.avoid_congestion" in preds
+                        else "1" if "route.avoid_toll" in preds else "")
+        if not strategy:
+            return "", ""
+        return strategy, self._MEM_PREF_NOTES.get(
+            strategy, note or "已按您记住的路线偏好规划。")
+
     @staticmethod
     def _route_midpoint(route) -> GeoPoint | None:
         """路线几何里程 45% 处的采样点（G2 沿途搜索锚点）。几何缺失/短途返回 None。"""
@@ -930,6 +969,20 @@ class NavigationAgent(BaseAgent):
                     "ts": now_ts, "items": remindable})
             except Exception as e:
                 logger.debug("navigation remindable save skipped: %s", e)
+        # G6 历史轨迹：导航成功落一条轻量情景记忆（「上次去的那个地方」的数据源——
+        # 此前全仓没有任何导航侧 episodic 写入方，历史指代永远无从召回）。
+        # 地点数据标 sensitive；best-effort 不挡导航。
+        if ctx is not None:
+            try:
+                await ctx.remember(
+                    f"{time.strftime('%Y-%m-%d')} 导航去过{name}",
+                    kind="episodic", scope="episodic.place",
+                    provenance="agent_inferred", confidence=0.9,
+                    privacy_level="sensitive",
+                    value={"name": name, "lat": lat, "lng": lng,
+                           "ts": int(time.time())})
+            except Exception as e:
+                logger.debug("navigation episodic save skipped: %s", e)
         card = attach({"type": "route_plan", "origin": "当前位置", "destination": name,
                        "waypoints": [], "distance_km": distance_km,
                        "duration_min": duration_min, **deadline_extra}, self.poi)

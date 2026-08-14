@@ -45,6 +45,10 @@ ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS half_life_days REAL NOT NULL DE
 -- consent：''=未特别声明（沿用 privacy_level 治理）；'explicit'=用户显式授权过的敏感画像。
 -- v1 只写不读，为 §5 生命周期强制项预留（消费在 M3/M4 的敏感画像功能）。
 ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS consent        TEXT NOT NULL DEFAULT '';
+-- EVA 二轮 G6（2026-08-14）：「关于谁」与偏好极性。缺省空串=存量行为逐字不变
+-- （subject 空=用户本人；polarity 空=未标注，消费方不据此做任何降权）。
+ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS subject        TEXT NOT NULL DEFAULT '';
+ALTER TABLE memory_item ADD COLUMN IF NOT EXISTS polarity       TEXT NOT NULL DEFAULT '';
 
 CREATE INDEX IF NOT EXISTS idx_mem_user ON memory_item (tenant_id, user_id, occupant_id, superseded_by);
 CREATE INDEX IF NOT EXISTS idx_mem_kind ON memory_item (kind);

@@ -297,3 +297,66 @@ def test_consolidate_records_real_turn_ids_as_evidence():
     evidence = items[0][0]["source_turn_ids"]
     assert "e1:user" in evidence and "e1:assistant:0" in evidence
     assert "s1" not in evidence.split(",")
+
+
+# ── EVA 二轮 G6/G7：关于谁 / 偏好极性 / 未来事件时刻 ──────────────────────
+def test_extract_subject_polarity_and_event_time():
+    """subject 亲属归一（爸→爸爸、我→空）、polarity 闭集（非法值丢）、
+    event_time 确定性校验（未来 90 天内才入 value_json，过去时间丢字段）。"""
+    from datetime import datetime, timedelta, timezone
+    tz = timezone(timedelta(hours=8))
+    future = (datetime.now(tz) + timedelta(days=3)).strftime("%Y-%m-%dT15:00:00")
+    cands = json.dumps([
+        {"category": "explicit_preference", "kind": "semantic",
+         "predicate": "climate.temperature", "text": "爸爸不喜欢空调太冷",
+         "subject": "爸", "polarity": "dislike", "confidence": 0.9},
+        {"category": "explicit_preference", "kind": "semantic",
+         "predicate": "taste.cuisine", "text": "用户喜欢粤菜",
+         "subject": "我", "polarity": "LOVE", "confidence": 0.9},
+        {"category": "episodic", "kind": "episodic",
+         "text": "女儿周六下午三点钢琴比赛", "subject": "女儿",
+         "event_time": future, "confidence": 0.8},
+        {"category": "episodic", "kind": "episodic",
+         "text": "上周去了西湖", "event_time": "2020-01-01T10:00:00",
+         "confidence": 0.8},
+    ])
+    out = asyncio.run(extract([{"role": "user", "text": "x"}], user_id="u1",
+                              complete_fn=_mock(cands)))
+    by_text = {o["text"]: o for o in out}
+    dad = by_text["爸爸不喜欢空调太冷"]
+    assert dad["subject"] == "爸爸" and dad["polarity"] == "dislike"
+    me = by_text["用户喜欢粤菜"]
+    assert me.get("subject", "") == "" and me.get("polarity", "") == ""
+    piano = by_text["女儿周六下午三点钢琴比赛"]
+    assert piano["subject"] == "女儿"
+    assert json.loads(piano["value_json"])["event_time"] > 0
+    assert "value_json" not in by_text["上周去了西湖"]
+
+
+def test_consolidate_subject_scopes_conflict_domain():
+    """G6：爸爸的空调偏好不得 supersede 本人的同谓词偏好——冲突域按 subject 收窄。"""
+    store = _store()
+
+    async def go():
+        await store.append_turn("s1", "user", "我最喜欢24度")
+        j1 = _mock(json.dumps([{"category": "explicit_preference", "kind": "semantic",
+                                "predicate": "climate.temperature",
+                                "text": "用户最喜欢的空调温度是24度",
+                                "scope": "profile.comfort", "confidence": 0.9}]))
+        await store.consolidate("s1", "u1", complete_fn=j1)
+        await store.append_turn("s1", "user", "我爸不喜欢空调太冷")
+        j2 = _mock(json.dumps([{"category": "explicit_preference", "kind": "semantic",
+                                "predicate": "climate.temperature",
+                                "text": "爸爸不喜欢空调太冷", "subject": "爸爸",
+                                "polarity": "dislike",
+                                "scope": "profile.comfort", "confidence": 0.9}]))
+        await store.consolidate("s1", "u1", complete_fn=j2)
+        return await store.recall(user_id="u1", query="", scopes=["profile.comfort"])
+
+    current = asyncio.run(go())
+    texts = sorted(it["text"] for it, _ in current)
+    # 两条并存：本人的 24 度没有被爸爸那条 supersede
+    assert texts == ["爸爸不喜欢空调太冷", "用户最喜欢的空调温度是24度"]
+    subj = {it["text"]: it.get("subject", "") for it, _ in current}
+    assert subj["爸爸不喜欢空调太冷"] == "爸爸"
+    assert subj["用户最喜欢的空调温度是24度"] == ""

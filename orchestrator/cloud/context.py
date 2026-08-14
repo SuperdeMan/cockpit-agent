@@ -18,6 +18,7 @@ import inspect
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field, fields, asdict
 
@@ -717,6 +718,11 @@ class ContextManager:
             logger.debug("get_session failed: %s", e)
             return []
 
+    # G6（EVA 二轮）：历史指代词 → 放开情景记忆召回。episodic 此前被 kinds=["semantic"]
+    # 写死永远进不了规划——「带我去上次看夜景那个地方」只能在闲聊里被复述。
+    # 只在话里出现历史指代时才放开：episodic 噪声大，无差别注入会挤掉偏好（预算 400 字符）。
+    _EPISODIC_REF_RE = re.compile(r"上次|上回|那次|上一次|之前去过?的?|前几天去")
+
     async def _recall(self, text: str, ctx) -> list[dict]:
         """召回与本轮相关的长期偏好（供 planner）。只取现行高置信语义偏好，
         阈值过滤避免污染；失败/无能力返回空，不阻塞规划。"""
@@ -724,9 +730,12 @@ class ContextManager:
         if not fn or not getattr(ctx, "user_id", ""):
             return []
         try:
+            kinds = ["semantic"]
+            if self._EPISODIC_REF_RE.search(text or ""):
+                kinds = ["semantic", "episodic"]
             # M4 P4：按乘员召回。memory 侧 recall 本来就是 occupant 精确过滤，
             # 传进去隔离即自动成立（缺的从来不是记忆能力，是这个参数）。
-            mems = await fn(ctx.user_id, text, kinds=["semantic"],
+            mems = await fn(ctx.user_id, text, kinds=kinds,
                             occupant_id=getattr(ctx, "occupant_id", "") or "primary",
                             top_k=3, min_confidence=0.5)
             if mems:

@@ -271,7 +271,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             query=request.query, scopes=list(request.scopes), kinds=list(request.kinds),
             top_k=request.top_k, include_superseded=request.include_superseded,
             predicate_prefix=request.predicate_prefix, min_score=request.min_score,
-            min_confidence=request.min_confidence, max_age_days=request.max_age_days)
+            min_confidence=request.min_confidence, max_age_days=request.max_age_days,
+            subject=request.subject)
         resp = memory_pb2.RecallResponse()
         for d, score in pairs:
             resp.items.append(_dict_to_item(d))
@@ -404,6 +405,8 @@ def _item_to_dict(m) -> dict:
         # M2 P0 偏好加权：weight=0 表示未参与加权，消费方回退 confidence（存量兼容）
         "weight": m.weight, "evidence_count": m.evidence_count,
         "half_life_days": m.half_life_days, "consent": m.consent,
+        # G6：关于谁 + 偏好极性
+        "subject": m.subject, "polarity": m.polarity,
     }
 
 
@@ -426,6 +429,8 @@ def _dict_to_item(d: dict):
         evidence_count=int(d.get("evidence_count", 0) or 0),
         half_life_days=float(d.get("half_life_days", 0) or 0),
         consent=d.get("consent", "") or "",
+        subject=d.get("subject", "") or "",
+        polarity=d.get("polarity", "") or "",
         source_ts=int(d.get("source_ts", 0) or 0),
         source_session=d.get("source_session", "") or "")
 

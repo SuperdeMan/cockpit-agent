@@ -217,13 +217,16 @@ class MemoryClient:
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
                      top_k: int = 5, include_superseded: bool = False,
                      predicate_prefix: str = "", min_score: float = 0.0,
-                     min_confidence: float = 0.0, max_age_days: int = 0) -> list[dict]:
-        """语义召回。返回 dict 列表（含 score）。memory 重启 UNAVAILABLE 自动重连重试一次。"""
+                     min_confidence: float = 0.0, max_age_days: int = 0,
+                     subject: str = "") -> list[dict]:
+        """语义召回。返回 dict 列表（含 score）。memory 重启 UNAVAILABLE 自动重连重试一次。
+        subject 非空=只取「关于该人」的记忆（G6，如 subject="老婆" 取老婆的口味）。"""
         req = memory_pb2.RecallRequest(
             user_id=user_id, occupant_id=occupant_id, query=query,
             scopes=scopes or [], kinds=kinds or [], top_k=top_k,
             include_superseded=include_superseded, predicate_prefix=predicate_prefix,
-            min_score=min_score, min_confidence=min_confidence, max_age_days=max_age_days)
+            min_score=min_score, min_confidence=min_confidence, max_age_days=max_age_days,
+            subject=subject or "")
         for attempt in (1, 2):
             try:
                 resp = await self._stub().Recall(req, timeout=DEFAULT_TIMEOUT)
@@ -287,7 +290,8 @@ def _from_memory_item(m) -> dict:
             "review_status": m.review_status, "scope": m.scope, "privacy_level": m.privacy_level,
             "valid_from": m.valid_from, "valid_to": m.valid_to, "expires_at": m.expires_at,
             "superseded_by": m.superseded_by, "source_turn_ids": m.source_turn_ids,
-            "source_ts": m.source_ts, "source_session": m.source_session}
+            "source_ts": m.source_ts, "source_session": m.source_session,
+            "subject": m.subject, "polarity": m.polarity}
 
 
 class RegistryClient:
