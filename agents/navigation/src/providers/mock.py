@@ -27,12 +27,19 @@ class MockPOIProvider(POIProvider):
 
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
                         meta: dict | None = None, with_polyline: bool = False,
-                        waypoints: list[GeoPoint] | None = None) -> dict:
-        return {
+                        waypoints: list[GeoPoint] | None = None,
+                        strategy: str = "") -> dict:
+        route = {
             "distance_km": 12.5,
             "duration_min": 25,
             "steps": ["直行 2km", "右转进入示例路", "到达目的地"],
         }
+        if with_polyline:
+            # 与 amap 同构的沿途取点面：等距四个采样点（供沿途候选/充电取点单测）
+            route["points"] = [
+                {"lng": 121.48 + 0.01 * i, "lat": 31.24 + 0.01 * i,
+                 "cum_km": round(12.5 * i / 4, 1)} for i in range(1, 5)]
+        return route
 
     async def reverse_geocode(self, lng: float, lat: float,
                               meta: dict | None = None) -> GeoPoint:

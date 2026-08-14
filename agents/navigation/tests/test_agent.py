@@ -844,3 +844,170 @@ def test_poi_detail_outage_degrades_honestly_no_mock():
     assert res.status == "ok"
     assert res.ui_card is None
     assert "暂时" in res.speech
+
+
+# ─── EVA 二轮批 B：时间约束(G1) / 沿途候选(G2) / 路线策略(G11) / 多途经点(G9) ───
+
+import time
+
+from agents._sdk.shared_state import REMINDABLE_ACTIVE
+from agents.navigation.src.agent import _parse_arrive_by, _route_strategy
+
+
+class _RoutePoiProvider(_ScriptedPoiProvider):
+    """带 get_route 的脚本化 provider：记录 strategy/waypoints/polyline 调用与搜索 kwargs。"""
+
+    def __init__(self, responses=None, default=None, duration_min=30, points=None):
+        super().__init__(responses, default)
+        self.route_calls = []
+        self.search_kwargs = []
+        self.duration_min = duration_min
+        self.points = points
+
+    async def search(self, keyword, **kwargs):
+        self.queries.append(keyword)
+        self.search_kwargs.append(kwargs)
+        return self.responses.get(keyword, self.default)
+
+    async def get_route(self, origin, destination, meta=None, with_polyline=False,
+                        waypoints=None, strategy=""):
+        self.route_calls.append({"with_polyline": with_polyline,
+                                 "waypoints": waypoints, "strategy": strategy})
+        route = {"distance_km": 20.0,
+                 "duration_min": self.duration_min + 10 * len(waypoints or []),
+                 "steps": []}
+        if with_polyline and self.points is not None:
+            route["points"] = self.points
+        return route
+
+
+def test_parse_arrive_by_rules():
+    """「五点前到」解析：裸 1-11 点取未来最近一次；段位/HH:MM/两位数字时直取。"""
+    now = int(time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))
+    assert time.localtime(_parse_arrive_by("5点", now_ts=now))[:5] == (2026, 8, 14, 17, 0)
+    now_late = int(time.mktime((2026, 8, 14, 20, 0, 0, 0, 0, -1)))
+    assert time.localtime(_parse_arrive_by("5点", now_ts=now_late))[:5] == (2026, 8, 15, 5, 0)
+    assert time.localtime(_parse_arrive_by("下午5点半", now_ts=now))[:5] == (2026, 8, 14, 17, 30)
+    assert time.localtime(_parse_arrive_by("17:00", now_ts=now))[:5] == (2026, 8, 14, 17, 0)
+    # 两位数字时刻：「23点」不得被单字符类错拆成「3点」（自埋缺陷回归）
+    assert time.localtime(_parse_arrive_by("23点", now_ts=now))[:5] == (2026, 8, 14, 23, 0)
+    assert _parse_arrive_by("尽快", now_ts=now) is None
+
+
+def test_route_strategy_mapping():
+    """G11：路线偏好 → 高德 strategy；「风景」诚实降档为不走高速并说明。"""
+    assert _route_strategy("不走高速")[0] == "6"
+    assert _route_strategy("避开拥堵")[0] == "4"
+    assert _route_strategy("不走高速，避堵，少收费")[0] == "9"
+    s, note = _route_strategy("带我走一条风景好一点的路回家")
+    assert s == "6" and "景观优先" in note
+    assert _route_strategy("导航去公司") == ("", "")
+
+
+def test_navigate_arrive_by_eta_judgment_and_departure_remindable(monkeypatch):
+    """G1：「五点前到」→ ETA/时限判定进话术与卡片；REMINDABLE 增「出发前往」反向事件。"""
+    import agents.navigation.src.agent as nav_mod
+    fixed_now = int(time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))
+    monkeypatch.setattr(nav_mod.time, "time", lambda: fixed_now)
+
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"实验小学": [POI(id="x", name="实验小学", address="市区", lat=31.30, lng=121.50)]},
+        duration_min=30)
+    ctx = make_context()
+    captured = {}
+
+    async def cap(key, value):
+        captured[key] = value
+        return True
+
+    ctx.save_shared_state = cap
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "实验小学", "arrive_by": "5点"},
+        raw_text="去接孩子，五点前要到实验小学", ctx=ctx,
+        meta={"current_lat": "31.2", "current_lng": "121.4"}))
+
+    assert "17:00" in res.speech and "早约" in res.speech       # 14:30 到 vs 17:00 时限
+    assert res.data["margin_min"] == 150
+    assert res.ui_card["eta_ts"] and res.ui_card["arrive_by_ts"]
+    items = captured[REMINDABLE_ACTIVE]["items"]
+    assert items[0]["title"] == "出发前往实验小学"
+    assert time.localtime(items[0]["fire_at"])[:5] == (2026, 8, 14, 16, 30)  # 时限-路程
+    assert items[1]["title"] == "到达实验小学"
+
+
+def test_stop_choice_searches_along_route_not_destination():
+    """G2：顺路候选锚点 = 路线 45% 里程采样点（真沿途），不再是目的地附近；话术如实说。"""
+    points = [{"lng": 120.0, "lat": 31.0, "cum_km": 5.0},
+              {"lng": 120.3, "lat": 31.1, "cum_km": 10.0},
+              {"lng": 120.6, "lat": 31.2, "cum_km": 18.0}]
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider({
+        "东方之门": [POI(id="d", name="东方之门", address="苏州", lat=31.32, lng=120.70)],
+        "咖啡": [POI(id="c", name="沿途咖啡", address="路上", lat=31.10, lng=120.30)],
+    }, points=points)
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "东方之门", "stop_category": "咖啡"},
+        raw_text="导航去东方之门，路上买杯咖啡",
+        meta={"current_lat": "31.0", "current_lng": "119.9"}))
+
+    coffee_near = [k.get("near") for q, k in zip(agent.poi.queries, agent.poi.search_kwargs)
+                   if q == "咖啡"]
+    # distance 20km × 45% = 9km → 首个 cum_km≥9 的采样点 (120.3, 31.1)，不是目的地 (120.70)
+    assert coffee_near and round(coffee_near[0].lat, 2) == 31.10
+    assert round(coffee_near[0].lng, 2) == 120.30
+    assert "沿途" in res.speech
+    assert res.ui_card["purpose"] == "waypoint_choice"
+
+
+def test_stop_choice_falls_back_to_destination_without_route():
+    """G2 回落：拿不到路线几何（无定位）→ 仍按目的地附近搜，话术不冒充「沿途」。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({
+        "东方之门": [POI(id="d", name="东方之门", address="苏州", lat=31.32, lng=120.70)],
+        "咖啡": [POI(id="c", name="门前咖啡", address="苏州", lat=31.32, lng=120.69)],
+    })
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "东方之门", "stop_category": "咖啡"},
+        raw_text="导航去东方之门，路上买杯咖啡"))
+    assert "目的地附近" in res.speech and "沿途" not in res.speech.split("目的地附近")[0]
+    assert res.ui_card["purpose"] == "waypoint_choice"
+
+
+def test_navigate_multi_waypoints_preserved_in_order():
+    """G9：「途经肯德基和星巴克」→ 两个途经点都进 payload/卡片，保用户口述序。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider({
+        "东方之门": [POI(id="d", name="东方之门", address="苏州", lat=31.32, lng=120.70)],
+        "肯德基": [POI(id="k", name="肯德基(园区店)", address="a", lat=31.30, lng=120.60)],
+        "星巴克": [POI(id="s", name="星巴克(湖东店)", address="b", lat=31.31, lng=120.65)],
+    })
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "东方之门", "waypoint": "肯德基和星巴克"},
+        raw_text="导航去东方之门，途经肯德基和星巴克"))
+
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == \
+        ["肯德基(园区店)", "星巴克(湖东店)"]
+    assert res.ui_card["type"] == "route_plan"
+    assert [w["name"] for w in res.ui_card["waypoints"]] == \
+        ["肯德基(园区店)", "星巴克(湖东店)"]
+
+
+def test_route_pref_maps_to_amap_strategy():
+    """G11：「不走高速」→ get_route(strategy="6")，话术如实报偏好已应用。"""
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"虹桥机场": [POI(id="a", name="虹桥机场", address="上海", lat=31.19, lng=121.33)]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "虹桥机场", "route_pref": "不走高速"},
+        raw_text="不走高速送我去虹桥机场",
+        meta={"current_lat": "31.2", "current_lng": "121.4"}))
+
+    assert any(c["strategy"] == "6" for c in agent.poi.route_calls)
+    assert "避开高速" in res.speech

@@ -311,6 +311,17 @@ class ReminderAgent(BaseAgent):
             future = [it for it in all_items if int(it["fire_at"]) > now_ts]
             if not future:
                 return None
+            # G1（EVA 二轮）出发/到达双事件择项：navigation 带到达时限时会同时写
+            # 「出发前往X」「到达X」两个事件。话里的「出发/到达」词形先按标题收窄，
+            # 收窄后唯一即直取，不再把两个事件当歧义反问。
+            if len(future) > 1:
+                for kw in ("出发", "到达"):
+                    if kw in raw:
+                        narrowed = [it for it in future
+                                    if kw in str(it.get("title") or "")]
+                        if narrowed:
+                            future = narrowed
+                        break
             if len(future) > 1:
                 heads = "、".join(
                     f"第{i}场 {it['title']}"
@@ -333,7 +344,10 @@ class ReminderAgent(BaseAgent):
         cleaned = _REMINDABLE_REF_RE.sub("", _ORDINAL_RE.sub("", raw)).strip(" ，。,、的时候了吧呀")
         verb = self._extract_title(cleaned).strip(" ，。,、的时候了吧呀")
         if verb and len(verb) <= 6 and not _REMINDABLE_REF_RE.search(verb):
-            title = f"{verb}{item['title']}"
+            # 事件标题本就以该动词开头（「出发前往X」+话里的「出发」）时不再前缀，
+            # 避免拼出「出发出发前往X」
+            title = (str(item["title"]) if str(item["title"]).startswith(verb)
+                     else f"{verb}{item['title']}")
         elif cur_title and cur_title != raw and len(cur_title) <= 24:
             title = cur_title
         else:

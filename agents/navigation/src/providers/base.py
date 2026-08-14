@@ -37,8 +37,13 @@ class POIProvider(ABC):
     @abstractmethod
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
                         meta: dict | None = None, with_polyline: bool = False,
-                        waypoints: list[GeoPoint] | None = None) -> dict:
-        """获取路线规划（可带途经点 waypoints）。返回 {"distance_km", "duration_min", "steps", ...}"""
+                        waypoints: list[GeoPoint] | None = None,
+                        strategy: str = "") -> dict:
+        """获取路线规划（可带途经点 waypoints）。返回 {"distance_km", "duration_min", "steps", ...}
+
+        strategy：路线策略（高德 v3 driving strategy 值，如 4=躲避拥堵、6=不走高速），
+        空串=厂商默认。EVA 二轮 G11 前该参数全仓从未使用。
+        """
         ...
 
     @abstractmethod

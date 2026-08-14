@@ -23,9 +23,13 @@ capabilities:
     slots: [keyword, category, near, rating_min]
     examples: ["最近的加油站在哪", "去深圳像笋一样的那栋大楼", "国贸三期在哪个位置"]
   - intent: navigation.navigate_to
-    description: 导航到指定目的地；支持常用地点别名（家/公司/学校，未设置会反问地址并记住）、顺路停靠（stop_category=吃饭/咖啡…→给候选让用户选）、带途经点（waypoint=已选停靠点名）
-    slots: [destination, stop_category, waypoint, place_address]
-    examples: ["导航去公司", "带我去首都机场", "回家", "导航去东方之门，附近找个吃饭的地方", "导航去东方之门途经肯德基"]
+    description: 导航到指定目的地；支持常用地点别名（家/公司/学校，未设置会反问地址并记住）、
+      顺路停靠（stop_category=吃饭/咖啡…→给沿途候选让用户选）、带途经点（waypoint=已选停靠
+      点名，多个用顿号连写）。「X点前到/别迟到」这类到达时限把时间原话填 arrive_by（会核对
+      预计到达并给出发提醒）；「不走高速/避堵/少收费/走风景好的路」填 route_pref（按策略规划）
+    slots: [destination, stop_category, waypoint, place_address, arrive_by, route_pref]
+    examples: ["导航去公司", "带我去首都机场", "回家", "导航去东方之门，附近找个吃饭的地方",
+               "导航去东方之门途经肯德基", "去接孩子放学，五点前要到学校", "不走高速送我去机场"]
   - intent: navigation.set_place
     description: 设置常用地点（家/公司/学校）的地址，记住后可直接『导航去家/公司』。只记录不导航。
     slots: [place, address]

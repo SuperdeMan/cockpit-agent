@@ -433,6 +433,23 @@ async def test_cross_domain_reference_single_direct():
 
 
 @pytest.mark.asyncio
+async def test_cross_domain_departure_word_form_selects_item_not_ambiguous():
+    """G1（EVA 二轮）：navigation 带到达时限时会同时写「出发前往X/到达X」两事件。
+    「到时候提醒我出发」按词形收窄直取出发事件（此前两未来项会被当歧义反问）。"""
+    a = await _agent()
+    depart = _ts(2026, 12, 1, 16, 30)
+    arrive = _ts(2026, 12, 1, 17, 0)
+    ctx = make_context(context_values=_remindable(
+        [{"title": "出发前往实验小学", "fire_at": depart},
+         {"title": "到达实验小学", "fire_at": arrive}]))
+    res = await run_handle(a, "reminder.create", raw_text="到时候提醒我出发", ctx=ctx)
+    assert res.status == "ok"
+    times, _ = await a.store.list_split("u1")
+    assert times[0].fire_at == depart - 600            # 该出发前 10 分钟
+    assert times[0].title == "出发前往实验小学"          # 不拼成「出发出发前往…」
+
+
+@pytest.mark.asyncio
 async def test_cross_domain_reference_waits_for_parallel_producer(monkeypatch):
     """A same-turn sports step may publish REMINDABLE_ACTIVE concurrently."""
     a = await _agent()

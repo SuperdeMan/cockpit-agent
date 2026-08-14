@@ -232,3 +232,63 @@ exemplars:
   tags:
   - badcase
   note: 「到航」是「导航」的 ASR 常见错字；带目的地的仍是发起导航，不是搜 POI
+# ── 2026-08-14 EVA 二轮批 B：时间约束 / 路线偏好 / 多途经点 / 自然地物 ────────
+- text: 去接孩子放学，五点前要到学校
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 孩子
+      arrive_by: 五点
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 到达时限填 arrive_by（原话时间）；人称目的地由关系边解析，不猜地名
+- text: 不走高速送我去机场
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 机场
+      route_pref: 不走高速
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 路线偏好填 route_pref，不是丢弃也不是另拆一步
+- text: 今天不赶时间，带我走一条风景好一点的路回家
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 家
+      route_pref: 风景好
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 「风景好的路」是路线偏好不是新目的地；能力侧会诚实降档为不走高速大路
+- text: 导航去东方之门，途经肯德基和星巴克
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 东方之门
+      waypoint: 肯德基和星巴克
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 多个途经点连写进同一个 waypoint 槽（能力侧拆分保序），不拆多步
+- text: 带我去上海那个特别大的圆圆的湖
+  plan:
+  - agent: navigation
+    intent: navigation.search_poi
+    slots:
+      keyword: 上海特别大的圆圆的湖
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 自然地物的视觉描述与建筑同路：search_poi 的地标解析路径（→滴水湖），不逐字搜

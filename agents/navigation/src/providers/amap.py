@@ -132,7 +132,8 @@ class AmapPOIProvider(POIProvider):
 
     async def get_route(self, origin: GeoPoint, destination: GeoPoint,
                         meta: dict | None = None, with_polyline: bool = False,
-                        waypoints: list[GeoPoint] | None = None) -> dict:
+                        waypoints: list[GeoPoint] | None = None,
+                        strategy: str = "") -> dict:
         o = await self._resolve_location(origin, meta)
         d = await self._resolve_location(destination, meta)
         if not o or not d:
@@ -141,6 +142,10 @@ class AmapPOIProvider(POIProvider):
         # 默认 base 更轻，不影响既有调用。
         ext = "all" if with_polyline else "base"
         params = {"origin": o, "destination": d, "extensions": ext}
+        # 路线策略（G11）：v3 driving 的 strategy——4 躲避拥堵 / 6 不走高速 / 1 费用优先 /
+        # 7 不走高速且避免收费 / 8 躲避收费和拥堵 / 9 不走高速且躲避收费和拥堵 / 3 不走快速路。
+        if strategy:
+            params["strategy"] = str(strategy)
         # waypoints：途经点（出发地→途经点→目的地），供路线规划卡算真实全程距离/时长
         if waypoints:
             wlocs = []
