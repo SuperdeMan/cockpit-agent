@@ -119,8 +119,10 @@ _SYSTEM = (
     '"subject"=这条内容是关于谁的——用户本人**留空**；关于家人填亲属称谓'
     "（爸爸/妈妈/老婆/老公/女儿/儿子/孩子，如『我爸不喜欢空调太冷』subject=爸爸）；"
     '"polarity"="like"（喜欢）或"dislike"（不喜欢/嫌弃，如『这家咖啡太酸了』），非偏好留空。'
-    "episodic 事件若用户明说了**未来**的日期/星期与时刻（『女儿周六下午三点钢琴比赛』），"
-    '额外给 "event_time"（ISO 8601，如 2026-08-22T15:00:00）；没有明确未来时间的不要编造。'
+    "episodic 事件若用户明说了**未来**的时间——明确日期（『下个月15号』）或星期"
+    "（『下周五』『周六下午三点』），带不带具体时刻都算——按当前日期换算后"
+    '额外给 "event_time"（ISO 8601，如 2026-08-22T15:00:00，只有日期没有时刻用 00:00:00）；'
+    "没有明确未来时间的不要编造。"
     # M2 P1 关系边：与偏好共用同一个 JSON 数组（不改输出结构），靠 category 分流。
     "另可抽取【实体关系】：category=\"relation\"，额外给 "
     '{"subject":"实体名","rel":"关系","object":"对象"}。'
@@ -137,6 +139,17 @@ _SYSTEM = (
 
 def _now() -> int:
     return int(time.time())
+
+
+def _date_line() -> str:
+    """抽取 prompt 的日期锚（planning.py::_date_line 同款判据）：相对时间词必须有
+    权威基准可换算。G7 真栈补验（2026-08-14）实锤：无锚时「下周五提车」8 次采样
+    0 次给出 event_time，「下个月15号」全靠 planner 回复轮凑巧复述了换算——
+    锚+措辞修后两种形态各 4/4 且日期正确。"""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone(timedelta(hours=8)))
+    wd = "一二三四五六日"[now.weekday()]
+    return f"当前日期：{now.year}年{now.month}月{now.day}日 周{wd}（今年={now.year}年）"
 
 
 def _build_complete_request(messages: list[dict]):
@@ -300,7 +313,8 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
     if not convo.strip():
         return []
     messages = [{"role": "system", "content": _SYSTEM},
-                {"role": "user", "content": f"对话：\n{convo}\n\n抽取 JSON："}]
+                {"role": "user",
+                 "content": f"{_date_line()}\n对话：\n{convo}\n\n抽取 JSON："}]
     try:
         raw = await (complete_fn or _default_complete)(messages)
     except Exception as e:

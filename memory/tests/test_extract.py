@@ -333,6 +333,25 @@ def test_extract_subject_polarity_and_event_time():
     assert "value_json" not in by_text["上周去了西湖"]
 
 
+def test_extract_prompt_carries_date_anchor():
+    """抽取 prompt 必须带日期锚（G7 真栈补验实锤）：event_time 要求 LLM 把
+    「下周五/下个月15号」换算成 ISO 绝对时间，无锚它只能借助手轮的复述或按训练
+    先验猜年——「相对时间词必须有权威基准可换算」（planning.py 日期锚同款判据）。"""
+    from datetime import datetime, timedelta, timezone
+    seen = {}
+
+    async def capture(messages):
+        seen["messages"] = messages
+        return "[]"
+
+    asyncio.run(extract([{"role": "user", "text": "我们下周五要去提车"}],
+                        user_id="u1", complete_fn=capture))
+    user_content = seen["messages"][-1]["content"]
+    now = datetime.now(timezone(timedelta(hours=8)))
+    assert "当前日期：" in user_content
+    assert f"{now.year}年{now.month}月{now.day}日" in user_content
+
+
 def test_consolidate_subject_scopes_conflict_domain():
     """G6：爸爸的空调偏好不得 supersede 本人的同谓词偏好——冲突域按 subject 收窄。"""
     store = _store()

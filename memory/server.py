@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import time
+from datetime import datetime, timezone, timedelta
 
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime.proactive import P_ADVISORY, publish_proactive
@@ -191,8 +192,11 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         text = (ev.get("text") or "").strip()
         if not ts or not text:
             return
-        lt = time.localtime(ts)
-        when = f"{lt.tm_mon}月{lt.tm_mday}日{lt.tm_hour:02d}:{lt.tm_min:02d}"
+        # 显示时区必须固定车机 UTC+8，不能用 time.localtime（容器是 UTC）——
+        # G7 真栈补验实锤：「9月15日」的 offer 显示成「9月14日16:00」，且会经
+        # 「要的」按钮的 send_text 传导成真错提醒。宿主机 UTC+8 跑单测永远不红。
+        dt = datetime.fromtimestamp(ts, timezone(timedelta(hours=8)))
+        when = f"{dt.month}月{dt.day}日{dt.hour:02d}:{dt.minute:02d}"
         title = self._TIME_WORD_RE.sub("", text).strip(" ，。,、的") or text
         owner_fingerprint = hashlib.sha256(
             f"{user_id}\0{occupant_id}".encode("utf-8")).hexdigest()[:16]

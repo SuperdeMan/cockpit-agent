@@ -475,6 +475,38 @@ def test_future_event_emits_ask_style_reminder_offer():
     assert p["priority"] == "advisory"
 
 
+def test_event_offer_time_display_is_utc8_not_container_local():
+    """time_display 必须按车机 UTC+8 格式化，与 _parse_event_time 的时区假设对齐。
+    G7 真栈补验实锤：memory 容器是 UTC，time.localtime 把「9月15日00:00」显示成
+    「9月14日16:00」，还会经「要的」按钮 send_text 传导成真错提醒——宿主机
+    （UTC+8）跑测试永远不红，本断言用固定 epoch 在任何时区环境都判同一结果。"""
+    from datetime import datetime, timedelta, timezone
+    svc = _servicer()
+    published = []
+
+    class _FakeNC:
+        async def publish(self, subject, data):
+            published.append(json.loads(data))
+
+    svc._nc = _FakeNC()
+    svc._nats_tried = True
+    tz8 = timezone(timedelta(hours=8))
+    future = datetime.now(tz8) + timedelta(days=5)
+    event_dt = datetime(future.year, future.month, future.day, 9, 30, tzinfo=tz8)
+
+    async def go():
+        ids = await svc.store.remember([{
+            "user_id": "u1", "kind": "episodic", "text": "去北京出差",
+            "scope": "episodic.general",
+            "value_json": json.dumps({"event_time": int(event_dt.timestamp())})}])
+        await svc._derive_and_emit("u1", "primary", new_ids=ids)
+
+    asyncio.run(go())
+    offer = [p for p in published if p["type"] == "event_reminder_offer"][0]
+    expect = f"{event_dt.month}月{event_dt.day}日09:30"
+    assert offer["card"]["item"]["time_display"] == expect
+
+
 def test_past_event_never_offered():
     """事件时刻已过 → 不发建议（future_events 确定性过滤）。"""
     import time as _time
