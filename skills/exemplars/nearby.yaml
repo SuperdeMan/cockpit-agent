@@ -311,3 +311,26 @@ exemplars:
   tags:
   - badcase
   note: demo-mkemhn 3650e2b5——纯发现句被 chitchat 编造门店列表
+# ── 2026-08-14 EVA 二轮批 E：语义类目 / 氛围属性 ─────────────────────────
+- text: 带孩子去附近能看看动物的地方
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      category: 动物园
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 口语目标→类目语义（看动物=动物园），发现面归 nearby，不逐字搜「看看动物的地方」
+- text: 最近有点累，找个安静点的地方喝咖啡
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      category: 咖啡
+  source: manual
+  added: '2026-08-14'
+  tags:
+  - canonical
+  note: 「安静」是氛围属性由能力侧软重排（标签+评分），不是目的地也不拆步

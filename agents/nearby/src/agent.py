@@ -49,12 +49,24 @@ _CATEGORY_KEYWORD = {
     "博物馆": "博物馆", "美术馆": "美术馆", "科技馆": "科技馆", "展览": "展览馆",
     "图书馆": "图书馆", "游乐": "游乐场", "KTV": "KTV", "唱歌": "KTV",
     "温泉": "温泉", "水族馆": "水族馆", "海洋馆": "水族馆",
+    # G5（EVA 二轮）语义类目扩展：「带孩子看看动物」此前零覆盖、兜底还会错搜「美食」。
+    # 动物园在动物之前（更具体先命中）；均在「景点」之前（插入序即优先级）。
+    "动物园": "动物园", "动物": "动物园", "植物园": "植物园",
+    "亲子": "亲子乐园", "遛娃": "亲子乐园", "书店": "书店",
     "景点": "景点", "景区": "景点", "旅游": "景点", "公园": "公园",
     "超市": "超市", "便利店": "便利店", "咖啡": "咖啡厅", "奶茶": "奶茶饮品",
     "药店": "药店", "银行": "银行", "医院": "医院",
 }
 # 餐饮类目（口味画像仅此类生效）
 _FOOD_CATS = {"餐饮", "美食", "吃饭", "餐厅", "吃的"}
+# G5：原话里的饮食信号——只有它在场时才允许落「餐饮」默认类目。
+# 「看看动物的地方」落「美食」是给出错误结果，比失败更糟。
+_FOOD_HINT_RE = re.compile(
+    r"吃|喝|饭|餐|饿|菜|夜宵|早茶|外卖|美食|小吃|火锅|烧烤|甜品|日料|自助")
+# G5：氛围属性词（「安静点的地方喝咖啡」）。高德没有安静度字段——能做的是
+# 环境类标签+评分的软重排，并在话术里如实说数据边界（不假装有安静度）。
+_AMBIENCE_RE = re.compile(r"安静|清静|清净|环境好|氛围好|不吵|幽静")
+_AMBIENCE_TAGS = ("环境", "安静", "书", "清吧", "花园", "庭院", "湖景", "江景")
 
 
 def _weather_word(weather: str) -> str:
@@ -279,7 +291,15 @@ class NearbyAgent(BaseAgent):
             for key in _CATEGORY_KEYWORD:
                 if key in hay:
                     return key
-        return raw or "餐饮"
+        if raw:
+            return raw
+        # G5（EVA 二轮）：全无类目命中且没有任何饮食信号 → 不再默认餐饮
+        # （「看看动物的地方」落「美食」是错误结果不是兜底）。返回空串，
+        # _search 对「类目/菜系/品牌/关键词全空」的情形诚实追问。
+        # 饮食信号面含 cuisine 槽（「川菜」这类菜系词不在类目表里，但它就是餐饮）。
+        hay_all = (f"{intent.raw_text or ''} {intent.slots.get('keyword') or ''} "
+                   f"{intent.slots.get('cuisine') or ''}")
+        return "餐饮" if _FOOD_HINT_RE.search(hay_all) else ""
 
     @staticmethod
     def _build_keyword(category, cuisine, brand, kw_slot) -> str:
@@ -333,6 +353,14 @@ class NearbyAgent(BaseAgent):
 
     async def _search(self, intent, ctx, meta) -> AgentResult:
         category = self._resolve_category(intent)
+        # G5：类目/菜系/品牌/关键词全空且无饮食信号 → 诚实追问，不猜「美食」
+        if not category and not any(
+                (intent.slots.get(k) or "").strip()
+                for k in ("cuisine", "brand", "keyword")):
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="想找哪一类地方？比如餐厅、动物园、商场或公园。",
+                follow_up="说个类目我就近帮你找", missing_slots=["category"])
         weather = (intent.slots.get("weather_context") or "").strip()
         # 室内组（「(下雨天)去哪玩」→ planner 填 category=室内 + weather_context）：
         # 单一关键词表达不了「适合室内玩的地方」，走多类目扇出组合推荐
@@ -401,6 +429,13 @@ class NearbyAgent(BaseAgent):
                 speech=f"附近暂时没找到{label}，换个说法或扩大范围再试试？",
                 follow_up="可以说『附近的火锅』或『评分高的川菜馆』")
 
+        # G5：氛围属性软重排（「安静点的地方」）。高德没有安静度字段——按环境类
+        # 标签 + 评分排前（稳定序），话术如实说数据边界，不假装有安静度。
+        if _AMBIENCE_RE.search(raw) and results:
+            results = sorted(results, key=lambda p: (
+                0 if any(t in (p.tags or "") for t in _AMBIENCE_TAGS) else 1,
+                -(p.rating or 0)))
+            taste_notes.append("您要安静些的——地图没有安静度数据，已按环境类标签和评分优先")
         # G6：负偏好软降权（忌辣/店名级差评 → 结果后移），话术只报**真实生效**的项
         # ——此前这里是搜完才召回、只拼「已参考您口味」进话术，结果集一条没变（假个性化）。
         if taste:

@@ -590,3 +590,56 @@ def test_taste_recall_includes_named_family_subject():
                            ctx=ctx, meta=_LOC))
     assert any(k.get("subject") == "老婆" for k in calls)
     assert seen["keyword"] == "粤菜"          # 老婆的偏好真实进了检索
+
+
+# ─── EVA 二轮批 E（G5）：语义类目扩展 / 无信号诚实追问 / 氛围软重排 ───
+
+def test_zoo_semantic_category_no_food_fallback():
+    """「带孩子看看动物」→ 动物园检索（此前零覆盖、兜底错搜「美食」）。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen["keyword"] = keyword
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={}, raw_text="带孩子去附近能看看动物的地方",
+                           meta=_LOC))
+    assert seen["keyword"] == "动物园"
+
+
+def test_unknown_category_without_food_hint_asks_honestly():
+    """全无类目命中且无饮食信号 → 诚实追问（错误结果比失败更糟），不落「美食」。"""
+    agent = NearbyAgent()
+    called = {"n": 0}
+
+    async def search(keyword, **kwargs):
+        called["n"] += 1
+        return []
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search",
+                                 slots={}, raw_text="找个能待着的地方", meta=_LOC))
+    assert res.status == "need_slot" and "哪一类" in res.speech
+    assert called["n"] == 0                    # 没拿「美食」冒充
+
+
+def test_ambience_word_reranks_by_tags_and_rating_honestly():
+    """「安静点的地方喝咖啡」→ 环境类标签+评分软重排，话术如实说没有安静度数据。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+
+    async def search(keyword, **kwargs):
+        return [Place(id="a", name="闹市咖啡", category="咖啡厅", rating=4.8,
+                      tags="商务宴请,网红店"),
+                Place(id="b", name="庭院咖啡", category="咖啡厅", rating=4.2,
+                      tags="环境好,安静")]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search",
+                                 slots={}, raw_text="最近有点累，找个安静点的地方喝咖啡",
+                                 meta=_LOC))
+    assert [i["name"] for i in res.data["items"]] == ["庭院咖啡", "闹市咖啡"]
+    assert "安静度数据" in res.speech          # 诚实说数据边界，不假装有安静度
