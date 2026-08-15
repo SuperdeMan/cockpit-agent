@@ -54,13 +54,17 @@ const ALERT_RE = /预警|拥堵|事故|绕行|路况|危险|注意|提醒您|减
 export function ChatView({
   messages,
   awaitConfirm,
+  livePendingOps,
   onConfirm,
   onQuick,
   partialUser,
 }: {
   messages: Msg[]
   awaitConfirm: boolean
-  onConfirm: (reply: '确认' | '取消') => void
+  // QA 卡 Q1-C：仍活着的挂起 id。带 operationId 的待确认气泡按它渲染确认条
+  // ⇒ **可以同时显示多条**，且不必是最后一条。空数组 = 只剩位置授权那类纯前端确认。
+  livePendingOps?: string[]
+  onConfirm: (reply: '确认' | '取消', operationId?: string) => void
   onQuick: (text: string) => void
   partialUser?: string // hands-free 聆听中的实时识别文字（issue②）
 }) {
@@ -95,6 +99,7 @@ export function ChatView({
             msg={m}
             isLast={i === messages.length - 1}
             awaitConfirm={awaitConfirm}
+            livePendingOps={livePendingOps}
             onConfirm={onConfirm}
             onAction={onQuick}
             retryText={lastUserText(i)}
@@ -125,12 +130,13 @@ function Welcome({ name, onQuick }: { name: string; onQuick: (t: string) => void
 
 // ─── 消息分发：按状态选不同气泡形态 ───
 function MessageItem({
-  msg, isLast, awaitConfirm, onConfirm, onAction, retryText,
+  msg, isLast, awaitConfirm, livePendingOps, onConfirm, onAction, retryText,
 }: {
   msg: Msg
   isLast: boolean
   awaitConfirm: boolean
-  onConfirm: (reply: '确认' | '取消') => void
+  livePendingOps?: string[]
+  onConfirm: (reply: '确认' | '取消', operationId?: string) => void
   onAction: (text: string) => void
   retryText?: string
 }) {
@@ -145,8 +151,17 @@ function MessageItem({
   // R4.4：云端拒识（疑似环境人声）→ 弱化 muted 小气泡，静默忽略但留痕供纠错
   if (msg.rejected) return <RejectedBubble />
 
-  // 危险车控二次确认（仅当前等待确认且为最后一条）
-  if (msg.needConfirm && awaitConfirm && isLast) return <ConfirmBubble msg={msg} onConfirm={onConfirm} onAction={onAction} />
+  // 危险车控二次确认。Q1-C：**带 operationId 的按台账渲染**（可同时多条、不必是最后一条）；
+  // 没有 operationId 的（位置授权征询等纯前端确认）沿用旧判据「等待中 + 最后一条」。
+  if (msg.needConfirm) {
+    if (msg.operationId) {
+      if ((livePendingOps || []).includes(msg.operationId)) {
+        return <ConfirmBubble msg={msg} onConfirm={onConfirm} onAction={onAction} />
+      }
+    } else if (awaitConfirm && isLast) {
+      return <ConfirmBubble msg={msg} onConfirm={onConfirm} onAction={onAction} />
+    }
+  }
 
   return <AssistantBubble msg={msg} onAction={onAction} />
 }
@@ -480,7 +495,7 @@ function ProcessArea({ steps, active, driving }: { steps: ProcessStep[]; active?
 }
 
 // ─── A-6.4 · 全局确认条（车控 / 商户写共用；琥珀警告 + ≥50px 车规触控）───
-function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: '确认' | '取消') => void; onAction: (t: string) => void }) {
+function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: '确认' | '取消', operationId?: string) => void; onAction: (t: string) => void }) {
   const uiCard = msg.uiCard
   const confirmationContext = uiCard
     && 'confirmation_context' in uiCard
@@ -507,13 +522,13 @@ function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: 
       {msg.uiCard && <div style={{ marginBottom: 12 }}><CardRenderer card={msg.uiCard} onAction={onAction} /></div>}
       <div style={{ display: 'flex', gap: 10 }}>
         <button
-          onClick={() => onConfirm('取消')}
+          onClick={() => onConfirm('取消', msg.operationId)}
           style={{ flex: 1, height: 50, borderRadius: 14, cursor: 'pointer', background: 'var(--au-fill)', border: '1px solid var(--au-line-2)', color: FG2, fontSize: 14, fontWeight: 500, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
         >
           <IcX size={15} />取消
         </button>
         <button
-          onClick={() => onConfirm('确认')}
+          onClick={() => onConfirm('确认', msg.operationId)}
           style={{ flex: 2, height: 50, borderRadius: 14, cursor: 'pointer', background: 'rgba(245,158,11,0.14)', border: '1px solid rgba(245,158,11,0.38)', color: AMBER, fontSize: 14, fontWeight: 600, fontFamily: 'inherit', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, boxShadow: '0 0 16px rgba(245,158,11,0.12)' }}
         >
           <IcCheck size={15} color={AMBER} />{copy.confirmLabel}

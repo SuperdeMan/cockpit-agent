@@ -334,6 +334,142 @@ const CASES = {
     await cdp.screenshot(`C9-${merchantSlug}-order-query-strict`)
     return `只读查单帧 is_confirmation=${sentFrame.is_confirmation}；商户终态=${expectedStatus}`
   },
+
+  // ── QA 卡 Q1/Q3/Q4 的 HMI 半边（阶段 2）──────────────────────────
+  // 这三张**必须在这条车道跑**：Q3 的归属与 Q4 的位置闸都活在客户端 JS 里，
+  // WS 探针是从闸后面进来的，跑多少轮都是假绿（卡 §4 出口条件）。
+
+  // C11 · Q1-B/C：确认帧带 operation_id + 两条挂起并存、先来那条仍可确认。
+  async C11(cdp) {
+    await debugVehicle('gear', 'P'); await debugVehicle('speed_kmh', 0)
+    const t0 = Date.now()
+    await cdp.typeAndSend('打开后备箱')
+    await cdp.waitFor(
+      `[...document.querySelectorAll('button')].some(b => b.textContent.trim() === '确认')`,
+      30000, '第一条确认条')
+    // 后端下发了寻址键（入帧证据；HMI 有没有用它由下面的出帧断言证明）
+    const first = await cdp.waitReceivedFrame(
+      (d) => d.type === 'final' && d.need_confirm === true && !!d.operation_id,
+      15000, t0, '带 operation_id 的挂起 final')
+
+    // 第二件危险动作 → 第二条挂起。单槽时代这一步会把第一条覆盖掉。
+    const t1 = Date.now()
+    await cdp.typeAndSend('把充电口盖打开')
+    const second = await cdp.waitReceivedFrame(
+      (d) => d.type === 'final' && d.need_confirm === true &&
+        !!d.operation_id && d.operation_id !== first.operation_id,
+      30000, t1, '第二条挂起 final')
+
+    // **两条确认条同时在屏**——这是 Q1-C 唯一在 UI 上看得见的产物
+    const bars = await cdp.eval(
+      `[...document.querySelectorAll('button')].filter(b => b.textContent.trim() === '确认').length`)
+    if (bars < 2) throw new Error(`同屏确认条数=${bars}（期望 ≥2）`)
+    await cdp.screenshot('C11-two-confirm-bars')
+
+    // 点**第一条**（更早那条）的确认 → 出帧必须带它自己的 operation_id
+    const t2 = Date.now()
+    await cdp.eval(`(() => {
+      const b = [...document.querySelectorAll('button')].filter(x => x.textContent.trim() === '确认')[0]
+      b.click(); return true
+    })()`)
+    const frame = await cdp.waitSentFrame(
+      (d) => d.is_confirmation === true, 10000, t2, '确认帧')
+    if (frame.operation_id !== first.operation_id) {
+      throw new Error(
+        `确认帧打给了 ${frame.operation_id}，应为更早那条 ${first.operation_id}`)
+    }
+    await sleep(4000)
+    const st = await vehicleState()
+    if (st.trunk !== 'open') throw new Error(`trunk=${st.trunk}（第一条挂起没被执行）`)
+
+    // 另一条挂起原样活着（确认条还在）
+    const left = await cdp.eval(
+      `[...document.querySelectorAll('button')].filter(b => b.textContent.trim() === '确认').length`)
+    if (left < 1) throw new Error('确认掉一条后，另一条挂起的确认条也消失了')
+    await cdp.clickButtonByText('取消')
+    await cdp.typeAndSend('关闭后备箱')            // 复位
+    await sleep(2500)
+    return `两条挂起并存；确认帧 operation_id=${first.operation_id.slice(0, 10)}…；第二条 ${second.operation_id.slice(0, 10)}… 未受影响`
+  },
+
+  // C12 · Q3：抢发并发归属。三请求快速连发，每个用户轮各收自己 request_id 的帧，
+  // 且**没有任何气泡卡在「思考中」**（旧实现单槽看门狗被后来者清掉 → 永久转圈）。
+  async C12(cdp) {
+    const t0 = Date.now()
+    await cdp.typeAndSend('帮我查一下深圳明天的天气')
+    await sleep(600)                          // 上一轮还在生成
+    await cdp.typeAndSend('讲个笑话')
+    await sleep(600)
+    await cdp.typeAndSend('现在几点了')
+
+    // 三轮各自发出去，且各带**不同**的 request_id
+    const sent = cdp.sentFrames.filter((f) => f.ts >= t0 && typeof f.data.text === 'string')
+    const ids = sent.map((f) => f.data.request_id).filter(Boolean)
+    if (ids.length < 3) throw new Error(`带 request_id 的出帧只有 ${ids.length} 条`)
+    if (new Set(ids).size !== ids.length) throw new Error('request_id 撞号')
+
+    // 网关把 id 盖回每一帧
+    await cdp.waitReceivedFrame(
+      (d) => d.type === 'final' && !!d.request_id, 60000, t0, '带 request_id 的入帧')
+    await sleep(20000)                        // 给最慢那轮留时间
+    // 「思考中」气泡的 DOM 签名 = ThinkingInline 那句「正在思考…」
+    const stuck = await cdp.eval(`(() => {
+      const marker = String.fromCharCode(27491,22312,24605,32771) + String.fromCharCode(8230)
+      return [...document.querySelectorAll('span')]
+        .filter(s => s.textContent.trim() === marker).length
+    })()`)
+    await cdp.screenshot('C12-concurrent-attribution')
+    // 判据用**形态**不用文案：还在转圈的气泡数（§4.3 话术层只用形态判据）
+    if (stuck > 0) throw new Error(`仍有 ${stuck} 个气泡卡在「思考中」`)
+    const finals = cdp.recvFrames.filter(
+      (f) => f.ts >= t0 && f.data.type === 'final').map((f) => f.data.request_id)
+    const covered = ids.filter((id) => finals.includes(id) ||
+      cdp.recvFrames.some((f) => f.data.type === 'cancelled' && f.data.request_id === id))
+    if (covered.length < ids.length) {
+      throw new Error(`${ids.length - covered.length} 轮既无 final 也无 cancelled——它没人管`)
+    }
+    return `${ids.length} 轮各自归属，零卡死气泡`
+  },
+
+  // C13 · Q4：位置前置闸收窄。四组只看**发没发出去**——被闸拦下的句子根本不会出帧，
+  // 这正是 WS 探针看不见的那一层（I-007 整句被吞）。
+  async C13(cdp) {
+    // 前置：关掉定位设置，让闸走「征询」分支（这才是会吞整句的那条路）
+    await cdp.eval(`(() => {
+      const k = 'cockpit.settings.v1'
+      const cur = JSON.parse(localStorage.getItem(k) || '{}')
+      localStorage.setItem(k, JSON.stringify({ ...cur, locationEnabled: false }))
+      return true
+    })()`)
+    await cdp.send('Page.reload')
+    await sleep(2500)
+    await cdp.waitFor(`document.querySelector('input.au-input') !== null`, 30000, 'HMI 重载')
+
+    const mustSend = async (text, label) => {
+      const t = Date.now()
+      await cdp.typeAndSend(text)
+      await cdp.waitSentFrame((d) => d.text === text, 8000, t, label)
+      await sleep(1200)
+    }
+    const mustAsk = async (text, label) => {
+      const t = Date.now()
+      await cdp.typeAndSend(text)
+      await sleep(1500)
+      const leaked = cdp.sentFrames.some((f) => f.ts >= t && f.data.text === text)
+      if (leaked) throw new Error(`${label}：本该征询定位，却直接发了出去`)
+      await cdp.clickButtonByText('取消')       // 收掉征询条
+      await sleep(800)
+    }
+
+    await mustSend('打开充电口', 'Q4① 车控对象')
+    await mustSend('取消当前导航', 'Q4③ 取消句')
+    await mustSend('查深圳欢乐海岸周边停车场', 'Q4② 显式地点')
+    await mustSend('关空调，查深圳天气，再看看股票', 'Q4④ 多意图句')
+    // 对照：真正没有地点线索的就近查询仍然征询（**不是把闸拆了**）
+    await mustAsk('附近有什么好吃的', 'Q4 对照')
+    await cdp.screenshot('C13-location-gate')
+    return '四组直发 + 一组仍征询（闸收窄而非拆除）'
+  },
 }
 
 async function main() {

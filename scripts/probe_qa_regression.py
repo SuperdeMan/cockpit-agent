@@ -74,7 +74,12 @@ PROBE_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
 # ——这次栽在我自己刚写的断言上。
 _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has",
                 "speech_any", "speech_not", "need_confirm", "card_type",
-                "is_question", "differs_from_turn"}
+                "is_question", "differs_from_turn", "has_operation_id",
+                "closes_op_from"}
+# 挂起寻址键原语（Q1-B/C，2026-08-16）。轮上写 `op_from: N` = 把第 N 轮 final 下发的
+# `operation_id` 原样回传——**这是探针唯一能证明「多条挂起并存且各自可寻址」的手段**：
+# 不带寻址键时编排一律按「最近一条」寻址，那条路径证不了先来那条还在。
+_TURN_KEYS = {"say", "sid", "expect", "op_from", "op_literal", "confirm"}
 
 # ── 用例集 ────────────────────────────────────────────────────────────────
 # `known` = 立卡时的已知现状（红/绿/待测），写在用例里是为了让第一次跑批的输出
@@ -125,16 +130,38 @@ CASES = [
     # 用户再也回不到那个解锁确认，而系统会说「没有待确认的操作」——它没说的是
     # 「刚才那条被我扔了」。这正是 B3 那条判据的确认版：**任何「认不出/放不下就用
     # 默认值」的分支，先问默认值错了会不会没人发现。**
+    # ⚠ **尺子在 Q1-C 落地后改过一次，留痕**：原期望是第四轮说「已失效/过期/取消了」
+    # ——那是**为单槽写的**期望（旧挂起注定被丢弃，至少要说一声）。挂起表落地后
+    # 旧挂起**根本没被丢**，再要求系统说「已过期」就是要求它说一件不真的事。
+    # 新考点因此换成 Q1-C 的真契约，且判据从话术换成**结构**（更硬）：
+    #   T3 不带寻址键的「确认」落最近一条（场景），不得误执行解锁；
+    #   T4 带 T1 的 operation_id 回来 → 先来那条**仍在、仍可执行**，
+    #      且 final 的 closed_operation_ids 点名关掉的就是它。
     {"id": "CF5", "group": "confirm", "card": "Q1", "issue": "I-013",
-     "why": "两个任务先后挂起：单槽覆盖会静默丢弃旧挂起，且不告诉用户",
+     "why": "两个任务先后挂起：挂起表 + operation_id 寻址，先来那条不被覆盖",
      "known": "red",
      "turns": [
-         {"say": "把全车门解锁", "expect": {"need_confirm": True}},
+         {"say": "把全车门解锁",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
          {"say": "创建一个午休模式，空调调到24度", "expect": {}},
-         {"say": "确认", "expect": {"actions_exclude": ["door_lock.open"]}},
-         {"say": "我刚才让你解锁车门那件事呢",
-          "expect": {"speech_any": ["已失效", "过期", "取消了", "重新说"],
-                     "speech_not": ["没有待确认的操作"]}},
+         {"say": "确认", "confirm": True,
+          "expect": {"actions_exclude": ["door_lock.open"]}},
+         {"say": "确认", "confirm": True, "op_from": 1,
+          "expect": {"actions_include": ["door_lock.open"],
+                     "closes_op_from": 1}},
+     ]},
+    {"id": "CF6", "group": "confirm", "card": "Q1", "issue": "I-013",
+     "why": "寻址键对不上必须诚实拒绝，且**不得清掉**当前还活着的挂起",
+     "known": "red",
+     "turns": [
+         {"say": "把全车门解锁",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         # 这条刻意伪造一个 id——它验的就是拒绝路径本身
+         {"say": "确认", "confirm": True, "op_literal": "op-nonexistent",
+          "expect": {"speech_has": ["已经不在"], "no_actions": True}},
+         # 挂起还在：原样回传真 id 仍能执行
+         {"say": "确认", "confirm": True, "op_from": 1,
+          "expect": {"actions_include": ["door_lock.open"]}},
      ]},
 
     # ── Q7 端侧语义维度：极性 / 顺序 / 省略 ────────────────────────
@@ -425,6 +452,9 @@ def _observe(msg: dict) -> dict:
         "need_confirm": bool(msg.get("need_confirm")),
         "card_type": str(card.get("type") or ""),
         "is_question": speech.rstrip().endswith(("？", "?")),
+        # Q1-B/C：挂起寻址键与本轮关掉的挂起（服务端权威）
+        "operation_id": str(msg.get("operation_id") or ""),
+        "closed_operation_ids": list(msg.get("closed_operation_ids") or []),
     }
 
 
@@ -465,14 +495,34 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None) -> list[str
         fails.append(f"card_type={obs['card_type'] or '无'}，期望 {expect['card_type'] or '无'}")
     if "is_question" in expect and obs["is_question"] != expect["is_question"]:
         fails.append(f"is_question={obs['is_question']}，期望 {expect['is_question']}")
+    if "has_operation_id" in expect:
+        got = bool(obs.get("operation_id"))
+        if got != expect["has_operation_id"]:
+            fails.append(f"operation_id 有无={got}，期望 {expect['has_operation_id']}")
+    ref_close = expect.get("closes_op_from")
+    if ref_close is not None:
+        rows = prior or []
+        earlier = next((r for r in rows if r.get("turn") == int(ref_close)), None)
+        want = (earlier or {}).get("operation_id") or ""
+        if not want:
+            fails.append(f"第 {ref_close} 轮没有 operation_id，无从校验关闭")
+        elif want not in (obs.get("closed_operation_ids") or []):
+            fails.append(
+                f"第 {ref_close} 轮那条挂起没被关掉"
+                f"（closed={obs.get('closed_operation_ids') or '空'}）")
     return fails
 
 
 # ── 跑批 ──────────────────────────────────────────────────────────────────
 
-async def _one_turn(ws, session: str, text: str) -> dict:
-    await ws.send(json.dumps({"text": text, "session_id": session,
-                              "meta": dict(PROBE_META)}))
+async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
+                    is_confirmation: bool = False) -> dict:
+    frame = {"text": text, "session_id": session, "meta": dict(PROBE_META)}
+    if operation_id:
+        frame["operation_id"] = operation_id      # Q1-B：点名确认哪一条挂起
+    if is_confirmation:
+        frame["is_confirmation"] = True
+    await ws.send(json.dumps(frame))
     while True:
         raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)
         msg = json.loads(raw)
@@ -493,11 +543,26 @@ async def _run_case(case: dict, stamp: int) -> dict:
     async with websockets.connect(WS_URL) as ws:
         await asyncio.wait_for(ws.recv(), timeout=10)      # identity ack / 首帧
         for i, turn in enumerate(case["turns"], 1):
+            unknown = set(turn) - _TURN_KEYS
+            if unknown:
+                raise ValueError(f"{case['id']} T{i} 未知的 turn 键：{sorted(unknown)}")
             sid = int(turn.get("sid", 0))
             sessions.setdefault(
                 sid, f"probe-qa-{case['id'].lower()}-{stamp}-{sid}")
+            op = str(turn.get("op_literal") or "")   # 只为验拒绝路径而伪造
+            if turn.get("op_from") is not None:
+                src = next((r for r in rows
+                            if r.get("turn") == int(turn["op_from"])), None)
+                op = (src or {}).get("operation_id") or ""
+                if not op:
+                    raise ValueError(
+                        f"{case['id']} T{i} 引用第 {turn['op_from']} 轮的 "
+                        f"operation_id，但那一轮没有下发——**探针不许自己编一个**，"
+                        f"编出来的 id 只会证明拒绝路径")
             try:
-                obs = await _one_turn(ws, sessions[sid], turn["say"])
+                obs = await _one_turn(ws, sessions[sid], turn["say"],
+                                      operation_id=op,
+                                      is_confirmation=bool(turn.get("confirm")))
             except asyncio.TimeoutError:
                 obs = {"speech": "[timeout]", "actions": [], "need_confirm": False,
                        "card_type": "", "is_question": False, "error": True}

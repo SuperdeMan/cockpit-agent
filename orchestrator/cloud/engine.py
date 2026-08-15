@@ -22,6 +22,7 @@ from .loop import LoopController
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
+from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from .context import (ContextManager, build_context, safety_alert_active,
                       _POC_DEFAULT_SCOPES)
@@ -34,22 +35,15 @@ from observability.tracing import set_session_id, set_trace_id
 
 logger = logging.getLogger("planner.engine")
 
-# wait_slot 语境内取消词（旅程 B5-1）：补槽追问是当前活跃语境，句中出现取消语义即指它。
-# 不复用 _confirm_reply——其「占据整句」规则（防子串误判）会拦住「那个提醒不用了，取消吧」。
-_SLOT_CANCEL_RE = re.compile(r"取消|不用了|算了|不需要了|不要了|别设了|别提醒了|不设了")
-# 复合取消句的「实质余量」量具（EVA 三§3，2026-08-15 真栈实测）：「算了咖啡不买了，
-# 先去加点油，但还是别迟到」在 wait_slot 下命中取消词后整句被吞、4.6ms 直回「已取消」
-# ——后半句是新请求。剥掉取消词/标点/语气尾后余量 ≥6 字 = 复合句：清挂起后按全新
-# 请求继续处理；纯取消句（「那个提醒不用了，取消吧」剥后 5 字）行为逐字不变。
-_SLOT_CANCEL_STRIP_RE = re.compile(
-    r"取消|不用了|算了|不需要了|不要了|不买了|不去了|别设了|别提醒了|不设了"
-    r"|[，。,、！!？?；;\s]|吧$|啦$")
-_SLOT_CANCEL_COMPOUND_MIN = 6
+# 取消判定已收敛到 `pending_cancel`（QA 卡 Q1-A）——**挂起态的两条分支
+# （wait_confirm / wait_slot）曾各判各的**，于是「取消刚才解锁」6 字 > 2+3，
+# 在 wait_confirm 下判不出取消、挂起一直活着（I-046）。词表与两条语境规则的
+# 全部理由写在那个模块的 docstring 里，这里不复述、也不留第二份词表。
 
-# 确认/取消话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）
+# 肯定话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）。
+# 否定侧不在这里——它是 `pending_cancel` 的职责。
 _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
               "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
-_NO_WORDS = ("取消", "不用", "不要", "算了", "不订", "不付", "不了", "别订", "先不")
 
 # M2 重复副作用防抖的 fingerprint 和可信来源 source_intent 会由
 # ``_resume_result`` 显式保留；其它字段默认不进入挂起种子。
@@ -194,8 +188,13 @@ class PlannerEngine:
             # R4.4：剥离内部标记键，消费端（server.py）看不到；同时记本轮是否拒识。
             if ev.pop("_rejected", False):
                 rejected = True
-            if ev.get("kind") == "final" and ev.get("speech"):
-                assistant_speech = ev["speech"]
+            if ev.get("kind") == "final":
+                # Q1-C：本轮关掉了哪几条挂起，由服务端权威告诉 HMI（撤确认条）。
+                # 空则不发键——多一个恒空字段就是多一处噪声。
+                if ctx.closed_operation_ids:
+                    ev["closed_operation_ids"] = list(ctx.closed_operation_ids)
+                if ev.get("speech"):
+                    assistant_speech = ev["speech"]
             yield ev
 
         # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
@@ -231,22 +230,48 @@ class PlannerEngine:
         # _settle_session 跳过 clear，并在 final 上补一句软提醒。
         held_pending = None
         pending = await self.session.load(
-            ctx.session_id, owner_user_id=ctx.user_id)
+            ctx.session_id, owner_user_id=ctx.user_id,
+            operation_id=ctx.operation_id)
+
+        # Q1-B：确认帧带了寻址键却对不上任何挂起 → **诚实拒绝**。
+        # 不静默打给当前挂起（I-013 全局确认命中旧请求），也不清掉它——
+        # 那一下不是冲它来的。空 operation_id（语音兜底/旧客户端）不走这条。
+        if ctx.operation_id and pending is None:
+            logger.info("Confirmation addressed a pending that is gone (%s)",
+                        ctx.operation_id[:16])
+            yield {"kind": "final",
+                   "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。"}
+            return
+
+        # Q1-A：取消判定对两条分支是**同一件事**，所以在分岔之前判一次。
+        # 此前 wait_confirm 走「词占据整句」、wait_slot 走子串+复合余量，
+        # 「取消刚才解锁」在前者判不出取消（I-046）。判据全在 pending_cancel。
+        just_cancelled = False
+        if pending:
+            cancelled = detect_cancel(text)
+            if cancelled.cancelled:
+                just_cancelled = True
+                await self._close_pending(ctx, pending)
+                if not cancelled.compound:
+                    yield {"kind": "final", "speech": "好的，已为您取消。"}
+                    return
+                # 复合句（「算了咖啡不买了，**先去加点油**」）：取消只作用于挂起，
+                # 其余内容按全新请求继续处理——不 return、不进确认/补槽/话题分支。
+                logger.info(
+                    "pending cancel with compound remainder (%d chars); "
+                    "continuing as fresh request", len(cancelled.remainder))
+                pending = None
+
         if pending and pending.phase == "wait_confirm":
             reply = self._confirm_reply(text, ctx.is_confirmation)
-            if reply == "no":
-                await self.session.clear(
-                    ctx.session_id, owner_user_id=ctx.user_id)
-                yield {"kind": "final", "speech": "好的，已为您取消。"}
-                return
             if reply == "yes":
                 plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
-                    await self.session.clear(
-                        ctx.session_id, owner_user_id=ctx.user_id)
+                    await self._close_pending(ctx, pending)
                     yield {"kind": "final",
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
+                ctx.pending_operation_id = pending.operation_id
                 logger.info("Resuming plan for session %s (confirm step %s)",
                             ctx.session_id, pending.pending_step_id)
             else:
@@ -255,23 +280,8 @@ class PlannerEngine:
                 held_pending = pending
         elif pending and pending.phase == "wait_slot":
             # F12：补槽续接——判定用户是在回答追问还是换了话题。
-            # 「取消/不用了」对补槽挂起同样是取消（镜像 wait_confirm；旅程 B5-1 抓到：
-            # R2 保留挂起后「那个提醒不用了，取消吧」被当槽位答案吃掉，挂起成黑洞）。
-            # 用语境内包含词表而非 _confirm_reply（其"占据整句"规则会拦住长取消句——
-            # 补槽追问是当前活跃语境，句中出现取消语义即指它，误伤面可忽略）。
-            if _SLOT_CANCEL_RE.search(text or ""):
-                await self.session.clear(
-                    ctx.session_id, owner_user_id=ctx.user_id)
-                remainder = _SLOT_CANCEL_STRIP_RE.sub("", text or "")
-                if len(remainder) < _SLOT_CANCEL_COMPOUND_MIN:
-                    yield {"kind": "final", "speech": "好的，已为您取消。"}
-                    return
-                # 复合句（「算了咖啡不买了，**先去加点油，但还是别迟到**」）：取消只
-                # 作用于挂起，其余内容按全新请求继续处理——不 return、不进补槽/话题
-                # 分支（挂起已清）。EVA 三§3 动态重规划的入口正是这一形态。
-                logger.info("wait_slot cancel with compound remainder (%d chars); "
-                            "continuing as fresh request", len(remainder))
-            elif self._is_topic_change(text, pending):
+            # （取消已在上面的共用判据里处理完，此处只剩「答案 vs 换话题」。）
+            if self._is_topic_change(text, pending):
                 # 答非所问：用户插话——保留挂起按新请求处理（R2，下轮裸答案仍可续接）
                 held_pending = pending
                 plan, seed_results = None, []
@@ -279,11 +289,11 @@ class PlannerEngine:
                 # 补槽恢复绝不注入 confirmed——补槽答案不是确认（见 _restore docstring）
                 plan, seed_results = self._restore(pending, inject_confirmed=False)
                 if plan is None:
-                    await self.session.clear(
-                        ctx.session_id, owner_user_id=ctx.user_id)
+                    await self._close_pending(ctx, pending)
                     yield {"kind": "final",
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
+                ctx.pending_operation_id = pending.operation_id
                 # Phase 1 简单版：直接用用户原始文本填 slot（Agent LLM 能理解自然语言）
                 for step in plan.steps:
                     if step.id == pending.pending_step_id:
@@ -292,8 +302,11 @@ class PlannerEngine:
                         break
             logger.info("Resuming plan for session %s (slot fill step %s, text=%s)",
                         ctx.session_id, pending.pending_step_id, text[:20])
-        elif ctx.is_confirmation or self._is_bare_confirm_word(text):
+        elif not just_cancelled and (
+                ctx.is_confirmation or self._is_bare_confirm_word(text)):
             # 带确认标记，或裸"确认/取消"，但没有挂起任务（TTL 过期/上一步异常/重复点击）。
+            # `just_cancelled` 排除复合取消刚清掉挂起的那一路——那句话的余量是新请求，
+            # 不能因为它带确认标记就被答成「当前没有待确认的操作」。
             # 关键：裸确认词绝不下交 Planner——否则会借历史把"确认"重规划成上一意图的重复
             # 执行（反复 trip.modify），即用户报告的"确认后又改一遍并再次要确认"死循环。
             yield {"kind": "final",
@@ -962,14 +975,29 @@ class PlannerEngine:
                 },
             }
 
-        saved = await self.session.save(ctx.session_id, SessionState(
-            phase="wait_confirm" if step_result.status == StepStatus.NEED_CONFIRM else "wait_slot",
-            owner_user_id=ctx.user_id,
-            pending_step_id=step_result.step_id,
-            missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
-            completed_results=completed,
-            pending_plan=self._serialize_plan(plan),
-        ))
+        # Q1-B：每条挂起自带寻址键，随 final 下发给 HMI 并由确认帧原样回传。
+        # 本轮续接上来的那条先关掉——补槽追问「再问一次」是同一件事的下一步，
+        # 不该在挂起表里占两格（Q1-C）。
+        if ctx.pending_operation_id:
+            await self.session.clear(
+                ctx.session_id, owner_user_id=ctx.user_id,
+                operation_id=ctx.pending_operation_id)
+            if ctx.pending_operation_id not in ctx.closed_operation_ids:
+                ctx.closed_operation_ids.append(ctx.pending_operation_id)
+            ctx.pending_operation_id = ""
+        operation_id = f"op-{uuid.uuid4().hex[:16]}"
+        saved, evicted = await self.session.save_pending(
+            ctx.session_id, SessionState(
+                phase=("wait_confirm"
+                       if step_result.status == StepStatus.NEED_CONFIRM
+                       else "wait_slot"),
+                owner_user_id=ctx.user_id,
+                operation_id=operation_id,
+                pending_step_id=step_result.step_id,
+                missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
+                completed_results=completed,
+                pending_plan=self._serialize_plan(plan),
+            ))
         if saved is False:
             # A concurrent privacy deletion owns the write fence.  Do not show
             # a confirmation UI for state that cannot be resumed safely.
@@ -988,14 +1016,37 @@ class PlannerEngine:
             attrs={"step_id": step_result.step_id},
         )
         brief = self._prior_brief(prior or [], step_result)
+        follow_up = step_result.follow_up
+        if evicted is not None:
+            # Q1-C：淘汰**必须有话术**。静默丢弃就是 B3 那条「认不出就用默认值」
+            # 的确认版——用户以为那件事还在等他，其实系统早就忘了。
+            ctx.closed_operation_ids.append(evicted.operation_id)
+            follow_up = self._append_hint(
+                follow_up, f"（{self._pending_label(evicted)}已过期，需要的话再说一次。）")
         return {
             "kind": "final",
             "speech": (brief + (step_result.speech or "")) if brief else step_result.speech,
-            "follow_up": step_result.follow_up,
+            "follow_up": follow_up,
             "actions": step_result.actions,
             "ui_card": step_result.ui_card,
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
+            "operation_id": operation_id,
         }
+
+    @staticmethod
+    def _pending_label(state) -> str:
+        """挂起的人话名字：取 pending_plan.goal，没有就退回中性说法。"""
+        goal = ""
+        try:
+            goal = (state.pending_plan or {}).get("goal") or ""
+        except AttributeError:
+            pass
+        return f"「{goal[:20]}」" if goal else "更早那条待确认的操作"
+
+    @staticmethod
+    def _append_hint(follow_up: str | None, hint: str) -> str:
+        base = str(follow_up or "")
+        return (base + (" " if base else "") + hint).strip()
 
     @staticmethod
     def _prior_brief(prior: list[StepResult], step_result: StepResult) -> str:
@@ -1012,13 +1063,33 @@ class PlannerEngine:
                 parts.append(s)
         return "；".join(parts) + "。" if parts else ""
 
+    async def _close_pending(self, ctx: PlanContext, pending) -> None:
+        """关掉一条挂起，并记进本轮的 `closed_operation_ids`（Q1-C）。
+
+        **只清这一条**：挂起表里其余的与本轮无关，清掉它们等于把用户还惦记着的
+        另一件事悄悄抹掉——正是单槽时代那个语义（`_suspend` 覆盖旧挂起）的换皮。
+        """
+        if pending is None:
+            return
+        op = getattr(pending, "operation_id", "") or ""
+        await self.session.clear(
+            ctx.session_id, owner_user_id=ctx.user_id, operation_id=op)
+        if op and op not in ctx.closed_operation_ids:
+            ctx.closed_operation_ids.append(op)
+
     async def _settle_session(self, ctx: PlanContext, held_pending) -> None:
         """本轮正常收口时的会话清理（R2）：插话轮（held_pending 非空）**不清挂起**——
-        用户 TTL 内回头「确认」/裸答案仍可续接；非插话轮照旧 clear（消费/过期清理）。
+        用户 TTL 内回头「确认」/裸答案仍可续接。
+
+        Q1-C 后清理范围收窄成**本轮真正续接上的那一条**（`ctx.pending_operation_id`）：
+        以前这里 `clear()` 清的是整个 key，多槽下会连带抹掉两件不相干的挂起。
         不刷新 TTL：挂起窗口以首次挂起时刻起算，插话不无限续命。"""
-        if held_pending is None:
+        if held_pending is None and ctx.pending_operation_id:
             await self.session.clear(
-                ctx.session_id, owner_user_id=ctx.user_id)
+                ctx.session_id, owner_user_id=ctx.user_id,
+                operation_id=ctx.pending_operation_id)
+            if ctx.pending_operation_id not in ctx.closed_operation_ids:
+                ctx.closed_operation_ids.append(ctx.pending_operation_id)
 
     @staticmethod
     def _append_pending_hint(final: dict, held_pending) -> None:
@@ -1051,14 +1122,18 @@ class PlannerEngine:
 
         否定词优先（"确认取消"按取消处理）；HMI 按钮带显式标记即肯定；
         语音兜底只认短肯定话术，避免长句误判成确认。
+
+        ⚠ 否定侧**只调 `pending_cancel`，不留第二份词表**（Q1-A）。挂起语境里
+        真正生效的是 `_orchestrate` 里那次共用判定，这里的 "no" 只服务两个残留
+        消费方：无挂起时的 `_is_bare_confirm_word`，以及历史上直接调本函数的测试。
         """
         t = (text or "").strip().lower()
-        # "词占据整句"判定：肯定/否定词须近似为全句（len(t) ≤ 词长+slack），不做宽松子串包含。
-        # 否则"第二天行程换一个"含"行"、"可以换X"含"可以"、"第二天不要去长城"含"不要"会被误判。
-        if any(k in t and len(t) <= len(k) + 3 for k in _NO_WORDS):
+        if is_standalone_cancel(t):
             return "no"
         if flagged:
             return "yes"
+        # "词占据整句"判定：肯定词须近似为全句（len(t) ≤ 词长+slack），不做宽松子串包含。
+        # 否则"第二天行程换一个"含"行"、"可以换X"含"可以"会被误判。
         if any(k in t and len(t) <= len(k) + 2 for k in _YES_WORDS):
             return "yes"
         return None
@@ -1069,7 +1144,11 @@ class PlannerEngine:
 
         无挂起任务时用于拦截：绝不能把裸"确认"交给 Planner——否则它会借对话历史把
         "确认"重规划成上一意图的重复执行（如反复 trip.modify），表现为"确认后又改一遍
-        并再次要确认"的死循环。挂起任务丢失（TTL 过期/上一步异常/重复点击）时优雅兜底。"""
+        并再次要确认"的死循环。挂起任务丢失（TTL 过期/上一步异常/重复点击）时优雅兜底。
+
+        ⚠ 这条**必须保持严格**（只认整句）：放宽了「取消当前导航」会被答成
+        「当前没有待确认的操作」而不是去规划——与 Q4 位置闸同款的「前置闸替编排
+        做意图判定」。它与挂起语境的宽判据同源一份词表，语境规则不同。"""
         return PlannerEngine._confirm_reply(text, False) is not None
 
     @staticmethod

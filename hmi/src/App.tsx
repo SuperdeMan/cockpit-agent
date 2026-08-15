@@ -30,6 +30,8 @@ import { ResilientWebSocket, appendToken } from './ws.mjs'
 import { HandsFreeController } from './handsFreeController'
 import { needsFrame, captureFrame } from './visionFrame.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
+import { RequestRegistry } from './requestRouting.mjs'
+import { openPending, closePendings, prunePendings, isPendingLive } from './pendingOps.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
 // R3.1 会话鉴权：带 token 连接（env 注入，默认空=不带 token）。edge-gateway upgrade 前校验。
@@ -69,29 +71,36 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const [connected, setConnected] = useState(false)
   // 车况镜像（edge-gateway vehicle_state 消息：连上即推全量 + 变更广播）→ 右舞台待机场景取数
   const [vehState, setVehState] = useState<Record<string, unknown>>({})
-  // 末条若是待确认问句（真实流程由 final 置位；seedMessages 演示态据此初始化以渲染确认条）
-  const [awaitConfirm, setAwaitConfirm] = useState(
-    !!(seedMessages && seedMessages.length && seedMessages[seedMessages.length - 1].needConfirm),
+  // QA 卡 Q1-C：待确认不再是一个全局布尔，而是一张按 operation_id 索引的小台账
+  // （容量 3，与云端挂起表一致）。确认条按 id 渲染 ⇒ 可以同时显示多条，且新消息
+  // 不再把它顶掉——后端那句「对了，X 还在等你确认」的软提醒本来就是为补偿它加的。
+  const [pendingOps, setPendingOps] = useState<Array<{ id: string; ts: number }>>([])
+  // 位置授权征询是**纯前端**确认（没有 operation_id、不上行），单独一格。
+  const [pendingLocationText, setPendingLocationText] = useState<string | null>(null)
+  // seedMessages 演示态：末条待确认时给它一个本地 id，确认条才渲染得出来。
+  const [seedConfirm] = useState(
+    () => !!(seedMessages && seedMessages.length && seedMessages[seedMessages.length - 1].needConfirm),
   )
   const [showSettings, setShowSettings] = useState(!!openSettings)
   const [currentLocation, setCurrentLocation] = useState<any>(null)
   const [locationStatus, setLocationStatus] = useState('未使用当前位置')
-  const [pendingLocationText, setPendingLocationText] = useState<string | null>(null)
+  // 是否有任何待确认（喂 hands-free FSM：确认条可见时裸「取消」必上云，D5-2）
+  const awaitConfirm = pendingOps.length > 0 || pendingLocationText !== null || seedConfirm
 
   const wsRef = useRef<any>(null) // ResilientWebSocket（见 ws.mjs，untyped 边界）
   // M-C：已呈现的投递凭据（幂等）与 S2S 忙时攒下的待补播语音。
   const presentedRef = useRef<Set<string>>(new Set())
   const pendingSpeechRef = useRef(new PendingSpeech())
   const drainPendingSpeechRef = useRef<() => void>(() => {})
-  // 请求看门狗计时器：后端真卡死时兜底，杜绝气泡永久"思考中"
-  const watchdogRef = useRef<number | undefined>(undefined)
+  // 请求看门狗计时器（QA 卡 Q3）：**每轮一只**。旧实现是单槽，`armWatchdog` 开头就
+  // `clearTimeout` ——第二个请求一来，第一个请求的超时保护被清掉，那轮既没有 final
+  // 也没人再救它，就是报告里「下一轮长期正在思考，需要刷新标签页」的成因。
+  const watchdogsRef = useRef<Map<string, number>>(new Map())
   const locationRefreshRequestedRef = useRef(false)
-  // R4.3b P0（A2 pendingId 单槽 → 归属错乱/旧轮复读）：在飞请求按 dispatch 顺序入 FIFO。
-  // 网关 WS 串行（一轮事件流 drain 到 EOF 才读下一条），故 fifo[0] 恒为当前正在收流的轮 → 正确归属。
-  const pendingIdsRef = useRef<string[]>([])
-  // 最新一次 dispatch 的轮 id：speech 喂 TTS / setTtsText / setAwaitConfirm / 候选记录只认最新轮，
-  // 旧轮（罕见双发或混合意图残留）的 final 只更新其气泡文本，静默不复读、不劫持确认条。
-  const lastDispatchIdRef = useRef<string | null>(null)
+  // Q3：响应归属登记簿。此前是 FIFO + 一条「网关 WS 串行故 fifo[0] 恒为当前收流轮」
+  // 的假设，抢发时不成立（端侧秒回 + 云侧在流 = 两条流交错）。现在按 request_id 归属，
+  // 带了 id 却对不上就丢帧——不回落 FIFO，那正是「响应错挂」本身。
+  const requestsRef = useRef<RequestRegistry>(new RequestRegistry())
   // U2/P2 THINKING 真打断：客户端主动取消时置位，网关回的 cancelled 视为确认（不重复标记气泡）
   const justCancelledRef = useRef(false)
   // 上一条 poi_list 的候选名（供「第一个/第二个」语音选择就近导航；见 resolvePoiSelection）
@@ -166,10 +175,12 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     })
     wsRef.current = rws
     rws.start()
+    const watchdogs = watchdogsRef.current
     return () => {
       rws.close()
       wsRef.current = null
-      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+      for (const t of watchdogs.values()) clearTimeout(t)
+      watchdogs.clear()
       stopTTS()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -318,24 +329,30 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
   const handleEvent = useCallback((data: any) => {
     const s = settingsRef.current
-    // 取当前正在收流的轮 id（fifo[0]）；无在飞轮时新建并置队首（混合意图云端续流），
-    // 并把它认作最新轮（lastDispatch），使其 TTS/确认照常——旧轮不会走到此分支（网关串行）。
-    const headPendingId = (): string => {
-      const fifo = pendingIdsRef.current
-      if (fifo.length) return fifo[0]
-      const id = uid()
-      fifo.unshift(id)
-      lastDispatchIdRef.current = id
-      return id
+    const reg = requestsRef.current
+    // 本帧归属的气泡（Q3）。带 request_id 走 id 归属；不带（旧网关/主动推送）回落 FIFO；
+    // 都没有 = 混合意图云段续流先于占位到达，新建一个并认作最新轮。
+    // ⚠ 返回 null 的唯一情形是「带了 id 却对不上」——那轮已结算过，**丢帧**。
+    const streamTargetId = (): string | null => {
+      const hit = reg.bubbleFor(data)
+      if (hit) return hit
+      if (data.request_id) return null    // 迟到的孤儿帧：不挂到别人身上
+      return reg.adopt(uid())
+    }
+    const clearWatchdog = (bubbleId: string | null) => {
+      if (!bubbleId) return
+      const t = watchdogsRef.current.get(bubbleId)
+      if (t) { clearTimeout(t); watchdogsRef.current.delete(bubbleId) }
     }
     if (data.type === 'speech_delta') {
       // 流式逐字：把 pending 占位转为 streaming，并追加 delta。
       // 若当前没有活跃占位（如混合意图里本地已 final、云端流式刚开始），
       // 新开一个助手气泡——否则这段 delta 会无处归属被丢弃。
       const delta = data.delta || ''
-      const targetId = headPendingId()
+      const targetId = streamTargetId()
+      if (targetId === null) return
       // A2：只有最新轮的语音才喂 TTS 播放队列，旧轮 delta 不复读
-      if (s.ttsEnabled && s.autoplay && delta && targetId === lastDispatchIdRef.current) {
+      if (s.ttsEnabled && s.autoplay && delta && reg.isLatest(targetId)) {
         appendTTSDelta(delta).catch(() => {/* 播放失败静默 */})
       }
       setMessages((m) =>
@@ -372,7 +389,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         return [...prev, step]
       }
       const driving = !!data.driving
-      const targetId = headPendingId()
+      const targetId = streamTargetId()
+      if (targetId === null) return
       setMessages((m) =>
         m.some((x) => x.id === targetId)
           ? m.map((msg) =>
@@ -394,7 +412,8 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // 流式期间单独下发的动作卡（如 T2 循环中间步骤）：附到当前气泡；
       // 没有活跃气泡则新开一个，避免动作被静默丢弃。
       const action = data.action
-      const targetId = headPendingId()
+      const targetId = streamTargetId()
+      if (targetId === null) return
       setMessages((m) =>
         m.some((x) => x.id === targetId)
           ? m.map((msg) =>
@@ -413,8 +432,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       // 必须自己放 FSM 出 THINKING（本分支早 return，跳过下方 turnEnded 路径 → 否则死锁，§0-6）。
       const rc: any = data.ui_card
       if (rc?.type === 'rejected') {
-        if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
-        const rid = pendingIdsRef.current.shift() ?? null
+        const rid = reg.settle(data)
+        if (rid === null && data.request_id) return   // Q3：孤儿帧丢弃
+        clearWatchdog(rid)
         setMessages((m) => m.map((msg) => (msg.id === rid
           ? { ...msg, pending: false, streaming: false, text: '', rejected: true } : msg)))
         bumpVoiceMetric('cloud_rejected')
@@ -422,10 +442,25 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         handsFreeRef.current?.turnEnded()
         return
       }
-      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
-      const id = pendingIdsRef.current.shift() ?? null // 出队当前轮
-      // 最新轮（或无在飞轮的续流 final）才驱动确认条/候选/TTS；旧轮只更新气泡文本，静默（A2）
-      const isLatest = id === null || id === lastDispatchIdRef.current
+      const isLatestTurn = reg.isLatest(reg.bubbleFor(data))
+      const id = reg.settle(data) // 归属并注销本轮
+      if (id === null && data.request_id) return      // Q3：孤儿帧丢弃
+      clearWatchdog(id)
+      // Q1-C：待确认台账由**服务端权威**驱动——新挂起进账、closed 列表出账。
+      // HMI 自己猜「这一轮是不是把某条挂起消费掉了」必然猜错，猜错的后果是一条
+      // 已作废的确认条继续挂在屏幕上等人点（I-017 同族）。
+      const closed: string[] = Array.isArray(data.closed_operation_ids)
+        ? data.closed_operation_ids : []
+      if (data.operation_id || closed.length) {
+        setPendingOps((prev) => {
+          const afterClose = closePendings(prunePendings(prev), closed)
+          return data.need_confirm && data.operation_id
+            ? openPending(afterClose, data.operation_id)
+            : afterClose
+        })
+      }
+      // 最新轮（或无在飞轮的续流 final）才驱动候选/TTS；旧轮只更新气泡文本，静默（A2）
+      const isLatest = id === null || isLatestTurn
       const final: Partial<Msg> = {
         pending: false,
         streaming: false,
@@ -433,6 +468,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         text: data.speech || '',
         actions: data.actions,
         needConfirm: !!data.need_confirm,
+        operationId: data.operation_id || undefined,
         followUp: data.follow_up,
         uiCard: data.ui_card,
       }
@@ -442,7 +478,6 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
           : [...m, { id: uid(), role: 'assistant', ...final } as Msg],
       )
       if (isLatest) {
-        setAwaitConfirm(!!data.need_confirm)
         // 记录候选名供下一轮「第N个」选择：充电目的地候选(dest_choice)→回填目的地槽位；
         // 普通导航 poi_list→就近导航（见 send）
         {
@@ -548,22 +583,23 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       return
     }
     if (data.type === 'error') {
-      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
-      pendingIdsRef.current = [] // 错误是硬终止：清空所有在飞轮
+      // 错误是硬终止：清空所有在飞轮。⚠ **不清挂起台账**——传输出错与「那几件事
+      // 还等着你确认」无关，服务端的挂起原样活着（Q1-C）。
+      for (const bubble of reg.drainAll()) clearWatchdog(bubble)
       setMessages((m) => [
         ...m.filter((x) => !x.pending),
         { id: uid(), role: 'assistant', text: '出错了：' + data.message, error: true },
       ])
-      setAwaitConfirm(false)
       handsFreeRef.current?.turnEnded() // U2：error 分支也放 FSM 出 THINKING，否则 hands-free 卡死
     }
     if (data.type === 'cancelled') {
       // 网关确认已取消在飞请求（U2 真打断）。客户端主动打断时 cancelCurrentTurn 已本地标记 → 幂等忽略；
-      // 网关侧主动取消（新请求取消旧的，防御）时无本地标记 → 在此标 FIFO 头气泡为「已打断」。
-      if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
+      // 网关侧主动取消（新请求抢占旧的）时无本地标记 → 按 request_id 点名标该气泡「已打断」。
       if (justCancelledRef.current) { justCancelledRef.current = false; return }
-      const id = pendingIdsRef.current.shift() ?? null
-      if (id) setMessages((m) => m.map((msg) =>
+      const id = reg.settle(data)
+      if (id === null) return
+      clearWatchdog(id)
+      setMessages((m) => m.map((msg) =>
         msg.id === id && (msg.pending || msg.streaming || msg.processActive)
           ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
           : msg))
@@ -572,11 +608,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
   // 请求看门狗：占位后 REQUEST_TIMEOUT_MS 内无 final/error → 转超时提示、停止转圈。
   // 正常 final/error 抵达即清除（见 handleEvent）。不强制关 WS（长任务靠服务端 Ping 保活）。
+  // Q3：**每轮一只**。旧实现单槽，第二个请求会把第一个的超时保护清掉。
   const armWatchdog = useCallback((id: string) => {
-    if (watchdogRef.current) clearTimeout(watchdogRef.current)
-    watchdogRef.current = window.setTimeout(() => {
-      watchdogRef.current = undefined
-      pendingIdsRef.current = pendingIdsRef.current.filter((x) => x !== id) // 从 FIFO 摘除超时轮
+    const timer = window.setTimeout(() => {
+      watchdogsRef.current.delete(id)
+      requestsRef.current.dropBubble(id)
       setMessages((m) =>
         m.map((msg) =>
           msg.id === id && (msg.pending || msg.streaming || msg.processActive)
@@ -585,11 +621,23 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
             : msg,
         ),
       )
-      setAwaitConfirm(false)
       stopTTS()
       handsFreeRef.current?.turnEnded() // U2：看门狗超时也放 FSM 出 THINKING
     }, REQUEST_TIMEOUT_MS)
+    watchdogsRef.current.set(id, timer)
   }, [])
+
+  // Q1-C：本地限龄——服务端挂起 TTL 到点就没了，前端不跟着老化的话那条确认条会
+  // 永远挂着。**静默失效比明说过期更糟**：用户以为那件事还等着他。
+  useEffect(() => {
+    if (!pendingOps.length) return
+    const t = window.setInterval(
+      () => setPendingOps((prev) => {
+        const next = prunePendings(prev)
+        return next.length === prev.length ? prev : next
+      }), 30_000)
+    return () => clearInterval(t)
+  }, [pendingOps.length])
 
   // ── 主动消息播报（M-C）────────────────────────────────────────────
   /** 播一条主动语音。回声指纹必须一起喂——否则 FOLLOWUP/LISTENING 期这段声音被
@@ -617,18 +665,20 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     const ws = wsRef.current
     if (ws) ws.send({ type: 'cancel', session_id: SESSION })
     justCancelledRef.current = true
-    if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = undefined }
     stopTTS()
-    setAwaitConfirm(false)
-    const id = pendingIdsRef.current.shift() ?? null
-    if (id) setMessages((m) => m.map((msg) =>
-      msg.id === id && (msg.pending || msg.streaming || msg.processActive)
-        ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
-        : msg))
+    const id = requestsRef.current.settle({})   // 打断的是当前在飞那轮（FIFO 头）
+    if (id) {
+      const t = watchdogsRef.current.get(id)
+      if (t) { clearTimeout(t); watchdogsRef.current.delete(id) }
+      setMessages((m) => m.map((msg) =>
+        msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断', error: true }
+          : msg))
+    }
   }, [])
 
   const dispatch = (text: string, isConfirmation: boolean, locationOverride?: any,
-                    metaExtra?: Record<string, string>) => {
+                    metaExtra?: Record<string, string>, operationId?: string) => {
     const ws = wsRef.current
     if (!ws) return
     const s = settingsRef.current
@@ -636,11 +686,16 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       startTTSReply(AUDIO_API, s.voiceId, s.ttsProvider, lastEmotionRef.current)
     else stopTTS()
     const traceId = genTraceId() // 观测贯通：本轮 trace，随 meta 上行 + 挂气泡供复制
+    const requestId = uid()      // Q3：本轮归属键，网关盖在该轮每一帧上
     // 断线时入有界队列、重连后自动 flush——不再静默丢消息（旧逻辑 readyState!==OPEN 直接 return）
     ws.send({
       text,
       session_id: SESSION,
+      request_id: requestId,
       is_confirmation: isConfirmation,
+      // Q1-B：这一下确认/取消指向哪一条挂起。空 = 普通请求（不发键即可，
+      // 网关按空串透传，编排侧照旧按「最近一条」寻址）。
+      ...(operationId ? { operation_id: operationId } : {}),
       meta: {
         ...buildMeta(s),
         ...buildRequestLocationMeta(
@@ -659,8 +714,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     })
     // 立刻插入"思考中"占位 —— 开放域慢响应也有即时反馈
     const pendingId = uid()
-    pendingIdsRef.current.push(pendingId) // 入 FIFO 队尾
-    lastDispatchIdRef.current = pendingId // 记为最新轮：只有它驱动 TTS/确认
+    requestsRef.current.open(requestId, pendingId)
     setMessages((m) => [...m, { id: pendingId, role: 'assistant', text: '', pending: true, traceId }])
     armWatchdog(pendingId)
   }
@@ -672,14 +726,15 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
     const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
     if (settingsRef.current.visionEnabled && !visionDone && needsFrame(text)) {
       setMessages((m) => [...m, { id: uid(), role: 'user', text }])
-      setAwaitConfirm(false)
       setHandsFreeNotice('已拍摄一帧用于识别')
       void captureFrame(AUDIO_API).then((fid) =>
         send(text, { ...(metaExtra || {}), vision_frame_id: fid, __bubbled: '1' }))
       return
     }
     if (!metaExtra?.__bubbled) setMessages((m) => [...m, { id: uid(), role: 'user', text }])
-    setAwaitConfirm(false)
+    // Q1-C：发新消息**不再撤掉待确认条**。挂起在服务端活得好好的（R2 插话不清挂起），
+    // 前端却把条子藏了——后端为此加了一句「对了，X 还在等你确认」的软提醒来补偿。
+    // 台账化之后条子自己留着，那句补偿话术不再是唯一的告知通道。
     // 行程内导航/修改整句（含『下一站』或『第N天…』）：整句交编排器路由到 trip.navigate/modify，
     // 不被上一条 poi_list 候选的「第N个」就近选择劫持（如「第二天第一个」≠ 上一条候选第1个）。
     if (/下一站|下个景点|继续导航|第\s*[一二两三四五六七八九十\d]+\s*天/.test(text)) {
@@ -778,7 +833,6 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         text: '这个请求需要使用当前位置，以便提供准确结果。是否允许座舱助手获取当前位置？您也可以拒绝后直接告诉我城市或地点。',
         needConfirm: true,
       } as Msg])
-      setAwaitConfirm(true)
       return
     }
     // 定位已开启 + 位置相关查询（导航/就近/我在哪/天气）：先实时刷新一次定位再发，
@@ -791,9 +845,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   }
   sendRef.current = send // hands-free 回路的 onSend 始终派发到最新 send 闭包
 
-  const confirm = (reply: '确认' | '取消') => {
+  /** 确认条按钮。`operationId` 来自那条待确认气泡——**哪一条**由它决定，不由「谁最后
+   *  置位了全局布尔」决定（Q1-B/C；I-013 全局确认命中旧请求就是后者的产物）。 */
+  const confirm = (reply: '确认' | '取消', operationId?: string) => {
     setMessages((m) => [...m, { id: uid(), role: 'user', text: reply }])
-    setAwaitConfirm(false)
     if (pendingLocationText) {
       const text = pendingLocationText
       setPendingLocationText(null)
@@ -813,7 +868,11 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       }
       return
     }
-    dispatch(reply, true)
+    // 台账即时出账：等服务端 closed 回来会有可见的双击窗口。服务端仍是权威——
+    // 它的 closed 列表到达时这一步是幂等的，而它若诚实拒绝（挂起已不在），
+    // 那条确认条本来也该消失。
+    if (operationId) setPendingOps((prev) => closePendings(prev, [operationId]))
+    dispatch(reply, true, undefined, undefined, operationId)
   }
 
   const enableLocation = async () => {
@@ -848,7 +907,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
 
       <StatusBar connected={connected} onOpenSettings={() => setShowSettings(true)} />
       <main className="au-main">
-        <ChatView messages={messages} awaitConfirm={awaitConfirm} onConfirm={confirm} onQuick={send} partialUser={handsFreePartial} />
+        <ChatView messages={messages} awaitConfirm={awaitConfirm}
+          livePendingOps={pendingOps.map((o) => o.id)}
+          onConfirm={confirm} onQuick={send} partialUser={handsFreePartial} />
         <aside className="au-stage">
           <ContextualStage messages={messages} vehicle={vehState} />
         </aside>

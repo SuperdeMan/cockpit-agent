@@ -1,9 +1,11 @@
 # 探索式真实用户 QA（DeepSeek/MiniMax 对比轮）根因分类与立卡 Q1–Q12
 
-- **状态**：**阶段 0（取证）与阶段 1（T0 安全与不可逆）已完成并真栈验证；阶段 2–4 待做**
-  （2026-08-15 泓舟指示「分类总结原因并立卡，排计划分阶段处理」→「推进阶段1」）。
-  流水 [`docs/agents-history.md`](../agents-history.md) **§41**；接手入口 `AGENTS.md` §4.1 ①。
-  ⚠ **下一步是阶段 2（Q1/Q3/Q4）**，但 Q3/Q4 在客户端 JS 里、**必须走 CDP 车道**（§4 出口条件）。
+- **状态**：**阶段 0/1/2 已完成并真栈验证；阶段 3–4 待做**
+  （2026-08-15 泓舟指示「分类总结原因并立卡，排计划分阶段处理」→「推进阶段1」→
+  2026-08-16「阶段 2 三张 + 阶段 3 先做 Q13」）。
+  流水 [`docs/agents-history.md`](../agents-history.md) **§41/§42**；接手入口 `AGENTS.md` §4.1 ①。
+  ⚠ **下一步是阶段 3，Q13 排最前**——两个分类出口收敛是 Q7/Q8 的上游，
+  先做别的会在两条不一致的路径上各修一遍。
 - **来源**：[`docs/reviews/2026-08-15-exploratory-real-user-qa-deepseek-minimax.md`](../reviews/2026-08-15-exploratory-real-user-qa-deepseek-minimax.md)（58 个去重问题：P0×3 / P1×44 / P2×10 / OBS×1）
 - **性质**：**存量缺陷为主**，30 个问题族两模型同时复现 ⇒ 按 §4.3「两档是否同时错」判据全部是系统缺口，不是模型方差
 - **卡号**：Q = QA 探索轮（与 B1–B6 外部评审、P1–P6 遗留、D1–D4 接地、E1–E5 EVA 余项、G1–G10 缺口均不冲突）
@@ -527,6 +529,64 @@ manual-rag 与 road-safety 已经各长出一套词表，chitchat 还要第三�
 **为什么这三张放一档**：它们共同决定「**用户的每一句话打给谁**」。Q2 的候选集依赖 Q1/Q3 定下的归属语义，先做会返工。
 
 **出口条件**：Q1 五组状态机 + 跨任务串扰一组；Q3 四组并发用例（CDP）；Q4 六组双向 + 多意图不整句拦。
+
+### 阶段 2 实施记录（2026-08-16）
+
+**三张全部落地，顺序按卡上的 A→B→C 走，没有换。** 全程 TDD：先写断言看它红，再改实现。
+
+| 项 | 落点 | 断言 |
+|---|---|---|
+| **Q1-A** 取消判据收敛 | `orchestrator/cloud/pending_cancel.py`——**一份词表两条语境规则**。`_orchestrate` 在 `wait_confirm`/`wait_slot` 分岔**之前**判一次；`engine._SLOT_CANCEL_RE`/`_NO_WORDS` 两份词表删除 | `test_pending_cancel.py` 11 条 + `test_engine_confirm.py` 3 条 |
+| **Q1-B** 确认帧带 `operation_id` | proto `HandleRequest.operation_id=9` / `FinalResult.operation_id=7`；`SessionState.operation_id`；`SessionStore.load(operation_id=…)` 对不上返回 None；engine 诚实拒绝；gateway/HMI 双向透传 | `test_pending_operation_id.py` 7 条 |
+| **Q1-C** 单槽→挂起表 | `session._PENDING_CAPACITY=3` + `save_pending()` 回传淘汰项 + `clear(operation_id=…)` 只清一条 + `SessionState.expires_at` 逐条限龄；`FinalResult.closed_operation_ids`；HMI `pendingOps.mjs` 台账 + 确认条按 id 渲染（可同屏多条） | `test_pending_table.py` 12 条 + `pendingOps.test.mjs` 8 条 |
+| **Q3** 响应归属 | `request_id` 随 WS 帧上行、网关盖在**每一帧**上（含 error/cancelled）；`requestRouting.mjs` 登记簿（对不上=丢帧，不回落 FIFO）；看门狗 `Map` 每轮一只；抢占旧轮**点名**回 cancelled | `requestRouting.test.mjs` 8 条 |
+| **Q4** 位置闸收窄 | `location.mjs` 拆 ORIGIN/ANCHOR 两族 + 否定邻接判据；裸 `充电`/`续航` 移出词表 | `location.test.mjs` +5 条 |
+
+契约登记：`docs/conventions.md` **§9.19**（挂起寻址）与 **§9.20**（WS 帧归属）。
+
+#### 实施期的三处判断
+
+**① 「收敛」不是把一条抄给另一条，是把两条的并集写成一份。** 直接让 `wait_confirm`
+复用 `wait_slot` 那套会**换一个洞**：`不订/不付/先不/不了` 只在前者词表里、
+`不要了/别提醒了` 只在后者词表里。所以按**歧义度**分了 STRONG（子串安全）与
+WEAK（只在占据整句时算）两层——WEAK 那条「词占据整句」规则不是删掉，是**作用域收窄到
+它真正该防的那半**（「第二天不要去长城」含「不要」、「我吃不了这么多」含「不了」）。
+
+**② `closed_operation_ids` 是被逼出来的第三个字段。** 最初只打算加 `operation_id`，
+但 HMI 拿到一条普通 final 时无从判断「刚才那条挂起是不是被这一轮消费掉了」——
+猜错就是一条已作废的确认条继续挂在屏幕上等人点（I-017 同族）。**服务端知道，
+那就让服务端说**，别让前端推断。同「系统持有的事实绝不让 LLM 答」的形态。
+
+**③ CF5 的尺子改过一次，留痕。** 原期望是第四轮说「已失效/过期/取消了」——那是
+**为单槽写的**期望（旧挂起注定被丢弃，至少要说一声）。挂起表落地后旧挂起根本没被丢，
+再要求系统说「已过期」就是要求它说一件不真的事。新考点换成结构判据（带 T1 的
+`operation_id` 回来 → 先来那条仍可执行 + `closed_operation_ids` 点名关掉它），
+比话术判据硬。**这不违反「不为某个模型的问题改案例集」**：那条针对被测对象做不到，
+这里是**契约变了、旧期望描述的行为已经不该存在**。
+
+#### 阶段 2 真栈读数
+
+QA 迷你集 confirm 组（`--repeat 3`，`minimax:MiniMax-M3`）：
+
+| 用例 | 阶段 0 基线 | 阶段 2 | 说明 |
+|---|---|---|---|
+| CF1「取消刚才解锁」 | **red** | **3/3** | I-046 原文现象，Q1-A |
+| CF2 裸取消幂等 | green | 3/3 | 对照 |
+| CF3 插话保留挂起 | green | 3/3 | 对照（首跑 2/3 是方差，复跑 3/3） |
+| CF4 无挂起裸确认兜底 | green | 3/3 | 对照 |
+| CF5 两任务并存 + 寻址确认 | **red** | **3/3** | I-013/I-051，Q1-B+C |
+| CF6 寻址键对不上（新增） | — | **3/3** | 诚实拒绝且不清活挂起 |
+
+CDP 车道（`C11/C12/C13`，各 3 轮）：**9/9**。C11 实测同屏两条确认条、点更早那条
+出帧 `operation_id` 等于它自己、`trunk=open` 且第二条挂起未受影响。
+
+⚠ **反向验证的两头**：「注入缺陷会红」由 A/B/C 各自的 TDD 红→绿承担（Q4 是 5 条先红）；
+CDP 三条的红态证据是**协议层面**的——改动前的帧里根本没有 `operation_id`/`request_id`
+这两个键，断言结构上不可能过。「对照仍绿」由 CF2/CF3/CF4 与每组里的对照断言承担。
+
+⚠ 顺手修了 CDP 驱动一个**既有** flake：`connect()` 在文档还停在 `about:blank` 时读
+`localStorage` 抛 SecurityError，整趟一条用例没跑就退出——读起来像用例失败。
+三轮里烧掉过一整轮。探针本身不可靠时，它给的每个读数都要打折。
 
 ### 阶段 3 · T2 语义与真实性（约 5–7 天）
 

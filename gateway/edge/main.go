@@ -148,7 +148,13 @@ type wsRequest struct {
 	Type                string            `json:"type"` // R4.3b P2：="cancel" 时取消在飞请求（旧 HMI 不发此字段，向后兼容）
 	Text                string            `json:"text"`
 	SessionID           string            `json:"session_id"`
+	// QA 卡 Q3：本轮的请求 id，由 HMI 生成。网关把它盖在该轮**每一帧**上，
+	// 归属不再靠「WS 串行所以 fifo[0] 就是当前轮」那个在抢发时不成立的假设。
+	RequestID           string            `json:"request_id"`
 	IsConfirmation      bool              `json:"is_confirmation"` // HMI 确认/取消按钮回应多轮确认时置 true
+	// QA 卡 Q1-B：这一下确认/取消**指向哪一条挂起**。由 final 下发、HMI 原样回传。
+	// 网关只搬运不解释——它既不是授权凭据也不参与任何判定，寻址在编排侧做。
+	OperationID         string            `json:"operation_id"`
 	Meta                map[string]string `json:"meta"`            // HMI 设置透传（answer_length/model_pref 等）
 	E2EMemoryCapability string            `json:"e2e_memory_capability"`
 	// M-C 投递回执：HMI 呈现主动消息后回传凭据（合并组回整组）。
@@ -174,7 +180,9 @@ func buildHandleRequest(
 	return &orchpb.HandleRequest{
 		Text:                req.Text,
 		SessionId:           req.SessionID,
+		RequestId:           req.RequestID,
 		IsConfirmation:      req.IsConfirmation,
+		OperationId:         req.OperationID,
 		Meta:                stampScopes(req.Meta, id.scopes),
 		E2EMemoryCapability: req.E2EMemoryCapability,
 		Context: &commonpb.ContextRef{
@@ -255,17 +263,22 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 	// R4.3b P2（U2 真打断）：读循环不再串行 drain 每条请求的事件流，改为「主循环只读消息、
 	// 请求在独立 goroutine 处理」——这样处理中（THINKING 90s）仍能读到 {type:"cancel"} 并即时取消。
 	// ctx cancel 沿 gRPC 天然传播到 edge-orchestrator→cloud→LLM（通讯加固卡已验证预算级联），零 proto 改动。
-	var mu sync.Mutex // 保护 currentCancel/reqGen
+	var mu sync.Mutex // 保护 currentCancel/currentReqID/reqGen
 	var currentCancel context.CancelFunc
+	var currentReqID string // QA 卡 Q3：在飞那轮的 request_id，取消时要点名回给客户端
 	var reqGen uint64
 
-	cancelCurrent := func() {
+	// 取消在飞请求，返回它的 request_id（无在飞时返回空串）。
+	cancelCurrent := func() string {
 		mu.Lock()
+		rid := currentReqID
 		if currentCancel != nil {
 			currentCancel()
 			currentCancel = nil
+			currentReqID = ""
 		}
 		mu.Unlock()
+		return rid
 	}
 	defer cancelCurrent() // 连接退出时取消在飞请求
 
@@ -293,9 +306,13 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 			continue
 		}
 		if req.Type == "cancel" {
-			// THINKING 期唤醒词打断：取消在飞请求，回确认（幂等；无在飞时也回，HMI 侧忽略）
-			cancelCurrent()
-			client.send(map[string]any{"type": "cancelled"})
+			// THINKING 期唤醒词打断：取消在飞请求，回确认（幂等；无在飞时也回，HMI 侧忽略）。
+			// Q3：点名被取消的那一轮——不点名，客户端只能猜是哪个气泡该标「已打断」。
+			cancelled := map[string]any{"type": "cancelled"}
+			if rid := cancelCurrent(); rid != "" {
+				cancelled["request_id"] = rid
+			}
+			client.send(cancelled)
 			continue
 		}
 		if req.Text == "" {
@@ -318,20 +335,32 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 		// 90s：复杂任务动态开思考端到端更慢，过程区覆盖等待；快意图仍毫秒级返回。
 		ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 		mu.Lock()
+		preemptedReqID := ""
 		if currentCancel != nil {
 			currentCancel()
+			preemptedReqID = currentReqID
 		}
 		currentCancel = cancel
+		currentReqID = handleReq.RequestId
 		reqGen++
 		myGen := reqGen
 		mu.Unlock()
+		// Q3：抢占掉的那一轮**必须点名告诉客户端**。此前它无声消失——客户端的
+		// 单槽看门狗又刚被新请求清掉，那个气泡就永远转圈（报告里「需要刷新标签页」
+		// 的成因）。判据同 B3「静默回落就是要消灭的形态」。
+		if preemptedReqID != "" {
+			client.send(map[string]any{
+				"type": "cancelled", "request_id": preemptedReqID})
+		}
 
 		go func(handleReq *orchpb.HandleRequest, ctx context.Context, cancel context.CancelFunc, myGen uint64) {
+			reqID := handleReq.RequestId
 			defer func() {
 				cancel()
 				mu.Lock()
 				if reqGen == myGen { // 仅当仍是当前请求时清空（避免误清后来者）
 					currentCancel = nil
+					currentReqID = ""
 				}
 				mu.Unlock()
 			}()
@@ -339,7 +368,8 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 			if err != nil {
 				// 取消导致的错误（context.Canceled）吞掉，不回发 error（HMI 已收 cancelled）
 				if ctx.Err() == nil {
-					client.send(map[string]any{"type": "error", "message": err.Error()})
+					client.send(stampRequestID(
+						map[string]any{"type": "error", "message": err.Error()}, reqID))
 				}
 				return
 			}
@@ -349,10 +379,19 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 					// 晚到的 grpc CANCELLED（ctx 已取消）不回发 error；正常 EOF/错误照旧收尾
 					return
 				}
-				client.send(eventToMap(ev))
+				client.send(stampRequestID(eventToMap(ev), reqID))
 			}
 		}(handleReq, ctx, cancel, myGen)
 	}
+}
+
+// QA 卡 Q3：把本轮 request_id 盖在每一帧上。空 id（旧 HMI 不发）不盖——
+// 客户端见不到 id 时回落 FIFO，滚动升级窗口里不黑屏。
+func stampRequestID(frame map[string]any, reqID string) map[string]any {
+	if reqID != "" && frame != nil {
+		frame["request_id"] = reqID
+	}
+	return frame
 }
 
 func eventToMap(ev *orchpb.HandleEvent) map[string]any {
@@ -382,6 +421,14 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		// M2 P2：会话级情绪信号（空=中性不发键，HMI 按缺省处理）
 		if f.Emotion != "" {
 			result["emotion"] = f.Emotion
+		}
+		// Q1-B：挂起寻址键（只有挂起 final 非空——不发恒空键）
+		if f.OperationId != "" {
+			result["operation_id"] = f.OperationId
+		}
+		// Q1-C：本轮关掉的挂起（HMI 据此撤确认条）
+		if len(f.ClosedOperationIds) > 0 {
+			result["closed_operation_ids"] = f.ClosedOperationIds
 		}
 		if f.UiCard != nil {
 			result["ui_card"] = f.UiCard.AsMap()

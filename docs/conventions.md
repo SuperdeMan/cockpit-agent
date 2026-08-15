@@ -1032,3 +1032,48 @@ condition 列），落库的只是普通定时提醒；治理器信封的 `condi
 放晴照响）系统无从修正。这是 v1 的真实边界，不是 bug；把它当「触发时求值」承诺才是 bug。
 若未来要做触发时复核，落点是 fired 信封带天气类 conditions + `proactive/evaluate.py`
 扩键，不是在 reminder 里长出第二套条件求值。
+
+### 9.19 挂起操作寻址契约（`operation_id` / `closed_operation_ids`，QA Q1-B/C，2026-08-16）
+
+**问题**：确认此前没有「指向哪一件事」的表达能力。HMI 侧是一个全局布尔 `awaitConfirm`
+加一句「确认」二字，谁最后置位就打给谁（I-013）；云侧是一个 `SessionState` 单槽，
+`_suspend` 覆盖旧挂起（I-051/I-037①）。两边都在**猜**。
+
+**契约**（三个字段，各只表达一件事）：
+
+| 字段 | 方向 | 语义 |
+|---|---|---|
+| `FinalResult.operation_id` | 云→端 | 本条 final 挂起的操作 id。**仅挂起轮非空**。 |
+| `HandleRequest.operation_id` | 端→云 | 这一下确认/取消指向哪一条挂起。**空 = 语音兜底/旧客户端**，按「最近一条」寻址。 |
+| `FinalResult.closed_operation_ids` | 云→端 | 本轮**关掉**了哪几条（完成/取消/LRU 淘汰）。HMI 据此撤确认条。 |
+
+四条不变量：
+
+1. **对不上就诚实拒绝**（`orchestrator/cloud/engine.py`）：带了寻址键却找不到那条挂起 →
+   回「这条确认对应的操作已经不在了」，**既不执行也不清掉**任何还活着的挂起。
+   静默回落到「最近一条」正是 I-013 那个缺陷本身（同 B3「认不出就用默认值」）。
+2. **它不是授权凭据**。恢复执行仍以本轮已认证 `user_id` 为准，`SessionStore` 仍按 owner
+   分键——寻址键只回答「哪一件」，不回答「是不是你」。
+3. **关闭以服务端为准**。HMI 不得自行推断某条挂起是否被本轮消费；`closed_operation_ids`
+   是唯一权威（HMI 猜错的后果是一条已作废的确认条继续挂在屏幕上等人点）。
+4. **挂起表容量 3、LRU 淘汰，淘汰必须有话术**（`session._PENDING_CAPACITY`）。
+   `save_pending()` 回传被淘汰的那条正是为此；静默丢弃是「认不出就用默认值」的确认版。
+   TTL **逐条**存（`SessionState.expires_at`）——多条共用一个 Redis key 时，
+   TTL 若只挂在 key 上，再存一条就等于给旧条续命，「挂起窗口以首次挂起时刻起算」会被架空。
+
+**取消判定**同批收敛到 `orchestrator/cloud/pending_cancel.py`：一份词表两条语境规则
+（有挂起=STRONG 子串+WEAK 整句+复合余量续处理；无挂起=只认整句）。此前
+`wait_confirm` 与 `wait_slot` 各判各的，「取消刚才解锁」6 字在前者判不出取消（I-046）。
+
+### 9.20 WS 帧的请求归属（`request_id`，QA Q3，2026-08-16）
+
+HMI 每轮 dispatch 生成 `request_id` 随 WS 帧上行（`gateway/edge` 转成
+`HandleRequest.request_id`），网关把它**盖在该轮每一帧上**（含 `error` 与 `cancelled`）。
+
+- **带了 id 却对不上 = 丢帧**，客户端不回落 FIFO——对不上只有一种解释：那轮已结算过
+  （超时/打断/错误），挂到当前轮就是「响应错挂」（I-048/I-053①/I-022）。
+- **没带 id 才回落 FIFO**：旧网关与主动推送不带 id，这条保证滚动升级窗口不黑屏。
+- **抢占要点名**：新请求取消在飞那轮时，网关必须回
+  `{"type":"cancelled","request_id":<被抢占的那轮>}`。此前它无声消失，而客户端的
+  单槽看门狗刚被新请求清掉 → 那个气泡永远转圈。
+- **看门狗每轮一只**（`hmi/src/App.tsx` 的 `watchdogsRef: Map`）。

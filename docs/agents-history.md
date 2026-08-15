@@ -3088,3 +3088,77 @@ SF3 0–1/3（方差带）。**SF3 剩余失败全是澄清轮，原始危险症
   最终定式：**话术层只能用形态判据**（有无动作 / 是否问句 / 是否逐字重复上一轮 / 动作名），
   为此给探针加了 `differs_from_turn` 原语。另配一条：**单次取样不能当基线**——
   SF4 单次 PASS、`--repeat 3` 实测 0/3，差一点把稳定红降级成方差面。
+
+## §42 2026-08-16 探索式 QA 阶段 2（T1 共享状态机）：Q1 A→B→C + Q3 + Q4
+
+接手入口与卡：`AGENTS.md` §4.1 ①、
+[`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md`](design/2026-08-15-qa-exploratory-root-cause-cards.md)
+（§4「阶段 2 实施记录」是逐项落点与断言表，本节只留流水与判据）。
+契约登记 `docs/conventions.md` **§9.19**（挂起寻址）/ **§9.20**（WS 帧归属）。
+
+### §42.1 Q1-A 取消判定收敛（I-046）
+
+`wait_confirm` 走「词占据整句」（`len(t)<=len(k)+3`）、`wait_slot` 走子串+复合余量
+——**同一件事的两条分支，§37 那批只修了后者**。于是「取消刚才解锁」6 字判不出取消，
+挂起一直活着（用户报告：第三次单独说「取消」才清除）。
+
+收敛到 `orchestrator/cloud/pending_cancel.py`，判定移到两条分支**分岔之前**。
+
+> **判据（新）**：**「收敛」不是把一条抄给另一条，是把两条的并集写成一份。**
+> 直接让 `wait_confirm` 复用 `wait_slot` 那套会换一个洞——`不订/不付/先不/不了`
+> 只在前者词表里。按歧义度分 STRONG（子串安全）/ WEAK（只在占据整句时算）两层：
+> 那条整句规则**不是删掉，是作用域收窄到它真正该防的那半**。
+
+### §42.2 Q1-B 寻址键 + Q1-C 挂起表（I-013/I-051/I-037①）
+
+顺序按卡走，没有换：B 是 C 的寻址键，先做 C 会得到「有三个槽但仍然靠猜」的状态机。
+
+- B：proto 两个字段 + `SessionState.operation_id` + `load(operation_id=…)` 对不上返回
+  None + engine 诚实拒绝（**既不执行也不清活挂起**）+ 网关/HMI 双向透传。
+- C：`_PENDING_CAPACITY=3`、`save_pending()` 回传淘汰项（**淘汰要有话术**）、
+  `clear(operation_id=…)` 只清一条、`expires_at` **逐条**限龄。
+  HMI 侧 `pendingOps.mjs` 台账 + 确认条按 id 渲染 ⇒ **可同屏多条**。
+
+> **判据（新）**：`closed_operation_ids` 是被逼出来的第三个字段。HMI 拿到一条普通
+> final 无从判断「刚才那条挂起是不是被这轮消费掉了」，猜错就是一条已作废的确认条
+> 继续挂在屏幕上等人点。**服务端知道，那就让服务端说**——同「系统持有的事实
+> 绝不让 LLM 答」的形态，只是这次的消费方是前端不是模型。
+
+> **判据（新）**：多条挂起共用一个 Redis key 时，**TTL 只挂在 key 上 = 再存一条就给
+> 旧条续命**，「挂起窗口以首次挂起时刻起算」那条纪律会被无声架空。截止时刻必须逐条存。
+
+### §42.3 Q3 响应归属 / Q4 位置闸（都在客户端 JS 里，只能走 CDP 车道）
+
+- Q3：`request_id` 随帧上行、网关盖在**每一帧**上；`requestRouting.mjs` 登记簿
+  （**带了 id 却对不上 = 丢帧，不回落 FIFO**）；看门狗 `Map` 每轮一只；
+  网关抢占旧轮时**点名**回 `cancelled`（此前无声消失 + 单槽看门狗刚被清 = 永久转圈）。
+- Q4：`location.mjs` 拆 ORIGIN（要出发地，显式目的地不豁免）/ ANCHOR（有显式地点即豁免）
+  两族 + 否定邻接判据（≤4 字间隔，「别忘了提醒我到公司充电站补电」不误伤）；
+  裸 `充电`/`续航` 移出词表。**刻意不加第二份「车控对象白名单」**——B4 那条判据。
+
+### §42.4 读数
+
+- 后端全量 `python -m pytest --import-mode=importlib`：**5739 passed / 14 skipped 零红**
+  （26m34s；较阶段 1 的 5706 净 **+33**，逐条点号：`test_pending_cancel.py` 11 +
+  `test_pending_operation_id.py` 7 + `test_pending_table.py` 12 +
+  `test_engine_confirm.py` +3。`orchestrator/cloud` 套件 811→**844** 独立实测对得上）。
+  > ⚠ 本节初稿写的是「5745 / +39」——**那是算出来的不是测出来的，而且算错了**。
+  > §4.3 有「净增量要跟同一个 SHA 比」，但漏了更前面的一句：**基线数只能来自一次
+  > 真实跑批**。写一个还没测到的数进文档，下一个人没有任何办法看出它是预测。
+- HMI 单测 `node --test src/*.test.mjs`：**279 passed**（新增 `pendingOps` 8 +
+  `requestRouting` 8 + `location` 5）。
+- Go：`go build ./gateway/... && go vet && go test ./gateway/...` 四包全 ok。
+- QA 迷你集 confirm 组 `--repeat 3`：**18/18**（CF1 red→3/3、CF5 red→3/3、
+  CF6 新增拒绝路径 3/3）。
+- CDP `C11/C12/C13` × 3 轮：**9/9**。
+
+### §42.5 两处自伤（都当场抓到）
+
+1. **尺子写错**：Q4 首版加了一条「周末去杭州两天 → 需要定位」的断言，实测 false——
+   **收窄前也是 false**（旧词表同样不含裸「去」）。那是我凭空加的一条**扩大**闸的要求，
+   与 Q4 的方向相反。改尺子并在用例里留痕（§4.3「尺子写错必须改」）。
+2. **探针不可靠会伪装成用例失败**：CDP 驱动 `connect()` 在文档还停在 `about:blank`
+   时读 `localStorage` 抛 SecurityError，整趟一条用例没跑就退出。三轮里烧掉过一整轮，
+   输出长得像「用例挂了」。修在驱动里（等真 origin，且探针自己吞异常——
+   `eval` 遇 exceptionDetails 是直接 rethrow 的，不 try 的话 `waitFor` 第一轮就崩、
+   退化成没有重试）。**探针本身不可靠时，它给的每个读数都要打折。**

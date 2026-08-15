@@ -27,6 +27,11 @@ message HandleRequest {
   // Runner 签发的短时记忆抽取能力。仅 signed E2E 链路可携带；它不是业务
   // session，也不得塞入 meta 或下发 Agent。
   string e2e_memory_capability = 8;
+  // 本轮确认/取消**指向哪一个挂起操作**（QA 卡 Q1-B）。由 FinalResult 下发、
+  // HMI 原样回传。空 = 语音兜底/旧客户端，编排按「最近一条挂起」寻址；
+  // 非空但对不上任何挂起 = 诚实拒绝，**绝不静默打给当前挂起**
+  // （I-013：全局确认命中旧请求）。它不是授权凭据，只是寻址键。
+  string operation_id = 9;
 }
 
 message HandleEvent {
@@ -59,4 +64,12 @@ message FinalResult {
   // 刻意不进记忆层——短 TTL + 不入画像的东西是会话态不是记忆；而 M1b 已就绪的
   // 情感 TTS 参数面缺的正是「当前这轮」的情绪。空串 = neutral（fail-open）。
   string emotion = 6;   // neutral | happy | tired | urgent | frustrated
+  // 本条 final 挂起的操作 id（QA 卡 Q1-B）。仅 need_confirm/待补槽时非空。
+  // HMI 把它挂在确认条上，用户点确认/取消时原样回传——多条挂起并存
+  // （Q1-C 小容量挂起表）时，这是唯一能把「这一下」定位到某条挂起的东西。
+  string operation_id = 7;
+  // 本轮**关掉**了哪几条挂起（完成/取消/LRU 淘汰）。HMI 据此撤掉对应确认条。
+  // 由服务端权威给出：HMI 自己猜「这一轮是不是把某条挂起消费掉了」必然猜错，
+  // 而猜错的后果是一条已经作废的确认条继续挂在屏幕上等人点（I-017 同族）。
+  repeated string closed_operation_ids = 8;
 }

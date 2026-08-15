@@ -12,6 +12,10 @@ export type Msg = {
   text: string
   actions?: Action[]
   needConfirm?: boolean
+  // QA 卡 Q1-B/C：这条待确认对应的挂起 id（后端 final 下发）。点确认/取消时原样回传，
+  // 后端据它定位是哪一条挂起——**没有它，多条挂起并存时「这一下」只能靠猜**
+  // （I-013 全局确认命中旧请求）。空 = 位置授权征询等纯前端确认，不上行。
+  operationId?: string
   followUp?: string
   pending?: boolean // 助手"思考中"占位（开放域慢响应时立刻给反馈）
   streaming?: boolean // 正在流式接收 speech_delta

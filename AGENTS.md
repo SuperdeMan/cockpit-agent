@@ -66,8 +66,11 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5706 passed / 14 skipped 零红**（2026-08-15 QA 批阶段 1 后实测，35m23s）。
-较双档复跑批的 5668 净 **+38**，逐条点号：`agents/_sdk` 7（新增 `test_safety_signal.py`
+**5739 passed / 14 skipped 零红**（2026-08-16 QA 批阶段 2 后实测，26m34s）。
+较阶段 1 的 5706 净 **+33**，逐条点号：`test_pending_cancel.py` 11 +
+`test_pending_operation_id.py` 7 + `test_pending_table.py` 12 + `test_engine_confirm.py` 3；
+证据 history **§42**。⚠ 那一节初稿写过一个**没测就写的** 5745——基线数只能来自真实跑批。
+前一跳 5706（+38，QA 阶段 1）逐条点号：`agents/_sdk` 7（新增 `test_safety_signal.py`
 ——**不该命中的用例占一半**）+ manual-rag 9 + road-safety 7 + chitchat 5 + parking-payment 3
 + `orchestrator/cloud` 7（新增 `test_safety_focus.py`）；证据 history **§41**。
 ⚠ **35m23s 不是回归变慢**：上一轮那 192 条假红是**快速失败**，这轮它们真的要跑
@@ -155,7 +158,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 全量基线见本节顶部（**5706**，2026-08-15 QA 批阶段 1 后）；分套件最近实测：`orchestrator/cloud` **804** / navigation **132** / trip **85** / mcp-bridge **433** / memory **229** / nearby **87** / `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15），edge **579**（2026-08-11 未重测，history §38.1）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**5739**，2026-08-16 QA 批阶段 2 后）；分套件最近实测：`orchestrator/cloud` **844**（2026-08-16，Q1 三批 +33）/ navigation **132** / trip **85** / mcp-bridge **433** / memory **229** / nearby **87** / `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15），edge **579**（2026-08-11 未重测，history §38.1）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -177,12 +180,12 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 > （2026-08-15 洁癖整理把 journeys 两红 / 接地卡 R1 二期 / EVA 二轮六批 / 支付四批 /
 > 商户七批五段完成态收走，归档索引见 history **§40.1**）。
 
-**① 探索式真实用户 QA 轮 58 个问题：Q1–Q13 立卡，阶段 0/1 已完成，阶段 2–4 待做**
-（2026-08-15。报告
+**① 探索式真实用户 QA 轮 58 个问题：Q1–Q13 立卡，阶段 0/1/2 已完成，阶段 3–4 待做**
+（2026-08-15 立卡 / 2026-08-16 阶段 2。报告
 [`…exploratory-real-user-qa-deepseek-minimax.md`](docs/reviews/2026-08-15-exploratory-real-user-qa-deepseek-minimax.md)、
 方案与全部读数
 [`…qa-exploratory-root-cause-cards.md`](docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)、
-流水 history **§41**。）
+流水 history **§41/§42**。）
 
 接手先读卡的 **§1**（四处与报告定性不同的重判）与 **§4**（阶段计划），
 **别按报告的 T0/T1/T2 直接开工**——报告按症状分档，会把同一个根因拆到三个档里。
@@ -191,8 +194,8 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 |---|---|---|
 | 0 取证与止血 | ✅ 完成 | I-021 定性推翻（QA 轮零 create-order）、迷你集 `scripts/probe_qa_regression.py`、方法论进 `test/README.md` §5.3.1、清洗 dry-run 10 条 |
 | 1 T0 安全与不可逆 | ✅ 完成 | manual-rag 零命中短路 + 来源类型 / 安全分级不进 LLM / `Focus.safety_alert`（契约 `conventions.md` §9.1）/ road-safety `safety.driver_state` / chitchat 兜底闸 / 支付字段 fail-closed。真栈 SF1·2·4·5 **3/3**，SF3 0–1/3（失败轮全是澄清，危险症状零复现） |
-| **2 T1 共享状态机** | ⏳ **下一步** | **Q1** 取消判据收敛唯一实现 → 确认帧带 `operation_id` → 单槽改小容量挂起表（顺序不可换，B 是 C 的寻址键）；**Q3** result 帧带 `request_id` + 看门狗每轮一只；**Q4** 位置前置闸收窄（可与 Q1/Q3 并行） |
-| 3 T2 语义与真实性 | ⏳ | **Q13 排最前**（两个分类出口收敛，是 Q7/Q8 的上游）→ Q2 候选集升格 → Q7 极性/顺序/省略 → Q5 记忆写入闸 → Q12 槽值保真 → Q6 执行账本 → Q10 查单绑会话；**清洗 `--apply` 排在 Q5/Q11 之后** |
+| 2 T1 共享状态机 | ✅ 完成 | **Q1** 取消判据收敛 `pending_cancel.py` → 确认帧带 `operation_id` → 小容量挂起表（≤3，LRU 有话术）+ HMI 同屏多条确认条；**Q3** 帧带 `request_id`、对不上即丢帧、看门狗每轮一只、抢占点名回 cancelled；**Q4** 位置闸拆 ORIGIN/ANCHOR + 否定邻接。契约 `conventions.md` §9.19/§9.20。真栈：confirm 组 **18/18**、CDP C11-13 × 3 轮 **9/9** |
+| **3 T2 语义与真实性** | ⏳ **下一步** | **Q13 排最前**（两个分类出口收敛，是 Q7/Q8 的上游）→ Q2 候选集升格 → Q7 极性/顺序/省略 → Q5 记忆写入闸 → Q12 槽值保真 → Q6 执行账本 → Q10 查单绑会话；**清洗 `--apply` 排在 Q5/Q11 之后** |
 | 4 T3 能力面与长尾 | ⏳ | Q8 补能力 / Q11 提醒准入 / P2 长尾 |
 
 **仍然成立的约束（不是流水，别收走）**：

@@ -159,6 +159,15 @@ class PlanContext:
     e2e_memory_capability: str = ""
     granted_permissions: list[str] = field(default_factory=list)
     is_confirmation: bool = False
+    # 本轮确认/取消指向哪一条挂起（QA 卡 Q1-B）。空 = 语音兜底/旧客户端，
+    # 按「最近一条挂起」寻址；非空对不上 = 诚实拒绝。
+    operation_id: str = ""
+    # ── 以下两项是**本轮 scratch**（不来自请求、不下发 Agent、不持久化）──
+    # 本轮真正续接上的那条挂起（Q1-C）：收口时只清它，其余挂起原样保留。
+    pending_operation_id: str = ""
+    # 本轮结束/淘汰掉的挂起 id，随 final 回传 HMI 撤掉对应确认条。
+    # **由服务端权威给出**——HMI 猜「这一轮是不是把某条挂起消费掉了」必然猜错。
+    closed_operation_ids: list[str] = field(default_factory=list)
     trace_id: str = ""
     raw_text: str = ""  # 用户原始话术，透传给 Agent（供 fallback 槽位提取）
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
@@ -186,6 +195,10 @@ class PlanContext:
 class SessionState:
     """多轮挂起态（待确认/待补槽），Redis 持久。"""
     phase: str                    # "wait_confirm" | "wait_slot"
+    # 本条挂起的寻址键（QA 卡 Q1-B）。随 FinalResult 下发、HMI 原样回传，
+    # 挂起表（Q1-C）按它定位。**不是授权凭据**——恢复执行仍以本轮已认证
+    # user_id 为准，SessionStore 也仍按 owner 分键。
+    operation_id: str = ""
     # owner 只用于 SessionStore 的隐私索引/删除边界；恢复执行仍以本轮
     # PlanContext 的已认证 user_id 为准，绝不把持久化字段当成授权。
     owner_user_id: str = ""
@@ -194,6 +207,10 @@ class SessionState:
     missing_slots: list[str] = field(default_factory=list)
     completed_results: dict = field(default_factory=dict)  # step_id -> StepResult dict
     ttl_seconds: int = 300   # 确认/补槽挂起 TTL：行程等慢流程每轮数十秒+用户阅读，90s 太短致确认过期
+    # 本条挂起的绝对截止时刻（epoch 秒，SessionStore 首次落盘时算）。挂起表（Q1-C）
+    # 里多条共用一个 Redis key，**TTL 若只挂在 key 上，再存一条就等于给旧条续命**
+    # ——「挂起窗口以首次挂起时刻起算、插话不无限续命」那条纪律会被无声架空。
+    expires_at: float = 0.0
 
 
 class CyclicPlan(Exception):

@@ -89,6 +89,14 @@ export class Cdp {
     } catch { /* 旧内核无此方法则靠 override 兜底 */ }
     await this.send('Emulation.setGeolocationOverride',
       { latitude: LATITUDE, longitude: LONGITUDE, accuracy: 10 })
+    // ⚠ `pageTarget()` 认的是 target 的 url，而**文档可能还停在 about:blank**——
+    // 那个 origin 上碰 localStorage 直接抛 SecurityError，整趟 CDP 在 connect 就崩，
+    // 一条用例都没跑就退出（读起来像用例失败，其实是驱动没就绪）。等真 origin 再写。
+    // 探针自己吞异常：opaque origin 上**读** localStorage 就抛，而 `eval` 遇到
+    // exceptionDetails 是直接 rethrow 的，不 try 的话 waitFor 第一轮就崩、退化成没有重试。
+    await this.waitFor(
+      `(() => { try { return location.origin !== 'null' && !!localStorage } catch { return false } })()`,
+      15000, '文档 origin 就绪')
     await this.eval(`(() => {
       const k = 'cockpit.settings.v1'
       const cur = JSON.parse(localStorage.getItem(k) || '{}')

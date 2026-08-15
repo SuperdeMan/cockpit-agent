@@ -56,6 +56,11 @@ class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
                     need_confirm=event.get("need_confirm", False),
                     actions=actions,
                     emotion=event.get("emotion", "") or "",
+                    # Q1-B 挂起寻址键（只有挂起 final 非空）
+                    operation_id=event.get("operation_id", "") or "",
+                    # Q1-C 本轮关掉的挂起（HMI 据此撤确认条）
+                    closed_operation_ids=list(
+                        event.get("closed_operation_ids") or []),
                 )
                 # 透传 ui_card（Agent 返回的结构化卡片数据给 HMI）
                 ui_card = event.get("ui_card")

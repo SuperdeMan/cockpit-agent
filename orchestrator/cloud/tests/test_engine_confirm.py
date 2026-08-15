@@ -123,10 +123,10 @@ def _make_engine() -> tuple[PlannerEngine, _Spy, SessionStore]:
 
 
 def _req(text: str, session_id: str = "sess-1", is_confirmation: bool = False,
-         user_id: str = "u1"):
+         user_id: str = "u1", operation_id: str = ""):
     return SimpleNamespace(
         text=text, session_id=session_id, request_id="r1",
-        is_confirmation=is_confirmation,
+        is_confirmation=is_confirmation, operation_id=operation_id,
         context=SimpleNamespace(user_id=user_id, vehicle_id="v1"),
     )
 
@@ -366,11 +366,16 @@ def test_interjection_cancel_still_cancels():
     assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
 
 
-def test_new_suspension_overwrites_old_pending():
-    """插话轮自身产生新挂起 → 单槽覆盖旧挂起（确认条 UI 只有一个，最新语义）。"""
+def test_unaddressed_confirm_resolves_to_the_newest_pending():
+    """无寻址键的「确认」落到**最近一条**挂起（语音兜底语义）。
+
+    ⚠ 这条测试原名 `test_new_suspension_overwrites_old_pending`，断言的是
+    「单槽覆盖旧挂起」。Q1-C 之后旧挂起**不再被覆盖**（`test_pending_table`
+    里有它的正面断言），这里只剩「不带 operation_id 时打给谁」这一件事。
+    """
     engine, spy, session = _make_engine()
     _run(engine, _req("找家川菜馆订今晚7点两位"))
-    _run(engine, _req("再找一家川菜馆订明晚8点三位"))    # 新规划 → 新 NEED_CONFIRM 覆盖
+    _run(engine, _req("再找一家川菜馆订明晚8点三位"))
     state = asyncio.run(session.load("sess-1", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_confirm"
     events = _run(engine, _req("确认", is_confirmation=True))
@@ -521,6 +526,44 @@ def test_slot_pending_compound_cancel_continues_as_fresh_request():
     final = events[-1]
     assert "已为您取消" not in (final.get("speech") or "")   # 不是取消直回
     assert spy.count("nearby.search") == 1                   # 余句真的被执行了
+
+
+def test_confirm_pending_referenced_cancel_clears():
+    """QA I-046（Q1-A）：`wait_confirm` 挂起中说「取消刚才的预订」——6 字 > 2+3，
+    旧「词占据整句」判据**判不出取消**，落进「插话保留挂起」，pending 一直活着
+    （用户报告：第三次单独说「取消」才清除）。收敛到唯一判据后立即取消。"""
+    engine, spy, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is not None
+
+    events = _run(engine, _req("取消刚才的预订"))
+
+    assert "取消" in events[-1]["speech"]
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
+
+
+def test_confirm_pending_compound_cancel_continues_as_fresh_request():
+    """Q1-A 的另一半：`wait_confirm` 也要有 `wait_slot` 的复合余量续处理，
+    否则收敛只搬走了一半（§37 那批的产物在这条分支上从来没生效过）。"""
+    engine, spy, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+
+    events = _run(engine, _req("算了不订了，帮我看看附近有什么景点"))
+
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
+    assert "已为您取消" not in (events[-1].get("speech") or "")
+    assert spy.count("nearby.search") == 2      # 首轮 1 次 + 余句真的被执行了
+
+
+def test_confirm_pending_weak_negation_word_still_cancels():
+    """收敛不得换一个洞：`不订/不付/先不` 只在旧 `wait_confirm` 词表里，
+    直接改用 `wait_slot` 那套会把它们丢掉。"""
+    engine, _, session = _make_engine_interject()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    events = _run(engine, _req("先不"))
+    assert "取消" in events[-1]["speech"]
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
 
 
 def test_slot_pending_pure_cancel_unchanged():

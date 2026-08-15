@@ -26,6 +26,11 @@ _OWNER_FENCE_TTL = 300
 _DELETING = "deleting"
 _DELETED = "deleted"
 _DEFAULT_TTL = 300  # 秒（确认/补槽挂起态；行程等慢流程每轮数十秒+用户阅读，90s 太短致确认过期）
+# 小容量挂起表（QA 卡 Q1-C）：单槽 `_suspend` 覆盖旧挂起的语义，注释里的理由是
+# 「确认条 UI 也只有一个」——**两个并行任务下就不成立**（I-051 商户补槽跨域劫持、
+# I-037① 无订单却进退款确认）。上限刻意小：挂起是**用户脑子里记得的东西**，
+# 三条已经是人能同时惦记的上限，再多只是把「猜错哪一条」换成「猜错更多条」。
+_PENDING_CAPACITY = 3
 # 焦点态：与挂起态分开存（每轮持久、完成不清，供跨轮指代消解）。TTL 比挂起态长。
 _FOCUS_PREFIX = "planner:focus:"
 _FOCUS_TTL = 300  # 秒
@@ -134,67 +139,154 @@ class SessionStore:
         return False
 
     async def load(self, session_id: str, *,
-                   owner_user_id: str = "") -> SessionState | None:
-        """加载挂起的会话状态。TTL 过期返回 None。"""
+                   owner_user_id: str = "",
+                   operation_id: str = "") -> SessionState | None:
+        """加载挂起的会话状态。TTL 过期返回 None。
+
+        `operation_id` 非空 = 按寻址键定位（QA 卡 Q1-B）：**对不上就返回 None，
+        绝不回落到「最近一条」**——静默回落正是 I-013「全局确认命中旧请求」
+        那个缺陷本身（同 B3「认不出就用默认值」）。
+        """
         owner = str(owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
             return None
+        entries = await self.load_all(session_id, owner_user_id=owner)
+        wanted = str(operation_id or "").strip()
+        if wanted:
+            return next(
+                (s for s in entries if s.operation_id == wanted), None)
+        return entries[-1] if entries else None
+
+    @staticmethod
+    def _decode(raw, owner: str) -> list[SessionState]:
+        """反序列化挂起表，顺序 = 挂起先后（最后一条最新）。
+
+        兼容上一版部署留下的**单对象**负载（滚动升级窗口里同一个 Redis 会同时
+        存在两种形状）——认不出的一律当空，绝不半解析出一个残缺状态。
+        """
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        items = data if isinstance(data, list) else [data]
+        out: list[SessionState] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("owner_user_id") or "").strip() != owner:
+                continue
+            try:
+                out.append(SessionState(**item))
+            except TypeError:
+                continue        # 未知字段 = 更新的写入方，这一条读不了就跳过
+        return out
+
+    @staticmethod
+    def _live(entries: list[SessionState]) -> list[SessionState]:
+        """逐条按自己的截止时刻过期（0 = 旧数据，不判过期，交给 key TTL）。"""
+        now = time.time()
+        return [s for s in entries
+                if not s.expires_at or s.expires_at > now]
+
+    async def load_all(self, session_id: str, *,
+                       owner_user_id: str = "") -> list[SessionState]:
+        """本会话全部未过期挂起，顺序 = 挂起先后（最后一条最新）。"""
+        owner = str(owner_user_id or "").strip()
+        if not owner or not str(session_id or "").strip():
+            return []
         r = await self._redis()
         if self._url and r is None:
-            return None
+            return []
         key = self._session_key(owner, session_id)
         if r:
             raw = await r.eval(
                 _LOAD_OWNER_LUA, 2, key, self._owner_fence_key(owner))
-            if raw:
-                try:
-                    data = json.loads(raw)
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    return None
-                if str(data.get("owner_user_id") or "").strip() != owner:
-                    return None
-                return SessionState(**data)
-            return None
+            return self._live(self._decode(raw, owner)) if raw else []
 
         # 内存兜底
         if self._memory_tombstoned(owner):
-            return None
+            return []
         entry = self._mem.get(key)
-        if entry:
-            state, expire_ts = entry
-            if (time.time() < expire_ts
-                    and str(state.owner_user_id or "").strip() == owner):
-                return state
+        if not entry:
+            return []
+        entries, expire_ts = entry
+        if time.time() >= expire_ts:
             del self._mem[key]
-        return None
+            return []
+        return self._live([s for s in entries
+                           if str(s.owner_user_id or "").strip() == owner])
 
     async def save(self, session_id: str, state: SessionState) -> bool:
         """Save owner-bound pending state, or fail closed."""
+        ok, _evicted = await self.save_pending(session_id, state)
+        return ok
+
+    async def save_pending(
+            self, session_id: str,
+            state: SessionState) -> tuple[bool, SessionState | None]:
+        """存一条挂起，返回 `(是否成功, 被 LRU 淘汰的那条或 None)`。
+
+        **淘汰必须回传**：调用方要拿它对用户说一句「刚才那条 X 已过期」——
+        静默丢弃就是 B3 那条「认不出就用默认值」的确认版（卡 §3-Q1 的 ⚠）。
+        同 `operation_id` 视为**替换**（补槽再次追问不占新槽位）。
+        """
         owner = str(state.owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
-            return False
+            return False, None
         r = await self._redis()
         if self._url and r is None:
-            return False
+            return False, None
         key = self._session_key(owner, session_id)
         ttl = state.ttl_seconds or _DEFAULT_TTL
-        data = json.dumps(asdict(state), ensure_ascii=False, default=str)
+        if not state.expires_at:
+            state.expires_at = time.time() + ttl
 
+        entries = await self.load_all(session_id, owner_user_id=owner)
+        entries = [s for s in entries
+                   if s.operation_id != state.operation_id]
+        entries.append(state)
+        evicted: SessionState | None = None
+        while len(entries) > _PENDING_CAPACITY:
+            evicted = entries.pop(0)
+
+        if not await self._write(r, key, owner, entries):
+            return False, None
+        return True, evicted
+
+    async def _write(self, r, key: str, owner: str,
+                     entries: list[SessionState]) -> bool:
+        """整表落盘。key TTL 取各条剩余寿命的最大值（逐条过期在读侧兜住）。"""
+        if not entries:
+            if r:
+                pipe = r.pipeline(transaction=True)
+                pipe.delete(key)
+                pipe.srem(self._owner_key(owner), key)
+                await pipe.execute()
+            else:
+                self._mem.pop(key, None)
+            return True
+        now = time.time()
+        ttl = max(int(s.expires_at - now) for s in entries)
+        ttl = max(ttl, 1)
         if r:
-            owner_key = self._owner_key(owner)
+            data = json.dumps([asdict(s) for s in entries],
+                              ensure_ascii=False, default=str)
             saved = await r.eval(
-                _SAVE_OWNER_LUA, 3, key, owner_key,
+                _SAVE_OWNER_LUA, 3, key, self._owner_key(owner),
                 self._owner_fence_key(owner), data, ttl)
-            if int(saved or 0) != 1:
-                return False
-        else:
-            if self._memory_tombstoned(owner):
-                return False
-            self._mem[key] = (state, time.time() + ttl)
+            return int(saved or 0) == 1
+        if self._memory_tombstoned(owner):
+            return False
+        self._mem[key] = (entries, now + ttl)
         return True
 
-    async def clear(self, session_id: str, *, owner_user_id: str = "") -> bool:
-        """Clear this owner's pending state without clearing focus."""
+    async def clear(self, session_id: str, *, owner_user_id: str = "",
+                    operation_id: str | None = None) -> bool:
+        """Clear this owner's pending state without clearing focus.
+
+        `operation_id=None` = 清空整张挂起表（隐私删除/整会话作废）；
+        给了 id = **只清那一条**，其余挂起原样保留（Q1-C）。
+        """
         owner = str(owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
             return False
@@ -202,14 +294,20 @@ class SessionStore:
         if self._url and r is None:
             return False
         key = self._session_key(owner, session_id)
-        if r:
-            pipe = r.pipeline(transaction=True)
-            pipe.delete(key)
-            pipe.srem(self._owner_key(owner), key)
-            result = await pipe.execute()
-            return bool(result and int(result[0] or 0))
-        else:
+        if operation_id is None:
+            if r:
+                pipe = r.pipeline(transaction=True)
+                pipe.delete(key)
+                pipe.srem(self._owner_key(owner), key)
+                result = await pipe.execute()
+                return bool(result and int(result[0] or 0))
             return self._mem.pop(key, None) is not None
+
+        entries = await self.load_all(session_id, owner_user_id=owner)
+        kept = [s for s in entries if s.operation_id != operation_id]
+        if len(kept) == len(entries):
+            return False
+        return await self._write(r, key, owner, kept)
 
     @staticmethod
     def _owner_key(user_id: str) -> str:
@@ -243,10 +341,19 @@ class SessionStore:
                         continue
                     try:
                         payload = json.loads(raw)
-                        owner = str(payload.get(owner_field) or "").strip()
+                        # 挂起表是**一个 list**（Q1-C）；focus 仍是单对象，旧部署
+                        # 留下的挂起也可能是单对象。三种形状都要能归属到 owner，
+                        # 否则隐私删除会因为「证据不完整」永远失败。
+                        items = (payload if isinstance(payload, list)
+                                 else [payload])
+                        owners = {str(it.get(owner_field) or "").strip()
+                                  for it in items}
                     except (AttributeError, TypeError, ValueError,
                             json.JSONDecodeError):
                         return False, [], [], max_ttl
+                    if not items or len(owners) != 1:
+                        return False, [], [], max_ttl   # 混装 owner = 归属不清
+                    owner = owners.pop()
                     if not owner:
                         return False, [], [], max_ttl
                     if owner == user_id:
@@ -270,8 +377,11 @@ class SessionStore:
         # request that started before deletion could re-save a 600s record once
         # a fixed 300s tombstone expires.
         memory_fence_expires = time.time() + _OWNER_FENCE_TTL
-        for key, (state, expires) in list(self._mem.items()):
-            if str(state.owner_user_id or "").strip() == user_id:
+        for key, (entries, expires) in list(self._mem.items()):
+            # 一个 key 下是一张挂起表（Q1-C）；同键必然同 owner（键含 owner 摘要），
+            # 但仍逐条比对——归属判定不建立在「键长这样」这个约定上。
+            if any(str(s.owner_user_id or "").strip() == user_id
+                   for s in entries):
                 memory_fence_expires = max(memory_fence_expires, expires)
                 self._mem.pop(key, None)
         for key, (focus, expires) in list(self._focus_mem.items()):

@@ -968,6 +968,7 @@ def build_context(request) -> PlanContext:
         occupant_id=occupant,
         e2e_memory_capability=getattr(request, "e2e_memory_capability", ""),
         is_confirmation=getattr(request, "is_confirmation", False),
+        operation_id=str(getattr(request, "operation_id", "") or "").strip(),
         granted_permissions=granted,
         trace_id=meta.get("trace_id", ""),
         prefs=prefs,
