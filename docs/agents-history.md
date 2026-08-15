@@ -2802,3 +2802,75 @@ B5/B6 只动 Python 侧（`orchestrator/cloud/` 与 `observability/collector/db.
 引用它的 exit 0 时别当成 e2e 全绿。`e2e_verify` 5 条红已逐条定性为**前提失效**（见 §4.2）。
 **本次演练抓到一个 B3 埋的真缺陷**：collector 与 proactive 的 Dockerfile 没
 `COPY runtime`，加闸后**一重建就起不来**（见 §4.3 同名条目）。
+
+## §39 2026-08-15 EVA 余项立卡 E1–E5：§4.2 除 G10 外全部处理
+
+泓舟指示「从 §4.2 EVA 余项接手，除 G10 维持搁置，其余立卡进行处理」。卡文档
+`docs/design/2026-08-15-eva-backlog-cards-e1-e5.md`（逐卡缺口/方案/实施/读数）。
+架构 **v1.26**（§7.1 增两条记忆消费面要点）。
+
+**逐卡一句话**：
+- **E1 事件时刻反推用餐窗**（G1 余项）：`agents/_sdk/timewindow.py` 作时刻解析的**唯一
+  实现**（navigation `_parse_arrive_by` 原样迁入，对外名字不变），新增 `parse_event_time`
+  （只认「时刻+事件词」，与「X 点前到」刻意互斥）与 `dining_window`（离席=事件−路上预留、
+  入座=离席−用餐时长）。nearby 消费：话术给窗口 + 按**入座时刻**筛营业中（用真实
+  `opentime_today`，不是近似）+ `data.dining_window`。**路上预留是明说的假设、必须念出来**；
+  来不及就说来不及，不压缩窗口凑数。
+- **E2 停车便利/无障碍/不排队**（G5 余项）：原话显式 + **记忆驱动**两路触发；停车便利度=
+  前 K=4 家各查一次周边停车场（300m 内计数，串行有界）软重排；无障碍/排队**没有数据就说
+  没有**。`data.access` 落结构化。
+- **E3 归城校正 + 主题接地可观测**：`correct_stop_cities` 按坐标把排错城那天的 stop 搬回
+  归属城首日（双阈值 1.5×/30km 保守，单城零影响）；`build_theme_pool` 改返回
+  `(pool, stats)`，`data.theme_grounding` 给命中率读数。
+- **E4 provider 方差面**：新增只读探针 `scripts/probe_plan_variance.py`（三句形×R 轮真栈 WS
+  + obs 取 `plan_mode`），**不进 CI、不当准入闸**；维持不加 hint、不动 gate 案例集。
+- **E5 谓词别名老账**：`_PRED_CANON` 扩 7 canonical/18 别名（全部来自真栈实测谓词）+ 抽取
+  prompt 钉死口味族命名空间 + nearby 口味召回改**两路并集** + `scripts/memory_predicate_cleanup.py`
+  （dry-run 默认，`--apply`/`--supersede-dups` 分别授权）。
+
+**E5 的取证是本批最有价值的一段**：§4.2 写的启动条件是「出现消费方误伤再启动数据清洗」——
+实测 u1 库里 `place.avoid`「以后不要推荐三立方…咖啡太酸」/ `poi.dislike` / `restaurant.no_queue`
+「老婆不喜欢排队」三条 **scope 明明是 `profile.taste`**，只因谓词不带 `taste.` 前缀，而
+`pg_store._score` 里 scope 与谓词前缀是 **AND**，就永远进不了口味消费面。**P5 那次降权能
+兑现，只是因为恰好另有一条 `taste.coffee` 也带了店名——同一件事的另外两条证据一直是死的。**
+真栈证据：「晚上和老婆找个地方吃饭」→「地图没有实时排队数据，这条我按不上」
+（`restaurant.no_queue` 第一次被读到）。泓舟授权**只做①归一不做②去重**，理由取自 dry-run
+自己的输出：②会把「用户有一只叫 Cookie 的宠物（宝宝），喜欢睡在窗台旁」这类**信息更全的
+旧条目**标成被取代——**那些行不是重复，是同谓词的不同事实**。`--apply` 已执行 18 行。
+
+**E3 连修四轮才让校正够得着**（每轮只暴露一个障碍，上一个不修就看不见下一个）：
+① 点名 POI 混进城市序（planner 把「大秋裤→东方之门」同时填进 `destination` 与 `must_visit`，
+「东方之门」成了一座城、第 2–5 天全标它）→ `_drop_named_pois_from_cities`，判据是**归一后
+精确相等**不是包含（「苏州园林」不等于「苏州」）；② 6 城只排 3 天、四座城一天都没分到 →
+`_days_for_cities`（多城且用户没说天数 → 天数取城数；⚠ 判「说没说」不能用 `_norm_days`，
+它把非数字剥掉、「三天」会被读成 0，那就成了替用户改需求）；③ `solve` 日上限顺延
+`insert(0)` 把无锡那天溢出的三个点塞进**南京那天** → 下一天是别城就原地插一天、城市跟着走
+（单城 city 全空、判据短路，行为逐字照旧）；④ 末轮五城全部归位，唯「潍坊风筝博物馆」仍在
+济南那天——**日志实锤 `pool search '潍坊 景点'/'潍坊 美食' failed: CUQPS_HAS_EXCEEDED_THE_LIMIT`
+⇒ 该城没有质心 ⇒ 不参与归城判定**，是本机制的已知边界不是静默失败。
+
+**三处过程抓修**（都不是单测能抓到的，全靠真栈/取证）：
+1. **假个性化第二形态**：E2 首版触发条件是「话里提到了人」，于是「和老婆吃饭」命中了
+   「父母腿脚不便」——系统声称考虑了一件根本不适用的事。修法=记忆必须**确实关于话里那个人**
+   （subject 命中或称谓同义词命中），泛指「老人/长辈」才放宽；对照断言双向锁。
+2. **探针自己抽掉了一个前提**：E4 首跑漏传位置 meta，D2a 5/5 全是问句、读起来像「过度澄清
+   100%」，实际是 nearby 的**位置缺席诚实降级**。补位置后 5/5 直接出列表。
+   「测试替被测系统提供前提」的**反面**同样成立——抽掉前提也是没在测要测的东西。
+3. **话术把类目别名当检索词**：planner 把「吃饭」填进 keyword 时它被拿去问高德、话术念成
+   「为您找到 10 家**吃饭**」。剥壳后若正好是类目别名就换 canonical 词（吃饭/餐厅→美食）。
+
+**顺带被既有门禁抓了一次**（正面例子）：清洗脚本的 docstring 里写了两处
+`docker exec car-agent-memory-1 …`，全量里 `scripts/tests/test_e2e_container_names.py`
+当场报红——容器名的 project 段派生自启动目录（本地 `car-agent`、CI checkout
+`cockpit-agent`），**连注释里的跑法也算数**。改成按 compose service 名寻址
+（`docker compose -f compose.yaml exec -T memory …`）并真跑通验证。
+这条守卫是 nightly #33 那笔账留下的，今天替新脚本挡了同一个坑。
+
+**读数**：E4 首跑（MiniMax-M3，每句形 5 轮）R7b 5/5 有动作+卡片、D2a 5/5 出卡片、R8b 5/5 解析
+出「深圳湾万象城」，**15/15 走成 toolcall、一次方差都没复现**；同日 E1 探针另见 1 次
+`toolcall_degraded` 落 chitchat ⇒ 方差是真的但本批分母下没抓到，维持档案化不加码。
+E1 真栈 4/4（含复跑三连）、E2 真栈 3/3、E3 六城长句四轮取证 + 主题池读数
+`theme pool《太平年》: 6/7 candidates grounded`（唯一漏掉的是高德限流不是主题知识缺——
+这个读数的用处正是一眼分开「正常降级」「链坏了」「被限流」三种长得一样的结果）。
+全量 **5659 passed / 14 skipped 零红**（20m36s）。
+范例 `skills/exemplars/nearby.yaml` +1（**307 条 / 22 域**，域错配率 2.4% 不涨）。

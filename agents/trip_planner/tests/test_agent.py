@@ -61,3 +61,45 @@ def test_modify_rainy_days_swapped_indoor():
         raw_text="哪天要下雨的话，把那天的安排换成室内的", ctx=ctx))
     assert res.status == "need_confirm"
     assert "第1天" in res.speech and "室内" in res.speech
+
+
+# ── E3：点名 POI 混进城市序（真栈六城长句抓修）─────────────────────
+def test_named_poi_is_dropped_from_the_city_sequence():
+    """planner 把「大秋裤→东方之门」同时填进 destination 与 must_visit（真栈实测），
+    「东方之门」于是成了一座城：逐城建池搜「东方之门 景点」、每天都标着它。"""
+    from agents.trip_planner.src.agent import _drop_named_pois_from_cities as drop
+    cities = ["苏州", "东方之门", "无锡", "南京", "济南", "潍坊", "北京"]
+    mv = ["东方之门（大秋裤）", "灵山大佛", "长江大桥", "趵突泉", "潍坊风筝博物馆", "天安门"]
+
+    assert drop(cities, mv) == ["苏州", "无锡", "南京", "济南", "潍坊", "北京"]
+
+
+def test_city_named_inside_a_poi_name_is_not_dropped():
+    """判据是**归一后精确相等**不是包含：「苏州园林」不能把「苏州」剔掉。"""
+    from agents.trip_planner.src.agent import _drop_named_pois_from_cities as drop
+    assert drop(["苏州", "杭州"], ["苏州园林", "西湖"]) == ["苏州", "杭州"]
+
+
+def test_city_filter_is_a_noop_without_must_visit():
+    from agents.trip_planner.src.agent import _drop_named_pois_from_cities as drop
+    assert drop(["苏州", "杭州"], []) == ["苏州", "杭州"]
+    assert drop(["苏州"], ["苏州"]) == ["苏州"]       # 单城不参与（<2 直接返回）
+
+
+def test_unspecified_days_defaults_to_city_count_for_multi_city():
+    """多城且用户没说天数 → 天数取城数（每城至少一天）。真栈六城 3 天实测：
+    南京/济南/潍坊/北京四城一天都没分到，归城校正无处可搬。"""
+    from agents.trip_planner.src.agent import _days_for_cities as fix
+    six = ["苏州", "无锡", "南京", "济南", "潍坊", "北京"]
+    assert fix("用户未指定", six) == "6"
+    assert fix("", six) == "6"
+
+
+def test_explicit_days_are_never_overridden():
+    """用户明说了天数就照办——含**中文数字**（`_norm_days` 会把「三天」读成 0，
+    拿它当判据就成了替用户改需求）。单城行程一律不参与。"""
+    from agents.trip_planner.src.agent import _days_for_cities as fix
+    six = ["苏州", "无锡", "南京", "济南", "潍坊", "北京"]
+    for spoken in ("3", "3天", "三天", "两天"):
+        assert fix(spoken, six) == spoken
+    assert fix("用户未指定", ["杭州"]) == "用户未指定"

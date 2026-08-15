@@ -444,3 +444,53 @@ def test_llm_duplicate_relation_deduped():
     edges = [o["_relation"] for o in out if "_relation" in o]
     works = [e for e in edges if e["rel"] == "works_at"]
     assert len(works) == 1 and works[0]["confidence"] >= 0.9
+
+
+# ── E5（EVA 余项⑤）口味谓词别名归一 ────────────────────────────
+def test_taste_alias_family_normalizes_to_canonical():
+    """真栈实测的散置谓词全部归一到 taste.* —— 这些别名不是想象的，是 u1 库里的行。"""
+    from extract import normalize_predicate
+    for alias in ("beverage.coffee", "coffee.order", "consume.coffee",
+                  "drink.coffee", "food.coffee", "taste.beverage",
+                  "taste.americano_iced"):
+        assert normalize_predicate(alias) == "taste.coffee", alias
+    assert normalize_predicate("food.cuisine") == "taste.cuisine"
+    assert normalize_predicate("cuisine.spicy") == "taste.spicy"
+    for alias in ("order.pickup_method", "purchase.pickup", "food.coffee_pickup"):
+        assert normalize_predicate(alias) == "order.pickup", alias
+
+
+def test_negative_taste_predicates_gain_taste_prefix():
+    """`place.avoid`/`poi.dislike`/`restaurant.no_queue` 的 scope 本就是 profile.taste，
+    但谓词没有 taste. 前缀 → nearby 的 predicate_prefix 召回永远够不着（消费方误伤已兑现）。"""
+    from extract import normalize_predicate
+    assert normalize_predicate("place.avoid") == "taste.dislike_place"
+    assert normalize_predicate("poi.dislike") == "taste.dislike_place"
+    assert normalize_predicate("restaurant.no_queue") == "taste.no_queue"
+
+
+def test_brand_and_taste_are_not_merged_into_one_class():
+    """品牌偏好与口味偏好是两个维度：压成一条会让新口味 supersede 掉品牌偏好。"""
+    from extract import normalize_predicate, predicate_class
+    assert normalize_predicate("coffee.brand") == "taste.coffee_brand"
+    assert "coffee.brand" not in predicate_class("taste.coffee")
+    assert "beverage.coffee" not in predicate_class("taste.coffee_brand")
+
+
+def test_extract_prompt_pins_taste_predicate_namespace():
+    """源头收敛：抽取 prompt 明写口味族一律 taste. 前缀（归一表只治已知别名）。"""
+    from extract import _SYSTEM
+    assert "taste. 开头" in _SYSTEM
+    assert "taste.dislike_place" in _SYSTEM and "taste.no_queue" in _SYSTEM
+
+
+def test_alias_written_by_llm_is_normalized_before_storage():
+    """端到端：LLM 造 `place.avoid` 也落 taste.dislike_place（写入侧归一）。"""
+    cands = json.dumps([
+        {"category": "explicit_preference", "kind": "semantic",
+         "predicate": "place.avoid", "polarity": "dislike",
+         "text": "用户不喜欢三立方(南山创维店)，咖啡太酸",
+         "scope": "profile.taste", "confidence": 0.9}])
+    out = asyncio.run(extract([{"role": "user", "text": "这家咖啡太酸了"}],
+                              user_id="u1", complete_fn=_mock(cands)))
+    assert [o["predicate"] for o in out if o.get("predicate")] == ["taste.dislike_place"]

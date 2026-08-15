@@ -93,11 +93,16 @@ _THEME_SYSTEM = (
 
 
 async def build_theme_pool(llm, poi_provider, theme: str, dest: str,
-                           meta) -> list[POI]:
+                           meta) -> tuple[list[POI], dict]:
     """主题相关候选地名经高德接地验证后入池。LLM 失败/全部接不到 → 空列表
-    （普通池兜底，narrate 如实降级话术）。"""
+    （普通池兜底，narrate 如实降级话术）。
+
+    E3：第二个返回值是**接地命中率读数** `{proposed, grounded}`——降级本身是设计，
+    但没有分母就分不出「这轮正常降级」和「这条链坏了」（此前只有一行 INFO 日志，
+    在真栈里等于没有）。
+    """
     if not (theme and dest):
-        return []
+        return [], {"proposed": 0, "grounded": 0}
     try:
         out = await llm.complete(
             [{"role": "system", "content": _THEME_SYSTEM},
@@ -105,7 +110,7 @@ async def build_theme_pool(llm, poi_provider, theme: str, dest: str,
             temperature=0.2, max_tokens=300)
     except Exception as e:
         logger.warning("theme candidates LLM failed（普通池兜底）: %s", e)
-        return []
+        return [], {"proposed": 0, "grounded": 0, "llm_failed": True}
     block = _extract_json_block_array(out)
     names: list[str] = []
     if block:
@@ -125,7 +130,7 @@ async def build_theme_pool(llm, poi_provider, theme: str, dest: str,
     if names:
         logger.info("theme pool《%s》: %d/%d candidates grounded",
                     theme, len(pool), len(names))
-    return pool
+    return pool, {"proposed": len(names), "grounded": len(pool)}
 
 
 async def _ground_theme_name(poi_provider, name: str, dest: str, meta) -> POI | None:
@@ -253,6 +258,71 @@ def ensure_must_visit_in_itinerary(trip: Trip,
             dwell_min=_DWELL_BY_TYPE.get("attraction", 90), source="user",
             poi=_poi_to_dict(poi), grounded=True))
         existing.add(nm)
+
+
+# ── E3：多城行程的确定性归城校正 ────────────────────────────────────
+# P2 的 `ensure_must_visit_in_itinerary` 只管「漏排」，不管「排错天」——LLM 骨架把
+# 苏州的点排进了南京那天，点在行程里、城市标签也在，看起来齐全，实际是错的。
+# 判据是坐标而不是名字：每个已接地 stop 算最近城池质心，与所在 Day 的 city 不符
+# **且明显更近**时才搬。两个阈值都刻意保守——城际交界（如苏州/无锡）来回搬比不搬更糟。
+_CITY_FIX_RATIO = 1.5      # 归属城比当前城近这么多倍才算「明显」
+_CITY_FIX_MIN_KM = 30.0    # 且绝对差要够大（同城不同区永远达不到）
+
+
+def correct_stop_cities(trip: Trip, pool_by_city: dict | None = None) -> list[dict]:
+    """按坐标把排错城市那天的 stop 搬回归属城首日。返回搬动记录（供观测/测试）。
+
+    单城行程（cities <2）零影响。原地修改 trip。
+    """
+    cities = [c for c in (trip.cities or []) if c]
+    if len(cities) < 2 or not trip.itinerary:
+        return []
+    centers: dict[str, GeoPoint] = {}
+    for c in cities:
+        ctr = _city_center((pool_by_city or {}).get(c) or [])
+        if ctr is not None:
+            centers[c] = ctr
+    if len(centers) < 2:
+        return []
+    first_day: dict[str, object] = {}
+    for day in trip.itinerary:
+        if day.city and day.city not in first_day:
+            first_day[day.city] = day
+    moved: list[dict] = []
+    for day in list(trip.itinerary):
+        if not day.city or day.city not in centers:
+            continue
+        for stop in list(day.stops):
+            if not (stop.lat and stop.lng):
+                continue                      # 未接地的没有坐标可判，不动
+            here = _km_between(stop, centers[day.city])
+            best, best_km = "", None
+            for city, ctr in centers.items():
+                km = _km_between(stop, ctr)
+                if best_km is None or km < best_km:
+                    best, best_km = city, km
+            if best == day.city or best not in first_day:
+                continue
+            if not (here >= best_km * _CITY_FIX_RATIO
+                    and here - best_km >= _CITY_FIX_MIN_KM):
+                continue                      # 差得不够明显 → 宁可不搬
+            target = first_day[best]
+            if target is day:
+                continue
+            day.stops.remove(stop)
+            target.stops.append(stop)
+            moved.append({"name": stop.name, "from": day.city, "to": best,
+                          "km_from": round(here, 1), "km_to": round(best_km, 1)})
+    if moved:
+        logger.info("归城校正搬动 %d 个停靠点: %s", len(moved),
+                    "、".join(f"{m['name']}({m['from']}→{m['to']})" for m in moved))
+    return moved
+
+
+def _km_between(stop, ctr) -> float:
+    dlat = (float(stop.lat) - ctr.lat) * 111.0
+    dlng = (float(stop.lng) - ctr.lng) * 111.0
+    return (dlat * dlat + dlng * dlng) ** 0.5
 
 
 # ─────────────────────────── propose ───────────────────────────
@@ -640,13 +710,18 @@ async def solve(poi_provider, trip: Trip, start_soc_pct: float, meta,
     while i < len(trip.itinerary) and len(trip.itinerary) <= _MAX_DAYS:
         day = trip.itinerary[i]
         while len(day.grounded_stops()) > 1 and await day_minutes(day) > cap:
-            moved = day.stops.pop()
-            if i + 1 >= len(trip.itinerary):
-                # G9：顺延新建的天继承前一天的 city——顺延的 stop 来自前一天，
-                # 城市跟着走（真栈首验实测：「玩三天」被顺延成 4 天，第 4 天无城标）。
-                trip.itinerary.append(Day(day_index=len(trip.itinerary) + 1,
-                                          city=day.city))
-            trip.itinerary[i + 1].stops.insert(0, moved)
+            nxt = trip.itinerary[i + 1] if i + 1 < len(trip.itinerary) else None
+            # E3：顺延**不得把这座城的停靠点塞进下一座城那天**——真栈六城实测，
+            # 无锡那天溢出的三个点被 insert(0) 进了南京那天，刚归好的城当场又乱。
+            # 下一天是别的城（或压根没有下一天）→ 原地插一天、城市跟着走。
+            # G9 既有语义（顺延新建的天继承前一天 city）不变；单城行程 city 全空，
+            # 判据短路，行为逐字照旧。
+            if nxt is None or (day.city and nxt.city and nxt.city != day.city):
+                if len(trip.itinerary) >= _MAX_DAYS:
+                    break                    # 有界：到天数上限就不再顺延
+                nxt = Day(day_index=i + 2, city=day.city)
+                trip.itinerary.insert(i + 1, nxt)
+            nxt.stops.insert(0, day.stops.pop())
         i += 1
     for idx, day in enumerate(trip.itinerary, start=1):   # 顺延后重排 day_index
         day.day_index = idx

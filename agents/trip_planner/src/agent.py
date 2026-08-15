@@ -23,7 +23,7 @@ from agents.info.src.providers import build_weather_provider
 from .models import Trip, Stop
 from .pipeline import (build_poi_pool, build_theme_pool, theme_hint,
                        ground_must_visit, must_visit_hint,
-                       ensure_must_visit_in_itinerary,
+                       ensure_must_visit_in_itinerary, correct_stop_cities,
                        propose, ground, solve, narrate,
                        plan_weather, _weather_hint, _norm_days,
                        _ground_one, _poi_to_dict)
@@ -34,6 +34,49 @@ logger = logging.getLogger("agent.trip_planner")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 # 当前活动行程键经 agents._sdk.shared_state.TRIP_ACTIVE 引用；登记见 docs/conventions.md「跨 Agent 状态键」。
+
+_PAREN_RE = re.compile(r"[（(][^）)]*[）)]")
+
+
+def _drop_named_pois_from_cities(cities: list[str], must_visit: list[str]) -> list[str]:
+    """把混进城市序的**点名 POI** 剔掉（E3）。
+
+    真栈实测（六城长句）：planner 把「大秋裤→东方之门」同时填进 destination 的
+    城市串和 must_visit，于是「东方之门」成了一座城——逐城建池搜「东方之门 景点」、
+    后面每天都标着它，归城校正也无从谈起（没有一天标着真正的城）。
+
+    判据是**归一后精确相等**，不是包含：「苏州园林」不等于「苏州」，真城市不受伤。
+    剔完只剩一城 → 返回单元素列表，由调用方退回单城路径。
+    """
+    if len(cities) < 2 or not must_visit:
+        return cities
+    named = {_PAREN_RE.sub("", w).strip() for w in must_visit}
+    named.discard("")
+    kept = [c for c in cities if c not in named]
+    if len(kept) != len(cities):
+        logger.info("城市序剔除点名 POI：%s → %s",
+                    "、".join(cities), "、".join(kept) or "（空）")
+    return kept
+
+
+_SPOKEN_DAYS_RE = re.compile(r"[0-9一二两三四五六七八九十]")
+
+
+def _days_for_cities(days: str, cities: list[str]) -> str:
+    """多城且**用户没说天数**时，天数取城数（每城至少一天）。
+
+    真栈六城实测：planner 填 days=「用户未指定」→ 骨架排成 3 天，南京/济南/潍坊/
+    北京四城一天都没分到，归城校正无处可搬、话术还写着「6 城 3 天」。
+
+    「说没说」按**原始槽值里有没有数量词**判断，不能用 `_norm_days`——它把
+    非数字全剥掉，「三天」会被读成 0（那就成了「替用户改需求」）。
+    """
+    if len(cities) < 2:
+        return days
+    if _SPOKEN_DAYS_RE.search(str(days or "")):
+        return days                        # 用户明说了（含中文数字）→ 一律不覆盖
+    return str(len(cities))
+
 
 _CN_NUM = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
@@ -139,11 +182,14 @@ class TripPlannerAgent(BaseAgent):
     async def _run_pipeline(self, ctx, meta, dest: str, days: str, prefs: str,
                             raw_text: str, theme: str = "",
                             cities: list[str] | None = None,
-                            must_visit: list[str] | None = None) -> Trip:
-        """propose → ground → solve，产出结构化 Trip。
+                            must_visit: list[str] | None = None) -> tuple[Trip, dict]:
+        """propose → ground → solve，产出结构化 Trip 与**软层观测**（E3）。
 
         G9 多城市（cities ≥2）：逐城建池（各「{city} 景点/美食」）、propose 按序分天
-        标 city、ground 按城取坐标；城市顺序=用户口述序（v1 不做顺路重排）。"""
+        标 city、ground 按城取坐标；城市顺序=用户口述序（v1 不做顺路重排）。
+
+        第二个返回值 `obs` 只进 `data`（观测面），不进话术也不进卡片正文：
+        主题接地命中率 `theme_grounding` + 归城校正搬动记录 `city_fixes`。"""
         cities = [c for c in (cities or []) if c]
         pool_by_city: dict[str, list] = {}
         if len(cities) >= 2:
@@ -163,9 +209,13 @@ class TripPlannerAgent(BaseAgent):
         # G4 主题检索步：主题相关地点经 LLM 提议 + 高德接地验证后**并入**池
         # （去重按名，池的封闭纪律不变——只是入池来源多一路）。
         theme_names: list[str] = []
+        obs: dict = {}
         if theme:
             seen = {(p.name or "").strip() for p in pool}
-            for tp in await build_theme_pool(self.llm, self.poi, theme, dest, meta):
+            theme_pool, theme_stats = await build_theme_pool(
+                self.llm, self.poi, theme, dest, meta)
+            obs["theme_grounding"] = theme_stats   # E3：降级是设计，命中率要有读数
+            for tp in theme_pool:
                 nm = (tp.name or "").strip()
                 theme_names.append(nm)
                 if nm and nm not in seen:
@@ -201,6 +251,11 @@ class TripPlannerAgent(BaseAgent):
         # P2 确定性补插：LLM 骨架漏排的必去点不许丢（「点了名的不许丢」与
         # 「池外不臆造」是两条互补纪律）。
         ensure_must_visit_in_itinerary(trip, mv_pairs)
+        # E3 归城校正：补插只管「漏排」，这里管「排错天」——按坐标把排进别城那天的
+        # 停靠点搬回归属城首日。必须在 solve 之前：跨天衔接 leg 依赖最终分天。
+        fixes = correct_stop_cities(trip, pool_by_city)
+        if fixes:
+            obs["city_fixes"] = fixes
         if theme and theme_names:
             trip.theme = theme          # 接地成功才标主题（narrate 据此带主题话术）
         soc = await self._soc_pct(ctx, meta)
@@ -212,7 +267,7 @@ class TripPlannerAgent(BaseAgent):
                 day.weather = weather[wi]
         trip.session_id = ctx.session_id or ""
         trip.user_id = ctx.user_id or ""
-        return trip
+        return trip, obs
 
     async def _plan(self, intent, ctx, meta) -> AgentResult:
         if meta.get("confirmed") == "true":
@@ -264,10 +319,16 @@ class TripPlannerAgent(BaseAgent):
         must_visit = [w.strip(" 、，,。") for w in
                       _CITY_SPLIT_RE.split(intent.slots.get("must_visit") or "")
                       if w.strip(" 、，,。")]
+        cities = _drop_named_pois_from_cities(cities, must_visit)
+        if len(cities) >= 2:
+            dest = "、".join(cities)
+        elif len(cities) == 1:
+            dest, cities = cities[0], []       # 只剩一城 → 退回单城路径
+        days = _days_for_cities(days, cities)
 
-        trip = await self._run_pipeline(ctx, meta, dest, days, prefs,
-                                        intent.raw_text, theme=theme,
-                                        cities=cities, must_visit=must_visit)
+        trip, obs = await self._run_pipeline(ctx, meta, dest, days, prefs,
+                                             intent.raw_text, theme=theme,
+                                             cities=cities, must_visit=must_visit)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
         attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
@@ -275,6 +336,7 @@ class TripPlannerAgent(BaseAgent):
             status=NEED_CONFIRM,
             speech=f"{speech}\n\n确认按此方案出行吗？",
             ui_card=card,
+            data=obs or None,      # E3 软层观测（主题接地命中率 / 归城校正搬动）
             follow_up="说『确认』即可，或告诉我需要调整的地方",
         ).action("trip.plan", {"destination": dest, "days": str(trip.days)},
                  require_confirm=True)
@@ -334,7 +396,7 @@ class TripPlannerAgent(BaseAgent):
                 trip = await solve(self.poi, trip, soc, meta)
             else:
                 # ③ 定位不到具体天 → 整程重规划（把修改并入偏好上下文）。
-                trip = await self._run_pipeline(
+                trip, _ = await self._run_pipeline(
                     ctx, meta, dest, str(trip.days or ""),
                     f"{prefs} {modification}".strip(), modification)
 

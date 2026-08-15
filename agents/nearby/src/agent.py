@@ -9,13 +9,16 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
+from agents._sdk.timewindow import (
+    clock_minutes, dining_window, fmt_clock, parse_event_time)
 from .providers import build_place_provider
-from .providers.base import GeoPoint, Place
+from .providers.base import GeoPoint, Place, is_open_now
 
 logger = logging.getLogger("agent.nearby")
 
@@ -73,6 +76,23 @@ _FOOD_HINT_RE = re.compile(
 # 环境类标签+评分的软重排，并在话术里如实说数据边界（不假装有安静度）。
 _AMBIENCE_RE = re.compile(r"安静|清静|清净|环境好|氛围好|不吵|幽静")
 _AMBIENCE_TAGS = ("环境", "安静", "书", "清吧", "花园", "庭院", "湖景", "江景")
+# ── E2（G5 余项）无障碍 / 停车便利 / 不排队三族 ────────────────────────
+# 原话显式触发。「无台阶/少走路」高德没有任何字段——能做的**近似**只有一个：
+# 目的地半径内的停车场（缺口分析 §2-G5 给的方向）。近似要说明是近似。
+_ACCESS_RE = re.compile(
+    r"腿脚不便|腿脚不好|腿脚不太?方便|不方便走路|走路不方便|走不动|走太多路|少走路|"
+    r"轮椅|无障碍|台阶|拄拐|停车方便|方便停车|好停车|停车近|停车位好找|推车|婴儿车")
+# 记忆驱动触发：话里点名家人/老人时才去读画像（不是每次搜索都翻记忆）。
+_ELDER_RE = re.compile(r"爸妈|父母|老人|长辈|老年|奶奶|爷爷|外公|外婆")
+_MOBILITY_MEM_RE = re.compile(
+    r"腿脚|(?:行动|走路|走动)不(?:太)?(?:方便|便)|不方便走|走不动|轮椅|拄拐")
+# 「不排队」：**没有实时排队数据就说没有**，不拿评分/人气冒充（六#3 语料的另半边）。
+# 原话与**记忆文本**共用一条：记忆里是「老婆不喜欢排队」，原话里是「不排队」，
+# 两处各写一条正则迟早只改一处（P5 那个门禁漏洞就是同一形态）。
+_NO_QUEUE_RE = re.compile(
+    r"(?:不喜欢|不爱|讨厌|嫌|怕|不愿意?|不想|别|不用|不)\s*(?:排队|等位)|排队少")
+_PARKING_PROBE_K = 4          # 停车探测的候选上限：高德免费档 QPS 紧，串行且有界
+_PARKING_RADIUS_KM = 0.3      # 「停车近」的近似半径
 
 
 def _weather_word(weather: str) -> str:
@@ -227,6 +247,12 @@ class NearbyAgent(BaseAgent):
         super().__init__(_MANIFEST)
         self.place = build_place_provider()
 
+    @staticmethod
+    def _now_ts() -> int:
+        """时间锚（实例可替换）。用餐窗判定依赖「现在几点」——不留注入口，
+        用例就只能写成「在某些真实时刻会红」的样子（那是假红的制造机）。"""
+        return int(time.time())
+
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {
             "nearby.search": self._search,
@@ -354,7 +380,10 @@ class NearbyAgent(BaseAgent):
             return _brand_qualified(_strip_qualifiers(kw_slot)) or cat_kw
         cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
-            return cleaned
+            # 剥完若正好是**类目别名**（「吃饭」「餐厅」），它不是检索词：拿它问高德
+            # 会搜名字里带「吃饭」的店，话术还念成「为您找到 10 家吃饭」（真栈实测）。
+            # 具体词（火锅/川菜）不在类目表里，原样返回不受影响。
+            return _CATEGORY_KEYWORD.get(cleaned, cleaned)
         # Preserve an explicit unknown/coarse category as the provider query;
         # silently rewriting it to food is a semantic corruption.  Only a
         # genuinely absent category keeps the legacy nearby-food default.
@@ -402,7 +431,15 @@ class NearbyAgent(BaseAgent):
         # 记忆里的喜好菜系直接偏置检索词；用户点名的东西永远优先于记忆。
         taste = None
         taste_notes: list[str] = []
+        # E1（G1 余项）：事件时刻 → 用餐窗反推。「晚上7点的电影，先吃个饭」此前只能
+        # 诚实澄清（「想让我怎么安排？」）——`arrive_by` 是「几点到」，这是它的镜像
+        # 半边「几点该吃完」。路上预留是**明说的假设**，话术必须念出来。
+        window = None
         if category in _TASTE_CATS:
+            now_ts = self._now_ts()
+            ev = parse_event_time(raw, now_ts=now_ts)
+            if ev:
+                window = dict(dining_window(ev[0], now_ts=now_ts), event_word=ev[1])
             taste = await self._taste_profile(ctx, raw)
             # 菜系偏置只限正餐类目（拿粤菜偏好偏置咖啡检索是错的）；
             # 忌口/店铺级降权按 _TASTE_CATS 全集生效（P5）。
@@ -458,6 +495,19 @@ class NearbyAgent(BaseAgent):
                 speech=f"附近暂时没找到{label}，换个说法或扩大范围再试试？",
                 follow_up="可以说『附近的火锅』或『评分高的川菜馆』")
 
+        # E1：按**入座时刻**筛营业中（这一条不是近似，是真实数据：business.opentime_today）。
+        # 「明确闭店才剔，未知保留」与既有 open_now 同纪律；全被剔时不硬凑——保留原列表
+        # 并如实说那个点大多不营业。
+        window_notes: list[str] = []
+        if window and not window["tight"]:
+            seat_min = clock_minutes(window["seat_ts"])
+            open_at_seat = [p for p in results
+                            if is_open_now(p.open_today, seat_min) is not False]
+            if open_at_seat:
+                results = open_at_seat
+            else:
+                window_notes.append("不过那个点附近这些店大多不营业，可能得换个时间或换个地方")
+
         # G5：氛围属性软重排（「安静点的地方」）。高德没有安静度字段——按环境类
         # 标签 + 评分排前（稳定序），话术如实说数据边界，不假装有安静度。
         if _AMBIENCE_RE.search(raw) and results:
@@ -465,6 +515,18 @@ class NearbyAgent(BaseAgent):
                 0 if any(t in (p.tags or "") for t in _AMBIENCE_TAGS) else 1,
                 -(p.rating or 0)))
             taste_notes.append("您要安静些的——地图没有安静度数据，已按环境类标签和评分优先")
+        # E2：行动不便 → 停车便利近似重排。**先于口味降权**跑：用户当轮点名的负偏好
+        # 是更强的信号，得由它说最后一句话（否则停车排序会把降权项拉回前面）。
+        access: dict = {}
+        reason = await self._mobility_reason(ctx, raw)
+        if reason and results:
+            results, parking = await self._parking_rerank(results, meta)
+            access = {"reason": reason, "parking": parking}
+            if parking and any(s["count"] for s in parking):
+                taste_notes.append(
+                    f"{reason}——地图没有无障碍/台阶数据，已按周边停车便利度排序")
+            else:
+                taste_notes.append(f"{reason}——地图没有无障碍数据，这条我按不上")
         # G6：负偏好软降权（忌辣/店名级差评 → 结果后移），话术只报**真实生效**的项
         # ——此前这里是搜完才召回、只拼「已参考您口味」进话术，结果集一条没变（假个性化）。
         if taste:
@@ -474,6 +536,9 @@ class NearbyAgent(BaseAgent):
             caution = self._taste_caution(taste, cuisine or keyword)
             if caution:
                 taste_notes.append(caution)
+        # E2：「不排队」原话或记忆在场 → 如实说没有这维数据（不拿评分/人气冒充）。
+        if _NO_QUEUE_RE.search(raw) or (taste and taste.get("no_queue")):
+            taste_notes.append("地图没有实时排队数据，这条我按不上")
         pref_note = f"（{'；'.join(taste_notes)}）" if taste_notes else ""
 
         items = [self._item(p) for p in results]
@@ -485,6 +550,15 @@ class NearbyAgent(BaseAgent):
         if weather and category in _OUTDOOR_CATS:
             word = _weather_word(weather)
             lead = f"{word}户外体验会打折扣，" if word else "天气不错，适合出去走走，"
+        if window:
+            lead = self._window_lead(window, window_notes) + lead
+        # 只进 data（编排 slot_refs + obs 排查有真实消费方），**不进卡片**——
+        # HMI 没有渲染这两块，落进卡片就是无消费方的死字段（B4 那条判据）。
+        extra_data: dict = {}
+        if window:
+            extra_data["dining_window"] = window
+        if access:
+            extra_data["access"] = access
         card = attach({"type": "place_list", "category": category, "keyword": label,
                        "items": items, "display_priority": 1}, self.place)
         # center 来源随数据落盘（观测/下游可辨）：slot=用户指定位置 / vehicle=车辆
@@ -501,9 +575,24 @@ class NearbyAgent(BaseAgent):
             speech=speech,
             ui_card=card,
             # items 供编排 slot_refs + HMI「第N个」handoff；center 供下游判断就近语义
-            data={"items": items, "center": center_src},
+            data={"items": items, "center": center_src, **extra_data},
             follow_up="说『看第 1 个详情』或『导航去第 2 个』",
         )
+
+    @staticmethod
+    def _window_lead(window: dict, notes: list[str]) -> str:
+        """用餐窗话术（E1）。`buffer_min` 是**明说的假设**，必须念出来——
+        我们没有事件地点、算不出真实路程，把假设说清楚才不算编数据。"""
+        ev = fmt_clock(window["event_ts"])
+        word = window.get("event_word") or "安排"
+        if window["tight"]:
+            return (f"{ev}的{word}——现在再吃饭时间不太够了"
+                    f"（还得留{window['buffer_min']}分钟路上时间），"
+                    "要不先过去，路上找点快的？")
+        tail = ("；" + "；".join(notes)) if notes else ""
+        return (f"{ev}的{word}——建议{fmt_clock(window['seat_ts'])}入座、"
+                f"{fmt_clock(window['leave_ts'])}前吃完，"
+                f"预留{window['buffer_min']}分钟路上时间{tail}。")
 
     async def _search_indoor(self, intent, ctx, meta, weather: str) -> AgentResult:
         """室内组合推荐（雨雪/高温等恶劣天气的「去哪玩」）：按室内组类目逐个检索再交错
@@ -590,23 +679,33 @@ class NearbyAgent(BaseAgent):
                 subs.append(canon)
         return subs[:2]
 
+    async def _recall_taste(self, ctx, subject: str = "") -> list[dict]:
+        """口味记忆召回：**scope 一路 + 谓词前缀一路的并集**（E5）。
+
+        此前只有「scope=profile.taste **且** predicate 前缀 taste.」这一路，而
+        `pg_store._score` 里两者是 AND——真栈库里 `place.avoid`「以后不要推荐三立方」、
+        `poi.dislike`、`restaurant.no_queue`「老婆不喜欢排队」scope 全是 profile.taste，
+        谓词却不带前缀，于是**永远召不回来**（P5 降权能兑现只因恰好另有一条
+        taste.coffee 也带了店名）。谓词与 scope 都由 LLM 写、都会漂移，
+        任何一路单独当门禁都会重演这一幕——与 P4「三类并集」同款判据。
+        top_k=5（P5 从 3 放宽）：店铺级差评条目会被更早的泛化条目挤出 top-3。
+        """
+        out: list[dict] = []
+        for kw in ({"scopes": ["profile.taste"]}, {"predicate_prefix": "taste."}):
+            try:
+                out += await ctx.recall("口味偏好", top_k=5, subject=subject, **kw)
+            except Exception:
+                continue
+        return out
+
     async def _taste_profile(self, ctx, raw: str) -> dict | None:
         """召回口味记忆（本人 + 话里点名家人的 subject 分区）→ 结构化信号。失败不挡主流程。"""
-        mems: list[dict] = []
-        try:
-            # top_k=5（P5 从 3 放宽）：店铺级差评条目与菜系偏好同谓词前缀，
-            # top-3 会被更早的泛化条目挤掉（真栈实测 4 条 taste 记忆时店名条目缺席）。
-            mems += await ctx.recall("口味偏好", scopes=["profile.taste"],
-                                     predicate_prefix="taste.", top_k=5)
-            for subj in self._person_subjects(raw):
-                mems += await ctx.recall("口味偏好", scopes=["profile.taste"],
-                                         predicate_prefix="taste.", top_k=5,
-                                         subject=subj)
-        except Exception:
-            pass
+        mems: list[dict] = await self._recall_taste(ctx)
+        for subj in self._person_subjects(raw):
+            mems += await self._recall_taste(ctx, subject=subj)
         if not mems:
             return None
-        like, dislikes, no_spicy = "", [], False
+        like, dislikes, no_spicy, no_queue = "", [], False, False
         seen: set[str] = set()
         for m in mems:
             text = str(m.get("text") or "").strip()
@@ -617,12 +716,16 @@ class NearbyAgent(BaseAgent):
                         or bool(self._NEG_TASTE_RE.search(text)))
             if self._NO_SPICY_RE.search(text):
                 no_spicy = True
+            # E2：「不排队」记下来但**不假装能筛**——地图没有实时排队数据。
+            if _NO_QUEUE_RE.search(text):
+                no_queue = True
             hit = next((c for c in self._CUISINE_WORDS if c in text), "")
             if hit and not negative and not like:
                 like = hit
             if negative:
                 dislikes.append(text)
-        return {"like_cuisine": like, "dislikes": dislikes, "no_spicy": no_spicy}
+        return {"like_cuisine": like, "dislikes": dislikes, "no_spicy": no_spicy,
+                "no_queue": no_queue}
 
     def _taste_rerank(self, results: list, taste: dict) -> tuple[list, bool]:
         """负偏好软降权：忌辣命中重辣菜系 / 店名级差评（「这家太酸」）→ 整体后移。
@@ -637,6 +740,90 @@ class NearbyAgent(BaseAgent):
         front = [p for p in results if not demoted(p)]
         back = [p for p in results if demoted(p)]
         return (front + back), bool(front and back)
+
+    # ── E2（G5 余项）无障碍/停车便利的确定性消费面 ───────────────────────
+    @classmethod
+    def _kin_words(cls, raw: str) -> set[str]:
+        """话里点名的人 → 用来**比对记忆文本**的词集合（含同义词）。
+
+        真栈抓到的坑：只判断「话里有没有提到人」，「和老婆吃饭」就会命中
+        「父母腿脚不便」那条记忆——系统声称考虑了一件根本不适用的事，
+        与 §5① 那条「假个性化」是同一种错，只是换了个维度。
+        """
+        words: set[str] = set()
+        t = raw or ""
+        for word, pair in cls._KIN_PAIR.items():          # 爸妈 / 父母
+            if word in t:
+                words.add(word)
+                for canon in pair:
+                    words.update(cls._KIN_SUBJECTS.get(canon, ()))
+        for syns in cls._KIN_SUBJECTS.values():
+            if any(s in t for s in syns):
+                words.update(syns)
+        if _ELDER_RE.search(t):        # 泛指长辈：父母/祖辈都算同一类
+            words |= {"老人", "长辈", "老年", "父母", "爸妈",
+                      "爷爷", "奶奶", "外公", "外婆"}
+        return words
+
+    async def _mobility_reason(self, ctx, raw: str) -> str:
+        """是否要按「行动不便」重排 → 返回话术里的**理由**（空=不触发）。
+
+        两路：① 原话显式；② 话里点名家人/老人时读画像（`profile.person` ∪
+        `person.` 谓词，同 E5 的并集判据——scope 与谓词都会漂），且记忆必须
+        **确实关于话里那个人**（subject 命中，或文本提到该称谓）。
+        不是每次搜索都翻记忆：没提到人就不问。
+        """
+        if _ACCESS_RE.search(raw or ""):
+            return "您提到出行不太方便"
+        subjects = self._person_subjects(raw)
+        words = self._kin_words(raw)
+        if not words:
+            return ""
+        mems: list[dict] = []
+        for kw in ({"scopes": ["profile.person"]}, {"predicate_prefix": "person."}):
+            try:
+                mems += await ctx.recall("家人 行动 不便", top_k=5, **kw)
+            except Exception:
+                continue
+        for m in mems:
+            text = str(m.get("text") or "")
+            if not _MOBILITY_MEM_RE.search(text):
+                continue
+            subj = str(m.get("subject") or "").strip()
+            if subj:
+                if subj in subjects:
+                    return "记得您提到过家人行动不太方便"
+                continue                      # 关于别人的，不能拿来说这一位
+            if any(w in text for w in words):
+                return "记得您提到过家人行动不太方便"
+        return ""
+
+    async def _parking_rerank(self, results: list, meta) -> tuple[list, list[dict]]:
+        """停车便利度**近似**：前 K 家各查一次周边停车场 → 按 300m 内计数软重排。
+
+        串行（高德免费档 QPS 紧，并发扇出会 CUQPS 超限）；只重排被探测的前 K 家，
+        尾部原样保留——探测面有界，重排面就不能超出它。任一次探测失败不挡主流程。
+        """
+        probe = [p for p in results[:_PARKING_PROBE_K] if p.lat and p.lng]
+        stats: list[dict] = []
+        for p in probe:
+            try:
+                lots = await self.place.search(
+                    "停车场", near=GeoPoint(lat=p.lat, lng=p.lng), limit=5, meta=meta)
+            except ProviderError as e:
+                logger.debug("parking probe failed for %s: %s", p.name, e)
+                continue
+            near_lots = [x for x in lots
+                         if 0 < (x.distance_km or 0) <= _PARKING_RADIUS_KM]
+            stats.append({"name": p.name, "count": len(near_lots),
+                          "nearest_km": round(min((x.distance_km for x in near_lots),
+                                                  default=0.0), 2)})
+        if not stats:
+            return results, []
+        rank = {s["name"]: (-s["count"], s["nearest_km"] or 9.9) for s in stats}
+        head = sorted(results[:_PARKING_PROBE_K],
+                      key=lambda p: rank.get(p.name, (0, 9.9)))
+        return head + results[_PARKING_PROBE_K:], stats
 
     def _taste_caution(self, taste: dict, asked: str) -> str:
         """用户点名要的正是记忆里忌口的（记得不吃辣却找川菜）→ 诚实提一句，不改结果。"""

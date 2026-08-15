@@ -356,3 +356,14 @@ exemplars:
   tags:
   - badcase
   note: P6 省略动词的发现句：真栈被过度澄清「你想怎么处理附近的咖啡店？」——「附近的X」本身就是完整发现请求
+- text: 晚上7点的电影，先找个地方吃饭
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      category: 餐饮
+  source: trace
+  added: '2026-08-15'
+  tags:
+  - badcase
+  note: E1 事件时刻+先吃饭：真栈一轮落 chitchat 反问「想吃什么类型」（plan_mode=toolcall_degraded），复跑 3/3 正常出候选。事件时刻由 agent 侧反推用餐窗，planner 只需落对域

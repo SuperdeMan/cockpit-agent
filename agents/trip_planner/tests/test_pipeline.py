@@ -264,22 +264,25 @@ def test_theme_pool_grounds_candidates_and_rejects_mismatch():
         "假想仙境阁": [_poi("某某大厦")],
         "杭州假想仙境阁": [_poi("某某大厦")],
     })
-    pool = asyncio.run(pipeline.build_theme_pool(llm, prov, "太平年", "杭州", {}))
+    pool, stats = asyncio.run(pipeline.build_theme_pool(llm, prov, "太平年", "杭州", {}))
     assert [p.name for p in pool] == ["河坊街"]
+    # E3：接地命中率是**读数**（提议 2 / 接地 1），降级本身仍是设计
+    assert stats == {"proposed": 2, "grounded": 1}
 
 
 def test_theme_pool_llm_failure_degrades_to_empty():
     llm = AsyncMock()
     llm.complete = AsyncMock(side_effect=RuntimeError("llm down"))
-    pool = asyncio.run(pipeline.build_theme_pool(llm, FakePOI(), "太平年", "杭州", {}))
-    assert pool == []
+    pool, stats = asyncio.run(pipeline.build_theme_pool(llm, FakePOI(), "太平年", "杭州", {}))
+    assert pool == [] and stats.get("llm_failed") is True
 
 
 def test_theme_pool_bad_json_degrades_to_empty():
     llm = AsyncMock()
     llm.complete = AsyncMock(return_value="这个主题我不了解")
-    pool = asyncio.run(pipeline.build_theme_pool(llm, FakePOI(), "冷门剧", "杭州", {}))
-    assert pool == []
+    pool, stats = asyncio.run(pipeline.build_theme_pool(llm, FakePOI(), "冷门剧", "杭州", {}))
+    # LLM 答了但一个名字都没给 → proposed=0（与「LLM 挂了」是两种状态，别混着读）
+    assert pool == [] and stats == {"proposed": 0, "grounded": 0}
 
 
 def test_theme_pool_city_prefix_first():
@@ -288,7 +291,7 @@ def test_theme_pool_city_prefix_first():
     llm.complete = AsyncMock(return_value='["鼓楼"]')
     prov = FakePOI(search_map={"杭州鼓楼": [_poi("鼓楼")],
                                "鼓楼": [_poi("北京鼓楼")]})
-    pool = asyncio.run(pipeline.build_theme_pool(llm, prov, "某剧", "杭州", {}))
+    pool, _ = asyncio.run(pipeline.build_theme_pool(llm, prov, "某剧", "杭州", {}))
     assert prov.calls[0] == "杭州鼓楼"
     assert [p.name for p in pool] == ["鼓楼"]
 
@@ -453,3 +456,141 @@ def test_must_visit_hint_and_post_insert():
     assert d1_names == ["东方之门"]           # 已在行程 → 不重复
     assert "灵山大佛" in d2_names             # 漏排 → 补进无锡那天
     assert trip.itinerary[1].stops[-1].source == "user"
+
+
+# ── E3：多城行程的确定性归城校正 ──────────────────────────────────
+# 坐标取真实量级：苏州(31.30,120.60) / 南京(32.06,118.79) 相距约 170km；
+# 苏州 vs 无锡(31.49,120.31) 约 33km（交界处样本，用来验「差得不够明显就不搬」）。
+_SUZHOU, _NANJING, _WUXI = (31.30, 120.60), (32.06, 118.79), (31.49, 120.31)
+
+
+def _stop(name, latlng):
+    return Stop(stop_id=name, name=name, grounded=True,
+                poi={"name": name, "lat": latlng[0], "lng": latlng[1]})
+
+
+def _multi_city_trip(days):
+    t = Trip(destination="苏州、南京", days=len(days), cities=["苏州", "南京"])
+    t.itinerary = days
+    return t
+
+
+def _pools():
+    return {"苏州": [_poi("苏州园林", *_SUZHOU)], "南京": [_poi("夫子庙", *_NANJING)]}
+
+
+def test_stop_placed_in_the_wrong_city_day_is_moved_back():
+    """P2 的补插只管「漏排」——这条管「排错天」：东方之门排进了南京那天。"""
+    d1 = Day(day_index=1, city="苏州", stops=[_stop("苏州园林", _SUZHOU)])
+    d2 = Day(day_index=2, city="南京",
+             stops=[_stop("夫子庙", _NANJING), _stop("东方之门", _SUZHOU)])
+    trip = _multi_city_trip([d1, d2])
+
+    moved = pipeline.correct_stop_cities(trip, _pools())
+
+    assert [m["name"] for m in moved] == ["东方之门"]
+    assert [s.name for s in d1.stops] == ["苏州园林", "东方之门"]
+    assert [s.name for s in d2.stops] == ["夫子庙"]
+
+
+def test_border_city_stop_is_not_shuffled():
+    """交界处（苏州/无锡 33km）差得不够明显 → 不搬。来回搬比不搬更糟。"""
+    d1 = Day(day_index=1, city="苏州", stops=[_stop("太湖边某点", _WUXI)])
+    trip = Trip(destination="苏州、无锡", days=1, cities=["苏州", "无锡"])
+    trip.itinerary = [d1]
+
+    moved = pipeline.correct_stop_cities(
+        trip, {"苏州": [_poi("苏州园林", *_SUZHOU)], "无锡": [_poi("鼋头渚", *_WUXI)]})
+
+    assert moved == [] and [s.name for s in d1.stops] == ["太湖边某点"]
+
+
+def test_single_city_trip_is_untouched():
+    """单城行程零影响（cities <2 直接返回）。"""
+    d1 = Day(day_index=1, stops=[_stop("西湖", (30.24, 120.15))])
+    trip = Trip(destination="杭州", days=1)
+    trip.itinerary = [d1]
+
+    assert pipeline.correct_stop_cities(trip, {"杭州": [_poi("西湖", 30.24, 120.15)]}) == []
+    assert [s.name for s in d1.stops] == ["西湖"]
+
+
+def test_ungrounded_stop_has_no_coordinates_to_judge_by():
+    """未接地的 stop 没有坐标——不猜、不动（同 ground 的「不臆造」纪律）。"""
+    d2 = Day(day_index=2, city="南京", stops=[Stop(stop_id="x", name="某个没接到的点")])
+    trip = _multi_city_trip([Day(day_index=1, city="苏州", stops=[]), d2])
+
+    assert pipeline.correct_stop_cities(trip, _pools()) == []
+    assert [s.name for s in d2.stops] == ["某个没接到的点"]
+
+
+def test_correction_needs_two_city_centers():
+    """池里算不出两个质心时不做判定（宁可不搬也不按半个坐标系搬）。"""
+    d2 = Day(day_index=2, city="南京", stops=[_stop("东方之门", _SUZHOU)])
+    trip = _multi_city_trip([Day(day_index=1, city="苏州", stops=[]), d2])
+
+    assert pipeline.correct_stop_cities(trip, {"苏州": [_poi("苏州园林", *_SUZHOU)]}) == []
+
+
+def test_moved_stop_lands_on_the_first_day_of_its_city():
+    """搬到归属城的**首日**（与补插同一落点规则，两条纪律行为一致）。"""
+    d1 = Day(day_index=1, city="苏州", stops=[])
+    d2 = Day(day_index=2, city="苏州", stops=[])
+    d3 = Day(day_index=3, city="南京", stops=[_stop("平江路", _SUZHOU)])
+    trip = _multi_city_trip([d1, d2, d3])
+
+    pipeline.correct_stop_cities(trip, _pools())
+
+    assert [s.name for s in d1.stops] == ["平江路"] and d2.stops == [] and d3.stops == []
+
+
+def test_correct_stop_cities_reports_distances_for_observability():
+    """搬动记录带两侧距离——「搬了什么、凭什么搬」要能复核，不能只留一个结果。"""
+    d2 = Day(day_index=2, city="南京", stops=[_stop("东方之门", _SUZHOU)])
+    trip = _multi_city_trip([Day(day_index=1, city="苏州", stops=[]), d2])
+
+    moved = pipeline.correct_stop_cities(trip, _pools())
+
+    assert moved[0]["from"] == "南京" and moved[0]["to"] == "苏州"
+    assert moved[0]["km_from"] > moved[0]["km_to"] * 1.5
+
+
+def test_reflow_never_pushes_stops_into_another_citys_day():
+    """E3：溢出的停靠点不得挤进**下一座城**那天——真栈六城实测，无锡那天溢出的
+    三个点被 insert(0) 进了南京那天，归城校正刚归好的城当场又乱。"""
+    trip = Trip(destination="无锡、南京", days=2, cities=["无锡", "南京"])
+    wuxi = Day(day_index=1, city="无锡", stops=[
+        Stop(stop_id=f"w{i}", name=f"无锡{i}", grounded=True,
+             poi={"name": f"无锡{i}", "lat": 31.49 + i * 0.01, "lng": 120.31},
+             dwell_min=120) for i in range(4)])
+    nanjing = Day(day_index=2, city="南京", stops=[
+        Stop(stop_id="n1", name="夫子庙", grounded=True,
+             poi={"name": "夫子庙", "lat": 32.06, "lng": 118.79}, dwell_min=120)])
+    trip.itinerary = [wuxi, nanjing]
+    prov = FakePOI(route={"distance_km": 5.0, "duration_min": 60, "points": []})
+
+    out = asyncio.run(pipeline.solve(prov, trip, 80, {},
+                                     full_range_km=500, day_cap_min=300))
+
+    for day in out.itinerary:
+        for s in day.stops:
+            assert s.name.startswith("无锡") == (day.city == "无锡"), \
+                f"{s.name} 落在 {day.city} 那天"
+    assert [d.city for d in out.itinerary][-1] == "南京"      # 南京仍在最后
+    assert [d.day_index for d in out.itinerary] == list(range(1, len(out.itinerary) + 1))
+
+
+def test_reflow_behaviour_unchanged_for_single_city():
+    """单城行程 city 全空 → 判据短路，顺延行为逐字照旧（新建天追加在末尾）。"""
+    trip = Trip(destination="X", days=1)
+    trip.itinerary = [Day(day_index=1, stops=[
+        Stop(stop_id=f"s{i}", name=f"P{i}", grounded=True,
+             poi={"name": f"P{i}", "lat": 30 + i * 0.01, "lng": 120}, dwell_min=120)
+        for i in range(4)])]
+    prov = FakePOI(route={"distance_km": 5.0, "duration_min": 60, "points": []})
+
+    out = asyncio.run(pipeline.solve(prov, trip, 80, {},
+                                     full_range_km=500, day_cap_min=300))
+
+    assert len(out.itinerary) >= 2 and all(d.city == "" for d in out.itinerary)
+    assert [s.name for d in out.itinerary for s in d.stops] == ["P0", "P1", "P2", "P3"]

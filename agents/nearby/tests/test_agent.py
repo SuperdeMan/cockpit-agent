@@ -1,5 +1,6 @@
 """nearby（周边发现）契约测试。"""
 import asyncio
+import time as _time
 from types import SimpleNamespace
 
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
@@ -746,3 +747,384 @@ def test_coffee_category_consumes_store_level_dislike():
     assert names[-1] == "三立方(南山创维店)"
     assert "不合口味的已排后" in res.speech
     assert seen["keyword"] != "粤菜"               # 菜系偏置未污染咖啡检索
+
+
+# ── E5（EVA 余项⑤）口味召回两路并集 ─────────────────────────────
+def _fake_recall(rows):
+    """复刻 pg_store._score 的过滤语义：scope 与 predicate_prefix 是 **AND**。"""
+    async def recall(query, *, scopes=None, kinds=None, top_k=5, predicate_prefix="",
+                     min_score=0.0, min_confidence=0.0, max_age_days=0, subject=""):
+        out = []
+        for r in rows:
+            if scopes and r.get("scope") not in scopes:
+                continue
+            if predicate_prefix and not str(r.get("predicate") or "").startswith(
+                    predicate_prefix):
+                continue
+            if subject and str(r.get("subject") or "") != subject:
+                continue
+            out.append(r)
+        return out[:top_k]
+    return recall
+
+
+def test_taste_recall_issues_both_scope_and_predicate_paths():
+    """并集召回必须真的发两路——只发一路就是今天这个 bug 的形状。"""
+    agent = NearbyAgent()
+    ctx = make_context()
+    seen = []
+
+    async def recall(query, **kw):
+        seen.append((tuple(kw.get("scopes") or ()), kw.get("predicate_prefix") or ""))
+        return []
+    ctx.recall = recall
+
+    asyncio.run(agent._recall_taste(ctx))
+    assert (("profile.taste",), "") in seen        # scope 路（谓词不限）
+    assert ((), "taste.") in seen                  # 谓词路（scope 不限）
+
+
+def test_store_dislike_without_taste_prefix_is_recalled_and_demoted():
+    """真栈存量形态：`place.avoid` 的 scope 是 profile.taste 但谓词没有 taste. 前缀。
+
+    旧的单路召回（scope **且** 谓词前缀）返回空 → 差评存了三条却一条都用不上；
+    并集召回把它取回来，店铺级降权照常生效。
+    """
+    from agents.nearby.src.providers.base import Place
+    rows = [{"text": "以后不要推荐三立方(南山创维店)，觉得咖啡太酸",
+             "predicate": "place.avoid", "scope": "profile.taste",
+             "polarity": "dislike"}]
+    recall = _fake_recall(rows)
+    # 先钉根因：老口径（两条件同时给）确实召不回
+    assert asyncio.run(recall("口味偏好", scopes=["profile.taste"],
+                              predicate_prefix="taste.")) == []
+
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = recall
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="三立方(南山创维店)", rating=4.6),
+                Place(id="b", name="瑞幸咖啡(创维店)", rating=4.2)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"keyword": "咖啡"},
+                                 raw_text="帮我找杯咖啡喝", ctx=ctx, meta=_LOC))
+    assert [i["name"] for i in res.data["items"]] == ["瑞幸咖啡(创维店)", "三立方(南山创维店)"]
+    assert "已排后" in res.speech
+
+
+def test_taste_recall_survives_scope_drift():
+    """反向：scope 漂成 profile.habit、谓词却是 taste.* 的行，由谓词路兜住。"""
+    from agents.nearby.src.providers.base import Place
+    rows = [{"text": "用户不喜欢老灶火锅（太咸）", "predicate": "taste.dislike_place",
+             "scope": "profile.habit", "polarity": "dislike"}]
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall(rows)
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="老灶火锅(总店)", rating=4.5),
+                Place(id="b", name="初色日料", rating=4.2)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"cuisine": "日料"},
+                                 raw_text="附近吃点什么", ctx=ctx, meta=_LOC))
+    assert [i["name"] for i in res.data["items"]] == ["初色日料", "老灶火锅(总店)"]
+
+
+def test_taste_recall_subject_partition_still_holds():
+    """并集不得打破 subject 定向：点名家人时只取该家人的条目（G6 分区纪律）。
+
+    ⚠ 反向不成立且**不是本卡要改的**：subject 为空是「不过滤」而非「只取本人」
+    （`pg_store._score` 的 subject 过滤只在非空时生效），所以泛召回本来就会带上
+    家人条目——这是既有语义，此处只钉「定向那一路仍然干净」。
+    """
+    rows = [{"text": "老婆喜欢粤菜", "predicate": "taste.cuisine",
+             "scope": "profile.taste", "subject": "老婆", "polarity": "like"},
+            {"text": "用户喜欢川菜", "predicate": "taste.cuisine",
+             "scope": "profile.taste", "polarity": "like"}]
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall(rows)
+
+    hers = asyncio.run(agent._recall_taste(ctx, subject="老婆"))
+    assert hers and all(r["subject"] == "老婆" for r in hers)   # 定向路只有她的
+    assert len(hers) == 2                                       # 两路各命中一次（去重在 _taste_profile）
+
+
+# ── E1（G1 余项）事件时刻 → 用餐窗反推 ─────────────────────────
+_EVENT_NOW = int(_time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))   # 周五 14:00
+
+
+def _agent_at(now_ts=_EVENT_NOW, places=None):
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    agent._now_ts = lambda: now_ts
+    rows = places if places is not None else [
+        Place(id="a", name="小南国", category="餐饮", rating=4.6),
+        Place(id="b", name="蜀香源", category="餐饮", rating=4.3)]
+
+    async def search(keyword, **kw):
+        return list(rows)
+    agent.place.search = search
+    return agent
+
+
+def test_event_time_reverse_infers_the_dining_window():
+    """「晚上7点的电影，先找个地方吃饭」→ 反推入座/离席窗，并把路上预留**说出来**。"""
+    agent = _agent_at()
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上7点的电影，先找个地方吃饭",
+                                 ctx=make_context(), meta=_LOC))
+    assert "19:00的电影" in res.speech
+    assert "17:30入座" in res.speech and "18:30前吃完" in res.speech
+    assert "预留30分钟路上时间" in res.speech          # 假设必须念出来
+    w = res.data["dining_window"]
+    assert w["dwell_min"] == 60 and w["buffer_min"] == 30 and w["tight"] is False
+
+
+def test_no_event_word_means_no_window():
+    """普通找吃的不带窗口（非回归）：没有事件就没有可反推的东西。"""
+    agent = _agent_at()
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="附近有什么好吃的", ctx=make_context(), meta=_LOC))
+    assert "dining_window" not in res.data and "入座" not in res.speech
+
+
+def test_window_filters_places_closed_at_the_seating_time():
+    """按入座时刻筛营业中——这一条不是近似，是真实的 opentime_today 数据。"""
+    from agents.nearby.src.providers.base import Place
+    agent = _agent_at(places=[
+        Place(id="a", name="夜宵摊", category="餐饮", rating=4.8, open_today="21:00-03:00"),
+        Place(id="b", name="小南国", category="餐饮", rating=4.2, open_today="11:00-22:00"),
+        Place(id="c", name="不明营业", category="餐饮", rating=4.1)])   # 未知 → 保留
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上7点的电影，先吃个饭",
+                                 ctx=make_context(), meta=_LOC))
+    names = [i["name"] for i in res.data["items"]]
+    assert "夜宵摊" not in names                     # 17:30 明确不营业 → 剔
+    assert "小南国" in names and "不明营业" in names  # 营业中 / 未知都留
+
+
+def test_all_closed_at_seating_time_is_told_not_hidden():
+    """全被剔时不硬凑——保留原列表并如实说那个点大多不营业。"""
+    from agents.nearby.src.providers.base import Place
+    agent = _agent_at(places=[
+        Place(id="a", name="夜宵摊", category="餐饮", open_today="21:00-03:00"),
+        Place(id="b", name="宵夜铺", category="餐饮", open_today="22:00-04:00")])
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上7点的电影，先吃个饭",
+                                 ctx=make_context(), meta=_LOC))
+    assert "大多不营业" in res.speech
+    assert len(res.data["items"]) == 2
+
+
+def test_tight_window_says_it_is_too_late():
+    """18:40 才问「7点的电影先吃饭」→ 说来不及，不把窗口压缩成能凑上的数。"""
+    late = int(_time.mktime((2026, 8, 14, 18, 40, 0, 0, 0, -1)))
+    agent = _agent_at(now_ts=late)
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上7点的电影，先吃个饭",
+                                 ctx=make_context(), meta=_LOC))
+    assert "时间不太够" in res.speech and res.data["dining_window"]["tight"] is True
+    assert "入座" not in res.speech
+
+
+# ── E2（G5 余项）无障碍 / 停车便利 / 不排队 ──────────────────────
+def _agent_with_parking(main_places, lots_by_name):
+    """主检索返回餐厅、「停车场」检索按坐标返回各自的停车场（探测桩）。"""
+    agent = NearbyAgent()
+
+    async def search(keyword, **kw):
+        if keyword == "停车场":
+            near = kw.get("near")
+            key = (round(near.lat, 4), round(near.lng, 4)) if near else None
+            return list(lots_by_name.get(key, []))
+        return list(main_places)
+
+    agent.place.search = search
+    return agent
+
+
+def test_explicit_accessibility_request_reranks_by_parking_and_says_it_is_an_approximation():
+    """「腿脚不便」→ 按周边停车场密度近似重排，并**说明这是近似**（没有台阶数据）。"""
+    from agents.nearby.src.providers.base import Place
+    far = Place(id="a", name="无停车小馆", category="餐饮", rating=4.8,
+                lat=22.500, lng=113.900)
+    near = Place(id="b", name="商场里的粤菜", category="餐饮", rating=4.1,
+                 lat=22.600, lng=113.950)
+    agent = _agent_with_parking([far, near], {
+        (22.5, 113.9): [],
+        (22.6, 113.95): [Place(id="p1", name="P1", distance_km=0.08),
+                         Place(id="p2", name="P2", distance_km=0.22),
+                         Place(id="p3", name="太远", distance_km=1.4)],
+    })
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="找个吃饭的地方，老人腿脚不便",
+                                 ctx=make_context(), meta=_LOC))
+    assert [i["name"] for i in res.data["items"]] == ["商场里的粤菜", "无停车小馆"]
+    assert "没有无障碍/台阶数据" in res.speech and "停车便利度" in res.speech
+    stats = {s["name"]: s for s in res.data["access"]["parking"]}
+    assert stats["商场里的粤菜"]["count"] == 2 and stats["商场里的粤菜"]["nearest_km"] == 0.08
+    assert stats["无停车小馆"]["count"] == 0
+
+
+def test_accessibility_triggered_by_memory_when_user_only_names_family():
+    """「带爸妈去吃饭」不带任何无障碍词 → 读画像里的行动不便事实再触发（记忆消费面）。"""
+    from agents.nearby.src.providers.base import Place
+    agent = _agent_with_parking(
+        [Place(id="a", name="甲餐厅", category="餐饮", lat=22.5, lng=113.9)],
+        {(22.5, 113.9): [Place(id="p", name="P", distance_km=0.1)]})
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "用户的父母腿脚不太方便", "predicate": "person.parent",
+         "scope": "profile.person"}])
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="带爸妈去吃个饭", ctx=ctx, meta=_LOC))
+    assert "记得您提到过家人行动不太方便" in res.speech
+    assert res.data["access"]["parking"][0]["count"] == 1
+
+
+def test_accessibility_not_triggered_without_person_or_explicit_words():
+    """守卫：普通「附近吃什么」不翻记忆、不做停车探测（探测有代价，别每轮都打）。"""
+    from agents.nearby.src.providers.base import Place
+    hits = []
+
+    agent = NearbyAgent()
+
+    async def search(keyword, **kw):
+        hits.append(keyword)
+        return [Place(id="a", name="甲餐厅", category="餐饮", lat=22.5, lng=113.9)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="附近有什么好吃的", ctx=make_context(), meta=_LOC))
+    assert "停车场" not in hits and "access" not in res.data
+
+
+def test_parking_probe_failure_does_not_break_the_search():
+    """探测失败（provider 挂/限流）→ 主结果照出，只是没有那句排序说明。"""
+    from agents.nearby.src.providers.base import Place
+    from agents._sdk.http import ProviderError
+    agent = NearbyAgent()
+
+    async def search(keyword, **kw):
+        if keyword == "停车场":
+            raise ProviderError("CUQPS_HAS_EXCEEDED_THE_LIMIT")
+        return [Place(id="a", name="甲餐厅", category="餐饮", lat=22.5, lng=113.9)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="找个停车方便的餐厅", ctx=make_context(), meta=_LOC))
+    assert res.status == "ok" and res.data["items"]
+    assert "这条我按不上" in res.speech          # 诚实：近似也没算成
+
+
+def test_parking_probe_is_bounded_to_top_k():
+    """探测面有界（K=4）：候选再多也只打 4 次，重排面不超出探测面。"""
+    from agents.nearby.src.providers.base import Place
+    probed = []
+    agent = NearbyAgent()
+    rows = [Place(id=str(i), name=f"店{i}", category="餐饮", lat=22.5 + i / 1000,
+                  lng=113.9) for i in range(9)]
+
+    async def search(keyword, **kw):
+        if keyword == "停车场":
+            probed.append(kw.get("near"))
+            return []
+        return list(rows)
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="找个好停车的地方吃饭",
+                                 ctx=make_context(), meta=_LOC))
+    assert len(probed) == 4
+    assert [i["name"] for i in res.data["items"]] == [f"店{i}" for i in range(9)]
+
+
+def test_no_queue_preference_is_answered_honestly_not_faked():
+    """「不排队」没有数据源——如实说按不上，不拿评分/人气冒充（六#3 语料另半边）。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="甲餐厅", category="餐饮", rating=4.5)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"cuisine": "粤菜"},
+                                 raw_text="找个不排队的粤菜馆", ctx=make_context(), meta=_LOC))
+    assert "没有实时排队数据" in res.speech
+
+
+def test_no_queue_preference_from_memory_also_surfaces():
+    """「老婆不喜欢排队」存在画像里 → 和老婆吃饭时也如实说一句（存了就要用上）。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "老婆不喜欢排队", "predicate": "taste.no_queue",
+         "scope": "profile.taste", "subject": "老婆"}])
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="甲餐厅", category="餐饮", rating=4.5)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上和老婆找地方吃饭", ctx=ctx, meta=_LOC))
+    assert "没有实时排队数据" in res.speech
+
+
+def test_mobility_memory_is_not_applied_to_an_unrelated_person():
+    """真栈抓修：「和老婆吃饭」不得命中「父母腿脚不便」那条记忆。
+
+    「话里提到了人」不等于「这条记忆是关于那个人的」——套上去就是假个性化
+    （系统声称考虑了一件根本不适用的事），与 §5① 同族只是换了维度。
+    """
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "用户的父母腿脚不太方便", "predicate": "person.parent",
+         "scope": "profile.person"}])
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="甲餐厅", category="餐饮", lat=22.5, lng=113.9)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上和老婆找个地方吃饭", ctx=ctx, meta=_LOC))
+    assert "行动不太方便" not in res.speech and "access" not in res.data
+    # 对照：同一条记忆在「带爸妈吃饭」时必须仍然生效（别把守卫修成一律不触发）
+    res2 = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                  raw_text="带爸妈去吃个饭", ctx=ctx, meta=_LOC))
+    assert "行动不太方便" in res2.speech
+
+
+def test_mobility_memory_with_explicit_subject_only_applies_to_that_subject():
+    """带 subject 的记忆按 subject 判定：老婆的行动不便只在提到老婆时生效。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "最近走路不太方便", "predicate": "person.spouse",
+         "scope": "profile.person", "subject": "老婆"}])
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="甲餐厅", category="餐饮", lat=22.5, lng=113.9)]
+
+    agent.place.search = search
+    hit = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="和老婆去吃饭", ctx=ctx, meta=_LOC))
+    miss = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                  raw_text="带爸妈去吃饭", ctx=ctx, meta=_LOC))
+    assert "行动不太方便" in hit.speech
+    assert "行动不太方便" not in miss.speech
+
+
+def test_food_category_alias_in_keyword_slot_is_not_used_as_a_query_word():
+    """planner 把「吃饭」填进 keyword 时不能拿它当检索词（真栈实测话术念成
+    「为您找到 10 家吃饭」）；具体词仍原样。"""
+    for kw_slot, expected in (("吃饭", "美食"), ("餐厅", "美食"),
+                              ("火锅", "火锅"), ("川菜", "川菜")):
+        assert NearbyAgent._build_keyword("餐饮", "", "", kw_slot) == expected

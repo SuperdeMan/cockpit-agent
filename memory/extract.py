@@ -63,6 +63,24 @@ _PRED_CANON: dict[str, tuple[str, ...]] = {
     "route.avoid_toll": ("route.no_toll", "navigation.avoid_toll", "route.toll"),
     "route.preferred_road": ("route.road_preference", "route.prefer_road",
                              "navigation.preferred_road", "route.preference"),
+    # E5（EVA 余项⑤）口味/负偏好族：**别名全部来自 u1 真栈库实测**，不发明未观测形态。
+    # 这一族的代价已经兑现过：`place.avoid`/`poi.dislike`/`restaurant.no_queue` 三条
+    # scope 都是 profile.taste，但 nearby 口味召回带 `predicate_prefix="taste."`，
+    # 而 pg_store 里 scope 与谓词前缀是 **AND** → 三条永远进不了消费面（P5 那次降权
+    # 能兑现，只因恰好另有一条 taste.coffee 也带了店名）。
+    # ⚠ 刻意**不合并语义不同的维度**：品牌偏好与口味偏好各自 canonical，
+    # 压成一条会让新口味 supersede 掉品牌偏好——「不加第二份声明」的反面同样成立。
+    "taste.coffee": ("beverage.coffee", "coffee.order", "consume.coffee",
+                     "drink.coffee", "food.coffee", "taste.beverage",
+                     "taste.americano_iced"),
+    "taste.coffee_brand": ("brand.coffee", "coffee.brand"),
+    "taste.cuisine": ("food.cuisine", "taste.style"),
+    "taste.spicy": ("cuisine.spicy",),
+    # 店铺级差评：降权消费面的输入（nearby `_taste_rerank` 按 text 里的店名匹配）。
+    "taste.dislike_place": ("place.avoid", "poi.dislike"),
+    "taste.no_queue": ("restaurant.no_queue",),
+    # 自取/到店习惯：不进口味消费面（语义不是口味），归一只为治「同一件事两个谓词」。
+    "order.pickup": ("order.pickup_method", "purchase.pickup", "food.coffee_pickup"),
 }
 _PRED_ALIAS = {a: canon for canon, aliases in _PRED_CANON.items() for a in aliases}
 
@@ -115,6 +133,12 @@ _SYSTEM = (
     "light.ambient_color（氛围灯颜色）、seat.heating（座椅加热）；"
     "路线偏好统一用：route.avoid_highway（不走高速）、route.avoid_congestion（避堵）、"
     "route.avoid_toll（少收费）、route.preferred_road（固定走某条路，text 里写清路名）。"
+    # E5：口味族谓词一律 taste. 前缀——消费面（nearby 口味召回）按该前缀精确读取，
+    # 自由造词（beverage.coffee / place.avoid / restaurant.no_queue 都真实发生过）
+    # 会让偏好存得下却召不回。归一表只治已知别名，源头收敛在这句。
+    "餐饮/口味偏好的 predicate 一律以 taste. 开头、scope=profile.taste："
+    "taste.coffee（咖啡口味）、taste.coffee_brand（常点的咖啡品牌）、taste.cuisine（菜系）、"
+    "taste.spicy（辣度）、taste.dislike_place（不喜欢某家店）、taste.no_queue（不愿排队）。"
     "偏好/事实类可选字段："
     '"subject"=这条内容是关于谁的——用户本人**留空**；关于家人填亲属称谓'
     "（爸爸/妈妈/老婆/老公/女儿/儿子/孩子，如『我爸不喜欢空调太冷』subject=爸爸）；"

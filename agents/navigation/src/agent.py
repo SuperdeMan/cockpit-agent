@@ -19,6 +19,7 @@ from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
+from agents._sdk.timewindow import parse_clock_time
 from .providers import build_poi_provider
 from .providers.base import GeoPoint, POI
 
@@ -108,54 +109,15 @@ def _strip_proximity(dest: str) -> str:
 
 
 # ── G1 时间约束（EVA 二轮批 B）：「五点前到」到达时限的确定性解析 ──────────
-_CN_HOUR = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
-            "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12}
-# 时刻本体：HH:MM 或 N点[半|N分]，可带段位前缀（槽位值与原话片段共用）。
-# 数字时刻用 \d{1,2}（「10点」「23点」是两位——单字符类会把「10点」错拆成「0点」）。
-_ARRIVE_TIME_RE = re.compile(
-    r"(?:(上午|早上|凌晨|中午|下午|傍晚|晚上)\s*)?"
-    r"(?:(\d{1,2})[:：](\d{2})|(十一|十二|\d{1,2}|[一两二三四五六七八九十])\s*点\s*(半|\d{1,2}分)?)")
+# E1：时刻解析本体已下沉 `agents/_sdk/timewindow.py`（nearby 的用餐窗反推要用同一套
+# 消歧语义——判定抄两份正是 B1 那个 bug 的成因）。本模块只留**到达时限**这层语义门。
+_parse_arrive_by = parse_clock_time      # 名字保持（测试与调用点逐字不变）
 # 原话兜底门：时刻 + 「前/之前」或「N点(我)要/得/必须到」的到达措辞——
 # 只认到达时限句式，不把「三点半的会」这类顺带提到的时间当成时限。
 _ARRIVE_RAW_RE = re.compile(
     r"(?:上午|早上|凌晨|中午|下午|傍晚|晚上)?\s*"
     r"(?:\d{1,2}[:：]\d{2}|(?:十一|十二|\d{1,2}|[一两二三四五六七八九十])\s*点(?:半|\d{1,2}分)?)"
     r"\s*(?:之前|以前|前|我?(?:要|得|必须)到)")
-
-
-def _parse_arrive_by(text: str, now_ts: int | None = None) -> int | None:
-    """「到达时限」→ epoch 秒；解析不出返回 None。纯确定性，now 可注入供测试。
-
-    裸 1-11 点无段位按「未来最近一次」消歧：14:00 说「5点前到」= 今天 17:00；
-    20:00 说「5点前到」= 次日 05:00。带段位/24h 时刻过点即滚到明天同刻。
-    """
-    m = _ARRIVE_TIME_RE.search(text or "")
-    if not m:
-        return None
-    seg, hh, mm, cn, cn_min = m.groups()
-    if hh is not None:
-        hour, minute = int(hh), int(mm)
-    else:
-        hour = int(cn) if cn.isdigit() else _CN_HOUR.get(cn, -1)
-        minute = 30 if cn_min == "半" else (int(cn_min[:-1]) if cn_min else 0)
-    if not (0 <= hour <= 24 and 0 <= minute < 60):
-        return None
-    now = int(now_ts if now_ts is not None else time.time())
-    lt = time.localtime(now)
-
-    def _at(day_off: int, h: int) -> int:
-        return int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day_off,
-                                h % 24, minute, 0, 0, 0, -1)))
-
-    if seg in ("下午", "傍晚", "晚上") and hour < 12:
-        hour += 12
-    elif seg == "中午" and hour < 6:
-        hour += 12
-    if seg or hour >= 12 or hour == 0:
-        ts = _at(0, hour)
-        return ts if ts > now else _at(1, hour)
-    cands = [t for t in (_at(0, hour), _at(0, hour + 12)) if t > now]
-    return min(cands) if cands else _at(1, hour)
 
 
 # ── G11 路线策略：route_pref 槽/原话 → 高德 v3 driving strategy ────────────
