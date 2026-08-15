@@ -2922,3 +2922,29 @@ B3「19:00的电影——建议17:30入座…为您找到 10 家**美食**（…
 **留下不修（已定性）**：复合句里的人称接送解析失效（「接爸妈去吃饭」两档都红，
 `_person_destination` 的「剩不剩实质内容」判据用在整句上天然失效）——存量，另立卡；
 provider 方差面维持档案化不加 hint；关系图谱两条方向反了的边无消费方受害，记账不修。
+
+## §40.1 2026-08-15 洁癖整理：AGENTS §4.0/§4.1 完成态归档索引
+
+本次整理把 `AGENTS.md` 两处**已完成批次的叙述**收走（那两节的约定是「只留状态、
+不留流水」，而它们各自累积了 60–90 行批次记叙）。**没有复制一份新流水**——下列每段
+在 history 里本来就有权威版本，这里只留索引，方便按主题回查：
+
+| 被收走的段 | 权威流水 | 设计/评审文档 |
+|---|---|---|
+| §4.0 EVA 二轮余项 P3 簇收口 | **§36** | `design/2026-08-15-g8-navigation-route-session.md` / `-g4-trip-theme-retrieval.md` / `-g9-trip-multi-city.md` |
+| §4.0 指令集全量端到端验证 + 遗留六卡 | **§37 / §38** | `reviews/2026-08-15-eva-instruction-set-e2e-verification.md`、`design/2026-08-15-eva-e2e-residual-cards.md` |
+| §4.0 EVA 余项立卡 E1–E5 | **§39** | `design/2026-08-15-eva-backlog-cards-e1-e5.md` |
+| §4.0 双档复跑 + 三处修复 | **§40** | `reviews/2026-08-15-eva-dual-provider-rerun-and-fixes.md` |
+| §4.1 journeys 两条红收口 | **§35** | `test/journeys/*.yaml` 注释 |
+| §4.1 目的地接地 R1 二期 | **§34** | `design/2026-08-14-dest-grounding-containment-card.md` §7 |
+| §4.1 EVA 指令集二轮对标六批 | **§33 / §33.1** | `design/2026-08-14-eva-round2-capability-gaps.md`、`-implementation.md` §7/§8 |
+| §4.1 支付基础设施真实化四批 | **§28** | `design/2026-08-11-payment-infrastructure-and-merchant-mcp.md` §2/§6 |
+| §4.1 商户 badcase 收口七批 + 两轮 HMI 复盘 | **§30 / §31–§32.2** | `design/2026-08-13-cross-turn-store-anchor.md`、`-demo-mkemhn-merchant-hmi-hardening.md` §5/§5.1 |
+
+**刻意留在 §4.1 的**（它们不是流水，是仍然成立的约束或仍要动手的事）：
+复合句人称接送解析立卡（新，见 `design/2026-08-15-person-pickup-resolution-card.md`）、
+支付余项两条 + 商户量产边界（服务级全局凭证 / `PAYMENT_EXTERNAL_PAY_HOSTS` fail-closed /
+不执行最终付款）、外部评审 B1–B6 的契约面六条与两条 ⚠ 纪律、对抗语料余量 0。
+
+判据（与 §38.1 同）：**归档是把叙述换成索引，不是再抄一遍**。§4.0/§4.1 里凡是能用
+「一句状态 + 一个 history 号」表达的，就不该占接手者的第一屏。
