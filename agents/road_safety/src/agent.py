@@ -17,6 +17,8 @@ import os
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
+from agents._sdk.provenance import attach
+from agents._sdk.safety_signal import DRIVER_STATE_ADVICE, driver_state
 from runtime.clock import hour_of as clock_hour
 from runtime.proactive import P_CRITICAL, publish_proactive
 
@@ -26,6 +28,28 @@ _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.y
 
 # NATS 主题：订阅车辆状态变更
 _STATE_SUBJECT = "vehicle.state.changed"
+
+# 驾驶员状态与车辆告警判据的**唯一实现**在 `agents/_sdk/safety_signal.py`。
+# 这里曾经有一份本地副本、manual-rag 有第二份，chitchat 还要第三份——
+# 收口发生在第三个消费方出现的**当天**，不是等它错了再收（§4.3 时区族那笔账）。
+
+
+def _focus_safety_alert(meta) -> dict:
+    """从编排下发的 `meta.focus_safety_alert` 读会话告警。解析失败一律当没有
+    ——**宁可少一层约束，也不要按一个解析错的等级去劝阻用户**。"""
+    raw = (meta or {}).get("focus_safety_alert") if hasattr(meta, "get") else None
+    if not raw:
+        return {}
+    try:
+        alert = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(alert, dict) or alert.get("level") not in ("critical", "amber"):
+        return {}
+    return alert
+
+
+_driver_state = driver_state          # 对外名字不变，实现指向 _sdk 的唯一份
 
 
 class RoadSafetyAgent(BaseAgent):
@@ -156,6 +180,7 @@ class RoadSafetyAgent(BaseAgent):
     async def handle(self, intent, ctx, meta) -> AgentResult:
         handlers = {
             "safety.driving_advice": self._driving_advice,
+            "safety.driver_state": self._driver_state_intent,
             "safety.weather_alert": self._weather_alert,
             "safety.road_condition": self._road_condition,
         }
@@ -166,6 +191,24 @@ class RoadSafetyAgent(BaseAgent):
 
     async def _driving_advice(self, intent, ctx, meta) -> AgentResult:
         """综合天气+路况给出驾驶安全建议。"""
+        # ── 驾驶员状态优先（Q9 / QA 轮 I-043）────────────────────────────
+        # 在天气/路况之前判。原实现里「驾驶员状态」**根本不是一个输入维度**：
+        # `_general_advice` 只看天气现象，于是「困到睁不开眼」得到的回答是
+        # 「天气状况良好，适合出行」（迷你集 SF4，--repeat 3 下 0/3 稳定红）。
+        # 确定性、零 LLM——**安全结论不该取决于这次模型怎么想**。
+        state = _driver_state(intent.raw_text or "")
+        if state:
+            return self._driver_state_advice(state)
+
+        # ── 会话已有未解除的安全告警 → 不许按天气答（Q9 / QA 轮 I-054）────
+        # SF3 实测：红色机油灯之后一句「现在在高速还能继续开吗」被答成
+        # 「天气状况良好，适合出行」。`_general_advice` 只看天气现象，
+        # **它不知道这个会话里刚响过一个红灯**。告警经 `meta.focus_safety_alert`
+        # 由编排广播下来（不按 scope 门控——告警是约束不是敏感数据）。
+        alert = _focus_safety_alert(meta)
+        if alert:
+            return self._alert_bound_advice(alert)
+
         dest = intent.slots.get("destination", "").strip()
         if not dest:
             # badcase 11db5215：「今天天气怎么样，适合出行吗」这类泛出行询问被规划到
@@ -232,6 +275,58 @@ class RoadSafetyAgent(BaseAgent):
                      "advice": advice, "weather": weather_info,
                      "route": route_info},
             follow_up="需要帮您打开除雾或导航到服务区吗？",
+        )
+
+    def _alert_bound_advice(self, alert: dict) -> AgentResult:
+        """有未解除告警时的驾驶建议：结论由告警等级定，**不看天气**。"""
+        critical = alert.get("level") == "critical"
+        sig = alert.get("signal") or "车辆告警"
+        speech = (f"您这次会话里还有未解除的{sig}。"
+                  + ("在它排除之前不建议继续行驶——请尽快在安全位置靠边停车、熄火，"
+                     "并联系救援或前往就近服务点检查。"
+                     if critical else
+                     "请降低车速、避免长时间或高速行驶，尽快就近检查处理。"))
+        return AgentResult(
+            speech=speech,
+            data={"safety_alert_bound": True, "level": alert.get("level")},
+            ui_card=attach({"type": "safety_advice", "advice": speech,
+                            "alert": sig}, "road-safety", mode="deterministic",
+                           note="按会话未解除告警给出，未经模型生成"),
+            follow_up="需要我帮您找最近的服务点吗？")
+
+    async def _driver_state_intent(self, intent, ctx, meta) -> AgentResult:
+        """`safety.driver_state` 入口。
+
+        ⚠ **词表认不出时绝不回落到某一档**。首版写的是 `... or "fatigue"`，
+        真栈当场兑现成缺陷：planner 把「慢一点开可以吗」也路由到这条 intent，
+        于是用户听到「您现在的状态不适合继续开——**困倦时**的反应时间和酒后接近」
+        ——**系统声称了一件用户根本没说的事**（同 nearby 那几例假个性化）。
+        认不出就退回通用安全建议路径，让下游按会话告警/天气路况正常回答。
+        """
+        state = driver_state(intent.raw_text or "")
+        if state:
+            return self._driver_state_advice(state)
+        alert = _focus_safety_alert(meta)
+        if alert:
+            return self._alert_bound_advice(alert)
+        return await self._general_advice(ctx, meta)
+
+    def _driver_state_advice(self, state: str) -> AgentResult:
+        """驾驶员状态的**确定性**安全结论。不调 LLM、不看天气。
+
+        同时经保留键 `_safety_alert` 声明会话态——否则下一轮「别提醒我，继续开就行」
+        没有任何东西挡得住（QA 实测那轮的回答是「收到，那不提醒也不停车」）。
+        """
+        spec = DRIVER_STATE_ADVICE[state]
+        return AgentResult(
+            speech=spec["speech"],
+            data={"driver_state": state,
+                  "_safety_alert": {"level": spec["level"], "signal": spec["signal"]}},
+            ui_card=attach({"type": "safety_advice", "driver_state": state,
+                            "advice": spec["speech"]},
+                           "road-safety", mode="deterministic",
+                           note="确定性安全判据，未经模型生成"),
+            follow_up=spec["follow_up"],
         )
 
     async def _general_advice(self, ctx, meta) -> AgentResult:

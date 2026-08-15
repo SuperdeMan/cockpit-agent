@@ -23,7 +23,8 @@ from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
 from .clients import set_llm_pin
-from .context import ContextManager, build_context, _POC_DEFAULT_SCOPES
+from .context import (ContextManager, build_context, safety_alert_active,
+                      _POC_DEFAULT_SCOPES)
 from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
 from observability import events as obs_events
@@ -1181,6 +1182,18 @@ class PlannerEngine:
             for step in plan.steps:
                 if "location" in (step.context_scopes or []):
                     step.meta = {**step.meta, **route_meta}
+
+        # Q9 安全告警下发：**不按 scope 门控，广播给所有步**。
+        # 与上面那条坐标下发的取舍正相反，理由也正相反：坐标是敏感数据，给多了是泄漏；
+        # 安全告警不是数据是**约束**，给少了才是事故——QA 轮 SF3 实测，红色机油灯之后
+        # 一句「现在在高速还能继续开吗」被 road-safety 的 `_general_advice` 按天气答成
+        # 「天气状况良好，适合出行」，正因为那个分支根本不知道有告警。
+        # 最该知道的恰恰是闲聊兜底那一类（它答的是「不提醒也不停车」）。
+        alert = getattr(focus, "safety_alert", None) or {}
+        if safety_alert_active(alert):
+            alert_meta = {"focus_safety_alert": json.dumps(alert, ensure_ascii=False)}
+            for step in plan.steps:
+                step.meta = {**step.meta, **alert_meta}
 
         if focus.destination_lat is None or focus.destination_lng is None:
             return

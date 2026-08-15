@@ -10,12 +10,15 @@
 这些 meta 由编排器从 HandleRequest.meta 透传（见 orchestrator/cloud/engine.py _build_context）。
 """
 from __future__ import annotations
+import json
 import os
 import re
 from datetime import datetime
 
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
+from agents._sdk.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
+                                       alert_level, alert_signal, driver_state)
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
@@ -117,6 +120,44 @@ def _length(meta: dict) -> tuple[int, str]:
     return _LENGTH.get((meta or {}).get("answer_length", "standard"), _LENGTH["standard"])
 
 
+def _safety_answer(text: str) -> tuple[str, dict]:
+    """安全信号的**确定性**直答。返回 (话术, 告警声明)；不是安全问题返回 ("", {})。
+
+    与 `_clock_answer` / `_identity_answer` 同一形态、同一理由：
+    **系统持有的判据绝不交给 LLM 答**。这里持有的是「这句话里有没有安全信号」。
+
+    为什么 chitchat 需要这个：安全问题的落域本身有方差——「红色机油灯亮了怎么办」
+    在真栈三次取样里分别落到 manual-rag、闲聊和澄清。**加固了 manual-rag 与
+    road-safety 之后，兜底这条路就成了唯一没有护栏的入口**，而它恰恰是
+    QA 轮答出「收到，那不提醒也不停车」的那一条（迷你集 SF4）。
+
+    判据取自 `agents/_sdk/safety_signal`（唯一实现，三个 Agent 共用）。
+    """
+    state = driver_state(text)
+    if state:
+        spec = DRIVER_STATE_ADVICE[state]
+        return spec["speech"], {"level": spec["level"], "signal": spec["signal"]}
+    level = alert_level(text)
+    if level:
+        return (alert_advice(level),
+                {"level": level, "signal": alert_signal(text) or "车辆告警"})
+    return "", {}
+
+
+def _active_alert(meta: dict) -> dict:
+    """编排下发的会话告警（`meta.focus_safety_alert`）。解析失败一律当没有。"""
+    raw = (meta or {}).get("focus_safety_alert")
+    if not raw:
+        return {}
+    try:
+        alert = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return {}
+    if not isinstance(alert, dict) or alert.get("level") not in ("critical", "amber"):
+        return {}
+    return alert
+
+
 def _system(meta: dict) -> str:
     name = (meta or {}).get("assistant_name") or "小舟"
     # M4 P4：声纹识别出的说话人称呼。**没有它「你知道我是谁」只能靠语义召回碰运气**——
@@ -152,6 +193,13 @@ def _system(meta: dict) -> str:
         "已下单」，绝不输出「请确认」开头的交易确认语，也不要替系统承诺接下来会执行"
         "什么。用户在推进这类操作时，直接建议他说出明确指令（如「查询附近的瑞幸咖啡」），"
         "由系统的对应能力接手。"
+        # Q9：会话里有未解除的安全告警时，它是**这一轮回答的前提**，不是背景。
+        # QA 轮实测，用户说「别提醒我，继续开就行」时兜底答了「收到，那不提醒也不停车」
+        # ——**用户可以拒绝被提醒，系统不可以跟着改口说不用停车**。
+        + (f"⚠本次会话里还有未解除的安全告警：{_active_alert(meta).get('signal')}。"
+           "无论用户问什么、或明确表示不想被提醒，都不得表示可以继续危险驾驶、"
+           "不得撤回或弱化停车/休息建议；可以不再重复啰嗦，但立场不改。"
+           if _active_alert(meta) else "")
     )
 
 
@@ -196,6 +244,9 @@ class ChitchatAgent(BaseAgent):
         who = _identity_answer(text, meta)
         if who:                 # 「我是谁」：声纹已认定，同样不交给 LLM（历史会盖过 system）
             return AgentResult(speech=who)
+        safety, alert = _safety_answer(text)
+        if safety:              # 安全信号：确定性直答 + 声明会话告警，零 LLM
+            return AgentResult(speech=safety, data={"_safety_alert": alert})
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)
@@ -221,6 +272,13 @@ class ChitchatAgent(BaseAgent):
         if who:                 # 「我是谁」：声纹已认定，同样不交给 LLM
             yield ("speech", who)
             yield ("final", AgentResult(speech=who))
+            return
+        # ⚠ **两条路径都要挂**：D0 流式直通绕过 executor，本仓已经为此踩过两次
+        #（M2 Ledger、商户 badcase 各一次）。只在 handle 里加闸等于没加。
+        safety, alert = _safety_answer(text)
+        if safety:
+            yield ("speech", safety)
+            yield ("final", AgentResult(speech=safety, data={"_safety_alert": alert}))
             return
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)

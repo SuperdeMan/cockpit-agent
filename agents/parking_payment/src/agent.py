@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 
-from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, FAILED
+from agents._sdk import BaseAgent, AgentResult, NEED_CONFIRM, NEED_SLOT, FAILED
 from agents._sdk.payment_client import PaymentClient
 from .providers import build_parking_provider
 
@@ -72,8 +72,23 @@ class ParkingPaymentAgent(BaseAgent):
         )
 
     async def _pay(self, intent, ctx, meta: dict) -> AgentResult:
-        plate = intent.slots.get("plate", "")
-        order_id = intent.slots.get("order_id", "current")
+        plate = str(intent.slots.get("plate", "") or "").strip()
+        order_id = str(intent.slots.get("order_id", "") or "").strip() or "current"
+
+        # ── 字段完整性闸（Q10 / QA 轮 I-027）──────────────────────────────
+        # 费用卡上明明写着「粤B12345」，`parking.pay` 的 payload 里 plate 却是空串
+        # ——一次**没有车牌的付款确认**就这样到了用户面前。付款前的每一项都必须
+        # 是可核对的，缺一项就不许往下走（确定性校验，与 LLM 无关；同 B1
+        # 「安全不变量放在唯一出口」）。
+        # 车牌是用户填得出来的东西（他自己的车、费用卡上就写着），所以这里
+        # NEED_SLOT 正当——与「不许把用户填不了的东西声明成 missing_slots」不冲突。
+        if not plate:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="缴费前我需要确认车牌号，请告诉我是哪辆车。",
+                follow_up="比如「粤B12345」",
+                missing_slots=["plate"])
+
         idem = _idem_key(ctx.user_id, order_id, plate)
 
         # ── 第二趟：用户已确认（编排器只对挂起那一步注入 confirmed）──
@@ -129,9 +144,15 @@ class ParkingPaymentAgent(BaseAgent):
         if auth.status == _ST_CAPTURED:
             return AgentResult(speech="这笔停车费已经支付过了，不用再付。")
         # confirm_token 是栈变量，到此为止——不进 speech/ui_card/data/action payload
+        # 确认卡必须**完整回显 plate/order/amount 三项**：用户点「确认」之前
+        # 能核对的东西，就是他点下去要付的东西（I-027）。金额取网关快照的
+        # `amount_cents`（不是本地 fee_cents）——用户点头的金额=扣的金额。
         return AgentResult(
             status=NEED_CONFIRM,
-            speech=auth.confirm_prompt,     # 网关按订单快照生成——用户点头的金额=扣的金额
+            speech=auth.confirm_prompt,     # 网关按订单快照生成
             follow_up="说『确认』我就展示付款码",
+            ui_card={"type": "parking_fee", "order_id": order_id, "plate": plate,
+                     "amount": f"{auth.amount_cents / 100:.0f}元",
+                     "pending_confirm": True},
         ).action("parking.pay", {"order_id": order_id, "plate": plate},
                  require_confirm=True)

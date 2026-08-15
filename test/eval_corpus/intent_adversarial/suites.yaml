@@ -57,12 +57,22 @@ schema_version: 1
 # 抢话+挂起黑洞；批 D 已拍板创建入口=用户对 offer 的肯定答复）。台账契约
 # 双向各 2 例、全部 reviewed 新增（不动 stable/gate——复用打标签要改既有
 # forbidden 会碰 baseline 比对面），机械地 +4。
+# 2026-08-15 放到 596：第十次适用——QA 探索轮卡 Q9 新增 active intent
+# `safety.driver_state`（疲劳/饮酒/身体不适时能否继续驾驶）。
+# **占这 5 条额度的理由是「能力面本来就没有这一侧」，不是「模型分不清」**：
+# 在它之前，「困到睁不开眼了，还要开两个小时」三次取样分别落到闲聊、拒识和
+# 音量调节（迷你集 SF4，--repeat 3 下 0/3），而 road-safety 里的确定性疲劳判据
+# 一次都没跑到——**改实现不等于加能力，planner 只看得见 manifest**。
+# 判据是**约束在人还是在环境**：疲劳/饮酒/不适看人，雨雪雾拥堵看环境；两侧共用
+# 「能不能开」这个框架，正是最容易一锅端的地方。正 2（疲劳/饮酒）+ 硬负 2
+# （路况/雨天，环境侧）+ 对照 1（invariant），机械地 +5。
+# 全部 reviewed 不进 gate 池（不动 stable、不碰 baseline 比对面）。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 591
+    max_cases: 596
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

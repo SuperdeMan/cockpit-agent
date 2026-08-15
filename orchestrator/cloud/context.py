@@ -256,6 +256,12 @@ class Focus:
     # 同三条纪律：粘性接力不续期、prompt 只渲染名字不渲染坐标、消费方（navigation
     # reroute）按 ts 限龄。空 dict = 无活动路线。
     active_route: dict = field(default_factory=dict)
+    # Q9 安全告警会话态：任何 Agent 经保留键 `_safety_alert` 声明的**未解除**安全信号
+    # `{level: critical|amber, signal, ts}`。同 active_route 三条纪律（粘性接力不续期、
+    # 按 ts 限龄、编排不认识 Agent 私有字段）。
+    # 存在的理由：QA 轮 SF3 三轮实测——红色机油灯之后第二轮答天气、第三轮执行音量。
+    # **一次安全警告必须是会话状态，不能是一句话说完就没了。**
+    safety_alert: dict = field(default_factory=dict)
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -263,7 +269,7 @@ class Focus:
         return not (self.obj or self.positions or self.attr
                     or self.last_poi or self.last_destination or self.last_intent
                     or self.last_choice_purpose or self.last_choices
-                    or self.last_places or self.active_route
+                    or self.last_places or self.active_route or self.safety_alert
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
 
@@ -437,6 +443,14 @@ def _render_focus(focus) -> str:
     if not focus or focus.is_empty():
         return ""
     parts = []
+    # Q9：未解除的安全告警**排在最前**。它不是「上下文的一部分」，它是这轮回答的前提
+    # ——QA 轮 SF3 实测，红色机油灯之后第二轮答天气、第三轮执行音量，正因为这一行不存在。
+    alert = focus.safety_alert or {}
+    if safety_alert_active(alert):
+        grade = "需立即停车处置" if alert.get("level") == "critical" else "需尽快处理"
+        sig = alert.get("signal") or "车辆告警"
+        parts.append(f"⚠本会话有未解除的安全告警：{sig}（{grade}）"
+                     f"——回答任何问题都必须先满足这条安全约束，不得被普通建议覆盖")
     if focus.last_intent:
         parts.append(f"上一轮意图={focus.last_intent}")  # 省略式追问（「明天呢」）延续判据
     if focus.obj:
@@ -542,6 +556,50 @@ def _valid_route_session(raw) -> dict:
     return out
 
 
+#: 安全告警的**总龄**上限（秒）。⚠ 它不是「告警能活多久」——真实生效的是两个约束的
+#: 交集：焦点态本身 `_FOCUS_TTL`（当前 300s）**每成功一轮就续期**，而告警的 `ts`
+#: **接力时原样携带、不续期**（同 last_places/active_route 纪律）。
+#: 于是语义是：**对话持续活跃（轮间隔 ≤ 焦点 TTL）时告警一直在，但总龄超过本值即失效**。
+#: 取 2h：一次未解除的警告在一次出行内应当一直可见；停一晚再上车不该还挂着上次的灯。
+_SAFETY_ALERT_TTL = 7200
+_SAFETY_LEVELS = ("critical", "amber")
+
+
+def _valid_safety_alert(raw) -> dict:
+    """校验并规范化 `_safety_alert` 保留键（Q9）。非法返回空 dict。
+
+    同 `_valid_route_session`：**非法元素直接丢、不做 str() 转换**——转出来的值
+    匹配不上任何东西，却会在日志里留下一个不存在的等级（CLAUDE.md §6）。
+    `level` 必须是枚举内的值：「很严重」这种自由文本一律丢弃，
+    否则下游按等级分支时会静默走到 else。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    level = raw.get("level")
+    if not isinstance(level, str) or level not in _SAFETY_LEVELS:
+        return {}
+    signal = raw.get("signal")
+    signal = str(signal).strip() if isinstance(signal, (str, int, float)) else ""
+    out = {"level": level, "signal": signal[:40]}
+    try:
+        ts = int(raw.get("ts") or 0)
+    except (TypeError, ValueError):
+        ts = 0
+    out["ts"] = ts if ts > 0 else int(time.time())
+    return out
+
+
+def safety_alert_active(alert, *, now: float | None = None) -> bool:
+    """告警是否仍在有效期内。消费方一律经此判定，不各自算一遍。"""
+    if not isinstance(alert, dict) or alert.get("level") not in _SAFETY_LEVELS:
+        return False
+    try:
+        ts = int(alert.get("ts") or 0)
+    except (TypeError, ValueError):
+        return False
+    return ts > 0 and ((now or time.time()) - ts) <= _SAFETY_ALERT_TTL
+
+
 def extract_focus(plan, results) -> "Focus | None":
     """从本轮执行的 plan + 成功结果抽取焦点（best-effort，启发式）。
 
@@ -642,6 +700,11 @@ def extract_focus(plan, results) -> "Focus | None":
             data.get("_route_session") if isinstance(data, dict) else None)
         if session:
             focus.active_route = session
+        # Q9 安全告警：同族保留键。多步都声明时取最后一个（后发的更新）。
+        alert = _valid_safety_alert(
+            data.get("_safety_alert") if isinstance(data, dict) else None)
+        if alert:
+            focus.safety_alert = alert
     return None if focus.is_empty() else focus
 
 
@@ -697,7 +760,8 @@ class ContextManager:
                 # 2026-08-13 真栈三轮实证；两轮测试测不出来——第二轮恰好紧邻搜索轮。
                 # G8 active_route 同款粘性：只有新的 navigate 才替换活动路线。
                 previous = None
-                if not focus.last_places or not focus.active_route:
+                if (not focus.last_places or not focus.active_route
+                        or not focus.safety_alert):
                     previous = await self._load_focus(session_id, user_id)
                 if previous is not None and not focus.last_places \
                         and previous.last_places:
@@ -710,6 +774,13 @@ class ContextManager:
                         and getattr(previous, "active_route", None):
                     # 原样携带（含 ts 不续期）：路线时效从 navigate 那一刻起算。
                     focus.active_route = dict(previous.active_route)
+                # Q9 安全告警同款粘性：**只有新的告警才替换它**，普通轮不得把它抹掉。
+                # 这一格正是 SF3 那三轮缺的东西——第二轮问「高速还能开吗」不产生
+                # 任何告警，不接力的话安全态当场蒸发，第三轮自然就只剩音量可挑了。
+                # 同样**原样携带 ts 不续期**：告警时效从它响起那一刻算。
+                if previous is not None and not focus.safety_alert \
+                        and getattr(previous, "safety_alert", None):
+                    focus.safety_alert = dict(previous.safety_alert)
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:

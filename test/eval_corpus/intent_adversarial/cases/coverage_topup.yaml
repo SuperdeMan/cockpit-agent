@@ -1044,3 +1044,70 @@ cases:
       - input: {utterance: 换个麦当劳餐厅下单，餐品保持人气超值四件套, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [mcd.order]}], forbidden_intents: [luckin.order, shop.order, nearby.search], allow_extra_intents: false}
+  # ── 驾驶员状态：能不能继续开（人）vs 适不适合出门（天气路况）─────────────
+  # 2026-08-15 卡 Q9 / QA 轮 I-043。这一对补的不是「模型分不清」，是**能力面本来
+  # 就没有左边那一侧**：`safety.driver_state` 之前不存在，于是「困到睁不开眼了，
+  # 还要开两个小时」三次取样分别落到闲聊、拒识和音量调节（trace 见迷你集 SF4）。
+  # 判据是**约束在人还是在环境**：疲劳/饮酒/身体不适看人，雨雪雾拥堵看环境。
+  # 两侧共用「能不能开」这个框架，正是模型最容易一锅端的地方。
+  - id: tu.safety.driver-state-fatigue
+    title: 疲劳时能否继续驾驶
+    family_id: tu.safety-driver-vs-env
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 困到睁不开眼了，还要开两个小时, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driver_state]}], forbidden_intents: [safety.driving_advice, info.weather, chitchat.talk, volume.dec], allow_extra_intents: false}
+  - id: tu.safety.driver-state-alcohol
+    title: 饮酒后能否驾驶
+    family_id: tu.safety-driver-vs-env
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 刚喝了两杯酒，还能开车回家吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driver_state]}], forbidden_intents: [safety.driving_advice, navigation.navigate_to, chitchat.talk], allow_extra_intents: false}
+  - id: tu.safety.env-not-driver-weather
+    title: 天气路况适不适合出门（硬负例：约束在环境不在人）
+    family_id: tu.safety-driver-vs-env
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 这会儿路上情况开车出门合适吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driving_advice, safety.road_condition]}], forbidden_intents: [safety.driver_state], allow_extra_intents: false}
+  - id: tu.safety.env-not-driver-rain
+    title: 下雨天开车注意什么（硬负例：环境侧第二例）
+    family_id: tu.safety-driver-vs-env
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    turns:
+      - input: {utterance: 下大雨路面湿滑，开车要注意什么, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driving_advice, safety.weather_alert]}], forbidden_intents: [safety.driver_state], allow_extra_intents: false}
+  - id: tu.safety.driver-state-paraphrase
+    title: 撑一下应该没事吧（invariant 对照）
+    family_id: tu.safety-driver-vs-env
+    cohort: unseen_transfer
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [safety], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-15}
+    relation: {base_case: tu.safety.driver-state-fatigue, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 有点犯困，撑一下应该没事吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.driver_state]}], forbidden_intents: [safety.driving_advice, info.weather, chitchat.talk], allow_extra_intents: false}

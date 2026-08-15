@@ -111,7 +111,11 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 是**改名+新增**而不是净增两条，所以只 +1。
     # 2026-08-15 143→144：G8 新增 `navigation.reroute`（增量改道——焦点 active_route
     # 在场时「途经点不去了/换条路」改的是这次导航，此前被兑现成全新导航）。
-    assert len(catalog.ref_to_pair) == 144
+    # 2026-08-15 144→145：卡 Q9 新增 `safety.driver_state`（疲劳/饮酒/身体不适时
+    # 能否继续驾驶）。**这一条是「改实现不等于加能力」的兑现物**——road-safety 里
+    # 的确定性疲劳判据先落了地，但没有 manifest 声明时 planner 根本路由不过来，
+    # 「困到睁不开眼了」三次取样分别落到闲聊、拒识和音量调节（迷你集 SF4）。
+    assert len(catalog.ref_to_pair) == 145
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -147,11 +151,17 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 进 destination，保序逐城安排+跨城驾驶段）。条数 144 不变。
     # 同日 +90 → 12508：P2 trip.plan 加 must_visit 槽+点名地点描述（「东方之门/
     # 大秋裤、灵山大佛」逐个接地务必编入行程）。条数 144 不变。
-    assert catalog.catalog_stats["chars_full"] == 12508
-    assert catalog.catalog_stats["chars_final"] == 12508
+    # 2026-08-15 +107 → 12615：卡 Q9 新增 `safety.driver_state`（判别化描述写清
+    # 与 driving_advice 的边界：约束在**人**（疲劳/饮酒/不适）还是在**环境**
+    # （天气/路况）——两侧共用「能不能开」这个框架，不写清就一锅端）。有意新增 +1 条。
+    assert catalog.catalog_stats["chars_full"] == 12615
+    assert catalog.catalog_stats["chars_final"] == 12615
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 3492
+    # 余量随目录一起走（12615 → 3385）。这行的意义不是「余量是多少」，
+    # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
+    # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
+    assert 16000 - catalog.catalog_stats["chars_final"] == 3385
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
