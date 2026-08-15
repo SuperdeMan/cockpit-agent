@@ -704,3 +704,45 @@ def test_ambience_word_reranks_by_tags_and_rating_honestly():
                                  meta=_LOC))
     assert [i["name"] for i in res.data["items"]] == ["庭院咖啡", "闹市咖啡"]
     assert "安静度数据" in res.speech          # 诚实说数据边界，不假装有安静度
+
+
+# ── P5（EVA 遗留卡）：咖啡类目的口味消费面 ──
+
+def test_coffee_category_consumes_store_level_dislike():
+    """「这家咖啡太酸」的店铺级差评此前对咖啡搜索结构性失效——口味门禁只认正餐
+    类目（_FOOD_CATS 无咖啡），带店名条目入了库结果集也纹丝不动。修后：咖啡类目
+    走 _TASTE_CATS 消费面，店名头匹配降权生效；菜系偏置仍只限正餐（粤菜偏好
+    不得偏置咖啡检索词）。"""
+    from agents.nearby.src.providers.base import Place as _Place
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [
+            _Place(id="a", name="三立方(南山创维店)", rating=4.0, lat=22.5, lng=113.9),
+            _Place(id="b", name="瑞幸咖啡(创维店)", rating=4.5, lat=22.5, lng=113.9),
+        ]
+
+    agent.place.search = search
+    ctx = make_context()
+
+    async def recall(query, **kw):
+        return [
+            {"text": "用户喜欢吃粤菜", "polarity": "like", "predicate": "taste.cuisine"},
+            {"text": "用户不喜欢三立方的咖啡（太酸）", "polarity": "dislike",
+             "predicate": "taste.coffee"},
+        ]
+    ctx.recall = recall
+
+    res = asyncio.run(run_handle(
+        agent, "nearby.search", slots={"keyword": "咖啡"},
+        raw_text="帮我找杯咖啡喝", ctx=ctx,
+        meta={"current_lat": "22.54", "current_lng": "113.93"}))
+
+    assert res.status == "ok"
+    names = [i["name"] for i in res.data["items"]]
+    assert names[0] == "瑞幸咖啡(创维店)"          # 差评店降权后移
+    assert names[-1] == "三立方(南山创维店)"
+    assert "不合口味的已排后" in res.speech
+    assert seen["keyword"] != "粤菜"               # 菜系偏置未污染咖啡检索

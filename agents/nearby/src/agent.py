@@ -59,6 +59,12 @@ _CATEGORY_KEYWORD = {
 }
 # 餐饮类目（口味画像仅此类生效）
 _FOOD_CATS = {"餐饮", "美食", "吃饭", "餐厅", "吃的"}
+# P5（EVA 遗留卡）：口味记忆的**消费面**类目——比 _FOOD_CATS 宽。此前口味召回
+# 门禁只认正餐类目，咖啡/奶茶搜索整个被排除 → 「这家咖啡太酸」的店铺级差评
+# **结构性永不降权**（2026-08-15 真栈实测：带店名条目已入库、结果集纹丝不动）。
+# 菜系偏置（like_cuisine 改检索词）仍只限 _FOOD_CATS——拿粤菜偏好去偏置咖啡
+# 检索是错的；降权/忌口消费按本集合。
+_TASTE_CATS = _FOOD_CATS | {"咖啡", "咖啡厅", "奶茶", "甜品", "面包", "烘焙", "饮品"}
 # G5：原话里的饮食信号——只有它在场时才允许落「餐饮」默认类目。
 # 「看看动物的地方」落「美食」是给出错误结果，比失败更糟。
 _FOOD_HINT_RE = re.compile(
@@ -396,9 +402,11 @@ class NearbyAgent(BaseAgent):
         # 记忆里的喜好菜系直接偏置检索词；用户点名的东西永远优先于记忆。
         taste = None
         taste_notes: list[str] = []
-        if category in _FOOD_CATS:
+        if category in _TASTE_CATS:
             taste = await self._taste_profile(ctx, raw)
-            if (taste and taste["like_cuisine"]
+            # 菜系偏置只限正餐类目（拿粤菜偏好偏置咖啡检索是错的）；
+            # 忌口/店铺级降权按 _TASTE_CATS 全集生效（P5）。
+            if (category in _FOOD_CATS and taste and taste["like_cuisine"]
                     and not (cuisine or brand or kw_slot.strip())):
                 keyword = taste["like_cuisine"]
                 taste_notes.append(f"按您的口味优先{taste['like_cuisine']}")
@@ -586,11 +594,13 @@ class NearbyAgent(BaseAgent):
         """召回口味记忆（本人 + 话里点名家人的 subject 分区）→ 结构化信号。失败不挡主流程。"""
         mems: list[dict] = []
         try:
+            # top_k=5（P5 从 3 放宽）：店铺级差评条目与菜系偏好同谓词前缀，
+            # top-3 会被更早的泛化条目挤掉（真栈实测 4 条 taste 记忆时店名条目缺席）。
             mems += await ctx.recall("口味偏好", scopes=["profile.taste"],
-                                     predicate_prefix="taste.", top_k=3)
+                                     predicate_prefix="taste.", top_k=5)
             for subj in self._person_subjects(raw):
                 mems += await ctx.recall("口味偏好", scopes=["profile.taste"],
-                                         predicate_prefix="taste.", top_k=3,
+                                         predicate_prefix="taste.", top_k=5,
                                          subject=subj)
         except Exception:
             pass

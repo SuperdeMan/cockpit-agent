@@ -556,7 +556,8 @@ class MemoryStore:
         **查不到返回 None**（调用方诚实追问）；命中多个实体也返回 None——导航到错地方
         比查不到更糟，宁可问一句。
         """
-        from relation import REL_FAMILY, REL_PLACE_OF, kinship_aliases
+        from relation import (REL_FAMILY, REL_PLACE_OF, REL_WORKS_AT,
+                              REL_LIVES_AT, kinship_aliases)
         aliases = kinship_aliases(person_word)
         if not aliases:
             return None
@@ -569,8 +570,18 @@ class MemoryStore:
                     persons.append(edge["subject"])
         if len(persons) != 1:
             return None                      # 0=不知道；>1=有歧义，都该问不该猜
-        places = await vs.query_relations(user_id, occupant_id=occupant_id,
-                                          subject=persons[0], rel=REL_PLACE_OF)
+        # P4：人的常在地是 place_of ∪ works_at ∪ lives_at 三类——此前只查 place_of，
+        # 「老婆在X上班」即便正确抽成 works_at 也查不到（存得下用不上的又一例）。
+        # 去重后仍要求唯一，歧义照旧问不猜。
+        places: list[dict] = []
+        seen_objs: set[str] = set()
+        for rel in (REL_PLACE_OF, REL_WORKS_AT, REL_LIVES_AT):
+            for edge in await vs.query_relations(user_id, occupant_id=occupant_id,
+                                                 subject=persons[0], rel=rel):
+                obj = edge.get("object") or ""
+                if obj and obj not in seen_objs:
+                    seen_objs.add(obj)
+                    places.append(edge)
         if len(places) != 1:
             return None
         return {"person": persons[0], "place": places[0]["object"],

@@ -19,7 +19,7 @@ from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 
 from ..admission import normalize_hostname
 from ..mcp_client import McpTimeout
-from .base import DeclaredBusinessRejected, MerchantWorkflow
+from .base import DeclaredBusinessRejected, MerchantWorkflow, parse_quantity
 from .models import MerchantChoice, MerchantDraft, MerchantItem, MerchantResult, yuan_to_cents
 
 
@@ -107,9 +107,10 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 missing_slots=["item_query"])
         quantity = self._quantity(slots.get("quantity", "1"))
         if quantity is None:
+            # P3：解析不出才追问，且说人话（同 luckin，校验文案不进 TTS）。
             return AgentResult(
-                status=NEED_SLOT, speech="数量需要是 1 到 20 之间的整数。",
-                follow_up="请告诉我要几份。", missing_slots=["quantity"])
+                status=NEED_SLOT, speech="点几份呢？一次最多帮您点 20 份。",
+                follow_up="比如说「两份」。", missing_slots=["quantity"])
 
         user_id, session_id = self._owner(ctx)
         if not user_id or not session_id:
@@ -579,11 +580,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
     @staticmethod
     def _quantity(value) -> int | None:
-        text = str(value).strip()
-        if not re.fullmatch(r"[0-9]+", text):
-            return None
-        quantity = int(text)
-        return quantity if 1 <= quantity <= 20 else None
+        # P3：容错解析（「一份」「2份」「１２」）在 base.parse_quantity；边界仍 1–20。
+        return parse_quantity(value)
 
     @staticmethod
     def _stores(data) -> list[dict]:

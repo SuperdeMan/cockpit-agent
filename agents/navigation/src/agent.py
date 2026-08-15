@@ -65,6 +65,12 @@ _PERSON_FILLER_RE = re.compile(
 # 裸称谓 → 播报用的自然说法（「我还不知道**妈**平时在哪」读着别扭，真栈实测）
 _PERSON_DISPLAY = {"妈": "妈妈", "爸": "爸爸", "娃": "孩子", "小孩": "孩子"}
 
+# set_place 人称守卫（P4）：长词直接算 + 单字「妈/爸」只认「我妈/你爸」代词组合——
+# 裸单字会误伤「妈湾路」这类地名。
+_SET_PLACE_PERSON_RE = re.compile(
+    "|".join([re.escape(w) for w in _PERSON_WORDS if len(w) >= 2]
+             + [r"[我你他她][妈爸]"]))
+
 
 def _person_display(word: str) -> str:
     return _PERSON_DISPLAY.get(word, word)
@@ -496,7 +502,7 @@ class NavigationAgent(BaseAgent):
                     return await self._navigate_via_waypoint(
                         stored_poi, place_label, waypoint, items, meta,
                         arrive_by_ts=arrive_by_ts, strategy=strategy,
-                        strategy_note=strategy_note)
+                        strategy_note=strategy_note, ctx=ctx)
                 stop_category = (intent.slots.get("stop_category") or "").strip()
                 if not stop_category:
                     m = self._STOP_RAW_RE.search(raw_text)
@@ -612,7 +618,8 @@ class NavigationAgent(BaseAgent):
         if waypoint:
             return await self._navigate_via_waypoint(
                 first, resolved_name, waypoint, items, meta,
-                arrive_by_ts=arrive_by_ts, strategy=strategy, strategy_note=strategy_note)
+                arrive_by_ts=arrive_by_ts, strategy=strategy,
+                strategy_note=strategy_note, ctx=ctx)
 
         # 轮1：顺路停靠类目（吃饭/咖啡…）→ 导航到目的地 + 给候选让用户二次选择。
         # planner 未填 stop_category 槽位时，从 raw_text"附近/顺路…餐厅/吃饭"兜底识别——
@@ -705,7 +712,23 @@ class NavigationAgent(BaseAgent):
         )
 
     async def _set_place(self, intent, ctx, meta) -> AgentResult:
-        """显式设置常用地点：『把家设成XX』『我家在XX』『设置公司地址为XX』。不导航。"""
+        """显式设置常用地点：『把家设成XX』『我家在XX』『设置公司地址为XX』。不导航。
+
+        P4 守卫（2026-08-15 真栈恶性实测）：「我老婆平时在深圳湾万象城上班」被 planner
+        语义映射成 set_place(公司=万象城)——**把用户自己的常用地点改写成了家人的位置**。
+        家人位置陈述是记忆抽取/关系图谱的输入，不是设置本人常用地点：原话含人称词时
+        只口头记下（真正的存储由抽取管线做），**绝不写画像**。
+        """
+        raw = getattr(intent, "raw_text", "") or ""
+        person_word = _SET_PLACE_PERSON_RE.search(raw)
+        if person_word:
+            token = person_word.group(0)
+            who = _person_display(token[1:] if len(token) == 2
+                                  and token[0] in "我你他她" else token)
+            return AgentResult(
+                speech=f"好的，记下了——您{who}的位置我记在TA名下，"
+                       f"以后说「去接{who}」我就知道去哪了。",
+                follow_up="您自己的常用地点才用「把家/公司设成XX」设置")
         place_key, label = _match_place_alias(intent.slots.get("place", ""))
         address = (intent.slots.get("address") or "").strip()
         if not place_key or not address:
@@ -959,28 +982,78 @@ class NavigationAgent(BaseAgent):
         h, mm = divmod(m, 60)
         return (f"{h}小时" if h else "") + (f"{mm}分钟" if mm else "")
 
+    async def _resolve_waypoint_token(self, w: str, ctx, near, meta
+                                      ) -> "tuple[POI | None, AgentResult | None]":
+        """P1（EVA 遗留卡）：单个途经点 token 三级解析——与目的地侧同款权威序。
+
+        ① 人称词（孩子/老婆…）→ 关系图谱一跳；命中得地点名再 POI 搜索取坐标；
+           **未命中 → 诚实教学问**（导航到随机学校比问一句更糟——真栈 B4 实测
+           「先送孩子去学校」搜出「博明程国际教育」）。
+        ② 常用地点别名（家/公司/学校）→ 画像 profile.places；未设置 → 引导先设置。
+        ③ 其余照旧 POI 搜索（近目的地）。
+        返回 (POI, None)=解析成功 / (None, AgentResult)=需要用户补信息（整轮中止）/
+        (None, None)=搜不到（调用方记 missing 如实说跳过）。"""
+        person_word = _person_destination(w)
+        if person_word and ctx is not None:
+            hit = await ctx.resolve_person_place(person_word)
+            if hit and hit.get("place"):
+                try:
+                    r = await self.poi.search(hit["place"], near=near, limit=1,
+                                              meta=meta)
+                except ProviderError:
+                    r = []
+                if r:
+                    return r[0], None
+                return None, None          # 图谱有名但地图接不到 → 如实跳过
+            who = _person_display(person_word)
+            return None, AgentResult(
+                status=NEED_SLOT,
+                speech=f"我还不知道你{who}平时在哪，你说个地方我就记住了。",
+                follow_up=f"可以说「我{who}在XX上班」或「我{who}在XX小学上学」",
+                missing_slots=["waypoint"])
+        place_key, place_label = _match_place_alias(w)
+        if place_key and ctx is not None:
+            stored = await self._get_place(ctx, place_key)
+            if stored and stored.get("lat") is not None:
+                return POI(id=f"place_{place_key}",
+                           name=stored.get("name") or place_label,
+                           address=stored.get("address") or "",
+                           lat=stored.get("lat"), lng=stored.get("lng")), None
+            return None, AgentResult(
+                status=NEED_SLOT,
+                speech=f"您还没有设置「{place_label}」的位置。"
+                       f"先说「把{place_label}设成XX地址」，我记住后再帮您把它设为途经点。",
+                follow_up=f"例如「把{place_label}设成深圳市南山实验小学」",
+                missing_slots=["waypoint"])
+        try:
+            r = await self.poi.search(w, near=near, limit=1, meta=meta)
+        except ProviderError as e:
+            logger.warning("waypoint resolve failed: %s", e)
+            r = []
+        return (r[0] if r else None), None
+
     async def _navigate_via_waypoint(self, dest_poi, resolved_name, waypoint,
                                      items, meta, *, arrive_by_ts=None,
                                      strategy: str = "",
-                                     strategy_note: str = "") -> AgentResult:
+                                     strategy_note: str = "", ctx=None) -> AgentResult:
         """轮2：所选停靠点 near 目的地解析坐标→并入途经点，并出路线规划卡（出发地→途经点→目的地）。
 
         G9（EVA 二轮）：waypoint 支持 、/和/与/及 连写多个（「途经肯德基和星巴克」），
         逐个解析**保用户口述序**并入路线；解析不出的如实说跳过。
         G1：带 arrive_by 时做时限判定；能算出直达路线时量化绕行代价（多绕约 N 分钟），
         迟到而直达能赶上时给出量化替代（不做自动取舍，选择权在用户）。
+        P1：token 先过人称/常用地点两级（`_resolve_waypoint_token`），
+        「先送孩子去学校再去公司」的「学校」不再搜出随机学校。
         """
         near = GeoPoint(lat=dest_poi.lat, lng=dest_poi.lng)
         wanted = [w.strip(" 、，,。") for w in re.split(r"[、和与及,，]", waypoint or "")
                   if w.strip(" 、，,。")][:6]
         resolved, missing = [], []
         for w in wanted:
-            try:
-                r = await self.poi.search(w, near=near, limit=1, meta=meta)
-            except ProviderError as e:
-                logger.warning("waypoint resolve failed: %s", e)
-                r = []
-            (resolved.append(r[0]) if r else missing.append(w))
+            poi_hit, ask = await self._resolve_waypoint_token(w, ctx, near, meta)
+            if ask is not None:
+                return ask
+            (resolved.append(poi_hit) if poi_hit else missing.append(w))
         payload = self._navigate_payload(dest_poi.name, dest_poi.lat, dest_poi.lng, meta)
         if not resolved:
             return self._stamp_route_session(AgentResult(

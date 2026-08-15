@@ -336,3 +336,42 @@ exemplars:
   tags:
   - canonical
   note: G8 导航中换路线策略；同目的地同途经点重规划，不是发起新导航
+- text: 接儿子放学，顺路买杯奶茶，六点前要到学校
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 儿子
+      stop_category: 奶茶
+      arrive_by: 六点前
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: P6 组合接送形（人称+顺路+时限一步到位）：destination=人称词由 agent 关系图谱解析（不知道就诚实教学问）；真栈方差=planner 偶发只口头确认不起 navigate
+- text: 五点半前去接老公，顺路取个奶茶，别迟到
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 老公
+      stop_category: 奶茶
+      arrive_by: 五点半前
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: P6 接配偶形：destination 填人称词本身（真栈方差=slot 被填成整句原话）；别迟到=保持 arrive_by 不产新时限
+- text: 先送孩子去学校，然后送我去公司，路上买个早餐
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 公司
+      waypoint: 学校
+      stop_category: 早餐
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: P1 多目的地先后序=终点+途经点（「先A后B」B 是 destination、A 是 waypoint）；学校/公司经画像/关系解析，未设置会诚实引导（真栈曾打散成快速路入口搜索）

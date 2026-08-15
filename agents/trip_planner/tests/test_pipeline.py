@@ -392,3 +392,64 @@ def test_solve_overflow_day_inherits_city():
     solved = asyncio.run(pipeline.solve(prov, trip, 80.0, {}))
     assert len(solved.itinerary) >= 2
     assert solved.itinerary[1].city == "苏州"
+
+
+# ─── P2 用户点名 POI 入池（EVA 遗留卡）───
+
+def test_must_visit_direct_ground_and_city_assignment():
+    """直搜接地 + 按坐标就近归城（东方之门→苏州、灵山大佛→无锡）。"""
+    llm = AsyncMock()
+    prov = FakePOI(search_map={
+        "东方之门": [_poi("东方之门", lat=31.32, lng=120.68)],
+        "灵山大佛": [_poi("灵山大佛", lat=31.43, lng=120.09)]})
+    pool_by_city = {
+        "苏州": [_poi("金鸡湖", lat=31.31, lng=120.71)],
+        "无锡": [_poi("鼋头渚", lat=31.53, lng=120.22)]}
+    pairs = asyncio.run(pipeline.ground_must_visit(
+        llm, prov, ["东方之门", "灵山大佛"], ["苏州", "无锡"], "苏州、无锡", {},
+        pool_by_city=pool_by_city))
+    assert [(c, p.name) for c, p in pairs] == [
+        ("苏州", "东方之门"), ("无锡", "灵山大佛")]
+    llm.complete.assert_not_called()          # 直搜命中不烧 LLM
+
+
+def test_must_visit_nickname_via_landmark_llm():
+    """俗称（大秋裤）直搜失败 → landmark_candidates 解析官方名再搜。"""
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value='["东方之门"]')
+    prov = FakePOI(search_map={
+        "东方之门": [_poi("东方之门", lat=31.32, lng=120.68)]})
+    pairs = asyncio.run(pipeline.ground_must_visit(
+        llm, prov, ["大秋裤"], ["苏州"], "苏州", {},
+        pool_by_city={"苏州": [_poi("金鸡湖", lat=31.31, lng=120.71)]}))
+    assert [(c, p.name) for c, p in pairs] == [("苏州", "东方之门")]
+
+
+def test_must_visit_ungroundable_dropped():
+    llm = AsyncMock()
+    llm.complete = AsyncMock(return_value="[]")
+    pairs = asyncio.run(pipeline.ground_must_visit(
+        llm, FakePOI(), ["不存在的仙境"], ["苏州"], "苏州", {},
+        pool_by_city={}))
+    assert pairs == []                        # 接不到丢弃，不臆造
+
+
+def test_must_visit_hint_and_post_insert():
+    """骨架漏排的必去点确定性补插进归属城首日；已在行程的不重复插。"""
+    dp = _poi("东方之门", lat=31.32, lng=120.68)
+    pairs = [("苏州", dp), ("无锡", _poi("灵山大佛", lat=31.43, lng=120.09))]
+    assert "东方之门（苏州）" in pipeline.must_visit_hint(pairs)
+
+    trip = Trip(destination="苏州、无锡", days=2, cities=["苏州", "无锡"], itinerary=[
+        Day(day_index=1, city="苏州", stops=[
+            Stop(stop_id="s1", name="东方之门", grounded=True,
+                 poi={"lat": 31.32, "lng": 120.68})]),
+        Day(day_index=2, city="无锡", stops=[
+            Stop(stop_id="s2", name="鼋头渚", grounded=True,
+                 poi={"lat": 31.53, "lng": 120.22})])])
+    pipeline.ensure_must_visit_in_itinerary(trip, pairs)
+    d1_names = [s.name for s in trip.itinerary[0].stops]
+    d2_names = [s.name for s in trip.itinerary[1].stops]
+    assert d1_names == ["东方之门"]           # 已在行程 → 不重复
+    assert "灵山大佛" in d2_names             # 漏排 → 补进无锡那天
+    assert trip.itinerary[1].stops[-1].source == "user"

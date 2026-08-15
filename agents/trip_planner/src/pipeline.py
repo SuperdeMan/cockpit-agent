@@ -164,6 +164,97 @@ def theme_hint(theme: str, theme_names: list[str]) -> str:
             "其余天数/空位用普通景点补齐。")
 
 
+# ── P2（EVA 遗留卡）：用户点名 POI 第三路入池 ──────────────────────────
+# 「我想去苏州打卡大秋裤…灵山大佛…趵突泉」——点名地点此前无入池通道（池只有
+# 「{城}景点/美食」+主题两路），六城行程骨架成立但点名 POI 全丢。
+# 接地纪律与主题步同款：直搜 name_matches → 失败走 landmark_candidates 俗称解析
+# （「大秋裤→东方之门」映射本就在 landmark prompt）；接不到丢弃不臆造。
+
+async def ground_must_visit(llm, poi_provider, names: list[str],
+                            cities: list[str], dest: str, meta,
+                            pool_by_city: dict | None = None) -> list[tuple[str, POI]]:
+    """点名地点逐个接地 → [(归属城, POI)]。归属城按坐标就近各城池质心
+    （多城时；单城/算不出归 dest 或空串）。接地失败的整个丢弃（宁缺勿错）。"""
+    out: list[tuple[str, POI]] = []
+    centers: dict[str, GeoPoint] = {}
+    for c in (cities or []):
+        ctr = _city_center((pool_by_city or {}).get(c) or [])
+        if ctr is not None:
+            centers[c] = ctr
+    for nm in [n for n in (names or []) if n][:8]:
+        poi = await _ground_must_visit_one(llm, poi_provider, nm, meta)
+        if poi is None or not (poi.lat and poi.lng):
+            logger.info("must-visit '%s' 接不到真实 POI（诚实丢弃，不臆造）", nm)
+            continue
+        city = _nearest_city(poi, centers) or (dest if not cities else "")
+        out.append((city, poi))
+    return out
+
+
+async def _ground_must_visit_one(llm, poi_provider, name: str, meta) -> POI | None:
+    """直搜（全国序，点名 POI 是专名不加城市前缀）→ 俗称经 landmark 解析再搜。"""
+    async def _search(kw):
+        try:
+            return await poi_provider.search(kw, near=None, limit=1, meta=meta)
+        except ProviderError as e:
+            logger.warning("must-visit ground '%s' failed: %s", kw, e)
+            return []
+
+    results = await _search(name)
+    if results and name_matches(name, results[0].name):
+        return results[0]
+    if llm is not None:
+        for cand in await landmark_candidates(llm, name, logger=logger):
+            cres = await _search(cand)
+            if cres and name_matches(cand, cres[0].name):
+                return cres[0]
+    return None
+
+
+def _nearest_city(poi: POI, centers: dict) -> str:
+    """按等距圆柱近似距离归城；无质心返回 ''。"""
+    best, best_km = "", None
+    for city, ctr in centers.items():
+        dlat = (poi.lat - ctr.lat) * 111.0
+        dlng = (poi.lng - ctr.lng) * 111.0
+        km = (dlat * dlat + dlng * dlng) ** 0.5
+        if best_km is None or km < best_km:
+            best, best_km = city, km
+    return best
+
+
+def must_visit_hint(pairs: list[tuple[str, POI]]) -> str:
+    """必去点 → propose 提示。空返回 ''。"""
+    if not pairs:
+        return ""
+    parts = [f"{p.name}（{c}）" if c else p.name for c, p in pairs]
+    return ("\n【必去地点】用户点名要去：" + "、".join(parts)
+            + "。务必把它们编入对应城市的行程，其余空位用普通景点补齐。")
+
+
+def ensure_must_visit_in_itinerary(trip: Trip,
+                                   pairs: list[tuple[str, POI]]) -> None:
+    """确定性补插：骨架漏排的必去点插进其归属城的首个 Day（无城匹配插首日）。
+    原地修改；LLM 漏排不能让用户点名的地方消失——池的封闭纪律管「不臆造」，
+    这里管「点了名的不许丢」。"""
+    if not (trip.itinerary and pairs):
+        return
+    existing = {s.name for d in trip.itinerary for s in d.stops if s.name}
+    sid = sum(len(d.stops) for d in trip.itinerary)
+    for city, poi in pairs:
+        nm = (poi.name or "").strip()
+        if not nm or any(nm in e or e in nm for e in existing):
+            continue
+        target = next((d for d in trip.itinerary if d.city and d.city == city),
+                      trip.itinerary[0])
+        sid += 1
+        target.stops.append(Stop(
+            stop_id=f"s_mv{sid}", name=nm, type="attraction",
+            dwell_min=_DWELL_BY_TYPE.get("attraction", 90), source="user",
+            poi=_poi_to_dict(poi), grounded=True))
+        existing.add(nm)
+
+
 # ─────────────────────────── propose ───────────────────────────
 
 _PROPOSE_SYSTEM = (

@@ -176,3 +176,132 @@ def test_memory_unavailable_degrades_to_ask():
         asyncio.run(run_handle(agent, "navigation.navigate_to",
                                slots={"destination": "接孩子"},
                                raw_text="去接孩子", ctx=ctx))
+
+
+# ── P1（EVA 遗留卡）：途经点三级解析 ─────────────────────────────────────
+
+from agents.navigation.src.providers.base import POI as _POI
+
+
+class _WpPoi:
+    def __init__(self, results=None):
+        self.results = results or {}
+        self.calls = []
+
+    async def search(self, keyword, near=None, limit=5, meta=None, **kw):
+        self.calls.append(keyword)
+        return self.results.get(keyword, [])
+
+    async def get_route(self, *a, **kw):
+        return {"distance_km": 5.0, "duration_min": 10}
+
+
+def _dest_poi():
+    return _POI(id="d", name="公司大厦", address="addr", lat=22.5, lng=113.9)
+
+
+def test_waypoint_person_resolves_via_relation_graph():
+    """「途经孩子的学校」：人称词走关系图谱→地点名→POI 取坐标，不搜「孩子的学校」。"""
+    agent = NavigationAgent()
+    poi = _WpPoi({"南山实验小学": [
+        _POI(id="s", name="南山实验小学", address="南山", lat=22.54, lng=113.93)]})
+    agent.poi = poi
+    ctx = _ctx_with({"person": "小雨", "place": "南山实验小学"})
+
+    res = asyncio.run(agent._navigate_via_waypoint(
+        _dest_poi(), "公司大厦", "孩子的学校", [], {}, ctx=ctx))
+
+    assert res.status == "ok"
+    nav = [a for a in res.actions if a["type"] == "navigate"]
+    assert nav and [w["name"] for w in nav[0]["payload"]["waypoints"]] == ["南山实验小学"]
+    assert "孩子的学校" not in poi.calls           # 没拿人称描述去搜随机学校
+
+
+def test_waypoint_person_unknown_asks_to_teach():
+    agent = NavigationAgent()
+    agent.poi = _WpPoi()
+    ctx = _ctx_with(None)
+
+    res = asyncio.run(agent._navigate_via_waypoint(
+        _dest_poi(), "公司大厦", "孩子的学校", [], {}, ctx=ctx))
+
+    assert res.status == "need_slot"
+    assert "还不知道" in res.speech
+    assert not res.actions
+
+
+def test_waypoint_place_alias_uses_profile():
+    """「途经学校」：常用地点别名走画像坐标，不做 POI 搜索。"""
+    agent = NavigationAgent()
+    poi = _WpPoi()
+    agent.poi = poi
+    ctx = make_context(context_values={"profile.places": {
+        "school": {"name": "市实验小学", "address": "a", "lat": 22.55, "lng": 113.92}}})
+
+    res = asyncio.run(agent._navigate_via_waypoint(
+        _dest_poi(), "公司大厦", "学校", [], {}, ctx=ctx))
+
+    assert res.status == "ok"
+    nav = [a for a in res.actions if a["type"] == "navigate"]
+    assert [w["name"] for w in nav[0]["payload"]["waypoints"]] == ["市实验小学"]
+    assert poi.calls == []                          # 画像直取，零搜索
+
+
+def test_waypoint_place_alias_unset_guides_setup():
+    agent = NavigationAgent()
+    agent.poi = _WpPoi()
+    ctx = make_context()
+
+    res = asyncio.run(agent._navigate_via_waypoint(
+        _dest_poi(), "公司大厦", "学校", [], {}, ctx=ctx))
+
+    assert res.status == "need_slot"
+    assert "还没有设置「学校」" in res.speech
+
+
+# ── P4 守卫：家人位置陈述不许写本人常用地点 ──
+
+def test_set_place_person_statement_never_writes_profile():
+    """「我老婆平时在深圳湾万象城上班」被 planner 映射成 set_place(公司=万象城)，
+    把用户自己的公司改写成了家人位置（2026-08-15 真栈恶性实测）——含人称词只口头
+    记下，绝不写画像。"""
+    agent = NavigationAgent()
+    saved = {}
+    ctx = make_context()
+
+    async def save_profile(key, value):
+        saved[key] = value
+    ctx.save_profile = save_profile
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.set_place",
+        slots={"place": "公司", "address": "深圳湾万象城"},
+        raw_text="我老婆平时在深圳湾万象城上班", ctx=ctx))
+
+    assert res.status == "ok"
+    assert "记在TA名下" in res.speech or "记下了" in res.speech
+    assert saved == {}                       # 画像零写入
+
+
+def test_set_place_own_home_with_mawan_road_not_blocked():
+    """「把家设成妈湾路8号」——单字「妈」在地名里不误伤（守卫只认长词+代词组合）。"""
+    agent = NavigationAgent()
+
+    async def search(keyword, **kw):
+        from agents.navigation.src.providers.base import POI as _P
+        return [_P(id="x", name="妈湾路8号", address="南山区", lat=22.5, lng=113.9)]
+    agent.poi.search = search
+    saved = {}
+    ctx = make_context()
+
+    async def save_profile(key, value):
+        saved[key] = value
+    ctx.save_profile = save_profile
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.set_place",
+        slots={"place": "家", "address": "妈湾路8号"},
+        raw_text="把家设成妈湾路8号", ctx=ctx))
+
+    assert res.status == "ok"
+    assert "places" in saved                 # 本人常用地点照常可设

@@ -345,3 +345,14 @@ exemplars:
   tags:
   - badcase
   note: 「找杯咖啡」是发现不是下单——真栈实测被派去 luckin.order，回了「数量需要是 1 到 20 之间的整数」槽校验错误当话术；点单要有明确品牌/门店语境（台账 nearby-luckin 族）
+- text: 附近的咖啡店
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 咖啡店
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - badcase
+  note: P6 省略动词的发现句：真栈被过度澄清「你想怎么处理附近的咖啡店？」——「附近的X」本身就是完整发现请求

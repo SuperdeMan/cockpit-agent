@@ -145,11 +145,13 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # （「跟着《某剧》游X」进目录；「只聊作品内容」显式排除）。条数 144 不变。
     # 同日 +78 → 12418：G9 trip.plan 多城市描述（「先去A再去B」城市按口述序连写
     # 进 destination，保序逐城安排+跨城驾驶段）。条数 144 不变。
-    assert catalog.catalog_stats["chars_full"] == 12418
-    assert catalog.catalog_stats["chars_final"] == 12418
+    # 同日 +90 → 12508：P2 trip.plan 加 must_visit 槽+点名地点描述（「东方之门/
+    # 大秋裤、灵山大佛」逐个接地务必编入行程）。条数 144 不变。
+    assert catalog.catalog_stats["chars_full"] == 12508
+    assert catalog.catalog_stats["chars_final"] == 12508
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    assert 16000 - catalog.catalog_stats["chars_final"] == 3582
+    assert 16000 - catalog.catalog_stats["chars_final"] == 3492
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from urllib.parse import urlparse
 
@@ -11,6 +12,30 @@ from ..admission import normalize_hostname
 from .models import MerchantChoice, MerchantDraft
 
 logger = logging.getLogger("agent.mcp_bridge.merchant")
+
+# ── P3（EVA 遗留卡）：数量槽容错解析 ─────────────────────────────────────
+# planner 填「一杯」「2份」「１２」是自然语言常态，旧实现只认纯 ASCII 数字，
+# 其余一律 NEED_SLOT「数量需要是 1 到 20 之间的整数」——机器话术直出 TTS
+# （2026-08-15 真栈实测）。解析尽量宽、**校验边界不松**（仍 1–20 整数）。
+_QTY_FW_DIGITS = str.maketrans("０１２３４５６７８９", "0123456789")
+_QTY_UNIT_RE = re.compile(r"(杯|份|个|只|支|块|盒|包|串)$")
+_QTY_CN = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+           "七": 7, "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12,
+           "十三": 13, "十四": 14, "十五": 15, "十六": 16, "十七": 17,
+           "十八": 18, "十九": 19, "二十": 20}
+
+
+def parse_quantity(value, lo: int = 1, hi: int = 20) -> int | None:
+    """「一杯」「2份」「１２」→ int；解析不出/越界返回 None（调用方友好追问）。"""
+    text = str(value or "").strip().translate(_QTY_FW_DIGITS)
+    text = _QTY_UNIT_RE.sub("", text).strip()
+    if re.fullmatch(r"[0-9]+", text):
+        n = int(text)
+    elif text in _QTY_CN:
+        n = _QTY_CN[text]
+    else:
+        return None
+    return n if lo <= n <= hi else None
 
 
 class DeclaredBusinessRejected(RuntimeError):

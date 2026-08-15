@@ -112,4 +112,6 @@
 | [2026-08-15-g4-trip-theme-retrieval.md](2026-08-15-g4-trip-theme-retrieval.md) | **G4 主题行程（EVA 二轮 P3 簇）**：trip 候选池加「主题检索步」——`extract_theme` 三族（书名号/跟着X游/同款取景地）并算出行 trigger；`build_theme_pool` LLM 只产名字候选（宁少勿错）→「{城市}{名}」优先高德接地 + `name_matches` 拒错名 → 通过者入池，**池的封闭纪律不变、入池来源多一路**；接地成功才标 `Trip.theme` 进话术。v1 刻意不做联网检索候选与方向性主题代选城市 | ✅ 2026-08-15 实施合入（`d26705e`）；trip 56/门禁全绿 |
 | [2026-08-15-g9-trip-multi-city.md](2026-08-15-g9-trip-multi-city.md) | **G9 trip 跨城市（EVA 二轮 P3 簇）**：`Trip.cities` 保口述序 + `Day.city`；`extract_cities`（「先去A再去B」逐抓+「A、B」连写拆分）；propose 按城列池、day 标 city 收敛到城市集（缺标按序均摊）；ground 按城池接地；**solve 补跨天衔接 leg**——此前天与天之间不建驾驶段，充电编织对跨城长途是盲的、SoC 递推断开（对单城市同样成立的改进）。v1 刻意不做顺路重排序（城市序=口述序） | ✅ 2026-08-15 实施合入（`63a565b`）；trip 64（既有零改动通过）/门禁全绿 |
 
+| [2026-08-15-eva-e2e-residual-cards.md](2026-08-15-eva-e2e-residual-cards.md) | **EVA 指令集验证遗留六卡（P1–P6）**：个人地点作途经点三级解析（人称→关系图谱/别名→画像/POI，未知诚实教学问）/ 多城 trip `must_visit` 点名 POI 第三路入池（直搜→landmark 俗称接地→按池质心归城→propose hint+确定性补插——「点了名的不许丢」与「池外不臆造」互补）/ 槽校验数量容错+话术人话（边界不松）/ 散句 relation 确定性前置抽取 + `resolve_person_place` 三类并集（只查 place_of 是「存得下用不上」第 N 例）/ 负偏好降权两根因串修（抽取丢店名 + **口味消费门禁不认咖啡类目的结构性漏洞**）/ 方差面范例四投不加 hint。过程抓修恶性缺陷：家人位置陈述被 set_place 改写本人公司地点——人称守卫绝不写画像 | ✅ 2026-08-15 六卡全部实施并端到端终验（报告 §5：✅17/⚠️5/🔒3）；真栈 Z6b 降权兑现/Z7 组合句两连/W2 散句链闭环 |
+
 > 接真实 provider 的标准流程见常青指南 [`docs/guides/provider-integration.md`](../guides/provider-integration.md)。

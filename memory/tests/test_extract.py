@@ -379,3 +379,68 @@ def test_consolidate_subject_scopes_conflict_domain():
     subj = {it["text"]: it.get("subject", "") for it, _ in current}
     assert subj["爸爸不喜欢空调太冷"] == "爸爸"
     assert subj["用户最喜欢的空调温度是24度"] == ""
+
+
+# ── P4（EVA 遗留卡）：散句 relation 确定性抽取 ──
+
+def _llm_noop(messages):
+    async def _inner():
+        return "[]"
+    return _inner()
+
+
+def test_deterministic_place_relation_without_name():
+    """「我老婆平时在深圳湾万象城上班」→ family(老婆→老婆) + works_at(老婆→万象城)。
+    LLM 抽成 semantic 偏好的方差不再是唯一通道（2026-08-15 真栈实测该形态）。"""
+    out = asyncio.run(extract(
+        [{"role": "user", "text": "我老婆平时在深圳湾万象城上班"}],
+        user_id="u1", complete_fn=lambda m: _llm_noop(m)))
+    edges = [o["_relation"] for o in out if "_relation" in o]
+    triples = {(e["subject"], e["rel"], e["object"]) for e in edges}
+    assert ("老婆", "family", "老婆") in triples
+    assert ("老婆", "works_at", "深圳湾万象城") in triples
+
+
+def test_deterministic_named_family_and_school():
+    """「我女儿叫小雨」+「我女儿在南山实验小学上学」→ 具名 family 边 + place_of 边。"""
+    out = asyncio.run(extract(
+        [{"role": "user", "text": "我女儿叫小雨"},
+         {"role": "user", "text": "我女儿在南山实验小学上学"}],
+        user_id="u1", complete_fn=lambda m: _llm_noop(m)))
+    edges = [o["_relation"] for o in out if "_relation" in o]
+    triples = {(e["subject"], e["rel"], e["object"]) for e in edges}
+    assert ("小雨", "family", "女儿") in triples
+    assert ("女儿", "place_of", "南山实验小学") in triples
+
+
+def test_deterministic_relations_survive_llm_failure():
+    """LLM 挂了确定性候选照常返回（旧行为是整体 []）。"""
+    async def boom(messages):
+        raise RuntimeError("llm down")
+    out = asyncio.run(extract(
+        [{"role": "user", "text": "我儿子在市第二实验学校读书"}],
+        user_id="u1", complete_fn=boom))
+    edges = [o["_relation"] for o in out if "_relation" in o]
+    assert any(e["rel"] == "place_of" and e["object"] == "市第二实验学校"
+               for e in edges)
+
+
+def test_assistant_turns_not_sniffed():
+    """只抽用户轮：助手复述「我老婆在X上班」不产边（归属判定不交给转述）。"""
+    out = asyncio.run(extract(
+        [{"role": "assistant", "text": "好的，我老婆平时在深圳湾万象城上班"}],
+        user_id="u1", complete_fn=lambda m: _llm_noop(m)))
+    assert [o for o in out if "_relation" in o] == []
+
+
+def test_llm_duplicate_relation_deduped():
+    """LLM 撞车同一条边 → 只留确定性那份（置信更高）。"""
+    async def llm(messages):
+        return json.dumps([{"category": "relation", "subject": "老婆",
+                            "rel": "works_at", "object": "深圳湾万象城"}])
+    out = asyncio.run(extract(
+        [{"role": "user", "text": "我老婆在深圳湾万象城上班"}],
+        user_id="u1", complete_fn=llm))
+    edges = [o["_relation"] for o in out if "_relation" in o]
+    works = [e for e in edges if e["rel"] == "works_at"]
+    assert len(works) == 1 and works[0]["confidence"] >= 0.9

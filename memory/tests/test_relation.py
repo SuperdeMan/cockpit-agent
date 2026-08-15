@@ -321,3 +321,29 @@ def test_consolidate_writes_relations_to_graph_not_items():
     ids, memories, relations = asyncio.run(go())
     assert ids == [] and memories == []          # 不进 memory_item
     assert len(relations) == 1                   # 进关系图
+
+
+# ── P4（EVA 遗留卡）：常在地三类并集 ──
+
+def test_resolve_person_place_via_works_at():
+    """「老婆在X上班」抽成 works_at 边——此前 resolve 只查 place_of，存得下用不上。
+    无名实体以称谓自身作实体名（确定性抽取的形态）也要一跳可达。"""
+    async def go():
+        store = _store()
+        await _seed(store, [{"subject": "老婆", "rel": "family", "object": "老婆"},
+                            {"subject": "老婆", "rel": "works_at",
+                             "object": "深圳湾万象城"}])
+        return await store.resolve_person_place("u1", "老婆")
+    hit = asyncio.run(go())
+    assert hit == {"person": "老婆", "place": "深圳湾万象城", "object_ref": ""}
+
+
+def test_resolve_ambiguous_across_place_kinds_returns_none():
+    """place_of 与 works_at 各一条且不同地点 → 歧义照旧问不猜。"""
+    async def go():
+        store = _store()
+        await _seed(store, [{"subject": "小雨", "rel": "family", "object": "女儿"},
+                            {"subject": "小雨", "rel": "place_of", "object": "XX小学"},
+                            {"subject": "小雨", "rel": "works_at", "object": "YY公司"}])
+        return await store.resolve_person_place("u1", "女儿")
+    assert asyncio.run(go()) is None

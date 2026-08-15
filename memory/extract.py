@@ -119,6 +119,9 @@ _SYSTEM = (
     '"subject"=这条内容是关于谁的——用户本人**留空**；关于家人填亲属称谓'
     "（爸爸/妈妈/老婆/老公/女儿/儿子/孩子，如『我爸不喜欢空调太冷』subject=爸爸）；"
     '"polarity"="like"（喜欢）或"dislike"（不喜欢/嫌弃，如『这家咖啡太酸了』），非偏好留空。'
+    "**店铺级差评要把具体店名写进 text**：用户说『第一家/这家太酸』时，店名以对话中"
+    "助手确认的为准（如助手答『以后不推荐三立方』则 text=『用户不喜欢三立方的咖啡（太酸）』，"
+    "predicate=taste.coffee, polarity=dislike）——丢掉店名的差评没法用于降权该店。"
     "episodic 事件若用户明说了**未来**的时间——明确日期（『下个月15号』）或星期"
     "（『下周五』『周六下午三点』），带不带具体时刻都算——按当前日期换算后"
     '额外给 "event_time"（ISO 8601，如 2026-08-22T15:00:00，只有日期没有时刻用 00:00:00）；'
@@ -299,10 +302,65 @@ def _parse(text: str) -> list[dict]:
         return []
 
 
+# ── P4（EVA 遗留卡）：散句 relation 确定性前置抽取 ─────────────────────────
+# 「我老婆平时在深圳湾万象城上班」经 LLM 抽取常落成 semantic 偏好而非 relation 边
+# （2026-08-15 真栈实测）——而人称→地点是关系图谱唯一非做不可的消费面（「去接老婆」
+# 靠它）。两族句式确定性抽取，与 LLM 候选合流去重；**LLM 挂了确定性候选照常返回**。
+# 人称词表与 relation._KINSHIP_SYNONYMS 同源（消费侧 kinship_aliases 认得的才抽）。
+_KIN_WORDS_ALT = "|".join(sorted(
+    {w for words in relation._KINSHIP_SYNONYMS.values() for w in words}
+    | set(relation._KINSHIP_SYNONYMS), key=len, reverse=True))
+# 「我(的){人称}叫{名}」「{人称}的名字是{名}」→ family 边（subject=名）
+_REL_NAME_RE = re.compile(
+    rf"我的?({_KIN_WORDS_ALT})(?:的名字)?(?:叫|名字是)([一-鿿A-Za-z]{{2,8}})")
+# 「(我的){人称}(平时|一般)?(都)?在{地点}{上班|上学|…}」→ family+place 两条边
+# （无名时以称谓作实体名——resolve_person_place 的 family 查询按称谓命中）。
+# 地点段 lazy + 动词 lookahead 兜边界（中文捕获组边界只能靠 lookahead，§36 教训）。
+_REL_PLACE_RE = re.compile(
+    rf"我的?({_KIN_WORDS_ALT})(?:平时|一般)?(?:都)?在"
+    rf"([一-鿿0-9A-Za-z]{{2,16}}?)(上班|上学|读书|念书|工作|上幼儿园)")
+_REL_PLACE_VERB_TO_REL = {
+    "上班": relation.REL_WORKS_AT, "工作": relation.REL_WORKS_AT,
+    "上学": relation.REL_PLACE_OF, "读书": relation.REL_PLACE_OF,
+    "念书": relation.REL_PLACE_OF, "上幼儿园": relation.REL_PLACE_OF,
+}
+
+
+def deterministic_relations(window: list[dict]) -> list[dict]:
+    """用户轮里的两族关系句式 → relation 候选（与 LLM 候选同形状，_govern 统一治理）。"""
+    out: list[dict] = []
+    seen: set[tuple] = set()
+
+    def _add(subject: str, rel: str, obj: str) -> None:
+        key = (subject, rel, obj)
+        if subject and obj and key not in seen:
+            seen.add(key)
+            out.append({"category": "relation", "subject": subject, "rel": rel,
+                        "object": obj, "confidence": 0.95,
+                        "provenance": "user_stated"})
+
+    for t in window:
+        if (t.get("role") or "user") != "user":
+            continue
+        text = t.get("text") or ""
+        for m in _REL_NAME_RE.finditer(text):
+            kin, name = m.group(1), m.group(2).strip()
+            _add(name, relation.REL_FAMILY, relation.normalize_kinship(kin))
+        for m in _REL_PLACE_RE.finditer(text):
+            kin, place, verb = m.group(1), m.group(2).strip(), m.group(3)
+            canon = relation.normalize_kinship(kin)
+            # 无名实体以称谓自身作实体名：family(称谓→称谓) + place(称谓→地点)，
+            # resolve_person_place 按称谓命中 persons=[称谓] → 地点，一跳可达。
+            _add(canon, relation.REL_FAMILY, canon)
+            _add(canon, _REL_PLACE_VERB_TO_REL.get(verb, relation.REL_PLACE_OF),
+                 place)
+    return out
+
+
 async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primary",
                   vehicle_id: str = "", session_id: str = "", complete_fn=None
                   ) -> list[dict]:
-    """从最近对话抽取治理后的候选记忆。LLM 不可用/解析失败 → []（静默，不阻塞）。"""
+    """从最近对话抽取治理后的候选记忆。LLM 不可用/解析失败 → 确定性候选仍返回。"""
     if not user_id or not turns:
         return []
     window = [t for t in turns[-_CONSOLIDATE_LOOKBACK:] if t.get("text")]
@@ -312,6 +370,7 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
     convo = "\n".join(f'{t.get("role","user")}: {t.get("text","")}' for t in window)
     if not convo.strip():
         return []
+    det_candidates = deterministic_relations(window)
     messages = [{"role": "system", "content": _SYSTEM},
                 {"role": "user",
                  "content": f"{_date_line()}\n对话：\n{convo}\n\n抽取 JSON："}]
@@ -319,9 +378,19 @@ async def extract(turns: list[dict], *, user_id: str, occupant_id: str = "primar
         raw = await (complete_fn or _default_complete)(messages)
     except Exception as e:
         logger.debug("extract LLM unavailable: %s", e)
-        return []
-    out = []
+        raw = ""          # P4：LLM 挂了确定性关系候选照常走治理入库
+    # 合流去重：确定性候选在前（置信更高），LLM 撞车的 (subject,rel,object) 丢弃。
+    det_keys = {(c["subject"], c["rel"], c["object"]) for c in det_candidates}
+    llm_candidates = []
     for c in _parse(raw):
+        if (isinstance(c, dict) and c.get("category") == "relation"
+                and (str(c.get("subject") or "").strip(),
+                     relation.normalize_rel(c.get("rel") or c.get("relation") or ""),
+                     str(c.get("object") or "").strip()) in det_keys):
+            continue
+        llm_candidates.append(c)
+    out = []
+    for c in det_candidates + llm_candidates:
         if not isinstance(c, dict):
             continue
         # M1 黑名单（确定性，不信 prompt）：场景配置参数不是个人偏好

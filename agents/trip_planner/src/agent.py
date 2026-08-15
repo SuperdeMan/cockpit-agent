@@ -22,6 +22,8 @@ from agents.navigation.src.providers import build_poi_provider
 from agents.info.src.providers import build_weather_provider
 from .models import Trip, Stop
 from .pipeline import (build_poi_pool, build_theme_pool, theme_hint,
+                       ground_must_visit, must_visit_hint,
+                       ensure_must_visit_in_itinerary,
                        propose, ground, solve, narrate,
                        plan_weather, _weather_hint, _norm_days,
                        _ground_one, _poi_to_dict)
@@ -136,7 +138,8 @@ class TripPlannerAgent(BaseAgent):
     # ── 规划流水线 ─────────────────────────────────────────────
     async def _run_pipeline(self, ctx, meta, dest: str, days: str, prefs: str,
                             raw_text: str, theme: str = "",
-                            cities: list[str] | None = None) -> Trip:
+                            cities: list[str] | None = None,
+                            must_visit: list[str] | None = None) -> Trip:
         """propose → ground → solve，产出结构化 Trip。
 
         G9 多城市（cities ≥2）：逐城建池（各「{city} 景点/美食」）、propose 按序分天
@@ -168,6 +171,20 @@ class TripPlannerAgent(BaseAgent):
                 if nm and nm not in seen:
                     seen.add(nm)
                     pool.append(tp)
+        # P2：用户点名 POI 第三路入池（俗称经 landmark 解析；接不到丢弃不臆造）。
+        mv_pairs = []
+        if must_visit:
+            mv_pairs = await ground_must_visit(
+                self.llm, self.poi, must_visit, cities, dest, meta,
+                pool_by_city=pool_by_city)
+            seen_mv = {(p.name or "").strip() for p in pool}
+            for city, mp in mv_pairs:
+                nm = (mp.name or "").strip()
+                if nm and nm not in seen_mv:
+                    seen_mv.add(nm)
+                    pool.append(mp)
+                    if city and city in pool_by_city:
+                        pool_by_city[city] = list(pool_by_city[city]) + [mp]
         # 天气联动：先取目的地多日预报对齐到行程各天，织进 propose（雨天优先室内/就近景点）。
         # 多城市按首城取（预报窗口本就 7 天、跨城对齐属 v2；首城覆盖头几天最准）。
         weather = await plan_weather(self.weather, cities[0] if cities else dest,
@@ -175,11 +192,15 @@ class TripPlannerAgent(BaseAgent):
         skeleton = await propose(self.llm, dest, days, prefs,
                                  [p.name for p in pool], raw_text,
                                  weather_hint=_weather_hint(weather)
-                                 + theme_hint(theme, theme_names),
+                                 + theme_hint(theme, theme_names)
+                                 + must_visit_hint(mv_pairs),
                                  cities=cities, pool_by_city=pool_by_city)
         trip = await ground(self.poi, skeleton, pool, meta,
                             dest=dest, days=days, prefs=prefs, raw_text=raw_text,
                             llm=self.llm, cities=cities, pool_by_city=pool_by_city)
+        # P2 确定性补插：LLM 骨架漏排的必去点不许丢（「点了名的不许丢」与
+        # 「池外不臆造」是两条互补纪律）。
+        ensure_must_visit_in_itinerary(trip, mv_pairs)
         if theme and theme_names:
             trip.theme = theme          # 接地成功才标主题（narrate 据此带主题话术）
         soc = await self._soc_pct(ctx, meta)
@@ -238,9 +259,15 @@ class TripPlannerAgent(BaseAgent):
         if len(cities) >= 2:
             dest = "、".join(cities)        # 话术/卡片可读；build_poi_pool 走逐城池
 
+        # P2：点名地点（planner 填 must_visit 顿号连写；俗称如「大秋裤」由接地侧
+        # landmark 解析，这里不做映射）。
+        must_visit = [w.strip(" 、，,。") for w in
+                      _CITY_SPLIT_RE.split(intent.slots.get("must_visit") or "")
+                      if w.strip(" 、，,。")]
+
         trip = await self._run_pipeline(ctx, meta, dest, days, prefs,
                                         intent.raw_text, theme=theme,
-                                        cities=cities)
+                                        cities=cities, must_visit=must_visit)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
         attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）

@@ -1092,3 +1092,25 @@ async def test_internal_write_incomplete_or_typed_drift_is_not_rejection(
 
     with pytest.raises(DeclaredBusinessIncomplete):
         await _Workflow().call_tool("createOrder", {}, write=True)
+
+
+# ── P3（EVA 遗留卡）：数量槽容错解析 ──
+
+import pytest as _pytest
+from agents.mcp_bridge.src.merchant.base import parse_quantity
+
+
+@_pytest.mark.parametrize("raw,expect", [
+    ("1", 1), ("20", 20), ("一杯", 1), ("两份", 2), ("三个", 3),
+    ("十二杯", 12), ("２份", 2), ("１２", 12), ("2杯", 2), ("二十", 20),
+])
+def test_parse_quantity_tolerant(raw, expect):
+    """「一杯」「2份」「１２」是 planner 填槽的自然形态——解析尽量宽。"""
+    assert parse_quantity(raw) == expect
+
+
+@_pytest.mark.parametrize("raw", ["0", "21", "两百", "很多", "杯", "", "  ", "abc",
+                                  "1.5", "-3", "二十一"])
+def test_parse_quantity_bounds_not_loosened(raw):
+    """校验边界不松：仍 1–20 整数，解析不出/越界一律 None。"""
+    assert parse_quantity(raw) is None
