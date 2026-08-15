@@ -215,6 +215,35 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 被中止时要手工确认）；②退役判定**必须跨 provider 且覆盖全部命中句**，抽样会系统性高估；
 ③软层 A/B 的 Δ **只能在实际注入的子集上算**——未注入的两臂 prompt 逐字相同，翻面是采样方差。
 
+### 5.3.1 探索式 QA 复现迷你集（`scripts/probe_qa_regression.py`，2026-08-15）
+
+2026-08-15 探索式真实用户 QA 轮 58 个问题的**红绿对照基线**。取证脚本、不进 CI；
+卡与阶段计划见 [`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md`](../docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)。
+
+```bash
+python scripts/probe_qa_regression.py --list                 # 31 例 / 52 轮 / 6 组
+python scripts/probe_qa_regression.py --mapping              # Q13：两个分类出口一致性（纯函数，不用起栈）
+python scripts/probe_qa_regression.py --group negation       # 按组跑
+python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线用这条**
+```
+
+**四条纪律，全部由这批自己的自伤沉淀（照做，别重新发明）：**
+
+1. **persona 必须换 `user_id`，只换 `session_id` 证明不了任何隔离。**
+   `reminder_item` **根本没有 `session_id` 列**，memory 同理——owner 是 `(user_id, occupant_id)`。
+   QA 那轮 5 类 persona 全是同一个 `u1/primary`，于是「跨 persona 污染」看起来像泄漏，
+   实际是**默认查询范围 = 全时段全会话**。换 user 要么配 `AUTH_TOKENS`，要么走签名 e2e 身份车道；
+   WS 客户端**设不了 user_id**（`gateway/edge/auth.go` 匿名回落进程默认）。
+2. **话术层的断言只能用形态判据**（有无动作 / 是否问句 / 是否逐字重复上一轮 / 动作名），
+   **不能用关键词排除**。首跑 5 条假绿全是这么来的——同一条用例三次取样三种措辞
+   （「其余行程不变」→「其他保持不变」→「其余保留」），按报告原文写的排除词一条没触发。
+   探针为此有 `differs_from_turn` 原语：**「逐字重复上一轮」是「没回答问题」唯一可靠的机械判据**。
+3. **单次取样不能当基线，一律 `--repeat >= 3`。** SF4 单次 PASS、三次实测 **0/3**
+   ——差一点把一条稳定红降级成方差面。报读数用「n/N + 方差标记」，不报单次结论。
+4. **客户端的东西必须走 CDP 车道。** 位置前置闸在 `hmi/src/App.tsx` 的 `send()` 里、
+   `dispatch()` 之前；响应归属靠浏览器内的 FIFO。**WS 探针是从闸后面进来的**，
+   对这两族跑多少轮都是假绿——同 §「测试若替被测系统提供了某个前提，那条前提就不再被验证」。
+
 ## 5.4 意图与落域对抗套件（`test/eval_intent_adversarial.py`）
 
 回答的问题和上面两类都不同：**意图是否完整、落域是否正确、决策链在哪里首次偏离**。
