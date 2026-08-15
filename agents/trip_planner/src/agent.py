@@ -25,7 +25,8 @@ from .pipeline import (build_poi_pool, build_theme_pool, theme_hint,
                        propose, ground, solve, narrate,
                        plan_weather, _weather_hint, _norm_days,
                        _ground_one, _poi_to_dict)
-from .extract import extract_trip, extract_theme, extract_cities, _CITY_SPLIT_RE
+from .extract import (extract_trip, extract_theme, extract_cities,
+                      is_direction_dest, _CITY_SPLIT_RE)
 
 logger = logging.getLogger("agent.trip_planner")
 
@@ -219,6 +220,15 @@ class TripPlannerAgent(BaseAgent):
             return AgentResult(
                 status=NEED_SLOT, speech="您想去哪里玩？",
                 follow_up="请告诉我目的地", missing_slots=["destination"])
+        # 方向词目的地（「北方」「南边」）：planner 会把「北上追春天」臆断成
+        # destination=北方——确定性拦下追问（EVA 一#8 的期望行为本体），
+        # 不管值来自 slot 还是抽取。真栈实测不拦的后果：搜「北方 景点」出
+        # 北方车辆集团、天气配到阿拉伯语区。
+        if is_direction_dest(dest):
+            return AgentResult(
+                status=NEED_SLOT,
+                speech=f"想去{dest}玩呀——具体想去哪个城市？我来帮您安排行程。",
+                follow_up="比如说「去哈尔滨玩三天」", missing_slots=["destination"])
 
         # G9 多城市：destination 槽的连写（「杭州、苏州」）优先拆，原话保序抽取兜底。
         cities = [c.strip() for c in _CITY_SPLIT_RE.split(dest) if c.strip()]

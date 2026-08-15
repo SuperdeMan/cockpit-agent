@@ -456,3 +456,15 @@ def test_theme_slot_sanitized_from_full_sentence():
     assert res.ui_card["theme"] == "太平年"              # 清洗后只留主题主体
     assert "《太平年》" in res.speech
     assert "《跟着" not in res.speech                    # 不再念嵌套书名号
+
+
+def test_direction_word_destination_asks_instead_of_planning():
+    """EVA 一#8「北上追春天」期望形态：planner 臆断 destination=北方 时确定性拦下
+    追问（真栈实测不拦的后果：搜「北方 景点」出北方车辆集团、天气配到阿拉伯语区）。"""
+    agent = TripPlannerAgent()
+    res = asyncio.run(run_handle(
+        agent, "trip.plan", slots={"destination": "北方", "days": "3"},
+        raw_text="我想一路北上，去北方追春天"))
+    assert res.status == "need_slot"
+    assert "destination" in res.missing_slots
+    assert "哪个城市" in res.speech

@@ -539,8 +539,28 @@ class NavigationAgent(BaseAgent):
         # 坐标直取，不重搜。planner 召回把 dest 填对了名（滴水湖），重搜却把最后
         # 一跳交回就近偏置（真栈接到雅悦酒店）——去过的地方坐标本来就在轨迹里。
         visited = None
-        if not is_proximity and self._HISTORY_REF_RE.search(raw_text):
+        history_ref = bool(not is_proximity and self._HISTORY_REF_RE.search(raw_text))
+        if history_ref:
             visited = await self._visited_coords_from_memory(ctx, dest)
+        # 历史指代 + **描述性** dest（「看夜景的那个地方」——planner 没解出名，原话
+        # 整句进了槽，2026-08-15 真栈实测）且轨迹名匹配不上 → 把最近去过的地方列成
+        # 候选让用户挑。确定性消费 episodic、零猜测：比「暂时无法确定」多给一步，
+        # 又不替用户拍板（D4「描述性 dest 不做语义猜」纪律不破——挑的人是用户）。
+        # 「上次去的星巴克」这类真专名不命中描述判定，照常走搜索。
+        if visited is None and history_ref and self._DESCRIPTIVE_DEST_RE.search(dest):
+            recent = await self._recent_visited_places(ctx)
+            if recent:
+                items = [{"id": f"episodic_{i}", "name": p["name"],
+                          "address": "您去过的地方", "lat": p["lat"], "lng": p["lng"]}
+                         for i, p in enumerate(recent)]
+                names = "、".join(p["name"] for p in recent[:5])
+                return AgentResult(
+                    speech=f"您最近去过这些地方：{names}。您说的是哪一个？"
+                           "说『第几个』即可。",
+                    ui_card=attach({"type": "poi_list", "keyword": "最近去过",
+                                    "items": items}, self.poi),
+                    data={"items": items},
+                    follow_up="说『第一个』『第二个』选择目的地")
         if visited:
             resolved_name = visited[0]
             results = [POI(id="episodic_place", name=visited[0],
@@ -728,6 +748,10 @@ class NavigationAgent(BaseAgent):
     # D4：历史指代词形——与 orchestrator/cloud/context.py::_EPISODIC_REF_RE 同一组
     # （planner 靠它放开 episodic 召回；端云各自部署，无法共享常量，改一处要对齐另一处）。
     _HISTORY_REF_RE = re.compile(r"上次|上回|那次|上一次|之前去过?的?|前几天去")
+    # 描述性目的地（「那个地方」「去过的」）：没有可搜的专名——历史指代下轨迹名
+    # 匹配不上时，拿它去 _find_destination 只会搜出垃圾。与「上次去的星巴克」区分：
+    # 星巴克是真专名，轨迹没有也该正常搜。
+    _DESCRIPTIVE_DEST_RE = re.compile(r"那个|那里|那儿|地方|去过的")
 
     async def _visited_coords_from_memory(self, ctx, dest: str) -> tuple[str, float, float] | None:
         """episodic 轨迹坐标直取（D4）：「召回对了最后一跳歪」的根治。
@@ -759,6 +783,35 @@ class NavigationAgent(BaseAgent):
                 except (TypeError, ValueError):
                     continue
         return None
+
+    async def _recent_visited_places(self, ctx) -> list[dict]:
+        """最近去过的地方（episodic 轨迹，按名去重，最多 5 个）。失败返回空。"""
+        if ctx is None:
+            return []
+        try:
+            mems = await ctx.recall("去过的地方", scopes=["episodic.place"],
+                                    kinds=["episodic"], top_k=10)
+        except Exception as e:
+            logger.debug("recent visited recall skipped: %s", e)
+            return []
+        out, seen = [], set()
+        for m in mems or []:
+            try:
+                v = json.loads(m.get("value_json") or "{}")
+            except (TypeError, ValueError):
+                continue
+            name = str(v.get("name") or "").strip()
+            lat, lng = v.get("lat"), v.get("lng")
+            if not name or name in seen or lat is None or lng is None:
+                continue
+            try:
+                out.append({"name": name, "lat": float(lat), "lng": float(lng)})
+            except (TypeError, ValueError):
+                continue
+            seen.add(name)
+            if len(out) >= 5:
+                break
+        return out
 
     async def _route_pref_from_memory(self, ctx) -> tuple[str, str]:
         """路线偏好记忆 → 高德 strategy（G6：route.* 谓词的确定性消费出口）。

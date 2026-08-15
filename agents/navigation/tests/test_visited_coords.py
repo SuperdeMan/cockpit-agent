@@ -104,3 +104,47 @@ def test_history_ref_recall_failure_not_blocking():
 
     assert res.status == "ok"
     assert "滴水湖" in poi.calls  # 回落正常解析链
+
+
+def test_descriptive_history_dest_offers_recent_visited_candidates():
+    """「看夜景的那个地方」——planner 把原话整句填进 dest（2026-08-15 真栈实测）：
+    描述性 dest + 轨迹名匹配不上 → 列最近去过的地方让用户挑（确定性消费 episodic、
+    零猜测），不再「暂时无法确定」也不拿描述句去搜垃圾。"""
+    agent = NavigationAgent()
+    poi = _TrapPoi()
+    agent.poi = poi
+    ctx = make_context()
+    ctx._memory.recall.return_value = [
+        _episodic("滴水湖", 30.9080, 121.9420),
+        _episodic("万象天地", 22.5350, 113.9530),
+        _episodic("滴水湖", 30.9080, 121.9420),   # 重复名去重
+    ]
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "上次我们看夜景的那个地方"},
+        raw_text="带我去上次我们看夜景的那个地方", ctx=ctx, meta=SH))
+
+    assert res.status == "ok"
+    assert "您最近去过" in res.speech and "滴水湖" in res.speech
+    assert res.ui_card["type"] == "poi_list"
+    names = [i["name"] for i in res.ui_card["items"]]
+    assert names == ["滴水湖", "万象天地"]        # 去重且保召回序
+    assert poi.calls == []                        # 没拿描述句去搜垃圾
+    assert not res.actions                        # 挑的人是用户，不替用户拍板
+
+
+def test_descriptive_history_dest_without_trace_falls_through():
+    """轨迹为空 → 候选无从列，回落正常解析链（诚实降级不変）。"""
+    agent = NavigationAgent()
+    poi = _TrapPoi()
+    agent.poi = poi
+    ctx = make_context()
+    ctx._memory.recall.return_value = []
+
+    asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "上次看夜景的那个地方"},
+        raw_text="带我去上次看夜景的那个地方", ctx=ctx, meta=SH))
+
+    assert poi.calls, "无轨迹时应回落正常 POI 解析"

@@ -296,8 +296,7 @@ exemplars:
   plan:
   - agent: navigation
     intent: navigation.navigate_to
-    slots:
-      destination: 记忆里上次去过的那个地点
+    slots: {}
   source: manual
   added: '2026-08-14'
   tags:

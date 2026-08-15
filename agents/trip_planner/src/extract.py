@@ -40,6 +40,24 @@ _THEME_FOLLOW_RE = re.compile(r"跟着\s*([^，。,、\s]{2,16}?)\s*(?:游|玩|�
 _THEME_TAG_RE = re.compile(r"([^，。,、\s]{2,16}?)\s*(?:同款|取景地|打卡地)")
 # 通勤/固定地点：是导航日常目的地，不是多日出行
 _TRIP_DEST_BLOCK = {"公司", "家", "单位", "学校", "上班", "这里", "那里", "机场", "车站"}
+# 方向/泛域词不是可规划目的地（EVA 一#8「北上追春天」正确形态=追问不是执行）：
+# 拿「北方」搜「北方 景点」只会得到北方车辆集团这类挂名垃圾 POI，天气还会配错地区
+# （2026-08-15 真栈实测配到阿拉伯语区）——**错结果比无结果更糟**（G5 同款判据）。
+# 精确匹配整词，「东方之门」「南方科技大学」这类真名不受影响。
+_TRIP_DIRECTION_DESTS = frozenset({
+    "北方", "南方", "东方", "西方", "北边", "南边", "东边", "西边",
+    "北部", "南部", "东部", "西部", "东北", "西北", "东南", "西南",
+    "外地", "远方", "郊外", "郊区"})
+
+
+def is_direction_dest(dest: str) -> bool:
+    """目的地是否是方向/泛域词打头（该追问具体城市，不该拿去搜 POI）。
+
+    前缀匹配而非全等：planner 会把「北上追春天」臆断成 destination=**北方追春天**
+    （2026-08-15 真栈二连实测，全等拦不住）。多日行程域里「北方/南边」打头的
+    目的地没有正当形态（「南方科技大学三日游」不成立），前缀误伤面为空。"""
+    d = (dest or "").strip()
+    return bool(d) and any(d.startswith(w) for w in _TRIP_DIRECTION_DESTS)
 _CN_NUM = {"一": "1", "两": "2", "二": "2", "三": "3", "四": "4", "五": "5",
            "六": "6", "七": "7", "八": "8", "九": "9", "十": "10"}
 
@@ -81,7 +99,8 @@ def extract_cities(text: str) -> list[str]:
 
     def _add(c: str) -> None:
         c = c.strip()
-        if c and not any(c.startswith(b) for b in _TRIP_DEST_BLOCK) and c not in out:
+        if (c and not any(c.startswith(b) for b in _TRIP_DEST_BLOCK)
+                and c not in _TRIP_DIRECTION_DESTS and c not in out):
             out.append(c)
 
     m = _TRIP_MULTI_DEST_RE.search(t)
