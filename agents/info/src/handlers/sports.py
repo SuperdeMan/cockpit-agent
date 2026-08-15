@@ -13,6 +13,7 @@ from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 
 from ._util import _shanghai_now
+from runtime.clock import BUSINESS_TZ
 
 logger = logging.getLogger("agent.info")
 
@@ -160,7 +161,7 @@ def _kickoff_epoch(iso: str) -> int:
     try:
         dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+            dt = dt.replace(tzinfo=BUSINESS_TZ)
         return int(dt.timestamp())
     except (ValueError, TypeError):
         return 0

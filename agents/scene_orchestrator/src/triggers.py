@@ -27,13 +27,15 @@ from runtime.proactive import P_ADVISORY
 
 from .compiler import actions_preview
 from .solve import SAT, evaluate
+from runtime.clock import BUSINESS_TZ as _BUSINESS_TZ
 
 logger = logging.getLogger("agent.scene.triggers")
 
 # 业务时区（中国车机 PoC 固定 UTC+8，与 reminder 的 Asia/Shanghai 默认一致）。
 # time watcher 与策略求值的 `hour` 环境键（agent._ground）都用它——容器本地时是 UTC，
 # 直接 time.localtime() 会让「晚上10点后」这类条件错 8 小时。
-BUSINESS_TZ = timezone(timedelta(hours=8))
+# 业务时区的唯一定义在 runtime.clock（本模块保留同名再导出，既有引用不变）。
+BUSINESS_TZ = _BUSINESS_TZ
 
 _OP_ALIASES = {"enter": "eq", "leave": "ne"}       # 位置进入/离开 → 边沿语义已由 watcher 保证
 RECURS = ("daily", "workday", "once")

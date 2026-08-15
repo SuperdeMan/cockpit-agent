@@ -19,7 +19,7 @@ from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
-from agents._sdk.timewindow import parse_clock_time
+from agents._sdk.timewindow import fmt_clock, parse_clock_time
 from .providers import build_poi_provider
 from .providers.base import GeoPoint, POI
 
@@ -230,8 +230,9 @@ class NavigationAgent(BaseAgent):
 
     @staticmethod
     def _fmt_clock(ts) -> str:
-        lt = time.localtime(int(ts))
-        return f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
+        """播给用户的时刻走业务时区（容器 TZ=UTC，裸 localtime 会整体偏 8 小时——
+        真栈实测「预计 05:17 到达，比您要求的 17:00 早约 703 分钟」）。"""
+        return fmt_clock(ts)
 
     def _deadline_note(self, duration_min, arrive_by_ts) -> tuple[str, dict]:
         """ETA vs 到达时限的判定（G1）→（话术片段, data/卡片附加字段）。任一缺失 → ("", {})。"""

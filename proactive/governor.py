@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from .delivery_store import EXPIRED as LEDGER_EXPIRED, is_durable
 from .evaluate import SAT, enrich, evaluate_all
 
+from runtime.clock import local_struct as business_localtime
+
 logger = logging.getLogger("proactive.governor")
 
 P_CRITICAL, P_USER_CONTRACT = "critical", "user_contract"
@@ -147,7 +149,7 @@ class Governor:
     """六道闸 + 合并窗口 + 延后队列。纯 asyncio，无外部依赖（NATS 由 main 注入）。"""
 
     def __init__(self, publish, *, state_fn=None, emit=None, now_fn=time.time,
-                 localtime_fn=time.localtime,
+                 localtime_fn=business_localtime,
                  merge_window_ms: int = 1500, dedup_window_s: int = 600,
                  max_per_hour: int = 6, high_load_speed: float = 80.0,
                  quiet_hours: str = "", defer_tick_s: float = 5.0, store=None):
@@ -436,6 +438,8 @@ class Governor:
         return len(self._delivered_at) >= self._max_per_hour
 
     def _minutes_of_day(self, now: float) -> int:
+        """免打扰时段判定的「几点」。**必须按业务时区**（容器 TZ=UTC）——
+        偏 8 小时等于在错误的时间打扰用户，而宿主 UTC+8 跑单测永远不红。"""
         lt = self._localtime(now)
         return lt.tm_hour * 60 + lt.tm_min
 

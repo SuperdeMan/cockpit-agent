@@ -22,6 +22,7 @@ from e2e_capability import (
     verify_memory_capability,
 )
 from store import ALL_OCCUPANTS, MemoryStore, OWNER_ONLY, TurnConflict, owner_of
+from runtime.clock import BUSINESS_TZ
 
 logger = logging.getLogger("memory.server")
 
@@ -195,7 +196,7 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         # 显示时区必须固定车机 UTC+8，不能用 time.localtime（容器是 UTC）——
         # G7 真栈补验实锤：「9月15日」的 offer 显示成「9月14日16:00」，且会经
         # 「要的」按钮的 send_text 传导成真错提醒。宿主机 UTC+8 跑单测永远不红。
-        dt = datetime.fromtimestamp(ts, timezone(timedelta(hours=8)))
+        dt = datetime.fromtimestamp(ts, BUSINESS_TZ)
         when = f"{dt.month}月{dt.day}日{dt.hour:02d}:{dt.minute:02d}"
         title = self._TIME_WORD_RE.sub("", text).strip(" ，。,、的") or text
         owner_fingerprint = hashlib.sha256(

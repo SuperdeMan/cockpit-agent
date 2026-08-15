@@ -29,6 +29,7 @@ from .retry_policy import (
 from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
+from runtime.clock import BUSINESS_TZ
 
 logger = logging.getLogger("planner.planning")
 
@@ -497,7 +498,7 @@ def _date_line() -> str:
     """规划 prompt 的日期锚（上海时区，日粒度——时刻由端侧墙钟直答负责，不进 prompt 防
     每分钟扰动）。badcase f11aa344：prompt 无日期锚，LLM 把「今年世界杯」按训练先验改写成
     「2024年世界杯」灌进检索槽位——相对时间词必须有权威基准可换算。"""
-    now = datetime.now(timezone(timedelta(hours=8)))
+    now = datetime.now(BUSINESS_TZ)
     wd = "一二三四五六日"[now.weekday()]
     return f"当前日期：{now.year}年{now.month}月{now.day}日 周{wd}（今年={now.year}年）"
 

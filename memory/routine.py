@@ -113,4 +113,7 @@ def detect_routines(episodes: list[dict], *, min_count: int = 3,
 
 
 def now_hour() -> int:
-    return time.localtime().tm_hour
+    # 业务时区（容器 TZ=UTC）：routine 的「几点常做什么」按北京时间算，
+    # 裸 localtime 会把全部时段标签偏 8 小时。
+    from runtime.clock import hour_of
+    return hour_of()

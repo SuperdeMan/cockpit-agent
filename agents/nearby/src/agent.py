@@ -40,6 +40,10 @@ _OUTDOOR_CATS = {"景点", "景区", "旅游", "公园"}
 #   室内组必须在「景点」之前——「室内景点」含「景点」子串，后置会被抢走。
 _CATEGORY_KEYWORD = {
     "餐饮": "美食", "美食": "美食", "吃饭": "美食", "餐厅": "美食", "吃的": "美食",
+    # 时段词不是检索词：真栈实测「今晚带爸妈出去吃饭」→ planner 填 keyword=「晚饭」
+    # → 拿它问高德，播成「为您找到 10 家**晚饭**」、结果是一串赛百味。
+    "晚饭": "美食", "晚餐": "美食", "午饭": "美食", "午餐": "美食",
+    "夜宵": "美食", "宵夜": "美食", "早饭": "早餐店", "早餐": "早餐店",
     "酒店": "酒店", "住宿": "酒店", "宾馆": "酒店", "民宿": "民宿",
     "影院": "电影院", "电影院": "电影院", "电影": "电影院",
     "停车": "停车场", "停车场": "停车场", "车位": "停车场",
@@ -61,7 +65,8 @@ _CATEGORY_KEYWORD = {
     "药店": "药店", "银行": "银行", "医院": "医院",
 }
 # 餐饮类目（口味画像仅此类生效）
-_FOOD_CATS = {"餐饮", "美食", "吃饭", "餐厅", "吃的"}
+_FOOD_CATS = {"餐饮", "美食", "吃饭", "餐厅", "吃的",
+              "晚饭", "晚餐", "午饭", "午餐", "夜宵", "宵夜"}
 # P5（EVA 遗留卡）：口味记忆的**消费面**类目——比 _FOOD_CATS 宽。此前口味召回
 # 门禁只认正餐类目，咖啡/奶茶搜索整个被排除 → 「这家咖啡太酸」的店铺级差评
 # **结构性永不降权**（2026-08-15 真栈实测：带店名条目已入库、结果集纹丝不动）。
@@ -81,7 +86,10 @@ _AMBIENCE_TAGS = ("环境", "安静", "书", "清吧", "花园", "庭院", "湖�
 # 目的地半径内的停车场（缺口分析 §2-G5 给的方向）。近似要说明是近似。
 _ACCESS_RE = re.compile(
     r"腿脚不便|腿脚不好|腿脚不太?方便|不方便走路|走路不方便|走不动|走太多路|少走路|"
-    r"轮椅|无障碍|台阶|拄拐|停车方便|方便停车|好停车|停车近|停车位好找|推车|婴儿车")
+    r"轮椅|无障碍|台阶|拄拐|推车|婴儿车|"
+    # 停车说法允许中间插词：真栈实测「停车最好方便一点」不匹配连写的「停车方便」，
+    # 整条属性维就没触发（正则按连写写死＝只认一种语序）。
+    r"停车[^，。！？]{0,4}(?:方便|好停|近|好找)|(?:方便|好)停车|停车位好找")
 # 记忆驱动触发：话里点名家人/老人时才去读画像（不是每次搜索都翻记忆）。
 _ELDER_RE = re.compile(r"爸妈|父母|老人|长辈|老年|奶奶|爷爷|外公|外婆")
 _MOBILITY_MEM_RE = re.compile(
@@ -242,6 +250,21 @@ def _parse_open_now(text: str) -> bool:
     return bool(_OPEN_NOW_RE.search(text or ""))
 
 
+# 餐饮检索词的正面白名单：菜系/菜品/食材字眼。认不出的一律退回干净类目词
+# （「不辣」「适合带老人」这类**约束词**当店名去搜，比少一个检索维度糟得多）。
+_DISH_MARKERS = (
+    "菜", "馆", "锅", "料理", "日料", "韩料", "烧烤", "小吃", "面", "粉", "饭",
+    "餐", "咖啡", "茶", "甜品", "烘焙", "披萨", "汉堡", "寿司", "烤肉", "海鲜",
+    "粥", "串", "饺", "包子", "牛排", "自助", "素食", "火锅", "简餐", "轻食",
+    "肉", "鱼", "虾", "蟹", "鸡", "鸭", "豆腐", "清真", "brunch", "buffet",
+)
+
+
+def _looks_like_dish(text: str) -> bool:
+    t = (text or "").strip().lower()
+    return bool(t) and any(m in t for m in _DISH_MARKERS)
+
+
 class NearbyAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
@@ -359,9 +382,14 @@ class NearbyAgent(BaseAgent):
         """高德检索词：品牌/菜系优先；设施/类型类目（停车场/充电站/酒店…）直接用干净类目词，
         避免把带动词/价位的整句（『帮我查一查人均百元的停车场』）当关键词；仅餐饮用剥壳后的具体词。"""
         if brand:
-            return brand
+            return brand                       # 品牌是专名（瑞幸/星巴克），不做菜品判定
         if cuisine:
-            return cuisine
+            # cuisine 槽同样会被填进约束词——真栈实测 planner 把「不辣」「适合带老人」
+            # 填在这里，而这条分支是**早退**，下面餐饮分支的守卫根本够不着
+            # （首版只补了那一处，复验时原样复现：「为您找到 10 家不辣」）。
+            if _looks_like_dish(cuisine):
+                return cuisine
+            cuisine = ""                       # 不是菜系 → 丢掉，继续按类目走
         # 指名门店（「瑞幸咖啡 深铁金融科技大厦店」/「麦当劳(科苑南路餐厅)」）原样保留：
         # 它比任何类目/品牌词都具体，被改写成「咖啡厅」是静默的信息丢失——
         # 候选卡按钮/用户点名的选店句正是这种形状（demo-mkemhn 选店死路的一环）。
@@ -380,10 +408,20 @@ class NearbyAgent(BaseAgent):
             return _brand_qualified(_strip_qualifiers(kw_slot)) or cat_kw
         cleaned = _strip_qualifiers(kw_slot)           # 餐饮：剥掉价位/评分/动词后的具体词（火锅/川菜）
         if cleaned and cleaned not in ("地点", "的"):
-            # 剥完若正好是**类目别名**（「吃饭」「餐厅」），它不是检索词：拿它问高德
-            # 会搜名字里带「吃饭」的店，话术还念成「为您找到 10 家吃饭」（真栈实测）。
-            # 具体词（火锅/川菜）不在类目表里，原样返回不受影响。
-            return _CATEGORY_KEYWORD.get(cleaned, cleaned)
+            # 剥完若正好是**类目别名**（「吃饭」「晚饭」），它不是检索词：拿它问高德
+            # 会搜名字里带「晚饭」的店，话术还念成「为您找到 10 家晚饭」（真栈实测）。
+            if cleaned in _CATEGORY_KEYWORD:
+                return _CATEGORY_KEYWORD[cleaned]
+            # **约束词不是检索词**（2026-08-15 双档真栈实测的两个恶例）：
+            # planner 填 keyword=「不辣」→ 搜出一串「辣可可·现炒黄牛肉」，
+            # 填 keyword=「适合带老人」→ 搜出家政公司。餐饮分支此前对剥壳结果
+            # 无条件信任，而「剥不掉的那部分」既可能是菜系，也可能是**约束**。
+            # 判据取正面白名单（菜系词/餐饮字眼）——认不出就退回干净类目词，
+            # 与上面「整句：漏认，退回类目」同一条纪律：**宁可少检索维度，
+            # 也不能拿约束词当店名去搜**。
+            if _looks_like_dish(cleaned):
+                return cleaned
+            return cat_kw or "美食"
         # Preserve an explicit unknown/coarse category as the provider query;
         # silently rewriting it to food is a semantic corruption.  Only a
         # genuinely absent category keeps the legacy nearby-food default.
@@ -441,12 +479,25 @@ class NearbyAgent(BaseAgent):
             if ev:
                 window = dict(dining_window(ev[0], now_ts=now_ts), event_word=ev[1])
             taste = await self._taste_profile(ctx, raw)
+            # **当轮明说的忌口压过记忆偏好**（真栈实测：「不要太辣」时两个 provider
+            # 都推了川菜——记忆说爱吃川菜、当轮说不要辣，系统选了记忆）。
+            # 记忆是背景，用户这句话是前景；前景与背景冲突时前景赢，并且要说出来。
+            turn_no_spicy = bool(self._NO_SPICY_RE.search(raw))
+            if turn_no_spicy:
+                # 没有任何口味记忆时也要生效——「不要太辣」本身就是一条约束，
+                # 不该因为画像是空的就被丢掉。
+                taste = dict(taste or {"like_cuisine": "", "dislikes": [],
+                                       "no_queue": False}, no_spicy=True)
             # 菜系偏置只限正餐类目（拿粤菜偏好偏置咖啡检索是错的）；
             # 忌口/店铺级降权按 _TASTE_CATS 全集生效（P5）。
             if (category in _FOOD_CATS and taste and taste["like_cuisine"]
                     and not (cuisine or brand or kw_slot.strip())):
-                keyword = taste["like_cuisine"]
-                taste_notes.append(f"按您的口味优先{taste['like_cuisine']}")
+                liked = taste["like_cuisine"]
+                if turn_no_spicy and any(w in liked for w in self._SPICY_MARKS):
+                    taste_notes.append(f"您说了不要辣，这次就不按平时爱吃的{liked}找了")
+                else:
+                    keyword = liked
+                    taste_notes.append(f"按您的口味优先{liked}")
         rating_min = _to_float(intent.slots.get("rating_min"))
         # 价位/排序/营业中：原话解析优先（『一百左右』的区间语义只在原话里，LLM 填的 price_max
         # 槽位会丢下限 → 之前『左右』返回太便宜的）；原话无价位再退回 LLM 槽位。
@@ -457,7 +508,9 @@ class NearbyAgent(BaseAgent):
         open_now = str(intent.slots.get("open_now") or "").lower() in ("1", "true", "yes") \
             or _parse_open_now(raw)
         near = await self._resolve_center(intent, meta)
-        label = cuisine or brand or keyword
+        # 话术标签用**净化后**的检索词：cuisine 槽里的约束词（「不辣」）被 _build_keyword
+        # 丢掉后，label 若还读原槽，就会播成「为您找到 10 家不辣」（真栈原样复现过）。
+        label = brand or keyword
 
         # 位置缺席的诚实降级（demo-mkemhn 59b34983/cffc84fd/44943f00）：没有任何
         # 搜索中心时，provider 会走**全国关键字检索**，高德默认把北京热门 POI 排前面
@@ -655,7 +708,12 @@ class NearbyAgent(BaseAgent):
                       "西餐", "江浙菜", "本帮菜", "东北菜", "新疆菜", "烧烤", "素食",
                       "面馆", "早茶", "茶餐厅")
     _SPICY_MARKS = ("川菜", "湘菜", "火锅", "串串", "麻辣烫", "冒菜", "麻辣")
-    _NO_SPICY_RE = re.compile(r"不(?:能|要|太)?(?:吃|沾)辣|怕辣|忌辣|别太辣|清淡")
+    # 忌辣说法：**原话与记忆文本共用**。首版只认「不…吃/沾辣」，真栈实测
+    # 「不要太辣」根本不匹配——于是用户当轮明说的忌口连识别都没识别到，
+    # 记忆里的川菜偏好照样把检索词改成「川菜」（假个性化的第三种形态）。
+    # ⚠「特**别辣**」会被裸「别」吃掉（写完立刻被负例抓住）——加 lookbehind。
+    _NO_SPICY_RE = re.compile(
+        r"(?:不|(?<!特)别|少|忌|怕)(?:能|要|想|太|吃|沾|放|加|了)*辣|清淡")
     _NEG_TASTE_RE = re.compile(r"不喜欢|不吃|不爱|讨厌|难吃|太[酸咸甜油腻辣]")
     # 话里点名家人 → 并取该家人的口味记忆（subject 维度）。词表与 memory/relation.py
     # 的亲属同义表同源——那边是权威登记，这里只做消费侧识别（跨服务不共享代码）。

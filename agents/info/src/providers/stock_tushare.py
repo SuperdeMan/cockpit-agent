@@ -10,6 +10,7 @@ docs: https://tushare.pro/document/1?doc_id=5
 from __future__ import annotations
 import logging
 from datetime import datetime, timedelta
+from runtime.clock import local_dt
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
 from .base import StockProvider, Quote, StockCandle, market_label
@@ -55,7 +56,9 @@ class TushareStockProvider(StockProvider):
 
     def _latest_trade_date(self) -> str:
         """最近交易日（往前推 1 天，跳过周末）。格式 YYYYMMDD。"""
-        d = datetime.now()
+        # 交易日/收盘判定按业务时区（容器 TZ=UTC：北京 15:00–23:00 会被当成
+        # 「未收盘」，取到错误的交易日）。
+        d = local_dt()
         # 如果当前时间是周末或当天还未收盘（15:00前），往前多推
         if d.weekday() >= 5:  # 周六日
             d -= timedelta(days=d.weekday() - 4)

@@ -17,6 +17,7 @@ import os
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
+from runtime.clock import hour_of as clock_hour
 from runtime.proactive import P_CRITICAL, publish_proactive
 
 logger = logging.getLogger("agent.road_safety")
@@ -108,7 +109,9 @@ class RoadSafetyAgent(BaseAgent):
         return f"{res.speech}建议降低车速、保持车距，必要时就近选择服务区休息。"
 
     def _is_night(self, now: float) -> bool:
-        hour = time.localtime(now).tm_hour
+        # 业务时区（容器 TZ=UTC）：裸 localtime 会把北京 06:00–14:00 当成夜间，
+        # 夜间节流窗口整段用错。
+        hour = clock_hour(now)
         return hour >= 22 or hour < 6
 
     def _should_broadcast(self, category: str, now: float) -> bool:

@@ -15,6 +15,7 @@ import re
 import time
 
 import relation
+from runtime.clock import BUSINESS_TZ
 
 logger = logging.getLogger("memory.extract")
 
@@ -174,7 +175,7 @@ def _date_line() -> str:
     0 次给出 event_time，「下个月15号」全靠 planner 回复轮凑巧复述了换算——
     锚+措辞修后两种形态各 4/4 且日期正确。"""
     from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone(timedelta(hours=8)))
+    now = datetime.now(BUSINESS_TZ)
     wd = "一二三四五六日"[now.weekday()]
     return f"当前日期：{now.year}年{now.month}月{now.day}日 周{wd}（今年={now.year}年）"
 
@@ -305,7 +306,7 @@ def _parse_event_time(iso: str) -> int | None:
     except (ValueError, TypeError):
         return None
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+        dt = dt.replace(tzinfo=BUSINESS_TZ)
     return int(dt.timestamp())
 
 

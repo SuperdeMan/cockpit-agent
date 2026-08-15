@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 import time
 
+from runtime.clock import epoch_at, hhmm, local_struct, minutes_of
+
 _CN_HOUR = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
             "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12}
 # 时刻本体：HH:MM 或 N点[半|N分]，可带段位前缀（槽位值与原话片段共用）。
@@ -43,11 +45,12 @@ def parse_clock_time(text: str, now_ts: int | None = None) -> int | None:
     if not (0 <= hour <= 24 and 0 <= minute < 60):
         return None
     now = int(now_ts if now_ts is not None else time.time())
-    lt = time.localtime(now)
+    # ⚠ 墙钟必须按**业务时区**取（容器 TZ=UTC）：裸 localtime 会让「晚上7点」
+    # 变成 19:00 UTC=次日 03:00 北京，而宿主 UTC+8 跑单测永远不红。
+    lt = local_struct(now)
 
     def _at(day_off: int, h: int) -> int:
-        return int(time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + day_off,
-                                h % 24, minute, 0, 0, 0, -1)))
+        return epoch_at(lt.tm_year, lt.tm_mon, lt.tm_mday + day_off, h % 24, minute)
 
     if seg in ("下午", "傍晚", "晚上") and hour < 12:
         hour += 12
@@ -119,11 +122,13 @@ def dining_window(event_ts: int, *, dwell_min: int = DINING_DWELL_MIN,
 
 
 def fmt_clock(ts) -> str:
-    lt = time.localtime(int(ts))
-    return f"{lt.tm_hour:02d}:{lt.tm_min:02d}"
+    """epoch → 业务时区「HH:MM」。播给用户的时刻一律走这里。"""
+    return hhmm(int(ts))
 
 
 def clock_minutes(ts) -> int:
-    """epoch → 当天的「时:分」折算分钟（供营业时段判定注入 now_min）。"""
-    lt = time.localtime(int(ts))
-    return lt.tm_hour * 60 + lt.tm_min
+    """epoch → 当天的「时:分」折算分钟（供营业时段判定注入 now_min）。
+
+    ⚠ 必须与 `providers/base.is_open_now` 同一时区——它按 UTC+8 判营业时段，
+    这里若按容器本地时（UTC）算，筛出来的「营业中」会整体错 8 小时。"""
+    return minutes_of(int(ts))

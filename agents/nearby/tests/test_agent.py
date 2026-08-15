@@ -1128,3 +1128,72 @@ def test_food_category_alias_in_keyword_slot_is_not_used_as_a_query_word():
     for kw_slot, expected in (("吃饭", "美食"), ("餐厅", "美食"),
                               ("火锅", "火锅"), ("川菜", "川菜")):
         assert NearbyAgent._build_keyword("餐饮", "", "", kw_slot) == expected
+
+
+# ── EVA 复验批：当轮忌口 / 停车说法 / 时段词（2026-08-15 双档真栈抓出）──
+def test_current_turn_no_spicy_overrides_remembered_cuisine():
+    """「不要太辣」必须压过记忆里的川菜偏好——两个 provider 都推了川菜（系统缺口）。
+
+    记忆是背景、这句话是前景；冲突时前景赢，而且要说出来。
+    """
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "用户喜欢川菜和四川火锅", "predicate": "taste.cuisine",
+         "scope": "profile.taste", "polarity": "like"}])
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="老灶火锅", category="餐饮", rating=4.6),
+                Place(id="b", name="淮扬人家", category="餐饮", rating=4.2)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上7点电影，先吃饭，不要太辣",
+                                 ctx=ctx, meta=_LOC))
+    assert seen["keyword"] != "川菜"                      # 不拿爱吃的辣菜系去偏置
+    assert "不要辣" in res.speech or "不按平时爱吃" in res.speech
+    assert [i["name"] for i in res.data["items"]][0] == "淮扬人家"   # 重辣的排后
+
+
+def test_no_spicy_phrasings_are_recognized():
+    """忌辣说法覆盖面（首版只认「不…吃/沾辣」，「不要太辣」直接漏）。"""
+    agent = NearbyAgent()
+    for raw in ("不要太辣", "不太能吃辣", "别太辣", "少辣一点", "我不吃辣",
+                "口味清淡点", "怕辣"):
+        assert agent._NO_SPICY_RE.search(raw), raw
+    for raw in ("要辣一点", "特别辣的那种", "麻辣香锅"):
+        assert not agent._NO_SPICY_RE.search(raw), raw
+
+
+def test_parking_phrasing_allows_inserted_words():
+    """「停车最好方便一点」这类插入语形态要触发属性维（真栈实测漏掉）。"""
+    from agents.nearby.src.agent import _ACCESS_RE
+    for raw in ("停车最好方便一点", "停车方便点的", "找个好停车的地方",
+                "停车位好找的", "方便停车吗"):
+        assert _ACCESS_RE.search(raw), raw
+    assert not _ACCESS_RE.search("附近有停车场吗")        # 找停车场本身不是无障碍诉求
+
+
+def test_meal_time_words_are_not_used_as_query_words():
+    """「晚饭」是时段词不是检索词（真栈实测搜出一串赛百味、话术念「10 家晚饭」）。"""
+    for kw_slot, expected in (("晚饭", "美食"), ("晚餐", "美食"), ("夜宵", "美食"),
+                              ("早饭", "早餐店"), ("火锅", "火锅")):
+        cat = NearbyAgent._resolve_category(
+            SimpleNamespace(slots={"keyword": kw_slot}, raw_text=kw_slot))
+        assert NearbyAgent._build_keyword(cat, "", "", kw_slot) == expected, kw_slot
+
+
+def test_constraint_words_are_never_used_as_query_words():
+    """planner 把**约束词**填进 keyword 时不得拿去检索（2026-08-15 双档真栈两个恶例）：
+    「不辣」搜出一串「辣可可·现炒黄牛肉」、「适合带老人」搜出家政公司。"""
+    for kw_slot in ("不辣", "适合带老人", "安静", "停车方便", "环境好", "便宜点"):
+        assert NearbyAgent._build_keyword("餐饮", "", "", kw_slot) == "美食", kw_slot
+
+
+def test_real_dish_words_still_pass_through():
+    """反向对照：菜系/菜品词照旧原样进检索（别把守卫修成一律退回类目）。"""
+    for kw_slot in ("火锅", "川菜", "日料", "潮汕牛肉", "烤鱼", "轻食", "brunch"):
+        assert NearbyAgent._build_keyword("餐饮", "", "", kw_slot) == kw_slot, kw_slot

@@ -18,6 +18,7 @@ import os
 import re
 from datetime import datetime
 
+from runtime.clock import local_dt
 from agents._sdk.http import ProviderError
 from agents._sdk.landmark import is_landmark_description, landmark_candidates, name_matches
 from agents.navigation.src.providers.base import GeoPoint, POI
@@ -391,7 +392,9 @@ async def plan_weather(weather_provider, dest: str, raw_text: str,
         return out
     if not fc:
         return out
-    off = _start_offset(raw_text, datetime.now())
+    # 「明天出发」这类偏移要按业务时区算日期（容器 TZ=UTC：北京 00:00–08:00
+    # 还停在前一天，整条预报会对错天）。
+    off = _start_offset(raw_text, local_dt())
     for i in range(num_days):
         idx = off + i
         if 0 <= idx < len(fc):

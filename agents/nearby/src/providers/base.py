@@ -9,6 +9,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from runtime.clock import BUSINESS_TZ
 
 
 @dataclass
@@ -51,7 +52,7 @@ def is_open_now(open_today: str, now_min: int | None = None) -> bool | None:
     if "24小时" in s or "00:00-24:00" in s or "全天" in s:
         return True
     if now_min is None:
-        n = datetime.now(timezone(timedelta(hours=8)))
+        n = datetime.now(BUSINESS_TZ)
         now_min = n.hour * 60 + n.minute
     ranges = _TIME_RANGE_RE.findall(s)
     if not ranges:

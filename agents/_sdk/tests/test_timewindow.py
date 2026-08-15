@@ -1,27 +1,137 @@
-"""共享时刻/时间窗解析单测（E1）：时刻消歧、事件时刻、用餐窗反推。
+"""共享时刻/时间窗解析单测（E1）：时刻消歧、事件时刻、用餐窗反推、**业务时区**。
 
-时刻消歧那几条与 navigation 的 `test_parse_arrive_by_rules` 是同一份实现
-（E1 下沉后 `_parse_arrive_by = parse_clock_time`），两处都留着是刻意的：
-一处证「共享实现对」，一处证「导航侧对外行为没变」。
+⚠ 断言一律用 `runtime.clock`（业务时区 UTC+8）构造期望值，**不用 `time.mktime` /
+`time.localtime`**——后者按宿主本地时解释，而宿主恰好就是 UTC+8，于是
+「容器 TZ=UTC 导致整体偏 8 小时」这类缺陷在本机**永远不红**（真栈实测
+「预计 05:17 到达，比您要求的 17:00 早约 703 分钟」，两个 provider 逐字一致）。
+另配一条**源码级守卫**：时钟族里不许再出现裸 `time.localtime` / `time.mktime`。
 """
-import time
+import re
+from pathlib import Path
 
+from runtime.clock import BUSINESS_TZ, epoch_at, hhmm, local_dt
 from agents._sdk.timewindow import (
     DINING_BUFFER_MIN, DINING_DWELL_MIN, clock_minutes, dining_window,
     fmt_clock, parse_clock_time, parse_event_time)
 
-# 2026-08-14 周五 14:00（与 navigation 既有用例同一基准）
-_NOW = int(time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))
+# 2026-08-14 周五 14:00（业务时区），与 navigation 既有用例同一基准
+_NOW = epoch_at(2026, 8, 14, 14, 0)
+
+
+def _wall(ts):
+    d = local_dt(ts)
+    return (d.year, d.month, d.day, d.hour, d.minute)
 
 
 def test_clock_time_disambiguates_bare_hours():
-    assert time.localtime(parse_clock_time("5点", now_ts=_NOW))[:5] == (2026, 8, 14, 17, 0)
-    late = int(time.mktime((2026, 8, 14, 20, 0, 0, 0, 0, -1)))
-    assert time.localtime(parse_clock_time("5点", now_ts=late))[:5] == (2026, 8, 15, 5, 0)
-    assert time.localtime(parse_clock_time("下午5点半", now_ts=_NOW))[:5] == (2026, 8, 14, 17, 30)
-    assert time.localtime(parse_clock_time("17:00", now_ts=_NOW))[:5] == (2026, 8, 14, 17, 0)
-    assert time.localtime(parse_clock_time("23点", now_ts=_NOW))[:5] == (2026, 8, 14, 23, 0)
+    assert _wall(parse_clock_time("5点", now_ts=_NOW)) == (2026, 8, 14, 17, 0)
+    late = epoch_at(2026, 8, 14, 20, 0)
+    assert _wall(parse_clock_time("5点", now_ts=late)) == (2026, 8, 15, 5, 0)
+    assert _wall(parse_clock_time("下午5点半", now_ts=_NOW)) == (2026, 8, 14, 17, 30)
+    assert _wall(parse_clock_time("17:00", now_ts=_NOW)) == (2026, 8, 14, 17, 0)
+    assert _wall(parse_clock_time("23点", now_ts=_NOW)) == (2026, 8, 14, 23, 0)
     assert parse_clock_time("尽快", now_ts=_NOW) is None
+
+
+def test_clock_is_anchored_to_business_timezone_not_host():
+    """核心回归：解析与渲染都按 UTC+8，**与宿主/容器 TZ 无关**。
+
+    容器是 UTC：旧实现把「晚上7点」算成 19:00 UTC（=次日 03:00 北京），
+    把 ETA 播成 05:17。这条断言用固定 epoch 钉死北京墙钟，UTC 主机上也成立。
+    """
+    ts = parse_clock_time("晚上7点", now_ts=_NOW)
+    assert local_dt(ts).utcoffset() == BUSINESS_TZ.utcoffset(None)
+    assert _wall(ts) == (2026, 8, 14, 19, 0)
+    assert fmt_clock(ts) == "19:00" == hhmm(ts)
+    assert clock_minutes(ts) == 19 * 60
+
+
+# 会按「几点/哪天」做判断或渲染的生产模块。新增同类消费点时加进来——
+# 这张表就是「哪些地方的墙钟是业务语义」的清单。
+_WALL_CLOCK_MODULES = (
+    "agents/_sdk/timewindow.py",
+    "agents/navigation/src/agent.py",
+    "agents/nearby/src/agent.py",
+    "agents/nearby/src/providers/base.py",
+    "orchestrator/cloud/context.py",
+    "orchestrator/cloud/planning.py",
+    "agents/road_safety/src/agent.py",
+    "agents/trip_planner/src/pipeline.py",
+    "agents/info/src/providers/stock_tushare.py",
+    "proactive/governor.py",
+    "memory/routine.py",
+    "memory/server.py",
+    "memory/extract.py",
+    "agents/scene_orchestrator/src/triggers.py",
+)
+
+
+def _code_only(path: Path) -> str:
+    """把注释与字符串**按原位置抹成空格**，其余字符原样保留。
+
+    两处都是反向验证抓出来的（「注入缺陷会红」和「对照仍绿」两头都要做）：
+    1. 首版根本没剥注释 → **误伤了记录这条规则的注释本身**（`scene/triggers.py`
+       里那句「直接 time.localtime() 会让…错 8 小时」）；
+    2. 改成 tokenize 后用**空格拼接** token → `time.localtime(` 变成
+       `time . localtime (`，正则再也匹配不上——**注入缺陷时守卫纹丝不动**。
+       一个恒绿的断言比没有断言更糟，它让人以为这块被守着。
+    """
+    import io
+    import tokenize
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+    starts = []
+    off = 0
+    for ln in lines:                       # 行号(1-based) → 该行在全文的起始偏移
+        starts.append(off)
+        off += len(ln)
+    buf = list(text)
+    with open(path, "rb") as f:
+        for tok in tokenize.tokenize(io.BytesIO(f.read()).readline):
+            if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+                continue
+            (r1, c1), (r2, c2) = tok.start, tok.end
+            a = starts[r1 - 1] + c1
+            b = starts[r2 - 1] + c2
+            for i in range(a, min(b, len(buf))):
+                if buf[i] != "\n":
+                    buf[i] = " "
+    return "".join(buf)
+
+
+def test_wall_clock_modules_have_no_naked_local_time():
+    """源码级守卫（本机就能红，不用等 UTC 环境）。
+
+    判据同 B6「反例最好从被测系统自己派生」：这一族出过**四次**事
+    （scene / memory 两处写对并留了注释，navigation+timewindow、road_safety、
+    proactive 三处仍写错），每次都是「某处又写了一个裸 localtime」。
+    把「哪些地方的墙钟是业务语义」变成一张表 + 一条断言，别靠下次记得。
+    """
+    root = Path(__file__).resolve().parents[3]
+    naked = re.compile(r"\btime\.(?:localtime|mktime)\s*\(|\bdatetime\.now\(\s*\)")
+    offenders = []
+    for rel in _WALL_CLOCK_MODULES:
+        if naked.search(_code_only(root / rel)):
+            offenders.append(rel)
+    assert not offenders, (
+        f"这些文件里还有裸 time.localtime/mktime/datetime.now()：{offenders}。"
+        "容器 TZ=UTC，墙钟一律走 runtime.clock（业务时区 UTC+8）。")
+
+
+def test_business_timezone_has_exactly_one_definition():
+    """「不加第二份表达同一件事的声明」的机械版。
+
+    这条缺陷的成因就是 UTC+8 被各写各的：7 处生产代码各有一份、**第 8 处写成了裸
+    localtime**。定义收敛到 `runtime/clock.py` 之后，用断言把它钉住。
+    （测试与 scripts 不在管辖内——它们跑在 UTC+8 宿主上，且各自显式 pin。）
+    """
+    root = Path(__file__).resolve().parents[3]
+    literal = re.compile(r"timezone\s*\(\s*timedelta\s*\(\s*hours\s*=\s*8\s*\)\s*\)")
+    offenders = [rel for rel in _WALL_CLOCK_MODULES
+                 if literal.search(_code_only(root / rel))]
+    assert not offenders, (
+        f"这些文件重新定义了业务时区：{offenders}。"
+        "唯一定义在 runtime/clock.py::BUSINESS_TZ，import 它。")
 
 
 def test_event_time_needs_both_a_clock_and_an_event_word():
@@ -58,10 +168,9 @@ def test_dining_window_is_derived_backwards_from_the_event():
 
 def test_dining_window_flags_tight_instead_of_squeezing():
     """来不及就是来不及——不压缩窗口凑出一个能满足的数（编数据比说不行更糟）。"""
-    ev = parse_event_time("晚上7点的电影，先吃个饭",
-                          now_ts=int(time.mktime((2026, 8, 14, 18, 0, 0, 0, 0, -1))))
-    w = dining_window(ev[0], now_ts=int(time.mktime((2026, 8, 14, 18, 0, 0, 0, 0, -1))))
-    assert w["tight"] is True
+    late = epoch_at(2026, 8, 14, 18, 0)
+    ev = parse_event_time("晚上7点的电影，先吃个饭", now_ts=late)
+    assert dining_window(ev[0], now_ts=late)["tight"] is True
 
 
 def test_window_params_are_injectable():
@@ -70,7 +179,7 @@ def test_window_params_are_injectable():
     assert (w["leave_ts"] - w["seat_ts"]) == 90 * 60
 
 
-def test_clock_minutes_matches_local_wall_clock():
-    ts = int(time.mktime((2026, 8, 14, 17, 30, 0, 0, 0, -1)))
+def test_clock_minutes_matches_business_wall_clock():
+    ts = epoch_at(2026, 8, 14, 17, 30)
     assert clock_minutes(ts) == 17 * 60 + 30
     assert fmt_clock(ts) == "17:30"

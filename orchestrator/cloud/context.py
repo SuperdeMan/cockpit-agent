@@ -23,6 +23,7 @@ import time
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext
+from runtime.clock import hhmm as clock_hhmm
 from security.audit import AuditLogger
 
 logger = logging.getLogger("planner.context")
@@ -469,8 +470,9 @@ def _render_focus(focus) -> str:
         except (TypeError, ValueError):
             ab = 0
         if ab > 0:
-            lt = time.localtime(ab)
-            seg += f"，须{lt.tm_hour:02d}:{lt.tm_min:02d}前到达"
+            # 焦点里渲染给模型看的时刻也要按业务时区（容器 TZ=UTC）——
+            # 这里偏 8 小时，模型转述出去就是一句错的约束。
+            seg += f"，须{clock_hhmm(ab)}前到达"
         parts.append(seg)
     if not parts:
         return ""
