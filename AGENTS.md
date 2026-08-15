@@ -66,11 +66,14 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5574 passed / 14 skipped 零红**（2026-08-15 EVA 指令集验证批后实测，单独跑
-14m52s）。较 P3 簇批的 5561 净 **+13** 逐条点上号：LLM_BACKUP 备份档 8 +
-trip 方向词拦截 1 + navigation 轨迹候选 2 + engine 复合取消 2；证据 history
-**§37**。前两跳：5561 的构成（+41=基线陈旧 3+P3 簇 38，台账条数锚仪式红一次）
-见 history **§36**，5518 见 **§34**。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
+**5613 passed / 14 skipped 零红**（2026-08-15 遗留六卡批后实测，单独跑 20m14s）。
+较验证批的 5574 净 **+39** 逐条点上号：navigation 6（waypoint 三级 4+set_place
+守卫 2）+ trip 4（must_visit）+ bridge 21（数量容错参数化）+ memory 7（确定性
+relation 5+resolve 并集 2）+ nearby 1（咖啡口味消费面）；证据 history **§38**。
+前四跳：5574（+13，LLM_BACKUP/方向词/轨迹候选/复合取消）见 **§37**、5561
+（+41=基线陈旧 3+P3 簇 38）见 **§36**、5518 见 **§34**。⚠ 后台跑全量期间不许动
+工作树/测试锚（本批首趟在 catalog 锚更新前启动、会假红一条，停掉重跑才是干净读数
+——live 跑批纪律的全量版）。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
 =与并行 journeys 的 **stack lease 冲突假红**（那些测试模拟 runner lease 树而
 journeys 真持有 lease），隔离复跑 61/61+2skip 全绿——与既有「并行 Docker build 时
 test_e2e_wrappers_ci 假红（隔离复跑 6/6）」同族：**全量要单独跑，不与任何 e2e/build
