@@ -334,3 +334,14 @@ exemplars:
   tags:
   - canonical
   note: 「安静」是氛围属性由能力侧软重排（标签+评分），不是目的地也不拆步
+- text: 帮我找杯咖啡喝
+  plan:
+  - agent: nearby
+    intent: nearby.search
+    slots:
+      keyword: 咖啡
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - badcase
+  note: 「找杯咖啡」是发现不是下单——真栈实测被派去 luckin.order，回了「数量需要是 1 到 20 之间的整数」槽校验错误当话术；点单要有明确品牌/门店语境（台账 nearby-luckin 族）

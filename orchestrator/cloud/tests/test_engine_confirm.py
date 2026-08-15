@@ -501,3 +501,39 @@ def test_pending_plan_preserves_skills_across_suspend_restore():
     restored, _seeds = PlannerEngine._restore(None, state, inject_confirmed=False)
     assert restored is not None
     assert restored.skills == plan.skills
+
+
+def test_slot_pending_compound_cancel_continues_as_fresh_request():
+    """EVA 三§3（2026-08-15 真栈实测）：wait_slot 挂起中「算了咖啡不买了，先去
+    帮我看看附近有什么景点」——取消词只该作用于挂起，后半句是新请求。此前命中
+    `_SLOT_CANCEL_RE` 即整句吞掉、4.6ms 直回「已取消」。修后：挂起清 + 余句
+    按全新请求正常规划执行。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1",
+        pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建交周报提醒"})))
+
+    events = _run(engine, _req("算了那个不要了，先去帮我看看附近有什么景点"))
+
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None  # 挂起清了
+    final = events[-1]
+    assert "已为您取消" not in (final.get("speech") or "")   # 不是取消直回
+    assert spy.count("nearby.search") == 1                   # 余句真的被执行了
+
+
+def test_slot_pending_pure_cancel_unchanged():
+    """对照：纯取消句（「那个提醒不用了，取消吧」剥后余量 <6）行为逐字不变。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1",
+        pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建交周报提醒"})))
+
+    events = _run(engine, _req("那个提醒不用了，取消吧"))
+
+    assert "取消" in events[-1]["speech"]
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
+    assert spy.count("nearby.search") == 0

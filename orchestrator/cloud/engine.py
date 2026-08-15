@@ -36,6 +36,14 @@ logger = logging.getLogger("planner.engine")
 # wait_slot 语境内取消词（旅程 B5-1）：补槽追问是当前活跃语境，句中出现取消语义即指它。
 # 不复用 _confirm_reply——其「占据整句」规则（防子串误判）会拦住「那个提醒不用了，取消吧」。
 _SLOT_CANCEL_RE = re.compile(r"取消|不用了|算了|不需要了|不要了|别设了|别提醒了|不设了")
+# 复合取消句的「实质余量」量具（EVA 三§3，2026-08-15 真栈实测）：「算了咖啡不买了，
+# 先去加点油，但还是别迟到」在 wait_slot 下命中取消词后整句被吞、4.6ms 直回「已取消」
+# ——后半句是新请求。剥掉取消词/标点/语气尾后余量 ≥6 字 = 复合句：清挂起后按全新
+# 请求继续处理；纯取消句（「那个提醒不用了，取消吧」剥后 5 字）行为逐字不变。
+_SLOT_CANCEL_STRIP_RE = re.compile(
+    r"取消|不用了|算了|不需要了|不要了|不买了|不去了|别设了|别提醒了|不设了"
+    r"|[，。,、！!？?；;\s]|吧$|啦$")
+_SLOT_CANCEL_COMPOUND_MIN = 6
 
 # 确认/取消话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）
 _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
@@ -253,9 +261,16 @@ class PlannerEngine:
             if _SLOT_CANCEL_RE.search(text or ""):
                 await self.session.clear(
                     ctx.session_id, owner_user_id=ctx.user_id)
-                yield {"kind": "final", "speech": "好的，已为您取消。"}
-                return
-            if self._is_topic_change(text, pending):
+                remainder = _SLOT_CANCEL_STRIP_RE.sub("", text or "")
+                if len(remainder) < _SLOT_CANCEL_COMPOUND_MIN:
+                    yield {"kind": "final", "speech": "好的，已为您取消。"}
+                    return
+                # 复合句（「算了咖啡不买了，**先去加点油，但还是别迟到**」）：取消只
+                # 作用于挂起，其余内容按全新请求继续处理——不 return、不进补槽/话题
+                # 分支（挂起已清）。EVA 三§3 动态重规划的入口正是这一形态。
+                logger.info("wait_slot cancel with compound remainder (%d chars); "
+                            "continuing as fresh request", len(remainder))
+            elif self._is_topic_change(text, pending):
                 # 答非所问：用户插话——保留挂起按新请求处理（R2，下轮裸答案仍可续接）
                 held_pending = pending
                 plan, seed_results = None, []

@@ -160,3 +160,23 @@ exemplars:
   tags:
   - canonical
   note: 同上：陈述行程安排是让系统「知道」，不是让系统「提醒」；G7 offer 通道负责问要不要提醒
+- text: 我女儿在市实验小学上学
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+    slots: {}
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: 家人位置陈述是**记忆抽取的输入**（关系图谱：女儿→学校，「去接女儿」靠它解析），不是设置自己的常用地点——navigation.set_place 只管「我家/我公司在X」；真栈实测这句被误路由 set_place 后反问「想设置哪个常用地点」，教学链整链卡死
+- text: 我老公在软件产业基地上班
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+    slots: {}
+  source: manual
+  added: '2026-08-15'
+  tags:
+  - canonical
+  note: 同上：配偶/家人的位置陈述走记忆抽取（person→place 一跳解析的数据源），不落 set_place

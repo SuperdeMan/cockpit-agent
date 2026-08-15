@@ -66,15 +66,11 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5559 passed / 14 skipped**（2026-08-15 P3 簇批后实测，单独跑 13m36s）。较留档
-5518 净 **+41** 逐条点上号：**+3 是基线陈旧**（5518 实测于 ca933f3，其后 `de6128f`
-B1-3 nearby 又加 3 条没刷新——「对不上先怀疑基线陈旧」§4.3 纪律第二次应验，
-worktree 对比取证）+ 本批 38（G8 test_route_session_focus 8 + test_reroute 13、
-G4 extract 4 + pipeline 5、G9 extract 3 + pipeline 5；989-951 分套件对比数吻合）。
-⚠ 全量执行中一条台账条数锚（`test_boundary_ledger_maps_...` 27→29）按其自述仪式
-红了一次——「裁定加了，兑现物加了吗」——兑现物已证后补断言即绿，不是回归。
-真栈探针批再 +2（顺延城标继承 + theme 槽清洗，trip 66 分套件核验）→ 当前
-**5561**。上一基线 5518 的构成见 history **§34**。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
+**5574 passed / 14 skipped 零红**（2026-08-15 EVA 指令集验证批后实测，单独跑
+14m52s）。较 P3 簇批的 5561 净 **+13** 逐条点上号：LLM_BACKUP 备份档 8 +
+trip 方向词拦截 1 + navigation 轨迹候选 2 + engine 复合取消 2；证据 history
+**§37**。前两跳：5561 的构成（+41=基线陈旧 3+P3 簇 38，台账条数锚仪式红一次）
+见 history **§36**，5518 见 **§34**。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
 =与并行 journeys 的 **stack lease 冲突假红**（那些测试模拟 runner lease 树而
 journeys 真持有 lease），隔离复跑 61/61+2skip 全绿——与既有「并行 Docker build 时
 test_e2e_wrappers_ci 假红（隔离复跑 6/6）」同族：**全量要单独跑，不与任何 e2e/build
@@ -116,6 +112,18 @@ demo 咖啡 hint 补导航语境让路词（整条计划曾被 replace 成 demo 
 入台账）。对抗语料 579→**591**（第六至九次适用，恰好用满）、catalog **144 条/
 12418 字符**、架构 **v1.25**。**仍未做**：G10 订座票务（搁置，诚实桩）、
 谓词别名清洗（条件触发未命中）。
+
+**2026-08-15 《超级EVA指令集》全量端到端验证**（栈全量重建后逐条真栈 WS 探针，
+报告 [`docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md`](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md)、
+流水 history **§37**）：25 条语料 **✅12 / ⚠️10 / 🔒3 面**（车控联动/订座/主动执行=
+红线搁置立场非缺失）。过程抓修 7 处（`4b975bd`/`911b7c4` + 收尾批）：**跨厂商
+备份档 `LLM_BACKUP=deepseek:deepseek-v4-flash`**（泓舟指定；MiniMax 抖动时厂商内
+fast=primary 同名一抖整死）、方向词目的地拦截（「北方追春天」臆断槽穿透全等改前缀）、
+描述性历史指代→轨迹候选挑选、**复合取消句吞句**（wait_slot「算了X不要了先去Y」曾
+4.6ms 直回已取消吞掉后半——剥词余量 ≥6 按新请求继续）、范例三投（占位符槽被逐字抄/
+家人位置误落 set_place/「找杯咖啡」被派下单）。遗留六项记报告 §3（个人地点作途经点/
+多城点名 POI 入池/raw 槽校验文案直出/散句 relation/负偏好 live 闭环/方差面档案化），
+未立卡。
 
 **2026-08-13/14 商户链路收口聚焦实测**（demo-3ukshz 二轮 + 打磨 + searchType
 勘误，逐批流水 history **§32/§32.1/§32.2**、方案与勘误 设计文档 §5/§5.1）：
