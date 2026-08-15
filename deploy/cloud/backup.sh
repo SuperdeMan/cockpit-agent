@@ -4,6 +4,8 @@ set -euo pipefail
 umask 077
 
 readonly RELEASE_ROOT="/opt/car-agent/current"
+readonly RELEASE_DIR="$(readlink -f "${RELEASE_ROOT}")"
+readonly COMPOSE_PROJECT_NAME="$(basename "${RELEASE_DIR}")"
 readonly CLOUD_COMPOSE="/opt/car-agent/shared/compose.cloud.yaml"
 readonly BACKUP_ROOT="/opt/car-agent/shared/backups"
 readonly POSTGRES_DIR="${BACKUP_ROOT}/postgres"
@@ -12,7 +14,9 @@ readonly OBS_DIR="${BACKUP_ROOT}/observability"
 
 compose=(
   docker compose
-  -f "${RELEASE_ROOT}/compose.yaml"
+  --project-name "${COMPOSE_PROJECT_NAME}"
+  --project-directory "${RELEASE_DIR}"
+  -f "${RELEASE_DIR}/compose.yaml"
   -f "${CLOUD_COMPOSE}"
 )
 

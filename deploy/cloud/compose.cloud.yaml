@@ -26,7 +26,7 @@ services:
     image: "car-agent-release/llm-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
-    ports: !reset
+    ports: !override
       - "127.0.0.1:50059:50059"
 
   memory:
@@ -40,6 +40,8 @@ services:
     pull_policy: never
     build: !reset null
     ports: !reset []
+    environment:
+      PERMISSIONS_FAIL_OPEN: "${PERMISSIONS_FAIL_OPEN:?PERMISSIONS_FAIL_OPEN required}"
 
   payment-gateway:
     image: "car-agent-release/payment-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
@@ -116,7 +118,7 @@ services:
     image: "car-agent-release/observability-collector:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
-    ports: !reset
+    ports: !override
       - "127.0.0.1:8092:8092"
     volumes:
       - obs-data:/data
@@ -147,7 +149,7 @@ services:
     image: "car-agent-release/edge-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
-    ports: !reset
+    ports: !override
       - "127.0.0.1:8090:8090"
 
   edge-orchestrator:
@@ -160,7 +162,7 @@ services:
     image: "car-agent-release/hmi:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
-    ports: !reset
+    ports: !override
       - "127.0.0.1:5173:5173"
     environment:
       VITE_EDGE_GATEWAY_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
@@ -171,7 +173,7 @@ services:
     image: "car-agent-release/dashboard:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
-    ports: !reset
+    ports: !override
       - "127.0.0.1:5174:5174"
     environment:
       VITE_COLLECTOR_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8446"

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -64,6 +69,7 @@ def _construct_reset(loader: _ComposeLoader, node: yaml.Node):
 
 
 _ComposeLoader.add_constructor("!reset", _construct_reset)
+_ComposeLoader.add_constructor("!override", _construct_reset)
 
 
 def _required_text(path: Path) -> str:
@@ -77,12 +83,22 @@ def _cloud_compose() -> tuple[str, dict]:
 
 
 def _service_block_has_reset(text: str, service: str, field: str) -> bool:
+    return _service_block_has_tag(text, service, field, "reset")
+
+
+def _service_block_has_tag(text: str, service: str, field: str, tag: str) -> bool:
     pattern = re.compile(
         rf"(?ms)^  {re.escape(service)}:\s*$"
         rf"(?P<body>.*?)(?=^  [a-z0-9-]+:\s*$|^volumes:\s*$|\Z)"
     )
     match = pattern.search(text)
-    return bool(match and re.search(rf"(?m)^    {re.escape(field)}:\s*!reset", match["body"]))
+    return bool(
+        match
+        and re.search(
+            rf"(?m)^    {re.escape(field)}:\s*!{re.escape(tag)}",
+            match["body"],
+        )
+    )
 
 
 def test_cloud_compose_pins_all_self_built_images_and_disables_builds():
@@ -107,7 +123,8 @@ def test_cloud_compose_resets_every_base_port_and_only_restores_loopback_ingress
     }
 
     for service in base_with_ports:
-        assert _service_block_has_reset(text, service, "ports"), service
+        expected_tag = "override" if service in LOOPBACK_PORTS else "reset"
+        assert _service_block_has_tag(text, service, "ports", expected_tag), service
 
     published = {
         name: spec.get("ports")
@@ -117,6 +134,61 @@ def test_cloud_compose_resets_every_base_port_and_only_restores_loopback_ingress
     assert published == LOOPBACK_PORTS
     for ports in published.values():
         assert all(port.startswith("127.0.0.1:") for port in ports)
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker is unavailable")
+def test_cloud_compose_tags_have_expected_real_merge_semantics(tmp_path: Path):
+    base_path = tmp_path / "base.yaml"
+    base_path.write_text(
+        "services:\n"
+        + "\n".join(
+            f"  {name}:\n    image: busybox\n    ports:\n      - '{index}:80'"
+            for index, name in enumerate(
+                (
+                    "redis", "nats", "postgres", "http-proxy", "registry",
+                    "llm-gateway", "memory", "cloud-planner", "payment-gateway",
+                    "observability-collector", "prometheus", "grafana",
+                    "cloud-gateway", "edge-gateway", "edge-orchestrator", "hmi",
+                    "dashboard",
+                ),
+                start=20000,
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "RELEASE_SHA": "4c1f479",
+            "TAILNET_FQDN": "car-agent-dev.example.ts.net",
+            "VITE_WS_TOKEN": "test-token",
+            "PERMISSIONS_FAIL_OPEN": "false",
+        }
+    )
+    result = subprocess.run(
+        [
+            "docker", "compose", "-f", str(base_path), "-f", str(COMPOSE_PATH),
+            "config", "--format", "json",
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert result.returncode == 0
+    services = json.loads(result.stdout)["services"]
+    published = {
+        name: [
+            f"{port['host_ip']}:{port['published']}:{port['target']}"
+            for port in spec.get("ports") or []
+        ]
+        for name, spec in services.items()
+        if spec.get("ports")
+    }
+    assert published == LOOPBACK_PORTS
 
 
 def test_cloud_compose_uses_stable_data_volumes_and_redis_aof():
@@ -139,6 +211,16 @@ def test_cloud_compose_uses_stable_data_volumes_and_redis_aof():
         "postgres-data": {"name": "car-agent-postgres-data"},
         "redis-data": {"name": "car-agent-redis-data"},
         "obs-data": {"name": "car-agent-obs-data"},
+    }
+
+
+def test_cloud_planner_consumes_the_fail_closed_permission_setting():
+    _, compose = _cloud_compose()
+
+    assert compose["services"]["cloud-planner"]["environment"] == {
+        "PERMISSIONS_FAIL_OPEN": (
+            "${PERMISSIONS_FAIL_OPEN:?PERMISSIONS_FAIL_OPEN required}"
+        )
     }
 
 
@@ -183,6 +265,14 @@ def test_backup_is_non_destructive_and_uses_logical_database_backups():
     assert ".env" not in backup
     for forbidden in ("rm ", "unlink", "-delete", "rmdir"):
         assert forbidden not in lowered
+
+
+def test_backup_targets_the_active_release_compose_project():
+    backup = _required_text(BACKUP_PATH)
+
+    assert 'readlink -f "${RELEASE_ROOT}"' in backup
+    assert '--project-name "${COMPOSE_PROJECT_NAME}"' in backup
+    assert '--project-directory "${RELEASE_DIR}"' in backup
 
 
 def test_cloud_shell_assets_are_forced_to_lf_for_ubuntu():

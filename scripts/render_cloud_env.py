@@ -25,6 +25,22 @@ _SAMPLE_TOKENS = {
     "replace-me",
     "demo-token",
 }
+DEMO_AUTH_SCOPES = (
+    "vehicle.control",
+    "vehicle.read.state",
+    "location.read",
+    "location.precise",
+    "navigation.control",
+    "media.control",
+    "network.external",
+    "payment.invoke",
+    "profile.read",
+    "profile.write",
+    "microphone.read",
+    "camera.frame",
+    "merchant.read",
+    "merchant.write",
+)
 
 
 def _assignment(raw: str) -> tuple[str, str] | None:
@@ -54,11 +70,20 @@ def _effective_values(lines: list[str]) -> dict[str, str]:
     return values
 
 
-def _auth_token(auth_tokens: str) -> str:
+def _auth_config(auth_tokens: str) -> tuple[str, str | None]:
     entries = [entry.strip() for entry in auth_tokens.split(";") if entry.strip()]
     if not entries:
         raise CloudEnvError("AUTH_TOKENS is missing or empty")
     parts = entries[0].split(":", 3)
+    if len(parts) == 3 and all(part.strip() for part in parts):
+        legacy_token, user_id, vehicle_id = (part.strip() for part in parts)
+        if legacy_token.lower() in _SAMPLE_TOKENS:
+            raise CloudEnvError("AUTH_TOKENS contains a sample token")
+        token = secrets.token_urlsafe(48)
+        upgraded = ":".join(
+            (token, user_id, vehicle_id, ",".join(DEMO_AUTH_SCOPES))
+        )
+        return token, upgraded
     if len(parts) != 4 or any(not part.strip() for part in parts):
         raise CloudEnvError("AUTH_TOKENS first entry has an invalid shape")
     token, _user_id, _vehicle_id, scopes = (part.strip() for part in parts)
@@ -66,7 +91,7 @@ def _auth_token(auth_tokens: str) -> str:
         raise CloudEnvError("AUTH_TOKENS contains a sample token")
     if not all(scope.strip() for scope in scopes.split(",")):
         raise CloudEnvError("AUTH_TOKENS first entry has invalid scopes")
-    return token
+    return token, None
 
 
 def _render_lines(lines: list[str], updates: dict[str, str]) -> str:
@@ -143,7 +168,7 @@ def render_cloud_env(
 
     lines = source.read_text(encoding="utf-8").splitlines()
     current = _effective_values(lines)
-    token = _auth_token(current.get("AUTH_TOKENS", ""))
+    token, upgraded_auth_tokens = _auth_config(current.get("AUTH_TOKENS", ""))
     channel_token = secrets.token_urlsafe(48)
     postgres_password = secrets.token_urlsafe(48)
     while postgres_password == channel_token:
@@ -166,6 +191,8 @@ def render_cloud_env(
         "OBS_CONTENT_CAPTURE": "on",
         "GRPC_TLS": "off",
     }
+    if upgraded_auth_tokens is not None:
+        updates["AUTH_TOKENS"] = upgraded_auth_tokens
     _atomic_write(output, _render_lines(lines, updates))
 
 

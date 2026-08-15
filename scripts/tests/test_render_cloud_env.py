@@ -9,7 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from scripts.render_cloud_env import CloudEnvError, render_cloud_env
+from scripts.render_cloud_env import (
+    DEMO_AUTH_SCOPES,
+    CloudEnvError,
+    render_cloud_env,
+)
 
 
 def _effective_values(path: Path) -> tuple[dict[str, str], list[str]]:
@@ -69,6 +73,32 @@ def test_render_preserves_provider_values_and_sets_fail_closed_cloud_runtime(tmp
         f"postgresql://cockpit:{values['POSTGRES_PASSWORD']}@postgres:5432/cockpit"
     )
     assert len(keys) == len(set(keys))
+
+
+def test_render_upgrades_legacy_three_part_auth_with_new_demo_token(tmp_path: Path):
+    source = tmp_path / "source.env"
+    output = tmp_path / "cloud.env"
+    source.write_text(
+        "AUTH_TOKENS=legacy-token:owner-1:vehicle-1\n"
+        "DEEPSEEK_API_KEY=provider-secret-value\n",
+        encoding="utf-8",
+    )
+
+    render_cloud_env(
+        source=source,
+        output=output,
+        release_sha="4c1f479",
+        tailnet_fqdn="car-agent-dev.example.ts.net",
+    )
+
+    values, _keys = _effective_values(output)
+    token, user_id, vehicle_id, scopes = values["AUTH_TOKENS"].split(":", 3)
+    assert token != "legacy-token"
+    assert len(token) >= 48
+    assert user_id == "owner-1"
+    assert vehicle_id == "vehicle-1"
+    assert scopes.split(",") == list(DEMO_AUTH_SCOPES)
+    assert values["VITE_WS_TOKEN"] == token
 
 
 @pytest.mark.parametrize(
