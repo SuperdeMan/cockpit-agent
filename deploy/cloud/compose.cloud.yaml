@@ -1,0 +1,186 @@
+services:
+  redis:
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    ports: !reset []
+    volumes:
+      - redis-data:/data
+
+  nats:
+    ports: !reset []
+
+  postgres:
+    ports: !reset []
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  http-proxy:
+    ports: !reset []
+
+  registry:
+    image: "car-agent-release/registry:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset []
+
+  llm-gateway:
+    image: "car-agent-release/llm-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset
+      - "127.0.0.1:50059:50059"
+
+  memory:
+    image: "car-agent-release/memory:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset []
+
+  cloud-planner:
+    image: "car-agent-release/cloud-planner:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset []
+
+  payment-gateway:
+    image: "car-agent-release/payment-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset []
+
+  navigation-agent:
+    image: "car-agent-release/navigation-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  chitchat-agent:
+    image: "car-agent-release/chitchat-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  nearby-agent:
+    image: "car-agent-release/nearby-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  parking-payment-agent:
+    image: "car-agent-release/parking-payment-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  manual-rag-agent:
+    image: "car-agent-release/manual-rag-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  trip-planner-agent:
+    image: "car-agent-release/trip-planner-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  info-agent:
+    image: "car-agent-release/info-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  deep-research-agent:
+    image: "car-agent-release/deep-research-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  reminder-agent:
+    image: "car-agent-release/reminder-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  charging-planner-agent:
+    image: "car-agent-release/charging-planner-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  scene-orchestrator-agent:
+    image: "car-agent-release/scene-orchestrator-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  road-safety-agent:
+    image: "car-agent-release/road-safety-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  vision-agent:
+    image: "car-agent-release/vision-agent:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  observability-collector:
+    image: "car-agent-release/observability-collector:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset
+      - "127.0.0.1:8092:8092"
+    volumes:
+      - obs-data:/data
+
+  prometheus:
+    ports: !reset []
+
+  grafana:
+    ports: !reset []
+
+  mcp-bridge:
+    image: "car-agent-release/mcp-bridge:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  proactive:
+    image: "car-agent-release/proactive:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+
+  cloud-gateway:
+    image: "car-agent-release/cloud-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset []
+
+  edge-gateway:
+    image: "car-agent-release/edge-gateway:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset
+      - "127.0.0.1:8090:8090"
+
+  edge-orchestrator:
+    image: "car-agent-release/edge-orchestrator:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset []
+
+  hmi:
+    image: "car-agent-release/hmi:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset
+      - "127.0.0.1:5173:5173"
+    environment:
+      VITE_EDGE_GATEWAY_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
+      VITE_AUDIO_API_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8444"
+      VITE_WS_TOKEN: "${VITE_WS_TOKEN:?VITE_WS_TOKEN required}"
+
+  dashboard:
+    image: "car-agent-release/dashboard:${RELEASE_SHA:?RELEASE_SHA required}"
+    pull_policy: never
+    build: !reset null
+    ports: !reset
+      - "127.0.0.1:5174:5174"
+    environment:
+      VITE_COLLECTOR_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8446"
+      VITE_EDGE_GATEWAY_URL: "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
+
+volumes:
+  postgres-data:
+    name: car-agent-postgres-data
+  redis-data:
+    name: car-agent-redis-data
+  obs-data:
+    name: car-agent-obs-data

@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import yaml
+
+
+ROOT = Path(__file__).resolve().parents[2]
+CLOUD_DIR = ROOT / "deploy" / "cloud"
+COMPOSE_PATH = CLOUD_DIR / "compose.cloud.yaml"
+BACKUP_PATH = CLOUD_DIR / "backup.sh"
+SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
+TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
+
+SELF_BUILT_SERVICES = {
+    "registry",
+    "llm-gateway",
+    "memory",
+    "cloud-planner",
+    "payment-gateway",
+    "navigation-agent",
+    "chitchat-agent",
+    "nearby-agent",
+    "parking-payment-agent",
+    "manual-rag-agent",
+    "trip-planner-agent",
+    "info-agent",
+    "deep-research-agent",
+    "reminder-agent",
+    "charging-planner-agent",
+    "scene-orchestrator-agent",
+    "road-safety-agent",
+    "vision-agent",
+    "observability-collector",
+    "mcp-bridge",
+    "proactive",
+    "cloud-gateway",
+    "edge-gateway",
+    "edge-orchestrator",
+    "hmi",
+    "dashboard",
+}
+
+LOOPBACK_PORTS = {
+    "llm-gateway": ["127.0.0.1:50059:50059"],
+    "observability-collector": ["127.0.0.1:8092:8092"],
+    "edge-gateway": ["127.0.0.1:8090:8090"],
+    "hmi": ["127.0.0.1:5173:5173"],
+    "dashboard": ["127.0.0.1:5174:5174"],
+}
+
+
+class _ComposeLoader(yaml.SafeLoader):
+    pass
+
+
+def _construct_reset(loader: _ComposeLoader, node: yaml.Node):
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return loader.construct_scalar(node) if node.value else None
+
+
+_ComposeLoader.add_constructor("!reset", _construct_reset)
+
+
+def _required_text(path: Path) -> str:
+    assert path.is_file(), f"required cloud deployment asset missing: {path.relative_to(ROOT)}"
+    return path.read_text(encoding="utf-8")
+
+
+def _cloud_compose() -> tuple[str, dict]:
+    text = _required_text(COMPOSE_PATH)
+    return text, yaml.load(text, Loader=_ComposeLoader)
+
+
+def _service_block_has_reset(text: str, service: str, field: str) -> bool:
+    pattern = re.compile(
+        rf"(?ms)^  {re.escape(service)}:\s*$"
+        rf"(?P<body>.*?)(?=^  [a-z0-9-]+:\s*$|^volumes:\s*$|\Z)"
+    )
+    match = pattern.search(text)
+    return bool(match and re.search(rf"(?m)^    {re.escape(field)}:\s*!reset", match["body"]))
+
+
+def test_cloud_compose_pins_all_self_built_images_and_disables_builds():
+    text, compose = _cloud_compose()
+    services = compose["services"]
+
+    assert SELF_BUILT_SERVICES <= services.keys()
+    for service in SELF_BUILT_SERVICES:
+        spec = services[service]
+        assert spec["image"] == (
+            f"car-agent-release/{service}:${{RELEASE_SHA:?RELEASE_SHA required}}"
+        )
+        assert spec["pull_policy"] == "never"
+        assert _service_block_has_reset(text, service, "build"), service
+
+
+def test_cloud_compose_resets_every_base_port_and_only_restores_loopback_ingress():
+    text, compose = _cloud_compose()
+    base = yaml.safe_load((ROOT / "deploy" / "docker-compose.yaml").read_text(encoding="utf-8"))
+    base_with_ports = {
+        name for name, spec in base["services"].items() if spec.get("ports")
+    }
+
+    for service in base_with_ports:
+        assert _service_block_has_reset(text, service, "ports"), service
+
+    published = {
+        name: spec.get("ports")
+        for name, spec in compose["services"].items()
+        if spec.get("ports")
+    }
+    assert published == LOOPBACK_PORTS
+    for ports in published.values():
+        assert all(port.startswith("127.0.0.1:") for port in ports)
+
+
+def test_cloud_compose_uses_stable_data_volumes_and_redis_aof():
+    _, compose = _cloud_compose()
+    services = compose["services"]
+
+    assert services["postgres"]["volumes"] == [
+        "postgres-data:/var/lib/postgresql/data"
+    ]
+    assert services["redis"]["volumes"] == ["redis-data:/data"]
+    assert services["observability-collector"]["volumes"] == ["obs-data:/data"]
+    assert services["redis"]["command"] == [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--appendfsync",
+        "everysec",
+    ]
+    assert compose["volumes"] == {
+        "postgres-data": {"name": "car-agent-postgres-data"},
+        "redis-data": {"name": "car-agent-redis-data"},
+        "obs-data": {"name": "car-agent-obs-data"},
+    }
+
+
+def test_cloud_frontends_use_tailnet_https_bases_and_derive_websockets_in_code():
+    _, compose = _cloud_compose()
+    services = compose["services"]
+    hmi = services["hmi"]["environment"]
+    dashboard = services["dashboard"]["environment"]
+
+    assert hmi["VITE_EDGE_GATEWAY_URL"] == (
+        "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
+    )
+    assert hmi["VITE_AUDIO_API_URL"] == (
+        "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8444"
+    )
+    assert dashboard["VITE_COLLECTOR_URL"] == (
+        "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8446"
+    )
+    assert dashboard["VITE_EDGE_GATEWAY_URL"] == (
+        "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
+    )
+
+    hmi_code = (ROOT / "hmi" / "src" / "App.tsx").read_text(encoding="utf-8")
+    dashboard_api = (ROOT / "dashboard" / "src" / "api.ts").read_text(encoding="utf-8")
+    assert "GATEWAY.replace(/^http/, 'ws') + '/ws'" in hmi_code
+    assert "BASE.replace(/^http/, 'ws') + '/stream'" in dashboard_api
+
+
+def test_backup_is_non_destructive_and_uses_logical_database_backups():
+    backup = _required_text(BACKUP_PATH)
+    lowered = backup.lower()
+
+    assert "set -euo pipefail" in backup
+    assert "umask 077" in backup
+    assert "pg_dump" in backup and "-Fc" in backup
+    assert "redis-cli SAVE" in backup
+    assert "redis:/data/dump.rdb" in backup
+    assert "sqlite3" in backup and "iterdump" in backup
+    assert "/data/obs.db" in backup
+    assert "gzip" in backup
+    assert "-mtime +7" in backup and "-print" in backup
+    assert ".env" not in backup
+    for forbidden in ("rm ", "unlink", "-delete", "rmdir"):
+        assert forbidden not in lowered
+
+
+def test_cloud_shell_assets_are_forced_to_lf_for_ubuntu():
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "deploy/cloud/*.sh text eol=lf" in attributes.splitlines()
+
+
+def test_backup_systemd_units_are_daily_persistent_and_have_no_cleanup_unit():
+    service = _required_text(SERVICE_PATH)
+    timer = _required_text(TIMER_PATH)
+
+    assert "Type=oneshot" in service
+    assert "ConditionPathExists=/opt/car-agent/current/compose.yaml" in service
+    assert "ExecStart=/opt/car-agent/shared/bin/backup.sh" in service
+    assert "OnCalendar=daily" in timer
+    assert "Persistent=true" in timer
+    assert not (CLOUD_DIR / "systemd" / "car-agent-cleanup.service").exists()
+    assert not (CLOUD_DIR / "systemd" / "car-agent-cleanup.timer").exists()
+
+
+def test_cloud_runbook_documents_canonical_operations_and_provider_acceptance():
+    readme = _required_text(CLOUD_DIR / "README.md")
+    provider_guide = _required_text(ROOT / "docs" / "guides" / "provider-integration.md")
+
+    for required in (
+        "/opt/car-agent/current/compose.yaml",
+        "/opt/car-agent/shared/compose.cloud.yaml",
+        "--env-file /opt/car-agent/shared/.env",
+        "--no-build --pull never",
+        "cleanup-candidates.txt",
+        "Tailscale",
+        "SSH",
+    ):
+        assert required in readme
+    assert "down -v" in readme
+    assert "云端 demo 验收矩阵" in provider_guide
+    for provider in ("高德", "和风", "Exa", "Tushare", "API-Football"):
+        assert provider in provider_guide
+    assert "只读" in provider_guide
+    assert "创建订单" in provider_guide
+    assert "real/mock" in provider_guide

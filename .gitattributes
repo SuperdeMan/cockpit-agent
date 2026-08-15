@@ -1,3 +1,4 @@
 # Byte-addressed adversarial baseline artifacts must remain stable on Windows.
 docs/reviews/eval/baseline_intent_adversarial.json text eol=lf
 docs/reviews/eval/baseline_intent_adversarial.md text eol=lf
+deploy/cloud/*.sh text eol=lf
