@@ -57,7 +57,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-14）
+### 4.0 当前快照（2026-08-15）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
@@ -87,25 +87,6 @@ test_e2e_wrappers_ci 假红（隔离复跑 6/6）」同族：**全量要单独�
 e2e_protocol_smoke.command executable does not exist: python`），scripts/tests 整族
 连坐；判据同款「红了先问是不是前提变了」，把解释器目录挂上 PATH 后同批 293 条全绿。
 
-**2026-08-14 EVA 指令集二轮对标五批**（缺口分析获批当日实施，流水 history **§33**、
-方案 `docs/design/2026-08-14-eva-round2-capability-gaps.md` + 实施计划同日档 §7）：
-批 A 存量七条（nearby 评分先排后截／trip「第一站」序数／主动治理器跨 owner 不合并／
-死槽位摘除／conventions §9.18）；批 B 导航五刀（`arrive_by` 时限求解+ETA 量化+出发提醒
-反向环／顺路候选真沿途 45% 采样／landmark 俗称+自然地物／`route_pref`→高德 strategy
-——该参数此前全仓从未使用／多途经点保序）；批 C 记忆消费面（proto `subject`/`polarity`
-+ 四个确定性消费出口，修 nearby **假个性化**：口味检索前置+负偏好软降权+subject 并取）；
-批 D 未来事件→询问式提醒建议（`reminder_card` offer 态，零执行权不破）；批 E 类目扩展
-（动物园族）+「餐饮」默认仅饮食信号下成立+氛围软重排。catalog 锚点 11866→**11928**；
-HMI node **258** + Vite build；四门禁绿。**真栈已验**（同日 `make up --build` 30 容器
-+ EVA 语料 13 轮 WS 探针，读数与批 F 三修见实施计划 **§8** / history **§33.1**）：
-样板轮「导航去东方之门，路上买杯咖啡，五点前要到」一轮给出时限判定+真沿途候选+
-逐家 ETA+记忆不走高速叠加；「老婆喜欢粤菜」subject 链抽取→消费全通。批 F 三修=
-demo 咖啡 hint 补导航语境让路词（整条计划曾被 replace 成 demo 下单）/route.* 记忆
-消费撤销极性过滤（方向在谓词名里）/轨迹写入补挂 search_poi 分支（挂点枚举第三次
-应验）。当日晚接手会话已收口两项：目的地接地就近包含误伤家族（R1 二期，见 §4.1 状态段）
-与 G7 询问式真栈补验（抓修抽取 prompt 日期锚缺失+offer 显示时区错一天两个真 bug，
-`cc7e5ba`——G7 通道真栈首次亮相「我记下了…要到时候提前提醒你吗？」）。
-
 **2026-08-15 EVA 二轮余项 P3 簇收口**（六提交 `36a0ff2`…`03f7e33`，三独立 RFC +
 待议项，流水 history **§36**）：G8 导航会话状态（`_route_session` 保留键→
 `Focus.active_route`→`navigation.reroute` 增量改道，「途经点不去了/换条路/改去Y」
@@ -132,54 +113,12 @@ fast=primary 同名一抖整死）、方向词目的地拦截（「北方追春�
 （报告 §5）；过程抓修恶性缺陷一枚（家人位置陈述被 set_place **改写本人公司地点**
 ——人称守卫，绝不写画像）。
 
-**2026-08-13/14 商户链路收口聚焦实测**（demo-3ukshz 二轮 + 打磨 + searchType
-勘误，逐批流水 history **§32/§32.1/§32.2**、方案与勘误 设计文档 §5/§5.1）：
-最终态一句话——瑞幸：聚合菜单主卡（多种子 ≤12 款、「在售不止这些」口径）、
-预览规格 chips（只上 `_SPEC_GROUPS` 四族）、改规格真栈生效（冰→热）、换店/取消；
-麦当劳：**「附近的麦当劳」真栈答出高新中五道餐厅**（109 款、8 分类导航）——
-「仅碧海君庭」曾是错误结论，真因是 `searchType` 写死 1=**搜索收藏餐厅**（勘误
-§32.2；判据：**「接口返回了数据」≠「接口在按你以为的语义工作」**）；
-`_refused` 拒绝句由聚合器确定性附加（不进 LLM，恰好一次）；焦点 `last_places`
-扩第四个安全标量 `city`。聚焦回归 cloud+bridge+nearby **1261 绿**、
-HMI **258/258**+Vite build、四门禁全绿（catalog **11866**）。
-
-**2026-08-13 demo-mkemhn 六批聚焦实测**：mcp-bridge **404 passed**（+8）、
-`orchestrator/cloud` **786**（含锚定门控/限龄/线契约归一/位移防御新守卫）、
-nearby **56**（+4）、HMI node **257/257**（+3）且 Vite build 通过；四条 blocking
-门禁全绿（L0 strict discovery 618 条/579 唯一输入恰好用满、gate 25/25；范例域错配
-2.4% 持平）；真栈抽验 4/4——无位置不再报异地门店、纯发现句诚实降级、
-「选择瑞幸门店：X」一轮直达菜单、营养查询给最接近条目。
-
-**2026-08-13 商户 badcase 批聚焦实测**：mcp-bridge **396 passed**、
-`orchestrator/cloud` 焦点/执行器新增回归 6 条、HMI node **254/254** 且 Vite build 通过；
-CDP **C10**（只读选品卡，不创建订单）端到端通过——选品卡 3 款 / 商品图 2/3 张
-**真加载**（`naturalWidth>0`，不是断言 `src` 存在）/ 帧文本正确且非确认帧 /
-**选品后换话题仍正常**。C1/C3/C5/C6 全绿（首轮红、复跑即绿 = registry 重注册期假红）。
-⚠ C2a/C10 会被高德间歇不可达阻塞——本机到 `restapi.amap.com` IPv4 超时、IPv6 无路由，
-百度 90ms 正常，**不是配额也不是代码**；用例把这种情况报成「前置降级，非卡片结论」。
-
-（2026-08-12 商户批的逐项读数已归档 history **§29/§30**，不再在本节留对账段。）
-
-**2026-08-11 分组实测**（B5/B6 后）：edge **579**、cloud **721**、registry **65**、
-agents **993**、`runtime/tests` **109**、observability **73**；端侧 smoke **13/13**；
-L0 门禁 **2/2 exit 0**（discovery 81/81、gate strict 25/25）；能力门禁 exit 0；
-`eval_fast_intent` 57/57、`eval_route_hints` 78/78、skills / 范例门禁 PASS
-（范例域错配 4/160=2.5%）；新增离线回放 `test/eval_actionability.py`
-（零 LLM、零网络，**不进 CI blocking——它是取证脚本不是准入闸**）。
-**Go 侧与前端数字未随本批重测**：Go `go build ./...` + `go vet` +
-`go test ./gateway/deployprofile` 全绿、HMI `node --test` **225/225**、
-Dashboard vitest **17/17** 分别是 B3/B4（2026-08-11）与 2026-08-09 实测——
-B5/B6 只动 Python 侧（`orchestrator/cloud/` 与 `observability/collector/db.py`）。
-
-**真栈演练（2026-08-11，`make up` 全量重建 30 容器）**：`e2e_ws` / `e2e_obs` /
-`e2e_context` / `e2e_process_region` / `e2e_proactive` / `e2e_ledger` / `e2e_scene`
-**全 PASS**；`turns` 表实测 `plan_mode` 三档齐全（`toolcall` / `toolcall_salvage` /
-`toolcall_degraded`）、`actionability` 列真实写入（`execute|0.95` 等）——B6 §5 第 1 条
-「shadow 进 obs 且可检索」由真栈而非单测坐实；既有 302 turns + 2377 spans 在
-加法式迁移后完整保留。⚠ **`--lane ci --full` 只选 1 个用例**（`e2e_protocol_smoke`），
-引用它的 exit 0 时别当成 e2e 全绿。`e2e_verify` 5 条红已逐条定性为**前提失效**（见 §4.2）。
-**本次演练抓到一个 B3 埋的真缺陷**：collector 与 proactive 的 Dockerfile 没
-`COPY runtime`，加闸后**一重建就起不来**（见 §4.3 同名条目）。
+**历史批次对账段已归档**（2026-08-15 洁癖整理，全文 history **§38.1**）：
+EVA 二轮五批（§33/§33.1）、商户链路收口三段（§30–§32.2；2026-08-12 商户批在
+§29/§30）、B5/B6 后分组实测与真栈演练（§27/§28）。段内 catalog/分组数字均为批次
+时点读数，当前数以上方基线段与下表为准。⚠ 从演练段沉淀并仍有效的两条：
+`--lane ci --full` 只选 1 个用例（引用它的 exit 0 别当 e2e 全绿）；
+`test/eval_actionability.py` 是取证脚本不是准入闸（不进 CI blocking）。
 
 **CI 已有四条 blocking 门禁**：skills 契约、范例契约、L0 对抗 strict
 （`scripts/check_intent_gate.py`，B2）、**能力完整性**（`test/eval_capability_integrity.py`，
@@ -188,7 +127,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **81/81**，618 条 / **579 唯一输入**（2026-08-13 起 bounds [450,**579**]，仍**恰好用满**。五次递进 560→564→568→570→571→579，逐次占用理由写在 `suites.yaml` 头部：`luckin.menu` 覆盖、跨轮锚定双向对照、`mcd.nutrition` 覆盖、跨域边界台账双向各 2 例、demo-mkemhn 两条新边界双向各 2 例；没有删除旧尺子压数字） |
+| L0 discovery | **81/81**，630 条 / **591 唯一输入**（2026-08-15 起 bounds [450,**591**]，仍**恰好用满**。九次递进 560→…→579→584→586→587→591，逐次占用理由写在 `suites.yaml` 头部——最近四跳：G8 `navigation.reroute`+边界双向、G4 主题行程、G9 多城市、G7 陈述 vs 请求边界双向；没有删除旧尺子压数字） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -196,7 +135,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 分组数字见上方 2026-08-11 实测段（`orchestrator/` 合计 **1300** = edge 579 + cloud 721）；Skill / Exemplar（**283 条 / 22 域**，2026-08-14 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**5613**，2026-08-15）；分套件最近实测：`orchestrator/cloud` **804** / navigation **132** / trip **71** / mcp-bridge **433** / memory **224** / nearby **68**（2026-08-15），edge **579**（2026-08-11 未重测，history §38.1）。Skill / Exemplar（**306 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **144 条 / 12508 字符**。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -248,8 +187,9 @@ route_hints 80/80、**真栈复验 5/5**（本卡四条 trace 全接到本体，
 history **§33/§33.1**。当日晚接手会话收口接地卡与 G7 补验（history **§34**）；
 journeys 全量已重跑（35/37，两条稳定存量红已立上方待办）。
 **余项 P3 簇已于 2026-08-15 三 RFC 收口**（G8 路线会话/G4 主题行程/G9 跨城市 +
-G7 双通道抢话边界，见 §4.0 段与 history **§36**）；只剩 G10 搁置与谓词别名条件
-触发，见 §4.2 索引行。
+G7 双通道抢话边界，见 §4.0 段与 history **§36**）；指令集验证+六卡收口后的
+**全量余项清点**（G1 反推窗/G5 属性维/LLM 软层双观察/方差面/谓词别名/G10 搁置）
+见 §4.2「EVA 余项」行——除 G10 外均为泓舟后续会话处理的待办。
 
 **支付基础设施真实化（四批，2026-08-11，全部实施推 main）**：`d964e1d`（网关
 双渠道核心）/ `94f7afc`（parking 闭环+HMI 支付卡+桥 streamable_http）/ `4a5cab0`
@@ -318,9 +258,9 @@ demo-mkemhn/demo-3ukshz 两轮复盘与 searchType 勘误的全部批次见上�
 或该族再成主要矛盾），是泓舟 2026-08-11 直接指示推进的。两份方案的头部都留了痕——
 **别把它读成「条件曾经满足过」**，那会让下一次「条件启动」的分量被稀释。
 
-⚠ **对抗语料唯一输入 571 / 上界 571**——当前余量仍为 0。下次加 L0 语料必须先说明新增
+⚠ **对抗语料唯一输入 591 / 上界 591**——当前余量仍为 0。下次加 L0 语料必须先说明新增
 能力或边界为何值得占额度，再有原则地调整 `suites.yaml` 的 `max_cases`；不得删旧尺子压数字，
-也不得先加语料撞闸后再补理由。560→571 的四次递进与逐项占用写在 `suites.yaml` 头部。
+也不得先加语料撞闸后再补理由。560→591 的九次递进与逐项占用写在 `suites.yaml` 头部。
 
 > 逐批流水在 [`docs/agents-history.md`](docs/agents-history.md) **§15–§27**，逐条证据在
 > `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§26**。
@@ -332,7 +272,7 @@ demo-mkemhn/demo-3ukshz 两轮复盘与 searchType 勘误的全部批次见上�
 
 | 主题 | 当前状态 / 启动条件 | 权威入口 |
 |---|---|---|
-| **EVA 二轮余项**（搁置面） | P3 簇三项已于 2026-08-15 三 RFC 收口（G8/G4/G9，history §36；「留档待议」的 G7 双通道抢话同批入台账 `chitchat-reminder.statement-vs-request`）。仍留两项：① **G10 订座/票务维持搁置**：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，不为对标造假；② 抽取谓词别名散置老账（u1 存量 coffee.brand/consume.coffee/beverage.coffee 并存）——`_PRED_CANON` 只治新增不治存量，出现消费方误伤再启动数据清洗 | [缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md)、三 RFC `docs/design/2026-08-15-g{8,4,9}-*.md` |
+| **EVA 余项**（2026-08-15 指令集验证+六卡收口后全量清点；除 G10 外均为**泓舟后续会话处理**的待办） | ① **G1 余项：由事件时刻反推用餐/出发窗**——「晚上7点电影，先吃饭」该反推用餐窗口再选餐厅（缺口分析 §2-G1 原文；到达时限 `arrive_by` 已做，反推窗是它的镜像半边）。② **G5 余项：POI 无障碍/停车便利属性维**——「爸妈腿脚不便→停车近/无台阶/少步行」零检索维度（方向=目的地半径停车场计数近似 + `business.tag` 软重排扩展，§2-G5）；「不排队」同属此族。③ **LLM 软层观察双面**：G4 主题标注方差（候选未接地即降级普通行程——降级本身是设计，观察命中率）+ G9/P2 多城跨天归城排错（点在行程里但排错城市的天；候选修法=确定性归城校正，把已排点移到其归属城的天——补插目前只管「漏排」不管「排错天」）。④ **provider 方差面**：组合句偶发口头确认不执行/过度澄清/slot 填整句——findings §23/§24 档案族，范例已投（P6 四条）**不加 hint**；复现时先读 `plan_modes` 定性再谈修。⑤ 抽取谓词别名散置老账（u1 存量 coffee.brand/consume.coffee/beverage.coffee 并存）——`_PRED_CANON` 只治新增不治存量，出现消费方误伤再启动数据清洗。⑥ **G10 订座/票务维持搁置**（唯一不立待办项）：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，不为对标造假 | [验证报告](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md) §5、[六卡](docs/design/2026-08-15-eva-e2e-residual-cards.md)、[缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md) §2 |
 | **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身 |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
