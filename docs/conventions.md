@@ -212,6 +212,7 @@
 | `QWEN_MODEL_PRIMARY` / `QWEN_MODEL_FAST` | 阿里百炼 qwen3.7 主/快模型（**key 复用 `LLM_EMBED_API_KEY`/`DASHSCOPE_ASR_KEY`**，无需单独 key；独立计费子账号才填 `DASHSCOPE_LLM_KEY`）| 否（默认 qwen3.7-max / qwen3.7-plus）|
 | `LLM_MOCK_DELAY_MS` | 测试专用：`MockProvider` 人为延迟（毫秒），供 `test/e2e_degrade.py`「LLM 超时」用例注入慢响应（R3.5）| 否（默认 0，零行为变化）|
 | `LLM_429_WAIT_CAP_S` | 上游 429 带 Retry-After 时最多等待重试同模型的秒数上限；更长直接 `RESOURCE_EXHAUSTED` 让上层诚实降级（运行时硬化 D3，2026-07-17）| 否（默认 2）|
+| `LLM_BACKUP` | 跨厂商备份档 `provider[:model]`（如 `deepseek:deepseek-v4-flash`）：active 厂商**整链**（含 429/上游抖动）耗尽后兜底一跳。与 `LLM_MODEL_FALLBACK` 是两层——那是厂商内档位链，同厂 fast=primary 时上游一抖整链即死（2026-08-15 MiniMax 抖动实测）。**pinned 请求恒不跨**（pin=不许漂移，D2）；toolcall 请求且备份厂商不支持 tool calling 时跳过；每请求现读可热切 | 否（空=关，行为与无此功能逐字一致）|
 | `REQUIRE_REAL_PROVIDERS` | **数据真实性严格栈**（治理 P2，§9.4）：`on`=任何 provider 决议落 mock 即启动失败（含 llm-gateway 的 llm/embed/asr/tts 四闸），演示/验收前翻开自证全真 | 否（默认 off，CI/离线全 mock 照跑）|
 | `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：`parking`=停车数据源（ETCP）未接真、`knowledge`=车书暂无真实实现。`payment` 是独立决议域且**不在豁免**（2026-08-11 真实化，§9.17） | 否（默认 `parking,knowledge`）|
 | `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |

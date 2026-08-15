@@ -96,6 +96,39 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             pid, request.model, (meta.get("llm_model") or "").strip())
         return provider, pid, models, True
 
+    def _backup_serving(self, aid: str, pinned: bool, tools_spec) -> tuple | None:
+        """跨厂商备份档（`LLM_BACKUP=provider[:model]`，如 `deepseek:deepseek-v4-flash`）。
+
+        active 厂商**整链**耗尽后兜底一跳——含 429：限流是账号/厂商级，同厂商换档
+        白打，换厂商正是对症（2026-08-15 实测 MiniMax 上游抖动时厂商内 fast=primary
+        同名，一抖即整请求死）。三条边界：
+        - **pinned 请求恒 None**——pin 的意义就是不许静默漂移（D2），eval/重放的
+          证据链靠它；
+        - 备份=当前 serving 厂商时跳过（同一上游再打一遍不是备份）；
+        - toolcall 请求且备份厂商不支持 tool calling → 跳过（planner 有 salvage/JSON
+          自己的退路，别把请求改形状）。
+        env 每请求现读（与 provider 热切同哲学）；未配置/拼错 fail-open 跳过。
+        """
+        if pinned:
+            return None
+        raw = (os.getenv("LLM_BACKUP") or "").strip()
+        if not raw:
+            return None
+        pid_raw, _, model = raw.partition(":")
+        entry = self.runtime.provider_entry(pid_raw.strip())
+        if entry is None:
+            logger.debug("LLM_BACKUP provider 未配置，忽略: %s", raw)
+            return None
+        pid, provider = entry
+        if pid == aid:
+            return None
+        if tools_spec is not None:
+            cap = getattr(self.runtime, "supports_toolcall", None)
+            if cap is not None and not cap(pid):
+                return None
+        models = self.runtime.resolve_models_for(pid, model.strip())
+        return (provider, pid, models[0]) if models else None
+
     @staticmethod
     def _msgs(request):
         msgs = [{"role": m.role, "content": m.content} for m in request.messages]
@@ -188,42 +221,53 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 content=content, model_used=used, finish_reason=finish,
                 prompt_tokens=usage[0], completion_tokens=usage[1])
 
-        # 调用（带降级：同厂商 primary→fast）。429 单独分类（D3）：Retry-After 小且预算
-        # 余量足 → 等一次重试同模型；否则不再打 fast 档（限流通常是账号/厂商级，白打）。
+        # 调用（带降级：同厂商 primary→fast，链尾追加跨厂商备份档 LLM_BACKUP）。
+        # 429 单独分类（D3）：Retry-After 小且预算余量足 → 等一次重试同模型；否则
+        # **跳过同厂商剩余档位**（限流是账号/厂商级，同厂白打）——但备份厂商照试
+        # （换厂商正是对限流/上游抖动的对症解）。
+        attempts = [(provider, aid, m) for m in models]
+        backup = self._backup_serving(aid, pinned, tools_spec)
+        if backup is not None:
+            attempts.append(backup)
         last_err = None
-        rate_limited = False
+        rate_limited_pids: set[str] = set()
         t_all = time.monotonic()
-        for model in models:
+        for a_provider, a_aid, model in attempts:
+            if a_aid in rate_limited_pids:
+                continue
+            if a_aid != aid:
+                logger.warning("active 厂商 %s 整链失败，尝试备份档 %s:%s",
+                               aid, a_aid, model)
             waited_429 = False
             while True:
                 t0 = time.monotonic()
                 try:
                     if tools_spec:
-                        content, used, finish, usage, tool_calls = await provider.complete_tools(
+                        content, used, finish, usage, tool_calls = await a_provider.complete_tools(
                             msgs, model, temp, max_tokens,
                             tools=tools_spec.get("tools"),
                             tool_choice=tools_spec.get("tool_choice"),
                             thinking=thinking)
                     else:
-                        content, used, finish, usage = await provider.complete(
+                        content, used, finish, usage = await a_provider.complete(
                             msgs, model, temp, max_tokens, thinking=thinking)
                         tool_calls = []
                     latency_ms = (time.monotonic() - t0) * 1000
 
-                    # 写缓存（tools 路径不写，与查同门控）
+                    # 写缓存（tools 路径不写，与查同门控；键按**实际 serving 厂商**）
                     if not tools_spec:
-                        self.cache.put(msgs, f"{aid}:{model}", temp, content, used, thinking)
+                        self.cache.put(msgs, f"{a_aid}:{model}", temp, content, used, thinking)
 
                     # 记录成本 + 健康
                     cost_tracker.record(used, usage[0], usage[1], latency_ms)
-                    health_tracker.record(aid, True, latency_ms=latency_ms)
+                    health_tracker.record(a_aid, True, latency_ms=latency_ms)
                     # tool call 场景 content 常为空：obs content_head 以工具名单补记（RFC §5）
                     obs_content = content or (
                         "[tool_calls] " + ",".join(tc.get("name", "") for tc in tool_calls)
                         if tool_calls else "")
                     await self._emit_llm(request, model=used, latency_ms=latency_ms,
                                          usage=usage, thinking=thinking, msgs=msgs,
-                                         content=obs_content, provider=aid, pinned=pinned)
+                                         content=obs_content, provider=a_aid, pinned=pinned)
 
                     out = llm_pb2.CompleteResponse(
                         content=content, model_used=used, finish_reason=finish,
@@ -237,7 +281,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                     cost_tracker.record(model, 0, 0, latency_ms, error=True)
                     last_err = e
                     if isinstance(e, ProviderHTTPError) and e.status_code == 429:
-                        health_tracker.record(aid, False, kind="rate_limited", error=str(e))
+                        health_tracker.record(a_aid, False, kind="rate_limited", error=str(e))
                         ra = e.retry_after
                         remaining = context.time_remaining()
                         if (not waited_429 and ra is not None and ra <= _429_WAIT_CAP_S
@@ -246,16 +290,17 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                             logger.info("429 Retry-After=%.1fs，等待后重试 %s", ra, model)
                             await asyncio.sleep(ra)
                             continue          # 等一次重试同模型（仅一次）
-                        rate_limited = True   # 跳过剩余档位
+                        rate_limited_pids.add(a_aid)   # 跳过**该厂商**剩余档位
                         break
                     health_tracker.record(
-                        aid, False,
+                        a_aid, False,
                         kind="timeout" if isinstance(e, httpx.TimeoutException) else "",
                         error=str(e))
                     logger.warning("Model %s failed: %s; trying next", model, e)
                     break
-            if rate_limited:
-                break
+        # 终态按**最后一次**失败定性（备份也失败时以备份的错为准——它是最后的屏障）
+        rate_limited = (isinstance(last_err, ProviderHTTPError)
+                        and last_err.status_code == 429)
 
         # 错误映射：429→RESOURCE_EXHAUSTED（SDK 对它不做重连重试——那是连接语义，白打）；
         # 上游超时 → DEADLINE_EXCEEDED（非 UNAVAILABLE），避免调用方 SDK 把它当瞬时错误重试
@@ -297,16 +342,24 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
             await context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(e))
 
         # 流式不走缓存。**首 token 前**失败按档位链降级到下一模型（D4，兑现 R3.5 记录的
-        # 「CompleteStream 无备用模型重试」缺口）；**首 token 后**不切——半段话术不可拼接，
+        # 「CompleteStream 无备用模型重试」缺口），链尾追加跨厂商备份档（LLM_BACKUP，
+        # 与 Complete 同门控：pinned 恒不跨）；**首 token 后**不切——半段话术不可拼接，
         # 宁可 abort 让调用方走既有失败路径。
+        attempts = [(provider_obj, aid, m) for m in models]
+        backup = self._backup_serving(aid, pinned, None)
+        if backup is not None:
+            attempts.append(backup)
         last_err = None
-        for model in models:
+        for a_provider, a_aid, model in attempts:
+            if a_aid != aid:
+                logger.warning("active 厂商 %s 流式整链失败，尝试备份档 %s:%s",
+                               aid, a_aid, model)
             t0 = time.monotonic()
             head: list[str] = []
             head_len = 0
             first_token = False
             try:
-                async for delta in provider_obj.stream(
+                async for delta in a_provider.stream(
                         msgs, model, request.temperature or 0.7, request.max_tokens or 512,
                         thinking=thinking):
                     if delta:
@@ -318,10 +371,10 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 yield llm_pb2.CompleteChunk(delta="", done=True)
                 latency_ms = (time.monotonic() - t0) * 1000
                 cost_tracker.record(model, 0, 0, latency_ms)
-                health_tracker.record(aid, True, latency_ms=latency_ms)
+                health_tracker.record(a_aid, True, latency_ms=latency_ms)
                 await self._emit_llm(request, model=model, latency_ms=latency_ms,
                                      thinking=thinking, msgs=msgs, content="".join(head),
-                                     provider=aid, pinned=pinned)
+                                     provider=a_aid, pinned=pinned)
                 return
             except Exception as e:
                 latency_ms = (time.monotonic() - t0) * 1000
@@ -329,12 +382,12 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 kind = ("rate_limited"
                         if isinstance(e, ProviderHTTPError) and e.status_code == 429
                         else "timeout" if isinstance(e, httpx.TimeoutException) else "")
-                health_tracker.record(aid, False, kind=kind, error=str(e))
+                health_tracker.record(a_aid, False, kind=kind, error=str(e))
                 last_err = e
                 if first_token:   # 已流出内容：不可换模型拼接，按既有语义直接失败
                     await self._emit_llm(request, model=model, latency_ms=latency_ms,
                                          status="err", error=str(e), thinking=thinking,
-                                         msgs=msgs, provider=aid, pinned=pinned)
+                                         msgs=msgs, provider=a_aid, pinned=pinned)
                     code = (grpc.StatusCode.DEADLINE_EXCEEDED
                             if isinstance(e, httpx.TimeoutException)
                             else grpc.StatusCode.UNAVAILABLE)

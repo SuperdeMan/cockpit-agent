@@ -191,6 +191,9 @@ services:
       LLM_DISABLE_THINKING: ${LLM_DISABLE_THINKING:-true}
       LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
       LLM_MODEL_FALLBACK: ${LLM_MODEL_FALLBACK:-mimo-v2.5}
+      # 跨厂商备份档（provider[:model]）：active 厂商整链（含 429）耗尽后兜底一跳。
+      # pinned 请求恒不跨（pin=不许漂移）；空=关（行为与今天逐字一致）。
+      LLM_BACKUP: ${LLM_BACKUP:-}
       # 多 LLM 源（HMI 设置页两级切换：厂商→模型，全局生效，默认 LLM_PROVIDER）：每家填 key 即出现在
       # 切换入口（未填置灰）。qwen(阿里百炼) 复用下面的 LLM_EMBED_API_KEY/DASHSCOPE_ASR_KEY，无需单独 key。
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}

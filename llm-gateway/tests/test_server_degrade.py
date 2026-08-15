@@ -219,3 +219,102 @@ def test_pin_stream_routes_to_pinned_provider():
     out = asyncio.run(_collect_stream(s, _pin_req("pin3", "other"), _Ctx()))
     assert [d for d, done in out if not done] == ["你", "好"]
     assert pinned.stream_calls == ["p1"] and active.stream_calls == []
+
+
+# ── 跨厂商备份档（LLM_BACKUP，2026-08-15）──
+
+
+def _rt_with_backup(active, backup, models=("m1",)):
+    rt = _RT(active, list(models), entries={"bk": backup})
+    return rt
+
+
+def test_backup_provider_catches_active_chain_failure(monkeypatch):
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    active = _FakeProvider(complete_script=[RuntimeError("boom")])
+    backup = _FakeProvider(complete_script=[("接住", "b1", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _rt_with_backup(active, backup)
+    resp = asyncio.run(s.Complete(_req("bk1"), _Ctx()))
+    assert resp.content == "接住"
+    assert active.calls == ["m1"] and backup.calls == ["m1"]  # _RT 固定模型表
+
+
+def test_backup_tried_even_after_rate_limit(monkeypatch):
+    """限流是厂商级：同厂剩余档跳过，但**备份厂商照试**——换厂商正是对症。"""
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    active = _FakeProvider(complete_script=[ProviderHTTPError(429, "rate")])
+    backup = _FakeProvider(complete_script=[("接住", "b1", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _rt_with_backup(active, backup, models=("m1", "m2"))
+    resp = asyncio.run(s.Complete(_req("bk2"), _Ctx()))
+    assert resp.content == "接住"
+    assert active.calls == ["m1"]          # m2 同厂被跳过
+    assert backup.calls == ["m1"]
+
+
+def test_backup_failure_maps_by_last_error(monkeypatch):
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    active = _FakeProvider(complete_script=[ProviderHTTPError(429, "rate")])
+    backup = _FakeProvider(complete_script=[RuntimeError("also down")])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _rt_with_backup(active, backup)
+    with pytest.raises(_Abort) as ei:
+        asyncio.run(s.Complete(_req("bk3"), _Ctx()))
+    # 终态按最后一次失败（备份的 RuntimeError）定性，而不是沿用主档的 429
+    assert ei.value.code == grpc.StatusCode.UNAVAILABLE
+
+
+def test_pinned_request_never_uses_backup(monkeypatch):
+    """pin 的意义就是不许静默漂移（D2）：pinned 请求整链失败也不跨备份厂商。"""
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    pinned_p = _FakeProvider(complete_script=[RuntimeError("down")])
+    backup = _FakeProvider(complete_script=[("不该被用到", "b1", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _RT(_FakeProvider(), ["m1"],
+                    entries={"other": pinned_p, "bk": backup})
+    with pytest.raises(_Abort):
+        asyncio.run(s.Complete(_pin_req("bk4", "other"), _Ctx()))
+    assert backup.calls == []
+
+
+def test_backup_unset_keeps_behavior(monkeypatch):
+    monkeypatch.delenv("LLM_BACKUP", raising=False)
+    active = _FakeProvider(complete_script=[RuntimeError("down")])
+    s = _servicer(active, ["m1"])
+    with pytest.raises(_Abort) as ei:
+        asyncio.run(s.Complete(_req("bk5"), _Ctx()))
+    assert ei.value.code == grpc.StatusCode.UNAVAILABLE
+    assert active.calls == ["m1"]
+
+
+def test_backup_same_as_active_is_skipped(monkeypatch):
+    monkeypatch.setenv("LLM_BACKUP", "fake:m1")   # _RT.active_id == "fake"
+    active = _FakeProvider(complete_script=[RuntimeError("down")])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _RT(active, ["m1"], entries={"fake": active})
+    with pytest.raises(_Abort):
+        asyncio.run(s.Complete(_req("bk6"), _Ctx()))
+    assert active.calls == ["m1"]          # 没有对同一上游的第二次白打
+
+
+def test_stream_backup_before_first_token(monkeypatch):
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    active = _FakeProvider(stream_script=[[ProviderHTTPError(500, "err")]])
+    backup = _FakeProvider(stream_script=[["接", "住"]])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _rt_with_backup(active, backup)
+    out = asyncio.run(_collect_stream(s, _req("bk7"), _Ctx()))
+    assert [d for d, done in out if not done] == ["接", "住"]
+    assert backup.stream_calls == ["m1"]
+
+
+def test_stream_first_token_out_never_switches_to_backup(monkeypatch):
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    active = _FakeProvider(stream_script=[["半", RuntimeError("cut")]])
+    backup = _FakeProvider(stream_script=[["不该被用到"]])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _rt_with_backup(active, backup)
+    with pytest.raises(_Abort):
+        asyncio.run(_collect_stream(s, _req("bk8"), _Ctx()))
+    assert backup.stream_calls == []       # 半段话不可拼接，备份也不例外
