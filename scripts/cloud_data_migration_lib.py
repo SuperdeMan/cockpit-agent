@@ -32,6 +32,36 @@ MANIFEST_KEYS = frozenset(
     }
 )
 SNAPSHOT_FILENAMES = ("postgres.dump", "redis.rdb", "collector.db")
+BUSINESS_TABLES = (
+    "memory_item",
+    "memory_relation",
+    "reminder_item",
+    "task_ledger",
+    "proactive_delivery",
+    "scene_item",
+    "voiceprint",
+)
+DERIVED_TABLES = ("agents", "agent_capability_vec")
+COLLECTOR_TABLES = ("turns", "spans", "llm_calls", "logs")
+POSTGRES_STATE_COLUMNS = MappingProxyType(
+    {
+        "reminder_item.status": ("reminder_item", "status"),
+        "task_ledger.status": ("task_ledger", "status"),
+        "proactive_delivery.state": ("proactive_delivery", "state"),
+        "scene_item.status": ("scene_item", "status"),
+    }
+)
+SCHEMA_SQL = """
+SELECT json_agg(row_to_json(x) ORDER BY table_name, ordinal_position)
+FROM (
+  SELECT table_name, column_name, ordinal_position, data_type, udt_name,
+         is_nullable, column_default
+  FROM information_schema.columns
+  WHERE table_schema='public'
+) x
+""".strip()
+POSTGRES_AGGREGATE_SQL = "/* cloud-migration aggregate: fixed table counts, states, schema only */"
+REDIS_AGGREGATE_LUA = "/* cloud-migration aggregate: prefix/type/ttl counts only */"
 
 
 class MigrationError(RuntimeError):
@@ -90,6 +120,18 @@ class MigrationBundle:
     directory: Path
     manifest: MigrationManifest
     files: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class SnapshotEvidence:
+    directory: Path
+    migration_id: str
+    phase: str
+    source_sha: str
+    created_at: str
+    postgres: Mapping[str, object]
+    redis: Mapping[str, object]
+    collector: Mapping[str, object]
 
 
 def _exact_keys(value: object, expected: frozenset[str], label: str) -> Mapping[str, object]:
@@ -210,6 +252,182 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode("ascii")
+
+
+def redis_prefix(key: bytes) -> str:
+    head = key.split(b":", 1)[0]
+    decoded = head.decode("ascii", errors="ignore")
+    return decoded if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", decoded) else "other"
+
+
+def sqlite_fingerprint(connection: sqlite3.Connection) -> str:
+    rows = connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master "
+        "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+    ).fetchall()
+    return hashlib.sha256(canonical_json_bytes(rows)).hexdigest()
+
+
+def _bounded_count_map(value: object, label: str) -> Mapping[str, int]:
+    if not isinstance(value, Mapping):
+        raise MigrationError(f"{label} must be an object")
+    result: dict[str, int] = {}
+    for key, count in value.items():
+        if not isinstance(key, str) or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key) is None:
+            raise MigrationError(f"{label} contains an invalid category")
+        result[key] = _strict_int(count, f"{label} count")
+    return MappingProxyType(result)
+
+
+def _postgres_evidence(payload: object) -> Mapping[str, object]:
+    expected = frozenset(
+        {"major", "vector_version", "tables", "states", "columns", "primary_keys", "indexes"}
+    )
+    data = _exact_keys(payload, expected, "PostgreSQL aggregate")
+    if not isinstance(data["major"], str) or re.fullmatch(r"[0-9]{1,3}", data["major"]) is None:
+        raise MigrationError("invalid PostgreSQL major version")
+    if not isinstance(data["vector_version"], str) or len(data["vector_version"]) > 32:
+        raise MigrationError("invalid vector extension version")
+    tables = _bounded_count_map(data["tables"], "PostgreSQL tables")
+    if set(tables) != set(BUSINESS_TABLES + DERIVED_TABLES):
+        raise MigrationError("PostgreSQL aggregate table set is not exact")
+    raw_states = data["states"]
+    if not isinstance(raw_states, Mapping) or set(raw_states) != set(POSTGRES_STATE_COLUMNS):
+        raise MigrationError("PostgreSQL state aggregate set is not exact")
+    states = {name: dict(_bounded_count_map(raw_states[name], name)) for name in POSTGRES_STATE_COLUMNS}
+    schema_material = {
+        "columns": data["columns"],
+        "primary_keys": data["primary_keys"],
+        "indexes": data["indexes"],
+    }
+    for value in schema_material.values():
+        if not isinstance(value, list):
+            raise MigrationError("PostgreSQL schema aggregate is invalid")
+    return MappingProxyType(
+        {
+            "major": data["major"],
+            "vector_version": data["vector_version"],
+            "tables": dict(tables),
+            "states": states,
+            "schema_fingerprint": hashlib.sha256(canonical_json_bytes(schema_material)).hexdigest(),
+        }
+    )
+
+
+def _redis_evidence(payload: object, rdb_path: Path) -> Mapping[str, object]:
+    expected = frozenset(
+        {
+            "version", "rdb_version", "key_count", "prefixes", "types",
+            "persistent", "expiring", "min_ttl_ms", "max_ttl_ms",
+        }
+    )
+    data = _exact_keys(payload, expected, "Redis aggregate")
+    if not isinstance(data["version"], str) or len(data["version"]) > 32:
+        raise MigrationError("invalid Redis version")
+    result: dict[str, object] = {
+        "version": data["version"],
+        "rdb_version": _strict_int(data["rdb_version"], "RDB version", minimum=1),
+        "key_count": _strict_int(data["key_count"], "Redis key count"),
+        "prefixes": dict(_bounded_count_map(data["prefixes"], "Redis prefixes")),
+        "types": dict(_bounded_count_map(data["types"], "Redis types")),
+        "persistent": _strict_int(data["persistent"], "persistent count"),
+        "expiring": _strict_int(data["expiring"], "expiring count"),
+        "min_ttl_ms": _strict_int(data["min_ttl_ms"], "minimum TTL"),
+        "max_ttl_ms": _strict_int(data["max_ttl_ms"], "maximum TTL"),
+        "rdb_sha256": sha256_file(rdb_path),
+    }
+    if result["persistent"] + result["expiring"] != result["key_count"]:
+        raise MigrationError("Redis TTL aggregates do not match key count")
+    return MappingProxyType(result)
+
+
+def _collector_evidence(path: Path) -> Mapping[str, object]:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchall()
+        if integrity != [("ok",)]:
+            raise MigrationError("Collector integrity check failed")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        existing = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not set(COLLECTOR_TABLES).issubset(existing):
+            raise MigrationError("Collector aggregate table set is incomplete")
+        tables = {
+            name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            for name in COLLECTOR_TABLES
+        }
+        fingerprint = sqlite_fingerprint(connection)
+    return MappingProxyType(
+        {"user_version": version, "schema_fingerprint": fingerprint, "tables": tables,
+         "integrity_check": "ok"}
+    )
+
+
+def collect_aggregate_evidence(
+    repo: Path,
+    services: Mapping[str, SourceService],
+    runner: BinaryCommandRunner,
+    directory: Path,
+) -> dict[str, Mapping[str, object]]:
+    postgres_raw = runner.json(
+        [
+            "docker", "exec", services["postgres"].container_id,
+            "psql", "-U", "cockpit", "-d", "cockpit", "-At",
+            "--command", POSTGRES_AGGREGATE_SQL,
+        ],
+        cwd=repo,
+    )
+    redis_raw = runner.json(
+        [
+            "docker", "exec", services["redis"].container_id,
+            "redis-cli", "--json", "EVAL", REDIS_AGGREGATE_LUA, "0",
+        ],
+        cwd=repo,
+    )
+    return {
+        "postgres": _postgres_evidence(postgres_raw),
+        "redis": _redis_evidence(redis_raw, directory / "redis.rdb"),
+        "collector": _collector_evidence(directory / "collector.db"),
+    }
+
+
+def manifest_payload(manifest: MigrationManifest) -> dict[str, object]:
+    return {
+        "schema_version": manifest.schema_version,
+        "migration_id": manifest.migration_id,
+        "phase": manifest.phase,
+        "source_sha": manifest.source_sha,
+        "created_at": manifest.created_at,
+        "files": {
+            name: {"size_bytes": record.size_bytes, "sha256": record.sha256}
+            for name, record in manifest.files.items()
+        },
+        "postgres": dict(manifest.postgres),
+        "redis": dict(manifest.redis),
+        "collector": dict(manifest.collector),
+    }
+
+
+def build_manifest(snapshot: SnapshotEvidence) -> MigrationManifest:
+    payload = _manifest_payload(
+        snapshot.migration_id,
+        snapshot.phase,
+        snapshot.source_sha,
+        snapshot.created_at,
+        snapshot.directory,
+        postgres=snapshot.postgres,
+        redis=snapshot.redis,
+        collector=snapshot.collector,
+    )
+    return parse_manifest(payload)
 
 
 def _strict_single_inspect(payload: object) -> Mapping[str, object]:
@@ -456,16 +674,19 @@ def capture_local_snapshot(
         capture_redis(services["redis"], directory, runner, repo=repo)
         capture_collector(services["observability-collector"], directory, runner, repo=repo)
         _verify_snapshots(directory, services, runner, repo)
-        payload = _manifest_payload(
-            migration_id,
-            phase,
-            source_sha,
-            current.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-            directory,
+        evidence = collect_aggregate_evidence(repo, services, runner, directory)
+        snapshot = SnapshotEvidence(
+            directory=directory,
+            migration_id=migration_id,
+            phase=phase,
+            source_sha=source_sha,
+            created_at=current.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            **evidence,
         )
+        manifest = build_manifest(snapshot)
+        payload = manifest_payload(manifest)
         atomic_private_json(directory / "manifest.json", payload)
         atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURED"})
-        manifest = parse_manifest(payload)
     except Exception:
         atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURE_FAILED"})
         raise

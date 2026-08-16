@@ -46,6 +46,32 @@ class FakeBinaryRunner:
 
     def json(self, argv, *, cwd: Path):
         call = self._record(argv)
+        if "psql" in call:
+            return {
+                "major": "16", "vector_version": "0.7.4",
+                "tables": {
+                    "memory_item": 370, "memory_relation": 12, "reminder_item": 57,
+                    "task_ledger": 4, "proactive_delivery": 2, "scene_item": 1,
+                    "voiceprint": 0, "agents": 22, "agent_capability_vec": 307,
+                },
+                "states": {
+                    "reminder_item.status": {"pending": 57},
+                    "task_ledger.status": {"done": 4},
+                    "proactive_delivery.state": {"presented": 2},
+                    "scene_item.status": {"enabled": 1},
+                },
+                "columns": [["memory_item", "id", 1, "text", "text", "NO", None]],
+                "primary_keys": [["memory_item", "memory_item_pkey", "id"]],
+                "indexes": [["memory_item", "memory_item_pkey"]],
+            }
+        if "redis-cli" in call and "--json" in call:
+            return {
+                "version": "7.2.5", "rdb_version": 11, "key_count": 3271,
+                "prefixes": {"memory": 3000, "session": 271},
+                "types": {"hash": 3000, "string": 271},
+                "persistent": 2700, "expiring": 571, "min_ttl_ms": 100,
+                "max_ttl_ms": 900000,
+            }
         if call[:2] != ("docker", "inspect"):
             raise AssertionError(call)
         container_id = call[-1]
@@ -71,7 +97,8 @@ class FakeBinaryRunner:
                     (source / "redis.rdb.partial").write_bytes(b"REDIS0011fixture")
                 elif "python" in call:
                     connection = sqlite3.connect(source / "collector.db.partial")
-                    connection.execute("CREATE TABLE turns(id INTEGER PRIMARY KEY)")
+                    for table in ("turns", "spans", "llm_calls", "logs"):
+                        connection.execute(f"CREATE TABLE {table}(id INTEGER PRIMARY KEY)")
                     connection.commit()
                     connection.close()
         return migration.CommandResult(call, 0, "", "")
@@ -212,3 +239,48 @@ def test_discovery_rejects_bind_mount(tmp_path: Path):
     runner.json = bad_json
     with pytest.raises(migration.MigrationError, match="named volume"):
         migration.discover_source_services(tmp_path, runner)
+
+
+def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
+    for name, content in {
+        "postgres.dump": b"PGDMPfixture",
+        "redis.rdb": b"REDIS0011fixture",
+    }.items():
+        (tmp_path / name).write_bytes(content)
+    connection = sqlite3.connect(tmp_path / "collector.db")
+    for table, count in {"turns": 3, "spans": 2, "llm_calls": 1, "logs": 4}.items():
+        connection.execute(f"CREATE TABLE {table}(id INTEGER PRIMARY KEY)")
+        connection.executemany(f"INSERT INTO {table} DEFAULT VALUES", [()] * count)
+    connection.commit()
+    connection.close()
+    runner = FakeBinaryRunner()
+    services = migration.discover_source_services(tmp_path, runner)
+    evidence = migration.collect_aggregate_evidence(tmp_path, services, runner, tmp_path)
+    manifest = migration.build_manifest(
+        migration.SnapshotEvidence(
+            directory=tmp_path,
+            migration_id=VALID_ID,
+            phase="online",
+            source_sha="a" * 40,
+            created_at="2026-08-16T01:02:03Z",
+            **evidence,
+        )
+    )
+    encoded = json.dumps(migration.manifest_payload(manifest), ensure_ascii=False)
+    assert manifest.postgres["tables"]["memory_item"] == 370
+    assert manifest.postgres["tables"]["voiceprint"] == 0
+    assert manifest.postgres["states"]["reminder_item.status"] == {"pending": 57}
+    assert manifest.redis["key_count"] == 3271
+    assert manifest.collector["tables"]["turns"] == 3
+    assert set(manifest.postgres["tables"]) == set(migration.BUSINESS_TABLES + migration.DERIVED_TABLES)
+    for private in ("user text", "session value", "api-token-value"):
+        assert private not in encoded
+    assert all("SELECT *" not in " ".join(call) for call in runner.calls)
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [(b"memory:user:1", "memory"), (b"bad.prefix:x", "other"), (b"\xff:x", "other")],
+)
+def test_redis_prefix_is_bounded_and_redacted(key: bytes, expected: str):
+    assert migration.redis_prefix(key) == expected
