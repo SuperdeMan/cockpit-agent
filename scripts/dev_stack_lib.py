@@ -206,6 +206,7 @@ def set_target(repo_root: Path, target: str) -> None:
     temporary: Path | None = None
     owned_temporary: os.stat_result | None = None
     fd: int | None = None
+    payload = f"target={target}\n".encode("ascii")
     try:
         fd, temporary_name = tempfile.mkstemp(
             prefix=f".{path.name}.", suffix=".partial", dir=path.parent
@@ -215,7 +216,7 @@ def set_target(repo_root: Path, target: str) -> None:
         if not _is_regular_file(owned_temporary):
             raise DevStackError(error_message)
         with os.fdopen(fd, "wb", closefd=False) as handle:
-            handle.write(f"target={target}\n".encode("ascii"))
+            handle.write(payload)
             handle.flush()
             os.fsync(fd)
         _verify_owned_regular_file(
@@ -224,6 +225,13 @@ def set_target(repo_root: Path, target: str) -> None:
         os.close(fd)
         fd = None
         os.replace(temporary, path)
+        written = _read_regular_file(
+            path,
+            max_bytes=TARGET_FILE_MAX_BYTES,
+            error_message=error_message,
+        )
+        if written != payload:
+            raise DevStackError(error_message)
     except OSError as exc:
         raise DevStackError(error_message) from exc
     finally:
@@ -258,7 +266,11 @@ def cloud_endpoints(fqdn: str) -> StackEndpoints:
 def _parse_env_value(value: str) -> str:
     """Parse a non-executing dotenv value; expansion syntax is always literal."""
     if not value or value[0] not in "\"'":
-        uncommented = value.split("#", 1)[0].rstrip()
+        uncommented = value.strip()
+        for index, character in enumerate(uncommented):
+            if character == "#" and (index == 0 or uncommented[index - 1].isspace()):
+                uncommented = uncommented[:index].rstrip()
+                break
         if "\"" in uncommented or "'" in uncommented:
             raise ValueError("unquoted quote")
         return uncommented

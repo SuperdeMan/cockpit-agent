@@ -260,6 +260,29 @@ def test_set_target_rejects_replaced_temporary_file_before_os_replace(
     assert stack_target.read_bytes() == b"target=local\n"
 
 
+def test_set_target_fails_when_os_replace_receives_a_swapped_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    stack_target = write_stack_target(tmp_path, b"target=local\n")
+    real_replace = os.replace
+
+    def swap_source_then_replace(
+        source: os.PathLike[str], destination: os.PathLike[str]
+    ) -> None:
+        source_path = Path(source)
+        displaced = tmp_path / "displaced-owned-temporary"
+        real_replace(source_path, displaced)
+        source_path.write_bytes(b"target=local\n")
+        real_replace(source_path, destination)
+
+    monkeypatch.setattr(dev.os, "replace", swap_source_then_replace)
+
+    with pytest.raises(dev.DevStackError):
+        dev.set_target(tmp_path, "cloud")
+
+    assert stack_target.read_bytes() == b"target=local\n"
+
+
 @pytest.mark.skipif(os.name == "nt", reason="real temporary replacement requires POSIX unlink semantics")
 def test_set_target_rejects_real_temporary_file_replacement(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -382,8 +405,25 @@ def test_read_root_env_parses_only_the_safe_nonexecuting_dotenv_subset(
         "DOUBLE": 'double # literal and "quote"',
         "SINGLE": "single # literal and 'quote'",
         "UNQUOTED": "value with spaces",
-        "SPACED": "  retained leading and trimmed trailing",
+        "SPACED": "retained leading and trimmed trailing",
         "SHELL": "$(uname)-${HOME}-`id`",
+    }
+
+
+def test_read_root_env_distinguishes_unquoted_hashes_from_comments(
+    tmp_path: Path,
+):
+    (tmp_path / ".env").write_text(
+        "LITERAL=abc#def\n"
+        "COMMENT=abc # comment\n"
+        "OUTER_SPACE=  abc  # comment\n",
+        encoding="utf-8",
+    )
+
+    assert dev.read_root_env(tmp_path, {"LITERAL", "COMMENT", "OUTER_SPACE"}) == {
+        "LITERAL": "abc#def",
+        "COMMENT": "abc",
+        "OUTER_SPACE": "abc",
     }
 
 
