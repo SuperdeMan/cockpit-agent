@@ -66,12 +66,20 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5999 passed / 14 skipped 零红**（2026-08-16 QA 批 Q6 后实测）。
-较 Q10 的 5974 净 **+25**，逐条点号=`memory/tests/test_executed_actions.py` 4 +
-`agents/chitchat/tests/test_audit_answer.py` 21；证据 history **§50**。
+**6110 passed / 24 skipped 零红**（2026-08-16，QA 批 Q6 **合入云发布工作线之后**实测）。
+⚠ **这一跳的净增量来自两条独立工作线，别当成一批**：
+- **QA Q6 净 +25**（本轮的产出）：`memory/tests/test_executed_actions.py` 4 +
+  `agents/chitchat/tests/test_audit_answer.py` 21；证据 history **§50**。
+  合并前单独实测过 **5999 / 14**（对 `--co` 6013），那是相对 Q10 的 5974 的干净读数。
+- **云发布批带入 +111 passed / +10 skipped**（`deploy/cloud/`、`scripts/cloud_*`，
+  远端 19 个提交，**非本轮产出**）。合并是 merge 不是 rebase，无冲突、零文件重叠。
+
+⚠ **合并后重跑过一次**——「零文件重叠」不等于「零交互」（conftest / 共享 fixture）。
+实测段 1 与合并前**逐字相同**（5370/10），差额全在段 2（629→**740**），
+证实那批确实只落在 `scripts/tests` 下。
 ⚠ **仍是分两段跑的合计，不是一趟根跑**（原因见下）：
-`--ignore=scripts/tests` 段 **5370 / 10**（13m45s）+ `scripts/tests` 段 **629 / 4**
-（10m17s）= **5999 / 14**，与 `--co` 的 **6013 collected** 逐字对上。
+`--ignore=scripts/tests` 段 **5370 / 10**（16m19s）+ `scripts/tests` 段 **740 / 14**
+（14m26s）= **6110 / 24**，与 `--co` 的 **6134 collected** 逐字对上。
 前一跳 5974（+45，Q10）：新文件 `test_order_session_scope.py` 45 条；
 同样分两段（5345/10 + 629/4，`--co` 5988）；证据 history **§49**。
 ⚠ **分段的原因是后台全量连续两次在同一位置（76%）被中止**，而 76% 正是
@@ -177,7 +185,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 全量基线见本节顶部（**5999**，2026-08-16 QA 批 Q6 后）；分套件最近实测：`orchestrator/cloud` **866**（2026-08-16）/ edge **713**（2026-08-16，Q13 +95 命名收敛守卫、Q7 +37 极性与分段）/ nearby **99**（Q2 +6）/ navigation **132** / trip **85** / mcp-bridge **478**（Q10 +45：新文件 `test_order_session_scope.py`）/ memory **254**（Q5 +21、Q6 +4）/ chitchat **47**（Q6 +21）/ reminder **164**（Q5 +3、Q11 +4）/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**6110**，2026-08-16 QA 批 Q6 + 云发布工作线合入后；**本轮产出只占 +25**）；分套件最近实测：`orchestrator/cloud` **866**（2026-08-16）/ edge **713**（2026-08-16，Q13 +95 命名收敛守卫、Q7 +37 极性与分段）/ nearby **99**（Q2 +6）/ navigation **132** / trip **85** / mcp-bridge **478**（Q10 +45：新文件 `test_order_session_scope.py`）/ memory **254**（Q5 +21、Q6 +4）/ chitchat **47**（Q6 +21）/ reminder **164**（Q5 +3、Q11 +4）/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
