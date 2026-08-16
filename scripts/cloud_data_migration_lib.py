@@ -12,6 +12,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import BinaryIO, Callable, Mapping, Protocol, Sequence
 
+from scripts.cloud_release_lib import CommandRunner as RemoteCommandRunner
+from scripts.cloud_release_lib import SshConfig
+
 
 MIGRATION_ID_RE = re.compile(
     r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}-(?:online|final)$"
@@ -88,6 +91,43 @@ class BinaryCommandRunner(Protocol):
     ) -> None: ...
 
 
+class LocalCommandRunner:
+    def _execute(
+        self, argv: Sequence[str], *, cwd: Path, stdout: object = subprocess.PIPE
+    ) -> subprocess.CompletedProcess[bytes]:
+        try:
+            completed = subprocess.run(
+                list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=stdout,
+                stderr=subprocess.PIPE, check=False,
+            )
+        except OSError as exc:
+            raise MigrationError(f"could not run required local command: {argv[0]}") from exc
+        if completed.returncode != 0:
+            raise MigrationError(f"required local command failed: {argv[0]}")
+        return completed
+
+    def run(self, argv: Sequence[str], *, cwd: Path) -> CommandResult:
+        completed = self._execute(argv, cwd=cwd)
+        return CommandResult(
+            tuple(argv), completed.returncode,
+            completed.stdout.decode("utf-8", errors="replace"),
+            completed.stderr.decode("utf-8", errors="replace"),
+        )
+
+    def text(self, argv: Sequence[str], *, cwd: Path) -> str:
+        return self.run(argv, cwd=cwd).stdout
+
+    def json(self, argv: Sequence[str], *, cwd: Path) -> object:
+        try:
+            return json.loads(self.text(argv, cwd=cwd))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise MigrationError(f"local command returned invalid JSON: {argv[0]}") from exc
+
+    def stream_to_file(self, argv: Sequence[str], target: Path, *, cwd: Path) -> None:
+        with target.open("xb") as output:
+            self._execute(argv, cwd=cwd, stdout=output)
+
+
 @dataclass(frozen=True)
 class FileRecord:
     size_bytes: int
@@ -132,6 +172,24 @@ class SnapshotEvidence:
     postgres: Mapping[str, object]
     redis: Mapping[str, object]
     collector: Mapping[str, object]
+
+
+@dataclass(frozen=True)
+class MigrationRequest:
+    repo: Path
+    migration_id: str
+    bundle: MigrationBundle
+    ssh: SshConfig
+
+
+@dataclass(frozen=True)
+class MigrationPlan:
+    migration_id: str
+    status: str
+    current_release: str
+    disk_available_bytes: int
+    bundle_size_bytes: int
+    remote_stores: Mapping[str, object]
 
 
 def _exact_keys(value: object, expected: frozenset[str], label: str) -> Mapping[str, object]:
@@ -428,6 +486,139 @@ def build_manifest(snapshot: SnapshotEvidence) -> MigrationManifest:
         collector=snapshot.collector,
     )
     return parse_manifest(payload)
+
+
+def load_bundle(repo: Path, migration_id: str) -> MigrationBundle:
+    require_migration_id(migration_id)
+    root = repo / ".artifacts" / "cloud-data-migrations"
+    directory = artifact_directory(root, migration_id)
+    manifest_path = directory / "manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise MigrationError("migration manifest is unavailable")
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise MigrationError("migration manifest is unreadable") from exc
+    manifest = parse_manifest(payload)
+    if manifest.migration_id != migration_id:
+        raise MigrationError("migration manifest identity mismatch")
+    files = tuple(directory / name for name in (*SNAPSHOT_FILENAMES, "manifest.json"))
+    return MigrationBundle(directory=directory, manifest=manifest, files=files)
+
+
+def validate_bundle(directory: Path) -> MigrationBundle:
+    if not directory.is_dir() or directory.is_symlink():
+        raise MigrationError("migration bundle directory is invalid")
+    bundle = load_bundle(directory.parents[2], directory.name)
+    if bundle.directory.resolve() != directory.resolve():
+        raise MigrationError("migration bundle path is invalid")
+    for name, record in bundle.manifest.files.items():
+        path = directory / name
+        if not path.is_file() or path.is_symlink() or path.stat().st_size != record.size_bytes:
+            raise MigrationError(f"migration file is invalid: {name}")
+        if sha256_file(path) != record.sha256:
+            raise MigrationError(f"migration file checksum mismatch: {name}")
+    return bundle
+
+
+REMOTE_SCRIPT = "/opt/car-agent/shared/bin/remote-data-migration.sh"
+
+
+def _remote_json_result(result: object) -> Mapping[str, object]:
+    stdout = getattr(result, "stdout", None)
+    if not isinstance(stdout, str) or len(stdout.encode("utf-8")) > 64 * 1024:
+        raise MigrationError("remote migration response is invalid")
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise MigrationError("remote migration response is invalid") from exc
+    expected = frozenset(
+        {"current_release", "runtime_project_name", "disk_available_bytes", "stores", "status"}
+    )
+    return _exact_keys(payload, expected, "remote migration response")
+
+
+def inspect_remote(request: MigrationRequest, runner: RemoteCommandRunner) -> Mapping[str, object]:
+    result = runner.run(
+        request.ssh.ssh_argv(f"sudo {REMOTE_SCRIPT} inspect-current"), cwd=request.repo
+    )
+    payload = _remote_json_result(result)
+    release = payload["current_release"]
+    project = payload["runtime_project_name"]
+    if not isinstance(release, str) or re.fullmatch(r"/opt/car-agent/releases/[0-9a-f]{7,40}", release) is None:
+        raise MigrationError("remote current release is invalid")
+    if not isinstance(project, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project) is None:
+        raise MigrationError("remote runtime project is invalid")
+    _strict_int(payload["disk_available_bytes"], "remote disk availability")
+    stores = payload["stores"]
+    if not isinstance(stores, Mapping) or set(stores) != {"postgres", "redis", "collector"}:
+        raise MigrationError("remote store inspection is incomplete")
+    return payload
+
+
+def make_migration_plan(
+    request: MigrationRequest, runner: RemoteCommandRunner
+) -> MigrationPlan:
+    bundle = validate_bundle(request.bundle.directory)
+    remote = inspect_remote(request, runner)
+    bundle_size = sum((bundle.directory / name).stat().st_size for name in SNAPSHOT_FILENAMES)
+    available = _strict_int(remote["disk_available_bytes"], "remote disk availability")
+    if available < max(bundle_size * 3, 1024 * 1024):
+        raise MigrationError("remote disk availability is insufficient")
+    return MigrationPlan(
+        migration_id=request.migration_id,
+        status="ready",
+        current_release=remote["current_release"],  # type: ignore[arg-type]
+        disk_available_bytes=available,
+        bundle_size_bytes=bundle_size,
+        remote_stores=MappingProxyType(dict(remote["stores"])),  # type: ignore[arg-type]
+    )
+
+
+def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str:
+    directory = request.bundle.directory
+    validate_bundle(directory)
+    prepared = runner.run(
+        request.ssh.ssh_argv(
+            f"sudo {REMOTE_SCRIPT} prepare-upload --migration-id {request.migration_id}"
+        ),
+        cwd=request.repo,
+    ).stdout.strip()
+    expected = f"/opt/car-agent/shared/imports/{request.migration_id}"
+    if prepared != expected:
+        raise MigrationError("server returned an unexpected import directory")
+    for name in ("manifest.json", "postgres.dump", "redis.rdb", "collector.db"):
+        runner.run(request.ssh.scp_argv(directory / name, f"{expected}/{name}"), cwd=request.repo)
+        runner.run(
+            request.ssh.ssh_argv(f"chmod 0600 -- {expected}/{name}"), cwd=request.repo
+        )
+    return expected
+
+
+def remote_action(
+    request: MigrationRequest, action: str, runner: RemoteCommandRunner
+) -> str:
+    if action not in {"preflight", "apply", "verify", "rollback"}:
+        raise MigrationError("invalid remote migration action")
+    result = runner.run(
+        request.ssh.ssh_argv(
+            f"sudo {REMOTE_SCRIPT} {action} --migration-id {request.migration_id}"
+        ),
+        cwd=request.repo,
+    )
+    return result.stdout.strip()
+
+
+def list_local_writers(repo: Path, runner: BinaryCommandRunner) -> tuple[str, ...]:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    raw = runner.text([*compose, "config", "--services"], cwd=repo)
+    services = tuple(line.strip() for line in raw.splitlines() if line.strip())
+    if not services or any(re.fullmatch(r"[a-z0-9-]+", item) is None for item in services):
+        raise MigrationError("compose service list is invalid")
+    writers = tuple(item for item in services if item not in {"postgres", "redis"})
+    if "observability-collector" not in writers:
+        raise MigrationError("collector writer is missing from compose services")
+    return writers
 
 
 def _strict_single_inspect(payload: object) -> Mapping[str, object]:

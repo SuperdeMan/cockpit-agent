@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts import cloud_data_migration as cli
 from scripts import cloud_data_migration_lib as migration
 
 
@@ -284,3 +285,95 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
 )
 def test_redis_prefix_is_bounded_and_redacted(key: bytes, expected: str):
     assert migration.redis_prefix(key) == expected
+
+
+class FakeRemoteRunner:
+    def __init__(self, remote_payload: dict[str, object] | None = None) -> None:
+        self.calls: list[tuple[str, ...]] = []
+        self.remote_payload = remote_payload or {
+            "current_release": "/opt/car-agent/releases/" + "a" * 40,
+            "runtime_project_name": "car-agent",
+            "disk_available_bytes": 10**12,
+            "stores": {
+                "postgres": {"schema_fingerprint": "inspect-required"},
+                "redis": {"schema_fingerprint": "inspect-required"},
+                "collector": {"schema_fingerprint": "inspect-required"},
+            },
+            "status": "inspect_only",
+        }
+
+    def run(self, argv, *, cwd: Path, **kwargs):
+        call = tuple(str(part) for part in argv)
+        self.calls.append(call)
+        command = call[-1]
+        stdout = ""
+        if "inspect-current" in command:
+            stdout = json.dumps(self.remote_payload)
+        elif "prepare-upload" in command:
+            stdout = f"/opt/car-agent/shared/imports/{VALID_ID}\n"
+        return migration.CommandResult(call, 0, stdout, "")
+
+
+def _write_valid_bundle(root: Path) -> Path:
+    directory = root / ".artifacts" / "cloud-data-migrations" / VALID_ID
+    directory.mkdir(parents=True)
+    for name, content in {
+        "postgres.dump": b"PGDMPfixture",
+        "redis.rdb": b"REDIS0011fixture",
+        "collector.db": b"SQLite format 3\x00fixture",
+    }.items():
+        (directory / name).write_bytes(content)
+    payload = valid_manifest_payload()
+    for name in migration.SNAPSHOT_FILENAMES:
+        payload["files"][name] = {
+            "size_bytes": (directory / name).stat().st_size,
+            "sha256": migration.sha256_file(directory / name),
+        }
+    (directory / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    return directory
+
+
+def _fake_key(root: Path) -> Path:
+    key = root / "id_ed25519"
+    key.write_text("synthetic-test-key", encoding="utf-8")
+    return key
+
+
+def test_apply_is_dry_run_without_explicit_flag(tmp_path: Path):
+    _write_valid_bundle(tmp_path)
+    runner = FakeRemoteRunner()
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+        "apply", "--migration-id", VALID_ID,
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    joined = [" ".join(call) for call in runner.calls]
+    assert any("inspect-current" in call for call in joined)
+    assert not any(" prepare-upload " in call or " apply " in call for call in joined)
+    assert not any(call[0] == "scp" for call in runner.calls)
+
+
+@pytest.mark.parametrize("value", ["../x", "x;id", "x$(id)", "", "A" * 90])
+def test_cli_rejects_unsafe_migration_id(value: str):
+    with pytest.raises(migration.MigrationError):
+        migration.require_migration_id(value)
+
+
+def test_plan_is_read_only_and_never_uploads(tmp_path: Path):
+    _write_valid_bundle(tmp_path)
+    runner = FakeRemoteRunner()
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+        "plan", "--migration-id", VALID_ID,
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert len(runner.calls) == 1
+    assert "inspect-current" in runner.calls[0][-1]
+
+
+def test_final_snapshot_without_both_switches_is_only_a_service_plan(tmp_path: Path):
+    runner = FakeBinaryRunner()
+    rc = cli.main(["snapshot", "--phase", "final"], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert any("config" in call and "--services" in call for call in runner.calls)
+    assert not any("pg_dump" in call or "redis-cli" in call for call in runner.calls)
