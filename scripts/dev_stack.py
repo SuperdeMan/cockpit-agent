@@ -15,8 +15,16 @@ from scripts.cloud_release_lib import ReleaseError, ReleaseRequest, SshConfig, S
 from scripts.dev_stack_lib import DefaultStackStatusRunner, DevStackError, LOCAL_ENDPOINTS, cloud_endpoints, cloud_release_argv, inspect_cloud_status, inspect_local_status, read_root_env, resolve_target, set_target, stack_status_to_dict
 
 
+
+class _ParseError(RuntimeError):
+    pass
+
+
+class _SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise _ParseError()
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Switchable car-agent development stack")
+    parser = _SafeArgumentParser(description="Switchable car-agent development stack")
     parser.add_argument("--host", default=os.getenv("CAR_AGENT_DEPLOY_HOST"))
     parser.add_argument("--user", default=os.getenv("CAR_AGENT_DEPLOY_USER", "ubuntu"))
     identity_default = os.getenv("CAR_AGENT_SSH_IDENTITY")
@@ -96,8 +104,19 @@ def _run(args, *, repo: Path, release_runner, status_runner, emit) -> int:
 
 
 def main(argv: Sequence[str] | None = None, *, repo: Path = REPO_ROOT, release_runner=None, status_runner=None, emit: Callable[[dict[str, object]], None] | None = None) -> int:
-    args = build_parser().parse_args(argv)
     output = emit or _emit
+    try:
+        args = build_parser().parse_args(argv)
+    except _ParseError:
+        output(
+            {
+                "status": "parse_error",
+                "target": None,
+                "source": None,
+                "error": "invalid command arguments",
+            }
+        )
+        return 2
     try:
         return _run(args, repo=Path(repo), release_runner=release_runner or SubprocessRunner(), status_runner=status_runner, emit=output)
     except DevStackError:

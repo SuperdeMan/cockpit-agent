@@ -1088,3 +1088,29 @@ def test_cli_unimplemented_actions_fail_closed(command: str, tmp_path: Path):
     assert events == [
         {"status": "configuration_rejected", "target": "local", "source": "default"}
     ]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    (
+        ("target", "set", "remote"),
+        ("unknown-command",),
+        ("target", "set"),
+    ),
+)
+def test_cli_parser_errors_are_redacted_json_with_exit_two(
+    argv: tuple[str, ...], tmp_path: Path
+):
+    identity = str(tmp_path / "secret-identity.pem")
+    events: list[dict[str, object]] = []
+
+    assert cli.main(["--identity", identity, *argv], repo=tmp_path, emit=events.append) == 2
+    assert events == [
+        {
+            "status": "parse_error",
+            "target": None,
+            "source": None,
+            "error": "invalid command arguments",
+        }
+    ]
+    assert identity not in json.dumps(events)
