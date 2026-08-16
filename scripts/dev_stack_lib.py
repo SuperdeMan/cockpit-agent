@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 import stat
 import tempfile
 from dataclasses import dataclass
@@ -675,3 +676,22 @@ def stack_status_to_dict(status: StackStatus) -> dict[str, object]:
         ],
         "warnings": list(status.warnings),
     }
+
+
+def cloud_release_argv(
+    repo: Path,
+    action: str,
+    sha: str,
+    *,
+    apply: bool,
+) -> list[str]:
+    """Build the allow-listed delegation argv for the existing release CLI."""
+    argv = [sys.executable, str(Path(repo) / "scripts" / "cloud_release.py")]
+    if action == "deploy":
+        argv.extend(["deploy", "--sha", sha])
+        if apply:
+            argv.append("--apply")
+        return argv
+    if action == "verify":
+        return [*argv, "verify"]
+    raise DevStackError("unsupported cloud release action")

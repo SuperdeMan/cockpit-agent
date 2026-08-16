@@ -4,6 +4,8 @@ import json
 import os
 import socket
 import ssl
+import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,12 +16,29 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from scripts import dev_stack_lib as dev
+from scripts import dev_stack as cli
 from scripts.cloud_release_lib import (
     CommandResult,
     ReleaseError,
     ReleaseRequest,
     SshConfig,
 )
+
+
+def test_development_stack_cli_exposes_all_six_actions():
+    result = subprocess.run(
+        [sys.executable, "scripts/dev_stack.py", "--help"],
+        cwd=Path(__file__).resolve().parents[2],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert all(
+        action in result.stdout
+        for action in ("target", "status", "deploy", "verify", "hmi", "dashboard")
+    )
 
 
 @contextmanager
@@ -1000,3 +1019,72 @@ def test_oneoff_container_does_not_make_stopped_required_service_ready(
 
     assert (status.container_total, status.container_running) == (8, 7)
     assert status.warnings == ("required local service is not running: postgres",)
+
+
+def test_cloud_release_argv_is_a_python_delegate_with_dry_run_and_apply():
+    repo = Path("C:/repo")
+
+    assert dev.cloud_release_argv(repo, "deploy", "a" * 40, apply=False) == [
+        sys.executable,
+        str(repo / "scripts" / "cloud_release.py"),
+        "deploy",
+        "--sha",
+        "a" * 40,
+    ]
+    assert dev.cloud_release_argv(repo, "deploy", "a" * 40, apply=True)[-1] == "--apply"
+    assert dev.cloud_release_argv(repo, "verify", "HEAD", apply=True) == [
+        sys.executable,
+        str(repo / "scripts" / "cloud_release.py"),
+        "verify",
+    ]
+    with pytest.raises(dev.DevStackError, match="unsupported"):
+        dev.cloud_release_argv(repo, "rollback", "HEAD", apply=False)
+
+
+class FakeCliRunner:
+    def __init__(self, result: int = 0) -> None:
+        self.calls: list[tuple[str, ...]] = []
+        self.result = result
+
+    def run(self, argv, **kwargs):
+        self.calls.append(tuple(argv))
+        return CommandResult(tuple(argv), self.result, "", "")
+
+
+def test_cli_target_show_and_set_emit_target_and_source(tmp_path: Path):
+    events: list[dict[str, object]] = []
+
+    assert cli.main(["target", "show"], repo=tmp_path, emit=events.append) == 0
+    assert events == [{"status": "target", "target": "local", "source": "default"}]
+    assert cli.main(["target", "set", "cloud"], repo=tmp_path, emit=events.append) == 0
+    assert (tmp_path / "dev-stack.local").read_text(encoding="utf-8") == "target=cloud\n"
+    assert events[-1] == {"status": "target", "target": "cloud", "source": "file"}
+
+
+def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(tmp_path: Path):
+    runner = FakeCliRunner()
+    assert cli.main(["deploy"], repo=tmp_path, release_runner=runner) == 2
+    assert runner.calls == []
+
+    dev.set_target(tmp_path, "cloud")
+    identity = tmp_path / "actual-secret-identity.pem"
+    events: list[dict[str, object]] = []
+    arguments = ["--host", "dev.example", "--user", "alice", "--identity", str(identity), "--kex-algorithms", "curve25519-sha256"]
+    assert cli.main([*arguments, "deploy", "--sha", "a" * 40], repo=tmp_path, release_runner=runner, emit=events.append) == 0
+    dry_run_argv = runner.calls[-1]
+    assert dry_run_argv[:11] == (sys.executable, str(tmp_path / "scripts" / "cloud_release.py"), "--host", "dev.example", "--user", "alice", "--identity", str(identity), "--kex-algorithms", "curve25519-sha256", "deploy")
+    assert dry_run_argv[-2:] == ("--sha", "a" * 40)
+    assert cli.main([*arguments, "deploy", "--sha", "a" * 40, "--apply"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
+    assert runner.calls[-1][-1] == "--apply"
+    assert events[-1]["target"] == "cloud"
+    assert str(identity) not in json.dumps(events)
+
+
+@pytest.mark.parametrize("command", ("verify", "hmi", "dashboard"))
+def test_cli_unimplemented_actions_fail_closed(command: str, tmp_path: Path):
+    events: list[dict[str, object]] = []
+
+    assert cli.main([command], repo=tmp_path, emit=events.append) == 2
+    assert events == [
+        {"status": "configuration_rejected", "target": "local", "source": "default"}
+    ]
