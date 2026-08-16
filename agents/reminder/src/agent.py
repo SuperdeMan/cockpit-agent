@@ -563,15 +563,35 @@ class ReminderAgent(BaseAgent):
                                                    occupant_id=self._occ(ctx))
         if todo_only:
             times = []
+        # Q5/I-045：**默认范围收窄到「从现在起」**。此前不带时间词一律 frm=0，
+        # 真栈实测答出「全部共 20 条」，头三条是 7 月的过期项——用户问的是
+        # 「我现在有哪些进行中的任务」，得到的是一份考古清单。
+        # ⚠ **收窄不等于隐藏**：过期的另计并显式报数，一条都不许悄悄消失。
+        # ⚠ 用户明说「全部/所有」时不收窄——那是他要的。
+        expired: list = []
+        if frm == 0 and not re.search(r"全部|所有|历史|以前|过去", text):
+            cutoff = ep(now_utc)
+            # `fire_at <= 0` 的**定时**提醒是无效数据：它永远不会触发，而按 fire_at
+            # 升序排还**永远排在最前面**（I-056 里用户看到的「妈妈住杭州、停车位B2」
+            # 就是这三条）。它们与过期项一起计数、一起不进「接下来」。
+            # ⚠ 真正的 todo（kind=todo，本来就没有时刻）在 `todos` 里，不受影响。
+            expired = [r for r in times if not r.fire_at or r.fire_at < cutoff]
+            times = [r for r in times if r.fire_at and r.fire_at >= cutoff]
+            if expired:
+                label = "接下来"
         total = len(times) + len(todos)
         if total == 0:
-            return AgentResult(speech=f"{label}没有提醒或待办。想加一条直接说"
+            tail = (f"另有 {len(expired)} 条已过期没处理的，要看的话说「看全部」。"
+                    if expired else "")
+            return AgentResult(speech=f"{label}没有提醒或待办。{tail}想加一条直接说"
                                       f"「明天早上八点提醒我…」。")
         await self._refresh_active(ctx, times + todos)
         head = "、".join(
             f"{r.title}（{format_display(r.fire_at, now=now_utc, tz=self._tz)}）"
             if r.fire_at else r.title for r in (times + todos)[:3])
         speech = f"{label}共 {total} 条：{head}" + ("等。" if total > 3 else "。")
+        if expired:
+            speech += f"另有 {len(expired)} 条已过期没处理的，说「看全部」可以查。"
         card = {"type": "reminder_list", "view": view, "date_label": label,
                 "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in times],
                 "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in todos]}

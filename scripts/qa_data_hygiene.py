@@ -92,9 +92,22 @@ async def _connect():
 
 
 async def scan_self_loops(conn):
+    """自环关系边。⚠ **`family` 排除在外——那不是噪声，是「无名的人」的表示法。**
+
+    2026-08-16 读消费方时发现的：`store.resolve_person_place` 靠 family 边的
+    **object** 反查人实体，没名字的人（「老婆」）就以称谓自身作实体名，
+    于是 `family(老婆→老婆)` 是**必需的**一跳。卡 §3-Q5 把它记成「零信息」，
+    本脚本首版据此准备删掉库里那 4 条——**那会当场打断「老婆在哪上班」这类解析**
+    （`test_resolve_person_place_via_works_at` 是它的既有断言）。
+
+    > **判据**：清洗脚本删的是**数据**，而数据是不是垃圾要问**消费方**，
+    > 不能只看它长得像不像垃圾。这是 dry-run 第三次劝退一条判据
+    > （前两次：单值谓词冲突、`fire_at<=0`）。
+    """
     return await conn.fetch(
         "SELECT id, user_id, subject, rel, object FROM memory_relation "
-        "WHERE subject = object AND superseded_by IS NULL ORDER BY user_id, subject")
+        "WHERE subject = object AND rel <> 'family' AND superseded_by IS NULL "
+        "ORDER BY user_id, subject")
 
 
 async def scan_inverted(conn):

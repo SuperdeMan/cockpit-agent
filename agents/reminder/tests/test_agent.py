@@ -548,3 +548,65 @@ async def test_ordinal_continuation_after_clarify():
     assert res.status == "ok"
     assert (await a.store.get("u1", r2.id)).status == "cancelled"
     assert (await a.store.get("u1", r1.id)).status == "pending"
+
+
+# ── Q5/I-045：默认查询范围收窄，但不隐藏 ──────────────────────────────────
+
+async def _seed_raw(agent, title: str, fire_at: int):
+    """直接写库（绕过 create 的时间解析，用例要造过期项）。"""
+    await agent.store.add(Reminder(
+        id=f"r-{title}", user_id="u1", occupant_id="primary",
+        title=title, fire_at=fire_at, kind="time", status="pending"))
+
+
+@pytest.mark.asyncio
+async def test_default_list_scope_excludes_expired_but_reports_the_count():
+    """真栈实测原样：「我现在有哪些进行中的任务」答出「全部共 20 条」，
+    头三条是 7 月的过期项——用户问的是现在，得到的是一份考古清单。
+
+    **收窄不等于隐藏**：过期的另计并显式报数，一条都不许悄悄消失。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "七月的旧提醒", now - 30 * 86400)
+    await _seed_raw(a, "上周的旧提醒", now - 7 * 86400)
+    await _seed_raw(a, "明天带伞", now + 86400)
+
+    res = await run_handle(a, "reminder.list", raw_text="我现在有哪些进行中的任务")
+
+    assert "明天带伞" in res.speech
+    assert "七月的旧提醒" not in res.speech
+    assert "2 条已过期" in res.speech, "过期项必须报数，不许悄悄消失"
+
+
+@pytest.mark.asyncio
+async def test_explicit_all_still_shows_everything():
+    """反向对照：用户明说「全部」时不收窄——那是他要的。"""
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "七月的旧提醒", now - 30 * 86400)
+    await _seed_raw(a, "明天带伞", now + 86400)
+
+    res = await run_handle(a, "reminder.list", raw_text="看全部提醒")
+
+    assert "七月的旧提醒" in res.speech
+
+
+@pytest.mark.asyncio
+async def test_invalid_fire_at_zero_is_not_shown_as_upcoming():
+    """`fire_at=0` 的**定时**提醒永远不会触发，而按 fire_at 升序排还**永远排在最前**
+    ——I-056 里用户看到的「妈妈住杭州、停车位在B2」就是这三条（N2 实证：时间解析
+    失败 + 非任务陈述被建成提醒，两个缺陷叠加后仍然写进了库）。
+
+    它们与过期项一起计数、一起不进「接下来」。真正的 todo 不受影响。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "妈妈住杭州", 0)
+    await _seed_raw(a, "明天带伞", now + 86400)
+
+    res = await run_handle(a, "reminder.list", raw_text="我现在有哪些进行中的任务")
+
+    assert "明天带伞" in res.speech
+    assert "妈妈住杭州" not in res.speech
+    assert "1 条已过期" in res.speech

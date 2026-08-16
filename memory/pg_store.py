@@ -676,8 +676,41 @@ class MemoryVectorStore:
                          row["superseded_by"], row["created_at"])
             else:
                 self._rel[row["id"]] = row
+            # Q5：单值谓词的旧边 supersede。`superseded_by` 列一直存在却**从未写过**
+            # ——于是库里出现「同一个孩子三个学校」，每轮召回哪条看运气
+            # （**这就是 I-044「幻觉」的真身**）。
+            # ⚠ 只对单值语义的谓词做（`relation.is_single_valued`）：
+            # `family`/`owns`/`prefers_brand` 天然一对多，对它们 supersede
+            # 等于**丢掉一个真实的人**（清洗 dry-run 当场劝退过这条）。
+            await self._supersede_older(user_id, occupant_id, row)
             out.append(row["id"])
         return out
+
+    async def _supersede_older(self, user_id: str, occupant_id: str,
+                               row: dict) -> None:
+        """把同 `(subject, rel)` 的旧现行边标为被本条取代。非单值谓词直接返回。"""
+        if not relation.is_single_valued(row["rel"]):
+            return
+        # ⚠ **只写 `superseded_by`，不写 `valid_to`**：`memory_relation` 建表语句里
+        # 根本没有 `valid_to` 列（那是 `memory_item` 才有的）。首版照着 item 的
+        # supersede 抄了过来，会在真库上直接报错——加列是 schema 变更（红线，要先问）。
+        # 现有这一列已经够表达「这条边被那条取代了」。
+        occ = occupant_id or "primary"
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE memory_relation SET superseded_by=$1
+                     WHERE user_id=$2 AND occupant_id=$3 AND subject=$4 AND rel=$5
+                       AND id<>$1 AND superseded_by IS NULL
+                """, row["id"], user_id, occ, row["subject"], row["rel"])
+            return
+        for k, v in self._rel.items():
+            if (k != row["id"] and v.get("user_id") == user_id
+                    and v.get("occupant_id") == occ
+                    and v.get("subject") == row["subject"]
+                    and v.get("rel") == row["rel"]
+                    and not v.get("superseded_by")):
+                v["superseded_by"] = row["id"]
 
     async def _relation_exists(self, user_id: str, occupant_id: str, edge: dict) -> bool:
         occ = occupant_id or "primary"
