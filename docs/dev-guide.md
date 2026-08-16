@@ -239,3 +239,32 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 ## 7. 提交前自检
 
 见 `AGENTS.md` §6。最低限度：改了 Python 跑 `py_compile` + 相关 `pytest`；改了端侧逻辑跑 `python test/smoke_edge.py`；改了 proto 跑 `make proto` 确认无错。
+
+## 8. 受控数据迁云命令
+
+第一阶段 online 不停止本地写入；快照之后产生的新数据不会自动同步。第二阶段 final 必须先确认
+所有本地写入者已经停止，再生成一份完整快照并覆盖云端。两个阶段都是 replace，不是 merge，
+且云端开始迁移前先生成 PostgreSQL、Redis、Collector 同时间戳备份。
+
+```powershell
+python scripts/cloud_data_migration.py snapshot --phase online
+python scripts/cloud_data_migration.py plan --migration-id 20260817T010203Z-abcdef0-online
+python scripts/cloud_data_migration.py apply --migration-id 20260817T010203Z-abcdef0-online
+# 只有取得本轮数据库迁移与云端应用授权后：
+python scripts/cloud_data_migration.py apply --migration-id 20260817T010203Z-abcdef0-online --apply
+python scripts/cloud_data_migration.py verify --migration-id 20260817T010203Z-abcdef0-online
+```
+
+示例 ID 只展示格式；实际命令必须复制 `snapshot` 输出的 ID。`apply` 和 `rollback` 不带
+`--apply` 时只输出 dry-run。final 也先运行 dry-run，核对会停止的精确服务列表；只有确认另一
+个 agent 已结束并取得本地停写授权后，才执行：
+
+```powershell
+python scripts/cloud_data_migration.py snapshot --phase final
+python scripts/cloud_data_migration.py snapshot --phase final --quiesce-local --apply
+```
+
+工具不会要求或自动修改根 `.env`、云端 `.env`、安全组、Tailscale Serve、CI/CD、systemd 或
+数据库 schema，也不会删除本地/云端卷、备份、release、镜像或迁移包。设计快照中的
+`pending=57`、`enabled=1` 只是验收参照，执行时必须重采；`voiceprint=0` 必须如实报告 0。
+这些命令和边界是运行手册，不代表已经对真实数据栈执行或验证。

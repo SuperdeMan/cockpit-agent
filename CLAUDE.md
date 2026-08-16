@@ -144,6 +144,11 @@ token、密码、私钥或 URL。`target=cloud` 禁止启动本地 Compose，本
 cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit/merge/push。未显式标记
 `remote_safe` 的 E2E 不得在 cloud 缺省运行，高影响开关不替代人工红线授权。本阶段不得
 自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
+
+本地三存储迁云使用 `scripts/cloud_data_migration.py`：online 不停本地写入，final 必须取得
+停写授权并确认其他 agent 已结束；两阶段均为 replace 而非 merge。`apply/rollback` 只有显式
+`--apply` 才允许写入。迁移不修改 `.env`、安全组、Tailscale、CI/CD、systemd 或 schema，
+不删除任何本地/云端卷、备份、release、镜像或迁移包；三存储失败必须整组恢复。
 - 敏感数据（车内音视频、精确位置、支付）默认不出车，上云最小化。
   - **唯一的受控例外：S2S 挡位下上行原始音频**（三段式只上行定稿文本）。三个条件同时成立才允许：① 设置默认 `classic`，须用户在 HMI 显式选择；② 仅在**用户主动唤醒后的交互窗内**采集（未唤醒不采）；③ 隐私声明与设置文案显式呈现该差异。任何绕过这三条的音频上行都是红线违规。
   - **视觉单帧同款三条件**（M4 P4）：设置默认关 + **端侧命中视觉触发词才抓一帧**（未命中一帧都不采）+ 文案说清。图像只在网关内存活 TTL 秒，**不落盘不落 Redis、不进 obs、不进记忆**；`camera.frame`（单帧）与 `camera.read`（连续流，维持 ❌ 禁）是两个 scope，别混用。

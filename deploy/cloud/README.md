@@ -199,3 +199,24 @@ python scripts/cloud_release.py rollback --to 4c1f479 --apply
 ```
 
 入口会在同一事务锁内校验目标目录、全部 SHA 镜像和备份状态，切换后执行完整验收；失败时恢复原 release。首次部署没有第二个 release，不做虚构的回滚演练。涉及不兼容 schema 时另立数据库迁移/回滚方案并重新审批。
+
+## PostgreSQL、Redis 与 Collector 两阶段迁移
+
+迁移包固定保存在本机 `.artifacts/cloud-data-migrations/{migration_id}/`，云端上传目录固定为
+`/opt/car-agent/shared/imports/{migration_id}/`。批次 ID 必须来自 `snapshot` 输出，格式为
+`YYYYMMDDTHHMMSSZ-<7位提交SHA>-online|final`；示例 ID 只说明格式，不能手工替代真实输出。
+
+第一阶段 online：本地不停写；快照完成后的本地新增不会自动同步。
+第二阶段 final：先确认所有本地写入者停止，再重新完整快照与覆盖。
+两阶段都是 replace，不是 merge；云端迁移开始前先备份。
+设计快照中的 57 条 pending 提醒和 1 个 enabled 场景按源快照原样恢复，服务启动后生效；
+每次执行仍以当轮源快照重新采集的计数为准，不能把 57 和 1 写成程序常量。
+voiceprint 为 0 时如实报告 0；模型可用不等于声纹数据已迁移。
+
+工具不删除本地卷、匿名旧卷、云端卷、备份、release、镜像或迁移包，也不执行 `down -v`。
+失败时 PostgreSQL、Redis 和 Collector 必须按同一份迁移前备份整组恢复，并保留导入文件、
+迁移前备份与失败现场；应用 release SHA 不因数据迁移改变。
+
+所有写动作默认 dry-run。真实 `apply --apply`、`rollback --apply`、final 本地停写和云端受控脚本
+安装分别需要本轮明确授权。未授权时只允许本地 `snapshot`、`plan`、dry-run 与静态测试；本文档
+记录的是工具契约，不表示已经在真实本地卷或云端完成迁移验证。

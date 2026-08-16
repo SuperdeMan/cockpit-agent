@@ -400,3 +400,22 @@ python -m pytest test/nightly -m nightly -v
 | 8 | ASR 转码 | POST /api/asr format=webm | ffmpeg 转码后正常返回文本 |
 
 > 注：未配置 `LLM_API_KEY` 时 LLM Gateway 用 MockProvider，链路可跑通但复杂意图能力受限。
+
+## 云数据迁移工具专项
+
+迁移工具测试只使用 fake runner 和静态 shell 契约，不连接真实 Docker 数据卷、SSH 或云端：
+
+```bash
+python -m pytest scripts/tests/test_cloud_data_migration.py \
+  scripts/tests/test_cloud_release.py \
+  scripts/tests/test_cloud_deploy_assets.py -q
+bash -n deploy/cloud/transaction-lock.sh deploy/cloud/backup.sh \
+  deploy/cloud/remote-release.sh deploy/cloud/activate-release.sh \
+  deploy/cloud/remote-data-migration.sh
+python -m compileall -q scripts/cloud_data_migration.py scripts/cloud_data_migration_lib.py
+```
+
+测试必须锁定：online 零 stop/restart/down；final 缺少 `--quiesce-local --apply` 时仅列服务、不
+生成快照；plan 和无 `--apply` 的 apply 不上传、不停服务；远端路径与 migration ID 拒绝注入；
+三存储迁移失败整组恢复；任何路径都不得删除卷、备份、release、镜像或迁移包。专项全绿只证明
+fake/static 契约，不得写成真实数据或云端迁移已经验证。

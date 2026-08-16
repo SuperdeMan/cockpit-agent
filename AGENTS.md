@@ -60,6 +60,12 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 标记 `remote_safe` 的 E2E 不得在 cloud 缺省运行，高影响开关也不替代人工红线授权。本阶段
 不得自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
 
+三存储迁云入口是 `scripts/cloud_data_migration.py`。online 本地不停写，final 必须先取得停写
+授权并确认其他 agent 已结束；两阶段都是 replace，不是 merge。`apply/rollback` 默认 dry-run，
+只有显式 `--apply` 才写入。工具不改 `.env`、安全组、Tailscale、CI/CD、systemd 或 schema，
+不删除任何本地/云端卷、备份、release、镜像或迁移包；失败时 PostgreSQL、Redis、Collector
+按同一份迁移前备份整组恢复。完整命令与授权检查点见 `docs/dev-guide.md` §8。
+
 1. **车控只经 VAL**。任何组件（含 LLM/Agent）不得直接碰 CAN/SOME-IP。
 2. **LLM 不直连车控**：LLM 只产"意图/计划"，车控由确定性 Executor 经 VAL 权限校验后执行（规划/执行分离）。
 3. **危险动作二次确认**（`require_confirm=true`）。
