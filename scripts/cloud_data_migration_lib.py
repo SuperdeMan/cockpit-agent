@@ -4,8 +4,11 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import sqlite3
+import stat
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +17,7 @@ from typing import BinaryIO, Callable, Mapping, Protocol, Sequence
 
 from scripts.cloud_release_lib import CommandRunner as RemoteCommandRunner
 from scripts.cloud_release_lib import SshConfig
+from scripts.dev_stack_lib import DevStackError, resolve_target
 
 
 MIGRATION_ID_RE = re.compile(
@@ -35,6 +39,7 @@ MANIFEST_KEYS = frozenset(
     }
 )
 SNAPSHOT_FILENAMES = ("postgres.dump", "redis.rdb", "collector.db")
+MIN_SNAPSHOT_FREE_BYTES = 1024 * 1024 * 1024
 BUSINESS_TABLES = (
     "memory_item",
     "memory_relation",
@@ -258,6 +263,14 @@ class SourceService:
 
 
 @dataclass(frozen=True)
+class WriterIdentity:
+    service: str
+    container_id: str
+    image_id: str
+    volumes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class MigrationBundle:
     directory: Path
     manifest: MigrationManifest
@@ -326,6 +339,21 @@ def new_migration_id(now: datetime, source_sha: str, phase: str) -> str:
 
 def artifact_directory(root: Path, migration_id: str) -> Path:
     require_migration_id(migration_id)
+    candidate = root.absolute()
+    for ancestor in (candidate, *candidate.parents):
+        if not ancestor.exists() and not ancestor.is_symlink():
+            continue
+        try:
+            info = ancestor.lstat()
+        except OSError as exc:
+            raise MigrationError("migration artifact ancestor is unsafe") from exc
+        is_reparse = bool(
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        )
+        is_junction = bool(getattr(ancestor, "is_junction", lambda: False)())
+        if ancestor.is_symlink() or is_reparse or is_junction:
+            raise MigrationError("migration artifact ancestor is a link or junction")
     base = root.resolve()
     target = (base / migration_id).resolve()
     if target.parent != base:
@@ -628,12 +656,15 @@ def collect_aggregate_evidence(
     redis_container = f"car-agent-migration-{suffix}-redis"
     readonly_mount = f"type=bind,source={directory.resolve()},target=/snapshot,readonly"
     runner.run([
-        "docker", "run", "-d", "--name", pg_container, "--tmpfs",
+        "docker", "run", "--pull", "never", "-d", "--name", pg_container, "--tmpfs",
         "/var/lib/postgresql/data:rw,noexec,nosuid", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
         services["postgres"].image,
     ], cwd=repo)
     try:
-        runner.run(["docker", "exec", pg_container, "pg_isready", "-U", "postgres"], cwd=repo)
+        _wait_for_command(
+            ["docker", "exec", pg_container, "pg_isready", "-U", "postgres"],
+            runner, repo=repo, label="PostgreSQL",
+        )
         runner.run_from_file([
             "docker", "exec", "-i", pg_container, "pg_restore", "-U", "postgres", "-d",
             "postgres", "--clean", "--if-exists", "--no-owner", "--no-privileges",
@@ -646,12 +677,16 @@ def collect_aggregate_evidence(
     finally:
         runner.run(["docker", "rm", "-f", pg_container], cwd=repo)
     runner.run([
-        "docker", "run", "-d", "--name", redis_container, "--mount", readonly_mount,
+        "docker", "run", "--pull", "never", "-d", "--name", redis_container, "--mount", readonly_mount,
         "--entrypoint", "redis-server", services["redis"].image,
         "--dir", "/snapshot", "--dbfilename", "redis.rdb", "--appendonly", "no",
         "--protected-mode", "no",
     ], cwd=repo)
     try:
+        _wait_for_command(
+            ["docker", "exec", redis_container, "redis-cli", "PING"],
+            runner, repo=repo, label="Redis",
+        )
         redis_raw = runner.json([
             "docker", "exec", redis_container, "redis-cli", "--json", "EVAL",
             REDIS_AGGREGATE_LUA, "0",
@@ -900,13 +935,19 @@ def discover_source_services(
             or state.get("Restarting") is True
         ):
             raise MigrationError(f"source service is not stable: {service}")
-        if not isinstance(config, Mapping) or not isinstance(config.get("Image"), str):
+        image_id = inspect.get("Image")
+        if (
+            not isinstance(config, Mapping)
+            or not isinstance(config.get("Image"), str)
+            or not isinstance(image_id, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        ):
             raise MigrationError(f"source image is unavailable: {service}")
         mount = _exact_mount(inspect.get("Mounts"), destination)
         found[service] = SourceService(
             service=service,
             container_id=container_id,
-            image=config["Image"],
+            image=image_id,
             data_mount=mount["Name"],
         )
     return MappingProxyType(found)
@@ -945,7 +986,7 @@ def capture_redis(
 ) -> None:
     runner.run(
         [
-            "docker", "run", "--rm",
+            "docker", "run", "--pull", "never", "--rm",
             "--network", f"container:{service.container_id}",
             "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
             "--entrypoint", "redis-cli", service.image,
@@ -971,7 +1012,7 @@ def capture_collector(
     )
     runner.run(
         [
-            "docker", "run", "--rm", "--volumes-from", f"{service.container_id}:ro",
+            "docker", "run", "--pull", "never", "--rm", "--volumes-from", f"{service.container_id}:ro",
             "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
             "--entrypoint", "python", service.image, "-c", program,
         ],
@@ -988,14 +1029,14 @@ def _verify_snapshots(
 ) -> str:
     readonly_mount = f"type=bind,source={directory.resolve()},target=/snapshot,readonly"
     pg_result = runner.text(
-        ["docker", "run", "--rm", "--mount", readonly_mount, "--entrypoint", "pg_restore",
+        ["docker", "run", "--pull", "never", "--rm", "--mount", readonly_mount, "--entrypoint", "pg_restore",
          services["postgres"].image, "--list", "/snapshot/postgres.dump"],
         cwd=repo,
     )
     if not pg_result.strip():
         raise MigrationError("PostgreSQL snapshot format validation failed")
     redis_result = runner.text(
-        ["docker", "run", "--rm", "--mount", readonly_mount, "--entrypoint", "redis-check-rdb",
+        ["docker", "run", "--pull", "never", "--rm", "--mount", readonly_mount, "--entrypoint", "redis-check-rdb",
          services["redis"].image, "/snapshot/redis.rdb"],
         cwd=repo,
     )
@@ -1042,11 +1083,26 @@ def _manifest_payload(
     }
 
 
-def _quiesce_local_writers(
-    repo: Path,
-    services: Mapping[str, SourceService],
-    runner: BinaryCommandRunner,
+def _wait_for_command(
+    argv: Sequence[str], runner: BinaryCommandRunner, *, repo: Path, label: str,
+    attempts: int = 20,
 ) -> None:
+    last_error: MigrationError | None = None
+    for attempt in range(attempts):
+        try:
+            runner.run(argv, cwd=repo)
+            return
+        except MigrationError as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(0.25)
+    raise MigrationError(f"{label} readiness timed out") from last_error
+
+
+def _resolve_writer_identities(
+    repo: Path,
+    runner: BinaryCommandRunner,
+) -> tuple[WriterIdentity, ...]:
     compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
     raw = runner.text([*compose, "config", "--services"], cwd=repo)
     names = tuple(line.strip() for line in raw.splitlines() if line.strip())
@@ -1055,11 +1111,41 @@ def _quiesce_local_writers(
     writers = tuple(name for name in names if name not in {"postgres", "redis"})
     if not writers or "observability-collector" not in writers:
         raise MigrationError("collector writer is missing from compose services")
-    runner.run([*compose, "stop", *writers], cwd=repo)
+    identities: list[WriterIdentity] = []
     for name in writers:
         raw_cid = runner.text([*compose, "ps", "-a", "-q", name], cwd=repo)
         ids = tuple(line.strip() for line in raw_cid.splitlines() if line.strip())
         if len(ids) != 1 or re.fullmatch(r"[0-9a-f]{12,64}", ids[0]) is None:
+            raise MigrationError(f"local writer container identity is invalid: {name}")
+        inspect = _strict_single_inspect(runner.json(["docker", "inspect", ids[0]], cwd=repo))
+        state = inspect.get("State")
+        image_id = inspect.get("Image")
+        mounts = inspect.get("Mounts")
+        if (not isinstance(state, Mapping) or state.get("Running") is not True
+                or not isinstance(image_id, str)
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+                or not isinstance(mounts, list)):
+            raise MigrationError(f"local writer identity is unstable: {name}")
+        volumes = tuple(sorted(
+            item["Name"] for item in mounts
+            if isinstance(item, Mapping) and item.get("Type") == "volume"
+            and isinstance(item.get("Name"), str)
+        ))
+        identities.append(WriterIdentity(name, ids[0], image_id, volumes))
+    return tuple(identities)
+
+
+def _quiesce_local_writers(
+    repo: Path, identities: Sequence[WriterIdentity], runner: BinaryCommandRunner,
+) -> None:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    writers = tuple(item.service for item in identities)
+    runner.run([*compose, "stop", *writers], cwd=repo)
+    for identity in identities:
+        name = identity.service
+        raw_cid = runner.text([*compose, "ps", "-a", "-q", name], cwd=repo)
+        ids = tuple(line.strip() for line in raw_cid.splitlines() if line.strip())
+        if ids != (identity.container_id,):
             raise MigrationError(f"local writer container identity is invalid: {name}")
         inspect = _strict_single_inspect(
             runner.json(["docker", "inspect", ids[0]], cwd=repo)
@@ -1068,6 +1154,21 @@ def _quiesce_local_writers(
         if (not isinstance(state, Mapping) or state.get("Running") is not False
                 or state.get("Status") != "exited"):
             raise MigrationError(f"local writer did not exit: {name}")
+
+
+def _restart_local_writers(
+    repo: Path, identities: Sequence[WriterIdentity], runner: BinaryCommandRunner,
+) -> None:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    names = tuple(item.service for item in identities)
+    runner.run([*compose, "start", *names], cwd=repo)
+    for identity in identities:
+        inspect = _strict_single_inspect(
+            runner.json(["docker", "inspect", identity.container_id], cwd=repo)
+        )
+        state = inspect.get("State")
+        if not isinstance(state, Mapping) or state.get("Running") is not True:
+            raise MigrationError(f"local writer recovery failed: {identity.service}")
 
 
 def capture_local_snapshot(
@@ -1086,19 +1187,35 @@ def capture_local_snapshot(
         raise MigrationError("final snapshot requires quiesce-local and apply")
     if phase not in {"online", "final"}:
         raise MigrationError("invalid snapshot phase")
+    repo = repo.resolve()
+    try:
+        selection = resolve_target(repo)
+    except DevStackError as exc:
+        raise MigrationError("local development stack target is invalid") from exc
+    if selection.name != "local":
+        raise MigrationError("snapshot requires the local development stack target")
     clock = now or (lambda: datetime.now(UTC))
     current = clock()
     source_sha = runner.text(["git", "rev-parse", "HEAD"], cwd=repo).strip()
     migration_id = new_migration_id(current, source_sha, phase)
+    artifact_root = artifact_root.absolute()
+    artifact_directory(artifact_root, migration_id)
+    if shutil.disk_usage(repo).free < MIN_SNAPSHOT_FREE_BYTES:
+        raise MigrationError("insufficient local snapshot disk space")
+    services = discover_source_services(repo, runner)
+    writer_identities: tuple[WriterIdentity, ...] = ()
+    if phase == "final":
+        writer_identities = _resolve_writer_identities(repo, runner)
     artifact_root.mkdir(parents=True, exist_ok=True)
     directory = artifact_directory(artifact_root, migration_id)
     directory.mkdir(mode=0o700)
     restrict_private_tree(directory, runner)
     atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURING"})
+    writers_stopped = False
     try:
-        services = discover_source_services(repo, runner)
         if phase == "final":
-            _quiesce_local_writers(repo, services, runner)
+            _quiesce_local_writers(repo, writer_identities, runner)
+            writers_stopped = True
         pg_partial = directory / "postgres.dump.partial"
         capture_postgres(services["postgres"], pg_partial, runner, repo=repo)
         private_replace(pg_partial, directory / "postgres.dump")
@@ -1113,7 +1230,7 @@ def capture_local_snapshot(
             migration_id=migration_id,
             phase=phase,
             source_sha=source_sha,
-            created_at=current.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            created_at=current.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             **evidence,
         )
         manifest = build_manifest(snapshot)
@@ -1122,6 +1239,8 @@ def capture_local_snapshot(
         atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURED"})
     except Exception:
         atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURE_FAILED"})
+        if writers_stopped:
+            _restart_local_writers(repo, writer_identities, runner)
         raise
     files = tuple(directory / name for name in (*SNAPSHOT_FILENAMES, "manifest.json", "status.json"))
     return MigrationBundle(directory=directory, manifest=manifest, files=files)

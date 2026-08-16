@@ -88,6 +88,7 @@ class FakeBinaryRunner:
         running = name not in self.stopped
         return [{
             "Id": container_id,
+            "Image": "sha256:" + container_id.ljust(64, "0"),
             "State": {"Running": running, "Restarting": False, "Status": "running" if running else "exited"},
             "Config": {"Image": service[1]},
             "Mounts": [{"Type": "volume", "Name": service[2], "Destination": service[3]}],
@@ -97,6 +98,8 @@ class FakeBinaryRunner:
         call = self._record(argv)
         if "stop" in call:
             self.stopped.update(call[call.index("stop") + 1:])
+        if "start" in call:
+            self.stopped.difference_update(call[call.index("start") + 1:])
         if call[:2] == ("docker", "run"):
             mount = next((part for part in call if part.startswith("type=bind,source=")), None)
             if mount:
@@ -272,6 +275,82 @@ def test_final_capture_stops_writers_and_leaves_them_stopped(tmp_path: Path):
     assert not any("start" in call or "restart" in call for call in runner.calls)
     inspected = {call[-1] for call in runner.calls if call[:2] == ("docker", "inspect")}
     assert runner.writer_ids["gateway-cloud"] in inspected
+
+
+def test_snapshot_rejects_cloud_target_before_any_docker_call(tmp_path: Path):
+    (tmp_path / "dev-stack.local").write_text("target=cloud\n", encoding="ascii")
+    runner = FakeBinaryRunner()
+    with pytest.raises(migration.MigrationError, match="local development stack"):
+        migration.capture_local_snapshot(
+            repo=tmp_path,
+            artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+            phase="online",
+            runner=runner,
+        )
+    assert not any(call and call[0] == "docker" for call in runner.calls)
+
+
+def test_snapshot_uses_locked_image_digest_and_never_pulls(tmp_path: Path):
+    runner = FakeBinaryRunner()
+    migration.capture_local_snapshot(
+        repo=tmp_path,
+        artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+        phase="online",
+        runner=runner,
+        now=lambda: datetime(2026, 8, 16, 1, 2, 3, tzinfo=UTC),
+    )
+    docker_runs = [call for call in runner.calls if call[:2] == ("docker", "run")]
+    assert docker_runs
+    assert all("--pull" in call and call[call.index("--pull") + 1] == "never" for call in docker_runs)
+    assert all(any(part.startswith("sha256:") for part in call) for call in docker_runs)
+
+
+def test_final_resolves_all_writer_identity_before_stop_and_recovers_on_failure(tmp_path: Path):
+    class FailingRunner(FakeBinaryRunner):
+        def stream_to_file(self, argv, target: Path, *, cwd: Path):
+            self._record(argv)
+            raise migration.MigrationError("injected pg dump failure")
+
+    runner = FailingRunner()
+    with pytest.raises(migration.MigrationError, match="injected"):
+        migration.capture_local_snapshot(
+            repo=tmp_path,
+            artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+            phase="final",
+            quiesce_local=True,
+            apply=True,
+            runner=runner,
+            now=lambda: datetime(2026, 8, 17, 1, 2, 3, 987654, tzinfo=UTC),
+        )
+    stop_index = next(i for i, call in enumerate(runner.calls) if "stop" in call)
+    for writer_id in runner.writer_ids.values():
+        assert any(call[:2] == ("docker", "inspect") and call[-1] == writer_id
+                   for call in runner.calls[:stop_index])
+    assert any("start" in call and "gateway-cloud" in call for call in runner.calls)
+
+
+def test_snapshot_timestamp_is_canonical_utc_seconds(tmp_path: Path):
+    bundle = migration.capture_local_snapshot(
+        repo=tmp_path,
+        artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+        phase="online",
+        runner=FakeBinaryRunner(),
+        now=lambda: datetime(2026, 8, 16, 1, 2, 3, 987654, tzinfo=UTC),
+    )
+    assert bundle.manifest.created_at == "2026-08-16T01:02:03Z"
+    assert datetime.fromisoformat(bundle.manifest.created_at.replace("Z", "+00:00")).microsecond == 0
+
+
+def test_artifact_directory_rejects_symlink_or_junction_ancestor(tmp_path: Path):
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    try:
+        linked.symlink_to(real, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlink is unavailable")
+    with pytest.raises(migration.MigrationError, match="link|junction|reparse"):
+        migration.artifact_directory(linked, VALID_ID)
 
 
 def test_online_capture_rejects_mutating_flags(tmp_path: Path):
