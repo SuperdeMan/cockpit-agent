@@ -136,6 +136,9 @@ python scripts/cloud_release.py rollback --to 4c1f479 --apply
 时会在隔离临时目录中检出目标提交、执行 `buf generate proto`，再将 gitignore 的
 `gen/` 派生产物绑定到 `source.tar` 的 SHA-256；它不会读取当前工作树中的 `gen/`。
 上传完成后发布器会显式把远端 `transport.tar` 收紧为 `0600`，再进入服务端验签和构建。
+SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 BuildKit cache mount
+共享 pip wheel 下载缓存，缓存不写入最终镜像。发布失败后仍保留 build record、成功镜像
+和诊断目录，不自动删除。
 
 连接信息只通过命令行参数或以下环境变量提供，不写入仓库和发布 manifest：
 

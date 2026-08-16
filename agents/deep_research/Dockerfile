@@ -3,9 +3,9 @@ FROM python:3.11-slim
 WORKDIR /app
 
 COPY agents/_sdk/requirements.txt /tmp/req.txt
-RUN pip install --no-cache-dir -r /tmp/req.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install -r /tmp/req.txt
 COPY agents/deep_research/requirements.txt /tmp/req-research.txt
-RUN pip install --no-cache-dir -r /tmp/req-research.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install -r /tmp/req-research.txt
 
 COPY gen/python /app/gen/python
 COPY agents /app/agents

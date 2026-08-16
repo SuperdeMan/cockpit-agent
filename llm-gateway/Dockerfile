@@ -11,7 +11,7 @@ COPY llm-gateway/requirements.txt .
 # sherpa-onnx（声纹，带 onnxruntime）一个包就要十几分钟。默认走阿里云镜像；
 # 需要直连（如 CI/海外）时 `--build-arg PIP_INDEX_URL=https://pypi.org/simple`。
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-RUN pip install --no-cache-dir -i "$PIP_INDEX_URL" -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install -i "$PIP_INDEX_URL" -r requirements.txt
 
 COPY gen/python /app/gen/python
 COPY llm-gateway /app/llm-gateway

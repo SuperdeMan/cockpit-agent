@@ -131,6 +131,22 @@ def test_release_services_manifest_is_ordered_and_matches_cloud_compose():
     )
 
 
+def test_python_dockerfiles_share_a_locked_buildkit_pip_cache():
+    dockerfiles = sorted(ROOT.rglob("Dockerfile"))
+    python_dockerfiles = []
+    for path in dockerfiles:
+        text = path.read_text(encoding="utf-8")
+        if "pip install" not in text:
+            continue
+        python_dockerfiles.append(path)
+        assert "--no-cache-dir" not in text, path.relative_to(ROOT)
+        assert (
+            "--mount=type=cache,target=/root/.cache/pip,sharing=locked"
+            in text
+        ), path.relative_to(ROOT)
+    assert len(python_dockerfiles) >= 20
+
+
 def test_runtime_model_manifest_has_exact_validated_files():
     manifest = json.loads(_required_text(RUNTIME_MODELS_PATH))
     models = manifest["models"]
