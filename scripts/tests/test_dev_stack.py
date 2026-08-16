@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import socket
+import ssl
+import threading
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace
+from urllib.error import HTTPError, URLError
 
 import pytest
 
@@ -14,6 +20,19 @@ from scripts.cloud_release_lib import (
     ReleaseRequest,
     SshConfig,
 )
+
+
+@contextmanager
+def temporary_http_server(handler_type: type[BaseHTTPRequestHandler]):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler_type)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
 
 
 def write_stack_target(repo: Path, content: bytes) -> Path:
@@ -576,7 +595,7 @@ def test_inspect_local_status_only_reads_compose_and_checks_five_fixed_endpoints
         [
             command_result("docker", "info"),
             command_result(
-                "docker", "compose", "-f", "compose.yaml", "ps", "--format", "json",
+                "docker", "compose", "-f", "compose.yaml", "ps", "--all", "--format", "json",
                 stdout=containers,
             ),
         ],
@@ -592,7 +611,7 @@ def test_inspect_local_status_only_reads_compose_and_checks_five_fixed_endpoints
     assert not status.warnings
     assert runner.commands == [
         ("docker", "info"),
-        ("docker", "compose", "-f", "compose.yaml", "ps", "--format", "json"),
+        ("docker", "compose", "-f", "compose.yaml", "ps", "--all", "--format", "json"),
     ]
     assert runner.urls == list(urls)
     assert all("up" not in command and "build" not in command for command in runner.commands)
@@ -640,6 +659,7 @@ def test_inspect_cloud_status_is_read_only_and_serializes_no_sensitive_transport
 
     assert status.target == "cloud"
     assert status.release_sha == "1" * 40
+    assert (status.container_total, status.container_running) == (None, None)
     assert status.healthy_endpoints == 4
     assert runner.commands[0][0] == "ssh"
     assert all(
@@ -652,10 +672,11 @@ def test_inspect_cloud_status_is_read_only_and_serializes_no_sensitive_transport
     assert "PRIVATE KEY" not in serialized
 
 
-def test_inspect_status_redacts_sensitive_probe_exception_text(tmp_path: Path):
+def test_inspect_status_does_not_store_sensitive_probe_exception_text(tmp_path: Path):
     urls = {
-        "http://localhost:5173/": RuntimeError(
-            "super-secret-token postgresql://user:pass@db/private "
+        "http://localhost:5173/": URLError(
+            "super-secret-token password=correct-horse "
+            "Bearer bearer-secret postgresql://user:pass@db/private "
             "-----BEGIN PRIVATE KEY-----"
         ),
         "http://localhost:8090/healthz": dev.HttpResponse(200),
@@ -675,8 +696,125 @@ def test_inspect_status_redacts_sensitive_probe_exception_text(tmp_path: Path):
     assert runner.commands == [("docker", "info")]
     assert status.warnings == ("local Docker daemon is unavailable",)
     assert "super-secret-token" not in serialized
+    assert "correct-horse" not in serialized
+    assert "bearer-secret" not in serialized
     assert "postgresql://" not in serialized
     assert "PRIVATE KEY" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status", "expected_code"),
+    [
+        (TimeoutError(), "timeout", None),
+        (ssl.SSLError("certificate failed"), "tls_error", None),
+        (URLError(socket.gaierror()), "dns_error", None),
+        (HTTPError("http://localhost/", 503, "unavailable", {}, None), "http_error", 503),
+        (URLError("connection refused"), "network_error", None),
+    ],
+    ids=["timeout", "tls", "dns", "http", "url"],
+)
+def test_endpoint_probe_classifies_expected_transport_failures(
+    failure: BaseException, expected_status: str, expected_code: int | None
+):
+    runner = FakeStatusRunner([], {"http://localhost:9999/": failure})
+
+    result = dev._endpoint_status("test", "http://localhost:9999", "/", runner)
+
+    assert result.status == expected_status
+    assert result.http_status == expected_code
+
+
+@pytest.mark.parametrize("failure", [AssertionError("bug"), TypeError("bug")])
+def test_endpoint_probe_propagates_unexpected_programming_errors(failure: BaseException):
+    runner = FakeStatusRunner([], {"http://localhost:9999/": failure})
+
+    with pytest.raises(type(failure)):
+        dev._endpoint_status("test", "http://localhost:9999", "/", runner)
+
+
+def make_cloud_request(tmp_path: Path) -> ReleaseRequest:
+    identity = tmp_path / "agent.pem"
+    identity.write_text("not-a-real-key\n", encoding="utf-8")
+    return ReleaseRequest(
+        repo=tmp_path,
+        revision="1" * 40,
+        artifact_root=tmp_path / "artifacts",
+        ssh=SshConfig(host="server.example.invalid", user="ubuntu", identity=identity),
+    )
+
+
+def test_inspect_cloud_status_propagates_unexpected_discovery_errors(tmp_path: Path):
+    runner = FakeStatusRunner([TypeError("programmer error")], {})
+
+    with pytest.raises(TypeError, match="programmer error"):
+        dev.inspect_cloud_status(
+            make_cloud_request(tmp_path),
+            dev.cloud_endpoints("demo.ts.net"),
+            runner,
+        )
+
+
+def test_default_status_runner_does_not_follow_same_origin_redirect():
+    requests: list[str] = []
+
+    class SameOriginRedirect(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if self.path == "/":
+                self.send_response(302)
+                self.send_header("Location", "/redirected")
+            else:
+                self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, _format, *_args):
+            pass
+
+    with temporary_http_server(SameOriginRedirect) as server:
+        host, port = server.server_address
+        result = dev._endpoint_status(
+            "test", f"http://{host}:{port}", "/", dev.DefaultStackStatusRunner()
+        )
+
+    assert (result.status, result.http_status) == ("http_error", 302)
+    assert requests == ["/"]
+
+
+def test_default_status_runner_does_not_follow_cross_origin_redirect():
+    target_requests: list[str] = []
+
+    class Target(BaseHTTPRequestHandler):
+        def do_GET(self):
+            target_requests.append(self.path)
+            self.send_response(204)
+            self.end_headers()
+
+        def log_message(self, _format, *_args):
+            pass
+
+    with temporary_http_server(Target) as target:
+        target_host, target_port = target.server_address
+
+        class CrossOriginRedirect(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(302)
+                self.send_header("Location", f"http://{target_host}:{target_port}/target")
+                self.end_headers()
+
+            def log_message(self, _format, *_args):
+                pass
+
+        with temporary_http_server(CrossOriginRedirect) as source:
+            source_host, source_port = source.server_address
+            result = dev._endpoint_status(
+                "test",
+                f"http://{source_host}:{source_port}",
+                "/",
+                dev.DefaultStackStatusRunner(),
+            )
+
+    assert (result.status, result.http_status) == ("http_error", 302)
+    assert target_requests == []
 
 
 def test_inspect_local_status_handles_release_error_without_running_compose(
@@ -696,7 +834,7 @@ def test_inspect_local_status_handles_release_error_without_running_compose(
     status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
     serialized = json.dumps(dev.stack_status_to_dict(status))
 
-    assert status.container_total == 0
+    assert status.container_total is None
     assert status.warnings == ("local Docker daemon is unavailable",)
     assert runner.commands == [("docker", "info")]
     assert all(
@@ -706,3 +844,95 @@ def test_inspect_local_status_handles_release_error_without_running_compose(
     )
     assert "super-secret-token" not in serialized
     assert "postgresql://" not in serialized
+
+
+def test_inspect_local_status_aggregates_scaled_services_from_json_array(
+    tmp_path: Path,
+):
+    containers = json.dumps(
+        [
+            {"Service": "postgres", "State": "exited"},
+            {"Service": "redis", "State": "running"},
+            {"Service": "postgres", "State": "running"},
+            {"Service": "redis", "State": "exited"},
+            {"Service": "edge-gateway", "State": "exited"},
+            {"Service": "edge-gateway", "State": "exited"},
+            {"Service": "llm-gateway", "State": "running"},
+            {"Service": "observability-collector", "State": "running"},
+            {"Service": "hmi", "State": "running"},
+            {"Service": "dashboard", "State": "exited"},
+            {"Service": "unrelated-current-project-service", "State": "running"},
+        ]
+    )
+    urls = {
+        "http://localhost:5173/": dev.HttpResponse(200),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [
+            command_result("docker", "info"),
+            command_result("docker", "compose", stdout=containers),
+        ],
+        urls,
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+
+    assert (status.container_total, status.container_running) == (11, 6)
+    assert status.warnings == (
+        "required local service is not running: dashboard",
+        "required local service is not running: edge-gateway",
+    )
+    assert not any("postgres" in warning for warning in status.warnings)
+    assert not any("redis" in warning for warning in status.warnings)
+
+
+def test_inspect_local_status_marks_counts_unknown_when_compose_json_is_malformed(
+    tmp_path: Path,
+):
+    urls = {
+        "http://localhost:5173/": dev.HttpResponse(200),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [
+            command_result("docker", "info"),
+            command_result("docker", "compose", stdout="{not JSON"),
+        ],
+        urls,
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+
+    assert (status.container_total, status.container_running) == (None, None)
+    assert status.warnings == ("local Compose status returned invalid JSON",)
+
+
+def test_inspect_local_status_marks_counts_unknown_when_compose_command_fails(
+    tmp_path: Path,
+):
+    urls = {
+        "http://localhost:5173/": dev.HttpResponse(200),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [
+            command_result("docker", "info"),
+            command_result("docker", "compose", returncode=1),
+        ],
+        urls,
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+
+    assert (status.container_total, status.container_running) == (None, None)
+    assert status.warnings == ("local Compose status is unavailable",)

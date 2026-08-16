@@ -14,7 +14,7 @@ import ssl
 from typing import Iterable, Literal, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from scripts.cloud_release_lib import (
     CommandResult,
@@ -73,8 +73,8 @@ class EndpointStatus:
 class StackStatus:
     target: Literal["local", "cloud"]
     release_sha: str | None
-    container_total: int
-    container_running: int
+    container_total: int | None
+    container_running: int | None
     healthy_endpoints: int
     endpoint_results: tuple[EndpointStatus, ...]
     warnings: tuple[str, ...]
@@ -90,18 +90,24 @@ class StackStatusRunner(Protocol):
         pass
 
 
+class _NoRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, new_url):
+        return None
+
+
 class DefaultStackStatusRunner:
     """Production runner with no mutating command or HTTP capability."""
 
     def __init__(self) -> None:
         self._commands = SubprocessRunner()
+        self._opener = build_opener(_NoRedirectHandler())
 
     def run(self, argv: Sequence[str], *, cwd: Path, **kwargs) -> CommandResult:
         return self._commands.run(argv, cwd=cwd, **kwargs)
 
     def get(self, url: str, *, timeout_s: float) -> HttpResponse:
         request = Request(url, method="GET")
-        with urlopen(request, timeout=timeout_s) as response:
+        with self._opener.open(request, timeout=timeout_s) as response:
             return HttpResponse(status_code=int(response.getcode()))
 
 
@@ -434,18 +440,6 @@ _REQUIRED_LOCAL_SERVICES = frozenset(
         "dashboard",
     )
 )
-_SENSITIVE_DSN_RE = re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|redis)://[^\s]+")
-_SENSITIVE_WORD_RE = re.compile(r"(?i)\b[\w-]*(?:secret|token)[\w-]*\b")
-_PRIVATE_KEY_RE = re.compile(r"(?i)private\s+key")
-
-
-def _redact_status_text(value: str) -> str:
-    """Keep status output categorical: never retain diagnostic transport text."""
-    value = _SENSITIVE_DSN_RE.sub("[REDACTED_DSN]", value)
-    value = _SENSITIVE_WORD_RE.sub("[REDACTED]", value)
-    return _PRIVATE_KEY_RE.sub("[REDACTED]", value)
-
-
 def _status_url(base: str, path: str) -> str | None:
     """Return a public HTTP URL with credentials, query, and fragment removed."""
     try:
@@ -486,13 +480,11 @@ def _endpoint_status(
         if isinstance(exc.reason, TimeoutError):
             return EndpointStatus(name, url, "timeout", None)
         return EndpointStatus(name, url, "network_error", None)
-    except OSError:
+    except ReleaseError:
         return EndpointStatus(name, url, "network_error", None)
-    except Exception:
-        # Probe errors are intentionally reduced to a category: exceptions can
-        # retain request URLs, credentials, headers, or transport diagnostics.
+    except (ConnectionError, socket.gaierror):
         return EndpointStatus(name, url, "network_error", None)
-    if 200 <= code < 400:
+    if 200 <= code < 300:
         return EndpointStatus(name, url, "healthy", code)
     return EndpointStatus(name, url, "http_error", code)
 
@@ -537,27 +529,38 @@ def _parse_compose_ps(payload: str) -> tuple[tuple[str, bool], ...] | None:
 
 def _local_container_status(
     repo: Path, runner: StackStatusRunner
-) -> tuple[int, int, tuple[str, ...]]:
+) -> tuple[int | None, int | None, tuple[str, ...]]:
     try:
         info = runner.run(("docker", "info"), cwd=repo, check=False)
     except (OSError, ReleaseError):
-        return 0, 0, ("local Docker daemon is unavailable",)
+        return None, None, ("local Docker daemon is unavailable",)
     if info.returncode != 0:
-        return 0, 0, ("local Docker daemon is unavailable",)
+        return None, None, ("local Docker daemon is unavailable",)
     try:
         compose = runner.run(
-            ("docker", "compose", "-f", "compose.yaml", "ps", "--format", "json"),
+            (
+                "docker",
+                "compose",
+                "-f",
+                "compose.yaml",
+                "ps",
+                "--all",
+                "--format",
+                "json",
+            ),
             cwd=repo,
             check=False,
         )
     except (OSError, ReleaseError):
-        return 0, 0, ("local Compose status is unavailable",)
+        return None, None, ("local Compose status is unavailable",)
     if compose.returncode != 0:
-        return 0, 0, ("local Compose status is unavailable",)
+        return None, None, ("local Compose status is unavailable",)
     containers = _parse_compose_ps(compose.stdout)
     if containers is None:
-        return 0, 0, ("local Compose status returned invalid JSON",)
-    observed = {service: running for service, running in containers}
+        return None, None, ("local Compose status returned invalid JSON",)
+    observed: dict[str, bool] = {}
+    for service, running in containers:
+        observed[service] = observed.get(service, False) or running
     warnings = tuple(
         f"required local service is {'not running' if service in observed else 'missing'}: {service}"
         for service in sorted(_REQUIRED_LOCAL_SERVICES)
@@ -591,7 +594,7 @@ def inspect_cloud_status(
     release_sha: str | None = None
     try:
         state = discover_remote_state(cloud_request, runner=runner)
-    except (ReleaseError, OSError, ValueError, TypeError):
+    except (ReleaseError, OSError):
         warnings.append("remote cloud status is unavailable")
     else:
         release_sha = state.current_release
@@ -609,11 +612,11 @@ def inspect_cloud_status(
     return StackStatus(
         target="cloud",
         release_sha=release_sha,
-        container_total=0,
-        container_running=0,
+        container_total=None,
+        container_running=None,
         healthy_endpoints=sum(item.status == "healthy" for item in endpoint_results),
         endpoint_results=endpoint_results,
-        warnings=tuple(_redact_status_text(warning) for warning in warnings),
+        warnings=tuple(warnings),
     )
 
 
@@ -628,11 +631,11 @@ def stack_status_to_dict(status: StackStatus) -> dict[str, object]:
         "endpoint_results": [
             {
                 "name": result.name,
-                "url": _redact_status_text(result.url),
+                "url": result.url,
                 "status": result.status,
                 "http_status": result.http_status,
             }
             for result in status.endpoint_results
         ],
-        "warnings": [_redact_status_text(warning) for warning in status.warnings],
+        "warnings": list(status.warnings),
     }
