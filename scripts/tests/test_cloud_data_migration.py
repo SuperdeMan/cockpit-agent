@@ -287,6 +287,17 @@ def test_redis_prefix_is_bounded_and_redacted(key: bytes, expected: str):
     assert migration.redis_prefix(key) == expected
 
 
+def test_aggregate_probes_are_executable_and_fixed_scope():
+    assert "fixed table counts" not in migration.POSTGRES_AGGREGATE_SQL
+    assert "json_build_object" in migration.POSTGRES_AGGREGATE_SQL
+    assert "information_schema.columns" in migration.POSTGRES_AGGREGATE_SQL
+    assert all(name in migration.POSTGRES_AGGREGATE_SQL for name in migration.BUSINESS_TABLES)
+    assert "cloud-migration aggregate" not in migration.REDIS_AGGREGATE_LUA
+    assert "redis.setresp(3)" in migration.REDIS_AGGREGATE_LUA
+    assert 'redis.call("SCAN"' in migration.REDIS_AGGREGATE_LUA
+    assert 'redis.call("PTTL"' in migration.REDIS_AGGREGATE_LUA
+
+
 class FakeRemoteRunner:
     def __init__(self, remote_payload: dict[str, object] | None = None) -> None:
         self.calls: list[tuple[str, ...]] = []

@@ -294,6 +294,22 @@ def test_remote_migration_reentry_and_rollback_preserve_both_datasets():
     assert "os.chmod(source" not in text
 
 
+def test_remote_inspection_and_preflight_use_real_schema_fingerprints():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert "inspect-required" not in text
+    for required in (
+        "SHOW server_version_num",
+        "SELECT extversion FROM pg_extension WHERE extname='vector'",
+        "information_schema.columns",
+        "redis_version",
+        "PRAGMA user_version",
+        "sqlite_master",
+        'current["stores"]["postgres"]["schema_fingerprint"]',
+        'manifest["postgres"]["schema_fingerprint"]',
+    ):
+        assert required in text
+
+
 def test_remote_release_validates_prepare_upload_and_deploy_ids():
     text = _required_text(REMOTE_RELEASE_PATH)
     assert "validate_full_sha" in text

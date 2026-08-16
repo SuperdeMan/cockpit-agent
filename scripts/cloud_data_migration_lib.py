@@ -63,8 +63,91 @@ FROM (
   WHERE table_schema='public'
 ) x
 """.strip()
-POSTGRES_AGGREGATE_SQL = "/* cloud-migration aggregate: fixed table counts, states, schema only */"
-REDIS_AGGREGATE_LUA = "/* cloud-migration aggregate: prefix/type/ttl counts only */"
+POSTGRES_AGGREGATE_SQL = r"""
+WITH table_counts(name, count) AS (
+  SELECT 'memory_item', count(*) FROM memory_item UNION ALL
+  SELECT 'memory_relation', count(*) FROM memory_relation UNION ALL
+  SELECT 'reminder_item', count(*) FROM reminder_item UNION ALL
+  SELECT 'task_ledger', count(*) FROM task_ledger UNION ALL
+  SELECT 'proactive_delivery', count(*) FROM proactive_delivery UNION ALL
+  SELECT 'scene_item', count(*) FROM scene_item UNION ALL
+  SELECT 'voiceprint', count(*) FROM voiceprint UNION ALL
+  SELECT 'agents', count(*) FROM agents UNION ALL
+  SELECT 'agent_capability_vec', count(*) FROM agent_capability_vec
+), columns_data AS (
+  SELECT json_agg(json_build_array(table_name, column_name, ordinal_position,
+             data_type, udt_name, is_nullable, column_default)
+             ORDER BY table_name, ordinal_position) AS value
+  FROM information_schema.columns WHERE table_schema='public'
+), primary_key_data AS (
+  SELECT json_agg(json_build_array(tc.table_name, tc.constraint_name, kcu.column_name)
+             ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position) AS value
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name
+  WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'
+), index_data AS (
+  SELECT json_agg(json_build_array(tablename, indexname) ORDER BY tablename, indexname) AS value
+  FROM pg_indexes WHERE schemaname='public'
+)
+SELECT json_build_object(
+  'major', (current_setting('server_version_num')::int / 10000)::text,
+  'vector_version', COALESCE((SELECT extversion FROM pg_extension WHERE extname='vector'), ''),
+  'tables', (SELECT json_object_agg(name, count) FROM table_counts),
+  'states', json_build_object(
+    'reminder_item.status', (SELECT COALESCE(json_object_agg(status, count), '{}'::json)
+       FROM (SELECT status, count(*) count FROM reminder_item GROUP BY status) x),
+    'task_ledger.status', (SELECT COALESCE(json_object_agg(status, count), '{}'::json)
+       FROM (SELECT status, count(*) count FROM task_ledger GROUP BY status) x),
+    'proactive_delivery.state', (SELECT COALESCE(json_object_agg(state, count), '{}'::json)
+       FROM (SELECT state, count(*) count FROM proactive_delivery GROUP BY state) x),
+    'scene_item.status', (SELECT COALESCE(json_object_agg(status, count), '{}'::json)
+       FROM (SELECT status, count(*) count FROM scene_item GROUP BY status) x)
+  ),
+  'columns', COALESCE((SELECT value FROM columns_data), '[]'::json),
+  'primary_keys', COALESCE((SELECT value FROM primary_key_data), '[]'::json),
+  'indexes', COALESCE((SELECT value FROM index_data), '[]'::json)
+)
+""".strip()
+REDIS_AGGREGATE_LUA = r"""
+redis.setresp(3)
+local cursor = "0"
+local prefixes, types = {}, {}
+local key_count, persistent, expiring = 0, 0, 0
+local min_ttl, max_ttl = nil, 0
+repeat
+  local page = redis.call("SCAN", cursor, "COUNT", 1000)
+  cursor = page[1]
+  for _, key in ipairs(page[2]) do
+    key_count = key_count + 1
+    local prefix = string.match(key, "^([A-Za-z0-9_-]+):") or "other"
+    if string.len(prefix) > 32 then prefix = "other" end
+    prefixes[prefix] = (prefixes[prefix] or 0) + 1
+    local kind = redis.call("TYPE", key)
+    if type(kind) == "table" then kind = kind.ok end
+    types[kind] = (types[kind] or 0) + 1
+    local ttl = redis.call("PTTL", key)
+    if ttl < 0 then
+      persistent = persistent + 1
+    else
+      expiring = expiring + 1
+      if min_ttl == nil or ttl < min_ttl then min_ttl = ttl end
+      if ttl > max_ttl then max_ttl = ttl end
+    end
+  end
+until cursor == "0"
+local prefix_items, type_items = {}, {}
+for key, value in pairs(prefixes) do table.insert(prefix_items, key); table.insert(prefix_items, value) end
+for key, value in pairs(types) do table.insert(type_items, key); table.insert(type_items, value) end
+local info = redis.call("INFO", "server")
+local version = string.match(info, "redis_version:([^\r\n]+)") or "unknown"
+return {map={
+  "version", version, "rdb_version", 1, "key_count", key_count,
+  "prefixes", {map=prefix_items}, "types", {map=type_items},
+  "persistent", persistent, "expiring", expiring,
+  "min_ttl_ms", min_ttl or 0, "max_ttl_ms", max_ttl
+}}
+""".strip()
 
 
 class MigrationError(RuntimeError):
@@ -388,9 +471,13 @@ def _redis_evidence(payload: object, rdb_path: Path) -> Mapping[str, object]:
     data = _exact_keys(payload, expected, "Redis aggregate")
     if not isinstance(data["version"], str) or len(data["version"]) > 32:
         raise MigrationError("invalid Redis version")
+    header = rdb_path.read_bytes()[:9]
+    if len(header) != 9 or not header.startswith(b"REDIS") or not header[5:].isdigit():
+        raise MigrationError("Redis snapshot header is invalid")
+    rdb_version = int(header[5:])
     result: dict[str, object] = {
         "version": data["version"],
-        "rdb_version": _strict_int(data["rdb_version"], "RDB version", minimum=1),
+        "rdb_version": rdb_version,
         "key_count": _strict_int(data["key_count"], "Redis key count"),
         "prefixes": dict(_bounded_count_map(data["prefixes"], "Redis prefixes")),
         "types": dict(_bounded_count_map(data["types"], "Redis types")),

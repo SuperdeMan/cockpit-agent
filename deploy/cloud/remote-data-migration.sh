@@ -119,27 +119,104 @@ run_required_backup() {
 }
 
 inspect_current() {
+  local postgres_version_num vector_version postgres_schema_json postgres_schema_fingerprint
+  local redis_info redis_version redis_fingerprint collector_json disk_available
   load_runtime
-  python3 - "${CURRENT_RELEASE}" "${RUNTIME_PROJECT_NAME}" <<'PY'
-import json, shutil, sys
+  [[ -n "$("${compose[@]}" ps -q --status running postgres)" ]] || die "postgres is not running"
+  [[ -n "$("${compose[@]}" ps -q --status running redis)" ]] || die "redis is not running"
+  [[ -n "$("${compose[@]}" ps -q --status running observability-collector)" ]] \
+    || die "collector is not running"
+  postgres_version_num="$("${compose[@]}" exec -T postgres \
+    psql -U cockpit -d cockpit -At -c "SHOW server_version_num")"
+  vector_version="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At \
+    -c "SELECT extversion FROM pg_extension WHERE extname='vector'")"
+  postgres_schema_json="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At <<'SQL'
+SELECT json_build_object(
+  'columns', COALESCE((SELECT json_agg(json_build_array(table_name,column_name,ordinal_position,
+    data_type,udt_name,is_nullable,column_default) ORDER BY table_name,ordinal_position)
+    FROM information_schema.columns WHERE table_schema='public'), '[]'::json),
+  'primary_keys', COALESCE((SELECT json_agg(json_build_array(tc.table_name,tc.constraint_name,kcu.column_name)
+    ORDER BY tc.table_name,tc.constraint_name,kcu.ordinal_position)
+    FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name
+    WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'), '[]'::json),
+  'indexes', COALESCE((SELECT json_agg(json_build_array(tablename,indexname) ORDER BY tablename,indexname)
+    FROM pg_indexes WHERE schemaname='public'), '[]'::json)
+);
+SQL
+)"
+  postgres_schema_fingerprint="$(printf '%s' "${postgres_schema_json}" | python3 -c '
+import hashlib,json,sys
+value=json.load(sys.stdin)
+encoded=json.dumps(value,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")
+print(hashlib.sha256(encoded).hexdigest())
+')"
+  redis_info="$("${compose[@]}" exec -T redis redis-cli --raw INFO server)"
+  redis_version="$(printf '%s\n' "${redis_info}" | sed -n 's/^redis_version://p' | tr -d '\r')"
+  [[ "${redis_version}" =~ ^[0-9]+([.][0-9]+){1,3}$ ]] || die "redis_version is invalid"
+  redis_fingerprint="$(printf '%s' "${redis_version}" | sha256sum | cut -d' ' -f1)"
+  collector_json="$("${compose[@]}" exec -T observability-collector python -c '
+import hashlib,json,sqlite3
+with sqlite3.connect("file:/data/obs.db?mode=ro", uri=True) as connection:
+    version=connection.execute("PRAGMA user_version").fetchone()[0]
+    rows=connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall()
+encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")
+print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest()},sort_keys=True,separators=(",", ":")))
+')"
+  disk_available="$(df --output=avail -B1 "${RELEASE_ROOT}" | tail -n 1 | tr -d ' ')"
+  python3 - "${CURRENT_RELEASE}" "${RUNTIME_PROJECT_NAME}" "${disk_available}" \
+    "${postgres_version_num}" "${vector_version}" "${postgres_schema_fingerprint}" \
+    "${redis_version}" "${redis_fingerprint}" "${collector_json}" <<'PY'
+import json, re, sys
+collector=json.loads(sys.argv[9])
+if re.fullmatch(r"[0-9a-f]{64}", sys.argv[6]) is None: raise SystemExit("invalid postgres fingerprint")
+if re.fullmatch(r"[0-9a-f]{64}", sys.argv[8]) is None: raise SystemExit("invalid redis fingerprint")
 print(json.dumps({
     "current_release": sys.argv[1],
     "runtime_project_name": sys.argv[2],
-    "disk_available_bytes": shutil.disk_usage("/opt/car-agent").free,
-    "stores": {"postgres": {"schema_fingerprint": "inspect-required"},
-               "redis": {"schema_fingerprint": "inspect-required"},
-               "collector": {"schema_fingerprint": "inspect-required"}},
+    "disk_available_bytes": int(sys.argv[3]),
+    "stores": {
+        "postgres": {"major": str(int(sys.argv[4]) // 10000), "vector_version": sys.argv[5],
+                     "schema_fingerprint": sys.argv[6], "running": True},
+        "redis": {"version": sys.argv[7], "schema_fingerprint": sys.argv[8], "running": True},
+        "collector": {**collector, "running": True},
+    },
     "status": "inspect_only",
 }, sort_keys=True, separators=(",", ":")))
 PY
 }
 
 preflight_migration() {
-  local migration_id="$1"
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}" current_file
   load_runtime
   require_import_bundle "${migration_id}"
-  [[ "$(df --output=avail -B1 "${IMPORT_ROOT}/${migration_id}" | tail -n 1)" =~ ^[[:space:]]*[0-9]+$ ]] \
-    || die "could not determine migration disk availability"
+  current_file="${directory}/preflight-current.json"
+  inspect_current >"${current_file}.partial"
+  chmod 0600 -- "${current_file}.partial"
+  mv -T "${current_file}.partial" "${current_file}"
+  python3 - "${directory}/manifest.json" "${current_file}" <<'PY'
+import json, sys
+from pathlib import Path
+manifest=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+current=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if Path(current["current_release"]).name != manifest["source_sha"]:
+    raise SystemExit("current release does not match migration source")
+if current["stores"]["postgres"]["schema_fingerprint"] != manifest["postgres"]["schema_fingerprint"]:
+    raise SystemExit("PostgreSQL schema fingerprint mismatch")
+if current["stores"]["postgres"]["major"] != manifest["postgres"]["major"]:
+    raise SystemExit("PostgreSQL major version mismatch")
+if current["stores"]["collector"]["schema_fingerprint"] != manifest["collector"]["schema_fingerprint"]:
+    raise SystemExit("Collector schema fingerprint mismatch")
+if current["stores"]["collector"]["user_version"] != manifest["collector"]["user_version"]:
+    raise SystemExit("Collector user_version mismatch")
+source_redis_major=str(manifest["redis"]["version"]).split(".",1)[0]
+target_redis_major=str(current["stores"]["redis"]["version"]).split(".",1)[0]
+if source_redis_major != target_redis_major:
+    raise SystemExit("Redis major version mismatch")
+required=sum(item["size_bytes"] for item in manifest["files"].values()) * 3
+if current["disk_available_bytes"] < required:
+    raise SystemExit("insufficient migration disk space")
+PY
   "${compose[@]}" config --services >/dev/null
   printf '{"migration_id":"%s","status":"preflight_ok"}\n' "${migration_id}"
 }
