@@ -22,6 +22,7 @@ HMI_DOCKERFILE_PATH = CLOUD_DIR / "hmi.Dockerfile"
 HMI_DOCKERIGNORE_PATH = CLOUD_DIR / "hmi.Dockerfile.dockerignore"
 HMI_VITE_CONFIG_PATH = CLOUD_DIR / "vite.hmi.cloud.config.mjs"
 BACKUP_PATH = CLOUD_DIR / "backup.sh"
+TRANSACTION_LOCK_PATH = CLOUD_DIR / "transaction-lock.sh"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
@@ -225,12 +226,34 @@ def test_cloud_hmi_build_uses_only_the_validated_client_model_context():
 
 def test_remote_release_holds_one_lock_for_the_full_transaction():
     text = _required_text(REMOTE_RELEASE_PATH)
-    assert 'exec 9>"${RELEASE_LOCK}"' in text
-    assert "flock -n 9" in text
+    assert 'source "${SCRIPT_ROOT}/transaction-lock.sh"' in text
+    assert 'transaction_lock_acquire "${kind}"' in text
     assert "build_release" in text
     assert "activate_release" in text
     assert "verify_current_release" in text
-    assert text.index("flock -n 9") < text.index("build_release")
+    assert text.index('transaction_lock_acquire "${kind}"') < text.index("build_release")
+
+
+def test_every_mutating_cloud_entrypoint_uses_transaction_lock():
+    lock = _required_text(TRANSACTION_LOCK_PATH)
+    release = _required_text(REMOTE_RELEASE_PATH)
+    backup = _required_text(BACKUP_PATH)
+    activate = _required_text(ACTIVATE_RELEASE_PATH)
+    assert 'TRANSACTION_LOCK="${SHARED_ROOT}/locks/release.lock"' in lock
+    assert 'transaction_lock_acquire "${kind}"' in release
+    assert 'transaction_lock_acquire "backup"' in backup
+    assert "--transaction-lock-fd" in backup
+    assert 'transaction_lock_validate_inherited "${TRANSACTION_LOCK_FD}"' in backup
+    assert "run_required_backup" in activate
+    assert '--transaction-lock-fd "${TRANSACTION_LOCK_FD}"' in activate
+
+
+def test_transaction_lock_is_nonblocking_and_reports_bounded_holder():
+    text = _required_text(TRANSACTION_LOCK_PATH)
+    assert 'flock -n "${TRANSACTION_LOCK_FD}"' in text
+    assert "return 75" in text
+    assert "release|rollback|backup|migration|e2e" in text
+    assert 'readlink "/proc/$$/fd/${descriptor}"' in text
 
 
 def test_remote_release_validates_prepare_upload_and_deploy_ids():

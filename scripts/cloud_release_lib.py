@@ -1028,6 +1028,7 @@ MODEL_BOOTSTRAP_FILES = (
 )
 
 SHARED_SCRIPT_NAMES = (
+    "transaction-lock.sh",
     "backup.sh",
     "remote-release.sh",
     "remote-build.sh",
@@ -1101,6 +1102,7 @@ SHARED = ROOT / "shared"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 SCRIPTS = (
+    SHARED / "bin/transaction-lock.sh",
     SHARED / "bin/backup.sh",
     SHARED / "bin/remote-release.sh",
     SHARED / "bin/remote-build.sh",
@@ -1119,6 +1121,7 @@ MODELS = {
     SHARED / "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm": "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492",
 }
 REQUIRED_INSTALLED = {
+    "deploy/cloud/transaction-lock.sh": "/opt/car-agent/shared/bin/transaction-lock.sh",
     "deploy/cloud/backup.sh": "/opt/car-agent/shared/bin/backup.sh",
     "deploy/cloud/remote-release.sh": "/opt/car-agent/shared/bin/remote-release.sh",
     "deploy/cloud/remote-build.sh": "/opt/car-agent/shared/bin/remote-build.sh",
