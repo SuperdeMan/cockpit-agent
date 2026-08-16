@@ -61,32 +61,67 @@ prepare_upload() {
   printf '%s\n' "${target}"
 }
 
-require_import_bundle() {
-  local migration_id="$1" directory="${IMPORT_ROOT}/${1}" name
+seal_upload() {
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}" caller caller_uid caller_gid
   require_migration_id "${migration_id}"
-  [[ -d "${directory}" && ! -L "${directory}" ]] || die "migration directory is invalid"
-  [[ "$(readlink -f "${directory}")" == "${directory}" ]] || die "migration path escaped import root"
-  for name in "${REQUIRED_IMPORT_FILES[@]}"; do
-    [[ -f "${directory}/${name}" && ! -L "${directory}/${name}" ]] \
-      || die "required migration file is invalid: ${name}"
-  done
-  chown root:root -- "${directory}" "${directory}/manifest.json" \
-    "${directory}/postgres.dump" "${directory}/redis.rdb" "${directory}/collector.db"
-  chmod 0700 -- "${directory}"
-  chmod 0600 -- "${directory}/manifest.json" "${directory}/postgres.dump" \
-    "${directory}/redis.rdb" "${directory}/collector.db"
-  python3 - "${directory}" <<'PY'
+  caller="${SUDO_USER:-}"
+  [[ "${caller}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] \
+    || die "seal-upload requires a valid sudo caller"
+  caller_uid="$(id -u "${caller}")" || return $?
+  caller_gid="$(id -g "${caller}")" || return $?
+  python3 - "${directory}" "${caller_uid}" "${caller_gid}" <<'PY'
 import os, stat, sys
+required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
 root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 try:
-    for name in ("manifest.json", "postgres.dump", "redis.rdb", "collector.db"):
+    directory = os.fstat(root)
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != int(sys.argv[2]) or directory.st_gid != int(sys.argv[3]):
+        raise SystemExit("migration directory owner is invalid")
+    if stat.S_IMODE(directory.st_mode) != 0o700:
+        raise SystemExit("migration directory mode is invalid")
+    os.fchown(root, 0, 0)
+    os.fchmod(root, 0o700)
+    if set(os.listdir(root)) != required:
+        raise SystemExit("migration upload file set is invalid")
+    for name in sorted(required):
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
         try:
             metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0:
-                raise SystemExit("root takeover verification failed")
-            if stat.S_IMODE(metadata.st_mode) != 0o600:
-                raise SystemExit("migration file mode mismatch")
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise SystemExit("migration upload entry is not a private regular file")
+            if metadata.st_uid != int(sys.argv[2]) or metadata.st_gid != int(sys.argv[3]):
+                raise SystemExit("migration upload file owner is invalid")
+            os.fchown(descriptor, 0, 0)
+            os.fchmod(descriptor, 0o600)
+        finally:
+            os.close(descriptor)
+finally:
+    os.close(root)
+PY
+  require_import_bundle "${migration_id}"
+}
+
+require_import_bundle() {
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
+  require_migration_id "${migration_id}"
+  python3 - "${directory}" <<'PY'
+import os, stat, sys
+required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
+root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    directory = os.fstat(root)
+    if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or directory.st_gid != 0:
+        raise SystemExit("sealed migration directory owner is invalid")
+    if stat.S_IMODE(directory.st_mode) != 0o700 or set(os.listdir(root)) != required:
+        raise SystemExit("sealed migration directory is invalid")
+    for name in sorted(required):
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise SystemExit("sealed migration entry is invalid")
+            if metadata.st_uid != 0 or metadata.st_gid != 0 or stat.S_IMODE(metadata.st_mode) != 0o600:
+                raise SystemExit("sealed migration entry permissions are invalid")
         finally:
             os.close(descriptor)
 finally:
@@ -97,6 +132,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 directory = Path(sys.argv[1])
@@ -112,8 +148,16 @@ if not re.fullmatch(r"[0-9a-f]{40}", payload.get("source_sha", "")):
     raise SystemExit("manifest source SHA is invalid")
 if payload.get("phase") not in {"online", "final"} or not migration_id.endswith("-" + payload["phase"]):
     raise SystemExit("manifest phase is invalid")
-if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z", payload.get("created_at", "")):
+created_at = payload.get("created_at", "")
+if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created_at):
     raise SystemExit("manifest created_at is not UTC")
+try:
+    created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+except ValueError as exc:
+    raise SystemExit("manifest created_at is invalid") from exc
+canonical = created.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+if created.utcoffset() != timezone.utc.utcoffset(created) or canonical != created_at:
+    raise SystemExit("manifest created_at is not canonical UTC")
 names = {"postgres.dump", "redis.rdb", "collector.db"}
 if not isinstance(payload.get("files"), dict) or set(payload["files"]) != names:
     raise SystemExit("manifest file set is invalid")
@@ -593,11 +637,12 @@ main() {
     inspect-current)
       [[ "$#" -eq 1 ]] || die "inspect-current takes no migration id" 2
       inspect_current ;;
-    prepare-upload|preflight|apply|verify|rollback)
+    prepare-upload|seal-upload|preflight|apply|verify|rollback)
       [[ "$#" -eq 3 && "${2:-}" == "--migration-id" ]] || die "action requires --migration-id" 2
       require_migration_id "${3:-}"
       case "$1" in
         prepare-upload) prepare_upload "$3" ;;
+        seal-upload) seal_upload "$3" ;;
         preflight) preflight_migration "$3" ;;
         apply) apply_migration "$3" ;;
         verify) verify_migration "$3" ;;

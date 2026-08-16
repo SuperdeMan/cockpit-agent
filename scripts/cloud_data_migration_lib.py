@@ -364,6 +364,8 @@ def restrict_private_tree(path: Path, runner: BinaryCommandRunner) -> None:
 def parse_manifest(payload: object) -> MigrationManifest:
     data = _exact_keys(payload, MANIFEST_KEYS, "manifest")
     schema_version = _strict_int(data["schema_version"], "schema_version", minimum=1)
+    if schema_version != 1:
+        raise MigrationError("invalid schema_version")
     migration_id = require_migration_id(data["migration_id"])  # type: ignore[arg-type]
     phase = data["phase"]
     if phase not in {"online", "final"} or not migration_id.endswith(f"-{phase}"):
@@ -372,13 +374,14 @@ def parse_manifest(payload: object) -> MigrationManifest:
     if not isinstance(source_sha, str) or FULL_SHA_RE.fullmatch(source_sha) is None:
         raise MigrationError("invalid source SHA")
     created_at = data["created_at"]
-    if not isinstance(created_at, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?Z", created_at) is None:
+    if not isinstance(created_at, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created_at) is None:
         raise MigrationError("invalid created_at")
     try:
         parsed_created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
     except ValueError as exc:
         raise MigrationError("invalid created_at") from exc
-    if parsed_created.utcoffset() != UTC.utcoffset(parsed_created):
+    canonical_created = parsed_created.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if parsed_created.utcoffset() != UTC.utcoffset(parsed_created) or canonical_created != created_at:
         raise MigrationError("invalid created_at")
 
     raw_files = _exact_keys(data["files"], frozenset(SNAPSHOT_FILENAMES), "file")
@@ -815,9 +818,12 @@ def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str
         raise MigrationError("server returned an unexpected import directory")
     for name in ("manifest.json", "postgres.dump", "redis.rdb", "collector.db"):
         runner.run(request.ssh.scp_argv(directory / name, f"{expected}/{name}"), cwd=request.repo)
-        runner.run(
-            request.ssh.ssh_argv(f"chmod 0600 -- {expected}/{name}"), cwd=request.repo
-        )
+    runner.run(
+        request.ssh.ssh_argv(
+            f"sudo {REMOTE_SCRIPT} seal-upload --migration-id {request.migration_id}"
+        ),
+        cwd=request.repo,
+    )
     return expected
 
 

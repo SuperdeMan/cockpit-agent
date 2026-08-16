@@ -277,7 +277,7 @@ def test_remote_migration_is_whitelisted_and_fail_closed():
 def test_remote_migration_has_strict_actions_paths_and_permissions():
     text = _required_text(REMOTE_MIGRATION_PATH)
     assert "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}-(online|final)$" in text
-    for action in ("inspect-current", "prepare-upload", "preflight", "apply", "verify", "rollback"):
+    for action in ("inspect-current", "prepare-upload", "seal-upload", "preflight", "apply", "verify", "rollback"):
         assert action in text
     assert 'install -d -m 0700' in text
     assert 'chmod 0600 --' in text
@@ -286,6 +286,28 @@ def test_remote_migration_has_strict_actions_paths_and_permissions():
     assert '"car-agent-obs-data"' in text
     assert 'install -d -m 0711 -o root -g root "${IMPORT_ROOT}"' in text
     assert "O_NOFOLLOW" in text and "dir_fd=root" in text
+
+
+def test_remote_upload_seal_takes_directory_first_and_mutates_only_open_fds():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^seal_upload\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert "os.O_DIRECTORY | os.O_NOFOLLOW" in body
+    assert "set(os.listdir(root))" in body
+    assert "os.fchown(root, 0, 0)" in body
+    assert "os.fchmod(root, 0o700)" in body
+    assert "os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)" in body
+    assert "os.fchown(descriptor, 0, 0)" in body
+    assert "os.fchmod(descriptor, 0o600)" in body
+    assert body.index("os.fchown(root, 0, 0)") < body.index("os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)")
+    for unsafe in ("chown root:root --", "chmod 0600 -- \"${directory}"):
+        assert unsafe not in body
+
+
+def test_remote_manifest_uses_real_datetime_and_canonical_utc_roundtrip():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert "from datetime import datetime, timezone" in text
+    assert "datetime.fromisoformat" in text
+    assert "created.astimezone(timezone.utc).isoformat(timespec=\"seconds\").replace(\"+00:00\", \"Z\")" in text
 
 
 def test_remote_migration_reentry_and_rollback_preserve_both_datasets():

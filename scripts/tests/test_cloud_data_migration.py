@@ -207,6 +207,21 @@ def test_manifest_rejects_unknown_aggregate_keys_and_non_utc_time():
         migration.parse_manifest(payload)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("schema_version", 2),
+        ("created_at", "2026-02-30T01:02:03Z"),
+        ("created_at", "2026-08-16T01:02:03.000000Z"),
+    ],
+)
+def test_manifest_accepts_only_v1_and_canonical_real_utc(field, value):
+    payload = valid_manifest_payload()
+    payload[field] = value
+    with pytest.raises(migration.MigrationError, match=field):
+        migration.parse_manifest(payload)
+
+
 def test_atomic_private_json_writes_canonical_json(tmp_path: Path):
     target = tmp_path / "manifest.json"
     migration.atomic_private_json(target, {"b": 1, "a": "值"})
@@ -479,6 +494,23 @@ def test_plan_is_read_only_and_never_uploads(tmp_path: Path):
     assert rc == 0
     assert len(runner.calls) == 1
     assert "inspect-current" in runner.calls[0][-1]
+
+
+def test_apply_seals_only_after_all_scp_uploads_complete(tmp_path: Path):
+    _write_valid_bundle(tmp_path)
+    runner = FakeRemoteRunner()
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+        "apply", "--migration-id", VALID_ID, "--apply",
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    commands = [" ".join(call) for call in runner.calls]
+    scp_positions = [index for index, call in enumerate(runner.calls) if call[0] == "scp"]
+    seal_position = next(index for index, command in enumerate(commands) if " seal-upload " in command)
+    apply_position = next(index for index, command in enumerate(commands) if " apply " in command)
+    assert len(scp_positions) == 4
+    assert max(scp_positions) < seal_position < apply_position
+    assert not any("chmod 0600" in command for command in commands)
 
 
 def test_final_snapshot_without_both_switches_is_only_a_service_plan(tmp_path: Path):
