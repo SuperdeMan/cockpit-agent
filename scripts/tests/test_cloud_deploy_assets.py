@@ -23,6 +23,7 @@ HMI_DOCKERIGNORE_PATH = CLOUD_DIR / "hmi.Dockerfile.dockerignore"
 HMI_VITE_CONFIG_PATH = CLOUD_DIR / "vite.hmi.cloud.config.mjs"
 BACKUP_PATH = CLOUD_DIR / "backup.sh"
 TRANSACTION_LOCK_PATH = CLOUD_DIR / "transaction-lock.sh"
+REMOTE_MIGRATION_PATH = CLOUD_DIR / "remote-data-migration.sh"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
@@ -254,6 +255,35 @@ def test_transaction_lock_is_nonblocking_and_reports_bounded_holder():
     assert "return 75" in text
     assert "release|rollback|backup|migration|e2e" in text
     assert 'readlink "/proc/$$/fd/${descriptor}"' in text
+
+
+def test_remote_migration_is_whitelisted_and_fail_closed():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert 'readonly IMPORT_ROOT="${SHARED_ROOT}/imports"' in text
+    assert 'transaction_lock_acquire "migration"' in text
+    assert "run_required_backup" in text
+    assert "pg_restore" in text and "--clean" in text and "--exit-on-error" in text
+    assert "appendonlydir" in text
+    assert "redis-check-rdb" in text
+    assert "PRAGMA integrity_check" in text
+    assert "rollback_all" in text and "ROLLBACK_FAILED" in text
+    for forbidden in (
+        "docker compose down", "docker volume rm", "rm -rf", "down -v",
+        "systemctl enable", "tailscale", "security group", ".env.example",
+    ):
+        assert forbidden not in text.lower()
+
+
+def test_remote_migration_has_strict_actions_paths_and_permissions():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert "^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}-(online|final)$" in text
+    for action in ("inspect-current", "prepare-upload", "preflight", "apply", "verify", "rollback"):
+        assert action in text
+    assert 'install -d -m 0700' in text
+    assert 'chmod 0600 --' in text
+    assert '"manifest.json" "postgres.dump" "redis.rdb" "collector.db"' in text
+    assert '"car-agent-redis-data"' in text
+    assert '"car-agent-obs-data"' in text
 
 
 def test_remote_release_validates_prepare_upload_and_deploy_ids():

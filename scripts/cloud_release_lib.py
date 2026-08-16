@@ -1029,6 +1029,7 @@ MODEL_BOOTSTRAP_FILES = (
 
 SHARED_SCRIPT_NAMES = (
     "transaction-lock.sh",
+    "remote-data-migration.sh",
     "backup.sh",
     "remote-release.sh",
     "remote-build.sh",
@@ -1103,6 +1104,7 @@ SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 SCRIPTS = (
     SHARED / "bin/transaction-lock.sh",
+    SHARED / "bin/remote-data-migration.sh",
     SHARED / "bin/backup.sh",
     SHARED / "bin/remote-release.sh",
     SHARED / "bin/remote-build.sh",
@@ -1122,6 +1124,7 @@ MODELS = {
 }
 REQUIRED_INSTALLED = {
     "deploy/cloud/transaction-lock.sh": "/opt/car-agent/shared/bin/transaction-lock.sh",
+    "deploy/cloud/remote-data-migration.sh": "/opt/car-agent/shared/bin/remote-data-migration.sh",
     "deploy/cloud/backup.sh": "/opt/car-agent/shared/bin/backup.sh",
     "deploy/cloud/remote-release.sh": "/opt/car-agent/shared/bin/remote-release.sh",
     "deploy/cloud/remote-build.sh": "/opt/car-agent/shared/bin/remote-build.sh",
