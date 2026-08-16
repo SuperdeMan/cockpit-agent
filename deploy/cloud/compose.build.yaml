@@ -1,0 +1,7 @@
+services:
+  hmi:
+    build:
+      context: .
+      dockerfile: deploy/cloud/hmi.Dockerfile
+      additional_contexts:
+        hmi_runtime_models: ${CAR_AGENT_HMI_MODELS_ROOT:?CAR_AGENT_HMI_MODELS_ROOT required}

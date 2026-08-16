@@ -1,0 +1,15 @@
+# The cloud HMI build uses the repository root as its primary context. Keep all
+# ignored local voice artifacts out of that context; the five approved files
+# return only through the hash-validated hmi_runtime_models named context.
+**/__pycache__/
+**/*.pyc
+**/.venv/
+**/venv/
+**/node_modules/
+**/dist/
+**/.vite/
+**/.pytest_cache/
+.git/
+*.log
+hmi/public/models/**
+hmi/public/kws/**

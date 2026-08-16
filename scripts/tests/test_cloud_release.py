@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import io
+import re
 import subprocess
 import sys
 import tarfile
@@ -18,6 +19,7 @@ from scripts.cloud_release_lib import (
     ReleasePlan,
     ReleaseError,
     RemoteState,
+    MODEL_BOOTSTRAP_FILES,
     REMOTE_PREFLIGHT_COMMAND,
     REMOTE_PREFLIGHT_SOURCE,
     SshConfig,
@@ -35,6 +37,9 @@ from scripts.cloud_release_lib import (
     validate_archive_member_names,
     validate_text_payload,
 )
+
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def git(repo: Path, *args: str) -> str:
@@ -614,11 +619,53 @@ def test_preflight_reports_exact_bootstrap_candidates():
         "/opt/car-agent/shared/models/nlu/labels.json",
         "/opt/car-agent/shared/models/nlu/vocab.json",
         "/opt/car-agent/shared/models/voiceprint/campplus_zh-cn_16k-common.onnx",
+        "/opt/car-agent/shared/models/hmi/public/models/silero_vad.onnx",
+        "/opt/car-agent/shared/models/hmi/public/kws/sherpa-onnx-kws.js",
+        "/opt/car-agent/shared/models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data",
+        "/opt/car-agent/shared/models/hmi/public/kws/sherpa-onnx-wasm-kws-main.js",
+        "/opt/car-agent/shared/models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm",
     )
     assert report.source_release == "/opt/car-agent/releases/4c1f479"
     assert all(item.owner == "root:root" for item in report.details)
     model_details = [item for item in report.details if "/models/" in item.path]
     assert all(item.sha256 and len(item.sha256) == 64 for item in model_details)
+    client_details = [
+        item for item in model_details if "/models/hmi/public/" in item.path
+    ]
+    assert [item.source for item in client_details] == [
+        "approved local asset:hmi/public/models/silero_vad.onnx",
+        "approved local asset:hmi/public/kws/sherpa-onnx-kws.js",
+        "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.data",
+        "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.js",
+        "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm",
+    ]
+
+
+def test_runtime_model_hash_tables_stay_in_sync():
+    manifest = json.loads(
+        (ROOT / "deploy/cloud/runtime-models.json").read_text(encoding="utf-8")
+    )
+    expected = {
+        item["path"]: item["sha256"]
+        for item in manifest["models"]
+    }
+    assert len(expected) == len(manifest["models"])
+
+    bootstrap = {
+        relative: digest
+        for relative, digest, _approved_source in MODEL_BOOTSTRAP_FILES
+    }
+    assert len(bootstrap) == len(MODEL_BOOTSTRAP_FILES)
+
+    preflight_pairs = re.findall(
+        r'SHARED / "([^"]+)": "([0-9a-f]{64})"',
+        REMOTE_PREFLIGHT_SOURCE,
+    )
+    preflight = dict(preflight_pairs)
+    assert len(preflight) == len(preflight_pairs)
+
+    assert bootstrap == expected
+    assert preflight == expected
 
 
 def test_inline_remote_preflight_is_read_only_and_does_not_read_runtime_env():

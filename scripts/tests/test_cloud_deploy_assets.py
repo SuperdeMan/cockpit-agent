@@ -17,6 +17,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 CLOUD_DIR = ROOT / "deploy" / "cloud"
 COMPOSE_PATH = CLOUD_DIR / "compose.cloud.yaml"
+BUILD_COMPOSE_PATH = CLOUD_DIR / "compose.build.yaml"
+HMI_DOCKERFILE_PATH = CLOUD_DIR / "hmi.Dockerfile"
+HMI_DOCKERIGNORE_PATH = CLOUD_DIR / "hmi.Dockerfile.dockerignore"
 HMI_VITE_CONFIG_PATH = CLOUD_DIR / "vite.hmi.cloud.config.mjs"
 BACKUP_PATH = CLOUD_DIR / "backup.sh"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
@@ -36,6 +39,19 @@ LOOPBACK_PORTS = {
     "edge-gateway": ["127.0.0.1:8090:8090"],
     "hmi": ["127.0.0.1:5173:5173"],
     "dashboard": ["127.0.0.1:5174:5174"],
+}
+
+CLIENT_RUNTIME_MODELS = {
+    "models/hmi/public/models/silero_vad.onnx":
+        "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+    "models/hmi/public/kws/sherpa-onnx-kws.js":
+        "d2113885f82cf307f52906ddf2a8786315db86fca53209c2d1e54c7fff8c6c76",
+    "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data":
+        "b91b148aa19d386fe27624867c21111c6a6bfa739a619538bb705408a8eb7165",
+    "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.js":
+        "93899d72cbb9a8e2ba7e71cc1143fdc7639098107e771860070bd507d8edfd87",
+    "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm":
+        "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492",
 }
 
 
@@ -118,18 +134,77 @@ def test_release_services_manifest_is_ordered_and_matches_cloud_compose():
 def test_runtime_model_manifest_has_exact_validated_files():
     manifest = json.loads(_required_text(RUNTIME_MODELS_PATH))
     models = manifest["models"]
+    actual = {item["path"]: item["sha256"] for item in models}
 
     assert manifest["schema_version"] == 1
-    assert {item["path"] for item in models} == {
+    assert set(actual) == {
         "models/nlu/edge_nlu.onnx",
         "models/nlu/labels.json",
         "models/nlu/vocab.json",
         "models/voiceprint/campplus_zh-cn_16k-common.onnx",
+        *CLIENT_RUNTIME_MODELS,
     }
+    assert {path: actual[path] for path in CLIENT_RUNTIME_MODELS} == CLIENT_RUNTIME_MODELS
     assert all(
         re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
         for item in models
     )
+
+
+def test_cloud_hmi_build_uses_only_the_validated_client_model_context():
+    compose = yaml.safe_load(_required_text(BUILD_COMPOSE_PATH))
+    build = compose["services"]["hmi"]["build"]
+
+    assert build == {
+        "context": ".",
+        "dockerfile": "deploy/cloud/hmi.Dockerfile",
+        "additional_contexts": {
+            "hmi_runtime_models": (
+                "${CAR_AGENT_HMI_MODELS_ROOT:?CAR_AGENT_HMI_MODELS_ROOT required}"
+            ),
+        },
+    }
+
+    dockerfile = _required_text(HMI_DOCKERFILE_PATH)
+    copies = [
+        line.strip()
+        for line in dockerfile.splitlines()
+        if line.strip().startswith("COPY --from=hmi_runtime_models ")
+    ]
+    assert copies == [
+        "COPY --from=hmi_runtime_models public/models/silero_vad.onnx "
+        "/app/public/models/silero_vad.onnx",
+        "COPY --from=hmi_runtime_models public/kws/sherpa-onnx-kws.js "
+        "/app/public/kws/sherpa-onnx-kws.js",
+        "COPY --from=hmi_runtime_models public/kws/sherpa-onnx-wasm-kws-main.data "
+        "/app/public/kws/sherpa-onnx-wasm-kws-main.data",
+        "COPY --from=hmi_runtime_models public/kws/sherpa-onnx-wasm-kws-main.js "
+        "/app/public/kws/sherpa-onnx-wasm-kws-main.js",
+        "COPY --from=hmi_runtime_models public/kws/sherpa-onnx-wasm-kws-main.wasm "
+        "/app/public/kws/sherpa-onnx-wasm-kws-main.wasm",
+    ]
+    assert "COPY --from=hmi_runtime_models public/models/ " not in dockerfile
+    assert "COPY --from=hmi_runtime_models public/kws/ " not in dockerfile
+
+    dockerignore = {
+        line.strip()
+        for line in _required_text(HMI_DOCKERIGNORE_PATH).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert dockerignore == {
+        "**/__pycache__/",
+        "**/*.pyc",
+        "**/.venv/",
+        "**/venv/",
+        "**/node_modules/",
+        "**/dist/",
+        "**/.vite/",
+        "**/.pytest_cache/",
+        ".git/",
+        "*.log",
+        "hmi/public/models/**",
+        "hmi/public/kws/**",
+    }
 
 
 def test_remote_release_holds_one_lock_for_the_full_transaction():
@@ -184,6 +259,10 @@ def test_remote_build_checks_capacity_models_and_artifact_before_building():
         assert text.index(required) < build_position
     assert "30 * 1024 * 1024 * 1024" in text
     assert "3 * 1024 * 1024 * 1024" in text
+    assert '-f "${src}/deploy/cloud/compose.build.yaml"' in text
+    assert 'CAR_AGENT_HMI_MODELS_ROOT="${SHARED_ROOT}/models/hmi"' in text
+    assert text.index('-f "${src}/deploy/cloud/compose.build.yaml"') < build_position
+    assert text.index("CAR_AGENT_HMI_MODELS_ROOT") < build_position
 
 
 def test_remote_build_preserves_failures_and_rejects_overwrite():

@@ -281,9 +281,11 @@ build_release() {
       --project-name "${project}"
       --project-directory "${src}"
       -f "${src}/compose.yaml"
+      -f "${src}/deploy/cloud/compose.build.yaml"
       --env-file "${src}/.env"
     )
     CAR_AGENT_MODELS_ROOT="${SHARED_ROOT}/models" \
+      CAR_AGENT_HMI_MODELS_ROOT="${SHARED_ROOT}/models/hmi" \
       docker compose "${compose_args[@]}" build "${service}"
     local_image="${project}-${service}:latest"
     docker image inspect "${local_image}" >/dev/null

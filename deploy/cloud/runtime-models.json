@@ -4,6 +4,11 @@
     {"path": "models/nlu/edge_nlu.onnx", "sha256": "cda6914c715d7e48f7b1f2ef2e2e9a64843e53ec58165737b41ec4e186080cf8"},
     {"path": "models/nlu/labels.json", "sha256": "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5"},
     {"path": "models/nlu/vocab.json", "sha256": "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5"},
-    {"path": "models/voiceprint/campplus_zh-cn_16k-common.onnx", "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11"}
+    {"path": "models/voiceprint/campplus_zh-cn_16k-common.onnx", "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11"},
+    {"path": "models/hmi/public/models/silero_vad.onnx", "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"},
+    {"path": "models/hmi/public/kws/sherpa-onnx-kws.js", "sha256": "d2113885f82cf307f52906ddf2a8786315db86fca53209c2d1e54c7fff8c6c76"},
+    {"path": "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data", "sha256": "b91b148aa19d386fe27624867c21111c6a6bfa739a619538bb705408a8eb7165"},
+    {"path": "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.js", "sha256": "93899d72cbb9a8e2ba7e71cc1143fdc7639098107e771860070bd507d8edfd87"},
+    {"path": "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm", "sha256": "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492"}
   ]
 }

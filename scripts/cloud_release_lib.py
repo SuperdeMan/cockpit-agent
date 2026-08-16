@@ -780,18 +780,47 @@ MODEL_BOOTSTRAP_FILES = (
     (
         "models/nlu/edge_nlu.onnx",
         "cda6914c715d7e48f7b1f2ef2e2e9a64843e53ec58165737b41ec4e186080cf8",
+        None,
     ),
     (
         "models/nlu/labels.json",
         "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5",
+        None,
     ),
     (
         "models/nlu/vocab.json",
         "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5",
+        None,
     ),
     (
         "models/voiceprint/campplus_zh-cn_16k-common.onnx",
         "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+        None,
+    ),
+    (
+        "models/hmi/public/models/silero_vad.onnx",
+        "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+        "approved local asset:hmi/public/models/silero_vad.onnx",
+    ),
+    (
+        "models/hmi/public/kws/sherpa-onnx-kws.js",
+        "d2113885f82cf307f52906ddf2a8786315db86fca53209c2d1e54c7fff8c6c76",
+        "approved local asset:hmi/public/kws/sherpa-onnx-kws.js",
+    ),
+    (
+        "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data",
+        "b91b148aa19d386fe27624867c21111c6a6bfa739a619538bb705408a8eb7165",
+        "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.data",
+    ),
+    (
+        "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.js",
+        "93899d72cbb9a8e2ba7e71cc1143fdc7639098107e771860070bd507d8edfd87",
+        "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.js",
+    ),
+    (
+        "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm",
+        "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492",
+        "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm",
     ),
 )
 
@@ -836,12 +865,12 @@ def make_bootstrap_report(state: RemoteState) -> BootstrapReport:
                 )
             )
     if not state.shared_models_ready:
-        for relative, digest in MODEL_BOOTSTRAP_FILES:
+        for relative, digest, approved_source in MODEL_BOOTSTRAP_FILES:
             shared_relative = relative.removeprefix("models/")
             details.append(
                 BootstrapCandidate(
                     path=f"/opt/car-agent/shared/models/{shared_relative}",
-                    source=f"{source_release}/{relative}",
+                    source=approved_source or f"{source_release}/{relative}",
                     sha256=digest,
                     mode="0644",
                 )
@@ -880,6 +909,11 @@ MODELS = {
     SHARED / "models/nlu/labels.json": "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5",
     SHARED / "models/nlu/vocab.json": "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5",
     SHARED / "models/voiceprint/campplus_zh-cn_16k-common.onnx": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+    SHARED / "models/hmi/public/models/silero_vad.onnx": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+    SHARED / "models/hmi/public/kws/sherpa-onnx-kws.js": "d2113885f82cf307f52906ddf2a8786315db86fca53209c2d1e54c7fff8c6c76",
+    SHARED / "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data": "b91b148aa19d386fe27624867c21111c6a6bfa739a619538bb705408a8eb7165",
+    SHARED / "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.js": "93899d72cbb9a8e2ba7e71cc1143fdc7639098107e771860070bd507d8edfd87",
+    SHARED / "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm": "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492",
 }
 REQUIRED_INSTALLED = {
     "deploy/cloud/backup.sh": "/opt/car-agent/shared/bin/backup.sh",
