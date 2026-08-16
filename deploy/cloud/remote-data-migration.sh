@@ -55,7 +55,7 @@ prepare_upload() {
     || die "prepare-upload requires a valid sudo caller"
   caller_group="$(id -gn "${caller}")"
   target="${IMPORT_ROOT}/${migration_id}"
-  install -d -m 0700 -o root -g root "${IMPORT_ROOT}"
+  install -d -m 0711 -o root -g root "${IMPORT_ROOT}"
   [[ ! -e "${target}" ]] || die "migration upload directory already exists"
   install -d -m 0700 -o "${caller}" -g "${caller_group}" "${target}"
   printf '%s\n' "${target}"
@@ -75,6 +75,23 @@ require_import_bundle() {
   chmod 0700 -- "${directory}"
   chmod 0600 -- "${directory}/manifest.json" "${directory}/postgres.dump" \
     "${directory}/redis.rdb" "${directory}/collector.db"
+  python3 - "${directory}" <<'PY'
+import os, stat, sys
+root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    for name in ("manifest.json", "postgres.dump", "redis.rdb", "collector.db"):
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0:
+                raise SystemExit("root takeover verification failed")
+            if stat.S_IMODE(metadata.st_mode) != 0o600:
+                raise SystemExit("migration file mode mismatch")
+        finally:
+            os.close(descriptor)
+finally:
+    os.close(root)
+PY
   python3 - "${directory}" "${migration_id}" <<'PY'
 import hashlib
 import json
@@ -91,6 +108,12 @@ if set(payload) != keys or payload.get("schema_version") != 1:
     raise SystemExit("manifest key set is invalid")
 if payload.get("migration_id") != migration_id:
     raise SystemExit("manifest migration id mismatch")
+if not re.fullmatch(r"[0-9a-f]{40}", payload.get("source_sha", "")):
+    raise SystemExit("manifest source SHA is invalid")
+if payload.get("phase") not in {"online", "final"} or not migration_id.endswith("-" + payload["phase"]):
+    raise SystemExit("manifest phase is invalid")
+if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]+)?Z", payload.get("created_at", "")):
+    raise SystemExit("manifest created_at is not UTC")
 names = {"postgres.dump", "redis.rdb", "collector.db"}
 if not isinstance(payload.get("files"), dict) or set(payload["files"]) != names:
     raise SystemExit("manifest file set is invalid")
@@ -102,6 +125,33 @@ for name in names:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     if record["size_bytes"] != path.stat().st_size or record["sha256"] != digest:
         raise SystemExit("migration file checksum mismatch")
+pg = payload.get("postgres")
+redis = payload.get("redis")
+collector = payload.get("collector")
+if not isinstance(pg, dict) or set(pg) != {"major", "vector_version", "tables", "states", "schema_fingerprint", "archive_fingerprint"}:
+    raise SystemExit("PostgreSQL evidence keys are invalid")
+pg_tables = {"memory_item", "memory_relation", "reminder_item", "task_ledger",
+             "proactive_delivery", "scene_item", "voiceprint", "agents", "agent_capability_vec"}
+pg_states = {"reminder_item.status", "task_ledger.status", "proactive_delivery.state", "scene_item.status"}
+if set(pg.get("tables", {})) != pg_tables or set(pg.get("states", {})) != pg_states:
+    raise SystemExit("PostgreSQL aggregate set is invalid")
+if not re.fullmatch(r"[0-9]{1,3}", pg.get("major", "")) or not re.fullmatch(r"[0-9]+(?:[.][0-9]+){1,3}", pg.get("vector_version", "")):
+    raise SystemExit("PostgreSQL version evidence is invalid")
+if not isinstance(redis, dict) or set(redis) != {"version", "rdb_version", "key_count", "prefixes", "types", "persistent", "expiring", "min_ttl_ms", "max_ttl_ms", "rdb_sha256"}:
+    raise SystemExit("Redis evidence keys are invalid")
+if not isinstance(collector, dict) or set(collector) != {"user_version", "schema_fingerprint", "tables", "integrity_check"}:
+    raise SystemExit("Collector evidence keys are invalid")
+if set(collector.get("tables", {})) != {"turns", "spans", "llm_calls", "logs"} or collector.get("integrity_check") != "ok":
+    raise SystemExit("Collector aggregate set is invalid")
+def safe_counts(value):
+    return isinstance(value, dict) and all(re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key) and type(count) is int and count >= 0 for key, count in value.items())
+if not safe_counts(pg["tables"]) or not all(safe_counts(item) for item in pg["states"].values()):
+    raise SystemExit("PostgreSQL aggregate counts are invalid")
+if not safe_counts(redis.get("prefixes")) or not safe_counts(redis.get("types")) or not safe_counts(collector.get("tables")):
+    raise SystemExit("aggregate category counts are invalid")
+for value in (pg["schema_fingerprint"], pg["archive_fingerprint"], redis.get("rdb_sha256"), collector["schema_fingerprint"]):
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise SystemExit("manifest fingerprint is invalid")
 PY
 }
 
@@ -140,7 +190,7 @@ SELECT json_build_object(
     FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu
     ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name
     WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'), '[]'::json),
-  'indexes', COALESCE((SELECT json_agg(json_build_array(tablename,indexname) ORDER BY tablename,indexname)
+  'indexes', COALESCE((SELECT json_agg(json_build_array(tablename,indexname,indexdef) ORDER BY tablename,indexname)
     FROM pg_indexes WHERE schemaname='public'), '[]'::json)
 );
 SQL

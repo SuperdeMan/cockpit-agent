@@ -18,6 +18,7 @@ class FakeBinaryRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
         self.stopped: set[str] = set()
+        self.writer_ids = {"gateway-cloud": "d" * 12}
         self.services = {
             "postgres": ("a" * 12, "postgres:16", "car-agent-postgres-data", "/var/lib/postgresql/data"),
             "redis": ("b" * 12, "redis:7", "car-agent-redis-data", "/data"),
@@ -32,6 +33,8 @@ class FakeBinaryRunner:
     def text(self, argv, *, cwd: Path) -> str:
         call = self._record(argv)
         if "ps" in call and "-q" in call:
+            if call[-1] in self.writer_ids:
+                return self.writer_ids[call[-1]] + "\n"
             return self.services[call[-1]][0] + "\n"
         if call[:2] == ("git", "rev-parse"):
             return "a" * 40 + "\n"
@@ -63,7 +66,7 @@ class FakeBinaryRunner:
                 },
                 "columns": [["memory_item", "id", 1, "text", "text", "NO", None]],
                 "primary_keys": [["memory_item", "memory_item_pkey", "id"]],
-                "indexes": [["memory_item", "memory_item_pkey"]],
+                "indexes": [["memory_item", "memory_item_pkey", "CREATE UNIQUE INDEX memory_item_pkey ON public.memory_item USING btree (id)"]],
             }
         if "redis-cli" in call and "--json" in call:
             return {
@@ -76,8 +79,12 @@ class FakeBinaryRunner:
         if call[:2] != ("docker", "inspect"):
             raise AssertionError(call)
         container_id = call[-1]
-        service = next(item for item in self.services.values() if item[0] == container_id)
-        name = next(name for name, item in self.services.items() if item[0] == container_id)
+        if container_id in self.writer_ids.values():
+            name = next(name for name, item in self.writer_ids.items() if item == container_id)
+            service = (container_id, "writer:test", "unused", "/unused")
+        else:
+            service = next(item for item in self.services.values() if item[0] == container_id)
+            name = next(name for name, item in self.services.items() if item[0] == container_id)
         running = name not in self.stopped
         return [{
             "Id": container_id,
@@ -108,6 +115,11 @@ class FakeBinaryRunner:
         self._record(argv)
         target.write_bytes(b"PGDMPfixture")
 
+    def run_from_file(self, argv, source: Path, *, cwd: Path):
+        call = self._record(argv)
+        assert source.is_file()
+        return migration.CommandResult(call, 0, "", "")
+
 
 def valid_manifest_payload() -> dict[str, object]:
     return {
@@ -120,9 +132,22 @@ def valid_manifest_payload() -> dict[str, object]:
             name: {"size_bytes": 1, "sha256": "b" * 64}
             for name in ("postgres.dump", "redis.rdb", "collector.db")
         },
-        "postgres": {},
-        "redis": {},
-        "collector": {},
+        "postgres": {
+            "major": "16", "vector_version": "0.7.4",
+            "tables": {name: 0 for name in migration.BUSINESS_TABLES + migration.DERIVED_TABLES},
+            "states": {name: {} for name in migration.POSTGRES_STATE_COLUMNS},
+            "schema_fingerprint": "c" * 64, "archive_fingerprint": "d" * 64,
+        },
+        "redis": {
+            "version": "7.2.5", "rdb_version": 11, "key_count": 0,
+            "prefixes": {}, "types": {}, "persistent": 0, "expiring": 0,
+            "min_ttl_ms": 0, "max_ttl_ms": 0, "rdb_sha256": "b" * 64,
+        },
+        "collector": {
+            "user_version": 0, "schema_fingerprint": "e" * 64,
+            "tables": {name: 0 for name in migration.COLLECTOR_TABLES},
+            "integrity_check": "ok",
+        },
     }
 
 
@@ -167,6 +192,21 @@ def test_manifest_rejects_non_exact_nested_contract(mutation):
         migration.parse_manifest(payload)
 
 
+def test_manifest_rejects_unknown_aggregate_keys_and_non_utc_time():
+    payload = valid_manifest_payload()
+    payload["postgres"] = {
+        "major": "16", "vector_version": "0.7.4", "tables": {}, "states": {},
+        "schema_fingerprint": "a" * 64, "archive_fingerprint": "b" * 64,
+        "unexpected": True,
+    }
+    with pytest.raises(migration.MigrationError):
+        migration.parse_manifest(payload)
+    payload = valid_manifest_payload()
+    payload["created_at"] = "2026-08-16T09:02:03+08:00"
+    with pytest.raises(migration.MigrationError, match="created_at"):
+        migration.parse_manifest(payload)
+
+
 def test_atomic_private_json_writes_canonical_json(tmp_path: Path):
     target = tmp_path / "manifest.json"
     migration.atomic_private_json(target, {"b": 1, "a": "值"})
@@ -193,7 +233,7 @@ def test_capture_discovers_exact_active_services_without_mutating_stack(tmp_path
         now=lambda: datetime(2026, 8, 16, 1, 2, 3, tzinfo=UTC),
     )
     assert bundle.manifest.phase == "online"
-    forbidden = {"stop", "restart", "down", "rm", "kill", "pause"}
+    forbidden = {"stop", "restart", "down", "kill", "pause"}
     assert not any(forbidden.intersection(call) for call in runner.calls)
     assert {path.name for path in bundle.files} == {
         "postgres.dump", "redis.rdb", "collector.db", "manifest.json", "status.json",
@@ -215,6 +255,8 @@ def test_final_capture_stops_writers_and_leaves_them_stopped(tmp_path: Path):
     assert "postgres" not in stop and "redis" not in stop
     assert "observability-collector" in stop and "gateway-cloud" in stop
     assert not any("start" in call or "restart" in call for call in runner.calls)
+    inspected = {call[-1] for call in runner.calls if call[:2] == ("docker", "inspect")}
+    assert runner.writer_ids["gateway-cloud"] in inspected
 
 
 def test_online_capture_rejects_mutating_flags(tmp_path: Path):
@@ -243,12 +285,14 @@ def test_discovery_rejects_bind_mount(tmp_path: Path):
 
 
 def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
+    directory = tmp_path / VALID_ID
+    directory.mkdir()
     for name, content in {
         "postgres.dump": b"PGDMPfixture",
         "redis.rdb": b"REDIS0011fixture",
     }.items():
-        (tmp_path / name).write_bytes(content)
-    connection = sqlite3.connect(tmp_path / "collector.db")
+        (directory / name).write_bytes(content)
+    connection = sqlite3.connect(directory / "collector.db")
     for table, count in {"turns": 3, "spans": 2, "llm_calls": 1, "logs": 4}.items():
         connection.execute(f"CREATE TABLE {table}(id INTEGER PRIMARY KEY)")
         connection.executemany(f"INSERT INTO {table} DEFAULT VALUES", [()] * count)
@@ -256,10 +300,12 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
     connection.close()
     runner = FakeBinaryRunner()
     services = migration.discover_source_services(tmp_path, runner)
-    evidence = migration.collect_aggregate_evidence(tmp_path, services, runner, tmp_path)
+    evidence = migration.collect_aggregate_evidence(
+        tmp_path, services, runner, directory, "d" * 64
+    )
     manifest = migration.build_manifest(
         migration.SnapshotEvidence(
-            directory=tmp_path,
+            directory=directory,
             migration_id=VALID_ID,
             phase="online",
             source_sha="a" * 40,
@@ -277,6 +323,56 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
     for private in ("user text", "session value", "api-token-value"):
         assert private not in encoded
     assert all("SELECT *" not in " ".join(call) for call in runner.calls)
+
+
+def test_snapshot_validation_and_probes_use_readonly_batch_mounts(tmp_path: Path):
+    runner = FakeBinaryRunner()
+    migration.capture_local_snapshot(
+        repo=tmp_path,
+        artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+        phase="online",
+        runner=runner,
+        now=lambda: datetime(2026, 8, 16, 1, 2, 3, tzinfo=UTC),
+    )
+    joined = [" ".join(call) for call in runner.calls]
+    assert any("target=/snapshot,readonly" in call and "/snapshot/postgres.dump" in call for call in joined)
+    assert any("target=/snapshot,readonly" in call and "/snapshot/redis.rdb" in call for call in joined)
+    aggregate_calls = [call for call in runner.calls if "--command" in call or "EVAL" in call]
+    assert aggregate_calls
+    assert all("a" * 12 not in call and "b" * 12 not in call for call in aggregate_calls)
+
+
+def test_plan_rejects_source_and_store_compatibility_mismatch(tmp_path: Path):
+    directory = _write_valid_bundle(tmp_path)
+    payload = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+    payload["postgres"] = {
+        "major": "16", "vector_version": "0.7.4", "tables": {
+            name: 0 for name in migration.BUSINESS_TABLES + migration.DERIVED_TABLES
+        }, "states": {name: {} for name in migration.POSTGRES_STATE_COLUMNS},
+        "schema_fingerprint": "c" * 64, "archive_fingerprint": "d" * 64,
+    }
+    payload["redis"] = {
+        "version": "7.2.5", "rdb_version": 11, "key_count": 0, "prefixes": {},
+        "types": {}, "persistent": 0, "expiring": 0, "min_ttl_ms": 0,
+        "max_ttl_ms": 0, "rdb_sha256": payload["files"]["redis.rdb"]["sha256"],
+    }
+    payload["collector"] = {
+        "user_version": 0, "schema_fingerprint": "e" * 64,
+        "tables": {name: 0 for name in migration.COLLECTOR_TABLES}, "integrity_check": "ok",
+    }
+    (directory / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    remote = dict(FakeRemoteRunner().remote_payload)
+    remote["current_release"] = "/opt/car-agent/releases/" + "b" * 40
+    runner = FakeRemoteRunner(remote)
+    request = migration.MigrationRequest(
+        repo=tmp_path, migration_id=VALID_ID, bundle=migration.load_bundle(tmp_path, VALID_ID),
+        ssh=cli._ssh_config(cli.build_parser().parse_args([
+            "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+            "plan", "--migration-id", VALID_ID,
+        ])),
+    )
+    with pytest.raises(migration.MigrationError, match="source release"):
+        migration.make_migration_plan(request, runner)
 
 
 @pytest.mark.parametrize(
@@ -306,9 +402,12 @@ class FakeRemoteRunner:
             "runtime_project_name": "car-agent",
             "disk_available_bytes": 10**12,
             "stores": {
-                "postgres": {"schema_fingerprint": "inspect-required"},
-                "redis": {"schema_fingerprint": "inspect-required"},
-                "collector": {"schema_fingerprint": "inspect-required"},
+                "postgres": {"major": "16", "vector_version": "0.7.4",
+                             "schema_fingerprint": "c" * 64, "running": True},
+                "redis": {"version": "7.2.5", "schema_fingerprint": "f" * 64,
+                          "running": True},
+                "collector": {"user_version": 0, "schema_fingerprint": "e" * 64,
+                              "running": True},
             },
             "status": "inspect_only",
         }

@@ -284,6 +284,8 @@ def test_remote_migration_has_strict_actions_paths_and_permissions():
     assert '"manifest.json" "postgres.dump" "redis.rdb" "collector.db"' in text
     assert '"car-agent-redis-data"' in text
     assert '"car-agent-obs-data"' in text
+    assert 'install -d -m 0711 -o root -g root "${IMPORT_ROOT}"' in text
+    assert "O_NOFOLLOW" in text and "dir_fd=root" in text
 
 
 def test_remote_migration_reentry_and_rollback_preserve_both_datasets():
