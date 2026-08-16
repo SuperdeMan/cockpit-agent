@@ -18,35 +18,8 @@ HMI_VITE_CONFIG_PATH = CLOUD_DIR / "vite.hmi.cloud.config.mjs"
 BACKUP_PATH = CLOUD_DIR / "backup.sh"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
-
-SELF_BUILT_SERVICES = {
-    "registry",
-    "llm-gateway",
-    "memory",
-    "cloud-planner",
-    "payment-gateway",
-    "navigation-agent",
-    "chitchat-agent",
-    "nearby-agent",
-    "parking-payment-agent",
-    "manual-rag-agent",
-    "trip-planner-agent",
-    "info-agent",
-    "deep-research-agent",
-    "reminder-agent",
-    "charging-planner-agent",
-    "scene-orchestrator-agent",
-    "road-safety-agent",
-    "vision-agent",
-    "observability-collector",
-    "mcp-bridge",
-    "proactive",
-    "cloud-gateway",
-    "edge-gateway",
-    "edge-orchestrator",
-    "hmi",
-    "dashboard",
-}
+RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
+RUNTIME_MODELS_PATH = CLOUD_DIR / "runtime-models.json"
 
 LOOPBACK_PORTS = {
     "llm-gateway": ["127.0.0.1:50059:50059"],
@@ -78,9 +51,51 @@ def _required_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _release_service_rows() -> list[dict[str, str]]:
+    payload = json.loads(_required_text(RELEASE_SERVICES_PATH))
+    return payload["services"]
+
+
+SELF_BUILT_SERVICES = {
+    item["service"] for item in _release_service_rows()
+}
+
+
 def _cloud_compose() -> tuple[str, dict]:
     text = _required_text(COMPOSE_PATH)
     return text, yaml.load(text, Loader=_ComposeLoader)
+
+
+def test_release_services_manifest_is_ordered_and_matches_cloud_compose():
+    manifest = json.loads(_required_text(RELEASE_SERVICES_PATH))
+    services = manifest["services"]
+    names = [item["service"] for item in services]
+
+    assert manifest["schema_version"] == 1
+    assert len(names) == 26
+    assert len(names) == len(set(names))
+    assert set(names) == SELF_BUILT_SERVICES
+    assert all(
+        item["image"] == f"car-agent-release/{item['service']}"
+        for item in services
+    )
+
+
+def test_runtime_model_manifest_has_exact_validated_files():
+    manifest = json.loads(_required_text(RUNTIME_MODELS_PATH))
+    models = manifest["models"]
+
+    assert manifest["schema_version"] == 1
+    assert {item["path"] for item in models} == {
+        "models/nlu/edge_nlu.onnx",
+        "models/nlu/labels.json",
+        "models/nlu/vocab.json",
+        "models/voiceprint/campplus_zh-cn_16k-common.onnx",
+    }
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+        for item in models
+    )
 
 
 def _service_block_has_reset(text: str, service: str, field: str) -> bool:
