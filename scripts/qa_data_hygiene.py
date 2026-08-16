@@ -9,18 +9,28 @@
   ① `--relation-self-loops`  自环关系边 `X --family--> X`
      实测 4 条（老婆/女儿/孩子/爸妈各一）。零信息量，且会在关系检索里占位。
   ② `--relation-inverted`    主宾颠倒 / 把地点当人
-     实测：`深圳国家工程实验大楼A栋 --works_at--> 用户`（人和地方反了）、
-     `公司 --lives_at--> 深圳国家工程实验大楼A栋`（「公司」被当成人）、
-     `深圳 --place_of--> 出发地`（「出发地」被当成实体）。
      判据：`works_at`/`lives_at`/`place_of` 的 **object 必须是地点、subject 必须是人**
      ——用「object 是否命中人称词表」与「subject 是否命中地点后缀」双向判，
      两边同时命中反向特征才算颠倒（**宁可漏，不误杀**）。
+     ⚠ **本判据的召回面比首版注释写的窄，2026-08-16 实测留痕**：库里三条形态相似的
+     脏边只抓得到一条——`深圳国家工程实验大楼A栋 --works_at--> 用户` 命中（两端都反）；
+     而 `公司 --lives_at--> 深圳国家工程实验大楼A栋`（「公司」不在人称词表）与
+     `深圳 --place_of--> 出发地`（「出发地」不在人称词表）**判不出、也不该判**。
+     首版注释把三条都写成「实测」，读起来像三条都会被清掉——**漏是设计内的，
+     但把设计内的漏写成待清项就是文档漂移**。要扩召回得先扩词表，那是另一件事。
   ③ `--relation-conflicts`   同 (subject, rel) 多个互不相同的现行 object
      实测：`女儿 --place_of-->` 同时有「深圳市南山实验小学」「南山实验小学」，
-     另有 `孩子 --place_of--> 南山外国语学校`。`superseded_by` 列存在但
-     **全表 0 条写过** ⇒ supersede 从未生效，每轮召回哪条看运气。
+     另有 `孩子 --place_of-->` 同时有「南山外国语学校」「深圳南山实验小学」。
+     `superseded_by` 列存在但 **全表 0 条写过** ⇒ supersede 从未生效，
+     每轮召回哪条看运气。
      处置**只标 supersede 不删行**，且**保留信息最全的那条**（最长 object 优先，
      不是最新优先——E5 的 dry-run 教过一次：新条目常常信息更少）。
+     ⚠ **③ 是四族里唯一自带「必须人裁」的一族，所以它的 `--apply` 还要再点一次名**：
+     必须同时给 `--conflict-subject <subject>`（可重复）逐组授权，**不接受整族一次清**。
+     理由是同一族内不同组的性质可以完全相反——2026-08-16 实测两组：
+     「女儿」那组两个 object 是**同一所学校**（差个城市前缀，清掉才对），
+     「孩子」那组是**两所不同的学校**（可能是真实变化，清掉就是丢事实）。
+     把「哪几组该清」写成参数，而不是靠跑脚本的人记得只清一组。
   ④ `--reminders-invalid`    `fire_at <= 0` 却仍是 pending 的提醒
      实测 **3 条**：「妈妈住杭州」「停车位在B2」「现在这段对话里最便宜的瑞幸咖啡价格」
      ——前两条**根本不是提醒，是用户陈述的事实**被 `reminder.create` 吃掉了。
@@ -125,6 +135,12 @@ async def scan_conflicts(conn):
     并准备把「妈妈」标成失效——**直接丢掉一个真实的人**。`family`/`owns`/
     `prefers_brand` 天然一对多，「同一个 subject 有多个 object」是正常状态不是冲突。
     这是 E5 那条判据的第二例：**dry-run 会自己劝退你**——去重会吞掉本来就该并存的条目。
+
+    ⚠ 本函数**只按字面 subject 分组**，所以同一个人被写成两个称谓时它抓不到：
+    实测 `妈妈 --lives_at--> 苏州` 与 `用户的妈妈 --lives_at--> 杭州` 是同一个人的
+    两个城市，两条分属两组、各自「无冲突」。**实体归一不在本脚本职责内**
+    （Q5 的另一半），别为了让它抓到而把分组键改成模糊匹配——那会把
+    「爸爸」「爸妈」这类真的不同实体并成一组。
     """
     rows = await conn.fetch(
         "SELECT id, user_id, occupant_id, subject, rel, object, created_at "
@@ -181,25 +197,46 @@ async def main_async(args) -> int:
 
         if args.all or args.relation_conflicts:
             groups = await scan_conflicts(conn)
+            picked = args.conflict_subject or []
             n = sum(len(losers) for _k, _keep, losers in groups)
             print(f"\n③ 同 (subject, rel) 冲突值：{len(groups)} 组 / 可 supersede {n} 条")
+            selected = []
             for (user, _occ, subject, rel), keep, losers in groups:
-                print(f"   {user}  {subject} --{rel}-->")
+                mark = "  ← 本次点名" if subject in picked else ""
+                print(f"   {user}  {subject} --{rel}-->{mark}")
                 print(f"       保留：{keep['object']}")
                 for loser in losers:
                     print(f"       失效：{loser['object']}")
+                if subject in picked:
+                    selected.append((keep, losers))
             if groups:
                 print("   ⚠ ③ **必须人裁再 --apply**：脚本只会「留最长的那条」，"
                       "但两个不同的 object 可能是**真实变化**（转学/换公司）而不是错误；"
                       "且「孩子」与「女儿」很可能是同一个人分成了两个 subject"
                       "——**实体归一不在本脚本职责内**（Q5 的另一半）。")
+                print("   ⚠ 因此 ③ 的 --apply 必须再点名 --conflict-subject <subject>，"
+                      "**不接受整族一次清**：同一族内不同组的性质可以完全相反。")
             total += n
-            if groups and args.apply and args.relation_conflicts:
-                for _key, keep, losers in groups:
+            if args.apply and args.relation_conflicts:
+                if not picked:
+                    print("   ✗ 未给 --conflict-subject，③ 不写库（见上一条）。",
+                          file=sys.stderr)
+                    return 2
+                unknown = [s for s in picked
+                           if s not in {k[2] for k, _keep, _l in groups}]
+                if unknown:
+                    print(f"   ✗ 点名的 subject 不在冲突组里：{unknown}——"
+                          "**认不出就拒绝，不静默跳过**（B3 那条「认不出就用默认值」）。",
+                          file=sys.stderr)
+                    return 2
+                done = 0
+                for keep, losers in selected:
                     await conn.execute(
                         "UPDATE memory_relation SET superseded_by=$1 WHERE id = ANY($2)",
                         str(keep["id"]), [x["id"] for x in losers])
-                print(f"   → 已标记 supersede {n} 条（不删行）")
+                    done += len(losers)
+                print(f"   → 已标记 supersede {done} 条（不删行），"
+                      f"点名 {len(selected)}/{len(groups)} 组")
 
         if args.all or args.reminders_invalid:
             rows = await scan_invalid_reminders(conn)
@@ -230,6 +267,9 @@ def main() -> int:
     ap.add_argument("--relation-self-loops", action="store_true")
     ap.add_argument("--relation-inverted", action="store_true")
     ap.add_argument("--relation-conflicts", action="store_true")
+    ap.add_argument("--conflict-subject", action="append", metavar="SUBJECT",
+                    help="③ 逐组授权：只对点名 subject 的冲突组写库（可重复）。"
+                         "③ 的 --apply 必须带它——同一族内不同组性质可以相反")
     ap.add_argument("--reminders-invalid", action="store_true")
     ap.add_argument("--apply", action="store_true",
                     help="真正写库（只作用于同时点名的族；不点名族只盘点）")
