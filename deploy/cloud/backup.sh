@@ -63,6 +63,20 @@ compose=(
 )
 export RELEASE_SHA="${ACTIVE_RELEASE_SHA}"
 
+fsync_backup_artifact() {
+  python3 - "$1" <<'PY'
+import os,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+try: os.fsync(fd)
+finally: os.close(fd)
+parent=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+try: os.fsync(parent)
+finally: os.close(parent)
+PY
+}
+
 if [[ "${WRITERS_QUIESCED}" -eq 1 ]]; then
   mapfile -t backup_services < <("${compose[@]}" config --services)
   [[ "${#backup_services[@]}" -gt 2 ]]
@@ -105,6 +119,7 @@ candidates_target="${BACKUP_ROOT}/cleanup-candidates.txt"
   pg_dump -U cockpit -d cockpit -Fc >"${postgres_partial}"
 test -s "${postgres_partial}"
 mv "${postgres_partial}" "${postgres_target}"
+fsync_backup_artifact "${postgres_target}"
 
 "${compose[@]}" exec -T redis redis-cli SAVE >/dev/null
 redis_aggregate="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
@@ -112,6 +127,7 @@ redis.setresp(3); local c="0"; local n,p,e=0,0,0; local px={}; local ty={}; repe
 "${compose[@]}" cp redis:/data/dump.rdb "${redis_partial}" >/dev/null
 test -s "${redis_partial}"
 mv "${redis_partial}" "${redis_target}"
+fsync_backup_artifact "${redis_target}"
 
 docker run --pull never --rm=true --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly" \
   --entrypoint python "${collector_image}" -c '
@@ -130,6 +146,7 @@ finally:
 test -s "${obs_partial}"
 gzip -t "${obs_partial}"
 mv "${obs_partial}" "${obs_target}"
+fsync_backup_artifact "${obs_target}"
 
 readonly postgres_mount="type=bind,source=${POSTGRES_DIR},target=/backup,readonly"
 readonly redis_mount="type=bind,source=${REDIS_DIR},target=/backup,readonly"
@@ -200,6 +217,7 @@ finally:
     os.close(fd)
 os.replace(partial, target)
 PY
+fsync_backup_artifact "${backup_manifest}"
 
 find "${BACKUP_ROOT}" -mindepth 2 -type f -mtime +7 -print \
   | sort >"${candidates_partial}"

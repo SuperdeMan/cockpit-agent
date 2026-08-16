@@ -82,7 +82,7 @@ seal_upload() {
   caller_uid="$(id -u "${caller}")" || return $?
   caller_gid="$(id -g "${caller}")" || return $?
   python3 - "${directory}" "${caller_uid}" "${caller_gid}" <<'PY'
-import os, stat, sys
+import os, secrets, stat, sys
 required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
 root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 try:
@@ -97,16 +97,37 @@ try:
         raise SystemExit("migration upload file set is invalid")
     for name in sorted(required):
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
+        temporary = f".sealed.{secrets.token_hex(16)}"
+        replacement = None
         try:
             metadata = os.fstat(descriptor)
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
                 raise SystemExit("migration upload entry is not a private regular file")
             if metadata.st_uid != int(sys.argv[2]) or metadata.st_gid != int(sys.argv[3]):
                 raise SystemExit("migration upload file owner is invalid")
-            os.fchown(descriptor, 0, 0)
-            os.fchmod(descriptor, 0o600)
+            replacement = os.open(
+                temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                0o600, dir_fd=root,
+            )
+            copied = 0
+            while chunk := os.read(descriptor, 1024 * 1024):
+                view = memoryview(chunk)
+                while view:
+                    written = os.write(replacement, view)
+                    view = view[written:]
+                    copied += written
+            after = os.fstat(descriptor)
+            if copied != metadata.st_size or (after.st_size, after.st_mtime_ns) != (metadata.st_size, metadata.st_mtime_ns):
+                raise SystemExit("migration upload changed while sealing")
+            os.fchown(replacement, 0, 0)
+            os.fchmod(replacement, 0o600)
+            os.fsync(replacement)
         finally:
+            if replacement is not None:
+                os.close(replacement)
             os.close(descriptor)
+        os.replace(temporary, name, src_dir_fd=root, dst_dir_fd=root)
+        os.fsync(root)
 finally:
     os.close(root)
 PY
@@ -227,7 +248,7 @@ require_runtime_batch() {
   python3 - "${directory}" <<'PY'
 import os, re, stat, sys
 required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
-allowed_files = required | {"status.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}
+allowed_files = required | {"status.json", "journal.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}
 allowed_directories = {"rollback", "rollback-generated"}
 redis_buckets = {"redis-volume", "failed-import-redis-volume"}
 collector_buckets = {"collector-volume", "failed-import-collector-volume"}
@@ -1049,7 +1070,7 @@ from pathlib import Path
 target=Path(sys.argv[2]); state=sys.argv[3]; migration_id=sys.argv[4]; stamp=sys.argv[5]
 allowed=dict([
  (None,{"BACKED_UP"}), ("BACKED_UP",{"APPLIED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}),
- ("APPLIED",{"ROLLBACK_IN_PROGRESS"}), ("ROLLBACK_IN_PROGRESS",{"ROLLED_BACK","ROLLBACK_FAILED"}),
+ ("APPLIED",{"ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}), ("ROLLBACK_IN_PROGRESS",{"ROLLED_BACK","ROLLBACK_FAILED"}),
  ("ROLLBACK_FAILED",{"ROLLBACK_IN_PROGRESS"}), ("ROLLED_BACK",set()),
 ])
 current=None
@@ -1079,6 +1100,80 @@ PY
   mv -T "${partial}" "${directory}/status.json" || return $?
 }
 
+update_crash_journal() {
+  local migration_id="$1" direction="$2" state="$3" backup_stamp="${4:-}"
+  local store="${5:-}" phase="${6:-}" failed_step="${7:-}" failed_rc="${8:-0}"
+  local directory="${IMPORT_ROOT}/${migration_id}" partial run_id
+  run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
+  partial="${directory}/journal.${run_id}.json.partial"
+  python3 - "${directory}/journal.json" "${partial}" "${migration_id}" "${direction}" \
+    "${state}" "${backup_stamp}" "${store}" "${phase}" "${failed_step}" "${failed_rc}" <<'PY' || return $?
+import json,os,secrets,sys
+from datetime import datetime,timezone
+from pathlib import Path
+target=Path(sys.argv[1]); partial=Path(sys.argv[2]); migration_id=sys.argv[3]
+direction=sys.argv[4]; state=sys.argv[5]; stamp=sys.argv[6]; store=sys.argv[7]; phase=sys.argv[8]
+failed_step=sys.argv[9] or None; failed_rc=int(sys.argv[10]); now=datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00","Z")
+if direction not in {"apply","rollback","recover"}: raise SystemExit("invalid journal direction")
+if store and store not in {"postgres","redis","collector"}: raise SystemExit("invalid journal store")
+if phase and phase not in {"pending","started","restored","verified"}: raise SystemExit("invalid journal phase")
+payload=None
+if target.exists():
+    if target.is_symlink() or target.stat().st_size>128*1024: raise SystemExit("unsafe crash journal")
+    payload=json.loads(target.read_text(encoding="utf-8"))
+    if payload.get("migration_id")!=migration_id: raise SystemExit("journal identity mismatch")
+if payload is None:
+    payload={"schema_version":1,"migration_id":migration_id,"operation_id":secrets.token_hex(16),
+             "direction":direction,"state":state,"backup_stamp":stamp or None,
+             "stores":{name:{"phase":"pending"} for name in ("postgres","redis","collector")},
+             "failed_step":None,"failed_rc":None,"attempts":[]}
+if payload["direction"]!=direction:
+    payload["operation_id"]=secrets.token_hex(16)
+    payload["direction"]=direction
+    payload["stores"]={name:{"phase":"pending"} for name in ("postgres","redis","collector")}
+payload["attempts"].append({"operation_id":payload["operation_id"],"direction":direction,
+                            "state":state,"recorded_at":now,"store":store or None,
+                            "phase":phase or None,"failed_step":failed_step,
+                            "failed_rc":failed_rc if failed_step else None})
+payload["state"]=state
+if stamp: payload["backup_stamp"]=stamp
+if store and phase: payload["stores"][store]["phase"]=phase
+payload["failed_step"]=failed_step
+payload["failed_rc"]=failed_rc if failed_step else None
+encoded=(json.dumps(payload,sort_keys=True,separators=(",", ":"))+"\n").encode()
+fd=os.open(partial,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+try: os.write(fd,encoded); os.fsync(fd)
+finally: os.close(fd)
+os.replace(partial,target)
+directory_fd=os.open(target.parent,os.O_RDONLY|os.O_DIRECTORY)
+try: os.fsync(directory_fd)
+finally: os.close(directory_fd)
+PY
+  chmod 0600 -- "${directory}/journal.json" || return $?
+}
+
+begin_crash_journal() {
+  update_crash_journal "$1" apply STOPPING_WRITERS || return $?
+}
+
+read_recovery_journal() {
+  local migration_id="$1"
+  python3 - "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" <<'PY' || return $?
+import json,re,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+if path.is_symlink() or path.stat().st_size>128*1024: raise SystemExit("invalid recovery journal")
+payload=json.loads(path.read_text(encoding="utf-8"))
+if payload.get("schema_version")!=1 or payload.get("migration_id")!=sys.argv[2]: raise SystemExit("recovery journal identity mismatch")
+state=payload.get("state"); stamp=payload.get("backup_stamp") or ""
+without_backup={"STOPPING_WRITERS","STOP_FAILED","BACKUP_FAILED"}
+with_backup={"BACKED_UP","REPLACING","INTERRUPTED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}
+if state not in without_backup|with_backup: raise SystemExit("journal is not recoverable")
+if state in with_backup and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("journal backup stamp is invalid")
+print(state,stamp)
+PY
+}
+
 record_store_progress() {
   local migration_id="$1" store="$2" field="$3" directory="${IMPORT_ROOT}/${1}"
   local partial run_id
@@ -1104,29 +1199,69 @@ PY
   mv -T "${partial}" "${directory}/status.json" || return $?
 }
 
+rollback_run_step() {
+  local migration_id="$1" backup_stamp="$2" direction="$3" store="$4" step="$5" rc journal_rc state_rc
+  shift 5
+  run_recoverable_step "$@"
+  rc="${STEP_RC}"
+  if [[ "${rc}" -ne 0 ]]; then
+    if update_crash_journal "${migration_id}" "${direction}" ROLLBACK_FAILED "${backup_stamp}" \
+      "${store}" "" "${step}" "${rc}"; then journal_rc=0; else journal_rc=$?; fi
+    if write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}" "${step}"; then
+      state_rc=0
+    else
+      state_rc=$?
+    fi
+    if [[ "${journal_rc}" -ne 0 ]]; then return "${journal_rc}"; fi
+    if [[ "${state_rc}" -ne 0 ]]; then return "${state_rc}"; fi
+    return "${rc}"
+  fi
+  return 0
+}
+
 rollback_all() {
-  local migration_id="$1" backup_stamp="$2"
-  write_migration_state "ROLLBACK_IN_PROGRESS" "${migration_id}" "${backup_stamp}" || return 1
-  stop_application_writers || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
-  record_store_progress "${migration_id}" postgres started || return 1
-  restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump" \
-    || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
-  record_store_progress "${migration_id}" postgres restored || return 1
-  record_store_progress "${migration_id}" redis started || return 1
-  restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" "failed-import-redis-volume" \
-    "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" \
-    || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
-  record_store_progress "${migration_id}" redis restored || return 1
-  record_store_progress "${migration_id}" collector started || return 1
-  restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}" \
-    || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
-  record_store_progress "${migration_id}" collector restored || return 1
-  start_current_release || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
-  verify_current_release || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
-  record_store_progress "${migration_id}" postgres verified || return 1
-  record_store_progress "${migration_id}" redis verified || return 1
-  record_store_progress "${migration_id}" collector verified || return 1
-  write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return 1
+  local migration_id="$1" backup_stamp="$2" direction="${3:-rollback}" store
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" backup-manifest \
+    validate_backup_manifest "${backup_stamp}" || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" journal-start \
+    update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" state-start \
+    write_migration_state "ROLLBACK_IN_PROGRESS" "${migration_id}" "${backup_stamp}" || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" stop-writers stop_application_writers || return $?
+  for store in postgres redis collector; do
+    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-started" \
+      record_store_progress "${migration_id}" "${store}" started || return $?
+    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-started" \
+      update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" started || return $?
+    case "${store}" in
+      postgres)
+        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" postgres postgres-restore \
+          restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump" || return $? ;;
+      redis)
+        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" redis redis-restore \
+          restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" \
+          "failed-import-redis-volume" "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" || return $? ;;
+      collector)
+        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" collector collector-restore \
+          restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}" || return $? ;;
+    esac
+    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-restored" \
+      record_store_progress "${migration_id}" "${store}" restored || return $?
+    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-restored" \
+      update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" restored || return $?
+  done
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" start-release start_current_release || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" verify-release verify_current_release || return $?
+  for store in postgres redis collector; do
+    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-verified" \
+      record_store_progress "${migration_id}" "${store}" verified || return $?
+    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-verified" \
+      update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" verified || return $?
+  done
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" state-complete \
+    write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" journal-complete \
+    update_crash_journal "${migration_id}" "${direction}" ROLLED_BACK "${backup_stamp}" || return $?
 }
 
 fail_and_rollback() {
@@ -1155,6 +1290,10 @@ apply_failure_trap() {
   trap - EXIT HUP INT TERM
   if [[ "${APPLY_FAILURE_ACTIVE}" -eq 1 ]]; then return "${signal_rc}"; fi
   APPLY_FAILURE_ACTIVE=1
+  if [[ -n "${APPLY_MIGRATION_ID}" ]]; then
+    update_crash_journal "${APPLY_MIGRATION_ID}" apply INTERRUPTED \
+      "${APPLY_BACKUP_STAMP}" "" "" signal "${signal_rc}"
+  fi
   if [[ "${APPLY_REPLACEMENT_STARTED}" -eq 1 && -n "${APPLY_BACKUP_STAMP}" ]]; then
     rollback_all "${APPLY_MIGRATION_ID}" "${APPLY_BACKUP_STAMP}"
   else
@@ -1183,49 +1322,62 @@ apply_migration() {
   if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
   run_recoverable_step refresh_preflight_before_stop "${migration_id}"
   if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
+  APPLY_MIGRATION_ID="${migration_id}"
+  APPLY_BACKUP_STAMP=""
+  APPLY_REPLACEMENT_STARTED=0
+  run_recoverable_step begin_crash_journal "${migration_id}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
+  install_apply_failure_trap
   run_recoverable_step stop_application_writers
   if [[ "${STEP_RC}" -ne 0 ]]; then
-    run_recoverable_step start_current_release
+    update_crash_journal "${migration_id}" apply STOP_FAILED "" "" "" stop-writers "${STEP_RC}"
     return 1
   fi
   run_recoverable_step_capture run_required_backup
   if [[ "${STEP_RC}" -ne 0 ]]; then
-    run_recoverable_step start_current_release
+    update_crash_journal "${migration_id}" apply BACKUP_FAILED "" "" "" backup "${STEP_RC}"
     return 1
   fi
   backup_stamp="${STEP_OUTPUT}"
+  APPLY_BACKUP_STAMP="${backup_stamp}"
+  run_recoverable_step update_crash_journal "${migration_id}" apply BACKED_UP "${backup_stamp}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then return 1; fi
   run_recoverable_step write_migration_state "BACKED_UP" "${migration_id}" "${backup_stamp}"
   if [[ "${STEP_RC}" -ne 0 ]]; then
     run_recoverable_step start_current_release
     return 1
   fi
-  APPLY_MIGRATION_ID="${migration_id}"
-  APPLY_BACKUP_STAMP="${backup_stamp}"
   APPLY_REPLACEMENT_STARTED=1
-  install_apply_failure_trap
   run_recoverable_step record_store_progress "${migration_id}" postgres started
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-start-state"; return 1; fi
+  update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" postgres started || return 1
   run_recoverable_step restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"; return 1; fi
   run_recoverable_step record_store_progress "${migration_id}" postgres restored
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-state"; return 1; fi
+  update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" postgres restored || return 1
   run_recoverable_step record_store_progress "${migration_id}" redis started
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-start-state"; return 1; fi
+  update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" redis started || return 1
   run_recoverable_step restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"; return 1; fi
   run_recoverable_step record_store_progress "${migration_id}" redis restored
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-state"; return 1; fi
+  update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" redis restored || return 1
   run_recoverable_step record_store_progress "${migration_id}" collector started
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-start-state"; return 1; fi
+  update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" collector started || return 1
   run_recoverable_step install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"; return 1; fi
   run_recoverable_step record_store_progress "${migration_id}" collector restored
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-state"; return 1; fi
+  update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" collector restored || return 1
   run_recoverable_step verify_store_group "${migration_id}" "pre-start"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"; return 1; fi
   for store in postgres redis collector; do
     run_recoverable_step record_store_progress "${migration_id}" "${store}" verified
     if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "${store}-verify-state"; return 1; fi
+    update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" "${store}" verified || return 1
   done
   run_recoverable_step start_current_release
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"; return 1; fi
@@ -1235,6 +1387,7 @@ apply_migration() {
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification"; return 1; fi
   run_recoverable_step write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "state-write"; return 1; fi
+  update_crash_journal "${migration_id}" apply APPLIED "${backup_stamp}" || return 1
   clear_apply_failure_trap
   printf '{"migration_id":"%s","status":"APPLIED"}\n' "${migration_id}"
 }
@@ -1278,6 +1431,23 @@ PY
   printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
 }
 
+recover_migration() {
+  local migration_id="$1" state backup_stamp journal_line
+  load_runtime || return $?
+  require_runtime_batch "${migration_id}" || return $?
+  journal_line="$(read_recovery_journal "${migration_id}")" || return $?
+  read -r state backup_stamp <<<"${journal_line}" || return $?
+  if [[ "${state}" == "STOPPING_WRITERS" || "${state}" == "STOP_FAILED" || "${state}" == "BACKUP_FAILED" ]]; then
+    start_current_release || return $?
+    update_crash_journal "${migration_id}" recover RECOVERED_WITHOUT_REPLACE || return $?
+    printf '{"migration_id":"%s","status":"RECOVERED"}\n' "${migration_id}"
+    return 0
+  fi
+  validate_backup_manifest "${backup_stamp}" || return $?
+  rollback_all "${migration_id}" "${backup_stamp}" recover || return $?
+  printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
+}
+
 main() {
   local code=0
   [[ "${EUID}" -eq 0 ]] || die "must run as root"
@@ -1291,7 +1461,7 @@ main() {
     inspect-current)
       [[ "$#" -eq 1 ]] || die "inspect-current takes no migration id" 2
       inspect_current ;;
-    prepare-upload|seal-upload|preflight|apply|verify|rollback)
+    prepare-upload|seal-upload|preflight|apply|verify|rollback|recover)
       [[ "$#" -eq 3 && "${2:-}" == "--migration-id" ]] || die "action requires --migration-id" 2
       require_migration_id "${3:-}"
       case "$1" in
@@ -1301,6 +1471,7 @@ main() {
         apply) apply_migration "$3" ;;
         verify) verify_migration "$3" ;;
         rollback) rollback_migration "$3" ;;
+        recover) recover_migration "$3" ;;
       esac ;;
     *) die "unknown data migration action" 2 ;;
   esac

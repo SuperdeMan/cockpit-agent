@@ -99,7 +99,11 @@ class FakeBinaryRunner:
         if "stop" in call:
             self.stopped.update(call[call.index("stop") + 1:])
         if "start" in call:
-            self.stopped.difference_update(call[call.index("start") + 1:])
+            started = set(call[call.index("start") + 1:])
+            self.stopped.difference_update(started)
+            self.stopped.difference_update(
+                name for name, container_id in self.writer_ids.items() if container_id in started
+            )
         if call[:2] == ("docker", "run"):
             mount = next((part for part in call if part.startswith("type=bind,source=")), None)
             if mount:
@@ -334,7 +338,51 @@ def test_final_resolves_all_writer_identity_before_stop_and_recovers_on_failure(
     for writer_id in runner.writer_ids.values():
         assert any(call[:2] == ("docker", "inspect") and call[-1] == writer_id
                    for call in runner.calls[:stop_index])
-    assert any("start" in call and "gateway-cloud" in call for call in runner.calls)
+    assert any(call[:2] == ("docker", "start") and runner.writer_ids["gateway-cloud"] in call
+               for call in runner.calls)
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt(), RuntimeError("snapshot failed")])
+def test_final_recovers_exact_writer_ids_for_baseexception(tmp_path: Path, failure: BaseException):
+    class FailingRunner(FakeBinaryRunner):
+        def stream_to_file(self, argv, target: Path, *, cwd: Path):
+            self._record(argv)
+            raise failure
+
+    runner = FailingRunner()
+    with pytest.raises(type(failure)):
+        migration.capture_local_snapshot(
+            repo=tmp_path,
+            artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+            phase="final", quiesce_local=True, apply=True, runner=runner,
+            now=lambda: datetime(2026, 8, 17, 1, 2, 3, tzinfo=UTC),
+        )
+    recovery = next(call for call in runner.calls if call[:2] == ("docker", "start"))
+    expected = set(runner.writer_ids.values()) | {runner.services["observability-collector"][0]}
+    assert set(recovery[2:]) == expected
+
+
+def test_partial_stop_failure_still_recovers_and_preserves_original_error(tmp_path: Path):
+    class PartialStopRunner(FakeBinaryRunner):
+        def run(self, argv, *, cwd: Path):
+            call = self._record(argv)
+            if "stop" in call:
+                self.stopped.add("gateway-cloud")
+                raise migration.MigrationError("partial stop original")
+            if call[:2] == ("docker", "start"):
+                self.stopped.clear()
+                return migration.CommandResult(call, 0, "", "")
+            return super().run(argv, cwd=cwd)
+
+    runner = PartialStopRunner()
+    with pytest.raises(migration.MigrationError, match="partial stop original"):
+        migration.capture_local_snapshot(
+            repo=tmp_path,
+            artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+            phase="final", quiesce_local=True, apply=True, runner=runner,
+            now=lambda: datetime(2026, 8, 17, 1, 2, 3, tzinfo=UTC),
+        )
+    assert any(call[:2] == ("docker", "start") for call in runner.calls)
 
 
 def test_snapshot_timestamp_is_canonical_utc_seconds(tmp_path: Path):
@@ -527,6 +575,8 @@ class FakeRemoteRunner:
             stdout = json.dumps({"migration_id": VALID_ID, "status": "APPLIED"})
         elif " rollback " in f" {command} ":
             stdout = json.dumps({"migration_id": VALID_ID, "status": "ROLLED_BACK"})
+        elif " recover " in f" {command} ":
+            stdout = json.dumps({"migration_id": VALID_ID, "status": "ROLLED_BACK"})
         return migration.CommandResult(call, 0, stdout, "")
 
 
@@ -573,6 +623,27 @@ def test_apply_is_dry_run_without_explicit_flag(tmp_path: Path):
 def test_cli_rejects_unsafe_migration_id(value: str):
     with pytest.raises(migration.MigrationError):
         migration.require_migration_id(value)
+
+
+def test_recover_cli_is_dry_run_without_apply_and_requires_final_remote_status(tmp_path: Path, capsys):
+    _write_valid_bundle(tmp_path)
+    key = _fake_key(tmp_path)
+    runner = FakeRemoteRunner()
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(key),
+        "recover", "--migration-id", VALID_ID,
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert not runner.calls
+    assert json.loads(capsys.readouterr().out)["status"] == "dry_run"
+
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(key),
+        "recover", "--migration-id", VALID_ID, "--apply",
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert " recover " in f" {runner.calls[-1][-1]} "
+    assert json.loads(capsys.readouterr().out)["status"] == "ROLLED_BACK"
 
 
 def test_plan_is_read_only_and_never_uploads(tmp_path: Path):

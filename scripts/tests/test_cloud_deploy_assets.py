@@ -296,8 +296,11 @@ def test_remote_upload_seal_takes_directory_first_and_mutates_only_open_fds():
     assert "os.fchown(root, 0, 0)" in body
     assert "os.fchmod(root, 0o700)" in body
     assert "os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)" in body
-    assert "os.fchown(descriptor, 0, 0)" in body
-    assert "os.fchmod(descriptor, 0o600)" in body
+    assert "os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW" in body
+    assert "os.fchown(replacement, 0, 0)" in body
+    assert "os.fchmod(replacement, 0o600)" in body
+    assert "os.replace(temporary, name" in body
+    assert "os.fsync(root)" in body
     assert body.index("os.fchown(root, 0, 0)") < body.index("os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)")
     for unsafe in ("chown root:root --", "chmod 0600 -- \"${directory}"):
         assert unsafe not in body
@@ -408,6 +411,8 @@ def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path
         require_sealed_inbound_bundle() {{ :; }}
         require_preapply_batch() {{ :; }}
         require_runtime_batch() {{ :; }}
+        begin_crash_journal() {{ :; }}
+        update_crash_journal() {{ :; }}
         refresh_preflight_after_backup() {{ printf 'preflight\n' >>'{events.as_posix()}'; }}
         run_required_backup() {{ printf 'backup\n' >>'{events.as_posix()}'; printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
@@ -438,6 +443,8 @@ def test_remote_attestation_failure_never_marks_applied_and_triggers_rollback(tm
         require_sealed_inbound_bundle() {{ :; }}
         require_preapply_batch() {{ :; }}
         require_runtime_batch() {{ :; }}
+        begin_crash_journal() {{ :; }}
+        update_crash_journal() {{ :; }}
         refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
@@ -468,6 +475,8 @@ def test_remote_apply_attests_exact_before_start_then_growth_safe_after_start(tm
         require_sealed_inbound_bundle() {{ :; }}
         require_preapply_batch() {{ :; }}
         require_runtime_batch() {{ :; }}
+        begin_crash_journal() {{ :; }}
+        update_crash_journal() {{ :; }}
         refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
@@ -528,7 +537,7 @@ def test_remote_batch_validation_splits_sealed_input_from_controlled_runtime_tre
     assert 'entries != required' in sealed
     assert '"rollback"' not in sealed and '"rollback-generated"' not in sealed
     assert 'allowed_directories = {"rollback", "rollback-generated"}' in runtime
-    assert 'allowed_files = required | {"status.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}' in runtime
+    assert 'allowed_files = required | {"status.json", "journal.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}' in runtime
     assert 'os.O_DIRECTORY | os.O_NOFOLLOW' in runtime
     assert 'metadata.st_uid != 0 or metadata.st_gid != 0' in runtime
     assert 'stat.S_IMODE(metadata.st_mode) != expected_mode' in runtime
@@ -580,6 +589,8 @@ def test_remote_state_machine_is_sealed_then_preflighted_then_runtime(tmp_path: 
         require_sealed_inbound_bundle() {{ printf 'sealed\n' >>'{events.as_posix()}'; }}
         require_preapply_batch() {{ printf 'preapply\n' >>'{events.as_posix()}'; }}
         require_runtime_batch() {{ printf 'runtime\n' >>'{events.as_posix()}'; }}
+        begin_crash_journal() {{ :; }}
+        update_crash_journal() {{ :; }}
         write_preflight_current() {{ printf 'preflighted\n' >>'{events.as_posix()}'; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ :; }}
@@ -612,6 +623,8 @@ def test_apply_then_verify_and_rollback_use_runtime_batch_validation(tmp_path: P
         require_sealed_inbound_bundle() {{ printf 'sealed\n' >>'{events.as_posix()}'; }}
         require_preapply_batch() {{ printf 'preapply\n' >>'{events.as_posix()}'; }}
         require_runtime_batch() {{ printf 'runtime:%s\n' "$1" >>'{events.as_posix()}'; }}
+        begin_crash_journal() {{ :; }}
+        update_crash_journal() {{ :; }}
         refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ :; }}
@@ -1824,3 +1837,44 @@ def test_migration_uses_linear_step_capture_without_errexit_or_err_trap():
     for name in ("run_recoverable_step", "run_recoverable_step_capture"):
         body = re.search(rf"(?ms)^{name}\(\) \{{(?P<body>.*?)^\}}", text)["body"]
         assert 'STEP_RC=$?' in body
+
+
+def test_apply_installs_durable_crash_journal_and_signal_guard_before_first_stop():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    apply = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert apply.index("begin_crash_journal") < apply.index("install_apply_failure_trap")
+    assert apply.index("install_apply_failure_trap") < apply.index("stop_application_writers")
+    journal = re.search(r"(?ms)^update_crash_journal\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for token in ("operation_id", "direction", "stores", "phase", "failed_step", "failed_rc"):
+        assert token in journal
+    assert "os.fsync" in journal and "os.O_DIRECTORY" in journal
+    traps = re.search(r"(?ms)^install_apply_failure_trap\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for signal in ("EXIT", "HUP", "INT", "TERM"):
+        assert signal in traps
+
+
+@pytest.mark.parametrize("journal_state", ["BACKED_UP", "ROLLBACK_IN_PROGRESS", "ROLLBACK_FAILED"])
+def test_explicit_recover_uses_validated_backup_and_never_blindly_marks_success(
+    tmp_path: Path, journal_state: str,
+):
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "recover.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+load_runtime() {{ :; }}
+require_runtime_batch() {{ :; }}
+read_recovery_journal() {{ printf '%s %s\n' '{journal_state}' '20260817T010203Z'; }}
+validate_backup_manifest() {{ printf 'validated\n' >>'{events.as_posix()}'; }}
+rollback_all() {{ printf 'rollback\n' >>'{events.as_posix()}'; return 43; }}
+recover_migration 20260817T010203Z-abcdef0-online
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode != 0
+    assert events.read_text(encoding="utf-8").splitlines() == ["validated", "rollback"]
+    assert "ROLLED_BACK" not in completed.stdout

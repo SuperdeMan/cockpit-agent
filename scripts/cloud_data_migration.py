@@ -26,10 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot.add_argument("--phase", choices=("online", "final"), required=True)
     snapshot.add_argument("--quiesce-local", action="store_true")
     snapshot.add_argument("--apply", action="store_true")
-    for name in ("plan", "apply", "verify", "rollback"):
+    for name in ("plan", "apply", "verify", "rollback", "recover"):
         command = commands.add_parser(name)
         command.add_argument("--migration-id", required=True)
-        if name in {"apply", "rollback"}:
+        if name in {"apply", "rollback", "recover"}:
             command.add_argument("--apply", action="store_true")
     return parser
 
@@ -134,6 +134,15 @@ def main(
                 })
                 return 0
             result = migration.remote_action(request, "rollback", remote_runner)  # type: ignore[arg-type]
+            final_status = migration.parse_action_status(result, request.migration_id, "ROLLED_BACK")
+            _emit({"status": final_status["status"], "migration_id": request.migration_id})
+            return 0
+        if args.command == "recover":
+            if not args.apply:
+                _emit({"status": "dry_run", "migration_id": request.migration_id,
+                       "would": "recover_from_server_journal"})
+                return 0
+            result = migration.remote_action(request, "recover", remote_runner)  # type: ignore[arg-type]
             final_status = migration.parse_action_status(result, request.migration_id, "ROLLED_BACK")
             _emit({"status": final_status["status"], "migration_id": request.migration_id})
             return 0

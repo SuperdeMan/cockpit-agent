@@ -910,14 +910,15 @@ def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str
 def remote_action(
     request: MigrationRequest, action: str, runner: RemoteCommandRunner
 ) -> str:
-    if action not in {"preflight", "apply", "verify", "rollback"}:
+    if action not in {"preflight", "apply", "verify", "rollback", "recover"}:
         raise MigrationError("invalid remote migration action")
     result = runner.run(
         request.ssh.ssh_argv(
             f"sudo {REMOTE_SCRIPT} {action} --migration-id {request.migration_id}"
         ),
         cwd=request.repo, timeout_s={"preflight": 300, "verify": 600,
-                                    "apply": 3600, "rollback": 3600}[action],
+                                    "apply": 3600, "rollback": 3600,
+                                    "recover": 3600}[action],
     )
     return result.stdout.strip()
 
@@ -1219,9 +1220,8 @@ def _quiesce_local_writers(
 def _restart_local_writers(
     repo: Path, identities: Sequence[WriterIdentity], runner: BinaryCommandRunner,
 ) -> None:
-    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
-    names = tuple(item.service for item in identities)
-    runner.run([*compose, "start", *names], cwd=repo)
+    container_ids = tuple(item.container_id for item in identities)
+    runner.run(["docker", "start", *container_ids], cwd=repo)
     for identity in identities:
         inspect = _strict_single_inspect(
             runner.json(["docker", "inspect", identity.container_id], cwd=repo)
@@ -1271,11 +1271,15 @@ def capture_local_snapshot(
     directory.mkdir(mode=0o700)
     restrict_private_tree(directory, runner)
     atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURING"})
-    writers_stopped = False
+    recovery_needed = False
     try:
         if phase == "final":
+            recovery_needed = True
+            atomic_private_json(directory / "status.json", {
+                "migration_id": migration_id, "status": "RECOVERY_NEEDED",
+                "writer_container_ids": [item.container_id for item in writer_identities],
+            })
             _quiesce_local_writers(repo, writer_identities, runner)
-            writers_stopped = True
         pg_partial = directory / "postgres.dump.partial"
         capture_postgres(services["postgres"], pg_partial, runner, repo=repo)
         private_replace(pg_partial, directory / "postgres.dump")
@@ -1297,10 +1301,21 @@ def capture_local_snapshot(
         payload = manifest_payload(manifest)
         atomic_private_json(directory / "manifest.json", payload)
         atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURED"})
-    except Exception:
+    except BaseException:
         atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURE_FAILED"})
-        if writers_stopped:
-            _restart_local_writers(repo, writer_identities, runner)
+        if recovery_needed:
+            try:
+                _restart_local_writers(repo, writer_identities, runner)
+                atomic_private_json(directory / "status.json", {
+                    "migration_id": migration_id, "status": "WRITERS_RECOVERED",
+                    "writer_container_ids": [item.container_id for item in writer_identities],
+                })
+            except BaseException as recovery_error:
+                atomic_private_json(directory / "status.json", {
+                    "migration_id": migration_id, "status": "RECOVERY_FAILED",
+                    "writer_container_ids": [item.container_id for item in writer_identities],
+                    "recovery_error": type(recovery_error).__name__,
+                })
         raise
     files = tuple(directory / name for name in (*SNAPSHOT_FILENAMES, "manifest.json", "status.json"))
     return MigrationBundle(directory=directory, manifest=manifest, files=files)
