@@ -17,6 +17,16 @@ logger = logging.getLogger("agent.reminder.store")
 
 _SCHEMA_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "schema.sql")
 PENDING, FIRED, DONE, CANCELLED = "pending", "fired", "done", "cancelled"
+
+
+class InvalidReminder(ValueError):
+    """写入闸拒绝：这条提醒**存进去也不会触发**（Q11/N2）。
+
+    **抛而不是静默丢**——调用方必须知道自己刚才没建成，才谈得上诚实追问。
+    静默丢弃会造出「系统说建好了、库里没有」这种更难查的形态。
+    """
+
+
 ACTIVE = (PENDING, FIRED)     # 默认过滤：用户可见/可操作态
 PERSONAL_DATA_TARGETS = (
     {
@@ -136,6 +146,18 @@ class ReminderStore:
         r.id = r.id or uuid.uuid4().hex
         r.created_at = r.created_at or int(time.time())
         r.occupant_id = (r.occupant_id or "").strip() or PRIMARY
+        # Q11/N2 写入闸：**定时提醒的 `fire_at` 必须是一个未来时刻**。
+        # 库里实测躺着三条 `fire_at=0`（1970-01-01）的 **pending** 提醒——
+        # 时间解析失败了，创建仍然成功。它们永远不会触发，而按 fire_at 升序
+        # **永远排在「进行中的任务」最前面**，于是用户每次查任务都先看到
+        # 「妈妈住杭州」「停车位在B2」（I-056 逐字就是这三条）。
+        # > **存储层对「什么是一条有效提醒」零校验**，是这个缺陷能落库的最后一环：
+        # > 上游解析失败与「非任务陈述被建成提醒」两个缺陷叠加后，**仍然写进了库**。
+        # ⚠ 只管 `kind=time`：待办（todo）与位置提醒本来就没有时刻。
+        if r.kind == "time" and not (r.fire_at and r.fire_at > 0):
+            raise InvalidReminder(
+                f"定时提醒的 fire_at 必须是有效时刻（拿到的是 {r.fire_at!r}）"
+                f"——解析失败就该诚实追问，不是存一条永远不会触发的提醒")
         if self._pg_ok:
             import json
             async with self._pool.acquire() as conn:

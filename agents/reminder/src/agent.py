@@ -32,7 +32,22 @@ _CMD_STRIP_RE = re.compile(
     r"^(麻烦|请|帮我|给我)?(再)?(提醒我|叫我|别忘了|记得|记一下|记个待办|记个|设个提醒|建个提醒|待办[:：]?)+")
 _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项场]?")   # 场：跨域「第N场」
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
+from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
+
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
+# Q11 否定守卫（I-009②）：用户明说「别建提醒」。**极性词表来自 `runtime.polarity`**
+# ——卡 §3-Q11 明写它与 Q7 的极性维度同源，共用一份，别写第二份。
+# 这里只补「否定的宾语是**提醒这件事**」这半：`polarity` 判的是「别做某个动作」，
+# 而「别建提醒」的动作词（建/设/记）不在车控动作表里。
+# ⚠ 多一个 `不用`：它在共享词表里被**刻意排除**（「不用了」全局歧义——那是取消挂起，
+# 见 `pending_cancel`），但**宾语是「提醒/闹钟」时不歧义**（「不用提醒我」）。
+# 这不是第二份词表，是本域给共享词表补一个只在本域成立的词。
+_NO_REMINDER_RE = re.compile(
+    rf"(?:{NEG_WORDS}|不用)[^，。；！？,;!?]{{0,4}}?(?:建|设|加|记|存|要)?"
+    r"[^，。；！？,;!?]{0,3}?(?:提醒|闹钟|日程|待办)")
+# 双重否定：「**别忘了**提醒我开会」真实语义是**要建**。挡它等于反向漏执行
+# ——同 `runtime.polarity` 的 `_DOUBLE_NEGATIVE_RE`，必须早于否定判据求值。
+_REMINDER_DOUBLE_NEG_RE = re.compile(rf"(?:{NEG_WORDS}|不用)\s*(?:忘|忘了|忘记)")
 _TIME_SIGNAL_RE = re.compile(
     r"今天|今晚|今早|明天|明早|明晚|后天|大后天|"
     r"周末|月底|月初|年末|年初|饭点|睡前|起床|稍后|待会|一会儿|"
@@ -153,6 +168,16 @@ class ReminderAgent(BaseAgent):
     # ── create（含 P1a：update 续接 / snooze 收编 / 重复规则）──
     async def _create(self, intent, ctx, meta) -> AgentResult:
         raw = intent.raw_text or ""
+        # Q11 否定守卫：**用户明说「别建提醒」时不许建**。
+        # 实测库里逐字躺着一条：「接爸妈去吃饭，**别建提醒**」→ 建了一条提醒，
+        # 正文含「别建提醒」四个字（已 cancelled，但它进过库）。
+        # ⚠ 判据**共用 Q7 的极性实现**（`runtime.polarity`），卡 §3-Q11 明写同源：
+        # 「别建提醒」与「车窗别开」是同一件事的两个域，不许写第二份。
+        if (not _REMINDER_DOUBLE_NEG_RE.search(raw)
+                and _NO_REMINDER_RE.search(raw)):
+            return AgentResult(
+                speech="好的，那我不建提醒。",
+                follow_up="要建的时候说一声就行。")
         title = (intent.slots.get("title") or "").strip()
         time_text = (intent.slots.get("time_text") or "").strip()
         if not title or title == raw:            # route_hints 灌整句 / planner 未抽槽

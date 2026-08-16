@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from fast_intent import classify, classify_structured, split_and_classify_any
-from polarity import is_negated_directive
+from runtime.polarity import is_negated_directive
 
 
 # ── 判据本身 ──────────────────────────────────────────────────────────────

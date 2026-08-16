@@ -7,7 +7,7 @@
 from __future__ import annotations
 import re
 
-from polarity import is_negated_directive
+from runtime.polarity import is_negated_directive
 
 LOCAL_INTENTS = {
     # ⚠ `hvac.inc/dec` 2026-08-04 补入：温度增减此前**只以别名 `aircon.inc/dec` 登记**

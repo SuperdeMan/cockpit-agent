@@ -553,10 +553,16 @@ async def test_ordinal_continuation_after_clarify():
 # ── Q5/I-045：默认查询范围收窄，但不隐藏 ──────────────────────────────────
 
 async def _seed_raw(agent, title: str, fire_at: int):
-    """直接写库（绕过 create 的时间解析，用例要造过期项）。"""
-    await agent.store.add(Reminder(
+    """直接塞进存储（绕过 create 的时间解析与**写入闸**，用例要造过期/存量项）。
+
+    ⚠ 刻意绕闸：**写入闸挡的是新写入，存量脏数据还在库里**（清洗 `--apply`
+    才管那些）。展示层的过滤必须独立成立——两件事分开验，否则「闸建好了」
+    会被误读成「用户不会再看到那三条」。
+    """
+    agent.store._mem[f"r-{title}"] = Reminder(
         id=f"r-{title}", user_id="u1", occupant_id="primary",
-        title=title, fire_at=fire_at, kind="time", status="pending"))
+        title=title, fire_at=fire_at, kind="time", status="pending",
+        created_at=1)
 
 
 @pytest.mark.asyncio
@@ -610,3 +616,48 @@ async def test_invalid_fire_at_zero_is_not_shown_as_upcoming():
     assert "明天带伞" in res.speech
     assert "妈妈住杭州" not in res.speech
     assert "1 条已过期" in res.speech
+
+
+# ── Q11 写入闸 + 否定守卫 ─────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_store_rejects_a_reminder_that_can_never_fire():
+    """N2：**时间解析失败了，创建仍然成功**——库里躺着三条 `fire_at=0` 的 pending。
+
+    存储层对「什么是一条有效提醒」零校验，是这个缺陷能落库的最后一环：
+    上游两个缺陷叠加之后，**仍然写进了库**。
+    """
+    from agents.reminder.src.store import InvalidReminder
+    a = await _agent()
+    with pytest.raises(InvalidReminder):
+        await a.store.add(Reminder(user_id="u1", title="妈妈住杭州",
+                                   kind="time", fire_at=0))
+
+
+@pytest.mark.asyncio
+async def test_store_still_accepts_todos_and_location_reminders():
+    """反向对照：待办与位置提醒**本来就没有时刻**，不许被这道闸误挡。"""
+    a = await _agent()
+    await a.store.add(Reminder(user_id="u1", title="买牛奶", kind="todo"))
+    await a.store.add(Reminder(user_id="u1", title="到公司提醒我",
+                               kind="location", extra={"place": "公司"}))
+
+
+@pytest.mark.asyncio
+async def test_explicit_no_reminder_is_honoured():
+    """I-009②：「接爸妈去吃饭，**别建提醒**」实测建了一条，正文含「别建提醒」四个字。"""
+    for raw in ("接爸妈去吃饭，别建提醒", "不用提醒我", "这个不要提醒", "别设闹钟"):
+        a = await _agent()
+        res = await run_handle(a, "reminder.create", raw_text=raw)
+        assert res.status == "ok" and "不建提醒" in res.speech, raw
+        times, todos = await a.store.list_split("u1")
+        assert not times and not todos, f"{raw} 仍然建了提醒"
+
+
+@pytest.mark.asyncio
+async def test_double_negative_still_creates():
+    """反向对照：「**别忘了**提醒我八点开会」真实语义是**要建**。
+    挡它等于反向漏执行——同 `runtime.polarity` 的双重否定例外。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="别忘了明天八点提醒我开会")
+    assert "不建提醒" not in res.speech
