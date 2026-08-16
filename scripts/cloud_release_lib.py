@@ -7,8 +7,10 @@ import io
 import json
 import re
 import secrets
+import shutil
 import subprocess
 import tarfile
+import tempfile
 import tokenize
 import uuid
 from dataclasses import dataclass
@@ -676,6 +678,80 @@ def _write_transport_tar(path: Path, files: Sequence[Path]) -> None:
             archive.addfile(info, io.BytesIO(payload))
 
 
+def _generate_proto_into_source_tar(
+    source_tar: Path,
+    *,
+    runner: CommandRunner,
+    executable: str | None = None,
+) -> None:
+    with tarfile.open(source_tar, mode="r:") as archive:
+        members = archive.getmembers()
+        names = {member.name for member in members}
+        if not {"buf.gen.yaml", "proto/buf.yaml"}.issubset(names):
+            return
+        if any(name == "gen" or name.startswith("gen/") for name in names):
+            raise ReleaseError("committed source unexpectedly contains gen output")
+        resolved_executable = executable or shutil.which("buf")
+        if not resolved_executable:
+            raise ReleaseError("buf is required to build the release artifact")
+
+        with tempfile.TemporaryDirectory(prefix="car-agent-codegen-") as raw:
+            source_root = Path(raw)
+            for member in members:
+                target = source_root.joinpath(*PurePosixPath(member.name).parts)
+                if member.isdir():
+                    target.mkdir(mode=0o755, parents=True, exist_ok=True)
+                    continue
+                if not member.isfile():
+                    raise ReleaseError(
+                        f"forbidden archive member type: {member.name}"
+                    )
+                target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise ReleaseError(
+                        f"could not inspect archive member: {member.name}"
+                    )
+                target.write_bytes(extracted.read())
+
+            runner.run(
+                [resolved_executable, "generate", "proto"],
+                cwd=source_root,
+            )
+            generated_root = source_root / "gen"
+            python_root = generated_root / "python"
+            if (
+                not python_root.is_dir()
+                or not any(python_root.rglob("*_pb2.py"))
+                or not any(python_root.rglob("*_pb2_grpc.py"))
+            ):
+                raise ReleaseError("buf did not produce Python protobuf output")
+
+            generated = sorted(
+                generated_root.rglob("*"),
+                key=lambda item: item.relative_to(source_root).as_posix(),
+            )
+            with tarfile.open(source_tar, mode="a") as output:
+                for path in generated:
+                    if path.is_symlink() or not (path.is_dir() or path.is_file()):
+                        raise ReleaseError("buf produced an unsupported output type")
+                    name = path.relative_to(source_root).as_posix()
+                    info = tarfile.TarInfo(name)
+                    info.mode = 0o755 if path.is_dir() else 0o644
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = "root"
+                    info.gname = "root"
+                    info.mtime = 0
+                    if path.is_dir():
+                        info.type = tarfile.DIRTYPE
+                        output.addfile(info)
+                        continue
+                    payload = path.read_bytes()
+                    info.size = len(payload)
+                    output.addfile(info, io.BytesIO(payload))
+
+
 def _artifact_paths(directory: Path) -> ReleaseArtifact:
     return ReleaseArtifact(
         directory=directory,
@@ -789,6 +865,8 @@ def build_release_artifact(
     plan: ReleasePlan,
     services_digest: str,
     models_digest: str,
+    codegen_runner: CommandRunner | None = None,
+    codegen_executable: str | None = None,
 ) -> ReleaseArtifact:
     if plan.status != "ready" or plan.blocking_changes:
         raise ReleaseError("cannot build artifact for a blocked release plan")
@@ -823,6 +901,11 @@ def build_release_artifact(
             plan.target_sha,
         ],
         cwd=repo,
+    )
+    _generate_proto_into_source_tar(
+        staged.source_tar,
+        runner=codegen_runner or SubprocessRunner(),
+        executable=codegen_executable,
     )
     _validate_source_tar(staged.source_tar)
     source_digest = sha256_file(staged.source_tar)
@@ -1384,6 +1467,12 @@ def execute_deploy(
         request.ssh.scp_argv(
             artifact.transport_tar,
             f"{expected_directory}/transport.tar",
+        ),
+        cwd=request.repo,
+    )
+    runner.run(
+        request.ssh.ssh_argv(
+            f"chmod 0600 -- {expected_directory}/transport.tar"
         ),
         cwd=request.repo,
     )

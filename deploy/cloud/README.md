@@ -132,6 +132,11 @@ python scripts/cloud_release.py verify
 python scripts/cloud_release.py rollback --to 4c1f479 --apply
 ```
 
+发布器要求本机安装项目既有开发依赖 `buf`，但不依赖本机 Docker。构建 artifact
+时会在隔离临时目录中检出目标提交、执行 `buf generate proto`，再将 gitignore 的
+`gen/` 派生产物绑定到 `source.tar` 的 SHA-256；它不会读取当前工作树中的 `gen/`。
+上传完成后发布器会显式把远端 `transport.tar` 收紧为 `0600`，再进入服务端验签和构建。
+
 连接信息只通过命令行参数或以下环境变量提供，不写入仓库和发布 manifest：
 
 | 环境变量 | 用途 |

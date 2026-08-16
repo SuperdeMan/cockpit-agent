@@ -370,6 +370,104 @@ def test_build_release_artifact_contains_only_committed_source(tmp_path: Path):
         ]
 
 
+def test_build_release_artifact_generates_proto_from_committed_source(
+    tmp_path: Path,
+):
+    repo, _ = make_repo(tmp_path)
+    (repo / "buf.gen.yaml").write_text("version: v1\n", encoding="utf-8")
+    proto = repo / "proto"
+    proto.mkdir()
+    (proto / "buf.yaml").write_text("version: v1\n", encoding="utf-8")
+    (proto / "agent.proto").write_text(
+        'syntax = "proto3";\n',
+        encoding="utf-8",
+    )
+    git(repo, "add", "buf.gen.yaml", "proto")
+    git(repo, "commit", "-m", "proto")
+    sha = git(repo, "rev-parse", "HEAD")
+
+    class CodegenRunner:
+        def __init__(self) -> None:
+            self.calls: list[tuple[tuple[str, ...], Path]] = []
+
+        def run(
+            self,
+            argv,
+            *,
+            cwd,
+            env=None,
+            stdin=None,
+            check=True,
+        ):
+            self.calls.append((tuple(argv), cwd))
+            generated = cwd / "gen" / "python" / "cockpit" / "agent" / "v1"
+            generated.mkdir(parents=True)
+            (generated / "agent_pb2.py").write_bytes(b"# generated\n")
+            (generated / "agent_pb2_grpc.py").write_bytes(
+                b"# generated grpc\n"
+            )
+            return CommandResult(tuple(argv), 0, "", "")
+
+    runner = CodegenRunner()
+    artifact = build_release_artifact(
+        repo=repo,
+        output_root=tmp_path / "artifacts",
+        plan=ReleasePlan(sha, sha, (), (), "ready"),
+        services_digest="1" * 64,
+        models_digest="2" * 64,
+        codegen_runner=runner,
+        codegen_executable="buf",
+    )
+
+    assert len(runner.calls) == 1
+    assert runner.calls[0][0] == ("buf", "generate", "proto")
+    assert runner.calls[0][1] != repo
+    assert not (repo / "gen").exists()
+    with tarfile.open(artifact.source_tar) as archive:
+        names = archive.getnames()
+        assert "gen/python/cockpit/agent/v1/agent_pb2.py" in names
+        assert "gen/python/cockpit/agent/v1/agent_pb2_grpc.py" in names
+        generated = archive.extractfile(
+            "gen/python/cockpit/agent/v1/agent_pb2.py"
+        )
+        assert generated is not None
+        assert generated.read() == b"# generated\n"
+
+
+def test_build_release_artifact_rejects_missing_python_codegen(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    (repo / "buf.gen.yaml").write_text("version: v1\n", encoding="utf-8")
+    proto = repo / "proto"
+    proto.mkdir()
+    (proto / "buf.yaml").write_text("version: v1\n", encoding="utf-8")
+    git(repo, "add", "buf.gen.yaml", "proto")
+    git(repo, "commit", "-m", "proto")
+    sha = git(repo, "rev-parse", "HEAD")
+
+    class EmptyCodegenRunner:
+        def run(
+            self,
+            argv,
+            *,
+            cwd,
+            env=None,
+            stdin=None,
+            check=True,
+        ):
+            return CommandResult(tuple(argv), 0, "", "")
+
+    with pytest.raises(ReleaseError, match="Python protobuf output"):
+        build_release_artifact(
+            repo=repo,
+            output_root=tmp_path / "artifacts",
+            plan=ReleasePlan(sha, sha, (), (), "ready"),
+            services_digest="1" * 64,
+            models_digest="2" * 64,
+            codegen_runner=EmptyCodegenRunner(),
+            codegen_executable="buf",
+        )
+
+
 def test_build_release_artifact_reuses_identical_existing_artifact(
     tmp_path: Path,
 ):
@@ -871,6 +969,7 @@ def test_apply_prepares_upload_scps_once_and_deploys_through_entrypoint(
             command_result(incoming + "\n"),
             command_result(),
             command_result(),
+            command_result(),
         ]
     )
 
@@ -885,6 +984,7 @@ def test_apply_prepares_upload_scps_once_and_deploys_through_entrypoint(
     joined = [" ".join(call) for call in runner.calls]
     assert sum("remote-release.sh prepare-upload" in call for call in joined) == 1
     assert sum(call.startswith("scp ") for call in joined) == 1
+    assert sum("chmod 0600 --" in call for call in joined) == 1
     assert sum("remote-release.sh deploy" in call for call in joined) == 1
     assert all(
         "sudo /opt/car-agent/shared/bin/remote-release.sh" in call
