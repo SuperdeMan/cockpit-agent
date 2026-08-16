@@ -9,8 +9,9 @@
 > 已经验证。
 
 - 发布前必须持有上述互斥锁；不得绕过锁并发 release、rollback 或 verify。
-- `dev-stack.local` 缺失按 `target=local`，损坏 fail closed；只允许 `target=local|cloud`，
-  且不得保存 token、密码、私钥或 URL。
+- `dev-stack.local` 是仓库根目录的 Git-ignore 文件；统一入口必须按仓库根目录定位，不能按
+  当前工作目录误判缺失。缺失按 `target=local`，损坏 fail closed；只允许
+  `target=local|cloud`，且不得保存 token、密码、私钥或 URL。
 - `target=cloud` 禁止启动本地 Compose；cloud deploy 只接受干净、已提交、main 可达的 SHA，
   不自动 commit、merge 或 push。
 

@@ -160,7 +160,8 @@ shell 与 `make e2e` 都只是参数透传，不再各自维护脚本数组。�
 
 > 以下命令在对应实现提交合入后可用。远程策略字段固定为 `remote_safe` / `remote_mutating`；
 > 本段只定义契约，不宣称尚未实现的命令已经验证。未显式 `remote_safe` 的 E2E 不得在 cloud
-> 缺省运行；`remote_mutating` 仍需人工红线授权。
+> 缺省运行；E2E 运行前也由统一入口按仓库根目录读取根 `dev-stack.local`；`remote_mutating`
+> 仍需人工红线授权。
 
 ```bash
 python scripts/run_e2e.py --check --milestone M-A --lane milestone --stale-policy warn
