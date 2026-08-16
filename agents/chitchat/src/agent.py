@@ -19,6 +19,7 @@ from datetime import datetime
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
 from .audit import audit_answer, is_execution_audit_question
+from .mem_source import with_provenance
 from agents._sdk.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
                                        alert_level, alert_signal, driver_state)
 
@@ -211,34 +212,40 @@ class ChitchatAgent(BaseAgent):
     def __init__(self):
         super().__init__(_MANIFEST)
 
-    async def _memory_context(self, intent, ctx) -> str:
+    async def _memory_context(self, intent, ctx):
         """召回与本问相关的个人信息/偏好（如宠物名、口味），注入 system 供自然作答。
-        失败/无 user_id 返回空，不阻塞。"""
+        返回 `(注入块, 召回到的记忆)`；失败/无 user_id 返回 `("", [])`，不阻塞。"""
         query = intent.raw_text or intent.slots.get("text", "")
         if not query:
-            return ""
+            return "", []
         try:
             # 含 episodic：个人事实（宠物/家人名）抽取时可能被归为 semantic 或 episodic（叙事式输入常落
             # episodic），只召 semantic 会漏「我的猫叫什么」这类问题。语义排序 + top_k 保证不相关片段不被注入。
             mems = await ctx.recall(query, kinds=["semantic", "episodic"], top_k=4, min_confidence=0.5)
         except Exception:
-            return ""
+            return "", []
         lines = [f"- {m.get('text', '')}" for m in mems if m.get("text")]
         if not lines:
-            return ""
-        return ("已知用户信息（仅在与问题相关时自然引用，勿生硬复述、勿暴露这是系统记忆）：\n"
-                + "\n".join(lines))
+            return "", []
+        # ⚠ **原来这里写着「勿暴露这是系统记忆」**（Q5 残余，2026-08-16 删）。
+        # 那句话是 XS3 三次取样一次都不说出处的**直接成因**——不是模型忘了，
+        # 是系统让它别说。而卡的要求正相反：真记忆没有出处，在用户眼里就是幻觉。
+        # 现在出处由 `mem_source.with_provenance` **确定性追加**（要的是机制不是
+        # 提示词），这里只需不再反向指示；也**不改成正向指示**——那仍是求 LLM 说。
+        return ("已知用户信息（仅在与问题相关时自然引用，勿生硬复述）：\n"
+                + "\n".join(lines), list(mems))
 
-    async def _build_messages(self, intent, ctx, meta) -> list[dict]:
+    async def _build_messages(self, intent, ctx, meta):
+        """返回 `(msgs, 本轮召回到的记忆)`——后者供确定性出处披露判定。"""
         sys = _system(meta)
-        mem_ctx = await self._memory_context(intent, ctx)
+        mem_ctx, mems = await self._memory_context(intent, ctx)
         if mem_ctx:
             sys = f"{sys}\n\n{mem_ctx}"
         msgs = [{"role": "system", "content": sys}]
         for turn in await ctx.history(4):
             msgs.append({"role": turn["role"], "content": turn["text"]})
         msgs.append({"role": "user", "content": intent.raw_text or intent.slots.get("text", "")})
-        return msgs
+        return msgs, mems
 
     async def _deterministic_reply(self, text, ctx, meta):
         """所有**零 LLM 直答**的唯一实现。返回 `AgentResult` 或 None（=交给 LLM）。
@@ -284,14 +291,18 @@ class ChitchatAgent(BaseAgent):
             return fixed
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
-        msgs = await self._build_messages(intent, ctx, meta)
+        msgs, mems = await self._build_messages(intent, ctx, meta)
         reply = await self.llm.complete(msgs, model=model, temperature=0.8, max_tokens=max_tokens)
         if not reply.strip():  # MiMo 偶发空响应：兜底重试一次
             reply = await self.llm.complete(msgs, model=model, temperature=0.9, max_tokens=max_tokens)
         q = _parse_search_mark(reply)
         if q:                   # 时效兜底：需要实时信息 → 零播报改派 info.search
             return _escalate_result(q)
-        return AgentResult(speech=reply.strip() or "我在听，您可以再说一次。")
+        # Q5 残余：记忆驱动的回答**确定性**追加出处（没证据一个字都不加）。
+        # 两条路径都要挂——Q6 刚为「只在 handle 里加闸」踩过第三次。
+        return AgentResult(
+            speech=with_provenance(reply.strip(), text, mems)
+            or "我在听，您可以再说一次。")
 
     async def handle_stream(self, intent, ctx, meta):
         """流式直答。头部缓冲：在确定回复不是 <search> 改派标记前不放流任何 delta——
@@ -308,7 +319,7 @@ class ChitchatAgent(BaseAgent):
             return
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
-        msgs = await self._build_messages(intent, ctx, meta)
+        msgs, mems = await self._build_messages(intent, ctx, meta)
         buf = ""
         held = ""
         mode = "probe"          # probe=判定中 | stream=正常放流 | silent=标记确认，静默缓冲
@@ -349,4 +360,9 @@ class ChitchatAgent(BaseAgent):
                 return
             if buf.strip():
                 yield ("speech", buf)
-        yield ("final", AgentResult(speech=buf.strip() or "我在听，您可以再说一次。"))
+        # Q5 残余：出处是**追加**的，所以流式下作为尾包补发——正文已经流出去了，
+        # 等回答完才判定得出「这句话有没有用到记忆」（判据要看完整回答）。
+        final_text = with_provenance(buf.strip(), text, mems)
+        if final_text != buf.strip():
+            yield ("speech", final_text[len(buf.strip()):])
+        yield ("final", AgentResult(speech=final_text or "我在听，您可以再说一次。"))
