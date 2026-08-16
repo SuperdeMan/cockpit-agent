@@ -239,6 +239,10 @@ class SshConfig:
             "IdentitiesOnly=yes",
             "-o",
             "ConnectTimeout=15",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ServerAliveCountMax=240",
         ]
         if self.kex_algorithms:
             options.extend(["-o", f"KexAlgorithms={self.kex_algorithms}"])
