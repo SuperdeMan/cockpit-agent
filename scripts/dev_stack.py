@@ -160,7 +160,7 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
         raise DevStackError("cloud release response is invalid")
     if not isinstance(remote["current_release"], str) or not isinstance(remote["runtime_project_name"], str):
         raise DevStackError("cloud release response is invalid")
-    if not isinstance(remote["disk_available_bytes"], int) or not isinstance(remote["memory_available_bytes"], int):
+    if type(remote["disk_available_bytes"]) is not int or type(remote["memory_available_bytes"]) is not int:
         raise DevStackError("cloud release response is invalid")
     if any(not isinstance(remote[name], bool) for name in expected_remote - {"current_release", "runtime_project_name", "disk_available_bytes", "memory_available_bytes"}):
         raise DevStackError("cloud release response is invalid")
@@ -183,14 +183,23 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
     }
 
 
+def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise DevStackError('cloud release response is invalid')
+        result[key] = value
+    return result
+
+
 def _parse_child_payload(stdout: str) -> Mapping[str, Any]:
     if len(stdout.encode("utf-8", errors="replace")) > CHILD_OUTPUT_MAX_BYTES:
         raise DevStackError("cloud release response is invalid")
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(object_pairs_hook=_object_without_duplicates)
     try:
         start = len(stdout) - len(stdout.lstrip())
         value, end = decoder.raw_decode(stdout, start)
-    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+    except (TypeError, ValueError, json.JSONDecodeError, RecursionError) as exc:
         raise DevStackError("cloud release response is invalid") from exc
     if stdout[end:].strip():
         raise DevStackError("cloud release response is invalid")
@@ -206,12 +215,11 @@ def _release_result(returncode: int, stdout: str) -> tuple[int, dict[str, object
         raise DevStackError("cloud release response is invalid")
     if returncode == 0 and status in {"dry_run", "submitted"}:
         return 0, _validate_plan_payload(payload)
-    if returncode == 2 and status in {"configuration_rejected", "safety_rejected"}:
+    if returncode == 2 and status == "error":
         if set(payload) == _CONFIG_FIELDS and payload.get("error_category") in {"configuration", "safety"}:
-            return 2, {"status": status}
+            return 2, {"status": "configuration_rejected"}
     if returncode == 3 and status == "plan_rejected":
-        if set(payload) == _PLAN_REJECTION_FIELDS:
-            return 3, {"status": status, "blocking_changes": _validate_blocking_changes(payload["blocking_changes"])}
+        return 3, _validate_plan_payload(payload)
     if returncode == 3 and status == "bootstrap_required":
         _validate_plan_payload(payload)
         return 1, {"status": "failed"}

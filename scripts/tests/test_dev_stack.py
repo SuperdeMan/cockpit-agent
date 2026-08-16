@@ -1169,9 +1169,9 @@ def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     ("returncode", "payload", "expected"),
     (
         (1, None, 1),
-        (2, {"status": "configuration_rejected", "error_category": "configuration"}, 2),
-        (3, {"status": "plan_rejected", "blocking_changes": []}, 3),
-        (3, {"status": "bootstrap_required"}, 1),
+        (2, {"status": "error", "error_category": "configuration"}, 2),
+        (3, _cloud_release_payload("plan_rejected"), 3),
+        (3, _cloud_release_payload("bootstrap_required"), 1),
     ),
 )
 def test_cli_deploy_maps_child_exit_codes_by_safe_payload_category(tmp_path: Path, returncode: int, payload: dict[str, object] | None, expected: int):

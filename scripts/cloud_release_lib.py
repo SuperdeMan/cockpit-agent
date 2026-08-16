@@ -66,7 +66,13 @@ SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 
 
 class ReleaseError(RuntimeError):
-    """A safe, user-facing cloud release error."""
+    """A safe, user-facing cloud release error with a fixed machine category."""
+
+    def __init__(self, message: str, *, category: str = "runtime") -> None:
+        super().__init__(message)
+        if category not in {"configuration", "safety", "runtime"}:
+            raise ValueError("invalid release error category")
+        self.category = category
 
 
 @dataclass(frozen=True)
@@ -223,11 +229,11 @@ class SshConfig:
 
     def __post_init__(self) -> None:
         if not SSH_HOST_RE.fullmatch(self.host):
-            raise ReleaseError("invalid SSH host")
+            raise ReleaseError("invalid SSH host", category="configuration")
         if not SSH_USER_RE.fullmatch(self.user):
-            raise ReleaseError("invalid SSH user")
+            raise ReleaseError("invalid SSH user", category="configuration")
         if self.kex_algorithms and not SSH_KEX_RE.fullmatch(self.kex_algorithms):
-            raise ReleaseError("invalid SSH kex algorithms")
+            raise ReleaseError("invalid SSH kex algorithms", category="configuration")
 
     def _common_options(self) -> list[str]:
         options = [
@@ -286,7 +292,7 @@ def require_clean_main_commit(repo: Path, revision: str) -> str:
         "--untracked-files=normal",
     ).stdout
     if dirty:
-        raise ReleaseError("worktree is not clean")
+        raise ReleaseError("worktree is not clean", category="safety")
 
     sha = _git(
         repo,
@@ -306,7 +312,7 @@ def require_clean_main_commit(repo: Path, revision: str) -> str:
         check=False,
     )
     if reachable.returncode != 0:
-        raise ReleaseError(f"commit {sha} is not reachable from main")
+        raise ReleaseError(f"commit {sha} is not reachable from main", category="safety")
     return sha
 
 
@@ -368,7 +374,7 @@ def make_release_plan(
     approved_infrastructure_digest: str | None = None,
 ) -> ReleasePlan:
     if not FULL_SHA_RE.fullmatch(target_sha):
-        raise ReleaseError("target SHA must be a full commit SHA")
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     if (
         target_infrastructure_digest is not None
         and not SHA256_RE.fullmatch(target_infrastructure_digest)
@@ -463,7 +469,7 @@ def _git_blob(repo: Path, revision: str, path: str) -> bytes:
 
 def compute_infrastructure_digest(repo: Path, target_sha: str) -> str:
     if not FULL_SHA_RE.fullmatch(target_sha):
-        raise ReleaseError("target SHA must be a full commit SHA")
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     listing = _git(
         repo,
         "ls-tree",
@@ -875,7 +881,7 @@ def build_release_artifact(
     if plan.status != "ready" or plan.blocking_changes:
         raise ReleaseError("cannot build artifact for a blocked release plan")
     if not FULL_SHA_RE.fullmatch(plan.target_sha):
-        raise ReleaseError("target SHA must be a full commit SHA")
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     if not SHA256_RE.fullmatch(services_digest):
         raise ReleaseError("release services digest is invalid")
     if not SHA256_RE.fullmatch(models_digest):
@@ -1367,7 +1373,7 @@ def _resolve_commit(repo: Path, revision: str) -> str:
         f"{revision}^{{commit}}",
     ).stdout.strip()
     if not FULL_SHA_RE.fullmatch(sha):
-        raise ReleaseError(f"could not resolve commit: {revision}")
+        raise ReleaseError(f"could not resolve commit: {revision}", category="configuration")
     return sha
 
 
@@ -1383,7 +1389,7 @@ def execute_deploy(
     nonce_factory: Callable[[], str] | None = None,
 ) -> CloudReleaseResult:
     if not request.ssh.identity.is_file():
-        raise ReleaseError("SSH identity file does not exist")
+        raise ReleaseError("SSH identity file does not exist", category="configuration")
     target_sha = require_clean_main_commit(request.repo, request.revision)
     remote_state = discover_remote_state(request, runner=runner)
     deployed_sha = _resolve_commit(request.repo, remote_state.current_release)
