@@ -230,7 +230,7 @@ python scripts/probe_qa_regression.py --group negation       # 按组跑
 python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线用这条**
 ```
 
-**五条纪律，全部由这批自己的自伤沉淀（照做，别重新发明）：**
+**七条纪律，全部由这批自己的自伤沉淀（照做，别重新发明）：**
 
 1. **persona 必须换 `user_id`，只换 `session_id` 证明不了任何隔离。**
    `reminder_item` **根本没有 `session_id` 列**，memory 同理——owner 是 `(user_id, occupant_id)`。
@@ -266,6 +266,18 @@ python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线
    > 配套原语：`card_text_has` / `card_text_not` / `card_items_at_least`
    > ——**「说了两条」和「真有两条」话术层分不开，卡片层分得开**（I-008 现场原样：
    > speech 说「15:30 和 16:00 各提醒你一次」，卡片里两张同一个 id、第二张 `updated`）。
+7. **一轮 = 「这一轮不再有新事件」，不是「收到第一个 final」**（2026-08-17 Q7 残余批，
+   **尺子口径改过一次，读旧读数时注意**）。**混合意图路径一轮会发两个 `final`**：
+   端侧先回本地那半、再把非本地片段上云，云侧回来又是一个。原实现拿到第一个就返回，
+   于是「端侧执行了 A、云侧执行了 B」这一整类轮次**探针从来只看见 A**——
+   OR2 即使修好也读不出来。现在收到 final 后进一个短 idle 窗（0.6s）继续收，
+   窗内有事件就切回长超时等下一个 final，尾段总预算 25s；合并语义**刻意保守**
+   （`actions` 全量合并、`speech` 追加，`need_confirm`/`card_type`/`operation_id`
+   只在首个 final 为空时才由后续填）⇒ **单 final 的用例逐字不变**。
+   > ⚠ **首版改完行为其实没变**（收到 `speech_delta` 后没切回长超时，0.6s 就超时返回，
+   > 而第二个 final 在 5.2s），**差点宣布「尺子已修」**。
+   > **改完尺子要验证它真的看见了新东西**——「我改了尺子」不等于「尺子变了」。
+   > 单测 `scripts/tests/test_probe_qa_regression.py` 钉住合并语义。
 
 ## 5.4 意图与落域对抗套件（`test/eval_intent_adversarial.py`）
 

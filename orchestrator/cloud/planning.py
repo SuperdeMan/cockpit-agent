@@ -261,6 +261,26 @@ _FOCUS_DEPENDENT_ELLIPSIS_RE = re.compile(
 _FOCUSED_LIST_BATCH_RE = re.compile(
     r"^(?:(?:那个|这个|它)?换一批|(?:再来|另来)一批)$"
 )
+# QA 卡 Q7（EL1/OR2）：**只接「动作明确、对象完全省略」的开关短句**。
+# `fullmatch` 是这里的安全边界，不是写法习惯——一旦放宽成 search，
+# 「打开周杰伦的歌」「关掉导航」都会被上一轮的车控焦点劫持成另一个对象的动作。
+# 前缀允许一个取消词（「不用了，关掉」是 EL1 的原样输入）、一个客套词；
+# 尾巴允许语气助词与**整句修饰语**（「按顺序执行」正是 OR2 那条被拖上云的尾巴）。
+# 刻意**不含**任何对象词/领域词：这条判据只回答「有没有动作、有没有对象」。
+_FOCUSED_CONTROL_ELLIPSIS_RE = re.compile(
+    r"^\s*(?:(?:不用了|不要了|算了|不必了)(?:吧)?\s*[，,、]?\s*)?"
+    r"(?:请|帮我|给我|麻烦)?\s*(?:把它|它)?\s*"
+    r"(?P<action>打开|开启|开一下|关闭|关掉|关上|合上|收起|关|开)"
+    r"(?:\s*(?:一下|吧|呀|啊|了|它))?"
+    r"(?:\s*[，,、]?\s*(?:按(?:这个|刚才的)?顺序(?:执行)?|依次(?:来|执行)?|"
+    r"立刻|马上|现在))?"
+    r"\s*[。！？!?～~]*\s*$"
+)
+#: 判「这一句要的是开还是关」。与上面的 alternation 同源，**必须同增同减**。
+_FOCUSED_OPEN_ACTIONS = frozenset({"打开", "开启", "开一下", "开"})
+#: 通用操作对，**不出现任何领域/Agent 字面量**：目标 intent 还要在本轮权限过滤后的
+#: catalog 里唯一存在才算数。仓库里两种命名都有（`sunroof.open` / `hvac.on`）。
+_CONTROL_OPERATION_PAIRS = (("open", "close"), ("on", "off"))
 _EXPLICIT_OPEN_ACTION_RE = re.compile(
     r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
     r"(?:请|帮我|给我)?(?:打开|开启|开一下)"
@@ -1253,6 +1273,60 @@ class PlanBuilder:
         # 编排核心不再硬编码特定 Agent/意图（恢复「新增 Agent 不改编排核心」铁律）。
         self._route_hints = RouteHintEngine(self._validated_steps)
 
+    @staticmethod
+    def _focused_control_ellipsis_plan(
+            text: str, working_set: WorkingSet,
+            catalog: PlannerCapabilityCatalog) -> Plan | None:
+        """省略式开关指令的**确定性消费方**（QA 卡 Q7 / EL1 + OR2）。
+
+        「打开天窗」之后说「不用了，关掉」，或「关闭空调然后打开，按顺序执行」里
+        被修饰语拖上云的那半——这两句要做什么，**完全由「上一个对象 × 这个动作」决定，
+        没有任何需要模型判断的东西**。让 LLM 做只是在引入方差：真栈三次取样分别是
+        「无动作却答『好的，关上了』」/「反向执行 `sunroof.open`」/ 正确。
+        > 判据：**系统持有的事实绝不让 LLM 答**（墙钟三件套那条纪律的省略消解版）。
+
+        三样东西各有确定来源，缺一就 fail-open 回正常规划：
+          · **对象**来自成功执行账本（`focus.last_intent`，Q6 的 `actions` 派生，
+            服务端盖章、模型与客户端都写不到）；
+          · **操作**来自本轮原话的显式开关词（`fullmatch`，见正则上的安全边界）；
+          · **能力**来自本轮**权限过滤后**的 catalog，且必须唯一——缺席或多个 owner
+            一律不接管，绝不让焦点发明一个用户没授权的能力。
+
+        产出的是普通 `Plan`：照常过 `_validated_steps`、executor、VAL 与
+        `require_confirm`。**这不是绕过执行链，是不让模型参与一个它无从判断的选择。**
+        """
+        match = _FOCUSED_CONTROL_ELLIPSIS_RE.fullmatch(str(text or ""))
+        if match is None:
+            return None
+        focus = getattr(working_set, "focus", None)
+        last_intent = str(getattr(focus, "last_intent", "") or "").strip()
+        if "." not in last_intent:
+            return None
+        stem, previous_operation = last_intent.rsplit(".", 1)
+        # 「打开」首字是「打」不是「开」——方向只能查表，不能 startswith。
+        asks_open = str(match.group("action") or "") in _FOCUSED_OPEN_ACTIONS
+        desired_operation = ""
+        for open_operation, close_operation in _CONTROL_OPERATION_PAIRS:
+            if previous_operation in (open_operation, close_operation):
+                desired_operation = open_operation if asks_open else close_operation
+                break
+        if not desired_operation:
+            return None          # 上一个动作不是开关型（set/inc/dec）⇒ 反向没有定义
+        target_intent = f"{stem}.{desired_operation}"
+        owners = [agent_id for agent_id, intent in catalog.pair_to_ref
+                  if intent == target_intent]
+        if len(owners) != 1:
+            return None          # 能力缺席或归属歧义 ⇒ 交回正常规划，不猜
+        steps = PlanBuilder._validated_steps(
+            [{"id": "s1", "agent_id": owners[0], "intent": target_intent,
+              "slots": {}, "depends_on": [], "slot_refs": {}}],
+            dict(catalog.agent_map))
+        if len(steps) != 1:
+            return None
+        logger.info("Focused control ellipsis: previous=%s action=%s -> %s",
+                    last_intent, match.group("action"), target_intent)
+        return Plan(steps=steps, raw_text=str(text or ""), goal=str(text or ""))
+
     async def build(self, text: str, working_set: WorkingSet, ctx: PlanContext,
                     granted_permissions: list[str] = None) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
@@ -1270,6 +1344,21 @@ class PlanBuilder:
         agents = list(catalog.visible_agents)
         agent_map = catalog.agent_map
         working_set.catalog_stats = dict(catalog.catalog_stats)
+
+        # Q7 EL1/OR2：动作明确、对象完全省略、且执行焦点能唯一落到本轮授权 capability
+        # ⇒ **确定性成计划，一次 LLM 都不调**（连下面两次检索 embed 也省了）。
+        # 真栈证明「把焦点写进 prompt」不够：同一句话三次取样能给出三种结果，
+        # 其中一次是 chitchat 声称「已为您关闭天窗」而 action 为空——**说了没做**。
+        focused_plan = self._focused_control_ellipsis_plan(text, working_set, catalog)
+        if focused_plan is not None:
+            focused_plan.catalog_stats = dict(catalog.catalog_stats)
+            focused_plan.plan_mode = "focus_deterministic"
+            # shadow 观测照记：这一族正是 B6 最关心的省略/裸对象面，
+            # 确定性接管后就不记，会让 shadow 的分母**静默**少掉一块。
+            focused_plan.actionability = _actionability.classify(
+                text, focus=getattr(working_set, "focus", None),
+                input_source=str((ctx.prefs or {}).get("input_source", ""))).as_attr()
+            return focused_plan
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
         # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
