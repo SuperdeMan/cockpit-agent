@@ -82,11 +82,12 @@ def resolve_target(repo_root: Path, target: str | None = None) -> TargetSelectio
 
     values = {
         "target=local": "local",
-        "target=local\n": "local",
         "target=cloud": "cloud",
-        "target=cloud\n": "cloud",
     }
-    name = values.get(text)
+    lines = text.splitlines()
+    if not lines or any(lines[1:]):
+        raise DevStackError("development stack target is invalid")
+    name = values.get(lines[0])
     if name is None:
         raise DevStackError("development stack target is invalid")
     return TargetSelection(name=name, source="file")

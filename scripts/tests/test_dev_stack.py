@@ -32,6 +32,23 @@ def test_resolve_target_accepts_exact_file_and_explicit_argument(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
+    ("content", "name"),
+    [
+        (b"target=local\n\n", "local"),
+        (b"target=cloud\n\n\n", "cloud"),
+    ],
+)
+def test_resolve_target_accepts_empty_lines_after_the_target(
+    tmp_path: Path, content: bytes, name: str
+):
+    write_stack_target(tmp_path, content)
+
+    assert dev.resolve_target(tmp_path) == dev.TargetSelection(
+        name=name, source="file"
+    )
+
+
+@pytest.mark.parametrize(
     "content",
     [
         b"target=remote\n",
@@ -40,7 +57,6 @@ def test_resolve_target_accepts_exact_file_and_explicit_argument(tmp_path: Path)
         b"target=cloud+extra=x\n",
         b"target=\n",
         b"\xef\xbb\xbftarget=cloud\n",
-        b"target=cloud\n\n",
     ],
     ids=[
         "unknown-target",
@@ -49,7 +65,6 @@ def test_resolve_target_accepts_exact_file_and_explicit_argument(tmp_path: Path)
         "extra-assignment",
         "empty-value",
         "bom",
-        "second-empty-line",
     ],
 )
 def test_resolve_target_rejects_malformed_root_file(
