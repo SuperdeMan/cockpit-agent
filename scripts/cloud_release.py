@@ -19,6 +19,7 @@ from scripts.cloud_release_lib import (
     SubprocessRunner,
     execute_deploy,
     make_bootstrap_report,
+    validate_ssh_identity,
 )
 
 
@@ -75,12 +76,14 @@ def _ssh_config(args: argparse.Namespace) -> SshConfig:
             "missing deployment connection setting(s): " + ", ".join(missing),
             category="configuration",
         )
-    return SshConfig(
+    config = SshConfig(
         host=args.host,
         user=args.user,
         identity=args.identity,
         kex_algorithms=args.kex_algorithms,
     )
+    validate_ssh_identity(config.identity)
+    return config
 
 
 def _request(
@@ -162,19 +165,19 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     repo = REPO_ROOT
     try:
-        ssh = _ssh_config(args)
-        runner = SubprocessRunner()
         if args.command in {"plan", "deploy"}:
+            ssh = _ssh_config(args)
             result = execute_deploy(
                 _request(repo, args, ssh),
                 apply=args.command == "deploy" and args.apply,
-                runner=runner,
+                runner=SubprocessRunner(),
             )
             _emit(_result_payload(result))
             return 0 if result.status in {"dry_run", "submitted"} else 3
 
         if args.command == "verify":
-            runner.run(
+            ssh = _ssh_config(args)
+            SubprocessRunner().run(
                 ssh.ssh_argv(f"sudo {REMOTE_ENTRYPOINT} verify-current"),
                 cwd=repo,
             )
@@ -190,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
             if not args.apply:
                 _emit({"status": "dry_run", "rollback_target": args.to})
                 return 0
-            runner.run(
+            ssh = _ssh_config(args)
+            SubprocessRunner().run(
                 ssh.ssh_argv(
                     f"sudo {REMOTE_ENTRYPOINT} rollback --to {args.to}"
                 ),
@@ -203,7 +207,6 @@ def main(argv: list[str] | None = None) -> int:
         _emit({"status": "error", "error_category": exc.category})
         print("cloud-release: operation failed", file=sys.stderr)
         return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

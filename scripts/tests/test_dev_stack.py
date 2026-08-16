@@ -1058,6 +1058,11 @@ class FakeCliRunner:
         return CommandResult(tuple(argv), self.result, self.stdout, self.stderr)
 
 
+def _valid_identity(tmp_path: Path, name: str = "identity") -> Path:
+    identity = tmp_path / name
+    identity.write_text("test-only identity", encoding="utf-8")
+    return identity
+
 def test_cli_target_show_and_set_emit_target_and_source(tmp_path: Path):
     events: list[dict[str, object]] = []
 
@@ -1075,6 +1080,7 @@ def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(t
 
     dev.set_target(tmp_path, "cloud")
     identity = tmp_path / "actual-secret-identity.pem"
+    identity.write_text("test-only identity", encoding="utf-8")
     events: list[dict[str, object]] = []
     arguments = ["--host", "dev.example", "--user", "alice", "--identity", str(identity), "--kex-algorithms", "curve25519-sha256"]
     assert cli.main([*arguments, "deploy", "--sha", "a" * 40], repo=tmp_path, release_runner=runner, emit=events.append) == 0
@@ -1138,6 +1144,42 @@ def _cloud_release_payload(status: str = "dry_run") -> dict[str, object]:
     }
 
 
+@pytest.mark.parametrize("identity_kind", ("missing", "directory"))
+def test_cli_cloud_status_and_deploy_reject_unusable_identity_before_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    identity_kind: str,
+):
+    dev.set_target(tmp_path, "cloud")
+    identity = tmp_path / "identity"
+    arguments = ["--host", "dev.example"]
+    if identity_kind == "directory":
+        identity.mkdir()
+        arguments.extend(["--identity", str(identity)])
+
+    inspected = False
+    def inspect(*args):
+        nonlocal inspected
+        inspected = True
+        raise AssertionError("cloud status runner must not execute")
+
+    monkeypatch.setattr(cli, "inspect_cloud_status", inspect)
+    status_events: list[dict[str, object]] = []
+    assert cli.main([*arguments, "status"], repo=tmp_path, emit=status_events.append) == 2
+    assert not inspected
+    assert status_events[-1]["status"] == "configuration_rejected"
+
+    release_runner = FakeCliRunner(stdout=json.dumps(_cloud_release_payload()))
+    deploy_events: list[dict[str, object]] = []
+    assert cli.main(
+        [*arguments, "deploy"],
+        repo=tmp_path,
+        release_runner=release_runner,
+        emit=deploy_events.append,
+    ) == 2
+    assert release_runner.calls == []
+    assert deploy_events[-1]["status"] == "configuration_rejected"
+
 def test_cli_status_uses_health_consistent_status_for_local_and_cloud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     endpoints = tuple(
         dev.EndpointStatus(str(index), "https://example.invalid", "healthy", 200)
@@ -1154,7 +1196,7 @@ def test_cli_status_uses_health_consistent_status_for_local_and_cloud(tmp_path: 
     monkeypatch.setattr(cli, "read_root_env", lambda *args: {"TAILNET_FQDN": "dev.ts.net"})
     monkeypatch.setattr(cli, "inspect_cloud_status", lambda *args: degraded)
     cloud_events: list[dict[str, object]] = []
-    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 1
+    assert cli.main(["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 1
     assert cloud_events[-1]["status"] == "degraded"
 
 
@@ -1206,7 +1248,7 @@ def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     payload = _cloud_release_payload()
     runner = FakeCliRunner(stdout=json.dumps(payload))
     events: list[dict[str, object]] = []
-    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
+    assert cli.main(["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
     assert events[-1]["action"] == "deploy"
     assert events[-1]["target_sha"] == payload["target_sha"]
     assert events[-1]["current_release"] == payload["remote"]["current_release"]
@@ -1229,7 +1271,7 @@ def test_cli_deploy_maps_child_exit_codes_by_safe_payload_category(tmp_path: Pat
     dev.set_target(tmp_path, "cloud")
     runner = FakeCliRunner(returncode, json.dumps(payload) if payload else "", "secret-stderr")
     events: list[dict[str, object]] = []
-    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == expected
+    assert cli.main(["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == expected
     assert "secret-stderr" not in json.dumps(events)
 
 
@@ -1260,7 +1302,7 @@ def test_cli_deploy_rejects_malformed_multiple_or_oversize_child_output(tmp_path
     }[kind]
     dev.set_target(tmp_path, "cloud")
     events: list[dict[str, object]] = []
-    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=FakeCliRunner(stdout=stdout, stderr="token=secret"), emit=events.append) == 1
+    assert cli.main(["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "deploy"], repo=tmp_path, release_runner=FakeCliRunner(stdout=stdout, stderr="token=secret"), emit=events.append) == 1
     assert events[-1]["status"] == "failed"
     assert "secret" not in json.dumps(events)
 
@@ -1283,5 +1325,5 @@ def test_cli_status_marks_local_degraded_and_cloud_healthy(
     monkeypatch.setattr(cli, "read_root_env", lambda *args: {"TAILNET_FQDN": "dev.ts.net"})
     monkeypatch.setattr(cli, "inspect_cloud_status", lambda *args: cloud_healthy)
     cloud_events: list[dict[str, object]] = []
-    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 0
+    assert cli.main(["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 0
     assert cloud_events[-1]["status"] == "ok"

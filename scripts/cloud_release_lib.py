@@ -280,6 +280,14 @@ class SshConfig:
         ]
 
 
+def validate_ssh_identity(identity: Path) -> None:
+    if not identity.exists() or not identity.is_file():
+        raise ReleaseError(
+            "SSH identity must be an existing regular file",
+            category="configuration",
+        )
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> CommandResult:
     return SubprocessRunner().run(["git", *args], cwd=repo, check=check)
 
@@ -1399,8 +1407,8 @@ def execute_deploy(
     runner: CommandRunner,
     nonce_factory: Callable[[], str] | None = None,
 ) -> CloudReleaseResult:
-    if not request.ssh.identity.is_file():
-        raise ReleaseError("SSH identity file does not exist", category="configuration")
+    validate_ssh_identity(request.ssh.identity)
+
     target_sha = require_clean_main_commit(request.repo, request.revision)
     remote_state = discover_remote_state(request, runner=runner)
     deployed_sha = _resolve_commit(request.repo, remote_state.current_release)

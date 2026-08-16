@@ -628,6 +628,47 @@ def test_cloud_release_cli_help_and_configuration_error_subprocess_contract():
     assert "operation failed" in missing.stderr
 
 
+@pytest.mark.parametrize("command", ("verify", "rollback"))
+@pytest.mark.parametrize("identity_kind", ("missing", "directory"))
+def test_cloud_release_connection_actions_reject_unusable_identity_before_ssh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    identity_kind: str,
+):
+    calls: list[object] = []
+
+    class NoSshRunner:
+        def run(self, *args, **kwargs):
+            calls.append(args)
+            raise AssertionError("SSH must not run with an invalid identity")
+
+    identity = tmp_path / "identity"
+    argv = ["--host", "dev.example"]
+    if identity_kind == "directory":
+        identity.mkdir()
+        argv.extend(["--identity", str(identity)])
+    if command == "rollback":
+        argv.extend(["rollback", "--to", "a" * 7, "--apply"])
+    else:
+        argv.append("verify")
+
+    monkeypatch.setattr(cloud_release, "SubprocessRunner", NoSshRunner)
+    assert cloud_release.main(argv) == 2
+    assert calls == []
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "error",
+        "error_category": "configuration",
+    }
+
+
+def test_cloud_release_rollback_dry_run_does_not_require_connection(
+    capsys: pytest.CaptureFixture[str],
+):
+    assert cloud_release.main(["rollback", "--to", "a" * 7]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "dry_run"
+
 def test_cloud_release_emit_enforces_the_child_json_size_limit():
     with pytest.raises(ReleaseError) as caught:
         cloud_release._emit({"status": "dry_run", "padding": "x" * (64 * 1024)})

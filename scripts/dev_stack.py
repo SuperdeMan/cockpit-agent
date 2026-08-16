@@ -14,7 +14,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.cloud_release_lib import ReleaseError, ReleaseRequest, SshConfig, SubprocessRunner
+from scripts.cloud_release_lib import (
+    ReleaseError,
+    ReleaseRequest,
+    SshConfig,
+    SubprocessRunner,
+    validate_ssh_identity,
+)
 from scripts.dev_stack_lib import (
     DefaultStackStatusRunner,
     DevStackError,
@@ -86,7 +92,9 @@ def _connection(args: argparse.Namespace) -> SshConfig:
     if missing:
         raise DevStackError("missing cloud connection settings")
     try:
-        return SshConfig(args.host, args.user, args.identity, args.kex_algorithms)
+        config = SshConfig(args.host, args.user, args.identity, args.kex_algorithms)
+        validate_ssh_identity(config.identity)
+        return config
     except ReleaseError as exc:
         raise DevStackError("invalid cloud connection settings") from exc
 
