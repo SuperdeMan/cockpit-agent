@@ -89,6 +89,16 @@ class Clients:
         M-B：默认 OWNER_ONLY——车里只有一个会话而说话人会换，不按 owner 过滤时
         planner 会拿到别人的对话当指代来源。scope 不传即 OWNER_ONLY，跨乘员读取
         必须显式声明，且不走这条规划路径。
+
+        ⚠ **`actions` 是 Q7-EL1 补上的（2026-08-16），它此前只差这一行。**
+        Q6 把执行事实写进了 `AppendTurn.actions`（端侧本地快路径与云侧规划轮各写各的），
+        proto 的读侧字段 `Turn.actions` 也一并加了，注释逐字写着「读侧必须也带上——
+        **存下来而读不到等于没存**」。`agents/_sdk/clients.py::get_session` 照做了，
+        **而云侧这份没有**——同一个 proto 的两份客户端实现，一份读了一份没读。
+        后果：端侧本地那 40% 的车控动作云侧规划路径完全看不见，
+        「打开天窗」→「不用了，关掉」只能让 LLM 从对话文本猜对象（真栈三次三个样：
+        无动作 / 反向执行 / 正确）。
+        > 判据：**读写对称要逐个消费方验，不是「写侧加了字段」就算通了。**
         """
         resp = await self._memory_stub().GetSession(
             memory_pb2.GetSessionRequest(
@@ -97,7 +107,9 @@ class Clients:
                 scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY),
             timeout=_DEFAULT_TIMEOUT)
         return [{"role": t.role, "text": t.text, "ts": t.ts,
-                 "occupant_id": t.occupant_id} for t in resp.turns]
+                 "occupant_id": t.occupant_id,
+                 "actions": list(t.actions), "exchange_id": t.exchange_id}
+                for t in resp.turns]
 
     async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,

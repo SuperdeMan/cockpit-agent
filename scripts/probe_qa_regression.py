@@ -822,22 +822,86 @@ def _subst(obj, stamp: int):
 
 async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
                     is_confirmation: bool = False) -> dict:
+    """一轮 = 从发出到**这一轮不再有新事件**，不是「收到第一个 final」。
+
+    ⚠ **尺子口径 2026-08-16 改过一次，留痕（Q7 残余批）。** 原实现收到第一个 `final`
+    就 return，而**混合意图路径一轮会发两个 final**：端侧先回本地那半、再把非本地片段
+    上云，云侧回来又是一个 final。于是「端侧执行了 A、云侧执行了 B」这一整类轮次，
+    探针**从来只看见 A**。
+
+    实测（OR2「关闭空调然后打开，按顺序执行」）：一轮收到 **2 个 final**，
+    第二个是云侧的。修 OR2 之前先修这里——**否则修好了也读不出来**，
+    而一个看不见正确答案的尺子，和一个恒绿的断言一样糟（§4.3）。
+
+    合并语义**刻意保守**，让单 final 的用例逐字不变：
+      · `actions` 全量合并（本轮真实执行的全集，`actions_include/exclude/no_actions` 因此更准）
+      · `speech` 追加（用户实际听到的就是两段）
+      · 其余字段（`need_confirm`/`card_type`/`operation_id`/卡片）**只在首个 final 为空时**
+        才由后续 final 填——挂起/确认语义属于主 final，不许被后面那段覆盖。
+    """
     frame = {"text": text, "session_id": session, "meta": dict(PROBE_META)}
     if operation_id:
         frame["operation_id"] = operation_id      # Q1-B：点名确认哪一条挂起
     if is_confirmation:
         frame["is_confirmation"] = True
     await ws.send(json.dumps(frame))
+    merged: dict | None = None
+    timeout = TIMEOUT
+    deadline = 0.0
     while True:
-        raw = await asyncio.wait_for(ws.recv(), timeout=TIMEOUT)
+        try:
+            raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
+        except asyncio.TimeoutError:
+            if merged is not None:
+                return merged
+            raise
         msg = json.loads(raw)
         kind = msg.get("type")
         if kind == "final":
-            return _observe(msg)
-        if kind == "error":
-            return {"speech": f"[error] {msg.get('message')}", "actions": [],
-                    "need_confirm": False, "card_type": "", "is_question": False,
-                    "error": True}
+            merged = _observe(msg) if merged is None else _merge_finals(merged, _observe(msg))
+            # 说完了？先只等一个**短 idle 窗**——单 final 的用例就此返回，只多花 0.6s。
+            timeout = _TAIL_IDLE_S
+            if not deadline:
+                deadline = time.monotonic() + _TAIL_BUDGET_S
+        elif kind == "error":
+            err = {"speech": f"[error] {msg.get('message')}", "actions": [],
+                   "need_confirm": False, "card_type": "", "is_question": False,
+                   "error": True}
+            return _merge_finals(merged, err) if merged is not None else err
+        elif merged is not None:
+            # final 之后又来了事件（mixed 的云段占位 / 云侧流式）⇒ **这一轮还没说完**，
+            # 切回长超时等下一个 final。
+            # ⚠ 这一支首版漏了，于是 idle 窗在 0.6s 就超时返回，尺子**看起来改了、
+            # 实际行为没变**——OR2 的第二个 final 在 5.2s，而中间那个占位帧在 0.0s。
+            # 差点据此宣布「尺子已修」。**改完尺子要验证它真的看见了新东西。**
+            timeout = max(0.1, min(TIMEOUT, deadline - time.monotonic()))
+
+
+#: 收到一个 final 之后再等多久才认定「这一轮说完了」。端侧混合路径的云段占位是
+#: **紧接着本地 final 立刻发**的（实测 0.0s），所以这个窗只要够跨过进程调度即可。
+_TAIL_IDLE_S = 0.6
+#: 尾段总预算：从第一个 final 起最多再等这么久。防止「云侧只流不收口」把跑批拖死
+#: （实测第二个 final 在 5.2s 到）。
+_TAIL_BUDGET_S = 25.0
+
+
+def _merge_finals(first: dict, later: dict) -> dict:
+    """同一轮的第二个 final 并进第一个。**首个 final 的语义字段不被覆盖。**"""
+    out = dict(first)
+    out["actions"] = list(first.get("actions") or []) + list(later.get("actions") or [])
+    speeches = [s for s in (first.get("speech"), later.get("speech")) if s]
+    out["speech"] = "\n".join(speeches)
+    # is_question 按合并后的**末尾**判——用户听到的最后一句才决定这轮是不是在问他。
+    out["is_question"] = out["speech"].rstrip().endswith(("？", "?"))
+    for key in ("need_confirm", "card_type", "operation_id", "card_items",
+                "card_item_count", "error"):
+        if not first.get(key) and later.get(key):
+            out[key] = later[key]
+    if not first.get("closed_operation_ids") and later.get("closed_operation_ids"):
+        out["closed_operation_ids"] = later["closed_operation_ids"]
+    if first.get("card_text") in (None, "", "{}") and later.get("card_text"):
+        out["card_text"] = later["card_text"]
+    return out
 
 
 async def _run_case(case: dict, stamp: int) -> dict:

@@ -705,6 +705,80 @@ def newest_candidate_set(focus, *, allow_fallback: bool = False) -> dict | None:
     return sets[-1] if allow_fallback else None
 
 
+def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str] | None:
+    """从**执行事实**解出「刚才操作的是哪个车控对象」→ `(对象, 属性, 意图名)`。
+
+    **确定性纯函数、零 LLM、零网络**（QA 卡 Q7-EL1/OR2，2026-08-16）。
+
+    ## 为什么非要它
+
+    `Focus` 只由**云侧规划轮**构建（`update_focus(plan, results)`）。端侧本地快路径
+    那 40% 的车控动作根本不上云——真栈对照实测：跑「打开天窗」后
+    `planner:focus:*` **0 个 key**，跑「附近有什么好吃的」后 **1 个**。
+    于是下一轮说「不用了，关掉」时，planner 手里**一个对象都没有**，只能从对话文本猜：
+    三次取样分别是「无动作却答『关上了』」/「反向执行 `sunroof.open`」/ 正确。
+
+    Q6 已经把这件事的事实源建好了（`AppendTurn.actions`，端侧本地轮与云侧规划轮各写各的），
+    缺的只是**读**——`clients.get_session` 此前没把 `actions` 带回来。
+
+    ## 取值规则
+
+    · **同轮压过跨轮**：`edge_executed` 是本轮端侧刚执行掉的，比历史里任何一轮都近。
+    · 同一组动作里取**最后一个**落在 `_CONTROL_FOCUS` 的（同 `extract_focus` 取
+      「最近一个成功控制步」的口径）。
+    · **零新映射表**——复用 `_CONTROL_FOCUS`，连取 namespace 的方式都与 `extract_focus`
+      逐字相同（`intent.split(".")[0]`）。云侧镜像不 `COPY orchestrator/edge`，
+      读不到 `commands.yaml`，这张表本来就是云侧的那一份。
+
+    ⚠ **覆盖边界**：`_CONTROL_FOCUS` 只有 8 个域而 VAL 车控对象有 67 个。
+    表外对象（如 `rear_view_mirror`）解不出 ⇒ 返回 None ⇒ 退化成本函数存在之前的行为
+    （fail-open）。**不引入新的不一致**——`extract_focus` 本来就是这个覆盖面。
+
+    形状不可信（history 来自 gRPC）：非 dict / actions 非 list / 元素非 str 一律跳过，
+    同 CLAUDE.md §6「防御要一路防到真正会被拿去用的那个值」。
+    """
+    groups: list[list[str]] = []
+    if isinstance(history, (list, tuple)):
+        for turn in history:
+            if not isinstance(turn, dict):
+                continue
+            raw = turn.get("actions")
+            if isinstance(raw, (list, tuple)):
+                groups.append([a for a in raw if isinstance(a, str) and a.strip()])
+    if isinstance(edge_executed, (list, tuple)):
+        groups.append([a for a in edge_executed if isinstance(a, str) and a.strip()])
+    for names in reversed(groups):
+        for name in reversed(names):
+            domain = name.strip().split(".", 1)[0]
+            if domain in _CONTROL_FOCUS:
+                obj, attr = _CONTROL_FOCUS[domain]
+                return obj, attr, name.strip()
+    return None
+
+
+def augment_focus_with_execution(focus, history, edge_executed=None) -> "Focus | None":
+    """用最近执行事实刷新车控焦点；解不出时原焦点不动。
+
+    会话历史按轮次有序，`actions` 是成功执行事实；同轮 `edge_executed` 又比历史更新。
+    因此一旦解出，它就应覆盖 Redis 里可能由更早云侧轮次留下的控制对象。只填空会把
+    「取不到对象」变成「稳定使用陈旧对象」（云侧调氛围灯→本地开天窗→关掉）。
+
+    动作账本没有位置与 agent，覆盖时清掉这两格，避免把旧对象的「副驾」等限定粘到
+    新对象上。地点、候选集、活动路线等其他正交焦点原样保留。
+    """
+    found = recent_control_execution(history, edge_executed)
+    if found is None:
+        return focus
+    obj, attr, intent = found
+    out = focus if focus is not None else Focus()
+    out.obj, out.attr = obj, attr
+    # `last_intent` 与 obj 必须来自同一事实：省略守卫按它的 namespace 校验计划。
+    out.last_intent = intent
+    out.positions = []
+    out.last_agent_id = ""
+    return out
+
+
 def extract_focus(plan, results) -> "Focus | None":
     """从本轮执行的 plan + 成功结果抽取焦点（best-effort，启发式）。
 
@@ -856,6 +930,12 @@ class ContextManager:
         memories = await self._recall(text, ctx) if mem_on else []
         focus = await self._load_focus(
             ctx.session_id, ctx.user_id) if (mem_on and self.session) else None
+        # Q7-EL1/OR2：用**最近执行事实**刷新车控焦点（跨轮取会话轮次的
+        # `actions`，同轮取端侧刚执行掉的那批）。端侧本地快路径根本不写云侧焦点，
+        # 「打开天窗」→「不用了，关掉」此前只能让 planner 猜对象。
+        # `mem_on=false` 时 history 为空，但**同轮那半仍然成立**——它不来自记忆。
+        focus = augment_focus_with_execution(
+            focus, history, getattr(ctx, "edge_executed", None))
         catalog = await self._catalog(text)
         return WorkingSet(catalog=catalog, history=history, memories=memories,
                           focus=focus)
@@ -1129,4 +1209,7 @@ def build_context(request) -> PlanContext:
         trace_id=meta.get("trace_id", ""),
         prefs=prefs,
         edge_nlu=meta.get("_edge_nlu", ""),   # M5 P2-D2：端侧初判，观测用（不进 prompt）
+        # Q7-OR2：本轮端侧已执行的动作名（混合路径的同轮上下文）。逗号分隔，空=没有。
+        edge_executed=[a.strip() for a in
+                       str(meta.get("_edge_executed", "") or "").split(",") if a.strip()],
     )

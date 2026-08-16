@@ -534,6 +534,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     async def _handle_impl(self, request, context, turn: dict):
         trace_id = _ensure_trace_id(request)
         self._change_source.set("T0")
+        # `_edge_executed` 是端侧执行器签发给云侧的内部事实，不是客户端输入。
+        # 网关会透传 HMI meta，因此每轮入口必须先剥掉同名键；混合路径只有在 VAL
+        # 实际成功后才会重新写入。否则网页/手机可伪造「刚执行过什么」污染指代焦点。
+        try:
+            request.meta.pop("_edge_executed", None)
+        except Exception:
+            pass
         # 把端侧真实车辆电量注入 meta，透传给云端 Agent（充电规划等），避免云端读 memory
         # 默认值(50%)与可观测台/仪表实际电量(如72%)不一致。
         try:
@@ -714,6 +721,16 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     # 已在端侧给过云段占位时，让云端别再重复"正在为您处理"（避免双占位文案）
                     if local_speeches:
                         cloud_req.meta["_mixed_subrequest"] = "1"
+                    # QA 卡 Q7-OR2：把**本轮端侧已经执行掉的动作**告诉云侧。
+                    # 上云的片段可能是个没有对象的碎片——「关闭空调然后打开，按顺序执行」
+                    # 上云的是「打开，按顺序执行」，对象在同一轮的**另一个组**里。
+                    # 真栈实测：云侧就此落兜底，答「我不能帮你执行操作」，
+                    # 而它 4 秒前刚关了空调。
+                    # 名字口径与 Q6 的执行事实账本、obs、探针**共用 `_executed_names`**
+                    # ——审计答的、面板看的、云侧消解用的必须是同一个名字。
+                    executed = self._executed_names(local_actions)
+                    if executed:
+                        cloud_req.meta["_edge_executed"] = ",".join(executed)
                     async for event in self.cloud.handle(cloud_req):
                         got = True
                         self.cloud_connected = True

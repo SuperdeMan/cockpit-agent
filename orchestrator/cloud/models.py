@@ -179,6 +179,16 @@ class PlanContext:
     # 刻意**不留 env 开关**：那会变成一个没人测过却随时可能被打开的分支；真要开就改代码，
     # 并且必须附 A/B 数据（性质由 test_edge_nlu_divergence.py 源码级断言守住）。
     edge_nlu: str = ""
+    # QA 卡 Q7-OR2（2026-08-16）**同轮**执行事实：端侧在这一轮已经经 VAL 执行掉的动作名
+    # （`hvac.off` 这种）。混合意图路径下端侧先执行本地那半、再把剩下的片段上云，
+    # 而剩下那半可能是个**没有对象的碎片**——「关闭空调然后打开，按顺序执行」上云的
+    # 是「打开，按顺序执行」，对象在同一轮的另一个组里。真栈实测：云侧就此落兜底，
+    # 答「我不能帮你执行操作」，而它 4 秒前刚关了空调。
+    #
+    # **刻意不进 `prefs`**（同 `edge_nlu`/`e2e_memory_capability` 的理由）：prefs 会
+    # 随 ExecuteRequest 下发给全部 Agent，而这是编排自己的上下文，Agent 不该看见。
+    # 跨轮的同一件事走 memory 会话轮次的 `actions`（Q6 已存），不在这里。
+    edge_executed: list[str] = field(default_factory=list)
     # 跨轮门店锚定（2026-08-13）：上一轮 `nearby.search` 取回的公开 POI 列表
     # （只留 name/lng/lat 三标量）。**服务端持有、LLM 写不到**——这正是它能充当
     # 可信来源的全部理由：延续的是「服务端记得取回过哪些门店」，不是让模型把坐标再说一遍。
