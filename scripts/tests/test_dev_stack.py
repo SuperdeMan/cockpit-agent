@@ -10,6 +10,7 @@ import pytest
 from scripts import dev_stack_lib as dev
 from scripts.cloud_release_lib import (
     CommandResult,
+    ReleaseError,
     ReleaseRequest,
     SshConfig,
 )
@@ -522,7 +523,7 @@ def test_read_root_env_fails_closed_when_path_is_not_a_readable_file(tmp_path: P
 class FakeStatusRunner:
     def __init__(
         self,
-        command_results: list[CommandResult],
+        command_results: list[object],
         endpoint_results: dict[str, object],
     ) -> None:
         self.command_results = list(command_results)
@@ -532,7 +533,10 @@ class FakeStatusRunner:
 
     def run(self, argv, *, cwd, **_kwargs):
         self.commands.append(tuple(argv))
-        return self.command_results.pop(0)
+        result = self.command_results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
     def get(self, url: str, *, timeout_s: float):
         self.urls.append(url)
@@ -673,3 +677,32 @@ def test_inspect_status_redacts_sensitive_probe_exception_text(tmp_path: Path):
     assert "super-secret-token" not in serialized
     assert "postgresql://" not in serialized
     assert "PRIVATE KEY" not in serialized
+
+
+def test_inspect_local_status_handles_release_error_without_running_compose(
+    tmp_path: Path,
+):
+    urls = {
+        "http://localhost:5173/": dev.HttpResponse(200),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [ReleaseError("super-secret-token postgresql://user:pass@db/private")], urls
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+    serialized = json.dumps(dev.stack_status_to_dict(status))
+
+    assert status.container_total == 0
+    assert status.warnings == ("local Docker daemon is unavailable",)
+    assert runner.commands == [("docker", "info")]
+    assert all(
+        forbidden not in command
+        for command in runner.commands
+        for forbidden in ("up", "start", "restart", "build")
+    )
+    assert "super-secret-token" not in serialized
+    assert "postgresql://" not in serialized

@@ -540,7 +540,7 @@ def _local_container_status(
 ) -> tuple[int, int, tuple[str, ...]]:
     try:
         info = runner.run(("docker", "info"), cwd=repo, check=False)
-    except OSError:
+    except (OSError, ReleaseError):
         return 0, 0, ("local Docker daemon is unavailable",)
     if info.returncode != 0:
         return 0, 0, ("local Docker daemon is unavailable",)
@@ -550,7 +550,7 @@ def _local_container_status(
             cwd=repo,
             check=False,
         )
-    except OSError:
+    except (OSError, ReleaseError):
         return 0, 0, ("local Compose status is unavailable",)
     if compose.returncode != 0:
         return 0, 0, ("local Compose status is unavailable",)
