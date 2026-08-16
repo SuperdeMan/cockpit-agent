@@ -35,7 +35,7 @@
 - Create: `deploy/cloud/runtime-models.json`
 - Modify: `scripts/tests/test_cloud_deploy_assets.py`
 
-- [ ] **Step 1: 先写失败的清单契约测试**
+- [x] **Step 1: 先写失败的清单契约测试**
 
 在 `scripts/tests/test_cloud_deploy_assets.py` 新增：
 
@@ -70,7 +70,7 @@ def test_runtime_model_manifest_has_exact_validated_files():
     assert all(re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) for item in models)
 ```
 
-- [ ] **Step 2: 运行测试，确认因两个清单缺失而失败**
+- [x] **Step 2: 运行测试，确认因两个清单缺失而失败**
 
 Run:
 
@@ -80,7 +80,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_deploy_assets.
 
 Expected: 两个新增测试报 `required cloud deployment asset missing`；原有测试不出现新回归。
 
-- [ ] **Step 3: 添加有序服务清单**
+- [x] **Step 3: 添加有序服务清单**
 
 `deploy/cloud/release-services.json` 使用以下完整顺序；远端按此顺序逐个构建，测试与脚本不得再维护第二份集合：
 
@@ -129,7 +129,7 @@ def _release_service_rows() -> list[dict[str, str]]:
 SELF_BUILT_SERVICES = {item["service"] for item in _release_service_rows()}
 ```
 
-- [ ] **Step 4: 添加共享模型清单**
+- [x] **Step 4: 添加共享模型清单**
 
 `deploy/cloud/runtime-models.json`：
 
@@ -145,7 +145,7 @@ SELF_BUILT_SERVICES = {item["service"] for item in _release_service_rows()}
 }
 ```
 
-- [ ] **Step 5: 运行清单与既有云部署测试**
+- [x] **Step 5: 运行清单与既有云部署测试**
 
 Run:
 
@@ -155,7 +155,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_deploy_assets.
 
 Expected: 全绿；Compose 合并测试只执行 `config`，不启动、停止或构建容器。
 
-- [ ] **Step 6: 提交清单契约**
+- [x] **Step 6: 提交清单契约**
 
 ```powershell
 git add deploy/cloud/release-services.json deploy/cloud/runtime-models.json scripts/tests/test_cloud_deploy_assets.py
@@ -169,7 +169,7 @@ git commit -m "feat: define immutable cloud release inputs"
 - Create: `scripts/cloud_release_lib.py`
 - Create: `scripts/tests/test_cloud_release.py`
 
-- [ ] **Step 1: 为 SHA、clean main 和脱敏 Runner 写失败测试**
+- [x] **Step 1: 为 SHA、clean main 和脱敏 Runner 写失败测试**
 
 测试必须在 `tmp_path` 创建临时 Git 仓库，不依赖当前工作树：
 
@@ -238,7 +238,7 @@ def test_runner_redacts_secret_values(tmp_path: Path):
     assert result.stdout == "[REDACTED]\n"
 ```
 
-- [ ] **Step 2: 运行失败测试**
+- [x] **Step 2: 运行失败测试**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
@@ -246,7 +246,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
 
 Expected: import `scripts.cloud_release_lib` 失败。
 
-- [ ] **Step 3: 实现基础类型和 Git 门禁**
+- [x] **Step 3: 实现基础类型和 Git 门禁**
 
 `scripts/cloud_release_lib.py` 的公开基础接口固定为：
 
@@ -331,7 +331,7 @@ def require_clean_main_commit(repo: Path, revision: str) -> str:
 
 实现时修正二进制 stdin 分支：当 `stdin` 非空时用 `stdout=subprocess.PIPE`、`stderr=subprocess.PIPE` 并按 UTF-8 `errors="replace"` 解码，不能同时依赖 `capture_output=True` 与手工流参数。
 
-- [ ] **Step 4: 补充 SSH 配置命令测试**
+- [x] **Step 4: 补充 SSH 配置命令测试**
 
 新增 `SshConfig`，测试精确 argv，不把 host、user、identity 或 kex 写入 manifest：
 
@@ -352,7 +352,7 @@ def test_ssh_config_builds_strict_batch_argv(tmp_path: Path):
     ]
 ```
 
-- [ ] **Step 5: 跑测试并提交**
+- [x] **Step 5: 跑测试并提交**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
@@ -369,7 +369,7 @@ Expected: 本任务测试全绿；没有调用 Docker 或服务器。
 - Modify: `scripts/cloud_release_lib.py`
 - Modify: `scripts/tests/test_cloud_release.py`
 
-- [ ] **Step 1: 写路径分类和 DDL diff 的失败测试**
+- [x] **Step 1: 写路径分类和 DDL diff 的失败测试**
 
 ```python
 @pytest.mark.parametrize(
@@ -406,7 +406,7 @@ def test_classify_diff_ignores_ddl_fixture_in_tests():
     assert not diff_contains_schema_change("scripts/tests/test_manifest.py", diff)
 ```
 
-- [ ] **Step 2: 实现分类器**
+- [x] **Step 2: 实现分类器**
 
 固定分类优先级：secret → schema → CI → infrastructure → runtime config contract → application。`diff_contains_schema_change` 只检查非 docs/test 的 `.py`/`.sql` 文件新增 diff 行，忽略 `+++`、空白和注释，关键字为 `CREATE|ALTER|DROP|TRUNCATE` + `TABLE|INDEX|TYPE|SCHEMA`。
 
@@ -440,7 +440,7 @@ def classify_changed_path(path: str) -> str:
     return CONTROLLED_EXACT.get(normalized, "application")
 ```
 
-- [ ] **Step 3: 写发布计划数据模型测试**
+- [x] **Step 3: 写发布计划数据模型测试**
 
 ```python
 def test_make_release_plan_blocks_controlled_changes():
@@ -493,7 +493,7 @@ def test_make_release_plan_rejects_stale_infrastructure_approval():
     assert plan.blocking_changes[0].category == "infrastructure"
 ```
 
-- [ ] **Step 4: 实现不可变计划类型和 Git 变化读取**
+- [x] **Step 4: 实现不可变计划类型和 Git 变化读取**
 
 ```python
 @dataclass(frozen=True, order=True)
@@ -527,7 +527,7 @@ def git_changes(repo: Path, base: str, target: str) -> tuple[list[str], dict[str
 
 `target_infrastructure_digest` 由目标 commit 中 `deploy/cloud/**` 的相对路径 + 文件 SHA-256 做 canonical JSON 后再 SHA-256，排除 `deploy/cloud/README.md`。必须从 `git show ${TARGET_SHA}:${PATH}` 读取已提交内容，不能从工作树读取。远端 approved digest 只来自 `/opt/car-agent/shared/release-infrastructure.json`；缺失、格式错或摘要不是 64 位小写十六进制时视为未批准。
 
-- [ ] **Step 5: 跑测试并提交**
+- [x] **Step 5: 跑测试并提交**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
@@ -542,7 +542,7 @@ git commit -m "feat: fail closed on controlled cloud changes"
 - Modify: `scripts/cloud_release_lib.py`
 - Modify: `scripts/tests/test_cloud_release.py`
 
-- [ ] **Step 1: 写 artifact 内容与重入测试**
+- [x] **Step 1: 写 artifact 内容与重入测试**
 
 ```python
 def test_build_release_artifact_contains_only_committed_source(tmp_path: Path):
@@ -590,7 +590,7 @@ def test_existing_mismatched_artifact_is_never_overwritten(tmp_path: Path):
         )
 ```
 
-- [ ] **Step 2: 写秘密扫描测试**
+- [x] **Step 2: 写秘密扫描测试**
 
 ```python
 @pytest.mark.parametrize(
@@ -607,7 +607,7 @@ def test_text_secret_scanner_rejects_private_key():
         validate_text_payload("-----BEGIN PRIVATE KEY-----\nvalue")
 ```
 
-- [ ] **Step 3: 实现 deterministic artifact**
+- [x] **Step 3: 实现 deterministic artifact**
 
 实现顺序固定：
 
@@ -640,7 +640,7 @@ def sha256_file(path: Path) -> str:
 
 `transport.tar` 只包含 `source.tar`、`manifest.json`、`checksums.sha256` 三个普通文件，供 SSH stdin 传输；不得包含模型、`.env` 或本地连接信息。
 
-- [ ] **Step 4: 跑测试并检查 archive**
+- [x] **Step 4: 跑测试并检查 archive**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
@@ -648,7 +648,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
 
 Expected: artifact 测试全绿；测试临时目录外没有新文件。
 
-- [ ] **Step 5: 提交 artifact 生成器**
+- [x] **Step 5: 提交 artifact 生成器**
 
 ```powershell
 git add scripts/cloud_release_lib.py scripts/tests/test_cloud_release.py
@@ -663,7 +663,7 @@ git commit -m "feat: build secret-free cloud release artifacts"
 - Modify: `scripts/cloud_release_lib.py`
 - Modify: `scripts/tests/test_cloud_release.py`
 
-- [ ] **Step 1: 写 CLI 默认不写远端的失败测试**
+- [x] **Step 1: 写 CLI 默认不写远端的失败测试**
 
 通过注入 `FakeRunner` 记录 argv；不启动真实 SSH：
 
@@ -697,7 +697,7 @@ def test_apply_prepares_upload_scps_once_and_deploys_through_remote_entrypoint()
     )
 ```
 
-- [ ] **Step 2: 写远端只读发现解析测试**
+- [x] **Step 2: 写远端只读发现解析测试**
 
 远端 inline preflight 只输出一行 JSON，字段固定为：
 
@@ -707,7 +707,7 @@ def test_apply_prepares_upload_scps_once_and_deploys_through_remote_entrypoint()
 
 测试非法 JSON、current 不在 `/opt/car-agent/releases/`、负容量和额外顶层字段均 fail closed。
 
-- [ ] **Step 3: 实现 CLI 参数**
+- [x] **Step 3: 实现 CLI 参数**
 
 `scripts/cloud_release.py` 的参数入口：
 
@@ -740,7 +740,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 连接参数缺失时，`plan`、`deploy`、`verify`、`rollback` 全部给出缺失变量名并返回 2；不得把已提供的路径/地址值回显到 manifest。
 
-- [ ] **Step 4: 实现四个命令的精确行为**
+- [x] **Step 4: 实现四个命令的精确行为**
 
 - `plan`：Git 门禁 → read-only remote discovery → `git diff` 分类 → 本地 artifact → JSON/人类摘要；若受控变化或远端 bootstrap 未完成，返回 3。
 - `deploy`：执行 `plan`；无 `--apply` 返回 `dry_run` 且不执行远端变更；有 `--apply` 时生成 `${FULL_SHA}-${NONCE}` upload ID，其中 nonce 为 32 位小写十六进制；先调用 `remote-release.sh prepare-upload` 创建全新 incoming 目录，再用一次 `scp` 上传 `transport.tar`，最后调用 `remote-release.sh deploy --sha ${FULL_SHA} --upload-id ${UPLOAD_ID}`。prepare/deploy 都只能经过同一个远端入口；SCP 不能上传到入口返回目录之外。
@@ -749,7 +749,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 所有 remote shell 参数只来自严格 SHA/upload-ID regex；host/user/identity 以独立 argv 传递；不得拼接未经验证的用户文本到远端 shell。`SshConfig.scp_argv()` 必须复用与 SSH 相同的 identity、BatchMode、IdentitiesOnly、ConnectTimeout、Kex 和 host key 行为。
 
-- [ ] **Step 5: 运行 CLI 测试和帮助烟测**
+- [x] **Step 5: 运行 CLI 测试和帮助烟测**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py -q
@@ -759,7 +759,7 @@ python scripts/cloud_release.py deploy --help
 
 Expected: 测试全绿；帮助包含 `plan/deploy/verify/rollback`；不连接服务器。
 
-- [ ] **Step 6: 提交 CLI**
+- [x] **Step 6: 提交 CLI**
 
 ```powershell
 git add scripts/cloud_release.py scripts/cloud_release_lib.py scripts/tests/test_cloud_release.py
@@ -774,7 +774,7 @@ git commit -m "feat: add dry-run cloud release CLI"
 - Create: `deploy/cloud/remote-build.sh`
 - Modify: `scripts/tests/test_cloud_deploy_assets.py`
 
-- [ ] **Step 1: 写 Shell 资产和非破坏性失败测试**
+- [x] **Step 1: 写 Shell 资产和非破坏性失败测试**
 
 ```python
 REMOTE_RELEASE_PATH = CLOUD_DIR / "remote-release.sh"
@@ -808,7 +808,7 @@ def test_remote_build_is_sequential_and_never_touches_runtime():
     assert "rm -rf" not in text
 ```
 
-- [ ] **Step 2: 添加协调器骨架并确认测试继续因 helper 缺失而失败**
+- [x] **Step 2: 添加协调器骨架并确认测试继续因 helper 缺失而失败**
 
 `deploy/cloud/remote-release.sh`：
 
@@ -872,7 +872,7 @@ main "$@"
 
 `validate_upload_id` 要求 `${FULL_SHA}-${NONCE}`，nonce 精确 32 位小写十六进制。`prepare_upload` 在锁内创建 `/opt/car-agent/incoming/releases/${UPLOAD_ID}`，要求目标不存在，权限 `0700`，owner/group 来自合法的 `SUDO_USER`；它只输出该固定绝对目录。SCP 中断后保留 incoming 现场，不自动删除。
 
-- [ ] **Step 3: 实现 transport 校验、容量闸和模型闸**
+- [x] **Step 3: 实现 transport 校验、容量闸和模型闸**
 
 `remote-build.sh` 只能被 source：
 
@@ -908,7 +908,7 @@ require_capacity() {
 
 `verify_shared_models` 读取新源码中的 `deploy/cloud/runtime-models.json`，移除每个条目的 `models/` 前缀后，逐文件校验 `/opt/car-agent/shared/models/` 下的对应相对路径。共享目录不存在、文件缺失或摘要不同都返回 `bootstrap_required`，不复制文件。
 
-- [ ] **Step 4: 实现 26 服务串行构建和 image inventory**
+- [x] **Step 4: 实现 26 服务串行构建和 image inventory**
 
 核心循环固定为：
 
@@ -957,7 +957,7 @@ PY
 
 实现时将 `compose_args` 声明为 `local -a compose_args`，ShellCheck 语义保持清晰。`write_image_inventory` 记录 service、目标 image:tag 和 image ID，不记录环境或 build args，文件权限 `0600 root:root`。
 
-- [ ] **Step 5: 用 Git Bash 做语法检查并运行契约测试**
+- [x] **Step 5: 用 Git Bash 做语法检查并运行契约测试**
 
 ```powershell
 & 'D:\Program Files\Git\bin\bash.exe' -n deploy/cloud/remote-release.sh deploy/cloud/remote-build.sh
@@ -966,7 +966,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_deploy_assets.
 
 Expected: Bash exit 0；契约测试全绿；不调用本机 Docker build。
 
-- [ ] **Step 6: 提交远端构建事务**
+- [x] **Step 6: 提交远端构建事务**
 
 ```powershell
 git add deploy/cloud/remote-release.sh deploy/cloud/remote-build.sh scripts/tests/test_cloud_deploy_assets.py
@@ -982,7 +982,7 @@ git commit -m "feat: add locked sequential cloud builds"
 - Modify: `deploy/cloud/backup.sh`
 - Modify: `scripts/tests/test_cloud_deploy_assets.py`
 
-- [ ] **Step 1: 写激活顺序和回滚失败测试**
+- [x] **Step 1: 写激活顺序和回滚失败测试**
 
 ```python
 ACTIVATE_RELEASE_PATH = CLOUD_DIR / "activate-release.sh"
@@ -1027,7 +1027,7 @@ def test_failed_verification_restores_previous_current_and_converges_old_release
     assert "ROLLBACK_FAILED" in text
 ```
 
-- [ ] **Step 2: 实现不可变 release 组装**
+- [x] **Step 2: 实现不可变 release 组装**
 
 `assemble_release`：
 
@@ -1061,7 +1061,7 @@ PY
 }
 ```
 
-- [ ] **Step 3: 实现备份门禁和 Compose 收敛**
+- [x] **Step 3: 实现备份门禁和 Compose 收敛**
 
 ```bash
 run_required_backup() {
@@ -1095,7 +1095,7 @@ compose_up_release() {
 
 同步修改 `backup.sh`：`COMPOSE_PROJECT_NAME` 改为同一共享文件读取值；active image SHA 仍从 `basename "${RELEASE_DIR}"` 得到并以 `RELEASE_SHA` 环境传给 Compose；Compose 命令显式加 `--env-file /opt/car-agent/shared/.env`。因此备份既能找到稳定 project 的当前容器，又能正确解析当前 release 的 SHA 镜像。
 
-- [ ] **Step 4: 实现原子 current 切换和自动应用回滚**
+- [x] **Step 4: 实现原子 current 切换和自动应用回滚**
 
 ```bash
 switch_current() {
@@ -1117,7 +1117,7 @@ restore_previous_release() {
 
 显式 `rollback_release` 只允许目标目录存在、26 个目标镜像齐全、目标 `.env` 为共享 symlink，且先备份再切换。目标目录名可为历史 7 位或新 40 位 SHA。
 
-- [ ] **Step 5: 验证 Shell 和契约**
+- [x] **Step 5: 验证 Shell 和契约**
 
 ```powershell
 & 'D:\Program Files\Git\bin\bash.exe' -n deploy/cloud/backup.sh deploy/cloud/remote-release.sh deploy/cloud/remote-build.sh deploy/cloud/activate-release.sh
@@ -1126,7 +1126,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_deploy_assets.
 
 Expected: Bash exit 0；新增契约全绿。
 
-- [ ] **Step 6: 提交激活与回滚**
+- [x] **Step 6: 提交激活与回滚**
 
 ```powershell
 git add deploy/cloud/activate-release.sh deploy/cloud/remote-release.sh deploy/cloud/backup.sh scripts/tests/test_cloud_deploy_assets.py
@@ -1142,7 +1142,7 @@ git commit -m "feat: activate and roll back immutable cloud releases"
 - Create: `deploy/cloud/probes/collector_ws_probe.py`
 - Modify: `scripts/tests/test_cloud_deploy_assets.py`
 
-- [ ] **Step 1: 写禁止危险 case、无凭证证据和五入口测试**
+- [x] **Step 1: 写禁止危险 case、无凭证证据和五入口测试**
 
 ```python
 VERIFY_RELEASE_PATH = CLOUD_DIR / "verify-release.sh"
@@ -1174,7 +1174,7 @@ def test_release_evidence_code_never_serializes_tokens_or_environment():
     assert "print(os.environ" not in payload
 ```
 
-- [ ] **Step 2: 实现 Edge WSS 探针**
+- [x] **Step 2: 实现 Edge WSS 探针**
 
 `edge_ws_probe.py` 复用现有首版探针的协议，但只保留三项：无 token 拒绝、无效 token 拒绝、安全闲聊返回 `final` + 非空 `speech`。成功输出只包含 case、status、HTTP code、result type、latency、是否有 speech、card/action 数、need_confirm；不输出 token、URL query、话术正文或原始异常。
 
@@ -1200,7 +1200,7 @@ async def ask_safe_chitchat(ws_url: str, token: str) -> bool:
 
 异常只输出 `type(exc).__name__` 和状态码，不调用 `str(exc)`。
 
-- [ ] **Step 3: 实现 Collector WSS 重连探针**
+- [x] **Step 3: 实现 Collector WSS 重连探针**
 
 `collector_ws_probe.py` 连续建立两个独立连接，每次首包都必须是 `{"type":"snapshot"}`，输出：
 
@@ -1208,7 +1208,7 @@ async def ask_safe_chitchat(ws_url: str, token: str) -> bool:
 {"case":"collector_reconnect","first_connect":true,"reconnect":true,"status":"pass"}
 ```
 
-- [ ] **Step 4: 实现服务器安全验收**
+- [x] **Step 4: 实现服务器安全验收**
 
 `verify-release.sh` 只可被 `remote-release.sh` source，按以下顺序：
 
@@ -1222,7 +1222,7 @@ async def ask_safe_chitchat(ws_url: str, token: str) -> bool:
 
 证据目录已存在时不得覆盖：若同一 SHA 重验，写 `verification-${UTC_TIMESTAMP}.json`；时间格式严格 `[0-9]{8}T[0-9]{6}Z`，冲突则失败并保留旧证据。
 
-- [ ] **Step 5: Shell/Python 语法与测试**
+- [x] **Step 5: Shell/Python 语法与测试**
 
 ```powershell
 & 'D:\Program Files\Git\bin\bash.exe' -n deploy/cloud/verify-release.sh
@@ -1232,7 +1232,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_deploy_assets.
 
 Expected: 三项命令 exit 0；不连接实际 Provider，不启动 Docker 容器。
 
-- [ ] **Step 6: 提交验收脚本**
+- [x] **Step 6: 提交验收脚本**
 
 ```powershell
 git add deploy/cloud/verify-release.sh deploy/cloud/probes scripts/tests/test_cloud_deploy_assets.py
@@ -1248,7 +1248,7 @@ git commit -m "feat: verify private cloud releases safely"
 - Modify: `deploy/cloud/README.md`
 - Modify: `scripts/tests/test_cloud_deploy_assets.py`
 
-- [ ] **Step 1: 写当前服务器会返回 bootstrap_required 的解析测试**
+- [x] **Step 1: 写当前服务器会返回 bootstrap_required 的解析测试**
 
 ```python
 def test_preflight_reports_exact_bootstrap_candidates():
@@ -1283,13 +1283,13 @@ def test_preflight_reports_exact_bootstrap_candidates():
 
 报告同时显示来源为当前已验证 release、每个模型 SHA-256 和目标权限；不生成复制命令，不执行远端写入。
 
-- [ ] **Step 2: 实现只读 inline remote discovery**
+- [x] **Step 2: 实现只读 inline remote discovery**
 
 SSH 命令只允许：`readlink`、`test`、`df`、读取 `/proc/meminfo`、`flock -n` 的只读竞争检查、`docker inspect` 读取当前容器 project label、`sha256sum` 和 Python JSON 输出。锁测试用新 FD 获取后立即释放，不创建缺失目录；若 lock 文件/父目录不存在则报告 unavailable，不执行 `install`/`mkdir`。
 
 `shared_scripts_ready` 要求 backup + 四个 release 脚本存在、root 所有、不可被 group/other 写且 `bash -n` 通过；`runtime_project_ready` 要求共享 project-name 文件内容与当前容器 `com.docker.compose.project` label 一致、root 所有且不可被 group/other 写；`approved_infrastructure_digest` 只在 `release-infrastructure.json` schema、聚合摘要和逐文件安装摘要全部有效时返回；`shared_models_ready` 要求四个文件摘要匹配 manifest。inline script 自身不读取 `.env`。
 
-- [ ] **Step 3: 更新运行手册**
+- [x] **Step 3: 更新运行手册**
 
 `deploy/cloud/README.md` 增加以下固定工作流：
 
@@ -1313,7 +1313,7 @@ python scripts/cloud_release.py rollback --to 4c1f479 --apply
 - 不自动清理；失败目录只进入候选清单。
 - merge、push、首次真实 deploy 和 rollback 各自审批。
 
-- [ ] **Step 4: 更新手册契约测试**
+- [x] **Step 4: 更新手册契约测试**
 
 ```python
 def test_cloud_runbook_documents_repeatable_release_workflow():
@@ -1330,7 +1330,7 @@ def test_cloud_runbook_documents_repeatable_release_workflow():
         assert required in readme
 ```
 
-- [ ] **Step 5: 运行本机测试并执行真实只读 preflight**
+- [x] **Step 5: 运行本机测试并执行真实只读 preflight**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scripts/tests/test_cloud_deploy_assets.py -q
@@ -1343,7 +1343,7 @@ Expected:
 - 在部署分支执行真实 `plan` 时，Git main 门禁或 `deploy/cloud/**` 基础设施变化使其返回 3，这是正确结果；不得尝试 deploy。
 - 在未来干净 main 合入后执行时，远端只读 preflight 应报告 shared scripts/models 尚未 bootstrap，并列出精确候选；服务器 current 仍为 `4c1f479`。
 
-- [ ] **Step 6: 提交文档和 preflight**
+- [x] **Step 6: 提交文档和 preflight**
 
 ```powershell
 git add scripts/cloud_release_lib.py scripts/tests/test_cloud_release.py deploy/cloud/README.md scripts/tests/test_cloud_deploy_assets.py
@@ -1358,7 +1358,7 @@ git commit -m "docs: add cloud release bootstrap runbook"
 - Modify: `docs/superpowers/plans/2026-08-16-cloud-release-workflow.md`
 - Review: all files changed since `87db3f2`
 
-- [ ] **Step 1: 运行目标测试集**
+- [x] **Step 1: 运行目标测试集**
 
 ```powershell
 python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scripts/tests/test_cloud_deploy_assets.py -q
@@ -1366,7 +1366,7 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scr
 
 Expected: 全绿；记录准确 passed/skipped 数，不预填数字。
 
-- [ ] **Step 2: 运行语法、格式和秘密路径检查**
+- [x] **Step 2: 运行语法、格式和秘密路径检查**
 
 ```powershell
 & 'D:\Program Files\Git\bin\bash.exe' -n deploy/cloud/backup.sh deploy/cloud/remote-release.sh deploy/cloud/remote-build.sh deploy/cloud/activate-release.sh deploy/cloud/verify-release.sh
@@ -1378,7 +1378,7 @@ $trackedSensitive
 
 Expected: Bash/Python/diff 命令 exit 0；最后一条除仓库已知且明确允许的示例文件外无敏感文件。任何新增命中都先停止并审查，不提交绕过。
 
-- [ ] **Step 3: 独立核对设计覆盖**
+- [x] **Step 3: 独立核对设计覆盖**
 
 逐项对照设计文档 §1 成功标准和 §4 组件职责，至少构造这些反例并确认测试拒绝：
 
@@ -1392,7 +1392,7 @@ Expected: Bash/Python/diff 命令 exit 0；最后一条除仓库已知且明确�
 
 若发现设计未覆盖的行为，先更新设计文档状态和裁决，再改实现；不得在代码中静默扩大范围。
 
-- [ ] **Step 4: 检查分支与本机/远端无副作用**
+- [x] **Step 4: 检查分支与本机/远端无副作用**
 
 ```powershell
 git status --short
@@ -1402,7 +1402,7 @@ docker ps --format '{{.Names}} {{.Status}}'
 
 Expected: 部署 worktree 只含计划内变化；本机既有容器仍由另一个 agent 管理，数量/状态未因本工作流实施改变。远端只允许前面已说明的 read-only preflight，current 不变。
 
-- [ ] **Step 5: 记录实施结果并提交最终文档**
+- [x] **Step 5: 记录实施结果并提交最终文档**
 
 在设计文档末尾追加“实现状态”表，逐项写实际 commit、测试命令和真实结果；把本计划已完成 checkbox 更新为 `[x]`。不写首次真实 deploy 成功，因为本计划不授权该动作。
 

@@ -276,3 +276,30 @@ PLANNED -> UPLOADED -> BUILT -> BACKED_UP -> ACTIVATING -> VERIFIED
 6. `git push`、首次真实新版本部署和任何清理均分别取得授权。
 
 现有一次性部署计划 `docs/superpowers/plans/2026-08-15-tencent-cloud-private-demo-deployment.md` 继续作为首版部署证据；本设计是其后续可重复发布机制，不回写或伪装首版历史。
+
+## 11. 实现状态（2026-08-16）
+
+| 范围 | 实现提交 | 当前证据 |
+|---|---|---|
+| 不可变服务/模型输入 | `1bbd084` | 26 个自建服务与 4 个运行模型均由显式 manifest 锁定 |
+| clean main、SSH 与脱敏子进程门禁 | `166454a` | dirty worktree、非 main 可达提交和不安全连接字段均有拒绝测试 |
+| 受控变化与基础设施批准锚 | `9894367` | Compose、schema、`.env.example`、CI/CD、密钥材料和 Python DDL diff fail closed |
+| 无密钥可复现 artifact | `67ab478` | 只归档已提交 Git bytes；路径、文本秘密、manifest/checksum 和不覆盖语义有测试 |
+| 本机 CLI 与 dry-run | `88385b3` | `plan/deploy/verify/rollback` 已实现；无 `--apply` 不调用远端写入口 |
+| 远端单锁顺序构建 | `5f3ec8b` | 30 GiB/3 GiB 容量闸、模型闸、26 服务串行构建、SHA image inventory 已实现 |
+| 备份、激活与回滚 | `716a433` | 稳定 Compose project、备份前置、原子 current 切换和旧 release 收敛已实现 |
+| 安全验收与脱敏证据 | `b4fdc72` | 五个私网入口、HTTPS/WSS、数据依赖、备份 timer 和唯一 0600 evidence 已实现 |
+| 只读 preflight 与运行手册 | `45a9912` | inline preflight 不读取 `.env`、不写服务器；bootstrap 精确列出 11 个候选 |
+| 独立失败反例加固 | `0963e74` | 动态注入容量、模型、第 9 个 build、备份、Compose config、verify/rollback、鉴权和重连失败 |
+
+最终目标测试命令：
+
+```powershell
+python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scripts/tests/test_cloud_deploy_assets.py -q
+```
+
+实施收口前新鲜读数为 **104 passed / 0 failed / 0 skipped**；五个 Shell 资产通过 Git Bash `bash -n`，四个 Python 入口通过 `py_compile`，`git diff --check 87db3f2..HEAD` 通过。tracked sensitive 路径检查只命中仓库既有且允许的 `.env.example`，没有新增 `.env`、私钥或证书密钥文件。
+
+真实服务器只执行过 read-only `plan`/preflight：`current` 仍为 `4c1f479`，运行时 Compose project 仍为 `4c1f479`；返回 `bootstrap_required`，列出 runtime project 文件、基础设施批准锚、5 个共享脚本和 4 个共享模型。没有生成 artifact、上传文件、安装脚本、修改环境、重启容器或执行首次真实 deploy。
+
+当前完成的是隔离分支 `feat/tencent-cloud-private-demo` 上的工作流实现。它尚未合入当前 `main`、未 push、未安装到服务器；首次 bootstrap、首次 `deploy --apply` 和未来 rollback 演练仍严格受 §7.2 与运行手册的单独审批约束。
