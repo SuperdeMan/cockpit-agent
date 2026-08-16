@@ -1042,13 +1042,15 @@ def test_cloud_release_argv_is_a_python_delegate_with_dry_run_and_apply():
 
 
 class FakeCliRunner:
-    def __init__(self, result: int = 0) -> None:
+    def __init__(self, result: int = 0, stdout: str = "", stderr: str = "") -> None:
         self.calls: list[tuple[str, ...]] = []
         self.result = result
+        self.stdout = stdout
+        self.stderr = stderr
 
     def run(self, argv, **kwargs):
         self.calls.append(tuple(argv))
-        return CommandResult(tuple(argv), self.result, "", "")
+        return CommandResult(tuple(argv), self.result, self.stdout, self.stderr)
 
 
 def test_cli_target_show_and_set_emit_target_and_source(tmp_path: Path):
@@ -1062,7 +1064,7 @@ def test_cli_target_show_and_set_emit_target_and_source(tmp_path: Path):
 
 
 def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(tmp_path: Path):
-    runner = FakeCliRunner()
+    runner = FakeCliRunner(stdout=json.dumps(_cloud_release_payload()))
     assert cli.main(["deploy"], repo=tmp_path, release_runner=runner) == 2
     assert runner.calls == []
 
@@ -1114,3 +1116,104 @@ def test_cli_parser_errors_are_redacted_json_with_exit_two(
         }
     ]
     assert identity not in json.dumps(events)
+
+
+def _cloud_release_payload(status: str = "dry_run") -> dict[str, object]:
+    return {
+        "status": status,
+        "deployed_sha": "a" * 40,
+        "target_sha": "b" * 40,
+        "changed_paths": ["agents/example.py"],
+        "blocking_changes": [],
+        "target_infrastructure_sha256": "c" * 64,
+        "approved_infrastructure_sha256": "d" * 64,
+        "artifact_directory": "/opt/car-agent/releases/ignored",
+        "bootstrap": {"status": "ready", "source_release": "/opt/ignored", "candidates": [], "details": []},
+        "remote": {"current_release": "a" * 40, "runtime_project_name": "car_agent", "disk_available_bytes": 1, "memory_available_bytes": 1, "release_lock_available": True, "runtime_project_ready": True, "shared_scripts_ready": True, "shared_models_ready": True},
+    }
+
+
+def test_cli_status_uses_health_consistent_status_for_local_and_cloud(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    endpoints = tuple(
+        dev.EndpointStatus(str(index), "https://example.invalid", "healthy", 200)
+        for index in range(5)
+    )
+    healthy = dev.StackStatus("local", None, 7, 7, 5, endpoints, ())
+    monkeypatch.setattr(cli, "inspect_local_status", lambda *args: healthy)
+    local_events: list[dict[str, object]] = []
+    assert cli.main(["status"], repo=tmp_path, status_runner=object(), emit=local_events.append) == 0
+    assert local_events[-1]["status"] == "ok"
+
+    dev.set_target(tmp_path, "cloud")
+    degraded = dev.StackStatus("cloud", "a" * 40, None, None, 4, (), ("remote status unavailable",))
+    monkeypatch.setattr(cli, "read_root_env", lambda *args: {"TAILNET_FQDN": "dev.ts.net"})
+    monkeypatch.setattr(cli, "inspect_cloud_status", lambda *args: degraded)
+    cloud_events: list[dict[str, object]] = []
+    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 1
+    assert cloud_events[-1]["status"] == "degraded"
+
+
+def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    payload = _cloud_release_payload()
+    runner = FakeCliRunner(stdout=json.dumps(payload))
+    events: list[dict[str, object]] = []
+    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
+    assert events[-1]["action"] == "deploy"
+    assert events[-1]["target_sha"] == payload["target_sha"]
+    assert events[-1]["current_release"] == payload["remote"]["current_release"]
+    assert events[-1]["changed_paths"] == ["agents/example.py"]
+
+
+@pytest.mark.parametrize(
+    ("returncode", "payload", "expected"),
+    (
+        (1, None, 1),
+        (2, {"status": "configuration_rejected", "error_category": "configuration"}, 2),
+        (3, {"status": "plan_rejected", "blocking_changes": []}, 3),
+        (3, {"status": "bootstrap_required"}, 1),
+    ),
+)
+def test_cli_deploy_maps_child_exit_codes_by_safe_payload_category(tmp_path: Path, returncode: int, payload: dict[str, object] | None, expected: int):
+    dev.set_target(tmp_path, "cloud")
+    runner = FakeCliRunner(returncode, json.dumps(payload) if payload else "", "secret-stderr")
+    events: list[dict[str, object]] = []
+    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == expected
+    assert "secret-stderr" not in json.dumps(events)
+
+
+@pytest.mark.parametrize("kind", ("malformed", "multiple", "oversize", "unknown_field"))
+def test_cli_deploy_rejects_malformed_multiple_or_oversize_child_output(tmp_path: Path, kind: str):
+    stdout = {
+        "malformed": "not-json",
+        "multiple": "{}\n{}",
+        "oversize": "{" + "x" * 70000 + "}",
+        "unknown_field": json.dumps({"status": "dry_run", "token": "secret"}),
+    }[kind]
+    dev.set_target(tmp_path, "cloud")
+    events: list[dict[str, object]] = []
+    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=FakeCliRunner(stdout=stdout, stderr="token=secret"), emit=events.append) == 1
+    assert events[-1]["status"] == "failed"
+    assert "secret" not in json.dumps(events)
+
+
+def test_cli_status_marks_local_degraded_and_cloud_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    endpoints = tuple(
+        dev.EndpointStatus(str(index), "https://example.invalid", "healthy", 200)
+        for index in range(5)
+    )
+    local_degraded = dev.StackStatus("local", None, None, None, 4, endpoints, ())
+    monkeypatch.setattr(cli, "inspect_local_status", lambda *args: local_degraded)
+    local_events: list[dict[str, object]] = []
+    assert cli.main(["status"], repo=tmp_path, status_runner=object(), emit=local_events.append) == 1
+    assert local_events[-1]["status"] == "degraded"
+
+    dev.set_target(tmp_path, "cloud")
+    cloud_healthy = dev.StackStatus("cloud", "a" * 40, None, None, 5, endpoints, ())
+    monkeypatch.setattr(cli, "read_root_env", lambda *args: {"TAILNET_FQDN": "dev.ts.net"})
+    monkeypatch.setattr(cli, "inspect_cloud_status", lambda *args: cloud_healthy)
+    cloud_events: list[dict[str, object]] = []
+    assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 0
+    assert cloud_events[-1]["status"] == "ok"
