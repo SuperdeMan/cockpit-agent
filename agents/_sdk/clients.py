@@ -184,7 +184,14 @@ class MemoryClient:
                     occupant_id=occupant_id or "primary",
                     scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY),
                 timeout=DEFAULT_TIMEOUT)
-            return [{"role": t.role, "text": t.text, "ts": t.ts} for t in resp.turns]
+            # Q6：`actions` 一并出来——审计问答的确定性 handler 消费的就是它。
+            # **存下来而读不到等于没存**，这一行就是那个「读到」。
+            # `exchange_id` 同样必须带上：端侧写入是 fire-and-forget，
+            # 两轮快指令的落库顺序会是 userA→userB→assistantA→assistantB，
+            # 按位置猜「这个动作属于哪句话」必然错绑（真栈实测答出「暂停音乐、暂停音乐」）。
+            return [{"role": t.role, "text": t.text, "ts": t.ts,
+                     "actions": list(t.actions), "exchange_id": t.exchange_id}
+                    for t in resp.turns]
         except grpc.aio.AioRpcError as e:
             raise RuntimeError(f"Memory error: {e.code().name}: {e.details()}") from e
 

@@ -36,6 +36,25 @@ from observability.tracing import set_session_id, set_trace_id
 
 logger = logging.getLogger("planner.engine")
 
+
+def _executed_action_names(actions) -> list[str]:
+    """final 帧里的动作 → 可查询的动作名（Q6）。
+
+    口径与端侧 `_executed_names`、obs、探针 `_action_names` 一致：
+    **优先 `payload.command`，回退 `type`**。三处必须同口径——否则「刚才执行了什么」
+    答的名字和 badcase 面板看到的对不上，用户与开发者会在两套词汇里各说各话。
+    """
+    out: list[str] = []
+    for a in actions or []:
+        if not isinstance(a, dict):
+            continue
+        payload = a.get("payload")
+        name = str((payload if isinstance(payload, dict) else {}).get("command")
+                   or a.get("type") or "").strip()
+        if name:
+            out.append(name)
+    return out
+
 # 取消判定已收敛到 `pending_cancel`（QA 卡 Q1-A）——**挂起态的两条分支
 # （wait_confirm / wait_slot）曾各判各的**，于是「取消刚才解锁」6 字 > 2+3，
 # 在 wait_confirm 下判不出取消、挂起一直活着（I-046）。词表与两条语境规则的
@@ -184,6 +203,7 @@ class PlannerEngine:
         mem_on = ctx.prefs.get("memory_enabled", "true") != "false"
 
         assistant_speech = ""
+        executed_actions: list[str] = []
         rejected = False
         async for ev in self._orchestrate(request, ctx, text, mem_on):
             # R4.4：剥离内部标记键，消费端（server.py）看不到；同时记本轮是否拒识。
@@ -196,6 +216,10 @@ class PlannerEngine:
                     ev["closed_operation_ids"] = list(ctx.closed_operation_ids)
                 if ev.get("speech"):
                     assistant_speech = ev["speech"]
+                # Q6：本轮真实执行了什么，随 assistant 轮一起落库。
+                # 取 final 帧而不是 step_result——**用户看到的那份就是这一份**，
+                # 中途被聚合器丢掉的步不该出现在审计回答里。
+                executed_actions = _executed_action_names(ev.get("actions"))
             yield ev
 
         # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
@@ -214,7 +238,8 @@ class PlannerEngine:
                                                ctx.user_id, ctx.vehicle_id, occ,
                                                ctx.e2e_memory_capability,
                                                turn_id=f"{exch}:assistant:0",
-                                               exchange_id=exch)
+                                               exchange_id=exch,
+                                               actions=executed_actions)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:

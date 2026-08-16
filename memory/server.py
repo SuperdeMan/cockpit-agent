@@ -84,7 +84,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 request.session_id, request.role, request.text,
                 user_id=request.user_id, occupant_id=request.occupant_id,
                 vehicle_id=request.vehicle_id, turn_id=request.turn_id,
-                exchange_id=request.exchange_id)
+                exchange_id=request.exchange_id,
+                actions=list(request.actions))   # Q6 执行事实
         except TurnConflict:
             # 重放可以，改写不行：保留原 Turn 并如实报错，不静默覆盖已发生的对话。
             return memory_pb2.AppendTurnResponse(ok=False, error="turn_conflict")
@@ -278,7 +279,9 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 role=t["role"], text=t["text"], ts=t["ts"],
                 user_id=t.get("user_id", ""), vehicle_id=t.get("vehicle_id", ""),
                 occupant_id=t.get("occupant_id", ""), turn_id=t.get("turn_id", ""),
-                exchange_id=t.get("exchange_id", ""))
+                exchange_id=t.get("exchange_id", ""),
+                # `or []` 不是形式：存量轮次（本字段之前写入的）读出来没有这个键。
+                actions=t.get("actions") or [])
             for t in turns
         ])
 

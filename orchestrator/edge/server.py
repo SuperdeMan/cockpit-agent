@@ -136,19 +136,25 @@ class _MemoryClient:
 
     async def append(self, session_id: str, role: str, text: str, *,
                      user_id: str = "", occupant_id: str = "", vehicle_id: str = "",
-                     turn_id: str = "", exchange_id: str = ""):
+                     turn_id: str = "", exchange_id: str = "", actions=None):
         """M-B：端侧轮次也带 OwnerKey。
 
         此前这里只传 session/role/text——于是端侧处理的每一轮都是**无主**的，
         云端切到 OWNER_ONLY 后它们会全部落进 primary 桶。车控/媒体本身没有偏好可抽，
         但「谁说的」这一维在端侧丢掉后，乘员 B 的本地轮次会被记成主驾说的。
+
+        **Q6（2026-08-16）再补一维：`actions`（本轮真实执行了什么）。** 同款理由——
+        端侧秒回的 313 个动作**云侧一个都看不到**，「刚才实际执行了什么」于是只能
+        由 LLM 从话术里猜（真栈三次取样三个样，一次直接否认执行过）。
+        识别得出「做了什么」而数据面存不下来，等于没记录。
         """
         try:
             await self._stub().AppendTurn(
                 memory_pb2.AppendTurnRequest(
                     session_id=session_id, role=role, text=text,
                     user_id=user_id, occupant_id=occupant_id or "primary",
-                    vehicle_id=vehicle_id, turn_id=turn_id, exchange_id=exchange_id),
+                    vehicle_id=vehicle_id, turn_id=turn_id, exchange_id=exchange_id,
+                    actions=list(actions or [])),
                 timeout=5)
         except Exception as e:  # 离线/记忆不可用 → 静默跳过
             logger.debug("edge memory append failed: %s", e)
@@ -395,8 +401,38 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         obj = structured.get("data", {}).get("object", "")
         return bool(obj) and self.val._need_confirm(obj)
 
-    def _record_local_turn(self, request, user_text: str, assistant_speech: str):
-        """把纯本地处理的一轮 best-effort 异步写入共享记忆（gated on memory_enabled）。"""
+    @staticmethod
+    def _executed_names(items) -> list[str]:
+        """本轮真实执行的动作名：优先 `payload.command`，回退 `type`。
+
+        ⚠ **与 obs/探针同一口径**（`server.py:908` 的 `payload.get("command", type)`、
+        探针的 `_action_names`）。审计回答与可观测台读到的必须是同一个名字，
+        否则「刚才执行了什么」答的和 badcase 面板看到的对不上。
+
+        两种入参形态都要吃：单意图分支给的是 dict，多意图分支给的是 `AgentAction`。
+        """
+        out: list[str] = []
+        for a in items or []:
+            if isinstance(a, dict):
+                payload, atype = a.get("payload") or {}, a.get("type") or ""
+            else:
+                atype = getattr(a, "type", "") or ""
+                raw = getattr(a, "payload", None)
+                payload = MessageToDict(
+                    raw, preserving_proto_field_name=True) if raw else {}
+            name = str((payload or {}).get("command") or atype or "").strip()
+            if name:
+                out.append(name)
+        return out
+
+    def _record_local_turn(self, request, user_text: str, assistant_speech: str,
+                           actions=None):
+        """把纯本地处理的一轮 best-effort 异步写入共享记忆（gated on memory_enabled）。
+
+        **Q6（2026-08-16）：动作一并写。** 端侧快路径那 313 个动作**根本不上云**，
+        云侧无从知道车窗到底开没开——「刚才实际执行了什么」于是只能由 LLM 从
+        对话历史里猜。这一处是唯一能把 local 那 40% 补进事实源的位置。
+        """
         meta = dict(request.meta) if request.meta else {}
         if meta.get("memory_enabled", "true") == "false":
             return
@@ -416,7 +452,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             if assistant_speech:
                 await self.memory.append(request.session_id, "assistant", assistant_speech,
                                          user_id=uid, occupant_id=occ, vehicle_id=vid,
-                                         turn_id=f"{exch}:assistant:0", exchange_id=exch)
+                                         turn_id=f"{exch}:assistant:0", exchange_id=exch,
+                                         actions=self._executed_names(actions))
 
         task = asyncio.create_task(_write())
         self._bg.add(task)
@@ -574,7 +611,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     trace_id, request.text, "multi",
                     rule_objects=[o for o in
                                   ((m.get("data") or {}).get("object", "") for m in multi) if o])
-                self._record_local_turn(request, request.text, combined)
+                self._record_local_turn(request, request.text, combined,
+                                        actions=actions)
                 return
 
         # 快路径 A2：混合意图（部分本地 + 部分非本地）。
@@ -761,7 +799,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 # 秒回之后才排影子——这一支是**规则已经执行了**的那一支，`differ` 在这里
                 # 意味着「模型认为你说的是另一个对象，而车已经动了」，是最该被人看的一档。
                 self._nlu_shadow_bg(trace_id, request.text, "local")
-                self._record_local_turn(request, request.text, speech)
+                self._record_local_turn(request, request.text, speech,
+                                        actions=[action] if action else [])
                 return
             logger.info("LOCAL confirm-required %s -> route to cloud", intent["name"])
 

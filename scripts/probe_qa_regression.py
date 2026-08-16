@@ -77,7 +77,37 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "speech_any", "speech_not", "need_confirm", "card_type",
                 "is_question", "differs_from_turn", "has_operation_id",
                 "closes_op_from", "names_item_from", "not_names_item_from",
-                "no_clock_time"}
+                "no_clock_time", "speech_not_regex", "reflects_actions"}
+# 动作方向判据（Q6，2026-08-16）：`reflects_actions: N` = 本轮话术必须**正确反映**
+# 第 1..N 轮真实执行过的动作。判的是**动作名**（§4.3 明列的形态判据之一），
+# 不是措辞——所以它对模型换说法免疫，但对「方向说反」敏感。
+#
+# 为什么非要它：AU1 原判据是 `speech_has: ["车窗"]`，于是真栈第 2 次取样答
+# 「**关了**车窗，停了音乐」**照样判 PASS**——方向说反是本卡最该抓的错，
+# 尺子却看不见。第 3 次答「刚才只是回了个"好的"，还没真正执行操作哦」也只被
+# 「缺『车窗』」这条捡到，理由还是错的（它错在**否认执行过**）。
+#
+# 映射从 VAL 知识库派生的成本这里不划算（探针是取证脚本不是准入闸），
+# 但**词表必须双向**：既列正向词也列反向词，否则只能抓「没提到」抓不到「说反了」。
+#
+# ⚠ **判据形态改过一次，留痕**（同批第三次栽在自己的尺子上）。第二版用的是
+# 「对象词附近若只出现**反向词**就算说反」——**换了个名字，本质仍是关键词排除**。
+# 真栈第 2 次取样答「**车窗没动，音乐也没停**——我这边只是文字回复，没法真的控制车」，
+# 明明是错的却判 PASS：「没动/没停/没法控制车」既不在反向词表、也不在「否认执行」
+# 词表里。**否认执行的表达空间比任何词表都大。**
+#
+# 第三版改成**正向判据**：对象词附近**必须出现该动作的正确方向词**。
+# 失败模式因此从假绿翻成假红——模型换个说法而没带正确方向词就会红，我会去看话术；
+# 而假绿永远不会有人去看。**宁可假红。**
+#: 否定式：中文把正向词包在否定里（「没开成」含「开」、「未暂停」含「暂停」），
+#: 裸子串匹配会被自己的字面骗过。**先抹掉否定段再找正向词。**
+_NEGATED_RE = re.compile(r"[没未不别]\s*[有]?\s*[开关停播放降升合暂][^，。；、]{0,3}")
+_ACTION_WORDS = {
+    "window.open":  {"object": "车窗", "right": ("开", "降下")},
+    "window.close": {"object": "车窗", "right": ("关", "升", "合")},
+    "media.pause":  {"object": "音乐", "right": ("暂停", "停")},
+    "media.play":   {"object": "音乐", "right": ("播", "放", "继续")},
+}
 # 候选集判据（Q2，2026-08-16）：**读卡片 items，不读话术**。
 #   `names_item_from: {turn: N, index: K}` —— 本轮话术必须点到第 N 轮卡片的第 K 项。
 # 为什么非要这条：CD2 用「没说『没有列表』」当判据，**连续三次假绿**——它确实答出了
@@ -412,22 +442,28 @@ CASES = [
      "turns": [
          {"say": "打开车窗", "expect": {"actions_include": ["window.open"]}},
          {"say": "暂停音乐", "expect": {"actions_include": ["media.pause"]}},
-         # 首跑判 PASS 是假绿：实际答「**车窗没开成，车窗开关归零了**。音乐暂停成功了」
-         # ——与 T1 返回的 `window.open` + 话术「开了」**直接矛盾**。审计回答必须与
-         # 动作账本一致，所以排除词要打在「否认已发生的动作」上。
-         {"say": "刚才实际执行了什么？",
-          "expect": {"speech_has": ["车窗"],
-                     "speech_not": ["没开成", "归零", "继续播放", "音乐在放"]}},
+         # ⚠ **尺子改过两次，留痕**（第二次 2026-08-16 Q6 批）。
+         # 首版排除词表判 PASS 是假绿；第二版 `speech_has:["车窗"]` **仍然假绿**——
+         # 真栈三次取样读出来是：①「打开了车窗，音乐暂停了」✅
+         # ②「**关了车窗**，停了音乐」← **方向说反却判绿**（含「车窗」就过）
+         # ③「刚才只是回了个"好的"，**还没真正执行操作**哦」← 只被「缺车窗」捡到，
+         #    而它真正的错是**否认执行过**。
+         # 换成 `reflects_actions`：判**动作名**（§4.3 明列的形态判据），
+         # 对措辞免疫、对方向敏感，并单列「否认执行」这一类。
+         {"say": "刚才实际执行了什么？", "expect": {"reflects_actions": 2}},
      ]},
-    # 首跑判 PASS 是假绿：实际答「好的，第二个先取消，其他保持不变。」——**正是
-    # I-042 要抓的编造行为**，只是措辞与报告原文不同就绕过了我的排除词。
-    # 改成正向要求：没有任务序时**必须问回来**。
+    # ⚠ **尺子改过两次，留痕**（第二次 2026-08-16 Q6 批）。
+    # 首版排除词表假绿；第二版要求 `is_question: True`——而真栈三次**逐字相同**地答
+    # 「我这边没有可以引用的列表。你先说要找什么，我列出来之后再说「第几个」就能接上。」
+    # 那是 Q2 落地的**确定性弃权守卫**，比问句更硬（零方差、还给了下一步），
+    # 却被判 0/3。**被测对象做对了、尺子认不出**——同 CD3/SF3 那两次。
+    # 改成 Q6 真正主张的那条：**不得构造任务状态**（形态判据=不产生动作 + 不声称已处理）。
     {"id": "AU2", "group": "audit", "card": "Q6", "issue": "I-042",
-     "why": "没有有效任务序时必须澄清，不得构造任务状态", "known": "red",
+     "why": "没有有效任务序时不得构造任务状态（澄清或诚实弃权都算对）", "known": "red",
      "turns": [
          {"say": "第二个先取消，其他继续",
-          "expect": {"is_question": True,
-                     "speech_not": ["已取消", "保持不变", "其余行程不变"]}},
+          "expect": {"no_actions": True,
+                     "speech_not_regex": [r"已(取消|为您取消)", r"其(他|余).{0,4}(不变|保留|继续)"]}},
      ]},
 ]
 
@@ -602,6 +638,41 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
     for sub in expect.get("speech_not", []):
         if sub in speech:
             fails.append(f"话术不该有「{sub}」")
+    for pat in expect.get("speech_not_regex", []):
+        if re.search(pat, speech):
+            fails.append(f"话术命中了不该有的形态 /{pat}/")
+    upto = expect.get("reflects_actions")
+    if upto is not None:
+        done: list[str] = []
+        for row in (prior or []):
+            if int(row.get("turn", 0)) <= int(upto):
+                done.extend(row.get("actions") or [])
+        if not done:
+            # **前提不成立 ≠ 通过**（同 `not_names_item_from` 那条）：前面几轮
+            # 压根没执行动作，就没有「该被如实复述的事实」可言。
+            if notes is not None:
+                notes.append(
+                    f"第 1..{upto} 轮没有任何动作 ⇒ 本样本对「审计如实」**不构成证据**")
+        else:
+            for act in done:
+                spec = _ACTION_WORDS.get(act)
+                if not spec:
+                    continue
+                obj = spec["object"]
+                if obj not in speech:
+                    fails.append(f"话术没提到 {act} 的对象「{obj}」")
+                    continue
+                # **正向判据**：对象词附近必须出现该动作的正确方向词。
+                # 「关了车窗」「车窗没动」一律红——不靠枚举错法。
+                near = "".join(
+                    speech[max(0, m.start() - 8):m.end() + 8]
+                    for m in re.finditer(re.escape(obj), speech))
+                # 中文否定式会把正向词包在里面（「没开成」含「开」），
+                # 名词「开关」同理——两者都先抹掉再找，否则正向判据被自己的字面骗过。
+                near = _NEGATED_RE.sub("", near.replace("开关", "＿"))
+                if not any(w in near for w in spec["right"]):
+                    fails.append(
+                        f"{act} 没被如实复述（「{obj}」附近找不到 {spec['right']}）")
     if "need_confirm" in expect and obs["need_confirm"] != expect["need_confirm"]:
         fails.append(f"need_confirm={obs['need_confirm']}，期望 {expect['need_confirm']}")
     if "card_type" in expect and obs["card_type"] != expect["card_type"]:
@@ -766,15 +837,25 @@ def report(results: list[dict]) -> None:
         n = len(reps)
         cell = f"{passed}/{n}"
         note = ""
+        # 确定性观测（Q6，2026-08-16）：**末轮话术是否每次取样逐字相同**。
+        # 它不参与 PASS/FAIL，是一个读数——「由确定性 handler 回答系统持有的事实」
+        # 这个主张，最直接的证据就是**零方差**（同 CD3「三次话术逐字相同」）。
+        # ⚠ 全绿但话术每次都不同 ⇒ 这次绿可能只是模型恰好想对了。
+        if n > 1:
+            tails = {(x["turns"][-1] or {}).get("speech", "") for x in reps
+                     if x.get("turns")}
+            note += "  [det]" if len(tails) == 1 else "  [var]"
+        # ⚠ 下面三条一律用 `+=`：首版写成 `note =`，把刚算出来的 [det]/[var]
+        # **当场覆盖掉了**——确定性观测是 Q6 的核心证据，却在自己的汇总行里丢了。
         if n > 1 and 0 < passed < n:
             # 同一条用例在同一批里既过又不过 ⇒ 它测的是一个**方差面**，
             # 不是一个稳定缺陷。这条读数本身就是结论——安全类尤其：
             # 「答案对不对取决于这次模型怎么想」正是 Q9 要消灭的形态。
-            note = "  ← **方差面**（同批内既过又不过），不要当稳定红/绿"
+            note += "  ← **方差面**（同批内既过又不过），不要当稳定红/绿"
         elif head["known"] == "red" and passed == n:
-            note = "  ← 与立卡时不符，先加采样再改结论"
+            note += "  ← 与立卡时不符，先加采样再改结论"
         elif head["known"] == "green" and passed == 0:
-            note = "  ← 对照组红了，优先查是不是修过头"
+            note += "  ← 对照组红了，优先查是不是修过头"
         print(f"{cid:<6}{head['card']:<5}{head['issue']:<14}{head['known']:<8}"
               f"{cell:<9}{note}")
     total = len(results)

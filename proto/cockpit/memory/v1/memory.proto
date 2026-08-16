@@ -65,6 +65,15 @@ message AppendTurnRequest {
   // 但 7 已被 M-A 的 `e2e_memory_capability` 占用，按「只追加不重用字段号」顺延到 8/9。
   string turn_id = 8;
   string exchange_id = 9;
+  // Q6 执行事实（2026-08-16）：本轮真实执行了哪些动作（`window.open` 这类命令名）。
+  // 存在的理由是「刚才实际执行了什么」此前**没有可查询的事实源**——`task_ledger`
+  // 只收 research/mcp_order，车控/导航/提醒/场景一条都不进，于是只能让 LLM 从对话
+  // 历史重构（真栈三次取样三个样，其中一次直接否认执行过）。
+  //
+  // **为什么挂在轮次上**：`local` 快路径那 313 个动作根本不上云，而端侧早就在调
+  // AppendTurn；挂这里是唯一同时覆盖 local/cloud/mixed 三条路径的位置。
+  // 向后兼容：不传=空，旧调用方一个字不用改。
+  repeated string actions = 10;
 }
 message AppendTurnResponse {
   bool ok = 1;
@@ -97,6 +106,10 @@ message Turn {
   string occupant_id = 6;
   string turn_id = 7;
   string exchange_id = 8;
+  // Q6 执行事实（2026-08-16）：这一轮真实执行了哪些动作。
+  // 读侧必须也带上——**存下来而读不到等于没存**（同 M-B 那条「识别得出而数据面
+  // 存不下来等于没识别」的读写对称形态）。审计问答的确定性 handler 消费的就是它。
+  repeated string actions = 9;
 }
 message GetSessionResponse { repeated Turn turns = 1; }
 

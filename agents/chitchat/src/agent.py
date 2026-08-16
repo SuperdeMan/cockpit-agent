@@ -11,14 +11,18 @@
 """
 from __future__ import annotations
 import json
+import logging
 import os
 import re
 from datetime import datetime
 
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
+from .audit import audit_answer, is_execution_audit_question
 from agents._sdk.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
                                        alert_level, alert_signal, driver_state)
+
+logger = logging.getLogger("agent.chitchat")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
@@ -236,8 +240,22 @@ class ChitchatAgent(BaseAgent):
         msgs.append({"role": "user", "content": intent.raw_text or intent.slots.get("text", "")})
         return msgs
 
-    async def handle(self, intent, ctx, meta) -> AgentResult:
-        text = intent.raw_text or intent.slots.get("text", "")
+    async def _deterministic_reply(self, text, ctx, meta):
+        """所有**零 LLM 直答**的唯一实现。返回 `AgentResult` 或 None（=交给 LLM）。
+
+        ⚠ **`handle` 与 `handle_stream` 都必须调它**，源码级守卫
+        `test_both_paths_share_one_deterministic_gate` 钉着这条。
+
+        为什么要收敛：这个文件里原本有一条注释写着「两条路径都要挂……
+        **只在 handle 里加闸等于没加**」，并点名本仓已为此踩过两次
+        （M2 Ledger、商户 badcase）。**2026-08-16 加 Q6 审计出口时，
+        我就在那条注释下面踩了第三次**——因为我改的是 `handle`，
+        根本没读到 `handle_stream`。真栈读数是 1/3 命中：只有非 salvage 轮走了
+        确定性回答，salvage 轮（`via: stream`）照旧让 LLM 编。
+
+        > **判据**：同一条纪律被写成注释还是被写成结构，差别就是会不会有第三次。
+        > 「记得加」不是机制，**只有一个入口**才是。
+        """
         clock = _clock_answer(text)
         if clock:               # 钟点/日期/星期：系统墙钟直答，零 LLM 零编造
             return AgentResult(speech=clock)
@@ -247,6 +265,23 @@ class ChitchatAgent(BaseAgent):
         safety, alert = _safety_answer(text)
         if safety:              # 安全信号：确定性直答 + 声明会话告警，零 LLM
             return AgentResult(speech=safety, data={"_safety_alert": alert})
+        if is_execution_audit_question(text):
+            # Q6：「刚才实际执行了什么」是**系统持有的事实**，零 LLM。
+            # 加提示词治不了它——模型手里根本没有那些数（真栈三次取样三个样，
+            # 一次方向说反、一次直接否认执行过）。答案由会话历史里的 actions 拼出。
+            try:
+                history = await ctx.history(20)
+            except Exception as e:      # 记忆不可用：诚实说查不到，别猜
+                logger.debug("audit history unavailable: %s", e)
+                return AgentResult(speech="我这会儿查不到执行记录，稍后再试。")
+            return AgentResult(speech=audit_answer(history))
+        return None
+
+    async def handle(self, intent, ctx, meta) -> AgentResult:
+        text = intent.raw_text or intent.slots.get("text", "")
+        fixed = await self._deterministic_reply(text, ctx, meta)
+        if fixed is not None:
+            return fixed
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs = await self._build_messages(intent, ctx, meta)
@@ -263,22 +298,13 @@ class ChitchatAgent(BaseAgent):
         escalate 的前提是「零播报」（engine 端 streamed=True 会忽略改派，双保险）。
         判定窗口 ≤ len("<search>")+空白，普通回复只延迟一个包级别，无感。"""
         text = intent.raw_text or intent.slots.get("text", "")
-        clock = _clock_answer(text)
-        if clock:               # 钟点/日期/星期：系统墙钟直答，零 LLM 零编造
-            yield ("speech", clock)
-            yield ("final", AgentResult(speech=clock))
-            return
-        who = _identity_answer(text, meta)
-        if who:                 # 「我是谁」：声纹已认定，同样不交给 LLM
-            yield ("speech", who)
-            yield ("final", AgentResult(speech=who))
-            return
-        # ⚠ **两条路径都要挂**：D0 流式直通绕过 executor，本仓已经为此踩过两次
-        #（M2 Ledger、商户 badcase 各一次）。只在 handle 里加闸等于没加。
-        safety, alert = _safety_answer(text)
-        if safety:
-            yield ("speech", safety)
-            yield ("final", AgentResult(speech=safety, data={"_safety_alert": alert}))
+        # ⚠ **两条路径都要挂**：D0 流式直通绕过 executor，本仓已经为此踩过三次
+        #（M2 Ledger、商户 badcase、Q6 审计出口各一次）。只在 handle 里加闸等于没加。
+        # 第三次之后把它收敛成唯一实现——**注释挡不住第三次，一个入口才行**。
+        fixed = await self._deterministic_reply(text, ctx, meta)
+        if fixed is not None:
+            yield ("speech", fixed.speech)
+            yield ("final", fixed)
             return
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
