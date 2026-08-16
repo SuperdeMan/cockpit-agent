@@ -28,8 +28,11 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+import pytest  # noqa: E402
 
 from orchestrator.cloud.context import (  # noqa: E402
     Focus, augment_focus_with_execution, recent_control_execution)
@@ -234,3 +237,170 @@ def test_cloud_get_session_carries_the_executed_actions():
     assert [t.get("exchange_id") for t in turns] == ["x1", "x1"]
     # 端到端：这份历史交给纯函数，必须解得出对象——两端接上了才算通。
     assert recent_control_execution(turns) == ("天窗", "开度", "sunroof.open")
+
+
+# ── 省略式开关的确定性计划：零 LLM ────────────────────────────────────────
+#
+# 「把焦点写进 prompt」实测**不够**：同一句「不用了，关掉」三次取样给出三种结果，
+# 其中一次是 chitchat 声称「好的，已为您关闭天窗」而 action 为空——**说了没做**。
+# 这一族要做什么完全由「上一个对象 × 这个动作」决定，没有需要模型判断的东西。
+
+def _agent(agent_id: str, *intents: str):
+    caps = [SimpleNamespace(intent=i, slots=[], description="", examples=[],
+                            heavy=False, require_confirm=False, verification=None)
+            for i in intents]
+    manifest = SimpleNamespace(
+        agent_id=agent_id, capabilities=caps, latency_budget_ms=5000,
+        kind="edge_fast", deployment="edge", requires_permissions=[],
+        trust_level="first_party", context_scopes=[], route_hints=[],
+        category="core")
+    return SimpleNamespace(manifest=manifest, endpoint=f"{agent_id}:50051")
+
+
+def _focused(text, last_intent, intents=("sunroof.open", "sunroof.close"),
+             agents=None):
+    """跑确定性判定。返回 Plan 或 None。"""
+    from orchestrator.cloud import planning
+    from orchestrator.cloud.context import WorkingSet
+    catalog = planning._assemble_capability_catalog(
+        agents if agents is not None else [_agent("edge-vehicle", *intents)])
+    ws = WorkingSet(catalog=list(catalog.visible_agents),
+                    focus=Focus(last_intent=last_intent) if last_intent else None)
+    return planning.PlanBuilder._focused_control_ellipsis_plan(text, ws, catalog)
+
+
+def test_cross_turn_close_resolves_to_the_focus_object():
+    """EL1：上一轮执行了 `sunroof.open`，这一轮「不用了，关掉」= 关天窗。"""
+    plan = _focused("不用了，关掉", "sunroof.open")
+    assert plan is not None
+    assert [s.intent for s in plan.steps] == ["sunroof.close"]
+
+
+def test_same_turn_open_resolves_to_the_edge_executed_object():
+    """OR2：同轮端侧刚执行 `hvac.off`，被修饰语拖上云的「打开，按顺序执行」= 开空调。
+
+    `hvac.on`/`hvac.off` 与 `sunroof.open`/`close` 是仓库里并存的两套开关命名，
+    两套都要认——判据是**操作对**，不是某一种拼法。
+    """
+    plan = _focused("打开，按顺序执行", "hvac.off", intents=("hvac.on", "hvac.off"),
+                    agents=[_agent("edge-vehicle", "hvac.on", "hvac.off")])
+    assert plan is not None
+    assert [s.intent for s in plan.steps] == ["hvac.on"]
+
+
+@pytest.mark.parametrize("text", [
+    "关掉", "关", "关闭", "不用了，关掉", "帮我关一下", "算了，关上吧", "关掉。",
+])
+def test_bare_close_forms_are_all_accepted(text):
+    assert _focused(text, "sunroof.open") is not None, text
+
+
+@pytest.mark.parametrize("text", [
+    # **安全边界**：句子里已经有对象/内容时，绝不许被上一轮的焦点劫持。
+    "打开车窗", "打开周杰伦的歌", "关掉导航", "把空调关了", "关掉音乐吧",
+    "打开天窗和车窗", "关掉，然后导航去公司", "打开一下附近的充电站",
+    # 不是开关动作
+    "再展开", "调高一点", "换一批", "暂停",
+])
+def test_anything_with_its_own_content_is_never_hijacked(text):
+    """`fullmatch` 是这里的安全边界。放宽成 search 会让上一轮焦点劫持整类请求。"""
+    assert _focused(text, "sunroof.open") is None, text
+
+
+def test_no_trustworthy_focus_means_no_takeover():
+    """焦点缺席 ⇒ fail-open 回正常规划，绝不猜一个对象。"""
+    assert _focused("关掉", "") is None
+    assert _focused("关掉", "sunroof") is None          # 不含 "." 不是意图名
+
+
+def test_a_non_toggle_previous_action_has_no_defined_inverse():
+    """上一个动作是 set/inc/dec 时，「打开」的反向**没有定义**——不接管。"""
+    assert _focused("关掉", "hvac.set", intents=("hvac.set", "hvac.on", "hvac.off"),
+                    agents=[_agent("edge-vehicle", "hvac.set", "hvac.on",
+                                   "hvac.off")]) is None
+
+
+def test_a_missing_capability_is_never_invented():
+    """目标能力不在本轮（权限过滤后的）catalog 里 ⇒ 不接管。
+
+    这条守的是**授权边界**：焦点只说明用户刚才碰过什么，不构成调用授权。
+    """
+    assert _focused("关掉", "sunroof.open",
+                    agents=[_agent("edge-vehicle", "sunroof.open")]) is None
+
+
+def test_an_ambiguous_owner_is_never_guessed():
+    """两个 Agent 都声明了同一个 intent ⇒ 归属歧义，交回正常规划。"""
+    assert _focused("关掉", "sunroof.open", agents=[
+        _agent("edge-vehicle", "sunroof.open", "sunroof.close"),
+        _agent("other-vehicle", "sunroof.open", "sunroof.close"),
+    ]) is None
+
+
+def _build(text, last_intent, intents=("sunroof.open", "sunroof.close")):
+    """跑真正的 `PlanBuilder.build()`，返回 (plan, LLM 调用次数)。"""
+    from orchestrator.cloud import exemplars, planning, skills
+    from orchestrator.cloud.context import WorkingSet
+    from orchestrator.cloud.models import PlanContext
+
+    calls = {"llm": 0, "tools": 0}
+
+    async def llm_fn(_messages):
+        calls["llm"] += 1
+        return "{}"
+
+    async def llm_tool_fn(_messages, _tools):
+        calls["tools"] += 1
+        return "", []
+
+    async def registry_fn(_query, _top_k=20):
+        return []
+
+    builder = planning.PlanBuilder(llm_fn, registry_fn, llm_tool_fn)
+    agents = [_agent("edge-vehicle", *intents)]
+    ws = WorkingSet(catalog=agents,
+                    focus=Focus(last_intent=last_intent) if last_intent else None)
+    plan = asyncio.run(builder.build(text, ws, PlanContext(session_id="s1")))
+    return plan, calls
+
+
+def test_build_takes_the_deterministic_path_without_calling_the_model():
+    """**接线守卫**：判据写对了但 `build()` 没接上，症状与没写完全相同
+    ——无日志、无报错、只是不发生（Q12 那次 `loop.py` 调了函数却漏传 `ctx` 的形态）。
+
+    这条同时钉住「零 LLM」：省略消解一旦交给模型就有方差，
+    而真栈那次「声称已关闭、action 为空」正是方差的最坏一面。
+    """
+    plan, calls = _build("不用了，关掉", "sunroof.open")
+    assert [s.intent for s in plan.steps] == ["sunroof.close"]
+    assert plan.plan_mode == "focus_deterministic"
+    assert (calls["llm"], calls["tools"]) == (0, 0)
+
+
+def test_build_still_calls_the_model_when_the_guard_declines():
+    """**反向对照**：不该接管的句子必须照常走 LLM——只做「命中即绿」那一半，
+    一个恒接管的分支也能骗过上面那条（§4.3「反向验证要两头做」）。"""
+    _plan, calls = _build("打开车窗", "sunroof.open")
+    assert calls["llm"] + calls["tools"] > 0
+
+
+def test_the_deterministic_plan_still_records_the_shadow_verdict():
+    """B6 shadow 的分母不许被静默挖掉一块。
+
+    这一族（省略/裸对象）恰恰是 shadow 最关心的那批；确定性接管后就不记，
+    canary 决策要看的漏判率会失真——而**读数失真比没有读数更糟**。
+    """
+    plan, _calls = _build("不用了，关掉", "sunroof.open")
+    assert plan.actionability, "确定性路径没写 shadow 观测"
+
+
+def test_open_and_close_words_stay_in_sync_with_the_regex():
+    """`_FOCUSED_OPEN_ACTIONS` 必须是正则 action 组的**子集**，且两侧都非空。
+
+    两处各写一份词表，迟早有一处漏改——那时「开」会被判成关（B4 判据的词表版）。
+    """
+    from orchestrator.cloud import planning
+    group = planning._FOCUSED_CONTROL_ELLIPSIS_RE.pattern.split("(?P<action>")[1]
+    words = set(group.split(")")[0].split("|"))
+    assert planning._FOCUSED_OPEN_ACTIONS <= words
+    assert words - planning._FOCUSED_OPEN_ACTIONS, "一个关向词都没有？方向判定失效"

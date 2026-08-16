@@ -154,18 +154,42 @@ def test_reject_is_declared_but_not_produced_in_v1():
 # ── 3. shadow 铁律：主链零行为变化 ─────────────────────────────────────────
 
 def test_planner_never_reads_the_shadow_verdict():
-    """planning.py 只许**写** `plan.actionability`，一个字都不许拿它做判断。
+    """planning.py 只许**写** `<计划>.actionability`，一个字都不许拿它做判断。
 
     行为测试证明不了这件事（今天没读不代表明天没读）；源码断言可以。
+
+    ⚠ **判据形态 2026-08-16 改过一次（Q7 EL1/OR2），留痕。** 原判据是
+    `uses == ["plan.actionability", "_actionability.classify"]`——它钉的是
+    「出现了几次、按什么顺序」，而红线是**只写不读**。于是新增第二条计划出口
+    （`focus_deterministic`）时它红了，可红线一点没破：新那次同样是写。
+    「测试红了先问是修坏了还是前提变了」（§4.3）——此处是前提变了，
+    所以改判据、不回退防御。新判据直接表达红线，且**不随出口条数漂移**：
+
+      ① `_actionability` 模块只许被调 `classify`（多一个入口就多一条进决策的路）；
+      ② 每一处 `.actionability` 都必须是**赋值左侧**——`==`、`if x.actionability`、
+         当参数传，一律算读；
+      ③ 每一处写入前，**同一个计划变量**的 `plan_mode` 必须已经定稿
+         （结构上不可能反过来影响计划）。
     """
     with open(os.path.join(_ROOT, "orchestrator", "cloud", "planning.py"),
               encoding="utf-8") as f:
         src = f.read()
-    uses = re.findall(r"_actionability\.\w+|plan\.actionability", src)
-    assert uses == ["plan.actionability", "_actionability.classify"], (
-        f"planning.py 里 actionability 的用法变了: {uses}——shadow 只许写一次")
-    # 那一次写入必须在计划定稿之后（结构上不可能影响计划）
-    assert src.index("plan.plan_mode = plan_mode") < src.index("plan.actionability")
+    # ① 模块入口
+    called = set(re.findall(r"_actionability\.(\w+)", src))
+    assert called == {"classify"}, (
+        f"planning.py 动了 actionability 模块的别的入口: {sorted(called)}")
+    # ② 只写不读。写入形态是 `<var>.actionability =`（`==` 不算），其余全判读。
+    reads = re.findall(r"(?<![\w.])(\w+)\.actionability\b(?!\s*=(?!=))", src)
+    assert reads == [], f"planning.py 把 shadow 判定拿去读了: {reads}——它只许被写"
+    # ③ 每一处写入都在**该计划自己**定稿之后
+    writes = list(re.finditer(r"(?<![\w.])(\w+)\.actionability\s*=(?!=)", src))
+    assert writes, "一处写入都没有？shadow 观测被整个摘掉了"
+    for match in writes:
+        var = match.group(1)
+        mode_at = src.find(f"{var}.plan_mode")
+        assert 0 <= mode_at < match.start(), (
+            f"{var}.actionability 写在 {var}.plan_mode 定稿之前——"
+            f"结构上就有可能反过来影响计划")
 
 
 def test_engine_shadow_attrs_never_touch_decisions():
