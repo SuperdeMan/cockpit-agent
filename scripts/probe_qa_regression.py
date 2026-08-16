@@ -77,7 +77,8 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "speech_any", "speech_not", "need_confirm", "card_type",
                 "is_question", "differs_from_turn", "has_operation_id",
                 "closes_op_from", "names_item_from", "not_names_item_from",
-                "no_clock_time", "speech_not_regex", "reflects_actions"}
+                "no_clock_time", "speech_not_regex", "reflects_actions",
+                "card_text_has", "card_text_not", "card_items_at_least"}
 # 动作方向判据（Q6，2026-08-16）：`reflects_actions: N` = 本轮话术必须**正确反映**
 # 第 1..N 轮真实执行过的动作。判的是**动作名**（§4.3 明列的形态判据之一），
 # 不是措辞——所以它对模型换说法免疫，但对「方向说反」敏感。
@@ -465,9 +466,60 @@ CASES = [
           "expect": {"no_actions": True,
                      "speech_not_regex": [r"已(取消|为您取消)", r"其(他|余).{0,4}(不变|保留|继续)"]}},
      ]},
+
+    # ── Q12 槽值保真（2026-08-16 加）─────────────────────────────────
+    # ⚠ **这一组的四条不是同一件事，取证之后各归各家**（卡 §4「Q12 实施记录」）：
+    # SL1 是 Q12 本体、SL2 是已修的回归对照、SL3/SL4 取证后判给 Q8「能力缺席」。
+    # 混在一个组里跑是因为它们出自同一段原话族，读数要分开读。
+    {"id": "SL1", "group": "slot", "card": "Q12", "issue": "I-008",
+     "why": "一句话要两条提醒时必须真的有两条，且第二条不得丢掉「明天下午」",
+     "known": "red",
+     "turns": [
+         # 判据全在**卡片**上，不在话术上：现场原样是 speech 说「15:30 和 16:00
+         # 各提醒你一次」而库里只有一条——两张卡同一个 id、第二张 `context=updated`。
+         # 「说了两条」和「真有两条」话术层分不开，卡片层分得开（同 CD2/AU1）。
+         #
+         # ⚠ **标题带 `{run}` 是为了躲开本条自己的上一次取样**，不是为了给系统提示：
+         # 提醒是 user 级持久数据，而「跨轮同名 + 再提醒 = 改期」是**正确行为**，
+         # 于是第 2 次取样会去改第 1 次留下的那条，读数变成自污染（首跑 1/3 就这么来的）。
+         # ⚠ **这道隔离不是密不透风的**：planner 转述标题时可能把编号抹掉
+         #（实测 3 次里有 2 次转成「开周会」），一旦抹掉就又撞上上一次的条目、
+         # 卡片出现 `updated`。**本条读红时先查一次库**
+         #（`select title, extra->>'turn' from reminder_item where title like '%周会%'`）：
+         # 同一个 `turn` 下有两行就说明本卡要证的东西是对的，红的是探针的隔离。
+         {"say": "明天下午四点提醒我参加代号{run}的评审会，三点半再提醒我一次",
+          "expect": {"card_items_at_least": 2,
+                     "card_text_has": ["15:30", "16:00"],
+                     "card_text_not": ["updated", "03:30"]}},
+     ]},
+    {"id": "SL2", "group": "slot", "card": "Q12", "issue": "I-041",
+     "why": "英文时间词必须进日期归一（修前 2/3——扫不到日词就按今天实况答）",
+     "known": "red",
+     "turns": [
+         {"say": "Shenzhen weather tomorrow, do not navigate.",
+          "expect": {"speech_has": ["明天"], "actions_exclude": ["navigate"]}},
+     ]},
+    {"id": "SL3", "group": "slot", "card": "Q8", "issue": "I-029",
+     "why": "「从 X 出发」绝不能被当成目的地导航过去（危险形态）", "known": "red",
+     "turns": [
+         {"say": "导航去野人先生", "expect": {}},
+         # 只判**危险形态**。「答得好不好」是另一件事：现状是逐字重复上一轮的
+         # 澄清问句（同 §4.3「把不再危险和回答完美分开报」）。
+         {"say": "从深圳欢乐海岸出发",
+          "expect": {"speech_not_regex": [r"导航到[^。]{0,12}欢乐海岸"]}},
+     ]},
+    {"id": "SL4", "group": "slot", "card": "Q8", "issue": "I-029②",
+     "why": "用户明说了出发地，系统却静默用当前位置——取证条，根因是 navigate_to "
+            "manifest 没有 origin 槽（能力缺席，不是槽值保真）",
+     "known": "red",
+     "turns": [
+         {"say": "从深圳欢乐海岸出发去世界之窗",
+          "expect": {"card_text_not": ["\"origin\": \"当前位置\""]}},
+     ]},
 ]
 
-_GROUPS = ("confirm", "negation", "session", "safety", "candidate", "audit")
+_GROUPS = ("confirm", "negation", "session", "safety", "candidate", "audit",
+           "slot")
 
 # ── Q13：两个分类出口的一致性（纯函数，不需要起栈）─────────────────────────
 # 阶段 0.2 首跑时由 NG3 的「假绿」牵出来的。端侧把结构化意图翻成意图名有**两个出口**
@@ -587,6 +639,10 @@ def _observe(msg: dict) -> dict:
         "closed_operation_ids": list(msg.get("closed_operation_ids") or []),
         # Q2：卡片候选项名（按渲染顺序）。判「答的是哪一份的哪一个」只能靠它。
         "card_items": _card_item_names(card),
+        # Q12：卡片全文（结构化层）。**槽值保真只能在卡片上判**——话术说「15:30 和
+        # 16:00 各提醒你一次」时库里可能只有一条，两者不是一回事（AU1 那次的同款教训）。
+        "card_text": json.dumps(card, ensure_ascii=False, sort_keys=True),
+        "card_item_count": len(card.get("items") or []) if isinstance(card, dict) else 0,
     }
 
 
@@ -721,6 +777,19 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
             if hit:
                 fails.append(
                     f"话术点到了第 {ref_not} 轮那一组的 {hit}——那是不该被引用的那份")
+    # Q12：结构化层判据。**话术层分不开「说了两条」与「真有两条」**——
+    # I-008 现场原样：speech 说「15:30 和 16:00 各提醒你一次」，库里只有一条
+    # （两张卡同一个 id，第二张 context=updated）。同 CD2/AU1 那两次的判据升级。
+    card_text = str(obs.get("card_text") or "")
+    for sub in expect.get("card_text_has", []):
+        if sub not in card_text:
+            fails.append(f"卡片里缺「{sub}」（卡片={card_text[:160]}）")
+    for sub in expect.get("card_text_not", []):
+        if sub in card_text:
+            fails.append(f"卡片里不该有「{sub}」")
+    least = expect.get("card_items_at_least")
+    if least is not None and int(obs.get("card_item_count") or 0) < int(least):
+        fails.append(f"卡片项数 {obs.get('card_item_count')} < 期望的 {least}")
     if expect.get("no_clock_time") and _CLOCK_RE.search(speech):
         fails.append(f"话术里出现了具体钟点——无候选可引用时不得编造：{_CLOCK_RE.search(speech).group()}")
     ref_close = expect.get("closes_op_from")
@@ -738,6 +807,18 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
 
 
 # ── 跑批 ──────────────────────────────────────────────────────────────────
+
+def _subst(obj, stamp: int):
+    """把用例里的 `{run}` 换成本次取样的唯一标记（话术与判据同一份，别只换一边）。"""
+    tag = str(stamp)[-6:]
+    if isinstance(obj, str):
+        return obj.replace("{run}", tag)
+    if isinstance(obj, list):
+        return [_subst(x, stamp) for x in obj]
+    if isinstance(obj, dict):
+        return {_subst(k, stamp): _subst(v, stamp) for k, v in obj.items()}
+    return obj
+
 
 async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
                     is_confirmation: bool = False) -> dict:
@@ -783,19 +864,25 @@ async def _run_case(case: dict, stamp: int) -> dict:
                         f"{case['id']} T{i} 引用第 {turn['op_from']} 轮的 "
                         f"operation_id，但那一轮没有下发——**探针不许自己编一个**，"
                         f"编出来的 id 只会证明拒绝路径")
+            # `{run}` = 本次取样的唯一标记。**只用于把用例与它自己前几次取样隔开**
+            # ——提醒是 user 级持久数据，「同名 + 再提醒 = 跨轮改期」是**正确行为**，
+            # 于是 SL1 第 2 次取样会去改第 1 次留下的那条，读数变成自污染。
+            # 这不是替被测系统提供前提（E4 那条），是取消一个探针自己造出来的前提。
+            say = _subst(turn["say"], stamp)
             try:
-                obs = await _one_turn(ws, sessions[sid], turn["say"],
+                obs = await _one_turn(ws, sessions[sid], say,
                                       operation_id=op,
                                       is_confirmation=bool(turn.get("confirm")))
             except asyncio.TimeoutError:
                 obs = {"speech": "[timeout]", "actions": [], "need_confirm": False,
                        "card_type": "", "is_question": False, "error": True}
             notes: list[str] = []
-            fails = _judge(turn.get("expect") or {}, obs, rows, notes)
-            rows.append({"turn": i, "sid": sid, "say": turn["say"],
+            fails = _judge(_subst(turn.get("expect") or {}, stamp), obs,
+                           rows, notes)
+            rows.append({"turn": i, "sid": sid, "say": say,
                          "session": sessions[sid], **obs, "fails": fails})
             flag = "✔" if not fails else "✘"
-            print(f"    {flag} T{i}[s{sid}] {turn['say'][:34]:<34} "
+            print(f"    {flag} T{i}[s{sid}] {say[:34]:<34} "
                   f"→ {(obs['actions'] and ','.join(obs['actions'])) or '—':<24}"
                   f" {obs['speech'][:48].replace(chr(10), ' ')}")
             for f in fails:

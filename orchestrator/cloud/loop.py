@@ -200,7 +200,14 @@ class LoopController:
                     and not current.steps[0].require_confirm):
                 step = current.steps[0]
                 if hasattr(self.executor, '_resolve_slot_refs'):
-                    self.executor._resolve_slot_refs(step, done_seed)
+                    # ⚠ **ctx 必须传**（2026-08-16，Q12 批发现）：此前这里只传两个参，
+                    # 于是挂在这个函数上、依赖 ctx 的东西在 T2 单步流式这条路上
+                    # **全部静默不生效**——跨轮门店锚定（`focus_places`）、城市补全、
+                    # 本批的槽值保真都够不着。D0 那条同族缺陷 2026-08-13 修过一次
+                    # （engine.py:543 的注释就写着「新增挂点必须枚举全部执行路径」），
+                    # **那次只补了 D0 这一条路**。同一形态第三次：
+                    # 「改遍了」和「发现了」是两件事（Q13 卡头那句话的又一例）。
+                    self.executor._resolve_slot_refs(step, done_seed, ctx)
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
                 stream_start = self.clock()

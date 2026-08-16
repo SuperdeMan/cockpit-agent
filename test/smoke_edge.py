@@ -6,7 +6,13 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "orchestrator", "edge"))
+_ROOT = os.path.join(os.path.dirname(__file__), "..")
+sys.path.insert(0, os.path.join(_ROOT, "orchestrator", "edge"))
+# 仓库根也要进——`fast_intent` 自 2026-08-16（Q11，`82a010c`）起 import
+# `runtime.polarity`（极性判据的唯一实现）。少这一行，AGENTS.md §5「任何人接手都先做
+# 这个」的第三条命令直接 `ModuleNotFoundError`，而 pytest 跑同一份代码是绿的
+# ——**根 conftest 帮它把根挂上了，裸跑没有**。
+sys.path.insert(0, _ROOT)
 
 from fast_intent import classify, is_local  # noqa: E402
 from val import VAL  # noqa: E402

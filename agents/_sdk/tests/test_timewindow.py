@@ -33,6 +33,23 @@ def test_clock_time_disambiguates_bare_hours():
     assert parse_clock_time("尽快", now_ts=_NOW) is None
 
 
+def test_segment_words_come_from_the_shared_table(monkeypatch):
+    """Q12 收敛的兑现：这两句此前两份实现各给一个答案，现在必须一致。
+
+    - 「早晨八点」：本模块的段位词表少了「早晨」，于是退回**裸 12 小时制消歧**，
+      09:00 说这句被判成 **20:00**（reminder 的同一句给 08:00）。
+    - 「晚上12点」：修正规则少了「晚上12点=次日零点」这一支，留在 **中午 12:00**。
+
+    两条都是「同一件事有两份各自演化的实现」的产物（§4.3，第四次应验）。
+    """
+    morning = epoch_at(2026, 8, 14, 9, 0)
+    assert _wall(parse_clock_time("早晨八点", now_ts=morning)) == (2026, 8, 15, 8, 0)
+    assert _wall(parse_clock_time("早上八点", now_ts=morning)) == (2026, 8, 15, 8, 0)
+    assert _wall(parse_clock_time("晚上12点", now_ts=morning)) == (2026, 8, 15, 0, 0)
+    # 段位词明摆着时，24h 写法也照样修正（「下午5:00」不是凌晨五点）
+    assert _wall(parse_clock_time("下午5:00", now_ts=morning)) == (2026, 8, 14, 17, 0)
+
+
 def test_clock_is_anchored_to_business_timezone_not_host():
     """核心回归：解析与渲染都按 UTC+8，**与宿主/容器 TZ 无关**。
 

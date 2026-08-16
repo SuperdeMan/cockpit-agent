@@ -284,6 +284,56 @@ async def test_snooze_without_title_targets_latest_fired():
 
 
 @pytest.mark.asyncio
+async def test_two_creates_in_one_turn_do_not_collapse_into_one(monkeypatch):
+    """一句话要两条提醒时，第二步不许把第一步刚建的那条**改期**（Q12 取证抓到）。
+
+    真栈原句「明天下午四点提醒我开会，**三点半再提醒我一次**」规划成两个
+    `reminder.create` 步，两步的 `raw` 是同一句话、都含「再提醒」，于是第二步命中
+    同名收编、把 0.2 秒前建出来的那条挪到了 15:30：**用户要两条、库里只有一条**，
+    而话术照说「15:30 和 16:00 各提醒你一次」——系统声称的与它真做的不一致（同 Q6）。
+    """
+    a = await _agent()
+    meta = {"trace_id": "trace-same-turn"}
+    raw = "明天下午四点提醒我开会，三点半再提醒我一次"
+    r1 = await run_handle(a, "reminder.create", raw_text=raw, meta=meta,
+                          slots={"title": "开会", "time_text": "明天下午四点"})
+    r2 = await run_handle(a, "reminder.create", raw_text=raw, meta=meta,
+                          slots={"title": "开会", "time_text": "明天下午三点半"})
+    assert r1.status == "ok" and r2.status == "ok"
+    assert r2.ui_card["context"] == "created"          # 不是 updated
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 2
+    assert sorted(t.to_card_item(now=_NOW, tz=_TZ)["time_display"] for t in times) \
+        == ["明天 15:30", "明天 16:00"]
+
+
+@pytest.mark.asyncio
+async def test_a_later_turn_still_reschedules_the_same_title(monkeypatch):
+    """反向对照：**下一轮**说「再提醒」仍然是改期，不是新建。
+
+    只做上面那一半会得到一个「每次 snooze 都堆一条」的系统——
+    §4.3「反向验证要两头做」：既证注入缺陷会红，也证没修过头。
+    """
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="明天下午四点提醒我开会",
+                     meta={"trace_id": "turn-1"})
+    res = await run_handle(a, "reminder.create", raw_text="明天三点半再提醒我开会",
+                           meta={"trace_id": "turn-2"})
+    assert res.ui_card["context"] == "updated"
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_trace_id_keeps_the_old_behaviour():
+    """没有 trace_id（端侧直发/老数据）时逐字维持此前行为——认不出就不排除。"""
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="明天下午四点提醒我开会")
+    res = await run_handle(a, "reminder.create", raw_text="明天三点半再提醒我开会")
+    assert res.ui_card["context"] == "updated"
+
+
+@pytest.mark.asyncio
 async def test_update_by_title_direct():
     a = await _agent()
     await run_handle(a, "reminder.create", raw_text="明天早上八点提醒我带充电线")

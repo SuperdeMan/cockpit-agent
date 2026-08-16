@@ -221,7 +221,7 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 卡与阶段计划见 [`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md`](../docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)。
 
 ```bash
-python scripts/probe_qa_regression.py --list                 # 34 例 / 58 轮 / 6 组（Q10 批 +XS7/XS8）
+python scripts/probe_qa_regression.py --list                 # 38 例 / 63 轮 / 7 组（Q12 批 +slot 组 SL1-SL4）
 # 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
 # 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
 # ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。
@@ -257,6 +257,15 @@ python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线
    > 配套原语：`reflects_actions`（判动作名与方向，对措辞免疫）、`speech_not_regex`。
    > ⚠ 这四次迭代本身就是 Q6 的论据：**话术层判据验证不了「系统说的是不是真的」**，
    > 所以那类问题必须做成确定性 handler，而不是继续调尺子。
+6. **用例要与它自己的上一次取样隔开，隔离标记必须是模型不愿意扔掉的东西**
+   （2026-08-16 Q12 批）。SL1 建的是**持久**提醒，而「跨轮同名 + 再提醒 = 改期」
+   是**正确行为**——于是第 2 次取样跑去改第 1 次留下的那条，3/3 被读成 1/3。
+   探针为此有 `{run}` 占位（话术与判据同批替换，别只换一边），但**纯数字后缀会被
+   planner 当噪声抹掉**，换成「代号 xxxxxx 的评审会」才保住。
+   > 这与第 4 条那个「探针替被测系统提供前提」相反：**这里取消的是探针自己造出来的前提**。
+   > 配套原语：`card_text_has` / `card_text_not` / `card_items_at_least`
+   > ——**「说了两条」和「真有两条」话术层分不开，卡片层分得开**（I-008 现场原样：
+   > speech 说「15:30 和 16:00 各提醒你一次」，卡片里两张同一个 id、第二张 `updated`）。
 
 ## 5.4 意图与落域对抗套件（`test/eval_intent_adversarial.py`）
 

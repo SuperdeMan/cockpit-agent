@@ -66,12 +66,29 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**6127 passed / 24 skipped 零红**（2026-08-16，QA 批 Q5 残余后实测）。
-较上一跳 6110 净 **+17**，⚠ **两条来源，别当成一批**：
-- **QA Q5 残余 +15**（本轮产出）：`agents/chitchat/tests/test_memory_provenance.py`；
-  证据 history **§51**。
-- **+2 来自开工前 pull 进来的 `f5099f9`**（HMI 本地语音模型随云发布交付，
-  落在 `scripts/tests` 下，**非本轮产出**）。
+**6197 passed / 15 skipped 零红**（2026-08-16，QA 批 Q12 后实测，SHA `bf92c22`+本批）。
+较上一跳 6127 净 **+70 passed / −9 skipped**，⚠ **三条来源，逐条点得上号**：
+- **QA Q12 +39**（本轮产出，全在段 1）：`runtime/tests/test_cntime.py` 9 +
+  `runtime/tests/test_slot_fidelity.py` 17 + `orchestrator/cloud/tests/test_slot_fidelity_wiring.py` 6
+  + reminder `test_agent.py` 3 + reminder `test_timeparse.py` 2 + `_sdk/test_timewindow.py` 1
+  + info `test_weather_answer.py` 1；证据 history **§52**。
+- **+22 来自 `afff49d`/`bf92c22`**（云发布工作线，`scripts/tests/test_cloud_release.py`，
+  **非本轮产出**；本地 main 在我开工前后 fast-forward 过，session 快照里的 `dc856ce` 已不是 HEAD）。
+  ⚠ 攻击这个数用的是**收集数对照**而不是猜：`scripts/tests` 在 `dc856ce` 收 **756**、
+  在 `bf92c22` 收 **778**，而段 1 的收集数两个 SHA **逐字相同**（worktree 里都缺 codegen，
+  3817+104errors 对 3817+104errors——**分母一样破，对照就仍然成立**）。
+- **+9 是环境不是代码**（原 skip 现 pass，段 2）：`scripts/tests` 有一批按
+  「symlink/junction 能不能建 / PowerShell 在不在 / docker 在不在」跳过的用例。
+  本次段 2 从 **PowerShell 起、PATH 全**，它们真的跑了。
+  **跨环境比 skip 数没有意义，比 passed 数也要先对齐 skip。**
+
+⚠ 分两段：`--ignore=scripts/tests` **5424 / 10**（16m35s）+ `scripts/tests`
+**773 / 5**（20m06s，**必须先 `Remove-Item Env:\PYTHONIOENCODING`**）= **6197 / 15**，
+收集数 5434 + 778 = **6212**。
+
+前一跳 **6127 / 24**（2026-08-16 Q5 残余后，`dc856ce`）也是两条来源：
+QA Q5 残余 +15（`agents/chitchat/tests/test_memory_provenance.py`，history **§51**）
++ `f5099f9` 带入 2。分段读数 5385/10 + 742/14。
 
 前一跳 **6110 / 24**（QA Q6 + 云发布工作线合入）同样是两条来源：
 QA Q6 净 **+25**（`memory/tests/test_executed_actions.py` 4 +
@@ -81,9 +98,8 @@ QA Q6 净 **+25**（`memory/tests/test_executed_actions.py` 4 +
 **合并后仍重跑过一次**——「零文件重叠」不等于「零交互」（conftest / 共享 fixture），
 实测段 1 与合并前逐字相同，差额全在段 2。
 
-⚠ **仍是分两段跑的合计，不是一趟根跑**（原因见下）：
-`--ignore=scripts/tests` 段 **5385 / 10**（16m17s）+ `scripts/tests` 段 **742 / 14**
-（11m40s）= **6127 / 24**，与 `--co` 的 **6151 collected** 逐字对上。
+⚠ **仍是分两段跑的合计，不是一趟根跑**（原因见下）。
+前一跳的分段读数 5385/10 + 742/14 = 6127/24，与当时 `--co` 的 **6151 collected** 对上。
 前一跳 5974（+45，Q10）：新文件 `test_order_session_scope.py` 45 条；
 同样分两段（5345/10 + 629/4，`--co` 5988）；证据 history **§49**。
 ⚠ **分段的原因是后台全量连续两次在同一位置（76%）被中止**，而 76% 正是
@@ -156,7 +172,8 @@ history **§40**）——25 语料 × MiniMax/DeepSeek 各 27 轮，据「两档
 
 当前对标状态一句话：时间约束（到达时限 + 事件反推用餐窗）、真沿途、多城保序与归城校正、
 模糊目的地推断、记忆六维消费（subject/polarity/轨迹/路线偏好/口味/无障碍）均**真栈在案**；
-对抗语料 **591 唯一输入**（上界 591，余量 0）、catalog **144 条**、架构 **v1.26**。
+对抗语料 **591 唯一输入**（上界 591，余量 0）、catalog **144 条**、架构 **v1.28**
+（该行的 v1.26 是 EVA 批时点读数，2026-08-16 随 QA 轮 Q6/Q10/Q5 与 Q12 两跳补齐）。
 **仍未做**：G10 订座票务（搁置，诚实桩）、复合句人称接送解析（§4.1 ②）、
 **探索式 QA 轮的 Q12/Q6/Q10/Q8 与三处卡内残余**（阶段 0/1/2、Q13/Q2/Q7/Q5/Q11/Q10/Q6
 与**存量数据清洗**已完成，逐卡状态见 §4.1 ①、流水 history **§41–§51**、
@@ -226,7 +243,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | 0 取证与止血 | ✅ 完成 | I-021 定性推翻（QA 轮零 create-order）、迷你集 `scripts/probe_qa_regression.py`、方法论进 `test/README.md` §5.3.1、清洗 dry-run 10 条 |
 | 1 T0 安全与不可逆 | ✅ 完成 | manual-rag 零命中短路 + 来源类型 / 安全分级不进 LLM / `Focus.safety_alert`（契约 `conventions.md` §9.1）/ road-safety `safety.driver_state` / chitchat 兜底闸 / 支付字段 fail-closed。真栈 SF1·2·4·5 **3/3**，SF3 0–1/3（失败轮全是澄清，危险症状零复现） |
 | 2 T1 共享状态机 | ✅ 完成 | **Q1** 取消判据收敛 `pending_cancel.py` → 确认帧带 `operation_id` → 小容量挂起表（≤3，LRU 有话术）+ HMI 同屏多条确认条；**Q3** 帧带 `request_id`、对不上即丢帧、看门狗每轮一只、抢占点名回 cancelled；**Q4** 位置闸拆 ORIGIN/ANCHOR + 否定邻接。契约 `conventions.md` §9.19/§9.20。真栈：confirm 组 **18/18**、CDP C11-13 × 3 轮 **9/9** |
-| **3 T2 语义与真实性** | 🔄 **进行中** | Q13 ✅ / Q2 ✅（第一批）/ Q7 ✅（两个半维度）/ Q5 ✅ / **Q10 ✅ 三块（第四块依赖不成立，见下表）** / **Q6 ✅** / **数据清洗 `--apply` ✅**；**Q12 未开工**。逐卡状态见下表 |
+| **3 T2 语义与真实性** | 🔄 **进行中** | Q13 ✅ / Q2 ✅（第一批）/ Q7 ✅（两个半维度）/ Q5 ✅ / **Q10 ✅ 三块（第四块依赖不成立，见下表）** / **Q6 ✅** / **数据清洗 `--apply` ✅** / **Q12 ✅ 主体**（规格维等 Q2 残余）。逐卡状态见下表 |
 | 4 T3 能力面与长尾 | 🔄 | **Q11 ✅ 提前做**（它是清洗 `--apply` 的最后一道前置）；**Q8 / P2 长尾未开工** |
 
 **逐卡状态与接手入口**（新会话从这张表开始；每张卡的落点、判据、读数在
@@ -238,8 +255,8 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 | 卡 | 状态 | 残余（**接手要做的就是这一列**） |
 |---|---|---|
-| **Q12 槽值保真** | ⏳ **未开工（下一个）** | 关键槽原话回查；**顺手把中文时段词解析收敛到唯一实现**（现有两份：`agents/reminder/src/timeparse.py` 与 `agents/_sdk/timewindow.py`，卡 §3-Q12 已点名） |
-| **Q8 能力缺席** | ⏳ 未开工 | 补 `navigation.estimate` / `media.mute-unmute` / `hazard_light` / 方向盘加热端侧入口（走 B4 SOP，从 §4.2 那 14 条欠账里挑并删台账条目）。⚠ **开工前先决策语料额度**（见接手顺序第 6 步） |
+| **Q8 能力缺席** | ⏳ **未开工（下一个之一）** | 补 `navigation.estimate` / `media.mute-unmute` / `hazard_light` / 方向盘加热端侧入口（走 B4 SOP，从 §4.2 那 14 条欠账里挑并删台账条目）。⚠ **开工前先决策语料额度**（见接手顺序第 6 步）。⚠ **2026-08-16 从 Q12 转来一条**：`navigation.navigate_to` 的 manifest **没有 `origin` 槽**，用户明说「从 X 出发」时 planner 无处可放——现状是**静默用当前位置**（探针 SL4 **0/3 `[det]`**），QA 轮那次是就近塞进 `destination`（导到出发地、0km）。是能力缺席不是槽值保真 |
+| **Q12 槽值保真** | 🔄 主体已交付 | 原话回查（时间维）+ 中文时间词三份实现收敛已落地（history **§52**）。**残余=规格维（I-025②「少冰」）验不到**——被「第一杯」序数绑错候选集挡在前面，**要等 Q2 残余落地**；且规格要按商家可选值域校验，那是 B6 §4 的 `input_schema` 远期字段 |
 | Q2 候选集升格 | 🔄 载体+绑定已交付 | **I-018/I-023 的确定性消费方没写**（「哪家最晚关门」「两个价格合计」）。属性已跨轮存住，算它的人还没写——**别把「数据在了」读成「问题解决了」**。⚠ **它还是 Q10 残余的前置**（下发面） |
 | Q10 查单绑会话 | 🔄 三缺一 | 查单/写路径/指代占位符三块 ✅（history **§49**）。**残余=「文本入口与按钮入口收敛到同一结构化解析链」，且它的依赖经取证不成立**——`Focus.candidate_sets` 只活在云侧 `context.py`，**没有下发到 Agent 的通道**（`mcp-bridge` 的 `context_scopes: []`）。要先有 Q2 残余那个确定性消费方与下发面 |
 | Q7 端侧语义维度 | 🔄 三缺一半 | **OR2**：补语跟着主意图上云后，云侧要用**同轮**上下文解出「打开」；**EL1**：跨轮省略「关掉」要从 Focus 取对象（走 Q2 焦点的云侧确定性消费） |
@@ -252,8 +269,8 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | Q3 HMI 响应归属 | ✅ | — |
 | Q13 两分类出口收敛 | ✅ | — |
 
-**接手顺序**（下面这个次序是有理由的，别按卡号做。**第 0–3 步已于 2026-08-16 完成，
-从第 4 步接手**）：
+**接手顺序**（下面这个次序是有理由的，别按卡号做。**第 0–4 步已于 2026-08-16 完成，
+从第 5 步接手**）：
 
 | # | 做什么 | **为什么排在这里** |
 |---|---|---|
@@ -261,8 +278,8 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | ~~**1**~~ | ~~**Q10** 查单绑会话~~ ✅ **三块已交付** | I-021+I-026（查单）、I-037（写路径）、指代占位符三块完成，XS4 **1/3→3/3**、XS8 **0/3→3/3**（history **§49**）。⚠ **原表写的「依赖已满足（Q2 候选集已就位）」对第四块不成立**——候选集只在云侧、**无下发通道**，见下面新的第 4 步 |
 | ~~**2**~~ | ~~**Q6** 执行账本~~ ✅ **已交付** | 它建立「**确定性 handler 回答系统持有的事实**」这个模式——而 **Q5 的出处披露残余复用同一个模式**。所以 Q6 必须在它前面。⚠ 先量清楚 533 轮 × N 动作的写入量与保留期再定表，别做成只涨不清的 |
 | ~~**3**~~ | ~~**Q5 残余**：出处披露~~ ✅ **已交付**（XS3 0/3→3/3，history §51） | 紧跟 Q6，直接复用上一步的确定性消费方形态。现状是 **0/3 稳定红**（清洗后复跑改硬的读数，不再是此前记的「方差」），要的是机制不是提示词。**Q6 已把那个形态建好了**：`agents/chitchat/src/audit.py` 就是「确定性 handler 回答系统持有的事实」的样板，出处披露照它做 |
-| **4** | **Q12** 槽值保真 ← **接手从这里开始** | 它含**一次收敛**（中文时段词两份实现：`agents/reminder/src/timeparse.py` 与 `agents/_sdk/timewindow.py`）。收敛类改动放在别的卡稳定之后做——Q13 那次收敛照出了一批连带，这次也会 |
-| **5** | **Q7 残余**：EL1 → OR2 | EL1（跨轮省略「关掉」从 Focus 取对象）要的正是第 2/3 步建起来的云侧确定性消费方；OR2（同轮跨层回传）最重，放最后 |
+| ~~**4**~~ | ~~**Q12** 槽值保真~~ ✅ **主体已交付** | 收敛类改动照例照出一批连带——**实测是三份实现不是两份**（`weather.py` 还有一张只有中文的日词表，**那就是 I-041「英文 tomorrow」的根因**），外加两个活缺陷（`早晨八点`→20:00、`晚上12点`→中午）。同批把 I-029 重判给 Q8、I-025② 重判给 Q2 残余（history **§52**） |
+| **5** | **Q7 残余**：EL1 → OR2 ← **接手从这里开始** | EL1（跨轮省略「关掉」从 Focus 取对象）要的正是第 2/3 步建起来的云侧确定性消费方；OR2（同轮跨层回传）最重，放最后 |
 | **6** | **Q8** 能力缺席 + **Q11** offer 准入 + P2 长尾 | 收尾。⚠ **Q8 开工前先决策**：对抗语料唯一输入 **596/596 余量为 0**，而新增 active intent 必须补对抗覆盖（正 2/硬负 2/对照 1）。**先说明新能力为何值得占额度、再有原则地调 `suites.yaml` 的 `max_cases`**——不得先加语料撞闸后补理由 |
 | **7** | **Q2 残余**：I-018/I-023 的确定性消费方 | 可以并到第 2 步一起做（同属「确定性 handler」族），也可以独立。属性已跨轮存住，缺的只是算它的人。⚠ **它同时是 Q10 残余的前置**——见下一行 |
 | **8**（新增，2026-08-16） | **Q10 残余**：文本/按钮双入口收敛 | **必须排在第 7 步之后**：修法是「文本路径先在当前候选集里做确定性匹配」，而 `Focus.candidate_sets` 只活在云侧 `context.py`、**没有下发到 Agent 的通道**（取证见 history **§49.6**）。第 7 步建起消费方与下发面之前，这一块开工就会卡在同一处 |
@@ -431,11 +448,33 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
     一份完整的第二定义在它眼皮底下活着，而注入验红（用的是标准写法）照样通过。
     **写完扫描类断言要问的不只是「它会不会红」，还有「它够不够得着现实里那些写法」**
     ——去被扫的文件里真找一遍，别只拿自己脑子里那个标准形态验。
+  - ⚠ **第三种绕过方式：词出现在文件里 ≠ 那里有第二份声明**（2026-08-16，Q12）。
+    段位词的「唯一声明」扫描（同文件里出现 ≥3 个不同段位词即第二张表）套到**日词**上
+    当场误伤——`timeparse._display()` 把「今天/明天/后天」当**话术**输出，
+    presence 扫描分不开「一张表」和「一段话」。改用身份断言（消费方必须持有共享表
+    **本身**）+ 对具名文件的断言，扫描那条留着兜「新模块自带一份」——
+    **两条各管一半，且都要注入验红**。
   - ⚠ **守卫也会被「入口条件」绕过，不只被正则绕过**（同批，真栈第 3 次取样才抓到）：
     查单/取消的会话范围守卫挂在「槽位为空才走账本回填」这条路径上，而 planner 把
     `order_id` 填成了字面量「刚才那笔订单」⇒ **槽位非空 ⇒ 守卫整个不被调用**。
     单测三轮全绿。**问一句「什么情况下我这道闸根本不会被执行到」，
     和问「它判得对不对」一样重要。**
+- **「挂点被调用了」和「挂点拿到了它要的东西」是两件事**（2026-08-16，Q12；
+  「新增挂点必须枚举全部执行路径」的第三次应验，**形态是新的**）。前两次是漏了一条路
+  （M2 Verifier 漏 D0、门店锚定漏 D0），这次 `loop.py` **调了函数却漏传 `ctx`**——
+  于是跨轮门店锚定、城市补全、槽值保真在 T2 单步流式那条路上全部静默不生效。
+  **症状与漏一条路完全相同：无日志、无报错、只是不发生。**
+  修法同款：把覆盖面变成断言（每个调用点必须几个参数），不是「下次记得」。
+- **防御要防到「维度」一级，不是「整值」一级**（2026-08-16，Q12，CLAUDE.md §6 那条
+  「防到真正会被拿去 hash / split 的那个值」的时间版）。槽值保真的首版要求
+  **整个值是裸时刻**才回填，而 planner 真实产出的是 `明天三点半`——**日留下了、
+  段位丢了**，于是原样放行、落成次日 03:30，**把要修的症状在修完之后又复现了一次**。
+  同族提问法：**我防的是不是「这个东西看起来完整」，而不是「我要的那一维在不在」。**
+- **探针的隔离标记必须是模型不愿意扔掉的东西**（2026-08-16，Q12）。给用例加纯数字
+  后缀做隔离，planner 转述标题时把它当噪声抹掉，于是第 2 次取样又撞上第 1 次留下的
+  持久数据（**那次改期是正确行为**），3/3 被读成 1/3。换成「代号 xxxxxx 的评审会」
+  后 7/7 保住。⚠ 这与 E4「探针不许替被测系统抽掉前提」不冲突——
+  **这里取消的是探针自己造出来的前提**。
 - **记忆是背景，用户当轮说的是前景；冲突时前景赢，并且要说出来**（2026-08-15）。
   「不要太辣」两档都推了川菜——记忆说爱吃川菜、当轮说不要辣，系统选了记忆。
   这是**假个性化的第三种形态**（前两种：声称参考却没参考、把别人的偏好套在你身上）。
@@ -560,6 +599,14 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
   `runtime_freshness: unverified`，在两次全量批之间穿插它，下一批的 L3 阶段会重建
   llm-gateway、掐断 primary 的网关连接（大批 `planner_unreached`）。单独定性 L3 之后
   **整批重来**，别接着跑还没开始的那一批（§19.4，2026-08-10 亲自踩的）。
+- **「我没动过 git」不等于「HEAD 没动过」**（2026-08-16，Q12）。全程没执行过任何 git
+  命令，本地 main 仍然从 `dc856ce` fast-forward 到了 `bf92c22`（并行的云发布工作线），
+  段 2 凭空多出 22 条用例。**攻击这类差额要用一次可复现的对照，不是猜**：
+  在两个 SHA 上各建临时 worktree 数 `--co`（`scripts/tests` 756 vs 778，段 1 逐字相同）
+  ——worktree 里缺 codegen、两边都是 3817+104 errors，**分母一样破，对照仍然成立**。
+  同批第三条来源是**环境**：`scripts/tests` 有一批按 symlink/junction/PowerShell/docker
+  可用性跳过的用例，换个 shell 起就从 skip 变 pass（9 条）。
+  **跨环境比 skip 数没有意义，比 passed 数也要先对齐 skip。**
 - **净增量要跟同一个 SHA 比，不能跟文档里那个数比**（2026-08-10 起两批都验过）。基线行
   会因为「实测之后又有提交加了测试却没刷新」而落后；对不上时**先怀疑基线陈旧**，再怀疑
   自己多出来了东西——反过来会凭空制造「N 条不明用例」的假问题。**每次刷新基线都要能把
@@ -642,8 +689,10 @@ make up                     # 起全栈（首次需调试，见 docs/dev-guide.m
 | 新增 Agent | 契约测试（参考 `agents/navigation/tests`）+ 在 compose 注册 |
 | 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针）。SOP 见 §7.1 |
 | 新增服务（compose 里加一个自建镜像）| `python -m pytest runtime/tests -q`——它断言每个自建服务都拿到 `DEPLOY_PROFILE`、入口够得着部署形态闸、**且该服务 Dockerfile 真的 `COPY runtime`**；**加进 `x-python-env` anchor 不等于配上了**（有服务不用那个 anchor），**源码 import 得到不等于镜像里有**（collector/proactive 就这么断过 40 小时）|
-| 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| 先查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类 |
+| 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| **另外查一遍有没有独立脚本直接 import 它**——`pytest` 绿不代表裸跑绿：根 `conftest.py` 会替测试把仓库根挂进 `sys.path`，**独立脚本没有这个待遇**。2026-08-16 实测：`fast_intent` 加了 `runtime.polarity` 之后，§5「任何人接手都先做这个」的 `python test/smoke_edge.py` 直接 `ModuleNotFoundError`，而全量 pytest 一条红都没有。再查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类 |
 | Planner 重试/守卫规则（B5）| **先改 `orchestrator/cloud/retry_policy.py` 的表，不要在主循环里加 `elif`**；同步方案附录 A 的清单表（`test_retry_policy.py` 逐列比对，改一处不改另一处即红）；`python -m pytest orchestrator/cloud/tests -q` |
+| 中文时间词（时段/日词/中文数字/12h 修正）| **改 `runtime/cntime.py`，不要在消费方本地再写一张表**（此前三份实现给出三个答案）；`python -m pytest runtime/tests/test_cntime.py agents/_sdk/tests/test_timewindow.py agents/reminder/tests/test_timeparse.py agents/info/tests/test_weather_answer.py -q` |
+| 槽值保真 / 给 `_resolve_slot_refs` 加挂点 | `python -m pytest runtime/tests/test_slot_fidelity.py orchestrator/cloud/tests/test_slot_fidelity_wiring.py -q`——后者含**覆盖面守卫**：每个调用点必须传 `ctx`（三条执行路径 executor / D0 / T2 共用这一个收口，少传不会报错、只会让挂点在那条路上不发生）|
 | 可执行性判定特征（B6 shadow）| `python -m pytest orchestrator/cloud/tests/test_actionability.py -q`（含「特征里不许有领域词汇」的知识库派生断言）+ `python test/eval_actionability.py` 看召回/假阳性两侧。⚠ 后者是**取证脚本不是准入闸**，不在 CI blocking 里 |
 
 不要为了"让它跑起来"注释报错或加绕过标记——找根因（CLAUDE.md §6）。

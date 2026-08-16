@@ -10,6 +10,9 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone, tzinfo
 
+from runtime.cntime import (CN_NUM_SRC, DAY_WORDS, SEG_DEFAULT_HOUR, SEGMENTS,
+                            cn_int, to_24h)
+
 OK = "ok"
 NEED_TIME = "need_time"
 FAIL = "fail"
@@ -33,43 +36,26 @@ class ParsedTime:
     display: str = ""    # 本地化回读："明天 08:00"
 
 
-_CN_DIGIT = {"零": 0, "一": 1, "两": 2, "二": 2, "三": 3, "四": 4,
-             "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+_cn2int = cn_int      # 中文数字的唯一实现在 runtime.cntime（本地别名保留调用点不变）
 
-
-def _cn2int(s: str | None) -> int | None:
-    s = (s or "").strip()
-    if not s:
-        return None
-    if s.isdigit():
-        return int(s)
-    if "十" in s:
-        tens, _, ones = s.partition("十")
-        t = 1 if tens == "" else _CN_DIGIT.get(tens)
-        o = 0 if ones == "" else _CN_DIGIT.get(ones)
-        return None if t is None or o is None else t * 10 + o
-    return _CN_DIGIT.get(s) if len(s) == 1 else None
-
-
-_NUM = r"(\d+|[一两二三四五六七八九十]+)"
+_NUM = f"({CN_NUM_SRC})"
 _REL_RE = re.compile(_NUM + r"\s*个?\s*(半)?\s*(秒钟|秒|分钟|小时|钟头)\s*(?:以后|之后|后)")
 _REL_HALF_RE = re.compile(r"半\s*个?\s*(小时|钟头)\s*(?:以后|之后|后)")
 # 「过N分钟（再叫我）」：前缀"过"表相对，无"后"缀（P1a snooze 自然说法）
 _REL_GUO_RE = re.compile(r"过\s*" + _NUM + r"\s*个?\s*(半)?\s*(秒钟|秒|分钟|小时|钟头)")
 _REL_GUO_HALF_RE = re.compile(r"过\s*半\s*个?\s*(小时|钟头)")
-# 长词在前（"大后天"含"后天"）；今晚/明早/明晚 自带段位
-_DAY_WORDS = [("大后天", 3, ""), ("后天", 2, ""), ("明早", 1, "am"), ("明晚", 1, "eve"),
-              ("明天", 1, ""), ("今晚", 0, "eve"), ("今天", 0, "")]
+# 日词/段位词/段位默认时刻的**唯一声明在 `runtime.cntime`**（2026-08-16，Q12 收敛）：
+# 这两张表此前 timewindow 各有一份，少了「早晨」「夜里」，同一句话两份实现给两个答案。
+_DAY_WORDS = DAY_WORDS
 _WEEK_RE = re.compile(r"(下*)(?:个)?(?:周|星期|礼拜)([一二三四五六日天])")
 _MD_RE = re.compile(_NUM + r"\s*月\s*" + _NUM + r"\s*[日号]")
 _DOM_RE = re.compile(_NUM + r"\s*号")
-_SEGS = [("凌晨", "dawn"), ("早上", "am"), ("早晨", "am"), ("上午", "am"), ("中午", "noon"),
-         ("下午", "pm"), ("傍晚", "pm"), ("晚上", "eve"), ("夜里", "eve")]
+_SEGS = SEGMENTS
 # 段位默认时刻（旅程 A1-4 ②收口）：「明早/明晚/明天下午」已给出日+段位粒度，再追问
 # 「什么时候提醒你」是忽略已给信息——按段位惯例默认成单，display 回读完整时刻，用户
 # 可一句「改到九点」调整（P1a update）。仅「日+段位」同时在场才默认；裸日期（「明天
 # 提醒我开会」）与裸段位（「晚上提醒我」——过点后会被滚到明晚，语义存疑）仍 NEED_TIME。
-_SEG_DEFAULT_HOUR = {"dawn": 6, "am": 8, "noon": 12, "pm": 15, "eve": 20}
+_SEG_DEFAULT_HOUR = SEG_DEFAULT_HOUR
 _HHMM_RE = re.compile(r"([01]?\d|2[0-3])[:：]([0-5]\d)")
 _CLOCK_RE = re.compile(_NUM + r"\s*点\s*(半|一刻|三刻|" + _NUM + r"\s*分?)?")
 
@@ -130,8 +116,9 @@ def parse_time_text(text: str, *, now: datetime | None = None,
     day_date = None
     week_based = False
     seg_kind = ""
+    tl = t.lower()          # 共享表含英文日词（tomorrow…）；中文 lower 是恒等变换
     for w, off, s in _DAY_WORDS:
-        if w in t:
+        if w in tl:
             day_date = (ln + timedelta(days=off)).date()
             seg_kind = s
             break
@@ -206,20 +193,12 @@ def parse_time_text(text: str, *, now: datetime | None = None,
     if hour is None:
         return ParsedTime(NEED_TIME) if (day_date is not None or seg_kind) else ParsedTime(FAIL)
 
-    # 5) 段位修正（12h→24h）
-    plus_day = 0
-    if not h24:
-        if seg_kind == "pm" and hour < 12:
-            hour += 12
-        elif seg_kind == "eve":
-            if hour == 12:
-                hour, plus_day = 0, 1     # 晚上12点 = 次日 00:00
-            elif hour < 12:
-                hour += 12
-        elif seg_kind == "noon" and hour < 6:
-            hour += 12                    # 中午一点 = 13:00
-    if hour == 24:
-        hour, plus_day = 0, plus_day + 1
+    # 5) 段位修正（12h→24h）——**唯一实现在 `runtime.cntime.to_24h`**。
+    # ⚠ 收敛时改掉了一处：此前整段被 `if not h24` 包着，于是「晚上12:00」这种
+    # **段位词明摆着的 24h 写法**跳过修正、留在中午。`h24` 现在只服务下面
+    # 「裸 12 小时制消歧」那一支——它问的是「原话有没有给出无歧义写法」，
+    # 与「要不要按段位修正」是两个问题。
+    hour, plus_day = to_24h(hour, seg_kind)
 
     # 6) 组装
     if day_date is not None:

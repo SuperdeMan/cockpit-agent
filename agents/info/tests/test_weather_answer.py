@@ -145,6 +145,20 @@ def test_requested_day_offset(monkeypatch):
     assert W._requested_day_offset("下周一", "") == 7
 
 
+def test_requested_day_offset_understands_english_time_words(monkeypatch):
+    """I-041：「Shenzhen weather tomorrow」此前被答成当前实况。
+
+    根因不是模型——是本文件自带的**第三份日词表**只有中文，扫不到就 `return 0`
+    （=今天）。表收敛到 `runtime.cntime` 之后英文自动覆盖。
+    """
+    _freeze_today(monkeypatch, "2026-07-13")
+    assert W._requested_day_offset("", "Shenzhen weather tomorrow, do not navigate.") == 1
+    assert W._requested_day_offset("tomorrow", "") == 1
+    assert W._requested_day_offset("", "Tomorrow's weather in Shenzhen") == 1
+    assert W._requested_day_offset("", "weather the day after tomorrow") == 2
+    assert W._requested_day_offset("", "Shenzhen weather now") == 0   # 无日词仍走今天
+
+
 def test_day_answer_rain_and_dry():
     rainy = _mk("2026-07-14", "小雨", "多云")
     dry = _mk("2026-07-14", "晴", "晴")

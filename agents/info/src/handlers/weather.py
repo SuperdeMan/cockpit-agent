@@ -12,6 +12,7 @@ from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
+from runtime.cntime import day_offset_of
 
 from ._util import _is_coordinate_label, _shanghai_now
 
@@ -53,7 +54,9 @@ def _day_label(date_str: str) -> str:
 # ── 日期感知（badcase demo-i9c92i：「明天还会下雨吗」三连被答成今天实况——planner 已解出
 #    slots.date=明天 但 _weather 从未消费，date 槽位在此落地）─────────────────────────
 
-_DAY_WORDS = (("大后天", 3), ("后天", 2), ("明天", 1), ("明日", 1), ("明早", 1), ("明晚", 1))
+# 日词表**唯一声明在 `runtime.cntime`**（2026-08-16，Q12 收敛）：本文件此前自带
+# 第三份、且只有中文，于是 I-041「Shenzhen weather **tomorrow**」被答成当前实况
+# ——`_requested_day_offset` 扫不到任何日词就 `return 0`（=今天）。
 _WEEKDAY_ZH = {"一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6}
 _WEEKDAY_RE = re.compile(r"(下+)?(?:周|星期|礼拜)([一二三四五六日天])")
 _ISO_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -75,9 +78,9 @@ def _requested_day_offset(date_slot: str, raw: str) -> int:
                 return (d - _shanghai_now().date()).days
             except ValueError:
                 pass
-        for w, off in _DAY_WORDS:
-            if w in s:
-                return off
+        off = day_offset_of(s)
+        if off is not None:
+            return off
         m = _WEEKDAY_RE.search(s)
         if m:
             now = _shanghai_now()

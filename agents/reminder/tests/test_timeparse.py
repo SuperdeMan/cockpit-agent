@@ -218,3 +218,24 @@ def test_parse_lead_quarter_hour():
     assert parse_lead("到之前一刻钟提醒我给张姐打电话") == 900
     assert parse_lead("提前一刻钟叫我") == 900
     assert parse_lead("开赛前提醒我") == 600          # 无量词仍默认 10 分钟
+
+
+# ── Q12 收敛（2026-08-16）：段位修正的唯一实现在 `runtime.cntime.to_24h` ──
+def test_segment_correction_applies_to_24h_written_times_too():
+    """段位词明摆着时，`HH:MM` 写法也要按段位修正。
+
+    收敛前整段被 `if not h24` 包着，于是「晚上12:00」跳过修正、留在中午
+    ——而同一个模块对「晚上12点」给的是次日零点。**同一件事的两种写法
+    在同一份实现里给了两个答案**，这次一并收掉。
+    """
+    assert P("晚上12:00提醒我").fire_at == ts(L(2026, 7, 12, 0, 0))
+    assert P("晚上12点提醒我").fire_at == ts(L(2026, 7, 12, 0, 0))
+    assert P("今天下午5:00提醒我").fire_at == ts(L(2026, 7, 11, 17, 0))
+    assert P("今天17:00提醒我").fire_at == ts(L(2026, 7, 11, 17, 0))
+    assert P("今天中午12:00提醒我").fire_at == ts(L(2026, 7, 11, 12, 0))
+
+
+def test_shared_segment_table_covers_the_words_timewindow_used_to_miss():
+    """「早晨」「夜里」这两个词此前只有本模块认得——现在两边同表。"""
+    assert P("明天早晨八点提醒我").fire_at == ts(L(2026, 7, 12, 8, 0))
+    assert P("今天夜里八点提醒我").fire_at == ts(L(2026, 7, 11, 20, 0))

@@ -17,14 +17,19 @@ import re
 import time
 
 from runtime.clock import epoch_at, hhmm, local_struct, minutes_of
+from runtime.cntime import CN_NUM_CHARS, SEG_ALT, cn_int, segment_kind, to_24h
 
-_CN_HOUR = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7,
-            "八": 8, "九": 9, "十": 10, "十一": 11, "十二": 12}
 # 时刻本体：HH:MM 或 N点[半|N分]，可带段位前缀（槽位值与原话片段共用）。
 # 数字时刻用 \d{1,2}（「10点」「23点」是两位——单字符类会把「10点」错拆成「0点」）。
+# ⚠ **段位词与中文数字来自 `runtime.cntime`，这里不再自带词表**（2026-08-16，Q12）：
+# 自带那份少了「早晨」「夜里」，于是「早晨八点」退回裸 12 小时制消歧、在 09:00 被判成
+# **20:00**，而 reminder 的同一句给 08:00。时刻本体的写法仍留在本地——
+# 它与 timeparse 的捕获需求不同，那是两个问题，`test_cntime.py` 只保证两者
+# **接受同一批字符串**。
 _CLOCK_RE = re.compile(
-    r"(?:(上午|早上|凌晨|中午|下午|傍晚|晚上)\s*)?"
-    r"(?:(\d{1,2})[:：](\d{2})|(十一|十二|\d{1,2}|[一两二三四五六七八九十])\s*点\s*(半|\d{1,2}分)?)")
+    rf"(?:({SEG_ALT})\s*)?"
+    rf"(?:(\d{{1,2}})[:：](\d{{2}})|(十一|十二|\d{{1,2}}|[{CN_NUM_CHARS}])\s*点\s*"
+    r"(半|\d{1,2}分)?)")
 
 
 def parse_clock_time(text: str, now_ts: int | None = None) -> int | None:
@@ -40,7 +45,10 @@ def parse_clock_time(text: str, now_ts: int | None = None) -> int | None:
     if hh is not None:
         hour, minute = int(hh), int(mm)
     else:
-        hour = int(cn) if cn.isdigit() else _CN_HOUR.get(cn, -1)
+        parsed = cn_int(cn)
+        if parsed is None:
+            return None
+        hour = parsed
         minute = 30 if cn_min == "半" else (int(cn_min[:-1]) if cn_min else 0)
     if not (0 <= hour <= 24 and 0 <= minute < 60):
         return None
@@ -52,13 +60,11 @@ def parse_clock_time(text: str, now_ts: int | None = None) -> int | None:
     def _at(day_off: int, h: int) -> int:
         return epoch_at(lt.tm_year, lt.tm_mon, lt.tm_mday + day_off, h % 24, minute)
 
-    if seg in ("下午", "傍晚", "晚上") and hour < 12:
-        hour += 12
-    elif seg == "中午" and hour < 6:
-        hour += 12
-    if seg or hour >= 12 or hour == 0:
-        ts = _at(0, hour)
-        return ts if ts > now else _at(1, hour)
+    kind = segment_kind(seg)
+    hour, plus_day = to_24h(hour, kind)     # 「晚上12点」在这里变成次日 00:00
+    if kind or plus_day or hour >= 12 or hour == 0:
+        ts = _at(plus_day, hour)
+        return ts if ts > now else _at(plus_day + 1, hour)
     cands = [t for t in (_at(0, hour), _at(0, hour + 12)) if t > now]
     return min(cands) if cands else _at(1, hour)
 

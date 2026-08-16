@@ -270,8 +270,11 @@ class ReminderAgent(BaseAgent):
             if aligned != fire_at:
                 fire_at, display = aligned, format_display(aligned, now=now, tz=self._tz)
         # ③snooze/尸体收编：同名 fired 一律改期原条目（「稍后10分钟」按钮即此路径）；
-        #   显式「再提醒」时同名 pending 也改期不重建 —— 根治 P0 的 fired 尸体堆积
-        target = snooze_target or await self._reschedule_target(ctx, title, raw)
+        #   显式「再提醒」时同名 pending 也改期不重建 —— 根治 P0 的 fired 尸体堆积。
+        #   **本轮自己刚建的那条除外**（Q12，见 `_reschedule_target` 的注释）。
+        turn = str((meta or {}).get("trace_id") or "")
+        target = snooze_target or await self._reschedule_target(ctx, title, raw,
+                                                                turn=turn)
         if target:
             await self.store.update_fire_at(self._uid(ctx), target.id, fire_at,
                                             occupant_id=self._occ(ctx))
@@ -284,7 +287,8 @@ class ReminderAgent(BaseAgent):
         r = await self.store.add(Reminder(
             user_id=self._uid(ctx), occupant_id=self._occ(ctx),
                 vehicle_id=ctx.vehicle_id or "",
-            title=title, kind="time", fire_at=fire_at, recur=recur))
+            title=title, kind="time", fire_at=fire_at, recur=recur,
+            extra={"turn": turn} if turn else {}))
         await self._refresh_active(ctx)
         await self._clear_pending(ctx)
         speech = (f"好的，{recur_label(recur)} {display.split(' ')[-1]} 提醒你：{title}，"
@@ -381,12 +385,26 @@ class ReminderAgent(BaseAgent):
         return {"fire_at": fire, "title": title,
                 "speech": f"好的，{item['title']} {event_disp} 开始，{lead_txt}提醒你。"}
 
-    async def _reschedule_target(self, ctx, title: str, raw: str) -> Reminder | None:
-        """同名 fired 尸体一律收编改期；显式「再提醒/再叫」时同名 pending 也改期不重建。"""
+    async def _reschedule_target(self, ctx, title: str, raw: str,
+                                 turn: str = "") -> Reminder | None:
+        """同名 fired 尸体一律收编改期；显式「再提醒/再叫」时同名 pending 也改期不重建。
+
+        ⚠ **本轮刚建的那条不算收编对象**（2026-08-16，Q12 取证抓到）。真栈原句
+        「明天下午四点提醒我开会，**三点半再提醒我一次**」规划成两个 `reminder.create`
+        步，第二步的 `raw` 是**同一句话**、照样含「再提醒」，于是它把 0.2 秒前
+        由第一步建出来的那条**改期**了：用户要两条、库里只有一条，而话术照说
+        「15:30 和 16:00 各提醒你一次」——**系统声称的与它真做的不一致**，
+        同 Q6 那一族。
+
+        判据用 `turn`（=本轮 `trace_id`）而不是「创建时间差几秒」：一句话里的两步
+        与「上一轮建完这轮说『过10分钟再叫我』」在时间上分不开，在轮次上分得开。
+        `turn` 缺失（老数据/端侧直发）时行为与此前逐字一致——不认得就不排除。
+        """
         uid, occ = self._uid(ctx), self._occ(ctx)
         exact = [h for h in await self.store.find_by_title(uid, title,
-                                                          occupant_id=occ)
-                 if h.title == title]
+                                                           occupant_id=occ)
+                 if h.title == title
+                 and not (turn and str(h.extra.get("turn") or "") == turn)]
         fired = [h for h in exact if h.status == FIRED]
         if fired:
             return fired[0]

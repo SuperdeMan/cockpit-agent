@@ -17,6 +17,7 @@ from google.protobuf.json_format import MessageToDict
 from . import verify as _verify
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan
 from observability import events as obs_events
+from runtime.slot_fidelity import restore_dropped_qualifiers
 
 logger = logging.getLogger("planner.executor")
 
@@ -579,10 +580,37 @@ class DagExecutor:
 
         self._anchor_store_from_focus(step, trusted, ctx, done.keys())
         self._hint_store_from_plan(step, done, ctx)
+        self._restore_slot_fidelity(step, ctx, trusted)
 
         if trusted:
             step.meta["_trusted_slot_refs"] = json.dumps(
                 trusted, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    @staticmethod
+    def _restore_slot_fidelity(step: Step, ctx, trusted: dict) -> None:
+        """槽值保真（Q12）：把 planner 转述时丢掉的**时间限定词**按原话补回来。
+
+        为什么挂在这里而不是各 Agent 里：这是**下发前的最后一道**，
+        三条执行路径（executor `_exec_step` / engine D0 流式直通 / loop T2 单步流式）
+        都经过 `_resolve_slot_refs`——「新增挂点必须枚举全部执行路径」这一条本项目
+        已经踩过两次，第三次的形态是 `loop.py` **传了函数却漏了 ctx**（同批一并修）。
+
+        `trusted` 里的槽位跳过：那些值来自服务端权威结果（slot_ref 解析、门店锚定），
+        不是 planner 的转述——拿原话去覆盖它们等于取消 provenance。
+
+        判据本身在 `runtime.slot_fidelity`（唯一实现），这里只负责接线与留痕。
+        观测面刻意只打日志、**不新增 `turns` 诊断列**：同函数里的门店锚定/城市补全
+        也只打日志，且这一列目前没有真消费方（B4「不落即死字段」）。
+        """
+        raw = str(getattr(ctx, "raw_text", "") or "")
+        if not raw:
+            return
+        for name, (value, reason) in restore_dropped_qualifiers(
+                raw, step.slots, skip=set(trusted)).items():
+            logger.info("Step %s(%s): 槽位 %s 按原话回填限定词 %r → %r（%s）",
+                        step.id, step.intent, name, step.slots.get(name),
+                        value, reason)
+            step.slots[name] = value
 
     @staticmethod
     def _anchor_store_from_focus(step: Step, trusted: dict, ctx,
