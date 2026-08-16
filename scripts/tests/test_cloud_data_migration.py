@@ -290,6 +290,14 @@ def test_snapshot_rejects_cloud_target_before_any_docker_call(tmp_path: Path):
     assert not any(call and call[0] == "docker" for call in runner.calls)
 
 
+def test_final_dry_run_rejects_cloud_target_before_docker(tmp_path: Path):
+    (tmp_path / "dev-stack.local").write_text("target=cloud\n", encoding="ascii")
+    runner = FakeBinaryRunner()
+    rc = cli.main(["snapshot", "--phase", "final"], runner=runner, repo=tmp_path)
+    assert rc == 2
+    assert not any(call and call[0] == "docker" for call in runner.calls)
+
+
 def test_snapshot_uses_locked_image_digest_and_never_pulls(tmp_path: Path):
     runner = FakeBinaryRunner()
     migration.capture_local_snapshot(

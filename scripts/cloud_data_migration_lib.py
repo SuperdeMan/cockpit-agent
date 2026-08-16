@@ -931,6 +931,12 @@ def parse_action_status(raw: str, migration_id: str, expected: str) -> Mapping[s
 
 
 def list_local_writers(repo: Path, runner: BinaryCommandRunner) -> tuple[str, ...]:
+    try:
+        selection = resolve_target(repo.resolve())
+    except DevStackError as exc:
+        raise MigrationError("local development stack target is invalid") from exc
+    if selection.name != "local":
+        raise MigrationError("writer inspection requires the local development stack target")
     compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
     raw = runner.text([*compose, "config", "--services"], cwd=repo)
     services = tuple(line.strip() for line in raw.splitlines() if line.strip())
