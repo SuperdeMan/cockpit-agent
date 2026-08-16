@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import tarfile
@@ -9,17 +10,23 @@ import pytest
 
 from scripts.cloud_release_lib import (
     ControlledChange,
+    CommandResult,
+    CloudReleaseResult,
+    ReleaseRequest,
     ReleaseArtifact,
     ReleasePlan,
     ReleaseError,
+    RemoteState,
     SshConfig,
     SubprocessRunner,
     build_release_artifact,
     classify_changed_path,
     compute_infrastructure_digest,
     diff_contains_schema_change,
+    execute_deploy,
     git_changes,
     make_release_plan,
+    parse_remote_state,
     require_clean_main_commit,
     validate_archive_member_names,
     validate_text_payload,
@@ -436,4 +443,201 @@ def test_build_release_artifact_rejects_committed_env(tmp_path: Path):
             services_digest="1" * 64,
             models_digest="2" * 64,
         )
-    build_release_artifact,
+
+
+class FakeRunner:
+    def __init__(self, responses: list[CommandResult]) -> None:
+        self.responses = responses
+        self.calls: list[tuple[str, ...]] = []
+
+    def run(self, argv, **kwargs):
+        self.calls.append(tuple(argv))
+        if not self.responses:
+            raise AssertionError(f"unexpected command: {argv}")
+        return self.responses.pop(0)
+
+
+def command_result(stdout: str = "", returncode: int = 0) -> CommandResult:
+    return CommandResult(("fake",), returncode, stdout, "")
+
+
+def make_deploy_repo(tmp_path: Path) -> tuple[Path, str, str]:
+    repo = tmp_path / "deploy-repo"
+    repo.mkdir()
+    git(repo, "init", "-b", "main")
+    git(repo, "config", "user.name", "Cloud Release Test")
+    git(repo, "config", "user.email", "cloud-release@example.invalid")
+    git(repo, "config", "core.autocrlf", "false")
+    cloud = repo / "deploy" / "cloud"
+    cloud.mkdir(parents=True)
+    (cloud / "release-services.json").write_text(
+        '{"schema_version":1,"services":[]}\n',
+        encoding="utf-8",
+    )
+    (cloud / "runtime-models.json").write_text(
+        '{"schema_version":1,"models":[]}\n',
+        encoding="utf-8",
+    )
+    (repo / "app.py").write_text("print('one')\n", encoding="utf-8")
+    git(repo, "add", "deploy/cloud", "app.py")
+    git(repo, "commit", "-m", "base")
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "app.py").write_text("print('two')\n", encoding="utf-8")
+    git(repo, "add", "app.py")
+    git(repo, "commit", "-m", "application")
+    target = git(repo, "rev-parse", "HEAD")
+    return repo, base, target
+
+
+def remote_state_payload(
+    current_release: str,
+    *,
+    approved_digest: str,
+) -> str:
+    return json.dumps(
+        {
+            "current_release": current_release,
+            "current_path": f"/opt/car-agent/releases/{current_release}",
+            "runtime_project_name": "4c1f479",
+            "approved_infrastructure_digest": approved_digest,
+            "disk_available_bytes": 100 * 1024**3,
+            "memory_available_bytes": 5 * 1024**3,
+            "release_lock_available": True,
+            "runtime_project_ready": True,
+            "shared_scripts_ready": True,
+            "shared_models_ready": True,
+        },
+        separators=(",", ":"),
+    ) + "\n"
+
+
+def make_release_request(tmp_path: Path) -> tuple[ReleaseRequest, str]:
+    repo, base, target = make_deploy_repo(tmp_path)
+    identity = tmp_path / "agent.pem"
+    identity.write_text("not-a-real-key\n", encoding="utf-8")
+    request = ReleaseRequest(
+        repo=repo,
+        revision=target,
+        artifact_root=tmp_path / "artifacts",
+        ssh=SshConfig(
+            host="server.example.invalid",
+            user="ubuntu",
+            identity=identity,
+            kex_algorithms="curve25519-sha256",
+        ),
+    )
+    return request, base
+
+
+def test_parse_remote_state_accepts_strict_valid_json():
+    digest = "a" * 64
+    state = parse_remote_state(remote_state_payload("4c1f479", approved_digest=digest))
+    assert state == RemoteState(
+        current_release="4c1f479",
+        current_path="/opt/car-agent/releases/4c1f479",
+        runtime_project_name="4c1f479",
+        approved_infrastructure_digest=digest,
+        disk_available_bytes=100 * 1024**3,
+        memory_available_bytes=5 * 1024**3,
+        release_lock_available=True,
+        runtime_project_ready=True,
+        shared_scripts_ready=True,
+        shared_models_ready=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not json",
+        "{}",
+        json.dumps(
+            {
+                **json.loads(remote_state_payload("4c1f479", approved_digest="a" * 64)),
+                "unexpected": True,
+            }
+        ),
+        remote_state_payload("../outside", approved_digest="a" * 64),
+    ],
+)
+def test_parse_remote_state_rejects_invalid_or_extra_data(payload: str):
+    with pytest.raises(ReleaseError, match="remote preflight"):
+        parse_remote_state(payload)
+
+
+def test_deploy_without_apply_never_calls_remote_mutation(tmp_path: Path):
+    request, base = make_release_request(tmp_path)
+    digest = compute_infrastructure_digest(request.repo, request.revision)
+    runner = FakeRunner(
+        [command_result(remote_state_payload(base, approved_digest=digest))]
+    )
+
+    result = execute_deploy(request, apply=False, runner=runner)
+
+    assert isinstance(result, CloudReleaseResult)
+    assert result.status == "dry_run"
+    assert result.artifact is not None
+    assert len(runner.calls) == 1
+    assert all(
+        "remote-release.sh" not in " ".join(call)
+        for call in runner.calls
+    )
+
+
+def test_apply_prepares_upload_scps_once_and_deploys_through_entrypoint(
+    tmp_path: Path,
+):
+    request, base = make_release_request(tmp_path)
+    digest = compute_infrastructure_digest(request.repo, request.revision)
+    incoming = (
+        "/opt/car-agent/incoming/releases/"
+        f"{request.revision}-{'f' * 32}"
+    )
+    runner = FakeRunner(
+        [
+            command_result(remote_state_payload(base, approved_digest=digest)),
+            command_result(incoming + "\n"),
+            command_result(),
+            command_result(),
+        ]
+    )
+
+    result = execute_deploy(
+        request,
+        apply=True,
+        runner=runner,
+        nonce_factory=lambda: "f" * 32,
+    )
+
+    assert result.status == "submitted"
+    joined = [" ".join(call) for call in runner.calls]
+    assert sum("remote-release.sh prepare-upload" in call for call in joined) == 1
+    assert sum(call.startswith("scp ") for call in joined) == 1
+    assert sum("remote-release.sh deploy" in call for call in joined) == 1
+    assert all(
+        "sudo /opt/car-agent/shared/bin/remote-release.sh" in call
+        for call in joined
+        if "remote-release.sh" in call
+    )
+
+
+def test_apply_rejects_prepare_upload_path_outside_expected_directory(
+    tmp_path: Path,
+):
+    request, base = make_release_request(tmp_path)
+    digest = compute_infrastructure_digest(request.repo, request.revision)
+    runner = FakeRunner(
+        [
+            command_result(remote_state_payload(base, approved_digest=digest)),
+            command_result("/tmp/attacker-controlled\n"),
+        ]
+    )
+
+    with pytest.raises(ReleaseError, match="unexpected upload directory"):
+        execute_deploy(
+            request,
+            apply=True,
+            runner=runner,
+            nonce_factory=lambda: "f" * 32,
+        )
+    assert all(not call[0].startswith("scp") for call in runner.calls)

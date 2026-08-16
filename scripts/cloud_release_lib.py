@@ -4,13 +4,14 @@ import hashlib
 import io
 import json
 import re
+import secrets
 import subprocess
 import tarfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from pathlib import PurePosixPath
-from typing import BinaryIO, Mapping, Sequence
+from typing import BinaryIO, Callable, Mapping, Protocol, Sequence
 
 
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -18,6 +19,9 @@ SSH_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 SSH_USER_RE = re.compile(r"^[a-z_][a-z0-9_-]*[$]?$")
 SSH_KEX_RE = re.compile(r"^[A-Za-z0-9@._+,-]+$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+RELEASE_SELECTOR_RE = re.compile(r"^[0-9a-f]{7,40}$")
+UPLOAD_NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
+RUNTIME_PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 DDL_RE = re.compile(
     r"\b(?:CREATE|ALTER|DROP|TRUNCATE)\s+"
     r"(?:TABLE|INDEX|TYPE|SCHEMA)\b",
@@ -79,6 +83,49 @@ class ReleaseArtifact:
     manifest: Path
     checksums: Path
     transport_tar: Path
+
+
+@dataclass(frozen=True)
+class RemoteState:
+    current_release: str
+    current_path: str
+    runtime_project_name: str
+    approved_infrastructure_digest: str | None
+    disk_available_bytes: int
+    memory_available_bytes: int
+    release_lock_available: bool
+    runtime_project_ready: bool
+    shared_scripts_ready: bool
+    shared_models_ready: bool
+
+
+@dataclass(frozen=True)
+class ReleaseRequest:
+    repo: Path
+    revision: str
+    artifact_root: Path
+    ssh: SshConfig
+
+
+@dataclass(frozen=True)
+class CloudReleaseResult:
+    status: str
+    plan: ReleasePlan
+    artifact: ReleaseArtifact | None
+    remote_state: RemoteState
+
+
+class CommandRunner(Protocol):
+    def run(
+        self,
+        argv: Sequence[str],
+        *,
+        cwd: Path,
+        env: Mapping[str, str] | None = None,
+        stdin: BinaryIO | None = None,
+        check: bool = True,
+    ) -> CommandResult:
+        pass
 
 
 class SubprocessRunner:
@@ -170,6 +217,22 @@ class SshConfig:
         if not remote_command or "\x00" in remote_command:
             raise ReleaseError("invalid SSH remote command")
         return ["ssh", *self._common_options(), self.target, remote_command]
+
+    def scp_argv(self, source: Path, remote_path: str) -> list[str]:
+        if (
+            not remote_path.startswith("/opt/car-agent/")
+            or "\x00" in remote_path
+            or "\n" in remote_path
+            or "\r" in remote_path
+            or ".." in PurePosixPath(remote_path).parts
+        ):
+            raise ReleaseError("invalid SCP remote path")
+        return [
+            "scp",
+            *self._common_options(),
+            str(source),
+            f"{self.target}:{remote_path}",
+        ]
 
 
 def _git(repo: Path, *args: str, check: bool = True) -> CommandResult:
@@ -680,3 +743,212 @@ def build_release_artifact(
             )
         raise ReleaseError("could not publish local release artifact") from exc
     return _artifact_paths(directory)
+
+
+REMOTE_STATE_FIELDS = {
+    "current_release",
+    "current_path",
+    "runtime_project_name",
+    "approved_infrastructure_digest",
+    "disk_available_bytes",
+    "memory_available_bytes",
+    "release_lock_available",
+    "runtime_project_ready",
+    "shared_scripts_ready",
+    "shared_models_ready",
+}
+
+# Task 9 replaces this marker with the complete read-only inline preflight.
+REMOTE_PREFLIGHT_COMMAND = (
+    "set -eu; "
+    "test -x /opt/car-agent/shared/bin/cloud-release-readonly-preflight; "
+    "/opt/car-agent/shared/bin/cloud-release-readonly-preflight"
+)
+
+
+def parse_remote_state(payload: str) -> RemoteState:
+    try:
+        raw = json.loads(payload)
+    except json.JSONDecodeError as exc:
+        raise ReleaseError("remote preflight returned invalid JSON") from exc
+    if not isinstance(raw, dict) or set(raw) != REMOTE_STATE_FIELDS:
+        raise ReleaseError("remote preflight returned an invalid field set")
+
+    selector = raw["current_release"]
+    current_path = raw["current_path"]
+    runtime_project = raw["runtime_project_name"]
+    approved_digest = raw["approved_infrastructure_digest"]
+    if not isinstance(selector, str) or not RELEASE_SELECTOR_RE.fullmatch(selector):
+        raise ReleaseError("remote preflight returned an invalid release")
+    if current_path != f"/opt/car-agent/releases/{selector}":
+        raise ReleaseError("remote preflight returned an invalid current path")
+    if (
+        not isinstance(runtime_project, str)
+        or not RUNTIME_PROJECT_RE.fullmatch(runtime_project)
+    ):
+        raise ReleaseError("remote preflight returned an invalid runtime project")
+    if approved_digest is not None and (
+        not isinstance(approved_digest, str)
+        or not SHA256_RE.fullmatch(approved_digest)
+    ):
+        raise ReleaseError(
+            "remote preflight returned an invalid infrastructure digest"
+        )
+
+    integer_fields = ("disk_available_bytes", "memory_available_bytes")
+    for field in integer_fields:
+        value = raw[field]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ReleaseError(
+                f"remote preflight returned an invalid {field}"
+            )
+    boolean_fields = (
+        "release_lock_available",
+        "runtime_project_ready",
+        "shared_scripts_ready",
+        "shared_models_ready",
+    )
+    if any(type(raw[field]) is not bool for field in boolean_fields):
+        raise ReleaseError("remote preflight returned an invalid boolean field")
+
+    return RemoteState(
+        current_release=selector,
+        current_path=current_path,
+        runtime_project_name=runtime_project,
+        approved_infrastructure_digest=approved_digest,
+        disk_available_bytes=raw["disk_available_bytes"],
+        memory_available_bytes=raw["memory_available_bytes"],
+        release_lock_available=raw["release_lock_available"],
+        runtime_project_ready=raw["runtime_project_ready"],
+        shared_scripts_ready=raw["shared_scripts_ready"],
+        shared_models_ready=raw["shared_models_ready"],
+    )
+
+
+def discover_remote_state(
+    request: ReleaseRequest,
+    *,
+    runner: CommandRunner,
+) -> RemoteState:
+    result = runner.run(
+        request.ssh.ssh_argv(REMOTE_PREFLIGHT_COMMAND),
+        cwd=request.repo,
+    )
+    return parse_remote_state(result.stdout)
+
+
+def _resolve_commit(repo: Path, revision: str) -> str:
+    sha = _git(
+        repo,
+        "rev-parse",
+        "--verify",
+        f"{revision}^{{commit}}",
+    ).stdout.strip()
+    if not FULL_SHA_RE.fullmatch(sha):
+        raise ReleaseError(f"could not resolve commit: {revision}")
+    return sha
+
+
+def _committed_file_digest(repo: Path, target_sha: str, path: str) -> str:
+    return hashlib.sha256(_git_blob(repo, target_sha, path)).hexdigest()
+
+
+def execute_deploy(
+    request: ReleaseRequest,
+    *,
+    apply: bool,
+    runner: CommandRunner,
+    nonce_factory: Callable[[], str] | None = None,
+) -> CloudReleaseResult:
+    if not request.ssh.identity.is_file():
+        raise ReleaseError("SSH identity file does not exist")
+    target_sha = require_clean_main_commit(request.repo, request.revision)
+    remote_state = discover_remote_state(request, runner=runner)
+    deployed_sha = _resolve_commit(request.repo, remote_state.current_release)
+    changed_paths, diff_by_path = git_changes(
+        request.repo,
+        deployed_sha,
+        target_sha,
+    )
+    infrastructure_digest = compute_infrastructure_digest(
+        request.repo,
+        target_sha,
+    )
+    plan = make_release_plan(
+        deployed_sha=deployed_sha,
+        target_sha=target_sha,
+        changed_paths=changed_paths,
+        diff_by_path=diff_by_path,
+        target_infrastructure_digest=infrastructure_digest,
+        approved_infrastructure_digest=(
+            remote_state.approved_infrastructure_digest
+        ),
+    )
+    if plan.status != "ready":
+        return CloudReleaseResult(
+            status=plan.status,
+            plan=plan,
+            artifact=None,
+            remote_state=remote_state,
+        )
+
+    artifact = build_release_artifact(
+        repo=request.repo,
+        output_root=request.artifact_root,
+        plan=plan,
+        services_digest=_committed_file_digest(
+            request.repo,
+            target_sha,
+            "deploy/cloud/release-services.json",
+        ),
+        models_digest=_committed_file_digest(
+            request.repo,
+            target_sha,
+            "deploy/cloud/runtime-models.json",
+        ),
+    )
+    if not apply:
+        return CloudReleaseResult(
+            status="dry_run",
+            plan=plan,
+            artifact=artifact,
+            remote_state=remote_state,
+        )
+
+    nonce = (nonce_factory or (lambda: secrets.token_hex(16)))()
+    if not UPLOAD_NONCE_RE.fullmatch(nonce):
+        raise ReleaseError("upload nonce must be 32 lowercase hex characters")
+    upload_id = f"{target_sha}-{nonce}"
+    prepare_command = (
+        "sudo /opt/car-agent/shared/bin/remote-release.sh prepare-upload "
+        f"--sha {target_sha} --upload-id {upload_id}"
+    )
+    prepared = runner.run(
+        request.ssh.ssh_argv(prepare_command),
+        cwd=request.repo,
+    )
+    expected_directory = f"/opt/car-agent/incoming/releases/{upload_id}"
+    if prepared.stdout.strip() != expected_directory:
+        raise ReleaseError("unexpected upload directory returned by server")
+
+    runner.run(
+        request.ssh.scp_argv(
+            artifact.transport_tar,
+            f"{expected_directory}/transport.tar",
+        ),
+        cwd=request.repo,
+    )
+    deploy_command = (
+        "sudo /opt/car-agent/shared/bin/remote-release.sh deploy "
+        f"--sha {target_sha} --upload-id {upload_id}"
+    )
+    runner.run(
+        request.ssh.ssh_argv(deploy_command),
+        cwd=request.repo,
+    )
+    return CloudReleaseResult(
+        status="submitted",
+        plan=plan,
+        artifact=artifact,
+        remote_state=remote_state,
+    )
