@@ -1553,7 +1553,7 @@ def test_untrusted_result_input_is_bounded_and_artifacts_must_exist(
 
 def test_secret_artifact_path_is_rejected_without_secret_output(tmp_path: Path):
     manifest = _write_repo(tmp_path, [_case("e2e_fake")])
-    secret = "artifact-secret-do-not-print"
+    secret = "artifact-secret-do-not-print"  # release-secret-fixture
 
     rc, summary, text = _invoke(
         tmp_path,
@@ -1572,7 +1572,7 @@ def test_general_parent_provider_secret_is_rejected_and_redacted_end_to_end(
     tmp_path: Path,
 ):
     manifest = _write_repo(tmp_path, [_case("e2e_fake")])
-    secret = "general-provider-secret-do-not-print"
+    secret = "general-provider-secret-do-not-print"  # release-secret-fixture
 
     rc, summary, text = _invoke(
         tmp_path,
@@ -1590,7 +1590,7 @@ def test_general_parent_provider_secret_is_rejected_and_redacted_end_to_end(
 
 def test_root_dotenv_reaches_child_and_is_redacted_end_to_end(tmp_path: Path):
     manifest = _write_repo(tmp_path, [_case("e2e_fake")])
-    secret = "root-dotenv-secret-do-not-print"
+    secret = "root-dotenv-secret-do-not-print"  # release-secret-fixture
     (tmp_path / ".env").write_text(
         f"LLM_API_KEY={secret}\n",
         encoding="utf-8",
@@ -1665,7 +1665,7 @@ def test_huge_child_output_is_bounded_redacted_and_keeps_tail_diagnostics(
     tmp_path: Path,
 ):
     manifest = _write_repo(tmp_path, [_case("e2e_fake")])
-    secret = "huge-output-secret-do-not-print"
+    secret = "huge-output-secret-do-not-print"  # release-secret-fixture
 
     rc, summary, text = _invoke(
         tmp_path,
@@ -2698,7 +2698,7 @@ def test_keyboard_interrupt_finalizes_bounded_redacted_logs_before_rethrow(
     case = _loaded_case(tmp_path)
     runner = _runner()
     tree = _TreeProbe()
-    secret = "interrupt-secret-do-not-print"
+    secret = "interrupt-secret-do-not-print"  # release-secret-fixture
     process = _InterruptingOutputProcess(secret)
 
     def fake_popen(*args, **kwargs):
@@ -3944,7 +3944,7 @@ def test_each_child_gets_an_independent_namespace_and_no_secret_is_reported(
         _case("e2e_two", profile="auth"),
     ]
     manifest = _write_repo(tmp_path, cases)
-    secret = "never-print-this-secret"
+    secret = "never-print-this-secret"  # release-secret-fixture
 
     rc, summary, text = _invoke(
         tmp_path,

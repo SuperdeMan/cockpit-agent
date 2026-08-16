@@ -14,7 +14,7 @@ import pytest
 from agents.mcp_bridge.src.mcp_client import (HttpMcpClient, McpError,
                                               parse_tool_result)
 
-TOKEN = "Bearer sekret-abc123"
+TOKEN = "Bearer sekret-abc123"  # release-secret-fixture
 
 
 def _rpc_result(rid: int, result: dict) -> str:

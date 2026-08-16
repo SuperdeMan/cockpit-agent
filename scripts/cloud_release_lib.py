@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import io
@@ -8,6 +9,7 @@ import re
 import secrets
 import subprocess
 import tarfile
+import tokenize
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,6 +39,19 @@ CREDENTIAL_ASSIGNMENT_RE = re.compile(
     r"(?im)^\s*(?:API[_-]?KEY|ACCESS[_-]?TOKEN|TOKEN|PASSWORD|SECRET)"
     r"\s*=\s*['\"]?(?P<value>[^\s#'\"]{16,})"
 )
+CREDENTIAL_NAME_RE = re.compile(
+    r"^(?:API_?KEY|ACCESS_?TOKEN|TOKEN|PASSWORD|SECRET)$",
+    re.IGNORECASE,
+)
+STRICT_PLACEHOLDER_RE = re.compile(
+    r"^(?:"
+    r"example|placeholder|changeme|mock|test|"
+    r"your[_-][A-Za-z0-9_-]+|"
+    r"\$\{[A-Za-z_][A-Za-z0-9_]*\}"
+    r")$",
+    re.IGNORECASE,
+)
+SYNTHETIC_CREDENTIAL_FIXTURE_MARKER = "# release-secret-fixture"
 CONTROLLED_EXACT = {
     "compose.yaml": "infrastructure",
     "deploy/docker-compose.yaml": "infrastructure",
@@ -500,27 +515,107 @@ def validate_archive_member_names(names: Sequence[str]) -> None:
             raise ReleaseError(f"forbidden archive member: {raw_name}")
 
 
-def validate_text_payload(text: str) -> None:
-    if PRIVATE_KEY_BLOCK_RE.search(text):
-        raise ReleaseError("private key material found in release source")
+def _is_strict_placeholder(value: str) -> bool:
+    return STRICT_PLACEHOLDER_RE.fullmatch(value) is not None
+
+
+def _validate_credential_assignment_text(text: str) -> None:
     for match in CREDENTIAL_ASSIGNMENT_RE.finditer(text):
         value = match.group("value")
-        lowered = value.lower()
-        if any(
-            marker in lowered
-            for marker in (
-                "example",
-                "placeholder",
-                "changeme",
-                "your_",
-                "your-",
-                "mock",
-                "test",
-                "${",
-            )
-        ):
+        if _is_strict_placeholder(value):
             continue
         raise ReleaseError("credential-like assignment found in release source")
+
+
+def _credential_target_name(target: ast.expr) -> str | None:
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return None
+
+
+def _literal_string(value: ast.expr) -> str | None:
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
+    if isinstance(value, ast.JoinedStr) and all(
+        isinstance(item, ast.Constant) and isinstance(item.value, str)
+        for item in value.values
+    ):
+        return "".join(str(item.value) for item in value.values)
+    return None
+
+
+def _validate_python_credential_literals(
+    text: str,
+    *,
+    allow_fixture_markers: bool,
+) -> None:
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        _validate_credential_assignment_text(text)
+        return
+
+    fixture_lines: set[int] = set()
+    if allow_fixture_markers:
+        try:
+            fixture_lines = {
+                token.start[0]
+                for token in tokenize.generate_tokens(io.StringIO(text).readline)
+                if token.type == tokenize.COMMENT
+                and token.string.strip()
+                == SYNTHETIC_CREDENTIAL_FIXTURE_MARKER
+            }
+        except (IndentationError, tokenize.TokenError):
+            fixture_lines = set()
+
+    for node in ast.walk(tree):
+        targets: tuple[ast.expr, ...] = ()
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign):
+            targets = tuple(node.targets)
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = (node.target,)
+            value = node.value
+        elif isinstance(node, ast.NamedExpr):
+            targets = (node.target,)
+            value = node.value
+
+        literal = _literal_string(value) if value is not None else None
+        if literal is not None and len(literal) >= 16:
+            if any(
+                (name := _credential_target_name(target)) is not None
+                and CREDENTIAL_NAME_RE.fullmatch(name)
+                for target in targets
+            ) and not _is_strict_placeholder(literal) and (
+                node.lineno not in fixture_lines
+            ):
+                raise ReleaseError(
+                    "credential-like assignment found in release source"
+                )
+
+
+def validate_text_payload(
+    text: str,
+    *,
+    source_path: str | None = None,
+) -> None:
+    if PRIVATE_KEY_BLOCK_RE.search(text):
+        raise ReleaseError("private key material found in release source")
+    source = PurePosixPath((source_path or "").replace("\\", "/"))
+    if source.suffix == ".py":
+        is_test_source = any(
+            part in {"test", "tests"}
+            for part in source.parts[:-1]
+        )
+        _validate_python_credential_literals(
+            text,
+            allow_fixture_markers=is_test_source,
+        )
+        return
+    _validate_credential_assignment_text(text)
 
 
 def _validate_source_tar(path: Path) -> None:
@@ -549,7 +644,7 @@ def _validate_source_tar(path: Path) -> None:
                     text = payload.decode("utf-8")
                 except UnicodeDecodeError:
                     continue
-                validate_text_payload(text)
+                validate_text_payload(text, source_path=member.name)
     except (tarfile.TarError, OSError) as exc:
         raise ReleaseError("source archive validation failed") from exc
 

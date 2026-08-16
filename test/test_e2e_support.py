@@ -861,7 +861,7 @@ def test_ws_url_merges_and_encodes_runner_token_without_reading_secrets(
     api,
     protocol_env,
 ):
-    token = "e2e.v1.a b/c?=.sig"
+    token = "e2e.v1.a b/c?=.sig"  # release-secret-fixture
     env = {
         **protocol_env,
         "WS_URL": "ws://localhost:8090/ws?existing=yes",
@@ -1075,7 +1075,7 @@ def test_artifact_path_rejects_environment_secret_before_side_effect(
     api,
     protocol_env,
 ):
-    secret = "environment-secret-material"
+    secret = "environment-secret-material"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_VENDOR_SECRET": secret,
@@ -1090,7 +1090,7 @@ def test_sensitive_metadata_keys_are_preserved_with_redacted_values(
     api,
     protocol_env,
 ):
-    secret = "environment-sensitive-value"
+    secret = "environment-sensitive-value"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_VENDOR_SECRET": secret,
@@ -1203,7 +1203,7 @@ def test_standard_body_exception_is_sanitized_in_place_and_rethrown(
     api,
     protocol_env,
 ):
-    secret = "body-exception-sensitive-value"
+    secret = "body-exception-sensitive-value"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_VENDOR_SECRET": secret,
@@ -1229,7 +1229,7 @@ def test_standard_body_exception_sanitizes_existing_cause_chain(
     api,
     protocol_env,
 ):
-    secret = "cause-chain-sensitive-value"
+    secret = "cause-chain-sensitive-value"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_VENDOR_SECRET": secret,
@@ -1258,7 +1258,7 @@ def test_nested_base_exception_group_is_derived_and_fully_sanitized(
     api,
     protocol_env,
 ):
-    token = "e2e.v1.group-sensitive-token.signature"
+    token = "e2e.v1.group-sensitive-token.signature"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_IDENTITY_TOKEN": token,
@@ -1304,7 +1304,7 @@ def test_exception_group_cause_cycle_is_bounded_and_safe(
     api,
     protocol_env,
 ):
-    token = "e2e.v1.group-cycle-token.signature"
+    token = "e2e.v1.group-cycle-token.signature"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_IDENTITY_TOKEN": token,
@@ -1337,7 +1337,7 @@ def test_exception_group_derive_failure_uses_safe_unchained_fallback(
     api,
     protocol_env,
 ):
-    token = "e2e.v1.group-derive-token.signature"
+    token = "e2e.v1.group-derive-token.signature"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_IDENTITY_TOKEN": token,
@@ -1372,7 +1372,7 @@ def test_unrewritable_body_exception_uses_safe_unchained_fallback(
     api,
     protocol_env,
 ):
-    secret = "immutable-render-sensitive-value"
+    secret = "immutable-render-sensitive-value"  # release-secret-fixture
     env = {
         **protocol_env,
         "E2E_VENDOR_SECRET": secret,

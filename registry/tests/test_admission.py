@@ -113,7 +113,7 @@ def test_metadata_key_is_case_insensitive():
 
 def test_denial_reason_never_contains_the_token():
     """审计行要回答「谁申报了什么」，token 本身写进日志就是新的泄漏面。"""
-    secret = "tok-super-secret"
+    secret = "tok-super-secret"  # release-secret-fixture
     _, reason = admission.check(((admission.METADATA_KEY, secret),), "navigation",
                                 env={admission.TOKENS_ENV: TOKENS})
     assert secret not in reason

@@ -472,6 +472,115 @@ def test_text_secret_scanner_rejects_private_key():
         validate_text_payload(private_key)
 
 
+def test_text_secret_scanner_allows_lowercase_program_variables():
+    validate_text_payload(
+        "token = secrets.token_urlsafe(24)\n"
+        "secret = decode_secret(raw_secret)\n"
+        "password = request.get('password')\n"
+        "api_key = configured_api_key\n",
+        source_path="service.py",
+    )
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "TOKEN=ordinary-sensitive-value",
+        "PASSWORD='ordinary-sensitive-value'",
+        'API_KEY="ordinary-sensitive-value"',
+        "ACCESS_TOKEN=ordinary-sensitive-value",
+        "SECRET=ordinary-sensitive-value",
+    ],
+)
+def test_text_secret_scanner_rejects_uppercase_credential_assignments(
+    assignment: str,
+):
+    with pytest.raises(ReleaseError, match="credential-like assignment"):
+        validate_text_payload(assignment + "\n")
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'token = "prod-secret-1234567890"',
+        "api_key = 'sk-prod-12345678901234567890'",
+        'password = "prod-password-1234567890"',
+    ],
+)
+def test_text_secret_scanner_rejects_lowercase_python_literal_credentials(
+    assignment: str,
+):
+    with pytest.raises(ReleaseError, match="credential-like assignment"):
+        validate_text_payload(assignment + "\n", source_path="service.py")
+
+
+def test_text_secret_scanner_rejects_lowercase_unquoted_env_literal():
+    with pytest.raises(ReleaseError, match="credential-like assignment"):
+        validate_text_payload(
+            "password=prod-secret-1234567890\n",
+            source_path=".env.example",
+        )
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "TOKEN=prod-contest-secret-1234567890",
+        "API_KEY=sk-test-livevalue-1234567890",
+        "SECRET=production-mockery-1234567890",
+    ],
+)
+def test_text_secret_scanner_rejects_placeholder_substring_bypasses(
+    assignment: str,
+):
+    with pytest.raises(ReleaseError, match="credential-like assignment"):
+        validate_text_payload(assignment + "\n")
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "TOKEN=${UPSTREAM_ACCESS_TOKEN}",
+        "PASSWORD=changeme",
+        "SECRET=your_secret_value",
+    ],
+)
+def test_text_secret_scanner_allows_strict_placeholders(assignment: str):
+    validate_text_payload(assignment + "\n")
+
+
+def test_text_secret_scanner_allows_explicit_synthetic_test_fixture():
+    validate_text_payload(
+        'token = "synthetic-sensitive-value"  # release-secret-fixture\n',
+        source_path="tests/test_service.py",
+    )
+
+
+@pytest.mark.parametrize(
+    "source_path",
+    [
+        "service.py",
+        "app/test_credentials.py",
+    ],
+)
+def test_text_secret_scanner_rejects_fixture_marker_in_production_source(
+    source_path: str,
+):
+    with pytest.raises(ReleaseError, match="credential-like assignment"):
+        validate_text_payload(
+            'token = "prod-sensitive-value"  # release-secret-fixture\n',
+            source_path=source_path,
+        )
+
+
+def test_text_secret_scanner_rejects_fixture_marker_in_non_python_text():
+    with pytest.raises(ReleaseError, match="credential-like assignment"):
+        validate_text_payload(
+            "TOKEN=prod-sensitive-value # release-secret-fixture\n",
+            source_path=".env.example",
+        )
+
+
 def test_build_release_artifact_rejects_committed_env(tmp_path: Path):
     repo, _ = make_repo(tmp_path)
     (repo / ".env").write_text("TOKEN=real-secret-value\n", encoding="utf-8")

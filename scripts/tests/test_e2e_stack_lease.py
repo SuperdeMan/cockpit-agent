@@ -1762,7 +1762,7 @@ def test_parallel_deadlines_are_independent_and_launch_relative(
     monkeypatch,
     tmp_path,
 ):
-    secret = "timeout-sibling-secret-do-not-print"
+    secret = "timeout-sibling-secret-do-not-print"  # release-secret-fixture
     huge_prefix = "x" * (2 * 64 * 1024) + "\n" + secret + "\n"
     runner, _compose, events, _children, _envs, _bundles, _trees = (
         _install_parallel_fakes(
@@ -1825,7 +1825,7 @@ def test_parallel_outer_logs_are_bounded_and_redacted(
     monkeypatch,
     tmp_path,
 ):
-    secret = "parallel-outer-secret-do-not-print"
+    secret = "parallel-outer-secret-do-not-print"  # release-secret-fixture
     huge_prefix = (
         "x" * (2 * 64 * 1024)
         + "\n"

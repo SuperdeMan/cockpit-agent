@@ -1113,7 +1113,7 @@ def test_profile_command_timeout_reaps_grandchild_and_never_leaks_secret(
 ):
     runner = _runner()
     pid_file = tmp_path / "profile-grandchild.pid"
-    secret = "profile-command-secret-must-not-render"
+    secret = "profile-command-secret-must-not-render"  # release-secret-fixture
     child_code = "import time; time.sleep(60)"
     parent_code = (
         "import subprocess,sys,time; from pathlib import Path; "
@@ -1327,7 +1327,7 @@ def test_e2e_auth_writes_result_protocol_and_uses_runner_user_sessions_and_only_
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    token = "ordinary-random-auth-token"
+    token = "ordinary-random-auth-token"  # release-secret-fixture
     env = _child_env(
         tmp_path,
         "e2e_auth",
@@ -1380,7 +1380,7 @@ def test_e2e_mtls_writes_result_protocol_and_uses_signed_identity_ack_and_synthe
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    token = "e2e.v1.payload.signature"
+    token = "e2e.v1.payload.signature"  # release-secret-fixture
     env = _child_env(
         tmp_path,
         "e2e_mtls",
