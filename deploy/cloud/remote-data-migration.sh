@@ -25,6 +25,9 @@ APPLY_MIGRATION_ID=""
 APPLY_BACKUP_STAMP=""
 APPLY_REPLACEMENT_STARTED=0
 APPLY_FAILURE_ACTIVE=0
+declare -A LOCKED_STORE_CID=()
+declare -A LOCKED_STORE_IMAGE=()
+declare -A LOCKED_STORE_VOLUME=()
 
 die() {
   printf 'cloud-data-migration: %s\n' "$1" >&2
@@ -549,20 +552,44 @@ PY
 }
 
 assert_expected_cloud_topology() {
-  local services_text service cid image volume serve_status serve_count
-  local -a services
+  local services_text service cid image volume serve_status serve_count state config_image timer_result
+  local expected_service expected_image
+  local -a services inspection
+  local -A expected_images=()
   services_text="$("${compose[@]}" config --services)" || return $?
   mapfile -t services <<<"${services_text}" || return $?
   [[ "${#services[@]}" -eq 30 ]] || { migration_fail "cloud compose topology is incomplete"; return 1; }
+  while IFS=$'\t' read -r expected_service expected_image; do
+    [[ "${expected_service}" =~ ^[a-z0-9-]+$ && "${expected_image}" =~ ^[A-Za-z0-9./_-]+$ ]] || return 1
+    expected_images["${expected_service}"]="${expected_image}:${RELEASE_SHA}"
+  done < <(python3 - "${CURRENT_RELEASE}/deploy/cloud/release-services.json" <<'PY'
+import json,re,sys
+from pathlib import Path
+payload=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+if set(payload)!={"schema_version","services"} or payload["schema_version"]!=1 or len(payload["services"])!=26:
+    raise SystemExit("release-services.json is invalid")
+for item in payload["services"]:
+    if set(item)!={"service","image"}: raise SystemExit("release image manifest entry is invalid")
+    print(f'{item["service"]}\t{item["image"]}')
+PY
+  )
+  [[ "${#expected_images[@]}" -eq 26 ]] || return 1
   for service in "${services[@]}"; do
     [[ "${service}" =~ ^[a-z0-9-]+$ ]] || return 1
     cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
     [[ "${cid}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
-    image="$(docker inspect --format '{{.Image}}' "${cid}")" || return $?
+    mapfile -t inspection < <(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.Config.Image}} {{.Image}}' "${cid}")
+    [[ "${#inspection[@]}" -eq 1 ]] || return 1
+    read -r state _status config_image image <<<"${inspection[0]}" || return $?
+    [[ "${state}" == "true" && "${_status}" == "running" ]] || return 1
     [[ "${image}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    if [[ -n "${expected_images[${service}]:-}" ]]; then
+      [[ "${config_image}" == "${expected_images[${service}]}" ]] || return 1
+    fi
   done
   for service in postgres redis observability-collector; do
     cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
+    image="$(docker inspect --format '{{.Image}}' "${cid}")" || return $?
     volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${cid}")" || return $?
     if [[ "${service}" == "postgres" ]]; then
       volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "${cid}")" || return $?
@@ -572,12 +599,52 @@ assert_expected_cloud_topology() {
     else
       [[ "${volume}" == "${COLLECTOR_VOLUME}" ]] || return 1
     fi
+    LOCKED_STORE_CID["${service}"]="${cid}"
+    LOCKED_STORE_IMAGE["${service}"]="${image}"
+    LOCKED_STORE_VOLUME["${service}"]="${volume}"
   done
   systemctl is-active --quiet car-agent-backup.timer || return $?
+  systemctl is-enabled --quiet car-agent-backup.timer || return $?
+  timer_result="$(systemctl show car-agent-backup.service --property=Result --value)" || return $?
+  [[ "${timer_result}" == "success" ]] || return 1
   serve_status="$(tailscale serve status)" || return $?
   serve_count="$(grep -Fic '(tailnet only)' <<<"${serve_status}")" || return $?
   [[ "${serve_count}" -eq 5 ]] || return 1
   if grep -Fqi funnel <<<"${serve_status}"; then return 1; fi
+}
+
+assert_locked_store_identity() {
+  local service="$1" destination cid image volume
+  [[ "${service}" == "postgres" || "${service}" == "redis" || "${service}" == "observability-collector" ]] || return 2
+  cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
+  [[ "${cid}" == "${LOCKED_STORE_CID[${service}]:-}" ]] || return 1
+  image="$(docker inspect --format '{{.Image}}' "${cid}")" || return $?
+  [[ "${image}" == "${LOCKED_STORE_IMAGE[${service}]:-}" ]] || return 1
+  if [[ "${service}" == "postgres" ]]; then destination="/var/lib/postgresql/data"; else destination="/data"; fi
+  volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "'"${destination}"'"}}{{.Name}}{{end}}{{end}}' "${cid}")" || return $?
+  [[ "${volume}" == "${LOCKED_STORE_VOLUME[${service}]:-}" ]] || return 1
+}
+
+lock_store_identities() {
+  local service cid image volume destination expected
+  for service in postgres redis observability-collector; do
+    cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
+    [[ "${cid}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    image="$(docker inspect --format '{{.Image}}' "${cid}")" || return $?
+    [[ "${image}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+    if [[ "${service}" == "postgres" ]]; then
+      destination="/var/lib/postgresql/data"; expected="${POSTGRES_VOLUME}"
+    elif [[ "${service}" == "redis" ]]; then
+      destination="/data"; expected="${REDIS_VOLUME}"
+    else
+      destination="/data"; expected="${COLLECTOR_VOLUME}"
+    fi
+    volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "'"${destination}"'"}}{{.Name}}{{end}}{{end}}' "${cid}")" || return $?
+    [[ "${volume}" == "${expected}" ]] || return 1
+    LOCKED_STORE_CID["${service}"]="${cid}"
+    LOCKED_STORE_IMAGE["${service}"]="${image}"
+    LOCKED_STORE_VOLUME["${service}"]="${volume}"
+  done
 }
 
 write_preflight_current() {
@@ -703,6 +770,7 @@ assert_named_volume() {
 restore_postgres_dump() {
   local dump="$1"
   [[ -s "${dump}" && ! -L "${dump}" ]] || { migration_fail "PostgreSQL restore source is invalid"; return 1; }
+  assert_locked_store_identity postgres || return $?
   "${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -v ON_ERROR_STOP=1 \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cockpit' AND pid <> pg_backend_pid()" >/dev/null || return $?
   "${compose[@]}" exec -T postgres pg_restore -U cockpit -d cockpit \
@@ -789,6 +857,7 @@ restore_redis_rdb() {
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local redis_container actual_volume image_id loader info dbsize rc attempt
   [[ -s "${rdb}" && ! -L "${rdb}" ]] || { printf 'Redis restore source is invalid\n' >&2; return 1; }
+  assert_locked_store_identity redis || return $?
   resolve_redis_identity || return $?
   redis_container="${RESOLVED_REDIS_CONTAINER}"
   actual_volume="${RESOLVED_REDIS_VOLUME}"
@@ -865,6 +934,7 @@ install_collector_db() {
   local database="$1" migration_id="$2" bucket="${3:-collector-volume}"
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local collector_container actual_volume image_id
+  assert_locked_store_identity observability-collector || return $?
   collector_container="$("${compose[@]}" ps -a -q observability-collector)"
   actual_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${collector_container}")"
   assert_named_volume "${actual_volume}" "${COLLECTOR_VOLUME}"
@@ -1223,6 +1293,8 @@ rollback_all() {
   local migration_id="$1" backup_stamp="$2" direction="${3:-rollback}" store
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" backup-manifest \
     validate_backup_manifest "${backup_stamp}" || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" store-identities \
+    lock_store_identities || return $?
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" journal-start \
     update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" || return $?
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" state-start \
@@ -1448,9 +1520,68 @@ recover_migration() {
   printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
 }
 
+inspect_rollback_plan() {
+  local migration_id="$1" meta backup_stamp services_text
+  load_runtime || return $?
+  require_runtime_batch "${migration_id}" || return $?
+  meta="$(python3 - "${IMPORT_ROOT}/${migration_id}/status.json" \
+    "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" <<'PY'
+import json,re,sys
+from pathlib import Path
+status=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+journal=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if status.get("migration_id")!=sys.argv[3] or journal.get("migration_id")!=sys.argv[3]:
+    raise SystemExit("rollback plan identity mismatch")
+stamp=status.get("backup_stamp") or journal.get("backup_stamp") or ""
+if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("rollback plan backup stamp is invalid")
+print(stamp)
+PY
+)" || return $?
+  backup_stamp="${meta}"
+  validate_backup_manifest "${backup_stamp}" || return $?
+  services_text="$("${compose[@]}" config --services)" || return $?
+  python3 - "${IMPORT_ROOT}/${migration_id}/status.json" \
+    "${IMPORT_ROOT}/${migration_id}/journal.json" \
+    "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" "${migration_id}" \
+    "${CURRENT_RELEASE}" "${services_text}" <<'PY' || return $?
+import json,re,sys
+from pathlib import Path
+status=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+journal=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+backup=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+services=sys.argv[6].splitlines()
+writers=[name for name in services if name not in {"postgres","redis"}]
+if not writers or len(writers)!=len(set(writers)) or any(re.fullmatch(r"[a-z0-9-]+",name) is None for name in writers):
+    raise SystemExit("rollback writer plan is invalid")
+if status.get("migration_id")!=sys.argv[4] or journal.get("migration_id")!=sys.argv[4]:
+    raise SystemExit("rollback plan identity mismatch")
+if status.get("status") not in {"APPLIED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED","ROLLED_BACK"}:
+    raise SystemExit("rollback status is invalid")
+operation_id=journal.get("operation_id","")
+if re.fullmatch(r"[0-9a-f]{32}",operation_id) is None: raise SystemExit("journal operation identity is invalid")
+print(json.dumps({
+  "schema_version":1,"migration_id":sys.argv[4],"status":status["status"],
+  "journal_state":journal.get("state"),"operation_id":operation_id,
+  "current_release":sys.argv[5],"backup_stamp":backup["backup_stamp"],
+  "backup_files":backup["files"],"would_stop":writers,
+},sort_keys=True,separators=(",",":")))
+PY
+}
+
 main() {
   local code=0
   [[ "${EUID}" -eq 0 ]] || die "must run as root"
+  case "${1:-}" in
+    inspect-current)
+      [[ "$#" -eq 1 ]] || die "inspect-current takes no migration id" 2
+      inspect_current
+      return $? ;;
+    rollback-plan)
+      [[ "$#" -eq 3 && "${2:-}" == "--migration-id" ]] || die "action requires --migration-id" 2
+      require_migration_id "${3:-}"
+      inspect_rollback_plan "$3"
+      return $? ;;
+  esac
   source "${SHARED_ROOT}/bin/transaction-lock.sh"
   transaction_lock_acquire "migration" || {
     code=$?
@@ -1458,9 +1589,6 @@ main() {
   }
   source "${SCRIPT_ROOT}/verify-release.sh"
   case "${1:-}" in
-    inspect-current)
-      [[ "$#" -eq 1 ]] || die "inspect-current takes no migration id" 2
-      inspect_current ;;
     prepare-upload|seal-upload|preflight|apply|verify|rollback|recover)
       [[ "$#" -eq 3 && "${2:-}" == "--migration-id" ]] || die "action requires --migration-id" 2
       require_migration_id "${3:-}"

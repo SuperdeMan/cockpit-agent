@@ -128,10 +128,11 @@ def main(
             return 0
         if args.command == "rollback":
             if not args.apply:
-                _emit({
-                    "status": "dry_run", "migration_id": request.migration_id,
-                    "backup_stamp": "server-recorded-pre-migration-backup",
-                })
+                raw_plan = migration.remote_action(
+                    request, "rollback-plan", remote_runner,  # type: ignore[arg-type]
+                )
+                plan = migration.parse_rollback_plan(raw_plan, request.migration_id)
+                _emit({**dict(plan), "status": "dry_run", "remote_status": plan["status"]})
                 return 0
             result = migration.remote_action(request, "rollback", remote_runner)  # type: ignore[arg-type]
             final_status = migration.parse_action_status(result, request.migration_id, "ROLLED_BACK")
@@ -139,7 +140,11 @@ def main(
             return 0
         if args.command == "recover":
             if not args.apply:
-                _emit({"status": "dry_run", "migration_id": request.migration_id,
+                raw_plan = migration.remote_action(
+                    request, "rollback-plan", remote_runner,  # type: ignore[arg-type]
+                )
+                plan = migration.parse_rollback_plan(raw_plan, request.migration_id)
+                _emit({**dict(plan), "status": "dry_run", "remote_status": plan["status"],
                        "would": "recover_from_server_journal"})
                 return 0
             result = migration.remote_action(request, "recover", remote_runner)  # type: ignore[arg-type]

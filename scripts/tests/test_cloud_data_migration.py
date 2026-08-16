@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -475,6 +477,23 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
     assert all("SELECT *" not in " ".join(call) for call in runner.calls)
 
 
+def test_local_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path):
+    marker = tmp_path / "local-grandchild-survived.txt"
+    child = (
+        "import time; from pathlib import Path; time.sleep(0.8); "
+        f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+    )
+    runner = migration.LocalCommandRunner(command_timeout_s=0.2)
+    with pytest.raises(migration.MigrationError, match="timed out"):
+        runner.run([sys.executable, "-c", parent], cwd=tmp_path)
+    time.sleep(1.0)
+    assert not marker.exists()
+
+
 def test_snapshot_validation_and_probes_use_readonly_batch_mounts(tmp_path: Path):
     runner = FakeBinaryRunner()
     migration.capture_local_snapshot(
@@ -577,6 +596,19 @@ class FakeRemoteRunner:
             stdout = json.dumps({"migration_id": VALID_ID, "status": "ROLLED_BACK"})
         elif " recover " in f" {command} ":
             stdout = json.dumps({"migration_id": VALID_ID, "status": "ROLLED_BACK"})
+        elif " rollback-plan " in f" {command} ":
+            stdout = json.dumps({
+                "schema_version": 1, "migration_id": VALID_ID, "status": "APPLIED",
+                "journal_state": "APPLIED", "operation_id": "b" * 32,
+                "current_release": "/opt/car-agent/releases/" + "a" * 40,
+                "backup_stamp": "20260817T010203Z",
+                "backup_files": {
+                    name: {"size_bytes": 12, "sha256": char * 64}
+                    for name, char in (("postgres.dump", "a"), ("redis.rdb", "b"),
+                                       ("collector.sql.gz", "c"))
+                },
+                "would_stop": ["gateway-cloud", "observability-collector"],
+            })
         return migration.CommandResult(call, 0, stdout, "")
 
 
@@ -634,7 +666,8 @@ def test_recover_cli_is_dry_run_without_apply_and_requires_final_remote_status(t
         "recover", "--migration-id", VALID_ID,
     ], runner=runner, repo=tmp_path)
     assert rc == 0
-    assert not runner.calls
+    assert len(runner.calls) == 1
+    assert " rollback-plan " in f" {runner.calls[0][-1]} "
     assert json.loads(capsys.readouterr().out)["status"] == "dry_run"
 
     rc = cli.main([
@@ -644,6 +677,23 @@ def test_recover_cli_is_dry_run_without_apply_and_requires_final_remote_status(t
     assert rc == 0
     assert " recover " in f" {runner.calls[-1][-1]} "
     assert json.loads(capsys.readouterr().out)["status"] == "ROLLED_BACK"
+
+
+def test_rollback_dry_run_reads_real_server_plan_without_remote_write(tmp_path: Path, capsys):
+    _write_valid_bundle(tmp_path)
+    key = _fake_key(tmp_path)
+    runner = FakeRemoteRunner()
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(key),
+        "rollback", "--migration-id", VALID_ID,
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert len(runner.calls) == 1
+    assert " rollback-plan " in f" {runner.calls[0][-1]} "
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["backup_stamp"] == "20260817T010203Z"
+    assert payload["backup_files"]["redis.rdb"]["sha256"] == "b" * 64
+    assert payload["would_stop"] == ["gateway-cloud", "observability-collector"]
 
 
 def test_plan_is_read_only_and_never_uploads(tmp_path: Path):

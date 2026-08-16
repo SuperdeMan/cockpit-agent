@@ -6,6 +6,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import pytest
@@ -136,6 +137,24 @@ def test_runner_failure_does_not_echo_full_argv(tmp_path: Path):
     assert "[REDACTED]" in message
     assert "secret-value" not in message
     assert "-c" not in message
+
+
+def test_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path):
+    marker = tmp_path / "grandchild-survived.txt"
+    child = (
+        "import time; from pathlib import Path; time.sleep(0.8); "
+        f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+    )
+    with pytest.raises(ReleaseError, match="timed out"):
+        SubprocessRunner().run(
+            [sys.executable, "-c", parent], cwd=tmp_path, timeout_s=0.2,
+        )
+    time.sleep(1.0)
+    assert not marker.exists()
 
 
 def test_ssh_config_builds_strict_batch_argv(tmp_path: Path):

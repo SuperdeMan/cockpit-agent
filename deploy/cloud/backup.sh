@@ -19,6 +19,8 @@ readonly BACKUP_ROOT="${SHARED_ROOT}/backups"
 readonly POSTGRES_DIR="${BACKUP_ROOT}/postgres"
 readonly REDIS_DIR="${BACKUP_ROOT}/redis"
 readonly OBS_DIR="${BACKUP_ROOT}/observability"
+readonly POSTGRES_VOLUME="car-agent-postgres-data"
+readonly REDIS_VOLUME="car-agent-redis-data"
 readonly COLLECTOR_VOLUME="car-agent-obs-data"
 WRITERS_QUIESCED=0
 
@@ -100,7 +102,11 @@ collector_image="$(docker inspect --format '{{.Image}}' "${collector_container}"
 [[ "${postgres_image}" =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ "${redis_image}" =~ ^sha256:[0-9a-f]{64}$ ]]
 [[ "${collector_image}" =~ ^sha256:[0-9a-f]{64}$ ]]
+postgres_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "${postgres_container}")"
+redis_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${redis_container}")"
 collector_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${collector_container}")"
+[[ "${postgres_volume}" == "${POSTGRES_VOLUME}" ]]
+[[ "${redis_volume}" == "${REDIS_VOLUME}" ]]
 [[ "${collector_volume}" == "${COLLECTOR_VOLUME}" ]]
 
 install -d -m 0700 "${POSTGRES_DIR}" "${REDIS_DIR}" "${OBS_DIR}"

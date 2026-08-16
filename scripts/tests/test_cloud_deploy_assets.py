@@ -1878,3 +1878,62 @@ recover_migration 20260817T010203Z-abcdef0-online
     assert completed.returncode != 0
     assert events.read_text(encoding="utf-8").splitlines() == ["validated", "rollback"]
     assert "ROLLED_BACK" not in completed.stdout
+
+
+def test_remote_read_only_actions_dispatch_before_lock_and_do_not_create_lock(tmp_path: Path):
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    main = re.search(r"(?ms)^main\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert main.index("inspect-current)") < main.index("transaction_lock_acquire")
+    assert main.index("rollback-plan)") < main.index("transaction_lock_acquire")
+    lock_marker = tmp_path / "lock-created"
+    copy = tmp_path / "remote-data-migration.sh"
+    copy.write_text(
+        text.replace('[[ "${EUID}" -eq 0 ]] || die "must run as root"', ":"),
+        encoding="utf-8",
+    )
+    harness = tmp_path / "readonly.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{copy.as_posix()}'
+inspect_current() {{ printf '{{"status":"inspect_only"}}\n'; }}
+transaction_lock_acquire() {{ : >'{lock_marker.as_posix()}'; }}
+main inspect-current
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert not lock_marker.exists()
+
+
+def test_migration_preflight_locks_complete_running_topology_and_backup_timer_health():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    topology = re.search(r"(?ms)^assert_expected_cloud_topology\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert '${#services[@]}" -eq 30' in topology
+    assert "{{.State.Running}}" in topology and "{{.State.Status}}" in topology
+    assert "release-services.json" in topology and "{{.Config.Image}}" in topology
+    assert "systemctl is-active --quiet car-agent-backup.timer" in topology
+    assert "systemctl is-enabled --quiet car-agent-backup.timer" in topology
+    assert "systemctl show car-agent-backup.service --property=Result --value" in topology
+    assert "LOCKED_STORE_CID" in topology and "LOCKED_STORE_IMAGE" in topology
+    assert "LOCKED_STORE_VOLUME" in topology
+    for function in ("restore_postgres_dump", "restore_redis_rdb", "install_collector_db"):
+        body = re.search(rf"(?ms)^{function}\(\) \{{(?P<body>.*?)^\}}", text)["body"]
+        assert "assert_locked_store_identity" in body
+
+
+def test_backup_asserts_all_three_stable_store_volumes_before_capture():
+    text = _required_text(BACKUP_PATH)
+    for token in (
+        'POSTGRES_VOLUME="car-agent-postgres-data"',
+        'REDIS_VOLUME="car-agent-redis-data"',
+        'COLLECTOR_VOLUME="car-agent-obs-data"',
+        '"${postgres_volume}" == "${POSTGRES_VOLUME}"',
+        '"${redis_volume}" == "${REDIS_VOLUME}"',
+        '"${collector_volume}" == "${COLLECTOR_VOLUME}"',
+    ):
+        assert token in text
+    assert text.index("postgres_volume=") < text.index("pg_dump")

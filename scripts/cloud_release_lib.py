@@ -5,9 +5,11 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
@@ -192,28 +194,32 @@ class SubprocessRunner:
         if not argv:
             raise ReleaseError("cannot run an empty command")
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 list(argv),
                 cwd=cwd,
                 env=dict(env) if env is not None else None,
                 stdin=stdin,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                check=False,
-                timeout=timeout_s,
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+                start_new_session=os.name != "nt",
             )
-        except subprocess.TimeoutExpired as exc:
-            raise ReleaseError(f"command timed out: {argv[0]}", category="runtime") from exc
         except OSError as exc:
             raise ReleaseError(
                 f"could not run {argv[0]}: {type(exc).__name__}"
             ) from exc
+        try:
+            stdout_bytes, stderr_bytes = process.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(process)
+            process.communicate()
+            raise ReleaseError(f"command timed out: {argv[0]}", category="runtime") from exc
 
-        stdout = completed.stdout.decode("utf-8", errors="replace")
-        stderr = completed.stderr.decode("utf-8", errors="replace")
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
         result = CommandResult(
             tuple(argv),
-            completed.returncode,
+            process.returncode,
             self._redact(stdout),
             self._redact(stderr),
         )
@@ -223,6 +229,24 @@ class SubprocessRunner:
                 f"command failed ({result.returncode}): {argv[0]}: {detail}"
             )
         return result
+
+
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    """Terminate the exact command process tree after a bounded stage timeout."""
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
 
 
 @dataclass(frozen=True)

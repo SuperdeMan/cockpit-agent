@@ -16,7 +16,7 @@ from types import MappingProxyType
 from typing import BinaryIO, Callable, Mapping, Protocol, Sequence
 
 from scripts.cloud_release_lib import CommandRunner as RemoteCommandRunner
-from scripts.cloud_release_lib import SshConfig
+from scripts.cloud_release_lib import SshConfig, _terminate_process_tree
 from scripts.dev_stack_lib import DevStackError, resolve_target
 
 
@@ -187,16 +187,38 @@ class BinaryCommandRunner(Protocol):
 
 
 class LocalCommandRunner:
+    def __init__(
+        self, *, command_timeout_s: float = 300, stream_timeout_s: float = 1800,
+    ) -> None:
+        self._command_timeout_s = command_timeout_s
+        self._stream_timeout_s = stream_timeout_s
+
     def _execute(
-        self, argv: Sequence[str], *, cwd: Path, stdout: object = subprocess.PIPE
+        self, argv: Sequence[str], *, cwd: Path, stdout: object = subprocess.PIPE,
+        stdin: object = subprocess.DEVNULL, timeout_s: float | None = None,
     ) -> subprocess.CompletedProcess[bytes]:
         try:
-            completed = subprocess.run(
-                list(argv), cwd=cwd, stdin=subprocess.DEVNULL, stdout=stdout,
-                stderr=subprocess.PIPE, check=False,
+            process = subprocess.Popen(
+                list(argv), cwd=cwd, stdin=stdin, stdout=stdout,
+                stderr=subprocess.PIPE,
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+                start_new_session=os.name != "nt",
             )
         except OSError as exc:
             raise MigrationError(f"could not run required local command: {argv[0]}") from exc
+        try:
+            captured_stdout, captured_stderr = process.communicate(
+                timeout=self._command_timeout_s if timeout_s is None else timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(process)
+            process.communicate()
+            raise MigrationError(f"local command timed out: {argv[0]}") from exc
+        completed = subprocess.CompletedProcess(
+            list(argv), process.returncode,
+            captured_stdout if captured_stdout is not None else b"",
+            captured_stderr if captured_stderr is not None else b"",
+        )
         if completed.returncode != 0:
             raise MigrationError(f"required local command failed: {argv[0]}")
         return completed
@@ -220,19 +242,13 @@ class LocalCommandRunner:
 
     def stream_to_file(self, argv: Sequence[str], target: Path, *, cwd: Path) -> None:
         with target.open("xb") as output:
-            self._execute(argv, cwd=cwd, stdout=output)
+            self._execute(argv, cwd=cwd, stdout=output, timeout_s=self._stream_timeout_s)
 
     def run_from_file(self, argv: Sequence[str], source: Path, *, cwd: Path) -> CommandResult:
         with source.open("rb") as input_file:
-            try:
-                completed = subprocess.run(
-                    list(argv), cwd=cwd, stdin=input_file, stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE, check=False,
-                )
-            except OSError as exc:
-                raise MigrationError(f"could not run required local command: {argv[0]}") from exc
-        if completed.returncode != 0:
-            raise MigrationError(f"required local command failed: {argv[0]}")
+            completed = self._execute(
+                argv, cwd=cwd, stdin=input_file, timeout_s=self._stream_timeout_s,
+            )
         return CommandResult(tuple(argv), completed.returncode,
             completed.stdout.decode("utf-8", errors="replace"),
             completed.stderr.decode("utf-8", errors="replace"))
@@ -910,7 +926,7 @@ def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str
 def remote_action(
     request: MigrationRequest, action: str, runner: RemoteCommandRunner
 ) -> str:
-    if action not in {"preflight", "apply", "verify", "rollback", "recover"}:
+    if action not in {"preflight", "apply", "verify", "rollback", "recover", "rollback-plan"}:
         raise MigrationError("invalid remote migration action")
     result = runner.run(
         request.ssh.ssh_argv(
@@ -918,9 +934,54 @@ def remote_action(
         ),
         cwd=request.repo, timeout_s={"preflight": 300, "verify": 600,
                                     "apply": 3600, "rollback": 3600,
-                                    "recover": 3600}[action],
+                                    "recover": 3600, "rollback-plan": 60}[action],
     )
     return result.stdout.strip()
+
+
+def parse_rollback_plan(raw: str, migration_id: str) -> Mapping[str, object]:
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise MigrationError("remote rollback plan is invalid") from exc
+    data = _exact_keys(payload, frozenset({
+        "schema_version", "migration_id", "status", "journal_state", "operation_id",
+        "current_release", "backup_stamp", "backup_files", "would_stop",
+    }), "rollback plan")
+    if data["schema_version"] != 1 or data["migration_id"] != migration_id:
+        raise MigrationError("remote rollback plan identity is invalid")
+    if data["status"] not in {"APPLIED", "ROLLBACK_IN_PROGRESS", "ROLLBACK_FAILED", "ROLLED_BACK"}:
+        raise MigrationError("remote rollback status is invalid")
+    if not isinstance(data["journal_state"], str) or len(data["journal_state"]) > 64:
+        raise MigrationError("remote journal state is invalid")
+    if not isinstance(data["operation_id"], str) or re.fullmatch(r"[0-9a-f]{32}", data["operation_id"]) is None:
+        raise MigrationError("remote operation identity is invalid")
+    if not isinstance(data["current_release"], str) or re.fullmatch(
+        r"/opt/car-agent/releases/[0-9a-f]{7,40}", data["current_release"],
+    ) is None:
+        raise MigrationError("remote release identity is invalid")
+    if not isinstance(data["backup_stamp"], str) or re.fullmatch(
+        r"[0-9]{8}T[0-9]{6}Z", data["backup_stamp"],
+    ) is None:
+        raise MigrationError("remote backup stamp is invalid")
+    files = _exact_keys(data["backup_files"], frozenset({
+        "postgres.dump", "redis.rdb", "collector.sql.gz",
+    }), "rollback backup files")
+    parsed_files: dict[str, dict[str, object]] = {}
+    for name, raw_record in files.items():
+        record = _exact_keys(raw_record, frozenset({"size_bytes", "sha256"}), "backup file")
+        parsed_files[name] = {
+            "size_bytes": _strict_int(record["size_bytes"], "backup size"),
+            "sha256": _require_fingerprint(record["sha256"], "backup sha256"),
+        }
+    would_stop = data["would_stop"]
+    if (not isinstance(would_stop, list) or not would_stop
+            or len(would_stop) > 64 or any(
+                not isinstance(name, str) or re.fullmatch(r"[a-z0-9-]+", name) is None
+                for name in would_stop
+            ) or len(set(would_stop)) != len(would_stop)):
+        raise MigrationError("remote writer plan is invalid")
+    return MappingProxyType({**data, "backup_files": parsed_files, "would_stop": list(would_stop)})
 
 
 def parse_action_status(raw: str, migration_id: str, expected: str) -> Mapping[str, object]:
