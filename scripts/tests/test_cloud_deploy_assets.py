@@ -338,8 +338,8 @@ def test_remote_apply_rechecks_preflight_and_has_no_subshell_error_suppression()
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
     assert 'require_preapply_batch "${migration_id}"' in body
-    assert body.index("run_required_backup") < body.index("refresh_preflight_after_backup")
-    assert body.index("refresh_preflight_after_backup") < body.index("stop_application_writers")
+    assert body.index("refresh_preflight_before_stop") < body.index("stop_application_writers")
+    assert body.index("stop_application_writers") < body.index("run_required_backup")
     assert "if ! (" not in text
     assert "ROLLBACK_FAILED" in text
 
@@ -563,7 +563,7 @@ def test_remote_state_machine_is_sealed_then_preflighted_then_runtime(tmp_path: 
     assert 'write_preflight_current "${migration_id}" || return $?' in preflight
     assert 'require_preapply_batch "${migration_id}"' in apply
     assert apply.index('require_preapply_batch "${migration_id}"') < apply.index("run_required_backup")
-    assert 'refresh_preflight_after_backup "${migration_id}"' in apply
+    assert 'refresh_preflight_before_stop "${migration_id}"' in apply
     assert 'require_runtime_batch "${migration_id}" || return $?' in refresh
     assert 'write_preflight_current "${migration_id}" || return $?' in refresh
 
@@ -1669,3 +1669,38 @@ def test_collector_probe_rejects_second_connection_without_snapshot(
         "reconnect": False,
         "status": "fail",
     }
+def test_redis_restore_converts_rdb_to_complete_aof_before_compose_start():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert '"--appendonly" "no"' in body
+    assert 'CONFIG SET appendonly yes' in body
+    assert "aof_rewrite_in_progress:0" in body
+    assert "aof_last_bgrewrite_status:ok" in body
+    assert "appendonly.aof.manifest" in text
+    assert "redis-check-aof" in text
+    assert body.index('"--appendonly" "no"') < body.index("CONFIG SET appendonly yes")
+    assert body.index("aof_last_bgrewrite_status:ok") < body.index('up -d --no-build --pull never redis')
+    assert "DBSIZE" in body and "empty Redis import" in body
+
+
+def test_apply_quiesces_before_validated_backup_and_uses_failure_funnel():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert body.index("refresh_preflight_before_stop") < body.index("stop_application_writers")
+    assert body.index("stop_application_writers") < body.index("run_required_backup")
+    assert body.index("run_required_backup") < body.index("restore_postgres_dump")
+    assert "install_apply_failure_trap" in body
+    assert "run_recoverable_step" in body
+    assert "|| fail_and_rollback" not in body
+    assert "if !" not in body
+
+
+def test_backup_supports_quiesced_migration_triplet_validation_and_hash_manifest():
+    text = _required_text(CLOUD_DIR / "backup.sh")
+    for token in (
+        "--writers-quiesced", "pg_restore", "redis-check-rdb", "PRAGMA integrity_check",
+        "sha256", "backup-manifest", "COLLECTOR_VOLUME",
+    ):
+        assert token in text
+    assert text.index("--writers-quiesced") < text.index("pg_dump")
+    assert "docker run --pull never --rm=true" in text

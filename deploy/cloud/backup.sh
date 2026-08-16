@@ -19,6 +19,8 @@ readonly BACKUP_ROOT="${SHARED_ROOT}/backups"
 readonly POSTGRES_DIR="${BACKUP_ROOT}/postgres"
 readonly REDIS_DIR="${BACKUP_ROOT}/redis"
 readonly OBS_DIR="${BACKUP_ROOT}/observability"
+readonly COLLECTOR_VOLUME="car-agent-obs-data"
+WRITERS_QUIESCED=0
 
 source "${SHARED_ROOT}/bin/transaction-lock.sh"
 
@@ -33,13 +35,19 @@ if [[ "$#" -eq 0 ]]; then
     printf 'backup failed: transaction lock error\n' >&2
     exit "${lock_code}"
   }
-elif [[ "$#" -eq 2 && "$1" == "--transaction-lock-fd" ]]; then
+elif [[ "$#" -ge 2 && "$1" == "--transaction-lock-fd" ]]; then
   TRANSACTION_LOCK_FD="$2"
   export TRANSACTION_LOCK_FD
   transaction_lock_validate_inherited "${TRANSACTION_LOCK_FD}" || {
     printf 'backup failed: inherited transaction lock is invalid\n' >&2
     exit 2
   }
+  if [[ "$#" -eq 3 && "$3" == "--writers-quiesced" ]]; then
+    WRITERS_QUIESCED=1
+  elif [[ "$#" -ne 2 ]]; then
+    printf 'backup failed: invalid arguments\n' >&2
+    exit 2
+  fi
 else
   printf 'backup failed: invalid arguments\n' >&2
   exit 2
@@ -54,6 +62,32 @@ compose=(
   --env-file "${SHARED_ENV}"
 )
 export RELEASE_SHA="${ACTIVE_RELEASE_SHA}"
+
+if [[ "${WRITERS_QUIESCED}" -eq 1 ]]; then
+  mapfile -t backup_services < <("${compose[@]}" config --services)
+  [[ "${#backup_services[@]}" -gt 2 ]]
+  for backup_service in "${backup_services[@]}"; do
+    [[ "${backup_service}" =~ ^[a-z0-9-]+$ ]]
+    if [[ "${backup_service}" != "postgres" && "${backup_service}" != "redis" ]]; then
+      [[ -z "$("${compose[@]}" ps -q --status running "${backup_service}")" ]]
+    fi
+  done
+fi
+
+postgres_container="$("${compose[@]}" ps -a -q postgres)"
+redis_container="$("${compose[@]}" ps -a -q redis)"
+collector_container="$("${compose[@]}" ps -a -q observability-collector)"
+[[ "${postgres_container}" =~ ^[0-9a-f]{12,64}$ ]]
+[[ "${redis_container}" =~ ^[0-9a-f]{12,64}$ ]]
+[[ "${collector_container}" =~ ^[0-9a-f]{12,64}$ ]]
+postgres_image="$(docker inspect --format '{{.Image}}' "${postgres_container}")"
+redis_image="$(docker inspect --format '{{.Image}}' "${redis_container}")"
+collector_image="$(docker inspect --format '{{.Image}}' "${collector_container}")"
+[[ "${postgres_image}" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "${redis_image}" =~ ^sha256:[0-9a-f]{64}$ ]]
+[[ "${collector_image}" =~ ^sha256:[0-9a-f]{64}$ ]]
+collector_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${collector_container}")"
+[[ "${collector_volume}" == "${COLLECTOR_VOLUME}" ]]
 
 install -d -m 0700 "${POSTGRES_DIR}" "${REDIS_DIR}" "${OBS_DIR}"
 
@@ -77,7 +111,8 @@ mv "${postgres_partial}" "${postgres_target}"
 test -s "${redis_partial}"
 mv "${redis_partial}" "${redis_target}"
 
-"${compose[@]}" exec -T observability-collector python -c '
+docker run --pull never --rm=true --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly" \
+  --entrypoint python "${collector_image}" -c '
 import sqlite3
 import sys
 
@@ -93,6 +128,76 @@ finally:
 test -s "${obs_partial}"
 gzip -t "${obs_partial}"
 mv "${obs_partial}" "${obs_target}"
+
+readonly postgres_mount="type=bind,source=${POSTGRES_DIR},target=/backup,readonly"
+readonly redis_mount="type=bind,source=${REDIS_DIR},target=/backup,readonly"
+readonly obs_mount="type=bind,source=${OBS_DIR},target=/backup,readonly"
+docker run --pull never --rm=true --mount "${postgres_mount}" --entrypoint pg_restore \
+  "${postgres_image}" --list "/backup/${timestamp}.dump" >/dev/null
+docker run --pull never --rm=true --mount "${redis_mount}" --entrypoint redis-check-rdb \
+  "${redis_image}" "/backup/${timestamp}.rdb" | grep -F 'CRC64 checksum is OK' >/dev/null
+docker run --pull never --rm=true --mount "${obs_mount}" --tmpfs /restore:rw,noexec,nosuid \
+  --entrypoint python "${collector_image}" - "${timestamp}.sql.gz" <<'PY'
+import gzip
+import sqlite3
+import sys
+from pathlib import Path
+
+target = Path("/restore/collector.db")
+with gzip.open(Path("/backup") / sys.argv[1], "rt", encoding="utf-8") as source:
+    with sqlite3.connect(target) as connection:
+        statement = []
+        expanded = 0
+        for line in source:
+            expanded += len(line.encode("utf-8"))
+            if expanded > 16 * 1024 * 1024 * 1024:
+                raise SystemExit("collector backup expands beyond limit")
+            statement.append(line)
+            sql = "".join(statement)
+            if len(sql.encode("utf-8")) > 64 * 1024 * 1024:
+                raise SystemExit("collector backup statement exceeds limit")
+            if sqlite3.complete_statement(sql):
+                connection.execute(sql)
+                statement.clear()
+        if statement:
+            raise SystemExit("collector backup has incomplete SQL")
+        if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
+            raise SystemExit("backup collector restore integrity failed")
+PY
+
+backup_manifest="${BACKUP_ROOT}/${timestamp}.backup-manifest.json"
+python3 - "${backup_manifest}" "${timestamp}" "${postgres_target}" "${redis_target}" "${obs_target}" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+def record(path_text):
+    path = Path(path_text)
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            size += len(chunk)
+            digest.update(chunk)
+    return {"size_bytes": size, "sha256": digest.hexdigest()}
+
+target = Path(sys.argv[1])
+payload = {"schema_version": 1, "backup_stamp": sys.argv[2], "files": {
+    "postgres.dump": record(sys.argv[3]),
+    "redis.rdb": record(sys.argv[4]),
+    "collector.sql.gz": record(sys.argv[5]),
+}}
+partial = target.with_suffix(target.suffix + ".partial")
+fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+try:
+    os.write(fd, (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode())
+    os.fsync(fd)
+finally:
+    os.close(fd)
+os.replace(partial, target)
+PY
 
 find "${BACKUP_ROOT}" -mindepth 2 -type f -mtime +7 -print \
   | sort >"${candidates_partial}"

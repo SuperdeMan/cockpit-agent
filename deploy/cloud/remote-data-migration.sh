@@ -18,6 +18,12 @@ readonly REQUIRED_IMPORT_FILES=("manifest.json" "postgres.dump" "redis.rdb" "col
 CURRENT_RELEASE=""
 RUNTIME_PROJECT_NAME=""
 declare -a compose=()
+STEP_RC=0
+STEP_OUTPUT=""
+APPLY_MIGRATION_ID=""
+APPLY_BACKUP_STAMP=""
+APPLY_REPLACEMENT_STARTED=0
+APPLY_FAILURE_ACTIVE=0
 
 die() {
   printf 'cloud-data-migration: %s\n' "$1" >&2
@@ -383,15 +389,49 @@ PY
 
 run_required_backup() {
   local output stamp
-  output="$("${SHARED_ROOT}/bin/backup.sh" --transaction-lock-fd "${TRANSACTION_LOCK_FD}")" \
-    || die "migration pre-backup failed"
+  output="$("${SHARED_ROOT}/bin/backup.sh" --transaction-lock-fd "${TRANSACTION_LOCK_FD}" --writers-quiesced)" \
+    || return $?
   stamp="${output##*backup completed: }"
-  [[ "${stamp}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || die "backup timestamp is invalid"
+  [[ "${stamp}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || return 1
   [[ -s "${BACKUP_ROOT}/postgres/${stamp}.dump" \
      && -s "${BACKUP_ROOT}/redis/${stamp}.rdb" \
-     && -s "${BACKUP_ROOT}/observability/${stamp}.sql.gz" ]] \
-    || die "migration pre-backup triplet is incomplete"
+     && -s "${BACKUP_ROOT}/observability/${stamp}.sql.gz" \
+     && -s "${BACKUP_ROOT}/${stamp}.backup-manifest.json" ]] || return 1
+  validate_backup_manifest "${stamp}" || return $?
   printf '%s\n' "${stamp}"
+}
+
+validate_backup_manifest() {
+  local stamp="$1"
+  python3 - "${BACKUP_ROOT}" "${stamp}" <<'PY' || return $?
+import hashlib, json, os, re, stat, sys
+from pathlib import Path
+
+root=Path(sys.argv[1]); stamp=sys.argv[2]
+if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("invalid backup stamp")
+path=root/f"{stamp}.backup-manifest.json"
+if path.is_symlink() or path.stat().st_size > 64*1024: raise SystemExit("invalid backup manifest")
+def unique(pairs):
+    result={}
+    for key,value in pairs:
+        if key in result: raise ValueError("duplicate key")
+        result[key]=value
+    return result
+payload=json.loads(path.read_text(encoding="utf-8"),object_pairs_hook=unique)
+if set(payload)!={"schema_version","backup_stamp","files"} or payload["schema_version"]!=1 or payload["backup_stamp"]!=stamp:
+    raise SystemExit("backup manifest contract mismatch")
+expected={"postgres.dump":root/"postgres"/f"{stamp}.dump","redis.rdb":root/"redis"/f"{stamp}.rdb","collector.sql.gz":root/"observability"/f"{stamp}.sql.gz"}
+if set(payload["files"])!=set(expected): raise SystemExit("backup manifest file set mismatch")
+for name,file_path in expected.items():
+    info=os.lstat(file_path)
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1: raise SystemExit("unsafe backup file")
+    digest=hashlib.sha256(); size=0
+    with file_path.open("rb") as source:
+        while chunk:=source.read(1024*1024): size+=len(chunk); digest.update(chunk)
+    record=payload["files"][name]
+    if set(record)!={"size_bytes","sha256"} or record!={"size_bytes":size,"sha256":digest.hexdigest()}:
+        raise SystemExit("backup hash mismatch")
+PY
 }
 
 inspect_current() {
@@ -548,6 +588,10 @@ refresh_preflight_after_backup() {
   write_preflight_current "${migration_id}" || return $?
 }
 
+refresh_preflight_before_stop() {
+  refresh_preflight_after_backup "$1" || return $?
+}
+
 stop_application_writers() {
   local service services_text running_id
   local -a services writers
@@ -595,23 +639,69 @@ resolve_redis_identity() {
   [[ "${RESOLVED_REDIS_IMAGE}" =~ ^sha256:[0-9a-f]{64}$ ]] || die "redis image identity is invalid"
 }
 
+wait_for_compose_redis() {
+  local attempt reply
+  for attempt in $(seq 1 60); do
+    reply="$("${compose[@]}" exec -T redis redis-cli PING 2>/dev/null)" || reply=""
+    if [[ "${reply}" == "PONG" ]]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+assert_redis_container_matches_manifest() {
+  local container_id="$1" manifest="$2" aggregate
+  aggregate="$(docker exec "${container_id}" redis-cli --json EVAL '
+redis.setresp(3); local c="0"; local n,p,e=0,0,0; local px={}; local ty={};
+repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1 else e=e+1 end end until c=="0";
+local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e}}' 0)" || return $?
+  python3 - "${manifest}" "${aggregate}" <<'PY' || return $?
+import json, sys
+from pathlib import Path
+m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["redis"]
+a=json.loads(sys.argv[2])
+if a["key_count"] <= 0:
+    raise SystemExit("empty Redis import")
+for key in ("key_count", "prefixes", "types", "persistent", "expiring"):
+    if a.get(key) != m.get(key):
+        raise SystemExit("Redis import aggregate mismatch")
+PY
+}
+
+validate_redis_aof_volume() {
+  local image_id="$1"
+  docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data,readonly" \
+    --entrypoint sh "${image_id}" -ceu '
+      manifest=/data/appendonlydir/appendonly.aof.manifest
+      test -s "${manifest}"
+      grep -Eq "^file appendonly[.]aof[.][0-9]+[.]base[.](rdb|aof) seq [0-9]+ type b$" "${manifest}"
+      grep -Eq "^file appendonly[.]aof[.][0-9]+[.]incr[.]aof seq [0-9]+ type i$" "${manifest}"
+      test -z "$(find /data/appendonlydir -maxdepth 1 -type l -print -quit)"
+      while read -r marker filename rest; do
+        test "${marker}" = file
+        test -s "/data/appendonlydir/${filename}"
+      done <"${manifest}"
+      redis-check-aof "${manifest}" >/dev/null
+    ' || return $?
+}
+
 restore_redis_rdb() {
   local rdb="$1" migration_id="$2" bucket="${3:-redis-volume}"
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
-  local redis_container actual_volume image_id
-  [[ -s "${rdb}" && ! -L "${rdb}" ]] || die "Redis restore source is invalid"
-  resolve_redis_identity
+  local redis_container actual_volume image_id loader info dbsize rc attempt
+  [[ -s "${rdb}" && ! -L "${rdb}" ]] || { printf 'Redis restore source is invalid\n' >&2; return 1; }
+  resolve_redis_identity || return $?
   redis_container="${RESOLVED_REDIS_CONTAINER}"
   actual_volume="${RESOLVED_REDIS_VOLUME}"
   image_id="${RESOLVED_REDIS_IMAGE}"
   "${compose[@]}" stop redis || return $?
-  resolve_redis_identity
+  resolve_redis_identity || return $?
   [[ "${RESOLVED_REDIS_CONTAINER}" == "${redis_container}" \
      && "${RESOLVED_REDIS_VOLUME}" == "${actual_volume}" \
      && "${RESOLVED_REDIS_IMAGE}" == "${image_id}" ]] \
-    || die "redis identity changed after stop"
-  install -d -m 0700 -o root -g root "${rollback_dir}"
-  docker run --rm --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
+    || { printf 'redis identity changed after stop\n' >&2; return 1; }
+  install -d -m 0700 -o root -g root "${rollback_dir}" || return $?
+  docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${rdb}"),target=/incoming,readonly" \
     --entrypoint sh "${image_id}" -ceu '
@@ -625,10 +715,49 @@ restore_redis_rdb() {
       find /rollback -type f -exec chmod 0600 {} +
       install -m 0600 /incoming/'"$(basename "${rdb}")"' /data/dump.rdb
     ' || return $?
+  loader="car-agent-migration-${migration_id//-/}-redis-loader"
+  docker run -d --pull never --name "${loader}" \
+    --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
+    --entrypoint redis-server "${image_id}" \
+    "--dir" "/data" "--dbfilename" "dump.rdb" "--appendonly" "no" \
+    "--protected-mode" "no" >/dev/null || return $?
+  rc=1
+  for attempt in $(seq 1 60); do
+    if docker exec "${loader}" redis-cli PING | grep -Fx PONG >/dev/null; then rc=0; break; fi
+    sleep 1
+  done
+  if [[ "${rc}" -ne 0 ]]; then docker rm -f "${loader}" >/dev/null 2>&1; return 1; fi
+  dbsize="$(docker exec "${loader}" redis-cli --raw DBSIZE)" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+  if [[ ! "${dbsize}" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'empty Redis import is forbidden\n' >&2
+    docker rm -f "${loader}" >/dev/null 2>&1
+    return 1
+  fi
+  assert_redis_container_matches_manifest "${loader}" "${IMPORT_ROOT}/${migration_id}/manifest.json" \
+    || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+  docker exec "${loader}" redis-cli CONFIG SET appendonly yes | grep -Fx OK >/dev/null \
+    || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+  rc=1
+  for attempt in $(seq 1 120); do
+    info="$(docker exec "${loader}" redis-cli --raw INFO persistence)" \
+      || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    if grep -F 'aof_rewrite_in_progress:0' <<<"${info}" >/dev/null \
+       && grep -F 'aof_last_bgrewrite_status:ok' <<<"${info}" >/dev/null; then rc=0; break; fi
+    sleep 1
+  done
+  if [[ "${rc}" -ne 0 ]]; then docker rm -f "${loader}" >/dev/null 2>&1; return 1; fi
+  docker exec "${loader}" redis-cli SAVE >/dev/null \
+    || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+  docker stop "${loader}" >/dev/null || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+  validate_redis_aof_volume "${image_id}" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+  docker rm "${loader}" >/dev/null || return $?
   "${compose[@]}" up -d --no-build --pull never redis || return $?
-  "${compose[@]}" exec -T redis redis-cli PING | grep -Fx PONG >/dev/null || return $?
-  "${compose[@]}" exec -T redis redis-check-rdb /data/dump.rdb | grep -F "CRC64 checksum is OK" >/dev/null || return $?
-  "${compose[@]}" exec -T redis test -d /data/appendonlydir || return $?
+  wait_for_compose_redis || return $?
+  resolve_redis_identity || return $?
+  [[ "${RESOLVED_REDIS_VOLUME}" == "${actual_volume}" && "${RESOLVED_REDIS_IMAGE}" == "${image_id}" ]] \
+    || return 1
+  assert_redis_container_matches_manifest "${RESOLVED_REDIS_CONTAINER}" \
+    "${IMPORT_ROOT}/${migration_id}/manifest.json" || return $?
 }
 
 install_collector_db() {
@@ -853,33 +982,104 @@ rollback_all() {
 fail_and_rollback() {
   local migration_id="$1" backup_stamp="$2" failed_step="$3"
   if rollback_all "${migration_id}" "${backup_stamp}"; then
-    die "migration step ${failed_step} failed and the store group was rolled back"
+    printf 'migration step %s failed and the store group was rolled back\n' "${failed_step}" >&2
+    return 1
   fi
   write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}" || true
-  die "migration step ${failed_step} and automatic rollback failed"
+  printf 'migration step %s and automatic rollback failed\n' "${failed_step}" >&2
+  return 1
+}
+
+run_recoverable_step() {
+  set +e
+  "$@"
+  STEP_RC=$?
+  set -e
+  return 0
+}
+
+run_recoverable_step_capture() {
+  set +e
+  STEP_OUTPUT="$("$@")"
+  STEP_RC=$?
+  set -e
+  return 0
+}
+
+apply_failure_trap() {
+  local signal_rc="${1:-1}"
+  trap - ERR INT TERM
+  if [[ "${APPLY_FAILURE_ACTIVE}" -eq 1 ]]; then return "${signal_rc}"; fi
+  APPLY_FAILURE_ACTIVE=1
+  if [[ "${APPLY_REPLACEMENT_STARTED}" -eq 1 && -n "${APPLY_BACKUP_STAMP}" ]]; then
+    set +e
+    rollback_all "${APPLY_MIGRATION_ID}" "${APPLY_BACKUP_STAMP}"
+    set -e
+  else
+    set +e
+    start_current_release
+    set -e
+  fi
+  return "${signal_rc}"
+}
+
+install_apply_failure_trap() {
+  trap 'apply_failure_trap $?' ERR
+  trap 'apply_failure_trap 130' INT
+  trap 'apply_failure_trap 143' TERM
+}
+
+clear_apply_failure_trap() {
+  trap - ERR INT TERM
+  APPLY_FAILURE_ACTIVE=0
 }
 
 apply_migration() {
   local migration_id="$1" backup_stamp
-  load_runtime
-  require_preapply_batch "${migration_id}"
-  backup_stamp="$(run_required_backup)"
-  write_migration_state "BACKED_UP" "${migration_id}" "${backup_stamp}"
-  refresh_preflight_after_backup "${migration_id}"
-  stop_application_writers || fail_and_rollback "${migration_id}" "${backup_stamp}" "stop-writers"
-  restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump" \
-    || fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"
-  restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}" \
-    || fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"
-  install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}" \
-    || fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"
-  verify_store_group "${migration_id}" "pre-start" \
-    || fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"
-  start_current_release || fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"
-  verify_current_release || fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification"
-  verify_store_group "${migration_id}" "post-start" \
-    || fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification"
-  write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}" || return $?
+  run_recoverable_step load_runtime
+  if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
+  run_recoverable_step require_preapply_batch "${migration_id}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
+  run_recoverable_step refresh_preflight_before_stop "${migration_id}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
+  run_recoverable_step stop_application_writers
+  if [[ "${STEP_RC}" -ne 0 ]]; then
+    run_recoverable_step start_current_release
+    return 1
+  fi
+  run_recoverable_step_capture run_required_backup
+  if [[ "${STEP_RC}" -ne 0 ]]; then
+    run_recoverable_step start_current_release
+    return 1
+  fi
+  backup_stamp="${STEP_OUTPUT}"
+  run_recoverable_step write_migration_state "BACKED_UP" "${migration_id}" "${backup_stamp}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then
+    run_recoverable_step start_current_release
+    return 1
+  fi
+  APPLY_MIGRATION_ID="${migration_id}"
+  APPLY_BACKUP_STAMP="${backup_stamp}"
+  APPLY_REPLACEMENT_STARTED=1
+  install_apply_failure_trap
+  run_recoverable_step restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"; return 1; fi
+  run_recoverable_step restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"; return 1; fi
+  run_recoverable_step install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"; return 1; fi
+  run_recoverable_step verify_store_group "${migration_id}" "pre-start"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"; return 1; fi
+  run_recoverable_step start_current_release
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"; return 1; fi
+  run_recoverable_step verify_current_release
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification"; return 1; fi
+  run_recoverable_step verify_store_group "${migration_id}" "post-start"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification"; return 1; fi
+  run_recoverable_step write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "state-write"; return 1; fi
+  clear_apply_failure_trap
+  printf '{"migration_id":"%s","status":"APPLIED"}\n' "${migration_id}"
 }
 
 verify_migration() {
