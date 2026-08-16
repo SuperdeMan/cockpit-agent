@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
+import importlib.util
 import json
 import os
 import re
 import shutil
 import subprocess
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -34,6 +37,31 @@ LOOPBACK_PORTS = {
     "hmi": ["127.0.0.1:5173:5173"],
     "dashboard": ["127.0.0.1:5174:5174"],
 }
+
+
+def _git_bash() -> Path:
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Git" / "bin" / "bash.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Git" / "bin" / "bash.exe",
+    ]
+    git = shutil.which("git")
+    if git:
+        candidates.append(Path(git).resolve().parents[1] / "bin" / "bash.exe")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    pytest.skip("Git Bash is required for cloud shell failure injection")
+
+
+def _run_cloud_bash(body: str, *args: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [str(_git_bash()), "-c", textwrap.dedent(body), "cloud-test", *(str(arg) for arg in args)],
+        cwd=ROOT,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -561,3 +589,379 @@ def test_cloud_runbook_documents_repeatable_release_workflow():
         "不自动清理",
     ):
         assert required in readme
+
+
+@pytest.mark.parametrize(
+    ("disk_bytes", "memory_bytes", "message"),
+    [
+        (1, 4 * 1024**3, "insufficient disk capacity"),
+        (40 * 1024**3, 1, "insufficient available memory"),
+    ],
+)
+def test_remote_capacity_counterexamples_fail_closed(
+    tmp_path: Path,
+    disk_bytes: int,
+    memory_bytes: int,
+    message: str,
+):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    df = fake_bin / "df"
+    df.write_text(
+        f"#!/usr/bin/env bash\nprintf 'Avail\\n{disk_bytes}\\n'\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    awk = fake_bin / "awk"
+    awk.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$*\" == *MemAvailable* ]]; then\n"
+        f"  printf '{memory_bytes}\\n'\n"
+        "else\n"
+        "  /usr/bin/awk \"$@\"\n"
+        "fi\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    df.chmod(0o755)
+    awk.chmod(0o755)
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        FAKE_BIN="$(cygpath -u "$2")"
+        PATH="$FAKE_BIN:$PATH"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$3"
+        require_capacity
+        """,
+        tmp_path,
+        fake_bin,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert message in result.stderr
+
+
+@pytest.mark.parametrize("create_wrong_file", [False, True])
+def test_shared_model_missing_or_wrong_digest_is_rejected(
+    tmp_path: Path,
+    create_wrong_file: bool,
+):
+    shared = tmp_path / "shared"
+    model = shared / "models" / "nlu" / "edge_nlu.onnx"
+    if create_wrong_file:
+        model.parent.mkdir(parents=True)
+        model.write_bytes(b"wrong model")
+    manifest = tmp_path / "models.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "models": [
+                    {
+                        "path": "models/nlu/edge_nlu.onnx",
+                        "sha256": "a" * 64,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$2"
+        verify_shared_models "$3"
+        """,
+        tmp_path,
+        REMOTE_BUILD_PATH,
+        manifest,
+    )
+
+    assert result.returncode != 0
+    assert "bootstrap_required" in result.stderr
+
+
+def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
+    build_dir = tmp_path / "build"
+    (build_dir / "src").mkdir(parents=True)
+    counter = tmp_path / "build-count"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        BUILD_DIR="$2"
+        COUNTER="$3"
+        SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$4"
+        require_capacity() { :; }
+        receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
+        verify_shared_models() { :; }
+        release_service_rows() {
+          local number
+          for number in $(seq -w 1 26); do
+            printf 'service%s\tcar-agent-release/service%s\n' "$number" "$number"
+          done
+        }
+        install() {
+          local target="${@: -1}"
+          mkdir -p "$(dirname "$target")"
+          : >"$target"
+        }
+        docker() {
+          if [[ "$1 $2" == "image inspect" ]]; then
+            if [[ "${3:-}" == car-agent-release/*:"$SHA" ]]; then
+              return 1
+            fi
+            [[ "${3:-}" == "--format" ]] && printf 'sha256:test\n'
+            return 0
+          fi
+          if [[ "$1" == "compose" ]]; then
+            local count=0
+            [[ -f "$COUNTER" ]] && count="$(<"$COUNTER")"
+            count=$((count + 1))
+            printf '%s\n' "$count" >"$COUNTER"
+            [[ "$count" -ne 9 ]]
+            return
+          fi
+          [[ "$1 $2" == "image tag" ]] && return 0
+          return 1
+        }
+        build_release "$SHA" "${SHA}-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        """,
+        tmp_path,
+        build_dir,
+        counter,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert counter.read_text(encoding="utf-8").strip() == "9"
+
+
+@pytest.mark.parametrize(
+    ("verify_body", "expected_state"),
+    [
+        ('[[ "$1" == "$OLD_SHA" ]]', "VERIFY_FAILED_ROLLED_BACK"),
+        ("return 1", "ROLLBACK_FAILED"),
+    ],
+)
+def test_verify_failure_restores_old_current_and_records_terminal_state(
+    tmp_path: Path,
+    verify_body: str,
+    expected_state: str,
+):
+    previous = tmp_path / "releases" / "aaaaaaa"
+    release = tmp_path / "releases" / "bbbbbbb"
+    previous.mkdir(parents=True)
+    release.mkdir(parents=True)
+    (tmp_path / "builds" / "bbbbbbb" / "src" / "deploy" / "cloud").mkdir(
+        parents=True
+    )
+    current_target = tmp_path / "current-target"
+    current_target.write_text(str(previous), encoding="utf-8")
+    state_log = tmp_path / "state.log"
+
+    result = _run_cloud_bash(
+        f"""
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        CURRENT_TARGET="$1/current-target"
+        OLD_SHA="aaaaaaa"
+        NEW_SHA="bbbbbbb"
+        NEW_DIR="$1/releases/$NEW_SHA"
+        STATE_LOG="$2"
+        die() {{ printf '%s\n' "$1" >&2; return "${{2:-1}}"; }}
+        validate_release_selector() {{ [[ "$1" =~ ^[0-9a-f]{{7,40}}$ ]]; }}
+        source "$3"
+        readlink() {{
+          if [[ "$*" == "-f $RELEASE_ROOT/current" ]]; then
+            cat "$CURRENT_TARGET"
+          else
+            command readlink "$@"
+          fi
+        }}
+        switch_current() {{ printf '%s' "$1" >"$CURRENT_TARGET"; }}
+        load_runtime_project_name() {{ RUNTIME_PROJECT_NAME="aaaaaaa"; }}
+        verify_release_images() {{ :; }}
+        assemble_release() {{ printf '%s\n' "$NEW_DIR"; }}
+        validate_runtime_release() {{ :; }}
+        run_required_backup() {{ :; }}
+        compose_up_release() {{ :; }}
+        verify_release() {{ {verify_body}; }}
+        write_release_state() {{ printf '%s\n' "$1" >>"$STATE_LOG"; }}
+        activate_release "$NEW_SHA"
+        """,
+        tmp_path,
+        state_log,
+        ACTIVATE_RELEASE_PATH,
+    )
+
+    assert result.returncode != 0
+    assert Path(current_target.read_text(encoding="utf-8")) == previous
+    assert expected_state in state_log.read_text(encoding="utf-8")
+
+
+def test_backup_failure_stops_before_current_switch(tmp_path: Path):
+    previous = tmp_path / "releases" / "aaaaaaa"
+    release = tmp_path / "releases" / "bbbbbbb"
+    previous.mkdir(parents=True)
+    release.mkdir(parents=True)
+    (tmp_path / "builds" / "bbbbbbb" / "src" / "deploy" / "cloud").mkdir(
+        parents=True
+    )
+    current_target = tmp_path / "current-target"
+    current_target.write_text(str(previous), encoding="utf-8")
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        CURRENT_TARGET="$1/current-target"
+        NEW_DIR="$1/releases/bbbbbbb"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        validate_release_selector() { :; }
+        source "$2"
+        readlink() {
+          if [[ "$*" == "-f $RELEASE_ROOT/current" ]]; then
+            cat "$CURRENT_TARGET"
+          else
+            command readlink "$@"
+          fi
+        }
+        switch_current() { printf '%s' "$1" >"$CURRENT_TARGET"; }
+        load_runtime_project_name() { RUNTIME_PROJECT_NAME="aaaaaaa"; }
+        verify_release_images() { :; }
+        assemble_release() { printf '%s\n' "$NEW_DIR"; }
+        validate_runtime_release() { :; }
+        run_required_backup() { printf 'backup failed\n' >&2; return 87; }
+        compose_up_release() { printf 'unexpected compose\n' >&2; return 88; }
+        activate_release "bbbbbbb"
+        """,
+        tmp_path,
+        ACTIVATE_RELEASE_PATH,
+    )
+
+    assert result.returncode != 0
+    assert "backup failed" in result.stderr
+    assert "unexpected compose" not in result.stderr
+    assert Path(current_target.read_text(encoding="utf-8")) == previous
+
+
+def test_compose_config_failure_prevents_compose_up(tmp_path: Path):
+    release = tmp_path / "releases" / "bbbbbbb"
+    release.mkdir(parents=True)
+    calls = tmp_path / "docker-calls"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        RUNTIME_PROJECT_NAME="aaaaaaa"
+        CALLS="$2"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$3"
+        docker() {
+          printf '%s\n' "$*" >>"$CALLS"
+          [[ " $* " != *" config "* ]]
+        }
+        compose_up_release "$4" "bbbbbbb"
+        """,
+        tmp_path,
+        calls,
+        ACTIVATE_RELEASE_PATH,
+        release,
+    )
+
+    assert result.returncode != 0
+    docker_calls = calls.read_text(encoding="utf-8")
+    assert "config --quiet" in docker_calls
+    assert "up -d" not in docker_calls
+
+
+def _load_probe(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_edge_probe_rejects_missing_and_invalid_credentials(monkeypatch, capsys):
+    monkeypatch.setenv("WS_URL", "wss://example.invalid/ws")
+    monkeypatch.setenv("WS_TOKEN", "test-only")
+    probe = _load_probe(EDGE_WS_PROBE_PATH, "cloud_edge_probe_test")
+
+    class RejectedContext:
+        async def __aenter__(self):
+            error = RuntimeError("redacted")
+            error.status_code = 403
+            raise error
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(probe.websockets, "connect", lambda *_args, **_kwargs: RejectedContext())
+
+    assert asyncio.run(probe.expect_rejection("auth_missing", probe.WS_URL))
+    assert asyncio.run(
+        probe.expect_rejection("auth_invalid", probe.WS_URL + "?invalid=1")
+    )
+    emitted = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [item["status"] for item in emitted] == ["pass", "pass"]
+    assert all(item["http_status"] == 403 for item in emitted)
+
+
+def test_collector_probe_rejects_second_connection_without_snapshot(
+    monkeypatch,
+    capsys,
+):
+    monkeypatch.setenv("WS_URL", "wss://example.invalid/stream")
+    probe = _load_probe(COLLECTOR_WS_PROBE_PATH, "cloud_collector_probe_test")
+    messages = iter(("snapshot", "event"))
+
+    class Socket:
+        def __init__(self, payload_type: str):
+            self.payload_type = payload_type
+
+        async def recv(self):
+            return json.dumps({"type": self.payload_type})
+
+    class Context:
+        def __init__(self, payload_type: str):
+            self.socket = Socket(payload_type)
+
+        async def __aenter__(self):
+            return self.socket
+
+        async def __aexit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        probe.websockets,
+        "connect",
+        lambda *_args, **_kwargs: Context(next(messages)),
+    )
+
+    assert asyncio.run(probe.main()) == 1
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {
+        "case": "collector_reconnect",
+        "first_connect": True,
+        "reconnect": False,
+        "status": "fail",
+    }

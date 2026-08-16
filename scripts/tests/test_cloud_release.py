@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import subprocess
 import sys
 import tarfile
@@ -399,6 +400,41 @@ def test_existing_mismatched_artifact_is_never_overwritten(tmp_path: Path):
         )
 
     assert manifest.read_text(encoding="utf-8") == "{}"
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ("manifest_sha", "source_checksum", "transport_traversal"),
+)
+def test_existing_artifact_rejects_precise_integrity_counterexamples(
+    tmp_path: Path,
+    tamper: str,
+):
+    repo, sha = make_repo(tmp_path)
+    kwargs = {
+        "repo": repo,
+        "output_root": tmp_path / "artifacts",
+        "plan": ReleasePlan(sha, sha, (), (), "ready"),
+        "services_digest": "1" * 64,
+        "models_digest": "2" * 64,
+    }
+    artifact = build_release_artifact(**kwargs)
+    if tamper == "manifest_sha":
+        payload = json.loads(artifact.manifest.read_text(encoding="utf-8"))
+        payload["target_sha"] = "f" * 40
+        artifact.manifest.write_text(json.dumps(payload), encoding="utf-8")
+    elif tamper == "source_checksum":
+        lines = artifact.checksums.read_text(encoding="utf-8").splitlines()
+        lines[0] = "0" * 64 + "  source.tar"
+        artifact.checksums.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    else:
+        with tarfile.open(artifact.transport_tar, mode="w:") as archive:
+            info = tarfile.TarInfo("../outside")
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+
+    with pytest.raises(ReleaseError, match="artifact exists but does not match"):
+        build_release_artifact(**kwargs)
 
 
 @pytest.mark.parametrize(
