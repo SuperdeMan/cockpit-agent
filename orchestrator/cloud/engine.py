@@ -24,7 +24,8 @@ from .stream_state import (
 )
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
-from .context import (ContextManager, build_context, safety_alert_active,
+from .context import (ContextManager, build_context, newest_candidate_set,
+                      references_a_candidate, safety_alert_active,
                       _POC_DEFAULT_SCOPES)
 from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
@@ -329,6 +330,23 @@ class PlannerEngine:
                 text, ctx, mem_on=mem_on,
                 granted_permissions=ctx.granted_permissions)
             agents = working_set.catalog
+
+            # Q2/I-052：句首就在引用「第 N 个」，而**一份可引用的候选都没有**
+            # → 确定性诚实弃权，**不进 Planner**。
+            # 真栈原样复现过它不该发生的样子：无任何候选集时，「第一个营业到几点」
+            # 被答成「个芙云朵蛋糕(南山京基百纳店)，评分3.9，人均23.00，
+            # 今日营业10:00-22:00」——**一整条编出来的记录**。
+            # 判据两条都必须成立（形态 + 事实），且形态锚在句首：
+            # 「第二天第一个景点」指的是行程内部，不是上一份列表。
+            if (references_a_candidate(text)
+                    and newest_candidate_set(
+                        working_set.focus, allow_fallback=True) is None):
+                logger.info("Ordinal reference with no candidate set: %s", text[:40])
+                yield {"kind": "final",
+                       "speech": "我这边没有可以引用的列表。你先说要找什么，"
+                                 "我列出来之后再说「第几个」就能接上。"}
+                return
+
             plan = await self.planner.build(
                 text, working_set, ctx,
                 granted_permissions=ctx.granted_permissions)

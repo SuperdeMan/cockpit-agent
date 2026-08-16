@@ -612,6 +612,38 @@ class NearbyAgent(BaseAgent):
             extra_data["dining_window"] = window
         if access:
             extra_data["access"] = access
+        # Q2/N5 保留键 `_fallback`：这一份候选是**我猜的那一类**还是**用户点名的那一份**。
+        # 判据：**用户给了一个具体词，而我们最终没拿它去搜**——`keyword`/`cuisine` 槽
+        # 非空，检索词却退回了干净类目词。
+        # 出处：I-011 的真根因不是「失败的重搜清空了候选」——那次重搜**根本没失败**：
+        # 泛化兜底搜出 10 家「美食」，于是它**合法地**覆盖了上一份川菜候选，
+        # 第三轮「刚才列表里的第二家」拿到的是兜底那份的第二家。
+        # **由产生方声明**（同 `_route_session`/`_safety_alert`）：只有这里知道
+        # 「搜的和他说的是不是一回事」，编排看不出来。
+        # ⚠ 判据首版写的是「检索词等于干净类目词」，实测把**用户点名的类目**
+        # （「附近的停车场」——干净类目词正是对的检索词）一起标成了兜底。
+        # 标反方向比漏标贵：真候选会被当成兜底忽略。所以判据必须落在
+        # 「**有没有一个用户说了、我们却丢掉的词**」上，不落在检索词长什么样上。
+        # ⚠ 判据是**两个信号取或**，因为单一信号各有够不着的一半（真栈 3 轮实测）：
+        #   ① 用户给了具体词、我们丢掉了（keyword/cuisine 槽非空却退回类目词）；
+        #   ② 类目本身是**猜**出来的——`_resolve_category` 的末行
+        #      `return "餐饮" if _FOOD_HINT_RE...` 那条兜底分支，没有任何类目键
+        #      在用户话里出现过。
+        # 只有 ① 时漏判：planner 对「附近有没有卖锟斤拷的店」有时**一个具体词都不填**
+        # （只给 category=餐饮），nearby 就没有可比对的东西 ⇒ 兜底没被标出来，
+        # 序数当场绑到它上面（CD2 三次取样里的那一次）。
+        # 只有 ② 时误判：「附近有什么好吃的」——`吃的` 是类目键、类目是**照他说的**
+        # 取的，搜「美食」不是猜。
+        # ⚠ haystack **刻意不含 category 槽**：那是 planner 填的，不是用户说的话。
+        # 把它算进去，「附近有没有卖锟斤拷的店」（planner 填 category=餐饮）就永远
+        # 判不成「猜的」——而这恰恰是本信号存在的那一类。问的是「用户自己说了哪个类目」。
+        hay = f"{raw} {kw_slot}"
+        category_guessed = not any(key in hay for key in _CATEGORY_KEYWORD)
+        term_discarded = bool(kw_slot or (intent.slots.get("cuisine") or "").strip())
+        if ((term_discarded or category_guessed)
+                and keyword == _CATEGORY_KEYWORD.get(category)
+                and not brand):
+            extra_data["_fallback"] = True
         card = attach({"type": "place_list", "category": category, "keyword": label,
                        "items": items, "display_priority": 1}, self.place)
         # center 来源随数据落盘（观测/下游可辨）：slot=用户指定位置 / vehicle=车辆

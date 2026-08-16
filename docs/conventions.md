@@ -553,6 +553,32 @@ owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
 
 | `_safety_alert` | 任意 Agent（现 manual-rag / road-safety / chitchat 三路，判据同源 `agents/_sdk/safety_signal.py`）| `context.extract_focus` → `Focus.safety_alert`（`_valid_safety_alert` 校验：`level` **必须是枚举内的值**，「很严重」这类自由文本一律丢弃——否则下游按等级分支会静默走 else；粘性接力**不续期 ts**）；出口两个——`_render_focus` 把它渲染在焦点块**最前面**，`engine._apply_focus_meta` 以 `meta.focus_safety_alert` **广播给所有步**（**刻意不按 scope 门控**：坐标是敏感数据、给多了是泄漏，告警是**约束**、给少了才是事故；最该知道的恰恰是闲聊兜底）。消费方按 `safety_alert_active()` 限龄（总龄 `_SAFETY_ALERT_TTL` 默认 2h，实际还受焦点 TTL 每轮续期约束）| `{"level": "critical"\|"amber", "signal": str(≤40), "ts": int}` | 「本会话有一个**未解除**的安全告警」——Q9 会话状态：让红色机油灯这类警告跨轮成立。QA 轮实测，没有这一格时第二轮答天气、第三轮执行音量。设计：`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md` §Q9，契约测试 `orchestrator/cloud/tests/test_safety_focus.py` |
 
+| `_fallback` | 产出候选列表的 Agent（现 nearby.search）| `context.extract_focus` → `CandidateSet.is_fallback`；`newest_candidate_set()` 据它**优先绑定最近一份非兜底候选**，`_derive_choice_view` 据它决定 prompt 里渲染哪一份 | `True` | 「这一份候选是**我猜的那一类**，不是用户点名的那一份」——Q2/N5。出处：I-011 的真根因不是「失败的重搜清空了候选」，那次重搜**根本没失败**——泛化兜底搜出 10 家「美食」，于是它**合法地**覆盖了上一份川菜候选。**必须由产生方声明**：只有它知道「搜的和他说的是不是一回事」，编排看不出来。nearby 的判据是两个信号取或（用户给了具体词却被丢掉 / 类目是从饮食信号猜出来的），单一信号各有够不着的一半。⚠ 标反方向比漏标贵——真候选被当成兜底会**永远排在序数解析之后**。契约测试 `orchestrator/cloud/tests/test_candidate_sets.py` + `agents/nearby/tests/test_agent.py` |
+
+### 9.1b 候选集（`Focus.candidate_sets`，QA Q2，2026-08-16）
+
+候选此前是 `Focus` 里一个 `list[str]` 名字数组 + **每轮从当前 plan 重建**，
+三条后果各自对应一族问题：每轮重建 ⇒ 任何一轮不产生候选就抹平上一份（I-019）；
+只存名字 ⇒ **卡片是终点**，渲染过的营业时间/评分/价格下一轮一个字都不剩
+（I-018/I-023）；无来源无版本 ⇒ nearby POI / 商户菜单 / 途经点 / 充电候选共用一格
+（I-030）。
+
+升格后每组 = `{source_intent, agent_id, purpose, ts, is_fallback, items}`，四条纪律：
+
+1. **粘性但不永生**：跨轮接力、**ts 原样携带不续期**、按 `_CANDIDATE_TTL_S` 限龄
+   （同 `last_places`/`active_route`/`safety_alert` 三格已验证过的纪律）。
+   `ts=0`（旧部署留下的数据）按过期处理。
+2. **新旧共存、不互相覆盖**，容量 `_CANDIDATE_SETS_MAX`=3。合并键是
+   `(source_intent, purpose, is_fallback)`——**少了第三项，兜底那份会把点名那份挤掉**。
+3. **items 按白名单裁剪**。`_resume_result` 已经为「整份 provider 负载落 Redis」付过
+   一次学费（商户 token/电话/地址进会话态）。加字段要有真实消费方（B4 判据）。
+4. **整组不进 prompt**（同 `last_places` 纪律：让模型看见结构化事实只会诱导它自己编）。
+   进 prompt 的只有派生视图 `last_choices`（名字，且是**非兜底那份**的名字）。
+
+配套：句首序数引用（`references_a_candidate`）+ 零可引用候选 ⇒ 编排**不进 Planner**、
+确定性诚实弃权（I-052：真栈原样复现过无候选时编出一整条营业记录）。
+形态判据锚在句首是刻意的——「第二天第一个景点」指的是行程内部，不是上一份列表。
+
 ### 9.2 合成会话 session_id 前缀（跳过记忆抽取）
 
 `AppendTurnRequest` 无 meta 字段，**session_id 前缀是「合成会话」的显式契约**（零 proto

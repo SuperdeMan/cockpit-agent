@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 import sys
 import time
 
@@ -75,7 +76,13 @@ PROBE_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
 _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has",
                 "speech_any", "speech_not", "need_confirm", "card_type",
                 "is_question", "differs_from_turn", "has_operation_id",
-                "closes_op_from"}
+                "closes_op_from", "names_item_from", "not_names_item_from",
+                "no_clock_time"}
+# 候选集判据（Q2，2026-08-16）：**读卡片 items，不读话术**。
+#   `names_item_from: {turn: N, index: K}` —— 本轮话术必须点到第 N 轮卡片的第 K 项。
+# 为什么非要这条：CD2 用「没说『没有列表』」当判据，**连续三次假绿**——它确实答出了
+# 一个店名，只是答的是**兜底那份**列表的第二家（N5 的缺陷原样通过）。
+# 「答了一个名字」和「答对了那一份的那一个」是两件事，话术层分不开，卡片层分得开。
 # 挂起寻址键原语（Q1-B/C，2026-08-16）。轮上写 `op_from: N` = 把第 N 轮 final 下发的
 # `operation_id` 原样回传——**这是探针唯一能证明「多条挂起并存且各自可寻址」的手段**：
 # 不带寻址键时编排一律按「最近一条」寻址，那条路径证不了先来那条还在。
@@ -327,21 +334,33 @@ CASES = [
           "expect": {"speech_not": ["未查到", "没有查到营业时间", "暂无营业时间"],
                      "differs_from_turn": 1}},
      ]},
-    {"id": "CD2", "group": "candidate", "card": "Q2", "issue": "I-011",
-     "why": "一次失败的重搜不该清空上一份可用候选", "known": "red",
+    # ⚠ **尺子改过一次，留痕**（2026-08-16）。原判据是「没说『没有列表/请先查询』」，
+    # **连续三次假绿**：它确实答出了一个店名，但答的是**兜底那份**（第二轮泛化搜出的
+    # 「10 家美食」）的第二家，不是用户点名的川菜那份——N5 的缺陷原样通过。
+    # 「答了一个名字」和「答对了那一份的那一个」是两件事，话术层分不开，**卡片层分得开**。
+    # 新判据直接钉：本轮必须点到**第 1 轮卡片**的第 2 项。
+    {"id": "CD2", "group": "candidate", "card": "Q2", "issue": "I-011/N5",
+     "why": "兜底搜索产生的候选不得顶替用户点名的那一份", "known": "red",
      "turns": [
          {"say": "附近有什么川菜馆", "expect": {}},
          {"say": "附近有没有卖锟斤拷的店", "expect": {}},
-         # 同 CD1：首跑这轮也是把整张列表又念了一遍（假绿）。
-         {"say": "刚才列表里的第二家叫什么",
-          "expect": {"speech_not": ["没有列表", "请先查询", "暂时无法确定"],
-                     "differs_from_turn": 1}},
+         # Q2 的契约是「**不得点到兜底那份**」，不是「必须答得完美」。真栈三次取样里
+         # 一次点对了店但只说了主干名、一次干脆只澄清没点名——后者是「答非所问」，
+         # 归别的卡；混进来只会让候选绑定的读数说不清自己证明了什么
+         # （§4.3「把『不再危险』和『回答完美』分开报」的同一形态）。
+         {"say": "刚才川菜列表里的第二家叫什么",
+          "expect": {"not_names_item_from": 2, "differs_from_turn": 1}},
      ]},
+    # ⚠ **尺子改过一次，留痕**（2026-08-16）。原判据是关键词表
+    # 「没有/先查/无法/哪个/什么」，实测三次取样分别说了「哪家」「没法」——
+    # **全是正确的弃权，却被判红**。§4.3「话术层只能用形态判据」我自己又栽一次。
+    # 真正的硬要求是「不得编造」：形态判据 = 话术里不出现具体钟点 + 不产生动作。
+    # 「有没有承认引用不了」这一条**机械判不了**，不写进断言（写了就是下一个假绿）。
     {"id": "CD3", "group": "candidate", "card": "Q2", "issue": "I-052",
-     "why": "没有成功候选集时必须说无法引用「第一个」，不得编造", "known": "red",
+     "why": "没有可引用候选集时不得编造营业时间", "known": "red",
      "turns": [
          {"say": "第一个营业到几点？",
-          "expect": {"speech_any": ["没有", "先查", "无法", "哪个", "什么"]}},
+          "expect": {"no_clock_time": True, "no_actions": True}},
      ]},
 
     # ── Q6 执行事实账本 ────────────────────────────────────────────
@@ -430,6 +449,38 @@ def check_mapping() -> int:
 
 # ── 观测与判定 ────────────────────────────────────────────────────────────
 
+# 具体钟点：`22:30` / `22点` / `晚上10点半`。**判「编没编造」用形态不用词表**——
+# CD3 原来的判据是「没有/先查/无法/哪个/什么」五个词，实测三次取样分别说了「哪家」
+# 「没法」，全是**正确的弃权**却被判红（§4.3：尺子写错必须改）。
+_CLOCK_RE = re.compile(r"\d{1,2}\s*[:：]\s*\d{2}|\d{1,2}\s*点(?:半|\d{1,2}分)?")
+
+#: 店名比对前的归一。⚠ 这条是**被自己的假红逼出来的**：CD2 三次取样都答对了店名，
+#: 却全判红——卡片里是 `辣宴•老坛酸菜鱼`（U+2022），话术里是 `辣宴·老坛酸菜鱼`
+#: （U+00B7），我做的是逐字子串匹配。**系统对了、尺子认不出**，和 SF3 那次
+#: 「把正确回答判成红」同族（§4.3：尺子写错必须改）。
+#: 只剥标点与空白——再宽就会把「答了同组另一家」洗成绿，那正是本判据要抓的东西。
+_NAME_NOISE_RE = re.compile(r"[·•・‧\.\s()（）「」『』\"'`,，、]+")
+
+
+def _norm_name(s: str) -> str:
+    return _NAME_NOISE_RE.sub("", str(s or ""))
+
+
+#: 店名主干（剥掉尾部的分店括注）。真栈实测模型常说「辣宴•老坛酸菜鱼」而卡片是
+#: 「辣宴•老坛酸菜鱼(汉京金融中心店)」——**那是同一家店**，判它没点到是尺子太死。
+_BRANCH_SUFFIX_RE = re.compile(r"[（(][^（()）]{0,20}[店厅馆部]?[）)]\s*$")
+
+
+def _core_name(s: str) -> str:
+    return _norm_name(_BRANCH_SUFFIX_RE.sub("", str(s or "")).strip())
+
+
+def _speech_names(speech: str, names: list[str]) -> list[str]:
+    """话术点到了这一组里的哪些项（按主干名比对）。"""
+    hay = _norm_name(speech)
+    return [n for n in names if n and _core_name(n) and _core_name(n) in hay]
+
+
 def _action_names(msg: dict) -> list[str]:
     """动作的可判定名字：优先 payload.command（端侧盖的规范名），回退 type。"""
     out = []
@@ -455,10 +506,29 @@ def _observe(msg: dict) -> dict:
         # Q1-B/C：挂起寻址键与本轮关掉的挂起（服务端权威）
         "operation_id": str(msg.get("operation_id") or ""),
         "closed_operation_ids": list(msg.get("closed_operation_ids") or []),
+        # Q2：卡片候选项名（按渲染顺序）。判「答的是哪一份的哪一个」只能靠它。
+        "card_items": _card_item_names(card),
     }
 
 
-def _judge(expect: dict, obs: dict, prior: list[dict] | None = None) -> list[str]:
+def _card_item_names(card: dict) -> list[str]:
+    """卡片里的候选项名，按渲染顺序。认 items/stops/options 三种既有形状。"""
+    if not isinstance(card, dict):
+        return []
+    for key in ("items", "stops", "options"):
+        seq = card.get(key)
+        if isinstance(seq, list):
+            names = [str((it or {}).get("name") or (it or {}).get("label")
+                         or (it or {}).get("title") or "").strip()
+                     for it in seq if isinstance(it, dict)]
+            names = [n for n in names if n]
+            if names:
+                return names
+    return []
+
+
+def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
+           notes: list[str] | None = None) -> list[str]:
     """返回**失败原因列表**（空 = 通过）。判据全部机械，不做语义理解。"""
     bad = set(expect) - _EXPECT_KEYS
     if bad:
@@ -499,6 +569,46 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None) -> list[str
         got = bool(obs.get("operation_id"))
         if got != expect["has_operation_id"]:
             fails.append(f"operation_id 有无={got}，期望 {expect['has_operation_id']}")
+    ref_item = expect.get("names_item_from")
+    if ref_item is not None:
+        rows = prior or []
+        src = next((r for r in rows
+                    if r.get("turn") == int(ref_item["turn"])), None)
+        names = (src or {}).get("card_items") or []
+        idx = int(ref_item["index"])
+        if len(names) < idx:
+            fails.append(
+                f"第 {ref_item['turn']} 轮卡片只有 {len(names)} 项，取不到第 {idx} 项"
+                "——**前提没成立，这一轮的读数不作数**")
+        else:
+            want = names[idx - 1]
+            if not _speech_names(speech, [want]):
+                other = _speech_names(speech, names)
+                fails.append(
+                    f"话术没点到第 {ref_item['turn']} 轮的第 {idx} 项「{want}」"
+                    + (f"（点到的是同组的 {other}）" if other else "（同组一个都没点到）"))
+    ref_not = expect.get("not_names_item_from")
+    if ref_not is not None:
+        # **绑错了哪一份**与**答得好不好**是两件事，分开报（同 §4.3 SF3 那条纪律）。
+        # 这条只管前者：不许点到那一组里的任何一项。它在「本轮压根没点名」时
+        # 天然通过——那是澄清质量问题，归别的卡，不该混进候选绑定的读数。
+        rows = prior or []
+        src = next((r for r in rows if r.get("turn") == int(ref_not)), None)
+        others = (src or {}).get("card_items") or []
+        if not others:
+            # **前提不成立 ≠ 通过**：第 N 轮压根没产出候选卡，就没有「不该被引用的
+            # 那份」可言。静默判绿就是拿一个什么都没证明的样本当证据（E4 那条
+            # 「探针替被测系统抽掉一个前提」的同族）。出提示，让读的人看得见。
+            if notes is not None:
+                notes.append(
+                    f"第 {ref_not} 轮没有候选卡 ⇒ 本样本对「兜底不得顶替」**不构成证据**")
+        else:
+            hit = _speech_names(speech, others)
+            if hit:
+                fails.append(
+                    f"话术点到了第 {ref_not} 轮那一组的 {hit}——那是不该被引用的那份")
+    if expect.get("no_clock_time") and _CLOCK_RE.search(speech):
+        fails.append(f"话术里出现了具体钟点——无候选可引用时不得编造：{_CLOCK_RE.search(speech).group()}")
     ref_close = expect.get("closes_op_from")
     if ref_close is not None:
         rows = prior or []
@@ -566,7 +676,8 @@ async def _run_case(case: dict, stamp: int) -> dict:
             except asyncio.TimeoutError:
                 obs = {"speech": "[timeout]", "actions": [], "need_confirm": False,
                        "card_type": "", "is_question": False, "error": True}
-            fails = _judge(turn.get("expect") or {}, obs, rows)
+            notes: list[str] = []
+            fails = _judge(turn.get("expect") or {}, obs, rows, notes)
             rows.append({"turn": i, "sid": sid, "say": turn["say"],
                          "session": sessions[sid], **obs, "fails": fails})
             flag = "✔" if not fails else "✘"
@@ -575,6 +686,8 @@ async def _run_case(case: dict, stamp: int) -> dict:
                   f" {obs['speech'][:48].replace(chr(10), ' ')}")
             for f in fails:
                 print(f"        · {f}")
+            for n in notes:
+                print(f"        ℹ {n}")
     verdict = "PASS" if all(not r["fails"] for r in rows) else "FAIL"
     return {"id": case["id"], "group": case["group"], "card": case["card"],
             "issue": case["issue"], "known": case["known"], "verdict": verdict,

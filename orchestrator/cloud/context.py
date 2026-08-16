@@ -236,8 +236,26 @@ class Focus:
     attr: str = ""                                      # "温度"/"颜色"...
     last_poi: str = ""                                  # 上个 POI（"还是刚才那家"）
     last_destination: str = ""                          # 上个导航目的地
+    # ⚠ 这两格现在是**派生视图**，不再独立抽取（Q2）：由 `candidate_sets` 里
+    # **最近一份非兜底**候选算出来，只服务 prompt 渲染与既有消费方。
+    # 独立抽取的老毛病是「任何一轮不产生候选就把上一份抹平」（I-019）。
     last_choice_purpose: str = ""                       # list | waypoint（最新候选卡的语义）
     last_choices: list[str] = field(default_factory=list)  # 最新候选名，按卡片顺序（最多 5 个）
+    # Q2 候选集一等对象：最近 N 组，**按产生先后**（最后一组最新）。
+    # 每组 = {source_intent, agent_id, purpose, ts, is_fallback, items:[{name, ...}]}。
+    #
+    # 为什么要升格：此前「候选」只是一个 `list[str]` 名字数组，且**每轮从当前 plan
+    # 重建**。三条后果各自对应一族问题——
+    #   · 每轮重建 ⇒ 任何一轮不产生候选就抹平上一份（I-019）；
+    #   · 只存名字 ⇒ 卡片上明明渲染了营业时间/评分/价格，下一轮上下文里一个字都没有
+    #     （I-018「称全部未查到营业时间」、I-023「不肯算 26.5+9.5」）。
+    #     **卡片是终点**：结构化结果一旦渲染成卡片就不再是可消费的事实；
+    #   · 无来源无版本 ⇒ nearby POI / 商户菜单 / 途经点 / 充电目的地共用一格，
+    #     跨域「第二个」无从判断问的是哪一份（I-030、I-025①、I-053②）。
+    #
+    # **刻意不整组进 prompt**（同 `last_places` 那条纪律）：让模型看见结构化事实
+    # 只会诱导它自己编。它是给**确定性消费方**用的。
+    candidate_sets: list[dict] = field(default_factory=list)
     destination_lat: float | None = None                # 已解析目的地坐标（供“那边”确定性续接）
     destination_lng: float | None = None
     # 上一轮 nearby.search 取回的公开 POI（只留 name/lng/lat 三标量，最多 10 条）。
@@ -269,6 +287,7 @@ class Focus:
         return not (self.obj or self.positions or self.attr
                     or self.last_poi or self.last_destination or self.last_intent
                     or self.last_choice_purpose or self.last_choices
+                    or self.candidate_sets
                     or self.last_places or self.active_route or self.safety_alert
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
@@ -600,6 +619,88 @@ def safety_alert_active(alert, *, now: float | None = None) -> bool:
     return ts > 0 and ((now or time.time()) - ts) <= _SAFETY_ALERT_TTL
 
 
+# ── Q2 候选集 ────────────────────────────────────────────────────────────
+#: 候选项里**允许跨轮留存**的字段。白名单而不是黑名单：`_resume_result` 已经为
+#: 「整份 provider 负载落 Redis」付过一次学费（商户 token/电话/地址进了会话态）。
+#: 名单本身就是「哪些事实值得跨轮消费」的声明——加字段要有真实消费方（B4 判据）。
+_CANDIDATE_ITEM_KEYS = (
+    "id", "name", "lng", "lat", "city", "address",
+    # I-018/I-023 需要的结构化事实：卡片上渲染了、下一轮却一个字都没有的那些
+    "open_hours", "business_hours", "opening_hours", "rating", "cost",
+    "price", "tel", "distance", "distance_m", "category", "spec",
+)
+#: 一个会话最多留几组候选。同挂起表的理由：候选是**用户脑子里记得的东西**。
+_CANDIDATE_SETS_MAX = 3
+#: 候选集时效（秒）。同 `last_places` 三条纪律：粘性接力**不续期**，
+#: 时效从产生那一刻起算——接力多少轮都不能让「刚才那家」变成「上周那家」。
+_CANDIDATE_TTL_S = 900.0
+
+
+def _candidate_items(raw_items: list) -> list[dict]:
+    """按白名单裁剪候选项。名字是唯一必需字段——没名字的项无从指代。"""
+    out: list[dict] = []
+    for item in raw_items[:10]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("title")
+                   or item.get("label") or item.get("poi_name") or "").strip()
+        if not name:
+            continue
+        kept = {"name": name}
+        for key in _CANDIDATE_ITEM_KEYS:
+            if key == "name" or key not in item:
+                continue
+            value = item[key]
+            if isinstance(value, (str, int, float, bool)) and value != "":
+                kept[key] = value
+        out.append(kept)
+    return out
+
+
+def _live_candidate_sets(sets: list, now: float | None = None) -> list[dict]:
+    """按各自的 ts 限龄。0 = 旧数据无时间戳，按过期处理（同 last_places_ts 口径）。"""
+    now = time.time() if now is None else now
+    return [s for s in sets
+            if isinstance(s, dict)
+            and 0 < float(s.get("ts") or 0) > now - _CANDIDATE_TTL_S]
+
+
+#: 「这句话开头就在指代一个列表里的某一项」。**锚在句首**是刻意的：
+#: 「第二天第一个景点安排什么」里的序数指的是行程内部，不是上一份候选列表。
+#:
+#: ⚠ 仓库里已经有三处序数正则，各自回答**另一个**问题，所以这里不复用也不合并：
+#:   · `engine._is_topic_change` 的 `fullmatch` —— 「这是不是一句**裸**序号选择」；
+#:   · `planning._FOCUS_DEPENDENT_ELLIPSIS_RE` —— 「这是不是焦点依赖的省略句」；
+#:   · `actionability` 那条 —— 形态分类器的特征。
+#: 本条问的是「**这句话在引用某一份候选**吗」（可以带别的内容：第一个营业到几点）。
+#: 合并成一条会让四个判定互相牵连——B4 那条判据反对的是「两份声明说同一件事」，
+#: 不是「不同的问题各自有判据」。
+_CANDIDATE_REFERENCE_RE = re.compile(
+    r"^(?:刚才|那个|这个|请问|帮我?看看|看看|查一下|问一下)?[，,]?\s*"
+    r"第\s*[一二三四五六七八九十\d]+\s*(?:个|家|项|条|种|款)")
+
+
+def references_a_candidate(text: str) -> bool:
+    return bool(_CANDIDATE_REFERENCE_RE.match(str(text or "").strip()))
+
+
+def newest_candidate_set(focus, *, allow_fallback: bool = False) -> dict | None:
+    """序数指代该绑到哪一组（Q2 的核心判定）。
+
+    **优先最近一份非兜底候选**——兜底/降级搜出来的那份不得顶替用户点名的那份
+    （N5：I-011 里那次重搜根本没失败，泛化兜底合法地覆盖了川菜候选，
+    于是「刚才列表里的第二家」拿到了兜底那份的第二家）。
+    全是兜底时才退回最近一份（`allow_fallback` 由调用方决定要不要退）。
+    """
+    sets = _live_candidate_sets(getattr(focus, "candidate_sets", None) or [])
+    if not sets:
+        return None
+    for entry in reversed(sets):
+        if not entry.get("is_fallback"):
+            return entry
+    return sets[-1] if allow_fallback else None
+
+
 def extract_focus(plan, results) -> "Focus | None":
     """从本轮执行的 plan + 成功结果抽取焦点（best-effort，启发式）。
 
@@ -628,16 +729,21 @@ def extract_focus(plan, results) -> "Focus | None":
             focus.last_poi = poi
         choice_items = data.get("stops") or data.get("items")
         if isinstance(choice_items, list):
-            choices = [
-                str(item.get("name") or item.get("title") or item.get("poi_name") or "")
-                for item in choice_items[:5]
-                if isinstance(item, dict)
-            ]
-            focus.last_choices = [name for name in choices if name]
-            if focus.last_choices:
-                focus.last_choice_purpose = (
-                    "waypoint" if isinstance(data.get("stops"), list) else "list"
-                )
+            # Q2：候选集升格成一等对象。名字数组（last_choices）改由它派生，
+            # **结构化属性一并留下**——卡片渲染完就丢，是 I-018/I-023 的成因。
+            items = _candidate_items(choice_items)
+            if items:
+                focus.candidate_sets.append({
+                    "source_intent": step.intent or "",
+                    "agent_id": step.agent_id or "",
+                    "purpose": ("waypoint" if isinstance(data.get("stops"), list)
+                                else "list"),
+                    "ts": time.time(),
+                    # 兜底与否**由产生方声明**（保留键 `_fallback`，同 `_route_session`
+                    # 族）：编排看不出「搜的和他说的是不是一回事」。
+                    "is_fallback": bool(data.get("_fallback")),
+                    "items": items,
+                })
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
         # 搜索结果里的同名字段误当成下一轮“那边”的目的地。
         if domain == "navigation":
@@ -705,7 +811,25 @@ def extract_focus(plan, results) -> "Focus | None":
             data.get("_safety_alert") if isinstance(data, dict) else None)
         if alert:
             focus.safety_alert = alert
+    _derive_choice_view(focus)
     return None if focus.is_empty() else focus
+
+
+def _derive_choice_view(focus: "Focus") -> None:
+    """`last_choices`/`last_choice_purpose` = 最近一份**非兜底**候选的派生视图。
+
+    它们是 prompt 渲染面与既有消费方的接口，形状一个字不变；变的是**数据从哪来**
+    ——从「每轮重建的一格」变成「候选集台账的一个视图」。于是：
+      · 不产生候选的轮不再抹平上一份（I-019）；
+      · 兜底那份不再顶替用户点名的那份（N5/I-011）——序数问的是后者。
+    """
+    entry = newest_candidate_set(focus, allow_fallback=True)
+    if not entry:
+        return
+    focus.last_choices = [str(i.get("name") or "") for i in entry.get("items", [])][:5]
+    focus.last_choices = [n for n in focus.last_choices if n]
+    if focus.last_choices:
+        focus.last_choice_purpose = str(entry.get("purpose") or "list")
 
 
 class ContextManager:
@@ -761,8 +885,34 @@ class ContextManager:
                 # G8 active_route 同款粘性：只有新的 navigate 才替换活动路线。
                 previous = None
                 if (not focus.last_places or not focus.active_route
-                        or not focus.safety_alert):
+                        or not focus.safety_alert
+                        or len(focus.candidate_sets) < _CANDIDATE_SETS_MAX):
                     previous = await self._load_focus(session_id, user_id)
+                # Q2 候选集台账：**旧组保留、新组追加**，按 ts 限龄、封顶 N 组。
+                # 这里刻意**不是**「第四个字段也加一条粘性接力」——那是卡里点名
+                # 不要做的第三次打补丁。三格粘性（last_places/active_route/
+                # safety_alert）各自是被真栈烧出来的补丁；候选集换的是**载体**：
+                # 一张有来源、有版本、有时效的台账，新旧共存而不是互相覆盖。
+                if previous is not None:
+                    merged = _live_candidate_sets(
+                        list(getattr(previous, "candidate_sets", None) or []))
+                    fresh = focus.candidate_sets
+                    # 合并键带 `is_fallback`：**兜底那份与点名那份不是同一件事的两个
+                    # 版本，是两种东西**。首版键只有 (intent, purpose)，于是
+                    # 「川菜 → 兜底美食」两轮同键，兜底当场把点名那份挤掉——
+                    # N5 换了个地方原样复发（测试当场抓到）。
+                    def _key(s):
+                        return (s.get("source_intent"), s.get("purpose"),
+                                bool(s.get("is_fallback")))
+                    fresh_keys = {_key(s) for s in fresh}
+                    # 同键的旧组被本轮新组取代；其余原样留着，
+                    # **ts 原样携带不续期**（时效从它产生那一刻起算）。
+                    focus.candidate_sets = [
+                        s for s in merged if _key(s) not in fresh_keys
+                    ] + fresh
+                focus.candidate_sets = _live_candidate_sets(
+                    focus.candidate_sets)[-_CANDIDATE_SETS_MAX:]
+                _derive_choice_view(focus)
                 if previous is not None and not focus.last_places \
                         and previous.last_places:
                     focus.last_places = list(previous.last_places)

@@ -1197,3 +1197,71 @@ def test_real_dish_words_still_pass_through():
     """反向对照：菜系/菜品词照旧原样进检索（别把守卫修成一律退回类目）。"""
     for kw_slot in ("火锅", "川菜", "日料", "潮汕牛肉", "烤鱼", "轻食", "brunch"):
         assert NearbyAgent._build_keyword("餐饮", "", "", kw_slot) == kw_slot, kw_slot
+
+
+# ── Q2/N5：兜底候选必须自报家门（保留键 `_fallback`）────────────────────────
+# I-011 的真根因不是「失败的重搜清空了候选」——那次重搜**根本没失败**：泛化兜底
+# 搜出 10 家「美食」，于是它**合法地**覆盖了上一份川菜候选，第三轮「刚才列表里的
+# 第二家」拿到的是兜底那份的第二家。要修的是「兜底不得顶替用户点名的那份」，
+# 而编排看不出一次检索是不是兜底——**只有产生方知道搜的和他说的是不是一回事**。
+
+def test_discarded_user_term_declares_a_fallback():
+    """用户点了一个具体词、检索词却退回干净类目词 ⇒ 这一份是兜底。
+
+    CD2 的原句形态：「附近有没有卖锟斤拷的店」——planner 把那个词填进 keyword，
+    `_build_keyword` 剥完认不出，落回「美食」。搜出来的 10 家和用户说的没关系。
+    """
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "餐饮", "keyword": "锟斤拷"},
+        raw_text="附近有没有卖锟斤拷的店", meta=_LOC))
+    assert res.status == "ok"
+    assert res.data.get("_fallback") is True
+
+
+def test_generic_food_request_is_not_a_fallback():
+    """对照：用户本来就问得泛（「附近有什么好吃的」，没点任何具体词）——
+    搜「美食」是**照他说的做**，不是猜。标成兜底会让这一份永远排在序数解析之后。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "餐饮"}, raw_text="附近有什么好吃的", meta=_LOC))
+    assert res.status == "ok"
+    assert "_fallback" not in res.data
+
+
+def test_named_cuisine_is_not_a_fallback():
+    """对照：用户点了菜系 ⇒ 这就是他要的那一份，不许被标成兜底
+    （标错方向的代价是**真候选被当成兜底忽略**，比漏标更贵）。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"cuisine": "川菜"}, raw_text="附近的川菜馆", meta=_LOC))
+    assert res.status == "ok"
+    assert "_fallback" not in res.data
+
+
+def test_named_brand_is_not_a_fallback():
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"brand": "瑞幸"}, raw_text="附近的瑞幸", meta=_LOC))
+    assert res.status == "ok"
+    assert "_fallback" not in res.data
+
+
+def test_explicit_facility_category_is_not_a_fallback():
+    """「附近的停车场」检索词就该是干净类目词——它是用户**点名**的类目，不是我猜的。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "停车场"}, raw_text="附近的停车场", meta=_LOC))
+    assert res.status == "ok"
+    assert "_fallback" not in res.data
+
+
+def test_guessed_category_declares_a_fallback_even_without_a_discarded_term():
+    """第二个信号：planner 一个具体词都不填、只给 category=餐饮 时，
+    「用户给了词我们丢了」这条够不着——真栈 3 轮里有一轮正是这个形态，
+    兜底没被标出来、序数当场绑到它上面。类目是不是**猜**的必须单独判。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "餐饮"}, raw_text="附近有没有卖锟斤拷的店", meta=_LOC))
+    assert res.status == "ok"
+    assert res.data.get("_fallback") is True
