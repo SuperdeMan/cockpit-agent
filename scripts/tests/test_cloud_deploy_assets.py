@@ -312,6 +312,55 @@ def test_remote_inspection_and_preflight_use_real_schema_fingerprints():
         assert required in text
 
 
+def test_remote_apply_rechecks_preflight_and_has_no_subshell_error_suppression():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert body.count('preflight_migration "${migration_id}"') >= 2
+    assert body.index("run_required_backup") < body.rindex("preflight_migration")
+    assert body.rindex("preflight_migration") < body.index("stop_application_writers")
+    assert "if ! (" not in text
+    assert "ROLLBACK_FAILED" in text
+
+
+def test_remote_verification_reads_actual_target_stores_and_writes_atomic_evidence():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert "collect_target_attestation" in text
+    assert 'ps -a -q redis' in text
+    assert 'type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly' in text
+    assert 'evidence_partial="${directory}/evidence.json.partial"' in text
+    assert 'chmod 0600 -- "${evidence_partial}"' in text
+    assert "PostgreSQL aggregate mismatch" in text
+    assert "Redis aggregate mismatch" in text
+    assert "Collector aggregate mismatch" in text
+
+
+def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path: Path):
+    bash = _git_bash()
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "harness.sh"
+    harness.write_text(textwrap.dedent(f"""
+        set -u
+        source '{REMOTE_MIGRATION_PATH.as_posix()}'
+        load_runtime() {{ :; }}
+        require_import_bundle() {{ :; }}
+        preflight_migration() {{ printf 'preflight\n' >>'{events.as_posix()}'; }}
+        run_required_backup() {{ printf 'backup\n' >>'{events.as_posix()}'; printf '20260817T010203Z\n'; }}
+        write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
+        stop_application_writers() {{ printf 'stop\n' >>'{events.as_posix()}'; }}
+        restore_postgres_dump() {{ printf 'postgres\n' >>'{events.as_posix()}'; return 23; }}
+        restore_redis_rdb() {{ printf 'redis\n' >>'{events.as_posix()}'; }}
+        install_collector_db() {{ printf 'collector\n' >>'{events.as_posix()}'; }}
+        rollback_all() {{ printf 'rollback\n' >>'{events.as_posix()}'; return 0; }}
+        apply_migration 20260817T010203Z-abcdef0-online
+    """), encoding="utf-8")
+    completed = subprocess.run([str(bash), str(harness)], capture_output=True, text=True)
+    assert completed.returncode != 0
+    recorded = events.read_text(encoding="utf-8").splitlines()
+    assert recorded.count("preflight") == 2
+    assert "postgres" in recorded and "rollback" in recorded
+    assert "redis" not in recorded and "collector" not in recorded
+
+
 def test_remote_release_validates_prepare_upload_and_deploy_ids():
     text = _required_text(REMOTE_RELEASE_PATH)
     assert "validate_full_sha" in text

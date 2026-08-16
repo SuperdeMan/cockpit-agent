@@ -272,18 +272,19 @@ PY
 }
 
 stop_application_writers() {
-  local service
+  local service services_text running_id
   local -a services writers
-  mapfile -t services < <("${compose[@]}" config --services)
+  services_text="$("${compose[@]}" config --services)" || return $?
+  mapfile -t services <<<"${services_text}"
   [[ "${#services[@]}" -gt 2 ]] || die "compose service list is incomplete"
   for service in "${services[@]}"; do
     [[ "${service}" =~ ^[a-z0-9-]+$ ]] || die "compose service name is invalid"
     [[ "${service}" == "postgres" || "${service}" == "redis" ]] || writers+=("${service}")
   done
-  "${compose[@]}" stop "${writers[@]}"
+  "${compose[@]}" stop "${writers[@]}" || return $?
   for service in "${writers[@]}"; do
-    [[ -z "$("${compose[@]}" ps -q --status running "${service}")" ]] \
-      || die "application writer did not stop: ${service}"
+    running_id="$("${compose[@]}" ps -q --status running "${service}")" || return $?
+    [[ -z "${running_id}" ]] || die "application writer did not stop: ${service}"
   done
 }
 
@@ -298,9 +299,23 @@ restore_postgres_dump() {
   local dump="$1"
   [[ -s "${dump}" && ! -L "${dump}" ]] || die "PostgreSQL restore source is invalid"
   "${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -v ON_ERROR_STOP=1 \
-    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cockpit' AND pid <> pg_backend_pid()" >/dev/null
+    -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cockpit' AND pid <> pg_backend_pid()" >/dev/null || return $?
   "${compose[@]}" exec -T postgres pg_restore -U cockpit -d cockpit \
-    --clean --if-exists --no-owner --no-privileges --exit-on-error <"${dump}"
+    --clean --if-exists --no-owner --no-privileges --exit-on-error <"${dump}" || return $?
+}
+
+resolve_redis_identity() {
+  local ids_text
+  local -a ids
+  ids_text="$("${compose[@]}" ps -a -q redis)" || return $?
+  mapfile -t ids <<<"${ids_text}"
+  [[ "${#ids[@]}" -eq 1 && "${ids[0]}" =~ ^[0-9a-f]{12,64}$ ]] \
+    || die "redis container identity is not unique"
+  RESOLVED_REDIS_CONTAINER="${ids[0]}"
+  RESOLVED_REDIS_VOLUME="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${RESOLVED_REDIS_CONTAINER}")"
+  RESOLVED_REDIS_IMAGE="$(docker inspect --format '{{.Image}}' "${RESOLVED_REDIS_CONTAINER}")"
+  assert_named_volume "${RESOLVED_REDIS_VOLUME}" "${REDIS_VOLUME}"
+  [[ "${RESOLVED_REDIS_IMAGE}" =~ ^sha256:[0-9a-f]{64}$ ]] || die "redis image identity is invalid"
 }
 
 restore_redis_rdb() {
@@ -308,11 +323,16 @@ restore_redis_rdb() {
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local redis_container actual_volume image_id
   [[ -s "${rdb}" && ! -L "${rdb}" ]] || die "Redis restore source is invalid"
-  redis_container="$("${compose[@]}" ps -q redis)"
-  actual_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${redis_container}")"
-  assert_named_volume "${actual_volume}" "${REDIS_VOLUME}"
-  image_id="$(docker inspect --format '{{.Image}}' "${redis_container}")"
-  "${compose[@]}" stop redis
+  resolve_redis_identity
+  redis_container="${RESOLVED_REDIS_CONTAINER}"
+  actual_volume="${RESOLVED_REDIS_VOLUME}"
+  image_id="${RESOLVED_REDIS_IMAGE}"
+  "${compose[@]}" stop redis || return $?
+  resolve_redis_identity
+  [[ "${RESOLVED_REDIS_CONTAINER}" == "${redis_container}" \
+     && "${RESOLVED_REDIS_VOLUME}" == "${actual_volume}" \
+     && "${RESOLVED_REDIS_IMAGE}" == "${image_id}" ]] \
+    || die "redis identity changed after stop"
   install -d -m 0700 -o root -g root "${rollback_dir}"
   docker run --rm --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
@@ -323,11 +343,11 @@ restore_redis_rdb() {
       test ! -e /data/dump.rdb || mv /data/dump.rdb /rollback/dump.rdb
       test ! -e /data/appendonlydir || mv /data/appendonlydir /rollback/appendonlydir
       install -m 0600 /incoming/'"$(basename "${rdb}")"' /data/dump.rdb
-    '
-  "${compose[@]}" up -d --no-build --pull never redis
-  "${compose[@]}" exec -T redis redis-cli PING | grep -Fx PONG >/dev/null
-  "${compose[@]}" exec -T redis redis-check-rdb /data/dump.rdb | grep -F "CRC64 checksum is OK" >/dev/null
-  "${compose[@]}" exec -T redis test -d /data/appendonlydir
+    ' || return $?
+  "${compose[@]}" up -d --no-build --pull never redis || return $?
+  "${compose[@]}" exec -T redis redis-cli PING | grep -Fx PONG >/dev/null || return $?
+  "${compose[@]}" exec -T redis redis-check-rdb /data/dump.rdb | grep -F "CRC64 checksum is OK" >/dev/null || return $?
+  "${compose[@]}" exec -T redis test -d /data/appendonlydir || return $?
 }
 
 install_collector_db() {
@@ -363,6 +383,7 @@ with source.open("rb") as incoming, temporary.open("xb") as output:
 os.chmod(temporary, 0o600)
 os.replace(temporary, target)
 PY
+  [[ "$?" -eq 0 ]] || return $?
 }
 
 restore_collector_sql() {
@@ -384,20 +405,67 @@ with sqlite3.connect(target) as connection:
     if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
         raise SystemExit("restored collector integrity failed")
 PY
-  install_collector_db "${directory}/collector.db" "${migration_id}" "failed-import-collector-volume"
+  [[ "$?" -eq 0 ]] || return $?
+  install_collector_db "${directory}/collector.db" "${migration_id}" "failed-import-collector-volume" || return $?
+}
+
+collect_target_attestation() {
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
+  local pg_json redis_json collector_json collector_container collector_image evidence_partial
+  pg_json="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At <<'SQL'
+SELECT json_build_object(
+ 'tables', json_build_object(
+  'memory_item',(SELECT count(*) FROM memory_item),'memory_relation',(SELECT count(*) FROM memory_relation),
+  'reminder_item',(SELECT count(*) FROM reminder_item),'task_ledger',(SELECT count(*) FROM task_ledger),
+  'proactive_delivery',(SELECT count(*) FROM proactive_delivery),'scene_item',(SELECT count(*) FROM scene_item),
+  'voiceprint',(SELECT count(*) FROM voiceprint),'agents',(SELECT count(*) FROM agents),
+  'agent_capability_vec',(SELECT count(*) FROM agent_capability_vec)),
+ 'states', json_build_object(
+  'reminder_item.status',(SELECT COALESCE(json_object_agg(status,count),'{}'::json) FROM (SELECT status,count(*) count FROM reminder_item GROUP BY status)x),
+  'task_ledger.status',(SELECT COALESCE(json_object_agg(status,count),'{}'::json) FROM (SELECT status,count(*) count FROM task_ledger GROUP BY status)x),
+  'proactive_delivery.state',(SELECT COALESCE(json_object_agg(state,count),'{}'::json) FROM (SELECT state,count(*) count FROM proactive_delivery GROUP BY state)x),
+  'scene_item.status',(SELECT COALESCE(json_object_agg(status,count),'{}'::json) FROM (SELECT status,count(*) count FROM scene_item GROUP BY status)x)),
+ 'schema', json_build_object(
+  'columns',COALESCE((SELECT json_agg(json_build_array(table_name,column_name,ordinal_position,data_type,udt_name,is_nullable,column_default) ORDER BY table_name,ordinal_position) FROM information_schema.columns WHERE table_schema='public'),'[]'::json),
+  'primary_keys',COALESCE((SELECT json_agg(json_build_array(tc.table_name,tc.constraint_name,kcu.column_name) ORDER BY tc.table_name,tc.constraint_name,kcu.ordinal_position) FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'),'[]'::json),
+  'indexes',COALESCE((SELECT json_agg(json_build_array(tablename,indexname,indexdef) ORDER BY tablename,indexname) FROM pg_indexes WHERE schemaname='public'),'[]'::json)));
+SQL
+)"
+  redis_json="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
+redis.setresp(3); local c="0"; local n,p,e=0,0,0; local lo=nil; local hi=0; local px={}; local ty={};
+repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1 else e=e+1; if lo==nil or ttl<lo then lo=ttl end; if ttl>hi then hi=ttl end end end until c=="0";
+local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0)"
+  mapfile -t collector_ids < <("${compose[@]}" ps -a -q observability-collector)
+  [[ "${#collector_ids[@]}" -eq 1 ]] || return 1
+  collector_container="${collector_ids[0]}"
+  collector_image="$(docker inspect --format '{{.Image}}' "${collector_container}")"
+  collector_json="$(docker run --rm --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly" \
+    --entrypoint python "${collector_image}" -c '
+import hashlib,json,sqlite3
+with sqlite3.connect("file:/data/obs.db?mode=ro",uri=True) as c:
+ rows=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall(); tables={n:c.execute(f"SELECT count(*) FROM {n}").fetchone()[0] for n in ("turns","spans","llm_calls","logs")}; ok=c.execute("PRAGMA integrity_check").fetchall()==[("ok",)]; version=c.execute("PRAGMA user_version").fetchone()[0]
+encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii"); print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest(),"tables":tables,"integrity_check":"ok" if ok else "failed"},sort_keys=True,separators=(",", ":")))')"
+  evidence_partial="${directory}/evidence.json.partial"
+  python3 - "${directory}/manifest.json" "${evidence_partial}" "${pg_json}" "${redis_json}" "${collector_json}" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); pg=json.loads(sys.argv[3]); r=json.loads(sys.argv[4]); c=json.loads(sys.argv[5])
+schema=pg.pop("schema"); schema_hash=hashlib.sha256(json.dumps(schema,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")).hexdigest()
+if schema_hash!=m["postgres"]["schema_fingerprint"]: raise SystemExit("PostgreSQL schema aggregate mismatch")
+if pg["tables"]!=m["postgres"]["tables"] or pg["states"]!=m["postgres"]["states"]: raise SystemExit("PostgreSQL aggregate mismatch")
+for key in ("key_count","prefixes","types","persistent","expiring"):
+    if r[key]!=m["redis"][key]: raise SystemExit("Redis aggregate mismatch")
+for key in ("min_ttl_ms","max_ttl_ms"):
+    if not isinstance(r[key],int) or r[key]<0 or r[key]>m["redis"][key]: raise SystemExit("Redis TTL aggregate mismatch")
+if c!=m["collector"]: raise SystemExit("Collector aggregate mismatch")
+Path(sys.argv[2]).write_text(json.dumps({"postgres":pg,"redis":r,"collector":c},sort_keys=True,separators=(",", ":"))+"\n",encoding="utf-8")
+PY
+  chmod 0600 -- "${evidence_partial}"
+  mv -T "${evidence_partial}" "${directory}/evidence.json"
 }
 
 verify_store_group() {
-  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
-  "${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At \
-    -c "SELECT count(*) FROM memory_item" >/dev/null
-  "${compose[@]}" exec -T redis redis-cli DBSIZE >/dev/null
-  python3 - "${directory}/collector.db" <<'PY'
-import sqlite3, sys
-with sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True) as connection:
-    if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-        raise SystemExit("PRAGMA integrity_check failed")
-PY
+  collect_target_attestation "$1"
 }
 
 start_current_release() {
@@ -418,13 +486,25 @@ PY
 
 rollback_all() {
   local migration_id="$1" backup_stamp="$2"
-  stop_application_writers
-  restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump"
-  restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" "failed-import-redis-volume"
-  restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}"
-  start_current_release
-  verify_current_release
-  write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}"
+  stop_application_writers || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump" \
+    || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" "failed-import-redis-volume" \
+    || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}" \
+    || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  start_current_release || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  verify_current_release || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return 1
+}
+
+fail_and_rollback() {
+  local migration_id="$1" backup_stamp="$2" failed_step="$3"
+  if rollback_all "${migration_id}" "${backup_stamp}"; then
+    die "migration step ${failed_step} failed and the store group was rolled back"
+  fi
+  write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}" || true
+  die "migration step ${failed_step} and automatic rollback failed"
 }
 
 apply_migration() {
@@ -434,21 +514,18 @@ apply_migration() {
   preflight_migration "${migration_id}"
   backup_stamp="$(run_required_backup)"
   write_migration_state "BACKED_UP" "${migration_id}" "${backup_stamp}"
-  stop_application_writers
-  if ! (
-    restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump"
-    restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}"
-    install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}"
-    verify_store_group "${migration_id}"
-    start_current_release
-    verify_current_release
-  ); then
-    if ! rollback_all "${migration_id}" "${backup_stamp}"; then
-      write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"
-      die "migration and automatic rollback failed"
-    fi
-    die "migration failed and the store group was rolled back"
-  fi
+  preflight_migration "${migration_id}"
+  stop_application_writers || fail_and_rollback "${migration_id}" "${backup_stamp}" "stop-writers"
+  restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump" \
+    || fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"
+  restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}" \
+    || fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"
+  install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}" \
+    || fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"
+  verify_store_group "${migration_id}" \
+    || fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"
+  start_current_release || fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"
+  verify_current_release || fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification"
   write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}"
 }
 
@@ -502,4 +579,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
