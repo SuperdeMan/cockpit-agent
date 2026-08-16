@@ -20,6 +20,8 @@ SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
 RUNTIME_MODELS_PATH = CLOUD_DIR / "runtime-models.json"
+REMOTE_RELEASE_PATH = CLOUD_DIR / "remote-release.sh"
+REMOTE_BUILD_PATH = CLOUD_DIR / "remote-build.sh"
 
 LOOPBACK_PORTS = {
     "llm-gateway": ["127.0.0.1:50059:50059"],
@@ -96,6 +98,67 @@ def test_runtime_model_manifest_has_exact_validated_files():
         re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
         for item in models
     )
+
+
+def test_remote_release_holds_one_lock_for_the_full_transaction():
+    text = _required_text(REMOTE_RELEASE_PATH)
+    assert 'exec 9>"${RELEASE_LOCK}"' in text
+    assert "flock -n 9" in text
+    assert "build_release" in text
+    assert "activate_release" in text
+    assert "verify_current_release" in text
+    assert text.index("flock -n 9") < text.index("build_release")
+
+
+def test_remote_release_validates_prepare_upload_and_deploy_ids():
+    text = _required_text(REMOTE_RELEASE_PATH)
+    assert "validate_full_sha" in text
+    assert "validate_upload_id" in text
+    assert "prepare-upload" in text
+    assert 'prepare_upload "${5}"' in text
+    assert 'build_release "${3}" "${5}"' in text
+
+
+def test_remote_helpers_cannot_be_executed_directly():
+    text = _required_text(REMOTE_BUILD_PATH)
+    assert '[[ "${BASH_SOURCE[0]}" != "$0" ]]' in text
+    assert "build_release()" in text
+
+
+def test_remote_build_is_sequential_and_never_touches_runtime():
+    text = _required_text(REMOTE_BUILD_PATH)
+    assert "while IFS=" in text
+    assert 'docker compose "${compose_args[@]}" build "${service}"' in text
+    assert "--parallel" not in text
+    assert "docker compose down" not in text
+    assert "docker stop" not in text
+    assert "docker kill" not in text
+    assert "rm -rf" not in text
+    assert "docker volume rm" not in text
+
+
+def test_remote_build_checks_capacity_models_and_artifact_before_building():
+    text = _required_text(REMOTE_BUILD_PATH)
+    build_position = text.index(
+        'docker compose "${compose_args[@]}" build "${service}"'
+    )
+    for required in (
+        "MIN_DISK_BYTES",
+        "MIN_MEMORY_BYTES",
+        "receive_and_validate_artifact",
+        "verify_shared_models",
+    ):
+        assert required in text
+        assert text.index(required) < build_position
+    assert "30 * 1024 * 1024 * 1024" in text
+    assert "3 * 1024 * 1024 * 1024" in text
+
+
+def test_remote_build_preserves_failures_and_rejects_overwrite():
+    text = _required_text(REMOTE_BUILD_PATH)
+    assert '[[ ! -e "${build_dir}" ]]' in text
+    for forbidden in ("rm ", "unlink", "rmdir", "-delete"):
+        assert forbidden not in text.lower()
 
 
 def _service_block_has_reset(text: str, service: str, field: str) -> bool:
