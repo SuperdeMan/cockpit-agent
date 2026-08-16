@@ -244,7 +244,9 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 
 第一阶段 online 不停止本地写入；快照之后产生的新数据不会自动同步。第二阶段 final 必须先确认
 所有本地写入者已经停止，再生成一份完整快照并覆盖云端。两个阶段都是 replace，不是 merge，
-且云端开始迁移前先生成 PostgreSQL、Redis、Collector 同时间戳备份。
+且云端只在完成全部只读预检、停止并确认写入者退出后，才在同一停写窗口生成 PostgreSQL、
+Redis、Collector 同时间戳备份。三份备份必须分别通过 archive 清单、RDB CRC、SQLite 实际恢复与
+integrity check，并以流式 SHA-256 写入 backup manifest；任一失败会恢复原 release，不进入 replace。
 
 ```powershell
 python scripts/cloud_data_migration.py snapshot --phase online
@@ -272,7 +274,8 @@ python scripts/cloud_data_migration.py snapshot --phase final --quiesce-local --
 远端验证分为 pre-start 与 post-start。恢复完成且写服务尚未启动时，工具将 snapshot 精确对账写入
 `evidence-pre-start.json`；release 启动后再写 `evidence-post-start.json`。post-start 允许服务
 自然增长，但 PostgreSQL 持久业务表及 manifest 状态计数不得减少，特别包括 pending reminders、
-enabled scenes 和 voiceprint。Redis 版本/类型集合保持不变，每个 persistent Redis prefix 的
-持久 key 计数不得减少；TTL key 可自然变化。Collector schema 和 `user_version` 保持不变，表计数
-不得减少。`verify` 使用保存的 pre-start baseline 执行同一规则，不再要求当前状态与原始 snapshot
+enabled scenes 和 voiceprint。PostgreSQL 状态按明确的状态集合与实体总数守恒校验，不要求每个状态
+bucket 单调增加。Redis 版本/类型集合保持不变，每个 persistent Redis prefix 的持久 key 计数不得减少；
+TTL key 可自然衰减或新增。Collector schema 和 `user_version` 保持不变，retention 导致的减少会按表
+记录删除差值，而不是伪报成迁移丢数。`verify` 使用保存的 pre-start baseline 执行同一规则，不再要求当前状态与原始 snapshot
 全量精确相等；所有证据仍只记录安全聚合，不输出正文或完整 key。

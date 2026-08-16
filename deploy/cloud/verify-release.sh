@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 [[ "${BASH_SOURCE[0]}" != "$0" ]] || {
-  printf 'verify-release.sh must be sourced by remote-release.sh\n' >&2
+  printf 'verify-release.sh is a source-only verification library\n' >&2
   exit 2
+}
+
+verify_error() {
+  printf 'cloud verification: %s\n' "$1" >&2
+  return 1
 }
 
 readonly -a PRIVATE_HTTPS_PORTS=(443 8443 8444 8445 8446)
@@ -40,7 +45,7 @@ running = sum(state == "running" for state in states)
 print(len(rows), running, bad)
 ' <<<"${payload}")"
   [[ "${PROJECT_COUNTS}" == "30 30 0" ]] \
-    || die "runtime project container state is not 30 running and 0 bad"
+    || { verify_error "runtime project container state is not 30 running and 0 bad"; return 1; }
 }
 
 verify_loopback_listeners() {
@@ -71,8 +76,8 @@ verify_tailscale_serve() {
   local status count
   status="$(tailscale serve status)"
   count="$(grep -Fic '(tailnet only)' <<<"${status}" || true)"
-  [[ "${count}" -eq 5 ]] || die "Tailscale Serve does not expose five tailnet only entries"
-  ! grep -Fqi 'funnel' <<<"${status}" || die "Tailscale Funnel must remain disabled"
+  [[ "${count}" -eq 5 ]] || { verify_error "Tailscale Serve does not expose five tailnet only entries"; return 1; }
+  if grep -Fqi 'funnel' <<<"${status}"; then verify_error "Tailscale Funnel must remain disabled"; return 1; fi
   TAILNET_ENTRY_COUNT="${count}"
 }
 
@@ -88,7 +93,7 @@ verify_https_endpoints() {
   while IFS=$'\t' read -r name url; do
     code="$(curl --fail --silent --show-error --output /dev/null \
       --write-out '%{http_code}' --max-time 20 "${url}")"
-    [[ "${code}" == "200" ]] || die "HTTPS endpoint ${name} failed"
+    [[ "${code}" == "200" ]] || { verify_error "HTTPS endpoint ${name} failed"; return 1; }
     HTTPS_RESULTS+="${name}=${code}"$'\n'
   done < <(
     printf 'hmi\thttps://%s/\n' "${fqdn}"
@@ -105,9 +110,9 @@ run_wss_probes() {
   hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)"
   collector_id="$(compose_for_release "${release_dir}" "${sha}" ps -q observability-collector)"
   [[ -n "${hmi_id}" && -n "${collector_id}" ]] \
-    || die "probe containers are unavailable"
+    || { verify_error "probe containers are unavailable"; return 1; }
   ws_token="$(container_env_value "${hmi_id}" VITE_WS_TOKEN)"
-  [[ -n "${ws_token}" ]] || die "runtime WebSocket credential is unavailable"
+  [[ -n "${ws_token}" ]] || { verify_error "runtime WebSocket credential is unavailable"; return 1; }
   EDGE_PROBE_OUTPUT="$(docker exec -i \
     -e WS_URL="wss://${fqdn}:8443/ws" \
     -e WS_TOKEN="${ws_token}" \
@@ -124,7 +129,7 @@ verify_data_and_backup() {
   postgres_id="$(compose_for_release "${release_dir}" "${sha}" ps -q postgres)"
   redis_id="$(compose_for_release "${release_dir}" "${sha}" ps -q redis)"
   [[ -n "${postgres_id}" && -n "${redis_id}" ]] \
-    || die "data dependency containers are unavailable"
+    || { verify_error "data dependency containers are unavailable"; return 1; }
   docker exec "${postgres_id}" pg_isready -U cockpit >/dev/null
   [[ "$(docker exec "${redis_id}" redis-cli ping)" == "PONG" ]]
   [[ "$(systemctl is-enabled car-agent-backup.timer)" == "enabled" ]]
@@ -136,7 +141,7 @@ write_verification_evidence() {
   local sha="$1" timestamp evidence_dir target
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
   [[ "${timestamp}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
-    || die "verification timestamp is invalid"
+    || { verify_error "verification timestamp is invalid"; return 1; }
   evidence_dir="${SHARED_ROOT}/evidence/releases/${sha}"
   install -d -m 0700 -o root -g root "${evidence_dir}"
   target="${evidence_dir}/verification.json"
@@ -196,14 +201,14 @@ verify_release() {
   load_runtime_project_name
   release_dir="$(readlink -f "${RELEASE_ROOT}/current")"
   [[ "$(basename "${release_dir}")" == "${sha}" ]] \
-    || die "current release does not match verification target"
+    || { verify_error "current release does not match verification target"; return 1; }
   validate_runtime_release "${release_dir}"
   inspect_project_containers "${release_dir}" "${sha}"
   verify_loopback_listeners
   verify_tailscale_serve
   hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)"
   fqdn="$(container_env_value "${hmi_id}" __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS)"
-  [[ "${fqdn}" =~ ^[a-z0-9.-]+\.ts\.net$ ]] || die "Tailnet FQDN is invalid"
+  [[ "${fqdn}" =~ ^[a-z0-9.-]+\.ts\.net$ ]] || { verify_error "Tailnet FQDN is invalid"; return 1; }
   verify_https_endpoints "${fqdn}"
   run_wss_probes "${release_dir}" "${sha}" "${fqdn}"
   verify_data_and_backup "${release_dir}" "${sha}"

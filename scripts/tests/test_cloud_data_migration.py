@@ -515,6 +515,10 @@ class FakeRemoteRunner:
             stdout = json.dumps(self.remote_payload)
         elif "prepare-upload" in command:
             stdout = f"/opt/car-agent/shared/imports/{VALID_ID}\n"
+        elif " apply " in f" {command} ":
+            stdout = json.dumps({"migration_id": VALID_ID, "status": "APPLIED"})
+        elif " rollback " in f" {command} ":
+            stdout = json.dumps({"migration_id": VALID_ID, "status": "ROLLED_BACK"})
         return migration.CommandResult(call, 0, stdout, "")
 
 

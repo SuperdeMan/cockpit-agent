@@ -40,6 +40,9 @@ MANIFEST_KEYS = frozenset(
 )
 SNAPSHOT_FILENAMES = ("postgres.dump", "redis.rdb", "collector.db")
 MIN_SNAPSHOT_FREE_BYTES = 1024 * 1024 * 1024
+CONTROL_JSON_MAX_BYTES = 1024 * 1024
+CONTROL_JSON_MAX_DEPTH = 16
+CONTROL_JSON_MAX_ITEMS = 20000
 BUSINESS_TABLES = (
     "memory_item",
     "memory_relation",
@@ -313,6 +316,44 @@ def _exact_keys(value: object, expected: frozenset[str], label: str) -> Mapping[
     keys = frozenset(value.keys())
     if keys != expected or not all(isinstance(key, str) for key in keys):
         raise MigrationError(f"unknown {label} keys")
+    return value
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise MigrationError("control JSON contains duplicate keys")
+        result[key] = value
+    return result
+
+
+def _validate_json_bounds(value: object, *, depth: int = 0, counter: list[int] | None = None) -> None:
+    if depth > CONTROL_JSON_MAX_DEPTH:
+        raise MigrationError("control JSON exceeds depth limit")
+    count = counter if counter is not None else [0]
+    count[0] += 1
+    if count[0] > CONTROL_JSON_MAX_ITEMS:
+        raise MigrationError("control JSON exceeds item limit")
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise MigrationError("control JSON key is invalid")
+            _validate_json_bounds(item, depth=depth + 1, counter=count)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_json_bounds(item, depth=depth + 1, counter=count)
+
+
+def parse_control_json(raw: bytes | str, *, max_bytes: int = CONTROL_JSON_MAX_BYTES) -> object:
+    encoded = raw.encode("utf-8") if isinstance(raw, str) else raw
+    if len(encoded) > max_bytes:
+        raise MigrationError("control JSON exceeds byte limit")
+    try:
+        value = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise MigrationError("control JSON is invalid") from exc
+    _validate_json_bounds(value)
     return value
 
 
@@ -739,7 +780,9 @@ def load_bundle(repo: Path, migration_id: str) -> MigrationBundle:
     if not manifest_path.is_file() or manifest_path.is_symlink():
         raise MigrationError("migration manifest is unavailable")
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.stat().st_size > CONTROL_JSON_MAX_BYTES:
+            raise MigrationError("migration manifest exceeds byte limit")
+        payload = parse_control_json(manifest_path.read_bytes())
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise MigrationError("migration manifest is unreadable") from exc
     manifest = parse_manifest(payload)
@@ -772,8 +815,8 @@ def _remote_json_result(result: object) -> Mapping[str, object]:
     if not isinstance(stdout, str) or len(stdout.encode("utf-8")) > 64 * 1024:
         raise MigrationError("remote migration response is invalid")
     try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError as exc:
+        payload = parse_control_json(stdout, max_bytes=64 * 1024)
+    except MigrationError as exc:
         raise MigrationError("remote migration response is invalid") from exc
     expected = frozenset(
         {"current_release", "runtime_project_name", "disk_available_bytes", "stores", "status"}
@@ -783,7 +826,8 @@ def _remote_json_result(result: object) -> Mapping[str, object]:
 
 def inspect_remote(request: MigrationRequest, runner: RemoteCommandRunner) -> Mapping[str, object]:
     result = runner.run(
-        request.ssh.ssh_argv(f"sudo {REMOTE_SCRIPT} inspect-current"), cwd=request.repo
+        request.ssh.ssh_argv(f"sudo {REMOTE_SCRIPT} inspect-current"), cwd=request.repo,
+        timeout_s=60,
     )
     payload = _remote_json_result(result)
     release = payload["current_release"]
@@ -846,18 +890,19 @@ def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str
         request.ssh.ssh_argv(
             f"sudo {REMOTE_SCRIPT} prepare-upload --migration-id {request.migration_id}"
         ),
-        cwd=request.repo,
+        cwd=request.repo, timeout_s=120,
     ).stdout.strip()
     expected = f"/opt/car-agent/shared/imports/{request.migration_id}"
     if prepared != expected:
         raise MigrationError("server returned an unexpected import directory")
     for name in ("manifest.json", "postgres.dump", "redis.rdb", "collector.db"):
-        runner.run(request.ssh.scp_argv(directory / name, f"{expected}/{name}"), cwd=request.repo)
+        runner.run(request.ssh.scp_argv(directory / name, f"{expected}/{name}"), cwd=request.repo,
+                   timeout_s=1800)
     runner.run(
         request.ssh.ssh_argv(
             f"sudo {REMOTE_SCRIPT} seal-upload --migration-id {request.migration_id}"
         ),
-        cwd=request.repo,
+        cwd=request.repo, timeout_s=120,
     )
     return expected
 
@@ -871,9 +916,18 @@ def remote_action(
         request.ssh.ssh_argv(
             f"sudo {REMOTE_SCRIPT} {action} --migration-id {request.migration_id}"
         ),
-        cwd=request.repo,
+        cwd=request.repo, timeout_s={"preflight": 300, "verify": 600,
+                                    "apply": 3600, "rollback": 3600}[action],
     )
     return result.stdout.strip()
+
+
+def parse_action_status(raw: str, migration_id: str, expected: str) -> Mapping[str, object]:
+    payload = parse_control_json(raw, max_bytes=64 * 1024)
+    data = _exact_keys(payload, frozenset({"migration_id", "status"}), "remote action status")
+    if data["migration_id"] != migration_id or data["status"] != expected:
+        raise MigrationError("remote action did not reach the expected final status")
+    return data
 
 
 def list_local_writers(repo: Path, runner: BinaryCommandRunner) -> tuple[str, ...]:

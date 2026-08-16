@@ -165,6 +165,7 @@ class CommandRunner(Protocol):
         env: Mapping[str, str] | None = None,
         stdin: BinaryIO | None = None,
         check: bool = True,
+        timeout_s: float | None = None,
     ) -> CommandResult:
         pass
 
@@ -186,6 +187,7 @@ class SubprocessRunner:
         env: Mapping[str, str] | None = None,
         stdin: BinaryIO | None = None,
         check: bool = True,
+        timeout_s: float | None = None,
     ) -> CommandResult:
         if not argv:
             raise ReleaseError("cannot run an empty command")
@@ -198,7 +200,10 @@ class SubprocessRunner:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
+                timeout=timeout_s,
             )
+        except subprocess.TimeoutExpired as exc:
+            raise ReleaseError(f"command timed out: {argv[0]}", category="runtime") from exc
         except OSError as exc:
             raise ReleaseError(
                 f"could not run {argv[0]}: {type(exc).__name__}"

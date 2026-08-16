@@ -513,10 +513,10 @@ write_preflight_current() {
     || die "store container identity is invalid"
   postgres_image="$(docker inspect --format '{{.Image}}' "${postgres_id}")"
   redis_image="$(docker inspect --format '{{.Image}}' "${redis_id}")"
-  archive_listing="$(docker run --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
+  archive_listing="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint pg_restore "${postgres_image}" --list /snapshot/postgres.dump)" || return $?
   archive_fingerprint="$(printf '%s\n' "${archive_listing}" | sed '/^; Archive created at/d' | sha256sum | cut -d' ' -f1)"
-  redis_check="$(docker run --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
+  redis_check="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint redis-check-rdb "${redis_image}" /snapshot/redis.rdb)" || return $?
   [[ "${redis_check}" == *"CRC64 checksum is OK"* ]] || die "Redis import format validation failed"
   current_json="$(inspect_current)" || return $?
@@ -905,11 +905,19 @@ else:
     for table in persistent_tables:
         baseline_count=baseline["postgres"]["tables"][table]; current_count=pg["tables"].get(table,-1)
         if current_count < baseline_count: raise SystemExit("PostgreSQL persistent table count decreased")
+    allowed_states={
+      "reminder_item.status":{"pending","fired","cancelled","expired","failed"},
+      "task_ledger.status":{"pending","confirmed","executing","done","failed","cancelled","expired"},
+      "proactive_delivery.state":{"pending","presented","accepted","dismissed","expired","failed"},
+      "scene_item.status":{"enabled","disabled"},
+    }
     for state_name,baseline_counts in baseline["postgres"]["states"].items():
         current_counts=pg["states"].get(state_name,{})
-        for value,baseline_count in baseline_counts.items():
-            current_count=current_counts.get(value,-1)
-            if current_count < baseline_count: raise SystemExit("PostgreSQL persisted state count decreased")
+        if not set(baseline_counts).issubset(allowed_states[state_name]) or not set(current_counts).issubset(allowed_states[state_name]):
+            raise SystemExit("PostgreSQL state transition set is invalid")
+        table=state_name.split(".",1)[0]
+        if sum(current_counts.values()) != pg["tables"][table] or sum(baseline_counts.values()) != baseline["postgres"]["tables"][table]:
+            raise SystemExit("PostgreSQL state entity conservation failed")
     if r["version"] != baseline["redis"]["version"]:
         raise SystemExit("Redis version changed after start")
     if set(r["types"]) != set(baseline["redis"]["types"]):
@@ -919,9 +927,12 @@ else:
         if current_count < baseline_count: raise SystemExit("Redis persistent prefix count decreased")
     if c["user_version"]!=baseline["collector"]["user_version"] or c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]:
         raise SystemExit("Collector schema or version changed after start")
+    retention_deleted={}
     for table,baseline_count in baseline["collector"]["tables"].items():
         current_count=c["tables"].get(table,-1)
-        if current_count < baseline_count: raise SystemExit("Collector table count decreased")
+        if current_count < 0: raise SystemExit("Collector table aggregate is missing")
+        retention_deleted[table]=max(0,baseline_count-current_count)
+    c["retention_deleted"]=retention_deleted
 evidence={"schema_version":1,"migration_id":sys.argv[8],"stage":stage,"postgres":pg,"redis":r,"collector":c}
 encoded=(json.dumps(evidence,sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")
 descriptor=os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
@@ -944,17 +955,40 @@ start_current_release() {
 }
 
 write_migration_state() {
-  local state="$1" migration_id="$2" backup_stamp="$3"
+  local state="$1" migration_id="$2" backup_stamp="$3" failed_step="${4:-}"
   local directory="${IMPORT_ROOT}/${migration_id}" partial run_id
   if compgen -G "${directory}/status.*.json.partial" >/dev/null; then
     return 1
   fi
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
   partial="${directory}/status.${run_id}.json.partial"
-  python3 - "${partial}" "${state}" "${migration_id}" "${backup_stamp}" <<'PY' || return $?
+  python3 - "${partial}" "${directory}/status.json" "${state}" "${migration_id}" \
+    "${backup_stamp}" "${failed_step}" "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" <<'PY' || return $?
 import json, os, sys
-encoded=(json.dumps({"status":sys.argv[2],"migration_id":sys.argv[3],
-                     "backup_stamp":sys.argv[4]},sort_keys=True)+"\n").encode("utf-8")
+from pathlib import Path
+target=Path(sys.argv[2]); state=sys.argv[3]; migration_id=sys.argv[4]; stamp=sys.argv[5]
+allowed=dict([
+ (None,{"BACKED_UP"}), ("BACKED_UP",{"APPLIED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}),
+ ("APPLIED",{"ROLLBACK_IN_PROGRESS"}), ("ROLLBACK_IN_PROGRESS",{"ROLLED_BACK","ROLLBACK_FAILED"}),
+ ("ROLLBACK_FAILED",{"ROLLBACK_IN_PROGRESS"}), ("ROLLED_BACK",set()),
+])
+current=None
+if target.exists():
+    if target.is_symlink() or target.stat().st_size>64*1024: raise SystemExit("unsafe migration state")
+    current=json.loads(target.read_text(encoding="utf-8"))
+    if current.get("migration_id")!=migration_id or current.get("backup_stamp")!=stamp: raise SystemExit("migration state identity mismatch")
+    if current.get("status")==state=="ROLLED_BACK": raise SystemExit(0)
+previous=current.get("status") if current else None
+if state not in allowed.get(previous,set()): raise SystemExit("invalid migration state transition")
+if current is None:
+    backup=json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
+    current={"schema_version":1,"migration_id":migration_id,"backup_stamp":stamp,
+             "backup_files":backup["files"],"failed_step":None,
+             "stores":{name:{"started":False,"restored":False,"verified":False}
+                       for name in ("postgres","redis","collector")}}
+current["status"]=state
+current["failed_step"]=sys.argv[6] or None
+encoded=(json.dumps(current,sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")
 descriptor=os.open(sys.argv[1],os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,0o600)
 try:
     os.write(descriptor,encoded); os.fsync(descriptor)
@@ -965,17 +999,52 @@ PY
   mv -T "${partial}" "${directory}/status.json" || return $?
 }
 
+record_store_progress() {
+  local migration_id="$1" store="$2" field="$3" directory="${IMPORT_ROOT}/${1}"
+  local partial run_id
+  [[ "${store}" == "postgres" || "${store}" == "redis" || "${store}" == "collector" ]] || return 2
+  [[ "${field}" == "started" || "${field}" == "restored" || "${field}" == "verified" ]] || return 2
+  run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
+  partial="${directory}/status.${run_id}.json.partial"
+  python3 - "${directory}/status.json" "${partial}" "${migration_id}" "${store}" "${field}" <<'PY' || return $?
+import json,os,sys
+from pathlib import Path
+source=Path(sys.argv[1]); payload=json.loads(source.read_text(encoding="utf-8"))
+if payload.get("migration_id")!=sys.argv[3] or payload.get("status") not in {"BACKED_UP","ROLLBACK_IN_PROGRESS"}: raise SystemExit("invalid progress state")
+progress=payload["stores"][sys.argv[4]]; field=sys.argv[5]
+if field=="restored" and not progress["started"]: raise SystemExit("store restore was not started")
+if field=="verified" and not progress["restored"]: raise SystemExit("store restore was not completed")
+progress[field]=True
+encoded=(json.dumps(payload,sort_keys=True,separators=(",", ":"))+"\n").encode()
+fd=os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+try: os.write(fd,encoded); os.fsync(fd)
+finally: os.close(fd)
+PY
+  chmod 0600 -- "${partial}" || return $?
+  mv -T "${partial}" "${directory}/status.json" || return $?
+}
+
 rollback_all() {
   local migration_id="$1" backup_stamp="$2"
+  write_migration_state "ROLLBACK_IN_PROGRESS" "${migration_id}" "${backup_stamp}" || return 1
   stop_application_writers || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  record_store_progress "${migration_id}" postgres started || return 1
   restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump" \
     || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  record_store_progress "${migration_id}" postgres restored || return 1
+  record_store_progress "${migration_id}" redis started || return 1
   restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" "failed-import-redis-volume" \
     || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  record_store_progress "${migration_id}" redis restored || return 1
+  record_store_progress "${migration_id}" collector started || return 1
   restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}" \
     || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  record_store_progress "${migration_id}" collector restored || return 1
   start_current_release || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
   verify_current_release || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
+  record_store_progress "${migration_id}" postgres verified || return 1
+  record_store_progress "${migration_id}" redis verified || return 1
+  record_store_progress "${migration_id}" collector verified || return 1
   write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return 1
 }
 
@@ -985,7 +1054,7 @@ fail_and_rollback() {
     printf 'migration step %s failed and the store group was rolled back\n' "${failed_step}" >&2
     return 1
   fi
-  write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}" || true
+  write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}" "${failed_step}" || true
   printf 'migration step %s and automatic rollback failed\n' "${failed_step}" >&2
   return 1
 }
@@ -1062,14 +1131,30 @@ apply_migration() {
   APPLY_BACKUP_STAMP="${backup_stamp}"
   APPLY_REPLACEMENT_STARTED=1
   install_apply_failure_trap
+  run_recoverable_step record_store_progress "${migration_id}" postgres started
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-start-state"; return 1; fi
   run_recoverable_step restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"; return 1; fi
+  run_recoverable_step record_store_progress "${migration_id}" postgres restored
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-state"; return 1; fi
+  run_recoverable_step record_store_progress "${migration_id}" redis started
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-start-state"; return 1; fi
   run_recoverable_step restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"; return 1; fi
+  run_recoverable_step record_store_progress "${migration_id}" redis restored
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-state"; return 1; fi
+  run_recoverable_step record_store_progress "${migration_id}" collector started
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-start-state"; return 1; fi
   run_recoverable_step install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"; return 1; fi
+  run_recoverable_step record_store_progress "${migration_id}" collector restored
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-state"; return 1; fi
   run_recoverable_step verify_store_group "${migration_id}" "pre-start"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"; return 1; fi
+  for store in postgres redis collector; do
+    run_recoverable_step record_store_progress "${migration_id}" "${store}" verified
+    if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "${store}-verify-state"; return 1; fi
+  done
   run_recoverable_step start_current_release
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"; return 1; fi
   run_recoverable_step verify_current_release
@@ -1092,17 +1177,33 @@ verify_migration() {
 }
 
 rollback_migration() {
-  local migration_id="$1" backup_stamp
-  load_runtime
-  require_runtime_batch "${migration_id}"
-  backup_stamp="$(python3 - "${IMPORT_ROOT}/${migration_id}/status.json" <<'PY'
+  local migration_id="$1" backup_stamp status state_line
+  load_runtime || return $?
+  require_runtime_batch "${migration_id}" || return $?
+  state_line="$(python3 - "${IMPORT_ROOT}/${migration_id}/status.json" "${migration_id}" <<'PY'
 import json, re, sys
-value = json.load(open(sys.argv[1], encoding="utf-8")).get("backup_stamp", "")
-if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", value) is None: raise SystemExit("invalid backup stamp")
-print(value)
+from pathlib import Path
+p=Path(sys.argv[1])
+if p.is_symlink() or p.stat().st_size>64*1024: raise SystemExit("invalid migration state")
+value=json.loads(p.read_text(encoding="utf-8"))
+if value.get("migration_id")!=sys.argv[2]: raise SystemExit("migration state identity mismatch")
+stamp=value.get("backup_stamp",""); status=value.get("status","")
+if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("invalid backup stamp")
+if status not in {"APPLIED","ROLLED_BACK","ROLLBACK_FAILED"}: raise SystemExit("rollback is not allowed from current state")
+print(status,stamp)
 PY
-)"
-  rollback_all "${migration_id}" "${backup_stamp}"
+)" || return $?
+  read -r status backup_stamp <<<"${state_line}" || return $?
+  if [[ "${status}" == "ROLLED_BACK" ]]; then
+    printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
+    return 0
+  fi
+  if [[ "${status}" == "ROLLBACK_FAILED" ]]; then
+    printf 'rollback continuation requires an audited operator recovery\n' >&2
+    return 1
+  fi
+  rollback_all "${migration_id}" "${backup_stamp}" || return $?
+  printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
 }
 
 main() {

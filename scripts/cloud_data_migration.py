@@ -117,8 +117,10 @@ def main(
                 return 0
             migration.upload_bundle(request, remote_runner)  # type: ignore[arg-type]
             migration.remote_action(request, "preflight", remote_runner)  # type: ignore[arg-type]
-            migration.remote_action(request, "apply", remote_runner)  # type: ignore[arg-type]
-            _emit(_plan_payload(plan, status="submitted"))
+            result = migration.remote_action(request, "apply", remote_runner)  # type: ignore[arg-type]
+            final_status = migration.parse_action_status(result, request.migration_id, "APPLIED")
+            _emit({**_plan_payload(plan, status=str(final_status["status"])),
+                   "migration_id": request.migration_id})
             return 0
         if args.command == "verify":
             migration.remote_action(request, "verify", remote_runner)  # type: ignore[arg-type]
@@ -131,8 +133,9 @@ def main(
                     "backup_stamp": "server-recorded-pre-migration-backup",
                 })
                 return 0
-            migration.remote_action(request, "rollback", remote_runner)  # type: ignore[arg-type]
-            _emit({"status": "rollback_submitted", "migration_id": request.migration_id})
+            result = migration.remote_action(request, "rollback", remote_runner)  # type: ignore[arg-type]
+            final_status = migration.parse_action_status(result, request.migration_id, "ROLLED_BACK")
+            _emit({"status": final_status["status"], "migration_id": request.migration_id})
             return 0
         raise migration.MigrationError("unsupported migration command")
     except (migration.MigrationError, ReleaseError):

@@ -411,6 +411,7 @@ def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path
         refresh_preflight_after_backup() {{ printf 'preflight\n' >>'{events.as_posix()}'; }}
         run_required_backup() {{ printf 'backup\n' >>'{events.as_posix()}'; printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
+        record_store_progress() {{ :; }}
         stop_application_writers() {{ printf 'stop\n' >>'{events.as_posix()}'; }}
         restore_postgres_dump() {{ printf 'postgres\n' >>'{events.as_posix()}'; return 23; }}
         restore_redis_rdb() {{ printf 'redis\n' >>'{events.as_posix()}'; }}
@@ -440,6 +441,7 @@ def test_remote_attestation_failure_never_marks_applied_and_triggers_rollback(tm
         refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
+        record_store_progress() {{ :; }}
         stop_application_writers() {{ :; }}
         restore_postgres_dump() {{ :; }}
         restore_redis_rdb() {{ :; }}
@@ -469,6 +471,7 @@ def test_remote_apply_attests_exact_before_start_then_growth_safe_after_start(tm
         refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
+        record_store_progress() {{ :; }}
         stop_application_writers() {{ :; }}
         restore_postgres_dump() {{ :; }}
         restore_redis_rdb() {{ :; }}
@@ -498,9 +501,10 @@ def test_remote_post_start_rules_preserve_business_data_but_allow_growth():
     ):
         assert f'"{table}"' in body
     assert 'current_count < baseline_count' in body
-    assert 'PostgreSQL persisted state count decreased' in body
+    assert 'PostgreSQL state transition set is invalid' in body
+    assert 'PostgreSQL state entity conservation failed' in body
     assert 'Redis persistent prefix count decreased' in body
-    assert 'Collector table count decreased' in body
+    assert 'retention_deleted' in body
     assert 'r["version"] != baseline["redis"]["version"]' in body
     assert 'c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]' in body
 
@@ -579,6 +583,7 @@ def test_remote_state_machine_is_sealed_then_preflighted_then_runtime(tmp_path: 
         write_preflight_current() {{ printf 'preflighted\n' >>'{events.as_posix()}'; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ :; }}
+        record_store_progress() {{ :; }}
         stop_application_writers() {{ :; }}
         restore_postgres_dump() {{ :; }}
         restore_redis_rdb() {{ :; }}
@@ -610,6 +615,7 @@ def test_apply_then_verify_and_rollback_use_runtime_batch_validation(tmp_path: P
         refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ :; }}
+        record_store_progress() {{ :; }}
         stop_application_writers() {{ :; }}
         restore_postgres_dump() {{ :; }}
         restore_redis_rdb() {{ :; }}
@@ -1704,3 +1710,26 @@ def test_backup_supports_quiesced_migration_triplet_validation_and_hash_manifest
         assert token in text
     assert text.index("--writers-quiesced") < text.index("pg_dump")
     assert "docker run --pull never --rm=true" in text
+
+
+def test_migration_state_persists_backup_hashes_store_progress_and_strict_transitions():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    state = re.search(r"(?ms)^write_migration_state\(\) \{(?P<body>.*?)^\}", text)["body"]
+    progress = re.search(r"(?ms)^record_store_progress\(\) \{(?P<body>.*?)^\}", text)["body"]
+    rollback = re.search(r"(?ms)^rollback_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for token in ("backup_files", "failed_step", "ROLLBACK_IN_PROGRESS", "ROLLBACK_FAILED", "ROLLED_BACK"):
+        assert token in state
+    for token in ('"started"', '"restored"', '"verified"'):
+        assert token in state and token in progress
+    assert rollback.index('if [[ "${status}" == "ROLLED_BACK" ]]') < rollback.index("rollback_all")
+    assert "requires an audited operator recovery" in rollback
+
+
+def test_post_start_evidence_allows_declared_transitions_ttl_decay_and_collector_retention():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert "allowed_states" in body
+    assert "state entity conservation" in body
+    assert "retention_deleted" in body
+    assert "persistent_prefixes" in body
+    assert "min_ttl_ms" not in body[body.index('else:'):]
