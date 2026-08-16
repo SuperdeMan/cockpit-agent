@@ -159,10 +159,20 @@ class TestStructuredToLegacy:
         assert legacy is not None
         assert legacy["name"] == "seat.heating.on"
 
-    def test_unknown_object_returns_none(self):
+    def test_unknown_object_is_never_locally_executable(self):
+        """认不出的对象绝不能落进端侧执行。
+
+        ⚠ 2026-08-16（Q13）：本条原名 `test_unknown_object_returns_none`，断言的是
+        `structured_to_legacy(s) is None`。命名收敛后唯一实现对认不出的对象**给名字
+        不给能力**（`foobar.do`）——`classify()` 本来就一直这么做（它的 `else` 分支
+        拼 `f"{obj}.{operate}"`），收敛只是让两条路一致，顺带让端云分歧观测里不再是
+        一片空白。**要守的安全性质从来不是「返回 None」，是「不可本地执行」**，
+        所以断言改成直接钉那个性质——它比原来那条更强：`None` 只是实现细节的一种。
+        """
         s = {"domain": "unknown", "intent": "unknown",
              "data": {"object": "foobar", "operate": "do"}, "confidence": 0.5}
-        assert structured_to_legacy(s) is None
+        legacy = structured_to_legacy(s)
+        assert legacy is None or not is_local(legacy["name"])
 
 
 # ═══════════════════════════════════════════════════

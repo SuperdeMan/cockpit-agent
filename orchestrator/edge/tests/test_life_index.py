@@ -90,9 +90,15 @@ class TestDoesNotHijackEverydayWords:
         assert _object(text) != "life_index"
 
     def test_navigation_and_media_still_own_their_domains(self):
-        """让路不是让成 None 就算完——得让回各自正确的域。"""
+        """让路不是让成 None 就算完——得让回各自正确的域。
+
+        ⚠ 2026-08-16（Q13）：媒体这条原来写的是 `music.play`。命名收敛后
+        媒体子类统一落 `media.*`（`LOCAL_INTENTS` 只登记 media.*，也是架构文档
+        「端侧快系统处理媒体」的承诺）——**`music.play` 从来就不在 LOCAL_INTENTS**，
+        它意味着「放点运动音乐」整句上云。改的是尺子对准的那个名字，不是本条考点。
+        """
         assert _name("导航去洗车店") == "navi.plan"
-        assert _name("放点运动音乐") == "music.play"
+        assert _name("放点运动音乐") == "media.play"
 
 
 # ═══════════════════════════════════════════════════════════════════════════

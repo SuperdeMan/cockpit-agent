@@ -121,7 +121,15 @@ class TestAirconStillWorks:
         ("关空调", "hvac.off"),
         ("空调26度", "hvac.set"),
         ("空调风速调大", "aircon.wind_speed.inc"),
-        ("空调开内循环", "hvac.on"),
+        # ⚠ 2026-08-16（Q13）：这条原来写的是 `hvac.on`。收敛前两个出口对
+        # 「operate=set 且无 value」判得不一样——单句路径退化成 `hvac.on`
+        # （**把「在设一个模式」报成「把空调打开了」**），分段路径给 `hvac.set`。
+        # 收敛取后者：它忠于结构化 operate。执行面不变（已实测：VAL 从结构化意图
+        # 取 mode，`internal/external` 照样落到状态位，名字只影响路由与观测，
+        # 而 `hvac.on`/`hvac.set` 都在 LOCAL_INTENTS ⇒ 路由也不变）。
+        # 本条原本挂在「空调不许被新分支蹭掉」的回归面下，记的是**当时是什么样**，
+        # 不是「应该是 hvac.on」的裁定。
+        ("空调开内循环", "hvac.set"),
     ])
     def test_aircon_unchanged(self, text, expect):
         assert _name(text) == expect

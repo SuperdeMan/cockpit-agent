@@ -14,22 +14,26 @@ LOCAL_INTENTS = {
     "hvac.set", "hvac.on", "hvac.off", "hvac.inc", "hvac.dec",
     "window.open", "window.close", "window.set", "window.inc", "window.dec",
     "media.play", "media.pause", "media.next", "media.prev",
-    # 座椅（open/close 兼容 on/off）
-    "seat.heating.on", "seat.heating.off", "seat.heating.open", "seat.heating.close",
-    "seat.ventilation.on", "seat.ventilation.off", "seat.ventilation.open", "seat.ventilation.close",
-    "seat.massage.on", "seat.massage.off", "seat.massage.open", "seat.massage.close",
-    "seat.lumbar_support.on", "seat.lumbar_support.off", "seat.lumbar_support.open", "seat.lumbar_support.close",
+    # 座椅。⚠ 2026-08-16（Q13）删掉 `.open/.close` 那半：`commands.yaml` 的
+    # `edge_intents` 声明的是 on/off，命名收敛成唯一实现后 `.open/.close` **不可达**
+    # （700 组合穷举证明，含大量不可能的 object×mode 过近似）。
+    # **「两个名字都收着」不是兼容，是让分歧不显形**——单句路径产 `.open`、分段路径
+    # 产 `.on`，两个都在表里，于是三个月没人看出这两条路根本不是同一条。
+    "seat.heating.on", "seat.heating.off",
+    "seat.ventilation.on", "seat.ventilation.off",
+    "seat.massage.on", "seat.massage.off",
+    "seat.lumbar_support.on", "seat.lumbar_support.off",
     "seat.lumbar_support.inc", "seat.lumbar_support.dec",
     "sunroof.open", "sunroof.close", "sunroof.set",
     "sunshade.open", "sunshade.close", "sunshade.set",
     "trunk.open", "trunk.close",
     "door_lock.open", "door_lock.close",
-    # 氛围灯/大灯/雨刷/香氛（open/close 兼容 on/off）
-    "ambient_light.on", "ambient_light.off", "ambient_light.open", "ambient_light.close", "ambient_light.set",
-    "headlight.on", "headlight.off", "headlight.open", "headlight.close",
-    "wiper.on", "wiper.off", "wiper.open", "wiper.close", "wiper.speed.set", "wiper.speed.inc", "wiper.speed.dec",
+    # 氛围灯/大灯/雨刷/香氛（同上，2026-08-16 删 `.open/.close` 死条目）
+    "ambient_light.on", "ambient_light.off", "ambient_light.set",
+    "headlight.on", "headlight.off",
+    "wiper.on", "wiper.off", "wiper.speed.set", "wiper.speed.inc", "wiper.speed.dec",
     "rear_view_mirror.fold", "rear_view_mirror.unfold",
-    "fragrance.on", "fragrance.off", "fragrance.open", "fragrance.close", "fragrance.set",
+    "fragrance.on", "fragrance.off", "fragrance.set",
     "volume.set", "volume.inc", "volume.dec",
     # 油箱盖 / 充电口盖
     "fuel_tank_cover.open", "fuel_tank_cover.close",
@@ -270,161 +274,22 @@ _STOCK_INDEX_QUALIFIED = ("创业板", "科创", "沪深", "日经", "富时", "
 
 
 def classify(text: str) -> dict | None:
-    """旧接口：返回 {name, slots, confidence}。向后兼容。"""
+    """旧接口：返回 {name, slots, confidence}。向后兼容。
+
+    Q13（2026-08-16）：**名字由 `_to_legacy_name` 一处产出**。这里原本有第二张
+    60+ 分支的对象表，与分段路径那张 15/38 处不一致、7 处 `is_local` 相反——
+    同一句话在单句形态与复合句形态下走不同的路。收敛后本函数只负责 slots。
+    """
     result = classify_structured(text)
     if result is None:
         return None
 
-    # 从结构化结果映射回旧 name/slots 格式
-    _on_off_map = {"open": "on", "close": "off"}
     data = result.get("data", {})
     obj = data.get("object", "")
-    operate = data.get("operate", "")
     mode = data.get("mode", "")
-
-    # 构造旧 name
-    if obj == "aircon":
-        if mode == "wind_speed":
-            name = f"aircon.wind_speed.{operate}"
-        elif operate == "close":
-            name = "hvac.off"
-        # 2026-08-04：这两支原本产出 `aircon.inc/dec`，而同一个分支的其它支产出的是
-        # `hvac.off/set/on`——**同一个对象在同一段代码里有两套前缀，是历史意外不是设计**。
-        # 后果不在端侧（`decode_intent` 把 `hvac` 对象改名成 `aircon`，两者解出的执行数据
-        # 逐字相同），在**云侧**：两个名字都注册进能力面，而端侧 catalog 只渲染意图名不渲染
-        # 描述 ⇒ planner 面对两个无法区分的同义工具只能掷硬币，落在 gold 只列其一的用例上
-        # 就是随机红。判据：**一个动作只能有一个名字——尤其当能力面只靠名字区分时。**
-        elif operate == "inc":
-            name = "hvac.inc"
-        elif operate == "dec":
-            name = "hvac.dec"
-        elif operate in ("set", "open") and data.get("value"):
-            name = "hvac.set"
-        else:
-            name = "hvac.on"
-    elif obj == "window":
-        name = f"window.{operate}"
-    elif obj == "rear_view_mirror":
-        # 与 _to_legacy_name 同口径：折叠/展开由 mode 决定，不是 operate。
-        name = _to_legacy_name(result) or "rear_view_mirror.fold"
-    elif obj in ("seat", "sunroof", "sunshade", "trunk", "door_lock",
-                 "ambient_light", "headlight",
-                 "fragrance", "volume"):
-        name = f"{obj}.{operate}"
-        if mode:
-            name = f"{obj}.{mode}.{operate}"
-    elif obj == "wiper":
-        if mode == "speed":
-            name = f"wiper.speed.{operate}"
-        else:
-            name = f"wiper.{operate}"
-    elif obj == "steering_wheel":
-        name = f"steering_wheel.{mode}.{operate}" if mode else f"steering_wheel.{operate}"
-    elif obj == "screen":
-        name = f"screen.{mode}.{operate}" if mode else f"screen.{operate}"
-    elif obj == "energy_recovery":
-        name = f"energy_recovery.{operate}"
-    elif obj in ("lane_departure_assistance", "lane_assistance"):
-        name = f"{obj}.{operate}"
-    elif obj in ("scene_mode", "power_mode"):
-        name = f"{obj}.set"
-    elif obj == "weather":
-        name = "info.weather"
-    elif obj == "forecast":
-        name = "info.forecast"
-    elif obj == "stock":
-        name = "info.stock"
-    elif obj == "life_index":
-        name = "info.indices"        # 与 agents/info/manifest.yaml 的 capability 同名
-    elif obj == "search":
-        name = "info.search"
-    elif obj == "page":
-        name = "page.open"
-    elif obj == "app":
-        name = f"app.{operate}"
-    elif obj == "media":
-        # 媒体特殊映射：switch → next/prev（从文本推断）
-        if operate == "switch":
-            if "上一首" in text:
-                name = "media.prev"
-            else:
-                name = "media.next"
-        else:
-            media_map = {"start": "play", "pause": "pause", "stop": "pause"}
-            name = f"media.{media_map.get(operate, operate)}"
-    elif obj == "bluetooth":
-        name = f"bluetooth.{operate}"
-    elif obj == "wifi":
-        name = f"wifi.{operate}"
-    elif obj == "hotspot":
-        name = f"hotspot.{_on_off_map.get(operate, operate)}"
-    elif obj == "auto_hold":
-        name = f"auto_hold.{_on_off_map.get(operate, operate)}"
-    elif obj == "epb":
-        name = f"epb.{_on_off_map.get(operate, operate)}"
-    elif obj == "launcher":
-        name = "launcher.return"
-    elif obj in ("equalizer", "sound_effect"):
-        name = f"{obj}.{operate}"
-    elif obj == "voice_assistant":
-        name = f"voice_assistant.{operate}"
-    elif obj == "factory_settings":
-        name = "factory_settings.restore"
-    elif obj == "memory":
-        name = "system.clean"
-    elif obj == "language":
-        name = "language.set"
-    elif obj == "time_format":
-        name = "time_format.set"
-    elif obj == "surround_view":
-        name = f"surround_view.{_on_off_map.get(operate, operate)}"
-    elif obj == "dashboard":
-        name = f"dashboard.{_on_off_map.get(operate, operate)}"
-    elif obj == "phone":
-        name = f"phone.{operate}"
-    elif obj == "contacts":
-        name = f"contacts.{operate}"
-    elif obj == "call_log":
-        name = f"call_log.{_on_off_map.get(operate, operate)}"
-    elif obj in ("radio", "online_radio", "opera", "news", "audiobook"):
-        name = f"{obj}.{operate}"
-    elif obj in ("music", "video"):
-        name = f"{obj}.{operate}"
-    elif obj == "TV":
-        name = f"TV.{_on_off_map.get(operate, operate)}"
-    elif obj == "frunk":
-        name = f"frunk.{operate}"
-    elif obj == "map":
-        name = f"map.{operate}"
-    elif obj in ("food", "hotel", "flight", "train", "stock",
-                 "temperature", "humidity", "wind_force", "air_quality"):
-        name = f"{obj}.query"
-    elif obj == "navi":
-        name = f"navi.{operate}"
-    elif obj in ("high_beam", "low_beam", "fog_light", "warning_light"):
-        name = f"{obj}.{operate}"
-    elif obj in ("cruise_following", "blind_spot_warning", "body_stability",
-                 "hill_descent", "creep_mode", "forward_collision_warning",
-                 "fatigue_detection", "speed_limit_assistance"):
-        name = f"{obj}.{_on_off_map.get(operate, operate)}"
-    elif obj in ("v2v_charging", "battery_preheat", "scheduled_charging"):
-        name = f"{obj}.{_on_off_map.get(operate, operate)}"
-    elif obj == "energy_consumption":
-        name = "energy_consumption.query"
-    elif obj == "fan":
-        name = f"fan.{_on_off_map.get(operate, operate)}"
-    elif obj == "step_heating":
-        name = f"step_heating.{_on_off_map.get(operate, operate)}"
-    elif obj == "camera":
-        name = f"camera.{_on_off_map.get(operate, operate)}"
-    elif obj == "car_link":
-        name = f"car_link.{_on_off_map.get(operate, operate)}"
-    elif obj == "team":
-        name = f"team.{operate}"
-    elif obj == "tire_temperature":
-        name = f"tire_temperature.{_on_off_map.get(operate, operate)}"
-    else:
-        name = f"{obj}.{operate}"
+    name = _to_legacy_name(result)
+    if name is None:
+        return None
 
     # 构造旧 slots
     slots = {}
@@ -452,6 +317,14 @@ def classify_structured(text: str) -> dict | None:
     result = _classify_structured(text)
     if _is_write_action(result) and _is_non_directive_question(text.strip()):
         return None                       # 整句上云：是提问，交云端如实作答
+    if result is not None:
+        # Q13：原话随意图走。**不是为了让下游再分类一次**——是因为结构化意图里
+        # 有信息拿不回来：`下一首` 与 `上一首` 解出的 data 逐字相同（都是
+        # `operate=switch, object=media`），方向只在原话里。命名唯一实现据此取回。
+        # 走「意图自带」而不是「给命名函数加个形参」：形参会被某个调用方忘了传
+        # （§4.3 记过——`replan()` 加了形参、测试替身没跟着传，两臂逐字相同还差点
+        # 据此否掉守卫）。`split_and_classify_any` 早就在盖同一个键，这里只是提前。
+        result.setdefault("_raw_text", text)
     return result
 
 
@@ -1771,11 +1644,31 @@ def split_and_classify_any(text: str) -> list[dict] | None:
 
 
 def _to_legacy_name(intent: dict) -> str | None:
-    """Convert structured intent to legacy name for is_local() check."""
+    """结构化意图 → 意图名。**全端侧唯一的一处**（QA 卡 Q13，2026-08-16 收敛）。
+
+    在这之前有两处：单句路径 `classify()` 里一张 60+ 分支的对象表、分段路径这一张。
+    实测 **15/38 处产出不同，7 处 `is_local` 相反**——同一句话在单句形态与复合句形态下
+    走不同的路。最贵的一例：`classify("暂停音乐")` 产 `music.pause`（不在
+    `LOCAL_INTENTS`）⇒ **媒体域的端侧快路径在最常见的单句形态下从来没生效过**，
+    而架构文档写的是「端侧快系统处理高频/确定/安全敏感指令（车控、**媒体**）」。
+
+    分歧能藏这么久，是因为 `LOCAL_INTENTS` 把两个名字都收着（`ambient_light.on`
+    与 `.open` 并列）——**「两个名字都收着」不是兼容，是让分歧不显形**。
+    收敛同批把这些死条目删了，守卫在
+    `tests/test_classifier_exit_parity.py::test_touched_objects_have_no_dead_alias`。
+
+    命名口径的权威是 `commands.yaml` 各对象的 `edge_intents`（B4「端侧意图名单的唯一
+    声明处」）：on/off 还是 open/close 由它定，不由这里的手感定。
+
+    ⚠ 认不出的对象返回 `f"{obj}.{operate}"` 而不是 `None`：调用方一律用
+    `is_local()` 把关（不在 `LOCAL_INTENTS` 即上云），路由结果不变；而给出名字之后，
+    端云分歧观测（`_edge_nlu`）与 obs 里不再是一片空白。
+    """
     data = intent.get("data", {})
     obj = data.get("object", "")
     operate = data.get("operate", "")
     mode = data.get("mode", "")
+    raw_text = str(intent.get("_raw_text") or "")
 
     # Per-object operate normalisation: structured intents use "open"/"close",
     # but LOCAL_INTENTS uses "on"/"off" for some objects and "open"/"close"
@@ -1795,18 +1688,37 @@ def _to_legacy_name(intent: dict) -> str | None:
         return f"hvac.{_on_off_map.get(operate, operate)}"
     if obj == "window":
         return f"window.{operate}"
-    if obj == "media":
-        media_map = {"start": "play", "pause": "pause", "stop": "pause"}
-        return f"media.{media_map.get(operate, operate)}"
-    # 媒体子类统一映射到 media.*
-    if obj in ("music", "radio", "online_radio", "audiobook", "opera", "news", "video", "TV"):
+    # 媒体子类统一落 `media.*`——`LOCAL_INTENTS` 只登记 media.*，而 commands.yaml 的
+    # media/music 是同一组物理能力的两个说法。收敛前 `classify()` 产 `music.pause`，
+    # 于是**单句形态的媒体控制从来没走过端侧快路径**（Q13 最贵的一处）。
+    if obj in ("media", "music", "radio", "online_radio", "audiobook",
+               "opera", "news", "video", "TV"):
+        if operate == "switch":
+            # 方向只在原话里：结构化 data 对「上一首/下一首」逐字相同。
+            # 缺原话时退回 next——`media.switch` 不在 LOCAL_INTENTS，
+            # 退回它等于整句上云，**认不出方向不该连本地能力一起丢**。
+            return "media.prev" if "上一" in raw_text else "media.next"
         media_map = {"play": "play", "start": "play", "open": "play", "pause": "pause",
-                     "stop": "pause", "close": "pause", "switch": "next", "resume": "play",
+                     "stop": "pause", "close": "pause", "resume": "play",
                      "query": "query"}
         return f"media.{media_map.get(operate, operate)}"
-    if obj in ("navigation", "navi", "map", "food", "hotel", "flight", "train",
-               "stock", "weather", "forecast", "search"):
-        return None  # online_only, not local
+    # online_only：**给名字但不给本地能力**。这些名字都不在 LOCAL_INTENTS，路由结果与
+    # 从前返回 None 逐字相同；差别在端云分歧观测（`_edge_nlu`）里能看出端侧认出了哪个域。
+    if obj == "weather":
+        return "info.weather"
+    if obj == "forecast":
+        return "info.forecast"
+    if obj == "stock":
+        return "info.stock"
+    if obj == "life_index":
+        return "info.indices"        # 与 agents/info/manifest.yaml 的 capability 同名
+    if obj == "search":
+        return "info.search"
+    if obj in ("navigation", "navi", "map"):
+        return f"{obj}.{operate}"
+    if obj in ("food", "hotel", "flight", "train",
+               "temperature", "humidity", "wind_force", "air_quality"):
+        return f"{obj}.query"
     if obj == "interaction":
         return f"interaction.{operate}"
     if obj == "frunk":
@@ -1859,7 +1771,13 @@ def _to_legacy_name(intent: dict) -> str | None:
     if obj == "tire_pressure":
         return "tire_pressure.query"
     if obj == "dashcam":
-        return f"dashcam.{_on_off_map.get(operate, operate)}"
+        # ⚠ 这里原来走 `_on_off_map` 产 `dashcam.on/off`，而 `commands.yaml` 的
+        # `edge_intents` 与 `LOCAL_INTENTS` 都是 `dashcam.open/close`——**分段路径
+        # 从来就路由不了行车记录仪**，只是单句路径走 `classify()` 的 `else` 兜底
+        # 恰好拼对了，把它盖住了。收敛让唯一实现暴露这处（2026-08-16 L0 语料
+        # `ei.local.dashcam` 当场抓到：期望 edge_local，实际 cloud）。
+        # **抓到它的是语料不是单测**——语料测的是 ingress 路由，单测测的是名字。
+        return f"dashcam.{operate}"
     if obj in ("scene_mode", "power_mode"):
         return f"{obj}.set"
     if obj == "page":
@@ -1905,7 +1823,28 @@ def _to_legacy_name(intent: dict) -> str | None:
         return f"call_log.{_on_off_map.get(operate, operate)}"
     if obj == "low_beam":
         return f"low_beam.{_on_off_map.get(operate, operate)}"
-    return None  # Unknown object -> not local
+    # ── 收敛时从 `classify()` 搬过来的对象族（Q13）。它们此前只有单句路径认得，
+    # 复合句里一律 None ⇒ 整组上云；除雾那两个更是 `LOCAL_INTENTS` 里有、
+    # 分段路径却拼不出来。──
+    if obj in ("front_defogger", "rear_defogger"):
+        return f"{obj}.{operate}"        # edge_intents 声明的就是 open/close
+    if obj in ("high_beam", "fog_light", "warning_light"):
+        return f"{obj}.{operate}"
+    if obj in ("cruise_following", "blind_spot_warning", "body_stability",
+               "hill_descent", "creep_mode", "forward_collision_warning",
+               "fatigue_detection", "speed_limit_assistance",
+               "v2v_charging", "battery_preheat", "scheduled_charging",
+               "fan", "step_heating", "camera", "car_link", "tire_temperature"):
+        return f"{obj}.{_on_off_map.get(operate, operate)}"
+    if obj == "energy_consumption":
+        return "energy_consumption.query"
+    if obj == "team":
+        return f"team.{operate}"
+    # 兜底：认不出的对象也给个名字。调用方一律过 `is_local()`（不在 LOCAL_INTENTS
+    # 即上云），所以路由与从前返回 None 完全一致；而端云分歧观测不再是一片空白。
+    if obj:
+        return f"{obj}.{operate}" if operate else obj
+    return None
 
 
 def structured_to_legacy(intent: dict) -> dict | None:

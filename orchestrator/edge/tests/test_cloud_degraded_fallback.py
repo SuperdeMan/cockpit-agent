@@ -45,6 +45,19 @@ def _servicer(cloud_events):
     return srv
 
 
+# QA 卡 Q13（2026-08-16）：本文件原来用「播放音乐」当「会上云的可执行原话」——
+# 它当时确实上云（`classify()` 产 `music.play`，不在 `LOCAL_INTENTS`）。收敛后
+# 媒体落 `media.play` **变成端侧快路径**，于是三条断言直接红，另外两条
+# **变成假绿**：`state["media"] == "playing"` 照样成立，但成立的原因是端侧秒回，
+# 云端兜底那条路一次都没走到。假绿比红更贵——它让一条 P0 回归探针悄悄退休。
+#
+# 兜底路径需要的原话要同时满足三条：端侧**认得出**（否则 local_structured 为空）、
+# 名字**不在 LOCAL_INTENTS**（否则走快路径不上云）、VAL **执行得了**（否则断言无从判）。
+# 场景模式正是这一形态：`scene_mode.set` 刻意不入 LOCAL_INTENTS（命名场景由云端
+# scene-orchestrator 编排），而 VAL 能设状态位。
+_CLOUD_ROUTED = "开启露营模式"
+
+
 def _empty_final():
     return orchestrator_pb2.HandleEvent(final=orchestrator_pb2.FinalResult(speech=""))
 
@@ -118,7 +131,7 @@ def test_streamed_delta_then_empty_final_does_not_trigger_fallback():
         _empty_final(),
     ])
     before = dict(srv.val.state)
-    _drive(srv, "播放音乐")
+    _drive(srv, _CLOUD_ROUTED)
     assert srv.val.state == before, "云端已流出话术，端侧仍补了一次执行"
 
 
@@ -129,7 +142,7 @@ def test_streamed_action_then_empty_final_does_not_trigger_fallback():
         _empty_final(),
     ])
     before = dict(srv.val.state)
-    _drive(srv, "播放音乐")
+    _drive(srv, _CLOUD_ROUTED)
     assert srv.val.state == before
 
 
@@ -139,8 +152,8 @@ def test_empty_delta_does_not_count_as_output():
         orchestrator_pb2.HandleEvent(speech_delta=""),
         _empty_final(),
     ])
-    _drive(srv, "播放音乐")
-    assert srv.val.state["media"] == "playing"
+    _drive(srv, _CLOUD_ROUTED)
+    assert srv.val.state.get("scene_mode") == "camping"
 
 
 # ── 挡板 ③：非危险车控兜底不变 ────────────────────────────────────────────
@@ -148,9 +161,9 @@ def test_empty_delta_does_not_count_as_output():
 def test_non_dangerous_fallback_still_executes():
     """兜底存在的意义：LLM 规划失败但原意是明确车控——这条必须活着。"""
     srv = _servicer([_empty_final()])
-    events = _drive(srv, "播放音乐")
+    events = _drive(srv, _CLOUD_ROUTED)
 
-    assert srv.val.state["media"] == "playing"
+    assert srv.val.state.get("scene_mode") == "camping"
     finals = [ev.final for ev in events if ev.WhichOneof("event") == "final"]
     assert any(f.actions for f in finals), "兜底执行成功却没回动作卡"
 
@@ -160,5 +173,5 @@ def test_cloud_with_speech_skips_fallback_entirely():
     srv = _servicer([orchestrator_pb2.HandleEvent(
         final=orchestrator_pb2.FinalResult(speech="已经在放了"))])
     before = dict(srv.val.state)
-    _drive(srv, "播放音乐")
+    _drive(srv, _CLOUD_ROUTED)
     assert srv.val.state == before
