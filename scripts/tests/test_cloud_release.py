@@ -2,22 +2,27 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
 
 from scripts.cloud_release_lib import (
     ControlledChange,
+    ReleaseArtifact,
     ReleasePlan,
     ReleaseError,
     SshConfig,
     SubprocessRunner,
+    build_release_artifact,
     classify_changed_path,
     compute_infrastructure_digest,
     diff_contains_schema_change,
     git_changes,
     make_release_plan,
     require_clean_main_commit,
+    validate_archive_member_names,
+    validate_text_payload,
 )
 
 
@@ -309,3 +314,126 @@ def test_compute_infrastructure_digest_reads_committed_bytes_only(tmp_path: Path
 def test_release_plan_positional_contract_is_stable():
     plan = ReleasePlan("a" * 40, "b" * 40, (), (), "ready")
     assert plan.status == "ready"
+
+
+def test_build_release_artifact_contains_only_committed_source(tmp_path: Path):
+    repo, sha = make_repo(tmp_path)
+    committed = subprocess.run(
+        ["git", "show", f"{sha}:tracked.txt"],
+        cwd=repo,
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+    (repo / "tracked.txt").write_text("dirty working copy\n", encoding="utf-8")
+    output_root = tmp_path / "artifacts"
+
+    artifact = build_release_artifact(
+        repo=repo,
+        output_root=output_root,
+        plan=ReleasePlan(sha, sha, (), (), "ready"),
+        services_digest="1" * 64,
+        models_digest="2" * 64,
+    )
+
+    assert isinstance(artifact, ReleaseArtifact)
+    assert artifact.directory == output_root / sha
+    assert artifact.source_tar.is_file()
+    assert artifact.manifest.is_file()
+    assert artifact.checksums.is_file()
+    assert artifact.transport_tar.is_file()
+    with tarfile.open(artifact.source_tar) as archive:
+        assert archive.getnames() == ["tracked.txt"]
+        extracted = archive.extractfile("tracked.txt")
+        assert extracted is not None
+        assert extracted.read() == committed
+    with tarfile.open(artifact.transport_tar) as archive:
+        assert archive.getnames() == [
+            "source.tar",
+            "manifest.json",
+            "checksums.sha256",
+        ]
+
+
+def test_build_release_artifact_reuses_identical_existing_artifact(
+    tmp_path: Path,
+):
+    repo, sha = make_repo(tmp_path)
+    kwargs = {
+        "repo": repo,
+        "output_root": tmp_path / "artifacts",
+        "plan": ReleasePlan(sha, sha, (), (), "ready"),
+        "services_digest": "1" * 64,
+        "models_digest": "2" * 64,
+    }
+
+    first = build_release_artifact(**kwargs)
+    second = build_release_artifact(**kwargs)
+
+    assert second == first
+
+
+def test_existing_mismatched_artifact_is_never_overwritten(tmp_path: Path):
+    repo, sha = make_repo(tmp_path)
+    directory = tmp_path / "artifacts" / sha
+    directory.mkdir(parents=True)
+    manifest = directory / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ReleaseError, match="artifact exists but does not match"):
+        build_release_artifact(
+            repo=repo,
+            output_root=tmp_path / "artifacts",
+            plan=ReleasePlan(sha, sha, (), (), "ready"),
+            services_digest="1" * 64,
+            models_digest="2" * 64,
+        )
+
+    assert manifest.read_text(encoding="utf-8") == "{}"
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        ".env",
+        "secrets/client.pem",
+        "certs/server.key",
+        ".artifacts/cloud.env",
+        "../outside.txt",
+        "/absolute.txt",
+    ],
+)
+def test_archive_secret_path_scanner_rejects_sensitive_members(member: str):
+    with pytest.raises(ReleaseError, match="forbidden archive member"):
+        validate_archive_member_names([member])
+
+
+def test_archive_secret_path_scanner_allows_env_example():
+    validate_archive_member_names([".env.example", "deploy/cloud/README.md"])
+
+
+def test_text_secret_scanner_rejects_private_key():
+    private_key = (
+        "-----BEGIN PRIVATE KEY-----\n"
+        + "A" * 64
+        + "\n-----END PRIVATE KEY-----\n"
+    )
+    with pytest.raises(ReleaseError, match="private key material"):
+        validate_text_payload(private_key)
+
+
+def test_build_release_artifact_rejects_committed_env(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    (repo / ".env").write_text("TOKEN=real-secret-value\n", encoding="utf-8")
+    git(repo, "add", "-f", ".env")
+    git(repo, "commit", "-m", "bad env")
+    sha = git(repo, "rev-parse", "HEAD")
+
+    with pytest.raises(ReleaseError, match="forbidden archive member"):
+        build_release_artifact(
+            repo=repo,
+            output_root=tmp_path / "artifacts",
+            plan=ReleasePlan(sha, sha, (), (), "ready"),
+            services_digest="1" * 64,
+            models_digest="2" * 64,
+        )
+    build_release_artifact,
