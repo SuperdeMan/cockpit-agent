@@ -48,8 +48,9 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 
 ### 可切换远程真栈实施期红线
 
-在改动任何脚本目录或 manifest 前，先读取 `dev-stack.local`：文件缺失时按
-`target=local` 处理，文件损坏则 fail closed。该文件只允许 `target=local|cloud`，不得保存
+任何真栈动作（包括运行 E2E、Compose 或 `make up`）前，必须先读取 `dev-stack.local`：文件
+缺失时按 `target=local` 处理，文件损坏则 fail closed。改动任何脚本目录或 manifest 前同样
+必须读取该文件。该文件只允许 `target=local|cloud`，不得保存
 token、密码、私钥或 URL。`target=cloud` 时禁止启动本地 Compose；本地只承载编辑、单测、
 静态检查和 Vite。`target=local` 时继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一
 运行时来源。

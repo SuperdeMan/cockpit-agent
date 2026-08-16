@@ -133,8 +133,9 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 
 ### 可切换远程真栈实施期红线
 
-在改动任何脚本目录或 manifest 前，必须先读取 `dev-stack.local`：文件缺失按
-`target=local` 处理，文件损坏则 fail closed。只允许 `target=local|cloud`，不得在其中保存
+任何真栈动作（包括运行 E2E、Compose 或 `make up`）前，必须先读取 `dev-stack.local`：文件
+缺失按 `target=local` 处理，文件损坏则 fail closed。改动任何脚本目录或 manifest 前同样
+必须读取该文件。只允许 `target=local|cloud`，不得在其中保存
 token、密码、私钥或 URL。`target=cloud` 禁止启动本地 Compose，本地仅用于编辑、单测、静态
 检查和 Vite；`target=local` 继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一运行时
 来源。
