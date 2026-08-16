@@ -133,6 +133,82 @@ PY
   validate_import_manifest "${migration_id}"
 }
 
+require_preapply_batch() {
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
+  require_migration_id "${migration_id}"
+  python3 - "${directory}" "${migration_id}" <<'PY'
+import hashlib, json, os, stat, sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
+allowed = required | {"preflight-current.json"}
+root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+descriptors = {}
+try:
+    metadata = os.fstat(root)
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != 0o700):
+        raise SystemExit("preapply batch root is invalid")
+    entries = set(os.listdir(root))
+    if entries != allowed:
+        raise SystemExit("preapply batch file set is invalid")
+    for name in sorted(entries):
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
+        descriptors[name] = descriptor
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                or metadata.st_uid != 0 or metadata.st_gid != 0
+                or stat.S_IMODE(metadata.st_mode) != 0o600):
+            raise SystemExit("preapply batch file is invalid")
+    manifest_bytes = os.read(descriptors["manifest.json"], os.fstat(descriptors["manifest.json"]).st_size)
+    marker_bytes = os.read(descriptors["preflight-current.json"], os.fstat(descriptors["preflight-current.json"]).st_size)
+    manifest = json.loads(manifest_bytes)
+    marker = json.loads(marker_bytes)
+    if set(marker) != {"schema_version","migration_id","manifest_sha256","archive_fingerprint","inspected_at","current"}:
+        raise SystemExit("preflight marker is forged")
+    if (marker["schema_version"] != 1 or marker["migration_id"] != sys.argv[2]
+            or marker["manifest_sha256"] != hashlib.sha256(manifest_bytes).hexdigest()
+            or marker["archive_fingerprint"] != manifest["postgres"]["archive_fingerprint"]):
+        raise SystemExit("preflight marker is forged")
+    try:
+        inspected = datetime.fromisoformat(marker["inspected_at"].replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as exc:
+        raise SystemExit("preflight marker is forged") from exc
+    canonical = inspected.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    now = datetime.now(timezone.utc)
+    if canonical != marker["inspected_at"] or inspected > now + timedelta(seconds=30):
+        raise SystemExit("preflight marker is forged")
+    if datetime.now(timezone.utc) - inspected > timedelta(minutes=5):
+        raise SystemExit("preflight marker is stale")
+    current = marker["current"]
+    if (not isinstance(current, dict) or set(current) != {"current_release","runtime_project_name","disk_available_bytes","stores","status"}
+            or marker["current"]["status"] != "inspect_only"):
+        raise SystemExit("preflight marker is forged")
+    stores = current["stores"]
+    if (not isinstance(stores, dict) or set(stores) != {"postgres","redis","collector"}
+            or set(stores["postgres"]) != {"major","vector_version","schema_fingerprint","running"}
+            or set(stores["redis"]) != {"version","schema_fingerprint","running"}
+            or set(stores["collector"]) != {"user_version","schema_fingerprint","running"}
+            or not all(store["running"] is True for store in stores.values())):
+        raise SystemExit("preflight marker is forged")
+    if (Path(current["current_release"]).name != manifest["source_sha"]
+            or stores["postgres"]["major"] != manifest["postgres"]["major"]
+            or stores["postgres"]["vector_version"] != manifest["postgres"]["vector_version"]
+            or stores["postgres"]["schema_fingerprint"] != manifest["postgres"]["schema_fingerprint"]
+            or str(stores["redis"]["version"]).split(".",1)[0] != str(manifest["redis"]["version"]).split(".",1)[0]
+            or stores["collector"]["user_version"] != manifest["collector"]["user_version"]
+            or stores["collector"]["schema_fingerprint"] != manifest["collector"]["schema_fingerprint"]):
+        raise SystemExit("preflight marker is forged")
+    needed = max(sum(item["size_bytes"] for item in manifest["files"].values()) * 3, 1024 * 1024)
+    if type(current["disk_available_bytes"]) is not int or current["disk_available_bytes"] < needed:
+        raise SystemExit("preflight marker is forged")
+finally:
+    for descriptor in descriptors.values(): os.close(descriptor)
+    os.close(root)
+PY
+  validate_import_manifest "${migration_id}"
+}
+
 require_runtime_batch() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
   require_migration_id "${migration_id}"
@@ -386,11 +462,10 @@ print(json.dumps({
 PY
 }
 
-preflight_migration() {
+write_preflight_current() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}" current_file
-  local postgres_id postgres_image redis_id redis_image archive_fingerprint archive_listing redis_check
-  load_runtime
-  require_runtime_batch "${migration_id}"
+  local postgres_id postgres_image redis_id redis_image archive_fingerprint archive_listing redis_check current_json
+  local partial run_id
   current_file="${directory}/preflight-current.json"
   postgres_id="$("${compose[@]}" ps -a -q postgres)" || return $?
   redis_id="$("${compose[@]}" ps -a -q redis)" || return $?
@@ -404,14 +479,25 @@ preflight_migration() {
   redis_check="$(docker run --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint redis-check-rdb "${redis_image}" /snapshot/redis.rdb)" || return $?
   [[ "${redis_check}" == *"CRC64 checksum is OK"* ]] || die "Redis import format validation failed"
-  inspect_current >"${current_file}.partial"
-  chmod 0600 -- "${current_file}.partial"
-  mv -T "${current_file}.partial" "${current_file}"
-  python3 - "${directory}/manifest.json" "${current_file}" "${archive_fingerprint}" <<'PY'
-import json, sys
+  current_json="$(inspect_current)" || return $?
+  if compgen -G "${directory}/preflight.*.json.partial" >/dev/null; then return 1; fi
+  run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
+  partial="${directory}/preflight.${run_id}.json.partial"
+  python3 - "${directory}/manifest.json" "${partial}" "${archive_fingerprint}" \
+    "${current_json}" "${migration_id}" <<'PY' || return $?
+import hashlib, json, os, sys
+from datetime import datetime, timezone
 from pathlib import Path
-manifest=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-current=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+manifest_bytes=Path(sys.argv[1]).read_bytes(); manifest=json.loads(manifest_bytes); current=json.loads(sys.argv[4])
+if set(current)!={"current_release","runtime_project_name","disk_available_bytes","stores","status"} or current["status"]!="inspect_only":
+    raise SystemExit("current inspection contract mismatch")
+stores=current["stores"]
+if (set(stores)!={"postgres","redis","collector"}
+        or set(stores["postgres"])!={"major","vector_version","schema_fingerprint","running"}
+        or set(stores["redis"])!={"version","schema_fingerprint","running"}
+        or set(stores["collector"])!={"user_version","schema_fingerprint","running"}
+        or not all(store["running"] is True for store in stores.values())):
+    raise SystemExit("current store inspection contract mismatch")
 if manifest["postgres"]["archive_fingerprint"] != sys.argv[3]:
     raise SystemExit("PostgreSQL archive fingerprint mismatch")
 if Path(current["current_release"]).name != manifest["source_sha"]:
@@ -433,9 +519,33 @@ if source_redis_major != target_redis_major:
 required=max(sum(item["size_bytes"] for item in manifest["files"].values()) * 3, 1024 * 1024)
 if current["disk_available_bytes"] < required:
     raise SystemExit("insufficient migration disk space")
+inspected_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
+marker={"schema_version":1,"migration_id":sys.argv[5],"manifest_sha256":hashlib.sha256(manifest_bytes).hexdigest(),
+        "archive_fingerprint":sys.argv[3],"inspected_at":inspected_at,"current":current}
+encoded=(json.dumps(marker,sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")
+descriptor=os.open(sys.argv[2],os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,0o600)
+try:
+    os.write(descriptor,encoded); os.fsync(descriptor)
+finally:
+    os.close(descriptor)
 PY
+  chmod 0600 -- "${partial}" || return $?
+  mv -T "${partial}" "${current_file}" || return $?
   "${compose[@]}" config --services >/dev/null
+}
+
+preflight_migration() {
+  local migration_id="$1"
+  load_runtime || return $?
+  require_sealed_inbound_bundle "${migration_id}" || return $?
+  write_preflight_current "${migration_id}" || return $?
   printf '{"migration_id":"%s","status":"preflight_ok"}\n' "${migration_id}"
+}
+
+refresh_preflight_after_backup() {
+  local migration_id="$1"
+  require_runtime_batch "${migration_id}" || return $?
+  write_preflight_current "${migration_id}" || return $?
 }
 
 stop_application_writers() {
@@ -752,11 +862,10 @@ fail_and_rollback() {
 apply_migration() {
   local migration_id="$1" backup_stamp
   load_runtime
-  require_sealed_inbound_bundle "${migration_id}"
-  preflight_migration "${migration_id}"
+  require_preapply_batch "${migration_id}"
   backup_stamp="$(run_required_backup)"
   write_migration_state "BACKED_UP" "${migration_id}" "${backup_stamp}"
-  preflight_migration "${migration_id}"
+  refresh_preflight_after_backup "${migration_id}"
   stop_application_writers || fail_and_rollback "${migration_id}" "${backup_stamp}" "stop-writers"
   restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump" \
     || fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"

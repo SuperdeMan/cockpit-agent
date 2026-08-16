@@ -507,9 +507,10 @@ def test_apply_seals_only_after_all_scp_uploads_complete(tmp_path: Path):
     commands = [" ".join(call) for call in runner.calls]
     scp_positions = [index for index, call in enumerate(runner.calls) if call[0] == "scp"]
     seal_position = next(index for index, command in enumerate(commands) if " seal-upload " in command)
+    preflight_position = next(index for index, command in enumerate(commands) if " preflight " in command)
     apply_position = next(index for index, command in enumerate(commands) if " apply " in command)
     assert len(scp_positions) == 4
-    assert max(scp_positions) < seal_position < apply_position
+    assert max(scp_positions) < seal_position < preflight_position < apply_position
     assert not any("chmod 0600" in command for command in commands)
 
 

@@ -337,9 +337,9 @@ def test_remote_inspection_and_preflight_use_real_schema_fingerprints():
 def test_remote_apply_rechecks_preflight_and_has_no_subshell_error_suppression():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
-    assert body.count('preflight_migration "${migration_id}"') >= 2
-    assert body.index("run_required_backup") < body.rindex("preflight_migration")
-    assert body.rindex("preflight_migration") < body.index("stop_application_writers")
+    assert 'require_preapply_batch "${migration_id}"' in body
+    assert body.index("run_required_backup") < body.index("refresh_preflight_after_backup")
+    assert body.index("refresh_preflight_after_backup") < body.index("stop_application_writers")
     assert "if ! (" not in text
     assert "ROLLBACK_FAILED" in text
 
@@ -406,8 +406,9 @@ def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
         require_sealed_inbound_bundle() {{ :; }}
+        require_preapply_batch() {{ :; }}
         require_runtime_batch() {{ :; }}
-        preflight_migration() {{ printf 'preflight\n' >>'{events.as_posix()}'; }}
+        refresh_preflight_after_backup() {{ printf 'preflight\n' >>'{events.as_posix()}'; }}
         run_required_backup() {{ printf 'backup\n' >>'{events.as_posix()}'; printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
         stop_application_writers() {{ printf 'stop\n' >>'{events.as_posix()}'; }}
@@ -420,7 +421,7 @@ def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path
     completed = subprocess.run([str(bash), str(harness)], capture_output=True, text=True)
     assert completed.returncode != 0
     recorded = events.read_text(encoding="utf-8").splitlines()
-    assert recorded.count("preflight") == 2
+    assert recorded.count("preflight") == 1
     assert "postgres" in recorded and "rollback" in recorded
     assert "redis" not in recorded and "collector" not in recorded
 
@@ -434,8 +435,9 @@ def test_remote_attestation_failure_never_marks_applied_and_triggers_rollback(tm
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
         require_sealed_inbound_bundle() {{ :; }}
+        require_preapply_batch() {{ :; }}
         require_runtime_batch() {{ :; }}
-        preflight_migration() {{ :; }}
+        refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
         stop_application_writers() {{ :; }}
@@ -462,8 +464,9 @@ def test_remote_apply_attests_exact_before_start_then_growth_safe_after_start(tm
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
         require_sealed_inbound_bundle() {{ :; }}
+        require_preapply_batch() {{ :; }}
         require_runtime_batch() {{ :; }}
-        preflight_migration() {{ :; }}
+        refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
         stop_application_writers() {{ :; }}
@@ -535,6 +538,64 @@ def test_remote_batch_validation_splits_sealed_input_from_controlled_runtime_tre
         assert expected in runtime
 
 
+def test_remote_preapply_batch_accepts_only_fresh_authentic_preflight_marker():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^require_preapply_batch\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'allowed = required | {"preflight-current.json"}' in body
+    for forbidden in ("status.json", "evidence-pre-start.json", "rollback", "rollback-generated"):
+        assert forbidden not in body
+    assert "os.O_NOFOLLOW" in body
+    assert "stat.S_ISREG" in body and "0o600" in body
+    assert 'set(marker) != {"schema_version","migration_id","manifest_sha256","archive_fingerprint","inspected_at","current"}' in body
+    assert 'marker["manifest_sha256"] != hashlib.sha256(manifest_bytes).hexdigest()' in body
+    assert 'datetime.now(timezone.utc) - inspected > timedelta(minutes=5)' in body
+    assert 'marker["current"]["status"] != "inspect_only"' in body
+    assert 'raise SystemExit("preflight marker is stale")' in body
+    assert 'raise SystemExit("preflight marker is forged")' in body
+
+
+def test_remote_state_machine_is_sealed_then_preflighted_then_runtime(tmp_path: Path):
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    preflight = re.search(r"(?ms)^preflight_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    apply = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    refresh = re.search(r"(?ms)^refresh_preflight_after_backup\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'require_sealed_inbound_bundle "${migration_id}" || return $?' in preflight
+    assert 'write_preflight_current "${migration_id}" || return $?' in preflight
+    assert 'require_preapply_batch "${migration_id}"' in apply
+    assert apply.index('require_preapply_batch "${migration_id}"') < apply.index("run_required_backup")
+    assert 'refresh_preflight_after_backup "${migration_id}"' in apply
+    assert 'require_runtime_batch "${migration_id}" || return $?' in refresh
+    assert 'write_preflight_current "${migration_id}" || return $?' in refresh
+
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "sealed-preflighted-runtime.sh"
+    harness.write_text(textwrap.dedent(f"""
+        set -u
+        source '{REMOTE_MIGRATION_PATH.as_posix()}'
+        load_runtime() {{ :; }}
+        require_sealed_inbound_bundle() {{ printf 'sealed\n' >>'{events.as_posix()}'; }}
+        require_preapply_batch() {{ printf 'preapply\n' >>'{events.as_posix()}'; }}
+        require_runtime_batch() {{ printf 'runtime\n' >>'{events.as_posix()}'; }}
+        write_preflight_current() {{ printf 'preflighted\n' >>'{events.as_posix()}'; }}
+        run_required_backup() {{ printf '20260817T010203Z\n'; }}
+        write_migration_state() {{ :; }}
+        stop_application_writers() {{ :; }}
+        restore_postgres_dump() {{ :; }}
+        restore_redis_rdb() {{ :; }}
+        install_collector_db() {{ :; }}
+        verify_store_group() {{ :; }}
+        start_current_release() {{ :; }}
+        verify_current_release() {{ :; }}
+        preflight_migration 20260817T010203Z-abcdef0-online >/dev/null
+        apply_migration 20260817T010203Z-abcdef0-online
+    """), encoding="utf-8")
+    completed = subprocess.run([str(_git_bash()), str(harness)], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert events.read_text(encoding="utf-8").splitlines()[:5] == [
+        "sealed", "preflighted", "preapply", "runtime", "preflighted",
+    ]
+
+
 def test_apply_then_verify_and_rollback_use_runtime_batch_validation(tmp_path: Path):
     bash = _git_bash()
     events = tmp_path / "events.txt"
@@ -544,8 +605,9 @@ def test_apply_then_verify_and_rollback_use_runtime_batch_validation(tmp_path: P
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
         require_sealed_inbound_bundle() {{ printf 'sealed\n' >>'{events.as_posix()}'; }}
+        require_preapply_batch() {{ printf 'preapply\n' >>'{events.as_posix()}'; }}
         require_runtime_batch() {{ printf 'runtime:%s\n' "$1" >>'{events.as_posix()}'; }}
-        preflight_migration() {{ :; }}
+        refresh_preflight_after_backup() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ :; }}
         stop_application_writers() {{ :; }}
@@ -564,7 +626,7 @@ def test_apply_then_verify_and_rollback_use_runtime_batch_validation(tmp_path: P
     completed = subprocess.run([str(bash), str(harness)], capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
     assert events.read_text(encoding="utf-8").splitlines() == [
-        "sealed", "runtime:20260817T010203Z-abcdef0-online",
+        "preapply", "runtime:20260817T010203Z-abcdef0-online",
         "runtime:20260817T010203Z-abcdef0-online",
     ]
 
