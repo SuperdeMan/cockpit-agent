@@ -222,12 +222,15 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 
 ```bash
 python scripts/probe_qa_regression.py --list                 # 34 例 / 58 轮 / 6 组（Q10 批 +XS7/XS8）
+# 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
+# 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
+# ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。
 python scripts/probe_qa_regression.py --mapping              # Q13：两个分类出口一致性（纯函数，不用起栈）
 python scripts/probe_qa_regression.py --group negation       # 按组跑
 python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线用这条**
 ```
 
-**四条纪律，全部由这批自己的自伤沉淀（照做，别重新发明）：**
+**五条纪律，全部由这批自己的自伤沉淀（照做，别重新发明）：**
 
 1. **persona 必须换 `user_id`，只换 `session_id` 证明不了任何隔离。**
    `reminder_item` **根本没有 `session_id` 列**，memory 同理——owner 是 `(user_id, occupant_id)`。
@@ -243,6 +246,17 @@ python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线
 4. **客户端的东西必须走 CDP 车道。** 位置前置闸在 `hmi/src/App.tsx` 的 `send()` 里、
    `dispatch()` 之前；响应归属靠浏览器内的 FIFO。**WS 探针是从闸后面进来的**，
    对这两族跑多少轮都是假绿——同 §「测试若替被测系统提供了某个前提，那条前提就不再被验证」。
+5. **「换个名字的关键词排除」还是关键词排除**（2026-08-16 Q6 批，尺子迭代四版、
+   前三版都假绿）。审计问答的判据依次是：关键词排除 → `speech_has:["车窗"]`
+   （「**关了车窗**」照样 PASS，方向说反判不出）→ 反向词表 + 「否认执行」词表
+   （「车窗**没动**，音乐也没停，**没法真的控制车**」三个说法全不在表里）→
+   **正向判据**（对象词附近必须出现该动作的**正确方向词**）。
+   > **否认执行的表达空间比任何词表都大。** 正向判据的价值不是更准，而是
+   > **把失败模式从假绿翻成假红**——模型换个说法而没带正确方向词就会红，我会去看话术；
+   > 假绿永远不会有人去看。**宁可假红。**
+   > 配套原语：`reflects_actions`（判动作名与方向，对措辞免疫）、`speech_not_regex`。
+   > ⚠ 这四次迭代本身就是 Q6 的论据：**话术层判据验证不了「系统说的是不是真的」**，
+   > 所以那类问题必须做成确定性 handler，而不是继续调尺子。
 
 ## 5.4 意图与落域对抗套件（`test/eval_intent_adversarial.py`）
 
