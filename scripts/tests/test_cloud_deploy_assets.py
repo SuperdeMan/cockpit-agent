@@ -322,6 +322,14 @@ def test_remote_apply_rechecks_preflight_and_has_no_subshell_error_suppression()
     assert "ROLLBACK_FAILED" in text
 
 
+def test_remote_second_preflight_rechecks_all_version_and_space_constraints():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert 'current["stores"]["postgres"]["vector_version"]' in text
+    assert 'manifest["postgres"]["vector_version"]' in text
+    assert "max(sum(item[\"size_bytes\"] for item in manifest[\"files\"].values()) * 3, 1024 * 1024)" in text
+    assert 'manifest["postgres"]["archive_fingerprint"] != sys.argv[3]' in text
+
+
 def test_remote_verification_reads_actual_target_stores_and_writes_atomic_evidence():
     text = _required_text(REMOTE_MIGRATION_PATH)
     assert "collect_target_attestation" in text

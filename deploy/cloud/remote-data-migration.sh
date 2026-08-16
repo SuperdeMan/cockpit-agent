@@ -149,6 +149,17 @@ if not safe_counts(pg["tables"]) or not all(safe_counts(item) for item in pg["st
     raise SystemExit("PostgreSQL aggregate counts are invalid")
 if not safe_counts(redis.get("prefixes")) or not safe_counts(redis.get("types")) or not safe_counts(collector.get("tables")):
     raise SystemExit("aggregate category counts are invalid")
+if not re.fullmatch(r"[0-9]+(?:[.][0-9]+){1,3}", redis.get("version", "")):
+    raise SystemExit("Redis version is invalid")
+for key in ("rdb_version", "key_count", "persistent", "expiring", "min_ttl_ms", "max_ttl_ms"):
+    if type(redis.get(key)) is not int or redis[key] < 0:
+        raise SystemExit("Redis numeric evidence is invalid")
+if redis["rdb_version"] < 1 or redis["persistent"] + redis["expiring"] != redis["key_count"]:
+    raise SystemExit("Redis aggregate total is invalid")
+if sum(redis["prefixes"].values()) != redis["key_count"] or sum(redis["types"].values()) != redis["key_count"]:
+    raise SystemExit("Redis category totals are invalid")
+if type(collector.get("user_version")) is not int or collector["user_version"] < 0:
+    raise SystemExit("Collector user_version is invalid")
 for value in (pg["schema_fingerprint"], pg["archive_fingerprint"], redis.get("rdb_sha256"), collector["schema_fingerprint"]):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         raise SystemExit("manifest fingerprint is invalid")
@@ -238,23 +249,40 @@ PY
 
 preflight_migration() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}" current_file
+  local postgres_id postgres_image redis_id redis_image archive_fingerprint archive_listing redis_check
   load_runtime
   require_import_bundle "${migration_id}"
   current_file="${directory}/preflight-current.json"
+  postgres_id="$("${compose[@]}" ps -a -q postgres)" || return $?
+  redis_id="$("${compose[@]}" ps -a -q redis)" || return $?
+  [[ "${postgres_id}" =~ ^[0-9a-f]{12,64}$ && "${redis_id}" =~ ^[0-9a-f]{12,64}$ ]] \
+    || die "store container identity is invalid"
+  postgres_image="$(docker inspect --format '{{.Image}}' "${postgres_id}")"
+  redis_image="$(docker inspect --format '{{.Image}}' "${redis_id}")"
+  archive_listing="$(docker run --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
+    --entrypoint pg_restore "${postgres_image}" --list /snapshot/postgres.dump)" || return $?
+  archive_fingerprint="$(printf '%s\n' "${archive_listing}" | sed '/^; Archive created at/d' | sha256sum | cut -d' ' -f1)"
+  redis_check="$(docker run --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
+    --entrypoint redis-check-rdb "${redis_image}" /snapshot/redis.rdb)" || return $?
+  [[ "${redis_check}" == *"CRC64 checksum is OK"* ]] || die "Redis import format validation failed"
   inspect_current >"${current_file}.partial"
   chmod 0600 -- "${current_file}.partial"
   mv -T "${current_file}.partial" "${current_file}"
-  python3 - "${directory}/manifest.json" "${current_file}" <<'PY'
+  python3 - "${directory}/manifest.json" "${current_file}" "${archive_fingerprint}" <<'PY'
 import json, sys
 from pathlib import Path
 manifest=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 current=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+if manifest["postgres"]["archive_fingerprint"] != sys.argv[3]:
+    raise SystemExit("PostgreSQL archive fingerprint mismatch")
 if Path(current["current_release"]).name != manifest["source_sha"]:
     raise SystemExit("current release does not match migration source")
 if current["stores"]["postgres"]["schema_fingerprint"] != manifest["postgres"]["schema_fingerprint"]:
     raise SystemExit("PostgreSQL schema fingerprint mismatch")
 if current["stores"]["postgres"]["major"] != manifest["postgres"]["major"]:
     raise SystemExit("PostgreSQL major version mismatch")
+if current["stores"]["postgres"]["vector_version"] != manifest["postgres"]["vector_version"]:
+    raise SystemExit("PostgreSQL vector version mismatch")
 if current["stores"]["collector"]["schema_fingerprint"] != manifest["collector"]["schema_fingerprint"]:
     raise SystemExit("Collector schema fingerprint mismatch")
 if current["stores"]["collector"]["user_version"] != manifest["collector"]["user_version"]:
@@ -263,7 +291,7 @@ source_redis_major=str(manifest["redis"]["version"]).split(".",1)[0]
 target_redis_major=str(current["stores"]["redis"]["version"]).split(".",1)[0]
 if source_redis_major != target_redis_major:
     raise SystemExit("Redis major version mismatch")
-required=sum(item["size_bytes"] for item in manifest["files"].values()) * 3
+required=max(sum(item["size_bytes"] for item in manifest["files"].values()) * 3, 1024 * 1024)
 if current["disk_available_bytes"] < required:
     raise SystemExit("insufficient migration disk space")
 PY
