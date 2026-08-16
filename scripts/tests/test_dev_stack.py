@@ -15,12 +15,17 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
+from scripts import cloud_release
 from scripts import dev_stack_lib as dev
 from scripts import dev_stack as cli
 from scripts.cloud_release_lib import (
+    CloudReleaseResult,
     CommandResult,
+    ControlledChange,
     ReleaseError,
+    ReleasePlan,
     ReleaseRequest,
+    RemoteState,
     SshConfig,
 )
 
@@ -1153,6 +1158,49 @@ def test_cli_status_uses_health_consistent_status_for_local_and_cloud(tmp_path: 
     assert cloud_events[-1]["status"] == "degraded"
 
 
+def _actual_cloud_release_payload(status: str) -> dict[str, object]:
+    plan = ReleasePlan(
+        deployed_sha="a" * 40,
+        target_sha="b" * 40,
+        changed_paths=("deploy/cloud/remote-release.sh",),
+        blocking_changes=(
+            ControlledChange("deploy/cloud/remote-release.sh", "infrastructure"),
+        ),
+        status=status,
+        target_infrastructure_digest="c" * 64,
+        approved_infrastructure_digest="d" * 64,
+    )
+    remote = RemoteState(
+        current_release="a" * 40,
+        current_path="/opt/car-agent/releases/" + "a" * 40,
+        runtime_project_name="car_agent",
+        approved_infrastructure_digest="d" * 64,
+        disk_available_bytes=1,
+        memory_available_bytes=1,
+        release_lock_available=True,
+        runtime_project_ready=True,
+        shared_scripts_ready=True,
+        shared_models_ready=True,
+    )
+    return cloud_release._result_payload(
+        CloudReleaseResult(status, plan, None, remote)
+    )
+
+
+def test_cli_uses_real_cloud_release_payload_for_plan_and_bootstrap_results():
+    plan_rejected = _actual_cloud_release_payload("plan_rejected")
+    plan_code, plan_payload = cli._release_result(3, json.dumps(plan_rejected))
+    assert plan_code == 3
+    assert plan_payload["blocking_changes"] == [
+        {"path": "deploy/cloud/remote-release.sh", "category": "infrastructure"}
+    ]
+
+    bootstrap = _actual_cloud_release_payload("bootstrap_required")
+    bootstrap_code, bootstrap_payload = cli._release_result(3, json.dumps(bootstrap))
+    assert bootstrap_code == 1
+    assert bootstrap_payload["status"] == "bootstrap_required"
+    assert bootstrap_payload["bootstrap"]["status"] in {"ready", "bootstrap_required"}
+
 def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     dev.set_target(tmp_path, "cloud")
     payload = _cloud_release_payload()
@@ -1163,6 +1211,8 @@ def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     assert events[-1]["target_sha"] == payload["target_sha"]
     assert events[-1]["current_release"] == payload["remote"]["current_release"]
     assert events[-1]["changed_paths"] == ["agents/example.py"]
+    assert events[-1]["bootstrap"]["status"] == "ready"
+    assert events[-1]["bootstrap"]["source_release"] == "/opt/ignored"
 
 
 @pytest.mark.parametrize(
@@ -1170,6 +1220,7 @@ def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     (
         (1, None, 1),
         (2, {"status": "error", "error_category": "configuration"}, 2),
+        (2, {"status": "error", "error_category": "safety"}, 2),
         (3, _cloud_release_payload("plan_rejected"), 3),
         (3, _cloud_release_payload("bootstrap_required"), 1),
     ),
@@ -1181,6 +1232,23 @@ def test_cli_deploy_maps_child_exit_codes_by_safe_payload_category(tmp_path: Pat
     assert cli.main(["--host", "dev.example", "--identity", str(tmp_path / "identity"), "deploy"], repo=tmp_path, release_runner=runner, emit=events.append) == expected
     assert "secret-stderr" not in json.dumps(events)
 
+
+    if returncode == 2:
+        assert events[-1]["status"] == f"{payload['error_category']}_rejected"
+        assert events[-1]["error_category"] == payload["error_category"]
+    if returncode == 3 and payload["status"] == "bootstrap_required":
+        assert events[-1]["bootstrap"]["status"] == "ready"
+
+
+def test_cli_rejects_duplicate_keys_deep_json_and_boolean_numeric_fields():
+    with pytest.raises(dev.DevStackError):
+        cli._parse_child_payload('{"status":"dry_run","status":"submitted"}')
+    with pytest.raises(dev.DevStackError):
+        cli._parse_child_payload("[" * 5000 + "]" * 5000)
+    payload = _cloud_release_payload()
+    payload["remote"]["disk_available_bytes"] = True
+    with pytest.raises(dev.DevStackError):
+        cli._release_result(0, json.dumps(payload))
 
 @pytest.mark.parametrize("kind", ("malformed", "multiple", "oversize", "unknown_field"))
 def test_cli_deploy_rejects_malformed_multiple_or_oversize_child_output(tmp_path: Path, kind: str):

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts import cloud_release
+from scripts import cloud_release_lib
 from scripts.cloud_release_lib import (
     ControlledChange,
     CommandResult,
@@ -95,6 +97,19 @@ def test_require_clean_main_commit_rejects_unreachable_commit(tmp_path: Path):
     with pytest.raises(ReleaseError, match="not reachable from main"):
         require_clean_main_commit(repo, "HEAD")
 
+
+def test_require_clean_main_commit_rejects_invalid_revision_as_configuration(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    with pytest.raises(ReleaseError) as caught:
+        require_clean_main_commit(repo, "not-a-revision")
+    assert caught.value.category == "configuration"
+
+
+def test_resolve_commit_rejects_invalid_revision_as_configuration(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    with pytest.raises(ReleaseError) as caught:
+        cloud_release_lib._resolve_commit(repo, "not-a-revision")
+    assert caught.value.category == "configuration"
 
 def test_runner_redacts_secret_values(tmp_path: Path):
     runner = SubprocessRunner(redactions={"secret-value"})
@@ -573,6 +588,77 @@ def test_text_secret_scanner_rejects_private_key():
     with pytest.raises(ReleaseError, match="private key material"):
         validate_text_payload(private_key)
 
+
+def test_secret_scanners_mark_sensitive_sources_as_safety():
+    for member in ("keys/production.pem", ".env", "../outside.txt"):
+        with pytest.raises(ReleaseError) as path_error:
+            validate_archive_member_names([member])
+        assert path_error.value.category == "safety"
+    private_key = "-----BEGIN PRIVATE KEY-----\n" + "A" * 64 + "\n-----END PRIVATE KEY-----\n"
+    with pytest.raises(ReleaseError) as body_error:
+        validate_text_payload(private_key)
+    assert body_error.value.category == "safety"
+
+
+def test_cloud_release_cli_help_and_configuration_error_subprocess_contract():
+    script = ROOT / "scripts" / "cloud_release.py"
+    assert script.stat().st_size > 2
+    assert "def main(" in script.read_text(encoding="utf-8")
+    help_result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert help_result.returncode == 0
+    assert all(action in help_result.stdout for action in ("plan", "deploy", "verify", "rollback"))
+    missing = subprocess.run(
+        [sys.executable, str(script), "deploy"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert missing.returncode == 2
+    assert json.loads(missing.stdout) == {
+        "status": "error",
+        "error_category": "configuration",
+    }
+    assert "operation failed" in missing.stderr
+
+
+def test_cloud_release_emit_enforces_the_child_json_size_limit():
+    with pytest.raises(ReleaseError) as caught:
+        cloud_release._emit({"status": "dry_run", "padding": "x" * (64 * 1024)})
+    assert caught.value.category == "runtime"
+
+def test_cloud_release_main_emits_configuration_category_for_invalid_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    repo, _ = make_repo(tmp_path)
+    identity = repo / "identity"
+    identity.write_text("not-a-real-key", encoding="utf-8")
+    monkeypatch.setattr(cloud_release, "REPO_ROOT", repo)
+    monkeypatch.setattr(
+        cloud_release,
+        "execute_deploy",
+        lambda request, **kwargs: cloud_release_lib._resolve_commit(
+            request.repo, request.revision
+        ),
+    )
+    assert cloud_release.main(
+        [
+            "--host", "dev.example", "--identity", str(identity),
+            "deploy", "--sha", "not-a-revision",
+        ]
+    ) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "error",
+        "error_category": "configuration",
+    }
 
 def test_text_secret_scanner_allows_lowercase_program_variables():
     validate_text_payload(

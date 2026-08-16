@@ -294,14 +294,18 @@ def require_clean_main_commit(repo: Path, revision: str) -> str:
     if dirty:
         raise ReleaseError("worktree is not clean", category="safety")
 
-    sha = _git(
+    resolved = _git(
         repo,
         "rev-parse",
         "--verify",
         f"{revision}^{{commit}}",
-    ).stdout.strip()
-    if not FULL_SHA_RE.fullmatch(sha):
-        raise ReleaseError("git did not return a full commit SHA")
+        check=False,
+    )
+    sha = resolved.stdout.strip()
+    if resolved.returncode != 0 or not FULL_SHA_RE.fullmatch(sha):
+        raise ReleaseError(
+            "could not resolve requested revision", category="configuration"
+        )
 
     reachable = _git(
         repo,
@@ -524,7 +528,7 @@ def validate_archive_member_names(names: Sequence[str]) -> None:
             or basename.endswith(SECRET_SUFFIXES)
         )
         if forbidden:
-            raise ReleaseError(f"forbidden archive member: {raw_name}")
+            raise ReleaseError(f"forbidden archive member: {raw_name}", category="safety")
 
 
 def _is_strict_placeholder(value: str) -> bool:
@@ -536,7 +540,7 @@ def _validate_credential_assignment_text(text: str) -> None:
         value = match.group("value")
         if _is_strict_placeholder(value):
             continue
-        raise ReleaseError("credential-like assignment found in release source")
+        raise ReleaseError("credential-like assignment found in release source", category="safety")
 
 
 def _credential_target_name(target: ast.expr) -> str | None:
@@ -605,7 +609,8 @@ def _validate_python_credential_literals(
                 node.lineno not in fixture_lines
             ):
                 raise ReleaseError(
-                    "credential-like assignment found in release source"
+                    "credential-like assignment found in release source",
+                    category="safety",
                 )
 
 
@@ -615,7 +620,7 @@ def validate_text_payload(
     source_path: str | None = None,
 ) -> None:
     if PRIVATE_KEY_BLOCK_RE.search(text):
-        raise ReleaseError("private key material found in release source")
+        raise ReleaseError("private key material found in release source", category="safety")
     source = PurePosixPath((source_path or "").replace("\\", "/"))
     if source.suffix == ".py":
         is_test_source = any(
@@ -640,7 +645,8 @@ def _validate_source_tar(path: Path) -> None:
                     continue
                 if not member.isfile():
                     raise ReleaseError(
-                        f"forbidden archive member type: {member.name}"
+                        f"forbidden archive member type: {member.name}",
+                        category="safety",
                     )
                 if member.size > 2 * 1024 * 1024:
                     continue
@@ -714,7 +720,8 @@ def _generate_proto_into_source_tar(
                     continue
                 if not member.isfile():
                     raise ReleaseError(
-                        f"forbidden archive member type: {member.name}"
+                        f"forbidden archive member type: {member.name}",
+                        category="safety",
                     )
                 target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
                 extracted = archive.extractfile(member)
@@ -1366,14 +1373,18 @@ def discover_remote_state(
 
 
 def _resolve_commit(repo: Path, revision: str) -> str:
-    sha = _git(
+    resolved = _git(
         repo,
         "rev-parse",
         "--verify",
         f"{revision}^{{commit}}",
-    ).stdout.strip()
-    if not FULL_SHA_RE.fullmatch(sha):
-        raise ReleaseError(f"could not resolve commit: {revision}", category="configuration")
+        check=False,
+    )
+    sha = resolved.stdout.strip()
+    if resolved.returncode != 0 or not FULL_SHA_RE.fullmatch(sha):
+        raise ReleaseError(
+            "could not resolve requested revision", category="configuration"
+        )
     return sha
 
 

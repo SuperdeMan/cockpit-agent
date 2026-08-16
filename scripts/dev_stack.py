@@ -172,6 +172,21 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
         "blocking_changes": _validate_blocking_changes(payload["blocking_changes"]),
         "target_infrastructure_sha256": payload["target_infrastructure_sha256"],
         "approved_infrastructure_sha256": payload["approved_infrastructure_sha256"],
+        "bootstrap": {
+            "status": bootstrap["status"],
+            "source_release": bootstrap["source_release"],
+            "candidates": _require_string_list(bootstrap["candidates"]),
+            "details": [
+                {
+                    "path": _require_mapping(detail)["path"],
+                    "source": _require_mapping(detail)["source"],
+                    "sha256": _require_mapping(detail)["sha256"],
+                    "mode": _require_mapping(detail)["mode"],
+                    "owner": _require_mapping(detail)["owner"],
+                }
+                for detail in bootstrap["details"]
+            ],
+        },
         "current_release": remote["current_release"],
         "runtime_project_name": remote["runtime_project_name"],
         "disk_available_bytes": remote["disk_available_bytes"],
@@ -216,13 +231,19 @@ def _release_result(returncode: int, stdout: str) -> tuple[int, dict[str, object
     if returncode == 0 and status in {"dry_run", "submitted"}:
         return 0, _validate_plan_payload(payload)
     if returncode == 2 and status == "error":
-        if set(payload) == _CONFIG_FIELDS and payload.get("error_category") in {"configuration", "safety"}:
-            return 2, {"status": "configuration_rejected"}
+        if set(payload) == _CONFIG_FIELDS:
+            category = payload.get("error_category")
+            if category in {"configuration", "safety"}:
+                return 2, {
+                    "status": f"{category}_rejected",
+                    "error_category": category,
+                }
+            if category == "runtime":
+                return 1, {"status": "failed", "error_category": category}
     if returncode == 3 and status == "plan_rejected":
         return 3, _validate_plan_payload(payload)
     if returncode == 3 and status == "bootstrap_required":
-        _validate_plan_payload(payload)
-        return 1, {"status": "failed"}
+        return 1, _validate_plan_payload(payload)
     raise DevStackError("cloud release response is invalid")
 
 
