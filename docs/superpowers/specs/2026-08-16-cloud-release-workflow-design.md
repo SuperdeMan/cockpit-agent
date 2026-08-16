@@ -2,7 +2,7 @@
 
 日期：2026-08-16
 
-状态：已由泓舟逐节确认，待设计文档复核
+状态：已由泓舟于 2026-08-16 复核通过
 
 适用范围：腾讯云私网 demo 环境，个人调试与 Android 真机开发
 
@@ -33,10 +33,14 @@
 /opt/car-agent/current            # 指向当前 release 的原子符号链接
 /opt/car-agent/shared             # 生产环境、云端 override、备份、锁和脱敏证据
 ├── models/                       # 按 manifest 校验的共享运行模型，不随普通代码发布重复上传
+├── runtime-project-name          # 稳定 Compose project 身份，避免新旧 release 双套容器争端口
+├── release-infrastructure.json   # 经单独批准的 deploy/cloud 资产摘要与安装哈希
 └── locks/release.lock            # build/activate/verify/rollback 的事务锁
 ```
 
 构建发生在 `/opt/car-agent/builds/<SHA>`，当前 `/opt/car-agent/current` 在整个构建阶段保持不变。26 个自建服务全部构建并以 `car-agent-release/<service>:<SHA>` 标记后，才允许创建 release 并进入激活阶段。
+
+运行时 Compose project 名不随 release SHA 改变。首次工作流 bootstrap 会把当前已运行 project 名写入只读共享文件；激活与回滚始终读取同一个名字，让 Compose 原位重建同一组容器。SHA 只用于 release 目录、镜像 tag 和证据身份，不能同时被用作运行时 project 名，否则新旧 30 个容器会并存并争用五个 loopback 端口。
 
 ### 2.2 未选：本机临时启动 Docker 构建
 
@@ -136,7 +140,7 @@ python scripts/cloud_release.py rollback --to <SHA> --apply
 - 复用 `/opt/car-agent/shared/.env` 和共享云端部署资产，不复制第二份生产配置。
 - 先启动现有备份 service 并要求 `Result=success`。
 - 保存 previous SHA，使用 `current.next` 原子更新 `current`。
-- 使用根 `compose.yaml` + 共享 `compose.cloud.yaml`，并执行 `up -d --no-build --pull never`。
+- 使用根 `compose.yaml` + 共享 `compose.cloud.yaml` + 稳定 runtime project name，并执行 `up -d --no-build --pull never` 原位收敛容器。
 - 激活后调用验证脚本；失败时恢复 previous SHA 并重新收敛旧 release。
 - 不回滚数据卷；如果版本需要 schema 变更，本流程在 plan 阶段已经拒绝。
 
@@ -205,6 +209,8 @@ PLANNED -> UPLOADED -> BUILT -> BACKED_UP -> ACTIVATING -> VERIFIED
 - Tailscale Serve/Funnel、安全组、systemd或主机级配置变更。
 - 数据删除、release/镜像/备份清理。
 - 支付、商户写操作、真实车控或整机重启。
+
+首次 bootstrap 是上面基础设施变化的显式批准过程。它必须把受审目标提交的 `deploy/cloud/**`（排除纯文档 `README.md`）聚合摘要和各安装文件 SHA-256 写入 `/opt/car-agent/shared/release-infrastructure.json`。后续普通发布只有在目标提交的基础设施摘要与该已批准摘要逐字一致时，才能把这些历史差异视为已批准；摘要缺失、不一致或出现新文件都重新 fail closed。manifest 本身不得由普通 deploy 生成或改写。
 
 ### 7.3 SSH边界
 
