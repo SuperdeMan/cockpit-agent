@@ -94,3 +94,6 @@ docs/reviews/badcase/.work/
 # AGENTS.md §4 交接区与 docs/。留在仓库里只会与 AGENTS.md 争夺「谁是真相源」，
 # 且过期得比谁都快。2026-08-02 取消跟踪（文件保留在工作树，历史不动）。
 .codex-resume.md
+
+# Private release/data-migration artifacts; never commit.
+.artifacts/
