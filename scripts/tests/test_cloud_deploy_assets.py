@@ -22,6 +22,7 @@ RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
 RUNTIME_MODELS_PATH = CLOUD_DIR / "runtime-models.json"
 REMOTE_RELEASE_PATH = CLOUD_DIR / "remote-release.sh"
 REMOTE_BUILD_PATH = CLOUD_DIR / "remote-build.sh"
+ACTIVATE_RELEASE_PATH = CLOUD_DIR / "activate-release.sh"
 
 LOOPBACK_PORTS = {
     "llm-gateway": ["127.0.0.1:50059:50059"],
@@ -159,6 +160,77 @@ def test_remote_build_preserves_failures_and_rejects_overwrite():
     assert '[[ ! -e "${build_dir}" ]]' in text
     for forbidden in ("rm ", "unlink", "rmdir", "-delete"):
         assert forbidden not in text.lower()
+
+
+def test_activate_helper_cannot_be_executed_directly():
+    text = _required_text(ACTIVATE_RELEASE_PATH)
+    assert '[[ "${BASH_SOURCE[0]}" != "$0" ]]' in text
+    assert "activate_release()" in text
+
+
+def test_activation_orders_images_models_backup_switch_up_verify():
+    text = _required_text(ACTIVATE_RELEASE_PATH)
+    match = re.search(
+        r"(?ms)^activate_release\(\) \{(?P<body>.*?)^\}",
+        text,
+    )
+    assert match
+    body = match["body"]
+    ordered = [
+        "verify_release_images",
+        'release_dir="$(assemble_release "${sha}")"',
+        "run_required_backup",
+        'switch_current "${release_dir}"',
+        'compose_up_release "${release_dir}" "${sha}"',
+        'if ! verify_release "${sha}"',
+    ]
+    positions = []
+    cursor = 0
+    for name in ordered:
+        position = body.index(name, cursor)
+        positions.append(position)
+        cursor = position + len(name)
+    assert positions == sorted(positions)
+
+
+def test_activation_never_changes_or_copies_runtime_env():
+    text = _required_text(ACTIVATE_RELEASE_PATH)
+    assert 'ln -s "${SHARED_ROOT}/.env"' in text
+    assert "cp ${SHARED_ROOT}/.env" not in text
+    assert "sed -i" not in text
+    assert "down -v" not in text
+    assert "docker volume rm" not in text
+
+
+def test_runtime_compose_project_is_stable_across_release_shas():
+    activation = _required_text(ACTIVATE_RELEASE_PATH)
+    backup = _required_text(BACKUP_PATH)
+    for text in (activation, backup):
+        assert "/opt/car-agent/shared/runtime-project-name" in text
+        assert '--project-name "${RUNTIME_PROJECT_NAME}"' in text
+    assert 'COMPOSE_PROJECT_NAME="$(basename "${RELEASE_DIR}")"' not in backup
+
+
+def test_failed_verification_restores_previous_current_and_converges_old_release():
+    text = _required_text(ACTIVATE_RELEASE_PATH)
+    assert "restore_previous_release" in text
+    assert "VERIFY_FAILED_ROLLED_BACK" in text
+    assert "ROLLBACK_FAILED" in text
+    assert "compose_up_release" in text
+
+
+def test_activation_uses_no_destructive_cleanup_or_data_rollback():
+    text = _required_text(ACTIVATE_RELEASE_PATH).lower()
+    for forbidden in (
+        "rm ",
+        "unlink",
+        "rmdir",
+        "-delete",
+        "down -v",
+        "docker volume",
+        "drop database",
+    ):
+        assert forbidden not in text
 
 
 def _service_block_has_reset(text: str, service: str, field: str) -> bool:
@@ -361,7 +433,13 @@ def test_backup_is_non_destructive_and_uses_logical_database_backups():
     assert "/data/obs.db" in backup
     assert "gzip" in backup
     assert "-mtime +7" in backup and "-print" in backup
-    assert ".env" not in backup
+    for forbidden_env_copy in (
+        'cp "${SHARED_ENV}"',
+        'cat "${SHARED_ENV}"',
+        'gzip "${SHARED_ENV}"',
+        'tar "${SHARED_ENV}"',
+    ):
+        assert forbidden_env_copy not in backup
     for forbidden in ("rm ", "unlink", "-delete", "rmdir"):
         assert forbidden not in lowered
 
@@ -370,8 +448,10 @@ def test_backup_targets_the_active_release_compose_project():
     backup = _required_text(BACKUP_PATH)
 
     assert 'readlink -f "${RELEASE_ROOT}"' in backup
-    assert '--project-name "${COMPOSE_PROJECT_NAME}"' in backup
+    assert '--project-name "${RUNTIME_PROJECT_NAME}"' in backup
     assert '--project-directory "${RELEASE_DIR}"' in backup
+    assert '--env-file "${SHARED_ENV}"' in backup
+    assert 'export RELEASE_SHA="${ACTIVE_RELEASE_SHA}"' in backup
 
 
 def test_cloud_shell_assets_are_forced_to_lf_for_ubuntu():

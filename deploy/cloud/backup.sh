@@ -5,8 +5,14 @@ umask 077
 
 readonly RELEASE_ROOT="/opt/car-agent/current"
 readonly RELEASE_DIR="$(readlink -f "${RELEASE_ROOT}")"
-readonly COMPOSE_PROJECT_NAME="$(basename "${RELEASE_DIR}")"
+readonly ACTIVE_RELEASE_SHA="$(basename "${RELEASE_DIR}")"
+readonly RUNTIME_PROJECT_NAME_FILE="/opt/car-agent/shared/runtime-project-name"
+mapfile -t runtime_project_names <"${RUNTIME_PROJECT_NAME_FILE}"
+[[ "${#runtime_project_names[@]}" -eq 1 ]]
+readonly RUNTIME_PROJECT_NAME="${runtime_project_names[0]}"
+[[ "${RUNTIME_PROJECT_NAME}" =~ ^[a-z0-9][a-z0-9_-]*$ ]]
 readonly CLOUD_COMPOSE="/opt/car-agent/shared/compose.cloud.yaml"
+readonly SHARED_ENV="/opt/car-agent/shared/.env"
 readonly BACKUP_ROOT="/opt/car-agent/shared/backups"
 readonly POSTGRES_DIR="${BACKUP_ROOT}/postgres"
 readonly REDIS_DIR="${BACKUP_ROOT}/redis"
@@ -14,11 +20,13 @@ readonly OBS_DIR="${BACKUP_ROOT}/observability"
 
 compose=(
   docker compose
-  --project-name "${COMPOSE_PROJECT_NAME}"
+  --project-name "${RUNTIME_PROJECT_NAME}"
   --project-directory "${RELEASE_DIR}"
   -f "${RELEASE_DIR}/compose.yaml"
   -f "${CLOUD_COMPOSE}"
+  --env-file "${SHARED_ENV}"
 )
+export RELEASE_SHA="${ACTIVE_RELEASE_SHA}"
 
 install -d -m 0700 "${POSTGRES_DIR}" "${REDIS_DIR}" "${OBS_DIR}"
 exec 9>"${BACKUP_ROOT}/.backup.lock"
