@@ -286,6 +286,14 @@ def test_remote_migration_has_strict_actions_paths_and_permissions():
     assert '"car-agent-obs-data"' in text
 
 
+def test_remote_migration_reentry_and_rollback_preserve_both_datasets():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert '[[ -n "${CURRENT_RELEASE:-}" ]] && return 0' in text
+    assert '"failed-import-redis-volume"' in text
+    assert '"failed-import-collector-volume"' in text
+    assert "os.chmod(source" not in text
+
+
 def test_remote_release_validates_prepare_upload_and_deploy_ids():
     text = _required_text(REMOTE_RELEASE_PATH)
     assert "validate_full_sha" in text

@@ -15,6 +15,9 @@ readonly MIGRATION_ID_PATTERN='^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}-(online|final)$'
 readonly REDIS_VOLUME="car-agent-redis-data"
 readonly COLLECTOR_VOLUME="car-agent-obs-data"
 readonly REQUIRED_IMPORT_FILES=("manifest.json" "postgres.dump" "redis.rdb" "collector.db")
+CURRENT_RELEASE=""
+RUNTIME_PROJECT_NAME=""
+declare -a compose=()
 
 die() {
   printf 'cloud-data-migration: %s\n' "$1" >&2
@@ -27,13 +30,14 @@ require_migration_id() {
 
 load_runtime() {
   local -a project_names
-  readonly CURRENT_RELEASE="$(readlink -f "${CURRENT_LINK}")"
+  [[ -n "${CURRENT_RELEASE:-}" ]] && return 0
+  CURRENT_RELEASE="$(readlink -f "${CURRENT_LINK}")"
   [[ "${CURRENT_RELEASE}" =~ ^/opt/car-agent/releases/[0-9a-f]{7,40}$ ]] \
     || die "current release is invalid"
   mapfile -t project_names <"${RUNTIME_PROJECT_NAME_FILE}"
   [[ "${#project_names[@]}" -eq 1 && "${project_names[0]}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
     || die "runtime project name is invalid"
-  readonly RUNTIME_PROJECT_NAME="${project_names[0]}"
+  RUNTIME_PROJECT_NAME="${project_names[0]}"
   compose=(
     docker compose --project-name "${RUNTIME_PROJECT_NAME}"
     --project-directory "${CURRENT_RELEASE}"
@@ -173,7 +177,8 @@ restore_postgres_dump() {
 }
 
 restore_redis_rdb() {
-  local rdb="$1" migration_id="$2" rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/redis-volume"
+  local rdb="$1" migration_id="$2" bucket="${3:-redis-volume}"
+  local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local redis_container actual_volume image_id
   [[ -s "${rdb}" && ! -L "${rdb}" ]] || die "Redis restore source is invalid"
   redis_container="$("${compose[@]}" ps -q redis)"
@@ -199,7 +204,8 @@ restore_redis_rdb() {
 }
 
 install_collector_db() {
-  local database="$1" migration_id="$2" rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/collector-volume"
+  local database="$1" migration_id="$2" bucket="${3:-collector-volume}"
+  local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local collector_container actual_volume image_id
   collector_container="$("${compose[@]}" ps -a -q observability-collector)"
   actual_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${collector_container}")"
@@ -225,7 +231,6 @@ temporary = Path("/data/obs.db.migration.partial")
 with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as connection:
     if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
         raise SystemExit("collector import integrity failed")
-os.chmod(source, 0o600)
 with source.open("rb") as incoming, temporary.open("xb") as output:
     output.write(incoming.read())
 os.chmod(temporary, 0o600)
@@ -252,7 +257,7 @@ with sqlite3.connect(target) as connection:
     if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
         raise SystemExit("restored collector integrity failed")
 PY
-  install_collector_db "${directory}/collector.db" "${migration_id}"
+  install_collector_db "${directory}/collector.db" "${migration_id}" "failed-import-collector-volume"
 }
 
 verify_store_group() {
@@ -288,7 +293,7 @@ rollback_all() {
   local migration_id="$1" backup_stamp="$2"
   stop_application_writers
   restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump"
-  restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}"
+  restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" "failed-import-redis-volume"
   restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}"
   start_current_release
   verify_current_release
