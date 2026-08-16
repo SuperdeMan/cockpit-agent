@@ -379,12 +379,22 @@ def test_remote_attestation_steps_propagate_failures_explicitly():
         "run_id=\"$(python3 -c 'import secrets; print(secrets.token_hex(12))')\" || return $?",
         'python3 - "${directory}/manifest.json"',
         'chmod 0600 -- "${evidence_partial}" || return $?',
-        'mv -T "${evidence_partial}" "${directory}/evidence.json" || return $?',
+        'mv -T "${evidence_partial}" "${evidence_final}" || return $?',
     ):
         assert command in body
-    assert '"${collector_json}" <<\'PY\' || return $?' in body
+    assert '"${collector_json}" "${stage}" "${baseline_file}" "${migration_id}" <<\'PY\' || return $?' in body
     verify_body = re.search(r"(?ms)^verify_store_group\(\) \{(?P<body>.*?)^\}", text)["body"]
-    assert 'collect_target_attestation "$1" || return $?' in verify_body
+    assert 'collect_target_attestation "$1" "$2" || return $?' in verify_body
+
+
+def test_remote_status_uses_unique_exclusive_partial_and_rejects_residue():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^write_migration_state\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'compgen -G "${directory}/status.*.json.partial"' in body
+    assert 'partial="${directory}/status.${run_id}.json.partial"' in body
+    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW" in body
+    assert 'chmod 0600 -- "${partial}" || return $?' in body
+    assert 'mv -T "${partial}" "${directory}/status.json" || return $?' in body
 
 
 def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path: Path):
@@ -439,6 +449,77 @@ def test_remote_attestation_failure_never_marks_applied_and_triggers_rollback(tm
     assert completed.returncode != 0
     recorded = events.read_text(encoding="utf-8").splitlines()
     assert recorded == ["state:BACKED_UP", "attestation-failed", "rollback"]
+
+
+def test_remote_apply_attests_exact_before_start_then_growth_safe_after_start(tmp_path: Path):
+    bash = _git_bash()
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "two-stage-attestation.sh"
+    harness.write_text(textwrap.dedent(f"""
+        set -u
+        source '{REMOTE_MIGRATION_PATH.as_posix()}'
+        load_runtime() {{ :; }}
+        require_import_bundle() {{ :; }}
+        preflight_migration() {{ :; }}
+        run_required_backup() {{ printf '20260817T010203Z\n'; }}
+        write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
+        stop_application_writers() {{ :; }}
+        restore_postgres_dump() {{ :; }}
+        restore_redis_rdb() {{ :; }}
+        install_collector_db() {{ :; }}
+        verify_store_group() {{ printf 'attest:%s\n' "$2" >>'{events.as_posix()}'; }}
+        start_current_release() {{ printf 'start\n' >>'{events.as_posix()}'; }}
+        verify_current_release() {{ printf 'release-ok\n' >>'{events.as_posix()}'; }}
+        apply_migration 20260817T010203Z-abcdef0-online
+    """), encoding="utf-8")
+    completed = subprocess.run([str(bash), str(harness)], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "state:BACKED_UP", "attest:pre-start", "start", "release-ok",
+        "attest:post-start", "state:APPLIED",
+    ]
+
+
+def test_remote_post_start_rules_preserve_business_data_but_allow_growth():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'stage not in {"pre-start", "post-start"}' in body
+    assert 'evidence-pre-start.json' in body and 'evidence-post-start.json' in body
+    assert 'persistent_prefixes' in body
+    for table in (
+        "memory_item", "memory_relation", "reminder_item", "task_ledger",
+        "proactive_delivery", "scene_item", "voiceprint",
+    ):
+        assert f'"{table}"' in body
+    assert 'current_count < baseline_count' in body
+    assert 'PostgreSQL persisted state count decreased' in body
+    assert 'Redis persistent prefix count decreased' in body
+    assert 'Collector table count decreased' in body
+    assert 'r["version"] != baseline["redis"]["version"]' in body
+    assert 'c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]' in body
+
+
+def test_remote_verify_uses_saved_pre_start_baseline_not_snapshot_exactness():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    verify_body = re.search(r"(?ms)^verify_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'verify_store_group "${migration_id}" "post-start" || return $?' in verify_body
+    assert '"pre-start"' not in verify_body
+    require_body = re.search(r"(?ms)^require_import_bundle\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'evidence-pre-start.json' in require_body
+    assert 'evidence-post-start.json' in require_body
+    assert 'status.json' in require_body
+    assert 'preflight-current.json' in require_body
+
+
+def test_migration_docs_explain_two_stage_attestation_growth_rules():
+    for path in (CLOUD_DIR / "README.md", ROOT / "docs" / "dev-guide.md"):
+        text = _required_text(path)
+        for phrase in (
+            "evidence-pre-start.json", "evidence-post-start.json",
+            "pending reminders", "enabled scenes", "voiceprint",
+            "persistent Redis prefix", "post-start",
+        ):
+            assert phrase in text
 
 
 def test_remote_release_validates_prepare_upload_and_deploy_ids():

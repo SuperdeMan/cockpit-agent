@@ -107,14 +107,16 @@ require_import_bundle() {
   python3 - "${directory}" <<'PY'
 import os, stat, sys
 required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
+allowed = required | {"status.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}
 root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 try:
     directory = os.fstat(root)
     if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or directory.st_gid != 0:
         raise SystemExit("sealed migration directory owner is invalid")
-    if stat.S_IMODE(directory.st_mode) != 0o700 or set(os.listdir(root)) != required:
+    entries = set(os.listdir(root))
+    if stat.S_IMODE(directory.st_mode) != 0o700 or not required.issubset(entries) or not entries.issubset(allowed):
         raise SystemExit("sealed migration directory is invalid")
-    for name in sorted(required):
+    for name in sorted(entries):
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
         try:
             metadata = os.fstat(descriptor)
@@ -482,9 +484,10 @@ PY
 }
 
 collect_target_attestation() {
-  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
+  local migration_id="$1" stage="$2" directory="${IMPORT_ROOT}/${1}"
   local pg_json redis_json collector_json collector_ids_text collector_container collector_image
-  local evidence_partial run_id
+  local evidence_partial evidence_final baseline_file run_id
+  [[ "${stage}" == "pre-start" || "${stage}" == "post-start" ]] || return 2
   pg_json="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At <<'SQL'
 SELECT json_build_object(
  'tables', json_build_object(
@@ -505,9 +508,9 @@ SELECT json_build_object(
 SQL
 )" || return $?
   redis_json="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
-redis.setresp(3); local c="0"; local n,p,e=0,0,0; local lo=nil; local hi=0; local px={}; local ty={};
-repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1 else e=e+1; if lo==nil or ttl<lo then lo=ttl end; if ttl>hi then hi=ttl end end end until c=="0";
-local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0)" || return $?
+redis.setresp(3); local c="0"; local n,p,e=0,0,0; local lo=nil; local hi=0; local px={}; local ty={}; local pp={};
+repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1; pp[h]=(pp[h] or 0)+1 else e=e+1; if lo==nil or ttl<lo then lo=ttl end; if ttl>hi then hi=ttl end end end until c=="0";
+local info=redis.call("INFO","server"); local version=string.match(info,"redis_version:([^\r\n]+)") or "unknown"; local a={}; local b={}; local d={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; for k,v in pairs(pp) do table.insert(d,k);table.insert(d,v) end; return {map={"version",version,"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent_prefixes",{map=d},"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0)" || return $?
   collector_ids_text="$("${compose[@]}" ps -a -q observability-collector)" || return $?
   mapfile -t collector_ids <<<"${collector_ids_text}" || return $?
   [[ "${#collector_ids[@]}" -eq 1 ]] || return 1
@@ -522,21 +525,65 @@ encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separat
   if compgen -G "${directory}/evidence.*.json.partial" >/dev/null; then
     return 1
   fi
+  baseline_file="${directory}/evidence-pre-start.json"
+  if [[ "${stage}" == "pre-start" ]]; then
+    evidence_final="${directory}/evidence-pre-start.json"
+    [[ ! -e "${evidence_final}" ]] || return 1
+  else
+    evidence_final="${directory}/evidence-post-start.json"
+    [[ -f "${baseline_file}" ]] || return 1
+  fi
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
   evidence_partial="${directory}/evidence.${run_id}.json.partial"
-  python3 - "${directory}/manifest.json" "${evidence_partial}" "${pg_json}" "${redis_json}" "${collector_json}" <<'PY' || return $?
+  python3 - "${directory}/manifest.json" "${evidence_partial}" "${pg_json}" "${redis_json}" \
+    "${collector_json}" "${stage}" "${baseline_file}" "${migration_id}" <<'PY' || return $?
 import hashlib,json,os,sys
 from pathlib import Path
 m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); pg=json.loads(sys.argv[3]); r=json.loads(sys.argv[4]); c=json.loads(sys.argv[5])
+stage=sys.argv[6]
+if stage not in {"pre-start", "post-start"}: raise SystemExit("invalid attestation stage")
 schema=pg.pop("schema"); schema_hash=hashlib.sha256(json.dumps(schema,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")).hexdigest()
-if schema_hash!=m["postgres"]["schema_fingerprint"]: raise SystemExit("PostgreSQL schema aggregate mismatch")
-if pg["tables"]!=m["postgres"]["tables"] or pg["states"]!=m["postgres"]["states"]: raise SystemExit("PostgreSQL aggregate mismatch")
-for key in ("key_count","prefixes","types","persistent","expiring"):
-    if r[key]!=m["redis"][key]: raise SystemExit("Redis aggregate mismatch")
-for key in ("min_ttl_ms","max_ttl_ms"):
-    if not isinstance(r[key],int) or r[key]<0 or r[key]>m["redis"][key]: raise SystemExit("Redis TTL aggregate mismatch")
-if c!=m["collector"]: raise SystemExit("Collector aggregate mismatch")
-encoded=(json.dumps({"postgres":pg,"redis":r,"collector":c},sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")
+pg["schema_fingerprint"]=schema_hash
+if not isinstance(r.get("persistent_prefixes"),dict) or not all(type(v) is int and v>=0 for v in r["persistent_prefixes"].values()):
+    raise SystemExit("Redis persistent prefix aggregate is invalid")
+if stage == "pre-start":
+    if schema_hash!=m["postgres"]["schema_fingerprint"]: raise SystemExit("PostgreSQL schema aggregate mismatch")
+    if pg["tables"]!=m["postgres"]["tables"] or pg["states"]!=m["postgres"]["states"]: raise SystemExit("PostgreSQL aggregate mismatch")
+    if r["version"]!=m["redis"]["version"]: raise SystemExit("Redis version mismatch")
+    for key in ("key_count","prefixes","types","persistent","expiring"):
+        if r[key]!=m["redis"][key]: raise SystemExit("Redis aggregate mismatch")
+    for key in ("min_ttl_ms","max_ttl_ms"):
+        if not isinstance(r[key],int) or r[key]<0 or r[key]>m["redis"][key]: raise SystemExit("Redis TTL aggregate mismatch")
+    if c!=m["collector"]: raise SystemExit("Collector aggregate mismatch")
+else:
+    baseline=json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
+    if set(baseline)!={"schema_version","migration_id","stage","postgres","redis","collector"} or baseline["schema_version"]!=1 or baseline["migration_id"]!=sys.argv[8] or baseline["stage"]!="pre-start":
+        raise SystemExit("pre-start attestation baseline is invalid")
+    if pg["schema_fingerprint"]!=baseline["postgres"]["schema_fingerprint"]:
+        raise SystemExit("PostgreSQL schema changed after start")
+    persistent_tables=("memory_item","memory_relation","reminder_item","task_ledger","proactive_delivery","scene_item","voiceprint")
+    for table in persistent_tables:
+        baseline_count=baseline["postgres"]["tables"][table]; current_count=pg["tables"].get(table,-1)
+        if current_count < baseline_count: raise SystemExit("PostgreSQL persistent table count decreased")
+    for state_name,baseline_counts in baseline["postgres"]["states"].items():
+        current_counts=pg["states"].get(state_name,{})
+        for value,baseline_count in baseline_counts.items():
+            current_count=current_counts.get(value,-1)
+            if current_count < baseline_count: raise SystemExit("PostgreSQL persisted state count decreased")
+    if r["version"] != baseline["redis"]["version"]:
+        raise SystemExit("Redis version changed after start")
+    if set(r["types"]) != set(baseline["redis"]["types"]):
+        raise SystemExit("Redis type schema changed after start")
+    for prefix,baseline_count in baseline["redis"]["persistent_prefixes"].items():
+        current_count=r["persistent_prefixes"].get(prefix,-1)
+        if current_count < baseline_count: raise SystemExit("Redis persistent prefix count decreased")
+    if c["user_version"]!=baseline["collector"]["user_version"] or c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]:
+        raise SystemExit("Collector schema or version changed after start")
+    for table,baseline_count in baseline["collector"]["tables"].items():
+        current_count=c["tables"].get(table,-1)
+        if current_count < baseline_count: raise SystemExit("Collector table count decreased")
+evidence={"schema_version":1,"migration_id":sys.argv[8],"stage":stage,"postgres":pg,"redis":r,"collector":c}
+encoded=(json.dumps(evidence,sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")
 descriptor=os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
 try:
     os.write(descriptor, encoded)
@@ -545,11 +592,11 @@ finally:
     os.close(descriptor)
 PY
   chmod 0600 -- "${evidence_partial}" || return $?
-  mv -T "${evidence_partial}" "${directory}/evidence.json" || return $?
+  mv -T "${evidence_partial}" "${evidence_final}" || return $?
 }
 
 verify_store_group() {
-  collect_target_attestation "$1" || return $?
+  collect_target_attestation "$1" "$2" || return $?
 }
 
 start_current_release() {
@@ -558,14 +605,24 @@ start_current_release() {
 
 write_migration_state() {
   local state="$1" migration_id="$2" backup_stamp="$3"
-  python3 - "${IMPORT_ROOT}/${migration_id}/status.json" "${state}" "${migration_id}" "${backup_stamp}" <<'PY'
+  local directory="${IMPORT_ROOT}/${migration_id}" partial run_id
+  if compgen -G "${directory}/status.*.json.partial" >/dev/null; then
+    return 1
+  fi
+  run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
+  partial="${directory}/status.${run_id}.json.partial"
+  python3 - "${partial}" "${state}" "${migration_id}" "${backup_stamp}" <<'PY' || return $?
 import json, os, sys
-from pathlib import Path
-target = Path(sys.argv[1]); partial = target.with_suffix(".json.partial")
-partial.write_text(json.dumps({"status": sys.argv[2], "migration_id": sys.argv[3],
-                               "backup_stamp": sys.argv[4]}, sort_keys=True) + "\n", encoding="utf-8")
-os.chmod(partial, 0o600); os.replace(partial, target)
+encoded=(json.dumps({"status":sys.argv[2],"migration_id":sys.argv[3],
+                     "backup_stamp":sys.argv[4]},sort_keys=True)+"\n").encode("utf-8")
+descriptor=os.open(sys.argv[1],os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,0o600)
+try:
+    os.write(descriptor,encoded); os.fsync(descriptor)
+finally:
+    os.close(descriptor)
 PY
+  chmod 0600 -- "${partial}" || return $?
+  mv -T "${partial}" "${directory}/status.json" || return $?
 }
 
 rollback_all() {
@@ -606,19 +663,21 @@ apply_migration() {
     || fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"
   install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}" \
     || fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"
-  verify_store_group "${migration_id}" \
+  verify_store_group "${migration_id}" "pre-start" \
     || fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"
   start_current_release || fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"
   verify_current_release || fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification"
-  write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}"
+  verify_store_group "${migration_id}" "post-start" \
+    || fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification"
+  write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}" || return $?
 }
 
 verify_migration() {
   local migration_id="$1"
-  load_runtime
-  require_import_bundle "${migration_id}"
-  verify_store_group "${migration_id}"
-  verify_current_release
+  load_runtime || return $?
+  require_import_bundle "${migration_id}" || return $?
+  verify_store_group "${migration_id}" "post-start" || return $?
+  verify_current_release || return $?
   printf '{"migration_id":"%s","status":"verified"}\n' "${migration_id}"
 }
 

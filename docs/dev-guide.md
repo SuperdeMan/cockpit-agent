@@ -268,3 +268,11 @@ python scripts/cloud_data_migration.py snapshot --phase final --quiesce-local --
 数据库 schema，也不会删除本地/云端卷、备份、release、镜像或迁移包。设计快照中的
 `pending=57`、`enabled=1` 只是验收参照，执行时必须重采；`voiceprint=0` 必须如实报告 0。
 这些命令和边界是运行手册，不代表已经对真实数据栈执行或验证。
+
+远端验证分为 pre-start 与 post-start。恢复完成且写服务尚未启动时，工具将 snapshot 精确对账写入
+`evidence-pre-start.json`；release 启动后再写 `evidence-post-start.json`。post-start 允许服务
+自然增长，但 PostgreSQL 持久业务表及 manifest 状态计数不得减少，特别包括 pending reminders、
+enabled scenes 和 voiceprint。Redis 版本/类型集合保持不变，每个 persistent Redis prefix 的
+持久 key 计数不得减少；TTL key 可自然变化。Collector schema 和 `user_version` 保持不变，表计数
+不得减少。`verify` 使用保存的 pre-start baseline 执行同一规则，不再要求当前状态与原始 snapshot
+全量精确相等；所有证据仍只记录安全聚合，不输出正文或完整 key。
