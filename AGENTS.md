@@ -66,9 +66,10 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**5863 passed / 14 skipped 零红**（2026-08-16 QA 批阶段 3·Q2 后实测，28m10s）。
-较 Q13 的 5836 净 **+27**，逐条点号：`test_candidate_sets.py` 21 + nearby 6；
-证据 history **§44**。前一跳 5836（+97，Q13）：`test_classifier_exit_parity.py` 93 +
+**5901 passed / 14 skipped 零红**（2026-08-16 QA 批阶段 3·Q7 后实测，26m52s）。
+较 Q2 的 5863 净 **+38**，逐条点号：`test_polarity.py` 26 +
+`test_segment_backfill.py` 11 + `test_pending_cancel.py` 1；证据 history **§45**。
+前一跳 5863（+27，Q2）：`test_candidate_sets.py` 21 + nearby 6；证据 history **§44**。前一跳 5836（+97，Q13）：`test_classifier_exit_parity.py` 93 +
 dashcam 两行金标各占 golden/分段两个参数化 4；证据 history **§43**。
 ⚠ **首趟 192 failed 是我自己造的假红**——`Start-Process` 起的子进程没挂 PATH，
 逐字命中下方那条已记录的签名。**记过的坑会换个方式再踩**。
@@ -163,7 +164,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 全量基线见本节顶部（**5863**，2026-08-16 QA 批阶段 3·Q2 后）；分套件最近实测：`orchestrator/cloud` **865**（2026-08-16，Q1 三批 +33、Q2 +21）/ edge **674**（2026-08-16，Q13 +95：命名收敛守卫）/ nearby **99**（Q2 +6）/ navigation **132** / trip **85** / mcp-bridge **433** / memory **229** / `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**5901**，2026-08-16 QA 批阶段 3·Q7 后）；分套件最近实测：`orchestrator/cloud` **866**（2026-08-16）/ edge **713**（2026-08-16，Q13 +95 命名收敛守卫、Q7 +37 极性与分段）/ nearby **99**（Q2 +6）/ navigation **132** / trip **85** / mcp-bridge **433** / memory **229** / `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -200,7 +201,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | 0 取证与止血 | ✅ 完成 | I-021 定性推翻（QA 轮零 create-order）、迷你集 `scripts/probe_qa_regression.py`、方法论进 `test/README.md` §5.3.1、清洗 dry-run 10 条 |
 | 1 T0 安全与不可逆 | ✅ 完成 | manual-rag 零命中短路 + 来源类型 / 安全分级不进 LLM / `Focus.safety_alert`（契约 `conventions.md` §9.1）/ road-safety `safety.driver_state` / chitchat 兜底闸 / 支付字段 fail-closed。真栈 SF1·2·4·5 **3/3**，SF3 0–1/3（失败轮全是澄清，危险症状零复现） |
 | 2 T1 共享状态机 | ✅ 完成 | **Q1** 取消判据收敛 `pending_cancel.py` → 确认帧带 `operation_id` → 小容量挂起表（≤3，LRU 有话术）+ HMI 同屏多条确认条；**Q3** 帧带 `request_id`、对不上即丢帧、看门狗每轮一只、抢占点名回 cancelled；**Q4** 位置闸拆 ORIGIN/ANCHOR + 否定邻接。契约 `conventions.md` §9.19/§9.20。真栈：confirm 组 **18/18**、CDP C11-13 × 3 轮 **9/9** |
-| **3 T2 语义与真实性** | 🔄 **进行中** | **Q13 ✅ / Q2 ✅（第一批：载体+绑定，⚠ I-018/I-023 的确定性消费方**未**交付——属性存下来了，算它的人还没写）**。Q13 完成态：（两个分类出口收敛成唯一实现，分歧 15/38→0/38；三条守卫见卡 §4；真栈「暂停音乐」154ms 端侧秒回。**它让 Q7 变得可测**：极性缺陷从「云侧判错」变成「端侧当场按反」，验证路径确定性、零 LLM）→ **下一步 Q7** 极性/顺序/省略（Q13 已让它可测） → Q5 记忆写入闸 → Q12 槽值保真 → Q6 执行账本 → Q10 查单绑会话；**清洗 `--apply` 排在 Q5/Q11 之后** |
+| **3 T2 语义与真实性** | 🔄 **进行中** | **Q13 ✅ / Q2 ✅（第一批：载体+绑定，⚠ I-018/I-023 的确定性消费方**未**交付）/ Q7 ✅（极性 + 段内省略 + 并列对象；⚠ OR2 同轮跨段回传与 EL1 跨轮省略未交付，negation 组 12/36→30/36）**。Q13 完成态：（两个分类出口收敛成唯一实现，分歧 15/38→0/38；三条守卫见卡 §4；真栈「暂停音乐」154ms 端侧秒回。**它让 Q7 变得可测**：极性缺陷从「云侧判错」变成「端侧当场按反」，验证路径确定性、零 LLM）→ **下一步 Q5** 记忆写入闸 → Q12 槽值保真 → Q6 执行账本 → Q10 查单绑会话；**清洗 `--apply` 排在 Q5/Q11 之后** |
 | 4 T3 能力面与长尾 | ⏳ | Q8 补能力 / Q11 提醒准入 / P2 长尾 |
 
 **仍然成立的约束（不是流水，别收走）**：

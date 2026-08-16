@@ -49,7 +49,11 @@ import fast_intent
 #   · 除雾按 `front_defogger.open/close` —— edge_intents 声明的就是 open/close。
 _GOLDEN = [
     # 媒体：收敛前单句形态全部上云（`music.*` 不在 LOCAL_INTENTS）
-    ("音乐别停", "media.pause", True),      # ⚠ 极性错误是 Q7 的事，这里只锁名字与路由
+    # ⚠ 2026-08-16 Q7 改过这一行，留痕。Q13 落地时它是 `("media.pause", True)`，
+    # 并在这里标着「极性错误是 Q7 的事，本表只锁名字与路由」。Q7 的极性守卫落地后
+    # 分类器对负极性写操作**不产出本地意图**，所以名字是 None、不可本地执行。
+    # **这条红是行为锁在按设计工作**：它逼我显式承认这次变更，而不是让它悄悄发生。
+    ("音乐别停", None, False),
     ("停止音乐", "media.pause", True),
     ("暂停音乐", "media.pause", True),
     ("音乐停", "media.pause", True),

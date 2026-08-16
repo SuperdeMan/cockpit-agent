@@ -70,12 +70,25 @@ def _whole_sentence_hit(text: str, words: tuple[str, ...]) -> bool:
                for k in words)
 
 
+#: 分句分隔符。「不用了**，**关掉」里逗号后面还有一整个分句 ⇒ 这不是一句裸取消。
+_CLAUSE_SEP_RE = re.compile(r"[，,。；;！!？?]")
+
+
 def is_standalone_cancel(text: str) -> bool:
-    """**没有挂起**的语境：这句话是不是一句裸取消词？只认整句。"""
+    """**没有挂起**的语境：这句话是不是一句裸取消词？只认整句。
+
+    ⚠ 光靠「词长 + 松弛量」不够：`不用了` 是 3 字、松弛 3，于是**6 字的
+    「不用了，关掉」也算整句**——真栈实测它被答成「当前没有待确认的操作」，
+    而用户在下一条新指令（QA EL1，2026-08-16 抓到，是 Q1-A 引入的回归）。
+    所以先看**有没有第二个分句**：逗号后面还有实质内容就不是裸取消。
+    """
     t = str(text or "").strip().lower()
     if not t:
         return False
-    return _whole_sentence_hit(t, _STRONG_WORDS + _WEAK_WORDS)
+    parts = _CLAUSE_SEP_RE.split(t, 1)
+    if len(parts) > 1 and parts[1].strip():
+        return False                 # 还有下一个分句 ⇒ 用户在说别的事
+    return _whole_sentence_hit(parts[0], _STRONG_WORDS + _WEAK_WORDS)
 
 
 def detect_cancel(text: str) -> CancelDecision:

@@ -7,6 +7,8 @@
 from __future__ import annotations
 import re
 
+from polarity import is_negated_directive
+
 LOCAL_INTENTS = {
     # ⚠ `hvac.inc/dec` 2026-08-04 补入：温度增减此前**只以别名 `aircon.inc/dec` 登记**
     # （见下方风速那一段的注释），于是「一个动作只能有一个名字」这条治本改完之后，
@@ -311,12 +313,19 @@ def classify(text: str) -> dict | None:
 def classify_structured(text: str) -> dict | None:
     """新接口：返回公版 {domain, intent, data: {operate, object, ...}} 格式。
 
-    这层只做一件事：**问句不许被执行成写操作**。分类本身在 `_classify_structured`。
-    收口放在出口而不是散在 30 个 return 上——判据是「结果是不是写操作」，那只有出口知道。
+    这层做两件同形态的事：**问句不许被执行成写操作**、**「别做 X」不许被执行成 X**。
+    分类本身在 `_classify_structured`。收口放在出口而不是散在 30 个 return 上
+    ——判据是「结果是不是写操作」，那只有出口知道。
     """
     result = _classify_structured(text)
     if _is_write_action(result) and _is_non_directive_question(text.strip()):
         return None                       # 整句上云：是提问，交云端如实作答
+    # Q7 极性维度（I-039）：分类器是「对象 × 动作」的**正向**匹配，「车窗别开」
+    # 命中对象词+动作词就成了 `window.open`——「别」不是任何判据的输入。
+    # **不产出**而不是产出反向意图：「别开」的反面不是「关」，是什么都不做；
+    # 映射成「关」只是换了一个**有副作用**的错误动作（判据全在 polarity.py）。
+    if _is_write_action(result) and is_negated_directive(text):
+        return None                       # 整句上云：宁可慢一点，不要按反
     if result is not None:
         # Q13：原话随意图走。**不是为了让下游再分类一次**——是因为结构化意图里
         # 有信息拿不回来：`下一首` 与 `上一首` 解出的 data 逐字相同（都是
@@ -1526,9 +1535,38 @@ def _split_parts_with_sep(text: str) -> list[tuple[str, str]]:
             continue
         if token and token.strip():
             for sub in _resplit_on_he(token.strip()):
-                out.append((sep, sub))
+                for piece in _expand_paired_objects(sub):
+                    out.append((sep, piece))
+                    sep = ""
             sep = ""
     return out
+
+
+def _expand_paired_objects(part: str) -> list[str]:
+    """并列对象展开（QA 卡 Q7 / I-005）：「**前后**风挡除雾都打开」拆成前、后两段。
+
+    实测原样：`_split_parts("前后风挡除雾都打开")` **压根没拆**（连词/逗号都没有），
+    走单句路径命中 `rear_defogger.open`——**前风挡从头到尾没被表达过**。
+    「不是拆了丢一项，是没拆 + 单句只认一个对象。」
+
+    ⚠ 一道闸：拆出来的两半**必须各自解出意图、且是两个不同的对象**。
+    「前后座椅加热都打开」两半都解成 `seat`（座椅是一个对象、前后是位置），
+    拆开只会把一条指令变成两条重复指令——闸在这里拒绝。
+    """
+    if "前后" not in part:
+        return [part]
+    head, _, tail = part.partition("前后")
+    if not tail.strip():
+        return [part]
+    first, second = f"{head}前{tail}", f"{head}后{tail}"
+    a, b = classify_structured(first), classify_structured(second)
+    if a is None or b is None:
+        return [part]
+    obj_a = str((a.get("data") or {}).get("object") or "")
+    obj_b = str((b.get("data") or {}).get("object") or "")
+    if not obj_a or obj_a == obj_b:
+        return [part]                # 同一个对象 ⇒ 「前后」是位置不是两件东西
+    return [first, second]
 
 
 def climate_feeling_intents(text: str) -> list[dict] | None:
@@ -1561,6 +1599,101 @@ def climate_feeling_intents(text: str) -> list[dict] | None:
     ]
 
 
+def _display_names() -> dict[str, str]:
+    """对象 id → 中文名。**从 `commands.yaml` 派生**，不手抄第二份
+    （B4：`display_name` 就是为「机械生成端侧描述」而存在的字段）。"""
+    global _DISPLAY_NAMES
+    if _DISPLAY_NAMES is None:
+        try:
+            from capability_meta import _load_objects
+            _DISPLAY_NAMES = {
+                str(k): str((v or {}).get("display_name") or "")
+                for k, v in (_load_objects() or {}).items()}
+        except Exception:            # 知识库读不到时退化成「不回填」，不阻塞主链路
+            _DISPLAY_NAMES = {}
+    return _DISPLAY_NAMES
+
+
+_DISPLAY_NAMES: dict[str, str] | None = None
+
+
+def _backfill_object(part: str, previous: dict | None) -> dict | None:
+    """段内省略回填（QA 卡 Q7 / I-040）：这一段没有对象，用**上一段的对象**再判一次。
+
+    「把空调打开**然后立刻关掉**」——第二段 `立刻关掉` 判不出对象，整段标
+    `_needs_cloud` 上云，而云侧拿到的是一个无对象的碎片。**第一步执行了，第二步蒸发了。**
+
+    回填只在段内（上一段的对象是最强候选），跨轮省略走焦点、不在这里做。
+
+    ⚠ 三道安全闸，缺一条这个机制就会开始**发明用户没说的动作**：
+      ① 只有本段判不出（`None`）才回填——判得出就不许改写；
+      ② 回填后解出的对象**必须与上一段同一个**。拼上「空调」之后如果解出了别的对象，
+         那说明这一段本来就在说别的事，宁可上云；
+      ③ 回填结果**必须与「光念对象词」的结果不同**。首版只有 ①②，实测
+         「关闭空调然后打开，**按顺序执行**」把第三段也回填成了 `aircon.open`
+         ——因为「空调」这个裸词本身就默认解成 open，那一段其实什么都没说。
+         判据刻意不用「动作词表」：**再加一份词表就是再加一处会漂的声明**（B4），
+         而「这一段有没有贡献信息」用同一个分类器自己就能问出来。
+    """
+    if previous is None:
+        return None
+    prev_obj = str(((previous.get("data") or {}).get("object")) or "")
+    if not prev_obj:
+        return None
+    name = _display_names().get(prev_obj) or ""
+    if not name:
+        return None
+    retry = classify_structured(f"{name}{part}")
+    if retry is None:
+        return None
+    if str(((retry.get("data") or {}).get("object")) or "") != prev_obj:
+        return None                  # 拼出来的是别的对象 = 这一段说的是别的事
+    if _is_filler_segment(part):
+        return None                  # 这一段没贡献任何信息 = 它不是一条指令
+    retry["_backfilled_from"] = prev_obj
+    return retry
+
+
+_VERB_PROBE: str | None = None
+
+
+def _verb_probe() -> str:
+    """一个**裸词本身判不出意图**的对象名，用来问「这一段里有没有动作」。
+
+    从 `commands.yaml` 的 `display_name` 里挑（不手写字面量：手抄的那份迟早与
+    知识库漂移，B6「反例从被测系统自己的知识库派生」）。挑「裸词判不出」的那个是
+    关键——像「空调」这种裸词默认解成 open 的对象当探针，会把真的「打开」
+    和填充语判成同一类（首版就栽在这里）。
+    """
+    global _VERB_PROBE
+    if _VERB_PROBE is None:
+        _VERB_PROBE = ""
+        for name in _display_names().values():
+            if name and classify_structured(name) is None:
+                _VERB_PROBE = name
+                break
+    return _VERB_PROBE
+
+
+def _is_filler_segment(part: str, prev_obj: str = "") -> bool:
+    """这一段是不是**整句的修饰语**而不是一条指令（「按顺序执行」「依次来」）。
+
+    判据：把**探针对象**拼上去还是判不出任何意图 ⇒ 这一段里没有动作。
+    「车窗打开」解得出、「车窗按顺序执行」解不出——差别正是「有没有指令内容」。
+
+    **刻意不用「修饰语词表」**：再加一份词表就是再加一处会漂的声明（B4 判据），
+    而「这一段有没有贡献信息」用同一个分类器自己就能问出来。
+
+    ⚠ 首版拿「上一段的对象」当探针，实测**把真的「打开」也判成了填充语**——
+    「空调」这个裸词本身就默认解成 open，于是「空调打开」与「空调」逐字相同。
+    探针必须是**裸词判不出**的那类对象，这一条是被实测按出来的。
+    """
+    probe = _verb_probe()
+    if not probe:
+        return False                 # 找不到合格探针 ⇒ 不做填充判定（宁可不跳过）
+    return classify_structured(f"{probe}{part}") is None
+
+
 def split_and_classify(text: str) -> list[dict] | None:
     """Multi-intent splitting. Returns list of structured intents if all local, None otherwise.
 
@@ -1585,6 +1718,16 @@ def split_and_classify(text: str) -> list[dict] | None:
             continue
         result = classify_structured(part)
         if result is None:
+            # Q7：段内省略回填（「把空调打开然后**立刻关掉**」）
+            result = _backfill_object(part, intents[-1] if intents else None)
+        if result is None:
+            # ⚠ 这里**刻意不跳过**「没有指令内容」的段。首版加过一条
+            # 「整句修饰语（按顺序执行）跳过，别把整句拖上云」的优化，
+            # 实测当场把「打开空调，帮我播一首歌，**周杰伦的**」里的补语也丢了
+            # ——端侧随机放一首歌，用户点的歌没放成（既有回归探针
+            # `test_trailing_qualifier_still_travels_with_its_head` 抓到）。
+            # **「这一段没有指令内容」不等于「这一段可以丢」**：补语没有动作，
+            # 但它带着用户说的东西。整段上云只是慢一点，静默丢内容是答错。
             return None  # Can't classify one part -> needs cloud
         intents.append(result)
 
@@ -1628,6 +1771,11 @@ def split_and_classify_any(text: str) -> list[dict] | None:
         if not part:
             continue
         result = classify_structured(part)
+        if result is None:
+            # Q7：先试段内省略回填，再判上云（同 split_and_classify）
+            result = _backfill_object(
+                part, next((i for i in reversed(intents)
+                            if not i.get("_needs_cloud")), None))
         if result is None:
             # Can't classify locally → mark for cloud dispatch
             result = {"_raw_text": part, "_needs_cloud": True,

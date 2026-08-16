@@ -96,6 +96,21 @@ def test_standalone_cancel_is_whole_sentence_only():
     assert is_standalone_cancel("别开始导航") is False
 
 
+def test_a_second_clause_means_it_is_not_a_bare_cancel():
+    """⚠ 2026-08-16 回归修复：光靠「词长 + 松弛量」不够。
+
+    `不用了` 是 3 字、松弛 3 ⇒ **6 字的「不用了，关掉」也算整句**，
+    真栈实测它被答成「当前没有待确认的操作」，而用户在下一条新指令
+    （QA EL1，这是 Q1-A 引入的回归）。逗号后面还有实质内容就不是裸取消。
+    """
+    assert is_standalone_cancel("不用了，关掉") is False
+    assert is_standalone_cancel("算了，打开车窗") is False
+    assert is_standalone_cancel("取消，帮我导航") is False
+    # 对照：分隔符后没有内容仍是裸取消
+    assert is_standalone_cancel("不用了。") is True
+    assert is_standalone_cancel("取消！") is True
+
+
 # ─── 反向：注入缺陷要红（§4.3「恒绿的断言比没有更糟」）───
 
 def test_threshold_is_the_documented_one():
