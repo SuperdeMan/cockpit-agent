@@ -66,14 +66,16 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
-**6197 passed / 15 skipped 零红**（2026-08-16，QA 批 Q12 后实测，SHA `bf92c22`+本批）。
-较上一跳 6127 净 **+70 passed / −9 skipped**，⚠ **三条来源，逐条点得上号**：
+**6198 passed / 15 skipped 零红**（2026-08-16，QA 批 Q12 + 合并 `e5d06a9` 后实测，
+SHA `dcd9182`）。较上一跳 6127 净 **+71 passed / −9 skipped**，
+⚠ **三条来源，逐条点得上号**：
 - **QA Q12 +39**（本轮产出，全在段 1）：`runtime/tests/test_cntime.py` 9 +
   `runtime/tests/test_slot_fidelity.py` 17 + `orchestrator/cloud/tests/test_slot_fidelity_wiring.py` 6
   + reminder `test_agent.py` 3 + reminder `test_timeparse.py` 2 + `_sdk/test_timewindow.py` 1
   + info `test_weather_answer.py` 1；证据 history **§52**。
-- **+22 来自 `afff49d`/`bf92c22`**（云发布工作线，`scripts/tests/test_cloud_release.py`，
-  **非本轮产出**；本地 main 在我开工前后 fast-forward 过，session 快照里的 `dc856ce` 已不是 HEAD）。
+- **+23 来自云发布工作线**（`afff49d`/`bf92c22` 的 22 条在
+  `scripts/tests/test_cloud_release.py`，收尾合并 `e5d06a9` 再 +1，**均非本轮产出**；
+  本地 main 在我开工前后 fast-forward 过，session 快照里的 `dc856ce` 已不是 HEAD）。
   ⚠ 攻击这个数用的是**收集数对照**而不是猜：`scripts/tests` 在 `dc856ce` 收 **756**、
   在 `bf92c22` 收 **778**，而段 1 的收集数两个 SHA **逐字相同**（worktree 里都缺 codegen，
   3817+104errors 对 3817+104errors——**分母一样破，对照就仍然成立**）。
@@ -82,9 +84,10 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
   本次段 2 从 **PowerShell 起、PATH 全**，它们真的跑了。
   **跨环境比 skip 数没有意义，比 passed 数也要先对齐 skip。**
 
-⚠ 分两段：`--ignore=scripts/tests` **5424 / 10**（16m35s）+ `scripts/tests`
-**773 / 5**（20m06s，**必须先 `Remove-Item Env:\PYTHONIOENCODING`**）= **6197 / 15**，
-收集数 5434 + 778 = **6212**。
+⚠ 分两段：`--ignore=scripts/tests` **5424 / 10** + `scripts/tests` **774 / 5**
+（**必须先 `Remove-Item Env:\PYTHONIOENCODING`**）= **6198 / 15**。
+合并 `e5d06a9` 后**整套重跑过一次**：段 1 与合并前**逐字相同**（5424/10），
+差额全在段 2（773→774）——与上一次合入同一条工作线时的观察一致。
 
 前一跳 **6127 / 24**（2026-08-16 Q5 残余后，`dc856ce`）也是两条来源：
 QA Q5 残余 +15（`agents/chitchat/tests/test_memory_provenance.py`，history **§51**）

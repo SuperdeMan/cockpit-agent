@@ -3977,13 +3977,13 @@ SL4 **0/3 `[det]`**（新增取证条，**Q8 的红**，本卡不修）。
 
 ### §52.7 基线净增量的三条来源（对不上时先怀疑哪一条）
 
-后端全量 **6197 passed / 15 skipped 零红**（分两段：5424/10 + 773/5，收集 5434+778=6212）。
-较 6127/24 净 **+70 passed / −9 skipped**，**三条来源**：
+后端全量 **6198 passed / 15 skipped 零红**（分两段：5424/10 + 774/5；这是合并 `e5d06a9` 后的重跑读数，合并前是 6197/15＝5424/10+773/5，**段 1 逐字相同**）。
+较 6127/24 净 **+71 passed / −9 skipped**，**三条来源**：
 
 1. **本批 +39**（全在段 1）：`test_cntime.py` 9 + `test_slot_fidelity.py` 17 +
    `test_slot_fidelity_wiring.py` 6 + reminder `test_agent.py` 3 +
    reminder `test_timeparse.py` 2 + `_sdk/test_timewindow.py` 1 + info `test_weather_answer.py` 1。
-2. **+22 来自 `afff49d`/`bf92c22`**（云发布工作线，`scripts/tests/test_cloud_release.py`）。
+2. **+23 来自云发布工作线**（`afff49d`/`bf92c22` 的 22 条在 `scripts/tests/test_cloud_release.py`，收尾合并 `e5d06a9` 再 +1）。
    ⚠ **本地 main 在我开工前后 fast-forward 过**——session 快照里的 `dc856ce` 已不是 HEAD，
    而我全程没执行过 git 操作。**「我没动过 git」不等于「HEAD 没动过」。**
 3. **+9 是环境不是代码**（段 2 的 skip→pass）：`scripts/tests` 有一批按
