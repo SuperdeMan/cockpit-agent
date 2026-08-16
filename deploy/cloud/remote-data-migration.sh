@@ -483,7 +483,8 @@ PY
 
 collect_target_attestation() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
-  local pg_json redis_json collector_json collector_container collector_image evidence_partial
+  local pg_json redis_json collector_json collector_ids_text collector_container collector_image
+  local evidence_partial run_id
   pg_json="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At <<'SQL'
 SELECT json_build_object(
  'tables', json_build_object(
@@ -502,24 +503,29 @@ SELECT json_build_object(
   'primary_keys',COALESCE((SELECT json_agg(json_build_array(tc.table_name,tc.constraint_name,kcu.column_name) ORDER BY tc.table_name,tc.constraint_name,kcu.ordinal_position) FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'),'[]'::json),
   'indexes',COALESCE((SELECT json_agg(json_build_array(tablename,indexname,indexdef) ORDER BY tablename,indexname) FROM pg_indexes WHERE schemaname='public'),'[]'::json)));
 SQL
-)"
+)" || return $?
   redis_json="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
 redis.setresp(3); local c="0"; local n,p,e=0,0,0; local lo=nil; local hi=0; local px={}; local ty={};
 repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1 else e=e+1; if lo==nil or ttl<lo then lo=ttl end; if ttl>hi then hi=ttl end end end until c=="0";
-local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0)"
-  mapfile -t collector_ids < <("${compose[@]}" ps -a -q observability-collector)
+local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0)" || return $?
+  collector_ids_text="$("${compose[@]}" ps -a -q observability-collector)" || return $?
+  mapfile -t collector_ids <<<"${collector_ids_text}" || return $?
   [[ "${#collector_ids[@]}" -eq 1 ]] || return 1
   collector_container="${collector_ids[0]}"
-  collector_image="$(docker inspect --format '{{.Image}}' "${collector_container}")"
+  collector_image="$(docker inspect --format '{{.Image}}' "${collector_container}")" || return $?
   collector_json="$(docker run --rm --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly" \
     --entrypoint python "${collector_image}" -c '
 import hashlib,json,sqlite3
 with sqlite3.connect("file:/data/obs.db?mode=ro",uri=True) as c:
  rows=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall(); tables={n:c.execute(f"SELECT count(*) FROM {n}").fetchone()[0] for n in ("turns","spans","llm_calls","logs")}; ok=c.execute("PRAGMA integrity_check").fetchall()==[("ok",)]; version=c.execute("PRAGMA user_version").fetchone()[0]
-encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii"); print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest(),"tables":tables,"integrity_check":"ok" if ok else "failed"},sort_keys=True,separators=(",", ":")))')"
-  evidence_partial="${directory}/evidence.json.partial"
-  python3 - "${directory}/manifest.json" "${evidence_partial}" "${pg_json}" "${redis_json}" "${collector_json}" <<'PY'
-import hashlib,json,sys
+encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii"); print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest(),"tables":tables,"integrity_check":"ok" if ok else "failed"},sort_keys=True,separators=(",", ":")))')" || return $?
+  if compgen -G "${directory}/evidence.*.json.partial" >/dev/null; then
+    return 1
+  fi
+  run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
+  evidence_partial="${directory}/evidence.${run_id}.json.partial"
+  python3 - "${directory}/manifest.json" "${evidence_partial}" "${pg_json}" "${redis_json}" "${collector_json}" <<'PY' || return $?
+import hashlib,json,os,sys
 from pathlib import Path
 m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8")); pg=json.loads(sys.argv[3]); r=json.loads(sys.argv[4]); c=json.loads(sys.argv[5])
 schema=pg.pop("schema"); schema_hash=hashlib.sha256(json.dumps(schema,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")).hexdigest()
@@ -530,14 +536,20 @@ for key in ("key_count","prefixes","types","persistent","expiring"):
 for key in ("min_ttl_ms","max_ttl_ms"):
     if not isinstance(r[key],int) or r[key]<0 or r[key]>m["redis"][key]: raise SystemExit("Redis TTL aggregate mismatch")
 if c!=m["collector"]: raise SystemExit("Collector aggregate mismatch")
-Path(sys.argv[2]).write_text(json.dumps({"postgres":pg,"redis":r,"collector":c},sort_keys=True,separators=(",", ":"))+"\n",encoding="utf-8")
+encoded=(json.dumps({"postgres":pg,"redis":r,"collector":c},sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")
+descriptor=os.open(sys.argv[2], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+try:
+    os.write(descriptor, encoded)
+    os.fsync(descriptor)
+finally:
+    os.close(descriptor)
 PY
-  chmod 0600 -- "${evidence_partial}"
-  mv -T "${evidence_partial}" "${directory}/evidence.json"
+  chmod 0600 -- "${evidence_partial}" || return $?
+  mv -T "${evidence_partial}" "${directory}/evidence.json" || return $?
 }
 
 verify_store_group() {
-  collect_target_attestation "$1"
+  collect_target_attestation "$1" || return $?
 }
 
 start_current_release() {
