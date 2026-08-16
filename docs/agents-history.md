@@ -2864,7 +2864,7 @@ B5/B6 只动 Python 侧（`orchestrator/cloud/` 与 `observability/collector/db.
 当场报红——容器名的 project 段派生自启动目录（本地 `car-agent`、CI checkout
 `cockpit-agent`），**连注释里的跑法也算数**。改成按 compose service 名寻址
 （`docker compose -f compose.yaml exec -T memory …`）并真跑通验证。
-这条守卫是 nightly #33 那笔账留下的，今天替新脚本挡了同一个坑。
+这条守卫是 nightly #33 那笔账留下的，2026-08-15 又替新脚本挡了同一个坑。
 
 **读数**：E4 首跑（MiniMax-M3，每句形 5 轮）R7b 5/5 有动作+卡片、D2a 5/5 出卡片、R8b 5/5 解析
 出「深圳湾万象城」，**15/15 走成 toolcall、一次方差都没复现**；同日 E1 探针另见 1 次
