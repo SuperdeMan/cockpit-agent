@@ -269,7 +269,7 @@ def test_remote_migration_is_whitelisted_and_fail_closed():
     assert "rollback_all" in text and "ROLLBACK_FAILED" in text
     for forbidden in (
         "docker compose down", "docker volume rm", "rm -rf", "down -v",
-        "systemctl enable", "tailscale", "security group", ".env.example",
+            "systemctl enable", "tailscale serve set", "security group", ".env.example",
     ):
         assert forbidden not in text.lower()
 
@@ -1733,3 +1733,14 @@ def test_post_start_evidence_allows_declared_transitions_ttl_decay_and_collector
     assert "retention_deleted" in body
     assert "persistent_prefixes" in body
     assert "min_ttl_ms" not in body[body.index('else:'):]
+
+
+def test_preflight_locks_complete_cloud_topology_volumes_serve_and_backup_timer():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    topology = re.search(r"(?ms)^assert_expected_cloud_topology\(\) \{(?P<body>.*?)^\}", text)["body"]
+    preflight = re.search(r"(?ms)^write_preflight_current\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for token in ("car-agent-postgres-data", "POSTGRES_VOLUME", "REDIS_VOLUME", "COLLECTOR_VOLUME",
+                  "car-agent-backup.timer", "tailscale serve status", "tailnet only", "{{.Image}}"):
+        assert token in topology or token in text
+    assert '"${#services[@]}" -eq 30' in topology
+    assert "assert_expected_cloud_topology" in preflight

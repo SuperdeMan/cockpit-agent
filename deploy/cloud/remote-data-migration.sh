@@ -12,6 +12,7 @@ readonly CLOUD_COMPOSE="${SHARED_ROOT}/compose.cloud.yaml"
 readonly SHARED_ENV="${SHARED_ROOT}/.env"
 readonly RUNTIME_PROJECT_NAME_FILE="${SHARED_ROOT}/runtime-project-name"
 readonly MIGRATION_ID_PATTERN='^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}-(online|final)$'
+readonly POSTGRES_VOLUME="car-agent-postgres-data"
 readonly REDIS_VOLUME="car-agent-redis-data"
 readonly COLLECTOR_VOLUME="car-agent-obs-data"
 readonly REQUIRED_IMPORT_FILES=("manifest.json" "postgres.dump" "redis.rdb" "collector.db")
@@ -30,8 +31,13 @@ die() {
   exit "${2:-1}"
 }
 
+migration_fail() {
+  printf 'cloud-data-migration: %s\n' "$1" >&2
+  return "${2:-1}"
+}
+
 require_migration_id() {
-  [[ "${1:-}" =~ ${MIGRATION_ID_PATTERN} ]] || die "invalid migration id" 2
+  [[ "${1:-}" =~ ${MIGRATION_ID_PATTERN} ]] || { migration_fail "invalid migration id" 2; return 2; }
 }
 
 load_runtime() {
@@ -39,10 +45,10 @@ load_runtime() {
   [[ -n "${CURRENT_RELEASE:-}" ]] && return 0
   CURRENT_RELEASE="$(readlink -f "${CURRENT_LINK}")"
   [[ "${CURRENT_RELEASE}" =~ ^/opt/car-agent/releases/[0-9a-f]{7,40}$ ]] \
-    || die "current release is invalid"
+    || { migration_fail "current release is invalid"; return 1; }
   mapfile -t project_names <"${RUNTIME_PROJECT_NAME_FILE}"
   [[ "${#project_names[@]}" -eq 1 && "${project_names[0]}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] \
-    || die "runtime project name is invalid"
+    || { migration_fail "runtime project name is invalid"; return 1; }
   RUNTIME_PROJECT_NAME="${project_names[0]}"
   compose=(
     docker compose --project-name "${RUNTIME_PROJECT_NAME}"
@@ -58,11 +64,11 @@ prepare_upload() {
   require_migration_id "${migration_id}"
   caller="${SUDO_USER:-}"
   [[ "${caller}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] \
-    || die "prepare-upload requires a valid sudo caller"
+    || { migration_fail "prepare-upload requires a valid sudo caller"; return 1; }
   caller_group="$(id -gn "${caller}")"
   target="${IMPORT_ROOT}/${migration_id}"
   install -d -m 0711 -o root -g root "${IMPORT_ROOT}"
-  [[ ! -e "${target}" ]] || die "migration upload directory already exists"
+  [[ ! -e "${target}" ]] || { migration_fail "migration upload directory already exists"; return 1; }
   install -d -m 0700 -o "${caller}" -g "${caller_group}" "${target}"
   printf '%s\n' "${target}"
 }
@@ -72,7 +78,7 @@ seal_upload() {
   require_migration_id "${migration_id}"
   caller="${SUDO_USER:-}"
   [[ "${caller}" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] \
-    || die "seal-upload requires a valid sudo caller"
+    || { migration_fail "seal-upload requires a valid sudo caller"; return 1; }
   caller_uid="$(id -u "${caller}")" || return $?
   caller_gid="$(id -g "${caller}")" || return $?
   python3 - "${directory}" "${caller_uid}" "${caller_gid}" <<'PY'
@@ -307,6 +313,7 @@ validate_import_manifest() {
   python3 - "${directory}" "${migration_id}" <<'PY'
 import hashlib
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -314,7 +321,19 @@ from pathlib import Path
 
 directory = Path(sys.argv[1])
 migration_id = sys.argv[2]
-payload = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+manifest_fd=os.open(directory / "manifest.json",os.O_RDONLY | os.O_NOFOLLOW)
+try:
+    if os.fstat(manifest_fd).st_size > 1024*1024: raise SystemExit("manifest exceeds byte limit")
+    manifest_raw=os.read(manifest_fd,1024*1024+1)
+finally:
+    os.close(manifest_fd)
+def unique(pairs):
+    value={}
+    for key,item in pairs:
+        if key in value: raise ValueError("duplicate manifest key")
+        value[key]=item
+    return value
+payload = json.loads(manifest_raw.decode("utf-8"),object_pairs_hook=unique)
 keys = {"schema_version", "migration_id", "phase", "source_sha", "created_at",
         "files", "postgres", "redis", "collector"}
 if set(payload) != keys or payload.get("schema_version") != 1:
@@ -343,7 +362,8 @@ for name in names:
     if set(record) != {"size_bytes", "sha256"} or isinstance(record["size_bytes"], bool):
         raise SystemExit("manifest file record is invalid")
     path = directory / name
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as source:
+        digest = hashlib.file_digest(source,"sha256").hexdigest()
     if record["size_bytes"] != path.stat().st_size or record["sha256"] != digest:
         raise SystemExit("migration file checksum mismatch")
 pg = payload.get("postgres")
@@ -418,8 +438,13 @@ def unique(pairs):
         result[key]=value
     return result
 payload=json.loads(path.read_text(encoding="utf-8"),object_pairs_hook=unique)
-if set(payload)!={"schema_version","backup_stamp","files"} or payload["schema_version"]!=1 or payload["backup_stamp"]!=stamp:
+if set(payload)!={"schema_version","backup_stamp","files","redis_aggregate"} or payload["schema_version"]!=1 or payload["backup_stamp"]!=stamp:
     raise SystemExit("backup manifest contract mismatch")
+aggregate=payload["redis_aggregate"]
+if set(aggregate)!={"key_count","prefixes","types","persistent","expiring"} or aggregate["key_count"]<=0:
+    raise SystemExit("backup Redis aggregate is invalid")
+if sum(aggregate["prefixes"].values())!=aggregate["key_count"] or sum(aggregate["types"].values())!=aggregate["key_count"] or aggregate["persistent"]+aggregate["expiring"]!=aggregate["key_count"]:
+    raise SystemExit("backup Redis aggregate totals mismatch")
 expected={"postgres.dump":root/"postgres"/f"{stamp}.dump","redis.rdb":root/"redis"/f"{stamp}.rdb","collector.sql.gz":root/"observability"/f"{stamp}.sql.gz"}
 if set(payload["files"])!=set(expected): raise SystemExit("backup manifest file set mismatch")
 for name,file_path in expected.items():
@@ -438,10 +463,10 @@ inspect_current() {
   local postgres_version_num vector_version postgres_schema_json postgres_schema_fingerprint
   local redis_info redis_version redis_fingerprint collector_json disk_available
   load_runtime
-  [[ -n "$("${compose[@]}" ps -q --status running postgres)" ]] || die "postgres is not running"
-  [[ -n "$("${compose[@]}" ps -q --status running redis)" ]] || die "redis is not running"
+  [[ -n "$("${compose[@]}" ps -q --status running postgres)" ]] || { migration_fail "postgres is not running"; return 1; }
+  [[ -n "$("${compose[@]}" ps -q --status running redis)" ]] || { migration_fail "redis is not running"; return 1; }
   [[ -n "$("${compose[@]}" ps -q --status running observability-collector)" ]] \
-    || die "collector is not running"
+    || { migration_fail "collector is not running"; return 1; }
   postgres_version_num="$("${compose[@]}" exec -T postgres \
     psql -U cockpit -d cockpit -At -c "SHOW server_version_num")"
   vector_version="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At \
@@ -469,7 +494,7 @@ print(hashlib.sha256(encoded).hexdigest())
 ')"
   redis_info="$("${compose[@]}" exec -T redis redis-cli --raw INFO server)"
   redis_version="$(printf '%s\n' "${redis_info}" | sed -n 's/^redis_version://p' | tr -d '\r')"
-  [[ "${redis_version}" =~ ^[0-9]+([.][0-9]+){1,3}$ ]] || die "redis_version is invalid"
+  [[ "${redis_version}" =~ ^[0-9]+([.][0-9]+){1,3}$ ]] || { migration_fail "redis_version is invalid"; return 1; }
   redis_fingerprint="$(printf '%s' "${redis_version}" | sha256sum | cut -d' ' -f1)"
   collector_json="$("${compose[@]}" exec -T observability-collector python -c '
 import hashlib,json,sqlite3
@@ -502,15 +527,48 @@ print(json.dumps({
 PY
 }
 
+assert_expected_cloud_topology() {
+  local services_text service cid image volume serve_status serve_count
+  local -a services
+  services_text="$("${compose[@]}" config --services)" || return $?
+  mapfile -t services <<<"${services_text}" || return $?
+  [[ "${#services[@]}" -eq 30 ]] || { migration_fail "cloud compose topology is incomplete"; return 1; }
+  for service in "${services[@]}"; do
+    [[ "${service}" =~ ^[a-z0-9-]+$ ]] || return 1
+    cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
+    [[ "${cid}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    image="$(docker inspect --format '{{.Image}}' "${cid}")" || return $?
+    [[ "${image}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  done
+  for service in postgres redis observability-collector; do
+    cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
+    volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${cid}")" || return $?
+    if [[ "${service}" == "postgres" ]]; then
+      volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' "${cid}")" || return $?
+      [[ "${volume}" == "${POSTGRES_VOLUME}" ]] || return 1
+    elif [[ "${service}" == "redis" ]]; then
+      [[ "${volume}" == "${REDIS_VOLUME}" ]] || return 1
+    else
+      [[ "${volume}" == "${COLLECTOR_VOLUME}" ]] || return 1
+    fi
+  done
+  systemctl is-active --quiet car-agent-backup.timer || return $?
+  serve_status="$(tailscale serve status)" || return $?
+  serve_count="$(grep -Fic '(tailnet only)' <<<"${serve_status}")" || return $?
+  [[ "${serve_count}" -eq 5 ]] || return 1
+  if grep -Fqi funnel <<<"${serve_status}"; then return 1; fi
+}
+
 write_preflight_current() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}" current_file
   local postgres_id postgres_image redis_id redis_image archive_fingerprint archive_listing redis_check current_json
   local partial run_id
   current_file="${directory}/preflight-current.json"
+  assert_expected_cloud_topology || return $?
   postgres_id="$("${compose[@]}" ps -a -q postgres)" || return $?
   redis_id="$("${compose[@]}" ps -a -q redis)" || return $?
   [[ "${postgres_id}" =~ ^[0-9a-f]{12,64}$ && "${redis_id}" =~ ^[0-9a-f]{12,64}$ ]] \
-    || die "store container identity is invalid"
+    || { migration_fail "store container identity is invalid"; return 1; }
   postgres_image="$(docker inspect --format '{{.Image}}' "${postgres_id}")"
   redis_image="$(docker inspect --format '{{.Image}}' "${redis_id}")"
   archive_listing="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
@@ -518,7 +576,7 @@ write_preflight_current() {
   archive_fingerprint="$(printf '%s\n' "${archive_listing}" | sed '/^; Archive created at/d' | sha256sum | cut -d' ' -f1)"
   redis_check="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint redis-check-rdb "${redis_image}" /snapshot/redis.rdb)" || return $?
-  [[ "${redis_check}" == *"CRC64 checksum is OK"* ]] || die "Redis import format validation failed"
+  [[ "${redis_check}" == *"CRC64 checksum is OK"* ]] || { migration_fail "Redis import format validation failed"; return 1; }
   current_json="$(inspect_current)" || return $?
   if compgen -G "${directory}/preflight.*.json.partial" >/dev/null; then return 1; fi
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
@@ -528,7 +586,12 @@ write_preflight_current() {
 import hashlib, json, os, sys
 from datetime import datetime, timezone
 from pathlib import Path
-manifest_bytes=Path(sys.argv[1]).read_bytes(); manifest=json.loads(manifest_bytes); current=json.loads(sys.argv[4])
+manifest_path=Path(sys.argv[1]); descriptor=os.open(manifest_path,os.O_RDONLY|os.O_NOFOLLOW)
+try:
+    if os.fstat(descriptor).st_size>1024*1024: raise SystemExit("manifest exceeds byte limit")
+    manifest_bytes=os.read(descriptor,1024*1024+1)
+finally: os.close(descriptor)
+manifest=json.loads(manifest_bytes); current=json.loads(sys.argv[4])
 if set(current)!={"current_release","runtime_project_name","disk_available_bytes","stores","status"} or current["status"]!="inspect_only":
     raise SystemExit("current inspection contract mismatch")
 stores=current["stores"]
@@ -597,28 +660,28 @@ stop_application_writers() {
   local -a services writers
   services_text="$("${compose[@]}" config --services)" || return $?
   mapfile -t services <<<"${services_text}"
-  [[ "${#services[@]}" -gt 2 ]] || die "compose service list is incomplete"
+  [[ "${#services[@]}" -gt 2 ]] || { migration_fail "compose service list is incomplete"; return 1; }
   for service in "${services[@]}"; do
-    [[ "${service}" =~ ^[a-z0-9-]+$ ]] || die "compose service name is invalid"
+    [[ "${service}" =~ ^[a-z0-9-]+$ ]] || { migration_fail "compose service name is invalid"; return 1; }
     [[ "${service}" == "postgres" || "${service}" == "redis" ]] || writers+=("${service}")
   done
   "${compose[@]}" stop "${writers[@]}" || return $?
   for service in "${writers[@]}"; do
     running_id="$("${compose[@]}" ps -q --status running "${service}")" || return $?
-    [[ -z "${running_id}" ]] || die "application writer did not stop: ${service}"
+    [[ -z "${running_id}" ]] || { migration_fail "application writer did not stop: ${service}"; return 1; }
   done
 }
 
 assert_named_volume() {
   local actual="$1" expected="$2"
   [[ "${expected}" == "car-agent-redis-data" || "${expected}" == "car-agent-obs-data" ]] \
-    || die "unapproved migration volume"
-  [[ "${actual}" == "${expected}" ]] || die "runtime named volume mismatch"
+    || { migration_fail "unapproved migration volume"; return 1; }
+  [[ "${actual}" == "${expected}" ]] || { migration_fail "runtime named volume mismatch"; return 1; }
 }
 
 restore_postgres_dump() {
   local dump="$1"
-  [[ -s "${dump}" && ! -L "${dump}" ]] || die "PostgreSQL restore source is invalid"
+  [[ -s "${dump}" && ! -L "${dump}" ]] || { migration_fail "PostgreSQL restore source is invalid"; return 1; }
   "${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -v ON_ERROR_STOP=1 \
     -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='cockpit' AND pid <> pg_backend_pid()" >/dev/null || return $?
   "${compose[@]}" exec -T postgres pg_restore -U cockpit -d cockpit \
@@ -631,12 +694,12 @@ resolve_redis_identity() {
   ids_text="$("${compose[@]}" ps -a -q redis)" || return $?
   mapfile -t ids <<<"${ids_text}"
   [[ "${#ids[@]}" -eq 1 && "${ids[0]}" =~ ^[0-9a-f]{12,64}$ ]] \
-    || die "redis container identity is not unique"
+    || { migration_fail "redis container identity is not unique"; return 1; }
   RESOLVED_REDIS_CONTAINER="${ids[0]}"
   RESOLVED_REDIS_VOLUME="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${RESOLVED_REDIS_CONTAINER}")"
   RESOLVED_REDIS_IMAGE="$(docker inspect --format '{{.Image}}' "${RESOLVED_REDIS_CONTAINER}")"
   assert_named_volume "${RESOLVED_REDIS_VOLUME}" "${REDIS_VOLUME}"
-  [[ "${RESOLVED_REDIS_IMAGE}" =~ ^sha256:[0-9a-f]{64}$ ]] || die "redis image identity is invalid"
+  [[ "${RESOLVED_REDIS_IMAGE}" =~ ^sha256:[0-9a-f]{64}$ ]] || { migration_fail "redis image identity is invalid"; return 1; }
 }
 
 wait_for_compose_redis() {
@@ -658,7 +721,8 @@ local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a
   python3 - "${manifest}" "${aggregate}" <<'PY' || return $?
 import json, sys
 from pathlib import Path
-m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["redis"]
+m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+m=m["redis_aggregate"] if "redis_aggregate" in m else m["redis"]
 a=json.loads(sys.argv[2])
 if a["key_count"] <= 0:
     raise SystemExit("empty Redis import")
@@ -687,6 +751,7 @@ validate_redis_aof_volume() {
 
 restore_redis_rdb() {
   local rdb="$1" migration_id="$2" bucket="${3:-redis-volume}"
+  local expected_manifest="${4:-${IMPORT_ROOT}/${migration_id}/manifest.json}"
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local redis_container actual_volume image_id loader info dbsize rc attempt
   [[ -s "${rdb}" && ! -L "${rdb}" ]] || { printf 'Redis restore source is invalid\n' >&2; return 1; }
@@ -733,7 +798,7 @@ restore_redis_rdb() {
     docker rm -f "${loader}" >/dev/null 2>&1
     return 1
   fi
-  assert_redis_container_matches_manifest "${loader}" "${IMPORT_ROOT}/${migration_id}/manifest.json" \
+  assert_redis_container_matches_manifest "${loader}" "${expected_manifest}" \
     || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
   docker exec "${loader}" redis-cli CONFIG SET appendonly yes | grep -Fx OK >/dev/null \
     || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
@@ -757,7 +822,7 @@ restore_redis_rdb() {
   [[ "${RESOLVED_REDIS_VOLUME}" == "${actual_volume}" && "${RESOLVED_REDIS_IMAGE}" == "${image_id}" ]] \
     || return 1
   assert_redis_container_matches_manifest "${RESOLVED_REDIS_CONTAINER}" \
-    "${IMPORT_ROOT}/${migration_id}/manifest.json" || return $?
+    "${expected_manifest}" || return $?
 }
 
 install_collector_db() {
@@ -1034,6 +1099,7 @@ rollback_all() {
   record_store_progress "${migration_id}" postgres restored || return 1
   record_store_progress "${migration_id}" redis started || return 1
   restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" "failed-import-redis-volume" \
+    "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" \
     || { write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}"; return 1; }
   record_store_progress "${migration_id}" redis restored || return 1
   record_store_progress "${migration_id}" collector started || return 1

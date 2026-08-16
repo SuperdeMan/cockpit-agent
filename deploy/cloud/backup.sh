@@ -107,6 +107,8 @@ test -s "${postgres_partial}"
 mv "${postgres_partial}" "${postgres_target}"
 
 "${compose[@]}" exec -T redis redis-cli SAVE >/dev/null
+redis_aggregate="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
+redis.setresp(3); local c="0"; local n,p,e=0,0,0; local px={}; local ty={}; repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; if redis.call("PTTL",k)<0 then p=p+1 else e=e+1 end end until c=="0"; local a={};local b={};for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end;for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end;return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e}}' 0)"
 "${compose[@]}" cp redis:/data/dump.rdb "${redis_partial}" >/dev/null
 test -s "${redis_partial}"
 mv "${redis_partial}" "${redis_target}"
@@ -166,7 +168,7 @@ with gzip.open(Path("/backup") / sys.argv[1], "rt", encoding="utf-8") as source:
 PY
 
 backup_manifest="${BACKUP_ROOT}/${timestamp}.backup-manifest.json"
-python3 - "${backup_manifest}" "${timestamp}" "${postgres_target}" "${redis_target}" "${obs_target}" <<'PY'
+python3 - "${backup_manifest}" "${timestamp}" "${postgres_target}" "${redis_target}" "${obs_target}" "${redis_aggregate}" <<'PY'
 import hashlib
 import json
 import os
@@ -184,7 +186,7 @@ def record(path_text):
     return {"size_bytes": size, "sha256": digest.hexdigest()}
 
 target = Path(sys.argv[1])
-payload = {"schema_version": 1, "backup_stamp": sys.argv[2], "files": {
+payload = {"schema_version": 1, "backup_stamp": sys.argv[2], "redis_aggregate": json.loads(sys.argv[6]), "files": {
     "postgres.dump": record(sys.argv[3]),
     "redis.rdb": record(sys.argv[4]),
     "collector.sql.gz": record(sys.argv[5]),
