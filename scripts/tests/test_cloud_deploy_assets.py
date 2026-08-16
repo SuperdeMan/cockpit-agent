@@ -405,7 +405,8 @@ def test_remote_apply_failure_stops_later_steps_and_runs_group_rollback(tmp_path
         set -u
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
-        require_import_bundle() {{ :; }}
+        require_sealed_inbound_bundle() {{ :; }}
+        require_runtime_batch() {{ :; }}
         preflight_migration() {{ printf 'preflight\n' >>'{events.as_posix()}'; }}
         run_required_backup() {{ printf 'backup\n' >>'{events.as_posix()}'; printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
@@ -432,7 +433,8 @@ def test_remote_attestation_failure_never_marks_applied_and_triggers_rollback(tm
         set -u
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
-        require_import_bundle() {{ :; }}
+        require_sealed_inbound_bundle() {{ :; }}
+        require_runtime_batch() {{ :; }}
         preflight_migration() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
@@ -459,7 +461,8 @@ def test_remote_apply_attests_exact_before_start_then_growth_safe_after_start(tm
         set -u
         source '{REMOTE_MIGRATION_PATH.as_posix()}'
         load_runtime() {{ :; }}
-        require_import_bundle() {{ :; }}
+        require_sealed_inbound_bundle() {{ :; }}
+        require_runtime_batch() {{ :; }}
         preflight_migration() {{ :; }}
         run_required_backup() {{ printf '20260817T010203Z\n'; }}
         write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
@@ -504,11 +507,66 @@ def test_remote_verify_uses_saved_pre_start_baseline_not_snapshot_exactness():
     verify_body = re.search(r"(?ms)^verify_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
     assert 'verify_store_group "${migration_id}" "post-start" || return $?' in verify_body
     assert '"pre-start"' not in verify_body
-    require_body = re.search(r"(?ms)^require_import_bundle\(\) \{(?P<body>.*?)^\}", text)["body"]
+    require_body = re.search(r"(?ms)^require_runtime_batch\(\) \{(?P<body>.*?)^\}", text)["body"]
     assert 'evidence-pre-start.json' in require_body
     assert 'evidence-post-start.json' in require_body
     assert 'status.json' in require_body
     assert 'preflight-current.json' in require_body
+
+
+def test_remote_batch_validation_splits_sealed_input_from_controlled_runtime_tree():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    sealed = re.search(r"(?ms)^require_sealed_inbound_bundle\(\) \{(?P<body>.*?)^\}", text)["body"]
+    runtime = re.search(r"(?ms)^require_runtime_batch\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'entries != required' in sealed
+    assert '"rollback"' not in sealed and '"rollback-generated"' not in sealed
+    assert 'allowed_directories = {"rollback", "rollback-generated"}' in runtime
+    assert 'allowed_files = required | {"status.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}' in runtime
+    assert 'os.O_DIRECTORY | os.O_NOFOLLOW' in runtime
+    assert 'metadata.st_uid != 0 or metadata.st_gid != 0' in runtime
+    assert 'stat.S_IMODE(metadata.st_mode) != expected_mode' in runtime
+    assert 'raise SystemExit("unknown runtime batch entry")' in runtime
+    assert 'raise SystemExit("runtime batch symlink or special file is forbidden")' in runtime
+    for expected in (
+        '"redis-volume"', '"collector-volume"', '"failed-import-redis-volume"',
+        '"failed-import-collector-volume"', '"dump.rdb"', '"appendonlydir"',
+        '"obs.db"', '"obs.db-wal"', '"obs.db-shm"', '"collector.db"',
+    ):
+        assert expected in runtime
+
+
+def test_apply_then_verify_and_rollback_use_runtime_batch_validation(tmp_path: Path):
+    bash = _git_bash()
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "runtime-batch-reentry.sh"
+    harness.write_text(textwrap.dedent(f"""
+        set -u
+        source '{REMOTE_MIGRATION_PATH.as_posix()}'
+        load_runtime() {{ :; }}
+        require_sealed_inbound_bundle() {{ printf 'sealed\n' >>'{events.as_posix()}'; }}
+        require_runtime_batch() {{ printf 'runtime:%s\n' "$1" >>'{events.as_posix()}'; }}
+        preflight_migration() {{ :; }}
+        run_required_backup() {{ printf '20260817T010203Z\n'; }}
+        write_migration_state() {{ :; }}
+        stop_application_writers() {{ :; }}
+        restore_postgres_dump() {{ :; }}
+        restore_redis_rdb() {{ :; }}
+        install_collector_db() {{ :; }}
+        verify_store_group() {{ :; }}
+        start_current_release() {{ :; }}
+        verify_current_release() {{ :; }}
+        rollback_all() {{ :; }}
+        python3() {{ printf '20260817T010203Z\n'; }}
+        apply_migration 20260817T010203Z-abcdef0-online
+        verify_migration 20260817T010203Z-abcdef0-online
+        rollback_migration 20260817T010203Z-abcdef0-online
+    """), encoding="utf-8")
+    completed = subprocess.run([str(bash), str(harness)], capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "sealed", "runtime:20260817T010203Z-abcdef0-online",
+        "runtime:20260817T010203Z-abcdef0-online",
+    ]
 
 
 def test_migration_docs_explain_two_stage_attestation_growth_rules():

@@ -98,25 +98,26 @@ try:
 finally:
     os.close(root)
 PY
-  require_import_bundle "${migration_id}"
+  require_sealed_inbound_bundle "${migration_id}"
 }
 
-require_import_bundle() {
+require_sealed_inbound_bundle() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
   require_migration_id "${migration_id}"
   python3 - "${directory}" <<'PY'
 import os, stat, sys
 required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
-allowed = required | {"status.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}
 root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 try:
     directory = os.fstat(root)
     if not stat.S_ISDIR(directory.st_mode) or directory.st_uid != 0 or directory.st_gid != 0:
         raise SystemExit("sealed migration directory owner is invalid")
-    entries = set(os.listdir(root))
-    if stat.S_IMODE(directory.st_mode) != 0o700 or not required.issubset(entries) or not entries.issubset(allowed):
+    if stat.S_IMODE(directory.st_mode) != 0o700:
         raise SystemExit("sealed migration directory is invalid")
-    for name in sorted(entries):
+    entries = set(os.listdir(root))
+    if entries != required:
+        raise SystemExit("sealed inbound file set is invalid")
+    for name in sorted(required):
         descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root)
         try:
             metadata = os.fstat(descriptor)
@@ -129,6 +130,98 @@ try:
 finally:
     os.close(root)
 PY
+  validate_import_manifest "${migration_id}"
+}
+
+require_runtime_batch() {
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
+  require_migration_id "${migration_id}"
+  python3 - "${directory}" <<'PY'
+import os, re, stat, sys
+required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
+allowed_files = required | {"status.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}
+allowed_directories = {"rollback", "rollback-generated"}
+redis_buckets = {"redis-volume", "failed-import-redis-volume"}
+collector_buckets = {"collector-volume", "failed-import-collector-volume"}
+
+def opened(parent, name, directory=False):
+    flags = os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if directory else 0)
+    try:
+        descriptor = os.open(name, flags, dir_fd=parent)
+    except OSError as exc:
+        raise SystemExit("runtime batch symlink or special file is forbidden") from exc
+    metadata = os.fstat(descriptor)
+    expected_mode = 0o700 if directory else 0o600
+    valid_type = stat.S_ISDIR(metadata.st_mode) if directory else stat.S_ISREG(metadata.st_mode)
+    if (not valid_type or (not directory and metadata.st_nlink != 1)
+            or metadata.st_uid != 0 or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != expected_mode):
+        os.close(descriptor)
+        raise SystemExit("runtime batch entry owner, mode, or type is invalid")
+    return descriptor
+
+def validate_regular_set(parent, entries, allowed, required_names=frozenset()):
+    if not required_names.issubset(entries) or not entries.issubset(allowed):
+        raise SystemExit("unknown runtime batch entry")
+    for name in sorted(entries):
+        os.close(opened(parent, name))
+
+root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+try:
+    metadata = os.fstat(root)
+    expected_mode = 0o700
+    if (not stat.S_ISDIR(metadata.st_mode) or metadata.st_uid != 0 or metadata.st_gid != 0
+            or stat.S_IMODE(metadata.st_mode) != expected_mode):
+        raise SystemExit("runtime batch root is invalid")
+    entries = set(os.listdir(root))
+    if not required.issubset(entries) or not entries.issubset(allowed_files | allowed_directories):
+        raise SystemExit("unknown runtime batch entry")
+    validate_regular_set(root, entries & allowed_files, allowed_files, required)
+    if "rollback-generated" in entries:
+        generated = opened(root, "rollback-generated", directory=True)
+        try:
+            validate_regular_set(generated, set(os.listdir(generated)), {"collector.db"}, {"collector.db"})
+        finally:
+            os.close(generated)
+    if "rollback" in entries:
+        rollback = opened(root, "rollback", directory=True)
+        try:
+            buckets = set(os.listdir(rollback))
+            if not buckets.issubset(redis_buckets | collector_buckets):
+                raise SystemExit("unknown runtime batch entry")
+            for bucket in sorted(buckets):
+                bucket_fd = opened(rollback, bucket, directory=True)
+                try:
+                    bucket_entries = set(os.listdir(bucket_fd))
+                    if bucket in collector_buckets:
+                        validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}, {"obs.db"})
+                    else:
+                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir"}):
+                            raise SystemExit("unknown runtime batch entry")
+                        if "dump.rdb" in bucket_entries:
+                            os.close(opened(bucket_fd, "dump.rdb"))
+                        if "appendonlydir" in bucket_entries:
+                            appendonly = opened(bucket_fd, "appendonlydir", directory=True)
+                            try:
+                                aof_entries = set(os.listdir(appendonly))
+                                for name in sorted(aof_entries):
+                                    if re.fullmatch(r"appendonly[.]aof(?:[.]manifest|[.][0-9]+[.](?:base[.](?:rdb|aof)|incr[.]aof))", name) is None:
+                                        raise SystemExit("unknown runtime batch entry")
+                                    os.close(opened(appendonly, name))
+                            finally:
+                                os.close(appendonly)
+                finally:
+                    os.close(bucket_fd)
+        finally:
+            os.close(rollback)
+finally:
+    os.close(root)
+PY
+  validate_import_manifest "${migration_id}"
+}
+
+validate_import_manifest() {
+  local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
   python3 - "${directory}" "${migration_id}" <<'PY'
 import hashlib
 import json
@@ -297,7 +390,7 @@ preflight_migration() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}" current_file
   local postgres_id postgres_image redis_id redis_image archive_fingerprint archive_listing redis_check
   load_runtime
-  require_import_bundle "${migration_id}"
+  require_runtime_batch "${migration_id}"
   current_file="${directory}/preflight-current.json"
   postgres_id="$("${compose[@]}" ps -a -q postgres)" || return $?
   redis_id="$("${compose[@]}" ps -a -q redis)" || return $?
@@ -416,6 +509,10 @@ restore_redis_rdb() {
       test ! -e /rollback/appendonlydir
       test ! -e /data/dump.rdb || mv /data/dump.rdb /rollback/dump.rdb
       test ! -e /data/appendonlydir || mv /data/appendonlydir /rollback/appendonlydir
+      test -z "$(find /rollback -type l -print -quit)"
+      chown -R 0:0 /rollback
+      find /rollback -type d -exec chmod 0700 {} +
+      find /rollback -type f -exec chmod 0600 {} +
       install -m 0600 /incoming/'"$(basename "${rdb}")"' /data/dump.rdb
     ' || return $?
   "${compose[@]}" up -d --no-build --pull never redis || return $?
@@ -448,6 +545,8 @@ for name in ("obs.db", "obs.db-wal", "obs.db-shm"):
         destination = rollback / name
         if destination.exists(): raise SystemExit("collector rollback target exists")
         os.replace(current, destination)
+        os.chown(destination, 0, 0)
+        os.chmod(destination, 0o600)
 temporary = Path("/data/obs.db.migration.partial")
 with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as connection:
     if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
@@ -480,6 +579,8 @@ with sqlite3.connect(target) as connection:
         raise SystemExit("restored collector integrity failed")
 PY
   [[ "$?" -eq 0 ]] || return $?
+  chown root:root -- "${directory}/collector.db" || return $?
+  chmod 0600 -- "${directory}/collector.db" || return $?
   install_collector_db "${directory}/collector.db" "${migration_id}" "failed-import-collector-volume" || return $?
 }
 
@@ -651,7 +752,7 @@ fail_and_rollback() {
 apply_migration() {
   local migration_id="$1" backup_stamp
   load_runtime
-  require_import_bundle "${migration_id}"
+  require_sealed_inbound_bundle "${migration_id}"
   preflight_migration "${migration_id}"
   backup_stamp="$(run_required_backup)"
   write_migration_state "BACKED_UP" "${migration_id}" "${backup_stamp}"
@@ -675,7 +776,7 @@ apply_migration() {
 verify_migration() {
   local migration_id="$1"
   load_runtime || return $?
-  require_import_bundle "${migration_id}" || return $?
+  require_runtime_batch "${migration_id}" || return $?
   verify_store_group "${migration_id}" "post-start" || return $?
   verify_current_release || return $?
   printf '{"migration_id":"%s","status":"verified"}\n' "${migration_id}"
@@ -684,7 +785,7 @@ verify_migration() {
 rollback_migration() {
   local migration_id="$1" backup_stamp
   load_runtime
-  require_import_bundle "${migration_id}"
+  require_runtime_batch "${migration_id}"
   backup_stamp="$(python3 - "${IMPORT_ROOT}/${migration_id}/status.json" <<'PY'
 import json, re, sys
 value = json.load(open(sys.argv[1], encoding="utf-8")).get("backup_stamp", "")
