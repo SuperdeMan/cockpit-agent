@@ -168,3 +168,33 @@ def build_x_provider():
 - ❌ 显式配置了真实源却在构造失败时静默回退 mock（2026-07-17 起 fail-fast，参考 ASR 那次教训）
 - ❌ 外源数据卡不带 `_prov`（真实性对评审/演示/badcase 排查不可见）
 - ❌ 新厂商改了 Agent 对外契约（Provider 切换必须对 Agent/编排无感）
+
+## 7. 云端 demo 验收矩阵
+
+云端 `DEPLOY_PROFILE=demo` 允许未配置能力诚实使用 mock，但不能把“网络可达”“HTTP 2xx”和“业务链真实命中”混成一件事。每个已配置 provider 都要在实际 car-agent 请求中结合 trace 判定。
+
+| 分组 | Provider / 能力 | 验收要求 |
+|---|---|---|
+| 地图与天气 | 高德、和风 | 发起天气、POI、附近和导航请求；trace/provider 决议必须与卡片 `_prov` 一致 |
+| 搜索与信息 | Exa、AnySearch、SerpAPI | 发起真实检索，区分网络失败、鉴权/配额失败和运行时诚实降级 |
+| 财经与体育 | Tushare、API-Football | 使用不产生写操作的查询；确认结果时间和来源，不以 HTTP 可达代替解析成功 |
+| LLM | DashScope、DeepSeek、MiniMax、MIMO | 记录实际 provider/model、`real/mock` 与 trace id；模型 fallback 必须显式可见 |
+| 商户 | 麦当劳、瑞幸 | **只读**门店、菜单、营养与详情查询；不得进入订单预览、创建订单、取消新订单或支付入口 |
+
+### 7.1 判定口径
+
+- **必须实时命中**：根运行时配置已明确选择 real 且凭证有效的源。启动决议和本次 trace 都要证明 real。
+- **允许诚实 mock**：没有配置凭证、没有显式 real 意图的能力。UI/trace 必须标记 mock，不能冒充实时结果。
+- **配置错误**：显式 real 但缺凭证或构造失败，应 fail-fast；不能为了起栈改成 mock。
+- **运行期上游失败**：记录 timeout、HTTP、鉴权或 quota 分类，Agent 诚实说暂时拿不到，不回填假数据。
+- 网络探针返回 2xx/401 只证明 DNS/TLS/HTTP 路由可通，不证明 car-agent 的鉴权、字段解析、实际模型或业务调用成功。
+
+### 7.2 脱敏证据格式
+
+每项记录下面字段，不写 token、密码、完整 DSN、商户账号、支付 URL 或完整用户原话：
+
+```text
+provider | configured | network | auth/quota | runtime real/mock | trace_id | conclusion
+```
+
+麦当劳/瑞幸验收若出现任何创建订单、写订单、支付或退款倾向，立即停止该链路并按安全缺陷记录；“只读问法最终没有付款”不足以证明安全，必须确认没有产生订单副作用。
