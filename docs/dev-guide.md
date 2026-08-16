@@ -1,5 +1,16 @@
 # 开发上手指南
 
+> 以下命令在对应实现提交合入后可用。用户入口固定为 `scripts/dev_stack.py`；本阶段仅记录
+> 入口与边界，不宣称尚未实现的命令已经验证。
+
+## 可切换真栈
+
+执行真栈动作前先读取 `dev-stack.local`：缺失按 `target=local`，损坏则 fail closed。只允许
+`target=local|cloud`，不得写入 token、密码、私钥或 URL。`target=cloud` 不启动本地 Compose，
+本地只做编辑、单测、静态检查和 Vite；`target=local` 只用根 `compose.yaml` / `make up`，根
+`.env` 是唯一运行时来源。cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit、
+merge 或 push；未显式 `remote_safe` 的 E2E 不在 cloud 缺省运行。
+
 面向第一次跑起本项目、或要单独调试某个服务的开发者。整栈说明见根 `README.md`，本文补齐**工具链、codegen、单服务调试、Windows 注意、常见坑**。
 
 ---

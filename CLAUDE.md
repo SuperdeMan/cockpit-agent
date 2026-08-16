@@ -130,6 +130,18 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 - 危险动作（`require_confirm=true`）必须用户二次确认。
 - **端到端语音（S2S）会话内不得有任何执行通道**（M4）：语音大模型唯一的工具是 `escalate`——把用户原话交回文本主链，此后 planner 校验 / 权限 / VAL / `require_confirm` 闸逐字全量生效。**不得把 capability 清单注入 S2S 会话的 tools**（那等于把执行判定权交给一个不过 planner 校验的模型）。S2S 是新的「话筒」，不是新的规划入口。
 - 密钥/token 不进代码、不进 commit、不进日志；用 `.env`（已 gitignore），模板见 `.env.example`。
+
+### 可切换远程真栈实施期红线
+
+在改动任何脚本目录或 manifest 前，必须先读取 `dev-stack.local`：文件缺失按
+`target=local` 处理，文件损坏则 fail closed。只允许 `target=local|cloud`，不得在其中保存
+token、密码、私钥或 URL。`target=cloud` 禁止启动本地 Compose，本地仅用于编辑、单测、静态
+检查和 Vite；`target=local` 继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一运行时
+来源。
+
+cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit/merge/push。未显式标记
+`remote_safe` 的 E2E 不得在 cloud 缺省运行，高影响开关不替代人工红线授权。本阶段不得
+自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
 - 敏感数据（车内音视频、精确位置、支付）默认不出车，上云最小化。
   - **唯一的受控例外：S2S 挡位下上行原始音频**（三段式只上行定稿文本）。三个条件同时成立才允许：① 设置默认 `classic`，须用户在 HMI 显式选择；② 仅在**用户主动唤醒后的交互窗内**采集（未唤醒不采）；③ 隐私声明与设置文案显式呈现该差异。任何绕过这三条的音频上行都是红线违规。
   - **视觉单帧同款三条件**（M4 P4）：设置默认关 + **端侧命中视觉触发词才抓一帧**（未命中一帧都不采）+ 文案说清。图像只在网关内存活 TTL 秒，**不落盘不落 Redis、不进 obs、不进记忆**；`camera.frame`（单帧）与 `camera.read`（连续流，维持 ❌ 禁）是两个 scope，别混用。

@@ -4,6 +4,16 @@
 
 ## 运行入口
 
+> 以下命令在对应实现提交合入后可用。远程发布互斥锁固定为
+> `/opt/car-agent/shared/locks/release.lock`；本段只定义入口与边界，不宣称尚未实现的命令
+> 已经验证。
+
+- 发布前必须持有上述互斥锁；不得绕过锁并发 release、rollback 或 verify。
+- `dev-stack.local` 缺失按 `target=local`，损坏 fail closed；只允许 `target=local|cloud`，
+  且不得保存 token、密码、私钥或 URL。
+- `target=cloud` 禁止启动本地 Compose；cloud deploy 只接受干净、已提交、main 可达的 SHA，
+  不自动 commit、merge 或 push。
+
 - 第一份 Compose 文件始终是仓库根 `compose.yaml`。
 - 第二份文件才是本目录的 `compose.cloud.yaml`。
 - 根 `.env` 是唯一运行时配置来源；服务器 release 根 `.env` 使用符号链接指向共享配置。

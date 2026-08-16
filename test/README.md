@@ -158,6 +158,10 @@ python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escal
 E2E 清单的唯一真相源是 `test/e2e_manifest.yaml`，统一入口是 `scripts/run_e2e.py`；PowerShell、
 shell 与 `make e2e` 都只是参数透传，不再各自维护脚本数组。常用门禁：
 
+> 以下命令在对应实现提交合入后可用。远程策略字段固定为 `remote_safe` / `remote_mutating`；
+> 本段只定义契约，不宣称尚未实现的命令已经验证。未显式 `remote_safe` 的 E2E 不得在 cloud
+> 缺省运行；`remote_mutating` 仍需人工红线授权。
+
 ```bash
 python scripts/run_e2e.py --check --milestone M-A --lane milestone --stale-policy warn
 python scripts/run_e2e.py --lane ci --full --stale-policy warn

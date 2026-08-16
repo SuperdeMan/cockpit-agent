@@ -46,6 +46,18 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 - 全栈只允许用 `make up` 或 `docker compose -f compose.yaml ...` 启动；根 `compose.yaml` 显式加载根 `.env`，并以 `deploy/` 为 included Compose 的项目目录以保持构建路径不变。
 - 不得直接以 `deploy/docker-compose.yaml` 为首个 Compose 文件启动，否则真实 Provider 可能静默回退 mock。
 
+### 可切换远程真栈实施期红线
+
+在改动任何脚本目录或 manifest 前，先读取 `dev-stack.local`：文件缺失时按
+`target=local` 处理，文件损坏则 fail closed。该文件只允许 `target=local|cloud`，不得保存
+token、密码、私钥或 URL。`target=cloud` 时禁止启动本地 Compose；本地只承载编辑、单测、
+静态检查和 Vite。`target=local` 时继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一
+运行时来源。
+
+cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit、merge 或 push；未显式
+标记 `remote_safe` 的 E2E 不得在 cloud 缺省运行，高影响开关也不替代人工红线授权。本阶段
+不得自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
+
 1. **车控只经 VAL**。任何组件（含 LLM/Agent）不得直接碰 CAN/SOME-IP。
 2. **LLM 不直连车控**：LLM 只产"意图/计划"，车控由确定性 Executor 经 VAL 权限校验后执行（规划/执行分离）。
 3. **危险动作二次确认**（`require_confirm=true`）。
