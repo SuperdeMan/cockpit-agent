@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -10,6 +11,74 @@ from scripts import cloud_data_migration_lib as migration
 
 
 VALID_ID = "20260816T010203Z-aaaaaaa-online"
+
+
+class FakeBinaryRunner:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, ...]] = []
+        self.stopped: set[str] = set()
+        self.services = {
+            "postgres": ("a" * 12, "postgres:16", "car-agent-postgres-data", "/var/lib/postgresql/data"),
+            "redis": ("b" * 12, "redis:7", "car-agent-redis-data", "/data"),
+            "observability-collector": ("c" * 12, "collector:test", "car-agent-obs-data", "/data"),
+        }
+
+    def _record(self, argv) -> tuple[str, ...]:
+        call = tuple(str(part) for part in argv)
+        self.calls.append(call)
+        return call
+
+    def text(self, argv, *, cwd: Path) -> str:
+        call = self._record(argv)
+        if "ps" in call and "-q" in call:
+            return self.services[call[-1]][0] + "\n"
+        if call[:2] == ("git", "rev-parse"):
+            return "a" * 40 + "\n"
+        if call == ("whoami",):
+            return "TEST\\migration\n"
+        if "config" in call and "--services" in call:
+            return "postgres\nredis\nobservability-collector\ngateway-cloud\n"
+        if "pg_restore" in call and "--list" in call:
+            return "; Archive created at 2026-08-16\n"
+        if "redis-check-rdb" in call:
+            return "[offset 0] CRC64 checksum is OK\n"
+        return ""
+
+    def json(self, argv, *, cwd: Path):
+        call = self._record(argv)
+        if call[:2] != ("docker", "inspect"):
+            raise AssertionError(call)
+        container_id = call[-1]
+        service = next(item for item in self.services.values() if item[0] == container_id)
+        name = next(name for name, item in self.services.items() if item[0] == container_id)
+        running = name not in self.stopped
+        return [{
+            "Id": container_id,
+            "State": {"Running": running, "Restarting": False, "Status": "running" if running else "exited"},
+            "Config": {"Image": service[1]},
+            "Mounts": [{"Type": "volume", "Name": service[2], "Destination": service[3]}],
+        }]
+
+    def run(self, argv, *, cwd: Path):
+        call = self._record(argv)
+        if "stop" in call:
+            self.stopped.update(call[call.index("stop") + 1:])
+        if call[:2] == ("docker", "run"):
+            mount = next((part for part in call if part.startswith("type=bind,source=")), None)
+            if mount:
+                source = Path(mount.split(",target=", 1)[0].split("source=", 1)[1])
+                if "redis-cli" in call:
+                    (source / "redis.rdb.partial").write_bytes(b"REDIS0011fixture")
+                elif "python" in call:
+                    connection = sqlite3.connect(source / "collector.db.partial")
+                    connection.execute("CREATE TABLE turns(id INTEGER PRIMARY KEY)")
+                    connection.commit()
+                    connection.close()
+        return migration.CommandResult(call, 0, "", "")
+
+    def stream_to_file(self, argv, target: Path, *, cwd: Path):
+        self._record(argv)
+        target.write_bytes(b"PGDMPfixture")
 
 
 def valid_manifest_payload() -> dict[str, object]:
@@ -84,3 +153,62 @@ def test_manifest_round_trip_is_typed_and_immutable():
     assert manifest.files["postgres.dump"].size_bytes == 1
     with pytest.raises(TypeError):
         manifest.files["postgres.dump"] = manifest.files["redis.rdb"]  # type: ignore[index]
+
+
+def test_capture_discovers_exact_active_services_without_mutating_stack(tmp_path: Path):
+    runner = FakeBinaryRunner()
+    bundle = migration.capture_local_snapshot(
+        repo=tmp_path,
+        artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+        phase="online",
+        runner=runner,
+        now=lambda: datetime(2026, 8, 16, 1, 2, 3, tzinfo=UTC),
+    )
+    assert bundle.manifest.phase == "online"
+    forbidden = {"stop", "restart", "down", "rm", "kill", "pause"}
+    assert not any(forbidden.intersection(call) for call in runner.calls)
+    assert {path.name for path in bundle.files} == {
+        "postgres.dump", "redis.rdb", "collector.db", "manifest.json", "status.json",
+    }
+
+
+def test_final_capture_stops_writers_and_leaves_them_stopped(tmp_path: Path):
+    runner = FakeBinaryRunner()
+    migration.capture_local_snapshot(
+        repo=tmp_path,
+        artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+        phase="final",
+        quiesce_local=True,
+        apply=True,
+        runner=runner,
+        now=lambda: datetime(2026, 8, 17, 1, 2, 3, tzinfo=UTC),
+    )
+    stop = next(call for call in runner.calls if "stop" in call)
+    assert "postgres" not in stop and "redis" not in stop
+    assert "observability-collector" in stop and "gateway-cloud" in stop
+    assert not any("start" in call or "restart" in call for call in runner.calls)
+
+
+def test_online_capture_rejects_mutating_flags(tmp_path: Path):
+    with pytest.raises(migration.MigrationError, match="online"):
+        migration.capture_local_snapshot(
+            repo=tmp_path,
+            artifact_root=tmp_path / ".artifacts/cloud-data-migrations",
+            phase="online",
+            quiesce_local=True,
+            apply=True,
+            runner=FakeBinaryRunner(),
+        )
+
+
+def test_discovery_rejects_bind_mount(tmp_path: Path):
+    runner = FakeBinaryRunner()
+    original_json = runner.json
+    def bad_json(argv, *, cwd):
+        result = original_json(argv, cwd=cwd)
+        if argv[-1] == "a" * 12:
+            result[0]["Mounts"][0]["Type"] = "bind"
+        return result
+    runner.json = bad_json
+    with pytest.raises(migration.MigrationError, match="named volume"):
+        migration.discover_source_services(tmp_path, runner)

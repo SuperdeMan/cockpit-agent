@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,6 +75,21 @@ class MigrationManifest:
     redis: Mapping[str, object]
     collector: Mapping[str, object]
     schema_version: int = 1
+
+
+@dataclass(frozen=True)
+class SourceService:
+    service: str
+    container_id: str
+    image: str
+    data_mount: str
+
+
+@dataclass(frozen=True)
+class MigrationBundle:
+    directory: Path
+    manifest: MigrationManifest
+    files: tuple[Path, ...]
 
 
 def _exact_keys(value: object, expected: frozenset[str], label: str) -> Mapping[str, object]:
@@ -194,3 +210,264 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _strict_single_inspect(payload: object) -> Mapping[str, object]:
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], Mapping):
+        raise MigrationError("docker inspect returned an unexpected result")
+    return payload[0]
+
+
+def _exact_mount(payload: object, destination: str) -> Mapping[str, object]:
+    if not isinstance(payload, list):
+        raise MigrationError("container mounts are invalid")
+    matches = [
+        item for item in payload
+        if isinstance(item, Mapping) and item.get("Destination") == destination
+    ]
+    if len(matches) != 1:
+        raise MigrationError("source data mount is unavailable")
+    mount = matches[0]
+    if mount.get("Type") != "volume" or not isinstance(mount.get("Name"), str):
+        raise MigrationError("source data must use an exact named volume")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", mount["Name"]) is None:
+        raise MigrationError("source named volume is invalid")
+    return mount
+
+
+def discover_source_services(
+    repo: Path, runner: BinaryCommandRunner
+) -> Mapping[str, SourceService]:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    found: dict[str, SourceService] = {}
+    for service, destination in {
+        "postgres": "/var/lib/postgresql/data",
+        "redis": "/data",
+        "observability-collector": "/data",
+    }.items():
+        container_id = runner.text([*compose, "ps", "-q", service], cwd=repo).strip()
+        if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
+            raise MigrationError(f"active source service is unavailable: {service}")
+        inspect = _strict_single_inspect(
+            runner.json(["docker", "inspect", container_id], cwd=repo)
+        )
+        state = inspect.get("State")
+        config = inspect.get("Config")
+        if (
+            not isinstance(state, Mapping)
+            or state.get("Running") is not True
+            or state.get("Restarting") is True
+        ):
+            raise MigrationError(f"source service is not stable: {service}")
+        if not isinstance(config, Mapping) or not isinstance(config.get("Image"), str):
+            raise MigrationError(f"source image is unavailable: {service}")
+        mount = _exact_mount(inspect.get("Mounts"), destination)
+        found[service] = SourceService(
+            service=service,
+            container_id=container_id,
+            image=config["Image"],
+            data_mount=mount["Name"],
+        )
+    return MappingProxyType(found)
+
+
+def private_replace(source: Path, destination: Path) -> None:
+    if not source.is_file() or source.is_symlink() or source.stat().st_size <= 0:
+        raise MigrationError(f"snapshot file is invalid: {destination.name}")
+    os.chmod(source, 0o600)
+    os.replace(source, destination)
+
+
+def capture_postgres(
+    service: SourceService,
+    target: Path,
+    runner: BinaryCommandRunner,
+    *,
+    repo: Path,
+) -> None:
+    runner.stream_to_file(
+        [
+            "docker", "exec", "-i", service.container_id,
+            "pg_dump", "-U", "cockpit", "-d", "cockpit", "-Fc",
+        ],
+        target,
+        cwd=repo,
+    )
+
+
+def capture_redis(
+    service: SourceService,
+    directory: Path,
+    runner: BinaryCommandRunner,
+    *,
+    repo: Path,
+) -> None:
+    runner.run(
+        [
+            "docker", "run", "--rm",
+            "--network", f"container:{service.container_id}",
+            "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
+            "--entrypoint", "redis-cli", service.image,
+            "-h", "127.0.0.1", "--rdb", "/snapshot/redis.rdb.partial",
+        ],
+        cwd=repo,
+    )
+    private_replace(directory / "redis.rdb.partial", directory / "redis.rdb")
+
+
+def capture_collector(
+    service: SourceService,
+    directory: Path,
+    runner: BinaryCommandRunner,
+    *,
+    repo: Path,
+) -> None:
+    program = (
+        "import sqlite3;"
+        "s=sqlite3.connect('file:/data/obs.db?mode=ro',uri=True);"
+        "d=sqlite3.connect('/snapshot/collector.db.partial');"
+        "s.backup(d);d.execute('PRAGMA wal_checkpoint');d.close();s.close()"
+    )
+    runner.run(
+        [
+            "docker", "run", "--rm", "--volumes-from", f"{service.container_id}:ro",
+            "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
+            "--entrypoint", "python", service.image, "-c", program,
+        ],
+        cwd=repo,
+    )
+    private_replace(directory / "collector.db.partial", directory / "collector.db")
+
+
+def _verify_snapshots(
+    directory: Path,
+    services: Mapping[str, SourceService],
+    runner: BinaryCommandRunner,
+    repo: Path,
+) -> None:
+    pg_result = runner.text(
+        ["docker", "run", "--rm", "--entrypoint", "pg_restore", services["postgres"].image,
+         "--list", str(directory / "postgres.dump")],
+        cwd=repo,
+    )
+    if not pg_result.strip():
+        raise MigrationError("PostgreSQL snapshot format validation failed")
+    redis_result = runner.text(
+        ["docker", "run", "--rm", "--entrypoint", "redis-check-rdb", services["redis"].image,
+         str(directory / "redis.rdb")],
+        cwd=repo,
+    )
+    if "CRC64 checksum is OK" not in redis_result:
+        raise MigrationError("Redis snapshot format validation failed")
+    with sqlite3.connect(f"file:{directory / 'collector.db'}?mode=ro", uri=True) as connection:
+        result = connection.execute("PRAGMA integrity_check").fetchall()
+    if result != [("ok",)]:
+        raise MigrationError("Collector snapshot integrity validation failed")
+
+
+def _manifest_payload(
+    migration_id: str,
+    phase: str,
+    source_sha: str,
+    created_at: str,
+    directory: Path,
+    *,
+    postgres: Mapping[str, object] | None = None,
+    redis: Mapping[str, object] | None = None,
+    collector: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "migration_id": migration_id,
+        "phase": phase,
+        "source_sha": source_sha,
+        "created_at": created_at,
+        "files": {
+            name: {
+                "size_bytes": (directory / name).stat().st_size,
+                "sha256": sha256_file(directory / name),
+            }
+            for name in SNAPSHOT_FILENAMES
+        },
+        "postgres": dict(postgres or {}),
+        "redis": dict(redis or {}),
+        "collector": dict(collector or {}),
+    }
+
+
+def _quiesce_local_writers(
+    repo: Path,
+    services: Mapping[str, SourceService],
+    runner: BinaryCommandRunner,
+) -> None:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    raw = runner.text([*compose, "config", "--services"], cwd=repo)
+    names = tuple(line.strip() for line in raw.splitlines() if line.strip())
+    if not names or any(re.fullmatch(r"[a-z0-9-]+", name) is None for name in names):
+        raise MigrationError("compose service list is invalid")
+    writers = tuple(name for name in names if name not in {"postgres", "redis"})
+    if not writers or "observability-collector" not in writers:
+        raise MigrationError("collector writer is missing from compose services")
+    runner.run([*compose, "stop", *writers], cwd=repo)
+    for name in writers:
+        source = services.get(name)
+        if source is None:
+            continue
+        inspect = _strict_single_inspect(
+            runner.json(["docker", "inspect", source.container_id], cwd=repo)
+        )
+        state = inspect.get("State")
+        if not isinstance(state, Mapping) or state.get("Running") is not False:
+            raise MigrationError(f"local writer did not exit: {name}")
+
+
+def capture_local_snapshot(
+    *,
+    repo: Path,
+    artifact_root: Path,
+    phase: str,
+    runner: BinaryCommandRunner,
+    quiesce_local: bool = False,
+    apply: bool = False,
+    now: Callable[[], datetime] | None = None,
+) -> MigrationBundle:
+    if phase == "online" and (quiesce_local or apply):
+        raise MigrationError("online snapshot never mutates the local stack")
+    if phase == "final" and not (quiesce_local and apply):
+        raise MigrationError("final snapshot requires quiesce-local and apply")
+    if phase not in {"online", "final"}:
+        raise MigrationError("invalid snapshot phase")
+    clock = now or (lambda: datetime.now(UTC))
+    current = clock()
+    source_sha = runner.text(["git", "rev-parse", "HEAD"], cwd=repo).strip()
+    migration_id = new_migration_id(current, source_sha, phase)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    directory = artifact_directory(artifact_root, migration_id)
+    directory.mkdir(mode=0o700)
+    restrict_private_tree(directory, runner)
+    atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURING"})
+    try:
+        services = discover_source_services(repo, runner)
+        if phase == "final":
+            _quiesce_local_writers(repo, services, runner)
+        pg_partial = directory / "postgres.dump.partial"
+        capture_postgres(services["postgres"], pg_partial, runner, repo=repo)
+        private_replace(pg_partial, directory / "postgres.dump")
+        capture_redis(services["redis"], directory, runner, repo=repo)
+        capture_collector(services["observability-collector"], directory, runner, repo=repo)
+        _verify_snapshots(directory, services, runner, repo)
+        payload = _manifest_payload(
+            migration_id,
+            phase,
+            source_sha,
+            current.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            directory,
+        )
+        atomic_private_json(directory / "manifest.json", payload)
+        atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURED"})
+        manifest = parse_manifest(payload)
+    except Exception:
+        atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURE_FAILED"})
+        raise
+    files = tuple(directory / name for name in (*SNAPSHOT_FILENAMES, "manifest.json", "status.json"))
+    return MigrationBundle(directory=directory, manifest=manifest, files=files)
