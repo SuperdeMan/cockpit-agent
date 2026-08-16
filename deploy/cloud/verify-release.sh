@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+[[ "${BASH_SOURCE[0]}" != "$0" ]] || {
+  printf 'verify-release.sh must be sourced by remote-release.sh\n' >&2
+  exit 2
+}
+
+readonly -a PRIVATE_HTTPS_PORTS=(443 8443 8444 8445 8446)
+readonly -a LOOPBACK_BUSINESS_PORTS=(5173 5174 8090 8092 50059)
+
+compose_for_release() {
+  local release_dir="$1" sha="$2"
+  shift 2
+  RELEASE_SHA="${sha}" docker compose \
+    --project-name "${RUNTIME_PROJECT_NAME}" \
+    --project-directory "${release_dir}" \
+    -f "${release_dir}/compose.yaml" \
+    -f "${SHARED_ROOT}/compose.cloud.yaml" \
+    --env-file "${SHARED_ROOT}/.env" \
+    "$@"
+}
+
+inspect_project_containers() {
+  local release_dir="$1" sha="$2" payload
+  payload="$(compose_for_release "${release_dir}" "${sha}" ps -a --format json)"
+  PROJECT_COUNTS="$(python3 -c '
+import json
+import sys
+
+raw = sys.stdin.read().strip()
+if not raw:
+    raise SystemExit("compose returned no containers")
+try:
+    decoded = json.loads(raw)
+    rows = decoded if isinstance(decoded, list) else [decoded]
+except json.JSONDecodeError:
+    rows = [json.loads(line) for line in raw.splitlines() if line.strip()]
+states = [str(row.get("State", "")).lower() for row in rows]
+bad = sum(state in {"restarting", "exited", "dead"} for state in states)
+running = sum(state == "running" for state in states)
+print(len(rows), running, bad)
+' <<<"${payload}")"
+  [[ "${PROJECT_COUNTS}" == "30 30 0" ]] \
+    || die "runtime project container state is not 30 running and 0 bad"
+}
+
+verify_loopback_listeners() {
+  local listeners
+  listeners="$(ss -lntH)"
+  python3 -c '
+import sys
+
+required = {5173, 5174, 8090, 8092, 50059}
+seen = set()
+for line in sys.stdin:
+    fields = line.split()
+    if len(fields) < 4:
+        continue
+    address = fields[3]
+    for port in required:
+        if not address.endswith(f":{port}"):
+            continue
+        if address != f"127.0.0.1:{port}":
+            raise SystemExit(f"business port {port} is not loopback-only")
+        seen.add(port)
+if seen != required:
+    raise SystemExit("one or more loopback business ports are missing")
+' <<<"${listeners}"
+}
+
+verify_tailscale_serve() {
+  local status count
+  status="$(tailscale serve status)"
+  count="$(grep -Fic '(tailnet only)' <<<"${status}" || true)"
+  [[ "${count}" -eq 5 ]] || die "Tailscale Serve does not expose five tailnet only entries"
+  ! grep -Fqi 'funnel' <<<"${status}" || die "Tailscale Funnel must remain disabled"
+  TAILNET_ENTRY_COUNT="${count}"
+}
+
+container_env_value() {
+  local container_id="$1" key="$2"
+  docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \
+    "${container_id}" | sed -n "s/^${key}=//p" | head -n 1
+}
+
+verify_https_endpoints() {
+  local fqdn="$1" name url code
+  HTTPS_RESULTS=""
+  while IFS=$'\t' read -r name url; do
+    code="$(curl --fail --silent --show-error --output /dev/null \
+      --write-out '%{http_code}' --max-time 20 "${url}")"
+    [[ "${code}" == "200" ]] || die "HTTPS endpoint ${name} failed"
+    HTTPS_RESULTS+="${name}=${code}"$'\n'
+  done <<EOF
+hmi\thttps://${fqdn}/
+edge\thttps://${fqdn}:8443/healthz
+llm\thttps://${fqdn}:8444/api/llm/providers
+dashboard\thttps://${fqdn}:8445/
+collector\thttps://${fqdn}:8446/healthz
+EOF
+}
+
+run_wss_probes() {
+  local release_dir="$1" sha="$2" fqdn="$3"
+  local hmi_id collector_id ws_token
+  hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)"
+  collector_id="$(compose_for_release "${release_dir}" "${sha}" ps -q observability-collector)"
+  [[ -n "${hmi_id}" && -n "${collector_id}" ]] \
+    || die "probe containers are unavailable"
+  ws_token="$(container_env_value "${hmi_id}" VITE_WS_TOKEN)"
+  [[ -n "${ws_token}" ]] || die "runtime WebSocket credential is unavailable"
+  EDGE_PROBE_OUTPUT="$(docker exec -i \
+    -e WS_URL="wss://${fqdn}:8443/ws" \
+    -e WS_TOKEN="${ws_token}" \
+    "${collector_id}" python - \
+    <"${release_dir}/deploy/cloud/probes/edge_ws_probe.py")"
+  COLLECTOR_PROBE_OUTPUT="$(docker exec -i \
+    -e WS_URL="wss://${fqdn}:8446/stream" \
+    "${collector_id}" python - \
+    <"${release_dir}/deploy/cloud/probes/collector_ws_probe.py")"
+}
+
+verify_data_and_backup() {
+  local release_dir="$1" sha="$2" postgres_id redis_id
+  postgres_id="$(compose_for_release "${release_dir}" "${sha}" ps -q postgres)"
+  redis_id="$(compose_for_release "${release_dir}" "${sha}" ps -q redis)"
+  [[ -n "${postgres_id}" && -n "${redis_id}" ]] \
+    || die "data dependency containers are unavailable"
+  docker exec "${postgres_id}" pg_isready -U cockpit >/dev/null
+  [[ "$(docker exec "${redis_id}" redis-cli ping)" == "PONG" ]]
+  [[ "$(systemctl is-enabled car-agent-backup.timer)" == "enabled" ]]
+  [[ "$(systemctl is-active car-agent-backup.timer)" == "active" ]]
+  [[ "$(systemctl show car-agent-backup.service -p Result --value)" == "success" ]]
+}
+
+write_verification_evidence() {
+  local sha="$1" timestamp evidence_dir target
+  timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  [[ "${timestamp}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] \
+    || die "verification timestamp is invalid"
+  evidence_dir="${SHARED_ROOT}/evidence/releases/${sha}"
+  install -d -m 0700 -o root -g root "${evidence_dir}"
+  target="${evidence_dir}/verification.json"
+  if [[ -e "${target}" ]]; then
+    target="${evidence_dir}/verification-${timestamp}.json"
+  fi
+  PROJECT_COUNTS="${PROJECT_COUNTS}" \
+  TAILNET_ENTRY_COUNT="${TAILNET_ENTRY_COUNT}" \
+  HTTPS_RESULTS="${HTTPS_RESULTS}" \
+  EDGE_PROBE_OUTPUT="${EDGE_PROBE_OUTPUT}" \
+  COLLECTOR_PROBE_OUTPUT="${COLLECTOR_PROBE_OUTPUT}" \
+  python3 - "${target}" "${sha}" "${timestamp}" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+
+target = Path(sys.argv[1])
+total, running, bad = (int(value) for value in os.environ["PROJECT_COUNTS"].split())
+https_codes = {}
+for row in os.environ["HTTPS_RESULTS"].splitlines():
+    name, code = row.split("=", 1)
+    https_codes[name] = int(code)
+edge_probe = [
+    json.loads(row)
+    for row in os.environ["EDGE_PROBE_OUTPUT"].splitlines()
+    if row.strip()
+]
+collector_probe = json.loads(os.environ["COLLECTOR_PROBE_OUTPUT"])
+payload = {
+    "schema_version": 1,
+    "release_sha": sys.argv[2],
+    "verified_at": sys.argv[3],
+    "passed": True,
+    "containers": {"total": total, "running": running, "bad": bad},
+    "loopback_business_ports": 5,
+    "tailnet_entries": int(os.environ["TAILNET_ENTRY_COUNT"]),
+    "https_codes": https_codes,
+    "edge_probe": edge_probe,
+    "collector_probe": collector_probe,
+    "postgres_ready": True,
+    "redis_ready": True,
+    "backup_timer_ready": True,
+}
+with target.open("x", encoding="utf-8", newline="\n") as handle:
+    json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+    handle.write("\n")
+target.chmod(0o600)
+PY
+  chown root:root "${target}"
+  printf '%s\n' "${target}"
+}
+
+verify_release() {
+  local sha="$1" release_dir hmi_id fqdn
+  validate_release_selector "${sha}"
+  load_runtime_project_name
+  release_dir="$(readlink -f "${RELEASE_ROOT}/current")"
+  [[ "$(basename "${release_dir}")" == "${sha}" ]] \
+    || die "current release does not match verification target"
+  validate_runtime_release "${release_dir}"
+  inspect_project_containers "${release_dir}" "${sha}"
+  verify_loopback_listeners
+  verify_tailscale_serve
+  hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)"
+  fqdn="$(container_env_value "${hmi_id}" __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS)"
+  [[ "${fqdn}" =~ ^[a-z0-9.-]+\.ts\.net$ ]] || die "Tailnet FQDN is invalid"
+  verify_https_endpoints "${fqdn}"
+  run_wss_probes "${release_dir}" "${sha}" "${fqdn}"
+  verify_data_and_backup "${release_dir}" "${sha}"
+  write_verification_evidence "${sha}"
+}
+
+verify_current_release() {
+  local release_dir sha
+  release_dir="$(readlink -f "${RELEASE_ROOT}/current")"
+  sha="$(basename "${release_dir}")"
+  verify_release "${sha}"
+}

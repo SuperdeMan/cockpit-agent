@@ -1,0 +1,11 @@
+[Unit]
+Description=Run car-agent demo backup daily
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15m
+Unit=car-agent-backup.service
+
+[Install]
+WantedBy=timers.target

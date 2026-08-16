@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "services": [
+    {"service": "registry", "image": "car-agent-release/registry"},
+    {"service": "llm-gateway", "image": "car-agent-release/llm-gateway"},
+    {"service": "memory", "image": "car-agent-release/memory"},
+    {"service": "cloud-planner", "image": "car-agent-release/cloud-planner"},
+    {"service": "payment-gateway", "image": "car-agent-release/payment-gateway"},
+    {"service": "navigation-agent", "image": "car-agent-release/navigation-agent"},
+    {"service": "chitchat-agent", "image": "car-agent-release/chitchat-agent"},
+    {"service": "nearby-agent", "image": "car-agent-release/nearby-agent"},
+    {"service": "parking-payment-agent", "image": "car-agent-release/parking-payment-agent"},
+    {"service": "manual-rag-agent", "image": "car-agent-release/manual-rag-agent"},
+    {"service": "trip-planner-agent", "image": "car-agent-release/trip-planner-agent"},
+    {"service": "info-agent", "image": "car-agent-release/info-agent"},
+    {"service": "deep-research-agent", "image": "car-agent-release/deep-research-agent"},
+    {"service": "reminder-agent", "image": "car-agent-release/reminder-agent"},
+    {"service": "charging-planner-agent", "image": "car-agent-release/charging-planner-agent"},
+    {"service": "scene-orchestrator-agent", "image": "car-agent-release/scene-orchestrator-agent"},
+    {"service": "road-safety-agent", "image": "car-agent-release/road-safety-agent"},
+    {"service": "vision-agent", "image": "car-agent-release/vision-agent"},
+    {"service": "observability-collector", "image": "car-agent-release/observability-collector"},
+    {"service": "mcp-bridge", "image": "car-agent-release/mcp-bridge"},
+    {"service": "proactive", "image": "car-agent-release/proactive"},
+    {"service": "cloud-gateway", "image": "car-agent-release/cloud-gateway"},
+    {"service": "edge-gateway", "image": "car-agent-release/edge-gateway"},
+    {"service": "edge-orchestrator", "image": "car-agent-release/edge-orchestrator"},
+    {"service": "hmi", "image": "car-agent-release/hmi"},
+    {"service": "dashboard", "image": "car-agent-release/dashboard"}
+  ]
+}

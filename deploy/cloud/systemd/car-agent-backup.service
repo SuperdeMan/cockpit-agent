@@ -1,0 +1,17 @@
+[Unit]
+Description=Back up car-agent demo persistent data
+ConditionPathExists=/opt/car-agent/current/compose.yaml
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/opt/car-agent/shared/bin/backup.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+[Install]
+WantedBy=multi-user.target

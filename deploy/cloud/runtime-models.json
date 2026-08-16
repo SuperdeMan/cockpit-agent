@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "models": [
+    {"path": "models/nlu/edge_nlu.onnx", "sha256": "cda6914c715d7e48f7b1f2ef2e2e9a64843e53ec58165737b41ec4e186080cf8"},
+    {"path": "models/nlu/labels.json", "sha256": "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5"},
+    {"path": "models/nlu/vocab.json", "sha256": "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5"},
+    {"path": "models/voiceprint/campplus_zh-cn_16k-common.onnx", "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11"}
+  ]
+}
