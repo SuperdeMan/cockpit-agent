@@ -19,14 +19,14 @@
 | Redis | 通过 | `PONG`，容器健康 |
 | 宿主机业务监听 | 通过 | 仅 `127.0.0.1:5173/5174/8090/8092/50059` |
 | 内部基础设施端口 | 通过 | PostgreSQL、Redis、NATS 均未发布到宿主机 |
-| Tailnet HTTPS/WSS | 等待控制面授权 | 节点在线；Tailnet 尚未启用 Serve/HTTPS，未落地任何 Serve/Funnel 配置 |
+| Tailnet HTTPS/WSS | 通过 | 443/8443–8446 五个 Serve 映射均显示 `tailnet only`；未启用 Funnel |
 
 ## 3. 应用链路与鉴权
 
-- HMI、Dashboard、Edge health、LLM provider API、Collector health 的 loopback HTTP 探针均返回 200。
+- HMI、Dashboard、Edge health、LLM provider API、Collector health 的 loopback HTTP 与有效证书 Tailnet HTTPS 探针均返回 200。
 - Edge WebSocket 无 token 与无效 token 均以 HTTP 401 拒绝。
 - 合法 token 下，闲聊、天气、附近、导航、搜索、新闻、股票和体育请求均返回 `final`，且有非空话术。
-- Collector WebSocket 首次连接与主动断开后的重连均收到 `snapshot`。
+- Tailnet `wss://` 下，Edge 合法 token 闲聊返回 `final` 与非空话术；Collector 首次连接与主动断开后的重连均收到 `snapshot`。
 - HMI/Dashboard 由 Vite 运行时读取的 Tailnet API 基址已在实际返回模块中核对，未回落 localhost 默认值。
 - 云端规划器已实测消费 `PERMISSIONS_FAIL_OPEN=false`；修复前该键只在 `.env` 中存在但未注入容器。
 - 本轮没有发起商户请求、支付请求或车控请求。导航探针只验证路线规划，不执行真实车辆动作。
@@ -60,17 +60,17 @@
 
 ## 6. 实施中抓修与本地验证
 
-实施中按失败证据修复三项：
+实施中按失败证据修复四项：
 
 1. legacy 三段式 `AUTH_TOKENS` 自动升级为带 scopes 的四段式，并轮换 demo token；
 2. Compose `ports: !reset` 改为 `!override`，确保合并后五个入口只绑定 loopback；
 3. 备份任务显式解析 active release 的 Compose project，并将 `PERMISSIONS_FAIL_OPEN` 注入 cloud-planner。
+4. HMI 固定镜像的 Vite 5 不支持附加 Host 环境变量，改为只读挂载云端 Vite 配置；Dashboard 的 Vite 8 直接消费 Tailnet Host 环境变量。两者均只允许当前 Tailnet FQDN。
 
-本地 fresh 验证：`31 passed, 1 skipped`；`backup.sh` Bash 语法通过；`git diff --check` 通过。修复提交为 `55bada2`，仅存在于本地部署分支，未 push、未合并 main。
+最新部署资产 fresh 验证：`28 passed, 1 skipped`；`backup.sh` Bash 语法通过；`git diff --check` 通过。部署资产与证据仅存在于本地部署分支，未 push、未合并 main。
 
 ## 7. 尚需人在环验证
 
-1. 在 Tailscale 管理台启用 Serve/HTTPS 后，配置 443/8443–8446 的五个 Tailnet-only 反向代理并验证有效证书与 WSS；禁止 Funnel。
-2. Android 安装并登录 Tailscale 后，验证 HMI/Dashboard、麦克风权限、ASR/TTS、前后台与网络切换重连，以及关闭 Tailscale 后不可达。
-3. 腾讯云安全组仅做控制台只读复核；本次没有修改授权，服务器侧已确认无公网业务监听。
-4. MiMo 凭证需单独轮换或修正后重跑 probe；在此之前保留 DeepSeek fallback。
+1. Android 安装并登录 Tailscale 后，验证 HMI/Dashboard、麦克风权限、ASR/TTS、前后台与网络切换重连，以及关闭 Tailscale 后不可达。
+2. 腾讯云安全组仅做控制台只读复核；本次没有修改授权，服务器侧已确认无公网业务监听。
+3. MiMo 凭证需单独轮换或修正后重跑 probe；在此之前保留 DeepSeek fallback。

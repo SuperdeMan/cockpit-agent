@@ -14,6 +14,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 CLOUD_DIR = ROOT / "deploy" / "cloud"
 COMPOSE_PATH = CLOUD_DIR / "compose.cloud.yaml"
+HMI_VITE_CONFIG_PATH = CLOUD_DIR / "vite.hmi.cloud.config.mjs"
 BACKUP_PATH = CLOUD_DIR / "backup.sh"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
@@ -230,6 +231,10 @@ def test_cloud_frontends_use_tailnet_https_bases_and_derive_websockets_in_code()
     hmi = services["hmi"]["environment"]
     dashboard = services["dashboard"]["environment"]
 
+    expected_allowed_host = "${TAILNET_FQDN:?TAILNET_FQDN required}"
+    assert hmi["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] == expected_allowed_host
+    assert dashboard["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] == expected_allowed_host
+
     assert hmi["VITE_EDGE_GATEWAY_URL"] == (
         "https://${TAILNET_FQDN:?TAILNET_FQDN required}:8443"
     )
@@ -247,6 +252,22 @@ def test_cloud_frontends_use_tailnet_https_bases_and_derive_websockets_in_code()
     dashboard_api = (ROOT / "dashboard" / "src" / "api.ts").read_text(encoding="utf-8")
     assert "GATEWAY.replace(/^http/, 'ws') + '/ws'" in hmi_code
     assert "BASE.replace(/^http/, 'ws') + '/stream'" in dashboard_api
+
+
+def test_cloud_hmi_mounts_a_vite5_compatible_tailnet_host_config():
+    _, compose = _cloud_compose()
+    hmi = compose["services"]["hmi"]
+    config = _required_text(HMI_VITE_CONFIG_PATH)
+
+    assert hmi["volumes"] == [
+        "/opt/car-agent/shared/vite.hmi.cloud.config.mjs:/app/vite.cloud.config.mjs:ro"
+    ]
+    assert hmi["command"] == [
+        "npm", "run", "dev", "--", "--config", "vite.cloud.config.mjs"
+    ]
+    assert "./vite.config.ts" in config
+    assert "__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS" in config
+    assert "allowedHosts" in config
 
 
 def test_backup_is_non_destructive_and_uses_logical_database_backups():

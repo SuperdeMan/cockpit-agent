@@ -33,12 +33,14 @@
 └── shared/
     ├── .env
     ├── compose.cloud.yaml
+    ├── vite.hmi.cloud.config.mjs
     ├── bin/backup.sh
     ├── backups/
     └── evidence/
 ```
 
 每个 release 根 `.env` 都是指向 `/opt/car-agent/shared/.env` 的符号链接。共享配置权限必须为 `0600`，不得在 release 中复制第二份。
+`vite.hmi.cloud.config.mjs` 只为固定镜像内的 Vite 5 注入当前 Tailnet Host 白名单，必须以只读方式挂载；不得把公网域名或通配 Host 写入该文件。
 
 ## 唯一运维命令形态
 
