@@ -68,7 +68,8 @@ class Clients:
                           user_id: str = "", vehicle_id: str = "",
                           occupant_id: str = "primary",
                           e2e_memory_capability: str = "",
-                          turn_id: str = "", exchange_id: str = ""):
+                          turn_id: str = "", exchange_id: str = "",
+                          actions=None):
         """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
         occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。
         turn_id/exchange_id 让重试是重放而不是追加一轮新对话（M-B）。"""
@@ -77,7 +78,8 @@ class Clients:
                                          user_id=user_id, vehicle_id=vehicle_id,
                                          occupant_id=occupant_id or "primary",
                                          e2e_memory_capability=e2e_memory_capability,
-                                         turn_id=turn_id, exchange_id=exchange_id),
+                                         turn_id=turn_id, exchange_id=exchange_id,
+                                         actions=list(actions or [])),
             timeout=_DEFAULT_TIMEOUT)
 
     async def get_session(self, session_id: str, last_n: int = 6, *,

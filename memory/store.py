@@ -93,6 +93,24 @@ def owner_of(user_id: str = "", occupant_id: str = "") -> tuple[str, str]:
     return (user_id or ""), (occupant_id or "").strip() or PRIMARY
 
 
+#: 一轮最多记几个动作。obs 实测每轮 1 个占 88.6%、最多 5 个——10 是两倍余量。
+#: 封顶的理由不是省空间，是**别让一条畸形上游把会话历史撑爆**。
+_MAX_TURN_ACTIONS = 10
+
+
+def _clean_actions(value) -> list[str]:
+    """执行事实的归一。**上游给的是不可信输入。**
+
+    ⚠ 非法元素**直接丢，不做 `str()` 转换**——CLAUDE.md §6 那条：转出来的值匹配
+    不上任何东西，却会在日志里留下一个不存在的动作名。`depends_on` 的 `[["s0"]]`
+    就是这么一路走到 `dep in valid_ids` 才崩的。
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out = [v.strip() for v in value if isinstance(v, str) and v.strip()]
+    return out[:_MAX_TURN_ACTIONS]
+
+
 def _tail_whole_exchanges(turns: list[dict], last_n: int) -> list[dict]:
     """取末尾 `last_n` 条，但**不切开 exchange**：切中就整体舍弃最旧的那半个。
 
@@ -139,7 +157,7 @@ class MemoryStore:
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", occupant_id: str = "",
                           vehicle_id: str = "", turn_id: str = "",
-                          exchange_id: str = "") -> bool:
+                          exchange_id: str = "", actions=None) -> bool:
         """会话轮次原文。**有 TTL、有 user 索引、有 OwnerKey**。
 
         TTL 与 user 索引是 GDPR 侧的硬要求（无 TTL＝永久留存；无索引则 ForgetUser
@@ -148,11 +166,24 @@ class MemoryStore:
 
         `turn_id` 是幂等键。同 id 同内容＝重放，静默成功；同 id 异内容抛
         `TurnConflict`——重试可以重放，但不能改写已经发生过的对话。
+
+        **`actions` 是 Q6 的执行事实（2026-08-16）**：本轮真实执行了哪些动作
+        （`window.open` 这类 VAL/Agent 命令名）。存在的理由是「刚才实际执行了什么」
+        此前**没有可查询的事实源**——`task_ledger` 只收 `research`/`mcp_order`，
+        车控/导航/提醒/场景一条都不进，chitchat 只能让 LLM 从对话历史重构，
+        真栈三次取样三个样、其中一次直接否认执行过。
+
+        为什么落在这里而不是新表：写入量先量清楚了（obs 38 天 2754 轮 / **763 个
+        动作**，有动作的轮次仅 24%），而本方法**已经**具备 TTL、user 索引、OwnerKey、
+        幂等键与 `ltrim(-50)`——**保留期由既有机制兜住**，卡上「别做成只涨不清的表」
+        自动满足。更关键的是：`local` 快路径那 313 个动作**根本不上云**，
+        而端侧早就在调 `AppendTurn`，只是没带动作。
         """
         uid, occ = owner_of(user_id, occupant_id)
         turn = {"role": role, "text": text, "ts": int(time.time()),
                 "user_id": uid, "occupant_id": occ, "vehicle_id": vehicle_id or "",
-                "turn_id": turn_id or "", "exchange_id": exchange_id or turn_id or ""}
+                "turn_id": turn_id or "", "exchange_id": exchange_id or turn_id or "",
+                "actions": _clean_actions(actions)}
         r = await self._redis()
         key = f"sess:{session_id}"
         if r:
@@ -192,8 +223,13 @@ class MemoryStore:
     @staticmethod
     def _assert_same_payload(existing: dict, incoming: dict, session_id: str,
                              turn_id: str) -> None:
+        # ⚠ `actions` 必须在比对集里（Q6，2026-08-16）：**一条被悄悄改过的执行记录
+        # 比没有记录更糟**——审计问答会照着它回答，而用户无从发现。
+        # 幂等键的既有语义（「重试可以重放，但不能改写已经发生过的对话」）
+        # 对执行事实只会更严，不会更松。
         same = all(existing.get(k) == incoming.get(k)
-                   for k in ("role", "text", "user_id", "occupant_id", "exchange_id"))
+                   for k in ("role", "text", "user_id", "occupant_id",
+                             "exchange_id", "actions"))
         if not same:
             logger.warning("turn_conflict session=%s turn=%s", session_id, turn_id)
             raise TurnConflict(f"{session_id}/{turn_id}")

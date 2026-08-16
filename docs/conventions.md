@@ -1193,3 +1193,44 @@ HMI 每轮 dispatch 生成 `request_id` 随 WS 帧上行（`gateway/edge` 转成
 
 ⚠ **「文本入口与按钮入口收敛到同一结构化解析链」不在本节** —— 它的依赖
 （`Focus.candidate_sets` 下发到 Agent）**当前不存在**，见 `AGENTS.md` §4.1 第 8 步。
+
+### 9.24 执行事实随会话轮次落库（QA Q6，2026-08-16）
+
+**「刚才实际执行了什么」是系统持有的事实，不由 LLM 回答。**
+此前它没有可查询的事实源：`task_ledger` 只收 `research`/`mcp_order`，
+车控/导航/提醒/场景一条都不进，于是 chitchat 只能从对话历史让 LLM 重构
+——真栈三次取样三个样，一次方向说反、一次直接否认执行过。
+
+**载体是会话轮次，不是新表**（写入量先量清楚了：obs 38 天 2754 轮 / 763 个动作，
+有动作的轮次仅 24%，每轮 1 个占 88.6%）：
+
+- `AppendTurnRequest.actions`（字段 10）与 `Turn.actions`（字段 9）**读写对称**
+  ——存下来而读不到等于没存。
+- `store.append_turn(actions=…)` 归一后落库：非 list 归空、非字符串元素**直接丢
+  不做 `str()` 转换**、封顶 10 条。
+- **`actions` 进幂等比对集**：同 `turn_id` 异动作 ⇒ `turn_conflict`。
+  一条被悄悄改过的执行记录**比没有记录更糟**——审计会照着它回答。
+- **保留期不必新定**：TTL、`ltrim(-50)`、user 索引、OwnerKey 都是既有的。
+
+三条配套纪律：
+
+1. **必须同时覆盖 local/cloud/mixed**。`local` 快路径那 313 个动作**根本不上云**，
+   台账只建在云侧 Focus 的话，端侧车控（最该被审计的那类）永远查不到。
+   端侧 `_record_local_turn` 与云侧 engine 各写各的那一半。
+2. **动作名口径三处统一**：`payload.command` 回退 `type`
+   （端侧 `_executed_names` / 云侧 `_executed_action_names` / 探针 `_action_names`）。
+   口径不同会让审计回答与 badcase 面板各说各话。
+3. **绑定按 `exchange_id`，不许按位置猜**。端侧写入是 fire-and-forget，
+   真实落库顺序会是 `userA → userB → assistantA → assistantB`；
+   「往前找最近一条 user 轮」会张冠李戴（真栈实测答出「暂停音乐、暂停音乐」）。
+   `exchange_id` 的既有契约就是把 user 请求与其可见回复「绑成一个不可拆的账目单元」。
+
+**消费面**：`agents/chitchat/src/audit.py`，确定性、零 LLM。
+判据要求**回顾指代 + 执行询问两类词同时命中**（chitchat 兜底看到的是全部流量，
+判宽一格就会劫持「刚才那家店叫什么」）。话术报**用户原话**而非 `window.open`
+——两者都来自系统持有的记录，但原话天然可核对。
+
+⚠ **`handle` 与 `handle_stream` 必须共用唯一入口 `_deterministic_reply`**，
+源码级守卫 `test_both_paths_share_one_deterministic_gate` 钉着。
+本仓已为「只在 handle 里加闸」踩过三次（M2 Ledger、商户 badcase、本卡）——
+**注释挡不住第三次，一个入口才行。**
