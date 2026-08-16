@@ -1299,8 +1299,11 @@ async def test_write_backfill_filters_owner_merchant_and_state_then_prefers_sess
     binding = a._bindings["shop.order_cancel"]
     ctx = SimpleNamespace(user_id="u1", session_id="s1")
     try:
-        slots = await a._backfill_write_slots(binding, ["order_id"], ctx)
+        # 返回值形态在 Q10（2026-08-16）改成 `(slots, OrderRef)`——与读路径
+        # `_resolve_order_ref` 对齐。**契约变了，不是这条测试坏了。**
+        slots, ref = await a._backfill_write_slots(binding, ["order_id"], ctx)
         assert slots == {"order_id": "CURRENT-SESSION"}
+        assert ref.found is True and ref.from_session is True
     finally:
         await a.shutdown()
 
@@ -1327,7 +1330,8 @@ async def test_write_backfill_never_targets_foreign_or_non_cancellable_order(
     binding = a._bindings["shop.order_cancel"]
     ctx = SimpleNamespace(user_id="u1", session_id="s1")
     try:
-        assert await a._backfill_write_slots(binding, ["order_id"], ctx) == {}
+        slots, ref = await a._backfill_write_slots(binding, ["order_id"], ctx)
+        assert slots == {} and ref.found is False
     finally:
         await a.shutdown()
 

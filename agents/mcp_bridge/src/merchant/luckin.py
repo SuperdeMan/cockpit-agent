@@ -17,6 +17,8 @@ from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 
 from ..admission import normalize_hostname
+from ..order_ref import (NEUTRAL, allows_history_fallback,
+                         is_deictic_placeholder, reference_scope)
 from .base import DeclaredBusinessRejected, MerchantWorkflow, parse_quantity
 from .models import (
     MerchantChoice,
@@ -310,7 +312,8 @@ class LuckinWorkflow(MerchantWorkflow):
         slots = dict(getattr(intent, "slots", {}) or {})
         requested_order_id = str(slots.get("order_id") or "").strip()
         previous_ref = await self._owned_order(
-            user_id, session_id=session_id, order_id=requested_order_id)
+            user_id, session_id=session_id, order_id=requested_order_id,
+            scope=reference_scope(str(getattr(intent, "raw_text", "") or "")))
         order_id = str(previous_ref.get("order_id") or "").strip()
         if not order_id:
             return AgentResult(
@@ -1012,7 +1015,20 @@ class LuckinWorkflow(MerchantWorkflow):
             return False
 
     async def _owned_order(self, user_id: str, *, session_id: str = "",
-                           order_id: str = "") -> dict:
+                           order_id: str = "", scope: str = NEUTRAL) -> dict:
+        """账本里找这个用户名下、本商户、仍可取消的那一单。
+
+        ⚠ **`scope=SESSION` 时不回落历史**（Q10，2026-08-16）：本函数是本仓
+        **第三份**「优先本 session、否则用 fallback」的实现，与
+        `agent._resolve_order_ref` / `agent._backfill_write_slots` 逐字同构——
+        而三份都有同一个洞。真栈实证：干净 session 说「帮我取消刚才那笔订单」
+        由本函数捞出一笔历史单，随后因查单失败才没真取消。
+        **那次没出事是运气（上游查单恰好失败），不是判据挡住的。**
+
+        规则的唯一定义处在 `order_ref.allows_history_fallback`；
+        三个循环各自的过滤条件（商户字段名/墓碑语义/可取消状态）确有正当差异，
+        故本批只共享规则、不合并循环。
+        """
         if self.ledger is None:
             return {}
         try:
@@ -1085,21 +1101,19 @@ class LuckinWorkflow(MerchantWorkflow):
                 return owned
             if not fallback:
                 fallback = owned
-        return fallback
+        return fallback if allows_history_fallback(scope) else {}
 
     @staticmethod
     def _explicit_order_id(value) -> str:
-        """Return a real explicit id, not a deictic planner placeholder."""
+        """Return a real explicit id, not a deictic planner placeholder.
+
+        ⚠ 词表已收敛到 `order_ref.is_deictic_placeholder`（Q10，2026-08-16）——
+        通用写路径当时**没有**这道防御，真栈把「刚才那笔订单」当订单号念进了
+        确认话术。**这一份先有、却只护住了瑞幸一家**，正是「同一件事有几处」
+        的第四例。
+        """
         text = str(value or "").strip()
-        compact = re.sub(r"\s+", "", text)
-        deictic = (
-            "刚才", "刚刚", "最近", "上一", "上次", "上个", "那单",
-            "那笔", "这单", "这笔", "我的订单", "我的瑞幸订单",
-        )
-        if (not re.search(r"[0-9]", compact) and
-                any(marker in compact for marker in deictic)):
-            return ""
-        return text
+        return "" if is_deictic_placeholder(text) else text
 
     async def _read(self, name: str, arguments: dict):
         if not self._required_present(name, arguments):

@@ -28,9 +28,13 @@ from agents._sdk.payment_client import PaymentClient
 from agents._sdk.provenance import attach
 from cockpit.agent.v1 import agent_pb2
 
+from runtime.clock import local_dt
+
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
                         check_version, load_servers, normalize_hostname)
 from .mcp_client import McpError, StdioMcpClient
+from .order_ref import (HISTORY, NEUTRAL, OrderRef, allows_history_fallback,
+                        is_deictic_placeholder, reference_scope)
 
 logger = logging.getLogger("agent.mcp_bridge")
 
@@ -45,6 +49,23 @@ _SLOT_PROMPTS = {
     "item": "要点什么？",
     "order_id": "要操作哪一单？说个订单号，或者先说「查一下我的订单」。",
 }
+
+# Q10：本会话没下过单时对「刚才那笔订单」的诚实回答。**与 `_SLOT_PROMPTS` 的
+# 泛泛追问刻意不同**——那句让用户以为系统没听清，这句说的是「你以为的那一单不存在」。
+_NO_ORDER_THIS_SESSION = (
+    "这次对话里我没有帮您下过单。要查以前的订单，说个订单号，"
+    "或者说「查一下我之前的订单」。")
+
+
+def _history_prefix(created_at: float) -> str:
+    """把「这不是本次那一单」变成一句用户能核对的话。
+
+    ⚠ 墙钟必须走 `runtime.clock`——容器 TZ=UTC 而业务时区是 UTC+8，
+    裸 `datetime.fromtimestamp` 会把 8 月 15 日 08:00 那单说成 8 月 15 日 00:00，
+    刚好在跨日边界上把日期也说错一天（§4.3 时区族，本仓已复发过四次）。
+    """
+    d = local_dt(created_at)
+    return f"这是您 {d.month} 月 {d.day} 日下的那笔（不是本次对话里的）："
 
 _HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _MANIFEST = os.path.join(_HERE, "manifest.yaml")
@@ -410,8 +431,19 @@ class McpBridgeAgent(BaseAgent):
             if "order_id" in declared and explicit_order_id:
                 args[oid_key] = explicit_order_id
             user_id = str(getattr(ctx, "user_id", "") or "").strip()
+            order_ref = OrderRef()
             if user_id:
-                args = await self._resolve_order_ref(b, args, user_id)
+                # Q10：查单必须绑会话。范围只从**原话**判，不问 LLM。
+                scope = reference_scope(str(getattr(intent, "raw_text", "") or ""))
+                args, order_ref = await self._resolve_order_ref(
+                    b, args, user_id,
+                    session_id=str(getattr(ctx, "session_id", "") or "").strip(),
+                    scope=scope)
+                if order_ref.needs_honest_declination:
+                    # **不出站**：没有可查的引用就不该打商户请求。也不退回泛泛的
+                    # 「要操作哪一单」——那会让用户以为系统没听清，而真相是
+                    # 「你以为的那一单不存在」（§4.3「认不出就返回空」的查单版）。
+                    return AgentResult(speech=_NO_ORDER_THIS_SESSION)
                 # 只给明确声明 forward_owner 的受控 demo 下发内部 owner。官方 remote
                 # 使用权威 granted_scopes，不认识也不应看到内部身份字段。
                 if self._can_forward_owner(b):
@@ -459,14 +491,24 @@ class McpBridgeAgent(BaseAgent):
                 return AgentResult(
                     speech="商户返回的订单号不一致，请到官方应用核对。")
             card = self._card(b, "mcp_order", normalized)
+            # Q10：不是本会话那一单就必须说清它是什么时候的——**不标注就与
+            # 「刚才那单」不可区分**，正是 I-021 那个错误定性的成因。
+            prefix = (_history_prefix(order_ref.created_at)
+                      if order_ref.should_label_as_history else "")
             return AgentResult(
-                speech=(f"订单 {normalized['order_id']} 当前状态："
+                speech=(f"{prefix}订单 {normalized['order_id']} 当前状态："
                         f"{normalized['status']}。"),
                 ui_card=card, data=normalized)
         card = self._card(b, "mcp_result", self._slim_payload(res))
         speech = await self._readable_speech(b, intent, res, ok=True)
-        return AgentResult(speech=self._demo_prefix(b) + (speech or "查到了。"),
-                           ui_card=card, data=res["data"])
+        # ⚠ 这条分支（无 result_map 的自由话术）**也要标注**。首版只改了上面那条
+        # 声明式分支，测试当场抓到——正是本卡自己那句「同一件事的两条分支只修了
+        # 一条」在**我自己这次修法里**的第四次应验。
+        stale = (_history_prefix(order_ref.created_at)
+                 if order_ref.should_label_as_history else "")
+        return AgentResult(
+            speech=self._demo_prefix(b) + stale + (speech or "查到了。"),
+            ui_card=card, data=res["data"])
 
     @staticmethod
     def _dig_result(value, path: str):
@@ -665,23 +707,37 @@ class McpBridgeAgent(BaseAgent):
             return "商户返回了错误，这次没有查到。"
         return (text[:100] + "…详情已放在屏幕上。") if len(text) > 120 else text
 
-    async def _backfill_write_slots(self, b, declared: list, ctx) -> dict:
+    async def _backfill_write_slots(self, b, declared: list, ctx, *,
+                                    scope: str = NEUTRAL) -> tuple[dict, OrderRef]:
         """补偿类写操作的槽位回填（只回填订单号，只从账本，只取确定完成的那单，
-        且只认**同一商户**——跨商户污染修，2026-08-11）。"""
+        且只认**同一商户**——跨商户污染修，2026-08-11）。
+
+        **会话范围（Q10，2026-08-16）**：本函数早就「优先本 session」，但仍会
+        **回落**到跨 session 的历史单——于是「取消刚才那单」在本会话没下过单时，
+        会捞一笔三天前的单进确认（I-037 的形态）。现在 `scope=SESSION` 时不回落。
+
+        ⚠ 写路径比读路径更该严：查单捞错只是看错，取消/退款捞错是**不可逆写**。
+        `NEUTRAL` 维持既有回落（有二次确认闸兜底、且订单号会念给用户），
+        但确认话术要标注那单是什么时候的——**用户该在点头之前就知道**。
+
+        返回 `(slots, OrderRef)`，与读路径 `_resolve_order_ref` **形态一致**：
+        一条返回 dict、另一条返回 tuple 就又是一处「同一件事的两个样子」，
+        而那正是本卡要消灭的形态。
+        """
         if "order_id" not in declared or not self.ledger:
-            return {}
+            return {}, OrderRef(scope=scope)
         user_id = str(getattr(ctx, "user_id", "") or "").strip()
         if not user_id:
-            return {}
+            return {}, OrderRef(scope=scope)
         session_id = str(getattr(ctx, "session_id", "") or "").strip()
         try:
             recent = await self.ledger.recent(
                 user_id, kind=LEDGER_KIND, limit=20)
         except Exception as e:
             logger.debug("[mcp] 取最近订单失败（照常追问）：%s", e)
-            return {}
+            return {}, OrderRef(scope=scope)
         seen: set[str] = set()
-        fallback: dict = {}
+        fallback: tuple[dict, OrderRef] | None = None
         for task in recent or []:
             if str(getattr(task, "user_id", "") or "") != user_id:
                 continue
@@ -715,7 +771,7 @@ class McpBridgeAgent(BaseAgent):
                 if task_status != DONE or outcome in {"failed", "uncertain"}:
                     # Without a recoverable identity, a newer ambiguous write
                     # makes "the recent order" unsafe to infer.
-                    return {}
+                    return {}, OrderRef(scope=scope)
                 continue
             if candidate_id in seen:
                 continue
@@ -734,58 +790,111 @@ class McpBridgeAgent(BaseAgent):
                 continue
 
             slots = {"order_id": candidate_id}
+            created = float(getattr(task, "created_at", 0.0) or 0.0)
             if session_id and str(
                     getattr(task, "session_id", "") or "") == session_id:
-                return slots
-            if not fallback:
-                fallback = slots
-        return fallback
+                return slots, OrderRef(found=True, from_session=True,
+                                       created_at=created, scope=scope)
+            if fallback is None:
+                fallback = (slots, OrderRef(found=True, from_session=False,
+                                            created_at=created, scope=scope))
+        if not allows_history_fallback(scope):
+            # 「取消**刚才**那单」而本会话没下过单 ⇒ **不许拿历史单顶上**。
+            # 读路径是把历史当「刚才」陈述，写路径是把历史当「刚才」**执行**。
+            return {}, OrderRef(scope=scope)
+        return fallback or ({}, OrderRef(scope=scope))
 
-    async def _resolve_order_ref(self, b, args: dict, user_id: str) -> dict:
-        """用户说「查一下我的订单」时没有订单号——从账本取他最近这一单的引用。
+    async def _resolve_order_ref(self, b, args: dict, user_id: str, *,
+                                 session_id: str = "",
+                                 scope: str = NEUTRAL) -> tuple[dict, OrderRef]:
+        """用户说「查一下我的订单」时没有订单号——从账本取他这一单的引用。
 
         **两种引用都要给**：正常完成的单有 `order_id`；而**下单超时那一单根本没有
         order_id**（响应没回来，账本里只有 `outcome=uncertain`），但幂等键是我们
         自己生成的、商户按它索引。给幂等键，「到底下没下成」才第一次可以核对
         ——此前只能让用户「先去商家处核实，别急着再下一单」。
+
+        **会话范围（Q10，2026-08-16）**：此前本函数只按 `user_id` 取最近一单，
+        于是干净 session 里问「刚才那笔订单」会拿到**三天前**那笔——I-021 那个
+        被推翻的 P0 就是这么产生的。现在按 `order_ref.reference_scope` 三档：
+        `SESSION` 只认本 session（找不到就诚实弃权，**不回落**）、`HISTORY` 取最近、
+        `NEUTRAL` 优先本 session 再回落。
+
+        > 同一个进程里，写路径（`_backfill_write_slots`）早就绑了会话，读路径没绑。
+        > **「同一件事的两条分支只修了一条」在本仓已经是第三次**（前两次：
+        > `wait_confirm`/`wait_slot` 的取消判据、两个分类出口的命名）。
+
+        ⚠ `limit` 从 5 提到 20（与写路径一致）：本 session 那单未必在最近 5 条里，
+        而「优先本 session」若因为窗口太小取不到，就退化成了原来的行为。
         """
         # 键名走 arg_map 翻译（麦当劳激活时修，2026-08-11）：本函数在 args 层
         # （已翻译）工作，回填却一直用规划期名 "order_id"——demo-coffee 的商户
         # 参数恰好同名没暴露；真实商户叫 orderId 就会塞进一个它不认识的键。
         oid_key = b.tool.arg_map.get("order_id", "order_id")
         idem_key_name = b.tool.arg_map.get("idempotency_key", "idempotency_key")
-        if not self.ledger or args.get(oid_key) or args.get(idem_key_name):
-            return args
+        if args.get(oid_key) or args.get(idem_key_name):
+            # 用户自己报了引用——范围判据不许拦它，否则历史订单再也查不了。
+            return args, OrderRef(found=True, from_session=True, scope=scope)
+        if not self.ledger:
+            return args, OrderRef(scope=scope)
         try:
-            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=5)
+            recent = await self.ledger.recent(user_id, kind=LEDGER_KIND, limit=20)
         except Exception as e:
             logger.debug("[mcp] 取最近订单失败（按无引用查）：%s", e)
-            return args
+            return args, OrderRef(scope=scope)
         # 只认**同一商户**的单（跨商户污染修，2026-08-11）：旧账（result_ref 无
         # server 字段的存量单）按 demo-coffee 归属——server 字段是本日新增，此前
         # 只有 demo 商户在写账。
+        picked = fallback = None
         for task in recent or []:
             ref = task.result_ref or {}
             owner = ref.get("server") or "demo-coffee"
             if owner != b.server.id:
                 continue
-            if ref.get("order_id"):
-                args[oid_key] = ref["order_id"]
-            elif getattr(task, "idempotency_key", ""):
-                args[idem_key_name] = task.idempotency_key
-            break
-        return args
+            if not ref.get("order_id") and not getattr(task, "idempotency_key", ""):
+                continue
+            same_session = bool(
+                session_id and str(getattr(task, "session_id", "") or "") == session_id)
+            if scope == HISTORY:
+                picked = (task, ref, same_session)
+                break
+            if same_session:
+                picked = (task, ref, True)
+                break
+            if fallback is None:
+                fallback = (task, ref, False)
+        if picked is None and allows_history_fallback(scope):
+            picked = fallback
+        if picked is None:
+            return args, OrderRef(scope=scope)
+        task, ref, same_session = picked
+        if ref.get("order_id"):
+            args[oid_key] = ref["order_id"]
+        else:
+            args[idem_key_name] = task.idempotency_key
+        return args, OrderRef(found=True, from_session=same_session,
+                              created_at=float(getattr(task, "created_at", 0.0) or 0.0),
+                              scope=scope)
 
     # ── 可确认写入（生命周期五项）──
     async def _call_write(self, b, intent, ctx, meta) -> AgentResult:
         confirmed = str((meta or {}).get("confirmed", "")).lower() == "true"
         declared = list(b.tool.slots or [])
         slots = {k: v for k, v in (intent.slots or {}).items() if v and k in declared}
+        # planner 会把用户原话原样塞进 `order_id`（真栈实测填过字面量「刚才那笔
+        # 订单」）。**槽位非空就不走账本回填**，于是会话范围守卫被整个绕过，
+        # 那个字符串还会被念进确认话术并拿去调商户 API。
+        # 模型输出是不可信输入——**防到真正会被拿去调 API 的那个值**。
+        if is_deictic_placeholder(slots.get("order_id")):
+            slots.pop("order_id", None)
+        write_ref = OrderRef()
         if declared and not slots:
             # 补偿类写操作（取消）用户往往不报订单号——从账本取他最近这一单。
             # 只补**已完成**那一单的 order_id：outcome=uncertain 的单连订单号都没有，
             # 拿它去取消等于对着一个不知道存不存在的单执行写操作。
-            slots = await self._backfill_write_slots(b, declared, ctx)
+            slots, write_ref = await self._backfill_write_slots(
+                b, declared, ctx,
+                scope=reference_scope(str(getattr(intent, "raw_text", "") or "")))
         preview_args = {**b.tool.const_args,
                         **{b.tool.arg_map.get(k, k): v for k, v in slots.items()}}
         preview_args.pop("_owner_user_id", None)
@@ -808,7 +917,13 @@ class McpBridgeAgent(BaseAgent):
             # （取消订单被问成「准备下单」）比说得笨拙严重得多。缺声明时用中性词，
             # 桥核心不认识「下单」「取消」这些动词。
             tmpl = b.tool.confirm_prompt or "准备执行：{args}，确认吗？"
-            speech = self._demo_prefix(b) + tmpl.format(args=self._readable(slots))
+            # Q10：要动的不是本会话那一单时，**在用户点头之前**就说清它是哪天的。
+            # 「取消我的订单」把三天前那笔捞上来仍会走到这里，确认闸只念订单号——
+            # 一串数字用户核对不了，一个日期可以。
+            stale = (_history_prefix(write_ref.created_at)
+                     if write_ref.should_label_as_history else "")
+            speech = (self._demo_prefix(b) + stale
+                      + tmpl.format(args=self._readable(slots)))
             if b.tool.compensate_policy == "abandon_unpaid":
                 speech += " 本单不立即扣款；不支付会由商户自动失效。"
             return AgentResult(status=NEED_CONFIRM, speech=speech)

@@ -1155,3 +1155,41 @@ HMI 每轮 dispatch 生成 `request_id` 随 WS 帧上行（`gateway/edge` 转成
 ⚠ supersede **只写 `superseded_by`，不写 `valid_to`**：`memory_relation` 建表语句里
 根本没有那一列（那是 `memory_item` 才有的）。首版照着 item 的 supersede 抄过来，
 会在真库上直接报错——**读 schema，别照着相邻实现抄**。
+
+### 9.23 订单引用的会话范围（QA Q10，2026-08-16）
+
+**「刚才那笔订单」必须解析成本 session 的单；没有就诚实说没有，不回落历史。**
+此前 `_resolve_order_ref` 只按 `user_id` 取账本最近一单，于是干净 session 问
+「我刚才那笔订单是什么」拿到**三天前**那笔——报告据此写下「确认前创建了真实订单」
+这个 P0（阶段 0.1 已推翻）。
+
+三档范围由 `agents/mcp_bridge/src/order_ref.py::reference_scope` 从**原话**判定，
+确定性、零 LLM：
+
+| 档 | 触发 | 行为 |
+|---|---|---|
+| `SESSION` | 「刚才」「刚刚」「这次」「这单」… | 只认本 session；找不到 ⇒ **不出站**、诚实说本次没下过单 |
+| `HISTORY` | 日期、「之前」「上次」「历史」… | 按 user 取最近 |
+| `NEUTRAL` | 都没有（「查一下我的订单」） | 优先本 session；回落历史**但话术必须标注日期** |
+
+**两档同时命中判 `HISTORY`**：日期是更具体的限定，「刚才」修饰的是「我说」。
+
+四条配套纪律：
+
+1. **误判代价不对称，所以 `SESSION` 词表刻意窄**。判成 SESSION 而用户要历史单 ⇒
+   系统说「给我订单号」，用户还有出路；判成 NEUTRAL 而用户要本会话那单 ⇒
+   历史单被端上来，**用户没有任何线索能发现**。「上一单/那笔」这类模糊词留在 NEUTRAL。
+2. **写路径同样收窄，且更该严**：查单捞错只是看错，取消/退款捞错是**不可逆写**。
+   回落时确认话术必须带日期——**一串订单号用户核对不了，一个日期可以**。
+3. **回落规则只许有一处定义**（`allows_history_fallback`）。本仓有三处独立的
+   「从账本找订单引用」循环（`_resolve_order_ref` / `_backfill_write_slots` /
+   `luckin._owned_order`），过滤条件确有正当差异故**不合并循环**，但规则共享，
+   源码级守卫 `test_the_fallback_rule_has_exactly_one_definition` 禁止就地写
+   `scope == SESSION`。
+4. **指代型槽值不算订单号**（`is_deictic_placeholder`）。planner 会把用户原话原样
+   塞进 `order_id`（真栈实测填过字面量「刚才那笔订单」）——**槽位非空就不走账本
+   回填，会话范围守卫会被整个绕过**，那串字符还会被念进确认话术并拿去调商户 API。
+   判据原本只有瑞幸 workflow 有，现已收敛供两条路径共用。
+
+⚠ **「文本入口与按钮入口收敛到同一结构化解析链」不在本节** —— 它的依赖
+（`Focus.candidate_sets` 下发到 Agent）**当前不存在**，见 `AGENTS.md` §4.1 第 8 步。

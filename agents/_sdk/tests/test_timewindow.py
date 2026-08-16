@@ -63,7 +63,17 @@ _WALL_CLOCK_MODULES = (
     "memory/server.py",
     "memory/extract.py",
     "agents/scene_orchestrator/src/triggers.py",
+    # Q10（2026-08-16）：查单话术要说「这是您 8 月 15 日下的那笔」——**日期说错
+    # 一天，用户就核对不上**，而这一族在容器里正好偏 8 小时、跨日边界必错。
+    "agents/mcp_bridge/src/agent.py",
 )
+# ⚠ **`merchant/mcdonalds.py` 刻意不在上表**（2026-08-16 加过一次又撤回，留痕）：
+# 它的 `_shanghai_timezone()` 是**麦当劳中国的营业时区**，不是车机业务墙钟——
+# PoC 里同值 UTC+8，语义不同（多时区时业务墙钟跟车走、商户营业时区不跟）。
+# 把它收敛成 `BUSINESS_TZ` 会让 `str(tzinfo)` 从 "Asia/Shanghai" 变 "UTC+08:00"，
+# `test_default_clock_is_explicit_shanghai_time…` 当场红——**那条既有断言守的正是
+# 这个区分，它按住了这次误收敛**。
+# > 判据：「看起来是第二份定义」和「真的是同一件事」是两回事。判同不同要问**语义**。
 
 
 def _code_only(path: Path) -> str:
@@ -126,7 +136,15 @@ def test_business_timezone_has_exactly_one_definition():
     （测试与 scripts 不在管辖内——它们跑在 UTC+8 宿主上，且各自显式 pin。）
     """
     root = Path(__file__).resolve().parents[3]
-    literal = re.compile(r"timezone\s*\(\s*timedelta\s*\(\s*hours\s*=\s*8\s*\)\s*\)")
+    # ⚠ **正则收紧过一次，留痕**（2026-08-16，Q10 批）：首版尾部写死 `\)\s*\)`，
+    # 要求 `timedelta(hours=8)` 后**紧跟**收尾括号。于是 mcdonalds.py 里的
+    # `timezone(timedelta(hours=8), "Asia/Shanghai")` **多一个参数就绕过去了**，
+    # 一份完整的第二定义在守卫眼皮底下活着。现在只认到 `timedelta(hours=8)` 为止，
+    # 后面跟什么都算。
+    # > 这条守卫本身就是「恒绿的断言比没有更糟」的标本——它当时**扫不到任何真实
+    # > 违规**，读起来却像这块被守着。写完扫描类断言要问的不只是「它会不会红」，
+    # > 还有「它够不够得着现实里那些写法」。
+    literal = re.compile(r"timezone\s*\(\s*timedelta\s*\(\s*hours\s*=\s*8\s*\)")
     offenders = [rel for rel in _WALL_CLOCK_MODULES
                  if literal.search(_code_only(root / rel))]
     assert not offenders, (

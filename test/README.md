@@ -221,7 +221,7 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 卡与阶段计划见 [`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md`](../docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)。
 
 ```bash
-python scripts/probe_qa_regression.py --list                 # 31 例 / 52 轮 / 6 组
+python scripts/probe_qa_regression.py --list                 # 34 例 / 58 轮 / 6 组（Q10 批 +XS7/XS8）
 python scripts/probe_qa_regression.py --mapping              # Q13：两个分类出口一致性（纯函数，不用起栈）
 python scripts/probe_qa_regression.py --group negation       # 按组跑
 python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线用这条**

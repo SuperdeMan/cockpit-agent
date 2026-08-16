@@ -45,7 +45,22 @@ _WORKFLOW_TOOL_CONTRACTS = {
 
 
 def _shanghai_timezone():
-    """Use IANA Shanghai time, with a UTC+8 fallback for Windows without tzdata."""
+    """Use IANA Shanghai time, with a UTC+8 fallback for Windows without tzdata.
+
+    ⚠ **这不是 `runtime.clock.BUSINESS_TZ` 的第二份声明，别去「收敛」它**
+    （2026-08-16 Q10 批试过一次，被下面这条既有断言当场按住）：
+
+    - `BUSINESS_TZ` 是**车机业务墙钟**——用户说「几点」时指的那个时区；
+    - 这一份是**麦当劳中国的营业时区**——商户侧解释取餐时间的基准。
+
+    PoC 里两者同值 UTC+8，**语义不同**：真做多时区时业务墙钟会跟着车走，
+    而麦当劳中国的营业时区不会。改成 `BUSINESS_TZ` 会让 `str(tzinfo)` 从
+    `"Asia/Shanghai"` 变成 `"UTC+08:00"`，`test_default_clock_is_explicit_shanghai_time…`
+    立刻红——那条断言守的正是「**显式上海时区** vs 随便一个 +8」。
+
+    > **判据**：「看起来是第二份定义」和「真的是同一件事」是两回事。
+    > 判同不同要问**语义**，不是比数值。
+    """
     try:
         return ZoneInfo("Asia/Shanghai")
     except ZoneInfoNotFoundError:
