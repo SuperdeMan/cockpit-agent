@@ -440,6 +440,10 @@ _REQUIRED_LOCAL_SERVICES = frozenset(
         "dashboard",
     )
 )
+COMPOSE_STATUS_MAX_BYTES = 512 * 1024
+COMPOSE_STATUS_MAX_RECORDS = 1_024
+
+
 def _status_url(base: str, path: str) -> str | None:
     """Return a public HTTP URL with credentials, query, and fragment removed."""
     try:
@@ -482,7 +486,9 @@ def _endpoint_status(
         return EndpointStatus(name, url, "network_error", None)
     except ReleaseError:
         return EndpointStatus(name, url, "network_error", None)
-    except (ConnectionError, socket.gaierror):
+    except socket.gaierror:
+        return EndpointStatus(name, url, "dns_error", None)
+    except ConnectionError:
         return EndpointStatus(name, url, "network_error", None)
     if 200 <= code < 300:
         return EndpointStatus(name, url, "healthy", code)
@@ -498,24 +504,47 @@ def _inspect_endpoints(
     )
 
 
-def _parse_compose_ps(payload: str) -> tuple[tuple[str, bool], ...] | None:
+def _compose_oneoff(labels: object) -> bool:
+    """Read the Compose one-off marker from either supported Labels shape."""
+    value: object | None = None
+    if isinstance(labels, dict):
+        value = labels.get("com.docker.compose.oneoff")
+    elif isinstance(labels, str):
+        for item in labels.split(","):
+            key, separator, candidate = item.partition("=")
+            if separator and key.strip() == "com.docker.compose.oneoff":
+                value = candidate
+                break
+    return isinstance(value, (str, bool)) and str(value).lower() == "true"
+
+
+def _parse_compose_ps(payload: str) -> tuple[tuple[str, bool, bool], ...] | None:
     """Safely accept Compose's array or one-JSON-object-per-line formats."""
+    if len(payload.encode("utf-8", "surrogatepass")) > COMPOSE_STATUS_MAX_BYTES:
+        return None
     if not payload.strip():
         return ()
     try:
         decoded = json.loads(payload)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         decoded_items: list[object] = []
         try:
             for line in payload.splitlines():
                 if line.strip():
+                    if len(decoded_items) >= COMPOSE_STATUS_MAX_RECORDS:
+                        return None
                     decoded_items.append(json.loads(line))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             return None
     else:
-        decoded_items = decoded if isinstance(decoded, list) else [decoded]
+        if isinstance(decoded, list):
+            if len(decoded) > COMPOSE_STATUS_MAX_RECORDS:
+                return None
+            decoded_items = decoded
+        else:
+            decoded_items = [decoded]
 
-    parsed: list[tuple[str, bool]] = []
+    parsed: list[tuple[str, bool, bool]] = []
     for item in decoded_items:
         if not isinstance(item, dict):
             return None
@@ -523,7 +552,13 @@ def _parse_compose_ps(payload: str) -> tuple[tuple[str, bool], ...] | None:
         state = item.get("State", item.get("state"))
         if not isinstance(service, str) or not isinstance(state, str):
             return None
-        parsed.append((service, state.lower() == "running"))
+        parsed.append(
+            (
+                service,
+                state.lower() == "running",
+                _compose_oneoff(item.get("Labels", item.get("labels"))),
+            )
+        )
     return tuple(parsed)
 
 
@@ -559,14 +594,15 @@ def _local_container_status(
     if containers is None:
         return None, None, ("local Compose status returned invalid JSON",)
     observed: dict[str, bool] = {}
-    for service, running in containers:
-        observed[service] = observed.get(service, False) or running
+    for service, running, oneoff in containers:
+        if not oneoff:
+            observed[service] = observed.get(service, False) or running
     warnings = tuple(
         f"required local service is {'not running' if service in observed else 'missing'}: {service}"
         for service in sorted(_REQUIRED_LOCAL_SERVICES)
         if not observed.get(service, False)
     )
-    return len(containers), sum(running for _, running in containers), warnings
+    return len(containers), sum(running for _, running, _ in containers), warnings
 
 
 def inspect_local_status(

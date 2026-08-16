@@ -708,10 +708,11 @@ def test_inspect_status_does_not_store_sensitive_probe_exception_text(tmp_path: 
         (TimeoutError(), "timeout", None),
         (ssl.SSLError("certificate failed"), "tls_error", None),
         (URLError(socket.gaierror()), "dns_error", None),
+        (socket.gaierror(), "dns_error", None),
         (HTTPError("http://localhost/", 503, "unavailable", {}, None), "http_error", 503),
         (URLError("connection refused"), "network_error", None),
     ],
-    ids=["timeout", "tls", "dns", "http", "url"],
+    ids=["timeout", "tls", "url-dns", "direct-dns", "http", "url"],
 )
 def test_endpoint_probe_classifies_expected_transport_failures(
     failure: BaseException, expected_status: str, expected_code: int | None
@@ -936,3 +937,66 @@ def test_inspect_local_status_marks_counts_unknown_when_compose_command_fails(
 
     assert (status.container_total, status.container_running) == (None, None)
     assert status.warnings == ("local Compose status is unavailable",)
+
+
+def test_parse_compose_ps_rejects_deeply_nested_json_without_recursion_error():
+    payload = "[" * 10_000 + "]" * 10_000
+
+    assert dev._parse_compose_ps(payload) is None
+
+
+def test_parse_compose_ps_rejects_oversized_and_overrecord_payloads():
+    oversized = " " * (dev.COMPOSE_STATUS_MAX_BYTES + 1)
+    overrecord = json.dumps(
+        [
+            {"Service": f"service-{index}", "State": "running"}
+            for index in range(dev.COMPOSE_STATUS_MAX_RECORDS + 1)
+        ]
+    )
+
+    assert dev._parse_compose_ps(oversized) is None
+    assert dev._parse_compose_ps(overrecord) is None
+
+
+@pytest.mark.parametrize(
+    "oneoff_labels",
+    [
+        {"com.docker.compose.oneoff": "True"},
+        "com.docker.compose.oneoff=True,com.docker.compose.project=car-agent",
+    ],
+    ids=["labels-dict", "labels-string"],
+)
+def test_oneoff_container_does_not_make_stopped_required_service_ready(
+    tmp_path: Path, oneoff_labels: object
+):
+    containers = json.dumps(
+        [
+            {"Service": "postgres", "State": "exited", "Labels": {}},
+            {"Service": "postgres", "State": "running", "Labels": oneoff_labels},
+            {"Service": "redis", "State": "running", "Labels": {}},
+            {"Service": "edge-gateway", "State": "running", "Labels": {}},
+            {"Service": "llm-gateway", "State": "running", "Labels": {}},
+            {"Service": "observability-collector", "State": "running", "Labels": {}},
+            {"Service": "hmi", "State": "running", "Labels": {}},
+            {"Service": "dashboard", "State": "running", "Labels": {}},
+        ]
+    )
+    urls = {
+        "http://localhost:5173/": dev.HttpResponse(200),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [
+            command_result("docker", "info"),
+            command_result("docker", "compose", stdout=containers),
+        ],
+        urls,
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+
+    assert (status.container_total, status.container_running) == (8, 7)
+    assert status.warnings == ("required local service is not running: postgres",)
