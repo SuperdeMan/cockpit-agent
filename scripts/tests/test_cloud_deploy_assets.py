@@ -547,3 +547,17 @@ def test_cloud_runbook_documents_canonical_operations_and_provider_acceptance():
     assert "只读" in provider_guide
     assert "创建订单" in provider_guide
     assert "real/mock" in provider_guide
+
+
+def test_cloud_runbook_documents_repeatable_release_workflow():
+    readme = _required_text(CLOUD_DIR / "README.md")
+    for required in (
+        "scripts/cloud_release.py plan",
+        "scripts/cloud_release.py deploy",
+        "scripts/cloud_release.py verify",
+        "scripts/cloud_release.py rollback",
+        "CAR_AGENT_DEPLOY_HOST",
+        "bootstrap_required",
+        "不自动清理",
+    ):
+        assert required in readme

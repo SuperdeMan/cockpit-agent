@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -97,6 +98,23 @@ class RemoteState:
     runtime_project_ready: bool
     shared_scripts_ready: bool
     shared_models_ready: bool
+
+
+@dataclass(frozen=True)
+class BootstrapCandidate:
+    path: str
+    source: str
+    sha256: str | None
+    mode: str
+    owner: str = "root:root"
+
+
+@dataclass(frozen=True)
+class BootstrapReport:
+    status: str
+    source_release: str
+    candidates: tuple[str, ...]
+    details: tuple[BootstrapCandidate, ...]
 
 
 @dataclass(frozen=True)
@@ -758,11 +776,299 @@ REMOTE_STATE_FIELDS = {
     "shared_models_ready",
 }
 
-# Task 9 replaces this marker with the complete read-only inline preflight.
+MODEL_BOOTSTRAP_FILES = (
+    (
+        "models/nlu/edge_nlu.onnx",
+        "cda6914c715d7e48f7b1f2ef2e2e9a64843e53ec58165737b41ec4e186080cf8",
+    ),
+    (
+        "models/nlu/labels.json",
+        "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5",
+    ),
+    (
+        "models/nlu/vocab.json",
+        "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5",
+    ),
+    (
+        "models/voiceprint/campplus_zh-cn_16k-common.onnx",
+        "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+    ),
+)
+
+SHARED_SCRIPT_NAMES = (
+    "backup.sh",
+    "remote-release.sh",
+    "remote-build.sh",
+    "activate-release.sh",
+    "verify-release.sh",
+)
+
+
+def make_bootstrap_report(state: RemoteState) -> BootstrapReport:
+    source_release = state.current_path
+    details: list[BootstrapCandidate] = []
+    if not state.runtime_project_ready:
+        details.append(
+            BootstrapCandidate(
+                path="/opt/car-agent/shared/runtime-project-name",
+                source="docker:com.docker.compose.project",
+                sha256=None,
+                mode="0644",
+            )
+        )
+    if state.approved_infrastructure_digest is None:
+        details.append(
+            BootstrapCandidate(
+                path="/opt/car-agent/shared/release-infrastructure.json",
+                source="approved target commit deploy/cloud manifest",
+                sha256=None,
+                mode="0600",
+            )
+        )
+    if not state.shared_scripts_ready:
+        for name in SHARED_SCRIPT_NAMES:
+            details.append(
+                BootstrapCandidate(
+                    path=f"/opt/car-agent/shared/bin/{name}",
+                    source=f"approved target commit:deploy/cloud/{name}",
+                    sha256=None,
+                    mode="0755",
+                )
+            )
+    if not state.shared_models_ready:
+        for relative, digest in MODEL_BOOTSTRAP_FILES:
+            shared_relative = relative.removeprefix("models/")
+            details.append(
+                BootstrapCandidate(
+                    path=f"/opt/car-agent/shared/models/{shared_relative}",
+                    source=f"{source_release}/{relative}",
+                    sha256=digest,
+                    mode="0644",
+                )
+            )
+    return BootstrapReport(
+        status="bootstrap_required" if details else "ready",
+        source_release=source_release,
+        candidates=tuple(item.path for item in details),
+        details=tuple(details),
+    )
+
+
+REMOTE_PREFLIGHT_SOURCE = r'''from collections import Counter
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import stat
+import subprocess
+
+ROOT = Path("/opt/car-agent")
+SHARED = ROOT / "shared"
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+SCRIPTS = (
+    SHARED / "bin/backup.sh",
+    SHARED / "bin/remote-release.sh",
+    SHARED / "bin/remote-build.sh",
+    SHARED / "bin/activate-release.sh",
+    SHARED / "bin/verify-release.sh",
+)
+MODELS = {
+    SHARED / "models/nlu/edge_nlu.onnx": "cda6914c715d7e48f7b1f2ef2e2e9a64843e53ec58165737b41ec4e186080cf8",
+    SHARED / "models/nlu/labels.json": "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5",
+    SHARED / "models/nlu/vocab.json": "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5",
+    SHARED / "models/voiceprint/campplus_zh-cn_16k-common.onnx": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+}
+REQUIRED_INSTALLED = {
+    "deploy/cloud/backup.sh": "/opt/car-agent/shared/bin/backup.sh",
+    "deploy/cloud/remote-release.sh": "/opt/car-agent/shared/bin/remote-release.sh",
+    "deploy/cloud/remote-build.sh": "/opt/car-agent/shared/bin/remote-build.sh",
+    "deploy/cloud/activate-release.sh": "/opt/car-agent/shared/bin/activate-release.sh",
+    "deploy/cloud/verify-release.sh": "/opt/car-agent/shared/bin/verify-release.sh",
+    "deploy/cloud/compose.cloud.yaml": "/opt/car-agent/shared/compose.cloud.yaml",
+    "deploy/cloud/vite.hmi.cloud.config.mjs": "/opt/car-agent/shared/vite.hmi.cloud.config.mjs",
+    "deploy/cloud/systemd/car-agent-backup.service": "/etc/systemd/system/car-agent-backup.service",
+    "deploy/cloud/systemd/car-agent-backup.timer": "/etc/systemd/system/car-agent-backup.timer",
+}
+
+
+def run(argv):
+    completed = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+    return completed.stdout.decode("utf-8", errors="strict").strip()
+
+
+def secure_regular(path):
+    try:
+        metadata = path.lstat()
+    except OSError:
+        return False
+    return bool(
+        stat.S_ISREG(metadata.st_mode)
+        and not path.is_symlink()
+        and metadata.st_uid == 0
+        and metadata.st_gid == 0
+        and metadata.st_mode & 0o022 == 0
+    )
+
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+
+def current_project():
+    ids = [item for item in run(["docker", "ps", "--format", "{{.ID}}"]).splitlines() if item]
+    if not ids:
+        raise RuntimeError("no running containers")
+    containers = json.loads(run(["docker", "inspect", *ids]))
+    projects = Counter(
+        str(item.get("Config", {}).get("Labels", {}).get("com.docker.compose.project", ""))
+        for item in containers
+    )
+    projects.pop("", None)
+    if not projects:
+        raise RuntimeError("compose project label unavailable")
+    project, _ = projects.most_common(1)[0]
+    if not PROJECT.fullmatch(project):
+        raise RuntimeError("invalid compose project label")
+    return project
+
+
+def lock_available():
+    path = SHARED / "locks/release.lock"
+    if not secure_regular(path):
+        return False
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return True
+    except BlockingIOError:
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def project_file_ready(project):
+    path = SHARED / "runtime-project-name"
+    if not secure_regular(path):
+        return False
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return False
+    return lines == [project]
+
+
+def scripts_ready():
+    for path in SCRIPTS:
+        if not secure_regular(path):
+            return False
+        if subprocess.run(["bash", "-n", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            return False
+    return True
+
+
+def models_ready():
+    return all(secure_regular(path) and digest(path) == expected for path, expected in MODELS.items())
+
+
+def approved_infrastructure_digest():
+    path = SHARED / "release-infrastructure.json"
+    if not secure_regular(path):
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if set(payload) != {"schema_version", "infrastructure_sha256", "source_files", "installed_files"}:
+            return None
+        if payload["schema_version"] != 1:
+            return None
+        aggregate = payload["infrastructure_sha256"]
+        source_files = payload["source_files"]
+        installed_files = payload["installed_files"]
+        if not isinstance(aggregate, str) or not SHA256.fullmatch(aggregate):
+            return None
+        if not isinstance(source_files, dict) or not source_files:
+            return None
+        if any(
+            not isinstance(name, str)
+            or not name.startswith("deploy/cloud/")
+            or name == "deploy/cloud/README.md"
+            or not isinstance(value, str)
+            or not SHA256.fullmatch(value)
+            for name, value in source_files.items()
+        ):
+            return None
+        canonical = json.dumps(source_files, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if hashlib.sha256(canonical).hexdigest() != aggregate:
+            return None
+        if not isinstance(installed_files, list) or not installed_files:
+            return None
+        installed = {}
+        for item in installed_files:
+            if not isinstance(item, dict) or set(item) != {"source_path", "target_path", "sha256"}:
+                return None
+            source = item["source_path"]
+            target = item["target_path"]
+            expected = item["sha256"]
+            if (
+                source in installed
+                or source_files.get(source) != expected
+                or not isinstance(target, str)
+                or not isinstance(expected, str)
+                or not SHA256.fullmatch(expected)
+            ):
+                return None
+            target_path = Path(target)
+            if not secure_regular(target_path) or digest(target_path) != expected:
+                return None
+            installed[source] = target
+        if installed != REQUIRED_INSTALLED:
+            return None
+        return aggregate
+    except (OSError, UnicodeError, ValueError, TypeError):
+        return None
+
+
+current_path = run(["readlink", "-f", "/opt/car-agent/current"])
+current_release = Path(current_path).name
+if current_path != f"/opt/car-agent/releases/{current_release}":
+    raise RuntimeError("invalid current release path")
+project = current_project()
+disk_lines = run(["df", "--output=avail", "-B1", "/opt/car-agent"]).splitlines()
+disk_available = int(disk_lines[-1].strip())
+memory_available = 0
+with Path("/proc/meminfo").open("r", encoding="ascii") as handle:
+    for line in handle:
+        if line.startswith("MemAvailable:"):
+            memory_available = int(line.split()[1]) * 1024
+            break
+if memory_available <= 0:
+    raise RuntimeError("MemAvailable is unavailable")
+result = {
+    "current_release": current_release,
+    "current_path": current_path,
+    "runtime_project_name": project,
+    "approved_infrastructure_digest": approved_infrastructure_digest(),
+    "disk_available_bytes": disk_available,
+    "memory_available_bytes": memory_available,
+    "release_lock_available": lock_available(),
+    "runtime_project_ready": project_file_ready(project),
+    "shared_scripts_ready": scripts_ready(),
+    "shared_models_ready": models_ready(),
+}
+print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+'''
+
 REMOTE_PREFLIGHT_COMMAND = (
-    "set -eu; "
-    "test -x /opt/car-agent/shared/bin/cloud-release-readonly-preflight; "
-    "/opt/car-agent/shared/bin/cloud-release-readonly-preflight"
+    "sudo python3 -c \"import base64;exec(base64.b64decode('"
+    + base64.b64encode(REMOTE_PREFLIGHT_SOURCE.encode("utf-8")).decode("ascii")
+    + "'))\""
 )
 
 
@@ -884,6 +1190,20 @@ def execute_deploy(
             remote_state.approved_infrastructure_digest
         ),
     )
+    if plan.status == "plan_rejected":
+        return CloudReleaseResult(
+            status=plan.status,
+            plan=plan,
+            artifact=None,
+            remote_state=remote_state,
+        )
+    if make_bootstrap_report(remote_state).status != "ready":
+        return CloudReleaseResult(
+            status="bootstrap_required",
+            plan=plan,
+            artifact=None,
+            remote_state=remote_state,
+        )
     if plan.status != "ready":
         return CloudReleaseResult(
             status=plan.status,

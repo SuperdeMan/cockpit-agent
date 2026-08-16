@@ -18,6 +18,7 @@ from scripts.cloud_release_lib import (
     SshConfig,
     SubprocessRunner,
     execute_deploy,
+    make_bootstrap_report,
 )
 
 
@@ -94,6 +95,7 @@ def _request(
 
 
 def _result_payload(result: CloudReleaseResult) -> dict[str, object]:
+    bootstrap = make_bootstrap_report(result.remote_state)
     return {
         "status": result.status,
         "deployed_sha": result.plan.deployed_sha,
@@ -112,6 +114,21 @@ def _result_payload(result: CloudReleaseResult) -> dict[str, object]:
         "artifact_directory": (
             str(result.artifact.directory) if result.artifact else None
         ),
+        "bootstrap": {
+            "status": bootstrap.status,
+            "source_release": bootstrap.source_release,
+            "candidates": list(bootstrap.candidates),
+            "details": [
+                {
+                    "path": item.path,
+                    "source": item.source,
+                    "sha256": item.sha256,
+                    "mode": item.mode,
+                    "owner": item.owner,
+                }
+                for item in bootstrap.details
+            ],
+        },
         "remote": {
             "current_release": result.remote_state.current_release,
             "runtime_project_name": result.remote_state.runtime_project_name,

@@ -17,6 +17,8 @@ from scripts.cloud_release_lib import (
     ReleasePlan,
     ReleaseError,
     RemoteState,
+    REMOTE_PREFLIGHT_COMMAND,
+    REMOTE_PREFLIGHT_SOURCE,
     SshConfig,
     SubprocessRunner,
     build_release_artifact,
@@ -25,6 +27,7 @@ from scripts.cloud_release_lib import (
     diff_contains_schema_change,
     execute_deploy,
     git_changes,
+    make_bootstrap_report,
     make_release_plan,
     parse_remote_state,
     require_clean_main_commit,
@@ -546,6 +549,69 @@ def test_parse_remote_state_accepts_strict_valid_json():
     )
 
 
+def test_preflight_reports_exact_bootstrap_candidates():
+    state = RemoteState(
+        current_release="4c1f479",
+        current_path="/opt/car-agent/releases/4c1f479",
+        disk_available_bytes=109_521_666_048,
+        memory_available_bytes=5_798_205_849,
+        release_lock_available=True,
+        runtime_project_name="4c1f479",
+        runtime_project_ready=False,
+        approved_infrastructure_digest=None,
+        shared_scripts_ready=False,
+        shared_models_ready=False,
+    )
+
+    report = make_bootstrap_report(state)
+
+    assert report.status == "bootstrap_required"
+    assert report.candidates == (
+        "/opt/car-agent/shared/runtime-project-name",
+        "/opt/car-agent/shared/release-infrastructure.json",
+        "/opt/car-agent/shared/bin/backup.sh",
+        "/opt/car-agent/shared/bin/remote-release.sh",
+        "/opt/car-agent/shared/bin/remote-build.sh",
+        "/opt/car-agent/shared/bin/activate-release.sh",
+        "/opt/car-agent/shared/bin/verify-release.sh",
+        "/opt/car-agent/shared/models/nlu/edge_nlu.onnx",
+        "/opt/car-agent/shared/models/nlu/labels.json",
+        "/opt/car-agent/shared/models/nlu/vocab.json",
+        "/opt/car-agent/shared/models/voiceprint/campplus_zh-cn_16k-common.onnx",
+    )
+    assert report.source_release == "/opt/car-agent/releases/4c1f479"
+    assert all(item.owner == "root:root" for item in report.details)
+    model_details = [item for item in report.details if "/models/" in item.path]
+    assert all(item.sha256 and len(item.sha256) == 64 for item in model_details)
+
+
+def test_inline_remote_preflight_is_read_only_and_does_not_read_runtime_env():
+    assert REMOTE_PREFLIGHT_COMMAND.startswith("sudo python3 -c ")
+    assert "/opt/car-agent/shared/.env" not in REMOTE_PREFLIGHT_SOURCE
+    lowered = REMOTE_PREFLIGHT_SOURCE.lower()
+    for forbidden in (
+        "mkdir",
+        "install ",
+        "shutil.copy",
+        "write_text",
+        "write_bytes",
+        "os.remove",
+        "os.unlink",
+        "subprocess.run([\"sudo\"",
+    ):
+        assert forbidden not in lowered
+    for required in (
+        "readlink",
+        "df",
+        "/proc/meminfo",
+        "docker",
+        "sha256",
+        "release-infrastructure.json",
+        "runtime-project-name",
+    ):
+        assert required in REMOTE_PREFLIGHT_SOURCE
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -582,6 +648,20 @@ def test_deploy_without_apply_never_calls_remote_mutation(tmp_path: Path):
         "remote-release.sh" not in " ".join(call)
         for call in runner.calls
     )
+
+
+def test_deploy_stops_when_remote_bootstrap_is_incomplete(tmp_path: Path):
+    request, base = make_release_request(tmp_path)
+    digest = compute_infrastructure_digest(request.repo, request.revision)
+    payload = json.loads(remote_state_payload(base, approved_digest=digest))
+    payload["shared_scripts_ready"] = False
+    runner = FakeRunner([command_result(json.dumps(payload))])
+
+    result = execute_deploy(request, apply=False, runner=runner)
+
+    assert result.status == "bootstrap_required"
+    assert result.artifact is None
+    assert len(runner.calls) == 1
 
 
 def test_apply_prepares_upload_scps_once_and_deploys_through_entrypoint(

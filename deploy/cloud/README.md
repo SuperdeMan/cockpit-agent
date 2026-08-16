@@ -112,6 +112,38 @@ ssh -N `
 
 `SERVER_IP` 只在交互终端替换为实际值，不写入仓库。Dashboard 当前命令栏不会携带 HMI 的静态 WS token；`AUTH_REQUIRED=true` 时它只用于查看 Collector trace，不作为发指令入口。
 
+## 固定代码发布工作流
+
+在仓库根目录使用同一个入口。`plan` 会读取 Git 和远端状态，但不写服务器；`deploy` 不带 `--apply` 也只是 dry-run：
+
+```powershell
+python scripts/cloud_release.py plan --sha HEAD
+python scripts/cloud_release.py deploy --sha HEAD
+python scripts/cloud_release.py deploy --sha HEAD --apply
+python scripts/cloud_release.py verify
+python scripts/cloud_release.py rollback --to 4c1f479 --apply
+```
+
+连接信息只通过命令行参数或以下环境变量提供，不写入仓库和发布 manifest：
+
+| 环境变量 | 用途 |
+|---|---|
+| `CAR_AGENT_DEPLOY_HOST` | SSH 主机名或地址 |
+| `CAR_AGENT_DEPLOY_USER` | SSH 用户名，默认 `ubuntu` |
+| `CAR_AGENT_SSH_IDENTITY` | 本机 SSH 私钥路径 |
+| `CAR_AGENT_SSH_KEX_ALGORITHMS` | 服务器明确要求时使用的 KEX 算法 |
+
+首次运行预期返回 `bootstrap_required`：服务器还没有满足新工作流所需的共享 scripts/models。`plan` 只列出源、目标路径、权限和模型 SHA-256，不生成复制命令；脚本来源必须是受审目标提交，模型来源必须是当前已验证 release。首次 bootstrap 必须单独批准并完成以下共享底座：runtime project 名、五个脚本、四个模型，以及 `/opt/car-agent/shared/release-infrastructure.json`。
+
+`release-infrastructure.json` 是唯一的基础设施批准锚，记录受审提交的 `deploy/cloud/**` 聚合摘要、逐文件摘要及安装位置。普通 deploy 只能读取，不能创建或更新它。普通代码变化一旦命中 `deploy/cloud/**`、Compose、数据库 schema、`.env.example`、CI/CD 或密钥材料，流程立即停止并要求重新审查。
+
+发布事务遵守以下边界：
+
+- 构建 26 个镜像时，`current` 和现有 30 个容器保持不变；完成全部镜像与备份后才切换。
+- 上传中断、构建失败和验收失败的目录都保留为诊断/清理候选，不自动清理。
+- merge、git push、首次真实 `deploy --apply` 和每次 `rollback --apply` 分别取得授权。
+- 普通发布不修改 `.env`、Tailscale Serve、安全组、systemd、数据库 schema 或数据。
+
 ## 备份与清理候选
 
 手动运行并查看定时器：
@@ -132,24 +164,11 @@ sudo systemctl list-timers car-agent-backup.timer --no-pager
 
 ## 应用回滚
 
-回滚只切换应用 release 和容器镜像，不自动回滚 PostgreSQL/Redis/Collector 数据。执行前确认上一 release 目录和全部 SHA 镜像确实存在，并确认 schema 向后兼容：
+回滚只切换应用 release 和容器镜像，不自动回滚 PostgreSQL、Redis 或 Collector 数据。先用不带 `--apply` 的命令检查目标，再经单独授权执行：
 
-```bash
-read -r -p 'Previous release SHA: ' PREVIOUS_SHA
-test -d "/opt/car-agent/releases/${PREVIOUS_SHA}"
-sudo ln -sfn "/opt/car-agent/releases/${PREVIOUS_SHA}" /opt/car-agent/current.next
-sudo mv -Tf /opt/car-agent/current.next /opt/car-agent/current
-cd /opt/car-agent/current
-sudo docker compose \
-  -f /opt/car-agent/current/compose.yaml \
-  -f /opt/car-agent/shared/compose.cloud.yaml \
-  --env-file /opt/car-agent/shared/.env \
-  config --quiet
-sudo docker compose \
-  -f /opt/car-agent/current/compose.yaml \
-  -f /opt/car-agent/shared/compose.cloud.yaml \
-  --env-file /opt/car-agent/shared/.env \
-  up -d --no-build --pull never
+```powershell
+python scripts/cloud_release.py rollback --to 4c1f479
+python scripts/cloud_release.py rollback --to 4c1f479 --apply
 ```
 
-首次部署没有旧 release，不做虚构的回滚演练。涉及不兼容 schema 时另立数据库迁移/回滚方案并重新审批。
+入口会在同一事务锁内校验目标目录、全部 SHA 镜像和备份状态，切换后执行完整验收；失败时恢复原 release。首次部署没有第二个 release，不做虚构的回滚演练。涉及不兼容 schema 时另立数据库迁移/回滚方案并重新审批。
