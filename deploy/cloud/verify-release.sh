@@ -1,12 +1,49 @@
 #!/usr/bin/env bash
-[[ "${BASH_SOURCE[0]}" != "$0" ]] || {
-  printf 'verify-release.sh is a source-only verification library\n' >&2
-  exit 2
-}
+VERIFY_LIBRARY_SOURCED=0
+[[ "${BASH_SOURCE[0]}" != "$0" ]] && VERIFY_LIBRARY_SOURCED=1
 
 verify_error() {
   printf 'cloud verification: %s\n' "$1" >&2
   return 1
+}
+
+verify_run_step() {
+  local label="$1" rc
+  shift
+  if "$@"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  if [[ "${rc}" -ne 0 ]]; then
+    printf 'cloud verification: %s failed (rc=%s)\n' "${label}" "${rc}" >&2
+    VERIFY_STEP_RC="${rc}"
+    return 0
+  fi
+  VERIFY_STEP_RC=0
+  return 0
+}
+
+verify_prepare_context() {
+  local sha="$1" release_dir mode owner
+  local runtime_file="${SHARED_ROOT}/runtime-project-name"
+  local -a names
+  [[ "${sha}" =~ ^[0-9a-f]{7,40}$ ]] || { verify_error "release selector is invalid"; return 2; }
+  [[ -f "${runtime_file}" && ! -L "${runtime_file}" ]] || { verify_error "runtime project name file is missing"; return 1; }
+  owner="$(stat -c '%U:%G' "${runtime_file}")" || return $?
+  [[ "${owner}" == "root:root" ]] || { verify_error "runtime project name owner mismatch"; return 1; }
+  mode="$(stat -c '%a' "${runtime_file}")" || return $?
+  [[ "${mode}" =~ ^[0-7]{3,4}$ ]] || return 1
+  (( (8#${mode} & 0022) == 0 )) || return 1
+  mapfile -t names <"${runtime_file}" || return $?
+  [[ "${#names[@]}" -eq 1 && "${names[0]}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
+  RUNTIME_PROJECT_NAME="${names[0]}"
+  release_dir="$(readlink -f "${RELEASE_ROOT}/current")" || return $?
+  [[ "${release_dir}" == "${RELEASE_ROOT}/releases/${sha}" && -d "${release_dir}" && ! -L "${release_dir}" ]] || return 1
+  [[ -L "${release_dir}/.env" ]] || return 1
+  [[ "$(readlink "${release_dir}/.env")" == "${SHARED_ROOT}/.env" ]] || return 1
+  VERIFY_RELEASE_SHA="${sha}"
+  VERIFY_RELEASE_DIR="${release_dir}"
 }
 
 readonly -a PRIVATE_HTTPS_PORTS=(443 8443 8444 8445 8446)
@@ -137,6 +174,15 @@ verify_data_and_backup() {
   [[ "$(systemctl show car-agent-backup.service -p Result --value)" == "success" ]]
 }
 
+verify_resolve_fqdn() {
+  local release_dir="$1" sha="$2" hmi_id fqdn
+  hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)" || return $?
+  [[ -n "${hmi_id}" ]] || return 1
+  fqdn="$(container_env_value "${hmi_id}" __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS)" || return $?
+  [[ "${fqdn}" =~ ^[a-z0-9.-]+\.ts\.net$ ]] || { verify_error "Tailnet FQDN is invalid"; return 1; }
+  VERIFY_FQDN="${fqdn}"
+}
+
 write_verification_evidence() {
   local sha="$1" timestamp evidence_dir target
   timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
@@ -196,23 +242,26 @@ PY
 }
 
 verify_release() {
-  local sha="$1" release_dir hmi_id fqdn
-  validate_release_selector "${sha}"
-  load_runtime_project_name
-  release_dir="$(readlink -f "${RELEASE_ROOT}/current")"
-  [[ "$(basename "${release_dir}")" == "${sha}" ]] \
-    || { verify_error "current release does not match verification target"; return 1; }
-  validate_runtime_release "${release_dir}"
-  inspect_project_containers "${release_dir}" "${sha}"
-  verify_loopback_listeners
-  verify_tailscale_serve
-  hmi_id="$(compose_for_release "${release_dir}" "${sha}" ps -q hmi)"
-  fqdn="$(container_env_value "${hmi_id}" __VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS)"
-  [[ "${fqdn}" =~ ^[a-z0-9.-]+\.ts\.net$ ]] || { verify_error "Tailnet FQDN is invalid"; return 1; }
-  verify_https_endpoints "${fqdn}"
-  run_wss_probes "${release_dir}" "${sha}" "${fqdn}"
-  verify_data_and_backup "${release_dir}" "${sha}"
-  write_verification_evidence "${sha}"
+  local sha="$1" rc
+  verify_run_step "verify_prepare_context" verify_prepare_context "${sha}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "inspect_project_containers" inspect_project_containers "${VERIFY_RELEASE_DIR}" "${VERIFY_RELEASE_SHA}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "verify_loopback_listeners" verify_loopback_listeners; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "verify_tailscale_serve" verify_tailscale_serve; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "verify_resolve_fqdn" verify_resolve_fqdn "${VERIFY_RELEASE_DIR}" "${VERIFY_RELEASE_SHA}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "verify_https_endpoints" verify_https_endpoints "${VERIFY_FQDN}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "run_wss_probes" run_wss_probes "${VERIFY_RELEASE_DIR}" "${VERIFY_RELEASE_SHA}" "${VERIFY_FQDN}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "verify_data_and_backup" verify_data_and_backup "${VERIFY_RELEASE_DIR}" "${VERIFY_RELEASE_SHA}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  verify_run_step "write_verification_evidence" write_verification_evidence "${VERIFY_RELEASE_SHA}"; rc="${VERIFY_STEP_RC}"
+  [[ "${rc}" -eq 0 ]] || return "${rc}"
+  return 0
 }
 
 verify_current_release() {
@@ -221,3 +270,8 @@ verify_current_release() {
   sha="$(basename "${release_dir}")"
   verify_release "${sha}"
 }
+
+if [[ "${VERIFY_LIBRARY_SOURCED}" -eq 0 ]]; then
+  printf 'verify-release.sh is a source-only verification library\n' >&2
+  false
+fi

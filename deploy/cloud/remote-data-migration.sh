@@ -743,7 +743,20 @@ validate_redis_aof_volume() {
       test -z "$(find /data/appendonlydir -maxdepth 1 -type l -print -quit)"
       while read -r marker filename rest; do
         test "${marker}" = file
-        test -s "/data/appendonlydir/${filename}"
+        candidate="/data/appendonlydir/${filename}"
+        test -f "${candidate}"
+        test ! -L "${candidate}"
+        test "$(stat -c %u:%g "${candidate}")" = 0:0
+        test "$(stat -c %a "${candidate}")" = 600
+        case "${filename}" in
+          *.base.rdb|*.base.aof)
+            test -s "${candidate}" || { echo "base file is empty" >&2; false; }
+            ;;
+          *.incr.aof)
+            test -f "${candidate}" || { echo "incr file is not regular private" >&2; false; }
+            ;;
+          *) false ;;
+        esac
       done <"${manifest}"
       redis-check-aof "${manifest}" >/dev/null
     ' || return $?
@@ -816,6 +829,8 @@ restore_redis_rdb() {
   docker stop "${loader}" >/dev/null || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
   validate_redis_aof_volume "${image_id}" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
   docker rm "${loader}" >/dev/null || return $?
+  # Compose cold-start from the persisted multipart AOF is authoritative; only
+  # its post-start aggregate may satisfy apply or rollback verification.
   "${compose[@]}" up -d --no-build --pull never redis || return $?
   wait_for_compose_redis || return $?
   resolve_redis_identity || return $?
@@ -1126,46 +1141,37 @@ fail_and_rollback() {
 }
 
 run_recoverable_step() {
-  set +e
-  "$@"
-  STEP_RC=$?
-  set -e
+  if "$@"; then STEP_RC=0; else STEP_RC=$?; fi
   return 0
 }
 
 run_recoverable_step_capture() {
-  set +e
-  STEP_OUTPUT="$("$@")"
-  STEP_RC=$?
-  set -e
+  if STEP_OUTPUT="$("$@")"; then STEP_RC=0; else STEP_RC=$?; fi
   return 0
 }
 
 apply_failure_trap() {
   local signal_rc="${1:-1}"
-  trap - ERR INT TERM
+  trap - EXIT HUP INT TERM
   if [[ "${APPLY_FAILURE_ACTIVE}" -eq 1 ]]; then return "${signal_rc}"; fi
   APPLY_FAILURE_ACTIVE=1
   if [[ "${APPLY_REPLACEMENT_STARTED}" -eq 1 && -n "${APPLY_BACKUP_STAMP}" ]]; then
-    set +e
     rollback_all "${APPLY_MIGRATION_ID}" "${APPLY_BACKUP_STAMP}"
-    set -e
   else
-    set +e
     start_current_release
-    set -e
   fi
   return "${signal_rc}"
 }
 
 install_apply_failure_trap() {
-  trap 'apply_failure_trap $?' ERR
+  trap 'apply_failure_trap $?' EXIT
+  trap 'apply_failure_trap 129' HUP
   trap 'apply_failure_trap 130' INT
   trap 'apply_failure_trap 143' TERM
 }
 
 clear_apply_failure_trap() {
-  trap - ERR INT TERM
+  trap - EXIT HUP INT TERM
   APPLY_FAILURE_ACTIVE=0
 }
 

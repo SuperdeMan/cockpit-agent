@@ -1744,3 +1744,83 @@ def test_preflight_locks_complete_cloud_topology_volumes_serve_and_backup_timer(
         assert token in topology or token in text
     assert '"${#services[@]}" -eq 30' in topology
     assert "assert_expected_cloud_topology" in preflight
+
+
+@pytest.mark.parametrize(
+    "failed_check",
+    [
+        "verify_prepare_context", "inspect_project_containers", "verify_loopback_listeners",
+        "verify_tailscale_serve", "verify_resolve_fqdn", "verify_https_endpoints",
+        "run_wss_probes", "verify_data_and_backup", "write_verification_evidence",
+    ],
+)
+def test_sourceable_verifier_propagates_each_child_failure_without_evidence(
+    tmp_path: Path, failed_check: str,
+):
+    evidence = tmp_path / "evidence.txt"
+    harness = tmp_path / "verify-source-harness.sh"
+    checks = [
+        "verify_prepare_context", "inspect_project_containers", "verify_loopback_listeners",
+        "verify_tailscale_serve", "verify_resolve_fqdn", "verify_https_endpoints",
+        "run_wss_probes", "verify_data_and_backup",
+    ]
+    stubs = "\n".join(
+        f'{name}() {{ [[ "${{FAIL_CHECK}}" != "{name}" ]]; }}'
+        for name in checks
+    )
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{(CLOUD_DIR / 'verify-release.sh').as_posix()}'
+FAIL_CHECK='{failed_check}'
+{stubs}
+write_verification_evidence() {{
+  [[ "${{FAIL_CHECK}}" != "write_verification_evidence" ]] || return 37
+  printf 'verified\n' >>'{evidence.as_posix()}'
+}}
+VERIFY_RELEASE_DIR=/synthetic/release
+VERIFY_RELEASE_SHA=abcdef0
+VERIFY_FQDN=example.ts.net
+verify_release abcdef0
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode != 0
+    assert not evidence.exists()
+
+
+def test_sourceable_verifier_has_self_contained_non_exiting_source_graph():
+    text = _required_text(CLOUD_DIR / "verify-release.sh")
+    assert "verify_prepare_context()" in text
+    assert "verify_run_step()" in text
+    assert re.search(r"\b(?:die|exit)\b", text) is None
+    body = re.search(r"(?ms)^verify_release\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for child in (
+        "verify_prepare_context", "inspect_project_containers", "verify_loopback_listeners",
+        "verify_tailscale_serve", "verify_resolve_fqdn", "verify_https_endpoints",
+        "run_wss_probes", "verify_data_and_backup", "write_verification_evidence",
+    ):
+        assert f'verify_run_step "{child}"' in body
+
+
+def test_redis_aof_validation_allows_empty_private_incr_but_requires_nonempty_base():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^validate_redis_aof_volume\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert "base file is empty" in body
+    assert "incr file is not regular private" in body
+    assert "-s \"/data/appendonlydir/${filename}\"" not in body
+    assert "redis-check-aof" in body
+    assert "cold-start" in text and "assert_redis_container_matches_manifest" in text
+
+
+def test_migration_uses_linear_step_capture_without_errexit_or_err_trap():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    assert "set +e" not in text
+    assert "set -e" not in text
+    assert "trap 'apply_failure_trap $?' ERR" not in text
+    for name in ("run_recoverable_step", "run_recoverable_step_capture"):
+        body = re.search(rf"(?ms)^{name}\(\) \{{(?P<body>.*?)^\}}", text)["body"]
+        assert 'STEP_RC=$?' in body
