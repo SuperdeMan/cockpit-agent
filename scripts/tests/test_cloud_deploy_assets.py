@@ -23,6 +23,9 @@ RUNTIME_MODELS_PATH = CLOUD_DIR / "runtime-models.json"
 REMOTE_RELEASE_PATH = CLOUD_DIR / "remote-release.sh"
 REMOTE_BUILD_PATH = CLOUD_DIR / "remote-build.sh"
 ACTIVATE_RELEASE_PATH = CLOUD_DIR / "activate-release.sh"
+VERIFY_RELEASE_PATH = CLOUD_DIR / "verify-release.sh"
+EDGE_WS_PROBE_PATH = CLOUD_DIR / "probes" / "edge_ws_probe.py"
+COLLECTOR_WS_PROBE_PATH = CLOUD_DIR / "probes" / "collector_ws_probe.py"
 
 LOOPBACK_PORTS = {
     "llm-gateway": ["127.0.0.1:50059:50059"],
@@ -231,6 +234,57 @@ def test_activation_uses_no_destructive_cleanup_or_data_rollback():
         "drop database",
     ):
         assert forbidden not in text
+
+
+def test_release_verify_covers_exact_private_ingress_and_data_dependencies():
+    text = _required_text(VERIFY_RELEASE_PATH)
+    for port in (443, 8443, 8444, 8445, 8446):
+        assert str(port) in text
+    for port in (5173, 5174, 8090, 8092, 50059):
+        assert str(port) in text
+    for required in (
+        "pg_isready",
+        "redis-cli",
+        "car-agent-backup.timer",
+        "tailnet only",
+    ):
+        assert required in text
+
+
+def test_release_probes_have_no_dangerous_utterances():
+    payload = _required_text(EDGE_WS_PROBE_PATH).lower()
+    for forbidden in ("支付", "下单", "购买", "开门", "解锁", "启动发动机", "退款"):
+        assert forbidden not in payload
+    assert "你好，请只回复一句问候" in payload
+
+
+def test_release_evidence_code_never_serializes_tokens_or_environment():
+    payload = _required_text(VERIFY_RELEASE_PATH) + _required_text(EDGE_WS_PROBE_PATH)
+    assert '"token"' not in payload
+    assert "os.environ.copy" not in payload
+    assert "print(os.environ" not in payload
+
+
+def test_release_verify_and_probes_are_source_or_stdin_only_assets():
+    verify = _required_text(VERIFY_RELEASE_PATH)
+    edge = _required_text(EDGE_WS_PROBE_PATH)
+    collector = _required_text(COLLECTOR_WS_PROBE_PATH)
+    assert '[[ "${BASH_SOURCE[0]}" != "$0" ]]' in verify
+    assert "verify_release()" in verify
+    assert "verify_current_release()" in verify
+    assert "collector_reconnect" in collector
+    assert "snapshot" in collector
+    assert "WS_URL" in edge and "WS_TOKEN" in edge
+
+
+def test_release_verification_evidence_is_unique_private_and_non_destructive():
+    text = _required_text(VERIFY_RELEASE_PATH)
+    assert "verification-${timestamp}.json" in text
+    assert 'target.open("x"' in text
+    assert "chmod(0o600)" in text
+    lowered = text.lower()
+    for forbidden in ("curl -k", "rm ", "unlink", "-delete", "docker stop", "down -v"):
+        assert forbidden not in lowered
 
 
 def _service_block_has_reset(text: str, service: str, field: str) -> bool:
