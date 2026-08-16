@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,11 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import dev_stack_lib as dev
+from scripts.cloud_release_lib import (
+    CommandResult,
+    ReleaseRequest,
+    SshConfig,
+)
 
 
 def write_stack_target(repo: Path, content: bytes) -> Path:
@@ -511,3 +517,159 @@ def test_read_root_env_fails_closed_when_path_is_not_a_readable_file(tmp_path: P
 
     with pytest.raises(dev.DevStackError):
         dev.read_root_env(tmp_path, {"TAILNET_FQDN"})
+
+
+class FakeStatusRunner:
+    def __init__(
+        self,
+        command_results: list[CommandResult],
+        endpoint_results: dict[str, object],
+    ) -> None:
+        self.command_results = list(command_results)
+        self.endpoint_results = endpoint_results
+        self.commands: list[tuple[str, ...]] = []
+        self.urls: list[str] = []
+
+    def run(self, argv, *, cwd, **_kwargs):
+        self.commands.append(tuple(argv))
+        return self.command_results.pop(0)
+
+    def get(self, url: str, *, timeout_s: float):
+        self.urls.append(url)
+        result = self.endpoint_results[url]
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+
+def command_result(*argv: str, stdout: str = "", returncode: int = 0) -> CommandResult:
+    return CommandResult(tuple(argv), returncode, stdout, "")
+
+
+def test_inspect_local_status_only_reads_compose_and_checks_five_fixed_endpoints(
+    tmp_path: Path,
+):
+    containers = "\n".join(
+        json.dumps({"Service": service, "State": "running"})
+        for service in (
+            "postgres",
+            "redis",
+            "edge-gateway",
+            "llm-gateway",
+            "observability-collector",
+            "hmi",
+            "dashboard",
+        )
+    )
+    urls = {
+        "http://localhost:5173/": dev.HttpResponse(200),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [
+            command_result("docker", "info"),
+            command_result(
+                "docker", "compose", "-f", "compose.yaml", "ps", "--format", "json",
+                stdout=containers,
+            ),
+        ],
+        urls,
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+
+    assert status.target == "local"
+    assert status.release_sha is None
+    assert (status.container_total, status.container_running) == (7, 7)
+    assert status.healthy_endpoints == 5
+    assert not status.warnings
+    assert runner.commands == [
+        ("docker", "info"),
+        ("docker", "compose", "-f", "compose.yaml", "ps", "--format", "json"),
+    ]
+    assert runner.urls == list(urls)
+    assert all("up" not in command and "build" not in command for command in runner.commands)
+
+
+def test_inspect_cloud_status_is_read_only_and_serializes_no_sensitive_transport_data(
+    tmp_path: Path,
+):
+    identity = tmp_path / "agent.pem"
+    identity.write_text("not-a-real-key\n", encoding="utf-8")
+    request = ReleaseRequest(
+        repo=tmp_path,
+        revision="1" * 40,
+        artifact_root=tmp_path / "artifacts",
+        ssh=SshConfig(host="server.example.invalid", user="ubuntu", identity=identity),
+    )
+    remote_state = json.dumps(
+        {
+            "current_release": "1" * 40,
+            "current_path": f"/opt/car-agent/releases/{'1' * 40}",
+            "runtime_project_name": "caragent",
+            "approved_infrastructure_digest": None,
+            "disk_available_bytes": 9,
+            "memory_available_bytes": 8,
+            "release_lock_available": True,
+            "runtime_project_ready": True,
+            "shared_scripts_ready": True,
+            "shared_models_ready": True,
+        }
+    )
+    endpoints = dev.cloud_endpoints("demo.ts.net")
+    urls = {
+        "https://demo.ts.net/": dev.HttpResponse(200),
+        "https://demo.ts.net:8443/healthz": dev.HttpResponse(200),
+        "https://demo.ts.net:8444/api/llm/providers": dev.HttpResponse(200),
+        "https://demo.ts.net:8445/": dev.HttpResponse(200),
+        "https://demo.ts.net:8446/healthz": dev.HttpResponse(503),
+    }
+    runner = FakeStatusRunner(
+        [command_result("ssh", "remote-preflight", stdout=remote_state)], urls
+    )
+
+    status = dev.inspect_cloud_status(request, endpoints, runner)
+    serialized = json.dumps(dev.stack_status_to_dict(status))
+
+    assert status.target == "cloud"
+    assert status.release_sha == "1" * 40
+    assert status.healthy_endpoints == 4
+    assert runner.commands[0][0] == "ssh"
+    assert all(
+        forbidden not in " ".join(command)
+        for command in runner.commands
+        for forbidden in ("deploy", "docker", "tailscale")
+    )
+    assert "super-secret-token" not in serialized
+    assert "postgresql://" not in serialized
+    assert "PRIVATE KEY" not in serialized
+
+
+def test_inspect_status_redacts_sensitive_probe_exception_text(tmp_path: Path):
+    urls = {
+        "http://localhost:5173/": RuntimeError(
+            "super-secret-token postgresql://user:pass@db/private "
+            "-----BEGIN PRIVATE KEY-----"
+        ),
+        "http://localhost:8090/healthz": dev.HttpResponse(200),
+        "http://localhost:50059/api/llm/providers": dev.HttpResponse(200),
+        "http://localhost:5174/": dev.HttpResponse(200),
+        "http://localhost:8092/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [command_result("docker", "info", returncode=1)], urls
+    )
+
+    status = dev.inspect_local_status(tmp_path, dev.LOCAL_ENDPOINTS, runner)
+    serialized = json.dumps(dev.stack_status_to_dict(status))
+
+    assert status.endpoint_results[0].status == "network_error"
+    assert status.healthy_endpoints == 4
+    assert runner.commands == [("docker", "info")]
+    assert status.warnings == ("local Docker daemon is unavailable",)
+    assert "super-secret-token" not in serialized
+    assert "postgresql://" not in serialized
+    assert "PRIVATE KEY" not in serialized
