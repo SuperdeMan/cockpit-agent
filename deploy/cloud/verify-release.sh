@@ -90,13 +90,13 @@ verify_https_endpoints() {
       --write-out '%{http_code}' --max-time 20 "${url}")"
     [[ "${code}" == "200" ]] || die "HTTPS endpoint ${name} failed"
     HTTPS_RESULTS+="${name}=${code}"$'\n'
-  done <<EOF
-hmi\thttps://${fqdn}/
-edge\thttps://${fqdn}:8443/healthz
-llm\thttps://${fqdn}:8444/api/llm/providers
-dashboard\thttps://${fqdn}:8445/
-collector\thttps://${fqdn}:8446/healthz
-EOF
+  done < <(
+    printf 'hmi\thttps://%s/\n' "${fqdn}"
+    printf 'edge\thttps://%s:8443/healthz\n' "${fqdn}"
+    printf 'llm\thttps://%s:8444/api/llm/providers\n' "${fqdn}"
+    printf 'dashboard\thttps://%s:8445/\n' "${fqdn}"
+    printf 'collector\thttps://%s:8446/healthz\n' "${fqdn}"
+  )
 }
 
 run_wss_probes() {

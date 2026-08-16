@@ -308,7 +308,7 @@ def test_activation_orders_images_models_backup_switch_up_verify():
         "run_required_backup",
         'switch_current "${release_dir}"',
         'compose_up_release "${release_dir}" "${sha}"',
-        'if ! verify_release "${sha}"',
+        'if ! ( verify_release "${sha}" ); then',
     ]
     positions = []
     cursor = 0
@@ -372,6 +372,43 @@ def test_release_verify_covers_exact_private_ingress_and_data_dependencies():
         "tailnet only",
     ):
         assert required in text
+
+
+def test_https_verifier_sends_five_individual_urls(tmp_path: Path):
+    calls = tmp_path / "curl-calls"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        CALLS="$1"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$2"
+        curl() {
+          printf '%s\n' "${@: -1}" >>"$CALLS"
+          printf '200'
+        }
+        verify_https_endpoints "car-agent-dev.example.ts.net"
+        printf '%s' "$HTTPS_RESULTS"
+        """,
+        calls,
+        VERIFY_RELEASE_PATH,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "https://car-agent-dev.example.ts.net/",
+        "https://car-agent-dev.example.ts.net:8443/healthz",
+        "https://car-agent-dev.example.ts.net:8444/api/llm/providers",
+        "https://car-agent-dev.example.ts.net:8445/",
+        "https://car-agent-dev.example.ts.net:8446/healthz",
+    ]
+    assert result.stdout.splitlines() == [
+        "hmi=200",
+        "edge=200",
+        "llm=200",
+        "dashboard=200",
+        "collector=200",
+    ]
 
 
 def test_release_probes_have_no_dangerous_utterances():
@@ -907,6 +944,169 @@ def test_verify_failure_restores_old_current_and_records_terminal_state(
     assert result.returncode != 0
     assert Path(current_target.read_text(encoding="utf-8")) == previous
     assert expected_state in state_log.read_text(encoding="utf-8")
+
+
+def test_verify_die_is_caught_and_activation_restores_previous_release(
+    tmp_path: Path,
+):
+    previous = tmp_path / "releases" / "aaaaaaa"
+    release = tmp_path / "releases" / "bbbbbbb"
+    previous.mkdir(parents=True)
+    release.mkdir(parents=True)
+    (tmp_path / "builds" / "bbbbbbb" / "src" / "deploy" / "cloud").mkdir(
+        parents=True
+    )
+    current_target = tmp_path / "current-target"
+    current_target.write_text(str(previous), encoding="utf-8")
+    state_log = tmp_path / "state.log"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        CURRENT_TARGET="$1/current-target"
+        NEW_DIR="$1/releases/bbbbbbb"
+        STATE_LOG="$2"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        validate_release_selector() { :; }
+        source "$3"
+        readlink() {
+          if [[ "$*" == "-f $RELEASE_ROOT/current" ]]; then
+            cat "$CURRENT_TARGET"
+          else
+            command readlink "$@"
+          fi
+        }
+        switch_current() { printf '%s' "$1" >"$CURRENT_TARGET"; }
+        load_runtime_project_name() { RUNTIME_PROJECT_NAME="aaaaaaa"; }
+        verify_release_images() { :; }
+        assemble_release() { printf '%s\n' "$NEW_DIR"; }
+        validate_runtime_release() { :; }
+        run_required_backup() { :; }
+        compose_up_release() { :; }
+        verify_release() {
+          [[ "$1" == "bbbbbbb" ]] && die "new release verification failed"
+          return 0
+        }
+        write_release_state() { printf '%s\n' "$1" >>"$STATE_LOG"; }
+        activate_release "bbbbbbb"
+        """,
+        tmp_path,
+        state_log,
+        ACTIVATE_RELEASE_PATH,
+    )
+
+    assert result.returncode != 0
+    assert Path(current_target.read_text(encoding="utf-8")) == previous
+    assert "VERIFY_FAILED_ROLLED_BACK" in state_log.read_text(encoding="utf-8")
+
+
+def test_verify_die_during_restore_records_rollback_failed(tmp_path: Path):
+    previous = tmp_path / "releases" / "aaaaaaa"
+    release = tmp_path / "releases" / "bbbbbbb"
+    previous.mkdir(parents=True)
+    release.mkdir(parents=True)
+    (tmp_path / "builds" / "bbbbbbb" / "src" / "deploy" / "cloud").mkdir(
+        parents=True
+    )
+    current_target = tmp_path / "current-target"
+    current_target.write_text(str(previous), encoding="utf-8")
+    state_log = tmp_path / "state.log"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        CURRENT_TARGET="$1/current-target"
+        NEW_DIR="$1/releases/bbbbbbb"
+        STATE_LOG="$2"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        validate_release_selector() { :; }
+        source "$3"
+        readlink() {
+          if [[ "$*" == "-f $RELEASE_ROOT/current" ]]; then
+            cat "$CURRENT_TARGET"
+          else
+            command readlink "$@"
+          fi
+        }
+        switch_current() { printf '%s' "$1" >"$CURRENT_TARGET"; }
+        load_runtime_project_name() { RUNTIME_PROJECT_NAME="aaaaaaa"; }
+        verify_release_images() { :; }
+        assemble_release() { printf '%s\n' "$NEW_DIR"; }
+        validate_runtime_release() { :; }
+        run_required_backup() { :; }
+        compose_up_release() { :; }
+        verify_release() {
+          [[ "$1" == "bbbbbbb" ]] && return 1
+          die "previous release verification failed"
+        }
+        write_release_state() { printf '%s\n' "$1" >>"$STATE_LOG"; }
+        activate_release "bbbbbbb"
+        """,
+        tmp_path,
+        state_log,
+        ACTIVATE_RELEASE_PATH,
+    )
+
+    assert result.returncode != 0
+    assert Path(current_target.read_text(encoding="utf-8")) == previous
+    assert "ROLLBACK_FAILED" in state_log.read_text(encoding="utf-8")
+
+
+def test_verify_die_during_explicit_rollback_restores_original_release(
+    tmp_path: Path,
+):
+    original = tmp_path / "releases" / "aaaaaaa"
+    target = tmp_path / "releases" / "bbbbbbb"
+    original.mkdir(parents=True)
+    (target / "deploy" / "cloud").mkdir(parents=True)
+    (target / "deploy" / "cloud" / "release-services.json").write_text(
+        "{}\n", encoding="utf-8"
+    )
+    current_target = tmp_path / "current-target"
+    current_target.write_text(str(original), encoding="utf-8")
+    state_log = tmp_path / "state.log"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$1/shared"
+        CURRENT_TARGET="$1/current-target"
+        STATE_LOG="$2"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$3"
+        readlink() {
+          if [[ "$*" == "-f $RELEASE_ROOT/current" ]]; then
+            cat "$CURRENT_TARGET"
+          else
+            command readlink "$@"
+          fi
+        }
+        switch_current() { printf '%s' "$1" >"$CURRENT_TARGET"; }
+        load_runtime_project_name() { RUNTIME_PROJECT_NAME="aaaaaaa"; }
+        validate_runtime_release() { :; }
+        verify_release_images() { :; }
+        run_required_backup() { :; }
+        compose_up_release() { :; }
+        verify_release() {
+          [[ "$1" == "bbbbbbb" ]] && die "rollback target verification failed"
+          return 0
+        }
+        write_release_state() { printf '%s\n' "$1" >>"$STATE_LOG"; }
+        rollback_release "bbbbbbb"
+        """,
+        tmp_path,
+        state_log,
+        ACTIVATE_RELEASE_PATH,
+    )
+
+    assert result.returncode != 0
+    assert Path(current_target.read_text(encoding="utf-8")) == original
+    assert "ROLLBACK_FAILED" in state_log.read_text(encoding="utf-8")
 
 
 def test_backup_failure_stops_before_current_switch(tmp_path: Path):

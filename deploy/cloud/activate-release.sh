@@ -190,7 +190,7 @@ restore_previous_release() {
     write_release_state "ROLLBACK_FAILED" "${failed_sha}" "${previous_sha}"
     return 1
   fi
-  if ! verify_release "${previous_sha}"; then
+  if ! ( verify_release "${previous_sha}" ); then
     write_release_state "ROLLBACK_FAILED" "${failed_sha}" "${previous_sha}"
     return 1
   fi
@@ -226,7 +226,7 @@ activate_release() {
       || die "ROLLBACK_FAILED"
     return 1
   fi
-  if ! verify_release "${sha}"; then
+  if ! ( verify_release "${sha}" ); then
     restore_previous_release \
       "${previous_dir}" "${previous_sha}" "${sha}" \
       "VERIFY_FAILED_ROLLED_BACK" \
@@ -253,7 +253,7 @@ rollback_release() {
   run_required_backup
   switch_current "${target_dir}"
   if ! compose_up_release "${target_dir}" "${target_sha}" \
-      || ! verify_release "${target_sha}"; then
+      || ! ( verify_release "${target_sha}" ); then
     restore_previous_release \
       "${previous_dir}" "${previous_sha}" "${target_sha}" \
       "ROLLBACK_FAILED" \
