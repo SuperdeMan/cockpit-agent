@@ -435,6 +435,7 @@ def test_snapshot_uses_locked_image_digest_and_never_pulls(tmp_path: Path):
     collector_run = next(call for call in docker_runs if "collector.db.partial" in call[-1])
     assert "--volumes-from" not in collector_run
     assert "type=volume,source=car-agent-obs-data,target=/data,readonly" in collector_run
+    assert "mode=ro&immutable=1" in collector_run[-1]
 
 
 def test_final_resolves_all_writer_identity_before_stop_and_recovers_on_failure(tmp_path: Path):

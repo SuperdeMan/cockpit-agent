@@ -1444,7 +1444,7 @@ def capture_collector(
 ) -> None:
     program = (
         "import sqlite3;"
-        "s=sqlite3.connect('file:/data/obs.db?mode=ro',uri=True);"
+        "s=sqlite3.connect('file:/data/obs.db?mode=ro&immutable=1',uri=True);"
         "d=sqlite3.connect('/snapshot/collector.db.partial');"
         "s.backup(d);d.execute('PRAGMA wal_checkpoint');d.close();s.close()"
     )
