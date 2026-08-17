@@ -1631,11 +1631,14 @@ clear_apply_failure_trap() {
 begin_migration_fence() {
   local migration_id="$1" fence_schema
   declare -F transaction_fence_begin >/dev/null || return 0
-  run_recoverable_step_capture python3 - "${IMPORT_ROOT}/${migration_id}/manifest.json" <<'PY'
-import hashlib,json,sys
+  run_recoverable_step_capture python3 - "${IMPORT_ROOT}/${migration_id}/preflight-current.json" <<'PY'
+import hashlib,json,re,sys
 from pathlib import Path
-m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-parts=[m["postgres"]["schema_fingerprint"],m["redis"]["schema_fingerprint"],m["collector"]["schema_fingerprint"]]
+marker=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+stores=marker["current"]["stores"]
+parts=[stores[name]["schema_fingerprint"] for name in ("postgres","redis","collector")]
+if any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in parts):
+    raise SystemExit("preflight store fingerprint is invalid")
 print(hashlib.sha256(":".join(parts).encode()).hexdigest())
 PY
   [[ "${STEP_RC}" -eq 0 ]] || return "${STEP_RC}"

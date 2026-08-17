@@ -2063,6 +2063,14 @@ def test_migration_establishes_fence_before_stop_and_clears_only_at_terminal_sta
     assert 'transaction_fence_assert_clear' in acquire
 
 
+def test_migration_fence_uses_the_validated_preflight_store_fingerprints():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^begin_migration_fence\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert 'preflight-current.json' in body
+    assert 'stores[name]["schema_fingerprint"]' in body
+    assert 'm["redis"]["schema_fingerprint"]' not in body
+
+
 def test_redis_aof_validation_allows_empty_private_incr_but_requires_nonempty_base():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^validate_redis_aof_volume\(\) \{(?P<body>.*?)^\}", text)["body"]
