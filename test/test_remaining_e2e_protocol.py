@@ -749,6 +749,9 @@ def test_real_provider_session_failure_satisfies_runner_result_contract(
         signed_identity=False,
         persistent_data=False,
         memory_sessions=0,
+        # 与 test/e2e_manifest.yaml 里同名用例逐字一致（真栈远程车道的两个声明位）。
+        remote_safe=False,
+        remote_mutating=False,
         nightly=None,
     )
 
