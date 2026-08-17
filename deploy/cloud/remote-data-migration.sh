@@ -1261,7 +1261,8 @@ update_crash_journal() {
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
   partial="${directory}/journal.${run_id}.json.partial"
   python3 - "${directory}/journal.json" "${partial}" "${migration_id}" "${direction}" \
-    "${state}" "${backup_stamp}" "${store}" "${phase}" "${failed_step}" "${failed_rc}" <<'PY' || return $?
+    "${state}" "${backup_stamp}" "${store}" "${phase}" "${failed_step}" "${failed_rc}" \
+    "${BACKUP_ROOT}" <<'PY' || return $?
 import json,os,secrets,sys
 from datetime import datetime,timezone
 from pathlib import Path
@@ -1279,6 +1280,7 @@ if target.exists():
 if payload is None:
     payload={"schema_version":1,"migration_id":migration_id,"operation_id":secrets.token_hex(16),
              "direction":direction,"state":state,"backup_stamp":stamp or None,
+             "backup_files":None,
              "stores":{name:{"phase":"pending"} for name in ("postgres","redis","collector")},
              "failed_step":None,"failed_rc":None,"attempts":[]}
 if payload["direction"]!=direction:
@@ -1290,7 +1292,15 @@ payload["attempts"].append({"operation_id":payload["operation_id"],"direction":d
                             "phase":phase or None,"failed_step":failed_step,
                             "failed_rc":failed_rc if failed_step else None})
 payload["state"]=state
-if stamp: payload["backup_stamp"]=stamp
+if stamp:
+    if payload.get("backup_stamp")!=stamp or payload.get("backup_files") is None:
+        manifest=Path(sys.argv[11])/f"{stamp}.backup-manifest.json"
+        if manifest.is_symlink() or manifest.stat().st_size>64*1024: raise SystemExit("unsafe journal backup manifest")
+        backup=json.loads(manifest.read_text(encoding="utf-8"))
+        if backup.get("backup_stamp")!=stamp or set(backup.get("files",{}))!={"postgres.dump","redis.rdb","collector.sql.gz"}:
+            raise SystemExit("journal backup manifest is invalid")
+        payload["backup_stamp"]=stamp
+        payload["backup_files"]=backup["files"]
 if store and phase: payload["stores"][store]["phase"]=phase
 payload["failed_step"]=failed_step
 payload["failed_rc"]=failed_rc if failed_step else None
@@ -1321,7 +1331,7 @@ payload=json.loads(path.read_text(encoding="utf-8"))
 if payload.get("schema_version")!=1 or payload.get("migration_id")!=sys.argv[2]: raise SystemExit("recovery journal identity mismatch")
 state=payload.get("state"); stamp=payload.get("backup_stamp") or ""
 without_backup={"STOPPING_WRITERS","STOP_FAILED","BACKUP_FAILED"}
-with_backup={"BACKED_UP","REPLACING","INTERRUPTED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}
+with_backup={"BACKED_UP","REPLACING","INTERRUPTED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED","ROLLED_BACK"}
 if state not in without_backup|with_backup: raise SystemExit("journal is not recoverable")
 if state in with_backup and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("journal backup stamp is invalid")
 print(state,stamp)
@@ -1414,10 +1424,10 @@ rollback_all() {
     rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-verified" \
       update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" verified || return $?
   done
-  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" state-complete \
-    write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return $?
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" journal-complete \
     update_crash_journal "${migration_id}" "${direction}" ROLLED_BACK "${backup_stamp}" || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" state-complete \
+    write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return $?
 }
 
 fail_and_rollback() {
@@ -1597,6 +1607,11 @@ recover_migration() {
     start_current_release || return $?
     update_crash_journal "${migration_id}" recover RECOVERED_WITHOUT_REPLACE || return $?
     printf '{"migration_id":"%s","status":"RECOVERED"}\n' "${migration_id}"
+    return 0
+  fi
+  if [[ "${state}" == "ROLLED_BACK" ]]; then
+    write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return $?
+    printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
     return 0
   fi
   validate_backup_manifest "${backup_stamp}" || return $?

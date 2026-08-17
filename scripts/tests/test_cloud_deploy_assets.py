@@ -1849,7 +1849,7 @@ def test_apply_installs_durable_crash_journal_and_signal_guard_before_first_stop
     assert apply.index("begin_crash_journal") < apply.index("install_apply_failure_trap")
     assert apply.index("install_apply_failure_trap") < apply.index("stop_application_writers")
     journal = re.search(r"(?ms)^update_crash_journal\(\) \{(?P<body>.*?)^\}", text)["body"]
-    for token in ("operation_id", "direction", "stores", "phase", "failed_step", "failed_rc"):
+    for token in ("operation_id", "direction", "stores", "phase", "failed_step", "failed_rc", "backup_files"):
         assert token in journal
     assert "os.fsync" in journal and "os.O_DIRECTORY" in journal
     traps = re.search(r"(?ms)^install_apply_failure_trap\(\) \{(?P<body>.*?)^\}", text)["body"]
@@ -1911,6 +1911,32 @@ main inspect-current
     )
     assert completed.returncode == 0, completed.stderr
     assert not lock_marker.exists()
+
+
+def test_recover_finishes_status_after_crash_between_journal_and_state_commit(tmp_path: Path):
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    rollback = re.search(r"(?ms)^rollback_all\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert rollback.index("journal-complete") < rollback.index("state-complete")
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "recover-complete.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+load_runtime() {{ :; }}
+require_runtime_batch() {{ :; }}
+read_recovery_journal() {{ printf 'ROLLED_BACK 20260817T010203Z\n'; }}
+write_migration_state() {{ printf 'state:%s\n' "$1" >>'{events.as_posix()}'; }}
+rollback_all() {{ printf 'unexpected-rollback\n' >>'{events.as_posix()}'; return 1; }}
+recover_migration 20260817T010203Z-abcdef0-online
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == ["state:ROLLED_BACK"]
 
 
 def test_migration_preflight_locks_complete_running_topology_and_backup_timer_health():
