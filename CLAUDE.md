@@ -133,6 +133,7 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 
 ### 可切换远程真栈实施期红线
 
+真栈动作前先运行 `python scripts/dev_stack.py target show` 确认目标。
 任何真栈动作（包括运行 E2E、Compose 或 `make up`）前，必须由统一入口按仓库根目录定位并读取
 `dev-stack.local`。它是仓库根目录的 Git-ignore 文件，不能按当前工作目录误判缺失：文件
 缺失按 `target=local` 处理，文件损坏则 fail closed。改动任何脚本目录或 manifest 前同样
@@ -141,8 +142,10 @@ token、密码、私钥或 URL。`target=cloud` 禁止启动本地 Compose，本
 检查和 Vite；`target=local` 继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一运行时
 来源。
 
-cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit/merge/push。未显式标记
-`remote_safe` 的 E2E 不得在 cloud 缺省运行，高影响开关不替代人工红线授权。本阶段不得
+cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit/merge/push；`git push`
+仍需单独授权。未显式标记 `remote_safe` 的 E2E 不得在 cloud 缺省运行；
+`remote_mutating=true` 只允许精确 `--id` + `--allow-mutating`；该开关不替代支付、商户写、
+真实车控、删数据或系统配置的本轮人工红线授权。本阶段不得
 自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
 
 本地三存储迁云使用 `scripts/cloud_data_migration.py`：online 不停本地写入，final 必须取得

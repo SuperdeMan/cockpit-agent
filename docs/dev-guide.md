@@ -1,7 +1,7 @@
 # 开发上手指南
 
-> 以下命令在对应实现提交合入后可用。用户入口固定为 `scripts/dev_stack.py`；本阶段仅记录
-> 入口与边界，不宣称尚未实现的命令已经验证。
+> 用户入口固定为 `scripts/dev_stack.py`。本章命令已有静态/fake 回归；
+> 本文不声称已在真实云主机运行。
 
 ## 可切换真栈
 
@@ -11,6 +11,29 @@ Git-ignore 文件，不能按当前工作目录误判缺失；缺失按 `target=
 本地只做编辑、单测、静态检查和 Vite；`target=local` 只用根 `compose.yaml` / `make up`，根
 `.env` 是唯一运行时来源。cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit、
 merge 或 push；未显式 `remote_safe` 的 E2E 不在 cloud 缺省运行。
+`remote_mutating=true` 仍要精确 `--id` + `--allow-mutating` 与本轮人工红线授权。
+
+### 日常三条路径
+
+```powershell
+# A. 纯代码/单测：不需要 Docker
+python -m pytest path/to/changed_tests.py -q
+
+# B. 本地前端连接已选后端：只启动 Vite
+python scripts/dev_stack.py target show
+python scripts/dev_stack.py hmi
+python scripts/dev_stack.py dashboard
+
+# C. 已提交 main 的后端更新：先 dry-run，再单独授权 apply
+python scripts/dev_stack.py deploy --sha HEAD
+python scripts/dev_stack.py deploy --sha HEAD --apply
+python scripts/dev_stack.py verify
+```
+
+切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
+Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。
+HMI/Dashboard 在 cloud 目标下仍是本机 Vite，经 Tailnet HTTPS/WSS 访问后端；
+KWS/VAD 模型由页面加载，推理仍在浏览器本地。
 
 面向第一次跑起本项目、或要单独调试某个服务的开发者。整栈说明见根 `README.md`，本文补齐**工具链、codegen、单服务调试、Windows 注意、常见坑**。
 

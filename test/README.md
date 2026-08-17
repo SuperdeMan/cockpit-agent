@@ -158,10 +158,25 @@ python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escal
 E2E 清单的唯一真相源是 `test/e2e_manifest.yaml`，统一入口是 `scripts/run_e2e.py`；PowerShell、
 shell 与 `make e2e` 都只是参数透传，不再各自维护脚本数组。常用门禁：
 
-> 以下命令在对应实现提交合入后可用。远程策略字段固定为 `remote_safe` / `remote_mutating`；
-> 本段只定义契约，不宣称尚未实现的命令已经验证。未显式 `remote_safe` 的 E2E 不得在 cloud
-> 缺省运行；E2E 运行前也由统一入口按仓库根目录读取根 `dev-stack.local`；`remote_mutating`
-> 仍需人工红线授权。
+> 远程策略字段固定为 `remote_safe` / `remote_mutating`。本段命令已有静态/fake 回归，
+> 不声称已在真实云主机运行。E2E 运行前由统一入口按仓库根目录读取
+> `dev-stack.local`。
+
+manifest 的三种状态不允许默认：`true/false` 表示 cloud 缺省可读；`false/true`
+只允许精确 `--id` + `--allow-mutating`；`false/false` 在 cloud 永久拒绝，直到完成远程
+端点化和独立 review。cloud 禁止本地 Compose、非 root profile、signed identity 和 fixture
+pre-step。每轮使用独立 run/user/session，结果记录 target/release/case 策略与 `e2e`
+锁摘要；不记 token、私钥或完整远程日志。
+
+```powershell
+python scripts/run_e2e.py --target cloud --dry-run
+python scripts/run_e2e.py --target cloud --id e2e_remote_safe
+
+# 仅当 manifest 已标 remote_mutating:true 且取得本轮精确人工授权
+python scripts/run_e2e.py --target cloud --id e2e_reviewed_mutation --allow-mutating
+```
+
+`--allow-mutating` 不覆盖支付、商户写、真实车控、数据删除或系统配置的人工红线授权。
 
 ```bash
 python scripts/run_e2e.py --check --milestone M-A --lane milestone --stale-policy warn

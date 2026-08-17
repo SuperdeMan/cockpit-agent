@@ -4,16 +4,18 @@
 
 ## 运行入口
 
-> 以下命令在对应实现提交合入后可用。远程发布互斥锁固定为
-> `/opt/car-agent/shared/locks/release.lock`；本段只定义入口与边界，不宣称尚未实现的命令
-> 已经验证。
+> 远程互斥锁固定为 `/opt/car-agent/shared/locks/release.lock`。本段只记录已有
+> 静态/fake 回归的入口与边界，不声称已在真实云主机运行。
 
-- 发布前必须持有上述互斥锁；不得绕过锁并发 release、rollback 或 verify。
+- `status` 是只读查询，不取锁。release、rollback、backup、data migration 和 remote E2E
+  共用上述锁；冲突立即失败，只报告 `release|rollback|backup|migration|e2e|unknown`
+  占用类别。不得绕过锁并发真栈事务。
 - `dev-stack.local` 是仓库根目录的 Git-ignore 文件；统一入口必须按仓库根目录定位，不能按
   当前工作目录误判缺失。缺失按 `target=local`，损坏 fail closed；只允许
   `target=local|cloud`，且不得保存 token、密码、私钥或 URL。
 - `target=cloud` 禁止启动本地 Compose；cloud deploy 只接受干净、已提交、main 可达的 SHA，
   不自动 commit、merge 或 push。
+- 本地 HMI/Dashboard Vite 经 Tailnet HTTPS/WSS 连接 cloud；KWS/VAD 仍在浏览器本地运行。
 
 - 第一份 Compose 文件始终是仓库根 `compose.yaml`。
 - 第二份文件才是本目录的 `compose.cloud.yaml`。
