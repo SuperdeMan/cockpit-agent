@@ -4125,3 +4125,92 @@ shadow」的红线断言写的是 `uses == ["plan.actionability", "_actionabilit
 
 > **判据：读数必须对得上代码版本**——「代码里有 ≠ 镜像里有」的又一形态（B3 那条）。
 > 每次真栈取数前用 `docker exec grep` 点一遍关键符号在不在容器里，成本几秒。
+
+## §54 2026-08-17 CI 连红 55 次收口：时区尺子 / Linux 属主 / 契约漂移
+
+最后一次 CI 绿是 **`#349`（2026-08-15，`41c4d54`）**；此后 `#350`–`#404` **连红 55 次**，
+`python-tests` **每一次**都红。本批把 15 条真失败全部收口。
+
+### §54.1 先修诊断通道：annotation 有 10 条上限，报的不是全集
+
+CI 那一步已经把失败逐条升成 `::error::` annotation（正是为了「没有 admin 读不到 job 日志」
+那笔账），但 **GitHub 每个 step 只保留 10 条 error annotation**。实际读到 9 条：
+组 1 的 1 条组名 + 7 条 FAILED，组 2（`scripts/tests`）的 1 条组名 + **只有 1 条** FAILED。
+按 Linux 容器复现，组 2 真实是 **8 条**——**被截断的那 7 条从未出现在任何可读通道里**。
+
+> 判据：**「annotation 里有几条」不等于「红了几条」**。
+> 上限是按 step 计的，先把组名行也算进去；数到 9~10 就要假定后面被吃了。
+
+诊断通道两条（沿用 `ci-green-linux-repro`）：`git credential fill` 拿本机 push 凭证当
+Bearer token 打 `/repos/.../check-runs/{job_id}/annotations`（job 日志 403，annotation 200）；
+全集靠 **Linux 容器复现**——`git bundle --all` + `python:3.12` + `useradd runner` 非 root 跑。
+⚠ 容器必须加 `--init`：PID 1 是 `sleep infinity` 时不收割僵尸，`scripts/tests` 会多出
+**4 条假红**（reap 家族），记忆里记的「3 条」这次是 4 条。
+
+### §54.2 A 族（6 条）：生产代码搬去业务墙钟，尺子留在宿主本地时
+
+`3b8cb39`（EVA 双档复跑抓修「容器 TZ=UTC 整体偏 8 小时」）把 `navigation._parse_arrive_by`
+等一族生产代码收敛到 `runtime/clock.py`，**而断言仍用 `time.mktime` / `time.localtime`**
+——后者按**跑测试那台机器**的时区解释。宿主是 UTC+8 时两把尺子恰好重合，GitHub runner 是
+UTC 就分家：`_parse_arrive_by("5点", now=14:00)` 本机得 17:00、CI 得次日 05:00（读成 21:00）。
+
+`3b8cb39` 正好落在最后一次 CI 绿之后——**修 A 缺陷的那次提交，制造了 B 缺陷**。
+
+修法：六条断言改用 `runtime.clock.epoch_at()` 构造、`local_dt()` 回读，与
+`agents/_sdk/tests/test_timewindow.py` 早就写对的那份同形。
+
+### §54.3 B 族（8 条）：写死 `chown(0,0)` 等于「只有 root 跑得动」
+
+`deploy/cloud/redis_volume_prepare.py::_privatize` 写 `os.chown(entry, 0, 0)`。
+内核**禁止非 root 把文件送给 root**，CI runner 是普通用户 `runner` ⇒ EPERM，
+8 条 Redis 迁移用例全红；**Windows 没有 `os.chown`、`hasattr` 整段跳过，本地永远不红**
+（`ci-green-linux-repro` 判据 #1 的属主版）。
+
+修法：属主归一按**当前有效身份** `os.geteuid()/os.getegid()`。生产里本工具跑在 helper
+容器内（collector 镜像无 `USER`，默认 root），`geteuid()==0`，与写死常量**逐字等价**
+——所以这是修法不是绕过；「rollback 树必须 root:root」由远端
+`remote-data-migration.sh::require_runtime_batch` fail-closed 复核，不靠这里的常量。
+
+### §54.4 C 族（1 条）：dataclass 加了必填字段，第二个构造点没跟
+
+`E2ECase` 新增 `remote_safe` / `remote_mutating`（可切换真栈那批），
+`scripts/tests/test_run_e2e.py` 跟了，`test/test_remaining_e2e_protocol.py` 没跟 ⇒ `TypeError`。
+值取自 `test/e2e_manifest.yaml` 同名用例（唯一真相源），不是猜的。
+
+### §54.5 守卫：把「作用域写错」也机制化
+
+这一族此前已复发四次，源码级守卫 `test_wall_clock_modules_have_no_naked_local_time` 早就有，
+**但它只管生产模块**，而旁边那条注释白纸黑字写着
+「测试与 scripts 不在管辖内——**它们跑在 UTC+8 宿主上**」。第五次复发就栽在这个前提上。
+
+新增 `test_wall_clock_tests_pin_business_timezone_not_host_local`：全仓测试文件扫描，
+断言里不许出现宿主本地时钟调用。反向验证两头都做（注入 `_t.mktime` 当场红、修完全绿）。
+
+顺手修了守卫自身两个真缺陷：
+- **别名导入整个绕过**：原正则 `\btime\.` 对 `_time.mktime(` **没有词边界**、纹丝不动
+  ——而 `nearby/tests` 用的正是 `import time as _time`，**CI 真红的一条恰好在守卫盲区里**。
+  改成按属性名匹配。`datetime.now()` 保持窄式：放宽成 `.now()` 会误伤 provider 自己的
+  `p.now()`（四处）——**扫不全很糟，扫误了也很糟**。
+- **f-string 在 Python 3.12 起不是 `tokenize.STRING`**（拆成 `FSTRING_START/MIDDLE/END`），
+  `_code_only` 剥不掉 ⇒ 同一条断言在 3.11/3.12 两档下严厉程度不同。只抹 `FSTRING_MIDDLE`。
+
+另加 `test_redis_prepare_privatizes_to_running_identity_not_hardcoded_root`（源码级，
+Windows 也能红），钉住别再写回 `chown(entry, 0, 0)`。
+
+### §54.6 读数
+
+- 本地全量（**全程 `TZ=UTC0`**，与 CI 同环境）：组 1 `test/ orchestrator/cloud/tests/
+  security/tests/ observability/tests/ agents/ runtime/tests/` **3953 / 11 skipped 零红**
+  （修前 7 红）。其余分组见 §4.0。
+- Linux 容器非 root + `--init`：`scripts/tests` **1060 passed / 55 skipped 零红**（修前 8 红）。
+  ⚠ 8 条 redis prepare 用例逐条确认是 **PASSED 不是 SKIPPED**——skip 长得跟绿一样。
+- 本批净增 **+2 用例**（守卫各 1）。
+
+### §54.7 顺带发现（未处理，记账）
+
+`scripts/tests/test_cloud_deploy_assets.py` 里 **41 条云端 shell 故障注入用例只在 Windows 跑**：
+`_git_bash()` 只找 `bash.exe`，Linux 上一律 `pytest.skip` ⇒ **它们在 CI 里从来没跑过**，
+只在泓舟这台机器上跑。守 `remote-data-migration.sh` 失败路径的那批断言，CI 是不设防的。
+
+`go-build-test` 那两次红与代码无关：`actions/setup-go` 下载 **429 Too Many Requests**
+（4 小时内 20 次推送 × 7 job 的下载配额）。20 次里只有 2 次命中，不改代码。
