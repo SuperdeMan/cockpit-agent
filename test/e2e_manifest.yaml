@@ -333,6 +333,20 @@ cases:
     remote_mutating: false
     nightly: {all: true}
 
+  - id: e2e_remote_safe
+    path: test/e2e_remote_safe.py
+    command: [python, test/e2e_remote_safe.py]
+    group: default
+    lanes: [milestone]
+    timeout_s: 180
+    profile: root
+    skip_reasons: [forbid]
+    signed_identity: false
+    persistent_data: true
+    memory_sessions: 0
+    remote_safe: true
+    remote_mutating: false
+
   - id: e2e_auth
     path: test/e2e_auth.py
     command: [python, test/e2e_auth.py]

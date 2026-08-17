@@ -211,12 +211,16 @@ EXPECTED: dict[
         "default", ("nightly", "milestone"), 300, "root", F,
         True, True, 0, "all",
     ),
+    "e2e_remote_safe": (
+        "default", ("milestone",), 180, "root", F,
+        False, True, 0, None,
+    ),
 }
 
 EXPECTED = {
     case_id: (
         *expected,
-        case_id in {"e2e_protocol_smoke", "e2e_tts_stream"},
+        case_id in {"e2e_protocol_smoke", "e2e_remote_safe", "e2e_tts_stream"},
         False,
     )
     for case_id, expected in EXPECTED.items()
@@ -897,7 +901,7 @@ def test_only_protocol_smoke_may_be_a_planned_missing_path(tmp_path: Path):
 def test_manifest_has_exact_inventory_and_schema():
     contract = _contract()
     manifest = contract.load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
-    assert len(manifest.cases) == 38
+    assert len(manifest.cases) == 39
     assert {case.id for case in manifest.cases} == set(EXPECTED)
 
     for case in manifest.cases:

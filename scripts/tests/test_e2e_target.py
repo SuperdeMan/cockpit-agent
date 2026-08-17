@@ -42,7 +42,9 @@ def test_cloud_default_selects_only_root_remote_safe_cases():
 
     assert selected
     assert all(case.remote_safe and case.profile == "root" for case in selected)
-    assert tuple(case.id for case in selected) == ("e2e_protocol_smoke",)
+    assert tuple(case.id for case in selected) == (
+        "e2e_protocol_smoke", "e2e_remote_safe",
+    )
     assert full is False
 
 
@@ -236,3 +238,16 @@ def test_cloud_runner_releases_remote_lock_in_finally(tmp_path: Path, monkeypatc
     assert [event[0] for event in events] == ["acquire", "release"]
     summary = json.loads(output.getvalue().splitlines()[-1])
     assert summary["remote_lock"]["kind"] == "e2e"
+
+
+def test_remote_safe_probe_uses_only_runner_endpoints_and_isolated_identity():
+    source = (ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8")
+    for name in (
+        "HMI_URL", "EDGE_HTTP_URL", "WS_URL", "AUDIO_API_URL",
+        "DASHBOARD_URL", "COLLECTOR_URL", "COLLECTOR_WS_URL",
+    ):
+        assert f'os.environ["{name}"]' in source
+    assert "localhost" not in source
+    assert '"memory_enabled": False' in source
+    assert "docker" not in source.lower()
+    assert "subprocess" not in source
