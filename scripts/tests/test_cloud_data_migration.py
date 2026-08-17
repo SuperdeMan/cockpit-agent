@@ -25,6 +25,22 @@ def test_redis_rdb_validation_accepts_legacy_and_redis_7_success_markers():
     assert not migration._redis_rdb_check_succeeded("RDB looks broken")
 
 
+def test_wait_for_nonempty_local_file_tolerates_delayed_docker_bind_sync(tmp_path, monkeypatch):
+    target = tmp_path / "collector.db.partial"
+    target.touch()
+    sleeps = []
+
+    def make_visible(delay):
+        sleeps.append(delay)
+        target.write_bytes(b"sqlite")
+
+    monkeypatch.setattr(migration.time, "sleep", make_visible)
+
+    migration._wait_for_nonempty_local_file(target, attempts=2, delay_s=0.01)
+
+    assert sleeps == [0.01]
+
+
 class FakeBinaryRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []

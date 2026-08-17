@@ -1384,6 +1384,20 @@ def private_replace(source: Path, destination: Path) -> None:
     os.replace(source, destination)
 
 
+def _wait_for_nonempty_local_file(
+    path: Path, *, attempts: int = 40, delay_s: float = 0.25,
+) -> None:
+    for attempt in range(attempts):
+        try:
+            if path.is_file() and not path.is_symlink() and path.stat().st_size > 0:
+                return
+        except OSError:
+            pass
+        if attempt + 1 < attempts:
+            time.sleep(delay_s)
+    raise MigrationError(f"snapshot file is invalid: {path.name}")
+
+
 def capture_postgres(
     service: SourceService,
     target: Path,
@@ -1442,6 +1456,7 @@ def capture_collector(
         ],
         cwd=repo,
     )
+    _wait_for_nonempty_local_file(directory / "collector.db.partial")
     private_replace(directory / "collector.db.partial", directory / "collector.db")
 
 
