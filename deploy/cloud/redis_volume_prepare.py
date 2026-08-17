@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import sys
@@ -98,6 +99,21 @@ def _remove_safe_tree(path: Path) -> None:
     _fsync_directory(path.parent)
 
 
+def _cleanup_marker_partials(rollback: Path) -> None:
+    pattern = re.compile(r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial")
+    changed = False
+    for entry in rollback.iterdir():
+        if pattern.fullmatch(entry.name) is None:
+            continue
+        metadata = entry.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            raise ValueError("Redis AOF marker partial is unsafe")
+        entry.unlink()
+        changed = True
+    if changed:
+        _fsync_directory(rollback)
+
+
 def finalize_aof(incoming: Path, data: Path, rollback: Path, expected_manifest_sha: str) -> None:
     source_sha = _digest(incoming)
     partial = data / "appendonlydir.migration.partial"
@@ -123,6 +139,7 @@ def prepare_redis_volume(
     data.mkdir(mode=0o700, parents=True, exist_ok=True)
     rollback.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(rollback, 0o700)
+    _cleanup_marker_partials(rollback)
     marker = rollback / "redis-replace.json"
     if marker.exists():
         if not _safe_entry(marker, directory=False) or marker.stat().st_size > 4096:

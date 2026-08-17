@@ -2286,12 +2286,16 @@ def test_redis_prepare_discards_safe_incomplete_aof_and_reuses_bound_complete_ma
     incoming.write_bytes(b"REDIS0011-new")
     data.mkdir()
     rollback.mkdir()
+    stale_marker = rollback / ".redis-aof-complete.json.123.partial"
+    stale_marker.write_text("partial", encoding="utf-8")
+    stale_marker.chmod(0o600)
     (data / "appendonlydir.migration.partial").mkdir()
     (data / "appendonlydir.migration.partial" / "partial.aof").write_bytes(b"partial")
     assert module.prepare_redis_volume(
         incoming, data, rollback, expected_manifest_sha="a" * 64,
     ) == "prepared"
     assert not (data / "appendonlydir.migration.partial").exists()
+    assert not stale_marker.exists()
     partial = data / "appendonlydir.migration.partial"
     partial.mkdir()
     (partial / "appendonly.aof.manifest").write_text("complete", encoding="utf-8")
@@ -2305,12 +2309,14 @@ def test_remote_store_recovery_uses_identity_bound_loader_and_atomic_completion_
     text = _required_text(REMOTE_MIGRATION_PATH)
     redis = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]
     collector = re.search(r"(?ms)^restore_collector_sql\(\) \{(?P<body>.*?)^\}", text)["body"]
+    runtime = re.search(r"(?ms)^require_runtime_batch\(\) \{(?P<body>.*?)^\}", text)["body"]
     for token in (
         "docker ps -a -q", "com.car-agent.migration-id", "com.car-agent.role=redis-loader",
         "appendonlydir.migration.partial", "--complete", "manifest_sha",
     ):
         assert token in redis
     assert redis.index("docker ps -a -q") < redis.index("prepare_state=")
+    assert r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial" in runtime
     for token in ("collector.db.partial", "collector-restore.json", "source_sha256", "os.replace"):
         assert token in collector
 

@@ -319,8 +319,13 @@ try:
                     if bucket in collector_buckets:
                         validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}, {"obs.db"})
                     else:
-                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir", "redis-replace.json", "redis-aof-complete.json"}):
+                        marker_partials={name for name in bucket_entries if re.fullmatch(
+                            r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial",name
+                        )}
+                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir", "redis-replace.json", "redis-aof-complete.json"}|marker_partials):
                             raise SystemExit("unknown runtime batch entry")
+                        for name in marker_partials:
+                            os.close(opened(bucket_fd,name))
                         if "dump.rdb" in bucket_entries:
                             os.close(opened(bucket_fd, "dump.rdb"))
                         if "redis-replace.json" in bucket_entries:
