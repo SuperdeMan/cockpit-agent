@@ -317,7 +317,10 @@ try:
                 try:
                     bucket_entries = set(os.listdir(bucket_fd))
                     if bucket in collector_buckets:
-                        validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}, {"obs.db"})
+                        collector_partials={name for name in bucket_entries if re.fullmatch(
+                            r"[.]obs[.]db(?:-wal|-shm)?[.]migration[.]partial",name
+                        )}
+                        validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}|collector_partials, {"obs.db"})
                     else:
                         marker_partials={name for name in bucket_entries if re.fullmatch(
                             r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial",name
@@ -1110,7 +1113,7 @@ install_collector_db() {
   docker run --rm --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${database}"),target=/incoming,readonly" \
-    --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/collector_volume_replace.py,target=/tool.py,readonly" \
+    --mount "type=bind,source=${SCRIPT_ROOT}/collector_volume_replace.py,target=/tool.py,readonly" \
     -e "MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}" \
     --entrypoint python "${image_id}" /tool.py \
     "/incoming/$(basename "${database}")" /data /rollback

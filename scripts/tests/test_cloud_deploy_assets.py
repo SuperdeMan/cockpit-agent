@@ -2800,3 +2800,33 @@ def test_collector_volume_replace_reconciles_each_rename_kill_point(
     finally:
         connection.close()
     assert not (data / "obs.db.migration.partial").exists()
+
+
+def test_collector_volume_replace_never_renames_across_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    helper = _load_probe(COLLECTOR_REPLACE_PATH, "collector_replace_cross_mount")
+    incoming = tmp_path / "incoming.db"
+    data = tmp_path / "data"
+    rollback = tmp_path / "rollback"
+    data.mkdir()
+    for database, value in ((incoming, "new"), (data / "obs.db", "old")):
+        connection = sqlite3.connect(database)
+        try:
+            connection.execute("CREATE TABLE marker(value TEXT)")
+            connection.execute("INSERT INTO marker VALUES (?)", (value,))
+            connection.commit()
+        finally:
+            connection.close()
+    real_replace = helper.os.replace
+
+    def reject_cross_mount_replace(source, destination):
+        source_path, destination_path = Path(source), Path(destination)
+        if data in source_path.parents and rollback in destination_path.parents:
+            raise OSError(18, "Invalid cross-device link")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(helper.os, "replace", reject_cross_mount_replace)
+    helper.replace_collector_database(incoming, data, rollback)
+    with sqlite3.connect(rollback / "obs.db") as connection:
+        assert connection.execute("SELECT value FROM marker").fetchone() == ("old",)

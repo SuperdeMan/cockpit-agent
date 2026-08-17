@@ -46,6 +46,42 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _copy_durable(source: Path, target: Path) -> None:
+    if not _regular(source):
+        raise ValueError("Collector data entry is unsafe")
+    source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    target_fd = os.open(
+        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        while chunk := os.read(source_fd, 1024 * 1024):
+            view = memoryview(chunk)
+            while view:
+                written = os.write(target_fd, view)
+                view = view[written:]
+        os.fsync(target_fd)
+    finally:
+        os.close(target_fd)
+        os.close(source_fd)
+
+
+def _backup_cross_mount(current: Path, saved: Path) -> None:
+    partial = saved.parent / f".{saved.name}.migration.partial"
+    if partial.exists():
+        if not _regular(partial):
+            raise ValueError("Collector rollback partial is unsafe")
+        partial.unlink()
+    _copy_durable(current, partial)
+    os.replace(partial, saved)
+    os.chmod(saved, 0o600)
+    _fsync_directory(saved.parent)
+    if _digest(current) != _digest(saved):
+        raise ValueError("Collector rollback copy identity mismatch")
+    current.unlink()
+    _fsync_directory(current.parent)
+
+
 def replace_collector_database(
     incoming: Path, data: Path, rollback: Path, *, kill_point: str | None = None,
 ) -> None:
@@ -73,14 +109,15 @@ def replace_collector_database(
         if not current.exists():
             continue
         if saved.exists():
-            raise ValueError("Collector rename state is ambiguous")
+            if _digest(current) != _digest(saved):
+                raise ValueError("Collector rename state is ambiguous")
+            current.unlink()
+            _fsync_directory(data)
+            continue
         if current.is_symlink() or not _regular(current):
             raise ValueError("Collector data entry is unsafe")
         _crash(f"before-old-{name}", kill_point)
-        os.replace(current, saved)
-        os.chmod(saved, 0o600)
-        _fsync_directory(rollback)
-        _fsync_directory(data)
+        _backup_cross_mount(current, saved)
         _crash(f"after-old-{name}", kill_point)
 
     partial = data / "obs.db.migration.partial"
