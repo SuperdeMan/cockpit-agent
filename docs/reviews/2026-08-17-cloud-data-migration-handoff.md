@@ -119,4 +119,3 @@ python scripts/dev_stack.py status
 - [ ] remote-safe E2E 证据包含实际 release/provider/model/case/lock identity。
 - [ ] 用户确认后写入 `target=cloud`，本机 HMI/Dashboard 能联调云端。
 - [ ] 本地项目容器停止且 Docker Desktop 退出；本地卷和全部迁移工件仍保留。
-
