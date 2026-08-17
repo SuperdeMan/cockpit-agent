@@ -28,6 +28,7 @@ from scripts.dev_stack_lib import (
     StackStatus,
     cloud_endpoints,
     cloud_release_argv,
+    frontend_command,
     inspect_cloud_status,
     inspect_local_status,
     read_root_env,
@@ -297,6 +298,39 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             return 1
         emit({**base, "action": "deploy", **payload})
         return exit_code
+    if args.command in {"hmi", "dashboard"}:
+        selected_env: dict[str, str] = {}
+        endpoints = LOCAL_ENDPOINTS
+        if selection.name == "cloud":
+            keys = {"TAILNET_FQDN"}
+            if args.command == "hmi":
+                keys.add("VITE_WS_TOKEN")
+            selected_env = read_root_env(repo, keys)
+            endpoints = cloud_endpoints(selected_env.get("TAILNET_FQDN", ""))
+        command = frontend_command(
+            repo=repo,
+            app=args.command,
+            target=selection,
+            endpoints=endpoints,
+            selected_env=selected_env,
+        )
+        result = release_runner.run(
+            command.argv,
+            cwd=command.cwd,
+            env={**os.environ, **command.env},
+            check=False,
+        )
+        redacted_environment = {
+            key: "[REDACTED]" if key == "VITE_WS_TOKEN" and value else value
+            for key, value in command.env.items()
+        }
+        emit({
+            **base,
+            "action": args.command,
+            "status": "completed" if result.returncode == 0 else "failed",
+            "environment": redacted_environment,
+        })
+        return 0 if result.returncode == 0 else 1
     raise DevStackError(f"{args.command} is not implemented by the safe development stack CLI")
 
 

@@ -1093,7 +1093,7 @@ def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(t
     assert str(identity) not in json.dumps(events)
 
 
-@pytest.mark.parametrize("command", ("verify", "hmi", "dashboard"))
+@pytest.mark.parametrize("command", ("verify",))
 def test_cli_unimplemented_actions_fail_closed(command: str, tmp_path: Path):
     events: list[dict[str, object]] = []
 
@@ -1101,6 +1101,83 @@ def test_cli_unimplemented_actions_fail_closed(command: str, tmp_path: Path):
     assert events == [
         {"status": "configuration_rejected", "target": "local", "source": "default"}
     ]
+
+
+def test_cloud_hmi_uses_local_vite_and_remote_endpoints(tmp_path: Path):
+    command = dev.frontend_command(
+        repo=tmp_path,
+        app="hmi",
+        target=dev.TargetSelection("cloud", "file"),
+        endpoints=dev.cloud_endpoints("demo.ts.net"),
+        selected_env={"VITE_WS_TOKEN": "secret"},
+    )
+
+    assert command.argv == (
+        "npm", "run", "dev", "--", "--host", "127.0.0.1",
+    )
+    assert command.cwd == tmp_path / "hmi"
+    assert command.env["VITE_EDGE_GATEWAY_URL"] == "https://demo.ts.net:8443"
+    assert command.env["VITE_AUDIO_API_URL"] == "https://demo.ts.net:8444"
+    assert command.env["VITE_WS_TOKEN"] == "secret"
+    assert "docker" not in command.argv
+
+
+def test_dashboard_and_local_hmi_receive_explicit_selected_endpoints(tmp_path: Path):
+    dashboard = dev.frontend_command(
+        repo=tmp_path,
+        app="dashboard",
+        target=dev.TargetSelection("local", "default"),
+        endpoints=dev.LOCAL_ENDPOINTS,
+        selected_env={},
+    )
+    hmi = dev.frontend_command(
+        repo=tmp_path,
+        app="hmi",
+        target=dev.TargetSelection("local", "default"),
+        endpoints=dev.LOCAL_ENDPOINTS,
+        selected_env={},
+    )
+
+    assert dashboard.env == {
+        "VITE_COLLECTOR_URL": "http://localhost:8092",
+        "VITE_EDGE_GATEWAY_URL": "http://localhost:8090",
+    }
+    assert hmi.env["VITE_AUDIO_API_URL"] == "http://localhost:50059"
+
+
+def test_cloud_hmi_requires_ws_token(tmp_path: Path):
+    with pytest.raises(dev.DevStackError, match="VITE_WS_TOKEN"):
+        dev.frontend_command(
+            repo=tmp_path,
+            app="hmi",
+            target=dev.TargetSelection("cloud", "file"),
+            endpoints=dev.cloud_endpoints("demo.ts.net"),
+            selected_env={},
+        )
+
+
+def test_cli_hmi_runs_only_vite_and_redacts_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    dev.set_target(tmp_path, "cloud")
+    runner = FakeCliRunner()
+    events: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        cli,
+        "read_root_env",
+        lambda *_args: {
+            "TAILNET_FQDN": "demo.ts.net",
+            "VITE_WS_TOKEN": "top-secret-token",
+        },
+    )
+
+    assert cli.main(["hmi"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
+    assert runner.calls == [
+        ("npm", "run", "dev", "--", "--host", "127.0.0.1")
+    ]
+    assert "docker" not in " ".join(runner.calls[0])
+    assert "top-secret-token" not in json.dumps(events)
+    assert events[-1]["environment"]["VITE_WS_TOKEN"] == "[REDACTED]"
 
 
 @pytest.mark.parametrize(

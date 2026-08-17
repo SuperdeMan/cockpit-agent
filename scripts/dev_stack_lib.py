@@ -12,7 +12,7 @@ from pathlib import Path
 import json
 import socket
 import ssl
-from typing import Iterable, Literal, Protocol, Sequence
+from typing import Iterable, Literal, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -45,6 +45,13 @@ class StackEndpoints:
     dashboard: str
     collector_http: str
     collector_ws: str
+
+
+@dataclass(frozen=True)
+class FrontendCommand:
+    argv: tuple[str, ...]
+    cwd: Path
+    env: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -340,6 +347,43 @@ def cloud_endpoints(fqdn: str) -> StackEndpoints:
         dashboard=f"https://{fqdn}:8445",
         collector_http=f"https://{fqdn}:8446",
         collector_ws=f"wss://{fqdn}:8446/stream",
+    )
+
+
+def frontend_environment(
+    app: str,
+    endpoints: StackEndpoints,
+    selected_env: Mapping[str, str],
+) -> dict[str, str]:
+    if app == "hmi":
+        return {
+            "VITE_EDGE_GATEWAY_URL": endpoints.edge_http,
+            "VITE_AUDIO_API_URL": endpoints.audio,
+            "VITE_WS_TOKEN": selected_env.get("VITE_WS_TOKEN", ""),
+        }
+    if app == "dashboard":
+        return {
+            "VITE_COLLECTOR_URL": endpoints.collector_http,
+            "VITE_EDGE_GATEWAY_URL": endpoints.edge_http,
+        }
+    raise DevStackError("unknown frontend application")
+
+
+def frontend_command(
+    *,
+    repo: Path,
+    app: str,
+    target: TargetSelection,
+    endpoints: StackEndpoints,
+    selected_env: Mapping[str, str],
+) -> FrontendCommand:
+    environment = frontend_environment(app, endpoints, selected_env)
+    if target.name == "cloud" and app == "hmi" and not environment["VITE_WS_TOKEN"]:
+        raise DevStackError("VITE_WS_TOKEN is required for cloud HMI")
+    return FrontendCommand(
+        argv=("npm", "run", "dev", "--", "--host", "127.0.0.1"),
+        cwd=Path(repo) / app,
+        env=environment,
     )
 
 
