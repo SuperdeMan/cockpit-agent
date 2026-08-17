@@ -43,6 +43,11 @@ MIN_SNAPSHOT_FREE_BYTES = 1024 * 1024 * 1024
 CONTROL_JSON_MAX_BYTES = 1024 * 1024
 CONTROL_JSON_MAX_DEPTH = 16
 CONTROL_JSON_MAX_ITEMS = 20000
+MAX_IDENTITY_ITEMS = 20_000
+MIGRATION_STATE_MACHINE = json.loads(
+    (Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "migration-state-machine.json")
+    .read_text(encoding="utf-8")
+)["states"]
 BUSINESS_TABLES = (
     "memory_item",
     "memory_relation",
@@ -74,19 +79,19 @@ POSTGRES_ALLOWED_STATES = MappingProxyType({
 })
 POSTGRES_STATE_TRANSITIONS = MappingProxyType({
     "reminder_item.status": MappingProxyType({
-        "pending": frozenset({"pending", "fired", "cancelled"}),
+        "pending": frozenset({"pending", "fired", "done", "cancelled"}),
         "fired": frozenset({"fired", "pending", "done", "cancelled"}),
         "done": frozenset({"done"}), "cancelled": frozenset({"cancelled"}),
     }),
     "task_ledger.status": MappingProxyType({
         "accepted": frozenset({"accepted", "running", "done", "failed", "cancelled", "orphaned"}),
         "running": frozenset({"running", "done", "failed", "cancelled", "orphaned"}),
-        "orphaned": frozenset({"orphaned", "running"}),
+        "orphaned": frozenset({"orphaned", "running", "done", "failed", "cancelled"}),
         "done": frozenset({"done"}), "failed": frozenset({"failed"}),
         "cancelled": frozenset({"cancelled"}),
     }),
     "proactive_delivery.state": MappingProxyType({
-        "pending": frozenset({"pending", "dispatched", "dropped", "expired"}),
+        "pending": frozenset({"pending", "dispatched", "presented", "dropped", "expired"}),
         "dispatched": frozenset({"dispatched", "presented", "dropped", "expired"}),
         "presented": frozenset({"presented"}), "dropped": frozenset({"dropped"}),
         "expired": frozenset({"expired"}),
@@ -450,7 +455,7 @@ class SnapshotEvidence:
 class MigrationRequest:
     repo: Path
     migration_id: str
-    bundle: MigrationBundle
+    bundle: MigrationBundle | None
     ssh: SshConfig
 
 
@@ -708,6 +713,8 @@ def _parse_postgres_manifest(value: object) -> Mapping[str, object]:
     tables = _bounded_count_map(data["tables"], "PostgreSQL tables")
     if set(tables) != set(BUSINESS_TABLES + DERIVED_TABLES):
         raise MigrationError("PostgreSQL table set is not exact")
+    if any(value > MAX_IDENTITY_ITEMS for value in tables.values()):
+        raise MigrationError("PostgreSQL identity count limit exceeded")
     states_raw = data["states"]
     if not isinstance(states_raw, Mapping) or set(states_raw) != set(POSTGRES_STATE_COLUMNS):
         raise MigrationError("PostgreSQL state set is not exact")
@@ -742,6 +749,8 @@ def _parse_redis_manifest(value: object) -> Mapping[str, object]:
     }
     if result["persistent"] + result["expiring"] != result["key_count"]:
         raise MigrationError("Redis TTL counts do not match key count")
+    if result["key_count"] > MAX_IDENTITY_ITEMS:
+        raise MigrationError("Redis identity count limit exceeded")
     if sum(result["prefixes"].values()) != result["key_count"] or sum(result["types"].values()) != result["key_count"]:
         raise MigrationError("Redis aggregate counts do not match key count")
     if result["min_ttl_ms"] > result["max_ttl_ms"]:
@@ -756,6 +765,8 @@ def _parse_collector_manifest(value: object) -> Mapping[str, object]:
     tables = _bounded_count_map(data["tables"], "Collector tables")
     if set(tables) != set(COLLECTOR_TABLES) or data["integrity_check"] != "ok":
         raise MigrationError("Collector evidence is invalid")
+    if any(value > MAX_IDENTITY_ITEMS for value in tables.values()):
+        raise MigrationError("Collector identity count limit exceeded")
     return MappingProxyType({
         "user_version": _strict_int(data["user_version"], "Collector user_version"),
         "schema_fingerprint": _require_fingerprint(data["schema_fingerprint"], "Collector schema fingerprint"),
@@ -1017,6 +1028,8 @@ def inspect_remote(request: MigrationRequest, runner: RemoteCommandRunner) -> Ma
 def make_migration_plan(
     request: MigrationRequest, runner: RemoteCommandRunner
 ) -> MigrationPlan:
+    if request.bundle is None:
+        raise MigrationError("local migration bundle is required for planning")
     bundle = validate_bundle(request.bundle.directory)
     remote = inspect_remote(request, runner)
     current_sha = Path(remote["current_release"]).name  # type: ignore[arg-type]
@@ -1055,6 +1068,8 @@ def make_migration_plan(
 
 
 def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str:
+    if request.bundle is None:
+        raise MigrationError("local migration bundle is required for upload")
     directory = request.bundle.directory
     validate_bundle(directory)
     prepared = runner.run(

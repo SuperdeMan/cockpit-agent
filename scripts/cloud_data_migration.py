@@ -55,9 +55,11 @@ def _ssh_config(args: argparse.Namespace) -> SshConfig:
     return config
 
 
-def _request(repo: Path, args: argparse.Namespace) -> migration.MigrationRequest:
+def _request(
+    repo: Path, args: argparse.Namespace, *, require_local_bundle: bool,
+) -> migration.MigrationRequest:
     migration_id = migration.require_migration_id(args.migration_id)
-    bundle = migration.load_bundle(repo, migration_id)
+    bundle = migration.load_bundle(repo, migration_id) if require_local_bundle else None
     return migration.MigrationRequest(
         repo=repo, migration_id=migration_id, bundle=bundle, ssh=_ssh_config(args)
     )
@@ -109,7 +111,9 @@ def main(
             return 0
 
         remote_runner = runner or SubprocessRunner()
-        request = _request(repo, args)
+        request = _request(
+            repo, args, require_local_bundle=args.command in {"plan", "apply"},
+        )
         if args.command in {"plan", "apply"}:
             plan = migration.make_migration_plan(request, remote_runner)  # type: ignore[arg-type]
             if args.command == "plan" or not args.apply:

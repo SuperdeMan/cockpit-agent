@@ -414,6 +414,8 @@ def safe_counts(value):
     return isinstance(value, dict) and all(re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key) and type(count) is int and count >= 0 for key, count in value.items())
 if not safe_counts(pg["tables"]) or not all(safe_counts(item) for item in pg["states"].values()):
     raise SystemExit("PostgreSQL aggregate counts are invalid")
+if any(value>20000 for value in pg["tables"].values()):
+    raise SystemExit("PostgreSQL identity count limit exceeded")
 allowed_states={
  "reminder_item.status":{"pending","fired","done","cancelled"},
  "task_ledger.status":{"accepted","running","done","failed","cancelled","orphaned"},
@@ -434,10 +436,13 @@ for key in ("rdb_version", "key_count", "persistent", "expiring", "min_ttl_ms", 
         raise SystemExit("Redis numeric evidence is invalid")
 if redis["rdb_version"] < 1 or redis["persistent"] + redis["expiring"] != redis["key_count"]:
     raise SystemExit("Redis aggregate total is invalid")
+if redis["key_count"]>20000: raise SystemExit("Redis identity count limit exceeded")
 if sum(redis["prefixes"].values()) != redis["key_count"] or sum(redis["types"].values()) != redis["key_count"]:
     raise SystemExit("Redis category totals are invalid")
 if type(collector.get("user_version")) is not int or collector["user_version"] < 0:
     raise SystemExit("Collector user_version is invalid")
+if any(value>20000 for value in collector["tables"].values()):
+    raise SystemExit("Collector identity count limit exceeded")
 for value in (pg["schema_fingerprint"], pg["archive_fingerprint"], redis.get("rdb_sha256"), collector["schema_fingerprint"]):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):
         raise SystemExit("manifest fingerprint is invalid")
@@ -475,13 +480,26 @@ def unique(pairs):
         result[key]=value
     return result
 payload=json.loads(path.read_text(encoding="utf-8"),object_pairs_hook=unique)
-if set(payload)!={"schema_version","backup_stamp","files","redis_aggregate"} or payload["schema_version"]!=1 or payload["backup_stamp"]!=stamp:
+if set(payload)!={"schema_version","backup_stamp","files","redis_aggregate","redis_identity"} or payload["schema_version"]!=1 or payload["backup_stamp"]!=stamp:
     raise SystemExit("backup manifest contract mismatch")
 aggregate=payload["redis_aggregate"]
 if set(aggregate)!={"key_count","prefixes","types","persistent","expiring"} or aggregate["key_count"]<=0:
     raise SystemExit("backup Redis aggregate is invalid")
 if sum(aggregate["prefixes"].values())!=aggregate["key_count"] or sum(aggregate["types"].values())!=aggregate["key_count"] or aggregate["persistent"]+aggregate["expiring"]!=aggregate["key_count"]:
     raise SystemExit("backup Redis aggregate totals mismatch")
+identity=payload["redis_identity"]
+hex64=lambda value:isinstance(value,str) and re.fullmatch(r"[0-9a-f]{64}",value) is not None
+if (set(identity)!={"digest_key","persistent_digests","expiring_deadlines_ms","checked_at_ms"}
+        or not hex64(identity["digest_key"])
+        or not isinstance(identity["persistent_digests"],list)
+        or len(identity["persistent_digests"])!=aggregate["persistent"]
+        or len(identity["persistent_digests"])!=len(set(identity["persistent_digests"]))
+        or not all(hex64(value) for value in identity["persistent_digests"])
+        or not isinstance(identity["expiring_deadlines_ms"],dict)
+        or len(identity["expiring_deadlines_ms"])!=aggregate["expiring"]
+        or not all(hex64(key) and type(value) is int and value>=0 for key,value in identity["expiring_deadlines_ms"].items())
+        or type(identity["checked_at_ms"]) is not int or identity["checked_at_ms"]<0):
+    raise SystemExit("backup Redis identity evidence is invalid")
 expected={"postgres.dump":root/"postgres"/f"{stamp}.dump","redis.rdb":root/"redis"/f"{stamp}.rdb","collector.sql.gz":root/"observability"/f"{stamp}.sql.gz"}
 if set(payload["files"])!=set(expected): raise SystemExit("backup manifest file set mismatch")
 for name,file_path in expected.items():
@@ -566,8 +584,8 @@ PY
 
 assert_expected_cloud_topology() {
   local services_text service cid image volume serve_status serve_count state config_image timer_result
-  local expected_service expected_image expected_rows inspection_text _status
-  local -a services inspection
+  local expected_service expected_image expected_rows inspection_text _status service_set expected_set
+  local -a services inspection fixed_infra=(postgres redis nats http-proxy)
   local -A expected_images=()
   services_text="$("${compose[@]}" config --services)" || return $?
   mapfile -t services <<<"${services_text}" || return $?
@@ -588,6 +606,14 @@ PY
     expected_images["${expected_service}"]="${expected_image}:${RELEASE_SHA}"
   done <<<"${expected_rows}"
   [[ "${#expected_images[@]}" -eq 26 ]] || return 1
+  service_set="$(printf '%s\n' "${services[@]}" | sort)" || return $?
+  expected_set="$(
+    printf '%s\n' "${!expected_images[@]}"
+    printf '%s\n' "${fixed_infra[@]}"
+  )" || return $?
+  expected_set="$(sort <<<"${expected_set}")" || return $?
+  [[ "${service_set}" == "${expected_set}" ]] \
+    || { migration_fail "cloud compose service set does not match release manifest"; return 1; }
   for service in "${services[@]}"; do
     [[ "${service}" =~ ^[a-z0-9-]+$ ]] || return 1
     cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
@@ -817,22 +843,37 @@ wait_for_compose_redis() {
 }
 
 assert_redis_container_matches_manifest() {
-  local container_id="$1" manifest="$2" aggregate
+  local container_id="$1" manifest="$2" aggregate digest_key
+  digest_key="$(python3 - "${manifest}" <<'PY'
+import json,sys
+from pathlib import Path
+m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(m.get("redis_identity",{}).get("digest_key",""))
+PY
+)" || return $?
   aggregate="$(docker exec "${container_id}" redis-cli --json EVAL '
-redis.setresp(3); local c="0"; local n,p,e=0,0,0; local px={}; local ty={};
-repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1 else e=e+1 end end until c=="0";
-local a={}; local b={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e}}' 0)" || return $?
+redis.setresp(3); local c="0"; local n,p,e=0,0,0; local px={}; local ty={}; local pd={}; local ed={}; local function kd(k) local a=redis.sha1hex(ARGV[1]..":1:"..k); local b=redis.sha1hex(ARGV[1]..":2:"..k); return string.sub(a..b,1,64) end
+repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); local d=kd(k); if ttl<0 then p=p+1; table.insert(pd,d) else e=e+1; ed[d]=redis.call("PEXPIRETIME",k) end end until c=="0";
+local now=redis.call("TIME");local checked=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000);local a={};local b={};local x={};for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end;for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end;for k,v in pairs(ed) do table.insert(x,k);table.insert(x,v) end;table.sort(pd);return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e,"persistent_digests",pd,"expiring_deadlines_ms",{map=x},"checked_at_ms",checked}}' 0 "${digest_key}")" || return $?
   python3 - "${manifest}" "${aggregate}" <<'PY' || return $?
 import json, sys
 from pathlib import Path
 m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
-m=m["redis_aggregate"] if "redis_aggregate" in m else m["redis"]
 a=json.loads(sys.argv[2])
 if a["key_count"] <= 0:
     raise SystemExit("empty Redis import")
-for key in ("key_count", "prefixes", "types", "persistent", "expiring"):
-    if a.get(key) != m.get(key):
-        raise SystemExit("Redis import aggregate mismatch")
+if "redis_identity" in m:
+    source=m["redis_identity"]; checked_at_ms=a["checked_at_ms"]
+    if set(a["persistent_digests"]) != set(source["persistent_digests"]):
+        raise SystemExit("Redis persistent identity mismatch")
+    current=set(a["expiring_deadlines_ms"])
+    for digest,source_deadline in source["expiring_deadlines_ms"].items():
+        if source_deadline > checked_at_ms and digest not in current:
+            raise SystemExit("unexpired Redis identity mismatch")
+else:
+    expected=m["redis"]
+    for key in ("key_count", "prefixes", "types", "persistent", "expiring"):
+        if a.get(key) != expected.get(key): raise SystemExit("Redis import aggregate mismatch")
 PY
 }
 
@@ -958,29 +999,10 @@ install_collector_db() {
   docker run --rm --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${database}"),target=/incoming,readonly" \
-    --entrypoint python "${image_id}" - "$(basename "${database}")" <<'PY'
-import os, sqlite3, sys
-from pathlib import Path
-source = Path("/incoming") / sys.argv[1]
-target = Path("/data/obs.db")
-rollback = Path("/rollback")
-for name in ("obs.db", "obs.db-wal", "obs.db-shm"):
-    current = Path("/data") / name
-    if current.exists():
-        destination = rollback / name
-        if destination.exists(): raise SystemExit("collector rollback target exists")
-        os.replace(current, destination)
-        os.chown(destination, 0, 0)
-        os.chmod(destination, 0o600)
-temporary = Path("/data/obs.db.migration.partial")
-with sqlite3.connect(f"file:{source}?mode=ro", uri=True) as connection:
-    if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-        raise SystemExit("collector import integrity failed")
-with source.open("rb") as incoming, temporary.open("xb") as output:
-    output.write(incoming.read())
-os.chmod(temporary, 0o600)
-os.replace(temporary, target)
-PY
+    --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/collector_volume_replace.py,target=/tool.py,readonly" \
+    -e "MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}" \
+    --entrypoint python "${image_id}" /tool.py \
+    "/incoming/$(basename "${database}")" /data /rollback
   [[ "$?" -eq 0 ]] || return $?
 }
 
@@ -1153,9 +1175,9 @@ else:
         if sum(current_counts.values()) != pg["tables"][table] or sum(baseline_counts.values()) != baseline["postgres"]["tables"][table]:
             raise SystemExit("PostgreSQL state entity conservation failed")
     transitions={
-      "reminder_item.status":{"pending":{"pending","fired","cancelled"},"fired":{"fired","pending","done","cancelled"},"done":{"done"},"cancelled":{"cancelled"}},
-      "task_ledger.status":{"accepted":{"accepted","running","done","failed","cancelled","orphaned"},"running":{"running","done","failed","cancelled","orphaned"},"orphaned":{"orphaned","running"},"done":{"done"},"failed":{"failed"},"cancelled":{"cancelled"}},
-      "proactive_delivery.state":{"pending":{"pending","dispatched","dropped","expired"},"dispatched":{"dispatched","presented","dropped","expired"},"presented":{"presented"},"dropped":{"dropped"},"expired":{"expired"}},
+      "reminder_item.status":{"pending":{"pending","fired","done","cancelled"},"fired":{"fired","pending","done","cancelled"},"done":{"done"},"cancelled":{"cancelled"}},
+      "task_ledger.status":{"accepted":{"accepted","running","done","failed","cancelled","orphaned"},"running":{"running","done","failed","cancelled","orphaned"},"orphaned":{"orphaned","running","done","failed","cancelled"},"done":{"done"},"failed":{"failed"},"cancelled":{"cancelled"}},
+      "proactive_delivery.state":{"pending":{"pending","dispatched","presented","dropped","expired"},"dispatched":{"dispatched","presented","dropped","expired"},"presented":{"presented"},"dropped":{"dropped"},"expired":{"expired"}},
       "scene_item.status":{"enabled":{"enabled","disabled"},"disabled":{"disabled","enabled"}},
     }
     for table,old_digests in baseline["postgres"]["identity_sets"].items():
@@ -1209,6 +1231,11 @@ start_current_release() {
   "${compose[@]}" up -d --no-build --pull never
 }
 
+start_verification_services() {
+  [[ "${#compose[@]}" -gt 0 ]] || return 0
+  "${compose[@]}" up -d --no-build --pull never postgres redis observability-collector || return $?
+}
+
 write_migration_state() {
   local state="$1" migration_id="$2" backup_stamp="$3" failed_step="${4:-}"
   local directory="${IMPORT_ROOT}/${migration_id}" partial run_id
@@ -1218,23 +1245,23 @@ write_migration_state() {
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
   partial="${directory}/status.${run_id}.json.partial"
   python3 - "${partial}" "${directory}/status.json" "${state}" "${migration_id}" \
-    "${backup_stamp}" "${failed_step}" "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" <<'PY' || return $?
+    "${backup_stamp}" "${failed_step}" "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" \
+    "${CURRENT_RELEASE}/deploy/cloud/migration-state-machine.json" <<'PY' || return $?
 import json, os, sys
 from pathlib import Path
 target=Path(sys.argv[2]); state=sys.argv[3]; migration_id=sys.argv[4]; stamp=sys.argv[5]
-allowed=dict([
- (None,{"BACKED_UP"}), ("BACKED_UP",{"APPLIED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}),
- ("APPLIED",{"ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED"}), ("ROLLBACK_IN_PROGRESS",{"ROLLED_BACK","ROLLBACK_FAILED"}),
- ("ROLLBACK_FAILED",{"ROLLBACK_IN_PROGRESS"}), ("ROLLED_BACK",set()),
-])
+machine=json.loads(Path(sys.argv[8]).read_text(encoding="utf-8"))
+if machine.get("schema_version")!=1 or not isinstance(machine.get("states"),dict): raise SystemExit("invalid migration state table")
+states=machine["states"]
 current=None
 if target.exists():
     if target.is_symlink() or target.stat().st_size>64*1024: raise SystemExit("unsafe migration state")
     current=json.loads(target.read_text(encoding="utf-8"))
     if current.get("migration_id")!=migration_id or current.get("backup_stamp")!=stamp: raise SystemExit("migration state identity mismatch")
-    if current.get("status")==state=="ROLLED_BACK": raise SystemExit(0)
+    if current.get("status")==state: raise SystemExit(0)
 previous=current.get("status") if current else None
-if state not in allowed.get(previous,set()): raise SystemExit("invalid migration state transition")
+if state not in states or (previous is None and state!="BACKED_UP"): raise SystemExit("invalid migration state transition")
+if previous is not None and state!=previous and state not in states[previous]["next"]: raise SystemExit("invalid migration state transition")
 if current is None:
     backup=json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
     current={"schema_version":1,"migration_id":migration_id,"backup_stamp":stamp,
@@ -1282,7 +1309,7 @@ if payload is None:
              "direction":direction,"state":state,"backup_stamp":stamp or None,
              "backup_files":None,
              "stores":{name:{"phase":"pending"} for name in ("postgres","redis","collector")},
-             "failed_step":None,"failed_rc":None,"attempts":[]}
+              "failed_step":None,"failed_rc":None,"origin_failure":None,"attempts":[]}
 if payload["direction"]!=direction:
     payload["operation_id"]=secrets.token_hex(16)
     payload["direction"]=direction
@@ -1292,6 +1319,9 @@ payload["attempts"].append({"operation_id":payload["operation_id"],"direction":d
                             "phase":phase or None,"failed_step":failed_step,
                             "failed_rc":failed_rc if failed_step else None})
 payload["state"]=state
+if direction=="apply" and failed_step and payload.get("origin_failure") is None:
+    payload["origin_failure"]={"operation_id":payload["operation_id"],"step":failed_step,
+                               "rc":failed_rc,"recorded_at":now}
 if stamp:
     if payload.get("backup_stamp")!=stamp or payload.get("backup_files") is None:
         manifest=Path(sys.argv[11])/f"{stamp}.backup-manifest.json"
@@ -1322,7 +1352,8 @@ begin_crash_journal() {
 
 read_recovery_journal() {
   local migration_id="$1"
-  python3 - "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" <<'PY' || return $?
+  python3 - "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" \
+    "${CURRENT_RELEASE}/deploy/cloud/migration-state-machine.json" <<'PY' || return $?
 import json,re,sys
 from pathlib import Path
 path=Path(sys.argv[1])
@@ -1330,10 +1361,9 @@ if path.is_symlink() or path.stat().st_size>128*1024: raise SystemExit("invalid 
 payload=json.loads(path.read_text(encoding="utf-8"))
 if payload.get("schema_version")!=1 or payload.get("migration_id")!=sys.argv[2]: raise SystemExit("recovery journal identity mismatch")
 state=payload.get("state"); stamp=payload.get("backup_stamp") or ""
-without_backup={"STOPPING_WRITERS","STOP_FAILED","BACKUP_FAILED"}
-with_backup={"BACKED_UP","REPLACING","INTERRUPTED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED","ROLLED_BACK"}
-if state not in without_backup|with_backup: raise SystemExit("journal is not recoverable")
-if state in with_backup and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("journal backup stamp is invalid")
+machine=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8")); states=machine.get("states",{})
+if machine.get("schema_version")!=1 or state not in states: raise SystemExit("journal is not recoverable")
+if states[state]["backup_required"] and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("journal backup stamp is invalid")
 print(state,stamp)
 PY
 }
@@ -1431,13 +1461,22 @@ rollback_all() {
 }
 
 fail_and_rollback() {
-  local migration_id="$1" backup_stamp="$2" failed_step="$3"
-  if rollback_all "${migration_id}" "${backup_stamp}"; then
+  local migration_id="$1" backup_stamp="$2" failed_step="$3" failed_rc="${4:-1}"
+  local journal_rc=0 rollback_rc=0
+  run_recoverable_step update_crash_journal "${migration_id}" apply APPLY_FAILED \
+    "${backup_stamp}" "" "" "${failed_step}" "${failed_rc}"
+  journal_rc="${STEP_RC}"
+  run_recoverable_step rollback_all "${migration_id}" "${backup_stamp}"
+  rollback_rc="${STEP_RC}"
+  if [[ "${rollback_rc}" -eq 0 ]]; then
+    [[ "${journal_rc}" -eq 0 ]] \
+      || printf 'migration origin failure journal write failed (rc=%s)\n' "${journal_rc}" >&2
     printf 'migration step %s failed and the store group was rolled back\n' "${failed_step}" >&2
     return 1
   fi
   write_migration_state "ROLLBACK_FAILED" "${migration_id}" "${backup_stamp}" "${failed_step}" || true
-  printf 'migration step %s and automatic rollback failed\n' "${failed_step}" >&2
+  printf 'migration step %s and automatic rollback failed (rc=%s, journal_rc=%s)\n' \
+    "${failed_step}" "${rollback_rc}" "${journal_rc}" >&2
   return 1
 }
 
@@ -1485,6 +1524,10 @@ apply_failure_trap() {
     else
       printf 'cloud-data-migration: interrupt writer restart failed (rc=%s)\n' "${recovery_rc}" >&2
     fi
+  elif [[ "${APPLY_REPLACEMENT_STARTED}" -eq 0 && -n "${APPLY_MIGRATION_ID}" ]]; then
+    run_recoverable_step clear_migration_fence "${APPLY_MIGRATION_ID}"
+    [[ "${STEP_RC}" -eq 0 ]] \
+      || printf 'cloud-data-migration: interrupt fence clear failed (rc=%s)\n' "${STEP_RC}" >&2
   fi
   return "${signal_rc}"
 }
@@ -1501,6 +1544,28 @@ clear_apply_failure_trap() {
   APPLY_FAILURE_ACTIVE=0
 }
 
+begin_migration_fence() {
+  local migration_id="$1" fence_schema
+  declare -F transaction_fence_begin >/dev/null || return 0
+  run_recoverable_step_capture python3 - "${IMPORT_ROOT}/${migration_id}/manifest.json" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+parts=[m["postgres"]["schema_fingerprint"],m["redis"]["schema_fingerprint"],m["collector"]["schema_fingerprint"]]
+print(hashlib.sha256(":".join(parts).encode()).hexdigest())
+PY
+  [[ "${STEP_RC}" -eq 0 ]] || return "${STEP_RC}"
+  fence_schema="${STEP_OUTPUT}"
+  transaction_fence_begin "${migration_id}" "${RELEASE_SHA}" \
+    "${LOCKED_STORE_IMAGE[postgres]#sha256:}" "${LOCKED_STORE_IMAGE[redis]#sha256:}" \
+    "${LOCKED_STORE_IMAGE[observability-collector]#sha256:}" "${fence_schema}" || return $?
+}
+
+clear_migration_fence() {
+  declare -F transaction_fence_clear >/dev/null || return 0
+  transaction_fence_clear "$1" || return $?
+}
+
 apply_migration() {
   local migration_id="$1" backup_stamp
   run_recoverable_step load_runtime
@@ -1512,8 +1577,10 @@ apply_migration() {
   APPLY_MIGRATION_ID="${migration_id}"
   APPLY_BACKUP_STAMP=""
   APPLY_REPLACEMENT_STARTED=0
-  run_recoverable_step begin_crash_journal "${migration_id}"
+  run_recoverable_step begin_migration_fence "${migration_id}"
   if [[ "${STEP_RC}" -ne 0 ]]; then return "${STEP_RC}"; fi
+  run_recoverable_step begin_crash_journal "${migration_id}"
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_migration_fence "${migration_id}"; return "${STEP_RC}"; fi
   install_apply_failure_trap
   run_recoverable_step stop_application_writers
   if [[ "${STEP_RC}" -ne 0 ]]; then
@@ -1536,45 +1603,48 @@ apply_migration() {
   fi
   APPLY_REPLACEMENT_STARTED=1
   run_recoverable_step record_store_progress "${migration_id}" postgres started
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-start-state"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-start-state" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" postgres started || return 1
   run_recoverable_step restore_postgres_dump "${IMPORT_ROOT}/${migration_id}/postgres.dump"
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-restore" "${STEP_RC}"; return 1; fi
   run_recoverable_step record_store_progress "${migration_id}" postgres restored
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-state"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "postgres-state" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" postgres restored || return 1
   run_recoverable_step record_store_progress "${migration_id}" redis started
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-start-state"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-start-state" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" redis started || return 1
   run_recoverable_step restore_redis_rdb "${IMPORT_ROOT}/${migration_id}/redis.rdb" "${migration_id}"
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-restore" "${STEP_RC}"; return 1; fi
   run_recoverable_step record_store_progress "${migration_id}" redis restored
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-state"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "redis-state" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" redis restored || return 1
   run_recoverable_step record_store_progress "${migration_id}" collector started
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-start-state"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-start-state" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" collector started || return 1
   run_recoverable_step install_collector_db "${IMPORT_ROOT}/${migration_id}/collector.db" "${migration_id}"
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-restore" "${STEP_RC}"; return 1; fi
   run_recoverable_step record_store_progress "${migration_id}" collector restored
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-state"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "collector-state" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" collector restored || return 1
   run_recoverable_step verify_store_group "${migration_id}" "pre-start"
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "store-verification" "${STEP_RC}"; return 1; fi
   for store in postgres redis collector; do
     run_recoverable_step record_store_progress "${migration_id}" "${store}" verified
-    if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "${store}-verify-state"; return 1; fi
+    if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "${store}-verify-state" "${STEP_RC}"; return 1; fi
     update_crash_journal "${migration_id}" apply REPLACING "${backup_stamp}" "${store}" verified || return 1
   done
-  run_recoverable_step start_current_release
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release"; return 1; fi
-  run_recoverable_step verify_current_release
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification"; return 1; fi
+  run_recoverable_step start_verification_services
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-verification-services" "${STEP_RC}"; return 1; fi
   run_recoverable_step verify_store_group "${migration_id}" "post-start"
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification" "${STEP_RC}"; return 1; fi
+  run_recoverable_step start_current_release
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release" "${STEP_RC}"; return 1; fi
+  run_recoverable_step verify_current_release
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification" "${STEP_RC}"; return 1; fi
   run_recoverable_step write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}"
-  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "state-write"; return 1; fi
+  if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "state-write" "${STEP_RC}"; return 1; fi
   update_crash_journal "${migration_id}" apply APPLIED "${backup_stamp}" || return 1
+  clear_migration_fence "${migration_id}" || return $?
   clear_apply_failure_trap
   printf '{"migration_id":"%s","status":"APPLIED"}\n' "${migration_id}"
 }
@@ -1607,6 +1677,7 @@ PY
 )" || return $?
   read -r status backup_stamp <<<"${state_line}" || return $?
   if [[ "${status}" == "ROLLED_BACK" ]]; then
+    clear_migration_fence "${migration_id}" || return $?
     printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
     return 0
   fi
@@ -1615,6 +1686,7 @@ PY
     return 1
   fi
   rollback_all "${migration_id}" "${backup_stamp}" || return $?
+  clear_migration_fence "${migration_id}" || return $?
   printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
 }
 
@@ -1627,16 +1699,19 @@ recover_migration() {
   if [[ "${state}" == "STOPPING_WRITERS" || "${state}" == "STOP_FAILED" || "${state}" == "BACKUP_FAILED" ]]; then
     start_current_release || return $?
     update_crash_journal "${migration_id}" recover RECOVERED_WITHOUT_REPLACE || return $?
+    clear_migration_fence "${migration_id}" || return $?
     printf '{"migration_id":"%s","status":"RECOVERED"}\n' "${migration_id}"
     return 0
   fi
   if [[ "${state}" == "ROLLED_BACK" ]]; then
     write_migration_state "ROLLED_BACK" "${migration_id}" "${backup_stamp}" || return $?
+    clear_migration_fence "${migration_id}" || return $?
     printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
     return 0
   fi
   validate_backup_manifest "${backup_stamp}" || return $?
   rollback_all "${migration_id}" "${backup_stamp}" recover || return $?
+  clear_migration_fence "${migration_id}" || return $?
   printf '{"migration_id":"%s","status":"ROLLED_BACK"}\n' "${migration_id}"
 }
 
@@ -1645,15 +1720,19 @@ inspect_rollback_plan() {
   load_runtime || return $?
   require_runtime_batch "${migration_id}" || return $?
   meta="$(python3 - "${IMPORT_ROOT}/${migration_id}/status.json" \
-    "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" <<'PY'
+    "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" \
+    "${CURRENT_RELEASE}/deploy/cloud/migration-state-machine.json" <<'PY'
 import json,re,sys
 from pathlib import Path
 status=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 journal=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+machine=json.loads(Path(sys.argv[4]).read_text(encoding="utf-8")); states=machine.get("states",{})
 if status.get("migration_id")!=sys.argv[3] or journal.get("migration_id")!=sys.argv[3]:
     raise SystemExit("rollback plan identity mismatch")
 stamp=status.get("backup_stamp") or journal.get("backup_stamp") or ""
-if re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("rollback plan backup stamp is invalid")
+state=journal.get("state")
+if machine.get("schema_version")!=1 or state not in states: raise SystemExit("rollback plan state is invalid")
+if states[state]["backup_required"] and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("rollback plan backup stamp is invalid")
 print(stamp)
 PY
 )" || return $?
@@ -1663,19 +1742,21 @@ PY
   python3 - "${IMPORT_ROOT}/${migration_id}/status.json" \
     "${IMPORT_ROOT}/${migration_id}/journal.json" \
     "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" "${migration_id}" \
-    "${CURRENT_RELEASE}" "${services_text}" <<'PY' || return $?
+    "${CURRENT_RELEASE}" "${CURRENT_RELEASE}/deploy/cloud/migration-state-machine.json" \
+    "${services_text}" <<'PY' || return $?
 import json,re,sys
 from pathlib import Path
 status=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 journal=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 backup=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
-services=sys.argv[6].splitlines()
+machine=json.loads(Path(sys.argv[6]).read_text(encoding="utf-8")); states=machine.get("states",{})
+services=sys.argv[7].splitlines()
 writers=[name for name in services if name not in {"postgres","redis"}]
 if not writers or len(writers)!=len(set(writers)) or any(re.fullmatch(r"[a-z0-9-]+",name) is None for name in writers):
     raise SystemExit("rollback writer plan is invalid")
 if status.get("migration_id")!=sys.argv[4] or journal.get("migration_id")!=sys.argv[4]:
     raise SystemExit("rollback plan identity mismatch")
-if status.get("status") not in {"APPLIED","ROLLBACK_IN_PROGRESS","ROLLBACK_FAILED","ROLLED_BACK"}:
+if machine.get("schema_version")!=1 or status.get("status") not in states or not states[status["status"]]["backup_required"]:
     raise SystemExit("rollback status is invalid")
 operation_id=journal.get("operation_id","")
 if re.fullmatch(r"[0-9a-f]{32}",operation_id) is None: raise SystemExit("journal operation identity is invalid")
@@ -1706,6 +1787,10 @@ main() {
   transaction_lock_acquire "migration" || {
     code=$?
     die "cloud transaction lock is held by ${TRANSACTION_LOCK_HOLDER:-unknown}" "${code}"
+  }
+  transaction_fence_assert_clear "${3:-}" || {
+    code=$?
+    die "cloud transaction is fenced by an unfinished migration; run recover --apply" "${code}"
   }
   source "${SCRIPT_ROOT}/verify-release.sh"
   case "${1:-}" in

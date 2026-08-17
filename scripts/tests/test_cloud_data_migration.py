@@ -226,6 +226,22 @@ def test_manifest_rejects_unknown_production_state_even_when_counts_balance():
         migration.parse_manifest(payload)
 
 
+@pytest.mark.parametrize("store", ["postgres", "redis", "collector"])
+def test_manifest_rejects_identity_counts_above_pre_destructive_bound(store: str):
+    payload = valid_manifest_payload()
+    if store == "postgres":
+        payload["postgres"]["tables"]["memory_item"] = 20_001
+    elif store == "redis":
+        payload["redis"].update({
+            "key_count": 20_001, "persistent": 20_001, "expiring": 0,
+            "prefixes": {"memory": 20_001}, "types": {"string": 20_001},
+        })
+    else:
+        payload["collector"]["tables"]["turns"] = 20_001
+    with pytest.raises(migration.MigrationError, match="identity count limit"):
+        migration.parse_manifest(payload)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -557,6 +573,26 @@ def test_identity_evidence_allows_only_declared_state_ttl_and_retention_changes(
     migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
 
 
+@pytest.mark.parametrize(
+    ("field", "before", "after"),
+    [
+        ("reminder_item.status", "pending", "done"),
+        ("proactive_delivery.state", "pending", "presented"),
+        ("task_ledger.status", "orphaned", "done"),
+        ("task_ledger.status", "orphaned", "failed"),
+        ("task_ledger.status", "orphaned", "cancelled"),
+    ],
+)
+def test_post_start_state_transitions_cover_production_terminal_update_paths(
+    field: str, before: str, after: str,
+):
+    baseline, current = _identity_evidence()
+    digest = next(iter(baseline["postgres"]["state_by_identity"][field]))
+    baseline["postgres"]["state_by_identity"][field][digest] = before
+    current["postgres"]["state_by_identity"][field][digest] = after
+    migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
+
+
 def test_migration_state_contract_is_generated_from_production_constants():
     def constants(relative: str) -> dict[str, str]:
         tree = ast.parse((Path(__file__).parents[2] / relative).read_text(encoding="utf-8"))
@@ -801,6 +837,29 @@ def test_recover_cli_is_dry_run_without_apply_and_requires_final_remote_status(t
     assert rc == 0
     assert " recover " in f" {runner.calls[-1][-1]} "
     assert json.loads(capsys.readouterr().out)["status"] == "ROLLED_BACK"
+
+
+@pytest.mark.parametrize(
+    ("command", "extra", "remote_token"),
+    [
+        ("verify", (), " verify "),
+        ("rollback", (), " rollback-plan "),
+        ("rollback", ("--apply",), " rollback "),
+        ("recover", (), " rollback-plan "),
+        ("recover", ("--apply",), " recover "),
+    ],
+)
+def test_remote_authoritative_actions_do_not_require_local_artifact_bundle(
+    tmp_path: Path, command: str, extra: tuple[str, ...], remote_token: str,
+):
+    runner = FakeRemoteRunner()
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+        command, "--migration-id", VALID_ID, *extra,
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert len(runner.calls) == 1
+    assert remote_token in f" {runner.calls[0][-1]} "
 
 
 def test_rollback_dry_run_reads_real_server_plan_without_remote_write(tmp_path: Path, capsys):

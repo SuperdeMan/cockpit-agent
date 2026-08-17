@@ -27,9 +27,11 @@ BACKUP_PATH = CLOUD_DIR / "backup.sh"
 TRANSACTION_LOCK_PATH = CLOUD_DIR / "transaction-lock.sh"
 REMOTE_MIGRATION_PATH = CLOUD_DIR / "remote-data-migration.sh"
 SQLITE_STREAM_RESTORE_PATH = CLOUD_DIR / "sqlite_stream_restore.py"
+COLLECTOR_REPLACE_PATH = CLOUD_DIR / "collector_volume_replace.py"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
+MIGRATION_STATES_PATH = CLOUD_DIR / "migration-state-machine.json"
 RUNTIME_MODELS_PATH = CLOUD_DIR / "runtime-models.json"
 REMOTE_RELEASE_PATH = CLOUD_DIR / "remote-release.sh"
 REMOTE_BUILD_PATH = CLOUD_DIR / "remote-build.sh"
@@ -489,16 +491,29 @@ def test_remote_apply_attests_exact_before_start_then_growth_safe_after_start(tm
         restore_redis_rdb() {{ :; }}
         install_collector_db() {{ :; }}
         verify_store_group() {{ printf 'attest:%s\n' "$2" >>'{events.as_posix()}'; }}
-        start_current_release() {{ printf 'start\n' >>'{events.as_posix()}'; }}
+        start_verification_services() {{ printf 'validation-services\n' >>'{events.as_posix()}'; }}
+        start_current_release() {{ printf 'full-start\n' >>'{events.as_posix()}'; }}
         verify_current_release() {{ printf 'release-ok\n' >>'{events.as_posix()}'; }}
         apply_migration 20260817T010203Z-abcdef0-online
     """), encoding="utf-8")
     completed = subprocess.run([str(bash), str(harness)], capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
     assert events.read_text(encoding="utf-8").splitlines() == [
-        "state:BACKED_UP", "attest:pre-start", "start", "release-ok",
-        "attest:post-start", "state:APPLIED",
+        "state:BACKED_UP", "attest:pre-start", "validation-services",
+        "attest:post-start", "full-start", "release-ok", "state:APPLIED",
     ]
+
+
+def test_post_import_attestation_finishes_before_external_ingress_services_start():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    apply = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
+    post = apply.index('verify_store_group "${migration_id}" "post-start"')
+    assert apply.index("start_verification_services") < post
+    assert post < apply.index("start_current_release", post)
+    helper = re.search(r"(?ms)^start_verification_services\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert "postgres redis observability-collector" in helper
+    for ingress in ("hmi", "edge-gateway", "llm-gateway"):
+        assert ingress not in helper
 
 
 def test_remote_post_start_rules_preserve_business_data_but_allow_growth():
@@ -1734,12 +1749,26 @@ def test_migration_state_persists_backup_hashes_store_progress_and_strict_transi
     state = re.search(r"(?ms)^write_migration_state\(\) \{(?P<body>.*?)^\}", text)["body"]
     progress = re.search(r"(?ms)^record_store_progress\(\) \{(?P<body>.*?)^\}", text)["body"]
     rollback = re.search(r"(?ms)^rollback_migration\(\) \{(?P<body>.*?)^\}", text)["body"]
-    for token in ("backup_files", "failed_step", "ROLLBACK_IN_PROGRESS", "ROLLBACK_FAILED", "ROLLED_BACK"):
+    for token in ("backup_files", "failed_step", "migration-state-machine.json"):
         assert token in state
     for token in ('"started"', '"restored"', '"verified"'):
         assert token in state and token in progress
     assert rollback.index('if [[ "${status}" == "ROLLED_BACK" ]]') < rollback.index("rollback_all")
     assert "requires an audited operator recovery" in rollback
+
+
+def test_migration_server_and_cli_share_one_complete_state_table():
+    payload = json.loads(MIGRATION_STATES_PATH.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == 1
+    assert set(payload["states"]) == {
+        "STOPPING_WRITERS", "STOP_FAILED", "BACKUP_FAILED", "BACKED_UP",
+        "REPLACING", "APPLY_FAILED", "INTERRUPTED", "APPLIED",
+        "ROLLBACK_IN_PROGRESS", "ROLLBACK_FAILED", "ROLLED_BACK",
+        "RECOVERED_WITHOUT_REPLACE",
+    }
+    assert payload["states"]["RECOVERED_WITHOUT_REPLACE"]["terminal"] is True
+    remote = _required_text(REMOTE_MIGRATION_PATH)
+    assert remote.count("migration-state-machine.json") >= 3
 
 
 def test_post_start_evidence_allows_declared_transitions_ttl_decay_and_collector_retention():
@@ -1900,6 +1929,97 @@ apply_failure_trap 99
     assert "rollback failed (rc=72)" in completed.stderr
 
 
+def test_apply_failure_is_recorded_before_rollback_and_origin_is_immutable(tmp_path: Path):
+    events = tmp_path / "origin-events.txt"
+    harness = tmp_path / "origin-failure.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+update_crash_journal() {{ printf 'journal:%s:%s:%s\n' "$2" "$7" "$8" >>'{events.as_posix()}'; }}
+rollback_all() {{ printf 'rollback\n' >>'{events.as_posix()}'; return 0; }}
+fail_and_rollback 20260817T010203Z-abcdef0-online 20260817T010203Z redis-restore 37
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode != 0
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "journal:apply:redis-restore:37", "rollback",
+    ]
+    journal = re.search(
+        r"(?ms)^update_crash_journal\(\) \{(?P<body>.*?)^\}",
+        _required_text(REMOTE_MIGRATION_PATH),
+    )["body"]
+    assert 'payload.get("origin_failure") is None' in journal
+
+
+def test_persistent_migration_fence_survives_process_lock_release_and_blocks_other_mutations(
+    tmp_path: Path,
+):
+    shared = tmp_path / "shared"
+    harness = tmp_path / "fence.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+SHARED_ROOT='{shared.as_posix()}'
+source '{TRANSACTION_LOCK_PATH.as_posix()}'
+python3() {{ '{Path(os.sys.executable).as_posix()}' "$@"; }}
+transaction_fence_begin 20260817T010203Z-abcdef0-online \
+  {'a' * 40} {'1' * 64} {'2' * 64} {'3' * 64} {'4' * 64}
+transaction_fence_assert_clear
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 75
+    assert "recover --apply" in completed.stderr
+    fence = shared / "locks" / "active-migration.json"
+    payload = json.loads(fence.read_text(encoding="utf-8"))
+    assert payload["migration_id"] == "20260817T010203Z-abcdef0-online"
+    assert payload["release_sha"] == "a" * 40
+    assert set(payload["store_images"]) == {"postgres", "redis", "collector"}
+
+
+def test_migration_fence_allows_owner_recovery_and_only_owner_can_clear(tmp_path: Path):
+    shared = tmp_path / "shared"
+    harness = tmp_path / "fence-owner.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+SHARED_ROOT='{shared.as_posix()}'
+source '{TRANSACTION_LOCK_PATH.as_posix()}'
+python3() {{ '{Path(os.sys.executable).as_posix()}' "$@"; }}
+owner=20260817T010203Z-abcdef0-online
+transaction_fence_begin "$owner" {'a' * 40} {'1' * 64} {'2' * 64} {'3' * 64} {'4' * 64}
+transaction_fence_assert_clear "$owner" || exit $?
+transaction_fence_clear 20260817T010203Z-bbbbbbb-online && exit 91
+transaction_fence_clear "$owner" || exit $?
+transaction_fence_assert_clear || exit $?
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert not (shared / "locks" / "active-migration.json").exists()
+
+
+def test_migration_establishes_fence_before_stop_and_clears_only_at_terminal_states():
+    migration_text = _required_text(REMOTE_MIGRATION_PATH)
+    apply = re.search(r"(?ms)^apply_migration\(\) \{(?P<body>.*?)^\}", migration_text)["body"]
+    assert apply.index("begin_migration_fence") < apply.index("stop_application_writers")
+    assert 'clear_migration_fence "${migration_id}"' in migration_text
+    lock_text = _required_text(TRANSACTION_LOCK_PATH)
+    acquire = re.search(r"(?ms)^transaction_lock_acquire\(\) \{(?P<body>.*?)^\}", lock_text)["body"]
+    assert 'transaction_fence_assert_clear' in acquire
+
+
 def test_redis_aof_validation_allows_empty_private_incr_but_requires_nonempty_base():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^validate_redis_aof_volume\(\) \{(?P<body>.*?)^\}", text)["body"]
@@ -2026,6 +2146,8 @@ def test_migration_preflight_locks_complete_running_topology_and_backup_timer_he
     assert "systemctl show car-agent-backup.service --property=Result --value" in topology
     assert "LOCKED_STORE_CID" in topology and "LOCKED_STORE_IMAGE" in topology
     assert "LOCKED_STORE_VOLUME" in topology
+    assert 'fixed_infra=(postgres redis nats http-proxy)' in topology
+    assert '[[ "${service_set}" == "${expected_set}" ]]' in topology
     for function in ("restore_postgres_dump", "restore_redis_rdb", "install_collector_db"):
         body = re.search(rf"(?ms)^{function}\(\) \{{(?P<body>.*?)^\}}", text)["body"]
         assert "assert_locked_store_identity" in body
@@ -2043,6 +2165,24 @@ def test_backup_asserts_all_three_stable_store_volumes_before_capture():
     ):
         assert token in text
     assert text.index("postgres_volume=") < text.index("pg_dump")
+
+
+def test_backup_redis_evidence_is_keyed_and_restore_uses_absolute_expiry_semantics():
+    backup = _required_text(BACKUP_PATH)
+    for token in (
+        "redis_digest_key", "persistent_digests", "expiring_deadlines_ms",
+        "PEXPIRETIME", "checked_at_ms", "redis_identity",
+    ):
+        assert token in backup
+    remote = _required_text(REMOTE_MIGRATION_PATH)
+    verifier = re.search(
+        r"(?ms)^assert_redis_container_matches_manifest\(\) \{(?P<body>.*?)^\}", remote,
+    )["body"]
+    assert "source_deadline > checked_at_ms" in verifier
+    assert "Redis persistent identity mismatch" in verifier
+    assert verifier.index('if "redis_identity" in m:') < verifier.index(
+        'for key in ("key_count", "prefixes", "types", "persistent", "expiring")'
+    )
 
 
 def test_target_attestation_collects_keyed_identities_and_real_retention_predicates():
@@ -2090,3 +2230,45 @@ def test_collector_sql_restore_is_streaming_bounded_and_integrity_checked(tmp_pa
     restore = re.search(r"(?ms)^restore_collector_sql\(\) \{(?P<body>.*?)^\}", remote)["body"]
     assert "sqlite_stream_restore.py" in restore
     assert "source.read()" not in restore and "executescript" not in restore
+
+
+@pytest.mark.parametrize(
+    "kill_point",
+    ["before-old-obs.db", "after-old-obs.db", "before-final-replace", "after-final-replace"],
+)
+def test_collector_volume_replace_reconciles_each_rename_kill_point(
+    tmp_path: Path, kill_point: str,
+):
+    helper = _load_probe(COLLECTOR_REPLACE_PATH, f"collector_replace_{kill_point}")
+    incoming = tmp_path / "incoming.db"
+    data = tmp_path / "data"
+    rollback = tmp_path / "rollback"
+    data.mkdir()
+    connection = sqlite3.connect(incoming)
+    try:
+        connection.execute("CREATE TABLE marker(value TEXT)")
+        connection.execute("INSERT INTO marker VALUES ('new')")
+        connection.commit()
+    finally:
+        connection.close()
+    connection = sqlite3.connect(data / "obs.db")
+    try:
+        connection.execute("CREATE TABLE marker(value TEXT)")
+        connection.execute("INSERT INTO marker VALUES ('old')")
+        connection.commit()
+    finally:
+        connection.close()
+    with pytest.raises(helper.InjectedCrash):
+        helper.replace_collector_database(incoming, data, rollback, kill_point=kill_point)
+    helper.replace_collector_database(incoming, data, rollback)
+    connection = sqlite3.connect(data / "obs.db")
+    try:
+        assert connection.execute("SELECT value FROM marker").fetchone() == ("new",)
+    finally:
+        connection.close()
+    connection = sqlite3.connect(rollback / "obs.db")
+    try:
+        assert connection.execute("SELECT value FROM marker").fetchone() == ("old",)
+    finally:
+        connection.close()
+    assert not (data / "obs.db.migration.partial").exists()
