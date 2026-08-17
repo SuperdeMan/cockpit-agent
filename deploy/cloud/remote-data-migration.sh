@@ -322,10 +322,15 @@ try:
                         marker_partials={name for name in bucket_entries if re.fullmatch(
                             r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial",name
                         )}
-                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir", "redis-replace.json", "redis-aof-complete.json"}|marker_partials):
+                        backup_partials={name for name in bucket_entries if re.fullmatch(
+                            r"[.]redis-backup-(?:dump[.]rdb|appendonlydir)[.]partial",name
+                        )}
+                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir", "redis-replace.json", "redis-aof-complete.json"}|marker_partials|backup_partials):
                             raise SystemExit("unknown runtime batch entry")
                         for name in marker_partials:
                             os.close(opened(bucket_fd,name))
+                        for name in backup_partials:
+                            os.close(opened(bucket_fd,name,directory=name.endswith("appendonlydir.partial")))
                         if "dump.rdb" in bucket_entries:
                             os.close(opened(bucket_fd, "dump.rdb"))
                         if "redis-replace.json" in bucket_entries:
@@ -1013,7 +1018,7 @@ PY
   prepare_state="$(docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${rdb}"),target=/incoming,readonly" \
-    --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py,target=/tool.py,readonly" \
+    --mount "type=bind,source=${SCRIPT_ROOT}/redis_volume_prepare.py,target=/tool.py,readonly" \
     -e "MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}" \
     --entrypoint python "${helper_image}" /tool.py \
     "/incoming/$(basename "${rdb}")" /data /rollback "${manifest_sha}")" || return $?
@@ -1063,7 +1068,7 @@ PY
     docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
       --mount "type=bind,source=${rollback_dir},target=/rollback" \
       --mount "type=bind,source=$(dirname "${rdb}"),target=/incoming,readonly" \
-      --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py,target=/tool.py,readonly" \
+      --mount "type=bind,source=${SCRIPT_ROOT}/redis_volume_prepare.py,target=/tool.py,readonly" \
       --entrypoint python "${helper_image}" /tool.py --complete \
       "/incoming/$(basename "${rdb}")" /data /rollback "${manifest_sha}" || return $?
     validate_redis_aof_volume "${image_id}" || return $?

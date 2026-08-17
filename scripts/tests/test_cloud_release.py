@@ -1010,9 +1010,10 @@ def test_preflight_reports_exact_bootstrap_candidates():
         "/opt/car-agent/shared/bin/backup.sh",
         "/opt/car-agent/shared/bin/remote-release.sh",
         "/opt/car-agent/shared/bin/remote-build.sh",
-        "/opt/car-agent/shared/bin/activate-release.sh",
-        "/opt/car-agent/shared/bin/verify-release.sh",
-        "/opt/car-agent/shared/models/nlu/edge_nlu.onnx",
+            "/opt/car-agent/shared/bin/activate-release.sh",
+            "/opt/car-agent/shared/bin/verify-release.sh",
+            "/opt/car-agent/shared/bin/redis_volume_prepare.py",
+            "/opt/car-agent/shared/models/nlu/edge_nlu.onnx",
         "/opt/car-agent/shared/models/nlu/labels.json",
         "/opt/car-agent/shared/models/nlu/vocab.json",
         "/opt/car-agent/shared/models/voiceprint/campplus_zh-cn_16k-common.onnx",
@@ -1048,6 +1049,7 @@ def test_bootstrap_requires_remote_data_migration_script():
     assert "remote-data-migration.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "/opt/car-agent/shared/bin/remote-data-migration.sh" in REMOTE_PREFLIGHT_SOURCE
     assert "remote-e2e-lock.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert "redis_volume_prepare.py" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "/opt/car-agent/shared/bin/remote-e2e-lock.sh" in REMOTE_PREFLIGHT_SOURCE
 
 

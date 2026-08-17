@@ -2303,6 +2303,37 @@ def test_redis_volume_prepare_reconciles_every_rename_kill_point(
     ) == "old"
 
 
+def test_redis_volume_prepare_never_renames_across_data_and_rollback_mounts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_probe(REDIS_PREPARE_PATH, "redis_prepare_cross_device_test")
+    incoming = tmp_path / "incoming.rdb"
+    data = tmp_path / "data"
+    rollback = tmp_path / "rollback"
+    incoming.write_bytes(b"REDIS0011-new")
+    data.mkdir()
+    (data / "dump.rdb").write_bytes(b"REDIS0011-old")
+    (data / "appendonlydir").mkdir()
+    (data / "appendonlydir" / "appendonly.aof.manifest").write_text(
+        "old", encoding="utf-8",
+    )
+    real_replace = module.os.replace
+
+    def reject_cross_mount_replace(source, destination):
+        source_path = Path(source)
+        destination_path = Path(destination)
+        if data in source_path.parents and rollback in destination_path.parents:
+            raise OSError(18, "Invalid cross-device link")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(module.os, "replace", reject_cross_mount_replace)
+    assert module.prepare_redis_volume(incoming, data, rollback) == "prepared"
+    assert (rollback / "dump.rdb").read_bytes() == b"REDIS0011-old"
+    assert (rollback / "appendonlydir" / "appendonly.aof.manifest").read_text(
+        encoding="utf-8",
+    ) == "old"
+
+
 def test_redis_prepare_discards_safe_incomplete_aof_and_reuses_bound_complete_marker(tmp_path: Path):
     module = _load_probe(REDIS_PREPARE_PATH, "redis_prepare_completion_test")
     incoming = tmp_path / "incoming.rdb"
@@ -2349,6 +2380,8 @@ def test_remote_store_recovery_uses_identity_bound_loader_and_atomic_completion_
 def test_redis_restore_uses_crash_reconciling_volume_helper() -> None:
     text = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
     restore = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert '${SCRIPT_ROOT}/redis_volume_prepare.py' in restore
+    assert '${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py' not in restore
     assert "redis_volume_prepare.py" in restore
     assert 'MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}' in restore
     assert "mv /data/dump.rdb" not in restore

@@ -99,6 +99,88 @@ def _remove_safe_tree(path: Path) -> None:
     _fsync_directory(path.parent)
 
 
+def _copy_file_durable(source: Path, target: Path) -> None:
+    metadata = source.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise ValueError("Redis volume file is unsafe")
+    source_fd = os.open(source, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    target_fd = os.open(
+        target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        while chunk := os.read(source_fd, 1024 * 1024):
+            view = memoryview(chunk)
+            while view:
+                written = os.write(target_fd, view)
+                view = view[written:]
+        os.fsync(target_fd)
+    finally:
+        os.close(target_fd)
+        os.close(source_fd)
+
+
+def _copy_tree_durable(source: Path, target: Path) -> None:
+    if not _safe_entry(source, directory=True):
+        raise ValueError("Redis volume directory is unsafe")
+    target.mkdir(mode=0o700)
+    for entry in sorted(source.iterdir(), key=lambda item: item.name):
+        metadata = entry.lstat()
+        destination = target / entry.name
+        if stat.S_ISDIR(metadata.st_mode):
+            _copy_tree_durable(entry, destination)
+        elif stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
+            _copy_file_durable(entry, destination)
+        else:
+            raise ValueError("Redis volume tree contains an unsafe entry")
+    _fsync_directory(target)
+
+
+def _entry_digest(path: Path, *, directory: bool) -> str:
+    if not directory:
+        return _digest(path)
+    value = hashlib.sha256()
+    if not _safe_entry(path, directory=True):
+        raise ValueError("Redis volume directory is unsafe")
+    for entry in sorted(path.rglob("*"), key=lambda item: item.as_posix()):
+        relative = entry.relative_to(path).as_posix().encode()
+        metadata = entry.lstat()
+        if stat.S_ISDIR(metadata.st_mode):
+            value.update(b"d\0" + relative + b"\0")
+        elif stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
+            value.update(b"f\0" + relative + b"\0")
+            value.update(bytes.fromhex(_digest(entry)))
+        else:
+            raise ValueError("Redis volume tree contains an unsafe entry")
+    return value.hexdigest()
+
+
+def _remove_safe_entry(path: Path, *, directory: bool) -> None:
+    if directory:
+        _remove_safe_tree(path)
+        return
+    if not _safe_entry(path, directory=False):
+        raise ValueError("Redis volume file is unsafe")
+    path.unlink()
+    _fsync_directory(path.parent)
+
+
+def _backup_cross_mount(current: Path, saved: Path, *, directory: bool) -> None:
+    partial = saved.parent / f".redis-backup-{saved.name}.partial"
+    if _entry_exists(partial):
+        _remove_safe_entry(partial, directory=directory)
+    if directory:
+        _copy_tree_durable(current, partial)
+    else:
+        _copy_file_durable(current, partial)
+    _privatize(partial)
+    os.replace(partial, saved)
+    _fsync_directory(saved.parent)
+    if _entry_digest(current, directory=directory) != _entry_digest(saved, directory=directory):
+        raise ValueError("Redis rollback copy identity mismatch")
+    _remove_safe_entry(current, directory=directory)
+
+
 def _cleanup_marker_partials(rollback: Path) -> None:
     pattern = re.compile(r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial")
     changed = False
@@ -178,13 +260,15 @@ def prepare_redis_volume(
             if (payload["phase"] == "prepared"
                     or (name == "dump.rdb" and _digest(current) == source_sha)):
                 continue
-            raise ValueError("Redis rename state is ambiguous")
+            if _entry_digest(current, directory=directory) != _entry_digest(
+                saved, directory=directory,
+            ):
+                raise ValueError("Redis rename state is ambiguous")
+            _remove_safe_entry(current, directory=directory)
+            continue
         if current.exists() and not saved.exists():
             _crash(f"before-old-{name}", kill_point)
-            os.replace(current, saved)
-            _privatize(saved)
-            _fsync_directory(data)
-            _fsync_directory(rollback)
+            _backup_cross_mount(current, saved, directory=directory)
             _crash(f"after-old-{name}", kill_point)
 
     _remove_safe_tree(data / "appendonlydir.migration.partial")
