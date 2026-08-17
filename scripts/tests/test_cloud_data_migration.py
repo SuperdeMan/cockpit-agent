@@ -432,6 +432,9 @@ def test_snapshot_uses_locked_image_digest_and_never_pulls(tmp_path: Path):
     assert docker_runs
     assert all("--pull" in call and call[call.index("--pull") + 1] == "never" for call in docker_runs)
     assert all(any(part.startswith("sha256:") for part in call) for call in docker_runs)
+    collector_run = next(call for call in docker_runs if "collector.db.partial" in call[-1])
+    assert "--volumes-from" not in collector_run
+    assert "type=volume,source=car-agent-obs-data,target=/data,readonly" in collector_run
 
 
 def test_final_resolves_all_writer_identity_before_stop_and_recovers_on_failure(tmp_path: Path):

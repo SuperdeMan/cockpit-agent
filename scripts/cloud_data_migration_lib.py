@@ -1450,7 +1450,8 @@ def capture_collector(
     )
     runner.run(
         [
-            "docker", "run", "--pull", "never", "--rm", "--volumes-from", f"{service.container_id}:ro",
+            "docker", "run", "--pull", "never", "--rm",
+            "--mount", f"type=volume,source={service.data_mount},target=/data,readonly",
             "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
             "--entrypoint", "python", service.image, "-c", program,
         ],
