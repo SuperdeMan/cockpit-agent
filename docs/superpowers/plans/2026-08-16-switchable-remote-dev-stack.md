@@ -819,8 +819,8 @@ async def collector_stream_probe(url: str) -> None:
 
 ```python
 async def edge_round_trip(recorder: CaseRecorder) -> str:
-    token = required_secret("VITE_WS_TOKEN")
-    ws_url = append_query_token(os.environ["WS_URL"], token)
+    ws_auth = required_secret("VITE_WS_TOKEN")
+    ws_url = append_query_token(os.environ["WS_URL"], ws_auth)
     trace_id = "remote-" + uuid.uuid4().hex
     payload = {
         "text": "你好，请只回复一句简短问候",
