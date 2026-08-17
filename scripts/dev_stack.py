@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -26,6 +27,7 @@ from scripts.dev_stack_lib import (
     DevStackError,
     LOCAL_ENDPOINTS,
     StackStatus,
+    VerificationEvidence,
     cloud_endpoints,
     cloud_release_argv,
     frontend_command,
@@ -35,6 +37,7 @@ from scripts.dev_stack_lib import (
     resolve_target,
     set_target,
     stack_status_to_dict,
+    write_verification_evidence,
 )
 
 CHILD_OUTPUT_MAX_BYTES = 64 * 1024
@@ -298,6 +301,55 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             return 1
         emit({**base, "action": "deploy", **payload})
         return exit_code
+    if args.command == "verify":
+        case_ids: tuple[str, ...] = ()
+        lock_kind: str | None = None
+        passed = False
+        if selection.name == "local":
+            argv = [
+                sys.executable,
+                str(repo / "scripts" / "run_e2e.py"),
+                "--target", "local", "--check",
+            ]
+            result = release_runner.run(argv, cwd=repo, check=False)
+            passed = result.returncode == 0
+        else:
+            config = _connection(args)
+            release = cloud_release_argv(repo, "verify", "HEAD", apply=False)
+            first = release_runner.run(
+                [*release[:2], *_connection_argv(config), *release[2:]],
+                cwd=repo,
+                check=False,
+            )
+            if first.returncode == 0:
+                case_ids = ("e2e_remote_safe",)
+                lock_kind = "e2e"
+                e2e = [
+                    sys.executable,
+                    str(repo / "scripts" / "run_e2e.py"),
+                    *_connection_argv(config),
+                    "--target", "cloud", "--id", "e2e_remote_safe",
+                ]
+                second = release_runner.run(e2e, cwd=repo, check=False)
+                passed = second.returncode == 0
+        evidence = VerificationEvidence(
+            target=selection.name,
+            release_sha=None,
+            provider=None,
+            model=None,
+            case_ids=case_ids,
+            lock_kind=lock_kind,
+            passed=passed,
+            verified_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        )
+        artifact = write_verification_evidence(repo, evidence)
+        emit({
+            **base,
+            "action": "verify",
+            "status": "verified" if passed else "failed",
+            "artifact": str(artifact),
+        })
+        return 0 if passed else 1
     if args.command in {"hmi", "dashboard"}:
         selected_env: dict[str, str] = {}
         endpoints = LOCAL_ENDPOINTS

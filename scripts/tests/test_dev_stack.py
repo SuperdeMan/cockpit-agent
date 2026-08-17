@@ -1093,14 +1093,69 @@ def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(t
     assert str(identity) not in json.dumps(events)
 
 
-@pytest.mark.parametrize("command", ("verify",))
-def test_cli_unimplemented_actions_fail_closed(command: str, tmp_path: Path):
-    events: list[dict[str, object]] = []
+def test_cloud_verify_runs_release_verify_then_remote_safe_runner(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    identity = _valid_identity(tmp_path)
+    runner = FakeCliRunner()
 
-    assert cli.main([command], repo=tmp_path, emit=events.append) == 2
-    assert events == [
-        {"status": "configuration_rejected", "target": "local", "source": "default"}
-    ]
+    rc = cli.main(
+        ["--host", "demo.example", "--identity", str(identity), "verify"],
+        repo=tmp_path,
+        release_runner=runner,
+    )
+
+    assert rc == 0
+    assert runner.calls[0][-1] == "verify"
+    assert runner.calls[1][-4:] == (
+        "--target", "cloud", "--id", "e2e_remote_safe",
+    )
+
+
+def test_local_verify_keeps_existing_e2e_check_semantics(tmp_path: Path):
+    runner = FakeCliRunner()
+
+    assert cli.main(["verify"], repo=tmp_path, release_runner=runner) == 0
+    assert runner.calls == [(
+        sys.executable,
+        str(tmp_path / "scripts" / "run_e2e.py"),
+        "--target", "local", "--check",
+    )]
+    assert "cloud_release.py" not in " ".join(runner.calls[0])
+
+
+def test_cloud_verify_stops_after_release_failure(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    runner = FakeCliRunner(result=1)
+
+    assert cli.main(
+        ["--host", "demo.example", "--identity", str(_valid_identity(tmp_path)), "verify"],
+        repo=tmp_path,
+        release_runner=runner,
+    ) == 1
+    assert len(runner.calls) == 1
+
+
+def test_verify_writes_private_allowlisted_evidence(tmp_path: Path):
+    events: list[dict[str, object]] = []
+    runner = FakeCliRunner()
+
+    assert cli.main(
+        ["verify"], repo=tmp_path, release_runner=runner, emit=events.append,
+    ) == 0
+    evidence_path = Path(events[-1]["artifact"])
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence == {
+        "case_ids": [],
+        "lock_kind": None,
+        "model": None,
+        "passed": True,
+        "provider": None,
+        "release_sha": None,
+        "target": "local",
+        "verified_at": evidence["verified_at"],
+    }
+    if os.name != "nt":
+        assert evidence_path.stat().st_mode & 0o777 == 0o600
 
 
 def test_cloud_hmi_uses_local_vite_and_remote_endpoints(tmp_path: Path):

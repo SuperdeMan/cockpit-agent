@@ -12,6 +12,7 @@ from pathlib import Path
 import json
 import socket
 import ssl
+from datetime import UTC, datetime
 from typing import Iterable, Literal, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -52,6 +53,18 @@ class FrontendCommand:
     argv: tuple[str, ...]
     cwd: Path
     env: dict[str, str]
+
+
+@dataclass(frozen=True)
+class VerificationEvidence:
+    target: str
+    release_sha: str | None
+    provider: str | None
+    model: str | None
+    case_ids: tuple[str, ...]
+    lock_kind: str | None
+    passed: bool
+    verified_at: str
 
 
 @dataclass(frozen=True)
@@ -739,3 +752,38 @@ def cloud_release_argv(
     if action == "verify":
         return [*argv, "verify"]
     raise DevStackError("unsupported cloud release action")
+
+
+def write_verification_evidence(
+    repo: Path,
+    evidence: VerificationEvidence,
+) -> Path:
+    directory = Path(repo) / ".artifacts" / "dev-stack-verifications"
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    suffix = (evidence.release_sha or "unknown")[:7]
+    destination = directory / f"{stamp}-{suffix}.json"
+    payload = {
+        "target": evidence.target,
+        "release_sha": evidence.release_sha,
+        "provider": evidence.provider,
+        "model": evidence.model,
+        "case_ids": list(evidence.case_ids),
+        "lock_kind": evidence.lock_kind,
+        "passed": evidence.passed,
+        "verified_at": evidence.verified_at,
+    }
+    encoded = (
+        json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        + "\n"
+    ).encode("utf-8")
+    try:
+        fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(destination, 0o600)
+    except OSError as exc:
+        raise DevStackError("verification evidence cannot be written safely") from exc
+    return destination
