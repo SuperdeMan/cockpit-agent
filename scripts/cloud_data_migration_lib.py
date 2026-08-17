@@ -47,6 +47,7 @@ CONTROL_JSON_MAX_BYTES = 16 * 1024 * 1024
 CONTROL_JSON_MAX_DEPTH = 16
 CONTROL_JSON_MAX_ITEMS = 200_000
 MAX_IDENTITY_ITEMS = 20_000
+MAX_COLLECTOR_IDENTITY_ITEMS = 50_000
 MIGRATION_STATE_MACHINE = json.loads(
     (Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "migration-state-machine.json")
     .read_text(encoding="utf-8")
@@ -840,7 +841,7 @@ def _parse_collector_manifest(value: object) -> Mapping[str, object]:
     tables = _bounded_count_map(data["tables"], "Collector tables")
     if set(tables) != set(COLLECTOR_TABLES) or data["integrity_check"] != "ok":
         raise MigrationError("Collector evidence is invalid")
-    if sum(tables.values()) > MAX_IDENTITY_ITEMS:
+    if sum(tables.values()) > MAX_COLLECTOR_IDENTITY_ITEMS:
         raise MigrationError("Collector identity count limit exceeded")
     identity = _exact_keys(data["source_identity"], frozenset({"rows"}), "Collector source identity")
     rows_raw = identity["rows"]

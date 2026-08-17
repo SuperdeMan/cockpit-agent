@@ -2356,6 +2356,8 @@ def _load_store_evidence_module():
 
 def test_collector_identity_evidence_is_keyed_content_free_and_cursor_bounded(tmp_path: Path):
     module = _load_store_evidence_module()
+    assert module.MAX_COLLECTOR_ITEMS == 50_000
+    assert module.MAX_ITEMS == 20_000
     database = tmp_path / "collector.db"
     with sqlite3.connect(database) as connection:
         for table in module.COLLECTOR_TABLES:

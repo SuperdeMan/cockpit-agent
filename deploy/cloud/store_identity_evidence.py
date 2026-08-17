@@ -19,6 +19,7 @@ from typing import Iterable
 
 
 MAX_ITEMS = 20_000
+MAX_COLLECTOR_ITEMS = 50_000
 PAGE_SIZE = 256
 PG_TABLES = {
     "memory_item": ("id", None),
@@ -286,7 +287,7 @@ def collect_collector(database: Path, key: bytes, retention_days: float = 7.0) -
                         "relation": _hmac(key, b"collector:trace:" + str(trace).encode()),
                     }
                     total_rows += 1
-                    if total_rows > MAX_ITEMS:
+                    if total_rows > MAX_COLLECTOR_ITEMS:
                         raise ValueError("Collector identity evidence exceeds item limit")
     return {"rows": rows, "user_version": version, "schema_fingerprint": schema_fingerprint,
             "tables": table_counts, "integrity_check": "ok",
