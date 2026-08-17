@@ -152,7 +152,17 @@ def main(
             _emit({"status": final_status["status"], "migration_id": request.migration_id})
             return 0
         raise migration.MigrationError("unsupported migration command")
-    except (migration.MigrationError, ReleaseError):
+    except ReleaseError as exc:
+        payload: dict[str, object] = {"status": "error", "error_category": "migration"}
+        if args.command in {"apply", "rollback", "recover"} and "timed out" in str(exc):
+            payload.update({
+                "remote_status": "unknown_in_progress",
+                "recovery_action": "recover --apply",
+            })
+        _emit(payload)
+        print("cloud-data-migration: operation failed", file=sys.stderr)
+        return 2
+    except migration.MigrationError:
         _emit({"status": "error", "error_category": "migration"})
         print("cloud-data-migration: operation failed", file=sys.stderr)
         return 2

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import gzip
 import importlib.util
 import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import textwrap
 from pathlib import Path
@@ -24,6 +26,7 @@ HMI_VITE_CONFIG_PATH = CLOUD_DIR / "vite.hmi.cloud.config.mjs"
 BACKUP_PATH = CLOUD_DIR / "backup.sh"
 TRANSACTION_LOCK_PATH = CLOUD_DIR / "transaction-lock.sh"
 REMOTE_MIGRATION_PATH = CLOUD_DIR / "remote-data-migration.sh"
+SQLITE_STREAM_RESTORE_PATH = CLOUD_DIR / "sqlite_stream_restore.py"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
@@ -374,11 +377,11 @@ def test_remote_attestation_steps_propagate_failures_explicitly():
     body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
     for command in (
         'SQL\n)" || return $?',
-        "}}' 0)\" || return $?",
+        "}}' 0 \"${digest_key}\")\" || return $?",
         'collector_ids_text="$("${compose[@]}" ps -a -q observability-collector)" || return $?',
         'mapfile -t collector_ids <<<"${collector_ids_text}" || return $?',
         'collector_image="$(docker inspect',
-        "separators=(\",\", \":\")))')\" || return $?",
+        "\"${digest_key}\" \"${retention_days}\")\" || return $?",
         "run_id=\"$(python3 -c 'import secrets; print(secrets.token_hex(12))')\" || return $?",
         'python3 - "${directory}/manifest.json"',
         'chmod 0600 -- "${evidence_partial}" || return $?',
@@ -512,7 +515,8 @@ def test_remote_post_start_rules_preserve_business_data_but_allow_growth():
     assert 'current_count < baseline_count' in body
     assert 'PostgreSQL state transition set is invalid' in body
     assert 'PostgreSQL state entity conservation failed' in body
-    assert 'Redis persistent prefix count decreased' in body
+    assert 'persistent Redis keyed identity disappeared' in body
+    assert 'unexpired Redis keyed identity disappeared' in body
     assert 'retention_deleted' in body
     assert 'r["version"] != baseline["redis"]["version"]' in body
     assert 'c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]' in body
@@ -655,8 +659,7 @@ def test_migration_docs_explain_two_stage_attestation_growth_rules():
         text = _required_text(path)
         for phrase in (
             "evidence-pre-start.json", "evidence-post-start.json",
-            "pending reminders", "enabled scenes", "voiceprint",
-            "persistent Redis prefix", "post-start",
+            "PostgreSQL", "keyed", "Collector", "TTL", "post-start",
         ):
             assert phrase in text
 
@@ -1717,10 +1720,11 @@ def test_apply_quiesces_before_validated_backup_and_uses_failure_funnel():
 def test_backup_supports_quiesced_migration_triplet_validation_and_hash_manifest():
     text = _required_text(CLOUD_DIR / "backup.sh")
     for token in (
-        "--writers-quiesced", "pg_restore", "redis-check-rdb", "PRAGMA integrity_check",
+        "--writers-quiesced", "pg_restore", "redis-check-rdb", "sqlite_stream_restore.py",
         "sha256", "backup-manifest", "COLLECTOR_VOLUME",
     ):
         assert token in text
+    assert "PRAGMA integrity_check" in _required_text(SQLITE_STREAM_RESTORE_PATH)
     assert text.index("--writers-quiesced") < text.index("pg_dump")
     assert "docker run --pull never --rm=true" in text
 
@@ -1937,3 +1941,50 @@ def test_backup_asserts_all_three_stable_store_volumes_before_capture():
     ):
         assert token in text
     assert text.index("postgres_volume=") < text.index("pg_dump")
+
+
+def test_target_attestation_collects_keyed_identities_and_real_retention_predicates():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for token in (
+        "identity_sets", "state_by_identity", "sha256(convert_to",
+        "persistent_digests", "expiring_deadlines_ms", "PEXPIRETIME",
+        "cleanup_cutoff_ms", "badcase==1 or gold!=\"\"", "relation",
+        "PostgreSQL keyed identity disappeared or was replaced",
+        "unexpired Redis keyed identity disappeared",
+        "Collector deletion violates retention predicate",
+    ):
+        assert token in body
+    assert '{"pending","fired","done","cancelled"}' in body
+    assert '{"accepted","running","done","failed","cancelled","orphaned"}' in body
+    assert '{"pending","dispatched","presented","dropped","expired"}' in body
+
+
+def test_collector_sql_restore_is_streaming_bounded_and_integrity_checked(tmp_path: Path):
+    helper = _load_probe(SQLITE_STREAM_RESTORE_PATH, "sqlite_stream_restore_test")
+    source_db = tmp_path / "source.db"
+    with sqlite3.connect(source_db) as connection:
+        connection.execute("CREATE TABLE turns(id INTEGER PRIMARY KEY, value TEXT)")
+        connection.execute("INSERT INTO turns(value) VALUES (?)", ("safe",))
+        dump = "\n".join(connection.iterdump()) + "\n"
+    compressed = tmp_path / "collector.sql.gz"
+    with gzip.open(compressed, "wt", encoding="utf-8") as output:
+        output.write(dump)
+    restored = tmp_path / "restored.db"
+    helper.restore_gzip_sql(compressed, restored, max_statement_bytes=1024)
+    with sqlite3.connect(f"file:{restored}?mode=ro", uri=True) as connection:
+        assert connection.execute("SELECT value FROM turns").fetchone() == ("safe",)
+        assert connection.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
+
+    oversized = tmp_path / "oversized.sql.gz"
+    with gzip.open(oversized, "wt", encoding="utf-8") as output:
+        output.write("CREATE TABLE x(value TEXT);\nINSERT INTO x VALUES ('" + "x" * 256 + "');\n")
+    rejected = tmp_path / "rejected.db"
+    with pytest.raises(ValueError, match="statement exceeds"):
+        helper.restore_gzip_sql(oversized, rejected, max_statement_bytes=64)
+    assert not rejected.exists()
+
+    remote = _required_text(REMOTE_MIGRATION_PATH)
+    restore = re.search(r"(?ms)^restore_collector_sql\(\) \{(?P<body>.*?)^\}", remote)["body"]
+    assert "sqlite_stream_restore.py" in restore
+    assert "source.read()" not in restore and "executescript" not in restore

@@ -162,33 +162,8 @@ docker run --pull never --rm=true --mount "${postgres_mount}" --entrypoint pg_re
 docker run --pull never --rm=true --mount "${redis_mount}" --entrypoint redis-check-rdb \
   "${redis_image}" "/backup/${timestamp}.rdb" | grep -F 'CRC64 checksum is OK' >/dev/null
 docker run --pull never --rm=true --mount "${obs_mount}" --tmpfs /restore:rw,noexec,nosuid \
-  --entrypoint python "${collector_image}" - "${timestamp}.sql.gz" <<'PY'
-import gzip
-import sqlite3
-import sys
-from pathlib import Path
-
-target = Path("/restore/collector.db")
-with gzip.open(Path("/backup") / sys.argv[1], "rt", encoding="utf-8") as source:
-    with sqlite3.connect(target) as connection:
-        statement = []
-        expanded = 0
-        for line in source:
-            expanded += len(line.encode("utf-8"))
-            if expanded > 16 * 1024 * 1024 * 1024:
-                raise SystemExit("collector backup expands beyond limit")
-            statement.append(line)
-            sql = "".join(statement)
-            if len(sql.encode("utf-8")) > 64 * 1024 * 1024:
-                raise SystemExit("collector backup statement exceeds limit")
-            if sqlite3.complete_statement(sql):
-                connection.execute(sql)
-                statement.clear()
-        if statement:
-            raise SystemExit("collector backup has incomplete SQL")
-        if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-            raise SystemExit("backup collector restore integrity failed")
-PY
+  --mount "type=bind,source=${RELEASE_DIR}/deploy/cloud/sqlite_stream_restore.py,target=/tool.py,readonly" \
+  --entrypoint python "${collector_image}" /tool.py "/backup/${timestamp}.sql.gz" /restore/collector.db
 
 backup_manifest="${BACKUP_ROOT}/${timestamp}.backup-manifest.json"
 python3 - "${backup_manifest}" "${timestamp}" "${postgres_target}" "${redis_target}" "${obs_target}" "${redis_aggregate}" <<'PY'

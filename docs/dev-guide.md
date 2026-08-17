@@ -255,6 +255,9 @@ python scripts/cloud_data_migration.py apply --migration-id 20260817T010203Z-abc
 # 只有取得本轮数据库迁移与云端应用授权后：
 python scripts/cloud_data_migration.py apply --migration-id 20260817T010203Z-abcdef0-online --apply
 python scripts/cloud_data_migration.py verify --migration-id 20260817T010203Z-abcdef0-online
+# SSH 超时或 durable journal 显示中断时，先只读审计，再另行授权恢复：
+python scripts/cloud_data_migration.py recover --migration-id 20260817T010203Z-abcdef0-online
+python scripts/cloud_data_migration.py recover --migration-id 20260817T010203Z-abcdef0-online --apply
 ```
 
 示例 ID 只展示格式；实际命令必须复制 `snapshot` 输出的 ID。`apply` 和 `rollback` 不带
@@ -273,9 +276,14 @@ python scripts/cloud_data_migration.py snapshot --phase final --quiesce-local --
 
 远端验证分为 pre-start 与 post-start。恢复完成且写服务尚未启动时，工具将 snapshot 精确对账写入
 `evidence-pre-start.json`；release 启动后再写 `evidence-post-start.json`。post-start 允许服务
-自然增长，但 PostgreSQL 持久业务表及 manifest 状态计数不得减少，特别包括 pending reminders、
-enabled scenes 和 voiceprint。PostgreSQL 状态按明确的状态集合与实体总数守恒校验，不要求每个状态
-bucket 单调增加。Redis 版本/类型集合保持不变，每个 persistent Redis prefix 的持久 key 计数不得减少；
-TTL key 可自然衰减或新增。Collector schema 和 `user_version` 保持不变，retention 导致的减少会按表
-记录删除差值，而不是伪报成迁移丢数。`verify` 使用保存的 pre-start baseline 执行同一规则，不再要求当前状态与原始 snapshot
-全量精确相等；所有证据仍只记录安全聚合，不输出正文或完整 key。
+自然增长。PostgreSQL 用主键的 keyed digest 集合守住实体身份，并按生产常量中的完整状态集合和允许
+transition matrix 校验；因此允许正常状态流转，但等量换行、非法回退和持久实体丢失都会失败。
+Redis 对无 TTL key 保存 keyed identity digest；有 TTL key 保存 digest 与绝对过期时刻，只有检查时已经
+到期的源 key 才允许缺失。Collector 保存各表关系 identity、清理 cutoff 与 badcase/gold trace 保护位；
+只有实际满足 `ts < cutoff` 且非保护 trace 的行才允许按 retention 谓词减少，等量替换和关联改写都失败。
+`verify` 使用保存的 pre-start baseline 执行同一 post-start 规则；证据不含正文或完整 key。
+
+`rollback` / `recover` 不带 `--apply` 时通过只读 `rollback-plan` 返回服务器已记录的 backup stamp、
+三份 backup hash、operation/release identity 与 would-stop 列表；该路径不获取或创建事务锁。
+`BACKED_UP`、`ROLLBACK_IN_PROGRESS` 可按 durable journal 确定性续作；`ROLLBACK_FAILED` 不自动
+盲重试，必须先审计 journal 中的 store/step/rc，再显式执行 `recover ... --apply`。

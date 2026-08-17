@@ -221,13 +221,20 @@ voiceprint 为 0 时如实报告 0；模型可用不等于声纹数据已迁移�
 安装分别需要本轮明确授权。未授权时只允许本地 `snapshot`、`plan`、dry-run 与静态测试；本文档
 记录的是工具契约，不表示已经在真实本地卷或云端完成迁移验证。
 
+迁移在首次停止 writer 前写入并 fsync durable journal，记录 operation/direction、三存储 phase、
+backup hash 绑定和失败 step/rc。`rollback` / `recover` 的 dry-run 只读该 journal 与 backup manifest，
+不获取或创建事务锁；显式授权的 `recover --apply` 才能从 `BACKED_UP` / `ROLLBACK_IN_PROGRESS`
+继续整组回滚。`ROLLBACK_FAILED` 必须先审计，不会自动盲重试。
+
 数据整组替换采用两段证明，不能把服务启动后的自然写入再与原始 snapshot 做全量精确相等：
 
 - 写服务仍停止时生成 `evidence-pre-start.json`，它必须与导入 manifest 精确相等。
-- 当前 release 启动并通过健康检查后生成 `evidence-post-start.json`。post-start 允许自然增长，但
-  PostgreSQL 的持久业务表、全部 manifest 状态计数、pending reminders、enabled scenes 与
-  voiceprint 均不得减少；派生的 `agents` / `agent_capability_vec` 可由启动过程重建。
-- Redis 版本与类型集合不得改变，每个 persistent Redis prefix 的无 TTL key 计数不得减少；
-  有 TTL key 可自然过期或新增。Collector 的 schema、`user_version` 不得改变，各表只允许增长。
+- 当前 release 启动并通过健康检查后生成 `evidence-post-start.json`。PostgreSQL 用 keyed 主键摘要
+  校验持久实体，并按 reminder、task ledger、proactive delivery、scene 的生产状态集合与 transition
+  matrix 允许正常流转；持久实体等量替换、丢失或非法状态回退均失败。
+- Redis 的无 TTL key keyed identity 不得减少；有 TTL key 只有其 baseline 绝对过期时刻已到才允许
+  缺失。Collector 的 schema、`user_version` 不得改变，仅允许真实 cleanup 谓词删除
+  `ts < cutoff` 且非 badcase/gold trace 的行；保护行、近期行、关系 identity 不得丢失或改写。
 - 独立 `verify` 必须读取已保存的 `evidence-pre-start.json`，按同一 post-start 规则重采并覆盖
-  `evidence-post-start.json`。证据只含计数、状态、类型、前缀和指纹，不含正文或完整 key。
+  `evidence-post-start.json`。证据只含计数、状态、keyed identity、到期时刻、清理 cutoff 和指纹，
+  不含正文或完整 key。

@@ -62,6 +62,40 @@ POSTGRES_STATE_COLUMNS = MappingProxyType(
         "scene_item.status": ("scene_item", "status"),
     }
 )
+POSTGRES_ALLOWED_STATES = MappingProxyType({
+    "reminder_item.status": frozenset({"pending", "fired", "done", "cancelled"}),
+    "task_ledger.status": frozenset({
+        "accepted", "running", "done", "failed", "cancelled", "orphaned",
+    }),
+    "proactive_delivery.state": frozenset({
+        "pending", "dispatched", "presented", "dropped", "expired",
+    }),
+    "scene_item.status": frozenset({"enabled", "disabled"}),
+})
+POSTGRES_STATE_TRANSITIONS = MappingProxyType({
+    "reminder_item.status": MappingProxyType({
+        "pending": frozenset({"pending", "fired", "cancelled"}),
+        "fired": frozenset({"fired", "pending", "done", "cancelled"}),
+        "done": frozenset({"done"}), "cancelled": frozenset({"cancelled"}),
+    }),
+    "task_ledger.status": MappingProxyType({
+        "accepted": frozenset({"accepted", "running", "done", "failed", "cancelled", "orphaned"}),
+        "running": frozenset({"running", "done", "failed", "cancelled", "orphaned"}),
+        "orphaned": frozenset({"orphaned", "running"}),
+        "done": frozenset({"done"}), "failed": frozenset({"failed"}),
+        "cancelled": frozenset({"cancelled"}),
+    }),
+    "proactive_delivery.state": MappingProxyType({
+        "pending": frozenset({"pending", "dispatched", "dropped", "expired"}),
+        "dispatched": frozenset({"dispatched", "presented", "dropped", "expired"}),
+        "presented": frozenset({"presented"}), "dropped": frozenset({"dropped"}),
+        "expired": frozenset({"expired"}),
+    }),
+    "scene_item.status": MappingProxyType({
+        "enabled": frozenset({"enabled", "disabled"}),
+        "disabled": frozenset({"disabled", "enabled"}),
+    }),
+})
 SCHEMA_SQL = """
 SELECT json_agg(row_to_json(x) ORDER BY table_name, ordinal_position)
 FROM (
@@ -160,6 +194,110 @@ return {map={
 
 class MigrationError(RuntimeError):
     """A redacted, user-facing data migration error."""
+
+
+def _digest_set(value: object, label: str) -> set[str]:
+    if (not isinstance(value, list) or len(value) > CONTROL_JSON_MAX_ITEMS
+            or any(not isinstance(item, str) or SHA256_RE.fullmatch(item) is None for item in value)
+            or len(set(value)) != len(value)):
+        raise MigrationError(f"{label} digest set is invalid")
+    return set(value)
+
+
+def verify_post_start_identity_evidence(
+    baseline: Mapping[str, object], current: Mapping[str, object], *, checked_at_ms: int,
+) -> None:
+    """Verify growth-safe post-start identities without exposing source keys or content."""
+    if type(checked_at_ms) is not int or checked_at_ms < 0:
+        raise MigrationError("identity evidence check time is invalid")
+    for store in ("postgres", "redis", "collector"):
+        if not isinstance(baseline.get(store), Mapping) or not isinstance(current.get(store), Mapping):
+            raise MigrationError("identity evidence store set is invalid")
+
+    baseline_pg = baseline["postgres"]
+    current_pg = current["postgres"]
+    assert isinstance(baseline_pg, Mapping) and isinstance(current_pg, Mapping)
+    baseline_sets = baseline_pg.get("identity_sets")
+    current_sets = current_pg.get("identity_sets")
+    if (not isinstance(baseline_sets, Mapping) or not isinstance(current_sets, Mapping)
+            or set(baseline_sets) != set(current_sets)):
+        raise MigrationError("PostgreSQL identity table set is invalid")
+    for table in baseline_sets:
+        before = _digest_set(baseline_sets[table], f"PostgreSQL {table}")
+        after = _digest_set(current_sets[table], f"PostgreSQL {table}")
+        if not before.issubset(after):
+            raise MigrationError("PostgreSQL identity disappeared or was replaced")
+    before_states = baseline_pg.get("state_by_identity")
+    after_states = current_pg.get("state_by_identity")
+    if (not isinstance(before_states, Mapping) or not isinstance(after_states, Mapping)
+            or set(before_states) != set(POSTGRES_ALLOWED_STATES)
+            or set(after_states) != set(POSTGRES_ALLOWED_STATES)):
+        raise MigrationError("PostgreSQL state identity set is invalid")
+    for state_name, allowed in POSTGRES_ALLOWED_STATES.items():
+        before_map = before_states[state_name]
+        after_map = after_states[state_name]
+        if not isinstance(before_map, Mapping) or not isinstance(after_map, Mapping):
+            raise MigrationError("PostgreSQL state identity map is invalid")
+        if len(before_map) > CONTROL_JSON_MAX_ITEMS or len(after_map) > CONTROL_JSON_MAX_ITEMS:
+            raise MigrationError("PostgreSQL state identity map exceeds item limit")
+        for digest, old_state in before_map.items():
+            if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+                raise MigrationError("PostgreSQL state identity digest is invalid")
+            new_state = after_map.get(digest)
+            if old_state not in allowed or new_state not in allowed:
+                raise MigrationError("PostgreSQL state value is invalid")
+            if new_state not in POSTGRES_STATE_TRANSITIONS[state_name][old_state]:
+                raise MigrationError("PostgreSQL state transition is invalid")
+
+    baseline_redis = baseline["redis"]
+    current_redis = current["redis"]
+    assert isinstance(baseline_redis, Mapping) and isinstance(current_redis, Mapping)
+    persistent_before = _digest_set(
+        baseline_redis.get("persistent_digests"), "Redis persistent",
+    )
+    persistent_after = _digest_set(
+        current_redis.get("persistent_digests"), "Redis persistent",
+    )
+    if not persistent_before.issubset(persistent_after):
+        raise MigrationError("persistent Redis identity disappeared")
+    expiry_before = baseline_redis.get("expiring_deadlines_ms")
+    expiry_after = current_redis.get("expiring_deadlines_ms")
+    if not isinstance(expiry_before, Mapping) or not isinstance(expiry_after, Mapping):
+        raise MigrationError("Redis expiry identity map is invalid")
+    for digest, deadline in expiry_before.items():
+        if (not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None
+                or type(deadline) is not int or deadline < 0):
+            raise MigrationError("Redis expiry identity record is invalid")
+        if digest not in expiry_after and deadline > checked_at_ms:
+            raise MigrationError("unexpired Redis identity disappeared")
+
+    baseline_collector = baseline["collector"]
+    current_collector = current["collector"]
+    assert isinstance(baseline_collector, Mapping) and isinstance(current_collector, Mapping)
+    before_rows = baseline_collector.get("rows")
+    after_rows = current_collector.get("rows")
+    cutoff = current_collector.get("cleanup_cutoff_ms")
+    if (not isinstance(before_rows, Mapping) or not isinstance(after_rows, Mapping)
+            or set(before_rows) != set(COLLECTOR_TABLES)
+            or set(after_rows) != set(COLLECTOR_TABLES)
+            or type(cutoff) is not int or cutoff < 0):
+        raise MigrationError("Collector identity evidence is invalid")
+    for table in COLLECTOR_TABLES:
+        old_table = before_rows[table]
+        new_table = after_rows[table]
+        if not isinstance(old_table, Mapping) or not isinstance(new_table, Mapping):
+            raise MigrationError("Collector table identity evidence is invalid")
+        for digest, record in old_table.items():
+            if not isinstance(record, Mapping):
+                raise MigrationError("Collector identity record is invalid")
+            if digest in new_table:
+                if new_table[digest] != record:
+                    raise MigrationError("Collector relation identity changed")
+                continue
+            if record.get("protected") is True:
+                raise MigrationError("protected Collector identity disappeared")
+            if type(record.get("ts_ms")) is not int or record["ts_ms"] >= cutoff:
+                raise MigrationError("Collector deletion violates retention predicate")
 
 
 @dataclass(frozen=True)
@@ -468,6 +606,9 @@ def parse_manifest(payload: object) -> MigrationManifest:
     canonical_created = parsed_created.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
     if parsed_created.utcoffset() != UTC.utcoffset(parsed_created) or canonical_created != created_at:
         raise MigrationError("invalid created_at")
+    expected_id = f"{parsed_created.strftime('%Y%m%dT%H%M%SZ')}-{source_sha[:7]}-{phase}"
+    if migration_id != expected_id:
+        raise MigrationError("migration id does not match source SHA and creation time")
 
     raw_files = _exact_keys(data["files"], frozenset(SNAPSHOT_FILENAMES), "file")
     files: dict[str, FileRecord] = {}
@@ -542,6 +683,17 @@ def _require_fingerprint(value: object, label: str) -> str:
     return value
 
 
+def _validate_postgres_state_counts(
+    tables: Mapping[str, int], states: Mapping[str, Mapping[str, int]],
+) -> None:
+    for name, counts in states.items():
+        if not set(counts).issubset(POSTGRES_ALLOWED_STATES[name]):
+            raise MigrationError("PostgreSQL state value is not in the production contract")
+        table = POSTGRES_STATE_COLUMNS[name][0]
+        if sum(counts.values()) != tables[table]:
+            raise MigrationError("PostgreSQL state counts do not conserve entities")
+
+
 def _parse_postgres_manifest(value: object) -> Mapping[str, object]:
     data = _exact_keys(value, frozenset({
         "major", "vector_version", "tables", "states",
@@ -560,6 +712,7 @@ def _parse_postgres_manifest(value: object) -> Mapping[str, object]:
     if not isinstance(states_raw, Mapping) or set(states_raw) != set(POSTGRES_STATE_COLUMNS):
         raise MigrationError("PostgreSQL state set is not exact")
     states = {name: dict(_bounded_count_map(states_raw[name], name)) for name in POSTGRES_STATE_COLUMNS}
+    _validate_postgres_state_counts(tables, states)
     return MappingProxyType({
         "major": major, "vector_version": vector, "tables": dict(tables), "states": states,
         "schema_fingerprint": _require_fingerprint(data["schema_fingerprint"], "schema fingerprint"),
@@ -626,6 +779,7 @@ def _postgres_evidence(payload: object, archive_fingerprint: str) -> Mapping[str
     if not isinstance(raw_states, Mapping) or set(raw_states) != set(POSTGRES_STATE_COLUMNS):
         raise MigrationError("PostgreSQL state aggregate set is not exact")
     states = {name: dict(_bounded_count_map(raw_states[name], name)) for name in POSTGRES_STATE_COLUMNS}
+    _validate_postgres_state_counts(tables, states)
     schema_material = {
         "columns": data["columns"],
         "primary_keys": data["primary_keys"],
@@ -656,7 +810,8 @@ def _redis_evidence(payload: object, rdb_path: Path) -> Mapping[str, object]:
     data = _exact_keys(payload, expected, "Redis aggregate")
     if not isinstance(data["version"], str) or len(data["version"]) > 32:
         raise MigrationError("invalid Redis version")
-    header = rdb_path.read_bytes()[:9]
+    with rdb_path.open("rb") as rdb_file:
+        header = rdb_file.read(9)
     if len(header) != 9 or not header.startswith(b"REDIS") or not header[5:].isdigit():
         raise MigrationError("Redis snapshot header is invalid")
     rdb_version = int(header[5:])

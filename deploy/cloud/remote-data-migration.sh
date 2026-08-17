@@ -378,6 +378,8 @@ except ValueError as exc:
 canonical = created.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 if created.utcoffset() != timezone.utc.utcoffset(created) or canonical != created_at:
     raise SystemExit("manifest created_at is not canonical UTC")
+expected_id=f'{created.strftime("%Y%m%dT%H%M%SZ")}-{payload["source_sha"][:7]}-{payload["phase"]}'
+if migration_id!=expected_id: raise SystemExit("migration id is not bound to source SHA and creation time")
 names = {"postgres.dump", "redis.rdb", "collector.db"}
 if not isinstance(payload.get("files"), dict) or set(payload["files"]) != names:
     raise SystemExit("manifest file set is invalid")
@@ -412,6 +414,17 @@ def safe_counts(value):
     return isinstance(value, dict) and all(re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key) and type(count) is int and count >= 0 for key, count in value.items())
 if not safe_counts(pg["tables"]) or not all(safe_counts(item) for item in pg["states"].values()):
     raise SystemExit("PostgreSQL aggregate counts are invalid")
+allowed_states={
+ "reminder_item.status":{"pending","fired","done","cancelled"},
+ "task_ledger.status":{"accepted","running","done","failed","cancelled","orphaned"},
+ "proactive_delivery.state":{"pending","dispatched","presented","dropped","expired"},
+ "scene_item.status":{"enabled","disabled"},
+}
+state_tables={"reminder_item.status":"reminder_item","task_ledger.status":"task_ledger",
+              "proactive_delivery.state":"proactive_delivery","scene_item.status":"scene_item"}
+for name,counts in pg["states"].items():
+    if not set(counts).issubset(allowed_states[name]) or sum(counts.values())!=pg["tables"][state_tables[name]]:
+        raise SystemExit("PostgreSQL state contract is invalid")
 if not safe_counts(redis.get("prefixes")) or not safe_counts(redis.get("types")) or not safe_counts(collector.get("tables")):
     raise SystemExit("aggregate category counts are invalid")
 if not re.fullmatch(r"[0-9]+(?:[.][0-9]+){1,3}", redis.get("version", "")):
@@ -553,16 +566,13 @@ PY
 
 assert_expected_cloud_topology() {
   local services_text service cid image volume serve_status serve_count state config_image timer_result
-  local expected_service expected_image
+  local expected_service expected_image expected_rows inspection_text _status
   local -a services inspection
   local -A expected_images=()
   services_text="$("${compose[@]}" config --services)" || return $?
   mapfile -t services <<<"${services_text}" || return $?
   [[ "${#services[@]}" -eq 30 ]] || { migration_fail "cloud compose topology is incomplete"; return 1; }
-  while IFS=$'\t' read -r expected_service expected_image; do
-    [[ "${expected_service}" =~ ^[a-z0-9-]+$ && "${expected_image}" =~ ^[A-Za-z0-9./_-]+$ ]] || return 1
-    expected_images["${expected_service}"]="${expected_image}:${RELEASE_SHA}"
-  done < <(python3 - "${CURRENT_RELEASE}/deploy/cloud/release-services.json" <<'PY'
+  expected_rows="$(python3 - "${CURRENT_RELEASE}/deploy/cloud/release-services.json" <<'PY'
 import json,re,sys
 from pathlib import Path
 payload=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -572,13 +582,18 @@ for item in payload["services"]:
     if set(item)!={"service","image"}: raise SystemExit("release image manifest entry is invalid")
     print(f'{item["service"]}\t{item["image"]}')
 PY
-  )
+)" || return $?
+  while IFS=$'\t' read -r expected_service expected_image; do
+    [[ "${expected_service}" =~ ^[a-z0-9-]+$ && "${expected_image}" =~ ^[A-Za-z0-9./_-]+$ ]] || return 1
+    expected_images["${expected_service}"]="${expected_image}:${RELEASE_SHA}"
+  done <<<"${expected_rows}"
   [[ "${#expected_images[@]}" -eq 26 ]] || return 1
   for service in "${services[@]}"; do
     [[ "${service}" =~ ^[a-z0-9-]+$ ]] || return 1
     cid="$("${compose[@]}" ps -a -q "${service}")" || return $?
     [[ "${cid}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
-    mapfile -t inspection < <(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.Config.Image}} {{.Image}}' "${cid}")
+    inspection_text="$(docker inspect --format '{{.State.Running}} {{.State.Status}} {{.Config.Image}} {{.Image}}' "${cid}")" || return $?
+    mapfile -t inspection <<<"${inspection_text}" || return $?
     [[ "${#inspection[@]}" -eq 1 ]] || return 1
     read -r state _status config_image image <<<"${inspection[0]}" || return $?
     [[ "${state}" == "true" && "${_status}" == "running" ]] || return 1
@@ -977,17 +992,8 @@ restore_collector_sql() {
   install -d -m 0700 -o root -g root "${directory}"
   docker run --rm --mount "type=bind,source=$(dirname "${sql_gz}"),target=/backup,readonly" \
     --mount "type=bind,source=${directory},target=/restore" --entrypoint python "${image_id}" \
-    - "$(basename "${sql_gz}")" <<'PY'
-import gzip, sqlite3, sys
-from pathlib import Path
-target = Path("/restore/collector.db")
-with gzip.open(Path("/backup") / sys.argv[1], "rt", encoding="utf-8") as source:
-    sql = source.read()
-with sqlite3.connect(target) as connection:
-    connection.executescript(sql)
-    if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
-        raise SystemExit("restored collector integrity failed")
-PY
+    --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/sqlite_stream_restore.py,target=/tool.py,readonly" \
+    /tool.py "/backup/$(basename "${sql_gz}")" /restore/collector.db
   [[ "$?" -eq 0 ]] || return $?
   chown root:root -- "${directory}/collector.db" || return $?
   chmod 0600 -- "${directory}/collector.db" || return $?
@@ -997,9 +1003,18 @@ PY
 collect_target_attestation() {
   local migration_id="$1" stage="$2" directory="${IMPORT_ROOT}/${1}"
   local pg_json redis_json collector_json collector_ids_text collector_container collector_image
-  local evidence_partial evidence_final baseline_file run_id
+  local evidence_partial evidence_final baseline_file run_id digest_key retention_days
   [[ "${stage}" == "pre-start" || "${stage}" == "post-start" ]] || return 2
-  pg_json="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At <<'SQL'
+  digest_key="$(python3 - "${directory}/manifest.json" "${migration_id}" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+m=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(hashlib.sha256((sys.argv[2]+":"+m["files"]["postgres.dump"]["sha256"]).encode()).hexdigest())
+PY
+)" || return $?
+  [[ "${digest_key}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  pg_json="$("${compose[@]}" exec -T postgres psql -U cockpit -d cockpit -At \
+    --set=digest_key="${digest_key}" <<'SQL'
 SELECT json_build_object(
  'tables', json_build_object(
   'memory_item',(SELECT count(*) FROM memory_item),'memory_relation',(SELECT count(*) FROM memory_relation),
@@ -1012,6 +1027,19 @@ SELECT json_build_object(
   'task_ledger.status',(SELECT COALESCE(json_object_agg(status,count),'{}'::json) FROM (SELECT status,count(*) count FROM task_ledger GROUP BY status)x),
   'proactive_delivery.state',(SELECT COALESCE(json_object_agg(state,count),'{}'::json) FROM (SELECT state,count(*) count FROM proactive_delivery GROUP BY state)x),
   'scene_item.status',(SELECT COALESCE(json_object_agg(status,count),'{}'::json) FROM (SELECT status,count(*) count FROM scene_item GROUP BY status)x)),
+ 'identity_sets', json_build_object(
+  'memory_item',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex') ORDER BY id),'[]'::json) FROM memory_item),
+  'memory_relation',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex') ORDER BY id),'[]'::json) FROM memory_relation),
+  'reminder_item',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex') ORDER BY id),'[]'::json) FROM reminder_item),
+  'task_ledger',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||task_id,'UTF8')),'hex') ORDER BY task_id),'[]'::json) FROM task_ledger),
+  'proactive_delivery',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||delivery_id,'UTF8')),'hex') ORDER BY delivery_id),'[]'::json) FROM proactive_delivery),
+  'scene_item',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex') ORDER BY id),'[]'::json) FROM scene_item),
+  'voiceprint',(SELECT COALESCE(json_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex') ORDER BY id),'[]'::json) FROM voiceprint)),
+ 'state_by_identity', json_build_object(
+  'reminder_item.status',(SELECT COALESCE(json_object_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex'),status),'{}'::json) FROM reminder_item),
+  'task_ledger.status',(SELECT COALESCE(json_object_agg(encode(sha256(convert_to(:'digest_key'||':'||task_id,'UTF8')),'hex'),status),'{}'::json) FROM task_ledger),
+  'proactive_delivery.state',(SELECT COALESCE(json_object_agg(encode(sha256(convert_to(:'digest_key'||':'||delivery_id,'UTF8')),'hex'),state),'{}'::json) FROM proactive_delivery),
+  'scene_item.status',(SELECT COALESCE(json_object_agg(encode(sha256(convert_to(:'digest_key'||':'||id,'UTF8')),'hex'),status),'{}'::json) FROM scene_item)),
  'schema', json_build_object(
   'columns',COALESCE((SELECT json_agg(json_build_array(table_name,column_name,ordinal_position,data_type,udt_name,is_nullable,column_default) ORDER BY table_name,ordinal_position) FROM information_schema.columns WHERE table_schema='public'),'[]'::json),
   'primary_keys',COALESCE((SELECT json_agg(json_build_array(tc.table_name,tc.constraint_name,kcu.column_name) ORDER BY tc.table_name,tc.constraint_name,kcu.ordinal_position) FROM information_schema.table_constraints tc JOIN information_schema.key_column_usage kcu ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'),'[]'::json),
@@ -1019,20 +1047,31 @@ SELECT json_build_object(
 SQL
 )" || return $?
   redis_json="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
-redis.setresp(3); local c="0"; local n,p,e=0,0,0; local lo=nil; local hi=0; local px={}; local ty={}; local pp={};
-repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); if ttl<0 then p=p+1; pp[h]=(pp[h] or 0)+1 else e=e+1; if lo==nil or ttl<lo then lo=ttl end; if ttl>hi then hi=ttl end end end until c=="0";
-local info=redis.call("INFO","server"); local version=string.match(info,"redis_version:([^\r\n]+)") or "unknown"; local a={}; local b={}; local d={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; for k,v in pairs(pp) do table.insert(d,k);table.insert(d,v) end; return {map={"version",version,"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent_prefixes",{map=d},"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0)" || return $?
+redis.setresp(3); local c="0"; local n,p,e=0,0,0; local lo=nil; local hi=0; local px={}; local ty={}; local pp={}; local pd={}; local ed={};
+local function kd(k) local a=redis.sha1hex(ARGV[1]..":1:"..k); local b=redis.sha1hex(ARGV[1]..":2:"..k); return string.sub(a..b,1,64) end
+repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; if string.len(h)>32 then h="other" end; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); local d=kd(k); if ttl<0 then p=p+1; pp[h]=(pp[h] or 0)+1; table.insert(pd,d) else e=e+1; ed[d]=redis.call("PEXPIRETIME",k); if lo==nil or ttl<lo then lo=ttl end; if ttl>hi then hi=ttl end end end until c=="0";
+local now=redis.call("TIME"); local checked=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000); local info=redis.call("INFO","server"); local version=string.match(info,"redis_version:([^\r\n]+)") or "unknown"; local a={}; local b={}; local d={}; local x={}; for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end; for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end; for k,v in pairs(pp) do table.insert(d,k);table.insert(d,v) end; for k,v in pairs(ed) do table.insert(x,k);table.insert(x,v) end; table.sort(pd); return {map={"version",version,"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent_prefixes",{map=d},"persistent_digests",pd,"expiring_deadlines_ms",{map=x},"checked_at_ms",checked,"persistent",p,"expiring",e,"min_ttl_ms",lo or 0,"max_ttl_ms",hi}}' 0 "${digest_key}")" || return $?
   collector_ids_text="$("${compose[@]}" ps -a -q observability-collector)" || return $?
   mapfile -t collector_ids <<<"${collector_ids_text}" || return $?
   [[ "${#collector_ids[@]}" -eq 1 ]] || return 1
   collector_container="${collector_ids[0]}"
   collector_image="$(docker inspect --format '{{.Image}}' "${collector_container}")" || return $?
+  retention_days="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${collector_container}" \
+    | sed -n 's/^OBS_RETENTION_DAYS=//p')" || return $?
+  retention_days="${retention_days:-7}"
+  [[ "${retention_days}" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
   collector_json="$(docker run --rm --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly" \
     --entrypoint python "${collector_image}" -c '
-import hashlib,json,sqlite3
+import hashlib,hmac,json,sqlite3,sys,time
+key=bytes.fromhex(sys.argv[1]); retention_days=float(sys.argv[2]); now_ms=int(time.time()*1000)
+def kd(value): return hmac.new(key,str(value).encode(),hashlib.sha256).hexdigest()
 with sqlite3.connect("file:/data/obs.db?mode=ro",uri=True) as c:
- rows=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall(); tables={n:c.execute(f"SELECT count(*) FROM {n}").fetchone()[0] for n in ("turns","spans","llm_calls","logs")}; ok=c.execute("PRAGMA integrity_check").fetchall()==[("ok",)]; version=c.execute("PRAGMA user_version").fetchone()[0]
-encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii"); print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest(),"tables":tables,"integrity_check":"ok" if ok else "failed"},sort_keys=True,separators=(",", ":")))')" || return $?
+ schema=c.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall(); tables={n:c.execute(f"SELECT count(*) FROM {n}").fetchone()[0] for n in ("turns","spans","llm_calls","logs")}; ok=c.execute("PRAGMA integrity_check").fetchall()==[("ok",)]; version=c.execute("PRAGMA user_version").fetchone()[0]
+ turns=c.execute("SELECT trace_id,ts,badcase,gold_intents FROM turns").fetchall(); protected={trace for trace,_,badcase,gold in turns if badcase==1 or gold!=""}; evidence={"turns":{kd(trace):{"ts_ms":ts,"protected":trace in protected,"relation":kd(trace)} for trace,ts,_,_ in turns}}
+ for table in ("spans","llm_calls","logs"):
+  values=c.execute(f"SELECT id,trace_id,ts FROM {table}").fetchall(); evidence[table]={kd(f"{row_id}:{trace}"):{"ts_ms":ts,"protected":trace in protected,"relation":kd(trace)} for row_id,trace,ts in values}
+ if any(len(items)>20000 for items in evidence.values()): raise SystemExit("collector identity evidence exceeds item limit")
+encoded=json.dumps(schema,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii"); print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest(),"tables":tables,"integrity_check":"ok" if ok else "failed","cleanup_cutoff_ms":int(now_ms-retention_days*86400000),"rows":evidence},sort_keys=True,separators=(",", ":")))' "${digest_key}" "${retention_days}")" || return $?
   if compgen -G "${directory}/evidence.*.json.partial" >/dev/null; then
     return 1
   fi
@@ -1057,6 +1096,29 @@ schema=pg.pop("schema"); schema_hash=hashlib.sha256(json.dumps(schema,ensure_asc
 pg["schema_fingerprint"]=schema_hash
 if not isinstance(r.get("persistent_prefixes"),dict) or not all(type(v) is int and v>=0 for v in r["persistent_prefixes"].values()):
     raise SystemExit("Redis persistent prefix aggregate is invalid")
+hex64=lambda value:isinstance(value,str) and len(value)==64 and all(ch in "0123456789abcdef" for ch in value)
+if (not isinstance(pg.get("identity_sets"),dict) or set(pg["identity_sets"])!={"memory_item","memory_relation","reminder_item","task_ledger","proactive_delivery","scene_item","voiceprint"}
+    or any(not isinstance(values,list) or len(values)>20000 or len(values)!=len(set(values)) or not all(hex64(value) for value in values) for values in pg["identity_sets"].values())):
+    raise SystemExit("PostgreSQL keyed identity evidence is invalid")
+state_names={"reminder_item.status","task_ledger.status","proactive_delivery.state","scene_item.status"}
+if (not isinstance(pg.get("state_by_identity"),dict) or set(pg["state_by_identity"])!=state_names
+    or any(not isinstance(values,dict) or len(values)>20000 or not all(hex64(value) for value in values) for values in pg["state_by_identity"].values())):
+    raise SystemExit("PostgreSQL keyed state evidence is invalid")
+if (not isinstance(r.get("persistent_digests"),list) or len(r["persistent_digests"])>20000
+    or len(r["persistent_digests"])!=len(set(r["persistent_digests"])) or not all(hex64(value) for value in r["persistent_digests"])
+    or not isinstance(r.get("expiring_deadlines_ms"),dict) or len(r["expiring_deadlines_ms"])>20000
+    or not all(hex64(key) and type(value) is int and value>=0 for key,value in r["expiring_deadlines_ms"].items())
+    or type(r.get("checked_at_ms")) is not int or r["checked_at_ms"]<0):
+    raise SystemExit("Redis keyed identity evidence is invalid")
+if (not isinstance(c.get("rows"),dict) or set(c["rows"])!={"turns","spans","llm_calls","logs"}
+    or type(c.get("cleanup_cutoff_ms")) is not int):
+    raise SystemExit("Collector retention evidence is invalid")
+for values in c["rows"].values():
+    if not isinstance(values,dict) or len(values)>20000: raise SystemExit("Collector identity evidence exceeds item limit")
+    for digest,record in values.items():
+        if (not hex64(digest) or not isinstance(record,dict) or set(record)!={"ts_ms","protected","relation"}
+            or type(record["ts_ms"]) is not int or type(record["protected"]) is not bool or not hex64(record["relation"])):
+            raise SystemExit("Collector keyed identity record is invalid")
 if stage == "pre-start":
     if schema_hash!=m["postgres"]["schema_fingerprint"]: raise SystemExit("PostgreSQL schema aggregate mismatch")
     if pg["tables"]!=m["postgres"]["tables"] or pg["states"]!=m["postgres"]["states"]: raise SystemExit("PostgreSQL aggregate mismatch")
@@ -1065,7 +1127,8 @@ if stage == "pre-start":
         if r[key]!=m["redis"][key]: raise SystemExit("Redis aggregate mismatch")
     for key in ("min_ttl_ms","max_ttl_ms"):
         if not isinstance(r[key],int) or r[key]<0 or r[key]>m["redis"][key]: raise SystemExit("Redis TTL aggregate mismatch")
-    if c!=m["collector"]: raise SystemExit("Collector aggregate mismatch")
+    for key in ("user_version","schema_fingerprint","tables","integrity_check"):
+        if c.get(key)!=m["collector"][key]: raise SystemExit("Collector aggregate mismatch")
 else:
     baseline=json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
     if set(baseline)!={"schema_version","migration_id","stage","postgres","redis","collector"} or baseline["schema_version"]!=1 or baseline["migration_id"]!=sys.argv[8] or baseline["stage"]!="pre-start":
@@ -1077,9 +1140,9 @@ else:
         baseline_count=baseline["postgres"]["tables"][table]; current_count=pg["tables"].get(table,-1)
         if current_count < baseline_count: raise SystemExit("PostgreSQL persistent table count decreased")
     allowed_states={
-      "reminder_item.status":{"pending","fired","cancelled","expired","failed"},
-      "task_ledger.status":{"pending","confirmed","executing","done","failed","cancelled","expired"},
-      "proactive_delivery.state":{"pending","presented","accepted","dismissed","expired","failed"},
+      "reminder_item.status":{"pending","fired","done","cancelled"},
+      "task_ledger.status":{"accepted","running","done","failed","cancelled","orphaned"},
+      "proactive_delivery.state":{"pending","dispatched","presented","dropped","expired"},
       "scene_item.status":{"enabled","disabled"},
     }
     for state_name,baseline_counts in baseline["postgres"]["states"].items():
@@ -1089,20 +1152,41 @@ else:
         table=state_name.split(".",1)[0]
         if sum(current_counts.values()) != pg["tables"][table] or sum(baseline_counts.values()) != baseline["postgres"]["tables"][table]:
             raise SystemExit("PostgreSQL state entity conservation failed")
+    transitions={
+      "reminder_item.status":{"pending":{"pending","fired","cancelled"},"fired":{"fired","pending","done","cancelled"},"done":{"done"},"cancelled":{"cancelled"}},
+      "task_ledger.status":{"accepted":{"accepted","running","done","failed","cancelled","orphaned"},"running":{"running","done","failed","cancelled","orphaned"},"orphaned":{"orphaned","running"},"done":{"done"},"failed":{"failed"},"cancelled":{"cancelled"}},
+      "proactive_delivery.state":{"pending":{"pending","dispatched","dropped","expired"},"dispatched":{"dispatched","presented","dropped","expired"},"presented":{"presented"},"dropped":{"dropped"},"expired":{"expired"}},
+      "scene_item.status":{"enabled":{"enabled","disabled"},"disabled":{"disabled","enabled"}},
+    }
+    for table,old_digests in baseline["postgres"]["identity_sets"].items():
+        if not set(old_digests).issubset(set(pg["identity_sets"].get(table,()))):
+            raise SystemExit("PostgreSQL keyed identity disappeared or was replaced")
+    for state_name,old_map in baseline["postgres"]["state_by_identity"].items():
+        new_map=pg["state_by_identity"].get(state_name,{})
+        for digest,old_state in old_map.items():
+            if new_map.get(digest) not in transitions[state_name].get(old_state,set()):
+                raise SystemExit("PostgreSQL keyed identity state transition is invalid")
     if r["version"] != baseline["redis"]["version"]:
         raise SystemExit("Redis version changed after start")
-    if set(r["types"]) != set(baseline["redis"]["types"]):
-        raise SystemExit("Redis type schema changed after start")
-    for prefix,baseline_count in baseline["redis"]["persistent_prefixes"].items():
-        current_count=r["persistent_prefixes"].get(prefix,-1)
-        if current_count < baseline_count: raise SystemExit("Redis persistent prefix count decreased")
+    if not set(baseline["redis"]["persistent_digests"]).issubset(set(r["persistent_digests"])):
+        raise SystemExit("persistent Redis keyed identity disappeared")
+    for digest,deadline in baseline["redis"]["expiring_deadlines_ms"].items():
+        if digest not in r["expiring_deadlines_ms"] and deadline>r["checked_at_ms"]:
+            raise SystemExit("unexpired Redis keyed identity disappeared")
     if c["user_version"]!=baseline["collector"]["user_version"] or c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]:
         raise SystemExit("Collector schema or version changed after start")
     retention_deleted={}
-    for table,baseline_count in baseline["collector"]["tables"].items():
-        current_count=c["tables"].get(table,-1)
-        if current_count < 0: raise SystemExit("Collector table aggregate is missing")
-        retention_deleted[table]=max(0,baseline_count-current_count)
+    for table,old_rows in baseline["collector"]["rows"].items():
+        current_rows=c["rows"].get(table,{})
+        deleted=0
+        for digest,record in old_rows.items():
+            if digest in current_rows:
+                if current_rows[digest]!=record: raise SystemExit("Collector relation identity changed")
+            else:
+                if record["protected"]: raise SystemExit("protected Collector identity disappeared")
+                if record["ts_ms"]>=c["cleanup_cutoff_ms"]: raise SystemExit("Collector deletion violates retention predicate")
+                deleted+=1
+        retention_deleted[table]=deleted
     c["retention_deleted"]=retention_deleted
 evidence={"schema_version":1,"migration_id":sys.argv[8],"stage":stage,"postgres":pg,"redis":r,"collector":c}
 encoded=(json.dumps(evidence,sort_keys=True,separators=(",", ":"))+"\n").encode("utf-8")

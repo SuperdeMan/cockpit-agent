@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import sqlite3
 import sys
@@ -11,6 +12,7 @@ import pytest
 
 from scripts import cloud_data_migration as cli
 from scripts import cloud_data_migration_lib as migration
+from scripts.cloud_release_lib import ReleaseError
 
 
 VALID_ID = "20260816T010203Z-aaaaaaa-online"
@@ -216,6 +218,14 @@ def test_manifest_rejects_unknown_aggregate_keys_and_non_utc_time():
         migration.parse_manifest(payload)
 
 
+def test_manifest_rejects_unknown_production_state_even_when_counts_balance():
+    payload = valid_manifest_payload()
+    payload["postgres"]["tables"]["reminder_item"] = 1
+    payload["postgres"]["states"]["reminder_item.status"] = {"expired": 1}
+    with pytest.raises(migration.MigrationError, match="production contract"):
+        migration.parse_manifest(payload)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -228,6 +238,17 @@ def test_manifest_accepts_only_v1_and_canonical_real_utc(field, value):
     payload = valid_manifest_payload()
     payload[field] = value
     with pytest.raises(migration.MigrationError, match=field):
+        migration.parse_manifest(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("source_sha", "b" * 40), ("created_at", "2026-08-16T01:02:04Z")],
+)
+def test_manifest_binds_migration_id_to_source_short_sha_and_creation_second(field, value):
+    payload = valid_manifest_payload()
+    payload[field] = value
+    with pytest.raises(migration.MigrationError, match="migration id"):
         migration.parse_manifest(payload)
 
 
@@ -494,6 +515,109 @@ def test_local_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path)
     assert not marker.exists()
 
 
+def _identity_evidence() -> tuple[dict[str, object], dict[str, object]]:
+    baseline = {
+        "postgres": {
+            "identity_sets": {"reminder_item": ["a" * 64], "task_ledger": ["b" * 64]},
+            "state_by_identity": {
+                "reminder_item.status": {"a" * 64: "pending"},
+                "task_ledger.status": {"b" * 64: "accepted"},
+                "proactive_delivery.state": {"c" * 64: "pending"},
+                "scene_item.status": {"d" * 64: "enabled"},
+            },
+        },
+        "redis": {
+            "persistent_digests": ["e" * 64],
+            "expiring_deadlines_ms": {"f" * 64: 2_000},
+        },
+        "collector": {
+            "rows": {
+                "turns": {
+                    "1" * 64: {"ts_ms": 900, "protected": False, "relation": "1" * 64},
+                    "2" * 64: {"ts_ms": 100, "protected": True, "relation": "2" * 64},
+                },
+                "spans": {
+                    "3" * 64: {"ts_ms": 100, "protected": False, "relation": "4" * 64},
+                },
+                "llm_calls": {}, "logs": {},
+            },
+            "cleanup_cutoff_ms": 500,
+        },
+    }
+    current = json.loads(json.dumps(baseline))
+    current["postgres"]["state_by_identity"]["reminder_item.status"]["a" * 64] = "fired"
+    current["postgres"]["state_by_identity"]["task_ledger.status"]["b" * 64] = "running"
+    current["redis"]["expiring_deadlines_ms"] = {}
+    current["collector"]["cleanup_cutoff_ms"] = 800
+    return baseline, current
+
+
+def test_identity_evidence_allows_only_declared_state_ttl_and_retention_changes():
+    baseline, current = _identity_evidence()
+    migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
+
+
+def test_migration_state_contract_is_generated_from_production_constants():
+    def constants(relative: str) -> dict[str, str]:
+        tree = ast.parse((Path(__file__).parents[2] / relative).read_text(encoding="utf-8"))
+        values: dict[str, str] = {}
+        for node in tree.body:
+            if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+                continue
+            target = node.targets[0]
+            if isinstance(target, (ast.Tuple, ast.List)) and isinstance(node.value, (ast.Tuple, ast.List)):
+                for name, value in zip(target.elts, node.value.elts, strict=True):
+                    if isinstance(name, ast.Name) and isinstance(value, ast.Constant) and isinstance(value.value, str):
+                        values[name.id] = value.value
+        return values
+
+    reminder_store = constants("agents/reminder/src/store.py")
+    ledger = constants("agents/_sdk/ledger.py")
+    delivery_store = constants("proactive/delivery_store.py")
+    scene_store = constants("agents/scene_orchestrator/src/store.py")
+    assert migration.POSTGRES_ALLOWED_STATES["reminder_item.status"] == {
+        reminder_store[name] for name in ("PENDING", "FIRED", "DONE", "CANCELLED")
+    }
+    assert migration.POSTGRES_ALLOWED_STATES["task_ledger.status"] == {
+        ledger[name] for name in ("ACCEPTED", "RUNNING", "DONE", "FAILED", "CANCELLED", "ORPHANED")
+    }
+    assert migration.POSTGRES_ALLOWED_STATES["proactive_delivery.state"] == {
+        delivery_store[name] for name in ("PENDING", "DISPATCHED", "PRESENTED", "DROPPED", "EXPIRED")
+    }
+    assert migration.POSTGRES_ALLOWED_STATES["scene_item.status"] == {
+        scene_store[name] for name in ("ENABLED", "DISABLED")
+    }
+
+
+def test_identity_evidence_rejects_equal_count_identity_swap_and_illegal_state_change():
+    baseline, current = _identity_evidence()
+    current["postgres"]["identity_sets"]["reminder_item"] = ["9" * 64]
+    with pytest.raises(migration.MigrationError, match="PostgreSQL identity"):
+        migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
+    baseline, current = _identity_evidence()
+    current["postgres"]["state_by_identity"]["task_ledger.status"]["b" * 64] = "accepted"
+    current["postgres"]["state_by_identity"]["task_ledger.status"]["b" * 64] = "cancelled"
+    # cancelled is legal from accepted; a terminal-to-running reversal is not.
+    baseline["postgres"]["state_by_identity"]["task_ledger.status"]["b" * 64] = "done"
+    current["postgres"]["state_by_identity"]["task_ledger.status"]["b" * 64] = "running"
+    with pytest.raises(migration.MigrationError, match="state transition"):
+        migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
+
+
+def test_identity_evidence_rejects_unexpired_redis_loss_and_nonretention_collector_loss():
+    baseline, current = _identity_evidence()
+    with pytest.raises(migration.MigrationError, match="unexpired Redis"):
+        migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=1_999)
+    baseline, current = _identity_evidence()
+    del current["collector"]["rows"]["turns"]["1" * 64]
+    with pytest.raises(migration.MigrationError, match="retention predicate"):
+        migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
+    baseline, current = _identity_evidence()
+    del current["collector"]["rows"]["turns"]["2" * 64]
+    with pytest.raises(migration.MigrationError, match="protected Collector"):
+        migration.verify_post_start_identity_evidence(baseline, current, checked_at_ms=2_001)
+
+
 def test_snapshot_validation_and_probes_use_readonly_batch_mounts(tmp_path: Path):
     runner = FakeBinaryRunner()
     migration.capture_local_snapshot(
@@ -694,6 +818,26 @@ def test_rollback_dry_run_reads_real_server_plan_without_remote_write(tmp_path: 
     assert payload["backup_stamp"] == "20260817T010203Z"
     assert payload["backup_files"]["redis.rdb"]["sha256"] == "b" * 64
     assert payload["would_stop"] == ["gateway-cloud", "observability-collector"]
+
+
+def test_mutating_ssh_timeout_reports_remote_status_unknown_in_progress(tmp_path: Path, capsys):
+    _write_valid_bundle(tmp_path)
+    key = _fake_key(tmp_path)
+
+    class TimeoutRunner(FakeRemoteRunner):
+        def run(self, argv, **kwargs):
+            if " apply " in f" {argv[-1]} ":
+                raise ReleaseError("command timed out: ssh", category="runtime")
+            return super().run(argv, **kwargs)
+
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(key),
+        "apply", "--migration-id", VALID_ID, "--apply",
+    ], runner=TimeoutRunner(), repo=tmp_path)
+    assert rc == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["remote_status"] == "unknown_in_progress"
+    assert payload["recovery_action"] == "recover --apply"
 
 
 def test_plan_is_read_only_and_never_uploads(tmp_path: Path):
