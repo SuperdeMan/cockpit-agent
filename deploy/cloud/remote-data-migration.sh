@@ -995,7 +995,8 @@ restore_redis_rdb() {
      && "${RESOLVED_REDIS_VOLUME}" == "${actual_volume}" \
      && "${RESOLVED_REDIS_IMAGE}" == "${image_id}" ]] \
     || { printf 'redis identity changed after stop\n' >&2; return 1; }
-  install -d -m 0700 -o root -g root "${rollback_dir}" || return $?
+  install -d -m 0700 -o root -g root \
+    "${IMPORT_ROOT}/${migration_id}/rollback" "${rollback_dir}" || return $?
   helper_image="${LOCKED_STORE_IMAGE[observability-collector]:-}"
   [[ "${helper_image}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   manifest_sha="$(python3 - "${expected_manifest}" <<'PY'
@@ -1093,7 +1094,8 @@ install_collector_db() {
   actual_volume="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Name}}{{end}}{{end}}' "${collector_container}")"
   assert_named_volume "${actual_volume}" "${COLLECTOR_VOLUME}"
   image_id="$(docker inspect --format '{{.Image}}' "${collector_container}")"
-  install -d -m 0700 -o root -g root "${rollback_dir}"
+  install -d -m 0700 -o root -g root \
+    "${IMPORT_ROOT}/${migration_id}/rollback" "${rollback_dir}"
   docker run --rm --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${database}"),target=/incoming,readonly" \

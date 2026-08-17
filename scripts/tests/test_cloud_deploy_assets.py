@@ -2382,6 +2382,7 @@ def test_redis_restore_uses_crash_reconciling_volume_helper() -> None:
     restore = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]
     assert '${SCRIPT_ROOT}/redis_volume_prepare.py' in restore
     assert '${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py' not in restore
+    assert '"${IMPORT_ROOT}/${migration_id}/rollback" "${rollback_dir}"' in restore
     assert "redis_volume_prepare.py" in restore
     assert 'MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}' in restore
     assert "mv /data/dump.rdb" not in restore
