@@ -82,6 +82,12 @@ from scripts.e2e_profiles import (  # noqa: E402
 from scripts.prepare_voiceprint_fixtures import (  # noqa: E402
     fixture_manifest_sha256,
 )
+from scripts.e2e_target import (  # noqa: E402
+    E2ETargetError,
+    endpoint_environment,
+    resolve_e2e_target,
+    select_for_target,
+)
 from support.e2e import (  # noqa: E402
     E2EResult,
     ProtocolError,
@@ -1053,6 +1059,13 @@ def _parser() -> _Parser:
     parser.add_argument("--stale-policy", choices=STALE_POLICIES, default="warn")
     parser.add_argument("--milestone", choices=MILESTONES)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--target", choices=("local", "cloud"))
+    parser.add_argument("--allow-mutating", action="store_true")
+    parser.add_argument("--host", default=os.getenv("CAR_AGENT_DEPLOY_HOST"))
+    parser.add_argument("--user", default=os.getenv("CAR_AGENT_DEPLOY_USER", "ubuntu"))
+    identity = os.getenv("CAR_AGENT_SSH_IDENTITY")
+    parser.add_argument("--identity", type=Path, default=Path(identity) if identity else None)
+    parser.add_argument("--kex-algorithms", default=os.getenv("CAR_AGENT_SSH_KEX_ALGORITHMS"))
     parser.add_argument("--parallel-isolation", type=int)
     parser.add_argument("--lease-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--lease-id", help=argparse.SUPPRESS)
@@ -1065,6 +1078,10 @@ def _base_summary(*, mode: str, args: argparse.Namespace | None) -> dict[str, An
     return {
         "mode": mode,
         "canonical": bool(args.canonical) if args is not None else False,
+        "target": args.target if args is not None else None,
+        "target_release_sha": None,
+        "remote_lock": None,
+        "allow_mutating": bool(args.allow_mutating) if args is not None else False,
         "full": False,
         "lane": args.lane if args is not None else None,
         "milestone": args.milestone if args is not None else None,
@@ -1170,36 +1187,12 @@ def _preflight(args: argparse.Namespace) -> None:
 def _select(
     manifest: E2EManifest,
     args: argparse.Namespace,
+    target: str = "local",
 ) -> tuple[tuple[E2ECase, ...], bool]:
-    explicit_scope = any((
-        args.group is not None,
-        args.lane is not None,
-        bool(args.ids),
-        args.profile is not None,
-    ))
-    implicit_default = not explicit_scope
-    effective_group = "default" if implicit_default else args.group
-
-    unknown = sorted(set(args.ids) - set(manifest.by_id))
-    if unknown:
-        raise RunnerArgumentError(f"unknown --id entries: {unknown}")
-
-    ids = set(args.ids)
-    selected = []
-    for case in manifest.cases:
-        if ids and case.id not in ids:
-            continue
-        if effective_group is not None and case.group != effective_group:
-            continue
-        if args.lane is not None and args.lane not in case.lanes:
-            continue
-        if args.profile is not None and case.profile != args.profile:
-            continue
-        selected.append(case)
-    if not selected:
-        raise RunnerArgumentError("selection is empty")
-    effective_full = (args.full or implicit_default) and not args.ids
-    return tuple(selected), effective_full
+    try:
+        return select_for_target(manifest, args, target=target)
+    except E2ETargetError as exc:
+        raise RunnerArgumentError(str(exc)) from exc
 
 
 def _child_argv(
@@ -1249,6 +1242,8 @@ def _selection_summary(
             ),
             "profile": case.profile,
             "timeout_s": case.timeout_s,
+            "remote_safe": case.remote_safe,
+            "remote_mutating": case.remote_mutating,
         }
         for case in selected
     ]
@@ -1564,8 +1559,6 @@ def _child_environment(
         and key != "AUDIO_API_URL"
         and key not in {"E2E_IDENTITY_ENABLED", "E2E_IDENTITY_SECRET"}
     }
-    if not env.get("WS_URL"):
-        env["WS_URL"] = "ws://127.0.0.1:8090/ws"
     user = f"{run_id}-{case.id}"
     env.update({
         "E2E_RUN_ID": run_id,
@@ -3937,6 +3930,7 @@ def main(
         if manifest_path is None
         else Path(manifest_path).resolve()
     )
+    explicit_test_environment = environ is not None
     source_env: Mapping[str, str] = (
         os.environ if environ is None else dict(environ)
     )
@@ -3954,7 +3948,19 @@ def main(
     try:
         stack_root = _resolve_stack_root(root, source_env)
         source_env = _load_stack_environment(stack_root, source_env)
-    except RunnerArgumentError:
+        target = resolve_e2e_target(
+            root,
+            explicit=args.target,
+            environ=source_env,
+        )
+        args.target = target.name
+        target_environment = endpoint_environment(target)
+        if explicit_test_environment:
+            for key, value in target_environment.items():
+                source_env.setdefault(key, value)
+        else:
+            source_env.update(target_environment)
+    except (RunnerArgumentError, E2ETargetError):
         summary = _base_summary(mode="preflight", args=args)
         summary["errors"] = ["preflight"]
         summary["exit_code"] = 2
@@ -3963,6 +3969,7 @@ def main(
 
     mode = "check" if args.check else "dry_run" if args.dry_run else "run"
     summary = _base_summary(mode=mode, args=args)
+    summary["target_release_sha"] = target.release_sha
     try:
         manifest = load_manifest(manifest_file, repo_root=root)
     except ManifestError:
@@ -3972,7 +3979,7 @@ def main(
         return 2
 
     try:
-        selected, effective_full = _select(manifest, args)
+        selected, effective_full = _select(manifest, args, target.name)
         if args.lease_child:
             try:
                 source_env = load_child_bundle(
@@ -4093,6 +4100,14 @@ def main(
             human_lines=(f"E2E {label}: {'STALE' if exit_code == 3 else 'OK'}",),
         )
         return exit_code
+
+    if target.name == "cloud" and (
+        not args.host or args.identity is None or not args.user
+    ):
+        summary["errors"] = ["preflight"]
+        summary["exit_code"] = 2
+        _emit(output, summary, human_lines=("E2E cloud connection: ERROR",))
+        return 2
 
     canonical_state: CanonicalSnapshot | None = None
     runtime_before: dict[str, str] | None = None
