@@ -140,7 +140,7 @@ PY
 require_sealed_inbound_bundle() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
   require_migration_id "${migration_id}"
-  python3 - "${directory}" <<'PY'
+  python3 - "${directory}" <<'PY' || return $?
 import os, stat, sys
 required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
 root = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -248,7 +248,7 @@ PY
 require_runtime_batch() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
   require_migration_id "${migration_id}"
-  python3 - "${directory}" <<'PY'
+  python3 - "${directory}" <<'PY' || return $?
 import os, re, stat, sys
 required = {"manifest.json", "postgres.dump", "redis.rdb", "collector.db"}
 allowed_files = required | {"status.json", "journal.json", "preflight-current.json", "evidence-pre-start.json", "evidence-post-start.json"}
@@ -1442,28 +1442,49 @@ fail_and_rollback() {
 }
 
 run_recoverable_step() {
-  if "$@"; then STEP_RC=0; else STEP_RC=$?; fi
+  local restore_errexit=0
+  [[ "$-" == *e* ]] && restore_errexit=1
+  set +e
+  "$@"
+  STEP_RC=$?
+  [[ "${restore_errexit}" -eq 0 ]] || set -e
   return 0
 }
 
 run_recoverable_step_capture() {
-  if STEP_OUTPUT="$("$@")"; then STEP_RC=0; else STEP_RC=$?; fi
+  local restore_errexit=0
+  [[ "$-" == *e* ]] && restore_errexit=1
+  set +e
+  STEP_OUTPUT="$("$@")"
+  STEP_RC=$?
+  [[ "${restore_errexit}" -eq 0 ]] || set -e
   return 0
 }
 
 apply_failure_trap() {
-  local signal_rc="${1:-1}"
+  local signal_rc="${1:-1}" journal_rc=0 recovery_rc=0
   trap - EXIT HUP INT TERM
   if [[ "${APPLY_FAILURE_ACTIVE}" -eq 1 ]]; then return "${signal_rc}"; fi
   APPLY_FAILURE_ACTIVE=1
   if [[ -n "${APPLY_MIGRATION_ID}" ]]; then
-    update_crash_journal "${APPLY_MIGRATION_ID}" apply INTERRUPTED \
+    run_recoverable_step update_crash_journal "${APPLY_MIGRATION_ID}" apply INTERRUPTED \
       "${APPLY_BACKUP_STAMP}" "" "" signal "${signal_rc}"
+    journal_rc="${STEP_RC}"
   fi
   if [[ "${APPLY_REPLACEMENT_STARTED}" -eq 1 && -n "${APPLY_BACKUP_STAMP}" ]]; then
-    rollback_all "${APPLY_MIGRATION_ID}" "${APPLY_BACKUP_STAMP}"
+    run_recoverable_step rollback_all "${APPLY_MIGRATION_ID}" "${APPLY_BACKUP_STAMP}"
   else
-    start_current_release
+    run_recoverable_step start_current_release
+  fi
+  recovery_rc="${STEP_RC}"
+  [[ "${journal_rc}" -eq 0 ]] \
+    || printf 'cloud-data-migration: interrupt journal update failed (rc=%s)\n' "${journal_rc}" >&2
+  if [[ "${recovery_rc}" -ne 0 ]]; then
+    if [[ "${APPLY_REPLACEMENT_STARTED}" -eq 1 && -n "${APPLY_BACKUP_STAMP}" ]]; then
+      printf 'cloud-data-migration: interrupt rollback failed (rc=%s)\n' "${recovery_rc}" >&2
+    else
+      printf 'cloud-data-migration: interrupt writer restart failed (rc=%s)\n' "${recovery_rc}" >&2
+    fi
   fi
   return "${signal_rc}"
 }

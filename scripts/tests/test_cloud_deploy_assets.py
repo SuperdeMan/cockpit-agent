@@ -1823,6 +1823,83 @@ def test_sourceable_verifier_has_self_contained_non_exiting_source_graph():
         assert f'verify_run_step "{child}"' in body
 
 
+def test_runtime_batch_propagates_embedded_validator_failure_without_errexit(tmp_path: Path):
+    marker = tmp_path / "validated.txt"
+    harness = tmp_path / "runtime-batch-failure.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+set +e
+python3() {{ return 31; }}
+validate_import_manifest() {{ printf 'unexpected\n' >'{marker.as_posix()}'; return 0; }}
+require_runtime_batch 20260817T010203Z-abcdef0-online
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 31
+    assert not marker.exists()
+
+
+def test_sourceable_verifier_propagates_inner_command_failure_without_errexit(tmp_path: Path):
+    harness = tmp_path / "verify-inner-failure.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{(CLOUD_DIR / 'verify-release.sh').as_posix()}'
+compose_for_release() {{
+  [[ "${{*: -1}}" == "postgres" ]] && printf 'pg-id\n' || printf 'redis-id\n'
+}}
+docker() {{
+  [[ "$*" == *'pg_isready'* ]] && return 37
+  [[ "$*" == *'redis-cli ping'* ]] && printf 'PONG\n' && return 0
+  return 0
+}}
+systemctl() {{
+  [[ "$*" == *'is-enabled'* ]] && printf 'enabled\n' || printf 'success\n'
+  [[ "$*" == *'is-active'* ]] && printf 'active\n'
+  return 0
+}}
+verify_run_step verify_data_and_backup verify_data_and_backup /release abcdef0
+exit "${{VERIFY_STEP_RC}}"
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 37
+
+
+def test_exit_trap_continues_recovery_when_journal_update_fails(tmp_path: Path):
+    events = tmp_path / "trap-events.txt"
+    harness = tmp_path / "trap-failure.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+update_crash_journal() {{ printf 'journal\n' >>'{events.as_posix()}'; return 71; }}
+rollback_all() {{ printf 'rollback\n' >>'{events.as_posix()}'; return 72; }}
+start_current_release() {{ printf 'start\n' >>'{events.as_posix()}'; return 73; }}
+APPLY_MIGRATION_ID=20260817T010203Z-abcdef0-online
+APPLY_BACKUP_STAMP=20260817T010203Z
+APPLY_REPLACEMENT_STARTED=1
+apply_failure_trap 99
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 99
+    assert events.read_text(encoding="utf-8").splitlines() == ["journal", "rollback"]
+    assert "journal update failed (rc=71)" in completed.stderr
+    assert "rollback failed (rc=72)" in completed.stderr
+
+
 def test_redis_aof_validation_allows_empty_private_incr_but_requires_nonempty_base():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^validate_redis_aof_volume\(\) \{(?P<body>.*?)^\}", text)["body"]
@@ -1835,12 +1912,11 @@ def test_redis_aof_validation_allows_empty_private_incr_but_requires_nonempty_ba
 
 def test_migration_uses_linear_step_capture_without_errexit_or_err_trap():
     text = _required_text(REMOTE_MIGRATION_PATH)
-    assert "set +e" not in text
-    assert "set -e" not in text
     assert "trap 'apply_failure_trap $?' ERR" not in text
     for name in ("run_recoverable_step", "run_recoverable_step_capture"):
         body = re.search(rf"(?ms)^{name}\(\) \{{(?P<body>.*?)^\}}", text)["body"]
         assert 'STEP_RC=$?' in body
+        assert 'if "$@"' not in body
 
 
 def test_apply_installs_durable_crash_journal_and_signal_guard_before_first_stop():
