@@ -461,7 +461,7 @@ if sum(redis["prefixes"].values()) != redis["key_count"] or sum(redis["types"].v
     raise SystemExit("Redis category totals are invalid")
 if type(collector.get("user_version")) is not int or collector["user_version"] < 0:
     raise SystemExit("Collector user_version is invalid")
-if sum(collector["tables"].values())>20000:
+if sum(collector["tables"].values())>50000:
     raise SystemExit("Collector identity count limit exceeded")
 for value in (pg["schema_fingerprint"], pg["archive_fingerprint"], redis.get("rdb_sha256"), collector["schema_fingerprint"]):
     if not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value):

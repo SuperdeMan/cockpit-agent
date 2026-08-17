@@ -2371,6 +2371,12 @@ def test_collector_identity_evidence_is_keyed_content_free_and_cursor_bounded(tm
     assert "fetchmany(PAGE_SIZE)" in STORE_EVIDENCE_PATH.read_text(encoding="utf-8")
 
 
+def test_remote_manifest_accepts_the_same_collector_corpus_bound_as_evidence():
+    text = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
+    assert 'if sum(collector["tables"].values())>50000:' in text
+    assert 'if sum(collector["tables"].values())>20000:' not in text
+
+
 def test_postgres_identity_copy_streams_only_server_side_digest_material():
     module = _load_store_evidence_module()
     query = module._pg_copy_query()
