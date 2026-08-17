@@ -45,7 +45,7 @@ SNAPSHOT_FILENAMES = ("postgres.dump", "redis.rdb", "collector.db")
 MIN_SNAPSHOT_FREE_BYTES = 1024 * 1024 * 1024
 CONTROL_JSON_MAX_BYTES = 16 * 1024 * 1024
 CONTROL_JSON_MAX_DEPTH = 16
-CONTROL_JSON_MAX_ITEMS = 200_000
+CONTROL_JSON_MAX_ITEMS = 600_000
 MAX_IDENTITY_ITEMS = 20_000
 MAX_COLLECTOR_IDENTITY_ITEMS = 50_000
 MIGRATION_STATE_MACHINE = json.loads(
@@ -704,8 +704,10 @@ def _validate_postgres_state_counts(
             raise MigrationError("PostgreSQL state counts do not conserve entities")
 
 
-def _identity_map(value: object, label: str) -> dict[str, str]:
-    if not isinstance(value, Mapping) or len(value) > MAX_IDENTITY_ITEMS:
+def _identity_map(
+    value: object, label: str, *, max_items: int = MAX_IDENTITY_ITEMS,
+) -> dict[str, str]:
+    if not isinstance(value, Mapping) or len(value) > max_items:
         raise MigrationError(f"{label} identity map is invalid")
     result: dict[str, str] = {}
     for identity, logical in value.items():
@@ -849,7 +851,10 @@ def _parse_collector_manifest(value: object) -> Mapping[str, object]:
         raise MigrationError("Collector source identity table set is invalid")
     rows: dict[str, dict[str, str]] = {}
     for table in COLLECTOR_TABLES:
-        rows[table] = _identity_map(rows_raw[table], f"Collector {table}")
+        rows[table] = _identity_map(
+            rows_raw[table], f"Collector {table}",
+            max_items=MAX_COLLECTOR_IDENTITY_ITEMS,
+        )
         if len(rows[table]) != tables[table]:
             raise MigrationError("Collector source identity count mismatch")
     return MappingProxyType({

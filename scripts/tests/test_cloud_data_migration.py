@@ -28,6 +28,7 @@ def test_redis_rdb_validation_accepts_legacy_and_redis_7_success_markers():
 def test_collector_identity_limit_fits_existing_corpus_without_raising_other_store_limits():
     assert migration.MAX_COLLECTOR_IDENTITY_ITEMS == 50_000
     assert migration.MAX_IDENTITY_ITEMS == 20_000
+    assert migration.CONTROL_JSON_MAX_ITEMS == 600_000
 
 
 def test_wait_for_nonempty_local_file_tolerates_delayed_docker_bind_sync(tmp_path, monkeypatch):
