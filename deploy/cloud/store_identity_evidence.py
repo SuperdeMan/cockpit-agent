@@ -43,12 +43,12 @@ for _,key in ipairs(page[2]) do
     local deadline=-1; if ttl>=0 then deadline=redis.call("PEXPIRETIME",key) end
     local prefix=string.match(key,"^([A-Za-z0-9_-]+):") or "other"
     if string.len(prefix)>32 then prefix="other" end
-    table.insert(out,{map={"identity_material",redis.sha1hex(key),"logical_material",redis.sha1hex(dump),"type",kind,"prefix",prefix,"deadline_ms",deadline}})
+    table.insert(out,{map={identity_material=redis.sha1hex(key),logical_material=redis.sha1hex(dump),type=kind,prefix=prefix,deadline_ms=deadline}})
   end
 end
 local now=redis.call("TIME")
 local version=string.match(info,"redis_version:([^\r\n]+)") or "unknown"
-return {map={"cursor",page[1],"checked_at_ms",tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000),"version",version,"rows",out}}
+return {map={cursor=page[1],checked_at_ms=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000),version=version,rows=out}}
 '''.strip()
 
 

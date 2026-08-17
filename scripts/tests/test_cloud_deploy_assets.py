@@ -2600,6 +2600,10 @@ def test_redis_info_is_read_before_switching_lua_to_resp3():
     assert helper.REDIS_PAGE_LUA.index('local info=redis.call("INFO","server")') < (
         helper.REDIS_PAGE_LUA.index("redis.setresp(3)")
     )
+    assert "map={identity_material=" in helper.REDIS_PAGE_LUA
+    assert "map={cursor=" in helper.REDIS_PAGE_LUA
+    assert 'map={"identity_material"' not in helper.REDIS_PAGE_LUA
+    assert 'map={"cursor"' not in helper.REDIS_PAGE_LUA
 
 
 def test_backup_streams_redis_evidence_into_manifest_builder_without_heredoc_stdin_collision():
