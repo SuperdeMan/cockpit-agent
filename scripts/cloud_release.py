@@ -17,6 +17,8 @@ from scripts.cloud_release_lib import (
     ReleaseRequest,
     SshConfig,
     SubprocessRunner,
+    _resolve_commit,
+    discover_remote_state,
     execute_deploy,
     make_bootstrap_report,
     validate_ssh_identity,
@@ -177,11 +179,17 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "verify":
             ssh = _ssh_config(args)
-            SubprocessRunner().run(
+            runner = SubprocessRunner()
+            runner.run(
                 ssh.ssh_argv(f"sudo {REMOTE_ENTRYPOINT} verify-current"),
                 cwd=repo,
             )
-            _emit({"status": "verified"})
+            request = ReleaseRequest(
+                repo, "HEAD", repo / ".artifacts" / "releases", ssh,
+            )
+            remote_state = discover_remote_state(request, runner=runner)
+            release_sha = _resolve_commit(repo, remote_state.current_release)
+            _emit({"status": "verified", "release_sha": release_sha})
             return 0
 
         if args.command == "rollback":

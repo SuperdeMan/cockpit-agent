@@ -1058,6 +1058,87 @@ class FakeCliRunner:
         return CommandResult(tuple(argv), self.result, self.stdout, self.stderr)
 
 
+class SequenceCliRunner:
+    def __init__(self, *results: CommandResult) -> None:
+        self.calls: list[tuple[str, ...]] = []
+        self.results = list(results)
+
+    def run(self, argv, **kwargs):
+        self.calls.append(tuple(argv))
+        return self.results.pop(0)
+
+
+def _release_verify_stdout(release_sha: str = "a" * 40) -> str:
+    return json.dumps({"status": "verified", "release_sha": release_sha})
+
+
+def _e2e_verify_stdout(
+    *,
+    target: str,
+    release_sha: str | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+) -> str:
+    cloud = target == "cloud"
+    selection = [{
+        "argv": ["python", "test/e2e_remote_safe.py"],
+        "id": "e2e_remote_safe",
+        "profile": "root",
+        "remote_mutating": False,
+        "remote_safe": True,
+        "timeout_s": 180,
+    }] if cloud else []
+    results = [{
+        "id": "e2e_remote_safe",
+        "status": "PASS",
+        "returncode": 0,
+        "errors": [],
+        "counts": {"selected": 7, "executed": 7, "passed": 7, "failed": 0, "skipped": 0},
+        "outcome_case_ids": {"failed": [], "skipped": []},
+        "artifact_dir": "C:/safe-artifacts",
+        "artifacts": [],
+        "logs": [],
+        "diagnostic": "",
+        "result_file": "C:/safe-result.json",
+        "profile": "root",
+        "timeout_s": 180,
+    }] if cloud else []
+    payload = {
+        "allow_mutating": False,
+        "canonical": False,
+        "canonical_promoted": False,
+        "canonical_rejection_reasons": [],
+        "epochs": [],
+        "errors": [],
+        "exit_code": 0,
+        "full": not cloud,
+        "lane": None,
+        "milestone": None,
+        "mode": "run" if cloud else "check",
+        "model": model,
+        "profile_restore": {"count": 0, "profile": "default"},
+        "provider": provider,
+        "remote_lock": (
+            {"kind": "e2e", "run_id": "e2e-" + "1" * 32}
+            if cloud else None
+        ),
+        "results": results,
+        "runtime_freshness": "unverified",
+        "selection": selection,
+        "stale": {"reasons": [], "stale": False},
+        "target": target,
+        "target_release_sha": release_sha,
+        "warnings": [],
+    }
+    if cloud:
+        payload["run_id"] = "e2e-test-run"
+    return "E2E summary:\n" + json.dumps(payload, separators=(",", ":"))
+
+
+def _command_result(returncode: int, stdout: str = "") -> CommandResult:
+    return CommandResult(("fake",), returncode, stdout, "")
+
+
 def _valid_identity(tmp_path: Path, name: str = "identity") -> Path:
     identity = tmp_path / name
     identity.write_text("test-only identity", encoding="utf-8")
@@ -1096,7 +1177,13 @@ def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(t
 def test_cloud_verify_runs_release_verify_then_remote_safe_runner(tmp_path: Path):
     dev.set_target(tmp_path, "cloud")
     identity = _valid_identity(tmp_path)
-    runner = FakeCliRunner()
+    runner = SequenceCliRunner(
+        _command_result(0, _release_verify_stdout()),
+        _command_result(0, _e2e_verify_stdout(
+            target="cloud", release_sha="a" * 40,
+            provider="deepseek", model="deepseek-v4-flash",
+        )),
+    )
 
     rc = cli.main(
         ["--host", "demo.example", "--identity", str(identity), "verify"],
@@ -1112,7 +1199,9 @@ def test_cloud_verify_runs_release_verify_then_remote_safe_runner(tmp_path: Path
 
 
 def test_local_verify_keeps_existing_e2e_check_semantics(tmp_path: Path):
-    runner = FakeCliRunner()
+    runner = SequenceCliRunner(
+        _command_result(0, _e2e_verify_stdout(target="local")),
+    )
 
     assert cli.main(["verify"], repo=tmp_path, release_runner=runner) == 0
     assert runner.calls == [(
@@ -1137,7 +1226,9 @@ def test_cloud_verify_stops_after_release_failure(tmp_path: Path):
 
 def test_verify_writes_private_allowlisted_evidence(tmp_path: Path):
     events: list[dict[str, object]] = []
-    runner = FakeCliRunner()
+    runner = SequenceCliRunner(
+        _command_result(0, _e2e_verify_stdout(target="local")),
+    )
 
     assert cli.main(
         ["verify"], repo=tmp_path, release_runner=runner, emit=events.append,
@@ -1147,6 +1238,7 @@ def test_verify_writes_private_allowlisted_evidence(tmp_path: Path):
     assert evidence == {
         "case_ids": [],
         "lock_kind": None,
+        "lock_run_id": None,
         "model": None,
         "passed": True,
         "provider": None,
@@ -1156,6 +1248,74 @@ def test_verify_writes_private_allowlisted_evidence(tmp_path: Path):
     }
     if os.name != "nt":
         assert evidence_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_cloud_verify_merges_validated_child_evidence(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    events: list[dict[str, object]] = []
+    runner = SequenceCliRunner(
+        _command_result(0, _release_verify_stdout()),
+        _command_result(0, _e2e_verify_stdout(
+            target="cloud", release_sha="a" * 40,
+            provider="deepseek", model="deepseek-v4-flash",
+        )),
+    )
+
+    assert cli.main(
+        ["--host", "demo.example", "--identity", str(_valid_identity(tmp_path)), "verify"],
+        repo=tmp_path, release_runner=runner, emit=events.append,
+    ) == 0
+
+    evidence = json.loads(Path(events[-1]["artifact"]).read_text(encoding="utf-8"))
+    assert evidence["release_sha"] == "a" * 40
+    assert evidence["provider"] == "deepseek"
+    assert evidence["model"] == "deepseek-v4-flash"
+    assert evidence["case_ids"] == ["e2e_remote_safe"]
+    assert evidence["lock_kind"] == "e2e"
+    assert evidence["lock_run_id"] == "e2e-" + "1" * 32
+
+
+@pytest.mark.parametrize(
+    "release_stdout,e2e_stdout",
+    [
+        ("", ""),
+        ('{"status":"verified","release_sha":"' + "a" * 40 + '","release_sha":"' + "a" * 40 + '"}', ""),
+        (json.dumps({"status": "verified", "release_sha": "a" * 40, "padding": "x" * (64 * 1024)}), ""),
+        (json.dumps({"status": "verified", "release_sha": "a" * 40, "nested": [[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]}), ""),
+        (json.dumps({"status": "verified"}), ""),
+        (_release_verify_stdout(), _e2e_verify_stdout(
+            target="cloud", release_sha="b" * 40,
+            provider="deepseek", model="deepseek-v4-flash",
+        )),
+        (_release_verify_stdout(), _e2e_verify_stdout(
+            target="cloud", release_sha="a" * 40,
+            provider=None, model=None,
+        )),
+    ],
+    ids=("missing", "duplicate", "oversized", "too-deep", "schema", "sha-mismatch", "missing-provider"),
+)
+def test_cloud_verify_rejects_rc_zero_invalid_or_inconsistent_evidence(
+    tmp_path: Path,
+    release_stdout: str,
+    e2e_stdout: str,
+):
+    dev.set_target(tmp_path, "cloud")
+    results = [_command_result(0, release_stdout)]
+    if e2e_stdout:
+        results.append(_command_result(0, e2e_stdout))
+    runner = SequenceCliRunner(*results)
+
+    assert cli.main(
+        ["--host", "demo.example", "--identity", str(_valid_identity(tmp_path)), "verify"],
+        repo=tmp_path, release_runner=runner,
+    ) == 1
+
+
+def test_local_verify_rejects_rc_zero_without_check_evidence(tmp_path: Path):
+    assert cli.main(
+        ["verify"], repo=tmp_path,
+        release_runner=SequenceCliRunner(_command_result(0, "")),
+    ) == 1
 
 
 def test_cloud_hmi_uses_local_vite_and_remote_endpoints(tmp_path: Path):

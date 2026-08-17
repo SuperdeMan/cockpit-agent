@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import UTC, datetime
 from collections.abc import Callable, Mapping, Sequence
@@ -41,6 +42,9 @@ from scripts.dev_stack_lib import (
 )
 
 CHILD_OUTPUT_MAX_BYTES = 64 * 1024
+CHILD_OUTPUT_MAX_DEPTH = 16
+_FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_REMOTE_LOCK_ID = re.compile(r"^e2e-[0-9a-f]{32}$")
 _PLAN_FIELDS = frozenset(
     {
         "status", "deployed_sha", "target_sha", "changed_paths",
@@ -219,6 +223,17 @@ def _object_without_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
+def _require_json_depth(value: object, *, depth: int = 0) -> None:
+    if depth > CHILD_OUTPUT_MAX_DEPTH:
+        raise DevStackError("cloud release response is invalid")
+    if isinstance(value, dict):
+        for item in value.values():
+            _require_json_depth(item, depth=depth + 1)
+    elif isinstance(value, list):
+        for item in value:
+            _require_json_depth(item, depth=depth + 1)
+
+
 def _parse_child_payload(stdout: str) -> Mapping[str, Any]:
     if len(stdout.encode("utf-8", errors="replace")) > CHILD_OUTPUT_MAX_BYTES:
         raise DevStackError("cloud release response is invalid")
@@ -230,7 +245,130 @@ def _parse_child_payload(stdout: str) -> Mapping[str, Any]:
         raise DevStackError("cloud release response is invalid") from exc
     if stdout[end:].strip():
         raise DevStackError("cloud release response is invalid")
+    _require_json_depth(value)
     return _require_mapping(value)
+
+
+def _parse_e2e_payload(stdout: str) -> Mapping[str, Any]:
+    if len(stdout.encode("utf-8", errors="replace")) > CHILD_OUTPUT_MAX_BYTES:
+        raise DevStackError("e2e verification response is invalid")
+    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+    json_lines = [line for line in lines if line.startswith(("{", "["))]
+    if len(json_lines) != 1 or lines[-1] != json_lines[0]:
+        raise DevStackError("e2e verification response is invalid")
+    try:
+        return _parse_child_payload(json_lines[0])
+    except DevStackError as exc:
+        raise DevStackError("e2e verification response is invalid") from exc
+
+
+_E2E_VERIFY_FIELDS = frozenset({
+    "allow_mutating", "canonical", "canonical_promoted",
+    "canonical_rejection_reasons", "epochs", "errors", "exit_code",
+    "full", "lane", "milestone", "mode", "model", "profile_restore",
+    "provider", "remote_lock", "results", "runtime_freshness",
+    "selection", "stale", "target", "target_release_sha", "warnings",
+})
+_E2E_SELECTION_FIELDS = frozenset({
+    "argv", "id", "profile", "remote_mutating", "remote_safe", "timeout_s",
+})
+_E2E_RESULT_FIELDS = frozenset({
+    "id", "status", "returncode", "errors", "counts", "outcome_case_ids",
+    "artifact_dir", "artifacts", "logs", "diagnostic", "result_file",
+    "profile", "timeout_s",
+})
+
+
+def _validate_release_verification(stdout: str) -> str:
+    payload = _parse_child_payload(stdout)
+    if set(payload) != {"status", "release_sha"}:
+        raise DevStackError("cloud release response is invalid")
+    release_sha = payload.get("release_sha")
+    if payload.get("status") != "verified" or not isinstance(release_sha, str):
+        raise DevStackError("cloud release response is invalid")
+    if _FULL_SHA.fullmatch(release_sha) is None:
+        raise DevStackError("cloud release response is invalid")
+    return release_sha
+
+
+def _validate_e2e_verification(
+    stdout: str,
+    *,
+    target: str,
+    release_sha: str | None,
+) -> dict[str, object]:
+    payload = _parse_e2e_payload(stdout)
+    expected_fields = set(_E2E_VERIFY_FIELDS)
+    if target == "cloud":
+        expected_fields.add("run_id")
+    if set(payload) != expected_fields:
+        raise DevStackError("e2e verification response is invalid")
+    if (
+        payload.get("target") != target
+        or payload.get("exit_code") != 0
+        or payload.get("errors") != []
+        or type(payload.get("allow_mutating")) is not bool
+        or payload.get("allow_mutating")
+        or not isinstance(payload.get("selection"), list)
+        or not isinstance(payload.get("results"), list)
+    ):
+        raise DevStackError("e2e verification response is invalid")
+    if target == "local":
+        if (
+            payload.get("mode") != "check"
+            or payload.get("target_release_sha") is not None
+            or payload.get("remote_lock") is not None
+            or payload.get("provider") is not None
+            or payload.get("model") is not None
+            or payload.get("results") != []
+        ):
+            raise DevStackError("e2e verification response is invalid")
+        return {
+            "release_sha": None,
+            "provider": None,
+            "model": None,
+            "case_ids": (),
+            "lock_kind": None,
+            "lock_run_id": None,
+        }
+    if payload.get("mode") != "run" or payload.get("target_release_sha") != release_sha:
+        raise DevStackError("e2e verification response is invalid")
+    provider = payload.get("provider")
+    model = payload.get("model")
+    if not isinstance(provider, str) or not provider or not isinstance(model, str) or not model:
+        raise DevStackError("e2e verification response is invalid")
+    lock = _require_mapping(payload.get("remote_lock"))
+    if set(lock) != {"kind", "run_id"} or lock.get("kind") != "e2e":
+        raise DevStackError("e2e verification response is invalid")
+    lock_run_id = lock.get("run_id")
+    if not isinstance(lock_run_id, str) or _REMOTE_LOCK_ID.fullmatch(lock_run_id) is None:
+        raise DevStackError("e2e verification response is invalid")
+    selection = payload["selection"]
+    results = payload["results"]
+    if len(selection) != 1 or len(results) != 1:
+        raise DevStackError("e2e verification response is invalid")
+    selected = _require_mapping(selection[0])
+    result = _require_mapping(results[0])
+    if (
+        set(selected) != _E2E_SELECTION_FIELDS
+        or selected.get("id") != "e2e_remote_safe"
+        or selected.get("remote_safe") is not True
+        or selected.get("remote_mutating") is not False
+        or set(result) != _E2E_RESULT_FIELDS
+        or result.get("id") != "e2e_remote_safe"
+        or result.get("status") != "PASS"
+        or result.get("returncode") != 0
+        or result.get("errors") != []
+    ):
+        raise DevStackError("e2e verification response is invalid")
+    return {
+        "release_sha": release_sha,
+        "provider": provider,
+        "model": model,
+        "case_ids": ("e2e_remote_safe",),
+        "lock_kind": "e2e",
+        "lock_run_id": lock_run_id,
+    }
 
 
 def _release_result(returncode: int, stdout: str) -> tuple[int, dict[str, object]]:
@@ -304,6 +442,10 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
     if args.command == "verify":
         case_ids: tuple[str, ...] = ()
         lock_kind: str | None = None
+        lock_run_id: str | None = None
+        release_sha: str | None = None
+        provider: str | None = None
+        model: str | None = None
         passed = False
         if selection.name == "local":
             argv = [
@@ -312,7 +454,14 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
                 "--target", "local", "--check",
             ]
             result = release_runner.run(argv, cwd=repo, check=False)
-            passed = result.returncode == 0
+            if result.returncode == 0:
+                try:
+                    verified = _validate_e2e_verification(
+                        result.stdout, target="local", release_sha=None,
+                    )
+                    passed = True
+                except DevStackError:
+                    passed = False
         else:
             config = _connection(args)
             release = cloud_release_argv(repo, "verify", "HEAD", apply=False)
@@ -322,23 +471,47 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
                 check=False,
             )
             if first.returncode == 0:
-                case_ids = ("e2e_remote_safe",)
-                lock_kind = "e2e"
-                e2e = [
-                    sys.executable,
-                    str(repo / "scripts" / "run_e2e.py"),
-                    *_connection_argv(config),
-                    "--target", "cloud", "--id", "e2e_remote_safe",
-                ]
-                second = release_runner.run(e2e, cwd=repo, check=False)
-                passed = second.returncode == 0
+                try:
+                    verified_release = _validate_release_verification(first.stdout)
+                except DevStackError:
+                    verified_release = None
+                if verified_release is not None:
+                    e2e = [
+                        sys.executable,
+                        str(repo / "scripts" / "run_e2e.py"),
+                        *_connection_argv(config),
+                        "--target", "cloud", "--id", "e2e_remote_safe",
+                    ]
+                    second = release_runner.run(
+                        e2e,
+                        cwd=repo,
+                        env={**os.environ, "E2E_TARGET_RELEASE_SHA": verified_release},
+                        check=False,
+                    )
+                    if second.returncode == 0:
+                        try:
+                            verified = _validate_e2e_verification(
+                                second.stdout,
+                                target="cloud",
+                                release_sha=verified_release,
+                            )
+                            release_sha = verified["release_sha"]
+                            provider = verified["provider"]
+                            model = verified["model"]
+                            case_ids = verified["case_ids"]
+                            lock_kind = verified["lock_kind"]
+                            lock_run_id = verified["lock_run_id"]
+                            passed = True
+                        except DevStackError:
+                            passed = False
         evidence = VerificationEvidence(
             target=selection.name,
-            release_sha=None,
-            provider=None,
-            model=None,
+            release_sha=release_sha,
+            provider=provider,
+            model=model,
             case_ids=case_ids,
             lock_kind=lock_kind,
+            lock_run_id=lock_run_id,
             passed=passed,
             verified_at=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         )

@@ -1087,6 +1087,8 @@ def _base_summary(*, mode: str, args: argparse.Namespace | None) -> dict[str, An
         "canonical": bool(args.canonical) if args is not None else False,
         "target": args.target if args is not None else None,
         "target_release_sha": None,
+        "provider": None,
+        "model": None,
         "remote_lock": None,
         "allow_mutating": bool(args.allow_mutating) if args is not None else False,
         "full": False,
@@ -2545,6 +2547,42 @@ def _result_exit_code(
     if any(item["errors"] for item in results):
         return 1
     return 0
+
+
+def _remote_probe_identity(
+    results: Sequence[Mapping[str, Any]],
+) -> tuple[str, str]:
+    remote = [item for item in results if item.get("id") == "e2e_remote_safe"]
+    if len(remote) != 1 or not isinstance(remote[0].get("artifacts"), list):
+        raise ProtocolError("remote provider/model evidence is missing")
+    candidates = [
+        Path(item)
+        for item in remote[0]["artifacts"]
+        if isinstance(item, str)
+        and Path(item).name == "remote_provider_catalog.json"
+    ]
+    if len(candidates) != 1 or candidates[0].is_symlink():
+        raise ProtocolError("remote provider/model evidence is missing")
+    try:
+        raw = candidates[0].read_bytes()
+    except OSError as exc:
+        raise ProtocolError("remote provider/model evidence is unreadable") from exc
+    if len(raw) > 4096:
+        raise ProtocolError("remote provider/model evidence is oversized")
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        raise ProtocolError("remote provider/model evidence is invalid") from exc
+    if not isinstance(payload, dict) or set(payload) != {"provider", "model"}:
+        raise ProtocolError("remote provider/model evidence is invalid")
+    provider = payload["provider"]
+    model = payload["model"]
+    if not isinstance(provider, str) or not provider or not isinstance(model, str) or not model:
+        raise ProtocolError("remote provider/model evidence is invalid")
+    return provider, model
 
 
 def _journey_report_artifacts(
@@ -4246,7 +4284,10 @@ def main(
         _emit(output, summary, human_lines=("E2E system awake lease: FAIL",))
         return 1
     awake_cleanup_failed = False
+    remote_lock_failed = False
     try:
+        if remote_lock is not None:
+            remote_lock.ensure_held()
         if profile_path:
             results, profile_summary_errors = _run_profile_epochs(
                 selected,
@@ -4411,6 +4452,8 @@ def main(
                         fixture_result=fixture_result,
                     ),
                 )
+    except RemoteLockError:
+        remote_lock_failed = True
     except StackLeaseProtocolError:
         results = [
             _synthetic_subrun_result(case, error="lease_protocol")
@@ -4425,7 +4468,14 @@ def main(
         if not awake_lease.release():
             awake_cleanup_failed = True
         if remote_lock is not None:
-            remote_lock.release()
+            try:
+                remote_lock.ensure_held()
+            except RemoteLockError:
+                remote_lock_failed = True
+            try:
+                remote_lock.release()
+            except RemoteLockError:
+                remote_lock_failed = True
     if awake_cleanup_failed:
         summary["errors"].append("system_awake")
         if not results:
@@ -4437,6 +4487,19 @@ def main(
             for result in results:
                 result["errors"] = list(dict.fromkeys(
                     [*result.get("errors", []), "system_awake"],
+                ))
+                result["status"] = "FAIL"
+    if remote_lock_failed:
+        summary["errors"].append("remote_lock")
+        if not results:
+            results = [
+                _synthetic_subrun_result(case, error="remote_lock")
+                for case in selected
+            ]
+        else:
+            for result in results:
+                result["errors"] = list(dict.fromkeys(
+                    [*result.get("errors", []), "remote_lock"],
                 ))
                 result["status"] = "FAIL"
     if cleanup_failed:
@@ -4455,6 +4518,16 @@ def main(
     summary["errors"].extend(profile_summary_errors)
     summary["run_id"] = run_id
     summary["results"] = results
+    if target.name == "cloud" and [case.id for case in selected] == ["e2e_remote_safe"]:
+        try:
+            summary["provider"], summary["model"] = _remote_probe_identity(results)
+        except ProtocolError:
+            summary["errors"].append("remote_evidence")
+            for result in results:
+                result["errors"] = list(dict.fromkeys(
+                    [*result.get("errors", []), "remote_evidence"],
+                ))
+                result["status"] = "FAIL"
     if (
         args.canonical
         and canonical_state is not None

@@ -162,7 +162,7 @@ def test_remote_lock_holds_until_context_exit(tmp_path: Path):
     )
 
 
-def test_remote_lock_release_is_best_effort_after_disconnect(tmp_path: Path):
+def test_remote_lock_release_rejects_disconnect_without_release_protocol(tmp_path: Path):
     process = FakeLockProcess(b"READY e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
 
     class DisconnectedStdin:
@@ -179,10 +179,40 @@ def test_remote_lock_release_is_best_effort_after_disconnect(tmp_path: Path):
         popen=lambda *args, **kwargs: process,
     ).acquire()
 
-    lock.release()
+    with pytest.raises(RemoteLockError, match="lease was lost"):
+        lock.release()
 
     assert process.terminated is True
     assert lock._process is None
+
+
+def test_remote_lock_health_rejects_ssh_255_after_ack(tmp_path: Path):
+    process = FakeLockProcess(b"READY e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+    lock = RemoteCloudLock(
+        ssh=SshConfig("demo.example", "ubuntu", tmp_path / "identity"),
+        run_id="e2e-" + "a" * 32,
+        popen=lambda *args, **kwargs: process,
+    ).acquire()
+    process.returncode = 255
+
+    with pytest.raises(RemoteLockError, match="lease was lost"):
+        lock.ensure_held()
+    with pytest.raises(RemoteLockError, match="lease was lost"):
+        lock.release()
+
+    assert lock._process is None
+
+
+def test_remote_lock_acquire_rejects_ack_from_already_dead_ssh(tmp_path: Path):
+    process = FakeLockProcess(b"READY e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+    process.returncode = 255
+
+    with pytest.raises(RemoteLockError, match="lease was lost"):
+        RemoteCloudLock(
+            ssh=SshConfig("demo.example", "ubuntu", tmp_path / "identity"),
+            run_id="e2e-" + "a" * 32,
+            popen=lambda *args, **kwargs: process,
+        ).acquire()
 
 
 def test_remote_lock_rejects_busy_or_wrong_ack(tmp_path: Path):
@@ -235,6 +265,8 @@ def test_cloud_runner_releases_remote_lock_in_finally(tmp_path: Path, monkeypatc
         def acquire(self):
             events.append(("acquire", self.run_id))
             return self
+        def ensure_held(self):
+            events.append(("held", self.run_id))
         def release(self):
             events.append(("release", self.run_id))
 
@@ -258,9 +290,99 @@ def test_cloud_runner_releases_remote_lock_in_finally(tmp_path: Path, monkeypatc
     )
 
     assert rc == 0
-    assert [event[0] for event in events] == ["acquire", "release"]
+    assert [event[0] for event in events] == [
+        "acquire", "held", "held", "release",
+    ]
     summary = json.loads(output.getvalue().splitlines()[-1])
     assert summary["remote_lock"]["kind"] == "e2e"
+
+
+def test_cloud_runner_fails_when_remote_lock_dies_after_green_case(tmp_path: Path, monkeypatch):
+    identity = tmp_path / "identity"
+    identity.write_text("test", encoding="utf-8")
+
+    class LostRemoteLock:
+        def __init__(self, **kwargs):
+            self.run_id = kwargs["run_id"]
+        def acquire(self):
+            return self
+        def ensure_held(self):
+            return None
+        def release(self):
+            raise RemoteLockError("remote lock lease was lost")
+
+    monkeypatch.setattr(run_e2e, "RemoteCloudLock", LostRemoteLock)
+    monkeypatch.setattr(run_e2e, "validate_ssh_identity", lambda _path: None)
+    monkeypatch.setattr(
+        run_e2e,
+        "_run_child",
+        lambda case, **_kwargs: {"id": case.id, "status": "PASS", "errors": []},
+    )
+    output = io.StringIO()
+
+    rc = run_e2e.main(
+        [
+            "--target", "cloud", "--id", "e2e_protocol_smoke",
+            "--host", "demo.example", "--identity", str(identity),
+        ],
+        repo_root=ROOT,
+        environ={"TAILNET_FQDN": "demo.ts.net"},
+        stdout=output,
+        staleness_evaluator=lambda _root: {"stale": False, "reasons": []},
+    )
+
+    summary = json.loads(output.getvalue().splitlines()[-1])
+    assert rc == 1
+    assert "remote_lock" in summary["errors"]
+    assert summary["results"][0]["status"] == "FAIL"
+
+
+def test_cloud_runner_reports_lock_lost_before_first_case(tmp_path: Path, monkeypatch):
+    identity = tmp_path / "identity"
+    identity.write_text("test", encoding="utf-8")
+
+    class LostBeforeRunLock:
+        def __init__(self, **kwargs):
+            self.run_id = kwargs["run_id"]
+        def acquire(self):
+            return self
+        def ensure_held(self):
+            raise RemoteLockError("remote lock lease was lost")
+        def release(self):
+            raise RemoteLockError("remote lock lease was lost")
+
+    monkeypatch.setattr(run_e2e, "RemoteCloudLock", LostBeforeRunLock)
+    monkeypatch.setattr(run_e2e, "validate_ssh_identity", lambda _path: None)
+    output = io.StringIO()
+
+    rc = run_e2e.main(
+        [
+            "--target", "cloud", "--id", "e2e_protocol_smoke",
+            "--host", "demo.example", "--identity", str(identity),
+        ],
+        repo_root=ROOT,
+        environ={"TAILNET_FQDN": "demo.ts.net"},
+        stdout=output,
+        staleness_evaluator=lambda _root: {"stale": False, "reasons": []},
+    )
+
+    summary = json.loads(output.getvalue().splitlines()[-1])
+    assert rc == 1
+    assert summary["errors"] == ["remote_lock"]
+    assert summary["results"][0]["status"] == "FAIL"
+
+
+def test_remote_probe_identity_is_read_from_its_validated_artifact(tmp_path: Path):
+    artifact = tmp_path / "remote_provider_catalog.json"
+    artifact.write_text(
+        json.dumps({"provider": "deepseek", "model": "deepseek-v4-flash"}),
+        encoding="utf-8",
+    )
+
+    assert run_e2e._remote_probe_identity([{
+        "id": "e2e_remote_safe",
+        "artifacts": [str(artifact)],
+    }]) == ("deepseek", "deepseek-v4-flash")
 
 
 def test_remote_safe_probe_uses_only_runner_endpoints_and_isolated_identity():

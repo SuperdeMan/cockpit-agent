@@ -66,6 +66,7 @@ class RemoteCloudLock:
             )
             self._process = None
             raise RemoteLockError(redact_lock_error(detail))
+        self.ensure_held()
         return self
 
     def _terminate(self) -> None:
@@ -75,26 +76,32 @@ class RemoteCloudLock:
             self._process.terminate()
         self._process.wait(timeout=5)
 
+    def ensure_held(self) -> None:
+        process = self._process
+        if process is None or process.poll() is not None:
+            raise RemoteLockError("remote lock lease was lost")
+
     def release(self) -> None:
         process = self._process
         if process is None:
             return
+        self._process = None
+        if process.poll() is not None:
+            raise RemoteLockError("remote lock lease was lost")
         try:
-            if process.poll() is None:
-                try:
-                    process.stdin.write(b"\n")
-                    process.stdin.close()
-                    process.wait(timeout=15)
-                except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
-                    pass
-        finally:
+            process.stdin.write(b"\n")
+            process.stdin.close()
+            returncode = process.wait(timeout=15)
+        except (BrokenPipeError, OSError, subprocess.TimeoutExpired) as exc:
             try:
                 if process.poll() is None:
                     process.terminate()
                     process.wait(timeout=5)
             except (OSError, subprocess.TimeoutExpired):
                 pass
-            self._process = None
+            raise RemoteLockError("remote lock lease was lost") from exc
+        if returncode != 0:
+            raise RemoteLockError("remote lock lease was lost")
 
     def __enter__(self) -> "RemoteCloudLock":
         return self.acquire()

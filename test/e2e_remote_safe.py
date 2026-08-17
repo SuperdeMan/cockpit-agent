@@ -40,24 +40,14 @@ def require_http_200(name: str, url: str) -> bytes:
         return response.read(512 * 1024)
 
 
-def provider_names(payload: bytes) -> list[dict[str, str]]:
+def active_provider_model(payload: bytes) -> dict[str, str]:
     value = json.loads(payload.decode("utf-8"))
-    found: set[tuple[str, str]] = set()
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if isinstance(item, dict):
-            provider = item.get("provider") or item.get("name")
-            model = item.get("model") or item.get("id")
-            if isinstance(provider, str) and isinstance(model, str):
-                found.add((provider, model))
-            pending.extend(item.values())
-        elif isinstance(item, list):
-            pending.extend(item)
-    return [
-        {"provider": provider, "model": model}
-        for provider, model in sorted(found)
-    ]
+    active = value.get("active") if isinstance(value, dict) else None
+    provider = active.get("provider") if isinstance(active, dict) else None
+    model = active.get("model") if isinstance(active, dict) else None
+    if not isinstance(provider, str) or not provider or not isinstance(model, str) or not model:
+        raise RemoteSafeError("active provider/model is missing")
+    return {"provider": provider, "model": model}
 
 
 async def collector_stream_probe(url: str) -> None:
@@ -132,7 +122,7 @@ async def main() -> int:
             recorder.pass_case("remote-hmi")
             require_http_200("edge", append_path(EDGE_HTTP_URL, "/healthz"))
             recorder.pass_case("remote-edge-health")
-            catalog = provider_names(require_http_200(
+            catalog = active_provider_model(require_http_200(
                 "audio", append_path(AUDIO_API_URL, "/api/llm/providers"),
             ))
             artifact = recorder.add_artifact(

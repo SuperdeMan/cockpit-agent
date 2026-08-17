@@ -63,6 +63,7 @@ class VerificationEvidence:
     model: str | None
     case_ids: tuple[str, ...]
     lock_kind: str | None
+    lock_run_id: str | None
     passed: bool
     verified_at: str
 
@@ -770,6 +771,7 @@ def write_verification_evidence(
         "model": evidence.model,
         "case_ids": list(evidence.case_ids),
         "lock_kind": evidence.lock_kind,
+        "lock_run_id": evidence.lock_run_id,
         "passed": evidence.passed,
         "verified_at": evidence.verified_at,
     }

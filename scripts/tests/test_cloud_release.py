@@ -8,6 +8,7 @@ import sys
 import tarfile
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -679,6 +680,42 @@ def test_cloud_release_connection_actions_reject_unusable_identity_before_ssh(
     assert json.loads(capsys.readouterr().out) == {
         "status": "error",
         "error_category": "configuration",
+    }
+
+
+def test_cloud_release_verify_emits_the_verified_full_release_sha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    identity = tmp_path / "identity"
+    identity.write_text("test-only identity", encoding="utf-8")
+
+    class FakeVerifyRunner:
+        def run(self, argv, **kwargs):
+            return CommandResult(tuple(argv), 0, "", "")
+
+    monkeypatch.setattr(cloud_release, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cloud_release, "SubprocessRunner", FakeVerifyRunner)
+    monkeypatch.setattr(
+        cloud_release,
+        "discover_remote_state",
+        lambda request, runner: SimpleNamespace(current_release="abc1234"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cloud_release,
+        "_resolve_commit",
+        lambda repo, revision: "a" * 40,
+        raising=False,
+    )
+
+    assert cloud_release.main([
+        "--host", "demo.example", "--identity", str(identity), "verify",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "verified",
+        "release_sha": "a" * 40,
     }
 
 
