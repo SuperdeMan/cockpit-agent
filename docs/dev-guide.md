@@ -5,6 +5,9 @@
 
 ## 可切换真栈
 
+> 当前真实迁移尚未完成，默认目标仍是 local。现场、阻断点与接手顺序见
+> [`reviews/2026-08-17-cloud-data-migration-handoff.md`](reviews/2026-08-17-cloud-data-migration-handoff.md)。
+
 执行真栈动作前由统一入口按仓库根目录定位并读取 `dev-stack.local`。它是仓库根目录的
 Git-ignore 文件，不能按当前工作目录误判缺失；缺失按 `target=local`，损坏则 fail closed。只允许
 `target=local|cloud`，不得写入 token、密码、私钥或 URL。`target=cloud` 不启动本地 Compose，
@@ -34,6 +37,10 @@ python scripts/dev_stack.py verify
 Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。
 HMI/Dashboard 在 cloud 目标下仍是本机 Vite，经 Tailnet HTTPS/WSS 访问后端；
 KWS/VAD 模型由页面加载，推理仍在浏览器本地。
+
+`target set cloud` 不是迁移命令。只有 final 数据覆盖为 `APPLIED`、独立迁移 verify、cloud release
+verify、remote-safe E2E 和本轮用户确认全部通过后，才允许执行；随后先 `status`/`verify`，再人工
+停止本地项目容器并退出 Docker Desktop。任何失败都保持或切回 local，且不删除本地卷。
 
 面向第一次跑起本项目、或要单独调试某个服务的开发者。整栈说明见根 `README.md`，本文补齐**工具链、codegen、单服务调试、Windows 注意、常见坑**。
 

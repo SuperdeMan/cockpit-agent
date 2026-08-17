@@ -166,7 +166,9 @@ trace_id 从 HMI 气泡角标一键复制，贯通到每一跳 LLM 调用（toke
 
 ## 快速开始
 
-依赖：Docker Desktop、Python 3.11+；本地开发另需 Go 1.24+、Node 20+、buf。
+依赖：Python 3.11+；`target=local` 的完整真栈才需要 Docker Desktop。本地开发另需 Go 1.24+、Node 20+、buf。
+云端真栈的当前迁移状态和接手门禁见
+[`docs/reviews/2026-08-17-cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)。
 
 ```bash
 cp .env.example .env         # 不配任何密钥也能跑：LLM 落 MockProvider，外部数据源走 mock

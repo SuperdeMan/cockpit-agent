@@ -1,6 +1,11 @@
 # 本地 Docker 数据迁云 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **执行状态（2026-08-17）：** 工具与受控基础设施已实现，但真实 final 在 `redis-restore` 失败并
+> 完成整组回滚，数据迁云尚未完成。不要按本计划的复选框猜现场；从
+> [`../../reviews/2026-08-17-cloud-data-migration-handoff.md`](../../reviews/2026-08-17-cloud-data-migration-handoff.md)
+> 接手。
 
 **Goal:** 构建一套可审计、可回滚的两阶段工具，把当前本地 Docker 真栈的 PostgreSQL、Redis 与 Collector SQLite 一致性快照完整替换到腾讯云稳定命名卷，同时保留本地卷、云端迁移前备份和全部迁移包。
 

@@ -204,6 +204,10 @@ python scripts/cloud_release.py rollback --to 4c1f479 --apply
 
 ## PostgreSQL、Redis 与 Collector 两阶段迁移
 
+> 2026-08-17 的真实 final 尚未迁入云端，当前云端已整组回滚且继续运行原数据。
+> 失败批次、保留现场和下一位 agent 的唯一接手顺序见
+> [`../../docs/reviews/2026-08-17-cloud-data-migration-handoff.md`](../../docs/reviews/2026-08-17-cloud-data-migration-handoff.md)。
+
 迁移包固定保存在本机 `.artifacts/cloud-data-migrations/{migration_id}/`，云端上传目录固定为
 `/opt/car-agent/shared/imports/{migration_id}/`。批次 ID 必须来自 `snapshot` 输出，格式为
 `YYYYMMDDTHHMMSSZ-<7位提交SHA>-online|final`；示例 ID 只说明格式，不能手工替代真实输出。

@@ -1,6 +1,10 @@
 # 本地/云端可切换真栈 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+>
+> **激活状态（2026-08-17）：** 切换工具已经具备，但 final 数据迁移未完成；`dev-stack.local`
+> 仍缺省为 local，禁止提前激活 cloud。当前现场与完成门禁见
+> [`../../reviews/2026-08-17-cloud-data-migration-handoff.md`](../../reviews/2026-08-17-cloud-data-migration-handoff.md)。
 
 **Goal:** 提供人和 agent 共用的 `dev_stack` 入口，让本地单测与前端热更新连接可切换的 local/cloud 后端，云端发布复用既有受控发布器，云端真栈测试只运行显式授权的安全用例，同时保持当前缺省 local 直至最终数据迁移完成。
 
