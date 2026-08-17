@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+import io
+import json
 
 import pytest
 
@@ -15,6 +17,8 @@ from scripts.e2e_target import (
     select_for_target,
 )
 from scripts.dev_stack_lib import LOCAL_ENDPOINTS, cloud_endpoints
+from scripts.cloud_release_lib import SshConfig
+from scripts.cloud_remote_lock import RemoteCloudLock, RemoteLockError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -107,3 +111,128 @@ def test_local_endpoint_environment_is_explicit():
     assert env["WS_URL"] == "ws://localhost:8090/ws"
     assert env["E2E_TARGET"] == "local"
     assert env["E2E_TARGET_RELEASE_SHA"] == ""
+
+
+class FakeLockProcess:
+    def __init__(self, ack: bytes):
+        self.stdin = io.BytesIO()
+        self.stdout = io.BytesIO(ack)
+        self.stderr = io.BytesIO(b"cloud transaction lock held by release\n")
+        self.returncode = None
+        self.waited = False
+        self.terminated = False
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self, timeout=None):
+        self.waited = True
+        self.returncode = 0
+        return 0
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = 1
+
+
+def test_remote_lock_holds_until_context_exit(tmp_path: Path):
+    process = FakeLockProcess(b"READY e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+    calls = []
+    ssh = SshConfig("demo.example", "ubuntu", tmp_path / "identity")
+
+    def popen(argv, **kwargs):
+        calls.append((tuple(argv), kwargs))
+        return process
+
+    with RemoteCloudLock(
+        ssh=ssh,
+        run_id="e2e-" + "a" * 32,
+        popen=popen,
+    ) as lock:
+        assert lock.identity == "e2e-" + "a" * 32
+        assert process.stdin.closed is False
+
+    assert process.stdin.closed is True
+    assert process.waited is True
+    assert calls[0][0][-1] == (
+        "sudo /opt/car-agent/shared/bin/remote-e2e-lock.sh "
+        "hold --run-id e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    )
+
+
+def test_remote_lock_rejects_busy_or_wrong_ack(tmp_path: Path):
+    process = FakeLockProcess(b"BUSY\n")
+    ssh = SshConfig("demo.example", "ubuntu", tmp_path / "identity")
+
+    with pytest.raises(RemoteLockError, match="release"):
+        RemoteCloudLock(
+            ssh=ssh,
+            run_id="e2e-" + "b" * 32,
+            popen=lambda *_args, **_kwargs: process,
+        ).acquire()
+    assert process.terminated
+
+
+def test_remote_lock_ack_timeout_is_fail_closed(tmp_path: Path, monkeypatch):
+    process = FakeLockProcess(b"")
+    ssh = SshConfig("demo.example", "ubuntu", tmp_path / "identity")
+
+    class TimedOutFuture:
+        def result(self, timeout):
+            raise TimeoutError
+
+    class FakeExecutor:
+        def __init__(self, max_workers):
+            pass
+        def submit(self, func):
+            return TimedOutFuture()
+        def shutdown(self, **kwargs):
+            pass
+
+    monkeypatch.setattr("scripts.cloud_remote_lock.concurrent.futures.ThreadPoolExecutor", FakeExecutor)
+    with pytest.raises(RemoteLockError, match="timed out"):
+        RemoteCloudLock(
+            ssh=ssh,
+            run_id="e2e-" + "c" * 32,
+            popen=lambda *_args, **_kwargs: process,
+        ).acquire()
+    assert process.terminated
+
+
+def test_cloud_runner_releases_remote_lock_in_finally(tmp_path: Path, monkeypatch):
+    identity = tmp_path / "identity"
+    identity.write_text("test", encoding="utf-8")
+    events = []
+
+    class FakeRemoteLock:
+        def __init__(self, **kwargs):
+            self.run_id = kwargs["run_id"]
+        def acquire(self):
+            events.append(("acquire", self.run_id))
+            return self
+        def release(self):
+            events.append(("release", self.run_id))
+
+    monkeypatch.setattr(run_e2e, "RemoteCloudLock", FakeRemoteLock)
+    monkeypatch.setattr(run_e2e, "validate_ssh_identity", lambda _path: None)
+    monkeypatch.setattr(
+        run_e2e,
+        "_run_child",
+        lambda case, **_kwargs: {"id": case.id, "status": "PASS", "errors": []},
+    )
+    output = io.StringIO()
+    rc = run_e2e.main(
+        [
+            "--target", "cloud", "--id", "e2e_protocol_smoke",
+            "--host", "demo.example", "--identity", str(identity),
+        ],
+        repo_root=ROOT,
+        environ={"TAILNET_FQDN": "demo.ts.net"},
+        stdout=output,
+        staleness_evaluator=lambda _root: {"stale": False, "reasons": []},
+    )
+
+    assert rc == 0
+    assert [event[0] for event in events] == ["acquire", "release"]
+    summary = json.loads(output.getvalue().splitlines()[-1])
+    assert summary["remote_lock"]["kind"] == "e2e"

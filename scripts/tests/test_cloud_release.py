@@ -968,6 +968,7 @@ def test_preflight_reports_exact_bootstrap_candidates():
         "/opt/car-agent/shared/runtime-project-name",
         "/opt/car-agent/shared/release-infrastructure.json",
         "/opt/car-agent/shared/bin/transaction-lock.sh",
+        "/opt/car-agent/shared/bin/remote-e2e-lock.sh",
         "/opt/car-agent/shared/bin/remote-data-migration.sh",
         "/opt/car-agent/shared/bin/backup.sh",
         "/opt/car-agent/shared/bin/remote-release.sh",
@@ -1009,6 +1010,8 @@ def test_bootstrap_requires_all_shared_transaction_scripts():
 def test_bootstrap_requires_remote_data_migration_script():
     assert "remote-data-migration.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "/opt/car-agent/shared/bin/remote-data-migration.sh" in REMOTE_PREFLIGHT_SOURCE
+    assert "remote-e2e-lock.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert "/opt/car-agent/shared/bin/remote-e2e-lock.sh" in REMOTE_PREFLIGHT_SOURCE
 
 
 def test_runtime_model_hash_tables_stay_in_sync():

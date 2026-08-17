@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import uuid
+import secrets
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
@@ -82,6 +83,12 @@ from scripts.e2e_profiles import (  # noqa: E402
 from scripts.prepare_voiceprint_fixtures import (  # noqa: E402
     fixture_manifest_sha256,
 )
+from scripts.cloud_release_lib import (  # noqa: E402
+    ReleaseError,
+    SshConfig,
+    validate_ssh_identity,
+)
+from scripts.cloud_remote_lock import RemoteCloudLock, RemoteLockError  # noqa: E402
 from scripts.e2e_target import (  # noqa: E402
     E2ETargetError,
     endpoint_environment,
@@ -4150,6 +4157,7 @@ def main(
         if args.lease_child
         else Path(tempfile.mkdtemp(prefix=f"{run_id}-"))
     )
+    remote_lock: RemoteCloudLock | None = None
     results: list[dict[str, Any]] = []
     lease: IdentityStackLease | None = None
     lease_owner_env: MutableMapping[str, str] | None = None
@@ -4208,10 +4216,26 @@ def main(
         except BaseException:
             _clear_capability_environment(mutable_env)
             raise
+    if target.name == "cloud":
+        try:
+            assert args.identity is not None
+            validate_ssh_identity(args.identity)
+            ssh = SshConfig(args.host, args.user, args.identity, args.kex_algorithms)
+            remote_run_id = "e2e-" + secrets.token_hex(16)
+            remote_lock = RemoteCloudLock(ssh=ssh, run_id=remote_run_id).acquire()
+            summary["remote_lock"] = {"kind": "e2e", "run_id": remote_run_id}
+        except (OSError, ReleaseError, RemoteLockError):
+            summary["run_id"] = run_id
+            summary["errors"] = ["remote_lock"]
+            summary["exit_code"] = 1
+            _emit(output, summary, human_lines=("E2E remote lock: FAIL",))
+            return 1
     awake_lease = _SystemAwakeLease(enabled=args.canonical)
     try:
         awake_lease.acquire()
     except OSError:
+        if remote_lock is not None:
+            remote_lock.release()
         if lease is not None:
             _restore_identity_lease(lease)
             if lease_owner_env is not None:
@@ -4400,6 +4424,8 @@ def main(
                 _clear_capability_environment(lease_owner_env)
         if not awake_lease.release():
             awake_cleanup_failed = True
+        if remote_lock is not None:
+            remote_lock.release()
     if awake_cleanup_failed:
         summary["errors"].append("system_awake")
         if not results:
