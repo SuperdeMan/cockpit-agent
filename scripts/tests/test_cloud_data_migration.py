@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import sqlite3
 import sys
@@ -100,6 +101,53 @@ class FakeBinaryRunner:
 
     def run(self, argv, *, cwd: Path):
         call = self._record(argv)
+        if any(str(part).endswith("store_identity_evidence.py") for part in call):
+            store = call[call.index(next(part for part in call if str(part).endswith("store_identity_evidence.py"))) + 1]
+            output = Path(call[call.index("--output") + 1])
+            def dig(label: str) -> str:
+                return hashlib.sha256(label.encode()).hexdigest()
+            if store == "postgres":
+                counts = {
+                    "memory_item": 370, "memory_relation": 12, "reminder_item": 57,
+                    "task_ledger": 4, "proactive_delivery": 2, "scene_item": 1,
+                    "voiceprint": 0,
+                }
+                identity_sets = {table: [dig(f"{table}:{i}") for i in range(count)] for table, count in counts.items()}
+                logical = {table: {item: dig(f"row:{item}") for item in values} for table, values in identity_sets.items()}
+                states = {
+                    "reminder_item.status": {item: "pending" for item in identity_sets["reminder_item"]},
+                    "task_ledger.status": {item: "done" for item in identity_sets["task_ledger"]},
+                    "proactive_delivery.state": {item: "presented" for item in identity_sets["proactive_delivery"]},
+                    "scene_item.status": {item: "enabled" for item in identity_sets["scene_item"]},
+                }
+                payload = {"identity_sets": identity_sets, "logical_rows": logical, "state_by_identity": states}
+            elif store == "redis":
+                rows = {}
+                for index in range(3271):
+                    rows[dig(f"redis:{index}")] = {
+                        "logical": dig(f"redis-row:{index}"),
+                        "deadline_ms": -1 if index < 2700 else 2_000_000,
+                    }
+                payload = {"rows": rows, "checked_at_ms": 1_000_000,
+                           "prefixes": {"memory": 3000, "session": 271},
+                           "types": {"hash": 3000, "string": 271}}
+            else:
+                database = Path(call[call.index("--database") + 1])
+                collector_rows = {}
+                with sqlite3.connect(database) as connection:
+                    for table in migration.COLLECTOR_TABLES:
+                        values = connection.execute(f'SELECT id FROM "{table}"').fetchall()
+                        collector_rows[table] = {}
+                        for value in values:
+                            identity = dig(f"collector:{table}:{value[0]}")
+                            collector_rows[table][identity] = {
+                                "logical": dig(f"collector-row:{table}:{value[0]}"),
+                                "ts_ms": 0, "protected": False,
+                                "relation": dig(f"collector-relation:{table}:{value[0]}"),
+                            }
+                payload = {"rows": collector_rows}
+            output.write_text(json.dumps(payload), encoding="utf-8")
+            return migration.CommandResult(call, 0, "", "")
         if "stop" in call:
             self.stopped.update(call[call.index("stop") + 1:])
         if "start" in call:
@@ -148,17 +196,25 @@ def valid_manifest_payload() -> dict[str, object]:
             "tables": {name: 0 for name in migration.BUSINESS_TABLES + migration.DERIVED_TABLES},
             "states": {name: {} for name in migration.POSTGRES_STATE_COLUMNS},
             "schema_fingerprint": "c" * 64, "archive_fingerprint": "d" * 64,
+            "source_identity": {
+                "identity_sets": {name: [] for name in migration.BUSINESS_TABLES},
+                "logical_rows": {name: {} for name in migration.BUSINESS_TABLES},
+                "state_by_identity": {name: {} for name in migration.POSTGRES_STATE_COLUMNS},
+            },
         },
         "redis": {
             "version": "7.2.5", "rdb_version": 11, "key_count": 0,
             "prefixes": {}, "types": {}, "persistent": 0, "expiring": 0,
             "min_ttl_ms": 0, "max_ttl_ms": 0, "rdb_sha256": "b" * 64,
+            "source_identity": {"rows": {}, "checked_at_ms": 0},
         },
         "collector": {
             "user_version": 0, "schema_fingerprint": "e" * 64,
             "tables": {name: 0 for name in migration.COLLECTOR_TABLES},
             "integrity_check": "ok",
+            "source_identity": {"rows": {name: {} for name in migration.COLLECTOR_TABLES}},
         },
+        "identity_hmac_key": "f" * 64,
     }
 
 
@@ -473,7 +529,7 @@ def test_discovery_rejects_bind_mount(tmp_path: Path):
         migration.discover_source_services(tmp_path, runner)
 
 
-def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
+def test_manifest_contains_only_private_keyed_evidence(tmp_path: Path):
     directory = tmp_path / VALID_ID
     directory.mkdir()
     for name, content in {
@@ -489,8 +545,12 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
     connection.close()
     runner = FakeBinaryRunner()
     services = migration.discover_source_services(tmp_path, runner)
+    identity_hmac_key = "f" * 64
+    (directory / "status.json").write_text(json.dumps({
+        "identity_hmac_key": identity_hmac_key,
+    }), encoding="utf-8")
     evidence = migration.collect_aggregate_evidence(
-        tmp_path, services, runner, directory, "d" * 64
+        tmp_path, services, runner, directory, "d" * 64, identity_hmac_key
     )
     manifest = migration.build_manifest(
         migration.SnapshotEvidence(
@@ -499,6 +559,7 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
             phase="online",
             source_sha="a" * 40,
             created_at="2026-08-16T01:02:03Z",
+            identity_hmac_key=identity_hmac_key,
             **evidence,
         )
     )
@@ -508,10 +569,24 @@ def test_manifest_contains_only_aggregate_evidence(tmp_path: Path):
     assert manifest.postgres["states"]["reminder_item.status"] == {"pending": 57}
     assert manifest.redis["key_count"] == 3271
     assert manifest.collector["tables"]["turns"] == 3
+    assert len(manifest.postgres["source_identity"]["identity_sets"]["memory_item"]) == 370
+    assert len(manifest.redis["source_identity"]["rows"]) == 3271
+    assert len(manifest.collector["source_identity"]["rows"]["turns"]) == 3
     assert set(manifest.postgres["tables"]) == set(migration.BUSINESS_TABLES + migration.DERIVED_TABLES)
     for private in ("user text", "session value", "api-token-value"):
         assert private not in encoded
     assert all("SELECT *" not in " ".join(call) for call in runner.calls)
+
+
+def test_private_source_identity_and_hmac_key_are_not_emitted_in_cli_summary():
+    manifest = migration.parse_manifest(valid_manifest_payload())
+    summaries = {
+        store: cli._public_store_summary(getattr(manifest, store))
+        for store in ("postgres", "redis", "collector")
+    }
+    encoded = json.dumps(summaries)
+    assert "source_identity" not in encoded
+    assert manifest.identity_hmac_key not in encoded
 
 
 def test_local_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path):
@@ -677,17 +752,20 @@ def test_plan_rejects_source_and_store_compatibility_mismatch(tmp_path: Path):
     payload["postgres"] = {
         "major": "16", "vector_version": "0.7.4", "tables": {
             name: 0 for name in migration.BUSINESS_TABLES + migration.DERIVED_TABLES
-        }, "states": {name: {} for name in migration.POSTGRES_STATE_COLUMNS},
-        "schema_fingerprint": "c" * 64, "archive_fingerprint": "d" * 64,
+            }, "states": {name: {} for name in migration.POSTGRES_STATE_COLUMNS},
+            "schema_fingerprint": "c" * 64, "archive_fingerprint": "d" * 64,
+            "source_identity": valid_manifest_payload()["postgres"]["source_identity"],
     }
     payload["redis"] = {
         "version": "7.2.5", "rdb_version": 11, "key_count": 0, "prefixes": {},
         "types": {}, "persistent": 0, "expiring": 0, "min_ttl_ms": 0,
-        "max_ttl_ms": 0, "rdb_sha256": payload["files"]["redis.rdb"]["sha256"],
+            "max_ttl_ms": 0, "rdb_sha256": payload["files"]["redis.rdb"]["sha256"],
+            "source_identity": valid_manifest_payload()["redis"]["source_identity"],
     }
     payload["collector"] = {
         "user_version": 0, "schema_fingerprint": "e" * 64,
-        "tables": {name: 0 for name in migration.COLLECTOR_TABLES}, "integrity_check": "ok",
+            "tables": {name: 0 for name in migration.COLLECTOR_TABLES}, "integrity_check": "ok",
+            "source_identity": valid_manifest_payload()["collector"]["source_identity"],
     }
     (directory / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
     remote = dict(FakeRemoteRunner().remote_payload)

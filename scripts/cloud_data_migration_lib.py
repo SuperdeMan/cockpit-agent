@@ -4,10 +4,12 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import stat
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -36,13 +38,14 @@ MANIFEST_KEYS = frozenset(
         "postgres",
         "redis",
         "collector",
+        "identity_hmac_key",
     }
 )
 SNAPSHOT_FILENAMES = ("postgres.dump", "redis.rdb", "collector.db")
 MIN_SNAPSHOT_FREE_BYTES = 1024 * 1024 * 1024
-CONTROL_JSON_MAX_BYTES = 1024 * 1024
+CONTROL_JSON_MAX_BYTES = 16 * 1024 * 1024
 CONTROL_JSON_MAX_DEPTH = 16
-CONTROL_JSON_MAX_ITEMS = 20000
+CONTROL_JSON_MAX_ITEMS = 200_000
 MAX_IDENTITY_ITEMS = 20_000
 MIGRATION_STATE_MACHINE = json.loads(
     (Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "migration-state-machine.json")
@@ -413,6 +416,7 @@ class MigrationManifest:
     postgres: Mapping[str, object]
     redis: Mapping[str, object]
     collector: Mapping[str, object]
+    identity_hmac_key: str
     schema_version: int = 1
 
 
@@ -449,6 +453,7 @@ class SnapshotEvidence:
     postgres: Mapping[str, object]
     redis: Mapping[str, object]
     collector: Mapping[str, object]
+    identity_hmac_key: str
 
 
 @dataclass(frozen=True)
@@ -630,6 +635,7 @@ def parse_manifest(payload: object) -> MigrationManifest:
     postgres = _parse_postgres_manifest(data["postgres"])
     redis = _parse_redis_manifest(data["redis"])
     collector = _parse_collector_manifest(data["collector"])
+    identity_hmac_key = _require_fingerprint(data["identity_hmac_key"], "identity HMAC key")
     return MigrationManifest(
         migration_id=migration_id,
         phase=phase,
@@ -639,6 +645,7 @@ def parse_manifest(payload: object) -> MigrationManifest:
         postgres=postgres,
         redis=redis,
         collector=collector,
+        identity_hmac_key=identity_hmac_key,
         schema_version=schema_version,
     )
 
@@ -699,10 +706,58 @@ def _validate_postgres_state_counts(
             raise MigrationError("PostgreSQL state counts do not conserve entities")
 
 
+def _identity_map(value: object, label: str) -> dict[str, str]:
+    if not isinstance(value, Mapping) or len(value) > MAX_IDENTITY_ITEMS:
+        raise MigrationError(f"{label} identity map is invalid")
+    result: dict[str, str] = {}
+    for identity, logical in value.items():
+        if (not isinstance(identity, str) or SHA256_RE.fullmatch(identity) is None
+                or not isinstance(logical, str) or SHA256_RE.fullmatch(logical) is None):
+            raise MigrationError(f"{label} identity record is invalid")
+        result[identity] = logical
+    return result
+
+
+def _parse_postgres_source_identity(
+    value: object, tables: Mapping[str, int],
+) -> dict[str, object]:
+    data = _exact_keys(value, frozenset({
+        "identity_sets", "logical_rows", "state_by_identity",
+    }), "PostgreSQL source identity")
+    identity_sets = data["identity_sets"]
+    logical_rows = data["logical_rows"]
+    state_maps = data["state_by_identity"]
+    if (not isinstance(identity_sets, Mapping) or not isinstance(logical_rows, Mapping)
+            or set(identity_sets) != set(BUSINESS_TABLES)
+            or set(logical_rows) != set(BUSINESS_TABLES)
+            or not isinstance(state_maps, Mapping)
+            or set(state_maps) != set(POSTGRES_STATE_COLUMNS)):
+        raise MigrationError("PostgreSQL source identity table set is invalid")
+    parsed_sets: dict[str, list[str]] = {}
+    parsed_rows: dict[str, dict[str, str]] = {}
+    for table in BUSINESS_TABLES:
+        identities = sorted(_digest_set(identity_sets[table], f"PostgreSQL {table}"))
+        rows = _identity_map(logical_rows[table], f"PostgreSQL {table}")
+        if len(identities) != tables[table] or set(identities) != set(rows):
+            raise MigrationError("PostgreSQL source identity count mismatch")
+        parsed_sets[table] = identities
+        parsed_rows[table] = rows
+    parsed_states: dict[str, dict[str, str]] = {}
+    for name, (table, _) in POSTGRES_STATE_COLUMNS.items():
+        raw = state_maps[name]
+        if not isinstance(raw, Mapping) or set(raw) != set(parsed_sets[table]):
+            raise MigrationError("PostgreSQL source state identity mismatch")
+        if any(state not in POSTGRES_ALLOWED_STATES[name] for state in raw.values()):
+            raise MigrationError("PostgreSQL source state is invalid")
+        parsed_states[name] = dict(raw)
+    return {"identity_sets": parsed_sets, "logical_rows": parsed_rows,
+            "state_by_identity": parsed_states}
+
+
 def _parse_postgres_manifest(value: object) -> Mapping[str, object]:
     data = _exact_keys(value, frozenset({
         "major", "vector_version", "tables", "states",
-        "schema_fingerprint", "archive_fingerprint",
+        "schema_fingerprint", "archive_fingerprint", "source_identity",
     }), "PostgreSQL evidence")
     major = data["major"]
     vector = data["vector_version"]
@@ -713,24 +768,26 @@ def _parse_postgres_manifest(value: object) -> Mapping[str, object]:
     tables = _bounded_count_map(data["tables"], "PostgreSQL tables")
     if set(tables) != set(BUSINESS_TABLES + DERIVED_TABLES):
         raise MigrationError("PostgreSQL table set is not exact")
-    if any(value > MAX_IDENTITY_ITEMS for value in tables.values()):
+    if sum(tables[name] for name in BUSINESS_TABLES) > MAX_IDENTITY_ITEMS:
         raise MigrationError("PostgreSQL identity count limit exceeded")
     states_raw = data["states"]
     if not isinstance(states_raw, Mapping) or set(states_raw) != set(POSTGRES_STATE_COLUMNS):
         raise MigrationError("PostgreSQL state set is not exact")
     states = {name: dict(_bounded_count_map(states_raw[name], name)) for name in POSTGRES_STATE_COLUMNS}
     _validate_postgres_state_counts(tables, states)
+    source_identity = _parse_postgres_source_identity(data["source_identity"], tables)
     return MappingProxyType({
         "major": major, "vector_version": vector, "tables": dict(tables), "states": states,
         "schema_fingerprint": _require_fingerprint(data["schema_fingerprint"], "schema fingerprint"),
         "archive_fingerprint": _require_fingerprint(data["archive_fingerprint"], "archive fingerprint"),
+        "source_identity": source_identity,
     })
 
 
 def _parse_redis_manifest(value: object) -> Mapping[str, object]:
     data = _exact_keys(value, frozenset({
         "version", "rdb_version", "key_count", "prefixes", "types", "persistent",
-        "expiring", "min_ttl_ms", "max_ttl_ms", "rdb_sha256",
+        "expiring", "min_ttl_ms", "max_ttl_ms", "rdb_sha256", "source_identity",
     }), "Redis evidence")
     version = data["version"]
     if not isinstance(version, str) or re.fullmatch(r"[0-9]+(?:[.][0-9]+){1,3}", version) is None:
@@ -755,22 +812,53 @@ def _parse_redis_manifest(value: object) -> Mapping[str, object]:
         raise MigrationError("Redis aggregate counts do not match key count")
     if result["min_ttl_ms"] > result["max_ttl_ms"]:
         raise MigrationError("Redis TTL range is invalid")
+    identity = _exact_keys(data["source_identity"], frozenset({"rows", "checked_at_ms"}), "Redis source identity")
+    rows_raw = identity["rows"]
+    if not isinstance(rows_raw, Mapping) or len(rows_raw) != result["key_count"]:
+        raise MigrationError("Redis source identity count mismatch")
+    rows: dict[str, dict[str, object]] = {}
+    persistent = expiring = 0
+    for digest, raw in rows_raw.items():
+        if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+            raise MigrationError("Redis source identity digest is invalid")
+        record = _exact_keys(raw, frozenset({"logical", "deadline_ms"}), "Redis source identity record")
+        logical = _require_fingerprint(record["logical"], "Redis logical row digest")
+        deadline = _strict_int(record["deadline_ms"], "Redis absolute expiry", minimum=-1)
+        if deadline == -1: persistent += 1
+        else: expiring += 1
+        rows[digest] = {"logical": logical, "deadline_ms": deadline}
+    if persistent != result["persistent"] or expiring != result["expiring"]:
+        raise MigrationError("Redis source TTL identity count mismatch")
+    result["source_identity"] = {
+        "rows": rows,
+        "checked_at_ms": _strict_int(identity["checked_at_ms"], "Redis identity check time"),
+    }
     return MappingProxyType(result)
 
 
 def _parse_collector_manifest(value: object) -> Mapping[str, object]:
     data = _exact_keys(value, frozenset({
-        "user_version", "schema_fingerprint", "tables", "integrity_check",
+        "user_version", "schema_fingerprint", "tables", "integrity_check", "source_identity",
     }), "Collector evidence")
     tables = _bounded_count_map(data["tables"], "Collector tables")
     if set(tables) != set(COLLECTOR_TABLES) or data["integrity_check"] != "ok":
         raise MigrationError("Collector evidence is invalid")
-    if any(value > MAX_IDENTITY_ITEMS for value in tables.values()):
+    if sum(tables.values()) > MAX_IDENTITY_ITEMS:
         raise MigrationError("Collector identity count limit exceeded")
+    identity = _exact_keys(data["source_identity"], frozenset({"rows"}), "Collector source identity")
+    rows_raw = identity["rows"]
+    if not isinstance(rows_raw, Mapping) or set(rows_raw) != set(COLLECTOR_TABLES):
+        raise MigrationError("Collector source identity table set is invalid")
+    rows: dict[str, dict[str, str]] = {}
+    for table in COLLECTOR_TABLES:
+        rows[table] = _identity_map(rows_raw[table], f"Collector {table}")
+        if len(rows[table]) != tables[table]:
+            raise MigrationError("Collector source identity count mismatch")
     return MappingProxyType({
         "user_version": _strict_int(data["user_version"], "Collector user_version"),
         "schema_fingerprint": _require_fingerprint(data["schema_fingerprint"], "Collector schema fingerprint"),
         "tables": dict(tables), "integrity_check": "ok",
+        "source_identity": {"rows": rows},
     })
 
 
@@ -873,6 +961,7 @@ def collect_aggregate_evidence(
     runner: BinaryCommandRunner,
     directory: Path,
     archive_fingerprint: str,
+    identity_hmac_key: str,
 ) -> dict[str, Mapping[str, object]]:
     suffix = require_migration_id(directory.name).replace("-", "")
     pg_container = f"car-agent-migration-{suffix}-pg"
@@ -897,6 +986,14 @@ def collect_aggregate_evidence(
             "docker", "exec", pg_container, "psql", "-U", "postgres", "-d", "postgres",
             "-At", "--command", POSTGRES_AGGREGATE_SQL,
         ], cwd=repo)
+        pg_identity_path = directory / ".postgres-identity.json"
+        runner.run([
+            sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
+            "postgres", "--container", pg_container, "--key-control", str(directory / "status.json"),
+            "--output", str(pg_identity_path),
+        ], cwd=repo)
+        pg_identity = parse_control_json(pg_identity_path.read_bytes())
+        pg_identity_path.unlink()
     finally:
         runner.run(["docker", "rm", "-f", pg_container], cwd=repo)
     runner.run([
@@ -914,13 +1011,36 @@ def collect_aggregate_evidence(
             "docker", "exec", redis_container, "redis-cli", "--json", "EVAL",
             REDIS_AGGREGATE_LUA, "0",
         ], cwd=repo)
+        redis_identity_path = directory / ".redis-identity.json"
+        runner.run([
+            sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
+            "redis", "--container", redis_container, "--key-control", str(directory / "status.json"),
+            "--output", str(redis_identity_path),
+        ], cwd=repo)
+        redis_identity = parse_control_json(redis_identity_path.read_bytes())
+        redis_identity_path.unlink()
     finally:
         runner.run(["docker", "rm", "-f", redis_container], cwd=repo)
-    return {
-        "postgres": _postgres_evidence(postgres_raw, archive_fingerprint),
-        "redis": _redis_evidence(redis_raw, directory / "redis.rdb"),
-        "collector": _collector_evidence(directory / "collector.db"),
+    collector_identity_path = directory / ".collector-identity.json"
+    runner.run([
+        sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
+        "collector", "--database", str(directory / "collector.db"),
+        "--key-control", str(directory / "status.json"), "--output", str(collector_identity_path),
+    ], cwd=repo)
+    collector_identity = parse_control_json(collector_identity_path.read_bytes())
+    collector_identity_path.unlink()
+    postgres = dict(_postgres_evidence(postgres_raw, archive_fingerprint))
+    postgres["source_identity"] = pg_identity
+    redis = dict(_redis_evidence(redis_raw, directory / "redis.rdb"))
+    redis["source_identity"] = {
+        "rows": redis_identity["rows"], "checked_at_ms": redis_identity["checked_at_ms"],
     }
+    collector = dict(_collector_evidence(directory / "collector.db"))
+    collector["source_identity"] = {"rows": {
+        table: {identity: record["logical"] for identity, record in rows.items()}
+        for table, rows in collector_identity["rows"].items()
+    }}
+    return {"postgres": postgres, "redis": redis, "collector": collector}
 
 
 def manifest_payload(manifest: MigrationManifest) -> dict[str, object]:
@@ -937,6 +1057,7 @@ def manifest_payload(manifest: MigrationManifest) -> dict[str, object]:
         "postgres": dict(manifest.postgres),
         "redis": dict(manifest.redis),
         "collector": dict(manifest.collector),
+        "identity_hmac_key": manifest.identity_hmac_key,
     }
 
 
@@ -950,6 +1071,7 @@ def build_manifest(snapshot: SnapshotEvidence) -> MigrationManifest:
         postgres=snapshot.postgres,
         redis=snapshot.redis,
         collector=snapshot.collector,
+        identity_hmac_key=snapshot.identity_hmac_key,
     )
     return parse_manifest(payload)
 
@@ -1362,6 +1484,7 @@ def _manifest_payload(
     postgres: Mapping[str, object] | None = None,
     redis: Mapping[str, object] | None = None,
     collector: Mapping[str, object] | None = None,
+    identity_hmac_key: str = "",
 ) -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -1379,6 +1502,7 @@ def _manifest_payload(
         "postgres": dict(postgres or {}),
         "redis": dict(redis or {}),
         "collector": dict(collector or {}),
+        "identity_hmac_key": identity_hmac_key,
     }
 
 
@@ -1508,7 +1632,11 @@ def capture_local_snapshot(
     directory = artifact_directory(artifact_root, migration_id)
     directory.mkdir(mode=0o700)
     restrict_private_tree(directory, runner)
-    atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURING"})
+    identity_hmac_key = secrets.token_hex(32)
+    atomic_private_json(directory / "status.json", {
+        "migration_id": migration_id, "status": "CAPTURING",
+        "identity_hmac_key": identity_hmac_key,
+    })
     recovery_needed = False
     try:
         if phase == "final":
@@ -1516,6 +1644,7 @@ def capture_local_snapshot(
             atomic_private_json(directory / "status.json", {
                 "migration_id": migration_id, "status": "RECOVERY_NEEDED",
                 "writer_container_ids": [item.container_id for item in writer_identities],
+                "identity_hmac_key": identity_hmac_key,
             })
             _quiesce_local_writers(repo, writer_identities, runner)
         pg_partial = directory / "postgres.dump.partial"
@@ -1525,7 +1654,7 @@ def capture_local_snapshot(
         capture_collector(services["observability-collector"], directory, runner, repo=repo)
         archive_fingerprint = _verify_snapshots(directory, services, runner, repo)
         evidence = collect_aggregate_evidence(
-            repo, services, runner, directory, archive_fingerprint
+            repo, services, runner, directory, archive_fingerprint, identity_hmac_key
         )
         snapshot = SnapshotEvidence(
             directory=directory,
@@ -1533,6 +1662,7 @@ def capture_local_snapshot(
             phase=phase,
             source_sha=source_sha,
             created_at=current.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            identity_hmac_key=identity_hmac_key,
             **evidence,
         )
         manifest = build_manifest(snapshot)

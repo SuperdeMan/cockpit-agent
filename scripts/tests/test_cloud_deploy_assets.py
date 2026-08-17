@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
+import hmac
+import io
 import importlib.util
 import json
 import os
@@ -9,6 +12,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -29,6 +33,9 @@ REMOTE_MIGRATION_PATH = CLOUD_DIR / "remote-data-migration.sh"
 SQLITE_STREAM_RESTORE_PATH = CLOUD_DIR / "sqlite_stream_restore.py"
 COLLECTOR_REPLACE_PATH = CLOUD_DIR / "collector_volume_replace.py"
 REDIS_PREPARE_PATH = CLOUD_DIR / "redis_volume_prepare.py"
+STORE_EVIDENCE_PATH = CLOUD_DIR / "store_identity_evidence.py"
+ASSEMBLE_ATTESTATION_PATH = CLOUD_DIR / "assemble_store_attestation.py"
+BUILD_BACKUP_MANIFEST_PATH = CLOUD_DIR / "build_backup_manifest.py"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
@@ -265,13 +272,14 @@ def test_transaction_lock_is_nonblocking_and_reports_bounded_holder():
 
 def test_remote_migration_is_whitelisted_and_fail_closed():
     text = _required_text(REMOTE_MIGRATION_PATH)
+    helper = _required_text(STORE_EVIDENCE_PATH)
     assert 'readonly IMPORT_ROOT="${SHARED_ROOT}/imports"' in text
     assert 'transaction_lock_acquire "migration"' in text
     assert "run_required_backup" in text
     assert "pg_restore" in text and "--clean" in text and "--exit-on-error" in text
     assert "appendonlydir" in text
     assert "redis-check-rdb" in text
-    assert "PRAGMA integrity_check" in text
+    assert "PRAGMA integrity_check" in helper
     assert "rollback_all" in text and "ROLLBACK_FAILED" in text
     for forbidden in (
         "docker compose down", "docker volume rm", "rm -rf", "down -v",
@@ -363,35 +371,36 @@ def test_remote_second_preflight_rechecks_all_version_and_space_constraints():
 
 def test_remote_verification_reads_actual_target_stores_and_writes_atomic_evidence():
     text = _required_text(REMOTE_MIGRATION_PATH)
+    assembler = _required_text(ASSEMBLE_ATTESTATION_PATH)
     assert "collect_target_attestation" in text
     assert 'ps -a -q redis' in text
     assert 'type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly' in text
     assert 'evidence_partial="${directory}/evidence.${run_id}.json.partial"' in text
-    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW" in text
-    assert 'compgen -G "${directory}/evidence.*.json.partial"' in text
+    assert "os.O_WRONLY | os.O_CREAT | os.O_EXCL" in _required_text(ASSEMBLE_ATTESTATION_PATH)
+    assert 'compgen -G "${directory}/.attestation.*.json.partial"' in text
     assert 'chmod 0600 -- "${evidence_partial}"' in text
-    assert "PostgreSQL aggregate mismatch" in text
-    assert "Redis aggregate mismatch" in text
-    assert "Collector aggregate mismatch" in text
+    assert "PostgreSQL pre-start aggregate mismatch" in assembler
+    assert "Redis pre-start version mismatch" in assembler
+    assert "Collector pre-start aggregate mismatch" in assembler
 
 
 def test_remote_attestation_steps_propagate_failures_explicitly():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
     for command in (
-        'SQL\n)" || return $?',
-        "}}' 0 \"${digest_key}\")\" || return $?",
+        '[[ "$?" -eq 0 ]] || return $?',
         'collector_ids_text="$("${compose[@]}" ps -a -q observability-collector)" || return $?',
         'mapfile -t collector_ids <<<"${collector_ids_text}" || return $?',
         'collector_image="$(docker inspect',
-        "\"${digest_key}\" \"${retention_days}\")\" || return $?",
         "run_id=\"$(python3 -c 'import secrets; print(secrets.token_hex(12))')\" || return $?",
-        'python3 - "${directory}/manifest.json"',
+        'store_identity_evidence.py" postgres',
+        'store_identity_evidence.py" redis',
+        'assemble_store_attestation.py',
         'chmod 0600 -- "${evidence_partial}" || return $?',
         'mv -T "${evidence_partial}" "${evidence_final}" || return $?',
     ):
         assert command in body
-    assert '"${collector_json}" "${stage}" "${baseline_file}" "${migration_id}" <<\'PY\' || return $?' in body
+    assert '--collector "${collector_file}" --stage "${stage}"' in body
     verify_body = re.search(r"(?ms)^verify_store_group\(\) \{(?P<body>.*?)^\}", text)["body"]
     assert 'collect_target_attestation "$1" "$2" || return $?' in verify_body
 
@@ -520,22 +529,21 @@ def test_post_import_attestation_finishes_before_external_ingress_services_start
 def test_remote_post_start_rules_preserve_business_data_but_allow_growth():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
-    assert 'stage not in {"pre-start", "post-start"}' in body
+    assembler = _required_text(ASSEMBLE_ATTESTATION_PATH)
+    assert 'choices=("pre-start", "post-start")' in assembler
     assert 'evidence-pre-start.json' in body and 'evidence-post-start.json' in body
-    assert 'persistent_prefixes' in body
     for table in (
         "memory_item", "memory_relation", "reminder_item", "task_ledger",
         "proactive_delivery", "scene_item", "voiceprint",
     ):
-        assert f'"{table}"' in body
-    assert 'current_count < baseline_count' in body
-    assert 'PostgreSQL state transition set is invalid' in body
-    assert 'PostgreSQL state entity conservation failed' in body
-    assert 'persistent Redis keyed identity disappeared' in body
-    assert 'unexpired Redis keyed identity disappeared' in body
-    assert 'retention_deleted' in body
-    assert 'r["version"] != baseline["redis"]["version"]' in body
-    assert 'c["schema_fingerprint"] != baseline["collector"]["schema_fingerprint"]' in body
+        assert f'"{table}"' in assembler
+    assert 'PostgreSQL stable logical row disappeared or changed' in assembler
+    assert 'PostgreSQL state transition is invalid' in assembler
+    assert 'persistent Redis identity disappeared' in assembler
+    assert 'unexpired Redis identity disappeared' in assembler
+    assert 'retention_deleted' in assembler
+    assert 'redis["version"] != old_redis["version"]' in assembler
+    assert 'collector["schema_fingerprint"] != old_collector["schema_fingerprint"]' in assembler
 
 
 def test_remote_verify_uses_saved_pre_start_baseline_not_snapshot_exactness():
@@ -1773,13 +1781,11 @@ def test_migration_server_and_cli_share_one_complete_state_table():
 
 
 def test_post_start_evidence_allows_declared_transitions_ttl_decay_and_collector_retention():
-    text = _required_text(REMOTE_MIGRATION_PATH)
-    body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
-    assert "allowed_states" in body
-    assert "state entity conservation" in body
-    assert "retention_deleted" in body
-    assert "persistent_prefixes" in body
-    assert "min_ttl_ms" not in body[body.index('else:'):]
+    assembler = _required_text(ASSEMBLE_ATTESTATION_PATH)
+    assert "TRANSITIONS" in assembler
+    assert "retention_deleted" in assembler
+    assert 'record["deadline_ms"] == -1' in assembler
+    assert "min_ttl_ms" not in assembler
 
 
 def test_preflight_locks_complete_cloud_topology_volumes_serve_and_backup_timer():
@@ -2224,6 +2230,201 @@ def test_redis_restore_uses_crash_reconciling_volume_helper() -> None:
     assert "mv /data/appendonlydir" not in restore
 
 
+def _load_store_evidence_module():
+    spec = importlib.util.spec_from_file_location("store_evidence", STORE_EVIDENCE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_collector_identity_evidence_is_keyed_content_free_and_cursor_bounded(tmp_path: Path):
+    module = _load_store_evidence_module()
+    database = tmp_path / "collector.db"
+    with sqlite3.connect(database) as connection:
+        for table in module.COLLECTOR_TABLES:
+            connection.execute(f'CREATE TABLE "{table}"(id TEXT PRIMARY KEY, body TEXT)')
+            connection.execute(f'INSERT INTO "{table}" VALUES (?,?)', (f"{table}-1", "PRIVATE-BODY"))
+    evidence = module.collect_collector(database, b"k" * 32)
+    encoded = json.dumps(evidence)
+    assert "PRIVATE-BODY" not in encoded
+    assert "turns-1" not in encoded
+    assert all(len(rows) == 1 for rows in evidence["rows"].values())
+    assert "fetchmany(PAGE_SIZE)" in STORE_EVIDENCE_PATH.read_text(encoding="utf-8")
+
+
+def test_postgres_identity_copy_streams_only_server_side_digest_material():
+    module = _load_store_evidence_module()
+    query = module._pg_copy_query()
+    assert "COPY (" in query and "FORMAT CSV" in query
+    assert "md5('id:1:'" in query and "md5('row:2:'" in query
+    assert "row_to_json(t)::text" not in query
+    assert "to_jsonb(t) - 'status'" in query
+
+
+def test_collector_protected_trace_scan_is_bounded_before_row_attestation(tmp_path: Path, monkeypatch):
+    module = _load_store_evidence_module()
+    monkeypatch.setattr(module, "MAX_ITEMS", 2)
+    database = tmp_path / "collector.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute(
+            "CREATE TABLE turns(id TEXT PRIMARY KEY, trace_id TEXT, badcase INTEGER, "
+            "gold_intents TEXT, ts INTEGER)"
+        )
+        for table in ("spans", "llm_calls", "logs"):
+            connection.execute(f'CREATE TABLE "{table}"(id TEXT PRIMARY KEY, trace_id TEXT, ts INTEGER)')
+        connection.executemany(
+            "INSERT INTO turns VALUES (?,?,?,?,?)",
+            [(f"id-{index}", f"trace-{index}", 1, "", index) for index in range(3)],
+        )
+    with pytest.raises(ValueError, match="protected trace evidence exceeds item limit"):
+        module.collect_collector(database, b"k" * 32)
+
+
+def test_redis_identity_evidence_scans_pages_without_keys_or_full_table_lua(monkeypatch):
+    module = _load_store_evidence_module()
+    pages = iter([
+        {"cursor": "7", "checked_at_ms": 1000, "version": "7.2.5", "rows": [{
+            "identity_material": "a" * 40, "logical_material": "b" * 40, "type": "string",
+            "prefix": "session", "deadline_ms": -1,
+        }]},
+        {"cursor": "0", "checked_at_ms": 1001, "version": "7.2.5", "rows": [{
+            "identity_material": "c" * 40, "logical_material": "d" * 40, "type": "hash",
+            "prefix": "memory", "deadline_ms": 2000,
+        }]},
+    ])
+    calls = []
+    monkeypatch.setattr(module, "_redis_page", lambda container, cursor: (
+        calls.append((container, cursor)) or next(pages)
+    ))
+    digest_key = b"z" * 32
+    evidence = module.collect_redis("redis-cid", digest_key)
+    assert [call[1] for call in calls] == ["0", "7"]
+    expected = {
+        hmac.new(digest_key, b"redis:id:" + bytes.fromhex(material), hashlib.sha256).hexdigest()
+        for material in ("a" * 40, "c" * 40)
+    }
+    assert set(evidence["rows"]) == expected
+    assert 'redis.call("SCAN",ARGV[1],"COUNT",256)' in module.REDIS_PAGE_LUA
+    assert "ARGV[2]" not in module.REDIS_PAGE_LUA
+    assert "ifttl~=-2anddumpthen" in module.REDIS_PAGE_LUA.replace(" ", "")
+    assert '"-x", "EVAL"' not in STORE_EVIDENCE_PATH.read_text(encoding="utf-8")
+    assert "repeat" not in module.REDIS_PAGE_LUA
+
+
+def test_redis_identity_evidence_rejects_supported_bound_before_unbounded_growth(monkeypatch):
+    module = _load_store_evidence_module()
+    monkeypatch.setattr(module, "MAX_ITEMS", 2)
+    page = {"cursor": "0", "checked_at_ms": 1000, "version": "7.2.5", "rows": [
+        {"identity_material": char * 40, "logical_material": logical * 40,
+         "type": "string", "prefix": "p", "deadline_ms": -1}
+        for char, logical in (("a", "d"), ("b", "e"), ("c", "f"))
+    ]}
+    monkeypatch.setattr(module, "_redis_page", lambda *args: page)
+    with pytest.raises(ValueError, match="item limit"):
+        module.collect_redis("redis-cid", b"z" * 32)
+
+
+def test_prestart_attestation_rejects_equal_count_logical_row_replacement():
+    spec = importlib.util.spec_from_file_location("assemble_attestation", ASSEMBLE_ATTESTATION_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    identity = "a" * 64
+    logical = "b" * 64
+    pg_source = {
+        "tables": {"memory_item": 1}, "states": {}, "schema_fingerprint": "c" * 64,
+        "source_identity": {
+            "identity_sets": {"memory_item": [identity]},
+            "logical_rows": {"memory_item": {identity: logical}},
+            "state_by_identity": {},
+        },
+    }
+    manifest = {
+        "postgres": pg_source,
+        "redis": {"version": "7.2.5", "source_identity": {"rows": {}}},
+        "collector": {
+            "user_version": 0, "schema_fingerprint": "d" * 64,
+            "tables": {"turns": 0}, "integrity_check": "ok",
+            "source_identity": {"rows": {"turns": {}}},
+        },
+    }
+    current = {
+        "postgres": {
+            "tables": {"memory_item": 1}, "states": {}, "schema_fingerprint": "c" * 64,
+            "identity_sets": {"memory_item": [identity]},
+            "logical_rows": {"memory_item": {identity: logical}}, "state_by_identity": {},
+        },
+        "redis": {"version": "7.2.5", "rows": {}, "checked_at_ms": 1000},
+        "collector": {
+            "user_version": 0, "schema_fingerprint": "d" * 64,
+            "tables": {"turns": 0}, "integrity_check": "ok", "rows": {"turns": {}},
+        },
+    }
+    module._exact_pre_start(manifest, current)
+    current["postgres"]["logical_rows"]["memory_item"][identity] = "e" * 64
+    with pytest.raises(ValueError, match="logical identity"):
+        module._exact_pre_start(manifest, current)
+
+
+def test_large_prestart_attestation_uses_control_files_not_json_argv(tmp_path: Path):
+    module = _load_probe(ASSEMBLE_ATTESTATION_PATH, "large_assemble_attestation_test")
+    identities = [hashlib.sha256(f"id-{index}".encode()).hexdigest() for index in range(1_200)]
+    logical = {
+        identity: hashlib.sha256(f"row-{index}".encode()).hexdigest()
+        for index, identity in enumerate(identities)
+    }
+    schema: dict[str, object] = {"columns": [], "primary_keys": [], "indexes": []}
+    manifest = {
+        "postgres": {
+            "tables": {"memory_item": len(identities)}, "states": {},
+            "schema_fingerprint": module._schema_fingerprint(schema),
+            "source_identity": {
+                "identity_sets": {"memory_item": identities},
+                "logical_rows": {"memory_item": logical}, "state_by_identity": {},
+            },
+        },
+        "redis": {"version": "7.2.5", "source_identity": {"rows": {}}},
+        "collector": {
+            "user_version": 0, "schema_fingerprint": "d" * 64,
+            "tables": {"turns": 0}, "integrity_check": "ok",
+            "source_identity": {"rows": {"turns": {}}},
+        },
+    }
+    files = {
+        "manifest": manifest,
+        "pg-aggregate": {"tables": {"memory_item": len(identities)}, "states": {}, "schema": schema},
+        "pg-identity": {
+            "identity_sets": {"memory_item": identities},
+            "logical_rows": {"memory_item": logical}, "state_by_identity": {},
+        },
+        "redis": {"version": "7.2.5", "rows": {}, "checked_at_ms": 1_000},
+        "collector": {
+            "user_version": 0, "schema_fingerprint": "d" * 64,
+            "tables": {"turns": 0}, "integrity_check": "ok", "rows": {"turns": {}},
+        },
+    }
+    paths: dict[str, Path] = {}
+    for name, payload in files.items():
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        paths[name] = path
+    assert paths["manifest"].stat().st_size > 64 * 1024
+    output = tmp_path / "evidence.json"
+    argv = [
+        sys.executable, str(ASSEMBLE_ATTESTATION_PATH),
+        "--manifest", str(paths["manifest"]),
+        "--pg-aggregate", str(paths["pg-aggregate"]),
+        "--pg-identity", str(paths["pg-identity"]),
+        "--redis", str(paths["redis"]), "--collector", str(paths["collector"]),
+        "--stage", "pre-start", "--migration-id", "20260817T010203Z-abcdef0-online",
+        "--output", str(output),
+    ]
+    completed = subprocess.run(argv, capture_output=True, text=True)
+    assert completed.returncode == 0, completed.stderr
+    assert json.loads(output.read_text(encoding="utf-8"))["stage"] == "pre-start"
+
+
 def test_migration_preflight_locks_complete_running_topology_and_backup_timer_health():
     text = _required_text(REMOTE_MIGRATION_PATH)
     topology = re.search(r"(?ms)^assert_expected_cloud_topology\(\) \{(?P<body>.*?)^\}", text)["body"]
@@ -2258,37 +2459,68 @@ def test_backup_asserts_all_three_stable_store_volumes_before_capture():
 
 def test_backup_redis_evidence_is_keyed_and_restore_uses_absolute_expiry_semantics():
     backup = _required_text(BACKUP_PATH)
-    for token in (
-        "redis_digest_key", "persistent_digests", "expiring_deadlines_ms",
-        "PEXPIRETIME", "checked_at_ms", "redis_identity",
-    ):
+    builder = _required_text(BUILD_BACKUP_MANIFEST_PATH)
+    helper = _required_text(STORE_EVIDENCE_PATH)
+    for token in ("redis_digest_key", "store_identity_evidence.py"):
         assert token in backup
+    for token in (
+        "persistent_digests", "expiring_deadlines_ms", "checked_at_ms", "redis_identity",
+    ):
+        assert token in builder
+    assert "PEXPIRETIME" in helper
+    assert 'repeat local r=redis.call("SCAN"' not in backup
     remote = _required_text(REMOTE_MIGRATION_PATH)
     verifier = re.search(
         r"(?ms)^assert_redis_container_matches_manifest\(\) \{(?P<body>.*?)^\}", remote,
     )["body"]
     assert "source_deadline > checked_at_ms" in verifier
     assert "Redis persistent identity mismatch" in verifier
-    assert verifier.index('if "redis_identity" in m:') < verifier.index(
-        'for key in ("key_count", "prefixes", "types", "persistent", "expiring")'
+    assert 'store_identity_evidence.py" redis' in verifier
+    assert 'repeat local r=redis.call("SCAN"' not in verifier
+
+
+def test_backup_streams_redis_evidence_into_manifest_builder_without_heredoc_stdin_collision():
+    backup = _required_text(BACKUP_PATH)
+    builder = _required_text(BUILD_BACKUP_MANIFEST_PATH)
+    assert 'store_identity_evidence.py" redis' in backup
+    assert 'build_backup_manifest.py"' in backup
+    assert "car-agent-backup-redis-${timestamp}" in backup
+    assert 'source=${REDIS_DIR},target=/snapshot,readonly' in backup
+    assert 'for attempt in $(seq 1 60)' in backup
+    assert '--container "${redis_container}" --key-stdin' not in backup
+    assert '--container "${cold_redis_container}" --key-stdin' in backup
+    assert re.search(
+        r'--include-key --output - \| \\\n\s+python3 "\$\{RELEASE_DIR\}/deploy/cloud/build_backup_manifest\.py"',
+        backup,
     )
+    assert 'python3 - "${backup_manifest}"' not in backup
+    assert "load_redis_evidence(sys.stdin)" in builder
+
+
+def test_backup_manifest_builder_bounds_streamed_control_json(monkeypatch):
+    module = _load_probe(BUILD_BACKUP_MANIFEST_PATH, "build_backup_manifest_test")
+    monkeypatch.setattr(module, "MAX_CONTROL_BYTES", 64)
+    with pytest.raises(ValueError, match="too large"):
+        module.load_redis_evidence(io.StringIO(" " * 65))
 
 
 def test_target_attestation_collects_keyed_identities_and_real_retention_predicates():
     text = _required_text(REMOTE_MIGRATION_PATH)
     body = re.search(r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", text)["body"]
+    helper = _required_text(STORE_EVIDENCE_PATH)
+    assembler = _required_text(ASSEMBLE_ATTESTATION_PATH)
+    assert "store_identity_evidence.py" in body and "assemble_store_attestation.py" in body
+    for token in ("identity_sets", "state_by_identity", "logical_rows", "PEXPIRETIME"):
+        assert token in helper
     for token in (
-        "identity_sets", "state_by_identity", "sha256(convert_to",
-        "persistent_digests", "expiring_deadlines_ms", "PEXPIRETIME",
-        "cleanup_cutoff_ms", "badcase==1 or gold!=\"\"", "relation",
-        "PostgreSQL keyed identity disappeared or was replaced",
-        "unexpired Redis keyed identity disappeared",
-        "Collector deletion violates retention predicate",
+        "cleanup_cutoff_ms", "protected_traces", "relation",
+        "PostgreSQL stable logical row disappeared or changed",
+        "unexpired Redis identity disappeared", "Collector deletion violates retention predicate",
     ):
-        assert token in body
-    assert '{"pending","fired","done","cancelled"}' in body
-    assert '{"accepted","running","done","failed","cancelled","orphaned"}' in body
-    assert '{"pending","dispatched","presented","dropped","expired"}' in body
+        assert token in helper + assembler
+    assert '"pending": {"pending", "fired", "done", "cancelled"}' in assembler
+    assert '"accepted": {"accepted", "running", "done", "failed", "cancelled", "orphaned"}' in assembler
+    assert '"pending": {"pending", "dispatched", "presented", "dropped", "expired"}' in assembler
 
 
 def test_collector_sql_restore_is_streaming_bounded_and_integrity_checked(tmp_path: Path):

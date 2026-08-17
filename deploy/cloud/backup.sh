@@ -130,11 +130,8 @@ fsync_backup_artifact "${postgres_target}"
 "${compose[@]}" exec -T redis redis-cli SAVE >/dev/null
 redis_digest_key="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
 [[ "${redis_digest_key}" =~ ^[0-9a-f]{64}$ ]]
-redis_aggregate="$("${compose[@]}" exec -T redis redis-cli --json EVAL '
-redis.setresp(3); local c="0"; local n,p,e=0,0,0; local px={}; local ty={}; local pd={}; local ed={};
-local function kd(k) local a=redis.sha1hex(ARGV[1]..":1:"..k); local b=redis.sha1hex(ARGV[1]..":2:"..k); return string.sub(a..b,1,64) end
-repeat local r=redis.call("SCAN",c,"COUNT",1000); c=r[1]; for _,k in ipairs(r[2]) do n=n+1; local h=string.match(k,"^([A-Za-z0-9_-]+):") or "other"; px[h]=(px[h] or 0)+1; local t=redis.call("TYPE",k); if type(t)=="table" then t=t.ok end; ty[t]=(ty[t] or 0)+1; local ttl=redis.call("PTTL",k); local d=kd(k); if ttl<0 then p=p+1; table.insert(pd,d) else e=e+1; ed[d]=redis.call("PEXPIRETIME",k) end end until c=="0";
-local now=redis.call("TIME"); local checked=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000); local a={};local b={};local x={};for k,v in pairs(px) do table.insert(a,k);table.insert(a,v) end;for k,v in pairs(ty) do table.insert(b,k);table.insert(b,v) end;for k,v in pairs(ed) do table.insert(x,k);table.insert(x,v) end;table.sort(pd);return {map={"key_count",n,"prefixes",{map=a},"types",{map=b},"persistent",p,"expiring",e,"persistent_digests",pd,"expiring_deadlines_ms",{map=x},"checked_at_ms",checked}}' 0 "${redis_digest_key}")"
+redis_container="$("${compose[@]}" ps -a -q redis)"
+[[ "${redis_container}" =~ ^[0-9a-f]{12,64}$ ]]
 "${compose[@]}" cp redis:/data/dump.rdb "${redis_partial}" >/dev/null
 test -s "${redis_partial}"
 mv "${redis_partial}" "${redis_target}"
@@ -171,41 +168,29 @@ docker run --pull never --rm=true --mount "${obs_mount}" --tmpfs /restore:rw,noe
   --entrypoint python "${collector_image}" /tool.py "/backup/${timestamp}.sql.gz" /restore/collector.db
 
 backup_manifest="${BACKUP_ROOT}/${timestamp}.backup-manifest.json"
-python3 - "${backup_manifest}" "${timestamp}" "${postgres_target}" "${redis_target}" "${obs_target}" "${redis_aggregate}" "${redis_digest_key}" <<'PY'
-import hashlib
-import json
-import os
-import sys
-from pathlib import Path
-
-def record(path_text):
-    path = Path(path_text)
-    digest = hashlib.sha256()
-    size = 0
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            size += len(chunk)
-            digest.update(chunk)
-    return {"size_bytes": size, "sha256": digest.hexdigest()}
-
-target = Path(sys.argv[1])
-redis=json.loads(sys.argv[6])
-identity={"digest_key":sys.argv[7],"persistent_digests":redis.pop("persistent_digests"),
-          "expiring_deadlines_ms":redis.pop("expiring_deadlines_ms"),"checked_at_ms":redis.pop("checked_at_ms")}
-payload = {"schema_version": 1, "backup_stamp": sys.argv[2], "redis_aggregate": redis, "redis_identity": identity, "files": {
-    "postgres.dump": record(sys.argv[3]),
-    "redis.rdb": record(sys.argv[4]),
-    "collector.sql.gz": record(sys.argv[5]),
-}}
-partial = target.with_suffix(target.suffix + ".partial")
-fd = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-try:
-    os.write(fd, (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode())
-    os.fsync(fd)
-finally:
-    os.close(fd)
-os.replace(partial, target)
-PY
+cold_redis_container="car-agent-backup-redis-${timestamp}"
+docker run -d --rm=true --pull never --name "${cold_redis_container}" \
+  --mount "type=bind,source=${REDIS_DIR},target=/snapshot,readonly" \
+  --entrypoint redis-server "${redis_image}" \
+  --dir /snapshot --dbfilename "${timestamp}.rdb" --appendonly no --save "" \
+  --protected-mode no >/dev/null
+trap 'docker stop --time 5 "${cold_redis_container}" >/dev/null 2>&1' EXIT
+cold_redis_ready=0
+for attempt in $(seq 1 60); do
+  if docker exec "${cold_redis_container}" redis-cli PING 2>/dev/null | grep -Fx PONG >/dev/null; then
+    cold_redis_ready=1
+    break
+  fi
+  sleep 1
+done
+[[ "${cold_redis_ready}" -eq 1 ]]
+printf '%s\n' "${redis_digest_key}" | \
+  python3 "${RELEASE_DIR}/deploy/cloud/store_identity_evidence.py" redis \
+    --container "${cold_redis_container}" --key-stdin --include-key --output - | \
+  python3 "${RELEASE_DIR}/deploy/cloud/build_backup_manifest.py" \
+    "${backup_manifest}" "${timestamp}" "${postgres_target}" "${redis_target}" "${obs_target}"
+docker stop --time 5 "${cold_redis_container}" >/dev/null
+trap - EXIT
 fsync_backup_artifact "${backup_manifest}"
 
 find "${BACKUP_ROOT}" -mindepth 2 -type f -mtime +7 -print \

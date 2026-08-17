@@ -5,6 +5,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Mapping
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -39,6 +40,10 @@ def _emit(payload: dict[str, object]) -> None:
     if len(encoded.encode("utf-8")) > 64 * 1024:
         raise migration.MigrationError("migration response exceeded output limit")
     print(encoded)
+
+
+def _public_store_summary(value: Mapping[str, object]) -> dict[str, object]:
+    return {key: item for key, item in value.items() if key != "source_identity"}
 
 
 def _ssh_config(args: argparse.Namespace) -> SshConfig:
@@ -104,9 +109,9 @@ def main(
                 "status": "captured", "phase": bundle.manifest.phase,
                 "migration_id": bundle.manifest.migration_id,
                 "artifact_directory": str(bundle.directory),
-                "postgres": dict(bundle.manifest.postgres),
-                "redis": dict(bundle.manifest.redis),
-                "collector": dict(bundle.manifest.collector),
+                "postgres": _public_store_summary(bundle.manifest.postgres),
+                "redis": _public_store_summary(bundle.manifest.redis),
+                "collector": _public_store_summary(bundle.manifest.collector),
             })
             return 0
 
