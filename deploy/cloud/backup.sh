@@ -146,7 +146,7 @@ docker run --pull never --rm=true --mount "type=volume,source=${COLLECTOR_VOLUME
 import sqlite3
 import sys
 
-connection = sqlite3.connect("file:/data/obs.db?mode=ro", uri=True)
+connection = sqlite3.connect("file:/data/obs.db?mode=ro&immutable=1", uri=True)
 try:
     connection.execute("BEGIN")
     for statement in connection.iterdump():

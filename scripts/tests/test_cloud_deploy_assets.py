@@ -1136,6 +1136,7 @@ def test_backup_is_non_destructive_and_uses_logical_database_backups():
     assert "redis:/data/dump.rdb" in backup
     assert "sqlite3" in backup and "iterdump" in backup
     assert "/data/obs.db" in backup
+    assert "file:/data/obs.db?mode=ro&immutable=1" in backup
     assert "gzip" in backup
     assert "-mtime +7" in backup and "-print" in backup
     for forbidden_env_copy in (
