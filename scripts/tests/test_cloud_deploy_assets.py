@@ -2375,6 +2375,13 @@ def test_remote_store_recovery_uses_identity_bound_loader_and_atomic_completion_
     assert r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial" in runtime
     for token in ("collector.db.partial", "collector-restore.json", "source_sha256", "os.replace"):
         assert token in collector
+    sqlite_tool_mount = (
+        '--mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/'
+        'sqlite_stream_restore.py,target=/tool.py,readonly"'
+    )
+    assert collector.index(sqlite_tool_mount) < collector.index(
+        '--entrypoint python "${image_id}"',
+    )
 
 
 def test_redis_aof_validation_is_private_and_detects_validator_mutation() -> None:

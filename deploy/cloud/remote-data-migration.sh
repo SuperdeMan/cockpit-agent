@@ -1156,8 +1156,8 @@ PY
 )" || return $?
   if [[ "${prepare_state}" == "rebuild" ]]; then
     docker run --rm --mount "type=bind,source=$(dirname "${sql_gz}"),target=/backup,readonly" \
-      --mount "type=bind,source=${directory},target=/restore" --entrypoint python "${image_id}" \
       --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/sqlite_stream_restore.py,target=/tool.py,readonly" \
+      --mount "type=bind,source=${directory},target=/restore" --entrypoint python "${image_id}" \
       /tool.py "/backup/$(basename "${sql_gz}")" /restore/collector.db.partial || return $?
     python3 - "${sql_gz}" "${directory}" <<'PY' || return $?
 import hashlib,json,os,sqlite3,sys
