@@ -53,6 +53,8 @@ EXPECTED: dict[
         bool,
         int,
         str | tuple[str, ...] | None,
+        bool,
+        bool,
     ],
 ] = {
     "e2e_protocol_smoke": (
@@ -211,6 +213,15 @@ EXPECTED: dict[
     ),
 }
 
+EXPECTED = {
+    case_id: (
+        *expected,
+        case_id in {"e2e_protocol_smoke", "e2e_tts_stream"},
+        False,
+    )
+    for case_id, expected in EXPECTED.items()
+}
+
 
 def _contract():
     assert CONTRACT_PATH.is_file(), "scripts/e2e_contract.py must define the manifest contract"
@@ -233,7 +244,36 @@ def _case(
         "signed_identity": False,
         "persistent_data": False,
         "memory_sessions": 0,
+        "remote_safe": False,
+        "remote_mutating": False,
     }
+
+
+def test_case_requires_explicit_remote_policy(tmp_path: Path):
+    contract = _contract()
+    case = _case()
+    case.pop("remote_safe")
+    case.pop("remote_mutating")
+    data = {"version": 1, "planned_paths": [], "cases": [case]}
+
+    with pytest.raises(contract.ManifestError, match="remote_safe"):
+        _load_temp(tmp_path, data)
+
+
+@pytest.mark.parametrize(
+    ("safe", "mutating"),
+    ((True, True), ("yes", False), (False, "no")),
+)
+def test_remote_policy_rejects_ambiguous_values(
+    tmp_path: Path, safe: object, mutating: object,
+):
+    contract = _contract()
+    case = _case()
+    case.update(remote_safe=safe, remote_mutating=mutating)
+    data = {"version": 1, "planned_paths": [], "cases": [case]}
+
+    with pytest.raises(contract.ManifestError, match="remote"):
+        _load_temp(tmp_path, data)
 
 
 def _privacy_target(
@@ -879,6 +919,8 @@ def test_manifest_has_exact_inventory_and_schema():
             case.persistent_data,
             case.memory_sessions,
             nightly,
+            case.remote_safe,
+            case.remote_mutating,
         ) == expected
         assert case.path == f"test/{case.id}.py"
         assert case.command[0] == "python"

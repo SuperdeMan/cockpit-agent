@@ -47,6 +47,8 @@ _CASE_KEYS = frozenset({
     "memory_sessions",
     "nightly",
     "fixture_pre_step",
+    "remote_safe",
+    "remote_mutating",
 })
 _REQUIRED_CASE_KEYS = _CASE_KEYS - {"nightly", "fixture_pre_step"}
 _GROUPS = frozenset({
@@ -327,6 +329,8 @@ class E2ECase:
     signed_identity: bool
     persistent_data: bool
     memory_sessions: int
+    remote_safe: bool
+    remote_mutating: bool
     nightly: NightlySelection | None
     fixture_pre_step: str | None = None
 
@@ -1892,6 +1896,19 @@ def _parse_case(
             "memory_sessions is positive",
         )
 
+    remote_safe = _require_bool(
+        raw["remote_safe"],
+        f"case {case_id}.remote_safe",
+    )
+    remote_mutating = _require_bool(
+        raw["remote_mutating"],
+        f"case {case_id}.remote_mutating",
+    )
+    if remote_safe and remote_mutating:
+        raise ManifestError(
+            f"case {case_id}.remote_safe and remote_mutating cannot both be true",
+        )
+
     nightly = (
         _parse_nightly(
             raw["nightly"],
@@ -1938,6 +1955,8 @@ def _parse_case(
         signed_identity=signed_identity,
         persistent_data=persistent_data,
         memory_sessions=memory_sessions,
+        remote_safe=remote_safe,
+        remote_mutating=remote_mutating,
         nightly=nightly,
         fixture_pre_step=fixture_pre_step,
     )
