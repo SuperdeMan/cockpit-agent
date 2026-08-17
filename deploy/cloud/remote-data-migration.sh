@@ -764,7 +764,7 @@ write_preflight_current() {
   redis_image="$(docker inspect --format '{{.Image}}' "${redis_id}")"
   archive_listing="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint pg_restore "${postgres_image}" --list /snapshot/postgres.dump)" || return $?
-  archive_fingerprint="$(printf '%s\n' "${archive_listing}" | sed '/^; Archive created at/d' | sha256sum | cut -d' ' -f1)"
+  archive_fingerprint="$(printf '%s\n' "${archive_listing}" | sed -e '/^; Archive created at/d' -e 's/[[:space:]]*$//' | sha256sum | cut -d' ' -f1)"
   redis_check="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint redis-check-rdb "${redis_image}" /snapshot/redis.rdb)" || return $?
   [[ "${redis_check}" == *"CRC64 checksum is OK"* \

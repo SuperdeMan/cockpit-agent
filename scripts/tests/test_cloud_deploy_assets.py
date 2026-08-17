@@ -2377,6 +2377,11 @@ def test_remote_manifest_accepts_the_same_collector_corpus_bound_as_evidence():
     assert 'if sum(collector["tables"].values())>20000:' not in text
 
 
+def test_remote_postgres_archive_fingerprint_trims_line_end_whitespace():
+    text = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
+    assert "sed -e '/^; Archive created at/d' -e 's/[[:space:]]*$//'" in text
+
+
 def test_postgres_identity_copy_streams_only_server_side_digest_material():
     module = _load_store_evidence_module()
     query = module._pg_copy_query()
