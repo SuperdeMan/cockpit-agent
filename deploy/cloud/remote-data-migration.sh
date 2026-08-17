@@ -320,7 +320,8 @@ try:
                         collector_partials={name for name in bucket_entries if re.fullmatch(
                             r"[.]obs[.]db(?:-wal|-shm)?[.]migration[.]partial",name
                         )}
-                        validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}|collector_partials, {"obs.db"})
+                        collector_required={"obs.db"} if bucket_entries-collector_partials else set()
+                        validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}|collector_partials, collector_required)
                     else:
                         marker_partials={name for name in bucket_entries if re.fullmatch(
                             r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial",name
