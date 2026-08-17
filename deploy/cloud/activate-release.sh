@@ -126,7 +126,9 @@ assemble_release() {
 }
 
 run_required_backup() {
-  "${SHARED_ROOT}/bin/backup.sh" \
+  local release_dir="$1"
+  CAR_AGENT_BACKUP_RELEASE_DIR="${release_dir}" \
+    "${SHARED_ROOT}/bin/backup.sh" \
     --transaction-lock-fd "${TRANSACTION_LOCK_FD}"
 }
 
@@ -216,7 +218,7 @@ activate_release() {
   previous_dir="$(readlink -f "${RELEASE_ROOT}/current")"
   previous_sha="$(basename "${previous_dir}")"
   validate_release_selector "${previous_sha}"
-  run_required_backup
+  run_required_backup "${release_dir}"
   switch_current "${release_dir}"
   if ! compose_up_release "${release_dir}" "${sha}"; then
     restore_previous_release \
@@ -249,7 +251,7 @@ rollback_release() {
   fi
   [[ -f "${manifest}" ]] || die "release service manifest is unavailable"
   verify_release_images "${target_sha}" "${manifest}"
-  run_required_backup
+  run_required_backup "${previous_dir}"
   switch_current "${target_dir}"
   if ! compose_up_release "${target_dir}" "${target_sha}" \
       || ! ( verify_release "${target_sha}" ); then

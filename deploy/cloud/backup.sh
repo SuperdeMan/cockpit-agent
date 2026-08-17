@@ -6,7 +6,11 @@ umask 077
 readonly CAR_ROOT="/opt/car-agent"
 readonly SHARED_ROOT="${CAR_ROOT}/shared"
 readonly RELEASE_ROOT="${CAR_ROOT}/current"
-readonly RELEASE_DIR="$(readlink -f "${RELEASE_ROOT}")"
+readonly DEFAULT_RELEASE_DIR="$(readlink -f "${RELEASE_ROOT}")"
+RELEASE_DIR="${CAR_AGENT_BACKUP_RELEASE_DIR:-${DEFAULT_RELEASE_DIR}}"
+[[ "${RELEASE_DIR}" =~ ^/opt/car-agent/releases/[0-9a-f]{7,40}$ ]]
+[[ -d "${RELEASE_DIR}" && ! -L "${RELEASE_DIR}" ]]
+readonly RELEASE_DIR
 readonly ACTIVE_RELEASE_SHA="$(basename "${RELEASE_DIR}")"
 readonly RUNTIME_PROJECT_NAME_FILE="/opt/car-agent/shared/runtime-project-name"
 mapfile -t runtime_project_names <"${RUNTIME_PROJECT_NAME_FILE}"

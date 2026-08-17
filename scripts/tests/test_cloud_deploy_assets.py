@@ -794,6 +794,22 @@ def test_activation_orders_images_models_backup_switch_up_verify():
     assert positions == sorted(positions)
 
 
+def test_activation_backup_uses_assembled_release_helpers_before_switch():
+    activation = _required_text(ACTIVATE_RELEASE_PATH)
+    backup = _required_text(BACKUP_PATH)
+    activate_body = re.search(
+        r"(?ms)^activate_release\(\) \{(?P<body>.*?)^\}", activation,
+    )["body"]
+    rollback_body = re.search(
+        r"(?ms)^rollback_release\(\) \{(?P<body>.*?)^\}", activation,
+    )["body"]
+    assert 'run_required_backup "${release_dir}"' in activate_body
+    assert 'run_required_backup "${previous_dir}"' in rollback_body
+    assert 'CAR_AGENT_BACKUP_RELEASE_DIR="${release_dir}"' in activation
+    assert 'RELEASE_DIR="${CAR_AGENT_BACKUP_RELEASE_DIR:-${DEFAULT_RELEASE_DIR}}"' in backup
+    assert '^/opt/car-agent/releases/[0-9a-f]{7,40}$' in backup
+
+
 def test_activation_never_changes_or_copies_runtime_env():
     text = _required_text(ACTIVATE_RELEASE_PATH)
     assert 'ln -s "${SHARED_ROOT}/.env"' in text
@@ -2577,6 +2593,13 @@ def test_backup_redis_evidence_is_keyed_and_restore_uses_absolute_expiry_semanti
     assert "Redis persistent identity mismatch" in verifier
     assert 'store_identity_evidence.py" redis' in verifier
     assert 'repeat local r=redis.call("SCAN"' not in verifier
+
+
+def test_redis_info_is_read_before_switching_lua_to_resp3():
+    helper = _load_probe(STORE_EVIDENCE_PATH, "store_identity_resp_test")
+    assert helper.REDIS_PAGE_LUA.index('local info=redis.call("INFO","server")') < (
+        helper.REDIS_PAGE_LUA.index("redis.setresp(3)")
+    )
 
 
 def test_backup_streams_redis_evidence_into_manifest_builder_without_heredoc_stdin_collision():

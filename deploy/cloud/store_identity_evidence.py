@@ -31,6 +31,7 @@ PG_TABLES = {
 }
 COLLECTOR_TABLES = ("turns", "spans", "llm_calls", "logs")
 REDIS_PAGE_LUA = r'''
+local info=redis.call("INFO","server")
 redis.setresp(3)
 local page=redis.call("SCAN",ARGV[1],"COUNT",256)
 local out={}
@@ -46,7 +47,6 @@ for _,key in ipairs(page[2]) do
   end
 end
 local now=redis.call("TIME")
-local info=redis.call("INFO","server")
 local version=string.match(info,"redis_version:([^\r\n]+)") or "unknown"
 return {map={"cursor",page[1],"checked_at_ms",tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000),"version",version,"rows",out}}
 '''.strip()
