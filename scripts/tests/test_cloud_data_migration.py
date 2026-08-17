@@ -992,6 +992,25 @@ def test_recover_dry_run_accepts_audited_no_backup_state(
     assert payload["backup_files"] is None
 
 
+def test_recover_apply_accepts_terminal_recovered_without_replace(tmp_path: Path, capsys):
+    runner = FakeRemoteRunner()
+
+    def recovered_run(argv, *, cwd: Path, **kwargs):
+        call = tuple(str(part) for part in argv)
+        runner.calls.append(call)
+        return migration.CommandResult(call, 0, json.dumps({
+            "migration_id": VALID_ID, "status": "RECOVERED_WITHOUT_REPLACE",
+        }), "")
+
+    runner.run = recovered_run
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+        "recover", "--migration-id", VALID_ID, "--apply",
+    ], runner=runner, repo=tmp_path)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "RECOVERED_WITHOUT_REPLACE"
+
+
 def test_mutating_ssh_timeout_reports_remote_status_unknown_in_progress(tmp_path: Path, capsys):
     _write_valid_bundle(tmp_path)
     key = _fake_key(tmp_path)

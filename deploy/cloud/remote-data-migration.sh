@@ -172,7 +172,7 @@ PY
 require_preapply_batch() {
   local migration_id="$1" directory="${IMPORT_ROOT}/${1}"
   require_migration_id "${migration_id}"
-  python3 - "${directory}" "${migration_id}" <<'PY'
+  python3 - "${directory}" "${migration_id}" <<'PY' || return $?
 import hashlib, json, os, stat, sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -242,7 +242,7 @@ finally:
     for descriptor in descriptors.values(): os.close(descriptor)
     os.close(root)
 PY
-  validate_import_manifest "${migration_id}"
+  validate_import_manifest "${migration_id}" || return $?
 }
 
 require_runtime_batch() {
@@ -297,7 +297,13 @@ try:
     if "rollback-generated" in entries:
         generated = opened(root, "rollback-generated", directory=True)
         try:
-            validate_regular_set(generated, set(os.listdir(generated)), {"collector.db"}, {"collector.db"})
+            generated_entries=set(os.listdir(generated))
+            if not generated_entries or not generated_entries.issubset({"collector.db","collector.db.partial","collector-restore.json",".collector-restore.json.partial"}):
+                raise SystemExit("unknown runtime batch entry")
+            for name in generated_entries:
+                os.close(opened(generated,name))
+            if "collector-restore.json" in generated_entries and generated_entries!={"collector.db","collector-restore.json"}:
+                raise SystemExit("collector completion state is invalid")
         finally:
             os.close(generated)
     if "rollback" in entries:
@@ -313,12 +319,14 @@ try:
                     if bucket in collector_buckets:
                         validate_regular_set(bucket_fd, bucket_entries, {"obs.db", "obs.db-wal", "obs.db-shm"}, {"obs.db"})
                     else:
-                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir", "redis-replace.json"}):
+                        if not bucket_entries.issubset({"dump.rdb", "appendonlydir", "redis-replace.json", "redis-aof-complete.json"}):
                             raise SystemExit("unknown runtime batch entry")
                         if "dump.rdb" in bucket_entries:
                             os.close(opened(bucket_fd, "dump.rdb"))
                         if "redis-replace.json" in bucket_entries:
                             os.close(opened(bucket_fd, "redis-replace.json"))
+                        if "redis-aof-complete.json" in bucket_entries:
+                            os.close(opened(bucket_fd, "redis-aof-complete.json"))
                         if "appendonlydir" in bucket_entries:
                             appendonly = opened(bucket_fd, "appendonlydir", directory=True)
                             try:
@@ -928,17 +936,17 @@ PY
 }
 
 validate_redis_aof_volume() {
-  local image_id="$1"
+  local image_id="$1" append_directory="${2:-appendonlydir}"
   docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data,readonly" \
     --entrypoint sh "${image_id}" -ceu '
-      manifest=/data/appendonlydir/appendonly.aof.manifest
+      manifest="/data/${1}/appendonly.aof.manifest"
       test -s "${manifest}"
       grep -Eq "^file appendonly[.]aof[.][0-9]+[.]base[.](rdb|aof) seq [0-9]+ type b$" "${manifest}"
       grep -Eq "^file appendonly[.]aof[.][0-9]+[.]incr[.]aof seq [0-9]+ type i$" "${manifest}"
-      test -z "$(find /data/appendonlydir -maxdepth 1 -type l -print -quit)"
+      test -z "$(find "/data/${1}" -maxdepth 1 -type l -print -quit)"
       while read -r marker filename rest; do
         test "${marker}" = file
-        candidate="/data/appendonlydir/${filename}"
+        candidate="/data/${1}/${filename}"
         test -f "${candidate}"
         test ! -L "${candidate}"
         test "$(stat -c %u:%g "${candidate}")" = 0:0
@@ -954,7 +962,7 @@ validate_redis_aof_volume() {
         esac
       done <"${manifest}"
       redis-check-aof "${manifest}" >/dev/null
-    ' || return $?
+    ' sh "${append_directory}" || return $?
 }
 
 restore_redis_rdb() {
@@ -962,6 +970,7 @@ restore_redis_rdb() {
   local expected_manifest="${4:-${IMPORT_ROOT}/${migration_id}/manifest.json}"
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
   local redis_container actual_volume image_id helper_image prepare_state loader info dbsize rc attempt aof_ready=0
+  local manifest_sha existing_loader loader_identity
   [[ -s "${rdb}" && ! -L "${rdb}" ]] || { printf 'Redis restore source is invalid\n' >&2; return 1; }
   assert_locked_store_identity redis || return $?
   resolve_redis_identity || return $?
@@ -977,24 +986,42 @@ restore_redis_rdb() {
   install -d -m 0700 -o root -g root "${rollback_dir}" || return $?
   helper_image="${LOCKED_STORE_IMAGE[observability-collector]:-}"
   [[ "${helper_image}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  manifest_sha="$(python3 - "${expected_manifest}" <<'PY'
+import hashlib,sys
+value=hashlib.sha256()
+with open(sys.argv[1],"rb") as source:
+    for chunk in iter(lambda:source.read(1024*1024),b""): value.update(chunk)
+print(value.hexdigest())
+PY
+)" || return $?
+  [[ "${manifest_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+  loader="car-agent-migration-${migration_id//-/}-redis-loader"
+  existing_loader="$(docker ps -a -q --filter "name=^/${loader}$")" || return $?
+  if [[ -n "${existing_loader}" ]]; then
+    [[ "${existing_loader}" =~ ^[0-9a-f]{12,64}$ ]] || return 1
+    loader_identity="$(docker inspect --format '{{.Image}} {{index .Config.Labels "com.car-agent.migration-id"}} {{index .Config.Labels "com.car-agent.role"}}' "${existing_loader}")" || return $?
+    [[ "${loader_identity}" == "${image_id} ${migration_id} redis-loader" ]] || return 1
+    docker rm -f "${existing_loader}" >/dev/null || return $?
+  fi
   prepare_state="$(docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${rdb}"),target=/incoming,readonly" \
     --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py,target=/tool.py,readonly" \
     -e "MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}" \
     --entrypoint python "${helper_image}" /tool.py \
-    "/incoming/$(basename "${rdb}")" /data /rollback)" || return $?
+    "/incoming/$(basename "${rdb}")" /data /rollback "${manifest_sha}")" || return $?
   if [[ "${prepare_state}" == "resume-aof" ]]; then
     validate_redis_aof_volume "${image_id}" || return $?
     aof_ready=1
   fi
   if [[ "${aof_ready}" -eq 0 ]]; then
     [[ "${prepare_state}" == "prepared" || "${prepare_state}" == "resume-rdb" ]] || return 1
-    loader="car-agent-migration-${migration_id//-/}-redis-loader"
     docker run -d --pull never --name "${loader}" \
+      --label "com.car-agent.migration-id=${migration_id}" --label "com.car-agent.role=redis-loader" \
       --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
       --entrypoint redis-server "${image_id}" \
       "--dir" "/data" "--dbfilename" "dump.rdb" "--appendonly" "no" \
+      "--appenddirname" "appendonlydir.migration.partial" \
       "--protected-mode" "no" >/dev/null || return $?
     rc=1
     for attempt in $(seq 1 60); do
@@ -1024,8 +1051,15 @@ restore_redis_rdb() {
     docker exec "${loader}" redis-cli SAVE >/dev/null \
       || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
     docker stop "${loader}" >/dev/null || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-    validate_redis_aof_volume "${image_id}" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    validate_redis_aof_volume "${image_id}" "appendonlydir.migration.partial" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
     docker rm "${loader}" >/dev/null || return $?
+    docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
+      --mount "type=bind,source=${rollback_dir},target=/rollback" \
+      --mount "type=bind,source=$(dirname "${rdb}"),target=/incoming,readonly" \
+      --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py,target=/tool.py,readonly" \
+      --entrypoint python "${helper_image}" /tool.py --complete \
+      "/incoming/$(basename "${rdb}")" /data /rollback "${manifest_sha}" || return $?
+    validate_redis_aof_volume "${image_id}" || return $?
   fi
   # Compose cold-start from the persisted multipart AOF is authoritative; only
   # its post-start aggregate may satisfy apply or rollback verification.
@@ -1060,17 +1094,75 @@ install_collector_db() {
 
 restore_collector_sql() {
   local sql_gz="$1" migration_id="$2" directory="${IMPORT_ROOT}/${migration_id}/rollback-generated"
-  local collector_container image_id
+  local collector_container image_id prepare_state
   collector_container="$("${compose[@]}" ps -a -q observability-collector)"
   image_id="$(docker inspect --format '{{.Image}}' "${collector_container}")"
   install -d -m 0700 -o root -g root "${directory}"
-  docker run --rm --mount "type=bind,source=$(dirname "${sql_gz}"),target=/backup,readonly" \
-    --mount "type=bind,source=${directory},target=/restore" --entrypoint python "${image_id}" \
-    --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/sqlite_stream_restore.py,target=/tool.py,readonly" \
-    /tool.py "/backup/$(basename "${sql_gz}")" /restore/collector.db
-  [[ "$?" -eq 0 ]] || return $?
-  chown root:root -- "${directory}/collector.db" || return $?
-  chmod 0600 -- "${directory}/collector.db" || return $?
+  prepare_state="$(python3 - "${sql_gz}" "${directory}" <<'PY'
+import hashlib,json,os,sqlite3,stat,sys
+from pathlib import Path
+source=Path(sys.argv[1]); root=Path(sys.argv[2]); target=root/"collector.db"
+partial=root/"collector.db.partial"; marker=root/"collector-restore.json"; marker_partial=root/".collector-restore.json.partial"
+def digest(path):
+    value=hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda:stream.read(1024*1024),b""): value.update(chunk)
+    return value.hexdigest()
+source_sha=digest(source)
+if marker.exists():
+    payload=json.loads(marker.read_text(encoding="utf-8"))
+    if set(payload)!={"schema_version","source_sha256","database_sha256","phase"} or payload!={"schema_version":1,"source_sha256":source_sha,"database_sha256":payload["database_sha256"],"phase":"complete"}:
+        raise SystemExit("collector completion marker identity mismatch")
+    if not target.is_file() or target.is_symlink() or digest(target)!=payload["database_sha256"]:
+        raise SystemExit("collector completed database identity mismatch")
+    db=sqlite3.connect(f"file:{target.as_posix()}?mode=ro",uri=True)
+    try:
+        if db.execute("PRAGMA integrity_check").fetchall()!=[("ok",)]: raise SystemExit("collector completed database corrupt")
+    finally: db.close()
+    print("reuse")
+else:
+    for path in (partial,target,marker_partial):
+        if path.exists():
+            meta=path.lstat()
+            if not stat.S_ISREG(meta.st_mode) or meta.st_nlink!=1: raise SystemExit("unsafe collector partial")
+            path.unlink()
+    print("rebuild")
+PY
+)" || return $?
+  if [[ "${prepare_state}" == "rebuild" ]]; then
+    docker run --rm --mount "type=bind,source=$(dirname "${sql_gz}"),target=/backup,readonly" \
+      --mount "type=bind,source=${directory},target=/restore" --entrypoint python "${image_id}" \
+      --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/sqlite_stream_restore.py,target=/tool.py,readonly" \
+      /tool.py "/backup/$(basename "${sql_gz}")" /restore/collector.db.partial || return $?
+    python3 - "${sql_gz}" "${directory}" <<'PY' || return $?
+import hashlib,json,os,sqlite3,sys
+from pathlib import Path
+source=Path(sys.argv[1]); root=Path(sys.argv[2]); partial=root/"collector.db.partial"; target=root/"collector.db"
+def digest(path):
+    value=hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda:stream.read(1024*1024),b""): value.update(chunk)
+    return value.hexdigest()
+db=sqlite3.connect(f"file:{partial.as_posix()}?mode=ro",uri=True)
+try:
+    if db.execute("PRAGMA integrity_check").fetchall()!=[("ok",)]: raise SystemExit("collector restore corrupt")
+finally: db.close()
+os.chmod(partial,0o600); database_sha=digest(partial); os.replace(partial,target)
+payload={"schema_version":1,"source_sha256":digest(source),"database_sha256":database_sha,"phase":"complete"}
+marker=root/"collector-restore.json"; temporary=root/".collector-restore.json.partial"
+fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+try:
+    os.write(fd,(json.dumps(payload,sort_keys=True,separators=(",",":"))+"\n").encode()); os.fsync(fd)
+finally: os.close(fd)
+os.replace(temporary,marker)
+if hasattr(os,"O_DIRECTORY"):
+    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY)
+    try: os.fsync(fd)
+    finally: os.close(fd)
+PY
+  elif [[ "${prepare_state}" != "reuse" ]]; then
+    return 1
+  fi
   install_collector_db "${directory}/collector.db" "${migration_id}" "failed-import-collector-volume" || return $?
 }
 
@@ -1485,7 +1577,7 @@ apply_failure_trap() {
   trap - EXIT HUP INT TERM
   if [[ "${APPLY_FAILURE_ACTIVE}" -eq 1 ]]; then return "${signal_rc}"; fi
   APPLY_FAILURE_ACTIVE=1
-  if [[ -n "${APPLY_MIGRATION_ID}" ]]; then
+  if [[ -n "${APPLY_MIGRATION_ID}" && -n "${APPLY_BACKUP_STAMP}" ]]; then
     run_recoverable_step update_crash_journal "${APPLY_MIGRATION_ID}" apply INTERRUPTED \
       "${APPLY_BACKUP_STAMP}" "" "" signal "${signal_rc}"
     journal_rc="${STEP_RC}"
@@ -1496,8 +1588,6 @@ apply_failure_trap() {
     run_recoverable_step start_current_release
   fi
   recovery_rc="${STEP_RC}"
-  [[ "${journal_rc}" -eq 0 ]] \
-    || printf 'cloud-data-migration: interrupt journal update failed (rc=%s)\n' "${journal_rc}" >&2
   if [[ "${recovery_rc}" -ne 0 ]]; then
     if [[ "${APPLY_REPLACEMENT_STARTED}" -eq 1 && -n "${APPLY_BACKUP_STAMP}" ]]; then
       printf 'cloud-data-migration: interrupt rollback failed (rc=%s)\n' "${recovery_rc}" >&2
@@ -1506,9 +1596,16 @@ apply_failure_trap() {
     fi
   elif [[ "${APPLY_REPLACEMENT_STARTED}" -eq 0 && -n "${APPLY_MIGRATION_ID}" ]]; then
     run_recoverable_step clear_migration_fence "${APPLY_MIGRATION_ID}"
-    [[ "${STEP_RC}" -eq 0 ]] \
-      || printf 'cloud-data-migration: interrupt fence clear failed (rc=%s)\n' "${STEP_RC}" >&2
+    if [[ "${STEP_RC}" -ne 0 ]]; then
+      printf 'cloud-data-migration: interrupt fence clear failed (rc=%s)\n' "${STEP_RC}" >&2
+    elif [[ -z "${APPLY_BACKUP_STAMP}" ]]; then
+      run_recoverable_step update_crash_journal "${APPLY_MIGRATION_ID}" recover \
+        RECOVERED_WITHOUT_REPLACE
+      journal_rc="${STEP_RC}"
+    fi
   fi
+  [[ "${journal_rc}" -eq 0 ]] \
+    || printf 'cloud-data-migration: interrupt journal update failed (rc=%s)\n' "${journal_rc}" >&2
   return "${signal_rc}"
 }
 
@@ -1676,11 +1773,15 @@ recover_migration() {
   require_runtime_batch "${migration_id}" || return $?
   journal_line="$(read_recovery_journal "${migration_id}")" || return $?
   read -r state backup_stamp <<<"${journal_line}" || return $?
+  if [[ "${state}" == "RECOVERED_WITHOUT_REPLACE" ]]; then
+    printf '{"migration_id":"%s","status":"RECOVERED_WITHOUT_REPLACE"}\n' "${migration_id}"
+    return 0
+  fi
   if [[ "${state}" == "STOPPING_WRITERS" || "${state}" == "STOP_FAILED" || "${state}" == "BACKUP_FAILED" ]]; then
     start_current_release || return $?
-    update_crash_journal "${migration_id}" recover RECOVERED_WITHOUT_REPLACE || return $?
     clear_migration_fence "${migration_id}" || return $?
-    printf '{"migration_id":"%s","status":"RECOVERED"}\n' "${migration_id}"
+    update_crash_journal "${migration_id}" recover RECOVERED_WITHOUT_REPLACE || return $?
+    printf '{"migration_id":"%s","status":"RECOVERED_WITHOUT_REPLACE"}\n' "${migration_id}"
     return 0
   fi
   if [[ "${state}" == "ROLLED_BACK" ]]; then

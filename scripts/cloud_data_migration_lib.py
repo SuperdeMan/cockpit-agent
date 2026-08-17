@@ -1283,10 +1283,13 @@ def parse_rollback_plan(raw: str, migration_id: str) -> Mapping[str, object]:
     return MappingProxyType({**data, "backup_files": parsed_files, "would_stop": list(would_stop)})
 
 
-def parse_action_status(raw: str, migration_id: str, expected: str) -> Mapping[str, object]:
+def parse_action_status(
+    raw: str, migration_id: str, expected: str | frozenset[str],
+) -> Mapping[str, object]:
     payload = parse_control_json(raw, max_bytes=64 * 1024)
     data = _exact_keys(payload, frozenset({"migration_id", "status"}), "remote action status")
-    if data["migration_id"] != migration_id or data["status"] != expected:
+    expected_statuses = frozenset({expected}) if isinstance(expected, str) else expected
+    if data["migration_id"] != migration_id or data["status"] not in expected_statuses:
         raise MigrationError("remote action did not reach the expected final status")
     return data
 

@@ -593,6 +593,26 @@ def test_remote_preapply_batch_accepts_only_fresh_authentic_preflight_marker():
     assert 'marker["current"]["status"] != "inspect_only"' in body
     assert 'raise SystemExit("preflight marker is stale")' in body
     assert 'raise SystemExit("preflight marker is forged")' in body
+    assert "<<'PY' || return $?" in body
+
+
+def test_preapply_inner_validator_failure_propagates_before_manifest_validation(tmp_path: Path):
+    marker = tmp_path / "called"
+    harness = tmp_path / "preapply-failure.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+require_migration_id() {{ :; }}
+python3() {{ return 23; }}
+validate_import_manifest() {{ : >'{marker.as_posix()}'; }}
+require_preapply_batch 20260817T010203Z-abcdef0-online
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run([str(_git_bash()), str(harness)], capture_output=True, text=True)
+    assert completed.returncode == 23
+    assert not marker.exists()
 
 
 def test_remote_state_machine_is_sealed_then_preflighted_then_runtime(tmp_path: Path):
@@ -2142,6 +2162,43 @@ recover_migration 20260817T010203Z-abcdef0-online
     assert events.read_text(encoding="utf-8").splitlines() == ["state:ROLLED_BACK"]
 
 
+def test_no_backup_recovery_is_terminal_and_idempotent(tmp_path: Path):
+    harness = tmp_path / "recover-no-backup.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+load_runtime() {{ :; }}
+require_runtime_batch() {{ :; }}
+read_recovery_journal() {{ printf '%s\n' "${{JOURNAL_STATE}}"; }}
+start_current_release() {{ printf 'start\n' >>'{(tmp_path / 'events').as_posix()}'; }}
+update_crash_journal() {{ printf 'journal:%s\n' "$3" >>'{(tmp_path / 'events').as_posix()}'; }}
+clear_migration_fence() {{ printf 'clear\n' >>'{(tmp_path / 'events').as_posix()}'; }}
+recover_migration 20260817T010203Z-abcdef0-online
+""",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["JOURNAL_STATE"] = "BACKUP_FAILED"
+    first = subprocess.run([str(_git_bash()), str(harness)], env=env, capture_output=True, text=True)
+    assert first.returncode == 0, first.stderr
+    assert json.loads(first.stdout)["status"] == "RECOVERED_WITHOUT_REPLACE"
+    env["JOURNAL_STATE"] = "RECOVERED_WITHOUT_REPLACE"
+    second = subprocess.run([str(_git_bash()), str(harness)], env=env, capture_output=True, text=True)
+    assert second.returncode == 0, second.stderr
+    assert json.loads(second.stdout)["status"] == "RECOVERED_WITHOUT_REPLACE"
+    assert (tmp_path / "events").read_text(encoding="utf-8").splitlines() == [
+        "start", "clear", "journal:RECOVERED_WITHOUT_REPLACE",
+    ]
+
+
+def test_interrupt_before_backup_never_writes_interrupted_with_empty_stamp():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    body = re.search(r"(?ms)^apply_failure_trap\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert '-n "${APPLY_BACKUP_STAMP}"' in body
+    assert "RECOVERED_WITHOUT_REPLACE" in body
+
+
 def test_rollback_plan_supports_prebackup_recovery_without_status_or_backup() -> None:
     script = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
     plan = script.split("inspect_rollback_plan() {", 1)[1].split("\nmain() {", 1)[0]
@@ -2219,6 +2276,43 @@ def test_redis_volume_prepare_reconciles_every_rename_kill_point(
     assert (rollback / "appendonlydir" / "appendonly.aof.manifest").read_text(
         encoding="utf-8",
     ) == "old"
+
+
+def test_redis_prepare_discards_safe_incomplete_aof_and_reuses_bound_complete_marker(tmp_path: Path):
+    module = _load_probe(REDIS_PREPARE_PATH, "redis_prepare_completion_test")
+    incoming = tmp_path / "incoming.rdb"
+    data = tmp_path / "data"
+    rollback = tmp_path / "rollback"
+    incoming.write_bytes(b"REDIS0011-new")
+    data.mkdir()
+    rollback.mkdir()
+    (data / "appendonlydir.migration.partial").mkdir()
+    (data / "appendonlydir.migration.partial" / "partial.aof").write_bytes(b"partial")
+    assert module.prepare_redis_volume(
+        incoming, data, rollback, expected_manifest_sha="a" * 64,
+    ) == "prepared"
+    assert not (data / "appendonlydir.migration.partial").exists()
+    partial = data / "appendonlydir.migration.partial"
+    partial.mkdir()
+    (partial / "appendonly.aof.manifest").write_text("complete", encoding="utf-8")
+    module.finalize_aof(incoming, data, rollback, "a" * 64)
+    assert module.prepare_redis_volume(
+        incoming, data, rollback, expected_manifest_sha="a" * 64,
+    ) == "resume-aof"
+
+
+def test_remote_store_recovery_uses_identity_bound_loader_and_atomic_completion_markers():
+    text = _required_text(REMOTE_MIGRATION_PATH)
+    redis = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]
+    collector = re.search(r"(?ms)^restore_collector_sql\(\) \{(?P<body>.*?)^\}", text)["body"]
+    for token in (
+        "docker ps -a -q", "com.car-agent.migration-id", "com.car-agent.role=redis-loader",
+        "appendonlydir.migration.partial", "--complete", "manifest_sha",
+    ):
+        assert token in redis
+    assert redis.index("docker ps -a -q") < redis.index("prepare_state=")
+    for token in ("collector.db.partial", "collector-restore.json", "source_sha256", "os.replace"):
+        assert token in collector
 
 
 def test_redis_restore_uses_crash_reconciling_volume_helper() -> None:

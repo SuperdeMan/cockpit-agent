@@ -157,7 +157,10 @@ def main(
                        "would": "recover_from_server_journal"})
                 return 0
             result = migration.remote_action(request, "recover", remote_runner)  # type: ignore[arg-type]
-            final_status = migration.parse_action_status(result, request.migration_id, "ROLLED_BACK")
+            final_status = migration.parse_action_status(
+                result, request.migration_id,
+                frozenset({"ROLLED_BACK", "RECOVERED_WITHOUT_REPLACE"}),
+            )
             _emit({"status": final_status["status"], "migration_id": request.migration_id})
             return 0
         raise migration.MigrationError("unsupported migration command")
