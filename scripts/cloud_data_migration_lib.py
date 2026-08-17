@@ -160,6 +160,7 @@ SELECT json_build_object(
 )
 """.strip()
 REDIS_AGGREGATE_LUA = r"""
+local info = redis.call("INFO", "server")
 redis.setresp(3)
 local cursor = "0"
 local prefixes, types = {}, {}
@@ -186,16 +187,12 @@ repeat
     end
   end
 until cursor == "0"
-local prefix_items, type_items = {}, {}
-for key, value in pairs(prefixes) do table.insert(prefix_items, key); table.insert(prefix_items, value) end
-for key, value in pairs(types) do table.insert(type_items, key); table.insert(type_items, value) end
-local info = redis.call("INFO", "server")
 local version = string.match(info, "redis_version:([^\r\n]+)") or "unknown"
 return {map={
-  "version", version, "rdb_version", 1, "key_count", key_count,
-  "prefixes", {map=prefix_items}, "types", {map=type_items},
-  "persistent", persistent, "expiring", expiring,
-  "min_ttl_ms", min_ttl or 0, "max_ttl_ms", max_ttl
+  version=version, rdb_version=1, key_count=key_count,
+  prefixes={map=prefixes}, types={map=types},
+  persistent=persistent, expiring=expiring,
+  min_ttl_ms=min_ttl or 0, max_ttl_ms=max_ttl
 }}
 """.strip()
 

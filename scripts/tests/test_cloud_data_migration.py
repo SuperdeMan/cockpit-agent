@@ -823,6 +823,8 @@ def test_aggregate_probes_are_executable_and_fixed_scope():
     assert all(name in migration.POSTGRES_AGGREGATE_SQL for name in migration.BUSINESS_TABLES)
     assert "cloud-migration aggregate" not in migration.REDIS_AGGREGATE_LUA
     assert "redis.setresp(3)" in migration.REDIS_AGGREGATE_LUA
+    assert migration.REDIS_AGGREGATE_LUA.index('redis.call("INFO"') < migration.REDIS_AGGREGATE_LUA.index("redis.setresp(3)")
+    assert "version=version" in migration.REDIS_AGGREGATE_LUA
     assert 'redis.call("SCAN"' in migration.REDIS_AGGREGATE_LUA
     assert 'redis.call("PTTL"' in migration.REDIS_AGGREGATE_LUA
 
