@@ -58,6 +58,19 @@ def _entry_exists(path: Path) -> bool:
 
 
 def _privatize(path: Path) -> None:
+    """把这棵树收敛成「只归本进程身份所有、别人读不到」。
+
+    ⚠ **属主归一必须按当前有效身份，不能写死 `0, 0`。** 生产里本工具跑在 helper
+    容器内（`docker run --entrypoint python`，默认 root），`geteuid()==0` 与写死
+    0:0 逐字等价；而内核**禁止非 root 把文件送给 root**（EPERM），写死常量等于
+    「这段代码只有 root 跑得动」——CI runner 是普通用户 `runner`，8 条 Redis 迁移
+    用例因此在 Linux 上全红，**而 Windows 没有 `os.chown`、`hasattr` 直接跳过，
+    本地永远不红**（ci-green-linux-repro 判据 #1 的属主版：被平台整段跳过的校验，
+    正是另一边会先触发的那一层）。
+    「rollback 树必须 root:root」那条部署判据不靠这里的常量守——它由
+    `remote-data-migration.sh::require_runtime_batch` 在远端 fail-closed 复核。
+    """
+    owner = (os.geteuid(), os.getegid()) if hasattr(os, "geteuid") else None
     entries = [path]
     if path.is_dir():
         entries.extend(path.rglob("*"))
@@ -67,8 +80,8 @@ def _privatize(path: Path) -> None:
             stat.S_ISDIR(metadata.st_mode) or stat.S_ISREG(metadata.st_mode)
         ):
             raise ValueError("Redis volume tree contains an unsafe entry")
-        if hasattr(os, "chown"):
-            os.chown(entry, 0, 0, follow_symlinks=False)
+        if owner is not None and hasattr(os, "chown"):
+            os.chown(entry, owner[0], owner[1], follow_symlinks=False)
         os.chmod(entry, 0o700 if stat.S_ISDIR(metadata.st_mode) else 0o600)
 
 

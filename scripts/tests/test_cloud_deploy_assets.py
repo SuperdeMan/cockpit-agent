@@ -2303,6 +2303,24 @@ def test_redis_volume_prepare_reconciles_every_rename_kill_point(
     ) == "old"
 
 
+def test_redis_prepare_privatizes_to_running_identity_not_hardcoded_root() -> None:
+    """属主归一按**当前有效身份**，不许再写死 `0, 0`（本机就能红，不用等 Linux CI）。
+
+    2026-08-17 实证：`_privatize` 写死 `os.chown(entry, 0, 0)`，非 root 无权把文件
+    送给 root（EPERM），于是本文件 **8 条** Redis 迁移用例在 GitHub runner（普通用户
+    `runner`）上全红；而 Windows 没有 `os.chown`、`hasattr` 整段跳过——本地永远看不到，
+    `python-tests` 因此连红 20 余次。生产里本工具跑在 helper 容器内（root），
+    `geteuid()==0`，两种写法逐字等价，所以这是**修法不是绕过**：
+    「rollback 树必须 root:root」那条部署判据由远端
+    `remote-data-migration.sh::require_runtime_batch` fail-closed 复核，不靠这里的常量。
+    """
+    body = _required_text(REDIS_PREPARE_PATH)
+    assert "os.chown(entry, 0, 0" not in body, (
+        "属主写死 0:0 等于「这段代码只有 root 跑得动」——CI 与本地复跑都是普通用户。")
+    assert "os.geteuid(), os.getegid()" in body, (
+        "属主归一要按当前有效身份取，别改回常量。")
+
+
 def test_redis_volume_prepare_never_renames_across_data_and_rollback_mounts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
