@@ -767,7 +767,9 @@ write_preflight_current() {
   archive_fingerprint="$(printf '%s\n' "${archive_listing}" | sed '/^; Archive created at/d' | sha256sum | cut -d' ' -f1)"
   redis_check="$(docker run --pull never --rm --mount "type=bind,source=${directory},target=/snapshot,readonly" \
     --entrypoint redis-check-rdb "${redis_image}" /snapshot/redis.rdb)" || return $?
-  [[ "${redis_check}" == *"CRC64 checksum is OK"* ]] || { migration_fail "Redis import format validation failed"; return 1; }
+  [[ "${redis_check}" == *"CRC64 checksum is OK"* \
+    || "${redis_check}" == *"Checksum OK"* ]] \
+    || { migration_fail "Redis import format validation failed"; return 1; }
   current_json="$(inspect_current)" || return $?
   if compgen -G "${directory}/preflight.*.json.partial" >/dev/null; then return 1; fi
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?

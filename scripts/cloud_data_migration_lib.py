@@ -1464,7 +1464,7 @@ def _verify_snapshots(
          services["redis"].image, "/snapshot/redis.rdb"],
         cwd=repo,
     )
-    if "CRC64 checksum is OK" not in redis_result:
+    if not _redis_rdb_check_succeeded(redis_result):
         raise MigrationError("Redis snapshot format validation failed")
     with sqlite3.connect(f"file:{directory / 'collector.db'}?mode=ro", uri=True) as connection:
         result = connection.execute("PRAGMA integrity_check").fetchall()
@@ -1475,6 +1475,13 @@ def _verify_snapshots(
         if not line.startswith("; Archive created at")
     ) + "\n"
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _redis_rdb_check_succeeded(output: str) -> bool:
+    return any(
+        marker in output
+        for marker in ("CRC64 checksum is OK", "Checksum OK")
+    )
 
 
 def _manifest_payload(

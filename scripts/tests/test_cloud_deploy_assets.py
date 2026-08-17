@@ -2609,6 +2609,10 @@ def test_redis_info_is_read_before_switching_lua_to_resp3():
 def test_backup_streams_redis_evidence_into_manifest_builder_without_heredoc_stdin_collision():
     backup = _required_text(BACKUP_PATH)
     builder = _required_text(BUILD_BACKUP_MANIFEST_PATH)
+    remote = _required_text(REMOTE_MIGRATION_PATH)
+    for source in (backup, remote):
+        assert "CRC64 checksum is OK" in source
+        assert "Checksum OK" in source
     assert 'store_identity_evidence.py" redis' in backup
     assert 'build_backup_manifest.py"' in backup
     assert "car-agent-backup-redis-${timestamp}" in backup

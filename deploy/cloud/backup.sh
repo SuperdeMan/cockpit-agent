@@ -165,8 +165,10 @@ readonly redis_mount="type=bind,source=${REDIS_DIR},target=/backup,readonly"
 readonly obs_mount="type=bind,source=${OBS_DIR},target=/backup,readonly"
 docker run --pull never --rm=true --mount "${postgres_mount}" --entrypoint pg_restore \
   "${postgres_image}" --list "/backup/${timestamp}.dump" >/dev/null
-docker run --pull never --rm=true --mount "${redis_mount}" --entrypoint redis-check-rdb \
-  "${redis_image}" "/backup/${timestamp}.rdb" | grep -F 'CRC64 checksum is OK' >/dev/null
+redis_check="$(docker run --pull never --rm=true --mount "${redis_mount}" \
+  --entrypoint redis-check-rdb "${redis_image}" "/backup/${timestamp}.rdb")"
+[[ "${redis_check}" == *"CRC64 checksum is OK"* \
+  || "${redis_check}" == *"Checksum OK"* ]]
 docker run --pull never --rm=true --mount "${obs_mount}" --tmpfs /restore:rw,noexec,nosuid \
   --mount "type=bind,source=${RELEASE_DIR}/deploy/cloud/sqlite_stream_restore.py,target=/tool.py,readonly" \
   --entrypoint python "${collector_image}" /tool.py "/backup/${timestamp}.sql.gz" /restore/collector.db

@@ -19,6 +19,12 @@ from scripts.cloud_release_lib import ReleaseError
 VALID_ID = "20260816T010203Z-aaaaaaa-online"
 
 
+def test_redis_rdb_validation_accepts_legacy_and_redis_7_success_markers():
+    assert migration._redis_rdb_check_succeeded("CRC64 checksum is OK")
+    assert migration._redis_rdb_check_succeeded("[offset 42] Checksum OK")
+    assert not migration._redis_rdb_check_succeeded("RDB looks broken")
+
+
 class FakeBinaryRunner:
     def __init__(self) -> None:
         self.calls: list[tuple[str, ...]] = []
