@@ -1120,9 +1120,9 @@ def parse_rollback_plan(raw: str, migration_id: str) -> Mapping[str, object]:
     }), "rollback plan")
     if data["schema_version"] != 1 or data["migration_id"] != migration_id:
         raise MigrationError("remote rollback plan identity is invalid")
-    if data["status"] not in {"APPLIED", "ROLLBACK_IN_PROGRESS", "ROLLBACK_FAILED", "ROLLED_BACK"}:
+    if data["status"] not in MIGRATION_STATE_MACHINE:
         raise MigrationError("remote rollback status is invalid")
-    if not isinstance(data["journal_state"], str) or len(data["journal_state"]) > 64:
+    if data["journal_state"] not in MIGRATION_STATE_MACHINE:
         raise MigrationError("remote journal state is invalid")
     if not isinstance(data["operation_id"], str) or re.fullmatch(r"[0-9a-f]{32}", data["operation_id"]) is None:
         raise MigrationError("remote operation identity is invalid")
@@ -1130,20 +1130,27 @@ def parse_rollback_plan(raw: str, migration_id: str) -> Mapping[str, object]:
         r"/opt/car-agent/releases/[0-9a-f]{7,40}", data["current_release"],
     ) is None:
         raise MigrationError("remote release identity is invalid")
-    if not isinstance(data["backup_stamp"], str) or re.fullmatch(
-        r"[0-9]{8}T[0-9]{6}Z", data["backup_stamp"],
-    ) is None:
-        raise MigrationError("remote backup stamp is invalid")
-    files = _exact_keys(data["backup_files"], frozenset({
-        "postgres.dump", "redis.rdb", "collector.sql.gz",
-    }), "rollback backup files")
-    parsed_files: dict[str, dict[str, object]] = {}
-    for name, raw_record in files.items():
-        record = _exact_keys(raw_record, frozenset({"size_bytes", "sha256"}), "backup file")
-        parsed_files[name] = {
-            "size_bytes": _strict_int(record["size_bytes"], "backup size"),
-            "sha256": _require_fingerprint(record["sha256"], "backup sha256"),
-        }
+    backup_required = MIGRATION_STATE_MACHINE[data["journal_state"]]["backup_required"]
+    parsed_files: dict[str, dict[str, object]] | None
+    if backup_required:
+        if not isinstance(data["backup_stamp"], str) or re.fullmatch(
+            r"[0-9]{8}T[0-9]{6}Z", data["backup_stamp"],
+        ) is None:
+            raise MigrationError("remote backup stamp is invalid")
+        files = _exact_keys(data["backup_files"], frozenset({
+            "postgres.dump", "redis.rdb", "collector.sql.gz",
+        }), "rollback backup files")
+        parsed_files = {}
+        for name, raw_record in files.items():
+            record = _exact_keys(raw_record, frozenset({"size_bytes", "sha256"}), "backup file")
+            parsed_files[name] = {
+                "size_bytes": _strict_int(record["size_bytes"], "backup size"),
+                "sha256": _require_fingerprint(record["sha256"], "backup sha256"),
+            }
+    else:
+        if data["backup_stamp"] is not None or data["backup_files"] is not None:
+            raise MigrationError("pre-backup recovery plan must not claim a backup")
+        parsed_files = None
     would_stop = data["would_stop"]
     if (not isinstance(would_stop, list) or not would_stop
             or len(would_stop) > 64 or any(

@@ -28,6 +28,7 @@ TRANSACTION_LOCK_PATH = CLOUD_DIR / "transaction-lock.sh"
 REMOTE_MIGRATION_PATH = CLOUD_DIR / "remote-data-migration.sh"
 SQLITE_STREAM_RESTORE_PATH = CLOUD_DIR / "sqlite_stream_restore.py"
 COLLECTOR_REPLACE_PATH = CLOUD_DIR / "collector_volume_replace.py"
+REDIS_PREPARE_PATH = CLOUD_DIR / "redis_volume_prepare.py"
 SERVICE_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.service"
 TIMER_PATH = CLOUD_DIR / "systemd" / "car-agent-backup.timer"
 RELEASE_SERVICES_PATH = CLOUD_DIR / "release-services.json"
@@ -2133,6 +2134,94 @@ recover_migration 20260817T010203Z-abcdef0-online
     )
     assert completed.returncode == 0, completed.stderr
     assert events.read_text(encoding="utf-8").splitlines() == ["state:ROLLED_BACK"]
+
+
+def test_rollback_plan_supports_prebackup_recovery_without_status_or_backup() -> None:
+    script = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
+    plan = script.split("inspect_rollback_plan() {", 1)[1].split("\nmain() {", 1)[0]
+    assert 'states[state]["backup_required"]' in plan
+    assert "backup_stamp=None" in plan
+    assert "backup_files=None" in plan
+    assert "if backup_required:" in plan
+
+
+def test_rollback_recovery_resumes_from_durable_store_phase(tmp_path: Path) -> None:
+    events = tmp_path / "events.txt"
+    harness = tmp_path / "resume-store-phase.sh"
+    harness.write_text(
+        f"""#!/usr/bin/env bash
+set -uo pipefail
+source '{REMOTE_MIGRATION_PATH.as_posix()}'
+validate_backup_manifest() {{ :; }}
+lock_store_identities() {{ :; }}
+update_crash_journal() {{ :; }}
+write_migration_state() {{ :; }}
+stop_application_writers() {{ :; }}
+start_current_release() {{ :; }}
+verify_current_release() {{ :; }}
+record_store_progress() {{ :; }}
+read_store_phase() {{
+  case "$3" in
+    postgres) printf 'verified\n' ;;
+    redis) printf 'restored\n' ;;
+    collector) printf 'started\n' ;;
+  esac
+}}
+restore_postgres_dump() {{ printf 'postgres-restore\n' >>'{events.as_posix()}'; }}
+restore_redis_rdb() {{ printf 'redis-restore\n' >>'{events.as_posix()}'; }}
+restore_collector_sql() {{ printf 'collector-restore\n' >>'{events.as_posix()}'; }}
+rollback_all 20260817T010203Z-abcdef0-online 20260817T010203Z recover
+""",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(harness)], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == ["collector-restore"]
+
+
+@pytest.mark.parametrize(
+    "kill_point",
+    [
+        "before-old-dump.rdb", "after-old-dump.rdb",
+        "before-old-appendonlydir", "after-old-appendonlydir",
+        "before-new-dump.rdb", "after-new-dump.rdb",
+    ],
+)
+def test_redis_volume_prepare_reconciles_every_rename_kill_point(
+    tmp_path: Path, kill_point: str,
+) -> None:
+    spec = importlib.util.spec_from_file_location("redis_prepare", REDIS_PREPARE_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    incoming = tmp_path / "incoming.rdb"
+    data = tmp_path / "data"
+    rollback = tmp_path / "rollback"
+    incoming.write_bytes(b"REDIS0011-new")
+    data.mkdir()
+    (data / "dump.rdb").write_bytes(b"REDIS0011-old")
+    (data / "appendonlydir").mkdir()
+    (data / "appendonlydir" / "appendonly.aof.manifest").write_text("old", encoding="utf-8")
+    with pytest.raises(module.InjectedCrash):
+        module.prepare_redis_volume(incoming, data, rollback, kill_point=kill_point)
+    outcome = module.prepare_redis_volume(incoming, data, rollback)
+    assert outcome in {"prepared", "resume-rdb"}
+    assert (data / "dump.rdb").read_bytes() == incoming.read_bytes()
+    assert (rollback / "dump.rdb").read_bytes() == b"REDIS0011-old"
+    assert (rollback / "appendonlydir" / "appendonly.aof.manifest").read_text(
+        encoding="utf-8",
+    ) == "old"
+
+
+def test_redis_restore_uses_crash_reconciling_volume_helper() -> None:
+    text = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
+    restore = re.search(r"(?ms)^restore_redis_rdb\(\) \{(?P<body>.*?)^\}", text)["body"]
+    assert "redis_volume_prepare.py" in restore
+    assert 'MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}' in restore
+    assert "mv /data/dump.rdb" not in restore
+    assert "mv /data/appendonlydir" not in restore
 
 
 def test_migration_preflight_locks_complete_running_topology_and_backup_timer_health():

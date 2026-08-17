@@ -911,7 +911,7 @@ restore_redis_rdb() {
   local rdb="$1" migration_id="$2" bucket="${3:-redis-volume}"
   local expected_manifest="${4:-${IMPORT_ROOT}/${migration_id}/manifest.json}"
   local rollback_dir="${IMPORT_ROOT}/${migration_id}/rollback/${bucket}"
-  local redis_container actual_volume image_id loader info dbsize rc attempt
+  local redis_container actual_volume image_id helper_image prepare_state loader info dbsize rc attempt aof_ready=0
   [[ -s "${rdb}" && ! -L "${rdb}" ]] || { printf 'Redis restore source is invalid\n' >&2; return 1; }
   assert_locked_store_identity redis || return $?
   resolve_redis_identity || return $?
@@ -925,56 +925,58 @@ restore_redis_rdb() {
      && "${RESOLVED_REDIS_IMAGE}" == "${image_id}" ]] \
     || { printf 'redis identity changed after stop\n' >&2; return 1; }
   install -d -m 0700 -o root -g root "${rollback_dir}" || return $?
-  docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
+  helper_image="${LOCKED_STORE_IMAGE[observability-collector]:-}"
+  [[ "${helper_image}" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
+  prepare_state="$(docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
     --mount "type=bind,source=${rollback_dir},target=/rollback" \
     --mount "type=bind,source=$(dirname "${rdb}"),target=/incoming,readonly" \
-    --entrypoint sh "${image_id}" -ceu '
-      test ! -e /rollback/dump.rdb
-      test ! -e /rollback/appendonlydir
-      test ! -e /data/dump.rdb || mv /data/dump.rdb /rollback/dump.rdb
-      test ! -e /data/appendonlydir || mv /data/appendonlydir /rollback/appendonlydir
-      test -z "$(find /rollback -type l -print -quit)"
-      chown -R 0:0 /rollback
-      find /rollback -type d -exec chmod 0700 {} +
-      find /rollback -type f -exec chmod 0600 {} +
-      install -m 0600 /incoming/'"$(basename "${rdb}")"' /data/dump.rdb
-    ' || return $?
-  loader="car-agent-migration-${migration_id//-/}-redis-loader"
-  docker run -d --pull never --name "${loader}" \
-    --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
-    --entrypoint redis-server "${image_id}" \
-    "--dir" "/data" "--dbfilename" "dump.rdb" "--appendonly" "no" \
-    "--protected-mode" "no" >/dev/null || return $?
-  rc=1
-  for attempt in $(seq 1 60); do
-    if docker exec "${loader}" redis-cli PING | grep -Fx PONG >/dev/null; then rc=0; break; fi
-    sleep 1
-  done
-  if [[ "${rc}" -ne 0 ]]; then docker rm -f "${loader}" >/dev/null 2>&1; return 1; fi
-  dbsize="$(docker exec "${loader}" redis-cli --raw DBSIZE)" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-  if [[ ! "${dbsize}" =~ ^[1-9][0-9]*$ ]]; then
-    printf 'empty Redis import is forbidden\n' >&2
-    docker rm -f "${loader}" >/dev/null 2>&1
-    return 1
+    --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/redis_volume_prepare.py,target=/tool.py,readonly" \
+    -e "MIGRATION_KILL_POINT=${MIGRATION_KILL_POINT:-}" \
+    --entrypoint python "${helper_image}" /tool.py \
+    "/incoming/$(basename "${rdb}")" /data /rollback)" || return $?
+  if [[ "${prepare_state}" == "resume-aof" ]]; then
+    validate_redis_aof_volume "${image_id}" || return $?
+    aof_ready=1
   fi
-  assert_redis_container_matches_manifest "${loader}" "${expected_manifest}" \
-    || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-  docker exec "${loader}" redis-cli CONFIG SET appendonly yes | grep -Fx OK >/dev/null \
-    || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-  rc=1
-  for attempt in $(seq 1 120); do
-    info="$(docker exec "${loader}" redis-cli --raw INFO persistence)" \
+  if [[ "${aof_ready}" -eq 0 ]]; then
+    [[ "${prepare_state}" == "prepared" || "${prepare_state}" == "resume-rdb" ]] || return 1
+    loader="car-agent-migration-${migration_id//-/}-redis-loader"
+    docker run -d --pull never --name "${loader}" \
+      --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
+      --entrypoint redis-server "${image_id}" \
+      "--dir" "/data" "--dbfilename" "dump.rdb" "--appendonly" "no" \
+      "--protected-mode" "no" >/dev/null || return $?
+    rc=1
+    for attempt in $(seq 1 60); do
+      if docker exec "${loader}" redis-cli PING | grep -Fx PONG >/dev/null; then rc=0; break; fi
+      sleep 1
+    done
+    if [[ "${rc}" -ne 0 ]]; then docker rm -f "${loader}" >/dev/null 2>&1; return 1; fi
+    dbsize="$(docker exec "${loader}" redis-cli --raw DBSIZE)" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    if [[ ! "${dbsize}" =~ ^[1-9][0-9]*$ ]]; then
+      printf 'empty Redis import is forbidden\n' >&2
+      docker rm -f "${loader}" >/dev/null 2>&1
+      return 1
+    fi
+    assert_redis_container_matches_manifest "${loader}" "${expected_manifest}" \
       || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-    if grep -F 'aof_rewrite_in_progress:0' <<<"${info}" >/dev/null \
-       && grep -F 'aof_last_bgrewrite_status:ok' <<<"${info}" >/dev/null; then rc=0; break; fi
-    sleep 1
-  done
-  if [[ "${rc}" -ne 0 ]]; then docker rm -f "${loader}" >/dev/null 2>&1; return 1; fi
-  docker exec "${loader}" redis-cli SAVE >/dev/null \
-    || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-  docker stop "${loader}" >/dev/null || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-  validate_redis_aof_volume "${image_id}" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
-  docker rm "${loader}" >/dev/null || return $?
+    docker exec "${loader}" redis-cli CONFIG SET appendonly yes | grep -Fx OK >/dev/null \
+      || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    rc=1
+    for attempt in $(seq 1 120); do
+      info="$(docker exec "${loader}" redis-cli --raw INFO persistence)" \
+        || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+      if grep -F 'aof_rewrite_in_progress:0' <<<"${info}" >/dev/null \
+         && grep -F 'aof_last_bgrewrite_status:ok' <<<"${info}" >/dev/null; then rc=0; break; fi
+      sleep 1
+    done
+    if [[ "${rc}" -ne 0 ]]; then docker rm -f "${loader}" >/dev/null 2>&1; return 1; fi
+    docker exec "${loader}" redis-cli SAVE >/dev/null \
+      || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    docker stop "${loader}" >/dev/null || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    validate_redis_aof_volume "${image_id}" || { docker rm -f "${loader}" >/dev/null 2>&1; return 1; }
+    docker rm "${loader}" >/dev/null || return $?
+  fi
   # Compose cold-start from the persisted multipart AOF is authoritative; only
   # its post-start aggregate may satisfy apply or rollback verification.
   "${compose[@]}" up -d --no-build --pull never redis || return $?
@@ -1368,6 +1370,29 @@ print(state,stamp)
 PY
 }
 
+read_store_phase() {
+  local migration_id="$1" direction="$2" store="$3"
+  [[ "${direction}" == "rollback" || "${direction}" == "recover" ]] || return 2
+  [[ "${store}" == "postgres" || "${store}" == "redis" || "${store}" == "collector" ]] || return 2
+  python3 - "${IMPORT_ROOT}/${migration_id}/journal.json" "${migration_id}" \
+    "${direction}" "${store}" <<'PY' || return $?
+import json,sys
+from pathlib import Path
+path=Path(sys.argv[1])
+if path.is_symlink() or path.stat().st_size>128*1024: raise SystemExit("invalid recovery journal")
+payload=json.loads(path.read_text(encoding="utf-8"))
+if payload.get("migration_id")!=sys.argv[2] or payload.get("direction")!=sys.argv[3]:
+    raise SystemExit("journal operation identity mismatch")
+stores=payload.get("stores")
+if not isinstance(stores,dict) or set(stores)!={"postgres","redis","collector"}:
+    raise SystemExit("journal store set is invalid")
+record=stores.get(sys.argv[4])
+if not isinstance(record,dict) or set(record)!={"phase"} or record["phase"] not in {"pending","started","restored","verified"}:
+    raise SystemExit("journal store phase is invalid")
+print(record["phase"])
+PY
+}
+
 record_store_progress() {
   local migration_id="$1" store="$2" field="$3" directory="${IMPORT_ROOT}/${1}"
   local partial run_id
@@ -1414,7 +1439,7 @@ rollback_run_step() {
 }
 
 rollback_all() {
-  local migration_id="$1" backup_stamp="$2" direction="${3:-rollback}" store
+  local migration_id="$1" backup_stamp="$2" direction="${3:-rollback}" store phase
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" backup-manifest \
     validate_backup_manifest "${backup_stamp}" || return $?
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" store-identities \
@@ -1425,34 +1450,42 @@ rollback_all() {
     write_migration_state "ROLLBACK_IN_PROGRESS" "${migration_id}" "${backup_stamp}" || return $?
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" stop-writers stop_application_writers || return $?
   for store in postgres redis collector; do
-    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-started" \
-      record_store_progress "${migration_id}" "${store}" started || return $?
-    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-started" \
-      update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" started || return $?
-    case "${store}" in
-      postgres)
-        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" postgres postgres-restore \
-          restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump" || return $? ;;
-      redis)
-        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" redis redis-restore \
-          restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" \
-          "failed-import-redis-volume" "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" || return $? ;;
-      collector)
-        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" collector collector-restore \
-          restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}" || return $? ;;
-    esac
-    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-restored" \
-      record_store_progress "${migration_id}" "${store}" restored || return $?
-    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-restored" \
-      update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" restored || return $?
+    phase="$(read_store_phase "${migration_id}" "${direction}" "${store}")" || return $?
+    if [[ "${phase}" != "restored" && "${phase}" != "verified" ]]; then
+      rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-started" \
+        record_store_progress "${migration_id}" "${store}" started || return $?
+      if [[ "${phase}" == "pending" ]]; then
+        rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-started" \
+          update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" started || return $?
+      fi
+      case "${store}" in
+        postgres)
+          rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" postgres postgres-restore \
+            restore_postgres_dump "${BACKUP_ROOT}/postgres/${backup_stamp}.dump" || return $? ;;
+        redis)
+          rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" redis redis-restore \
+            restore_redis_rdb "${BACKUP_ROOT}/redis/${backup_stamp}.rdb" "${migration_id}" \
+            "failed-import-redis-volume" "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" || return $? ;;
+        collector)
+          rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" collector collector-restore \
+            restore_collector_sql "${BACKUP_ROOT}/observability/${backup_stamp}.sql.gz" "${migration_id}" || return $? ;;
+      esac
+      rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-restored" \
+        record_store_progress "${migration_id}" "${store}" restored || return $?
+      rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-restored" \
+        update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" restored || return $?
+    fi
   done
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" start-release start_current_release || return $?
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" verify-release verify_current_release || return $?
   for store in postgres redis collector; do
-    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-verified" \
-      record_store_progress "${migration_id}" "${store}" verified || return $?
-    rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-verified" \
-      update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" verified || return $?
+    phase="$(read_store_phase "${migration_id}" "${direction}" "${store}")" || return $?
+    if [[ "${phase}" != "verified" ]]; then
+      rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-verified" \
+        record_store_progress "${migration_id}" "${store}" verified || return $?
+      rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "${store}" "${store}-journal-verified" \
+        update_crash_journal "${migration_id}" "${direction}" ROLLBACK_IN_PROGRESS "${backup_stamp}" "${store}" verified || return $?
+    fi
   done
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" journal-complete \
     update_crash_journal "${migration_id}" "${direction}" ROLLED_BACK "${backup_stamp}" || return $?
@@ -1716,7 +1749,7 @@ recover_migration() {
 }
 
 inspect_rollback_plan() {
-  local migration_id="$1" meta backup_stamp services_text
+  local migration_id="$1" meta state backup_required backup_stamp services_text backup_manifest="-"
   load_runtime || return $?
   require_runtime_batch "${migration_id}" || return $?
   meta="$(python3 - "${IMPORT_ROOT}/${migration_id}/status.json" \
@@ -1724,47 +1757,66 @@ inspect_rollback_plan() {
     "${CURRENT_RELEASE}/deploy/cloud/migration-state-machine.json" <<'PY'
 import json,re,sys
 from pathlib import Path
-status=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+status_path=Path(sys.argv[1])
+status=json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else None
 journal=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 machine=json.loads(Path(sys.argv[4]).read_text(encoding="utf-8")); states=machine.get("states",{})
-if status.get("migration_id")!=sys.argv[3] or journal.get("migration_id")!=sys.argv[3]:
+if journal.get("migration_id")!=sys.argv[3] or (status is not None and status.get("migration_id")!=sys.argv[3]):
     raise SystemExit("rollback plan identity mismatch")
-stamp=status.get("backup_stamp") or journal.get("backup_stamp") or ""
 state=journal.get("state")
 if machine.get("schema_version")!=1 or state not in states: raise SystemExit("rollback plan state is invalid")
-if states[state]["backup_required"] and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("rollback plan backup stamp is invalid")
-print(stamp)
+stamp=(status or {}).get("backup_stamp") or journal.get("backup_stamp") or ""
+required=states[state]["backup_required"]
+if required and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z",stamp) is None: raise SystemExit("rollback plan backup stamp is invalid")
+if not required and stamp: raise SystemExit("pre-backup state unexpectedly claims a backup")
+print(state, "1" if required else "0", stamp or "-")
 PY
 )" || return $?
-  backup_stamp="${meta}"
-  validate_backup_manifest "${backup_stamp}" || return $?
+  read -r state backup_required backup_stamp <<<"${meta}" || return $?
+  if [[ "${backup_required}" == "1" ]]; then
+    validate_backup_manifest "${backup_stamp}" || return $?
+    backup_manifest="${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json"
+  elif [[ "${backup_required}" != "0" || "${backup_stamp}" != "-" ]]; then
+    return 1
+  fi
   services_text="$("${compose[@]}" config --services)" || return $?
   python3 - "${IMPORT_ROOT}/${migration_id}/status.json" \
     "${IMPORT_ROOT}/${migration_id}/journal.json" \
-    "${BACKUP_ROOT}/${backup_stamp}.backup-manifest.json" "${migration_id}" \
+    "${backup_manifest}" "${migration_id}" \
     "${CURRENT_RELEASE}" "${CURRENT_RELEASE}/deploy/cloud/migration-state-machine.json" \
     "${services_text}" <<'PY' || return $?
 import json,re,sys
 from pathlib import Path
-status=json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+status_path=Path(sys.argv[1])
+status=json.loads(status_path.read_text(encoding="utf-8")) if status_path.exists() else None
 journal=json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
-backup=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 machine=json.loads(Path(sys.argv[6]).read_text(encoding="utf-8")); states=machine.get("states",{})
 services=sys.argv[7].splitlines()
 writers=[name for name in services if name not in {"postgres","redis"}]
 if not writers or len(writers)!=len(set(writers)) or any(re.fullmatch(r"[a-z0-9-]+",name) is None for name in writers):
     raise SystemExit("rollback writer plan is invalid")
-if status.get("migration_id")!=sys.argv[4] or journal.get("migration_id")!=sys.argv[4]:
+if journal.get("migration_id")!=sys.argv[4] or (status is not None and status.get("migration_id")!=sys.argv[4]):
     raise SystemExit("rollback plan identity mismatch")
-if machine.get("schema_version")!=1 or status.get("status") not in states or not states[status["status"]]["backup_required"]:
+state=journal.get("state")
+if machine.get("schema_version")!=1 or state not in states:
     raise SystemExit("rollback status is invalid")
+status_state=(status or {}).get("status",state)
+if status_state not in states: raise SystemExit("rollback status is invalid")
 operation_id=journal.get("operation_id","")
 if re.fullmatch(r"[0-9a-f]{32}",operation_id) is None: raise SystemExit("journal operation identity is invalid")
+backup_required=states[state]["backup_required"]
+if backup_required:
+    backup=json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
+    backup_stamp=backup["backup_stamp"]
+    backup_files=backup["files"]
+else:
+    backup_stamp=None
+    backup_files=None
 print(json.dumps({
-  "schema_version":1,"migration_id":sys.argv[4],"status":status["status"],
-  "journal_state":journal.get("state"),"operation_id":operation_id,
-  "current_release":sys.argv[5],"backup_stamp":backup["backup_stamp"],
-  "backup_files":backup["files"],"would_stop":writers,
+  "schema_version":1,"migration_id":sys.argv[4],"status":status_state,
+  "journal_state":state,"operation_id":operation_id,
+  "current_release":sys.argv[5],"backup_stamp":backup_stamp,
+  "backup_files":backup_files,"would_stop":writers,
 },sort_keys=True,separators=(",",":")))
 PY
 }

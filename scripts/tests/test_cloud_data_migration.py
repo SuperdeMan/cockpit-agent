@@ -879,6 +879,41 @@ def test_rollback_dry_run_reads_real_server_plan_without_remote_write(tmp_path: 
     assert payload["would_stop"] == ["gateway-cloud", "observability-collector"]
 
 
+@pytest.mark.parametrize("state", ["STOPPING_WRITERS", "STOP_FAILED", "BACKUP_FAILED"])
+def test_recover_dry_run_accepts_audited_no_backup_state(
+    tmp_path: Path, capsys, state: str,
+):
+    runner = FakeRemoteRunner()
+
+    def no_backup_run(argv, *, cwd: Path, **kwargs):
+        call = tuple(str(part) for part in argv)
+        runner.calls.append(call)
+        return migration.CommandResult(call, 0, json.dumps({
+            "schema_version": 1,
+            "migration_id": VALID_ID,
+            "status": state,
+            "journal_state": state,
+            "operation_id": "d" * 32,
+            "current_release": "/opt/car-agent/releases/" + "a" * 40,
+            "backup_stamp": None,
+            "backup_files": None,
+            "would_stop": ["gateway-cloud", "observability-collector"],
+        }), "")
+
+    runner.run = no_backup_run
+    rc = cli.main([
+        "--host", "cloud.example", "--identity", str(_fake_key(tmp_path)),
+        "recover", "--migration-id", VALID_ID,
+    ], runner=runner, repo=tmp_path)
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "dry_run"
+    assert payload["journal_state"] == state
+    assert payload["backup_stamp"] is None
+    assert payload["backup_files"] is None
+
+
 def test_mutating_ssh_timeout_reports_remote_status_unknown_in_progress(tmp_path: Path, capsys):
     _write_valid_bundle(tmp_path)
     key = _fake_key(tmp_path)
