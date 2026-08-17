@@ -92,6 +92,20 @@ _WALL_CLOCK_MODULES = (
 # 这个区分，它按住了这次误收敛**。
 # > 判据：「看起来是第二份定义」和「真的是同一件事」是两回事。判同不同要问**语义**。
 
+# 扫描测试文件时跳过的目录：别人的 worktree / 生成物 / 依赖树不归本仓这条纪律管，
+# 也不该让并行开发的分支把本仓扫红。
+_TEST_SCAN_SKIP = frozenset({".worktrees", ".git", "gen", "node_modules", "__pycache__"})
+
+# ⚠ **别名导入曾整个绕过这条守卫**（2026-08-17 反向验证抓到）：原正则写 `\btime\.`，
+# 而 `nearby/tests` 用的是 `import time as _time` —— `_time.mktime(` 里 `_` 与 `t`
+# 之间**没有词边界**，正则纹丝不动，而它恰是 CI 真红的一条。现在按**属性名**匹配，
+# 模块叫什么都算（`time.` / `_time.` / `from time import mktime` 的裸调用）。
+# `datetime.now()` 仍按窄式匹配：放宽成 `.now()` 会误伤 provider 自己的 `p.now()`
+# （info/tests/test_qweather_provider.py 四处）——**守卫扫不全很糟，扫误了也很糟**。
+_NAKED_LOCAL_TIME = re.compile(
+    r"(?:^|[^\w.])(?:\w+\.)?(?:localtime|mktime)\s*\("
+    r"|\bdatetime\.now\(\s*\)")
+
 
 def _code_only(path: Path) -> str:
     """把注释与字符串**按原位置抹成空格**，其余字符原样保留。
@@ -102,9 +116,16 @@ def _code_only(path: Path) -> str:
     2. 改成 tokenize 后用**空格拼接** token → `time.localtime(` 变成
        `time . localtime (`，正则再也匹配不上——**注入缺陷时守卫纹丝不动**。
        一个恒绿的断言比没有断言更糟，它让人以为这块被守着。
+    3. （2026-08-17）**f-string 在 Python 3.12 起不再是 `tokenize.STRING`**——
+       它被拆成 `FSTRING_START/MIDDLE/END`，于是 3.11 上剥得掉的字面量在 3.12 上
+       原样留下（本文件那句报错话术里的「time.localtime/mktime/datetime.now()」
+       当场把自己扫成了违例）。CI 两个版本都跑，**同一条断言在两档下严厉程度不同**
+       就是恒绿/恒红的温床。只抹 `FSTRING_MIDDLE`（字面量段），插值表达式是代码、
+       照旧参与匹配。
     """
     import io
     import tokenize
+    fstring_middle = getattr(tokenize, "FSTRING_MIDDLE", None)   # 3.12+ 才有
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     starts = []
@@ -115,7 +136,9 @@ def _code_only(path: Path) -> str:
     buf = list(text)
     with open(path, "rb") as f:
         for tok in tokenize.tokenize(io.BytesIO(f.read()).readline):
-            if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+            if tok.type not in (tokenize.COMMENT, tokenize.STRING) and (
+                fstring_middle is None or tok.type != fstring_middle
+            ):
                 continue
             (r1, c1), (r2, c2) = tok.start, tok.end
             a = starts[r1 - 1] + c1
@@ -135,14 +158,44 @@ def test_wall_clock_modules_have_no_naked_local_time():
     把「哪些地方的墙钟是业务语义」变成一张表 + 一条断言，别靠下次记得。
     """
     root = Path(__file__).resolve().parents[3]
-    naked = re.compile(r"\btime\.(?:localtime|mktime)\s*\(|\bdatetime\.now\(\s*\)")
     offenders = []
     for rel in _WALL_CLOCK_MODULES:
-        if naked.search(_code_only(root / rel)):
+        if _NAKED_LOCAL_TIME.search(_code_only(root / rel)):
             offenders.append(rel)
     assert not offenders, (
         f"这些文件里还有裸 time.localtime/mktime/datetime.now()：{offenders}。"
         "容器 TZ=UTC，墙钟一律走 runtime.clock（业务时区 UTC+8）。")
+
+
+def test_wall_clock_tests_pin_business_timezone_not_host_local():
+    """**尺子自己也不许用宿主本地时**——这一族第五次复发就栽在这条作用域上。
+
+    上一条守卫只管生产模块，而下面 `test_business_timezone_has_exactly_one_definition`
+    的注释白纸黑字写着「测试与 scripts 不在管辖内——**它们跑在 UTC+8 宿主上**」。
+    2026-08-17 实证那个前提本身是错的：GitHub runner 是 UTC，六条用例
+    （navigation 两条 / nearby 一条 / road_safety 两条 / cloud focus 一条）在 CI 上
+    **稳定红、本机稳定绿**，`python-tests` 因此连红 20 次以上。被测代码走的是
+    `runtime.clock`，尺子却用 `time.mktime` 按**跑测试那台机器的时区**造期望值——
+    两把尺子量同一件事，在 UTC+8 宿主上恰好重合，换台机器就分家。
+
+    > 判据：**「本地绿」只证明本地那条分支绿**（ci-green-linux-repro 判据 #1 的时区版）。
+    > 断言里出现 `time.mktime` / `time.localtime` / 裸 `datetime.now()`，
+    > 等于把刻度焊死在 CI runner 的时区上。要业务墙钟就 `runtime.clock`。
+    """
+    root = Path(__file__).resolve().parents[3]
+    offenders = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if _TEST_SCAN_SKIP & set(rel.parts):
+            continue
+        if not (path.name.startswith("test_") or "tests" in rel.parts):
+            continue
+        if _NAKED_LOCAL_TIME.search(_code_only(path)):
+            offenders.append(rel.as_posix())
+    assert not offenders, (
+        f"这些测试用宿主本地时构造期望值：{offenders}。"
+        "epoch 秒与时区无关，**转墙钟**必须走 runtime.clock："
+        "构造用 epoch_at(...)，回读用 local_dt(...)/local_struct(...)。")
 
 
 def test_business_timezone_has_exactly_one_definition():
@@ -150,7 +203,10 @@ def test_business_timezone_has_exactly_one_definition():
 
     这条缺陷的成因就是 UTC+8 被各写各的：7 处生产代码各有一份、**第 8 处写成了裸
     localtime**。定义收敛到 `runtime/clock.py` 之后，用断言把它钉住。
-    （测试与 scripts 不在管辖内——它们跑在 UTC+8 宿主上，且各自显式 pin。）
+    （**本条只管「第二份 UTC+8 定义」，不管测试**；测试那面由上一条
+    `test_wall_clock_tests_pin_business_timezone_not_host_local` 管——原注释写的
+    「测试跑在 UTC+8 宿主上所以不在管辖内」**是错的**，CI runner 是 UTC，
+    2026-08-17 因此连红 20 余次。scripts 仍不在管辖内。）
     """
     root = Path(__file__).resolve().parents[3]
     # ⚠ **正则收紧过一次，留痕**（2026-08-16，Q10 批）：首版尾部写死 `\)\s*\)`，

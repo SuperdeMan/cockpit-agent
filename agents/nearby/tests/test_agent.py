@@ -1,8 +1,8 @@
 """nearby（周边发现）契约测试。"""
 import asyncio
-import time as _time
 from types import SimpleNamespace
 
+from runtime.clock import epoch_at
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
 from agents.nearby.src.agent import NearbyAgent
 
@@ -854,7 +854,7 @@ def test_taste_recall_subject_partition_still_holds():
 
 
 # ── E1（G1 余项）事件时刻 → 用餐窗反推 ─────────────────────────
-_EVENT_NOW = int(_time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))   # 周五 14:00
+_EVENT_NOW = epoch_at(2026, 8, 14, 14, 0)   # 周五 14:00（业务时区，非宿主本地时）
 
 
 def _agent_at(now_ts=_EVENT_NOW, places=None):
@@ -922,7 +922,7 @@ def test_all_closed_at_seating_time_is_told_not_hidden():
 
 def test_tight_window_says_it_is_too_late():
     """18:40 才问「7点的电影先吃饭」→ 说来不及，不把窗口压缩成能凑上的数。"""
-    late = int(_time.mktime((2026, 8, 14, 18, 40, 0, 0, 0, -1)))
+    late = epoch_at(2026, 8, 14, 18, 40)
     agent = _agent_at(now_ts=late)
     res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
                                  raw_text="晚上7点的电影，先吃个饭",

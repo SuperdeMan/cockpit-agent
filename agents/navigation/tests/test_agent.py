@@ -848,10 +848,20 @@ def test_poi_detail_outage_degrades_honestly_no_mock():
 
 # ─── EVA 二轮批 B：时间约束(G1) / 沿途候选(G2) / 路线策略(G11) / 多途经点(G9) ───
 
-import time
-
+from runtime.clock import epoch_at, local_dt
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents.navigation.src.agent import _parse_arrive_by, _route_strategy
+
+
+def _wall(ts):
+    """epoch → 业务时区墙钟五元组。
+
+    ⚠ 不用 `time.localtime`：它按**宿主本地时**解释，而本机恰好是 UTC+8，于是
+    「容器 TZ=UTC 整体偏 8 小时」这族缺陷在本地永远不红，只在 CI（UTC runner）
+    才暴露——被测代码走的是 `runtime.clock`，尺子也必须走同一个墙钟。
+    """
+    d = local_dt(ts)
+    return (d.year, d.month, d.day, d.hour, d.minute)
 
 
 class _RoutePoiProvider(_ScriptedPoiProvider):
@@ -883,14 +893,14 @@ class _RoutePoiProvider(_ScriptedPoiProvider):
 
 def test_parse_arrive_by_rules():
     """「五点前到」解析：裸 1-11 点取未来最近一次；段位/HH:MM/两位数字时直取。"""
-    now = int(time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))
-    assert time.localtime(_parse_arrive_by("5点", now_ts=now))[:5] == (2026, 8, 14, 17, 0)
-    now_late = int(time.mktime((2026, 8, 14, 20, 0, 0, 0, 0, -1)))
-    assert time.localtime(_parse_arrive_by("5点", now_ts=now_late))[:5] == (2026, 8, 15, 5, 0)
-    assert time.localtime(_parse_arrive_by("下午5点半", now_ts=now))[:5] == (2026, 8, 14, 17, 30)
-    assert time.localtime(_parse_arrive_by("17:00", now_ts=now))[:5] == (2026, 8, 14, 17, 0)
+    now = epoch_at(2026, 8, 14, 14, 0)
+    assert _wall(_parse_arrive_by("5点", now_ts=now)) == (2026, 8, 14, 17, 0)
+    now_late = epoch_at(2026, 8, 14, 20, 0)
+    assert _wall(_parse_arrive_by("5点", now_ts=now_late)) == (2026, 8, 15, 5, 0)
+    assert _wall(_parse_arrive_by("下午5点半", now_ts=now)) == (2026, 8, 14, 17, 30)
+    assert _wall(_parse_arrive_by("17:00", now_ts=now)) == (2026, 8, 14, 17, 0)
     # 两位数字时刻：「23点」不得被单字符类错拆成「3点」（自埋缺陷回归）
-    assert time.localtime(_parse_arrive_by("23点", now_ts=now))[:5] == (2026, 8, 14, 23, 0)
+    assert _wall(_parse_arrive_by("23点", now_ts=now)) == (2026, 8, 14, 23, 0)
     assert _parse_arrive_by("尽快", now_ts=now) is None
 
 
@@ -907,7 +917,7 @@ def test_route_strategy_mapping():
 def test_navigate_arrive_by_eta_judgment_and_departure_remindable(monkeypatch):
     """G1：「五点前到」→ ETA/时限判定进话术与卡片；REMINDABLE 增「出发前往」反向事件。"""
     import agents.navigation.src.agent as nav_mod
-    fixed_now = int(time.mktime((2026, 8, 14, 14, 0, 0, 0, 0, -1)))
+    fixed_now = epoch_at(2026, 8, 14, 14, 0)
     monkeypatch.setattr(nav_mod.time, "time", lambda: fixed_now)
 
     agent = NavigationAgent()
@@ -933,7 +943,7 @@ def test_navigate_arrive_by_eta_judgment_and_departure_remindable(monkeypatch):
     assert res.ui_card["eta_ts"] and res.ui_card["arrive_by_ts"]
     items = captured[REMINDABLE_ACTIVE]["items"]
     assert items[0]["title"] == "出发前往实验小学"
-    assert time.localtime(items[0]["fire_at"])[:5] == (2026, 8, 14, 16, 30)  # 时限-路程
+    assert _wall(items[0]["fire_at"]) == (2026, 8, 14, 16, 30)  # 时限-路程
     assert items[1]["title"] == "到达实验小学"
 
 

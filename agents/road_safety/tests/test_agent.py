@@ -7,10 +7,10 @@ import asyncio
 import pytest
 import sys
 import os
-import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+from runtime.clock import epoch_at
 from agents._sdk import AgentResult
 from agents._sdk.testing import make_context, run_handle
 from agents.road_safety.src.agent import RoadSafetyAgent
@@ -128,7 +128,7 @@ def test_evaluate_hazard_detects_alert():
 def test_throttle_suppresses_repeat_within_window():
     """同类提示 30 分钟内不重复：记录后窗口内 _should_broadcast 为 False。"""
     agent = RoadSafetyAgent()
-    now = time.mktime((2026, 6, 21, 14, 0, 0, 0, 0, -1))  # 下午（非夜间）
+    now = float(epoch_at(2026, 6, 21, 14, 0))  # 下午（非夜间，业务时区）
     assert agent._should_broadcast("weather_safety", now) is True
     agent._last_broadcast["weather_safety"] = now
     assert agent._should_broadcast("weather_safety", now + 600) is False      # 10 分钟内
@@ -138,7 +138,7 @@ def test_throttle_suppresses_repeat_within_window():
 def test_night_uses_longer_throttle_window():
     """夜间降频：白天 30 分钟可再播，夜间需 60 分钟。"""
     agent = RoadSafetyAgent()
-    night = time.mktime((2026, 6, 21, 23, 0, 0, 0, 0, -1))
+    night = float(epoch_at(2026, 6, 21, 23, 0))
     assert agent._is_night(night) is True
     agent._last_broadcast["weather_safety"] = night
     assert agent._should_broadcast("weather_safety", night + 1801) is False   # 夜间 30 分钟仍抑制

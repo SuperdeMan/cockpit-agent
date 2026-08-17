@@ -10,6 +10,7 @@ import json
 import time
 from types import SimpleNamespace
 
+from runtime.clock import epoch_at
 from orchestrator.cloud.context import (
     ContextManager, Focus, _render_focus, _valid_route_session, extract_focus)
 from orchestrator.cloud.engine import PlannerEngine
@@ -73,7 +74,7 @@ def test_active_route_only_focus_persists():
 
 def test_render_focus_route_names_no_coords():
     """prompt 只有名字与时限，绝不渲染坐标——坐标进 prompt 只会诱导模型自己编。"""
-    arrive = int(time.mktime((2026, 8, 15, 16, 50, 0, 0, 0, -1)))
+    arrive = epoch_at(2026, 8, 15, 16, 50)
     block = _render_focus(Focus(active_route={
         "destination": "万象天地", "lat": 22.53, "lng": 113.95,
         "waypoints": [{"name": "肯德基(海岸城店)", "lat": 22.52, "lng": 113.94}],
