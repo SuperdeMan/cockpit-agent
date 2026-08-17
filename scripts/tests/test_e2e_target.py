@@ -162,6 +162,29 @@ def test_remote_lock_holds_until_context_exit(tmp_path: Path):
     )
 
 
+def test_remote_lock_release_is_best_effort_after_disconnect(tmp_path: Path):
+    process = FakeLockProcess(b"READY e2e-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n")
+
+    class DisconnectedStdin:
+        def write(self, payload):
+            raise BrokenPipeError
+
+        def close(self):
+            pass
+
+    process.stdin = DisconnectedStdin()
+    lock = RemoteCloudLock(
+        ssh=SshConfig("demo.example", "ubuntu", tmp_path / "identity"),
+        run_id="e2e-" + "a" * 32,
+        popen=lambda *args, **kwargs: process,
+    ).acquire()
+
+    lock.release()
+
+    assert process.terminated is True
+    assert lock._process is None
+
+
 def test_remote_lock_rejects_busy_or_wrong_ack(tmp_path: Path):
     process = FakeLockProcess(b"BUSY\n")
     ssh = SshConfig("demo.example", "ubuntu", tmp_path / "identity")

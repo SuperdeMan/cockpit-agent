@@ -81,13 +81,19 @@ class RemoteCloudLock:
             return
         try:
             if process.poll() is None:
-                process.stdin.write(b"\n")
-                process.stdin.close()
-                process.wait(timeout=15)
+                try:
+                    process.stdin.write(b"\n")
+                    process.stdin.close()
+                    process.wait(timeout=15)
+                except (BrokenPipeError, OSError, subprocess.TimeoutExpired):
+                    pass
         finally:
-            if process.poll() is None:
-                process.terminate()
-                process.wait(timeout=5)
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             self._process = None
 
     def __enter__(self) -> "RemoteCloudLock":
