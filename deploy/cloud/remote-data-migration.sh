@@ -949,7 +949,7 @@ PY
 
 validate_redis_aof_volume() {
   local image_id="$1" append_directory="${2:-appendonlydir}"
-  docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data,readonly" \
+  docker run --rm --pull never --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
     --entrypoint sh "${image_id}" -ceu '
       manifest="/data/${1}/appendonly.aof.manifest"
       test -s "${manifest}"
@@ -973,7 +973,18 @@ validate_redis_aof_volume() {
           *) false ;;
         esac
       done <"${manifest}"
+      digest_tree() {
+        {
+          sha256sum "${manifest}"
+          while read -r marker filename rest; do
+            sha256sum "/data/${1}/${filename}"
+          done <"${manifest}"
+        } | sha256sum
+      }
+      before="$(digest_tree)"
       redis-check-aof "${manifest}" >/dev/null
+      after="$(digest_tree)"
+      test "${before}" = "${after}"
     ' sh "${append_directory}" || return $?
 }
 
@@ -1032,7 +1043,7 @@ PY
     docker run -d --pull never --name "${loader}" \
       --label "com.car-agent.migration-id=${migration_id}" --label "com.car-agent.role=redis-loader" \
       --mount "type=volume,source=${REDIS_VOLUME},target=/data" \
-      --entrypoint redis-server "${image_id}" \
+      --entrypoint sh "${image_id}" -c 'umask 077; exec redis-server "$@"' sh \
       "--dir" "/data" "--dbfilename" "dump.rdb" "--appendonly" "no" \
       "--appenddirname" "appendonlydir.migration.partial" \
       "--protected-mode" "no" >/dev/null || return $?

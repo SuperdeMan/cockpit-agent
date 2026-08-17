@@ -2368,13 +2368,24 @@ def test_remote_store_recovery_uses_identity_bound_loader_and_atomic_completion_
     runtime = re.search(r"(?ms)^require_runtime_batch\(\) \{(?P<body>.*?)^\}", text)["body"]
     for token in (
         "docker ps -a -q", "com.car-agent.migration-id", "com.car-agent.role=redis-loader",
-        "appendonlydir.migration.partial", "--complete", "manifest_sha",
+        "appendonlydir.migration.partial", "--complete", "manifest_sha", "umask 077",
     ):
         assert token in redis
     assert redis.index("docker ps -a -q") < redis.index("prepare_state=")
     assert r"[.]redis-aof-complete[.]json[.][0-9]+[.]partial" in runtime
     for token in ("collector.db.partial", "collector-restore.json", "source_sha256", "os.replace"):
         assert token in collector
+
+
+def test_redis_aof_validation_is_private_and_detects_validator_mutation() -> None:
+    text = REMOTE_MIGRATION_PATH.read_text(encoding="utf-8")
+    validate = re.search(
+        r"(?ms)^validate_redis_aof_volume\(\) \{(?P<body>.*?)^\}", text,
+    )["body"]
+    assert "target=/data,readonly" not in validate
+    assert 'before="$(digest_tree)"' in validate
+    assert 'after="$(digest_tree)"' in validate
+    assert 'test "${before}" = "${after}"' in validate
 
 
 def test_redis_restore_uses_crash_reconciling_volume_helper() -> None:
