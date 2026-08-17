@@ -4,6 +4,19 @@
 
 ## 运行入口
 
+> 远程互斥锁固定为 `/opt/car-agent/shared/locks/release.lock`。本段只记录已有
+> 静态/fake 回归的入口与边界，不声称已在真实云主机运行。
+
+- `status` 是只读查询，不取锁。release、rollback、backup、data migration 和 remote E2E
+  共用上述锁；冲突立即失败，只报告 `release|rollback|backup|migration|e2e|unknown`
+  占用类别。不得绕过锁并发真栈事务。
+- `dev-stack.local` 是仓库根目录的 Git-ignore 文件；统一入口必须按仓库根目录定位，不能按
+  当前工作目录误判缺失。缺失按 `target=local`，损坏 fail closed；只允许
+  `target=local|cloud`，且不得保存 token、密码、私钥或 URL。
+- `target=cloud` 禁止启动本地 Compose；cloud deploy 只接受干净、已提交、main 可达的 SHA，
+  不自动 commit、merge 或 push。
+- 本地 HMI/Dashboard Vite 经 Tailnet HTTPS/WSS 连接 cloud；KWS/VAD 仍在浏览器本地运行。
+
 - 第一份 Compose 文件始终是仓库根 `compose.yaml`。
 - 第二份文件才是本目录的 `compose.cloud.yaml`。
 - 根 `.env` 是唯一运行时配置来源；服务器 release 根 `.env` 使用符号链接指向共享配置。
@@ -188,3 +201,42 @@ python scripts/cloud_release.py rollback --to 4c1f479 --apply
 ```
 
 入口会在同一事务锁内校验目标目录、全部 SHA 镜像和备份状态，切换后执行完整验收；失败时恢复原 release。首次部署没有第二个 release，不做虚构的回滚演练。涉及不兼容 schema 时另立数据库迁移/回滚方案并重新审批。
+
+## PostgreSQL、Redis 与 Collector 两阶段迁移
+
+迁移包固定保存在本机 `.artifacts/cloud-data-migrations/{migration_id}/`，云端上传目录固定为
+`/opt/car-agent/shared/imports/{migration_id}/`。批次 ID 必须来自 `snapshot` 输出，格式为
+`YYYYMMDDTHHMMSSZ-<7位提交SHA>-online|final`；示例 ID 只说明格式，不能手工替代真实输出。
+
+第一阶段 online：本地不停写；快照完成后的本地新增不会自动同步。
+第二阶段 final：先确认所有本地写入者停止，再重新完整快照与覆盖。
+两阶段都是 replace，不是 merge；云端迁移开始前先备份。
+设计快照中的 57 条 pending 提醒和 1 个 enabled 场景按源快照原样恢复，服务启动后生效；
+每次执行仍以当轮源快照重新采集的计数为准，不能把 57 和 1 写成程序常量。
+voiceprint 为 0 时如实报告 0；模型可用不等于声纹数据已迁移。
+
+工具不删除本地卷、匿名旧卷、云端卷、备份、release、镜像或迁移包，也不执行 `down -v`。
+失败时 PostgreSQL、Redis 和 Collector 必须按同一份迁移前备份整组恢复，并保留导入文件、
+迁移前备份与失败现场；应用 release SHA 不因数据迁移改变。
+
+所有写动作默认 dry-run。真实 `apply --apply`、`rollback --apply`、final 本地停写和云端受控脚本
+安装分别需要本轮明确授权。未授权时只允许本地 `snapshot`、`plan`、dry-run 与静态测试；本文档
+记录的是工具契约，不表示已经在真实本地卷或云端完成迁移验证。
+
+迁移在首次停止 writer 前写入并 fsync durable journal，记录 operation/direction、三存储 phase、
+backup hash 绑定和失败 step/rc。`rollback` / `recover` 的 dry-run 只读该 journal 与 backup manifest，
+不获取或创建事务锁；显式授权的 `recover --apply` 才能从 `BACKED_UP` / `ROLLBACK_IN_PROGRESS`
+继续整组回滚。`ROLLBACK_FAILED` 必须先审计，不会自动盲重试。
+
+数据整组替换采用两段证明，不能把服务启动后的自然写入再与原始 snapshot 做全量精确相等：
+
+- 写服务仍停止时生成 `evidence-pre-start.json`，它必须与导入 manifest 精确相等。
+- 当前 release 启动并通过健康检查后生成 `evidence-post-start.json`。PostgreSQL 用 keyed 主键摘要
+  校验持久实体，并按 reminder、task ledger、proactive delivery、scene 的生产状态集合与 transition
+  matrix 允许正常流转；持久实体等量替换、丢失或非法状态回退均失败。
+- Redis 的无 TTL key keyed identity 不得减少；有 TTL key 只有其 baseline 绝对过期时刻已到才允许
+  缺失。Collector 的 schema、`user_version` 不得改变，仅允许真实 cleanup 谓词删除
+  `ts < cutoff` 且非 badcase/gold trace 的行；保护行、近期行、关系 identity 不得丢失或改写。
+- 独立 `verify` 必须读取已保存的 `evidence-pre-start.json`，按同一 post-start 规则重采并覆盖
+  `evidence-post-start.json`。证据只含计数、状态、keyed identity、到期时刻、清理 cutoff 和指纹，
+  不含正文或完整 key。

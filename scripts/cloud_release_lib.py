@@ -5,9 +5,11 @@ import base64
 import hashlib
 import io
 import json
+import os
 import re
 import secrets
 import shutil
+import signal
 import subprocess
 import tarfile
 import tempfile
@@ -66,7 +68,13 @@ SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
 
 
 class ReleaseError(RuntimeError):
-    """A safe, user-facing cloud release error."""
+    """A safe, user-facing cloud release error with a fixed machine category."""
+
+    def __init__(self, message: str, *, category: str = "runtime") -> None:
+        super().__init__(message)
+        if category not in {"configuration", "safety", "runtime"}:
+            raise ValueError("invalid release error category")
+        self.category = category
 
 
 @dataclass(frozen=True)
@@ -159,6 +167,7 @@ class CommandRunner(Protocol):
         env: Mapping[str, str] | None = None,
         stdin: BinaryIO | None = None,
         check: bool = True,
+        timeout_s: float | None = None,
     ) -> CommandResult:
         pass
 
@@ -180,29 +189,37 @@ class SubprocessRunner:
         env: Mapping[str, str] | None = None,
         stdin: BinaryIO | None = None,
         check: bool = True,
+        timeout_s: float | None = None,
     ) -> CommandResult:
         if not argv:
             raise ReleaseError("cannot run an empty command")
         try:
-            completed = subprocess.run(
+            process = subprocess.Popen(
                 list(argv),
                 cwd=cwd,
                 env=dict(env) if env is not None else None,
                 stdin=stdin,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                check=False,
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+                start_new_session=os.name != "nt",
             )
         except OSError as exc:
             raise ReleaseError(
                 f"could not run {argv[0]}: {type(exc).__name__}"
             ) from exc
+        try:
+            stdout_bytes, stderr_bytes = process.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(process)
+            process.communicate()
+            raise ReleaseError(f"command timed out: {argv[0]}", category="runtime") from exc
 
-        stdout = completed.stdout.decode("utf-8", errors="replace")
-        stderr = completed.stderr.decode("utf-8", errors="replace")
+        stdout = stdout_bytes.decode("utf-8", errors="replace")
+        stderr = stderr_bytes.decode("utf-8", errors="replace")
         result = CommandResult(
             tuple(argv),
-            completed.returncode,
+            process.returncode,
             self._redact(stdout),
             self._redact(stderr),
         )
@@ -214,6 +231,24 @@ class SubprocessRunner:
         return result
 
 
+def _terminate_process_tree(process: subprocess.Popen[bytes]) -> None:
+    """Terminate the exact command process tree after a bounded stage timeout."""
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=10,
+        )
+        return
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 @dataclass(frozen=True)
 class SshConfig:
     host: str
@@ -223,11 +258,11 @@ class SshConfig:
 
     def __post_init__(self) -> None:
         if not SSH_HOST_RE.fullmatch(self.host):
-            raise ReleaseError("invalid SSH host")
+            raise ReleaseError("invalid SSH host", category="configuration")
         if not SSH_USER_RE.fullmatch(self.user):
-            raise ReleaseError("invalid SSH user")
+            raise ReleaseError("invalid SSH user", category="configuration")
         if self.kex_algorithms and not SSH_KEX_RE.fullmatch(self.kex_algorithms):
-            raise ReleaseError("invalid SSH kex algorithms")
+            raise ReleaseError("invalid SSH kex algorithms", category="configuration")
 
     def _common_options(self) -> list[str]:
         options = [
@@ -274,6 +309,14 @@ class SshConfig:
         ]
 
 
+def validate_ssh_identity(identity: Path) -> None:
+    if not identity.exists() or not identity.is_file():
+        raise ReleaseError(
+            "SSH identity must be an existing regular file",
+            category="configuration",
+        )
+
+
 def _git(repo: Path, *args: str, check: bool = True) -> CommandResult:
     return SubprocessRunner().run(["git", *args], cwd=repo, check=check)
 
@@ -286,16 +329,20 @@ def require_clean_main_commit(repo: Path, revision: str) -> str:
         "--untracked-files=normal",
     ).stdout
     if dirty:
-        raise ReleaseError("worktree is not clean")
+        raise ReleaseError("worktree is not clean", category="safety")
 
-    sha = _git(
+    resolved = _git(
         repo,
         "rev-parse",
         "--verify",
         f"{revision}^{{commit}}",
-    ).stdout.strip()
-    if not FULL_SHA_RE.fullmatch(sha):
-        raise ReleaseError("git did not return a full commit SHA")
+        check=False,
+    )
+    sha = resolved.stdout.strip()
+    if resolved.returncode != 0 or not FULL_SHA_RE.fullmatch(sha):
+        raise ReleaseError(
+            "could not resolve requested revision", category="configuration"
+        )
 
     reachable = _git(
         repo,
@@ -306,7 +353,7 @@ def require_clean_main_commit(repo: Path, revision: str) -> str:
         check=False,
     )
     if reachable.returncode != 0:
-        raise ReleaseError(f"commit {sha} is not reachable from main")
+        raise ReleaseError(f"commit {sha} is not reachable from main", category="safety")
     return sha
 
 
@@ -368,7 +415,7 @@ def make_release_plan(
     approved_infrastructure_digest: str | None = None,
 ) -> ReleasePlan:
     if not FULL_SHA_RE.fullmatch(target_sha):
-        raise ReleaseError("target SHA must be a full commit SHA")
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     if (
         target_infrastructure_digest is not None
         and not SHA256_RE.fullmatch(target_infrastructure_digest)
@@ -463,7 +510,7 @@ def _git_blob(repo: Path, revision: str, path: str) -> bytes:
 
 def compute_infrastructure_digest(repo: Path, target_sha: str) -> str:
     if not FULL_SHA_RE.fullmatch(target_sha):
-        raise ReleaseError("target SHA must be a full commit SHA")
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     listing = _git(
         repo,
         "ls-tree",
@@ -518,7 +565,7 @@ def validate_archive_member_names(names: Sequence[str]) -> None:
             or basename.endswith(SECRET_SUFFIXES)
         )
         if forbidden:
-            raise ReleaseError(f"forbidden archive member: {raw_name}")
+            raise ReleaseError(f"forbidden archive member: {raw_name}", category="safety")
 
 
 def _is_strict_placeholder(value: str) -> bool:
@@ -530,7 +577,7 @@ def _validate_credential_assignment_text(text: str) -> None:
         value = match.group("value")
         if _is_strict_placeholder(value):
             continue
-        raise ReleaseError("credential-like assignment found in release source")
+        raise ReleaseError("credential-like assignment found in release source", category="safety")
 
 
 def _credential_target_name(target: ast.expr) -> str | None:
@@ -599,7 +646,8 @@ def _validate_python_credential_literals(
                 node.lineno not in fixture_lines
             ):
                 raise ReleaseError(
-                    "credential-like assignment found in release source"
+                    "credential-like assignment found in release source",
+                    category="safety",
                 )
 
 
@@ -609,7 +657,7 @@ def validate_text_payload(
     source_path: str | None = None,
 ) -> None:
     if PRIVATE_KEY_BLOCK_RE.search(text):
-        raise ReleaseError("private key material found in release source")
+        raise ReleaseError("private key material found in release source", category="safety")
     source = PurePosixPath((source_path or "").replace("\\", "/"))
     if source.suffix == ".py":
         is_test_source = any(
@@ -634,7 +682,8 @@ def _validate_source_tar(path: Path) -> None:
                     continue
                 if not member.isfile():
                     raise ReleaseError(
-                        f"forbidden archive member type: {member.name}"
+                        f"forbidden archive member type: {member.name}",
+                        category="safety",
                     )
                 if member.size > 2 * 1024 * 1024:
                     continue
@@ -708,7 +757,8 @@ def _generate_proto_into_source_tar(
                     continue
                 if not member.isfile():
                     raise ReleaseError(
-                        f"forbidden archive member type: {member.name}"
+                        f"forbidden archive member type: {member.name}",
+                        category="safety",
                     )
                 target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
                 extracted = archive.extractfile(member)
@@ -875,7 +925,7 @@ def build_release_artifact(
     if plan.status != "ready" or plan.blocking_changes:
         raise ReleaseError("cannot build artifact for a blocked release plan")
     if not FULL_SHA_RE.fullmatch(plan.target_sha):
-        raise ReleaseError("target SHA must be a full commit SHA")
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
     if not SHA256_RE.fullmatch(services_digest):
         raise ReleaseError("release services digest is invalid")
     if not SHA256_RE.fullmatch(models_digest):
@@ -1007,6 +1057,9 @@ MODEL_BOOTSTRAP_FILES = (
 )
 
 SHARED_SCRIPT_NAMES = (
+    "transaction-lock.sh",
+    "remote-e2e-lock.sh",
+    "remote-data-migration.sh",
     "backup.sh",
     "remote-release.sh",
     "remote-build.sh",
@@ -1080,6 +1133,9 @@ SHARED = ROOT / "shared"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 SCRIPTS = (
+    SHARED / "bin/transaction-lock.sh",
+    SHARED / "bin/remote-e2e-lock.sh",
+    SHARED / "bin/remote-data-migration.sh",
     SHARED / "bin/backup.sh",
     SHARED / "bin/remote-release.sh",
     SHARED / "bin/remote-build.sh",
@@ -1098,6 +1154,9 @@ MODELS = {
     SHARED / "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm": "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492",
 }
 REQUIRED_INSTALLED = {
+    "deploy/cloud/transaction-lock.sh": "/opt/car-agent/shared/bin/transaction-lock.sh",
+    "deploy/cloud/remote-e2e-lock.sh": "/opt/car-agent/shared/bin/remote-e2e-lock.sh",
+    "deploy/cloud/remote-data-migration.sh": "/opt/car-agent/shared/bin/remote-data-migration.sh",
     "deploy/cloud/backup.sh": "/opt/car-agent/shared/bin/backup.sh",
     "deploy/cloud/remote-release.sh": "/opt/car-agent/shared/bin/remote-release.sh",
     "deploy/cloud/remote-build.sh": "/opt/car-agent/shared/bin/remote-build.sh",
@@ -1360,14 +1419,18 @@ def discover_remote_state(
 
 
 def _resolve_commit(repo: Path, revision: str) -> str:
-    sha = _git(
+    resolved = _git(
         repo,
         "rev-parse",
         "--verify",
         f"{revision}^{{commit}}",
-    ).stdout.strip()
-    if not FULL_SHA_RE.fullmatch(sha):
-        raise ReleaseError(f"could not resolve commit: {revision}")
+        check=False,
+    )
+    sha = resolved.stdout.strip()
+    if resolved.returncode != 0 or not FULL_SHA_RE.fullmatch(sha):
+        raise ReleaseError(
+            "could not resolve requested revision", category="configuration"
+        )
     return sha
 
 
@@ -1382,8 +1445,8 @@ def execute_deploy(
     runner: CommandRunner,
     nonce_factory: Callable[[], str] | None = None,
 ) -> CloudReleaseResult:
-    if not request.ssh.identity.is_file():
-        raise ReleaseError("SSH identity file does not exist")
+    validate_ssh_identity(request.ssh.identity)
+
     target_sha = require_clean_main_commit(request.repo, request.revision)
     remote_state = discover_remote_state(request, runner=runner)
     deployed_sha = _resolve_commit(request.repo, remote_state.current_release)

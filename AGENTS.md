@@ -46,6 +46,29 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 - 全栈只允许用 `make up` 或 `docker compose -f compose.yaml ...` 启动；根 `compose.yaml` 显式加载根 `.env`，并以 `deploy/` 为 included Compose 的项目目录以保持构建路径不变。
 - 不得直接以 `deploy/docker-compose.yaml` 为首个 Compose 文件启动，否则真实 Provider 可能静默回退 mock。
 
+### 可切换远程真栈实施期红线
+
+真栈动作前先运行 `python scripts/dev_stack.py target show` 确认目标。
+任何真栈动作（包括运行 E2E、Compose 或 `make up`）前，必须由统一入口按仓库根目录定位并读取
+`dev-stack.local`。它是仓库根目录的 Git-ignore 文件，不能按当前工作目录误判缺失：文件
+缺失时按 `target=local` 处理，文件损坏则 fail closed。改动任何脚本目录或 manifest 前同样
+必须读取该文件。该文件只允许 `target=local|cloud`，不得保存
+token、密码、私钥或 URL。`target=cloud` 时禁止启动本地 Compose；本地只承载编辑、单测、
+静态检查和 Vite。`target=local` 时继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一
+运行时来源。
+
+cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit、merge 或 push；`git push`
+仍需单独授权。未显式标记 `remote_safe` 的 E2E 不得在 cloud 缺省运行；
+`remote_mutating=true` 只允许精确 `--id` + `--allow-mutating`；该开关只是技术门禁，
+不替代支付、商户写、真实车控、删数据或系统配置的本轮人工红线授权。本阶段
+不得自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
+
+三存储迁云入口是 `scripts/cloud_data_migration.py`。online 本地不停写，final 必须先取得停写
+授权并确认其他 agent 已结束；两阶段都是 replace，不是 merge。`apply/rollback` 默认 dry-run，
+只有显式 `--apply` 才写入。工具不改 `.env`、安全组、Tailscale、CI/CD、systemd 或 schema，
+不删除任何本地/云端卷、备份、release、镜像或迁移包；失败时 PostgreSQL、Redis、Collector
+按同一份迁移前备份整组恢复。完整命令与授权检查点见 `docs/dev-guide.md` §8。
+
 1. **车控只经 VAL**。任何组件（含 LLM/Agent）不得直接碰 CAN/SOME-IP。
 2. **LLM 不直连车控**：LLM 只产"意图/计划"，车控由确定性 Executor 经 VAL 权限校验后执行（规划/执行分离）。
 3. **危险动作二次确认**（`require_confirm=true`）。

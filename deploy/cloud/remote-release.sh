@@ -4,7 +4,6 @@ umask 077
 
 readonly RELEASE_ROOT="/opt/car-agent"
 readonly SHARED_ROOT="${RELEASE_ROOT}/shared"
-readonly RELEASE_LOCK="${SHARED_ROOT}/locks/release.lock"
 readonly SCRIPT_ROOT="${SHARED_ROOT}/bin"
 readonly INCOMING_ROOT="${RELEASE_ROOT}/incoming/releases"
 
@@ -41,10 +40,15 @@ prepare_upload() {
 }
 
 main() {
+  local kind="release" code=0
   [[ "${EUID}" -eq 0 ]] || die "must run as root"
-  install -d -m 0700 -o root -g root "${SHARED_ROOT}/locks"
-  exec 9>"${RELEASE_LOCK}"
-  flock -n 9 || die "another release transaction holds the lock" 75
+
+  source "${SCRIPT_ROOT}/transaction-lock.sh"
+  [[ "${1:-}" == "rollback" ]] && kind="rollback"
+  transaction_lock_acquire "${kind}" || {
+    code=$?
+    die "cloud transaction lock is held by ${TRANSACTION_LOCK_HOLDER:-unknown}" "${code}"
+  }
 
   source "${SCRIPT_ROOT}/remote-build.sh"
   source "${SCRIPT_ROOT}/activate-release.sh"

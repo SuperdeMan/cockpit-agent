@@ -158,6 +158,26 @@ python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escal
 E2E 清单的唯一真相源是 `test/e2e_manifest.yaml`，统一入口是 `scripts/run_e2e.py`；PowerShell、
 shell 与 `make e2e` 都只是参数透传，不再各自维护脚本数组。常用门禁：
 
+> 远程策略字段固定为 `remote_safe` / `remote_mutating`。本段命令已有静态/fake 回归，
+> 不声称已在真实云主机运行。E2E 运行前由统一入口按仓库根目录读取
+> `dev-stack.local`。
+
+manifest 的三种状态不允许默认：`true/false` 表示 cloud 缺省可读；`false/true`
+只允许精确 `--id` + `--allow-mutating`；`false/false` 在 cloud 永久拒绝，直到完成远程
+端点化和独立 review。cloud 禁止本地 Compose、非 root profile、signed identity 和 fixture
+pre-step。每轮使用独立 run/user/session，结果记录 target/release/case 策略与 `e2e`
+锁摘要；不记 token、私钥或完整远程日志。
+
+```powershell
+python scripts/run_e2e.py --target cloud --dry-run
+python scripts/run_e2e.py --target cloud --id e2e_remote_safe
+
+# 仅当 manifest 已标 remote_mutating:true 且取得本轮精确人工授权
+python scripts/run_e2e.py --target cloud --id e2e_reviewed_mutation --allow-mutating
+```
+
+`--allow-mutating` 不覆盖支付、商户写、真实车控、数据删除或系统配置的人工红线授权。
+
 ```bash
 python scripts/run_e2e.py --check --milestone M-A --lane milestone --stale-policy warn
 python scripts/run_e2e.py --lane ci --full --stale-policy warn
@@ -395,3 +415,22 @@ python -m pytest test/nightly -m nightly -v
 | 8 | ASR 转码 | POST /api/asr format=webm | ffmpeg 转码后正常返回文本 |
 
 > 注：未配置 `LLM_API_KEY` 时 LLM Gateway 用 MockProvider，链路可跑通但复杂意图能力受限。
+
+## 云数据迁移工具专项
+
+迁移工具测试只使用 fake runner 和静态 shell 契约，不连接真实 Docker 数据卷、SSH 或云端：
+
+```bash
+python -m pytest scripts/tests/test_cloud_data_migration.py \
+  scripts/tests/test_cloud_release.py \
+  scripts/tests/test_cloud_deploy_assets.py -q
+bash -n deploy/cloud/transaction-lock.sh deploy/cloud/backup.sh \
+  deploy/cloud/remote-release.sh deploy/cloud/activate-release.sh \
+  deploy/cloud/remote-data-migration.sh
+python -m compileall -q scripts/cloud_data_migration.py scripts/cloud_data_migration_lib.py
+```
+
+测试必须锁定：online 零 stop/restart/down；final 缺少 `--quiesce-local --apply` 时仅列服务、不
+生成快照；plan 和无 `--apply` 的 apply 不上传、不停服务；远端路径与 migration ID 拒绝注入；
+三存储迁移失败整组恢复；任何路径都不得删除卷、备份、release、镜像或迁移包。专项全绿只证明
+fake/static 契约，不得写成真实数据或云端迁移已经验证。

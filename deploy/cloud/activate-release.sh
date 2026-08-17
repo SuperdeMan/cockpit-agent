@@ -126,9 +126,8 @@ assemble_release() {
 }
 
 run_required_backup() {
-  systemctl start car-agent-backup.service
-  [[ "$(systemctl show car-agent-backup.service -p Result --value)" == "success" ]] \
-    || die "required backup did not succeed"
+  "${SHARED_ROOT}/bin/backup.sh" \
+    --transaction-lock-fd "${TRANSACTION_LOCK_FD}"
 }
 
 switch_current() {

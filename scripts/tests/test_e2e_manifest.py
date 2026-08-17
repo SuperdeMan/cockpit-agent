@@ -53,6 +53,8 @@ EXPECTED: dict[
         bool,
         int,
         str | tuple[str, ...] | None,
+        bool,
+        bool,
     ],
 ] = {
     "e2e_protocol_smoke": (
@@ -209,6 +211,19 @@ EXPECTED: dict[
         "default", ("nightly", "milestone"), 300, "root", F,
         True, True, 0, "all",
     ),
+    "e2e_remote_safe": (
+        "default", ("milestone",), 180, "root", F,
+        False, True, 0, None,
+    ),
+}
+
+EXPECTED = {
+    case_id: (
+        *expected,
+        case_id in {"e2e_protocol_smoke", "e2e_remote_safe", "e2e_tts_stream"},
+        False,
+    )
+    for case_id, expected in EXPECTED.items()
 }
 
 
@@ -233,7 +248,36 @@ def _case(
         "signed_identity": False,
         "persistent_data": False,
         "memory_sessions": 0,
+        "remote_safe": False,
+        "remote_mutating": False,
     }
+
+
+def test_case_requires_explicit_remote_policy(tmp_path: Path):
+    contract = _contract()
+    case = _case()
+    case.pop("remote_safe")
+    case.pop("remote_mutating")
+    data = {"version": 1, "planned_paths": [], "cases": [case]}
+
+    with pytest.raises(contract.ManifestError, match="remote_safe"):
+        _load_temp(tmp_path, data)
+
+
+@pytest.mark.parametrize(
+    ("safe", "mutating"),
+    ((True, True), ("yes", False), (False, "no")),
+)
+def test_remote_policy_rejects_ambiguous_values(
+    tmp_path: Path, safe: object, mutating: object,
+):
+    contract = _contract()
+    case = _case()
+    case.update(remote_safe=safe, remote_mutating=mutating)
+    data = {"version": 1, "planned_paths": [], "cases": [case]}
+
+    with pytest.raises(contract.ManifestError, match="remote"):
+        _load_temp(tmp_path, data)
 
 
 def _privacy_target(
@@ -857,7 +901,7 @@ def test_only_protocol_smoke_may_be_a_planned_missing_path(tmp_path: Path):
 def test_manifest_has_exact_inventory_and_schema():
     contract = _contract()
     manifest = contract.load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
-    assert len(manifest.cases) == 38
+    assert len(manifest.cases) == 39
     assert {case.id for case in manifest.cases} == set(EXPECTED)
 
     for case in manifest.cases:
@@ -879,6 +923,8 @@ def test_manifest_has_exact_inventory_and_schema():
             case.persistent_data,
             case.memory_sessions,
             nightly,
+            case.remote_safe,
+            case.remote_mutating,
         ) == expected
         assert case.path == f"test/{case.id}.py"
         assert case.command[0] == "python"

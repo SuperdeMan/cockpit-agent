@@ -132,6 +132,8 @@ def _write_inner_repo(root: Path) -> Path:
             "signed_identity": False,
             "persistent_data": False,
             "memory_sessions": 0,
+            "remote_safe": False,
+            "remote_mutating": False,
         })
     manifest = test_dir / "e2e_manifest.yaml"
     manifest.write_text(

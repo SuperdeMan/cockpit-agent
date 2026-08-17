@@ -6,10 +6,14 @@ import re
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from scripts import cloud_release
+from scripts import cloud_release_lib
 from scripts.cloud_release_lib import (
     ControlledChange,
     CommandResult,
@@ -96,6 +100,19 @@ def test_require_clean_main_commit_rejects_unreachable_commit(tmp_path: Path):
         require_clean_main_commit(repo, "HEAD")
 
 
+def test_require_clean_main_commit_rejects_invalid_revision_as_configuration(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    with pytest.raises(ReleaseError) as caught:
+        require_clean_main_commit(repo, "not-a-revision")
+    assert caught.value.category == "configuration"
+
+
+def test_resolve_commit_rejects_invalid_revision_as_configuration(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    with pytest.raises(ReleaseError) as caught:
+        cloud_release_lib._resolve_commit(repo, "not-a-revision")
+    assert caught.value.category == "configuration"
+
 def test_runner_redacts_secret_values(tmp_path: Path):
     runner = SubprocessRunner(redactions={"secret-value"})
     result = runner.run(
@@ -121,6 +138,24 @@ def test_runner_failure_does_not_echo_full_argv(tmp_path: Path):
     assert "[REDACTED]" in message
     assert "secret-value" not in message
     assert "-c" not in message
+
+
+def test_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path):
+    marker = tmp_path / "grandchild-survived.txt"
+    child = (
+        "import time; from pathlib import Path; time.sleep(0.8); "
+        f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+    )
+    parent = (
+        "import subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+    )
+    with pytest.raises(ReleaseError, match="timed out"):
+        SubprocessRunner().run(
+            [sys.executable, "-c", parent], cwd=tmp_path, timeout_s=0.2,
+        )
+    time.sleep(1.0)
+    assert not marker.exists()
 
 
 def test_ssh_config_builds_strict_batch_argv(tmp_path: Path):
@@ -574,6 +609,154 @@ def test_text_secret_scanner_rejects_private_key():
         validate_text_payload(private_key)
 
 
+def test_secret_scanners_mark_sensitive_sources_as_safety():
+    for member in ("keys/production.pem", ".env", "../outside.txt"):
+        with pytest.raises(ReleaseError) as path_error:
+            validate_archive_member_names([member])
+        assert path_error.value.category == "safety"
+    private_key = "-----BEGIN PRIVATE KEY-----\n" + "A" * 64 + "\n-----END PRIVATE KEY-----\n"
+    with pytest.raises(ReleaseError) as body_error:
+        validate_text_payload(private_key)
+    assert body_error.value.category == "safety"
+
+
+def test_cloud_release_cli_help_and_configuration_error_subprocess_contract():
+    script = ROOT / "scripts" / "cloud_release.py"
+    assert script.stat().st_size > 2
+    assert "def main(" in script.read_text(encoding="utf-8")
+    help_result = subprocess.run(
+        [sys.executable, str(script), "--help"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert help_result.returncode == 0
+    assert all(action in help_result.stdout for action in ("plan", "deploy", "verify", "rollback"))
+    missing = subprocess.run(
+        [sys.executable, str(script), "deploy"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert missing.returncode == 2
+    assert json.loads(missing.stdout) == {
+        "status": "error",
+        "error_category": "configuration",
+    }
+    assert "operation failed" in missing.stderr
+
+
+@pytest.mark.parametrize("command", ("verify", "rollback"))
+@pytest.mark.parametrize("identity_kind", ("missing", "directory"))
+def test_cloud_release_connection_actions_reject_unusable_identity_before_ssh(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+    identity_kind: str,
+):
+    calls: list[object] = []
+
+    class NoSshRunner:
+        def run(self, *args, **kwargs):
+            calls.append(args)
+            raise AssertionError("SSH must not run with an invalid identity")
+
+    identity = tmp_path / "identity"
+    argv = ["--host", "dev.example"]
+    if identity_kind == "directory":
+        identity.mkdir()
+        argv.extend(["--identity", str(identity)])
+    if command == "rollback":
+        argv.extend(["rollback", "--to", "a" * 7, "--apply"])
+    else:
+        argv.append("verify")
+
+    monkeypatch.setattr(cloud_release, "SubprocessRunner", NoSshRunner)
+    assert cloud_release.main(argv) == 2
+    assert calls == []
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "error",
+        "error_category": "configuration",
+    }
+
+
+def test_cloud_release_verify_emits_the_verified_full_release_sha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    identity = tmp_path / "identity"
+    identity.write_text("test-only identity", encoding="utf-8")
+
+    class FakeVerifyRunner:
+        def run(self, argv, **kwargs):
+            return CommandResult(tuple(argv), 0, "", "")
+
+    monkeypatch.setattr(cloud_release, "REPO_ROOT", tmp_path)
+    monkeypatch.setattr(cloud_release, "SubprocessRunner", FakeVerifyRunner)
+    monkeypatch.setattr(
+        cloud_release,
+        "discover_remote_state",
+        lambda request, runner: SimpleNamespace(current_release="abc1234"),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        cloud_release,
+        "_resolve_commit",
+        lambda repo, revision: "a" * 40,
+        raising=False,
+    )
+
+    assert cloud_release.main([
+        "--host", "demo.example", "--identity", str(identity), "verify",
+    ]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "verified",
+        "release_sha": "a" * 40,
+    }
+
+
+def test_cloud_release_rollback_dry_run_does_not_require_connection(
+    capsys: pytest.CaptureFixture[str],
+):
+    assert cloud_release.main(["rollback", "--to", "a" * 7]) == 0
+    assert json.loads(capsys.readouterr().out)["status"] == "dry_run"
+
+def test_cloud_release_emit_enforces_the_child_json_size_limit():
+    with pytest.raises(ReleaseError) as caught:
+        cloud_release._emit({"status": "dry_run", "padding": "x" * (64 * 1024)})
+    assert caught.value.category == "runtime"
+
+def test_cloud_release_main_emits_configuration_category_for_invalid_revision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    repo, _ = make_repo(tmp_path)
+    identity = repo / "identity"
+    identity.write_text("not-a-real-key", encoding="utf-8")
+    monkeypatch.setattr(cloud_release, "REPO_ROOT", repo)
+    monkeypatch.setattr(
+        cloud_release,
+        "execute_deploy",
+        lambda request, **kwargs: cloud_release_lib._resolve_commit(
+            request.repo, request.revision
+        ),
+    )
+    assert cloud_release.main(
+        [
+            "--host", "dev.example", "--identity", str(identity),
+            "deploy", "--sha", "not-a-revision",
+        ]
+    ) == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "error",
+        "error_category": "configuration",
+    }
+
 def test_text_secret_scanner_allows_lowercase_program_variables():
     validate_text_payload(
         "token = secrets.token_urlsafe(24)\n"
@@ -821,6 +1004,9 @@ def test_preflight_reports_exact_bootstrap_candidates():
     assert report.candidates == (
         "/opt/car-agent/shared/runtime-project-name",
         "/opt/car-agent/shared/release-infrastructure.json",
+        "/opt/car-agent/shared/bin/transaction-lock.sh",
+        "/opt/car-agent/shared/bin/remote-e2e-lock.sh",
+        "/opt/car-agent/shared/bin/remote-data-migration.sh",
         "/opt/car-agent/shared/bin/backup.sh",
         "/opt/car-agent/shared/bin/remote-release.sh",
         "/opt/car-agent/shared/bin/remote-build.sh",
@@ -850,6 +1036,19 @@ def test_preflight_reports_exact_bootstrap_candidates():
         "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.js",
         "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm",
     ]
+
+
+def test_bootstrap_requires_all_shared_transaction_scripts():
+    assert "transaction-lock.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert "backup.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert "/opt/car-agent/shared/bin/transaction-lock.sh" in REMOTE_PREFLIGHT_SOURCE
+
+
+def test_bootstrap_requires_remote_data_migration_script():
+    assert "remote-data-migration.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert "/opt/car-agent/shared/bin/remote-data-migration.sh" in REMOTE_PREFLIGHT_SOURCE
+    assert "remote-e2e-lock.sh" in cloud_release_lib.SHARED_SCRIPT_NAMES
+    assert "/opt/car-agent/shared/bin/remote-e2e-lock.sh" in REMOTE_PREFLIGHT_SOURCE
 
 
 def test_runtime_model_hash_tables_stay_in_sync():

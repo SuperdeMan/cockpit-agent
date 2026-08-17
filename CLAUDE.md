@@ -130,6 +130,28 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 - 危险动作（`require_confirm=true`）必须用户二次确认。
 - **端到端语音（S2S）会话内不得有任何执行通道**（M4）：语音大模型唯一的工具是 `escalate`——把用户原话交回文本主链，此后 planner 校验 / 权限 / VAL / `require_confirm` 闸逐字全量生效。**不得把 capability 清单注入 S2S 会话的 tools**（那等于把执行判定权交给一个不过 planner 校验的模型）。S2S 是新的「话筒」，不是新的规划入口。
 - 密钥/token 不进代码、不进 commit、不进日志；用 `.env`（已 gitignore），模板见 `.env.example`。
+
+### 可切换远程真栈实施期红线
+
+真栈动作前先运行 `python scripts/dev_stack.py target show` 确认目标。
+任何真栈动作（包括运行 E2E、Compose 或 `make up`）前，必须由统一入口按仓库根目录定位并读取
+`dev-stack.local`。它是仓库根目录的 Git-ignore 文件，不能按当前工作目录误判缺失：文件
+缺失按 `target=local` 处理，文件损坏则 fail closed。改动任何脚本目录或 manifest 前同样
+必须读取该文件。只允许 `target=local|cloud`，不得在其中保存
+token、密码、私钥或 URL。`target=cloud` 禁止启动本地 Compose，本地仅用于编辑、单测、静态
+检查和 Vite；`target=local` 继续只用根 `compose.yaml` / `make up`，根 `.env` 仍是唯一运行时
+来源。
+
+cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit/merge/push；`git push`
+仍需单独授权。未显式标记 `remote_safe` 的 E2E 不得在 cloud 缺省运行；
+`remote_mutating=true` 只允许精确 `--id` + `--allow-mutating`；该开关不替代支付、商户写、
+真实车控、删数据或系统配置的本轮人工红线授权。本阶段不得
+自动写入 `target=cloud`，也不得停止另一个 agent 正在使用的本地 Docker。
+
+本地三存储迁云使用 `scripts/cloud_data_migration.py`：online 不停本地写入，final 必须取得
+停写授权并确认其他 agent 已结束；两阶段均为 replace 而非 merge。`apply/rollback` 只有显式
+`--apply` 才允许写入。迁移不修改 `.env`、安全组、Tailscale、CI/CD、systemd 或 schema，
+不删除任何本地/云端卷、备份、release、镜像或迁移包；三存储失败必须整组恢复。
 - 敏感数据（车内音视频、精确位置、支付）默认不出车，上云最小化。
   - **唯一的受控例外：S2S 挡位下上行原始音频**（三段式只上行定稿文本）。三个条件同时成立才允许：① 设置默认 `classic`，须用户在 HMI 显式选择；② 仅在**用户主动唤醒后的交互窗内**采集（未唤醒不采）；③ 隐私声明与设置文案显式呈现该差异。任何绕过这三条的音频上行都是红线违规。
   - **视觉单帧同款三条件**（M4 P4）：设置默认关 + **端侧命中视觉触发词才抓一帧**（未命中一帧都不采）+ 文案说清。图像只在网关内存活 TTL 秒，**不落盘不落 Redis、不进 obs、不进记忆**；`camera.frame`（单帧）与 `camera.read`（连续流，维持 ❌ 禁）是两个 scope，别混用。

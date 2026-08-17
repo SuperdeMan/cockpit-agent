@@ -329,7 +329,23 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: true
+    remote_mutating: false
     nightly: {all: true}
+
+  - id: e2e_remote_safe
+    path: test/e2e_remote_safe.py
+    command: [python, test/e2e_remote_safe.py]
+    group: default
+    lanes: [milestone]
+    timeout_s: 180
+    profile: root
+    skip_reasons: [forbid]
+    signed_identity: false
+    persistent_data: true
+    memory_sessions: 0
+    remote_safe: true
+    remote_mutating: false
 
   - id: e2e_auth
     path: test/e2e_auth.py
@@ -342,6 +358,8 @@ cases:
     signed_identity: false
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_central_hub_assertions
     path: test/e2e_central_hub_assertions.py
@@ -354,6 +372,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly:
       args:
         - --case
@@ -374,6 +394,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly:
       # 只留**不经过模型判断**的两例：注入拦截走确定性检测、裸确认走挂起态短路。
       # `ctx_trip_plan_fallback` / `ctx_trip_modify_fallback` 于 2026-08-01 移出 nightly
@@ -397,6 +419,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly: {all: true}
 
   - id: e2e_geofence
@@ -410,6 +434,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   # 2026-08-01 移出 nightly：mock 车道原有两条旅程（A4-2 提醒触达 / B4-2 场景激活），
   # **它们的「mock-safe」判据白纸黑字写的就是「route_hints 确定性路由」**
@@ -430,6 +456,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 2
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_ledger
     path: test/e2e_ledger.py
@@ -442,6 +470,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_mcp
     path: test/e2e_mcp.py
@@ -454,6 +484,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   # 真实麦当劳/瑞幸人工车道。默认零动作；写模式还需脚本内三重显式开关与
   # ≤3 笔预算，永不被 CI/nightly/milestone 自动选中。
@@ -468,6 +500,8 @@ cases:
     signed_identity: false
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_memory
     path: test/e2e_memory.py
@@ -480,6 +514,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 1
+    remote_safe: false
+    remote_mutating: false
     nightly:
       args: [--case, privacy_targeting, --case, compliance]
       memory_sessions: 0
@@ -495,6 +531,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 2
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_mtls
     path: test/e2e_mtls.py
@@ -507,6 +545,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_obs
     path: test/e2e_obs.py
@@ -519,6 +559,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_observability
     path: test/e2e_observability.py
@@ -531,6 +573,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   # 支付真栈闭环（§9.17 批 2）：确认亮码 → mock 渠道自动支付 → 幂等防双付。
   # milestone 车道（「交停车费」落域依赖真 LLM planner；mock 栈会落 chitchat）。
@@ -545,6 +589,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_planner_toolcall
     path: test/e2e_planner_toolcall.py
@@ -557,6 +603,8 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_proactive
     path: test/e2e_proactive.py
@@ -569,6 +617,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_process_region
     path: test/e2e_process_region.py
@@ -581,6 +631,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_real_providers
     path: test/e2e_real_providers.py
@@ -593,6 +645,8 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_rejection
     path: test/e2e_rejection.py
@@ -605,6 +659,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_reminder
     path: test/e2e_reminder.py
@@ -617,6 +673,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_research
     path: test/e2e_research.py
@@ -629,6 +687,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly: {all: true}
 
   - id: e2e_research_async
@@ -642,6 +702,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly: {all: true}
 
   - id: e2e_resilience
@@ -655,6 +717,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly: {all: true}
 
   - id: e2e_s2s
@@ -668,6 +732,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_s2s_probe
     path: test/e2e_s2s_probe.py
@@ -681,6 +747,8 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_s2s_resilience
     path: test/e2e_s2s_resilience.py
@@ -693,6 +761,8 @@ cases:
     signed_identity: true
     persistent_data: false
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_scene
     path: test/e2e_scene.py
@@ -705,6 +775,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_strict_stack
     path: test/e2e_strict_stack.py
@@ -717,6 +789,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   # 2026-08-01 移出 nightly：本脚本每一轮都要求规划落到 trip-planner，而 nightly 是
   # **mock 全栈**——MockProvider 只回显原话，规划必然走 `_fallback` 而 `_fallback` 优先
@@ -737,6 +811,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_tts_stream
     path: test/e2e_tts_stream.py
@@ -749,6 +825,8 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: true
+    remote_mutating: false
 
   - id: e2e_verify
     path: test/e2e_verify.py
@@ -761,6 +839,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_vision
     path: test/e2e_vision.py
@@ -773,6 +853,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_voice_loop
     path: test/e2e_voice_loop.py
@@ -785,6 +867,8 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_voiceprint
     path: test/e2e_voiceprint.py
@@ -797,6 +881,8 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 4
+    remote_safe: false
+    remote_mutating: false
     fixture_pre_step: voiceprint
 
   - id: e2e_voiceprint_probe
@@ -811,6 +897,8 @@ cases:
     signed_identity: false
     persistent_data: false
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
 
   - id: e2e_ws
     path: test/e2e_ws.py
@@ -823,4 +911,6 @@ cases:
     signed_identity: true
     persistent_data: true
     memory_sessions: 0
+    remote_safe: false
+    remote_mutating: false
     nightly: {all: true}

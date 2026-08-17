@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import uuid
+import secrets
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
@@ -81,6 +82,18 @@ from scripts.e2e_profiles import (  # noqa: E402
 )
 from scripts.prepare_voiceprint_fixtures import (  # noqa: E402
     fixture_manifest_sha256,
+)
+from scripts.cloud_release_lib import (  # noqa: E402
+    ReleaseError,
+    SshConfig,
+    validate_ssh_identity,
+)
+from scripts.cloud_remote_lock import RemoteCloudLock, RemoteLockError  # noqa: E402
+from scripts.e2e_target import (  # noqa: E402
+    E2ETargetError,
+    endpoint_environment,
+    resolve_e2e_target,
+    select_for_target,
 )
 from support.e2e import (  # noqa: E402
     E2EResult,
@@ -1053,6 +1066,13 @@ def _parser() -> _Parser:
     parser.add_argument("--stale-policy", choices=STALE_POLICIES, default="warn")
     parser.add_argument("--milestone", choices=MILESTONES)
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--target", choices=("local", "cloud"))
+    parser.add_argument("--allow-mutating", action="store_true")
+    parser.add_argument("--host", default=os.getenv("CAR_AGENT_DEPLOY_HOST"))
+    parser.add_argument("--user", default=os.getenv("CAR_AGENT_DEPLOY_USER", "ubuntu"))
+    identity = os.getenv("CAR_AGENT_SSH_IDENTITY")
+    parser.add_argument("--identity", type=Path, default=Path(identity) if identity else None)
+    parser.add_argument("--kex-algorithms", default=os.getenv("CAR_AGENT_SSH_KEX_ALGORITHMS"))
     parser.add_argument("--parallel-isolation", type=int)
     parser.add_argument("--lease-child", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--lease-id", help=argparse.SUPPRESS)
@@ -1065,6 +1085,12 @@ def _base_summary(*, mode: str, args: argparse.Namespace | None) -> dict[str, An
     return {
         "mode": mode,
         "canonical": bool(args.canonical) if args is not None else False,
+        "target": args.target if args is not None else None,
+        "target_release_sha": None,
+        "provider": None,
+        "model": None,
+        "remote_lock": None,
+        "allow_mutating": bool(args.allow_mutating) if args is not None else False,
         "full": False,
         "lane": args.lane if args is not None else None,
         "milestone": args.milestone if args is not None else None,
@@ -1170,36 +1196,12 @@ def _preflight(args: argparse.Namespace) -> None:
 def _select(
     manifest: E2EManifest,
     args: argparse.Namespace,
+    target: str = "local",
 ) -> tuple[tuple[E2ECase, ...], bool]:
-    explicit_scope = any((
-        args.group is not None,
-        args.lane is not None,
-        bool(args.ids),
-        args.profile is not None,
-    ))
-    implicit_default = not explicit_scope
-    effective_group = "default" if implicit_default else args.group
-
-    unknown = sorted(set(args.ids) - set(manifest.by_id))
-    if unknown:
-        raise RunnerArgumentError(f"unknown --id entries: {unknown}")
-
-    ids = set(args.ids)
-    selected = []
-    for case in manifest.cases:
-        if ids and case.id not in ids:
-            continue
-        if effective_group is not None and case.group != effective_group:
-            continue
-        if args.lane is not None and args.lane not in case.lanes:
-            continue
-        if args.profile is not None and case.profile != args.profile:
-            continue
-        selected.append(case)
-    if not selected:
-        raise RunnerArgumentError("selection is empty")
-    effective_full = (args.full or implicit_default) and not args.ids
-    return tuple(selected), effective_full
+    try:
+        return select_for_target(manifest, args, target=target)
+    except E2ETargetError as exc:
+        raise RunnerArgumentError(str(exc)) from exc
 
 
 def _child_argv(
@@ -1249,6 +1251,8 @@ def _selection_summary(
             ),
             "profile": case.profile,
             "timeout_s": case.timeout_s,
+            "remote_safe": case.remote_safe,
+            "remote_mutating": case.remote_mutating,
         }
         for case in selected
     ]
@@ -1564,8 +1568,6 @@ def _child_environment(
         and key != "AUDIO_API_URL"
         and key not in {"E2E_IDENTITY_ENABLED", "E2E_IDENTITY_SECRET"}
     }
-    if not env.get("WS_URL"):
-        env["WS_URL"] = "ws://127.0.0.1:8090/ws"
     user = f"{run_id}-{case.id}"
     env.update({
         "E2E_RUN_ID": run_id,
@@ -2545,6 +2547,42 @@ def _result_exit_code(
     if any(item["errors"] for item in results):
         return 1
     return 0
+
+
+def _remote_probe_identity(
+    results: Sequence[Mapping[str, Any]],
+) -> tuple[str, str]:
+    remote = [item for item in results if item.get("id") == "e2e_remote_safe"]
+    if len(remote) != 1 or not isinstance(remote[0].get("artifacts"), list):
+        raise ProtocolError("remote provider/model evidence is missing")
+    candidates = [
+        Path(item)
+        for item in remote[0]["artifacts"]
+        if isinstance(item, str)
+        and Path(item).name == "remote_provider_catalog.json"
+    ]
+    if len(candidates) != 1 or candidates[0].is_symlink():
+        raise ProtocolError("remote provider/model evidence is missing")
+    try:
+        raw = candidates[0].read_bytes()
+    except OSError as exc:
+        raise ProtocolError("remote provider/model evidence is unreadable") from exc
+    if len(raw) > 4096:
+        raise ProtocolError("remote provider/model evidence is oversized")
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (UnicodeError, ValueError, RecursionError) as exc:
+        raise ProtocolError("remote provider/model evidence is invalid") from exc
+    if not isinstance(payload, dict) or set(payload) != {"provider", "model"}:
+        raise ProtocolError("remote provider/model evidence is invalid")
+    provider = payload["provider"]
+    model = payload["model"]
+    if not isinstance(provider, str) or not provider or not isinstance(model, str) or not model:
+        raise ProtocolError("remote provider/model evidence is invalid")
+    return provider, model
 
 
 def _journey_report_artifacts(
@@ -3937,6 +3975,7 @@ def main(
         if manifest_path is None
         else Path(manifest_path).resolve()
     )
+    explicit_test_environment = environ is not None
     source_env: Mapping[str, str] = (
         os.environ if environ is None else dict(environ)
     )
@@ -3954,7 +3993,19 @@ def main(
     try:
         stack_root = _resolve_stack_root(root, source_env)
         source_env = _load_stack_environment(stack_root, source_env)
-    except RunnerArgumentError:
+        target = resolve_e2e_target(
+            root,
+            explicit=args.target,
+            environ=source_env,
+        )
+        args.target = target.name
+        target_environment = endpoint_environment(target)
+        if explicit_test_environment:
+            for key, value in target_environment.items():
+                source_env.setdefault(key, value)
+        else:
+            source_env.update(target_environment)
+    except (RunnerArgumentError, E2ETargetError):
         summary = _base_summary(mode="preflight", args=args)
         summary["errors"] = ["preflight"]
         summary["exit_code"] = 2
@@ -3963,6 +4014,7 @@ def main(
 
     mode = "check" if args.check else "dry_run" if args.dry_run else "run"
     summary = _base_summary(mode=mode, args=args)
+    summary["target_release_sha"] = target.release_sha
     try:
         manifest = load_manifest(manifest_file, repo_root=root)
     except ManifestError:
@@ -3972,7 +4024,7 @@ def main(
         return 2
 
     try:
-        selected, effective_full = _select(manifest, args)
+        selected, effective_full = _select(manifest, args, target.name)
         if args.lease_child:
             try:
                 source_env = load_child_bundle(
@@ -4094,6 +4146,14 @@ def main(
         )
         return exit_code
 
+    if target.name == "cloud" and (
+        not args.host or args.identity is None or not args.user
+    ):
+        summary["errors"] = ["preflight"]
+        summary["exit_code"] = 2
+        _emit(output, summary, human_lines=("E2E cloud connection: ERROR",))
+        return 2
+
     canonical_state: CanonicalSnapshot | None = None
     runtime_before: dict[str, str] | None = None
     if args.canonical:
@@ -4135,6 +4195,7 @@ def main(
         if args.lease_child
         else Path(tempfile.mkdtemp(prefix=f"{run_id}-"))
     )
+    remote_lock: RemoteCloudLock | None = None
     results: list[dict[str, Any]] = []
     lease: IdentityStackLease | None = None
     lease_owner_env: MutableMapping[str, str] | None = None
@@ -4193,10 +4254,26 @@ def main(
         except BaseException:
             _clear_capability_environment(mutable_env)
             raise
+    if target.name == "cloud":
+        try:
+            assert args.identity is not None
+            validate_ssh_identity(args.identity)
+            ssh = SshConfig(args.host, args.user, args.identity, args.kex_algorithms)
+            remote_run_id = "e2e-" + secrets.token_hex(16)
+            remote_lock = RemoteCloudLock(ssh=ssh, run_id=remote_run_id).acquire()
+            summary["remote_lock"] = {"kind": "e2e", "run_id": remote_run_id}
+        except (OSError, ReleaseError, RemoteLockError):
+            summary["run_id"] = run_id
+            summary["errors"] = ["remote_lock"]
+            summary["exit_code"] = 1
+            _emit(output, summary, human_lines=("E2E remote lock: FAIL",))
+            return 1
     awake_lease = _SystemAwakeLease(enabled=args.canonical)
     try:
         awake_lease.acquire()
     except OSError:
+        if remote_lock is not None:
+            remote_lock.release()
         if lease is not None:
             _restore_identity_lease(lease)
             if lease_owner_env is not None:
@@ -4207,7 +4284,10 @@ def main(
         _emit(output, summary, human_lines=("E2E system awake lease: FAIL",))
         return 1
     awake_cleanup_failed = False
+    remote_lock_failed = False
     try:
+        if remote_lock is not None:
+            remote_lock.ensure_held()
         if profile_path:
             results, profile_summary_errors = _run_profile_epochs(
                 selected,
@@ -4372,6 +4452,8 @@ def main(
                         fixture_result=fixture_result,
                     ),
                 )
+    except RemoteLockError:
+        remote_lock_failed = True
     except StackLeaseProtocolError:
         results = [
             _synthetic_subrun_result(case, error="lease_protocol")
@@ -4385,6 +4467,15 @@ def main(
                 _clear_capability_environment(lease_owner_env)
         if not awake_lease.release():
             awake_cleanup_failed = True
+        if remote_lock is not None:
+            try:
+                remote_lock.ensure_held()
+            except RemoteLockError:
+                remote_lock_failed = True
+            try:
+                remote_lock.release()
+            except RemoteLockError:
+                remote_lock_failed = True
     if awake_cleanup_failed:
         summary["errors"].append("system_awake")
         if not results:
@@ -4396,6 +4487,19 @@ def main(
             for result in results:
                 result["errors"] = list(dict.fromkeys(
                     [*result.get("errors", []), "system_awake"],
+                ))
+                result["status"] = "FAIL"
+    if remote_lock_failed:
+        summary["errors"].append("remote_lock")
+        if not results:
+            results = [
+                _synthetic_subrun_result(case, error="remote_lock")
+                for case in selected
+            ]
+        else:
+            for result in results:
+                result["errors"] = list(dict.fromkeys(
+                    [*result.get("errors", []), "remote_lock"],
                 ))
                 result["status"] = "FAIL"
     if cleanup_failed:
@@ -4414,6 +4518,16 @@ def main(
     summary["errors"].extend(profile_summary_errors)
     summary["run_id"] = run_id
     summary["results"] = results
+    if target.name == "cloud" and [case.id for case in selected] == ["e2e_remote_safe"]:
+        try:
+            summary["provider"], summary["model"] = _remote_probe_identity(results)
+        except ProtocolError:
+            summary["errors"].append("remote_evidence")
+            for result in results:
+                result["errors"] = list(dict.fromkeys(
+                    [*result.get("errors", []), "remote_evidence"],
+                ))
+                result["status"] = "FAIL"
     if (
         args.canonical
         and canonical_state is not None

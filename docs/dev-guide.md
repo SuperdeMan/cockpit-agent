@@ -1,5 +1,40 @@
 # 开发上手指南
 
+> 用户入口固定为 `scripts/dev_stack.py`。本章命令已有静态/fake 回归；
+> 本文不声称已在真实云主机运行。
+
+## 可切换真栈
+
+执行真栈动作前由统一入口按仓库根目录定位并读取 `dev-stack.local`。它是仓库根目录的
+Git-ignore 文件，不能按当前工作目录误判缺失；缺失按 `target=local`，损坏则 fail closed。只允许
+`target=local|cloud`，不得写入 token、密码、私钥或 URL。`target=cloud` 不启动本地 Compose，
+本地只做编辑、单测、静态检查和 Vite；`target=local` 只用根 `compose.yaml` / `make up`，根
+`.env` 是唯一运行时来源。cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit、
+merge 或 push；未显式 `remote_safe` 的 E2E 不在 cloud 缺省运行。
+`remote_mutating=true` 仍要精确 `--id` + `--allow-mutating` 与本轮人工红线授权。
+
+### 日常三条路径
+
+```powershell
+# A. 纯代码/单测：不需要 Docker
+python -m pytest path/to/changed_tests.py -q
+
+# B. 本地前端连接已选后端：只启动 Vite
+python scripts/dev_stack.py target show
+python scripts/dev_stack.py hmi
+python scripts/dev_stack.py dashboard
+
+# C. 已提交 main 的后端更新：先 dry-run，再单独授权 apply
+python scripts/dev_stack.py deploy --sha HEAD
+python scripts/dev_stack.py deploy --sha HEAD --apply
+python scripts/dev_stack.py verify
+```
+
+切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
+Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。
+HMI/Dashboard 在 cloud 目标下仍是本机 Vite，经 Tailnet HTTPS/WSS 访问后端；
+KWS/VAD 模型由页面加载，推理仍在浏览器本地。
+
 面向第一次跑起本项目、或要单独调试某个服务的开发者。整栈说明见根 `README.md`，本文补齐**工具链、codegen、单服务调试、Windows 注意、常见坑**。
 
 ---
@@ -227,3 +262,51 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 ## 7. 提交前自检
 
 见 `AGENTS.md` §6。最低限度：改了 Python 跑 `py_compile` + 相关 `pytest`；改了端侧逻辑跑 `python test/smoke_edge.py`；改了 proto 跑 `make proto` 确认无错。
+
+## 8. 受控数据迁云命令
+
+第一阶段 online 不停止本地写入；快照之后产生的新数据不会自动同步。第二阶段 final 必须先确认
+所有本地写入者已经停止，再生成一份完整快照并覆盖云端。两个阶段都是 replace，不是 merge，
+且云端只在完成全部只读预检、停止并确认写入者退出后，才在同一停写窗口生成 PostgreSQL、
+Redis、Collector 同时间戳备份。三份备份必须分别通过 archive 清单、RDB CRC、SQLite 实际恢复与
+integrity check，并以流式 SHA-256 写入 backup manifest；任一失败会恢复原 release，不进入 replace。
+
+```powershell
+python scripts/cloud_data_migration.py snapshot --phase online
+python scripts/cloud_data_migration.py plan --migration-id 20260817T010203Z-abcdef0-online
+python scripts/cloud_data_migration.py apply --migration-id 20260817T010203Z-abcdef0-online
+# 只有取得本轮数据库迁移与云端应用授权后：
+python scripts/cloud_data_migration.py apply --migration-id 20260817T010203Z-abcdef0-online --apply
+python scripts/cloud_data_migration.py verify --migration-id 20260817T010203Z-abcdef0-online
+# SSH 超时或 durable journal 显示中断时，先只读审计，再另行授权恢复：
+python scripts/cloud_data_migration.py recover --migration-id 20260817T010203Z-abcdef0-online
+python scripts/cloud_data_migration.py recover --migration-id 20260817T010203Z-abcdef0-online --apply
+```
+
+示例 ID 只展示格式；实际命令必须复制 `snapshot` 输出的 ID。`apply` 和 `rollback` 不带
+`--apply` 时只输出 dry-run。final 也先运行 dry-run，核对会停止的精确服务列表；只有确认另一
+个 agent 已结束并取得本地停写授权后，才执行：
+
+```powershell
+python scripts/cloud_data_migration.py snapshot --phase final
+python scripts/cloud_data_migration.py snapshot --phase final --quiesce-local --apply
+```
+
+工具不会要求或自动修改根 `.env`、云端 `.env`、安全组、Tailscale Serve、CI/CD、systemd 或
+数据库 schema，也不会删除本地/云端卷、备份、release、镜像或迁移包。设计快照中的
+`pending=57`、`enabled=1` 只是验收参照，执行时必须重采；`voiceprint=0` 必须如实报告 0。
+这些命令和边界是运行手册，不代表已经对真实数据栈执行或验证。
+
+远端验证分为 pre-start 与 post-start。恢复完成且写服务尚未启动时，工具将 snapshot 精确对账写入
+`evidence-pre-start.json`；release 启动后再写 `evidence-post-start.json`。post-start 允许服务
+自然增长。PostgreSQL 用主键的 keyed digest 集合守住实体身份，并按生产常量中的完整状态集合和允许
+transition matrix 校验；因此允许正常状态流转，但等量换行、非法回退和持久实体丢失都会失败。
+Redis 对无 TTL key 保存 keyed identity digest；有 TTL key 保存 digest 与绝对过期时刻，只有检查时已经
+到期的源 key 才允许缺失。Collector 保存各表关系 identity、清理 cutoff 与 badcase/gold trace 保护位；
+只有实际满足 `ts < cutoff` 且非保护 trace 的行才允许按 retention 谓词减少，等量替换和关联改写都失败。
+`verify` 使用保存的 pre-start baseline 执行同一 post-start 规则；证据不含正文或完整 key。
+
+`rollback` / `recover` 不带 `--apply` 时通过只读 `rollback-plan` 返回服务器已记录的 backup stamp、
+三份 backup hash、operation/release identity 与 would-stop 列表；该路径不获取或创建事务锁。
+`BACKED_UP`、`ROLLBACK_IN_PROGRESS` 可按 durable journal 确定性续作；`ROLLBACK_FAILED` 不自动
+盲重试，必须先审计 journal 中的 store/step/rc，再显式执行 `recover ... --apply`。

@@ -995,6 +995,8 @@ def test_journey_shards_receive_fresh_bundles_immediately_before_each_child(
         signed_identity=True,
         persistent_data=True,
         memory_sessions=2,
+        remote_safe=False,
+        remote_mutating=False,
         nightly=None,
     )
     events = []
@@ -1204,6 +1206,8 @@ def _case(
         "signed_identity": False,
         "persistent_data": False,
         "memory_sessions": 0,
+        "remote_safe": False,
+        "remote_mutating": False,
     }
     if "nightly" in lanes:
         item["nightly"] = nightly if nightly is not None else {"all": True}
@@ -4041,7 +4045,7 @@ def test_emit_is_ascii_safe_for_strict_windows_streams():
     assert payload == {"diagnostic": "\ufffd", "exit_code": 1}
 
 
-def test_child_environment_defaults_to_root_stack_websocket(tmp_path: Path):
+def test_child_environment_uses_only_resolved_target_websocket(tmp_path: Path):
     runner = _runner()
     manifest = runner.load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
     case = next(item for item in manifest.cases if item.id == "e2e_memory")
@@ -4067,5 +4071,5 @@ def test_child_environment_defaults_to_root_stack_websocket(tmp_path: Path):
         model=None,
     )
 
-    assert default_env["WS_URL"] == "ws://127.0.0.1:8090/ws"
+    assert "WS_URL" not in default_env
     assert custom_env["WS_URL"] == "wss://example.invalid/ws"

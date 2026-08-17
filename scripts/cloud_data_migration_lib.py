@@ -1,0 +1,1692 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import secrets
+import shutil
+import sqlite3
+import stat
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from types import MappingProxyType
+from typing import BinaryIO, Callable, Mapping, Protocol, Sequence
+
+from scripts.cloud_release_lib import CommandRunner as RemoteCommandRunner
+from scripts.cloud_release_lib import SshConfig, _terminate_process_tree
+from scripts.dev_stack_lib import DevStackError, resolve_target
+
+
+MIGRATION_ID_RE = re.compile(
+    r"^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{7}-(?:online|final)$"
+)
+FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+MANIFEST_KEYS = frozenset(
+    {
+        "schema_version",
+        "migration_id",
+        "phase",
+        "source_sha",
+        "created_at",
+        "files",
+        "postgres",
+        "redis",
+        "collector",
+        "identity_hmac_key",
+    }
+)
+SNAPSHOT_FILENAMES = ("postgres.dump", "redis.rdb", "collector.db")
+MIN_SNAPSHOT_FREE_BYTES = 1024 * 1024 * 1024
+CONTROL_JSON_MAX_BYTES = 16 * 1024 * 1024
+CONTROL_JSON_MAX_DEPTH = 16
+CONTROL_JSON_MAX_ITEMS = 200_000
+MAX_IDENTITY_ITEMS = 20_000
+MIGRATION_STATE_MACHINE = json.loads(
+    (Path(__file__).resolve().parents[1] / "deploy" / "cloud" / "migration-state-machine.json")
+    .read_text(encoding="utf-8")
+)["states"]
+BUSINESS_TABLES = (
+    "memory_item",
+    "memory_relation",
+    "reminder_item",
+    "task_ledger",
+    "proactive_delivery",
+    "scene_item",
+    "voiceprint",
+)
+DERIVED_TABLES = ("agents", "agent_capability_vec")
+COLLECTOR_TABLES = ("turns", "spans", "llm_calls", "logs")
+POSTGRES_STATE_COLUMNS = MappingProxyType(
+    {
+        "reminder_item.status": ("reminder_item", "status"),
+        "task_ledger.status": ("task_ledger", "status"),
+        "proactive_delivery.state": ("proactive_delivery", "state"),
+        "scene_item.status": ("scene_item", "status"),
+    }
+)
+POSTGRES_ALLOWED_STATES = MappingProxyType({
+    "reminder_item.status": frozenset({"pending", "fired", "done", "cancelled"}),
+    "task_ledger.status": frozenset({
+        "accepted", "running", "done", "failed", "cancelled", "orphaned",
+    }),
+    "proactive_delivery.state": frozenset({
+        "pending", "dispatched", "presented", "dropped", "expired",
+    }),
+    "scene_item.status": frozenset({"enabled", "disabled"}),
+})
+POSTGRES_STATE_TRANSITIONS = MappingProxyType({
+    "reminder_item.status": MappingProxyType({
+        "pending": frozenset({"pending", "fired", "done", "cancelled"}),
+        "fired": frozenset({"fired", "pending", "done", "cancelled"}),
+        "done": frozenset({"done"}), "cancelled": frozenset({"cancelled"}),
+    }),
+    "task_ledger.status": MappingProxyType({
+        "accepted": frozenset({"accepted", "running", "done", "failed", "cancelled", "orphaned"}),
+        "running": frozenset({"running", "done", "failed", "cancelled", "orphaned"}),
+        "orphaned": frozenset({"orphaned", "running", "done", "failed", "cancelled"}),
+        "done": frozenset({"done"}), "failed": frozenset({"failed"}),
+        "cancelled": frozenset({"cancelled"}),
+    }),
+    "proactive_delivery.state": MappingProxyType({
+        "pending": frozenset({"pending", "dispatched", "presented", "dropped", "expired"}),
+        "dispatched": frozenset({"dispatched", "presented", "dropped", "expired"}),
+        "presented": frozenset({"presented"}), "dropped": frozenset({"dropped"}),
+        "expired": frozenset({"expired"}),
+    }),
+    "scene_item.status": MappingProxyType({
+        "enabled": frozenset({"enabled", "disabled"}),
+        "disabled": frozenset({"disabled", "enabled"}),
+    }),
+})
+SCHEMA_SQL = """
+SELECT json_agg(row_to_json(x) ORDER BY table_name, ordinal_position)
+FROM (
+  SELECT table_name, column_name, ordinal_position, data_type, udt_name,
+         is_nullable, column_default
+  FROM information_schema.columns
+  WHERE table_schema='public'
+) x
+""".strip()
+POSTGRES_AGGREGATE_SQL = r"""
+WITH table_counts(name, count) AS (
+  SELECT 'memory_item', count(*) FROM memory_item UNION ALL
+  SELECT 'memory_relation', count(*) FROM memory_relation UNION ALL
+  SELECT 'reminder_item', count(*) FROM reminder_item UNION ALL
+  SELECT 'task_ledger', count(*) FROM task_ledger UNION ALL
+  SELECT 'proactive_delivery', count(*) FROM proactive_delivery UNION ALL
+  SELECT 'scene_item', count(*) FROM scene_item UNION ALL
+  SELECT 'voiceprint', count(*) FROM voiceprint UNION ALL
+  SELECT 'agents', count(*) FROM agents UNION ALL
+  SELECT 'agent_capability_vec', count(*) FROM agent_capability_vec
+), columns_data AS (
+  SELECT json_agg(json_build_array(table_name, column_name, ordinal_position,
+             data_type, udt_name, is_nullable, column_default)
+             ORDER BY table_name, ordinal_position) AS value
+  FROM information_schema.columns WHERE table_schema='public'
+), primary_key_data AS (
+  SELECT json_agg(json_build_array(tc.table_name, tc.constraint_name, kcu.column_name)
+             ORDER BY tc.table_name, tc.constraint_name, kcu.ordinal_position) AS value
+  FROM information_schema.table_constraints tc
+  JOIN information_schema.key_column_usage kcu
+    ON tc.constraint_schema=kcu.constraint_schema AND tc.constraint_name=kcu.constraint_name
+  WHERE tc.table_schema='public' AND tc.constraint_type='PRIMARY KEY'
+), index_data AS (
+  SELECT json_agg(json_build_array(tablename, indexname, indexdef) ORDER BY tablename, indexname) AS value
+  FROM pg_indexes WHERE schemaname='public'
+)
+SELECT json_build_object(
+  'major', (current_setting('server_version_num')::int / 10000)::text,
+  'vector_version', COALESCE((SELECT extversion FROM pg_extension WHERE extname='vector'), ''),
+  'tables', (SELECT json_object_agg(name, count) FROM table_counts),
+  'states', json_build_object(
+    'reminder_item.status', (SELECT COALESCE(json_object_agg(status, count), '{}'::json)
+       FROM (SELECT status, count(*) count FROM reminder_item GROUP BY status) x),
+    'task_ledger.status', (SELECT COALESCE(json_object_agg(status, count), '{}'::json)
+       FROM (SELECT status, count(*) count FROM task_ledger GROUP BY status) x),
+    'proactive_delivery.state', (SELECT COALESCE(json_object_agg(state, count), '{}'::json)
+       FROM (SELECT state, count(*) count FROM proactive_delivery GROUP BY state) x),
+    'scene_item.status', (SELECT COALESCE(json_object_agg(status, count), '{}'::json)
+       FROM (SELECT status, count(*) count FROM scene_item GROUP BY status) x)
+  ),
+  'columns', COALESCE((SELECT value FROM columns_data), '[]'::json),
+  'primary_keys', COALESCE((SELECT value FROM primary_key_data), '[]'::json),
+  'indexes', COALESCE((SELECT value FROM index_data), '[]'::json)
+)
+""".strip()
+REDIS_AGGREGATE_LUA = r"""
+redis.setresp(3)
+local cursor = "0"
+local prefixes, types = {}, {}
+local key_count, persistent, expiring = 0, 0, 0
+local min_ttl, max_ttl = nil, 0
+repeat
+  local page = redis.call("SCAN", cursor, "COUNT", 1000)
+  cursor = page[1]
+  for _, key in ipairs(page[2]) do
+    key_count = key_count + 1
+    local prefix = string.match(key, "^([A-Za-z0-9_-]+):") or "other"
+    if string.len(prefix) > 32 then prefix = "other" end
+    prefixes[prefix] = (prefixes[prefix] or 0) + 1
+    local kind = redis.call("TYPE", key)
+    if type(kind) == "table" then kind = kind.ok end
+    types[kind] = (types[kind] or 0) + 1
+    local ttl = redis.call("PTTL", key)
+    if ttl < 0 then
+      persistent = persistent + 1
+    else
+      expiring = expiring + 1
+      if min_ttl == nil or ttl < min_ttl then min_ttl = ttl end
+      if ttl > max_ttl then max_ttl = ttl end
+    end
+  end
+until cursor == "0"
+local prefix_items, type_items = {}, {}
+for key, value in pairs(prefixes) do table.insert(prefix_items, key); table.insert(prefix_items, value) end
+for key, value in pairs(types) do table.insert(type_items, key); table.insert(type_items, value) end
+local info = redis.call("INFO", "server")
+local version = string.match(info, "redis_version:([^\r\n]+)") or "unknown"
+return {map={
+  "version", version, "rdb_version", 1, "key_count", key_count,
+  "prefixes", {map=prefix_items}, "types", {map=type_items},
+  "persistent", persistent, "expiring", expiring,
+  "min_ttl_ms", min_ttl or 0, "max_ttl_ms", max_ttl
+}}
+""".strip()
+
+
+class MigrationError(RuntimeError):
+    """A redacted, user-facing data migration error."""
+
+
+def _digest_set(value: object, label: str) -> set[str]:
+    if (not isinstance(value, list) or len(value) > CONTROL_JSON_MAX_ITEMS
+            or any(not isinstance(item, str) or SHA256_RE.fullmatch(item) is None for item in value)
+            or len(set(value)) != len(value)):
+        raise MigrationError(f"{label} digest set is invalid")
+    return set(value)
+
+
+def verify_post_start_identity_evidence(
+    baseline: Mapping[str, object], current: Mapping[str, object], *, checked_at_ms: int,
+) -> None:
+    """Verify growth-safe post-start identities without exposing source keys or content."""
+    if type(checked_at_ms) is not int or checked_at_ms < 0:
+        raise MigrationError("identity evidence check time is invalid")
+    for store in ("postgres", "redis", "collector"):
+        if not isinstance(baseline.get(store), Mapping) or not isinstance(current.get(store), Mapping):
+            raise MigrationError("identity evidence store set is invalid")
+
+    baseline_pg = baseline["postgres"]
+    current_pg = current["postgres"]
+    assert isinstance(baseline_pg, Mapping) and isinstance(current_pg, Mapping)
+    baseline_sets = baseline_pg.get("identity_sets")
+    current_sets = current_pg.get("identity_sets")
+    if (not isinstance(baseline_sets, Mapping) or not isinstance(current_sets, Mapping)
+            or set(baseline_sets) != set(current_sets)):
+        raise MigrationError("PostgreSQL identity table set is invalid")
+    for table in baseline_sets:
+        before = _digest_set(baseline_sets[table], f"PostgreSQL {table}")
+        after = _digest_set(current_sets[table], f"PostgreSQL {table}")
+        if not before.issubset(after):
+            raise MigrationError("PostgreSQL identity disappeared or was replaced")
+    before_states = baseline_pg.get("state_by_identity")
+    after_states = current_pg.get("state_by_identity")
+    if (not isinstance(before_states, Mapping) or not isinstance(after_states, Mapping)
+            or set(before_states) != set(POSTGRES_ALLOWED_STATES)
+            or set(after_states) != set(POSTGRES_ALLOWED_STATES)):
+        raise MigrationError("PostgreSQL state identity set is invalid")
+    for state_name, allowed in POSTGRES_ALLOWED_STATES.items():
+        before_map = before_states[state_name]
+        after_map = after_states[state_name]
+        if not isinstance(before_map, Mapping) or not isinstance(after_map, Mapping):
+            raise MigrationError("PostgreSQL state identity map is invalid")
+        if len(before_map) > CONTROL_JSON_MAX_ITEMS or len(after_map) > CONTROL_JSON_MAX_ITEMS:
+            raise MigrationError("PostgreSQL state identity map exceeds item limit")
+        for digest, old_state in before_map.items():
+            if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+                raise MigrationError("PostgreSQL state identity digest is invalid")
+            new_state = after_map.get(digest)
+            if old_state not in allowed or new_state not in allowed:
+                raise MigrationError("PostgreSQL state value is invalid")
+            if new_state not in POSTGRES_STATE_TRANSITIONS[state_name][old_state]:
+                raise MigrationError("PostgreSQL state transition is invalid")
+
+    baseline_redis = baseline["redis"]
+    current_redis = current["redis"]
+    assert isinstance(baseline_redis, Mapping) and isinstance(current_redis, Mapping)
+    persistent_before = _digest_set(
+        baseline_redis.get("persistent_digests"), "Redis persistent",
+    )
+    persistent_after = _digest_set(
+        current_redis.get("persistent_digests"), "Redis persistent",
+    )
+    if not persistent_before.issubset(persistent_after):
+        raise MigrationError("persistent Redis identity disappeared")
+    expiry_before = baseline_redis.get("expiring_deadlines_ms")
+    expiry_after = current_redis.get("expiring_deadlines_ms")
+    if not isinstance(expiry_before, Mapping) or not isinstance(expiry_after, Mapping):
+        raise MigrationError("Redis expiry identity map is invalid")
+    for digest, deadline in expiry_before.items():
+        if (not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None
+                or type(deadline) is not int or deadline < 0):
+            raise MigrationError("Redis expiry identity record is invalid")
+        if digest not in expiry_after and deadline > checked_at_ms:
+            raise MigrationError("unexpired Redis identity disappeared")
+
+    baseline_collector = baseline["collector"]
+    current_collector = current["collector"]
+    assert isinstance(baseline_collector, Mapping) and isinstance(current_collector, Mapping)
+    before_rows = baseline_collector.get("rows")
+    after_rows = current_collector.get("rows")
+    cutoff = current_collector.get("cleanup_cutoff_ms")
+    if (not isinstance(before_rows, Mapping) or not isinstance(after_rows, Mapping)
+            or set(before_rows) != set(COLLECTOR_TABLES)
+            or set(after_rows) != set(COLLECTOR_TABLES)
+            or type(cutoff) is not int or cutoff < 0):
+        raise MigrationError("Collector identity evidence is invalid")
+    for table in COLLECTOR_TABLES:
+        old_table = before_rows[table]
+        new_table = after_rows[table]
+        if not isinstance(old_table, Mapping) or not isinstance(new_table, Mapping):
+            raise MigrationError("Collector table identity evidence is invalid")
+        for digest, record in old_table.items():
+            if not isinstance(record, Mapping):
+                raise MigrationError("Collector identity record is invalid")
+            if digest in new_table:
+                if new_table[digest] != record:
+                    raise MigrationError("Collector relation identity changed")
+                continue
+            if record.get("protected") is True:
+                raise MigrationError("protected Collector identity disappeared")
+            if type(record.get("ts_ms")) is not int or record["ts_ms"] >= cutoff:
+                raise MigrationError("Collector deletion violates retention predicate")
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    argv: tuple[str, ...]
+    returncode: int
+    stdout: str
+    stderr: str
+
+
+class BinaryCommandRunner(Protocol):
+    def run(self, argv: Sequence[str], *, cwd: Path) -> CommandResult: ...
+
+    def text(self, argv: Sequence[str], *, cwd: Path) -> str: ...
+
+    def json(self, argv: Sequence[str], *, cwd: Path) -> object: ...
+
+    def stream_to_file(
+        self, argv: Sequence[str], target: Path, *, cwd: Path
+    ) -> None: ...
+
+    def run_from_file(
+        self, argv: Sequence[str], source: Path, *, cwd: Path
+    ) -> CommandResult: ...
+
+
+class LocalCommandRunner:
+    def __init__(
+        self, *, command_timeout_s: float = 300, stream_timeout_s: float = 1800,
+    ) -> None:
+        self._command_timeout_s = command_timeout_s
+        self._stream_timeout_s = stream_timeout_s
+
+    def _execute(
+        self, argv: Sequence[str], *, cwd: Path, stdout: object = subprocess.PIPE,
+        stdin: object = subprocess.DEVNULL, timeout_s: float | None = None,
+    ) -> subprocess.CompletedProcess[bytes]:
+        try:
+            process = subprocess.Popen(
+                list(argv), cwd=cwd, stdin=stdin, stdout=stdout,
+                stderr=subprocess.PIPE,
+                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
+                start_new_session=os.name != "nt",
+            )
+        except OSError as exc:
+            raise MigrationError(f"could not run required local command: {argv[0]}") from exc
+        try:
+            captured_stdout, captured_stderr = process.communicate(
+                timeout=self._command_timeout_s if timeout_s is None else timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            _terminate_process_tree(process)
+            process.communicate()
+            raise MigrationError(f"local command timed out: {argv[0]}") from exc
+        completed = subprocess.CompletedProcess(
+            list(argv), process.returncode,
+            captured_stdout if captured_stdout is not None else b"",
+            captured_stderr if captured_stderr is not None else b"",
+        )
+        if completed.returncode != 0:
+            raise MigrationError(f"required local command failed: {argv[0]}")
+        return completed
+
+    def run(self, argv: Sequence[str], *, cwd: Path) -> CommandResult:
+        completed = self._execute(argv, cwd=cwd)
+        return CommandResult(
+            tuple(argv), completed.returncode,
+            completed.stdout.decode("utf-8", errors="replace"),
+            completed.stderr.decode("utf-8", errors="replace"),
+        )
+
+    def text(self, argv: Sequence[str], *, cwd: Path) -> str:
+        return self.run(argv, cwd=cwd).stdout
+
+    def json(self, argv: Sequence[str], *, cwd: Path) -> object:
+        try:
+            return json.loads(self.text(argv, cwd=cwd))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise MigrationError(f"local command returned invalid JSON: {argv[0]}") from exc
+
+    def stream_to_file(self, argv: Sequence[str], target: Path, *, cwd: Path) -> None:
+        with target.open("xb") as output:
+            self._execute(argv, cwd=cwd, stdout=output, timeout_s=self._stream_timeout_s)
+
+    def run_from_file(self, argv: Sequence[str], source: Path, *, cwd: Path) -> CommandResult:
+        with source.open("rb") as input_file:
+            completed = self._execute(
+                argv, cwd=cwd, stdin=input_file, timeout_s=self._stream_timeout_s,
+            )
+        return CommandResult(tuple(argv), completed.returncode,
+            completed.stdout.decode("utf-8", errors="replace"),
+            completed.stderr.decode("utf-8", errors="replace"))
+
+
+@dataclass(frozen=True)
+class FileRecord:
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class MigrationManifest:
+    migration_id: str
+    phase: str
+    source_sha: str
+    created_at: str
+    files: Mapping[str, FileRecord]
+    postgres: Mapping[str, object]
+    redis: Mapping[str, object]
+    collector: Mapping[str, object]
+    identity_hmac_key: str
+    schema_version: int = 1
+
+
+@dataclass(frozen=True)
+class SourceService:
+    service: str
+    container_id: str
+    image: str
+    data_mount: str
+
+
+@dataclass(frozen=True)
+class WriterIdentity:
+    service: str
+    container_id: str
+    image_id: str
+    volumes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class MigrationBundle:
+    directory: Path
+    manifest: MigrationManifest
+    files: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class SnapshotEvidence:
+    directory: Path
+    migration_id: str
+    phase: str
+    source_sha: str
+    created_at: str
+    postgres: Mapping[str, object]
+    redis: Mapping[str, object]
+    collector: Mapping[str, object]
+    identity_hmac_key: str
+
+
+@dataclass(frozen=True)
+class MigrationRequest:
+    repo: Path
+    migration_id: str
+    bundle: MigrationBundle | None
+    ssh: SshConfig
+
+
+@dataclass(frozen=True)
+class MigrationPlan:
+    migration_id: str
+    status: str
+    current_release: str
+    disk_available_bytes: int
+    bundle_size_bytes: int
+    remote_stores: Mapping[str, object]
+
+
+def _exact_keys(value: object, expected: frozenset[str], label: str) -> Mapping[str, object]:
+    if not isinstance(value, Mapping):
+        raise MigrationError(f"{label} must be an object")
+    keys = frozenset(value.keys())
+    if keys != expected or not all(isinstance(key, str) for key in keys):
+        raise MigrationError(f"unknown {label} keys")
+    return value
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise MigrationError("control JSON contains duplicate keys")
+        result[key] = value
+    return result
+
+
+def _validate_json_bounds(value: object, *, depth: int = 0, counter: list[int] | None = None) -> None:
+    if depth > CONTROL_JSON_MAX_DEPTH:
+        raise MigrationError("control JSON exceeds depth limit")
+    count = counter if counter is not None else [0]
+    count[0] += 1
+    if count[0] > CONTROL_JSON_MAX_ITEMS:
+        raise MigrationError("control JSON exceeds item limit")
+    if isinstance(value, Mapping):
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise MigrationError("control JSON key is invalid")
+            _validate_json_bounds(item, depth=depth + 1, counter=count)
+    elif isinstance(value, list):
+        for item in value:
+            _validate_json_bounds(item, depth=depth + 1, counter=count)
+
+
+def parse_control_json(raw: bytes | str, *, max_bytes: int = CONTROL_JSON_MAX_BYTES) -> object:
+    encoded = raw.encode("utf-8") if isinstance(raw, str) else raw
+    if len(encoded) > max_bytes:
+        raise MigrationError("control JSON exceeds byte limit")
+    try:
+        value = json.loads(encoded.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    except (UnicodeError, json.JSONDecodeError, RecursionError) as exc:
+        raise MigrationError("control JSON is invalid") from exc
+    _validate_json_bounds(value)
+    return value
+
+
+def _strict_int(value: object, label: str, *, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise MigrationError(f"{label} must be an integer")
+    return value
+
+
+def require_migration_id(value: str) -> str:
+    if not isinstance(value, str) or MIGRATION_ID_RE.fullmatch(value) is None:
+        raise MigrationError("invalid migration id")
+    return value
+
+
+def new_migration_id(now: datetime, source_sha: str, phase: str) -> str:
+    if now.tzinfo is None or phase not in {"online", "final"}:
+        raise MigrationError("invalid migration identity inputs")
+    if FULL_SHA_RE.fullmatch(source_sha) is None:
+        raise MigrationError("source SHA must be a full lowercase commit SHA")
+    stamp = now.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return f"{stamp}-{source_sha[:7]}-{phase}"
+
+
+def artifact_directory(root: Path, migration_id: str) -> Path:
+    require_migration_id(migration_id)
+    candidate = root.absolute()
+    for ancestor in (candidate, *candidate.parents):
+        if not ancestor.exists() and not ancestor.is_symlink():
+            continue
+        try:
+            info = ancestor.lstat()
+        except OSError as exc:
+            raise MigrationError("migration artifact ancestor is unsafe") from exc
+        is_reparse = bool(
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        )
+        is_junction = bool(getattr(ancestor, "is_junction", lambda: False)())
+        if ancestor.is_symlink() or is_reparse or is_junction:
+            raise MigrationError("migration artifact ancestor is a link or junction")
+    base = root.resolve()
+    target = (base / migration_id).resolve()
+    if target.parent != base:
+        raise MigrationError("migration artifact escaped its root")
+    return target
+
+
+def atomic_private_json(path: Path, payload: Mapping[str, object]) -> None:
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8") + b"\n"
+    temporary = path.with_name(path.name + ".partial")
+    with temporary.open("xb") as handle:
+        handle.write(encoded)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def restrict_private_tree(path: Path, runner: BinaryCommandRunner) -> None:
+    os.chmod(path, 0o700 if path.is_dir() else 0o600)
+    if os.name != "nt":
+        return
+    account = runner.text(["whoami"], cwd=path.parent).strip()
+    if not account or any(char in account for char in "\r\n\x00"):
+        raise MigrationError("could not resolve the current Windows account")
+    grant = f"{account}:(OI)(CI)F" if path.is_dir() else f"{account}:F"
+    runner.run(
+        ["icacls", str(path), "/inheritance:r", "/grant:r", grant], cwd=path.parent
+    )
+
+
+def parse_manifest(payload: object) -> MigrationManifest:
+    data = _exact_keys(payload, MANIFEST_KEYS, "manifest")
+    schema_version = _strict_int(data["schema_version"], "schema_version", minimum=1)
+    if schema_version != 1:
+        raise MigrationError("invalid schema_version")
+    migration_id = require_migration_id(data["migration_id"])  # type: ignore[arg-type]
+    phase = data["phase"]
+    if phase not in {"online", "final"} or not migration_id.endswith(f"-{phase}"):
+        raise MigrationError("manifest phase does not match migration id")
+    source_sha = data["source_sha"]
+    if not isinstance(source_sha, str) or FULL_SHA_RE.fullmatch(source_sha) is None:
+        raise MigrationError("invalid source SHA")
+    created_at = data["created_at"]
+    if not isinstance(created_at, str) or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", created_at) is None:
+        raise MigrationError("invalid created_at")
+    try:
+        parsed_created = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MigrationError("invalid created_at") from exc
+    canonical_created = parsed_created.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+    if parsed_created.utcoffset() != UTC.utcoffset(parsed_created) or canonical_created != created_at:
+        raise MigrationError("invalid created_at")
+    expected_id = f"{parsed_created.strftime('%Y%m%dT%H%M%SZ')}-{source_sha[:7]}-{phase}"
+    if migration_id != expected_id:
+        raise MigrationError("migration id does not match source SHA and creation time")
+
+    raw_files = _exact_keys(data["files"], frozenset(SNAPSHOT_FILENAMES), "file")
+    files: dict[str, FileRecord] = {}
+    for name in SNAPSHOT_FILENAMES:
+        raw = _exact_keys(
+            raw_files[name], frozenset({"size_bytes", "sha256"}), "file record"
+        )
+        size = _strict_int(raw["size_bytes"], "size_bytes", minimum=1)
+        checksum = raw["sha256"]
+        if not isinstance(checksum, str) or SHA256_RE.fullmatch(checksum) is None:
+            raise MigrationError("invalid sha256")
+        files[name] = FileRecord(size_bytes=size, sha256=checksum)
+
+    postgres = _parse_postgres_manifest(data["postgres"])
+    redis = _parse_redis_manifest(data["redis"])
+    collector = _parse_collector_manifest(data["collector"])
+    identity_hmac_key = _require_fingerprint(data["identity_hmac_key"], "identity HMAC key")
+    return MigrationManifest(
+        migration_id=migration_id,
+        phase=phase,
+        source_sha=source_sha,
+        created_at=created_at,
+        files=MappingProxyType(files),
+        postgres=postgres,
+        redis=redis,
+        collector=collector,
+        identity_hmac_key=identity_hmac_key,
+        schema_version=schema_version,
+    )
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":")
+    ).encode("ascii")
+
+
+def redis_prefix(key: bytes) -> str:
+    head = key.split(b":", 1)[0]
+    decoded = head.decode("ascii", errors="ignore")
+    return decoded if re.fullmatch(r"[A-Za-z0-9_-]{1,32}", decoded) else "other"
+
+
+def sqlite_fingerprint(connection: sqlite3.Connection) -> str:
+    rows = connection.execute(
+        "SELECT type,name,tbl_name,sql FROM sqlite_master "
+        "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+    ).fetchall()
+    return hashlib.sha256(canonical_json_bytes(rows)).hexdigest()
+
+
+def _bounded_count_map(value: object, label: str) -> Mapping[str, int]:
+    if not isinstance(value, Mapping):
+        raise MigrationError(f"{label} must be an object")
+    result: dict[str, int] = {}
+    for key, count in value.items():
+        if not isinstance(key, str) or re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", key) is None:
+            raise MigrationError(f"{label} contains an invalid category")
+        result[key] = _strict_int(count, f"{label} count")
+    return MappingProxyType(result)
+
+
+def _require_fingerprint(value: object, label: str) -> str:
+    if not isinstance(value, str) or SHA256_RE.fullmatch(value) is None:
+        raise MigrationError(f"invalid {label}")
+    return value
+
+
+def _validate_postgres_state_counts(
+    tables: Mapping[str, int], states: Mapping[str, Mapping[str, int]],
+) -> None:
+    for name, counts in states.items():
+        if not set(counts).issubset(POSTGRES_ALLOWED_STATES[name]):
+            raise MigrationError("PostgreSQL state value is not in the production contract")
+        table = POSTGRES_STATE_COLUMNS[name][0]
+        if sum(counts.values()) != tables[table]:
+            raise MigrationError("PostgreSQL state counts do not conserve entities")
+
+
+def _identity_map(value: object, label: str) -> dict[str, str]:
+    if not isinstance(value, Mapping) or len(value) > MAX_IDENTITY_ITEMS:
+        raise MigrationError(f"{label} identity map is invalid")
+    result: dict[str, str] = {}
+    for identity, logical in value.items():
+        if (not isinstance(identity, str) or SHA256_RE.fullmatch(identity) is None
+                or not isinstance(logical, str) or SHA256_RE.fullmatch(logical) is None):
+            raise MigrationError(f"{label} identity record is invalid")
+        result[identity] = logical
+    return result
+
+
+def _parse_postgres_source_identity(
+    value: object, tables: Mapping[str, int],
+) -> dict[str, object]:
+    data = _exact_keys(value, frozenset({
+        "identity_sets", "logical_rows", "state_by_identity",
+    }), "PostgreSQL source identity")
+    identity_sets = data["identity_sets"]
+    logical_rows = data["logical_rows"]
+    state_maps = data["state_by_identity"]
+    if (not isinstance(identity_sets, Mapping) or not isinstance(logical_rows, Mapping)
+            or set(identity_sets) != set(BUSINESS_TABLES)
+            or set(logical_rows) != set(BUSINESS_TABLES)
+            or not isinstance(state_maps, Mapping)
+            or set(state_maps) != set(POSTGRES_STATE_COLUMNS)):
+        raise MigrationError("PostgreSQL source identity table set is invalid")
+    parsed_sets: dict[str, list[str]] = {}
+    parsed_rows: dict[str, dict[str, str]] = {}
+    for table in BUSINESS_TABLES:
+        identities = sorted(_digest_set(identity_sets[table], f"PostgreSQL {table}"))
+        rows = _identity_map(logical_rows[table], f"PostgreSQL {table}")
+        if len(identities) != tables[table] or set(identities) != set(rows):
+            raise MigrationError("PostgreSQL source identity count mismatch")
+        parsed_sets[table] = identities
+        parsed_rows[table] = rows
+    parsed_states: dict[str, dict[str, str]] = {}
+    for name, (table, _) in POSTGRES_STATE_COLUMNS.items():
+        raw = state_maps[name]
+        if not isinstance(raw, Mapping) or set(raw) != set(parsed_sets[table]):
+            raise MigrationError("PostgreSQL source state identity mismatch")
+        if any(state not in POSTGRES_ALLOWED_STATES[name] for state in raw.values()):
+            raise MigrationError("PostgreSQL source state is invalid")
+        parsed_states[name] = dict(raw)
+    return {"identity_sets": parsed_sets, "logical_rows": parsed_rows,
+            "state_by_identity": parsed_states}
+
+
+def _parse_postgres_manifest(value: object) -> Mapping[str, object]:
+    data = _exact_keys(value, frozenset({
+        "major", "vector_version", "tables", "states",
+        "schema_fingerprint", "archive_fingerprint", "source_identity",
+    }), "PostgreSQL evidence")
+    major = data["major"]
+    vector = data["vector_version"]
+    if not isinstance(major, str) or re.fullmatch(r"[0-9]{1,3}", major) is None:
+        raise MigrationError("invalid PostgreSQL major")
+    if not isinstance(vector, str) or re.fullmatch(r"[0-9]+(?:[.][0-9]+){1,3}", vector) is None:
+        raise MigrationError("invalid vector version")
+    tables = _bounded_count_map(data["tables"], "PostgreSQL tables")
+    if set(tables) != set(BUSINESS_TABLES + DERIVED_TABLES):
+        raise MigrationError("PostgreSQL table set is not exact")
+    if sum(tables[name] for name in BUSINESS_TABLES) > MAX_IDENTITY_ITEMS:
+        raise MigrationError("PostgreSQL identity count limit exceeded")
+    states_raw = data["states"]
+    if not isinstance(states_raw, Mapping) or set(states_raw) != set(POSTGRES_STATE_COLUMNS):
+        raise MigrationError("PostgreSQL state set is not exact")
+    states = {name: dict(_bounded_count_map(states_raw[name], name)) for name in POSTGRES_STATE_COLUMNS}
+    _validate_postgres_state_counts(tables, states)
+    source_identity = _parse_postgres_source_identity(data["source_identity"], tables)
+    return MappingProxyType({
+        "major": major, "vector_version": vector, "tables": dict(tables), "states": states,
+        "schema_fingerprint": _require_fingerprint(data["schema_fingerprint"], "schema fingerprint"),
+        "archive_fingerprint": _require_fingerprint(data["archive_fingerprint"], "archive fingerprint"),
+        "source_identity": source_identity,
+    })
+
+
+def _parse_redis_manifest(value: object) -> Mapping[str, object]:
+    data = _exact_keys(value, frozenset({
+        "version", "rdb_version", "key_count", "prefixes", "types", "persistent",
+        "expiring", "min_ttl_ms", "max_ttl_ms", "rdb_sha256", "source_identity",
+    }), "Redis evidence")
+    version = data["version"]
+    if not isinstance(version, str) or re.fullmatch(r"[0-9]+(?:[.][0-9]+){1,3}", version) is None:
+        raise MigrationError("invalid Redis version")
+    result = {
+        "version": version,
+        "rdb_version": _strict_int(data["rdb_version"], "RDB version", minimum=1),
+        "key_count": _strict_int(data["key_count"], "Redis key count"),
+        "prefixes": dict(_bounded_count_map(data["prefixes"], "Redis prefixes")),
+        "types": dict(_bounded_count_map(data["types"], "Redis types")),
+        "persistent": _strict_int(data["persistent"], "persistent count"),
+        "expiring": _strict_int(data["expiring"], "expiring count"),
+        "min_ttl_ms": _strict_int(data["min_ttl_ms"], "minimum TTL"),
+        "max_ttl_ms": _strict_int(data["max_ttl_ms"], "maximum TTL"),
+        "rdb_sha256": _require_fingerprint(data["rdb_sha256"], "RDB sha256"),
+    }
+    if result["persistent"] + result["expiring"] != result["key_count"]:
+        raise MigrationError("Redis TTL counts do not match key count")
+    if result["key_count"] > MAX_IDENTITY_ITEMS:
+        raise MigrationError("Redis identity count limit exceeded")
+    if sum(result["prefixes"].values()) != result["key_count"] or sum(result["types"].values()) != result["key_count"]:
+        raise MigrationError("Redis aggregate counts do not match key count")
+    if result["min_ttl_ms"] > result["max_ttl_ms"]:
+        raise MigrationError("Redis TTL range is invalid")
+    identity = _exact_keys(data["source_identity"], frozenset({"rows", "checked_at_ms"}), "Redis source identity")
+    rows_raw = identity["rows"]
+    if not isinstance(rows_raw, Mapping) or len(rows_raw) != result["key_count"]:
+        raise MigrationError("Redis source identity count mismatch")
+    rows: dict[str, dict[str, object]] = {}
+    persistent = expiring = 0
+    for digest, raw in rows_raw.items():
+        if not isinstance(digest, str) or SHA256_RE.fullmatch(digest) is None:
+            raise MigrationError("Redis source identity digest is invalid")
+        record = _exact_keys(raw, frozenset({"logical", "deadline_ms"}), "Redis source identity record")
+        logical = _require_fingerprint(record["logical"], "Redis logical row digest")
+        deadline = _strict_int(record["deadline_ms"], "Redis absolute expiry", minimum=-1)
+        if deadline == -1: persistent += 1
+        else: expiring += 1
+        rows[digest] = {"logical": logical, "deadline_ms": deadline}
+    if persistent != result["persistent"] or expiring != result["expiring"]:
+        raise MigrationError("Redis source TTL identity count mismatch")
+    result["source_identity"] = {
+        "rows": rows,
+        "checked_at_ms": _strict_int(identity["checked_at_ms"], "Redis identity check time"),
+    }
+    return MappingProxyType(result)
+
+
+def _parse_collector_manifest(value: object) -> Mapping[str, object]:
+    data = _exact_keys(value, frozenset({
+        "user_version", "schema_fingerprint", "tables", "integrity_check", "source_identity",
+    }), "Collector evidence")
+    tables = _bounded_count_map(data["tables"], "Collector tables")
+    if set(tables) != set(COLLECTOR_TABLES) or data["integrity_check"] != "ok":
+        raise MigrationError("Collector evidence is invalid")
+    if sum(tables.values()) > MAX_IDENTITY_ITEMS:
+        raise MigrationError("Collector identity count limit exceeded")
+    identity = _exact_keys(data["source_identity"], frozenset({"rows"}), "Collector source identity")
+    rows_raw = identity["rows"]
+    if not isinstance(rows_raw, Mapping) or set(rows_raw) != set(COLLECTOR_TABLES):
+        raise MigrationError("Collector source identity table set is invalid")
+    rows: dict[str, dict[str, str]] = {}
+    for table in COLLECTOR_TABLES:
+        rows[table] = _identity_map(rows_raw[table], f"Collector {table}")
+        if len(rows[table]) != tables[table]:
+            raise MigrationError("Collector source identity count mismatch")
+    return MappingProxyType({
+        "user_version": _strict_int(data["user_version"], "Collector user_version"),
+        "schema_fingerprint": _require_fingerprint(data["schema_fingerprint"], "Collector schema fingerprint"),
+        "tables": dict(tables), "integrity_check": "ok",
+        "source_identity": {"rows": rows},
+    })
+
+
+def _postgres_evidence(payload: object, archive_fingerprint: str) -> Mapping[str, object]:
+    expected = frozenset(
+        {"major", "vector_version", "tables", "states", "columns", "primary_keys", "indexes"}
+    )
+    data = _exact_keys(payload, expected, "PostgreSQL aggregate")
+    if not isinstance(data["major"], str) or re.fullmatch(r"[0-9]{1,3}", data["major"]) is None:
+        raise MigrationError("invalid PostgreSQL major version")
+    if not isinstance(data["vector_version"], str) or len(data["vector_version"]) > 32:
+        raise MigrationError("invalid vector extension version")
+    tables = _bounded_count_map(data["tables"], "PostgreSQL tables")
+    if set(tables) != set(BUSINESS_TABLES + DERIVED_TABLES):
+        raise MigrationError("PostgreSQL aggregate table set is not exact")
+    raw_states = data["states"]
+    if not isinstance(raw_states, Mapping) or set(raw_states) != set(POSTGRES_STATE_COLUMNS):
+        raise MigrationError("PostgreSQL state aggregate set is not exact")
+    states = {name: dict(_bounded_count_map(raw_states[name], name)) for name in POSTGRES_STATE_COLUMNS}
+    _validate_postgres_state_counts(tables, states)
+    schema_material = {
+        "columns": data["columns"],
+        "primary_keys": data["primary_keys"],
+        "indexes": data["indexes"],
+    }
+    for value in schema_material.values():
+        if not isinstance(value, list):
+            raise MigrationError("PostgreSQL schema aggregate is invalid")
+    return MappingProxyType(
+        {
+            "major": data["major"],
+            "vector_version": data["vector_version"],
+            "tables": dict(tables),
+            "states": states,
+            "schema_fingerprint": hashlib.sha256(canonical_json_bytes(schema_material)).hexdigest(),
+            "archive_fingerprint": _require_fingerprint(archive_fingerprint, "archive fingerprint"),
+        }
+    )
+
+
+def _redis_evidence(payload: object, rdb_path: Path) -> Mapping[str, object]:
+    expected = frozenset(
+        {
+            "version", "rdb_version", "key_count", "prefixes", "types",
+            "persistent", "expiring", "min_ttl_ms", "max_ttl_ms",
+        }
+    )
+    data = _exact_keys(payload, expected, "Redis aggregate")
+    if not isinstance(data["version"], str) or len(data["version"]) > 32:
+        raise MigrationError("invalid Redis version")
+    with rdb_path.open("rb") as rdb_file:
+        header = rdb_file.read(9)
+    if len(header) != 9 or not header.startswith(b"REDIS") or not header[5:].isdigit():
+        raise MigrationError("Redis snapshot header is invalid")
+    rdb_version = int(header[5:])
+    result: dict[str, object] = {
+        "version": data["version"],
+        "rdb_version": rdb_version,
+        "key_count": _strict_int(data["key_count"], "Redis key count"),
+        "prefixes": dict(_bounded_count_map(data["prefixes"], "Redis prefixes")),
+        "types": dict(_bounded_count_map(data["types"], "Redis types")),
+        "persistent": _strict_int(data["persistent"], "persistent count"),
+        "expiring": _strict_int(data["expiring"], "expiring count"),
+        "min_ttl_ms": _strict_int(data["min_ttl_ms"], "minimum TTL"),
+        "max_ttl_ms": _strict_int(data["max_ttl_ms"], "maximum TTL"),
+        "rdb_sha256": sha256_file(rdb_path),
+    }
+    if result["persistent"] + result["expiring"] != result["key_count"]:
+        raise MigrationError("Redis TTL aggregates do not match key count")
+    return MappingProxyType(result)
+
+
+def _collector_evidence(path: Path) -> Mapping[str, object]:
+    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+        integrity = connection.execute("PRAGMA integrity_check").fetchall()
+        if integrity != [("ok",)]:
+            raise MigrationError("Collector integrity check failed")
+        version = connection.execute("PRAGMA user_version").fetchone()[0]
+        existing = {
+            row[0] for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if not set(COLLECTOR_TABLES).issubset(existing):
+            raise MigrationError("Collector aggregate table set is incomplete")
+        tables = {
+            name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            for name in COLLECTOR_TABLES
+        }
+        fingerprint = sqlite_fingerprint(connection)
+    return MappingProxyType(
+        {"user_version": version, "schema_fingerprint": fingerprint, "tables": tables,
+         "integrity_check": "ok"}
+    )
+
+
+def collect_aggregate_evidence(
+    repo: Path,
+    services: Mapping[str, SourceService],
+    runner: BinaryCommandRunner,
+    directory: Path,
+    archive_fingerprint: str,
+    identity_hmac_key: str,
+) -> dict[str, Mapping[str, object]]:
+    suffix = require_migration_id(directory.name).replace("-", "")
+    pg_container = f"car-agent-migration-{suffix}-pg"
+    redis_container = f"car-agent-migration-{suffix}-redis"
+    readonly_mount = f"type=bind,source={directory.resolve()},target=/snapshot,readonly"
+    runner.run([
+        "docker", "run", "--pull", "never", "-d", "--name", pg_container, "--tmpfs",
+        "/var/lib/postgresql/data:rw,noexec,nosuid", "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
+        services["postgres"].image,
+    ], cwd=repo)
+    try:
+        _wait_for_command(
+            ["docker", "exec", pg_container, "pg_isready", "-U", "postgres"],
+            runner, repo=repo, label="PostgreSQL",
+        )
+        runner.run_from_file([
+            "docker", "exec", "-i", pg_container, "pg_restore", "-U", "postgres", "-d",
+            "postgres", "--clean", "--if-exists", "--no-owner", "--no-privileges",
+            "--exit-on-error",
+        ], directory / "postgres.dump", cwd=repo)
+        postgres_raw = runner.json([
+            "docker", "exec", pg_container, "psql", "-U", "postgres", "-d", "postgres",
+            "-At", "--command", POSTGRES_AGGREGATE_SQL,
+        ], cwd=repo)
+        pg_identity_path = directory / ".postgres-identity.json"
+        runner.run([
+            sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
+            "postgres", "--container", pg_container, "--key-control", str(directory / "status.json"),
+            "--output", str(pg_identity_path),
+        ], cwd=repo)
+        pg_identity = parse_control_json(pg_identity_path.read_bytes())
+        pg_identity_path.unlink()
+    finally:
+        runner.run(["docker", "rm", "-f", pg_container], cwd=repo)
+    runner.run([
+        "docker", "run", "--pull", "never", "-d", "--name", redis_container, "--mount", readonly_mount,
+        "--entrypoint", "redis-server", services["redis"].image,
+        "--dir", "/snapshot", "--dbfilename", "redis.rdb", "--appendonly", "no",
+        "--protected-mode", "no",
+    ], cwd=repo)
+    try:
+        _wait_for_command(
+            ["docker", "exec", redis_container, "redis-cli", "PING"],
+            runner, repo=repo, label="Redis",
+        )
+        redis_raw = runner.json([
+            "docker", "exec", redis_container, "redis-cli", "--json", "EVAL",
+            REDIS_AGGREGATE_LUA, "0",
+        ], cwd=repo)
+        redis_identity_path = directory / ".redis-identity.json"
+        runner.run([
+            sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
+            "redis", "--container", redis_container, "--key-control", str(directory / "status.json"),
+            "--output", str(redis_identity_path),
+        ], cwd=repo)
+        redis_identity = parse_control_json(redis_identity_path.read_bytes())
+        redis_identity_path.unlink()
+    finally:
+        runner.run(["docker", "rm", "-f", redis_container], cwd=repo)
+    collector_identity_path = directory / ".collector-identity.json"
+    runner.run([
+        sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
+        "collector", "--database", str(directory / "collector.db"),
+        "--key-control", str(directory / "status.json"), "--output", str(collector_identity_path),
+    ], cwd=repo)
+    collector_identity = parse_control_json(collector_identity_path.read_bytes())
+    collector_identity_path.unlink()
+    postgres = dict(_postgres_evidence(postgres_raw, archive_fingerprint))
+    postgres["source_identity"] = pg_identity
+    redis = dict(_redis_evidence(redis_raw, directory / "redis.rdb"))
+    redis["source_identity"] = {
+        "rows": redis_identity["rows"], "checked_at_ms": redis_identity["checked_at_ms"],
+    }
+    collector = dict(_collector_evidence(directory / "collector.db"))
+    collector["source_identity"] = {"rows": {
+        table: {identity: record["logical"] for identity, record in rows.items()}
+        for table, rows in collector_identity["rows"].items()
+    }}
+    return {"postgres": postgres, "redis": redis, "collector": collector}
+
+
+def manifest_payload(manifest: MigrationManifest) -> dict[str, object]:
+    return {
+        "schema_version": manifest.schema_version,
+        "migration_id": manifest.migration_id,
+        "phase": manifest.phase,
+        "source_sha": manifest.source_sha,
+        "created_at": manifest.created_at,
+        "files": {
+            name: {"size_bytes": record.size_bytes, "sha256": record.sha256}
+            for name, record in manifest.files.items()
+        },
+        "postgres": dict(manifest.postgres),
+        "redis": dict(manifest.redis),
+        "collector": dict(manifest.collector),
+        "identity_hmac_key": manifest.identity_hmac_key,
+    }
+
+
+def build_manifest(snapshot: SnapshotEvidence) -> MigrationManifest:
+    payload = _manifest_payload(
+        snapshot.migration_id,
+        snapshot.phase,
+        snapshot.source_sha,
+        snapshot.created_at,
+        snapshot.directory,
+        postgres=snapshot.postgres,
+        redis=snapshot.redis,
+        collector=snapshot.collector,
+        identity_hmac_key=snapshot.identity_hmac_key,
+    )
+    return parse_manifest(payload)
+
+
+def load_bundle(repo: Path, migration_id: str) -> MigrationBundle:
+    require_migration_id(migration_id)
+    root = repo / ".artifacts" / "cloud-data-migrations"
+    directory = artifact_directory(root, migration_id)
+    manifest_path = directory / "manifest.json"
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        raise MigrationError("migration manifest is unavailable")
+    try:
+        if manifest_path.stat().st_size > CONTROL_JSON_MAX_BYTES:
+            raise MigrationError("migration manifest exceeds byte limit")
+        payload = parse_control_json(manifest_path.read_bytes())
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise MigrationError("migration manifest is unreadable") from exc
+    manifest = parse_manifest(payload)
+    if manifest.migration_id != migration_id:
+        raise MigrationError("migration manifest identity mismatch")
+    files = tuple(directory / name for name in (*SNAPSHOT_FILENAMES, "manifest.json"))
+    return MigrationBundle(directory=directory, manifest=manifest, files=files)
+
+
+def validate_bundle(directory: Path) -> MigrationBundle:
+    if not directory.is_dir() or directory.is_symlink():
+        raise MigrationError("migration bundle directory is invalid")
+    bundle = load_bundle(directory.parents[2], directory.name)
+    if bundle.directory.resolve() != directory.resolve():
+        raise MigrationError("migration bundle path is invalid")
+    for name, record in bundle.manifest.files.items():
+        path = directory / name
+        if not path.is_file() or path.is_symlink() or path.stat().st_size != record.size_bytes:
+            raise MigrationError(f"migration file is invalid: {name}")
+        if sha256_file(path) != record.sha256:
+            raise MigrationError(f"migration file checksum mismatch: {name}")
+    return bundle
+
+
+REMOTE_SCRIPT = "/opt/car-agent/shared/bin/remote-data-migration.sh"
+
+
+def _remote_json_result(result: object) -> Mapping[str, object]:
+    stdout = getattr(result, "stdout", None)
+    if not isinstance(stdout, str) or len(stdout.encode("utf-8")) > 64 * 1024:
+        raise MigrationError("remote migration response is invalid")
+    try:
+        payload = parse_control_json(stdout, max_bytes=64 * 1024)
+    except MigrationError as exc:
+        raise MigrationError("remote migration response is invalid") from exc
+    expected = frozenset(
+        {"current_release", "runtime_project_name", "disk_available_bytes", "stores", "status"}
+    )
+    return _exact_keys(payload, expected, "remote migration response")
+
+
+def inspect_remote(request: MigrationRequest, runner: RemoteCommandRunner) -> Mapping[str, object]:
+    result = runner.run(
+        request.ssh.ssh_argv(f"sudo {REMOTE_SCRIPT} inspect-current"), cwd=request.repo,
+        timeout_s=60,
+    )
+    payload = _remote_json_result(result)
+    release = payload["current_release"]
+    project = payload["runtime_project_name"]
+    if not isinstance(release, str) or re.fullmatch(r"/opt/car-agent/releases/[0-9a-f]{7,40}", release) is None:
+        raise MigrationError("remote current release is invalid")
+    if not isinstance(project, str) or re.fullmatch(r"[a-z0-9][a-z0-9_-]*", project) is None:
+        raise MigrationError("remote runtime project is invalid")
+    _strict_int(payload["disk_available_bytes"], "remote disk availability")
+    stores = payload["stores"]
+    if not isinstance(stores, Mapping) or set(stores) != {"postgres", "redis", "collector"}:
+        raise MigrationError("remote store inspection is incomplete")
+    return payload
+
+
+def make_migration_plan(
+    request: MigrationRequest, runner: RemoteCommandRunner
+) -> MigrationPlan:
+    if request.bundle is None:
+        raise MigrationError("local migration bundle is required for planning")
+    bundle = validate_bundle(request.bundle.directory)
+    remote = inspect_remote(request, runner)
+    current_sha = Path(remote["current_release"]).name  # type: ignore[arg-type]
+    if current_sha != bundle.manifest.source_sha:
+        raise MigrationError("remote source release does not match migration bundle")
+    stores = remote["stores"]
+    postgres_remote = stores["postgres"]  # type: ignore[index]
+    redis_remote = stores["redis"]  # type: ignore[index]
+    collector_remote = stores["collector"]  # type: ignore[index]
+    if not all(isinstance(item, Mapping) for item in (postgres_remote, redis_remote, collector_remote)):
+        raise MigrationError("remote store inspection is invalid")
+    postgres = bundle.manifest.postgres
+    if (postgres_remote.get("major") != postgres["major"]
+            or postgres_remote.get("vector_version") != postgres["vector_version"]
+            or postgres_remote.get("schema_fingerprint") != postgres["schema_fingerprint"]):
+        raise MigrationError("remote PostgreSQL compatibility check failed")
+    redis_version = redis_remote.get("version")
+    if not isinstance(redis_version, str) or redis_version.split(".", 1)[0] != str(bundle.manifest.redis["version"]).split(".", 1)[0]:
+        raise MigrationError("remote Redis major version mismatch")
+    collector = bundle.manifest.collector
+    if (collector_remote.get("user_version") != collector["user_version"]
+            or collector_remote.get("schema_fingerprint") != collector["schema_fingerprint"]):
+        raise MigrationError("remote Collector compatibility check failed")
+    bundle_size = sum((bundle.directory / name).stat().st_size for name in SNAPSHOT_FILENAMES)
+    available = _strict_int(remote["disk_available_bytes"], "remote disk availability")
+    if available < max(bundle_size * 3, 1024 * 1024):
+        raise MigrationError("remote disk availability is insufficient")
+    return MigrationPlan(
+        migration_id=request.migration_id,
+        status="ready",
+        current_release=remote["current_release"],  # type: ignore[arg-type]
+        disk_available_bytes=available,
+        bundle_size_bytes=bundle_size,
+        remote_stores=MappingProxyType(dict(stores)),  # type: ignore[arg-type]
+    )
+
+
+def upload_bundle(request: MigrationRequest, runner: RemoteCommandRunner) -> str:
+    if request.bundle is None:
+        raise MigrationError("local migration bundle is required for upload")
+    directory = request.bundle.directory
+    validate_bundle(directory)
+    prepared = runner.run(
+        request.ssh.ssh_argv(
+            f"sudo {REMOTE_SCRIPT} prepare-upload --migration-id {request.migration_id}"
+        ),
+        cwd=request.repo, timeout_s=120,
+    ).stdout.strip()
+    expected = f"/opt/car-agent/shared/imports/{request.migration_id}"
+    if prepared != expected:
+        raise MigrationError("server returned an unexpected import directory")
+    for name in ("manifest.json", "postgres.dump", "redis.rdb", "collector.db"):
+        runner.run(request.ssh.scp_argv(directory / name, f"{expected}/{name}"), cwd=request.repo,
+                   timeout_s=1800)
+    runner.run(
+        request.ssh.ssh_argv(
+            f"sudo {REMOTE_SCRIPT} seal-upload --migration-id {request.migration_id}"
+        ),
+        cwd=request.repo, timeout_s=120,
+    )
+    return expected
+
+
+def remote_action(
+    request: MigrationRequest, action: str, runner: RemoteCommandRunner
+) -> str:
+    if action not in {"preflight", "apply", "verify", "rollback", "recover", "rollback-plan"}:
+        raise MigrationError("invalid remote migration action")
+    result = runner.run(
+        request.ssh.ssh_argv(
+            f"sudo {REMOTE_SCRIPT} {action} --migration-id {request.migration_id}"
+        ),
+        cwd=request.repo, timeout_s={"preflight": 300, "verify": 600,
+                                    "apply": 3600, "rollback": 3600,
+                                    "recover": 3600, "rollback-plan": 60}[action],
+    )
+    return result.stdout.strip()
+
+
+def parse_rollback_plan(raw: str, migration_id: str) -> Mapping[str, object]:
+    try:
+        payload = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise MigrationError("remote rollback plan is invalid") from exc
+    data = _exact_keys(payload, frozenset({
+        "schema_version", "migration_id", "status", "journal_state", "operation_id",
+        "current_release", "backup_stamp", "backup_files", "would_stop",
+    }), "rollback plan")
+    if data["schema_version"] != 1 or data["migration_id"] != migration_id:
+        raise MigrationError("remote rollback plan identity is invalid")
+    if data["status"] not in MIGRATION_STATE_MACHINE:
+        raise MigrationError("remote rollback status is invalid")
+    if data["journal_state"] not in MIGRATION_STATE_MACHINE:
+        raise MigrationError("remote journal state is invalid")
+    if not isinstance(data["operation_id"], str) or re.fullmatch(r"[0-9a-f]{32}", data["operation_id"]) is None:
+        raise MigrationError("remote operation identity is invalid")
+    if not isinstance(data["current_release"], str) or re.fullmatch(
+        r"/opt/car-agent/releases/[0-9a-f]{7,40}", data["current_release"],
+    ) is None:
+        raise MigrationError("remote release identity is invalid")
+    backup_required = MIGRATION_STATE_MACHINE[data["journal_state"]]["backup_required"]
+    parsed_files: dict[str, dict[str, object]] | None
+    if backup_required:
+        if not isinstance(data["backup_stamp"], str) or re.fullmatch(
+            r"[0-9]{8}T[0-9]{6}Z", data["backup_stamp"],
+        ) is None:
+            raise MigrationError("remote backup stamp is invalid")
+        files = _exact_keys(data["backup_files"], frozenset({
+            "postgres.dump", "redis.rdb", "collector.sql.gz",
+        }), "rollback backup files")
+        parsed_files = {}
+        for name, raw_record in files.items():
+            record = _exact_keys(raw_record, frozenset({"size_bytes", "sha256"}), "backup file")
+            parsed_files[name] = {
+                "size_bytes": _strict_int(record["size_bytes"], "backup size"),
+                "sha256": _require_fingerprint(record["sha256"], "backup sha256"),
+            }
+    else:
+        if data["backup_stamp"] is not None or data["backup_files"] is not None:
+            raise MigrationError("pre-backup recovery plan must not claim a backup")
+        parsed_files = None
+    would_stop = data["would_stop"]
+    if (not isinstance(would_stop, list) or not would_stop
+            or len(would_stop) > 64 or any(
+                not isinstance(name, str) or re.fullmatch(r"[a-z0-9-]+", name) is None
+                for name in would_stop
+            ) or len(set(would_stop)) != len(would_stop)):
+        raise MigrationError("remote writer plan is invalid")
+    return MappingProxyType({**data, "backup_files": parsed_files, "would_stop": list(would_stop)})
+
+
+def parse_action_status(
+    raw: str, migration_id: str, expected: str | frozenset[str],
+) -> Mapping[str, object]:
+    payload = parse_control_json(raw, max_bytes=64 * 1024)
+    data = _exact_keys(payload, frozenset({"migration_id", "status"}), "remote action status")
+    expected_statuses = frozenset({expected}) if isinstance(expected, str) else expected
+    if data["migration_id"] != migration_id or data["status"] not in expected_statuses:
+        raise MigrationError("remote action did not reach the expected final status")
+    return data
+
+
+def list_local_writers(repo: Path, runner: BinaryCommandRunner) -> tuple[str, ...]:
+    try:
+        selection = resolve_target(repo.resolve())
+    except DevStackError as exc:
+        raise MigrationError("local development stack target is invalid") from exc
+    if selection.name != "local":
+        raise MigrationError("writer inspection requires the local development stack target")
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    raw = runner.text([*compose, "config", "--services"], cwd=repo)
+    services = tuple(line.strip() for line in raw.splitlines() if line.strip())
+    if not services or any(re.fullmatch(r"[a-z0-9-]+", item) is None for item in services):
+        raise MigrationError("compose service list is invalid")
+    writers = tuple(item for item in services if item not in {"postgres", "redis"})
+    if "observability-collector" not in writers:
+        raise MigrationError("collector writer is missing from compose services")
+    return writers
+
+
+def _strict_single_inspect(payload: object) -> Mapping[str, object]:
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], Mapping):
+        raise MigrationError("docker inspect returned an unexpected result")
+    return payload[0]
+
+
+def _exact_mount(payload: object, destination: str) -> Mapping[str, object]:
+    if not isinstance(payload, list):
+        raise MigrationError("container mounts are invalid")
+    matches = [
+        item for item in payload
+        if isinstance(item, Mapping) and item.get("Destination") == destination
+    ]
+    if len(matches) != 1:
+        raise MigrationError("source data mount is unavailable")
+    mount = matches[0]
+    if mount.get("Type") != "volume" or not isinstance(mount.get("Name"), str):
+        raise MigrationError("source data must use an exact named volume")
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", mount["Name"]) is None:
+        raise MigrationError("source named volume is invalid")
+    return mount
+
+
+def discover_source_services(
+    repo: Path, runner: BinaryCommandRunner
+) -> Mapping[str, SourceService]:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    found: dict[str, SourceService] = {}
+    for service, destination in {
+        "postgres": "/var/lib/postgresql/data",
+        "redis": "/data",
+        "observability-collector": "/data",
+    }.items():
+        container_id = runner.text([*compose, "ps", "-q", service], cwd=repo).strip()
+        if re.fullmatch(r"[0-9a-f]{12,64}", container_id) is None:
+            raise MigrationError(f"active source service is unavailable: {service}")
+        inspect = _strict_single_inspect(
+            runner.json(["docker", "inspect", container_id], cwd=repo)
+        )
+        state = inspect.get("State")
+        config = inspect.get("Config")
+        if (
+            not isinstance(state, Mapping)
+            or state.get("Running") is not True
+            or state.get("Restarting") is True
+        ):
+            raise MigrationError(f"source service is not stable: {service}")
+        image_id = inspect.get("Image")
+        if (
+            not isinstance(config, Mapping)
+            or not isinstance(config.get("Image"), str)
+            or not isinstance(image_id, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        ):
+            raise MigrationError(f"source image is unavailable: {service}")
+        mount = _exact_mount(inspect.get("Mounts"), destination)
+        found[service] = SourceService(
+            service=service,
+            container_id=container_id,
+            image=image_id,
+            data_mount=mount["Name"],
+        )
+    return MappingProxyType(found)
+
+
+def private_replace(source: Path, destination: Path) -> None:
+    if not source.is_file() or source.is_symlink() or source.stat().st_size <= 0:
+        raise MigrationError(f"snapshot file is invalid: {destination.name}")
+    os.chmod(source, 0o600)
+    os.replace(source, destination)
+
+
+def capture_postgres(
+    service: SourceService,
+    target: Path,
+    runner: BinaryCommandRunner,
+    *,
+    repo: Path,
+) -> None:
+    runner.stream_to_file(
+        [
+            "docker", "exec", "-i", service.container_id,
+            "pg_dump", "-U", "cockpit", "-d", "cockpit", "-Fc",
+        ],
+        target,
+        cwd=repo,
+    )
+
+
+def capture_redis(
+    service: SourceService,
+    directory: Path,
+    runner: BinaryCommandRunner,
+    *,
+    repo: Path,
+) -> None:
+    runner.run(
+        [
+            "docker", "run", "--pull", "never", "--rm",
+            "--network", f"container:{service.container_id}",
+            "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
+            "--entrypoint", "redis-cli", service.image,
+            "-h", "127.0.0.1", "--rdb", "/snapshot/redis.rdb.partial",
+        ],
+        cwd=repo,
+    )
+    private_replace(directory / "redis.rdb.partial", directory / "redis.rdb")
+
+
+def capture_collector(
+    service: SourceService,
+    directory: Path,
+    runner: BinaryCommandRunner,
+    *,
+    repo: Path,
+) -> None:
+    program = (
+        "import sqlite3;"
+        "s=sqlite3.connect('file:/data/obs.db?mode=ro',uri=True);"
+        "d=sqlite3.connect('/snapshot/collector.db.partial');"
+        "s.backup(d);d.execute('PRAGMA wal_checkpoint');d.close();s.close()"
+    )
+    runner.run(
+        [
+            "docker", "run", "--pull", "never", "--rm", "--volumes-from", f"{service.container_id}:ro",
+            "--mount", f"type=bind,source={directory.resolve()},target=/snapshot",
+            "--entrypoint", "python", service.image, "-c", program,
+        ],
+        cwd=repo,
+    )
+    private_replace(directory / "collector.db.partial", directory / "collector.db")
+
+
+def _verify_snapshots(
+    directory: Path,
+    services: Mapping[str, SourceService],
+    runner: BinaryCommandRunner,
+    repo: Path,
+) -> str:
+    readonly_mount = f"type=bind,source={directory.resolve()},target=/snapshot,readonly"
+    pg_result = runner.text(
+        ["docker", "run", "--pull", "never", "--rm", "--mount", readonly_mount, "--entrypoint", "pg_restore",
+         services["postgres"].image, "--list", "/snapshot/postgres.dump"],
+        cwd=repo,
+    )
+    if not pg_result.strip():
+        raise MigrationError("PostgreSQL snapshot format validation failed")
+    redis_result = runner.text(
+        ["docker", "run", "--pull", "never", "--rm", "--mount", readonly_mount, "--entrypoint", "redis-check-rdb",
+         services["redis"].image, "/snapshot/redis.rdb"],
+        cwd=repo,
+    )
+    if "CRC64 checksum is OK" not in redis_result:
+        raise MigrationError("Redis snapshot format validation failed")
+    with sqlite3.connect(f"file:{directory / 'collector.db'}?mode=ro", uri=True) as connection:
+        result = connection.execute("PRAGMA integrity_check").fetchall()
+    if result != [("ok",)]:
+        raise MigrationError("Collector snapshot integrity validation failed")
+    normalized = "\n".join(
+        line.rstrip() for line in pg_result.splitlines()
+        if not line.startswith("; Archive created at")
+    ) + "\n"
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _manifest_payload(
+    migration_id: str,
+    phase: str,
+    source_sha: str,
+    created_at: str,
+    directory: Path,
+    *,
+    postgres: Mapping[str, object] | None = None,
+    redis: Mapping[str, object] | None = None,
+    collector: Mapping[str, object] | None = None,
+    identity_hmac_key: str = "",
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "migration_id": migration_id,
+        "phase": phase,
+        "source_sha": source_sha,
+        "created_at": created_at,
+        "files": {
+            name: {
+                "size_bytes": (directory / name).stat().st_size,
+                "sha256": sha256_file(directory / name),
+            }
+            for name in SNAPSHOT_FILENAMES
+        },
+        "postgres": dict(postgres or {}),
+        "redis": dict(redis or {}),
+        "collector": dict(collector or {}),
+        "identity_hmac_key": identity_hmac_key,
+    }
+
+
+def _wait_for_command(
+    argv: Sequence[str], runner: BinaryCommandRunner, *, repo: Path, label: str,
+    attempts: int = 20,
+) -> None:
+    last_error: MigrationError | None = None
+    for attempt in range(attempts):
+        try:
+            runner.run(argv, cwd=repo)
+            return
+        except MigrationError as exc:
+            last_error = exc
+            if attempt + 1 < attempts:
+                time.sleep(0.25)
+    raise MigrationError(f"{label} readiness timed out") from last_error
+
+
+def _resolve_writer_identities(
+    repo: Path,
+    runner: BinaryCommandRunner,
+) -> tuple[WriterIdentity, ...]:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    raw = runner.text([*compose, "config", "--services"], cwd=repo)
+    names = tuple(line.strip() for line in raw.splitlines() if line.strip())
+    if not names or any(re.fullmatch(r"[a-z0-9-]+", name) is None for name in names):
+        raise MigrationError("compose service list is invalid")
+    writers = tuple(name for name in names if name not in {"postgres", "redis"})
+    if not writers or "observability-collector" not in writers:
+        raise MigrationError("collector writer is missing from compose services")
+    identities: list[WriterIdentity] = []
+    for name in writers:
+        raw_cid = runner.text([*compose, "ps", "-a", "-q", name], cwd=repo)
+        ids = tuple(line.strip() for line in raw_cid.splitlines() if line.strip())
+        if len(ids) != 1 or re.fullmatch(r"[0-9a-f]{12,64}", ids[0]) is None:
+            raise MigrationError(f"local writer container identity is invalid: {name}")
+        inspect = _strict_single_inspect(runner.json(["docker", "inspect", ids[0]], cwd=repo))
+        state = inspect.get("State")
+        image_id = inspect.get("Image")
+        mounts = inspect.get("Mounts")
+        if (not isinstance(state, Mapping) or state.get("Running") is not True
+                or not isinstance(image_id, str)
+                or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+                or not isinstance(mounts, list)):
+            raise MigrationError(f"local writer identity is unstable: {name}")
+        volumes = tuple(sorted(
+            item["Name"] for item in mounts
+            if isinstance(item, Mapping) and item.get("Type") == "volume"
+            and isinstance(item.get("Name"), str)
+        ))
+        identities.append(WriterIdentity(name, ids[0], image_id, volumes))
+    return tuple(identities)
+
+
+def _quiesce_local_writers(
+    repo: Path, identities: Sequence[WriterIdentity], runner: BinaryCommandRunner,
+) -> None:
+    compose = ["docker", "compose", "-f", str(repo / "compose.yaml")]
+    writers = tuple(item.service for item in identities)
+    runner.run([*compose, "stop", *writers], cwd=repo)
+    for identity in identities:
+        name = identity.service
+        raw_cid = runner.text([*compose, "ps", "-a", "-q", name], cwd=repo)
+        ids = tuple(line.strip() for line in raw_cid.splitlines() if line.strip())
+        if ids != (identity.container_id,):
+            raise MigrationError(f"local writer container identity is invalid: {name}")
+        inspect = _strict_single_inspect(
+            runner.json(["docker", "inspect", ids[0]], cwd=repo)
+        )
+        state = inspect.get("State")
+        if (not isinstance(state, Mapping) or state.get("Running") is not False
+                or state.get("Status") != "exited"):
+            raise MigrationError(f"local writer did not exit: {name}")
+
+
+def _restart_local_writers(
+    repo: Path, identities: Sequence[WriterIdentity], runner: BinaryCommandRunner,
+) -> None:
+    container_ids = tuple(item.container_id for item in identities)
+    runner.run(["docker", "start", *container_ids], cwd=repo)
+    for identity in identities:
+        inspect = _strict_single_inspect(
+            runner.json(["docker", "inspect", identity.container_id], cwd=repo)
+        )
+        state = inspect.get("State")
+        if not isinstance(state, Mapping) or state.get("Running") is not True:
+            raise MigrationError(f"local writer recovery failed: {identity.service}")
+
+
+def capture_local_snapshot(
+    *,
+    repo: Path,
+    artifact_root: Path,
+    phase: str,
+    runner: BinaryCommandRunner,
+    quiesce_local: bool = False,
+    apply: bool = False,
+    now: Callable[[], datetime] | None = None,
+) -> MigrationBundle:
+    if phase == "online" and (quiesce_local or apply):
+        raise MigrationError("online snapshot never mutates the local stack")
+    if phase == "final" and not (quiesce_local and apply):
+        raise MigrationError("final snapshot requires quiesce-local and apply")
+    if phase not in {"online", "final"}:
+        raise MigrationError("invalid snapshot phase")
+    repo = repo.resolve()
+    try:
+        selection = resolve_target(repo)
+    except DevStackError as exc:
+        raise MigrationError("local development stack target is invalid") from exc
+    if selection.name != "local":
+        raise MigrationError("snapshot requires the local development stack target")
+    clock = now or (lambda: datetime.now(UTC))
+    current = clock()
+    source_sha = runner.text(["git", "rev-parse", "HEAD"], cwd=repo).strip()
+    migration_id = new_migration_id(current, source_sha, phase)
+    artifact_root = artifact_root.absolute()
+    artifact_directory(artifact_root, migration_id)
+    if shutil.disk_usage(repo).free < MIN_SNAPSHOT_FREE_BYTES:
+        raise MigrationError("insufficient local snapshot disk space")
+    services = discover_source_services(repo, runner)
+    writer_identities: tuple[WriterIdentity, ...] = ()
+    if phase == "final":
+        writer_identities = _resolve_writer_identities(repo, runner)
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    directory = artifact_directory(artifact_root, migration_id)
+    directory.mkdir(mode=0o700)
+    restrict_private_tree(directory, runner)
+    identity_hmac_key = secrets.token_hex(32)
+    atomic_private_json(directory / "status.json", {
+        "migration_id": migration_id, "status": "CAPTURING",
+        "identity_hmac_key": identity_hmac_key,
+    })
+    recovery_needed = False
+    try:
+        if phase == "final":
+            recovery_needed = True
+            atomic_private_json(directory / "status.json", {
+                "migration_id": migration_id, "status": "RECOVERY_NEEDED",
+                "writer_container_ids": [item.container_id for item in writer_identities],
+                "identity_hmac_key": identity_hmac_key,
+            })
+            _quiesce_local_writers(repo, writer_identities, runner)
+        pg_partial = directory / "postgres.dump.partial"
+        capture_postgres(services["postgres"], pg_partial, runner, repo=repo)
+        private_replace(pg_partial, directory / "postgres.dump")
+        capture_redis(services["redis"], directory, runner, repo=repo)
+        capture_collector(services["observability-collector"], directory, runner, repo=repo)
+        archive_fingerprint = _verify_snapshots(directory, services, runner, repo)
+        evidence = collect_aggregate_evidence(
+            repo, services, runner, directory, archive_fingerprint, identity_hmac_key
+        )
+        snapshot = SnapshotEvidence(
+            directory=directory,
+            migration_id=migration_id,
+            phase=phase,
+            source_sha=source_sha,
+            created_at=current.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+            identity_hmac_key=identity_hmac_key,
+            **evidence,
+        )
+        manifest = build_manifest(snapshot)
+        payload = manifest_payload(manifest)
+        atomic_private_json(directory / "manifest.json", payload)
+        atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURED"})
+    except BaseException:
+        atomic_private_json(directory / "status.json", {"migration_id": migration_id, "status": "CAPTURE_FAILED"})
+        if recovery_needed:
+            try:
+                _restart_local_writers(repo, writer_identities, runner)
+                atomic_private_json(directory / "status.json", {
+                    "migration_id": migration_id, "status": "WRITERS_RECOVERED",
+                    "writer_container_ids": [item.container_id for item in writer_identities],
+                })
+            except BaseException as recovery_error:
+                atomic_private_json(directory / "status.json", {
+                    "migration_id": migration_id, "status": "RECOVERY_FAILED",
+                    "writer_container_ids": [item.container_id for item in writer_identities],
+                    "recovery_error": type(recovery_error).__name__,
+                })
+        raise
+    files = tuple(directory / name for name in (*SNAPSHOT_FILENAMES, "manifest.json", "status.json"))
+    return MigrationBundle(directory=directory, manifest=manifest, files=files)

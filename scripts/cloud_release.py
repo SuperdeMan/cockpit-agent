@@ -17,12 +17,16 @@ from scripts.cloud_release_lib import (
     ReleaseRequest,
     SshConfig,
     SubprocessRunner,
+    _resolve_commit,
+    discover_remote_state,
     execute_deploy,
     make_bootstrap_report,
+    validate_ssh_identity,
 )
 
 
 REMOTE_ENTRYPOINT = "/opt/car-agent/shared/bin/remote-release.sh"
+JSON_OUTPUT_MAX_BYTES = 64 * 1024
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,14 +75,17 @@ def _ssh_config(args: argparse.Namespace) -> SshConfig:
         missing.append("CAR_AGENT_SSH_IDENTITY/--identity")
     if missing:
         raise ReleaseError(
-            "missing deployment connection setting(s): " + ", ".join(missing)
+            "missing deployment connection setting(s): " + ", ".join(missing),
+            category="configuration",
         )
-    return SshConfig(
+    config = SshConfig(
         host=args.host,
         user=args.user,
         identity=args.identity,
         kex_algorithms=args.kex_algorithms,
     )
+    validate_ssh_identity(config.identity)
+    return config
 
 
 def _request(
@@ -145,48 +152,57 @@ def _result_payload(result: CloudReleaseResult) -> dict[str, object]:
 
 
 def _emit(payload: dict[str, object]) -> None:
-    print(
-        json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            indent=2,
-        )
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        indent=2,
     )
+    if len(encoded.encode("utf-8")) > JSON_OUTPUT_MAX_BYTES:
+        raise ReleaseError("cloud release response exceeded output limit")
+    print(encoded)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     repo = REPO_ROOT
     try:
-        ssh = _ssh_config(args)
-        runner = SubprocessRunner()
         if args.command in {"plan", "deploy"}:
+            ssh = _ssh_config(args)
             result = execute_deploy(
                 _request(repo, args, ssh),
                 apply=args.command == "deploy" and args.apply,
-                runner=runner,
+                runner=SubprocessRunner(),
             )
             _emit(_result_payload(result))
             return 0 if result.status in {"dry_run", "submitted"} else 3
 
         if args.command == "verify":
+            ssh = _ssh_config(args)
+            runner = SubprocessRunner()
             runner.run(
                 ssh.ssh_argv(f"sudo {REMOTE_ENTRYPOINT} verify-current"),
                 cwd=repo,
             )
-            _emit({"status": "verified"})
+            request = ReleaseRequest(
+                repo, "HEAD", repo / ".artifacts" / "releases", ssh,
+            )
+            remote_state = discover_remote_state(request, runner=runner)
+            release_sha = _resolve_commit(repo, remote_state.current_release)
+            _emit({"status": "verified", "release_sha": release_sha})
             return 0
 
         if args.command == "rollback":
             if not RELEASE_SELECTOR_RE.fullmatch(args.to):
                 raise ReleaseError(
-                    "rollback target must be 7 to 40 lowercase hex characters"
+                    "rollback target must be 7 to 40 lowercase hex characters",
+                    category="configuration",
                 )
             if not args.apply:
                 _emit({"status": "dry_run", "rollback_target": args.to})
                 return 0
-            runner.run(
+            ssh = _ssh_config(args)
+            SubprocessRunner().run(
                 ssh.ssh_argv(
                     f"sudo {REMOTE_ENTRYPOINT} rollback --to {args.to}"
                 ),
@@ -194,11 +210,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             _emit({"status": "rollback_submitted", "rollback_target": args.to})
             return 0
-        raise ReleaseError("unsupported cloud release command")
+        raise ReleaseError("unsupported cloud release command", category="configuration")
     except ReleaseError as exc:
-        print(f"cloud-release: {exc}", file=sys.stderr)
+        _emit({"status": "error", "error_category": exc.category})
+        print("cloud-release: operation failed", file=sys.stderr)
         return 2
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
