@@ -298,7 +298,7 @@ try:
         generated = opened(root, "rollback-generated", directory=True)
         try:
             generated_entries=set(os.listdir(generated))
-            if not generated_entries or not generated_entries.issubset({"collector.db","collector.db.partial","collector-restore.json",".collector-restore.json.partial"}):
+            if not generated_entries.issubset({"collector.db","collector.db.partial","collector-restore.json",".collector-restore.json.partial"}):
                 raise SystemExit("unknown runtime batch entry")
             for name in generated_entries:
                 os.close(opened(generated,name))

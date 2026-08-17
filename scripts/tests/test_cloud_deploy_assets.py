@@ -2382,6 +2382,8 @@ def test_remote_store_recovery_uses_identity_bound_loader_and_atomic_completion_
     assert collector.index(sqlite_tool_mount) < collector.index(
         '--entrypoint python "${image_id}"',
     )
+    assert 'if not generated_entries or not generated_entries.issubset' not in runtime
+    assert 'if not generated_entries.issubset' in runtime
 
 
 def test_redis_aof_validation_is_private_and_detects_validator_mutation() -> None:
