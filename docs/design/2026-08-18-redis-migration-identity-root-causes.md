@@ -128,6 +128,45 @@ hash seed；listpack / quicklist / intset 是顺序结构，序列化确定。�
 「用 DUMP 取值」绑成一件事。现在钉三件缺一不可的事（ttl 哨兵 / 类型哨兵 / 取值拿不到就跳过），
 并验过它对修前代码仍红（不是恒绿）。
 
+## 4.5 修完 RC1/RC2 之后又撞出的三件事（同一趟里逐个掀开）
+
+**RC3 — 一个恒假的就绪闸。** `cloud_release_lib.py` 的远端预检 `scripts_ready()`
+对共享底座**每个**文件跑 `bash -n`，而 `49b0788`（08-17 15:03 UTC）把
+`redis_volume_prepare.py` / `collector_volume_replace.py` 加进了 `SCRIPTS`
+⇒ Python 源在 bash 眼里是语法错 ⇒ 本函数**恒为 False**、`cloud_release.py plan/deploy`
+永远报 `bootstrap_required`。那之后没人发过版（迁移走另一条工具链），所以没人发现。
+> 判据：**一个永远不可能满足的前置条件，和没有这个前置条件一样糟**——它不是把关，
+> 是把路堵死，而且堵在没人会看的地方。
+修法＝按文件类型自检（`.py` 走 `compile()`）；回归从 `REMOTE_PREFLIGHT_SOURCE` 里
+抽 `scripts_ready` 本体跑（整段是「下发即执行」的脚本，不能直接 exec）。
+⚠ 探针不能按 `which bash` 判可用性：Windows 的 `system32\bash.EXE` 是 WSL 存根，
+`which` 找得到、跑起来就报错，且 `CreateProcess` 先命中 system32、往 PATH 前插也压不住
+——只能按「能不能真跑」筛出**绝对路径**再用。
+
+**RC4 — Collector schema 指纹量的是形式。** `sqlite_fingerprint` 哈希 `sqlite_master`
+的 DDL 原始文本 ⇒「靠 ALTER 迁上来的库」与「新建的库」永远不可能相等。实证：本地与
+云端 `llm_calls` 同为 16 列同类型，只因本地 `provider` 是后加的列排在末尾、云端在建表
+语句的声明位；`turns` 同列同序，只差云端那份带 SQL 注释。**这正是上一轮必须手工「按云端
+现行 schema 重建 turns/llm_calls」的原因。** 修法＝规范化逻辑形态（表→按列名排序的
+`[名, 类型大写, notnull, pk]`；索引→`[所属表, unique, 按序列名]`；其它对象退回空白归一的
+SQL；**刻意不含默认值**）。
+⚠ 同一算法**活在三处**（本地 lib / `remote-data-migration.sh` 内联 python /
+`store_identity_evidence.py`），跨 ssh 边界无法共用实现，而
+`assemble_store_attestation.py` 的 pre-start 会拿 evidence 指纹与 manifest 直接比
+⇒ 三者必须逐字等价。回归用「同一个库跑三份实现比对」钉住，并单独验过
+「只退回其中一处就当场红」。
+
+**PG 死列 `agents.embedding`。** 与前两条不同，这是**真实** schema 差异：本地旧库有、
+云端新建库没有。取证三条：`store.py:560` 那处 `v.embedding` 读的是 `agent_capability_vec`
+不是 `agents`；`postgres_schema.sql` 虽仍声明它但**无人执行**（只被文档与路径分类引用）；
+代码自己写着「停写停读、保留不迁移」。⇒ 本地 `DROP COLUMN`（13 行数据先导出留档），
+registry 重启后确认未长回。**没有放宽 PG 兼容判据**——那处判据在正确履职，
+该消除的是真实差异。
+
+**顺带一条发布闸的盲区**：`diff_contains_schema_change` 只跳过 `#` 注释、跳不过
+docstring，于是一段**讲** DDL 的散文被读成真的 schema 变更、`plan_rejected`。
+从 diff 里无法可靠识别 docstring（没有解析上下文），所以只能在文本侧回避并就地写明。
+
 ## 5. 还没做的（要授权）
 
 1. `deploy/cloud/**` 变了 ⇒ **下次真实迁移前必须先做受控基础设施安装 + 摘要更新**

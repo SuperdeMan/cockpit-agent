@@ -4307,3 +4307,33 @@ set 排序 / hash 按字段排序 / zset 按成员排序，逐元素带长度前
 随后**重新生成 final 批次**（不复用旧 ID，需本地停写授权）；`apply --apply` 与切换
 按交接页 §4 第 7/8 步逐关取授权。云端本批只做只读检查：30/30 容器健康、fence 已清、
 release 仍 `585537f`、`target=local` 未变。
+
+### §55.6 修完 RC1/RC2 之后又掀开三件（同一趟里逐个撞出来）
+
+**RC3 恒假的就绪闸**：`scripts_ready()` 对共享底座每个文件跑 `bash -n`，而
+`49b0788` 把两个 `.py` 加进了 `SCRIPTS` ⇒ 本函数**恒为 False**、`cloud_release.py`
+永远报 `bootstrap_required`。那之后没人发过版，所以没人发现，直到要把修复发上云端。
+> **一个永远不可能满足的前置条件，和没有这个前置条件一样糟**——它不是把关，是把路堵死。
+
+**RC4 Collector schema 指纹量的是形式**：哈希 DDL 原始文本 ⇒ ALTER 迁上来的库与新建库
+永远不可能相等（本地 `provider` 后加排末尾 vs 云端在建表语句声明位；`turns` 只差注释）。
+**这正是上一轮必须手工重建 turns/llm_calls 的原因。** 同一算法活在三处、跨 ssh 无法共用
+实现，回归用「同一个库跑三份实现比对」钉住，并单独验过「只退一处就红」。
+
+**PG 死列 `agents.embedding`**：与上两条不同，这是**真差异**。取证三条（`store.py:560`
+读的是 `agent_capability_vec`、`postgres_schema.sql` 无人执行、代码自陈「停写停读」）后
+本地 `DROP COLUMN`，13 行先导出留档。**没有放宽 PG 判据**——它在正确履职，
+该消除的是真实差异。
+
+**发布闸盲区**：`diff_contains_schema_change` 只跳 `#` 注释、跳不过 docstring，
+一段**讲** DDL 的散文被读成真 schema 变更 ⇒ `plan_rejected`。从 diff 无法可靠识别
+docstring，只能在文本侧回避并就地写明「别改回去」。
+
+> **本趟四个缺陷里三个是同一个形状：校验量错了东西**——DUMP 的字节序、DDL 的文本形态、
+> `bash -n` 用在 Python 上。都不是「写错了」，是**拿形式当内容**。
+
+**操作面两条**：① `which bash` 找到的可能是 Windows 的 WSL 存根（`which` 有、跑就炸，
+且 `CreateProcess` 先命中 system32，往 PATH 前插也压不住）⇒ 判可用性要**探它能不能真跑**、
+拿绝对路径调。② `final` 快照**没有 dry-run**（源码强制要求 `--quiesce-local --apply` 同给），
+且它要求 28 个写入方**当前在运行**才肯记录身份 ⇒ 取快照前必须先把本地栈拉起来，
+成功后它们保持停止（只有失败路径才自动拉回）。
