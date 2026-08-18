@@ -4,6 +4,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -1208,3 +1209,96 @@ def test_collector_schema_fingerprint_has_three_equivalent_implementations(tmp_p
         local = migration.sqlite_fingerprint(connection)
     assert local == _remote_collector_fingerprint(database)
     assert local == _evidence_collector_fingerprint(database)
+
+
+# ── 封存的 WAL 库：只读介质上必须读得开（immutable=1）────────────────────────
+
+def _wal_database(path: Path, rows: int = 3) -> None:
+    """造一个真实形态的 collector 库：WAL 模式、checkpoint 过、**不留 sidecar**。"""
+    with sqlite3.connect(path) as connection:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("CREATE TABLE turns(trace_id TEXT PRIMARY KEY)")
+        for index in range(rows):
+            connection.execute("INSERT INTO turns(trace_id) VALUES (?)", (f"t{index}",))
+        connection.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    for suffix in ("-wal", "-shm"):
+        sidecar = path.with_name(path.name + suffix)
+        if sidecar.exists():
+            sidecar.unlink()
+    # ⚠ 不能用 `PRAGMA journal_mode` 自检：以 `immutable=1` 打开时 SQLite **忽略 WAL**、
+    # 把它报成 `delete`（探针第一版就栽在这，容器里当场红——同一族「观察方式改变了观察结果」）。
+    # 直接读文件头：第 18/19 字节是 read/write format version，`2` 即 WAL。
+    header = path.read_bytes()[18:20]
+    assert header == b"\x02\x02", (
+        f"探针没造出 WAL 库（header={header!r}），这条用例就什么都没验到"
+    )
+
+
+@pytest.mark.skipif(os.name == "nt", reason="需要 POSIX 目录权限来造只读介质")
+@pytest.mark.skipif(
+    os.name != "nt" and os.geteuid() == 0,
+    reason="root 绕过目录权限，造不出只读介质（CI 以普通用户跑，这条在那里生效）",
+)
+def test_sealed_wal_database_opens_on_read_only_media(tmp_path: Path):
+    """封存的迁移包按 `--mount …,readonly` 挂进来，读它**不能依赖能写 sidecar**。
+
+    2026-08-18 真栈实证：`collector-restore` 与随后的 pre-start 取证都倒在
+    `sqlite3.OperationalError: unable to open database file`——shipped 的
+    `collector.db` header 是 WAL，`mode=ro` 打开需要建 `-shm`，只读挂载上建不了。
+    ⚠ 本机第一次复现**没红**：批次目录里残留着我们自己读路径产生的 `-shm`/`-wal`，
+    而云端 `/incoming` 只有 4 个规范文件。
+    > 判据：**我们自己的读路径会往「封存输入」旁边写 sidecar，那正是让复现说谎的东西。**
+    """
+    sealed = tmp_path / "sealed"
+    sealed.mkdir()
+    database = sealed / "collector.db"
+    _wal_database(database)
+    database.chmod(0o444)
+    sealed.chmod(0o555)                      # 只读介质：连 sidecar 都建不出来
+    try:
+        with pytest.raises(sqlite3.OperationalError):   # 前提自检：不加 immutable 确实打不开
+            sqlite3.connect(
+                f"file:{database.as_posix()}?mode=ro", uri=True,
+            ).execute("PRAGMA integrity_check").fetchall()
+
+        with sqlite3.connect(
+            f"file:{database.as_posix()}?mode=ro&immutable=1", uri=True,
+        ) as connection:
+            assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            assert connection.execute("SELECT count(*) FROM turns").fetchone()[0] == 3
+        assert not list(sealed.glob("collector.db-*")), "读封存件时不许留下 sidecar"
+    finally:
+        sealed.chmod(0o755)
+
+
+def test_collector_readers_open_sealed_input_immutably():
+    """三处读**封存件**的地方都要 `immutable=1`；读**活库**的地方绝不能加。
+
+    活库那一档（apply post-start、远端 inspect-current）collector 正在写，
+    `immutable=1` 会略过 WAL 读出偏旧视图 ⇒ 尚在 WAL 里的行看起来像被删了。
+    所以这不是「到处加上就对」，而是**按被读对象是否静止**来分。
+    """
+    replace_source = (REPO_ROOT / "deploy" / "cloud" / "collector_volume_replace.py").read_text(
+        encoding="utf-8",
+    )
+    assert "mode=ro&immutable=1" in replace_source, "封存的 incoming 必须 immutable 打开"
+
+    evidence_source = (REPO_ROOT / "deploy" / "cloud" / "store_identity_evidence.py").read_text(
+        encoding="utf-8",
+    )
+    assert '"--immutable"' in evidence_source and "immutable=args.immutable" in evidence_source
+    assert 'immutable else ""' in evidence_source, "必须是显式开关，不是无条件 immutable"
+
+    shell = (REPO_ROOT / "deploy" / "cloud" / "remote-data-migration.sh").read_text(encoding="utf-8")
+    body = re.search(
+        r"(?ms)^collect_target_attestation\(\) \{(?P<body>.*?)^\}", shell,
+    )["body"]
+    assert 'if [[ "${stage}" == "pre-start" ]]; then collector_immutable=(--immutable); fi' in body
+    assert '"${collector_immutable[@]}"' in body
+    # 活库那一路（inspect-current 读运行中的 /data/obs.db）不许被顺手加上
+    assert 'sqlite3.connect("file:/data/obs.db?mode=ro", uri=True)' in shell
+
+    local_source = (REPO_ROOT / "scripts" / "cloud_data_migration_lib.py").read_text(encoding="utf-8")
+    assert local_source.count("mode=ro&immutable=1") == 3
+    assert '"--immutable",' in local_source

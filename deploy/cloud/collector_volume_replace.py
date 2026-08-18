@@ -87,7 +87,18 @@ def replace_collector_database(
 ) -> None:
     if not _regular(incoming):
         raise ValueError("Collector source is not a regular file")
-    connection = sqlite3.connect(f"file:{incoming.as_posix()}?mode=ro", uri=True)
+    # `immutable=1` 不是可选项：incoming 是**封存的迁移包**，按 `--mount …,readonly`
+    # 挂进来。它的 header 里 `journal_mode=wal`，而以 `mode=ro` 打开 WAL 库需要建
+    # `-shm` ⇒ 只读挂载上直接 `unable to open database file`。
+    # 2026-08-18 真栈实证：`collector-restore` 就倒在下一行，rc=1、helper 容器 94ms 退出、
+    # rollback 桶一个字节没写。⚠ 本机第一次复现**没红**——因为本地批次目录里残留着
+    # 前面只读打开时产生的 `-shm`/`-wal`，而云端 `/incoming` 只有 4 个规范文件。
+    # > 判据：**我们自己的读路径会往「封存输入」旁边写 sidecar，那正是让复现说谎的东西。**
+    # 安全性已单独证过：快照走 `backup()` + `wal_checkpoint`，`-wal` 为 0 字节，
+    # 用 `immutable=1` 读到的四表行数与 manifest 逐字一致。
+    connection = sqlite3.connect(
+        f"file:{incoming.as_posix()}?mode=ro&immutable=1", uri=True,
+    )
     try:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise ValueError("Collector source integrity check failed")

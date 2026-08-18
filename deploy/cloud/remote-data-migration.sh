@@ -1217,6 +1217,7 @@ collect_target_attestation() {
   local collector_ids_text collector_container collector_image postgres_id redis_id
   local evidence_partial evidence_final baseline_file run_id retention_days
   local pg_file pg_identity_file redis_file collector_file
+  local -a collector_immutable=()
   [[ "${stage}" == "pre-start" || "${stage}" == "post-start" ]] || return 2
   if compgen -G "${directory}/.attestation.*.json.partial" >/dev/null; then return 1; fi
   run_id="$(python3 -c 'import secrets; print(secrets.token_hex(12))')" || return $?
@@ -1262,12 +1263,20 @@ SQL
     | sed -n 's/^OBS_RETENTION_DAYS=//p')" || return $?
   retention_days="${retention_days:-7}"
   [[ "${retention_days}" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+  # pre-start：collector 容器还没起，卷是 readonly 挂进来、刚装上的 obs.db 旁边没有
+  # `-shm`。以 mode=ro 打开 WAL 库需要建 `-shm` ⇒ 只读挂载上 `unable to open database
+  # file`（2026-08-18 已按该条件逐字复现）。所以这一档必须 `--immutable`。
+  # ⚠ post-start **绝不能加**：那时 collector 正在写，immutable 会略过 WAL、读出偏旧的
+  # 视图，尚在 WAL 里的行看起来像被删了，把正确的迁移判成失败。
+  collector_immutable=()
+  if [[ "${stage}" == "pre-start" ]]; then collector_immutable=(--immutable); fi
   docker run --rm --pull never \
     --mount "type=volume,source=${COLLECTOR_VOLUME},target=/data,readonly" \
     --mount "type=bind,source=${directory},target=/evidence" \
     --mount "type=bind,source=${CURRENT_RELEASE}/deploy/cloud/store_identity_evidence.py,target=/tool.py,readonly" \
     --entrypoint python "${collector_image}" /tool.py collector --database /data/obs.db \
     --key-control /evidence/manifest.json --retention-days "${retention_days}" \
+    "${collector_immutable[@]}" \
     --output "/evidence/$(basename "${collector_file}")" || return $?
   baseline_file="${directory}/evidence-pre-start.json"
   if [[ "${stage}" == "pre-start" ]]; then

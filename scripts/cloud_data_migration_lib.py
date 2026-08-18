@@ -982,7 +982,12 @@ def _redis_evidence(payload: object, rdb_path: Path) -> Mapping[str, object]:
 
 
 def _collector_evidence(path: Path) -> Mapping[str, object]:
-    with sqlite3.connect(f"file:{path}?mode=ro", uri=True) as connection:
+    # `immutable=1`：批次目录是**封存输入**，而以 `mode=ro` 打开 WAL 库会在它旁边建
+    # `-shm`（甚至 `-wal`）——我们自己的读路径往封存件旁边写文件。2026-08-18 那些残留
+    # sidecar 让「只读挂载上打不开」这个真缺陷在本机复现时**没红**，因为云端 `/incoming`
+    # 只有 4 个规范文件、本地却多了 sidecar。快照本身是 `backup()`+`wal_checkpoint`，
+    # `-wal` 为 0 字节，immutable 读出的行数与 manifest 逐字一致（已验）。
+    with sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True) as connection:
         integrity = connection.execute("PRAGMA integrity_check").fetchall()
         if integrity != [("ok",)]:
             raise MigrationError("Collector integrity check failed")
@@ -1074,7 +1079,7 @@ def collect_aggregate_evidence(
     collector_identity_path = directory / ".collector-identity.json"
     runner.run([
         sys.executable, str(repo / "deploy" / "cloud" / "store_identity_evidence.py"),
-        "collector", "--database", str(directory / "collector.db"),
+        "collector", "--database", str(directory / "collector.db"), "--immutable",
         "--key-control", str(directory / "status.json"), "--output", str(collector_identity_path),
     ], cwd=repo)
     collector_identity = parse_control_json(collector_identity_path.read_bytes())
@@ -1532,7 +1537,10 @@ def _verify_snapshots(
     )
     if not _redis_rdb_check_succeeded(redis_result):
         raise MigrationError("Redis snapshot format validation failed")
-    with sqlite3.connect(f"file:{directory / 'collector.db'}?mode=ro", uri=True) as connection:
+    # 同 `_collector_evidence`：封存输入只读且不许留下 sidecar。
+    with sqlite3.connect(
+        f"file:{directory / 'collector.db'}?mode=ro&immutable=1", uri=True,
+    ) as connection:
         result = connection.execute("PRAGMA integrity_check").fetchall()
     if result != [("ok",)]:
         raise MigrationError("Collector snapshot integrity validation failed")

@@ -294,10 +294,25 @@ def _row_bytes(row: Iterable[object]) -> bytes:
     return json.dumps(list(row), ensure_ascii=False, allow_nan=False, separators=(",", ":"), default=str).encode()
 
 
-def collect_collector(database: Path, key: bytes, retention_days: float = 7.0) -> dict[str, object]:
+def collect_collector(
+    database: Path, key: bytes, retention_days: float = 7.0, *, immutable: bool = False,
+) -> dict[str, object]:
+    """采 Collector 身份证据。
+
+    `immutable=True` 只用于**库确定静止**的那一档（apply 的 pre-start：collector 容器
+    还没起、卷是 `readonly` 挂进来的、刚装上的 `obs.db` 旁边没有 `-shm`）。
+    以 `mode=ro` 打开 WAL 库需要建 `-shm`，只读挂载上会 `unable to open database file`
+    ——2026-08-18 已在本机按 pre-start 条件逐字复现。
+
+    ⚠ **post-start 绝不能加**：那时 collector 正在写，`immutable=1` 会略过 WAL，
+    读出一份偏旧的视图 ⇒ 尚在 WAL 里的行看起来像被删了，把正确的迁移判成失败。
+    所以这里做成**显式开关**而不是「打不开就回落」——回落会在两种语义之间静默切换，
+    而这两种语义的差别正是「有没有看见活库的最新写入」。
+    """
     rows: dict[str, dict[str, dict[str, object]]] = {table: {} for table in COLLECTOR_TABLES}
     total_rows = 0
-    with sqlite3.connect(f"file:{database.as_posix()}?mode=ro", uri=True) as connection:
+    uri = f"file:{database.as_posix()}?mode=ro" + ("&immutable=1" if immutable else "")
+    with sqlite3.connect(uri, uri=True) as connection:
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise ValueError("Collector integrity check failed")
         version = connection.execute("PRAGMA user_version").fetchone()[0]
@@ -394,6 +409,8 @@ def main() -> int:
     parser.add_argument("--output", required=True)
     parser.add_argument("--include-key", action="store_true")
     parser.add_argument("--retention-days", type=float, default=7.0)
+    # 只在库确定静止的那一档给（apply pre-start）；post-start 给了会读不到活库的 WAL。
+    parser.add_argument("--immutable", action="store_true")
     parser.add_argument("--db-user", default="postgres")
     parser.add_argument("--database-name", default="postgres")
     args = parser.parse_args()
@@ -414,7 +431,9 @@ def main() -> int:
         payload = collect_redis(args.container, key)
     else:
         if args.database is None: parser.error("collector requires --database")
-        payload = collect_collector(args.database, key, args.retention_days)
+        payload = collect_collector(
+            args.database, key, args.retention_days, immutable=args.immutable,
+        )
     if args.include_key:
         payload["identity_hmac_key"] = key.hex()
     _atomic_json(None if args.output == "-" else Path(args.output), payload)
