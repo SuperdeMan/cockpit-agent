@@ -116,7 +116,7 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 `make up` → `status`。
 根因分三段：迁移 apply **RC1–RC7**（history §55，另有两处未编号：PG 死列
 `agents.embedding`、发布闸把 docstring 读成 schema 变更）、切云验证 **RC8–RC14**（§56）、
-前端联调车道 **RC15/RC16** 与单测环境串味 **RC17**（§57）——**合计 17 条编号根因**。
+前端联调车道 **RC15/RC16**、单测环境串味 **RC17**（§57）——**合计 17 条编号根因**；另修一条偶发竞态（L3 报告被 mtime 分辨率读成陈旧，§57.11）。
 > ⚠ 五条接手须知：① **真栈命令一律走 PowerShell**——Git Bash 的 `ssh` 是 MSYS 版，
 > 会吃掉 `subprocess.list2cmdline` 的 `\"` 转义，远端 bash 报 `unexpected EOF`；
 > ② 本地 `.env` 现含 `VITE_WS_TOKEN`（云端 `AUTH_REQUIRED=true` 必需，**不进 commit**）；
