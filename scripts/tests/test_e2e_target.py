@@ -3,8 +3,13 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+import ast
 import io
 import json
+import re
+import subprocess
+import sys
+import time
 
 import pytest
 
@@ -388,11 +393,203 @@ def test_remote_probe_identity_is_read_from_its_validated_artifact(tmp_path: Pat
 def test_remote_safe_probe_uses_only_runner_endpoints_and_isolated_identity():
     source = (ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8")
     for name in (
-        "HMI_URL", "EDGE_HTTP_URL", "WS_URL", "AUDIO_API_URL",
+        "HMI_URL", "EDGE_HTTP_URL", "WS_URL", "E2E_AUDIO_API_ORIGIN",
         "DASHBOARD_URL", "COLLECTOR_URL", "COLLECTOR_WS_URL",
     ):
         assert f'os.environ["{name}"]' in source
     assert "localhost" not in source
-    assert '"memory_enabled": False' in source
+    assert '"memory_enabled": "false"' in source
     assert "docker" not in source.lower()
     assert "subprocess" not in source
+
+
+def test_remote_lock_ack_survives_a_login_banner_larger_than_the_stderr_pipe(
+    tmp_path: Path,
+):
+    """The real host greets every ssh session with a multi-KiB banner on stderr.
+
+    A pipe nobody reads holds only 4 KiB on Windows, so the remote end blocks on
+    its own banner and never gets to write the ack. This needs a real child
+    process: in-memory streams cannot reproduce a full pipe.
+    """
+    run_id = "e2e-" + "d" * 32
+    script = tmp_path / "banner_then_ack.py"
+    script.write_text(
+        "import sys\n"
+        "sys.stderr.buffer.write(b'B' * 262144)\n"
+        "sys.stderr.buffer.flush()\n"
+        f"sys.stdout.write('READY {run_id}' + chr(10))\n"
+        "sys.stdout.flush()\n"
+        "sys.stdin.readline()\n",
+        encoding="utf-8",
+    )
+
+    def popen(argv, **kwargs):
+        return subprocess.Popen([sys.executable, str(script)], **kwargs)
+
+    started = time.monotonic()
+    with RemoteCloudLock(
+        ssh=SshConfig("demo.example", "ubuntu", tmp_path / "identity"),
+        run_id=run_id,
+        popen=popen,
+    ) as lock:
+        assert lock.identity == run_id
+    assert time.monotonic() - started < 15
+
+
+def test_remote_safe_probe_reads_only_names_the_runner_hands_the_child(
+    tmp_path: Path,
+):
+    """The scan test above only proves the probe *names* runner endpoints.
+
+    AUDIO_API_URL was named there and stripped by _child_environment, so the one
+    case cloud verification runs could never survive its own import.
+    """
+    source = (ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8")
+    required = set(re.findall('os[.]environ[[]"([A-Z0-9_]+)"[]]', source))
+    assert required
+
+    target = E2ETarget("cloud", cloud_endpoints("demo.ts.net"), "a" * 40)
+    declared = {
+        line.split("=", 1)[0].strip(): "declared"
+        for line in (ROOT / ".env.example").read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.lstrip().startswith("#")
+    }
+    declared.update(endpoint_environment(target))
+    delivered = run_e2e._child_environment(
+        declared,
+        case=MANIFEST.by_id["e2e_remote_safe"],
+        run_id="e2e-" + "f" * 32,
+        result_file=tmp_path / "result.json",
+        artifact_dir=tmp_path / "artifacts",
+        lane=None,
+        provider=None,
+        model=None,
+    )
+
+    assert sorted(required - set(delivered)) == []
+
+
+def _frame_types_the_probe_reacts_to(source: str) -> set[str]:
+    """Every literal the probe compares a frame's ``type`` against."""
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Compare):
+            continue
+        left = node.left
+        if not (
+            isinstance(left, ast.Call)
+            and isinstance(left.func, ast.Attribute)
+            and left.func.attr == "get"
+            and left.args
+            and isinstance(left.args[0], ast.Constant)
+            and left.args[0].value == "type"
+        ):
+            continue
+        for item in node.comparators:
+            if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                names.add(item.value)
+            elif isinstance(item, (ast.Set, ast.Tuple, ast.List)):
+                names.update(
+                    element.value
+                    for element in item.elts
+                    if isinstance(element, ast.Constant)
+                    and isinstance(element.value, str)
+                )
+    return names
+
+
+def test_remote_safe_probe_waits_only_for_frames_the_edge_gateway_emits():
+    """hello_ack belongs to the cloud gRPC channel, not the edge WebSocket.
+
+    The probe waited for it as its handshake, so the round trip could not
+    complete against any real stack no matter how healthy the deployment was.
+    """
+    awaited = _frame_types_the_probe_reacts_to(
+        (ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8"),
+    )
+    assert awaited
+
+    gateway = (ROOT / "gateway/edge/main.go").read_text(encoding="utf-8")
+    emitted = set(re.findall('"type":[ ]*"([a-z_0-9]+)"', gateway))
+
+    assert sorted(awaited - emitted) == []
+
+
+_GO_SCALARS = {"string": str, "bool": bool}
+
+
+def _ws_request_field_types() -> dict[str, str]:
+    """Field types of the gateway's wsRequest, keyed by wire name."""
+    source = (ROOT / "gateway/edge/main.go").read_text(encoding="utf-8")
+    block = source.split("type wsRequest struct {", 1)[1].split("}", 1)[0]
+    fields: dict[str, str] = {}
+    for line in block.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[0].startswith("//"):
+            continue
+        tag = re.search('json:"([a-z_0-9]+)"', line)
+        if tag is not None:
+            fields[tag.group(1)] = parts[1]
+    return fields
+
+
+def _probe_ws_payload() -> ast.Dict:
+    tree = ast.parse((ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "payload"
+            and isinstance(node.value, ast.Dict)
+        ):
+            return node.value
+    raise AssertionError("the probe no longer builds a payload literal")
+
+
+def test_remote_safe_probe_payload_matches_the_gateway_wire_contract():
+    """A meta value of the wrong type fails the gateway's whole unmarshal.
+
+    The request is then dropped with no frame back and no log line, which reads
+    exactly like a dead stack. Checking the payload's source text cannot see it.
+    """
+    fields = _ws_request_field_types()
+    assert fields["meta"] == "map[string]string"
+
+    payload = _probe_ws_payload()
+    for key_node, value_node in zip(payload.keys, payload.values):
+        assert isinstance(key_node, ast.Constant)
+        key = key_node.value
+        declared = fields.get(key)
+        assert declared is not None, f"{key} is not a wsRequest field"
+        if declared == "map[string]string":
+            assert isinstance(value_node, ast.Dict), key
+            for item in value_node.values:
+                if isinstance(item, ast.Constant):
+                    assert isinstance(item.value, str), f"meta.{key}"
+        elif isinstance(value_node, ast.Constant):
+            expected = _GO_SCALARS.get(declared)
+            if expected is not None:
+                assert isinstance(value_node.value, expected), key
+
+
+def test_runner_unit_tests_never_inherit_the_repository_deployment_target():
+    """`runner.main` resolves the target from the repo's dev-stack.local.
+
+    Seventeen unit tests turned red the moment the operator switched that file to
+    cloud -- nothing about the code under test had changed. Any in-process runner
+    invocation with a literal argv has to say which target it means.
+    """
+    offenders = []
+    for name in ("test_e2e_stack_lease", "test_e2e_profiles", "test_run_e2e"):
+        source = (Path(__file__).resolve().parent / f"{name}.py").read_text(
+            encoding="utf-8",
+        )
+        for match in re.finditer(r"\brunner\.main\(\s*\[", source):
+            closing = source.index("]", match.end())
+            if '"--target"' not in source[match.end():closing]:
+                line = source.count("\n", 0, match.start()) + 1
+                offenders.append(f"{name}.py:{line}")
+
+    assert offenders == []

@@ -5,6 +5,7 @@ from __future__ import annotations
 import concurrent.futures
 import re
 import subprocess
+import threading
 from typing import Callable
 
 from scripts.cloud_release_lib import SshConfig
@@ -13,6 +14,10 @@ from scripts.cloud_release_lib import SshConfig
 REMOTE_E2E_LOCK = "/opt/car-agent/shared/bin/remote-e2e-lock.sh"
 _RUN_ID = re.compile(r"^e2e-[0-9a-f]{32}$")
 _LOCK_KINDS = ("release", "rollback", "backup", "migration", "e2e")
+# The ack arrives on stdout, but sshd also writes the host's login banner to stderr.
+# A pipe nobody reads fills up (4 KiB on Windows) and blocks the remote end before it
+# can emit the ack, so stderr has to be drained concurrently, not after the ack.
+_STDERR_TAIL_BYTES = 8192
 
 
 class RemoteLockError(RuntimeError):
@@ -40,6 +45,9 @@ class RemoteCloudLock:
         self.identity = run_id
         self._popen = popen
         self._process = None
+        self._stderr_tail = bytearray()
+        self._stderr_lock = threading.Lock()
+        self._stderr_pump = None
 
     def acquire(self) -> "RemoteCloudLock":
         command = f"sudo {REMOTE_E2E_LOCK} hold --run-id {self.run_id}"
@@ -49,6 +57,7 @@ class RemoteCloudLock:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+        self._start_stderr_pump()
         reader = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         future = reader.submit(self._process.stdout.readline)
         try:
@@ -61,13 +70,31 @@ class RemoteCloudLock:
         ack = raw_ack.decode("utf-8", errors="replace").strip()
         if ack != f"READY {self.run_id}":
             self._terminate()
-            detail = self._process.stderr.read(4096).decode(
-                "utf-8", errors="replace",
-            )
+            detail = self._drained_stderr()
             self._process = None
             raise RemoteLockError(redact_lock_error(detail))
         self.ensure_held()
         return self
+
+    def _start_stderr_pump(self) -> None:
+        stream = self._process.stderr
+        if stream is None:
+            return
+
+        def pump() -> None:
+            for chunk in iter(lambda: stream.read(1024), b""):
+                with self._stderr_lock:
+                    self._stderr_tail.extend(chunk)
+                    del self._stderr_tail[:-_STDERR_TAIL_BYTES]
+
+        self._stderr_pump = threading.Thread(target=pump, daemon=True)
+        self._stderr_pump.start()
+
+    def _drained_stderr(self) -> str:
+        if self._stderr_pump is not None:
+            self._stderr_pump.join(timeout=5)
+        with self._stderr_lock:
+            return bytes(self._stderr_tail).decode("utf-8", errors="replace")
 
     def _terminate(self) -> None:
         if self._process is None:

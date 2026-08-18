@@ -18,7 +18,9 @@ from support.e2e import CaseRecorder, _redact_text
 HMI_URL = os.environ["HMI_URL"]
 EDGE_HTTP_URL = os.environ["EDGE_HTTP_URL"]
 WS_URL = os.environ["WS_URL"]
-AUDIO_API_URL = os.environ["AUDIO_API_URL"]
+# The runner strips AUDIO_API_URL from every case child on purpose; the name it
+# does hand down for the audio/LLM endpoint is E2E_AUDIO_API_ORIGIN.
+AUDIO_API_ORIGIN = os.environ["E2E_AUDIO_API_ORIGIN"]
 DASHBOARD_URL = os.environ["DASHBOARD_URL"]
 COLLECTOR_URL = os.environ["COLLECTOR_URL"]
 COLLECTOR_WS_URL = os.environ["COLLECTOR_WS_URL"]
@@ -88,7 +90,7 @@ def wait_collector_trace(trace_id: str, *, timeout_s: float) -> None:
 
 
 async def edge_round_trip(recorder: CaseRecorder) -> str:
-    token = os.environ["VITE_WS_TOKEN"]
+    token = os.environ.get("VITE_WS_TOKEN", "")
     if not token:
         raise RemoteSafeError("websocket token is missing")
     ws_url = append_query_token(WS_URL, token)
@@ -97,16 +99,18 @@ async def edge_round_trip(recorder: CaseRecorder) -> str:
         "text": "你好，请只回复一句简短问候",
         "session_id": recorder.session_id(1),
         "is_confirmation": False,
+        # The gateway decodes meta as map[string]string; a non-string value fails
+        # the whole unmarshal and the request is dropped without a frame or a log.
         "meta": {
             "trace_id": trace_id,
-            "memory_enabled": False,
+            "memory_enabled": "false",
             "e2e_run_id": os.environ["E2E_RUN_ID"],
         },
     }
     async with websockets.connect(ws_url, open_timeout=20, ping_interval=None) as socket:
-        ack = json.loads(await asyncio.wait_for(socket.recv(), timeout=10))
-        if ack.get("type") != "hello_ack":
-            raise RemoteSafeError("edge websocket acknowledgement failed")
+        # An unsigned client gets no handshake frame from the edge WS: a bad token
+        # fails the upgrade above, and the mirror/proactive frames the gateway may
+        # push first are skipped by wait_final.
         await socket.send(json.dumps(payload, ensure_ascii=False))
         await wait_final(socket, timeout_s=90)
     await asyncio.to_thread(wait_collector_trace, trace_id, timeout_s=30)
@@ -123,7 +127,7 @@ async def main() -> int:
             require_http_200("edge", append_path(EDGE_HTTP_URL, "/healthz"))
             recorder.pass_case("remote-edge-health")
             catalog = active_provider_model(require_http_200(
-                "audio", append_path(AUDIO_API_URL, "/api/llm/providers"),
+                "audio", append_path(AUDIO_API_ORIGIN, "/api/llm/providers"),
             ))
             artifact = recorder.add_artifact(
                 "remote_provider_catalog.json",
