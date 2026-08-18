@@ -4662,3 +4662,32 @@ test_migration_docs_explain_two_stage_attestation_growth_rules` **真的会读�
 
 本批净产出 **+5 collected**（`scripts/tests` 1132 → 1137）：四条前端车道回归
 （RC15/RC16）+ 一条 RC17 覆盖面守卫，五条全 pass。段 1 代码未碰。
+
+### §57.10 收尾清理：捡回一份孤儿日报、删两个分支、`.env.example` 那笔撤回
+
+泓舟指示「分支删、`TAILNET_FQDN` 补」。三件事各有一处值得记：
+
+**① 删分支前先看它装了什么。** `plan/cloud-data-remote-dev` 已全量并入 main，
+`safety/pre-cloud-cutover-20260817` 却有一个未并入的 `40476dd`。它只加了一个文件：
+`docs/reviews/badcase/2026-08-16.md`——nightly 自进化日报。而 main 上这个系列
+**从 2026-07-24 一路连到 2026-08-15、单缺 8-16**，最近两次提交就叫「归档 nightly
+badcase 日报」「补入库 …」⇒ 是断档不是刻意不收。先 `git checkout 40476dd -- <该文件>`
+捡回 main（逐字校验一致）再删分支。
+> **判据：「已合并」要按内容问，不是按分支名问。** `safety/*` 这种名字最容易被当成
+> 纯快照直接删——它确实是快照，但快照里夹着唯一一份产物。
+
+**② `.env.example` 补 `TAILNET_FQDN`：提交、实测、撤回。**
+补完跑 `cloud_release.py deploy --sha HEAD` dry-run，得到
+`status: plan_rejected`、`blocking_changes: [{runtime_config_contract, .env.example}]`、rc=3。
+读码确认这不是「审批闸」而是**硬阻断**：`infrastructure` 有
+`release-infrastructure.json` 的 digest 批准通道，
+`runtime_config_contract`/`database_schema`/`ci_cd`/`secret_material` **一条都没有**；
+而 `changed_paths` 取的是「已部署 SHA → 目标 SHA」全量 diff ⇒
+**这一笔只要在 main 上，`deploy` 就永远被拒，连「先发一次版把它消化掉」都不行
+——发版本身就是被拒的那个动作。** 于是 `030c049` 撤回，两个键的说明改落
+`docs/dev-guide.md` §可切换真栈（新增一张表 + 为什么不写进模板）。
+> **判据：闸按路径分类、不看内容，所以它会误伤纯声明性的改动。**
+> 这已是同一个发布闸的第二次同类误伤——§55.6 那次是把**讲** DDL 的 docstring
+> 读成真 schema 变更。区别在于那次能靠改写文本绕开，这次绕不开：**类别本身没有出口。**
+> 推论：**先前我把它描述成「加一道审批闸」是轻描淡写了**；一句 dry-run 就能把
+> 「大概会怎样」换成「实际是什么」，而这次的差别是「多一道手续」与「彻底堵死」。

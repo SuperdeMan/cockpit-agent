@@ -16,6 +16,25 @@
 > `CAR_AGENT_SSH_IDENTITY` 三个环境变量提供，**不进 `.env`、不进 `dev-stack.local`**；
 > 缺任一项时 CLI 返回 `configuration_rejected`（rc=2）而不是去猜。
 
+### cloud 档需要的两个键（`.env.example` 里刻意没有）
+
+新环境按 `.env.example` 配不出 cloud 档，缺的是这两个——**它们只有 `target=cloud` 时才读**：
+
+| 键 | 在哪 | 干什么 |
+|---|---|---|
+| `TAILNET_FQDN` | 根 `.env`（只写主机名，不带协议/端口/路径） | `dev_stack` 的 `status`/`verify`/`hmi`/`dashboard` 由它派生五个端点（443 HMI、8443 edge、8444 audio、8445 dashboard、8446 collector）；缺失或格式非法一律 fail closed |
+| `VITE_WS_TOKEN` | 根 `.env`（64 字符，与云端 `.env` 一致） | 云端 `AUTH_REQUIRED=true`，HMI 与 E2E 都要它；`.env.example` 里已有此键 |
+
+> ⚠ **为什么 `TAILNET_FQDN` 不写进 `.env.example`**：那个文件在发布闸里被分类为
+> `runtime_config_contract`（`scripts/cloud_release_lib.py::CONTROLLED_EXACT`），
+> 而该类别**没有任何放行通道**——`infrastructure` 有 `release-infrastructure.json`
+> 的 digest 批准，`runtime_config_contract` / `database_schema` / `ci_cd` /
+> `secret_material` 一律硬阻断。且 `changed_paths` 取的是「已部署 SHA → 目标 SHA」
+> 的全量 diff，所以只要这一笔在 main 上，`cloud_release.py deploy` 就**永远** `plan_rejected`
+> ——连「先发一次版把它消化掉」都不行，发版本身就是被拒的那个动作。
+> 2026-08-19 实测过一次（`c03d5a3` → rc=3 → 已 `030c049` 撤回）。
+> 真要改这个文件，得先给该类别设计一条与 infrastructure 对等的批准锚点。
+
 执行真栈动作前由统一入口按仓库根目录定位并读取 `dev-stack.local`。它是仓库根目录的
 Git-ignore 文件，不能按当前工作目录误判缺失；缺失按 `target=local`，损坏则 fail closed。只允许
 `target=local|cloud`，不得写入 token、密码、私钥或 URL。`target=cloud` 不启动本地 Compose，

@@ -123,10 +123,15 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > ③ `target=cloud` 期间**不要起本地 Compose**，本地只承载编辑、单测、静态检查与 Vite；
 > ④ 云端连接三参数走环境变量 `CAR_AGENT_DEPLOY_HOST` / `CAR_AGENT_DEPLOY_USER` /
 > `CAR_AGENT_SSH_IDENTITY`，**不在 `.env`、不在 `dev-stack.local`**——缺任一项时
-> `dev_stack` 返回 `configuration_rejected`（rc=2）；⑤ **已知缺口（下次发版顺带修）**：
-> `.env.example` 没有 `TAILNET_FQDN` 这个键，而 cloud 档的 `status`/`verify`/`hmi`/`dashboard`
-> 都要它。**本批刻意没补**——`.env.example` 在发布闸里被分类为 `runtime_config_contract`
-> （`scripts/tests/test_cloud_release.py`），改它会给下一次云端发版凭空加一道审批闸。
+> `dev_stack` 返回 `configuration_rejected`（rc=2）；⑤ **cloud 档要两个键，
+> `.env.example` 里刻意只有一个**：`VITE_WS_TOKEN` 有、**`TAILNET_FQDN` 没有**
+> （后者派生五个云端端点，缺了 fail closed）。**不是忘了，是不能补**——`.env.example`
+> 在发布闸里属 `runtime_config_contract`，该类别**无放行通道**（只有 `infrastructure`
+> 有 digest 批准），且 `changed_paths` 取「已部署 SHA → 目标 SHA」全量 diff ⇒
+> 这一笔只要在 main 上，`deploy` 就永远 `plan_rejected`，**连「先发一次版消化掉」
+> 都不行**（发版本身就是被拒的那个动作）。2026-08-19 实测过一次（`c03d5a3` rc=3，
+> 已由 `030c049` 撤回），两个键的说明改落 `docs/dev-guide.md` §可切换真栈。
+> 要动它得先给该类别设计一条与 infrastructure 对等的批准锚点。
 
 **最新后端全量基线（2026-08-18 切云收口批后实测，`target=cloud` + 本地 Docker 已退）**：
 `python -m pytest --import-mode=importlib` **6551 passed / 73 skipped 零红**，分两段：
