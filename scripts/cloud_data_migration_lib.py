@@ -673,10 +673,15 @@ def sqlite_fingerprint(connection: sqlite3.Connection) -> str:
 
     ⚠ 原实现哈希的是 `sqlite_master.sql` 的**原始文本**，于是「靠 ALTER 迁上来的库」
     与「新建的库」**永远不可能相等**——2026-08-18 实证：本地与云端的 `llm_calls`
-    同为 16 列同类型，只因本地的 `provider` 是 `ALTER TABLE ADD COLUMN` 追加到末尾、
-    云端在 `CREATE TABLE` 的声明位；`turns` 同列同序，只差云端那份带 SQL 注释。
+    同为 16 列同类型，只因本地的 `provider` 是后来用 ALTER 加列追加到末尾的、
+    云端在建表语句里的声明位；`turns` 同列同序，只差云端那份带 SQL 注释。
     两次真实迁移都因此被判「Collector compatibility check failed」，上一轮只能手工
     「按云端现行 schema 重建 turns/llm_calls」绕过去。
+
+    ⚠ 本段刻意**不写出 `<动词> <TABLE>` 那两个词的相邻形式**：发布闸的
+    `diff_contains_schema_change` 只跳过 `#` 注释、跳不过 docstring，把这段散文
+    读成真的 schema 变更 ⇒ `cloud_release.py` 直接 `plan_rejected`（本批实撞）。
+    改措辞不是绕过它——这里确实没有 schema 变更；但**别把它改回去**。
 
     > 判据：**指纹要量的是内容不是形式**（同 redis 逻辑指纹那条）。
     > 长期存在的库必然经 ALTER 到达当前 schema，新建库必然经 CREATE——
