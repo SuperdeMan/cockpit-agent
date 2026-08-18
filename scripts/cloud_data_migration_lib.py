@@ -669,11 +669,53 @@ def redis_prefix(key: bytes) -> str:
 
 
 def sqlite_fingerprint(connection: sqlite3.Connection) -> str:
-    rows = connection.execute(
+    """Collector schema 的**逻辑**指纹（与 DDL 文本形态无关）。
+
+    ⚠ 原实现哈希的是 `sqlite_master.sql` 的**原始文本**，于是「靠 ALTER 迁上来的库」
+    与「新建的库」**永远不可能相等**——2026-08-18 实证：本地与云端的 `llm_calls`
+    同为 16 列同类型，只因本地的 `provider` 是 `ALTER TABLE ADD COLUMN` 追加到末尾、
+    云端在 `CREATE TABLE` 的声明位；`turns` 同列同序，只差云端那份带 SQL 注释。
+    两次真实迁移都因此被判「Collector compatibility check failed」，上一轮只能手工
+    「按云端现行 schema 重建 turns/llm_calls」绕过去。
+
+    > 判据：**指纹要量的是内容不是形式**（同 redis 逻辑指纹那条）。
+    > 长期存在的库必然经 ALTER 到达当前 schema，新建库必然经 CREATE——
+    > 拿文本比这两者，等于要求一件不可能的事。
+
+    规范化：表 → 按列名排序的 `[名, 类型大写, notnull, pk]`；索引 → `[所属表, unique,
+    按序列的列名]`；其它对象（视图/触发器）退回**空白归一后的 SQL**（当前 collector 只有
+    4 表 9 索引，这一支是为将来兜底，不静默跳过）。**刻意不含列默认值**——默认值不影响
+    目标库能否装下源数据，却会把同一族文本差异再引回来。
+
+    ⚠ 本算法**同时活在三处**（本地这份 / `remote-data-migration.sh` 的内联 python /
+    `store_identity_evidence.py`），跨 ssh 边界无法共用实现。三者必须逐字等价，
+    由 `test_collector_schema_fingerprint_*` 拿同一个库跑三份实现比对钉住。
+    """
+    objects = connection.execute(
         "SELECT type,name,tbl_name,sql FROM sqlite_master "
         "WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
     ).fetchall()
-    return hashlib.sha256(canonical_json_bytes(rows)).hexdigest()
+    unique_flags: dict[str, int] = {}
+    for kind, name, _table, _sql in objects:
+        if kind == "table":
+            for entry in connection.execute(f'PRAGMA index_list("{name}")').fetchall():
+                unique_flags[str(entry[1])] = int(entry[2])
+    material: dict[str, object] = {}
+    for kind, name, table, sql in objects:
+        if kind == "table":
+            material[f"table:{name}"] = sorted(
+                [str(column[1]), str(column[2] or "").upper(), int(column[3]), int(column[5])]
+                for column in connection.execute(f'PRAGMA table_info("{name}")').fetchall()
+            )
+        elif kind == "index":
+            material[f"index:{name}"] = [
+                str(table), unique_flags.get(str(name), 0),
+                [str(entry[2]) for entry in
+                 sorted(connection.execute(f'PRAGMA index_info("{name}")').fetchall())],
+            ]
+        else:
+            material[f"{kind}:{name}"] = " ".join(str(sql or "").split())
+    return hashlib.sha256(canonical_json_bytes(material)).hexdigest()
 
 
 def _bounded_count_map(value: object, label: str) -> Mapping[str, int]:

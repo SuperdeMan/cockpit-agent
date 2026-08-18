@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import importlib.util
 import json
+import re
 import sqlite3
 import sys
 import time
@@ -1101,3 +1103,108 @@ def test_final_snapshot_without_both_switches_is_only_a_service_plan(tmp_path: P
     assert rc == 0
     assert any("config" in call and "--services" in call for call in runner.calls)
     assert not any("pg_dump" in call or "redis-cli" in call for call in runner.calls)
+
+
+# ── Collector schema 指纹：逻辑形态，且三份实现必须等价 ────────────────────────
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _collector_like(path: Path, *, migrated: bool) -> None:
+    """建一个 collector 形态的库。
+
+    `migrated=True` 走「老库 + ALTER 追加列」这条路径，`False` 走「新建库一次性声明」
+    ——两者**逻辑 schema 相同、DDL 文本必然不同**，正是真实的本地 vs 云端。
+    """
+    with sqlite3.connect(path) as connection:
+        if migrated:
+            connection.execute(
+                "CREATE TABLE llm_calls(id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                " trace_id TEXT DEFAULT '', model TEXT DEFAULT '')"
+            )
+            connection.execute("ALTER TABLE llm_calls ADD COLUMN provider TEXT DEFAULT ''")
+        else:
+            connection.execute(
+                "CREATE TABLE llm_calls(\n"
+                "  id INTEGER PRIMARY KEY AUTOINCREMENT,\n"
+                "  trace_id TEXT DEFAULT '',\n"
+                "  model TEXT DEFAULT '',\n"
+                "  provider TEXT DEFAULT ''  -- 服务商\n"
+                ")"
+            )
+        connection.execute("CREATE INDEX idx_llm_trace ON llm_calls(trace_id)")
+
+
+def _remote_collector_fingerprint(database: Path) -> str:
+    """跑 `remote-data-migration.sh` 里那段内联 python（抽出来、把库路径换成探针）。"""
+    text = (REPO_ROOT / "deploy" / "cloud" / "remote-data-migration.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^  collector_json=\"\$\(\"\$\{compose\[@\]\}\" exec -T observability-collector "
+        r"python -c '(?P<body>.*?)'\)\"$",
+        text,
+    )
+    assert match is not None, "远端 collector 指纹的内联 python 找不到了，本用例失去锚点"
+    # ⚠ 不要「反转义」`\"`：那段 python 被 bash 单引号包着，`\"` 原样进文件，
+    # 而它在 Python 双引号串里正是合法转义。多此一举地替换会把 SQL 串拆坏。
+    body = match.group("body").replace(
+        "file:/data/obs.db?mode=ro", f"file:{database.as_posix()}?mode=ro",
+    )
+    output: list[str] = []
+    namespace = {"print": output.append}
+    exec(compile(body, "<remote-collector-fingerprint>", "exec"), namespace)
+    return json.loads(output[-1])["schema_fingerprint"]
+
+
+def _evidence_collector_fingerprint(database: Path) -> str:
+    """跑 `store_identity_evidence.py::collect_collector` 那份实现。"""
+    spec = importlib.util.spec_from_file_location(
+        "store_evidence_for_fingerprint",
+        REPO_ROOT / "deploy" / "cloud" / "store_identity_evidence.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    payload = module.collect_collector(database, b"k" * 32, 7.0)
+    return payload["schema_fingerprint"]
+
+
+def test_collector_schema_fingerprint_ignores_ddl_text_form(tmp_path: Path):
+    """ALTER 迁上来的库与新建库**逻辑相同**，指纹就必须相同。
+
+    2026-08-18 真栈实证：本地与云端的 `llm_calls` 同为 16 列同类型，只因本地的
+    `provider` 是 ALTER 追加、云端在 CREATE 的声明位，旧的「哈希 DDL 原文」指纹
+    把两者判成不兼容，`plan` 直接 `remote PostgreSQL/Collector compatibility check failed`。
+    > 判据：**指纹要量的是内容不是形式**——长期库必经 ALTER、新库必经 CREATE，
+    > 拿文本比这两者等于要求一件不可能的事。
+    """
+    migrated, fresh = tmp_path / "migrated.db", tmp_path / "fresh.db"
+    _collector_like(migrated, migrated=True)
+    _collector_like(fresh, migrated=False)
+
+    with sqlite3.connect(migrated) as left, sqlite3.connect(fresh) as right:
+        # 前提自检：两份 DDL 文本确实不同，否则本用例什么都没验到
+        ddl_left = left.execute("SELECT sql FROM sqlite_master WHERE name='llm_calls'").fetchone()[0]
+        ddl_right = right.execute("SELECT sql FROM sqlite_master WHERE name='llm_calls'").fetchone()[0]
+        assert ddl_left != ddl_right
+        assert migration.sqlite_fingerprint(left) == migration.sqlite_fingerprint(right)
+
+    # 真的少一列时必须红（别把「规范化」做成「什么都看不见」）
+    with sqlite3.connect(fresh) as right:
+        right.execute("ALTER TABLE llm_calls ADD COLUMN extra TEXT DEFAULT ''")
+    with sqlite3.connect(migrated) as left, sqlite3.connect(fresh) as right:
+        assert migration.sqlite_fingerprint(left) != migration.sqlite_fingerprint(right)
+
+
+def test_collector_schema_fingerprint_has_three_equivalent_implementations(tmp_path: Path):
+    """同一算法活在三处（本地 lib / 远端 sh 内联 / evidence 工具），必须逐字等价。
+
+    跨 ssh 边界无法共用实现，所以用「同一个库跑三份实现比对」把它们钉在一起
+    ——改一处不改另两处，迁移就会在 preflight 或 pre-start 比对上失败。
+    """
+    database = tmp_path / "obs.db"
+    _collector_like(database, migrated=True)
+    with sqlite3.connect(database) as connection:
+        for table in ("turns", "spans", "logs"):
+            connection.execute(f"CREATE TABLE {table}(trace_id TEXT PRIMARY KEY)")
+        local = migration.sqlite_fingerprint(connection)
+    assert local == _remote_collector_fingerprint(database)
+    assert local == _evidence_collector_fingerprint(database)

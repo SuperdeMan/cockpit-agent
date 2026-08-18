@@ -301,11 +301,36 @@ def collect_collector(database: Path, key: bytes, retention_days: float = 7.0) -
         if connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise ValueError("Collector integrity check failed")
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        schema = connection.execute(
+        # Collector schema 指纹取**逻辑形态**，不取 DDL 原始文本——ALTER 迁上来的库与
+        # 新建库的 DDL 文本永远不同（列声明位置、内联注释），却是同一个 schema。
+        # 算法与 `cloud_data_migration_lib.sqlite_fingerprint` /
+        # `remote-data-migration.sh` 的内联 python **三处必须逐字等价**，
+        # 由 scripts/tests 拿同一个库跑三份实现比对钉住。
+        objects = connection.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
         ).fetchall()
+        unique_flags: dict[str, int] = {}
+        for kind, name, _table, _sql in objects:
+            if kind == "table":
+                for entry in connection.execute(f'PRAGMA index_list("{name}")').fetchall():
+                    unique_flags[str(entry[1])] = int(entry[2])
+        material: dict[str, object] = {}
+        for kind, name, table, sql in objects:
+            if kind == "table":
+                material[f"table:{name}"] = sorted(
+                    [str(column[1]), str(column[2] or "").upper(), int(column[3]), int(column[5])]
+                    for column in connection.execute(f'PRAGMA table_info("{name}")').fetchall()
+                )
+            elif kind == "index":
+                material[f"index:{name}"] = [
+                    str(table), unique_flags.get(str(name), 0),
+                    [str(entry[2]) for entry in
+                     sorted(connection.execute(f'PRAGMA index_info("{name}")').fetchall())],
+                ]
+            else:
+                material[f"{kind}:{name}"] = " ".join(str(sql or "").split())
         schema_fingerprint = hashlib.sha256(json.dumps(
-            schema, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":"),
+            material, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":"),
         ).encode("ascii")).hexdigest()
         table_counts = {
             table: connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]

@@ -622,12 +622,29 @@ print(hashlib.sha256(encoded).hexdigest())
   redis_version="$(printf '%s\n' "${redis_info}" | sed -n 's/^redis_version://p' | tr -d '\r')"
   [[ "${redis_version}" =~ ^[0-9]+([.][0-9]+){1,3}$ ]] || { migration_fail "redis_version is invalid"; return 1; }
   redis_fingerprint="$(printf '%s' "${redis_version}" | sha256sum | cut -d' ' -f1)"
+  # Collector schema 指纹取**逻辑形态**，不取 DDL 原始文本——ALTER 迁上来的库与新建库
+  # 的 DDL 文本永远不同（列声明位置、内联注释），却是同一个 schema。算法与
+  # `cloud_data_migration_lib.sqlite_fingerprint` / `store_identity_evidence.collect_collector`
+  # **三处必须逐字等价**，由 scripts/tests 拿同一个库跑三份实现比对钉住。
   collector_json="$("${compose[@]}" exec -T observability-collector python -c '
 import hashlib,json,sqlite3
 with sqlite3.connect("file:/data/obs.db?mode=ro", uri=True) as connection:
     version=connection.execute("PRAGMA user_version").fetchone()[0]
-    rows=connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall()
-encoded=json.dumps(rows,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")
+    objects=connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE \"sqlite_%\" ORDER BY type,name").fetchall()
+    unique_flags={}
+    for kind,name,table,sql in objects:
+        if kind=="table":
+            for entry in connection.execute("PRAGMA index_list(\"%s\")" % name).fetchall():
+                unique_flags[str(entry[1])]=int(entry[2])
+    material={}
+    for kind,name,table,sql in objects:
+        if kind=="table":
+            material["table:"+name]=sorted([str(column[1]),str(column[2] or "").upper(),int(column[3]),int(column[5])] for column in connection.execute("PRAGMA table_info(\"%s\")" % name).fetchall())
+        elif kind=="index":
+            material["index:"+name]=[str(table),unique_flags.get(str(name),0),[str(entry[2]) for entry in sorted(connection.execute("PRAGMA index_info(\"%s\")" % name).fetchall())]]
+        else:
+            material[kind+":"+name]=" ".join(str(sql or "").split())
+encoded=json.dumps(material,ensure_ascii=True,allow_nan=False,sort_keys=True,separators=(",", ":")).encode("ascii")
 print(json.dumps({"user_version":version,"schema_fingerprint":hashlib.sha256(encoded).hexdigest()},sort_keys=True,separators=(",", ":")))
 ')"
   disk_available="$(df --output=avail -B1 "${RELEASE_ROOT}" | tail -n 1 | tr -d ' ')"
