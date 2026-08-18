@@ -30,7 +30,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 | 前瞻设计 / 问题分析（多意图、ASR、车控、云端中枢、可观测）| `docs/design/` |
 | 工程规则与铁律 | `CLAUDE.md` |
 | 怎么搭环境、codegen、单服务调试 | `docs/dev-guide.md` |
-| **当前云端数据迁移现场与远程开发接手** | `docs/reviews/2026-08-17-cloud-data-migration-handoff.md`（**apply 失败已定性**：两条根因与取证见 `docs/design/2026-08-18-redis-migration-identity-root-causes.md`，代码侧已修；云端动作全部待授权） |
+| **当前云端数据迁移现场与远程开发接手** | `docs/reviews/2026-08-17-cloud-data-migration-handoff.md`（**迁移已 APPLIED、切云已验证通过**——迁移 apply 的两条根因见 `docs/design/2026-08-18-redis-migration-identity-root-causes.md`，验证通路的六条根因见 `docs/design/2026-08-18-cloud-switch-verification-root-causes.md`） |
 | intent/scope/端口/错误码/env 速查 | `docs/conventions.md` |
 | 怎么验证 | `test/README.md` |
 | 历史批次流水（只进不出，查证据用） | `docs/agents-history.md` |
@@ -101,6 +101,16 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > **CI 的 `::error::` annotation 每个 step 只保留 10 条**，本次实际红 15 条只报出 8 条
 > ——「annotation 里有几条」不等于「红了几条」，数到 9~10 就要假定被截断，
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + **非 root** + `--init`）取全集。
+
+**当前部署形态（2026-08-18）**：`dev-stack.local` = **`target=cloud`**。
+云端 release `34d72d7`、30 个容器起齐、三存储数据已迁入并逐表核对；
+`python scripts/dev_stack.py status` = ok（5/5 端点 healthy）、
+`verify` = **verified**（`e2e_remote_safe`、minimax/MiniMax-M3、lock `e2e`）。
+迁移 apply 与验证通路一共修掉 **8 条根因**，见 history **§55/§56**。
+> ⚠ 三条接手须知：① **真栈命令一律走 PowerShell**——Git Bash 的 `ssh` 是 MSYS 版，
+> 会吃掉 `subprocess.list2cmdline` 的 `\"` 转义，远端 bash 报 `unexpected EOF`；
+> ② 本地 `.env` 现含 `VITE_WS_TOKEN`（云端 `AUTH_REQUIRED=true` 必需，**不进 commit**）；
+> ③ `target=cloud` 期间**不要起本地 Compose**，本地只承载编辑、单测、静态检查与 Vite。
 
 **最新后端全量基线**：`python -m pytest --import-mode=importlib`
 **6257 passed / 15 skipped 零红**（2026-08-17 凌晨，QA 批 **Q7 残余（EL1+OR2）**后实测，

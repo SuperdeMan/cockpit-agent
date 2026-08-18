@@ -4404,3 +4404,90 @@ chmod: cannot access '.../status.<run>.json.partial': No such file or directory
 修法＝迁移侧三个调用点走静音包装（release 工作流仍要那行路径，源头不动）。
 回归同时钉住两头：迁移里不许有裸调用；`verify-release.sh` 仍必须打印那行。
 
+
+## §56 2026-08-18 切云验证通路收口：七条根因，`dev_stack verify` 首次绿
+
+迁移 apply 成功（§55）、云端 30 容器起齐、`dev_stack status` 报 ok 之后，
+`dev_stack verify` 仍然一次没绿过。全部取证与方案在
+[`docs/design/2026-08-18-cloud-switch-verification-root-causes.md`](design/2026-08-18-cloud-switch-verification-root-causes.md)，
+本节只留判据。终态：`dev_stack verify` = **verified**
+（`release_sha=34d72d7…`、`provider=minimax`、`model=MiniMax-M3`、`lock_kind=e2e`），
+`target=cloud` 已写入 `dev-stack.local`。
+
+### §56.1 一条从来没跑绿过的用例，不会只有一个 bug
+
+云端验证唯一会跑的用例是 `e2e_remote_safe`，它在四个不同的地方各卡一次
+（环境变量被运行器剥掉 → 缺 WS token → 等一个不存在的握手帧 → payload 类型不合契约）。
+每修一处重跑，都会露出下一处；每一处单独看都像「刚刚坏掉」。
+
+> **判据：判断依据不是失败次数而是形态。** 四处全是「不可能成功」而不是「偶尔失败」——
+> 这种分布只有一个解释：这条路径自打写下来就没有真正跑通过一次。
+> 推论：**接手一条没有成功记录的验证通路，默认它是坏的，不要按「回归」排查。**
+
+### §56.2 两条只验形式的断言可以同时绿，并且互相矛盾
+
+`_child_environment` 对每个用例子进程**无条件剔除** `AUDIO_API_URL`，
+而探针第 21 行就是 `os.environ["AUDIO_API_URL"]`。两头各有一条测试：
+一条断言探针源码里**出现**这个名字，一条断言子进程环境里**没有**这个名字。
+两条都绿，两条都只验形式。
+
+> **判据：「源码里有这个名字」和「运行时拿得到这个名字」是两件事。**
+> 修法不是改断言的名字，是把尺子换成**内容判据**：把探针里所有 `os.environ["X"]`
+> 抽出来，与运行器实际交付的集合（`endpoint_environment ∪ .env.example ∪
+> _child_environment`）比差集。同族老账见 §55.3「校验量错了东西」。
+
+### §56.3 静默丢弃是最贵的失败模式，因为它长得像别的故障
+
+网关 `wsRequest.Meta` 是 `map[string]string`，探针传 `"memory_enabled": False`
+（JSON 布尔）⇒ `json.Unmarshal` 失败 ⇒ **`continue`**。现象：连接正常、
+`vehicle_state` 正常收到、请求发出去 **60 秒一帧不回，边缘网关与编排器日志一行不写**。
+
+读起来跟「云端栈死了」一模一样，排查方向会被带去查容器、查 LLM、查网络出口，
+而真相在**客户端的一个字面量**里。定位靠的是网关源码里那句 `continue`，不是日志。
+
+> **判据：现象指向哪一侧，取决于谁沉默。** 服务端沉默不等于服务端有问题——
+> 先问「有没有一条路径会让它合法地什么都不做」。
+> 新回归从 Go 结构体的 json tag 反推线上类型，用 AST 核对探针 payload 的常量类型——
+> **契约从被消费方派生，不写死在断言里**。
+
+### §56.4 只读一头的管道会死锁，而且只在有横幅的主机上
+
+`RemoteCloudLock.acquire()` 等 `stdout.readline` 20 秒，**stderr 一个字节不读**。
+这台云主机每次 ssh 都打整屏微信扫码横幅到 stderr，Windows 匿名管道缓冲 4 KiB 写满后
+远端阻塞，`READY` 永远发不出来。并发抽干 stderr 的同一条 ssh，`READY` **1.5 秒**就到。
+
+> **判据：这类回归必须拉真子进程**——`BytesIO` 替身写的测试会永远绿，
+> 因为内存流复现不了「管道写满」。改前 25 秒超时红、改后 1 秒绿。
+
+### §56.5 同一个远端栈，HMI 要的凭据 E2E 也要
+
+云端 `AUTH_REQUIRED=true` + 64 字符 `VITE_WS_TOKEN`（compose 硬要求），
+本地 `.env` 没声明它。`frontend_command` 早就为 cloud HMI 立过这条规矩，
+`verify` 没跟上——于是先跑一遍云端 release verify、再拉起 E2E，三分钟后才 `child_failed`。
+
+> **判据：一个入口 fail closed、另一个入口跑到子进程里才炸，等于这条规矩只落实了一半。**
+> cloud 档 verify 现在前置读 `.env`，缺则 `configuration_rejected` 直接退。
+
+### §56.6 单测不该读操作者的部署选择
+
+写完 `target=cloud` 之后，`scripts/tests` **17 条单测转红**，被测代码一行没动。
+`runner.main()` 从仓库根 `dev-stack.local` 解析 target，这些用例传的是真实 `REPO_ROOT`
+（它们需要真 manifest），于是 `--parallel-isolation` / `--profile` / `--full` /
+`e2e_auth` 这些**本地专属模式在 cloud 档下被合法拒绝**，preflight rc=2。
+`CLAUDE.md` 明说 `target=cloud` 期间本地仍要能跑单测 ⇒ 这是缺陷不是限制。
+
+> **判据：单测的读数不许依赖操作者当前的部署档。**
+> 与 §56.2 同源（尺子被环境串味），区别是这条串的是**一个随时可切换的仓库状态文件**,
+> 所以它的表现是「某天忽然全红」而不是「一直是红的」。
+> 排查顺序上先问一句：**被测代码没动而颜色变了，那变的是什么？**
+
+### §56.7 操作面两笔
+
+- **Git Bash 里的 `ssh` 不是 PowerShell 里的 `ssh`。** 前者解析到 MSYS 版，会吃掉
+  `subprocess.list2cmdline` 产出的 `\"` 转义，远端 bash 报 `unexpected EOF`；
+  后者是 `C:\WINDOWS\System32\OpenSSH\ssh.exe`，同一条命令正常。
+  **真栈命令一律走 PowerShell**，Git Bash 只用于读写文件与本地测试。
+- **Bash heredoc 会吃掉一层反斜杠。** 本批用它写 Python 字符串时踩了三次
+  （`\n` 落地成真换行，生成的子脚本变成 SyntaxError，红灯读起来像被测代码坏了）。
+  规矩：**heredoc 里写 Python 字符串，一个反斜杠都不要写**——用 `chr(10)`
+  或改用编辑工具。
