@@ -69,6 +69,20 @@ CASES_DIR = CORPUS_ROOT / "cases"
 SUITES_PATH = CORPUS_ROOT / "suites.yaml"
 EXEMPTIONS_PATH = CORPUS_ROOT / "coverage_exemptions.yaml"
 JOURNEY_LINKS_PATH = CORPUS_ROOT / "journey_links.yaml"
+# `since` 取自 run_l3 **调用之前**，所以本次产出的报告在逻辑上必然更晚
+# ——`st_mtime >= since` 本该恒成立。这个容差吸收的只是**文件系统 mtime 的分辨率**：
+# 2026-08-18 CI 两次红（#412 3.11 / #419 3.12，不同版本各一次 ⇒ 与版本无关）都是
+# 瞬间写完的报告被读成「早于 since」，隔离复现把 mtime 强设到 now-0.5s 即得到逐字
+# 相同的签名。**不是放宽新鲜度语义**：它要挡的「上一次运行留下的报告」隔着一整趟
+# run_l3（真实几十秒到几分钟），远大于这个容差。
+REPORT_MTIME_RESOLUTION_TOLERANCE_S = 2.0
+
+
+def _report_predates_run(path: Path, since: float | None) -> bool:
+    """这份报告是不是**本次运行之前**就存在的。两个读取口共用同一判据。"""
+    if since is None:
+        return False
+    return path.stat().st_mtime < since - REPORT_MTIME_RESOLUTION_TOLERANCE_S
 BOUNDARIES_PATH = ROOT / "skills" / "exemplars" / "boundaries.yaml"
 JOURNEYS_DIR = ROOT / "test" / "journeys"
 
@@ -893,7 +907,7 @@ def read_l3_report(artifact_root: Path, *, since: float | None = None,
     accepted: list[tuple[Path, bytes, dict[str, Any], dict[str, str], dict]] = []
     for path in sorted(root.glob("**/journeys_report.json")):
         try:
-            if since is not None and path.stat().st_mtime < since:
+            if _report_predates_run(path, since):
                 stale.append(str(path))
                 continue
         except OSError as exc:
@@ -1889,7 +1903,7 @@ def _report_run_ids(artifact_root: Path, *, since: float | None = None) -> set[s
     out: set[str] = set()
     for path in sorted(Path(artifact_root).glob("**/journeys_report.json")):
         try:
-            if since is not None and path.stat().st_mtime < since:
+            if _report_predates_run(path, since):
                 continue
             out.add(str(json.loads(path.read_text(encoding="utf-8")).get("run_id") or ""))
         except (OSError, json.JSONDecodeError, AttributeError):

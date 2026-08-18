@@ -2807,6 +2807,40 @@ def test_stale_l3_report_is_never_counted_as_this_run(tmp_path):
     assert anytime == {"A1-1": "pass"}
 
 
+def test_a_report_written_this_run_survives_filesystem_mtime_resolution(tmp_path):
+    """本次写的报告不许因为 mtime 分辨率被读成上一次的。
+
+    `since` 取自 run_l3 调用之前，所以本次产出在逻辑上必然更晚；但文件系统的 mtime
+    分辨率能让它看起来早半秒以上。2026-08-18 CI 因此红了两次（#412 3.11 / #419 3.12
+    ——不同版本各一次，排除版本因素），隔离复现把 mtime 强设到 now-0.5s 即得逐字
+    相同的签名。这条钉住容差；上一条钉住「真正的旧报告仍算旧」，两条一起才是完整判据。
+    """
+    import os
+    import time as _time
+
+    report = tmp_path / "run" / "journeys_report.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps({
+        "run_id": "e2e-now",
+        "journeys": [{"id": "A1-1", "status": "pass"}],
+    }),
+                      encoding="utf-8")
+
+    now = _time.time()
+    for lag in (0.0, 0.5, 1.5):
+        stamp = now - lag
+        os.utime(report, (stamp, stamp))
+        statuses, stale, _ = read_l3_report(tmp_path, since=now)
+        assert statuses == {"A1-1": "pass"}, f"mtime 落后 {lag}s 就被判成上一次的报告"
+        assert not stale
+
+    # 超出分辨率容差的差距仍然必须判旧——容差不是放宽新鲜度语义。
+    old = now - 3600
+    os.utime(report, (old, old))
+    statuses, stale, _ = read_l3_report(tmp_path, since=now)
+    assert statuses == {} and stale
+
+
 def test_l3_runner_nonzero_exit_is_infrastructure_even_with_a_readable_report(
         tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "load_journey_links", lambda *a, **k: {"c1": ["A1-1"]})
