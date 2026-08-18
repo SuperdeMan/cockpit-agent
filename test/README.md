@@ -245,8 +245,17 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 2026-08-15 探索式真实用户 QA 轮 58 个问题的**红绿对照基线**。取证脚本、不进 CI；
 卡与阶段计划见 [`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md`](../docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)。
 
+**端点经统一入口解析**（2026-08-19，切云后本脚本首次能在 cloud 档跑）：
+`scripts/e2e_target.resolve_e2e_target` 读仓库根 `dev-stack.local` 定档；cloud 档从根
+`.env` 的 `TAILNET_FQDN` 派生 `wss://…:8443/ws` 并追加 `VITE_WS_TOKEN`。跑批第一行会打
+`真栈目标：<档位>（<主机>）`——**读数之前先确认它打的是你以为的那个栈**。
+local 档的 URL 与此前写死的 `ws://localhost:8090/ws` 逐字相同。
+> ⚠ 云端边缘 WS **连上后一帧都不发**（坏 token 在 upgrade 阶段就失败）。原实现开头
+> 硬等一个握手帧，在 cloud 档必然超时——「等一个从不发的帧」是切云那趟的根因之一，
+> 现在改成宽容超时（就算超时后首帧才到也无害，帧循环会忽略非 final/error 帧）。
+
 ```bash
-python scripts/probe_qa_regression.py --list                 # 38 例 / 63 轮 / 7 组（Q12 批 +slot 组 SL1-SL4）
+python scripts/probe_qa_regression.py --list                 # 39 例 / 65 轮 / 7 组（Q2 残余批 +CD4）
 # 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
 # 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
 # ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。

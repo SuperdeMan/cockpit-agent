@@ -22,10 +22,17 @@ need_confirm / 卡片类型），把「现在是什么样」钉成 JSON。修完
 **同 user 跨 session**；真正的「换 user 是否隔离」要么配 `AUTH_TOKENS`，
 要么走签名 e2e 身份车道。**这条差别写进读数，不要让它被读成「隔离验过了」。**
 
-跑法（需要 make up 全栈 + 真实 provider）：
+跑法（需要一个在线的真栈 + 真实 provider）：
     python scripts/probe_qa_regression.py --group confirm
     python scripts/probe_qa_regression.py --list
     python scripts/probe_qa_regression.py --out docs/reviews/eval/_qa-baseline.json
+
+**端点经统一入口解析，不写死**（2026-08-19，切云后本脚本首次能在 cloud 档跑）：
+`scripts/e2e_target.resolve_e2e_target` 读仓库根 `dev-stack.local` 定档，cloud 档
+从根 `.env` 的 `TAILNET_FQDN` 派生 `wss://…:8443/ws` 并追加 `VITE_WS_TOKEN`。
+local 档的 URL 与此前写死的 `ws://localhost:8090/ws` **逐字相同**。
+⚠ 红线要求真栈动作前必须由统一入口读 `dev-stack.local`——所以这里**不许自己解析**
+那个文件，也不许把 URL 或 token 落进任何文件。
 
 ⚠ 读数纪律：单轮不作定性；**PASS 只说明这一次符合声明的期望**，FAIL 也可能是
 provider 方差——两档各跑一次再定性（§4.3「两档是否同时错」）。
@@ -36,14 +43,25 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 import time
+import urllib.parse
+from pathlib import Path
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")     # Windows GBK 宿主常驻放大器
 except Exception:
     pass
+
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from scripts.dev_stack_lib import read_root_env                      # noqa: E402
+from scripts.e2e_target import (endpoint_environment,                # noqa: E402
+                                resolve_e2e_target)
 
 try:
     import websockets
@@ -51,8 +69,43 @@ except ImportError:
     print("请先：pip install websockets")
     sys.exit(1)
 
-WS_URL = "ws://localhost:8090/ws"
 TIMEOUT = 120
+#: 连上之后等首帧多久。**必须容忍「压根没有首帧」**：本地网关在
+#: `AUTH_REQUIRED=false` 下连上就推一帧匿名身份，而**云端边缘 WS 一帧都不发**
+#: （坏 token 在 upgrade 阶段就失败，见 `test/e2e_remote_safe.py::edge_round_trip`
+#: 那条注释）。原实现 `wait_for(recv(), 10)` 无 except，在 cloud 档必然抛
+#: TimeoutError ——「等一个从不发的握手帧」是切云那趟四条根因之一，别再犯第二次。
+#: 就算超时之后首帧才到也无害：`_one_turn` 的帧循环忽略一切非 final/error 帧。
+_HELLO_WAIT_S = 2.0
+
+
+def _resolve_ws_url() -> tuple[str, str]:
+    """→ (可连的 WS URL, 档位名)。**端点解析走统一入口，本脚本不解析 `dev-stack.local`。**
+
+    cloud 档要把 `VITE_WS_TOKEN` 追加成查询串（网关 `?token=` 层 1 鉴权，
+    云端 `AUTH_REQUIRED=true`）。token **只进进程内存**，不打印、不落文件。
+    """
+    env = dict(os.environ)
+    # `.env` 是唯一运行时来源；cloud 档的两个键都在那里（`TAILNET_FQDN`/`VITE_WS_TOKEN`）。
+    env.update(read_root_env(_ROOT, {"TAILNET_FQDN", "VITE_WS_TOKEN"}))
+    target = resolve_e2e_target(_ROOT, explicit=None, environ=env)
+    url = endpoint_environment(target)["WS_URL"]
+    if target.name == "local":
+        return url, target.name
+    token = (env.get("VITE_WS_TOKEN") or "").strip()
+    if not token:
+        raise SystemExit("cloud 档缺 VITE_WS_TOKEN（根 .env）——网关会拒绝 upgrade")
+    parts = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+    query.append(("token", token))
+    return urllib.parse.urlunsplit(
+        parts._replace(query=urllib.parse.urlencode(query))), target.name
+
+
+#: 由 `main()` 在**真要连栈之前**解析一次并写这里。**刻意只解析一次**：跑批中途
+#: 有人切档会让前后几轮打到两个栈上，那种读数比红灯更难查。
+#: 也刻意不在 import 期解析——`--list` / `--mapping` 是纯函数车道，不该要求 `.env`。
+WS_URL, WS_TARGET = "", ""
 # 位置 meta 必带。E4 探针首跑漏了它，「附近的咖啡店」5/5 全是问句、读起来像
 # 「过度澄清 100%」，实际是 nearby 的位置缺席诚实降级——**抽掉前提与提供前提一样糟**。
 PROBE_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
@@ -78,7 +131,8 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "is_question", "differs_from_turn", "has_operation_id",
                 "closes_op_from", "names_item_from", "not_names_item_from",
                 "no_clock_time", "speech_not_regex", "reflects_actions",
-                "card_text_has", "card_text_not", "card_items_at_least"}
+                "card_text_has", "card_text_not", "card_items_at_least",
+                "latest_closing_from", "sums_from"}
 # 动作方向判据（Q6，2026-08-16）：`reflects_actions: N` = 本轮话术必须**正确反映**
 # 第 1..N 轮真实执行过的动作。判的是**动作名**（§4.3 明列的形态判据之一），
 # 不是措辞——所以它对模型换说法免疫，但对「方向说反」敏感。
@@ -397,6 +451,12 @@ CASES = [
      ]},
 
     # ── Q2 焦点与候选集 ────────────────────────────────────────────
+    # ⚠ **尺子改过两次，留痕。** 第二次是 2026-08-19（Q2 残余批），把判据从
+    # 「别说没查到 + 别复读」升级成 `latest_closing_from`：**必须点到卡上收盘最晚的那家**。
+    # 为什么非要改：前两条判据都是「不许做什么」，于是 Q2 第一批之后 CD1 报 3/3
+    # ——而真栈里营业时间**压根没进过候选集**（白名单写的 `open_hours`/`business_hours`/
+    # `opening_hours` 三个键与产生方的 `open_today` 一个都对不上，离线实测被裁掉）。
+    # 一个只会说「他没说错话」的尺子，量不出「他有没有答对」。同 AU1 那次的判据升级。
     {"id": "CD1", "group": "candidate", "card": "Q2", "issue": "I-018",
      "why": "卡片上已有营业时间，下一轮却答未查到——卡片事实不进上下文",
      "known": "red",
@@ -406,6 +466,21 @@ CASES = [
          # 人均12.00」都一样），一个排除词都没触发。`differs_from_turn` 就是为这条加的。
          {"say": "哪家最晚关门？",
           "expect": {"speech_not": ["未查到", "没有查到营业时间", "暂无营业时间"],
+                     "differs_from_turn": 1,
+                     "latest_closing_from": 1}},
+     ]},
+    # I-023 首次有探针（2026-08-19，Q2 残余批）。立卡时它归 Q2 但**从没被复现过**
+    # ——报告原文「巨无霸 26.50、可乐 9.50，问总价，实际反问要哪一款」。
+    # 取证发现根因比卡上写的更靠上游：商户菜单的 `items` 只在 `ui_card` 里，
+    # 而 `extract_focus` 只读 `data` ⇒ 那两个价格**从来没进过 Focus**。
+    # 用**序数**引用而不是写死商品名：菜单会变，序数不会；期望金额从卡片算出来。
+    {"id": "CD4", "group": "candidate", "card": "Q2", "issue": "I-023",
+     "why": "卡上已有两项价格，问合计却反问要哪一款——菜单候选未进候选集",
+     "known": "red",
+     "turns": [
+         {"say": "看看麦当劳有什么可以点的", "expect": {}},
+         {"say": "第一个和第二个一共多少钱",
+          "expect": {"sums_from": {"turn": 1, "indices": [1, 2]},
                      "differs_from_turn": 1}},
      ]},
     # ⚠ **尺子改过一次，留痕**（2026-08-16）。原判据是「没说『没有列表/请先查询』」，
@@ -639,6 +714,11 @@ def _observe(msg: dict) -> dict:
         "closed_operation_ids": list(msg.get("closed_operation_ids") or []),
         # Q2：卡片候选项名（按渲染顺序）。判「答的是哪一份的哪一个」只能靠它。
         "card_items": _card_item_names(card),
+        # Q2 残余（2026-08-19）：候选项的**结构化属性**，不只是名字。
+        # 「哪家最晚关门」「两个价格合计」的期望值必须**从卡片算出来**，不能写死
+        # ——写死就变成「这条语料在这一天的答案」，换一批 POI 就是假红/假绿。
+        # 同 RC15 那条：**期望要从被消费方派生**（这里被消费方是用户看到的那张卡）。
+        "card_items_raw": _card_items_raw(card),
         # Q12：卡片全文（结构化层）。**槽值保真只能在卡片上判**——话术说「15:30 和
         # 16:00 各提醒你一次」时库里可能只有一条，两者不是一回事（AU1 那次的同款教训）。
         "card_text": json.dumps(card, ensure_ascii=False, sort_keys=True),
@@ -660,6 +740,89 @@ def _card_item_names(card: dict) -> list[str]:
             if names:
                 return names
     return []
+
+
+def _card_items_raw(card: dict) -> list[dict]:
+    """卡片候选项的原始 dict，按渲染顺序。与 `_card_item_names` 认同一组键。
+
+    **刻意不裁字段**：探针要拿它算期望（营业时间/价格），裁了就得在两处维护白名单。
+    """
+    if not isinstance(card, dict):
+        return []
+    for key in ("items", "stops", "options"):
+        seq = card.get(key)
+        if isinstance(seq, list):
+            rows = [it for it in seq if isinstance(it, dict)]
+            if rows:
+                return rows
+    return []
+
+
+#: 卡片里的营业时间可能落在哪个键上。**这张表从产生方派生**：
+#: `agents/nearby/src/agent.py::_item()` 出的是 `open_today`（高德
+#: `business.opentime_today`），`_detail_card` 另有 `open_week`。
+#: ⚠ 2026-08-19 取证：候选集白名单当初写的是 `open_hours`/`business_hours`/
+#: `opening_hours` 三个**猜出来的名字**，与产生方一个都对不上——这条表存在的
+#: 意义就是别让尺子重犯同一个错（照常见命名猜字段最易被真机否）。
+_CLOSING_KEYS = ("open_today", "open_week", "business_hours", "open_hours")
+_CLOSE_TIME_RE = re.compile(r"(\d{1,2}):(\d{2})\s*[-~到至]\s*(\d{1,2}):(\d{2})")
+
+
+def _closing_minute(item: dict) -> int | None:
+    """这一项**今天几点关门**（分钟）。判不出 → None。24 小时按最大值。
+
+    跨零点（`17:00-02:00`）按 +24h 计——「最晚关门」问的就是这一类。
+    """
+    for key in _CLOSING_KEYS:
+        raw = str(item.get(key) or "").strip()
+        if not raw:
+            continue
+        if "24小时" in raw or "全天" in raw or "00:00-24:00" in raw:
+            return 24 * 60
+        best: int | None = None
+        for h1, m1, h2, m2 in _CLOSE_TIME_RE.findall(raw):
+            start, end = int(h1) * 60 + int(m1), int(h2) * 60 + int(m2)
+            if end <= start:
+                end += 24 * 60                      # 跨零点
+            best = end if best is None else max(best, end)
+        if best is not None:
+            return best
+    return None
+
+
+_PRICE_KEYS = ("price", "cost", "subtitle")
+_PRICE_RE = re.compile(r"(\d+(?:\.\d+)?)")
+
+
+def _item_price(item: dict) -> float | None:
+    """这一项的价格（元）。判不出 → None。
+
+    键顺序从产生方派生：商户菜单 `_menu_item()` 出 `price`+`subtitle`（同值），
+    nearby `_item()` 出 `cost`（人均，字符串）。
+    """
+    for key in _PRICE_KEYS:
+        raw = str(item.get(key) or "").strip()
+        if not raw:
+            continue
+        m = _PRICE_RE.search(raw)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def _amount_forms(total: float) -> tuple[str, ...]:
+    """一个金额的可接受写法。**只放等价写法，不放近似值**——判的是「算对了」。"""
+    cents = round(total * 100)
+    whole, frac = divmod(cents, 100)
+    forms = [f"{total:.2f}", f"{whole}.{frac:02d}"]
+    if frac == 0:
+        forms.append(str(whole))
+    elif frac % 10 == 0:
+        forms.append(f"{whole}.{frac // 10}")
+    return tuple(dict.fromkeys(forms))
 
 
 def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
@@ -790,6 +953,59 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
     least = expect.get("card_items_at_least")
     if least is not None and int(obs.get("card_item_count") or 0) < int(least):
         fails.append(f"卡片项数 {obs.get('card_item_count')} < 期望的 {least}")
+    # Q2 残余（2026-08-19）：候选集上的**聚合问题**必须答对，不是「别说没查到」。
+    # ⚠ CD1 原判据只压「不说未查到」+「别复读上一轮」，**压不到算得对不对**——
+    # 于是「营业时间从来没进过候选集」这个缺陷在探针上一直看不见。
+    ref_latest = expect.get("latest_closing_from")
+    if ref_latest is not None:
+        rows = prior or []
+        src = next((r for r in rows if r.get("turn") == int(ref_latest)), None)
+        items = (src or {}).get("card_items_raw") or []
+        ranked = [(m, it) for it in items
+                  if (m := _closing_minute(it)) is not None and it.get("name")]
+        if len(ranked) < 2:
+            # **前提不成立 ≠ 通过**（同 `not_names_item_from` 那条纪律）：卡上不足
+            # 两项带营业时间就没有「最晚」可言，静默判绿等于拿空样本当证据。
+            if notes is not None:
+                notes.append(
+                    f"第 {ref_latest} 轮卡片只有 {len(ranked)} 项带营业时间"
+                    "⇒ 本样本对「候选集聚合」**不构成证据**")
+        else:
+            latest = max(m for m, _ in ranked)
+            winners = [str(it["name"]) for m, it in ranked if m == latest]
+            losers = [str(it["name"]) for m, it in ranked if m != latest]
+            hit = _speech_names(speech, winners)
+            wrong = _speech_names(speech, losers)
+            if not hit:
+                fails.append(
+                    f"话术没点到最晚关门的「{'/'.join(winners)}」"
+                    f"（卡上收盘 {latest // 60:02d}:{latest % 60:02d}）"
+                    + (f"，点到的是 {wrong}" if wrong else "，一家都没点到"))
+            elif wrong:
+                fails.append(
+                    f"点到了最晚的「{hit}」但同时点了更早关门的 {wrong}"
+                    "——「哪家最晚」要的是一个答案")
+    ref_sum = expect.get("sums_from")
+    if ref_sum is not None:
+        rows = prior or []
+        src = next((r for r in rows
+                    if r.get("turn") == int(ref_sum["turn"])), None)
+        items = (src or {}).get("card_items_raw") or []
+        idxs = [int(i) for i in ref_sum["indices"]]
+        picked = [items[i - 1] for i in idxs if 0 < i <= len(items)]
+        prices = [p for it in picked if (p := _item_price(it)) is not None]
+        if len(prices) != len(idxs):
+            if notes is not None:
+                notes.append(
+                    f"第 {ref_sum['turn']} 轮卡片第 {idxs} 项里只有 {len(prices)} 个"
+                    "带价格 ⇒ 本样本对「价格合计」**不构成证据**")
+        else:
+            total = round(sum(prices), 2)
+            forms = _amount_forms(total)
+            if not any(f in speech for f in forms):
+                fails.append(
+                    f"话术里没有正确合计 {forms[0]}"
+                    f"（卡上 {'+'.join(f'{p:.2f}' for p in prices)}）")
     if expect.get("no_clock_time") and _CLOCK_RE.search(speech):
         fails.append(f"话术里出现了具体钟点——无候选可引用时不得编造：{_CLOCK_RE.search(speech).group()}")
     ref_close = expect.get("closes_op_from")
@@ -894,7 +1110,7 @@ def _merge_finals(first: dict, later: dict) -> dict:
     # is_question 按合并后的**末尾**判——用户听到的最后一句才决定这轮是不是在问他。
     out["is_question"] = out["speech"].rstrip().endswith(("？", "?"))
     for key in ("need_confirm", "card_type", "operation_id", "card_items",
-                "card_item_count", "error"):
+                "card_items_raw", "card_item_count", "error"):
         if not first.get(key) and later.get(key):
             out[key] = later[key]
     if not first.get("closed_operation_ids") and later.get("closed_operation_ids"):
@@ -910,7 +1126,11 @@ async def _run_case(case: dict, stamp: int) -> dict:
     rows = []
     started = time.time()
     async with websockets.connect(WS_URL) as ws:
-        await asyncio.wait_for(ws.recv(), timeout=10)      # identity ack / 首帧
+        try:
+            # 首帧（本地档的匿名身份 ack）。**超时不是错误**——云端边缘 WS 一帧不发。
+            await asyncio.wait_for(ws.recv(), timeout=_HELLO_WAIT_S)
+        except asyncio.TimeoutError:
+            pass
         for i, turn in enumerate(case["turns"], 1):
             unknown = set(turn) - _TURN_KEYS
             if unknown:
@@ -1055,6 +1275,11 @@ def main() -> int:
                   f"{c['known']:<8}{len(c['turns']):>2}  {c['why']}")
         print(f"\n共 {len(picked)} 例 / {sum(len(c['turns']) for c in picked)} 轮。")
         return 0
+
+    global WS_URL, WS_TARGET
+    WS_URL, WS_TARGET = _resolve_ws_url()
+    # 打的是**档位与主机**，不是完整 URL——token 在查询串里，一律不出现在输出里。
+    print(f"真栈目标：{WS_TARGET}（{urllib.parse.urlsplit(WS_URL).netloc}）")
 
     results = asyncio.run(run(picked, max(1, args.repeat)))
     report(results)
