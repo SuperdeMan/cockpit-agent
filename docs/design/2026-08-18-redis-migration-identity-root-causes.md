@@ -167,6 +167,49 @@ registry 重启后确认未长回。**没有放宽 PG 兼容判据**——那处
 docstring，于是一段**讲** DDL 的散文被读成真的 schema 变更、`plan_rejected`。
 从 diff 里无法可靠识别 docstring（没有解析上下文），所以只能在文本侧回避并就地写明。
 
+## 4.6 RC5：封存的 WAL 库在只读介质上打不开（真实 apply 才撞到）
+
+2026-08-18 04:20 的真实 apply 证明 RC1/RC2 已兑现——**PostgreSQL 与 Redis 都替换成功**，
+倒在 `collector-restore`：
+
+| 时刻 (UTC) | 事件 |
+|---|---|
+| 04:20:16 | `BACKED_UP`（三存储同时间戳备份） |
+| 04:20:16→18 | postgres started → restored ✅ |
+| 04:20:18→29 | redis started → restored ✅ |
+| 04:20:29→30 | collector started → **APPLY_FAILED `collector-restore` rc=1** |
+| 04:20:31→04:21:12 | 整组回滚 → `ROLLED_BACK`，三存储 restored/started/verified 全 true |
+
+根因：shipped 的 `collector.db` 头里 `journal_mode=wal`，而迁移包按 `--mount …,readonly`
+挂进来；以 `mode=ro` 打开 WAL 库需要建 `-shm`，只读挂载上建不出来 ⇒
+`sqlite3.OperationalError: unable to open database file`（helper 容器 94ms 退出、
+rollback 桶一个字节没写，与证据完全吻合）。
+
+> ⚠ **本机第一次复现没红。** 本地批次目录里残留着**我们自己读路径**产生的
+> `-shm`/`-wal`，而云端 `/incoming` 只有 4 个规范文件。精确复刻（只带 `.db` + 只读挂载）
+> 当场复现。
+> **判据：我们自己的读路径会往「封存输入」旁边写 sidecar，那正是让复现说谎的东西。**
+
+**同族第二处在撞它之前就先查了出来**：apply 的 pre-start 取证
+（`store_identity_evidence.py collector`）同样是 readonly 挂载 + `mode=ro`，
+且它跑在 collector 容器启动**之前**、新装的 `obs.db` 旁边同样没有 `-shm`
+——已按 pre-start 条件逐字复现，一并修掉。
+
+修法：`collector_volume_replace.py` 无条件 `immutable=1`（incoming 是封存包）；
+`store_identity_evidence.py` 加**显式** `--immutable`，`remote-data-migration.sh` 只在
+pre-start 传。**post-start 绝不能加**——那时 collector 正在写，`immutable` 会略过 WAL
+读出偏旧视图，尚在 WAL 里的行看起来像被删了，把正确的迁移判成失败。做成显式开关而不是
+「打不开就回落」，正因为这两种语义的差别就是「有没有看见活库的最新写入」。
+本地三处读封存批次也一并改（它们此前会在封存目录里写出 sidecar）。
+
+安全性单独证过：快照走 `backup()`+`wal_checkpoint`，`-wal` 为 0 字节，`immutable` 读出的
+四表行数与 manifest 逐字一致、`integrity_check` ok。
+
+回归两条，反向验证都做：只读介质用例（POSIX 且**非 root** 才有意义——root 绕过目录权限
+造不出只读介质；CI 以普通用户跑，那里会真跑）＋三处封存读必须 immutable / 活库那一路必须不加。
+⚠ 探针自检不能用 `PRAGMA journal_mode`：**`immutable` 打开时 SQLite 忽略 WAL、把它报成
+`delete`**（第一版就栽在这，容器里当场红），改读文件头第 18/19 字节。
+
 ## 5. 还没做的（要授权）
 
 1. `deploy/cloud/**` 变了 ⇒ **下次真实迁移前必须先做受控基础设施安装 + 摘要更新**

@@ -4337,3 +4337,21 @@ docstring，只能在文本侧回避并就地写明「别改回去」。
 拿绝对路径调。② `final` 快照**没有 dry-run**（源码强制要求 `--quiesce-local --apply` 同给），
 且它要求 28 个写入方**当前在运行**才肯记录身份 ⇒ 取快照前必须先把本地栈拉起来，
 成功后它们保持停止（只有失败路径才自动拉回）。
+
+### §55.7 RC5：封存的 WAL 库在只读介质上打不开（真实 apply 才撞到）
+
+真实 apply 证明 RC1/RC2 已兑现——**PostgreSQL 与 Redis 都替换成功**，倒在
+`collector-restore`：shipped 的 `collector.db` 是 WAL 模式，而迁移包按 `readonly` 挂进来，
+`mode=ro` 打开 WAL 库要建 `-shm`、只读挂载上建不出来。云端已按同批备份整组回滚、三存储 verified。
+
+> ⚠ **本机第一次复现没红**——本地批次目录里残留着我们自己读路径产生的 sidecar，
+> 而云端 `/incoming` 只有 4 个规范文件。
+> **判据：我们自己的读路径会往「封存输入」旁边写 sidecar，那正是让复现说谎的东西。**
+
+同族第二处（pre-start 取证，跑在 collector 启动前）**在撞它之前就先查了出来**并一并修掉
+——这次没再重演「修好一个洞才看见下一个洞」。`--immutable` 做成**显式开关**而非「打不开就
+回落」：post-start 绝不能加，那时 collector 正在写，immutable 会把还在 WAL 里的行读成「被删了」。
+
+探针自检还抓到我自己一个错：**`immutable` 打开时 SQLite 忽略 WAL、把 journal_mode 报成
+`delete`**，不能用它自检，改读文件头；且 **root 绕过目录权限**造不出只读介质，故加 root 守卫。
+
