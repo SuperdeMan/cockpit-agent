@@ -4604,4 +4604,18 @@ test_migration_docs_explain_two_stage_attestation_growth_rules` **真的会读�
 - `dev_stack verify` 由接手方**独立重跑一次**仍 `verified`
   （`.artifacts/dev-stack-verifications/20260818T091100Z-34d72d7.json`）
   ——同一份证据两个人各取一次，才叫可复现。
-- CI：`#414`（`a45aebd`）**success**；`#412` 那次红已由 `c1179c1` 修掉（`#413` 起连绿）。
+- CI：`#415`（`ac44168`，本批）**success**；`#412` 那次红已由 `c1179c1` 修掉，`#413` 起连绿。
+
+### §57.7 收尾：本地 Docker 退出，七条判据清零
+
+泓舟当轮授权后执行 `docker stop car-agent-postgres-1 car-agent-redis-1`
+（两者 `Exited (0)`）→ `docker desktop stop`（优雅退出，`docker ps` 不再可用、
+零 Docker 进程残留）。**只 stop 不 down**：32 个容器全部保留为 `Exited`，
+卷数量停前停后同为 **37**，镜像、release、迁移包与兼容副本一个未删。
+
+> 这条判据此前一直挂着不是因为难，是因为它**同时踩两条约束**：需要人工动作，
+> 且「不得停止另一个 agent 正在使用的本地 Docker」是本阶段红线。
+> **红线解除的方式是当轮授权，不是「看起来没人在用」。**
+
+至此交接页 §6 七条全部达成。回本地真栈的固定次序不变：
+`target set local` → 人工启动 Docker Desktop → `make up` → `status`。

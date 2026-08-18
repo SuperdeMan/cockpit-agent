@@ -21,7 +21,7 @@
 | 开发栈目标 | 仓库根 `dev-stack.local` = **`target=cloud`** |
 | `dev_stack verify` | **`verified`**（`release_sha=34d72d7…`、`provider=minimax`、`model=MiniMax-M3`、`case=e2e_remote_safe`、`lock_kind=e2e`），由两个会话各独立取证一次 |
 | 本机前端联调 | HMI 5173 / Dashboard 5174 起得来且 bundle 内逐字含 tailnet FQDN；**入口 bug 已修**（见 §6 注） |
-| 本地 Docker | **未退出**：业务写入容器已停止，PostgreSQL、Redis 两个数据容器仍在跑（保留为可回切副本，停不停由泓舟决定） |
+| 本地 Docker | **已退出**（2026-08-18 授权后执行）：32 个容器全部 `Exited`、Docker Desktop 优雅停止、零进程残留；**卷 37 个一个未删**，镜像/release/迁移包/兼容副本全部保留，随时可回切 |
 
 ### 1.1 2026-08-17 的失败态（原文留档）
 
@@ -163,7 +163,9 @@ python scripts/dev_stack.py status
       已修（`shutil.which` 解析 + 前端车道 attached 控制台 + 4 条回归，
       设计页 §6c）。修后实测：HMI 5173 / Dashboard 5174 均 200，
       `/src/App.tsx` 与 `/src/components/CommandBar.tsx` 的转译结果里逐字含 tailnet FQDN。
-- [ ] 本地项目容器停止且 Docker Desktop 退出；本地卷和全部迁移工件仍保留。
-      **这一条留给泓舟**：业务写入容器已停，只剩 `car-agent-postgres-1` /
-      `car-agent-redis-1` 两个数据容器在跑（作为可回切副本）。停容器与退 Docker Desktop
-      是人工动作，且「不得停止另一个 agent 正在使用的本地 Docker」仍是本阶段红线。
+- [x] 本地项目容器停止且 Docker Desktop 退出；本地卷和全部迁移工件仍保留。
+      （2026-08-18 泓舟当轮授权后执行：`docker stop car-agent-postgres-1
+      car-agent-redis-1` → 两者 `Exited (0)`；随后 `docker desktop stop` 优雅退出，
+      `docker ps` 不再可用、零 Docker 进程残留。**只 stop 不 down**：
+      32 个容器全部保留为 `Exited`，卷数量停前停后同为 **37**，
+      镜像、release、迁移包与兼容副本一个未删。回切方式见 §5 末尾。）

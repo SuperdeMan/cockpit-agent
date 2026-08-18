@@ -110,7 +110,10 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 **cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` + `e2e_remote_safe`，
 `run_e2e --target cloud` 无 `--id`）。交接页
 [`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
-§6 七条完成判据**六条达成**，只剩「停本地容器 + 退 Docker Desktop」这条人工动作。
+§6 七条完成判据**全部达成**。**本地 Docker 已停**（32 容器全 `Exited`、Docker Desktop
+优雅退出、零进程残留；**只 stop 不 down**——卷停前停后同为 37 个、镜像/release/迁移包
+一个未删）⇒ 回本地真栈的固定次序是 `target set local` → 人工启动 Docker Desktop →
+`make up` → `status`。
 根因分三段：迁移 apply **RC1–RC7**（history §55，另有两处未编号：PG 死列
 `agents.embedding`、发布闸把 docstring 读成 schema 变更）、切云验证 **RC8–RC14**（§56）、
 前端联调车道 **RC15/RC16**（§57）——**合计 16 条编号根因**。
