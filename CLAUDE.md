@@ -46,6 +46,11 @@ orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库
                 + actionability.py 可执行性**形态**判定，**shadow 只写观测不进决策**：
                 特征全是封闭虚词类、不许出现任何领域词（源码断言从 commands.yaml
                 派生词表比对）；REJECT 声明但 v1 不产出（B6）
+                + candidate_query.py 候选集**聚合问答的唯一实现**（哪家最晚关门／两个价格
+                合计）——确定性、零 LLM、挂在 plan 构建**之前**；与 I-052 那条弃权守卫
+                **方向相反、判据同源**（契约 conventions §9.27）。候选项白名单
+                `_CANDIDATE_ITEM_KEYS` 是**与产生方的契约**，字段名不许猜——改产生方
+                item 字段要同步 `test_candidate_sets.py::_PRODUCER_SHAPES`
 llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
                 + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
                 + speaker_embed.py 声纹提取（音频→向量，**不持模板**）
@@ -78,7 +83,10 @@ runtime/        共享运行时（gRPC keepalive/优雅停机/mTLS 工厂；+ �
                 （「车窗别开」，端侧与 reminder 共用）／cntime.py 中文时间词（时段词·日词含英文别名·
                 中文数字·12h→24h 修正；此前 timeparse/timewindow/weather 三份各自演化，同一句话给三个答案）
                 ／slot_fidelity.py 下发前的**槽值原话回查**（planner 转述丢限定词，逐维补、三道闸，
-                唯一挂点 `executor._resolve_slot_refs`）／profile.py 部署形态闸／admission.py
+                唯一挂点 `executor._resolve_slot_refs`）／openhours.py 营业时间窗口解析
+                （nearby 筛「此刻开着的」与云侧算「谁最晚」共用一份；跨零点归一成 >1440 可直接
+                比大小；判不出返回 None 不是 0——0 会让「时间未知」赢下「哪家最早关门」）
+                ／profile.py 部署形态闸／admission.py
 docs/           架构与设计文档
 test/           端到端场景测试
 gen/            codegen 产出（gitignore，不要手动编辑）
