@@ -1332,6 +1332,18 @@ start_verification_services() {
   "${compose[@]}" up -d --no-build --pull never postgres redis observability-collector || return $?
 }
 
+# 迁移协议里 **stdout 是机器通道**：每个命令只在结尾打印一行状态 JSON，而客户端
+# （`parse_action_status`）把**整段 stdout** 交给 `json.loads`。
+# `verify_current_release` 末尾会把证据文件路径打到 stdout——那是 release 工作流要的
+# 输出，在迁移里就是污染：2026-08-18 一次**完全成功**的 apply 因此被客户端判成失败
+# （服务端 status.json 是 APPLIED、fence 已清、独立 verify 通过，客户端却 rc=2）。
+# 后果是最坏的一类：**诱使人去回滚一次好的迁移**。
+# 这条只可能在成功的 apply 上出现（前两次都倒在更早的步骤），所以从来没人看见过。
+# 判据：**诊断信息走 stderr，stdout 留给协议**。
+verify_current_release_quiet() {
+  verify_current_release >/dev/null
+}
+
 write_migration_state() {
   local state="$1" migration_id="$2" backup_stamp="$3" failed_step="${4:-}"
   local directory="${IMPORT_ROOT}/${migration_id}" partial run_id
@@ -1579,7 +1591,7 @@ rollback_all() {
     fi
   done
   rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" start-release start_current_release || return $?
-  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" verify-release verify_current_release || return $?
+  rollback_run_step "${migration_id}" "${backup_stamp}" "${direction}" "" verify-release verify_current_release_quiet || return $?
   for store in postgres redis collector; do
     phase="$(read_store_phase "${migration_id}" "${direction}" "${store}")" || return $?
     if [[ "${phase}" != "verified" ]]; then
@@ -1782,7 +1794,7 @@ apply_migration() {
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "post-start-verification" "${STEP_RC}"; return 1; fi
   run_recoverable_step start_current_release
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "start-release" "${STEP_RC}"; return 1; fi
-  run_recoverable_step verify_current_release
+  run_recoverable_step verify_current_release_quiet
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "release-verification" "${STEP_RC}"; return 1; fi
   run_recoverable_step write_migration_state "APPLIED" "${migration_id}" "${backup_stamp}"
   if [[ "${STEP_RC}" -ne 0 ]]; then clear_apply_failure_trap; fail_and_rollback "${migration_id}" "${backup_stamp}" "state-write" "${STEP_RC}"; return 1; fi
@@ -1797,7 +1809,7 @@ verify_migration() {
   load_runtime || return $?
   require_runtime_batch "${migration_id}" || return $?
   verify_store_group "${migration_id}" "post-start" || return $?
-  verify_current_release || return $?
+  verify_current_release_quiet || return $?
   printf '{"migration_id":"%s","status":"verified"}\n' "${migration_id}"
 }
 

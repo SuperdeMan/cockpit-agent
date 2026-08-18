@@ -1384,3 +1384,34 @@ def test_migration_state_write_is_idempotent_and_always_emits_a_partial(
         VALID_ID, stamp, "", str(backup_manifest), str(machine),
     ])
     assert code == 1, "ROLLED_BACK → APPLIED 是非法跃迁，必须拒绝"
+
+
+def test_migration_protocol_keeps_stdout_machine_only():
+    """迁移的 stdout 是**机器通道**：客户端把整段 stdout 交给 json.loads。
+
+    2026-08-18 真栈实证：`verify_current_release` 末尾会把证据文件路径打到 stdout
+    （release 工作流要的输出），于是一次**完全成功**的 apply 被客户端判成失败——
+    服务端 `status.json` 是 APPLIED、fence 已清、独立 verify 通过，客户端却 rc=2。
+    后果是最坏的一类：**诱使人去回滚一次好的迁移**。这条只可能在成功的 apply 上出现
+    （前两次都倒在更早的步骤），所以从来没人看见过。
+    > 判据：**诊断信息走 stderr，stdout 留给协议。**
+    """
+    shell = (REPO_ROOT / "deploy" / "cloud" / "remote-data-migration.sh").read_text(encoding="utf-8")
+    assert "verify_current_release_quiet() {\n  verify_current_release >/dev/null\n}" in shell
+    # 迁移侧三个调用点都必须走静音包装（apply / verify / rollback 三条路径都会被解析）
+    bare = re.findall(r"(?m)^\s*(?:run_recoverable_step |rollback_run_step .*? )?verify_current_release(?!_quiet)\b.*$", shell)
+    assert [line for line in bare if "verify_current_release() {" not in line and ">/dev/null" not in line] == [], (
+        f"还有裸调用会把证据路径漏进 stdout：{bare}"
+    )
+    # release 工作流仍然要那行路径——不能顺手把源头改掉
+    verifier = (REPO_ROOT / "deploy" / "cloud" / "verify-release.sh").read_text(encoding="utf-8")
+    assert "printf '%s\\n' \"${target}\"" in verifier
+
+    # 客户端确实是「整段 stdout 必须是一个 JSON」，所以多一行就会崩
+    lib = (REPO_ROOT / "scripts" / "cloud_data_migration_lib.py").read_text(encoding="utf-8")
+    assert "return result.stdout.strip()" in lib
+    with pytest.raises(migration.MigrationError):
+        migration.parse_action_status(
+            '/opt/car-agent/shared/evidence/x.json\n{"migration_id":"%s","status":"APPLIED"}' % VALID_ID,
+            VALID_ID, "APPLIED",
+        )

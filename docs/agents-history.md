@@ -4377,3 +4377,30 @@ chmod: cannot access '.../status.<run>.json.partial': No such file or directory
 回归抽出那段内联 python 直接跑：BACKED_UP → ROLLED_BACK → **再写一次 ROLLED_BACK**
 都必须产出 partial，非法跃迁仍须被拒；对修前代码精确红在「ROLLED_BACK 没有产出 partial」。
 
+### §55.9 迁移成功了：`APPLIED` + 独立 verify 通过（附 RC7）
+
+2026-08-18 04:54–04:55，第三次真实 apply **全程走通**：
+
+| 时刻 (UTC) | 事件 |
+|---|---|
+| 04:54:47 | `BACKED_UP` |
+| 04:54:47→48 | postgres started → restored |
+| 04:54:48→59 | redis started → restored |
+| 04:55:00→02 | collector started → **restored**（RC5 修复兑现） |
+| 04:55:07→08 | 三存储逐个 `verified`（pre-start + post-start 取证都过） |
+| 04:55:37 | **`APPLIED`**，fence 自动清除 |
+
+云端实测：Redis DBSIZE **55 → 3302**、30 容器健康、独立 `verify` rc=0。
+
+**RC7：成功的 apply 被客户端判成失败。** `verify_current_release` 末尾会把证据文件路径
+打到 stdout（那是 release 工作流要的输出），而迁移协议里 stdout 是**机器通道**——客户端
+把整段 stdout 交给 `json.loads`，于是多出的那行路径让解析崩掉、CLI 返回 rc=2。
+服务端 `status.json` 是 APPLIED、fence 已清、独立 verify 通过，只有客户端说失败。
+
+> 这条**只可能在成功的 apply 上出现**（前两次都倒在更早的步骤），所以从来没人看见过。
+> 而它的后果是最坏的一类：**诱使人去回滚一次好的迁移**。
+> 判据：**诊断信息走 stderr，stdout 留给协议。**
+
+修法＝迁移侧三个调用点走静音包装（release 工作流仍要那行路径，源头不动）。
+回归同时钉住两头：迁移里不许有裸调用；`verify-release.sh` 仍必须打印那行。
+
