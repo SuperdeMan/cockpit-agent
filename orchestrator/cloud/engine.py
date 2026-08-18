@@ -24,6 +24,7 @@ from .stream_state import (
 )
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
+from . import candidate_query
 from .context import (ContextManager, build_context, newest_candidate_set,
                       references_a_candidate, safety_alert_active,
                       _POC_DEFAULT_SCOPES)
@@ -363,13 +364,31 @@ class PlannerEngine:
             # 今日营业10:00-22:00」——**一整条编出来的记录**。
             # 判据两条都必须成立（形态 + 事实），且形态锚在句首：
             # 「第二天第一个景点」指的是行程内部，不是上一份列表。
-            if (references_a_candidate(text)
-                    and newest_candidate_set(
-                        working_set.focus, allow_fallback=True) is None):
+            live_candidates = newest_candidate_set(
+                working_set.focus, allow_fallback=True)
+            if references_a_candidate(text) and live_candidates is None:
                 logger.info("Ordinal reference with no candidate set: %s", text[:40])
                 yield {"kind": "final",
                        "speech": "我这边没有可以引用的列表。你先说要找什么，"
                                  "我列出来之后再说「第几个」就能接上。"}
+                return
+
+            # Q2 残余：候选集上的**聚合问题**由确定性算子回答，同样不进 Planner。
+            # 与上面那条**一正一反、同一个判据面**：那条是「引用了候选但一份都没有」，
+            # 这条是「引用了候选而候选就在手里」。
+            # 为什么不交给 Agent：落到哪个 Agent 都是错的——`nearby.search` 重搜一遍
+            # 答的是**新一批**（CD1 首跑逐字重复上一轮整段列表就是这个形态），
+            # chitchat 手里根本没有那些数。判据三段同时成立才劫持，见
+            # `candidate_query.is_candidate_aggregate_question` 那段。
+            aggregate = candidate_query.answer(text, live_candidates)
+            if aggregate:
+                logger.info("Deterministic candidate aggregate: %s", text[:40])
+                await obs_events.get_emitter("cloud").emit_span(
+                    ctx.trace_id, "cloud.candidate_aggregate",
+                    attrs={"source_intent": str(
+                        (live_candidates or {}).get("source_intent") or ""),
+                        "items": len((live_candidates or {}).get("items") or [])})
+                yield {"kind": "final", "speech": aggregate}
                 return
 
             plan = await self.planner.build(
