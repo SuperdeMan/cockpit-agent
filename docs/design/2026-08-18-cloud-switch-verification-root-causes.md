@@ -1,17 +1,17 @@
-# 切云验证通路的九条根因（2026-08-18）
+# 切云验证通路的十条根因（2026-08-18）
 
 > 迁移 apply 成功、云端 30 个容器起齐、`dev_stack status` 报 ok 之后，
-> `dev_stack verify` 仍然一次都没绿过。本页把它收敛成九条确定性根因，
+> `dev_stack verify` 仍然一次都没绿过。本页把它收敛成十条确定性根因，
 > 全部修完并各带一条反向验证过的回归。上一批（迁移 apply 的 RC1/RC2）见
 > [`2026-08-18-redis-migration-identity-root-causes.md`](2026-08-18-redis-migration-identity-root-causes.md)。
-> RC15/RC16 是**接手方**在核对交接页最后两条验收项时补上的（§6c）。
+> RC15/RC16/RC17 是**接手方**在核对交接页最后两条验收项时补上的（§6c/§6d）。
 
 ## 0. 这批的形状
 
 `dev_stack verify` 只有两步：`cloud_release verify` + `run_e2e --target cloud --id
 e2e_remote_safe`。第二步倒在 **`e2e_remote_safe` 这一个用例**上，而这个用例是**云端验证
 唯一会跑的东西**。逐层剥下来，它在四个不同的地方各卡一次；切完之后本地单测又露出第七条；
-最后去核「HMI/Dashboard 能不能联调云端」，那条路又是两条——
+最后去核「HMI/Dashboard 能不能联调云端」，那条路又是两条，收尾时再掀开一条——
 
 | # | 位置 | 形态 |
 |---|---|---|
@@ -24,6 +24,7 @@ e2e_remote_safe`。第二步倒在 **`e2e_remote_safe` 这一个用例**上，�
 | RC14 | `scripts/tests` 三个套件 | 单测跟着仓库部署档变色——切云当天 **17 条转红** |
 | RC15 | `dev_stack_lib.frontend_command` | argv[0] 是裸名 `npm`，Windows 上 **一定** `FileNotFoundError` |
 | RC16 | `dev_stack.py` 前端车道 | dev server 的输出被 pipe 吃掉；Ctrl-C 打不到它，留下孤儿 Vite |
+| RC17 | `scripts/tests` 两个套件 | 单测读操作者 shell 里的 `CAR_AGENT_*`——**配了云端的人必红，CI 永远绿** |
 
 RC10/RC12/RC13 三条都在同一个文件里，而且都是**这条路径从来没成功过**的证据：
 `e2e_remote_safe` 自打写下来就没有真正跑通过一次。
@@ -181,6 +182,40 @@ HMI 5173 / Dashboard 5174 均 200，且 `/src/App.tsx` 与
 `/src/components/CommandBar.tsx` 的转译结果里**逐字含 tailnet FQDN**
 ——注入的云端端点确实进了浏览器拿到的那份 bundle，不只是进了进程环境。
 
+## 6d. RC17 单测读操作者 shell 里的云端连接参数（RC14 同族第二例）
+
+切云收尾时，在**设了云端环境变量的那个 shell 里**顺手跑了一次 `scripts/tests`，
+**4 条转红**：
+
+```
+FAILED test_cloud_release.py::test_cloud_release_cli_help_and_configuration_error_subprocess_contract
+FAILED test_cloud_release.py::test_cloud_release_connection_actions_reject_unusable_identity_before_ssh[missing-verify]
+FAILED test_cloud_release.py::…[missing-rollback]
+FAILED test_dev_stack.py::test_cli_cloud_status_and_deploy_reject_unusable_identity_before_runner[missing]
+```
+
+成因：四个云端 CLI 的 `build_parser()` 把 `--host`/`--user`/`--identity`/
+`--kex-algorithms` 的默认值取自 `CAR_AGENT_*` 环境变量——**这对 CLI 是对的**。
+错的是这些用例的 `missing` 分支：它们不传 `--identity`，指望 CLI 因缺 identity 而
+`configuration_rejected`，而操作者 shell 里那个变量把默认值填上了，于是 CLI 不再拒绝。
+
+同一条用例，**只因 `export CAR_AGENT_SSH_IDENTITY=…` 就从绿变红**（实测两跑对照）。
+
+> **判据：这是尺子被环境串味的第三种形态。**
+> RC10 串的是「运行器故意剥掉的环境变量」，RC14 串的是「一个可切换的仓库状态文件」，
+> RC17 串的是**操作者自己 shell 里的导出**。三者的共同点是**读数取决于谁在跑**。
+> 这一条最阴：**CI 从不设这些变量，所以它永远是绿的；而唯一会设它们的人，
+> 正是唯一在用云端真栈的人。**
+>
+> 推论：**验收要在操作者的真实 shell 里做，不是在干净 shell 里做**——
+> 干净 shell 证明不了「配好云端的人能不能工作」。这条只有在真正切云之后才可能被发现。
+
+修法：`scripts/tests/conftest.py` 加 autouse fixture，把四个名字从测试进程里摘掉。
+清单**故意手写**，守卫 `test_cloud_connection_defaults_stay_hidden_from_unit_tests`
+用 AST 扫 `scripts/*.py` 里所有 `CAR_AGENT_*` 字面量、与清单**逐项比对**
+——加第五个变量却只改一处即红（同 B5 那条「清单与代码表逐列比对」）。
+反向验证：清单删掉一个名字 ⇒ 红在集合比对那条断言上。
+
 ## 7. 收口状态
 
 - `dev_stack verify` = `status: verified`，证据
@@ -188,7 +223,7 @@ HMI 5173 / Dashboard 5174 均 200，且 `/src/App.tsx` 与
   `release_sha=34d72d7…`、`provider=minimax`、`model=MiniMax-M3`、
   `lock_kind=e2e`、`case_ids=[e2e_remote_safe]`。
 - `dev_stack status` = ok，5/5 端点 healthy。
-- 九条根因各带一条回归，全部做过反向验证（改回旧码必红，且红在该红的那条断言上）。
+- 十条根因各带一条回归，全部做过反向验证（改回旧码必红，且红在该红的那条断言上）。
 - `scripts/tests` 全量在 **`target=cloud` 档下**跑绿——切云不再改变本地单测的读数。
 - 云端只读复核（2026-08-18 17:0x）：容器 **30 total / 30 running / 0 bad**、
   `current` 指向 `34d72d7…`、`car-agent-backup.timer` 下次 08-19 00:00:04 CST、

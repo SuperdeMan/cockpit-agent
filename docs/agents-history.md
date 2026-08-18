@@ -4619,3 +4619,46 @@ test_migration_docs_explain_two_stage_attestation_growth_rules` **真的会读�
 
 至此交接页 §6 七条全部达成。回本地真栈的固定次序不变：
 `target set local` → 人工启动 Docker Desktop → `make up` → `status`。
+
+### §57.8 收尾之后又掀开一条：RC17，单测读操作者 shell 里的云端连接参数
+
+退完 Docker、正要收工时，在**那个设了云端环境变量的 shell 里**顺手跑了一次
+`scripts/tests`，**4 条转红**（`test_cloud_release.py` 3 条 + `test_dev_stack.py` 1 条）。
+
+成因：四个云端 CLI 的 `build_parser()` 把 `--host`/`--user`/`--identity`/
+`--kex-algorithms` 默认值取自 `CAR_AGENT_*` 环境变量——**这对 CLI 是对的**。错的是那些
+用例的 `missing` 分支：它们不传 `--identity`、指望 CLI 因缺 identity 而
+`configuration_rejected`，而操作者 shell 里那个变量把默认值填上了。
+同一条用例，**只因 `export CAR_AGENT_SSH_IDENTITY=…` 就从绿变红**（两跑对照实测）。
+
+> **判据：这是尺子被环境串味的第三种形态。**
+> RC10 串的是「运行器故意剥掉的环境变量」，RC14 串的是「一个可切换的仓库状态文件」，
+> RC17 串的是**操作者自己 shell 里的导出**。共同点是**读数取决于谁在跑**。
+> 这一条最阴：**CI 从不设这些变量所以永远绿，而唯一会设它们的人，
+> 正是唯一在用云端真栈的人。**
+>
+> 推论：**验收要在操作者的真实 shell 里做，不是在干净 shell 里做**——
+> 干净 shell 证明不了「配好云端的人能不能工作」。它也只有在真正切云之后才可能被发现。
+
+修法：新建 `scripts/tests/conftest.py`，autouse fixture 把四个名字从测试进程摘掉。
+清单**故意手写**，守卫 `test_cloud_connection_defaults_stay_hidden_from_unit_tests`
+用 AST 扫 `scripts/*.py` 的 `CAR_AGENT_*` 字面量与清单逐项比对——加第五个变量却只改
+一处即红（同 B5「清单与代码表逐列比对」）。反向验证：清单删一个名字 ⇒ 红在集合比对那条。
+
+### §57.9 交付态基线：Docker 退出会改读数，这不是回归
+
+**退 Docker 之后重新取的两段才是交付态**：
+
+| | 段 1 | 段 2 | 合计 |
+|---|---|---|---|
+| Docker 开着（本批改动前） | 5475 / 12 | 1085 / 51 | **6560 / 63** |
+| **Docker 已退（交付态）** | **5466 / 21** | **1085 / 52** | **6551 / 73** |
+
+**差额 10 条 pass→skip 全部逐条点得上号，且全是本地 Docker 停的直接后果**：
+段 1 的 `test_merchant_redis_integration` **8** + `test_session_redis_integration` **1**
+（"Redis 7 integration"），段 2 的 `test_cloud_deploy_assets`
+"redis probe image redis:7-alpine is not present locally" **1**。
+**`make up` 回来后它们会变回 pass——看到 6551 不要当成回归。**
+
+本批净产出 **+5 collected**（`scripts/tests` 1132 → 1137）：四条前端车道回归
+（RC15/RC16）+ 一条 RC17 覆盖面守卫，五条全 pass。段 1 代码未碰。
