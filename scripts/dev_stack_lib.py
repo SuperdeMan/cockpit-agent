@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import sys
 import stat
 import tempfile
@@ -383,6 +384,22 @@ def frontend_environment(
     raise DevStackError("unknown frontend application")
 
 
+FRONTEND_LAUNCHER = "npm"
+
+
+def resolve_frontend_launcher(name: str = FRONTEND_LAUNCHER) -> str:
+    """Resolve the launcher path this platform can actually execute.
+
+    ``subprocess.Popen`` does not apply ``PATHEXT``: on Windows the bare name
+    ``npm`` raises ``FileNotFoundError`` while ``npm.cmd`` runs, so the argv the
+    command builder hands out must already name a file that exists.
+    """
+    resolved = shutil.which(name)
+    if resolved is None:
+        raise DevStackError(f"{name} was not found on PATH")
+    return resolved
+
+
 def frontend_command(
     *,
     repo: Path,
@@ -395,7 +412,7 @@ def frontend_command(
     if target.name == "cloud" and app == "hmi" and not environment["VITE_WS_TOKEN"]:
         raise DevStackError("VITE_WS_TOKEN is required for cloud HMI")
     return FrontendCommand(
-        argv=("npm", "run", "dev", "--", "--host", "127.0.0.1"),
+        argv=(resolve_frontend_launcher(), "run", "dev", "--", "--host", "127.0.0.1"),
         cwd=Path(repo) / app,
         env=environment,
     )

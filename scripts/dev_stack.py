@@ -544,16 +544,25 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
             endpoints=endpoints,
             selected_env=selected_env,
         )
+        redacted_environment = {
+            key: "[REDACTED]" if key == "VITE_WS_TOKEN" and value else value
+            for key, value in command.env.items()
+        }
+        # The dev server holds the console until the operator stops it, so the
+        # selected endpoints have to be reported before it starts, not after.
+        emit({
+            **base,
+            "action": args.command,
+            "status": "starting",
+            "environment": redacted_environment,
+        })
         result = release_runner.run(
             command.argv,
             cwd=command.cwd,
             env={**os.environ, **command.env},
             check=False,
+            attached=True,
         )
-        redacted_environment = {
-            key: "[REDACTED]" if key == "VITE_WS_TOKEN" and value else value
-            for key, value in command.env.items()
-        }
         emit({
             **base,
             "action": args.command,

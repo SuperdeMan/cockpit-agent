@@ -168,6 +168,7 @@ class CommandRunner(Protocol):
         stdin: BinaryIO | None = None,
         check: bool = True,
         timeout_s: float | None = None,
+        attached: bool = False,
     ) -> CommandResult:
         pass
 
@@ -190,6 +191,7 @@ class SubprocessRunner:
         stdin: BinaryIO | None = None,
         check: bool = True,
         timeout_s: float | None = None,
+        attached: bool = False,
     ) -> CommandResult:
         if not argv:
             raise ReleaseError("cannot run an empty command")
@@ -199,15 +201,40 @@ class SubprocessRunner:
                 cwd=cwd,
                 env=dict(env) if env is not None else None,
                 stdin=stdin,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0),
-                start_new_session=os.name != "nt",
+                stdout=None if attached else subprocess.PIPE,
+                stderr=None if attached else subprocess.PIPE,
+                creationflags=(
+                    subprocess.CREATE_NEW_PROCESS_GROUP
+                    if os.name == "nt" and not attached
+                    else 0
+                ),
+                start_new_session=os.name != "nt" and not attached,
             )
         except OSError as exc:
             raise ReleaseError(
                 f"could not run {argv[0]}: {type(exc).__name__}"
             ) from exc
+        if attached:
+            # Interactive foreground children (a Vite dev server) own the console:
+            # their output must reach the operator while they run, and Ctrl-C must
+            # reach them instead of orphaning them on a private process group.
+            try:
+                returncode = process.wait(timeout=timeout_s)
+            except subprocess.TimeoutExpired as exc:
+                _terminate_process_tree(process)
+                process.wait()
+                raise ReleaseError(
+                    f"command timed out: {argv[0]}", category="runtime"
+                ) from exc
+            except KeyboardInterrupt:
+                process.wait()
+                raise
+            result = CommandResult(tuple(argv), returncode, "", "")
+            if check and result.returncode != 0:
+                raise ReleaseError(
+                    f"command failed ({result.returncode}): {argv[0]}: no output"
+                )
+            return result
         try:
             stdout_bytes, stderr_bytes = process.communicate(timeout=timeout_s)
         except subprocess.TimeoutExpired as exc:

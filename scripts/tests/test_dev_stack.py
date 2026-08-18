@@ -27,7 +27,21 @@ from scripts.cloud_release_lib import (
     ReleaseRequest,
     RemoteState,
     SshConfig,
+    SubprocessRunner,
 )
+
+
+def _stub_launcher(directory: Path, name: str = "npm") -> Path:
+    """Install a runnable stand-in for a launcher, named the way this OS names it."""
+    directory.mkdir(parents=True, exist_ok=True)
+    if os.name == "nt":
+        stub = directory / f"{name}.cmd"
+        stub.write_text("@echo off\r\necho stub-launcher-ok\r\n", encoding="ascii")
+    else:
+        stub = directory / name
+        stub.write_text("#!/bin/sh\necho stub-launcher-ok\n", encoding="ascii")
+        stub.chmod(0o755)
+    return stub
 
 
 def test_development_stack_cli_exposes_all_six_actions():
@@ -1339,9 +1353,8 @@ def test_cloud_hmi_uses_local_vite_and_remote_endpoints(tmp_path: Path):
         selected_env={"VITE_WS_TOKEN": "secret"},
     )
 
-    assert command.argv == (
-        "npm", "run", "dev", "--", "--host", "127.0.0.1",
-    )
+    assert Path(command.argv[0]).name.lower().startswith("npm")
+    assert command.argv[1:] == ("run", "dev", "--", "--host", "127.0.0.1")
     assert command.cwd == tmp_path / "hmi"
     assert command.env["VITE_EDGE_GATEWAY_URL"] == "https://demo.ts.net:8443"
     assert command.env["VITE_AUDIO_API_URL"] == "https://demo.ts.net:8444"
@@ -1399,12 +1412,101 @@ def test_cli_hmi_runs_only_vite_and_redacts_token(
     )
 
     assert cli.main(["hmi"], repo=tmp_path, release_runner=runner, emit=events.append) == 0
-    assert runner.calls == [
-        ("npm", "run", "dev", "--", "--host", "127.0.0.1")
-    ]
+    assert len(runner.calls) == 1
+    assert Path(runner.calls[0][0]).name.lower().startswith("npm")
+    assert runner.calls[0][1:] == ("run", "dev", "--", "--host", "127.0.0.1")
     assert "docker" not in " ".join(runner.calls[0])
     assert "top-secret-token" not in json.dumps(events)
     assert events[-1]["environment"]["VITE_WS_TOKEN"] == "[REDACTED]"
+
+
+def test_frontend_argv_names_a_launcher_this_platform_can_actually_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """`npm` is spawnable on POSIX and not on Windows, so argv must resolve first.
+
+    Popen never applies PATHEXT: the bare name raises FileNotFoundError there.
+    Asserting the literal name only proves the string, so this hands argv[0] to
+    the same runner the CLI uses and requires it to start.
+    """
+    launcher_dir = tmp_path / "bin"
+    _stub_launcher(launcher_dir)
+    monkeypatch.setenv("PATH", str(launcher_dir))
+
+    command = dev.frontend_command(
+        repo=tmp_path,
+        app="dashboard",
+        target=dev.TargetSelection("cloud", "file"),
+        endpoints=dev.cloud_endpoints("demo.ts.net"),
+        selected_env={},
+    )
+
+    result = SubprocessRunner().run((command.argv[0],), cwd=tmp_path, check=False)
+    assert result.returncode == 0
+    assert "stub-launcher-ok" in result.stdout
+
+
+def test_frontend_command_rejects_a_launcher_that_is_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.chdir(empty)
+
+    with pytest.raises(dev.DevStackError, match="npm"):
+        dev.frontend_command(
+            repo=tmp_path,
+            app="dashboard",
+            target=dev.TargetSelection("cloud", "file"),
+            endpoints=dev.cloud_endpoints("demo.ts.net"),
+            selected_env={},
+        )
+
+
+def test_attached_commands_reach_the_operator_console_instead_of_a_capture_buffer(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str],
+):
+    stub = _stub_launcher(tmp_path / "bin", "streamer")
+
+    captured = SubprocessRunner().run((str(stub),), cwd=tmp_path, check=False)
+    assert "stub-launcher-ok" in captured.stdout
+    assert "stub-launcher-ok" not in capfd.readouterr().out
+
+    attached = SubprocessRunner().run(
+        (str(stub),), cwd=tmp_path, check=False, attached=True
+    )
+    assert attached.returncode == 0
+    assert "stub-launcher-ok" in capfd.readouterr().out
+
+
+def test_cli_frontend_reports_endpoints_before_the_dev_server_takes_the_console(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    dev.set_target(tmp_path, "cloud")
+    events: list[dict[str, object]] = []
+    observed: list[dict[str, object]] = []
+
+    class RecordingRunner:
+        def run(self, argv, **kwargs):
+            observed.append({"kwargs": kwargs, "events_so_far": len(events)})
+            return CommandResult(tuple(argv), 0, "", "")
+
+    monkeypatch.setattr(
+        cli,
+        "read_root_env",
+        lambda *_args: {"TAILNET_FQDN": "demo.ts.net", "VITE_WS_TOKEN": "t" * 64},
+    )
+
+    assert cli.main(
+        ["hmi"], repo=tmp_path, release_runner=RecordingRunner(), emit=events.append
+    ) == 0
+    assert observed[0]["kwargs"]["attached"] is True
+    assert observed[0]["events_so_far"] == 1
+    assert events[0]["status"] == "starting"
+    assert events[0]["environment"]["VITE_EDGE_GATEWAY_URL"] == "https://demo.ts.net:8443"
+    assert events[0]["environment"]["VITE_WS_TOKEN"] == "[REDACTED]"
+    assert events[-1]["status"] == "completed"
 
 
 @pytest.mark.parametrize(
