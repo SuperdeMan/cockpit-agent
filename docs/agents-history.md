@@ -4214,3 +4214,96 @@ Windows 也能红），钉住别再写回 `chown(entry, 0, 0)`。
 
 `go-build-test` 那两次红与代码无关：`actions/setup-go` 下载 **429 Too Many Requests**
 （4 小时内 20 次推送 × 7 job 的下载配额）。20 次里只有 2 次命中，不改代码。
+
+## §55 2026-08-18 Redis 迁移 apply 失败定性：两条根因（RC1 阈值 / RC2 指纹不是数据的函数）
+
+交接页
+[`2026-08-17-cloud-data-migration-handoff.md`](reviews/2026-08-17-cloud-data-migration-handoff.md)
+§3 写着「现有证据只能说明 apply 路径处理本地 Redis 包失败，不能据此宣称任何具体根因」。
+本批把它收敛成**两条确定性复现的根因**。方案与全部取证在
+[`docs/design/2026-08-18-redis-migration-identity-root-causes.md`](design/2026-08-18-redis-migration-identity-root-causes.md)，
+本节只留判据。**云端动作一步没做**（只读检查除外）。
+
+### §55.1 时间戳是唯一可靠的向导
+
+`journal.json` 只给 `failed_step=redis-restore, rc=1`。把三处证据并排就唯一了：
+prepare 写完 `phase=prepared` **15:39:40.797**（rollback 桶文件 mtime）→ loader 入网
+**15:39:41.209**（`journalctl -u docker` 的 `sbJoin`）→ loader task 被删 **41.665** →
+`APPLY_FAILED` **41.x**。
+
+> **判据①：先用时间窗砍掉整族假设。** 等 loader 的 `PING` 循环是 `seq 1 60`+`sleep 1`；
+> 失败在 loader 起来后 **0.45 秒** ⇒ 那个循环根本没跑满 ⇒
+> **「loader 装不进数据」这一族（版本错配 / RDB 损坏 / AOF）全部出局**。
+> 我原本的首要假设正是「云端 Redis 版本旧、装不下 RDB v12」——它解释得了
+> 「apply 失败而 rollback 成功」这个不对称，**但一条只读事实（云端也是 7.4.9）就否掉了**。
+
+> **判据②：失败路径留下的空白也是证据。** `assert_redis_container_matches_manifest`
+> 失败时**不会**删掉写到一半的 `.redis-verify.*.partial`（`os.unlink` 只在成功路径上）。
+> 批次目录里**没有**这个文件 ⇒ 失败在写证据**之前**。
+
+### §55.2 RC1：只有一种真实输入的守卫，阈值却是照另一种输入写的
+
+`store_identity_evidence.py::_load_key` 的 `st_size > 1 MiB` ⇒
+`ValueError("identity key control is unsafe")`。而 `--key-control` 的 **4 个调用点全部传
+manifest**，真实 final 批次的 manifest 是 **7.3 MB**。本机验证：同一条命令把 key-control
+换成 89 字节等价文件，rc=1 → rc=0。
+
+**回滚为什么成功**：它传的是 `${BACKUP_ROOT}/${stamp}.backup-manifest.json`
+——云端 Redis 只有 33 KB 数据，manifest 远不到 1 MiB。
+> **「apply 失败而 rollback 成功」的全部原因就是这个阈值。**
+> 判据：**一个只有一种真实输入的守卫，阈值必须按那个输入定。**
+> 1 MiB 是照着「小密钥文件」写的，而这条路径从来没收到过小密钥文件。
+
+### §55.3 RC2：指纹不是数据的函数，是进程的函数
+
+修完 RC1 后紧跟的比对**仍会失败**——这一条是先查出来的，不是撞出来的
+（「修好一个洞才看得见下一个洞」的主动版：修 A 之前先跑 A 之后那一步）。
+
+取证顺序（每一步都在排除一类解释）：
+1. 拿失败批次的 `redis.rdb` 在隔离卷里走完整条 apply 路径（prepare → loader → AOF → SAVE
+   → `--complete`）**全通**，DBSIZE 3299 与 manifest 逐字一致 ⇒ **包不坏、工具链不坏**；
+2. 与 manifest 比：3299 条里 **3 条 `logical` 不一致**（`identity` 全对）；
+3. 排除「有人还在写」：本地写入方容器 `FinishedAt` **13:45:30–33 UTC**，快照 15:37:43；
+4. 排除「副本改坏了」：**最初那次真 `snapshot` 命令产的批次（13:45:08）对它自己的 rdb
+   也是同样 3 条**；
+5. **决定性**：同一个 `redis.rdb` 用两个独立容器各载一次互比——**同样那 3 条互不相同**，
+   加 manifest 那次共 **三次三个值**。
+
+机制：`sha1(DUMP(key))` 对 `hashtable` 编码的对象按 **dict 内部桶序**序列化，
+桶序取决于 Redis **每个进程随机的 hash seed**。命中对象精确落在一族：
+2 个 `payment:` hash（24 字段但有值 >64B ⇒ 越过 `hash-max-listpack-value`）
++ 1 个 `user_sessions:` set（1340 成员）；listpack/quicklist 的 3296 个一条不差。
+合成实验另证相关效应：集合涨到 600 再删到 2 停在 `hashtable`，**存盘重载后归一成 listpack、
+指纹随之改变**。
+
+> **判据：这不是数据问题，是校验不变量本身不成立。** 而且它随数据增长**必然**发生——
+> 每人会话数越过 128、支付单变多，就会有更多对象落进 hashtable 编码。
+
+### §55.4 修法与回归
+
+RC1：`MAX_KEY_CONTROL_BYTES = 64 MiB`，按本工具自己的 `MAX_ITEMS`/`MAX_COLLECTOR_ITEMS`
+反推最坏 ~32 MB 再留一倍余量；**symlink 守卫保留**（那条才是真正的安全性质）。
+
+RC2：逻辑材料改成**编码无关的规范化形式**再 sha1——string=值 / list 按原序 /
+set 排序 / hash 按字段排序 / zset 按成员排序，逐元素带长度前缀 `<len>:<bytes>`，
+**未知类型 fail closed**。值读取切回 RESP2 拿扁平数组，返回前切回 RESP3，
+对调用方的 `map={…}` 契约不变。
+⚠ **manifest 里 digest 的语义变了**，旧批次与新证据不可比 ⇒ 必须重新生成 final 批次
+（本来也要重生成——旧批次带的就是不稳定指纹）。
+
+三条回归，反向验证全做（对修前代码全红）：key-control 上限（>1 MiB 必须收、调小又必须拒）
+／源码级（不许再有 `DUMP`、集合先排序、未知类型 fail closed、长度前缀在）
+／**行为级真 Redis**（①正序/逆序写入指纹相同 ②RDB 往返+换进程逐字不变 ③改一个成员必须
+只有那一行变）。行为那条对修前代码倒在 ①，正是 DUMP 缺陷本身。
+
+另有一条**既有**断言按新语义改判而非回退防御：原本把「扫描中途消失的 key 不进证据」
+写死成 `if ttl ~= -2 and dump then`，**把不变量和「用 DUMP 取值」绑成了一件事**；
+现在钉三件缺一不可的事（ttl 哨兵 / 类型哨兵 / 取值拿不到就整行跳过），并验过它对修前代码
+仍红（不是恒绿）。
+
+### §55.5 尚未做（要授权）
+
+`deploy/cloud/**` 已变更 ⇒ 下次真实迁移前必须先做**受控基础设施安装 + 摘要更新**；
+随后**重新生成 final 批次**（不复用旧 ID，需本地停写授权）；`apply --apply` 与切换
+按交接页 §4 第 7/8 步逐关取授权。云端本批只做只读检查：30/30 容器健康、fence 已清、
+release 仍 `585537f`、`target=local` 未变。

@@ -47,6 +47,17 @@
 
 ## 3. 唯一未决问题
 
+> ✅ **2026-08-18 已定性并修复（代码侧）**，本节保留原文作为当时的证据边界。
+> 两条根因、取证链与回归见
+> [`docs/design/2026-08-18-redis-migration-identity-root-causes.md`](../design/2026-08-18-redis-migration-identity-root-causes.md)：
+> **RC1** = `store_identity_evidence.py::_load_key` 的 key-control 上限写死 1 MiB，
+> 而真实 manifest 是 7.3 MB ⇒ `redis-restore` rc=1；**回滚传的是云端自己那份小
+> backup-manifest，恰好在阈值内——这就是「apply 失败而 rollback 成功」的全部原因**。
+> **RC2** = 逻辑指纹取 `sha1(DUMP(key))`，`DUMP` 对 `hashtable` 编码的对象按进程随机
+> 桶序序列化 ⇒ 同一个 rdb 两次加载指纹不同，修完 RC1 后**紧接着**会倒在身份比对。
+> ⚠ 下面第 5 条「补聚焦回归」已完成（三条，反向验证都做了）；**第 7 条仍未做**——
+> `deploy/cloud/**` 已变更，必须先受控安装并更新摘要，且要重新生成 final 批次。
+
 第二次 final 的 PostgreSQL replace 已开始，Redis apply 随后在 `redis-restore` 失败；自动 rollback
 则成功恢复并验证了 PostgreSQL、Redis、Collector。现有证据只能说明“apply 路径处理本地 Redis
 包失败”，不能据此宣称是 RDB 损坏、AOF 转换、权限、挂载或数据内容中的任何一个具体根因。
@@ -112,7 +123,9 @@ python scripts/dev_stack.py status
 
 ## 6. 完成判据
 
-- [ ] Redis apply 在隔离环境有稳定复现、根因和聚焦回归。
+- [x] Redis apply 在隔离环境有稳定复现、根因和聚焦回归。
+      （2026-08-18：**两条**根因，非一条；隔离复现走完整条 apply 路径证明包与工具链都不坏；
+      三条回归 + 一条既有断言按新语义改判，反向验证全做。见上文 §3 注与设计文档。）
 - [ ] 新 final 批次真实 apply 为 `APPLIED`，没有残留 fence。
 - [ ] PostgreSQL、Redis、Collector 的 pre/post evidence 与独立 verify 通过。
 - [ ] 云端仍为预期 release，30/30 容器健康，备份 timer 与 Tailnet 入口正常。

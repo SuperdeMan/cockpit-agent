@@ -30,7 +30,7 @@ api-football，无凭证回退 mock）。当前全量测试基线与批次证据
 | 前瞻设计 / 问题分析（多意图、ASR、车控、云端中枢、可观测）| `docs/design/` |
 | 工程规则与铁律 | `CLAUDE.md` |
 | 怎么搭环境、codegen、单服务调试 | `docs/dev-guide.md` |
-| **当前云端数据迁移现场与远程开发接手** | `docs/reviews/2026-08-17-cloud-data-migration-handoff.md` |
+| **当前云端数据迁移现场与远程开发接手** | `docs/reviews/2026-08-17-cloud-data-migration-handoff.md`（**apply 失败已定性**：两条根因与取证见 `docs/design/2026-08-18-redis-migration-identity-root-causes.md`，代码侧已修；云端动作全部待授权） |
 | intent/scope/端口/错误码/env 速查 | `docs/conventions.md` |
 | 怎么验证 | `test/README.md` |
 | 历史批次流水（只进不出，查证据用） | `docs/agents-history.md` |
