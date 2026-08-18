@@ -1302,3 +1302,85 @@ def test_collector_readers_open_sealed_input_immutably():
     local_source = (REPO_ROOT / "scripts" / "cloud_data_migration_lib.py").read_text(encoding="utf-8")
     assert local_source.count("mode=ro&immutable=1") == 3
     assert '"--immutable",' in local_source
+
+
+# ── 迁移状态写入：幂等重写也必须产出 partial ────────────────────────────────
+
+def _migration_state_writer():
+    """抽出 `write_migration_state` 里那段内联 python（整段 .sh 不能直接跑）。"""
+    text = (REPO_ROOT / "deploy" / "cloud" / "remote-data-migration.sh").read_text(encoding="utf-8")
+    match = re.search(
+        r"(?ms)^  python3 - \"\$\{partial\}\" \"\$\{directory\}/status\.json\".*?<<'PY' \|\| return \$\?\n"
+        r"(?P<body>.*?)^PY$",
+        text,
+    )
+    assert match is not None, "找不到 write_migration_state 的内联 python，本用例失去锚点"
+    return match.group("body")
+
+
+def _run_state_writer(body: str, argv: list[str]) -> int:
+    saved = sys.argv
+    sys.argv = ["-", *argv]
+    try:
+        exec(compile(body, "<write-migration-state>", "exec"), {"__name__": "__main__"})
+    except SystemExit as exit_code:
+        return 0 if exit_code.code in (None, 0) else 1
+    finally:
+        sys.argv = saved
+    return 0
+
+
+def test_migration_state_write_is_idempotent_and_always_emits_a_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+):
+    """重写同一个状态**也必须产出 partial**——shell 紧跟着无条件 chmod 它。
+
+    2026-08-18 真栈实证：原实现在「状态已等于目标」时 `raise SystemExit(0)` 却不建
+    partial，于是 `chmod: cannot access …: No such file or directory`，整步失败
+    ⇒ **`recover` 永远不可能成功**，而它存在的意义正是把已经 ROLLED_BACK 的迁移收尾、
+    清掉挡住发版的 fence。
+    > 判据同「恒假的就绪闸」：**一条永远不可能成功的路径，和没有这条路径一样糟。**
+    """
+    # 远端跑在 Linux；Windows 没有 O_NOFOLLOW，补一个无意义的 0 让同一段代码跑起来。
+    monkeypatch.setattr(os, "O_NOFOLLOW", getattr(os, "O_NOFOLLOW", 0), raising=False)
+    body = _migration_state_writer()
+    directory = tmp_path
+    machine = directory / "migration-state-machine.json"
+    machine.write_text(json.dumps({
+        "schema_version": 1,
+        "states": {
+            "BACKED_UP": {"next": ["REPLACING", "ROLLED_BACK"]},
+            "REPLACING": {"next": ["APPLIED", "ROLLBACK_IN_PROGRESS"]},
+            "ROLLBACK_IN_PROGRESS": {"next": ["ROLLED_BACK"]},
+            "ROLLED_BACK": {"next": []},
+            "APPLIED": {"next": []},
+        },
+    }), encoding="utf-8")
+    backup_manifest = directory / "backup-manifest.json"
+    backup_manifest.write_text(json.dumps({"files": {"redis.rdb": {"sha256": "0" * 64}}}), encoding="utf-8")
+    status = directory / "status.json"
+    stamp = "20260818T000000Z"
+
+    def write(state: str, partial_name: str) -> Path:
+        partial = directory / partial_name
+        code = _run_state_writer(body, [
+            str(partial), str(status), state, VALID_ID, stamp, "", str(backup_manifest), str(machine),
+        ])
+        assert code == 0, f"{state} 写入失败"
+        assert partial.is_file(), f"{state} 没有产出 partial —— shell 会在 chmod 上炸"
+        partial.replace(status)                      # 复刻 shell 的 mv -T
+        return status
+
+    write("BACKED_UP", "status.a.json.partial")
+    assert json.loads(status.read_text(encoding="utf-8"))["status"] == "BACKED_UP"
+    write("ROLLED_BACK", "status.b.json.partial")
+    assert json.loads(status.read_text(encoding="utf-8"))["status"] == "ROLLED_BACK"
+    # 幂等重写：recover 收尾走的就是这一步
+    write("ROLLED_BACK", "status.c.json.partial")
+    assert json.loads(status.read_text(encoding="utf-8"))["status"] == "ROLLED_BACK"
+    # 非法跃迁仍必须被拒
+    code = _run_state_writer(body, [
+        str(directory / "status.d.json.partial"), str(status), "APPLIED",
+        VALID_ID, stamp, "", str(backup_manifest), str(machine),
+    ])
+    assert code == 1, "ROLLED_BACK → APPLIED 是非法跃迁，必须拒绝"

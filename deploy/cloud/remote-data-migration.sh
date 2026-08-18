@@ -1354,7 +1354,15 @@ if target.exists():
     if target.is_symlink() or target.stat().st_size>64*1024: raise SystemExit("unsafe migration state")
     current=json.loads(target.read_text(encoding="utf-8"))
     if current.get("migration_id")!=migration_id or current.get("backup_stamp")!=stamp: raise SystemExit("migration state identity mismatch")
-    if current.get("status")==state: raise SystemExit(0)
+    # ⚠ 这里原本是 `if current.get("status")==state: raise SystemExit(0)`——幂等无操作时
+    # 直接退出 0 **却不建 partial**，而 shell 侧紧跟着无条件 `chmod 0600 -- "${partial}"`
+    # ⇒ `chmod: cannot access …: No such file or directory`，整步失败。
+    # 后果是 `recover` **永远不可能成功**：它存在的意义就是把已经处于目标状态
+    # （ROLLED_BACK）的迁移收尾并清 fence，而那正好是这条无操作分支。
+    # 2026-08-18 真栈实证：apply 失败后 fence 留在云端，`recover --apply` 报上述错，
+    # 发版也被 fence 挡住（`cloud transaction fenced by unfinished migration`）。
+    # 判据同「恒假的就绪闸」：**一条永远不可能成功的路径，和没有这条路径一样糟。**
+    # 修法＝让幂等分支照样写出 partial，保持「先写再原子替换」这一条路径，别在 shell 侧特判。
 previous=current.get("status") if current else None
 if state not in states or (previous is None and state!="BACKED_UP"): raise SystemExit("invalid migration state transition")
 if previous is not None and state!=previous and state not in states[previous]["next"]: raise SystemExit("invalid migration state transition")

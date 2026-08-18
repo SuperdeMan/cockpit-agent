@@ -4355,3 +4355,25 @@ docstring，只能在文本侧回避并就地写明「别改回去」。
 探针自检还抓到我自己一个错：**`immutable` 打开时 SQLite 忽略 WAL、把 journal_mode 报成
 `delete`**，不能用它自检，改读文件头；且 **root 绕过目录权限**造不出只读介质，故加 root 守卫。
 
+### §55.8 RC6：`recover` 永远不可能成功（RC3 同族）
+
+RC5 修完要发版，却被云端 fence 挡住（`cloud transaction fenced by unfinished migration`）
+——上一次 apply 失败留下了 `active-migration.json`。清 fence 的规定路径是
+`recover --apply`，而它报了个被 CLI 吞掉的错，挖出来是：
+
+```
+chmod: cannot access '.../status.<run>.json.partial': No such file or directory
+```
+
+`write_migration_state` 的内联 python 在「状态已等于目标」时 `raise SystemExit(0)`
+**却不建 partial**，而 shell 侧紧跟着无条件 `chmod 0600 -- "${partial}"`。
+⇒ **`recover` 永远不可能成功**——它存在的意义恰恰就是把已经处于目标状态（`ROLLED_BACK`）
+的迁移收尾、清掉挡住发版的 fence。
+
+> **判据同 RC3：一条永远不可能成功的路径，和没有这条路径一样糟。**
+> 而且两条都藏在「只有出事时才会走」的地方——平时没人走，所以没人发现。
+
+修法＝让幂等分支照样写出 partial，保持「先写再原子替换」这一条路径，不在 shell 侧特判。
+回归抽出那段内联 python 直接跑：BACKED_UP → ROLLED_BACK → **再写一次 ROLLED_BACK**
+都必须产出 partial，非法跃迁仍须被拒；对修前代码精确红在「ROLLED_BACK 没有产出 partial」。
+
