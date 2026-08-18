@@ -1668,7 +1668,11 @@ class LuckinWorkflow(MerchantWorkflow):
                         if item.get("image_url") else {})}
                     for item in items[:12]
                 ],
-            })
+            },
+            # Q2 残余（2026-08-19）：同 `mcdonalds._menu` 那处——菜单商品是可被指代的
+            # 候选，必须进 `data` 才到得了 `Focus.candidate_sets`。判据与取证写在那边。
+            data={"items": items},
+        )
 
     def _menu_item(self, product: dict) -> dict:
         price = self._menu_price(product)

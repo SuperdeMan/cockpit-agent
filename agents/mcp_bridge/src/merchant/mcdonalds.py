@@ -990,7 +990,16 @@ class McDonaldsWorkflow(MerchantWorkflow):
                         if item.get("image_url") else {})}
                     for item in items[:12]
                 ],
-            })
+            },
+            # Q2 残余（2026-08-19）：菜单商品是**可被指代的候选**，所以它们属于
+            # `data`（给下游消费的结构化事实），不只属于 `ui_card`（给人看）。
+            # 取证：`extract_focus` 只读 `data.items`/`data.stops`，于是商户菜单
+            # **从来没进过 `Focus.candidate_sets`**——真栈 CD4 当场坐实：用户刚看完
+            # 菜单问「第一个和第二个一共多少钱」，系统答「我这边没有可以引用的列表」
+            # （I-052 防编造弃权守卫的话术，在这里变成了误伤）。I-023/I-030 同源。
+            # 与 ui_card 共用同一份 `items`：两处各造一份就会漂移。
+            data={"items": items},
+        )
 
     @classmethod
     def _menu_matches(cls, products: list[dict], asked: str) -> list[dict]:
