@@ -1209,7 +1209,10 @@ def test_runner_dry_run_exposes_epoch_order_entry_profiles_and_one_restore_witho
     output = io.StringIO()
 
     rc = runner.main(
-        ["--milestone", "M-A", "--lane", "milestone", "--full", "--dry-run"],
+        [
+            "--target", "local",
+            "--milestone", "M-A", "--lane", "milestone", "--full", "--dry-run",
+        ],
         repo_root=REPO_ROOT,
         manifest_path=MANIFEST_PATH,
         environ={
@@ -1247,7 +1250,10 @@ def test_runner_profile_auth_selects_only_auth_manifest_entry():
     output = io.StringIO()
 
     rc = runner.main(
-        ["--profile", "auth", "--dry-run"],
+        [
+            "--target", "local",
+            "--profile", "auth", "--dry-run",
+        ],
         repo_root=REPO_ROOT,
         manifest_path=MANIFEST_PATH,
         environ={},
@@ -1715,6 +1721,7 @@ def _invoke_profile_runner(runner: ModuleType) -> tuple[int, dict[str, Any]]:
     output = io.StringIO()
     rc = runner.main(
         [
+            "--target", "local",
             "--id",
             "e2e_protocol_smoke",
             "--id",
@@ -1880,7 +1887,10 @@ def test_root_only_signed_run_keeps_task5a_identity_lease_and_never_uses_profile
     monkeypatch.setattr(runner, "_run_child", fake_child)
     output = io.StringIO()
     rc = runner.main(
-        ["--id", "e2e_memory"],
+        [
+            "--target", "local",
+            "--id", "e2e_memory",
+        ],
         repo_root=REPO_ROOT,
         manifest_path=MANIFEST_PATH,
         environ={"VEHICLE_ID": "v1"},

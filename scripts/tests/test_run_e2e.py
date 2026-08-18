@@ -1376,6 +1376,10 @@ def _invoke(
     extra_env: dict[str, str] | None = None,
 ) -> tuple[int, dict[str, Any], str]:
     output = io.StringIO()
+    # Unit tests must not read the operator's current deployment choice: without
+    # this they change colour the moment dev-stack.local says cloud.
+    if "--target" not in args:
+        args = ["--target", "local", *args]
     env = dict(os.environ)
     env["RUNNER_FAKE_BEHAVIORS"] = json.dumps(behaviors or {})
     if extra_env:
@@ -2860,6 +2864,7 @@ def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
 
     runner.main(
         [
+            "--target", "local",
             "--milestone",
             "M-A",
             "--parallel-isolation",

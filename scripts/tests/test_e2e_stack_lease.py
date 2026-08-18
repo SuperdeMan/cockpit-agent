@@ -1421,7 +1421,10 @@ def test_runner_signs_immediately_for_child_and_clears_owner_secret(monkeypatch)
     monkeypatch.setattr(runner, "prove_identity_owner", lambda **_kwargs: None)
     output = io.StringIO()
     rc = runner.main(
-        ["--lane", "milestone", "--milestone", "M-A", "--id", "e2e_memory"],
+        [
+            "--target", "local",
+            "--lane", "milestone", "--milestone", "M-A", "--id", "e2e_memory",
+        ],
         repo_root=root,
         environ={},
         stdout=output,
@@ -1661,6 +1664,7 @@ def _parallel_main(runner, *, environ=None):
     output = io.StringIO()
     rc = runner.main(
         [
+            "--target", "local",
             "--milestone",
             "M-A",
             "--parallel-isolation",
