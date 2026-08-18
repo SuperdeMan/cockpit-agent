@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import socket
@@ -15,6 +16,7 @@ from urllib.error import HTTPError, URLError
 
 import pytest
 
+from scripts.tests import conftest
 from scripts import cloud_release
 from scripts import dev_stack_lib as dev
 from scripts import dev_stack as cli
@@ -1418,6 +1420,42 @@ def test_cli_hmi_runs_only_vite_and_redacts_token(
     assert "docker" not in " ".join(runner.calls[0])
     assert "top-secret-token" not in json.dumps(events)
     assert events[-1]["environment"]["VITE_WS_TOKEN"] == "[REDACTED]"
+
+
+def test_cloud_connection_defaults_stay_hidden_from_unit_tests(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The hand-written hide list must cover every CAR_AGENT_* the scripts read.
+
+    Exporting these turns four cases red without a code change, and CI never
+    sets them, so the leak is invisible exactly where it is not happening.
+    Deriving the expectation from the scripts means a fifth variable added on
+    one side only is a red rather than a surprise months later.
+    """
+    scripts_dir = Path(__file__).resolve().parents[1]
+    read_by_scripts: set[str] = set()
+    for source_file in sorted(scripts_dir.glob("*.py")):
+        tree = ast.parse(source_file.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            attribute = getattr(function, "attr", None)
+            if attribute not in {"getenv", "get", "__getitem__"}:
+                continue
+            for argument in node.args:
+                if (
+                    isinstance(argument, ast.Constant)
+                    and isinstance(argument.value, str)
+                    and argument.value.startswith("CAR_AGENT_")
+                ):
+                    read_by_scripts.add(argument.value)
+
+    assert read_by_scripts, "the scan found nothing, so it guards nothing"
+    assert read_by_scripts == set(conftest.OPERATOR_CLOUD_VARIABLES)
+
+    for name in sorted(read_by_scripts):
+        assert name not in os.environ
 
 
 def test_frontend_argv_names_a_launcher_this_platform_can_actually_spawn(
