@@ -627,11 +627,27 @@ def safety_alert_active(alert, *, now: float | None = None) -> bool:
 #: 候选项里**允许跨轮留存**的字段。白名单而不是黑名单：`_resume_result` 已经为
 #: 「整份 provider 负载落 Redis」付过一次学费（商户 token/电话/地址进了会话态）。
 #: 名单本身就是「哪些事实值得跨轮消费」的声明——加字段要有真实消费方（B4 判据）。
+#: 候选项留哪些结构化属性。**每个键必须是某个产生方真的产出的名字**，
+#: 守卫 `test_candidate_sets.py::test_the_whitelist_is_derived_from_real_producers`
+#: 拿逐字复刻的产生方形状比对，加键不登记即红。
+#:
+#: ⚠ **2026-08-19 修：这张表原本有 7 个死键**（`open_hours`/`business_hours`/
+#: `opening_hours`/`distance`/`distance_m`/`tel`/`spec`）。它们是按常见命名**猜**的，
+#: 与产生方一个都对不上——`nearby._item()` 出的是 `open_today`/`distance_km`。
+#: 于是 §9.1b 声称留住的「营业时间」**一个字都没留住**，I-018「哪家最晚关门」
+#: 在真栈里连数据都没有（CD1 判据升级后当场红）。
+#: > 判据：**照常见命名猜字段最易被真机否**（商户 badcase 那批的同一条）。
+#: > 白名单是与产生方的契约，期望必须从产生方派生，不能从直觉派生。
+#:
+#: ⚠ `lat`/`lng`/`city`/`address` 当前也没有消费方（跨轮门店锚定走的是
+#: `last_places` 那条专门通道）。**本批刻意不动它们**：删它们是独立的收敛问题，
+#: 混进来会让本批读数说不清自己证明了什么（同 CD2 那条「把两件事分开报」）。
+#: Q10 第 7 步的双入口收敛已声明要用 `id` 做确定性匹配，那个键有近期消费方。
 _CANDIDATE_ITEM_KEYS = (
-    "id", "name", "lng", "lat", "city", "address",
-    # I-018/I-023 需要的结构化事实：卡片上渲染了、下一轮却一个字都没有的那些
-    "open_hours", "business_hours", "opening_hours", "rating", "cost",
-    "price", "tel", "distance", "distance_m", "category", "spec",
+    "id", "name", "lng", "lat", "city", "address", "category",
+    # I-018/I-023 需要的结构化事实：卡片上渲染了、下一轮却一个字都没有的那些。
+    # 消费方是 `candidate_query.py` 的四个聚合维度（关门/价格/评分/距离）。
+    "open_today", "open_week", "rating", "cost", "price", "distance_km",
 )
 #: 一个会话最多留几组候选。同挂起表的理由：候选是**用户脑子里记得的东西**。
 _CANDIDATE_SETS_MAX = 3

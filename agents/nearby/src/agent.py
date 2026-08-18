@@ -431,10 +431,16 @@ class NearbyAgent(BaseAgent):
     def _item(p: Place) -> dict:
         # lat/lng 供 HMI「导航去第N个」handoff（同 navigation poi_list 形状）；
         # city 供商户官方检索（麦当劳 searchType=2 按位置搜时城市必填）
+        # `open_week` 2026-08-19 加入（Q2 残余）：`open_today` 厂商常缺，而
+        # 「周一至周日 10:00-22:00」这种一周概述照样能判出收盘时刻。云侧
+        # `candidate_query.dimension_value` 按 today→week 的权威序取值——
+        # 今日实况优于一周概述。加它之前 `_CANDIDATE_ITEM_KEYS` 里的 `open_week`
+        # 是个**死键**（本批修死键时差点又制造一个）。
         return {"id": p.id, "name": p.name, "category": p.category,
                 "rating": p.rating, "cost": p.cost, "distance_km": p.distance_km,
                 "address": p.address, "city": p.city, "tags": p.tags,
-                "open_today": p.open_today, "lat": p.lat, "lng": p.lng}
+                "open_today": p.open_today, "open_week": p.open_week,
+                "lat": p.lat, "lng": p.lng}
 
     @staticmethod
     def _known_attrs(p: Place) -> str:

@@ -19,8 +19,9 @@ import time
 from types import SimpleNamespace
 
 from orchestrator.cloud.context import (
-    Focus, _CANDIDATE_SETS_MAX, _CANDIDATE_TTL_S, _candidate_items,
-    _derive_choice_view, extract_focus, newest_candidate_set,
+    Focus, _CANDIDATE_ITEM_KEYS, _CANDIDATE_SETS_MAX, _CANDIDATE_TTL_S,
+    _candidate_items, _derive_choice_view, extract_focus,
+    newest_candidate_set,
 )
 
 
@@ -45,10 +46,19 @@ def _extract(intent, agent, data):
                          [_result("s1", data, intent)])
 
 
+#: ⚠ **2026-08-19 修：这份 fixture 原来用的是 `open_hours`，而产生方从来不产这个名字。**
+#: `nearby._item()` 出的是 `open_today`（高德 `business.opentime_today`）。于是
+#: 「白名单猜错了字段名、营业时间一个字都没留住」这个真缺陷被本文件**自己掩盖住**
+#: ——测试造了一个现实里不存在的前提，断言当然过。
+#: > CLAUDE.md §6 那条第三例：**测试若替被测系统提供了某个前提，那条前提就不再被验证。**
+#: 现在这份 fixture 逐字复刻产生方（见下方 `_PRODUCER_SHAPES` 与那条守卫）。
 _PLACES = {"items": [
-    {"name": "川菜·甲", "lng": 113.9, "lat": 22.5, "rating": 4.5,
-     "open_hours": "10:00-22:00", "tel": "0755-1", "cost": "60"},
-    {"name": "川菜·乙", "lng": 113.91, "lat": 22.51, "rating": 4.1},
+    {"id": "B0FF1", "name": "川菜·甲", "category": "川菜", "rating": 4.5,
+     "cost": "60", "distance_km": 0.8, "address": "文心五路", "city": "深圳市",
+     "tags": "川菜,辣", "open_today": "10:00-22:00", "lat": 22.5, "lng": 113.9},
+    {"id": "B0FF2", "name": "川菜·乙", "category": "川菜", "rating": 4.1,
+     "cost": "", "distance_km": 1.4, "address": "", "city": "深圳市",
+     "tags": "", "open_today": "", "lat": 22.51, "lng": 113.91},
 ]}
 
 
@@ -58,7 +68,7 @@ def test_structured_attributes_survive_the_turn():
     focus = _extract("nearby.search", "nearby", _PLACES)
     items = focus.candidate_sets[-1]["items"]
     assert items[0]["name"] == "川菜·甲"
-    assert items[0]["open_hours"] == "10:00-22:00"
+    assert items[0]["open_today"] == "10:00-22:00"
     assert items[0]["rating"] == 4.5
     assert items[0]["cost"] == "60"
 
@@ -210,7 +220,7 @@ def test_a_turn_without_candidates_does_not_wipe_the_previous_set():
         _turn("hvac.set", "vehicle", {}),
     ])
     assert focus.last_choices == ["川菜·甲", "川菜·乙"]
-    assert focus.candidate_sets[-1]["items"][0]["open_hours"] == "10:00-22:00"
+    assert focus.candidate_sets[-1]["items"][0]["open_today"] == "10:00-22:00"
 
 
 def test_fallback_search_does_not_displace_the_named_one():
@@ -284,3 +294,85 @@ def test_ordinal_inside_another_structure_is_not_a_candidate_reference():
     for t in ("第二天第一个景点安排什么", "明天第一站去哪", "第三天的行程",
               "把空调调到第一档", "帮我找附近的咖啡店"):
         assert references_a_candidate(t) is False, t
+
+
+# ── 白名单与产生方的契约（Q2 残余，2026-08-19）────────────────────────────
+#
+# **为什么非要这条守卫**：`_CANDIDATE_ITEM_KEYS` 原来有 7 个键
+# （`open_hours`/`business_hours`/`opening_hours`/`distance`/`distance_m`/`tel`/`spec`）
+# 是按常见命名**猜**的，与任何产生方都对不上。于是 §9.1b 声称留住了「营业时间」，
+# 而真栈里 I-018「哪家最晚关门」连数据都没有。本文件的 fixture 当时也用着
+# `open_hours`，所以**测试自己把缺陷盖住了**。
+#
+# ⚠ **刻意不做 AST 自动扫描**：四个产生方里两个（charging 的两处）是列表推导里的
+# 内联字典，没有具名函数可锚。半覆盖的结构断言比没有更糟（B3/B4 那条判据），
+# 所以这里选**手写登记表 + 一条自动的「无死键」断言**：
+#   · 死键会被自动抓到（白名单里有、登记表里没有 ⇒ 红）；
+#   · 漏字段靠登记表比对（产生方加字段要来这里登记，SOP 写在 `docs/conventions.md` §9.1b）。
+
+#: 逐字复刻各产生方**当前**产出的 item 形状。改产生方就要改这里。
+_PRODUCER_SHAPES = {
+    # agents/nearby/src/agent.py::_item
+    "nearby.search": ("id", "name", "category", "rating", "cost", "distance_km",
+                      "address", "city", "tags", "open_today", "open_week",
+                      "lat", "lng"),
+    # agents/navigation/src/agent.py 的 poi_list items
+    "navigation.search_poi": ("id", "name", "rating", "distance_km", "address",
+                              "lat", "lng"),
+    # agents/charging_planner/src/agent.py 的 charging_list items
+    "charging.find": ("id", "name", "available", "total", "price", "distance_km",
+                      "operator", "lat", "lng"),
+    # agents/mcp_bridge/src/merchant/{mcdonalds,luckin}.py::_menu_item
+    "mcd.menu": ("id", "name", "price", "subtitle", "image_url"),
+}
+#: 产生方产出、但**刻意不留**的字段。每条都要有理由——空着比写错更容易被人默认放行。
+_DELIBERATELY_DROPPED = {
+    "tags": "特色标签，当前没有聚合消费方（B4：加字段要有真实消费方）",
+    "available": "充电桩空闲数，可聚合（「哪个空闲最多」）但本批不做该维度",
+    "total": "同 available，桩总数",
+    "operator": "运营商名，无消费方",
+    "subtitle": "与 price 同值，第二份声明只会漂移",
+    "image_url": "图片 URL，不该进会话态（`_resume_result` 那次学费）",
+}
+
+
+def test_the_whitelist_is_derived_from_real_producers():
+    """白名单里不许有任何产生方都不产出的键——**死键就是漂移**。"""
+    produced = {key for shape in _PRODUCER_SHAPES.values() for key in shape}
+    dead = sorted(set(_CANDIDATE_ITEM_KEYS) - produced)
+    assert not dead, (
+        f"这些白名单键没有任何产生方产出：{dead}。"
+        "要么是猜错了字段名（2026-08-19 那 7 个就是），要么该删。")
+
+
+def test_every_produced_field_is_either_kept_or_deliberately_dropped():
+    """产生方的每个字段都要有归宿：留下、或**登记为刻意不留**。
+
+    漏字段的失败模式与死键相反、代价一样：I-018 要的 `open_today` 当初就在
+    产生方手里，只是没人把它列进白名单。
+    """
+    for intent, shape in _PRODUCER_SHAPES.items():
+        for key in shape:
+            assert key in _CANDIDATE_ITEM_KEYS or key in _DELIBERATELY_DROPPED, (
+                f"{intent} 产出的 `{key}` 既不在白名单里、也没登记为刻意不留")
+
+
+def test_a_real_producer_shape_keeps_the_facts_i018_and_i023_need():
+    """端到端形状断言：拿真实形状灌进裁剪器，**I-018/I-023 要的那两个数必须活着**。
+
+    这是本批的核心回归——它红过一次（2026-08-19 离线复现：`open_today` 被裁掉、
+    `distance_km` 被裁掉、营业时间在不在 = False）。
+    """
+    place = dict.fromkeys(_PRODUCER_SHAPES["nearby.search"], "x")
+    place.update({"name": "甲", "open_today": "10:00-23:00", "rating": 4.5,
+                  "cost": "60", "distance_km": 0.8})
+    kept = _candidate_items([place])[0]
+    assert kept["open_today"] == "10:00-23:00"      # I-018 的那个数
+    assert kept["distance_km"] == 0.8
+    assert "tags" not in kept                       # 刻意不留的仍然不留
+
+    product = dict.fromkeys(_PRODUCER_SHAPES["mcd.menu"], "x")
+    product.update({"name": "巨无霸", "price": "26.50"})
+    kept = _candidate_items([product])[0]
+    assert kept["price"] == "26.50"                 # I-023 的那个数
+    assert "image_url" not in kept
