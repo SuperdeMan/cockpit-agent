@@ -5,11 +5,8 @@
 评分/人均等字段厂商常缺，缺则留默认（0/空），Agent 话术按「是否已知」自适应，绝不编造。
 """
 from __future__ import annotations
-import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from runtime.clock import BUSINESS_TZ
 
 
 @dataclass
@@ -40,31 +37,11 @@ class Place:
     photos: list[str] = field(default_factory=list)  # photos[].url
 
 
-_TIME_RANGE_RE = re.compile(r"(\d{1,2}):(\d{2})\s*[-~到至]\s*(\d{1,2}):(\d{2})")
-
-
-def is_open_now(open_today: str, now_min: int | None = None) -> bool | None:
-    """按今日营业时间判断此刻是否营业。返回 True/False；无法解析→None（未知）。
-    now_min: 当前「时:分」折算分钟（测试注入）；缺省取北京时间。"""
-    s = (open_today or "").strip()
-    if not s:
-        return None
-    if "24小时" in s or "00:00-24:00" in s or "全天" in s:
-        return True
-    if now_min is None:
-        n = datetime.now(BUSINESS_TZ)
-        now_min = n.hour * 60 + n.minute
-    ranges = _TIME_RANGE_RE.findall(s)
-    if not ranges:
-        return None
-    for h1, m1, h2, m2 in ranges:
-        start, end = int(h1) * 60 + int(m1), int(h2) * 60 + int(m2)
-        if end <= start:                       # 跨零点（如 17:00-02:00）
-            if now_min >= start or now_min <= end:
-                return True
-        elif start <= now_min <= end:
-            return True
-    return False
+# 营业时间解析 2026-08-19 收敛进 `runtime/openhours.py`（QA Q2 残余）。
+# **这里只转口，不再有第二份实现**：云侧编排要用同一份解析算「哪家最晚关门」，
+# 而它的镜像不 COPY `agents/`——落点判据是镜像依赖闭包（CLAUDE.md §3）。
+# 保留本名字是为了不动既有的三处 import（agent.py / amap.py / mock.py + 两个测试）。
+from runtime.openhours import is_open_now  # noqa: E402,F401
 
 
 class PlaceProvider(ABC):
