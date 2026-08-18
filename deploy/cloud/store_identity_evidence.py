@@ -21,6 +21,18 @@ from typing import Iterable
 MAX_ITEMS = 20_000
 MAX_COLLECTOR_ITEMS = 50_000
 PAGE_SIZE = 256
+# `--key-control` 的**唯一真实输入是迁移 manifest**（4 个调用点：远端 redis/postgres/collector
+# 断言各一、本地快照一），而 manifest 的体积随数据量线性长——它装着本工具自己产出的逐行
+# keyed identity。上限按那两个行数上限反推：redis/postgres ≤ MAX_ITEMS、collector ≤
+# MAX_COLLECTOR_ITEMS，每行 ~150 字节 JSON，最坏 ~32 MB，留一倍余量取 64 MiB。
+#
+# ⚠ 2026-08-17 实证：原值写死 1 MiB，而真实 final 批次的 manifest 是 **7.3 MB**
+# ⇒ `_load_key` 直接抛 "identity key control is unsafe"，`redis-restore` rc=1。
+# 云端回滚却成功——它传的是云端自己那份 backup-manifest（云端 redis 仅 33 KB 数据、
+# manifest 远小于 1 MiB）。**「apply 失败而 rollback 成功」的全部原因就在这个阈值上。**
+# 判据：**一个只有一种真实输入的守卫，阈值必须按那个输入定**；1 MiB 是照着
+# 「小密钥文件」写的，而这条路径从来没收到过小密钥文件。
+MAX_KEY_CONTROL_BYTES = 64 * 1024 * 1024
 PG_TABLES = {
     "memory_item": ("id", None),
     "memory_relation": ("id", None),
@@ -31,23 +43,75 @@ PG_TABLES = {
     "voiceprint": ("id", None),
 }
 COLLECTOR_TABLES = ("turns", "spans", "llm_calls", "logs")
+# 逻辑指纹**必须与内部编码无关**。
+#
+# ⚠ 2026-08-17 实证（原实现用 `sha1hex(DUMP(key))`）：`DUMP` 对 `hashtable` 编码的对象
+# 按 dict 内部桶序序列化，而那个顺序取决于 Redis **每个进程随机的 hash seed**
+# ⇒ **同一个 `redis.rdb` 两次独立加载，同一个 key 的 logical 指纹三次三个值**。
+# 真实批次里精确命中 3 个：2 个 `payment:` hash（24 字段、值超 64 字节 ⇒ hashtable）
+# + 1 个 `user_sessions:` set（1340 成员 ⇒ hashtable）；listpack/quicklist 的 3296 个
+# 一条不差。这不是数据问题，是**校验不变量本身不成立**——数据一长（每人会话过 128、
+# 支付单变多）必然有对象落进 hashtable，迁移身份断言就再也不可能通过。
+#
+# 改法：按类型产出**规范化材料**再 sha1——集合类先排序、逐元素带长度前缀
+# （`<len>:<bytes>`，二进制安全且无歧义），顺序有意义的 list 保持原序。
+# 未知类型 **fail closed**（宁可整趟停下，也不要「没验到却报绿」）。
+# 值读取切回 RESP2 拿扁平数组（RESP3 会把 hash/set 包成 map/set 结构），
+# 返回前切回 RESP3——返回值仍是 `map={...}`，与调用方契约不变。
 REDIS_PAGE_LUA = r'''
 local info=redis.call("INFO","server")
 redis.setresp(3)
 local page=redis.call("SCAN",ARGV[1],"COUNT",256)
+redis.setresp(2)
+local function enc(value)
+  return string.len(value)..":"..value
+end
+local function canonical(key,kind)
+  local parts={kind,"|"}
+  if kind=="string" then
+    local value=redis.call("GET",key)
+    if not value then return nil end
+    parts[#parts+1]=enc(value)
+  elseif kind=="list" then
+    local items=redis.call("LRANGE",key,0,-1)
+    for i=1,#items do parts[#parts+1]=enc(items[i]) end
+  elseif kind=="set" then
+    local items=redis.call("SMEMBERS",key)
+    table.sort(items)
+    for i=1,#items do parts[#parts+1]=enc(items[i]) end
+  elseif kind=="hash" then
+    local flat=redis.call("HGETALL",key)
+    local fields={}
+    for i=1,#flat,2 do fields[#fields+1]={flat[i],flat[i+1]} end
+    table.sort(fields,function(a,b) return a[1]<b[1] end)
+    for i=1,#fields do parts[#parts+1]=enc(fields[i][1])..enc(fields[i][2]) end
+  elseif kind=="zset" then
+    local flat=redis.call("ZRANGE",key,0,-1,"WITHSCORES")
+    local members={}
+    for i=1,#flat,2 do members[#members+1]={flat[i],flat[i+1]} end
+    table.sort(members,function(a,b) return a[1]<b[1] end)
+    for i=1,#members do parts[#parts+1]=enc(members[i][1])..enc(members[i][2]) end
+  else
+    error("unsupported Redis value type: "..kind)
+  end
+  return table.concat(parts)
+end
 local out={}
 for _,key in ipairs(page[2]) do
   local kind=redis.call("TYPE",key); if type(kind)=="table" then kind=kind.ok end
   local ttl=redis.call("PTTL",key)
-  local dump=redis.call("DUMP",key)
-  if ttl ~= -2 and dump then
-    local deadline=-1; if ttl>=0 then deadline=redis.call("PEXPIRETIME",key) end
-    local prefix=string.match(key,"^([A-Za-z0-9_-]+):") or "other"
-    if string.len(prefix)>32 then prefix="other" end
-    table.insert(out,{map={identity_material=redis.sha1hex(key),logical_material=redis.sha1hex(dump),type=kind,prefix=prefix,deadline_ms=deadline}})
+  if ttl ~= -2 and kind ~= "none" then
+    local material=canonical(key,kind)
+    if material then
+      local deadline=-1; if ttl>=0 then deadline=redis.call("PEXPIRETIME",key) end
+      local prefix=string.match(key,"^([A-Za-z0-9_-]+):") or "other"
+      if string.len(prefix)>32 then prefix="other" end
+      table.insert(out,{map={identity_material=redis.sha1hex(key),logical_material=redis.sha1hex(material),type=kind,prefix=prefix,deadline_ms=deadline}})
+    end
   end
 end
 local now=redis.call("TIME")
+redis.setresp(3)
 local version=string.match(info,"redis_version:([^\r\n]+)") or "unknown"
 return {map={cursor=page[1],checked_at_ms=tonumber(now[1])*1000+math.floor(tonumber(now[2])/1000),version=version,rows=out}}
 '''.strip()
@@ -58,7 +122,7 @@ def _hmac(key: bytes, value: bytes) -> str:
 
 
 def _load_key(control: Path) -> bytes:
-    if control.is_symlink() or control.stat().st_size > 1024 * 1024:
+    if control.is_symlink() or control.stat().st_size > MAX_KEY_CONTROL_BYTES:
         raise ValueError("identity key control is unsafe")
     payload = json.loads(control.read_text(encoding="utf-8"))
     value = payload.get("identity_hmac_key")

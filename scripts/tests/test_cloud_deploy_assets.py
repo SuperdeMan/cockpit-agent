@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -2518,7 +2519,14 @@ def test_redis_identity_evidence_scans_pages_without_keys_or_full_table_lua(monk
     assert set(evidence["rows"]) == expected
     assert 'redis.call("SCAN",ARGV[1],"COUNT",256)' in module.REDIS_PAGE_LUA
     assert "ARGV[2]" not in module.REDIS_PAGE_LUA
-    assert "ifttl~=-2anddumpthen" in module.REDIS_PAGE_LUA.replace(" ", "")
+    # 「扫描中途消失的 key 不许进证据」这条不变量**按语义断言，不钉具体写法**：
+    # 原断言写死 `if ttl ~= -2 and dump then`，把不变量和「用 DUMP 取值」绑成了一件事；
+    # 2026-08-17 逻辑指纹改成规范化材料后 DUMP 退场，这条就红了——**红的是写法不是不变量**。
+    # 现在钉三件缺一不可的事：ttl 哨兵、类型哨兵、取值拿不到就整行跳过。
+    compact = module.REDIS_PAGE_LUA.replace(" ", "")
+    assert "ifttl~=-2andkind~=\"none\"then" in compact
+    assert "ifmaterialthen" in compact
+    assert "ifnotvaluethenreturnnilend" in compact
     assert '"-x", "EVAL"' not in STORE_EVIDENCE_PATH.read_text(encoding="utf-8")
     assert "repeat" not in module.REDIS_PAGE_LUA
 
@@ -2699,6 +2707,165 @@ def test_redis_info_is_read_before_switching_lua_to_resp3():
     assert "map={cursor=" in helper.REDIS_PAGE_LUA
     assert 'map={"identity_material"' not in helper.REDIS_PAGE_LUA
     assert 'map={"cursor"' not in helper.REDIS_PAGE_LUA
+
+
+def test_identity_key_control_bound_is_sized_for_real_migration_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`--key-control` 收到的**只有** manifest，阈值必须按 manifest 定（本机就能红）。
+
+    2026-08-17 真栈实证：上限写死 1 MiB，而真实 final 批次的 manifest 是 **7.3 MB**
+    ⇒ `_load_key` 抛 "identity key control is unsafe"、`redis-restore` rc=1；
+    而云端回滚传的是云端自己那份小 backup-manifest，**恰好在阈值以内所以成功**
+    ——「apply 失败而 rollback 成功」的全部原因就是这个阈值。
+    > 判据：**只有一种真实输入的守卫，阈值要按那个输入定**。
+    """
+    module = _load_probe(STORE_EVIDENCE_PATH, "store_identity_key_control_test")
+    control = tmp_path / "manifest.json"
+    control.write_text(
+        json.dumps({"identity_hmac_key": "a" * 64, "rows": "x" * (2 * 1024 * 1024)}),
+        encoding="utf-8",
+    )
+    assert control.stat().st_size > 1024 * 1024, "探针必须真的越过旧上限，否则这条断言是空的"
+    assert module._load_key(control) == bytes.fromhex("a" * 64)
+    # 仍然有界：把上限调小，同一个文件必须被拒（守卫没有被删掉，只是改对了尺寸）
+    monkeypatch.setattr(module, "MAX_KEY_CONTROL_BYTES", 1024)
+    with pytest.raises(ValueError, match="unsafe"):
+        module._load_key(control)
+
+
+def test_redis_logical_material_is_canonical_not_dump_order() -> None:
+    """逻辑指纹不许再取 `DUMP`——它按 dict 桶序序列化，而桶序随进程随机 hash seed 变。
+
+    2026-08-17 实证：同一个 `redis.rdb` 两次独立加载，`hashtable` 编码的对象
+    （真实批次里 2 个 `payment:` hash + 1 个 1340 成员的 `user_sessions:` set）
+    指纹**三次三个值**；listpack/quicklist 的 3296 个一条不差。
+    源码级守住「按类型规范化 + 集合先排序 + 未知类型 fail closed」这三件事。
+    """
+    lua = _load_probe(STORE_EVIDENCE_PATH, "store_identity_canonical_test").REDIS_PAGE_LUA
+    assert "DUMP" not in lua, "DUMP 的字节序不是逻辑身份，别再拿它当指纹"
+    assert "table.sort" in lua
+    assert "unsupported Redis value type" in lua, "未知类型必须 fail closed，不许静默跳过"
+    for kind in ('kind=="string"', 'kind=="list"', 'kind=="set"',
+                 'kind=="hash"', 'kind=="zset"'):
+        assert kind in lua
+    # 长度前缀：`a`+`bc` 与 `ab`+`c` 不得撞成同一份材料
+    assert 'string.len(value)..":"..value' in lua
+
+
+def _redis_probe_image() -> str:
+    """探针用的 Redis 镜像**从 compose 取**，不在测试里再写一份 tag。"""
+    compose = yaml.safe_load(
+        (ROOT / "deploy" / "docker-compose.yaml").read_text(encoding="utf-8"),
+    )
+    return compose["services"]["redis"]["image"]
+
+
+@pytest.mark.skipif(shutil.which("docker") is None, reason="docker is unavailable")
+def test_redis_logical_digest_is_insertion_order_and_rdb_round_trip_stable(
+    tmp_path: Path,
+) -> None:
+    """行为级回归：同样的内容，**怎么写进去的、存过几轮盘，指纹都必须一样**。
+
+    两条断言各自都能单独红：
+    ① 同一集合正序 / 逆序写入 ⇒ 指纹必须相同（DUMP 方案在这里就会红）；
+    ② 存 RDB 再由**另一个进程**载入 ⇒ 指纹必须逐字不变（这是迁移真实走的那条路，
+       也是 2026-08-17 那次 `redis-restore` 之后必然失败的那一步）。
+    同时验它没有变得「太规范以至于看不见变化」：改一个成员必须只有那一行变。
+    """
+    image = _redis_probe_image()
+    if subprocess.run(["docker", "image", "inspect", image],
+                      capture_output=True).returncode != 0:
+        pytest.skip(f"redis probe image {image} is not present locally")
+
+    key_control = tmp_path / "keyctl.json"
+    key_control.write_text(json.dumps({"identity_hmac_key": "b" * 64}), encoding="utf-8")
+    digest_key = bytes.fromhex("b" * 64)
+
+    def identity(name: str) -> str:
+        return hmac.new(
+            digest_key, b"redis:id:" + hashlib.sha1(name.encode()).digest(), hashlib.sha256,
+        ).hexdigest()
+
+    def scan(container: str, label: str) -> dict:
+        output = tmp_path / f"{label}.json"
+        subprocess.run(
+            [sys.executable, str(STORE_EVIDENCE_PATH), "redis", "--container", container,
+             "--key-control", str(key_control), "--output", str(output)],
+            check=True, capture_output=True,
+        )
+        return json.loads(output.read_text(encoding="utf-8"))["rows"]
+
+    volume = "carapt-identity-probe"
+    first, second = "carapt-identity-probe-a", "carapt-identity-probe-b"
+    subprocess.run(["docker", "rm", "-f", first, second], capture_output=True)
+    subprocess.run(["docker", "volume", "rm", volume], capture_output=True)
+    subprocess.run(["docker", "volume", "create", volume], check=True, capture_output=True)
+    try:
+        subprocess.run(
+            ["docker", "run", "-d", "--name", first,
+             "--mount", f"type=volume,source={volume},target=/data", image,
+             "redis-server", "--dir", "/data", "--save", "", "--appendonly", "no"],
+            check=True, capture_output=True,
+        )
+        _wait_for_redis(first)
+        members = [f"m{index}" for index in range(300)]          # 300 > set-max-listpack ⇒ hashtable
+        _redis(first, ["SADD", "probe:forward", *members])
+        _redis(first, ["SADD", "probe:reverse", *reversed(members)])
+        _redis(first, ["HSET", "probe:hash", *sum(
+            ([f"f{index}", "v" * 80] for index in range(200)), [])])   # 值 >64B ⇒ hashtable
+        _redis(first, ["SET", "probe:string", "value"])
+        _redis(first, ["RPUSH", "probe:list", "a", "b", "c"])
+        assert _redis(first, ["OBJECT", "ENCODING", "probe:forward"]) == "hashtable", (
+            "探针没造出 hashtable 编码，这条用例就什么都没验到")
+        before = scan(first, "before")
+
+        # ① 写入顺序不得影响指纹
+        assert before[identity("probe:forward")]["logical"] == (
+            before[identity("probe:reverse")]["logical"])
+
+        _redis(first, ["SAVE"])
+        subprocess.run(["docker", "stop", first], check=True, capture_output=True)
+        subprocess.run(
+            ["docker", "run", "-d", "--name", second,
+             "--mount", f"type=volume,source={volume},target=/data", image,
+             "redis-server", "--dir", "/data", "--save", "", "--appendonly", "no"],
+            check=True, capture_output=True,
+        )
+        _wait_for_redis(second)
+        after = scan(second, "after")
+
+        # ② RDB 往返 + 换一个进程，指纹逐字不变
+        assert after == before
+
+        # ③ 真改了值必须只有那一行变（别让「规范化」把变化也抹平）
+        _redis(second, ["SADD", "probe:forward", "canary"])
+        changed = scan(second, "changed")
+        differing = [row for row in changed if changed[row] != after.get(row)]
+        assert differing == [identity("probe:forward")]
+    finally:
+        subprocess.run(["docker", "rm", "-f", first, second], capture_output=True)
+        subprocess.run(["docker", "volume", "rm", volume], capture_output=True)
+
+
+def _redis(container: str, argv: list[str]) -> str:
+    completed = subprocess.run(
+        ["docker", "exec", container, "redis-cli", *argv],
+        check=True, capture_output=True, text=True,
+    )
+    return completed.stdout.strip()
+
+
+def _wait_for_redis(container: str) -> None:
+    for _ in range(60):
+        probe = subprocess.run(
+            ["docker", "exec", container, "redis-cli", "PING"],
+            capture_output=True, text=True,
+        )
+        if probe.stdout.strip() == "PONG":
+            return
+        time.sleep(1)
+    raise AssertionError(f"redis probe container {container} never became ready")
 
 
 def test_backup_streams_redis_evidence_into_manifest_builder_without_heredoc_stdin_collision():
