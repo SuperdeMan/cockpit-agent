@@ -4,8 +4,11 @@
 
 ## 运行入口
 
-> 远程互斥锁固定为 `/opt/car-agent/shared/locks/release.lock`。本段只记录已有
-> 静态/fake 回归的入口与边界，不声称已在真实云主机运行。
+> 远程互斥锁固定为 `/opt/car-agent/shared/locks/release.lock`。
+> **2026-08-18 起本段入口已在真实云主机跑通**：release `34d72d7` 部署、三存储 final
+> 迁移 `APPLIED`、`dev_stack status`/`verify` 与 cloud 缺省 E2E 均通过（逐条根因见
+> `docs/design/2026-08-18-*`）。仍未在真机执行过的动作只剩 `rollback`
+> ——首次部署之后还没有第二个 release 可回退，不做虚构演练。
 
 - `status` 是只读查询，不取锁。release、rollback、backup、data migration 和 remote E2E
   共用上述锁；冲突立即失败，只报告 `release|rollback|backup|migration|e2e|unknown`
@@ -204,9 +207,12 @@ python scripts/cloud_release.py rollback --to 4c1f479 --apply
 
 ## PostgreSQL、Redis 与 Collector 两阶段迁移
 
-> 2026-08-17 的真实 final 尚未迁入云端，当前云端已整组回滚且继续运行原数据。
-> 失败批次、保留现场和下一位 agent 的唯一接手顺序见
-> [`../../docs/reviews/2026-08-17-cloud-data-migration-handoff.md`](../../docs/reviews/2026-08-17-cloud-data-migration-handoff.md)。
+> **2026-08-18 04:55 UTC 第三次 final 真实 apply 成功**：批次
+> `20260818T044944Z-34d72d7-final` 状态 `APPLIED`、fence 自动清除，三存储 pre/post
+> 取证与独立 `verify` 均通过（云端 Redis DBSIZE 55 → 3302）。前两次失败的现场、
+> 逐条根因与最终验收状态见
+> [`../../docs/reviews/2026-08-17-cloud-data-migration-handoff.md`](../../docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
+> 与 [`../../docs/design/2026-08-18-redis-migration-identity-root-causes.md`](../../docs/design/2026-08-18-redis-migration-identity-root-causes.md)。
 
 迁移包固定保存在本机 `.artifacts/cloud-data-migrations/{migration_id}/`，云端上传目录固定为
 `/opt/car-agent/shared/imports/{migration_id}/`。批次 ID 必须来自 `snapshot` 输出，格式为

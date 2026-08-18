@@ -2,10 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **执行状态（2026-08-17）：** 工具与受控基础设施已实现，但真实 final 在 `redis-restore` 失败并
-> 完成整组回滚，数据迁云尚未完成。不要按本计划的复选框猜现场；从
+> **执行状态（2026-08-18 完成）：** 第三次真实 final 批次
+> `20260818T044944Z-34d72d7-final` 已 `APPLIED`，三存储 pre/post 取证与独立 `verify`
+> 均通过，`dev-stack.local` = `target=cloud`。本计划到此终结，
+> **不要再按它的复选框推进或猜现场**；终态与逐条根因看
 > [`../../reviews/2026-08-17-cloud-data-migration-handoff.md`](../../reviews/2026-08-17-cloud-data-migration-handoff.md)
-> 接手。
+> 与 `docs/design/2026-08-18-*`。
 
 **Goal:** 构建一套可审计、可回滚的两阶段工具，把当前本地 Docker 真栈的 PostgreSQL、Redis 与 Collector SQLite 一致性快照完整替换到腾讯云稳定命名卷，同时保留本地卷、云端迁移前备份和全部迁移包。
 

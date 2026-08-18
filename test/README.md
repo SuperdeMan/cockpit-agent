@@ -158,9 +158,14 @@ python test/eval_s2s_escalation.py --desc "…" # §6.2 灰度调参：换 escal
 E2E 清单的唯一真相源是 `test/e2e_manifest.yaml`，统一入口是 `scripts/run_e2e.py`；PowerShell、
 shell 与 `make e2e` 都只是参数透传，不再各自维护脚本数组。常用门禁：
 
-> 远程策略字段固定为 `remote_safe` / `remote_mutating`。本段命令已有静态/fake 回归，
-> 不声称已在真实云主机运行。E2E 运行前由统一入口按仓库根目录读取
-> `dev-stack.local`。
+> 远程策略字段固定为 `remote_safe` / `remote_mutating`。E2E 运行前由统一入口按仓库
+> 根目录读取 `dev-stack.local`。
+> **2026-08-18 起 cloud 车道已在真实云主机跑通**：`--target cloud` 不带 `--id` 时选中
+> `remote_safe and profile == "root"` 的 **2 条**（`e2e_protocol_smoke`、
+> `e2e_remote_safe`），实测 **2/2 PASS**。⚠ manifest 里 `remote_safe: true` 是 **3 条**，
+> `e2e_tts_stream` 因 profile 不是 `root` **不进 cloud 缺省面**——
+> **「标了 remote_safe」不等于「cloud 会跑它」**，读覆盖面要看 dry-run 的 `selection`，
+> 不要数 manifest。`remote_mutating: true` 当前 **0 条**。
 
 manifest 的三种状态不允许默认：`true/false` 表示 cloud 缺省可读；`false/true`
 只允许精确 `--id` + `--allow-mutating`；`false/false` 在 cloud 永久拒绝，直到完成远程

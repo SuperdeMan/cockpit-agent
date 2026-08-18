@@ -1,12 +1,31 @@
 # 云端数据迁移与远程开发交接
 
-> 状态日期：2026-08-17。本文是这次真实迁移现场与后续接手顺序的唯一交接页。
+> 状态日期：**2026-08-18 收口**（原文写于 2026-08-17，逐节保留并就地标注终态）。
+> 本文是这次真实迁移现场与后续接手顺序的唯一交接页。
 > 工具契约仍以 `docs/dev-guide.md` §8 和 `deploy/cloud/README.md` 为准；设计取舍见两份
 > `2026-08-16` spec/plan。不要从计划中的未勾选项推断真实云端状态。
 
 ## 1. 当前结论
 
-| 项目 | 当前状态 |
+> ✅ **2026-08-18 已全部完成**。下表是**当前**状态；2026-08-17 的失败态原文移到 §1.1。
+
+| 项目 | 当前状态（2026-08-18） |
+|---|---|
+| 本地三存储迁云 | **完成**：第三次 final 批次 `20260818T044944Z-34d72d7-final` = `APPLIED` |
+| 云端数据 | PostgreSQL / Redis / Collector 三存储 pre-start + post-start 取证均通过，独立 `verify` rc=0；Redis DBSIZE 55 → **3302** |
+| 云端服务 | **30 total / 30 running / 0 bad**（2026-08-18 只读复核） |
+| 云端迁移 fence | 已自动清除 |
+| 云端应用 release | `34d72d72cc1108140dfb3f37adaafae0a39eec2d`，数据迁移没有改变 release |
+| 备份 timer | `car-agent-backup.timer` 活跃，上次 08-18 00:05 CST、下次 08-19 00:00 CST |
+| Tailnet 入口 | 五个 Serve 入口（443 / 8443 / 8444 / 8445 / 8446）齐全 |
+| 开发栈目标 | 仓库根 `dev-stack.local` = **`target=cloud`** |
+| `dev_stack verify` | **`verified`**（`release_sha=34d72d7…`、`provider=minimax`、`model=MiniMax-M3`、`case=e2e_remote_safe`、`lock_kind=e2e`），由两个会话各独立取证一次 |
+| 本机前端联调 | HMI 5173 / Dashboard 5174 起得来且 bundle 内逐字含 tailnet FQDN；**入口 bug 已修**（见 §6 注） |
+| 本地 Docker | **未退出**：业务写入容器已停止，PostgreSQL、Redis 两个数据容器仍在跑（保留为可回切副本，停不停由泓舟决定） |
+
+### 1.1 2026-08-17 的失败态（原文留档）
+
+| 项目 | 当时状态 |
 |---|---|
 | 本地三存储迁云 | **未完成**；第二次 final 在 `redis-restore` 失败 |
 | 云端数据安全 | 已按迁移前同一批备份整组回滚，三存储均记录 `restored/started/verified=true` |
@@ -17,8 +36,9 @@
 | 开发栈目标 | 仓库根 `dev-stack.local` 不存在，按规则仍是 `target=local` |
 | 本地 Docker | 未退出；业务写入容器已停止，PostgreSQL、Redis 两个数据容器仍健康运行 |
 
-因此当前不能宣称云端已经包含本地测试语料、记忆、声纹或 Collector 数据，也不能切换
-`target=cloud` 或退出 Docker Desktop。上一轮明确约定失败后不做第三次盲重试，已遵守。
+当时的结论是：不能宣称云端已经包含本地测试语料、记忆、声纹或 Collector 数据，也不能切换
+`target=cloud` 或退出 Docker Desktop。上一轮明确约定失败后不做第三次盲重试，已遵守
+——第三次是在两条根因（RC1/RC2）经隔离复现定性并修复之后才发起的。
 
 ## 2. 保留现场
 
@@ -126,9 +146,24 @@ python scripts/dev_stack.py status
 - [x] Redis apply 在隔离环境有稳定复现、根因和聚焦回归。
       （2026-08-18：**两条**根因，非一条；隔离复现走完整条 apply 路径证明包与工具链都不坏；
       三条回归 + 一条既有断言按新语义改判，反向验证全做。见上文 §3 注与设计文档。）
-- [ ] 新 final 批次真实 apply 为 `APPLIED`，没有残留 fence。
-- [ ] PostgreSQL、Redis、Collector 的 pre/post evidence 与独立 verify 通过。
-- [ ] 云端仍为预期 release，30/30 容器健康，备份 timer 与 Tailnet 入口正常。
-- [ ] remote-safe E2E 证据包含实际 release/provider/model/case/lock identity。
-- [ ] 用户确认后写入 `target=cloud`，本机 HMI/Dashboard 能联调云端。
+- [x] 新 final 批次真实 apply 为 `APPLIED`，没有残留 fence。
+      （`20260818T044944Z-34d72d7-final`，04:55:37 UTC `APPLIED`、fence 自动清除；
+      过程中又掀开 RC3–RC7 五条，逐条见 history §55.6–§55.9。）
+- [x] PostgreSQL、Redis、Collector 的 pre/post evidence 与独立 verify 通过。
+- [x] 云端仍为预期 release，30/30 容器健康，备份 timer 与 Tailnet 入口正常。
+      （2026-08-18 只读复核：`30 total / 30 running / 0 bad`；`current -> 34d72d7…`；
+      `car-agent-backup.timer` 下次 08-19 00:00:04 CST；Serve 五入口齐。）
+- [x] remote-safe E2E 证据包含实际 release/provider/model/case/lock identity。
+      （`.artifacts/dev-stack-verifications/20260818T081414Z-34d72d7.json`；
+      接手方另于 09:11 UTC 独立复跑一次得同结论 `20260818T091100Z-34d72d7.json`。）
+- [x] 用户确认后写入 `target=cloud`，本机 HMI/Dashboard 能联调云端。
+      ⚠ **这一条差点被误判为通过**：`dev-stack.local` 写好了，但文档给的入口
+      `python scripts/dev_stack.py hmi` 在 Windows 上**必然失败**（argv[0] 用裸名
+      `npm`，`Popen` 不套 `PATHEXT`），CLI 只吐一句 `{"status": "failed"}`。
+      已修（`shutil.which` 解析 + 前端车道 attached 控制台 + 4 条回归，
+      设计页 §6c）。修后实测：HMI 5173 / Dashboard 5174 均 200，
+      `/src/App.tsx` 与 `/src/components/CommandBar.tsx` 的转译结果里逐字含 tailnet FQDN。
 - [ ] 本地项目容器停止且 Docker Desktop 退出；本地卷和全部迁移工件仍保留。
+      **这一条留给泓舟**：业务写入容器已停，只剩 `car-agent-postgres-1` /
+      `car-agent-redis-1` 两个数据容器在跑（作为可回切副本）。停容器与退 Docker Desktop
+      是人工动作，且「不得停止另一个 agent 正在使用的本地 Docker」仍是本阶段红线。

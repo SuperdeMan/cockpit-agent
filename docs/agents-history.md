@@ -4491,3 +4491,117 @@ chmod: cannot access '.../status.<run>.json.partial': No such file or directory
   （`\n` 落地成真换行，生成的子脚本变成 SyntaxError，红灯读起来像被测代码坏了）。
   规矩：**heredoc 里写 Python 字符串，一个反斜杠都不要写**——用 `chr(10)`
   或改用编辑工具。
+
+
+## §57 2026-08-18 切云收口（接手批）：前端联调车道两条根因 + 验收逐条闭环
+
+接手 §55/§56 那条工作线（原会话上下文已压缩过一轮），把交接页
+[`2026-08-17-cloud-data-migration-handoff.md`](reviews/2026-08-17-cloud-data-migration-handoff.md)
+§6 的完成判据逐条核到底。**七条判据六条达成**；第七条（停本地容器 + 退 Docker Desktop）
+是人工动作留给泓舟。**但「HMI/Dashboard 能联调云端」那条差点被误判为通过。**
+
+### §57.1 RC15/RC16：验收项写着"能联调"，而文档给的入口在本机必然失败
+
+`python scripts/dev_stack.py hmi` 是 `docs/dev-guide.md`「日常三条路径」的 B 条。实跑：
+
+```
+{"source": null, "status": "failed", "target": null}
+```
+
+**RC15**：`frontend_command` 返回 `argv[0] = "npm"`。`subprocess.Popen` 不套 `PATHEXT`，
+Windows 上能执行的是 `npm.cmd`——裸名直接 `FileNotFoundError`，被 `SubprocessRunner`
+包成 `ReleaseError`，CLI 的 `except ReleaseError` 打一句 `{"status": "failed"}` 收场，
+**没有任何诊断**。取证：`Popen(["npm","--version"])` → `[WinError 2]`；
+`Popen(["npm.cmd","--version"])` → rc 0；`shutil.which("npm")` →
+`C:\Program Files\nodejs\npm.CMD`。
+
+**RC16**：`SubprocessRunner` 对每个子进程一律 `stdout=PIPE` + `communicate()`。
+dev server 要活到操作者停它为止，于是**整个生命周期一个字都不吐**——看不到
+`Local: http://127.0.0.1:5173/`，看不到编译错误；叠加 `CREATE_NEW_PROCESS_GROUP`，
+Ctrl-C 打不到子进程，python 退了 Vite 还占着 5173（仓库既往那条
+「宿主遗留 vite 占 5173」就是它）。
+
+两条守卫此前都在，且**都只验字面量**——
+`test_cloud_hmi_uses_local_vite_and_remote_endpoints` 与
+`test_cli_hmi_runs_only_vite_and_redacts_token` 各断言一次
+`argv == ("npm", "run", "dev", "--", "--host", "127.0.0.1")`，用的是 `FakeCliRunner`，
+**从来没有真起过一个进程**。
+
+> **判据：断言字面量等于没断言。** 这是 RC10/RC12/RC13 之后的第四次同形，
+> 也是「一条从来没跑绿过的路径不会只有一个 bug」的第二次应验——同一条车道两个缺陷。
+> 新尺子换成内容判据：把 `argv[0]` 交给 **CLI 真正会用的那个 runner** 去启动，起不来即红；
+> 桩启动器按本平台命名法造在临时目录里（`npm.cmd` / `npm`），
+> **所以这条测试不依赖机器上装没装 npm**。
+
+修法三处：`resolve_frontend_launcher()` 用 `shutil.which` 解析（与 `cloud_release_lib`
+解析 `buf` 同款），解析不到抛 `DevStackError`；runner 增加 `attached=True`
+（不接管 stdout/stderr、不开新进程组、`wait()` 而非 `communicate()`），**只有前端车道用它**；
+CLI 在启动**之前**先 emit 一条 `status: starting`（带脱敏端点）——子进程一旦接管控制台，
+后面那条要等它退出才打得出来。
+
+四条回归全部反向验证：撤解析 ⇒ `ReleaseError: could not run npm: FileNotFoundError`
++ `DID NOT RAISE DevStackError`；撤 attached ⇒ `assert 'stub-launcher-ok' in ''`
++ `KeyError: 'attached'`。
+
+链路其余部分是好的（RC15 挡在第一步，此前无从得知）：用解析后的 argv 起 Vite，
+HMI 5173 / Dashboard 5174 均 200，`/src/App.tsx` 与
+`/src/components/CommandBar.tsx` 的转译结果里**逐字含 tailnet FQDN**
+——注入的云端端点确实进了浏览器拿到的那份 bundle，不只是进了进程环境。
+
+### §57.2 cloud 缺省面是 2 条不是 3 条，而 verify 只验 1 条
+
+`dev_stack verify` 硬编码 `--id e2e_remote_safe`。manifest 里 `remote_safe: true` 是 **3 条**，
+但 `select_for_target` 在 cloud 档要求 `remote_safe and profile == "root"`
+⇒ `e2e_tts_stream` **不进缺省面**，实际是 2 条。
+
+> **判据：「标了 remote_safe」不等于「cloud 会跑它」。** 覆盖面要读 dry-run 的
+> `selection`，不要数 manifest——这跟 §56.2「源码里有这个名字 ≠ 运行时拿得到」是同一件事，
+> 只是换到了选集这一层。
+
+本批补跑 `run_e2e --target cloud`（无 `--id`）：**2/2 PASS**
+（`e2e_protocol_smoke` 1/1 **首次在云上跑**、`e2e_remote_safe` 7/7），50s，
+锁 `e2e-0e34a686…`。没有第三个 bug。
+
+### §57.3 交接来的数字要自己核：两处站不住
+
+- **「一共修掉 8 条根因」对不上账。** §55 编号到 RC1–RC7、设计页 §56 是 RC8–RC14，
+  加本批 RC15/RC16 合计 **16 条**（§55.6 另有两处未编号：PG 死列 `agents.embedding`、
+  发布闸把 docstring 读成 schema 变更）。AGENTS.md 已改为分段计数。
+- **两次段 2 读数的命令不同，不能相减。** 上一位跑
+  `pytest scripts/tests/ -q --import-mode=importlib`，我先前那次没带 `--import-mode`。
+  相减会得出「+5 而我只加了 4 条」这种幽灵。改用同 HEAD 的 `--collect-only` nodeid
+  逐条 diff：差额**恰好是新增的 4 条、没有第 5 条**。
+
+### §57.4 「跑批期间不许动工作树」——当天两个会话各踩一次，而这次有测试真的读文档
+
+上一位段 2 **08:40:24 起跑**，而 **08:39:42** 还在 `cat >>` 往 `scripts/tests` 追加用例、
+**08:40:09** 执行 `git stash push -- scripts/tests/...` 做反向验证。
+它记的 1080 比自己 HEAD 的 collect 1132 少 1，**那 1 条永远找不回来了**。
+
+我自己在第一次跑 `scripts/tests` 期间改了 `deploy/cloud/README.md` 与 `docs/dev-guide.md`
+——而 `scripts/tests/test_cloud_deploy_assets.py::
+test_migration_docs_explain_two_stage_attestation_growth_rules` **真的会读这两个文件**。
+没红纯属运气（改的段落不含它断言的短语）。
+
+> **判据：「我改的只是文档所以没关系」不成立**——先问一句「有没有测试读这个文件」。
+> 更钝的一条：**起跑前 15 秒还在 stash，读数就不是 HEAD 的读数。**
+> 本批最终基线是在**起跑后一个仓库文件都没动**的条件下取的。
+
+### §57.5 刻意没做的一件事
+
+`.env.example` **缺 `TAILNET_FQDN`**，而 cloud 档的 `status`/`verify`/`hmi`/`dashboard`
+都要它——是真缺口。**本批不补**：`.env.example` 在发布闸里被分类为
+`runtime_config_contract`（`scripts/tests/test_cloud_release.py`），
+改它会给下一次云端发版凭空加一道审批闸，而收益只是一个模板键。
+留给发版那一轮顺带处理，已记进 AGENTS.md §4.0 接手须知⑤。
+
+### §57.6 读数
+
+- 全量 **6560 / 63 零红**（段 1 `5475/12` + 段 2 `1085/51`，`target=cloud` 档下）。
+  本批 **+4**，全在段 2；段 1 与改动前逐字相同。记账与对照法见 AGENTS.md §4.0。
+- 云端只读复核：容器 **30 total / 30 running / 0 bad**、`current -> 34d72d7…`、
+  `car-agent-backup.timer` 下次 08-19 00:00:04 CST、Tailnet Serve 五入口齐。
+- `dev_stack verify` 由接手方**独立重跑一次**仍 `verified`
+  （`.artifacts/dev-stack-verifications/20260818T091100Z-34d72d7.json`）
+  ——同一份证据两个人各取一次，才叫可复现。
+- CI：`#414`（`a45aebd`）**success**；`#412` 那次红已由 `c1179c1` 修掉（`#413` 起连绿）。

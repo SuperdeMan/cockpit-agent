@@ -103,20 +103,51 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + **非 root** + `--init`）取全集。
 
 **当前部署形态（2026-08-18）**：`dev-stack.local` = **`target=cloud`**。
-云端 release `34d72d7`、30 个容器起齐、三存储数据已迁入并逐表核对；
+云端 release `34d72d7`、**30 total / 30 running / 0 bad**、三存储数据已迁入并逐表核对；
 `python scripts/dev_stack.py status` = ok（5/5 端点 healthy）、
-`verify` = **verified**（`e2e_remote_safe`、minimax/MiniMax-M3、lock `e2e`）。
-迁移 apply 与验证通路一共修掉 **8 条根因**，见 history **§55/§56**。
-> ⚠ 三条接手须知：① **真栈命令一律走 PowerShell**——Git Bash 的 `ssh` 是 MSYS 版，
+`verify` = **verified**（`e2e_remote_safe`、minimax/MiniMax-M3、lock `e2e`）；
+`car-agent-backup.timer` 活跃、Tailnet Serve 五入口齐；
+**cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` + `e2e_remote_safe`，
+`run_e2e --target cloud` 无 `--id`）。交接页
+[`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
+§6 七条完成判据**六条达成**，只剩「停本地容器 + 退 Docker Desktop」这条人工动作。
+根因分三段：迁移 apply **RC1–RC7**（history §55，另有两处未编号：PG 死列
+`agents.embedding`、发布闸把 docstring 读成 schema 变更）、切云验证 **RC8–RC14**（§56）、
+前端联调车道 **RC15/RC16**（§57）——**合计 16 条编号根因**。
+> ⚠ 五条接手须知：① **真栈命令一律走 PowerShell**——Git Bash 的 `ssh` 是 MSYS 版，
 > 会吃掉 `subprocess.list2cmdline` 的 `\"` 转义，远端 bash 报 `unexpected EOF`；
 > ② 本地 `.env` 现含 `VITE_WS_TOKEN`（云端 `AUTH_REQUIRED=true` 必需，**不进 commit**）；
-> ③ `target=cloud` 期间**不要起本地 Compose**，本地只承载编辑、单测、静态检查与 Vite。
+> ③ `target=cloud` 期间**不要起本地 Compose**，本地只承载编辑、单测、静态检查与 Vite；
+> ④ 云端连接三参数走环境变量 `CAR_AGENT_DEPLOY_HOST` / `CAR_AGENT_DEPLOY_USER` /
+> `CAR_AGENT_SSH_IDENTITY`，**不在 `.env`、不在 `dev-stack.local`**——缺任一项时
+> `dev_stack` 返回 `configuration_rejected`（rc=2）；⑤ **已知缺口（下次发版顺带修）**：
+> `.env.example` 没有 `TAILNET_FQDN` 这个键，而 cloud 档的 `status`/`verify`/`hmi`/`dashboard`
+> 都要它。**本批刻意没补**——`.env.example` 在发布闸里被分类为 `runtime_config_contract`
+> （`scripts/tests/test_cloud_release.py`），改它会给下一次云端发版凭空加一道审批闸。
 
-**最新后端全量基线（2026-08-18 切云批后实测）**：`python -m pytest --import-mode=importlib`
-**6555 passed / 63 skipped 零红**，分两段：`--ignore=scripts/tests` **5475 / 12**
-+ `scripts/tests` **1080 / 51**（`da834f5` + 本批文档提交，**在 `target=cloud` 档下跑的**）。
-较 8-17 那跳 6257 的净增几乎全在段 2——云发布/迁移工作线合入带来的 `scripts/tests`
-扩张（**那是另一条线的账，不要记到 QA 批头上**）；本批自身只 **+7**（七条根因各一条回归，其中一条是跨套件守卫）。
+**最新后端全量基线（2026-08-18 切云收口批后实测）**：`python -m pytest --import-mode=importlib`
+**6560 passed / 63 skipped 零红**，分两段：`--ignore=scripts/tests` **5475 / 12**
++ `scripts/tests` **1085 / 51**（`a45aebd` + 本批工作树，**在 `target=cloud` 档下跑的**；
+起跑后一个仓库文件都没动过）。
+- **本批产出 +4**，全在段 2（`scripts/tests/test_dev_stack.py` 四条前端车道回归，
+  RC15/RC16，证据 history **§57**）。段 1 与改动前**逐字相同**（5475/12）
+  ——本批只碰 `scripts/`，段 1 本来就该不动，这是对照不是巧合。
+- ⚠ **这个 +4 是量出来的不是数出来的**：同工作树 `--collect-only` = **1136**
+  = 实跑 1085+51，**零口径缺口**；把四个文件 `git stash` 掉再 collect = **1132**，
+  nodeid 逐条 diff 只差我新增那 4 条、**没有第 5 条**。
+- ⚠ **上一跳记的段 2 `1080` 比它自己 HEAD 的 collect `1132` 少 1，那 1 条没有归属**：
+  transcript 显示它 08:40:24 起跑，而 08:39:42 还在 `cat >>` 往 `scripts/tests` 追加用例、
+  08:40:09 执行 `git stash push -- scripts/tests/...` 做反向验证。
+  **起跑前 15 秒还在 stash，读数就不是 HEAD 的读数**——所以本节不拿 1080 去加减，
+  只用同 HEAD 的可复现对照。
+- **段 1 的 12 skipped 逐条点得上号**：nightly LLM 语料 4（未配 `LLM_API_KEY`）+
+  ASR e2e 4（2 条无 key + **2 条 `ASR service unreachable at http://localhost:50059`**）
+  + symlink 权限 3（Windows 非管理员）+ opentelemetry 未装 1。
+  ⚠ **那 2 条 ASR 是切云的直接后果**（本地 llm-gateway 已停），8-17 那跳段 1 是 10 skipped
+  ——**切回 `target=local` 并 `make up` 后它们会变回 pass，不要当成回归**。
+
+⚠ 上一版本节写过 **6555 / 段 2 1080 / 「本批自身 +7」**，那是上一位在自己那次读数上记的账；
+段 2 数字与 +4 的归属已按上面的对照修正，「+7」那句因分母不可复现**不予背书也不重算**。
 
 上一跳（QA 批）留档：`python -m pytest --import-mode=importlib`
 **6257 passed / 15 skipped 零红**（2026-08-17 凌晨，QA 批 **Q7 残余（EL1+OR2）**后实测，

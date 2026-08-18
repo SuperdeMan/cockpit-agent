@@ -1,12 +1,20 @@
 # 开发上手指南
 
-> 用户入口固定为 `scripts/dev_stack.py`。本章命令已有静态/fake 回归；
-> 本文不声称已在真实云主机运行。
+> 用户入口固定为 `scripts/dev_stack.py`。
 
 ## 可切换真栈
 
-> 当前真实迁移尚未完成，默认目标仍是 local。现场、阻断点与接手顺序见
+> **当前 `dev-stack.local` = `target=cloud`（2026-08-18 起）。** 三存储 final 迁移已
+> `APPLIED`、独立 verify 通过，云端 release `34d72d7`、30/30 容器健康，
+> `python scripts/dev_stack.py verify` = `verified`。切云那趟修掉的九条根因见
+> [`design/2026-08-18-cloud-switch-verification-root-causes.md`](design/2026-08-18-cloud-switch-verification-root-causes.md)，
+> 迁移 apply 的七条见
+> [`design/2026-08-18-redis-migration-identity-root-causes.md`](design/2026-08-18-redis-migration-identity-root-causes.md)，
+> 现场与最终验收状态见
 > [`reviews/2026-08-17-cloud-data-migration-handoff.md`](reviews/2026-08-17-cloud-data-migration-handoff.md)。
+> 云端连接参数由 `CAR_AGENT_DEPLOY_HOST` / `CAR_AGENT_DEPLOY_USER` /
+> `CAR_AGENT_SSH_IDENTITY` 三个环境变量提供，**不进 `.env`、不进 `dev-stack.local`**；
+> 缺任一项时 CLI 返回 `configuration_rejected`（rc=2）而不是去猜。
 
 执行真栈动作前由统一入口按仓库根目录定位并读取 `dev-stack.local`。它是仓库根目录的
 Git-ignore 文件，不能按当前工作目录误判缺失；缺失按 `target=local`，损坏则 fail closed。只允许
@@ -36,7 +44,9 @@ python scripts/dev_stack.py verify
 切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
 Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。
 HMI/Dashboard 在 cloud 目标下仍是本机 Vite，经 Tailnet HTTPS/WSS 访问后端；
-KWS/VAD 模型由页面加载，推理仍在浏览器本地。
+KWS/VAD 模型由页面加载，推理仍在浏览器本地。前端车道的 `npm` 由 `shutil.which` 解析后
+再启动（Windows 上真正能执行的是 `npm.cmd`），dev server 直接占用当前控制台——
+所以 `Local: http://127.0.0.1:5173/` 是它自己打的，Ctrl-C 也直接落到它身上。
 
 `target set cloud` 不是迁移命令。只有 final 数据覆盖为 `APPLIED`、独立迁移 verify、cloud release
 verify、remote-safe E2E 和本轮用户确认全部通过后，才允许执行；随后先 `status`/`verify`，再人工

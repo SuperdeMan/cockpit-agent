@@ -1,15 +1,17 @@
-# 切云验证通路的七条根因（2026-08-18）
+# 切云验证通路的九条根因（2026-08-18）
 
 > 迁移 apply 成功、云端 30 个容器起齐、`dev_stack status` 报 ok 之后，
-> `dev_stack verify` 仍然一次都没绿过。本页把它收敛成七条确定性根因，
+> `dev_stack verify` 仍然一次都没绿过。本页把它收敛成九条确定性根因，
 > 全部修完并各带一条反向验证过的回归。上一批（迁移 apply 的 RC1/RC2）见
 > [`2026-08-18-redis-migration-identity-root-causes.md`](2026-08-18-redis-migration-identity-root-causes.md)。
+> RC15/RC16 是**接手方**在核对交接页最后两条验收项时补上的（§6c）。
 
 ## 0. 这批的形状
 
 `dev_stack verify` 只有两步：`cloud_release verify` + `run_e2e --target cloud --id
 e2e_remote_safe`。第二步倒在 **`e2e_remote_safe` 这一个用例**上，而这个用例是**云端验证
-唯一会跑的东西**。逐层剥下来，它在四个不同的地方各卡一次；切完之后本地单测又露出第七条——
+唯一会跑的东西**。逐层剥下来，它在四个不同的地方各卡一次；切完之后本地单测又露出第七条；
+最后去核「HMI/Dashboard 能不能联调云端」，那条路又是两条——
 
 | # | 位置 | 形态 |
 |---|---|---|
@@ -20,6 +22,8 @@ e2e_remote_safe`。第二步倒在 **`e2e_remote_safe` 这一个用例**上，�
 | RC12 | `test/e2e_remote_safe.py` | 等一个边缘 WS **从不发送**的握手帧 |
 | RC13 | `test/e2e_remote_safe.py` | `meta` 值类型不合网关契约 ⇒ 整条消息被**静默丢弃** |
 | RC14 | `scripts/tests` 三个套件 | 单测跟着仓库部署档变色——切云当天 **17 条转红** |
+| RC15 | `dev_stack_lib.frontend_command` | argv[0] 是裸名 `npm`，Windows 上 **一定** `FileNotFoundError` |
+| RC16 | `dev_stack.py` 前端车道 | dev server 的输出被 pipe 吃掉；Ctrl-C 打不到它，留下孤儿 Vite |
 
 RC10/RC12/RC13 三条都在同一个文件里，而且都是**这条路径从来没成功过**的证据：
 `e2e_remote_safe` 自打写下来就没有真正跑通过一次。
@@ -133,6 +137,50 @@ Windows 匿名管道缓冲只有 4 KiB，写满后远端阻塞，`READY` 那行*
 > 守卫 `test_runner_unit_tests_never_inherit_the_repository_deployment_target`
 > 扫这三个套件里所有字面量 argv 的 `runner.main(` 调用，缺 `--target` 即红。
 
+## 6c. RC15/RC16 前端联调那条路同样一次没跑过
+
+交接页的验收项写着「本机 HMI/Dashboard 能联调云端」，而文档给的入口
+`python scripts/dev_stack.py hmi` 在 Windows 上**必然失败**：
+
+- **RC15**：`frontend_command` 返回 `argv[0] = "npm"`。`subprocess.Popen` 不套
+  `PATHEXT`，Windows 上能执行的是 `npm.cmd`，裸名直接
+  `FileNotFoundError` ⇒ `ReleaseError` ⇒ CLI 打一句 `{"status": "failed"}` 收场，
+  **没有任何诊断**。实测：`Popen(["npm","--version"])` → `[WinError 2]`；
+  `Popen(["npm.cmd","--version"])` → rc 0。
+- **RC16**：`SubprocessRunner` 对每个子进程都 `stdout=PIPE` + `communicate()`。
+  dev server 要活到操作者停它为止，于是**整段生命周期一个字都不吐**——
+  看不到 `Local: http://127.0.0.1:5173/`，看不到报错。叠加
+  `CREATE_NEW_PROCESS_GROUP`，Ctrl-C 打不到子进程：python 退了、Vite 还占着 5173
+  （仓库既往那条「宿主遗留 vite 占 5173」就是它）。
+
+两条守卫此前都存在，且都只验字面量：`test_cloud_hmi_uses_local_vite_and_remote_endpoints`
+与 `test_cli_hmi_runs_only_vite_and_redacts_token` 各断言一次
+`argv == ("npm", "run", "dev", "--", "--host", "127.0.0.1")`——**用的是 FakeCliRunner，
+从来没有真起过进程**。
+
+> **判据⑥（RC10/RC12/RC13 的第四次同形）：断言字面量等于没断言。**
+> 尺子换成内容判据：把 `argv[0]` 交给**CLI 真正会用的那个 runner** 去启动，
+> 起不来就是红。这条测试不依赖机器上装没装 npm——PATH 指向临时目录里的桩启动器，
+> 桩的名字按本平台的命名法给（`npm.cmd` / `npm`）。
+
+修法：
+- `resolve_frontend_launcher()` 用 `shutil.which` 解析，解析不到抛
+  `DevStackError("npm was not found on PATH")`（与 `cloud_release_lib` 解析 `buf` 同款）；
+  `frontend_command` 返回的 argv **已经是一个存在的文件**。
+- runner 增加 `attached=True`：不接管 stdout/stderr、不开新进程组，
+  `wait()` 而不是 `communicate()`。前端车道用它，其余路径一字未动。
+- CLI 在**启动之前**先 emit 一条 `status: starting`（带脱敏后的端点），
+  因为子进程一旦接管控制台，后面那条要等它退出才打得出来。
+
+四条回归全部反向验证过：撤掉解析 ⇒ `ReleaseError: could not run npm: FileNotFoundError`
++ `DID NOT RAISE DevStackError`；撤掉 attached ⇒ `assert 'stub-launcher-ok' in ''`
++ `KeyError: 'attached'`。
+
+链路的其余部分是好的（RC15 一挡就挡在第一步，此前无从得知）：用解析后的 argv 起 Vite，
+HMI 5173 / Dashboard 5174 均 200，且 `/src/App.tsx` 与
+`/src/components/CommandBar.tsx` 的转译结果里**逐字含 tailnet FQDN**
+——注入的云端端点确实进了浏览器拿到的那份 bundle，不只是进了进程环境。
+
 ## 7. 收口状态
 
 - `dev_stack verify` = `status: verified`，证据
@@ -140,5 +188,11 @@ Windows 匿名管道缓冲只有 4 KiB，写满后远端阻塞，`READY` 那行*
   `release_sha=34d72d7…`、`provider=minimax`、`model=MiniMax-M3`、
   `lock_kind=e2e`、`case_ids=[e2e_remote_safe]`。
 - `dev_stack status` = ok，5/5 端点 healthy。
-- 七条根因各带一条回归，全部做过反向验证（改回旧码必红，且红在该红的那条断言上）。
+- 九条根因各带一条回归，全部做过反向验证（改回旧码必红，且红在该红的那条断言上）。
 - `scripts/tests` 全量在 **`target=cloud` 档下**跑绿——切云不再改变本地单测的读数。
+- 云端只读复核（2026-08-18 17:0x）：容器 **30 total / 30 running / 0 bad**、
+  `current` 指向 `34d72d7…`、`car-agent-backup.timer` 下次 08-19 00:00:04 CST、
+  Tailnet Serve 五个入口（443/8443/8444/8445/8446）齐。
+- `dev_stack verify` 由接手方**独立重跑一次**仍 `verified`
+  （`.artifacts/dev-stack-verifications/20260818T091100Z-34d72d7.json`，
+  lock `e2e-0fdbc272…`）——同一份证据两个人各取一次，才叫可复现。
