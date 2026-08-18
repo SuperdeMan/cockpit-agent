@@ -520,6 +520,15 @@ def _status_url(base: str, path: str) -> str | None:
     return f"{parsed.scheme}://{parsed.hostname}{port}{path}"
 
 
+# 端点探测超时。**唯一的真实访问路径是跨境 Tailnet HTTPS**（本机 → 腾讯云），
+# 实测单次 2.3–3.1 秒（TLS 握手 + Tailscale 中继）。原值 3.0 秒正好卡在这条链路的
+# 时延带上，于是同一套健康的服务被随机报成 degraded——2026-08-18 切云当天，
+# 5 个端点里 hmi 与 edge 报 timeout，而手工 curl 五个全 200。
+# 判据同「只有一种真实输入的守卫，阈值要按那个输入定」：3 秒是局域网的数，
+# 而这条路径从来不是局域网。
+ENDPOINT_TIMEOUT_S = 10.0
+
+
 def _endpoint_status(
     name: str, base: str, path: str, runner: StackStatusRunner
 ) -> EndpointStatus:
@@ -527,7 +536,7 @@ def _endpoint_status(
     if url is None:
         return EndpointStatus(name, "<invalid endpoint>", "invalid_endpoint", None)
     try:
-        response = runner.get(url, timeout_s=3.0)
+        response = runner.get(url, timeout_s=ENDPOINT_TIMEOUT_S)
         code = int(response.status_code)
     except HTTPError as exc:
         return EndpointStatus(name, url, "http_error", int(exc.code))

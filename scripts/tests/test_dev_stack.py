@@ -1174,8 +1174,17 @@ def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(t
     assert str(identity) not in json.dumps(events)
 
 
+def _seed_cloud_verify_env(tmp_path: Path) -> None:
+    """A repo that can verify against cloud carries the stack's WS token."""
+    (tmp_path / ".env").write_text(
+        "TAILNET_FQDN=demo.ts.net\nVITE_WS_TOKEN=" + "t" * 64 + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_cloud_verify_runs_release_verify_then_remote_safe_runner(tmp_path: Path):
     dev.set_target(tmp_path, "cloud")
+    _seed_cloud_verify_env(tmp_path)
     identity = _valid_identity(tmp_path)
     runner = SequenceCliRunner(
         _command_result(0, _release_verify_stdout()),
@@ -1214,6 +1223,7 @@ def test_local_verify_keeps_existing_e2e_check_semantics(tmp_path: Path):
 
 def test_cloud_verify_stops_after_release_failure(tmp_path: Path):
     dev.set_target(tmp_path, "cloud")
+    _seed_cloud_verify_env(tmp_path)
     runner = FakeCliRunner(result=1)
 
     assert cli.main(
@@ -1252,6 +1262,7 @@ def test_verify_writes_private_allowlisted_evidence(tmp_path: Path):
 
 def test_cloud_verify_merges_validated_child_evidence(tmp_path: Path):
     dev.set_target(tmp_path, "cloud")
+    _seed_cloud_verify_env(tmp_path)
     events: list[dict[str, object]] = []
     runner = SequenceCliRunner(
         _command_result(0, _release_verify_stdout()),
@@ -1300,6 +1311,7 @@ def test_cloud_verify_rejects_rc_zero_invalid_or_inconsistent_evidence(
     e2e_stdout: str,
 ):
     dev.set_target(tmp_path, "cloud")
+    _seed_cloud_verify_env(tmp_path)
     results = [_command_result(0, release_stdout)]
     if e2e_stdout:
         results.append(_command_result(0, e2e_stdout))
@@ -1619,3 +1631,52 @@ def test_cli_status_marks_local_degraded_and_cloud_healthy(
     cloud_events: list[dict[str, object]] = []
     assert cli.main(["--host", "dev.example", "--identity", str(_valid_identity(tmp_path)), "status"], repo=tmp_path, status_runner=object(), emit=cloud_events.append) == 0
     assert cloud_events[-1]["status"] == "ok"
+
+
+def test_endpoint_probe_timeout_fits_the_only_real_access_path():
+    """探测超时要按**唯一的真实访问路径**定：跨境 Tailnet HTTPS，不是局域网。
+
+    2026-08-18 切云当天实测：本机 → 腾讯云单次 2.3–3.1 秒（TLS 握手 + Tailscale 中继），
+    而原值 3.0 秒正好卡在这条时延带上 ⇒ 同一套健康的服务被随机报成 `degraded`
+    （5 个端点里 hmi 与 edge 报 timeout，手工 curl 五个全 200）。
+    > 判据同 RC1：**只有一种真实输入的守卫，阈值要按那个输入定。**
+    """
+    from scripts import dev_stack_lib
+
+    assert dev_stack_lib.ENDPOINT_TIMEOUT_S >= 8.0, (
+        "低于实测时延带就会把健康的云端报成 degraded"
+    )
+    source = (
+        Path(__file__).resolve().parents[2] / "scripts" / "dev_stack_lib.py"
+    ).read_text(encoding="utf-8")
+    assert "timeout_s=ENDPOINT_TIMEOUT_S" in source
+    assert "timeout_s=3.0" not in source, "别把它改回局域网的数"
+
+
+def test_cloud_verify_rejects_a_repo_without_the_stack_websocket_token(
+    tmp_path: Path,
+):
+    """The remote stack runs AUTH_REQUIRED=true, so the probe needs the token.
+
+    Without this the runner is spawned and the missing key only surfaces from
+    inside the child, minutes later, as an opaque child failure.
+    """
+    dev.set_target(tmp_path, "cloud")
+    (tmp_path / ".env").write_text("TAILNET_FQDN=demo.ts.net\n", encoding="utf-8")
+    events: list[dict[str, object]] = []
+    runner = SequenceCliRunner(
+        _command_result(0, _release_verify_stdout()),
+        _command_result(0, ""),
+    )
+
+    rc = cli.main(
+        ["--host", "demo.example", "--identity", str(_valid_identity(tmp_path)),
+         "verify"],
+        repo=tmp_path,
+        release_runner=runner,
+        emit=events.append,
+    )
+
+    assert rc == 2
+    assert events[-1]["status"] == "configuration_rejected"
+    assert runner.calls == []

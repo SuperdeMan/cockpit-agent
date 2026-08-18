@@ -464,6 +464,11 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
                     passed = False
         else:
             config = _connection(args)
+            # The remote stack runs with AUTH_REQUIRED=true, so the probe needs the
+            # same token cloud HMI does. Reject here instead of three minutes later
+            # inside the child.
+            if not read_root_env(repo, {"VITE_WS_TOKEN"}).get("VITE_WS_TOKEN"):
+                raise DevStackError("VITE_WS_TOKEN is required for cloud verification")
             release = cloud_release_argv(repo, "verify", "HEAD", apply=False)
             first = release_runner.run(
                 [*release[:2], *_connection_argv(config), *release[2:]],
