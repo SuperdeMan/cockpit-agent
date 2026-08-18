@@ -112,7 +112,13 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > ② 本地 `.env` 现含 `VITE_WS_TOKEN`（云端 `AUTH_REQUIRED=true` 必需，**不进 commit**）；
 > ③ `target=cloud` 期间**不要起本地 Compose**，本地只承载编辑、单测、静态检查与 Vite。
 
-**最新后端全量基线**：`python -m pytest --import-mode=importlib`
+**最新后端全量基线（2026-08-18 切云批后实测）**：`python -m pytest --import-mode=importlib`
+**6555 passed / 63 skipped 零红**，分两段：`--ignore=scripts/tests` **5475 / 12**
++ `scripts/tests` **1080 / 51**（`da834f5` + 本批文档提交，**在 `target=cloud` 档下跑的**）。
+较 8-17 那跳 6257 的净增几乎全在段 2——云发布/迁移工作线合入带来的 `scripts/tests`
+扩张（**那是另一条线的账，不要记到 QA 批头上**）；本批自身只 **+7**（七条根因各一条回归，其中一条是跨套件守卫）。
+
+上一跳（QA 批）留档：`python -m pytest --import-mode=importlib`
 **6257 passed / 15 skipped 零红**（2026-08-17 凌晨，QA 批 **Q7 残余（EL1+OR2）**后实测，
 SHA `c1620d9` + 本批工作树）。分两段：`--ignore=scripts/tests` **5476 / 10**
 + `scripts/tests` **781 / 5**。较上一跳 6198 净 **+59**，**两条来源逐条点得上号**：
