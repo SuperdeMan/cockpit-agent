@@ -1307,10 +1307,22 @@ def project_file_ready(project):
 
 
 def scripts_ready():
+    # 语法自检要按**文件类型**走。2026-08-17 `49b0788` 把 redis_volume_prepare.py 与
+    # collector_volume_replace.py 加进 SCRIPTS 之后，这里仍对每个文件跑 `bash -n`
+    # ——Python 源在 bash 眼里是语法错 ⇒ 本函数**恒为 False** ⇒ `shared_scripts_ready`
+    # 永远假、`cloud_release.py plan/deploy` 永远报 bootstrap_required。
+    # 那之后没人发过版，所以这个恒假闸一直没被发现（数据迁移走的是另一条工具链）。
+    # > 判据：**一个永远不可能满足的前置条件，和没有这个前置条件一样糟**——
+    # > 它不是把关，是把路堵死，而且堵在没人会看的地方。
     for path in SCRIPTS:
         if not secure_regular(path):
             return False
-        if subprocess.run(["bash", "-n", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+        if path.suffix == ".py":
+            try:
+                compile(path.read_text(encoding="utf-8"), str(path), "exec")
+            except (OSError, UnicodeError, SyntaxError, ValueError):
+                return False
+        elif subprocess.run(["bash", "-n", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
             return False
     return True
 

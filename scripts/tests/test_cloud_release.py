@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import io
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
 import time
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1053,6 +1056,115 @@ def test_bootstrap_requires_remote_data_migration_script():
     assert "redis_volume_prepare.py" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "collector_volume_replace.py" in cloud_release_lib.SHARED_SCRIPT_NAMES
     assert "/opt/car-agent/shared/bin/remote-e2e-lock.sh" in REMOTE_PREFLIGHT_SOURCE
+
+
+def _working_bash() -> str | None:
+    """返回一个**真能跑**的 bash 绝对路径；找不到返回 None。
+
+    ⚠ 不能按「`which bash` 找得到」判定：Windows 的 `C:\\WINDOWS\\system32\\bash.EXE`
+    是 WSL 启动器存根，`which` 找得到、跑起来直接报 WSL 错；而且 `CreateProcess`
+    在搜 PATH **之前**先命中 system32，往 PATH 前面插 Git Bash 也压不住它
+    ——所以只能拿绝对路径调。
+    """
+    candidates = [shutil.which("bash")]
+    candidates += [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Git" / "bin" / "bash.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Git" / "bin" / "bash.exe",
+    ]
+    git = shutil.which("git")
+    if git:
+        candidates.append(Path(git).resolve().parents[1] / "bin" / "bash.exe")
+    for candidate in candidates:
+        if not candidate:
+            continue
+        executable = str(candidate)
+        if not Path(executable).is_file():
+            continue
+        try:
+            if subprocess.run([executable, "-c", ":"], capture_output=True).returncode == 0:
+                return executable
+        except OSError:
+            continue
+    return None
+
+
+def _load_remote_scripts_ready(script_paths, *, bash: str, calls: list):
+    """从下发到服务器的那段源码里**抽出 `scripts_ready` 本体**跑。
+
+    整段不能直接 exec——它是「下发即执行」的脚本，跑到一半就会去
+    `readlink -f /opt/car-agent/current`。抽函数体的做法与 `test_cloud_deploy_assets.py`
+    抽 shell 函数体同形，且仍然绑在**真实源码文本**上：函数一改，本用例立刻看得见。
+
+    `subprocess` 换成把裸 `bash` 改写成绝对路径的薄壳，并记录每次调用
+    ——**记录本身就是断言材料**：`.py` 探针不该出现在任何一次 bash 调用里。
+    """
+    body = re.search(
+        r"(?ms)^def scripts_ready\(\):.*?(?=^\S|\Z)", REMOTE_PREFLIGHT_SOURCE,
+    )
+    assert body is not None, "远端预检里找不到 scripts_ready，本用例已经失去锚点"
+
+    class _Subprocess:
+        DEVNULL = subprocess.DEVNULL
+
+        @staticmethod
+        def run(argv, **kwargs):
+            resolved = [bash if argv[0] == "bash" else argv[0], *argv[1:]]
+            calls.append(tuple(resolved))
+            return subprocess.run(resolved, **kwargs)
+
+    namespace: dict[str, object] = {
+        "Path": Path,
+        "subprocess": _Subprocess,
+        "SCRIPTS": tuple(script_paths),
+        "secure_regular": lambda path: path.is_file(),
+    }
+    exec(compile(body.group(0), "<remote-preflight:scripts_ready>", "exec"), namespace)
+    return namespace["scripts_ready"]
+
+
+def test_shared_scripts_readiness_checks_syntax_per_file_type(tmp_path, monkeypatch):
+    """共享底座里既有 .sh 也有 .py，语法自检必须按类型走（否则这个闸恒假）。
+
+    2026-08-17 `49b0788` 把 `redis_volume_prepare.py` / `collector_volume_replace.py`
+    加进 `SCRIPTS`，而 `scripts_ready()` 仍对每个文件跑 `bash -n`——Python 源在 bash
+    眼里是语法错 ⇒ **`shared_scripts_ready` 从此永远为 False**、
+    `cloud_release.py plan/deploy` 永远报 `bootstrap_required`。
+    那之后没人发过版（数据迁移走另一条工具链），所以这个恒假闸一直没被发现。
+    > 判据：**一个永远不可能满足的前置条件，和没有这个前置条件一样糟。**
+    """
+    bash = _working_bash()
+    if bash is None:
+        pytest.skip("bash is unavailable; shared-script syntax checking cannot be exercised")
+
+    shell = tmp_path / "remote-data-migration.sh"
+    shell.write_text("#!/usr/bin/env bash\nset -euo pipefail\nmain() { :; }\n", encoding="utf-8")
+    python_helper = tmp_path / "redis_volume_prepare.py"
+    python_helper.write_text(
+        "#!/usr/bin/env python3\n"
+        "from __future__ import annotations\n"
+        "def prepare(path: str) -> str:\n"
+        "    return path\n",
+        encoding="utf-8",
+    )
+    # 前提自检：这个 .py 确实是 bash 通不过的，否则本用例什么都没验到
+    assert subprocess.run(
+        [bash, "-n", str(python_helper)],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode != 0
+
+    calls: list = []
+    scripts_ready = _load_remote_scripts_ready([shell, python_helper], bash=bash, calls=calls)
+    assert scripts_ready() is True
+    # 直接钉住「.py 不许走 bash」——不靠语法结果间接推断
+    assert not any(str(python_helper) in call for call in calls)
+    assert any(str(shell) in call for call in calls)
+
+    python_helper.write_text("def broken(:\n", encoding="utf-8")      # Python 语法错必须红
+    assert scripts_ready() is False
+
+    python_helper.write_text("value = 1\n", encoding="utf-8")
+    shell.write_text("if true; then\n", encoding="utf-8")             # bash 语法错必须红
+    assert scripts_ready() is False
 
 
 def test_runtime_model_hash_tables_stay_in_sync():
