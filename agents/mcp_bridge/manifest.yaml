@@ -37,4 +37,11 @@ requires_permissions:
   - network.external          # 外部服务出站
   - payment.invoke            # 写操作涉钱时经 payment-gateway（Agent 不持凭证）
 edge_intents: []
-context_scopes: []            # 生态桥不需要精确位置/电量
+# `candidates`（Q10 第 7 步）：上一轮卡片那份候选集的**最小投影**（只有序号与名字，
+# 见 `orchestrator/cloud/context.candidate_downlink`）。它让文本入口
+# 「点第一杯」「点巨无霸」解析成按钮 `send_text` 里那个规范名——两条入口收敛到
+# 同一条结构化解析链（I-020/I-025①）。
+# **刻意仍不要 `location`/`vehicle_state`**：桥是 `trust_level: third_party`，
+# 精确位置属红线级敏感上下文；候选集投影里也因此一个坐标字段都没有，
+# 它不能成为绕过这条声明的第二条路。
+context_scopes: [candidates]

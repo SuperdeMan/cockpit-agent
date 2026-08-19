@@ -30,6 +30,7 @@ from cockpit.agent.v1 import agent_pb2
 
 from runtime.clock import local_dt
 
+from . import candidate_ref
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
                         check_version, load_servers, normalize_hostname)
 from .mcp_client import McpError, StdioMcpClient
@@ -285,6 +286,18 @@ class McpBridgeAgent(BaseAgent):
             token = str((intent.slots or {}).get("checkout_token") or "")
             if intent.name.endswith("_cancel"):
                 return await workflow_binding.workflow.cancel(intent, ctx, meta)
+            # Q10 双入口收敛（2026-08-19）：文本入口的说法先在**上一轮那张卡的候选集**
+            # 里做确定性翻译，翻成按钮 `send_text` 里那个商家原名，再进各商户既有的
+            # 选品链。挂在这里而不是各 workflow 里：这是「槽值指代哪一项」的通用判定，
+            # 与商户无关；商户特有的严格判据仍在各自的 `_matching_products`，
+            # 本步只把用户的说法换成它认得的那个词。
+            # **只对 prepare/menu 生效**——confirm/cancel 靠 checkout_token 寻址，
+            # 草稿里的商品早已定死；在那条路上改槽值只会与已核价的草稿对不上。
+            # 条件写成「menu 或 未确认」而不是 `not confirmed`：menu 分支刻意排在
+            # confirmed 判定**之前**（看菜单没有可确认的东西），所以一句带确认标记的
+            # 菜单请求仍该翻译。
+            if intent.name.endswith(".menu") or not confirmed:
+                self._resolve_candidate_slot(workflow_binding.spec, intent, meta)
             # 只读看菜单：与 prepare/confirm 是**并列的第三条入口**，不建草稿、
             # 不碰写工具。放在 confirmed 判定之前——菜单没有可确认的东西，
             # 让它掉进 confirm 分支会拿一个不存在的 checkout_token 去核销。
@@ -308,6 +321,29 @@ class McpBridgeAgent(BaseAgent):
             return AgentResult(speech=f"{b.server.id} 暂时不可用，稍后再试。")
         return await (self._call_write(b, intent, ctx, meta) if b.tool.write
                       else self._call_read(b, intent, ctx, meta))
+
+    @staticmethod
+    def _resolve_candidate_slot(spec, intent, meta) -> None:
+        """把 `candidate_slot` 声明的那个槽翻译成候选集里的商家原名（就地改写）。
+
+        判不出就**原样不动**——回到今天的行为（商户自己追问/出选项卡），
+        不猜。翻错等于系统替用户改了他点的东西，而它没有任何「我不太确定」的信号。
+        """
+        slot = str(getattr(spec, "candidate_slot", "") or "")
+        slots = getattr(intent, "slots", None)
+        if not slot or not isinstance(slots, dict):
+            return
+        value = str(slots.get(slot) or "").strip()
+        if not value:
+            return
+        namespace = str(getattr(intent, "name", "") or "").split(".", 1)[0]
+        item = candidate_ref.resolve(value, meta, namespace=namespace)
+        if item is None or item["name"] == value:
+            return
+        logger.info("候选集指代解析：%s 的 %s %r → %r（第 %d 项）",
+                    getattr(intent, "name", ""), slot, value,
+                    item["name"], item["index"])
+        slots[slot] = item["name"]
 
     @staticmethod
     def _granted_scopes(meta) -> set[str]:

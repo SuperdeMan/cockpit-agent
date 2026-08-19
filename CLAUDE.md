@@ -50,7 +50,11 @@ orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库
                 合计）——确定性、零 LLM、挂在 plan 构建**之前**；与 I-052 那条弃权守卫
                 **方向相反、判据同源**（契约 conventions §9.27）。候选项白名单
                 `_CANDIDATE_ITEM_KEYS` 是**与产生方的契约**，字段名不许猜——改产生方
-                item 字段要同步 `test_candidate_sets.py::_PRODUCER_SHAPES`
+                item 字段要同步 `test_candidate_sets.py::_PRODUCER_SHAPES`。
+                候选集**下发给 Agent** 走 `context.candidate_downlink` 的最小投影
+                （只有序号与名字）+ `engine._apply_focus_meta` 按 `context_scopes:
+                [candidates]` 门控——「值得跨轮留住」与「可以离开编排」是两个问题，
+                两张表刻意分开（契约 §9.28）
 llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
                 + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
                 + speaker_embed.py 声纹提取（音频→向量，**不持模板**）

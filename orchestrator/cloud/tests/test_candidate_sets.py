@@ -15,14 +15,17 @@
 """
 from __future__ import annotations
 
+import json
 import time
 from types import SimpleNamespace
 
 from orchestrator.cloud.context import (
     Focus, _CANDIDATE_ITEM_KEYS, _CANDIDATE_SETS_MAX, _CANDIDATE_TTL_S,
-    _candidate_items, _derive_choice_view, extract_focus,
+    _candidate_items, _derive_choice_view, candidate_downlink, extract_focus,
     newest_candidate_set,
 )
+from orchestrator.cloud.engine import PlannerEngine
+from orchestrator.cloud.models import Plan, Step
 
 
 class _St:
@@ -376,3 +379,108 @@ def test_a_real_producer_shape_keeps_the_facts_i018_and_i023_need():
     kept = _candidate_items([product])[0]
     assert kept["price"] == "26.50"                 # I-023 的那个数
     assert "image_url" not in kept
+
+
+# ── 下发面（Q10 接手第 7 步）────────────────────────────────────────
+#
+# Q2 残余批**刻意没建这条通道**（history §58.6）：那批的消费方在云侧短路里、
+# 不依赖下发，而 B4 判据是「无消费方的声明只会漂移」。第 7 步（Q10 双入口收敛）
+# 才是它真正的消费方，所以到这一批才落。
+#
+# ⚠ 本组断言的重点不是「下发了什么」而是「**没有**下发什么」：
+# 「跨轮留住」和「可以离开编排」是两个问题，合成一张表就会让前者自动等于后者。
+
+def test_downlink_keeps_only_the_index_and_the_name():
+    """坐标/价格/评分/id 一个都不许出现在下发面上。
+
+    · 坐标——精确位置是红线级敏感上下文（CLAUDE.md §5），而桥的 manifest 连
+      `location` scope 都没有；候选集不能成为绕过那条声明的第二条路。
+    · 价格/评分/营业时间——它们的消费方（`candidate_query` 四个聚合维度）**在云侧**。
+    · id——收敛目标是**按钮送出的那个规范名**，再给一条 id 通道会让两个入口重新
+      变得不一样，只是反了个方向。
+    """
+    entry = {"source_intent": "nearby.search", "agent_id": "nearby",
+             "ts": 1.0, "is_fallback": False,
+             "items": [{"id": "B0FF1", "name": "川菜·甲", "lat": 22.5,
+                        "lng": 113.9, "city": "深圳市", "address": "文心五路",
+                        "rating": 4.5, "cost": "60", "price": "26.50",
+                        "open_today": "10:00-22:00", "distance_km": 0.8}]}
+    got = candidate_downlink(entry)
+    assert got == {"source_intent": "nearby.search",
+                   "items": [{"index": 1, "name": "川菜·甲"}]}
+    leaked = set(got["items"][0]) - {"index", "name"}
+    assert not leaked, f"下发面泄漏了 {sorted(leaked)}"
+
+
+def test_downlink_index_is_the_card_number_not_the_array_offset():
+    """序号从 1 开始、且**由下发方给**——裁剪会让下标漂移，序号不会。"""
+    entry = {"source_intent": "mcd.menu",
+             "items": [{"name": f"第{n}款"} for n in range(1, 15)]}
+    got = candidate_downlink(entry)
+    assert [it["index"] for it in got["items"]] == list(range(1, 11))
+
+
+def test_downlink_drops_nameless_items_and_empty_sets():
+    assert candidate_downlink(None) is None
+    assert candidate_downlink({"items": []}) is None
+    assert candidate_downlink({"items": [{"id": "x"}, {"name": "  "}]}) is None
+    assert candidate_downlink({"items": ["not a dict", {"name": "甲"}]}) == {
+        "source_intent": "", "items": [{"index": 1, "name": "甲"}]}
+
+
+def test_downlink_only_reaches_agents_that_declared_the_scope():
+    """与 `focus_active_route` 同一门控通道：未声明就收不到。"""
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
+             context_scopes=["candidates"]),
+        Step(id="s2", agent_id="chitchat", intent="chitchat.talk",
+             context_scopes=[]),
+        Step(id="s3", agent_id="nearby", intent="nearby.search",
+             context_scopes=["location"]),
+    ])
+    focus = Focus(candidate_sets=[{
+        "source_intent": "mcd.menu", "agent_id": "mcp-bridge",
+        "purpose": "list", "ts": time.time(), "is_fallback": False,
+        "items": [{"name": "巨无霸套餐", "price": "36.90 元"}]}])
+
+    PlannerEngine._apply_focus_meta(plan, focus)
+
+    payload = json.loads(plan.steps[0].meta["focus_candidate_set"])
+    assert payload["items"] == [{"index": 1, "name": "巨无霸套餐"}]
+    assert "focus_candidate_set" not in plan.steps[1].meta
+    assert "focus_candidate_set" not in plan.steps[2].meta
+
+
+def test_downlink_is_absent_when_there_is_nothing_to_reference():
+    """没有可引用的候选就不写这个键——空值和「没有」必须长得不一样。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
+                            context_scopes=["candidates"])])
+    PlannerEngine._apply_focus_meta(plan, Focus())
+    assert "focus_candidate_set" not in plan.steps[0].meta
+
+
+def test_downlink_expired_set_is_not_delivered():
+    """限龄与云侧消费方同一口径（`newest_candidate_set`），不另算一遍。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
+                            context_scopes=["candidates"])])
+    focus = Focus(candidate_sets=[{
+        "source_intent": "mcd.menu", "ts": time.time() - _CANDIDATE_TTL_S - 1,
+        "is_fallback": False, "items": [{"name": "巨无霸套餐"}]}])
+    PlannerEngine._apply_focus_meta(plan, focus)
+    assert "focus_candidate_set" not in plan.steps[0].meta
+
+
+def test_downlink_prefers_the_set_the_user_named_over_the_fallback_one():
+    """绑哪一组的口径**只有一份**（N5）：兜底那份不得顶替用户点名的那份。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
+                            context_scopes=["candidates"])])
+    now = time.time()
+    focus = Focus(candidate_sets=[
+        {"source_intent": "mcd.menu", "ts": now - 5, "is_fallback": False,
+         "items": [{"name": "巨无霸套餐"}]},
+        {"source_intent": "nearby.search", "ts": now, "is_fallback": True,
+         "items": [{"name": "随便什么美食"}]},
+    ])
+    PlannerEngine._apply_focus_meta(plan, focus)
+    payload = json.loads(plan.steps[0].meta["focus_candidate_set"])
+    assert payload["source_intent"] == "mcd.menu"

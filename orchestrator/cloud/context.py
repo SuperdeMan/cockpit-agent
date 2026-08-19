@@ -721,6 +721,47 @@ def newest_candidate_set(focus, *, allow_fallback: bool = False) -> dict | None:
     return sets[-1] if allow_fallback else None
 
 
+#: 候选集**跨层下发**给 Agent 时的投影（Q10 接手第 7 步的下发面）。
+#: 与 `_CANDIDATE_ITEM_KEYS` 是**两张表，故意的**——那张回答「哪些事实值得跨轮留住」
+#: （消费方在云侧，四个聚合维度都要数值），这张回答「哪些字段可以**离开编排**、
+#: 进到一个 `trust_level: third_party` 的 Agent 里」。两个问题的答案不一样，
+#: 合成一张表就会让「留住」自动等于「下发」。
+#:
+#: 留 `index` 与 `name`，**只留这两个**：
+#: · `lat`/`lng`/`city`/`address` —— 精确位置是红线级敏感上下文（CLAUDE.md §5），
+#:   而桥的 manifest 连 `location` scope 都没有；候选集不能成为绕过它的第二条路。
+#: · `open_today`/`rating`/`cost`/`price`/`distance_km` —— 它们的消费方
+#:   （`candidate_query` 那四个聚合维度）**在云侧**，桥拿到也没人算。
+#: · `id` —— 收敛目标是**按钮送出的那个规范名**（`send_text` 里就是 `item["name"]`），
+#:   不是另造一条 id 通道；再给一条 id 会让两个入口重新变得不一样，只是反了个方向。
+#: 三条都是 B4 那句「加字段要有真实消费方，无消费方的声明只会漂移」的逐条应用。
+_DOWNLINK_ITEMS_MAX = 10
+_DOWNLINK_NAME_MAX = 40
+
+
+def candidate_downlink(entry: dict | None) -> dict | None:
+    """候选集 → 下发给 Agent 的最小投影；没有可下发内容时返回 None。
+
+    形状 `{"source_intent": str, "items": [{"index": 1, "name": str}, ...]}`。
+    `index` 是**从 1 开始的卡片序号**——「第一杯」说的就是它。下发方给序号而不是
+    让消费方去数数组下标，是因为这里会裁剪（`_DOWNLINK_ITEMS_MAX`），
+    下标会随裁剪漂移而序号不会。
+
+    `source_intent` 是消费方**唯一的归属判据**：桥只认自己那家商户产出的候选，
+    否则「附近的瑞幸」之后一句「点第一个」会把一个 POI 名塞进 `item_query`。
+    """
+    items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
+    out = []
+    for index, item in enumerate(items[:_DOWNLINK_ITEMS_MAX], start=1):
+        name = str(item.get("name") or "").strip()[:_DOWNLINK_NAME_MAX]
+        if name:
+            out.append({"index": index, "name": name})
+    if not out:
+        return None
+    return {"source_intent": str((entry or {}).get("source_intent") or ""),
+            "items": out}
+
+
 def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str] | None:
     """从**执行事实**解出「刚才操作的是哪个车控对象」→ `(对象, 属性, 意图名)`。
 

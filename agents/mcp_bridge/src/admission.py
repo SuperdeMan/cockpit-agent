@@ -118,6 +118,12 @@ class WorkflowSpec:
     slots: list[str] = field(default_factory=list)
     require_confirm: bool = True
     expose: bool = True
+    #: 哪个槽在指代**上一轮卡片里的那一项**（Q10 双入口收敛）。声明了才做确定性
+    #: 翻译（「第一杯」「巨无霸」→ 商家原名），空 = 本 workflow 不吃候选集。
+    #: 放在 servers.yaml 而不是写死在 `agent.handle` 里：加一家商户=改表不改主循环，
+    #: 同 `retry_policy` 那条纪律。守卫 `test_candidate_ref.py` 校验它必须在 `slots` 里
+    #: ——声明一个 planner 永远填不到的槽等于没声明。
+    candidate_slot: str = ""
 
 
 @dataclass
@@ -303,6 +309,7 @@ def load_servers(path: str) -> list:
             slots=[str(slot) for slot in (w.get("slots") or [])],
             require_confirm=bool(w.get("require_confirm", True)),
             expose=bool(w.get("expose", True)),
+            candidate_slot=str(w.get("candidate_slot") or ""),
         ) for w in (s.get("workflows") or [])]
         headers: dict[str, str] = {}
         env_error = ""

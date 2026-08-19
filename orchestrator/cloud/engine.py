@@ -25,7 +25,8 @@ from .stream_state import (
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
-from .context import (ContextManager, build_context, newest_candidate_set,
+from .context import (ContextManager, build_context, candidate_downlink,
+                      newest_candidate_set,
                       references_a_candidate, safety_alert_active,
                       _POC_DEFAULT_SCOPES)
 from .progress import (is_complex, phase_label, result_summary, step_summary,
@@ -1323,6 +1324,29 @@ class PlannerEngine:
             for step in plan.steps:
                 if "location" in (step.context_scopes or []):
                     step.meta = {**step.meta, **route_meta}
+
+        # Q10 第 7 步：**候选集下发面**。与 focus_active_route 同一门控通道
+        # （只注给 manifest 声明了 `candidates` context_scope 的步；LLM 与客户端
+        # 都写不到 step.meta），消费方在 Agent 侧做确定性匹配——「第一杯」「巨无霸」
+        # 由此解析成**按钮送出的那个规范名**，两条入口收敛到同一条解析链。
+        #
+        # ⚠ 这条通道 Q2 残余批**刻意没建**（history §58.6）：那批的消费方落在云侧
+        # 短路里、不依赖下发，而 B4 判据是「无消费方的声明只会漂移」。本步才是它
+        # 真正的消费方，所以到这里才落。
+        #
+        # 挂在 `_apply_focus_meta` 而不是 executor：三条执行路径里 D0 流式直通
+        # 走的是 `call_agent_stream(..., step.meta)` 且 `context_scopes=None`
+        # （`_merge_meta` 那条最小化在这条路上整个不生效）——写在 step.meta 上是
+        # **唯一在全部路径上都成立**的做法。「新增挂点必须枚举全部执行路径」，
+        # 本项目已经栽过三次。
+        candidates = candidate_downlink(
+            newest_candidate_set(focus, allow_fallback=True))
+        if candidates:
+            candidate_meta = {"focus_candidate_set": json.dumps(
+                candidates, ensure_ascii=False)}
+            for step in plan.steps:
+                if "candidates" in (step.context_scopes or []):
+                    step.meta = {**step.meta, **candidate_meta}
 
         # Q9 安全告警下发：**不按 scope 门控，广播给所有步**。
         # 与上面那条坐标下发的取舍正相反，理由也正相反：坐标是敏感数据，给多了是泄漏；
