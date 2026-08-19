@@ -6,10 +6,23 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 )
+
+// errAuthTokensConfig：AUTH_TOKENS 里有畸形条目。**消费方拒绝启动**（fail closed）。
+//
+// 为什么不能像原来那样静默跳过：2026-08-19 云端实测过它的代价——一条
+// `<token>:v1:<scope串>:<scope串>` 的错配（漏写了 user_id 段）被逐字接受，
+// 于是 `parts[1]` 这个 **user_id 位被解析成 `v1`**，而全部长期记忆在 `u1` 名下。
+// 后果是**权限全通、功能全正常，只有记忆一条都召不回**——因为第 4 段 scopes 恰好还在
+// 正确的位置上。这种「看起来全绿、实际身份错了」的形态，靠人读配置是发现不了的。
+//
+// 报错**绝不包含 token 值**（只给序号与形状），日志里不该出现凭证。
+var errAuthTokensConfig = errors.New("invalid AUTH_TOKENS")
 
 // identity 是一个 token 解析出的会话身份 + 授权。
 type identity struct {
@@ -27,7 +40,10 @@ type authConfig struct {
 	e2eEnabled     bool
 	e2eSecret      []byte
 	e2eConfigErr   error
-	now            func() time.Time
+	// tokensConfigErr：AUTH_TOKENS 畸形。**由 main 拒绝启动**——同 e2eConfigErr 的形态
+	// （配置错误存进 struct、由消费点决定怎么 fail），不在装配函数里 panic。
+	tokensConfigErr error
+	now             func() time.Time
 }
 
 // loadAuthConfig 从环境变量装配层 1 鉴权配置。
@@ -45,23 +61,36 @@ func loadAuthConfig() authConfig {
 			secret = decoded
 		}
 	}
+	tokens, tokensErr := parseAuthTokens(os.Getenv("AUTH_TOKENS"))
 	return authConfig{
-		required:       strings.EqualFold(os.Getenv("AUTH_REQUIRED"), "true"),
-		tokens:         parseAuthTokens(os.Getenv("AUTH_TOKENS")),
-		defaultUserID:  getenv("AUTH_DEFAULT_USER_ID", "u1"),
-		defaultVehicle: getenv("VEHICLE_ID", "v1"),
-		e2eEnabled:     enabled,
-		e2eSecret:      secret,
-		e2eConfigErr:   configErr,
-		now:            time.Now,
+		required:        strings.EqualFold(os.Getenv("AUTH_REQUIRED"), "true"),
+		tokens:          tokens,
+		tokensConfigErr: tokensErr,
+		defaultUserID:   getenv("AUTH_DEFAULT_USER_ID", "u1"),
+		defaultVehicle:  getenv("VEHICLE_ID", "v1"),
+		e2eEnabled:      enabled,
+		e2eSecret:       secret,
+		e2eConfigErr:    configErr,
+		now:             time.Now,
 	}
 }
 
 // parseAuthTokens 解析静态 token 表。格式：条目用 ; 分隔，每条 token:user_id:vehicle_id:scope-csv
-// （scope-csv 内部用 , 分隔，直接就是要注入 meta 的值）。空/畸形（不足 4 段）条目跳过。
-func parseAuthTokens(raw string) map[string]identity {
+// （scope-csv 内部用 , 分隔，直接就是要注入 meta 的值）。空条目跳过。
+//
+// **畸形条目返回 error 而不是静默跳过**（见 errAuthTokensConfig 上的实测代价）。
+// 三条形状判据，各自对应一种真实发生过或会静默错身份的写法：
+//  1. 不足 4 段 —— 整条被忽略，token 表悄悄变空（本地 `.env` 当时就是这样）；
+//  2. token 段为空 —— 无法索引；
+//  3. user_id / vehicle_id 段含逗号 —— 那是 scope 串的特征，**几乎必然是漏写了一段
+//     导致后面的字段整体前移**（云端当时就是这样）。
+//
+// 刻意**不**校验 user_id/vehicle_id 非空：`resolve` 有意支持空值回退进程默认，
+// 那是既有设计不是缺陷。判据只挡「能机器判定的错位」，不替人裁定取值。
+func parseAuthTokens(raw string) (map[string]identity, error) {
 	table := map[string]identity{}
-	for _, entry := range strings.Split(raw, ";") {
+	var bad []string
+	for i, entry := range strings.Split(raw, ";") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
@@ -69,19 +98,33 @@ func parseAuthTokens(raw string) map[string]identity {
 		// 只切前 3 个 ':'，第 4 段（scope-csv）保留其内部逗号
 		parts := strings.SplitN(entry, ":", 4)
 		if len(parts) < 4 {
+			bad = append(bad, fmt.Sprintf(
+				"第 %d 条只有 %d 段，需要 token:user_id:vehicle_id:scope-csv 四段", i+1, len(parts)))
 			continue
 		}
 		token := strings.TrimSpace(parts[0])
 		if token == "" {
+			bad = append(bad, fmt.Sprintf("第 %d 条的 token 段为空", i+1))
+			continue
+		}
+		userID := strings.TrimSpace(parts[1])
+		vehicleID := strings.TrimSpace(parts[2])
+		if strings.Contains(userID, ",") || strings.Contains(vehicleID, ",") {
+			bad = append(bad, fmt.Sprintf(
+				"第 %d 条的 user_id/vehicle_id 段含逗号——那是 scope 串的特征，"+
+					"多半漏写了一段导致字段整体前移", i+1))
 			continue
 		}
 		table[token] = identity{
-			userID:    strings.TrimSpace(parts[1]),
-			vehicleID: strings.TrimSpace(parts[2]),
+			userID:    userID,
+			vehicleID: vehicleID,
 			scopes:    strings.TrimSpace(parts[3]),
 		}
 	}
-	return table
+	if len(bad) > 0 {
+		return table, fmt.Errorf("%w: %s", errAuthTokensConfig, strings.Join(bad, "; "))
+	}
+	return table, nil
 }
 
 // resolve 把 WS 查询串里的 token 解析成会话身份，返回 (身份, 是否命中有效 token)。

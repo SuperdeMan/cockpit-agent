@@ -499,6 +499,13 @@ func main() {
 	orchAddr := getenv("EDGE_ORCHESTRATOR_ADDR", "edge-orchestrator:50070")
 	port := getenv("EDGE_GATEWAY_PORT", "8090")
 	auth := loadAuthConfig() // 层 1 会话鉴权（R3.1）；默认关，逐字保持现状
+	// AUTH_TOKENS 畸形 ⇒ **拒绝启动**。放在这里（与 deployprofile.Enforce 同段）而不是
+	// 让它静默跳过：2026-08-19 云端实测过静默的代价——漏写一段导致 user_id 位被解析成
+	// vehicle_id，**权限全通、功能全正常，只有长期记忆一条都召不回**。
+	// 起不来是刺眼的，身份悄悄错了不是。
+	if auth.tokensConfigErr != nil {
+		log.Fatalf("[edge-gateway] %v", auth.tokensConfigErr)
+	}
 
 	// 连接端侧编排器（架构 §2.2：HMI → Edge Gateway → Edge Orchestrator）
 	orchConn, err := grpc.NewClient(dnsTarget(orchAddr),

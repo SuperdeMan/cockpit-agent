@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -14,8 +15,11 @@ import (
 )
 
 func TestParseAuthTokens(t *testing.T) {
-	table := parseAuthTokens(
+	table, err := parseAuthTokens(
 		"demo-u1:u1:v1:vehicle.control,media.control;demo-u2:u2:v2:location.read")
+	if err != nil {
+		t.Fatalf("well-formed entries must not error: %v", err)
+	}
 	if len(table) != 2 {
 		t.Fatalf("want 2 tokens, got %d", len(table))
 	}
@@ -28,26 +32,76 @@ func TestParseAuthTokens(t *testing.T) {
 	}
 }
 
-func TestParseAuthTokensSkipsMalformed(t *testing.T) {
-	// 空串 / 缺段(<4) / 空 token 都跳过；scope-csv 内部逗号保留。
-	table := parseAuthTokens("  ;bad:only:three;:emptytoken:v:scope;ok:u:v:a.b,c.d")
-	if len(table) != 1 {
-		t.Fatalf("want 1 valid token, got %d: %+v", len(table), table)
+// mustParseAuthTokens：用例只关心解析结果时的助手。**畸形当场失败**，
+// 免得下一个人像 2026-08-19 云端那样，拿着一份错配的表跑出一片绿。
+func mustParseAuthTokens(t *testing.T, raw string) map[string]identity {
+	t.Helper()
+	table, err := parseAuthTokens(raw)
+	if err != nil {
+		t.Fatalf("parseAuthTokens(%q) unexpected error: %v", raw, err)
 	}
-	if table["ok"].scopes != "a.b,c.d" {
-		t.Fatalf("scope csv mangled: %q", table["ok"].scopes)
+	return table
+}
+
+func TestParseAuthTokensRejectsMalformed(t *testing.T) {
+	// ⚠ 判据 2026-08-19 从「静默跳过」翻成「报错」，留痕。
+	// 起因是云端一条 `<token>:v1:<scope串>:<scope串>`（漏写 user_id 段）被逐字接受：
+	// user_id 位解析成 `v1`，而全部长期记忆在 `u1` 名下 ⇒ **权限全通、功能全正常、
+	// 只有记忆一条都召不回**（第 4 段 scopes 恰好还在对的位置上）。
+	// 这种形态靠人读配置发现不了，只能让它起不来。
+	for _, tc := range []struct {
+		name string
+		raw  string
+	}{
+		{"不足四段", "bad:only:three"},
+		{"token 段为空", ":emptytoken:v:scope"},
+		{"user_id 位是 scope 串", "tok:vehicle.control,media.control:v1:a.b"},
+		{"vehicle_id 位是 scope 串（云端那条的形状）", "tok:v1:vehicle.control,media.control:a.b,c.d"},
+	} {
+		if _, err := parseAuthTokens(tc.raw); err == nil {
+			t.Fatalf("%s: 畸形条目必须报错，实际放行了", tc.name)
+		} else if !errors.Is(err, errAuthTokensConfig) {
+			t.Fatalf("%s: 错误类型不对: %v", tc.name, err)
+		}
+	}
+}
+
+func TestParseAuthTokensErrorNeverLeaksTheToken(t *testing.T) {
+	// 报错会进日志，**日志里不许出现凭证**。只给序号与形状。
+	secret := "s3cr3t-token-value"
+	_, err := parseAuthTokens(secret + ":v1:vehicle.control,media.control:a.b")
+	if err == nil {
+		t.Fatalf("want error")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error message leaked the token: %v", err)
+	}
+}
+
+func TestParseAuthTokensKeepsWellFormedEntriesAndScopeCommas(t *testing.T) {
+	// 合法条目照常解析，scope-csv 内部逗号保留（那是它本来的形状）。
+	table, err := parseAuthTokens("  ;ok:u:v:a.b,c.d")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(table) != 1 || table["ok"].scopes != "a.b,c.d" {
+		t.Fatalf("unexpected table: %+v", table)
 	}
 }
 
 func TestParseAuthTokensEmpty(t *testing.T) {
-	if len(parseAuthTokens("")) != 0 {
+	empty, err := parseAuthTokens("")
+	if err != nil {
+		t.Fatalf("empty env must not error: %v", err)
+	}
+	if len(empty) != 0 {
 		t.Fatalf("empty env should yield empty table")
 	}
 }
 
 func TestResolveHitAndMiss(t *testing.T) {
 	a := authConfig{
-		tokens:         parseAuthTokens("demo:u9:v9:media.control"),
+		tokens:         mustParseAuthTokens(t, "demo:u9:v9:media.control"),
 		defaultUserID:  "u1",
 		defaultVehicle: "v1",
 	}
@@ -65,7 +119,7 @@ func TestResolveHitAndMiss(t *testing.T) {
 func TestResolveFillsDefaults(t *testing.T) {
 	// token 表里 user/vehicle 段为空 → 回退进程默认。
 	a := authConfig{
-		tokens:         parseAuthTokens("demo:::navigation.control"),
+		tokens:         mustParseAuthTokens(t, "demo:::navigation.control"),
 		defaultUserID:  "u1",
 		defaultVehicle: "v1",
 	}
