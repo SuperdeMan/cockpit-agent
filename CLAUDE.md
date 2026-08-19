@@ -46,9 +46,12 @@ orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库
                 + actionability.py 可执行性**形态**判定，**shadow 只写观测不进决策**：
                 特征全是封闭虚词类、不许出现任何领域词（源码断言从 commands.yaml
                 派生词表比对）；REJECT 声明但 v1 不产出（B6）
-                + candidate_query.py 候选集**聚合问答的唯一实现**（哪家最晚关门／两个价格
-                合计）——确定性、零 LLM、挂在 plan 构建**之前**；与 I-052 那条弃权守卫
-                **方向相反、判据同源**（契约 conventions §9.27）。候选项白名单
+                + candidate_query.py 候选集**聚合问答的唯一实现**，三种算子：最值（哪家最晚
+                关门）／合计（两个价格）／**序数取值**（第 N 个多少钱）——确定性、零 LLM、
+                挂在 plan 构建**之前**；与 I-052 那条弃权守卫**方向相反、判据同源**
+                （契约 conventions §9.27）。**第三种算子是被两条守卫之间的缝逼出来的**：
+                前两种只认聚合、弃权那条只管零候选，于是「有候选的单项查询」两头不管，
+                模型从缝里编了一个价格出来 ⇒ **凡是「系统持有的事实」，判据面就得是闭合的**。候选项白名单
                 `_CANDIDATE_ITEM_KEYS` 是**与产生方的契约**，字段名不许猜——改产生方
                 item 字段要同步 `test_candidate_sets.py::_PRODUCER_SHAPES`。
                 候选集**下发给 Agent** 走 `context.candidate_downlink` 的最小投影

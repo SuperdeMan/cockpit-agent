@@ -247,7 +247,12 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 
 - 无 `make`：用 `scripts/gen-proto.ps1` 代替 `make proto`；其余命令用 `docker compose ...` 直接跑。
 - PYTHONPATH：用 `$env:PYTHONPATH = "$PWD;$PWD/gen/python"`（分隔符是 `;` 不是 `:`）。
-- 控制台中文乱码：`python -X utf8 script.py` 或设 `PYTHONIOENCODING=utf-8`。
+- 控制台中文乱码：**用 `python -X utf8 script.py`**。
+  ⚠ **不要为此设 `PYTHONIOENCODING` 环境变量**——它会让全量单测里拉子进程的那批
+  **188 条假红**（`AGENTS.md` §4.0「跑全量的固定口径」）。2026-08-19 实测这台机器的
+  shell 里它**本来就是设着的**（`utf-8:surrogateescape`），一趟 25 分钟的全量因此白跑。
+  跑全量前先 `Write-Output $env:PYTHONIOENCODING` 看一眼，非空就
+  `Remove-Item Env:PYTHONIOENCODING`。**一次性用 `-X utf8`，不要落进环境。**
 - 路径含空格/中文：命令里用引号包路径。
 
 ---
