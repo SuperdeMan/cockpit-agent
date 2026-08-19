@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import time
 
+import pytest
+
 from orchestrator.cloud import candidate_query as cq
 from orchestrator.cloud.context import Focus, newest_candidate_set
 
@@ -136,9 +138,24 @@ def test_a_new_search_is_never_hijacked():
 
 
 def test_single_item_price_query_is_not_a_total():
-    """「巨无霸多少钱」是单品查询——没有合计词就不是求和。"""
+    """「巨无霸多少钱」是单品查询——没有合计词就不是求和。
+
+    ⚠ **本条改过一次，留痕（2026-08-19，序数取值通道上线）。**
+    原文还有一行 `assert cq.answer("第一个多少钱", ...) is None`。
+    那一行断言的**不是这条测试的主张**——它主张的是「没有合计词就不是求和」，
+    而 `第一个多少钱 → None` 只是「当时只有最值/合计两种算子」的**副产物**，
+    被顺手写进了同一条断言里。第三种算子（序数取值）上线后它当场变红。
+
+    > **判据：一条断言里混进了它没打算主张的东西，就会在别处正确演进时假红。**
+    > 这与「不为某个模型的问题改案例集」不冲突——那条针对**被测对象做不到**，
+    > 这里是**被测对象新增了一个正确能力**，而断言的字面表述过期了。
+    > 拆开之后两半各自更强：这里守「不是求和」，
+    > `test_ordinal_pick_answers_from_the_card_not_the_model` 守「是取值」。
+    """
     assert cq.answer("巨无霸多少钱", _entry(_MENU, intent="mcd.menu")) is None
-    assert cq.answer("第一个多少钱", _entry(_MENU, intent="mcd.menu")) is None
+    # 「第一个多少钱」现在有答案，但**必须不是合计**。
+    got = cq.answer("第一个多少钱", _entry(_MENU, intent="mcd.menu"))
+    assert got is not None and "一共" not in got and "巨无霸" in got
 
 
 def test_itinerary_ordinal_is_not_a_candidate_reference():
@@ -250,3 +267,85 @@ def test_both_overlapping_names_asked_together_falls_back_to_the_planner():
             {"name": "生椰拿铁", "price": "32.00"}]
     assert cq.answer("拿铁和生椰拿铁一共多少钱",
                      _entry(menu, intent="luckin.menu")) is None
+
+
+# ── 序数取值型：两条既有守卫之间的缝（2026-08-19，Q10 复跑掀开）───────────
+#
+# 真栈原话：菜单卡就在上一轮，「麦当劳的第七个多少钱」落到 chitchat，答
+# **「第七个是脆汁鸡腿堡，10.90 元」**——第 7 项其实是柠檬脆脆麦旋风 16.00 元，
+# **商品名和价格都是编的**。它同时躲开了两条守卫：最值/合计那条只认聚合算子，
+# I-052 那条只在**零候选**时触发，而这里是**有候选的单项查询**。
+
+_TEN = [{"name": f"第{i}款", "price": f"{i}.50"} for i in range(1, 11)]
+
+
+def test_ordinal_pick_answers_from_the_card_not_the_model():
+    got = cq.answer("麦当劳的第七个多少钱", _entry(_TEN, intent="mcd.menu"))
+    assert got is not None and "第7款" in got and "7.5" in got
+
+
+@pytest.mark.parametrize("text,expect", [
+    ("第一个几点关门", "营业到"),
+    ("第 2 个评分多少", "评分"),
+    ("第三个多远", "公里"),
+])
+def test_every_dimension_has_an_ordinal_pick_form(text, expect):
+    items = [{"name": "甲", "open_today": "10:00-22:00", "rating": 4.5,
+              "distance_km": 0.8},
+             {"name": "乙", "open_today": "09:00-21:00", "rating": 4.1,
+              "distance_km": 1.4},
+             {"name": "丙", "open_today": "08:00-20:00", "rating": 3.9,
+              "distance_km": 2.6}]
+    got = cq.answer(text, _entry(items))
+    assert got is not None and expect in got, text
+
+
+def test_an_ordinal_followed_by_a_real_noun_is_not_hijacked():
+    """**这是本条唯一的收窄手段**：序数与维度问句必须紧邻。
+
+    「第二天第一个景点多少钱」问的是行程内部的第一个景点，不是上一份候选列表。
+    分开匹（「句里有序数」+「句里有多少钱」）会把行程、菜谱、清单里的任何序数
+    都吞掉，而这条短路误伤的代价是**整轮不进 Planner**。
+    同 `context._CANDIDATE_REFERENCE_RE` 头上那段的判据来源。
+    """
+    assert cq.answer("第二天第一个景点多少钱", _entry(_TEN)) is None
+    assert cq.answer("行程里第一个城市的酒店多少钱", _entry(_TEN)) is None
+
+
+def test_a_new_search_still_wins_over_the_ordinal_pick():
+    """「附近第七个多少钱」是新检索，三段判据的第三段仍然管着它。"""
+    assert cq.answer("附近第七个多少钱", _entry(_TEN)) is None
+
+
+def test_out_of_range_says_what_the_system_actually_kept():
+    """越界要**诚实说系统记得多少**，不是说「列表只有 N 项」——那是假话。
+
+    候选集裁到 10 项而卡片渲染 20 项，用户看得见第 15 项。说「这份列表只有 10 项」
+    等于用一句确定的话说错一件事，比不答更糟。
+    """
+    got = cq.answer("第十五个多少钱", _entry(_TEN, intent="mcd.menu"))
+    assert got is not None
+    assert "只跟到第 10 项" in got and "第 15 项" in got
+    assert "列表只有" not in got
+
+
+def test_missing_dimension_is_an_honest_refusal_not_a_fallback():
+    got = cq.answer("第一个多少钱",
+                    _entry([{"name": "甲"}, {"name": "乙"}]))
+    assert got is not None and "甲" in got and "没带价格" in got
+
+
+def test_a_single_item_candidate_set_still_answers_an_ordinal_pick():
+    """只读菜单命中单品后候选集只剩一项——「第一个多少钱」那时照样有答案。
+
+    最值/合计仍要求 ≥2 项（一项没有「哪家最…」可言），序数取值没有这条限制。
+    """
+    one = [{"name": "柠檬脆脆麦旋风", "price": "16.00"}]
+    assert cq.answer("第一个多少钱", _entry(one, intent="mcd.menu")) is not None
+    assert cq.answer("哪个最便宜", _entry(one, intent="mcd.menu")) is None
+
+
+def test_the_total_operator_still_wins_when_both_could_match():
+    """「第一个和第二个一共多少钱」是合计不是取值——序数后面是「和」，不紧邻。"""
+    got = cq.answer("第一个和第二个一共多少钱", _entry(_TEN, intent="mcd.menu"))
+    assert got is not None and "一共" in got

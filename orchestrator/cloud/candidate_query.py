@@ -81,6 +81,35 @@ _NUM_RE = re.compile(r"(\d+(?:\.\d+)?)")
 #: 序数并列：「第一个和第二个」「第 1 个、第 3 个」。
 _ORDINAL_RE = re.compile(rf"第\s*({CN_NUM_SRC})\s*(?:个|家|项|条|种|款|杯|份)")
 
+#: 第三种算子：**取第 N 项的某个维度**（`(维度问句, 维度)`，按声明序求值）。
+#:
+#: 它补的是前两种算子之间的缝。真栈实证（2026-08-19，Q10 残余批复跑）：菜单卡就在
+#: 上一轮，「麦当劳的第七个多少钱」落到 chitchat，答**「第七个是脆汁鸡腿堡，10.90 元」**
+#: ——第 7 项其实是柠檬脆脆麦旋风 16.00 元，**商品名和价格都是编的**。
+#: 它同时躲开了两条既有守卫：最值/合计那条只认聚合算子，I-052 那条只在**零候选**
+#: 时触发，而这里是**有候选的单项查询**。判据与两者同源：
+#: **系统持有的事实绝不让 LLM 答。**
+#:
+#: ⚠ **序数与维度问句必须紧邻**，这是本条唯一的收窄手段，也是它与
+#: 「行程内部的第 N 个」的分界：
+#:   · 「麦当劳的第七个**多少钱**」→ 序数后直接是维度问句 ⇒ 劫持；
+#:   · 「第二天第一个**景点**多少钱」→ 序数后是一个实质名词 ⇒ **不劫持**。
+#: 这是 §9.27「算子+维度一起匹配，分开匹会误伤」那条纪律用在序数上的形态。
+#: 分开匹（「句里有序数」+「句里有多少钱」）会把行程、菜谱、清单里的任何序数
+#: 都吞掉，而这条短路误伤的代价是**整轮不进 Planner**。
+_PICK_DIMS: tuple[tuple[str, str], ...] = (
+    (r"多少钱|什么价|价钱|价格|几块钱|多少元|卖多少", "price"),
+    (r"几点(?:关门|打烊|结束)|营业到几点|什么时候(?:关门|打烊)|关门时间", "closing"),
+    (r"评分(?:是)?多少|几分|多少分|评分怎么样", "rating"),
+    (r"多远|几公里|距离(?:是)?多少", "distance"),
+)
+#: 序数与维度问句之间允许的虚词。**只许虚词**——放行任何实词就等于放弃紧邻判据。
+_PICK_GLUE = r"(?:是|的|要|卖)?\s*"
+_ORDINAL_PICKS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"第\s*({CN_NUM_SRC})\s*(?:个|家|项|条|种|款|杯|份)\s*"
+                rf"{_PICK_GLUE}(?:{pattern})"), dim)
+    for pattern, dim in _PICK_DIMS)
+
 
 def _numeric(raw) -> float | None:
     """从候选项字段取一个数。`0` 视为缺失——`rating`/`distance_km` 的默认值就是 0，
@@ -203,6 +232,35 @@ def _total_answer(text: str, items: list[dict]) -> str | None:
     return f"{parts}，一共 {total:.2f} 元。"
 
 
+def _ordinal_pick_answer(text: str, items: list[dict]) -> str | None:
+    """「第 N 个多少钱 / 几点关门 / 评分多少 / 多远」→ 确定性回答那一项的那个维度。
+
+    三种「答不出来」全部**诚实说，不返回 None**——返回 None 就是把它交回 LLM 去编，
+    而这条通道存在的全部理由正是「有候选却被编造了一个」。
+    """
+    for pattern, dim in _ORDINAL_PICKS:
+        match = pattern.search(text)
+        if not match:
+            continue
+        index = cn_int(match.group(1))
+        if not index:
+            return None
+        if index > len(items):
+            # ⚠ **不说「这份列表只有 N 项」**——那会说一句假话：候选集按
+            # `_CANDIDATE_ITEM_KEYS` 裁到 10 项，而卡片上渲染的是 20 项，
+            # 用户看得见第 15 项。诚实的说法是「我这边只跟到第 N 项」，
+            # 说的是**系统记得多少**，不是**列表有多长**。
+            return (f"刚才那份列表我这边只跟到第 {len(items)} 项，"
+                    f"第 {index} 项够不着——你把名字说给我，我直接查。")
+        item = items[index - 1]
+        name = str(item.get("name") or "")
+        value = dimension_value(item, dim)
+        if value is None:
+            return f"「{name}」这一项没带{_DIM_NOUN[dim]}，这个我算不出来。"
+        return f"「{name}」{_render(dim, value)}。"
+    return None
+
+
 def _has_reference(text: str, items: list[dict]) -> bool:
     """这句话在引用当前那份候选吗。两条通道取或：
 
@@ -229,6 +287,8 @@ def is_candidate_aggregate_question(text: str,
         return False
     if any(pattern.search(t) for pattern, _, _ in _SUPERLATIVES):
         return True
+    if any(pattern.search(t) for pattern, _ in _ORDINAL_PICKS):
+        return True
     return bool(_TOTAL_RE.search(t) and _TOTAL_DIM_RE.search(t))
 
 
@@ -239,11 +299,18 @@ def answer(text: str, entry: dict | None) -> str | None:
     ——**候选集该绑哪一组的口径只有一份**，这里不发明第二套。
     """
     items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
-    if len(items) < 2:
-        # 一项都没有 / 只有一项时没有「哪家最…」可比。零候选那一支由 I-052
-        # 那条守卫兜（它管的是「引用了却没有」），这里只是不劫持。
+    if not items:
+        # 零候选那一支由 I-052 那条守卫兜（它管的是「引用了却没有」），
+        # 这里只是不劫持。
         return None
     if not is_candidate_aggregate_question(text, items):
         return None
     t = str(text).strip()
-    return _total_answer(t, items) or _superlative_answer(t, items)
+    if len(items) >= 2:
+        # 最值与合计**要求至少两项**——一项时没有「哪家最…」「一共」可言。
+        # 序数取值没有这条限制：只读菜单命中单品后候选集就只有一项，
+        # 而「第一个多少钱」在那时照样是个有答案的问题。
+        got = _total_answer(t, items) or _superlative_answer(t, items)
+        if got:
+            return got
+    return _ordinal_pick_answer(t, items)
