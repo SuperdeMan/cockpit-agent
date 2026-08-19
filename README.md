@@ -10,7 +10,7 @@
 
 > 云边协同的智能座舱 AI Agent 系统。喊一声「小舟小舟」，从毫秒级车控到多日行程规划、分钟级深度调研，一个语音入口全部完成。LLM 只负责理解与规划，确定性系统负责执行——没有任何一条车控指令由 LLM 直接下发。
 
-**14** 个领域 Agent · **30** 个服务一键起栈 · **80** 条端侧 capability / **67** 个车控对象 · 后端 **5706** 个通过用例 + **37** 条旅程级语料 · 流式 TTS 首帧 **469ms** / 端到端语音首音频 **609ms** · 数据源全真实（高德 / 和风 / Exa / Tushare / api-football）· M0a→M4 智能化升级**通过跨阶段组合总体验收**且 13 张验收主卡全部收口 · M5 数据飞轮落地——**修落域 badcase 的标准产物是数据不是正则** · 竞品高阶指令集 25 条语料逐条真栈对标（时间约束 / 真沿途 / 长期记忆消费 / 动态重规划）
+**14** 个领域 Agent · **30** 个服务一键起栈 · **80** 条端侧 capability / **67** 个车控对象 · 后端 **6623** 个通过用例 + **37** 条旅程级语料 · 流式 TTS 首帧 **469ms** / 端到端语音首音频 **609ms** · 数据源全真实（高德 / 和风 / Exa / Tushare / api-football）· M0a→M4 智能化升级**通过跨阶段组合总体验收**且 13 张验收主卡全部收口 · M5 数据飞轮落地——**修落域 badcase 的标准产物是数据不是正则** · 竞品高阶指令集 25 条语料逐条真栈对标（时间约束 / 真沿途 / 长期记忆消费 / 动态重规划）· 会话真实性走确定性出口——**执行入账本、审计与候选集聚合问答零 LLM**
 
 ## 能做什么
 
@@ -29,6 +29,8 @@
 | 「哪天下雨就把行程换成室内」 | 按天气预报对既有行程确定性改排 |
 | 「深入调研固态电池量产进展，不急，查完告诉我」 | 异步深度调研：秒级受理，后台多视角迭代检索，完成后主动推送带引用的分节报告 |
 | 「那个调研查得怎么样了」／「别查了」 | 后台长任务有账本：能问进度、能中途喊停、重启中断后诚实告知而不是假装还在跑 |
+| 「（看着刚列出的店）第一家和第二家一共多少钱」 | 候选集是一等会话对象：最值 / 合计 / 序数取值三类聚合在规划**之前**确定性算出，零 LLM——系统持有的事实绝不让模型编 |
+| 「你刚才都帮我做了什么」 | 执行过的动作随轮次入账本，审计追问由确定性出口作答并绑定本会话——说做过的就真做过，历史副作用不会被说成刚刚发生 |
 
 ## 界面预览
 
@@ -151,7 +153,7 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 ### 记忆、上下文与个性化
 
 - **语义记忆**（pgvector）：自动从对话抽取偏好与个人实体，语义召回注入规划与闲聊；隐私分级、可查可删。
-- **上下文装配**：统一 token 预算内装配能力目录（语义预筛）+ 对话历史 + 长期记忆 + 结构化焦点态（跨轮指代不靠啃原文）；敏感上下文按 manifest 最小化下发。
+- **上下文装配**：统一 token 预算内装配能力目录（语义预筛）+ 对话历史 + 长期记忆 + 结构化焦点态（跨轮指代不靠啃原文；候选集与执行事实是焦点态的一等成员）；敏感上下文按 manifest 最小化下发。
 - **主动性有治理层**：七路主动（routine / 场景触发 / 路况播报 / 提醒到点与到地 / 深调研完成 / 晨间早报 / 低电量顺路建议）先过**统一主动引擎**——情境断言在投递时刻复核、跨生产方去重、驾驶负荷高时攒着说、同窗到达的合并成一条，再经 NATS 到 HMI。治理器缺席即自动回落直发，不会静默吞掉用户显式约定的提醒。
 
 ### 多 LLM / 多引擎运行时
@@ -167,8 +169,9 @@ trace_id 从 HMI 气泡角标一键复制，贯通到每一跳 LLM 调用（toke
 ## 快速开始
 
 依赖：Python 3.11+；`target=local` 的完整真栈才需要 Docker Desktop。本地开发另需 Go 1.24+、Node 20+、buf。
-云端真栈的当前迁移状态和接手门禁见
-[`docs/reviews/2026-08-17-cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)。
+真栈支持**本地 / 云端两档**（仓库根 `dev-stack.local` 声明目标，统一入口 `scripts/dev_stack.py`
+提供 status / deploy / verify / hmi）；新克隆缺省即 `target=local`，下述本地步骤开箱可用。
+云档操作与切换红线见 [`docs/dev-guide.md`](docs/dev-guide.md) §可切换真栈。
 
 ```bash
 cp .env.example .env         # 不配任何密钥也能跑：LLM 落 MockProvider，外部数据源走 mock
@@ -202,8 +205,8 @@ docker compose -f compose.yaml up --build -d
 
 | 层 | 是什么 | 现状 |
 |---|---|---|
-| 单测 / 契约 | 全服务 pytest（编排 / Agent / 安全 / 记忆 / 网关 / 共享运行时）单命令一次跑通 | **5706 passed / 14 skipped / 0 failed**（2026-08-15） |
-| 前端 | HMI `node --test` / Dashboard vitest | 258 / 17 |
+| 单测 / 契约 | 全服务 pytest（编排 / Agent / 安全 / 记忆 / 网关 / 共享运行时）单命令一次跑通 | **6623 passed / 73 skipped / 0 failed**（2026-08-19，一趟根跑 24m34s） |
+| 前端 | HMI `node --test` / Dashboard vitest | 279 / 17（2026-08-19 实测） |
 | 评测基线 | 端侧意图覆盖（8k+ 真实说法语料）、云侧路由、四模式路由、拒识/澄清、L0–L3 对抗落域 | 对比/参考基线 **147/147**，L1/L2 各 2×3 独立进程，资格 `eligible=True`（DeepSeek / `f0af9c0`）；MiniMax 主模型同口径 **141/147、eligible=False**，不可混写成跨模型全绿（其余报告型基线见 `docs/reviews/eval/README.md`） |
 | 单链路 e2e | WS 全链路 / 记忆 / 上下文 / 韧性自愈 / TTS 流 / 语音回路 / 降级矩阵 / 任务账本 / 执行对账 / 主动治理 / 声纹 / 视觉 / S2S | 真栈脚本，接入 `run_e2e`（Windows/Linux 清单一致） |
 | L3 旅程级 | 37 条语料：跨 Agent 自主执行（把事办完）× 全场景连续对话 | 回归级 15/15 常绿（红灯单条重跑定性制） |
@@ -226,7 +229,7 @@ node test/hmi_cdp/run_cases.mjs    # L4 真浏览器 CDP
 
 三条工程文化：
 
-- **文档先行**：96 篇按日期编号的设计与落地记录（`docs/design/`，截至 2026-08-15），每个主题先对齐设计再动手；「架构唯一真相源」制度化。
+- **文档先行**：101 篇按日期编号的设计与落地记录（`docs/design/`，截至 2026-08-19），每个主题先对齐设计再动手；「架构唯一真相源」制度化。
 - **badcase 驱动**：真机/真麦反馈 → Dashboard trace 下钻 → 修复 → 原句真栈复验，全环节留档。
 - **铁律测试化**：「新增 Agent 不改编排核心」「危险动作必确认」等架构约定由契约测试固化，违反直接红灯。
 
@@ -262,7 +265,7 @@ docs/             架构（真相源）、设计记录、指南
 | 工程约定、目录规范、安全红线 | [`CLAUDE.md`](CLAUDE.md) |
 | 为什么这么设计（架构唯一真相源） | [`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md) |
 | 分期计划与量产 DoD | [`docs/architecture/phase1-implementation-plan.md`](docs/architecture/phase1-implementation-plan.md) |
-| 各主题设计与落地记录（96 篇，按日期，截至 2026-08-15） | [`docs/design/`](docs/design/) |
+| 各主题设计与落地记录（101 篇，按日期，截至 2026-08-19） | [`docs/design/`](docs/design/) |
 | 怎么接真实 Provider（高德/和风样板） | [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md) |
 | 怎么跑意图落域对抗测试、怎么修落域 badcase | [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) |
 | 环境 / 端口 / 命名 / 错误码速查 | [`docs/dev-guide.md`](docs/dev-guide.md)、[`docs/conventions.md`](docs/conventions.md) |
@@ -277,7 +280,7 @@ docs/             架构（真相源）、设计记录、指南
 - **VAL 为 Python 模拟**（`orchestrator/edge/val.py`）：真实 SOME-IP/CAN 对接、车规资源约束与 OTA 属量产阶段。
 - **停车 / 手册仍为 mock Provider**（严格模式默认豁免域），按环境接入。
 - **单实例状态**：Cloud Gateway 车辆长连状态在单实例内存；Registry 已有 PostgreSQL 持久化与周期重注册自愈，多实例扩展待做。
-- **安全能力已落地但默认关**：两层会话鉴权（`AUTH_REQUIRED`）与服务间 mTLS（`GRPC_TLS`）经 env 门控，开启即全栈生效；真实 IdP、证书轮换属后续。
+- **安全能力已落地，本地开发档默认关**：两层会话鉴权（`AUTH_REQUIRED`）与服务间 mTLS（`GRPC_TLS`）经 env 门控，开启即全栈生效——云端真栈档已实际开启会话鉴权（`AUTH_TOKENS` 畸形条目 fail-closed）；真实 IdP、证书轮换属后续。
 - **声学层指标**（真麦命中率 / 误唤醒率）属人工验收范畴；浏览器内 KWS / VAD 链路已真机验证。
 - **MCP 生态桥已接真实商户，但仍是 PoC 账号模型**：麦当劳/瑞幸官方复合工作流已打通到“创建未支付订单、展示受控支付入口、查单”，瑞幸可再次确认取消；不执行最终付款，麦当劳官方工具面无远程取消。写工具不可自动重放，支付链接经桥与 payment-gateway 双层 host 白名单。两家凭证当前都是服务级全局 token/账号，只允许网关权威 scope 下的已认证主用户使用；多乘员独立商户账号、token 自动刷新、通用 HTTP 工具面均未产品化。商户与支付 host 必须由运行时安全配置提供，空配置 fail-closed。
 
