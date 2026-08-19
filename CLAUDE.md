@@ -63,7 +63,10 @@ llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音�
                 + speaker_embed.py 声纹提取（音频→向量，**不持模板**）
                 + vision_frames.py 视觉单帧内存库（图像只在此活 120s，**不落盘不落 Redis**）
 registry/       Agent 注册中心
-memory/         记忆/画像服务
+memory/         记忆/画像服务（+ offer_admission.py G7 询问式提醒建议的**准入判据唯一声明处**：
+                「用户说出了时刻（不是日期缺省的 00:00）+ 至少提前 30 分钟 + 剥完时间词还剩一件事」，
+                零 LLM；判据取**形态**不取关键词——天气查询被挡住不是因为它长得像查询，
+                是因为它**没有时刻**。契约 conventions §9.30）
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录
 skills/         Planner 规划知识声明式载体（M0b）：guides/ 领域组合判据（双通道检索注入）、
                 policies/ 跨域软约束（常驻）。**加规划知识=投 skill 文件不改编排核心**；
@@ -126,10 +129,18 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 3. 人写四处生成不了的：`fast_intent.py` 触发规则（+ `LOCAL_INTENTS`，那是**路由**判定，
    与 `edge_intents` 这个**能力目录**是两个问题）、VAL `_simulate` 分支（档位/开度型必须写，
    开关型可落通用兜底）、对抗覆盖（每 intent 正 2/硬负 2/对照 1）、迁移探针基线。
+   ⚠ **规则产的 `operate`/`attr`/`mode` 必须与该对象的 `operates`/`attrs`/`modes` 对得上**
+   ——方向盘加热就是在这里断的：规则产 `operate=open`，而它的 `operates` 是 `[set,inc,dec]`，
+   声明齐全、名字也对、端侧照样秒回「暂不支持哦」（QA I-004，契约 §9.29 的五段链）。
+   新对象**要在 `orchestrator/edge/tests/corpus/vehicle_objects.yaml` 留一条识别语料**，
+   那条语料同时验「认出哪个对象」与「这条命令 VAL 收不收」。
 4. 跑 `test/eval_capability_integrity.py` + `scripts/check_intent_gate.py` +
    `test/smoke_edge.py` + `pytest orchestrator/edge/tests`。
    **漏一处就有具名红灯**——这是 B4 存在的理由：除雾能力那次漏了对抗覆盖，
    因为「要改哪些地方」只活在某个人的记忆里。
+   ⚠ **门禁覆盖 ①②⑤ 三段，不覆盖 ③④**（规则产得出命令 / 命令过得了校验）：它逐条跑的是
+   `edge_call.decode_intent` 那**一个**产出方且跳过 `_validate_command`。③④ 由
+   `test_classifier_exit_parity.py` 与 `test_corpus_objects.py` 的两条 VAL 校验断言守。
 
 ## 4. 命名约定
 - Intent：`<domain>.<action>`，如 `hvac.set`、`navigation.search_poi`。
@@ -228,10 +239,11 @@ EVA 指令集两轮对标（history §33–§40）、支付基础设施真实化
 （history §30–§32.2）。两家商户凭证仍是服务级全局 token/账号、支付 host 依赖运行时
 安全配置——PoC 限制而非多乘员量产账号模型。
 
-**进行中：探索式真实用户 QA 轮**（2026-08-15 立卡，架构 **v1.30**）：533 轮 × 5 persona
+**进行中：探索式真实用户 QA 轮**（2026-08-15 立卡，架构 **v1.33**）：533 轮 × 5 persona
 两档跑出的 58 个问题收敛成 13 个根因（Q1–Q13）四阶段推进，契约面新增 `conventions.md`
-**§9.19–§9.27**。**当前进度、逐卡残余与接手顺序一律以 `AGENTS.md` §4.1 ① 为准**
-（那里是唯一真相源，本节只说到「这件事在做」）。
+**§9.19–§9.30**。四个阶段与编号接手序列已于 2026-08-19 全部走完（第 8 步 Q8/Q11/P2
+收官，history §63）；**剩余的是三条不编号的残余，当前进度与接手入口一律以
+`AGENTS.md` §4.1 ① 为准**（那里是唯一真相源，本节只说到「这件事在做」）。
 ⚠ 该轮与 EVA 批验的不是同一个面：EVA 验「能力面有没有那个维度」，QA 验**会话状态、
 归属、审计与真实性**——两边读数不矛盾。
 ⚠ 2026-08-19 云端复跑掀开的「记忆召回失效」当日修完——真根因是 `AUTH_TOKENS` 漏写

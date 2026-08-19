@@ -258,7 +258,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 > （2026-08-15 洁癖整理把 journeys 两红 / 接地卡 R1 二期 / EVA 二轮六批 / 支付四批 /
 > 商户七批五段完成态收走，归档索引见 history **§40.1**）。
 
-**① 探索式真实用户 QA 轮 58 个问题：Q1–Q13 立卡，阶段 0/1/2 完成，阶段 3/4 部分完成**
+**① 探索式真实用户 QA 轮 58 个问题：Q1–Q13 立卡，四阶段与编号接手序列全部走完，剩三条不编号残余**
 （2026-08-15 立卡 / 2026-08-17 持续推进，逐批流水见下。报告
 [`…exploratory-real-user-qa-deepseek-minimax.md`](docs/reviews/2026-08-15-exploratory-real-user-qa-deepseek-minimax.md)、
 方案与全部读数
@@ -282,7 +282,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 [卡 §4 的各「实施记录」段](docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)，
 流水在 history §42–§53，**这里只留状态与残余**）：
 
-> ⚠ **表按「接手顺序」排，不按卡号**——第一行就是下一个该动的。
+> ⚠ **表按「接手顺序」排，不按卡号。** ~~第一行就是下一个该动的~~ ——**2026-08-19 第 8 步收口后这句话不再成立**：编号序列已走完，分隔行以上剩的两行（Q12 规格维 / Q5 实体归一）**都不是「下一个动手」的对象**（前者等 B6 远期字段、后者跟着 person-pickup 卡走）。按这张表自己的判据——**主张失效了就改主张，不是补一句说明**——这一行改成：**分隔行以上=还没做完的，分隔行以下=只作查证入口；真正的「下一个」见 §4.1 ② 与 §4.2**。
 > 洁癖整理三次：第一次（08-16）把未完成的挪到上面；**第二次（08-16，Q12 收尾）按接手顺序
 > 重排，并把 Q8 从第一行挪到未完成项的最后**——它是**叶子**（不解锁任何别的卡），
 > 而 Q2 残余是三条卡的**共同前置**却原本排在它后面。**前置排在叶子后面是排序 bug。**
@@ -446,6 +446,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 | `e2e_verify` 案例①：**前提变了不是修坏了** | 2026-08-11 全新重建的干净栈上 5 条红，**逐条定性为测试前提失效**，不是回归。该用例的前提写在它自己的注释里——「单句『打开空调』被端侧快路径直接执行，**必须用混合多意图句**才能规划出云侧 hvac 步」。2026-08-11 实测：混合句「帮我把空调打开，再查一下附近有什么好吃的」的 `route.mixed` span 记着 `local_actions:1`，**端侧把 hvac 那半自己执行了**（`val.execute`），云侧只剩 `nearby.search`——于是 `state_match` 那两条断言恒不可能满足。另两条 `schema` 断言失败是**测试查的 trace 与实际落的 trace 不是同一个**（按文本直查该 trace，`step.verify{mode:schema,verdict:sat}` 明明在），第 5 条是前四条的连带。**对账链本身是好的**（案例②/③ 全绿）。修它要先决定断言该指向什么（换一句仍能规划出云侧车控步的话术 / 或改测端侧 VAL 面），属独立一卡；B5/B6 结构上不可能造成它——那个决定发生在云端被调用之前 | 证据：本条 + `test/e2e_verify.py` 案例①注释、history §27.6 |
 | **云端 shell 故障注入用例只在 Windows 跑**（2026-08-17 CI 收口顺带发现） | `scripts/tests/test_cloud_deploy_assets.py` 里 **41 条** 经 `_git_bash()` 起 shell 的用例，只找 `bash.exe`（Windows 路径），**Linux 上一律 `pytest.skip` ⇒ 它们在 CI 里从来没跑过**，只在泓舟这台机器上跑——守 `remote-data-migration.sh` 失败路径的那批断言，CI 是不设防的。⚠ 修它要先决定用哪个 shell：Linux runner 上 `/bin/bash` 就在，但 `_run_cloud_bash` 现在的 argv/引号形态是按 Git Bash 调的（同 `run_go_tests.ps1` 那次的判据：**要问「怎么传参」而不是「什么系统」**），**换 shell 要重新验参数传递**，不是把 `bash.exe` 改成 `bash` 就完 | 本行 + `scripts/tests/test_cloud_deploy_assets.py::_git_bash`、history **§54.7** |
+| **会话级数据源/降级账本**（I-033 的跨轮追问，2026-08-19 第 8 步新记） | **启动条件：出现第二个消费方**。本批已交付「本轮披露」那一半——体育结构化源回落通用检索时话术点名 vendor、卡片 `_prov` 打 `degraded`（契约 §9.3）。**没做的是跨轮**：用户下一句问「哪个数据源失败了」时，系统手上仍然没有可查的事实，只能让 LLM 猜（真栈实测它把方向说反成「联网检索不可用」）。修法形态与 Q6 执行账本同族——**「这一轮用了谁、降级没降级」得像动作一样入账**，而不是只活在这一轮的卡片上。⚠ 别在披露那一层继续加话术：**话术层判据验证不了「说的是不是真的」**（Q6 那批四版尺子前三版都假绿，同一条判据）。 | 本行 + history **§63.4/§63.7** + `agents/info/src/handlers/sports.py::_mark_sports_degraded` 的 docstring（覆盖面写在那里）|
 | B6 §4 Capability Contract 远期字段 | **逐字段独立触发，无当前行动**：`input_schema`/`output_schema`（槽位类型错误成稳定 badcase 族或 typed Executor 立项）、`compensation`（撤销/补偿类产品需求）、`version`/`deprecation`（第三方 Agent 生态启动）。`replayable`/`idempotency` **已由 B5 §4.2 就地收口**——不新造 `command_id`，复用 `_fingerprint` | [B6 方案](docs/design/2026-08-10-b6-actionability-forward.md) §4 |
 
 ### 4.3 读数纪律
@@ -757,7 +758,7 @@ make up                     # 起全栈（首次需调试，见 docs/dev-guide.m
 | proto | `make proto` 重新生成，确认 codegen 无错 |
 | 端到端链路 | `make up` 后 `python test/e2e_ws.py` |
 | 新增 Agent | 契约测试（参考 `agents/navigation/tests`）+ 在 compose 注册 |
-| 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针）。SOP 见 §7.1 |
+| 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针 **与两条 VAL 校验断言**）。⚠ **门禁覆盖不到「规则产的命令过不过得了校验」那一段**——它只走 `edge_call.decode_intent` 一个产出方且跳过 `_validate_command`；端侧快路径那条由 `test_classifier_exit_parity.py::test_fast_path_command_is_accepted_by_val` 与 `test_corpus_objects.py::test_recognized_command_is_accepted_by_val` 守（**名字对不代表命令合法**，契约 §9.29 五段链）。SOP 见 §7.1 |
 | 新增服务（compose 里加一个自建镜像）| `python -m pytest runtime/tests -q`——它断言每个自建服务都拿到 `DEPLOY_PROFILE`、入口够得着部署形态闸、**且该服务 Dockerfile 真的 `COPY runtime`**；**加进 `x-python-env` anchor 不等于配上了**（有服务不用那个 anchor），**源码 import 得到不等于镜像里有**（collector/proactive 就这么断过 40 小时）|
 | 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| **另外查一遍有没有独立脚本直接 import 它**——`pytest` 绿不代表裸跑绿：根 `conftest.py` 会替测试把仓库根挂进 `sys.path`，**独立脚本没有这个待遇**。2026-08-16 实测：`fast_intent` 加了 `runtime.polarity` 之后，§5「任何人接手都先做这个」的 `python test/smoke_edge.py` 直接 `ModuleNotFoundError`，而全量 pytest 一条红都没有。再查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类 |
 | Planner 重试/守卫规则（B5）| **先改 `orchestrator/cloud/retry_policy.py` 的表，不要在主循环里加 `elif`**；同步方案附录 A 的清单表（`test_retry_policy.py` 逐列比对，改一处不改另一处即红）；`python -m pytest orchestrator/cloud/tests -q` |
@@ -794,6 +795,13 @@ python scripts/gen_capability_skeleton.py rear_wiper --display-name 后雨刷 --
 `rear_wiper` 全流程演练过：只加 `commands.yaml` 对象、其余不做时，话术 ×2 / 等价类 ×1 /
 迁移探针 ×1 / 台账陈旧项 ×1 / L0 对抗覆盖 ×6 逐条报出来，逐项照做后全绿。
 门禁是 `test/eval_capability_integrity.py`（六维逐对象断言，CI blocking）。
+⚠ **它覆盖「声明→可达」五段链里的 ①②⑤，不覆盖 ③④**（规则产得出结构化命令 /
+那条命令过得了 VAL 校验）：门禁逐条跑的是 `edge_call.decode_intent` 那**一个**产出方，
+而端侧快路径 `fast_intent.classify_structured` 是**第二个产出方**，两者形状可以不同
+（方向盘加热就是这么断的：一个产 `set`+`enabled`、一个产 `open`，后者知识库不认）。
+③④ 由 `test_classifier_exit_parity.py` 与 `test_corpus_objects.py` 的两条 VAL 校验断言守
+——**新对象要在 `orchestrator/edge/tests/corpus/vehicle_objects.yaml` 留一条识别语料**。
+五段链全表见 `docs/conventions.md` §9.29。
 
 ---
 

@@ -255,7 +255,7 @@ local 档的 URL 与此前写死的 `ws://localhost:8090/ws` 逐字相同。
 > 现在改成宽容超时（就算超时后首帧才到也无害，帧循环会忽略非 final/error 帧）。
 
 ```bash
-python scripts/probe_qa_regression.py --list                 # 41 例 / 69 轮 / 8 组（Q10 残余批 +MC1/MC2）
+python scripts/probe_qa_regression.py --list                 # 46 例 / 78 轮 / 9 组（第 8 步 +capability 组 CA1-CA5）
 # 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
 # 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
 # ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。
