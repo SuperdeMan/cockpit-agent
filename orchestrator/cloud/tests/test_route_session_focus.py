@@ -137,6 +137,75 @@ def test_active_route_survives_non_navigation_turn_without_ts_renewal():
     assert focus.last_intent == "info.weather", "其余焦点字段仍按本轮刷新"
 
 
+def test_route_session_end_survives_the_sticky_relay_across_turns():
+    """**跨轮**：取消之后下一轮不许再看到那条路线（QA I-017，真栈 CA5 抓到）。
+
+    ⚠ 这条是 2026-08-19 补的，补它的原因值得记：上面那两条同轮断言**当时全绿，
+    而真栈第 3 轮 3/3 红**——「取消导航」发出去了，下一句「换条路走」照样改到那条
+    已取消的路线。根因是**接力比清除更强**：粘性接力的条件是 `not focus.active_route`，
+    而清空恰恰让它成立 ⇒ 上一轮那条被原样搬回来。
+    ⇒ **同轮测试替被测系统提供了「同轮」这个前提**，而这条机制的全部意义在跨轮
+    （§4.3「测试若替被测系统提供了某个前提，那条前提就不再被验证」的又一例）。
+    """
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    nav_plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                                intent="navigation.navigate_to")])
+    cancel_plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                                   intent="navigation.cancel")])
+    cancel_results = [StepResult(step_id="s1", status=StepStatus.OK,
+                                 source_intent="navigation.cancel",
+                                 data={"_route_session_end": True})]
+    later_plan = Plan(steps=[Step(id="s1", agent_id="info",
+                                  intent="info.weather")])
+    later_results = [StepResult(step_id="s1", status=StepStatus.OK,
+                                source_intent="info.weather", data={})]
+
+    async def _run():
+        await manager.update_focus("sess", nav_plan, [_route_result()], user_id="u1")
+        await manager.update_focus("sess", cancel_plan, cancel_results, user_id="u1")
+        after_cancel = await manager._load_focus("sess", "u1")
+        # 再走一轮无关轮：**旗子不许粘住**，否则以后任何一次导航都接力不了
+        await manager.update_focus("sess", later_plan, later_results, user_id="u1")
+        return after_cancel, await manager._load_focus("sess", "u1")
+
+    after_cancel, after_later = asyncio.run(_run())
+    assert not (after_cancel and after_cancel.active_route),         "取消之后下一轮仍看得见活动路线——接力把清空搬回来了"
+    assert not getattr(after_cancel, "route_ended", False),         "`route_ended` 是本轮事实，存进焦点会永久关掉接力"
+    assert not (after_later and after_later.active_route)
+
+
+def test_route_ended_does_not_block_a_later_new_navigation():
+    """反向对照：取消过之后**再导一次**，活动路线要正常建立。
+
+    只验「取消能清掉」那一半，一个恒不接力的实现也能过——那会把 G8 整个关掉。
+    """
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    nav_plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                                intent="navigation.navigate_to")])
+    cancel_plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                                   intent="navigation.cancel")])
+    cancel_results = [StepResult(step_id="s1", status=StepStatus.OK,
+                                 source_intent="navigation.cancel",
+                                 data={"_route_session_end": True})]
+    info_plan = Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather")])
+    info_results = [StepResult(step_id="s1", status=StepStatus.OK,
+                               source_intent="info.weather", data={})]
+
+    async def _run():
+        await manager.update_focus("sess", nav_plan, [_route_result()], user_id="u1")
+        await manager.update_focus("sess", cancel_plan, cancel_results, user_id="u1")
+        await manager.update_focus(
+            "sess", nav_plan, [_route_result(destination="宝安机场", waypoints=[])],
+            user_id="u1")
+        await manager.update_focus("sess", info_plan, info_results, user_id="u1")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+    assert focus.active_route["destination"] == "宝安机场",         "取消过之后新导航建不起来 / 或接力被永久关掉了"
+
+
 def test_new_navigate_replaces_active_route():
     store = SessionStore()
     manager = ContextManager(clients=SimpleNamespace(), session=store)

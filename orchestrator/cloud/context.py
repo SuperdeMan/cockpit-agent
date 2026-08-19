@@ -284,6 +284,14 @@ class Focus:
     # 存在的理由：QA 轮 SF3 三轮实测——红色机油灯之后第二轮答天气、第三轮执行音量。
     # **一次安全警告必须是会话状态，不能是一句话说完就没了。**
     safety_alert: dict = field(default_factory=dict)
+    # **本轮 scratch，不跨轮**（保存前由 `update_focus` 复位）：这一轮显式终止了活动路线
+    # （保留键 `_route_session_end`，QA I-017）。
+    # ⚠ 存在的理由是**接力比清除更强**：粘性接力的条件是 `not focus.active_route`，
+    # 而「清空」恰恰让它成立 ⇒ 上一轮那条路线被原样搬回来，用户听到「已结束导航」、
+    # 下一句「换条路」却仍在改它（真栈 CA5 第 3 轮 3/3 红，**单测没抓到**——
+    # 我的两条断言都在同一份 results 里既 stamp 又 end，**替被测系统提供了「同轮」
+    # 这个前提**，而真实场景是跨轮）。空 dict 表达不了「我是故意空的」，所以要一个旗子。
+    route_ended: bool = False
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -293,6 +301,7 @@ class Focus:
                     or self.last_choice_purpose or self.last_choices
                     or self.candidate_sets
                     or self.last_places or self.active_route or self.safety_alert
+                    or self.route_ended
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
 
@@ -947,6 +956,7 @@ def extract_focus(plan, results) -> "Focus | None":
         # ——「说了取消却还挂着」是本条要修的那个形态。
         if isinstance(data, dict) and data.get("_route_session_end") is True:
             focus.active_route = {}
+            focus.route_ended = True      # 让接力知道这次空是**故意的**
         # Q9 安全告警：同族保留键。多步都声明时取最后一个（后发的更新）。
         alert = _valid_safety_alert(
             data.get("_safety_alert") if isinstance(data, dict) else None)
@@ -1068,8 +1078,11 @@ class ContextManager:
                     focus.last_places_ts = float(
                         getattr(previous, "last_places_ts", 0.0) or 0.0)
                 if previous is not None and not focus.active_route \
+                        and not focus.route_ended \
                         and getattr(previous, "active_route", None):
                     # 原样携带（含 ts 不续期）：路线时效从 navigate 那一刻起算。
+                    # ⚠ `route_ended` 时**不接力**：那一轮的空是显式终止，不是「本轮没
+                    # 产生新路线」。两者在数据上都是空 dict，判据只能靠旗子（QA I-017）。
                     focus.active_route = dict(previous.active_route)
                 # Q9 安全告警同款粘性：**只有新的告警才替换它**，普通轮不得把它抹掉。
                 # 这一格正是 SF3 那三轮缺的东西——第二轮问「高速还能开吗」不产生
@@ -1078,6 +1091,9 @@ class ContextManager:
                 if previous is not None and not focus.safety_alert \
                         and getattr(previous, "safety_alert", None):
                     focus.safety_alert = dict(previous.safety_alert)
+                # `route_ended` 是**本轮事实**，不跨轮——存进去下一轮读回来仍是 True
+                # 就会永久关掉接力（一个只该响一次的旗子变成了常态）。
+                focus.route_ended = False
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:
