@@ -341,7 +341,7 @@
 | 变量 | 含义 | 必填 |
 |---|---|---|
 | `AUTH_REQUIRED` | 层 1/2 鉴权总开关：`false`/默认=匿名放行保持现状；`true`=无/错 token 的 WS 回 401、无/错 channel token 的 Hello 拒 | 否（默认 `false`） |
-| `AUTH_TOKENS` | 层 1（HMI↔edge-gateway）静态 token 表：条目 `;` 分隔，每条 `token:user_id:vehicle_id:scope-csv`（scope-csv 直接注入 `meta.granted_scopes`）| 否（默认空） |
+| `AUTH_TOKENS` | 层 1（HMI↔edge-gateway）静态 token 表：条目 `;` 分隔，每条 `token:user_id:vehicle_id:scope-csv`（scope-csv 直接注入 `meta.granted_scopes`）。**⚠ 四段一个都不能少，畸形条目 2026-08-19 起拒绝启动**（此前是静默跳过）——少写 user_id 段会让 `parts[1]` 取到 vehicle_id 当 user_id，而 **scopes 段恰好还在正确位置 ⇒ 权限全通、功能全正常，只有长期记忆一条都召不回**（云端实测，history §59）。判据：不足 4 段 / token 段为空 / **user_id·vehicle_id 段含逗号**（那是 scope 串的特征）| 否（默认空） |
 | `AUTH_DEFAULT_USER_ID` | 匿名回退用户（`AUTH_REQUIRED=false` 且无有效 token 时）；去掉硬编码 `user_id="u1"` | 否（默认 `u1`） |
 | `VITE_WS_TOKEN` | HMI 连 WS 携带的 token（须与 `AUTH_TOKENS` 某条一致）；留空=不带 token | 否（默认空） |
 | `CLOUD_CHANNEL_TOKEN` | 层 2（edge-orchestrator↔cloud-gateway）Hello 携带的通道 token | 否（默认空） |
