@@ -5409,6 +5409,12 @@ chitchat**，而它手里没有菜单，于是**编了一个商品名和一个�
 反向验证五处各做两头，逐处精确红、回退全绿：挂点注掉（2 红）/ 归属判据恒真（2 红）/
 下发字段改名（1 红）/ scope 门控注掉（1 红）/ 投影带上坐标（3 红）。
 
+**整批收尾验收**（release `4e975f6` = main HEAD）：
+`dev_stack verify` = **verified**（`case_ids: ["e2e_remote_safe"]` **非空**——
+不是接手须知 ⑥ 那个「空成功」形态）；cloud 缺省 E2E **2/2 PASS**
+（`e2e_protocol_smoke` 1/1 + `e2e_remote_safe` 8/8，零 skip）。
+本批动了编排核心（`engine._apply_focus_meta` / `context`），这两项是「没打破既有」的证据。
+
 ### §61.5 一条操作坑（本机默认命中，此前没记过）
 
 **这台机器的 shell 里 `PYTHONIOENCODING=utf-8:surrogateescape` 是设着的。**

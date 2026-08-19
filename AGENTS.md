@@ -97,12 +97,16 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
 **当前部署形态（2026-08-19 更新）**：`dev-stack.local` = **`target=cloud`**。
-云端 release **`8bea3b8`**（2026-08-19 由 QA Q2 残余批 + `AUTH_TOKENS` 身份修复批逐次 `deploy --apply` 推上去，
-`verify` = **verified**；此前是切云那趟的 `34d72d7`）、三存储数据已迁入并逐表核对；
+云端 release **`4e975f6`**（2026-08-19 由 QA Q10 残余批三次 `deploy --apply` 推上去：
+`870f4bc` 下发面 + 双入口收敛 → `64f2807` 补完三条通道 → `4e975f6` 读数回填，
+`verify` = **verified**、`case_ids: ["e2e_remote_safe"]` 非空；
+此前依次是 `8bea3b8`（Q2 残余 + `AUTH_TOKENS` 修复）与切云那趟的 `34d72d7`）、
+三存储数据已迁入并逐表核对；
 `python scripts/dev_stack.py status` = ok（5/5 端点 healthy）、
 `verify` = **verified**（`e2e_remote_safe`、minimax/MiniMax-M3、lock `e2e`）；
 `car-agent-backup.timer` 活跃、Tailnet Serve 五入口齐；
-**cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` + `e2e_remote_safe`，
+**cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` **1/1** + `e2e_remote_safe` **8/8**，
+零 skip；2026-08-19 Q10 残余批在 release `4e975f6` 上复跑实测，
 `run_e2e --target cloud` 无 `--id`）。交接页
 [`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
 §6 七条完成判据**全部达成**。**本地 Docker 已停**（32 容器全 `Exited`、Docker Desktop
