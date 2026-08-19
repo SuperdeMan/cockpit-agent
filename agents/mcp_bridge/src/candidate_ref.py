@@ -64,6 +64,13 @@ _ORDINAL_RE = re.compile(rf"第\s*({CN_NUM_SRC})\s*(?:个|家|项|条|种|款|�
 #: 序数只有出现在开头时才是「在指代那份列表」。一个本来就叫「生椰拿铁第二杯半价」
 #: 的商品，槽值里的「第二」是名字的一部分，不是序号。
 _LEADING_ORDINAL_RE = re.compile(rf"^\s*{_ORDINAL_RE.pattern}")
+#: **整值就是一句序数指代**。比 `_LEADING_ORDINAL_RE` 严一档，因为它服务的是
+#: 更强的一个断言：「这个值被放错了槽」。允许「那个/这个」之类的前缀虚词。
+_BARE_ORDINAL_RE = re.compile(
+    rf"(?:刚才|那|这|那个|这个)?\s*第\s*{CN_NUM_SRC}\s*(?:个|家|项|条|种|款|杯|份)?")
+#: 原话里的序数引用（**锚在整句里唯一出现**才用）。它是最后一条通道：
+#: planner 有时**一个槽都不填**，于是前面两条都够不着。
+_TEXT_ORDINAL_RE = re.compile(rf"第\s*({CN_NUM_SRC})\s*(?:个|家|项|条|种|款|杯|份)")
 
 #: 名字比对的规范化。与 `luckin._normalized` 同式（只留中文/字母/数字），
 #: 比 `mcdonalds._normalized` 的标点表更宽——**宽在这里是对的**：本模块的产物是
@@ -122,16 +129,26 @@ def _by_ordinal(value: str, items: list[dict]) -> dict | None:
     lead = _LEADING_ORDINAL_RE.match(value)
     if lead is None:
         return None
-    found = {n for raw in _ORDINAL_RE.findall(value) if (n := cn_int(raw))}
-    if len(found) != 1:
+    return _ordinal_item(value, items, cn_int(lead.group(1)))
+
+
+def _ordinal_item(text: str, items: list[dict], index) -> dict | None:
+    found = {n for raw in _ORDINAL_RE.findall(text) if (n := cn_int(raw))}
+    if len(found) != 1 or not index:
         # 多个 = 「第一个和第二个一共多少钱」，那是**聚合问句**不是选品，
         # 归云侧 `candidate_query`；这里不从两个里猜一个。
         return None
-    index = cn_int(lead.group(1))
-    if not index:
-        return None
     hit = [item for item in items if item["index"] == index]
     return hit[0] if len(hit) == 1 else None
+
+
+def is_bare_ordinal(value) -> bool:
+    """这个槽值**整体**就是一句序数指代（「第七个」「第 2 杯」「第三」）。
+
+    它是「这个值被放错了槽」的判据：一个纯序数短语不可能是分类名、门店名或商品名
+    ——planner 把它填进哪个槽都改变不了它在指代候选列表里的第 N 项。
+    """
+    return bool(_BARE_ORDINAL_RE.fullmatch(str(value or "").strip()))
 
 
 def _by_exact_name(value: str, items: list[dict]) -> dict | None:
@@ -169,10 +186,43 @@ def resolve(value, meta, *, namespace: str) -> dict | None:
     text = str(value or "").strip()
     if not text:
         return None
-    entry = parse(meta)
-    if entry is None or not _belongs_to(entry, namespace):
+    items = live_items(meta, namespace=namespace)
+    if items is None:
         return None
-    items = entry["items"]
     return (_by_exact_name(text, items)
             or _by_ordinal(text, items)
             or _by_partial_name(text, items))
+
+
+def live_items(meta, *, namespace: str) -> list[dict] | None:
+    """本能力当前能引用的候选项；没有或不属于本域时 None。"""
+    entry = parse(meta)
+    if entry is None or not _belongs_to(entry, namespace):
+        return None
+    return entry["items"]
+
+
+def from_raw_text(raw_text, meta, *, namespace: str) -> dict | None:
+    """原话里的序数引用 → 候选项。**最后一条通道**，判不出返回 None。
+
+    存在的理由是真栈实测的第三种形态：planner 有时**一个槽都不填**
+    （「麦当劳的第七个多少钱」原样出了整份菜单，与上一轮逐字重复）。
+    前两条通道都读槽值，够不着这一种。
+
+    ⇒ 这条通道兑现的是本步判据的**完整版**：不只「序数落到哪一项」不该让 LLM 数，
+    **「序数该放进哪个槽」也不该由它决定**——真栈三次取样，同一句话它分别填进
+    `item_query`、填进 `category`、和一个都不填。
+
+    **只在整句恰好出现一次序数时生效**（多个 = 聚合问句，归云侧 `candidate_query`），
+    且调用方只在目标槽为空时才用它——绝不覆盖用户说出口的实质内容。
+    """
+    text = str(raw_text or "").strip()
+    if not text:
+        return None
+    items = live_items(meta, namespace=namespace)
+    if items is None:
+        return None
+    found = [n for raw in _TEXT_ORDINAL_RE.findall(text) if (n := cn_int(raw))]
+    if len(set(found)) != 1:
+        return None
+    return _ordinal_item(text, items, found[0])

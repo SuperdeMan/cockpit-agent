@@ -324,26 +324,69 @@ class McpBridgeAgent(BaseAgent):
 
     @staticmethod
     def _resolve_candidate_slot(spec, intent, meta) -> None:
-        """把 `candidate_slot` 声明的那个槽翻译成候选集里的商家原名（就地改写）。
+        """把用户对候选列表的指代翻成商家原名，写进 `candidate_slot`（就地改写）。
 
-        判不出就**原样不动**——回到今天的行为（商户自己追问/出选项卡），
-        不猜。翻错等于系统替用户改了他点的东西，而它没有任何「我不太确定」的信号。
+        判不出就**原样不动**——回到今天的行为（商户自己追问/出选项卡），不猜。
+        翻错等于系统替用户改了他点的东西，而它没有任何「我不太确定」的信号。
+
+        ## 三条通道，因为 planner 会把同一句话填成三种样子
+
+        真栈同一句「麦当劳的第七个多少钱」三次取样，序数分别落在三个地方：
+
+        | 取样 | planner 填成 | 靠哪条通道 |
+        |---|---|---|
+        | 1 | `item_query="第七个"` | ① 目标槽自己 |
+        | 2 | **`category`**`="第7个"` | ② 错位槽重定向 |
+        | 3 | **一个槽都没填** | ③ 原话兜底 |
+
+        ⇒ 本步的判据因此是完整版：不只「序数落到哪一项」不该让 LLM 数，
+        **「序数该放进哪个槽」也不该由它决定**。②③ 都只在目标槽为空时才动手，
+        绝不覆盖用户说出口的实质内容。
         """
         slot = str(getattr(spec, "candidate_slot", "") or "")
         slots = getattr(intent, "slots", None)
         if not slot or not isinstance(slots, dict):
             return
-        value = str(slots.get(slot) or "").strip()
-        if not value:
-            return
         namespace = str(getattr(intent, "name", "") or "").split(".", 1)[0]
-        item = candidate_ref.resolve(value, meta, namespace=namespace)
+        value = str(slots.get(slot) or "").strip()
+
+        # ① 目标槽自己有值：原名 / 序数 / 唯一部分名三通道。
+        item = (candidate_ref.resolve(value, meta, namespace=namespace)
+                if value else None)
+        source = slot
+
+        # ② 值是**纯序数**却落在别的槽上。一个纯序数短语不可能是分类名或门店名
+        #    ——planner 把它放进哪个槽都改变不了它在指代第 N 项。命中即把那个槽
+        #    **清掉**：留着它，商户侧会先按「有没有这个分类」去过滤然后诚实查无
+        #    （真栈原话「餐单里没有「第7个」这一类」）。
+        misplaced = ""
+        if item is None and not value:
+            for name in (getattr(spec, "slots", None) or []):
+                if name == slot or not candidate_ref.is_bare_ordinal(
+                        slots.get(name)):
+                    continue
+                item = candidate_ref.resolve(
+                    str(slots[name]), meta, namespace=namespace)
+                if item is not None:
+                    misplaced, source = name, name
+                    break
+
+        # ③ 一个槽都没填：回原话取序数。**只认整句恰好出现一次**的那种。
+        if item is None and not value:
+            item = candidate_ref.from_raw_text(
+                getattr(intent, "raw_text", ""), meta, namespace=namespace)
+            source = "raw_text"
+
         if item is None or item["name"] == value:
             return
-        logger.info("候选集指代解析：%s 的 %s %r → %r（第 %d 项）",
-                    getattr(intent, "name", ""), slot, value,
+        logger.info("候选集指代解析：%s 的 %s ← %s %r → %r（第 %d 项）",
+                    getattr(intent, "name", ""), slot, source,
+                    value or slots.get(misplaced) or
+                    getattr(intent, "raw_text", ""),
                     item["name"], item["index"])
         slots[slot] = item["name"]
+        if misplaced:
+            slots.pop(misplaced, None)
 
     @staticmethod
     def _granted_scopes(meta) -> set[str]:

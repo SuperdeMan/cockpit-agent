@@ -267,3 +267,80 @@ async def test_no_downlink_means_no_change():
     finally:
         await agent.shutdown()
     assert workflow.seen == [("prepare", {"item_query": "第一杯"})]
+
+
+# ── H. 三种形态：真栈同一句话，planner 填成三个样子 ──────────────────
+#
+# 「麦当劳的第七个多少钱」三次取样实测（cloud 档 870f4bc）：
+#   ① `item_query="第七个"`  ② **`category`**`="第7个"`  ③ **一个槽都没填**
+# 首版只做了 ①，读数 1/3。⇒ 判据的完整版是：不只「序数落到哪一项」不该让 LLM 数，
+# **「序数该放进哪个槽」也不该由它决定**。
+
+def test_a_bare_ordinal_is_recognized_wherever_it_lands():
+    for raw in ["第七个", "第7个", "第 2 杯", "第三", "那个第一个", "第十款"]:
+        assert candidate_ref.is_bare_ordinal(raw), raw
+    for raw in ["巨无霸套餐", "生椰拿铁第二杯半价", "汉堡", "", "第一个和第二个"]:
+        assert not candidate_ref.is_bare_ordinal(raw), raw
+
+
+@pytest.mark.parametrize("raw_text,expected", [
+    ("麦当劳的第七个多少钱", None),                    # 越界（fixture 只有 3 项）
+    ("麦当劳的第二个多少钱", "猪柳蛋麦满分套餐"),
+    ("那第一个呢", "北非蛋风味麦满分套餐"),
+    ("第一个和第二个一共多少钱", None),                # 聚合问句，归云侧
+    ("看看麦当劳有什么可以点的", None),                # 没有序数
+    ("", None),
+])
+def test_raw_text_channel_is_the_last_resort(raw_text, expected):
+    got = candidate_ref.from_raw_text(raw_text, _meta(), namespace="mcd")
+    assert (got or {}).get("name") == expected, raw_text
+
+
+@pytest.mark.asyncio
+async def test_ordinal_in_the_wrong_slot_is_redirected_and_cleared():
+    """真栈取样 ②：planner 把「第7个」填进 `category`。
+
+    **必须把错位那个槽清掉**——留着它，商户侧会先按「有没有这个分类」过滤，
+    然后诚实查无（真栈原话「餐单里没有「第7个」这一类」），翻译等于白做。
+    """
+    agent, workflow = await _bridge_with("mcd.menu")
+    agent._workflow_bindings["mcd.menu"].spec.slots = ["item_query", "category"]
+    try:
+        await run_handle(agent, "mcd.menu", {"category": "第7个"},
+                         raw_text="麦当劳的第七个多少钱",
+                         meta=_meta(items=[{"index": i, "name": f"第{i}款"}
+                                           for i in range(1, 9)],
+                                    granted_scopes=_GRANTED))
+    finally:
+        await agent.shutdown()
+    assert workflow.seen == [("menu", {"item_query": "第7款"})]
+
+
+@pytest.mark.asyncio
+async def test_no_slot_at_all_falls_back_to_the_raw_text():
+    """真栈取样 ③：planner 一个槽都没填，整份菜单原样又出一遍。"""
+    agent, workflow = await _bridge_with("mcd.menu")
+    try:
+        await run_handle(agent, "mcd.menu", {},
+                         raw_text="麦当劳的第二个多少钱",
+                         meta=_meta(granted_scopes=_GRANTED))
+    finally:
+        await agent.shutdown()
+    assert workflow.seen == [("menu", {"item_query": "猪柳蛋麦满分套餐"})]
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_value_is_never_overwritten_by_the_fallbacks():
+    """②③ 只在目标槽为空时才动手——用户说出口的实质内容永远优先。"""
+    agent, workflow = await _bridge_with("mcd.menu")
+    agent._workflow_bindings["mcd.menu"].spec.slots = ["item_query", "category"]
+    try:
+        await run_handle(agent, "mcd.menu",
+                         {"item_query": "拿铁", "category": "第2个"},
+                         raw_text="麦当劳的第二个拿铁多少钱",
+                         meta=_meta(granted_scopes=_GRANTED))
+    finally:
+        await agent.shutdown()
+    # 「拿铁」在本 fixture 里一项都不命中 ⇒ 原样不动，category 也不清。
+    assert workflow.seen == [("menu", {"item_query": "拿铁",
+                                       "category": "第2个"})]
