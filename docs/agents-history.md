@@ -5660,12 +5660,14 @@ CA1–CA4，`--repeat 3`，release `86a9490`）。**四条全红，而且比卡�
 
 ### §63.7 读数
 
-- **后端全量**：`python -m pytest --import-mode=importlib` = **6784 passed / 73 skipped
-  零红（24m05s）**（首跑 6783 + 1 failed，红的是本批自己新写的那条端到端测试，见 §63.8）。
-  较上一跳 6722 净 **+62**：navigation +9（`test_estimate.py` 7 + cancel 2）/
+- **后端全量**：`python -m pytest --import-mode=importlib` = **6786 passed / 73 skipped
+  零红（16m58s）**（首跑 6783 + 1 failed，红的是本批自己新写的那条端到端测试，见 §63.8；
+  第二趟 6784 零红；CA5 修复后第三趟 6786 零红）。
+  ⚠ 同一份代码三趟**时长 24m05s / 24m16s / 16m58s**——耗时受宿主负载影响很大，
+  **别拿时长当回归信号**。较上一跳 6722 净 **+64**：navigation +9（`test_estimate.py` 7 + cancel 2）/
   edge +34（金标表两行新增 + `test_fast_path_command_is_accepted_by_val` 40 条 +
   对象语料 VAL 校验 22 条，扣参数化重叠）/ memory +7（`test_offer_admission.py`）/
-  cloud +5（clarify_resume 3 + `_route_session_end` 正反 2）/ llm-gateway +2 /
+  cloud +7（clarify_resume 3 + `_route_session_end` 同轮正反 2 + 跨轮 2）/ llm-gateway +2 /
   mcp-bridge +1 / info +1。
   ⚠ **skip 数 73** = 操作者 shell **没有** `CAR_AGENT_*` 三件套那一档（设了是 32）——
   上一跳设了、这一跳没设，**41 条差额不是回归**（「跑全量的固定口径」第二变量）。
@@ -5674,6 +5676,32 @@ CA1–CA4，`--repeat 3`，release `86a9490`）。**四条全红，而且比卡�
 - **能力完整性门禁**：`python test/eval_capability_integrity.py` PASS（八车道零缺口）。
 - **端侧冒烟**：`python test/smoke_edge.py` **13/13**。
 - **前端**：hmi `npm test` 279 / `npm run build` ✅；dashboard 17 / build ✅。
+- **真栈（cloud 档，release `e5cef21`）**：迷你集 `capability` 组 `--repeat 3`
+  **15/15 PASS**——CA1 I-016 `0/3 → 3/3`（答「全程约12.0公里，开车约20分钟，
+  现在出发预计…到」且**零 navigate 动作**）/ CA2 I-004 `0/3 → 3/3 [det]`
+  （`steering_wheel.heating.open`）/ CA3 I-049 `0/3 → 3/3 [det]`
+  （`volume.mute` / `volume.unmute`，「取消静音」不再被答成「当前没有待确认的操作」）/
+  CA4 I-050 `0/3 → 3/3 [det]`（`warning_light.open/close`）/
+  CA5 I-017 `0/3 → 3/3 [det]`（第 3 轮「换条路走」答「当前没有正在进行的导航」）。
+- **云端 E2E**：`run_e2e --target cloud` **2/2 PASS**（`e2e_protocol_smoke` 1/1 +
+  `e2e_remote_safe` 8/8，零 skip）；`dev_stack verify` = **verified**
+  （`release_sha=e5cef21`、`case_ids: ["e2e_remote_safe"]` 非空、minimax/MiniMax-M3）。
+
+### §63.9 CA5 是本批唯一一个**只有真栈才抓得到**的缺陷
+
+`navigation.cancel` 把 `focus.active_route` 清空了，可下一轮「换条路走」照样改到那条
+已取消的路线（首轮复跑 3/3 红）。根因是**接力比清除更强**：粘性接力的条件是
+`not focus.active_route`，而「清空」恰恰让它成立 ⇒ 上一轮那条被原样搬回来。
+**空 dict 表达不了「我是故意空的」**，所以要一个本轮 scratch 旗子 `Focus.route_ended`
+（`update_focus` 保存前复位——存进去下一轮读回来仍是 True 会永久关掉接力，
+一个只该响一次的旗子会变成常态）。
+
+> **它为什么没被单测抓到**：我先写的两条断言都在**同一份 results** 里既 stamp 又 end，
+> **替被测系统提供了「同轮」这个前提**——而这条机制的全部意义在跨轮。
+> §4.3 那条「测试若替被测系统提供了某个前提，那条前提就不再被验证」的又一例，
+> 这次是**我自己写的新测试**。补法：两条跨轮断言 + 一条「取消过之后再导一次仍能建立」
+> 的反向对照（只验「能清掉」那一半的话，**一个恒不接力的实现也能过**，那会把 G8
+> 整个关掉），注入验红两侧都做。
 
 ### §63.8 本批自伤三次，三次都是同一类：**先证明自己测的那条路径真的被走到**
 
