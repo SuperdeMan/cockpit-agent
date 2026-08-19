@@ -4971,3 +4971,277 @@ PERMISSION_DENIED: request vehicle v1 does not match stream vehicle
 CF3（Q1 对照组）复跑 **2/3 `[var]`**：失败那次「把全车门解锁」确认后执行的是
 `door_lock.close`（**上锁**）。危险动作方向反了，是既有方差不是本批引入
 （本批未碰车控/确认链）。归 Q1 面，未处理。
+
+## §60 2026-08-19 洁癖整理：§4.0 对账链归档 + CLAUDE.md §7 提要化 + 全量 pytest 盘点
+
+泓舟当轮授权（含提交与推送）。动机：`AGENTS.md` 已 930 行 / 约 4.6 万 token，接手者一屏
+读不完；§4.0 的基线记账在当前数下面还压着**十跳历史对账叙述**（各跳证据在 §41–§59 本来
+就有权威版本），CLAUDE.md §7 的批次叙述与 §4.0/§4.1 重复。判据仍是 §40.1 那条：
+**归档是把叙述换成索引，不是再抄一遍**——history 已有权威版本的段只留索引；
+只活在 §4.0 的对账评注（各跳之间的净增量核对现场）全文留档在 §60.2，一字不删。
+（同批还把用户侧 agent memory 索引做了每条一行化——不在仓库，不展开。）
+
+### §60.1 归档索引
+
+| 被收走的段 | 权威版本 |
+|---|---|
+| GitHub CI 连红 55 次收口叙述（§4.0 头部） | history **§54**（两条通用教训压缩保留在 §4.0） |
+| 6623 闭合验算三表 + 本批净增 +71 逐条 | **§58**（6613/73 实测 + 批次证据）+ §60.2 原文 |
+| 上一跳 6257（Q7 残余）记账 | **§53** + §60.2 原文 |
+| 6198（Q12）`<details>` 记账 | **§52** + §60.2 原文 |
+| 6127 / 6110 / 5974 / 5929 / 5925 / 5901 / 5863 / 5836 / 5739 / 5706 / 5668 / 5659 …十余跳链 | **§51/§50/§49/§47/§46/§45/§44/§43/§42/§41/§40/§39** 等（逐跳指向已写在原文里）+ §60.2 原文 |
+| EVA 主题四批能力状态段（读数细节） | **§36–§40、§40.2**（§4.0 压缩为四行索引；「当前对标状态一句话」段保留未动） |
+| CLAUDE.md §7 的批次叙述（EVA 六批细节 / QA 已交付清单 / 商户批清单） | **AGENTS §4.0 / §4.1 与 history**——§7 自己就声明它们是唯一真相源，本次把它裁回「只说到这件事在做」 |
+
+散落在各跳记账里的**操作性教训**没有被归档，而是收敛成 §4.0 新的「跑全量的固定口径」块
+（importlib / PATH / 干净 env / 隔离 / collect 时刻 / skip 对照 / 基线陈旧优先怀疑），
+每条只留一个权威位置；§4.1 与 §4.3 未动。
+
+### §60.2 原文留档（洁癖前 §4.0 的对账链，一字未改）
+
+<details><summary>基线对账链原文（原 §4.0 L150–L320）</summary>
+
+**最新后端全量基线（2026-08-19 QA Q2 残余批后，`target=cloud` + 本地 Docker 已退）**：
+`python -m pytest --import-mode=importlib` = **6623 passed / 73 skipped 零红**。
+⚠ **这个数是闭合验算出来的，不是一次跑批直接读出来的**，三条实测拼起来、零缺口：
+
+| 实测 | 读数 | 说明 |
+|---|---|---|
+| 全量一次跑 | **6613 passed / 73 skipped / 1 failed** | **起跑那一刻的用例集**，见下 |
+| `scripts/tests` 独占复跑 | **1091 / 52 零红** | 那 1 条 failed 在这里，独占即绿 |
+| 当前 HEAD `--collect-only` | **6696** | = 6623 + 73，**逐条对得上** |
+
+- ⚠ **那次全量跑的 6613 不是 HEAD 的读数**：pytest 在 collect 阶段就把用例集定死了，
+  而我在它跑的 24 分钟里又往两个文件追加了 **9 条**（`test_candidate_query.py` +3、
+  `scripts/tests/test_probe_qa_regression.py` +6，都已单独验绿）。6613 + 9 = 6622，
+  再加那条并行污染的（独占跑是 pass）= **6623**。
+  > 这是上一跳那条纪律的同族——那次是「起跑前 15 秒还在 stash」，**这次是起跑后还在
+  > 往里加用例**。判据一样：**读数属于哪个用例集，取决于 collect 那一刻的工作树。**
+- ⚠ **那 1 条 failed 是我自己制造的前提变化**：`scripts/tests/test_e2e_wrappers_ci.py`
+  要启 PowerShell 子进程（单跑 83s），而它跑那会儿我正在旁边跑 `deploy` / `status` 轮询 /
+  `verify`（全是 PowerShell）。独占复跑 **1091/52 零红**。
+  **红了先问是不是前提变了——这次变的前提是我自己制造的。**
+- **本批净增 +71**（另有另一条工作线的 L3 报告竞态批 **+1**，`a341486`）：
+  段 1 **+65**（`runtime/tests/test_openhours.py` **31** +
+  `orchestrator/cloud/tests/test_candidate_query.py` **26** +
+  `orchestrator/cloud/tests/test_engine_candidate_shortcut.py` **5** +
+  `test_candidate_sets.py` **+3**）+ 段 2 **+6**（探针判据的单测）。
+  6551 + 71 + 1 = **6623** ✅ 与 collect 闭合。
+- **段 2 可直接对账**：1085 → **1091**，差的 6 条正是探针那批，逐条点得上号。
+- ⚠ **先看这条再对数**：`make up` 起着本地栈时同一份代码是 **6560 / 63**
+  （段 1 `5475/12` + 段 2 `1085/51`）。差的 **10 条 pass→skip 全是本地 Docker 停掉的
+  直接后果**，逐条点得上号：段 1 `test_merchant_redis_integration` **8** +
+  `test_session_redis_integration` **1**（"Redis 7 integration"）、段 2
+  `test_cloud_deploy_assets` 的 "redis probe image redis:7-alpine is not present
+  locally" **1**。**回本地跑 `make up` 后它们会变回 pass——看到少 10 条别当成回归。**（那组对照是在 6551/6560 那一跳量的，10 条的差值不随本批变化。）
+- **上一跳（切云收口批）产出 +5 collected**，全在段 2（`scripts/tests` **1132 → 1137**）：
+  四条前端车道回归（RC15/RC16）+ 一条 RC17 覆盖面守卫，五条全 pass；
+  证据 history **§57**。段 1 代码未碰。
+- ⚠ **这个 +5 是量出来的不是数出来的**：同工作树 `--collect-only` = 实跑 passed+skip，
+  **零口径缺口**；把改动 `git stash` 掉再 collect = **1132**，nodeid 逐条 diff 只差
+  新增的那几条、**没有多出来的第 N+1 条**。
+- ⚠ **上一跳记的段 2 `1080` 比它自己 HEAD 的 collect `1132` 少 1，那 1 条没有归属**：
+  transcript 显示它 08:40:24 起跑，而 08:39:42 还在 `cat >>` 往 `scripts/tests` 追加用例、
+  08:40:09 执行 `git stash push -- scripts/tests/...` 做反向验证。
+  **起跑前 15 秒还在 stash，读数就不是 HEAD 的读数**——所以本节不拿 1080 去加减，
+  只用同 HEAD 的可复现对照。
+- **段 1 的 12 skipped 逐条点得上号**：nightly LLM 语料 4（未配 `LLM_API_KEY`）+
+  ASR e2e 4（2 条无 key + **2 条 `ASR service unreachable at http://localhost:50059`**）
+  + symlink 权限 3（Windows 非管理员）+ opentelemetry 未装 1。
+  ⚠ **那 2 条 ASR 是切云的直接后果**（本地 llm-gateway 已停），8-17 那跳段 1 是 10 skipped
+  ——**切回 `target=local` 并 `make up` 后它们会变回 pass，不要当成回归**。
+
+⚠ 上一版本节写过 **6555 / 段 2 1080 / 「本批自身 +7」**，那是上一位在自己那次读数上记的账；
+段 2 数字与 +4 的归属已按上面的对照修正，「+7」那句因分母不可复现**不予背书也不重算**。
+
+上一跳（QA 批）留档：`python -m pytest --import-mode=importlib`
+**6257 passed / 15 skipped 零红**（2026-08-17 凌晨，QA 批 **Q7 残余（EL1+OR2）**后实测，
+SHA `c1620d9` + 本批工作树）。分两段：`--ignore=scripts/tests` **5476 / 10**
++ `scripts/tests` **781 / 5**。较上一跳 6198 净 **+59**，**两条来源逐条点得上号**：
+- **本轮产出 +55**：段 1 **+52**（`orchestrator/cloud/tests/test_execution_focus.py` **47**
+  + `orchestrator/edge/tests/test_mixed_edge_executed.py` **5**）
+  + 段 2 **+3**（`scripts/tests/test_probe_qa_regression.py`，探针尺子的单测）；
+  证据 history **§53**。⚠ `test_actionability.py` 只改了判据形态、**没加用例**（仍 14 条）。
+- **+4 来自云发布工作线 `ea5947c`**（段 2，**非本轮产出**）。
+  ⚠ 这个数是**可复现对照**量出来的，不是猜：`ea5947c` 的临时 worktree 里
+  `scripts/tests` 收 **783**、当前工作树收 **786**，差额 **+3** 正是本轮那个新文件。
+  **段 1 不能这么比**——worktree 缺 codegen（3852 collected + **104 errors**）而主仓完整
+  （5486），**分母破得不一样就不可比**；段 2 可比是因为它不依赖 codegen。
+  段 1 因此用逐条点号（47+5=52），与实测 5424→5476 逐字对上。
+
+⚠ 本轮期间 HEAD 被并行工作线推进过两次（`3fd121a` 见 history §53.7、
+`c1620d9` 是云数据迁移/远程开发栈的**纯文档**提交，不碰代码）——
+**「我没动过 git」不等于「HEAD 没动过」，这已经是本项目第二次记它**。
+
+<details><summary>上一跳 6198 / 15 的记账（2026-08-16，QA 批 Q12，SHA `dcd9182`）</summary>
+
+较其上一跳 6127 净 **+71 passed / −9 skipped**，
+⚠ **三条来源，逐条点得上号**：
+- **QA Q12 +39**（本轮产出，全在段 1）：`runtime/tests/test_cntime.py` 9 +
+  `runtime/tests/test_slot_fidelity.py` 17 + `orchestrator/cloud/tests/test_slot_fidelity_wiring.py` 6
+  + reminder `test_agent.py` 3 + reminder `test_timeparse.py` 2 + `_sdk/test_timewindow.py` 1
+  + info `test_weather_answer.py` 1；证据 history **§52**。
+- **+23 来自云发布工作线**（`afff49d`/`bf92c22` 的 22 条在
+  `scripts/tests/test_cloud_release.py`，收尾合并 `e5d06a9` 再 +1，**均非本轮产出**；
+  本地 main 在我开工前后 fast-forward 过，session 快照里的 `dc856ce` 已不是 HEAD）。
+  ⚠ 攻击这个数用的是**收集数对照**而不是猜：`scripts/tests` 在 `dc856ce` 收 **756**、
+  在 `bf92c22` 收 **778**，而段 1 的收集数两个 SHA **逐字相同**（worktree 里都缺 codegen，
+  3817+104errors 对 3817+104errors——**分母一样破，对照就仍然成立**）。
+- **+9 是环境不是代码**（原 skip 现 pass，段 2）：`scripts/tests` 有一批按
+  「symlink/junction 能不能建 / PowerShell 在不在 / docker 在不在」跳过的用例。
+  本次段 2 从 **PowerShell 起、PATH 全**，它们真的跑了。
+  **跨环境比 skip 数没有意义，比 passed 数也要先对齐 skip。**
+
+⚠ 分两段：`--ignore=scripts/tests` **5424 / 10** + `scripts/tests` **774 / 5**
+（**必须先 `Remove-Item Env:\PYTHONIOENCODING`**）= **6198 / 15**。
+合并 `e5d06a9` 后**整套重跑过一次**：段 1 与合并前**逐字相同**（5424/10），
+差额全在段 2（773→774）——与上一次合入同一条工作线时的观察一致。
+
+⚠ **这个数取完之后，云发布工作线又进来一笔 `ea5947c`**（cloud verification 事务化，
+`scripts/tests/test_cloud_deploy_assets.py` +202 行）。**段 2 的收集数已从 778 变 783
+（+5），本节的 6198 是 `ea5947c` 之前的读数、没有重跑**。
+下一批开工前先把这 5 条点掉再谈自己的净增量——**同一条工作线本轮已经这样插进来三次**
+（`afff49d`/`bf92c22` +22、`e5d06a9` +1、`ea5947c` +5），而三次我都没执行过 git。
+> ✅ **这一笔已由 Q7 残余批点掉，实测是 +4 不是 +5**。推导链：本跳段 2 实跑
+> 781+5=**786 collected**，减去本轮新增的 3 条 = **783**，与 `ea5947c` worktree 的
+> `--co` 逐字相同；而上一跳实跑 774+5=**779**。⇒ `ea5947c` 带入 **+4 collected**，
+> 且两跳 skip 数同为 5 ⇒ **这 +4 全是 passed**。
+> 上面那个「778」是 `bf92c22` **worktree 里的 `--co`** 读数，与实跑口径差 1
+> ——**收集数与 passed+skip 是两个口径，跨口径相减会凭空造出一条不明用例**。
+
+</details>
+
+前一跳 **6127 / 24**（2026-08-16 Q5 残余后，`dc856ce`）也是两条来源：
+QA Q5 残余 +15（`agents/chitchat/tests/test_memory_provenance.py`，history **§51**）
++ `f5099f9` 带入 2。分段读数 5385/10 + 742/14。
+
+前一跳 **6110 / 24**（QA Q6 + 云发布工作线合入）同样是两条来源：
+QA Q6 净 **+25**（`memory/tests/test_executed_actions.py` 4 +
+`agents/chitchat/tests/test_audit_answer.py` 21，证据 history **§50**；
+合并前单独实测过 **5999 / 14** 对 `--co` 6013，那是相对 Q10 的 5974 的干净读数），
+云发布批带入 **+111 passed / +10 skipped**。合并走 merge 不走 rebase，无冲突、零文件重叠；
+**合并后仍重跑过一次**——「零文件重叠」不等于「零交互」（conftest / 共享 fixture），
+实测段 1 与合并前逐字相同，差额全在段 2。
+
+⚠ **仍是分两段跑的合计，不是一趟根跑**（原因见下）。
+前一跳的分段读数 5385/10 + 742/14 = 6127/24，与当时 `--co` 的 **6151 collected** 对上。
+前一跳 5974（+45，Q10）：新文件 `test_order_session_scope.py` 45 条；
+同样分两段（5345/10 + 629/4，`--co` 5988）；证据 history **§49**。
+⚠ **分段的原因是后台全量连续两次在同一位置（76%）被中止**，而 76% 正是
+`scripts/tests` 那族拉真子进程的起点（与既有的「scripts/tests 要隔离复跑」同源）。
+两段合起来分母等于全集，但**段 1 的 import 顺序与一趟根跑不同**（少了 scripts/tests
+的 conftest），下次能一趟跑完时应重取一次。
+前一跳 5929（+4，Q11）：reminder 160→**164**，证据 history **§47**。
+前一跳 5925（+24，Q5）：memory 229→**250**、reminder 157→**160**；证据 history **§46**。前一跳 5901（+38，Q7）：`test_polarity.py` 26 +
+`test_segment_backfill.py` 11 + `test_pending_cancel.py` 1；证据 history **§45**。
+前一跳 5863（+27，Q2）：`test_candidate_sets.py` 21 + nearby 6；证据 history **§44**。前一跳 5836（+97，Q13）：`test_classifier_exit_parity.py` 93 +
+dashcam 两行金标各占 golden/分段两个参数化 4；证据 history **§43**。
+⚠ **首趟 192 failed 是我自己造的假红**——`Start-Process` 起的子进程没挂 PATH，
+逐字命中下方那条已记录的签名。**记过的坑会换个方式再踩**。
+前一跳 5739（+33，QA 阶段 2）：`test_pending_cancel.py` 11 +
+`test_pending_operation_id.py` 7 + `test_pending_table.py` 12 + `test_engine_confirm.py` 3；
+证据 history **§42**。⚠ 那一节初稿写过一个**没测就写的** 5745——基线数只能来自真实跑批。
+前一跳 5706（+38，QA 阶段 1）逐条点号：`agents/_sdk` 7（新增 `test_safety_signal.py`
+——**不该命中的用例占一半**）+ manual-rag 9 + road-safety 7 + chitchat 5 + parking-payment 3
++ `orchestrator/cloud` 7（新增 `test_safety_focus.py`）；证据 history **§41**。
+⚠ **35m23s 不是回归变慢**：上一轮那 192 条假红是**快速失败**，这轮它们真的要跑
+（`scripts/tests/test_run_e2e.py` 拉真子进程），且本机 30 个容器在占 CPU。
+⚠ **这轮先踩了一次 §4.0 已经记过的坑**：用绝对路径 `& $py` 跑（`python` 不在 PATH）
+→ **192 条假红**，数字逐字对上下方那条警告。**红了先问是不是前提变了**。
+前一跳 5668（+9，双档复跑修复）：时区族 3（业务时区锚定 1 + 两条源码级守卫）+ nearby 6
+（当轮忌口压过记忆 1 + 忌辣说法覆盖 1 + 停车插入语 1 + 时段词 1 + 约束词正反两向 2）；
+证据 history **§40**。前一跳 5659（+46，EVA 余项 E1–E5）逐条点号：`agents/_sdk` 8（新增 `test_timewindow.py`：
+时刻消歧 1+事件时刻 3+用餐窗 3+时钟换算 1）+ nearby 19（E5 并集召回 4+E1 用餐窗 5
++E2 属性维 7+假个性化守卫 2+类目别名话术 1）+ trip 14（E3 归城校正 7+城市序守卫 3
++天数守卫 2+顺延跨城 2）+ memory 5（谓词归一族）；证据 history **§39**。
+前五跳：5613（+39，遗留六卡）见 **§38**、5574（+13，LLM_BACKUP/方向词/轨迹候选/
+复合取消）见 **§37**、5561
+（+41=基线陈旧 3+P3 簇 38）见 **§36**、5518 见 **§34**。⚠ 后台跑全量期间不许动
+工作树/测试锚（本批首趟在 catalog 锚更新前启动、会假红一条，停掉重跑才是干净读数
+——live 跑批纪律的全量版）。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
+=与并行 journeys 的 **stack lease 冲突假红**（那些测试模拟 runner lease 树而
+journeys 真持有 lease），隔离复跑 61/61+2skip 全绿——与既有「并行 Docker build 时
+test_e2e_wrappers_ci 假红（隔离复跑 6/6）」同族：**全量要单独跑，不与任何 e2e/build
+并行**。前五跳：5471→5500 见 §33、5464→5471 见 §32.1/§32.2、5457→5464 见 §32、
+5440→5457 见 §31、5408→5440 见 §30。
+⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/出站验签代码先想编码两端；
+本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
+（§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
+⚠ 同族第二形态（2026-08-14 实测烧掉一次全量）：**`python` 不在 PATH 的 shell 里跑
+全量会 192 条假红**——e2e manifest 校验要求 `python` 可执行存在（`case
+e2e_protocol_smoke.command executable does not exist: python`），scripts/tests 整族
+连坐；判据同款「红了先问是不是前提变了」，把解释器目录挂上 PATH 后同批 293 条全绿。
+
+
+</details>
+
+<details><summary>CI 连红段与 EVA 主题四批段原文（原 §4.0 L92–L103 / L321–L342）</summary>
+
+**GitHub CI（2026-08-17 收口）**：`#349`（2026-08-15 `41c4d54`）之后 **连红 55 次**
+（`#350`–`#404`），`python-tests` 每次都红；15 条真失败已全部修完，见 history **§54**。
+三族：① **6 条时区**——`3b8cb39` 把生产代码收敛到 `runtime.clock`（业务时区）却没迁尺子，
+断言仍用 `time.mktime`/`time.localtime`（**按跑测试那台机器的时区解释**），
+宿主 UTC+8 恰好重合、GitHub runner 是 UTC 就分家；② **8 条 Linux 属主**——
+`deploy/cloud/redis_volume_prepare.py::_privatize` 写死 `chown(0,0)`，
+非 root 无权把文件送给 root（EPERM），而 **Windows 没有 `os.chown`、本地永远不红**；
+③ **1 条契约漂移**——`E2ECase` 新增必填字段后第二个构造点没跟。
+> ⚠ 两条通用教训：**本地跑测试必须显式 `TZ=UTC0` 才等价 CI**（Windows 上 CRT 认这个变量）；
+> **CI 的 `::error::` annotation 每个 step 只保留 10 条**，本次实际红 15 条只报出 8 条
+> ——「annotation 里有几条」不等于「红了几条」，数到 9~10 就要假定被截断，
+> 改用 Linux 容器（`git bundle --all` + `python:3.12` + **非 root** + `--init`）取全集。
+
+**2026-08-15 EVA 主题四批（能力状态，流水只查 history §36–§40）**：
+① P3 簇三 RFC（history **§36**）——G8 导航路线会话 + `navigation.reroute` 增量改道、
+G4 主题行程检索步、G9 trip 跨城市（`Trip.cities` + 跨天衔接 leg）、G7 陈述 vs 请求入台账。
+② 指令集全量真栈验证（报告
+[`…eva-instruction-set-e2e-verification.md`](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md)、
+history **§37/§38**）——25 语料首轮 ✅12/⚠️10/🔒3，遗留六卡 P1–P6 收口后
+**✅17/⚠️5/🔒3**；同批建了跨厂商备份档 `LLM_BACKUP=deepseek:deepseek-v4-flash`。
+③ 余项立卡 E1–E5（卡
+[`…eva-backlog-cards-e1-e5.md`](docs/design/2026-08-15-eva-backlog-cards-e1-e5.md)、
+history **§39**）——事件时刻反推用餐窗 / 停车便利·无障碍·不排队属性维 / 多城确定性归城校正 +
+主题接地读数 / 方差面只读探针 / 谓词别名老账（消费面两路并集 + 存量 18 行归一）。
+④ 双档复跑修复（报告
+[`…eva-dual-provider-rerun-and-fixes.md`](docs/reviews/2026-08-15-eva-dual-provider-rerun-and-fixes.md)、
+history **§40**）——25 语料 × MiniMax/DeepSeek 各 27 轮，据「两档是否同时错」定位并修掉
+**容器时区族**（所有「几点」判定偏 8 小时，8 处；唯一实现下沉 `runtime/clock.py` + 两条源码级守卫）、
+**当轮忌口被记忆压过**、**约束词被当检索词**，外加画像 `place.company` 存量污染复位。
+修复后 25 条重跑一遍取干净读数：**✅18 / ⚠️7 / 🔒3 面**（报告 §6）。
+⚠ **这个数不能与六卡批的 ✅17/⚠️5 直接相减**——两轮是不同时点的独立采样，差额大头是
+已知方差面翻面（人称解析在 DeepSeek 同轮是对的、主题标注本轮零候选走诚实降级）；
+**能确定的结构性变化只有三条**：三§1#3 ⚠️→✅（用餐窗+忌口+停车三件齐）、六#6 ⚠️→✅、
+时间族全线正确（「6点前」现在解析成 18:00 而不是 06:00）。本轮仍 ⚠️ 的七条逐条有归属，
+**无新缺陷**（人称卡 2 条 / 主题方差 2 条 / 车控 🔒 2 条 / 南京池被限流 1 条）。
+
+</details>
+
+### §60.3 全量 pytest 盘点：结论是「无可安全精简的存量」，基线升级成一趟根跑实测
+
+盘点动作（干净 HEAD `68879e0`，`target=cloud`、本地 Docker 停，PATH/env 按固定口径）：
+
+- `--collect-only` **6696** 条，与基线 6623+73 逐条闭合；
+- 结构扫描：全仓 **0** 条空断言（`assert True` 类）、**0** 条 xfail、**0** 条无条件模块级
+  skip、**0** 条已退役特性遗留测试（`food_ordering` 等旧名零命中）；
+- 六份 `test_provider_factory.py` 与十二份 `test_agent.py` 是**每 Agent 一份契约测试**的
+  SOP 产物，不是复制粘贴重复；
+- Q13 的 `test_classifier_exit_parity.py`（97 条）自带三层结构（源码级唯一实现断言 +
+  行为锁金标 + 死条目清理），正是「收敛后 parity 断言恒绿」的正确处置——**不是精简对象**；
+- 全量一趟根跑 `--durations=120`：**6623 passed / 73 skipped 零红，24m34s**。
+  这是该基线第一次由**一趟根跑**直接读出（此前 6623/73 是三表闭合验算的数，两者逐字一致），
+  同时兑现了 §4.0 里「分段跑的 import 顺序与一趟根跑不同，下次能一趟跑完时应重取一次」
+  那条待办。
+- 耗时两极分布：**前 ~60 条占约一半墙钟**——`test_e2e_wrappers_ci` 93s+12s（起真
+  PowerShell 验 argv/rc 等价）、`test_e2e_stack_lease` 族 ~145s（真进程树收割/deadline
+  语义）、`test_e2e_manifest` / `test_run_e2e` / `test_e2e_profiles` 族合计 ~200s、
+  edge NLU tokenizer 全语料 parity 48s（8000+ 条逐条对 `BertTokenizerFast`，首跑抓过
+  vocab.txt 空行错位 1 的真 bug）、S2S 架构守卫 AST 扫描 25s；**其余 ~6600 条平均 ~0.11s**。
+- **判定：不删任何用例。** 慢的每一条都在守「必须真起子进程/真进程树/全语料才验得到」的
+  主张，砍时长=砍强度（「验证的强度必须匹配主张的强度」）；快的那六千多条没有肥肉。
+  日常迭代嫌全量慢，走 §6 自检表的分套件命令（本来就是这么设计的），全量留给批次收尾。
+
+### §60.4 同批读数（供下一跳对账）
+
+- 后端全量：**6623 passed / 73 skipped 零红（24m34s，一趟根跑）**，与上一跳闭合验算逐字一致，
+  **本批 ±0 条**（纯文档批，不新增不删除用例）。
+- `AGENTS.md` 929 → **759 行**（−170）；`CLAUDE.md` 301 → **289 行**（§7 叙述段 31 → 24）；
+  被收走的段全文在 §60.2，权威流水位置在 §60.1 索引。

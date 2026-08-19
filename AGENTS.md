@@ -81,7 +81,7 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 
 ## 4. ⚠️ 当前真实状态（别假设没验证的东西能跑）
 
-### 4.0 当前快照（2026-08-15）
+### 4.0 当前快照（2026-08-19）
 
 意图落域对抗测试按这个顺序接手：运行手册
 [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) → 最终验收
@@ -89,18 +89,12 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 → 逐批证据 `docs/design/2026-08-02-intent-routing-adversarial-findings.md` **§17–§26**。
 历史流水只查 [`docs/agents-history.md`](docs/agents-history.md)，不要再抄回本文件。
 
-**GitHub CI（2026-08-17 收口）**：`#349`（2026-08-15 `41c4d54`）之后 **连红 55 次**
-（`#350`–`#404`），`python-tests` 每次都红；15 条真失败已全部修完，见 history **§54**。
-三族：① **6 条时区**——`3b8cb39` 把生产代码收敛到 `runtime.clock`（业务时区）却没迁尺子，
-断言仍用 `time.mktime`/`time.localtime`（**按跑测试那台机器的时区解释**），
-宿主 UTC+8 恰好重合、GitHub runner 是 UTC 就分家；② **8 条 Linux 属主**——
-`deploy/cloud/redis_volume_prepare.py::_privatize` 写死 `chown(0,0)`，
-非 root 无权把文件送给 root（EPERM），而 **Windows 没有 `os.chown`、本地永远不红**；
-③ **1 条契约漂移**——`E2ECase` 新增必填字段后第二个构造点没跟。
-> ⚠ 两条通用教训：**本地跑测试必须显式 `TZ=UTC0` 才等价 CI**（Windows 上 CRT 认这个变量）；
-> **CI 的 `::error::` annotation 每个 step 只保留 10 条**，本次实际红 15 条只报出 8 条
-> ——「annotation 里有几条」不等于「红了几条」，数到 9~10 就要假定被截断，
-> 改用 Linux 容器（`git bundle --all` + `python:3.12` + **非 root** + `--init`）取全集。
+**GitHub CI（2026-08-17 收口，流水 §54）**：`#350`–`#404` 连红 55 次、15 条真失败三族
+（时区尺子未随 `runtime.clock` 收敛 / `chown(0,0)` 写死非 root 必炸 / `E2ECase` 契约漂移）
+已全部修完；叙述原文归档 history **§60.2**。
+> 两条仍有效的通用教训：**本地跑测试显式 `TZ=UTC0` 才等价 CI**（Windows CRT 认它）；
+> **CI annotation 每 step 只保留 10 条**——红灯数到 9~10 就假定被截断，
+> 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
 **当前部署形态（2026-08-19 更新）**：`dev-stack.local` = **`target=cloud`**。
 云端 release **`8bea3b8`**（2026-08-19 由 QA Q2 残余批 + `AUTH_TOKENS` 身份修复批逐次 `deploy --apply` 推上去，
@@ -139,207 +133,43 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > `case_ids: []` / `release_sha: null`——**一趟什么都没跑，却只报一行 `failed`**；
 > `scripts/tests/test_e2e_target.py` 同样 collection error。
 > **跑真栈与全量单测前先把它加进 PATH**（2026-08-19 实测，两处都撞到）。
-> ⑦ **跑全量单测必须带 `--import-mode=importlib`**（即 `make test` 的口径），
-> 否则 `agents/*/tests/test_agent.py` 同名模块冲突 ⇒ **一条 collection error 截断整趟**，
-> 读起来像「只红了一条」，实际是后面几千条根本没跑。
-> ⚠ 同族一条：**跑单测期间别在旁边跑 PowerShell 真栈命令**。
-> `scripts/tests/test_e2e_wrappers_ci.py` 那条要启 PowerShell 子进程（单跑 83s），
-> 与 `deploy`/`status` 轮询撞在一起就会红；独占复跑 **1091/52 零红**。
-> **红了先问是不是前提变了——这次变的前提是我自己制造的。**
+> ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
+> 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新后端全量基线（2026-08-19 QA Q2 残余批后，`target=cloud` + 本地 Docker 已退）**：
-`python -m pytest --import-mode=importlib` = **6623 passed / 73 skipped 零红**。
-⚠ **这个数是闭合验算出来的，不是一次跑批直接读出来的**，三条实测拼起来、零缺口：
+**最新后端全量基线（2026-08-19 洁癖批一趟根跑实测，`target=cloud` + 本地 Docker 已退）**：
+`python -m pytest --import-mode=importlib` = **6623 passed / 73 skipped 零红（24m34s）**，
+干净 HEAD 一趟根跑直接读出，与上一跳三表闭合验算的 6623/73 **逐字一致**（那条「分段跑的
+import 顺序与一趟根跑不同，下次应一趟重取」的待办由此兑现）；`--collect-only` = **6696**，
+与 passed+skip 逐条闭合。本批为纯文档批，用例 **±0**。
+历跳对账链（6623←6551←6257←6198←6127←…←5408）已归档：索引与原文全文见 history
+**§60**，各跳批次证据 §30–§59。全量 pytest 盘点结论（无可安全精简的存量、耗时两极分布、
+慢的都是刻意的真子进程/全语料守卫）见 history **§60.3**。
 
-| 实测 | 读数 | 说明 |
-|---|---|---|
-| 全量一次跑 | **6613 passed / 73 skipped / 1 failed** | **起跑那一刻的用例集**，见下 |
-| `scripts/tests` 独占复跑 | **1091 / 52 零红** | 那 1 条 failed 在这里，独占即绿 |
-| 当前 HEAD `--collect-only` | **6696** | = 6623 + 73，**逐条对得上** |
-
-- ⚠ **那次全量跑的 6613 不是 HEAD 的读数**：pytest 在 collect 阶段就把用例集定死了，
-  而我在它跑的 24 分钟里又往两个文件追加了 **9 条**（`test_candidate_query.py` +3、
-  `scripts/tests/test_probe_qa_regression.py` +6，都已单独验绿）。6613 + 9 = 6622，
-  再加那条并行污染的（独占跑是 pass）= **6623**。
-  > 这是上一跳那条纪律的同族——那次是「起跑前 15 秒还在 stash」，**这次是起跑后还在
-  > 往里加用例**。判据一样：**读数属于哪个用例集，取决于 collect 那一刻的工作树。**
-- ⚠ **那 1 条 failed 是我自己制造的前提变化**：`scripts/tests/test_e2e_wrappers_ci.py`
-  要启 PowerShell 子进程（单跑 83s），而它跑那会儿我正在旁边跑 `deploy` / `status` 轮询 /
-  `verify`（全是 PowerShell）。独占复跑 **1091/52 零红**。
-  **红了先问是不是前提变了——这次变的前提是我自己制造的。**
-- **本批净增 +71**（另有另一条工作线的 L3 报告竞态批 **+1**，`a341486`）：
-  段 1 **+65**（`runtime/tests/test_openhours.py` **31** +
-  `orchestrator/cloud/tests/test_candidate_query.py` **26** +
-  `orchestrator/cloud/tests/test_engine_candidate_shortcut.py` **5** +
-  `test_candidate_sets.py` **+3**）+ 段 2 **+6**（探针判据的单测）。
-  6551 + 71 + 1 = **6623** ✅ 与 collect 闭合。
-- **段 2 可直接对账**：1085 → **1091**，差的 6 条正是探针那批，逐条点得上号。
-- ⚠ **先看这条再对数**：`make up` 起着本地栈时同一份代码是 **6560 / 63**
-  （段 1 `5475/12` + 段 2 `1085/51`）。差的 **10 条 pass→skip 全是本地 Docker 停掉的
-  直接后果**，逐条点得上号：段 1 `test_merchant_redis_integration` **8** +
-  `test_session_redis_integration` **1**（"Redis 7 integration"）、段 2
-  `test_cloud_deploy_assets` 的 "redis probe image redis:7-alpine is not present
-  locally" **1**。**回本地跑 `make up` 后它们会变回 pass——看到少 10 条别当成回归。**（那组对照是在 6551/6560 那一跳量的，10 条的差值不随本批变化。）
-- **上一跳（切云收口批）产出 +5 collected**，全在段 2（`scripts/tests` **1132 → 1137**）：
-  四条前端车道回归（RC15/RC16）+ 一条 RC17 覆盖面守卫，五条全 pass；
-  证据 history **§57**。段 1 代码未碰。
-- ⚠ **这个 +5 是量出来的不是数出来的**：同工作树 `--collect-only` = 实跑 passed+skip，
-  **零口径缺口**；把改动 `git stash` 掉再 collect = **1132**，nodeid 逐条 diff 只差
-  新增的那几条、**没有多出来的第 N+1 条**。
-- ⚠ **上一跳记的段 2 `1080` 比它自己 HEAD 的 collect `1132` 少 1，那 1 条没有归属**：
-  transcript 显示它 08:40:24 起跑，而 08:39:42 还在 `cat >>` 往 `scripts/tests` 追加用例、
-  08:40:09 执行 `git stash push -- scripts/tests/...` 做反向验证。
-  **起跑前 15 秒还在 stash，读数就不是 HEAD 的读数**——所以本节不拿 1080 去加减，
-  只用同 HEAD 的可复现对照。
-- **段 1 的 12 skipped 逐条点得上号**：nightly LLM 语料 4（未配 `LLM_API_KEY`）+
-  ASR e2e 4（2 条无 key + **2 条 `ASR service unreachable at http://localhost:50059`**）
-  + symlink 权限 3（Windows 非管理员）+ opentelemetry 未装 1。
-  ⚠ **那 2 条 ASR 是切云的直接后果**（本地 llm-gateway 已停），8-17 那跳段 1 是 10 skipped
-  ——**切回 `target=local` 并 `make up` 后它们会变回 pass，不要当成回归**。
-
-⚠ 上一版本节写过 **6555 / 段 2 1080 / 「本批自身 +7」**，那是上一位在自己那次读数上记的账；
-段 2 数字与 +4 的归属已按上面的对照修正，「+7」那句因分母不可复现**不予背书也不重算**。
-
-上一跳（QA 批）留档：`python -m pytest --import-mode=importlib`
-**6257 passed / 15 skipped 零红**（2026-08-17 凌晨，QA 批 **Q7 残余（EL1+OR2）**后实测，
-SHA `c1620d9` + 本批工作树）。分两段：`--ignore=scripts/tests` **5476 / 10**
-+ `scripts/tests` **781 / 5**。较上一跳 6198 净 **+59**，**两条来源逐条点得上号**：
-- **本轮产出 +55**：段 1 **+52**（`orchestrator/cloud/tests/test_execution_focus.py` **47**
-  + `orchestrator/edge/tests/test_mixed_edge_executed.py` **5**）
-  + 段 2 **+3**（`scripts/tests/test_probe_qa_regression.py`，探针尺子的单测）；
-  证据 history **§53**。⚠ `test_actionability.py` 只改了判据形态、**没加用例**（仍 14 条）。
-- **+4 来自云发布工作线 `ea5947c`**（段 2，**非本轮产出**）。
-  ⚠ 这个数是**可复现对照**量出来的，不是猜：`ea5947c` 的临时 worktree 里
-  `scripts/tests` 收 **783**、当前工作树收 **786**，差额 **+3** 正是本轮那个新文件。
-  **段 1 不能这么比**——worktree 缺 codegen（3852 collected + **104 errors**）而主仓完整
-  （5486），**分母破得不一样就不可比**；段 2 可比是因为它不依赖 codegen。
-  段 1 因此用逐条点号（47+5=52），与实测 5424→5476 逐字对上。
-
-⚠ 本轮期间 HEAD 被并行工作线推进过两次（`3fd121a` 见 history §53.7、
-`c1620d9` 是云数据迁移/远程开发栈的**纯文档**提交，不碰代码）——
-**「我没动过 git」不等于「HEAD 没动过」，这已经是本项目第二次记它**。
-
-<details><summary>上一跳 6198 / 15 的记账（2026-08-16，QA 批 Q12，SHA `dcd9182`）</summary>
-
-较其上一跳 6127 净 **+71 passed / −9 skipped**，
-⚠ **三条来源，逐条点得上号**：
-- **QA Q12 +39**（本轮产出，全在段 1）：`runtime/tests/test_cntime.py` 9 +
-  `runtime/tests/test_slot_fidelity.py` 17 + `orchestrator/cloud/tests/test_slot_fidelity_wiring.py` 6
-  + reminder `test_agent.py` 3 + reminder `test_timeparse.py` 2 + `_sdk/test_timewindow.py` 1
-  + info `test_weather_answer.py` 1；证据 history **§52**。
-- **+23 来自云发布工作线**（`afff49d`/`bf92c22` 的 22 条在
-  `scripts/tests/test_cloud_release.py`，收尾合并 `e5d06a9` 再 +1，**均非本轮产出**；
-  本地 main 在我开工前后 fast-forward 过，session 快照里的 `dc856ce` 已不是 HEAD）。
-  ⚠ 攻击这个数用的是**收集数对照**而不是猜：`scripts/tests` 在 `dc856ce` 收 **756**、
-  在 `bf92c22` 收 **778**，而段 1 的收集数两个 SHA **逐字相同**（worktree 里都缺 codegen，
-  3817+104errors 对 3817+104errors——**分母一样破，对照就仍然成立**）。
-- **+9 是环境不是代码**（原 skip 现 pass，段 2）：`scripts/tests` 有一批按
-  「symlink/junction 能不能建 / PowerShell 在不在 / docker 在不在」跳过的用例。
-  本次段 2 从 **PowerShell 起、PATH 全**，它们真的跑了。
-  **跨环境比 skip 数没有意义，比 passed 数也要先对齐 skip。**
-
-⚠ 分两段：`--ignore=scripts/tests` **5424 / 10** + `scripts/tests` **774 / 5**
-（**必须先 `Remove-Item Env:\PYTHONIOENCODING`**）= **6198 / 15**。
-合并 `e5d06a9` 后**整套重跑过一次**：段 1 与合并前**逐字相同**（5424/10），
-差额全在段 2（773→774）——与上一次合入同一条工作线时的观察一致。
-
-⚠ **这个数取完之后，云发布工作线又进来一笔 `ea5947c`**（cloud verification 事务化，
-`scripts/tests/test_cloud_deploy_assets.py` +202 行）。**段 2 的收集数已从 778 变 783
-（+5），本节的 6198 是 `ea5947c` 之前的读数、没有重跑**。
-下一批开工前先把这 5 条点掉再谈自己的净增量——**同一条工作线本轮已经这样插进来三次**
-（`afff49d`/`bf92c22` +22、`e5d06a9` +1、`ea5947c` +5），而三次我都没执行过 git。
-> ✅ **这一笔已由 Q7 残余批点掉，实测是 +4 不是 +5**。推导链：本跳段 2 实跑
-> 781+5=**786 collected**，减去本轮新增的 3 条 = **783**，与 `ea5947c` worktree 的
-> `--co` 逐字相同；而上一跳实跑 774+5=**779**。⇒ `ea5947c` 带入 **+4 collected**，
-> 且两跳 skip 数同为 5 ⇒ **这 +4 全是 passed**。
-> 上面那个「778」是 `bf92c22` **worktree 里的 `--co`** 读数，与实跑口径差 1
-> ——**收集数与 passed+skip 是两个口径，跨口径相减会凭空造出一条不明用例**。
-
-</details>
-
-前一跳 **6127 / 24**（2026-08-16 Q5 残余后，`dc856ce`）也是两条来源：
-QA Q5 残余 +15（`agents/chitchat/tests/test_memory_provenance.py`，history **§51**）
-+ `f5099f9` 带入 2。分段读数 5385/10 + 742/14。
-
-前一跳 **6110 / 24**（QA Q6 + 云发布工作线合入）同样是两条来源：
-QA Q6 净 **+25**（`memory/tests/test_executed_actions.py` 4 +
-`agents/chitchat/tests/test_audit_answer.py` 21，证据 history **§50**；
-合并前单独实测过 **5999 / 14** 对 `--co` 6013，那是相对 Q10 的 5974 的干净读数），
-云发布批带入 **+111 passed / +10 skipped**。合并走 merge 不走 rebase，无冲突、零文件重叠；
-**合并后仍重跑过一次**——「零文件重叠」不等于「零交互」（conftest / 共享 fixture），
-实测段 1 与合并前逐字相同，差额全在段 2。
-
-⚠ **仍是分两段跑的合计，不是一趟根跑**（原因见下）。
-前一跳的分段读数 5385/10 + 742/14 = 6127/24，与当时 `--co` 的 **6151 collected** 对上。
-前一跳 5974（+45，Q10）：新文件 `test_order_session_scope.py` 45 条；
-同样分两段（5345/10 + 629/4，`--co` 5988）；证据 history **§49**。
-⚠ **分段的原因是后台全量连续两次在同一位置（76%）被中止**，而 76% 正是
-`scripts/tests` 那族拉真子进程的起点（与既有的「scripts/tests 要隔离复跑」同源）。
-两段合起来分母等于全集，但**段 1 的 import 顺序与一趟根跑不同**（少了 scripts/tests
-的 conftest），下次能一趟跑完时应重取一次。
-前一跳 5929（+4，Q11）：reminder 160→**164**，证据 history **§47**。
-前一跳 5925（+24，Q5）：memory 229→**250**、reminder 157→**160**；证据 history **§46**。前一跳 5901（+38，Q7）：`test_polarity.py` 26 +
-`test_segment_backfill.py` 11 + `test_pending_cancel.py` 1；证据 history **§45**。
-前一跳 5863（+27，Q2）：`test_candidate_sets.py` 21 + nearby 6；证据 history **§44**。前一跳 5836（+97，Q13）：`test_classifier_exit_parity.py` 93 +
-dashcam 两行金标各占 golden/分段两个参数化 4；证据 history **§43**。
-⚠ **首趟 192 failed 是我自己造的假红**——`Start-Process` 起的子进程没挂 PATH，
-逐字命中下方那条已记录的签名。**记过的坑会换个方式再踩**。
-前一跳 5739（+33，QA 阶段 2）：`test_pending_cancel.py` 11 +
-`test_pending_operation_id.py` 7 + `test_pending_table.py` 12 + `test_engine_confirm.py` 3；
-证据 history **§42**。⚠ 那一节初稿写过一个**没测就写的** 5745——基线数只能来自真实跑批。
-前一跳 5706（+38，QA 阶段 1）逐条点号：`agents/_sdk` 7（新增 `test_safety_signal.py`
-——**不该命中的用例占一半**）+ manual-rag 9 + road-safety 7 + chitchat 5 + parking-payment 3
-+ `orchestrator/cloud` 7（新增 `test_safety_focus.py`）；证据 history **§41**。
-⚠ **35m23s 不是回归变慢**：上一轮那 192 条假红是**快速失败**，这轮它们真的要跑
-（`scripts/tests/test_run_e2e.py` 拉真子进程），且本机 30 个容器在占 CPU。
-⚠ **这轮先踩了一次 §4.0 已经记过的坑**：用绝对路径 `& $py` 跑（`python` 不在 PATH）
-→ **192 条假红**，数字逐字对上下方那条警告。**红了先问是不是前提变了**。
-前一跳 5668（+9，双档复跑修复）：时区族 3（业务时区锚定 1 + 两条源码级守卫）+ nearby 6
-（当轮忌口压过记忆 1 + 忌辣说法覆盖 1 + 停车插入语 1 + 时段词 1 + 约束词正反两向 2）；
-证据 history **§40**。前一跳 5659（+46，EVA 余项 E1–E5）逐条点号：`agents/_sdk` 8（新增 `test_timewindow.py`：
-时刻消歧 1+事件时刻 3+用餐窗 3+时钟换算 1）+ nearby 19（E5 并集召回 4+E1 用餐窗 5
-+E2 属性维 7+假个性化守卫 2+类目别名话术 1）+ trip 14（E3 归城校正 7+城市序守卫 3
-+天数守卫 2+顺延跨城 2）+ memory 5（谓词归一族）；证据 history **§39**。
-前五跳：5613（+39，遗留六卡）见 **§38**、5574（+13，LLM_BACKUP/方向词/轨迹候选/
-复合取消）见 **§37**、5561
-（+41=基线陈旧 3+P3 簇 38）见 **§36**、5518 见 **§34**。⚠ 后台跑全量期间不许动
-工作树/测试锚（本批首趟在 catalog 锚更新前启动、会假红一条，停掉重跑才是干净读数
-——live 跑批纪律的全量版）。⚠ 本次实测 scripts/tests/test_e2e_stack_lease.py 12 条红
-=与并行 journeys 的 **stack lease 冲突假红**（那些测试模拟 runner lease 树而
-journeys 真持有 lease），隔离复跑 61/61+2skip 全绿——与既有「并行 Docker build 时
-test_e2e_wrappers_ci 假红（隔离复跑 6/6）」同族：**全量要单独跑，不与任何 e2e/build
-并行**。前五跳：5471→5500 见 §33、5464→5471 见 §32.1/§32.2、5457→5464 见 §32、
-5440→5457 见 §31、5408→5440 见 §30。
-⚠ Windows GBK 宿主是本仓常驻放大器，新写子进程/出站验签代码先想编码两端；
-本机会话若带 `PYTHONIOENCODING`，scripts/tests 的拉子进程用例会 188 条假红
-（§4.3 既有纪律，2026-08-13 又实测一次——全量必须在干净 env 跑）。
-⚠ 同族第二形态（2026-08-14 实测烧掉一次全量）：**`python` 不在 PATH 的 shell 里跑
-全量会 192 条假红**——e2e manifest 校验要求 `python` 可执行存在（`case
-e2e_protocol_smoke.command executable does not exist: python`），scripts/tests 整族
-连坐；判据同款「红了先问是不是前提变了」，把解释器目录挂上 PATH 后同批 293 条全绿。
-
-**2026-08-15 EVA 主题四批（能力状态，流水只查 history §36–§40）**：
-① P3 簇三 RFC（history **§36**）——G8 导航路线会话 + `navigation.reroute` 增量改道、
-G4 主题行程检索步、G9 trip 跨城市（`Trip.cities` + 跨天衔接 leg）、G7 陈述 vs 请求入台账。
-② 指令集全量真栈验证（报告
-[`…eva-instruction-set-e2e-verification.md`](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md)、
-history **§37/§38**）——25 语料首轮 ✅12/⚠️10/🔒3，遗留六卡 P1–P6 收口后
-**✅17/⚠️5/🔒3**；同批建了跨厂商备份档 `LLM_BACKUP=deepseek:deepseek-v4-flash`。
-③ 余项立卡 E1–E5（卡
-[`…eva-backlog-cards-e1-e5.md`](docs/design/2026-08-15-eva-backlog-cards-e1-e5.md)、
-history **§39**）——事件时刻反推用餐窗 / 停车便利·无障碍·不排队属性维 / 多城确定性归城校正 +
-主题接地读数 / 方差面只读探针 / 谓词别名老账（消费面两路并集 + 存量 18 行归一）。
-④ 双档复跑修复（报告
-[`…eva-dual-provider-rerun-and-fixes.md`](docs/reviews/2026-08-15-eva-dual-provider-rerun-and-fixes.md)、
-history **§40**）——25 语料 × MiniMax/DeepSeek 各 27 轮，据「两档是否同时错」定位并修掉
-**容器时区族**（所有「几点」判定偏 8 小时，8 处；唯一实现下沉 `runtime/clock.py` + 两条源码级守卫）、
-**当轮忌口被记忆压过**、**约束词被当检索词**，外加画像 `place.company` 存量污染复位。
-修复后 25 条重跑一遍取干净读数：**✅18 / ⚠️7 / 🔒3 面**（报告 §6）。
-⚠ **这个数不能与六卡批的 ✅17/⚠️5 直接相减**——两轮是不同时点的独立采样，差额大头是
-已知方差面翻面（人称解析在 DeepSeek 同轮是对的、主题标注本轮零候选走诚实降级）；
-**能确定的结构性变化只有三条**：三§1#3 ⚠️→✅（用餐窗+忌口+停车三件齐）、六#6 ⚠️→✅、
-时间族全线正确（「6点前」现在解析成 18:00 而不是 06:00）。本轮仍 ⚠️ 的七条逐条有归属，
-**无新缺陷**（人称卡 2 条 / 主题方差 2 条 / 车控 🔒 2 条 / 南京池被限流 1 条）。
+**跑全量的固定口径**（历跳教训收敛于此，每条这里是唯一版本；违反任一条都会制造假红或假读数）：
+- **命令**：仓库根 `python -m pytest --import-mode=importlib`（= `make test`）。不带
+  `--import-mode` 会因 `agents/*/tests/test_agent.py` 同名模块 collection error **截断整趟**
+  ——读起来像只红一条，实际是后面几千条根本没跑。
+- **PATH**：`python` 必须在 PATH（本机在 `%LOCALAPPDATA%/Programs/Python/Python312/`）。
+  不在会让 scripts/tests 整族 **192 条假红**（e2e manifest 校验要求 `python` 可执行存在），
+  真栈侧还会让 `dev_stack verify` 变**空成功**（见上方接手须知 ⑥）。
+- **干净 env**：不得带 `PYTHONIOENCODING`（拉子进程的用例会 **188 条假红**）；
+  Windows GBK 宿主是常驻放大器，新写子进程/出站验签代码先想编码两端。
+- **隔离**：不与任何 e2e / docker build / PowerShell 真栈命令（`deploy`/`status`/`verify`）
+  并行——`test_e2e_wrappers_ci`（起真 PowerShell，单跑 ~93s）与 `test_e2e_stack_lease`
+  （模拟 runner lease 树）都会被并行方污染成假红，隔离复跑即绿。**红了先问是不是前提变了。**
+- **跑批期间不动工作树**：pytest 在 collect 那一刻定死用例集，**读数属于 collect 时的
+  工作树**——期间 stash、追加用例、更新测试锚，读数就对不上 HEAD。
+- **skip 对照**：`target=cloud` + 本地 Docker 停 = **73 skipped**；`make up` 起本地栈同一份
+  代码 = **63**（差的 10 条全是 Redis 集成 skip）；切云另使 2 条 ASR e2e 转 skip
+  （本地 `localhost:50059` 已停）。**切换部署形态后 skip 数变化不是回归。**
+- **对账**：基线对不上先怀疑**基线陈旧**（并行工作线合入过——「我没动过 git」不等于
+  「HEAD 没动过」）；净增量要跟同一 SHA 逐条点号，不能跟文档里那个数比。
+**2026-08-15 EVA 主题四批**（能力状态；完整叙述与读数 history **§36–§40**、修复后终态
+计分 **§40.2**，原文归档 §60.2）：① P3 簇三 RFC——G8 路线会话 + `navigation.reroute` /
+G4 主题行程检索步 / G9 跨城市 / G7 陈述 vs 请求台账（§36）；② 指令集 25 语料真栈验证 +
+遗留六卡收口（§37/§38）；③ 余项立卡 E1–E5 全部处理（§39）；④ 双档复跑修复——容器时区族
+8 处收敛 `runtime/clock.py` + 当轮忌口被记忆压过 + 约束词被当检索词（§40）。
+跨批次计分不可直减（不同时点独立采样），仍 ⚠ 的条目逐条有归属、无新缺陷。
 
 当前对标状态一句话：时间约束（到达时限 + 事件反推用餐窗）、真沿途、多城保序与归城校正、
 模糊目的地推断、记忆六维消费（subject/polarity/轨迹/路线偏好/口味/无障碍）均**真栈在案**；
@@ -357,11 +187,11 @@ Q13/Q2/**Q7 全维度**/Q5/Q11/Q10/Q6/Q12 主体、**存量数据清洗**已完�
 **会话状态、归属、审计与真实性**——所以它抓到的三个 P0 与 44 个 P1 与上面那些读数不矛盾，
 两者测的不是同一个面。
 
-**历史批次已归档，索引在 history §38.1 与 §40.1**（两次洁癖整理）：前者收 EVA 二轮五批
+**历史批次已归档，索引在 history §38.1 / §40.1 / §60.1**（三次洁癖整理）：§38.1 收 EVA 二轮五批
 （§33/§33.1）、商户链路收口三段（§30–§32.2；2026-08-12 商户批在 §29/§30）、B5/B6 后
-分组实测与真栈演练（§27/§28）；后者收上方四批的完整叙述与 §4.1 的五段完成态
+分组实测与真栈演练（§27/§28）；§40.1 收上方四批的完整叙述与 §4.1 的五段完成态
 （journeys 两红 §35 / 接地卡 R1 二期 §34 / EVA 二轮六批 §33 / 支付四批 §28 /
-商户七批 §30–§32.2）。**归档是把叙述换成索引，不是再抄一遍**——段内 catalog/分组
+商户七批 §30–§32.2）；§60.1 收 §4.0 的基线对账链与 CI 连红段（原文全文在 §60.2）。**归档是把叙述换成索引，不是再抄一遍**——段内 catalog/分组
 数字均为批次时点读数，当前数以上方基线段与下表为准。⚠ 从演练段沉淀并仍有效的两条：
 `--lane ci --full` 只选 1 个用例（引用它的 exit 0 别当 e2e 全绿）；
 `test/eval_actionability.py` 是取证脚本不是准入闸（不进 CI blocking）。
@@ -381,7 +211,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 全量基线见本节顶部（**6551 / 73**，2026-08-18 切云收口批后、本地 Docker 已退；`make up` 时同一份代码是 **6560 / 63**，差额是 Redis 集成 skip）；分套件最近实测：`orchestrator/cloud` **919**（2026-08-17，Q7 残余 +47 执行事实进焦点与确定性计划）/ edge **718**（2026-08-17，Q7 残余 +5 混合路径同轮执行事实；此前 Q13 +95 命名收敛守卫、Q7 +37 极性与分段）/ nearby **99**（Q2 +6）/ navigation **132** / trip **85** / mcp-bridge **478**（Q10 +45：新文件 `test_order_session_scope.py`）/ memory **254**（Q5 +21、Q6 +4）/ chitchat **62**（Q6 +21、Q5 残余 +15）/ reminder **164**（Q5 +3、Q11 +4）/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**6623 / 73**，2026-08-19 一趟根跑实测、`target=cloud` + 本地 Docker 已退；起本地栈时 skip 会少 10 条 Redis 集成，见「跑全量的固定口径」）；分套件最近实测：`orchestrator/cloud` **919**（2026-08-17，Q7 残余 +47 执行事实进焦点与确定性计划）/ edge **718**（2026-08-17，Q7 残余 +5 混合路径同轮执行事实；此前 Q13 +95 命名收敛守卫、Q7 +37 极性与分段）/ nearby **99**（Q2 +6）/ navigation **132** / trip **85** / mcp-bridge **478**（Q10 +45：新文件 `test_order_session_scope.py`）/ memory **254**（Q5 +21、Q6 +4）/ chitchat **62**（Q6 +21、Q5 残余 +15）/ reminder **164**（Q5 +3、Q11 +4）/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**307 条 / 22 域**，2026-08-15 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **145 条 / 12615 字符**（2026-08-15 QA 批 +1：`safety.driver_state`；余量 16000−12615=**3385**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **80 条**（vehicle 76 + media 4）/ VAL 车控对象 **67**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
