@@ -13,6 +13,28 @@ schema_version: 1
 #
 # 授权：泓舟 2026-08-02（概括授权，非逐条人裁；见落地记录「审阅闸」一节）。
 exemptions:
+  # ── 2026-08-19（QA 卡 Q8）新增四条：静音/取消静音、双闪开/关 ──
+  # 与 volume.set/inc/dec、headlight.on/off 同族，沿用 2026-08-02 的概括授权判据。
+  - intent: volume.mute
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。⚠ 豁免的是 2+2+1 覆盖矩阵，**不是 ingress 路由**——本条另有 cases/edge_ingress.yaml 的 ei.local.* 语料钉住「必须走端侧」（2026-08-19 之前它正是路由到云被就近误执行的）。
+    owner: 泓舟
+    reviewed_at: 2026-08-19
+  - intent: volume.unmute
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。⚠ 豁免的是 2+2+1 覆盖矩阵，**不是 ingress 路由**——本条另有 cases/edge_ingress.yaml 的 ei.local.* 语料钉住「必须走端侧」（2026-08-19 之前它正是路由到云被就近误执行的）。
+    owner: 泓舟
+    reviewed_at: 2026-08-19
+  - intent: warning_light.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。⚠ 豁免的是 2+2+1 覆盖矩阵，**不是 ingress 路由**——本条另有 cases/edge_ingress.yaml 的 ei.local.* 语料钉住「必须走端侧」（2026-08-19 之前它正是路由到云被就近误执行的）。
+    owner: 泓舟
+    reviewed_at: 2026-08-19
+  - intent: warning_light.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。⚠ 豁免的是 2+2+1 覆盖矩阵，**不是 ingress 路由**——本条另有 cases/edge_ingress.yaml 的 ei.local.* 语料钉住「必须走端侧」（2026-08-19 之前它正是路由到云被就近误执行的）。
+    owner: 泓舟
+    reviewed_at: 2026-08-19
   - intent: accompany_home.close
     requirements: [positive, hard_negative, relation]
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。

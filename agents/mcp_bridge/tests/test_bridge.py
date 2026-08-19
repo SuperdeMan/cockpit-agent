@@ -971,8 +971,24 @@ def test_card_drops_all_reserved_payload_keys_before_trusted_stamp(monkeypatch):
         "value": 7,
     })
     assert "_prov" not in card
+    # `readonly` 是 2026-08-19（QA I-022）新增的**产生方声明**：这条 binding 的
+    # ToolSpec 没声明 write ⇒ 只读 ⇒ 结果卡不该长成订单卡。它同时进了 reserved 集合
+    # （payload 里同名键会被丢掉），所以本条「外部键不许存活」的主张不受影响。
     assert card == {"value": 7, "type": "trusted", "server": "merchant",
-                    "tool": "query", "merchant": "merchant"}
+                    "tool": "query", "merchant": "merchant", "readonly": True}
+
+
+def test_write_tool_result_card_is_not_marked_readonly(monkeypatch):
+    """反向对照：写工具的结果卡**不许**被标只读——否则下单结果也会渲染成信息卡，
+    方向反了但一样是「卡片形态与本轮动作不一致」（QA I-022）。"""
+    monkeypatch.setattr("agents.mcp_bridge.src.agent.attach",
+                        lambda card, *args, **kwargs: card)
+    a = McpBridgeAgent()
+    binding = SimpleNamespace(
+        server=ServerSpec(id="merchant", command=[], version="", tools=[]),
+        tool=ToolSpec(name="create-order", intent="merchant.order", write=True))
+    card = a._card(binding, "mcp_result", {"order_id": "O-9"})
+    assert "readonly" not in card
 
 
 @pytest.mark.asyncio

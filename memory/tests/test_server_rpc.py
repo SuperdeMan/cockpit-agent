@@ -451,13 +451,22 @@ def test_future_event_emits_ask_style_reminder_offer():
 
     svc._nc = _FakeNC()
     svc._nats_tried = True
-    future_ts = int(_time.time()) + 3 * 86400
+    # ⚠ `event_time_iso` 必须一起给：生产里 `extract.py` 两个字段同时写，而 G7 的
+    # 准入闸（`offer_admission`）要靠 iso 分辨「用户说了时刻」还是「日期缺省 00:00」。
+    # 只写 epoch 的 fixture 测的是一个真实链路里不存在的形态（2026-08-19 Q11 残余）。
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    _tz8 = _tz(_td(hours=8))
+    _when = (_dt.now(_tz8) + _td(days=3)).replace(hour=15, minute=0, second=0,
+                                                  microsecond=0)
+    future_ts = int(_when.timestamp())
 
     async def go():
         ids = await svc.store.remember([{
             "user_id": "u1", "kind": "episodic", "text": "女儿周六下午三点钢琴比赛",
             "scope": "episodic.general", "subject": "女儿",
-            "value_json": json.dumps({"event_time": future_ts}, ensure_ascii=False)}])
+            "value_json": json.dumps({"event_time": future_ts,
+                                      "event_time_iso": _when.strftime("%Y-%m-%dT%H:%M:%S")},
+                                     ensure_ascii=False)}])
         await svc._derive_and_emit("u1", "primary", new_ids=ids)
         await svc._derive_and_emit("u1", "primary", new_ids=[])   # 非当轮 → 不再建议
 
@@ -498,7 +507,9 @@ def test_event_offer_time_display_is_utc8_not_container_local():
         ids = await svc.store.remember([{
             "user_id": "u1", "kind": "episodic", "text": "去北京出差",
             "scope": "episodic.general",
-            "value_json": json.dumps({"event_time": int(event_dt.timestamp())})}])
+            "value_json": json.dumps({
+                "event_time": int(event_dt.timestamp()),
+                "event_time_iso": event_dt.strftime("%Y-%m-%dT%H:%M:%S")})}])
         await svc._derive_and_emit("u1", "primary", new_ids=ids)
 
     asyncio.run(go())

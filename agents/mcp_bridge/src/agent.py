@@ -1313,11 +1313,18 @@ class McpBridgeAgent(BaseAgent):
 
     def _card(self, b, card_type: str, payload: dict) -> dict:
         reserved = {"_prov", "type", "server", "tool", "merchant",
-                    "buttons", "actions", "demo_label"}
+                    "buttons", "actions", "demo_label", "readonly"}
         card = {k: v for k, v in (payload or {}).items()
                 if k != "demo" and k not in reserved}
         card.update({"type": card_type, "server": b.server.id,
                      "tool": b.tool.name, "merchant": b.server.id})
+        # QA I-022：**只读工具的结果不许长成订单卡**。真栈现象是「问某个商品的营养
+        # 成分」→ speech 答营养、卡片却显示商户服务 + 订单号 + 待回传状态。
+        # 「这次调用会不会产生订单」是**产生方知道的事**，`servers.yaml` 的 `write`
+        # 就是它的声明处——不该让渲染端从「有没有 order_id」去猜（猜的结果就是
+        # 一张查询卡上挂着「待商户回传」）。同 §9.3「真实性标记是结果的一部分」。
+        if card_type != "mcp_order" and not getattr(b.tool, "write", False):
+            card["readonly"] = True
         if b.server.demo:
             card["demo"] = True
             card["demo_label"] = "演示商户"

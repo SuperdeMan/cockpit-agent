@@ -42,6 +42,33 @@ def test_route_session_reserved_key_feeds_active_route():
     assert route["arrive_by_ts"] > 0 and route["ts"] > 0
 
 
+def test_route_session_end_clears_the_active_route():
+    """QA I-017：导航被取消 ⇒ 活动路线**清空**（保留键 `_route_session_end`）。
+
+    不清的话 `focus.active_route` 还挂着，下一句「换条路」会去改一条已经取消的路线
+    ——而用户已经听到「已结束导航」了。**说了取消却还挂着**正是本条要修的形态。
+    """
+    plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                            intent="navigation.cancel")])
+    ended = StepResult(step_id="s1", status=StepStatus.OK,
+                       source_intent="navigation.cancel",
+                       data={"_route_session_end": True})
+    # 先有一条活动路线，同一份 results 里再终止它（跨轮由焦点接力，这里只验消费）
+    focus = extract_focus(plan, [_route_result(), ended])
+    assert focus is None or not focus.active_route,         f"取消之后活动路线还在：{getattr(focus, 'active_route', None)}"
+
+
+def test_route_session_end_only_when_declared_true():
+    """反向对照：没声明就不许清——恒清等于把 G8 整个关掉。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="navigation",
+                            intent="navigation.navigate_to")])
+    noise = StepResult(step_id="s2", status=StepStatus.OK,
+                       source_intent="navigation.locate",
+                       data={"_route_session_end": "true"})   # 字符串不是 True
+    focus = extract_focus(plan, [_route_result(), noise])
+    assert focus is not None and focus.active_route["destination"] == "万象天地"
+
+
 def test_route_session_rejects_bad_elements_without_str_coercion():
     """waypoints 非法元素直接丢（CLAUDE.md §6：不做 str() 转换）；坏坐标整条不进。"""
     ok = _valid_route_session({

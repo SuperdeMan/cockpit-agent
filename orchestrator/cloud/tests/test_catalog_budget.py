@@ -115,7 +115,15 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 能否继续驾驶）。**这一条是「改实现不等于加能力」的兑现物**——road-safety 里
     # 的确定性疲劳判据先落了地，但没有 manifest 声明时 planner 根本路由不过来，
     # 「困到睁不开眼了」三次取样分别落到闲聊、拒识和音量调节（迷你集 SF4）。
-    assert len(catalog.ref_to_pair) == 145
+    # 2026-08-19 145→151：卡 Q8「能力缺席 → 就近误执行」一次补齐 **6 条**——
+    # 云侧 `navigation.estimate`（只算不导：此前「A 到 B 多远多久」被就近挑成
+    # navigate_to **真的开始导航**）、`navigation.cancel`（终止本次导航：此前
+    # 「取消导航」被前置闸当成「取消挂起」吞掉），端侧 `volume.mute`/`volume.unmute`
+    # （此前「静音」上云被映射成 volume.dec）与 `warning_light.open`/`.close`
+    # （此前「打开双闪」三次取样分别落 power_mode.set / lane_assistance.close /
+    # **hvac.off**——要开双闪把空调关了）。端侧四条同样进 catalog：planner 看得见的
+    # 车控工具就是这一份。
+    assert len(catalog.ref_to_pair) == 151
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -154,14 +162,20 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-08-15 +107 → 12615：卡 Q9 新增 `safety.driver_state`（判别化描述写清
     # 与 driving_advice 的边界：约束在**人**（疲劳/饮酒/不适）还是在**环境**
     # （天气/路况）——两侧共用「能不能开」这个框架，不写清就一锅端）。有意新增 +1 条。
-    assert catalog.catalog_stats["chars_full"] == 12615
-    assert catalog.catalog_stats["chars_final"] == 12615
+    # 2026-08-19 +524 → 13139：卡 Q8 六条能力上目录，其中三条的描述刻意写长——
+    # 它们要教给 planner 的都是**边界**而不是功能：`navigation.estimate` 与
+    # navigate_to 的边界是「用户要的是数还是行程」（不写清就会把纯查询兑现成
+    # 真导航）、`navigation.cancel` 与 reroute 的边界是「终止 vs 增量调整」、
+    # `volume.mute` 与 volume.dec / media.pause 的边界是「压掉全部出声 vs 调小 vs
+    # 停播放」（真栈实测「静音」正是落到 volume.dec）。端侧两条走机械生成的短描述。
+    assert catalog.catalog_stats["chars_full"] == 13139
+    assert catalog.catalog_stats["chars_final"] == 13139
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（12615 → 3385）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13139 → 2861）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 3385
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2861
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

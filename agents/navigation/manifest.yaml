@@ -27,9 +27,22 @@ capabilities:
       顺路停靠（stop_category=吃饭/咖啡…→给沿途候选让用户选）、带途经点（waypoint=已选停靠
       点名，多个用顿号连写）。「X点前到/别迟到」这类到达时限把时间原话填 arrive_by（会核对
       预计到达并给出发提醒）；「不走高速/避堵/少收费/走风景好的路」填 route_pref（按策略规划）
-    slots: [destination, stop_category, waypoint, place_address, arrive_by, route_pref]
+    slots: [destination, origin, stop_category, waypoint, place_address, arrive_by, route_pref]
     examples: ["导航去公司", "带我去首都机场", "回家", "导航去东方之门，附近找个吃饭的地方",
-               "导航去东方之门途经肯德基", "去接孩子放学，五点前要到学校", "不走高速送我去机场"]
+               "导航去东方之门途经肯德基", "去接孩子放学，五点前要到学校", "不走高速送我去机场",
+               "从深圳欢乐海岸出发去世界之窗"]
+  # 2026-08-19（QA 卡 Q8 / I-016）：能力面原本只有「导航过去」，于是「从A到B多远多久」
+  # 被 planner 就近挑成 navigate_to **真的开始导航**（真栈实测发出 navigate、答「全程约21
+  # 公里」并前往）。判据是**用户要的是数还是行程**——这两件事在能力面上必须分开，
+  # 否则一个纯查询会产生不可逆的副作用（同 Q8 卡的「就近误执行」形态）。
+  - intent: navigation.estimate
+    description: 只算不导——回答「从A到B多远/多久/几点能到」，给出里程、驾车时长
+      与预计到达时刻，**不启动导航、不发车控动作**。起点默认当前位置，用户明说
+      「从X出发/从X开到Y」时填 origin。用户说「导航去/带我去/走吧/出发」这类**要动身**
+      的话归 navigation.navigate_to；本条只回答数字
+    slots: [destination, origin, route_pref]
+    examples: ["从深圳市民中心到深圳北站开车大概多远、要多久", "到公司还有多远",
+               "从家开到宝安机场大概要多久", "去趟世界之窗多长时间"]
   - intent: navigation.reroute
     description: 增量调整**当前正在进行的这次导航**（对话焦点里有「当前正在导航」时用本条）——
       去掉/加上途经点（「肯德基不去了」「顺路加个加油站」，remove_waypoint/add_waypoint）、
@@ -39,6 +52,17 @@ capabilities:
     slots: [remove_waypoint, add_waypoint, destination, route_pref]
     examples: ["刚才那个途经点不去了", "换条路走", "咖啡不买了，先去加油站，别迟到",
                "顺路再加个超市", "目的地改成宝安机场"]
+  # 2026-08-19（QA 卡 Q8 / I-017）：**终止**当前导航，与 reroute 的「增量调整」不是
+  # 一件事。补它的直接原因有两条：① I-017 现象是「说了取消，屏幕上那条路线还在」；
+  # ② 同批把裸取消判据收窄之后（`pending_cancel._no_substance_left`），
+  # 「取消导航」不再被前置闸当成「取消挂起」吞掉，**它必须有一个落点**——
+  # 放开一条路却不给它落点，是把一个错换成另一个错。
+  - intent: navigation.cancel
+    description: 结束/取消**当前正在进行的这次导航**（「取消导航」「别导了」「不去了」
+      在有活动路线时）。它是终止不是调整——删途经点/换路线/改目的地归 navigation.reroute；
+      没有正在进行的导航时诚实说明，不当作取消待确认操作
+    slots: []
+    examples: ["取消导航", "结束导航", "别导航了", "不用导航了", "退出导航"]
   - intent: navigation.set_place
     description: 设置常用地点（家/公司/学校）的地址，记住后可直接『导航去家/公司』。只记录不导航。
     slots: [place, address]

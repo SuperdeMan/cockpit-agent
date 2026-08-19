@@ -100,7 +100,14 @@ _BEFORE_MIGRATION = {
     "wiper.on",
     "wiper.speed.dec",
     "wiper.speed.inc",
+    "volume.mute",
+    "volume.unmute",
     "wiper.speed.set",
+    # 2026-08-19（QA 卡 Q8 / I-049）新增：静音/取消静音归 volume 对象。
+    # 2026-08-19（QA 卡 Q8 / I-050）新增：双闪从 headlight 拆成独立对象。
+    # 能力面 +2 是产品决定，在这里显式签收。
+    "warning_light.close",
+    "warning_light.open",
 }
 
 

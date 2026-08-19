@@ -67,12 +67,36 @@ schema_version: 1
 # 「能不能开」这个框架，正是最容易一锅端的地方。正 2（疲劳/饮酒）+ 硬负 2
 # （路况/雨天，环境侧）+ 对照 1（invariant），机械地 +5。
 # 全部 reviewed 不进 gate 池（不动 stable、不碰 baseline 比对面）。旧尺子一条没删。
+# 2026-08-19 放到 605：第十一次适用——QA 探索轮卡 Q8「能力缺席 → 就近误执行」补三块
+# 能力面，**占额度的理由同 Q9：不是模型分不清，是能力面上本来就没有那一侧**，
+# 而这一批三条的真栈读数比 Q9 那次更硬（迷你集 CA1-CA4，--repeat 3）：
+#   ① `navigation.estimate`（只算不导）+5：在它之前「从深圳市民中心到深圳北站开车
+#      大概多远、要多久」1/3 直接发出 navigate 真的开始导航（全程 21 公里）、
+#      1/3 答成「找到 0 个…路况」。**纯查询产生了不可逆副作用**，这是 Q8 卡里
+#      最该被尺子钉住的一类。判据是「用户要的是数还是行程」：正 2（问里程 / 问时长）+
+#      硬负 2（「导航去」「带我去」必须仍归 navigate_to，两个方向都要锁——只锁一侧
+#      会纵容把导航也答成估算）+ 对照 1（invariant 换措辞）。
+#   ② `volume.mute` / `volume.unmute` 与 ③ `warning_light.open/close` 各 **+2**，
+#      **不是 2+2+1**：它们是端侧原子车控，与 `volume.set/inc/dec`、`headlight.on/off`
+#      同族走 `coverage_exemptions.yaml`（判据：不经云侧 LLM 落域，没有可测对象）。
+#      但**豁免的是覆盖矩阵，不是 ingress 路由**——这两族修之前的真实症状恰恰是
+#      「路由到了云」：「静音」两次落 `volume.dec`、「打开双闪」三次分别落
+#      `power_mode.set`/`lane_assistance.close`/`hvac.off`（**要开双闪把空调关了**）。
+#      能钉住这件事的只有 `ei.local.*` ingress 语料，**单测只测名字**
+#      （dashcam 那条老账：抓到它的是语料不是单测）。故各补一对，机械地 +4。
+#   ④ `navigation.cancel`（终止本次导航）**+5**：它与本批把裸取消判据收窄
+#      （`pending_cancel._no_substance_left`）是同一笔改动的两面——旧判据
+#      「词长+3」让「取消导航」「取消订单」「取消提醒」整族被前置闸当成「取消挂起」
+#      吞掉（真栈答「当前没有待确认的操作」）；放开之后它必须有落点，
+#      **放开一条路却不给它落点是把一个错换成另一个错**。判据是「终止还是调整」，
+#      正 2 + 硬负 2（reroute 两侧）+ 对照 1。
+# 合计 +14 → 610。全部 reviewed 不进 gate 池；旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 596
+    max_cases: 610
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

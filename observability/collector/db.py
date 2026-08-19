@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS llm_calls(
   caller TEXT DEFAULT '',
   model TEXT DEFAULT '',
   provider TEXT DEFAULT '',
+  fallback INTEGER DEFAULT 0,
   prompt_tokens INTEGER DEFAULT 0,
   completion_tokens INTEGER DEFAULT 0,
   latency_ms REAL DEFAULT 0,
@@ -162,6 +163,9 @@ class ObsDB:
             # 加法式迁移：已存在的 obs.db（named volume 跨重启）补新列，
             # CREATE IF NOT EXISTS 不会给旧表加列
             self._ensure_column("llm_calls", "provider", "TEXT DEFAULT ''")
+            # QA I-057（2026-08-19）：这一跳换没换厂商。provider 一直有，但
+            # 「是不是降级」要人拿它比 active 才看得出来——排查现场没人会去比。
+            self._ensure_column("llm_calls", "fallback", "INTEGER DEFAULT 0")
             # 数据飞轮 P0（2026-07-28）：落域可观测 + 标注载体
             self._ensure_column("turns", "intents", "TEXT DEFAULT ''")
             self._ensure_column("turns", "plan_mode", "TEXT DEFAULT ''")
@@ -240,12 +244,13 @@ class ObsDB:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO llm_calls(trace_id, session_id, ts, caller, model, provider, "
-                "prompt_tokens, completion_tokens, latency_ms, cache_hit, thinking, "
+                "fallback, prompt_tokens, completion_tokens, latency_ms, cache_hit, thinking, "
                 "status, error, prompt_tail, content_head) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (event.get("trace_id", "") or "", event.get("session_id", "") or "",
                  int(event.get("ts", 0) or 0), event.get("caller", "") or "",
                  event.get("model", "") or "", event.get("provider", "") or "",
+                 1 if event.get("fallback") else 0,
                  int(event.get("prompt_tokens", 0) or 0),
                  int(event.get("completion_tokens", 0) or 0),
                  float(event.get("latency_ms", 0) or 0),

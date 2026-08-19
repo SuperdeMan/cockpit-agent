@@ -5516,3 +5516,175 @@ chitchat**，而它手里没有菜单，于是**编了一个商品名和一个�
 **整批收尾验收**（release `86a9490` = main HEAD）：`dev_stack verify` = **verified**；
 cloud 缺省 E2E **2/2 PASS**。本批动的是编排层短路（看到全部流量），这两项是
 「没打破既有」的证据。
+
+
+## §63 2026-08-19 QA 接手顺序第 8 步：Q8 能力缺席 + Q11 offer 准入 + P2 长尾
+
+接手顺序表里最后一个编号步。一批做完三件事，读数与根因分三段记。
+
+### §63.1 取证先行：四条探针把「卡上写的」和「真栈是什么」分开
+
+动码之前先按卡 §5 建红绿迷你集（`probe_qa_regression.py` 新增 `capability` 组
+CA1–CA4，`--repeat 3`，release `86a9490`）。**四条全红，而且比卡上写的更糟**：
+
+| 探针 | 卡上/报告写的 | 真栈实测（3 次取样） |
+|---|---|---|
+| CA1 I-016 | 纯距离查询触发导航 | **1/3 `[var]`**：一次真发 `navigate`（答「全程约21公里」并前往）、一次答「为您找到 0 个…路况」、一次只有 LLM 常识没有数 |
+| CA2 I-004 | 方向盘加热自然语言不可达 | **0/3 `[det]`**，三次逐字「暂不支持哦」 |
+| CA3 I-049 | 静音→volume.dec | **0/3 `[det]`**：静音落 `volume.set`/`volume.dec`；「取消静音」三次都答「当前没有待确认的操作」 |
+| CA4 I-050 | 双闪被映射为大灯 | **0/3 `[var]`**：三次分别落 `power_mode.set` / `lane_assistance.close` / **`hvac.off`**，另有一次零动作纯话术「好的，已为您打开双闪」 |
+
+⚠ **CA4 那一栏比报告严重一档**：报告说「映射为大灯」，实测是**每次落到一个随机的
+别的车控对象**——要开双闪把空调关了。这不是模型方差，是**能力缺席的签名**：
+没有那个工具时 planner 每次都在别的工具里就近挑一个，挑的还不是同一个。
+
+### §63.2 Q8 四块，两块的根因与卡上不同
+
+**① 方向盘（I-004）——两个产出方对同一个 intent 给出不同形状的 VAL 命令。**
+`edge_call.decode_intent("steering_wheel.heating.open")` 产 `operate=set` + `enabled`
+（合法）；`fast_intent.classify_structured("打开方向盘加热")` 产 `operate=open`
+（`commands.yaml` 里方向盘 `operates: [set, inc, dec]` 不认）⇒ `_validate_command`
+一律判 unsupported_command。同族第二处：高度调节产 `mode=height` 而知识库里它是
+`attrs: [height]`，VAL 的 `attr == "height"` 分支够不着 ⇒ **方向盘高度三条从来没通过**。
+> **B4 门禁为什么看不见**：`lane_verification` 直接调 `_simulate`、**跳过
+> `_validate_command`**，而且只走 `decode_intent` 那一个产出方。
+> **门禁走的是执行流水线的一段，不是整条** ⇒「声明了却过不了校验」这一族完全不可见。
+> 修法把覆盖面变成断言：`test_fast_path_command_is_accepted_by_val`（金标 40 条）+
+> `test_recognized_command_is_accepted_by_val`（对象语料 22 条）。**注入验红两侧都做**
+> ——退回旧实现两条当场红，还原后全绿。
+>
+> 断言刻意**只要求合法、不要求两个产出方逐字相同**：实测另有 7 对良性差异
+> （media 别名 music、`switch` 带不带 mode 等），一并锁死只会制造噪声红。
+
+顺手修掉话术三处错（`_build_response_key` 只按 operate 二分）：加热关闭答「开了」、
+高度调节答「开了/关了」。新增 `steering_wheel_height_set_success`。
+
+**② 双闪（I-050）——根因在生成器的 family 表。**
+`scripts/gen_commands_yaml.py` 把 `warning_light` 并进了 `headlight`，于是知识库里
+**没有双闪这个对象**；规则侧一直认得出 `warning_light` 这个名字，但它不在
+`LOCAL_INTENTS` ⇒ 整句上云 ⇒ 云侧没有这个工具 ⇒ 就近误执行。
+按 B4 SOP 全流程补：新对象 + 删 family 映射 + `LOCAL_INTENTS` + VAL `_simulate`
+专属状态键 + 两条话术 + 迁移探针签收 + ingress 语料 ×2。
+> **判据**：大灯是照明、双闪是示警，两个物理开关、两种行车限制语义。
+> 「看起来像同一族」和「真的是同一件事」是两回事（同 `BUSINESS_TZ` 那次的反向误用）。
+
+**③ 静音（I-049）——第二个洞比卡上写的宽得多。**
+端侧无规则只是上半；下半是 `pending_cancel.is_standalone_cancel` 把「取消静音」
+当成裸取消吞了。旧判据是「词长 + 松弛 3」，于是 `取消`（2 字）后面跟**任何两字宾语**
+都算裸取消——实测 **取消导航 / 取消订单 / 取消提醒 / 取消播放 / 不用导航 / 不要开窗**
+整族被前置闸吞掉，从来到不了规划。
+改成「剥掉取消词与虚词之后一个实质字都不剩」（判据形态同
+`navigation._person_destination`），23 条正反用例逐条锁。
+> 模块 docstring 里那句「放宽了『取消当前导航』会被答成…」写的是对的，
+> **只是当时那个阈值已经放得够宽、能吞下两字宾语了**。
+> ⚠ 只收窄「没有挂起」那条路径；`detect_cancel`（有挂起时）维持原样——那个语境下
+> 「取消 X」指挂起还是指 X 是真歧义，短路型判据看到全部流量，误伤代价是整轮被吞。
+
+落点是 **`volume` 不是卡上写的 `media`**，三条取证：飞书公版指令表「打开静音」的域是
+`setting`（`baseline_routing.json` 有这条）；`nlu_objects.yaml` 头部自己写着
+「`声音` 全量 62% 是音量（导航音量/媒体音量/**静音**）」；静音要压的是全部出声，
+而 `media.pause` 是停播放——两件事放同一个对象下，planner 才不会面对两个分不开的工具。
+
+**④ `navigation.estimate` + `origin` 槽（I-016 与 I-029②）。**
+能力面里只有「导航过去」，于是「A 到 B 多远多久」被就近挑成 navigate_to。补一条
+只算不导的能力（**永不产出 navigate 动作**），并给 `navigate_to`/`estimate` 都加
+`origin` 槽——I-029② 那条从 Q12 转过来时就判定为「能力缺席不是槽值保真」：
+用户明说「从 X 出发」时 planner 无处可放，只能丢掉（静默用当前位置）或塞进 destination。
+`_resolve_point` 是两条路共用的解析；**解析不出就诚实追问，绝不静默回落当前位置**。
+覆盖面写在 `_route_plan_to` 的 docstring 里：接了 origin 的只有普通导航这一条路径，
+顺路停靠/途经点/常用地点三条仍按当前位置起算（行为与本批之前逐字一致）。
+
+### §63.3 Q11 offer 准入：判据落成一个模块，而不是一句 if
+
+`memory/offer_admission.py` 是准入判据的唯一声明处，三条确定性判据：
+① 时刻必须是**用户说出来的**（抽取 prompt 明写「只有日期没有时刻用 00:00:00」，
+所以 `event_time_iso` 落在 00:00 就等于用户只说了个日子——一张「8月21日00:00提醒你」
+的建议卡本身就是坏的）；② 至少提前 30 分钟；③ 剥掉时间词之后还得剩下一件事
+（原实现 `or text` 回落成原文，等于把时间词又贴回标题里）。
+`store.future_events` 一并带出 `event_time_iso`——只带 epoch 秒的话，那个区别在下游
+就永远看不见了。
+> **刻意没做**：按 text 里的「查询/问了/搜了」做排除。那是关键词排除，模型换个转述
+> 就绕过去。判据取**形态**：天气查询之所以被挡住，不是因为它长得像查询，
+> 是因为它**没有时刻**。
+> ⚠ 既有两条 G7 测试的 fixture 只写 `event_time` 不写 `event_time_iso`——那是一个
+> 生产链路里不存在的形态（`extract.py` 两个字段一起写）。一并补上。
+> 注入验红：把 `_has_spoken_clock` 改成恒 True，判据侧与端到端侧同时红。
+
+### §63.4 P2 长尾五条，两条的定性被取证改写
+
+- **I-022（营养查询显示订单卡）**：`servers.yaml` 的 `write: false` 就是现成判据——
+  只读工具的结果卡打 `readonly`，HMI 走 `McpInfoCardView`（无订单号/状态/按钮）。
+  **「这次调用会不会产生订单」是产生方知道的事**，不该让渲染端从有没有 order_id 去猜。
+- **I-033（体育失败不披露 provider）**：回落通用检索时话术点名 vendor + 卡片
+  `_prov.mode=degraded`。**真实性标记是结果的一部分，不是日志的一部分。**
+  ⚠ **只做了本轮披露这一半**：下一轮追问「哪个源失败了」需要会话级的数据源账本
+  （Q6 执行账本的同族扩展面），独立一卡，本批未做。
+- **I-057（静默切 provider）**：**取证推翻了报告的第一半**——`obs.llm` 早就记着
+  actual provider（`_emit_llm(provider=a_aid)`），collector 也存着这一列。
+  真缺口是**「这一跳换了厂商」没被标出来**，要人拿 provider 去比 active 才看得出，
+  而排查现场没人会去比。新增 `fallback` 字段（llm-gateway→obs→collector→dashboard 四层），
+  dashboard 显示 provider 徽章 + 「降级换厂商」告警条。正反两条断言（没换厂商不许标）。
+- **I-017（取消导航后卡片残留）**：新增 `navigation.cancel`。**它是 §63.2③ 那条收窄的
+  必要配套**——把「取消导航」从前置闸里放出来却不给它落点，是把一个错换成另一个错。
+  终止 ≠ 增量调整：新保留键 `_route_session_end` 清 `focus.active_route`（不清的话
+  下一句「换条路」会去改一条已经取消的路线），HMI 出「导航已结束」卡。
+  没有活动路线时**诚实说明，不回落成「已取消」**——那正是 I-017 里用户看到「已取消」
+  却什么都没变的来源。
+- **I-031（按钮回发反而拒识）**：根因不在 send_text 写得好不好。resume 轮模型**又出了
+  一张澄清卡**，而 engine 在这一轮不许连问两次、会把它丢掉，丢完只剩空计划 ⇒「没听清」。
+  判据：**系统自己给的选项被点了之后，不许回答「我没听清你要做什么」**。
+  ⚠ 两次自伤：① 首版条件带了 `plan.clarify is None`，**实测根本没触发**——测下来走的是
+  `_no_action` 那条既有路（「先证明自己测的那条路径真的被走到」的第 N 次应验）；
+  ② 首版挂点在观测赋值之后、靠逐字段搬运，当场被 B6「shadow 只写不读」的源码级断言
+  按住——**搬运也是读**，那条红线不接受「我只是原样传递」。改成挂在赋值之前，零搬运。
+
+### §63.5 语料额度：596 → 610（第十一次递进，+14）
+
+按接手顺序第 8 步的要求**先说明理由再调 `max_cases`**，逐项占用写进 `suites.yaml` 头部：
+`navigation.estimate` +5 / `navigation.cancel` +5 / 静音族 ingress +2 / 双闪族 ingress +2。
+端侧四条 intent 进 `coverage_exemptions`（同 `volume.set`/`headlight.on` 的既有判据），
+但**豁免的是 2+2+1 覆盖矩阵、不是 ingress 路由**——这两族修之前的真实症状恰恰是
+「路由到了云」，而**单测只测名字、走哪条路只有 ingress 语料看得见**（dashcam 那条老账）。
+> 门禁当场抓到一条 **cohort leakage**：`顺路那个加油站不去了` 的首版原话
+> 「刚才那个途经点不去了」**逐字取自被注入的知识**（manifest examples / boundaries texts）。
+> 换句话，不动那条检查——**尺子该让的是这句话，不是那条检查**。
+
+### §63.6 基线变更（都是显式签收点，不是顺带）
+
+- catalog **145 → 151** 条、chars **12615 → 13139**、16k 预算余量 3385 → **2861**
+- `VEHICLE_INTENTS` 迁移探针 **+4**（`volume.mute`/`volume.unmute`/`warning_light.open`/`.close`）
+- 端侧分类金标表 **五行翻面 + 两行新增**（双闪/静音四行原来锁的是「能力缺席时诚实上云」，
+  现在锁「能力补上了、走端侧」；方向盘两行名字层面**一直是对的**，
+  真正红的是新加的那条 VAL 校验断言——**名字对不代表命令合法**）
+- L0 门禁：discovery **85/85**、gate **25/25**，`distinct_inputs` **610**（恰好用满新上界）
+
+### §63.7 读数
+
+- **后端全量**：`python -m pytest --import-mode=importlib` = **6784 passed / 73 skipped
+  零红（24m05s）**（首跑 6783 + 1 failed，红的是本批自己新写的那条端到端测试，见 §63.8）。
+  较上一跳 6722 净 **+62**：navigation +9（`test_estimate.py` 7 + cancel 2）/
+  edge +34（金标表两行新增 + `test_fast_path_command_is_accepted_by_val` 40 条 +
+  对象语料 VAL 校验 22 条，扣参数化重叠）/ memory +7（`test_offer_admission.py`）/
+  cloud +5（clarify_resume 3 + `_route_session_end` 正反 2）/ llm-gateway +2 /
+  mcp-bridge +1 / info +1。
+  ⚠ **skip 数 73** = 操作者 shell **没有** `CAR_AGENT_*` 三件套那一档（设了是 32）——
+  上一跳设了、这一跳没设，**41 条差额不是回归**（「跑全量的固定口径」第二变量）。
+- **L0 门禁**：`python scripts/check_intent_gate.py` **exit 0**——discovery **85/85**
+  （649 条 / **610 唯一输入**）、gate **25/25**（139 条 / 129 唯一输入）。
+- **能力完整性门禁**：`python test/eval_capability_integrity.py` PASS（八车道零缺口）。
+- **端侧冒烟**：`python test/smoke_edge.py` **13/13**。
+- **前端**：hmi `npm test` 279 / `npm run build` ✅；dashboard 17 / build ✅。
+
+### §63.8 本批自伤三次，三次都是同一类：**先证明自己测的那条路径真的被走到**
+
+1. **I-031 首版条件带了 `plan.clarify is None`** ⇒ 分支根本没触发，测下来走的是既有
+   `_no_action` 那条路。改条件之后才真的走到。
+2. **I-031 首版挂点在观测赋值之后、靠逐字段搬运** ⇒ 被 B6「shadow 只写不读」的源码级
+   断言当场按住。**搬运也是读。**
+3. **`test_offer_admission.py` 单跑绿、全量红**：`from tests.test_server_rpc import _servicer`
+   ——`tests` 是裸包名，全量跑批时它已被别的服务的 tests 包占了 `sys.modules`
+   （`ModuleNotFoundError: No module named 'tests.test_server_rpc'`）。本仓记过同族老账
+   两次（`server` 裸模块名与 orchestrator/edge 冲突、`providers` 包名劫持），**这是第三次**。
+   修法按既有惯例：**按文件路径独名加载**，四行 `_servicer` 就地复制而不是跨模块导入。
+   > **通用判据**：新写的测试要跨模块拿脚手架时，先问一句「这个模块名在全量里唯一吗」。
+   > 单跑绿证明不了它在全量里也绿——**分母不同，import 解析也不同**。

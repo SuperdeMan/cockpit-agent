@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 from fast_intent import LOCAL_INTENTS, classify, classify_structured, is_local
+from val import VAL
 import fast_intent
 
 
@@ -101,14 +102,22 @@ _GOLDEN = [
     # 本文件当时全绿——**名字对不对与走哪条路，是两层断言**。补进金标。
     ("打开行车记录仪", "dashcam.open", True),
     ("关闭行车记录仪", "dashcam.close", True),
-    # 双闪：`commands.yaml` 没给它 edge_intents ⇒ **本来就不是端侧能力**。
-    # 收敛只要求两个出口给同一个答案，不要求把它变成本地——补 `hazard_light`
-    # 能力面是 Q8（阶段 4），在那之前它诚实地上云。
-    ("打开双闪", "warning_light.open", False),
-    # 静音：两个出口都认不出。**这是能力缺席（Q8）不是命名分歧**，
-    # 锁在这里是为了让 Q8 补 `media.mute` 时这一行必须跟着改。
-    ("静音", None, False),
-    ("取消静音", None, False),
+    # ⚠ 下面五行 2026-08-19（QA 卡 Q8）翻面，**留痕**：它们原来锁的是「能力缺席时
+    # 诚实上云」，现在锁的是「能力补上了、走端侧」。**行为锁按设计工作**——
+    # 补能力必然要显式改这几行，而不是让路由悄悄变。
+    # 双闪：原为 `("打开双闪", "warning_light.open", False)`——commands.yaml 当时没有
+    # 这个对象（被 `gen_commands_yaml` 的 family 表并进了 headlight）。
+    ("打开双闪", "warning_light.open", True),
+    ("关闭双闪", "warning_light.close", True),
+    # 静音：原为 `("静音", None, False)` / `("取消静音", None, False)`，两个出口都认不出。
+    # 落点是 `volume` 不是 `media`，理由写在 commands.yaml 的 volume 对象上。
+    ("静音", "volume.mute", True),
+    ("取消静音", "volume.unmute", True),
+    # 方向盘：名字这一层**一直是对的**，所以这两行在旧代码下也绿——真正红的是
+    # 下面那条 VAL 校验断言（旧实现产 `operate=open` / `mode=height`，
+    # 知识库两者都不认，端侧秒回「暂不支持哦」）。**名字对不代表命令合法。**
+    ("关掉方向盘加热", "steering_wheel.heating.close", True),
+    ("方向盘调高", "steering_wheel.height.inc", True),
 ]
 
 
@@ -133,6 +142,37 @@ def test_segment_path_agrees_with_single_sentence_path(text, want_name, _local):
     structured = classify_structured(text)
     got = fast_intent._to_legacy_name(structured) if structured else None
     assert got == want_name, f"{text!r} 分段路径 → {got!r}，金标 {want_name!r}"
+
+
+@pytest.mark.parametrize("text,want_name,want_local", _GOLDEN,
+                         ids=[g[0] for g in _GOLDEN])
+def test_fast_path_command_is_accepted_by_val(text, want_name, want_local):
+    """端侧快路径产出的结构化命令**必须过 VAL 校验**——名字对不等于命令合法。
+
+    ⚠ **这条断言是 2026-08-19 补的，补它的直接原因是一个活了很久的洞**（QA I-004）：
+    `steering_wheel.heating.open` 在 `commands.yaml` 里声明齐全、在 `LOCAL_INTENTS` 里、
+    `classify()` 也产得出这个名字——**唯独端侧快路径产的 VAL 命令是 `operate=open`，
+    而方向盘的 `operates` 是 `[set, inc, dec]`**，于是 `_validate_command` 一律判
+    unsupported_command，真栈三次取样全是「暂不支持哦」。
+
+    为什么既有的门禁看不见它：`test/eval_capability_integrity.py` 逐条跑的是
+    **`edge_call.decode_intent`** 那条路（云侧计划面），它产的是 `set` + `enabled`
+    ——**合法**。同一个 intent 有两个产出方，门禁只走了其中一条。
+    这是「同一件事有两份实现，迟早有一份是错的」在**结构化命令形状**上的形态。
+
+    判据刻意**只要求合法、不要求两个产出方逐字相同**：实测另有 7 对良性差异
+    （media 别名 music、`switch` 带不带 mode 等），把它们一并锁死只会制造噪声红。
+    """
+    if not want_local:
+        return                       # 上云的那些本来就不经 VAL
+    structured = classify_structured(text)
+    assert structured is not None, f"{text!r} 认不出结构化意图"
+    data = structured["data"]
+    val = VAL()
+    ok, err = val._validate_command(
+        data.get("object"), data.get("operate"), val._normalize_entities(data))
+    assert ok, (f"{text!r} → {data!r} 过不了 VAL 校验（{err}）；"
+                "端侧会秒回「暂不支持哦」，能力声明齐全也没用")
 
 
 # ── 源码级：只允许存在一处「对象 → 名字」的分支链 ──────────────────────────

@@ -30,6 +30,8 @@ function LlmRow({ call }: { call: LlmCall }) {
       <button className="det-llm__head" onClick={() => setOpen(!open)}>
         <span className="det-llm__caller">{call.caller || '—'}</span>
         <span className="det-llm__model">{call.model}</span>
+        {call.provider && <span className="det-chip">{call.provider}</span>}
+        {!!call.fallback && <span className="det-chip det-chip--warn">降级换厂商</span>}
         <span className="det-llm__tok">
           {call.prompt_tokens}+{call.completion_tokens} tok
         </span>

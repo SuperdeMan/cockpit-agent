@@ -161,7 +161,7 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'research_report': return <ResearchReportCardView card={card} />
     case 'sports_scores': return <SportsScoresCardView card={card} />
     case 'sports_scorers': return <SportsScorersCardView card={card} />
-    case 'route_plan': return <RoutePlanCardView card={card} />
+    case 'route_plan': return <RoutePlanCardView card={card} onAction={onAction} />
     case 'charging_route': return <ChargingRouteCardView card={card} />
     case 'trip_itinerary': return <TripItineraryCardView card={card} onAction={onAction} />
     case 'poi_list': return <PoiListCardView card={card} />
@@ -178,7 +178,10 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'payment_receipt': return <PaymentReceiptCardView card={card} />
     case 'parking_fee': return <ParkingFeeCardView card={card} />
     case 'mcp_order': return <McpOrderCardView card={card} onAction={onAction} />
-    case 'mcp_result': return <McpOrderCardView card={card} onAction={onAction} />
+    // 只读工具的结果走信息卡：卡片形态必须与本轮真实动作一致（QA I-022）
+    case 'mcp_result': return card.readonly
+      ? <McpInfoCardView card={card} />
+      : <McpOrderCardView card={card} onAction={onAction} />
     case 'merchant_checkout': return <MerchantCheckoutCardView card={card} onAction={onAction} />
     case 'merchant_choices': return <MerchantCheckoutCardView card={card} onAction={onAction} />
     case 'merchant_order_preview': return <MerchantCheckoutCardView card={card} onAction={onAction} />
@@ -1008,7 +1011,7 @@ function SportsScorersCardView({ card }: { card: SportsScorersCard }) {
 
 // ─── 路线规划卡：出发地 → 途经点 → 目的地（导航确认途经点后，复用充电时间线样式）───
 
-function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
+function RoutePlanCardView({ card, onAction }: { card: RoutePlanCard; onAction?: (text: string) => void }) {
   const dur = card.duration_min
     ? `${Math.floor(card.duration_min / 60) ? `${Math.floor(card.duration_min / 60)}小时` : ''}${card.duration_min % 60 ? `${card.duration_min % 60}分钟` : ''}`
     : ''
@@ -1017,7 +1020,7 @@ function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
       <div style={{ padding: '15px 16px 12px' }}>
         <AIBadge label="AI · 路线规划" />
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600 }}><Icon name="route-map" size={17} color="var(--au-text)" />规划路线</span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14.5, fontWeight: 600, opacity: card.cancelled ? 0.55 : 1, textDecoration: card.cancelled ? 'line-through' : 'none' }}><Icon name="route-map" size={17} color="var(--au-text)" />{card.cancelled ? '导航已结束' : card.estimate ? '距离估算' : '规划路线'}</span>
           {(card.distance_km || dur) && <span className="au-num" style={{ fontSize: 12, color: 'var(--au-text-2)' }}>{dur}{card.distance_km ? `${dur ? ' · ' : ''}${card.distance_km}km` : ''}</span>}
         </div>
       </div>
@@ -1044,7 +1047,16 @@ function RoutePlanCardView({ card }: { card: RoutePlanCard }) {
         })}
       </div>
       <div style={{ padding: '0 16px 14px' }}>
-        <button style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'var(--au-aurora)', border: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>开始导航</button>
+        {/* 按钮回发的必须是**可直接执行的自然语言**（I-031：「解释定位原理」那颗按钮回发后
+            被判没听清）。estimate 卡上它才是真按钮——只算不导之后「那就导过去」是下一步；
+            规划卡上导航已经发出去了，再点一次没有语义，保持原来的装饰态。 */}
+        {card.cancelled
+          ? <button onClick={() => onAction?.(`导航去${card.destination}`)} disabled={!onAction}
+              style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'transparent', border: '1px solid var(--au-line-2)', color: 'var(--au-text-2)', fontSize: 13.5, fontWeight: 600, cursor: onAction ? 'pointer' : 'default', opacity: onAction ? 1 : 0.58, fontFamily: 'inherit' }}>重新导航</button>
+          : card.estimate
+          ? <button onClick={() => onAction?.(`导航去${card.destination}`)} disabled={!onAction}
+              style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'var(--au-aurora)', border: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: onAction ? 'pointer' : 'default', opacity: onAction ? 1 : 0.58, fontFamily: 'inherit' }}>导航过去</button>
+          : <button style={{ width: '100%', padding: '11px 0', borderRadius: 14, background: 'var(--au-aurora)', border: 'none', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer' }}>开始导航</button>}
       </div>
     </div>
   )
@@ -1763,6 +1775,39 @@ function McpOrderCardView({ card, onAction }: {
         </div>
       )}
       <MerchantActionRow buttons={actionButtons} onAction={onAction} />
+    </div>
+  )
+}
+
+// 只读商户工具的结果卡（QA I-022）。**刻意极简**：内容由 speech 承载（这些工具都是
+// speech_mode: summarize），卡片只留三件后端已经保证、话术里说不清的事——
+// 品牌、演示商户角标、数据真实性徽章。订单号/状态/应付/操作按钮一个都不出现：
+// 那些字段在一次营养成分查询里没有对应物，渲染出来就是无中生有。
+function McpInfoCardView({ card }: { card: McpResultCard }) {
+  const order = normalizeMerchantOrder(card)
+  return (
+    <div className="au-card" style={{ padding: '14px 16px', maxWidth: 340 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          fontSize: 10.5, fontWeight: 800, letterSpacing: '0.06em', padding: '3px 8px',
+          borderRadius: 999, color: 'var(--au-primary)', background: 'rgba(70,214,224,0.10)',
+          border: '1px solid rgba(70,214,224,0.22)',
+        }}>
+          {order.brand}
+        </span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--au-text)' }}>商户信息</span>
+        {card.demo && (
+          <span style={{
+            fontSize: 10, padding: '1px 6px', borderRadius: 6,
+            background: 'rgba(245,158,11,0.16)', color: 'var(--au-warn)', fontWeight: 700,
+          }}>{card.demo_label || '演示商户'}</span>
+        )}
+        <span style={{ flex: 1 }} />
+        <ProvBadge prov={card._prov} />
+      </div>
+      {typeof card.tool === 'string' && card.tool && (
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--au-text-3)' }}>来源 · {card.tool}</div>
+      )}
     </div>
   )
 }

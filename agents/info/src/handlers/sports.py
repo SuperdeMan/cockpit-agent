@@ -546,6 +546,32 @@ class SportsMixin:
         return AgentResult(speech=speech, ui_card=card,
                            data={"fixtures": [fd], "goals": goals})
 
+    def _sports_vendor(self) -> str:
+        """体育数据源的 vendor 名（决议时由 `log_resolution` 盖的章）。"""
+        return getattr(self.sports, "provenance_vendor", "") or "体育数据源"
+
+    def _mark_sports_degraded(self, res: AgentResult) -> AgentResult:
+        """回落通用检索时，把**降级这件事**摆到用户面前（QA I-033）。
+
+        原来这条路只在服务端日志里留了一行 `sports provider down`，用户看到的是一段
+        没有任何标记的检索结果——他追问「哪个数据源失败了」时，系统手上**没有可答的
+        事实**，只能让 LLM 猜（真栈实测答的是「联网检索不可用」，把降级的方向说反了）。
+        判据同 §9.3：**真实性标记是结果的一部分，不是日志的一部分。**
+
+        ⚠ 只做「本轮披露」这一半。**下一轮追问时能不能答，本批没做**——那需要一个
+        会话级的「本轮数据源/降级」账本（Q6 执行账本的同族扩展面），独立一卡。
+        """
+        vendor = self._sports_vendor()
+        note = f"{vendor} 不可用，已回落联网检索"
+        if res.speech:
+            res.speech = f"{vendor}这会儿拿不到数据，下面是联网检索的结果。" + res.speech
+        if isinstance(res.ui_card, dict):
+            # 覆盖 `_search` 盖的那一章：用户要知道的是**这一轮降级了**，
+            # 而不是「检索源是谁」——后者仍留在 vendor 里。
+            attach(res.ui_card, res.ui_card.get("_prov", {}).get("vendor") or vendor,
+                   mode="degraded", note=note)
+        return res
+
     async def _top_scorers(self, league_id: int, league_name: str, meta) -> AgentResult:
         """联赛射手榜。按赛季优先级试取，首个有数据的赛季胜出并标注（免费档常挡本届）。"""
         scorers, used_season = [], 0
@@ -560,8 +586,11 @@ class SportsMixin:
                 break
         if not scorers:
             # 诚实降级用 OK——FAILED 话术会被聚合器吞掉换成裸「处理失败」（R9/scene 同坑）
+            # 点名数据源（I-033）：「可能是数据源限制」这句话里唯一没说的就是**哪个源**，
+            # 而那恰恰是用户追问时想知道的。
             return AgentResult(
-                speech=f"暂时获取不到{league_name}的射手榜，可能是数据源限制，请稍后再试。")
+                speech=f"暂时获取不到{league_name}的射手榜，"
+                       f"{self._sports_vendor()} 这会儿没给到数据，请稍后再试。")
 
         label = f"{used_season}赛季"
         top3 = "、".join(f"{s.player} {s.goals}球（{s.team}）" for s in scorers[:3])
@@ -742,6 +771,7 @@ class SportsMixin:
             # 二次吃超时。原话整句作 query，保住「昨晚/决赛」等上下文。
             logger.warning("sports provider down, fallback to grounded search: %s", text[:40])
             intent.slots["query"] = (intent.raw_text or query).strip()
-            return await self._search(intent, ctx, meta, skip_sports=True)
+            fallen = await self._search(intent, ctx, meta, skip_sports=True)
+            return self._mark_sports_degraded(fallen)
         await self._save_remindable(ctx, res)   # 跨域提醒 P1c：未开赛场次交接给 reminder
         return res

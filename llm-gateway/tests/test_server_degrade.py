@@ -240,6 +240,48 @@ def test_backup_provider_catches_active_chain_failure(monkeypatch):
     assert active.calls == ["m1"] and backup.calls == ["m1"]  # _RT 固定模型表
 
 
+def test_backup_hop_is_marked_as_fallback_in_obs(monkeypatch):
+    """换厂商这一跳必须在 obs.llm 上**显式标出来**（QA I-057）。
+
+    `provider` 字段一直都有，但要判断「这次是不是降级」得人拿它去比 active——
+    排查现场没人会去比，于是「MiniMax 529 静默切 DeepSeek」在可观测里长得和
+    正常调用一模一样。**静默回落就是要消灭的形态**（B3 那条的第二次适用）。
+    """
+    monkeypatch.setenv("LLM_BACKUP", "bk:b1")
+    events = []
+
+    class _Obs:
+        async def emit_llm(self, **kw):
+            events.append(kw)
+
+    active = _FakeProvider(complete_script=[RuntimeError("boom")])
+    backup = _FakeProvider(complete_script=[("接住", "b1", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _rt_with_backup(active, backup)
+    s.obs = _Obs()
+    asyncio.run(s.Complete(_req("bkobs"), _Ctx()))
+    ok = [e for e in events if e.get("status", "ok") == "ok"]
+    assert ok and ok[-1]["fallback"] is True, f"换厂商没被标出来：{ok}"
+    assert ok[-1]["provider"] == "bk"
+
+
+def test_same_provider_hop_is_not_marked_fallback(monkeypatch):
+    """反向对照：没换厂商就不许标——**恒真的标记和没有标记一样没用**。"""
+    events = []
+
+    class _Obs:
+        async def emit_llm(self, **kw):
+            events.append(kw)
+
+    active = _FakeProvider(complete_script=[("直接答", "m1", "stop", (1, 1))])
+    s = srv.LLMGatewayServicer()
+    s.runtime = _RT(active, ["m1"])
+    s.obs = _Obs()
+    asyncio.run(s.Complete(_req("nobk"), _Ctx()))
+    ok = [e for e in events if e.get("status", "ok") == "ok"]
+    assert ok and ok[-1]["fallback"] is False
+
+
 def test_backup_tried_even_after_rate_limit(monkeypatch):
     """限流是厂商级：同厂剩余档跳过，但**备份厂商照试**——换厂商正是对症。"""
     monkeypatch.setenv("LLM_BACKUP", "bk:b1")

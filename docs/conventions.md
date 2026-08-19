@@ -551,6 +551,7 @@ owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
 | `_verify` | **编排核心**（`executor._verify_outcome`，非 Agent 声明） | 聚合器 `_append_verify_note`（确定性拼接诚实口径，不进 LLM） | `{"verdict": "unsat", "mode": str, "attempts": int}` | 「这步声称成功，但对账没通过」——执行后对账判定确凿未达成（M2 Outcome Verifier）。**状态保持 OK**（R9 §9.5：FAILED 上的话术会被聚合器吞成裸「处理失败」）。Agent 已按 R9 诚实降级（无卡无动作无 data）时不再补口径，防重复念。设计：`docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md` §3，契约测试 `orchestrator/cloud/tests/test_verify.py` |
 | `_route_session` | 发出 `navigate` action 的 Agent（现 navigation 全部 6 条导航路径） | `context.extract_focus` → `Focus.active_route`（校验坐标域、非法途经点直接丢不做 str() 转换；粘性接力**不续期 ts**）；出口两个——`_render_focus` 渲染进 prompt 的**只有名字与时限、绝不渲染坐标**，`engine._apply_focus_meta` 把 JSON 注给声明 `location` scope 的步（`meta.focus_active_route`，LLM 与客户端写不到），`navigation.reroute` 消费做增量改道并按 ts 限龄（`ROUTE_SESSION_MAX_AGE_S` 默认 2h） | `{"destination": str, "lat": float, "lng": float, "waypoints": [{name,lat,lng}], "strategy": str, "arrive_by_ts"?: int, "ts": int}` | 「这次导航的活动路线」——G8 会话状态：让「途经点不去了/换条路/改去 Y」有对象可指、做**增量**改道而非全新导航。**刻意不剥**（同 `_verify`）：聚合器话术合成只读 speech、`_compose_actions` 只认顶层 `waypoint(s)` 键，留在 data 随 obs 落 trace 是排查资产。设计：`docs/design/2026-08-15-g8-navigation-route-session.md`，契约测试 `test_route_session_focus.py` + `agents/navigation/tests/test_reroute.py` |
 
+| `_route_session_end` | 终止本次导航的 Agent（现 `navigation.cancel`，含「没有正在进行的导航」那条诚实降级）| `context.extract_focus` **清空** `Focus.active_route`（在 `_route_session` 之后求值：同一轮不会既开新路线又终止，真出现时以终止为准）| `True`（严格恒等，字符串 `"true"` 不算——恒清等于把 G8 整个关掉）| 「这一趟结束了」。**终止 ≠ 增量调整**：删途经点/换路/改目的地是 `navigation.reroute`，那条继续走 `_route_session`。不清的话下一句「换条路」会去改一条已经取消的路线，而用户已经听到「已结束导航」了（QA I-017）。契约测试 `test_route_session_focus.py`（正反两条）|
 | `_safety_alert` | 任意 Agent（现 manual-rag / road-safety / chitchat 三路，判据同源 `agents/_sdk/safety_signal.py`）| `context.extract_focus` → `Focus.safety_alert`（`_valid_safety_alert` 校验：`level` **必须是枚举内的值**，「很严重」这类自由文本一律丢弃——否则下游按等级分支会静默走 else；粘性接力**不续期 ts**）；出口两个——`_render_focus` 把它渲染在焦点块**最前面**，`engine._apply_focus_meta` 以 `meta.focus_safety_alert` **广播给所有步**（**刻意不按 scope 门控**：坐标是敏感数据、给多了是泄漏，告警是**约束**、给少了才是事故；最该知道的恰恰是闲聊兜底）。消费方按 `safety_alert_active()` 限龄（总龄 `_SAFETY_ALERT_TTL` 默认 2h，实际还受焦点 TTL 每轮续期约束）| `{"level": "critical"\|"amber", "signal": str(≤40), "ts": int}` | 「本会话有一个**未解除**的安全告警」——Q9 会话状态：让红色机油灯这类警告跨轮成立。QA 轮实测，没有这一格时第二轮答天气、第三轮执行音量。设计：`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md` §Q9，契约测试 `orchestrator/cloud/tests/test_safety_focus.py` |
 
 | `_fallback` | 产出候选列表的 Agent（现 nearby.search）| `context.extract_focus` → `CandidateSet.is_fallback`；`newest_candidate_set()` 据它**优先绑定最近一份非兜底候选**，`_derive_choice_view` 据它决定 prompt 里渲染哪一份 | `True` | 「这一份候选是**我猜的那一类**，不是用户点名的那一份」——Q2/N5。出处：I-011 的真根因不是「失败的重搜清空了候选」，那次重搜**根本没失败**——泛化兜底搜出 10 家「美食」，于是它**合法地**覆盖了上一份川菜候选。**必须由产生方声明**：只有它知道「搜的和他说的是不是一回事」，编排看不出来。nearby 的判据是两个信号取或（用户给了具体词却被丢掉 / 类目是从饮食信号猜出来的），单一信号各有够不着的一半。⚠ 标反方向比漏标贵——真候选被当成兜底会**永远排在序数解析之后**。契约测试 `orchestrator/cloud/tests/test_candidate_sets.py` + `agents/nearby/tests/test_agent.py` |
@@ -629,12 +630,31 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 
 - `degraded` = 真实数据但经降级路径（备选 vendor / 赛季回退 / 薄证据 / lexical 召回）；
   `cached` 当前无生产者（栈内无数据缓存层），词表前向兼容——**禁止无缓存装缓存**。
+- **降级要点名是谁降级了**（QA I-033，2026-08-19）：体育结构化源不可用回落通用检索时，
+  话术里写出 vendor、卡片 `_prov` 打 `degraded` + note。**真实性标记是结果的一部分，
+  不是日志的一部分**——原实现只在服务端留了一行 `sports provider down`，用户追问
+  「哪个数据源失败了」时系统手上没有可答的事实，只能让 LLM 猜（真栈实测把方向说反成
+  「联网检索不可用」）。⚠ 只做到「本轮披露」：跨轮追问要会话级数据源账本，独立一卡。
 - 凡展示外源数据的卡必须带（P2 已推广：weather / forecast / search_result / news_brief /
   stock_quote / sports_scores / sports_scorers / place_list / place_detail / poi_list /
   poi_detail / route_plan / charging_route），生产点 `agents/_sdk/provenance.py::attach()`。
   **刻意不标**（卡内已有更强证据链）：trip_itinerary（每停靠点 grounded 布尔粒度更细）、
   research_report（sources + 全局权威编号）、内部数据卡（reminder/scene/vehicle）。
   LLM 生成的对话内容**不标**（语言无真值可标；证据链由卡片 sources 字段承担）。
+
+#### 9.3b 两个与 `_prov` 同族的形态标记（2026-08-19）
+
+它们不进 `_prov`（那是**数据来源**的标记），但同属「结果要如实说明自己是什么」：
+
+- **`ui_card.readonly`（mcp_result 卡，QA I-022）**：这一轮调的是只读工具
+  （`servers.yaml` 的 `write: false`）⇒ 结果里没有订单 ⇒ HMI 渲染成信息卡而不是订单卡。
+  真栈现象是「问某个商品的营养成分」→ speech 答营养、卡片却显示商户服务 + 订单号 +
+  **待商户回传**。**「这次调用会不会产生订单」是产生方知道的事**，
+  不该让渲染端从「有没有 order_id」去猜——猜的结果就是一张查询卡上挂着待回传状态。
+- **`obs.llm.fallback`（QA I-057）**：这一跳换了厂商（active 整链失败 → 跨厂商备份档）。
+  `provider` 字段一直都在，但「这次是不是降级」要人拿它去比 active 才看得出，
+  **而排查现场没人会去比**。dashboard 轮次详情按它出「降级换厂商」告警条。
+  ⚠ 同厂内换档不标——模型名已经在 `model` 里能看出来，标了会让这个信号贬值。
 
 ### 9.4 Provider 决议契约（fail-fast + 统一决议日志）
 
@@ -1511,3 +1531,63 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 
 - **I-030 跨组比较**：`candidate_query` 与本条都只读**最新那一组**；
   「麦当劳的第二个 vs 瑞幸的第二个」要先有「哪一组」的指代解析，是独立能力。
+
+---
+
+### 9.29 端侧车控能力：从「声明了」到「可达」是五段链（QA Q8，2026-08-19）
+
+**背景**：`commands.yaml` 声明齐全、`LOCAL_INTENTS` 里有名字、`classify()` 也产得出
+那个名字——「打开方向盘加热」在真栈仍然三次逐字回「暂不支持哦」。B4 的能力完整性
+门禁全绿。
+
+**五段链**（任何一段断了，用户看到的都是「不支持」或答非所问）：
+
+| 段 | 断了会怎样 | 谁在守 |
+|---|---|---|
+| ① 知识库有这个**对象** | 规则认得出名字但对象不存在 ⇒ 名字进不了 `LOCAL_INTENTS` ⇒ 整句上云 ⇒ 就近误执行 | `lane_execution`（对象无 intent） |
+| ② 对象声明了 **intent**（`edge_intents`）| 能力不可达且**无任何报错** | `lane_execution`（孤儿 intent / 挂错对象块） |
+| ③ 端侧规则产得出**结构化命令** | 单句/复合句走不同的路 | `test_classifier_exit_parity`（Q13 收敛） |
+| ④ 那条命令过得了 **VAL 校验** | 端侧秒回「暂不支持哦」 | **本节新增**：`test_fast_path_command_is_accepted_by_val` + `test_recognized_command_is_accepted_by_val` |
+| ⑤ 有专属**状态键与话术** | 执行了对不上账 / 用户听不出做了什么 | `lane_verification` / `lane_speech` |
+
+**④ 为什么原来没人守**：B4 门禁逐条跑的是 `edge_call.decode_intent`（云侧计划面）
+那**一个**产出方，而且直接调 `_simulate`、**跳过 `_validate_command`**。
+端侧快路径 `fast_intent.classify_structured` 是**第二个产出方**，它产的形状不一样
+（方向盘：`operate=open` vs `set`+`enabled`；高度：`mode=height` vs `attr=height`）。
+
+> **通用判据：门禁走的是执行流水线的一段，不是整条。** 写完一道门禁要问的不是
+> 「它查得对不对」，而是**「真实那条路上，它没走到的是哪几段」**。
+>
+> **同一个 intent 有两个产出方时，要求的不是两边逐字相同**（实测 7 对良性差异：
+> media 别名 music、`switch` 带不带 mode…），**而是每一个产出方的产出都过同一道校验**。
+
+**新增能力时**：`scripts/gen_capability_skeleton.py` 产的待办清单覆盖 ①②⑤；
+③④ 由上面两条断言守——**新对象要在 `orchestrator/edge/tests/corpus/vehicle_objects.yaml`
+里留一条识别语料**，那条语料同时验「认出哪个对象」与「这条命令 VAL 收不收」。
+
+---
+
+### 9.30 G7 询问式提醒建议的准入（QA Q11 残余，2026-08-19）
+
+**唯一声明处**：`memory/offer_admission.py::admit_event_offer`。零 LLM、纯函数。
+
+在它之前，offer 的前提只有「`kind=episodic` 且 `event_time > now`」，于是一次普通
+天气查询被抽成 episodic、`event_time` 落在**次日 00:00**，用户收到一张
+「要到时候提前提醒你吗」——他只是问了句天气（I-014）。
+
+**三条判据**：
+
+1. **时刻必须是用户说出来的。** 抽取 prompt 明写「只有日期没有时刻用 00:00:00」
+   （`memory/extract.py`），所以 `event_time_iso` 落在 00:00 就等于「用户只说了个日子」。
+   一张「8月21日00:00提醒你」的卡本身就是坏的。
+   ⚠ 这会连带漏掉真实的「下周五提车」（确实只有日期）——**刻意的**：补时刻的正确做法
+   是问用户，不是系统替他挑一个上午九点。
+2. **至少提前 `MEMORY_OFFER_MIN_LEAD_S`（默认 1800 秒）。**
+3. **剥掉时间词之后还得剩下一件事**（剥法只许有一份实现，由调用方剥完传进来）。
+
+> **刻意没做**：按 text 里的「查询/问了/搜了」排除。那是关键词排除，模型换个转述
+> 就绕过去（§4.3 那条）。判据取**形态**：天气查询被挡住不是因为它长得像查询，
+> 是因为它**没有时刻**。
+
+`store.future_events` 因此一并带出 `event_time_iso`——只带 epoch 秒的话，
+「用户说的时刻」与「日期缺省」的区别在下游就永远看不见了。

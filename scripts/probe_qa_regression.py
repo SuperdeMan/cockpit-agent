@@ -645,10 +645,73 @@ CASES = [
          {"say": "从深圳欢乐海岸出发去世界之窗",
           "expect": {"card_text_not": ["\"origin\": \"当前位置\""]}},
      ]},
+
+    # ── Q8 能力缺席（2026-08-19 加，接手顺序第 8 步）────────────────────
+    # ⚠ 这一组量的是**能力面有没有那一侧**，不是模型选得准不准：卡 Q8 的机制段写得
+    # 很清楚——planner 只能在**现有工具**里挑最近的一个，于是「算距离」挑了导航、
+    # 「静音」挑了音量减。**改实现不等于加能力**（§4.3，road-safety 那条的同族），
+    # 所以判据一律落在「有没有那个动作/那个数」上，不落在措辞上。
+    {"id": "CA1", "group": "capability", "card": "Q8", "issue": "I-016",
+     "why": "纯距离/时长查询不得真的开始导航；两点间的路线是系统持有的事实，要答出数",
+     "known": "red",
+     "turns": [
+         # 判据两侧都要：**不许发导航动作**（危险形态）+ **必须答出里程**
+         # （能力真的补上了才答得出）。只判前者会把「诚实说不支持」也算过。
+         {"say": "从深圳市民中心到深圳北站开车大概多远、要多久",
+          "expect": {"actions_exclude": ["navigate"], "speech_has": ["公里"]}},
+     ]},
+    {"id": "CA2", "group": "capability", "card": "Q8", "issue": "I-004",
+     "why": "commands.yaml 声明了 edge_intents，自然语言入口就必须真的通到 VAL",
+     "known": "red",
+     "turns": [
+         {"say": "打开方向盘加热",
+          "expect": {"actions_include": ["steering_wheel.heating.open"]}},
+     ]},
+    {"id": "CA3", "group": "capability", "card": "Q8", "issue": "I-049",
+     "why": "静音/取消静音是独立能力；缺席时被就近映射成 volume.dec 与「取消挂起」",
+     "known": "red",
+     "turns": [
+         # ⚠ 落点是 `volume` 不是卡上写的 `media`——取证后按知识库自己的口径定的
+         # （飞书公版指令表「打开静音」域=setting、`nlu_objects.yaml` 头部写着
+         # 「声音 全量 62% 是音量（…静音）」）。理由写在 commands.yaml 的 volume 对象上。
+         {"say": "静音",
+          "expect": {"actions_include": ["volume.mute"],
+                     "actions_exclude": ["volume.dec"]}},
+         # 第二轮同时验**取消词预处理不许劫持**：「取消静音」不是「取消刚才那条挂起」。
+         {"say": "取消静音",
+          "expect": {"actions_include": ["volume.unmute"],
+                     "speech_not": ["已为您取消", "没有待确认"]}},
+     ]},
+    {"id": "CA5", "group": "capability", "card": "Q8", "issue": "I-017",
+     "why": "「取消导航」必须真的结束这一趟，并把服务端的活动路线清掉——"
+            "第三轮问「换条路」验的就是它真的清了（多轮系统必须跑 ≥3 轮）",
+     "known": "red",
+     "turns": [
+         {"say": "导航去世界之窗", "expect": {}},
+         # 修前这一句被裸取消闸吞成「当前没有待确认的操作」（`取消` 2 字 + 松弛 3
+         # ≥ 4 字整句），从来到不了规划。
+         {"say": "取消导航",
+          "expect": {"speech_not": ["没有待确认"], "speech_has": ["导航"]}},
+         # 活动路线真的清了 ⇒ 增量改道无对象可指，诚实说没有正在进行的导航。
+         {"say": "换条路走",
+          "expect": {"speech_any": ["没有正在进行的导航", "没有正在导航"],
+                     "actions_exclude": ["navigate"]}},
+     ]},
+    {"id": "CA4", "group": "capability", "card": "Q8", "issue": "I-050",
+     "why": "双闪必须是独立对象；缺席时被 gen_commands_yaml 的 family 表并进 headlight",
+     "known": "red",
+     "turns": [
+         {"say": "打开双闪",
+          "expect": {"actions_include": ["warning_light.open"],
+                     "actions_exclude": ["headlight.on"]}},
+         {"say": "关闭双闪",
+          "expect": {"actions_include": ["warning_light.close"],
+                     "actions_exclude": ["headlight.off"]}},
+     ]},
 ]
 
 _GROUPS = ("confirm", "negation", "session", "safety", "candidate", "audit",
-           "slot", "merchant")
+           "slot", "merchant", "capability")
 
 # ── Q13：两个分类出口的一致性（纯函数，不需要起栈）─────────────────────────
 # 阶段 0.2 首跑时由 NG3 的「假绿」牵出来的。端侧把结构化意图翻成意图名有**两个出口**

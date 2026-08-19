@@ -91,6 +91,15 @@ _VERB = {
 # 这两个动词读起来必须后置：「媒体切换到下一个」通顺，「切换到下一个媒体」不通。
 _SUFFIX_VERBS = {"next", "prev"}
 
+# 动词本身就是一句完整能力，拼上对象名反而不通（「静音音量」）。**描述整句写死**，
+# 而且刻意把它与近邻能力的差别写进去——catalog 描述就是 planner 的选择权重，
+# 「静音」与「音量调小」「暂停播放」三者最容易被一锅端（QA I-049 实测：静音 → volume.dec）。
+_STANDALONE_VERBS = {
+    "mute": "静音：把车上全部出声压掉（媒体/导航播报/来电提示），音量档位保留不变；"
+            "只是想小一点用音量调低，只是想停音乐用暂停播放",
+    "unmute": "取消静音：恢复静音前的音量档位（不是把音量调大，也不是继续播放）",
+}
+
 # intent 名 `<object>.<path>.<verb>` 里 path 段的中文；外加「默认属性」的中文
 # （path 为空且对象声明了 attrs 时取 attrs[0]——与 VAL `_simulate` 的默认行为一致：
 # aircon 的裸 inc/dec 调的就是 temperature）。
@@ -148,6 +157,8 @@ def _describe(intent: str, objects: dict, entities: dict) -> str:
     noun = defs.get("display_name") or ""
     parts = [p for p in intent.split(".") if p]
     verb_key = parts[-1]
+    if verb_key in _STANDALONE_VERBS:
+        return _STANDALONE_VERBS[verb_key]
     verb = _VERB.get(verb_key, "")
     if not noun or not verb:
         return ""

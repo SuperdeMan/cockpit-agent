@@ -19,6 +19,16 @@ intent_recognition:
   - {text: 打开后备箱, object: trunk}
   - {text: 打开雨刮, object: wiper}
   - {text: 打开大灯, object: headlight}
+  # 2026-08-19（QA 卡 Q8）新增三族。⚠ 本组语料 2026-08-19 起**同时断言 VAL 收下这条命令**
+  # （见 test_corpus_objects.py）——「认出了哪个对象」和「这条命令合法」是两件事，
+  # 方向盘加热就是在这条缝里活了很久：名字对、对象对，`operate` 知识库不认。
+  - {text: 打开方向盘加热, object: steering_wheel}
+  - {text: 关掉方向盘加热, object: steering_wheel}
+  - {text: 方向盘调高, object: steering_wheel}
+  - {text: 打开双闪, object: warning_light}
+  - {text: 关闭双闪, object: warning_light}
+  - {text: 静音, object: volume}
+  - {text: 取消静音, object: volume}
 
 val_execution:
   - {object: aircon, operate: set, value: "23", expect: {hvac_on: true, hvac_temp: 23}}

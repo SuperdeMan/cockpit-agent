@@ -389,6 +389,20 @@ scene_mode_set_success:
   speech_brief:
   - 好的
   - 已开启
+warning_light_open_success:
+  scene: 双闪已打开
+  status: 成功
+  speech_full:
+  - 已为您打开双闪，请注意安全
+  speech_brief:
+  - 双闪开了
+warning_light_close_success:
+  scene: 双闪已关闭
+  status: 成功
+  speech_full:
+  - 已为您关闭双闪
+  speech_brief:
+  - 双闪关了
 steering_wheel_heating_on_success:
   scene: 方向盘加热已开启
   status: 成功
@@ -403,6 +417,27 @@ steering_wheel_heating_off_success:
   - 方向盘加热已关闭
   speech_brief:
   - 关了
+steering_wheel_height_set_success:
+  scene: 方向盘高度已调整
+  status: 成功
+  speech_full:
+  - 方向盘高度已调整
+  speech_brief:
+  - 调好了
+volume_mute_success:
+  scene: 已静音
+  status: 成功
+  speech_full:
+  - 已静音
+  speech_brief:
+  - 静音了
+volume_unmute_success:
+  scene: 已取消静音
+  status: 成功
+  speech_full:
+  - 已取消静音
+  speech_brief:
+  - 声音回来了
 volume_set_success:
   scene: 音量已设定
   status: 成功

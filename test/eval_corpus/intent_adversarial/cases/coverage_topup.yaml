@@ -1111,3 +1111,142 @@ cases:
       - input: {utterance: 有点犯困，撑一下应该没事吧, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [safety.driver_state]}], forbidden_intents: [safety.driving_advice, info.weather, chitchat.talk], allow_extra_intents: false}
+  # ── 只算不导 vs 真的动身（navigation.estimate，2026-08-19 卡 Q8 / I-016）──────
+  # 与上面 driver-state 同一条判据的第二次适用：**补的不是「模型分不清」，
+  # 是能力面上本来就没有左边那一侧**。在 estimate 之前，导航域只有
+  # navigate_to 一个「跟这两点有关」的工具，于是「从A到B多远多久」被就近挑成导航
+  # 并**真的开始导航**（真栈 --repeat 3：1/3 发出 navigate、答「全程约21公里」）。
+  # 判据是**用户要的是数还是行程**。两侧都要锁：只锁左边会纵容把「导航去」也答成
+  # 估算，那是把一个不可逆动作变成一句话，方向反了但一样错。
+  - id: tu.nav.estimate-distance
+    title: 两点间开车多远多久（只算不导）
+    family_id: tu.nav-estimate-vs-go
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 从深圳市民中心到深圳北站开车大概多远、要多久, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.estimate]}], forbidden_intents: [navigation.navigate_to, navigation.search_poi, nearby.search, chitchat.talk], allow_extra_intents: false}
+  - id: tu.nav.estimate-duration
+    title: 到目的地还要多久（只算不导，第二正例）
+    family_id: tu.nav-estimate-vs-go
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 从家开到宝安机场大概要多长时间, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.estimate]}], forbidden_intents: [navigation.navigate_to, trip.plan, chitchat.talk], allow_extra_intents: false}
+  - id: tu.nav.go-not-estimate
+    title: 导航去某地（硬负例：要动身不是问数）
+    family_id: tu.nav-estimate-vs-go
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 导航去深圳北站, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [navigation.estimate, navigation.search_poi], allow_extra_intents: false}
+  - id: tu.nav.go-with-origin-not-estimate
+    title: 从X出发去Y（硬负例第二例：说了起点仍然是要动身）
+    family_id: tu.nav-estimate-vs-go
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 从深圳欢乐海岸出发去世界之窗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [navigation.estimate, navigation.search_poi], allow_extra_intents: false}
+  - id: tu.nav.estimate-paraphrase
+    title: 去趟那儿得开多久（invariant 对照）
+    family_id: tu.nav-estimate-vs-go
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    relation: {base_case: tu.nav.estimate-distance, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 从市民中心去趟深圳北站得开多久, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.estimate]}], forbidden_intents: [navigation.navigate_to, nearby.search, chitchat.talk], allow_extra_intents: false}
+  # ── 终止 vs 增量调整（navigation.cancel，2026-08-19 卡 Q8 / I-017）────────
+  # 同批把裸取消判据收窄之后（`pending_cancel._no_substance_left`），「取消导航」
+  # 不再被前置闸当成「取消挂起」吞掉——**放开一条路却不给它落点，是把一个错换成
+  # 另一个错**，所以这五条与那次收窄是同一笔改动的两面。
+  # 判据是**终止还是调整**：cancel 结束这一趟，reroute 改这一趟（删途经点/换路/改目的地）。
+  # 两侧都要锁：只锁左边会让「换条路」也被兑现成结束导航，那比答非所问更糟。
+  - id: tu.nav.cancel-route
+    title: 取消当前导航（终止）
+    family_id: tu.nav-cancel-vs-reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 取消导航, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.cancel]}], forbidden_intents: [navigation.reroute, navigation.navigate_to, navigation.estimate], allow_extra_intents: false}
+  - id: tu.nav.cancel-route-colloquial
+    title: 别导航了（终止，口语第二正例）
+    family_id: tu.nav-cancel-vs-reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [paraphrase], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 别导航了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.cancel]}], forbidden_intents: [navigation.reroute, navigation.navigate_to], allow_extra_intents: false}
+  - id: tu.nav.reroute-not-cancel
+    title: 途经点不去了（硬负例：改这一趟不是结束这一趟）
+    family_id: tu.nav-cancel-vs-reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      # ⚠ 原话不能逐字取自被注入的知识（manifest examples / boundaries texts）——
+      # `unseen_transfer` cohort 的 leakage 检查当场抓到「刚才那个途经点不去了」。
+      # 换一句同形态但没进过知识库的：门禁在按设计工作，尺子该让的是**这句话**，
+      # 不是那条检查。
+      - input: {utterance: 顺路那个加油站不去了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reroute]}], forbidden_intents: [navigation.cancel], allow_extra_intents: false}
+  - id: tu.nav.change-route-not-cancel
+    title: 换条避堵的路（硬负例第二例）
+    family_id: tu.nav-cancel-vs-reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    turns:
+      - input: {utterance: 换条避堵的路走, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.reroute]}], forbidden_intents: [navigation.cancel], allow_extra_intents: false}
+  - id: tu.nav.cancel-paraphrase
+    title: 结束导航吧（invariant 对照）
+    family_id: tu.nav-cancel-vs-reroute
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-19}
+    relation: {base_case: tu.nav.cancel-route, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 结束导航吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.cancel]}], forbidden_intents: [navigation.reroute, navigation.navigate_to], allow_extra_intents: false}

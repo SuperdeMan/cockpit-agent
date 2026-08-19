@@ -577,6 +577,11 @@ class VAL:
                 self.state["media"] = "playing"
                 return "media", "playing"
 
+        elif obj == "warning_light":
+            # 独立状态键：双闪与大灯互不影响（Outcome Verifier 要能分别对账）。
+            self.state["warning_light"] = (operate == "open")
+            return "warning_light", self.state["warning_light"]
+
         elif obj == "headlight":
             if operate == "open":
                 self.state["headlight"] = True
@@ -713,6 +718,11 @@ class VAL:
             if operate == "dec":
                 self.state["volume"] = max(self.state.get("volume", 50) - 10, 0)
                 return "volume", self.state["volume"]
+            # 静音是**独立状态位**，不是「音量设为 0」：取消静音要能回到原来那一档，
+            # 而 volume=0 之后原值就没地方留了。状态键专属，Outcome Verifier 可对账。
+            if operate in ("mute", "unmute"):
+                self.state["volume_muted"] = (operate == "mute")
+                return "volume_muted", self.state["volume_muted"]
 
         elif obj == "screen":
             if operate == "set" and value is not None:
@@ -835,6 +845,10 @@ class VAL:
                 return "ambient_light_color_success"
             return "ambient_light_brightness_success"
 
+        if obj == "warning_light":
+            return ("warning_light_open_success" if operate == "open"
+                    else "warning_light_close_success")
+
         if obj == "headlight":
             return "headlight_on_success" if operate == "open" else "headlight_off_success"
 
@@ -874,7 +888,17 @@ class VAL:
             return "power_mode_set_success"
 
         if obj == "steering_wheel":
-            return "steering_wheel_heating_on_success" if operate in ("open", "set") else "steering_wheel_heating_off_success"
+            # ⚠ 原实现只按 operate 二分（`in ("open","set")` → on，否则 off），三处都错：
+            # 高度调节（`attr=height`）被答成「开了/关了」，加热关闭（`set`+`enabled=False`，
+            # 云侧 `decode_intent` 一直就是这个形状）被答成「开了」。
+            # **话术键要按语义分，不按 operate 分**——同一个 `set` 在这个对象上有两种意思。
+            if data.get("attr") == "height" or mode == "height":
+                return "steering_wheel_height_set_success"
+            enabled = data.get("enabled", operate in ("open", "set"))
+            if isinstance(enabled, str):
+                enabled = enabled.strip().lower() == "true"
+            return ("steering_wheel_heating_on_success" if enabled
+                    else "steering_wheel_heating_off_success")
 
         if obj == "driving_mode":
             return "driving_mode_set_success"
@@ -883,6 +907,10 @@ class VAL:
             return "scene_mode_set_success"
 
         if obj == "volume":
+            if operate == "mute":
+                return "volume_mute_success"
+            if operate == "unmute":
+                return "volume_unmute_success"
             if operate == "set":
                 return "volume_set_success"
             if operate == "inc":

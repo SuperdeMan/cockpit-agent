@@ -81,6 +81,10 @@ export type LlmCall = {
   ts: number
   caller: string
   model: string
+  // provider=这一跳实际是哪家厂商在答；fallback=1 表示 active 厂商整链失败后换了脑
+  // （QA I-057：MiniMax 529 时静默切 DeepSeek，可观测里看不出这一跳换过）。
+  provider?: string
+  fallback?: number | boolean
   prompt_tokens: number
   completion_tokens: number
   latency_ms: number

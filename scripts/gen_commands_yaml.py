@@ -55,7 +55,9 @@ OBJECT_MAP = {
     # ── 大灯 family ──
     "high_beam": "headlight",
     "high_beam_assist": "headlight",
-    "warning_light": "headlight",
+    # ⚠ `warning_light`（双闪）**刻意不再并进 headlight**（2026-08-19，QA I-050）：
+    # 并进去之后知识库里就没有双闪这个对象，「打开双闪」只能上云就近误执行。
+    # 大灯是照明、双闪是示警，两个物理开关、两种行车限制语义，不是同义词。
     # ── 雾灯 family ──
     "fog_light/front": "fog_light",
     "fog_light/back": "fog_light",

@@ -84,9 +84,13 @@ def test_sports_provider_down_falls_back_to_search():
         raw_text = "昨晚欧冠决赛的比分是多少"
         slots = {"query": "昨晚欧冠决赛比分"}
 
+    class _Sports:
+        provenance_vendor = "api-football"
+
     class _Stub(SportsMixin):
         def __init__(self):
             self.search_called_with = None
+            self.sports = _Sports()
 
         async def _do_sports(self, *a, **kw):
             return None                       # provider 故障路径
@@ -94,12 +98,47 @@ def test_sports_provider_down_falls_back_to_search():
         async def _search(self, intent, ctx, meta, skip_sports=False):
             self.search_called_with = (intent.slots.get("query"), skip_sports)
             from agents._sdk import AgentResult
-            return AgentResult(speech="接地搜索结果")
+            return AgentResult(speech="接地搜索结果",
+                               ui_card={"type": "search_result",
+                                        "_prov": {"mode": "real", "vendor": "exa"}})
 
         async def _save_remindable(self, *a, **kw):  # pragma: no cover
             raise AssertionError("故障路径不该写 REMINDABLE")
 
     stub = _Stub()
     res = asyncio.run(stub._sports(_Intent(), ctx=None, meta={}))
-    assert res.speech == "接地搜索结果"
+    assert "接地搜索结果" in res.speech
     assert stub.search_called_with == ("昨晚欧冠决赛的比分是多少", True)  # 原话整句 + 跳结构化源
+    # QA I-033（2026-08-19）：**降级这件事要摆到用户面前**，不只写进服务端日志。
+    # 追问「哪个数据源失败了」时系统手上得有可答的事实，而不是让 LLM 猜
+    # （真栈实测它把方向说反成「联网检索不可用」）。
+    assert "api-football" in res.speech, f"降级没点名数据源：{res.speech!r}"
+    assert res.ui_card["_prov"]["mode"] == "degraded"
+    assert "回落联网检索" in res.ui_card["_prov"]["note"]
+
+
+def test_sports_degraded_marking_does_not_touch_the_happy_path():
+    """反向对照：provider 正常时不许出现降级标记（恒真的标记等于没有标记）。"""
+    import asyncio
+
+    from agents._sdk import AgentResult
+
+    class _Intent:
+        raw_text = "昨晚欧冠决赛的比分是多少"
+        slots = {"query": "昨晚欧冠决赛比分"}
+
+    class _Stub(SportsMixin):
+        def __init__(self):
+            self.sports = type("S", (), {"provenance_vendor": "api-football"})()
+
+        async def _do_sports(self, *a, **kw):
+            return AgentResult(speech="皇马 2:1 拜仁。",
+                               ui_card={"type": "sports_scores",
+                                        "_prov": {"mode": "real", "vendor": "api-football"}})
+
+        async def _save_remindable(self, *a, **kw):
+            return None
+
+    res = asyncio.run(_Stub()._sports(_Intent(), ctx=None, meta={}))
+    assert res.speech == "皇马 2:1 拜仁。"
+    assert res.ui_card["_prov"]["mode"] == "real"

@@ -15,6 +15,7 @@ from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 from runtime.proactive import P_ADVISORY, publish_proactive
 
 import voiceprint
+from offer_admission import admit_event_offer
 from e2e_capability import (
     derive_runner_run_id,
     MemoryCapabilityError,
@@ -194,12 +195,20 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         text = (ev.get("text") or "").strip()
         if not ts or not text:
             return
+        # Q11 残余（2026-08-19）：准入判据在 `offer_admission`，**这里只调用不判断**
+        # ——判据抄第二份正是本仓反复栽的那个坑。拒绝要留日志：offer 不发是个静默
+        # 事件，不记的话「为什么没建议」查无对证。
+        title_probe = self._TIME_WORD_RE.sub("", text).strip(" ，。,、的")
+        ok, why = admit_event_offer(ev, title_probe, int(time.time()))
+        if not ok:
+            logger.info("memory: 事件提醒建议未准入（%s）：%s", why, text[:40])
+            return
         # 显示时区必须固定车机 UTC+8，不能用 time.localtime（容器是 UTC）——
         # G7 真栈补验实锤：「9月15日」的 offer 显示成「9月14日16:00」，且会经
         # 「要的」按钮的 send_text 传导成真错提醒。宿主机 UTC+8 跑单测永远不红。
         dt = datetime.fromtimestamp(ts, BUSINESS_TZ)
         when = f"{dt.month}月{dt.day}日{dt.hour:02d}:{dt.minute:02d}"
-        title = self._TIME_WORD_RE.sub("", text).strip(" ，。,、的") or text
+        title = title_probe          # 准入闸已保证它非空（判据 3）
         owner_fingerprint = hashlib.sha256(
             f"{user_id}\0{occupant_id}".encode("utf-8")).hexdigest()[:16]
         payload = {

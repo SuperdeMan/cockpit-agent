@@ -73,6 +73,34 @@ def _whole_sentence_hit(text: str, words: tuple[str, ...]) -> bool:
 #: 分句分隔符。「不用了**，**关掉」里逗号后面还有一整个分句 ⇒ 这不是一句裸取消。
 _CLAUSE_SEP_RE = re.compile(r"[，,。；;！!？?]")
 
+#: 剥掉取消词之后允许剩下的「非实质内容」：语气词、标点、客套。
+#: 判据形态与 `navigation._person_destination` 的「去掉人称词后还剩不剩实质内容」同源
+#: ——**那才是「占据整句」真正想说的意思**，长度阈值只是它的一个粗糙近似。
+_CANCEL_FILLER_RE = re.compile(
+    r"一下|好吗|好了|谢谢|麻烦|帮我|请|[了吧啦呢的呀啊嘛哦噢喔嗯~\s"
+    r"，,。；;！!？?、\.]")
+
+
+def _no_substance_left(text: str) -> bool:
+    """剥掉取消词与虚词之后**一个实质字都不剩** ⇒ 这句话就是一句裸取消。
+
+    ⚠ **2026-08-19 从「词长 + 松弛量 3」换成本判据**（QA 卡 Q8 / I-049）。旧判据是
+    `len(t) <= len(k) + 3`，于是「取消」（2 字）后面跟任何**两字宾语**都算裸取消：
+    真栈实测「取消静音」被答成「当前没有待确认的操作」，同族还有
+    **取消导航 / 取消订单 / 取消提醒 / 取消播放 / 不用导航 / 不要开窗**——
+    一整类「取消某个具体东西」的指令被前置闸吞掉，从来到不了规划。
+    模块 docstring 里那句「放宽了『取消当前导航』会被答成…」写的是对的，
+    只是**当时那个阈值已经放得够宽，能吞下两字宾语了**。
+
+    ⚠ 只换这一条路径（**没有挂起**时）。`detect_cancel`（有挂起时）维持原样：
+    那个语境下「取消 X」到底指挂起还是指 X 本身是真歧义，收窄它要另有证据
+    ——短路型判据看到的是全部流量，误伤代价是整轮被吞（同 §9.27 取窄的理由）。
+    """
+    for word in _STRONG_WORDS + _WEAK_WORDS:
+        if word in text and not _CANCEL_FILLER_RE.sub("", text.replace(word, "")):
+            return True
+    return False
+
 
 def is_standalone_cancel(text: str) -> bool:
     """**没有挂起**的语境：这句话是不是一句裸取消词？只认整句。
@@ -88,7 +116,7 @@ def is_standalone_cancel(text: str) -> bool:
     parts = _CLAUSE_SEP_RE.split(t, 1)
     if len(parts) > 1 and parts[1].strip():
         return False                 # 还有下一个分句 ⇒ 用户在说别的事
-    return _whole_sentence_hit(parts[0], _STRONG_WORDS + _WEAK_WORDS)
+    return _no_substance_left(parts[0])
 
 
 def detect_cancel(text: str) -> CancelDecision:

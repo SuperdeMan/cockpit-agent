@@ -38,6 +38,24 @@ def test_intent_recognition(case):
         assert obj == expected, f"{case['text']!r} 识别为 {obj!r}，期望 {expected!r}"
 
 
+@pytest.mark.parametrize("case", _CASES["intent_recognition"], ids=lambda c: c["text"])
+def test_recognized_command_is_accepted_by_val(val, case):
+    """识别出对象**还不够**——这条结构化命令必须能过 VAL 校验。
+
+    ⚠ 2026-08-19 补（QA 卡 Q8 / I-004）。上一条断言只看 `object`，于是
+    `打开方向盘加热` 长期「识别正确」而端侧秒回「暂不支持哦」：`operate` 产的是
+    `open`，而方向盘的 `operates` 是 `[set, inc, dec]`。**认出了哪个对象**与
+    **这条命令知识库收不收**是两层，本文件此前只测了第一层。
+    同族断言另有一份在 `test_classifier_exit_parity.py`（按金标文本走），
+    两处各覆盖一批文本，都要在。
+    """
+    structured = classify_structured(case["text"])
+    data = structured["data"]
+    ok, err = val._validate_command(
+        data.get("object"), data.get("operate"), val._normalize_entities(data))
+    assert ok, f"{case['text']!r} → {data!r} 过不了 VAL 校验（{err}）"
+
+
 def _exec_id(case):
     return f"{case['object']}.{case['operate']}"
 

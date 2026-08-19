@@ -54,7 +54,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
 
     async def _emit_llm(self, request, *, model, latency_ms, cache_hit=False,
                         usage=(0, 0), status="ok", error="", thinking=None,
-                        msgs=None, content="", provider="", pinned=False):
+                        msgs=None, content="", provider="", pinned=False,
+                        fallback=False):
         """obs.llm 事件（best-effort）：LLM 唯一出口在此收口，badcase 按 trace 回看每一跳。"""
         try:
             meta = dict(request.meta) if request.meta else {}
@@ -66,6 +67,7 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 provider=provider or self.runtime.active_id,  # 实际 serving 厂商（审计「哪个脑答的」）
                 requested_tier=(request.model or ""),         # 调用方原始档位/模型参数
                 pinned=pinned,                                # 请求级 pin（D2）
+                fallback=fallback,                            # 这一跳换了厂商（I-057）
                 prompt_tokens=usage[0],
                 completion_tokens=usage[1],
                 latency_ms=latency_ms,
@@ -267,7 +269,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                         if tool_calls else "")
                     await self._emit_llm(request, model=used, latency_ms=latency_ms,
                                          usage=usage, thinking=thinking, msgs=msgs,
-                                         content=obs_content, provider=a_aid, pinned=pinned)
+                                         content=obs_content, provider=a_aid, pinned=pinned,
+                                         fallback=(a_aid != aid))
 
                     out = llm_pb2.CompleteResponse(
                         content=content, model_used=used, finish_reason=finish,
@@ -374,7 +377,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 health_tracker.record(a_aid, True, latency_ms=latency_ms)
                 await self._emit_llm(request, model=model, latency_ms=latency_ms,
                                      thinking=thinking, msgs=msgs, content="".join(head),
-                                     provider=a_aid, pinned=pinned)
+                                     provider=a_aid, pinned=pinned,
+                                     fallback=(a_aid != aid))
                 return
             except Exception as e:
                 latency_ms = (time.monotonic() - t0) * 1000
@@ -387,7 +391,8 @@ class LLMGatewayServicer(llm_pb2_grpc.LLMGatewayServicer):
                 if first_token:   # 已流出内容：不可换模型拼接，按既有语义直接失败
                     await self._emit_llm(request, model=model, latency_ms=latency_ms,
                                          status="err", error=str(e), thinking=thinking,
-                                         msgs=msgs, provider=a_aid, pinned=pinned)
+                                         msgs=msgs, provider=a_aid, pinned=pinned,
+                                         fallback=(a_aid != aid))
                     code = (grpc.StatusCode.DEADLINE_EXCEEDED
                             if isinstance(e, httpx.TimeoutException)
                             else grpc.StatusCode.UNAVAILABLE)

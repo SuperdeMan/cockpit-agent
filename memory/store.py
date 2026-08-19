@@ -742,7 +742,11 @@ class MemoryStore:
             except (TypeError, ValueError):
                 continue
             if ts > now:
-                out.append({**it, "event_time": ts})
+                # `event_time_iso` 一并带出：G7 offer 的准入判据要看这个时刻是
+                # **用户说出来的**还是日期缺省填的 00:00（`offer_admission`）。
+                # 只带 epoch 秒的话那个区别在下游就永远看不见了。
+                out.append({**it, "event_time": ts,
+                            "event_time_iso": str(vj.get("event_time_iso") or "")})
         return out
 
     async def derive_routines(self, user_id: str, occupant_id: str = "primary",

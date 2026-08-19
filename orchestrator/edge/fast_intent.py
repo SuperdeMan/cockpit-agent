@@ -110,6 +110,12 @@ LOCAL_INTENTS = {
     "call_log.open", "call_log.close",
     # ── 新增：近光灯 ──
     "low_beam.on", "low_beam.off", "low_beam.open", "low_beam.close",
+    # ── 静音（2026-08-19 QA 卡 Q8 / I-049）──
+    "volume.mute", "volume.unmute",
+    # ── 双闪（危险报警灯，2026-08-19 QA 卡 Q8 / I-050）──
+    # 规则侧一直认得出 `warning_light`，只是名字不在本表 ⇒ 整句上云 ⇒ 云侧没有这个
+    # 工具 ⇒ 就近误执行（真栈实测落到 hvac.off）。**「识别得了」和「能执行」是两件事。**
+    "warning_light.open", "warning_light.close",
 }
 
 
@@ -670,6 +676,19 @@ def _classify_structured(text: str) -> dict | None:
                       value=m.group(1), unit="level", conf=0.9)
         return _s("setting", "control", "open", "fragrance", conf=0.9)
 
+    # ── 静音 / 取消静音 ───────────────────────────────────
+    # ⚠ 必须排在「音量」之前：「取消静音」不含「音量」，但「静音」两字要先被认领，
+    # 否则它落到云侧被就近映射成 `volume.dec`（QA I-049 真栈实测 2/3 如此，
+    # 另 1/3 是 `volume.set`）。
+    # ⚠ 「静音模式」是**场景**（scene_orchestrator 的命名场景），不是本条——
+    # 场景句在本函数顶部已被 `_is_scene_utterance` 整句拦走，这里再显式排除一次，
+    # 因为「静音模式」也可能以「打开静音模式」之外的形态出现。
+    if "静音" in t and "模式" not in t:
+        if ("取消" in t or "解除" in t or "关闭" in t or "关掉" in t
+                or "退出" in t or "打开声音" in t):
+            return _s("setting", "control", "unmute", "volume", conf=0.9)
+        return _s("setting", "control", "mute", "volume", conf=0.9)
+
     # ── 音量 ──────────────────────────────────────────────
     if "音量" in t:
         m = re.search(r"(\d+)", t)
@@ -765,21 +784,29 @@ def _classify_structured(text: str) -> dict | None:
     # ── 方向盘（加热/高度）────────────────────────────────
     if "方向盘" in t:
         if "加热" in t:
-            if "关" in t:
-                return _s("setting", "control", "close", "steering_wheel",
-                          mode="heating", conf=0.9)
-            return _s("setting", "control", "open", "steering_wheel",
-                      mode="heating", conf=0.9)
+            # ⚠ **operate 必须是 `set` + `enabled`，不是 open/close**（QA 卡 Q8，
+            # 2026-08-19 真栈实测 0/3 「暂不支持哦」）。`commands.yaml` 里方向盘的
+            # `operates` 是 `[set, inc, dec]`——它没有「打开方向盘」这种动作，加热
+            # 开关表达成「把加热这一档设成开/关」。云侧计划那条路
+            # （`edge_call.decode_intent`）一直是这么产的，**端侧快路径产了另一种形状**，
+            # 于是 `_validate_command` 一律判 unsupported_command，能力声明齐全却不可达。
+            # 名字仍是 `edge_intents` 声明的 `.open/.close`——**名字是路由面、operate
+            # 是执行面，两者本来就不必逐字相同**（`_to_legacy_name` 负责翻回去）。
+            return _s("setting", "control", "set", "steering_wheel",
+                      mode="heating", enabled=("关" not in t), conf=0.9)
+        # 高度是 `attr` 不是 `mode`——`commands.yaml` 里方向盘 `attrs: [height]`、
+        # `modes: [heating]`。写成 mode 时 VAL 的 `attr == "height"` 分支够不着，
+        # 落通用兜底键；与上面加热那处是同一族错（QA 卡 Q8，2026-08-19）。
         if "调高" in t or "升高" in t or "高" in t:
             return _s("setting", "control", "inc", "steering_wheel",
-                      mode="height", conf=0.9)
+                      attr="height", conf=0.9)
         if "调低" in t or "降低" in t or "低" in t:
             return _s("setting", "control", "dec", "steering_wheel",
-                      mode="height", conf=0.9)
+                      attr="height", conf=0.9)
         m = re.search(r"(\d)\s*挡", t)
         if m:
             return _s("setting", "control", "set", "steering_wheel",
-                      mode="height", value=m.group(1), unit="level", conf=0.9)
+                      attr="height", value=m.group(1), unit="level", conf=0.9)
 
     # ── 屏幕亮度 ──────────────────────────────────────────
     if "屏幕" in t:
@@ -1193,7 +1220,8 @@ def _classify_structured(text: str) -> dict | None:
         if "关" in t:
             return _s("setting", "control", "close", "fog_light", conf=0.9)
         return _s("setting", "control", "open", "fog_light", conf=0.9)
-    if "双闪" in t or "警示灯" in t or "危险灯" in t:
+    if ("双闪" in t or "双跳灯" in t or "警示灯" in t or "危险灯" in t
+            or "危险报警灯" in t):
         if "关" in t:
             return _s("setting", "control", "close", "warning_light", conf=0.9)
         return _s("setting", "control", "open", "warning_light", conf=0.9)
@@ -1903,8 +1931,14 @@ def _to_legacy_name(intent: dict) -> str | None:
     if obj == "volume":
         return f"{obj}.{operate}"
     if obj == "steering_wheel":
-        if mode:
-            return f"steering_wheel.{mode}.{operate}"
+        if mode == "heating":
+            # 执行面是 `set` + `enabled`（见 classify_structured 的方向盘分支），
+            # 路由面仍用 `edge_intents` 声明的 open/close 两个名字。
+            return ("steering_wheel.heating.open" if data.get("enabled", True)
+                    else "steering_wheel.heating.close")
+        seg = mode or data.get("attr", "")
+        if seg:
+            return f"steering_wheel.{seg}.{operate}"
         return f"steering_wheel.{operate}"
     if obj == "screen":
         if mode:

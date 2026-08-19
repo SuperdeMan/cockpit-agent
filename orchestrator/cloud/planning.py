@@ -1555,6 +1555,30 @@ class PlanBuilder:
             # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
             plan = await self._fallback(text, agents)
             plan_mode = "toolcall_degraded" if toolcall else "json"
+        # QA I-031（2026-08-19）：**系统自己给的选项被点了之后，不许回答「我没听清
+        # 你要做什么」。** 澄清卡的 send_text 由 LLM 写，写出来的短语不一定规划得出
+        # steps（真栈：点「解释定位原理」→ 回发 → 空计划 → engine 出「没听清」）；
+        # 而这一轮 `clarify_resume=1` 又已经把再澄清那条路关掉了 ⇒ 用户被自己刚点的
+        # 按钮顶回了起点。判据是**形态**不是措辞：这一轮是用户在回应系统的提问，
+        # 空计划的正确出口是交给兜底 Agent 答一句，不是宣布自己没听清。
+        # ⚠ 只在 clarify_resume 轮生效——普通轮的空计划仍走既有诚实降级话术
+        # （低分不硬执行，那条路是对的）。
+        # ⚠ **必须挂在下面那批观测赋值之前**：换 plan 对象后由它们统一作用在最终这份
+        # 计划上。首版挂在后面、靠逐字段搬运，当场被 B6 那条「shadow 只写不读」的
+        # 源码级断言按住——**搬运也是读**，那条红线不接受「我只是原样传递」。
+        # ⚠ 条件**不带 `plan.clarify is None`**，首版带了、于是测下来根本没触发：
+        # 真实形态恰恰是「模型第二轮又出了一张澄清卡」，而 engine 在 resume 轮会把它
+        # 丢掉（不许连问两次），丢完就只剩空计划 ⇒「没听清」。纯空 steps 那种形态
+        # 早被上面 `_no_action` 那条接住了。**先证明自己测的那条路径真的被走到**
+        # （§4.3「A/B 之前先证明两臂真的不同」的同款）。
+        if (not plan.steps
+                and str((ctx.prefs or {}).get("clarify_resume", "")) == "1"):
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                logger.info("clarify_resume 轮空计划 → 兜底 Agent 应答: %s", text[:40])
+                plan = talk
+                plan_mode = f"{plan_mode or ''}_clarify_resume_talk"
+
         # 观测：保留 LLM 最后一次原始输出（fallback 路径保留失败现场），供 planning span 门控采集
         plan.raw_llm = last_raw
         plan.skills = sk_names

@@ -183,6 +183,9 @@ export type McpOrderCard = {
 
 export type McpResultCard = {
   type: 'mcp_result'
+  // readonly=true：这一轮调的是只读工具（servers.yaml 的 write: false），
+  // 结果里没有订单。渲染成信息卡而不是订单卡（QA I-022）。
+  readonly?: boolean
   server?: string
   tool?: string
   merchant?: string
@@ -283,11 +286,20 @@ export type IntentChoiceCard = {
 // 路线规划卡：出发地 → 途经点（餐厅等）→ 目的地（导航确认途经点后）
 export type RoutePlanCard = {
   type: 'route_plan'
+  // estimate=true 表示这一轮**只算不导**（navigation.estimate，QA 卡 Q8 / I-016）。
+  // 卡片标题与按钮据此改写——「卡片类型必须与本轮真实动作一致」（I-022 同族）：
+  // 一张写着「已规划好路线」的卡配一个没有发生的导航，用户没法分辨这两件事。
+  estimate?: boolean
+  // cancelled=true：这一趟导航已经结束（navigation.cancel，QA I-017）。
+  // 聊天流里历史卡片改不了，但**这一轮**必须出一张说清「作废了」的卡——
+  // 否则用户看到的最后一张路线卡永远是还在导航的样子。
+  cancelled?: boolean
   origin?: string
   destination: string
   waypoints: Array<{ name: string; address?: string }>
   distance_km?: number
   duration_min?: number
+  eta_ts?: number
 }
 
 // 充能路线卡：出发地 → 沿途途经充电点 → 目的地

@@ -197,7 +197,9 @@ class NavigationAgent(BaseAgent):
         handlers = {
             "navigation.search_poi": self._search_poi,
             "navigation.navigate_to": self._navigate_to,
+            "navigation.estimate": self._estimate,
             "navigation.reroute": self._reroute,
+            "navigation.cancel": self._cancel_route,
             "navigation.reverse_geocode": self._reverse_geocode,
             "navigation.poi_detail": self._poi_detail,
             "navigation.set_place": self._set_place,
@@ -250,13 +252,105 @@ class NavigationAgent(BaseAgent):
                 "建议尽快出发，或说「帮我换避堵路线」。", extra)
 
     @staticmethod
-    def _navigate_payload(destination: str, lat: float, lng: float, meta: dict | None) -> dict:
-        """构建导航动作；仅携带本轮已授权的精确起点。"""
+    def _navigate_payload(destination: str, lat: float, lng: float, meta: dict | None,
+                          origin: "GeoPoint | None" = None) -> dict:
+        """构建导航动作；仅携带本轮已授权的精确起点。
+
+        `origin` 非空 = 用户**明说了出发地**（Q8 的 origin 槽），它优先于本轮 GPS：
+        「从深圳欢乐海岸出发去世界之窗」要按欢乐海岸算路，而不是按车现在在哪。
+        """
         payload = {"destination": destination, "lat": lat, "lng": lng}
-        current = current_location_from_meta(meta)
-        if current:
-            payload.update({"origin_lat": current.lat, "origin_lng": current.lng})
+        start = origin or current_location_from_meta(meta)
+        if start:
+            payload.update({"origin_lat": start.lat, "origin_lng": start.lng})
         return payload
+
+    # ── 起终点解析（Q8：manifest 新增 origin 槽）────────────────────────
+    async def _resolve_point(self, text: str, ctx, meta) -> tuple[str, GeoPoint | None]:
+        """地点原话 → (显示名, 坐标)。空文本 → ("", None)。
+
+        **解析不出坐标时返回 (原话, None)，绝不悄悄回落当前位置**——那正是 SL4
+        要修的形态：用户明说了出发地，系统却拿当前位置去算（探针四轮 12/13 红）。
+        """
+        t = (text or "").strip()
+        if not t:
+            return "", None
+        key, label = _match_place_alias(t)
+        if key:
+            stored = await self._get_place(ctx, key)
+            if stored and stored.get("lat") is not None:
+                return (stored.get("name") or label,
+                        GeoPoint(lat=float(stored["lat"]), lng=float(stored["lng"])))
+            return label, None
+        near = await self._current_position(ctx, meta)
+        _, items = await self._find_destination(t, meta, near=near, limit=1)
+        if items and items[0].lat is not None:
+            return items[0].name, GeoPoint(lat=float(items[0].lat),
+                                           lng=float(items[0].lng))
+        return t, None
+
+    async def _estimate(self, intent, ctx, meta) -> AgentResult:
+        """只算不导：两点间的里程/时长/预计到达时刻。**本方法永不产出 navigate 动作。**
+
+        Q8「能力缺席 → 就近误执行」的头一条（I-016）。判据写在 manifest 的描述里：
+        用户要的是**数**还是**行程**。这里出的卡带 `estimate: true`，HMI 据此把标题
+        从「规划路线」换成「距离估算」——**卡片类型必须与本轮真实动作一致**
+        （同 I-022 那族）。
+        """
+        dest_text = (intent.slots.get("destination") or "").strip()
+        raw_text = (intent.raw_text or "").strip()
+        if not dest_text:
+            return AgentResult(status=NEED_SLOT, speech="您想算到哪里的路程？",
+                               follow_up="说个目的地，比如「到深圳北站多远」",
+                               missing_slots=["destination"])
+        dest_name, dest_pt = await self._resolve_point(dest_text, ctx, meta)
+        if dest_pt is None:
+            return AgentResult(
+                speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？")
+
+        origin_text = (intent.slots.get("origin") or "").strip()
+        if origin_text:
+            origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
+            if origin_pt is None:
+                return AgentResult(
+                    speech=f"我没找到起点「{origin_name or origin_text}」，换个说法再试试？")
+        else:
+            origin_name, origin_pt = "当前位置", await self._current_position(ctx, meta)
+            if origin_pt is None:
+                # 诚实降级：没有起点就没有路程，别拿一个假起点算出一个像模像样的数。
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech="我现在拿不到车辆的位置，你说一下从哪儿出发，我就能算。",
+                    follow_up="可以说「从深圳北站出发」", missing_slots=["origin"])
+
+        strategy, strategy_note = _route_strategy(
+            f"{intent.slots.get('route_pref') or ''} {raw_text}")
+        try:
+            route = await self.poi.get_route(origin_pt, dest_pt, meta=meta,
+                                             strategy=strategy)
+        except ProviderError as e:
+            logger.warning("estimate route failed（诚实降级，不猜数）: %s", e)
+            return AgentResult(speech="地图服务暂时不可用，这段路程算不出来，稍后再试。")
+        distance_km = route.get("distance_km") or 0
+        duration_min = route.get("duration_min") or 0
+        if not distance_km and not duration_min:
+            return AgentResult(
+                speech=f"没能算出{origin_name}到{dest_name}的路程，稍后再试。")
+
+        dur = self._fmt_dur(duration_min)
+        eta = int(time.time()) + int(float(duration_min) * 60)
+        speech = f"{strategy_note}从{origin_name}到{dest_name}全程约{distance_km}公里"
+        if dur:
+            speech += f"，开车约{dur}，现在出发预计{self._fmt_clock(eta)}到"
+        speech += "。需要我导航过去吗？"
+        card = attach({"type": "route_plan", "estimate": True,
+                       "origin": origin_name, "destination": dest_name,
+                       "waypoints": [], "distance_km": distance_km,
+                       "duration_min": duration_min, "eta_ts": eta}, self.poi)
+        return AgentResult(speech=speech, ui_card=card,
+                           data={"origin": origin_name, "destination": dest_name,
+                                 "distance_km": distance_km,
+                                 "duration_min": duration_min, "eta_ts": eta})
 
     async def _search_poi(self, intent, ctx, meta) -> AgentResult:
         keyword = intent.slots.get("keyword") or intent.slots.get("category")
@@ -598,12 +692,25 @@ class NavigationAgent(BaseAgent):
                 first, resolved_name, stop_category, items, meta,
                 arrive_by_ts=arrive_by_ts, strategy=strategy, strategy_note=strategy_note)
 
-        # 普通导航：出路线规划卡（当前位置 → 目的地，起终点 + best-effort 距离/时长）
+        # 普通导航：出路线规划卡（起点 → 目的地，起终点 + best-effort 距离/时长）
         prefix = (f"识别到您说的是{first.name}。" if resolved_name != dest else "")
+        # Q8 origin 槽：用户明说「从X出发」时按 X 算路。解析不出就**诚实说一句**，
+        # 不静默回落当前位置（SL4 要修的就是那个静默）。
+        origin_text = (intent.slots.get("origin") or "").strip()
+        origin_pair = None
+        if origin_text:
+            o_name, o_pt = await self._resolve_point(origin_text, ctx, meta)
+            if o_pt is None:
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"我没找到您说的起点「{o_name or origin_text}」。",
+                    follow_up="换个说法告诉我出发地，或者直接说「从当前位置出发」。",
+                    missing_slots=["origin"])
+            origin_pair = (o_name, o_pt)
         return await self._route_plan_to(
             first.name, first.address, first.lat, first.lng, meta,
             resolved_prefix=prefix, ctx=ctx, arrive_by_ts=arrive_by_ts,
-            strategy=strategy, strategy_note=strategy_note)
+            strategy=strategy, strategy_note=strategy_note, origin=origin_pair)
 
     # ── 常用地点（家/公司/学校）──────────────────────────────
     async def _get_places(self, ctx) -> dict:
@@ -1093,12 +1200,22 @@ class NavigationAgent(BaseAgent):
     async def _route_plan_to(self, name: str, address: str, lat, lng, meta,
                              *, resolved_prefix: str = "", ctx=None,
                              arrive_by_ts=None, strategy: str = "",
-                             strategy_note: str = "") -> AgentResult:
-        """导航到具体目的地：出路线规划卡（当前位置 → 目的地，best-effort 距离/时长）+ navigate。
-        与顺路途经点的 route_plan 卡同一范式，让用户直观看到"已规划好路线（起点→终点）"。"""
-        payload = self._navigate_payload(name, lat, lng, meta)
+                             strategy_note: str = "",
+                             origin: "tuple[str, GeoPoint] | None" = None) -> AgentResult:
+        """导航到具体目的地：出路线规划卡（起点 → 目的地，best-effort 距离/时长）+ navigate。
+        与顺路途经点的 route_plan 卡同一范式，让用户直观看到"已规划好路线（起点→终点）"。
+
+        `origin`（Q8 的 origin 槽解析结果）非空时**它就是起点**：算路、卡片、动作载荷
+        三处一起换掉。⚠ **覆盖面写在这里**：接了 origin 的只有这条普通导航路径；
+        顺路停靠 / 途经点 / 常用地点三条仍按当前位置起算（行为与本批之前逐字一致）。
+        它们要接的时候在这三处各传一次即可——**不覆盖的部分要写下来，不要让读的人
+        以为全都接上了**。
+        """
+        origin_label = origin[0] if origin else "当前位置"
+        payload = self._navigate_payload(name, lat, lng, meta,
+                                         origin[1] if origin else None)
         distance_km = duration_min = 0
-        current = current_location_from_meta(meta)
+        current = origin[1] if origin else current_location_from_meta(meta)
         if current:
             try:
                 route = await self.poi.get_route(
@@ -1108,7 +1225,8 @@ class NavigationAgent(BaseAgent):
                 duration_min = route.get("duration_min") or 0
             except Exception as e:                       # best-effort：算不出就只给起终点
                 logger.debug("route plan distance unavailable: %s", e)
-        speech = f"{resolved_prefix}{strategy_note}为您导航到{name}（{address}）。"
+        origin_note = f"从{origin_label}" if origin else ""
+        speech = f"{resolved_prefix}{strategy_note}{origin_note}为您导航到{name}（{address}）。"
         if distance_km:
             dur = self._fmt_dur(duration_min)
             speech += f"全程约{distance_km}公里" + (f"、约{dur}" if dur else "") + "，已规划好路线。"
@@ -1145,7 +1263,7 @@ class NavigationAgent(BaseAgent):
                 logger.debug("navigation remindable save skipped: %s", e)
         # G6 历史轨迹：导航成功落一条轻量情景记忆（「上次去的那个地方」的数据源）
         await self._remember_visited(ctx, name, lat, lng)
-        card = attach({"type": "route_plan", "origin": "当前位置", "destination": name,
+        card = attach({"type": "route_plan", "origin": origin_label, "destination": name,
                        "waypoints": [], "distance_km": distance_km,
                        "duration_min": duration_min, **deadline_extra}, self.poi)
         return self._stamp_route_session(AgentResult(
@@ -1647,6 +1765,35 @@ class NavigationAgent(BaseAgent):
                 logger.info("corrected planner dest %r -> landmark %r", dest, cand)
                 return cand
         return dest
+
+    async def _cancel_route(self, intent, ctx, meta) -> AgentResult:
+        """终止当前导航（QA I-017）。
+
+        两件事都要做，少一件就是 I-017 的原样复现：
+        1. **说清楚**取消的是哪一趟（「已结束到X的导航」），不是一句裸「已取消」；
+        2. **把服务端的活动路线清掉**——保留键 `_route_session_end`（与
+           `_route_session` 同族，契约 §9.1）。不清的话 `focus.active_route` 还挂着，
+           下一句「换条路」会去改一条已经取消的路线，而屏幕上那张路线卡也再没有
+           任何东西说它作废了。
+
+        ⚠ 没有活动路线时**诚实说明**，不回落成「已为您取消」——那正是 I-017 里
+        用户看到「已取消」却什么都没变的来源。
+        """
+        active = self._active_route_from(meta)
+        if not active:
+            return AgentResult(
+                speech="当前没有正在进行的导航。",
+                data={"_route_session_end": True})
+        dest = active.get("destination") or "目的地"
+        card = attach({"type": "route_plan", "cancelled": True,
+                       "origin": "当前位置", "destination": dest,
+                       "waypoints": active.get("waypoints") or [],
+                       "distance_km": 0, "duration_min": 0}, self.poi)
+        return AgentResult(
+            speech=f"已结束到{dest}的导航。",
+            ui_card=card,
+            data={"_route_session_end": True, "destination": dest},
+        ).action("navigate_cancel", {"destination": dest})
 
     async def _reverse_geocode(self, intent, ctx, meta) -> AgentResult:
         """逆地理编码：坐标 → 地址。"""

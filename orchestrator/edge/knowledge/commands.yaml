@@ -256,6 +256,34 @@ objects:
     - project-a
     - project-b
     - project-c
+  warning_light:
+    # 双闪（危险报警灯）。**2026-08-19 从 headlight 里拆出来**（QA 卡 Q8 / I-050）：
+    # `scripts/gen_commands_yaml.py` 的 family 表原本把 `warning_light` 并进 `headlight`，
+    # 于是「打开双闪」在知识库里根本没有对应对象——端侧规则认得出 `warning_light`
+    # 却不在 LOCAL_INTENTS，整句上云，planner 在别的车控工具里就近挑一个。
+    # 真栈实测三次分别落 `power_mode.set` / `lane_assistance.close` / `hvac.off`
+    # ——**要开双闪却把空调关了**。它与大灯不是同一个开关：大灯照明、双闪示警，
+    # 行车中恰恰是最该能用的那一个，所以 drive_restricted 两向都不限制。
+    display_name: 双闪
+    operates:
+    - open
+    - close
+    attrs: []
+    modes: []
+    positions: false
+    units: []
+    online: offline_ok
+    drive_restricted: false
+    require_confirm: false
+    effect: write
+    edge_intents:
+    - warning_light.close
+    - warning_light.open
+    voice_forbidden: false
+    projects:
+    - project-a
+    - project-b
+    - project-c
   trunk:
     display_name: 后备箱
     operates:
@@ -759,10 +787,18 @@ objects:
     - project-c
   volume:
     display_name: 音量
+    # 静音/取消静音归**音量**不归媒体（2026-08-19，QA 卡 Q8 / I-049）：卡上写的是
+    # `media.mute-unmute`，取证后按知识库自己的口径改了——① 飞书公版指令表里
+    # 「打开静音」的域是 `setting` 不是 `media`（`baseline_routing.json` 有这条）；
+    # ② `nlu_objects.yaml` 头部写着「`声音` 全量 62% 是音量（导航音量/媒体音量/**静音**）」；
+    # ③ 静音要压住的是**全部出声**（导航播报/来电/媒体），而 `media.pause` 是停播放
+    # ——两件事，放同一个对象下才不会让 planner 面对两个分不开的工具。
     operates:
     - set
     - inc
     - dec
+    - mute
+    - unmute
     attrs: []
     modes: []
     positions: false
@@ -776,7 +812,9 @@ objects:
     edge_intents:
     - volume.dec
     - volume.inc
+    - volume.mute
     - volume.set
+    - volume.unmute
     voice_forbidden: false
     projects:
     - project-a

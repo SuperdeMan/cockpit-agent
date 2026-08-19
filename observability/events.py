@@ -206,6 +206,7 @@ class EventEmitter:
         provider="",
         requested_tier="",
         pinned=False,
+        fallback=False,
         prompt_tokens=0,
         completion_tokens=0,
         latency_ms=0,
@@ -219,6 +220,11 @@ class EventEmitter:
         """LLM 调用事件（llm-gateway 唯一出口收口）：模型/tokens/时延/缓存按 trace 归档。
         provider=实际 serving 的厂商 id；requested_tier=调用方原始 model 参数（""/@fast/具体名，
         审计谁在用什么档）；pinned=本次调用是否被请求级锁定（D2 落地前恒 False）。
+        fallback=**这一跳换了厂商**（active 整链失败 → 跨厂商备份档）。provider 字段
+        一直都在，但「这次是不是降级」要人拿它去比 active 才看得出来——而
+        **静默回落正是要消灭的形态**（B3）：一个需要人脑比对才发现的降级，
+        在排查现场等于没记（QA I-057：MiniMax 529 时静默切 DeepSeek，
+        可观测里看不出这一跳换了脑）。
         prompt_tail/content_head 受 OBS_CONTENT_CAPTURE 门控 + 脱敏。"""
         from observability.redact import gate_content, redact
 
@@ -232,6 +238,7 @@ class EventEmitter:
                 "provider": provider,
                 "requested_tier": requested_tier,
                 "pinned": bool(pinned),
+                "fallback": bool(fallback),
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "latency_ms": round(latency_ms, 1),

@@ -941,6 +941,12 @@ def extract_focus(plan, results) -> "Focus | None":
             data.get("_route_session") if isinstance(data, dict) else None)
         if session:
             focus.active_route = session
+        # G8 终止（QA I-017，2026-08-19）：导航被取消 ⇒ 活动路线**清空**。
+        # 同族保留键、声明式，编排照旧不认识 navigation 的私有字段。
+        # 顺序在 stamp 之后：同一轮不会既开新路线又终止，真出现时以终止为准
+        # ——「说了取消却还挂着」是本条要修的那个形态。
+        if isinstance(data, dict) and data.get("_route_session_end") is True:
+            focus.active_route = {}
         # Q9 安全告警：同族保留键。多步都声明时取最后一个（后发的更新）。
         alert = _valid_safety_alert(
             data.get("_safety_alert") if isinstance(data, dict) else None)
