@@ -277,7 +277,7 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
 
 ---
 
-### 改了 `.env` 却不生效？两道关都要过
+### 改了 `.env` 却不生效？三道关都要过
 
 1. **compose 必须显式列名**。根 `compose.yaml` 的 `env_file: .env` 只作用于**变量插值**
    （让 compose 文件里的 `${VAR}` 取到值），**不会把 `.env` 自动注入容器**。
@@ -294,6 +294,19 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
    ```
    > 2026-07-26 实例：给声纹旋钮接线 compose 后 `VOICEPRINT_MODEL_PATH` 变成空串，
    > `os.path.exists("")` 为假 → 整个声纹面 disabled。**接线本身把功能关掉了。**
+3. **改身份/凭证类变量要整栈重建，不是重启、也不是只重建持有它的那个服务。**
+   两件事各挡一半：
+   - **`docker restart` 不重读 `env_file`**——环境在容器**创建**时固化，
+     必须 `up -d --force-recreate`（或走部署入口）才会重新读。
+   - **下游可能把身份缓存在长连里**。2026-08-19 实例：改完 `AUTH_TOKENS` 只
+     `--force-recreate --no-deps edge-gateway`，而没重建的 `edge-orchestrator`
+     仍拿**旧身份**维持着云端长连，于是每一轮都是
+     `PERMISSION_DENIED: request vehicle <新值> does not match stream vehicle <旧值>`，
+     整栈降级成「网络不太好，复杂请求暂时无法处理」——**看起来像云端挂了，
+     其实是端云身份不一致**。
+   ⇒ 本地 `make up`（或 `docker compose up -d --force-recreate`）、
+   云档走 `python scripts/dev_stack.py deploy --sha <sha> --apply`。
+   **别用 `--no-deps` 省时间**，省下来的几十秒会变成半小时的误判。
 
 ## 7. 提交前自检
 
