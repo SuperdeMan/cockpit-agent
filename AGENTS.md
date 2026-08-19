@@ -97,9 +97,9 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
 **当前部署形态（2026-08-19 更新）**：`dev-stack.local` = **`target=cloud`**。
-云端 release **`45a9318`**（2026-08-19 由 QA Q10 残余批 + 第 7.5 步四次 `deploy --apply`
+云端 release **`86a9490`**（2026-08-19 由 QA Q10 残余批 + 第 7.5 步五次 `deploy --apply`
 推上去：`870f4bc` 下发面 + 双入口收敛 → `64f2807` 补完三条通道 → `4e975f6` 读数回填
-→ `45a9318` 序数取值，
+→ `45a9318` 序数取值 → `86a9490` 收口回填，
 `verify` = **verified**、`case_ids: ["e2e_remote_safe"]` 非空；
 此前依次是 `8bea3b8`（Q2 残余 + `AUTH_TOKENS` 修复）与切云那趟的 `34d72d7`）、
 三存储数据已迁入并逐表核对；
