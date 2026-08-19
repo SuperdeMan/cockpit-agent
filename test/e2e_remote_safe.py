@@ -117,6 +117,54 @@ async def edge_round_trip(recorder: CaseRecorder) -> str:
     return trace_id
 
 
+#: 「这一轮引用到了长期记忆」的两条判据，取或。
+#:
+#: **为什么非要这条探针**：2026-08-19 实测，云端 `AUTH_TOKENS` 漏写 user_id 段导致网关把
+#: user_id 解析成 `v1`，而全部长期记忆在 `u1` 名下 ⇒ **一条都召不回**。而当时
+#: 端点全 healthy、`verify` 全绿、权限全通——因为**这条 E2E 只发一句问候，验证面里
+#: 没有记忆**。「切云验证通过」于是与「记忆全废」同时成立了三天。
+#:
+#: 判据取或是刻意的：`with_provenance` 会**确定性追加**出处尾巴，但它有一条
+#: 「模型自己说了就别再叠」的短路，所以出处标记会漏；而实体词只在真的引用了记忆时出现。
+#: 两条任一命中即算召回到了。**宁可假红不要假绿**——假红有人看，假绿没人看。
+_MEMORY_EVIDENCE = ("提过的）", "提过", "记得")
+
+
+async def memory_recall_probe(recorder: CaseRecorder) -> None:
+    """只读：问一句只有长期记忆才答得出的问题，断言当前身份确实看得见记忆。
+
+    **不写入任何数据**（remote_safe 契约）：只发一句问句，不产生动作、不下单、不建提醒。
+
+    ⚠ 前提：当前 owner 名下存在可召回的长期记忆。前提不成立时报错要说清是前提问题，
+    别让下一个人把「库是空的」读成「召回坏了」。
+    """
+    token = os.environ.get("VITE_WS_TOKEN", "")
+    if not token:
+        raise RemoteSafeError("websocket token is missing")
+    ws_url = append_query_token(WS_URL, token)
+    payload = {
+        "text": "我女儿在哪上学",
+        "session_id": recorder.session_id(2),
+        "is_confirmation": False,
+        "meta": {
+            "trace_id": "remote-mem-" + uuid.uuid4().hex,
+            "memory_enabled": "true",
+            "e2e_run_id": os.environ["E2E_RUN_ID"],
+        },
+    }
+    async with websockets.connect(ws_url, open_timeout=20, ping_interval=None) as socket:
+        await socket.send(json.dumps(payload, ensure_ascii=False))
+        final = await wait_final(socket, timeout_s=90)
+    speech = str(final.get("speech") or "")
+    if final.get("actions"):
+        raise RemoteSafeError("memory probe must stay read-only but produced actions")
+    if not any(mark in speech for mark in _MEMORY_EVIDENCE):
+        raise RemoteSafeError(
+            "long-term memory was not recalled for the current identity; "
+            "check the AUTH_TOKENS user_id segment before assuming recall is broken "
+            "(this probe also fails if the owner simply has no memories yet)")
+
+
 async def main() -> int:
     recorder = CaseRecorder()
     token = os.environ.get("VITE_WS_TOKEN", "")
@@ -143,6 +191,8 @@ async def main() -> int:
             recorder.pass_case("remote-collector-stream")
             await edge_round_trip(recorder)
             recorder.pass_case("remote-isolated-round-trip")
+            await memory_recall_probe(recorder)
+            recorder.pass_case("remote-memory-recall")
         except Exception as exc:
             safe = _redact_text(str(exc), {token} if token else set())
             raise RemoteSafeError(safe) from None
