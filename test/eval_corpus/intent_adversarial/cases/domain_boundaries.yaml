@@ -1243,3 +1243,60 @@ cases:
       - input: {utterance: 这边有没有能买水的便利店, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [charging.find, charging.plan], allow_extra_intents: false}
+  # ── 接送复合句 vs 纯周边发现（2026-08-20，person-pickup 卡）────────────────
+  # 台账 navigation-nearby.pickup-plus-meal。判据**不是相似度**（这两族的
+  # IDF-Dice 高达 0.492），是**有没有接送人称**：`接/送 + 人称词` 在场 ⇒ 这是一趟
+  # 带顺路停靠的导航（destination=人称词、吃饭那半是 stop_category）；不在场才是
+  # 纯 POI 搜索。真栈红例：「先去接我儿子，再找家川菜馆」三次取样**逐字相同地
+  # 只答川菜那半**，接谁整个被丢掉——而川菜那半答得相当好，所以话术层看不出缺了一半。
+  # 话术刻意避开范例原句（教泛化不教背诵）。
+  - id: bd.pickup-meal.left.parents
+    title: 接上父母再吃饭是一趟导航，不是周边搜索
+    family_id: bd.pickup-meal.parents
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [navigation, nearby], boundary_ledger: navigation-nearby.pickup-plus-meal, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-nearby.pickup-plus-meal, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-20}
+    turns:
+      - input: {utterance: 接上爸妈再找个地方吃晚饭, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.pickup-meal.left.son
+    title: 换个人称与句形，仍然是接送导航
+    family_id: bd.pickup-meal.son
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [navigation, nearby], boundary_ledger: navigation-nearby.pickup-plus-meal, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-nearby.pickup-plus-meal, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-20}
+    turns:
+      - input: {utterance: 先把儿子接了然后去吃顿火锅, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [nearby.search], allow_extra_intents: false}
+  - id: bd.pickup-meal.right.dinner
+    title: 同一句去掉接送人称就是纯周边发现
+    family_id: bd.pickup-meal.parents
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [navigation, nearby], boundary_ledger: navigation-nearby.pickup-plus-meal, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-nearby.pickup-plus-meal, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-20}
+    relation: {base_case: bd.pickup-meal.left.parents, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
+    turns:
+      - input: {utterance: 再找个地方吃晚饭, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+  - id: bd.pickup-meal.right.hotpot
+    title: 火锅那半同样——没有接送人称就不该规划出行
+    family_id: bd.pickup-meal.son
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision], domains: [navigation, nearby], boundary_ledger: navigation-nearby.pickup-plus-meal, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: navigation-nearby.pickup-plus-meal, reviewed_by: human, reviewed_via: session_authorisation, reviewed_at: 2026-08-20}
+    relation: {base_case: bd.pickup-meal.left.son, type: route_flip, expectation: {forbidden_after: [navigation.navigate_to], required_change: true}}
+    turns:
+      - input: {utterance: 然后去吃顿火锅吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}

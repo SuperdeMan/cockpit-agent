@@ -244,6 +244,13 @@ python scripts/retire_hints.py --apply                           # 按交集执�
 
 2026-08-15 探索式真实用户 QA 轮 58 个问题的**红绿对照基线**。取证脚本、不进 CI；
 卡与阶段计划见 [`docs/design/2026-08-15-qa-exploratory-root-cause-cards.md`](../docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)。
+> ⚠ **`pickup` 组不是 QA 轮的**（2026-08-20 加）：它来自 EVA 双档复跑的 person-pickup 卡，
+> 放进来是因为那张卡与 QA 卡 Q5 残余**是同一件事**。它自带三条判据原语
+> （`follow_up_any` 分支签名 / `navigate_within_km` 从**动作 payload 的坐标**算 /
+> `navigate_named_any` 至少一个命中）——**三条都是被自己的假读数逼出来的**，
+> 逐条留痕在卡 §6.1。
+> ⚠ 跑 `pickup` 组会往 `u1` 写 `episodic.place`「导航去过X」（成功导航的既有行为）：
+> 一趟 `--repeat 5` 约 20 条。它们不是假事实，但是探针噪声——**大批量跑之前先知道**。
 
 **端点经统一入口解析**（2026-08-19，切云后本脚本首次能在 cloud 档跑）：
 `scripts/e2e_target.resolve_e2e_target` 读仓库根 `dev-stack.local` 定档；cloud 档从根
@@ -255,7 +262,7 @@ local 档的 URL 与此前写死的 `ws://localhost:8090/ws` 逐字相同。
 > 现在改成宽容超时（就算超时后首帧才到也无害，帧循环会忽略非 final/error 帧）。
 
 ```bash
-python scripts/probe_qa_regression.py --list                 # 46 例 / 78 轮 / 9 组（第 8 步 +capability 组 CA1-CA5）
+python scripts/probe_qa_regression.py --list                 # 55 例 / 87 轮 / 10 组（2026-08-20 +pickup 组 PU1-PU9）
 # 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
 # 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
 # ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。

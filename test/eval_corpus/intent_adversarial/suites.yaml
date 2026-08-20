@@ -91,12 +91,23 @@ schema_version: 1
 #      **放开一条路却不给它落点是把一个错换成另一个错**。判据是「终止还是调整」，
 #      正 2 + 硬负 2（reroute 两侧）+ 对照 1。
 # 合计 +14 → 610。全部 reviewed 不进 gate 池；旧尺子一条没删。
+# 2026-08-20 放到 614：第十二次适用，**理由回到最早那一条**——泓舟新裁定了一条跨域
+# 边界 `navigation-nearby.pickup-plus-meal`，而台账契约要求**双向各 2 例**，
+# 机械地就是 +4。**边界裁定的对照用例是台账的兑现物，不是可裁的冗余。**
+# 这条边界为什么值得占额度：接送复合句与纯周边搜索的 IDF-Dice 高达 **0.492**
+# （门禁自己算出来的），而它们**根本不是同一件事**——真栈实测「先去接我儿子，
+# 再找家川菜馆」三次取样**逐字相同地只答川菜那半**，接谁整个被丢掉；
+# 而川菜那半答得相当好（还用上了「不吃辣」的记忆），**所以话术层看不出缺了一半**。
+# 判据**不是相似度**，是「有没有接送人称」——正是台账存在的理由。
+# 左侧 2（接爸妈/接儿子，必须落 navigation 且禁 nearby.search）+ 右侧 2
+# （同句去掉接送人称，route_flip 回 nearby.search 且禁 navigation）。
+# 全部 reviewed 不进 gate 池；旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 610
+    max_cases: 614
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

@@ -873,7 +873,14 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # 成 reminder NEED_SLOT 是双通道抢话；批 D 已拍板创建入口=对 offer 的肯定答复）。
     assert ledger["navigation-trip.reroute-vs-modify"] == ("navigation", "trip")
     assert ledger["chitchat-reminder.statement-vs-request"] == ("chitchat", "reminder")
-    assert len(ledger) == 29
+    # 2026-08-20 29→30：person-pickup 卡落一条。**这条计数断言当场按住了我**——
+    # 加范例时门禁只报「跨域近重复未裁定」，登记完台账我以为完事了，
+    # 而 `validate_boundary_coverage` 要的是**双向各 2 条对照语料**，
+    # 全量 pytest 才把它翻出来（子集跑绿证明不了全量绿——分母不同）。
+    # 兑现物已证：bd.pickup-meal.{left.parents,left.son} ×
+    # bd.pickup-meal.{right.dinner,right.hotpot}（同一句有没有「接/送+人称」，
+    # 计划必须不同），L0 strict 2/2 exit 0（614 唯一输入，上界同步 610→614）。
+    assert len(ledger) == 30
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):
