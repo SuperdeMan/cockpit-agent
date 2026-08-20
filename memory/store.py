@@ -593,7 +593,7 @@ class MemoryStore:
         比查不到更糟，宁可问一句。
         """
         from relation import (REL_FAMILY, REL_PLACE_OF, REL_WORKS_AT,
-                              REL_LIVES_AT, kinship_aliases)
+                              REL_LIVES_AT, kinship_aliases, normalize_kinship)
         aliases = kinship_aliases(person_word)
         if not aliases:
             return None
@@ -604,23 +604,46 @@ class MemoryStore:
                                                  rel=REL_FAMILY, object_=alias):
                 if edge["subject"] not in persons:
                     persons.append(edge["subject"])
-        if len(persons) != 1:
-            return None                      # 0=不知道；>1=有歧义，都该问不该猜
+        # **匿名占位与具名是同一个人**（Q5 实体归一，2026-08-20 真栈取证）。
+        # 「我女儿在X上学」存下 `女儿 --family--> 女儿`（无名的人以称谓自身作实体名，
+        # 见 `relation.normalize_candidate` 的 family 自环例外）；之后「我女儿叫小雨」
+        # 再存 `小雨 --family--> 女儿`。库里于是有**两个 subject 指向同一个人**，
+        # 旧判据把它们数成两个人 ⇒ 判歧义 ⇒ **一跳解析从此对这个称谓永久失效**。
+        # 真栈实测（云端 u1）：`女儿` persons=['女儿','小雨'] → None、
+        # `孩子` persons=['孩子','女儿','小雨'] → None，只有从没起过名字的
+        # 「老婆」还解析得动。**「用户给这个人起了名字」不该让能力退化。**
+        #
+        # 判据：subject 本身就是该称谓族的亲属词 ⇒ 它是**占位**，不是独立的人；
+        # 具名主体 ≥2 才是真歧义（「小雨」和「小明」是两个孩子，照旧问不猜）。
+        # ⚠ 安全性没被放松：合并的只是**人的分组**，最后那道
+        # 「地点必须唯一，否则返回 None」一个字没动——两个孩子两所学校仍然是 None。
+        alias_set = {normalize_kinship(a) for a in aliases} | set(aliases)
+        named = [p for p in persons
+                 if p not in alias_set and normalize_kinship(p) not in alias_set]
+        if len(named) > 1:
+            return None                      # 多个具名实体 = 真歧义，问不猜
+        if not persons:
+            return None                      # 不知道这个人是谁
         # P4：人的常在地是 place_of ∪ works_at ∪ lives_at 三类——此前只查 place_of，
         # 「老婆在X上班」即便正确抽成 works_at 也查不到（存得下用不上的又一例）。
         # 去重后仍要求唯一，歧义照旧问不猜。
         places: list[dict] = []
+        holders: list[str] = []
         seen_objs: set[str] = set()
-        for rel in (REL_PLACE_OF, REL_WORKS_AT, REL_LIVES_AT):
-            for edge in await vs.query_relations(user_id, occupant_id=occupant_id,
-                                                 subject=persons[0], rel=rel):
-                obj = edge.get("object") or ""
-                if obj and obj not in seen_objs:
-                    seen_objs.add(obj)
-                    places.append(edge)
+        for person in persons:               # 同一个人的几个 subject，地点取并集
+            for rel in (REL_PLACE_OF, REL_WORKS_AT, REL_LIVES_AT):
+                for edge in await vs.query_relations(user_id, occupant_id=occupant_id,
+                                                     subject=person, rel=rel):
+                    obj = edge.get("object") or ""
+                    if obj and obj not in seen_objs:
+                        seen_objs.add(obj)
+                        places.append(edge)
+                        holders.append(person)
         if len(places) != 1:
             return None
-        return {"person": persons[0], "place": places[0]["object"],
+        # 回报的人名优先具名——教学问与日志里「小雨」比「女儿」有信息量。
+        person_name = named[0] if named else holders[0]
+        return {"person": person_name, "place": places[0]["object"],
                 "object_ref": places[0].get("object_ref") or ""}
 
     async def consolidate(self, session_id: str, user_id: str, occupant_id: str = "primary",

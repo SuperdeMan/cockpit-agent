@@ -305,3 +305,125 @@ def test_set_place_own_home_with_mawan_road_not_blocked():
 
     assert res.status == "ok"
     assert "places" in saved                 # 本人常用地点照常可设
+
+
+# ── person-pickup 卡（2026-08-20）：复合句里的接送人称 ─────────────────────
+#
+# 存量缺陷，两个 provider 同时红 ⇒ 系统缺口不是模型方差（卡 §1）。
+# `_person_destination` 的「剥完人称还剩不剩实质内容」判据对**槽值**是对的，
+# 套到**整句原话**上天然失效——复合请求必然有剩余内容。
+# 修法**不动那条判据**（卡 §5），改成在「这个目的地我接不着」之后再回退人称。
+
+from agents.navigation.src.agent import _pickup_person
+
+
+@pytest.mark.parametrize("raw,expect", [
+    ("接爸妈去吃饭。", "爸妈"),
+    ("带我去接孩子放学，顺便帮我找一家麦当劳，5点我要到学校。", "孩子"),
+    ("先去接我妈，再找家川菜馆。", "妈"),
+    ("送孩子上学，路过买个早餐", "孩子"),
+    ("接一下老婆然后去吃饭", "老婆"),
+    ("接女儿放学，路上买杯咖啡。", "女儿"),
+])
+def test_pickup_pattern_survives_composite_sentences(raw, expect):
+    assert _pickup_person(raw) == expect
+
+
+@pytest.mark.parametrize("raw", [
+    "接下来去哪吃饭",          # 「接」后面不是人称词
+    "导航去机场接机",
+    "我接受这个方案",
+    "去万象城买东西",
+    "",
+])
+def test_pickup_pattern_does_not_overreach(raw):
+    assert _pickup_person(raw) == ""
+
+
+def test_dual_appellation_is_named_as_a_pair():
+    """「接爸妈」问的是两个人——教学问不能说成「你爸爸」（卡 §4.2）。"""
+    from agents.navigation.src.agent import _person_display
+    assert _pickup_person("接爸妈去吃饭。") == "爸妈"
+    assert _person_display("爸妈") == "爸妈"
+    assert _person_display("父母") == "爸妈"
+
+
+def _agent_with_search(results_by_query):
+    agent = NavigationAgent()
+
+    async def _fake_correct(dest, raw, meta):
+        return dest
+    agent._correct_planner_landmark = _fake_correct
+    calls = []
+
+    async def _fake_search(keyword, near=None, **kw):
+        calls.append(keyword)
+        return list(results_by_query.get(keyword, []))
+    agent.poi.search = _fake_search
+    return agent, calls
+
+
+def test_composite_pickup_without_place_asks_instead_of_quoting_the_sentence():
+    """一#5 原样：「接爸妈去吃饭」接不到地点 ⇒ 教学问，**不是**把整句当地名回读。
+
+    修前话术：「暂时无法确定「接爸妈去吃饭」对应的具体地点。」
+    """
+    agent, _ = _agent_with_search({})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "接爸妈去吃饭"},
+        raw_text="接爸妈去吃饭。", ctx=_ctx_with(None)))
+    assert res.status == "need_slot"
+    assert "爸妈" in res.speech and "在哪" in res.speech
+    assert "上班" in res.follow_up
+    assert "暂时无法确定" not in res.speech
+
+
+def test_composite_pickup_with_place_navigates_there():
+    """接不到地点但记忆里有那个人的常去地 ⇒ 用它继续既有导航链路。"""
+    school = _POI(id="s1", name="深圳市南山实验教育集团鼎太小学",
+                  category="科教文化服务;学校;小学", lat=22.53, lng=113.93)
+    agent, calls = _agent_with_search({"深圳市南山实验小学": [school]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "接孩子放学"},
+        raw_text="带我去接孩子放学，顺便帮我找一家麦当劳。",
+        ctx=_ctx_with({"person": "小雨", "place": "深圳市南山实验小学",
+                       "object_ref": ""}),
+        meta={"current_lat": "22.5410", "current_lng": "113.9412"}))
+    assert res.status == "ok"
+    assert "鼎太小学" in res.speech
+    assert "深圳市南山实验小学" in calls          # 用的是记忆里的全名
+
+
+def test_pickup_fallback_never_fires_when_the_destination_grounds():
+    """**反向对照（卡 §4.3）**：给了具体地点的复合句不得被改写成那个人的常去地。"""
+    mall = _POI(id="m1", name="深圳湾万象城", category="购物服务;商场;购物中心",
+                lat=22.51, lng=113.93)
+    agent, _ = _agent_with_search({"万象城": [mall]})
+    ctx = make_context()
+
+    async def _must_not_resolve(person_word):
+        raise AssertionError("目的地接得着时不该回退人称")
+    ctx.resolve_person_place = _must_not_resolve
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "万象城"},
+        raw_text="接孩子后去万象城。", ctx=ctx,
+        meta={"current_lat": "22.5410", "current_lng": "113.9412"}))
+    assert res.status == "ok"
+    assert "万象城" in res.speech
+
+
+def test_non_pickup_sentence_keeps_the_old_fallback():
+    """反向对照：不是接送句 ⇒ 「暂时无法确定」那条兜底一个字不变。"""
+    agent, _ = _agent_with_search({})
+    ctx = make_context()
+
+    async def _must_not_resolve(person_word):
+        raise AssertionError("非接送句不该查关系图")
+    ctx.resolve_person_place = _must_not_resolve
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "某个不存在的地方"},
+        raw_text="导航去某个不存在的地方", ctx=ctx))
+    assert res.status == "need_slot"
+    assert "暂时无法确定" in res.speech

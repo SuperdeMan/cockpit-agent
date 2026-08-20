@@ -251,3 +251,70 @@ def test_admin_county_no_location_falls_through():
         raw_text="导航去西湖", meta={}))
     assert res.status == "ok"
     assert "杭州西湖" in res.speech
+
+
+# ── 校园族（person-pickup 卡，2026-08-20）：与「虹桥机场」逐字同构 ──────────
+#
+# POI 名字/类目取自 2026-08-20 真高德取证（云端 navigation-agent 容器直连）：
+#   「南山实验小学」near=当前位置 → 五条全是深圳的学校（鼎太/深湾/海滨/南头…）
+#   「南山实验小学」near=None     → **只有**「济南市南山实验小学」1579km
+# ⇒ 「接孩子接到济南」不是高德乱返回，是**我们自己那条去偏置全国重搜**捞上来的。
+
+SZ = {"current_lat": "22.5410", "current_lng": "113.9412"}   # 深圳南山（QA 探针同款）
+
+_SZ_SCHOOLS = [
+    POI(id="n1", name="深圳市南山实验教育集团鼎太小学",
+        category="科教文化服务;学校;小学", lat=22.5361, lng=113.9285),
+    POI(id="n2", name="深圳市海滨实验小学",
+        category="科教文化服务;学校;小学", lat=22.5290, lng=113.9330),
+]
+_JINAN_SCHOOL = POI(id="w1", name="济南市南山实验小学",
+                    category="科教文化服务;科教文化场所;科教文化场所",
+                    lat=36.6512, lng=117.1201)
+
+
+def test_school_anchor_parsing():
+    anchor = NavigationAgent._category_anchor
+    assert anchor("南山实验小学") == ("小学", ("学校", "小学"))
+    assert anchor("南山外国语学校") == ("学校", ("学校",))
+    assert anchor("小学") is None            # 纯类目词维持就近距离序
+    assert anchor("学校") is None
+
+
+def test_school_stem_match_beats_the_nationwide_namesake():
+    """真栈红例：「南山实验小学」→ 济南（1579km）。
+
+    正主是 `results[0]`，与官方名隔着「教育集团」不构成连续包含 ⇒ 严格校验够不着；
+    主干「南山实验」+ 类目「小学」双匹配够得着。**必须零额外 API**——
+    走到去偏置全国重搜就已经错了。
+    """
+    poi = _RecordingPoi(near_results=_SZ_SCHOOLS, wide_results=[_JINAN_SCHOOL])
+    agent = NavigationAgent()
+    agent.poi = poi
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学", meta=SZ))
+    assert res.status == "ok"
+    assert _nav_dest(res) == "深圳市南山实验教育集团鼎太小学"
+    assert ("南山实验小学", False) not in poi.calls    # 没做全国重搜
+
+
+def test_nationwide_namesake_is_rejected_when_the_rescue_runs():
+    """第二道：近侧全是借名 POI ⇒ 真跑去偏置全国重搜，而济南那条也过不了类目复核
+    （它的高德类目是「科教文化场所」，不含「学校/小学」）⇒ **不许被当成正主**。
+
+    修前这一步正是 1579km 的来源：严格包含放行、类目无人复核。
+    ⚠ 原话刻意**不写成接送句**：那会触发 person-pickup 兜底、把读数变成教学问，
+    验的就不是接地这一段了（首版就这么写的，测试当场按住）。
+    """
+    borrowed = POI(id="n1", name="南山实验小学家长接送临时停车区",
+                   category="交通设施服务;停车场;路边停车场",
+                   lat=22.5361, lng=113.9285)
+    poi = _RecordingPoi(near_results=[borrowed], wide_results=[_JINAN_SCHOOL])
+    agent = NavigationAgent()
+    agent.poi = poi
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="导航去南山实验小学", meta=SZ))
+    assert ("南山实验小学", False) in poi.calls    # 重搜确实跑了……
+    assert "济南" not in _nav_dest(res)            # ……只是没被采信

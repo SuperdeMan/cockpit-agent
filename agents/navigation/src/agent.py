@@ -50,8 +50,12 @@ def _match_place_alias(text: str) -> tuple[str | None, str]:
 # 含裸「妈/爸」：口语里「去接我妈」比「去接妈妈」更常见（真栈首验实测漏掉）。
 # 单字不会误伤——`_person_destination` 要求「去掉人称词与填充词后没有实质内容」，
 # 「大妈」剥掉「妈」剩「大」即不触发。
+# 含对偶称谓「爸妈/父母」（person-pickup 卡 §4.2，2026-08-20 补）：此前
+# 「接爸妈去吃饭」匹配到的是单字「爸」，教学问于是说成「我还不知道你**爸爸**平时在哪」
+# ——用户问的是两个人。nearby 早就有这张对偶表（`_KIN_PAIR`），navigation 侧漏了。
 _PERSON_WORDS = ("女儿", "闺女", "儿子", "孩子", "娃", "小孩",
                  "老婆", "妻子", "太太", "媳妇", "老公", "丈夫",
+                 "爸妈", "父母",
                  "妈妈", "母亲", "老妈", "妈", "爸爸", "父亲", "老爸", "爸")
 _PERSON_RE = re.compile("|".join(sorted(_PERSON_WORDS, key=len, reverse=True)))
 # 目的地里去掉人称词后剩下的"非实质内容"：动词、泛称地点、方位词。剩下这些说明用户
@@ -64,7 +68,23 @@ _PERSON_FILLER_RE = re.compile(
 
 
 # 裸称谓 → 播报用的自然说法（「我还不知道**妈**平时在哪」读着别扭，真栈实测）
-_PERSON_DISPLAY = {"妈": "妈妈", "爸": "爸爸", "娃": "孩子", "小孩": "孩子"}
+_PERSON_DISPLAY = {"妈": "妈妈", "爸": "爸爸", "娃": "孩子", "小孩": "孩子",
+                   "父母": "爸妈"}
+
+# person-pickup 卡（2026-08-20）：**接送句形**——「接/送 + （我/你/他/她的）+ 人称」。
+# 判据取形态不取整句：复合请求（「接爸妈去吃饭」「带我去接孩子放学，顺便找家麦当劳」）
+# 的剩余内容必然非空，所以 `_person_destination` 那条「剥完还剩不剩」的判据对整句
+# 天然失效——但「接谁」这个**局部**形态一直都在。
+# ⚠ 刻意只认动词紧邻：「接下来去哪」「接机」不含人称词、「我接受」没有接送语义。
+_PICKUP_RE = re.compile(
+    r"[接送]\s*(?:一下)?\s*(?:[我你他她]的?)?\s*("
+    + "|".join(sorted(_PERSON_WORDS, key=len, reverse=True)) + r")")
+
+
+def _pickup_person(raw_text: str) -> str:
+    """原话里的接送对象人称词；不是接送句返回空串。"""
+    m = _PICKUP_RE.search(raw_text or "")
+    return m.group(1) if m else ""
 
 # set_place 人称守卫（P4）：长词直接算 + 单字「妈/爸」只认「我妈/你爸」代词组合——
 # 裸单字会误伤「妈湾路」这类地名。
@@ -526,13 +546,7 @@ class NavigationAgent(BaseAgent):
                 dest = hit["place"]
             else:
                 # **诚实追问，绝不猜**：不知道「孩子」是谁/在哪时，导航到错地方比问一句更糟。
-                who = _person_display(person_word)
-                return AgentResult(
-                    status=NEED_SLOT,
-                    speech=f"我还不知道你{who}平时在哪，你说个地方我就记住了。",
-                    follow_up=f"可以说「我{who}在XX上班」或「我{who}在XX小学上学」，"
-                              "以后我就能直接带你去。",
-                    missing_slots=["destination"])
+                return self._ask_person_place(person_word)
 
         # 常用地点（家/公司/学校）：命中别名先走画像，未设置则二次交互让用户设置。
         place_key, place_label = _match_place_alias(dest)
@@ -634,6 +648,28 @@ class NavigationAgent(BaseAgent):
             resolved_name, results = await self._find_destination(
                 dest, meta, near=near, limit=5 if is_proximity else 3, page=page,
                 strict=not is_proximity)
+        if not results and not is_proximity:
+            # person-pickup 卡（2026-08-20）：**接不到地点时再回退人称**。
+            # 上面那道 `_person_destination` 的判据是「剥完人称还剩不剩实质内容」
+            # ——对**槽值**是对的，套到**整句原话**上天然失效，因为复合请求必然有
+            # 剩余内容（「接爸妈去吃饭」剩「吃饭」、「带我去接孩子放学，顺便找家
+            # 麦当劳」剩一大段）。于是 raw 兜底那一路对多目标句形恒不触发。
+            # 落点选在这里而不是放宽上面的判据（卡 §5 明写不许动它）：只有走到
+            # 「这个目的地我接不着」才回退，**给了具体地点的复合句一个字都不受影响**。
+            pickup = _pickup_person(raw_text)
+            if pickup:
+                hit = await ctx.resolve_person_place(pickup)
+                if hit and hit.get("place"):
+                    logger.info("pickup fallback resolved: %s → %s(%s)",
+                                pickup, hit["place"], hit.get("person", ""))
+                    dest = hit["place"]
+                    resolved_name, results = await self._find_destination(
+                        dest, meta, near=near, limit=3, page=page)
+                if not results:
+                    # 查不到就给**教学问**（与「去接我爸」逐字同一句），
+                    # 不是「暂时无法确定「接爸妈去吃饭」对应的具体地点」——
+                    # 后者把整句原话当成了地名回读给用户。
+                    return self._ask_person_place(pickup)
         if not results:
             if is_proximity:
                 if page > 1:  # "换一批"翻到底了
@@ -1594,6 +1630,18 @@ class NavigationAgent(BaseAgent):
         ("机场", ("机场",)),
         ("湖", ("风景名胜", "自然地名", "热点地名")),
         ("滩", ("风景名胜", "自然地名", "热点地名")),
+        # 校园族（person-pickup 卡，2026-08-20）。**它与「虹桥机场」逐字同构**：
+        # 记忆里的「南山实验小学」与官方名「深圳市南山实验教育集团鼎太小学」
+        # 隔着「教育集团」不构成连续包含 ⇒ 严格校验拒了 4km 外的正主 ⇒ 掉进
+        # 去偏置全国重搜 ⇒ 捞回**1579km 外**逐字同名的「济南市南山实验小学」。
+        # 真栈取证（2026-08-20 直连高德）：同一个词带 near 搜出来的五条全是深圳的学校，
+        # 济南那条**只在 near=None 时出现**——所以「接孩子接到济南」不是高德乱返回，
+        # 是**我们自己那条全国重搜**捞上来的。
+        # 顺序：具体级在前（`_category_anchor` 取首个命中）。
+        ("小学", ("学校", "小学")),
+        ("中学", ("学校", "中学")),
+        ("幼儿园", ("学校", "幼儿园")),
+        ("学校", ("学校",)),
     )
 
     @classmethod
@@ -1632,6 +1680,21 @@ class NavigationAgent(BaseAgent):
         dlat = (lat2 - lat1) * 111.0
         dlng = (lng2 - lng1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
         return math.hypot(dlat, dlng)
+
+    @staticmethod
+    def _ask_person_place(person_word: str) -> AgentResult:
+        """不知道这个人在哪 → **教学问**（诚实追问 + 告诉用户怎么把它教给系统）。
+
+        **两个调用点共用同一份**（槽值路径与原话接送兜底）：话术分叉出第二份的那天，
+        探针的分支签名判据（`follow_up_any`）就再也说不清自己验的是哪一条了。
+        """
+        who = _person_display(person_word)
+        return AgentResult(
+            status=NEED_SLOT,
+            speech=f"我还不知道你{who}平时在哪，你说个地方我就记住了。",
+            follow_up=f"可以说「我{who}在XX上班」或「我{who}在XX小学上学」，"
+                      "以后我就能直接带你去。",
+            missing_slots=["destination"])
 
     async def _find_destination(self, description: str, meta, near=None,
                                 limit: int = 3, page: int = 1,
@@ -1720,7 +1783,13 @@ class NavigationAgent(BaseAgent):
             if anchor:
                 # 先在候选集内找名字+类目双匹配（零 API）：「东湖」→#2 东湖绿地
                 # （风景名胜），比全国重搜接到 500km 外的武汉东湖更合就近意图。
-                for r in results[1:]:
+                # ⚠ **从 results[0] 开始扫，不是 results[1:]**（2026-08-20 修）：
+                # 上面那道 `top_named` 用的是**严格**包含，而这里的 `_grounds_to`
+                # 还认**主干**匹配——把 top1 排除掉，等于让排第一的候选受一条比
+                # 后面所有候选都严的判据，而它恰恰是就近序最靠前的那个。
+                # 「南山实验小学 → 鼎太小学」就断在这：正主是 results[0]，
+                # 严格包含够不着它，主干规则够得着，却轮不到它被试。
+                for r in results:
                     if self._grounds_to(description, r, *anchor):
                         return description, [r] + [x for x in results if x is not r]
             # R1：就近弱匹配/借名 POI 顶上了 top1 → 去偏置全国重搜（真地标全国序靠前）

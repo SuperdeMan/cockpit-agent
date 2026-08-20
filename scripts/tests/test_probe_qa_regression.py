@@ -199,3 +199,83 @@ def test_closing_minute_handles_the_real_field_names():
     assert probe._closing_minute({"open_today": "17:00-02:00"}) == 26 * 60
     assert probe._closing_minute({"open_today": "24小时"}) == 24 * 60
     assert probe._closing_minute({"name": "无营业信息"}) is None
+
+
+# ── person-pickup 卡（2026-08-20）：两条新原语的尺子 ────────────────────────
+#
+# 第二条（`navigate_within_km`）**首版当场造过一次假绿**，所以它的第一条用例
+# 就是那次的真栈现场：话术里写着「去济南市南山实验小学这条路全程…」、navigate
+# 动作也发了，只是赢下主卡的不是 route_plan。首版判据读卡片里程 ⇒ 拿不到 ⇒
+# 走「不构成证据」提示分支 ⇒ 判 PASS。**「拿不到证据」只能在真的什么都没发生
+# 时走**——动作已经发出去了就不是「没发生」。
+
+_JINAN = {"type": "navigate",
+          "payload": {"command": "navigate", "destination": "济南市南山实验小学",
+                      "lat": 36.6512, "lng": 117.1201}}
+_SHENZHEN = {"type": "navigate",
+             "payload": {"command": "navigate", "destination": "深圳市南山实验教育集团鼎太小学",
+                         "lat": 22.5361, "lng": 113.9285}}
+
+
+def _nav_obs(actions: list[dict], follow_up: str = "") -> dict:
+    msg = {"speech": "", "actions": actions, "follow_up": follow_up}
+    obs = _obs("")
+    obs.update({"follow_up": follow_up,
+                "actions": probe._action_names(msg),
+                "nav_targets": probe._nav_targets(msg)})
+    return obs
+
+
+def test_navigating_to_another_province_is_red_even_without_a_route_card():
+    """真栈那一轮的原样形状：动作发了、主卡不是 route_plan。**必须红。**"""
+    notes: list[str] = []
+    fails = probe._judge({"actions_include": ["navigate"], "navigate_within_km": 100},
+                         _nav_obs([_JINAN]), [], notes)
+    assert fails and "另一座城" in fails[0]
+    assert notes == []          # 动作发了 ⇒ 不许走「不构成证据」那条
+
+
+def test_navigating_within_the_city_passes():
+    assert probe._judge({"actions_include": ["navigate"], "navigate_within_km": 100},
+                        _nav_obs([_SHENZHEN]), [], []) == []
+
+
+def test_dropping_the_pickup_entirely_is_red_not_a_note():
+    """整个接人意图被丢掉（一个动作都没发）⇒ 靠 `actions_include` 判红，
+    提示只解释「里程这条判不了」。**提示不许替代判据。**"""
+    notes: list[str] = []
+    fails = probe._judge({"actions_include": ["navigate"], "navigate_within_km": 100},
+                         _nav_obs([]), [], notes)
+    assert fails and "缺动作 navigate" in fails[0]
+    assert notes and "不构成证据" in notes[0]
+
+
+def test_navigate_without_coordinates_is_red():
+    """发得出动作却验不了去哪 ⇒ 按红算（宁可假红）。"""
+    blind = {"type": "navigate", "payload": {"command": "navigate", "destination": "某小学"}}
+    fails = probe._judge({"navigate_within_km": 100}, _nav_obs([blind]), [], [])
+    assert fails and "没有坐标" in fails[0]
+
+
+def test_follow_up_identifies_the_branch_not_the_wording():
+    """`follow_up` 是**分支签名**：教学问那条与「找不到目的地」那条是两串固定文案。"""
+    teach = "可以说「我爸爸在XX上班」或「我爸爸在XX小学上学」，以后我就能直接带你去。"
+    lost = "请补充城市、所在区域，或附近的地标，我再为您定位。"
+    assert probe._judge({"follow_up_any": ["在XX上班"]},
+                        _nav_obs([], teach), [], []) == []
+    fails = probe._judge({"follow_up_any": ["在XX上班"]}, _nav_obs([], lost), [], [])
+    assert fails and "走的不是那条分支" in fails[0]
+
+
+def test_navigate_named_any_does_not_require_a_navigation():
+    """澄清「哪个万象城？」是正确回答，不是缺陷 ⇒ 没发导航时这条判据不该红。"""
+    assert probe._judge({"navigate_named_any": ["万象城"]}, _nav_obs([]), [], []) == []
+
+
+def test_navigate_named_any_catches_a_rewritten_destination():
+    """给了具体地点却被改写成那个人的常去地 ⇒ 红。"""
+    school = {"type": "navigate",
+              "payload": {"command": "navigate", "destination": "深圳南山实验小学",
+                          "lat": 22.5361, "lng": 113.9285}}
+    fails = probe._judge({"navigate_named_any": ["万象城"]}, _nav_obs([school]), [], [])
+    assert fails and "目的地被改写了" in fails[0]

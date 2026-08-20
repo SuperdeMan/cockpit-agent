@@ -347,3 +347,70 @@ def test_resolve_ambiguous_across_place_kinds_returns_none():
                             {"subject": "小雨", "rel": "works_at", "object": "YY公司"}])
         return await store.resolve_person_place("u1", "女儿")
     assert asyncio.run(go()) is None
+
+
+# ── Q5 实体归一（person-pickup 卡，2026-08-20）：匿名占位 ≠ 第二个人 ──
+#
+# 2026-08-20 云端真栈取证（u1 现行边）：
+#   `女儿--family-->女儿`（占位）+ `小雨--family-->女儿`（具名）
+#   ⇒ 旧判据 persons=['女儿','小雨'] 数成两个人 ⇒ 歧义 ⇒ **一跳解析永久失效**，
+#   而库里 `女儿--place_of-->深圳市南山实验小学` 明明在。
+# **「用户给这个人起了名字」不该让能力退化。**
+
+def test_placeholder_and_named_subject_are_one_person():
+    """占位边 + 具名边指向同一个人 → 合并，地点取并集后仍唯一 ⇒ 解析得出。"""
+    async def go():
+        store = _store()
+        await _seed(store, [
+            {"subject": "女儿", "rel": "family", "object": "女儿"},     # 无名占位
+            {"subject": "小雨", "rel": "family", "object": "女儿"},     # 后来起了名
+            {"subject": "女儿", "rel": "place_of", "object": "深圳市南山实验小学"},
+        ])
+        return await store.resolve_person_place("u1", "女儿")
+    hit = asyncio.run(go())
+    assert hit == {"person": "小雨", "place": "深圳市南山实验小学", "object_ref": ""}
+
+
+def test_generic_word_reaches_the_same_merged_entity():
+    """泛称「孩子」同样够得着——它的同义集覆盖「女儿」。"""
+    async def go():
+        store = _store()
+        await _seed(store, [
+            {"subject": "女儿", "rel": "family", "object": "女儿"},
+            {"subject": "小雨", "rel": "family", "object": "女儿"},
+            {"subject": "小雨", "rel": "place_of", "object": "XX小学"},
+        ])
+        return await store.resolve_person_place("u1", "孩子")
+    assert asyncio.run(go()) == {"person": "小雨", "place": "XX小学", "object_ref": ""}
+
+
+def test_merging_does_not_relax_the_place_uniqueness_guard():
+    """**合并的只是人的分组**：同一个人挂着两个不同地点，照旧 None（问不猜）。
+
+    这是本次改动的安全边界——真栈 u1 的「孩子」正是这一形态
+    （`孩子--place_of-->南山外国语学校` 与 `孩子--place_of-->深圳南山实验小学`
+    两条现行边并存，2026-08-16 清洗刻意留着等人裁）。
+    """
+    async def go():
+        store = _store()
+        await _seed(store, [
+            {"subject": "孩子", "rel": "family", "object": "孩子"},
+            {"subject": "孩子", "rel": "place_of", "object": "南山外国语学校"},
+            {"subject": "女儿", "rel": "family", "object": "女儿"},
+            {"subject": "女儿", "rel": "place_of", "object": "深圳南山实验小学"},
+        ])
+        return await store.resolve_person_place("u1", "孩子")
+    assert asyncio.run(go()) is None
+
+
+def test_two_named_children_are_still_ambiguous():
+    """反向对照：两个**具名**孩子 = 真歧义，一个都不许猜（既有安全属性不许被合并吃掉）。"""
+    async def go():
+        store = _store()
+        await _seed(store, [
+            {"subject": "小雨", "rel": "family", "object": "女儿"},
+            {"subject": "小明", "rel": "family", "object": "儿子"},
+            {"subject": "小雨", "rel": "place_of", "object": "XX小学"},
+        ])
+        return await store.resolve_person_place("u1", "孩子")
+    assert asyncio.run(go()) is None

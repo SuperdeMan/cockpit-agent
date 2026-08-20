@@ -132,7 +132,23 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "closes_op_from", "names_item_from", "not_names_item_from",
                 "no_clock_time", "speech_not_regex", "reflects_actions",
                 "card_text_has", "card_text_not", "card_items_at_least",
-                "latest_closing_from", "sums_from"}
+                "latest_closing_from", "sums_from",
+                "follow_up_any", "navigate_within_km", "navigate_named_any"}
+# 人称接送判据（person-pickup 卡，2026-08-20）。两条都**不是关键词排除**：
+#   `follow_up_any`   —— 匹配的是**我们自己代码里的确定性 follow_up**，即
+#     「这一轮走了哪条分支」的签名。navigation 的教学问分支固定发
+#     「可以说「我X在XX上班」…」，而找不到目的地那条兜底固定发
+#     「请补充城市、所在区域…」。两句都不经 LLM，所以它判的是**分支**不是措辞。
+#     ⚠ 判 speech 就不行：那一句会被聚合/复述改写，而 follow_up 不会。
+#   `navigate_within_km` —— 「接孩子却导到 2004km 外的同名学校」的机械判据：
+#     拿 **navigate 动作 payload 里的目的地坐标**与探针固定位置算球面距离。
+#     不写死地名（换一座同名城市就漏），也不依赖哪张卡赢了聚合。
+#     ⚠ **首版读的是 route_plan 卡的 distance_km，当场造了一次假绿**：PU5 真栈
+#     实测话术里明明写着「去济南市南山实验小学这条路全程…」、navigate 动作也发了，
+#     但那一轮赢下主卡的不是 route_plan ⇒ 判据拿不到里程 ⇒ 走了「不构成证据」
+#     那条提示分支 ⇒ **判 PASS**。这正是 §4.3「前提不成立 ≠ 通过」被自己实现
+#     踩中的形态：**「拿不到证据」的分支必须只在真的什么都没发生时才走**，
+#     动作已经发出去了就不是「没发生」。判据因此改成从**动作**派生。
 # 动作方向判据（Q6，2026-08-16）：`reflects_actions: N` = 本轮话术必须**正确反映**
 # 第 1..N 轮真实执行过的动作。判的是**动作名**（§4.3 明列的形态判据之一），
 # 不是措辞——所以它对模型换说法免疫，但对「方向说反」敏感。
@@ -708,10 +724,81 @@ CASES = [
           "expect": {"actions_include": ["warning_light.close"],
                      "actions_exclude": ["headlight.off"]}},
      ]},
+
+    # ── person-pickup：复合句里的「接送某人」人称解析 ──────────────────
+    # 来源不是 QA 轮而是 2026-08-15 EVA 双档复跑（两档都红 ⇒ 系统缺口），卡
+    # `docs/design/2026-08-15-person-pickup-resolution-card.md`。放进本脚本是因为
+    # 它与 QA 卡 Q5 残余（`memory_item` 实体归一）**是同一件事**——AGENTS §4.1 ①
+    # 末行写着「跟着那张卡做，别单独排队」。
+    #
+    # **格子是卡 §4.1 要求的红绿迷你集**：人称接送 × 单句/复合句 × 有/无该人地点记忆，
+    # 每格 2 条 + 两条反向对照（卡 §4.3 / §4.4）。
+    #   有地点记忆的人称：老婆（→深圳湾万象城）、女儿/孩子（→深圳南山实验小学一族）
+    #   无地点记忆的人称：爸妈（family 边在、place_of/works_at/lives_at 一条都没有）
+    # ⚠ 「有记忆」这一格的**真实可解析性**在 2026-08-20 真栈取证里被推翻过一次：
+    #   `resolve_person_place` 对「女儿」「孩子」返回 None（匿名占位边
+    #   `女儿--family-->女儿` 与具名边 `小雨--family-->女儿` 被数成两个人），
+    #   只有「老婆」这一条一跳可达。读数请对着这条注释看，别当成模型方差。
+    {"id": "PU1", "group": "pickup", "card": "PP", "issue": "对照组",
+     "why": "单句 × 无地点记忆：既有教学问分支是对的，防修 PU3 时把它改坏",
+     "known": "green",
+     "turns": [
+         {"say": "去接我爸。",
+          "expect": {"no_actions": True, "follow_up_any": ["在XX上班"]}},
+     ]},
+    {"id": "PU2", "group": "pickup", "card": "PP", "issue": "对照组",
+     "why": "单句 × 有地点记忆：一跳解析走得通（老婆→深圳湾万象城），是能力在的证明",
+     "known": "green",
+     "turns": [
+         {"say": "去接老婆。",
+          "expect": {"actions_include": ["navigate"], "navigate_within_km": 100}},
+     ]},
+    {"id": "PU3", "group": "pickup", "card": "PP", "issue": "一#5",
+     "why": "复合句 × 无地点记忆：剥完人称还剩「吃饭」⇒ raw 兜底那一路恒不触发",
+     "known": "red",
+     "turns": [
+         {"say": "接爸妈去吃饭。",
+          "expect": {"actions_exclude": ["navigate"], "follow_up_any": ["在XX上班"]}},
+     ]},
+    {"id": "PU4", "group": "pickup", "card": "PP", "issue": "一#5 同族",
+     "why": "复合句 × 无地点记忆（另一种句形）：并列请求同样把剩余内容撑成非空",
+     "known": "red",
+     "turns": [
+         {"say": "先去接我妈，再找家川菜馆。",
+          "expect": {"actions_exclude": ["navigate"], "follow_up_any": ["在XX上班"]}},
+     ]},
+    {"id": "PU5", "group": "pickup", "card": "PP", "issue": "一#1",
+     "why": "复合句 × 有地点记忆：接到了 POI 但接错城（真栈实测济南 2004km）",
+     "known": "red",
+     "turns": [
+         {"say": "带我去接孩子放学，顺便帮我找一家麦当劳，5点我要到学校。",
+          "expect": {"actions_include": ["navigate"], "navigate_within_km": 100}},
+     ]},
+    {"id": "PU6", "group": "pickup", "card": "PP", "issue": "一#1 同族",
+     "why": "复合句 × 有地点记忆（短句形）：同一条链路，去掉时限与第二意图",
+     "known": "red",
+     "turns": [
+         {"say": "接女儿放学，路上买杯咖啡。",
+          "expect": {"actions_include": ["navigate"], "navigate_within_km": 100}},
+     ]},
+    {"id": "PU7", "group": "pickup", "card": "PP", "issue": "反向对照",
+     "why": "卡 §4.3：给了具体地点的复合句**不得**被改写成那个人的常去地",
+     "known": "green",
+     "turns": [
+         {"say": "接孩子后去万象城。",
+          "expect": {"navigate_named_any": ["万象城"]}},
+     ]},
+    {"id": "PU8", "group": "pickup", "card": "PP", "issue": "反向对照",
+     "why": "卡 §4.4：真实长途不得被就近收窄（B 方案的误伤面）",
+     "known": "green",
+     "turns": [
+         {"say": "导航去上海外滩。",
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["外滩"]}},
+     ]},
 ]
 
 _GROUPS = ("confirm", "negation", "session", "safety", "candidate", "audit",
-           "slot", "merchant", "capability")
+           "slot", "merchant", "capability", "pickup")
 
 # ── Q13：两个分类出口的一致性（纯函数，不需要起栈）─────────────────────────
 # 阶段 0.2 首跑时由 NG3 的「假绿」牵出来的。端侧把结构化意图翻成意图名有**两个出口**
@@ -822,6 +909,9 @@ def _observe(msg: dict) -> dict:
     card = msg.get("ui_card") or {}
     return {
         "speech": speech,
+        # person-pickup 卡：**分支签名**。speech 会被改写，follow_up 不会——
+        # 它是 AgentResult 里那一串固定文案，原样透到 WS final（gateway/edge/main.go:418）。
+        "follow_up": str(msg.get("follow_up") or ""),
         "actions": _action_names(msg),
         "need_confirm": bool(msg.get("need_confirm")),
         "card_type": str(card.get("type") or ""),
@@ -840,7 +930,42 @@ def _observe(msg: dict) -> dict:
         # 16:00 各提醒你一次」时库里可能只有一条，两者不是一回事（AU1 那次的同款教训）。
         "card_text": json.dumps(card, ensure_ascii=False, sort_keys=True),
         "card_item_count": len(card.get("items") or []) if isinstance(card, dict) else 0,
+        # person-pickup 卡：本轮真的把车导去了哪（判「接人导到了另一座城」）。
+        "nav_targets": _nav_targets(msg),
     }
+
+
+def _nav_targets(msg: dict) -> list[dict]:
+    """本轮 navigate 动作的目的地 `{name, lat, lng}`（`_navigate_payload` 的形状）。
+
+    **从动作派生而不是从卡派生**：多意图轮里赢下主卡的可能是别的 Agent，
+    而「车被导去哪」这件事只有动作说了算。
+    """
+    out: list[dict] = []
+    for a in msg.get("actions") or []:
+        if not isinstance(a, dict):
+            continue
+        payload = a.get("payload") or {}
+        name = str(payload.get("command") or a.get("type") or "")
+        if "navigate" not in name:
+            continue
+        try:
+            lat, lng = float(payload["lat"]), float(payload["lng"])
+        except (KeyError, TypeError, ValueError):
+            lat = lng = None
+        out.append({"name": str(payload.get("destination") or ""),
+                    "lat": lat, "lng": lng})
+    return out
+
+
+def _haversine_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """两点球面距离（km）。判「接人接到了另一座城」只需要量级，不需要路网里程。"""
+    import math
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lng2 - lng1)
+    h = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(min(1.0, math.sqrt(h)))
 
 
 def _card_item_names(card: dict) -> list[str]:
@@ -1123,6 +1248,48 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
                 fails.append(
                     f"话术里没有正确合计 {forms[0]}"
                     f"（卡上 {'+'.join(f'{p:.2f}' for p in prices)}）")
+    # ── person-pickup 卡（2026-08-20）──────────────────────────────────
+    want_fu = expect.get("follow_up_any", [])
+    if want_fu:
+        got_fu = str(obs.get("follow_up") or "")
+        if not any(s in got_fu for s in want_fu):
+            fails.append(
+                f"follow_up 未命中任一「{'/'.join(want_fu)}」"
+                f"（实际「{got_fu[:60] or '空'}」）——走的不是那条分支")
+    limit = expect.get("navigate_within_km")
+    if limit is not None:
+        targets = obs.get("nav_targets") or []
+        if not targets:
+            # 没发导航动作 ⇒ 「导到了多远」无从谈起。**这条提示只在真的什么都
+            # 没发生时出现**；用例要同时写 `actions_include: ["navigate"]`，
+            # 否则「整个接人意图被丢掉」会从这里静默滑过去。
+            if notes is not None:
+                notes.append("本轮没有 navigate 动作 ⇒ 本样本对"
+                             "「接人不得导到另一座城」**不构成证据**")
+        for t in targets:
+            if t["lat"] is None or t["lng"] is None:
+                fails.append(
+                    f"navigate 到「{t['name'] or '未命名'}」却没有坐标——"
+                    "发得出动作却验不了去哪，按红算")
+                continue
+            km = _haversine_km(float(PROBE_META["current_lat"]),
+                               float(PROBE_META["current_lng"]),
+                               t["lat"], t["lng"])
+            if km >= float(limit):
+                fails.append(
+                    f"navigate 到「{t['name']}」直线 {km:.0f}km ≥ {limit}km"
+                    "——接人导到了另一座城")
+    want_dest = expect.get("navigate_named_any", [])
+    if want_dest:
+        # **只约束「真发了导航就得去对地方」，不要求本轮必须发导航**——
+        # 「为您找到 5 个万象城…需要导航过去吗？」是正确的澄清，不是缺陷。
+        # 首版给反向对照写了 `actions_include: ["navigate"]`，第 3 次取样就把这句
+        # 正确回答判成了红（§4.3「尺子写错必须改」，与「不为模型改案例集」不冲突）。
+        for t in obs.get("nav_targets") or []:
+            if not any(s in (t["name"] or "") for s in want_dest):
+                fails.append(
+                    f"navigate 到「{t['name'] or '未命名'}」，"
+                    f"期望目的地含「{'/'.join(want_dest)}」——目的地被改写了")
     if expect.get("no_clock_time") and _CLOCK_RE.search(speech):
         fails.append(f"话术里出现了具体钟点——无候选可引用时不得编造：{_CLOCK_RE.search(speech).group()}")
     ref_close = expect.get("closes_op_from")
