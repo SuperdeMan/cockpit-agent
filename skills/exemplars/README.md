@@ -272,6 +272,14 @@ python scripts/evolve.py all           # 草案落 .work/<date>/proposals/exempl
    且台账里两端文本已消失的陈旧条目也阻断——台账只进不出会腐烂）。
    运行时 loader 对这些一律 fail-open 跳过（保可用性），这里是硬失败（保主干整洁）。
    零网络：`lex_min` 只用词法通道，llm-gateway 不可达不能把 CI 变红。
+   > ⚠ **这道门禁只查「近重复有没有被裁定」，不查「裁定有没有对照语料兑现」。**
+   > 后者是 `scripts/check_intent_gate.py` 里的 `validate_boundary_coverage`：
+   > **台账每加一条裁定，L0 语料就要相应加双向各 2 条**（「required 本侧 +
+   > forbidden 对侧」，只写 required 的用例证明不了边界）。而 L0 语料有 `max_cases`
+   > 上界且长期用满 ⇒ 加裁定**连带**要先在 `suites.yaml` 头部写清占额度的理由再放上界。
+   > **2026-08-20 就是漏了这一步**：范例门禁绿了、我据此报了绿，L0 门禁其实是红的，
+   > 最后由全量 pytest 的台账计数断言翻出来。⇒ **登记完台账一定要再跑一次
+   > `python scripts/check_intent_gate.py`**（AGENTS §6 自检表已加这一行）。
 2. **域路由探针**：拿**不在语料里**的句子（`mode_routing_cases` 设计上就「避开 manifest
    examples 原句」+ `route_hints_cases`）问「检回的范例指向的域对不对」，三个数——
    `hit`（域对）/ `miss`（**域错配，这才是伤害面**）/ `silent`（没检回，无害）。

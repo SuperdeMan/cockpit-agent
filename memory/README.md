@@ -20,6 +20,7 @@
 | `DeleteMemoryItem` | L1 精确删除：OwnerKey + item id 删一条，同事务清派生关系边 |
 | `Remember` | 写语义/情景记忆（抽取管线或 Agent 显式） |
 | `Recall` | 语义召回（向量 + scope/occupant + 时序融合；`predicate_prefix` 精确优先，`min_score/min_confidence/max_age_days` 阈值） |
+| `ResolvePersonPlace` | 人称 → 常去地一跳解析（`family` 边找实体 → `place_of ∪ works_at ∪ lives_at` 找地点）。**查不到或有歧义一律返回 not found，调用方须诚实追问**——导航到错地方比查不到更糟。⚠ **匿名占位与具名是同一个人**（2026-08-20）：`女儿--family-->女儿` 是「无名的人」的表示法，用户后来说「我女儿叫小雨」再存 `小雨--family-->女儿` ⇒ 两个 subject 指向同一个人，旧判据数成两个人判歧义、**一跳解析对该称谓永久失效**。现按「占位不算独立的人、**具名主体 ≥2 才是真歧义**」分组，地点在合并后的实体上取并集；**「地点必须唯一否则返回 not found」那道闸没动**——放宽识别不等于放宽授权 |
 | `ForgetUser` / `ExportUser` | 合规：被遗忘权（硬删）/ 数据导出 |
 
 ## 存储与 embedding
