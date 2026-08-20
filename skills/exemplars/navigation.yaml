@@ -375,3 +375,16 @@ exemplars:
   tags:
   - canonical
   note: P1 多目的地先后序=终点+途经点（「先A后B」B 是 destination、A 是 waypoint）；学校/公司经画像/关系解析，未设置会诚实引导（真栈曾打散成快速路入口搜索）
+# ── 2026-08-20 person-pickup 卡（§4.1 ②）：接送复合句的「两半」 ────────────
+- text: 接爸妈去吃饭
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 爸妈
+      stop_category: 吃饭
+  source: manual
+  added: '2026-08-20'
+  tags:
+  - badcase
+  note: 一#5 真栈三次取样**全部只答「吃饭」那半**，「接谁」整个被丢掉（落成纯 nearby.search，答得还挺好——所以话术层看不出缺了一半）。接送复合句与「接孩子放学，顺路买杯奶茶」同形：destination 填人称词本身、吃饭那半是 stop_category，不是把整句判成周边搜索
