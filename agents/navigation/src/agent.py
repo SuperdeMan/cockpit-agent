@@ -81,6 +81,13 @@ _PICKUP_RE = re.compile(
     + "|".join(sorted(_PERSON_WORDS, key=len, reverse=True)) + r")")
 
 
+#: 接人目的地的就近合理性上限（km）。取值理由：接地卡 D2 的区县级判据是 150km，
+#: 那是「裸区县名的心智是本地」；接人比它更窄——**一趟接送不会跨省**。
+#: 100km 覆盖同城与相邻城市（深圳↔东莞/广州 ~70/120km 的量级），真实跨城接人
+#: 会被问一句而不是被拒绝。可经 env 调，但**默认值本身就是判据**，别当调参旋钮。
+_PICKUP_MAX_KM = float(os.getenv("PICKUP_MAX_KM", "100"))
+
+
 def _pickup_person(raw_text: str) -> str:
     """原话里的接送对象人称词；不是接送句返回空串。"""
     m = _PICKUP_RE.search(raw_text or "")
@@ -697,6 +704,33 @@ class NavigationAgent(BaseAgent):
                 follow_up="请补充城市、所在区域，或附近的地标，我再为您定位。",
                 missing_slots=["destination"],
             )
+
+        # 接送句的**就近合理性**（person-pickup 卡 §3-B 的收窄版，2026-08-20）。
+        # 「接人」天然是本地差事：接到一个几百公里外的同名 POI，几乎一定是接错了，
+        # 而代价是**一声不吭地开出去**。这道闸不重搜、不改写，只是**问一句**。
+        #
+        # 为什么单独要它——上游那两道（校园类目锚词 / 一跳解析）都是**判据面**的修法，
+        # 各自只覆盖自己那条路：真栈 PU5 七次取样里仍有一次导到 1582km 外的济南同名校，
+        # 而**全部容器日志里「济南」零命中**（planner 那一轮下发的是「深圳南山实验小学」，
+        # 直连高德复测该词只返回深圳的学校）⇒ 那一跳的来源至今没查清。
+        # **来源查不清不等于不能防**：这条判据不依赖它从哪来，只问「接人接到这么远合理吗」。
+        # ⚠ 只对**接送句**生效：「导航去上海外滩」原话没有接送人称，一个字不受影响。
+        pickup_word = _pickup_person(raw_text)
+        if pickup_word and near is not None and not is_proximity:
+            far = results[0]
+            if far.lat and far.lng and self._rough_km(
+                    near.lat, near.lng, far.lat, far.lng) > _PICKUP_MAX_KM:
+                km = round(self._rough_km(near.lat, near.lng, far.lat, far.lng))
+                who = _person_display(pickup_word)
+                logger.info("pickup destination implausibly far: %s → %s (%dkm)",
+                            pickup_word, far.name, km)
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"我找到的「{far.name}」离这儿约 {km} 公里，"
+                           f"接{who}要去这么远吗？",
+                    follow_up="要是就在附近，说个区域或更完整的名字我再找一次；"
+                              "确实要去就说「就去这个」。",
+                    missing_slots=["destination"])
 
         first = results[0]
         items = [{"id": r.id, "name": r.name, "rating": r.rating,

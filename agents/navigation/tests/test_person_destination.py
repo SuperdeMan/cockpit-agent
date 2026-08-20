@@ -486,3 +486,61 @@ def test_pickup_does_not_override_a_configured_place():
         raw_text="接女儿放学，路上买杯咖啡。", ctx=ctx,
         meta={"current_lat": "22.5410", "current_lng": "113.9412"}))
     assert "阳光小学" in res.speech
+
+
+# ── 接送句的就近合理性（卡 §3-B 的收窄版）─────────────────────────────────
+
+_SZ_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
+
+
+def test_pickup_to_another_province_asks_instead_of_driving():
+    """真栈 PU5 七次取样仍有一次导到 1582km 外的济南同名校（来源至今没查清）。
+    **来源查不清不等于不能防**：这条只问「接人接到这么远合理吗」。"""
+    far = _POI(id="j1", name="济南市南山实验小学",
+               category="科教文化服务;科教文化场所;科教文化场所",
+               lat=36.5109, lng=117.0261)
+    agent, _ = _agent_with_search({"南山实验小学": [far]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学，顺便帮我找一家麦当劳。",
+        ctx=_ctx_with(None), meta=_SZ_META))
+    assert res.status == "need_slot"
+    assert "济南市南山实验小学" in res.speech and "公里" in res.speech
+    assert not [a for a in res.actions if a["type"] == "navigate"]
+
+
+def test_pickup_nearby_is_untouched():
+    """反向对照：接人接到本地 ⇒ 一个字不受影响，照常导航。"""
+    near = _POI(id="s1", name="深圳市南山实验教育集团明远学校",
+                category="科教文化服务;学校;中学", lat=22.529, lng=113.9289)
+    agent, _ = _agent_with_search({"南山实验小学": [near]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学。", ctx=_ctx_with(None), meta=_SZ_META))
+    assert res.status == "ok" and "明远学校" in res.speech
+
+
+def test_long_haul_without_pickup_is_untouched():
+    """反向对照之二（卡 §4.4）：真实长途原话没有接送人称 ⇒ 这道闸根本不该被执行到。
+
+    ——「什么情况下我这道闸不会被执行到」和「它判得对不对」一样重要（§4.3）。
+    """
+    bund = _POI(id="b1", name="外滩", category="风景名胜;风景名胜;国家级景点",
+                lat=31.2335, lng=121.4921)
+    agent, _ = _agent_with_search({"上海外滩": [bund], "外滩": [bund]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "上海外滩"},
+        raw_text="导航去上海外滩。", ctx=_ctx_with(None), meta=_SZ_META))
+    assert res.status == "ok" and "外滩" in res.speech
+
+
+def test_pickup_guard_is_skipped_without_a_current_position():
+    """没有定位就判不出「多远」——**认不出就不判**，不回落成拒绝。"""
+    far = _POI(id="j1", name="济南市南山实验小学",
+               category="科教文化服务;科教文化场所;科教文化场所",
+               lat=36.5109, lng=117.0261)
+    agent, _ = _agent_with_search({"南山实验小学": [far]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学。", ctx=_ctx_with(None), meta={}))
+    assert res.status == "ok"

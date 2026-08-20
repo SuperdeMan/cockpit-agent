@@ -279,3 +279,19 @@ def test_navigate_named_any_catches_a_rewritten_destination():
                           "lat": 22.5361, "lng": 113.9285}}
     fails = probe._judge({"navigate_named_any": ["万象城"]}, _nav_obs([school]), [], [])
     assert fails and "目的地被改写了" in fails[0]
+
+
+def test_navigate_named_any_accepts_a_two_leg_plan():
+    """PU7 真栈答的是两段路线（先到学校接孩子、再到万象城）——**比单段更好**。
+    首版判据要求每个目标都命中，把它判成了红。至少一个命中即可。"""
+    school = {"type": "navigate",
+              "payload": {"command": "navigate", "destination": "深圳市南山实验教育集团明远学校",
+                          "lat": 22.529, "lng": 113.9289}}
+    mall = {"type": "navigate",
+            "payload": {"command": "navigate", "destination": "深圳湾万象城",
+                        "lat": 22.5155, "lng": 113.9444}}
+    assert probe._judge({"navigate_named_any": ["万象城"]},
+                        _nav_obs([school, mall]), [], []) == []
+    # 只去了学校、万象城一次都没出现 ⇒ 仍然红
+    fails = probe._judge({"navigate_named_any": ["万象城"]}, _nav_obs([school]), [], [])
+    assert fails and "目的地被改写了" in fails[0]

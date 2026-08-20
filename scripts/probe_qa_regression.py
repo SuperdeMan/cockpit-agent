@@ -1305,11 +1305,17 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
         # 「为您找到 5 个万象城…需要导航过去吗？」是正确的澄清，不是缺陷。
         # 首版给反向对照写了 `actions_include: ["navigate"]`，第 3 次取样就把这句
         # 正确回答判成了红（§4.3「尺子写错必须改」，与「不为模型改案例集」不冲突）。
-        for t in obs.get("nav_targets") or []:
-            if not any(s in (t["name"] or "") for s in want_dest):
-                fails.append(
-                    f"navigate 到「{t['name'] or '未命名'}」，"
-                    f"期望目的地含「{'/'.join(want_dest)}」——目的地被改写了")
+        #
+        # ⚠ **语义改过一次，同一条用例又抓到一次假红**：首版要求**每个** navigate
+        # 目标都命中，而 PU7 真栈答出的是**两段路线**（先到学校接孩子、再到万象城）
+        # ——那是比单段更好的答案，却因为第一段是学校被判红。判据因此改成
+        # **至少一个命中**：这条反向对照要证的是「万象城没有被那个人的常去地顶掉」，
+        # 不是「本轮只许去一个地方」。**主张是什么，判据就该只压什么。**
+        names = [t["name"] or "" for t in obs.get("nav_targets") or []]
+        if names and not any(w in n for n in names for w in want_dest):
+            fails.append(
+                f"navigate 到 {names}，期望其中至少一个含「{'/'.join(want_dest)}」"
+                "——目的地被改写了")
     if expect.get("no_clock_time") and _CLOCK_RE.search(speech):
         fails.append(f"话术里出现了具体钟点——无候选可引用时不得编造：{_CLOCK_RE.search(speech).group()}")
     ref_close = expect.get("closes_op_from")
