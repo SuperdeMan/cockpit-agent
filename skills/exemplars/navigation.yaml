@@ -388,3 +388,15 @@ exemplars:
   tags:
   - badcase
   note: 一#5 真栈三次取样**全部只答「吃饭」那半**，「接谁」整个被丢掉（落成纯 nearby.search，答得还挺好——所以话术层看不出缺了一半）。接送复合句与「接孩子放学，顺路买杯奶茶」同形：destination 填人称词本身、吃饭那半是 stop_category，不是把整句判成周边搜索
+- text: 先去接我儿子，再找家川菜馆
+  plan:
+  - agent: navigation
+    intent: navigation.navigate_to
+    slots:
+      destination: 儿子
+      stop_category: 川菜馆
+  source: manual
+  added: '2026-08-20'
+  tags:
+  - badcase
+  note: 同上一条的另一种句形（先…再…）。加它是因为**上一条只治了它示范的那个形**——真栈实测「接爸妈去吃饭」0/3→3/3 的同一批里，这个句形仍稳定 0/3（三次逐字相同地只答川菜那半）。「补上 X」与「补上 X 就能修」是两个命题，第二个得单独证

@@ -427,3 +427,62 @@ def test_non_pickup_sentence_keeps_the_old_fallback():
         raw_text="导航去某个不存在的地方", ctx=ctx))
     assert res.status == "need_slot"
     assert "暂时无法确定" in res.speech
+
+
+def test_pickup_beats_an_unset_place_alias():
+    """PU6 真栈稳定占 2/5：planner 把「接女儿放学」压成 `destination=学校`，
+    别名分支抢在人称之前命中 ⇒ 答「您还没有设置「学校」的位置」，
+    而库里那个人的地点明明在。**接不着就回退人称**，这里的「接不着」是「没设过」。"""
+    school = _POI(id="s1", name="深圳市南山实验教育集团明远学校",
+                  category="科教文化服务;学校;中学", lat=22.53, lng=113.93)
+    agent, calls = _agent_with_search({"深圳市南山实验小学": [school]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "学校"},
+        raw_text="接女儿放学，路上买杯咖啡。",
+        ctx=_ctx_with({"person": "小雨", "place": "深圳市南山实验小学",
+                       "object_ref": ""}),
+        meta={"current_lat": "22.5410", "current_lng": "113.9412"}))
+    assert res.status == "ok"
+    assert "明远学校" in res.speech
+    assert "您还没有设置" not in res.speech
+
+
+def test_plain_place_alias_still_asks_to_be_set():
+    """**反向对照**：原话没有接送人称 ⇒ 「导航去学校」照旧走常用地点设置引导，
+    一个字不动（别把这条通用教学链改坏）。"""
+    agent, _ = _agent_with_search({})
+    ctx = make_context()
+
+    async def _must_not_resolve(person_word):
+        raise AssertionError("原话无接送人称时不该查关系图")
+    ctx.resolve_person_place = _must_not_resolve
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "学校"},
+        raw_text="导航去学校", ctx=ctx))
+    assert res.status == "need_slot"
+    assert "您还没有设置「学校」的位置" in res.speech
+
+
+def test_pickup_does_not_override_a_configured_place():
+    """**反向对照之二**：常用地点已设置 ⇒ 用它，不许被人称解析顶掉
+    （用户明确配过「学校」就是把它当地址簿用）。"""
+    agent, _ = _agent_with_search({})
+
+    async def _fake_correct(dest, raw, meta):
+        return dest
+    agent._correct_planner_landmark = _fake_correct
+    ctx = _ctx_with({"person": "小雨", "place": "深圳市南山实验小学", "object_ref": ""})
+
+    async def _get_place(_ctx, key):
+        return {"name": "阳光小学", "address": "深圳市南山区某路 1 号",
+                "lat": 22.54, "lng": 113.94}
+    agent._get_place = _get_place
+
+    # ⚠ 原话必须是**复合句**：短句「接女儿放学」会命中上面那道槽值判据、
+    # 根本走不到别名分支，验的就不是这一段了（首版就这么写的，测试当场按住）。
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "学校"},
+        raw_text="接女儿放学，路上买杯咖啡。", ctx=ctx,
+        meta={"current_lat": "22.5410", "current_lng": "113.9412"}))
+    assert "阳光小学" in res.speech

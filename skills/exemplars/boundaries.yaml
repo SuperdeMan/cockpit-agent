@@ -233,3 +233,13 @@ rulings:
       「到点叫」）。陈述句由记忆抽取异步接住、发 G7 询问式提醒建议卡，planner 抢答
       成 reminder NEED_SLOT 会双通道抢话且挂起会话吞后续句（挂起黑洞族）；
       批 D（32fcdaf）已拍板 reminder 的创建入口是用户对 offer 的肯定答复
+
+  - id: navigation-nearby.pickup-plus-meal
+    texts: [先去接我儿子，再找家川菜馆, 找家川菜馆]
+    domains: [navigation, nearby]
+    why: 接送复合句有**两半**，纯周边搜索只有一半。真栈实测（person-pickup 卡 §6）：
+      「先去接我儿子，再找家川菜馆」三次取样**逐字相同地只答川菜那半**、「接谁」
+      整个被丢掉——而川菜那半答得相当好（还用上了「不吃辣」的记忆），所以话术层
+      根本看不出缺了一块。共享的只是「找家川菜馆」这个宾语；判据是**有没有接送人称**
+      （`接/送 + 人称词`），有就是一趟带顺路停靠的导航（destination=人称词、
+      吃饭那半是 stop_category），没有才是纯 POI 搜索。不构成地盘冲突

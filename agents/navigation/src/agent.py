@@ -550,6 +550,21 @@ class NavigationAgent(BaseAgent):
 
         # 常用地点（家/公司/学校）：命中别名先走画像，未设置则二次交互让用户设置。
         place_key, place_label = _match_place_alias(dest)
+        if place_key and not (intent.slots.get("place_address") or "").strip():
+            # person-pickup（2026-08-20）：**「接女儿放学」不是在问「学校」这个常用地点。**
+            # planner 把它压成 `destination=学校` 时，别名分支会抢在人称之前命中，
+            # 于是真栈答「您还没有设置「学校」的位置，请告诉我学校的地址」——而库里
+            # `女儿--place_of-->深圳市南山实验小学` 明明在（PU6 5 次取样稳定占 2 次）。
+            # 与下面那条 raw 兜底同一形态：**接不着地点时回退人称**，只是这里的
+            # 「接不着」是「这个常用地点没设过」。查得到才改写，查不到一个字不动
+            # ——「导航去学校」（原话无接送人称）照旧走设置引导。
+            pickup = _pickup_person(raw_text)
+            if pickup and not await self._get_place(ctx, place_key):
+                hit = await ctx.resolve_person_place(pickup)
+                if hit and hit.get("place"):
+                    logger.info("pickup beats place alias: %s(%s) → %s",
+                                pickup, place_label, hit["place"])
+                    dest, place_key = hit["place"], ""
         if place_key:
             place_address = (intent.slots.get("place_address") or "").strip()
             if place_address:
