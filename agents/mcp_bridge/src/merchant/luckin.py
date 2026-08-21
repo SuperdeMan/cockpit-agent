@@ -74,12 +74,13 @@ _CLOSED_STATUSES = {
     "已打烊", "打烊", "停业", "休息中", "closed", "close", "closing", "0",
     "false",
 }
-_SPEC_GROUPS = {
-    "temperature": {"温度", "冷热", "热冷"},
-    "ice": {"冰量", "冰度", "加冰"},
-    "sweetness": {"糖度", "甜度"},
-    "milk": {"奶底", "奶类", "乳基底", "奶制品"},
-}
+# ⚠ **这里原来有一张 `_SPEC_GROUPS`（槽名→官方规格组名），2026-08-21 删除。**
+# 它是照常见叫法写的，从 2026-08-13 引入起就没和真机对过：`ice→{冰量,冰度,加冰}`
+# 与 `milk→{奶底,奶类,乳基底,奶制品}` 在瑞幸**一个组名都不存在**（冰档位是「温度」
+# 组的取值，奶的真名是 奶基/奶/奶油），`sweetness` 漏了美式族用的「糖」。
+# 三个槽因此声明齐全却**永远匹配不到任何东西**——「声明了 ≠ 可达」（§9.29 的商户版）。
+# 现在唯一声明处是 `servers.yaml` 的 `input_schema`（B6 §4），组名与项名由
+# `tests/test_merchant_spec_contract.py` 逐条比对真机台账。
 _ORDER_ID_PATHS = (
     "orderIdStr",
     "orderId",
@@ -127,10 +128,19 @@ class _BusinessError(RuntimeError):
 
 
 class _SelectionRequired(_BusinessError):
-    def __init__(self, slot: str, value: str):
+    """规格定不下来。`group`/`options` 非空时话术要**把商家的可选项说出来**。
+
+    只说「不支持少冰」而不说能选什么，用户下一句只能再猜一次——而可选项本来就
+    在手上（官方 `productAttrs`，权威且新鲜）。**系统持有的事实不该让用户猜。**
+    """
+
+    def __init__(self, slot: str, value: str, group: str = "",
+                 options: tuple[str, ...] = ()):
         super().__init__(f"unsupported selection {slot}")
         self.slot = slot
         self.value = value
+        self.group = group
+        self.options = tuple(options)
 
 
 class _BusinessReject(_BusinessError):
@@ -175,6 +185,30 @@ class LuckinWorkflow(MerchantWorkflow):
         # even if a future bootstrap caller accidentally passes server-wide
         # bindings instead of the per-workflow subset.
         self.tools = {name: available[name] for name in self.required_tools}
+        self.spec_contract = self._compile_spec_contract(workflow_spec)
+
+    @staticmethod
+    def _compile_spec_contract(workflow_spec) -> dict:
+        """`input_schema` → 消费态：`{slot: {groups, alias_index, precedence}}`。
+
+        **归一在这里做一次**：官方组名/项名与用户说法都过 `_normalized_spec`，
+        匹配时两边同口径——「校验要复刻消费方解析」（B3 那条）。声明序保留
+        （dict 有序），`_apply_specs` 按它遍历。
+        """
+        contract: dict[str, dict] = {}
+        for slot, body in (getattr(workflow_spec, "input_schema", None) or {}).items():
+            groups = {LuckinWorkflow._normalized_spec(name)
+                      for name in (body.get("groups") or [])}
+            alias_index: dict[str, str] = {}
+            for official, spoken in (body.get("aliases") or {}).items():
+                official_norm = LuckinWorkflow._normalized_spec(official)
+                for word in spoken or ():
+                    alias_index[LuckinWorkflow._normalized_spec(word)] = official_norm
+            contract[str(slot)] = {
+                "groups": groups, "alias_index": alias_index,
+                "precedence": int(body.get("precedence") or 0),
+            }
+        return contract
 
     async def prepare(self, intent, ctx, meta) -> AgentResult:
         slots = dict(getattr(intent, "slots", {}) or {})
@@ -270,9 +304,15 @@ class LuckinWorkflow(MerchantWorkflow):
                 quantity=quantity, expected_store=store,
                 fallback_name=str(product.get("productName") or item_query))
         except _SelectionRequired as exc:
+            # 可选项在手上就说出来——「系统持有的事实不该让用户猜」（§9.27 同族）。
+            if exc.options:
+                speech = (f"这款的{exc.group or '规格'}只能选："
+                          + "、".join(exc.options)
+                          + f"，没有“{exc.value}”。")
+            else:
+                speech = f"这款饮品不支持“{exc.value}”，我没有替你猜其他规格。"
             return AgentResult(
-                status=NEED_SLOT,
-                speech=f"这款饮品不支持“{exc.value}”，我没有替你猜其他规格。",
+                status=NEED_SLOT, speech=speech,
                 follow_up="请选择商家当前可用的规格。",
                 missing_slots=[exc.slot])
         except Exception as exc:
@@ -635,17 +675,50 @@ class LuckinWorkflow(MerchantWorkflow):
             },
             data=ref)
 
+    def _spec_order(self, slots: dict) -> list[str]:
+        """本轮要落的规格槽，**同一个官方组只留一个**。
+
+        瑞幸没有独立的「冰量」组——冰/少冰/去冰/热都是「温度」组的取值，于是
+        `temperature` 与 `ice` 会同时指向同一个组。真栈实测「来一杯冰美式去冰」
+        planner 产的正是 `temperature=冰` + `ice=去冰`：两个都往同一个组里写，
+        后写的赢，结果取决于遍历顺序——**那不是判据，那是巧合**。
+        判据写在契约里（`precedence` 大的赢），并把让位的那一维打进日志：
+        让位可以，**静默让位不行**（同 person-pickup 批「别名让位要留痕」）。
+
+        ⚠ 分组按**声明的 `groups` 集合**，因此要求任意两个槽的 groups 要么相同、
+        要么不相交——部分重叠会让两个槽算成不同组却落到同一个官方组，先写的被
+        悄悄覆盖且零报错。该不变量由 `test_merchant_spec_contract.py::
+        test_declared_groups_are_identical_or_disjoint` 守，**不是靠注释提醒**。
+        """
+        wanted = {name: str(slots.get(name) or "").strip()
+                  for name in self.spec_contract
+                  if str(slots.get(name) or "").strip()}
+        by_group: dict[frozenset, str] = {}
+        for name in wanted:
+            key = frozenset((self.spec_contract[name].get("groups") or set()))
+            keep = by_group.get(key)
+            if keep is None:
+                by_group[key] = name
+                continue
+            win, lose = ((name, keep)
+                         if self.spec_contract[name]["precedence"] >
+                         self.spec_contract[keep]["precedence"] else (keep, name))
+            by_group[key] = win
+            logger.info(
+                "瑞幸规格同组冲突：%s=%r 让位给 %s=%r（同一个官方规格组）",
+                lose, wanted.get(lose), win, wanted.get(win))
+        kept = set(by_group.values())
+        return [name for name in wanted if name in kept]
+
     async def _apply_specs(self, detail: dict, *, dept_id: int,
                            product_id: int, quantity: int,
                            slots: dict) -> dict:
         current = copy.deepcopy(detail)
-        for slot_name in ("temperature", "ice", "sweetness", "milk"):
+        for slot_name in self._spec_order(slots):
             desired = str(slots.get(slot_name) or "").strip()
-            if not desired:
-                continue
             selection = self._official_selection(current, slot_name, desired)
             if selection is None:
-                raise _SelectionRequired(slot_name, desired)
+                raise self._selection_required(current, slot_name, desired)
             parent_id, sub_id, selected = selection
             if selected:
                 continue
@@ -1194,22 +1267,29 @@ class LuckinWorkflow(MerchantWorkflow):
     _REF_LITERAL_RE = re.compile(
         r"^\$?\{?\s*[A-Za-z0-9_-]+\.data\.[A-Za-z0-9_.]+\s*\}?$")
 
-    @classmethod
-    def _spec_options(cls, detail: dict) -> list[dict]:
+    def _spec_options(self, detail: dict) -> list[dict]:
         """从官方 productAttrs 提取**可改**的规格组（demo-3ukshz #3）。
 
         「可改」有两个条件，缺一不上卡：①可选项 ≥2（唯一可选项没有改的余地，
-        canSelected!=1 的项不算）；②组名属于 `_SPEC_GROUPS` 声明的四族（温度/冰量/
-        糖度/奶底）——**那是下单链 `_apply_specs` 唯一消费得动的规格面**，把杯型/
-        咖啡豆这类改不动的组做成按钮就是给用户一个必然失败的入口。
-        每组带当前选中项与候选（含官方差价，分为单位）；值全部原样来自官方 detail。"""
-        changeable = {name for names in _SPEC_GROUPS.values() for name in names}
+        canSelected!=1 的项不算）；②组名在 `input_schema` 声明的规格面里
+        （杯型/温度/糖度/奶底）——**那是下单链 `_apply_specs` 唯一消费得动的那些组**，
+        把咖啡豆/浓度/奶油这类目前没有槽的组做成按钮就是给用户一个必然失败的入口。
+        每组带当前选中项与候选（含官方差价，分为单位）；值全部原样来自官方 detail。
+
+        ⚠ **`changeable` 从 `input_schema` 派生，与下单链同一份声明。** 此前它取
+        `_SPEC_GROUPS` 的并集——那张表把「温度」算作可改，于是卡上真的画出了
+        「少冰」chip，而点下去必然答「这款饮品不支持少冰」（`ice` 查的是不存在的
+        「冰量」组）。**docstring 说要避免的那件事，它自己正在做。**
+        两处消费同一份声明之后，这种自相矛盾在结构上就不可能了。"""
+        changeable = {name
+                      for body in self.spec_contract.values()
+                      for name in (body.get("groups") or set())}
         groups: list[dict] = []
         for attr in (detail or {}).get("productAttrs") or []:
             if not isinstance(attr, dict):
                 continue
             name = str(attr.get("attributeName") or "").strip()
-            if cls._normalized_spec(name) not in changeable:
+            if self._normalized_spec(name) not in changeable:
                 continue
             subs = [sub for sub in attr.get("productSubAttrs") or []
                     if isinstance(sub, dict) and sub.get("canSelected") == 1]
@@ -1379,39 +1459,69 @@ class LuckinWorkflow(MerchantWorkflow):
                 if cls._overlaps(
                     needle, cls._normalized(product.get("productName")))]
 
-    @classmethod
-    def _official_selection(cls, detail: dict, slot_name: str,
-                            desired: str) -> tuple[int, int, bool] | None:
-        groups = detail.get("productAttrs")
-        if not isinstance(groups, list):
+    def _spec_group(self, detail: dict, slot_name: str) -> dict | None:
+        """本商品上承载该槽的**官方规格组**，没有就是 None（这款不支持这一维）。"""
+        allowed = (self.spec_contract.get(slot_name) or {}).get("groups") or set()
+        if not allowed:
             return None
-        desired_norm = cls._normalized_spec(desired)
-        allowed_groups = {_ for _ in _SPEC_GROUPS[slot_name]}
-        for group in groups:
+        for group in detail.get("productAttrs") or []:
             if not isinstance(group, dict):
                 continue
-            group_name = cls._normalized_spec(group.get("attributeName"))
-            if group_name not in allowed_groups:
-                continue
-            parent_id = cls._positive_int(group.get("attributeId"))
-            subs = group.get("productSubAttrs")
-            if parent_id is None or not isinstance(subs, list):
-                return None
-            for sub in subs:
-                if not isinstance(sub, dict):
-                    continue
-                name = cls._normalized_spec(sub.get("attributeName"))
-                if name != desired_norm:
-                    continue
-                if sub.get("canSelected") not in (1, True, "1"):
-                    return None
-                sub_id = cls._positive_int(sub.get("attributeId"))
-                if sub_id is None:
-                    return None
-                selected = sub.get("selected") in (1, True, "1", "true")
-                return parent_id, sub_id, selected
-            return None
+            if self._normalized_spec(group.get("attributeName")) in allowed:
+                return group
         return None
+
+    @classmethod
+    def _selectable(cls, group: dict) -> tuple[str, ...]:
+        """该组当前**可选**的官方项名（原样，给用户看的）。"""
+        return tuple(
+            str(sub.get("attributeName") or "").strip()
+            for sub in (group or {}).get("productSubAttrs") or []
+            if isinstance(sub, dict) and sub.get("canSelected") in (1, True, "1")
+            and str(sub.get("attributeName") or "").strip())
+
+    def _official_selection(self, detail: dict, slot_name: str,
+                            desired: str) -> tuple[int, int, bool] | None:
+        """用户说的规格 → `(组 id, 项 id, 是否已选中)`；定不下来返回 None。
+
+        两步都不猜：**先按契约声明的组名找组**（`servers.yaml` 的 `input_schema`
+        是唯一声明处），再把用户说法按 `aliases` 翻成官方项名做精确匹配。翻不到
+        就原样比——**别名表只做语义等价的翻译，不做档位换算**（「半糖」不映射到
+        「少甜」，那是替用户改了他说的话）。商家仍是权威：`canSelected` 不为真
+        一律 None。
+        """
+        if not isinstance(detail.get("productAttrs"), list):
+            return None
+        group = self._spec_group(detail, slot_name)
+        if group is None:
+            return None
+        alias_index = (self.spec_contract.get(slot_name) or {}).get("alias_index") or {}
+        desired_norm = self._normalized_spec(desired)
+        desired_norm = alias_index.get(desired_norm, desired_norm)
+        parent_id = self._positive_int(group.get("attributeId"))
+        subs = group.get("productSubAttrs")
+        if parent_id is None or not isinstance(subs, list):
+            return None
+        for sub in subs:
+            if not isinstance(sub, dict):
+                continue
+            if self._normalized_spec(sub.get("attributeName")) != desired_norm:
+                continue
+            if sub.get("canSelected") not in (1, True, "1"):
+                return None
+            sub_id = self._positive_int(sub.get("attributeId"))
+            if sub_id is None:
+                return None
+            return parent_id, sub_id, sub.get("selected") in (1, True, "1", "true")
+        return None
+
+    def _selection_required(self, detail: dict, slot_name: str,
+                            desired: str) -> _SelectionRequired:
+        group = self._spec_group(detail, slot_name)
+        return _SelectionRequired(
+            slot_name, desired,
+            group=str((group or {}).get("attributeName") or "").strip(),
+            options=self._selectable(group) if group else ())
 
     @staticmethod
     def _normalized(value) -> str:
@@ -1745,7 +1855,14 @@ class LuckinWorkflow(MerchantWorkflow):
                       candidate["longitude"] is not None and
                       candidate["latitude"] is not None and
                       math.isfinite(candidate["distance"])]
-        if len(candidates) < 2:
+        # ⚠ **闸从 `< 2` 收到 `< 1`（2026-08-21 Q12 规格维批）。** 原判据把「只剩一家
+        # 可选」当成「数据不完整」，于是真栈 3/3 撞死路：POI 名与官方 deptName 对不上
+        # （高德「瑞幸咖啡(海王银河科技大厦大堂店)」在官方门店表里根本没有这个名字）
+        # ⇒ 按名查 0 家 ⇒ 坐标重查拿回 8 家 ⇒ **夜里只有一家还营业** ⇒ 候选 1 家
+        # ⇒ 拒绝，而话术还说「信息不完整」——数据其实很完整，是判据把「唯一」读成了
+        # 「缺失」。用户重查一次结果一模一样，这是个闭环死路。
+        # **一家可选就是一家可选**；真正的「不完整」是零家。
+        if not candidates:
             return AgentResult(
                 speech="门店候选信息不完整，请重新查询附近的瑞幸。")
         request_slots = {
@@ -1782,9 +1899,14 @@ class LuckinWorkflow(MerchantWorkflow):
             send_text=f"选择瑞幸门店：{candidate['deptName']}",
             data={"dept_id": str(candidate["deptId"])},
         ) for candidate in candidates]
+        # 单候选也要**让用户点头**，不能替他选：走到这里就说明官方门店名与所选 POI
+        # 对不上（`matched != 1`），只有坐标可信链背书。话术因此如实说是哪一家。
+        speech = ("找到多家可能的瑞幸门店，请选择其中一家。" if len(candidates) > 1
+                  else f"附近符合的瑞幸门店只有一家：{candidates[0]['deptName']}，"
+                       "确认是这家吗？")
         return AgentResult(
             status=NEED_SLOT,
-            speech="找到多家可能的瑞幸门店，请选择其中一家。",
+            speech=speech,
             follow_up="请选择门店。", missing_slots=["store_name"],
             ui_card=self.choice_card("store", choices),
             data={"checkout_token": continuation.token})

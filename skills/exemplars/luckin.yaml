@@ -232,4 +232,4 @@ exemplars:
   added: '2026-08-13'
   tags:
   - merchant-order
-  note: 预览卡规格 chip 句式「在{店}点一杯{品}，要{规格}」（demo-3ukshz #3）——规格词按 _SPEC_GROUPS 落对应槽
+  note: 预览卡规格 chip 句式「在{店}点一杯{品}，要{规格}」（demo-3ukshz #3）——规格词按 servers.yaml 的 input_schema 落对应槽（2026-08-21 前这里写的是 _SPEC_GROUPS，那张表已删）

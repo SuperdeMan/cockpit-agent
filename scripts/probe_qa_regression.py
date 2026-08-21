@@ -815,10 +815,57 @@ CASES = [
          {"say": "导航去上海外滩。",
           "expect": {"actions_include": ["navigate"], "navigate_named_any": ["外滩"]}},
      ]},
+
+    # ── Q12 规格维（2026-08-21 加，接手时先读这段）────────────────────────────
+    #
+    # 这一组验的是**规格有没有真的落进订单**，而不是「系统答得好不好」。修前的形态是：
+    # planner 把「少冰/不加糖/超大杯」都填进了正确的槽（真栈 3/3 实测），而桥侧查的
+    # 官方规格组名是**猜的**（`ice→冰量`，瑞幸根本没有这一组）⇒ 无论用户说什么都被答
+    # 「这款饮品不支持"X"」。契约与根因见 `docs/conventions.md` §9.31。
+    #
+    # ⚠ **两条跑法约束，违反任一条读数就没意义**：
+    #   ① **必须在门店营业时段跑**（建议 09:00-17:00）。打烊门店取不到 productAttrs，
+    #      整条链停在「找到的瑞幸门店已打烊」——那不是红，是没跑到。
+    #      2026-08-21 首次收口当晚 22:38 就撞上这个，规格维因此**未做真栈复验**。
+    #   ② **只跑到 `need_confirm` 为止，绝不发确认帧**。确认会创建真实未支付订单
+    #      （商户写要单轮人工授权，CLAUDE.md §5）。本组用例刻意没有第二轮。
+    #
+    # 判据落在**卡片**上不落在话术上：预览卡的 `specifications` 逐字来自商家最终 SKU
+    # 的 `additionDesc`，它说规格生效了才是真的生效了；话术里念的那串是同一份数据，
+    # 但「说了」和「下单里真有」在话术层分不开（同 SL1/CD2/AU1 那条）。
+    {"id": "SP1", "group": "spec", "card": "Q12", "issue": "I-025②",
+     "why": "「不加糖」要翻译成官方项名「不另外加糖」并真的落进订单——修前 sweetness "
+            "只认「糖度/甜度」，美式族的「糖」组永远匹配不到",
+     "known": "red",
+     "turns": [
+         {"say": "先查附近的瑞幸，再点一杯生椰拿铁不加糖",
+          "expect": {"card_type": "merchant_order_preview", "need_confirm": True,
+                     "card_text_has": ["不另外加糖"]}},
+     ]},
+    {"id": "SP2", "group": "spec", "card": "Q12", "issue": "I-025②",
+     "why": "杯型：planner 真栈实测就在产 `size` 槽，而契约里原本没有这个槽 ⇒ 静默丢弃",
+     "known": "red",
+     "turns": [
+         {"say": "先查附近的瑞幸，再点一杯超大杯生椰拿铁",
+          "expect": {"card_type": "merchant_order_preview", "need_confirm": True,
+                     "card_text_has": ["超大杯"]}},
+     ]},
+    # 反向对照：**商家没有的档位不许被就近映射**。瑞幸的糖度是
+    # 标准甜/少甜/少少甜/微甜/不另外加糖，没有「半糖」——正确行为是诚实拒绝并把
+    # 可选项说出来，不是替用户挑一档（`aliases` 只做等价翻译不做档位换算，§9.31）。
+    {"id": "SP3", "group": "spec", "card": "Q12", "issue": "反向对照",
+     "why": "「半糖」在瑞幸不存在；不许被映射成少甜/微甜，要列出可选项让用户挑",
+     "known": "green",
+     "turns": [
+         {"say": "先查附近的瑞幸，再点一杯生椰拿铁半糖",
+          "expect": {"is_question": True, "speech_has": ["半糖"],
+                     "speech_any": ["标准甜", "少甜", "微甜", "不另外加糖"],
+                     "need_confirm": False}},
+     ]},
 ]
 
 _GROUPS = ("confirm", "negation", "session", "safety", "candidate", "audit",
-           "slot", "merchant", "capability", "pickup")
+           "slot", "merchant", "capability", "pickup", "spec")
 
 # ── Q13：两个分类出口的一致性（纯函数，不需要起栈）─────────────────────────
 # 阶段 0.2 首跑时由 NG3 的「假绿」牵出来的。端侧把结构化意图翻成意图名有**两个出口**

@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
-                                   restore_time_qualifiers)
+                                   restore_time_qualifiers,
+                                   undeclared_slots)
 
 I008 = "明天下午四点提醒我开会，三点半再提醒我一次"
 
@@ -116,3 +117,35 @@ def test_skip_protects_server_resolved_slots():
 
 def test_non_string_slot_values_are_ignored():
     assert restore_dropped_qualifiers(I008, {"n": 3, "ok": True}) == {}
+
+
+# ── 契约外槽位（2026-08-21，Q12 规格维的孪生形态）────────────────────────
+#
+# 判据只用能力自己的声明，**零领域词**——下面这些用例里的槽名全是通用形状，
+# 换个域照样成立。
+
+def test_undeclared_slots_reports_values_outside_the_contract():
+    """真栈实例：planner 产 `size: 大杯`，而该能力当时没有 `size` 槽。"""
+    assert undeclared_slots(
+        {"item_query": "生椰拿铁", "size": "大杯"},
+        ["item_query", "quantity"]) == ["size"]
+
+
+def test_undeclared_slots_ignores_empty_values():
+    """空值不是「用户说了一件事」——模型顺手写个空键不该报。"""
+    assert undeclared_slots(
+        {"item_query": "美式", "size": "", "note": "   "},
+        ["item_query"]) == []
+
+
+def test_undeclared_slots_is_silent_when_the_contract_is_unknown():
+    """契约为空时**一律不判**：那说明能力没声明槽位，不能拿沉默当证据。"""
+    assert undeclared_slots({"anything": "x"}, []) == []
+    assert undeclared_slots({"anything": "x"}, None) == []
+
+
+def test_undeclared_slots_accepts_everything_the_contract_declares():
+    """反向对照：契约里的槽一个都不许被报出来。"""
+    assert undeclared_slots(
+        {"item_query": "拿铁", "ice": "少冰", "size": "大杯"},
+        ["item_query", "ice", "size", "quantity"]) == []

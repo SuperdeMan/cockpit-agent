@@ -124,6 +124,19 @@ class WorkflowSpec:
     #: 同 `retry_policy` 那条纪律。守卫 `test_candidate_ref.py` 校验它必须在 `slots` 里
     #: ——声明一个 planner 永远填不到的槽等于没声明。
     candidate_slot: str = ""
+    #: **B6 §4 `input_schema` 的首个消费方**（Q12 规格维，2026-08-21）：逐槽声明
+    #: 「这个槽是什么、它的值域从哪里来」。当前只有一种 `kind`——`merchant_spec`：
+    #: 值域的**权威仍然是商家**（下单前逐项过官方 `productAttrs` 的 `canSelected`），
+    #: 本表声明的只有两件事：
+    #:   · `groups`：这个槽对应哪个**官方规格组名**（瑞幸的冰档位在「温度」组里，
+    #:     不在「冰量」组——猜错了就是个声明齐全却永远匹配不上的死槽）；
+    #:   · `aliases`：`官方项名 -> [用户说法…]` 的翻译词典（「不加糖」→「不另外加糖」）。
+    #: 放在 servers.yaml 而不是写死在 `luckin.py` 里，理由同 `candidate_slot`：
+    #: **加一个规格维=改表不改主循环**；更重要的是消灭第二份声明——组名此前既活在
+    #: 代码的 `_SPEC_GROUPS` 里、又隐含在 `slots` 声明里，两份从来没有对齐过。
+    #: 组名与项名由 `test_merchant_spec_contract.py` 逐条比对真机观测台账
+    #: `knowledge/merchant_specs_observed.yaml`——**不许靠常见叫法猜**。
+    input_schema: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -204,7 +217,55 @@ def admit_workflow(spec: WorkflowSpec, admitted_by_name: dict) -> str:
             return "workflow 含写工具时 require_confirm 必须为 true"
         if "merchant.write" not in declared_scopes:
             return "workflow 含写工具时 required_scopes 必须含 merchant.write"
+    # `input_schema`（B6 §4，Q12 规格维）：**声明一个 planner 永远填不到的槽等于
+    # 没声明**（判据同 `candidate_slot`）；`kind`/`groups` 缺失则该槽的值域无人可查，
+    # 消费方只能退回猜——而「猜组名」正是本字段要消灭的那件事，所以宁可拒载。
+    declared = {str(slot).strip() for slot in (spec.slots or []) if str(slot).strip()}
+    for slot, body in (spec.input_schema or {}).items():
+        if slot not in declared:
+            return f"workflow input_schema 声明了不存在的槽位={slot}"
+        if body.get("kind") != SPEC_KIND_MERCHANT:
+            return f"workflow input_schema.{slot}.kind 必须是 {SPEC_KIND_MERCHANT}"
+        if not body.get("groups"):
+            return f"workflow input_schema.{slot}.groups 必须非空"
     return ""
+
+
+#: `input_schema.<slot>.kind` 目前唯一有消费方的取值。**不做「以后可能有」的枚举**
+#: （B4「不加即死字段」）：新增一种 kind 时连同它的消费方一起加。
+SPEC_KIND_MERCHANT = "merchant_spec"
+
+
+def _slot_schema(raw) -> dict:
+    """归一 `input_schema`：`{slot: {kind, groups, aliases, precedence}}`。
+
+    **非法元素直接丢，不做 `str()` 转换**——转出来的值匹配不上任何东西，却会在
+    日志里留下一个不存在的组名（CLAUDE.md §6 那条 `depends_on` 归一的同款判据）。
+    丢掉的后果是「这个槽没有值域声明」，由 `admit_workflow` 判红，不会静默下错单。
+    """
+    out: dict[str, dict] = {}
+    if not isinstance(raw, dict):
+        return out
+    for slot, body in raw.items():
+        if not isinstance(body, dict) or not str(slot).strip():
+            continue
+        groups = [str(name).strip() for name in (body.get("groups") or [])
+                  if str(name).strip()]
+        aliases: dict[str, list[str]] = {}
+        for official, spoken in (body.get("aliases") or {}).items():
+            words = [str(word).strip() for word in (spoken or [])
+                     if str(word).strip()]
+            if str(official).strip() and words:
+                aliases[str(official).strip()] = words
+        try:
+            precedence = int(body.get("precedence") or 0)
+        except (TypeError, ValueError):
+            precedence = 0
+        out[str(slot).strip()] = {
+            "kind": str(body.get("kind") or "").strip(),
+            "groups": groups, "aliases": aliases, "precedence": precedence,
+        }
+    return out
 
 
 def schema_fingerprint(schema) -> str:
@@ -310,6 +371,7 @@ def load_servers(path: str) -> list:
             require_confirm=bool(w.get("require_confirm", True)),
             expose=bool(w.get("expose", True)),
             candidate_slot=str(w.get("candidate_slot") or ""),
+            input_schema=_slot_schema(w.get("input_schema")),
         ) for w in (s.get("workflows") or [])]
         headers: dict[str, str] = {}
         env_error = ""

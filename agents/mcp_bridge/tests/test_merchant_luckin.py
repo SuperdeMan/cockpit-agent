@@ -4,6 +4,8 @@ import asyncio
 import copy
 import json
 from collections import defaultdict
+from functools import lru_cache
+from pathlib import Path
 from types import SimpleNamespace
 from contextlib import asynccontextmanager
 
@@ -12,7 +14,8 @@ import pytest
 from agents._sdk import NEED_CONFIRM, NEED_SLOT, OK
 from agents._sdk.ledger import DONE, FAILED, LedgerTask
 from agents.mcp_bridge.src import agent as agent_module
-from agents.mcp_bridge.src.admission import ServerSpec, ToolSpec, WorkflowSpec
+from agents.mcp_bridge.src.admission import (ServerSpec, ToolSpec,
+                                             WorkflowSpec, load_servers)
 from agents.mcp_bridge.src.agent import McpBridgeAgent
 from agents.mcp_bridge.src.mcp_client import McpError, McpTimeout
 from agents.mcp_bridge.src.merchant.luckin import LuckinWorkflow
@@ -359,6 +362,19 @@ def _schema(properties, required):
     }
 
 
+_SERVERS_YAML = str(Path(__file__).resolve().parents[1] / "servers.yaml")
+
+
+@lru_cache(maxsize=None)
+def _real_input_schema(intent: str) -> dict:
+    """真实 `servers.yaml` 里该 workflow 的 `input_schema`（B6 §4）。"""
+    for server in load_servers(_SERVERS_YAML):
+        for workflow in server.workflows:
+            if workflow.intent == intent:
+                return dict(workflow.input_schema or {})
+    return {}
+
+
 def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
               pay_url_locator="", pay_url_hosts=None, tool_names=None,
               workflow_intent="luckin.order", amount_locator="",
@@ -428,7 +444,13 @@ def _workflow(*, scripts=None, store=None, ledger=None, payment=None,
                      else ["img04.luckincoffeecdn.com"]))
     spec = SimpleNamespace(
         intent=workflow_intent, required_tools=[
-            name for name in schemas if name in selected_names])
+            name for name in schemas if name in selected_names],
+        # **规格值域契约取真实 `servers.yaml`，不由替身现编**（2026-08-21）。
+        # 上一版这里只给 intent/required_tools，于是 `input_schema` 恒空、
+        # `_apply_specs` 一个槽都不落——**测试替被测系统提供了「规格是什么」这个
+        # 前提，那条前提就不再被验证**（CLAUDE.md §6 那条 e2e 教训的单测版）。
+        # 现在契约漂移（谁删了 `ice` 的声明、组名写错）会在这里直接红。
+        input_schema=_real_input_schema(workflow_intent))
     workflow = LuckinWorkflow(
         server, spec, tools, store or FakeDraftStore(),
         ledger if ledger is not None else FakeLedger(),
@@ -559,10 +581,17 @@ async def test_prepare_uses_trusted_nearby_store_and_last_switched_sku():
         "confirmation_context": "merchant_create",
         "buttons": [],
         # 规格可改性外露（demo-3ukshz #3）：上卡的组必须同时满足①可选项 ≥2
-        # ②属于 `_SPEC_GROUPS` 四族（下单链唯一消费得动的规格面）——杯型/咖啡豆/
-        # 咖啡浓度可选项再多也不上（点了也改不动=必然失败的按钮），奶油组唯一可选
-        # 也不上。selected 取**换规格后**的最终 detail。
+        # ②组名在 `servers.yaml` 的 `input_schema` 里（下单链唯一消费得动的那些组）
+        # ——咖啡豆/咖啡浓度可选项再多也不上（目前没有槽，点了也改不动=必然失败的
+        # 按钮），奶油组唯一可选也不上。selected 取**换规格后**的最终 detail。
+        # ⚠ **杯型是 2026-08-21 新进来的**：`luckin.order` 补了 `size` 槽之后它
+        # 才真的可消费——在那之前 planner 已经在产 `size: 大杯`（真栈实测），
+        # 而契约里没有这个槽，值被静默丢掉。
         "spec_options": [
+            {"name": "杯型", "selected": "大杯", "options": [
+                {"label": "大杯"},
+                {"label": "超大杯", "price_delta_cents": 300},
+            ]},
             {"name": "温度", "selected": "热", "options": [
                 {"label": "冰"}, {"label": "热"},
             ]},
@@ -685,6 +714,53 @@ async def test_multiple_or_closed_stores_stop_before_product_lookup():
     closed_result = await closed_flow.prepare(_intent(), CTX, META)
     assert "打烊" in closed_result.speech
     assert [name for name, _, _ in closed_client.calls] == ["queryShopList"]
+
+
+@pytest.mark.asyncio
+async def test_single_remaining_store_is_offered_not_refused_as_incomplete():
+    """只剩一家可选 ≠ 数据不完整（2026-08-21 真栈 3/3 死路）。
+
+    复现链逐段真实：高德 POI 名「瑞幸咖啡(海王银河科技大厦大堂店)」在官方门店表
+    里根本没有 ⇒ 按名查 0 家 ⇒ 坐标重查拿回 8 家 ⇒ **夜里只有一家还营业** ⇒
+    名字对不上、候选剩 1 家 ⇒ 旧闸 `len(candidates) < 2` 判「门店候选信息不完整，
+    请重新查询附近的瑞幸」。数据其实很完整，用户重查一次结果一模一样——闭环死路，
+    而且它把整条下单链（含本批要验的规格维）挡在门外。
+    """
+    lone = _ok([{"deptId": 7, "deptName": "科技园文化广场店",
+                 "longitude": 121.4737, "latitude": 31.2304,
+                 "workStatus": "营业中", "distance": 0.01}])
+    workflow, client = _workflow(scripts={"queryShopList": [lone]})
+
+    result = await workflow.prepare(
+        _intent(store_name="瑞幸咖啡（名字对不上的那家）"), CTX, META)
+
+    assert result.status == NEED_SLOT
+    assert result.missing_slots == ["store_name"]
+    assert result.ui_card["choice_kind"] == "store"
+    assert [item["name"] for item in result.ui_card["items"]] == ["科技园文化广场店"]
+    assert "只有一家" in result.speech and "科技园文化广场店" in result.speech
+    assert "信息不完整" not in result.speech
+    # 单候选也**不替用户拍板**：仍是 NEED_SLOT + 选择卡，坐标可信链背书但要他点头。
+    assert [name for name, _, _ in client.calls] == ["queryShopList"]
+
+
+@pytest.mark.asyncio
+async def test_zero_usable_store_candidates_still_reports_incomplete():
+    """反向对照：候选**真的**一家都拼不出来时，「信息不完整」仍然是对的话术。"""
+    broken = _ok([
+        {"deptId": 0, "deptName": "", "longitude": 121.4737,
+         "latitude": 31.2304, "workStatus": "营业中", "distance": 0.01},
+        {"deptId": 8, "deptName": "", "longitude": 121.4738,
+         "latitude": 31.2305, "workStatus": "营业中", "distance": 0.02},
+    ])
+    workflow, client = _workflow(scripts={"queryShopList": [broken]})
+
+    result = await workflow.prepare(
+        _intent(store_name="瑞幸咖啡（名字对不上的那家）"), CTX, META)
+
+    assert "门店候选信息不完整" in result.speech
+    assert result.ui_card in (None, {})
+    assert [name for name, _, _ in client.calls] == ["queryShopList"]
 
 
 @pytest.mark.asyncio
@@ -863,9 +939,15 @@ async def test_multiple_products_and_unavailable_spec_require_user_choice():
     assert len(result.ui_card["items"]) == 3
     assert client.counts["queryProductDetailInfo"] == 0
 
-    # These colloquial requests are not present in this product's fresh
-    # official attribute tree.  They must be rejected, not mapped to a nearby
-    # option or synthesized by the codec.
+    # ⚠ **这一段的定性 2026-08-21 改过，留痕。** 它原本的注释写的是「这些口语说法
+    # 不在官方属性树里，必须被拒绝」——**而当时它们被拒绝的真实原因不是这个**：
+    # `ice`/`milk` 查的组名（冰量 / 奶底…）在瑞幸压根不存在，两个槽结构性死亡，
+    # 于是**任何值**都会被拒。这条断言因此把一个 bug 焊死成了预期行为，且因为
+    # 本 fixture 的温度组恰好只有 冰/热、没有奶基组，它在修好之后**照样是绿的**。
+    # 「一个看不见正确答案的尺子，和一个恒绿的断言一样糟」——正面路径由
+    # `test_real_shape_specs_*` 三条守（那里用真机形状：温度[冰/少冰]、奶基
+    # [牛奶/燕麦奶]、糖[…不另外加糖]）。本段保留的语义收窄为：
+    # **这款商品的属性树里确实没有的选项，不许被就近映射或凭空合成。**
     for slot, value in (("ice", "少冰"), ("sweetness", "半糖"),
                         ("milk", "燕麦奶")):
         unsupported, unsupported_client = _workflow()
@@ -2149,3 +2231,159 @@ async def test_menu_seed_failure_keeps_already_aggregated_items():
     failed = await flow2.menu(
         _intent(name="luckin.menu", item_query=""), CTX, META)
     assert "暂时拿不到" in failed.speech or "稍后再试" in failed.speech
+
+
+# ── 规格值域：真机形状下的正面路径（2026-08-21，Q12 规格维）────────────────
+#
+# 这一组用的属性树**逐字来自真机台账** `knowledge/merchant_specs_observed.yaml`
+# （2026-08-21 扫 18 款商品）：温度[冰/少冰/去冰/热]、奶基[牛奶/燕麦奶]、
+# 糖[…不另外加糖]、杯型[大杯/超大杯]。在此之前，`ice`/`milk` 两个槽在整个测试
+# 套件里**从来没有过成功路径**——只有「必须被拒绝」的断言，而它们被拒的真实原因
+# 是组名猜错了。缺的正是这几条：**能看见正确答案的尺子。**
+
+def _group(gid, name, subs):
+    """`subs`: [(项 id, 项名, 是否已选中)]，一律 canSelected=1。"""
+    return {"attributeId": gid, "attributeName": name, "productSubAttrs": [
+        {"attributeId": sid, "attributeName": sname, "selected": chosen,
+         "price": 0, "canSelected": 1} for sid, sname, chosen in subs]}
+
+
+def _real_shape_detail(*groups, sku="SP-REAL-1"):
+    return _ok({"productId": 1262, "productName": "生椰拿铁（首创）",
+                "skuCode": sku, "productAttrs": list(groups),
+                "initialPrice": 20.0, "estimatePrice": 16.6})
+
+
+def _switched(sku):
+    return _ok({"productId": 1262, "productName": "生椰拿铁（首创）",
+                "skuCode": sku, "productAttrs": [],
+                "initialPrice": 20.0, "estimatePrice": 16.6})
+
+
+def _preview_for(sku, addition="大杯/冰/意式拼配/默认浓度/标准甜"):
+    """预览结果必须回带**换规格之后**的那个 sku——桥侧逐字校验商品身份。"""
+    preview = copy.deepcopy(PREVIEW_RESULT)
+    item = preview["data"]["data"]["productInfoList"][0]
+    item["skuCode"] = sku
+    item["additionDesc"] = addition
+    return preview
+
+
+async def _prepare_with(detail, *, switches=1, **slots):
+    final_sku = f"SP-REAL-{switches + 1}"
+    workflow, client = _workflow(scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": [SEARCH_RESULT],
+        "queryProductDetailInfo": [detail],
+        "switchProduct": [_switched(f"SP-REAL-{n + 2}")
+                          for n in range(max(1, switches))],
+        "previewOrder": [_preview_for(final_sku), _preview_for(final_sku)],
+        "createOrder": [CREATE_RESULT],
+        "cancelOrder": [CANCEL_RESULT],
+    })
+    values = {"temperature": "", "ice": "", "sweetness": "", "milk": ""}
+    values.update(slots)
+    return await workflow.prepare(_intent(**values), CTX, META), client
+
+
+def _switch_args(client):
+    return [args["attrOperationParam"]
+            for name, args, _ in client.calls if name == "switchProduct"]
+
+
+@pytest.mark.asyncio
+async def test_real_shape_specs_ice_lands_in_the_temperature_group():
+    """「少冰」必须落到**温度**组——瑞幸没有独立的冰量组（I-025② 的真身）。"""
+    detail = _real_shape_detail(_group(17, "温度", [
+        (57, "冰", True), (58, "少冰", False), (59, "去冰", False),
+        (56, "热", False)]))
+    result, client = await _prepare_with(detail, ice="少冰")
+
+    assert result.status == NEED_CONFIRM, result.speech
+    assert _switch_args(client) == [
+        {"attributeId": 17, "subAttr": {"attributeId": 58, "operation": 1}}]
+
+
+@pytest.mark.asyncio
+async def test_real_shape_specs_milk_lands_in_the_milk_base_group():
+    """「燕麦奶」是**奶基**组的真实取值——旧表查的「奶底/奶类」一个都不存在。"""
+    detail = _real_shape_detail(_group(21, "奶基", [
+        (80, "牛奶", True), (81, "燕麦奶", False)]))
+    result, client = await _prepare_with(detail, milk="燕麦奶")
+
+    assert result.status == NEED_CONFIRM, result.speech
+    assert _switch_args(client) == [
+        {"attributeId": 21, "subAttr": {"attributeId": 81, "operation": 1}}]
+
+
+@pytest.mark.asyncio
+async def test_real_shape_specs_alias_translates_user_wording():
+    """用户说「不加糖」，官方项名是「不另外加糖」；组名在美式族叫「糖」不叫「糖度」。"""
+    detail = _real_shape_detail(_group(18, "糖", [
+        (60, "标准甜", True), (112, "少甜", False), (69, "不另外加糖", False)]))
+    result, client = await _prepare_with(detail, sweetness="不加糖")
+
+    assert result.status == NEED_CONFIRM, result.speech
+    assert _switch_args(client) == [
+        {"attributeId": 18, "subAttr": {"attributeId": 69, "operation": 1}}]
+
+
+@pytest.mark.asyncio
+async def test_real_shape_specs_cup_size_is_no_longer_dropped_silently():
+    """杯型：planner 真栈实测就在产 `size`，而契约里原本没有这个槽 ⇒ 静默丢弃。"""
+    detail = _real_shape_detail(_group(64, "杯型", [
+        (365, "大杯", True), (594, "超大杯", False)]))
+    result, client = await _prepare_with(detail, size="超大杯")
+
+    assert result.status == NEED_CONFIRM, result.speech
+    assert _switch_args(client) == [
+        {"attributeId": 64, "subAttr": {"attributeId": 594, "operation": 1}}]
+
+
+@pytest.mark.asyncio
+async def test_same_group_slots_resolve_by_declared_precedence():
+    """「来一杯冰美式去冰」：`temperature=冰` + `ice=去冰` 落同一个组，去冰赢。
+
+    真栈实测的 plan 就是这个形状。两个槽都往「温度」里写，谁赢必须由契约的
+    `precedence` 决定——不能取决于遍历顺序。**只发一次 switchProduct。**
+    """
+    detail = _real_shape_detail(_group(17, "温度", [
+        (57, "冰", True), (59, "去冰", False), (56, "热", False)]))
+    result, client = await _prepare_with(detail, temperature="冰", ice="去冰")
+
+    assert result.status == NEED_CONFIRM, result.speech
+    assert _switch_args(client) == [
+        {"attributeId": 17, "subAttr": {"attributeId": 59, "operation": 1}}]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_spec_speech_lists_the_official_options():
+    """定不下来时**把商家的可选项说出来**，别让用户再猜一次。
+
+    并且**不许把「半糖」就近映射到任何一档**——标准甜/少甜/少少甜/微甜/不另外加糖
+    里没有「半糖」，替用户挑一个就是替他改了他说的话。
+    """
+    detail = _real_shape_detail(_group(18, "糖度", [
+        (60, "标准甜", True), (112, "少甜", False), (254, "微甜", False)]))
+    result, client = await _prepare_with(detail, sweetness="半糖")
+
+    assert result.status == NEED_SLOT
+    assert result.missing_slots == ["sweetness"]
+    assert "糖度" in result.speech
+    assert "标准甜" in result.speech and "少甜" in result.speech
+    assert "半糖" in result.speech
+    assert client.counts["switchProduct"] == 0
+    assert client.counts["previewOrder"] == 0
+
+
+@pytest.mark.asyncio
+async def test_group_absent_on_this_product_keeps_the_honest_refusal():
+    """这款商品压根没有那一维时，退回原来的诚实话术（没有可选项可列）。"""
+    detail = _real_shape_detail(_group(64, "杯型", [
+        (365, "大杯", True), (594, "超大杯", False)]))
+    result, client = await _prepare_with(detail, ice="少冰")
+
+    assert result.status == NEED_SLOT
+    assert result.missing_slots == ["ice"]
+    assert "少冰" in result.speech
+    assert client.counts["switchProduct"] == 0

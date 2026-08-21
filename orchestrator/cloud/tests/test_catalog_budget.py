@@ -168,14 +168,18 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 真导航）、`navigation.cancel` 与 reroute 的边界是「终止 vs 增量调整」、
     # `volume.mute` 与 volume.dec / media.pause 的边界是「压掉全部出声 vs 调小 vs
     # 停播放」（真栈实测「静音」正是落到 volume.dec）。端侧两条走机械生成的短描述。
-    assert catalog.catalog_stats["chars_full"] == 13139
-    assert catalog.catalog_stats["chars_final"] == 13139
+    # 2026-08-21 +23 → 13162：Q12 规格维给 `luckin.order` 补 `size` 槽（杯型）
+    # 并在描述里点名规格面。**这一笔是「补一维已经在被用户说、却无处可放的能力」**
+    # ——planner 真栈实测本来就在产 `size: 大杯`，契约里没有这个槽，值被静默丢掉。
+    # 条数不变（既有 workflow 加槽，不是新增条目）。
+    assert catalog.catalog_stats["chars_full"] == 13162
+    assert catalog.catalog_stats["chars_final"] == 13162
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13139 → 2861）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13162 → 2838）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2861
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2838
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

@@ -437,10 +437,65 @@ servers:
         required_scopes: [merchant.read, merchant.write]
         require_confirm: true
         expose: true
-        description: 必须先消费 nearby.search 同一公开 POI 的可信门店名和坐标，再选商品规格、预览确认并创建未支付订单
-        slots: [item_query, quantity, store_name, store_longitude, store_latitude, temperature, ice, sweetness, milk, checkout_token]
+        description: 必须先消费 nearby.search 同一公开 POI 的可信门店名和坐标，再选商品规格（杯型/温度或冰量/糖度/奶底）、预览确认并创建未支付订单
+        slots: [item_query, quantity, store_name, store_longitude, store_latitude, size, temperature, ice, sweetness, milk, checkout_token]
         candidate_slot: item_query
-        examples: ["先查附近的瑞幸，再点一杯生椰拿铁少冰半糖", "先找到瑞幸迪美店，再来两杯热美式"]
+        # 规格槽的值域契约（B6 §4 `input_schema` 的首个消费方，2026-08-21 Q12 规格维）。
+        # **值域的权威仍然是商家**：下单前逐项过官方 productAttrs 的 canSelected，
+        # 这里声明的只有「这个槽对应哪个官方规格组」与「用户说法怎么翻译成官方项名」。
+        #
+        # ⚠ 组名**不许靠常见叫法猜**——2026-08-21 真机取证：此前写死在 luckin.py 的
+        # `_SPEC_GROUPS` 里，`ice→{冰量,冰度,加冰}` 和 `milk→{奶底,奶类,乳基底,奶制品}`
+        # 在瑞幸**一个都不存在**（冰档位是「温度」组的取值；奶的真名是 奶基/奶/奶油），
+        # `sweetness` 还漏了美式族用的「糖」。于是这三个槽声明齐全、planner 也填对了，
+        # 用户仍然被答「这款饮品不支持"少冰"」，而 HMI 上明明画着一个「少冰」的 chip。
+        # 组名与项名逐条比对真机台账 `knowledge/merchant_specs_observed.yaml`
+        # （门禁 `tests/test_merchant_spec_contract.py`）。
+        input_schema:
+          size:
+            kind: merchant_spec
+            groups: [杯型]
+          temperature:
+            kind: merchant_spec
+            groups: [温度]
+            aliases:
+              冰: [冰的, 冰镇, 冷的, 凉的]
+              热: [热的, 热饮]
+          # `ice` 与 `temperature` **刻意同组**：瑞幸没有独立的冰量组，冰/少冰/去冰/热
+          # 是同一个「温度」组的四个取值。同组多槽时 `precedence` 大的赢——真栈实测
+          # 「来一杯冰美式去冰」planner 产的就是 `temperature=冰` + `ice=去冰`，
+          # 用户的意思显然是去冰。让位的那一维打日志，不静默（同 person-pickup 批
+          # 「别名让位要留痕」）。
+          ice:
+            kind: merchant_spec
+            groups: [温度]
+            precedence: 1
+            aliases:
+              少冰: [少点冰, 少一点冰, 少放冰]
+              去冰: [不要冰, 不加冰, 免冰, 无冰, 零冰]
+          sweetness:
+            kind: merchant_spec
+            groups: [糖度, 糖]
+            # 别名只写**语义等价、无争议**的那些。「半糖/三分糖/五分糖」刻意不写——
+            # 瑞幸的档位是 标准甜/少甜/少少甜/微甜/不另外加糖，把「半糖」映射到其中
+            # 任何一档都是**替用户改了他说的话**。匹配不上就诚实拒绝并列出可选项。
+            aliases:
+              不另外加糖: [不加糖, 无糖, 不要糖, 免糖, 零糖, 0糖]
+              少甜: [少糖]
+              少少甜: [少少糖]
+              微甜: [微糖]
+              标准甜: [标准糖, 正常糖, 全糖]
+          # 只含「奶」族，**不含「奶油」**：奶油组（无奶油/加奶油）与奶底是两件事，
+          # 把「不要奶」翻成「无奶油」是换了一个维度。奶油目前没有槽=还没有消费方。
+          # ⚠ 首版这里还顺手写了个「奶底」——**门禁第一次跑就把它抓了出来**
+          # （真机台账里没有这个组名）。留痕：写这条规矩的人，正是被它抓到的第一个。
+          milk:
+            kind: merchant_spec
+            groups: [奶基, 奶]
+            aliases:
+              无奶: [不要奶, 去奶, 不加奶]
+        examples: ["先查附近的瑞幸，再点一杯生椰拿铁少冰半糖", "先找到瑞幸迪美店，再来两杯热美式",
+                   "在瑞幸点一杯超大杯生椰拿铁，去冰不加糖"]
       # 只读看菜单（2026-08-13）：在此之前「这家店的菜单」在整个能力目录里只对应
       # 演示商户的 shop.menu，于是真实门店的问句答出了演示数据（trace 9899486a8773d577）。
       # 门店可信链与下单完全一致——官方菜单必须绑定 deptId，绕不开选店这一步。

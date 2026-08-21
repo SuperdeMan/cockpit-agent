@@ -82,11 +82,34 @@ B4 已落 `effect`/`risk`/`confirmation`（有消费方）。其余字段**谁�
 
 | 字段 | 触发条件 |
 |---|---|
-| `input_schema` / `output_schema` | Planner 槽位类型错误成为稳定 badcase 族，或 typed Executor 立项 |
+| ~~`input_schema`~~ **✅ 2026-08-21 落地**（消费方=商户规格值域，契约 `conventions.md` **§9.31**）／ `output_schema` 仍未触发 | Planner 槽位类型错误成为稳定 badcase 族，或 typed Executor 立项 |
 | `replayable` / `idempotency` | B5 §4.2 流式统一启动时随 `command_id` 一起 |
 | `compensation` | 撤销/补偿类产品需求出现（如订单取消生命周期，M-C 后置项激活） |
 | `timeout_budget` | 现 `latency_budget_ms` 已有——仅当预算需要分档治理时升格 |
 | `version` / `deprecation` | 第三方 Agent 生态启动（能力退役需要迁移窗口）时 |
+
+### 4.1 `input_schema` 落地记（2026-08-21，QA Q12 规格维）
+
+**触发命中了，但形态与本文件预想的不一样**——留痕，因为这决定了字段该长什么样。
+
+预想的触发是「planner 填错了槽位类型」。真机取证（`scripts/probe_merchant_specs.py`
+扫 18 款瑞幸商品）证否：planner **一个字都没填错**（3/3 把「少冰/去冰/燕麦奶/不加糖」
+放进了正确的槽）。错的是**我们自己声明的值域**——`luckin.py` 里那张 `_SPEC_GROUPS`
+是照常见叫法猜的，`ice→{冰量,冰度,加冰}` 与 `milk→{奶底,奶类,乳基底,奶制品}`
+在瑞幸**一个组名都不存在**（冰档位是「温度」组的取值，奶的真名是 奶基/奶/奶油），
+`sweetness` 还漏了美式族用的「糖」。三个槽因此从 2026-08-13 引入起就结构性死亡。
+
+⇒ **`input_schema` 的价值不在「给槽位加类型」，在「把值域声明从代码搬进契约、
+并让机器守住它不许是猜的」。** 所以落地形态是三件事而不是一件：
+
+1. `servers.yaml` 的 `workflows[].input_schema`（唯一声明处，
+   `groups` + `aliases`，值域权威仍是商家的 `canSelected`）；
+2. **真机观测台账** `knowledge/merchant_specs_observed.yaml` + 单向门禁
+   （声明 ⊆ 台账）——没有这一条，第二次照样会猜错；
+3. 删 `_SPEC_GROUPS`：下单链与预览卡 chip 从此读同一份声明。
+
+**这一批也回答了 §4 表格的写法本身该怎么读**：「谁有消费方谁触发」是对的，但
+触发时**先取证再照方案做**——本文件写的触发条件是对的，对触发后的形态描述是错的。
 
 ## 5. 验收判据（shadow 子项）
 

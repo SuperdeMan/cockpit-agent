@@ -17,7 +17,8 @@ from google.protobuf.json_format import MessageToDict
 from . import verify as _verify
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan
 from observability import events as obs_events
-from runtime.slot_fidelity import restore_dropped_qualifiers
+from runtime.slot_fidelity import (restore_dropped_qualifiers,
+                                   undeclared_slots)
 
 logger = logging.getLogger("planner.executor")
 
@@ -602,6 +603,16 @@ class DagExecutor:
         观测面刻意只打日志、**不新增 `turns` 诊断列**：同函数里的门店锚定/城市补全
         也只打日志，且这一列目前没有真消费方（B4「不落即死字段」）。
         """
+        # 契约外的槽位：**只观测不改值**（判据与消费面见 `runtime.slot_fidelity`）。
+        # 2026-08-21 真栈实例：planner 产 `size: 大杯` 而 `luckin.order` 当时没有
+        # `size` 槽 ⇒ 用户说的杯型一路走到下发、被下游当未知键忽略，零信号。
+        # 观测面**刻意只打日志**，与同函数里的门店锚定/城市补全同口径——这一列
+        # 目前没有真消费方（B4「不落即死字段」），真要读日志里逐行都有。
+        extra = undeclared_slots(step.slots, getattr(step, "declared_slots", None))
+        if extra:
+            logger.info("Step %s(%s): 槽位 %s 不在能力契约里，值被下游忽略"
+                        "（planner 往契约外塞了东西，多半是缺一维能力）",
+                        step.id, step.intent, extra)
         raw = str(getattr(ctx, "raw_text", "") or "")
         if not raw:
             return

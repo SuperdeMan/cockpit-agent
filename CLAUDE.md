@@ -68,6 +68,10 @@ memory/         记忆/画像服务（+ offer_admission.py G7 询问式提醒建
                 零 LLM；判据取**形态**不取关键词——天气查询被挡住不是因为它长得像查询，
                 是因为它**没有时刻**。契约 conventions §9.30）
 agents/         所有 Agent；_sdk/ 是公共 SDK，每个 Agent 一个子目录
+                （+ mcp_bridge/knowledge/merchant_specs_observed.yaml **商户规格组真机观测台账**：
+                `servers.yaml` 的 `input_schema` 声明的官方组名/项名必须在它里面出现过，
+                方向单向、由 `scripts/probe_merchant_specs.py` 扫出来——**外部系统持有的值域，
+                我们这一侧的声明必须有机器闸对着真机**，写进契约的仍然可以是猜的，契约 §9.31）
 skills/         Planner 规划知识声明式载体（M0b）：guides/ 领域组合判据（双通道检索注入）、
                 policies/ 跨域软约束（常驻）。**加规划知识=投 skill 文件不改编排核心**；
                 golden 必填进 CI 门禁（含 holdout），契约见 skills/README.md（唯一真相源）
@@ -93,7 +97,8 @@ runtime/        共享运行时（gRPC keepalive/优雅停机/mTLS 工厂；+ �
                 （「车窗别开」，端侧与 reminder 共用）／cntime.py 中文时间词（时段词·日词含英文别名·
                 中文数字·12h→24h 修正；此前 timeparse/timewindow/weather 三份各自演化，同一句话给三个答案）
                 ／slot_fidelity.py 下发前的**槽值原话回查**（planner 转述丢限定词，逐维补、三道闸，
-                唯一挂点 `executor._resolve_slot_refs`）／openhours.py 营业时间窗口解析
+                唯一挂点 `executor._resolve_slot_refs`；同处还有 `undeclared_slots`——**契约**比原话
+                少了一维时只观测不改值，判据零领域词）／openhours.py 营业时间窗口解析
                 （nearby 筛「此刻开着的」与云侧算「谁最晚」共用一份；跨零点归一成 >1440 可直接
                 比大小；判不出返回 None 不是 0——0 会让「时间未知」赢下「哪家最早关门」）
                 ／profile.py 部署形态闸／admission.py
@@ -239,10 +244,10 @@ EVA 指令集两轮对标（history §33–§40）、支付基础设施真实化
 （history §30–§32.2）。两家商户凭证仍是服务级全局 token/账号、支付 host 依赖运行时
 安全配置——PoC 限制而非多乘员量产账号模型。
 
-**进行中：探索式真实用户 QA 轮**（2026-08-15 立卡，架构 **v1.33**）：533 轮 × 5 persona
+**进行中：探索式真实用户 QA 轮**（2026-08-15 立卡，架构 **v1.35**）：533 轮 × 5 persona
 两档跑出的 58 个问题收敛成 13 个根因（Q1–Q13）四阶段推进，契约面新增 `conventions.md`
-**§9.19–§9.30**。四个阶段与编号接手序列已于 2026-08-19 全部走完（第 8 步 Q8/Q11/P2
-收官，history §63）；**剩余的是三条不编号的残余，当前进度与接手入口一律以
+**§9.19–§9.31**。四个阶段与编号接手序列已于 2026-08-19 全部走完（第 8 步 Q8/Q11/P2
+收官，history §63）；**剩余的是不编号的残余，当前进度与接手入口一律以
 `AGENTS.md` §4.1 ① 为准**（那里是唯一真相源，本节只说到「这件事在做」）。
 ⚠ 该轮与 EVA 批验的不是同一个面：EVA 验「能力面有没有那个维度」，QA 验**会话状态、
 归属、审计与真实性**——两边读数不矛盾。

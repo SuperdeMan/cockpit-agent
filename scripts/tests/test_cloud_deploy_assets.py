@@ -78,7 +78,14 @@ def _git_bash() -> Path:
     ]
     git = shutil.which("git")
     if git:
-        candidates.append(Path(git).resolve().parents[1] / "bin" / "bash.exe")
+        # ⚠ **不能只试一级**（2026-08-21 修）：PATH 里暴露的 git 是
+        # `<GitRoot>/cmd/git.exe`（PowerShell）还是 `<GitRoot>/mingw64/bin/git.exe`
+        # （Git Bash）**取决于从哪个 shell 跑**。固定取 `parents[1]` 在后者上算出
+        # `<GitRoot>/mingw64/bin/bash.exe`（不存在）⇒ **同一台机器、同一份代码，
+        # 换个 shell 这 41 条就整族 skip**，而 skip 不是红、没人会发现。
+        # 逐级向上找 `bin/bash.exe`，两种布局都命中。
+        candidates.extend(parent / "bin" / "bash.exe"
+                          for parent in Path(git).resolve().parents)
     for candidate in candidates:
         if candidate.is_file():
             return candidate

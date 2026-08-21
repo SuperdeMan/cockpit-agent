@@ -225,6 +225,13 @@ python test/eval_actionability.py      # B6 可执行性形态判定：CLARIFY �
                                        # ⚠ 假阳性的分母是「除澄清金标外的全部轮」——
                                        # 分母挑得越干净它越好看，改口径前先读脚本里那段理由
 
+# 商户规格组真机取证（要商户凭证；只调 write:false 只读工具，不下单）
+python scripts/probe_merchant_specs.py --dept <id>              # 只打印
+python scripts/probe_merchant_specs.py --dept <id> --write --scanned-on YYYY-MM-DD
+  # 产出 agents/mcp_bridge/knowledge/merchant_specs_observed.yaml（**观测样本不是声明**）
+  # 门禁 agents/mcp_bridge/tests/test_merchant_spec_contract.py 方向单向：声明 ⊆ 台账
+  # ⚠ 打烊门店取不到 productAttrs——**要在营业时段扫**（契约 §9.31）
+
 # 分布尺 N1（真栈，回答「这个月变聪明了吗」，**不是**回归闸）
 python test/routing_bench.py                        # 零成本：语料覆盖 + 隐藏分母 + 域偏斜
 python test/routing_bench.py --live --write-baseline # 出 domain_hit_rate 与分域混淆矩阵
@@ -262,7 +269,9 @@ local 档的 URL 与此前写死的 `ws://localhost:8090/ws` 逐字相同。
 > 现在改成宽容超时（就算超时后首帧才到也无害，帧循环会忽略非 final/error 帧）。
 
 ```bash
-python scripts/probe_qa_regression.py --list                 # 55 例 / 87 轮 / 10 组（2026-08-20 +pickup 组 PU1-PU9）
+python scripts/probe_qa_regression.py --list                 # 58 例 / 90 轮 / 11 组（2026-08-21 +spec 组 SP1-SP3）
+python scripts/probe_qa_regression.py --group spec           # ⚠ **必须在门店营业时段跑**（打烊取不到规格树，链停在「已打烊」＝没跑到，不是红）；
+                                                             # 只跑到 need_confirm，**不发确认帧**（商户写要单轮人工授权）
 # 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
 # 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
 # ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。

@@ -46,12 +46,27 @@ planner 产出的槽值是**自由文本的转述**，转述会丢限定词，�
 - **角色**（I-029「从 X 出发」）：`navigation.navigate_to` 的 manifest **根本没有
   `origin` 槽**——planner 无处可放才就近塞进 destination。那是**能力缺席**（Q8），
   回填一个不存在的槽没有意义；
-- **规格**（I-025②「少冰」）：`luckin.order` 已声明 `ice` 槽，真栈复现时被**序数
-  绑错候选集**挡在前面（归 Q2 残余），本轮验不到规格这一层。
-  且它要的是「按商家可选值域校验」，那是 B6 §4 的 `input_schema` 远期字段。
+- **规格**（I-025②「少冰」）：2026-08-21 真栈取证后**整条重判**。planner 其实
+  **没有丢词**（3/3 都把「少冰/去冰/燕麦奶」填进了正确的槽），所以这一维根本不是
+  「回查原话」能修的——它丢在两个别的地方：① 契约里**没有那个槽**（planner 产
+  `size: 大杯`，而 `luckin.order` 当时没有 `size` 槽）；② 槽有、但**值域声明是猜的**
+  （`ice` 查的「冰量」组在瑞幸根本不存在，冰档位是「温度」组的取值）。
+  修法因此落在 B6 §4 的 `input_schema`（`servers.yaml` 唯一声明 + 真机台账门禁），
+  不是本模块的第二维。本模块在这一维上只留一条通用闸：`undeclared_slots`（见下）。
 
 **先落一个没有真消费方的通用回填框架，就是 B4 那条「不加第二份表达同一件事的声明」
 的孪生形态。** 所以本模块只长它现在真的用得上的那一维。
+
+## 另一半：`undeclared_slots`——**契约**比原话少了什么
+
+回填管的是「槽值比原话少了什么」。2026-08-21 真栈翻出它的孪生形态：**槽值一个字
+没丢，丢的是契约**——planner 产出 `size: 大杯`，而那个能力当时根本没有 `size` 槽，
+于是这个值一路走到下发、被下游当未知键忽略，**全程没有任何一处会报错**。
+用户说了大杯，系统下了标准杯，零信号。
+
+判据只用能力自己的声明（`declared_slots`，来自 manifest / servers.yaml），
+**零领域词**。`declared` 为空时一律不判——那说明这个能力没声明槽位，我们无从判断
+「多」还是「少」，不能拿沉默当证据。
 """
 from __future__ import annotations
 
@@ -123,3 +138,17 @@ def restore_dropped_qualifiers(raw: str, slots: dict,
         if reason:
             changed[name] = (new_value, reason)
     return changed
+
+
+def undeclared_slots(slots: dict, declared) -> list[str]:
+    """→ 有值、却**不在能力契约里**的槽名（排序）。契约为空时一律返回空。
+
+    调用方**只观测不改值**：删掉它不会让用户拿回那个规格（能力确实没有这一维），
+    硬塞给下游反而是拿模型编的键去撞商户接口。它回答的是另一个问题——
+    **「模型往契约外面塞过东西吗」**，那是补能力的线索，不是本轮能修的错。
+    """
+    names = {str(name) for name in (declared or []) if str(name).strip()}
+    if not names:
+        return []
+    return sorted(name for name, value in (slots or {}).items()
+                  if name not in names and str(value or "").strip())
