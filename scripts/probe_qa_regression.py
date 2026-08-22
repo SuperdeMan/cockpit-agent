@@ -187,7 +187,8 @@ _ACTION_WORDS = {
 # 挂起寻址键原语（Q1-B/C，2026-08-16）。轮上写 `op_from: N` = 把第 N 轮 final 下发的
 # `operation_id` 原样回传——**这是探针唯一能证明「多条挂起并存且各自可寻址」的手段**：
 # 不带寻址键时编排一律按「最近一条」寻址，那条路径证不了先来那条还在。
-_TURN_KEYS = {"say", "sid", "expect", "op_from", "op_literal", "confirm"}
+_TURN_KEYS = {"say", "sid", "expect", "op_from", "op_literal", "confirm",
+              "say_button"}
 
 # ── 用例集 ────────────────────────────────────────────────────────────────
 # `known` = 立卡时的已知现状（红/绿/待测），写在用例里是为了让第一次跑批的输出
@@ -833,20 +834,39 @@ CASES = [
     # 判据落在**卡片**上不落在话术上：预览卡的 `specifications` 逐字来自商家最终 SKU
     # 的 `additionDesc`，它说规格生效了才是真的生效了；话术里念的那串是同一份数据，
     # 但「说了」和「下单里真有」在话术层分不开（同 SL1/CD2/AU1 那条）。
+    # ⚠ **首版是单轮的，2026-08-22 真栈当场证否——留痕。** 我按「一句话就能走到
+    # 预览卡」写了 SP1-SP3，结果白天复跑 0/9，三条全停在**门店选择卡**上：
+    # 高德 POI 名与瑞幸官方 deptName 对不上是**常态**（真栈 3/3），于是
+    # `matched != 1` ⇒ 出候选卡让用户挑 —— 那是**正确行为**，而单轮探针永远走不过去。
+    # ⇒ **我自己刚写的尺子看不见正确答案**，正是本文件反复引用的那条判据。
+    # 修法是补上真实链路里本来就有的那一轮（点门店按钮），不是放宽判据。
     {"id": "SP1", "group": "spec", "card": "Q12", "issue": "I-025②",
      "why": "「不加糖」要翻译成官方项名「不另外加糖」并真的落进订单——修前 sweetness "
             "只认「糖度/甜度」，美式族的「糖」组永远匹配不到",
      "known": "red",
      "turns": [
-         {"say": "先查附近的瑞幸，再点一杯生椰拿铁不加糖",
+         # 第一轮拿到门店候选（**不判**：几家、叫什么全是运行时数据）。
+         {"say": "先查附近的瑞幸，再点一杯生椰拿铁不加糖", "expect": {}},
+         # 第二轮点第一个门店按钮 → 规格链才真正开始跑。
+         {"say_button": {"turn": 1, "index": 1}, "expect": {}},
+         # 第三轮点第一个商品按钮。**链路真的有三轮**——「生椰拿铁」在真机上模糊
+         # 命中两款（首创 / 冰吸首创），于是还有一张选品卡。2026-08-22 两次低估
+         # 链路长度都是同一个错：**照着我以为的流程写尺子，不是照着它真实的流程写**。
+         {"say_button": {"turn": 2, "index": 1},
           "expect": {"card_type": "merchant_order_preview", "need_confirm": True,
                      "card_text_has": ["不另外加糖"]}},
      ]},
     {"id": "SP2", "group": "spec", "card": "Q12", "issue": "I-025②",
-     "why": "杯型：planner 真栈实测就在产 `size` 槽，而契约里原本没有这个槽 ⇒ 静默丢弃",
+     "why": "杯型：planner 真栈实测就在产 `size` 槽，而契约里原本没有这个槽 ⇒ 静默丢弃。"
+            "**选门店那一跳也要保住它**——续跑的槽位名单曾经是第二份硬编码声明",
      "known": "red",
      "turns": [
-         {"say": "先查附近的瑞幸，再点一杯超大杯生椰拿铁",
+         {"say": "先查附近的瑞幸，再点一杯超大杯生椰拿铁", "expect": {}},
+         {"say_button": {"turn": 1, "index": 1}, "expect": {}},
+         # 第三轮点第一个商品按钮。**链路真的有三轮**——「生椰拿铁」在真机上模糊
+         # 命中两款（首创 / 冰吸首创），于是还有一张选品卡。2026-08-22 两次低估
+         # 链路长度都是同一个错：**照着我以为的流程写尺子，不是照着它真实的流程写**。
+         {"say_button": {"turn": 2, "index": 1},
           "expect": {"card_type": "merchant_order_preview", "need_confirm": True,
                      "card_text_has": ["超大杯"]}},
      ]},
@@ -857,8 +877,10 @@ CASES = [
      "why": "「半糖」在瑞幸不存在；不许被映射成少甜/微甜，要列出可选项让用户挑",
      "known": "green",
      "turns": [
-         {"say": "先查附近的瑞幸，再点一杯生椰拿铁半糖",
-          "expect": {"is_question": True, "speech_has": ["半糖"],
+         {"say": "先查附近的瑞幸，再点一杯生椰拿铁半糖", "expect": {}},
+         {"say_button": {"turn": 1, "index": 1}, "expect": {}},
+         {"say_button": {"turn": 2, "index": 1},
+          "expect": {"speech_has": ["半糖"],
                      "speech_any": ["标准甜", "少甜", "微甜", "不另外加糖"],
                      "need_confirm": False}},
      ]},
@@ -997,6 +1019,13 @@ def _observe(msg: dict) -> dict:
         # 16:00 各提醒你一次」时库里可能只有一条，两者不是一回事（AU1 那次的同款教训）。
         "card_text": json.dumps(card, ensure_ascii=False, sort_keys=True),
         "card_item_count": len(card.get("items") or []) if isinstance(card, dict) else 0,
+        # 卡片按钮的 send_text（按渲染顺序）。**多轮用例要点按钮时只能从这里取**
+        # ——候选项名是运行时数据（哪几家瑞幸在附近、叫什么），写死在用例里就变成
+        # 「这条语料在这一天的答案」（同 `card_items_raw` 那条判据）。
+        "card_buttons": [str(b.get("send_text") or "")
+                         for b in (card.get("buttons") or [])
+                         if isinstance(b, dict) and b.get("send_text")]
+        if isinstance(card, dict) else [],
         # person-pickup 卡：本轮真的把车导去了哪（判「接人导到了另一座城」）。
         "nav_targets": _nav_targets(msg),
     }
@@ -1509,7 +1538,23 @@ async def _run_case(case: dict, stamp: int) -> dict:
             # ——提醒是 user 级持久数据，「同名 + 再提醒 = 跨轮改期」是**正确行为**，
             # 于是 SL1 第 2 次取样会去改第 1 次留下的那条，读数变成自污染。
             # 这不是替被测系统提供前提（E4 那条），是取消一个探针自己造出来的前提。
-            say = _subst(turn["say"], stamp)
+            if turn.get("say_button") is not None:
+                # **点上一轮卡片的第 N 个按钮**。它送出的就是一句中文
+                # （`send_text`），所以这里仍然只是「说一句话」——不引入第二条
+                # 客户端通道（契约 §9.28：两条入口本来就该收敛成同一条）。
+                ref = turn["say_button"]
+                src = next((r for r in rows
+                            if r.get("turn") == int(ref["turn"])), None)
+                buttons = (src or {}).get("card_buttons") or []
+                index = int(ref.get("index", 1))
+                if len(buttons) < index:
+                    raise ValueError(
+                        f"{case['id']} T{i} 要点第 {index} 个按钮，但第 "
+                        f"{ref['turn']} 轮只给了 {len(buttons)} 个——"
+                        f"**探针不许自己编一句**（同 op_from 那条）")
+                say = buttons[index - 1]
+            else:
+                say = _subst(turn["say"], stamp)
             try:
                 obs = await _one_turn(ws, sessions[sid], say,
                                       operation_id=op,

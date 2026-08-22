@@ -269,9 +269,12 @@ local 档的 URL 与此前写死的 `ws://localhost:8090/ws` 逐字相同。
 > 现在改成宽容超时（就算超时后首帧才到也无害，帧循环会忽略非 final/error 帧）。
 
 ```bash
-python scripts/probe_qa_regression.py --list                 # 58 例 / 90 轮 / 11 组（2026-08-21 +spec 组 SP1-SP3）
+python scripts/probe_qa_regression.py --list                 # 58 例 / 96 轮 / 11 组（2026-08-21 +spec 组 SP1-SP3，08-22 各补到 3 轮）
 python scripts/probe_qa_regression.py --group spec           # ⚠ **必须在门店营业时段跑**（打烊取不到规格树，链停在「已打烊」＝没跑到，不是红）；
-                                                             # 只跑到 need_confirm，**不发确认帧**（商户写要单轮人工授权）
+                                                             # 只跑到 need_confirm，**不发确认帧**（商户写要单轮人工授权）。
+                                                             # ⚠ 三轮：查店 → 选门店 → 选商品 → 预览。**两张选择卡都是正确行为**
+                                                             # （POI 名与官方 deptName 对不上是常态；「生椰拿铁」模糊命中两款），
+                                                             # 首版单轮尺子因此 0/9 全停在第一张卡上——**尺子长度要照真实链路量**
 # 汇总行的 [det]/[var] 是**确定性观测**（Q6 加）：末轮话术每次取样是否逐字相同。
 # 它不参与 PASS/FAIL——「由确定性 handler 回答」这个主张，最直接的证据就是零方差。
 # ⚠ 但 [var] 不一定是坏事：Q5 的出处披露只要求**出处**确定，正文本来就该由 LLM 说得自然。

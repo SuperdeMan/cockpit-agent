@@ -142,11 +142,12 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
 > 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新后端全量基线（2026-08-21 Q12 规格维批根跑实测，`target=cloud` +
+**最新后端全量基线（2026-08-22 Q12 规格维复验批根跑实测，`target=cloud` +
 本地 Docker 已退）**：`python -m pytest --import-mode=importlib` =
-**6897 passed / 32 skipped 零红**。
+**6902 passed / 32 skipped 零红**。
 ⚠ 耗时受宿主负载影响很大（慢的都是真子进程/全语料守卫），**别拿时长当回归信号**。
-净增量 `6865 → 6897` = **+32**，逐条点号：mcp-bridge **+28**
+净增量 `6897 → 6902` = **+5**（白天复验批：mcp-bridge 选品续跑 4 条 +
+规格槽跨跳保真 1 条）。上一跳 `6865 → 6897` = **+32**，逐条点号：mcp-bridge **+28**
 （`test_merchant_spec_contract.py` 新增 **19**：声明 ⊆ 真机台账的单向门禁 + 别名方向/换档/
 同组 precedence / groups 不许部分重叠；`test_merchant_luckin.py` **+9**：真机形状的规格
 正面路径 5 + 拒绝话术带可选项 1 + 组缺席诚实拒绝 1 + 单候选门店正反 2）/
@@ -264,7 +265,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 全量基线见本节顶部（**6897 / 32**，2026-08-21 根跑实测、`target=cloud` + 本地 Docker 已退；起本地栈时 skip 会少 9 条 Redis 集成，见「跑全量的固定口径」）；分套件最近实测（2026-08-20 person-pickup 批：navigation **167**、memory **265**；其余为 2026-08-19 第 8 步读数）：`orchestrator/cloud` **976**（+7：clarify_resume 3 / `_route_session_end` 同轮正反 2 + **跨轮 2**）/ edge **796**（+34：金标表 VAL 校验断言与两行新金标、对象语料 VAL 校验）/ nearby **99** / navigation **167**（+26：接送句形/兜底/别名/就近合理性 + 校园锚词）/ trip **85** / mcp-bridge **540**（+28：规格值域契约门禁 19 / 真机形状正面路径 7 / 单候选门店正反 2，2026-08-21）/ memory **265**（+4：占位与具名归一，含两条反向对照）/ chitchat **62** / reminder **164**/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**309 条 / 22 域**，2026-08-20 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **151 条 / 13162 字符**（2026-08-19 卡 Q8 +6：云侧 `navigation.estimate`/`navigation.cancel` + 端侧 `volume.mute`/`volume.unmute`/`warning_light.open`/`.close`；余量 16000−13162=**2838**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **84 条**（vehicle 80 + media 4——`volume.mute/unmute` 与 `warning_light.open/close` 都从 `commands.yaml` 的 `edge_intents` 派生，进的是 vehicle 那一半）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**6897 / 32**，2026-08-21 根跑实测、`target=cloud` + 本地 Docker 已退；起本地栈时 skip 会少 9 条 Redis 集成，见「跑全量的固定口径」）；分套件最近实测（2026-08-20 person-pickup 批：navigation **167**、memory **265**；其余为 2026-08-19 第 8 步读数）：`orchestrator/cloud` **976**（+7：clarify_resume 3 / `_route_session_end` 同轮正反 2 + **跨轮 2**）/ edge **796**（+34：金标表 VAL 校验断言与两行新金标、对象语料 VAL 校验）/ nearby **99** / navigation **167**（+26：接送句形/兜底/别名/就近合理性 + 校园锚词）/ trip **85** / mcp-bridge **545**（2026-08-22 复验批 +5：选品续跑 4 / 规格槽跨跳保真 1；2026-08-21 +28：规格值域契约门禁 19 / 真机形状正面路径 7 / 单候选门店正反 2）/ memory **265**（+4：占位与具名归一，含两条反向对照）/ chitchat **62** / reminder **164**/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**309 条 / 22 域**，2026-08-20 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **151 条 / 13162 字符**（2026-08-19 卡 Q8 +6：云侧 `navigation.estimate`/`navigation.cancel` + 端侧 `volume.mute`/`volume.unmute`/`warning_light.open`/`.close`；余量 16000−13162=**2838**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **84 条**（vehicle 80 + media 4——`volume.mute/unmute` 与 `warning_light.open/close` 都从 `commands.yaml` 的 `edge_intents` 派生，进的是 vehicle 那一半）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用

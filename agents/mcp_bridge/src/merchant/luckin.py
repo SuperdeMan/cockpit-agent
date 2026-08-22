@@ -69,6 +69,9 @@ _WORKFLOW_TOOL_CONTRACTS = {
     "luckin.order_cancel": _CANCEL_TOOLS,
     "luckin.menu": _MENU_TOOLS,
 }
+#: 选品卡按钮的句式前缀。**它就是一句中文**（同选店按钮）——两条入口本来就该
+#: 收敛成同一条（契约 §9.28），所以续跑靠剥前缀，不靠第二条客户端通道。
+_PRODUCT_CHOICE_PREFIX = "选择瑞幸商品："
 _OPEN_STATUSES = {"营业中", "open", "opened", "1", "true"}
 _CLOSED_STATUSES = {
     "已打烊", "打烊", "停业", "休息中", "closed", "close", "closing", "0",
@@ -216,8 +219,16 @@ class LuckinWorkflow(MerchantWorkflow):
         if not user_id or not session_id:
             return self.refused("当前会话身份不完整，暂时不能创建真实订单。")
         store = None
+        # **选品续跑先试**：它的触发条件更具体（`item_query` 带按钮前缀），且它
+        # 带回来的门店已经过完整可信链校验——比让 planner 把门店再说一遍可靠。
+        picked = await self._resume_product_choice(
+            slots, user_id=user_id, session_id=session_id)
+        if isinstance(picked, AgentResult):
+            return picked
+        if picked is not None:
+            slots, store = picked
         trusted = self._trusted_store(slots, meta)
-        if trusted is None:
+        if store is None and trusted is None:
             resumed = await self._resume_store_choice(
                 slots, user_id=user_id, session_id=session_id)
             if isinstance(resumed, AgentResult):
@@ -262,7 +273,9 @@ class LuckinWorkflow(MerchantWorkflow):
                 speech=f"这家门店没有找到可售的“{item_query}”。",
                 follow_up="请换一款饮品。", missing_slots=["item_query"])
         if len(matches) != 1:
-            return self._product_choices(matches)
+            return await self._product_choices(
+                matches, slots=slots, store=store,
+                user_id=user_id, session_id=session_id)
         product = matches[0]
         product_id = self._positive_int(product.get("productId"))
         if product_id is None:
@@ -1865,12 +1878,15 @@ class LuckinWorkflow(MerchantWorkflow):
         if not candidates:
             return AgentResult(
                 speech="门店候选信息不完整，请重新查询附近的瑞幸。")
-        request_slots = {
-            key: str(slots.get(key) or "").strip()
-            for key in ("item_query", "quantity", "temperature", "ice",
-                        "sweetness", "milk")
-            if str(slots.get(key) or "").strip()
-        }
+        # 规格槽**从契约派生，不再写第二份名单**（2026-08-22）：这里原本硬编码
+        # `("temperature","ice","sweetness","milk")`，于是同批新加的 `size` 在
+        # 「选门店」这一跳被**静默丢掉**——而选门店是常态路径（高德 POI 名与官方
+        # deptName 对不上是常态，真栈 3/3 都走了这条）。
+        # ⇒ **刚修好的「静默丢弃」在另一条路上原样复现了一次**，成因还是同一个：
+        # 一件事写了两份声明（B4/B5 那条判据的又一次落地暴露）。
+        # 现在加一个规格维=改 `servers.yaml` 一处，选店续跑自动跟上；
+        # 覆盖面由 `test_store_choice_preserves_every_declared_spec_slot` 守。
+        request_slots = self._request_slots(slots)
         continuation = MerchantDraft(
             token=secrets.token_urlsafe(24), merchant=self.merchant,
             operation="select_store",
@@ -1968,20 +1984,105 @@ class LuckinWorkflow(MerchantWorkflow):
         restored["store_name"] = str(matches[0].get("deptName") or "")
         return restored, copy.deepcopy(matches[0])
 
-    def _product_choices(self, products: list[dict]) -> AgentResult:
+    async def _product_choices(self, products: list[dict], *, slots: dict,
+                               store: dict, user_id: str,
+                               session_id: str) -> AgentResult:
+        """选品卡 + **续跑草稿**（2026-08-22 补上后者）。
+
+        原本这里只出一张卡、**不留任何上下文**：用户点了商品之后，门店与他说过的
+        规格全靠 planner 从对话历史重构。真栈实测整条链**当场断掉**——桥把商品名
+        当门店名去 escalate 重搜，答「附近暂时没搜到瑞幸的门店」。
+        而这条路径正是 I-025② 原始复现里那句「**卡片点击才生成生椰拿铁**」。
+
+        与选店续跑同构（`_store_choices`/`_resume_store_choice`），安全判据照搬：
+        门店取**已经过完整可信链校验的那一个**（不重新解析、也不让客户端重报），
+        商品只接受草稿里记着的候选名，`schema_digest` 变了即失效。
+        """
         choices = [MerchantChoice(
             id=str(product.get("productId") or ""),
             name=str(product.get("productName") or "瑞幸饮品"),
             subtitle=self._product_subtitle(product),
-            send_text=(f"选择瑞幸商品："
-                       f"{str(product.get('productName') or '')}"),
+            send_text=(_PRODUCT_CHOICE_PREFIX
+                       + f"{str(product.get('productName') or '')}"),
             data={"product_id": str(product.get("productId") or "")},
         ) for product in products]
+        names = [str(product.get("productName") or "").strip()
+                 for product in products
+                 if str(product.get("productName") or "").strip()]
+        continuation = MerchantDraft(
+            token=secrets.token_urlsafe(24), merchant=self.merchant,
+            operation="select_product",
+            user_id=user_id, session_id=session_id,
+            store={
+                "operation": "select_product",
+                "store": copy.deepcopy(store),
+                "candidates": names,
+            },
+            items=[], amount_cents=0,
+            upstream_args={"request": self._request_slots(slots)},
+            schema_digest=self._schema_digest(), created_at=time.time())
+        if not await self.drafts.put(continuation):
+            return AgentResult(
+                speech="商品选择暂时无法安全保存，请稍后重新下单。")
         return AgentResult(
             status=NEED_SLOT,
             speech="找到多款相近的瑞幸饮品，请选择具体商品。",
             follow_up="请选择饮品。", missing_slots=["item_query"],
-            ui_card=self.choice_card("product", choices))
+            ui_card=self.choice_card("product", choices),
+            data={"checkout_token": continuation.token})
+
+    async def _resume_product_choice(self, slots: dict, *, user_id: str,
+                                     session_id: str):
+        """选品按钮的续跑：把上一轮存下的门店与**用户说过的规格**原样接回来。"""
+        asked = str(slots.get("item_query") or "").strip()
+        if not asked.startswith(_PRODUCT_CHOICE_PREFIX):
+            return None
+        selected = asked[len(_PRODUCT_CHOICE_PREFIX):].strip()
+        draft = await self.drafts.consume_current(
+            user_id=user_id, session_id=session_id, merchant=self.merchant,
+            expected_action="select_product")
+        if draft is None:
+            return AgentResult(
+                status=NEED_SLOT, speech="商品选择已失效，请重新说要点的饮品。",
+                follow_up="请说具体饮品，例如“生椰拿铁”。",
+                missing_slots=["item_query"])
+        if draft.operation != "select_product":
+            await self.drafts.put(draft)
+            return None
+        if draft.schema_digest != self._schema_digest():
+            return AgentResult(
+                status=NEED_SLOT, speech="商家接口已更新，请重新下单。",
+                missing_slots=["item_query"])
+        store = (draft.store or {}).get("store")
+        candidates = (draft.store or {}).get("candidates")
+        saved = (draft.upstream_args or {}).get("request")
+        if (not isinstance(store, dict) or not isinstance(candidates, list)
+                or not isinstance(saved, dict)):
+            return AgentResult(
+                status=NEED_SLOT, speech="商品选择已失效，请重新下单。",
+                missing_slots=["item_query"])
+        wanted = self._normalized(selected)
+        if not wanted or wanted not in {self._normalized(name)
+                                        for name in candidates}:
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="这款不在刚才的官方候选里，请重新选择。",
+                missing_slots=["item_query"])
+        restored = {str(key): str(value) for key, value in saved.items()}
+        restored["item_query"] = selected
+        return restored, copy.deepcopy(store)
+
+    def _request_slots(self, slots: dict) -> dict[str, str]:
+        """续跑草稿要保住的槽位：商品/数量 + **契约声明的全部规格槽**。
+
+        规格槽从 `input_schema` 派生，**不写第二份名单**——写死过一次，代价是
+        同批新加的 `size` 在选门店那一跳被静默丢掉（2026-08-22 真栈按住）。
+        """
+        return {
+            key: str(slots.get(key) or "").strip()
+            for key in ("item_query", "quantity", *self.spec_contract)
+            if str(slots.get(key) or "").strip()
+        }
 
     @staticmethod
     def _distance(value) -> float:

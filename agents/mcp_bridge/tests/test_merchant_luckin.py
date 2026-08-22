@@ -2387,3 +2387,147 @@ async def test_group_absent_on_this_product_keeps_the_honest_refusal():
     assert result.missing_slots == ["ice"]
     assert "少冰" in result.speech
     assert client.counts["switchProduct"] == 0
+
+
+@pytest.mark.asyncio
+async def test_store_choice_preserves_every_declared_spec_slot():
+    """选门店这一跳**不许丢任何一个已声明的规格槽**（2026-08-22）。
+
+    这条是被真栈按住之后补的：`size` 加进契约的同一批里，选店续跑的槽位名单
+    仍是硬编码的四个（temperature/ice/sweetness/milk），于是**刚修好的「静默丢弃」
+    在另一条路上原样复现**——而选门店是常态路径（高德 POI 名与官方 deptName 对不上
+    是常态，真栈 3/3 都走了这条）。
+
+    断言逐条比对 `input_schema` 的声明，**不写死槽名**：写死就等于第三份名单。
+    """
+    choices = _ok([
+        {"deptId": 1, "deptName": "上海迪美一店", "longitude": 121.4730,
+         "latitude": 31.2300, "workStatus": "营业中", "distance": 0.08},
+        {"deptId": 2, "deptName": "上海迪美二店", "longitude": 121.4745,
+         "latitude": 31.2304, "workStatus": "营业中", "distance": 0.08},
+    ])
+    store = FakeDraftStore()
+    workflow, _ = _workflow(scripts={"queryShopList": [choices]}, store=store)
+    declared = list(workflow.spec_contract)
+    assert declared, "契约里一个规格槽都没有，这条断言就失去了意义"
+    spoken = {name: f"值{index}" for index, name in enumerate(declared)}
+
+    result = await workflow.prepare(
+        _intent(store_name="瑞幸咖啡（迪美店）", **spoken), CTX, META)
+
+    assert result.status == NEED_SLOT
+    assert result.ui_card["choice_kind"] == "store"
+    draft = list(store.current.values())[-1]
+    assert draft.operation == "select_store"
+    saved = (draft.upstream_args or {}).get("request") or {}
+    missing = [name for name in declared if saved.get(name) != spoken[name]]
+    assert not missing, (
+        f"选门店时丢了已声明的规格槽 {missing}——用户说过的规格不许在中途消失")
+
+
+# ── 选品续跑（2026-08-22，真栈按住之后补）─────────────────────────────────
+#
+# `_product_choices` 原本只出一张卡、**不留任何上下文**，于是用户点了商品之后
+# 门店与他说过的规格全靠 planner 从对话历史重构——真栈实测整条链**当场断掉**
+# （桥把商品名当门店名去 escalate 重搜，答「附近暂时没搜到瑞幸的门店」）。
+# 这条路径正是 I-025② 原始复现里那句「卡片点击才生成生椰拿铁」。
+#
+# ⚠ 这一组是**尺子先失效才被发现的**：迷你集 SP1-SP3 首版写成单轮，真栈 0/9 全停在
+# 门店选择卡；补成两轮又全停在选品卡。**两次都是照着我以为的流程写尺子。**
+
+@pytest.mark.asyncio
+async def test_product_choice_persists_store_and_every_declared_spec_slot():
+    store = FakeDraftStore()
+    workflow, _ = _workflow(store=store)
+    declared = list(workflow.spec_contract)
+    assert declared
+    spoken = {name: f"值{index}" for index, name in enumerate(declared)}
+
+    # 「生椰拿铁」在真机上模糊命中两款（首创 / 冰吸首创）⇒ 出选品卡。
+    result = await workflow.prepare(
+        _intent(item_query="生椰拿铁", **spoken), CTX, META)
+
+    assert result.status == NEED_SLOT
+    assert result.ui_card["choice_kind"] == "product"
+    draft = list(store.current.values())[-1]
+    assert draft.operation == "select_product"
+    saved = (draft.upstream_args or {}).get("request") or {}
+    missing = [name for name in declared if saved.get(name) != spoken[name]]
+    assert not missing, f"选品时丢了已声明的规格槽 {missing}"
+    # 门店必须**原样存下**：续跑时不重新解析、也不让客户端重报。
+    assert (draft.store or {}).get("store", {}).get("deptId") == 602825
+    assert (draft.store or {}).get("candidates") == [
+        "生椰拿铁（首创）", "冰吸生椰拿铁（首创）"]
+
+
+@pytest.mark.asyncio
+async def test_product_choice_resume_reaches_preview_carrying_the_spec():
+    """点完商品按钮必须直达预览卡，且**用户说过的规格仍在**。"""
+    store = FakeDraftStore()
+    detail = _real_shape_detail(_group(64, "杯型", [
+        (365, "大杯", True), (594, "超大杯", False)]))
+    workflow, client = _workflow(store=store, scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": [SEARCH_RESULT, SEARCH_RESULT],
+        "queryProductDetailInfo": [detail],
+        "switchProduct": [_switched("SP-REAL-2")],
+        "previewOrder": [_preview_for("SP-REAL-2", "超大杯/冰"),
+                         _preview_for("SP-REAL-2", "超大杯/冰")],
+        "createOrder": [CREATE_RESULT],
+        "cancelOrder": [CANCEL_RESULT],
+    })
+    first = await workflow.prepare(
+        _intent(item_query="生椰拿铁", size="超大杯", temperature="",
+                ice="", sweetness="", milk=""), CTX, META)
+    assert first.ui_card["choice_kind"] == "product"
+    send_text = first.ui_card["buttons"][0]["send_text"]
+    assert send_text == "选择瑞幸商品：生椰拿铁（首创）"
+
+    # 第二轮：planner 把按钮那句中文当 item_query 送回来（真栈就是这个形态），
+    # **门店三槽一个都没有**——续跑必须自己把它们接回来。
+    second = await workflow.prepare(
+        _intent(item_query=send_text, size="", quantity="",
+                store_name="", store_longitude="", store_latitude="",
+                temperature="", ice="", sweetness="", milk=""), CTX, META)
+
+    assert second.status == NEED_CONFIRM, second.speech
+    assert second.ui_card["type"] == "merchant_order_preview"
+    # 规格真的被应用了：switchProduct 落到杯型组的「超大杯」。
+    assert _switch_args(client) == [
+        {"attributeId": 64, "subAttr": {"attributeId": 594, "operation": 1}}]
+    # 门店没有被重新解析（queryShopList 只在第一轮调过一次）。
+    assert client.counts["queryShopList"] == 1
+
+
+@pytest.mark.asyncio
+async def test_product_choice_resume_rejects_a_product_not_in_the_candidates():
+    """只接受草稿里记着的候选名——客户端自报的商品名不构成授权。"""
+    store = FakeDraftStore()
+    workflow, client = _workflow(store=store)
+    first = await workflow.prepare(_intent(item_query="生椰拿铁"), CTX, META)
+    assert first.ui_card["choice_kind"] == "product"
+
+    forged = await workflow.prepare(
+        _intent(item_query="选择瑞幸商品：某款根本没出现过的饮品",
+                store_name="", store_longitude="", store_latitude=""),
+        CTX, META)
+
+    assert forged.status == NEED_SLOT
+    assert "不在刚才的官方候选" in forged.speech
+    assert client.counts["queryProductDetailInfo"] == 0
+    assert client.counts["previewOrder"] == 0
+
+
+@pytest.mark.asyncio
+async def test_product_choice_resume_without_a_draft_is_honest():
+    """草稿不在（过期/换会话）时诚实追问，**不拿按钮句式去当商品名搜**。"""
+    workflow, client = _workflow(store=FakeDraftStore())
+
+    result = await workflow.prepare(
+        _intent(item_query="选择瑞幸商品：生椰拿铁（首创）",
+                store_name="", store_longitude="", store_latitude=""),
+        CTX, META)
+
+    assert result.status == NEED_SLOT
+    assert result.missing_slots == ["item_query"]
+    assert client.counts["searchProductForMcp"] == 0
