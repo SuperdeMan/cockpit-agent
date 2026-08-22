@@ -104,7 +104,8 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 
 **当前部署形态（2026-08-22 更新）**：`dev-stack.local` = **`target=cloud`**。
 云端 release **`7a0e03a`**（2026-08-22 I-030 跨组批：组指代 + 跨组算子 + 下发面逐步
-选组；`status` = ok、5/5 端点 healthy；**迷你集 `--group candidate` 20/21**——
+选组；`status` = ok、5/5 端点 healthy、`verify` = **verified**（`release_sha` 非空，
+不是那种「一趟什么都没跑」的空成功）；**迷你集 `--group candidate` 20/21**——
 考点 **CD5 3/3 `[det]`** / 对照 **CD7 3/3 `[det]`**（两条共用同一份前提＝干净 A/B）/
 跨组 **CD6 2/3**，唯一那次红是 **T1 前提就没成立**、判据自报「读数不作数」）；
 此前依次是 `9bdadda`（2026-08-22 Q12 规格维复验批，`--group spec` 9/9 全 `[det]`）、
@@ -118,7 +119,7 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 `verify` = **verified**（`e2e_remote_safe`、minimax/MiniMax-M3、lock `e2e`）；
 `car-agent-backup.timer` 活跃、Tailnet Serve 五入口齐；
 **cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` **1/1** + `e2e_remote_safe` **8/8**，
-零 skip；2026-08-19 第 8 步在 release `e5cef21` 上复跑实测，
+零 skip；**2026-08-22 I-030 批在 release `7a0e03a` 上复跑实测**，
 `run_e2e --target cloud` 无 `--id`）。交接页
 [`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
 §6 七条完成判据**全部达成**。**本地 Docker 已停**（32 容器全 `Exited`、Docker Desktop
