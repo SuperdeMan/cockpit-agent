@@ -33,6 +33,8 @@ from ..mcp_client import McpTimeout
 logger = logging.getLogger("agent.mcp_bridge.merchant.luckin")
 
 _LEDGER_KIND = "mcp_order"
+#: 商户在用户嘴里的称呼。一处声明，卡片与候选组标签共用（同 `mcdonalds` 那处）。
+MERCHANT_NAME = "瑞幸"
 _ORDER_TOOLS = (
     "queryShopList",
     "searchProductForMcp",
@@ -1774,7 +1776,7 @@ class LuckinWorkflow(MerchantWorkflow):
                 "type": "merchant_choices",
                 "stage": "choices",
                 "choice_kind": "product",
-                "merchant": "瑞幸",
+                "merchant": MERCHANT_NAME,
                 "store_name": store_name,
                 # 主卡（display_priority=0）：「附近的瑞幸有什么可以点的」这类组合轮，
                 # 菜单是用户的目标，此前缺省 2 被 place_list（1）压掉——菜单内容只剩
@@ -1794,7 +1796,10 @@ class LuckinWorkflow(MerchantWorkflow):
             },
             # Q2 残余（2026-08-19）：同 `mcdonalds._menu` 那处——菜单商品是可被指代的
             # 候选，必须进 `data` 才到得了 `Focus.candidate_sets`。判据与取证写在那边。
-            data={"items": items},
+            # I-030 组指代：这一组该怎么被称呼同样只有产生方知道（保留键
+            # `_candidate_label`），否则两家菜单并存时「瑞幸的第二个」会被绑到
+            # 最新那一组——答出来的是另一家的真商品真价格，比编造更难被发现。
+            data={"items": items, "_candidate_label": MERCHANT_NAME},
         )
 
     def _menu_item(self, product: dict) -> dict:

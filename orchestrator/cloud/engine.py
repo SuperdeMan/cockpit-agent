@@ -26,8 +26,9 @@ from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
 from .context import (ContextManager, build_context, candidate_downlink,
-                      newest_candidate_set,
-                      references_a_candidate, safety_alert_active,
+                      candidate_set_for,
+                      references_a_candidate, resolve_candidate_scope,
+                      safety_alert_active,
                       _POC_DEFAULT_SCOPES)
 from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
@@ -365,8 +366,13 @@ class PlannerEngine:
             # 今日营业10:00-22:00」——**一整条编出来的记录**。
             # 判据两条都必须成立（形态 + 事实），且形态锚在句首：
             # 「第二天第一个景点」指的是行程内部，不是上一份列表。
-            live_candidates = newest_candidate_set(
-                working_set.focus, allow_fallback=True)
+            # I-030：绑哪一组由**这句话点名了谁**决定，不是无条件绑最新那一组。
+            # 卡上写的是「跨组比较做不了」，真栈取证的形态更严重——两家菜单并存时
+            # 「麦当劳的第二个多少钱」被绑到瑞幸那组，零方差地答出「「生椰拿铁」
+            # 16 元」：商品名与价格都真实存在，只是答的是另一家。**没有任何一处
+            # 对不上，所以比编造更难被发现。** 零命中时退回旧口径、行为逐字不变。
+            live_candidates, named_candidates = resolve_candidate_scope(
+                text, working_set.focus)
             if references_a_candidate(text) and live_candidates is None:
                 logger.info("Ordinal reference with no candidate set: %s", text[:40])
                 yield {"kind": "final",
@@ -381,14 +387,19 @@ class PlannerEngine:
             # 答的是**新一批**（CD1 首跑逐字重复上一轮整段列表就是这个形态），
             # chitchat 手里根本没有那些数。判据三段同时成立才劫持，见
             # `candidate_query.is_candidate_aggregate_question` 那段。
-            aggregate = candidate_query.answer(text, live_candidates)
+            aggregate = candidate_query.answer(text, live_candidates,
+                                               named_candidates)
             if aggregate:
                 logger.info("Deterministic candidate aggregate: %s", text[:40])
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id, "cloud.candidate_aggregate",
                     attrs={"source_intent": str(
                         (live_candidates or {}).get("source_intent") or ""),
-                        "items": len((live_candidates or {}).get("items") or [])})
+                        "items": len((live_candidates or {}).get("items") or []),
+                        # 取证面：这一轮点名了几组、绑的是不是点名的那一组。
+                        # 「答错组」在话术层看不出来（名字与价格都真实存在），
+                        # 只有把「按谁答的」记下来才查得了。
+                        "named_groups": len(named_candidates)})
                 yield {"kind": "final", "speech": aggregate}
                 return
 
@@ -1339,14 +1350,21 @@ class PlannerEngine:
         # （`_merge_meta` 那条最小化在这条路上整个不生效）——写在 step.meta 上是
         # **唯一在全部路径上都成立**的做法。「新增挂点必须枚举全部执行路径」，
         # 本项目已经栽过三次。
-        candidates = candidate_downlink(
-            newest_candidate_set(focus, allow_fallback=True))
-        if candidates:
-            candidate_meta = {"focus_candidate_set": json.dumps(
-                candidates, ensure_ascii=False)}
-            for step in plan.steps:
-                if "candidates" in (step.context_scopes or []):
-                    step.meta = {**step.meta, **candidate_meta}
+        #
+        # ⚠ **逐步选组，不是全局取最新**（I-030 段 A，2026-08-22）。此前一律下发
+        # 最新那一组，于是「先看瑞幸菜单、再说在麦当劳点第一个」时 `mcd.order`
+        # 那步拿到的是 `source_intent=luckin.menu`——桥侧按域前缀拒收
+        # （**那一侧是 fail-safe 的，没翻错**），但麦当劳那组明明还在焦点里，
+        # 用户的「第一个」就这么白丢了。判据是**结构的、零领域词**：
+        # 步的 intent 域 == 组的 `source_intent` 域。
+        for step in plan.steps:
+            if "candidates" not in (step.context_scopes or []):
+                continue
+            candidates = candidate_downlink(candidate_set_for(
+                focus, (step.intent or "").split(".", 1)[0]))
+            if candidates:
+                step.meta = {**step.meta, "focus_candidate_set": json.dumps(
+                    candidates, ensure_ascii=False)}
 
         # Q9 安全告警下发：**不按 scope 门控，广播给所有步**。
         # 与上面那条坐标下发的取舍正相反，理由也正相反：坐标是敏感数据，给多了是泄漏；

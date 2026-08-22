@@ -666,7 +666,11 @@ class NearbyAgent(BaseAgent):
             speech=speech,
             ui_card=card,
             # items 供编排 slot_refs + HMI「第N个」handoff；center 供下游判断就近语义
-            data={"items": items, "center": center_src, **extra_data},
+            # `_candidate_label`（I-030 组指代）：这一组该怎么被称呼只有产生方知道
+            # ——`label` 就是卡上那个 `keyword`（品牌优先，否则类目词）。没有它，
+            # 「先搜川菜、再搜咖啡」之后一句「川菜那份里最贵的」会绑到咖啡那组。
+            data={"items": items, "center": center_src,
+                  "_candidate_label": label, **extra_data},
             follow_up="说『看第 1 个详情』或『导航去第 2 个』",
         )
 
@@ -734,7 +738,7 @@ class NearbyAgent(BaseAgent):
         return AgentResult(
             speech=f"{lead}推荐附近这些室内去处：{names}{extra}。",
             ui_card=card,
-            data={"items": items},
+            data={"items": items, "_candidate_label": "室内好去处"},
             follow_up="说『看第 1 个详情』或『导航去第 2 个』",
         )
 

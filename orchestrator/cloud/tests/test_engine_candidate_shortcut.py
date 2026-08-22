@@ -28,7 +28,7 @@ from types import SimpleNamespace
 from orchestrator.cloud.aggregator import Aggregator
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.executor import DagExecutor
-from orchestrator.cloud.planning import PlanBuilder
+from orchestrator.cloud.planning import PlanBuilder, _build_ref_maps
 from orchestrator.cloud.session import SessionStore
 
 _PLAN = json.dumps({"steps": [
@@ -71,10 +71,15 @@ class _Spy:
     def __init__(self, unary_seq=None):
         self.unary_seq = list(unary_seq or [])
         self.unary_calls: list[str] = []
+        #: 最后一次下发到 Agent 的 `step.meta`。下发面（`focus_candidate_set`）
+        #: 只有在这里才看得见——**在 engine 外面断言那个静态方法，正是段 A
+        #: 那处接线漏测的方式**。
+        self.last_meta: dict = {}
         self.llm_calls = 0
 
     async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None):
         self.unary_calls.append(intent)
+        self.last_meta = dict(meta or {})
         if self.unary_seq:
             return self.unary_seq.pop(0)
         return _Resp(speech=f"（{intent} 兜底）")
@@ -88,6 +93,7 @@ class _Spy:
         看起来像我的短路判据写反了。**装置少喂一条路径，读数就会指向错误的根因。**
         """
         self.unary_calls.append(intent)
+        self.last_meta = dict(meta or {})
         yield ("final", self.unary_seq.pop(0) if self.unary_seq
                else _Resp(speech=f"（{intent} 兜底）"))
 
@@ -226,3 +232,126 @@ def test_the_two_shortcuts_do_not_shadow_each_other():
     engine2 = _engine(spy2)
     got2 = _finals(_run(engine2, "哪家最晚关门？", "sess-cand-4"))[-1]["speech"]
     assert "营业到" not in got2, "无候选却编出了一个营业时刻"
+
+
+# ── I-030 跨组：engine 层的**接线守卫** ──────────────────────────────────
+#
+# ⚠ **这一段是反向验证逼出来的。** 组指代落地后我逐处打断判据验它们承不承重，
+# 第一处「把 engine 改回 `newest_candidate_set`」跑出来是 **0 个用例** ——
+# 挂点本身没有任何测试。纯函数全绿、接线断了照样绿，正是本文件开头那条
+# 「纯函数绿 ≠ 那条路径会走到它」，我在写着这句话的文件里又欠了一次。
+
+_MENU_MCD = [{"id": "m1", "name": "巨无霸", "price": "26.50"},
+             {"id": "m2", "name": "麦辣鸡腿堡", "price": "19.50"}]
+_MENU_LUCKIN = [{"id": "l1", "name": "美式", "price": "15.00"},
+                {"id": "l2", "name": "生椰拿铁", "price": "16.00"}]
+
+
+def _bridge_agents():
+    """一个桥两条能力——**两家菜单必须能同时在场**，这才是 I-030 的场景。
+
+    换成两轮 `nearby.search` 是造不出来的：合并键
+    `(source_intent, purpose, is_fallback)` 相同，第二份会**取代**第一份
+    （契约 §9.28「同源候选是取代不是叠加」）。
+    """
+    return [SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="mcp-bridge", trust_level="third_party", latency_budget_ms=15000,
+        deployment="cloud", requires_permissions=[], context_scopes=["candidates"],
+        capabilities=[_Cap("mcd.menu"), _Cap("luckin.menu")], route_hints=[],
+    ), endpoint="stub:50080")]
+
+
+class _BridgeSpy(_Spy):
+    def __init__(self, unary_seq=None, plan_seq=()):
+        super().__init__(unary_seq)
+        self.plan_seq = list(plan_seq)
+
+    async def llm(self, messages, **kwargs):
+        self.llm_calls += 1
+        if "任务编排器" in messages[0]["content"]:
+            return self.plan_seq.pop(0) if self.plan_seq else _PLAN
+        return "（聚合话术）"
+
+    async def resolve(self, query="", intent="", top_k=1):
+        return _bridge_agents()
+
+    async def list_agents(self):
+        return _bridge_agents()
+
+
+def _cap_plan(intent):
+    """按 **intent** 造计划，不写死 `cap_0001`。
+
+    ⚠ **写死过一次，留痕**：`_capability_pairs` 是 `sorted(...)`，ref 编号按
+    `(agent_id, intent)` 字典序而不是声明序 ⇒ `cap_0001` 是 `luckin.menu`。
+    于是 fixture 把两家的 intent 和 label 配反了，段 A 那条断言红成
+    「下发面选错组」，而下发面其实一直是对的。
+    **装置自己算错，读数会指向一个不存在的缺陷**（同「A/B 之前先证明两臂真的
+    不同」那条）。这里从真实映射反查，装置和被测系统用同一份口径。
+    """
+    _, pair_to_ref = _build_ref_maps(_bridge_agents())
+    return json.dumps({"steps": [
+        {"id": "s1", "capability_ref": pair_to_ref[("mcp-bridge", intent)],
+         "slots": {}, "depends_on": [], "slot_refs": {}}]})
+
+
+def _two_menus_in_session(session_id):
+    """两轮真菜单落进同一个会话 → engine，返回 spy（第三轮用它记读数）。"""
+    spy = _BridgeSpy(
+        unary_seq=[
+            _Resp(speech="麦当劳在售 2 款。",
+                  data={"items": _MENU_MCD, "_candidate_label": "麦当劳"}),
+            _Resp(speech="瑞幸可点 2 款。",
+                  data={"items": _MENU_LUCKIN, "_candidate_label": "瑞幸"}),
+        ],
+        plan_seq=[_cap_plan("mcd.menu"), _cap_plan("luckin.menu")])
+    engine = _engine(spy)
+    _run(engine, "看看麦当劳有什么可以点的", session_id)
+    _run(engine, "看看瑞幸有什么可以点的", session_id)
+    return spy, engine
+
+
+def test_naming_a_group_binds_to_it_end_to_end_not_to_the_newest():
+    """**I-030 的端到端读数。** 修前这一句确定性地答「「生椰拿铁」16 元」
+    ——瑞幸的第二个。商品名与价格都真实存在，没有一处对得上错，
+    所以它比编造更难被发现。"""
+    spy, engine = _two_menus_in_session("sess-i030-1")
+    calls_before, llm_before = len(spy.unary_calls), spy.llm_calls
+
+    got = _finals(_run(engine, "麦当劳的第二个多少钱", "sess-i030-1"))[-1]["speech"]
+
+    assert "麦辣鸡腿堡" in got and "生椰拿铁" not in got
+    assert len(spy.unary_calls) == calls_before, "短路轮不该调任何 Agent"
+    assert spy.llm_calls == llm_before, "短路轮不该调 LLM"
+
+
+def test_cross_group_comparison_end_to_end():
+    spy, engine = _two_menus_in_session("sess-i030-2")
+    got = _finals(_run(engine, "麦当劳的第二个和瑞幸的第二个哪个贵",
+                       "sess-i030-2"))[-1]["speech"]
+    assert "麦当劳的「麦辣鸡腿堡」" in got and "瑞幸的「生椰拿铁」" in got
+    assert got.endswith("「麦辣鸡腿堡」更贵。")
+
+
+def test_an_unnamed_ordinal_still_binds_to_the_newest_group():
+    """**误伤对照**：没点名任何一家时，逐字还是旧行为（最新那一组）。
+    组指代只在用户**点了名**时接管——它收窄的是错，不是放宽的口子。"""
+    spy, engine = _two_menus_in_session("sess-i030-3")
+    got = _finals(_run(engine, "第二个多少钱", "sess-i030-3"))[-1]["speech"]
+    assert "生椰拿铁" in got
+
+
+def test_the_downlink_each_step_gets_is_its_own_domain_s_group():
+    """段 A 的接线守卫：`_apply_focus_meta` 逐步选组，不是全局取最新。
+
+    走 engine 而不是直接调那个静态方法——**那正是这一段被漏掉的原因**。
+    """
+    spy, engine = _two_menus_in_session("sess-i030-4")
+    spy.unary_seq.append(_Resp(speech="好的。"))
+    spy.plan_seq.append(_cap_plan("mcd.menu"))          # 第三轮落回 mcd.menu
+
+    _run(engine, "在麦当劳点一份", "sess-i030-4")
+
+    payload = json.loads(spy.last_meta["focus_candidate_set"])
+    assert payload["source_intent"] == "mcd.menu"
+    assert [i["name"] for i in payload["items"]] == ["巨无霸", "麦辣鸡腿堡"]

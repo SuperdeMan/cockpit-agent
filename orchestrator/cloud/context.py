@@ -665,6 +665,25 @@ _CANDIDATE_SETS_MAX = 3
 _CANDIDATE_TTL_S = 900.0
 
 
+#: 组标签（保留键 `_candidate_label`）的长度闸。声明成一整句话就不再是「称呼」——
+#: 用户不会原样说出来，`label in text` 于是永远不命中，而它还会让 2 字前缀通道
+#: 变得任意。<2 字视为**未声明**（同「未声明的产生方逐字零行为变化」那条）。
+_CANDIDATE_LABEL_MAX = 20
+_CANDIDATE_LABEL_MIN = 2
+
+
+def _candidate_label(data: dict) -> str:
+    """产生方声明的「这一组该怎么被称呼」（I-030 组指代的唯一来源）。
+
+    判据与 `_fallback` **同一条**：编排看不出这一组该叫什么名字，产生方知道。
+    `mcd.menu` 的卡上就写着 `merchant: "麦当劳"`、nearby 卡上写着 `keyword`，
+    而 `data` 里一个字都没有——**和「菜单只进 ui_card 从没进过候选集」逐字同形**
+    （§9.27 末段）。可被指代的事实两边都要有。
+    """
+    label = str((data or {}).get("_candidate_label") or "").strip()
+    return label[:_CANDIDATE_LABEL_MAX] if len(label) >= _CANDIDATE_LABEL_MIN else ""
+
+
 def _candidate_items(raw_items: list) -> list[dict]:
     """按白名单裁剪候选项。名字是唯一必需字段——没名字的项无从指代。"""
     out: list[dict] = []
@@ -721,13 +740,97 @@ def newest_candidate_set(focus, *, allow_fallback: bool = False) -> dict | None:
     于是「刚才列表里的第二家」拿到了兜底那份的第二家）。
     全是兜底时才退回最近一份（`allow_fallback` 由调用方决定要不要退）。
     """
-    sets = _live_candidate_sets(getattr(focus, "candidate_sets", None) or [])
+    return _newest_of(_live_candidate_sets(
+        getattr(focus, "candidate_sets", None) or []),
+        allow_fallback=allow_fallback)
+
+
+def _newest_of(sets: list[dict], *, allow_fallback: bool) -> dict | None:
+    """一批候选组里该绑哪一组。**N5 判据住在这里**，所以组指代（I-030）挑出
+    被点名的那几组之后仍然复用它——「兜底不得顶替点名那份」在**任何**取值域上
+    都成立，不该因为多了一维筛选就丢掉。"""
     if not sets:
         return None
     for entry in reversed(sets):
         if not entry.get("is_fallback"):
             return entry
     return sets[-1] if allow_fallback else None
+
+
+def label_hit(text: str, entry: dict) -> int | None:
+    """这句话在**哪个位置**点名了这一组；没点名 → None（I-030 组指代）。
+
+    **从组标签派生，不是第二张词表**——同 `candidate_query._named` 那条纪律：
+    名字通道由候选集自己派生，用户换个说法它不会失效，也不需要编排知道
+    「麦当劳」属于哪个域（那是 R2.1 明令不许写进编排核心的东西）。
+
+    两条通道按序求值，都在**原话**上找（位置要能拿回来，跨组切句靠它）：
+      · 整个标签——「麦当劳」「瑞幸」；
+      · 标签的 **2 字前缀**——产生方声明「川菜馆」而用户说的是「川菜」。
+    中文品牌/品类词的判别信息几乎都在前缀；放开到「任意公共子串」就等于放弃判据。
+    """
+    label = str((entry or {}).get("label") or "").strip()
+    if len(label) < _CANDIDATE_LABEL_MIN:
+        return None
+    for needle in (label, label[:_CANDIDATE_LABEL_MIN]):
+        at = str(text or "").find(needle)
+        if at >= 0:
+            return at
+    return None
+
+
+def resolve_candidate_scope(text: str, focus) -> tuple[dict | None, list[dict]]:
+    """「这句话在说哪一组候选」→ `(主组, 被点名的那几组)`（I-030）。
+
+    ## 它修的是一个比卡上写的更严重的形态
+
+    卡上写的是「跨组比较做不了」（答非所问）。真实形态是**跨组会给出一个算错的
+    确定性答案**：两家菜单都在会话里时，「**麦当劳**的第二个多少钱」被
+    `newest_candidate_set` 绑到瑞幸那组，零方差地答出「「生椰拿铁」16 元」
+    ——商品名与价格都真实存在，只是答的是另一家。**比编造更难被发现**，
+    因为没有任何一处对不上。
+
+    根因是判据面上**根本没有「哪一组」这一维**：同第 7.5 步「留一条缝模型就编一个」
+    的同族第二例，只是这次编的不是模型，是短路自己。
+    ⇒ **凡是「系统持有的事实」，判据面就得是闭合的**——多一份候选就是多一维。
+
+    ## 三条规则
+
+    · 零命中 → 退回 `newest_candidate_set`，**行为逐字同旧**（没有标签的部署、
+      没点名的句子，一个字都不变）；
+    · 命中一组 → 就是它；
+    · 命中多组 → 主组取**命中集里**那一组（仍走 `_newest_of`，N5 继承），
+      **绝不越出命中集**。「附近的麦当劳」→「看看菜单」会产生两个都叫「麦当劳」
+      的组（门店列表 + 菜单），它们是同一家商户的两份东西不是两家——此时用户
+      指的是新的那份，而**关键在于两份都姓麦当劳，取哪份都不会拿瑞幸的事实作答**。
+
+    第二个返回值给跨组算子用（`candidate_query`）：只有句子**点名了 ≥2 组**时
+    才谈得上比较，那是比现状更严的条件，所以误伤面不因此扩大。
+    """
+    sets = _live_candidate_sets(getattr(focus, "candidate_sets", None) or [])
+    named = [s for s in sets if label_hit(text, s) is not None]
+    if named:
+        return _newest_of(named, allow_fallback=True), named
+    return _newest_of(sets, allow_fallback=True), []
+
+
+def candidate_set_for(focus, domain: str) -> dict | None:
+    """给**某一域的消费步**挑候选组：优先同域那一组，没有才退回最新那组（I-030）。
+
+    判据是**结构的、零领域词**：步的 intent 域 == 组的 `source_intent` 域。
+    下发面此前一律取最新那一组，于是「先看瑞幸菜单、再说在麦当劳点第一个」时，
+    `mcd.order` 那一步拿到的是 `source_intent=luckin.menu` 的下发——桥侧
+    `candidate_ref._belongs_to` 按域前缀拒收（**那一侧是 fail-safe 的，没翻错**），
+    但麦当劳那组明明还在焦点里，用户的「第一个」就这么白丢了。
+
+    退回最新那组是为了**逐字保持旧行为**：同域没有候选时下发什么都一样
+    （消费方自己会按归属判据拒收），换成「什么都不发」反而是一处未经证据的收窄。
+    """
+    sets = _live_candidate_sets(getattr(focus, "candidate_sets", None) or [])
+    prefix = str(domain or "").strip()
+    same = [s for s in sets
+            if prefix and str(s.get("source_intent") or "").split(".", 1)[0] == prefix]
+    return _newest_of(same or sets, allow_fallback=True)
 
 
 #: 候选集**跨层下发**给 Agent 时的投影（Q10 接手第 7 步的下发面）。
@@ -886,6 +989,10 @@ def extract_focus(plan, results) -> "Focus | None":
                     # 兜底与否**由产生方声明**（保留键 `_fallback`，同 `_route_session`
                     # 族）：编排看不出「搜的和他说的是不是一回事」。
                     "is_fallback": bool(data.get("_fallback")),
+                    # 「这一组该怎么被称呼」（保留键 `_candidate_label`，I-030）。
+                    # 同族同判据：编排看不出 `mcd.menu` 那一组该叫「麦当劳」。
+                    # 未声明 = 空串 = 这一组点不了名，行为逐字同旧。
+                    "label": _candidate_label(data),
                     "items": items,
                 })
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/

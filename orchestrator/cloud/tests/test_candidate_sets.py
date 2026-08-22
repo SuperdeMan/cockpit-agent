@@ -21,8 +21,8 @@ from types import SimpleNamespace
 
 from orchestrator.cloud.context import (
     Focus, _CANDIDATE_ITEM_KEYS, _CANDIDATE_SETS_MAX, _CANDIDATE_TTL_S,
-    _candidate_items, _derive_choice_view, candidate_downlink, extract_focus,
-    newest_candidate_set,
+    _candidate_items, _derive_choice_view, candidate_downlink, candidate_set_for,
+    extract_focus, label_hit, newest_candidate_set, resolve_candidate_scope,
 )
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.models import Plan, Step
@@ -484,3 +484,140 @@ def test_downlink_prefers_the_set_the_user_named_over_the_fallback_one():
     PlannerEngine._apply_focus_meta(plan, focus)
     payload = json.loads(plan.steps[0].meta["focus_candidate_set"])
     assert payload["source_intent"] == "mcd.menu"
+
+
+# ── I-030 组指代：点名了哪一组 ────────────────────────────────────────────
+#
+# **卡上的定性被真栈取证改了一档。** 卡写的是「跨组比较做不了」（答非所问）；
+# 实测形态是**跨组会给出一个算错的确定性答案**——两家菜单都在会话里时，
+# 「麦当劳的第二个多少钱」被 `newest_candidate_set` 绑到瑞幸那组，零方差地答
+# 「「生椰拿铁」16 元」。**商品名与价格都真实存在**，没有任何一处对不上，
+# 所以它比编造更难被发现。⇒ 本节的用例先钉这一半。
+
+def _labelled(intent, label, items, *, ts_offset=0.0, fallback=False):
+    return {"source_intent": intent, "agent_id": "x", "purpose": "list",
+            "ts": time.time() + ts_offset, "is_fallback": fallback,
+            "label": label, "items": items}
+
+
+_MCD = _labelled("mcd.menu", "麦当劳",
+                 [{"name": "巨无霸", "price": 26.5},
+                  {"name": "麦辣鸡腿堡", "price": 19.5}], ts_offset=-60)
+_LUCKIN = _labelled("luckin.menu", "瑞幸",
+                    [{"name": "美式", "price": 15.0},
+                     {"name": "生椰拿铁", "price": 16.0}])
+
+
+def test_set_records_the_label_its_producer_declared():
+    """组标签由**产生方**声明（保留键 `_candidate_label`），判据同 `_fallback`：
+    编排看不出 `mcd.menu` 那一组该叫「麦当劳」。"""
+    focus = _extract("mcd.menu", "mcp-bridge",
+                     {"items": [{"name": "巨无霸"}], "_candidate_label": "麦当劳"})
+    assert focus.candidate_sets[-1]["label"] == "麦当劳"
+
+
+def test_an_undeclared_label_leaves_the_group_unnameable():
+    """未声明 = 点不了名 = **行为逐字同旧**。这是本能力可以安全上线的全部理由：
+    没跟上的产生方不会因此改变任何一个字。"""
+    focus = _extract("navigation.search_poi", "navigation",
+                     {"items": [{"name": "甲"}]})
+    entry = focus.candidate_sets[-1]
+    assert entry["label"] == ""
+    assert label_hit("甲那份里第一个多少钱", entry) is None
+
+
+def test_a_one_character_label_is_treated_as_undeclared():
+    """1 字标签的命中面太大（同 `_named` 那条 2 字下限）——宁可点不了名。"""
+    focus = _extract("mcd.menu", "mcp-bridge",
+                     {"items": [{"name": "甲"}], "_candidate_label": "麦"})
+    assert focus.candidate_sets[-1]["label"] == ""
+
+
+def test_naming_a_group_binds_to_it_instead_of_the_newest_one():
+    """**I-030 的核心断言**：点名了麦当劳，就不许拿瑞幸那组的事实回答。"""
+    focus = Focus(candidate_sets=[_MCD, _LUCKIN])
+    primary, named = resolve_candidate_scope("麦当劳的第二个多少钱", focus)
+    assert primary["source_intent"] == "mcd.menu"
+    assert [g["label"] for g in named] == ["麦当劳"]
+    # 反向对照：**没点名的句子一个字都不许变**——仍是最新那一组。
+    primary, named = resolve_candidate_scope("第二个多少钱", focus)
+    assert primary["source_intent"] == "luckin.menu" and named == []
+
+
+def test_a_named_scope_never_escapes_the_named_set():
+    """「附近的麦当劳」→「看看菜单」会产生两个都叫「麦当劳」的组（门店列表 + 菜单）。
+    它们是同一家的两份东西，取新的那份；**关键是两份都姓麦当劳**——
+    无论取哪份都不会拿瑞幸的事实作答。"""
+    stores = _labelled("nearby.search", "麦当劳",
+                       [{"name": "麦当劳碧海君庭餐厅"}], ts_offset=-120)
+    focus = Focus(candidate_sets=[stores, _MCD, _LUCKIN])
+    primary, named = resolve_candidate_scope("麦当劳的第二个多少钱", focus)
+    assert primary["source_intent"] == "mcd.menu"
+    assert {g["source_intent"] for g in named} == {"nearby.search", "mcd.menu"}
+
+
+def test_the_label_prefix_channel_catches_the_short_form():
+    """产生方声明「川菜馆」而用户说的是「川菜」——2 字前缀通道。"""
+    entry = _labelled("nearby.search", "川菜馆", [{"name": "甲"}])
+    assert label_hit("刚才川菜列表里的第二家叫什么", entry) == 2
+    assert label_hit("附近的咖啡店呢", entry) is None
+
+
+def test_a_named_fallback_group_still_loses_to_the_named_real_one():
+    """N5 在**命中集内**同样成立——组指代多了一维筛选，不该把旧判据丢掉。"""
+    named_real = _labelled("nearby.search", "川菜馆",
+                           [{"name": "川菜·甲"}], ts_offset=-30)
+    named_fb = _labelled("nearby.search", "川菜馆",
+                         [{"name": "美食·丙"}], fallback=True)
+    focus = Focus(candidate_sets=[named_real, named_fb])
+    primary, _ = resolve_candidate_scope("川菜那份里第一家叫什么", focus)
+    assert primary["items"][0]["name"] == "川菜·甲"
+
+
+def test_an_expired_group_cannot_be_named():
+    """限龄先于点名——过期那组连被点名的资格都没有。"""
+    stale = _labelled("mcd.menu", "麦当劳", [{"name": "巨无霸"}],
+                      ts_offset=-_CANDIDATE_TTL_S - 1)
+    focus = Focus(candidate_sets=[stale, _LUCKIN])
+    primary, named = resolve_candidate_scope("麦当劳的第二个多少钱", focus)
+    assert named == [] and primary["source_intent"] == "luckin.menu"
+
+
+# ── I-030 段 A：下发面逐步选组 ───────────────────────────────────────────
+
+def test_downlink_prefers_the_step_s_own_domain():
+    """判据是**结构的、零领域词**：步的 intent 域 == 组的 `source_intent` 域。
+
+    此前一律下发最新那一组，于是「先看瑞幸菜单、再说在麦当劳点第一个」时
+    `mcd.order` 拿到的是 luckin 那份——桥侧按域前缀拒收（那一侧 fail-safe），
+    但麦当劳那组明明还在焦点里，用户的「第一个」白丢。
+    """
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
+             context_scopes=["candidates"]),
+        Step(id="s2", agent_id="mcp-bridge", intent="luckin.order",
+             context_scopes=["candidates"]),
+    ])
+    PlannerEngine._apply_focus_meta(plan, Focus(candidate_sets=[_MCD, _LUCKIN]))
+    assert json.loads(plan.steps[0].meta["focus_candidate_set"])[
+        "source_intent"] == "mcd.menu"
+    assert json.loads(plan.steps[1].meta["focus_candidate_set"])[
+        "source_intent"] == "luckin.menu"
+
+
+def test_downlink_falls_back_to_the_newest_when_the_domain_has_none():
+    """反向对照：同域没有候选时**逐字保持旧行为**（消费方自己按归属判据拒收）。
+    改成「什么都不发」是一处未经证据的收窄。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
+                            context_scopes=["candidates"])])
+    PlannerEngine._apply_focus_meta(plan, Focus(candidate_sets=[_LUCKIN]))
+    assert json.loads(plan.steps[0].meta["focus_candidate_set"])[
+        "source_intent"] == "luckin.menu"
+
+
+def test_candidate_set_for_keeps_the_n5_preference_within_a_domain():
+    """同域内仍然优先非兜底那份——`_newest_of` 是唯一实现，三个入口共用。"""
+    real = _labelled("nearby.search", "川菜馆", [{"name": "川菜·甲"}], ts_offset=-30)
+    fb = _labelled("nearby.search", "美食", [{"name": "美食·丙"}], fallback=True)
+    got = candidate_set_for(Focus(candidate_sets=[real, fb]), "nearby")
+    assert got["items"][0]["name"] == "川菜·甲"

@@ -26,6 +26,11 @@ from .models import MerchantChoice, MerchantDraft, MerchantItem, MerchantResult,
 logger = logging.getLogger("agent.mcp_bridge.merchant.mcdonalds")
 
 _LEDGER_KIND = "mcp_order"
+#: 商户在用户嘴里的称呼。**一处声明，卡片与候选组标签共用**——两处各写一份
+#: 就会在改名那天只改一处（同 `ui_card`/`data` 共用一份 items 那条）。
+#: 它同时是候选组的 `_candidate_label`（I-030 组指代）：编排看不出 `mcd.menu`
+#: 那一组该叫「麦当劳」，只有产生方知道（判据同保留键 `_fallback`）。
+MERCHANT_NAME = "麦当劳"
 _READ_TOOLS = (
     "query-nearby-stores",
     "query-meals",
@@ -966,7 +971,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 "type": "merchant_choices",
                 "stage": "choices",
                 "choice_kind": "product",
-                "merchant": "麦当劳",
+                "merchant": MERCHANT_NAME,
                 "store_name": store_name,
                 # 主卡（同 luckin.menu）：附近+菜单组合轮菜单卡不再被 place_list 压掉
                 "display_priority": 0,
@@ -998,7 +1003,10 @@ class McDonaldsWorkflow(MerchantWorkflow):
             # 菜单问「第一个和第二个一共多少钱」，系统答「我这边没有可以引用的列表」
             # （I-052 防编造弃权守卫的话术，在这里变成了误伤）。I-023/I-030 同源。
             # 与 ui_card 共用同一份 `items`：两处各造一份就会漂移。
-            data={"items": items},
+            # I-030 组指代：这一组该怎么被称呼同样只有产生方知道（保留键
+            # `_candidate_label`）。没有它，两家菜单并存时「麦当劳的第二个多少钱」
+            # 会被绑到最新那一组，确定性地答出另一家的真商品真价格。
+            data={"items": items, "_candidate_label": MERCHANT_NAME},
         )
 
     @classmethod

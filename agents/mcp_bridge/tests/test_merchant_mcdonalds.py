@@ -1300,6 +1300,28 @@ async def test_store_menu_answers_price_and_never_touches_write_tools():
 
 
 @pytest.mark.asyncio
+async def test_store_menu_declares_the_group_label_users_will_name_it_by(
+):
+    """候选组标签（`_candidate_label`，I-030）必须与**卡上给用户看的称呼**是同一个。
+
+    判据同 `_fallback`：编排看不出 `mcd.menu` 那一组该叫「麦当劳」，只有产生方
+    知道。没有它，两家菜单并存时「麦当劳的第二个多少钱」会被绑到最新那一组，
+    **确定性地**答出另一家的真商品真价格——名字与价格都对得上，所以比编造更难
+    被发现（真栈取证把 I-030 的定性从「答不出来」改成了这一档）。
+
+    ⚠ 断言的是**两处相等**而不是字面量：用户是照卡上那个称呼点名的，
+    两处各写一份就会在改名那天只改一处。
+    """
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+    result = await workflow.menu(
+        SimpleNamespace(name="mcd.menu", slots={"store_hint": "人民广场"}),
+        CTX, META)
+    assert result.data["_candidate_label"] == result.ui_card["merchant"] == "麦当劳"
+
+
+@pytest.mark.asyncio
 async def test_store_menu_image_requires_https_and_an_allowlisted_host():
     """商品图链是外部输入，且会变成 HMI 的一次网络请求——白名单在基类，两家共用一份。"""
     for bad in ("http://menu-img.mcd.cn/x.png", "https://evil.example.com/x.png",

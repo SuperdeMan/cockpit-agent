@@ -57,7 +57,14 @@ orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库
                 候选集**下发给 Agent** 走 `context.candidate_downlink` 的最小投影
                 （只有序号与名字）+ `engine._apply_focus_meta` 按 `context_scopes:
                 [candidates]` 门控——「值得跨轮留住」与「可以离开编排」是两个问题，
-                两张表刻意分开（契约 §9.28）
+                两张表刻意分开（契约 §9.28）。**「这句话在说哪一组」的判定住在
+                `context.resolve_candidate_scope`（唯一实现）**：组标签由产生方经
+                保留键 `_candidate_label` 声明（判据同 `_fallback`——编排看不出
+                `mcd.menu` 那组该叫「麦当劳」，把商户名写进编排核心正是 R2.1 禁的），
+                零命中逐字退回 `newest_candidate_set`。下发面选组是**另一份判据**
+                （`candidate_set_for`，按步的 intent 域，零领域词）——编排知道这一步
+                姓什么，但不知道用户嘴里那个词姓什么，合成一条会逼编排认识商户名
+                （契约 §9.32）
 llm-gateway/    LLM 多模型网关（所有 LLM 调用的唯一出口）；音频面同门：批/流式 ASR·TTS
                 + s2s/ 端到端语音会话（M4；协议/provider/会话/回灌四层，换厂商只加 provider 子类）
                 + speaker_embed.py 声纹提取（音频→向量，**不持模板**）
@@ -244,7 +251,7 @@ EVA 指令集两轮对标（history §33–§40）、支付基础设施真实化
 （history §30–§32.2）。两家商户凭证仍是服务级全局 token/账号、支付 host 依赖运行时
 安全配置——PoC 限制而非多乘员量产账号模型。
 
-**进行中：探索式真实用户 QA 轮**（2026-08-15 立卡，架构 **v1.35**）：533 轮 × 5 persona
+**进行中：探索式真实用户 QA 轮**（2026-08-15 立卡，架构 **v1.36**）：533 轮 × 5 persona
 两档跑出的 58 个问题收敛成 13 个根因（Q1–Q13）四阶段推进，契约面新增 `conventions.md`
 **§9.19–§9.31**。四个阶段与编号接手序列已于 2026-08-19 全部走完（第 8 步 Q8/Q11/P2
 收官，history §63）；**剩余的是不编号的残余，当前进度与接手入口一律以

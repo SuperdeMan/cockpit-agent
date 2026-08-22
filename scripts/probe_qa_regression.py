@@ -529,6 +529,52 @@ CASES = [
           "expect": {"no_clock_time": True, "no_actions": True}},
      ]},
 
+    # ── I-030 跨组（2026-08-22，Q2 最后一条残余）──────────────────────
+    # ⚠ **卡上的定性被单测层取证改了一档，探针跟着改。** 卡写的是「跨组比较
+    # 做不了」（答非所问）；真实形态是**跨组会给出一个算错的确定性答案**——
+    # 两家菜单都在会话里时，「麦当劳的第二个多少钱」被绑到最新那一组，
+    # 零方差地答出瑞幸的第二个。**商品名与价格都真实存在**，没有任何一处
+    # 对不上，所以它比编造更难被发现，也比「答不出来」严重一档。
+    #
+    # ⇒ 判据必须是**两条互补的结构判据同时成立**：点到了麦当劳那组的第 2 项
+    #   **且**没点到瑞幸那组的任何一项。只压前者压不出「绑错组」——
+    #   两组商品名不同，模型胡诌一个也可能碰不上，那是 CD2 那次
+    #   「答了一个名字就判绿」的同一形态。
+    {"id": "CD5", "group": "candidate", "card": "Q2", "issue": "I-030",
+     "why": "两家菜单并存时序数被绑到最新那一组，答出另一家的真商品真价格",
+     "known": "red",
+     "turns": [
+         {"say": "看看麦当劳有什么可以点的", "expect": {}},
+         {"say": "看看瑞幸有什么可以点的", "expect": {}},
+         {"say": "麦当劳的第二个多少钱",
+          "expect": {"names_item_from": {"turn": 1, "index": 2},
+                     "not_names_item_from": 2,
+                     "differs_from_turn": 2}},
+     ]},
+    # 跨组比较本体。**两边都要点到**才叫比较——只点到一边的话术读起来一样通顺。
+    {"id": "CD6", "group": "candidate", "card": "Q2", "issue": "I-030",
+     "why": "跨组比较：两组各取一项再比，此前整句落 Planner", "known": "red",
+     "turns": [
+         {"say": "看看麦当劳有什么可以点的", "expect": {}},
+         {"say": "看看瑞幸有什么可以点的", "expect": {}},
+         {"say": "麦当劳的第二个和瑞幸的第二个哪个贵",
+          "expect": {"names_items_from": [{"turn": 1, "index": 2},
+                                          {"turn": 2, "index": 2}],
+                     "differs_from_turn": 2}},
+     ]},
+    # **误伤对照**：没点名任何一家时逐字还是旧行为（绑最新那一组＝瑞幸）。
+    # 组指代收窄的是错，不是放宽的口子；这条修前修后都该绿。
+    {"id": "CD7", "group": "candidate", "card": "Q2", "issue": "对照组",
+     "why": "没点名时仍绑最新那一组——组指代不得改变未点名句子的行为",
+     "known": "green",
+     "turns": [
+         {"say": "看看麦当劳有什么可以点的", "expect": {}},
+         {"say": "看看瑞幸有什么可以点的", "expect": {}},
+         {"say": "第二个多少钱",
+          "expect": {"names_item_from": {"turn": 2, "index": 2},
+                     "differs_from_turn": 2}},
+     ]},
+
     # ── Q10 双入口收敛（接手第 7 步，2026-08-19）────────────────────
     # ⚠ **首跑当场推翻了两处立卡时的说法，两处都改变了「该验什么」**：
     #
@@ -1258,6 +1304,23 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
                 fails.append(
                     f"话术没点到第 {ref_item['turn']} 轮的第 {idx} 项「{want}」"
                     + (f"（点到的是同组的 {other}）" if other else "（同组一个都没点到）"))
+    # I-030 跨组：一句话点名了两组，**两边都要点到**才叫比较。
+    # `names_item_from` 的 list 形态泛化——判据仍是结构层（取自各轮卡片项名），
+    # 不是话术关键词。⚠ 跨组的错在话术层**看起来毫无异常**：两个名字都在、
+    # 价格也真实存在，只是取自同一组。所以必须逐轮逐项钉。
+    for ref_one in (expect.get("names_items_from") or []):
+        rows = prior or []
+        src = next((r for r in rows
+                    if r.get("turn") == int(ref_one["turn"])), None)
+        names = (src or {}).get("card_items") or []
+        idx = int(ref_one["index"])
+        if len(names) < idx:
+            fails.append(
+                f"第 {ref_one['turn']} 轮卡片只有 {len(names)} 项，取不到第 {idx} 项"
+                "——**前提没成立，这一轮的读数不作数**")
+        elif not _speech_names(speech, [names[idx - 1]]):
+            fails.append(f"话术没点到第 {ref_one['turn']} 轮的第 {idx} 项"
+                         f"「{names[idx - 1]}」")
     ref_not = expect.get("not_names_item_from")
     if ref_not is not None:
         # **绑错了哪一份**与**答得好不好**是两件事，分开报（同 §4.3 SF3 那条纪律）。

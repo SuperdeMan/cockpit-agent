@@ -796,6 +796,15 @@ async def test_menu_is_read_only_and_never_touches_write_tools():
 
 
 @pytest.mark.asyncio
+async def test_menu_declares_the_group_label_users_will_name_it_by():
+    """候选组标签（`_candidate_label`，I-030）= 卡上给用户看的称呼，判据写在
+    麦当劳侧那条同名用例上。两家各有一条，因为**这两组并存才是 I-030 的场景**。"""
+    workflow, _ = _workflow()
+    result = await workflow.menu(_intent(name="luckin.menu"), CTX, META)
+    assert result.data["_candidate_label"] == result.ui_card["merchant"] == "瑞幸"
+
+
+@pytest.mark.asyncio
 async def test_menu_requires_the_same_trusted_store_chain_as_ordering():
     """没有可信 POI 就不给菜单——官方菜单绑定 deptId，绕不开选店这一步。
 

@@ -349,3 +349,113 @@ def test_the_total_operator_still_wins_when_both_could_match():
     """「第一个和第二个一共多少钱」是合计不是取值——序数后面是「和」，不紧邻。"""
     got = cq.answer("第一个和第二个一共多少钱", _entry(_TEN, intent="mcd.menu"))
     assert got is not None and "一共" in got
+
+
+# ── I-030 跨组：点名了两组，就不该由其中一组独自回答 ──────────────────────
+#
+# 真栈取证把卡上的定性改了一档：卡写「跨组比较做不了」（答非所问），而实测是
+# **跨组会给出一个算错的确定性答案**——「麦当劳的第二个多少钱」绑到瑞幸那组，
+# 零方差地答「「生椰拿铁」16 元」。名字与价格都真实存在，所以比编造更难被发现。
+#
+# ⚠ 本节**依然一半是误伤对照**，理由与本文件开头那段同源，而且更强：跨组的错
+# 会把两家的东西比成一家的，而话术里两个名字都在，看起来毫无异常。
+
+_G_MCD = {"source_intent": "mcd.menu", "agent_id": "mcp-bridge", "purpose": "list",
+          "ts": time.time() - 60, "is_fallback": False, "label": "麦当劳",
+          "items": [{"name": "巨无霸", "price": "26.50"},
+                    {"name": "麦辣鸡腿堡", "price": "19.50"}]}
+_G_LUCKIN = {"source_intent": "luckin.menu", "agent_id": "mcp-bridge",
+             "purpose": "list", "ts": time.time(), "is_fallback": False,
+             "label": "瑞幸",
+             "items": [{"name": "美式", "price": "15.00"},
+                       {"name": "生椰拿铁", "price": "16.00"}]}
+_TWO = [_G_MCD, _G_LUCKIN]
+
+
+def test_naming_one_group_answers_from_that_group_not_the_newest():
+    """I-030 的核心读数：同一句话，修前答瑞幸的第二个、修后答麦当劳的第二个。"""
+    got = cq.answer("麦当劳的第二个多少钱", _G_MCD, [_G_MCD])
+    assert got is not None and "麦辣鸡腿堡" in got and "生椰拿铁" not in got
+
+
+def test_cross_group_comparison_states_both_sides_before_the_verdict():
+    """跨组结论只有一个词（「更贵」），用户没法核对它是不是拿对了组
+    ——所以两边的数都要念出来。**拿错组恰恰是这条通道要修的病。**"""
+    got = cq.answer("麦当劳的第二个和瑞幸的第二个哪个贵", _G_LUCKIN, _TWO)
+    assert got is not None
+    assert "麦当劳的「麦辣鸡腿堡」" in got and "瑞幸的「生椰拿铁」" in got
+    assert got.endswith("「麦辣鸡腿堡」更贵。")
+
+
+def test_cross_group_total_keeps_the_arithmetic_checkable():
+    got = cq.answer("麦当劳的第二个和瑞幸的第二个一共多少钱", _G_LUCKIN, _TWO)
+    assert got is not None and " + " in got and "一共 35.50 元" in got
+
+
+def test_cross_group_ordinals_do_not_leak_across_groups():
+    """两个「第二个」必须各归各组。不切段而在整句里找序数，就会把它们都塞给
+    同一组——那正是这条通道要修的错，只是换了个地方发生。"""
+    got = cq.answer("麦当劳的第一个和瑞幸的第二个一共多少钱", _G_LUCKIN, _TWO)
+    assert got is not None and "巨无霸" in got and "生椰拿铁" in got
+    assert "一共 42.50 元" in got
+
+
+def test_cross_group_names_work_too_not_only_ordinals():
+    got = cq.answer("麦当劳的巨无霸和瑞幸的美式哪个便宜", _G_LUCKIN, _TWO)
+    assert got is not None and got.endswith("「美式」更便宜。")
+
+
+def test_a_tie_is_reported_as_a_tie_not_as_a_winner():
+    """相等时点名一个「更贵」，是用一句确定的话说错一件事。"""
+    same = dict(_G_LUCKIN, items=[{"name": "美式", "price": "26.50"}])
+    got = cq.answer("麦当劳的第一个和瑞幸的第一个哪个贵", same, [_G_MCD, same])
+    assert got is not None and got.endswith("两边价格一样。")
+
+
+def test_cross_group_missing_dimension_is_an_honest_refusal():
+    """菜单项没有营业时间——诚实说比不了，**不回落 LLM**（回落就是交回去编）。"""
+    got = cq.answer("麦当劳的第一个和瑞幸的第一个哪个关门更晚", _G_LUCKIN, _TWO)
+    assert got is not None and "没带营业时间" in got and "比不了" in got
+
+
+def test_a_group_that_cannot_be_pinned_to_exactly_one_item_aborts_the_whole_answer():
+    """任一组点不到**恰好一项**就整句放弃——同 `candidate_ref` 那条
+    「命中多项一律不动」。跨组的错比单组贵。"""
+    assert cq.answer("麦当劳和瑞幸的第二个哪个贵", _G_LUCKIN, _TWO) is None
+
+
+def test_an_out_of_range_ordinal_is_answered_honestly_not_handed_back_to_the_llm():
+    """越界与「点不到」是两件事：「第九个」是**明确的**引用，只是我们跟不到
+    那么远 ⇒ 诚实说系统记得多少（同单组 `_ordinal_pick_answer` 那条判据）。
+
+    ⚠ 说的是「我这边只跟到第 N 项」不是「这份列表只有 N 项」——候选集裁到 10 项
+    而卡片渲染 20 项，后者是用一句确定的话说错一件事。
+    """
+    got = cq.answer("麦当劳的第九个和瑞幸的第二个哪个贵", _G_LUCKIN, _TWO)
+    assert got is not None and "只跟到第 2 项" in got and "第 9 项" in got
+    assert "列表只有" not in got
+
+
+def test_the_overflow_answer_still_requires_an_operator():
+    """**误伤对照**：算子闸排在解析之前。没有「哪个更…／一共」的句子不该被
+    越界话术接管——那是把误伤面往回放宽。"""
+    assert cq.answer("麦当劳的第九个和瑞幸的第二个", _G_LUCKIN, _TWO) is None
+
+
+def test_the_comparative_table_does_not_widen_the_single_group_gate():
+    """**误伤对照**：比较级只在点名了 ≥2 组时求值。单组句子命中这张表也拿不到
+    答案，照常进 Planner——本表要求的条件比现状更严，不是又放宽一道口子。"""
+    assert cq.answer("哪个更贵", _entry(_MENU, intent="mcd.menu")) is None
+    assert cq.answer("哪个更贵", _G_MCD, [_G_MCD]) is None
+
+
+def test_a_new_search_still_wins_over_cross_group():
+    """**误伤对照**：「附近还有别的麦当劳和瑞幸吗，哪个便宜」是一次新检索。"""
+    assert cq.answer("附近还有别的麦当劳和瑞幸吗，哪个便宜",
+                     _G_LUCKIN, _TWO) is None
+
+
+def test_an_unnamed_sentence_keeps_the_old_single_group_behaviour():
+    """**误伤对照**：没点名任何组时，逐字还是修改之前那条路。"""
+    got = cq.answer("第二个多少钱", _G_LUCKIN, [])
+    assert got is not None and "生椰拿铁" in got

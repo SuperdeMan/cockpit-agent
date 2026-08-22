@@ -110,6 +110,26 @@ def test_search_returns_place_list_card():
     assert "lat" in res.data["items"][0]              # 结构化结果供「第N个」handoff
 
 
+def test_search_declares_the_group_label_users_will_name_it_by():
+    """候选组标签（`_candidate_label`，I-030）= 卡上那个 `keyword`（品牌优先）。
+
+    没有它，「先搜川菜、再搜咖啡」之后一句「川菜那份里最贵的」会绑到咖啡那组
+    ——**确定性地答出另一份列表里的真店真价格**。断言两处相等而不是字面量：
+    用户是照卡上看到的那个词点名的。
+    """
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"cuisine": "川菜"}, raw_text="附近的川菜馆", meta=_LOC))
+    assert res.data["_candidate_label"] == res.ui_card["keyword"]
+    assert len(res.data["_candidate_label"]) >= 2      # 1 字标签会被编排当未声明
+
+    # 品牌优先：用户点名的品牌就是他下一轮会用来指代这一组的词
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"brand": "瑞幸咖啡"}, raw_text="附近的瑞幸咖啡", meta=_LOC))
+    assert res.data["_candidate_label"] == "瑞幸咖啡"
+
+
 def test_search_incorporates_recalled_taste_preference():
     """餐饮搜索前 ctx.recall 取学到的口味偏好并体现在话术（精确读取走 predicate_prefix）。"""
     agent = NearbyAgent()

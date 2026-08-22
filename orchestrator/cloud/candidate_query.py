@@ -42,6 +42,11 @@ import re
 from runtime import openhours
 from runtime.cntime import CN_NUM_SRC, cn_int
 
+#: 「这句话点名了哪一组」只有一份实现，住在 `context`（组标签是候选集自己的字段）。
+#: 这里**只消费位置**，不再造第二条判据——同 `newest_candidate_set` 那条
+#: 「候选集该绑哪一组的口径只有一份」。
+from .context import label_hit
+
 #: 「在说当前这份候选」的**词表通道**。另有一条更硬的**名字通道**见
 #: `_has_reference`——用户直接说出候选项的名字，那是比任何指示词都强的引用信号。
 _REFERENCE_RE = re.compile(
@@ -66,6 +71,31 @@ _SUPERLATIVES: tuple[tuple[re.Pattern[str], str, bool], ...] = (
     (re.compile(r"评分最低|最低分|分最低|评价最差"), "rating", False),
     (re.compile(r"最近|离(?:我|这)?最近|距离最近"), "distance", False),
     (re.compile(r"最远|距离最远"), "distance", True),
+)
+#: **跨组比较算子**（I-030）：`(比较问句, 维度, 取最大?, 说法)`，按声明序求值。
+#:
+#: 它与 `_SUPERLATIVES` 是两张表、故意的：那张问「**这一组里**哪个最…」，
+#: 这张问「**这几组各自那一项**里哪个更…」。比较级（「哪个更贵」）在单组里
+#: 本来就该由最值算子回答，而在跨组里它才是主要说法。
+#:
+#: ⚠ **只在句子点名了 ≥2 组时求值**——这是本表误伤面不扩大的全部理由：
+#: 它要求的条件比现状**更严**（要有两个组标签 + 每组各点到恰好一项），
+#: 而不是又放宽一道口子。单组句子命中这张表也拿不到答案，照常进 Planner。
+_COMPARATIVES: tuple[tuple[re.Pattern[str], str, bool, str], ...] = (
+    (re.compile(r"哪(?:个|家|款|杯|份|一个|一款)?更?贵|哪(?:个|家|款|杯|份)?价(?:格|钱)高"),
+     "price", True, "更贵"),
+    (re.compile(r"哪(?:个|家|款|杯|份|一个|一款)?更?(?:便宜|划算|省钱)|"
+                r"哪(?:个|家|款|杯|份)?价(?:格|钱)低"), "price", False, "更便宜"),
+    (re.compile(r"哪(?:个|家|款|杯|份|一个)?(?:的)?评分(?:更)?高|哪(?:个|家)?分(?:更)?高|"
+                r"哪(?:个|家)?口碑(?:更)?好"), "rating", True, "评分更高"),
+    (re.compile(r"哪(?:个|家|一个)?(?:更)?近|哪(?:个|家)?距离(?:更)?近"),
+     "distance", False, "更近"),
+    (re.compile(r"哪(?:个|家|一个)?(?:更)?远|哪(?:个|家)?距离(?:更)?远"),
+     "distance", True, "更远"),
+    (re.compile(r"哪(?:个|家|一个)?关(?:门|店)?(?:更)?晚|哪(?:个|家)?(?:更)?晚关"),
+     "closing", True, "关得更晚"),
+    (re.compile(r"哪(?:个|家|一个)?关(?:门|店)?(?:更)?早|哪(?:个|家)?(?:更)?早关"),
+     "closing", False, "关得更早"),
 )
 #: 合计型。**必须有合计词**——「巨无霸多少钱」是单品查询不是求和。
 _TOTAL_RE = re.compile(r"一共|总共|共计|合计|加起来|加一起|加在一起|总价|总额|总金额")
@@ -261,6 +291,121 @@ def _ordinal_pick_answer(text: str, items: list[dict]) -> str | None:
     return None
 
 
+def _group_slices(text: str, groups: list[dict]) -> list[tuple[dict, str]]:
+    """按各组标签出现的位置把原话切成「这一段在说这一组」（I-030）。
+
+    「麦当劳的第二个和瑞幸的第二个哪个贵」→
+    `[(mcd 组, "麦当劳的第二个和"), (luckin 组, "瑞幸的第二个哪个贵")]`。
+    序数**归属最近的前一个标签**——不切段而在整句里找序数，就会把两个「第二个」
+    都塞给同一组，那正是这条通道要修的错。
+
+    ⚠ **同位置只留最新那一组**：「附近的麦当劳」→「看看菜单」会产生两个都叫
+    「麦当劳」的组，它们指的是同一家的两份东西。留两份会切出一个空段，
+    读起来像「跨组」其实不是。
+    """
+    at_group: dict[int, dict] = {}
+    for entry in groups:
+        at = label_hit(text, entry)
+        if at is not None:
+            at_group[at] = entry            # 后来的（更新的）覆盖同位置的旧组
+    marks = sorted(at_group.items())
+    return [(entry, text[at:(marks[i + 1][0] if i + 1 < len(marks) else len(text))])
+            for i, (at, entry) in enumerate(marks)]
+
+
+def _cross_group_picks(
+        text: str, groups: list[dict]) -> tuple[list[tuple[str, dict]], str | None]:
+    """每个被点名的组各自点到的那**一项** → `([(组标签, 候选项), ...], 越界话术)`。
+
+    **任一组点不到恰好一项就整句放弃**（返回空）。跨组的错比单组贵：它会把
+    两家的东西比成一家的，而话术里两个名字都在、看起来毫无异常
+    ——同 `candidate_ref` 那条「命中多项一律不动」。
+
+    ⚠ **越界与「点不到」是两件事，出口也不同**（同 `_ordinal_pick_answer` 那条）：
+    「第十五个」是一个**明确的**引用，只是我们跟不到那么远 ⇒ 诚实说系统记得多少；
+    「麦当劳和瑞幸的第二个」是我们分不清他在说哪一项 ⇒ 不劫持，交回 Planner。
+    把前者也返回 None，就是把一个明确的问题交回 LLM 去编。
+    """
+    out: list[tuple[str, dict]] = []
+    for entry, segment in _group_slices(text, groups):
+        items = [it for it in (entry.get("items") or []) if isinstance(it, dict)]
+        ordinals = _ordinals(segment)
+        if len(ordinals) == 1 and ordinals[0] > len(items):
+            label = str(entry.get("label") or "")
+            return [], (f"{label}那份我这边只跟到第 {len(items)} 项，"
+                        f"第 {ordinals[0]} 项够不着——你把名字说给我，我直接查。")
+        hit = [items[i - 1] for i in ordinals if 0 < i <= len(items)]
+        if not hit:
+            hit = _named(segment, items)
+        if len(hit) != 1:
+            return [], None
+        out.append((str(entry.get("label") or ""), hit[0]))
+    return out, None
+
+
+def _cross_group_answer(text: str, groups: list[dict]) -> str | None:
+    """跨组比较 / 跨组合计（I-030）→ 确定性话术，或 None（不劫持）。
+
+    **算子闸排在解析之前**是判据不是顺序：先确认这句话确实在问「哪个更…／一共」，
+    才谈得上把它拆成两组引用。反过来做会让「麦当劳的第十五个和瑞幸的第二个」
+    这种**没有算子**的句子也被越界话术接管——那是把误伤面往回放宽。
+
+    话术把**两边的数都念出来**再给结论：跨组结论只有一个词（「更贵」），
+    用户没法核对它是不是拿对了组——而拿错组恰恰是这条通道要修的病。
+    """
+    compare = next(((dim, want_max, phrase)
+                    for pattern, dim, want_max, phrase in _COMPARATIVES
+                    if pattern.search(text)), None)
+    total = bool(_TOTAL_RE.search(text) and _TOTAL_DIM_RE.search(text))
+    if compare is None and not total:
+        return None
+    picks, overflow = _cross_group_picks(text, groups)
+    if overflow:
+        return overflow
+    if len(picks) < 2:
+        return None
+    return (_compare_answer(picks, *compare) if compare
+            else _cross_total_answer(picks))
+
+
+def _cross_render(picks: list[tuple[str, dict]], dim: str) -> str:
+    return "、".join(
+        f"{label}的「{it.get('name')}」{_render(dim, dimension_value(it, dim))}"
+        for label, it in picks)
+
+
+def _missing_answer(picks: list[tuple[str, dict]], dim: str, verb: str) -> str:
+    missing = [f"{label}的「{it.get('name')}」" for label, it in picks
+               if dimension_value(it, dim) is None]
+    return f"{'、'.join(missing)}没带{_DIM_NOUN[dim]}，这个我{verb}不了。"
+
+
+def _compare_answer(picks, dim: str, want_max: bool, phrase: str) -> str:
+    if any(dimension_value(it, dim) is None for _, it in picks):
+        return _missing_answer(picks, dim, "比")
+    values = [dimension_value(it, dim) for _, it in picks]
+    body = _cross_render(picks, dim)
+    if len(set(values)) == 1:
+        # 相等时说「一样」，**不点名**——把两个名字都塞进「更贵」读起来像是
+        # 系统选出了赢家，那是用一句确定的话说错一件事。
+        return f"{body}——两边{_DIM_NOUN[dim]}一样。"
+    best = max(values) if want_max else min(values)
+    head = "、".join(f"「{it.get('name')}」" for (_, it), v in zip(picks, values)
+                    if v == best)
+    return f"{body}——{head}{phrase}。"
+
+
+def _cross_total_answer(picks) -> str:
+    """跨组合计。用 ` + ` 而不是顿号连接，与单组 `_total_answer` 同款：
+    **算式要能被用户当场核对**，这是确定性回答该有的样子。"""
+    if any(dimension_value(it, "price") is None for _, it in picks):
+        return _missing_answer(picks, "price", "算")
+    priced = [(label, str(it.get("name") or ""), dimension_value(it, "price"))
+              for label, it in picks]
+    parts = " + ".join(f"{label}的「{name}」{v:.2f}" for label, name, v in priced)
+    return f"{parts}，一共 {sum(v for _, _, v in priced):.2f} 元。"
+
+
 def _has_reference(text: str, items: list[dict]) -> bool:
     """这句话在引用当前那份候选吗。两条通道取或：
 
@@ -292,12 +437,23 @@ def is_candidate_aggregate_question(text: str,
     return bool(_TOTAL_RE.search(t) and _TOTAL_DIM_RE.search(t))
 
 
-def answer(text: str, entry: dict | None) -> str | None:
+def answer(text: str, entry: dict | None,
+           named: list[dict] | None = None) -> str | None:
     """→ 确定性话术，或 None（=不劫持，照常进 Planner）。
 
-    `entry` 是 `context.newest_candidate_set(focus, allow_fallback=True)` 的返回
+    `entry` / `named` 都来自 `context.resolve_candidate_scope(text, focus)`
     ——**候选集该绑哪一组的口径只有一份**，这里不发明第二套。
+    `entry` 是主组（零命中时就是 `newest_candidate_set`，行为逐字同旧），
+    `named` 是句子**点名了的**那几组，只有它 ≥2 时才谈得上跨组（I-030）。
+
+    跨组排在单组**之前**：一句话点名了两组，就不该由其中一组独自回答
+    ——那正是 I-030 那个「答出另一家的真商品真价格」的形态。
     """
+    groups = [g for g in (named or []) if isinstance(g, dict)]
+    if len(groups) >= 2 and not _NEW_SEARCH_RE.search(str(text or "")):
+        got = _cross_group_answer(str(text).strip(), groups)
+        if got:
+            return got
     items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
     if not items:
         # 零候选那一支由 I-052 那条守卫兜（它管的是「引用了却没有」），
