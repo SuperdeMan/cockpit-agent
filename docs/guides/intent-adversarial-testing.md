@@ -22,7 +22,7 @@
 
 | 证据 | 当前口径 |
 |---|---|
-| L0 discovery | **85/85**；**649 条 / 610 唯一输入**（2026-08-19 卡 Q8 六条能力，上界 610 **恰好用满**） |
+| L0 discovery | **85/85**；**653 条 / 614 唯一输入**（2026-08-20 person-pickup 跨域边界裁定 +4，上界 614 仍**恰好用满**；语料上界与实数以 `suites.yaml` 头部为准） |
 | gate 规模 | **139 stable / 129 唯一输入**；L0 strict **25/25，exit 0** |
 | DeepSeek 对比/参考 gate | **147/147**（`f0af9c0`）：L0 25、L1 117、L2 4、L3 1；L1/L2 各 **2 个独立进程 × 每进程 3 样本**；正式 baseline `eligible=True` |
 | MiniMax 主模型 gate | **141/147**（`32e8718`）；exact **116/121**、required **99/103**；raw 幻觉 **3/121**、校验后逃逸 **0/121**；不稳定 **4/121**；`pass 141 / unstable 4 / stable_fail 2`；`eligible=False` |
@@ -30,7 +30,7 @@
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（claim `adaptive_replan_continuity`）两趟各 **1/1**，其 case 仍 `reviewed`、不进 gate 选集 |
 | 工具通道（协议层，可跨 provider 比） | 走成 `toolcall` 的比例是 **provider 属性**：MiniMax **45~48%**、DeepSeek **100%**（35 样本零掉档，p≈0.0002）。⚠ 那组 MiniMax 数是 **`PLANNER_TOOLCALL_SALVAGE_RETRY=off` 口径**；2026-08-10 起默认 **on**，gate L1 双臂实测 **51.3% → 85.5%**（+34.2pp，p=2.3e-08，重试成功率 ≈70%，墙钟 +38.5%，findings §26.5）。读任何落域数前先看 `meta.plan_modes`（§23/§24） |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 0；MiniMax **11/122**，其中未声明 **2** |
-| 回归 | `orchestrator/` **1184 passed**、`pytest test/` **1139 passed / 9 skipped**；端侧 smoke **13/13**；项目根全量 **4601 passed / 14 skipped / 0 failed**（2026-08-10 夜实测，18m49s） |
+| 回归 | `orchestrator/` **1184 passed**、`pytest test/` **1139 passed / 9 skipped**；端侧 smoke **13/13**；项目根全量 **4601 passed / 14 skipped**（2026-08-10 历史读数）——⚠ **全量基线不属于这把尺子**，当前数一律看 `AGENTS.md` §4.0（2026-08-22：6902/32） |
 
 ⚠ **MiniMax 三批 141/141/140 都不是同一批红灯。** `f0af9c0` 点名的 6 条 unstable 在
 `32e8718` 全部转绿，红灯换成另一批边界单元（其中 5 条单跑 10 样本全绿）；`5e8247d`

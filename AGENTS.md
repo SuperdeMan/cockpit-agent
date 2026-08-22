@@ -3,6 +3,12 @@
 > 你（开发者或 AI 协作者）接手本项目时**先读这一份**。它告诉你：项目是什么、铁律、现在真实进展到哪、第一步做什么、改完怎么自检。
 > 工程约定的最高权威是 [`CLAUDE.md`](CLAUDE.md)；架构唯一真相源是 [`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md)。本文件与它们冲突时以它们为准。
 
+> 🧭 **只想知道「现在做什么」**：直接跳 **§4.1 的「接手入口」挑选表**（搜 `#### 接手入口`）。
+> 探索式 QA 轮已**全部收口**，因此**没有默认的「下一个」**——那张表逐条写清了每个候选
+> 「为什么现在能做 / 不能做」，**挑一个再开工，别按顺序往下扫**。
+> 开工前的固定动作（先确认档位 `target show`、跑全量的固定口径）在同一节。
+> §4.0 是当前快照（部署形态 / 测试基线 / 各类读数），**引用任何数字前先看它的日期**。
+
 ---
 
 ## 1. 30 秒了解项目
@@ -153,7 +159,7 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 同组 precedence / groups 不许部分重叠；`test_merchant_luckin.py` **+9**：真机形状的规格
 正面路径 5 + 拒绝话术带可选项 1 + 组缺席诚实拒绝 1 + 单候选门店正反 2）/
 runtime **+4**（`test_slot_fidelity.py` 契约外槽位正反四条）/ 其余不计数。
-上一跳基线 6865/32（person-pickup 批）。
+对账链：**6902**（08-22 复验批）← 6897（08-21 规格值域批）← 6865（person-pickup 批）← 6786（第 8 步）。
 
 > ⚠ **那条「73 vs 32」的差额归因写了三版，前两版都错，2026-08-21 把成因直接修掉了**
 > （`_git_bash` 按 `parents[1]` 找 Git Bash，换个 shell 就算错 ⇒ 整族 skip）。
@@ -214,7 +220,7 @@ G4 主题行程检索步 / G9 跨城市 / G7 陈述 vs 请求台账（§36）；
 
 当前对标状态一句话：时间约束（到达时限 + 事件反推用餐窗）、真沿途、多城保序与归城校正、
 模糊目的地推断、记忆六维消费（subject/polarity/轨迹/路线偏好/口味/无障碍）均**真栈在案**；
-对抗语料 **614 唯一输入**（上界 614，余量 0）、catalog **151 条**、架构 **v1.34**
+对抗语料 **614 唯一输入**（上界 614，余量 0）、catalog **151 条**、架构 **v1.35**
 （该行的 v1.26 是 EVA 批时点读数，2026-08-16 随 QA 轮 Q6/Q10/Q5 与 Q12 两跳补齐、
 2026-08-17 随 Q7 残余到 v1.29——新增 **§5.2.4 省略式开关的确定性消解**；
 2026-08-19 随 Q2 残余到 v1.30——新增 §5.2.5 候选集上的聚合问答；
@@ -267,7 +273,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | 全量基线见本节顶部（**6897 / 32**，2026-08-21 根跑实测、`target=cloud` + 本地 Docker 已退；起本地栈时 skip 会少 9 条 Redis 集成，见「跑全量的固定口径」）；分套件最近实测（2026-08-20 person-pickup 批：navigation **167**、memory **265**；其余为 2026-08-19 第 8 步读数）：`orchestrator/cloud` **976**（+7：clarify_resume 3 / `_route_session_end` 同轮正反 2 + **跨轮 2**）/ edge **796**（+34：金标表 VAL 校验断言与两行新金标、对象语料 VAL 校验）/ nearby **99** / navigation **167**（+26：接送句形/兜底/别名/就近合理性 + 校园锚词）/ trip **85** / mcp-bridge **545**（2026-08-22 复验批 +5：选品续跑 4 / 规格槽跨跳保真 1；2026-08-21 +28：规格值域契约门禁 19 / 真机形状正面路径 7 / 单候选门店正反 2）/ memory **265**（+4：占位与具名归一，含两条反向对照）/ chitchat **62** / reminder **164**/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**309 条 / 22 域**，2026-08-20 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **151 条 / 13162 字符**（2026-08-19 卡 Q8 +6：云侧 `navigation.estimate`/`navigation.cancel` + 端侧 `volume.mute`/`volume.unmute`/`warning_light.open`/`.close`；余量 16000−13162=**2838**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **84 条**（vehicle 80 + media 4——`volume.mute/unmute` 与 `warning_light.open/close` 都从 `commands.yaml` 的 `edge_intents` 派生，进的是 vehicle 那一半）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | 全量基线见本节顶部（**6902 / 32**，2026-08-22 根跑实测、`target=cloud` + 本地 Docker 已退；起本地栈时 skip 会少 9 条 Redis 集成，见「跑全量的固定口径」）；分套件最近实测（2026-08-20 person-pickup 批：navigation **167**、memory **265**；其余为 2026-08-19 第 8 步读数）：`orchestrator/cloud` **976**（+7：clarify_resume 3 / `_route_session_end` 同轮正反 2 + **跨轮 2**）/ edge **796**（+34：金标表 VAL 校验断言与两行新金标、对象语料 VAL 校验）/ nearby **99** / navigation **167**（+26：接送句形/兜底/别名/就近合理性 + 校园锚词）/ trip **85** / mcp-bridge **545**（2026-08-22 复验批 +5：选品续跑 4 / 规格槽跨跳保真 1；2026-08-21 +28：规格值域契约门禁 19 / 真机形状正面路径 7 / 单候选门店正反 2）/ memory **265**（+4：占位与具名归一，含两条反向对照）/ chitchat **62** / reminder **164**/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**309 条 / 22 域**，2026-08-20 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **151 条 / 13162 字符**（2026-08-19 卡 Q8 +6：云侧 `navigation.estimate`/`navigation.cancel` + 端侧 `volume.mute`/`volume.unmute`/`warning_light.open`/`.close`；余量 16000−13162=**2838**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **84 条**（vehicle 80 + media 4——`volume.mute/unmute` 与 `warning_light.open/close` 都从 `commands.yaml` 的 `edge_intents` 派生，进的是 vehicle 那一半）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -297,7 +303,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 | 候选 | 为什么现在能做 / 不能做 | 入口 |
 |---|---|---|
-| **I-030 跨组比较**（Q2 残余）| **可以直接开工，影响面也最清楚**（三条残余里 Q12 在等 B6 字段、I-024 要先量影响面，只有它两样都不欠）。`candidate_query` 与桥侧消费方都只读**最新那一组**候选集；跨组要先有「哪一组」的指代解析（「麦当劳的第二个」vs「瑞幸的第二个」），是**独立能力**不是补丁 | 下方 ① Q2 行、契约 §9.27/§9.28、history §58.6 |
+| **I-030 跨组比较**（Q2 残余）| **可以直接开工，影响面也最清楚**（另一条残余 I-024 要先量影响面，它不欠这一样；~~Q12 在等 B6 字段~~ 那条已于 2026-08-21/22 收口）。`candidate_query` 与桥侧消费方都只读**最新那一组**候选集；跨组要先有「哪一组」的指代解析（「麦当劳的第二个」vs「瑞幸的第二个」），是**独立能力**不是补丁 | 下方 ① Q2 行、契约 §9.27/§9.28、history §58.6 |
 | **I-024 门店侧**（Q10 残余）| **可以开工但影响面要先量**：门店选项卡是 `NEED_SLOT` 结果，而 `extract_focus` 只从**成功步**抽候选 ⇒ 门店候选集根本不存在。放宽抽取影响面远超本卡，**动之前先枚举谁在读候选集** | 下方 ① Q10 行、契约 §9.28「三条边界」 |
 | **多意图复合句被单域吞掉**（2026-08-20 新立）| **可以开工，但别再逐句补范例**——person-pickup 迷你集最后剩的 4 次红全在这一族（mcd/trip/闲聊各自吞掉整轮）。要换判定形态（多意图是不是被完整覆盖），同「裸对象澄清族」那条 | §4.2 该行、卡 §6.7、history §64.6 |
 | **`memory_item` supersede 信息衰减**（同日新立）| **等第二个可复现实例**。实据只有一条链（`person.child` 四跳越记越少），而修法要先分清「事实被更精确地重述」与「偏好发生了变化」——**偏好类就该新的赢**，不能直接搬关系边那条规则 | §4.2 该行、卡 §6.8、history §64.7 |
@@ -329,12 +335,15 @@ I-024 门店侧**（Q12 规格维 2026-08-21 收口、08-22 真栈复验 9/9 通
 | **3 T2 语义与真实性** | ✅ **主体完成** | Q13 ✅ / **Q2 ✅（载体 + 确定性消费方 §58 + 下发面 §61）** / **Q7 ✅ 三维度全收口** / Q5 ✅ / **Q10 ✅ 四块（双入口收敛 §61）** / **Q6 ✅** / **数据清洗 `--apply` ✅** / **Q12 ✅ 主体**。残余三条各有独立成因（Q12 规格维 / Q10 门店侧 / I-030），见下表；⚠ 同批掀开的**记忆语义召回失效**已于当日插队修完（§59）|
 | 4 T3 能力面与长尾 | ✅ **完成** | **Q11 ✅**（写入闸/否定守卫 §47 + **offer 准入 §63**）；**Q8 ✅ 四块**（方向盘 / 双闪 / 静音 / `navigation.estimate`+`origin`）；**P2 长尾 ✅ 五条**（I-022/I-033/I-057/I-017/I-031）。流水 history **§63**。⚠ 本批新记一条账：I-033 的**跨轮追问**未做（需会话级数据源账本，独立一卡）|
 
-**逐卡状态与接手入口**（新会话从这张表开始；每张卡的落点、判据、读数在
+**逐卡终态**（**新会话不从这张表开始**——从上方的接手入口挑选表开始；这张表用来
+回答「某张卡当时是怎么裁的、读数在哪」。每张卡的落点、判据、读数在
 [卡 §4 的各「实施记录」段](docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)，
 流水在 history §42–§53，**这里只留状态与残余**）：
 
-> ⚠ **表按「接手顺序」排，不按卡号。** ~~第一行就是下一个该动的~~ ——**2026-08-19 第 8 步收口后这句话不再成立**：编号序列已走完，分隔行以上剩的两行（Q12 规格维 / Q5 实体归一）**都不是「下一个动手」的对象**（前者等 B6 远期字段、后者跟着 person-pickup 卡走）。按这张表自己的判据——**主张失效了就改主张，不是补一句说明**——这一行改成：**分隔行以上=还没做完的，分隔行以下=只作查证入口；真正的「下一个」见 §4.1 ② 与 §4.2**。
-> 洁癖整理三次：第一次（08-16）把未完成的挪到上面；**第二次（08-16，Q12 收尾）按接手顺序
+> ⚠ **这张表已经没有「下一个」了——整张只作查证入口。** 2026-08-22 起 QA 轮逐卡**全部 ✅**，原来那条「以下已收口」的分隔行因此被删掉：**一个只有一侧有内容的分隔符是噪声**。行序是历史接手顺序的残留、**不再有含义**，按卡号 Ctrl+F 找即可。
+> **「下一个做什么」看上方的接手入口挑选表**（那里才是活的）。
+> 这一行的主张改过三轮，每一轮都是被表自己的内容打脸后改的——留在这里当判据：**表的排序/分区本身就是它的主张，主张失效了就得改，不是补一句说明。**
+> 洁癖整理**十次**，逐次判据（只进不出，排新卡时照着做）：第一次（08-16）把未完成的挪到上面；**第二次（08-16，Q12 收尾）按接手顺序
 > 重排，并把 Q8 从第一行挪到未完成项的最后**——它是**叶子**（不解锁任何别的卡），
 > 而 Q2 残余是三条卡的**共同前置**却原本排在它后面。**前置排在叶子后面是排序 bug。**
 > 第三次（**2026-08-17，Q7 残余收口**）把 Q7 移入已完成区，**Q2 残余升到第一行**。
@@ -357,14 +366,17 @@ I-024 门店侧**（Q12 规格维 2026-08-21 收口、08-22 真栈复验 9/9 通
 > 留痕一句：它在这张表上挂着「等 B6 §4 的 `input_schema` 远期字段」等了五天，而真机一扫，
 > **那个字段要表达的东西早就以更差的形式存在了**（一张藏在实现里、从没和真机对过的猜表）。
 > **判据：接手一条「等某个字段」的待办时，先问那个字段要表达的东西现在是不是已经存在了。**
-> ⇒ **下一个动手的不在这张表里，也不在 §4.1 ② 了**（那些卡都已收口）：见 §4.1 ① 的
-> **I-030 跨组比较**、上方挑选表的 **Q12 真栈复验**、§4.1 ③ 支付余项，
+> 第十次（**2026-08-22，Q12 真栈复验 9/9 通过**）：**分区本身被删掉了**。
+> 上一次（第九次）我把上半区清空、却把分隔行留着，还在留痕里指向「上方挑选表的
+> **Q12 真栈复验**」——而那一行随复验通过也已删除。⇒ **清空一个分区之后，
+> 分区就该跟着消失**；留着它等于让读者去一个永远为空的地方找东西，
+> 而指向它的那句话就是下一个坏链。
+> ⇒ **下一个动手的不在这张表里**：见上方**接手入口挑选表**（I-030 跨组比较 /
+> I-024 门店侧 / 多意图复合句 / `memory_item` 衰减 / 支付余项），
 > 与 §4.2 条件待办索引。
-> **判据：这张表的排序本身就是它的主张，主张失效了就得重排，不是补一句说明。**
 
 | 卡 | 状态 | 残余（**接手要做的就是这一列**） |
 |---|---|---|
-| ── 以下已收口，只作查证入口 ── | | |
 | **Q12 槽值保真** | ✅ 完成（2026-08-21 规格维收口）| 原话回查（时间维）+ 中文时间词收敛（history §52）；**规格维 2026-08-21 收口**（history §65）——卡上「等 B6 `input_schema` 远期字段」的定性被真机推翻四处：planner **没有丢词**（3/3 填对），三个规格槽是**值域声明本身猜错了**（`ice` 查的「冰量」组在瑞幸不存在，冰档位是「温度」组的取值）⇒ 结构性死亡两个多月。修法=`input_schema` 落 `servers.yaml`（唯一声明）+ 真机台账单向门禁 + 删 `_SPEC_GROUPS` + 补 `size` 槽。**2026-08-22 真栈复验通过**（`--group spec` **9/9 全 `[det]`**）——复验本身又掀开一条：**选品那一跳整条链是断的**（`_product_choices` 不留上下文，用户点了商品之后门店与规格全丢），正是 I-025② 原文「卡片点击才生成生椰拿铁」那句话。已一并修掉（history **§66**）。**本卡零残余。**|
 | Q5 身份/作用域/记忆写入 | ✅ **全部收口**（出处披露 §51 + **实体归一 2026-08-20 §64**）| ① 出处披露 **✅ 0/3 → 3/3**（`agents/chitchat/src/mem_source.py` 确定性追加，history **§51**）。⚠ 汇总行是 `[var]` 不是 `[det]`，**这是预期的**——主张的是「出处确定性」不是「整句确定性」。② 实体归一 ✅ **2026-08-20 随 person-pickup 卡一并收口**（泓舟逐条裁定：孩子≡女儿·学校=深圳市南山实验小学 / **妈妈=苏州、岳母才是杭州** / 补城市 + 删济南轨迹 / 清 16 条陈旧会话情景族）。**代码侧还各修了一处**——`resolve_person_place` 把匿名占位边与具名边数成两个人（一跳解析对该称谓永久失效），以及 `memory_item` supersede 按新旧让 `person.child` 四跳越记越少。history **§64** |
 | **Q8 能力缺席** | ✅ **四块全收口**（2026-08-19 第 8 步，history **§63**）| 补齐 `navigation.estimate`（只算不导）/ `navigation.cancel`（终止本次导航，I-017）/ `volume.mute`+`unmute` / `warning_light`（双闪独立对象）/ 方向盘加热与高度打通 / `navigate_to`+`estimate` 的 `origin` 槽。⚠ **取证改了四处定性**：方向盘是「两个产出方给出不同形状的 VAL 命令 + 门禁跳过校验那一段」不是缺入口；双闪是生成器 family 表把它并进 headlight，真栈三次分别落 `power_mode.set`/`lane_assistance.close`/**`hvac.off`**；静音落 `volume` 不是卡上的 `media`；`is_standalone_cancel` 的过捕获比卡上宽得多（**取消导航/订单/提醒/播放**整族被吞）。**架构 §5.2.7 / 契约 §9.29** |
@@ -526,7 +538,7 @@ history **§65**）、§4.1 ③ 支付余项，与 **§4.2 条件待办索引**�
 | 裸对象澄清族（**已知无解状态，不是待办**；⚠ **B6 shadow 已给出第四条路，见上一行**） | **三条路径已全部走完，该族目前无可用修法。** `nq.landmark.bare` 合并 11/20≈55% 的高方差边界句；`nq.landmark.explicit` 自己每条断言都过、被 relation `clarify_flip` 连累；同族第三条 `nq.city.bare`「上海」reviewed 未进池。路径 1「写 guide」实测**有害**（§18：4/10→1/10→退回 7/10，p≈0.02）；路径 3「换出预选池」执行并全量验证后由泓舟裁定回退（§19.5）；**路径 2「范例 schema 加 clarify 型」2026-08-10 已实现并合入**（schema+渲染+门禁+契约+11 条测试），但同批实测出它**治不了本族**：裸专名之间 IDF-Dice 全 0.000（检索是内容通道，而裸对象澄清是**形态判据**——这也解释了路径 1 为何有害），且澄清型范例天然与其「补全版」近重复（两条候选一条抢到明确请求 top-1、一条只靠 0.03 差距，全部撤回，**故仓库刻意没有 clarify.yaml**）。**下一次要动它得换判定形态（形态/句法特征），不是再加一层检索式知识** | 立卡整段写在语料 `test/eval_corpus/intent_adversarial/cases/negation_quotation.yaml` 的 `nq.landmark.bare` 头上；[findings §18/§19/**§25**](docs/design/2026-08-02-intent-routing-adversarial-findings.md)；机制契约 [`skills/exemplars/README.md`](skills/exemplars/README.md) §clarify 型 |
 | B3-2「广州塔」地标解析（高德侧） | **不进落域账**。2026-08-10 同坐标直连复测：geocode 对（兴趣点／广州塔真坐标）、`near=None` 重搜 top1 就是广州塔，只有带深圳偏置的关键词搜索会顶出「广州仄仄科技有限公司」2.4km。即 R1 去偏置重搜机制本身是对的，但它**要多打一次高德**，跑批并发下正是最易被限流的那一次；掉一次退回就近弱匹配，掉两次成「暂时无法确定」——两次红的两种形态由此解释。归高德 QPS 一族，出现真实用户投诉或做并发治理时再启动 | [复杂意图·地标/停车](docs/design/2026-07-07-complex-intent-landmark-parking-fixes.md)、判据与复测记在 `test/journeys/target_b.yaml` B3-2 注释 |
 | `e2e_verify` 案例①：**前提变了不是修坏了** | 2026-08-11 全新重建的干净栈上 5 条红，**逐条定性为测试前提失效**，不是回归。该用例的前提写在它自己的注释里——「单句『打开空调』被端侧快路径直接执行，**必须用混合多意图句**才能规划出云侧 hvac 步」。2026-08-11 实测：混合句「帮我把空调打开，再查一下附近有什么好吃的」的 `route.mixed` span 记着 `local_actions:1`，**端侧把 hvac 那半自己执行了**（`val.execute`），云侧只剩 `nearby.search`——于是 `state_match` 那两条断言恒不可能满足。另两条 `schema` 断言失败是**测试查的 trace 与实际落的 trace 不是同一个**（按文本直查该 trace，`step.verify{mode:schema,verdict:sat}` 明明在），第 5 条是前四条的连带。**对账链本身是好的**（案例②/③ 全绿）。修它要先决定断言该指向什么（换一句仍能规划出云侧车控步的话术 / 或改测端侧 VAL 面），属独立一卡；B5/B6 结构上不可能造成它——那个决定发生在云端被调用之前 | 证据：本条 + `test/e2e_verify.py` 案例①注释、history §27.6 |
-| **云端 shell 故障注入用例只在 Windows 跑**（2026-08-17 CI 收口顺带发现） | `scripts/tests/test_cloud_deploy_assets.py` 里 **41 条** 经 `_git_bash()` 起 shell 的用例，只找 `bash.exe`（Windows 路径），**Linux 上一律 `pytest.skip` ⇒ 它们在 CI 里从来没跑过**，只在泓舟这台机器上跑——守 `remote-data-migration.sh` 失败路径的那批断言，CI 是不设防的。⚠ 修它要先决定用哪个 shell：Linux runner 上 `/bin/bash` 就在，但 `_run_cloud_bash` 现在的 argv/引号形态是按 Git Bash 调的（同 `run_go_tests.ps1` 那次的判据：**要问「怎么传参」而不是「什么系统」**），**换 shell 要重新验参数传递**，不是把 `bash.exe` 改成 `bash` 就完 | 本行 + `scripts/tests/test_cloud_deploy_assets.py::_git_bash`、history **§54.7** |
+| **云端 shell 故障注入用例只在 Windows 跑**（2026-08-17 CI 收口顺带发现；2026-08-22 修掉了其中一半） | `scripts/tests/test_cloud_deploy_assets.py` 里 **41 条** 经 `_git_bash()` 起 shell 的用例，只找 `bash.exe`（Windows 路径），**Linux 上一律 `pytest.skip` ⇒ 它们在 CI 里从来没跑过**，只在泓舟这台机器上跑——守 `remote-data-migration.sh` 失败路径的那批断言，CI 是不设防的。✅ **2026-08-22 修掉的那一半**：候选原本固定取 `Path(which("git")).parents[1]`，于是**同一台 Windows 机器换个 shell 就整族 skip**（PowerShell 下 PATH 暴露 `<GitRoot>/cmd/git.exe` 算得对，Git Bash 下暴露 `<GitRoot>/mingw64/bin/git.exe` 算错）——这正是全量 skip 数在 32/73 之间跳、被记错两次的那个差额（history **§65.6**）。改成逐级向上找 `bin/bash.exe` 后两个 shell 一致。**剩下的那一半（Linux/CI 仍不跑）没动。**⚠ 修它要先决定用哪个 shell：Linux runner 上 `/bin/bash` 就在，但 `_run_cloud_bash` 现在的 argv/引号形态是按 Git Bash 调的（同 `run_go_tests.ps1` 那次的判据：**要问「怎么传参」而不是「什么系统」**），**换 shell 要重新验参数传递**，不是把 `bash.exe` 改成 `bash` 就完 | 本行 + `scripts/tests/test_cloud_deploy_assets.py::_git_bash`、history **§54.7** |
 | **会话级数据源/降级账本**（I-033 的跨轮追问，2026-08-19 第 8 步新记） | **启动条件：出现第二个消费方**。本批已交付「本轮披露」那一半——体育结构化源回落通用检索时话术点名 vendor、卡片 `_prov` 打 `degraded`（契约 §9.3）。**没做的是跨轮**：用户下一句问「哪个数据源失败了」时，系统手上仍然没有可查的事实，只能让 LLM 猜（真栈实测它把方向说反成「联网检索不可用」）。修法形态与 Q6 执行账本同族——**「这一轮用了谁、降级没降级」得像动作一样入账**，而不是只活在这一轮的卡片上。⚠ 别在披露那一层继续加话术：**话术层判据验证不了「说的是不是真的」**（Q6 那批四版尺子前三版都假绿，同一条判据）。 | 本行 + history **§63.4/§63.7** + `agents/info/src/handlers/sports.py::_mark_sports_degraded` 的 docstring（覆盖面写在那里）|
 | **`memory_item` 的 supersede 让同一件事越记越少**（2026-08-20 person-pickup 批新记）| **启动条件：出现第二个可复现实例，或 typed Executor / 记忆质量成主要矛盾**。实据是一条 `person.child` 链四跳：「用户的女儿在**深圳市**南山实验小学上学」→「用户有孩子，孩子在上学」→「用户的女儿叫小雨」→「用户有一个女儿」（live）——**每一跳都用更少的信息取代更多的信息**，而正是它把无城市的槽值喂给了 planner。关系边侧 2026-08-16 定的是**相反**的规则（保留信息最全的那条，不是最新的，E5 那次 dry-run 教的），`memory_item` 侧**没有对应实现**：`consolidate` 只按谓词等价类比新旧。⚠ **不能直接把关系边那条规则搬过来**——偏好类记忆（「以后不吃辣了」）**就该新的赢**。判据得先分清「事实被更精确地重述」与「偏好发生了变化」，这才是这一卡的真正内容 | 卡 [`…person-pickup-resolution-card.md`](docs/design/2026-08-15-person-pickup-resolution-card.md) §6.8、history **§64.7**、`memory/store.py::consolidate` |
 | **多意图复合句被单域吞掉**（同批新记）| **启动条件：出现稳定可复现的族，而不是逐句补范例**。person-pickup 迷你集 45 次取样最后剩的 4 次红全在这一族、**与人称解析无关**：mcd ×2（「想点哪一款麦当劳餐品？」——接人那半没了）、trip ×1（「已结合天气为您规划学校1天行程」，动作 `trip.plan`）、闲聊式应答 ×1（不发动作也不给教学问）。⚠ **本批刻意不继续加范例**：已经加了两条接送句形，再按句形逐条补就是 per-utterance 调参了。要动它得换判定形态（多意图是不是被完整覆盖），不是再加一层检索式知识——同「裸对象澄清族」那条 | 卡 §6.7、history **§64.6** |
@@ -875,9 +887,10 @@ python scripts/dev_stack.py hmi             # 前端联调（dashboard 同理）
 | 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| **另外查一遍有没有独立脚本直接 import 它**——`pytest` 绿不代表裸跑绿：根 `conftest.py` 会替测试把仓库根挂进 `sys.path`，**独立脚本没有这个待遇**。2026-08-16 实测：`fast_intent` 加了 `runtime.polarity` 之后，§5「任何人接手都先做这个」的 `python test/smoke_edge.py` 直接 `ModuleNotFoundError`，而全量 pytest 一条红都没有。再查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类 |
 | Planner 重试/守卫规则（B5）| **先改 `orchestrator/cloud/retry_policy.py` 的表，不要在主循环里加 `elif`**；同步方案附录 A 的清单表（`test_retry_policy.py` 逐列比对，改一处不改另一处即红）；`python -m pytest orchestrator/cloud/tests -q` |
 | 中文时间词（时段/日词/中文数字/12h 修正）| **改 `runtime/cntime.py`，不要在消费方本地再写一张表**（此前三份实现给出三个答案）；`python -m pytest runtime/tests/test_cntime.py agents/_sdk/tests/test_timewindow.py agents/reminder/tests/test_timeparse.py agents/info/tests/test_weather_answer.py -q` |
-| 槽值保真 / 给 `_resolve_slot_refs` 加挂点 | `python -m pytest runtime/tests/test_slot_fidelity.py orchestrator/cloud/tests/test_slot_fidelity_wiring.py -q`——后者含**覆盖面守卫**：每个调用点必须传 `ctx`（三条执行路径 executor / D0 / T2 共用这一个收口，少传不会报错、只会让挂点在那条路上不发生）|
+| 槽值保真 / 给 `_resolve_slot_refs` 加挂点 | `python -m pytest runtime/tests/test_slot_fidelity.py orchestrator/cloud/tests/test_slot_fidelity_wiring.py -q`（同文件另有 `undeclared_slots`：**契约**比原话少一维时只观测不改值，判据零领域词）——后者含**覆盖面守卫**：每个调用点必须传 `ctx`（三条执行路径 executor / D0 / T2 共用这一个收口，少传不会报错、只会让挂点在那条路上不发生）|
 | 接送人称 / 目的地接地（person-pickup）| `python -m pytest agents/navigation/tests/test_person_destination.py agents/navigation/tests/test_dest_grounding.py memory/tests/test_relation.py -q`——三处判据各自有**反向对照断言**：给了具体地点的复合句不得被改写 / 已设置的常用地点不许被人称顶掉 / 两个具名孩子两所学校仍然是「问一句」。⚠ **动 `_DEST_CATEGORY_ANCHORS` 或 `boundaries.yaml` 之后必须再跑 `python scripts/check_intent_gate.py`**：台账每加一条裁定，`validate_boundary_coverage` 就要求**双向各 2 条**对照语料，而范例门禁 `test/eval_exemplars.py` **不查这一条**——2026-08-20 就是这么绿着提交、被全量 pytest 翻出来的 |
 | 省略式开关的确定性消解 / 执行事实进焦点（Q7 EL1-OR2）| `python -m pytest orchestrator/cloud/tests/test_execution_focus.py orchestrator/edge/tests/test_mixed_edge_executed.py -q`——含**接线守卫**（`build()` 真的走确定性路径且零 LLM）与**反向对照**（不该接管的句子仍走 LLM）。⚠ 判据里**不许出现任何对象词/领域词**，`fullmatch` 是安全边界不是写法习惯；动 `_FOCUSED_CONTROL_ELLIPSIS_RE` 后必须重跑 `test_actionability.py`（B6「只写不读」红线同族）。契约 `docs/conventions.md` §9.26 |
+| 商户规格值域 / `input_schema` 契约（mcp-bridge）| **改 `agents/mcp_bridge/servers.yaml` 一处**（槽名 + `input_schema` 条目），**不要在 `luckin.py` 里再写一张组名表**——那张 `_SPEC_GROUPS` 是照常见叫法猜的、和真机对不上两个多月（契约 §9.31）。`python -m pytest agents/mcp_bridge/tests -q`——含 `test_merchant_spec_contract.py`（**声明 ⊆ 真机台账，单向**）与选店/选品两跳的规格保真断言。⚠ **声明新组名之前先扫台账**：`python scripts/probe_merchant_specs.py --dept <id> --write --scanned-on YYYY-MM-DD`（**必须营业时段**，打烊门店取不到 `productAttrs`）。真栈复验 `python scripts/probe_qa_regression.py --group spec`——**三轮**（查店→选门店→选商品→预览），**只跑到 `need_confirm`、绝不发确认帧**（商户写要单轮人工授权）|
 | 可执行性判定特征（B6 shadow）| `python -m pytest orchestrator/cloud/tests/test_actionability.py -q`（含「特征里不许有领域词汇」的知识库派生断言）+ `python test/eval_actionability.py` 看召回/假阳性两侧。⚠ 后者是**取证脚本不是准入闸**，不在 CI blocking 里 |
 
 不要为了"让它跑起来"注释报错或加绕过标记——找根因（CLAUDE.md §6）。

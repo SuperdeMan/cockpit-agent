@@ -5,10 +5,10 @@
 ## 运行入口
 
 > 远程互斥锁固定为 `/opt/car-agent/shared/locks/release.lock`。
-> **2026-08-18 起本段入口已在真实云主机跑通**：release `34d72d7` 部署、三存储 final
+> **2026-08-18 起本段入口已在真实云主机跑通**：**首次跑通的**是 release `34d72d7` 部署、三存储 final
 > 迁移 `APPLIED`、`dev_stack status`/`verify` 与 cloud 缺省 E2E 均通过（逐条根因见
 > `docs/design/2026-08-18-*`）。仍未在真机执行过的动作只剩 `rollback`
-> ——首次部署之后还没有第二个 release 可回退，不做虚构演练。
+> ——⚠ **这句话的理由 2026-08-22 已失效**（此后已有 `e5cef21`/`032dd82`/`5c6300f`/`9bdadda` 等多个 release 可回退），**但结论仍成立**：`rollback` 至今没在真机演练过。当前 release 以 `AGENTS.md` §4.0 为准。
 
 - `status` 是只读查询，不取锁。release、rollback、backup、data migration 和 remote E2E
   共用上述锁；冲突立即失败，只报告 `release|rollback|backup|migration|e2e|unknown`

@@ -5,7 +5,7 @@
 ## 可切换真栈
 
 > **当前 `dev-stack.local` = `target=cloud`（2026-08-18 起）。** 三存储 final 迁移已
-> `APPLIED`、独立 verify 通过，云端 release `34d72d7`、30/30 容器健康，
+> `APPLIED`、独立 verify 通过，云端 release **以 `AGENTS.md` §4.0「当前部署形态」为准**（首次跑通的是 `34d72d7`，此后已多次前进）、30/30 容器健康，
 > `python scripts/dev_stack.py verify` = `verified`。切云那趟修掉的九条根因见
 > [`design/2026-08-18-cloud-switch-verification-root-causes.md`](design/2026-08-18-cloud-switch-verification-root-causes.md)，
 > 迁移 apply 的七条见

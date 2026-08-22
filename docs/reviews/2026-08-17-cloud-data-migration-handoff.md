@@ -15,7 +15,7 @@
 | 云端数据 | PostgreSQL / Redis / Collector 三存储 pre-start + post-start 取证均通过，独立 `verify` rc=0；Redis DBSIZE 55 → **3302** |
 | 云端服务 | **30 total / 30 running / 0 bad**（2026-08-18 只读复核） |
 | 云端迁移 fence | 已自动清除 |
-| 云端应用 release | `34d72d72cc1108140dfb3f37adaafae0a39eec2d`，数据迁移没有改变 release |
+| 云端应用 release | `34d72d72cc1108140dfb3f37adaafae0a39eec2d`，数据迁移没有改变 release。⚠ **此后已多次前进**（2026-08-22 为 `9bdadda`）——**实时状态以 `AGENTS.md` §4.0「当前部署形态」为准**，本表冻结在 2026-08-18 |
 | 备份 timer | `car-agent-backup.timer` 活跃，上次 08-18 00:05 CST、下次 08-19 00:00 CST |
 | Tailnet 入口 | 五个 Serve 入口（443 / 8443 / 8444 / 8445 / 8446）齐全 |
 | 开发栈目标 | 仓库根 `dev-stack.local` = **`target=cloud`** |
@@ -53,7 +53,7 @@
 - `20260817T140455Z-585537f-final`：Collector 隔离兼容副本；仅在副本按云端现行 schema
   重建 `turns`、`llm_calls` 并按字段名复制全部记录。
 - `20260817T144914Z-585537f-final`：第一次兼容迁移包；最终已恢复为 `ROLLED_BACK`。
-- `20260817T153743Z-585537f-final`：第二次 final 迁移包；当前失败现场。
+- `20260817T153743Z-585537f-final`：第二次 final 迁移包；**2026-08-17 的失败现场**（已定性并修复，见 §3 注）。
 
 第二次云端批次目录：
 `/opt/car-agent/shared/imports/20260817T153743Z-585537f-final/`。
@@ -98,7 +98,7 @@
 
 1. 读 `AGENTS.md`、本文、`docs/dev-guide.md` §8、`deploy/cloud/README.md` 的数据迁移章节。
 2. 确认 `git status --short` 干净，核对 `HEAD` 与 `origin/main`；不要在脏工作树部署。
-3. 运行 `python scripts/dev_stack.py target show`。当前必须仍显示 local；若不是，先停止并审计。
+3. 运行 `python scripts/dev_stack.py target show`。~~当前必须仍显示 local~~（⚠ **2026-08-18 已切云**，照做会看到 `cloud`，那是正常的、不该「停止审计」——本节是 08-17 原文留档）；若不是，先停止并审计。
 4. 只读检查第二次批次的 status/journal、active migration fence、云端 release 和 30 个容器状态。
 5. 按 §3 在隔离环境复现并修复 Redis apply；未复现前不改代码。
 6. 生成新的 final 批次，不复用旧 ID；依次执行 `plan`、`apply` dry-run 并核对实际源聚合。
@@ -107,7 +107,7 @@
 
 ## 5. 迁移成功后的云端开发激活
 
-下列动作现在**不得执行**。满足 §4 第 8 步并取得用户确认后，按固定次序执行：
+下列动作在 **2026-08-17 写下时不得执行**；**✅ 2026-08-18 已按此次序全部执行完毕**。以下保留为**固定次序参考**，不要再当成待办照着做：
 
 ```powershell
 python scripts/dev_stack.py target set cloud
