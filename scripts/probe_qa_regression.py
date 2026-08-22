@@ -129,7 +129,8 @@ PROBE_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
 _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has",
                 "speech_any", "speech_not", "need_confirm", "card_type",
                 "is_question", "differs_from_turn", "has_operation_id",
-                "closes_op_from", "names_item_from", "not_names_item_from",
+                "closes_op_from", "names_item_from", "names_items_from",
+                "not_names_item_from",
                 "no_clock_time", "speech_not_regex", "reflects_actions",
                 "card_text_has", "card_text_not", "card_items_at_least",
                 "latest_closing_from", "sums_from",
@@ -540,12 +541,44 @@ CASES = [
     #   **且**没点到瑞幸那组的任何一项。只压前者压不出「绑错组」——
     #   两组商品名不同，模型胡诌一个也可能碰不上，那是 CD2 那次
     #   「答了一个名字就判绿」的同一形态。
+    # ── I-030 跨组（2026-08-22，Q2 最后一条残余）──────────────────────
+    # ⚠ **卡上的定性被取证改了一档，探针跟着改。** 卡写的是「跨组比较做不了」
+    # （答非所问）；真实形态是**跨组会给出一个算错的确定性答案**——两组候选都在
+    # 会话里时，「麦当劳的第二个多少钱」被绑到最新那一组，零方差地答出另一组的
+    # 第 N 项。**名字与价格都真实存在**，没有任何一处对不上，所以它比编造更难被
+    # 发现，也比「答不出来」严重一档。
+    #
+    # ⚠ **第二组的说法改过三次，全部留痕——每一次都是「前提不成立」而不是判据错**：
+    #
+    # 【一】「看看瑞幸有什么可以点的」：三次落到三个地方（nearby 列表 / 澄清 /
+    #      **门店选择 `NEED_SLOT`**）。第三种把会话挂起，第 3 轮整句被当成补槽吞掉。
+    #      `luckin.menu` 要先走完可信门店链（§9.28 边界 2），一句话到不了。
+    # 【二】「附近的咖啡店」：前提稳了，但**对照组 CD7 三次红两次**，而且红得有道理
+    #      ——nearby 对裸类目词会标 `_fallback`（`keyword == _CATEGORY_KEYWORD[category]`
+    #      且无品牌），于是 **N5「兜底不得顶替点名那份」本来就会把绑定送回麦当劳组**。
+    #      ⇒ 那几次 **CD5 是因为 N5 通过的，不是因为组指代**——考点用例证明不了自己。
+    #      这是「分母挑得越干净假阳性越好看」的镜像：**分母脏了，真阳性也不算数。**
+    # 【三】「附近的星巴克」：品牌搜索恒非兜底，CD5/CD7 当场各自 5/5、4/4 全 `[det]`
+    #      ——但 **CD6 0/3**：这台车位置附近**没有星巴克**，nearby 降级成「10 家美食」
+    #      ⇒ 组标签跟着变成「美食」，用户说的「星巴克」点不到名。
+    #      **那不是缺陷是安全方向**（标签认不出就退回旧行为，漏而不误伤），
+    #      但对探针致命：跨组要求两组都点得到名。
+    #
+    # ⇒ 终稿用**菜系**：`_build_keyword` 的 cuisine 分支早退返回「川菜」，而餐饮类目
+    #   标准词是「美食」⇒ `keyword != cat_kw` ⇒ **恒非兜底**（前提硬）；标签就是
+    #   「川菜」、用户说得出来（跨组点得到名）；且**三条用例共用同一份前提**
+    #   ——对照组和考点用例分母不同，比出来的差就不是判据造成的。
+    #
+    # ⚠ T1/T2 都钉了 `card_type`，这是**前提显式化**：T1 偶尔落 nearby 或澄清卡，
+    #   不钉的话第 3 轮会报「没点到第 1 轮第 2 项『查餐品热量』」——**读起来像被测
+    #   对象错了，其实是前提换了**（真栈实见，加上守卫后当场变成「T1 红」）。
     {"id": "CD5", "group": "candidate", "card": "Q2", "issue": "I-030",
-     "why": "两家菜单并存时序数被绑到最新那一组，答出另一家的真商品真价格",
+     "why": "两组候选并存时序数被绑到最新那一组，答出另一组的真名字真价格",
      "known": "red",
      "turns": [
-         {"say": "看看麦当劳有什么可以点的", "expect": {}},
-         {"say": "看看瑞幸有什么可以点的", "expect": {}},
+         {"say": "看看麦当劳有什么可以点的",
+          "expect": {"card_type": "merchant_choices"}},
+         {"say": "附近的川菜馆", "expect": {"card_type": "place_list"}},
          {"say": "麦当劳的第二个多少钱",
           "expect": {"names_item_from": {"turn": 1, "index": 2},
                      "not_names_item_from": 2,
@@ -555,21 +588,24 @@ CASES = [
     {"id": "CD6", "group": "candidate", "card": "Q2", "issue": "I-030",
      "why": "跨组比较：两组各取一项再比，此前整句落 Planner", "known": "red",
      "turns": [
-         {"say": "看看麦当劳有什么可以点的", "expect": {}},
-         {"say": "看看瑞幸有什么可以点的", "expect": {}},
-         {"say": "麦当劳的第二个和瑞幸的第二个哪个贵",
+         {"say": "看看麦当劳有什么可以点的",
+          "expect": {"card_type": "merchant_choices"}},
+         {"say": "附近的川菜馆", "expect": {"card_type": "place_list"}},
+         {"say": "麦当劳的第二个和川菜的第二个哪个贵",
           "expect": {"names_items_from": [{"turn": 1, "index": 2},
                                           {"turn": 2, "index": 2}],
                      "differs_from_turn": 2}},
      ]},
-    # **误伤对照**：没点名任何一家时逐字还是旧行为（绑最新那一组＝瑞幸）。
-    # 组指代收窄的是错，不是放宽的口子；这条修前修后都该绿。
+    # **误伤对照**：没点名任何一组时逐字还是旧行为（绑最新那一组＝川菜）。
+    # 与 CD5 用**同一份前提**，两条合起来才是一个干净的 A/B：同一份候选，
+    # 点名就绑麦当劳组、不点名就绑最新那组。
     {"id": "CD7", "group": "candidate", "card": "Q2", "issue": "对照组",
      "why": "没点名时仍绑最新那一组——组指代不得改变未点名句子的行为",
      "known": "green",
      "turns": [
-         {"say": "看看麦当劳有什么可以点的", "expect": {}},
-         {"say": "看看瑞幸有什么可以点的", "expect": {}},
+         {"say": "看看麦当劳有什么可以点的",
+          "expect": {"card_type": "merchant_choices"}},
+         {"say": "附近的川菜馆", "expect": {"card_type": "place_list"}},
          {"say": "第二个多少钱",
           "expect": {"names_item_from": {"turn": 2, "index": 2},
                      "differs_from_turn": 2}},

@@ -103,9 +103,12 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
 **当前部署形态（2026-08-22 更新）**：`dev-stack.local` = **`target=cloud`**。
-云端 release **`9bdadda`**（2026-08-22 Q12 规格维复验批：选品续跑 + 规格槽跨跳保真；
-`verify` = **verified**、5/5 端点 healthy；**迷你集 `--group spec` 9/9 全 `[det]`**）；
-此前依次是 `5c6300f`（2026-08-21 规格值域契约 `input_schema` + 真机台账门禁 +
+云端 release **`7a0e03a`**（2026-08-22 I-030 跨组批：组指代 + 跨组算子 + 下发面逐步
+选组；`status` = ok、5/5 端点 healthy；**迷你集 `--group candidate` 20/21**——
+考点 **CD5 3/3 `[det]`** / 对照 **CD7 3/3 `[det]`**（两条共用同一份前提＝干净 A/B）/
+跨组 **CD6 2/3**，唯一那次红是 **T1 前提就没成立**、判据自报「读数不作数」）；
+此前依次是 `9bdadda`（2026-08-22 Q12 规格维复验批，`--group spec` 9/9 全 `[det]`）、
+`5c6300f`（2026-08-21 规格值域契约 `input_schema` + 真机台账门禁 +
 单候选门店闸）、`032dd82`（person-pickup 批四次 apply：
 `d89bebd` → `a8d2c78` → `2f2a3e7` → `032dd82`）、`e5cef21`（第 8 步）、
 `86a9490`（第 7.5 步）、`8bea3b8`（Q2 残余 + `AUTH_TOKENS` 修复）
