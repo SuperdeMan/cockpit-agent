@@ -44,20 +44,14 @@ def load_agents(include_edge: bool = True) -> list:
     agents.append(SimpleNamespace(manifest=builtin, endpoint="tool://builtin"))
     if not include_edge:
         return agents
-    from edge_agents_mod.media import MEDIA_INTENTS
-    from edge_agents_mod.vehicle import VEHICLE_INTENTS
-    for aid, intents, perm in (("edge-vehicle", VEHICLE_INTENTS, "vehicle.control"),
-                               ("edge-media", MEDIA_INTENTS, "media.control")):
-        caps = [SimpleNamespace(intent=i, description="", slots=[], examples=[],
-                                heavy=False, require_confirm=False)
-                for i in sorted(intents)]
+    # 必须复用生产注册的**整份** manifest。旧代码手抄 capability 名单并把
+    # route_hints/verification/描述清空，导致生产新增门锁极性纠偏后，意图 gate
+    # 永远看不见那两条规则；所谓「生产同构」只同构了 intent 名字。
+    from capabilities import build_edge_manifests
+    for manifest in build_edge_manifests():
         agents.append(SimpleNamespace(
-            manifest=SimpleNamespace(
-                agent_id=aid, kind="edge_fast", deployment="edge", category="core",
-                trust_level="system", latency_budget_ms=800,
-                requires_permissions=[perm], context_scopes=[], route_hints=[],
-                capabilities=caps),
-            endpoint=f"edge://{aid}"))
+            manifest=manifest,
+            endpoint=f"edge://{manifest.agent_id}"))
     return agents
 
 

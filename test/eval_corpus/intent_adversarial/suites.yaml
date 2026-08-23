@@ -102,12 +102,16 @@ schema_version: 1
 # 左侧 2（接爸妈/接儿子，必须落 navigation 且禁 nearby.search）+ 右侧 2
 # （同句去掉接送人称，route_flip 回 nearby.search 且禁 navigation）。
 # 全部 reviewed 不进 gate 池；旧尺子一条没删。
+# 2026-08-24 放到 619：MiniMax QA 复验把同一事项双时刻从不稳定的两个 planner step
+# 收敛成 active intent `reminder.create_batch`。覆盖矩阵随能力面机械新增正例 2、硬负例 2
+# 与 relation 对照 1；这 5 条全部标记 `seen_regression`，因为本次修复用了 manifest
+# route_hint，不能伪装成未见迁移。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 614
+    max_cases: 619
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

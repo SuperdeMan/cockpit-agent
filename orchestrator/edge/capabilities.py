@@ -198,6 +198,42 @@ def _capabilities(intents: set[str], fallback: str):
     ]
 
 
+def _door_lock_route_hints() -> list[agent_pb2.RouteHint]:
+    """危险门锁指令的窄语法极性锚。
+
+    MiniMax 真栈曾把原话「把全车门解锁」的 goal/slots 都理解正确，却选择了
+    `door_lock.close`，随后错误动作进入二次确认。这里仍走通用 RouteHintEngine、
+    capability 校验、Executor 与 VAL；只把**原话已经明确给出的开/关极性**从模型手里
+    收回。正则整句锚定且带反例 guard，问句、否定、取消和其他对象一律不接管。
+    """
+    polite = r"(?:请|帮我|给我|麻烦)?\s*"
+    scope = r"(?:全(?:部)?|所有)?\s*"
+    suffix = r"\s*(?:一下|吧|了)?[。！!]*\s*$"
+    guard = r"(?:别|不要|不用|取消|撤销|为什么|为何|怎么|如何|是否|有没有|吗|没)"
+    unlock = (
+        r"^\s*" + polite
+        + r"(?:(?:把\s*)?" + scope
+        + r"车门\s*(?:都\s*)?(?:解锁|打开(?:门)?锁)"
+        + r"|(?:解锁|打开(?:门)?锁)\s*" + scope + r"车门)"
+        + suffix
+    )
+    lock = (
+        r"^\s*" + polite
+        + r"(?:(?:把\s*)?" + scope
+        + r"车门\s*(?:都\s*)?(?:上锁|锁上|锁好|锁闭)"
+        + r"|(?:上锁|锁上|锁好|锁闭|锁)\s*" + scope + r"车门)"
+        + suffix
+    )
+    return [
+        agent_pb2.RouteHint(
+            pattern=unlock, intent="door_lock.open", policy="replace",
+            priority=130, guard=guard),
+        agent_pb2.RouteHint(
+            pattern=lock, intent="door_lock.close", policy="replace",
+            priority=130, guard=guard),
+    ]
+
+
 def build_edge_manifests() -> list[agent_pb2.AgentManifest]:
     return [
         agent_pb2.AgentManifest(
@@ -213,6 +249,7 @@ def build_edge_manifests() -> list[agent_pb2.AgentManifest]:
                 VEHICLE_INTENTS, "通过车端 VAL 执行确定性车控意图"),
             requires_permissions=["vehicle.control"],
             edge_intents=sorted(VEHICLE_INTENTS),
+            route_hints=_door_lock_route_hints(),
         ),
         agent_pb2.AgentManifest(
             agent_id="edge-media",

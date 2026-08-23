@@ -26,6 +26,17 @@ class _Socket:
             raise AssertionError("unreachable")
 
 
+class _Connect:
+    def __init__(self, socket: _Socket):
+        self.socket = socket
+
+    async def __aenter__(self):
+        return self.socket
+
+    async def __aexit__(self, *_args):
+        return False
+
+
 def test_one_turn_merges_the_local_and_cloud_finals(monkeypatch):
     monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
     monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.1)
@@ -81,6 +92,19 @@ def test_one_turn_returns_a_single_final_after_the_idle_window(monkeypatch):
     assert observed["is_question"] is False
 
 
+def test_one_turn_can_pin_a_trace_id_for_collector_reconciliation(monkeypatch):
+    monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
+    monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.1)
+    monkeypatch.setattr(probe, "TIMEOUT", 0.1)
+    socket = _Socket([{"type": "final", "speech": "完成", "actions": []}])
+
+    observed = asyncio.run(probe._one_turn(
+        socket, "session-trace", "查天气", trace_id="qa-trace-001"))
+
+    assert socket.sent[0]["meta"]["trace_id"] == "qa-trace-001"
+    assert observed["trace_id"] == "qa-trace-001"
+
+
 def test_merge_finals_only_fills_empty_primary_semantics():
     first = {
         "speech": "第一段",
@@ -110,6 +134,49 @@ def test_merge_finals_only_fills_empty_primary_semantics():
     assert merged["card_type"] == "confirm"
     assert merged["closed_operation_ids"] == ["old-op"]
     assert merged["card_text"] == '{"type":"confirm"}'
+
+
+def test_missing_button_marks_the_sample_failed_without_aborting_the_suite(monkeypatch):
+    """运行时卡片缺按钮是被测结果，不该让整个回归进程丢掉已完成证据。"""
+    monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
+    monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.01)
+    monkeypatch.setattr(probe, "TIMEOUT", 0.01)
+    socket = _Socket([
+        {"type": "hello"},
+        {
+            "type": "final",
+            "speech": "附近找到 10 家瑞幸",
+            "actions": [],
+            "card": {"type": "place_list", "items": []},
+        },
+    ])
+    monkeypatch.setattr(probe.websockets, "connect", lambda _url: _Connect(socket))
+    case = {
+        "id": "SPX",
+        "group": "spec",
+        "card": "Q12",
+        "issue": "fixture",
+        "known": "red",
+        "turns": [
+            {"say": "先查附近的瑞幸", "expect": {}},
+            {"say_button": {"turn": 1, "index": 1}, "expect": {}},
+        ],
+    }
+
+    async def run_without_abort():
+        try:
+            return await probe._run_case(case, 1)
+        except ValueError:
+            return None
+
+    result = asyncio.run(run_without_abort())
+
+    assert result is not None, "单个样本前提失败不应中止整套回归"
+    assert result["verdict"] == "FAIL"
+    assert len(result["turns"]) == 2
+    assert result["turns"][1]["error"] is True
+    assert "按钮" in result["turns"][1]["fails"][0]
+    assert len(socket.sent) == 1, "探针不得为缺失按钮编造第二轮文本"
 
 
 # ── Q2 残余（2026-08-19）：两条新判据原语本身也要有尺子 ────────────────────

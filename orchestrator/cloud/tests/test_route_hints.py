@@ -158,6 +158,186 @@ def test_reminder_hint_does_not_replace_sports_query_before_event_reminder():
     assert plan.complexity == "adaptive"
 
 
+def test_same_event_two_time_reminder_uses_the_narrow_batch_capability():
+    """SL1：严格双时刻句不再依赖 MiniMax 恰好生成两个步骤。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    reminder = load_manifest(str(root / "agents" / "reminder" / "manifest.yaml"))
+    amap = {"reminder": SimpleNamespace(manifest=reminder, endpoint="x:0")}
+    plan = Plan(steps=[Step(
+        id="s_model", agent_id="chitchat", intent="chitchat.talk")])
+
+    hit = _engine().apply(
+        plan, "明天下午四点提醒我开会，三点半再提醒我一次", amap)
+
+    assert hit is True
+    assert [s.intent for s in plan.steps] == ["reminder.create_batch"]
+
+
+def test_batch_reminder_hint_does_not_take_queries_negation_or_unrelated_compounds():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    reminder = load_manifest(str(root / "agents" / "reminder" / "manifest.yaml"))
+    amap = {"reminder": SimpleNamespace(manifest=reminder, endpoint="x:0")}
+    for text in (
+        "明天下午四点有哪些提醒，三点半的也列一下",
+        "明天下午四点别提醒我开会，三点半也不要提醒",
+        "明天下午四点提醒我开会，顺便查一下天气",
+        "如果明天下雨，下午四点提醒我开会",
+    ):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_driving_continuation_phrases_route_to_safety_instead_of_nearby_tools():
+    """SF3：告警后的继续驾驶追问不能再随机落到导航、音量或澄清。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    safety = load_manifest(str(root / "agents" / "road_safety" / "manifest.yaml"))
+    amap = {"road-safety": SimpleNamespace(manifest=safety, endpoint="x:0")}
+    for text in (
+        "现在在高速还能继续开吗",
+        "慢一点开可以吗",
+        "这种情况需要靠边停车吗",
+    ):
+        plan = _plan("navigation.search_poi")
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [s.intent for s in plan.steps] == ["safety.driving_advice"]
+
+
+def test_driving_continuation_hint_does_not_hijack_non_vehicle_devices():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    safety = load_manifest(str(root / "agents" / "road_safety" / "manifest.yaml"))
+    amap = {"road-safety": SimpleNamespace(manifest=safety, endpoint="x:0")}
+    for text in ("视频还能继续开吗", "游戏慢一点开可以吗", "空调慢一点开"):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+
+
+def test_current_active_task_query_routes_to_reminder_list():
+    """XS1：同一 owner 跨 session 的任务查询不能落入闲聊记忆重构。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    reminder = load_manifest(str(root / "agents" / "reminder" / "manifest.yaml"))
+    amap = {"reminder": SimpleNamespace(manifest=reminder, endpoint="x:0")}
+    plan = _plan("chitchat.talk")
+    assert _engine().apply(plan, "我现在有哪些进行中的任务", amap) is True
+    assert [s.intent for s in plan.steps] == ["reminder.list"]
+
+
+def test_active_task_hint_does_not_take_statements_or_completion_commands():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    reminder = load_manifest(str(root / "agents" / "reminder" / "manifest.yaml"))
+    amap = {"reminder": SimpleNamespace(manifest=reminder, endpoint="x:0")}
+    for text in ("这个任务为什么进行中", "把进行中的任务标记完成", "我正在进行任务"):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+
+
+def test_generic_historical_order_query_routes_to_the_account_order_reader():
+    """XS7：泛指历史订单必须走账号型只读能力，不能落互联网搜索。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    bridge = load_manifest(str(root / "agents" / "mcp_bridge" / "manifest.yaml"))
+    # manifest 的 capabilities 由启动期准入清单合成；路由引擎单测只需 route hint。
+    amap = {"mcp-bridge": SimpleNamespace(manifest=bridge, endpoint="x:0")}
+    plan = _plan("info.search")
+    assert _engine().apply(plan, "查一下我之前的订单", amap) is True
+    assert [s.intent for s in plan.steps] == ["shop.order_status"]
+
+
+def test_historical_order_hint_does_not_take_platform_help_or_brand_queries():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    bridge = load_manifest(str(root / "agents" / "mcp_bridge" / "manifest.yaml"))
+    amap = {"mcp-bridge": SimpleNamespace(manifest=bridge, endpoint="x:0")}
+    for text in ("怎么查看淘宝历史订单", "查一下我之前的麦当劳订单", "订单是什么"):
+        plan = _plan("info.search")
+        assert _engine().apply(plan, text, amap) is False, text
+
+
+def test_compound_person_pickup_with_enroute_stop_routes_to_navigation():
+    """PU5/PU6：明确接人且顺路办事时，不能被商户或提醒域吞掉主导航。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
+    amap = {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+    cases = (
+        (
+            "带我去接孩子放学，顺便帮我找一家麦当劳，5点我要到学校。",
+            "孩子",
+            "麦当劳",
+            "mcd.menu",
+        ),
+        (
+            "接女儿放学，路上买杯咖啡。",
+            "女儿",
+            "咖啡",
+            "reminder.create",
+        ),
+    )
+    for text, destination, stop_category, wrong_intent in cases:
+        plan = _plan(wrong_intent)
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [s.intent for s in plan.steps] == ["navigation.navigate_to"]
+        assert plan.steps[0].slots == {
+            "destination": destination,
+            "stop_category": stop_category,
+        }
+
+
+def test_compound_person_pickup_hint_does_not_take_other_user_goals():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
+    amap = {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+    for text in (
+        "帮我找一家麦当劳",
+        "明天下午提醒我接孩子放学",
+        "接孩子后去万象城",
+        "今天不要接孩子，路上也别买咖啡",
+        "怎么接孩子放学才不堵车",
+        "接孩子时把手机声音调低",
+        "接孩子放学，路上咖啡洒了",
+    ):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
 def test_deferred_research_language_recovers_shallow_search_plan():
     """The Agent itself advertises this phrase as its async task trigger."""
     import pathlib

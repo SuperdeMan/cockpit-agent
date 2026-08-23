@@ -46,5 +46,14 @@ capabilities:
     slots: [route]
     examples: ["路况怎么样", "高速堵车吗"]
 
+# SF3：继续驾驶/降速/靠边是安全问题，不是导航或音量控制。只声明本 Agent 自己的
+# 窄语法，仍经通用 RouteHintEngine；设备/媒体词命中 guard 时完全不接管。
+route_hints:
+  - pattern: '(?:(?:高速|路上|行驶|驾驶)[^，。！？!?]{0,12}(?:(?:还能|能否|能不能|可以)?\s*(?:继续开|继续行驶|开车|驾驶))|(?:慢一点|慢点)\s*(?:开|行驶)|(?:这种情况|这种状态|这样|现在)?\s*(?:需要|要不要|是否需要)\s*(?:靠边|停车))'
+    intent: safety.driving_advice
+    policy: replace
+    priority: 126
+    guard: '(?:视频|音乐|歌曲|游戏|软件|程序|空调|设备|手机|电脑)'
+
 requires_permissions: [location.read, network.external]
 context_scopes: [location]   # 透传给子 agent（navigation）

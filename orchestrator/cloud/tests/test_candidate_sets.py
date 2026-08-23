@@ -420,6 +420,27 @@ def test_downlink_index_is_the_card_number_not_the_array_offset():
     assert [it["index"] for it in got["items"]] == list(range(1, 11))
 
 
+def test_downlink_keeps_menu_product_identity_but_never_poi_identity():
+    """同名商品必须靠商户商品码闭合；POI id 仍不得越过位置权限边界。"""
+    menu = candidate_downlink({
+        "source_intent": "mcd.menu",
+        "items": [{"id": "M001", "name": "同名套餐"}],
+    })
+    assert menu == {
+        "source_intent": "mcd.menu",
+        "items": [{"index": 1, "name": "同名套餐", "id": "M001"}],
+    }
+
+    poi = candidate_downlink({
+        "source_intent": "nearby.search",
+        "items": [{"id": "B0FF1", "name": "某门店", "lat": 22.5, "lng": 113.9}],
+    })
+    assert poi == {
+        "source_intent": "nearby.search",
+        "items": [{"index": 1, "name": "某门店"}],
+    }
+
+
 def test_downlink_drops_nameless_items_and_empty_sets():
     assert candidate_downlink(None) is None
     assert candidate_downlink({"items": []}) is None

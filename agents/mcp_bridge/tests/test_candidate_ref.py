@@ -138,12 +138,13 @@ def test_the_consumer_parses_exactly_what_the_producer_emits():
         {candidate_ref.META_KEY: json.dumps(produced, ensure_ascii=False)})
     assert parsed is not None
     assert parsed["source_intent"] == "mcd.menu"
-    assert [it["name"] for it in parsed["items"]] == [
-        "巨无霸套餐", "双层吉士堡套餐"]
+    assert [(it["name"], it["id"]) for it in parsed["items"]] == [
+        ("巨无霸套餐", "M001"), ("双层吉士堡套餐", "M002")]
     got = candidate_ref.resolve("第二个",
                                 {candidate_ref.META_KEY: json.dumps(produced)},
                                 namespace="mcd")
-    assert got is not None and got["name"] == "双层吉士堡套餐"
+    assert got is not None and got == {
+        "index": 2, "name": "双层吉士堡套餐", "id": "M002"}
 
 
 # ── F. 声明面：candidate_slot 必须是这个 workflow 真有的槽 ────────────
@@ -344,3 +345,41 @@ async def test_an_explicit_value_is_never_overwritten_by_the_fallbacks():
     # 「拿铁」在本 fixture 里一项都不命中 ⇒ 原样不动，category 也不清。
     assert workflow.seen == [("menu", {"item_query": "拿铁",
                                        "category": "第2个"})]
+
+
+@pytest.mark.asyncio
+async def test_raw_ordinal_disambiguates_duplicate_names_and_carries_trusted_id():
+    """MC2：模型把「第二个」改写成同名商品时，原话序数 + 商品码仍能唯一落项。"""
+    duplicate = [
+        {"index": 1, "name": "猪柳蛋麦满分套餐", "id": "BREAKFAST-A"},
+        {"index": 2, "name": "猪柳蛋麦满分套餐", "id": "BREAKFAST-B"},
+    ]
+    agent, workflow = await _bridge_with("mcd.order")
+    try:
+        await run_handle(
+            agent, "mcd.order", {"item_query": "猪柳蛋麦满分套餐"},
+            raw_text="在麦当劳点第二个",
+            meta=_meta(items=duplicate, granted_scopes=_GRANTED),
+        )
+    finally:
+        await agent.shutdown()
+    assert workflow.seen == [("prepare", {
+        "item_query": "猪柳蛋麦满分套餐",
+        "_candidate_ref_id": "BREAKFAST-B",
+    })]
+
+
+@pytest.mark.asyncio
+async def test_planner_cannot_inject_the_reserved_candidate_identity():
+    """商品码只能来自服务端候选投影；模型伪造的保留槽必须先被清掉。"""
+    agent, workflow = await _bridge_with("mcd.order")
+    try:
+        await run_handle(
+            agent, "mcd.order",
+            {"item_query": "巨无霸套餐", "_candidate_ref_id": "FORGED"},
+            raw_text="点一份巨无霸套餐",
+            meta={"granted_scopes": _GRANTED},
+        )
+    finally:
+        await agent.shutdown()
+    assert workflow.seen == [("prepare", {"item_query": "巨无霸套餐"})]

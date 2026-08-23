@@ -226,6 +226,7 @@ _CONTROL_FOCUS = {
     "ambient": ("氛围灯", "颜色"), "lighting": ("灯光", ""),
     "seat": ("座椅", ""), "volume": ("音量", "音量"),
     "media": ("媒体", ""), "sunroof": ("天窗", "开度"),
+    "rear_view_mirror": ("后视镜", "开合"),
 }
 _POSITION_WORDS = ("主驾驶", "副驾驶", "主驾", "副驾", "后排", "左后", "右后", "前排")
 
@@ -839,22 +840,25 @@ def candidate_set_for(focus, domain: str) -> dict | None:
 #: 进到一个 `trust_level: third_party` 的 Agent 里」。两个问题的答案不一样，
 #: 合成一张表就会让「留住」自动等于「下发」。
 #:
-#: 留 `index` 与 `name`，**只留这两个**：
+#: 默认只留 `index` 与 `name`；商户菜单额外留一个受限的 `id`：
 #: · `lat`/`lng`/`city`/`address` —— 精确位置是红线级敏感上下文（CLAUDE.md §5），
 #:   而桥的 manifest 连 `location` scope 都没有；候选集不能成为绕过它的第二条路。
 #: · `open_today`/`rating`/`cost`/`price`/`distance_km` —— 它们的消费方
 #:   （`candidate_query` 那四个聚合维度）**在云侧**，桥拿到也没人算。
-#: · `id` —— 收敛目标是**按钮送出的那个规范名**（`send_text` 里就是 `item["name"]`），
-#:   不是另造一条 id 通道；再给一条 id 会让两个入口重新变得不一样，只是反了个方向。
+#: · `id` —— 只在 `*.menu` 候选中下发。真栈出现同一菜单两项展示名逐字相同，规范名
+#:   无法再唯一落项；按钮和语音都先收敛到同一候选项，再由该服务端商品码闭合身份。
+#:   nearby 等位置候选仍不下发 id，避免它成为绕过 `location` scope 的 POI 定位通道。
 #: 三条都是 B4 那句「加字段要有真实消费方，无消费方的声明只会漂移」的逐条应用。
 _DOWNLINK_ITEMS_MAX = 10
 _DOWNLINK_NAME_MAX = 40
+_DOWNLINK_ID_MAX = 128
 
 
 def candidate_downlink(entry: dict | None) -> dict | None:
     """候选集 → 下发给 Agent 的最小投影；没有可下发内容时返回 None。
 
-    形状 `{"source_intent": str, "items": [{"index": 1, "name": str}, ...]}`。
+    形状 `{"source_intent": str, "items": [{"index": 1, "name": str,
+    "id"?: str}, ...]}`；`id` 只允许出现在 `*.menu` 候选。
     `index` 是**从 1 开始的卡片序号**——「第一杯」说的就是它。下发方给序号而不是
     让消费方去数数组下标，是因为这里会裁剪（`_DOWNLINK_ITEMS_MAX`），
     下标会随裁剪漂移而序号不会。
@@ -862,16 +866,24 @@ def candidate_downlink(entry: dict | None) -> dict | None:
     `source_intent` 是消费方**唯一的归属判据**：桥只认自己那家商户产出的候选，
     否则「附近的瑞幸」之后一句「点第一个」会把一个 POI 名塞进 `item_query`。
     """
+    source_intent = str((entry or {}).get("source_intent") or "")
+    include_identity = source_intent.endswith(".menu")
     items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
     out = []
     for index, item in enumerate(items[:_DOWNLINK_ITEMS_MAX], start=1):
         name = str(item.get("name") or "").strip()[:_DOWNLINK_NAME_MAX]
         if name:
-            out.append({"index": index, "name": name})
+            projected = {"index": index, "name": name}
+            raw_id = item.get("id")
+            if include_identity and isinstance(raw_id, (str, int)) \
+                    and not isinstance(raw_id, bool):
+                candidate_id = str(raw_id).strip()[:_DOWNLINK_ID_MAX]
+                if candidate_id:
+                    projected["id"] = candidate_id
+            out.append(projected)
     if not out:
         return None
-    return {"source_intent": str((entry or {}).get("source_intent") or ""),
-            "items": out}
+    return {"source_intent": source_intent, "items": out}
 
 
 def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str] | None:
@@ -899,8 +911,9 @@ def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str
       逐字相同（`intent.split(".")[0]`）。云侧镜像不 `COPY orchestrator/edge`，
       读不到 `commands.yaml`，这张表本来就是云侧的那一份。
 
-    ⚠ **覆盖边界**：`_CONTROL_FOCUS` 只有 8 个域而 VAL 车控对象有 67 个。
-    表外对象（如 `rear_view_mirror`）解不出 ⇒ 返回 None ⇒ 退化成本函数存在之前的行为
+    ⚠ **覆盖边界**：`_CONTROL_FOCUS` 只覆盖确有跨轮省略消费方的少数控制域，
+    而 VAL 车控对象远多于此。
+    表外对象解不出 ⇒ 返回 None ⇒ 退化成本函数存在之前的行为
     （fail-open）。**不引入新的不一致**——`extract_focus` 本来就是这个覆盖面。
 
     形状不可信（history 来自 gRPC）：非 dict / actions 非 list / 元素非 str 一律跳过，

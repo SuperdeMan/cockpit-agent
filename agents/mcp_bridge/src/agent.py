@@ -340,13 +340,17 @@ class McpBridgeAgent(BaseAgent):
         | 3 | **一个槽都没填** | ③ 原话兜底 |
 
         ⇒ 本步的判据因此是完整版：不只「序数落到哪一项」不该让 LLM 数，
-        **「序数该放进哪个槽」也不该由它决定**。②③ 都只在目标槽为空时才动手，
-        绝不覆盖用户说出口的实质内容。
+        **「序数该放进哪个槽」也不该由它决定**。②③ 通常只在目标槽为空时动手；
+        唯一例外是槽值逐字命中多个重名候选——它已经不能定位，此时才回看原话唯一
+        序数。普通实质内容绝不覆盖。
         """
         slot = str(getattr(spec, "candidate_slot", "") or "")
         slots = getattr(intent, "slots", None)
         if not slot or not isinstance(slots, dict):
             return
+        # 保留槽只能由下面这条服务端候选链写入。模型/客户端即使伪造同名键，
+        # 也会在任何解析前被清掉，不能把任意商品码送进商户工作流。
+        slots.pop(candidate_ref.RESERVED_ID_SLOT, None)
         namespace = str(getattr(intent, "name", "") or "").split(".", 1)[0]
         value = str(slots.get(slot) or "").strip()
 
@@ -372,12 +376,14 @@ class McpBridgeAgent(BaseAgent):
                     break
 
         # ③ 一个槽都没填：回原话取序数。**只认整句恰好出现一次**的那种。
-        if item is None and not value:
+        if item is None and (
+                not value or candidate_ref.is_ambiguous_exact_name(
+                    value, meta, namespace=namespace)):
             item = candidate_ref.from_raw_text(
                 getattr(intent, "raw_text", ""), meta, namespace=namespace)
             source = "raw_text"
 
-        if item is None or item["name"] == value:
+        if item is None:
             return
         logger.info("候选集指代解析：%s 的 %s ← %s %r → %r（第 %d 项）",
                     getattr(intent, "name", ""), slot, source,
@@ -385,6 +391,9 @@ class McpBridgeAgent(BaseAgent):
                     getattr(intent, "raw_text", ""),
                     item["name"], item["index"])
         slots[slot] = item["name"]
+        candidate_id = str(item.get("id") or "").strip()
+        if candidate_id:
+            slots[candidate_ref.RESERVED_ID_SLOT] = candidate_id
         if misplaced:
             slots.pop(misplaced, None)
 

@@ -18,6 +18,7 @@ from agents._sdk import AgentResult, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 
 from ..admission import normalize_hostname
+from ..candidate_ref import RESERVED_ID_SLOT
 from ..mcp_client import McpTimeout
 from .base import DeclaredBusinessRejected, MerchantWorkflow, parse_quantity
 from .models import MerchantChoice, MerchantDraft, MerchantItem, MerchantResult, yuan_to_cents
@@ -119,6 +120,7 @@ class McDonaldsWorkflow(MerchantWorkflow):
 
     async def prepare(self, intent, ctx, meta) -> AgentResult:
         slots = dict(getattr(intent, "slots", {}) or {})
+        candidate_id = str(slots.pop(RESERVED_ID_SLOT, "") or "").strip()
         item_query = self._choice_value(slots.get("item_query"), "餐品")
         if not item_query:
             return AgentResult(
@@ -157,7 +159,8 @@ class McDonaldsWorkflow(MerchantWorkflow):
         except Exception as exc:
             return self._read_failure("查询该门店菜单", exc)
         products = self._menu_products(menu_data)
-        product_matches = self._matching_products(products, item_query)
+        product_matches = self._matching_products(
+            products, item_query, candidate_id=candidate_id)
         if not product_matches:
             return AgentResult(
                 status=NEED_SLOT,
@@ -987,13 +990,14 @@ class McDonaldsWorkflow(MerchantWorkflow):
                     for label in categories[:8]
                 ],
                 # options 与 items 同序但**各自自带 image_url**：靠下标去另一个数组
-                # 捞图会在任一端裁剪时错位。
+                # 捞图会在任一端裁剪时错位。最多 10 项与云侧候选台账的硬上限一致；
+                # 多渲染第 11/12 个序数按钮却不保留对应候选，会造出一按就丢身份的按钮。
                 "options": [
                     {"label": item["name"], "subtitle": item.get("price", ""),
-                     "send_text": f"在{store_name}点一份{item['name']}",
+                     "send_text": f"在{store_name}点第{index}个：{item['name']}",
                      **({"image_url": item["image_url"]}
                         if item.get("image_url") else {})}
-                    for item in items[:12]
+                    for index, item in enumerate(items[:10], start=1)
                 ],
             },
             # Q2 残余（2026-08-19）：菜单商品是**可被指代的候选**，所以它们属于
@@ -1139,7 +1143,13 @@ class McDonaldsWorkflow(MerchantWorkflow):
                    product.get("title") or "")
 
     @classmethod
-    def _matching_products(cls, products: list[dict], query: str) -> list[dict]:
+    def _matching_products(cls, products: list[dict], query: str,
+                           candidate_id: str = "") -> list[dict]:
+        if candidate_id:
+            # candidate_id 已由桥从服务端候选投影写入；仍只在**本次重新读取的当店菜单**
+            # 内匹配，过期/换店/不存在一律空，不把旧身份直接送给写工具。
+            return [item for item in products
+                    if str(item.get("code") or "") == candidate_id]
         needle = cls._normalized(query)
         exact = [item for item in products
                  if cls._normalized(cls._product_name(item)) == needle]

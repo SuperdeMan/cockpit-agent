@@ -153,17 +153,19 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
 > 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新后端全量基线（2026-08-22 I-030 跨组批根跑实测，`target=cloud` +
-本地 Docker 已退）**：`python -m pytest --import-mode=importlib` =
-**6933 passed / 32 skipped 零红**。
+**最新后端全量基线（2026-08-24 MiniMax-only QA 复验收口，`target=cloud` +
+本地 Docker 已退）**：`python -m pytest -q -n auto --dist worksteal` =
+**6969 passed / 32 skipped 零红**。
 ⚠ 耗时受宿主负载影响很大（慢的都是真子进程/全语料守卫），**别拿时长当回归信号**。
-净增量 `6902 → 6933` = **+31**，逐条点号：`test_candidate_sets.py` **+11**
+本跳 `6933 → 6969` = **+36**：cloud 编排净 +13（候选身份 / 后视镜焦点 /
+五类窄 route hint 与误伤集 / 评测清单同构）、edge 门锁极性 +10、mcp-bridge +4、
+reminder 原子批建 +2、两套 QA 工具 +7。上一跳 `6902 → 6933` = **+31**，逐条点号：`test_candidate_sets.py` **+11**
 （组标签载体 3 / 组指代 5 / 下发面逐步选组 3）、`test_candidate_query.py` **+13**
 （跨组比较·合计·切句 5 / 越界与点不到分流 2 / **误伤对照 4** / 组指代 1 / 相等 1）、
 `test_engine_candidate_shortcut.py` **+4**（**engine 层接线守卫**——反向验证第一处
 就露出「挂点零测试」）、三个产生方各 **+1**（组标签 = 卡上那个称呼，断言两处相等）。
 上一跳 `6897 → 6902` = **+5**（08-22 白天复验批：mcp-bridge 选品续跑 4 + 规格槽跨跳保真 1）。
-对账链：**6933**（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
+对账链：**6969**（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
 ← 6865（person-pickup 批）← 6786（第 8 步）。
 
 > ⚠ **那条「73 vs 32」的差额归因写了三版，前两版都错，2026-08-21 把成因直接修掉了**
@@ -232,7 +234,7 @@ G4 主题行程检索步 / G9 跨城市 / G7 陈述 vs 请求台账（§36）；
 
 当前对标状态一句话：时间约束（到达时限 + 事件反推用餐窗）、真沿途、多城保序与归城校正、
 模糊目的地推断、记忆六维消费（subject/polarity/轨迹/路线偏好/口味/无障碍）均**真栈在案**；
-对抗语料 **614 唯一输入**（上界 614，余量 0）、catalog **151 条**、架构 **v1.36**
+对抗语料 **619 唯一输入**（上界 619，余量 0）、catalog **152 条**、架构 **v1.37**
 （该行的 v1.26 是 EVA 批时点读数，2026-08-16 随 QA 轮 Q6/Q10/Q5 与 Q12 两跳补齐、
 2026-08-17 随 Q7 残余到 v1.29——新增 **§5.2.4 省略式开关的确定性消解**；
 2026-08-19 随 Q2 残余到 v1.30——新增 §5.2.5 候选集上的聚合问答；
@@ -242,7 +244,8 @@ G4 主题行程检索步 / G9 跨城市 / G7 陈述 vs 请求台账（§36）；
 2026-08-20 随 person-pickup 卡到 v1.34——新增 §5.2.8 指代到人：占位与具名是同一个实体、
 救济路径要闭合；2026-08-21 随 Q12 规格维到 v1.35——新增 §5.2.9 能力槽位的值域契约：
 声明了 ≠ 可达；2026-08-22 随 I-030 跨组到 **v1.36**——新增 §5.2.10 候选集的
-「哪一组」：指代要闭合到组这一维）。
+「哪一组」：指代要闭合到组这一维；2026-08-24 随 MiniMax-only QA 复验到
+**v1.37**——新增 §5.2.11 尾部方差闭环：确定事实不经过模型转述）。
 **仍未做**：G10 订座票务（搁置，诚实桩）、~~复合句人称接送解析（§4.1 ②）~~
 **✅ 2026-08-20 收口**（连同 Q5 残余，history **§64**；真栈 10/24 → **41/45**）、
 **探索式 QA 轮的卡内残余**（~~Q2 的确定性消费方~~ ✅、
@@ -280,7 +283,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **85/85**，653 条 / **614 唯一输入**（2026-08-20 起 bounds [450,**614**]，仍**恰好用满**。十二次递进 560→…→591→596→610→614，逐次占用理由写在 `suites.yaml` 头部——最近一跳是 **person-pickup 卡的一条跨域边界裁定**（`navigation-nearby.pickup-plus-meal`，台账契约要求双向各 2 例 ⇒ 机械地 +4）；上一跳是**卡 Q8 一次补齐六条能力**：`navigation.estimate` +5 / `navigation.cancel` +5（各正 2/硬负 2/对照 1）+ 静音族与双闪族的 `ei.local.*` **ingress 路由锚**各 +2（这两族**豁免的是 2+2+1 覆盖矩阵、不是 ingress**——它们修之前的真实症状恰恰是「路由到了云」，而单测只测名字）。没有删除旧尺子压数字） |
+| L0 discovery | **85/85**，658 条 / **619 唯一输入**（bounds [450,**619**]，仍**恰好用满**。十三次递进 560→…→596→610→614→619，逐次占用理由写在 `suites.yaml` 头部——最近一跳是 `reminder.create_batch` 的正 2 / 硬负 2 / relation 1，且因进入 route_hint 修复资产全部标 `seen_regression`；上一跳是 **person-pickup** 跨域边界双向各 2 例。没有删除旧尺子压数字） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -288,7 +291,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | **全量基线只在本节顶部写一次**（本行刻意不复述那个数——它已经被这么写错过一次：顶部刷到 6933 时这里还留着 6902。「同一件事在两处各写一版」正是本文件记过会错三次的那个形态）；分套件最近实测（2026-08-20 person-pickup 批：navigation **167**、memory **265**；其余为 2026-08-19 第 8 步读数）：`orchestrator/cloud` **1004**（2026-08-22 I-030 批 +28：候选集载体与组指代 11 / 跨组算子 13 / engine 接线 4；上一跳 +7）/ edge **796**（+34：金标表 VAL 校验断言与两行新金标、对象语料 VAL 校验）/ nearby **100**（I-030 +1）/ navigation **167**（+26：接送句形/兜底/别名/就近合理性 + 校园锚词）/ trip **85** / mcp-bridge **547**（2026-08-22 I-030 批 +2：两家各一条组标签契约；同日复验批 +5：选品续跑 4 / 规格槽跨跳保真 1；2026-08-21 +28：规格值域契约门禁 19 / 真机形状正面路径 7 / 单候选门店正反 2）/ memory **265**（+4：占位与具名归一，含两条反向对照）/ chitchat **62** / reminder **164**/ `agents/_sdk` **+8**（新增 `test_timewindow.py`）（2026-08-15）。Skill / Exemplar（**309 条 / 22 域**，2026-08-20 实数——clarify 型机制已就位但**刻意零生产范例**，见 §4.2）/ L0 门禁均通过。catalog 目录 **151 条 / 13162 字符**（2026-08-19 卡 Q8 +6：云侧 `navigation.estimate`/`navigation.cancel` + 端侧 `volume.mute`/`volume.unmute`/`warning_light.open`/`.close`；余量 16000−13162=**2838**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算）。端侧能力面 **84 条**（vehicle 80 + media 4——`volume.mute/unmute` 与 `warning_light.open/close` 都从 `commands.yaml` 的 `edge_intents` 派生，进的是 vehicle 那一半）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | **全量基线只在本节顶部写一次**（本行刻意不复述那个数——它已经被这么写错过一次。「同一件事在两处各写一版」正是本文件记过会错三次的那个形态）；2026-08-24 fresh collect：`orchestrator/cloud` **1018** / edge **806** / mcp-bridge **559** / reminder **171**；其余最近读数：nearby **100** / navigation **167** / trip **85** / memory **265** / chitchat **62**。Skill / Exemplar **309 条 / 22 域**，四条确定性门禁均通过。catalog 目录 **152 条 / 13278 字符**，余量 16000−13278=**2722**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算。端侧能力面 **84 条**（vehicle 80 + media 4）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -520,9 +523,9 @@ I-030 跨组 2026-08-22 收口 history **§67**）、§4.1 ③ 支付余项，
 或该族再成主要矛盾），是泓舟 2026-08-11 直接指示推进的。两份方案的头部都留了痕——
 **别把它读成「条件曾经满足过」**，那会让下一次「条件启动」的分量被稀释。
 
-⚠ **对抗语料唯一输入 614 / 上界 614**（`suites.yaml` 的 `max_cases`，权威值）——当前余量仍为 0。下次加 L0 语料必须先说明新增
+⚠ **对抗语料唯一输入 619 / 上界 619**（`suites.yaml` 的 `max_cases`，权威值）——当前余量仍为 0。下次加 L0 语料必须先说明新增
 能力或边界为何值得占额度，再有原则地调整 `suites.yaml` 的 `max_cases`；不得删旧尺子压数字，
-也不得先加语料撞闸后再补理由。560→614 的十二次递进与逐项占用写在 `suites.yaml` 头部。
+也不得先加语料撞闸后再补理由。560→619 的十三次递进与逐项占用写在 `suites.yaml` 头部。
 ⚠ 第十二跳（2026-08-20，person-pickup 卡）**理由回到最早那一条**：新裁定一条跨域边界
 （`navigation-nearby.pickup-plus-meal`），台账契约要求**双向各 2 例**，机械地 +4。
 它同时留下一条**门禁覆盖面的账**：`skills/exemplars/boundaries.yaml` 加裁定时，
@@ -549,7 +552,7 @@ I-030 跨组 2026-08-22 收口 history **§67**）、§4.1 ③ 支付余项，
 | **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目。⚠ **2026-08-19 卡 Q8 没有从这 14 条里挑，是刻意的**：QA 轮实际抓到的四处缺席一条都不在这张表上——方向盘**已声明**（断在 VAL 校验）、双闪**对象根本不存在**（被生成器 family 表并进了 headlight）、静音是 `volume` 缺一个**操作**、估算在云侧。**台账列的是「有对象没意图」，而这四处是别的形态**；本批因此新增对象 `warning_light` 与操作 `volume.mute/unmute`，台账 39 条不变 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身 |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
-| `route_hints` 继续退役 | 当前实数 **11**；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；当前只用 MiniMax 主模型 / DeepSeek 对比，MiMo key 失效不阻塞主线，切换 provider 时重新全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
+| `route_hints` 继续退役 | 当前实数 **18**（2026-08-24 QA 复验净增 7：MiniMax 重复采样残余的 5 条窄业务结构 + edge 门锁开/关极性 2 条）；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；本批只证明 MiniMax 主模型当前需要这些纠偏，退役仍须跨 provider 全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | M5 后续杠杆 | catalog 检索化当前是“有意不做”；16k 预算再次裁剪或保护集显著变瘦时重评。gold→范例现走 CLI；P4 仅在范例 ≥2k 且 N1 平台期 ≥2 周时启动 | [M5 P2/P4](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) |
 | M-B / M-C / M-D 明确后置项 | 13 张验收主卡已清零；跨域删除 saga、完整隐私管理/迁移仪式、持久治理扩面与 MCP 生产化覆盖按 GDPR 完备性、量产迁移或新消费方触发 | [总体验收](docs/reviews/2026-07-26-acceptance-review-m0a-m4.md) §10.2/§11.2/§12.2、[OwnerKey 契约](docs/conventions.md) §9.13 |
 | M2 / M3 产品化边界 | Ledger 自动续跑/任务中心，以及主动治理持久化、偏好学习、dashboard、远距 geocode 与真实商户均为显式未做；出现真实消费方或产品阶段后另立卡 | [M2 RFC](docs/design/2026-07-25-m2-task-ledger-outcome-verifier-rfc.md) §9.6、[M3 RFC](docs/design/2026-07-25-m3-proactive-engine-mcp-bridge-rfc.md) §10.7 |

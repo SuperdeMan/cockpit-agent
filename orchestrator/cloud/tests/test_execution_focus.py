@@ -49,6 +49,13 @@ def test_reads_the_object_from_the_previous_turns_executed_action():
     assert recent_control_execution(history) == ("天窗", "开度", "sunroof.open")
 
 
+def test_reads_the_rear_view_mirror_from_the_previous_executed_action():
+    """EL2：后视镜是可开合控制对象，执行事实不能在焦点映射处被丢掉。"""
+    history = [{"role": "assistant", "actions": ["rear_view_mirror.fold"]}]
+    assert recent_control_execution(history) == (
+        "后视镜", "开合", "rear_view_mirror.fold")
+
+
 def test_the_newest_control_action_wins():
     """多轮都有动作时取**最近**那条——焦点是「刚才」，不是「这个会话里某一次」。"""
     history = [
@@ -288,6 +295,18 @@ def test_same_turn_open_resolves_to_the_edge_executed_object():
     assert [s.intent for s in plan.steps] == ["hvac.on"]
 
 
+def test_cross_turn_expand_resolves_to_the_folded_rear_view_mirror():
+    """EL2：「再展开」只能反向执行刚折叠的后视镜，不能猜成天窗。"""
+    plan = _focused(
+        "再展开", "rear_view_mirror.fold",
+        intents=("rear_view_mirror.fold", "rear_view_mirror.unfold"),
+        agents=[_agent("edge-vehicle", "rear_view_mirror.fold",
+                      "rear_view_mirror.unfold")],
+    )
+    assert plan is not None
+    assert [s.intent for s in plan.steps] == ["rear_view_mirror.unfold"]
+
+
 @pytest.mark.parametrize("text", [
     "关掉", "关", "关闭", "不用了，关掉", "帮我关一下", "算了，关上吧", "关掉。",
 ])
@@ -300,7 +319,7 @@ def test_bare_close_forms_are_all_accepted(text):
     "打开车窗", "打开周杰伦的歌", "关掉导航", "把空调关了", "关掉音乐吧",
     "打开天窗和车窗", "关掉，然后导航去公司", "打开一下附近的充电站",
     # 不是开关动作
-    "再展开", "调高一点", "换一批", "暂停",
+    "调高一点", "换一批", "暂停",
 ])
 def test_anything_with_its_own_content_is_never_hijacked(text):
     """`fullmatch` 是这里的安全边界。放宽成 search 会让上一轮焦点劫持整类请求。"""

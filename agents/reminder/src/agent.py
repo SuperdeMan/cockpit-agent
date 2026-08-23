@@ -48,6 +48,11 @@ _NO_REMINDER_RE = re.compile(
 # 双重否定：「**别忘了**提醒我开会」真实语义是**要建**。挡它等于反向漏执行
 # ——同 `runtime.polarity` 的 `_DOUBLE_NEGATIVE_RE`，必须早于否定判据求值。
 _REMINDER_DOUBLE_NEG_RE = re.compile(rf"(?:{NEG_WORDS}|不用)\s*(?:忘|忘了|忘记)")
+_BATCH_SPLIT_RE = re.compile(r"\s*[，,；;]\s*")
+_BATCH_REPEAT_RE = re.compile(r"再(?:提醒|叫)我(?:一|1)次")
+_BATCH_DAY_RE = re.compile(r"大后天|后天|明天|今天")
+_BATCH_SEGMENT_RE = re.compile(r"凌晨|早上|早晨|上午|中午|下午|傍晚|晚上|夜里")
+_BATCH_CONDITIONAL_RE = re.compile(r"^(?:如果|要是|假如|若|只要|除非)")
 _TIME_SIGNAL_RE = re.compile(
     r"今天|今晚|今早|明天|明早|明晚|后天|大后天|"
     r"周末|月底|月初|年末|年初|饭点|睡前|起床|稍后|待会|一会儿|"
@@ -136,7 +141,9 @@ class ReminderAgent(BaseAgent):
 
     # ── 请求-响应 ──
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        handlers = {"reminder.create": self._create, "reminder.list": self._list,
+        handlers = {"reminder.create": self._create,
+                    "reminder.create_batch": self._create_batch,
+                    "reminder.list": self._list,
                     "reminder.complete": self._complete, "reminder.cancel": self._cancel,
                     "reminder.update": self._update}
         h = handlers.get(intent.name)
@@ -166,6 +173,73 @@ class ReminderAgent(BaseAgent):
         return owner_scoped(key, self._uid(ctx), self._occ(ctx))
 
     # ── create（含 P1a：update 续接 / snooze 收编 / 重复规则）──
+    async def _create_batch(self, intent, ctx, meta) -> AgentResult:
+        """同一事项、两个明确时刻的一次性创建（SL1）。
+
+        该能力只由 manifest 的整句窄 route hint 进入；这里仍独立复核形状和两个未来
+        时刻，再用存储事务整组写入。它不接受自由的「多提醒」列表，避免在 Agent 内
+        复制一套通用 planner。
+        """
+        raw = str(intent.raw_text or "").strip()
+        parts = _BATCH_SPLIT_RE.split(raw)
+        if (len(parts) != 2 or not _BATCH_REPEAT_RE.search(parts[1])
+                or _BATCH_CONDITIONAL_RE.search(raw)
+                or (not _REMINDER_DOUBLE_NEG_RE.search(raw)
+                    and _NO_REMINDER_RE.search(raw))):
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="这组提醒的两个时间我还没听完整，请分别说清楚。",
+                follow_up="比如：明天下午四点提醒我开会，三点半再提醒我一次",
+                missing_slots=["time_text"],
+            )
+
+        first, second = parts
+        title = self._extract_title(first)
+        day = _BATCH_DAY_RE.search(first)
+        segment = _BATCH_SEGMENT_RE.search(first)
+        # 这条能力只接「同一天、同一事项，第二次省略日/段位」；第二段若自己另给日期，
+        # 交回普通 planner，避免擅自决定它是否还指同一件事。
+        if (not title or day is None or _BATCH_DAY_RE.search(second)):
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="这组提醒的事项或日期不够明确，请分两句告诉我。",
+                missing_slots=["title", "time_text"],
+            )
+        inherited = day.group(0)
+        if segment is not None and _BATCH_SEGMENT_RE.search(second) is None:
+            inherited += segment.group(0)
+        second_time_text = inherited + second
+
+        now = self._now_utc()
+        parsed = [
+            parse_time_text(first, now=now, tz=self._tz),
+            parse_time_text(second_time_text, now=now, tz=self._tz),
+        ]
+        if (any(pt.status != T_OK or pt.fire_at <= int(now.timestamp()) for pt in parsed)
+                or parsed[0].fire_at == parsed[1].fire_at):
+            return AgentResult(
+                status=NEED_SLOT,
+                speech="这组提醒需要两个不同的未来时刻，请再说一次。",
+                missing_slots=["time_text"],
+            )
+
+        turn = str((meta or {}).get("trace_id") or "")
+        reminders = [Reminder(
+            user_id=self._uid(ctx), occupant_id=self._occ(ctx),
+            vehicle_id=ctx.vehicle_id or "", title=title, kind="time",
+            fire_at=pt.fire_at, extra={"turn": turn} if turn else {},
+        ) for pt in parsed]
+        created = await self.store.add_many(reminders)
+        await self._refresh_active(ctx)
+        await self._clear_pending(ctx)
+        return AgentResult(
+            speech=(f"好的，{parsed[0].display}和{parsed[1].display}"
+                    f"各提醒你一次：{title}。"),
+            ui_card={"type": "card_group", "items": [
+                self._card_single(r, "created") for r in created
+            ]},
+        )
+
     async def _create(self, intent, ctx, meta) -> AgentResult:
         raw = intent.raw_text or ""
         # Q11 否定守卫：**用户明说「别建提醒」时不许建**。

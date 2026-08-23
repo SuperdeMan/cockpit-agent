@@ -67,6 +67,27 @@ def test_budget_full_stack_matches_eval_live_runtime_inventory():
     assert "builtin-tools" in budget_ids
 
 
+def test_eval_live_edge_inventory_is_the_production_registered_manifest():
+    """评测不能手抄 edge 能力；否则生产新增 route hint 而 gate 永远测不到。"""
+    test_dir = os.path.join(_ROOT, "test")
+    if test_dir not in sys.path:
+        sys.path.insert(0, test_dir)
+    import eval_live
+    from capabilities import build_edge_manifests
+
+    actual = {
+        agent.manifest.agent_id: agent.manifest
+        for agent in eval_live.load_agents(include_edge=True)
+        if agent.manifest.agent_id.startswith("edge-")
+    }
+    expected = {manifest.agent_id: manifest for manifest in build_edge_manifests()}
+
+    assert actual == expected
+    assert {hint.intent for hint in actual["edge-vehicle"].route_hints} == {
+        "door_lock.open", "door_lock.close",
+    }
+
+
 def test_tight_budget_only_drops_unprotected_and_never_core(monkeypatch):
     """预算再紧也只裁「非 core 且无 hint」的 agent；**核心域一个都不许掉**。
 
@@ -123,7 +144,10 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # （此前「打开双闪」三次取样分别落 power_mode.set / lane_assistance.close /
     # **hvac.off**——要开双闪把空调关了）。端侧四条同样进 catalog：planner 看得见的
     # 车控工具就是这一份。
-    assert len(catalog.ref_to_pair) == 151
+    # 2026-08-24 151→152：SL1 新增 `reminder.create_batch`。同一事项两个时刻是
+    # 一个原子业务意图，不能再赌 planner 恰好生成两个步骤、也不能让两次独立写入
+    # 落成半组。其余本批 route hint 都指向既有能力，不增加目录条数。
+    assert len(catalog.ref_to_pair) == 152
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -172,14 +196,16 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 并在描述里点名规格面。**这一笔是「补一维已经在被用户说、却无处可放的能力」**
     # ——planner 真栈实测本来就在产 `size: 大杯`，契约里没有这个槽，值被静默丢掉。
     # 条数不变（既有 workflow 加槽，不是新增条目）。
-    assert catalog.catalog_stats["chars_full"] == 13162
-    assert catalog.catalog_stats["chars_final"] == 13162
+    # 2026-08-24 +116 → 13278：`reminder.create_batch` 的能力描述与一条判别化范例。
+    # 有意新增 +1 条；默认 16k 下仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 13278
+    assert catalog.catalog_stats["chars_final"] == 13278
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13162 → 2838）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13278 → 2722）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2838
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2722
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

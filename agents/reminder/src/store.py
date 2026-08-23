@@ -142,7 +142,8 @@ class ReminderStore:
         return self._pg_ok
 
     # ── 写入 ──
-    async def add(self, r: Reminder) -> Reminder:
+    @staticmethod
+    def _prepare_new(r: Reminder) -> Reminder:
         r.id = r.id or uuid.uuid4().hex
         r.created_at = r.created_at or int(time.time())
         r.occupant_id = (r.occupant_id or "").strip() or PRIMARY
@@ -158,6 +159,10 @@ class ReminderStore:
             raise InvalidReminder(
                 f"定时提醒的 fire_at 必须是有效时刻（拿到的是 {r.fire_at!r}）"
                 f"——解析失败就该诚实追问，不是存一条永远不会触发的提醒")
+        return r
+
+    async def add(self, r: Reminder) -> Reminder:
+        r = self._prepare_new(r)
         if self._pg_ok:
             import json
             async with self._pool.acquire() as conn:
@@ -171,6 +176,31 @@ class ReminderStore:
         else:
             self._mem[r.id] = r
         return r
+
+    async def add_many(self, reminders: list[Reminder]) -> list[Reminder]:
+        """同一用户句子产生的多条提醒整组写入；任一无效时一条也不落。"""
+        prepared = [self._prepare_new(r) for r in reminders]
+        if not prepared:
+            return []
+        if self._pg_ok:
+            import json
+            query = (
+                "INSERT INTO reminder_item (id,user_id,occupant_id,vehicle_id,title,"
+                "kind,fire_at,status,created_at,fired_at,source,recur,extra) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb)"
+            )
+            rows = [(
+                r.id, r.user_id, r.occupant_id or PRIMARY, r.vehicle_id, r.title,
+                r.kind, r.fire_at, r.status, r.created_at, r.fired_at, r.source,
+                r.recur, json.dumps(r.extra, ensure_ascii=False),
+            ) for r in prepared]
+            async with self._pool.acquire() as conn:
+                async with conn.transaction():
+                    await conn.executemany(query, rows)
+        else:
+            # 所有校验都已在上面完成；此处才一次性修改内存态，避免半组落地。
+            self._mem.update({r.id: r for r in prepared})
+        return prepared
 
     # ── 读取 ──
     async def get(self, user_id: str, rid: str, *,

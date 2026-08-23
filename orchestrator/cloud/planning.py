@@ -269,18 +269,19 @@ _FOCUSED_LIST_BATCH_RE = re.compile(
 # 刻意**不含**任何对象词/领域词：这条判据只回答「有没有动作、有没有对象」。
 _FOCUSED_CONTROL_ELLIPSIS_RE = re.compile(
     r"^\s*(?:(?:不用了|不要了|算了|不必了)(?:吧)?\s*[，,、]?\s*)?"
-    r"(?:请|帮我|给我|麻烦)?\s*(?:把它|它)?\s*"
-    r"(?P<action>打开|开启|开一下|关闭|关掉|关上|合上|收起|关|开)"
+    r"(?:请|帮我|给我|麻烦)?\s*(?:把它|它)?\s*(?:再)?\s*"
+    r"(?P<action>打开|开启|开一下|展开|关闭|关掉|关上|合上|折叠|收起来|收起|关|开)"
     r"(?:\s*(?:一下|吧|呀|啊|了|它))?"
     r"(?:\s*[，,、]?\s*(?:按(?:这个|刚才的)?顺序(?:执行)?|依次(?:来|执行)?|"
     r"立刻|马上|现在))?"
     r"\s*[。！？!?～~]*\s*$"
 )
 #: 判「这一句要的是开还是关」。与上面的 alternation 同源，**必须同增同减**。
-_FOCUSED_OPEN_ACTIONS = frozenset({"打开", "开启", "开一下", "开"})
+_FOCUSED_OPEN_ACTIONS = frozenset({"打开", "开启", "开一下", "展开", "开"})
 #: 通用操作对，**不出现任何领域/Agent 字面量**：目标 intent 还要在本轮权限过滤后的
 #: catalog 里唯一存在才算数。仓库里两种命名都有（`sunroof.open` / `hvac.on`）。
-_CONTROL_OPERATION_PAIRS = (("open", "close"), ("on", "off"))
+_CONTROL_OPERATION_PAIRS = (("open", "close"), ("on", "off"),
+                            ("unfold", "fold"))
 _EXPLICIT_OPEN_ACTION_RE = re.compile(
     r"(?:^|[\s，,。；;！？!?]|先|再|然后|接着|随后|顺便)"
     r"(?:请|帮我|给我)?(?:打开|开启|开一下)"

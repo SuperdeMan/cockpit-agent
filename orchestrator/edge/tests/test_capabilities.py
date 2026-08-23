@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -12,6 +13,9 @@ from capabilities import _describe, _knowledge, build_edge_manifests
 from edge_agents_mod.media import MEDIA_INTENTS
 from edge_agents_mod.vehicle import VEHICLE_INTENTS
 from edge_call import decode_intent
+from orchestrator.cloud.models import Plan, Step
+from orchestrator.cloud.planning import PlanBuilder
+from orchestrator.cloud.route_hints import RouteHintEngine
 
 _FALLBACKS = ("通过车端 VAL 执行确定性车控意图", "通过车端执行器控制本地媒体")
 
@@ -39,6 +43,47 @@ def test_edge_vehicle_and_media_capabilities_are_separate_and_routable():
     assert {c.intent for c in media.capabilities} >= {
         "media.play", "media.pause", "media.next", "media.prev",
     }
+
+
+def _apply_vehicle_route_hints(text: str, initial_intent: str) -> Plan:
+    manifest = next(
+        m for m in build_edge_manifests() if m.agent_id == "edge-vehicle")
+    agent_map = {
+        manifest.agent_id: SimpleNamespace(
+            manifest=manifest, endpoint="edge://vehicle")
+    }
+    plan = Plan(steps=[Step(
+        id="s_model", agent_id=manifest.agent_id,
+        endpoint="edge://vehicle", intent=initial_intent,
+    )])
+    RouteHintEngine(PlanBuilder._validated_steps).apply(
+        plan, text, agent_map)
+    return plan
+
+
+@pytest.mark.parametrize("text", [
+    "把全车门解锁", "解锁所有车门", "请把车门都解锁一下",
+])
+def test_explicit_door_unlock_overrides_an_inverted_model_plan(text):
+    """CF1/CF3/CF6：危险动作极性以用户原话为准，模型选反不能进入确认。"""
+    plan = _apply_vehicle_route_hints(text, "door_lock.close")
+    assert [step.intent for step in plan.steps] == ["door_lock.open"]
+
+
+@pytest.mark.parametrize("text", [
+    "把全车门上锁", "锁上所有车门", "请把车门都锁上",
+])
+def test_explicit_door_lock_overrides_an_inverted_model_plan(text):
+    plan = _apply_vehicle_route_hints(text, "door_lock.open")
+    assert [step.intent for step in plan.steps] == ["door_lock.close"]
+
+
+@pytest.mark.parametrize("text", [
+    "取消刚才解锁", "不要解锁车门", "为什么车门解锁了", "手机解锁",
+])
+def test_door_lock_route_hints_do_not_hijack_cancellation_negation_or_questions(text):
+    plan = _apply_vehicle_route_hints(text, "chitchat.talk")
+    assert [step.intent for step in plan.steps] == ["chitchat.talk"]
 
 
 # ── 判别化描述（M5 P3 收尾）────────────────────────────────────────────────────

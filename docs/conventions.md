@@ -110,6 +110,7 @@
 | `info.air_quality` | info | cloud | city | 实时空气质量（和风 AQI/PM2.5 真实 provider）；端侧"空气质量/PM2.5"online_only 上云 |
 | `info.sports` | info | cloud | query, league | 赛事比分/赛程（api-football，league=世界杯/欧冠/五大联赛，按日期查+客户端过滤）。追问"第N场/某队 + 谁进的球/详细赛况"→定位该场并拉**进球事件**（射手+分钟，剔除罚丢点球等非进球）；"**射手榜/金靴/得分王**"→`/players/topscorers`（免费档仅 2022-2024 赛季，试本届→拿不到回退最近可用并标注「{season}赛季」）；"**总/历史射手榜**"（累计历史榜，赛季 API 给不了）→改写 query 走通用搜索接地合成；联赛上下文可从多轮 `ctx.history()` 回填 |
 | `reminder.create` | reminder | cloud | title, time_text, kind | 一句话创建提醒；确定性中文时间解析（LLM@fast 兜底），缺时刻 NEED_SLOT 追问（title 存 REMINDER_PENDING 下轮合并）；"记一下…"无时刻→待办(kind=todo)；创建回读确认。**P1a**：重复（每天/每个工作日/每周X→`recur` 触发后滚动，工作日首触发落周末顺延周一）；「过10分钟再提醒我/稍后按钮」= snooze **改期原条目**（同名 fired 尸体收编，不新建） |
+| `reminder.create_batch` | reminder | cloud | — | 同一事项、同一天两个明确时刻的原子创建（严格句形「某时提醒我某事，另一时刻再提醒一次」）；Agent 重解析两个不同未来时刻，PostgreSQL 同一事务 / 内存态一次更新，任一无效时一条也不落。不承接自由多事项列表 |
 | `reminder.list` | reminder | cloud | scope, date_text | 按范围列日程（今天/这周/全部）；D7 词表判 scope→view 双形态（day=单日时间轴 / multi=按天分组），刷新 REMINDERS_ACTIVE 供序号解析 |
 | `reminder.complete` | reminder | cloud | index, title | 标记完成：按标题模糊匹配或"第N条"（经 REMINDERS_ACTIVE 序号）；无 fire 的待办同样可完成 |
 | `reminder.cancel` | reminder | cloud | index, title, all | 取消单条（标题/序号）；"全部清空"→NEED_CONFIRM 二次确认后执行 |
@@ -1445,9 +1446,10 @@ I-023/I-030/I-025① 同源。真栈 CD4 由系统自己的话坐实：用户刚
 卡上写的是「按钮路径带**结构化引用**（store 三元组、product_code），文本路径靠 LLM
 从原话解析」。取证结论：
 
-1. **按钮路径并没有结构化引用**——`ui_card.options[].send_text` 就是一句中文
-   （`在<门店>点一份<商品全名>`），里面没有 id。两条入口真正的差别是
-   **用词是不是商家的原名**：点按钮送出的是原名，用户说的是「巨无霸」「第一个」。
+1. **按钮路径并没有客户端结构化引用**——`ui_card.options[].send_text` 仍是一句中文。
+   v1.31 时是 `在<门店>点一份<商品全名>`；2026-08-24 起菜单选项改成
+   `在<门店>点第 N 个：<商品全名>`，可读序号让按钮与语音都能在服务端还原同一候选项，
+   但客户端依然不能提交权威 product_code。
 2. **文本入口不是完全不通**——`_render_focus` 早就把 `最新候选=1:甲/2:乙…` 渲染进
    prompt，于是「第一个」靠**模型自己数**就能碰对（真栈实测 3/3）。但
    `last_choices` 只渲染 **5** 个而菜单有 20 款：「第七个」在 prompt 里根本不存在，
@@ -1464,22 +1466,24 @@ I-023/I-030/I-025① 同源。真栈 CD4 由系统自己的话坐实：用户刚
 | 门控 | manifest `context_scopes` 含 **`candidates`** 的步才注入，与 `focus_active_route` 同一通道 |
 | 挂点 | `engine._apply_focus_meta`（plan 构建后、分发前，**三条执行路径都覆盖**）|
 | 选哪一组 | `newest_candidate_set(focus, allow_fallback=True)` —— 与云侧聚合消费方**同一份口径**，不发明第二套 |
-| 投影 | `context.candidate_downlink()` → `{source_intent, items:[{index, name}]}` |
+| 投影 | `context.candidate_downlink()` → `{source_intent, items:[{index, name, id?}]}`；`id` 只允许 `*.menu` |
 
 **挂在 `_apply_focus_meta` 而不是 executor 是判据不是习惯**：D0 单步流式直通走
 `call_agent_stream(..., step.meta)` 且 `context_scopes=None`（`_merge_meta` 那条
 prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**唯一在全部路径上都成立**的
 做法——「新增挂点必须枚举全部执行路径」本项目已经栽过三次。
 
-**投影只留 `index` 与 `name`，三条都是 B4「加字段要有真实消费方」的逐条应用**：
+**默认投影只留 `index` 与 `name`；菜单 id 是有真实消费方的唯一例外**：
 
 - **坐标/城市/地址不下发**——精确位置是红线级敏感上下文（CLAUDE.md §5），
   而桥是 `trust_level: third_party`、manifest 连 `location` scope 都没有。
   **候选集不能成为绕过那条声明的第二条路。**
 - **营业时间/评分/价格/距离不下发**——它们的消费方（`candidate_query` 四个聚合维度）
   **在云侧**，桥拿到也没人算。
-- **`id` 不下发**——收敛目标就是按钮送出的那个规范名；再给一条 id 通道会让两个入口
-  重新变得不一样，只是反了个方向。
+- **`id` 只对 `source_intent.endswith(".menu")` 下发，且长度有界**——真栈 MC2
+  证明同一份官方菜单可以有两项展示名逐字相同，规范名不再是身份；语音序数与按钮序数
+  都先闭合到候选项，再由这一个服务端 id 进入商户链。nearby/POI 候选仍不下发 id，
+  不能借候选集绕过 `location` scope。
 
 `index` 是**从 1 开始的卡片序号、由下发方给**：投影会裁剪（≤10 项），数组下标会随
 裁剪漂移而序号不会。
@@ -1497,7 +1501,8 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 挂点是 `McpBridgeAgent.handle`，**只对 prepare/menu 生效**：confirm/cancel 靠
 `checkout_token` 寻址，草稿里的商品早已核价定死，在那条路上改槽值只会与草稿对不上。
 
-三条通道**按声明序求值**，第一条命中即用：
+三条通道**按声明序求值**，第一条命中即用；候选项形状为
+`{index,name,id?}`：
 
 | # | 通道 | 例 |
 |---|---|---|
@@ -1507,12 +1512,18 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 
 - **原名排最前是判据不是顺序**：一个本来就叫「生椰拿铁第二杯半价」的商品，
   序数通道会把它读成「第 2 项」。序数还要求锚在开头（同 `references_a_candidate`）。
-- **命中多项一律不动**，交回商户既有的追问链（它会出选项卡让用户点）。
+- **命中多项时只有原话存在唯一序数才能继续**：当投影范围内也存在重名项时，MiniMax
+  可能把「第二个」改写成两项共有的规范名；此时槽值不能定位，但原话序数仍是系统
+  持有的事实。没有唯一序数
+  就一律不动，交回商户既有的追问链（它会出选项卡让用户点）。
   翻错等于系统替用户改了他点的东西，而它没有任何「我不太确定」的信号
   （同 `candidate_query._named`：**一个算错的确定性答案比不答更糟**）。
 - **归属判据只有 `source_intent` 的域前缀**：桥只认自己那家商户产出的候选。
   没有它，「先查附近的瑞幸」之后一句「点第一个」会把一个高德 POI 名当成商品名
   塞进 `item_query`——那是**用户从没说过的商品**。
+- **保留槽 `_candidate_ref_id` 不信任 planner/client**：桥入口先删除同名槽，只能由
+  当前服务端候选项重新写入；商户工作流重新读取当前门店菜单，并只在其中按商品 code
+  精确匹配。过期、换店、不存在或伪造 id 均返回不命中，不直接进入写工具。
 
 #### 三条边界，**下一个人最容易误以为不存在**
 

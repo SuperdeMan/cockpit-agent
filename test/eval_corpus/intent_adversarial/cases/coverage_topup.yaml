@@ -1250,3 +1250,70 @@ cases:
       - input: {utterance: 结束导航吧, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [navigation.cancel]}], forbidden_intents: [navigation.reroute, navigation.navigate_to], allow_extra_intents: false}
+
+  # ── 同一事项双时刻 vs 普通提醒查询（reminder.create_batch，2026-08-24 SL1）──
+  # MiniMax 对同一句会随机给两步、一步或零步；新能力把「同一件事提醒两次」收成一次
+  # 原子提交。边界不在“有几个时间词”，而在第二段是否明确复指**同一事项**：不同事项
+  # 仍走普通 create 计划，查询仍走 list。全族进入 route_hint 修复资产，故必须是
+  # seen_regression，不能借这 5 条冒充 unseen transfer。
+  - id: tu.reminder.batch-two-times
+    title: 同一事项两个时刻各提醒一次
+    family_id: tu.reminder-batch-vs-ordinary
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [step_cardinality], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-24}
+    turns:
+      - input: {utterance: 明天下午四点提醒我提交材料，三点半再提醒我一次, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create_batch]}], forbidden_intents: [reminder.create, reminder.list], allow_extra_intents: false}
+  - id: tu.reminder.batch-call-twice
+    title: 叫我两次（第二正例）
+    family_id: tu.reminder-batch-vs-ordinary
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [step_cardinality, paraphrase], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-24}
+    turns:
+      - input: {utterance: 后天上午十点叫我去复诊，九点半再叫我一次, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create_batch]}], forbidden_intents: [reminder.create, reminder.list], allow_extra_intents: false}
+  - id: tu.reminder.two-events-not-batch
+    title: 两个不同事项不能合成同一批（硬负例）
+    family_id: tu.reminder-batch-vs-ordinary
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [step_cardinality, object_flip], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-24}
+    turns:
+      - input: {utterance: 明天下午四点提醒我开会，三点半提醒我取快递, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create]}], forbidden_intents: [reminder.create_batch, reminder.list], allow_extra_intents: false}
+  - id: tu.reminder.list-two-times-not-batch
+    title: 查两个时段的提醒不是新建（硬负例第二例）
+    family_id: tu.reminder-batch-vs-ordinary
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [step_cardinality, action_flip], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-24}
+    turns:
+      - input: {utterance: 明天下午四点有哪些提醒，三点半的也列一下, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.list]}], forbidden_intents: [reminder.create_batch, reminder.create], allow_extra_intents: false}
+  - id: tu.reminder.batch-paraphrase
+    title: 两次提醒换一种说法（invariant 对照）
+    family_id: tu.reminder-batch-vs-ordinary
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [step_cardinality, paraphrase], domains: [reminder], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-24}
+    relation: {base_case: tu.reminder.batch-two-times, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 明天早上九点提醒我交材料，八点半再提醒我一次, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [reminder.create_batch]}], forbidden_intents: [reminder.create, reminder.list], allow_extra_intents: false}

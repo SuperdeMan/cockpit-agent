@@ -6,23 +6,32 @@ I-020：菜单卡上明明有巨无霸，**说**「点一份巨无霸」答商�
 按钮就出正确预览。I-025①：当前筛选只剩生椰拿铁，说「第一杯大杯少冰」跳回美式列表。
 
 取证把卡上的说法修正了一处：按钮路径并没有携带 store 三元组或 product_code
-——`ui_card.options[].send_text` 就是一句**规范化的中文**（`在<门店>点一份<商品全名>`）。
-所以两条入口的差别不是「结构化 vs 自然语言」，而是**用词是不是商家的原名**：
+——`ui_card.options[].send_text` 仍是一句中文。首版把它规范化为
+`在<门店>点一份<商品全名>`，因此两条入口真正的差别不是「结构化 vs 自然语言」，
+而是**用词是不是商家的原名**：
 
 | 入口 | `item_query` 实际值 | 下游 `_matching_products` |
 |---|---|---|
 | 点按钮 | `巨无霸套餐`（商家原名） | 精确命中一款 |
 | 说话 | `巨无霸` / `第一个` / `第一杯` | 多命中或零命中 → 追问、跳列表 |
 
-⇒ **收敛的目标就是那个规范名**。本模块把用户的说法确定性地翻译成它，翻译之后
-两条入口在桥里逐字同路——这才叫「同一条结构化解析链」。
+⇒ 首版把**规范名**作为收敛目标；本模块把用户说法确定性翻成它，翻译后两条入口
+在桥里逐字同路。
 
-## 为什么不再给一条 id 通道
+## 2026-08-24 校正：名字不是身份
 
-下发投影里**刻意没有 `id`**（`context.candidate_downlink` 有逐条理由）。给了 id、
-让文本路径按 id 直取，等于让文本入口走一条按钮入口没有的路——两个入口重新变得不
-一样，只是反了个方向。B4 的「无消费方的声明只会漂移」在这里还有个孪生形态：
-**为了「更结构化」而造的第二条通道，会让被收敛的两条重新分叉。**
+真栈 MC2 推翻了「规范名足够」这个前提：同一份麦当劳官方菜单里，多项商品的展示名
+可以逐字相同。MiniMax 把「第一个」转述成该项规范名后，下游按名字在完整菜单里又
+命中三项；系统明明知道用户点的是哪一项，却在跨 Agent 时把身份丢了。
+
+所以 `*.menu` 投影现在额外保留**有界商品 id**，按钮发送
+`在<门店>点第 N 个：<商品名>`，语音序数也走同一翻译链。id 不是客户端或 planner
+给的权威值：Agent 入口先删除同名保留槽，只能由当前服务端候选项重新写入；商户工作流
+还会重新读取当前门店菜单，并只在那份新鲜菜单里按 code 精确匹配。无效/过期/换店 id
+一律不命中。nearby/POI 候选仍不下发 id，不能借候选集绕过位置 scope。
+
+⇒ 收敛目标是**候选项身份**：名字唯一时规范名已经足够；名字不唯一时必须再带上
+服务端持有的商品 id。两个入口走的仍是同一条结构化解析链。
 
 ## 三条通道的**优先级是判据不是顺序**
 
@@ -56,6 +65,9 @@ logger = logging.getLogger("mcp-bridge.candidate_ref")
 #: 下发键名。写在这里而不是各消费点——它是与编排的契约（`docs/conventions.md` §9.28），
 #: 抄成两份就会在改名那天只改一处。
 META_KEY = "focus_candidate_set"
+#: 只允许本模块从服务端下发候选写入；Agent 入口先删除 planner 同名槽。
+RESERVED_ID_SLOT = "_candidate_ref_id"
+_ID_MAX = 128
 
 #: 序数量词。`杯`/`份` 是商户面才有的说法（「第一杯」），`家`/`个`/`款`/`项` 与
 #: 云侧那两条同源。量词**可省**（「第二个」「第二」都算），但序数词本身不可省。
@@ -107,7 +119,13 @@ def parse(meta) -> dict | None:
         except (TypeError, ValueError):
             continue
         if name and index > 0:
-            items.append({"index": index, "name": name})
+            parsed_item = {"index": index, "name": name}
+            raw_id = item.get("id")
+            if isinstance(raw_id, (str, int)) and not isinstance(raw_id, bool):
+                candidate_id = str(raw_id).strip()[:_ID_MAX]
+                if candidate_id:
+                    parsed_item["id"] = candidate_id
+            items.append(parsed_item)
     if not items:
         return None
     return {"source_intent": str(entry.get("source_intent") or ""),
@@ -160,6 +178,19 @@ def _by_exact_name(value: str, items: list[dict]) -> dict | None:
     return hit[0] if len(hit) == 1 else None
 
 
+def is_ambiguous_exact_name(value, meta, *, namespace: str) -> bool:
+    """槽值逐字命中同一候选组里的多项。
+
+    这是唯一允许「目标槽已有值仍回看原话序数」的情况：值本身已被证明不能唯一
+    定位，而原话可能保留了 MiniMax 改写时丢掉的「第 N 个」。普通实质内容仍不覆盖。
+    """
+    needle = _normalized(value)
+    items = live_items(meta, namespace=namespace)
+    if len(needle) < 2 or items is None:
+        return False
+    return sum(_normalized(item["name"]) == needle for item in items) > 1
+
+
 def _by_partial_name(value: str, items: list[dict]) -> dict | None:
     """用户的说法是某一项名字的子串，且**只命中一项**（「巨无霸」→「巨无霸套餐」）。
 
@@ -174,7 +205,7 @@ def _by_partial_name(value: str, items: list[dict]) -> dict | None:
 
 
 def resolve(value, meta, *, namespace: str) -> dict | None:
-    """槽值 + 下发候选集 → 候选项 `{"index","name"}`；判不出返回 None。
+    """槽值 + 下发候选集 → 候选项 `{"index","name","id"?}`；判不出返回 None。
 
     **确定性纯函数、零 LLM、零网络。**`namespace` 传本能力 intent 的域前缀
     （`mcd.order` → `mcd`）——归属判据从 intent 派生，不写第二份商户名单。
@@ -214,7 +245,8 @@ def from_raw_text(raw_text, meta, *, namespace: str) -> dict | None:
     `item_query`、填进 `category`、和一个都不填。
 
     **只在整句恰好出现一次序数时生效**（多个 = 聚合问句，归云侧 `candidate_query`），
-    且调用方只在目标槽为空时才用它——绝不覆盖用户说出口的实质内容。
+    且调用方只在目标槽为空，或槽值已被证明是**重复规范名**时才用它——普通实质
+    内容绝不覆盖；重复名本身不能唯一定位，原话序数才是仍然存在的身份事实。
     """
     text = str(raw_text or "").strip()
     if not text:

@@ -1297,6 +1297,47 @@ async def test_store_menu_answers_price_and_never_touches_write_tools():
     assert big_mac["price"] == "36.90 元"
     assert big_mac["image_url"] == "https://menu-img.mcd.cn/meal/M001.png"
     assert "36.90 元" in result.speech
+    assert [option["send_text"] for option in card["options"]] == [
+        "在人民广场麦当劳餐厅点第1个：巨无霸套餐",
+        "在人民广场麦当劳餐厅点第2个：双层吉士堡套餐",
+    ]
+
+
+def test_trusted_candidate_id_selects_one_of_duplicate_product_names():
+    products = [
+        {"code": "BREAKFAST-A", "name": "猪柳蛋麦满分套餐"},
+        {"code": "BREAKFAST-B", "name": "猪柳蛋麦满分套餐"},
+    ]
+    assert McDonaldsWorkflow._matching_products(
+        products, "猪柳蛋麦满分套餐", candidate_id="BREAKFAST-B") == [products[1]]
+    assert McDonaldsWorkflow._matching_products(
+        products, "猪柳蛋麦满分套餐", candidate_id="FORGED") == []
+
+
+@pytest.mark.asyncio
+async def test_menu_only_renders_buttons_the_server_can_keep_as_candidates():
+    """序数按钮不能超过云侧候选台账的 10 项上限，否则第 11/12 个没有身份可回传。"""
+    menu = copy.deepcopy(MENU_RESULT)
+    category = menu["data"]["data"]["categories"][0]
+    meals = menu["data"]["data"]["meals"]
+    for index in range(3, 13):
+        code = f"M{index:03d}"
+        category["meals"].append({"code": code, "tags": []})
+        meals[code] = {
+            "name": f"测试套餐{index}", "currentPrice": str(20 + index),
+            "canWithOrder": False,
+        }
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [menu]})
+
+    result = await workflow.menu(
+        SimpleNamespace(name="mcd.menu", slots={"store_hint": "人民广场"}),
+        CTX, META)
+
+    assert len(result.ui_card["options"]) == 10
+    assert result.ui_card["options"][-1]["send_text"].startswith(
+        "在人民广场麦当劳餐厅点第10个：")
 
 
 @pytest.mark.asyncio

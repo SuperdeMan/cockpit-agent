@@ -308,6 +308,36 @@ async def test_two_creates_in_one_turn_do_not_collapse_into_one(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_batch_create_is_independent_of_the_planners_step_count():
+    """SL1：MiniMax 即使给零步，也由窄能力一次原子表达「同一件事提醒两次」。"""
+    a = await _agent()
+    raw = "明天下午四点提醒我开会，三点半再提醒我一次"
+    res = await run_handle(
+        a, "reminder.create_batch", raw_text=raw,
+        meta={"trace_id": "trace-batch"})
+
+    assert res.status == "ok"
+    assert res.ui_card["type"] == "card_group"
+    assert len(res.ui_card["items"]) == 2
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 2
+    assert sorted(t.to_card_item(now=_NOW, tz=_TZ)["time_display"] for t in times) \
+        == ["明天 15:30", "明天 16:00"]
+    assert all(t.title == "开会" for t in times)
+
+
+@pytest.mark.asyncio
+async def test_batch_create_rejects_non_batch_shape_without_partial_write():
+    a = await _agent()
+    res = await run_handle(
+        a, "reminder.create_batch",
+        raw_text="明天下午四点提醒我开会，顺便查一下天气")
+    assert res.status == "need_slot"
+    times, todos = await a.store.list_split("u1")
+    assert times == [] and todos == []
+
+
+@pytest.mark.asyncio
 async def test_a_later_turn_still_reschedules_the_same_title(monkeypatch):
     """反向对照：**下一轮**说「再提醒」仍然是改期，不是新建。
 
