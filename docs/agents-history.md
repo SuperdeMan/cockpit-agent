@@ -6141,3 +6141,67 @@ CD5 的判据是**两条互补的结构判据同时成立**——只压「点到
 ⚠ 给接 I-024 的人留一条：那一卡的前置动作是「**动之前先枚举谁在读候选集**」，
 而本批**又多了两个读的地方**（`resolve_candidate_scope` 与 `candidate_set_for`）
 ——枚举时别漏。
+
+## §68 2026-08-23 全量 pytest 并行化：25min → ~5min，import 口径收敛进 pytest.ini
+
+主诉（泓舟）：功能越加越多，每次迭代/修 bug 后的全量 pytest 越来越长。批前形态：
+6965 条用例、18 核 32GB 的机器**单进程串行 ~25 分钟**。
+
+### §68.1 方向是被 §60.3 定死的，本批只是把并行度补上
+
+- **不删**：§60.3 已盘点过存量（0 空断言/0 xfail/慢的都是真子进程与全语料守卫），
+  「砍时长=砍强度」的判定直接沿用，本批一条用例没动（**基线 6933/32 不变，±0 条**）。
+- **不做覆盖选测**（testmon 类）：本仓的跨模块耦合走 yaml 台账与子进程
+  （boundaries.yaml 改动牵动 L0 语料、manifest 牵动 wrappers——都是覆盖图看不见的边），
+  按改动选测会把「分套件绿、全量才翻出来」的历史事故**机制化重演**。
+- 剩下的主要矛盾就一个：**并行度 1/18**。
+
+### §68.2 落点
+
+| 落点 | 内容 |
+|---|---|
+| `pytest.ini`（新增） | `--import-mode=importlib` 进 addopts——「裸 pytest 被同名 test_agent.py collection error 截断整趟」的坑**消灭而非记住**（同 `_git_bash` 逐级找 bash 那条的处置哲学）；norecursedirs 黑名单剪掉 gen/models/hmi 等无测试目录（collect 22s→17.5s）。**刻意不用 testpaths 白名单**：新增顶层目录默认仍被收集，漏测方向 fail-closed |
+| `Makefile` | `make test` → `python -m pytest -q -n auto --dist worksteal`（`pytest-xdist` 3.8.0，当轮授权装入系统 Python） |
+| `ci.yml` | python-tests 安装行加 pytest-xdist 对齐本地依赖；**分组跑法本身不动**（55 连红的教训，CI 并行化另议） |
+| 文档 | `AGENTS.md` §4.0 固定口径段（唯一版本处）、`docs/dev-guide.md` 日常路径 A、`test/README.md` §2 |
+
+### §68.3 验证法：跑法变更的对账物是**结果集逐字一致**，不是「测试通过」
+
+变更的是执行方式不是被测代码，所以一趟绿不算数，要多形态多趟与串行基线对账：
+
+| 趟 | 形态 | 结果 | 墙钟 |
+|---|---|---|---|
+| 1 | `-n 8 --dist loadfile` | 6933/32 零红 | 6m14s |
+| 2 | `-n 14 --dist worksteal` | 6933/32 零红 | 4m38s |
+| 3 | `-n auto --dist worksteal`（+pytest.ini） | 6933/32 零红 | 5m18s |
+| 4 | 落地后 `make test` 原样终验（系统包） | 6933/32 零红 | 6m48s |
+
+- **worksteal 把同文件测试打散到不同 worker 也零红**——lease 类测试的 repo_root 全是
+  注入 tmp_path 的，隔离纪律扛得住测试粒度并行。
+- 趟间时长差（±40s，-n 14 反而比 -n auto=18 快）在宿主噪声内——「别拿时长当回归信号」
+  照旧适用于并行档；**worker 数不为单机读数过拟合**，Makefile 写 `-n auto`。
+- 偶发红的排查次序已写进 §4.0 固定口径：先查外部并行方（e2e/docker/PowerShell 真栈，
+  这条约束并行档不变）→ 串行复跑对照（`python -m pytest -q`）→ `--dist loadfile`
+  降级取证（红聚在同文件新增用例上才怀疑共享状态）。
+
+### §68.4 顺带 profile 出的下一批入口（本批刻意不夹带）
+
+`run_e2e.py --dry-run` 单次 **40.8s**，cProfile 三个热点全是**不砍强度的实现级问题**：
+
+1. **`load_manifest` 同进程被调 2 次**（`main` 与 `evaluate_staleness` 各一次，每次 ~7s）
+   ——复用即省 7s；
+2. `_validate_privacy_inventory` 内 pathlib.glob 触发 **38354 次 scandir**（7.5s）；
+3. canonical digest **顺序读 1064 个文件 16s**（~15ms/文件的 Windows 打开税，
+   线程池并发读可摊薄，digest 结果不变）。
+
+这是 `scripts/tests` 那批 10~30s 慢测试的共同税负（它们进程内反复调这套），也是
+wrappers_ci 93s 的内因。⚠ 给接手的人：动的是**证据链代码**（`e2e_contract.py` /
+`run_e2e.py`），单独批次做，验收至少 `pytest scripts/tests -q` 全绿 +
+`run_e2e --check` / `--dry-run` 输出 JSON 逐字段对照改前。
+
+### §68.5 同批读数（供下一跳对账）
+
+- 后端全量：**6933 passed / 32 skipped 零红（并行口径四趟 + 既有串行基线，逐字一致）**，
+  本批 **±0 条**（纯跑法/口径/文档批，不新增不删除用例）。
+- 耗时口径刷新：全量 ~25min（串行）→ **~5–7min**（`-n auto --dist worksteal`，
+  宿主负载区间 4m38s–6m48s）；collect 22s → 17.5s。

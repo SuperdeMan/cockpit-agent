@@ -111,7 +111,8 @@ jobs:
 
       - name: Install dependencies
         # 聚合安装各服务 requirements.txt（单一真相源，避免手写清单与 requirements 漂移，D12）
-        # + 仅测试用的 pytest/pytest-asyncio（不在运行时 requirements 内）。
+        # + 仅测试用的 pytest/pytest-asyncio/pytest-xdist（不在运行时 requirements 内；
+        # xdist 是本地 `make test -n auto` 的对齐依赖，本 job 分组跑法暂未并行化）。
         run: |
           python -m pip install --upgrade pip
           reqs=$(find . -name requirements.txt \
@@ -120,7 +121,7 @@ jobs:
                    -not -path '*/node_modules/*' \
                    -printf '-r %p ')
           echo "aggregated requirements: $reqs"
-          pip install pytest pytest-asyncio $reqs
+          pip install pytest pytest-asyncio pytest-xdist $reqs
 
       - name: Set up buf
         uses: bufbuild/buf-setup-action@v1

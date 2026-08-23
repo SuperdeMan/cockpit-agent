@@ -30,8 +30,11 @@ down:
 logs:
 	$(COMPOSE) logs -f
 
+# 并行全量（2026-08-23 实测 25min → ~4.5min，三种并行形态各一趟均 6933/32 与串行基线
+# 逐字一致）。--import-mode=importlib 口径的唯一声明处已收敛到根 pytest.ini 的 addopts，
+# 这里不再抄一份。慢守卫（真子进程/全语料，§60.3 判定不可删）靠 worksteal 打散摊薄。
 test:
-	python -m pytest --import-mode=importlib -q
+	python -m pytest -q -n auto --dist worksteal
 
 # B2：意图对抗 L0 门禁的唯一入口。封装脚本由 Python 读退出码——证据链上不出现
 # shell 管道（2026-08-10 `cmd | tail; echo $$?` 把 exit 2 报成 exit 0 的机制化根治）。

@@ -172,12 +172,19 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > 流水 history **§65.6**。这里不再抄——**同一件事在两处各写一版，正是它错三次的方式**。
 历跳对账链（6623←6551←6257←6198←6127←…←5408）已归档：索引与原文全文见 history
 **§60**，各跳批次证据 §30–§59。全量 pytest 盘点结论（无可安全精简的存量、耗时两极分布、
-慢的都是刻意的真子进程/全语料守卫）见 history **§60.3**。
+慢的都是刻意的真子进程/全语料守卫）见 history **§60.3**；其并行化落地（2026-08-23，
+25min→~5min，四趟结果集逐字对账 + run_e2e dry-run 40.8s 的 profile 留卡）见 **§68**。
 
 **跑全量的固定口径**（历跳教训收敛于此，每条这里是唯一版本；违反任一条都会制造假红或假读数）：
-- **命令**：仓库根 `python -m pytest --import-mode=importlib`（= `make test`）。不带
-  `--import-mode` 会因 `agents/*/tests/test_agent.py` 同名模块 collection error **截断整趟**
-  ——读起来像只红一条，实际是后面几千条根本没跑。
+- **命令**：仓库根 `python -m pytest -q -n auto --dist worksteal`（= `make test`，需
+  `pytest-xdist`，2026-08-23 起并行化：25min → ~5min，18 核串行是当时的主要矛盾）。
+  `--import-mode=importlib` 已收敛进根 `pytest.ini` 的 addopts——裸 `pytest` 与 `make test`
+  同口径，「不带它会被 `agents/*/tests/test_agent.py` 同名模块 collection error 截断整趟」
+  的坑自此**不存在**（消灭而非记住，同 `_git_bash` 那条的处置）。
+  **并行不改变对账口径**：loadfile×8 / worksteal×14 / worksteal×auto 三趟实测均
+  **6933/32 与串行基线逐字一致**。若并行下偶发红：先按下方「隔离」条排查外部并行方，
+  再串行复跑对照（`python -m pytest -q`，不带 `-n`）——红聚在同一文件内新增用例上才怀疑
+  共享状态，届时用 loadfile 档降级取证（`--dist loadfile`，同文件同 worker）。
 - **PATH**：`python` 必须在 PATH（本机在 `%LOCALAPPDATA%/Programs/Python/Python312/`）。
   不在会让 scripts/tests 整族 **192 条假红**（e2e manifest 校验要求 `python` 可执行存在），
   真栈侧还会让 `dev_stack verify` 变**空成功**（见上方接手须知 ⑥）。

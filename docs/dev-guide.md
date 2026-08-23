@@ -47,7 +47,9 @@ merge 或 push；未显式 `remote_safe` 的 E2E 不在 cloud 缺省运行。
 
 ```powershell
 # A. 纯代码/单测：不需要 Docker
-python -m pytest path/to/changed_tests.py -q
+python -m pytest path/to/changed_tests.py -q   # 迭代内跑相关目录（小选集不必并行）
+python -m pytest -q -n auto --dist worksteal   # 提交前全量 = make test（需 pytest-xdist，
+                                               # 2026-08-23 起并行，~5min；口径见 AGENTS.md §4.0）
 
 # B. 本地前端连接已选后端：只启动 Vite
 python scripts/dev_stack.py target show

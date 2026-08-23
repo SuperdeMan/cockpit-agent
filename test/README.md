@@ -8,9 +8,12 @@ python test/smoke_edge.py
 
 ## 2. 全量测试（一条命令，无需 docker）
 ```bash
-python -m pytest --import-mode=importlib -q
+python -m pytest -q -n auto --dist worksteal    # = make test（需 pytest-xdist，~5min）
+python -m pytest -q                             # 串行对照档（~25min，排查并行嫌疑时用）
 ```
-`conftest.py` 已配好 PYTHONPATH，`--import-mode=importlib` 解决 test_agent.py 重名。
+`conftest.py` 已配好 PYTHONPATH；`--import-mode=importlib`（解决 test_agent.py 重名）
+已收敛进根 `pytest.ini` 的 addopts——裸 `pytest` 同口径，不再需要手带。并行口径与
+对账法见 [`AGENTS.md` §4.0](../AGENTS.md)「跑全量的固定口径」。
 **当前结果不在本文件维护**——数字变得比这份说明快，抄一份必然陈旧（这一行以前就写着
 一个落后两批的 4601）。唯一真相源是 [`AGENTS.md` §4.0](../AGENTS.md) 的「最新后端全量基线」，
 那里同时给出**较上一个 SHA 的净增量与逐条点号**（§4.3：净增量要跟同一个 SHA 比，
