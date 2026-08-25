@@ -1228,30 +1228,67 @@ def test_runbook_documents_one_shot_ci_digest_approval():
     required_contract = (
         "--approve-ci-cd-sha256",
         "target_ci_cd_sha256",
+        "approved_ci_cd_sha256",
+        "artifact_directory",
         "一次性",
         "不支持环境变量",
         "database_schema",
         "secret_material",
         "runtime_config_contract",
-        "plan_rejected",
-        "$LASTEXITCODE -ne 3",
+        "`ci_cd` 变化 + 无批准：`plan_rejected`",
+        "无 `ci_cd` 变化 + 有批准：`configuration_rejected`",
+        "无 `ci_cd` 变化 + 无批准：不因本机制阻塞",
+        "批准绑定 workflow 提交树摘要，不绑定 commit SHA",
+        "不同 target SHA 的 workflow 树相同，摘要也相同",
     )
     operator_sequence = (
-        "python scripts/dev_stack.py target show",
+        "$targetJson = python scripts/dev_stack.py target show | Out-String",
+        '$target = $targetJson | ConvertFrom-Json',
+        'if ($target.status -ne "target" -or $target.target -ne "cloud")',
         "$sha = (git rev-parse HEAD).Trim()",
         "$planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String",
         "$plan = $planJson | ConvertFrom-Json",
+        'if ($planRc -ne 3)',
+        'if ($plan.status -ne "plan_rejected")',
+        'if ($null -ne $plan.target_sha -and $plan.target_sha -ne $sha)',
+        "$blockers = @($plan.blocking_changes)",
+        'if ($blockers.Count -eq 0)',
+        'Where-Object { $_.category -ne "ci_cd" }',
+        'Format-Table path, category',
+        'Read-Host "Confirm every listed path is within the explicit CI/CD authorization (type YES)"',
+        'if ($confirmation -cne "YES")',
         "$digest = $plan.target_ci_cd_sha256",
-        "python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest",
+        "if ($digest -cnotmatch '^[0-9a-f]{64}$')",
+        "$dryJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest | Out-String",
+        "$dry = $dryJson | ConvertFrom-Json",
+        'if ($dryRc -ne 0)',
+        'if ($dry.status -ne "dry_run")',
+        'if ($dry.target_sha -ne $sha)',
+        'if ($dry.target_ci_cd_sha256 -cne $digest)',
+        'if ($dry.approved_ci_cd_sha256 -cne $digest)',
+        'if (@($dry.blocking_changes).Count -ne 0)',
+        'if (-not $dry.artifact_directory)',
+        "$applyTargetJson = python scripts/dev_stack.py target show | Out-String",
+        '$applyTarget = $applyTargetJson | ConvertFrom-Json',
+        'if ($applyTarget.status -ne "target" -or $applyTarget.target -ne "cloud")',
         "python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply",
     )
 
+    approval_blocks: list[str] = []
     for path in runbooks:
         text = _required_text(path)
         for required in required_contract:
             assert required in text, f"{path} must document {required}"
-        positions = [text.index(command) for command in operator_sequence]
+        section = text.split("### CI/CD 一次性摘要批准", maxsplit=1)[1]
+        match = re.search(r"```powershell\n(?P<body>.*?)\n```", section, re.DOTALL)
+        assert match is not None, f"{path} must contain a PowerShell approval block"
+        block = match.group("body")
+        positions = [block.index(command) for command in operator_sequence]
         assert positions == sorted(positions), f"{path} must preserve the operator sequence"
+        assert block.count("python scripts/dev_stack.py target show") == 2
+        approval_blocks.append(block)
+
+    assert approval_blocks[0] == approval_blocks[1]
 
 
 @pytest.mark.parametrize(

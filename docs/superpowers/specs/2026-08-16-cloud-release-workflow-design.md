@@ -215,8 +215,10 @@ PLANNED -> UPLOADED -> BUILT -> BACKED_UP -> ACTIVATING -> VERIFIED
 CI/CD 使用另一套不持久化的批准模型：发布器从目标 commit 的 `.github/workflows/**` blob 树计算
 规范 SHA-256，并把它作为 `target_ci_cd_sha256` 返回。只有显式 CLI 参数
 `--approve-ci-cd-sha256` 与该摘要逐字相等时，当前计划才忽略对应 `ci_cd` 阻塞；批准不支持
-环境变量、不写远端文件，也不能继承到另一个 target SHA。无批准、过期摘要、目标没有 CI/CD
-变化却提供摘要都 fail closed。`runtime_config_contract`、`database_schema`、
+环境变量、不写远端文件；每次 plan / deploy 调用都必须显式传入，不会自动继承。批准值绑定的
+是完整 workflow 提交树摘要而不是 commit SHA；不同 target SHA 的 workflow 树相同，摘要也
+相同。无批准、过期摘要、目标没有 CI/CD 变化却提供摘要都 fail closed。
+`runtime_config_contract`、`database_schema`、
 `secret_material` 继续硬阻塞；`infrastructure` 仍只认它自己的
 `release-infrastructure.json` 批准锚，CI/CD 批准不能抑制这些类别。
 
@@ -285,14 +287,16 @@ CI/CD 使用另一套不持久化的批准模型：发布器从目标 commit 的
 
 现有一次性部署计划 `docs/superpowers/plans/2026-08-15-tencent-cloud-private-demo-deployment.md` 继续作为首版部署证据；本设计是其后续可重复发布机制，不回写或伪装首版历史。
 
-## 11. 实现状态（2026-08-16）
+## 11. 2026-08-16 实现状态（历史快照）
 
-| 范围 | 实现提交 | 当前证据 |
+本节以下表格和服务器状态只记录 **2026-08-16 当日快照**，不代表 2026-08-26 的仓库或云端
+现状；后续状态见 §12。
+
+| 范围 | 实现提交 | 2026-08-16 当日证据 |
 |---|---|---|
 | 不可变服务/模型输入 | `1bbd084` | 26 个自建服务与 4 个运行模型均由显式 manifest 锁定 |
 | clean main、SSH 与脱敏子进程门禁 | `166454a` | dirty worktree、非 main 可达提交和不安全连接字段均有拒绝测试 |
 | 受控变化与基础设施批准锚 | `9894367` | Compose、schema、`.env.example`、CI/CD、密钥材料和 Python DDL diff 默认 fail closed；基础设施使用远端批准锚 |
-| CI/CD 一次性摘要批准（2026-08-26 扩展） | `96768b1`–`93c0368` | 仅显式 CLI 精确匹配目标 workflow 提交树摘要；不持久化、不放行其他类别 |
 | 无密钥可复现 artifact | `67ab478` | 只归档已提交 Git bytes；路径、文本秘密、manifest/checksum 和不覆盖语义有测试 |
 | 本机 CLI 与 dry-run | `88385b3` | `plan/deploy/verify/rollback` 已实现；无 `--apply` 不调用远端写入口 |
 | 远端单锁顺序构建 | `5f3ec8b` | 30 GiB/3 GiB 容量闸、模型闸、26 服务串行构建、SHA image inventory 已实现 |
@@ -309,6 +313,20 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scr
 
 实施收口前新鲜读数为 **104 passed / 0 failed / 0 skipped**；五个 Shell 资产通过 Git Bash `bash -n`，四个 Python 入口通过 `py_compile`，`git diff --check 87db3f2..HEAD` 通过。tracked sensitive 路径检查只命中仓库既有且允许的 `.env.example`，没有新增 `.env`、私钥或证书密钥文件。
 
-真实服务器只执行过 read-only `plan`/preflight：`current` 仍为 `4c1f479`，运行时 Compose project 仍为 `4c1f479`；返回 `bootstrap_required`，列出 runtime project 文件、基础设施批准锚、5 个共享脚本和 4 个共享模型。没有生成 artifact、上传文件、安装脚本、修改环境、重启容器或执行首次真实 deploy。
+截至 2026-08-16，真实服务器只执行过 read-only `plan`/preflight：`current` 为 `4c1f479`，运行时 Compose project 为 `4c1f479`；返回 `bootstrap_required`，列出 runtime project 文件、基础设施批准锚、5 个共享脚本和 4 个共享模型。当日没有生成 artifact、上传文件、安装脚本、修改环境、重启容器或执行首次真实 deploy。
 
-当前完成的是隔离分支 `feat/tencent-cloud-private-demo` 上的工作流实现。它尚未合入当前 `main`、未 push、未安装到服务器；首次 bootstrap、首次 `deploy --apply` 和未来 rollback 演练仍严格受 §7.2 与运行手册的单独审批约束。
+2026-08-16 快照中的实现位于隔离分支 `feat/tencent-cloud-private-demo`，当日尚未合入 `main`、
+未 push、未安装到服务器；这段话不是后续版本状态。首次 bootstrap、首次 `deploy --apply` 和
+未来 rollback 演练仍严格受 §7.2 与运行手册的单独审批约束。
+
+## 12. 2026-08-26 一次性 CI/CD 摘要批准扩展状态
+
+泓舟已单独授权 CI/CD / 发布治理变更。Tasks 1–4（`96768b1`–`93c0368`）已在本地 main 完成，
+并通过定向测试、独立规格审查与独立质量审查：目标 commit 的完整 workflow 树生成规范摘要，
+计划只在显式摘要逐字相等时放行 `ci_cd`，CLI / artifact / `dev_stack` 输出保留 target 与
+approved 审计字段。后续 `c70eefc` 以失败反例补齐 `artifact_directory` 的统一入口安全投影，
+本地定向与联合回归均通过；该补丁的审查状态不在本段提前宣称。
+
+截至 2026-08-26，本扩展尚未 push 或 deploy，也没有执行 cloud apply / verify；云端仍为
+`7a0e03a`，current-SHA MiniMax long probe 与 HMI C14 均无新证据。当前操作口径以两份 runbook
+的“CI/CD 一次性摘要批准”段为准。

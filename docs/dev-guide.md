@@ -70,26 +70,58 @@ python scripts/dev_stack.py verify
 因此先捕获 stdout，再检查 `$LASTEXITCODE`：
 
 ```powershell
-python scripts/dev_stack.py target show
+$targetJson = python scripts/dev_stack.py target show | Out-String
+$targetRc = $LASTEXITCODE
+if ($targetRc -ne 0) { throw "target show failed" }
+$target = $targetJson | ConvertFrom-Json
+if ($target.status -ne "target" -or $target.target -ne "cloud") { throw "target must be cloud" }
+
 $sha = (git rev-parse HEAD).Trim()
 $planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String
-if ($LASTEXITCODE -ne 3) { throw "expected unapproved deploy rc=3" }
+$planRc = $LASTEXITCODE
 $plan = $planJson | ConvertFrom-Json
+if ($planRc -ne 3) { throw "expected unapproved deploy rc=3" }
 if ($plan.status -ne "plan_rejected") { throw "expected status=plan_rejected" }
+if ($null -ne $plan.target_sha -and $plan.target_sha -ne $sha) { throw "target SHA changed" }
+$blockers = @($plan.blocking_changes)
+if ($blockers.Count -eq 0) { throw "expected CI/CD blockers" }
+$unexpected = @($blockers | Where-Object { $_.category -ne "ci_cd" })
+if ($unexpected.Count -ne 0) { throw "non-CI/CD blocker present; stop" }
+$blockers | Format-Table path, category
+$confirmation = Read-Host "Confirm every listed path is within the explicit CI/CD authorization (type YES)"
+if ($confirmation -cne "YES") { throw "CI/CD paths were not authorized" }
 $digest = $plan.target_ci_cd_sha256
-if (-not $digest) { throw "target_ci_cd_sha256 is missing" }
+if ($digest -cnotmatch '^[0-9a-f]{64}$') { throw "target_ci_cd_sha256 is invalid" }
 
 # 第二次仅 dry-run：批准同一 target SHA 的精确 workflow 提交树摘要
-python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest
-if ($LASTEXITCODE -ne 0) { throw "approved dry-run failed" }
+$dryJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest | Out-String
+$dryRc = $LASTEXITCODE
+$dry = $dryJson | ConvertFrom-Json
+if ($dryRc -ne 0) { throw "approved dry-run failed" }
+if ($dry.status -ne "dry_run") { throw "expected status=dry_run" }
+if ($dry.target_sha -ne $sha) { throw "dry-run target SHA changed" }
+if ($dry.target_ci_cd_sha256 -cne $digest) { throw "target CI/CD digest changed" }
+if ($dry.approved_ci_cd_sha256 -cne $digest) { throw "approved CI/CD digest mismatch" }
+if (@($dry.blocking_changes).Count -ne 0) { throw "dry-run still has blockers" }
+if (-not $dry.artifact_directory) { throw "dry-run artifact_directory is missing" }
 
 # dry-run 通过后，才显式 apply 同一个 SHA 与摘要
+$applyTargetJson = python scripts/dev_stack.py target show | Out-String
+$applyTargetRc = $LASTEXITCODE
+if ($applyTargetRc -ne 0) { throw "pre-apply target show failed" }
+$applyTarget = $applyTargetJson | ConvertFrom-Json
+if ($applyTarget.status -ne "target" -or $applyTarget.target -ne "cloud") { throw "pre-apply target must be cloud" }
 python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply
 ```
 
-`$digest` 必须原样复制自**同一个** `$sha` 首轮输出的 `target_ci_cd_sha256`。这个批准是一次性的
-CLI 参数，不支持环境变量，也不会写入或更新远端批准锚；摘要不匹配、目标没有 CI/CD 变化或
-省略参数都会拒绝。它只放行该摘要覆盖的 `ci_cd` 项，不能抑制
+`$digest` 必须原样复制自**同一个** `$sha` 首轮输出的 `target_ci_cd_sha256`，防止操作时把另一次计划的摘要串进来。批准绑定 workflow 提交树摘要，不绑定 commit SHA；不同 target SHA 的 workflow 树相同，摘要也相同，但每次 plan / deploy 调用仍必须显式传 CLI 参数，不会自动继承。
+三种分支必须区分：
+
+- 有 `ci_cd` 变化 + 无批准：`plan_rejected`；
+- 无 `ci_cd` 变化 + 有批准：`configuration_rejected`；
+- 无 `ci_cd` 变化 + 无批准：不因本机制阻塞。
+
+这个批准是一次性的 CLI 参数，不支持环境变量，也不会写入或更新远端批准锚。它只放行该摘要覆盖的 `ci_cd` 项，不能抑制
 `runtime_config_contract`、`database_schema`、`secret_material`，也不能放行未匹配其自身
 `release-infrastructure.json` 批准锚的 `infrastructure`。
 

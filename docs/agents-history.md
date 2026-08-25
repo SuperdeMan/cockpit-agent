@@ -6319,3 +6319,15 @@ SHA 的长会话**。云端仍是 `7a0e03a`；current-SHA MiniMax long probe 与
 本节落笔时 Tasks 1–4 尚未 push，也没有执行 cloud deploy / apply / verify。云端仍为
 `7a0e03a`；current-SHA MiniMax long probe 与 HMI C14 均未运行，必须等唯一 SHA 推送、无批准
 负例、错误摘要负例、精确摘要 dry-run 和显式 apply 依次完成后再补证，旧 release 证据不得移用。
+
+### §70.1 文档审查反推统一入口证据字段闭环
+
+首轮文档质量审查没有接受“摘要不能继承到另一个 target SHA”的说法：实现绑定的是完整
+workflow 树，不是 commit SHA；相同树在不同 SHA 上会产生相同摘要，只是每次调用都必须显式
+传参。审查还要求 runbook 在 apply 前逐项证明 blocker 只有已授权 `ci_cd`、批准 dry-run 的
+SHA / target digest / approved digest / 空 blocker / artifact 全部闭合，并再次确认 target=cloud。
+
+按 runbook 写 `artifact_directory` 守卫时反向读出一条真实实现缺口：child payload 已有且校验了
+该字段，但 `dev_stack` 的安全投影漏掉它。`c70eefc` 先用 **2 个失败反例**复现，再补齐投影；
+定向 **6 passed**，`dev_stack + cloud_release` 联合回归更新为 **277 passed / 3 skipped**。
+本节仍是未 push、未 deploy 状态，不产生任何新真栈结论。
