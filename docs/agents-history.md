@@ -6295,3 +6295,27 @@ runtime project/models/scripts ready、磁盘与内存读数有效；唯一 bloc
 必须单独人工授权。因此**没有执行 `--apply`、没有改门禁/CI、没有拿旧 release 跑一份冒充新
 SHA 的长会话**。云端仍是 `7a0e03a`；current-SHA MiniMax long probe 与 HMI C14 待 CI/CD
 发布策略取得新授权或外部状态改变后再做，旧证据不得移用。
+
+## §70 2026-08-26 CI/CD 目标提交树一次性摘要批准（本地实现态）
+
+泓舟已单独授权修改 CI/CD / 发布治理，并授权在 `main` 直接提交和后续推送。设计与实施计划先行
+落地（`a888d63` / `0c6dc3e`），随后 Tasks 1–4 在本地 main 顺序完成：
+
+- `96768b1` 计算目标 commit 的 `.github/workflows/**` 提交树摘要；初次规格审查发现非法
+  UTF-8、C1 控制字符、submodule 与 malformed tree 覆盖缺口，`37ff9887` 补齐 fail-closed
+  解析与反例后复审通过。
+- `af68bd8` 只在显式批准摘要与目标摘要逐字相等时移除 `ci_cd` 阻塞；两项 mutation 分别证明
+  “任意非空批准”与“借 CI 批准吞掉其他类别”都会被测试杀死。
+- `e1e10b7` 把 target / approved CI 摘要写入 request、CLI JSON 与 artifact manifest，旧 artifact
+  的批准字段不一致会拒绝复用。
+- `93c0368` 只在 `dev_stack deploy` 透传批准参数，并对两个审计字段执行严格子进程 schema 校验；
+  `status` / `verify` 不接受该参数，也没有环境变量回退。
+
+四个任务终态均通过独立规格审查与独立质量审查，零未决 Critical / Important / Minor。
+`test_cloud_release.py` 的整文件阶段读数为 **119 → 132 → 137 passed**；Task 4 的
+`test_dev_stack.py` 为 **135 passed / 3 skipped**，与 cloud release 联合回归为
+**272 passed / 3 skipped**。这些都是本地定向证据，**本节没有运行或声称全仓 pytest**。
+
+本节落笔时 Tasks 1–4 尚未 push，也没有执行 cloud deploy / apply / verify。云端仍为
+`7a0e03a`；current-SHA MiniMax long probe 与 HMI C14 均未运行，必须等唯一 SHA 推送、无批准
+负例、错误摘要负例、精确摘要 dry-run 和显式 apply 依次完成后再补证，旧 release 证据不得移用。

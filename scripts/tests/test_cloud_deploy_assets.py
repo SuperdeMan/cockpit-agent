@@ -1223,6 +1223,37 @@ def test_cloud_runbook_documents_repeatable_release_workflow():
         assert required in readme
 
 
+def test_runbook_documents_one_shot_ci_digest_approval():
+    runbooks = (CLOUD_DIR / "README.md", ROOT / "docs" / "dev-guide.md")
+    required_contract = (
+        "--approve-ci-cd-sha256",
+        "target_ci_cd_sha256",
+        "一次性",
+        "不支持环境变量",
+        "database_schema",
+        "secret_material",
+        "runtime_config_contract",
+        "plan_rejected",
+        "$LASTEXITCODE -ne 3",
+    )
+    operator_sequence = (
+        "python scripts/dev_stack.py target show",
+        "$sha = (git rev-parse HEAD).Trim()",
+        "$planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String",
+        "$plan = $planJson | ConvertFrom-Json",
+        "$digest = $plan.target_ci_cd_sha256",
+        "python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest",
+        "python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply",
+    )
+
+    for path in runbooks:
+        text = _required_text(path)
+        for required in required_contract:
+            assert required in text, f"{path} must document {required}"
+        positions = [text.index(command) for command in operator_sequence]
+        assert positions == sorted(positions), f"{path} must preserve the operator sequence"
+
+
 @pytest.mark.parametrize(
     ("disk_bytes", "memory_bytes", "message"),
     [

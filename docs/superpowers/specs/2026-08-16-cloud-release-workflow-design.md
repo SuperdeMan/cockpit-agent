@@ -18,7 +18,7 @@
 2. 构建失败、备份失败或发布前校验失败时，当前生产版本不受影响。
 3. 激活后健康检查失败时，自动恢复上一 release 的 `current` 指针和容器状态。
 4. 普通代码发布不读取、复制或修改生产 `.env`。
-5. 数据库 schema、密钥、CI/CD 等受控变化在计划阶段停止并请求单独授权。
+5. 数据库 schema、运行时配置契约和密钥变化在计划阶段硬停止；CI/CD 仅接受目标 workflow 提交树摘要的一次性精确授权。
 6. 发布过程不自动删除 release、镜像、备份、构建目录或数据卷。
 
 ## 2. 已选方案与备选方案
@@ -103,7 +103,7 @@ python scripts/cloud_release.py rollback --to <SHA> --apply
 
 - 将输入解析为完整 commit SHA，并验证它属于 `main`。
 - 要求仓库根工作区干净；不从当前 dirty 文件系统制作归档。
-- 检查受控变化，命中数据库 schema、`.env`/密钥或 CI/CD 配置时 fail closed。
+- 检查受控变化：数据库 schema、运行时配置契约和 `.env`/密钥始终 fail closed；CI/CD 默认拒绝，仅在目标 workflow 提交树摘要与显式一次性批准逐字相等时放行该类别。
 - 以当前已部署 SHA 为比较基线；`deploy/cloud/**` 等共享运行资产发生变化时标记为基础设施发布并停止普通代码发布。
 - 生成 `git archive`、SHA-256 校验清单和脱敏 release manifest。
 - 默认只输出计划；`deploy` 和 `rollback` 没有 `--apply` 时不得调用服务器写操作。
@@ -204,13 +204,21 @@ PLANNED -> UPLOADED -> BUILT -> BACKED_UP -> ACTIVATING -> VERIFIED
 
 - 数据库 schema、migration或初始化 SQL。
 - `.env`、密钥、token和运行时凭证变更。
-- CI/CD配置和Registry授权。
+- CI/CD 配置和 Registry 授权；只允许对受审目标提交的 `.github/workflows/**` 提交树摘要做一次性精确批准。
 - `deploy/cloud/**` 中的 Compose override、远端发布脚本、备份脚本或 systemd unit 变化；它们属于共享运行底座，不随普通应用代码静默替换。
 - Tailscale Serve/Funnel、安全组、systemd或主机级配置变更。
 - 数据删除、release/镜像/备份清理。
 - 支付、商户写操作、真实车控或整机重启。
 
 首次 bootstrap 是上面基础设施变化的显式批准过程。它必须把受审目标提交的 `deploy/cloud/**`（排除纯文档 `README.md`）聚合摘要和各安装文件 SHA-256 写入 `/opt/car-agent/shared/release-infrastructure.json`。后续普通发布只有在目标提交的基础设施摘要与该已批准摘要逐字一致时，才能把这些历史差异视为已批准；摘要缺失、不一致或出现新文件都重新 fail closed。manifest 本身不得由普通 deploy 生成或改写。
+
+CI/CD 使用另一套不持久化的批准模型：发布器从目标 commit 的 `.github/workflows/**` blob 树计算
+规范 SHA-256，并把它作为 `target_ci_cd_sha256` 返回。只有显式 CLI 参数
+`--approve-ci-cd-sha256` 与该摘要逐字相等时，当前计划才忽略对应 `ci_cd` 阻塞；批准不支持
+环境变量、不写远端文件，也不能继承到另一个 target SHA。无批准、过期摘要、目标没有 CI/CD
+变化却提供摘要都 fail closed。`runtime_config_contract`、`database_schema`、
+`secret_material` 继续硬阻塞；`infrastructure` 仍只认它自己的
+`release-infrastructure.json` 批准锚，CI/CD 批准不能抑制这些类别。
 
 ### 7.3 SSH边界
 
@@ -283,7 +291,8 @@ PLANNED -> UPLOADED -> BUILT -> BACKED_UP -> ACTIVATING -> VERIFIED
 |---|---|---|
 | 不可变服务/模型输入 | `1bbd084` | 26 个自建服务与 4 个运行模型均由显式 manifest 锁定 |
 | clean main、SSH 与脱敏子进程门禁 | `166454a` | dirty worktree、非 main 可达提交和不安全连接字段均有拒绝测试 |
-| 受控变化与基础设施批准锚 | `9894367` | Compose、schema、`.env.example`、CI/CD、密钥材料和 Python DDL diff fail closed |
+| 受控变化与基础设施批准锚 | `9894367` | Compose、schema、`.env.example`、CI/CD、密钥材料和 Python DDL diff 默认 fail closed；基础设施使用远端批准锚 |
+| CI/CD 一次性摘要批准（2026-08-26 扩展） | `96768b1`–`93c0368` | 仅显式 CLI 精确匹配目标 workflow 提交树摘要；不持久化、不放行其他类别 |
 | 无密钥可复现 artifact | `67ab478` | 只归档已提交 Git bytes；路径、文本秘密、manifest/checksum 和不覆盖语义有测试 |
 | 本机 CLI 与 dry-run | `88385b3` | `plan/deploy/verify/rollback` 已实现；无 `--apply` 不调用远端写入口 |
 | 远端单锁顺序构建 | `5f3ec8b` | 30 GiB/3 GiB 容量闸、模型闸、26 服务串行构建、SHA image inventory 已实现 |

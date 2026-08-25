@@ -28,8 +28,9 @@
 > ⚠ **为什么 `TAILNET_FQDN` 不写进 `.env.example`**：那个文件在发布闸里被分类为
 > `runtime_config_contract`（`scripts/cloud_release_lib.py::CONTROLLED_EXACT`），
 > 而该类别**没有任何放行通道**——`infrastructure` 有 `release-infrastructure.json`
-> 的 digest 批准，`runtime_config_contract` / `database_schema` / `ci_cd` /
-> `secret_material` 一律硬阻断。且 `changed_paths` 取的是「已部署 SHA → 目标 SHA」
+> 的 digest 批准，`ci_cd` 仅有下文按目标 workflow 提交树摘要的一次性 CLI 批准；
+> `runtime_config_contract` / `database_schema` / `secret_material` 一律硬阻断。
+> 且 `changed_paths` 取的是「已部署 SHA → 目标 SHA」
 > 的全量 diff，所以只要这一笔在 main 上，`cloud_release.py deploy` 就**永远** `plan_rejected`
 > ——连「先发一次版把它消化掉」都不行，发版本身就是被拒的那个动作。
 > 2026-08-19 实测过一次（`c03d5a3` → rc=3 → 已 `030c049` 撤回）。
@@ -61,6 +62,36 @@ python scripts/dev_stack.py deploy --sha HEAD
 python scripts/dev_stack.py deploy --sha HEAD --apply
 python scripts/dev_stack.py verify
 ```
+
+### CI/CD 一次性摘要批准
+
+默认不带批准参数时仍然 fail closed。只有用户已经单独授权目标 SHA 的 CI/CD 变化时，才按下面
+的 PowerShell 顺序操作；首轮即使以 rc=3 / `status=plan_rejected` 退出，stdout 仍是完整 JSON，
+因此先捕获 stdout，再检查 `$LASTEXITCODE`：
+
+```powershell
+python scripts/dev_stack.py target show
+$sha = (git rev-parse HEAD).Trim()
+$planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String
+if ($LASTEXITCODE -ne 3) { throw "expected unapproved deploy rc=3" }
+$plan = $planJson | ConvertFrom-Json
+if ($plan.status -ne "plan_rejected") { throw "expected status=plan_rejected" }
+$digest = $plan.target_ci_cd_sha256
+if (-not $digest) { throw "target_ci_cd_sha256 is missing" }
+
+# 第二次仅 dry-run：批准同一 target SHA 的精确 workflow 提交树摘要
+python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest
+if ($LASTEXITCODE -ne 0) { throw "approved dry-run failed" }
+
+# dry-run 通过后，才显式 apply 同一个 SHA 与摘要
+python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply
+```
+
+`$digest` 必须原样复制自**同一个** `$sha` 首轮输出的 `target_ci_cd_sha256`。这个批准是一次性的
+CLI 参数，不支持环境变量，也不会写入或更新远端批准锚；摘要不匹配、目标没有 CI/CD 变化或
+省略参数都会拒绝。它只放行该摘要覆盖的 `ci_cd` 项，不能抑制
+`runtime_config_contract`、`database_schema`、`secret_material`，也不能放行未匹配其自身
+`release-infrastructure.json` 批准锚的 `infrastructure`。
 
 切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
 Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。
