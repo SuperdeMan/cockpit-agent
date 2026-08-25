@@ -153,6 +153,7 @@ class ReleaseRequest:
     revision: str
     artifact_root: Path
     ssh: SshConfig
+    approved_ci_cd_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1060,6 +1061,8 @@ def _expected_manifest(
         "runtime_models_sha256": models_digest,
         "target_infrastructure_sha256": plan.target_infrastructure_digest,
         "approved_infrastructure_sha256": plan.approved_infrastructure_digest,
+        "target_ci_cd_sha256": plan.target_ci_cd_digest,
+        "approved_ci_cd_sha256": plan.approved_ci_cd_digest,
     }
 
 
@@ -1698,6 +1701,7 @@ def execute_deploy(
         request.repo,
         target_sha,
     )
+    ci_cd_digest = compute_ci_cd_digest(request.repo, target_sha)
     plan = make_release_plan(
         deployed_sha=deployed_sha,
         target_sha=target_sha,
@@ -1707,6 +1711,8 @@ def execute_deploy(
         approved_infrastructure_digest=(
             remote_state.approved_infrastructure_digest
         ),
+        target_ci_cd_digest=ci_cd_digest,
+        approved_ci_cd_digest=request.approved_ci_cd_digest,
     )
     if plan.status == "plan_rejected":
         return CloudReleaseResult(

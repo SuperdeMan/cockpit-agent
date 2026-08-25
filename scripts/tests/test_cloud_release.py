@@ -785,6 +785,38 @@ def test_build_release_artifact_reuses_identical_existing_artifact(
     assert second == first
 
 
+def test_existing_artifact_rejects_changed_ci_cd_approval(tmp_path: Path):
+    repo, sha = make_repo(tmp_path)
+    first_plan = ReleasePlan(
+        sha,
+        sha,
+        (),
+        (),
+        "ready",
+        target_ci_cd_digest="a" * 64,
+        approved_ci_cd_digest="a" * 64,
+    )
+    kwargs = {
+        "repo": repo,
+        "output_root": tmp_path / "artifacts",
+        "services_digest": "1" * 64,
+        "models_digest": "2" * 64,
+    }
+    build_release_artifact(plan=first_plan, **kwargs)
+
+    changed_approval = ReleasePlan(
+        sha,
+        sha,
+        (),
+        (),
+        "ready",
+        target_ci_cd_digest="a" * 64,
+        approved_ci_cd_digest="b" * 64,
+    )
+    with pytest.raises(ReleaseError, match="artifact exists but does not match"):
+        build_release_artifact(plan=changed_approval, **kwargs)
+
+
 def test_existing_mismatched_artifact_is_never_overwritten(tmp_path: Path):
     repo, sha = make_repo(tmp_path)
     directory = tmp_path / "artifacts" / sha
@@ -906,6 +938,77 @@ def test_cloud_release_cli_help_and_configuration_error_subprocess_contract():
         "error_category": "configuration",
     }
     assert "operation failed" in missing.stderr
+
+
+def test_cloud_release_ci_cd_approval_flag_is_plan_deploy_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    approval = "d" * 64
+    monkeypatch.setenv("CAR_AGENT_APPROVED_CI_CD_SHA256", "e" * 64)
+    parser = cloud_release.build_parser()
+
+    plan_args = parser.parse_args(
+        ["plan", "--sha", "a" * 40, "--approve-ci-cd-sha256", approval]
+    )
+    deploy_args = parser.parse_args(
+        ["deploy", "--approve-ci-cd-sha256", approval]
+    )
+    assert plan_args.approve_ci_cd_sha256 == approval
+    assert deploy_args.approve_ci_cd_sha256 == approval
+
+    identity = tmp_path / "identity"
+    identity.write_text("test-only identity", encoding="utf-8")
+    request = cloud_release._request(
+        tmp_path,
+        plan_args,
+        SshConfig("demo.example", "ubuntu", identity),
+    )
+    assert request.approved_ci_cd_digest == approval
+
+    no_flag_args = parser.parse_args(["plan"])
+    assert no_flag_args.approve_ci_cd_sha256 is None
+    for argv in (
+        ["verify", "--approve-ci-cd-sha256", approval],
+        ["rollback", "--to", "a" * 7, "--approve-ci-cd-sha256", approval],
+    ):
+        with pytest.raises(SystemExit):
+            parser.parse_args(argv)
+
+
+def test_cloud_release_result_payload_audits_ci_cd_digests():
+    target_digest = "c" * 64
+    approved_digest = "d" * 64
+    result = CloudReleaseResult(
+        status="plan_rejected",
+        plan=ReleasePlan(
+            "a" * 40,
+            "b" * 40,
+            (".github/workflows/ci.yml",),
+            (ControlledChange(".github/workflows/ci.yml", "ci_cd"),),
+            "plan_rejected",
+            target_ci_cd_digest=target_digest,
+            approved_ci_cd_digest=approved_digest,
+        ),
+        artifact=None,
+        remote_state=RemoteState(
+            current_release="a" * 40,
+            current_path=f"/opt/car-agent/releases/{'a' * 40}",
+            runtime_project_name="4c1f479",
+            approved_infrastructure_digest=None,
+            disk_available_bytes=100 * 1024**3,
+            memory_available_bytes=5 * 1024**3,
+            release_lock_available=True,
+            runtime_project_ready=True,
+            shared_scripts_ready=True,
+            shared_models_ready=True,
+        ),
+    )
+
+    payload = cloud_release._result_payload(result)
+
+    assert payload["target_ci_cd_sha256"] == target_digest
+    assert payload["approved_ci_cd_sha256"] == approved_digest
 
 
 @pytest.mark.parametrize("command", ("verify", "rollback"))
@@ -1209,8 +1312,22 @@ def remote_state_payload(
     ) + "\n"
 
 
-def make_release_request(tmp_path: Path) -> tuple[ReleaseRequest, str]:
+def make_release_request(
+    tmp_path: Path,
+    *,
+    with_ci_cd_change: bool = False,
+) -> tuple[ReleaseRequest, str]:
     repo, base, target = make_deploy_repo(tmp_path)
+    if with_ci_cd_change:
+        workflows = repo / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / "ci.yml").write_text(
+            "name: ci\non: push\njobs: {}\n",
+            encoding="utf-8",
+        )
+        git(repo, "add", ".github/workflows/ci.yml")
+        git(repo, "commit", "-m", "ci workflow")
+        target = git(repo, "rev-parse", "HEAD")
     identity = tmp_path / "agent.pem"
     identity.write_text("not-a-real-key\n", encoding="utf-8")
     request = ReleaseRequest(
@@ -1514,6 +1631,88 @@ def test_deploy_without_apply_never_calls_remote_mutation(tmp_path: Path):
         "remote-release.sh" not in " ".join(call)
         for call in runner.calls
     )
+
+
+def test_ci_cd_change_without_request_approval_stops_before_artifact_or_write(
+    tmp_path: Path,
+):
+    request, base = make_release_request(tmp_path, with_ci_cd_change=True)
+    infrastructure_digest = compute_infrastructure_digest(
+        request.repo,
+        request.revision,
+    )
+    runner = FakeRunner(
+        [
+            command_result(
+                remote_state_payload(
+                    base,
+                    approved_digest=infrastructure_digest,
+                )
+            )
+        ]
+    )
+
+    result = execute_deploy(request, apply=False, runner=runner)
+
+    assert result.status == "plan_rejected"
+    assert result.artifact is None
+    assert result.plan.target_ci_cd_digest == compute_ci_cd_digest(
+        request.repo,
+        request.revision,
+    )
+    assert result.plan.approved_ci_cd_digest is None
+    assert len(runner.calls) == 1
+    assert not request.artifact_root.exists()
+    assert all(
+        "remote-release.sh" not in " ".join(call)
+        for call in runner.calls
+    )
+
+
+def test_exact_ci_cd_request_approval_is_audited_in_dry_run_artifact(
+    tmp_path: Path,
+):
+    initial_request, base = make_release_request(
+        tmp_path,
+        with_ci_cd_change=True,
+    )
+    approval = compute_ci_cd_digest(
+        initial_request.repo,
+        initial_request.revision,
+    )
+    assert approval is not None
+    request = ReleaseRequest(
+        repo=initial_request.repo,
+        revision=initial_request.revision,
+        artifact_root=initial_request.artifact_root,
+        ssh=initial_request.ssh,
+        approved_ci_cd_digest=approval,
+    )
+    infrastructure_digest = compute_infrastructure_digest(
+        request.repo,
+        request.revision,
+    )
+    runner = FakeRunner(
+        [
+            command_result(
+                remote_state_payload(
+                    base,
+                    approved_digest=infrastructure_digest,
+                )
+            )
+        ]
+    )
+
+    result = execute_deploy(request, apply=False, runner=runner)
+
+    assert result.status == "dry_run"
+    assert result.plan.target_ci_cd_digest == approval
+    assert result.plan.approved_ci_cd_digest == approval
+    assert result.artifact is not None
+    manifest = json.loads(result.artifact.manifest.read_text(encoding="utf-8"))
+    assert manifest["target_ci_cd_sha256"] == approval
+    assert manifest["approved_ci_cd_sha256"] == approval
+    assert len(runner.calls) == 1
 
 
 def test_deploy_stops_when_remote_bootstrap_is_incomplete(tmp_path: Path):

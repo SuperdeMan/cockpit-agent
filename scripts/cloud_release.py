@@ -52,9 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan = subparsers.add_parser("plan")
     plan.add_argument("--sha", default="HEAD")
+    plan.add_argument("--approve-ci-cd-sha256")
 
     deploy = subparsers.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
+    deploy.add_argument("--approve-ci-cd-sha256")
     deploy.add_argument("--apply", action="store_true")
 
     subparsers.add_parser("verify")
@@ -98,6 +100,7 @@ def _request(
         revision=args.sha,
         artifact_root=repo / ".artifacts" / "releases",
         ssh=ssh,
+        approved_ci_cd_digest=args.approve_ci_cd_sha256,
     )
 
 
@@ -118,6 +121,8 @@ def _result_payload(result: CloudReleaseResult) -> dict[str, object]:
         "approved_infrastructure_sha256": (
             result.plan.approved_infrastructure_digest
         ),
+        "target_ci_cd_sha256": result.plan.target_ci_cd_digest,
+        "approved_ci_cd_sha256": result.plan.approved_ci_cd_digest,
         "artifact_directory": (
             str(result.artifact.directory) if result.artifact else None
         ),
