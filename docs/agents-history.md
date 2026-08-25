@@ -6276,3 +6276,22 @@ walk error fail-closed 保留。
 - 本节落笔时仍只是**未部署工作树的本地证据**；旧 cloud release `7a0e03a` 的历史读数不能替代
   本批。必须白名单提交并部署唯一 SHA 后，才可补写 cloud long probe / C14 结果；若发布闸因
   已提交的受控 CI/CD diff 拒绝，按闸的原始结果记录，不绕过、不改发布策略。
+
+### §69.6 提交/推送完成，cloud apply 被 CI/CD 门禁正确拦住
+
+白名单提交 **`5c43bc9041d47a896718c90f25a8c37d4dd31860`**（`fix: close minimax cloud qa loop`）
+并推送 `origin/main`。真栈动作逐次先核 `target show=cloud`；随后 status 返回旧 release
+`7a0e03aadbc7409d542d0567a4ed87924f56083a`、5/5 healthy、warnings=[]。
+
+对目标 SHA 只跑 deploy dry-run，结果 **`status=plan_rejected`**。其余前提都成立：
+`target_infrastructure_sha256 == approved_infrastructure_sha256`、release lock available、
+runtime project/models/scripts ready、磁盘与内存读数有效；唯一 blocking changes 为：
+
+- `.github/workflows/ci.yml`（`category=ci_cd`）
+- `.github/workflows/mobile-apk.yml`（`category=ci_cd`）
+
+这两笔来自“已部署 SHA → 目标 SHA”的累计 main diff，不是本 QA commit 偷带（本批白名单清单
+无 `.github/**`）。`ci_cd` 没有 infrastructure digest 那种批准通道，且项目红线要求修改 CI/CD
+必须单独人工授权。因此**没有执行 `--apply`、没有改门禁/CI、没有拿旧 release 跑一份冒充新
+SHA 的长会话**。云端仍是 `7a0e03a`；current-SHA MiniMax long probe 与 HMI C14 待 CI/CD
+发布策略取得新授权或外部状态改变后再做，旧证据不得移用。

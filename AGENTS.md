@@ -121,6 +121,12 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 **cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` **1/1** + `e2e_remote_safe` **8/8**，
 零 skip；**2026-08-22 I-030 批在 release `7a0e03a` 上复跑实测**，
 `run_e2e --target cloud` 无 `--id`）。交接页
+> ⚠ **2026-08-25 发布门禁现状**：MiniMax QA 闭环 commit
+> `5c43bc9041d47a896718c90f25a8c37d4dd31860` 已推 main，但 deploy plan 因累计差异中的
+> `.github/workflows/ci.yml` 与 `.github/workflows/mobile-apk.yml`（均 `ci_cd`）返回
+> `plan_rejected`；infra digest 匹配、release lock 可用、旧栈仍 5/5 healthy。**未执行 apply，
+> 云端仍是 `7a0e03a`，本批没有 current-SHA long probe/C14 证据。** CI/CD 属人工红线且该类别
+> 无批准通道，不得绕过；原始结果与本地闭环见 history §69.6。
 [`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
 §6 七条完成判据**全部达成**。**本地 Docker 已停**（32 容器全 `Exited`、Docker Desktop
 优雅退出、零进程残留；**只 stop 不 down**——卷停前停后同为 37 个、镜像/release/迁移包
