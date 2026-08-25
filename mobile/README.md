@@ -26,7 +26,7 @@ cd mobile
 npm install          # 首次
 npx expo start       # Metro dev server；真机 dev-client 扫码连
 npm run typecheck    # tsc --noEmit（含 @shared 引用）
-npm test             # jest：白名单守卫 + 端点校验 + gateway 帧契约
+npm test             # jest：白名单守卫 + 端点/gateway 契约 + 会话状态机 + 发送路由 + 设置 meta + 卡片注册表
 ```
 
 首次真机调试需要安装 **dev-client APK**（见下方构建），之后 JS 热更即可；
@@ -70,10 +70,18 @@ App 专属条目（手机档不含 `vehicle.control`）由泓舟在 M1 期间加
 
 ```
 app.config.ts          原生配置真相源（名称/包名/变体/插件）
-shared-allowlist.json  共享模块台账（机器守）
-src/app/               expo-router 屏：index / onboarding（M0-5）/ debug（M0-6 主链帧调试屏）
+shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M1）
+src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / debug
 src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts
+src/core/session/      M1 会话状态机：store.ts（8 型帧分发+看门狗+确认台账）/ sendRouter.ts
+                       （候选拦截+位置闸）/ candidates.ts / wiring.ts（跨路由单例）
+src/core/settings/     设置仓库（AsyncStorage 持久化；buildMeta 与 HMI settings.tsx 键集一致）
+src/core/location/     定位桥（expo-location 取坐标；meta 键共享纯函数拼、source='app'）
 src/core/obs/          trace_id（HMI 同构）+ 会话前缀 app-
-test/                  jest（jest-expo）：守卫 + 契约单测
+src/features/chat/     对话 UI：ChatScreen（双形态外壳）/ MessageBubble / Composer
+src/features/cards/    CardRenderer（M1 首批 17+1 型 + 兜底卡铁则 + ErrorBoundary + _prov 徽章）
+src/features/settings/ 设置页；src/features/vehicle/ 车况镜像面板
+src/ui/                主题（深浅/跟随系统 + 字号两档）
+test/                  jest（jest-expo）：守卫 + 契约单测（80 条）
 ```

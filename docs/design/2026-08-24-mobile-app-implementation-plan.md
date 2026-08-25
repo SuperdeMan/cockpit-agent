@@ -417,7 +417,57 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 ### M1-8 ⛔ M1 真机验收轮
 §8.1 清单全过（两台设备），问题清零或立卡挂账后进 M2。
 
-**M1 实施记录**：
+**M1 实施记录**（2026-08-25，M1-1..M1-7 代码面全部完成；真机面待 E3/E4，M1-8 验收轮顺延到
+设备批次与 M0 五条补验同做）：
+
+- **M1-1 ✅（⛔）**：`src/core/session/store.ts`（zustand vanilla `SessionCore`，不接 UI
+  先接测试）。8 型分发逐帧对照表（帧型 → HMI 行号，App 实现均在该文件 `handleFrame`）：
+  `speech_delta`→App.tsx:347-368 / `process`→:369-410 / `action`→:411-427 /
+  `final`（含 rejected 特例与挂起进出账）→:428-536 / `vehicle_state`→:538-542 /
+  `proactive`→:543-583 / `error`→:585-594 / `cancelled`→:595-606；看门狗:609-628
+  （**每轮一只** 95s）、dispatch/占位/trace 挂气泡:680-720、确认:850-876、打断:664-678、
+  挂起限龄:630-640。`requestRouting`/`pendingOps`/`proactiveSpeech` 从 `@shared`
+  （台账 `currentPhase` 推进 M0→M1）。测试 `test/sessionStore.test.ts`：**正常 8 +
+  必测边界 8（逐条对号①-⑧）+ ⑦b 双看门狗 + 位置征询 2**，jest 回放帧序列断言消息数组终态。
+- **M1-2 ✅**：`sendRouter.ts` 纯函数（**决策与副作用分离**：clear/categoryPage/withLocation
+  由 store 按决策执行，node 直接单测），分支序逐条=App.tsx:722-845（trip 守卫→intent_choice
+  →商户菜单→换一批→waypoint→dest→place→poi→位置闸）；`candidates.ts` 收 final 记录
+  （:483-517 对照，isLatest 才记）。单测 18 例（每分支正/负 + I-007/I-032① 两个历史误伤
+  反例回归）。位置桥 `core/location/appLocation.ts`：expo-location 取坐标 + 共享纯函数拼
+  meta 键、source='app'；征询语义按本计划 M1-2（**拒绝→照发不带**，与 HMI「拒绝不发」
+  刻意不同，后端诚实降级）。
+- **M1-3 ✅（代码面）**：`features/chat/`。⚠ 踩坑：**FlashList v2 已移除 `inverted`**，
+  聊天列表改 v2 范式 `maintainVisibleContentPosition.startRenderingFromBottom`。气泡态
+  全集（pending/streaming/error/rejected/超时）、过程区折叠（execute 合并态在 store 已做）、
+  **确认条按台账渲染多条并存**（isPendingLive；位置征询条只激活最新一条）、followUp 点发、
+  trace 长按复制（expo-clipboard）；Composer=文本+快捷 chips+在飞轮「■ 打断」（cancel 帧）。
+- **M1-4 ✅（⛔，代码面）**：`features/cards/`：注册表 **17+1 型** + **兜底卡铁则**
+  （type 名+主字段探取+buttons+`_prov`，绝不 null）+ 每卡 ErrorBoundary（单卡异常换渲
+  兜底卡，不抛崩列表）+ ProvBadge 四态（mock 醒目琥珀）。`test/cards.test.ts` 断言注册表
+  与 §2.6 首批清单**集合相等**（M3 扩表时同步该测试）。真栈逐族验收语句待设备轮。
+- **M1-5 ✅**：`core/settings/store.ts`（AsyncStorage 持久化、深合并向前兼容、
+  `currentMeta()` 注入会话）+ `features/settings/` 六分区（服务器/显示/助手/能力开关/
+  记忆定位/调试）。buildMeta 键集=settings.tsx:79-90 逐键，`settingsMeta.test.ts` 键名
+  硬拷贝钉住。⚠ 踩坑：AsyncStorage 原生模块在 jest 里是 null——moduleNameMapper 接官方
+  内存 mock。
+- **M1-6 ✅（代码面）**：短边 ≥600dp 平板双栏（右=车况+最近卡片聚焦），
+  useWindowDimensions 旋转即时切；主题 system/dark/light + 字号两档全组件走 Palette；
+  SafeAreaView+KeyboardAvoidingView。三形态截图待真机。
+- **M1-7 ✅（代码面）**：proactive 帧→💡 通知气泡（标题按 advisory 种类取，HMI
+  PROACTIVE_LABEL 同款）+ `deliveryIdsOf` 幂等 + **呈现即回执**；vehicle_state→store→
+  平板面板+手机「车辆」页。`core/session/wiring.ts` 会话单例跨路由共享——导航切页
+  **不重置对话**（会话=App 启动一次，§2.1）；仅 edgeUrl+token 变化才断开重建（M1-5
+  服务器分区语义）。真栈提醒到点待设备轮。
+- **读数**：jest **80/80**（8 suites：M0 4 + M1 新增 sessionStore/sendRouter/
+  settingsMeta/cards）、`tsc --noEmit` 0 error、白名单守卫绿（M1 五模块准入）。
+  新增依赖：zustand 5.0.15 + expo-location 57.0.13 + expo-clipboard 57.0.1 +
+  @shopify/flash-list 2.0.2（后三者含原生面）⇒ 按纪律重跑镜像构建复验：
+  **BUILD SUCCESSFUL in 15m15s**（696 tasks：411 executed / 285 from cache），
+  app-debug.apk **243MB**（新 dev-client，含本批原生模块——真机装的是它）。
+- **M1-8 ⏳（真机验收轮，E3/E4 就绪后与 M0 五条补验同做）**：§8.1 清单整轮 +
+  App 专属 AUTH_TOKENS 条目（⚠ 泓舟，手机档不含 vehicle.control）。⚠ 本批新增了
+  **原生依赖**：设备上必须装**本批重构建出的新 dev-client APK**（旧 APK 热更不带
+  expo-location/clipboard 原生模块）。
 
 ---
 
