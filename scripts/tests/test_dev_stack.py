@@ -1821,6 +1821,42 @@ def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     assert events[-1]["bootstrap"]["source_release"] == "/opt/ignored"
     assert events[-1]["target_ci_cd_sha256"] is None
     assert events[-1]["approved_ci_cd_sha256"] is None
+    assert events[-1]["artifact_directory"] == payload["artifact_directory"]
+
+
+def test_cli_deploy_preserves_null_release_artifact_directory(tmp_path: Path):
+    dev.set_target(tmp_path, "cloud")
+    payload = _cloud_release_payload()
+    payload["artifact_directory"] = None
+    runner = FakeCliRunner(stdout=json.dumps(payload))
+    events: list[dict[str, object]] = []
+
+    assert cli.main(
+        [
+            "--host",
+            "dev.example",
+            "--identity",
+            str(_valid_identity(tmp_path)),
+            "deploy",
+        ],
+        repo=tmp_path,
+        release_runner=runner,
+        emit=events.append,
+    ) == 0
+    assert "artifact_directory" in events[-1]
+    assert events[-1]["artifact_directory"] is None
+
+
+@pytest.mark.parametrize("invalid", (True, 1, [], {}))
+def test_release_artifact_directory_rejects_non_string(invalid: object):
+    payload = _cloud_release_payload()
+    payload["artifact_directory"] = invalid
+
+    with pytest.raises(
+        dev.DevStackError,
+        match="cloud release response is invalid",
+    ):
+        cli._release_result(0, json.dumps(payload))
 
 
 @pytest.mark.parametrize(

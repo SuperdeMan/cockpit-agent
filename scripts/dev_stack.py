@@ -199,6 +199,7 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
         "approved_infrastructure_sha256": payload["approved_infrastructure_sha256"],
         "target_ci_cd_sha256": payload["target_ci_cd_sha256"],
         "approved_ci_cd_sha256": payload["approved_ci_cd_sha256"],
+        "artifact_directory": payload["artifact_directory"],
         "bootstrap": {
             "status": bootstrap["status"],
             "source_release": bootstrap["source_release"],
