@@ -13,6 +13,8 @@ export interface UserFrameOpts {
   /** Q1-B：确认/取消指向哪一条挂起；空=普通请求（不发键） */
   operationId?: string
   metaExtra?: Record<string, string>
+  /** 会话级偏好 meta（settings buildMeta + 位置键；M1 起接管缺省两键） */
+  metaBase?: Record<string, string>
 }
 
 export interface UserFrame {
@@ -43,8 +45,7 @@ export function buildUserFrame(
     is_confirmation: opts.isConfirmation ?? false,
     ...(opts.operationId ? { operation_id: opts.operationId } : {}),
     meta: {
-      assistant_name: '小舟',
-      memory_enabled: 'true',
+      ...(opts.metaBase ?? { assistant_name: '小舟', memory_enabled: 'true' }),
       ...extra,
       occupant_id: 'primary',
       occupant_name: '',
@@ -106,6 +107,12 @@ export class GatewaySession {
   /** 打断（§2.2）：{type:'cancel', session_id} */
   cancel(): boolean {
     const frame = { type: 'cancel', session_id: this.sessionId }
+    this.onFrame?.('up', frame)
+    return Boolean(this.ws.send(frame))
+  }
+
+  /** 通用上行（M1 会话状态机自建帧：用户请求/cancel/proactive_ack 都走这里） */
+  sendRaw(frame: object): boolean {
     this.onFrame?.('up', frame)
     return Boolean(this.ws.send(frame))
   }

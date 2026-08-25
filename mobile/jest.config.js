@@ -21,6 +21,9 @@ module.exports = {
   moduleNameMapper: {
     ...(preset.moduleNameMapper ?? {}),
     '^@babel/runtime/(.*)$': '<rootDir>/node_modules/@babel/runtime/$1',
+    // AsyncStorage 原生模块在 jest 里是 null：接官方内存 mock（设置仓库单测用）
+    '^@react-native-async-storage/async-storage$':
+      '@react-native-async-storage/async-storage/jest/async-storage-mock',
     '^@shared/(.*)$': '<rootDir>/../hmi/src/$1',
     '^@/(.*)$': '<rootDir>/src/$1',
   },
