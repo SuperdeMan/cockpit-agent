@@ -298,7 +298,10 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   强制 UTF-8 → 从 libs.versions.toml 解析并预装缺失 SDK 包（NDK 27.1.12297006 745MB
   实测 3.5MB/s 三分半，AGP 现拉同物 32KB/s 要 6.5 小时）→ CN maven init script →
   assembleDebug → 验产物。**读数：首构 BUILD SUCCESSFUL in 21m48s（473 executed /
-  223 from cache），app-debug.apk 254MB（debug 含 dev-client，正常量级）**。
+  223 from cache），app-debug.apk 254MB（debug 含 dev-client，正常量级）；复构
+  14m37s**——复构慢在每次 prebuild 都会刷新 codegen/autolinking 生成物、拖着 app 层
+  4 ABI 的 C++ 重编。**日常 JS 开发不走本脚本**（dev-client 热更即可），只在原生
+  配置/依赖变化时重跑；「prebuild 无变化时跳过」留作后续优化观察项，M0 不做。
   真机可装可启动待 E3。
 - **M0-3 ✅（本地可验部分）**：metro.config.js（watchFolders=仓库根 / sourceExts+mjs /
   nodeModulesPaths 单指 mobile + disableHierarchicalLookup）+ tsconfig paths
@@ -330,9 +333,13 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 - **M0-7 ✅**：conventions.md **§9.33**（多端客户端网关契约：types.ts 唯一真相源 /
   归属与台账语义多端一致 / `app-` 前缀 / 鉴权与 meta 约束）+ mobile/README.md
   （运行手册：前置自检、日常开发、镜像构建、连接后端、共享面）。
-- **M0-8 ✅（代码面）**：ci.yml `mobile` job（npm ci→tsc→jest 含守卫；刻意不跑 gradle）
-  + mobile-apk.yml（workflow_dispatch 出 debug APK 工件；ubuntu 路径全 ASCII，
-  不需要本机那套镜像预案）。实跑读数推送后回填。
+- **M0-8 ✅（push 车道实跑绿）**：ci.yml `mobile` job（npm ci→tsc→jest 含守卫；
+  刻意不跑 gradle）+ mobile-apk.yml（workflow_dispatch 出 debug APK 工件；ubuntu
+  路径全 ASCII，不需要本机那套镜像预案）。**读数：run 32822278722（sha `4a3c829`）
+  全绿，8 job 含 `mobile` success，既有 7 job 零回归**。⚠ mobile-apk 手动档**尚未
+  实跑**：本机无 gh CLI、`.env` 无 GitHub token，`workflow_dispatch` 触发需要认证
+  ——由泓舟在 GitHub → Actions → Mobile APK → Run workflow 点一次（其验收「下载
+  APK 装机可启」本就依赖 E3 真机，与设备批次同做）。
 - **待真机清单（E3/E4 就绪后一次补验，缺一不算 M0 收口）**：① APK 装机启动（空壳）；
   ② dev-client 下 @shared 退避值 console 打印；③ 引导页配置→杀 App 重启仍在→
   错 token 连接测试给可读失败；④ 调试屏发「今天天气怎么样」→ speech_delta×N +
