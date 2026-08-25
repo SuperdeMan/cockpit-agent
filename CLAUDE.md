@@ -17,6 +17,7 @@
 | 编排器 orchestrator/、Agent agents/、各 AI 服务 | Python 3.11 (grpcio + FastAPI) |
 | 车控抽象层 vehicle-abstraction/ | C++（PoC 阶段可用 Python 模拟） |
 | HMI hmi/ | React + TypeScript + Vite |
+| 移动端 mobile/ | React Native + Expo (TypeScript) |
 | 服务间通信 | gRPC（proto/ 为单一真相源） |
 | 异步/广播 | NATS |
 | 存储 | Redis（短期）、PostgreSQL + pgvector（长期/向量） |
@@ -94,6 +95,9 @@ payment-gateway/  统一支付网关（Agent 不持支付凭证；2026-08-11 真
 proactive/      统一主动引擎：主动消息的全局治理器（频控/免打扰/驾驶负荷/同类合并）
 observability/  可观测模块：NATS 事件出口、collector、trace/日志/指标
 hmi/            React 座舱前端
+mobile/         Android 陪伴端 App（React Native + Expo，TypeScript）——与 hmi/ 共存的第二个
+                用户端，同一后端大脑；只读引用 hmi/src 纯逻辑模块，共享台账
+                mobile/shared-allowlist.json，改共享面两边一起看
 dashboard/      React 开发/演示可观测台（不进入车控执行主链）
 deploy/         docker-compose / helm / k8s
 scripts/        codegen、构建辅助（含 gen-certs.* 生成 mTLS 证书）、自进化流水线 evolve.py（M1b，nightly 经 Task Scheduler）
