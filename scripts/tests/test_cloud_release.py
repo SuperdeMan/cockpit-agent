@@ -321,6 +321,133 @@ def test_make_release_plan_rejects_stale_infrastructure_approval():
     assert plan.blocking_changes[0].category == "infrastructure"
 
 
+def test_make_release_plan_ci_cd_change_requires_approval():
+    plan = make_release_plan(
+        deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+        target_sha="c" * 40,
+        changed_paths=[".github/workflows/ci.yml"],
+        diff_by_path={".github/workflows/ci.yml": "+reviewed workflow\n"},
+    )
+
+    assert plan.status == "plan_rejected"
+    assert plan.blocking_changes == (
+        ControlledChange(".github/workflows/ci.yml", "ci_cd"),
+    )
+    assert plan.target_ci_cd_digest is None
+    assert plan.approved_ci_cd_digest is None
+
+
+def test_make_release_plan_exact_ci_cd_digest_removes_ci_cd_blocker():
+    plan = make_release_plan(
+        deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+        target_sha="c" * 40,
+        changed_paths=[".github/workflows/ci.yml"],
+        diff_by_path={".github/workflows/ci.yml": "+reviewed workflow\n"},
+        target_ci_cd_digest="d" * 64,
+        approved_ci_cd_digest="d" * 64,
+    )
+
+    assert plan.status == "ready"
+    assert plan.blocking_changes == ()
+    assert plan.target_ci_cd_digest == "d" * 64
+    assert plan.approved_ci_cd_digest == "d" * 64
+
+
+@pytest.mark.parametrize(
+    ("other_path", "other_category", "expected_status"),
+    [
+        (".env.example", "runtime_config_contract", "plan_rejected"),
+        ("memory/schema.sql", "database_schema", "plan_rejected"),
+        (".env.local", "secret_material", "plan_rejected"),
+        (
+            "deploy/cloud/remote-release.sh",
+            "infrastructure",
+            "bootstrap_required",
+        ),
+    ],
+)
+def test_make_release_plan_ci_cd_digest_removes_only_ci_cd_blocker(
+    other_path: str,
+    other_category: str,
+    expected_status: str,
+):
+    plan = make_release_plan(
+        deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+        target_sha="c" * 40,
+        changed_paths=[".github/workflows/ci.yml", other_path],
+        diff_by_path={
+            ".github/workflows/ci.yml": "+reviewed workflow\n",
+            other_path: "+controlled change\n",
+        },
+        target_ci_cd_digest="d" * 64,
+        approved_ci_cd_digest="d" * 64,
+    )
+
+    assert plan.status == expected_status
+    assert plan.blocking_changes == (
+        ControlledChange(other_path, other_category),
+    )
+
+
+def test_make_release_plan_stale_ci_cd_approval_keeps_blocker():
+    plan = make_release_plan(
+        deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+        target_sha="c" * 40,
+        changed_paths=[".github/workflows/ci.yml"],
+        diff_by_path={".github/workflows/ci.yml": "+unapproved revision\n"},
+        target_ci_cd_digest="e" * 64,
+        approved_ci_cd_digest="d" * 64,
+    )
+
+    assert plan.status == "plan_rejected"
+    assert plan.blocking_changes == (
+        ControlledChange(".github/workflows/ci.yml", "ci_cd"),
+    )
+
+
+@pytest.mark.parametrize("approved_digest", ["", "ABC", "g" * 64, "A" * 64])
+def test_make_release_plan_rejects_invalid_ci_cd_approval(approved_digest: str):
+    with pytest.raises(ReleaseError) as caught:
+        make_release_plan(
+            deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+            target_sha="c" * 40,
+            changed_paths=[".github/workflows/ci.yml"],
+            diff_by_path={".github/workflows/ci.yml": "+reviewed workflow\n"},
+            target_ci_cd_digest="d" * 64,
+            approved_ci_cd_digest=approved_digest,
+        )
+
+    assert caught.value.category == "configuration"
+
+
+def test_make_release_plan_rejects_invalid_ci_cd_target_digest():
+    with pytest.raises(ReleaseError) as caught:
+        make_release_plan(
+            deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+            target_sha="c" * 40,
+            changed_paths=[".github/workflows/ci.yml"],
+            diff_by_path={".github/workflows/ci.yml": "+reviewed workflow\n"},
+            target_ci_cd_digest="A" * 64,
+            approved_ci_cd_digest="d" * 64,
+        )
+
+    assert caught.value.category == "configuration"
+
+
+def test_make_release_plan_rejects_unused_ci_cd_approval():
+    with pytest.raises(ReleaseError) as caught:
+        make_release_plan(
+            deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",
+            target_sha="c" * 40,
+            changed_paths=["gateway/edge/main.go"],
+            diff_by_path={"gateway/edge/main.go": "+safe application code\n"},
+            target_ci_cd_digest="d" * 64,
+            approved_ci_cd_digest="d" * 64,
+        )
+
+    assert caught.value.category == "configuration"
+
+
 def test_make_release_plan_rejects_production_ddl():
     plan = make_release_plan(
         deployed_sha="4c1f479513c8b13564803ba43555a470aacbf640",

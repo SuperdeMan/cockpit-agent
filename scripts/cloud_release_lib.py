@@ -103,6 +103,8 @@ class ReleasePlan:
     status: str
     target_infrastructure_digest: str | None = None
     approved_infrastructure_digest: str | None = None
+    target_ci_cd_digest: str | None = None
+    approved_ci_cd_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -529,6 +531,8 @@ def make_release_plan(
     diff_by_path: Mapping[str, str],
     target_infrastructure_digest: str | None = None,
     approved_infrastructure_digest: str | None = None,
+    target_ci_cd_digest: str | None = None,
+    approved_ci_cd_digest: str | None = None,
 ) -> ReleasePlan:
     if not FULL_SHA_RE.fullmatch(target_sha):
         raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
@@ -537,6 +541,30 @@ def make_release_plan(
         and not SHA256_RE.fullmatch(target_infrastructure_digest)
     ):
         raise ReleaseError("target infrastructure digest is invalid")
+    if target_ci_cd_digest is not None and not SHA256_RE.fullmatch(
+        target_ci_cd_digest
+    ):
+        raise ReleaseError(
+            "target CI/CD digest is invalid",
+            category="configuration",
+        )
+    if approved_ci_cd_digest is not None and not SHA256_RE.fullmatch(
+        approved_ci_cd_digest
+    ):
+        raise ReleaseError(
+            "approved CI/CD digest is invalid",
+            category="configuration",
+        )
+
+    normalized_paths = tuple(path.replace("\\", "/") for path in changed_paths)
+    has_ci_cd_changes = any(
+        classify_changed_path(path) == "ci_cd" for path in normalized_paths
+    )
+    if approved_ci_cd_digest is not None and not has_ci_cd_changes:
+        raise ReleaseError(
+            "CI/CD digest approval was provided without CI/CD changes",
+            category="configuration",
+        )
 
     infrastructure_approved = (
         target_infrastructure_digest is not None
@@ -544,10 +572,17 @@ def make_release_plan(
         and SHA256_RE.fullmatch(approved_infrastructure_digest) is not None
         and target_infrastructure_digest == approved_infrastructure_digest
     )
+    ci_cd_approved = (
+        has_ci_cd_changes
+        and target_ci_cd_digest is not None
+        and approved_ci_cd_digest is not None
+        and target_ci_cd_digest == approved_ci_cd_digest
+    )
     blocking: set[ControlledChange] = set()
-    normalized_paths = tuple(path.replace("\\", "/") for path in changed_paths)
     for path in normalized_paths:
         category = classify_changed_path(path)
+        if category == "ci_cd" and ci_cd_approved:
+            continue
         if category == "infrastructure" and infrastructure_approved:
             continue
         if category != "application":
@@ -571,6 +606,8 @@ def make_release_plan(
         status=status,
         target_infrastructure_digest=target_infrastructure_digest,
         approved_infrastructure_digest=approved_infrastructure_digest,
+        target_ci_cd_digest=target_ci_cd_digest,
+        approved_ci_cd_digest=approved_ci_cd_digest,
     )
 
 
