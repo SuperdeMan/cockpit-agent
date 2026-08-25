@@ -1243,14 +1243,17 @@ def test_runbook_documents_one_shot_ci_digest_approval():
     )
     operator_sequence = (
         "$targetJson = python scripts/dev_stack.py target show | Out-String",
+        "$targetRc = $LASTEXITCODE",
+        'if ($targetRc -ne 0)',
         '$target = $targetJson | ConvertFrom-Json',
         'if ($target.status -ne "target" -or $target.target -ne "cloud")',
         "$sha = (git rev-parse HEAD).Trim()",
         "$planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String",
-        "$plan = $planJson | ConvertFrom-Json",
+        "$planRc = $LASTEXITCODE",
         'if ($planRc -ne 3)',
+        "$plan = $planJson | ConvertFrom-Json",
         'if ($plan.status -ne "plan_rejected")',
-        'if ($null -ne $plan.target_sha -and $plan.target_sha -ne $sha)',
+        'if ($plan.target_sha -ne $sha)',
         "$blockers = @($plan.blocking_changes)",
         'if ($blockers.Count -eq 0)',
         'Where-Object { $_.category -ne "ci_cd" }',
@@ -1260,8 +1263,9 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         "$digest = $plan.target_ci_cd_sha256",
         "if ($digest -cnotmatch '^[0-9a-f]{64}$')",
         "$dryJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest | Out-String",
-        "$dry = $dryJson | ConvertFrom-Json",
+        "$dryRc = $LASTEXITCODE",
         'if ($dryRc -ne 0)',
+        "$dry = $dryJson | ConvertFrom-Json",
         'if ($dry.status -ne "dry_run")',
         'if ($dry.target_sha -ne $sha)',
         'if ($dry.target_ci_cd_sha256 -cne $digest)',
@@ -1269,6 +1273,8 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         'if (@($dry.blocking_changes).Count -ne 0)',
         'if (-not $dry.artifact_directory)',
         "$applyTargetJson = python scripts/dev_stack.py target show | Out-String",
+        "$applyTargetRc = $LASTEXITCODE",
+        'if ($applyTargetRc -ne 0)',
         '$applyTarget = $applyTargetJson | ConvertFrom-Json',
         'if ($applyTarget.status -ne "target" -or $applyTarget.target -ne "cloud")',
         "python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply",
@@ -1286,6 +1292,22 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         positions = [block.index(command) for command in operator_sequence]
         assert positions == sorted(positions), f"{path} must preserve the operator sequence"
         assert block.count("python scripts/dev_stack.py target show") == 2
+        assert "$null -ne $plan.target_sha" not in block
+        for immediate_check in (
+            "$targetJson = python scripts/dev_stack.py target show | Out-String\n"
+            "$targetRc = $LASTEXITCODE\n"
+            'if ($targetRc -ne 0)',
+            "$planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String\n"
+            "$planRc = $LASTEXITCODE\n"
+            'if ($planRc -ne 3)',
+            "$dryJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest | Out-String\n"
+            "$dryRc = $LASTEXITCODE\n"
+            'if ($dryRc -ne 0)',
+            "$applyTargetJson = python scripts/dev_stack.py target show | Out-String\n"
+            "$applyTargetRc = $LASTEXITCODE\n"
+            'if ($applyTargetRc -ne 0)',
+        ):
+            assert immediate_check in block
         approval_blocks.append(block)
 
     assert approval_blocks[0] == approval_blocks[1]

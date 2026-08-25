@@ -164,10 +164,10 @@ if ($target.status -ne "target" -or $target.target -ne "cloud") { throw "target 
 $sha = (git rev-parse HEAD).Trim()
 $planJson = python scripts/dev_stack.py deploy --sha $sha | Out-String
 $planRc = $LASTEXITCODE
-$plan = $planJson | ConvertFrom-Json
 if ($planRc -ne 3) { throw "expected unapproved deploy rc=3" }
+$plan = $planJson | ConvertFrom-Json
 if ($plan.status -ne "plan_rejected") { throw "expected status=plan_rejected" }
-if ($null -ne $plan.target_sha -and $plan.target_sha -ne $sha) { throw "target SHA changed" }
+if ($plan.target_sha -ne $sha) { throw "target SHA changed" }
 $blockers = @($plan.blocking_changes)
 if ($blockers.Count -eq 0) { throw "expected CI/CD blockers" }
 $unexpected = @($blockers | Where-Object { $_.category -ne "ci_cd" })
@@ -181,8 +181,8 @@ if ($digest -cnotmatch '^[0-9a-f]{64}$') { throw "target_ci_cd_sha256 is invalid
 # 第二次仅 dry-run：批准同一 target SHA 的精确 workflow 提交树摘要
 $dryJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest | Out-String
 $dryRc = $LASTEXITCODE
-$dry = $dryJson | ConvertFrom-Json
 if ($dryRc -ne 0) { throw "approved dry-run failed" }
+$dry = $dryJson | ConvertFrom-Json
 if ($dry.status -ne "dry_run") { throw "expected status=dry_run" }
 if ($dry.target_sha -ne $sha) { throw "dry-run target SHA changed" }
 if ($dry.target_ci_cd_sha256 -cne $digest) { throw "target CI/CD digest changed" }
