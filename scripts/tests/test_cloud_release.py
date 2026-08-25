@@ -33,6 +33,7 @@ from scripts.cloud_release_lib import (
     SubprocessRunner,
     build_release_artifact,
     classify_changed_path,
+    compute_ci_cd_digest,
     compute_infrastructure_digest,
     diff_contains_schema_change,
     execute_deploy,
@@ -367,6 +368,106 @@ def test_compute_infrastructure_digest_reads_committed_bytes_only(tmp_path: Path
 
     assert compute_infrastructure_digest(repo, sha) == first
     assert len(first) == 64
+
+
+def test_ci_cd_digest_uses_target_commit_workflow_tree(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    workflows = repo / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("name: ci\n", encoding="utf-8")
+    (workflows / "mobile.yml").write_text("name: mobile\n", encoding="utf-8")
+    git(repo, "add", ".github/workflows")
+    git(repo, "commit", "-m", "workflows")
+    sha = git(repo, "rev-parse", "HEAD")
+    first = compute_ci_cd_digest(repo, sha)
+
+    (workflows / "ci.yml").write_text("name: dirty\n", encoding="utf-8")
+    assert compute_ci_cd_digest(repo, sha) == first
+    assert first is not None
+    assert re.fullmatch(r"[0-9a-f]{64}", first)
+
+    git(repo, "add", ".github/workflows/ci.yml")
+    git(repo, "commit", "-m", "change ci")
+    assert compute_ci_cd_digest(repo, git(repo, "rev-parse", "HEAD")) != first
+
+
+def test_ci_cd_digest_tracks_workflow_add_delete_and_rename(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    workflows = repo / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    ci = workflows / "ci.yml"
+    ci.write_text("name: ci\n", encoding="utf-8")
+    git(repo, "add", ".github/workflows/ci.yml")
+    git(repo, "commit", "-m", "ci")
+    single_sha = git(repo, "rev-parse", "HEAD")
+    single = compute_ci_cd_digest(repo, single_sha)
+
+    mobile = workflows / "mobile.yml"
+    mobile.write_text("name: mobile\n", encoding="utf-8")
+    git(repo, "add", ".github/workflows/mobile.yml")
+    git(repo, "commit", "-m", "mobile")
+    with_mobile = compute_ci_cd_digest(repo, git(repo, "rev-parse", "HEAD"))
+    assert with_mobile != single
+
+    git(repo, "mv", ".github/workflows/mobile.yml", ".github/workflows/android.yml")
+    git(repo, "commit", "-m", "rename mobile")
+    assert compute_ci_cd_digest(repo, git(repo, "rev-parse", "HEAD")) != with_mobile
+
+    git(repo, "rm", ".github/workflows/android.yml")
+    git(repo, "commit", "-m", "remove android")
+    assert compute_ci_cd_digest(repo, git(repo, "rev-parse", "HEAD")) == single
+
+
+def test_ci_cd_digest_returns_none_without_committed_workflows(tmp_path: Path):
+    repo, sha = make_repo(tmp_path)
+    assert compute_ci_cd_digest(repo, sha) is None
+
+
+def test_ci_cd_digest_rejects_non_regular_tree_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repo, sha = make_repo(tmp_path)
+
+    monkeypatch.setattr(
+        cloud_release_lib,
+        "_git",
+        lambda *_args, **_kwargs: CommandResult(
+            (), 0, "120000 blob " + "a" * 40 + "\t.github/workflows/ci.yml\0", ""
+        ),
+    )
+
+    with pytest.raises(ReleaseError) as caught:
+        compute_ci_cd_digest(repo, sha)
+    assert caught.value.category == "safety"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "100644 blob " + "a" * 40 + "\t.github\\workflows\\ci.yml\0",
+        "100644 blob " + "a" * 40 + "\t.github/workflows/ci\x01.yml\0",
+        "100644 blob " + "a" * 40 + "\tother/ci.yml\0",
+        "100644 blob " + "a" * 40 + "\t.github/workflows/../ci.yml\0",
+        "100644 blob " + "a" * 40 + "\t.github/workflows/ci.yml\0"
+        "100755 blob " + "b" * 40 + "\t.github/workflows/ci.yml\0",
+        "100600 blob " + "a" * 40 + "\t.github/workflows/ci.yml\0",
+        "100644 tree " + "a" * 40 + "\t.github/workflows/ci.yml\0",
+    ],
+)
+def test_ci_cd_digest_rejects_unsafe_tree_paths(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, entry: str
+):
+    repo, sha = make_repo(tmp_path)
+
+    monkeypatch.setattr(
+        cloud_release_lib,
+        "_git",
+        lambda *_args, **_kwargs: CommandResult((), 0, entry, ""),
+    )
+
+    with pytest.raises(ReleaseError) as caught:
+        compute_ci_cd_digest(repo, sha)
+    assert caught.value.category == "safety"
 
 
 def test_release_plan_positional_contract_is_stable():

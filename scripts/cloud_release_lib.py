@@ -65,6 +65,8 @@ CONTROLLED_EXACT = {
     "proactive/schema.sql": "database_schema",
 }
 SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx")
+CI_CD_TREE_PREFIX = ".github/workflows"
+REGULAR_GIT_TREE_MODES = frozenset({"100644", "100755"})
 
 
 class ReleaseError(RuntimeError):
@@ -586,11 +588,11 @@ def _git_blob(repo: Path, revision: str, path: str) -> bytes:
         )
     except OSError as exc:
         raise ReleaseError(
-            f"could not read committed infrastructure: {type(exc).__name__}"
+            f"could not read committed controlled source: {type(exc).__name__}"
         ) from exc
     if completed.returncode != 0:
         raise ReleaseError(
-            f"could not read committed infrastructure path: {path}"
+            f"could not read committed controlled source path: {path}"
         )
     return completed.stdout
 
@@ -612,6 +614,69 @@ def compute_infrastructure_digest(repo: Path, target_sha: str) -> str:
         for path in listing
         if path and path != "deploy/cloud/README.md"
     )
+    per_file = {
+        path: hashlib.sha256(_git_blob(repo, target_sha, path)).hexdigest()
+        for path in paths
+    }
+    canonical = json.dumps(
+        per_file,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _committed_regular_tree_paths(
+    repo: Path, target_sha: str, prefix: str
+) -> tuple[str, ...]:
+    raw_listing = _git(
+        repo,
+        "ls-tree",
+        "-r",
+        "-z",
+        target_sha,
+        "--",
+        prefix,
+    ).stdout
+    if raw_listing and not raw_listing.endswith("\0"):
+        raise ReleaseError("committed controlled tree record is malformed", category="safety")
+
+    paths: set[str] = set()
+    for record in raw_listing.split("\0")[:-1]:
+        header, separator, path = record.partition("\t")
+        fields = header.split(" ")
+        if (
+            not separator
+            or len(fields) != 3
+            or fields[0] not in REGULAR_GIT_TREE_MODES
+            or fields[1] != "blob"
+            or not re.fullmatch(r"[0-9a-f]{40}", fields[2])
+        ):
+            raise ReleaseError("committed controlled tree entry is unsafe", category="safety")
+        if (
+            "\\" in path
+            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+            or not path.startswith(f"{prefix}/")
+        ):
+            raise ReleaseError("committed controlled tree path is unsafe", category="safety")
+        parts = path.split("/")
+        if (
+            any(part in {"", ".", ".."} for part in parts)
+            or PurePosixPath(path).as_posix() != path
+            or path in paths
+        ):
+            raise ReleaseError("committed controlled tree path is unsafe", category="safety")
+        paths.add(path)
+    return tuple(sorted(paths))
+
+
+def compute_ci_cd_digest(repo: Path, target_sha: str) -> str | None:
+    if not FULL_SHA_RE.fullmatch(target_sha):
+        raise ReleaseError("target SHA must be a full commit SHA", category="configuration")
+    paths = _committed_regular_tree_paths(repo, target_sha, CI_CD_TREE_PREFIX)
+    if not paths:
+        return None
     per_file = {
         path: hashlib.sha256(_git_blob(repo, target_sha, path)).hexdigest()
         for path in paths
