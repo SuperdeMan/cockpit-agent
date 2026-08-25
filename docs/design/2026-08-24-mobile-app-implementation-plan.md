@@ -26,14 +26,63 @@
 
 ## 1. 一次性环境准备（开工前，多数须泓舟执行）
 
-| # | 事项 | 谁 | 说明 |
+> **状态（2026-08-25）：E1/E2/E5/E6 已完成并实测通过，E3/E4 待泓舟。**
+> 逐条自检入口 **`powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1`**
+> ——"装过了"和"现在还好使"是两件事（PATH 被别的安装器改、JDK 被升级、Tailscale 掉线、
+> 设备没插、licenses 没接受），**每次开工前先跑它**，退出码 0 才动手。
+> 落地细节与三处与本表原文的偏差记在 §1.1。
+
+| # | 事项 | 谁 | 状态与说明 |
 |---|---|---|---|
-| E1 | 装 Android Studio（含 SDK Platform 35、Build-Tools、Platform-Tools）+ JDK 17 | ⚠ 泓舟（全局安装是红线） | RN/Expo 官方要求；装完 `adb --version`、`java -version` 可用即可，不必开 IDE |
-| E2 | 环境变量 `ANDROID_HOME`、`JAVA_HOME` 并入 PATH | ⚠ 泓舟 | Windows 用户级即可（同 [[windows-env-path-and-utf8]] 那次的形态） |
-| E3 | 真机两台开 USB 调试：手机（Android 10+）、平板（Android 10+） | 泓舟 | `adb devices` 能看到；平板没有可先只用手机，平板形态验收顺延 |
-| E4 | 两台设备装 Tailscale 官方 App、登录同一 tailnet | 泓舟 | 装好后设备浏览器开 `https://{TAILNET_FQDN}:8443` 应得到网关响应（证书绿锁） |
-| E5 | Node ≥ 20（已有）、npm 可用（已有） | — | `dev_stack_lib.py` 同款要求 |
-| E6 | ⚠ 路径风险预案：仓库路径含中文+空格（`D:\Personal\AI\Claude Code\产品\car-agent`），gradle/NDK/CMake 对非 ASCII 路径不稳 | 执行者 | **原生构建一律经 `subst` 映射盘符跑**（M0-2 的构建脚本内置：`subst X: <repo>` 后从 `X:\mobile` 起 gradle）。JS/Metro 开发不受影响 |
+| E1 | ~~装 Android Studio~~ → **只装命令行工具链**（cmdline-tools + platform-tools + SDK Platform + Build-Tools）+ JDK 17 | ⚠ 泓舟（全局安装是红线） | **✅ 2026-08-25 完成**（授权换成不装 IDE，理由见 §1.1）。装完 `adb --version`、`java -version` 可用即可 |
+| E2 | 环境变量 `ANDROID_HOME`、`JAVA_HOME` 并入 PATH | ⚠ 泓舟 | **✅ 2026-08-25 完成**，用户级（同 [[windows-env-path-and-utf8]] 那次的形态），只加不删，改前原值备份 |
+| E3 | 真机两台开 USB 调试：手机（Android 10+）、平板（Android 10+） | 泓舟 | **⏳ 待办**：`adb devices` 当前为空。平板没有可先只用手机，平板形态验收顺延 |
+| E4 | 两台设备装 Tailscale 官方 App、登录同一 tailnet | 泓舟 | **⏳ 部分**：PC→云栈已实测通（`:8443/healthz`=200、`:8444` 有响应）；tailnet 里已有 android 节点 `superdeman-xiaomi-mix-fold-4`（折叠屏，手机态+展开态可覆盖两形态），但当前离线 |
+| E5 | Node ≥ 20（已有）、npm 可用（已有） | — | **✅** node v22.15.0 / npm 10.9.2 |
+| E6 | ⚠ 路径风险预案：仓库路径含中文+空格（`D:\Personal\AI\Claude Code\产品\car-agent`） | 执行者 | **✅ 已实测，且结论比本行原文更硬**：不是"不稳"，是 **AGP 硬拒绝**（§1.1 ③）。**原生构建一律经 `subst` 映射盘符跑**（M0-2 构建脚本内置：`subst X: <repo>` 后从 `X:\mobile` 起 gradle）。JS/Metro 开发不受影响 |
+
+### 1.1 E1–E6 落地记录与三处偏差（2026-08-25）
+
+**装了什么、装在哪**（自检脚本每条都验）：
+
+| 组件 | 版本 | 落点 |
+|---|---|---|
+| JDK | Microsoft OpenJDK **17.0.20.1** LTS | `C:\Program Files\Microsoft\jdk-17.0.20.101-hotspot` |
+| SDK cmdline-tools | **23.0**（`sdkmanager --version` 报 Android CLI 1.0.15985488） | `D:\Android\Sdk\cmdline-tools\latest` |
+| platform-tools | r**37.0.1** | `D:\Android\Sdk\platform-tools` |
+| SDK Platform | **android-35 + android-36** | `D:\Android\Sdk\platforms` |
+| Build-Tools | **35.0.0 + 36.0.0** | `D:\Android\Sdk\build-tools` |
+| licenses | `android-sdk-license` 已接受 | `D:\Android\Sdk\licenses` |
+
+用户级环境变量：`JAVA_HOME` / `ANDROID_HOME` / `ANDROID_SDK_ROOT` = 上表路径，
+`GRADLE_USER_HOME=D:\Android\.gradle`（缓存不落 C 盘），PATH 追加
+`jdk\bin`、`Sdk\platform-tools`、`Sdk\cmdline-tools\latest\bin` 三条。
+另设 `git config --global core.longpaths true`。
+
+**偏差 ①（E1）：不装 Android Studio，只装命令行工具链。** 本表原文写"装 Android Studio"，
+但同一行自己也写了"不必开 IDE"——IDE 不在 M0–M3 关键路径上（真机为主，模拟器只是迭代用），
+省 ~4GB 且少一个维护面。**代价明说**：没有 AVD 模拟器、logcat GUI、Profiler；M4 真要写原生
+音频模块时可再补装，不返工。经泓舟当轮授权。
+
+**偏差 ②（E1）：SDK Platform 装的是 35+36，不是本表写的 35。** 写计划时（08-24）
+Google 已发到 **API 37**（`platforms;android-37.1` / `build-tools;37.0.0` 均已 GA）。
+compileSdk 由开工时 Expo SDK 决定，不由本表决定；装 35+36 覆盖当下两种可能，
+真需要 37 时一条 `android sdk install "platforms;android-37.1"` 补上即可。
+
+**偏差 ③（E6）：非 ASCII 路径不是"不稳"，是硬拒绝。** 2026-08-25 用一个最小 AGP 工程
+做了 A/B（同一个项目、只换访问路径）：
+
+- **A 中文原路径**（`D:\Personal\AI\Claude Code\产品\...`）→ **BUILD FAILED**，
+  AGP 在 apply plugin 阶段直接拒：
+  `Your project path contains non-ASCII characters. This will most likely cause the build
+  to fail on Windows.`（唯一逃生门是 `android.overridePathCheck=true`，**不要用**——
+  它只是关掉检查，底下 NDK/CMake 的真实风险没消失）
+- **B 同一项目经 `subst`** → **BUILD SUCCESSFUL in 23s**，产出 `app-debug.apk`
+
+⇒ **subst 是必需项不是保险丝。** 顺带证实的三件事：licenses 文件对 AGP 有效
+（构建期自动补装 build-tools 时打印了 `License for package ... accepted`）、
+aapt2/d8/zipalign/apksigner 四个二进制都能跑（没有缺 MSVC 运行时那类故障）、
+JDK 17 ↔ Gradle 8.13 ↔ AGP 8.7.3 ↔ SDK 36 这条链是通的。
 
 ## 2. 协议契约（真相源指认 + 导读）
 
@@ -422,11 +471,23 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 
 ## 9. 已知坑账（开工前读一遍，踩新坑追加到这里）
 
-1. **路径**：原生构建必经 subst（E6/M0-2）；Metro/JS 在原路径可用，出现诡异 watch 失败时
+1. **路径**：原生构建必经 subst（E6/M0-2），**已实测：不走 subst 就是 BUILD FAILED，
+   不是"可能不稳"**（§1.1 ③ 有 A/B 读数）。Metro/JS 在原路径可用，出现诡异 watch 失败时
    同样切 subst 跑。
 2. **Windows 终端**：PowerShell 5.1 无 `&&`；`PYTHONUTF8=1` 已全局（读数口径统一）；
    npm 脚本经 `npm.cmd` 解析（`Popen` 不套 PATHEXT 的老账 RC15——脚本里用绝对路径或
    `shutil.which` 形态）。
+   **⚠ 写 `.ps1` 带中文注释必须存成 UTF-8 with BOM。** PS 5.1 对无 BOM 的 `.ps1`
+   按 ANSI(GBK) 解码，而 GBK 是**有状态双字节**——中文注释里的高位字节一旦错位配对，
+   就会把行尾的 `\r\n` 当 trail byte 吃掉，**下一行代码被并进注释、静默不执行、不报任何错**。
+   2026-08-25 实测：`scripts/check_android_env.ps1` 因此吞掉 9 行，症状是
+   `Get-Command adb` 那行"没跑"，读数变成"adb 不在 PATH"——一个完全误导的结论。
+   判据（可机器验）：`UTF8 解码行数 - GBK 解码行数 > 0` 即中招；仓库现有 6 个 `.ps1`
+   碰巧都是 0，**这是运气不是设计**。
+   **镜像坑**：`.gradle` / `.properties` 反过来**不许有 BOM**——Groovy 解析器会报
+   `Unexpected character: '?' @ line 1, column 1`。而 PS 5.1 的
+   `Set-Content -Encoding utf8` **总是加 BOM**（PS 7 才有 `utf8` 无 BOM / `utf8BOM` 之分）。
+   写文件前先想清楚**消费方是谁**。
 3. **RN/Expo**：dev-client 首装后 JS 热更即可，改原生配置（app.config/插件/新原生依赖）
    必须重 prebuild+重装（对照 [[docker-rebuild-after-source-change]] 同款「改了不生效」形态）；
    `.mjs` 需 sourceExts 显式加；重复 React 报错查 nodeModulesPaths。
@@ -437,6 +498,38 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
    系统省电模式会杀后台 socket——验收在前台做。
 6. **卡片**：渲染缺字段用可选链默认值，**不许因单卡异常抛崩整个列表**（ErrorBoundary
    包 CardRenderer）；`_prov.mode==='mock'` 必须醒目（数据真实性纪律）。
+7. **下载源（本机实测 2026-08-25，直接决定 M0 是 1 分钟还是 1 小时）**：三条通道速度差两个
+   数量级，**别用默认的那条**。
+   | 通道 | 实测 | 备注 |
+   |---|---|---|
+   | `services.gradle.org`（gradle wrapper **默认**分发源） | **34 KB/s** | 130MB 要 ~65 分钟 |
+   | `mirrors.cloud.tencent.com/gradle/` | **3.6 MB/s** | 同一个 zip 37.5 秒 |
+   | AGP 构建期内置的 SDK 自动下载器 | **32 KB/s** | 缺包时它会自己去拉，慢到像卡死 |
+   | `android sdk install`（cmdline-tools） | **~1 MB/s** | 同样是 dl.google.com，快 30 倍 |
+   ⇒ 两条动作：① `expo prebuild` 之后**先把 `android/gradle/wrapper/gradle-wrapper.properties`
+   的 `distributionUrl` 换成腾讯镜像**再跑 gradlew（M0-2 的构建脚本应内置这步）；
+   ② 从 `android/build.gradle` 读出 `compileSdkVersion`/`buildToolsVersion`，
+   **用 `android sdk install` 预装**，别让 AGP 在构建期现拉。
+   代理帮不上忙：v2rayN 那条反而更慢（services.gradle.org 直连 10.4s vs 代理 29.7s），
+   所以 `D:\Android\.gradle\gradle.properties` 里**刻意没配代理**（配了等于把构建硬绑在
+   v2rayN 上，它没开就是 `Connection refused`，而这类故障看起来像"网络问题"很难归因）。
+8. **cmdline-tools 23 起 `sdkmanager` 已弃用**，转 `android` CLI（`android sdk install|list|remove`）。
+   两个坑：① `sdkmanager.bat` 是包装器，`"platforms;android-35"` 这种带分号的参数**会被 cmd
+   拆成两个**（报 `Package platforms not found` + `Package android-35 not found`）——用
+   `android.exe sdk install` 直传参数；② 新 CLI 对**已安装的包再 install 会崩**
+   （`0xC0000409` STATUS_STACK_BUFFER_OVERRUN）。**它的退出码不可信，验产物不验退出码。**
+9. **Windows 长路径**：gradle 中间产物路径很长
+   （`app/build/intermediates/.../dexBuilderDebug/out/...`），2026-08-25 曾实测触发
+   `PathTooLongException`。**当日已由泓舟以管理员改
+   `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled=1` 并实证
+   （379 字符路径可建可写）**，`git config --global core.longpaths true` 同日已设。
+   ⚠ 这条是**本机状态不是仓库状态**——换机器/重装要重设，自检脚本 E2 有一行守它。
+   注意它**不替代 subst**：LongPaths 治的是"路径太长"，subst 治的是"路径有中文"，
+   两个是不同的病（§1.1 ③）。
+10. **两份 adb**：机器级 PATH 上有独立的 `D:\platform-tools`（r36.0.0），SDK 里另有一份
+    （r37.0.1）。**当下无害**——协议版本都是 `1.0.41`，不会互相 kill server；Expo/gradle 走
+    ANDROID_HOME 那份，人手敲 `adb` 走机器 PATH 那份。自检脚本比的是**协议版本**不是包版本
+    （包版本不同不要紧，协议版本分叉才会出"设备时有时无"）。哪天它报 WARN 了再处理。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
