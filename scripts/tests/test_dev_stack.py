@@ -1062,6 +1062,37 @@ def test_cloud_release_argv_is_a_python_delegate_with_dry_run_and_apply():
         dev.cloud_release_argv(repo, "rollback", "HEAD", apply=False)
 
 
+def test_cloud_release_argv_ci_approval_is_deploy_scoped_and_precedes_apply():
+    repo = Path("C:/repo")
+    digest = "e" * 64
+
+    dry_run = dev.cloud_release_argv(
+        repo,
+        "deploy",
+        "a" * 40,
+        apply=False,
+        approved_ci_cd_digest=digest,
+    )
+    applied = dev.cloud_release_argv(
+        repo,
+        "deploy",
+        "a" * 40,
+        apply=True,
+        approved_ci_cd_digest=digest,
+    )
+    verify = dev.cloud_release_argv(
+        repo,
+        "verify",
+        "HEAD",
+        apply=False,
+        approved_ci_cd_digest=digest,
+    )
+
+    assert dry_run[-2:] == ["--approve-ci-cd-sha256", digest]
+    assert applied[-3:] == ["--approve-ci-cd-sha256", digest, "--apply"]
+    assert "--approve-ci-cd-sha256" not in verify
+
+
 class FakeCliRunner:
     def __init__(self, result: int = 0, stdout: str = "", stderr: str = "") -> None:
         self.calls: list[tuple[str, ...]] = []
@@ -1188,6 +1219,91 @@ def test_cli_deploy_rejects_local_and_delegates_cloud_without_echoing_identity(t
     assert runner.calls[-1][-1] == "--apply"
     assert events[-1]["target"] == "cloud"
     assert str(identity) not in json.dumps(events)
+
+
+def test_dev_stack_deploy_forwards_exact_ci_approval_and_release_audit_fields(
+    tmp_path: Path,
+):
+    dev.set_target(tmp_path, "cloud")
+    digest = "e" * 64
+    payload = _cloud_release_payload()
+    payload["target_ci_cd_sha256"] = digest
+    payload["approved_ci_cd_sha256"] = digest
+    runner = FakeCliRunner(stdout=json.dumps(payload))
+    events: list[dict[str, object]] = []
+
+    rc = cli.main(
+        [
+            "--host",
+            "dev.example",
+            "--identity",
+            str(_valid_identity(tmp_path)),
+            "deploy",
+            "--sha",
+            "b" * 40,
+            "--approve-ci-cd-sha256",
+            digest,
+        ],
+        repo=tmp_path,
+        release_runner=runner,
+        emit=events.append,
+    )
+
+    assert rc == 0
+    assert runner.calls[0][-2:] == ("--approve-ci-cd-sha256", digest)
+    assert events[-1]["target_ci_cd_sha256"] == digest
+    assert events[-1]["approved_ci_cd_sha256"] == digest
+
+
+def test_dev_stack_deploy_without_ci_approval_has_no_flag_or_env_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    dev.set_target(tmp_path, "cloud")
+    monkeypatch.setenv("CAR_AGENT_APPROVE_CI_CD_SHA256", "e" * 64)
+    payload = _cloud_release_payload()
+    runner = FakeCliRunner(stdout=json.dumps(payload))
+    events: list[dict[str, object]] = []
+
+    rc = cli.main(
+        [
+            "--host",
+            "dev.example",
+            "--identity",
+            str(_valid_identity(tmp_path)),
+            "deploy",
+        ],
+        repo=tmp_path,
+        release_runner=runner,
+        emit=events.append,
+    )
+
+    assert rc == 0
+    assert "--approve-ci-cd-sha256" not in runner.calls[0]
+    assert events[-1]["target_ci_cd_sha256"] is None
+    assert events[-1]["approved_ci_cd_sha256"] is None
+
+
+@pytest.mark.parametrize("command", ("status", "verify"))
+def test_dev_stack_non_deploy_commands_reject_ci_approval(
+    tmp_path: Path,
+    command: str,
+):
+    events: list[dict[str, object]] = []
+
+    assert cli.main(
+        [command, "--approve-ci-cd-sha256", "e" * 64],
+        repo=tmp_path,
+        emit=events.append,
+    ) == 2
+    assert events == [
+        {
+            "status": "parse_error",
+            "target": None,
+            "source": None,
+            "error": "invalid command arguments",
+        }
+    ]
 
 
 def _seed_cloud_verify_env(tmp_path: Path) -> None:
@@ -1582,6 +1698,8 @@ def _cloud_release_payload(status: str = "dry_run") -> dict[str, object]:
         "blocking_changes": [],
         "target_infrastructure_sha256": "c" * 64,
         "approved_infrastructure_sha256": "d" * 64,
+        "target_ci_cd_sha256": None,
+        "approved_ci_cd_sha256": None,
         "artifact_directory": "/opt/car-agent/releases/ignored",
         "bootstrap": {"status": "ready", "source_release": "/opt/ignored", "candidates": [], "details": []},
         "remote": {"current_release": "a" * 40, "runtime_project_name": "car_agent", "disk_available_bytes": 1, "memory_available_bytes": 1, "release_lock_available": True, "runtime_project_ready": True, "shared_scripts_ready": True, "shared_models_ready": True},
@@ -1680,6 +1798,8 @@ def test_cli_uses_real_cloud_release_payload_for_plan_and_bootstrap_results():
     assert plan_payload["blocking_changes"] == [
         {"path": "deploy/cloud/remote-release.sh", "category": "infrastructure"}
     ]
+    assert plan_payload["target_ci_cd_sha256"] is None
+    assert plan_payload["approved_ci_cd_sha256"] is None
 
     bootstrap = _actual_cloud_release_payload("bootstrap_required")
     bootstrap_code, bootstrap_payload = cli._release_result(3, json.dumps(bootstrap))
@@ -1699,6 +1819,60 @@ def test_cli_deploy_keeps_allowlisted_release_audit_fields(tmp_path: Path):
     assert events[-1]["changed_paths"] == ["agents/example.py"]
     assert events[-1]["bootstrap"]["status"] == "ready"
     assert events[-1]["bootstrap"]["source_release"] == "/opt/ignored"
+    assert events[-1]["target_ci_cd_sha256"] is None
+    assert events[-1]["approved_ci_cd_sha256"] is None
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ("target_ci_cd_sha256", "approved_ci_cd_sha256"),
+)
+def test_release_audit_fields_are_required_in_child_payload(
+    missing_field: str,
+):
+    payload = _cloud_release_payload()
+    del payload[missing_field]
+
+    with pytest.raises(
+        dev.DevStackError,
+        match="cloud release response is invalid",
+    ):
+        cli._release_result(0, json.dumps(payload))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("target_ci_cd_sha256", "A" * 64),
+        ("approved_ci_cd_sha256", True),
+        ("target_ci_cd_sha256", "a" * 63),
+        ("approved_ci_cd_sha256", "g" * 64),
+        ("target_ci_cd_sha256", 1),
+    ),
+)
+def test_release_audit_fields_reject_malformed_ci_digests(
+    field: str,
+    value: object,
+):
+    payload = _cloud_release_payload()
+    payload[field] = value
+
+    with pytest.raises(
+        dev.DevStackError,
+        match="cloud release response is invalid",
+    ):
+        cli._release_result(0, json.dumps(payload))
+
+
+def test_release_audit_fields_still_reject_unknown_child_field():
+    payload = _cloud_release_payload()
+    payload["unknown"] = "value"
+
+    with pytest.raises(
+        dev.DevStackError,
+        match="cloud release response is invalid",
+    ):
+        cli._release_result(0, json.dumps(payload))
 
 
 @pytest.mark.parametrize(

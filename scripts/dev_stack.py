@@ -44,12 +44,14 @@ from scripts.dev_stack_lib import (
 CHILD_OUTPUT_MAX_BYTES = 64 * 1024
 CHILD_OUTPUT_MAX_DEPTH = 16
 _FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _REMOTE_LOCK_ID = re.compile(r"^e2e-[0-9a-f]{32}$")
 _PLAN_FIELDS = frozenset(
     {
         "status", "deployed_sha", "target_sha", "changed_paths",
         "blocking_changes", "target_infrastructure_sha256",
-        "approved_infrastructure_sha256", "artifact_directory", "bootstrap", "remote",
+        "approved_infrastructure_sha256", "target_ci_cd_sha256",
+        "approved_ci_cd_sha256", "artifact_directory", "bootstrap", "remote",
     }
 )
 _CONFIG_FIELDS = frozenset({"status", "error_category"})
@@ -81,6 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("status")
     deploy = commands.add_parser("deploy")
     deploy.add_argument("--sha", default="HEAD")
+    deploy.add_argument("--approve-ci-cd-sha256")
     deploy.add_argument("--apply", action="store_true")
     for command in ("verify", "hmi", "dashboard"):
         commands.add_parser(command)
@@ -151,6 +154,12 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
     for name in ("target_infrastructure_sha256", "approved_infrastructure_sha256"):
         if payload[name] is not None and not isinstance(payload[name], str):
             raise DevStackError("cloud release response is invalid")
+    for name in ("target_ci_cd_sha256", "approved_ci_cd_sha256"):
+        value = payload[name]
+        if value is not None and (
+            not isinstance(value, str) or _SHA256.fullmatch(value) is None
+        ):
+            raise DevStackError("cloud release response is invalid")
     if payload["artifact_directory"] is not None and not isinstance(payload["artifact_directory"], str):
         raise DevStackError("cloud release response is invalid")
     bootstrap = _require_mapping(payload["bootstrap"])
@@ -188,6 +197,8 @@ def _validate_plan_payload(payload: Mapping[str, Any]) -> dict[str, object]:
         "blocking_changes": _validate_blocking_changes(payload["blocking_changes"]),
         "target_infrastructure_sha256": payload["target_infrastructure_sha256"],
         "approved_infrastructure_sha256": payload["approved_infrastructure_sha256"],
+        "target_ci_cd_sha256": payload["target_ci_cd_sha256"],
+        "approved_ci_cd_sha256": payload["approved_ci_cd_sha256"],
         "bootstrap": {
             "status": bootstrap["status"],
             "source_release": bootstrap["source_release"],
@@ -430,7 +441,13 @@ def _run(args: argparse.Namespace, *, repo: Path, release_runner: object, status
         if selection.name != "cloud":
             raise DevStackError("deploy requires target=cloud")
         config = _connection(args)
-        release = cloud_release_argv(repo, "deploy", args.sha, apply=args.apply)
+        release = cloud_release_argv(
+            repo,
+            "deploy",
+            args.sha,
+            apply=args.apply,
+            approved_ci_cd_digest=args.approve_ci_cd_sha256,
+        )
         result = release_runner.run([*release[:2], *_connection_argv(config), *release[2:]], cwd=repo, check=False)
         try:
             exit_code, payload = _release_result(result.returncode, result.stdout)
