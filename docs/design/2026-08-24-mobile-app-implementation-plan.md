@@ -39,7 +39,7 @@
 | E3 | 真机两台开 USB 调试：手机（Android 10+）、平板（Android 10+） | 泓舟 | **⏳ 待办**：`adb devices` 当前为空。平板没有可先只用手机，平板形态验收顺延 |
 | E4 | 两台设备装 Tailscale 官方 App、登录同一 tailnet | 泓舟 | **⏳ 部分**：PC→云栈已实测通（`:8443/healthz`=200、`:8444` 有响应）；tailnet 里已有 android 节点 `superdeman-xiaomi-mix-fold-4`（折叠屏，手机态+展开态可覆盖两形态），但当前离线 |
 | E5 | Node ≥ 20（已有）、npm 可用（已有） | — | **✅** node v22.15.0 / npm 10.9.2 |
-| E6 | ⚠ 路径风险预案：仓库路径含中文+空格（`D:\Personal\AI\Claude Code\产品\car-agent`） | 执行者 | **✅ 已实测，且结论比本行原文更硬**：不是"不稳"，是 **AGP 硬拒绝**（§1.1 ③）。**原生构建一律经 `subst` 映射盘符跑**（M0-2 构建脚本内置：`subst X: <repo>` 后从 `X:\mobile` 起 gradle）。JS/Metro 开发不受影响 |
+| E6 | ⚠ 路径风险预案：仓库路径含中文+空格（`D:\Personal\AI\Claude Code\产品\car-agent`） | 执行者 | **✅ 已实测，定案经两次迭代**：AGP 对中文路径硬拒绝（§1.1 ③）→ subst 在真实 RN/Expo 构建里**也不可用**（双根 relativize 必炸，§1.1 偏差 ④）→ **最终形态：原生构建在 ASCII 镜像工作区 `D:\Android\builds\xiaozhou-mobile` 进行**（M0-2 构建脚本内置 robocopy 增量镜像）。JS/Metro 开发不受影响（中文路径无碍） |
 
 ### 1.1 E1–E6 落地记录与三处偏差（2026-08-25）
 
@@ -83,6 +83,27 @@ compileSdk 由开工时 Expo SDK 决定，不由本表决定；装 35+36 覆盖�
 （构建期自动补装 build-tools 时打印了 `License for package ... accepted`）、
 aapt2/d8/zipalign/apksigner 四个二进制都能跑（没有缺 MSVC 运行时那类故障）、
 JDK 17 ↔ Gradle 8.13 ↔ AGP 8.7.3 ↔ SDK 36 这条链是通的。
+
+**偏差 ④（E6 定案二次迭代，2026-08-25 M0-2 实测）：subst 从「必需项」改判「不可用」，
+最终形态 = ASCII 镜像工作区。** 上面的 A/B 只覆盖**单工程最小 AGP 构建**，subst 在那个
+场景够用；真实 RN/Expo 构建（Expo 57 / RN 0.86 / 新架构 codegen / worklets C++）
+六次失败收敛出三条结构性事实（逐条读数在 §9 坑账 11-12）：
+
+1. **subst 双根必炸**：`require.resolve` 不解析 subst（产 X: 路径）、RN CLI 的
+   `fs.realpathSync.native` 解析 subst（产 D: 中文真实路径）——同一构建里永远两套
+   盘符根，每个做 `Path.relativize` 的子系统挨个断（expo-dev-menu projectDirectory /
+   codegen schema 任务 / KGP 增量编译，三处实证）。
+2. **真实中文路径单根也不可用**：`android.overridePathCheck=true` 放行后，
+   CMake PCH 把中文路径以错误编码写进生成头文件，clang `cannot open file`——
+   **AGP 那条检查的原判被实证坐实**（上面「不要用」维持不变）。
+3. junction 与 subst 同类（native realpath 同样穿透）。
+
+⇒ 定案：`build_mobile.ps1` 构建前 `robocopy /MIR` 把 `mobile/` 增量镜像到
+**`D:\Android\builds\xiaozhou-mobile`**（全 ASCII 单根，落点跟随 SDK/缓存所在的
+D:\Android 惯例；`/XD android .expo` 让原生目录在镜像侧存续、增量编译不丢）。
+debug 构建不读 `src/` 与 `hmi/`（JS 不打包），镜像自洽；**-Release 打 JS bundle
+时此形态需再评估**（M5 前用不上，先挂账）。E6 对 Metro/JS 开发面的原判维持
+（中文路径无碍，无需 subst）。
 
 ## 2. 协议契约（真相源指认 + 导读）
 
@@ -264,7 +285,58 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   `workflow_dispatch` 手动出 debug APK 工件。
 - **验收**：Actions 两条都实跑过一次绿（`workflow_dispatch` 那条下载 APK 装机可启）。
 
-**M0 实施记录**：（完成后逐任务补）
+**M0 实施记录**（2026-08-25，M0-1..M0-8 代码面全部完成；真机面待 E3/E4，清单见末条）：
+
+- **M0-1 ✅**：CLAUDE.md §2 技术栈行 + §3 目录条目，diff 仅两处（commit `12f8036`）。
+- **M0-2 ✅（构建面）**：Expo SDK **57.0.16** / RN 0.86.2 / React 19.2.3 / TS ~6.0.3，
+  一轮交付内锁定。app.config.ts=CNG 真相源（名称小舟随行、包 com.xiaozhou.companion、
+  APP_VARIANT 三档 dev/staging/prod、expo-build-properties 控 cleartext、config plugin
+  `with-unified-drive-root`）；模板样板裁掉（.claude/、模板 AGENTS/CLAUDE/Expo LICENSE、
+  app.json、demo 屏与未引用图片）。构建脚本定案形态=**ASCII 镜像工作区**（三形态
+  六连败的证据链在 §1.1 偏差 ④ 与坑账 §9.11-17）：robocopy /MIR（**绝对路径** /XD）→
+  镜像内 prebuild（前置 gradlew --stop 防 EBUSY）→ 腾讯 gradle 分发镜像 + jvmargs
+  强制 UTF-8 → 从 libs.versions.toml 解析并预装缺失 SDK 包（NDK 27.1.12297006 745MB
+  实测 3.5MB/s 三分半，AGP 现拉同物 32KB/s 要 6.5 小时）→ CN maven init script →
+  assembleDebug → 验产物。**读数：首构 BUILD SUCCESSFUL in 21m48s（473 executed /
+  223 from cache），app-debug.apk 254MB（debug 含 dev-client，正常量级）**。
+  真机可装可启动待 E3。
+- **M0-3 ✅（本地可验部分）**：metro.config.js（watchFolders=仓库根 / sourceExts+mjs /
+  nodeModulesPaths 单指 mobile + disableHierarchicalLookup）+ tsconfig paths
+  （`@shared/*`、allowJs、**types 显式 [jest,node]**——TS 6.0 不再自动纳入 @types，
+  这是踩了才知道的）。`tsc --noEmit` 绿；jest 侧 `import { nextBackoff } from
+  '@shared/ws.mjs'` 断言退避值通过（真机 dev-client 同款验证待 E3）。jest 接线三坑：
+  预设 babel transform 键是 `\.[jt]sx?$` **不含字面 js 也不含 mjs**（按「值是 babel
+  转换器」找到该条给 .mjs 复用）；@babel/runtime 需显式 moduleNameMapper（转译后的
+  hmi 文件从自己目录向上找不到 mobile/node_modules）；moduleFileExtensions **别覆盖**
+  （jest 默认已含 mjs，窄覆盖反而丢 jsx/cjs）。
+- **M0-4 ✅**：台账 16 模块（phase/purpose/notes）+ 守卫四断言（含台账健康：file 真实
+  存在防 typo）。反向验证**三头**、逐条具名红：台账外引用（`cardMath.mjs (used by
+  src\core\_tmp_guard_probe.ts)`）、ws.mjs 临时塞 window.x（`ws.mjs: window.`，
+  git 还原后 hmi node:test 282/282 绿）、M1 模块在 M0 引用（`pendingOps.mjs (phase M1,
+  current M0)`）；还原后 jest 29/29 绿。断言②去注释后扫（pcmPlayer.mjs 注释里合法
+  提及 window.AudioContext，naive 子串扫会假红）。
+- **M0-5 ✅（单测面）**：端点校验三判据与 dev_stack_lib.cloud_endpoints 同构（合法 3 /
+  非法 7，含「整串正则过、label 校验拦」与「label 全合法、仅总长超 253」两个边界）；
+  token=expo-secure-store、其余=AsyncStorage、任一缺失按未配置 fail-closed；
+  onboarding（预设 chips / 连接测试给 close code+「查 Tailscale/token」/ token 显尾
+  4 位；prod 档隐藏 lan/custom 由 extra.allowCustomServer 门控）。真机持久化验收待 E3。
+- **M0-6 ✅（单测面）**：GatewaySession 用 @shared/ws.mjs（注入 fake WebSocket 实证
+  断线入有界队列→onopen 按序 flush；URL 逐字 `wss://…:8443/ws?token=`）；用户帧
+  逐字段对照 App.tsx:691-714（meta 全 string / `__` 前缀与空值剥离 / occupant 恒
+  primary·空 / trace_id 16hex 同构 / operation_id 条件键）；调试屏 8 型下行帧原样
+  落屏；会话 id `app-` 与记忆跳过名单互斥由测试钉住。真栈冒烟待 E3/E4。
+  ⚠ token：M0 冒烟用根 `.env` 现有 `VITE_WS_TOKEN`（只读）；App 专属 AUTH_TOKENS
+  条目（手机档无 vehicle.control）=⚠ 泓舟，M1 期间完成。
+- **M0-7 ✅**：conventions.md **§9.33**（多端客户端网关契约：types.ts 唯一真相源 /
+  归属与台账语义多端一致 / `app-` 前缀 / 鉴权与 meta 约束）+ mobile/README.md
+  （运行手册：前置自检、日常开发、镜像构建、连接后端、共享面）。
+- **M0-8 ✅（代码面）**：ci.yml `mobile` job（npm ci→tsc→jest 含守卫；刻意不跑 gradle）
+  + mobile-apk.yml（workflow_dispatch 出 debug APK 工件；ubuntu 路径全 ASCII，
+  不需要本机那套镜像预案）。实跑读数推送后回填。
+- **待真机清单（E3/E4 就绪后一次补验，缺一不算 M0 收口）**：① APK 装机启动（空壳）；
+  ② dev-client 下 @shared 退避值 console 打印；③ 引导页配置→杀 App 重启仍在→
+  错 token 连接测试给可读失败；④ 调试屏发「今天天气怎么样」→ speech_delta×N +
+  final（ui_card.type='weather'）；⑤ 断 Tailscale 再发一条→重连后自动 flush 送达。
 
 ---
 
@@ -530,6 +602,48 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     （r37.0.1）。**当下无害**——协议版本都是 `1.0.41`，不会互相 kill server；Expo/gradle 走
     ANDROID_HOME 那份，人手敲 `adb` 走机器 PATH 那份。自检脚本比的是**协议版本**不是包版本
     （包版本不同不要紧，协议版本分叉才会出"设备时有时无"）。哪天它报 WARN 了再处理。
+11. **subst 在真实 RN/Expo 构建里不可用（E6 定案二次迭代，2026-08-25 M0-2 六连败实测）**：
+    路径来源多头——`require.resolve` **不**解析 subst（产 X:）、RN CLI 的
+    `fs.realpathSync.native` **解析** subst（产 D: 中文）——同一构建永远两套盘符根，
+    每个做 `Path.relativize` 的子系统挨个炸 `different roots`（三处实证：expo-dev-menu
+    projectDirectory / 各库 generateCodegenSchemaFromJavaScript / KGP 增量编译）。
+    **`NODE_OPTIONS=--preserve-symlinks` 是反例**：拦不住 CLI 里显式的 native realpath，
+    反把 expo 侧路径也变 X:，制造第二种混合。修 codegen 那半的 config plugin
+    `mobile/plugins/with-unified-drive-root.js`（react{} Folders 三路径钉 native realpath）
+    留作形态守卫。
+12. **真实中文路径单根也不可用**：`android.overridePathCheck=true` 放行 AGP 后，
+    CMake PCH 把中文路径以错误编码写进生成头文件（clang 报
+    `cannot open file 'D:/.../<B2><FA>?/.../WorkletsPCH.h'`）——**AGP 那条检查的
+    原判（§1.1 ③「不要用 override」）被实证坐实**。⇒ 唯一形态：**ASCII 镜像工作区**
+    （`build_mobile.ps1` 用 `robocopy /MIR` 增量镜像 `mobile/` 到
+    `D:\Android\builds\xiaozhou-mobile`，`/XD android .expo` 保镜像侧原生目录与增量）。
+    debug 构建不读 `src/`；**-Release 打 JS bundle 需再评估此形态**（挂 M5）。
+13. **Gradle `providers.exec` 的 `asText` 按 JVM 默认字符集解码**（本机 GBK）：expo
+    autolinking 起的 node 子进程输出 UTF-8 JSON，中文路径在 JVM 内成乱码、报
+    「projectDirectory 不存在」，而**日志里路径看着是干净中文**——GBK 解码→GBK 编码
+    的字节回环假象，肉眼从日志分辨不出。修 = `gradle.properties` 的 jvmargs 加
+    `-Dfile.encoding=UTF-8`（脚本自动补）。修完后现象反转：JVM 正确、GBK 控制台渲染
+    UTF-8 输出变乱码——**判读构建日志先想编码链是哪一段**。
+14. **`repo.maven.apache.org` 本网络 DNS 不可达**（Maven Central 拉不动
+    org.jetbrains.compose 等；gradle 一次失败还会把整个 MavenRepo 禁用、连坐其余包）。
+    修 = `scripts/gradle_cn_mirrors.init.gradle` 镜像**前置**（aliyun central/google/
+    gradle-plugin + tencent 聚合；`-I` 注入，**前置不删原仓库**）。CI 海外 runner
+    不经过它（workflow 里直接 gradlew）。
+15. **prebuild「Clearing android」EBUSY 的锁主清单**：gradle/kotlin daemon 之外，
+    **自己会话与子进程的 cwd** 也算——本轮两连败都是自己（bash 会话 cd 进
+    `mobile/android` 查文件没退出来；Monitor 的 tail 子进程继承了那个 cwd）。
+    脚本已内置 prebuild 前 `gradlew --stop`；列出 java 进程为空却仍 EBUSY ≈ 就是你自己。
+16. **小坑合集**：android CLI 实体是 `android.exe`（bin 下没有 android.bat，传 .bat 报
+    CommandNotFound）；SDK 57 生成的根 build.gradle **不再带 ext 版本块**，静态版本
+    真相源 = `node_modules/react-native/gradle/libs.versions.toml`（NDK 27.1.12297006
+    就是从这解析并预装的，AGP 现拉这个 745MB 包要 6.5 小时、android CLI 3.5MB/s 三分半）；
+    `subst` 命令输出的中文经 OEM 码页必乱码、**不可字符串比对**（当时用 nonce 探针文件
+    验同一性；subst 已废弃，判据留档）。
+17. **robocopy `/XD` 传裸名是按目录名匹配全树**：`/XD android` 把 node_modules 里
+    每个包的 `android/` 原生源码目录一并排掉（镜像后 prebuild 报
+    `Cannot find module .../config-plugins/build/android/codeMod.js`，而两侧
+    node_modules 顶层数量完全一致——**顶层对不代表深层对**）。要只挡顶层那一个目录，
+    必须传**绝对路径**、且源侧与镜像侧都传（前者管拷贝面、后者管 /MIR 的删除面）。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 

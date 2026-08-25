@@ -1,0 +1,57 @@
+# Android 陪伴端 debug APK（实施计划 M0-8）：手动触发出安装包工件。
+# 刻意不进每 push CI（gradle 时长不值得）；签名 keystore M5 前用 debug 缺省，
+# 正式签名随 M5 生产化（secret 注入，不进仓库）。
+# Linux runner 路径全 ASCII，不需要本地那套 subst 预案；Android SDK 随 runner 预装，
+# 缺的包 AGP 会用 runner 的许可自动补。
+name: Mobile APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "APP_VARIANT (dev/staging/prod)"
+        required: false
+        default: "dev"
+
+jobs:
+  debug-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install
+        working-directory: mobile
+        run: npm ci
+
+      - name: Expo prebuild (android)
+        working-directory: mobile
+        env:
+          CI: "1"
+          APP_VARIANT: ${{ github.event.inputs.variant }}
+        run: npx expo prebuild -p android --no-install
+
+      - name: Gradle assembleDebug
+        working-directory: mobile/android
+        env:
+          APP_VARIANT: ${{ github.event.inputs.variant }}
+        run: ./gradlew assembleDebug --console=plain
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaozhou-companion-debug-apk-${{ github.run_id }}
+          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          retention-days: 14

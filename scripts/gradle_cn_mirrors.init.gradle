@@ -1,0 +1,36 @@
+// 国内 Maven 镜像前置（仅本机构建；build_mobile.ps1 经 -I 传入，CI 海外 runner 不用）。
+// 背景（2026-08-25 实测）：repo.maven.apache.org 本网络 DNS 不可达（GBK 乱码报「未知的
+// 名称或服务」），Maven Central 上的 org.jetbrains.compose/com.composables 等包拉不动；
+// dl.google.com 反而 3.5MB/s。init script 注册的 allprojects 回调先于工程自身
+// build.gradle 求值，镜像仓库因此排在 google()/mavenCentral() 之前——命中即止，
+// 命不中再落回原仓库（不删原仓库，只前置）。
+// ⚠ 本文件是 .gradle：必须无 BOM（Groovy 解析器见 BOM 即报 Unexpected character）。
+
+def MIRRORS = [
+    'https://maven.aliyun.com/repository/central',
+    'https://maven.aliyun.com/repository/google',
+    'https://maven.aliyun.com/repository/gradle-plugin',
+    'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/',
+]
+
+def addMirrors = { repoHandler ->
+    MIRRORS.each { u ->
+        repoHandler.maven { url u }
+    }
+}
+
+allprojects {
+    buildscript {
+        repositories { addMirrors(delegate) }
+    }
+    repositories { addMirrors(delegate) }
+}
+
+settingsEvaluated { settings ->
+    settings.pluginManagement.repositories { addMirrors(delegate) }
+    try {
+        settings.dependencyResolutionManagement.repositories { addMirrors(delegate) }
+    } catch (Throwable ignored) {
+        // 老 Gradle 无此 API 时静默跳过
+    }
+}

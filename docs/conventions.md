@@ -1809,3 +1809,33 @@ I-052 那类编造还能靠「这个商品不存在」抓出来，而这一条�
 > 写死成 `cap_0001`，而 `_capability_pairs` 是 `sorted()`、编号按字典序不是声明序
 > ⇒ fixture 把两家的 intent 和 label 配反了，段 A 那条红成「下发面选错组」，
 > 而下发面一直是对的。改成从 `_build_ref_maps` 反查——**装置和被测系统用同一份口径**。
+
+### 9.33 多端客户端网关契约（Android 陪伴端 `mobile/`，M0，2026-08-25）
+
+**背景**：座舱 HMI 之外的第二个用户端（`mobile/`，React Native + Expo）经同一
+edge-gateway WS / llm-gateway HTTP·WS 接入。两个网关本来不关心客户端是谁——
+本条登记的是「多端必须一致」的最小契约面，防止第二个客户端各自演化出第二套会话语义。
+
+- **消息/卡片契约唯一真相源 = `hmi/src/types.ts`**（29 卡型 + `card_group` 递归 +
+  WS 帧型 + 默认值）。App 不复制不改写，经 `@shared/*` 直引（Metro monorepo 接线，
+  tsconfig paths 别名）；共享面是**台账 + 机器守**：`mobile/shared-allowlist.json` +
+  守卫测试 `mobile/test/sharedAllowlist.test.ts`（引台账外模块 / 引未到阶段模块 /
+  共享模块长出 DOM 依赖，三种漂移即红）。**未知/未实现卡型渲染兜底卡绝不 null**
+  （types.ts 记录的「桥在发、HMI 渲染 null 两个月」欠账不许在任何端重演）。
+- **响应归属与挂起台账语义是多端一致性要求**（`hmi/src/requestRouting.mjs` /
+  `pendingOps.mjs` 顶部注释为准）：帧带 `request_id` 按 id 归属、对不上=丢帧
+  （不回落）；不带→FIFO 头；无在飞轮的续流→adopt 新气泡；终态帧
+  （final/error/cancelled）归属并注销该轮。`final.closed_operation_ids` 出账、
+  `need_confirm && operation_id` 进账，挂起台账**服务端权威**。任何新客户端
+  **移植这两份共享模块而不是重写**（QA Q1/Q3 硬化出来的语义，正是为多端并发场景）。
+- **会话前缀 `app-`**：App 每次启动新会话（同 HMI 每次刷新语义），
+  id = `app-` + 随机 6 位。不在记忆抽取跳过名单（`memory/server.py:42-48`）——
+  App 会话正常进记忆抽取；观测面按前缀分端。跳过名单前缀（eval-/e2e-/…）
+  不得用于真实用户端。
+- **鉴权与 meta**：App 用独立 `AUTH_TOKENS` 条目（同 user_id 共记忆画像、独立 token
+  可单独吊销、手机默认档 scope 不含 `vehicle.control`——远程车控不由客户端夹带）；
+  meta 键值全 string（网关是 map[string]string，塞非 string 整帧静默丢弃）；
+  `__` 前缀键不得上行。
+
+执行真相源（逐任务）：`docs/design/2026-08-24-mobile-app-implementation-plan.md`
+（协议逐字段指认见其 §2，坑账见其 §9；需求/选型在 `2026-08-23-hmi-android-app-plan.md`）。

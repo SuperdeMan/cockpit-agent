@@ -33,7 +33,7 @@ npm test             # jest：白名单守卫 + 端点校验 + gateway 帧契约
 **改了 app.config.ts / config plugins / 新增原生依赖必须重 prebuild + 重装 APK**
 （「改了不生效」十有八九是这个）。
 
-## 原生构建（必须经 subst——仓库路径含中文，AGP 硬拒绝，坑账 §9.1）
+## 原生构建（在 ASCII 镜像工作区进行——仓库路径含中文，subst/中文单根两形态均实测不可用，实施计划 §1.1 偏差 ④ + 坑账 §9.11-12）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1            # debug APK
@@ -41,9 +41,10 @@ powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release   # r
 powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Clean     # 重生成 android/
 ```
 
-脚本内置：subst 盘符 → `expo prebuild` → gradle wrapper 换腾讯镜像（默认源慢两个
-数量级）→ 缺失 SDK 包用 android CLI 预装 → `gradlew assembleDebug` → 验 APK 产物。
-装机：`adb install -r <APK 路径>`（脚本末尾打印）。
+脚本内置：robocopy 增量镜像 `mobile/` → `D:\Android\builds\xiaozhou-mobile`（全 ASCII
+单根）→ 镜像里 `expo prebuild` → gradle wrapper 换腾讯镜像 + jvmargs 强制 UTF-8 →
+缺失 SDK 包用 android CLI 预装 → CN maven 镜像 init script → `gradlew assembleDebug`
+→ 验 APK 产物。装机：`adb install -r <APK 路径>`（脚本末尾打印，路径在镜像区）。
 
 构建变体：`APP_VARIANT=dev|staging|prod`（缺省 dev）。dev 允许 cleartext + 任意服务器
 入口；prod 两者皆禁（只留云栈 FQDN 预设）。包名三档同为 `com.xiaozhou.companion`。

@@ -51,6 +51,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       },
     ],
     'expo-secure-store',
+    // Windows subst 构建的盘符根统一（非 win32 原样通过），坑账见插件头注
+    './plugins/with-unified-drive-root',
     [
       'expo-build-properties',
       {

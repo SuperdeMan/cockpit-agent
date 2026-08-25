@@ -304,6 +304,33 @@ jobs:
       - name: Go test
         run: go test ./...
 
+  # Android 陪伴端（mobile/，实施计划 M0-8）：tsc + jest（含共享白名单守卫——
+  # mobile 只许引 hmi/src 台账内模块，三种漂移即红）。刻意不跑 gradle：
+  # 原生构建时长/密钥不值得每 push，出 debug APK 走 mobile-apk.yml 手动档。
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (tsc --noEmit, strict, 含 @shared 引用)
+        run: npm run typecheck
+
+      - name: Unit tests + shared allowlist guard (jest)
+        run: npx jest --ci
+
   frontend:
     runs-on: ubuntu-latest
     strategy:
