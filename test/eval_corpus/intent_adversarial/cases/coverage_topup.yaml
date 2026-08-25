@@ -1317,3 +1317,70 @@ cases:
       - input: {utterance: 明天早上九点提醒我交材料，八点半再提醒我一次, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [reminder.create_batch]}], forbidden_intents: [reminder.create, reminder.list], allow_extra_intents: false}
+
+  # ── 会话临时预览清理 vs 真实订单生命周期（shop.preview_discard，2026-08-25）──
+  # QA 探针会创建商户预览，但“取消待确认”只关闭编排挂起，不会自动删除 Redis 草稿。
+  # 新能力因此只处理认证 user + 当前 session 的临时预览；绝不能借“取消/订单”宽词
+  # 吞掉真实订单取消或历史查单。能力声明与 route_hint 已进入修复资产，整族必须标
+  # seen_regression，不能把修过的原话冒充 unseen transfer。
+  - id: tu.shop.preview-discard-current-session
+    title: 清理本次会话的订单预览
+    family_id: tu.shop-preview-discard-vs-order-lifecycle
+    cohort: seen_regression
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-25}
+    turns:
+      - input: {utterance: 清理本次会话的订单预览, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.preview_discard]}], forbidden_intents: [shop.order_cancel, luckin.order_cancel, shop.order_status], allow_extra_intents: false}
+  - id: tu.shop.preview-discard-temporary-draft
+    title: 丢弃本会话下单临时草稿（第二正例）
+    family_id: tu.shop-preview-discard-vs-order-lifecycle
+    cohort: seen_regression
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip, paraphrase], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-25}
+    turns:
+      - input: {utterance: 丢弃这个会话的下单临时草稿, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.preview_discard]}], forbidden_intents: [shop.order_cancel, luckin.order_cancel, shop.order_status], allow_extra_intents: false}
+  - id: tu.shop.real-order-cancel-not-preview-discard
+    title: 取消真实瑞幸订单不是清理预览（硬负例）
+    family_id: tu.shop-preview-discard-vs-order-lifecycle
+    cohort: seen_regression
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [object_flip], domains: [luckin, shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-25}
+    turns:
+      - input: {utterance: 取消刚才那笔瑞幸订单, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [luckin.order_cancel]}], forbidden_intents: [shop.preview_discard, shop.order_status], allow_extra_intents: false}
+  - id: tu.shop.history-query-not-preview-discard
+    title: 查询历史订单不是清理预览（硬负例第二例）
+    family_id: tu.shop-preview-discard-vs-order-lifecycle
+    cohort: seen_regression
+    risk: high
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [action_flip], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-25}
+    turns:
+      - input: {utterance: 查一下我之前的订单, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.order_status]}], forbidden_intents: [shop.preview_discard, shop.order_cancel], allow_extra_intents: false}
+  - id: tu.shop.preview-discard-paraphrase
+    title: 取消本次订单预览（invariant 对照）
+    family_id: tu.shop-preview-discard-vs-order-lifecycle
+    cohort: seen_regression
+    risk: critical
+    status: reviewed
+    tags: {attacks: [A6], mechanisms: [paraphrase], domains: [shop], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-25}
+    relation: {base_case: tu.shop.preview-discard-current-session, type: invariant, expectation: {}}
+    turns:
+      - input: {utterance: 取消本次订单预览, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [shop.preview_discard]}], forbidden_intents: [shop.order_cancel, luckin.order_cancel, shop.order_status], allow_extra_intents: false}

@@ -262,6 +262,53 @@ class FakeRedis:
                     owner_key, meta_key, draft_prefix, current_prefix,
                     owner, version)
                 return [-1, 0] if live is None else [1, len(live)]
+            if "merchant-draft-session-lifecycle-v1" in script:
+                (owner_key, meta_key, fence_key, active_key, draft_prefix,
+                 current_prefix, owner, session, version, mode, ttl) = args
+                if fence_key in self.values or active_key in self.values:
+                    return [-2, 0, -1]
+                live = self._validate_owner_index(
+                    owner_key, meta_key, draft_prefix, current_prefix,
+                    owner, version)
+                if live is None:
+                    return [-1, 0, -1]
+                targets = []
+                drafts = 0
+                for key in tuple(self.sets.get(owner_key, set())):
+                    if key.startswith(draft_prefix):
+                        raw = self.values.get(key)
+                        if raw is None:
+                            return [-1, 0, -1]
+                        value = json.loads(raw)
+                        if value.get("session_digest") == session:
+                            targets.append(key)
+                            drafts += 1
+                    elif key.startswith(current_prefix):
+                        token = self.values.get(key)
+                        raw = self.values.get(draft_prefix + str(token or ""))
+                        if raw is None:
+                            return [-1, 0, -1]
+                        value = json.loads(raw)
+                        if value.get("session_digest") == session:
+                            targets.append(key)
+                if mode == "count":
+                    return [1, drafts, len(self.sets.get(owner_key, set()))]
+                if mode != "discard":
+                    return [-1, 0, -1]
+                for key in targets:
+                    if self.values.pop(key, None) is None:
+                        return [-1, 0, -1]
+                    self.expiries.pop(key, None)
+                    self.sets[owner_key].remove(key)
+                remaining = len(self.sets.get(owner_key, set()))
+                if remaining:
+                    self.hashes[meta_key]["count"] = str(remaining)
+                else:
+                    self.sets.pop(owner_key, None)
+                    self.hashes[meta_key] = {
+                        "version": version, "state": "idle", "count": "0"}
+                    self.expiries[meta_key] = ttl
+                return [1, drafts, remaining]
             if "merchant-draft-delete-owner-v3" in script:
                 (owner_key, meta_key, active_key, draft_prefix,
                  current_prefix, owner, ttl, version) = args
@@ -543,6 +590,40 @@ async def test_discard_releases_write_lease_instead_of_blocking_privacy_delete()
         expected_action="create") is True
     assert await redis.exists(store._owner_active_key("u1")) == 0
     assert await store.delete_owner("u1") is True
+
+
+@pytest.mark.asyncio
+async def test_session_draft_count_and_discard_are_exact_and_preserve_other_sessions():
+    redis = FakeRedis()
+    store = RedisDraftStore(redis=redis)
+    assert await store.put(_draft("s1-luckin", user="u1", session="s1")) is True
+    assert await store.put(_draft(
+        "s1-mcd", user="u1", session="s1", merchant="mcdonalds")) is True
+    assert await store.put(_draft("s2-control", user="u1", session="s2")) is True
+    assert await store.put(_draft("u2-control", user="u2", session="s1")) is True
+
+    assert await store.count_session("u1", "s1") == 2
+    assert await store.discard_session("u1", "s1") == 2
+    assert await store.count_session("u1", "s1") == 0
+    assert await store.count_session("u1", "s2") == 1
+    assert await store.count_session("u2", "s1") == 1
+    assert await store.consume_current(
+        user_id="u1", session_id="s2", merchant="luckin",
+        expected_action="create") is not None
+
+
+@pytest.mark.asyncio
+async def test_session_draft_discard_fails_closed_during_active_write_lease():
+    redis = FakeRedis()
+    store = RedisDraftStore(redis=redis)
+    assert await store.put(_draft("active", user="u1", session="s1")) is True
+    draft = await store.consume(
+        "active", user_id="u1", session_id="s1", merchant="luckin",
+        expected_action="create")
+    assert draft is not None
+
+    assert await store.discard_session("u1", "s1") == -1
+    assert await store.release(draft.token, user_id=draft.user_id) is True
 
 
 @pytest.mark.asyncio
@@ -867,7 +948,9 @@ def test_workflow_capability_requires_every_internal_tool():
     from agents.mcp_bridge.src.agent import _WorkflowBinding
     agent._workflow_bindings[spec.intent] = _WorkflowBinding(server, spec, _Workflow())
     agent._sync_capabilities()
-    assert [c.intent for c in agent.manifest.capabilities] == ["luckin.order"]
+    assert [c.intent for c in agent.manifest.capabilities] == [
+        "luckin.order", "shop.preview_discard",
+    ]
     assert list(agent.manifest.capabilities[0].slots) == ["item_query"]
 
 

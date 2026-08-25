@@ -9,11 +9,14 @@
    不新建表——它是 Ledger 的第二个载体。
 
 capability 是**启动期从准入清单合成**的（`bootstrap()` 在 `serve()` 之前跑）：
-新增工具 = 改 servers.yaml + 人工审，零编排核心改动，也零本文件改动。
+外部工具 = 改 servers.yaml + 人工审，零编排核心与本文件改动；Bridge 自有的确定性
+生命周期能力也声明在 `servers.yaml#local_capabilities`，但 handler 必须同时进入
+`admission.py` 的窄白名单并由本文件显式接线，不能借声明动态执行任意本地函数。
 """
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import html
 import json
 import logging
@@ -22,7 +25,7 @@ import re
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from urllib.parse import unquote
 
-from agents._sdk import AgentResult, BaseAgent, NEED_CONFIRM, NEED_SLOT
+from agents._sdk import AgentResult, BaseAgent, FAILED, NEED_CONFIRM, NEED_SLOT
 from agents._sdk.ledger import DONE, FAILED as LEDGER_FAILED, Duplicate, idem_key
 from agents._sdk.payment_client import PaymentClient
 from agents._sdk.provenance import attach
@@ -32,7 +35,8 @@ from runtime.clock import local_dt
 
 from . import candidate_ref
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
-                        check_version, load_servers, normalize_hostname)
+                        check_version, load_local_capabilities, load_servers,
+                        normalize_hostname)
 from .mcp_client import McpError, StdioMcpClient
 from .order_ref import (HISTORY, NEUTRAL, OrderRef, allows_history_fallback,
                         is_deictic_placeholder, reference_scope)
@@ -75,7 +79,6 @@ _SERVERS = os.path.join(_HERE, "servers.yaml")
 LEDGER_KIND = "mcp_order"           # 契约登记 conventions §9.6 的 kind 全集
 DEMO_PROVIDER = "demo"              # _prov 标记（conventions §9.3）：演示商户永远标出来
 _HIDDEN_ADMIN_TOOL = "__e2e.namespace.admin"
-
 PERSONAL_DATA_TARGETS = (
     {
         # Checkout snapshots contain store/product/specification/amount data.
@@ -122,6 +125,9 @@ class McpBridgeAgent(BaseAgent):
                  payment: PaymentClient | None = None, draft_store=None):
         super().__init__(_MANIFEST)
         self._servers_path = servers_path
+        self._local_capabilities = load_local_capabilities(servers_path)
+        self._local_capabilities_by_intent = {
+            spec.intent: spec for spec in self._local_capabilities if spec.expose}
         self._bindings: dict[str, _Binding] = {}
         self._workflow_bindings: dict[str, _WorkflowBinding] = {}
         self._clients: list = []
@@ -264,6 +270,14 @@ class McpBridgeAgent(BaseAgent):
                 examples=spec.examples,
                 require_confirm=bool(spec.require_confirm),
             ))
+        for spec in self._local_capabilities:
+            if not spec.expose:
+                continue
+            caps.append(agent_pb2.Capability(
+                intent=spec.intent, description=spec.description,
+                slots=spec.slots, examples=spec.examples,
+                require_confirm=spec.require_confirm,
+            ))
         del self.manifest.capabilities[:]
         self.manifest.capabilities.extend(caps)
         logger.info("MCP 桥合成 capability %d 个：%s",
@@ -275,6 +289,12 @@ class McpBridgeAgent(BaseAgent):
 
     # ── 请求处理 ─────────────────────────────────────────────────────
     async def handle(self, intent, ctx, meta) -> AgentResult:
+        local = self._local_capabilities_by_intent.get(intent.name)
+        if local is not None:
+            if local.handler == "session_preview_discard":
+                return await self._discard_session_previews(
+                    ctx, meta, required_scopes=set(local.required_scopes))
+            return AgentResult(speech="这个本地桥接能力还没接入。")
         workflow_binding = self._workflow_bindings.get(intent.name)
         if workflow_binding is not None:
             spec = workflow_binding.spec
@@ -308,6 +328,17 @@ class McpBridgeAgent(BaseAgent):
                     intent, ctx, meta, token=token)
             return await workflow_binding.workflow.prepare(intent, ctx, meta)
         b = self._bindings.get(intent.name)
+        if intent.name == "shop.order_status":
+            # 账号型泛查必须先过统一授权闸，再读取本地订单账本。否则“有订单”与
+            # “无订单”会走出不同话术，未授权调用者可借此探测订单是否存在/归属。
+            if not b or not b.tool.expose:
+                return AgentResult(speech="这个外部服务还没接入。")
+            if set(b.tool.required_scopes or []) - self._granted_scopes(meta):
+                return AgentResult(
+                    speech="当前账号缺少商户授权，不能执行这个操作。")
+            b, early = await self._generic_order_status_binding(intent, ctx, b)
+            if early is not None:
+                return early
         if not b or not b.tool.expose:
             # 准入清单里没有 = 这个能力今天不存在。诚实说，不猜、不静默成功。
             return AgentResult(speech="这个外部服务还没接入。")
@@ -321,6 +352,59 @@ class McpBridgeAgent(BaseAgent):
             return AgentResult(speech=f"{b.server.id} 暂时不可用，稍后再试。")
         return await (self._call_write(b, intent, ctx, meta) if b.tool.write
                       else self._call_read(b, intent, ctx, meta))
+
+    @staticmethod
+    def _session_digest(session_id: str) -> str:
+        return hashlib.sha256(
+            str(session_id or "").encode("utf-8")).hexdigest()[:16]
+
+    async def _discard_session_previews(
+            self, ctx, meta, *, required_scopes: set[str]) -> AgentResult:
+        """Remove transient merchant previews for this authenticated session.
+
+        Count-before → atomic discard → count-after gives the QA/user-facing
+        proof.  Any missing primitive, Redis error, race or non-zero remainder
+        is reported as failure; no successful cleanup card is fabricated.
+        """
+        if required_scopes - self._granted_scopes(meta):
+            return AgentResult(
+                speech="当前账号缺少商户授权，不能执行这个操作。")
+        user_id = str(getattr(ctx, "user_id", "") or "").strip()
+        session_id = str(getattr(ctx, "session_id", "") or "").strip()
+        count = getattr(self._draft_store, "count_session", None)
+        discard = getattr(self._draft_store, "discard_session", None)
+        if not user_id or not session_id or not callable(count) or not callable(discard):
+            return AgentResult(
+                status=FAILED,
+                speech="未能确认本次订单预览清理完成，请稍后再试。")
+        try:
+            before = int(await count(user_id, session_id))
+            removed = int(await discard(user_id, session_id))
+            after = int(await count(user_id, session_id))
+        except Exception as exc:
+            logger.warning("MCP session draft cleanup failed: %s",
+                           type(exc).__name__)
+            return AgentResult(
+                status=FAILED,
+                speech="未能确认本次订单预览清理完成，请稍后再试。")
+        if before < 0 or removed < 0 or after != 0 or removed != before:
+            logger.warning(
+                "MCP session draft cleanup unproven: before=%s removed=%s after=%s",
+                before, removed, after)
+            return AgentResult(
+                status=FAILED,
+                speech="未能确认本次订单预览清理完成，请稍后再试。")
+        card = {
+            "type": "merchant_draft_cleanup",
+            "session_id_digest": self._session_digest(session_id),
+            "drafts_before": before,
+            "drafts_removed": removed,
+            "drafts_after": after,
+        }
+        return AgentResult(
+            speech=(f"已清理本次会话的 {removed} 条订单预览；"
+                    "没有创建、取消或支付真实订单。"),
+            ui_card=card, data=dict(card))
 
     @staticmethod
     def _resolve_candidate_slot(spec, intent, meta) -> None:
@@ -405,6 +489,117 @@ class McpBridgeAgent(BaseAgent):
         if isinstance(raw, (list, tuple, set)):
             return {str(scope).strip() for scope in raw if str(scope).strip()}
         return set()
+
+    async def _generic_order_status_binding(self, intent, ctx, default):
+        """把泛指历史查单落到**账本声明的真实商户**，绝不拿 demo 代替。
+
+        ``shop.order_status`` 是仓库早期的演示商户能力。MiniMax 长会话里一句
+        「查一下我之前的订单」被窄 hint 稳定落到它后，系统明明在账本里持有
+        ``server=mcdonalds/luckin``，却返回 ``demo-coffee:mock`` 卡。路由稳定了，
+        真实性反而被固化。
+
+        这里不让 LLM 猜品牌：账本的 ``result_ref.server`` 是下单完成时写入的权威
+        归属。按 session/history 三档先选任务，再选择同 server 的官方
+        ``*.order_status`` binding；后续仍走原有 owner、scope、result_map 与出站校验。
+        找不到真实 binding 就诚实弃权。只有用户明确说「演示商户」时才保留旧 demo。
+        """
+        raw = str(getattr(intent, "raw_text", "") or "").strip()
+        if any(mark in raw.lower() for mark in ("演示商户", "demo-coffee")):
+            return default, None
+
+        user_id = str(getattr(ctx, "user_id", "") or "").strip()
+        session_id = str(getattr(ctx, "session_id", "") or "").strip()
+        if not user_id or not self.ledger:
+            return None, AgentResult(
+                speech="没有可核对的真实商户订单；我不会用演示商户结果代替。")
+
+        real_bindings = {
+            binding.server.id: binding
+            for name, binding in self._bindings.items()
+            if name != "shop.order_status"
+            and name.endswith(".order_status")
+            and not bool(getattr(binding.server, "demo", False))
+            and bool(getattr(binding.tool, "expose", False))
+        }
+        try:
+            recent = await self.ledger.recent(
+                user_id, kind=LEDGER_KIND, limit=20)
+        except Exception as exc:
+            logger.debug("[mcp] 泛指查单读取账本失败：%s", exc)
+            return None, AgentResult(
+                speech="真实商户订单记录暂时无法读取；我不会用演示结果代替。")
+
+        explicit_id = self._explicit_numeric_order_id(raw)
+        scope = reference_scope(raw)
+        candidates = []
+        demo_candidates = []
+        unavailable_real_sessions: list[bool] = []
+        for task in recent or []:
+            if str(getattr(task, "user_id", "") or "") != user_id:
+                continue
+            if str(getattr(task, "kind", "") or "") != LEDGER_KIND:
+                continue
+            ref = getattr(task, "result_ref", {}) or {}
+            if not isinstance(ref, dict):
+                continue
+            order_id = str(ref.get("order_id") or "").strip()
+            if explicit_id and order_id != explicit_id:
+                continue
+            if not order_id and not str(
+                    getattr(task, "idempotency_key", "") or "").strip():
+                continue
+            owner = str(ref.get("server") or "demo-coffee").strip()
+            same_session = bool(
+                session_id and str(getattr(task, "session_id", "") or "")
+                == session_id)
+            binding = real_bindings.get(owner)
+            if binding is None:
+                if owner == "demo-coffee":
+                    demo_candidates.append((task, default, same_session))
+                    continue
+                unavailable_real_sessions.append(same_session)
+                continue
+            candidates.append((task, binding, same_session))
+
+        picked = None
+        if explicit_id or scope == HISTORY:
+            picked = candidates[0] if candidates else None
+        elif not allows_history_fallback(scope):
+            picked = next((row for row in candidates if row[2]), None)
+        else:
+            picked = next((row for row in candidates if row[2]), None)
+            if picked is None and candidates:
+                picked = candidates[0]
+        if picked is not None:
+            return picked[1], None
+        unavailable_real_owner = (
+            bool(unavailable_real_sessions)
+            if explicit_id or scope == HISTORY or allows_history_fallback(scope)
+            else any(unavailable_real_sessions)
+        )
+        if unavailable_real_owner:
+            return None, AgentResult(
+                speech="这笔是真实商户订单，但当前没有可用的真实查询通道；"
+                       "我不会用演示商户结果代替。")
+        # 兼容明确存在的演示订单，但**只在没有任何可用真实订单时**才回落。
+        # 这保持 ``shop.*`` 既有演示能力，同时确保真实历史单不会被更新的 demo 记录
+        # 遮住。卡片仍带 ``mode=mock``，调用方能明确识别它不是云端真商户证据。
+        demo_picked = None
+        if explicit_id or scope == HISTORY:
+            demo_picked = demo_candidates[0] if demo_candidates else None
+        elif not allows_history_fallback(scope):
+            demo_picked = next((row for row in demo_candidates if row[2]), None)
+        else:
+            demo_picked = next((row for row in demo_candidates if row[2]), None)
+            if demo_picked is None and demo_candidates:
+                demo_picked = demo_candidates[0]
+        if demo_picked is not None and default is not None:
+            return default, None
+        if not allows_history_fallback(scope):
+            return None, AgentResult(speech=_NO_ORDER_THIS_SESSION)
+        return None, AgentResult(
+            speech="没有找到可核对的真实商户订单；请说明商户或提供订单号，"
+                   "我不会用演示结果代替。")
 
     async def namespace_admin(self, request: dict) -> dict:
         """Run an E2E-only exact-owner lifecycle operation through a write binding.

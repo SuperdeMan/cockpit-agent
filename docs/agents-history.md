@@ -6205,3 +6205,74 @@ wrappers_ci 93s 的内因。⚠ 给接手的人：动的是**证据链代码**�
   本批 **±0 条**（纯跑法/口径/文档批，不新增不删除用例）。
 - 耗时口径刷新：全量 ~25min（串行）→ **~5–7min**（`-n auto --dist worksteal`，
   宿主负载区间 4m38s–6m48s）；collect 22s → 17.5s。
+
+## §69 2026-08-25 MiniMax-only QA 复验闭环：业务残余、真证据与清理事务
+
+本批不是再跑一遍旧探针。要求同时锁定 **LLM=minimax:MiniMax-M3**、**TTS=minimax**，
+五类 persona 各在同一个 session 连续跑 50–100 个业务轮；发现问题可直接修，但危险动作只到
+二次确认/取消边界，商户不付款，所有提醒、草稿、导航、车态与挂起都要给出终态清理证据。
+
+### §69.1 业务残余按根因收口
+
+- **天气/股票焦点**：对象形 city 统一规范化，显式新城市不再被旧城市覆盖；首轮对象 city
+  能落焦点，malformed/非字符串不下发 provider。股票追问保留标的与真实来源/行情时间，
+  Tushare index row 必须与请求 `ts_code` 一致。
+- **焦点时序**：`Focus.origin_exchange_id` 与最新 history exchange 同源比较；端侧一次性签发
+  `previous_local_exchange/actions` 补 memory 异步落库窗口。旧车控不再覆盖更新的 stock/weather，
+  本地 battery.query 会切断相邻追问，紧邻本地 sunroof action 仍能续接。marker 为 10min TTL、
+  256 项 LRU，客户端同名 meta 每轮先剥。
+- **端侧/导航**：no-op 不再吞“别开玩笑认真回答…”，混合全本地分支补动作账本；接孩子途经点
+  改成明确正向 pickup 三态判定，有限负词表不再越补越漏；fold/unfold 与 open/close 操作族分离。
+- **提醒/nearby**：未来查询只报实际范围内提醒，todo/date/expired/limit 计数与话术一致；同一事项
+  双时刻仍走原子 batch；nearby 清洗后按完整槽值等价决定是否保持同一批候选。
+- **商户**：账号查单先过 scope，再读账本；真实 owner binding 缺席时，即使 demo 旧单共存也
+  诚实拒绝 mock 代答；未知外部订单号不回落 demo；补槽“订单号是…”只传精确 id。
+  新增 bridge-owned `shop.preview_discard`，按认证 owner/session Lua 原子清草稿并返回零态证明。
+
+### §69.2 长会话与 HMI 证据链重建
+
+`scripts/probe_qa_long_sessions.py` 五份业务计划为 **vehicle 50 / family 58 / merchant 51 /
+adversarial 51 / information 52** 个计划轮，运行时取消、恢复与清理轮另计；不再把迷你集拆成
+干净 session。每轮审计 exact trace、终态 status、local|mixed|cloud route、非空 intent、
+agent 或具名 engine lifecycle owner、卡片 provenance 与 action/state。
+
+- release 在全部业务轮前后各走统一 `dev_stack status`，两端均须 cloud + exact 40 位 SHA +
+  5/5 healthy；跨 SHA 或末端降级整份报告作废。
+- 每个 WS 业务帧显式带 `llm_provider=minimax / llm_model=MiniMax-M3`；collector 的实际调用还须
+  `pinned=true`、零 fallback。`requested_tier/pinned` 复用 `llm.call.meta` span 持久，不改 DB schema。
+- collector 可能 turn/span/llm 跨进程乱序：详情要在 audit-ready 后连续两次指纹稳定才返回，
+  晚到的非 MiniMax/unpinned 调用不能被第一拍空列表漏掉。
+- 外源 `_prov` 只接受具名 provider + `real|cached|degraded`；mock、unknown、typo 或缺字段全局失败。
+- HMI C14 五 persona 实抓 MiniMax TTS start/text/finish、PCM 二进制、非静音 AudioBuffer 与自然
+  播放完成；barge-in 同时证明 provider cancel 和本地 source.stop。C14 也做 start/end release
+  双锁，并写脱敏 artifact；默认 C 组不隐式运行 C14。
+
+### §69.3 副作用清理不再依赖“看见卡”或复用不确定 session
+
+VAL 初始 state 补齐 rear_view_mirror/volume_muted/warning_light，并在启动 snapshot 中发布。
+每个 persona 发第一句前要取得 10 个可恢复键的权威前态且连续稳定；缺键即拒跑，不用默认值
+冒充。业务 transport 不确定时关闭原 WS，车辆恢复改走新的 cleanup session，再按 expected
+baseline 连续回读。merchant/adversarial 即使预览卡丢帧也在末尾无条件做 session draft 零态证明；
+挂起只认服务端 `closed_operation_ids`，提醒按真实 card id/序号清理，导航按活动动作事实取消。
+
+### §69.4 顺带关闭 §68.4 的证据链性能账
+
+mobile 加入 node_modules/android build 后，隐私 inventory 的 `Path.glob("**/...")` 会先遍历
+生成目录、再事后过滤：真实 manifest 单次 **40.1s**，wrapper 在 xdist 下越过 180s timeout。
+改成 `os.walk(topdown=True)` 进入目录前剪枝后为 **1.8s**。安全边界同批反向验证：source
+pattern 大小写不敏感（Store.py/SCHEMA.SQL/Migrations/*.PY 不漏），排除目录保持 exact；
+node_modules/.gradle 等结构生成目录可全局剪，build/dist/coverage 只在已知生成前缀剪，
+Gen/Worktrees/Node_Modules 与任意 agents/*/build 源码仍必须扫描；nested .git、symlink 逃逸与
+walk error fail-closed 保留。
+
+### §69.5 Fresh 本地证据与发布边界
+
+- 正式全量（稳定工作树、`TZ=UTC0`、清 `PYTHONIOENCODING`/`CAR_AGENT_*`）：
+  **7106 passed / 32 skipped / 0 failed**，4m58s；HEAD、内容 hash、mtime 前后完全一致。
+- L0 strict：discovery **85/85**（663 cases / 624 distinct）+ gate **25/25**（139/129）。
+  Skill **22/22**、Exemplar 309/22 域（2.4% <20%）、能力完整性 PASS。
+- Edge **818/818**；HMI npm **285/285** + Vite build；long/collector/observability 与 MCP
+  受影响闭包均 fresh 全绿。独立 release review 两轮最终均 **READY**，零 Critical/Important/Minor。
+- 本节落笔时仍只是**未部署工作树的本地证据**；旧 cloud release `7a0e03a` 的历史读数不能替代
+  本批。必须白名单提交并部署唯一 SHA 后，才可补写 cloud long probe / C14 结果；若发布闸因
+  已提交的受控 CI/CD diff 拒绝，按闸的原始结果记录，不绕过、不改发布策略。

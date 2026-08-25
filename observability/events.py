@@ -167,6 +167,7 @@ class EventEmitter:
         is_confirmation=False,
         ui_card_type="",
         actions=0,
+        intents=(),
         duration_ms=0,
         error="",
         ts=None,
@@ -178,6 +179,12 @@ class EventEmitter:
         """
         from observability.redact import gate_content, redact
 
+        raw_intents = intents if isinstance(intents, (list, tuple)) else [intents]
+        intent_names = []
+        for value in raw_intents:
+            if isinstance(value, str):
+                intent_names.extend(
+                    item.strip() for item in value.split(",") if item.strip())
         payload = {
             "trace_id": trace_id,
             "session_id": session_id,
@@ -189,6 +196,7 @@ class EventEmitter:
             "is_confirmation": bool(is_confirmation),
             "ui_card_type": ui_card_type,
             "actions": actions,
+            "intents": ",".join(dict.fromkeys(intent_names))[:400],
             "duration_ms": round(duration_ms, 1),
             "error": redact(error)[:300] if error else "",
         }

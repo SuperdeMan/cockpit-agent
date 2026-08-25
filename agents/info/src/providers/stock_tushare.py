@@ -20,6 +20,17 @@ logger = logging.getLogger("agent.info.stock_tushare")
 _API_URL = "https://api.tushare.pro"
 _EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
 _DAILY_FIELDS = "ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount"
+_INDEX_NAME_TO_CODE = {
+    "上证": "000001.SH", "上证指数": "000001.SH",
+    "深证": "399001.SZ", "深证成指": "399001.SZ",
+    "沪深300": "000300.SH", "创业板": "399006.SZ",
+    "科创50": "000688.SH",
+}
+_INDEX_CODE_TO_NAME = {
+    "000001.SH": "上证指数", "399001.SZ": "深证成指",
+    "000300.SH": "沪深300", "399006.SZ": "创业板",
+    "000688.SH": "科创50",
+}
 
 
 def _s(v) -> str:
@@ -74,6 +85,8 @@ class TushareStockProvider(StockProvider):
     @staticmethod
     def _daily_api(ts_code: str) -> str:
         """按 ts_code 后缀返回对应的 Tushare 日线 API 名。"""
+        if ts_code in _INDEX_CODE_TO_NAME:
+            return "index_daily"
         if ts_code.endswith(".HK"):
             return "hk_daily"
         if ts_code.endswith(".US"):
@@ -104,14 +117,8 @@ class TushareStockProvider(StockProvider):
     def _normalize_ts_code(self, symbol: str) -> str:
         """把指数名/证券代码归一为 ts_code；中文名称交给异步查表。"""
         # 常见指数映射
-        _INDEX_MAP = {
-            "上证": "000001.SH", "上证指数": "000001.SH",
-            "深证": "399001.SZ", "深证成指": "399001.SZ",
-            "沪深300": "000300.SH", "创业板": "399006.SZ",
-            "科创50": "000688.SH",
-        }
-        if symbol in _INDEX_MAP:
-            return _INDEX_MAP[symbol]
+        if symbol in _INDEX_NAME_TO_CODE:
+            return _INDEX_NAME_TO_CODE[symbol]
         # 已经是标准格式（如 000001.SZ / 600519.SH）
         if "." in symbol:
             return symbol
@@ -126,6 +133,8 @@ class TushareStockProvider(StockProvider):
         symbol = (symbol or "").strip()
         direct = self._normalize_ts_code(symbol)
         if direct:
+            if direct in _INDEX_CODE_TO_NAME:
+                self._code_to_name.setdefault(direct, _INDEX_CODE_TO_NAME[direct])
             return direct
         if symbol in self._name_to_code:
             return self._name_to_code[symbol]
@@ -194,6 +203,21 @@ class TushareStockProvider(StockProvider):
             volume=_s(row[9]) if len(row) > 9 else "",
         )
 
+    @staticmethod
+    def _matching_rows(data: dict, ts_code: str) -> list[list]:
+        """只接受响应中与请求证券代码一致的行；缺身份列时 fail closed。"""
+        payload = data.get("data") or {}
+        fields = payload.get("fields") or []
+        try:
+            code_index = list(fields).index("ts_code")
+        except ValueError:
+            return []
+        return [
+            row for row in (payload.get("items") or [])
+            if isinstance(row, list) and len(row) > code_index
+            and _s(row[code_index]).upper() == ts_code.upper()
+        ]
+
     async def history(self, symbol: str, limit: int = 20,
                       meta: dict | None = None) -> list[StockCandle]:
         """拉取一个有限交易日窗口，规整为前端 K 线所需的正序 OHLC 数据。"""
@@ -206,7 +230,7 @@ class TushareStockProvider(StockProvider):
             api_name, {"ts_code": ts_code, "start_date": start_date, "end_date": end_date},
             fields=_DAILY_FIELDS, op="daily_history", meta=meta,
         )
-        rows = (data.get("data") or {}).get("items") or []
+        rows = self._matching_rows(data, ts_code)
         candles = [self._candle_from_row(row) for row in rows]
         candles = [candle for candle in candles if candle.date and candle.close]
         if not candles:
@@ -225,7 +249,7 @@ class TushareStockProvider(StockProvider):
             fields=_DAILY_FIELDS,
             op="daily", meta=meta,
         )
-        items = (data.get("data") or {}).get("items") or []
+        items = self._matching_rows(data, ts_code)
         if not items:
             # 可能非交易日，尝试往前找
             for offset in range(1, 5):
@@ -236,7 +260,7 @@ class TushareStockProvider(StockProvider):
                     fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg",
                     op="daily", meta=meta,
                 )
-                items = (alt.get("data") or {}).get("items") or []
+                items = self._matching_rows(alt, ts_code)
                 if items:
                     break
         if not items:

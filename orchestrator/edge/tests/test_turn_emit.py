@@ -47,7 +47,24 @@ def test_local_fast_path_emits_ok_turn(monkeypatch):
     assert t["status"] == "ok"
     assert t["input_source"] == "voice_wake"
     assert t["speech"]  # VAL 播报话术非空
+    assert t["intents"]
     assert t["duration_ms"] >= 0
+
+
+def test_local_read_only_battery_turn_persists_its_intent(monkeypatch):
+    service, turns = _service(monkeypatch)
+    request = orchestrator_pb2.HandleRequest(
+        text="电量还有多少", session_id="turn-battery",
+        meta={"trace_id": "turn-battery-trace"})
+
+    async def run():
+        async for _ in service.Handle(request, None):
+            pass
+
+    asyncio.run(run())
+
+    assert turns[0]["path"] == "local"
+    assert turns[0]["intents"] == ["battery.query"]
 
 
 def test_cloud_path_turn_records_speech_and_card(monkeypatch):

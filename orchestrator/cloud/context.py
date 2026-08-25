@@ -24,6 +24,7 @@ from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext
 from runtime.clock import hhmm as clock_hhmm
+from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
 
 logger = logging.getLogger("planner.context")
@@ -52,6 +53,12 @@ _SENSITIVE_CONTEXT_KEYS = (
     "current_lat", "current_lng", "current_accuracy_m",
     "current_location_at", "current_location_source", "vehicle_battery",
 )
+
+# 共享给焦点提取与 Engine 的同域续接判据；两处各写一份会在新增天气能力时漂移。
+WEATHER_CONTEXT_INTENTS = frozenset({
+    "info.weather", "info.forecast", "info.alerts", "info.indices",
+    "info.air_quality", "safety.weather_alert",
+})
 
 
 def _adapt_append_turn_call(
@@ -236,11 +243,16 @@ class Focus:
     """跨轮对话焦点（指代消解用）。只记能可靠抽取的字段；空字段不注入 prompt。"""
     last_agent_id: str = ""
     last_intent: str = ""
+    # 产生当前相邻焦点的 exchange。只用于证明「上一轮」真的是紧邻上一轮；不进 prompt。
+    # 端侧本地轮不会更新 Redis Focus，但会写同一会话历史并携带 exchange_id。
+    origin_exchange_id: str = ""
     obj: str = ""                                       # 语义对象，如 "空调"/"氛围灯"
     positions: list[str] = field(default_factory=list)  # ["副驾"]
     attr: str = ""                                      # "温度"/"颜色"...
     last_poi: str = ""                                  # 上个 POI（"还是刚才那家"）
     last_destination: str = ""                          # 上个导航目的地
+    last_city: str = ""                                 # 上个天气/空气查询的显式城市
+    last_stock_symbol: str = ""                         # 上个成功股票查询的标的
     # ⚠ 这两格现在是**派生视图**，不再独立抽取（Q2）：由 `candidate_sets` 里
     # **最近一份非兜底**候选算出来，只服务 prompt 渲染与既有消费方。
     # 独立抽取的老毛病是「任何一轮不产生候选就把上一份抹平」（I-019）。
@@ -298,7 +310,9 @@ class Focus:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
         # 省略式追问就只能靠裸历史猜域（badcase demo-i9c92i 追问被错绑到天气）。
         return not (self.obj or self.positions or self.attr
-                    or self.last_poi or self.last_destination or self.last_intent
+                    or self.last_poi or self.last_destination or self.last_city
+                    or self.last_stock_symbol
+                    or self.last_intent
                     or self.last_choice_purpose or self.last_choices
                     or self.candidate_sets
                     or self.last_places or self.active_route or self.safety_alert
@@ -496,6 +510,10 @@ def _render_focus(focus) -> str:
         parts.append(f"上个地点={focus.last_poi}")
     if focus.last_destination:
         parts.append(f"上个目的地={focus.last_destination}")
+    if focus.last_city:
+        parts.append(f"上个城市={focus.last_city}")
+    if focus.last_stock_symbol:
+        parts.append(f"上个股票标的={focus.last_stock_symbol}")
     if focus.last_choices:
         purpose = ("顺路途经点选择"
                    if focus.last_choice_purpose == "waypoint" else "列表选择")
@@ -921,9 +939,22 @@ def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str
     """
     groups: list[list[str]] = []
     if isinstance(history, (list, tuple)):
-        for turn in history:
-            if not isinstance(turn, dict):
-                continue
+        trusted_turns = [turn for turn in history if isinstance(turn, dict)]
+        latest_exchange = next((
+            str(turn.get("exchange_id") or "").strip()
+            for turn in reversed(trusted_turns)
+            if str(turn.get("exchange_id") or "").strip()
+        ), "")
+        # Modern turns carry exchange_id. Once present, only the latest exchange
+        # is adjacent; scanning through an actionless battery query to an older
+        # window action corrupts a newer stock/weather focus. Legacy rows without
+        # exchange ids retain the historical best-effort scan.
+        if latest_exchange:
+            trusted_turns = [
+                turn for turn in trusted_turns
+                if str(turn.get("exchange_id") or "").strip() == latest_exchange
+            ]
+        for turn in trusted_turns:
             raw = turn.get("actions")
             if isinstance(raw, (list, tuple)):
                 groups.append([a for a in raw if isinstance(a, str) and a.strip()])
@@ -938,7 +969,14 @@ def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str
     return None
 
 
-def augment_focus_with_execution(focus, history, edge_executed=None) -> "Focus | None":
+def augment_focus_with_execution(
+    focus,
+    history,
+    edge_executed=None,
+    *,
+    previous_local_exchange: str = "",
+    previous_local_actions=None,
+) -> "Focus | None":
     """用最近执行事实刷新车控焦点；解不出时原焦点不动。
 
     会话历史按轮次有序，`actions` 是成功执行事实；同轮 `edge_executed` 又比历史更新。
@@ -948,17 +986,82 @@ def augment_focus_with_execution(focus, history, edge_executed=None) -> "Focus |
     动作账本没有位置与 agent，覆盖时清掉这两格，避免把旧对象的「副驾」等限定粘到
     新对象上。地点、候选集、活动路线等其他正交焦点原样保留。
     """
-    found = recent_control_execution(history, edge_executed)
-    if found is None:
+    latest_history_exchange = ""
+    history_exchange_ids: set[str] = set()
+    if isinstance(history, (list, tuple)):
+        history_exchange_ids = {
+            str(turn.get("exchange_id") or "").strip()
+            for turn in history if isinstance(turn, dict)
+            and str(turn.get("exchange_id") or "").strip()
+        }
+        latest_history_exchange = next((
+            str(turn.get("exchange_id") or "").strip()
+            for turn in reversed(history)
+            if isinstance(turn, dict)
+            and str(turn.get("exchange_id") or "").strip()
+        ), "")
+    def apply_control(found):
+        obj, attr, intent = found
+        out = focus if focus is not None else Focus()
+        out.obj, out.attr = obj, attr
+        # `last_intent` 与 obj 必须来自同一事实：省略守卫按它的 namespace 校验计划。
+        out.last_intent = intent
+        out.positions = []
+        out.last_agent_id = ""
+        if latest_history_exchange:
+            out.origin_exchange_id = latest_history_exchange
+        return out
+
+    # Same-request edge execution is newer than both Redis focus and history.
+    edge_found = recent_control_execution([], edge_executed)
+    if edge_found is not None:
+        return apply_control(edge_found)
+
+    signed_local_found = recent_control_execution([], previous_local_actions)
+    if signed_local_found is not None:
+        out = apply_control(signed_local_found)
+        out.origin_exchange_id = str(previous_local_exchange or "").strip()
+        return out
+
+    origin = str(getattr(focus, "origin_exchange_id", "") or "").strip() \
+        if focus is not None else ""
+    previous_local = str(previous_local_exchange or "").strip()
+    focus_memory_is_in_flight = bool(
+        focus is not None and origin and history_exchange_ids
+        and origin not in history_exchange_ids and not previous_local
+    )
+    # update_focus is saved before that exchange's memory append. If history
+    # does not yet contain the origin at all, its older action cannot outrank
+    # the newer Redis focus. A server-signed local boundary is the exception.
+    local_boundary_is_in_flight = bool(
+        previous_local and latest_history_exchange != previous_local
+    )
+    history_found = None if (
+        focus_memory_is_in_flight or local_boundary_is_in_flight
+    ) else recent_control_execution(history)
+    if history_found is not None:
+        return apply_control(history_found)
+
+    if focus is None:
+        return None
+    if focus_memory_is_in_flight:
         return focus
-    obj, attr, intent = found
-    out = focus if focus is not None else Focus()
-    out.obj, out.attr = obj, attr
-    # `last_intent` 与 obj 必须来自同一事实：省略守卫按它的 namespace 校验计划。
-    out.last_intent = intent
-    out.positions = []
-    out.last_agent_id = ""
-    return out
+    boundary = str(previous_local or latest_history_exchange or "").strip()
+    if not boundary or boundary == origin:
+        return focus
+
+    # A newer actionless/local exchange is an explicit adjacency break. Keep
+    # deliberately sticky ledgers/routes/places, but drop every field whose
+    # semantics is “the immediately previous business/control turn”.
+    focus.last_intent = ""
+    focus.last_agent_id = ""
+    focus.obj = ""
+    focus.attr = ""
+    focus.positions = []
+    focus.last_city = ""
+    focus.last_stock_symbol = ""
+    focus.origin_exchange_id = boundary
+    return None if focus.is_empty() else focus
 
 
 def extract_focus(plan, results) -> "Focus | None":
@@ -983,6 +1086,14 @@ def extract_focus(plan, results) -> "Focus | None":
         dest = (step.slots or {}).get("destination")
         if dest:
             focus.last_destination = str(dest)
+        if step.intent in WEATHER_CONTEXT_INTENTS:
+            city = normalize_weather_city_slot((step.slots or {}).get("city"))
+            if city:
+                focus.last_city = city
+        if step.intent == "info.stock":
+            symbol = (step.slots or {}).get("symbol")
+            if isinstance(symbol, str) and symbol.strip():
+                focus.last_stock_symbol = symbol.strip()
         data = getattr(by_id.get(step.id), "data", None) or {}
         poi = _first_poi(data)
         if poi:
@@ -1128,7 +1239,11 @@ class ContextManager:
         # 「打开天窗」→「不用了，关掉」此前只能让 planner 猜对象。
         # `mem_on=false` 时 history 为空，但**同轮那半仍然成立**——它不来自记忆。
         focus = augment_focus_with_execution(
-            focus, history, getattr(ctx, "edge_executed", None))
+            focus, history, getattr(ctx, "edge_executed", None),
+            previous_local_exchange=getattr(
+                ctx, "previous_local_exchange", ""),
+            previous_local_actions=getattr(
+                ctx, "previous_local_actions", None))
         catalog = await self._catalog(text)
         return WorkingSet(catalog=catalog, history=history, memories=memories,
                           focus=focus)
@@ -1147,13 +1262,14 @@ class ContextManager:
             return None
 
     async def update_focus(self, session_id: str, plan, results, *,
-                           user_id: str):
+                           user_id: str, exchange_id: str = ""):
         """每轮成功完成后更新焦点态（供下一轮指代消解）。绝不抛错、不阻塞主链路。"""
         if not self.session:
             return
         try:
             focus = extract_focus(plan, results)
             if focus is not None:
+                focus.origin_exchange_id = str(exchange_id or "").strip()
                 # 门店列表是**粘性**的：只有新的 nearby.search 才该替换它。
                 # focus 每轮都从当前 plan 重建，不接力的话，紧跟其后的任何一轮
                 # （比如「第一个」直接落 luckin.menu）就会把上一轮取回的门店抹成空，
@@ -1162,7 +1278,7 @@ class ContextManager:
                 # G8 active_route 同款粘性：只有新的 navigate 才替换活动路线。
                 previous = None
                 if (not focus.last_places or not focus.active_route
-                        or not focus.safety_alert
+                        or not focus.safety_alert or not focus.last_city
                         or len(focus.candidate_sets) < _CANDIDATE_SETS_MAX):
                     previous = await self._load_focus(session_id, user_id)
                 # Q2 候选集台账：**旧组保留、新组追加**，按 ts 限龄、封顶 N 组。
@@ -1211,6 +1327,10 @@ class ContextManager:
                 if previous is not None and not focus.safety_alert \
                         and getattr(previous, "safety_alert", None):
                     focus.safety_alert = dict(previous.safety_alert)
+                if previous is not None and not focus.last_city \
+                        and focus.last_intent not in WEATHER_CONTEXT_INTENTS \
+                        and getattr(previous, "last_city", ""):
+                    focus.last_city = str(previous.last_city)
                 # `route_ended` 是**本轮事实**，不跨轮——存进去下一轮读回来仍是 True
                 # 就会永久关掉接力（一个只该响一次的旗子变成了常态）。
                 focus.route_ended = False
@@ -1411,4 +1531,9 @@ def build_context(request) -> PlanContext:
         # Q7-OR2：本轮端侧已执行的动作名（混合路径的同轮上下文）。逗号分隔，空=没有。
         edge_executed=[a.strip() for a in
                        str(meta.get("_edge_executed", "") or "").split(",") if a.strip()],
+        previous_local_exchange=str(
+            meta.get("_edge_previous_local_exchange", "") or "").strip(),
+        previous_local_actions=[a.strip() for a in str(
+            meta.get("_edge_previous_local_actions", "") or ""
+        ).split(",") if a.strip()],
     )

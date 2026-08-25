@@ -7,6 +7,8 @@ import asyncio
 import json
 import time
 
+import pytest
+
 from agents._sdk.testing import make_context, run_handle
 from agents.navigation.src.agent import NavigationAgent
 from agents.navigation.src.providers.base import POI
@@ -106,6 +108,82 @@ def test_reroute_add_waypoint_prepend():
         ["中石化加油站", "肯德基(海岸城店)"]
 
 
+def test_pickup_then_new_place_promotes_the_new_place_to_destination():
+    """「接孩子后去万象城」的先后关系是学校作途经点、万象城作终点。
+
+    MiniMax 真栈把万象城填进 ``add_waypoint``，旧实现就保留学校为目的地，实际
+    规划成「当前位置 -> 万象城 -> 学校」，与用户说的顺序完全相反。Agent 能从
+    原话和服务端活动路线确定性消解，不应让模型的槽位极性决定路线顺序。
+    """
+    mall = POI(id="mall-1", name="深圳湾万象城", address="南山区",
+               lat=22.5155, lng=113.9444)
+    agent, _ = _agent(search_results=[mall])
+    meta = _session_meta(
+        destination="深圳市南山实验教育集团明远学校",
+        lat=22.5290, lng=113.9289,
+    )
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={"add_waypoint": "万象城"},
+        raw_text="接孩子后去万象城。", ctx=make_context(), meta=meta))
+
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert nav["payload"]["destination"] == "深圳湾万象城"
+    assert [w["name"] for w in nav["payload"]["waypoints"]] == \
+        ["深圳市南山实验教育集团明远学校"]
+    assert "当前位置 → 深圳市南山实验教育集团明远学校 → 深圳湾万象城" in res.speech
+    assert res.data["_route_session"]["destination"] == "深圳湾万象城"
+
+
+@pytest.mark.parametrize("raw_text", [
+    "别接孩子了，然后去万象城。",
+    "不接孩子了，然后去万象城。",
+    "不想去接孩子了，然后去万象城。",
+    "没打算去接孩子了，然后去万象城。",
+    "不是去接孩子，然后去万象城。",
+])
+def test_cancelled_pickup_does_not_keep_the_old_school_as_a_waypoint(raw_text):
+    """「别接孩子了」撤销旧目的；后续新终点不能再经过学校。"""
+    mall = POI(id="mall-1", name="深圳湾万象城", address="南山区",
+               lat=22.5155, lng=113.9444)
+    agent, _ = _agent(search_results=[mall])
+    meta = _session_meta(
+        destination="深圳市南山实验教育集团明远学校",
+        lat=22.5290, lng=113.9289,
+    )
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={"destination": "万象城"},
+        raw_text=raw_text, ctx=make_context(), meta=meta))
+
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert nav["payload"]["destination"] == "深圳湾万象城"
+    assert nav["payload"].get("waypoints", []) == []
+    assert "接孩子" not in res.speech
+
+
+@pytest.mark.parametrize("raw_text", [
+    "不得不接孩子，然后去万象城。",
+    "我打算去接孩子，然后去万象城。",
+])
+def test_explicit_positive_pickup_keeps_the_school_as_a_waypoint(raw_text):
+    mall = POI(id="mall-1", name="深圳湾万象城", address="南山区",
+               lat=22.5155, lng=113.9444)
+    agent, _ = _agent(search_results=[mall])
+    meta = _session_meta(
+        destination="深圳市南山实验教育集团明远学校",
+        lat=22.5290, lng=113.9289,
+    )
+
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={"destination": "万象城"},
+        raw_text=raw_text, ctx=make_context(), meta=meta))
+
+    nav = next(a for a in res.actions if a["type"] == "navigate")
+    assert [w["name"] for w in nav["payload"].get("waypoints", [])] == [
+        "深圳市南山实验教育集团明远学校"]
+
+
 def test_reroute_remove_and_add_in_one_turn():
     """EVA 动态重规划组：「咖啡不买了，先去加油站」——删+加一轮完成。"""
     station = POI(id="gas-1", name="中石化加油站", lat=22.55, lng=113.92)
@@ -138,6 +216,23 @@ def test_reroute_route_pref_slot():
         raw_text="换条不走高速的路",
         ctx=make_context(), meta=_session_meta()))
     assert res.data["_route_session"]["strategy"] == "6"
+
+
+def test_route_preference_phrase_is_not_reparsed_as_a_destination():
+    """「换成避堵路线」只改策略，不能把「避堵路线」拿去做 POI 搜索。
+
+    MiniMax 真栈复现过：Planner 已正确给出 ``route_pref=避开拥堵``，但 Agent 的
+    raw fallback 仍先用「换成…」正则抽出新目的地，最终把深圳北站漂成深圳医院。
+    """
+    agent, calls = _agent()
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={"route_pref": "避开拥堵"},
+        raw_text="换成避堵路线",
+        ctx=make_context(), meta=_session_meta(destination="深圳北站")))
+
+    assert calls["search"] == []
+    assert res.data["_route_session"]["destination"] == "深圳北站"
+    assert res.data["_route_session"]["strategy"] == "4"
 
 
 def test_reroute_change_destination_keeps_waypoints():

@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 import pytest  # noqa: E402
 
 from orchestrator.cloud.context import (  # noqa: E402
-    Focus, augment_focus_with_execution, recent_control_execution)
+    Focus, augment_focus_with_execution, build_context, recent_control_execution)
 
 
 # ── 确定性纯函数：从执行事实解对象 ────────────────────────────────────────
@@ -65,6 +65,81 @@ def test_the_newest_control_action_wins():
     assert recent_control_execution(history)[0] == "空调"
 
 
+def test_old_control_action_cannot_override_a_newer_stock_focus_exchange():
+    history = [
+        {"role": "assistant", "exchange_id": "x-control",
+         "actions": ["window.open"]},
+        {"role": "user", "exchange_id": "x-stock", "actions": []},
+        {"role": "assistant", "exchange_id": "x-stock", "actions": []},
+    ]
+    focus = Focus(
+        last_intent="info.stock",
+        last_stock_symbol="宁德时代",
+        origin_exchange_id="x-stock",
+    )
+
+    out = augment_focus_with_execution(focus, history)
+
+    assert out.last_intent == "info.stock"
+    assert out.last_stock_symbol == "宁德时代"
+    assert out.obj == ""
+
+
+def test_new_focus_wins_while_its_memory_exchange_is_still_in_flight():
+    focus = Focus(
+        last_intent="info.stock",
+        last_stock_symbol="宁德时代",
+        origin_exchange_id="x-stock",
+    )
+    # update_focus already saved x-stock, but its fire-after-final memory append
+    # has not landed yet; history therefore still ends at the older control turn.
+    history = [{
+        "role": "assistant", "exchange_id": "x-control",
+        "actions": ["window.open"],
+    }]
+
+    out = augment_focus_with_execution(focus, history)
+
+    assert out.last_intent == "info.stock"
+    assert out.last_stock_symbol == "宁德时代"
+    assert out.obj == ""
+
+
+@pytest.mark.parametrize(("intent", "field", "value"), [
+    ("info.stock", "last_stock_symbol", "宁德时代"),
+    ("info.weather", "last_city", "深圳"),
+])
+def test_newer_actionless_local_exchange_breaks_adjacent_info_focus(
+    intent, field, value,
+):
+    focus = Focus(last_intent=intent, origin_exchange_id="x-info")
+    setattr(focus, field, value)
+    history = [
+        {"role": "assistant", "exchange_id": "x-info", "actions": []},
+        {"role": "user", "exchange_id": "x-battery", "actions": []},
+        {"role": "assistant", "exchange_id": "x-battery", "actions": []},
+    ]
+
+    out = augment_focus_with_execution(focus, history)
+
+    assert out is None or getattr(out, field) == ""
+    assert out is None or out.last_intent == ""
+
+
+def test_build_context_keeps_server_signed_local_exchange_out_of_agent_prefs():
+    request = SimpleNamespace(
+        request_id="cloud-1", session_id="s1", is_confirmation=False,
+        operation_id="", e2e_memory_capability="",
+        meta={"_edge_previous_local_exchange": "local-battery"},
+        context=SimpleNamespace(user_id="u1", vehicle_id="v1"),
+    )
+
+    ctx = build_context(request)
+
+    assert ctx.previous_local_exchange == "local-battery"
+    assert "_edge_previous_local_exchange" not in ctx.prefs
+
+
 def test_within_one_turn_the_last_control_action_wins():
     """同一轮多个动作时取最后一个——与 `extract_focus` 取「最近一个成功控制步」同口径。"""
     history = [{"role": "assistant", "actions": ["hvac.on", "sunroof.open"]}]
@@ -76,6 +151,31 @@ def test_same_turn_edge_execution_outranks_any_history():
     history = [{"role": "assistant", "actions": ["sunroof.open"]}]
     got = recent_control_execution(history, edge_executed=["hvac.off"])
     assert got == ("空调", "温度", "hvac.off")
+
+
+def test_signed_local_boundary_still_consumes_its_landed_control_action():
+    history = [{
+        "role": "assistant", "exchange_id": "local-1",
+        "actions": ["sunroof.open"],
+    }]
+
+    out = augment_focus_with_execution(
+        None, history, previous_local_exchange="local-1")
+
+    assert out is not None
+    assert (out.obj, out.last_intent) == ("天窗", "sunroof.open")
+
+
+def test_signed_local_actions_bridge_memory_append_race():
+    out = augment_focus_with_execution(
+        None,
+        [],
+        previous_local_exchange="local-1",
+        previous_local_actions=["sunroof.open"],
+    )
+
+    assert out is not None
+    assert (out.obj, out.last_intent) == ("天窗", "sunroof.open")
 
 
 def test_non_control_actions_are_not_a_focus_object():
@@ -305,6 +405,16 @@ def test_cross_turn_expand_resolves_to_the_folded_rear_view_mirror():
     )
     assert plan is not None
     assert [s.intent for s in plan.steps] == ["rear_view_mirror.unfold"]
+
+
+@pytest.mark.parametrize(("text", "last_intent", "intents"), [
+    ("再折叠", "sunroof.open", ("sunroof.open", "sunroof.close")),
+    ("再展开", "window.close", ("window.open", "window.close")),
+])
+def test_fold_words_never_cross_into_plain_open_close_pairs(
+        text, last_intent, intents):
+    """展开/折叠只属于 unfold/fold；不能仅凭方向把它翻成普通 open/close。"""
+    assert _focused(text, last_intent, intents=intents) is None
 
 
 @pytest.mark.parametrize("text", [

@@ -90,6 +90,47 @@ def test_merge_turn_then_span_and_reupsert_keeps_merge():
     assert row["plan_mode"] == "json"
 
 
+def test_edge_turn_intents_are_persisted_and_merge_with_cloud_planning():
+    db = ObsDB(":memory:")
+    db.insert_turn({
+        "trace_id": "tr-edge", "session_id": "s", "ts": 1000,
+        "user_text": "电量还有多少", "intents": "battery.query",
+    })
+    assert db.search_turns(q="电量")[0]["intents"] == "battery.query"
+
+    db.insert_span(_planning_span("tr-edge", "info.weather", "toolcall"))
+    assert db.search_turns(q="电量")[0]["intents"] == (
+        "battery.query,info.weather")
+
+
+def test_cloud_planning_intent_survives_later_edge_turn_upsert():
+    db = ObsDB(":memory:")
+    db.insert_span(_planning_span("tr-mixed", "reminder.create"))
+    db.insert_turn({
+        "trace_id": "tr-mixed", "session_id": "s", "ts": 1000,
+        "intents": "hvac.off", "status": "ok",
+    })
+
+    assert db.search_turns()[0]["intents"] == "reminder.create,hvac.off"
+
+
+def test_llm_request_pin_is_persisted_via_existing_span_contract():
+    db = ObsDB(":memory:")
+    db.insert_turn({"trace_id": "tr-pin", "session_id": "s", "ts": 1000})
+    db.insert_llm({
+        "trace_id": "tr-pin", "session_id": "s", "ts": 1001,
+        "caller": "cloud-planner", "provider": "minimax",
+        "model": "MiniMax-M3", "requested_tier": "MiniMax-M3",
+        "pinned": True, "status": "ok",
+    })
+
+    detail = db.turn_detail("tr-pin")
+
+    assert detail["llm_calls"][0]["pinned"] is True
+    assert detail["llm_calls"][0]["requested_tier"] == "MiniMax-M3"
+    assert any(span["node"] == "llm.call.meta" for span in detail["spans"])
+
+
 def test_non_planning_span_does_not_touch_turns():
     db = ObsDB(":memory:")
     db.insert_span({"trace_id": "tr-3", "span_id": "x", "ts": 1,

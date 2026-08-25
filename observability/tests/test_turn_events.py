@@ -39,6 +39,7 @@ def test_emit_turn_payload_shape(monkeypatch):
             user_text="打开空调", speech="好的，空调已打开",
             status="ok", path="local", input_source="voice_wake",
             is_confirmation=False, ui_card_type="", actions=1,
+            intents=["hvac.on"],
             duration_ms=12.34, ts=1720000000000)
         await emitter.flush()
 
@@ -52,6 +53,7 @@ def test_emit_turn_payload_shape(monkeypatch):
     assert body["path"] == "local"
     assert body["status"] == "ok"
     assert body["actions"] == 1
+    assert body["intents"] == "hvac.on"
     assert body["ts"] == 1720000000000
     assert body["duration_ms"] == 12.3
 

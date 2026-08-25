@@ -29,6 +29,7 @@ from .context import (ContextManager, build_context, candidate_downlink,
                       candidate_set_for,
                       references_a_candidate, resolve_candidate_scope,
                       safety_alert_active,
+                      WEATHER_CONTEXT_INTENTS, normalize_weather_city_slot,
                       _POC_DEFAULT_SCOPES)
 from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
@@ -172,6 +173,15 @@ def _actionability_attrs(plan) -> dict:
                 "1" if raw.split("|", 1)[0] == planner_decision else "0")}
 
 
+async def _emit_engine_lifecycle(ctx: PlanContext, node: str, intent: str) -> None:
+    """Give deterministic engine-only turns an auditable owner and intent."""
+    await obs_events.get_emitter("cloud").emit_span(
+        ctx.trace_id,
+        node,
+        attrs={"intent": intent, "owner": "cloud-engine"},
+    )
+
+
 class PlannerEngine:
     """编排主循环。engine 是唯一持有全局状态的地方。"""
 
@@ -268,6 +278,8 @@ class PlannerEngine:
         if ctx.operation_id and pending is None:
             logger.info("Confirmation addressed a pending that is gone (%s)",
                         ctx.operation_id[:16])
+            await _emit_engine_lifecycle(
+                ctx, "cloud.pending_missing", "system.pending_missing")
             yield {"kind": "final",
                    "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。"}
             return
@@ -276,12 +288,14 @@ class PlannerEngine:
         # 此前 wait_confirm 走「词占据整句」、wait_slot 走子串+复合余量，
         # 「取消刚才解锁」在前者判不出取消（I-046）。判据全在 pending_cancel。
         just_cancelled = False
-        if pending:
+        if pending and not self._is_cancel_index_answer(text, pending):
             cancelled = detect_cancel(text)
             if cancelled.cancelled:
                 just_cancelled = True
                 await self._close_pending(ctx, pending)
                 if not cancelled.compound:
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.pending_cancel", "system.pending_cancel")
                     yield {"kind": "final", "speech": "好的，已为您取消。"}
                     return
                 # 复合句（「算了咖啡不买了，**先去加点油**」）：取消只作用于挂起，
@@ -297,6 +311,8 @@ class PlannerEngine:
                 plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
                     await self._close_pending(ctx, pending)
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.pending_expired", "system.pending_expired")
                     yield {"kind": "final",
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
@@ -319,6 +335,8 @@ class PlannerEngine:
                 plan, seed_results = self._restore(pending, inject_confirmed=False)
                 if plan is None:
                     await self._close_pending(ctx, pending)
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.pending_expired", "system.pending_expired")
                     yield {"kind": "final",
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
@@ -327,7 +345,8 @@ class PlannerEngine:
                 for step in plan.steps:
                     if step.id == pending.pending_step_id:
                         for slot_name in (pending.missing_slots or []):
-                            step.slots[slot_name] = text
+                            step.slots[slot_name] = self._slot_answer(
+                                slot_name, text)
                         break
             logger.info("Resuming plan for session %s (slot fill step %s, text=%s)",
                         ctx.session_id, pending.pending_step_id, text[:20])
@@ -338,6 +357,8 @@ class PlannerEngine:
             # 不能因为它带确认标记就被答成「当前没有待确认的操作」。
             # 关键：裸确认词绝不下交 Planner——否则会借历史把"确认"重规划成上一意图的重复
             # 执行（反复 trip.modify），即用户报告的"确认后又改一遍并再次要确认"死循环。
+            await _emit_engine_lifecycle(
+                ctx, "cloud.no_pending", "system.no_pending")
             yield {"kind": "final",
                    "speech": "当前没有待确认的操作。您可以重新告诉我需求。"}
             return
@@ -348,6 +369,8 @@ class PlannerEngine:
             from security.injection import detect_injection
             if detect_injection(text):
                 logger.warning("Prompt injection detected, rejecting: %s", text[:80])
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.injection_reject", "system.injection_reject")
                 yield {"kind": "final",
                        "speech": "抱歉，您的请求包含异常内容，无法处理。"}
                 return
@@ -375,6 +398,8 @@ class PlannerEngine:
                 text, working_set.focus)
             if references_a_candidate(text) and live_candidates is None:
                 logger.info("Ordinal reference with no candidate set: %s", text[:40])
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.candidate_missing", "system.candidate_missing")
                 yield {"kind": "final",
                        "speech": "我这边没有可以引用的列表。你先说要找什么，"
                                  "我列出来之后再说「第几个」就能接上。"}
@@ -395,6 +420,7 @@ class PlannerEngine:
                     ctx.trace_id, "cloud.candidate_aggregate",
                     attrs={"source_intent": str(
                         (live_candidates or {}).get("source_intent") or ""),
+                        "intent": "system.candidate_aggregate",
                         "items": len((live_candidates or {}).get("items") or []),
                         # 取证面：这一轮点名了几组、绑的是不是点名的那一组。
                         # 「答错组」在话术层看不出来（名字与价格都真实存在），
@@ -414,7 +440,10 @@ class PlannerEngine:
             if (ctx.prefs.get("input_source", "").startswith("voice_")
                     and not plan.addressed and _reject_enabled()):
                 await obs_events.get_emitter("cloud").emit_span(
-                    ctx.trace_id, "rejected", attrs={"reason": "not_addressed"})
+                    ctx.trace_id, "rejected",
+                    attrs={"reason": "not_addressed",
+                           "intent": "system.rejected",
+                           "owner": "cloud-engine"})
                 yield {"kind": "final", "speech": "",
                        "ui_card": {"type": "rejected", "reason": "not_addressed"},
                        "_rejected": True}
@@ -426,11 +455,14 @@ class PlannerEngine:
                 clarify = (plan.clarify if (_clarify_enabled()
                            and ctx.prefs.get("clarify_resume") != "1") else None)
                 if clarify:
-                    await obs_events.get_emitter("cloud").emit_span(ctx.trace_id, "clarify")
+                    await _emit_engine_lifecycle(
+                        ctx, "clarify", "system.clarify")
                     yield {"kind": "final", "speech": clarify["question"],
                            "ui_card": {"type": "intent_choice", **clarify}}
                     return
                 # R4.4 D5-2：诚实降级话术（含 fallback 低分不硬执行的场景），比「无法处理」更引导重说。
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.no_plan", "system.no_plan")
                 yield {"kind": "final", "speech": "抱歉，我没听清您想让我做什么，可以换个说法吗。"}
                 return
 
@@ -650,7 +682,8 @@ class PlannerEngine:
                 if mem_on:
                     await self.context.update_focus(
                         ctx.session_id, focus_plan, results,
-                        user_id=ctx.user_id)
+                        user_id=ctx.user_id,
+                        exchange_id=ctx.request_id)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 self._append_pending_hint(final, held_pending)
                 # M2 P2：会话级情绪信号随 final 透传给 HMI 选 TTS 情感参数（不入记忆）
@@ -773,7 +806,8 @@ class PlannerEngine:
         if mem_on:
             await self.context.update_focus(
                 ctx.session_id, plan, results,
-                user_id=ctx.user_id)  # 焦点态供下轮指代
+                user_id=ctx.user_id,
+                exchange_id=ctx.request_id)  # 焦点态供下轮指代
         if show_process:
             yield self._progress("synthesize", "整理结果",
                                  summary="合并各步结果生成回复", status="start")
@@ -1226,6 +1260,32 @@ class PlannerEngine:
         return PlannerEngine._confirm_reply(text, False) is not None
 
     @staticmethod
+    def _is_cancel_index_answer(text: str, pending: SessionState | None) -> bool:
+        """Whether ``取消第一条`` answers an active ``*.cancel`` index prompt.
+
+        The leading verb is normally a request to close the suspended operation.
+        Once that same operation explicitly asks for an ``index``, however, the
+        ordinal is the business slot answer.  Scope this exception to the pending
+        cancel step and an exact ordinal shape so ordinary ``取消`` keeps its global
+        fail-safe meaning.
+        """
+        if pending is None or "index" not in (pending.missing_slots or []):
+            return False
+        steps = (pending.pending_plan or {}).get("steps") or []
+        step = next(
+            (item for item in steps
+             if str(item.get("id") or "") == pending.pending_step_id),
+            {},
+        )
+        intent = str(step.get("intent") or "")
+        if not intent.endswith(".cancel"):
+            return False
+        return bool(re.fullmatch(
+            r"(?:取消|删除|删掉)\s*第[一二三四五六七八九十\d]+条(?:提醒|待办)?",
+            str(text or "").strip(),
+        ))
+
+    @staticmethod
     def _is_topic_change(text: str, pending: SessionState | None = None) -> bool:
         """判定 wait_slot 状态下用户是否换了话题（答非所问）。
 
@@ -1238,6 +1298,26 @@ class PlannerEngine:
         t = (text or "").strip()
         if not t:
             return False
+        # 订单取消/退款的 ``order_id`` 是写路径身份，不是自由文本槽。真栈长会话
+        # 复现过：系统追问订单号后，用户换题说「附近的咖啡店」，旧逻辑把整句填成
+        # order_id，下一跳直接生成“准备退款，确认吗”。确认闸挡住了最终写入，但错误
+        # 意图已经被推进到危险边界。
+        #
+        # 因此该槽只接受两种**显式引用**：10–40 位纯数字（两家官方订单号形状），
+        # 或带「订单号/单号」标签的有界字母数字 id。其余一律按换题处理并保留挂起；
+        # 「上次麦当劳那单」也应重新规划，由账本归属解析，而不是直塞权威 id 槽。
+        missing = set(getattr(pending, "missing_slots", None) or [])
+        if "order_id" in missing:
+            if re.fullmatch(r"[0-9]{10,40}", t):
+                return False
+            if re.fullmatch(
+                r"(?:订单号|单号)\s*(?:是|为|[:：])?\s*"
+                r"[0-9A-Za-z][0-9A-Za-z_-]{2,63}",
+                t,
+                flags=re.IGNORECASE,
+            ):
+                return False
+            return True
         # 裸序号是对最近列表/候选的选择，不是任意历史 NEED_SLOT 的自然语言答案。
         # 旧挂起若抢占“第二个”，会把咖啡候选选择错误填进数轮前的 route 槽。
         # 唯一例外是挂起步骤自身刚给出了 *_choice 选择卡：此时序号正是该槽位的
@@ -1269,6 +1349,8 @@ class PlannerEngine:
         if any(k in t for k in ("什么来着", "来着", "有什么", "有哪些", "哪些")) \
                 or t.endswith(("吗", "？", "?", "呢")):
             return True
+        if any(k in t for k in ("为什么", "为何", "什么原因")):
+            return True
         # 「动词+数量+量词+宾语」是完整新指令（在X点一杯标准美式/来两份炒饭）——
         # 槽位答案是名词短语，不自带量词结构（同一次探针：整句新单被旧挂起吞掉）。
         # 量词后要求 ≥2 字宾语：裸「要两杯」仍是数量补槽的合法答案，不算换话题。
@@ -1290,6 +1372,20 @@ class PlannerEngine:
         return any(t.startswith(v) for v in _verbs)
 
     @staticmethod
+    def _slot_answer(slot_name: str, text: str) -> str:
+        """把追问回答归一成真正的槽值；普通自由文本槽保持原样。"""
+        value = str(text or "").strip()
+        if slot_name != "order_id":
+            return value
+        labelled = re.fullmatch(
+            r"(?:订单号|单号)\s*(?:是|为|[:：])?\s*"
+            r"([0-9A-Za-z][0-9A-Za-z_-]{2,63})",
+            value,
+            flags=re.IGNORECASE,
+        )
+        return labelled.group(1) if labelled else value
+
+    @staticmethod
     def _apply_focus_meta(plan: Plan, focus) -> None:
         """把地图已解析的目的地焦点确定性下发给 location Agent。
 
@@ -1298,7 +1394,51 @@ class PlannerEngine:
         不广播给闲聊等无关 Agent。Agent 仍须按原话是否含地点指代决定是否消费。
         """
         if not focus:
+            # 首轮也要收敛对象化槽；否则 Agent 虽能答对，焦点抽取却可能记不住城市。
+            for step in plan.steps:
+                if step.intent in WEATHER_CONTEXT_INTENTS:
+                    city = normalize_weather_city_slot(
+                        (step.slots or {}).get("city"))
+                    if city:
+                        step.slots["city"] = city
             return
+        # MiniMax 偶发把 weather ``city`` 填成序列化对象。只有上一轮本身也是
+        # 天气域时，缺槽或对象化槽才表示同域续接并可复用城市；跨过闲聊/导航等
+        # 无关轮次后，旧城市已经失去指代资格，必须让 Agent 回到本轮显式位置/GPS。
+        # 普通标量始终保持不动。
+        if (getattr(focus, "last_city", "")
+                and getattr(focus, "last_intent", "") in WEATHER_CONTEXT_INTENTS):
+            for step in plan.steps:
+                if step.intent not in WEATHER_CONTEXT_INTENTS:
+                    continue
+                raw_city = (step.slots or {}).get("city")
+                malformed = isinstance(raw_city, dict) or (
+                    isinstance(raw_city, str) and raw_city.strip().startswith("{"))
+                if malformed:
+                    payload = raw_city if isinstance(raw_city, dict) else {}
+                    if not payload:
+                        try:
+                            decoded = json.loads(raw_city)
+                            payload = decoded if isinstance(decoded, dict) else {}
+                        except (TypeError, ValueError, json.JSONDecodeError):
+                            payload = {}
+                    candidate = normalize_weather_city_slot(raw_city)
+                    road = str(payload.get("road") or "").strip()
+                    raw_text = str(getattr(plan, "raw_text", "") or "")
+                    explicitly_named = bool(
+                        candidate and candidate in raw_text
+                        and not (road and road in raw_text and candidate in road)
+                    )
+                    step.slots["city"] = (
+                        candidate if explicitly_named else str(focus.last_city)
+                    )
+                elif not raw_city:
+                    step.slots["city"] = str(focus.last_city)
+        if (getattr(focus, "last_stock_symbol", "")
+                and getattr(focus, "last_intent", "") == "info.stock"):
+            for step in plan.steps:
+                if step.intent == "info.stock" and not (step.slots or {}).get("symbol"):
+                    step.slots["symbol"] = str(focus.last_stock_symbol)
         # 顺路停靠/“第二个”候选选择轮里，Planner 可能只给 stop_category/waypoint，
         # 省略已经确立的目的地。destination 是系统焦点中的事实，确定性补齐比让 LLM
         # 重猜安全；仅限这两类续接计划，绝不覆盖用户本轮显式目的地。

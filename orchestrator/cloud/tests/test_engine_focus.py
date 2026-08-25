@@ -153,6 +153,90 @@ def test_destination_focus_meta_only_reaches_location_scoped_steps():
     assert "focus_destination_lat" not in plan.steps[1].meta
 
 
+def test_deictic_weather_followup_uses_last_city_even_if_model_invents_another():
+    plan = Plan(
+        raw_text="现在有影响开车的天气预警吗",
+        steps=[Step(id="alerts", agent_id="info", intent="info.alerts",
+                    slots={"city": '{"city":"上海","road":""}'},
+                    context_scopes=["location"])],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_city="深圳", last_intent="info.weather")
+    )
+
+    assert plan.steps[0].slots["city"] == "深圳"
+
+
+def test_weather_after_unrelated_turn_does_not_inherit_stale_city():
+    """城市焦点只服务同域续接，不能跨过一次无关会话污染新的当前位置查询。"""
+    plan = Plan(
+        raw_text="现在天气怎么样",
+        steps=[Step(id="weather", agent_id="info", intent="info.weather",
+                    slots={"city": ""}, context_scopes=["location"])],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_city="深圳", last_intent="chitchat.talk")
+    )
+
+    assert plan.steps[0].slots["city"] == ""
+
+
+def test_object_city_explicitly_named_this_turn_beats_the_previous_city():
+    """对象化是格式错误，不代表其中被原话点名的新城市可以被旧焦点覆盖。"""
+    plan = Plan(
+        raw_text="北京现在有天气预警吗",
+        steps=[Step(id="alerts", agent_id="info", intent="info.alerts",
+                    slots={"city": '{"city":"北京","road":""}'},
+                    context_scopes=["location"])],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_city="深圳", last_intent="info.weather")
+    )
+
+    assert plan.steps[0].slots["city"] == "北京"
+
+
+def test_explicit_city_in_weather_followup_beats_the_previous_city():
+    plan = Plan(
+        raw_text="北京现在有天气预警吗",
+        steps=[Step(id="alerts", agent_id="info", intent="info.alerts",
+                    slots={"city": "北京"}, context_scopes=["location"])],
+    )
+
+    PlannerEngine._apply_focus_meta(plan, Focus(last_city="深圳"))
+
+    assert plan.steps[0].slots["city"] == "北京"
+
+
+def test_stock_provenance_followup_inherits_the_last_successful_symbol():
+    plan = Plan(
+        raw_text="数据源和更新时间是什么",
+        steps=[Step(id="stock", agent_id="info", intent="info.stock",
+                    slots={})],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_stock_symbol="宁德时代", last_intent="info.stock"))
+
+    assert plan.steps[0].slots["symbol"] == "宁德时代"
+
+
+def test_stock_query_after_unrelated_turn_does_not_inherit_stale_symbol():
+    plan = Plan(
+        raw_text="现在什么行情值得关注",
+        steps=[Step(id="stock", agent_id="info", intent="info.stock",
+                    slots={})],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_stock_symbol="宁德时代", last_intent="chitchat.talk"))
+
+    assert "symbol" not in plan.steps[0].slots
+
+
 def test_waypoint_plan_inherits_current_destination_from_focus():
     """裸序号选途经点时，Planner 可能只给 waypoint；目的地应取系统持有的会话焦点。"""
     plan = Plan(steps=[

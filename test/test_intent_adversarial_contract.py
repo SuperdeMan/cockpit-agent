@@ -802,6 +802,20 @@ def test_dynamic_inventory_reads_yaml_workflows_with_legacy_server_spec(
     }
 
 
+def test_dynamic_inventory_includes_bridge_owned_local_capabilities():
+    from cockpit.agent.v1 import agent_pb2
+    import eval_live
+
+    manifest = agent_pb2.AgentManifest(agent_id="mcp-bridge")
+    agent_dir = Path(__file__).parents[1] / "agents" / "mcp_bridge"
+
+    eval_live._synth_admitted_caps(manifest, agent_dir)
+
+    assert "shop.preview_discard" in {
+        capability.intent for capability in manifest.capabilities
+    }
+
+
 def test_boundary_requires_two_cases_per_side(contract_case):
     errors = validate_boundary_coverage(
         [contract_case],

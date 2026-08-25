@@ -8,6 +8,7 @@ import asyncio
 import logging
 import time
 import uuid
+from collections import OrderedDict
 
 import grpc
 from google.protobuf import struct_pb2
@@ -17,8 +18,7 @@ from cockpit.common.v1 import common_pb2
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
 
 from runtime.grpcio import aio_channel
-
-from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
+from fast_intent import classify, classify_structured, climate_feeling_intents, is_local, is_negated_write_directive, is_sequence_connector, split_and_classify, split_and_classify_any, structured_to_legacy
 import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只算不用）
 from val import VAL
 from edge_agents import edge_execute
@@ -31,6 +31,10 @@ from observability.tracing import (get_trace_id, new_trace_id, set_session_id,
 logger = logging.getLogger("edge.orchestrator")
 
 _HIGH = float(os.getenv("FAST_INTENT_THRESHOLD_HIGH", "0.85"))
+_LOCAL_EXCHANGE_MAX = 256
+_LOCAL_EXCHANGE_TTL_S = 10 * 60
+_LOCAL_ID_MAX_CHARS = 256
+_LOCAL_EXCHANGE_ID_MAX_CHARS = 128
 
 
 def _ensure_trace_id(request) -> str:
@@ -186,6 +190,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(self.val))
         self.cloud_connected = False  # 连接状态追踪
         self.memory = _MemoryClient()
+        self._last_local_exchange: OrderedDict[
+            tuple[str, str, str], tuple[str, float, tuple[str, ...]]
+        ] = OrderedDict()
         self._bg: set[asyncio.Task] = set()  # 持有 fire-and-forget 任务引用，防 GC
 
     async def drain_state(self):
@@ -444,6 +451,16 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         occ = (meta.get("occupant_id") or "").strip() or "primary"
         # 一次本地请求 = 一个完整 exchange（user + 本地最终话术）。请求 id 就是 exchange 键。
         exch = getattr(request, "request_id", "") or f"edge-{uuid.uuid4().hex[:16]}"
+        executed_names = self._executed_names(actions)
+        key = self._local_exchange_key(request)
+        if key is not None and len(exch) <= _LOCAL_EXCHANGE_ID_MAX_CHARS:
+            now = time.monotonic()
+            self._prune_local_exchanges(now)
+            self._last_local_exchange.pop(key, None)
+            self._last_local_exchange[key] = (
+                exch, now, tuple(executed_names))
+            while len(self._last_local_exchange) > _LOCAL_EXCHANGE_MAX:
+                self._last_local_exchange.popitem(last=False)
 
         async def _write():
             await self.memory.append(request.session_id, "user", user_text,
@@ -453,11 +470,45 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 await self.memory.append(request.session_id, "assistant", assistant_speech,
                                          user_id=uid, occupant_id=occ, vehicle_id=vid,
                                          turn_id=f"{exch}:assistant:0", exchange_id=exch,
-                                         actions=self._executed_names(actions))
+                                         actions=executed_names)
 
         task = asyncio.create_task(_write())
         self._bg.add(task)
         task.add_done_callback(self._bg.discard)
+
+    @staticmethod
+    def _local_exchange_key(request) -> tuple[str, str, str] | None:
+        ctxp = getattr(request, "context", None)
+        meta = request.meta if getattr(request, "meta", None) is not None else {}
+        values = (
+            str(getattr(request, "session_id", "") or ""),
+            str(getattr(ctxp, "user_id", "") or ""),
+            str((meta.get("occupant_id") or "").strip() or "primary"),
+        )
+        if not values[0] or any(len(value) > _LOCAL_ID_MAX_CHARS for value in values):
+            return None
+        return values
+
+    def _prune_local_exchanges(self, now: float) -> None:
+        cutoff = now - _LOCAL_EXCHANGE_TTL_S
+        while self._last_local_exchange:
+            _key, (_exchange, seen_at, _actions) = next(
+                iter(self._last_local_exchange.items()))
+            if seen_at >= cutoff:
+                break
+            self._last_local_exchange.popitem(last=False)
+
+    def _attach_previous_local_exchange(self, request) -> None:
+        """Forward one unconsumed local-turn boundary; client meta cannot forge it."""
+        key = self._local_exchange_key(request)
+        if key is None:
+            return
+        self._prune_local_exchanges(time.monotonic())
+        entry = self._last_local_exchange.pop(key, None)
+        if entry:
+            request.meta["_edge_previous_local_exchange"] = entry[0]
+            if entry[2]:
+                request.meta["_edge_previous_local_actions"] = ",".join(entry[2])
 
     async def Handle(self, request, context):
         """观测收口 wrapper：一次 Handle = 一条 obs.turn（badcase 排查的核心数据）。
@@ -524,6 +575,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     is_confirmation=request.is_confirmation,
                     ui_card_type=card_type,
                     actions=actions_n,
+                    intents=turn.get("intents") or [],
                     duration_ms=(time.perf_counter() - started) * 1000,
                     error=error,
                     ts=ts_ms,
@@ -539,6 +591,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 实际成功后才会重新写入。否则网页/手机可伪造「刚执行过什么」污染指代焦点。
         try:
             request.meta.pop("_edge_executed", None)
+            request.meta.pop("_edge_previous_local_exchange", None)
+            request.meta.pop("_edge_previous_local_actions", None)
         except Exception:
             pass
         # 把端侧真实车辆电量注入 meta，透传给云端 Agent（充电规划等），避免云端读 memory
@@ -567,6 +621,15 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 # 全有全无失败 → 尝试混合拆分（本地+非本地）
                 mixed_intents = split_and_classify_any(request.text)
                 intent = None if mixed_intents else classify(request.text)
+
+        # 单句负极性写操作已经没有需要模型补全的信息：「别开」的正确语义是保持
+        # 不变。此前 classify 正确地不产本地意图，服务层却把它再送云端，模型仍可能
+        # 猜成反向动作。复合句由下面 `_negated_directive` 分段标记处理。
+        negated_only = bool(
+            not request.is_confirmation
+            and not mixed_intents
+            and is_negated_write_directive(request.text)
+        )
 
         # 快路径 A：多意图全部本地，并行执行聚合语音
         if multi:
@@ -605,6 +668,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     break
             if speeches:
                 turn["path"] = "local"
+                turn["intents"] = self._executed_names(actions)
                 await self._emit_span(
                     trace_id,
                     "route.multi",
@@ -629,8 +693,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             local_actions = []
             cloud_parts = []  # 非本地意图的原始文本片段
             for group in _group_mixed_intents(mixed_intents):
+                effective_group = [
+                    item for item in group if not item.get("_negated_directive")
+                ]
+                if not effective_group:
+                    local_speeches.append("好的，保持当前状态")
+                    continue
                 local_group = []
-                for m_intent in group:
+                for m_intent in effective_group:
                     legacy = structured_to_legacy(m_intent)
                     if (not m_intent.get("_needs_cloud")
                             and legacy
@@ -667,7 +737,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 else:
                     # 组内任一片段需上云时，整组上云，保留目的地/路线偏好、
                     # 媒体动作/歌手等相邻片段之间的语义上下文。
-                    for m_intent in group:
+                    for m_intent in effective_group:
                         raw = m_intent.get("_raw_text", "")
                         if raw:
                             cloud_parts.append(raw)
@@ -678,6 +748,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
 
             if cloud_parts:
                 turn["path"] = "mixed"
+                turn["intents"] = self._executed_names(local_actions)
                 await self._emit_span(
                     trace_id,
                     "route.mixed",
@@ -731,6 +802,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     executed = self._executed_names(local_actions)
                     if executed:
                         cloud_req.meta["_edge_executed"] = ",".join(executed)
+                    self._attach_previous_local_exchange(cloud_req)
                     async for event in self.cloud.handle(cloud_req):
                         got = True
                         self.cloud_connected = True
@@ -751,6 +823,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             else:
                 # 全部本地（不应该到这里，multi 应该已经捕获）
                 turn["path"] = "local"
+                turn["intents"] = self._executed_names(local_actions)
                 if local_speeches:
                     combined = _join_speeches(local_speeches)
                     final = orchestrator_pb2.FinalResult(speech=combined)
@@ -761,7 +834,23 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         rule_objects=[o for o in
                                       ((m.get("data") or {}).get("object", "")
                                        for m in mixed_intents) if o])
+                    self._record_local_turn(
+                        request, request.text, combined, actions=local_actions)
                 return
+
+        if negated_only:
+            turn["path"] = "local"
+            turn["intents"] = ["noop.negated"]
+            speech = "好的，保持当前状态。"
+            await self._emit_span(
+                trace_id, "route.local",
+                attrs={"intent": "noop.negated", "confidence": 1.0},
+            )
+            yield orchestrator_pb2.HandleEvent(
+                final=orchestrator_pb2.FinalResult(speech=speech))
+            self._nlu_shadow_bg(trace_id, request.text, "local")
+            self._record_local_turn(request, request.text, speech, actions=[])
+            return
 
         # 快路径 B：高置信本地意图，端侧秒回（离线可用，不依赖网络）
         if intent and intent["confidence"] >= _HIGH and is_local(intent["name"]):
@@ -804,6 +893,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         require_confirm=action["require_confirm"]))
                 logger.info("LOCAL %s -> %s", intent["name"], speech)
                 turn["path"] = "local"
+                turn["intents"] = [intent["name"]]
                 await self._emit_span(
                     trace_id,
                     "route.local",
@@ -848,6 +938,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         cloud_had_output = False
         try:
             got = False
+            self._attach_previous_local_exchange(request)
             async for event in self.cloud.handle(request):
                 got = True
                 self.cloud_connected = True

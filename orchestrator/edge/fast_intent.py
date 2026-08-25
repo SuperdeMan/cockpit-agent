@@ -343,8 +343,24 @@ def classify_structured(text: str) -> dict | None:
     return result
 
 
+def is_negated_write_directive(text: str) -> bool:
+    """整句是否是带明确车控/媒体对象的负极性写指令。
+
+    只看「含否定词」会把“别开玩笑，认真回答股票问题”误当本地 no-op；这里先
+    用未做极性裁剪的结构化分类确认它确实命中一个写操作，再判否定。
+    """
+    result = _classify_structured(text)
+    return _is_write_action(result) and is_negated_directive(text)
+
+
 def _classify_structured(text: str) -> dict | None:
     t = text.strip()
+
+    # 元话语纠错不是业务执行请求。「不要把生活指数当成股票指数」同时含两域词，
+    # 旧规则按先后顺序必然挑一个执行；正确行为是整句上云解释，不发任何动作。
+    # 只认封闭的“把 A 识别成 B”句法，不拦「不要把空调开太冷」等真实否定指令。
+    if re.search(r"(?:不要|别)(?:再)?把.{1,24}(?:当成|算作|识别成|归到)", t):
+        return None
 
     # ── 提醒类话术一律上云（badcase c9bcf8c2：「再帮我加一个明晚10点提醒我冷萃咖啡过滤」
     # 中「冷」（冷萃）+「再」（再帮我）撞上体感共现规则，被端侧当 hvac.on 秒回并真开了空调）。
@@ -1043,7 +1059,9 @@ def _classify_structured(text: str) -> dict | None:
         if "关" in t or "停" in t:
             return _s("media", "control", "stop", "news", conf=0.9)
         # "看/摘要/今天发生了什么/有什么新闻" → info.news（文本摘要，online_only）
-        if "看" in t or "摘要" in t or "发生" in t or "有什么" in t:
+        if any(word in t for word in (
+                "看", "查", "搜", "摘要", "发生", "有什么", "要闻",
+                "重要", "行业", "来源", "发布")):
             return _s("info", "query", "query", "news", conf=0.88)
         # 默认仍走媒体播放（兼容"来段新闻"等模糊表达）
         return _s("media", "control", "play", "news", conf=0.85)
@@ -1805,9 +1823,20 @@ def split_and_classify_any(text: str) -> list[dict] | None:
                 part, next((i for i in reversed(intents)
                             if not i.get("_needs_cloud")), None))
         if result is None:
-            # Can't classify locally → mark for cloud dispatch
-            result = {"_raw_text": part, "_needs_cloud": True,
-                      "data": {"object": "unknown", "operate": "unknown"}}
+            if is_negated_write_directive(part):
+                # 负极性写操作的正确结果是**不动作**。给服务层留一枚结构化标记，
+                # 避免它把这段重新拼回云端、再让模型猜一次极性（NG4 真栈曾因此
+                # 把「车窗别开」执行成 window.close，并拖丢同句的 hvac.off）。
+                result = {
+                    "_raw_text": part,
+                    "_needs_cloud": True,
+                    "_negated_directive": True,
+                    "data": {"object": "unknown", "operate": "noop"},
+                }
+            else:
+                # Can't classify locally → mark for cloud dispatch
+                result = {"_raw_text": part, "_needs_cloud": True,
+                          "data": {"object": "unknown", "operate": "unknown"}}
             result["_cloud_domain"] = cloud_domain_of(part) or ""
         else:
             result["_raw_text"] = part
@@ -1864,6 +1893,10 @@ def _to_legacy_name(intent: dict) -> str | None:
         return f"hvac.{_on_off_map.get(operate, operate)}"
     if obj == "window":
         return f"window.{operate}"
+    # ``news`` 同时是媒体播放对象与联网资讯对象，不能只按 object 命名；
+    # 结构化分类已用 domain 明确区分，查询域必须落到真实 info capability。
+    if obj == "news" and intent.get("domain") == "info":
+        return "info.news"
     # 媒体子类统一落 `media.*`——`LOCAL_INTENTS` 只登记 media.*，而 commands.yaml 的
     # media/music 是同一组物理能力的两个说法。收敛前 `classify()` 产 `music.pause`，
     # 于是**单句形态的媒体控制从来没走过端侧快路径**（Q13 最贵的一处）。

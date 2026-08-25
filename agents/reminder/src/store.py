@@ -246,6 +246,45 @@ class ReminderStore:
                        key=lambda r: r.created_at)[:limit]
         return times, todos
 
+    async def count_time(self, user_id: str, *, from_ts: int = 0, to_ts: int = 0,
+                         statuses: tuple = ACTIVE, occupant_id: str = "") -> int:
+        """精确统计定时项；与 ``list_split`` 同 OwnerKey/边界但不受 LIMIT。"""
+        _u, occ = owner_of(user_id, occupant_id)
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                value = await conn.fetchval(
+                    "SELECT COUNT(*) FROM reminder_item "
+                    "WHERE user_id=$1 AND occupant_id=$5 AND kind='time' "
+                    "AND status=ANY($2) "
+                    "AND COALESCE(fire_at, 0)>=$3 "
+                    "AND ($4=0 OR COALESCE(fire_at, 0)<$4)",
+                    user_id, list(statuses), from_ts, to_ts, occ)
+            return int(value or 0)
+        return sum(
+            1 for r in self._mem.values()
+            if r.user_id == user_id and r.occupant_id == occ
+            and r.kind == "time" and r.status in statuses
+            and r.fire_at >= from_ts and (to_ts == 0 or r.fire_at < to_ts)
+        )
+
+    async def count_todo(self, user_id: str, *, statuses: tuple = ACTIVE,
+                         occupant_id: str = "") -> int:
+        """精确统计待办；与 ``list_split`` 同 OwnerKey 但不受 LIMIT。"""
+        _u, occ = owner_of(user_id, occupant_id)
+        if self._pg_ok:
+            async with self._pool.acquire() as conn:
+                value = await conn.fetchval(
+                    "SELECT COUNT(*) FROM reminder_item "
+                    "WHERE user_id=$1 AND occupant_id=$3 AND kind='todo' "
+                    "AND status=ANY($2)",
+                    user_id, list(statuses), occ)
+            return int(value or 0)
+        return sum(
+            1 for r in self._mem.values()
+            if r.user_id == user_id and r.occupant_id == occ
+            and r.kind == "todo" and r.status in statuses
+        )
+
     async def find_by_title(self, user_id: str, q: str,
                             statuses: tuple = ACTIVE,
                             occupant_id: str = "") -> list[Reminder]:

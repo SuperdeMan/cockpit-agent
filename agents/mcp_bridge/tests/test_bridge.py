@@ -13,12 +13,21 @@ from agents._sdk.testing import make_context, run_handle
 from agents.mcp_bridge.demo_servers import demo_coffee
 from agents.mcp_bridge.src.admission import (REJECT_MISSING, REJECT_SCHEMA,
                                              REJECT_VERSION, ServerSpec, ToolSpec,
-                                             admit, check_version, load_servers,
+                                             admit, check_version,
+                                             load_local_capabilities, load_servers,
                                              schema_fingerprint)
 from agents.mcp_bridge.src.agent import LEDGER_KIND, McpBridgeAgent, _Binding
 from agents.mcp_bridge.src.mcp_client import McpError, StdioMcpClient
 
 SERVERS_YAML = "agents/mcp_bridge/servers.yaml"
+
+
+def test_bridge_owned_capabilities_share_the_allowlist_source():
+    specs = load_local_capabilities(SERVERS_YAML)
+
+    assert [spec.intent for spec in specs] == ["shop.preview_discard"]
+    assert specs[0].handler == "session_preview_discard"
+    assert specs[0].required_scopes == ["merchant.write"]
 
 
 def test_e2e_cleanup_uses_atomic_owner_lifecycle_without_captured_ids():
@@ -501,7 +510,8 @@ async def test_bootstrap_synthesizes_capabilities_from_allowlist(monkeypatch):
     try:
         intents = {c.intent for c in a.manifest.capabilities}
         assert intents == {"shop.menu", "shop.order",
-                           "shop.order_status", "shop.order_cancel"}
+                           "shop.order_status", "shop.order_cancel",
+                           "shop.preview_discard"}
         order = next(c for c in a.manifest.capabilities if c.intent == "shop.order")
         assert order.require_confirm is True, "写操作必须声明二次确认"
         assert "演示商户" in order.description, "演示身份要出现在能力描述里"
@@ -598,9 +608,72 @@ async def test_agent_namespace_admin_uses_write_binding_without_registering_hidd
         assert fake.calls[0][1]["op"] == "lifecycle_cleanup"
         assert response["ok"] is True
         assert {c.intent for c in a.manifest.capabilities} == {
-            "shop.menu", "shop.order", "shop.order_status", "shop.order_cancel"}
+            "shop.menu", "shop.order", "shop.order_status", "shop.order_cancel",
+            "shop.preview_discard"}
     finally:
         await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_preview_discard_is_owner_session_scoped_and_returns_auditable_card():
+    class DraftStore:
+        def __init__(self):
+            self.calls = []
+            self.counts = [2, 0]
+
+        async def count_session(self, user_id, session_id):
+            self.calls.append(("count", user_id, session_id))
+            return self.counts.pop(0)
+
+        async def discard_session(self, user_id, session_id):
+            self.calls.append(("discard", user_id, session_id))
+            return 2
+
+    drafts = DraftStore()
+    agent = McpBridgeAgent(draft_store=drafts)
+    agent._sync_capabilities()
+    ctx = make_context(session_id="qa-session", user_id="qa-owner")
+
+    denied = await run_handle(
+        agent, "shop.preview_discard", raw_text="清理本次订单预览", ctx=ctx,
+        meta={"granted_scopes": "merchant.read"})
+    assert denied.speech == "当前账号缺少商户授权，不能执行这个操作。"
+    assert drafts.calls == []
+
+    result = await run_handle(
+        agent, "shop.preview_discard", raw_text="清理本次订单预览", ctx=ctx,
+        meta={"granted_scopes": "merchant.write"})
+
+    assert result.status == "ok"
+    assert result.ui_card == {
+        "type": "merchant_draft_cleanup",
+        "session_id_digest": agent._session_digest("qa-session"),
+        "drafts_before": 2, "drafts_removed": 2, "drafts_after": 0,
+    }
+    assert drafts.calls == [
+        ("count", "qa-owner", "qa-session"),
+        ("discard", "qa-owner", "qa-session"),
+        ("count", "qa-owner", "qa-session"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_preview_discard_never_claims_success_without_zero_count_proof():
+    class DraftStore:
+        async def count_session(self, _user_id, _session_id):
+            return 1
+
+        async def discard_session(self, _user_id, _session_id):
+            return -1
+
+    agent = McpBridgeAgent(draft_store=DraftStore())
+    result = await run_handle(
+        agent, "shop.preview_discard", ctx=make_context(),
+        meta={"granted_scopes": "merchant.write"})
+
+    assert result.status == "failed"
+    assert "未能确认本次订单预览清理完成" in result.speech
+    assert result.ui_card is None
 
 
 @pytest.mark.asyncio
@@ -927,7 +1000,8 @@ async def test_non_exposed_tool_is_neither_registered_nor_dispatchable():
     a._bindings[tool.intent] = _Binding(server, fake, tool, {})
     a._sync_capabilities()
     try:
-        assert not list(a.manifest.capabilities)
+        assert {cap.intent for cap in a.manifest.capabilities} == {
+            "shop.preview_discard"}
         res = await run_handle(a, tool.intent, raw_text="取消")
         assert "还没接入" in res.speech
         assert fake.calls == []
@@ -1359,7 +1433,9 @@ async def test_order_status_looks_up_the_last_order_id_without_asking():
                                   "data": {"found": True, "status": "submitted"}})
     a.ledger = FakeLedger(history=[_ledger_task(order_id="DC1")])
     try:
-        res = await run_handle(a, "shop.order_status", raw_text="查一下我的订单")
+        res = await run_handle(
+            a, "shop.order_status", raw_text="查一下我的订单",
+            meta={"granted_scopes": "merchant.read"})
         assert res.status == "ok"
         args = fake.calls[0][1]
         assert args["order_id"] == "DC1"
@@ -1376,7 +1452,9 @@ async def test_uncertain_order_is_reconciled_by_idempotency_key():
                                   "data": {"found": False}})
     a.ledger = FakeLedger(history=[_ledger_task(order_id="", idem="idem-9")])
     try:
-        await run_handle(a, "shop.order_status", raw_text="查一下我的订单")
+        await run_handle(
+            a, "shop.order_status", raw_text="查一下我的订单",
+            meta={"granted_scopes": "merchant.read"})
         args = fake.calls[0][1]
         assert "order_id" not in args, "超时那一单根本没有订单号"
         assert args["idempotency_key"] == "idem-9"
@@ -1389,7 +1467,9 @@ async def test_order_status_is_read_only_and_needs_no_confirmation():
     a, _ = await _agent(reply={"ok": True, "text": "查到了", "data": {}})
     a.ledger = FakeLedger(history=[_ledger_task(order_id="DC1")])
     try:
-        res = await run_handle(a, "shop.order_status", raw_text="我那杯咖啡好了吗")
+        res = await run_handle(
+            a, "shop.order_status", raw_text="我那杯咖啡好了吗",
+            meta={"granted_scopes": "merchant.read"})
         assert res.status == "ok", "只读不该触发确认闸"
     finally:
         await a.shutdown()

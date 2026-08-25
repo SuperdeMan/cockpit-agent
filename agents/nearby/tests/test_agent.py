@@ -1276,6 +1276,42 @@ def test_explicit_facility_category_is_not_a_fallback():
     assert "_fallback" not in res.data
 
 
+def test_category_alias_in_keyword_is_not_a_fallback():
+    """类目别名归一不是语义丢弃：咖啡店 -> 咖啡厅仍是用户点名的真候选。
+
+    MiniMax 真栈会同时填 ``category=咖啡`` 与 ``keyword=咖啡店``。旧判据只看
+    keyword 非空且最终检索词等于类目词，误把这次正常归一标成 fallback；下一轮
+    「哪家最晚关门」因此避开最新咖啡候选，读到了更早的导航候选。
+    """
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "咖啡", "keyword": "咖啡店"},
+        raw_text="附近的咖啡店", meta=_LOC))
+    assert res.status == "ok"
+    assert res.data.get("_candidate_label") == "咖啡厅"
+    assert "_fallback" not in res.data
+
+
+def test_category_word_inside_discarded_sentence_is_still_a_fallback():
+    """类目词只是整句的一部分时，不能掩盖其余被检索器丢掉的限定语。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "咖啡", "keyword": "在瑞幸咖啡店点一杯美式"},
+        raw_text="在瑞幸咖啡店点一杯美式", meta=_LOC))
+    assert res.status == "ok"
+    assert res.data.get("_fallback") is True
+
+
+def test_facility_alias_duplicated_in_keyword_is_not_a_fallback():
+    """同一条边界覆盖设施类：Planner 重复填槽不应改变候选可信等级。"""
+    res = asyncio.run(run_handle(
+        NearbyAgent(), "nearby.search",
+        slots={"category": "停车场", "keyword": "附近的停车场"},
+        raw_text="附近的停车场", meta=_LOC))
+    assert res.status == "ok"
+    assert "_fallback" not in res.data
+
+
 def test_guessed_category_declares_a_fallback_even_without_a_discarded_term():
     """第二个信号：planner 一个具体词都不填、只给 category=餐饮 时，
     「用户给了词我们丢了」这条够不着——真栈 3 轮里有一轮正是这个形态，

@@ -1,6 +1,62 @@
 from __future__ import annotations
 
+import asyncio
+import json
+from types import SimpleNamespace
+
+import pytest
+
 from scripts import probe_qa_long_sessions as long_qa
+from scripts.dev_stack_lib import (
+    EndpointStatus,
+    StackStatus,
+    stack_status_to_dict,
+)
+
+
+def _real_cloud_status_payload(sha: str, *, healthy: int = 5) -> dict:
+    endpoints = tuple(
+        EndpointStatus(
+            name=f"endpoint-{index}",
+            url=f"https://endpoint-{index}.example.invalid/health",
+            status="healthy" if index <= healthy else "timeout",
+            http_status=200 if index <= healthy else None,
+        )
+        for index in range(1, 6)
+    )
+    return {
+        **stack_status_to_dict(StackStatus(
+            target="cloud",
+            release_sha=sha,
+            container_total=None,
+            container_running=None,
+            healthy_endpoints=healthy,
+            endpoint_results=endpoints,
+            warnings=(),
+        )),
+        # ``scripts.dev_stack`` adds the CLI result status around the shared
+        # redacted serializer. Keep the test payload identical to that path.
+        "status": "ok" if healthy == 5 else "degraded",
+    }
+
+
+def _complete_vehicle_state_payload():
+    return {
+        "hvac_on": False,
+        "front_defogger": False,
+        "rear_defogger": False,
+        "window": "closed",
+        "sunroof": "closed",
+        "rear_view_mirror": "unfolded",
+        "steering_wheel_heating": False,
+        "volume_muted": False,
+        "warning_light": False,
+        "media": "stopped",
+    }
+
+
+async def _complete_vehicle_state(_collector, **_kwargs):
+    return _complete_vehicle_state_payload()
 
 
 def test_five_personas_each_have_a_continuous_50_to_100_turn_plan():
@@ -15,6 +71,21 @@ def test_five_personas_each_have_a_continuous_50_to_100_turn_plan():
         assert all(int(turn.get("sid", 0)) == 0
                    for case in cases for turn in case["turns"]), name
 
+    assert all((case.get("source_case_id") or case["id"]) != "CD3"
+               for cases in plans.values() for case in cases)
+    for name in ("merchant", "adversarial"):
+        assert any(case["id"] == "LONG-ORDER-INTERRUPT"
+                   for case in plans[name])
+
+
+def test_every_persona_requires_the_complete_restorable_vehicle_baseline():
+    plans = long_qa.build_persona_plans()
+
+    for name, cases in plans.items():
+        assert set(long_qa._required_vehicle_state_keys(cases)) == set(
+            long_qa._MANAGED_VEHICLE_KEYS
+        ), name
+
 
 def test_long_session_plan_never_authorizes_dangerous_or_merchant_writes():
     plans = long_qa.build_persona_plans()
@@ -28,14 +99,268 @@ def test_long_session_plan_never_authorizes_dangerous_or_merchant_writes():
                 assert not any(word in text for word in forbidden), text
 
 
+def test_trip_planning_turns_explicitly_expect_the_service_confirmation_gate():
+    plans = long_qa.build_persona_plans()
+    trip = next(case for case in plans["information"] if case["id"] == "INF-TRIP")
+
+    assert trip["turns"][0]["expect"]["need_confirm"] is True
+    assert trip["turns"][3]["expect"]["need_confirm"] is True
+
+
+def test_reminder_case_uses_a_run_scoped_title_and_cleans_up_its_record():
+    plans = long_qa.build_persona_plans()
+    case = next(case for case in plans["information"]
+                if case["id"] == "INF-REMINDER")
+    says = [turn["say"] for turn in case["turns"]]
+
+    assert "{run}" in says[0]
+    assert any("取消" in say and "{run}" in say for say in says)
+    assert case["turns"][-1]["expect"]["speech_not"] == ["交周报QA{run}"]
+
+
+def test_family_batch_reminders_keep_same_item_two_time_semantics_and_clean_up():
+    plans = long_qa.build_persona_plans()
+    cases = [case for case in plans["family"]
+             if case.get("source_case_id") == "SL1"]
+
+    assert len(cases) == 2
+    for case in cases:
+        says = [turn["say"] for turn in case["turns"]]
+        assert says[0] == (
+            "明天下午四点提醒我参加代号{run}的评审会，三点半再提醒我一次"
+        )
+        assert "评审材料" not in says[0]
+        assert says[1:4] == [
+            "取消参加代号{run}的评审会",
+            "取消第一条",
+            "取消参加代号{run}的评审会",
+        ]
+        assert case["turns"][-1]["expect"]["speech_not"] == [
+            "代号{run}的评审会",
+        ]
+
+
+def test_generic_history_order_case_requires_the_real_merchant_card_shape():
+    plans = long_qa.build_persona_plans()
+    xs7 = next(case for case in plans["merchant"]
+               if (case.get("source_case_id") or case["id"]) == "XS7")
+
+    assert xs7["turns"][0]["expect"]["card_type"] == "mcp_order"
+
+
+def test_active_operations_are_only_removed_by_server_closed_ids():
+    active: dict[str, int] = {}
+    long_qa._track_active_operations(
+        active, {"operation_id": "op-1", "closed_operation_ids": []}, 7)
+    assert active == {"op-1": 7}
+
+    # 用户话术里出现“取消”不是服务端关闭证据；没有 closed id 时仍须保留并精确清理。
+    long_qa._track_active_operations(
+        active, {"operation_id": "", "closed_operation_ids": []}, 8)
+    assert active == {"op-1": 7}
+
+    long_qa._track_active_operations(
+        active, {"operation_id": "", "closed_operation_ids": ["op-1"]}, 9)
+    assert active == {}
+
+
+def test_cleanup_requires_exact_server_closure_evidence():
+    good = {
+        "actions": [], "need_confirm": False, "closed_operation_ids": ["op-1"],
+    }
+    assert long_qa.validate_cleanup_result("op-1", good) == []
+
+    failures = long_qa.validate_cleanup_result("op-1", {
+        "actions": [], "need_confirm": False, "closed_operation_ids": [],
+    })
+    assert failures == ["服务端未证明待确认 op-1 已关闭（closed=空）"]
+
+    failures = long_qa.validate_cleanup_result("op-1", {
+        "actions": [], "need_confirm": False, "closed_operation_ids": [],
+        "error": True,
+    })
+    assert "取消轮 transport/backend error" in failures
+
+
+def test_persona_aborts_before_bare_confirm_when_cleanup_is_unproven(monkeypatch):
+    sent: list[str] = []
+
+    class _Ws:
+        async def close(self):
+            return None
+
+    async def connect(_url):
+        return _Ws()
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        sent.append(say)
+        if say == "触发危险确认":
+            return {
+                "speech": "需要确认", "actions": [], "need_confirm": True,
+                "operation_id": "op-1", "closed_operation_ids": [],
+                "card_type": "", "is_question": True, "trace_id": trace_id,
+            }
+        assert say == "取消"
+        return {
+            "speech": "已取消", "actions": [], "need_confirm": False,
+            "operation_id": "", "closed_operation_ids": [],
+            "card_type": "", "is_question": False, "trace_id": trace_id,
+        }
+
+    async def detail(_collector, trace_id):
+        return {
+            "turn": {"trace_id": trace_id, "status": "ok", "path": "cloud"},
+            "spans": [], "llm_calls": [], "logs": [],
+        }
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    monkeypatch.setattr(
+        long_qa, "_settled_vehicle_state", _complete_vehicle_state,
+    )
+    cases = [
+        {"id": "CF1", "turns": [{
+            "say": "触发危险确认", "expect": {"need_confirm": True},
+        }]},
+        {"id": "CF4", "turns": [{"say": "确认", "expect": {}}]},
+    ]
+
+    result = asyncio.run(long_qa._run_persona(
+        "safety", cases, "wss://example.invalid", "https://collector.invalid", 1))
+
+    assert sent == ["触发危险确认", "取消"]
+    assert result["aborted"] is True
+    assert result["open_operation_ids"] == ["op-1"]
+    assert all(row["case"] != "RECOVERY" for row in result["turns"])
+
+
+def test_persona_aborts_before_bare_confirm_after_transport_uncertainty(monkeypatch):
+    sent: list[str] = []
+
+    class _Ws:
+        async def close(self):
+            return None
+
+    async def connect(_url):
+        return _Ws()
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        sent.append(say)
+        raise TimeoutError("response lost")
+
+    async def detail(_collector, trace_id):
+        return {"error": "not found"}
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    monkeypatch.setattr(
+        long_qa, "_settled_vehicle_state", _complete_vehicle_state,
+    )
+    cases = [
+        {"id": "CF1", "turns": [{"say": "触发危险确认", "expect": {}}]},
+        {"id": "CF4", "turns": [{"say": "确认", "expect": {}}]},
+    ]
+
+    result = asyncio.run(long_qa._run_persona(
+        "transport", cases, "wss://example.invalid", "https://collector.invalid", 1))
+
+    assert sent == ["触发危险确认"]
+    assert result["aborted"] is True
+    assert all(row["case"] != "RECOVERY" for row in result["turns"])
+
+
+def test_transport_abort_restores_known_vehicle_delta_in_a_fresh_session(monkeypatch):
+    sent: list[tuple[str, str]] = []
+    original_closed = False
+
+    class _Ws:
+        def __init__(self, name):
+            self.name = name
+
+        async def close(self):
+            nonlocal original_closed
+            if self.name == "original":
+                original_closed = True
+
+    connections = iter([_Ws("original"), _Ws("cleanup")])
+
+    async def connect(_url):
+        return next(connections)
+
+    states = iter([
+        _complete_vehicle_state_payload(),
+        {**_complete_vehicle_state_payload(), "hvac_on": True},
+        {**_complete_vehicle_state_payload(), "hvac_on": False},
+    ])
+
+    async def settled(_collector, **_kwargs):
+        return next(states)
+
+    async def turn(ws, session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        sent.append((session, say))
+        if say == "打开空调":
+            return {
+                "speech": "已打开", "actions": ["hvac.on"],
+                "vehicle_state": {"hvac_on": True}, "need_confirm": False,
+                "operation_id": "", "closed_operation_ids": [],
+                "card_type": "", "card_text": "", "is_question": False,
+                "trace_id": trace_id,
+            }
+        if say == "触发超时":
+            raise TimeoutError("response lost")
+        assert ws.name == "cleanup"
+        assert original_closed is True
+        assert say == "关闭空调"
+        return {
+            "speech": "已关闭", "actions": ["hvac.off"],
+            "vehicle_state": {"hvac_on": False}, "need_confirm": False,
+            "operation_id": "", "closed_operation_ids": [],
+            "card_type": "", "card_text": "", "is_question": False,
+            "trace_id": trace_id,
+        }
+
+    async def detail(_collector, trace_id):
+        return {
+            "turn": {"trace_id": trace_id, "status": "ok", "path": "local"},
+            "spans": [], "llm_calls": [], "logs": [],
+        }
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_settled_vehicle_state", settled)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    cases = [{
+        "id": "ABORT-RESTORE",
+        "turns": [
+            {"say": "打开空调", "expect": {"actions_include": ["hvac.on"]}},
+            {"say": "触发超时", "expect": {}},
+        ],
+    }]
+
+    result = asyncio.run(long_qa._run_persona(
+        "vehicle", cases, "wss://example.invalid",
+        "https://collector.invalid", 1,
+    ))
+
+    assert result["aborted"] is True
+    assert result["vehicle_cleanup"]["verified"] is True
+    assert result["vehicle_cleanup"]["cleanup_session_id"].endswith("-cleanup")
+    assert (result["vehicle_cleanup"]["cleanup_session_id"], "关闭空调") in sent
+
+
 def test_collector_audit_accepts_minimax_and_rejects_any_other_llm_provider():
     good = {
         "turn": {"trace_id": "t1", "status": "ok", "path": "cloud",
                  "intents": "info.weather"},
         "spans": [{"service": "cloud-orchestrator", "node": "agent.call",
-                   "attrs": {"agent_id": "info", "intent": "info.weather"}}],
+                    "attrs": {"agent_id": "info", "intent": "info.weather"}}],
         "llm_calls": [{"provider": "minimax", "model": "MiniMax-M3",
-                       "status": "ok", "fallback": 0}],
+                        "status": "ok", "fallback": 0, "pinned": True}],
         "logs": [],
     }
     summary, failures = long_qa.audit_trace_detail(good, "t1")
@@ -50,10 +375,188 @@ def test_collector_audit_accepts_minimax_and_rejects_any_other_llm_provider():
     _, failures = long_qa.audit_trace_detail(bad, "t1")
     assert failures and "非 MiniMax" in failures[0]
 
+    unpinned = {**good, "llm_calls": [{
+        "provider": "minimax", "model": "MiniMax-M3",
+        "status": "ok", "fallback": 0, "pinned": False,
+    }]}
+    _, failures = long_qa.audit_trace_detail(unpinned, "t1")
+    assert failures == ["MiniMax-M3 LLM 调用未兑现请求级 pin"]
+
 
 def test_missing_collector_trace_is_never_counted_as_pass():
     _, failures = long_qa.audit_trace_detail({"error": "not found"}, "lost")
     assert failures == ["collector 缺少 trace lost"]
+
+
+def test_partial_collector_detail_without_authoritative_turn_is_rejected():
+    _, failures = long_qa.audit_trace_detail({
+        "turn": {}, "spans": [], "llm_calls": [], "logs": [],
+    }, "t-partial")
+
+    assert "collector 缺少权威 turn t-partial" in failures
+
+
+def test_collector_audit_requires_exact_trace_terminal_status_and_route():
+    _, failures = long_qa.audit_trace_detail({
+        "turn": {"trace_id": "", "status": "", "path": ""},
+        "spans": [], "llm_calls": [], "logs": [],
+    }, "t1")
+
+    assert "collector trace 对不上：空 != t1" in failures
+    assert "collector 轮次状态不完整：空" in failures
+    assert "collector 路由路径不完整：空" in failures
+
+
+def test_local_trace_also_requires_an_authoritative_intent():
+    _, failures = long_qa.audit_trace_detail({
+        "turn": {"trace_id": "t1", "status": "ok", "path": "local",
+                 "intents": ""},
+        "spans": [], "llm_calls": [], "logs": [],
+    }, "t1")
+
+    assert "collector 轮次缺少可审计 intent" in failures
+
+
+def test_cloud_trace_requires_agent_span_or_explicit_engine_lifecycle_node():
+    detail = {
+        "turn": {"trace_id": "t1", "status": "ok", "path": "cloud",
+                 "intents": "info.weather"},
+        "spans": [], "llm_calls": [], "logs": [],
+    }
+    _, failures = long_qa.audit_trace_detail(detail, "t1")
+    assert "collector 云端/混合业务轮缺少 agent 归属 span" in failures
+
+    engine_only = {
+        **detail,
+        "spans": [{"node": "cloud.candidate_aggregate", "attrs": {}}],
+    }
+    _, failures = long_qa.audit_trace_detail(engine_only, "t1")
+    assert "collector 云端/混合业务轮缺少 agent 归属 span" not in failures
+
+    pending_cancel = {
+        "turn": {"trace_id": "t1", "status": "ok", "path": "cloud",
+                 "intents": ""},
+        "spans": [{
+            "node": "cloud.pending_cancel",
+            "attrs": {"intent": "system.pending_cancel", "owner": "cloud-engine"},
+        }],
+        "llm_calls": [], "logs": [],
+    }
+    summary, failures = long_qa.audit_trace_detail(pending_cancel, "t1")
+    assert failures == []
+    assert summary["intents"] == ["system.pending_cancel"]
+
+
+def test_cancelled_collector_status_needs_an_explicit_case_expectation():
+    detail = {
+        "turn": {"trace_id": "t1", "status": "cancelled", "path": "local"},
+        "spans": [], "llm_calls": [], "logs": [],
+    }
+    _, failures = long_qa.audit_trace_detail(detail, "t1")
+    assert "collector 轮次状态异常：cancelled" in failures
+
+    _, failures = long_qa.audit_trace_detail(
+        detail, "t1", allow_cancelled=True)
+    assert "collector 轮次状态异常：cancelled" not in failures
+
+
+def test_fetch_detail_waits_for_partial_collector_row_to_become_terminal(monkeypatch):
+    ready = {"turn": {"trace_id": "t1", "status": "ok", "path": "cloud",
+                      "intents": "info.weather"},
+             "spans": [{"node": "step.agent:info",
+                         "attrs": {"agent_id": "info", "intent": "info.weather"}}],
+             "llm_calls": [], "logs": []}
+    payloads = iter([
+        {"turn": {}, "spans": [{"node": "cloud.planning"}]},
+        ready,
+        ready,
+    ])
+    calls = 0
+
+    def http_json(_url):
+        nonlocal calls
+        calls += 1
+        return next(payloads)
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa, "_http_json", http_json)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    detail = asyncio.run(long_qa._fetch_detail(
+        "https://collector.invalid", "t1"))
+
+    assert detail["turn"]["trace_id"] == "t1"
+    assert calls == 3
+
+
+def test_fetch_detail_waits_for_agent_span_after_complete_cloud_turn(monkeypatch):
+    turn = {"trace_id": "t1", "status": "ok", "path": "cloud",
+            "intents": "info.weather"}
+    ready = {"turn": turn,
+             "spans": [{"node": "step.agent:info",
+                         "attrs": {"agent_id": "info", "intent": "info.weather"}}],
+             "llm_calls": [], "logs": []}
+    payloads = iter([
+        {"turn": turn, "spans": [], "llm_calls": [], "logs": []},
+        ready,
+        ready,
+    ])
+    calls = 0
+
+    def http_json(_url):
+        nonlocal calls
+        calls += 1
+        return next(payloads)
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa, "_http_json", http_json)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    detail = asyncio.run(long_qa._fetch_detail(
+        "https://collector.invalid", "t1"))
+
+    assert detail["spans"][0]["attrs"]["agent_id"] == "info"
+    assert calls == 3
+
+
+def test_fetch_detail_does_not_miss_a_late_unpinned_non_minimax_call(monkeypatch):
+    turn = {"trace_id": "t1", "status": "ok", "path": "cloud",
+            "intents": "info.weather"}
+    spans = [{"id": 1, "node": "step.agent:info",
+              "attrs": {"agent_id": "info", "intent": "info.weather"}}]
+    late = [{
+        "id": 7, "provider": "deepseek", "model": "deepseek-v4-flash",
+        "pinned": False, "fallback": 0, "status": "ok", "error": "",
+    }]
+    payloads = iter([
+        {"turn": turn, "spans": spans, "llm_calls": [], "logs": []},
+        {"turn": turn, "spans": spans, "llm_calls": late, "logs": []},
+        {"turn": turn, "spans": spans, "llm_calls": late, "logs": []},
+    ])
+    calls = 0
+
+    def http_json(_url):
+        nonlocal calls
+        calls += 1
+        return next(payloads)
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa, "_http_json", http_json)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    detail = asyncio.run(long_qa._fetch_detail(
+        "https://collector.invalid", "t1"))
+    _, failures = long_qa.audit_trace_detail(detail, "t1")
+
+    assert calls == 3
+    assert any("非 MiniMax" in failure for failure in failures)
+    assert any("未兑现请求级 pin" in failure for failure in failures)
 
 
 def test_card_provenance_is_collected_and_mock_is_rejected():
@@ -73,3 +576,537 @@ def test_card_provenance_is_collected_and_mock_is_rejected():
         '{"_prov":{"provider":"qweather","mode":"mock"}}')
     assert entries == [{"provider": "qweather", "mode": "mock"}]
     assert failures == ["真栈卡片出现 mock provenance: qweather"]
+
+
+def test_required_external_card_without_provenance_is_rejected():
+    entries, failures = long_qa.audit_card_provenance(
+        '{"type":"weather","city":"深圳"}', required=True)
+
+    assert entries == []
+    assert failures == ["外部数据卡缺少真实性章"]
+    assert long_qa.audit_card_provenance("", required=True) == (
+        [], ["外部数据卡缺少真实性章"])
+    assert long_qa.audit_card_provenance("{}", required=True) == (
+        [], ["外部数据卡缺少真实性章"])
+
+
+def test_required_external_card_rejects_incomplete_or_unknown_provenance():
+    entries, failures = long_qa.audit_card_provenance(
+        '{"_prov":{"vendor":"qweather"}}', required=True)
+    assert entries == [{"provider": "qweather", "mode": "unknown"}]
+    assert failures == ["外部数据卡真实性章 mode 非法: unknown"]
+
+    entries, failures = long_qa.audit_card_provenance(
+        '{"_prov":{"mode":"real"}}', required=True)
+    assert entries == [{"provider": "unknown", "mode": "real"}]
+    assert failures == ["外部数据卡真实性章 provider 缺失"]
+
+    _, failures = long_qa.audit_card_provenance(
+        '{"_prov":{"vendor":"qweather","mode":"typo"}}', required=True)
+    assert failures == ["外部数据卡真实性章 mode 非法: typo"]
+
+    _, failures = long_qa.audit_card_provenance(
+        '{"_prov":{"vendor":"qweather","mode":"typo"}}')
+    assert failures == ["外部数据卡真实性章 mode 非法: typo"]
+
+
+def test_stock_source_followup_is_checked_against_the_previous_real_card():
+    prior = [{
+        "case_instance": "INF-STOCK",
+        "local_turn": 1,
+        "card_text": '{"type":"stock_quote","market_time":"2026-08-25 15:00:00",'
+                     '"_prov":{"vendor":"tushare","mode":"real"}}',
+    }]
+    row = {
+        "case_instance": "INF-STOCK",
+        "local_turn": 2,
+        "speech": "数据来源是 Tushare，行情时间是2026-08-25 15:00:00。",
+    }
+
+    assert long_qa.audit_stock_provenance_followup(row, prior, 1) == []
+    row["speech"] = "数据来源和更新时间见卡片。"
+    assert long_qa.audit_stock_provenance_followup(row, prior, 1) == [
+        "股票来源追问没有复述真实 provider：tushare",
+        "股票来源追问没有复述真实行情时间：2026-08-25 15:00:00",
+    ]
+
+
+def test_endpoint_snapshot_is_resolved_once_and_derives_all_cloud_urls(monkeypatch):
+    calls = 0
+    target = SimpleNamespace(name="cloud")
+
+    def resolve(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return target
+
+    monkeypatch.setattr(long_qa, "read_root_env", lambda *_args: {
+        "TAILNET_FQDN": "qa.example.ts.net", "VITE_WS_TOKEN": "secret token",
+    })
+    monkeypatch.setattr(long_qa, "resolve_e2e_target", resolve)
+    monkeypatch.setattr(long_qa, "endpoint_environment", lambda _target: {
+        "WS_URL": "wss://qa.example.ts.net:8443/ws",
+        "COLLECTOR_URL": "https://qa.example.ts.net:8446",
+        "AUDIO_API_URL": "https://qa.example.ts.net:8444",
+    })
+
+    ws_url, collector, audio, name = long_qa._resolve_endpoints()
+
+    assert calls == 1
+    assert ws_url == "wss://qa.example.ts.net:8443/ws?token=secret+token"
+    assert collector == "https://qa.example.ts.net:8446"
+    assert audio == "https://qa.example.ts.net:8444"
+    assert name == "cloud"
+
+
+def test_long_probe_fails_closed_when_target_is_not_cloud(monkeypatch):
+    monkeypatch.setattr(long_qa, "read_root_env", lambda *_args: {})
+    monkeypatch.setattr(long_qa, "resolve_e2e_target", lambda *_args, **_kwargs:
+                        SimpleNamespace(name="local"))
+    monkeypatch.setattr(long_qa, "endpoint_environment", lambda _target: {
+        "WS_URL": "ws://localhost/ws", "COLLECTOR_URL": "http://localhost",
+        "AUDIO_API_URL": "http://localhost:50059",
+    })
+
+    with pytest.raises(SystemExit, match="只允许 target=cloud"):
+        long_qa._resolve_endpoints()
+
+
+def test_minimax_tts_validation_requires_available_capability_and_real_audio():
+    good = {
+        "provider": "minimax", "model": "speech-2.8-turbo",
+        "voice": "female-tianmei", "capability_available": True,
+        "meta": {"type": "meta", "format": "pcm", "sample_rate": 24000},
+        "chunks": 2, "audio_bytes": 1024, "terminal": "done",
+        "pcm": {
+            "sample_rate": 24000, "sample_count": 512,
+            "duration_ms": 500, "peak_abs": 12000,
+            "rms": 3000, "nonzero_ratio": 0.8, "playable": True,
+        },
+    }
+    assert long_qa.validate_minimax_tts(good) == []
+
+    bad = {**good, "provider": "mock", "capability_available": False,
+           "meta": None, "chunks": 0, "audio_bytes": 0,
+           "terminal": "unsupported"}
+    assert long_qa.validate_minimax_tts(bad) == [
+        "TTS 未锁定 minimax",
+        "MiniMax TTS 能力未在云端声明 available",
+        "MiniMax TTS 未返回 PCM meta",
+        "MiniMax TTS 未返回二进制音频帧",
+        "MiniMax TTS 未正常 done（terminal=unsupported）",
+        "MiniMax TTS PCM 不能被 HMI 播放",
+    ]
+
+
+def test_pcm_metrics_prove_playable_non_silent_effective_audio():
+    # 24 kHz mono s16le，正负交替 0.5 秒；这与 HMI PcmPlayer 的输入契约一致。
+    one = (12000).to_bytes(2, "little", signed=True)
+    other = (-12000).to_bytes(2, "little", signed=True)
+    metrics = long_qa.pcm_metrics((one + other) * 6000, sample_rate=24000)
+
+    assert metrics["sample_count"] == 12000
+    assert metrics["duration_ms"] == 500
+    assert metrics["peak_abs"] == 12000
+    assert metrics["nonzero_ratio"] == 1.0
+    assert metrics["playable"] is True
+
+    assert long_qa.pcm_metrics(b"\x00\x00" * 12000, sample_rate=24000)[
+        "playable"] is False
+    assert long_qa.pcm_metrics(b"\x00", sample_rate=24000)["playable"] is False
+
+
+def test_tts_samples_are_bound_to_one_real_business_turn_per_persona():
+    results = [
+        {
+            "persona": name, "session_id": f"s-{name}",
+            "turns": [
+                {"turn": 1, "case": "AUTO-CANCEL", "speech": "已取消",
+                 "trace_id": f"cleanup-{name}", "fails": []},
+                {"turn": 2, "case": "BIZ", "speech": f"{name} 的真实业务回复",
+                 "trace_id": f"biz-{name}", "fails": []},
+            ],
+        }
+        for name in ("vehicle", "family", "merchant", "information", "adversarial")
+    ]
+
+    samples = long_qa.select_tts_business_samples(results)
+
+    assert set(samples) == {result["persona"] for result in results}
+    assert all(sample["case"] == "BIZ" for sample in samples.values())
+    assert all(sample["trace_id"].startswith("biz-") for sample in samples.values())
+
+
+def test_barge_in_validation_requires_cancel_close_and_no_post_cancel_audio():
+    good = {
+        "provider": "minimax", "cancel_sent": True,
+        "audio_before_cancel_bytes": 2048, "post_cancel_audio_bytes": 0,
+        "terminal": "closed_after_cancel", "closed_after_cancel_ms": 80,
+    }
+    assert long_qa.validate_tts_barge_in(good) == []
+
+    bad = {**good, "cancel_sent": False, "post_cancel_audio_bytes": 512,
+           "terminal": "timeout", "closed_after_cancel_ms": None}
+    assert long_qa.validate_tts_barge_in(bad) == [
+        "MiniMax TTS 打断帧未发出",
+        "MiniMax TTS cancel 后仍收到音频残帧",
+        "MiniMax TTS cancel 后连接未及时关闭",
+    ]
+
+
+def test_release_snapshot_requires_healthy_cloud_and_exact_full_sha():
+    sha = "a" * 40
+    good = _real_cloud_status_payload(sha)
+
+    assert long_qa.validate_release_snapshot(good, sha) == []
+    assert long_qa.validate_release_snapshot(good, "b" * 40) == [
+        f"云端 release_sha={sha}，与 expected_sha={'b' * 40} 不一致",
+    ]
+
+    broken = {
+        **_real_cloud_status_payload("a" * 7, healthy=4),
+        "warnings": ["one down"],
+    }
+    failures = long_qa.validate_release_snapshot(broken, sha)
+    assert "云端 status 不是 ok：degraded" in failures
+    assert "云端 release_sha 不是完整 40 位 SHA" in failures
+    assert "云端端点不是 5/5 healthy：4/5" in failures
+    assert "云端 status 带 warning：one down" in failures
+
+
+def test_release_snapshot_uses_unified_status_entry_and_persists_payload():
+    sha = "c" * 40
+    calls = []
+
+    def status_probe():
+        calls.append("status")
+        return 0, _real_cloud_status_payload(sha)
+
+    snapshot = long_qa.cloud_release_snapshot(sha, status_probe=status_probe)
+
+    assert calls == ["status"]
+    assert snapshot["release_sha"] == sha
+    assert snapshot["expected_sha"] == sha
+    assert snapshot["failures"] == []
+
+
+def test_release_continuity_requires_the_same_healthy_sha_at_start_and_end():
+    sha = "d" * 40
+    start = _real_cloud_status_payload(sha)
+    end = _real_cloud_status_payload(sha)
+
+    assert long_qa.validate_release_continuity(start, end, sha) == []
+
+    changed = _real_cloud_status_payload("e" * 40, healthy=4)
+    failures = long_qa.validate_release_continuity(start, changed, sha)
+    assert any(failure.startswith("end: 云端 release_sha=") for failure in failures)
+    assert "end: 云端端点不是 5/5 healthy：4/5" in failures
+
+
+def test_vehicle_restore_plan_covers_every_managed_state_without_debug_backdoor():
+    before = {
+        "hvac_on": True, "front_defogger": False,
+        "rear_defogger": False, "window": "30%", "sunroof": "closed",
+        "rear_view_mirror": "folded", "steering_wheel_heating": False,
+        "volume_muted": True, "warning_light": False, "media": "playing",
+    }
+    after = {
+        **before, "hvac_on": False, "front_defogger": True,
+        "rear_defogger": True, "window": "open", "sunroof": "open",
+        "rear_view_mirror": "unfolded", "steering_wheel_heating": True,
+        "volume_muted": False, "warning_light": True, "media": "paused",
+    }
+
+    commands = long_qa.vehicle_restore_commands(before, after)
+
+    assert commands == [
+        ("hvac_on", "打开空调"),
+        ("front_defogger", "关闭前挡风玻璃除雾"),
+        ("rear_defogger", "关闭后挡风玻璃除雾"),
+        ("window", "把车窗开到30%"),
+        ("sunroof", "关闭天窗"),
+        ("rear_view_mirror", "把后视镜折叠起来"),
+        ("steering_wheel_heating", "关闭方向盘加热"),
+        ("volume_muted", "静音"),
+        ("warning_light", "关闭双闪"),
+        ("media", "播放音乐"),
+    ]
+
+
+def test_missing_vehicle_keys_are_not_invented_from_semantic_defaults():
+    normalized = long_qa.managed_vehicle_state({
+        "hvac_on": False, "window": "closed", "sunroof": "closed",
+        "media": "stopped",
+    })
+
+    assert "rear_view_mirror" not in normalized
+    assert "volume_muted" not in normalized
+    assert "warning_light" not in normalized
+
+
+def test_vehicle_persona_rejects_missing_authoritative_baseline_key(monkeypatch):
+    async def incomplete_state(_collector, **_kwargs):
+        return {"hvac_on": False}
+
+    async def forbidden_connect(_url):
+        raise AssertionError("missing baseline must fail before opening a session")
+
+    monkeypatch.setattr(long_qa, "_settled_vehicle_state", incomplete_state)
+    monkeypatch.setattr(long_qa, "_connect", forbidden_connect)
+    cases = [{
+        "id": "MIRROR",
+        "turns": [{
+            "say": "把后视镜折叠起来",
+            "expect": {"actions_include": ["rear_view_mirror.fold"]},
+        }],
+    }]
+
+    result = asyncio.run(long_qa._run_persona(
+        "vehicle", cases, "wss://example.invalid",
+        "https://collector.invalid", 1,
+    ))
+
+    assert result["aborted"] is True
+    assert result["turn_count"] == 0
+    assert "rear_view_mirror" in result["abort_reason"]
+
+
+def test_settled_vehicle_state_waits_past_old_cache_for_expected_state(monkeypatch):
+    values = iter([
+        {"rear_view_mirror": "unfolded"},
+        {"rear_view_mirror": "folded"},
+        {"rear_view_mirror": "folded"},
+    ])
+    calls = 0
+
+    async def vehicle_state(_collector):
+        nonlocal calls
+        calls += 1
+        return next(values)
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa, "_vehicle_state", vehicle_state)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    result = asyncio.run(long_qa._settled_vehicle_state(
+        "https://collector.invalid",
+        attempts=3,
+        required_keys={"rear_view_mirror"},
+        expected={"rear_view_mirror": "folded"},
+    ))
+
+    assert result["rear_view_mirror"] == "folded"
+    assert calls == 3
+
+
+def test_merchant_persona_proves_draft_zero_state_even_without_preview_card(
+    monkeypatch,
+):
+    sent: list[str] = []
+
+    class _Ws:
+        async def close(self):
+            return None
+
+    async def connect(_url):
+        return _Ws()
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        sent.append(say)
+        if say == "清理本次会话的订单预览":
+            card = json.dumps({
+                "type": "merchant_draft_cleanup",
+                "session_id_digest": "abc123",
+                "drafts_before": 0,
+                "drafts_removed": 0,
+                "drafts_after": 0,
+            }, ensure_ascii=False)
+            return {
+                "speech": "已清理", "actions": [], "need_confirm": False,
+                "operation_id": "", "closed_operation_ids": [],
+                "card_type": "merchant_draft_cleanup", "card_text": card,
+                "is_question": False, "trace_id": trace_id,
+            }
+        return {
+            "speech": "没有卡片的普通商户回复", "actions": [],
+            "need_confirm": False, "operation_id": "",
+            "closed_operation_ids": [], "card_type": "", "card_text": "",
+            "is_question": False, "trace_id": trace_id,
+        }
+
+    async def detail(_collector, trace_id):
+        return {
+            "turn": {"trace_id": trace_id, "status": "ok", "path": "edge",
+                     "intents": "shop.preview_discard"},
+            "spans": [], "llm_calls": [], "logs": [],
+        }
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    monkeypatch.setattr(
+        long_qa, "_settled_vehicle_state", _complete_vehicle_state,
+    )
+    monkeypatch.setattr(long_qa, "recovery_turns", lambda: [])
+    cases = [{"id": "MERCHANT", "turns": [{"say": "看看咖啡", "expect": {}}]}]
+
+    result = asyncio.run(long_qa._run_persona(
+        "merchant", cases, "wss://example.invalid",
+        "https://collector.invalid", 1,
+    ))
+
+    assert sent == ["看看咖啡", "清理本次会话的订单预览"]
+    assert result["merchant_cleanup_proofs"][-1]["drafts_after"] == 0
+    assert result["cleanup_failures"] == []
+
+
+def test_merchant_draft_cleanup_card_proves_exact_session_is_empty():
+    card = json.dumps({
+        "type": "merchant_draft_cleanup", "session_id_digest": "abc123",
+        "drafts_before": 2, "drafts_removed": 2, "drafts_after": 0,
+    }, ensure_ascii=False)
+    proof, failures = long_qa.audit_merchant_draft_cleanup(card)
+
+    assert proof["drafts_before"] == 2
+    assert proof["drafts_removed"] == 2
+    assert proof["drafts_after"] == 0
+    assert failures == []
+
+    _, failures = long_qa.audit_merchant_draft_cleanup(json.dumps({
+        "type": "merchant_draft_cleanup", "session_id_digest": "abc123",
+        "drafts_before": 2,
+        "drafts_removed": 1, "drafts_after": 1,
+    }))
+    assert failures == ["商户临时预览清理后仍有 1 条 active draft"]
+
+
+def test_recovery_contract_has_three_audited_turns():
+    turns = long_qa.recovery_turns()
+
+    assert len(turns) == 3
+    assert turns[0]["expect"] == {
+        "no_actions": True, "need_confirm": False,
+        "speech_not": ["仍有待确认", "还有待确认的操作"],
+    }
+    assert turns[1]["audit"] == {
+        "intent_any": ["info.weather"], "provenance_required": True,
+    }
+    assert turns[2]["expect"] == {"no_actions": True, "need_confirm": False}
+
+
+def test_persona_judge_resolves_case_local_turn_references_not_global_turns():
+    turn = {
+        "expect": {"names_item_from": {"turn": 1, "index": 2}},
+    }
+    prior = [{
+        "turn": 41,
+        "local_turn": 1,
+        "card_items": ["第一项", "第二项"],
+    }]
+    obs = {
+        "speech": "第二项 14.90 元。",
+        "actions": [],
+        "need_confirm": False,
+        "card_type": "",
+        "is_question": False,
+    }
+
+    failures, notes = long_qa.judge_persona_turn(
+        turn, obs, prior, stamp=123456)
+
+    assert failures == []
+    assert notes == []
+
+
+def test_persona_judge_rejects_unexpected_confirmation_on_read_only_turn():
+    turn = {"expect": {"no_actions": True}}
+    obs = {
+        "speech": "准备退款，确认吗？",
+        "actions": [],
+        "need_confirm": True,
+        "card_type": "",
+        "is_question": True,
+    }
+
+    failures, _ = long_qa.judge_persona_turn(
+        turn, obs, [], stamp=123456)
+
+    assert "只读/普通业务轮意外进入待确认" in failures
+
+
+def test_persona_judge_allows_confirmation_when_case_explicitly_requires_it():
+    turn = {"expect": {"need_confirm": True}}
+    obs = {
+        "speech": "这项操作需要确认。",
+        "actions": [],
+        "need_confirm": True,
+        "card_type": "",
+        "is_question": False,
+    }
+
+    failures, _ = long_qa.judge_persona_turn(
+        turn, obs, [], stamp=123456)
+
+    assert failures == []
+
+
+def test_websocket_connect_retries_transient_opening_handshake_failures(monkeypatch):
+    calls = 0
+
+    class _Ws:
+        async def recv(self):
+            raise asyncio.TimeoutError
+
+    async def flaky(_url):
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise TimeoutError("opening handshake")
+        return _Ws()
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa.probe.websockets, "connect", flaky)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    ws = asyncio.run(long_qa._connect("wss://example.invalid", attempts=3))
+
+    assert isinstance(ws, _Ws)
+    assert calls == 3
+
+
+def test_long_turn_injects_the_minimax_request_pin(monkeypatch):
+    captured = {}
+
+    async def one_turn(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"speech": "ok", "actions": []}
+
+    monkeypatch.setattr(long_qa.probe, "_one_turn", one_turn)
+
+    asyncio.run(long_qa._turn(
+        object(), "session", "查天气", trace_id="trace-1"))
+
+    assert captured["meta_overrides"] == {
+        "llm_provider": "minimax", "llm_model": "MiniMax-M3",
+    }
+
+
+def test_state_check_uses_only_the_last_action_for_each_state_key():
+    assert long_qa._state_failures(
+        ["hvac.on", "hvac.off"], {"hvac_on": False}) == []
+    assert long_qa._state_failures(
+        ["hvac.off", "hvac.on"], {"hvac_on": True}) == []
+
+
+def test_state_check_still_reports_a_wrong_final_state():
+    failures = long_qa._state_failures(
+        ["hvac.on", "hvac.off"], {"hvac_on": True})
+
+    assert failures == [
+        "状态未兑现 hvac.off: hvac_on=True, 期望 False",
+    ]

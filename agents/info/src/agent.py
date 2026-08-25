@@ -25,11 +25,17 @@ from .providers.amap_geocoder import build_location_resolver
 from .handlers import (
     WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin, BriefingMixin,
 )
+from runtime.slots import normalize_city_slot
 
 logger = logging.getLogger("agent.info")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 _DESTINATION_DEICTIC_RE = re.compile(r"那边|那儿|那里|目的地|终点")
+
+
+def _city_slot(value) -> str:
+    """收敛弱模型偶发的对象化 city 槽；只消费对象中的 ``city`` 标量。"""
+    return normalize_city_slot(value)
 
 
 def _destination_focus_from_meta(intent, meta: dict | None):
@@ -91,7 +97,7 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
 
     async def _resolve_city(self, intent, ctx, meta: dict | None = None) -> str:
         """从 intent slots 或浏览器定位解析城市名。空串表示无法解析。"""
-        city = (intent.slots.get("city") or "").strip()
+        city = _city_slot(intent.slots.get("city"))
         destination = _destination_focus_from_meta(intent, meta)
         current = destination or current_location_from_meta(meta)
         if destination or (not city and current):
@@ -103,7 +109,7 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
 
     async def _display_city(self, intent, city: str, meta: dict | None = None) -> str:
         """坐标仅用于请求上游；展示时优先用高德反查出的可读地址。"""
-        explicit_city = (intent.slots.get("city") or "").strip()
+        explicit_city = _city_slot(intent.slots.get("city"))
         destination = _destination_focus_from_meta(intent, meta)
         if explicit_city and destination is None:
             return explicit_city

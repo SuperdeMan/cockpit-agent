@@ -139,6 +139,19 @@ class WorkflowSpec:
     input_schema: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class LocalCapabilitySpec:
+    """Bridge-owned deterministic lifecycle operation declared beside MCP tools."""
+    intent: str
+    handler: str
+    required_scopes: list[str]
+    description: str = ""
+    examples: list[str] = field(default_factory=list)
+    slots: list[str] = field(default_factory=list)
+    require_confirm: bool = False
+    expose: bool = True
+
+
 @dataclass
 class ServerSpec:
     id: str
@@ -320,6 +333,50 @@ def normalize_hostname(value: str) -> str:
            for label in labels):
         return ""
     return host
+
+
+def load_local_capabilities(path: str) -> list[LocalCapabilitySpec]:
+    """Load audited bridge-owned capabilities from the same allowlist file.
+
+    These handlers never call an external MCP server, but they still need one
+    declaration source shared by runtime registration, offline catalog tests
+    and capability-integrity inventory.
+    """
+    import yaml
+    with open(path, encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    rows = data.get("local_capabilities") or []
+    if not isinstance(rows, list):
+        raise ValueError("local_capabilities 必须是列表")
+    out: list[LocalCapabilitySpec] = []
+    seen: set[str] = set()
+    for index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise ValueError(f"local_capabilities[{index}] 必须是对象")
+        intent = str(row.get("intent") or "").strip()
+        handler = str(row.get("handler") or "").strip()
+        if not re.fullmatch(r"[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+", intent):
+            raise ValueError(f"local_capabilities[{index}].intent 无效")
+        if intent in seen:
+            raise ValueError(f"local capability intent 重复={intent}")
+        if handler != "session_preview_discard":
+            raise ValueError(f"local capability handler 未受审={handler}")
+        scopes = [str(scope).strip() for scope in row.get("required_scopes") or []]
+        if scopes != ["merchant.write"]:
+            raise ValueError(
+                "session_preview_discard required_scopes 必须逐字为 merchant.write")
+        examples = [str(value).strip() for value in row.get("examples") or []
+                    if str(value).strip()]
+        slots = [str(value).strip() for value in row.get("slots") or []
+                 if str(value).strip()]
+        out.append(LocalCapabilitySpec(
+            intent=intent, handler=handler, required_scopes=scopes,
+            description=str(row.get("description") or "").strip(),
+            examples=examples, slots=slots,
+            require_confirm=bool(row.get("require_confirm", False)),
+            expose=bool(row.get("expose", True))))
+        seen.add(intent)
+    return out
 
 
 def load_servers(path: str) -> list:

@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.37（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-08-24（v1.37 定稿归档——尾部方差闭环：确定事实不经过模型转述）
+> 版本：v1.38（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-08-25（v1.38 定稿归档——验收证据本身也必须事务化、可闭环）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -866,6 +866,47 @@ LLM 仍不能直连车控。
 退役仍走 §5.1 的全命中语料双臂与跨 provider 交集，不把本次 MiniMax 证据外推成所有
 模型永久需要这条规则。
 
+### 5.2.12 验收证据也必须收口到同一事务（v1.38，MiniMax QA 闭环）
+
+系统行为修到尾部后，最危险的假绿不再来自“完全没测”，而来自**证据只覆盖事务的一半**：
+起跑时 release 正确，不代表 250+ 轮后仍是同一 SHA；collector 先到 turn、后到 agent/LLM，
+不代表第一份非空 JSON 就是终态；车态键缺失时补一个语义默认值，不代表知道真实前态；页面
+写了 MiniMax 设置，不代表服务端实际按请求级 pin 执行。
+
+#### 一、相邻上下文必须有同源时序
+
+`Focus.last_intent` 不再与“整个 history 里最近一个 action”抢同一格。云侧焦点记录
+`origin_exchange_id`；现代历史只消费最新 exchange 的动作。端侧本地轮用一次性、入口防伪的
+`previous_local_exchange + actions` 桥接 memory 异步落库窗口，并以 TTL/LRU 限界。于是旧车控
+不能覆盖更新的股票/天气焦点，端侧电量查询也会切断信息追问；但紧邻本地 `sunroof.open`
+仍能让“关掉”确定性续接。
+
+#### 二、真栈报告必须绑定完整运行区间
+
+长会话与 HMI C14 都在开始和结束调用统一 `dev_stack status`，同时要求 `target=cloud`、
+exact 40 位 release SHA、5/5 healthy；任一端漂移则整份报告失效。每个业务帧显式携带
+`llm_provider=minimax / llm_model=MiniMax-M3`，collector 还必须证明实际 LLM call
+`pinned=true`、无 fallback。HMI 再向下证明 MiniMax TTS start/text/finish、PCM 非静音、
+AudioBuffer 起播/自然结束和 barge-in cancel + source.stop，不能以“页面出现回复”替代。
+
+#### 三、分布式观测要等连续稳定，不能抢第一份快照
+
+Edge 的 local intent 与 cloud planning intent 按 trace 无序合并；agent 调用与 engine-only
+lifecycle 都有明确 owner span。探针只接受 exact trace、终态 status、合法 route、非空 intent
+及 agent/lifecycle owner，并对 turn/spans/llm_calls 指纹做两次连续稳定读取。这样晚到的
+非 MiniMax、unpinned 或 fallback 调用不会因为第一拍 `llm_calls=[]` 被漏掉。
+
+#### 四、测试产生的副作用必须可证明归零
+
+所有 persona 开始前取得 VAL 发布的完整权威车态，不用默认值冒充；异常业务 session 立即关闭，
+恢复动作走新的 cleanup session，终态按基线目标连续回读。商户预览即使 UI 卡丢失也无条件执行
+owner/session 原子清理并要求 after=0；提醒、导航与挂起操作同样以服务端 closed id/真实卡 id
+收口。**停止复用不确定 session 与清理已知副作用是两件事，前者不能成为放弃后者的理由。**
+
+这套原则也约束验收工具自身：隐私 inventory 可以在 `os.walk(topdown=True)` 进入生成目录前
+剪枝，但 source pattern 大小写不敏感、排除目录严格精确，通用 `build/dist/coverage` 只能在
+已知生成前缀剪，不能造一个未来可藏真实 source 的全局命名空间。
+
 ---
 
 ## 6. 核心数据流与时序（典型场景）
@@ -1572,6 +1613,7 @@ agents/<name>/
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.38 | 2026-08-25 | 内容性合入（MiniMax-only QA 闭环）：新增 **§5.2.12 验收证据也必须收口到同一事务**。焦点用 exchange 同源时序解决旧 action/新业务域互相覆盖与 memory 落库竞态；长会话/C14 用 start+end exact release、逐请求 MiniMax pin、连续稳定 trace/intent/agent/LLM 与浏览器 PCM 证据消灭半截快照假绿；异常业务 session 与独立 cleanup session 分离，车态/草稿/提醒/导航按权威终态归零；隐私 inventory 以可剪枝 walker 消除生成目录税，同时保持大小写 source 覆盖与精确排除，禁止建立全局隐藏命名空间。契约 `conventions.md` §8/§9.9/§9.26，运行手册 `test/hmi_cdp/README.md`。 |
 | v1.37 | 2026-08-24 | 内容性合入（MiniMax-only 探索式 QA 复验）：新增 **§5.2.11 尾部方差闭环：确定事实不经过模型转述**。重复采样抓到四类同源残余：危险门锁原话极性被反向 intent 覆盖、同名官方商品把序数身份压成展示名、同一事项双时刻被随机拆成一步/两步、执行历史里的后视镜焦点被转成别的对象。落地判据：① 纠偏只收回确定事实的分类权，普通 Plan 仍完整过 capability/Executor/Runtime Policy/VAL/二次确认；② `*.menu` 才下发有界商品 id，保留槽先剥后由服务端候选重铸，并在当前门店新鲜菜单内二次校验；③ 同一用户提交用 `reminder.create_batch` + `add_many` 原子整组写，话术与落库数量不能分叉；④ route hint 只声明 Agent 自己的窄结构，必须同批有真实重复采样、反向误伤集与命中归因，宽泛 paraphrase 仍归 exemplar/LLM，退役仍须全命中双臂与跨 provider 交集。契约 `conventions.md` §2 / §9.28 |
 | v1.0 | 2026-05-29 | 初版设计稿（待评审）：整体架构、组件职责、契约、数据流、安全、选型、部署、分阶段路线 |
 | v1.1 | 2026-06-15 | 定为当前架构基线（Phase 1 实施基线） |

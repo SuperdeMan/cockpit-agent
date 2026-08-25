@@ -27,7 +27,7 @@ from agents.mcp_bridge.src.order_ref import (
     HISTORY, NEUTRAL, SESSION, is_deictic_placeholder, reference_scope,
 )
 
-from .test_bridge import FakeLedger, _agent, _ledger_task
+from .test_bridge import FakeClient, FakeLedger, _agent, _ledger_task
 
 
 # ── A. 范围判据：确定性纯函数，零 LLM ────────────────────────────────
@@ -178,7 +178,8 @@ async def test_this_session_has_no_order_answers_honestly_without_calling_mercha
     try:
         res = await run_handle(a, "shop.order_status",
                                raw_text="我刚才那笔订单是什么",
-                               ctx=make_context(session_id="s1"))
+                               ctx=make_context(session_id="s1"),
+                               meta={"granted_scopes": "merchant.read"})
         assert fake.calls == [], "本会话没有订单，不该出站查商户"
         assert "OLD" not in (res.speech or ""), "历史单泄漏进了话术"
         assert any(w in res.speech for w in ("这次", "本次", "没有")), res.speech
@@ -204,10 +205,138 @@ async def test_history_order_is_labelled_with_when_it_was_placed():
     try:
         res = await run_handle(a, "shop.order_status",
                                raw_text="查一下我的订单",
-                               ctx=make_context(session_id="s1"))
+                               ctx=make_context(session_id="s1"),
+                               meta={"granted_scopes": "merchant.read"})
         assert fake.calls, "泛指查询仍应查商户"
         assert _STALE_DATE_RE.search(res.speech or ""), res.speech
         assert "不是本次对话" in (res.speech or ""), res.speech
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_generic_history_query_selects_real_merchant_from_ledger():
+    """泛指查历史单不能固定打 demo；账本已经持有真实商户归属。"""
+    from agents.mcp_bridge.src.admission import load_servers
+    from agents.mcp_bridge.src.agent import _Binding
+
+    a, demo = await _agent()
+    official = FakeClient(reply={
+        "ok": True,
+        "text": "provider documentation",
+        "data": {"success": True, "code": 200, "data": {
+            "orderId": "1030837030000753499156095268",
+            "orderStatus": "订单已取消", "status": "60",
+            "realTotalAmount": "26.50", "storeName": "测试餐厅",
+        }},
+    })
+    server = next(s for s in load_servers(a._servers_path)
+                  if s.id == "mcdonalds")
+    tool = next(t for t in server.tools if t.intent == "mcd.order_status")
+    a._bindings["mcd.order_status"] = _Binding(
+        server, official, tool, {"required": ["orderId"]})
+    task = _ledger_task(
+        order_id="1030837030000753499156095268", server="mcdonalds",
+        session_id="s-old")
+    task.created_at = 1786752000.0
+    a.ledger = FakeLedger(history=[task])
+    try:
+        res = await run_handle(
+            a, "shop.order_status", raw_text="查一下我之前的订单",
+            ctx=make_context(session_id="s1"),
+            meta={"granted_scopes": "merchant.read"})
+
+        assert demo.calls == [], "真实订单归属已知时不得调用演示商户"
+        assert official.calls and official.calls[0][0] == tool.name
+        assert res.ui_card["type"] == "mcp_order"
+        assert res.ui_card["_prov"]["vendor"] == "mcdonalds"
+        assert res.ui_card["_prov"]["mode"] == "real"
+        assert "不是本次对话" in res.speech
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_generic_history_query_never_falls_back_to_demo_for_real_owner():
+    """真实商户 binding 缺席时诚实说明，不能拿 demo 卡伪装真栈结果。"""
+    a, demo = await _agent()
+    a.ledger = FakeLedger(history=[
+        _ledger_task(order_id="REAL-1", server="mcdonalds", session_id="s-old"),
+    ])
+    try:
+        res = await run_handle(
+            a, "shop.order_status", raw_text="查一下我之前的订单",
+            ctx=make_context(session_id="s1"),
+            meta={"granted_scopes": "merchant.read"})
+
+        assert demo.calls == []
+        assert res.ui_card is None
+        assert all(word in res.speech for word in ("演示", "真实", "订单"))
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_real_history_blocks_coexisting_demo_fallback():
+    """真实 owner 与 demo 共存时，真实通道缺席不能被 mock 卡遮住。"""
+    a, demo = await _agent()
+    a.ledger = FakeLedger(history=[
+        _ledger_task(order_id="REAL-1", server="mcdonalds", session_id="s-old"),
+        _ledger_task(order_id="DEMO-1", server="demo-coffee", session_id="s-old"),
+    ])
+    try:
+        res = await run_handle(
+            a, "shop.order_status", raw_text="查一下我之前的订单",
+            ctx=make_context(session_id="s1"),
+            meta={"granted_scopes": "merchant.read"})
+
+        assert demo.calls == []
+        assert res.ui_card is None
+        assert "真实查询通道" in res.speech
+        assert "不会用演示商户结果代替" in res.speech
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [
+    [],
+    [_ledger_task(order_id="REAL-1", server="mcdonalds", session_id="s-old")],
+])
+async def test_generic_order_status_checks_scope_before_reading_ledger(history):
+    """无授权时，有单/无单必须逐字同拒绝，且账本一次都不能读。"""
+    class NoReadLedger(FakeLedger):
+        async def recent(self, *args, **kwargs):
+            raise AssertionError("授权闸之前读取了订单账本")
+
+    a, demo = await _agent()
+    a.ledger = NoReadLedger(history=history)
+    try:
+        res = await run_handle(
+            a, "shop.order_status", raw_text="查一下我之前的订单",
+            ctx=make_context(session_id="s1"), meta={})
+
+        assert res.speech == "当前账号缺少商户授权，不能执行这个操作。"
+        assert demo.calls == []
+    finally:
+        await a.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_unknown_explicit_order_id_never_falls_back_to_demo():
+    """外部真实单号不在本地账本时，不能生成一张演示订单卡。"""
+    a, demo = await _agent()
+    a.ledger = FakeLedger(history=[])
+    try:
+        res = await run_handle(
+            a, "shop.order_status",
+            raw_text="订单号 1030837030000753499156095268 查一下",
+            ctx=make_context(session_id="s1"),
+            meta={"granted_scopes": "merchant.read"})
+
+        assert demo.calls == []
+        assert res.ui_card is None
+        assert "不会用演示结果代替" in res.speech
     finally:
         await a.shutdown()
 
@@ -223,7 +352,8 @@ async def test_this_session_order_is_not_labelled_as_history():
     try:
         res = await run_handle(a, "shop.order_status",
                                raw_text="我刚才那笔订单是什么",
-                               ctx=make_context(session_id="s1"))
+                               ctx=make_context(session_id="s1"),
+                               meta={"granted_scopes": "merchant.read"})
         assert not _STALE_DATE_RE.search(res.speech or ""), res.speech
         assert "不是本次对话" not in (res.speech or ""), res.speech
     finally:
@@ -392,8 +522,9 @@ async def test_explicit_order_number_still_wins_over_session_scoping():
     try:
         await run_handle(
             a, "shop.order_status",
-            raw_text="我刚才那笔订单 1030837030000753499156095268 查一下",
-            ctx=make_context(session_id="s1"))
+            raw_text="查演示商户订单 1030837030000753499156095268",
+            ctx=make_context(session_id="s1"),
+            meta={"granted_scopes": "merchant.read"})
         assert fake.calls, "显式订单号被范围判据挡掉了"
         assert fake.calls[0][1]["order_id"] == "1030837030000753499156095268"
     finally:

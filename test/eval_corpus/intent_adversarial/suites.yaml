@@ -106,12 +106,16 @@ schema_version: 1
 # 收敛成 active intent `reminder.create_batch`。覆盖矩阵随能力面机械新增正例 2、硬负例 2
 # 与 relation 对照 1；这 5 条全部标记 `seen_regression`，因为本次修复用了 manifest
 # route_hint，不能伪装成未见迁移。旧尺子一条没删。
+# 2026-08-25 放到 624：MiniMax QA 终态清理新增 active intent
+# `shop.preview_discard`。它只丢弃认证用户当前会话的临时商户预览，真实订单取消与历史
+# 查单必须严格让路；覆盖矩阵机械新增正例 2、硬负例 2、relation 对照 1。五条均为
+# `seen_regression`（能力声明与 route_hint 已参与修复），旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 619
+    max_cases: 624
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

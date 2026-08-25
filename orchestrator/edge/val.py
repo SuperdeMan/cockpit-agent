@@ -40,10 +40,13 @@ class VAL:
             "seat_heating": False, "seat_ventilation": False,
             # 灯光
             "ambient_light": False, "headlight": False,
+            "warning_light": False,
             # 媒体
-            "media": "stopped", "volume": 30,
+            "media": "stopped", "volume": 30, "volume_muted": False,
             # 其他车身
-            "wiper": False, "fragrance": False, "steering_wheel_heating": False,
+            "wiper": False, "fragrance": False,
+            "rear_view_mirror": "unfolded",
+            "steering_wheel_heating": False,
             # ws8: 安全相关
             "child_lock": False,
             # 动态量（在「车辆动态」面板呈现）

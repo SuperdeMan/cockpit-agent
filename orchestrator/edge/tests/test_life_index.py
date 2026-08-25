@@ -168,3 +168,7 @@ class TestStockTermTiers:
         漏接只是慢一点。同「宁可漏接上云」那条纪律。"""
         assert _object("查一下幸福指数") is None
         assert _object("基尼指数是多少") is None
+
+    def test_meta_correction_does_not_execute_either_index_domain(self):
+        """纠正系统分类不是在请求生活指数，也不是在请求证券指数。"""
+        assert _object("不要把生活指数当成股票指数") not in {"life_index", "stock"}

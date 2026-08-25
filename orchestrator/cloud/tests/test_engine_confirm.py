@@ -415,6 +415,124 @@ def test_slot_pending_cancel_phrase_clears():
     assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
 
 
+def test_reminder_cancel_ordinal_resumes_business_selection_not_pending_cancel():
+    """“取消第一条”是 reminder.cancel 的 index 答案，不是撤销这次澄清。"""
+    from orchestrator.cloud.models import Plan, SessionState, Step
+
+    engine, spy, session = _make_engine()
+    plan = Plan(
+        steps=[Step(
+            id="s1", agent_id="reminder", endpoint="stub:reminder",
+            intent="reminder.cancel", slots={"title": "喝水"},
+        )],
+        raw_text="取消喝水提醒", goal="取消喝水提醒",
+    )
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-reminder",
+        pending_step_id="s1", missing_slots=["index"], completed_results={},
+        pending_plan=engine._serialize_plan(plan),
+    )))
+
+    events = _run(engine, _req("取消第一条"))
+
+    assert spy.count("reminder.cancel") == 1
+    assert events[-1]["speech"] != "好的，已为您取消。"
+
+
+def test_batch_reminder_cleanup_crosses_agent_clarify_and_engine_resume():
+    """SL1 cleanup: real batch title -> clarify -> engine ordinal -> final item."""
+    from agents._sdk.base import Context
+    from agents._sdk.testing import run_handle
+    from agents.reminder.src.agent import ReminderAgent
+    from agents.reminder.src.store import ReminderStore
+    from orchestrator.cloud.models import Plan, SessionState, Step
+
+    class _Memory:
+        def __init__(self):
+            self.values: dict[str, str] = {}
+
+        async def upsert_profile(self, _uid, key, value, **_kwargs):
+            self.values[f"profile.{key}"] = value
+            return True
+
+        async def get_context(self, _sid, _uid, _vid, scopes, **_kwargs):
+            return {scope: self.values[scope] for scope in scopes
+                    if scope in self.values}
+
+        async def get_session(self, *_args, **_kwargs):
+            return []
+
+        async def recall(self, *_args, **_kwargs):
+            return []
+
+    memory = _Memory()
+    agent_ctx = Context("sess-1", "u1", "v1", memory)
+    agent = ReminderAgent()
+    agent.store = ReminderStore(dsn="")
+    asyncio.run(agent.store.init())
+    raw = "明天下午四点提醒我参加代号ZX9的评审会，三点半再提醒我一次"
+
+    created = asyncio.run(run_handle(
+        agent, "reminder.create_batch", raw_text=raw, ctx=agent_ctx))
+    assert created.ui_card["type"] == "card_group"
+    assert len(created.ui_card["items"]) == 2
+
+    cancel_text = "取消参加代号ZX9的评审会"
+    clarify = asyncio.run(run_handle(
+        agent, "reminder.cancel", raw_text=cancel_text, ctx=agent_ctx))
+    assert clarify.status == "need_slot"
+    assert clarify.missing_slots == ["index"]
+    assert len(clarify.ui_card["items"]) == 2
+
+    class _ReminderSpy(_Spy):
+        async def call_agent(self, endpoint, intent, slots, ctx, meta):
+            self.calls.append((intent, dict(meta or {})))
+            result = await run_handle(
+                agent, intent, slots=slots, raw_text=ctx.raw_text,
+                ctx=agent_ctx, meta=meta)
+            status = {
+                "ok": 0, "need_confirm": 1, "need_slot": 2,
+                "failed": 3, "rejected": 4,
+            }[result.status]
+            return SimpleNamespace(
+                status=status, speech=result.speech, follow_up=result.follow_up,
+                actions=[], ui_card=result.ui_card, data=result.data or {},
+                missing_slots=result.missing_slots,
+            )
+
+    spy = _ReminderSpy()
+    session = SessionStore(redis_url="")
+    engine = PlannerEngine(
+        clients=spy,
+        planner=PlanBuilder(llm_fn=spy.llm, registry_fn=spy.resolve),
+        executor=DagExecutor(call_agent_fn=spy.call_agent),
+        aggregator=Aggregator(llm_fn=spy.llm),
+        session=session,
+    )
+    plan = Plan(
+        steps=[Step(
+            id="s1", agent_id="reminder", endpoint="stub:reminder",
+            intent="reminder.cancel", slots={"title": "参加代号ZX9的评审会"},
+        )],
+        raw_text=cancel_text, goal="取消重复提醒",
+    )
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-reminder",
+        pending_step_id="s1", missing_slots=clarify.missing_slots,
+        completed_results={}, pending_plan=engine._serialize_plan(plan),
+    )))
+
+    _run(engine, _req("取消第一条"))
+    remaining, _ = asyncio.run(agent.store.list_split("u1"))
+    assert len(remaining) == 1
+
+    final_cancel = asyncio.run(run_handle(
+        agent, "reminder.cancel", raw_text=cancel_text, ctx=agent_ctx))
+    assert final_cancel.status == "ok" and "取消" in final_cancel.speech
+    remaining, _ = asyncio.run(agent.store.list_split("u1"))
+    assert remaining == []
+
+
 def test_slot_pending_question_not_eaten_as_answer():
     """B5-1 黑洞修复②：疑问/回忆式（「我刚才让你提醒我什么来着」）不是槽位答案——
     判为换话题（挂起保留），不再拿去当 time_text 反复追问。"""
@@ -487,6 +605,39 @@ def test_slot_pending_conditional_reminder_is_topic_change():
     assert PlannerEngine._is_topic_change("到公司之前提醒我交周报") is True
     assert PlannerEngine._is_topic_change("电量低于20%时叫我充电") is True
     assert PlannerEngine._is_topic_change("到公司") is False
+
+
+def test_slot_pending_explanation_question_is_not_consumed_as_destination():
+    pending = SimpleNamespace(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["destination"],
+        pending_plan={"steps": [{"id": "s1", "intent": "charging.plan"}]},
+    )
+
+    assert PlannerEngine._is_topic_change("第一站为什么选它", pending) is True
+
+
+def test_order_id_slot_only_accepts_an_explicit_order_reference():
+    """退款/取消缺订单号时，任意新话题绝不能被当成写操作参数。"""
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["order_id"],
+        owner_user_id="u1", operation_id="op-order",
+    )
+
+    assert PlannerEngine._is_topic_change("附近的咖啡店", pending) is True
+    assert PlannerEngine._is_topic_change("上次麦当劳那单", pending) is True
+    assert PlannerEngine._is_topic_change("1030837030000753499156095268", pending) is False
+    assert PlannerEngine._is_topic_change(
+        "订单号是 1030837030000753499156095268", pending) is False
+
+
+def test_order_id_slot_answer_strips_the_spoken_label():
+    """追问恢复后，商户参数必须只有 ID，不能把“订单号是”一起下发。"""
+    oid = "1030837030000753499156095268"
+    assert PlannerEngine._slot_answer("order_id", f"订单号是 {oid}") == oid
+    assert PlannerEngine._slot_answer("order_id", oid) == oid
+    assert PlannerEngine._slot_answer("destination", "订单号是深圳湾") == "订单号是深圳湾"
 
 
 def test_pending_plan_preserves_skills_across_suspend_restore():

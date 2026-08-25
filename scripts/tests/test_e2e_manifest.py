@@ -1081,15 +1081,7 @@ def test_nightly_memory_capability_must_be_nonnegative_and_not_exceed_case(
 
 @pytest.mark.parametrize(
     "excluded_dir",
-    [
-        ".git",
-        ".worktrees",
-        "gen",
-        "__pycache__",
-        ".pytest_cache",
-        ".venv",
-        "venv",
-    ],
+    sorted(_contract()._PRIVACY_EXCLUDED_DIRS),
 )
 def test_privacy_walker_ignores_duplicate_candidates_in_excluded_directories(
     tmp_path: Path,
@@ -1112,6 +1104,78 @@ def test_privacy_walker_ignores_duplicate_candidates_in_excluded_directories(
     assert [
         item.source for item in candidates if item.id == "fixture_item"
     ] == ["feature/store.py"]
+
+
+def test_privacy_walker_matches_source_patterns_case_insensitively(tmp_path: Path):
+    files = (
+        ("Feature/Store.py", "**/store.py"),
+        ("Feature/SCHEMA.SQL", "**/*.sql"),
+        ("Feature/Migrations/001.PY", "**/migrations/**/*.py"),
+    )
+    for relative, _pattern in files:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# source", encoding="utf-8")
+
+    for relative, pattern in files:
+        found = _contract()._controlled_privacy_source_paths(
+            tmp_path, (pattern,))
+        assert [path.relative_to(tmp_path).as_posix() for path in found] == [relative]
+
+
+def test_generic_build_dist_and_coverage_names_are_not_global_blind_spots(
+    tmp_path: Path,
+):
+    relative_paths = (
+        "agents/foo/build/store.py",
+        "pkg/dist/db.py",
+        "agents/coverage/registry.sql",
+    )
+    for relative in relative_paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# tracked source", encoding="utf-8")
+
+    found = _contract()._controlled_privacy_source_paths(
+        tmp_path, ("**/store.py", "**/db.py", "**/*.sql"))
+
+    assert [path.relative_to(tmp_path).as_posix() for path in found] == sorted(
+        relative_paths)
+
+
+def test_case_variants_of_excluded_names_are_not_hidden_namespaces(tmp_path: Path):
+    relative_paths = (
+        "agents/Gen/store.py",
+        "pkg/Worktrees/db.py",
+        "src/Node_Modules/store.py",
+    )
+    for relative in relative_paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# source", encoding="utf-8")
+
+    found = _contract()._controlled_privacy_source_paths(
+        tmp_path, ("**/store.py", "**/db.py"))
+
+    assert [path.relative_to(tmp_path).as_posix() for path in found] == sorted(
+        relative_paths)
+
+
+def test_known_generated_output_prefixes_are_pruned(tmp_path: Path):
+    paths = (
+        "mobile/android/app/build/store.py",
+        "hmi/dist/db.py",
+        "coverage/schema.sql",
+    )
+    for relative in paths:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# generated", encoding="utf-8")
+
+    found = _contract()._controlled_privacy_source_paths(
+        tmp_path, ("**/store.py", "**/db.py", "**/*.sql"))
+
+    assert found == ()
 
 
 def test_privacy_walker_rejects_source_symlink_escaping_repository(

@@ -74,10 +74,17 @@ def _synth_admitted_caps(manifest, agent_dir: Path) -> None:
     try:
         sys.path.insert(0, str(agent_dir / "src"))
         from admission import load_servers  # type: ignore
+        try:
+            from admission import load_local_capabilities  # type: ignore
+        except ImportError:
+            load_local_capabilities = None
         from cockpit.agent.v1 import agent_pb2
         loaded = {spec.id: spec for spec in load_servers(str(servers))}
+        local_loaded = (load_local_capabilities(str(servers))
+                        if load_local_capabilities is not None else None)
     except Exception:
         loaded = {}
+        local_loaded = None
     try:
         from cockpit.agent.v1 import agent_pb2
 
@@ -129,6 +136,22 @@ def _synth_admitted_caps(manifest, agent_dir: Path) -> None:
                     require_confirm=bool(value("require_confirm", False)
                                          or value("write", False))))
                 seen.add(intent)
+        local_rows = (local_loaded if local_loaded is not None
+                      else raw.get("local_capabilities") or [])
+        for row in local_rows:
+            value = (lambda key, default=None:
+                     row.get(key, default) if isinstance(row, dict)
+                     else getattr(row, key, default))
+            intent = str(value("intent", "") or "")
+            if not intent or intent in seen or not bool(value("expose", True)):
+                continue
+            caps.append(agent_pb2.Capability(
+                intent=intent,
+                description=str(value("description", "") or ""),
+                slots=list(value("slots", []) or []),
+                examples=list(value("examples", []) or []),
+                require_confirm=bool(value("require_confirm", False))))
+            seen.add(intent)
         manifest.capabilities.extend(caps)
     except Exception:
         pass          # 合成失败不该带崩评测：退化成「该 Agent 无能力」，与今天行为一致

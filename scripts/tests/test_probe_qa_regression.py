@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 
+import pytest
+
 from scripts import probe_qa_regression as probe
 
 
@@ -103,6 +105,27 @@ def test_one_turn_can_pin_a_trace_id_for_collector_reconciliation(monkeypatch):
 
     assert socket.sent[0]["meta"]["trace_id"] == "qa-trace-001"
     assert observed["trace_id"] == "qa-trace-001"
+
+
+def test_one_turn_allows_only_explicit_llm_pin_meta(monkeypatch):
+    monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
+    monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.1)
+    monkeypatch.setattr(probe, "TIMEOUT", 0.1)
+    socket = _Socket([{"type": "final", "speech": "完成", "actions": []}])
+
+    asyncio.run(probe._one_turn(
+        socket, "session-pin", "查天气",
+        meta_overrides={
+            "llm_provider": "minimax", "llm_model": "MiniMax-M3",
+        }))
+
+    assert socket.sent[0]["meta"]["llm_provider"] == "minimax"
+    assert socket.sent[0]["meta"]["llm_model"] == "MiniMax-M3"
+
+    with pytest.raises(ValueError, match="meta override"):
+        asyncio.run(probe._one_turn(
+            _Socket([]), "session-pin", "查天气",
+            meta_overrides={"merchant.write": "yes"}))
 
 
 def test_merge_finals_only_fills_empty_primary_semantics():

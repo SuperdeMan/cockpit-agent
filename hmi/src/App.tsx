@@ -22,7 +22,6 @@ import {
   stopTTS,
   setTtsLifecycle,
   setObsSession,
-  syncLlmProvider,
 } from './audio'
 import { wakeKeywordsFor, DEFAULT_SETTINGS, type Msg, type Settings } from './types'
 import { poiSelectionIndex, ordinalSelectIn, isRefreshRequest } from './nav.mjs'
@@ -183,13 +182,6 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       watchdogs.clear()
       stopTTS()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  // ─── 多 LLM 源：启动时把本地存的「大脑」偏好重放回网关（网关重启回落 env 默认后恢复用户选择）───
-  useEffect(() => {
-    const s = settingsRef.current
-    if (s.llmProvider) syncLlmProvider(AUDIO_API, s.llmProvider, s.llmModel)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

@@ -91,7 +91,11 @@ def declaration_sources() -> dict[str, set[str]]:
 
     synthesized: set[str] = set()
     for path in sorted(glob.glob(str(_ROOT / "agents" / "*" / "servers.yaml"))):
-        for server in _yaml(Path(path)).get("servers") or []:
+        document = _yaml(Path(path))
+        for local in document.get("local_capabilities") or []:
+            if (local or {}).get("intent"):
+                synthesized.add(str(local["intent"]))
+        for server in document.get("servers") or []:
             for tool in (server or {}).get("tools") or []:
                 if (tool or {}).get("intent"):
                     synthesized.add(str(tool["intent"]))

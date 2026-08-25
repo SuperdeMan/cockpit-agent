@@ -199,6 +199,41 @@ _REROUTE_CHANGE_ROUTE_RE = re.compile(r"换条|换一条|换个路线|别走这|
 # 改目的地：「改去COCO Park」「目的地换成宝安机场」。
 _REROUTE_DEST_RE = re.compile(
     r"(?:目的地)?(?:改去|改到|改成|换成)去?\s*([^，。,、]{2,20})")
+# 当前路线已经以接人地点为终点时，「接孩子后去万象城」不是加一个途经点：
+# 用户明确给出了先后关系，原终点应降为途经点，新地点升为终点。
+_REROUTE_AFTER_PICKUP_RE = re.compile(
+    r"(?:后|之后|以后|然后|再)\s*(?:再)?\s*(?:去|到|前往)\s*"
+    r"([^，。,、。！？!?]{2,20})")
+
+# 路线顺序提升只能由**明确正向**接送句触发。旧实现先找任意「接孩子」，再维护一个
+# 无限增长的否定词排除表；“没打算去接”“不是去接”每换一种说法就会漏一次。这里反过来
+# 做闭集：接送动词前的当前分句只能由正向主语/情态/方向词组成；任何未知极性都不提升。
+# 「不得不」是语义正向的双重否定，作为完整情态词列入正向语法。
+_POSITIVE_PICKUP_PREFIX_RE = re.compile(
+    r"^(?:(?:我们?|请|麻烦|帮我|带我|先|再|还|然后|接着|现在|待会儿|等会儿|"
+    r"必须|不得不|非得|得|要|需要|想|打算|准备|计划|决定|继续|照常|还是|可以|会|"
+    r"去|过去|前往))*$")
+
+
+def _explicit_positive_pickup_person(raw_text: str) -> str:
+    """Return the pickup person only when the local pickup clause is positive."""
+    text = str(raw_text or "")
+    match = _PICKUP_RE.search(text)
+    if not match:
+        return ""
+    prefix = re.split(r"[，,。；;！？!?]", text[:match.start()])[-1]
+    prefix = re.sub(r"\s+", "", prefix)
+    return match.group(1) if _POSITIVE_PICKUP_PREFIX_RE.fullmatch(prefix) else ""
+
+
+def _route_preference_only(text: str) -> bool:
+    """raw ``换成…`` 捕获的是路线策略时，不把它二次解释成目的地。"""
+    value = (text or "").strip()
+    if not value or not _route_strategy(value)[0]:
+        return False
+    return any(mark in value for mark in (
+        "路线", "避堵", "拥堵", "高速", "收费", "快速路", "风景好的路",
+    ))
 
 
 def _rating_policy(value, raw_text: str) -> tuple[float, bool]:
@@ -1488,11 +1523,21 @@ class NavigationAgent(BaseAgent):
 
         # ① 改目的地（slot 优先，raw 兜底）：新目的地走 _find_destination 全套接地
         #    （R1 强校验/类目锚词/行政级判定全部生效），途经点保留。
-        new_dest = (intent.slots.get("destination") or "").strip()
+        mentioned_pickup_word = _pickup_person(raw_text)
+        after_pickup = _REROUTE_AFTER_PICKUP_RE.search(raw_text) \
+            if mentioned_pickup_word else None
+        pickup_word = _explicit_positive_pickup_person(raw_text)
+        promote_current_to_waypoint = bool(after_pickup and pickup_word)
+        # 原话里的「接人后去 X」比模型填到 destination/add_waypoint 哪一格更权威。
+        # MiniMax 真栈曾把 X 填进 add_waypoint，导致路线顺序被完整反转。
+        new_dest = after_pickup.group(1).strip(" 。，,的") if after_pickup \
+            else (intent.slots.get("destination") or "").strip()
         if not new_dest:
             m = _REROUTE_DEST_RE.search(raw_text)
             if m:
                 new_dest = m.group(1).strip(" 。，,的")
+                if not raw_text.startswith("目的地") and _route_preference_only(new_dest):
+                    new_dest = ""
         if new_dest and not self._dest_matches(new_dest, orig_dest):
             near = await self._current_position(ctx, meta)
             _resolved, results = await self._find_destination(new_dest, meta, near=near)
@@ -1500,6 +1545,13 @@ class NavigationAgent(BaseAgent):
                 first = results[0]
                 dest_name, dest_lat, dest_lng = first.name, first.lat, first.lng
                 notes.append(f"目的地已改为{first.name}")
+                if promote_current_to_waypoint and not any(
+                        self._dest_matches(orig_dest, str(w.get("name") or ""))
+                        for w in waypoints):
+                    waypoints.append({"name": orig_dest,
+                                      "lat": session["lat"], "lng": session["lng"]})
+                    notes.append(
+                        f"先到{orig_dest}接{_person_display(pickup_word)}")
                 changed = True
             else:
                 return AgentResult(
@@ -1539,7 +1591,8 @@ class NavigationAgent(BaseAgent):
                                            if slot_add in raw_text else False)
         else:
             add_word, prepend = self._parse_reroute_add(raw_text)
-        if add_word and add_word not in (remove_word or ""):
+        if (add_word and add_word not in (remove_word or "")
+                and not self._dest_matches(add_word, dest_name)):
             keyword = self._stop_keyword(add_word)
             current = current_location_from_meta(meta)
             near = (GeoPoint(lat=current.lat, lng=current.lng) if current

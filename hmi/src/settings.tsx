@@ -86,5 +86,7 @@ export function buildMeta(s: Settings): Record<string, string> {
     assistant_name: s.assistantName,
     memory_enabled: String(s.memoryEnabled),
     disabled_agents: disabled.join(','),
+    ...(s.llmProvider ? { llm_provider: s.llmProvider } : {}),
+    ...(s.llmProvider && s.llmModel ? { llm_model: s.llmModel } : {}),
   }
 }

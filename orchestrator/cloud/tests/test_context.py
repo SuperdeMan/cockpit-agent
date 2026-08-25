@@ -11,7 +11,8 @@ import json
 from types import SimpleNamespace
 
 from orchestrator.cloud.context import (
-    ContextManager, WorkingSet, Focus, extract_focus)
+    ContextManager, WorkingSet, Focus, extract_focus,
+    normalize_weather_city_slot)
 from orchestrator.cloud.models import Plan, Step, StepResult, StepStatus
 from orchestrator.cloud.session import SessionStore
 
@@ -271,6 +272,50 @@ def test_extract_focus_info_turn_keeps_last_intent():
     assert "上一轮意图=info.sports" in WorkingSet(focus=f).render_context()
 
 
+def test_weather_focus_keeps_the_last_explicit_city():
+    plan = Plan(steps=[Step(id="s1", agent_id="info",
+                            intent="info.weather", slots={"city": "深圳"})])
+    focus = extract_focus(plan, [_ok("s1")])
+
+    assert focus is not None and focus.last_city == "深圳"
+    assert "上个城市=深圳" in WorkingSet(focus=focus).render_context()
+
+
+def test_object_city_on_first_turn_is_available_to_the_next_weather_turn():
+    """首轮没有旧 focus 时，对象化 city 也必须落账，供“明天呢”续接。"""
+    first = Plan(steps=[Step(
+        id="s1", agent_id="info", intent="info.weather",
+        slots={"city": '{"city":"北京","road":""}'},
+    )])
+    focus = extract_focus(first, [_ok("s1")])
+
+    assert focus is not None and focus.last_city == "北京"
+
+    followup = Plan(
+        raw_text="明天呢",
+        steps=[Step(id="s2", agent_id="info", intent="info.forecast",
+                    slots={"city": ""}, context_scopes=["location"])],
+    )
+    from orchestrator.cloud.engine import PlannerEngine
+    PlannerEngine._apply_focus_meta(followup, focus)
+    assert followup.steps[0].slots["city"] == "北京"
+
+
+def test_focus_city_normalizer_rejects_non_string_object_values():
+    assert normalize_weather_city_slot({"city": 123}) == ""
+    assert normalize_weather_city_slot('{"city":123}') == ""
+    assert normalize_weather_city_slot("{oops}") == ""
+
+
+def test_stock_focus_keeps_the_last_successful_symbol():
+    plan = Plan(steps=[Step(id="s1", agent_id="info",
+                            intent="info.stock", slots={"symbol": "宁德时代"})])
+    focus = extract_focus(plan, [_ok("s1")])
+
+    assert focus is not None and focus.last_stock_symbol == "宁德时代"
+    assert "上个股票标的=宁德时代" in WorkingSet(focus=focus).render_context()
+
+
 def test_extract_focus_ignores_failed_steps():
     plan = Plan(steps=[Step(id="s1", agent_id="hvac", intent="hvac.set",
                             slots={"position": "副驾"})])
@@ -526,6 +571,51 @@ def test_last_places_survive_a_turn_that_did_not_search():
     assert focus is not None
     assert [p["name"] for p in focus.last_places] == ["瑞幸咖啡(前海印里店)"]
     assert focus.last_intent == "luckin.menu", "其余焦点字段仍按本轮刷新"
+
+
+def test_current_location_weather_replaces_instead_of_reviving_an_old_city():
+    """新的无城市天气轮表示回到 GPS；不得把更早的显式城市重新粘回来。"""
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    explicit = Plan(steps=[Step(
+        id="s1", agent_id="info", intent="info.weather", slots={"city": "深圳"})])
+    current_location = Plan(steps=[Step(
+        id="s2", agent_id="info", intent="info.weather", slots={"city": ""})])
+
+    async def _run():
+        await manager.update_focus(
+            "sess", explicit, [_ok("s1")], user_id="u1")
+        await manager.update_focus(
+            "sess", current_location, [_ok("s2")], user_id="u1")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+
+    assert focus is not None
+    assert focus.last_intent == "info.weather"
+    assert focus.last_city == ""
+
+
+def test_unrelated_turn_drops_the_previous_stock_symbol_from_focus():
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    stock = Plan(steps=[Step(
+        id="s1", agent_id="info", intent="info.stock",
+        slots={"symbol": "宁德时代"})])
+    unrelated = Plan(steps=[Step(
+        id="s2", agent_id="chitchat", intent="chitchat.talk", slots={})])
+
+    async def _run():
+        await manager.update_focus("sess", stock, [_ok("s1")], user_id="u1")
+        await manager.update_focus(
+            "sess", unrelated, [_ok("s2")], user_id="u1")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+
+    assert focus is not None
+    assert focus.last_intent == "chitchat.talk"
+    assert focus.last_stock_symbol == ""
 
 
 def test_places_come_from_result_provenance_not_the_plan_object():

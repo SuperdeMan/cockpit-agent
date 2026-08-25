@@ -158,7 +158,7 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 
 ### 多 LLM / 多引擎运行时
 
-- **LLM**：MiMo / MiniMax / DeepSeek / 通义千问四厂商进程内注册表，HMI 设置页运行时热切换、切换持久化；请求级 pin、429 与流式故障分类降级、**跨厂商备份档**（active 厂商整链耗尽后兜底一跳，pinned 请求恒不跨）、健康探针；embedding 与 chat 厂商解耦。
+- **LLM**：MiMo / MiniMax / DeepSeek / 通义千问四厂商进程内注册表，HMI 设置页运行时热切换、切换持久化；HMI 每个业务帧也携带所选 provider/model 的请求级 pin（启动不再靠重放全局切换恢复），429 与流式故障分类降级、**跨厂商备份档**（active 厂商整链耗尽后兜底一跳，pinned 请求恒不跨）、健康探针；embedding 与 chat 厂商解耦。
 - **ASR**：DashScope 实时流式（qwen3 / fun 双协议）+ 分块回退；**TTS**：cosyvoice / qwen3（含方言）/ MiMo / MiniMax 四引擎，「引擎 → 音色」两级选择。
 - 评测报告锁定 provider（中途漂移即作废），跨模型对比可信。
 

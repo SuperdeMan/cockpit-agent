@@ -1304,10 +1304,20 @@ class PlanBuilder:
         if "." not in last_intent:
             return None
         stem, previous_operation = last_intent.rsplit(".", 1)
-        # 「打开」首字是「打」不是「开」——方向只能查表，不能 startswith。
-        asks_open = str(match.group("action") or "") in _FOCUSED_OPEN_ACTIONS
+        # 「展开/折叠」是 unfold/fold 这一族的专属动词，不能只按“开/关方向”
+        # 套到普通 open/close 上（例如天窗 open 后说「再折叠」）。
+        action = str(match.group("action") or "")
+        if action == "展开":
+            operation_pairs = (("unfold", "fold"),)
+            asks_open = True
+        elif action == "折叠":
+            operation_pairs = (("unfold", "fold"),)
+            asks_open = False
+        else:
+            operation_pairs = (("open", "close"), ("on", "off"))
+            asks_open = action in _FOCUSED_OPEN_ACTIONS
         desired_operation = ""
-        for open_operation, close_operation in _CONTROL_OPERATION_PAIRS:
+        for open_operation, close_operation in operation_pairs:
             if previous_operation in (open_operation, close_operation):
                 desired_operation = open_operation if asks_open else close_operation
                 break

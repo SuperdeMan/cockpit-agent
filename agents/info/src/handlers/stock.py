@@ -8,6 +8,21 @@ from agents._sdk.provenance import attach
 
 logger = logging.getLogger("agent.info")
 
+_PROVENANCE_MARKERS = (
+    "数据源", "行情来源", "报价来源", "股价来源", "价格来源",
+    "更新时间", "行情时间", "报价时间", "更新到",
+)
+
+
+def _source_label(vendor: str) -> str:
+    return {
+        "tushare": "Tushare",
+        "eastmoney": "东方财富代码解析与新浪行情",
+        "mock": "模拟行情",
+        "mock-stock": "模拟行情",
+        "alphavantage": "Alpha Vantage",
+    }.get((vendor or "").lower(), vendor or "未标明的数据源")
+
 
 class StockMixin:
     async def _stock(self, intent, ctx, meta) -> AgentResult:
@@ -37,12 +52,17 @@ class StockMixin:
                     status=FAILED,
                     speech=f"没有找到「{symbol}」的行情数据。可能未上市或名称不准确。",
                 )
-        try:
-            candles = await stock_provider.history(symbol, limit=20, meta=meta)
-        except ProviderError as e:
-            # 报价仍然有价值；历史失败时不混用 mock K 线误导用户。
-            logger.warning("stock history unavailable, leaving chart empty: %s", e)
-            candles = []
+        raw_text = str(intent.raw_text or "")
+        # “来源”本身可能在问公司收入/业务来源，不能因上一轮股票焦点就被
+        # 改写成行情 provenance。只消费明确指向行情数据或更新时间的词组。
+        provenance_query = any(mark in raw_text for mark in _PROVENANCE_MARKERS)
+        candles = []
+        if not provenance_query:
+            try:
+                candles = await stock_provider.history(symbol, limit=20, meta=meta)
+            except ProviderError as e:
+                # 报价仍然有价值；历史失败时不混用 mock K 线误导用户。
+                logger.warning("stock history unavailable, leaving chart empty: %s", e)
 
         parts = [f"{q.name or symbol}"]
         if q.price:
@@ -65,4 +85,8 @@ class StockMixin:
             attach(card, self.stock)
         else:
             attach(card, "eastmoney", mode="degraded", note="Tushare 失败降级东方财富")
+        if provenance_query:
+            vendor = str((card.get("_prov") or {}).get("vendor") or "")
+            when = q.market_time or "上游未提供"
+            speech = f"数据来源是{_source_label(vendor)}，行情时间是{when}。"
         return AgentResult(speech=speech, ui_card=card, data={"quote": card})

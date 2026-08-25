@@ -182,6 +182,10 @@ _PRIVACY_EXCLUDED_DIRS = frozenset({
     ".pytest_cache",
     ".venv",
     "venv",
+    "node_modules",
+    ".gradle",
+    ".artifacts",
+    ".expo",
 })
 _SQL_IDENTIFIER = (
     r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")*"|'
@@ -553,38 +557,75 @@ def _controlled_privacy_source_paths(
     except (OSError, RuntimeError) as exc:
         raise ManifestError(f"privacy repository root does not resolve: {root}") from exc
     paths: dict[str, Path] = {}
-    nested_roots: dict[str, bool] = {}
 
-    def _inside_nested_checkout(relative: Path) -> bool:
-        """目录名清单之外的第二道闸：任何**自带 `.git` 的子目录**都是另一份 checkout。
+    def _prune_directory(relative: Path) -> bool:
+        parts = relative.parts
+        if not parts:
+            return False
+        if parts[-1] in _PRIVACY_EXCLUDED_DIRS:
+            return True
+        # Generic names such as build/dist/coverage may also be legitimate
+        # source namespaces. Prune them only at the generated output locations
+        # present in this repository, never at arbitrary depth.
+        if parts == ("coverage",):
+            return True
+        if parts in {("hmi", "dist"), ("dashboard", "dist")}:
+            return True
+        if len(parts) >= 3 and parts[:2] == ("mobile", "android") \
+                and parts[-1] == "build":
+            return True
+        return False
 
-        名字清单必然滞后于布局（`.worktrees` 写好了、真实是 `.claude/worktrees/`），
-        而「有没有 `.git`」是 checkout 的**定义**而不是它的命名习惯。
-        worktree 的 `.git` 是文件、clone 的是目录，`exists()` 两者都认。
-        """
-        prefix: list[str] = []
-        for part in relative.parts[:-1]:
-            prefix.append(part)
-            key = "/".join(prefix)
-            marked = nested_roots.get(key)
-            if marked is None:
-                marked = (resolved_root.joinpath(*prefix) / ".git").exists()
-                nested_roots[key] = marked
-            if marked:
+    def _matches(relative: str) -> bool:
+        # ``Path.glob`` treats each ``**/`` as zero-or-more directories. Python's
+        # fnmatch does not model the zero-directory case, so enumerate those
+        # finite variants before matching the already normalized POSIX path.
+        for pattern in patterns:
+            variants = {pattern}
+            pending = [pattern]
+            while pending:
+                candidate = pending.pop()
+                start = 0
+                while True:
+                    index = candidate.find("**/", start)
+                    if index < 0:
+                        break
+                    shorter = candidate[:index] + candidate[index + 3:]
+                    if shorter not in variants:
+                        variants.add(shorter)
+                        pending.append(shorter)
+                    start = index + 3
+            folded_relative = relative.casefold()
+            if any(fnmatch.fnmatchcase(
+                    folded_relative, variant.casefold()) for variant in variants):
                 return True
         return False
 
-    for pattern in patterns:
-        for path in resolved_root.glob(pattern):
+    def _walk_error(exc: OSError) -> None:
+        raise ManifestError(f"cannot scan privacy source tree: {exc}") from exc
+
+    for current, dirnames, filenames in os.walk(
+        resolved_root, topdown=True, onerror=_walk_error, followlinks=False,
+    ):
+        current_path = Path(current)
+        # Any child containing its own .git file/directory is another checkout.
+        # Prune it before walking files, rather than discovering and filtering a
+        # second repository after the expensive recursive glob has already run.
+        if current_path != resolved_root and (current_path / ".git").exists():
+            dirnames[:] = []
+            continue
+        kept_dirs = []
+        for name in sorted(dirnames):
+            child = current_path / name
+            relative_child = child.relative_to(resolved_root)
+            if _prune_directory(relative_child) or child.is_symlink():
+                continue
+            kept_dirs.append(name)
+        dirnames[:] = kept_dirs
+        for name in sorted(filenames):
+            path = current_path / name
             relative = path.relative_to(resolved_root)
-            if any(
-                part in _PRIVACY_EXCLUDED_DIRS
-                for part in relative.parts[:-1]
-            ):
-                continue
-            if _inside_nested_checkout(relative):
-                continue
-            if path.is_dir():
+            if not _matches(relative.as_posix()):
                 continue
             try:
                 resolved = _resolve_path(path)

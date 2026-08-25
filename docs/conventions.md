@@ -38,7 +38,7 @@
 | road-safety | road_safety | core | first_party | cloud | 50072 | safety.driving_advice, safety.weather_alert, safety.road_condition |
 | deep-research | deep_research | ecosystem | first_party | cloud | 50073 | research.run, research.status, research.cancel |
 | reminder | reminder | core | first_party | cloud | 50074 | reminder.create, reminder.list, reminder.complete, reminder.cancel, reminder.update |
-| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（低层工具与复合 workflow 分别准入；demo-coffee `shop.*` 四件 + 麦当劳 `mcd.nutrition/order_status/menu/order` + 瑞幸 `luckin.order_status/menu/order/order_cancel`，启动期实测合成 **12** 条）——manifest 里 capabilities 故意留空，见 §9.9 |
+| mcp-bridge | mcp_bridge | ecosystem | third_party | cloud | 50076 | 由 `servers.yaml` 准入清单**启动期合成**（外部低层工具/复合 workflow 12 条 + bridge-owned `shop.preview_discard` 1 条，共 **13** 条）——manifest 里 capabilities 故意留空，见 §9.9 |
 | vision | vision | core | first_party | cloud | 50077 | vision.describe（单帧图片问答，M4 P4；契约见 §9.12）|
 
 > 规划中（设计文档提及，PoC 未建独立服务）：独立的云侧 `media` Agent、`ticketing` 交易类 Agent。
@@ -71,6 +71,7 @@
 | `shop.order` | mcp-bridge | cloud | item, size | require_confirm；演示商户下单（描述已判别化：真实品牌不适用） |
 | `shop.order_status` | mcp-bridge | cloud | order_id | 演示商户查单（按订单号或幂等键，§9.9） |
 | `shop.order_cancel` | mcp-bridge | cloud | order_id | require_confirm；演示商户取消退款 |
+| `shop.preview_discard` | mcp-bridge | cloud | — | bridge-owned 本地能力；按认证 `user_id + session_id` 原子清除当前会话 Redis 临时预览，返回 before/removed/after 零态证明；不调用外部商户、不触碰真实订单 |
 | `mcd.menu` | mcp-bridge | cloud | store_hint/city + 可选 item_query | 麦当劳**当店菜单**：官方 query-meals 的全店在售餐品与**价格**（带商品图，域名走 `image_hosts` 白名单）。2026-08-13 由营养表让位——它返回的一直是营养不是菜单，旧名让「麦满分多少钱」只能回「这个接口里只有营养信息」 |
 | `mcd.nutrition` | mcp-bridge | cloud | — | 麦当劳餐品**营养成分**（热量/蛋白质等，**不含价格**；真机 tools/list 核实激活，speech_mode=summarize，§9.9）。2026-08-13 由 `mcd.menu` 改名 |
 | `mcd.order_status` | mcp-bridge | cloud | order_id | 麦当劳订单查询（商家是订单状态真相源） |
@@ -449,8 +450,12 @@ HMI `DEFAULT_SETTINGS` 里、运行期 env 无承载，由源码级断言测试�
 > **LLM 网关控制面**（`:50059`，非 collector）：`GET /api/llm/providers`（厂商/模型/可用性/active
 > +**health 被动健康块**）、`POST /api/llm/provider`（全局切换，**持久化 Redis `llm:active`**）、
 > `POST /api/llm/probe {provider?}`（按需体检，2026-07-17）。`obs.llm` 事件自 2026-07-17 增
-> `provider`（实际 serving 厂商）/`requested_tier`（原始档位参数）/`pinned`（请求级 pin）三字段，
-> collector `llm_calls` 表加法迁移 `provider` 列。
+> `provider`（实际 serving 厂商）/`requested_tier`（原始档位参数）/`pinned`（请求级 pin）三字段。
+> `provider` 在既有 `llm_calls` 列落盘；`requested_tier/pinned` 以现有 `llm.call.meta` span
+> 按 `llm_call_id` 绑定，`turn_detail` 回填到 `llm_calls` 响应，**不做数据库 schema 迁移**。
+> `obs.turn.intents` 同时接端侧确定性 intent 与 `cloud.planning` intent，collector 按 trace
+> 无序去重合并；cloud/mixed 的 Agent 归属来自 `step.agent:*` span，engine-only 取消/澄清/
+> 候选短路必须发具名 lifecycle span，缺 turn/route/intent/owner 的局部详情不得当终态。
 
 Dashboard 使用 `VITE_COLLECTOR_URL` 与 `VITE_EDGE_GATEWAY_URL`，Compose 已分别配置为
 `http://localhost:8092` 和 `http://localhost:8090`。**Prometheus/Grafana（T3.6）**：
@@ -815,6 +820,7 @@ cutover、真栈故障注入矩阵、位置提醒的「是否还在围栏内」�
 | 超时口径 | 调用超时 **≠ 没下单**：诚实说「不确定」并提醒别急着重复下单，账目落 `failed` 且 `result_ref.outcome=uncertain`（状态机无 uncertain 终态，查询入口按 result_ref 回答，不得照 failed 说「上次失败了」）。非超时异常=确定没发出去，按失败说，不装不确定。**话术与能力的顺序**：2026-07-26 验收发现它承诺「说『查一下我的订单』我帮你核对」而查询能力根本没接入，于是先改成不承诺；M-D 接入 `order.get` 后才把承诺加回来——**先有能力再有话术**，反过来就是把不确定包装成「有办法查清楚」 |
 | 演示商户 | `demo: true` → 卡片 `demo`/`demo_label` 角标 + `_prov.mode=mock`+note + 话术前缀「（演示商户）」**三重冗余**。演示不是问题，把演示装成真实才是 |
 | 能力合成 | capability 由 `bootstrap()` 在 `serve()` **之前**从准入清单合成（注册在 serve 里发生，晚一步注册中心就看到空能力表）；manifest.yaml 的 `capabilities` 故意留空 |
+| bridge-owned 本地能力 | 与外部 MCP binding 分栏登记在 `servers.yaml.local_capabilities`，只允许代码内具名 handler + scope 白名单；`shop.preview_discard` 只清认证 owner/session 的临时草稿，`drafts_after=0` 才算成功。外部卡丢帧也不能成为“不清理”的前提 |
 | 权限 | 一律 `trust_level: third_party`（硬上限表自动禁高危车控/精确位置/摄像头麦克风）+ `network.external`；涉钱走 payment-gateway，Agent 不持凭证 |
 | **账号与 owner 边界** | 官方麦当劳/瑞幸 token 当前是服务级全局账号，不是乘员凭证。只有网关权威身份与 scope 可开启写 workflow；`user_id`、声纹 `occupant_id` 或 Planner meta 均不能自行授予商户写权。owner 只用于本地草稿/账本隔离，不作为未知参数发给远程 MCP。多乘员独立商户账号与 token 自动刷新均未产品化，缺 token 时能力诚实缺席。 |
 | 故障隔离 | 一台 server 起不来/版本不符 → **只让它自己的工具缺席**，桥照常服务其余；绝不静默降级成假数据 |
@@ -1330,6 +1336,13 @@ HMI 每轮 dispatch 生成 `request_id` 随 WS 帧上行（`gateway/edge` 转成
 - **端侧入口每轮先 `meta.pop`**——网关透传客户端 meta，不剥就等于让网页自称
   「我刚执行过 sunroof.open」；它是执行器签发的内部事实，不是客户端输入；
 - 落 `PlanContext.edge_executed`，**刻意不进 `prefs`**（prefs 会下发全部 Agent）。
+
+**跨轮相邻性不能再从整个 history 倒着捞 action。** `Focus.origin_exchange_id` 记录云侧焦点
+产生轮；现代 history 只消费最新 exchange 的 actions。端侧纯本地轮另用一次性内部 meta
+`_edge_previous_local_exchange` + `_edge_previous_local_actions` 桥接 memory 异步落库窗口：入口先剥
+客户端同名键，端侧按 `(session,user,occupant)` 签发，10 分钟 TTL + 256 项 LRU，消费一次即 pop；
+同轮 `_edge_executed` 优先级最高。若最新本地轮无控制 action，则清掉只对紧邻轮有效的
+`last_intent/last_city/last_stock_symbol/obj`，但候选集、活动路线等显式粘性台账仍按各自 TTL 保留。
 
 **消费面 `planning._focused_control_ellipsis_plan`：确定性成计划，零 LLM。**
 三样东西各有确定来源，缺一就 fail-open 回正常规划：对象来自执行账本、

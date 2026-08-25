@@ -188,6 +188,7 @@ async def test_cancel_multi_match_clarifies_and_deletes_nothing():
     res = await run_handle(a, "reminder.cancel", slots={"title": "喝水"},
                            raw_text="把喝水那条删了", ctx=ctx)
     assert res.status == "need_slot" and "2 条" in res.speech and "哪条" in res.speech
+    assert res.missing_slots == ["index"]
     times, _ = await a.store.list_split("u1")
     assert len(times) == 2                     # 澄清阶段一条都没删（旧实现会静默删掉第一条）
     assert res.ui_card and len(res.ui_card["items"]) == 2   # 候选卡列出两条供用户选
@@ -663,6 +664,79 @@ async def test_default_list_scope_excludes_expired_but_reports_the_count():
     assert "明天带伞" in res.speech
     assert "七月的旧提醒" not in res.speech
     assert "2 条已过期" in res.speech, "过期项必须报数，不许悄悄消失"
+
+
+@pytest.mark.asyncio
+async def test_default_list_without_expired_items_is_still_labelled_upcoming():
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "明天带伞", now + 86400)
+
+    res = await run_handle(a, "reminder.list", raw_text="查看我的提醒")
+
+    assert "接下来共 1 条" in res.speech
+    assert "全部共" not in res.speech
+
+
+@pytest.mark.asyncio
+async def test_default_list_reports_exact_total_beyond_display_limit():
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    for idx in range(51):
+        await _seed_raw(a, f"未来提醒{idx:02d}", now + (idx + 1) * 60)
+
+    res = await run_handle(a, "reminder.list", raw_text="查看我的提醒")
+
+    assert "接下来共 51 条" in res.speech
+    assert len(res.ui_card["items"]) == 50
+
+
+@pytest.mark.asyncio
+async def test_todo_only_does_not_report_expired_timed_reminders():
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "旧闹钟", now - 60)
+    await a.store.add(Reminder(user_id="u1", title="买牛奶", kind="todo"))
+
+    res = await run_handle(a, "reminder.list", raw_text="只看待办")
+
+    assert "待办共 1 条" in res.speech
+    assert "已过期" not in res.speech
+
+
+@pytest.mark.asyncio
+async def test_dated_reminder_scope_excludes_undated_todos():
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "明天带伞", now + 86400)
+    await a.store.add(Reminder(user_id="u1", title="买牛奶", kind="todo"))
+
+    res = await run_handle(a, "reminder.list", raw_text="明天有什么提醒")
+
+    assert "明天带伞" in res.speech
+    assert "买牛奶" not in res.speech
+    assert "共 1 条" in res.speech
+    assert res.ui_card["todos"] == []
+
+
+@pytest.mark.asyncio
+async def test_default_list_finds_future_item_after_more_than_fifty_expired_rows():
+    """LIMIT 必须作用在「未来项」上，不能先被最早的 50 条过期项占满。
+
+    真栈里标题检索能找到明天下午的提醒，但默认列表称没有进行中；根因正是
+    ``ORDER BY fire_at ASC LIMIT 50`` 后才在 Agent 层过滤过期项。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    for idx in range(51):
+        await _seed_raw(a, f"旧提醒{idx:02d}", now - (idx + 1) * 60)
+    await _seed_raw(a, "明天下午交周报", now + 86400)
+
+    res = await run_handle(a, "reminder.list", raw_text="查看我的提醒")
+
+    assert "明天下午交周报" in res.speech
+    assert "51 条已过期" in res.speech
+    assert [item["title"] for item in res.ui_card["items"]] == ["明天下午交周报"]
 
 
 @pytest.mark.asyncio

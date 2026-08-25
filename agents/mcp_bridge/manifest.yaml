@@ -7,9 +7,11 @@ deployment: cloud
 latency_budget_ms: 20000      # 外部 server 走子进程 + 网络，给足余量
 fallback: chitchat
 
-# **capabilities 故意留空**：由 `servers.yaml` 准入清单在启动期合成
+# **capabilities 故意留空**：由 `servers.yaml` 的外部工具与 bridge-owned
+# `local_capabilities` 准入清单在启动期合成
 # （`McpBridgeAgent.bootstrap()`，注册发生在 serve 之前）。
-# 新增工具 = 改 servers.yaml + 人工审，不改本文件、不改编排核心。
+# 新增外部工具 = 改 servers.yaml + 人工审，不改本文件、不改编排核心；本地能力 handler
+# 还必须进入 admission 窄白名单并显式接线，声明本身不能获得任意代码执行权。
 capabilities: []
 
 # 确定性路由兜底（R2.1；2026-07-26 验收补）：「点一杯大杯拿铁」在 shop.order 与
@@ -17,6 +19,12 @@ capabilities: []
 # 判找店（画像里有「爱喝拿铁」时更偏后者）。下单动词+量词「杯」+品类共现才兜，
 # 发现类语义（附近/找店/推荐）guard 让路给 nearby，劫持面收窄到点单句式。
 route_hints:
+  # 商户预览取消后的临时草稿清理：只认“本次/本会话 + 订单预览”完整语义，
+  # 不碰真实订单取消、历史订单清理或普通查看。Agent 再按认证 user/session 双键收窄。
+  - pattern: '^\s*(?:请|帮我|给我)?\s*(?:清理|取消|丢弃)\s*(?:本次会话|本会话|本次|这个会话)的?\s*(?:订单|下单)(?:临时)?(?:预览|草稿)\s*[。！!？?]*$'
+    intent: shop.preview_discard
+    policy: replace
+    priority: 126
   # XS7：不带品牌的历史订单查询走账号型只读入口；此前 MiniMax 偶发落 info.search，
   # 返回各互联网平台「怎么查订单」教程。品牌词/平台帮助问法由整句锚和 guard 让路。
   - pattern: '^\s*(?:请|帮我|给我)?\s*(?:查|查询|看|看看)\s*(?:一下)?\s*我?(?:之前|以前|历史|过去)的?\s*(?:订单|单子)\s*[？?]*$'

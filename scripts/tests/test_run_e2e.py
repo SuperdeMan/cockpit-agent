@@ -2919,6 +2919,62 @@ def test_empty_selection_is_a_selection_error(tmp_path: Path):
     assert "selection_empty" in summary["errors"]
 
 
+def test_unknown_explicit_id_is_rejected_before_cloud_target_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    manifest = _write_repo(tmp_path, [_case("e2e_known")])
+    runner = _runner()
+
+    def forbidden_target_resolution(*_args, **_kwargs):
+        raise AssertionError("unknown --id must not reach cloud target resolution")
+
+    def forbidden_full_manifest_load(*_args, **_kwargs):
+        raise AssertionError("unknown --id must not trigger full manifest validation")
+
+    monkeypatch.setattr(
+        runner,
+        "resolve_e2e_target",
+        forbidden_target_resolution,
+    )
+    monkeypatch.setattr(runner, "load_manifest", forbidden_full_manifest_load)
+
+    rc, summary, _ = _invoke(
+        tmp_path,
+        manifest,
+        ["--target", "cloud", "--id", "does_not_exist"],
+    )
+
+    assert rc == 2
+    assert summary["errors"] == ["selection_empty"]
+
+
+def test_fast_manifest_id_index_never_masks_ambiguous_manifest_errors(
+    tmp_path: Path,
+):
+    runner = _runner()
+    manifest = tmp_path / "e2e_manifest.yaml"
+
+    manifest.write_text(
+        "cases:\n  - id: duplicate\n  - id: duplicate\n",
+        encoding="utf-8",
+    )
+    assert runner._manifest_case_ids_fast(manifest) is None
+
+    manifest.write_text(
+        "cases:\n  - id: first\n    id: shadowed\n",
+        encoding="utf-8",
+    )
+    assert runner._manifest_case_ids_fast(manifest) is None
+
+    for invalid_id in ("bad id", " e2e_valid ", "not_e2e_prefixed"):
+        manifest.write_text(
+            f"cases:\n  - id: {invalid_id!r}\n",
+            encoding="utf-8",
+        )
+        assert runner._manifest_case_ids_fast(manifest) is None
+
+
 @pytest.mark.parametrize(
     ("group", "args"),
     [

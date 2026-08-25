@@ -4,9 +4,13 @@
 // 用法：node test/hmi_cdp/run_cases.mjs           # 全部
 //       node test/hmi_cdp/run_cases.mjs C1 C4    # 指定
 // 前置：make up 全栈；宿主 5173 未被本地 vite 占用；真实 key（live 语义类用例）。
-import { Cdp, launchBrowser, debugVehicle, vehicleState, sleep } from './driver.mjs'
+import {
+  Cdp, launchBrowser, debugVehicle, vehicleState, turnDetail, sleep,
+  cloudReleaseSnapshot, redactedReleaseSnapshot, writeC14Artifact,
+} from './driver.mjs'
 
 const results = []
+let c14RuntimeEvidence = null
 function record(id, ok, detail = '') {
   results.push({ id, ok, detail })
   console.log(`${ok ? '✅' : '❌'} ${id}  ${detail}`)
@@ -470,31 +474,298 @@ const CASES = {
     await cdp.screenshot('C13-location-gate')
     return '四组直发 + 一组仍征询（闸收窄而非拆除）'
   },
+
+  // C14 · MiniMax-only QA：五类长会话 persona 各取一条真实业务回复，逐条证明
+  // HMI 发了 MiniMax start/text/finish、收到了真 PCM、PcmPlayer 将非静音样本排进
+  // AudioContext；最后用一条长回复验证发新消息时 provider cancel 与本地 source.stop
+  // 同时发生。浏览器以 --mute-audio 运行只是不出扬声器，不绕过 WebAudio 排程。
+  async C14(cdp) {
+    await cdp.installAudioProbe()
+    await cdp.eval(`(() => {
+      const key = 'cockpit.settings.v1'
+      const current = JSON.parse(localStorage.getItem(key) || '{}')
+      localStorage.setItem(key, JSON.stringify({
+        ...current,
+        ttsEnabled: true,
+        autoplay: true,
+        ttsProvider: 'minimax',
+        voiceId: 'female-tianmei',
+        llmProvider: 'minimax',
+        llmModel: 'MiniMax-M3',
+        locationEnabled: true,
+      }))
+      return true
+    })()`)
+    await cdp.send('Page.reload')
+    await cdp.waitFor(`document.querySelector('input.au-input') !== null`, 30000, 'C14 HMI 重载')
+    await sleep(2500)
+
+    const samples = [
+      { persona: 'vehicle', prompt: '电量还有多少', intents: ['battery.query'] },
+      { persona: 'family', prompt: '我现在有哪些待办', intents: ['reminder.list'] },
+      { persona: 'merchant', prompt: '查一下我之前的订单', intents: ['shop.order_status'] },
+      { persona: 'information', prompt: '深圳今天的天气怎么样', intents: ['info.weather'] },
+      { persona: 'adversarial', prompt: '别开玩笑，认真回答沪深300现在怎么样', intents: ['info.stock'] },
+    ]
+    const evidence = []
+
+    const assertTrace = async (sent, expectedIntents) => {
+      const traceId = sent.meta && sent.meta.trace_id
+      if (!traceId) throw new Error('HMI 业务帧缺 trace_id')
+      const traceReady = (candidate) => {
+        const turn = candidate && candidate.turn || {}
+        const intents = String(turn.intents || '').split(',').filter(Boolean)
+        const path = String(turn.path || '')
+        const agents = (candidate.spans || []).flatMap((span) => {
+          const attrs = span && span.attrs || {}
+          return [attrs.agent_id, attrs.agent].filter(Boolean)
+        })
+        const llmReady = (candidate.llm_calls || []).every(
+          (call) => Object.prototype.hasOwnProperty.call(call, 'pinned'))
+        return turn.trace_id === traceId && turn.status === 'ok' &&
+          ['local', 'mixed', 'cloud'].includes(path) &&
+          expectedIntents.some((intent) => intents.includes(intent)) &&
+          (path === 'local' || agents.length > 0) && llmReady
+      }
+      const detail = await turnDetail(traceId, 12, traceReady)
+      if (!detail || detail.error) throw new Error(`collector 缺 trace ${traceId}`)
+      if (!detail.turn || detail.turn.trace_id !== traceId) {
+        throw new Error(`collector trace 对不上：${detail.turn && detail.turn.trace_id}`)
+      }
+      const status = String((detail.turn && detail.turn.status) || '').toLowerCase()
+      if (status !== 'ok') {
+        throw new Error(`collector 轮次状态=${status}`)
+      }
+      const path = String(detail.turn.path || '')
+      const intents = String((detail.turn && detail.turn.intents) || '')
+        .split(',').filter(Boolean)
+      if (!expectedIntents.some((intent) => intents.includes(intent))) {
+        throw new Error(`落域=${JSON.stringify(intents)}，期望其一=${JSON.stringify(expectedIntents)}`)
+      }
+      const agents = [...new Set((detail.spans || []).flatMap((span) => {
+        const attrs = span && span.attrs || {}
+        return [attrs.agent_id, attrs.agent].filter(Boolean)
+      }))]
+      if (path !== 'local' && !agents.length) {
+        throw new Error(`collector ${path} 轮缺 agent 归属 span`)
+      }
+      for (const call of detail.llm_calls || []) {
+        const provider = String(call.provider || '').toLowerCase()
+        const model = String(call.model || '')
+        if (provider !== 'minimax' || model !== 'MiniMax-M3') {
+          throw new Error(`出现非 MiniMax-M3 LLM 调用：${provider}:${model}`)
+        }
+        if (!call.pinned) throw new Error('MiniMax-M3 LLM 调用未兑现请求级 pin')
+        if (call.fallback || call.error) throw new Error('MiniMax LLM 出现 fallback/error')
+      }
+      return { traceId, path, intents, agents,
+        llmCalls: (detail.llm_calls || []).length }
+    }
+
+    const playBusinessReply = async (sample) => {
+      const before = await cdp.audioProbe()
+      const startedAt = Date.now()
+      await cdp.typeAndSend(sample.prompt)
+      const sent = await cdp.waitSentFrame(
+        (data) => data.text === sample.prompt, 10000, startedAt, `${sample.persona} 业务帧`)
+      if (!sent.meta || sent.meta.llm_provider !== 'minimax' ||
+          sent.meta.llm_model !== 'MiniMax-M3') {
+        throw new Error(`${sample.persona} HMI 帧未携带 MiniMax-M3 请求级 pin`)
+      }
+      const ttsStart = await cdp.waitWsFrame(
+        (frame) => frame.direction === 'sent' && frame.url.includes('/api/tts/stream') &&
+          frame.data && frame.data.type === 'start' && frame.data.provider === 'minimax' &&
+          frame.data.voice === 'female-tianmei',
+        15000, startedAt, `${sample.persona} MiniMax TTS start`)
+      const final = await cdp.waitReceivedFrame(
+        (data) => data.type === 'final' && data.request_id === sent.request_id &&
+          typeof data.speech === 'string' && data.speech.trim().length > 0,
+        90000, startedAt, `${sample.persona} 业务 final`)
+      await cdp.waitWsFrame(
+        (frame) => frame.requestId === ttsStart.requestId && frame.direction === 'sent' &&
+          frame.data && frame.data.type === 'finish',
+        15000, startedAt, `${sample.persona} TTS finish`)
+      const meta = await cdp.waitWsFrame(
+        (frame) => frame.requestId === ttsStart.requestId && frame.direction === 'received' &&
+          frame.data && frame.data.type === 'meta' && frame.data.format === 'pcm',
+        30000, startedAt, `${sample.persona} PCM meta`)
+      await cdp.waitWsFrame(
+        (frame) => frame.requestId === ttsStart.requestId && frame.direction === 'received' &&
+          frame.opcode === 2 && frame.bytes > 0,
+        60000, startedAt, `${sample.persona} PCM binary`)
+      await cdp.waitFor(
+        `window.__qaAudioProbe && window.__qaAudioProbe.buffers.length > ${before.buffers.length}`,
+        30000, `${sample.persona} AudioBuffer 排程`)
+      await cdp.waitWsFrame(
+        (frame) => frame.requestId === ttsStart.requestId && frame.direction === 'received' &&
+          frame.data && frame.data.type === 'done',
+        60000, startedAt, `${sample.persona} TTS done`)
+      await cdp.waitFor(
+        `window.__qaAudioProbe && window.__qaAudioProbe.active === 0`,
+        60000, `${sample.persona} 播放完成`)
+
+      const probe = await cdp.audioProbe()
+      const buffers = probe.buffers.slice(before.buffers.length)
+      const pcmBytes = cdp.wsFrames
+        .filter((frame) => frame.requestId === ttsStart.requestId &&
+          frame.direction === 'received' && frame.opcode === 2)
+        .reduce((total, frame) => total + frame.bytes, 0)
+      const durationMs = buffers.reduce((total, buffer) => total + buffer.durationMs, 0)
+      const peak = Math.max(0, ...buffers.map((buffer) => Number(buffer.peak || 0)))
+      const sampleCount = buffers.reduce((total, buffer) => total + buffer.samples, 0)
+      const nonzeroRatio = sampleCount
+        ? buffers.reduce(
+          (total, buffer) => total + buffer.nonzeroRatio * buffer.samples, 0) / sampleCount
+        : 0
+      if (pcmBytes < 1 || Number(meta.data.sample_rate || 0) < 8000) {
+        throw new Error(`${sample.persona} 没有有效 PCM 字节/meta`)
+      }
+      if (durationMs < 250 || peak < 0.002 || nonzeroRatio < 0.01) {
+        throw new Error(
+          `${sample.persona} PCM 不可播放：duration=${durationMs} peak=${peak} ratio=${nonzeroRatio}`)
+      }
+      const trace = await assertTrace(sent, sample.intents)
+      return {
+        persona: sample.persona, caseText: sample.prompt,
+        speechChars: final.speech.length, pcmBytes, durationMs,
+        peak: Number(peak.toFixed(6)), nonzeroRatio: Number(nonzeroRatio.toFixed(6)),
+        sampleRate: meta.data.sample_rate,
+        requestPin: `${sent.meta.llm_provider}:${sent.meta.llm_model}`,
+        ...trace,
+      }
+    }
+
+    for (const sample of samples) evidence.push(await playBusinessReply(sample))
+
+    // 独立长回复：等第一片真的排进 AudioContext 且仍在播放，再发新消息。
+    const beforeBarge = await cdp.audioProbe()
+    const bargeAt = Date.now()
+    const longPrompt = '请详细介绍深圳未来三天的天气变化、穿衣和出行注意事项，至少分六点回答'
+    await cdp.typeAndSend(longPrompt)
+    const longSent = await cdp.waitSentFrame(
+      (data) => data.text === longPrompt, 10000, bargeAt, 'barge 长业务帧')
+    const longTts = await cdp.waitWsFrame(
+      (frame) => frame.direction === 'sent' && frame.url.includes('/api/tts/stream') &&
+        frame.data && frame.data.type === 'start' && frame.data.provider === 'minimax',
+      15000, bargeAt, 'barge MiniMax start')
+    await cdp.waitReceivedFrame(
+      (data) => data.type === 'final' && data.request_id === longSent.request_id &&
+        typeof data.speech === 'string' && data.speech.length > 20,
+      90000, bargeAt, 'barge 长业务 final')
+    await cdp.waitFor(
+      `window.__qaAudioProbe &&
+       window.__qaAudioProbe.buffers.length > ${beforeBarge.buffers.length} &&
+       window.__qaAudioProbe.active > 0`,
+      60000, 'barge 前已真实起播')
+    const playing = await cdp.audioProbe()
+    const interruptAt = Date.now()
+    await cdp.typeAndSend('停一下，改成只告诉我明天深圳是否下雨')
+    await cdp.waitWsFrame(
+      (frame) => frame.requestId === longTts.requestId && frame.direction === 'sent' &&
+        frame.data && frame.data.type === 'cancel',
+      10000, interruptAt, 'barge provider cancel')
+    await cdp.waitFor(
+      `window.__qaAudioProbe && window.__qaAudioProbe.stops > ${playing.stops}`,
+      10000, 'barge 本地 AudioBufferSource.stop')
+    const stopped = await cdp.audioProbe()
+    if (stopped.stops <= playing.stops) throw new Error('barge 没有本地 stop 播放源')
+    await cdp.screenshot('C14-minimax-tts-playback-barge')
+    c14RuntimeEvidence = {
+      personas: evidence,
+      barge_in: {
+        provider: 'minimax', cancelSent: true,
+        localStops: stopped.stops - playing.stops,
+        longTraceId: longSent.meta && longSent.meta.trace_id,
+      },
+    }
+    return `${evidence.length}/5 persona MiniMax TTS 真播放；` +
+      `PCM=${evidence.reduce((n, row) => n + row.pcmBytes, 0)} bytes；` +
+      `barge cancel+stop=${stopped.stops - playing.stops}`
+  },
 }
 
 async function main() {
   const only = process.argv.slice(2)
-  const ids = only.length ? only : Object.keys(CASES)
+  // C14 is cloud-release evidence, not a generic local CDP smoke. Keep it
+  // explicit so the default C-group command does not silently run unbound.
+  let ids = only.length ? only : Object.keys(CASES).filter((id) => id !== 'C14')
+  const c14Selected = ids.includes('C14')
+  const expectedSha = String(process.env.CDP_EXPECTED_SHA || '').trim().toLowerCase()
+  let releaseStart = null
+  let releaseEnd = null
+  let releaseError = ''
   console.log(`=== HMI CDP C 组：${ids.join(', ')} ===`)
-  const browser = launchBrowser()
+  if (c14Selected) {
+    try {
+      releaseStart = await cloudReleaseSnapshot(expectedSha)
+      console.log(`C14 release start=${releaseStart.release_sha}，cloud 5/5 healthy`)
+    } catch (error) {
+      releaseError = `start: ${String(error && error.message || error)}`
+      record('C14', false, releaseError.slice(0, 200))
+      ids = ids.filter((id) => id !== 'C14')
+    }
+  }
+
+  let browser = null
   const cdp = new Cdp()
   try {
-    await cdp.connect()
-    await cdp.waitFor(`document.querySelector('input.au-input') !== null`, 30000, 'HMI 加载')
-    await sleep(1500)                     // WS 建连 + 车况首推
-    for (const id of ids) {
-      if (!CASES[id]) { record(id, false, '未知用例'); continue }
-      try {
-        const detail = await CASES[id](cdp)
-        record(id, true, detail)
-      } catch (e) {
-        try { await cdp.screenshot(`${id}-FAIL`) } catch { /* ignore */ }
-        record(id, false, String(e.message || e).slice(0, 200))
+    if (ids.length) {
+      browser = launchBrowser()
+      await cdp.connect()
+      await cdp.waitFor(`document.querySelector('input.au-input') !== null`, 30000, 'HMI 加载')
+      await sleep(1500)                     // WS 建连 + 车况首推
+      for (const id of ids) {
+        if (!CASES[id]) { record(id, false, '未知用例'); continue }
+        try {
+          const detail = await CASES[id](cdp)
+          record(id, true, detail)
+        } catch (e) {
+          try { await cdp.screenshot(`${id}-FAIL`) } catch { /* ignore */ }
+          record(id, false, String(e.message || e).slice(0, 200))
+        }
+        await sleep(1500)                   // 用例间隔，避免上一轮尾帧串台
       }
-      await sleep(1500)                   // 用例间隔，避免上一轮尾帧串台
+    }
+  } catch (error) {
+    if (c14Selected && !results.some((row) => row.id === 'C14')) {
+      record('C14', false, String(error && error.message || error).slice(0, 200))
+    } else {
+      throw error
     }
   } finally {
-    try { browser.kill() } catch { /* ignore */ }
+    if (releaseStart) {
+      try {
+        releaseEnd = await cloudReleaseSnapshot(expectedSha)
+        console.log(`C14 release end=${releaseEnd.release_sha}，cloud 5/5 healthy`)
+      } catch (error) {
+        releaseError = `end: ${String(error && error.message || error)}`
+        const result = results.find((row) => row.id === 'C14')
+        if (result) {
+          result.ok = false
+          result.detail = `${result.detail}; ${releaseError}`.slice(0, 500)
+        } else {
+          record('C14', false, releaseError.slice(0, 200))
+        }
+      }
+    }
+    try { if (browser) browser.kill() } catch { /* ignore */ }
+    if (c14Selected) {
+      const c14Result = results.find((row) => row.id === 'C14') || null
+      const artifact = writeC14Artifact({
+        ts: Math.floor(Date.now() / 1000),
+        expected_sha: expectedSha,
+        release: {
+          start: redactedReleaseSnapshot(releaseStart),
+          end: redactedReleaseSnapshot(releaseEnd),
+          error: releaseError,
+        },
+        llm_lock: { provider: 'minimax', model: 'MiniMax-M3' },
+        tts_lock: { provider: 'minimax', voice: 'female-tianmei' },
+        evidence: c14RuntimeEvidence,
+        result: c14Result,
+      })
+      console.log(`C14 artifact: ${artifact}`)
+    }
   }
   const pass = results.filter((r) => r.ok).length
   console.log(`\n=== ${pass}/${results.length} 通过 ===`)

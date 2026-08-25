@@ -4,8 +4,8 @@ from datetime import datetime
 
 from agents._sdk.http import ProviderError
 from agents._sdk.testing import run_handle, make_context, assert_manifest_consistent
-from agents.info.src.agent import InfoAgent, _shanghai_now, _plan_search
-from agents.info.src.providers.base import SearchResult
+from agents.info.src.agent import InfoAgent, _city_slot, _shanghai_now, _plan_search
+from agents.info.src.providers.base import Quote, SearchResult
 from agents.info.src.providers.mock import MockWeatherProvider
 
 
@@ -37,6 +37,23 @@ class _UnavailableStockProvider:
 
     async def history(self, *args, **kwargs):
         raise AssertionError("history must not run after quote failure")
+
+
+class _AuditableStockProvider:
+    provenance_vendor = "tushare"
+    provenance_mode = "real"
+
+    def __init__(self):
+        self.history_calls = 0
+
+    async def quote(self, symbol, **kwargs):
+        return Quote(name="宁德时代", symbol="300750.SZ", price="387.89",
+                     change="-3.26", change_pct="-0.83%",
+                     market_time="20260825", market="深证·A股")
+
+    async def history(self, *args, **kwargs):
+        self.history_calls += 1
+        return []
 
 
 class _UnavailableSearchProvider:
@@ -1260,6 +1277,54 @@ def test_stock_provider_failure_does_not_render_a_mock_kline():
     assert res.status == "failed"
     assert res.ui_card is None
     assert "没有找到" in res.speech or "暂时无法获取" in res.speech
+
+
+def test_stock_source_and_update_time_followup_is_answered_deterministically():
+    agent = InfoAgent()
+    provider = _AuditableStockProvider()
+    agent.stock = provider
+    agent._stock_eastmoney = None
+
+    res = asyncio.run(run_handle(
+        agent, "info.stock", slots={"symbol": "宁德时代"},
+        raw_text="数据源和更新时间是什么"))
+
+    assert "Tushare" in res.speech
+    assert "20260825" in res.speech
+    assert provider.history_calls == 0, "只问来源/时间时不应再拉 K 线"
+
+
+def test_stock_provenance_followup_does_not_hijack_company_revenue_source_question():
+    agent = InfoAgent()
+    provider = _AuditableStockProvider()
+    agent.stock = provider
+    agent._stock_eastmoney = None
+
+    res = asyncio.run(run_handle(
+        agent, "info.stock", slots={"symbol": "宁德时代"},
+        raw_text="这家公司的收入来源是什么"))
+
+    assert "数据来源是" not in res.speech
+    assert "387.89" in res.speech
+    assert provider.history_calls == 1
+
+
+def test_stringified_city_object_is_normalized_before_weather_provider_call():
+    agent = InfoAgent()
+    agent.weather = MockWeatherProvider()
+
+    res = asyncio.run(run_handle(
+        agent, "info.alerts", slots={"city": '{"city":"深圳","road":""}'},
+        raw_text="现在有天气预警吗"))
+
+    assert "深圳" in res.speech
+    assert "{" not in res.speech
+
+
+def test_city_slot_rejects_non_string_or_malformed_object_values():
+    assert _city_slot({"city": 123}) == ""
+    assert _city_slot('{"city":123}') == ""
+    assert _city_slot("{oops}") == ""
 
 
 def test_unknown_intent_failed():

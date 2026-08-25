@@ -227,6 +227,12 @@ def test_driving_continuation_hint_does_not_hijack_non_vehicle_devices():
         plan = _plan("chitchat.talk")
         assert _engine().apply(plan, text, amap) is False, text
 
+    # replace hint 只能覆盖完整的单一安全追问，不能吞掉后续独立目标。
+    plan = _plan("navigation.navigate_to")
+    assert _engine().apply(
+        plan, "高速还能继续开吗，然后导航回家", amap) is False
+    assert [s.intent for s in plan.steps] == ["navigation.navigate_to"]
+
 
 def test_current_active_task_query_routes_to_reminder_list():
     """XS1：同一 owner 跨 session 的任务查询不能落入闲聊记忆重构。"""
@@ -283,6 +289,25 @@ def test_historical_order_hint_does_not_take_platform_help_or_brand_queries():
         assert _engine().apply(plan, text, amap) is False, text
 
 
+def test_current_session_merchant_preview_cleanup_has_a_narrow_deterministic_route():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    bridge = load_manifest(str(root / "agents" / "mcp_bridge" / "manifest.yaml"))
+    amap = {"mcp-bridge": SimpleNamespace(manifest=bridge, endpoint="x:0")}
+
+    for text in ("清理本次会话的订单预览", "取消本次订单预览"):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is True
+        assert [step.intent for step in plan.steps] == ["shop.preview_discard"]
+
+    for text in ("取消订单", "清理历史订单", "查看本次订单预览"):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False
+
+
 def test_compound_person_pickup_with_enroute_stop_routes_to_navigation():
     """PU5/PU6：明确接人且顺路办事时，不能被商户或提醒域吞掉主导航。"""
     import pathlib
@@ -332,6 +357,52 @@ def test_compound_person_pickup_hint_does_not_take_other_user_goals():
         "怎么接孩子放学才不堵车",
         "接孩子时把手机声音调低",
         "接孩子放学，路上咖啡洒了",
+        "接女儿放学，路上买杯咖啡，然后播放音乐",
+        "去接他爸",
+        "送你妈",
+    ):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_plain_person_pickup_routes_to_navigation_without_model_variance():
+    """PU1/PU2：只有接送对象的短句也有唯一语义，不应在 set_place/闲聊间漂移。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
+    amap = {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+    for text, destination in (
+        ("去接我爸。", "爸"),
+        ("去接老婆。", "老婆"),
+        ("带我去接孩子放学", "孩子"),
+        ("送女儿上学", "女儿"),
+    ):
+        plan = _plan("navigation.set_place")
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [s.intent for s in plan.steps] == ["navigation.navigate_to"]
+        assert plan.steps[0].slots == {"destination": destination}
+
+
+def test_plain_person_pickup_hint_does_not_take_negated_or_embedded_phrases():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
+    amap = {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+    for text in (
+        "明天下午提醒我去接老婆",
+        "我不想去接老婆",
+        "怎么去接孩子才不堵车",
+        "导航去机场接我爸",
+        "去接孩子后去万象城",
+        "去接他爸",
+        "送你妈",
     ):
         plan = _plan("chitchat.talk")
         assert _engine().apply(plan, text, amap) is False, text

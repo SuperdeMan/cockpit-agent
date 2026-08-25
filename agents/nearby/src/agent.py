@@ -645,7 +645,30 @@ class NearbyAgent(BaseAgent):
         # 判不成「猜的」——而这恰恰是本信号存在的那一类。问的是「用户自己说了哪个类目」。
         hay = f"{raw} {kw_slot}"
         category_guessed = not any(key in hay for key in _CATEGORY_KEYWORD)
-        term_discarded = bool(kw_slot or (intent.slots.get("cuisine") or "").strip())
+        explicit_terms = [
+            term.strip() for term in (
+                kw_slot, intent.slots.get("cuisine") or "",
+            ) if term.strip()
+        ]
+        # Planner 常把同一个类目同时填进 category 与 keyword（MiniMax 真栈：
+        # ``咖啡`` + ``咖啡店``）。把别名规范成 provider 词 ``咖啡厅`` 没有丢语义；
+        # 但别名必须是**整个清洗后槽值**；只要整句里恰好含「咖啡」就算等价，会把
+        # 「在瑞幸咖啡店点一杯美式」中被丢掉的品牌/商品约束悄悄伪装成精准命中。
+        def category_alias_only(term: str) -> bool:
+            cleaned = _strip_qualifiers(term)
+            for alias, mapped in _CATEGORY_KEYWORD.items():
+                if mapped != keyword:
+                    continue
+                forms = {alias, mapped}
+                forms.update(f"{base}{suffix}" for base in (alias, mapped)
+                             for suffix in ("店", "馆"))
+                if cleaned in forms:
+                    return True
+            return False
+
+        term_discarded = any(
+            not category_alias_only(term) for term in explicit_terms
+        )
         if ((term_discarded or category_guessed)
                 and keyword == _CATEGORY_KEYWORD.get(category)
                 and not brand):

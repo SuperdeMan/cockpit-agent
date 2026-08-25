@@ -18,6 +18,19 @@
 #
 # 契约登记见 docs/conventions.md §9.9。
 
+local_capabilities:
+  # Bridge-owned deterministic lifecycle operation.  It never calls a merchant
+  # MCP tool and never touches the real-order ledger; the handler is allow-listed
+  # by admission.py and narrows deletion to authenticated user + current session.
+  - intent: shop.preview_discard
+    handler: session_preview_discard
+    expose: true
+    require_confirm: false
+    required_scopes: [merchant.write]
+    description: 取消或清理本次会话的商户订单预览/下单草稿；仅处理当前账号当前会话的临时预览，不取消真实订单，不处理历史订单
+    examples: ["清理本次会话的订单预览", "取消本次订单预览"]
+    slots: []
+
 servers:
   - id: demo-coffee
     # **演示商户**：真实商户的替身，存在的唯一目的是让写操作生命周期能在真栈被验证。
@@ -74,7 +87,7 @@ servers:
         write: false
         expose: true
         forward_owner: true
-        required_scopes: []
+        required_scopes: [merchant.read]
         idempotency_mode: none
         retry_policy: safe
         schema_sha: "df8761c5f320"

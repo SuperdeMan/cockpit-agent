@@ -146,6 +146,18 @@ def _plan_summary_of(attrs: dict) -> tuple[str, str, str, str]:
     return intents[:400], plan_mode[:40], edge_nlu[:60], actionability[:40]
 
 
+def _merge_intents(*values: object) -> str:
+    merged: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            continue
+        for item in value.split(","):
+            name = item.strip()
+            if name and name not in merged:
+                merged.append(name)
+    return ",".join(merged)[:400]
+
+
 class ObsDB:
     """turns/spans/llm_calls/logs 的同步 SQLite 存取（调用方负责 to_thread）。"""
 
@@ -208,6 +220,17 @@ class ObsDB:
                 f"VALUES(:trace_id, {', '.join(':' + k for k in _TURN_FIELDS)}) "
                 f"ON CONFLICT(trace_id) DO UPDATE SET {assigns}",
                 {"trace_id": trace_id, **values})
+            incoming_intents = _merge_intents(event.get("intents", ""))
+            if incoming_intents:
+                row = self._conn.execute(
+                    "SELECT intents FROM turns WHERE trace_id=?", (trace_id,)
+                ).fetchone()
+                merged = _merge_intents(
+                    row[0] if row else "", incoming_intents)
+                self._conn.execute(
+                    "UPDATE turns SET intents=? WHERE trace_id=?",
+                    (merged, trace_id),
+                )
             self._conn.commit()
 
     def insert_span(self, event: dict) -> None:
@@ -230,6 +253,10 @@ class ObsDB:
                 intents, plan_mode, edge_nlu, actionability = _plan_summary_of(
                     event.get("attrs") or {})
                 if intents or plan_mode or edge_nlu or actionability:
+                    row = self._conn.execute(
+                        "SELECT intents FROM turns WHERE trace_id=?", (trace_id,)
+                    ).fetchone()
+                    intents = _merge_intents(row[0] if row else "", intents)
                     self._conn.execute(
                         "INSERT INTO turns(trace_id, intents, plan_mode, edge_nlu, "
                         "actionability) VALUES(?,?,?,?,?) "
@@ -242,7 +269,7 @@ class ObsDB:
 
     def insert_llm(self, event: dict) -> None:
         with self._lock:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 "INSERT INTO llm_calls(trace_id, session_id, ts, caller, model, provider, "
                 "fallback, prompt_tokens, completion_tokens, latency_ms, cache_hit, thinking, "
                 "status, error, prompt_tail, content_head) "
@@ -258,6 +285,24 @@ class ObsDB:
                  1 if event.get("thinking") else 0,
                  event.get("status", "") or "", event.get("error", "") or "",
                  event.get("prompt_tail", "") or "", event.get("content_head", "") or ""))
+            # ``pinned``/``requested_tier`` arrived after the SQLite table was
+            # established. Persist them in the existing generic span contract
+            # instead of a DB schema migration; turn_detail deterministically
+            # joins the nth llm row with the nth metadata span.
+            attrs = json.dumps({
+                "llm_call_id": int(cursor.lastrowid),
+                "pinned": bool(event.get("pinned")),
+                "requested_tier": str(event.get("requested_tier") or "")[:100],
+                "provider": str(event.get("provider") or "")[:80],
+                "model": str(event.get("model") or "")[:120],
+            }, ensure_ascii=False)
+            self._conn.execute(
+                "INSERT INTO spans(trace_id, span_id, parent_id, ts, service, node, "
+                "status, duration_ms, attrs) VALUES(?,?,?,?,?,?,?,?,?)",
+                (event.get("trace_id", "") or "", f"llm-meta-{cursor.lastrowid}", "",
+                 int(event.get("ts", 0) or 0), "llm-gateway", "llm.call.meta",
+                 event.get("status", "") or "", 0.0, attrs),
+            )
             self._conn.commit()
 
     def insert_log(self, event: dict) -> None:
@@ -321,6 +366,15 @@ class ObsDB:
                 s["attrs"] = json.loads(s.get("attrs") or "{}")
             except Exception:
                 s["attrs"] = {}
+        pin_meta = {
+            int((span.get("attrs") or {}).get("llm_call_id") or 0):
+                (span.get("attrs") or {})
+            for span in spans if span.get("node") == "llm.call.meta"
+        }
+        for call in llm_calls:
+            meta = pin_meta.get(int(call.get("id") or 0), {})
+            call["pinned"] = bool(meta.get("pinned"))
+            call["requested_tier"] = str(meta.get("requested_tier") or "")
         return {"turn": turn, "spans": spans, "llm_calls": llm_calls, "logs": logs}
 
     def search_turns(self, q: str = "", status: str = "", session_id: str = "",

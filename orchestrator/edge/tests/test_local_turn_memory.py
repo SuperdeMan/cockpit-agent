@@ -7,6 +7,7 @@
 import asyncio
 import types
 
+import server as edge_server
 from server import EdgeOrchestratorServicer, _MemoryClient
 
 
@@ -71,6 +72,72 @@ def test_local_turn_carries_owner_and_one_exchange(monkeypatch):
     assert [k["vehicle_id"] for _, k in calls] == ["v1", "v1"]
     assert {k["exchange_id"] for _, k in calls} == {"req-9"}
     assert [k["turn_id"] for _, k in calls] == ["req-9:user", "req-9:assistant:0"]
+
+
+def test_latest_local_exchange_boundary_is_forwarded_once(monkeypatch):
+    service = _service(monkeypatch)
+    service.memory.append = lambda *_args, **_kwargs: None
+    local = _request(request_id="local-battery")
+
+    async def run():
+        async def fake_append(*_args, **_kwargs):
+            return None
+
+        service.memory.append = fake_append
+        service._record_local_turn(local, "电量还有多少", "还有72%", actions=[])
+        await asyncio.gather(*service._bg)
+
+    asyncio.run(run())
+    first_cloud = _request(request_id="cloud-stock")
+    service._attach_previous_local_exchange(first_cloud)
+    assert first_cloud.meta["_edge_previous_local_exchange"] == "local-battery"
+
+    second_cloud = _request(request_id="cloud-weather")
+    service._attach_previous_local_exchange(second_cloud)
+    assert "_edge_previous_local_exchange" not in second_cloud.meta
+
+
+def test_local_only_session_boundaries_are_capacity_bounded(monkeypatch):
+    service = _service(monkeypatch)
+
+    async def fake_append(*_args, **_kwargs):
+        return None
+
+    service.memory.append = fake_append
+
+    async def run():
+        for index in range(300):
+            service._record_local_turn(
+                _request(session_id=f"local-only-{index}", request_id=f"req-{index}"),
+                "电量还有多少", "还有72%", actions=[])
+        await asyncio.gather(*service._bg)
+
+    asyncio.run(run())
+
+    assert len(service._last_local_exchange) <= 256
+    latest = _request(session_id="local-only-299", request_id="cloud-latest")
+    service._attach_previous_local_exchange(latest)
+    assert latest.meta["_edge_previous_local_exchange"] == "req-299"
+    oldest = _request(session_id="local-only-0", request_id="cloud-oldest")
+    service._attach_previous_local_exchange(oldest)
+    assert "_edge_previous_local_exchange" not in oldest.meta
+
+
+def test_expired_local_exchange_boundary_is_dropped_without_blocking(monkeypatch):
+    service = _service(monkeypatch)
+    request = _request(session_id="ttl-session", request_id="local-ttl")
+    key = service._local_exchange_key(request)
+    service._last_local_exchange[key] = ("local-ttl", 10.0, ())
+    monkeypatch.setattr(
+        edge_server.time, "monotonic",
+        lambda: 10.0 + edge_server._LOCAL_EXCHANGE_TTL_S + 1.0,
+    )
+
+    cloud = _request(session_id="ttl-session", request_id="cloud-after-ttl")
+    service._attach_previous_local_exchange(cloud)
+
+    assert "_edge_previous_local_exchange" not in cloud.meta
+    assert not service._last_local_exchange
 
 
 def test_local_turn_without_occupant_falls_back_to_primary(monkeypatch):

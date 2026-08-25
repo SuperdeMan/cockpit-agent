@@ -128,6 +128,62 @@ def test_no_local_action_means_no_key_at_all(monkeypatch):
     assert "_edge_executed" not in cloud_requests[0].meta
 
 
+def test_negated_segments_are_noops_while_the_real_directive_executes(monkeypatch):
+    """NG4 服务层整链：负极性两段不重送云端，中间正指令不被一起拖走。"""
+    mixed = server_module.split_and_classify_any(
+        "车窗别开，空调关了，音乐别停")
+    assert mixed is not None
+
+    cloud_requests, events = _run(
+        monkeypatch, mixed,
+        request=_request("车窗别开，空调关了，音乐别停"))
+
+    assert cloud_requests == []
+    final = next(ev.final for ev in events
+                 if ev.WhichOneof("event") == "final")
+    commands = [a.payload.fields["command"].string_value for a in final.actions]
+    assert commands == ["hvac.off"]
+    assert "保持" in final.speech and "空调" in final.speech
+
+
+def test_single_negated_directive_is_acknowledged_without_cloud_or_action(monkeypatch):
+    """单句「别开」的反面不是「关」；也无需再让模型猜一次极性。"""
+    cloud_requests, events = _run(
+        monkeypatch, [], request=_request("车窗别开"))
+
+    assert cloud_requests == []
+    final = next(ev.final for ev in events
+                 if ev.WhichOneof("event") == "final")
+    assert not final.actions
+    assert "保持" in final.speech
+
+
+def test_negation_idiom_without_a_control_object_still_goes_to_cloud(monkeypatch):
+    """「别开玩笑」的“开”不是车控动词，后面的股票问题不能被 no-op 吞掉。"""
+    request = _request("别开玩笑认真回答沪深300现在怎么样")
+    cloud_requests, _events = _run(monkeypatch, [], request=request)
+
+    assert len(cloud_requests) == 1
+    assert cloud_requests[0].text == request.text
+
+
+def test_all_local_mixed_path_records_the_executed_action_ledger(monkeypatch):
+    recorded = []
+
+    def capture(_self, _request, user_text, speech, actions=None):
+        recorded.append((user_text, speech, list(actions or [])))
+
+    monkeypatch.setattr(EdgeOrchestratorServicer, "_record_local_turn", capture)
+    mixed = server_module.split_and_classify_any(
+        "车窗别开，空调关了，音乐别停")
+    _cloud_requests, _events = _run(
+        monkeypatch, mixed,
+        request=_request("车窗别开，空调关了，音乐别停"))
+
+    assert len(recorded) == 1
+    assert EdgeOrchestratorServicer._executed_names(recorded[0][2]) == ["hvac.off"]
+
+
 def test_client_cannot_spoof_the_internal_execution_fact(monkeypatch):
     """网关会透传客户端 meta；同名键必须在端侧入口剥掉，再由真实执行器盖章。
 

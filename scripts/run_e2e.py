@@ -24,6 +24,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
+import yaml
+
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
@@ -36,6 +38,8 @@ from e2e_contract import (  # noqa: E402
     E2ECase,
     E2EManifest,
     ManifestError,
+    _CASE_ID_RE,
+    _UniqueKeyLoader,
     _read_bounded_report_bytes,
     atomic_write_report_bytes_pair,
     atomic_write_report_pair,
@@ -1202,6 +1206,37 @@ def _select(
         return select_for_target(manifest, args, target=target)
     except E2ETargetError as exc:
         raise RunnerArgumentError(str(exc)) from exc
+
+
+def _manifest_case_ids_fast(path: Path) -> set[str] | None:
+    """Read only the id index needed to reject an explicit CLI typo quickly.
+
+    ``load_manifest`` intentionally performs whole-repository contract checks
+    and can take tens of seconds on Windows.  This minimal-shape YAML read is
+    not a substitute for that validation: any malformed/ambiguous structure
+    returns ``None`` so the authoritative loader still decides the error.
+    """
+
+    try:
+        raw = yaml.load(
+            path.read_text(encoding="utf-8"),
+            Loader=_UniqueKeyLoader,
+        )
+    except (ManifestError, OSError, UnicodeError, yaml.YAMLError):
+        return None
+    if type(raw) is not dict or type(raw.get("cases")) is not list:
+        return None
+    ids: list[str] = []
+    for item in raw["cases"]:
+        if type(item) is not dict:
+            return None
+        case_id = item.get("id")
+        if type(case_id) is not str or not _CASE_ID_RE.fullmatch(case_id):
+            return None
+        ids.append(case_id)
+    if len(ids) != len(set(ids)):
+        return None
+    return set(ids)
 
 
 def _child_argv(
@@ -3990,6 +4025,25 @@ def main(
         _emit(output, summary, human_lines=("E2E preflight: ERROR",))
         return 2
 
+    mode = "check" if args.check else "dry_run" if args.dry_run else "run"
+    fast_ids = _manifest_case_ids_fast(manifest_file) if args.ids else None
+    if fast_ids is not None and any(
+        case_id not in fast_ids for case_id in args.ids
+    ):
+        summary = _base_summary(mode=mode, args=args)
+        summary["errors"] = ["selection_empty"]
+        summary["exit_code"] = 2
+        _emit(output, summary, human_lines=("E2E selection: ERROR",))
+        return 2
+    try:
+        manifest = load_manifest(manifest_file, repo_root=root)
+    except ManifestError:
+        summary = _base_summary(mode=mode, args=args)
+        summary["errors"] = ["manifest"]
+        summary["exit_code"] = 2
+        _emit(output, summary, human_lines=("E2E manifest: ERROR",))
+        return 2
+
     try:
         stack_root = _resolve_stack_root(root, source_env)
         source_env = _load_stack_environment(stack_root, source_env)
@@ -4012,16 +4066,8 @@ def main(
         _emit(output, summary, human_lines=("E2E stack root: ERROR",))
         return 2
 
-    mode = "check" if args.check else "dry_run" if args.dry_run else "run"
     summary = _base_summary(mode=mode, args=args)
     summary["target_release_sha"] = target.release_sha
-    try:
-        manifest = load_manifest(manifest_file, repo_root=root)
-    except ManifestError:
-        summary["errors"] = ["manifest"]
-        summary["exit_code"] = 2
-        _emit(output, summary, human_lines=("E2E manifest: ERROR",))
-        return 2
 
     try:
         selected, effective_full = _select(manifest, args, target.name)

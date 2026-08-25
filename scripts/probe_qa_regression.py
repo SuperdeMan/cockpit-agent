@@ -393,9 +393,11 @@ CASES = [
      "turns": [
          # 与 XS4 是**一对**：XS4 证「严格模式不回落」，本条证「宽松模式没被误伤」。
          # 只做前者会得到一个「什么订单都查不到」的系统（§4.3 反向验证要两头做）。
-         {"sid": 1, "say": "查一下我之前的订单",
-          "expect": {"card_type": "mcp_result",
-                     "speech_any": ["月", "不是本次"]}},
+          {"sid": 1, "say": "查一下我之前的订单",
+           # 真实商户查单统一走 ``*.order_status`` 的 mcp_order 结果映射；
+           # mcp_result 是早期 demo-coffee 通用工具的形态，真栈不再接受它。
+           "expect": {"card_type": "mcp_order",
+                      "speech_any": ["月", "不是本次"]}},
      ]},
     {"id": "XS8", "group": "session", "card": "Q10", "issue": "I-037",
      "why": "干净 session 说「取消刚才那单」不得把历史单捞进确认——**写路径比读路径更该严**",
@@ -1527,7 +1529,8 @@ def _subst(obj, stamp: int):
 
 
 async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
-                    is_confirmation: bool = False, trace_id: str = "") -> dict:
+                    is_confirmation: bool = False, trace_id: str = "",
+                    meta_overrides: dict[str, str] | None = None) -> dict:
     """一轮 = 从发出到**这一轮不再有新事件**，不是「收到第一个 final」。
 
     ⚠ **尺子口径 2026-08-16 改过一次，留痕（Q7 残余批）。** 原实现收到第一个 `final`
@@ -1546,6 +1549,14 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
         才由后续 final 填——挂起/确认语义属于主 final，不许被后面那段覆盖。
     """
     meta = dict(PROBE_META)
+    overrides = meta_overrides or {}
+    if not isinstance(overrides, dict) or set(overrides) - {
+            "llm_provider", "llm_model"}:
+        raise ValueError("unsupported meta override")
+    for key, value in overrides.items():
+        if not isinstance(value, str) or not value.strip() or len(value) > 80:
+            raise ValueError(f"invalid meta override: {key}")
+        meta[key] = value.strip()
     if trace_id:
         # 长会话 QA 用这枚 id 与 collector 的 route/agent/provider/span 逐轮对账。
         # 普通迷你集不传时行为逐字不变。

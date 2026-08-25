@@ -1,6 +1,14 @@
 from val import VAL
 
 
+def test_initial_state_declares_every_long_qa_restorable_control():
+    state = VAL().state
+
+    assert state["rear_view_mirror"] == "unfolded"
+    assert state["volume_muted"] is False
+    assert state["warning_light"] is False
+
+
 def test_on_change_reports_diff_batch():
     captured = []
     val = VAL(on_change=lambda changes: captured.append(changes))

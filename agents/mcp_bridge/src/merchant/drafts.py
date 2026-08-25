@@ -218,6 +218,84 @@ end
 return {1, live}
 """
 
+_SESSION_LIFECYCLE_LUA = r"""
+-- merchant-draft-session-lifecycle-v1
+if redis.call('EXISTS', KEYS[3]) == 1
+   or redis.call('EXISTS', KEYS[4]) == 1 then
+  return {-2, 0, -1}
+end
+local cardinality = redis.call('SCARD', KEYS[1])
+local version = redis.call('HGET', KEYS[2], 'version')
+local state = redis.call('HGET', KEYS[2], 'state')
+local expected = tonumber(redis.call('HGET', KEYS[2], 'count') or '-1')
+if version ~= ARGV[5] then return {-1, 0, -1} end
+if state == 'idle' and expected == 0 and cardinality == 0 then
+  return {1, 0, 0}
+end
+if state ~= 'active' or cardinality == 0 or expected ~= cardinality then
+  return {-1, 0, -1}
+end
+
+local members = redis.call('SMEMBERS', KEYS[1])
+local targets = {}
+local drafts = 0
+for _, key in ipairs(members) do
+  if string.sub(key, 1, string.len(ARGV[1])) == ARGV[1] then
+    local raw = redis.call('GET', key)
+    if not raw then return {-1, 0, -1} end
+    local ok, value = pcall(cjson.decode, raw)
+    if not ok or type(value) ~= 'table'
+       or value['owner_digest'] ~= ARGV[3] then
+      return {-1, 0, -1}
+    end
+    if value['session_digest'] == ARGV[4] then
+      table.insert(targets, key)
+      drafts = drafts + 1
+    end
+  elseif string.sub(key, 1, string.len(ARGV[2])) == ARGV[2] then
+    local token = redis.call('GET', key)
+    if not token then return {-1, 0, -1} end
+    local draft_key = ARGV[1] .. token
+    if redis.call('SISMEMBER', KEYS[1], draft_key) ~= 1 then
+      return {-1, 0, -1}
+    end
+    local raw = redis.call('GET', draft_key)
+    if not raw then return {-1, 0, -1} end
+    local ok, value = pcall(cjson.decode, raw)
+    if not ok or type(value) ~= 'table'
+       or value['owner_digest'] ~= ARGV[3] then
+      return {-1, 0, -1}
+    end
+    local canonical = ARGV[2] .. ARGV[3] .. ':'
+                      .. tostring(value['session_digest']) .. ':'
+                      .. string.lower(tostring(value['merchant']))
+    if key ~= canonical then return {-1, 0, -1} end
+    if value['session_digest'] == ARGV[4] then
+      table.insert(targets, key)
+    end
+  else
+    return {-1, 0, -1}
+  end
+end
+
+if ARGV[6] == 'count' then return {1, drafts, cardinality} end
+if ARGV[6] ~= 'discard' then return {-1, 0, -1} end
+for _, key in ipairs(targets) do
+  if redis.call('DEL', key) ~= 1 then return {-1, 0, -1} end
+  if redis.call('SREM', KEYS[1], key) ~= 1 then return {-1, 0, -1} end
+end
+local new_count = redis.call('SCARD', KEYS[1])
+if new_count == 0 then
+  redis.call('DEL', KEYS[1])
+  redis.call('HSET', KEYS[2], 'version', ARGV[5], 'state', 'idle',
+             'count', 0)
+  redis.call('EXPIRE', KEYS[2], ARGV[7])
+else
+  redis.call('HSET', KEYS[2], 'count', new_count)
+end
+return {1, drafts, new_count}
+"""
+
 _PERSIST_FENCE_LUA = r"""
 if redis.call('GET', KEYS[1]) == ARGV[1]
    and redis.call('EXISTS', KEYS[2]) == 0 then
@@ -490,6 +568,51 @@ class RedisDraftStore:
             logger.warning("MerchantDraftStore.count_owner 失败：%s",
                            type(exc).__name__)
             return -1
+
+    async def _session_lifecycle(self, user_id: str, session_id: str,
+                                 mode: str) -> tuple[int, int, int]:
+        """Atomically count/discard one authenticated session's live drafts.
+
+        The owner index is the authority.  Missing/corrupt indexes, privacy
+        fences and active write leases all fail closed; a QA cleanup must never
+        scan and delete by a caller-controlled prefix.
+        """
+        if not user_id or not session_id or mode not in {"count", "discard"}:
+            return -1, 0, -1
+        r = await self._redis()
+        if r is None:
+            return -1, 0, -1
+        try:
+            result = await r.eval(
+                _SESSION_LIFECYCLE_LUA, 4, self._owner_key(user_id),
+                self._owner_meta_key(user_id), self._owner_fence_key(user_id),
+                self._owner_active_key(user_id), _DRAFT_PREFIX,
+                _CURRENT_PREFIX, _digest(user_id), _digest(session_id),
+                _OWNER_INDEX_VERSION, mode, self.ttl_seconds)
+            if not isinstance(result, (list, tuple)) or len(result) != 3:
+                return -1, 0, -1
+            return tuple(int(value) for value in result)
+        except Exception as exc:
+            logger.warning("MerchantDraftStore.%s_session 失败：%s",
+                           mode, type(exc).__name__)
+            return -1, 0, -1
+
+    async def count_session(self, user_id: str, session_id: str) -> int:
+        """Count active draft records for exactly one owner/session."""
+        status, drafts, _ = await self._session_lifecycle(
+            user_id, session_id, "count")
+        return drafts if status == 1 else -1
+
+    async def discard_session(self, user_id: str, session_id: str) -> int:
+        """Discard exactly one owner/session's transient previews.
+
+        Returns the number of draft records removed, or ``-1`` when zero-state
+        proof is unavailable.  It never touches merchant orders or another
+        session's previews.
+        """
+        status, drafts, _ = await self._session_lifecycle(
+            user_id, session_id, "discard")
+        return drafts if status == 1 else -1
 
     async def delete_owner(self, user_id: str) -> bool:
         """Delete owner data behind a write fence and prove the result."""

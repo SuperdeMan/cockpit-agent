@@ -36,6 +36,28 @@ _DAILY_OK = {
     },
 }
 
+_INDEX_DAILY_OK = {
+    "code": 0,
+    "data": {
+        "fields": ["ts_code", "trade_date", "open", "high", "low", "close",
+                    "pre_close", "change", "pct_chg", "vol", "amount"],
+        "items": [["000300.SH", "20260824", "3920.00", "3950.00",
+                   "3900.00", "3944.50", "3910.00", "34.50", "0.88",
+                   "123456", "987654.32"]],
+    },
+}
+
+_SSE_INDEX_DAILY_OK = {
+    "code": 0,
+    "data": {
+        "fields": ["ts_code", "trade_date", "open", "high", "low", "close",
+                   "pre_close", "change", "pct_chg", "vol", "amount"],
+        "items": [["000001.SH", "20260824", "3820.00", "3850.00",
+                   "3800.00", "3844.50", "3810.00", "34.50", "0.91",
+                   "223456", "887654.32"]],
+    },
+}
+
 _DAILY_WINDOW_OK = {
     "code": 0,
     "data": {
@@ -114,9 +136,21 @@ def test_quote_no_data_raises():
 
 
 def test_index_maps_chinese_name():
-    p = _provider({"daily": _DAILY_OK, "stock_basic": _STOCK_BASIC_OK})
+    p = _provider({"index_daily": _SSE_INDEX_DAILY_OK})
     q = asyncio.run(p.index("上证"))
     assert q.symbol == "000001.SH"  # 上证指数
+    assert q.price == "3844.50"
+
+
+def test_hs300_uses_index_daily_and_keeps_the_index_name():
+    p = _provider({"index_daily": _INDEX_DAILY_OK})
+
+    q = asyncio.run(p.quote("沪深300"))
+
+    assert q.name == "沪深300"
+    assert q.symbol == "000300.SH"
+    assert q.price == "3944.50"
+    assert [request["api_name"] for request in p.requests] == ["index_daily"]
 
 
 def test_history_parses_ohlc_in_chronological_order():
@@ -128,3 +162,17 @@ def test_history_parses_ohlc_in_chronological_order():
         ("20260619", "1860", "1880", "1850", "1870", "11000"),
         ("20260620", "1875", "1900", "1870", "1888", "12000"),
     ]
+
+
+def test_quote_rejects_a_row_for_another_security():
+    p = _provider({"index_daily": _INDEX_DAILY_OK})
+
+    with pytest.raises(ProviderError, match="no daily data"):
+        asyncio.run(p.quote("上证"))
+
+
+def test_history_rejects_rows_for_another_security():
+    p = _provider({"daily": _DAILY_WINDOW_OK})
+
+    with pytest.raises(ProviderError, match="no daily history"):
+        asyncio.run(p.history("000001.SZ", limit=2))
