@@ -14,6 +14,7 @@ import subprocess
 import tarfile
 import tempfile
 import tokenize
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -406,7 +407,33 @@ def validate_ssh_identity(identity: Path) -> None:
         )
 
 
-def _git(repo: Path, *args: str, check: bool = True) -> CommandResult:
+def _git(
+    repo: Path, *args: str, check: bool = True, raw: bool = False
+) -> CommandResult:
+    if raw:
+        try:
+            completed = subprocess.run(
+                ["git", *args],
+                cwd=repo,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+        except OSError as exc:
+            raise ReleaseError(
+                f"could not run git: {type(exc).__name__}"
+            ) from exc
+        stdout = completed.stdout.decode("utf-8", errors="surrogateescape")
+        stderr = completed.stderr.decode("utf-8", errors="replace")
+        result = CommandResult(
+            tuple(["git", *args]), completed.returncode, stdout, stderr
+        )
+        if check and result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "no output"
+            raise ReleaseError(
+                f"command failed ({result.returncode}): git: {detail}"
+            )
+        return result
     return SubprocessRunner().run(["git", *args], cwd=repo, check=check)
 
 
@@ -638,6 +665,7 @@ def _committed_regular_tree_paths(
         target_sha,
         "--",
         prefix,
+        raw=True,
     ).stdout
     if raw_listing and not raw_listing.endswith("\0"):
         raise ReleaseError("committed controlled tree record is malformed", category="safety")
@@ -656,7 +684,11 @@ def _committed_regular_tree_paths(
             raise ReleaseError("committed controlled tree entry is unsafe", category="safety")
         if (
             "\\" in path
-            or any(ord(character) < 32 or ord(character) == 127 for character in path)
+            or any(
+                unicodedata.category(character) == "Cc"
+                or "\udc80" <= character <= "\udcff"
+                for character in path
+            )
             or not path.startswith(f"{prefix}/")
         ):
             raise ReleaseError("committed controlled tree path is unsafe", category="safety")

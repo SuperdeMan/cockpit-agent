@@ -446,12 +446,19 @@ def test_ci_cd_digest_rejects_non_regular_tree_entry(
     [
         "100644 blob " + "a" * 40 + "\t.github\\workflows\\ci.yml\0",
         "100644 blob " + "a" * 40 + "\t.github/workflows/ci\x01.yml\0",
+        "100644 blob " + "a" * 40 + "\t.github/workflows/ci\u0085.yml\0",
         "100644 blob " + "a" * 40 + "\tother/ci.yml\0",
         "100644 blob " + "a" * 40 + "\t.github/workflows/../ci.yml\0",
         "100644 blob " + "a" * 40 + "\t.github/workflows/ci.yml\0"
         "100755 blob " + "b" * 40 + "\t.github/workflows/ci.yml\0",
         "100600 blob " + "a" * 40 + "\t.github/workflows/ci.yml\0",
         "100644 tree " + "a" * 40 + "\t.github/workflows/ci.yml\0",
+        "160000 commit " + "a" * 40 + "\t.github/workflows/x.yml\0",
+        "100644 blob " + "a" * 40 + "\t.github/workflows/ci.yml",
+        "100644 blob " + "a" * 40 + ".github/workflows/ci.yml\0",
+        "100644 blob\t.github/workflows/ci.yml\0",
+        "100644 blob not-hex\t.github/workflows/ci.yml\0",
+        "100644 blob " + "a" * 39 + "\t.github/workflows/ci.yml\0",
     ],
 )
 def test_ci_cd_digest_rejects_unsafe_tree_paths(
@@ -463,6 +470,28 @@ def test_ci_cd_digest_rejects_unsafe_tree_paths(
         cloud_release_lib,
         "_git",
         lambda *_args, **_kwargs: CommandResult((), 0, entry, ""),
+    )
+
+    with pytest.raises(ReleaseError) as caught:
+        compute_ci_cd_digest(repo, sha)
+    assert caught.value.category == "safety"
+
+
+def test_ci_cd_digest_rejects_invalid_utf8_tree_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    repo, sha = make_repo(tmp_path)
+
+    monkeypatch.setattr(
+        cloud_release_lib.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=(
+                b"100644 blob " + b"a" * 40 + b"\t.github/workflows/ci\xff.yml\0"
+            ),
+            stderr=b"",
+        ),
     )
 
     with pytest.raises(ReleaseError) as caught:
