@@ -2018,6 +2018,100 @@ def test_exact_ci_cd_request_approval_is_audited_in_dry_run_artifact(
     assert len(runner.calls) == 1
 
 
+def test_apply_rejects_remote_baseline_drift_after_approved_dry_run(
+    tmp_path: Path,
+):
+    initial_request, base_a = make_release_request(
+        tmp_path,
+        with_ci_cd_change=True,
+    )
+    target = initial_request.revision
+    baseline_b = git(initial_request.repo, "rev-parse", f"{target}^")
+    assert base_a != baseline_b != target
+    assert re.fullmatch(r"[0-9a-f]{40}", baseline_b)
+    changed_from_b, _ = git_changes(initial_request.repo, baseline_b, target)
+    assert changed_from_b == [".github/workflows/ci.yml"]
+    approval = compute_ci_cd_digest(initial_request.repo, target)
+    assert approval is not None
+    request = ReleaseRequest(
+        repo=initial_request.repo,
+        revision=target,
+        artifact_root=initial_request.artifact_root,
+        ssh=initial_request.ssh,
+        approved_ci_cd_digest=approval,
+    )
+    infrastructure_digest = compute_infrastructure_digest(
+        request.repo,
+        target,
+    )
+
+    dry_runner = FakeRunner(
+        [
+            command_result(
+                remote_state_payload(
+                    base_a,
+                    approved_digest=infrastructure_digest,
+                )
+            )
+        ]
+    )
+    dry_run = execute_deploy(request, apply=False, runner=dry_runner)
+
+    assert dry_run.status == "dry_run"
+    assert dry_run.plan.deployed_sha == base_a
+    assert set(dry_run.plan.changed_paths) == {
+        ".github/workflows/ci.yml",
+        "app.py",
+    }
+    assert list(dry_run.plan.changed_paths) != changed_from_b
+    assert dry_run.plan.target_ci_cd_digest == approval
+    assert dry_run.plan.approved_ci_cd_digest == approval
+    assert dry_run.artifact is not None
+    artifact_directory = dry_run.artifact.directory
+    artifact_bytes = {
+        path.relative_to(artifact_directory).as_posix(): path.read_bytes()
+        for path in sorted(artifact_directory.rglob("*"))
+        if path.is_file()
+    }
+    assert artifact_bytes
+
+    apply_runner = FakeRunner(
+        [
+            command_result(
+                remote_state_payload(
+                    baseline_b,
+                    approved_digest=infrastructure_digest,
+                )
+            )
+        ]
+    )
+    with pytest.raises(ReleaseError, match="artifact exists but does not match"):
+        execute_deploy(
+            request,
+            apply=True,
+            runner=apply_runner,
+            nonce_factory=lambda: "f" * 32,
+        )
+
+    assert apply_runner.calls == [
+        tuple(request.ssh.ssh_argv(REMOTE_PREFLIGHT_COMMAND))
+    ]
+    assert all(
+        forbidden not in " ".join(apply_runner.calls[0])
+        for forbidden in (
+            "prepare-upload",
+            "scp",
+            "chmod",
+            "remote-release.sh deploy",
+        )
+    )
+    assert {
+        path.relative_to(artifact_directory).as_posix(): path.read_bytes()
+        for path in sorted(artifact_directory.rglob("*"))
+        if path.is_file()
+    } == artifact_bytes
+
+
 def test_deploy_stops_when_remote_bootstrap_is_incomplete(tmp_path: Path):
     request, base = make_release_request(tmp_path)
     digest = compute_infrastructure_digest(request.repo, request.revision)
