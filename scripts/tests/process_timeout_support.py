@@ -274,7 +274,26 @@ class MethodArm:
 
     def __init__(self) -> None:
         self.triggered = False
+        self.observed_timeout: object | None = None
         self.timeout_injections = 0
+
+
+_TIMEOUT_MISSING = object()
+
+
+def _method_timeout_argument(
+    method_name: str,
+    args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> object:
+    position = 0 if method_name == "wait" else 1
+    if "timeout" in kwargs:
+        if len(args) > position:
+            raise AssertionError(f"{method_name} timeout was supplied twice")
+        return kwargs["timeout"]
+    if len(args) > position:
+        return args[position]
+    return _TIMEOUT_MISSING
 
 
 def _arm_method_after_ready(
@@ -284,6 +303,7 @@ def _arm_method_after_ready(
     method_name: str,
     inject_timeout: bool,
     ready_timeout_s: float,
+    expected_timeout_s: float | int | None,
 ) -> MethodArm:
     original = getattr(process, method_name)
     original_poll = process.poll
@@ -292,6 +312,18 @@ def _arm_method_after_ready(
     def armed(*args, **kwargs):
         if arm.triggered:
             return original(*args, **kwargs)
+        if expected_timeout_s is not None:
+            observed_timeout = _method_timeout_argument(method_name, args, kwargs)
+            if observed_timeout is _TIMEOUT_MISSING:
+                raise AssertionError(f"{method_name} timeout is required")
+            arm.observed_timeout = observed_timeout
+            if observed_timeout is None:
+                raise AssertionError(f"{method_name} timeout cannot be None")
+            if observed_timeout != expected_timeout_s:
+                raise AssertionError(
+                    f"{method_name} timeout mismatch: expected "
+                    f"{expected_timeout_s!r}, got {observed_timeout!r}"
+                )
         arm.triggered = True
         probe.capture(
             process,
@@ -314,6 +346,7 @@ def arm_wait_timeout_after_ready(
     process: subprocess.Popen[bytes],
     probe: ProcessReadinessProbe,
     *,
+    expected_timeout_s: float | int,
     ready_timeout_s: float = 8,
 ) -> MethodArm:
     return _arm_method_after_ready(
@@ -322,6 +355,7 @@ def arm_wait_timeout_after_ready(
         method_name="wait",
         inject_timeout=True,
         ready_timeout_s=ready_timeout_s,
+        expected_timeout_s=expected_timeout_s,
     )
 
 
@@ -329,6 +363,7 @@ def arm_wait_after_ready(
     process: subprocess.Popen[bytes],
     probe: ProcessReadinessProbe,
     *,
+    expected_timeout_s: float | int | None = None,
     ready_timeout_s: float = 8,
 ) -> MethodArm:
     return _arm_method_after_ready(
@@ -337,6 +372,7 @@ def arm_wait_after_ready(
         method_name="wait",
         inject_timeout=False,
         ready_timeout_s=ready_timeout_s,
+        expected_timeout_s=expected_timeout_s,
     )
 
 
@@ -344,6 +380,7 @@ def arm_communicate_timeout_after_ready(
     process: subprocess.Popen[bytes],
     probe: ProcessReadinessProbe,
     *,
+    expected_timeout_s: float | int,
     ready_timeout_s: float = 8,
 ) -> MethodArm:
     return _arm_method_after_ready(
@@ -352,6 +389,7 @@ def arm_communicate_timeout_after_ready(
         method_name="communicate",
         inject_timeout=True,
         ready_timeout_s=ready_timeout_s,
+        expected_timeout_s=expected_timeout_s,
     )
 
 

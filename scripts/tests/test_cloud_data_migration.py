@@ -655,7 +655,11 @@ def test_local_runner_timeout_terminates_grandchild_process_tree(
     def popen(*args, **kwargs):
         process = original_popen(*args, **kwargs)
         processes.append(process)
-        arms.append(arm_communicate_timeout_after_ready(process, probe))
+        arms.append(arm_communicate_timeout_after_ready(
+            process,
+            probe,
+            expected_timeout_s=30,
+        ))
         return process
 
     monkeypatch.setattr(migration.subprocess, "Popen", popen)
@@ -666,6 +670,7 @@ def test_local_runner_timeout_terminates_grandchild_process_tree(
             runner.run([sys.executable, "-c", parent], cwd=tmp_path)
         assert len(arms) == 1
         assert arms[0].triggered
+        assert arms[0].observed_timeout == 30
         assert arms[0].timeout_injections == 1
         probe.assert_exited()
         assert not marker.exists()

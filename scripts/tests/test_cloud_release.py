@@ -137,7 +137,12 @@ def test_process_probe_rejects_operation_exit_before_descendant_ready(
         tmp_path / "missing.pid",
         tmp_path / "missing.ready",
     )
-    arm = arm_wait_after_ready(process, probe, ready_timeout_s=1)
+    arm = arm_wait_after_ready(
+        process,
+        probe,
+        ready_timeout_s=1,
+        expected_timeout_s=5,
+    )
     try:
         with pytest.raises(AssertionError, match="descendant not started"):
             process.wait(timeout=5)
@@ -164,12 +169,18 @@ def test_process_timeout_arm_fires_once_then_delegates_to_real_wait(
         stderr=subprocess.DEVNULL,
     )
     probe = ProcessReadinessProbe(pid_file, ready_file)
-    arm = arm_wait_timeout_after_ready(process, probe, ready_timeout_s=5)
+    arm = arm_wait_timeout_after_ready(
+        process,
+        probe,
+        ready_timeout_s=5,
+        expected_timeout_s=30,
+    )
     verified = False
     try:
         with pytest.raises(subprocess.TimeoutExpired):
-            process.wait(timeout=30)
+            process.wait(30)
         assert arm.triggered
+        assert arm.observed_timeout == 30
         assert arm.timeout_injections == 1
         probe.force_cleanup()
         returncode = process.wait(timeout=5)
@@ -184,6 +195,137 @@ def test_process_timeout_arm_fires_once_then_delegates_to_real_wait(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
+        probe.close()
+
+
+def test_wait_timeout_arm_rejects_a_missing_real_timeout_before_injection(
+    tmp_path: Path,
+):
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(600)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    real_wait = process.wait
+    probe = ProcessReadinessProbe(tmp_path / "unused.pid", tmp_path / "unused.ready")
+    arm = arm_wait_timeout_after_ready(
+        process,
+        probe,
+        expected_timeout_s=30,
+    )
+    try:
+        with pytest.raises(AssertionError, match="wait timeout is required"):
+            process.wait()
+        assert arm.timeout_injections == 0
+    finally:
+        process.kill()
+        real_wait(timeout=5)
+        probe.close()
+
+
+@pytest.mark.parametrize(
+    ("actual_timeout", "message"),
+    [
+        (None, "wait timeout cannot be None"),
+        (29, "wait timeout mismatch"),
+    ],
+)
+def test_wait_timeout_arm_rejects_none_or_the_wrong_exact_value(
+    tmp_path: Path,
+    actual_timeout: int | None,
+    message: str,
+):
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(600)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    real_wait = process.wait
+    probe = ProcessReadinessProbe(tmp_path / "unused.pid", tmp_path / "unused.ready")
+    arm = arm_wait_timeout_after_ready(
+        process,
+        probe,
+        expected_timeout_s=30,
+    )
+    try:
+        with pytest.raises(AssertionError, match=message):
+            process.wait(timeout=actual_timeout)
+        assert arm.timeout_injections == 0
+    finally:
+        process.kill()
+        real_wait(timeout=5)
+        probe.close()
+
+
+def test_communicate_timeout_arm_rejects_input_without_a_real_timeout(
+    tmp_path: Path,
+):
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(600)"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    real_wait = process.wait
+    probe = ProcessReadinessProbe(tmp_path / "unused.pid", tmp_path / "unused.ready")
+    arm = arm_communicate_timeout_after_ready(
+        process,
+        probe,
+        expected_timeout_s=30,
+    )
+    try:
+        with pytest.raises(AssertionError, match="communicate timeout is required"):
+            process.communicate(b"input-only")
+        assert arm.timeout_injections == 0
+    finally:
+        process.kill()
+        real_wait(timeout=5)
+        probe.close()
+
+
+def test_communicate_timeout_arm_accepts_a_positional_timeout_then_delegates(
+    tmp_path: Path,
+):
+    pid_file = tmp_path / "communicate-armed.pid"
+    ready_file = tmp_path / "communicate-armed.ready"
+    child_code = (
+        "import time; from pathlib import Path; "
+        + atomic_pid_ready_code(pid_file, ready_file, pid_expression="os.getpid()")
+        + "time.sleep(600)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    probe = ProcessReadinessProbe(pid_file, ready_file)
+    arm = arm_communicate_timeout_after_ready(
+        process,
+        probe,
+        expected_timeout_s=30,
+    )
+    verified = False
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            process.communicate(None, 30)
+        assert arm.triggered
+        assert arm.observed_timeout == 30
+        assert arm.timeout_injections == 1
+        probe.force_cleanup()
+        process.communicate()
+        probe.assert_exited()
+        verified = True
+    finally:
+        if not verified:
+            probe.force_cleanup()
+            try:
+                process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.communicate(timeout=5)
         probe.close()
 
 
@@ -241,7 +383,11 @@ def test_runner_timeout_terminates_grandchild_process_tree(
     def popen(*args, **kwargs):
         process = original_popen(*args, **kwargs)
         processes.append(process)
-        arms.append(arm_communicate_timeout_after_ready(process, probe))
+        arms.append(arm_communicate_timeout_after_ready(
+            process,
+            probe,
+            expected_timeout_s=30,
+        ))
         return process
 
     monkeypatch.setattr(cloud_release_lib.subprocess, "Popen", popen)
@@ -253,6 +399,7 @@ def test_runner_timeout_terminates_grandchild_process_tree(
             )
         assert len(arms) == 1
         assert arms[0].triggered
+        assert arms[0].observed_timeout == 30
         assert arms[0].timeout_injections == 1
         probe.assert_exited()
         assert not marker.exists()

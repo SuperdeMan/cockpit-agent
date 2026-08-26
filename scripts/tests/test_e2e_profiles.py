@@ -1071,7 +1071,11 @@ def test_profile_command_timeout_reaps_grandchild_and_never_leaks_secret(
     def popen(*args, **kwargs):
         process = original_popen(*args, **kwargs)
         processes.append(process)
-        arms.append(arm_wait_timeout_after_ready(process, probe))
+        arms.append(arm_wait_timeout_after_ready(
+            process,
+            probe,
+            expected_timeout_s=30,
+        ))
         return process
 
     monkeypatch.setattr(runner.subprocess, "Popen", popen)
@@ -1088,6 +1092,7 @@ def test_profile_command_timeout_reaps_grandchild_and_never_leaks_secret(
         assert secret not in str(caught.value)
         assert len(arms) == 1
         assert arms[0].triggered
+        assert arms[0].observed_timeout == 30
         assert arms[0].timeout_injections == 1
         probe.assert_exited()
         verified = True

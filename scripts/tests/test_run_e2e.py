@@ -27,6 +27,7 @@ from scripts.tests.process_timeout_support import (
     arm_poll_after_ready,
     arm_wait_after_ready,
     arm_wait_timeout_after_ready,
+    atomic_pid_ready_code,
 )
 
 
@@ -2694,6 +2695,117 @@ def test_keyboard_interrupt_finalizes_bounded_redacted_logs_before_rethrow(
     assert tree.closed == 1
 
 
+def test_fixture_command_timeout_reaps_grandchild_and_never_leaks_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    runner = _runner()
+    marker = tmp_path / "fixture-grandchild-survived"
+    pid_file = tmp_path / "fixture-grandchild.pid"
+    ready_file = tmp_path / "fixture-grandchild.ready"
+    stdout_path = tmp_path / "fixture-stdout.log"
+    stderr_path = tmp_path / "fixture-stderr.log"
+    secret = "fixture-command-secret-must-not-render"  # release-secret-fixture
+    child_code = (
+        "import time; from pathlib import Path; time.sleep(600); "
+        f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
+    )
+    parent_code = (
+        "import subprocess,sys,time; from pathlib import Path; "
+        "secret=sys.argv[1]; "
+        f"descendant=subprocess.Popen([sys.executable,'-c',{child_code!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL); "
+        "sys.stdout.write('x'*(4*1024*1024)+secret); sys.stdout.flush(); "
+        "sys.stderr.write('y'*(4*1024*1024)+secret); sys.stderr.flush(); "
+        + atomic_pid_ready_code(pid_file, ready_file)
+        + "time.sleep(600)"
+    )
+    probe = ProcessReadinessProbe(pid_file, ready_file)
+    original_popen = runner.subprocess.Popen
+    processes = []
+    real_waits = []
+    arms = []
+    terminate_events: list[str] = []
+    close_calls = []
+    original_terminate = runner._ProcessTree.terminate
+    original_close = runner._ProcessTree.close
+
+    def observed_terminate(tree, process):
+        terminate_events.append("terminate:entered")
+        result = original_terminate(tree, process)
+        probe.assert_exited()
+        terminate_events.append("terminate:descendant-exited")
+        return result
+
+    def observed_close(tree):
+        close_calls.append(tree)
+        return original_close(tree)
+
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        real_waits.append(process.wait)
+        arms.append(arm_wait_timeout_after_ready(
+            process,
+            probe,
+            expected_timeout_s=30,
+            ready_timeout_s=15,
+        ))
+        return process
+
+    monkeypatch.setattr(runner._ProcessTree, "terminate", observed_terminate)
+    monkeypatch.setattr(runner._ProcessTree, "close", observed_close)
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    verified = False
+    try:
+        ok, returncode, diagnostic, logs = runner._run_fixture_command(
+            [sys.executable, "-c", parent_code, secret],
+            repo_root=tmp_path,
+            environ={**os.environ, "FIXTURE_TEST_SECRET": secret},
+            timeout_s=30,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+            sensitive_values=(secret,),
+        )
+
+        assert ok is False
+        assert isinstance(returncode, int) and returncode != 0
+        assert len(arms) == 1
+        assert arms[0].triggered
+        assert arms[0].observed_timeout == 30
+        assert arms[0].timeout_injections == 1
+        probe.assert_exited()
+        assert not marker.exists()
+        assert terminate_events == [
+            "terminate:entered",
+            "terminate:descendant-exited",
+        ]
+        assert close_calls and len(close_calls) == 1
+        assert set(logs) == {str(stdout_path.resolve()), str(stderr_path.resolve())}
+        assert all(Path(path).stat().st_size <= runner.MAX_LOG_BYTES for path in logs)
+        rendered_logs = b"".join(Path(path).read_bytes() for path in logs).decode(
+            "utf-8",
+            errors="replace",
+        )
+        assert len(diagnostic.encode("utf-8")) <= runner.MAX_DIAGNOSTIC_BYTES
+        assert "[REDACTED]" in diagnostic
+        assert secret not in diagnostic
+        assert secret not in rendered_logs
+        verified = True
+    finally:
+        if not verified:
+            probe.force_cleanup()
+            for process, real_wait in zip(processes, real_waits):
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    real_wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        probe.close()
+
+
 def test_timeout_kills_real_process_tree_and_continues(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2723,7 +2835,11 @@ def test_timeout_kills_real_process_tree_and_continues(
             probes.append(probe)
             target_processes.append(process)
             target_waits.append(process.wait)
-            arms.append(arm_wait_timeout_after_ready(process, probe))
+            arms.append(arm_wait_timeout_after_ready(
+                process,
+                probe,
+                expected_timeout_s=30,
+            ))
         return process
 
     monkeypatch.setattr(runner.subprocess, "Popen", popen)
@@ -2745,6 +2861,7 @@ def test_timeout_kills_real_process_tree_and_continues(
         assert "timeout" in summary["results"][0]["errors"]
         assert len(probes) == len(arms) == 1
         assert arms[0].triggered
+        assert arms[0].observed_timeout == 30
         assert arms[0].timeout_injections == 1
         assert (
             Path(summary["results"][0]["artifact_dir"]) / "parent_started"
@@ -2792,7 +2909,11 @@ def test_descendant_is_reaped_even_when_leader_exits_before_cleanup(
             probes.append(probe)
             target_processes.append(process)
             target_waits.append(process.wait)
-            arms.append(arm_wait_after_ready(process, probe))
+            arms.append(arm_wait_after_ready(
+                process,
+                probe,
+                expected_timeout_s=30,
+            ))
         return process
 
     monkeypatch.setattr(runner.subprocess, "Popen", popen)
@@ -2813,6 +2934,7 @@ def test_descendant_is_reaped_even_when_leader_exits_before_cleanup(
         assert summary["results"][0]["errors"] == ["child_failed"]
         assert len(probes) == len(arms) == 1
         assert arms[0].triggered
+        assert arms[0].observed_timeout == 30
         assert arms[0].timeout_injections == 0
         probes[0].assert_exited()
         assert not tree_marker.exists(), "leader-exit grandchild wrote its marker"
