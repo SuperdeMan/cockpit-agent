@@ -19,7 +19,8 @@ import { ensureWired, type Wired } from '../../core/session/wiring'
 import { settingsStore } from '../../core/settings/store'
 import { usePalette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
-import { VehiclePanel } from '../vehicle/VehiclePanel'
+import { ReminderSection } from '../vehicle/ReminderSection'
+import { VehicleSection } from '../vehicle/VehiclePanel'
 import { Composer } from './Composer'
 import { MessageBubble } from './MessageBubble'
 import { usePtt } from './usePtt'
@@ -114,6 +115,18 @@ function ChatBody({
 
   const dotColor = connStatus === 'open' ? p.green : connStatus === 'connecting' ? p.amber : p.red
 
+  // 弱网提示条（M3-4）：**延迟 3 秒**再显示——重连本来就是常态（切基站/锁屏回来都会闪一下），
+  // 每次都弹一条会把「正常自愈」渲染成「出事了」，用户学会忽略它之后真断网也就没人看了。
+  const [linkWarn, setLinkWarn] = useState(false)
+  useEffect(() => {
+    if (connStatus === 'open') {
+      setLinkWarn(false)
+      return
+    }
+    const t = setTimeout(() => setLinkWarn(true), 3000)
+    return () => clearTimeout(t)
+  }, [connStatus])
+
   const chatColumn = (
     <View style={{ flex: 1 }}>
       <FlashList
@@ -177,21 +190,31 @@ function ChatBody({
             设置
           </Link>
         </View>
+        {linkWarn ? (
+          <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
+            <Text style={{ color: p.amber, fontSize: p.font(12) }}>
+              {connStatus === 'connecting' ? '正在重连服务器…' : '连接已断开，正在重试'}
+              ——这期间发出的消息会排队，连上后自动补发
+            </Text>
+          </View>
+        ) : null}
         {tablet ? (
           <View style={{ flex: 1, flexDirection: 'row' }}>
             {chatColumn}
+            {/* 平板右面板三段（M3-2）：车况 / 提醒 / 焦点卡。
+                三段都是**已经在会话里的事实的第二个视图**，不额外向后端取数 */}
             <View style={{ width: 340, borderLeftWidth: 1, borderColor: p.line }}>
-              <ScrollView>
-                <Text style={{ color: p.fg3, fontSize: p.font(12), padding: 12, paddingBottom: 0 }}>
-                  车况
-                </Text>
-                <VehiclePanel p={p} vehState={vehState} />
-                {latestCard ? (
-                  <View style={{ padding: 12, gap: 6 }}>
-                    <Text style={{ color: p.fg3, fontSize: p.font(12) }}>最近卡片</Text>
+              <ScrollView contentContainerStyle={{ padding: 12, gap: 14 }}>
+                <VehicleSection p={p} vehState={vehState} />
+                <ReminderSection p={p} messages={messages} />
+                <View style={{ gap: 6 }}>
+                  <Text style={{ color: p.fg3, fontSize: p.font(12) }}>焦点卡</Text>
+                  {latestCard ? (
                     <CardRenderer p={p} card={latestCard} onSend={onSend} />
-                  </View>
-                ) : null}
+                  ) : (
+                    <Text style={{ color: p.fg3, fontSize: p.font(11) }}>本轮还没有卡片</Text>
+                  )}
+                </View>
               </ScrollView>
             </View>
           </View>

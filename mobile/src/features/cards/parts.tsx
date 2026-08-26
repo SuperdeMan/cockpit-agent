@@ -110,6 +110,38 @@ export function CardButtons({
   )
 }
 
+/**
+ * 时效相对化（M3-1）：`2026-08-25T01:56:00.000Z` → 「3小时前」。
+ *
+ * ⚠ **这是 `hmi/src/components/Cards.tsx:592 relativeTime` 的第二份实现**，明说不藏：
+ * 那份住在 `.tsx` 组件文件里、不是共享模块，搬出来要动 hmi 的 5 个调用点，
+ * 而「hmi 一行不改」是本计划的边界（§10）——它的例外是「共享模块**有 bug**」，
+ * 而这里 hmi 是对的，错的是 App 直显了 ISO 原文。⇒ 在边界内修，把重复记在这。
+ * **判据逐行照抄那份**（阈值 60s/60min/24h/30d、mock 判空、NaN 判空），
+ * 保持两端对同一张卡说同一句话。要收敛就得先把它提成共享模块 + node:test + 台账，
+ * 那是一次独立的共享面改动，已挂账给泓舟裁。
+ */
+export function relativeTime(iso?: string): string {
+  if (!iso || iso === 'mock') return ''
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return ''
+  const diff = Date.now() - t
+  if (diff < 60000) return '刚刚'
+  const min = Math.floor(diff / 60000)
+  if (min < 60) return `${min}分钟前`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}小时前`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day}天前`
+  return new Date(t).toLocaleDateString('zh-CN')
+}
+
+/** 时效角标：相对化后为空（缺失/无法解析/mock）就整个不渲染，不留一个空 chip */
+export function FreshChip({ p, iso }: { p: Palette; iso?: string }) {
+  const label = relativeTime(iso)
+  return label ? <Chip p={p} text={label} /> : null
+}
+
 /** 数据真实性徽章（契约 §9.3 四态）：mock 必须醒目（坑账 #6），real 只角标来源·时间 */
 export function ProvBadge({ p, prov }: { p: Palette; prov?: Provenance }) {
   if (!prov?.mode) return null

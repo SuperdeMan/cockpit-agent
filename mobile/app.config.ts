@@ -16,6 +16,13 @@ const VARIANT: Variant = (['dev', 'staging', 'prod'] as const).includes(
 
 const NAME_SUFFIX: Record<Variant, string> = { dev: ' (Dev)', staging: ' (Staging)', prod: '' }
 
+// 高德 Android key（M3-3）：来自 `mobile/.env.local`（gitignore；Expo CLI 自动加载 .env*，
+// Metro 启动日志会打印 `env: load .env.local` / `env: export AMAP_ANDROID_KEY`）。
+// **缺 key 时插件根本不挂**——manifest 里不写这条 meta-data、`extra.mapEnabled=false`、
+// 卡片上的「地图」入口不出现。M3-3 要的「可降级」是这个意思：不是运行时 try/catch，
+// 是这个能力压根没被装进 APK。⚠ key 绑「包名 + 签名 SHA1」，换签名要在高德控制台另加一条。
+const AMAP_KEY = (process.env.AMAP_ANDROID_KEY || '').trim()
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: `小舟随行${NAME_SUFFIX[VARIANT]}`,
@@ -83,6 +90,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         disableFFmpeg: true,
       },
     ],
+    // 有 key 才挂（见上方 AMAP_KEY 注释）。`...(cond ? [x] : [])` 而不是塞个 false 进去：
+    // Expo 的 plugins 数组不接受假值项，会直接报配置错。
+    ...(AMAP_KEY ? [['./plugins/with-amap-key', { apiKey: AMAP_KEY }] as [string, unknown]] : []),
   ],
   experiments: {
     typedRoutes: true,
@@ -92,5 +102,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     variant: VARIANT,
     // 「任意服务器入口」开关：onboarding 只在非 prod 档展示 lan/custom 预设
     allowCustomServer: VARIANT !== 'prod',
+    // 地图入口的**唯一运行时判据**（M3-3「可降级」）：为 false 时卡片不出「地图」按钮。
+    // 刻意只透传布尔、**不透传 key 本身**——key 已经在 manifest 里给原生 SDK 用了，
+    // 再往 JS 侧放一份只是多一个泄露面。
+    mapEnabled: Boolean(AMAP_KEY),
   },
 })

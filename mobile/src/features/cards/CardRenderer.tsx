@@ -11,14 +11,40 @@ import {
   NewsBrief,
   NewsDigest,
   NewsList,
+  ResearchReport,
   SearchAnswer,
   SearchList,
   SearchResult,
+  SportsScorers,
+  SportsScores,
   StockQuote,
   Weather,
 } from './infoCards'
-import { IntentChoice, ReminderList, ReminderSingle } from './miscCards'
-import { PlaceDetail, PlaceList, PoiDetail, PoiList, RoutePlan } from './navCards'
+import {
+  McpOrder,
+  McpResult,
+  MerchantCheckout,
+  ParkingFee,
+  PaymentQr,
+  PaymentReceipt,
+} from './merchantCards'
+import {
+  IntentChoice,
+  ReminderList,
+  ReminderSingle,
+  SceneList,
+  SceneSingle,
+  VisionAnswer,
+} from './miscCards'
+import {
+  ChargingRoute,
+  PlaceDetail,
+  PlaceList,
+  PoiDetail,
+  PoiList,
+  RoutePlan,
+  TripItinerary,
+} from './navCards'
 import { CardButtons, CardShell, ProvBadge, type SendFn } from './parts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -29,7 +55,9 @@ interface CardProps {
   onSend: SendFn
 }
 
-// M1 首批 17 型 + search_list 顺手（§2.6 分批清单）。M3 补齐其余 12+。
+// 全量卡型（M1 首批 18 键 + M3-1 补齐 16 键 = types.ts 的全部 34 个 type 字符串）。
+// 守卫 test/cards.test.ts **从 types.ts 直接派生**清单逐字比对——不再手抄：
+// 实施计划 §2.6 那句「29 型」就是手抄清单漂移的现成证据（真实是 34）。
 const REGISTRY: Record<string, (props: CardProps) => ReactNode> = {
   card_group: ({ p, card, onSend }) => (
     <View style={{ gap: 8 }}>
@@ -55,9 +83,30 @@ const REGISTRY: Record<string, (props: CardProps) => ReactNode> = {
   search_answer: ({ p, card, onSend }) => <SearchAnswer p={p} card={card} onSend={onSend} />,
   search_result: ({ p, card, onSend }) => <SearchResult p={p} card={card} onSend={onSend} />,
   search_list: ({ p, card, onSend }) => <SearchList p={p} card={card} onSend={onSend} />,
+
+  // ── M3-1 增量 ──
+  research_report: ({ p, card, onSend }) => <ResearchReport p={p} card={card} onSend={onSend} />,
+  sports_scores: ({ p, card, onSend }) => <SportsScores p={p} card={card} onSend={onSend} />,
+  sports_scorers: ({ p, card, onSend }) => <SportsScorers p={p} card={card} onSend={onSend} />,
+  charging_route: ({ p, card, onSend }) => <ChargingRoute p={p} card={card} onSend={onSend} />,
+  trip_itinerary: ({ p, card, onSend }) => <TripItinerary p={p} card={card} onSend={onSend} />,
+  scene_card: ({ p, card, onSend }) => <SceneSingle p={p} card={card} onSend={onSend} />,
+  scene_list: ({ p, card, onSend }) => <SceneList p={p} card={card} onSend={onSend} />,
+  vision_answer: ({ p, card, onSend }) => <VisionAnswer p={p} card={card} onSend={onSend} />,
+  payment_qr: ({ p, card, onSend }) => <PaymentQr p={p} card={card} onSend={onSend} />,
+  payment_receipt: ({ p, card, onSend }) => <PaymentReceipt p={p} card={card} onSend={onSend} />,
+  parking_fee: ({ p, card, onSend }) => <ParkingFee p={p} card={card} onSend={onSend} />,
+  mcp_order: ({ p, card, onSend }) => <McpOrder p={p} card={card} onSend={onSend} />,
+  mcp_result: ({ p, card, onSend }) => <McpResult p={p} card={card} onSend={onSend} />,
+  // merchant 三个 type 字符串共用一个渲染器（types.ts:232 的联合类型，
+  // 后两个是设计阶段卡名，桥侧仍在发——三个都注册，别让别名掉进兜底卡）
+  merchant_checkout: ({ p, card, onSend }) => <MerchantCheckout p={p} card={card} onSend={onSend} />,
+  merchant_choices: ({ p, card, onSend }) => <MerchantCheckout p={p} card={card} onSend={onSend} />,
+  merchant_order_preview: ({ p, card, onSend }) => <MerchantCheckout p={p} card={card} onSend={onSend} />,
 }
 
-/** 已实现卡型（守卫测试对照 §2.6 首批清单；M3 扩表时同步该测试） */
+/** 已实现卡型。守卫测试拿它与 `hmi/src/types.ts::UiCard` 派生出的全量集合比对，
+ *  两个方向都断言（缺=漏实现、多=types.ts 里没有这个型），所以**加卡型不需要改测试**。 */
 export const KNOWN_CARD_TYPES: string[] = Object.keys(REGISTRY)
 
 // 兜底卡主字段的探取顺序：拿得出一个「人能认出这是什么」的值就够

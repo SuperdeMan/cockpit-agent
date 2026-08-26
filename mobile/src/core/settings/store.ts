@@ -16,6 +16,8 @@ export type ModelPref = 'fast' | 'deep' | 'auto'
 export interface AppSettings {
   theme: ThemePref
   fontScale: FontScalePref
+  /** 常亮（M3-4）：车载支架上看行程/导航卡时别熄屏。默认关——它耗电，得用户自己要 */
+  keepAwake: boolean
   assistantName: string
   answerLength: AnswerLength
   model: ModelPref
@@ -41,6 +43,7 @@ export interface AppSettings {
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   theme: 'system',
   fontScale: 'normal',
+  keepAwake: false,
   assistantName: '小舟',
   answerLength: 'standard',
   model: 'auto',

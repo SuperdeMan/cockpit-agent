@@ -1,6 +1,6 @@
 {
   "$comment": "hmi/src 共享模块台账（实施计划 §2.7）。准入判据：零 DOM/BOM 全局、依赖闭包封闭于台账内、hmi 侧已有 node:test 覆盖。currentPhase 手动推进（进入新阶段时改这里）；守卫测试 test/sharedAllowlist.test.ts 三条断言：实际引用 ⊆ 台账、台账内文件不含 DOM/BOM 全局、phase 晚于当前阶段的模块不得被引用。",
-  "currentPhase": "M2",
+  "currentPhase": "M3",
   "phaseOrder": ["M0", "M1", "M2", "M3", "M4"],
   "modules": [
     { "file": "ws.mjs", "phase": "M0", "purpose": "主链 WS 重连/有界发送队列（断线不丢消息）", "notes": "注入 RN 全局 WebSocket" },

@@ -166,6 +166,13 @@ export function SettingsScreen() {
           ]}
           onPick={(fontScale) => set({ fontScale })}
         />
+        <SwitchRow
+          p={p}
+          label="保持屏幕常亮"
+          desc="车载支架上看行程/路线卡时不熄屏（耗电，默认关）"
+          value={settings.keepAwake}
+          onChange={(keepAwake) => set({ keepAwake })}
+        />
       </Section>
 
       <Section p={p} title="助手">
@@ -362,6 +369,9 @@ export function SettingsScreen() {
         </Link>
         <Link href="/voice-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
           语音采集/播放 spike（M2 取证）
+        </Link>
+        <Link href="/card-gallery" style={{ color: p.accent, fontSize: p.font(14) }}>
+          卡片画廊（M3 全卡族 / 主题过检）
         </Link>
       </Section>
     </ScrollView>
