@@ -538,7 +538,127 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 ### M2-5 ⛔ M2 真机验收轮
 §8.2 清单全过。
 
-**M2 实施记录**：
+**M2 实施记录**（2026-08-26，M2-1 定案 + M2-2/M2-3/M2-4 代码面完成，语音两条链路已在
+真栈上跑通并留下机器读数；**剩交互面与四场景中断待人工验收**，清单在本节末）：
+
+- **M2-1 ✅（采集定案：react-native-audio-api 的 AudioRecorder）**。A/B **都在真机上跑过**
+  才选（计划要求），读数（MIX Fold 4 / Android 16 / HyperOS 3，spike 屏 `/voice-spike`）：
+
+  | | A `react-native-audio-record@0.2.2` | B `react-native-audio-api@0.13.3` |
+  |---|---|---|
+  | 帧间隔（5s） | min 36/p50 40/p95 43/max 47ms | min 97/p50 100/p95 102/max 104ms |
+  | 采样率 | 16k（init 参数） | **16k（设备直接给，无需重采样）** |
+  | 数据形态 | base64 字符串（每帧一次编解码 + 字符串 GC） | Float32Array（JSI） |
+  | 与播放并存 | 未测 | ✅ 不互踢（录音 p50 100/max 116ms，播放同时进行） |
+  | 3 分钟长测 | — | frames=1798 p95=102/**max=128**ms，**漂移 -0.21%**（179.80s vs 墙钟 180s） |
+  | 维护状态 | 最后发布 2022-05，legacy bridge，靠 RN 的 interop 层活着 | 活跃（0.13.3 当日发布），新架构原生 |
+  | 构建面 | `compileSdkVersion` 默认写死 27、`compileOnly 'com.facebook.react:react-native:+'`——**现在能编译是因为 expo root project 注入了 ext 版本**，注入方式一变就断 | 正常 |
+
+  ⚠ **A 并不是"不能用"**：`NativeModules.RNAudioRecord = present`，5 秒录到 4.88s，
+  帧间隔 40ms 比 B 还细。**静态取证（停更 4 年 + legacy bridge）预测它会挂，实测它没挂**
+  ——所以定案理由不是"A 坏了"，是这三条：① B 同一个库还提供播放侧的 AudioContext，
+  用 A 意味着**两个音频库抢同一份设备资源**；② A 每帧多一轮 base64；③ A 的构建面挂在
+  一个它自己没声明的前提上。**帧间隔判据（≤128ms）两个都过，不构成区分度。**
+
+  ⚠ **A 仍留在 `package.json` 里**（spike 屏的 `A rec5s` 是它的可复现入口）——M2-5 验收通过后移除：留一个淘汰的 legacy bridge 模块，每次构建都编译它，而 RN 哪次升级把 interop 层拿掉它就炸。留它的唯一理由是「B 万一在人工验收里翻车还有退路」。
+
+  **判据偏差两条（如实记）**：计划写「两台真机 30 分钟」——① 平板缺席（E3 仍未办），
+  只跑了手机；② 实跑 **3 分钟**不是 30 分钟。理由：爆音只有人耳能判，而**漂移可以机器判**
+  （采集样本数换算的秒 vs 墙钟秒），3 分钟已足够看出有没有累积趋势（-0.21% 全在启停开销里）。
+  30 分钟那条的边际信息是「有没有极低频掉帧」，留给真人对话轮顺带观察。
+
+- **M2-2 ✅（⛔ 代码面 + 真栈上行链路实证）**：`core/voice/`（recorder/resample/asr/base64）
+  + `features/chat/usePtt.ts` + Composer PTT 按钮。三条语义从 `hmi/src/audio.ts` 照抄不简化
+  （各对应一次已发生的事故）：单 final 守卫 / 7s 无定稿兜底（timer 句柄留存并在 cleanup 清，
+  否则陈旧会话劫杀下一轮）/ recorder 先行（不等 ws.onopen 就采集，握手窗音频攒着补发）。
+  PTT 三个竞态守卫对应 MicController 原账：快按快松（pendingStop）/ 最短时长 320ms /
+  并发按下。**定稿走与文本完全相同的 `core.send`**——前置路由、位置闸、候选拦截一条都不因为
+  「这句是说出来的」而绕过。
+
+  **真栈读数（spike 屏 `asr 直灌`）**：把合成好的干净音频**当作麦克风输出**喂给
+  `AsrSession`，绕开麦克风只验协议面——`fun-asr-realtime` **partial×4（首个 @476ms）→
+  final「今天深圳天气怎么样？」逐字一致**；`qwen3-asr-flash-realtime` partial×10
+  （首个 @764ms）同样逐字一致。⇒ start 帧 / 100ms 聚包 / 二进制上行 / partial 流 /
+  单 final 守卫 / 松手定稿，**在真栈上整条成立**。
+  之所以要这条「不经过麦克风」的路：声学回环一次失败会同时怀疑「协议错了」和
+  「麦克风音质不够」，而这两件事的修法毫不相干。
+
+- **M2-3 ✅（⛔ 代码面 + 真栈播报实证）**。注入契约在真机上**逐条量过**（spike `inject` 项），
+  三处不一致全部由 App 侧适配层吸收，`@shared/pcmPlayer.mjs` 与 `hmi/` 一行未改：
+
+  | 探测 | 读数 | 处置 |
+  |---|---|---|
+  | `getChannelData()` 是否可写视图 | **true** | 本可直接 `.set()`；但第三条要求先重采样，数据本就要过 scratch，统一走 `copyToChannel` |
+  | 结束回调属性名 | `onended=false` / **`onEnded=true`** | 适配层做名字映射。**赋错的那个不报错、只是永不触发** ⇒ sources 永不回收 |
+  | 是否按 ctx 采样率重采样 | **不重采样**：播 1 秒 22050 的 buffer，onEnded 复测 **461ms** ≈ 22050/48000 秒 | 适配层每片重采样到 `ctx.sampleRate`；同一段经适配层复测 **onEnded @1000ms** ✅ |
+  | `AudioContext` 初始状态 | **suspended** | `sharedAudioContext()` 建完即 `resume()`。不 resume 就不出声，**而且一声不吭**——没有异常也没有回调 |
+
+  **真栈读数（spike 屏 `tts 流式`：真实 `TtsSession` 逐字 append→finish，
+  同时开麦克风量能量）**：
+
+  | 引擎 | 首音 | 整段 | 麦克风 peak |
+  |---|---|---|---|
+  | cosyvoice/longxiaochun_v3 | **617ms** ✅ | 5659ms | 0.311 |
+  | minimax/female-tianmei（新默认） | **1881 / 1353 / 1390ms** ⚠ | ~6.0-6.6s | 0.12-0.22 |
+
+  `same=true`（前缀差量收尾逻辑正确）。**「我听不到」不是不能验证的理由**——底噪 peak≈0.06，
+  播报时 0.12~0.31，麦克风能量就是「确实出声了」的客观证据。
+  ⚠ **minimax 首音 1.35~1.39s（冷启动 1.88s），贴着甚至越过计划的 <1.5s 判据**；
+  cosyvoice 617ms 有三倍余量。**这是引擎属性不是 App 缺陷**——要么调判据要么调引擎，
+  由泓舟定（见下「引擎偏好」）。
+
+- **M2-4 ✅（代码面，真机四场景待验）**：`core/voice/audioFocus.ts`，`_layout.tsx` 启动装一次。
+  两条处置**刻意不对称**：中断开始→停播报，**恢复不自动续播**（被电话打断后自己接着念半句
+  比不念更奇怪）；`routeChange` 只在 `OldDeviceUnavailable`（拔耳机/蓝牙断）时停——
+  那是 Android 的 becoming-noisy 语义，拔了耳机继续外放等于把刚才那句广播给一车人；
+  设备**接入**不停，那不是隐私事件。
+
+- **引擎偏好（泓舟 2026-08-26 当轮指示）**：ASR 主用 **fun-asr**、其次 **qwen3-asr**；
+  TTS 主用 **minimax**；LLM 主用 minimax。App 侧已落：
+  - 默认 `asrModel='fun-asr-realtime'`、`ttsProvider='minimax'`、`voiceId='female-tianmei'`。
+    ⚠ 这三项**刻意偏离共享契约**（`hmi/src/types.ts::DEFAULT_SETTINGS` 仍是
+    qwen3/cosyvoice）——改 hmi/ 是本计划禁区（§10），两边不一致是**已知的**不是漂移。
+    HMI 侧要不要跟，由泓舟另定。
+  - 「其次」落成**真正的模型回退链**（`AsrConfig.fallbackModel`）：主模型 error/unsupported/
+    7s 无定稿 → 换模型重连 + **全量重放已录音频** + 补 stop，只重试一次。
+    之所以要做实而不是只改个默认值：**批处理那条兜底在当前云栈上是 401**（下条），
+    「一次说话只有一次机会」的第二次机会就只剩它。5 条单测钉住（含「换了还失败才走批处理」
+    与「不无限换」）。
+  - LLM provider 是后端 `.env` 的事（红线），App 不碰——**请泓舟自行确认云栈 `LLM_PROVIDER`**。
+
+- **⚠ 移交后端 QA（不是 App 面）**：**批处理 `/api/asr` 401**——
+  `Client error '401 Unauthorized' for url 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions'`。
+  PC 侧直连探针实测（`scripts` 外的一次性探针，读数在本条）：`dashscope/qwen3-asr` 与
+  `dashscope/fun-asr` 流式都**逐字 partial→final 全对**，`mimo` 流式 final 空，
+  批处理 `/api/asr` 401。⇒ MiMo 的 key 无效/过期，而**批处理是全体客户端（含 HMI）的
+  ASR 兜底路径**，现在这条路是死的。App 因此更依赖上面的模型回退链。
+
+- **声学回环（spike `e2e 回环`）**：合成→扬声器→麦克风→ASR。读数：合成 1021ms/2.32s，
+  **麦克风 peak=0.247 rms=0.0256（底噪 0.06/0.005）⇒ 声音确实传到了麦克风**，
+  但识别为空。⚠ **这不是链路失败**：同一段音频经 `asr 直灌` 识别逐字正确，说明协议面没问题；
+  失败在声学质量（HyperOS 的 `AudioHardening ... would be muted, level: partial` 日志、
+  自机扬声器→自机麦克风的近场失真、可能的 AEC）。**真人说话的验收不能用它替代。**
+
+- **读数**：jest **133/133**（新增 3 suites + sessionStore 追加 6 条：重采样跨帧连续 /
+  base64 往返 / WAV 带 LIST chunk / ASR 单 final 守卫·7s 兜底·off 主路径·模型回退 5 条 /
+  TTS 收尾三分支 / SpeechSink 六个挂点）、`tsc --noEmit` 0 error、白名单守卫绿
+  （`currentPhase` 推进到 M2，新增 `ttsQueue.mjs`）。镜像构建 **BUILD SUCCESSFUL 15m20s**、
+  app-debug.apk **281MB**（M1 是 243MB）。
+
+- **共享面改了一行（§10 的正当情形）**：`hmi/src/ttsQueue.d.mts` 补 `normSpeech`/`speechCovered`
+  两条声明——`.mjs` 里它们一直是导出的，`.d.mts` 漏了。hmi 走 vite（esbuild 不做类型检查）
+  且 package.json **没有 typecheck 脚本**，所以这缺口从没红过；mobile 跑 tsc 才撞上。只补声明。
+
+- **M2-5 待验清单（人工，下一轮）**：
+  1. 真人按住说话：partial 上屏 ≥1 / 松手自动发送（**上行协议已由直灌证明**，待验的是交互面：
+     按钮手感、320ms 误触门槛、权限首次弹窗）；蜂窝网络下重复。
+  2. 播报中按 PTT 即停（barge-in 的物理面）。
+  3. 说话中途杀网 → 兜底触发不挂死。
+  4. `asrProvider='off'` 批处理出文字 —— **当前云栈 401，这条过不了**，等后端修 MiMo key。
+  5. M2-4 四场景：来电 / 闹钟 / 其他 App 抢焦点 / 蓝牙插拔。
+  6. 语音设置持久化（引擎/音色/试听）。
+  7. 平板形态（E3 仍未办）。
+  8. minimax 首音 1.4s 是否接受（判据线上）。
 
 ---
 
@@ -747,6 +867,48 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     （坐标带真实时间戳上行，实测宝安区预报/周边闭环）；根治=换 platform-provider 取
     坐标方案（M2 评估 @react-native-community/geolocation `locationProvider:'android'`
     或 M4 一并入原生模块）。
+
+22. **react-native-audio-api 的 `downloadPrebuiltBinaries` 有两个 Windows 假设**（M2-1，
+    两轮实测才通）：① 它在 Windows 分支把 Git Bash 写成**绝对路径**（C 盘的
+    `Program Files\Git\usr\bin\bash.exe`，见该包 `android/build.gradle:320-329`），
+    本机 Git 装在 D 盘 ⇒ `A problem occurred starting process`，而 preBuild 依赖它，
+    整构建停在这（BUILD FAILED in 2m18s）；② 换对 bash 还不够——Gradle 的 `Exec`
+    继承的是 gradle 进程的 Windows PATH，**里面没有 Git 的 usr/bin**，脚本里的
+    `rm`/`mkdir`/`unzip` 全 `command not found`（exit 127），`curl` 则撞上 System32
+    那个原生版、不认 MSYS 路径、写 `-o` 目标报 `curl: (23)`。
+    修在 `scripts/gradle_cn_mirrors.init.gradle`（不是改 node_modules——它是镜像产物，
+    改了每次同步都要重做）：`-PaudioApiBashPath` 传真实路径 + 把 `usr/bin`、`mingw64/bin`
+    前置到该任务的 PATH。bash 路径由 `build_mobile.ps1::Resolve-GitBash` 探测，
+    **从 git.exe 反推优先**——PATH 上叫 bash.exe 的还有 WSL 启动器（System32）和商店存根，
+    拿到那两个比拿不到更糟。CI（Linux）走库的非 Windows 分支，不经过这里。
+23. **下载源仍是 GitHub releases**（`software-mansion-labs/rn-audio-libs`），本网络
+    **30 KB/s**（走代理，`Connection established` 可见）。两条动作：① `app.config.ts` 的
+    插件配置 `disableFFmpeg: true`——本 App 音频面全是裸 PCM，用不到 `decodeAudioData`
+    解 mp3/aac，省掉 11.9MB 的 `jniLibs.zip`（~6.6 分钟）与 4 个 ABI 的 FFmpeg `.so`；
+    ② 剩下那个 2.6MB 的 `android.zip`（opus/ogg/vorbis 静态库）**在源侧先下**
+    （`mobile/node_modules/.../android` 里跑一次那个脚本），否则 `build_mobile.ps1` 的
+    `robocopy /MIR` 每次都会把镜像侧的下载产物当"多余文件"删掉、每次构建重下。
+    ⚠ 代价明说：`decodeAudioData` 对压缩格式不可用；哪天要放 mp3 提示音（M4 cue）
+    得把 `disableFFmpeg` 改回来并重构建。
+24. **metro 的 `disableHierarchicalLookup=true` 会掐断嵌套依赖**（M2-1）：
+    react-native-audio-api 运行时要 `semver@^7`，而顶层 `node_modules/semver` 被
+    `@babel/core` 的 6.3.1 占着，npm 把 7 装进了它自己的 `node_modules`——**正好是那条
+    被关掉的层级查找**。症状是 bundle 直接失败 `Unable to resolve "semver/functions/gte"`。
+    修 = `metro.config.js` 加一个**只对 semver 生效**的 `resolveRequest`，用 node 的
+    `require.resolve(..., {paths:[发起方目录]})`（那就是"从发起方向上找"的语义），
+    重复 React 的防线原样保留。**别为一个包的依赖去关全局解析策略。**
+25. **react-native-audio-api 与浏览器 Web Audio 的三处差异**（M2-3 真机逐条量的，
+    读数在实施计划 M2 记录）：`onEnded` 不是 `onended`（赋错不报错、只是永不触发）；
+    `AudioContext` 建出来是 **suspended**，不 `resume()` 就不出声**且一声不吭**；
+    **不按 ctx 采样率重采样**（22050 的 TTS 在 48k 上下文 = 2.18 倍速 + 音调升高）。
+    三条全部由 `mobile/src/core/voice/audioCtx.ts` 吸收，共享模块与 hmi 一行不改。
+    ⚠ 附带一条 typed array 的坑：`copyToChannel` 收到 `subarray` 视图时抛
+    `Not enough space to copy to destination`——**它量的是底层 ArrayBuffer 不是 length**，
+    所以重采样器返回 `slice` 而不是 `subarray`。
+26. **Git Bash 里跑 `adb shell` 要关 MSYS 路径转换**：`adb shell uiautomator dump /sdcard/ui.xml`
+    里的 `/sdcard/...` 会被 MSYS 当本地路径翻译成 `D:\Program Files\Git\sdcard\ui.xml`
+    （报 `failed to stat remote object`）。`export MSYS_NO_PATHCONV=1` 即可，
+    或者用 PowerShell 跑 adb。**这类故障看起来像"设备上没有那个文件"，其实命令根本没到设备。**
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
