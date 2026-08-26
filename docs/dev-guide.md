@@ -111,7 +111,17 @@ $applyTargetRc = $LASTEXITCODE
 if ($applyTargetRc -ne 0) { throw "pre-apply target show failed" }
 $applyTarget = $applyTargetJson | ConvertFrom-Json
 if ($applyTarget.status -ne "target" -or $applyTarget.target -ne "cloud") { throw "pre-apply target must be cloud" }
-python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply
+$applyJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply | Out-String
+$applyRc = $LASTEXITCODE
+if ($applyRc -ne 0) { throw "approved apply failed" }
+$submitted = $applyJson | ConvertFrom-Json
+if ($submitted.status -ne "submitted") { throw "expected status=submitted" }
+if ($submitted.target_sha -ne $sha) { throw "submitted target SHA changed" }
+if ($submitted.deployed_sha -ne $plan.deployed_sha) { throw "deployed baseline changed" }
+if ($submitted.target_ci_cd_sha256 -cne $digest) { throw "submitted target CI/CD digest changed" }
+if ($submitted.approved_ci_cd_sha256 -cne $digest) { throw "submitted approved CI/CD digest mismatch" }
+if (@($submitted.blocking_changes).Count -ne 0) { throw "submitted result still has blockers" }
+if (-not $submitted.artifact_directory) { throw "submitted artifact_directory is missing" }
 ```
 
 `$digest` 必须原样复制自**同一个** `$sha` 首轮输出的 `target_ci_cd_sha256`，防止操作时把另一次计划的摘要串进来。批准绑定 workflow 提交树摘要，不绑定 commit SHA；不同 target SHA 的 workflow 树相同，摘要也相同，但每次 plan / deploy 调用仍必须显式传 CLI 参数，不会自动继承。
@@ -124,6 +134,10 @@ python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --a
 这个批准是一次性的 CLI 参数，不支持环境变量，也不会写入或更新远端批准锚。它只放行该摘要覆盖的 `ci_cd` 项，不能抑制
 `runtime_config_contract`、`database_schema`、`secret_material`，也不能放行未匹配其自身
 `release-infrastructure.json` 批准锚的 `infrastructure`。
+
+`status=submitted` 只证明 apply 返回值与本次 SHA、摘要、基线和 artifact 闭合，**不等于最终
+verify 成功**。随后仍须在每个真栈动作前独立执行 `target show`，依次完成 `status`、`verify`、
+MiniMax long sessions 与 HMI C14，才能形成发布验收证据。
 
 切回 local 的固定次序是 `python scripts/dev_stack.py target set local` → 人工启动
 Docker Desktop → `make up` → `python scripts/dev_stack.py status`。工具不自动启动 Docker。

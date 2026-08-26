@@ -1866,6 +1866,9 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         "无 `ci_cd` 变化 + 无批准：不因本机制阻塞",
         "批准绑定 workflow 提交树摘要，不绑定 commit SHA",
         "不同 target SHA 的 workflow 树相同，摘要也相同",
+        "不等于最终",
+        "MiniMax long sessions",
+        "HMI C14",
     )
     operator_sequence = (
         "$targetJson = python scripts/dev_stack.py target show | Out-String",
@@ -1903,7 +1906,17 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         'if ($applyTargetRc -ne 0)',
         '$applyTarget = $applyTargetJson | ConvertFrom-Json',
         'if ($applyTarget.status -ne "target" -or $applyTarget.target -ne "cloud")',
-        "python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply",
+        "$applyJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply | Out-String",
+        "$applyRc = $LASTEXITCODE",
+        'if ($applyRc -ne 0)',
+        "$submitted = $applyJson | ConvertFrom-Json",
+        'if ($submitted.status -ne "submitted")',
+        'if ($submitted.target_sha -ne $sha)',
+        'if ($submitted.deployed_sha -ne $plan.deployed_sha)',
+        'if ($submitted.target_ci_cd_sha256 -cne $digest)',
+        'if ($submitted.approved_ci_cd_sha256 -cne $digest)',
+        'if (@($submitted.blocking_changes).Count -ne 0)',
+        'if (-not $submitted.artifact_directory)',
     )
 
     approval_blocks: list[str] = []
@@ -1932,6 +1945,9 @@ def test_runbook_documents_one_shot_ci_digest_approval():
             "$applyTargetJson = python scripts/dev_stack.py target show | Out-String\n"
             "$applyTargetRc = $LASTEXITCODE\n"
             'if ($applyTargetRc -ne 0)',
+            "$applyJson = python scripts/dev_stack.py deploy --sha $sha --approve-ci-cd-sha256 $digest --apply | Out-String\n"
+            "$applyRc = $LASTEXITCODE\n"
+            'if ($applyRc -ne 0)',
         ):
             assert immediate_check in block
         approval_blocks.append(block)
