@@ -617,21 +617,50 @@ def git_changes(
     base: str,
     target: str,
 ) -> tuple[list[str], dict[str, str]]:
-    paths_result = _git(
+    raw_paths = _git(
         repo,
         "diff",
         "--name-only",
-        "--diff-filter=ACMRTUXB",
+        "-z",
+        "--no-renames",
+        "--diff-filter=ACDMRTUXB",
         base,
         target,
-    )
-    changed = [line for line in paths_result.stdout.splitlines() if line]
+        raw=True,
+    ).stdout
+    if raw_paths and not raw_paths.endswith("\0"):
+        raise ReleaseError("git changed path record is malformed", category="safety")
+
+    changed: list[str] = []
+    seen: set[str] = set()
+    for path in raw_paths.split("\0")[:-1]:
+        parts = path.split("/")
+        posix_path = PurePosixPath(path)
+        if (
+            not path
+            or "\\" in path
+            or any(
+                unicodedata.category(character) == "Cc"
+                or "\udc80" <= character <= "\udcff"
+                for character in path
+            )
+            or posix_path.is_absolute()
+            or re.match(r"^[A-Za-z]:/", path) is not None
+            or any(part in {"", ".", ".."} for part in parts)
+            or posix_path.as_posix() != path
+            or path in seen
+        ):
+            raise ReleaseError("git changed path is unsafe", category="safety")
+        seen.add(path)
+        changed.append(path)
+
     diffs = {
         path: _git(
             repo,
             "diff",
             "--unified=0",
             "--no-ext-diff",
+            "--no-renames",
             base,
             target,
             "--",

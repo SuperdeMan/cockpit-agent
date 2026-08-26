@@ -479,6 +479,198 @@ def test_git_changes_returns_a_diff_per_path(tmp_path: Path):
     assert "+two" in diffs["tracked.txt"]
 
 
+def test_git_changes_enumerates_both_sides_of_workflow_rename(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    workflow = repo / ".github" / "workflows" / "x.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: x\n", encoding="utf-8")
+    git(repo, "add", ".github/workflows/x.yml")
+    git(repo, "commit", "-m", "workflow baseline")
+    base = git(repo, "rev-parse", "HEAD")
+
+    destination = repo / "docs" / "x.yml"
+    destination.parent.mkdir()
+    git(repo, "mv", ".github/workflows/x.yml", "docs/x.yml")
+    git(repo, "commit", "-m", "move workflow out")
+    target = git(repo, "rev-parse", "HEAD")
+
+    paths, diffs = git_changes(repo, base, target)
+    plan = make_release_plan(
+        deployed_sha=base,
+        target_sha=target,
+        changed_paths=paths,
+        diff_by_path=diffs,
+    )
+
+    assert paths == [".github/workflows/x.yml", "docs/x.yml"]
+    assert set(diffs) == set(paths)
+    assert "-name: x" in diffs[".github/workflows/x.yml"]
+    assert "+name: x" in diffs["docs/x.yml"]
+    assert plan.status == "plan_rejected"
+    assert plan.blocking_changes == (
+        ControlledChange(".github/workflows/x.yml", "ci_cd"),
+    )
+
+
+@pytest.mark.parametrize("change_kind", ["add", "modify"])
+def test_git_changes_preserves_unicode_workflow_path(
+    tmp_path: Path,
+    change_kind: str,
+):
+    repo, base = make_repo(tmp_path)
+    relative = ".github/workflows/发布.yml"
+    workflow = repo / ".github" / "workflows" / "发布.yml"
+    workflow.parent.mkdir(parents=True)
+    if change_kind == "modify":
+        workflow.write_text("name: first\n", encoding="utf-8")
+        git(repo, "add", relative)
+        git(repo, "commit", "-m", "unicode workflow baseline")
+        base = git(repo, "rev-parse", "HEAD")
+
+    workflow.write_text("name: second\n", encoding="utf-8")
+    git(repo, "add", relative)
+    git(repo, "commit", "-m", f"unicode workflow {change_kind}")
+    target = git(repo, "rev-parse", "HEAD")
+
+    paths, diffs = git_changes(repo, base, target)
+    plan = make_release_plan(
+        deployed_sha=base,
+        target_sha=target,
+        changed_paths=paths,
+        diff_by_path=diffs,
+    )
+
+    assert paths == [relative]
+    assert set(diffs) == {relative}
+    assert "+name: second" in diffs[relative]
+    assert plan.status == "plan_rejected"
+    assert plan.blocking_changes == (ControlledChange(relative, "ci_cd"),)
+
+
+def test_git_changes_classifies_every_deleted_controlled_category(tmp_path: Path):
+    repo, _ = make_repo(tmp_path)
+    controlled = {
+        ".github/workflows/ci.yml": "name: ci\n",
+        ".env.example": "EXAMPLE_VALUE=placeholder\n",
+        ".env.local": "LOCAL_VALUE=placeholder\n",
+        "memory/schema.sql": "-- schema placeholder\n",
+        "deploy/cloud/remote-release.sh": "#!/usr/bin/env bash\n",
+    }
+    for relative, content in controlled.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    git(repo, "add", *controlled)
+    git(repo, "commit", "-m", "controlled baseline")
+    base = git(repo, "rev-parse", "HEAD")
+
+    git(repo, "rm", *controlled)
+    git(repo, "commit", "-m", "delete controlled files")
+    target = git(repo, "rev-parse", "HEAD")
+
+    paths, diffs = git_changes(repo, base, target)
+    plan = make_release_plan(
+        deployed_sha=base,
+        target_sha=target,
+        changed_paths=paths,
+        diff_by_path=diffs,
+    )
+
+    assert set(paths) == set(controlled)
+    assert set(diffs) == set(controlled)
+    assert all("deleted file mode" in diffs[path] for path in controlled)
+    assert plan.status == "plan_rejected"
+    assert {item.path: item.category for item in plan.blocking_changes} == {
+        ".github/workflows/ci.yml": "ci_cd",
+        ".env.example": "runtime_config_contract",
+        ".env.local": "secret_material",
+        "memory/schema.sql": "database_schema",
+        "deploy/cloud/remote-release.sh": "infrastructure",
+    }
+
+
+@pytest.mark.parametrize(
+    "raw_output",
+    [
+        "safe.txt",
+        "invalid-\udcff.txt\0",
+        "line\nbreak.txt\0",
+        "c1\u0085control.txt\0",
+        "back\\slash.txt\0",
+        "../outside.txt\0",
+        "/absolute.txt\0",
+        "C:/absolute.txt\0",
+        "dot/./segment.txt\0",
+        "empty//segment.txt\0",
+        "same.txt\0same.txt\0",
+        "safe.txt\0\0",
+    ],
+    ids=[
+        "missing-nul",
+        "invalid-utf8-surrogate",
+        "newline-control",
+        "c1-control",
+        "backslash",
+        "parent-segment",
+        "absolute",
+        "drive-absolute",
+        "dot-segment",
+        "empty-segment",
+        "duplicate",
+        "empty-record",
+    ],
+)
+def test_git_changes_rejects_unsafe_raw_name_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raw_output: str,
+):
+    repo, base = make_repo(tmp_path)
+    monkeypatch.setattr(
+        cloud_release_lib,
+        "_git",
+        lambda *_args, **_kwargs: CommandResult((), 0, raw_output, ""),
+    )
+
+    with pytest.raises(ReleaseError) as caught:
+        git_changes(repo, base, base)
+
+    assert caught.value.category == "safety"
+
+
+def test_git_changes_requests_raw_nul_names_with_rename_detection_disabled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    repo, base = make_repo(tmp_path)
+    calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
+
+    def fake_git(_repo: Path, *args: str, **kwargs: object) -> CommandResult:
+        calls.append((args, kwargs))
+        if "--name-only" in args:
+            return CommandResult(tuple(["git", *args]), 0, "safe.txt\0", "")
+        return CommandResult(tuple(["git", *args]), 0, "+safe\n", "")
+
+    monkeypatch.setattr(cloud_release_lib, "_git", fake_git)
+
+    paths, diffs = git_changes(repo, base, base)
+
+    assert paths == ["safe.txt"]
+    assert diffs == {"safe.txt": "+safe\n"}
+    assert calls[0] == (
+        (
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-renames",
+            "--diff-filter=ACDMRTUXB",
+            base,
+            base,
+        ),
+        {"raw": True},
+    )
+
+
 def test_compute_infrastructure_digest_reads_committed_bytes_only(tmp_path: Path):
     repo, _ = make_repo(tmp_path)
     cloud = repo / "deploy" / "cloud"
@@ -1663,6 +1855,53 @@ def test_ci_cd_change_without_request_approval_stops_before_artifact_or_write(
     assert result.plan.approved_ci_cd_digest is None
     assert len(runner.calls) == 1
     assert not request.artifact_root.exists()
+    assert all(
+        "remote-release.sh" not in " ".join(call)
+        for call in runner.calls
+    )
+
+
+def test_deleted_ci_cd_workflow_stops_before_artifact_or_remote_write(
+    tmp_path: Path,
+):
+    initial_request, _ = make_release_request(tmp_path)
+    workflow = initial_request.repo / ".github" / "workflows" / "x.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: x\n", encoding="utf-8")
+    git(initial_request.repo, "add", ".github/workflows/x.yml")
+    git(initial_request.repo, "commit", "-m", "workflow baseline")
+    deployed = git(initial_request.repo, "rev-parse", "HEAD")
+    git(initial_request.repo, "rm", ".github/workflows/x.yml")
+    git(initial_request.repo, "commit", "-m", "delete workflow")
+    target = git(initial_request.repo, "rev-parse", "HEAD")
+    request = ReleaseRequest(
+        repo=initial_request.repo,
+        revision=target,
+        artifact_root=initial_request.artifact_root,
+        ssh=initial_request.ssh,
+    )
+    infrastructure_digest = compute_infrastructure_digest(request.repo, target)
+    runner = FakeRunner(
+        [
+            command_result(
+                remote_state_payload(
+                    deployed,
+                    approved_digest=infrastructure_digest,
+                )
+            )
+        ]
+    )
+
+    result = execute_deploy(request, apply=False, runner=runner)
+
+    assert result.status == "plan_rejected"
+    assert result.artifact is None
+    assert result.plan.changed_paths == (".github/workflows/x.yml",)
+    assert result.plan.blocking_changes == (
+        ControlledChange(".github/workflows/x.yml", "ci_cd"),
+    )
+    assert not request.artifact_root.exists()
+    assert len(runner.calls) == 1
     assert all(
         "remote-release.sh" not in " ".join(call)
         for call in runner.calls
