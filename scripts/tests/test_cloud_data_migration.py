@@ -8,7 +8,6 @@ import os
 import re
 import sqlite3
 import sys
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -17,6 +16,11 @@ import pytest
 from scripts import cloud_data_migration as cli
 from scripts import cloud_data_migration_lib as migration
 from scripts.cloud_release_lib import ReleaseError
+from scripts.tests.process_timeout_support import (
+    ProcessReadinessProbe,
+    arm_communicate_timeout_after_ready,
+    atomic_pid_ready_code,
+)
 
 
 VALID_ID = "20260816T010203Z-aaaaaaa-online"
@@ -624,21 +628,59 @@ def test_private_source_identity_and_hmac_key_are_not_emitted_in_cli_summary():
     assert manifest.identity_hmac_key not in encoded
 
 
-def test_local_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path):
+def test_local_runner_timeout_terminates_grandchild_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     marker = tmp_path / "local-grandchild-survived.txt"
+    pid_file = tmp_path / "local-grandchild.pid"
+    ready_file = tmp_path / "local-grandchild.ready"
     child = (
-        "import time; from pathlib import Path; time.sleep(0.8); "
+        "import time; from pathlib import Path; time.sleep(600); "
         f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
     )
     parent = (
-        "import subprocess,sys,time; "
-        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"descendant=subprocess.Popen([sys.executable, '-c', {child!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL); "
+        + atomic_pid_ready_code(pid_file, ready_file)
+        + "time.sleep(600)"
     )
-    runner = migration.LocalCommandRunner(command_timeout_s=0.2)
-    with pytest.raises(migration.MigrationError, match="timed out"):
-        runner.run([sys.executable, "-c", parent], cwd=tmp_path)
-    time.sleep(1.0)
-    assert not marker.exists()
+    original_popen = migration.subprocess.Popen
+    processes = []
+    arms = []
+    probe = ProcessReadinessProbe(pid_file, ready_file)
+
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        arms.append(arm_communicate_timeout_after_ready(process, probe))
+        return process
+
+    monkeypatch.setattr(migration.subprocess, "Popen", popen)
+    verified = False
+    try:
+        runner = migration.LocalCommandRunner(command_timeout_s=30)
+        with pytest.raises(migration.MigrationError, match="timed out"):
+            runner.run([sys.executable, "-c", parent], cwd=tmp_path)
+        assert len(arms) == 1
+        assert arms[0].triggered
+        assert arms[0].timeout_injections == 1
+        probe.assert_exited()
+        assert not marker.exists()
+        verified = True
+    finally:
+        if not verified:
+            probe.force_cleanup()
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    process.communicate(timeout=5)
+                except migration.subprocess.TimeoutExpired:
+                    process.kill()
+        probe.close()
 
 
 def _identity_evidence() -> tuple[dict[str, object], dict[str, object]]:

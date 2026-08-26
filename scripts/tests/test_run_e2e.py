@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import ctypes
 import hashlib
 import importlib.util
 import io
@@ -21,6 +20,14 @@ from typing import Any
 
 import pytest
 import yaml
+
+from scripts.tests.process_timeout_support import (
+    DeadlineJumpClock,
+    ProcessReadinessProbe,
+    arm_poll_after_ready,
+    arm_wait_after_ready,
+    arm_wait_timeout_after_ready,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -97,6 +104,16 @@ def write_payload(payload):
     target.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def publish_tree_ready(descendant):
+    pid_value = str(descendant.pid)
+    pid_path = Path(os.environ["RUNNER_TREE_PID_FILE"])
+    ready_path = artifact_dir / "parent_started"
+    for path in (pid_path, ready_path):
+        temporary = path.with_name(path.name + ".tmp-" + str(os.getpid()))
+        temporary.write_text(pid_value, encoding="utf-8")
+        os.replace(temporary, path)
+
+
 marker = os.environ.get("RUNNER_EXEC_MARKER")
 if marker:
     Path(marker).write_text(os.environ["E2E_TEST_ID"], encoding="utf-8")
@@ -129,41 +146,7 @@ if mode == "parallel_timeout_tree":
     tree_marker = os.environ["RUNNER_TREE_MARKER"]
     child_code = (
         "import time; from pathlib import Path; "
-        f"path = Path({tree_marker!r}); "
-        "[(path.write_text(str(i), encoding='utf-8'), time.sleep(0.1)) "
-        "for i in range(600)]"
-    )
-    descendant = subprocess.Popen([sys.executable, "-c", child_code])
-    Path(os.environ["RUNNER_TREE_PID_FILE"]).write_text(
-        str(descendant.pid),
-        encoding="utf-8",
-    )
-    (artifact_dir / "parent_started").write_text("started", encoding="utf-8")
-    time.sleep(60)
-    raise SystemExit(9)
-
-if mode == "timeout_tree":
-    time.sleep(1.5)
-    tree_marker = os.environ["RUNNER_TREE_MARKER"]
-    child_code = (
-        "import time; from pathlib import Path; "
-        "time.sleep(12.0); "
-        f"Path({tree_marker!r}).write_text('survived', encoding='utf-8')"
-    )
-    descendant = subprocess.Popen([sys.executable, "-c", child_code])
-    Path(os.environ["RUNNER_TREE_PID_FILE"]).write_text(
-        str(descendant.pid),
-        encoding="utf-8",
-    )
-    (artifact_dir / "parent_started").write_text("started", encoding="utf-8")
-    time.sleep(60)
-    raise SystemExit(9)
-
-if mode == "leader_exit_tree":
-    tree_marker = os.environ["RUNNER_TREE_MARKER"]
-    child_code = (
-        "import time; from pathlib import Path; "
-        "time.sleep(4.0); "
+        "time.sleep(600); "
         f"Path({tree_marker!r}).write_text('survived', encoding='utf-8')"
     )
     descendant = subprocess.Popen(
@@ -172,10 +155,41 @@ if mode == "leader_exit_tree":
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    Path(os.environ["RUNNER_TREE_PID_FILE"]).write_text(
-        str(descendant.pid),
-        encoding="utf-8",
+    publish_tree_ready(descendant)
+    time.sleep(600)
+    raise SystemExit(9)
+
+if mode == "timeout_tree":
+    tree_marker = os.environ["RUNNER_TREE_MARKER"]
+    child_code = (
+        "import time; from pathlib import Path; "
+        "time.sleep(600); "
+        f"Path({tree_marker!r}).write_text('survived', encoding='utf-8')"
     )
+    descendant = subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    publish_tree_ready(descendant)
+    time.sleep(600)
+    raise SystemExit(9)
+
+if mode == "leader_exit_tree":
+    tree_marker = os.environ["RUNNER_TREE_MARKER"]
+    child_code = (
+        "import time; from pathlib import Path; "
+        "time.sleep(600); "
+        f"Path({tree_marker!r}).write_text('survived', encoding='utf-8')"
+    )
+    descendant = subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    publish_tree_ready(descendant)
     write_payload(result(
         "fail",
         {"selected": 1, "executed": 1, "passed": 0, "failed": 1, "skipped": 0},
@@ -1401,77 +1415,6 @@ def _invoke(
     ]
     assert json_lines, text
     return rc, json.loads(json_lines[-1]), text
-
-
-def _wait_for_marker_absence(path: Path, *, deadline_s: float) -> None:
-    """Poll through the descendant's write deadline without a fixed sleep."""
-
-    deadline = time.monotonic() + deadline_s
-    while time.monotonic() < deadline:
-        assert not path.exists(), f"descendant wrote unexpected marker: {path}"
-        time.sleep(0.05)
-
-
-class _DescendantProbe:
-    """Hold the original Windows process handle so PID reuse cannot fool checks."""
-
-    def __init__(self, pid_file: Path):
-        self.pid_file = pid_file
-        self.pid: int | None = None
-        self.handle: int | None = None
-        self._thread = threading.Thread(target=self._capture, daemon=True)
-        self._thread.start()
-
-    def _capture(self) -> None:
-        deadline = time.monotonic() + 8
-        while time.monotonic() < deadline:
-            try:
-                self.pid = int(self.pid_file.read_text(encoding="utf-8"))
-                break
-            except (OSError, ValueError):
-                time.sleep(0.01)
-        if self.pid is None or os.name != "nt":
-            return
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.argtypes = [
-            ctypes.c_uint32,
-            ctypes.c_int,
-            ctypes.c_uint32,
-        ]
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        handle = kernel32.OpenProcess(0x00100000 | 0x1000, 0, self.pid)
-        if handle:
-            self.handle = int(handle)
-
-    def assert_exited(self, *, deadline_s: float = 5) -> None:
-        self._thread.join(timeout=9)
-        assert self.pid is not None, "descendant PID was not recorded"
-        if os.name == "nt" and self.handle is not None:
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel32.WaitForSingleObject.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_uint32,
-            ]
-            kernel32.WaitForSingleObject.restype = ctypes.c_uint32
-            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-            kernel32.CloseHandle.restype = ctypes.c_int
-            try:
-                assert kernel32.WaitForSingleObject(
-                    self.handle,
-                    int(deadline_s * 1000),
-                ) == 0, "descendant process handle is still active"
-            finally:
-                kernel32.CloseHandle(self.handle)
-            return
-
-        deadline = time.monotonic() + deadline_s
-        while time.monotonic() < deadline:
-            try:
-                os.kill(self.pid, 0)
-            except OSError:
-                return
-            time.sleep(0.05)
-        pytest.fail("descendant PID is still active")
 
 
 def _loaded_case(tmp_path: Path, case_id: str = "e2e_fake"):
@@ -2751,60 +2694,142 @@ def test_keyboard_interrupt_finalizes_bounded_redacted_logs_before_rethrow(
     assert tree.closed == 1
 
 
-def test_timeout_kills_real_process_tree_and_continues(tmp_path: Path):
+def test_timeout_kills_real_process_tree_and_continues(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     cases = [
-        _case("e2e_timeout", timeout_s=5),
-        _case("e2e_after", timeout_s=5),
+        _case("e2e_timeout", timeout_s=30),
+        _case("e2e_after", timeout_s=30),
     ]
     manifest = _write_repo(tmp_path, cases)
+    runner = _runner()
     tree_marker = tmp_path / "grandchild_survived"
     pid_file = tmp_path / "grandchild.pid"
-    descendant = _DescendantProbe(pid_file)
+    original_popen = runner.subprocess.Popen
+    probes: list[ProcessReadinessProbe] = []
+    arms = []
+    target_processes = []
+    target_waits = []
 
-    rc, summary, _ = _invoke(
-        tmp_path,
-        manifest,
-        [],
-        behaviors={"e2e_timeout": "timeout_tree", "e2e_after": "pass"},
-        extra_env={
-            "RUNNER_TREE_MARKER": str(tree_marker),
-            "RUNNER_TREE_PID_FILE": str(pid_file),
-        },
-    )
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        child_env = kwargs.get("env") or {}
+        if child_env.get("E2E_TEST_ID") == "e2e_timeout":
+            probe = ProcessReadinessProbe(
+                pid_file,
+                Path(child_env["E2E_ARTIFACT_DIR"]) / "parent_started",
+            )
+            probes.append(probe)
+            target_processes.append(process)
+            target_waits.append(process.wait)
+            arms.append(arm_wait_timeout_after_ready(process, probe))
+        return process
 
-    assert rc == 1
-    assert [item["status"] for item in summary["results"]] == ["FAIL", "PASS"]
-    assert "timeout" in summary["results"][0]["errors"]
-    assert (
-        Path(summary["results"][0]["artifact_dir"]) / "parent_started"
-    ).is_file()
-    descendant.assert_exited()
-    assert not tree_marker.exists(), "timed-out grandchild wrote its marker"
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    verified = False
+    try:
+        rc, summary, _ = _invoke(
+            tmp_path,
+            manifest,
+            [],
+            behaviors={"e2e_timeout": "timeout_tree", "e2e_after": "pass"},
+            extra_env={
+                "RUNNER_TREE_MARKER": str(tree_marker),
+                "RUNNER_TREE_PID_FILE": str(pid_file),
+            },
+        )
+
+        assert rc == 1
+        assert [item["status"] for item in summary["results"]] == ["FAIL", "PASS"]
+        assert "timeout" in summary["results"][0]["errors"]
+        assert len(probes) == len(arms) == 1
+        assert arms[0].triggered
+        assert arms[0].timeout_injections == 1
+        assert (
+            Path(summary["results"][0]["artifact_dir"]) / "parent_started"
+        ).is_file()
+        probes[0].assert_exited()
+        assert not tree_marker.exists(), "timed-out grandchild wrote its marker"
+        verified = True
+    finally:
+        if not verified:
+            for probe in probes:
+                probe.force_cleanup()
+            for process, real_wait in zip(target_processes, target_waits):
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    real_wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        for probe in probes:
+            probe.close()
 
 
 def test_descendant_is_reaped_even_when_leader_exits_before_cleanup(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    manifest = _write_repo(tmp_path, [_case("e2e_leader", timeout_s=5)])
+    manifest = _write_repo(tmp_path, [_case("e2e_leader", timeout_s=30)])
+    runner = _runner()
     tree_marker = tmp_path / "leader_exit_grandchild_survived"
     pid_file = tmp_path / "leader_exit_grandchild.pid"
-    descendant = _DescendantProbe(pid_file)
+    original_popen = runner.subprocess.Popen
+    probes: list[ProcessReadinessProbe] = []
+    arms = []
+    target_processes = []
+    target_waits = []
 
-    rc, summary, _ = _invoke(
-        tmp_path,
-        manifest,
-        ["--id", "e2e_leader"],
-        behaviors={"e2e_leader": "leader_exit_tree"},
-        extra_env={
-            "RUNNER_TREE_MARKER": str(tree_marker),
-            "RUNNER_TREE_PID_FILE": str(pid_file),
-        },
-    )
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        child_env = kwargs.get("env") or {}
+        if child_env.get("E2E_TEST_ID") == "e2e_leader":
+            probe = ProcessReadinessProbe(
+                pid_file,
+                Path(child_env["E2E_ARTIFACT_DIR"]) / "parent_started",
+            )
+            probes.append(probe)
+            target_processes.append(process)
+            target_waits.append(process.wait)
+            arms.append(arm_wait_after_ready(process, probe))
+        return process
 
-    assert rc == 1
-    assert summary["results"][0]["errors"] == ["child_failed"]
-    descendant.assert_exited()
-    assert not tree_marker.exists(), "leader-exit grandchild wrote its marker"
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    verified = False
+    try:
+        rc, summary, _ = _invoke(
+            tmp_path,
+            manifest,
+            ["--id", "e2e_leader"],
+            behaviors={"e2e_leader": "leader_exit_tree"},
+            extra_env={
+                "RUNNER_TREE_MARKER": str(tree_marker),
+                "RUNNER_TREE_PID_FILE": str(pid_file),
+            },
+        )
+
+        assert rc == 1
+        assert summary["results"][0]["errors"] == ["child_failed"]
+        assert len(probes) == len(arms) == 1
+        assert arms[0].triggered
+        assert arms[0].timeout_injections == 0
+        probes[0].assert_exited()
+        assert not tree_marker.exists(), "leader-exit grandchild wrote its marker"
+        verified = True
+    finally:
+        if not verified:
+            for probe in probes:
+                probe.force_cleanup()
+            for process, real_wait in zip(target_processes, target_waits):
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    real_wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        for probe in probes:
+            probe.close()
 
 
 def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
@@ -2812,8 +2837,8 @@ def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
     monkeypatch: pytest.MonkeyPatch,
 ):
     cases = [
-        _case("e2e_memory", timeout_s=1),
-        _case("e2e_voiceprint", timeout_s=10),
+        _case("e2e_memory", timeout_s=30),
+        _case("e2e_voiceprint", timeout_s=30),
     ]
     for item in cases:
         item["signed_identity"] = True
@@ -2822,8 +2847,12 @@ def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
     runner = _runner()
     tree_marker = tmp_path / "parallel_grandchild_survived"
     pid_file = tmp_path / "parallel_grandchild.pid"
-    descendant = _DescendantProbe(pid_file)
-    restore_calls = []
+    restore_events: list[str] = []
+    reaped = threading.Event()
+    probes: list[ProcessReadinessProbe] = []
+    arms = []
+    processes = {}
+    memory_real_waits = []
 
     class FakeLease:
         def __init__(self, *, environ, **_kwargs):
@@ -2836,7 +2865,13 @@ def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
             self.environ["E2E_IDENTITY_SECRET"] = "owner-only"
 
         def restore(self):
-            restore_calls.append(time.monotonic())
+            restore_events.append("restore:entered")
+            assert reaped.is_set(), "lease restore ran before descendant reap"
+            assert len(probes) == 1
+            assert probes[0].is_exited_now(), (
+                "lease restore ran while the retained descendant was active"
+            )
+            restore_events.append("restore:after-reap")
             self.environ.pop("E2E_IDENTITY_ENABLED", None)
             self.environ.pop("E2E_IDENTITY_SECRET", None)
             self.secret = b""
@@ -2844,12 +2879,92 @@ def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
     loaded = runner.load_manifest(manifest_path, repo_root=tmp_path)
     monkeypatch.setattr(runner, "IdentityStackLease", FakeLease)
     monkeypatch.setattr(runner, "prove_identity_owner", lambda **_kwargs: None)
+
+    sibling_result = {
+        "id": "e2e_voiceprint",
+        "status": "PASS",
+        "returncode": 0,
+        "errors": [],
+        "counts": {
+            "selected": 1,
+            "executed": 1,
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0,
+        },
+        "outcome_case_ids": {"failed": [], "skipped": []},
+        "artifact_dir": "",
+        "artifacts": [],
+        "logs": [],
+        "diagnostic": "",
+        "result_file": "",
+        "profile": "root",
+        "timeout_s": 30,
+    }
+    sibling_summary = json.dumps({
+        "exit_code": 0,
+        "results": [sibling_result],
+    })
+
+    def subrun_argv(**kwargs):
+        if kwargs["case_id"] == "e2e_memory":
+            return list(loaded.by_id["e2e_memory"].command)
+        return [sys.executable, "-c", f"print({sibling_summary!r})"]
+
     monkeypatch.setattr(
         runner,
         "parallel_subrun_argv",
-        lambda **kwargs: list(loaded.by_id[kwargs["case_id"]].command),
+        subrun_argv,
     )
     monkeypatch.setattr(runner, "_new_run_id", lambda: "e2e-parallel-real-tree")
+    original_popen = runner.subprocess.Popen
+
+    def wait_for_sibling_exit() -> None:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            sibling = processes.get("e2e_voiceprint")
+            if sibling is not None and sibling.poll() is not None:
+                return
+            time.sleep(0.01)
+        raise AssertionError("parallel sibling did not finish before timeout injection")
+
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        child_env = kwargs.get("env") or {}
+        case_id = child_env.get("E2E_TEST_ID")
+        if case_id in {"e2e_memory", "e2e_voiceprint"}:
+            processes[case_id] = process
+        if case_id == "e2e_memory":
+            probe = ProcessReadinessProbe(
+                pid_file,
+                Path(child_env["E2E_ARTIFACT_DIR"]) / "parent_started",
+            )
+            probes.append(probe)
+            real_wait = process.wait
+            memory_real_waits.append(real_wait)
+            arms.append(
+                arm_poll_after_ready(
+                    process,
+                    probe,
+                    on_ready=wait_for_sibling_exit,
+                )
+            )
+
+            def observed_wait(*wait_args, **wait_kwargs):
+                returncode = real_wait(*wait_args, **wait_kwargs)
+                probe.assert_exited()
+                reaped.set()
+                return returncode
+
+            process.wait = observed_wait
+        return process
+
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    clock = DeadlineJumpClock(
+        lambda: arms[0] if arms else None,
+        jump_s=3600,
+    )
+    monkeypatch.setattr(runner, "time", clock)
     output = io.StringIO()
     env = dict(os.environ)
     env.update({
@@ -2863,47 +2978,63 @@ def test_parallel_timeout_reaps_real_grandchild_before_lease_restore(
         "E2E_RESULT_FILE": str(tmp_path / "parallel-result.json"),
     })
 
-    runner.main(
-        [
-            "--target", "local",
-            "--milestone",
-            "M-A",
-            "--parallel-isolation",
-            "2",
-            "--id",
-            "e2e_memory",
-            "--id",
-            "e2e_voiceprint",
-        ],
-        repo_root=tmp_path,
-        manifest_path=manifest_path,
-        environ=env,
-        stdout=output,
-        staleness_evaluator=_fresh,
-    )
-
-    assert len(restore_calls) == 1
+    verified = False
     try:
-        descendant.assert_exited(deadline_s=1)
+        rc = runner.main(
+            [
+                "--target", "local",
+                "--milestone",
+                "M-A",
+                "--parallel-isolation",
+                "2",
+                "--id",
+                "e2e_memory",
+                "--id",
+                "e2e_voiceprint",
+            ],
+            repo_root=tmp_path,
+            manifest_path=manifest_path,
+            environ=env,
+            stdout=output,
+            staleness_evaluator=_fresh,
+        )
+
+        summaries = [
+            json.loads(line)
+            for line in output.getvalue().splitlines()
+            if line.startswith("{") and line.endswith("}")
+        ]
+        assert summaries
+        by_id = {item["id"]: item for item in summaries[-1]["results"]}
+        assert rc == 1
+        assert by_id["e2e_memory"]["errors"] == ["timeout"]
+        assert by_id["e2e_voiceprint"]["status"] == "PASS", json.dumps(
+            by_id["e2e_voiceprint"],
+            sort_keys=True,
+        )
+        assert len(probes) == len(arms) == 1
+        assert arms[0].triggered
+        assert clock.jumped
+        assert reaped.is_set()
+        assert restore_events == ["restore:entered", "restore:after-reap"]
+        probes[0].assert_exited()
+        assert not tree_marker.exists(), "parallel grandchild wrote its marker"
+        verified = True
     finally:
-        if descendant.pid is not None:
-            if os.name == "nt":
-                subprocess.run(
-                    ["taskkill", "/PID", str(descendant.pid), "/T", "/F"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=10,
-                    check=False,
-                )
-            else:
+        if not verified:
+            for probe in probes:
+                probe.force_cleanup()
+            memory = processes.get("e2e_memory")
+            if memory is not None:
                 try:
-                    os.kill(descendant.pid, 9)
-                except OSError:
+                    if memory.poll() is None:
+                        memory.kill()
+                    if memory_real_waits:
+                        memory_real_waits[0](timeout=5)
+                except (OSError, subprocess.SubprocessError):
                     pass
-    heartbeat = tree_marker.read_text(encoding="utf-8")
-    time.sleep(1)
-    assert tree_marker.read_text(encoding="utf-8") == heartbeat
+        for probe in probes:
+            probe.close()
 
 
 def test_empty_selection_is_a_selection_error(tmp_path: Path):

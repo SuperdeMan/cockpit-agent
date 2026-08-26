@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import importlib.util
 import asyncio
-import ctypes
 import io
 import json
 import os
 import stat
 import subprocess
 import sys
-import threading
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -21,6 +18,12 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
+
+from scripts.tests.process_timeout_support import (
+    ProcessReadinessProbe,
+    arm_wait_timeout_after_ready,
+    atomic_pid_ready_code,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -133,71 +136,6 @@ def _write_valid_mtls_chain(root: Path) -> None:
     )
     if os.name != "nt":
         server_key_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
-
-
-class _PidProbe:
-    """Retain a Windows process handle so PID reuse cannot fake cleanup."""
-
-    def __init__(self, pid_file: Path) -> None:
-        self.pid_file = pid_file
-        self.pid: int | None = None
-        self.handle: int | None = None
-        self.thread = threading.Thread(target=self._capture, daemon=True)
-        self.thread.start()
-
-    def _capture(self) -> None:
-        deadline = time.monotonic() + 8
-        while time.monotonic() < deadline:
-            try:
-                self.pid = int(self.pid_file.read_text(encoding="utf-8"))
-                break
-            except (OSError, ValueError):
-                time.sleep(0.01)
-        if self.pid is None or os.name != "nt":
-            return
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.argtypes = [
-            ctypes.c_uint32,
-            ctypes.c_int,
-            ctypes.c_uint32,
-        ]
-        kernel32.OpenProcess.restype = ctypes.c_void_p
-        handle = kernel32.OpenProcess(
-            0x00100000 | 0x1000,
-            0,
-            self.pid,
-        )
-        if handle:
-            self.handle = int(handle)
-
-    def assert_exited(self, *, deadline_s: float = 5) -> None:
-        self.thread.join(timeout=9)
-        assert self.pid is not None, "descendant PID was not recorded"
-        if os.name == "nt" and self.handle is not None:
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel32.WaitForSingleObject.argtypes = [
-                ctypes.c_void_p,
-                ctypes.c_uint32,
-            ]
-            kernel32.WaitForSingleObject.restype = ctypes.c_uint32
-            kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
-            kernel32.CloseHandle.restype = ctypes.c_int
-            try:
-                assert kernel32.WaitForSingleObject(
-                    self.handle,
-                    int(deadline_s * 1000),
-                ) == 0
-            finally:
-                kernel32.CloseHandle(self.handle)
-            return
-        deadline = time.monotonic() + deadline_s
-        while time.monotonic() < deadline:
-            try:
-                os.kill(self.pid, 0)
-            except OSError:
-                return
-            time.sleep(0.05)
-        pytest.fail("descendant PID is still active")
 
 
 class _FakeLease:
@@ -1110,30 +1048,60 @@ def test_profile_command_runner_discards_four_mib_output_without_deadlock(
 
 def test_profile_command_timeout_reaps_grandchild_and_never_leaks_secret(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     runner = _runner()
     pid_file = tmp_path / "profile-grandchild.pid"
+    ready_file = tmp_path / "profile-grandchild.ready"
     secret = "profile-command-secret-must-not-render"  # release-secret-fixture
-    child_code = "import time; time.sleep(60)"
+    child_code = "import time; time.sleep(600)"
     parent_code = (
         "import subprocess,sys,time; from pathlib import Path; "
-        "time.sleep(1.5); "
-        f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
-        f"Path({str(pid_file)!r}).write_text(str(child.pid),encoding='utf-8'); "
-        "print('z' * (4 * 1024 * 1024)); time.sleep(60)"
+        f"descendant=subprocess.Popen([sys.executable,'-c',{child_code!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL); "
+        + atomic_pid_ready_code(pid_file, ready_file)
+        + "print('z' * (4 * 1024 * 1024)); time.sleep(600)"
     )
-    probe = _PidProbe(pid_file)
+    probe = ProcessReadinessProbe(pid_file, ready_file)
+    original_popen = runner.subprocess.Popen
+    processes = []
+    arms = []
 
-    with pytest.raises(RuntimeError, match="profile_command_failed") as caught:
-        runner._run_profile_command(
-            [sys.executable, "-c", parent_code, secret],
-            cwd=tmp_path,
-            environ={**os.environ, "PROFILE_TEST_SECRET": secret},
-            timeout_s=5,
-        )
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        arms.append(arm_wait_timeout_after_ready(process, probe))
+        return process
 
-    assert secret not in str(caught.value)
-    probe.assert_exited()
+    monkeypatch.setattr(runner.subprocess, "Popen", popen)
+    verified = False
+    try:
+        with pytest.raises(RuntimeError, match="profile_command_failed") as caught:
+            runner._run_profile_command(
+                [sys.executable, "-c", parent_code, secret],
+                cwd=tmp_path,
+                environ={**os.environ, "PROFILE_TEST_SECRET": secret},
+                timeout_s=30,
+            )
+
+        assert secret not in str(caught.value)
+        assert len(arms) == 1
+        assert arms[0].triggered
+        assert arms[0].timeout_injections == 1
+        probe.assert_exited()
+        verified = True
+    finally:
+        if not verified:
+            probe.force_cleanup()
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        probe.close()
 
 
 @pytest.mark.parametrize(

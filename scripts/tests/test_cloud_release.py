@@ -8,7 +8,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +16,13 @@ import pytest
 
 from scripts import cloud_release
 from scripts import cloud_release_lib
+from scripts.tests.process_timeout_support import (
+    ProcessReadinessProbe,
+    arm_communicate_timeout_after_ready,
+    arm_wait_after_ready,
+    arm_wait_timeout_after_ready,
+    atomic_pid_ready_code,
+)
 from scripts.cloud_release_lib import (
     ControlledChange,
     CommandResult,
@@ -117,6 +123,70 @@ def test_resolve_commit_rejects_invalid_revision_as_configuration(tmp_path: Path
         cloud_release_lib._resolve_commit(repo, "not-a-revision")
     assert caught.value.category == "configuration"
 
+
+def test_process_probe_rejects_operation_exit_before_descendant_ready(
+    tmp_path: Path,
+):
+    process = subprocess.Popen(
+        [sys.executable, "-c", "raise SystemExit(0)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    probe = ProcessReadinessProbe(
+        tmp_path / "missing.pid",
+        tmp_path / "missing.ready",
+    )
+    arm = arm_wait_after_ready(process, probe, ready_timeout_s=1)
+    try:
+        with pytest.raises(AssertionError, match="descendant not started"):
+            process.wait(timeout=5)
+        assert arm.triggered
+        assert process.wait(timeout=5) == 0
+    finally:
+        probe.close()
+
+
+def test_process_timeout_arm_fires_once_then_delegates_to_real_wait(
+    tmp_path: Path,
+):
+    pid_file = tmp_path / "armed.pid"
+    ready_file = tmp_path / "armed.ready"
+    child_code = (
+        "import time; from pathlib import Path; "
+        + atomic_pid_ready_code(pid_file, ready_file, pid_expression="os.getpid()")
+        + "time.sleep(600)"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", child_code],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    probe = ProcessReadinessProbe(pid_file, ready_file)
+    arm = arm_wait_timeout_after_ready(process, probe, ready_timeout_s=5)
+    verified = False
+    try:
+        with pytest.raises(subprocess.TimeoutExpired):
+            process.wait(timeout=30)
+        assert arm.triggered
+        assert arm.timeout_injections == 1
+        probe.force_cleanup()
+        returncode = process.wait(timeout=5)
+        assert process.wait(timeout=5) == returncode
+        probe.assert_exited()
+        verified = True
+    finally:
+        if not verified:
+            probe.force_cleanup()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+        probe.close()
+
+
 def test_runner_redacts_secret_values(tmp_path: Path):
     runner = SubprocessRunner(redactions={"secret-value"})
     result = runner.run(
@@ -144,22 +214,60 @@ def test_runner_failure_does_not_echo_full_argv(tmp_path: Path):
     assert "-c" not in message
 
 
-def test_runner_timeout_terminates_grandchild_process_tree(tmp_path: Path):
+def test_runner_timeout_terminates_grandchild_process_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
     marker = tmp_path / "grandchild-survived.txt"
+    pid_file = tmp_path / "grandchild.pid"
+    ready_file = tmp_path / "grandchild.ready"
     child = (
-        "import time; from pathlib import Path; time.sleep(0.8); "
+        "import time; from pathlib import Path; time.sleep(600); "
         f"Path({str(marker)!r}).write_text('survived', encoding='utf-8')"
     )
     parent = (
-        "import subprocess,sys,time; "
-        f"subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(30)"
+        "import subprocess,sys,time; from pathlib import Path; "
+        f"descendant=subprocess.Popen([sys.executable, '-c', {child!r}],"
+        "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,"
+        "stderr=subprocess.DEVNULL); "
+        + atomic_pid_ready_code(pid_file, ready_file)
+        + "time.sleep(600)"
     )
-    with pytest.raises(ReleaseError, match="timed out"):
-        SubprocessRunner().run(
-            [sys.executable, "-c", parent], cwd=tmp_path, timeout_s=0.2,
-        )
-    time.sleep(1.0)
-    assert not marker.exists()
+    original_popen = cloud_release_lib.subprocess.Popen
+    processes = []
+    arms = []
+    probe = ProcessReadinessProbe(pid_file, ready_file)
+
+    def popen(*args, **kwargs):
+        process = original_popen(*args, **kwargs)
+        processes.append(process)
+        arms.append(arm_communicate_timeout_after_ready(process, probe))
+        return process
+
+    monkeypatch.setattr(cloud_release_lib.subprocess, "Popen", popen)
+    verified = False
+    try:
+        with pytest.raises(ReleaseError, match="timed out"):
+            SubprocessRunner().run(
+                [sys.executable, "-c", parent], cwd=tmp_path, timeout_s=30,
+            )
+        assert len(arms) == 1
+        assert arms[0].triggered
+        assert arms[0].timeout_injections == 1
+        probe.assert_exited()
+        assert not marker.exists()
+        verified = True
+    finally:
+        if not verified:
+            probe.force_cleanup()
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                try:
+                    process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+        probe.close()
 
 
 def test_ssh_config_builds_strict_batch_argv(tmp_path: Path):
