@@ -20,6 +20,7 @@ import { AsrSession, recognizeBatch } from '@/core/voice/asr'
 import { TtsSession, synthesizeBatch } from '@/core/voice/tts'
 import { newPcmPlayer, playerCtxOf, sharedAudioContext } from '@/core/voice/audioCtx'
 import { recorder } from '@/core/voice/recorder'
+import { speechController } from '@/core/voice/speech'
 import { Resampler } from '@/core/voice/resample'
 import { usePalette } from '@/ui/theme'
 
@@ -558,6 +559,51 @@ export default function VoiceSpikeScreen() {
     }
   }, [ensurePermission, log])
 
+  // ── barge-in 物理面（M2-3 验收「播报中按 PTT 即停」的机器版）──
+  //  播报中 stop() → 麦克风能量应当回到底噪。判据不是「代码调了 stop」而是
+  //  **声音真的没了**：调了 stop 但排定的 source 继续播完，是 pcmPlayer 那类调度器的
+  //  典型失败形态（stop 只清了队列没停已排定的）。
+  const probeBargeIn = useCallback(async () => {
+    setBusy('barge-in')
+    try {
+      const cfg = await loadServerConfig()
+      if (!cfg?.audioUrl) {
+        log('barge-in: 未配置服务器')
+        return
+      }
+      if (!(await ensurePermission())) return
+      const sc = speechController(cfg.audioUrl)
+      const peaks = [0, 0, 0] // 0=播报中 1=stop 后 200ms 内（余音窗）2=stop 后稳态
+      let phase = 0
+      const rec = recorder()
+      await rec.start((frame) => {
+        for (let i = 0; i < frame.length; i += 7) {
+          const v = Math.abs(frame[i]) / 32768
+          if (v > peaks[phase]) peaks[phase] = v
+        }
+      })
+      void sc.preview('今天深圳晴，气温二十八度，空气质量优，很适合出门散步或者去公园走走。')
+      await new Promise((r) => setTimeout(r, 3200)) // 让它先播起来
+      const during = peaks[0]
+      sc.stop()
+      phase = 1
+      await new Promise((r) => setTimeout(r, 250)) // 余音窗：已排定的分片可能还响一下
+      phase = 2
+      await new Promise((r) => setTimeout(r, 1500))
+      await rec.stop()
+      log('barge-in: 播报中 peak=' + during.toFixed(3) +
+        ' / stop 后 250ms=' + peaks[1].toFixed(3) +
+        ' / 稳态=' + peaks[2].toFixed(3) + '（底噪~0.06）')
+      log('barge-in: ' + (during > 0.09 && peaks[2] < during * 0.6
+        ? '✓ 播报中有声、停后回落'
+        : during <= 0.09 ? '? 播报期就没测到声音（先看 tts 流式那条）' : '✗ 停后仍有声'))
+    } catch (e: any) {
+      log('barge-in: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      setBusy('')
+    }
+  }, [ensurePermission, log])
+
   const Btn = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable
       onPress={onPress}
@@ -585,6 +631,7 @@ export default function VoiceSpikeScreen() {
         <Btn label="e2e 回环" onPress={() => void probeLoopback()} />
         <Btn label="asr 直灌" onPress={() => void probeAsrInject()} />
         <Btn label="tts 流式" onPress={() => void probeTtsStream()} />
+        <Btn label="barge-in" onPress={() => void probeBargeIn()} />
         <Btn label="clear" onPress={() => setLines([])} />
       </View>
       <Text style={{ color: p.fg3, fontSize: p.font(12), paddingHorizontal: 12 }}>

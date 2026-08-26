@@ -385,6 +385,27 @@ describe('fallbackModel 换模型重试', () => {
     }
   })
 
+  test('重连的新流**永远不 open** 也要能被救回来（2026-08-26 真机断网挂死的回归）', async () => {
+    jest.useFakeTimers()
+    try {
+      const { session, rec, calls } = newSession(withFallback)
+      await session.start()
+      FakeWs.last!.open()
+      rec.feed(16000)
+      await session.stop()
+      FakeWs.last!.emit({ type: 'error', message: '网断了' })
+      await flush()
+      expect(FakeWs.count).toBe(2)
+      // 新 ws 停在 CONNECTING：不 open、不 error、不 close（飞行模式下的真实形态）
+      jest.advanceTimersByTime(ASR_FALLBACK_MS + 10)
+      await flush()
+      // 兜底 timer 必须在重连**当时**就武装好，否则这一轮永久挂起、UI 卡在「识别中…」
+      expect(calls.final).toEqual(['批处理结果'])
+    } finally {
+      jest.useRealTimers()
+    }
+  })
+
   test("provider='off' 不绕这一圈（它的批处理是主路径不是兜底）", async () => {
     const { session, rec, calls } = newSession({ ...withFallback, provider: 'off' })
     await session.start()

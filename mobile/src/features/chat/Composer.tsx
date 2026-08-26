@@ -33,7 +33,8 @@ export function Composer({
   const recording = ptt?.state === 'recording'
   const finalizing = ptt?.state === 'finalizing'
   // 一行状态条：识别中的实时文字优先，其次失败原因（两者都没有就不占高度）
-  const hint = ptt?.partial || (finalizing ? '识别中…' : '') || ptt?.error || ''
+  const finalizingHint = ptt?.slow ? '网络似乎不太顺，正在重试…' : '识别中…'
+  const hint = ptt?.partial || (finalizing ? finalizingHint : '') || ptt?.error || ''
   const hintIsError = !ptt?.partial && !finalizing && !!ptt?.error
 
   return (

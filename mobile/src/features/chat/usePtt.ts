@@ -7,7 +7,7 @@
 //  ③ **并发按下**：starting/active 期间再次按下直接忽略，一个时刻只有一个采集会话。
 //
 // barge-in 的 App 版：按下先停播报再开录音，物理上不会自听（计划 M2-3 的 stopTTS 硬停）。
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AsrSession } from '@/core/voice/asr'
 import { PermissionDeniedError } from '@/core/voice/recorder'
@@ -15,6 +15,10 @@ import { speechController } from '@/core/voice/speech'
 import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
 
 const MIN_DURATION_MS = 320
+// 定稿超过它仍无结果 → UI 给中间反馈。兜底链最长要走 7s（无定稿）+ 7s（换模型）
+// + 10s（批处理超时）≈ 24 秒，这段时间一直只写「识别中…」会让人以为卡死了
+// ——2026-08-26 真机断网那次**确实**卡死，修完仍有近 30 秒的静默期。
+const SLOW_HINT_MS = 8000
 
 export type PttState = 'idle' | 'recording' | 'finalizing'
 
@@ -24,6 +28,8 @@ export interface PttHandle {
   partial: string
   /** 上一次的失败原因（供 UI 一行提示；下次按下即清） */
   error: string
+  /** 定稿等太久（兜底链在走）：UI 换一句中间反馈，别让人以为卡死了 */
+  slow: boolean
   pressDown(): void
   pressUp(): void
 }
@@ -36,6 +42,7 @@ export function usePtt(opts: {
   const [state, setState] = useState<PttState>('idle')
   const [partial, setPartial] = useState('')
   const [error, setError] = useState('')
+  const [slow, setSlow] = useState(false)
   const sessionRef = useRef<AsrSession | null>(null)
   const startingRef = useRef(false)
   const pendingStopRef = useRef(false)
@@ -118,6 +125,15 @@ export function usePtt(opts: {
       })
   }, [finishSession, opts])
 
+  useEffect(() => {
+    if (state !== 'finalizing') {
+      setSlow(false)
+      return
+    }
+    const t = setTimeout(() => setSlow(true), SLOW_HINT_MS)
+    return () => clearTimeout(t)
+  }, [state])
+
   const pressUp = useCallback(() => {
     if (startingRef.current) {
       pendingStopRef.current = true
@@ -126,5 +142,5 @@ export function usePtt(opts: {
     void finishSession()
   }, [finishSession])
 
-  return { state, partial, error, pressDown, pressUp }
+  return { state, partial, error, slow, pressDown, pressUp }
 }

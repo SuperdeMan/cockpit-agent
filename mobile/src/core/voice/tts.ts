@@ -39,16 +39,25 @@ export async function synthesizeBatch(
   text: string,
 ): Promise<{ pcm: Int16Array; sampleRate: number } | null> {
   if (!text.trim()) return null
-  const resp = await fetch(cfg.audioUrl + '/api/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      text,
-      voice_id: cfg.voice,
-      format: 'wav',
-      ...(cfg.provider ? { provider: cfg.provider } : {}),
-    }),
-  })
+  // 同 ASR 兜底：断网时 fetch 不自己失败，会一直挂着——而它是播报链的最后一环
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), 10_000)
+  let resp: Response
+  try {
+    resp = await fetch(cfg.audioUrl + '/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        voice_id: cfg.voice,
+        format: 'wav',
+        ...(cfg.provider ? { provider: cfg.provider } : {}),
+      }),
+      signal: ctl.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
   const data = (await resp.json()) as { audio?: string; error?: string }
   if (data.error || !data.audio) return null
   const wav = parseWav(base64ToBytes(data.audio))

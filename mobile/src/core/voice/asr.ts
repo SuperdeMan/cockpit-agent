@@ -56,6 +56,10 @@ function mergeChunks(chunks: Int16Array[]): Int16Array {
   return out
 }
 
+/** 批处理的网络超时：断网时 fetch 不会自己失败，会一直挂着——
+ *  而这是兜底链的**最后一环**，它挂住就等于整轮挂住（真机断网实测抓到的） */
+export const BATCH_TIMEOUT_MS = 10_000
+
 /** 批处理识别（兜底路径 + provider='off' 主路径）。返回定稿文本，空串表示没识别出内容 */
 export async function recognizeBatch(
   audioUrl: string,
@@ -63,11 +67,19 @@ export async function recognizeBatch(
   language: string,
 ): Promise<string> {
   const wav = int16ToWav(pcm, TARGET_SAMPLE_RATE)
-  const resp = await fetch(audioUrl + '/api/asr', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ audio: bytesToBase64(wav), format: 'wav', language }),
-  })
+  const ctl = new AbortController()
+  const timer = setTimeout(() => ctl.abort(), BATCH_TIMEOUT_MS)
+  let resp: Response
+  try {
+    resp = await fetch(audioUrl + '/api/asr', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audio: bytesToBase64(wav), format: 'wav', language }),
+      signal: ctl.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
   const data = (await resp.json()) as { text?: string; error?: string }
   if (data.error) throw new Error(data.error)
   return (data.text || '').trim()
@@ -261,6 +273,11 @@ export class AsrSession {
     this.opened = false
     this.sendBuf = this.allChunks.slice() // 全量重放（allChunks 不清，批处理兜底还要用）
     this.openSocket()
+    // ⚠ 立刻重新武装兜底，**不等 onopen**（2026-08-26 真机断网实测抓到的挂死）：
+    // 飞行模式下新 WebSocket 停在 CONNECTING，onerror/onclose 一个都不来，
+    // 而 armFallbackTimer 原本只在 onopen 或 stop() 里武装——于是这一轮永久挂起，
+    // UI 卡在「识别中…」不恢复。**新开的那条流也可能永远不出声，它同样需要有人看着。**
+    if (this.stopped) this.armFallbackTimer()
   }
 
   /** 批处理：流式失败但音频已录到 → 用整段兜回本轮（primary=true 时它是主路径不是兜底） */
