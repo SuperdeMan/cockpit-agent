@@ -232,6 +232,12 @@ def test_git_bash_finds_windows_git_layouts(
     bash.parent.mkdir(parents=True, exist_ok=True)
     git.write_bytes(b"git")
     bash.write_bytes(b"bash")
+    bash.chmod(0o755)
+
+    def fail_on_skip(reason: str):
+        raise AssertionError(f"Windows Git layout silently skipped: {reason}")
+
+    monkeypatch.setattr(pytest, "skip", fail_on_skip)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("PROGRAMFILES", str(tmp_path / "missing-program-files"))
     monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path / "missing-x86"))
