@@ -72,6 +72,18 @@ CLIENT_RUNTIME_MODELS = {
 
 
 def _git_bash() -> Path:
+    if sys.platform != "win32":
+        discovered = shutil.which("bash")
+        if discovered:
+            candidate = Path(discovered)
+            if (
+                candidate.is_absolute()
+                and candidate.is_file()
+                and os.access(candidate, os.X_OK)
+            ):
+                return candidate
+        pytest.skip("an absolute executable bash is required for cloud shell tests")
+
     candidates = [
         Path(os.environ.get("PROGRAMFILES", "")) / "Git" / "bin" / "bash.exe",
         Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Git" / "bin" / "bash.exe",
@@ -87,17 +99,49 @@ def _git_bash() -> Path:
         candidates.extend(parent / "bin" / "bash.exe"
                           for parent in Path(git).resolve().parents)
     for candidate in candidates:
-        if candidate.is_file():
+        if candidate.is_file() and os.access(candidate, os.X_OK):
             return candidate
     pytest.skip("Git Bash is required for cloud shell failure injection")
+
+
+def _bash_path(path: Path) -> str:
+    if sys.platform != "win32":
+        return path.as_posix()
+    bash = _git_bash()
+    cygpath = bash.parents[1] / "usr" / "bin" / "cygpath.exe"
+    completed = subprocess.run(
+        [
+            str(cygpath),
+            "-u",
+            "--",
+            str(path),
+        ],
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    converted = completed.stdout.strip()
+    if (
+        completed.returncode != 0
+        or not converted
+        or len(completed.stdout.splitlines()) != 1
+    ):
+        raise RuntimeError("Git Bash could not convert a cloud test path")
+    return converted
 
 
 def _run_cloud_bash(
     body: str,
     *args: str | Path,
 ) -> subprocess.CompletedProcess[str]:
+    bash = _git_bash()
+    bash_args = [
+        _bash_path(arg) if isinstance(arg, Path) else str(arg)
+        for arg in args
+    ]
     return subprocess.run(
-        [str(_git_bash()), "-c", textwrap.dedent(body), "cloud-test", *(str(arg) for arg in args)],
+        [str(bash), "-c", textwrap.dedent(body), "cloud-test", *bash_args],
         cwd=ROOT,
         text=True,
         encoding="utf-8",
@@ -170,6 +214,119 @@ def _run_remote_release(
         check=False,
     )
     return completed, events
+
+
+@pytest.mark.parametrize(
+    "git_relative",
+    ("cmd/git.exe", "mingw64/bin/git.exe"),
+)
+def test_git_bash_finds_windows_git_layouts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_relative: str,
+):
+    git_root = tmp_path / "Git"
+    git = git_root / git_relative
+    bash = git_root / "bin" / "bash.exe"
+    git.parent.mkdir(parents=True)
+    bash.parent.mkdir(parents=True, exist_ok=True)
+    git.write_bytes(b"git")
+    bash.write_bytes(b"bash")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path / "missing-program-files"))
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path / "missing-x86"))
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(git) if name == "git" else None,
+    )
+
+    assert _git_bash() == bash
+
+
+def test_git_bash_uses_absolute_executable_posix_bash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bash = tmp_path / "bin" / "bash"
+    bash.parent.mkdir()
+    bash.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    bash.chmod(0o755)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path / "missing-program-files"))
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path / "missing-x86"))
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: str(bash) if name == "bash" else None,
+    )
+
+    assert _git_bash() == bash
+
+
+@pytest.mark.parametrize("candidate", (None, "relative/bash"))
+def test_git_bash_skips_only_when_posix_bash_is_unusable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    candidate: str | None,
+):
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path / "missing-program-files"))
+    monkeypatch.setenv("PROGRAMFILES(X86)", str(tmp_path / "missing-x86"))
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: candidate if name == "bash" else None,
+    )
+
+    with pytest.raises(pytest.skip.Exception):
+        _git_bash()
+
+
+def test_bash_path_is_direct_on_posix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    path = tmp_path / "release asset"
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("POSIX paths must not use cygpath"),
+    )
+
+    assert _bash_path(path) == path.as_posix()
+
+
+def test_bash_path_uses_cygpath_for_windows_git_bash(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    bash = tmp_path / "Git" / "bin" / "bash.exe"
+    path = tmp_path / "release asset"
+    calls: list[tuple[str, ...]] = []
+
+    def fake_run(argv, **_kwargs):
+        calls.append(tuple(argv))
+        return subprocess.CompletedProcess(argv, 0, "/c/release-asset\n", "")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "_git_bash",
+        lambda: bash,
+    )
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _bash_path(path) == "/c/release-asset"
+    assert calls == [
+        (
+            str(bash.parents[1] / "usr" / "bin" / "cygpath.exe"),
+            "-u",
+            "--",
+            str(path),
+        )
+    ]
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -939,7 +1096,7 @@ def test_remote_build_validates_exact_current_symlink_before_other_work(
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        ROOT="$(cygpath -u "$1")"
+        ROOT="$1"
         EXPECTED="$2"
         ACTUAL="$3"
         mkdir -p "$ROOT/releases/$ACTUAL"
@@ -947,7 +1104,7 @@ def test_remote_build_validates_exact_current_symlink_before_other_work(
         RELEASE_ROOT="$ROOT"
         SHARED_ROOT="$ROOT/shared"
         die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
-        source "$(cygpath -u "$4")"
+        source "$4"
         validate_expected_current_release "$EXPECTED"
         printf 'validated\n'
         """,
@@ -976,9 +1133,9 @@ def test_remote_build_current_mismatch_precedes_capacity_receive_and_docker(
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        ROOT="$(cygpath -u "$1")"
-        EVENTS="$(cygpath -u "$2")"
-        BUILD_DIR="$(cygpath -u "$3")"
+        ROOT="$1"
+        EVENTS="$2"
+        BUILD_DIR="$3"
         EXPECTED="$4"
         ACTUAL="$5"
         mkdir -p "$ROOT/releases/$ACTUAL"
@@ -986,7 +1143,7 @@ def test_remote_build_current_mismatch_precedes_capacity_receive_and_docker(
         RELEASE_ROOT="$ROOT"
         SHARED_ROOT="$ROOT/shared"
         die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
-        source "$(cygpath -u "$6")"
+        source "$6"
         require_capacity() { printf 'capacity\n' >>"$EVENTS"; }
         receive_and_validate_artifact() {
           printf 'receive\n' >>"$EVENTS"
@@ -1010,6 +1167,61 @@ def test_remote_build_current_mismatch_precedes_capacity_receive_and_docker(
     assert not events.exists()
 
 
+@pytest.mark.parametrize("release_kind", ("missing", "file", "symlink"))
+def test_remote_build_rejects_dangling_or_nondirectory_current_before_work(
+    tmp_path: Path,
+    release_kind: str,
+):
+    expected = "a" * 40
+    target = "c" * 40
+    events = tmp_path / "events.txt"
+    build_dir = tmp_path / "build"
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        ROOT="$1"
+        EVENTS="$2"
+        BUILD_DIR="$3"
+        EXPECTED="$4"
+        TARGET="$5"
+        RELEASE_KIND="$6"
+        mkdir -p "$ROOT/releases"
+        if [[ "$RELEASE_KIND" == "file" ]]; then
+          : >"$ROOT/releases/$EXPECTED"
+        elif [[ "$RELEASE_KIND" == "symlink" ]]; then
+          mkdir -p "$ROOT/real-release"
+          MSYS=winsymlinks:sys ln -s \
+            "$ROOT/real-release" "$ROOT/releases/$EXPECTED"
+        fi
+        MSYS=winsymlinks:sys ln -s \
+          "$ROOT/releases/$EXPECTED" "$ROOT/current"
+        RELEASE_ROOT="$ROOT"
+        SHARED_ROOT="$ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$7"
+        require_capacity() { printf 'capacity\n' >>"$EVENTS"; }
+        receive_and_validate_artifact() {
+          printf 'receive\n' >>"$EVENTS"
+          printf '%s\n' "$BUILD_DIR"
+        }
+        validate_release_manifest_baseline() { printf 'manifest\n' >>"$EVENTS"; }
+        docker() { printf 'docker\n' >>"$EVENTS"; }
+        build_release "$TARGET" "$TARGET-$(printf 'd%.0s' {1..32})" "$EXPECTED"
+        """,
+        tmp_path,
+        events,
+        build_dir,
+        expected,
+        target,
+        release_kind,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert "current release changed since plan" in result.stderr
+    assert not events.exists()
+
+
 def test_remote_build_rejects_current_symlink_changed_after_matching_check(
     tmp_path: Path,
 ):
@@ -1018,7 +1230,7 @@ def test_remote_build_rejects_current_symlink_changed_after_matching_check(
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        ROOT="$(cygpath -u "$1")"
+        ROOT="$1"
         EXPECTED="$2"
         REPLACEMENT="$3"
         mkdir -p "$ROOT/releases/$EXPECTED" "$ROOT/releases/$REPLACEMENT"
@@ -1027,7 +1239,7 @@ def test_remote_build_rejects_current_symlink_changed_after_matching_check(
         RELEASE_ROOT="$ROOT"
         SHARED_ROOT="$ROOT/shared"
         die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
-        source "$(cygpath -u "$4")"
+        source "$4"
         validate_expected_current_release "$EXPECTED"
         printf 'initial-match\n'
         MSYS=winsymlinks:sys ln -sfn \
@@ -1071,11 +1283,11 @@ def test_release_manifest_baseline_requires_matching_full_lowercase_sha(
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        RELEASE_ROOT="$(cygpath -u "$1")"
+        RELEASE_ROOT="$1"
         SHARED_ROOT="$RELEASE_ROOT/shared"
         die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
-        source "$(cygpath -u "$2")"
-        validate_release_manifest_baseline "$(cygpath -u "$3")" "$4"
+        source "$2"
+        validate_release_manifest_baseline "$3" "$4"
         """,
         tmp_path,
         REMOTE_BUILD_PATH,
@@ -1088,6 +1300,43 @@ def test_release_manifest_baseline_requires_matching_full_lowercase_sha(
     else:
         assert result.returncode != 0
         assert "release manifest baseline mismatch" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "[1,2,3]",
+        "null",
+        (
+            '{"deployed_sha":"' + "a" * 40 + '",'
+            '"deployed_sha":"' + "a" * 40 + '"}'
+        ),
+    ],
+)
+def test_release_manifest_baseline_rejects_nonobject_or_duplicate_keys(
+    tmp_path: Path,
+    payload: str,
+):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(payload, encoding="utf-8")
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$RELEASE_ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$2"
+        validate_release_manifest_baseline "$3" "$4"
+        """,
+        tmp_path,
+        REMOTE_BUILD_PATH,
+        manifest,
+        "a" * 40,
+    )
+
+    assert result.returncode != 0
+    assert "release manifest baseline mismatch" in result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_manifest_baseline_mismatch_stops_before_docker_build(
@@ -1106,9 +1355,9 @@ def test_manifest_baseline_mismatch_stops_before_docker_build(
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        ROOT="$(cygpath -u "$1")"
-        EVENTS="$(cygpath -u "$2")"
-        BUILD_DIR="$(cygpath -u "$3")"
+        ROOT="$1"
+        EVENTS="$2"
+        BUILD_DIR="$3"
         EXPECTED="$4"
         TARGET="$5"
         mkdir -p "$ROOT/releases/$EXPECTED"
@@ -1116,7 +1365,7 @@ def test_manifest_baseline_mismatch_stops_before_docker_build(
         RELEASE_ROOT="$ROOT"
         SHARED_ROOT="$ROOT/shared"
         die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
-        source "$(cygpath -u "$6")"
+        source "$6"
         require_capacity() { :; }
         receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
         docker() { printf 'docker\n' >>"$EVENTS"; }
@@ -1724,7 +1973,7 @@ def test_remote_capacity_counterexamples_fail_closed(
         set -Eeuo pipefail
         RELEASE_ROOT="$1"
         SHARED_ROOT="$1/shared"
-        FAKE_BIN="$(cygpath -u "$2")"
+        FAKE_BIN="$2"
         PATH="$FAKE_BIN:$PATH"
         die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
         source "$3"
@@ -1791,17 +2040,17 @@ def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        RELEASE_ROOT="$(cygpath -u "$1")"
+        RELEASE_ROOT="$1"
         SHARED_ROOT="$RELEASE_ROOT/shared"
-        BUILD_DIR="$(cygpath -u "$2")"
-        COUNTER="$(cygpath -u "$3")"
+        BUILD_DIR="$2"
+        COUNTER="$3"
         SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         BASE="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         mkdir -p "$RELEASE_ROOT/releases/$BASE"
         MSYS=winsymlinks:sys ln -s \
           "$RELEASE_ROOT/releases/$BASE" "$RELEASE_ROOT/current"
         die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
-        source "$(cygpath -u "$4")"
+        source "$4"
         require_capacity() { :; }
         receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
         validate_release_manifest_baseline() { :; }

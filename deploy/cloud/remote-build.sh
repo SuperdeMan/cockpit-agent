@@ -8,12 +8,15 @@ readonly MIN_DISK_BYTES=$((30 * 1024 * 1024 * 1024))
 readonly MIN_MEMORY_BYTES=$((3 * 1024 * 1024 * 1024))
 
 validate_expected_current_release() {
-  local expected="${1:-}" current
+  local expected="${1:-}" current release_dir
   [[ "${expected}" =~ ^[0-9a-f]{40}$ ]] \
     || die "current release changed since plan" 2
+  release_dir="${RELEASE_ROOT}/releases/${expected}"
+  [[ -d "${release_dir}" && ! -L "${release_dir}" ]] \
+    || die "current release changed since plan"
   current="$(readlink -f -- "${RELEASE_ROOT}/current")" \
     || die "current release changed since plan"
-  [[ "${current}" == "${RELEASE_ROOT}/releases/${expected}" ]] \
+  [[ "${current}" == "${release_dir}" ]] \
     || die "current release changed since plan"
 }
 
@@ -32,9 +35,25 @@ import sys
 
 manifest_path = Path(sys.argv[1])
 expected = sys.argv[2]
+
+
+def unique_object(pairs):
+    payload = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ValueError("duplicate JSON key")
+        payload[key] = value
+    return payload
+
+
 try:
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-except (OSError, UnicodeError, json.JSONDecodeError):
+    payload = json.loads(
+        manifest_path.read_text(encoding="utf-8"),
+        object_pairs_hook=unique_object,
+    )
+except (OSError, UnicodeError, ValueError):
+    raise SystemExit(1)
+if not isinstance(payload, dict):
     raise SystemExit(1)
 deployed = payload.get("deployed_sha")
 if not isinstance(deployed, str) or re.fullmatch(r"[0-9a-f]{40}", deployed) is None:
