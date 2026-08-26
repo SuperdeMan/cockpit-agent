@@ -34,6 +34,30 @@ function Info([string]$msg) {
     Write-Host "[build-mobile] $msg"
 }
 
+# Git Bash 的真实路径（react-native-audio-api 的 downloadPrebuiltBinaries 在 Windows
+# 分支写死了 C 盘那个绝对路径，本机 Git 装在 D 盘 ⇒ 起进程失败，见坑账）。
+# 探测顺序刻意是「git.exe 反推」优先：PATH 上叫 bash.exe 的还有 WSL 启动器
+# （System32）和商店存根（WindowsApps），拿到那两个比拿不到更糟。
+function Resolve-GitBash {
+    $gitExe = (Get-Command git.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    if ($gitExe) {
+        # ...\Git\cmd\git.exe 或 ...\Git\mingw64\bin\git.exe → 往上找到 Git 根
+        $dir = Split-Path -Parent $gitExe
+        $up1 = Split-Path -Parent $dir
+        foreach ($root in @($up1, (Split-Path -Parent $up1))) {
+            if (-not $root) { continue }
+            $cand = Join-Path $root 'usr\bin\bash.exe'
+            if (Test-Path $cand) { return $cand }
+        }
+    }
+    foreach ($c in (Get-Command bash.exe -All -ErrorAction SilentlyContinue)) {
+        if ($c.Source -and $c.Source -notmatch 'System32|WindowsApps' -and (Test-Path $c.Source)) {
+            return $c.Source
+        }
+    }
+    return $null
+}
+
 # ---- 0. 前置 ----
 if (-not (Test-Path (Join-Path $MobileReal 'node_modules'))) {
     Fail "mobile/node_modules 不存在——先在 mobile/ 里跑 npm install"
@@ -191,8 +215,20 @@ try {
         if ($env:NODE_OPTIONS) { Remove-Item Env:NODE_OPTIONS -ErrorAction SilentlyContinue }
         # 国内镜像前置（repo.maven.apache.org 本网络 DNS 不可达，2026-08-25 实测）
         $initScript = Join-Path $PSScriptRoot 'gradle_cn_mirrors.init.gradle'
+        # react-native-audio-api 把 Git Bash 路径写死在 C 盘（2026-08-26 M2-1 实测：
+        # 本机 Git 在 D 盘 ⇒ downloadPrebuiltBinaries 起不了进程，整构建停在 preBuild）。
+        # 真实路径在这里探测、经 -P 传给 init script 覆盖；探不到就不传，
+        # 让库自己的默认值决定成败（不静默造一个假路径出来）。
+        $gradleArgs = @($task, '--console=plain', '-I', $initScript)
+        $bashExe = Resolve-GitBash
+        if ($bashExe) {
+            Info "audio-api bash: $bashExe"
+            $gradleArgs += "-PaudioApiBashPath=$bashExe"
+        } else {
+            Info 'WARN 没探到 Git Bash——react-native-audio-api 的预编译产物下载可能失败'
+        }
         Info "gradlew $task（首跑会拉依赖，几分钟量级；CN 镜像 init script）"
-        & .\gradlew.bat $task --console=plain -I $initScript
+        & .\gradlew.bat @gradleArgs
         if ($LASTEXITCODE -ne 0) { Fail "gradle $task 失败（exit $LASTEXITCODE）" }
     } finally {
         Pop-Location

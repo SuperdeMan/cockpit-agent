@@ -19,4 +19,27 @@ config.resolver.sourceExts = [...config.resolver.sourceExts, 'mjs']
 config.resolver.nodeModulesPaths = [path.join(projectRoot, 'node_modules')]
 config.resolver.disableHierarchicalLookup = true
 
+// 4. 嵌套依赖的窄口子（M2-1 实测）：react-native-audio-api 运行时要 semver@^7，
+//    而顶层 node_modules/semver 被 @babel/core 的 6.3.1 占着，npm 把 7 装进了
+//    audio-api 自己的 node_modules——正好是上面第 3 条关掉的那种层级查找。
+//    症状是 bundle 直接失败：Unable to resolve "semver/functions/gte"。
+//    只对 semver 这一个包恢复「从发起方向上找」的语义（node 的 require.resolve 就是
+//    这个语义），不改全局解析，重复 React 的防线原样保留。
+const defaultResolve = config.resolver.resolveRequest
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === 'semver' || moduleName.startsWith('semver/')) {
+    try {
+      return {
+        type: 'sourceFile',
+        filePath: require.resolve(moduleName, {
+          paths: [path.dirname(context.originModulePath)],
+        }),
+      }
+    } catch {
+      // 找不到就落回默认解析，让 metro 报它自己的错（别把错误信息也吃掉）
+    }
+  }
+  return (defaultResolve ?? context.resolveRequest)(context, moduleName, platform)
+}
+
 module.exports = config

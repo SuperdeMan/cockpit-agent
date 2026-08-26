@@ -62,6 +62,27 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         },
       },
     ],
+    // 语音面原生依赖（M2-1 定案：录音+播放同一库，见实施计划 §5 M2 实施记录）。
+    // 三项刻意偏离插件默认值：
+    //  · androidPermissions 只要 RECORD_AUDIO——默认那两条是给前台服务用的，我们不起服务
+    //  · androidForegroundService=false：PoC 承诺前台交互档（坑账 §9.5 省电模式会杀后台
+    //    socket，验收本就在前台做）；声明 service 却不给 FOREGROUND_SERVICE 权限会崩，
+    //    两者必须一起关
+    //  · iosBackgroundMode=false：本项目不构建 iOS
+    [
+      'react-native-audio-api',
+      {
+        androidPermissions: ['android.permission.RECORD_AUDIO'],
+        androidForegroundService: false,
+        iosBackgroundMode: false,
+        // FFmpeg 关掉：本 App 的音频面全是裸 PCM（TTS 下行 s16le / ASR 上行 s16le），
+        // 用不到 decodeAudioData 解 mp3/aac。收益是不下 11.9MB 的 jniLibs.zip
+        // （GitHub releases 本网络 30KB/s，见坑账）+ 不打包 4 个 ABI 的 FFmpeg .so。
+        // ⚠ 代价明说：AudioContext.decodeAudioData 对压缩格式不可用；哪天要放 mp3
+        // 提示音（M4 cue 音）得把这条改回来并重构建。
+        disableFFmpeg: true,
+      },
+    ],
   ],
   experiments: {
     typedRoutes: true,

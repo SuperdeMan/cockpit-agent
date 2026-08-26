@@ -1,10 +1,12 @@
-// 设置仓库（实施计划 M1-5）：AsyncStorage 持久化 + zustand。
+// 设置仓库（实施计划 M1-5，M2 追加语音面）：AsyncStorage 持久化 + zustand。
 // buildMeta 键集与 hmi/src/settings.tsx:79-90 逐键一致（单测硬拷贝键名钉住，漂移即红）；
-// 语音/免唤醒等 HMI 专属字段不搬（M2/M4 再加），theme 多一档 'system'（RN 跟随系统）。
+// **语音字段刻意不进 buildMeta**——它们是客户端本地行为（用哪个引擎合成/识别），
+// 不是会话偏好，上行了后端也不看。免唤醒/S2S/声纹等仍不搬（M4 再说）。
+// theme 多一档 'system'（RN 跟随系统）。
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { createStore } from 'zustand/vanilla'
 
-import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS } from '@shared/types.ts'
+import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS, DEFAULT_SETTINGS } from '@shared/types.ts'
 
 export type ThemePref = 'system' | 'dark' | 'light'
 export type FontScalePref = 'normal' | 'large'
@@ -23,6 +25,17 @@ export interface AppSettings {
   /** 定位：仅记住是否允许本应用使用；精确坐标不持久化（同 HMI 语义） */
   locationEnabled: boolean
   quickCommands: string[]
+  // ── 语音输入（M2-2）──
+  /** 流式 ASR 引擎；'off' = 强制走批处理（整段录完一次识别） */
+  asrProvider: string
+  asrModel: string
+  asrLanguage: string
+  // ── 语音播报（M2-3）──
+  ttsEnabled: boolean
+  /** 自动播报本轮回答；关掉后仍可在设置页试听 */
+  autoplay: boolean
+  ttsProvider: string
+  voiceId: string
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -35,7 +48,23 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   memoryEnabled: true,
   locationEnabled: false,
   quickCommands: DEFAULT_QUICK_COMMANDS,
+  // 开关类默认值取自共享契约（hmi/src/types.ts::DEFAULT_SETTINGS），不抄第二份字面量
+  asrProvider: DEFAULT_SETTINGS.asrProvider,
+  asrLanguage: DEFAULT_SETTINGS.asrLanguage,
+  ttsEnabled: DEFAULT_SETTINGS.ttsEnabled,
+  autoplay: DEFAULT_SETTINGS.autoplay,
+  // ⚠ 引擎选型三项**刻意偏离共享契约**（泓舟 2026-08-26 当轮指示：ASR 主用 fun-asr、
+  // 其次 qwen3-asr；TTS 主用 minimax）。HMI 侧的 DEFAULT_SETTINGS 仍是 qwen3/cosyvoice
+  // ——那是 hmi/ 的改动，本计划禁区（§10），要改由泓舟另行决定。**两边不一致是已知的**，
+  // 不是漂移：这里写死字面量并注明来源，比让 App 跟着一个已被推翻的默认值走要好。
+  asrModel: 'fun-asr-realtime',
+  ttsProvider: 'minimax',
+  voiceId: 'female-tianmei',
 }
+
+/** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。
+ *  泓舟 2026-08-26：fun-asr 主、qwen3-asr 次。 */
+export const ASR_FALLBACK_MODEL = 'qwen3-asr-flash-realtime-2026-02-10'
 
 /** 存量合并（同 hmi settings.load()）：合并默认值向前兼容新增字段；agents 深合并 */
 export function mergeStoredSettings(raw: string | null): AppSettings {

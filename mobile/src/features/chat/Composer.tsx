@@ -1,14 +1,16 @@
-// 输入区（实施计划 M1-3）：文本输入 + 发送 + 快捷指令 chips（settings.quickCommands）。
-// 在飞轮存在时给「打断」（cancel 帧，U2 语义）。PTT 语音按钮随 M2-2 加。
+// 输入区（实施计划 M1-3 + M2-2 PTT）：文本输入 + 发送 + 快捷指令 chips + 按住说话。
+// 在飞轮存在时给「打断」（cancel 帧，U2 语义）。
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 
 import type { Palette } from '../../ui/theme'
+import type { PttHandle } from './usePtt'
 
 export function Composer({
   p,
   quickCommands,
   busy,
+  ptt,
   onSend,
   onInterrupt,
 }: {
@@ -16,6 +18,8 @@ export function Composer({
   quickCommands: string[]
   /** 有在飞轮（pending/streaming/process 任一）→ 显示打断 */
   busy: boolean
+  /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
+  ptt: PttHandle | null
   onSend(text: string): void
   onInterrupt(): void
 }) {
@@ -26,6 +30,12 @@ export function Composer({
     onSend(text)
     setInput('')
   }
+  const recording = ptt?.state === 'recording'
+  const finalizing = ptt?.state === 'finalizing'
+  // 一行状态条：识别中的实时文字优先，其次失败原因（两者都没有就不占高度）
+  const hint = ptt?.partial || (finalizing ? '识别中…' : '') || ptt?.error || ''
+  const hintIsError = !ptt?.partial && !finalizing && !!ptt?.error
+
   return (
     <View style={{ borderTopWidth: 1, borderColor: p.line, backgroundColor: p.bg }}>
       <ScrollView
@@ -49,7 +59,40 @@ export function Composer({
           </Pressable>
         ))}
       </ScrollView>
+      {hint ? (
+        <Text
+          numberOfLines={2}
+          style={{
+            color: hintIsError ? p.amber : p.fg2,
+            fontSize: p.font(13),
+            paddingHorizontal: 14,
+            paddingTop: 6,
+          }}
+        >
+          {recording ? '🎙 ' : ''}
+          {hint}
+        </Text>
+      ) : null}
       <View style={{ flexDirection: 'row', gap: 8, padding: 10, alignItems: 'flex-end' }}>
+        {ptt ? (
+          <Pressable
+            onPressIn={ptt.pressDown}
+            onPressOut={ptt.pressUp}
+            disabled={finalizing}
+            accessibilityLabel="按住说话"
+            style={{
+              backgroundColor: recording ? p.red : p.accentSoft,
+              borderRadius: 12,
+              paddingHorizontal: 13,
+              minHeight: 42,
+              justifyContent: 'center',
+            }}
+          >
+            <Text style={{ color: recording ? '#fff' : p.accent, fontSize: p.font(17) }}>
+              {finalizing ? '…' : '🎙'}
+            </Text>
+          </Pressable>
+        ) : null}
         <TextInput
           style={{
             flex: 1,
@@ -64,7 +107,7 @@ export function Composer({
           }}
           value={input}
           onChangeText={setInput}
-          placeholder="和小舟说点什么…"
+          placeholder={recording ? '正在听…' : '和小舟说点什么…'}
           placeholderTextColor={p.fg3}
           multiline
           onSubmitEditing={submit}

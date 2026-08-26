@@ -1,7 +1,12 @@
 // 会话状态机（实施计划 M1-1 ⛔）：jest 回放帧序列驱动 store，断言消息数组终态。
 // 「必测边界」八条每条对应一次真实事故（App.tsx/QA 卡注释里点名的那些），缺一不收；
 // 另补正常路径八条 + 位置征询两条（M1-2 的 store 半边）。
-import { REQUEST_TIMEOUT_MS, SessionCore, type LocationBridge } from '@/core/session/store'
+import {
+  REQUEST_TIMEOUT_MS,
+  SessionCore,
+  type LocationBridge,
+  type SpeechSink,
+} from '@/core/session/store'
 import type { Msg } from '@shared/types.ts'
 
 class FakeTransport {
@@ -24,13 +29,33 @@ function fakeLocation(enabled: boolean, meta: Record<string, string> = {}): Loca
   }
 }
 
-function newCore(opts: { location?: LocationBridge; meta?: Record<string, string> } = {}) {
+/** 播报端口的记录用替身（M2-3）：只记调用序列，不出声 */
+class FakeSpeech implements SpeechSink {
+  calls: string[] = []
+  begin(bubbleId: string, emotion: string): void {
+    this.calls.push('begin:' + emotion)
+  }
+  delta(_bubbleId: string, text: string): void {
+    this.calls.push('delta:' + text)
+  }
+  finish(_bubbleId: string, text: string): void {
+    this.calls.push('finish:' + text)
+  }
+  stop(): void {
+    this.calls.push('stop')
+  }
+}
+
+function newCore(
+  opts: { location?: LocationBridge; meta?: Record<string, string>; speech?: SpeechSink } = {},
+) {
   const transport = new FakeTransport()
   const core = new SessionCore({
     transport,
     sessionId: 'app-test01',
     getMeta: () => opts.meta ?? { assistant_name: '小舟', memory_enabled: 'true' },
     location: opts.location ?? fakeLocation(false),
+    ...(opts.speech ? { speech: opts.speech } : {}),
   })
   return { transport, core }
 }
@@ -346,6 +371,83 @@ describe('位置征询（M1-2 store 半边：同意带坐标重发 / 拒绝照�
     expect(frame.text).toBe('附近的充电站')
     expect('current_lat' in frame.meta).toBe(false)
     expect(core.store.getState().pendingLocationText).toBeNull()
+    core.dispose()
+  })
+})
+
+// ── M2-3：播报端口挂点（与 HMI App.tsx 逐处对齐；错挂的后果是两轮同时出声或永远不出声）──
+describe('SpeechSink 挂点（M2-3）', () => {
+  test('dispatch 就 begin（提前握手），并带上一轮的 emotion', () => {
+    const speech = new FakeSpeech()
+    const { core } = newCore({ speech })
+    core.send('讲个笑话')
+    expect(speech.calls).toEqual(['begin:'])
+    // 本轮 final 带 emotion → 只影响**下一轮**的 start 帧
+    core.handleFrame({ type: 'final', speech: '好的', emotion: 'happy' })
+    speech.calls.length = 0
+    core.send('再讲一个')
+    expect(speech.calls[0]).toBe('begin:happy')
+    core.dispose()
+  })
+
+  test('speech_delta 只喂最新轮：旧轮的字继续上屏但**不出声**', () => {
+    const speech = new FakeSpeech()
+    const { transport, core } = newCore({ speech })
+    core.send('第一问')
+    const r1 = transport.lastUserFrame().request_id
+    core.send('第二问')
+    speech.calls.length = 0
+    core.handleFrame({ type: 'speech_delta', delta: '旧轮的字', request_id: r1 })
+    expect(speech.calls).toEqual([])
+    expect(msgs(core).some((m) => m.text === '旧轮的字')).toBe(true) // 屏上照样有
+    const r2 = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'speech_delta', delta: '新轮的字', request_id: r2 })
+    expect(speech.calls).toEqual(['delta:新轮的字'])
+    core.dispose()
+  })
+
+  test('final 有 speech → finish；纯卡片轮（无 speech）→ stop 而不是留个空会话', () => {
+    const speech = new FakeSpeech()
+    const { core } = newCore({ speech })
+    core.send('今天天气')
+    speech.calls.length = 0
+    core.handleFrame({ type: 'final', speech: '今天深圳晴' })
+    expect(speech.calls).toEqual(['finish:今天深圳晴'])
+
+    speech.calls.length = 0
+    core.send('附近充电站')
+    speech.calls.length = 0
+    core.handleFrame({ type: 'final', speech: '', ui_card: { type: 'poi_list', items: [] } })
+    expect(speech.calls).toEqual(['stop'])
+    core.dispose()
+  })
+
+  test('看门狗超时 → stop（那轮不会再有 final，会话留着就永远收不了尾）', () => {
+    const speech = new FakeSpeech()
+    const { core } = newCore({ speech })
+    core.send('会超时的一问')
+    speech.calls.length = 0
+    jest.advanceTimersByTime(REQUEST_TIMEOUT_MS + 10)
+    expect(speech.calls).toEqual(['stop'])
+    core.dispose()
+  })
+
+  test('打断 → stop', () => {
+    const speech = new FakeSpeech()
+    const { core } = newCore({ speech })
+    core.send('一个长问题')
+    speech.calls.length = 0
+    core.cancelCurrentTurn()
+    expect(speech.calls).toEqual(['stop'])
+    core.dispose()
+  })
+
+  test('不注入 speech 时一切照旧（M1 的调用方与测试不用改一行）', () => {
+    const { core } = newCore()
+    core.send('讲个笑话')
+    core.handleFrame({ type: 'speech_delta', delta: '好的' })
+    core.handleFrame({ type: 'final', speech: '好的，这是个笑话' })
+    expect(assistants(core).at(-1)?.text).toBe('好的，这是个笑话')
     core.dispose()
   })
 })

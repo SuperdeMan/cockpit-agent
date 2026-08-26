@@ -34,3 +34,38 @@ settingsEvaluated { settings ->
         // 老 Gradle 无此 API 时静默跳过
     }
 }
+
+// ── react-native-audio-api 的 Windows 硬编码 bash 路径（M2-1 实测，2026-08-26）──
+// 它的 downloadPrebuiltBinaries 任务在 Windows 分支写死了 Git Bash 的**绝对路径**
+// （C 盘的 Program Files\Git\usr\bin\bash.exe，见
+// node_modules/react-native-audio-api/android/build.gradle:320-329）。
+// 本机 Git 装在 D 盘 ⇒「A problem occurred starting process」，而 preBuild 依赖该
+// 任务，整个构建停在这（首次实测 BUILD FAILED in 2m18s）。
+// 与 CN 镜像同性质——**本机环境形态与库的假设不符**，所以落同一份 init script，
+// 不改 node_modules（它是镜像产物，改了每次同步都要重做）。真实路径由
+// build_mobile.ps1 探测后经 -PaudioApiBashPath 传入；CI（Linux runner）走库的
+// 非 Windows 分支，不经过本文件。
+allprojects { proj ->
+    proj.afterEvaluate {
+        if (proj.name != 'react-native-audio-api') return
+        def bashPath = proj.findProperty('audioApiBashPath')
+        if (!bashPath) return
+        proj.tasks.matching { it.name == 'downloadPrebuiltBinaries' }.configureEach { t ->
+            // 只换 executable，args（脚本路径 / android / skipffmpeg）原样保留
+            t.executable = bashPath.toString()
+            // 换对 bash 还不够（第二轮实测）：Exec 继承的是 gradle 进程的 Windows PATH，
+            // 里面没有 Git 的 usr/bin ⇒ 脚本里的 rm/mkdir/unzip 全 command not found、
+            // exit 127；curl 则撞上 System32 那个原生版，它不认 MSYS 路径，写 -o 目标
+            // 报 curl(23)。把 Git 的 usr/bin 与 mingw64/bin **前置**到 PATH 两个都治。
+            def gitRoot = new File(bashPath.toString()).parentFile.parentFile.parentFile
+            def msysPath = [new File(gitRoot, 'usr/bin'), new File(gitRoot, 'mingw64/bin')]
+                    .collect { it.absolutePath }.join(File.pathSeparator)
+            def env = new LinkedHashMap<String, Object>(t.environment)
+            // Windows 上这个键实际叫 Path；按大小写不敏感找出真名再覆盖，别新造一个
+            def pathKey = env.keySet().find { it.toString().equalsIgnoreCase('path') } ?: 'PATH'
+            env.put(pathKey, msysPath + File.pathSeparator + (env.get(pathKey) ?: ''))
+            t.setEnvironment(env)
+            proj.logger.lifecycle("[init] audio-api downloadPrebuiltBinaries bash -> " + bashPath)
+        }
+    }
+}

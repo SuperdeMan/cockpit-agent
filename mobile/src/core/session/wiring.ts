@@ -5,6 +5,7 @@ import { GatewaySession } from '../api/gateway'
 import type { ServerConfig } from '../config/types'
 import { appLocationBridge } from '../location/appLocation'
 import { currentMeta } from '../settings/store'
+import { speechController } from '../voice/speech'
 import { SessionCore } from './store'
 
 export interface Wired {
@@ -35,6 +36,8 @@ export function ensureWired(cfg: ServerConfig): Wired {
     sessionId: session.sessionId,
     getMeta: currentMeta,
     location: appLocationBridge,
+    // 播报端口（M2-3）：audioUrl 跟着服务器配置走，换服务器时同一个控制器改地址即可
+    speech: speechController(cfg.audioUrl),
   })
   session.start()
   wired = { session, core, cfgKey }

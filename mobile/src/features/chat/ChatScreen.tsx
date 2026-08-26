@@ -22,6 +22,7 @@ import { CardRenderer } from '../cards/CardRenderer'
 import { VehiclePanel } from '../vehicle/VehiclePanel'
 import { Composer } from './Composer'
 import { MessageBubble } from './MessageBubble'
+import { usePtt } from './usePtt'
 
 export function ChatScreen() {
   const [cfgState, setCfgState] = useState<'loading' | 'missing' | ServerConfig>('loading')
@@ -56,17 +57,19 @@ export function ChatScreen() {
   if (cfgState === 'loading' || !wired) {
     return <View style={{ flex: 1, backgroundColor: p.bg }} />
   }
-  return <ChatBody p={p} wired={wired} tablet={tablet} />
+  return <ChatBody p={p} wired={wired} tablet={tablet} cfg={cfgState} />
 }
 
 function ChatBody({
   p,
   wired,
   tablet,
+  cfg,
 }: {
   p: ReturnType<typeof usePalette>
   wired: Wired
   tablet: boolean
+  cfg: ServerConfig
 }) {
   const { core } = wired
   const { messages, pendingOps, vehState, connStatus, pendingLocationText } = useStore(core.store)
@@ -81,6 +84,13 @@ function ChatBody({
     [core],
   )
   const onInterrupt = useCallback(() => core.cancelCurrentTurn(), [core])
+  // 语音输入（M2-2）：定稿走与文本完全相同的 send 路径——前置路由/位置闸/候选拦截
+  // 一条都不能因为「这句是说出来的」而绕过
+  const ptt = usePtt({
+    audioUrl: cfg.audioUrl,
+    sessionId: wired.session.sessionId,
+    onFinal: (text) => core.send(text),
+  })
 
   const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
@@ -129,6 +139,7 @@ function ChatBody({
         p={p}
         quickCommands={settings.quickCommands}
         busy={busy}
+        ptt={cfg.audioUrl ? ptt : null}
         onSend={onSend}
         onInterrupt={onInterrupt}
       />

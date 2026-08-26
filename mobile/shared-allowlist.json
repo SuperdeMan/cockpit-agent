@@ -1,6 +1,6 @@
 {
   "$comment": "hmi/src 共享模块台账（实施计划 §2.7）。准入判据：零 DOM/BOM 全局、依赖闭包封闭于台账内、hmi 侧已有 node:test 覆盖。currentPhase 手动推进（进入新阶段时改这里）；守卫测试 test/sharedAllowlist.test.ts 三条断言：实际引用 ⊆ 台账、台账内文件不含 DOM/BOM 全局、phase 晚于当前阶段的模块不得被引用。",
-  "currentPhase": "M1",
+  "currentPhase": "M2",
   "phaseOrder": ["M0", "M1", "M2", "M3", "M4"],
   "modules": [
     { "file": "ws.mjs", "phase": "M0", "purpose": "主链 WS 重连/有界发送队列（断线不丢消息）", "notes": "注入 RN 全局 WebSocket" },
@@ -11,6 +11,7 @@
     { "file": "location.mjs", "phase": "M1", "purpose": "位置 meta + 位置依赖闸", "notes": "仅纯导出；文件内允许出现 navigator（requestCurrentLocation 用），但 mobile 源码禁引 requestCurrentLocation——守卫 ② 例外条款点名断言" },
     { "file": "proactiveSpeech.mjs", "phase": "M1", "purpose": "主动消息投递凭据幂等/播报仲裁（SPEAK/DEFER/INTERRUPT）", "notes": "" },
     { "file": "pcmPlayer.mjs", "phase": "M2", "purpose": "流式 TTS PCM 分片播放调度", "notes": "ctx 注入 react-native-audio-api 的 AudioContext" },
+    { "file": "ttsQueue.mjs", "phase": "M2", "purpose": "TTS 收尾判定 speechCovered（final 与已流式文本是不是同一段话）", "notes": "只用 speechCovered；分句缓冲与 OrderedPlaybackQueue 是批处理路径的，App 未用" },
     { "file": "pcmRing.mjs", "phase": "M2", "purpose": "Float32↔Int16、int16ToWav（ASR 批处理兜底 WAV 构造）", "notes": "" },
     { "file": "merchantUi.mjs", "phase": "M3", "purpose": "商户卡逻辑（图片白名单/行项归一）", "notes": "" },
     { "file": "vehicleStage.mjs", "phase": "M3", "purpose": "车况右面板推导", "notes": "" },

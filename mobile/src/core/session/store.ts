@@ -3,8 +3,10 @@
 // 归属规则（§2.3 前言，多端一致性要求 conventions §9.33）：
 //   帧带 request_id → 按 id 归属，对不上=丢帧（不回落）；不带 → FIFO 头；
 //   无在飞轮的续流 → adopt 新气泡；终态帧（final/error/cancelled）归属并注销该轮。
-// 纯逻辑 + 注入 transport/location，不接 UI 先接测试（jest 回放帧序列驱动）。
-// TTS/hands-free 属 M2/M4，对应调用点此处刻意缺席；emotion 仍按契约存下（供 M2 下一轮取用）。
+// 纯逻辑 + 注入 transport/location/speech，不接 UI 先接测试（jest 回放帧序列驱动）。
+// M2 起接播报端口 SpeechSink（真实现 core/voice/speech.ts）：挂点与 HMI App.tsx 逐处对齐
+// ——dispatch 开头 begin（提前握手，首音更快）/ speech_delta 且**最新轮** delta /
+// final 且最新轮 finish / 看门狗超时与 cancel 都 stop。hands-free 仍属 M4，此处缺席。
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import { RequestRegistry } from '@shared/requestRouting.mjs'
@@ -55,12 +57,34 @@ export interface LocationBridge {
   enable(): Promise<Record<string, string> | null>
 }
 
+/** 播报端口（core/voice/speech.ts 实现；测试注入 fake）。
+ *  「开没开播报」的判定住在实现里不在这里——SessionCore 只有 getMeta，不读设置。 */
+export interface SpeechSink {
+  /** 本轮发出：预建播报会话（带上一轮 emotion）。关着播报时实现内部转成 stop */
+  begin(bubbleId: string, emotion: string): void
+  /** 流式增量（只有最新轮会调到） */
+  delta(bubbleId: string, text: string): void
+  /** 本轮定稿（只有最新轮会调到） */
+  finish(bubbleId: string, text: string): void
+  /** 打断 / 超时 / 关掉播报：硬停 */
+  stop(): void
+}
+
+const NOOP_SPEECH: SpeechSink = {
+  begin() {},
+  delta() {},
+  finish() {},
+  stop() {},
+}
+
 export interface SessionDeps {
   transport: Transport
   sessionId: string
   /** 会话级偏好 meta（settings buildMeta；键集与 hmi/src/settings.tsx:79-90 一致） */
   getMeta(): Record<string, string>
   location: LocationBridge
+  /** 缺省 no-op：M1 的测试与调用方不传也照跑（行为逐字等于 M2 之前） */
+  speech?: SpeechSink
 }
 
 export class SessionCore {
@@ -75,8 +99,11 @@ export class SessionCore {
   private justCancelled = false
   private pruneTimer: ReturnType<typeof setInterval> | null = null
 
+  private readonly speech: SpeechSink
+
   constructor(deps: SessionDeps) {
     this.deps = deps
+    this.speech = deps.speech ?? NOOP_SPEECH
     this.store = createStore<SessionState>(() => ({
       messages: [],
       pendingOps: [],
@@ -180,6 +207,7 @@ export class SessionCore {
   cancelCurrentTurn(): void {
     this.deps.transport.send({ type: 'cancel', session_id: this.deps.sessionId })
     this.justCancelled = true
+    this.speech.stop()
     const id = this.registry.settle({})
     if (id) {
       this.clearWatchdog(id)
@@ -204,6 +232,9 @@ export class SessionCore {
     this.deps.transport.send(frame)
     const pendingId = uid()
     this.registry.open(frame.request_id, pendingId)
+    // 播报会话提前建（App.tsx:677-679 同位）：等第一个 delta 再握手会把首音推后一个 RTT。
+    // 上一轮的 emotion 决定本轮语气（M2 P2 契约）
+    this.speech.begin(pendingId, this.store.getState().lastEmotion)
     this.appendMessage({
       id: pendingId,
       role: 'assistant',
@@ -222,6 +253,9 @@ export class SessionCore {
       const delta = data.delta || ''
       const targetId = this.streamTargetId(data)
       if (targetId === null) return
+      // 只有最新轮喂播报（App.tsx:347）：旧轮的字还在流是因为它没结算完，
+      // 但用户已经在等新一轮的答案了，两轮同时出声是灾难
+      if (delta && this.registry.isLatest(targetId)) this.speech.delta(targetId, delta)
       this.upsertBubble(targetId, (msg) =>
         msg
           ? { ...msg, pending: false, streaming: true, text: msg.text + delta }
@@ -342,6 +376,10 @@ export class SessionCore {
       // 最新轮（或无在飞轮的续流 final）才驱动候选记录；旧轮只更新气泡文本（A2）
       if (isLatest) {
         this.candidates = recordCandidates(this.candidates, data.ui_card)
+        // 播报收尾同一个闸（App.tsx:519-521）：没有 speech 的纯卡片轮不播，
+        // 但会话已经建了 ⇒ 显式停掉，不留一个空会话占着音频通道
+        if (data.speech) this.speech.finish(id ?? '', String(data.speech))
+        else this.speech.stop()
       }
       return
     }
@@ -415,6 +453,7 @@ export class SessionCore {
     const timer = setTimeout(() => {
       this.watchdogs.delete(id)
       this.registry.dropBubble(id)
+      this.speech.stop() // 超时轮不会再有 final，播报会话留着就是个永不收尾的空会话
       this.store.setState((s) => ({
         messages: s.messages.map((msg) =>
           msg.id === id && (msg.pending || msg.streaming || msg.processActive)

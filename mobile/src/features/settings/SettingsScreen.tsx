@@ -1,5 +1,6 @@
-// 设置页（实施计划 M1-5）：分区=服务器（M0-5 复用，改配置回对话屏断开重连）/ 显示 /
-// 助手 / 能力开关（AGENT_CATALOG 全列，disabled_agents 生效）/ 记忆 / 定位 / 调试入口。
+// 设置页（实施计划 M1-5 + M2 语音两分区）：分区=服务器（M0-5 复用，改配置回对话屏断开
+// 重连）/ 显示 / 助手 / **语音输入** / **语音播报** / 能力开关（AGENT_CATALOG 全列，
+// disabled_agents 生效）/ 记忆 / 定位 / 调试入口。
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
 import { useEffect, useState, type ReactNode } from 'react'
@@ -11,7 +12,14 @@ import { AGENT_CATALOG } from '@shared/types.ts'
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { settingsStore, type AppSettings } from '../../core/settings/store'
+import {
+  fetchAsrProviders,
+  fetchTtsProviders,
+  type AsrProviderInfo,
+} from '../../core/voice/catalog'
+import { speechController } from '../../core/voice/speech'
 import { usePalette, type Palette } from '../../ui/theme'
+import type { TtsProviderInfo } from '@shared/types.ts'
 
 function Section({ p, title, children }: { p: Palette; title: string; children: ReactNode }) {
   return (
@@ -102,11 +110,23 @@ export function SettingsScreen() {
   const p = usePalette(settings)
   const [server, setServer] = useState<ServerConfig | null>(null)
   const [nameDraft, setNameDraft] = useState(settings.assistantName)
+  const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
+  const [asrCatalog, setAsrCatalog] = useState<AsrProviderInfo[]>([])
+  const [previewing, setPreviewing] = useState(false)
 
   useEffect(() => {
     void loadServerConfig().then(setServer)
   }, [])
   useEffect(() => setNameDraft(settings.assistantName), [settings.assistantName])
+  // 目录探测：两个端点都可能失败，catalog.ts 里各自回落静态表（不留空白设置页）
+  useEffect(() => {
+    if (!server?.audioUrl) return
+    void fetchTtsProviders(server.audioUrl).then(setTtsCatalog)
+    void fetchAsrProviders(server.audioUrl).then(setAsrCatalog)
+  }, [server?.audioUrl])
+
+  const ttsEngine = ttsCatalog.find((e) => e.id === settings.ttsProvider) ?? ttsCatalog[0]
+  const asrEngine = asrCatalog.find((e) => e.id === settings.asrProvider)
 
   const set = (patch: Partial<AppSettings>) => update(patch)
 
@@ -193,6 +213,119 @@ export function SettingsScreen() {
         />
       </Section>
 
+      <Section p={p} title="语音输入（按住麦克风说话）">
+        <ChoiceRow
+          p={p}
+          label="识别引擎"
+          value={settings.asrProvider}
+          options={[
+            ...asrCatalog.map((e) => ({
+              v: e.id,
+              label: e.available ? e.label : e.label + '（未配置）',
+            })),
+            { v: 'off', label: '不用流式（整段识别）' },
+          ]}
+          onPick={(asrProvider) => {
+            // 换引擎要同时换模型：模型 id 是跟着引擎走的，留着上一个引擎的 model
+            // 会让 start 帧带一个该引擎不认识的名字（这类错误只表现为连不上）
+            const next = asrCatalog.find((e) => e.id === asrProvider)
+            set({ asrProvider, ...(next?.models?.[0] ? { asrModel: next.models[0] } : {}) })
+          }}
+        />
+        {asrEngine && asrEngine.models.length > 1 ? (
+          <ChoiceRow
+            p={p}
+            label="识别模型"
+            value={settings.asrModel}
+            options={asrEngine.models.map((m) => ({ v: m, label: m }))}
+            onPick={(asrModel) => set({ asrModel })}
+          />
+        ) : null}
+        <ChoiceRow
+          p={p}
+          label="语言"
+          value={settings.asrLanguage}
+          options={[
+            { v: 'zh', label: '中文' },
+            { v: 'en', label: 'English' },
+          ]}
+          onPick={(asrLanguage) => set({ asrLanguage })}
+        />
+      </Section>
+
+      <Section p={p} title="语音播报">
+        <SwitchRow
+          p={p}
+          label="播报回答"
+          desc="关闭后完全静默（试听仍可用）"
+          value={settings.ttsEnabled}
+          onChange={(ttsEnabled) => {
+            set({ ttsEnabled })
+            if (!ttsEnabled) speechController().stop() // 关掉要立刻停当前这段
+          }}
+        />
+        <SwitchRow
+          p={p}
+          label="自动播报"
+          desc="关闭后只显示文字，不出声"
+          value={settings.autoplay}
+          onChange={(autoplay) => {
+            set({ autoplay })
+            if (!autoplay) speechController().stop()
+          }}
+        />
+        {ttsCatalog.length ? (
+          <ChoiceRow
+            p={p}
+            label="引擎"
+            value={settings.ttsProvider}
+            options={ttsCatalog.map((e) => ({
+              v: e.id,
+              label: e.available ? e.label : e.label + '（未配置）',
+            }))}
+            onPick={(ttsProvider) => {
+              const next = ttsCatalog.find((e) => e.id === ttsProvider)
+              const first = next?.voices?.[0]?.voice_id
+              set({ ttsProvider, ...(first ? { voiceId: first } : {}) })
+            }}
+          />
+        ) : null}
+        {ttsEngine?.voices?.length ? (
+          <ChoiceRow
+            p={p}
+            label="音色"
+            value={settings.voiceId}
+            options={ttsEngine.voices.map((v) => ({
+              v: v.voice_id,
+              label: v.name + (v.gender === 'male' ? '·男' : v.gender === 'female' ? '·女' : ''),
+            }))}
+            onPick={(voiceId) => set({ voiceId })}
+          />
+        ) : null}
+        <Pressable
+          disabled={previewing || !server?.audioUrl}
+          onPress={() => {
+            setPreviewing(true)
+            void speechController(server?.audioUrl)
+              .preview('你好，我是' + settings.assistantName + '，这是当前音色的效果。')
+              .finally(() => setPreviewing(false))
+          }}
+          style={{
+            alignSelf: 'flex-start',
+            borderWidth: 1,
+            borderColor: p.accent,
+            borderRadius: 999,
+            paddingHorizontal: 14,
+            paddingVertical: 7,
+            opacity: previewing ? 0.5 : 1,
+          }}
+        >
+          <Text style={{ color: p.accent, fontSize: p.font(13) }}>
+            {previewing ? '播放中…' : '试听'}
+          </Text>
+        </Pressable>
+      </Section>
+
       <Section p={p} title="能力开关（关掉的指令会被婉拒）">
         {AGENT_CATALOG.map((a) => (
           <SwitchRow
@@ -226,6 +359,9 @@ export function SettingsScreen() {
       <Section p={p} title="调试">
         <Link href="/debug" style={{ color: p.accent, fontSize: p.font(14) }}>
           主链帧调试屏（M0）
+        </Link>
+        <Link href="/voice-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
+          语音采集/播放 spike（M2 取证）
         </Link>
       </Section>
     </ScrollView>
