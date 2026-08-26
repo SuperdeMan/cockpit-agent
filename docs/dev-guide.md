@@ -63,6 +63,28 @@ python scripts/dev_stack.py deploy --sha HEAD --apply
 python scripts/dev_stack.py verify
 ```
 
+**两个会把 dry-run 挡在门外的闸**（都是设计意图不是 bug）：
+
+- `status=plan_rejected` + `blocking_changes` 里有 `.env.example`：**见上文
+  「cloud 档需要的两个键」下面那条 ⚠ 注**（该类别硬阻断、无放行通道、2026-08-19 已实测撤回过一次）。
+  2026-08-27 又撞了一次：新增 env 键**即使代码里有默认值**照样被拦——闸按路径判，
+  不读你的默认值。⇒ 把 `.env.example` 的改动**单独拆出去**，别和要部署的代码混在一个区间里。
+- `status=safety_rejected`（且 JSON 里不带任何细节）：多半是**工作树不干净**。
+  `git status --short` 一看便知。⚠ **多个 agent 共用同一个工作目录时这条特别容易撞**
+  ——别人正在装依赖/改文件，你这边就部署不了。
+  **不要 stash 或 checkout 别人的改动**（双 agent 共用工作目录互摘 HEAD 是本仓库出过的事故），
+  用一个隔离工作树部署，全程不碰主工作树：
+
+  ```powershell
+  git worktree add --detach D:\car-agent-deploy-wt <sha>
+  Copy-Item dev-stack.local D:\car-agent-deploy-wt\   # gitignore，worktree 里没有
+  cd D:\car-agent-deploy-wt
+  python scripts\dev_stack.py deploy --sha <sha> --apply
+  cd -; git worktree remove D:\car-agent-deploy-wt
+  ```
+
+  deploy 只读 git 与 SSH，不读根 `.env`，所以**不需要**把密钥复制进临时工作树。
+
 ### CI/CD 一次性摘要批准
 
 默认不带批准参数时仍然 fail closed。只有用户已经单独授权目标 SHA 的 CI/CD 变化时，才按下面
@@ -340,6 +362,17 @@ dashboard 四视图见 `docs/conventions.md` §8 与 `dashboard/README.md`；真
   跑全量前先 `Write-Output $env:PYTHONIOENCODING` 看一眼，非空就
   `Remove-Item Env:PYTHONIOENCODING`。**一次性用 `-X utf8`，不要落进环境。**
 - 路径含空格/中文：命令里用引号包路径。
+- ⚠ **`dev_stack` 的 cloud 命令（`status` / `deploy` / `verify`）必须在 PowerShell 里跑，
+  不能在 Git Bash 里。** Git Bash 的 PATH 上 `ssh` 解析成 **MSYS 版**，它对参数的转义
+  约定与 Windows OpenSSH 不同——远端 preflight 那条 `sudo python3 -c "..."` 的双引号
+  会被弄坏，远程 bash 报 `unexpected EOF while looking for matching "`。
+  **症状极具误导性**：`status` 报 `remote cloud status is unavailable`、
+  `container_running: null`，而五个 HTTP 端点全 `healthy`——看起来像"云端挂了"，
+  其实是本机 shell 选错了 ssh。同一条命令在 PowerShell 里
+  （`C:\WINDOWS\System32\OpenSSH\ssh.exe`）直接 `status: "ok"`。
+  判据：`Get-Command ssh` / `which ssh` 看解析到哪个。
+- 云主机每次 SSH 会打一整屏微信扫码横幅，它在 **stderr**（stdout 是干净的）。
+  诊断脚本按行过滤掉再看，别把它当成命令输出的一部分。
 
 ---
 

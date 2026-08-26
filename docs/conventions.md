@@ -201,6 +201,13 @@
 
 ## 6. 环境变量表（`.env.example`）
 
+> ⚠ **本表是 `.env.example` 的超集，不是镜像。** 少数键刻意不进那个文件——它在发布闸里
+> 被分类为 `runtime_config_contract`，该类别**没有放行通道**，只要改动落在
+> 「已部署 SHA → 目标 SHA」的 diff 里，`cloud deploy` 就永远 `plan_rejected`
+> （详见 `dev-guide.md` §可切换真栈）。这类键在下表**标注了「不进 `.env.example`」**。
+> 已知成员：`TAILNET_FQDN`（cloud 档端点派生，见 dev-guide）、
+> `MINIMAX_TTS_TRANSPORT` / `MINIMAX_T2A_WS_URL`。
+
 | 变量 | 含义 | 必填 |
 |---|---|---|
 | `LLM_PROVIDER` | **默认 active LLM 厂商**（多 LLM 源注册表的启动默认，运行时可经 HMI/`POST /api/llm/provider` 切换）：`mimo`(=xiaomimimo)/`minimax`/`deepseek`/`qwen`/`anthropic`(Claude SDK) | 否（默认 xiaomimimo）|
@@ -230,6 +237,8 @@
 | `TTS_FORMAT` | 批处理 TTS 输出格式（wav/pcm16）| 否（默认 wav）|
 | `TTS_STREAM_PROVIDER` | 服务端流式 TTS 引擎：`cosyvoice`(默认·run-task)/`qwen`(realtime·含方言)/`mimo`(MiMo v2.5 流式·复用 `LLM_API_KEY`)/`minimax`(T2A 流式·复用 `MINIMAX_API_KEY`)/`mock`/`off`；无 key 时 HMI 无感回退批处理 | 否 |
 | `TTS_STREAM_MODEL` | 覆盖流式模型；留空用引擎默认 | 否 |
+| `MINIMAX_TTS_TRANSPORT` | MiniMax 流式 TTS 的传输形态：`ws`(默认·T2A WebSocket 长连接·分片直送)/`http`(per-sentence 一次 POST，旧形态)。**换传输是首音优化不是单程票**：同一句同一逐字节奏经云栈实测 WS 516~563ms vs HTTP 1453ms（2026-08-27）；出问题一键退回 `http` （**不进 `.env.example`**）| 否 |
+| `MINIMAX_T2A_WS_URL` | 覆盖 T2A WebSocket 端点；留空用 `wss://api.minimaxi.com/ws/v1/t2a_v2` （**不进 `.env.example`**）| 否 |
 | `TTS_STREAM_VOICE` | 覆盖流式默认音色；留空用引擎默认（cosyvoice `longxiaochun_v3` / qwen `Cherry` / mimo `冰糖` / minimax `female-tianmei`）；HMI 设置逐请求可覆盖 | 否 |
 | `TTS_INSTRUCT_DEFAULT` | 情感 TTS 指令（M1b 能力面，仅 cosyvoice）：如「用温柔的语气说」；缺省空=不发键零行为变化；按情绪标签动态选参的接线留 M2 emotion | 否 |
 | `TTS_SPEED_DEFAULT` | 语速（M1b 能力面，仅 cosyvoice `rate`，0.5~2.0 夹紧）；缺省空=不发键 | 否 |

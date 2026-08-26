@@ -657,7 +657,7 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   | 蜂窝网络下重复 | ⬜ **未验** | 08-27 那轮没跑这条 |
   | `asrProvider=off` 批处理出文字 | **❌ 阻塞（后端）** | 云栈 `/api/asr` 401（MiMo key）。**这条不是 App 能修的**，等后端 |
   | 说话中断网兜底不挂死 | **✅（抓到并修了一个真 bug）** | 首跑**挂死**：松手后永久停在「识别中…」，恢复网络也不回来。根因＝换模型重连清了兜底 timer 而新 ws 在飞行模式下停在 CONNECTING（onerror/onclose 都不来）＋批处理用裸 fetch 断网时一直挂着。修后复验：松手 29 秒出「语音流连接失败」并回 idle |
-  | TTS 首音 <1.5s | **✅ 根因已查清（下条）** | cosyvoice 551/617ms；minimax 1353/1390ms、冷启 1881ms。**慢的不是 minimax 引擎**——它一次性喂全文时首音 406ms，四家里最快 |
+  | TTS 首音 <1.5s | **✅ 已修并验证** | 旧：cosyvoice 551/617ms、minimax 1353/1390ms（冷启 1881ms）。根因与修法见下条；**换 WS 长连接并部署后 minimax 经云栈 516~563ms**，2.7 倍余量 |
 | 播报听感 | **✅** | 泓舟 08-27 真机验：minimax 语音正常，播报中按 PTT 立刻安静 |
   | 播报中按 PTT 即停 | **✅ 物理面实证** | `barge-in` 探测：播报中麦克风 peak=0.145 → stop 后 250ms=0.024 → 稳态=0.004。**不是「代码调了 stop」而是声音真的没了**（调了 stop 但已排定的分片继续播完，是这类调度器的典型失败形态） |
   | 无 key 引擎回退出声 | ⬜ **未验** | ⚠ 现在有现成的无 key 引擎可用：**mimo TTS 四次探测全 error**（与 mimo ASR 401 同源，MiMo key 失效），选它即可验回退 |
@@ -703,7 +703,8 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   ② **逐字发 `task_continue` 是错误用法**（音频总长翻倍 7.57s vs 3.98s，且撞
   `rate limit exceeded(RPM)`），所以仍走 `_sentence_segments`，只是开 `soft_break=True`
   ——长连接下细分段不额外建连，首音因此能贴着第一个逗号。
-  ⚠ **尚未部署到云栈**：App 侧现在测到的仍是 1.4s，要等这版 llm-gateway 上线。
+  **已部署并验证（2026-08-27，云端 release `7ac2176`，5/5 端点 healthy）**：同一句、同一逐字 50ms 节奏、经云栈测四趟——**首音 516 / 547 / 547 / 563ms**（部署前 1453 / 1500ms），音频 3.83~4.01s 完整。**比 cosyvoice（563~594ms）还快一点**，计划里的 <1.5s 判据现在有 2.7 倍余量。
+  → 原本记在 M2-5 表里的「minimax 首音贴线」那条**已消失**，不再需要泓舟定取舍。
 
   **这一轮最有价值的产出不是「都过了」，是那个断网挂死**——它只在「失败态之后」出现，
   happy path 与单测都证明不了会话状态是对的（CLAUDE.md §6 的那条纪律，又一次实证）。
@@ -916,6 +917,12 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     （坐标带真实时间戳上行，实测宝安区预报/周边闭环）；根治=换 platform-provider 取
     坐标方案（M2 评估 @react-native-community/geolocation `locationProvider:'android'`
     或 M4 一并入原生模块）。
+    ⚠ **2026-08-27 更正：M2 结束了，这条既没做也没评估**——M2 全程围着语音面转，
+    定位根治一次都没被拿起来。**挂在某个阶段名下的账，那个阶段结束时要么做要么改期，
+    不能就这么留着**（留着的下场是下一个人以为它做过了）。
+    ⇒ **改期到 M3**：M3-3 本来就要动地图/坐标面，届时一并评估
+    `@react-native-community/geolocation` 的 `locationProvider:'android'`。
+    当前的 20s 上限 + last-known 兜底继续用，它在真机上是通的（M1-8 实证）。
 
 22. **react-native-audio-api 的 `downloadPrebuiltBinaries` 有两个 Windows 假设**（M2-1，
     两轮实测才通）：① 它在 Windows 分支把 Git Bash 写成**绝对路径**（C 盘的

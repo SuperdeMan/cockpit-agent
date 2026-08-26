@@ -80,8 +80,11 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - **DashScope cosyvoice-v3-flash**（默认）：**run-task** 协议（`/api-ws/v1/inference`；run-task→task-started→`continue-task`(每 delta)→**二进制音频帧**→finish-task→task-finished；PCM s16le 22050Hz，首帧 ~469ms）。音色须 v3 专属（`longxiaochun_v3` 等，v2 名会 418）。
 - **DashScope qwen3-tts-flash-realtime**：**realtime** 协议（`/api-ws/v1/realtime`；session.update→`input_text_buffer.append`(每 delta)→`response.audio.delta`(base64)→commit/finish；PCM s16le 24000Hz，首帧 ~719ms）。含北京/上海/四川方言音色。cosyvoice/qwen 复用百炼 `LLM_EMBED_API_KEY`（或独立 `DASHSCOPE_ASR_KEY`）。
 - **MiMo v2.5 流式**（`mimo`）：MiMo TTS `stream:true`+`audio:{format:pcm16}`，SSE 逐 chunk 取 `delta.audio.data`（base64 pcm16@24k）。复用 `LLM_API_KEY`。
-- **MiniMax T2A 流式**（`minimax`）：`/v1/t2a_v2` `stream:true`，SSE `data.audio`（hex）解码为 PCM@24k。复用 `MINIMAX_API_KEY`（与 MiniMax LLM 同 key）。**注意**：T2A 流式末尾会发一个 `status:2` 汇总帧把整段音频重发一次——须跳过（已有增量时）否则双份播放。
-- mimo/minimax 的 TTS API 是「整段文本一次入」，靠 `providers._sentence_segments` 句级切分逐段流式合成、边说边播。
+- **MiniMax T2A 流式**（`minimax`）：**默认走 WebSocket 长连接**（`MiniMaxWsStreamingTTSProvider`，`wss://api.minimaxi.com/ws/v1/t2a_v2`，`Authorization: Bearer` 走 header）：`connected_success`→`task_start`→`task_started`→N×`task_continue`→`task_finish`→`task_finished`，音频在 `task_continued` 的 `data.audio`（**hex**）。复用 `MINIMAX_API_KEY`（与 MiniMax LLM 同 key）。两个必须记住的坑（2026-08-27 真栈取证）：① **`is_final` 是段级不是任务级**（首段几百毫秒就 IS_FINAL，其后还有 200+ 条音频帧，拿它收尾会截断大半）；② **逐字发 `task_continue` 是错误用法**（音频总长翻倍 + 撞 RPM 限流），所以仍走 `_sentence_segments`、只是开 `soft_break`。
+  `MINIMAX_TTS_TRANSPORT=http` 退回旧的 HTTP 形态（`/v1/t2a_v2` `stream:true`，SSE `data.audio` hex；**注意**它末尾会发 `status:2` 汇总帧把整段重发一次——已有增量时须跳过否则双份播放）。
+  **为什么默认换成 WS**：HTTP 版是 per-sentence 一次 POST，必须等 `_sentence_segments` 吐出一整句才发得出去，而 `_SENTENCE_END` 不含逗号 ⇒ 逐字到达的 speech_delta 要等到第一个句号。同一句同一节奏经云栈实测：**HTTP 首音 1453ms → WS 516~563ms**（比 cosyvoice 还快）。
+- mimo（以及 `MINIMAX_TTS_TRANSPORT=http` 时的 minimax）的 TTS API 是「整段文本一次入」，靠 `providers._sentence_segments` 句级切分逐段流式合成、边说边播。
+  `_sentence_segments(soft_break=True)` 让逗号/顿号/冒号也断，**只给长连接类 provider 用**——HTTP-per-request 类开了会把一句话拆成多次请求。
 - 无对应 key → 工厂返 None → `stream/info` 报 unavailable → HMI 无感回退批处理 `/api/tts`。`mock` 引擎产静音分片供 nightly/无 key 验证协议。
 - HMI 侧 `pcmPlayer.mjs` 无缝拼播、`cancel`/断连传播到供应商任务取消（barge-in）；`STREAMING_TTS_PROVIDERS`（`hmi/src/audio.ts`）须与本节引擎清单一致，否则漏配的引擎会误走批处理。
 

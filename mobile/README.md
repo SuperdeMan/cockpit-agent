@@ -70,8 +70,9 @@ App 专属条目（手机档不含 `vehicle.control`）由泓舟在 M1 期间加
 
 ```
 app.config.ts          原生配置真相源（名称/包名/变体/插件）
-shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M1）
+shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M2）
 src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / debug
+                       / voice-spike（M2 语音取证屏，不进主导航，深链接进）
 src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts
 src/core/session/      M1 会话状态机：store.ts（8 型帧分发+看门狗+确认台账）/ sendRouter.ts
@@ -79,9 +80,12 @@ src/core/session/      M1 会话状态机：store.ts（8 型帧分发+看门狗+
 src/core/settings/     设置仓库（AsyncStorage 持久化；buildMeta 与 HMI settings.tsx 键集一致）
 src/core/location/     定位桥（expo-location 取坐标；meta 键共享纯函数拼、source='app'）
 src/core/obs/          trace_id（HMI 同构）+ 会话前缀 app-
+src/core/voice/        M2 语音面：recorder（16k 归一）/ resample / asr（流式+模型回退+批处理兜底）
+                       / tts（流式+收尾三分支）/ audioCtx（pcmPlayer 注入适配）/ speech
+                       （SpeechSink 实现）/ audioFocus / catalog / wav / base64
 src/features/chat/     对话 UI：ChatScreen（双形态外壳）/ MessageBubble / Composer
 src/features/cards/    CardRenderer（M1 首批 17+1 型 + 兜底卡铁则 + ErrorBoundary + _prov 徽章）
 src/features/settings/ 设置页；src/features/vehicle/ 车况镜像面板
 src/ui/                主题（深浅/跟随系统 + 字号两档）
-test/                  jest（jest-expo）：守卫 + 契约单测（80 条）
+test/                  jest（jest-expo）：守卫 + 契约单测（134 条）
 ```
