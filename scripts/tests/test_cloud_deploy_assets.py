@@ -13,6 +13,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tarfile
 import textwrap
 import time
 from pathlib import Path
@@ -214,6 +215,80 @@ def _run_remote_release(
         check=False,
     )
     return completed, events
+
+
+def _write_transport_with_duplicate_source_member(
+    root: Path,
+    *,
+    target_sha: str,
+    deployed_sha: str,
+    upload_id: str,
+) -> Path:
+    staging = root / "artifact-staging"
+    staging.mkdir(parents=True)
+
+    def add_bytes(archive: tarfile.TarFile, name: str, payload: bytes) -> None:
+        member = tarfile.TarInfo(name)
+        member.mode = 0o644
+        member.mtime = 0
+        member.size = len(payload)
+        archive.addfile(member, io.BytesIO(payload))
+
+    source_tar = staging / "source.tar"
+    runtime_models = b'{"schema_version":1,"models":[]}\n'
+    release_services = b'{"schema_version":1,"services":[]}\n'
+    with tarfile.open(source_tar, mode="w") as archive:
+        add_bytes(
+            archive,
+            "deploy/cloud/runtime-models.json",
+            runtime_models,
+        )
+        add_bytes(
+            archive,
+            "deploy/cloud/release-services.json",
+            release_services,
+        )
+        add_bytes(
+            archive,
+            "deploy/cloud/runtime-models.json",
+            runtime_models,
+        )
+
+    source_digest = hashlib.sha256(source_tar.read_bytes()).hexdigest()
+    manifest = staging / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "deployed_sha": deployed_sha,
+                "target_sha": target_sha,
+                "plan_status": "ready",
+                "blocking_changes": [],
+                "source_sha256": source_digest,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    manifest_digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    checksums = staging / "checksums.sha256"
+    checksums.write_text(
+        f"{source_digest}  source.tar\n"
+        f"{manifest_digest}  manifest.json\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    incoming = root / "incoming" / "releases" / upload_id
+    incoming.mkdir(parents=True)
+    transport = incoming / "transport.tar"
+    with tarfile.open(transport, mode="w") as archive:
+        for path in (source_tar, manifest, checksums):
+            add_bytes(archive, path.name, path.read_bytes())
+    return transport
 
 
 @pytest.mark.parametrize(
@@ -1090,6 +1165,100 @@ def test_remote_build_checks_capacity_models_and_artifact_before_building():
     ]
     positions = [body.index(item) for item in ordered]
     assert positions == sorted(positions)
+    assert (
+        'receive_and_validate_artifact "${sha}" "${upload_id}" '
+        '"${expected_current}"'
+    ) in body
+    assert 'build_dir="${RELEASE_ROOT}/builds/${sha}"' in body
+    assert 'build_dir="$(receive_and_validate_artifact' not in body
+
+    receive_match = re.search(
+        r"(?ms)^receive_and_validate_artifact\(\) \{(?P<body>.*?)^\}",
+        text,
+    )
+    assert receive_match
+    receive_body = receive_match["body"]
+    assert "<<'PY' || return $?" in receive_body
+    assert "printf '%s\\n' \"${build_dir}\"" not in receive_body
+
+
+def test_source_validator_failure_cannot_continue_to_verify_or_docker(
+    tmp_path: Path,
+):
+    root = tmp_path / "remote"
+    target = "c" * 40
+    expected = "a" * 40
+    upload_id = f"{target}-{'d' * 32}"
+    _write_transport_with_duplicate_source_member(
+        root,
+        target_sha=target,
+        deployed_sha=expected,
+        upload_id=upload_id,
+    )
+    events = tmp_path / "events.txt"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$1"
+        SHARED_ROOT="$RELEASE_ROOT/shared"
+        INCOMING_ROOT="$RELEASE_ROOT/incoming/releases"
+        EVENTS="$2"
+        TARGET="$3"
+        EXPECTED="$4"
+        UPLOAD_ID="$5"
+        SUDO_USER="tester"
+        mkdir -p "$RELEASE_ROOT/releases/$EXPECTED"
+        MSYS=winsymlinks:sys ln -s \
+          "$RELEASE_ROOT/releases/$EXPECTED" "$RELEASE_ROOT/current"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$6"
+        require_capacity() { :; }
+        stat() {
+          if [[ "$*" == *"%U"* ]]; then
+            printf 'tester\n'
+          elif [[ "$*" == *"%a"* \
+            && "${@: -1}" == "$INCOMING_ROOT/$UPLOAD_ID" ]]; then
+            printf '700\n'
+          elif [[ "$*" == *"%a"* \
+            && "${@: -1}" == "$INCOMING_ROOT/$UPLOAD_ID/transport.tar" ]]; then
+            printf '600\n'
+          else
+            command stat "$@"
+          fi
+        }
+        install() {
+          if [[ "$1" == "-d" ]]; then
+            local value
+            for value in "$@"; do
+              [[ "$value" == "$RELEASE_ROOT/"* ]] && mkdir -p "$value"
+            done
+            return 0
+          fi
+          local source="${@: -2:1}" target="${@: -1}"
+          mkdir -p "$(dirname "$target")"
+          if [[ "$source" == "/dev/null" ]]; then
+            : >"$target"
+          else
+            cp "$source" "$target"
+          fi
+        }
+        verify_shared_models() { printf 'verify\n' >>"$EVENTS"; }
+        docker() { printf 'docker\n' >>"$EVENTS"; }
+        build_release "$TARGET" "$UPLOAD_ID" "$EXPECTED"
+        """,
+        root,
+        events,
+        target,
+        expected,
+        upload_id,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert (root / "builds" / target / "src" / "deploy" / "cloud"
+            / "release-services.json").is_file()
+    assert not events.exists()
 
 
 @pytest.mark.parametrize("matches", [True, False])
@@ -1153,7 +1322,6 @@ def test_remote_build_current_mismatch_precedes_capacity_receive_and_docker(
         require_capacity() { printf 'capacity\n' >>"$EVENTS"; }
         receive_and_validate_artifact() {
           printf 'receive\n' >>"$EVENTS"
-          printf '%s\n' "$BUILD_DIR"
         }
         validate_release_manifest_baseline() { printf 'manifest\n' >>"$EVENTS"; }
         docker() { printf 'docker\n' >>"$EVENTS"; }
@@ -1208,7 +1376,6 @@ def test_remote_build_rejects_dangling_or_nondirectory_current_before_work(
         require_capacity() { printf 'capacity\n' >>"$EVENTS"; }
         receive_and_validate_artifact() {
           printf 'receive\n' >>"$EVENTS"
-          printf '%s\n' "$BUILD_DIR"
         }
         validate_release_manifest_baseline() { printf 'manifest\n' >>"$EVENTS"; }
         docker() { printf 'docker\n' >>"$EVENTS"; }
@@ -1351,7 +1518,7 @@ def test_manifest_baseline_mismatch_stops_before_docker_build(
     expected = "a" * 40
     target = "c" * 40
     events = tmp_path / "events.txt"
-    build_dir = tmp_path / "build"
+    build_dir = tmp_path / "builds" / target
     (build_dir / "src").mkdir(parents=True)
     (build_dir / "upload").mkdir()
     (build_dir / "upload" / "manifest.json").write_text(
@@ -1373,7 +1540,7 @@ def test_manifest_baseline_mismatch_stops_before_docker_build(
         die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
         source "$6"
         require_capacity() { :; }
-        receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
+        receive_and_validate_artifact() { :; }
         docker() { printf 'docker\n' >>"$EVENTS"; }
         build_release "$TARGET" "$TARGET-$(printf 'd%.0s' {1..32})" "$EXPECTED"
         """,
@@ -2093,7 +2260,7 @@ def test_shared_model_missing_or_wrong_digest_is_rejected(
 
 
 def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
-    build_dir = tmp_path / "build"
+    build_dir = tmp_path / "builds" / ("a" * 40)
     (build_dir / "src").mkdir(parents=True)
     counter = tmp_path / "build-count"
 
@@ -2112,7 +2279,7 @@ def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
         die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
         source "$4"
         require_capacity() { :; }
-        receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
+        receive_and_validate_artifact() { :; }
         validate_release_manifest_baseline() { :; }
         verify_shared_models() { :; }
         release_service_rows() {

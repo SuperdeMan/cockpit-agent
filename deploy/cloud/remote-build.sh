@@ -74,7 +74,10 @@ require_capacity() {
 }
 
 receive_and_validate_artifact() {
-  local sha="$1" upload_id="$2" caller incoming transport_mode build_dir
+  local sha="$1" upload_id="$2" expected_current="$3"
+  local caller incoming transport_mode build_dir
+  [[ "${expected_current}" =~ ^[0-9a-f]{40}$ ]] \
+    || die "release manifest baseline mismatch" 2
   caller="${SUDO_USER:-}"
   incoming="${INCOMING_ROOT}/${upload_id}"
   [[ -d "${incoming}" && ! -L "${incoming}" ]] \
@@ -96,11 +99,13 @@ receive_and_validate_artifact() {
   build_dir="${RELEASE_ROOT}/builds/${sha}"
   [[ ! -e "${build_dir}" ]] || die "build directory already exists"
   install -d -m 0700 -o root -g root \
-    "${build_dir}" "${build_dir}/upload" "${build_dir}/src"
+    "${build_dir}" "${build_dir}/upload" "${build_dir}/src" \
+    || return $?
   install -m 0600 -o root -g root \
-    "${incoming}/transport.tar" "${build_dir}/transport.tar"
+    "${incoming}/transport.tar" "${build_dir}/transport.tar" \
+    || return $?
 
-  python3 - "${build_dir}" "${sha}" <<'PY'
+  python3 - "${build_dir}" "${sha}" <<'PY' || return $?
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -203,8 +208,8 @@ PY
 
   [[ ! -e "${build_dir}/src/.env" ]] \
     || die "source archive unexpectedly contains .env"
-  install -m 0600 -o root -g root /dev/null "${build_dir}/src/.env"
-  printf '%s\n' "${build_dir}"
+  install -m 0600 -o root -g root /dev/null "${build_dir}/src/.env" \
+    || return $?
 }
 
 verify_shared_models() {
@@ -318,7 +323,8 @@ build_release() {
   local -a compose_args release_rows
   validate_expected_current_release "${expected_current}"
   require_capacity
-  build_dir="$(receive_and_validate_artifact "${sha}" "${upload_id}")"
+  receive_and_validate_artifact "${sha}" "${upload_id}" "${expected_current}"
+  build_dir="${RELEASE_ROOT}/builds/${sha}"
   validate_release_manifest_baseline \
     "${build_dir}/upload/manifest.json" "${expected_current}"
   src="${build_dir}/src"
