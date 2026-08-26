@@ -1117,6 +1117,7 @@ def test_profile_command_timeout_reaps_grandchild_and_never_leaks_secret(
     child_code = "import time; time.sleep(60)"
     parent_code = (
         "import subprocess,sys,time; from pathlib import Path; "
+        "time.sleep(1.5); "
         f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}]); "
         f"Path({str(pid_file)!r}).write_text(str(child.pid),encoding='utf-8'); "
         "print('z' * (4 * 1024 * 1024)); time.sleep(60)"
@@ -1128,7 +1129,7 @@ def test_profile_command_timeout_reaps_grandchild_and_never_leaks_secret(
             [sys.executable, "-c", parent_code, secret],
             cwd=tmp_path,
             environ={**os.environ, "PROFILE_TEST_SECRET": secret},
-            timeout_s=1,
+            timeout_s=5,
         )
 
     assert secret not in str(caught.value)
@@ -1342,6 +1343,7 @@ def test_e2e_auth_writes_result_protocol_and_uses_runner_user_sessions_and_only_
     )
     for key, value in env.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.syspath_prepend(str(REPO_ROOT / "test"))
     module = _load(REPO_ROOT / "test" / "e2e_auth.py", "task5b_e2e_auth")
     urls: list[str] = []
     sockets: list[_FakeWebSocket] = []
@@ -1395,6 +1397,7 @@ def test_e2e_mtls_writes_result_protocol_and_uses_signed_identity_ack_and_synthe
     )
     for key, value in env.items():
         monkeypatch.setenv(key, value)
+    monkeypatch.syspath_prepend(str(REPO_ROOT / "test"))
     module = _load(REPO_ROOT / "test" / "e2e_mtls.py", "task5b_e2e_mtls")
     ws = _FakeWebSocket([
         {

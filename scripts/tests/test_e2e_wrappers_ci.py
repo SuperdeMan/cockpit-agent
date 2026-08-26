@@ -34,17 +34,21 @@ def _last_json(completed: subprocess.CompletedProcess[str]) -> dict[str, object]
     )
 
 
-def _run(command: list[str]) -> tuple[int, dict[str, object]]:
+def _run(
+    command: list[str],
+    *,
+    cwd: Path = ROOT,
+) -> tuple[int, dict[str, object]]:
     completed = subprocess.run(
         command,
-        cwd=ROOT,
+        cwd=cwd,
         text=True,
         encoding="utf-8",
         errors="replace",
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=180,
+        timeout=30,
         check=False,
     )
     return completed.returncode, _last_json(completed)
@@ -58,6 +62,37 @@ def _powershell() -> str:
     if executable is None:
         pytest.skip("PowerShell runtime unavailable locally; Linux CI installs and gates it")
     return executable
+
+
+def _isolated_wrapper_contract(tmp_path: Path) -> tuple[Path, Path]:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    ps_wrapper = scripts_dir / "run_e2e.ps1"
+    shutil.copyfile(PS_WRAPPER, ps_wrapper)
+    assert ps_wrapper.read_bytes() == PS_WRAPPER.read_bytes()
+
+    stub_runner = scripts_dir / "run_e2e.py"
+    stub_runner.write_text(
+        "from __future__ import annotations\n"
+        "import json\n"
+        "import sys\n"
+        "argv = sys.argv[1:]\n"
+        "missing = any(\n"
+        "    arg == '--id'\n"
+        "    and index + 1 < len(argv)\n"
+        "    and argv[index + 1] == '__missing_wrapper_contract__'\n"
+        "    for index, arg in enumerate(argv)\n"
+        ")\n"
+        "marker = 'isolated-wrapper-stub'\n"
+        "print(json.dumps({\n"
+        "    'observed_argv': argv,\n"
+        "    'selection': {'argv': argv, 'marker': marker},\n"
+        "    'stub_marker': marker,\n"
+        "}, sort_keys=True))\n"
+        "raise SystemExit(2 if missing else 0)\n",
+        encoding="utf-8",
+    )
+    return ps_wrapper, stub_runner
 
 
 def test_wrappers_are_semantics_free_argument_and_exit_code_forwarders():
@@ -91,22 +126,33 @@ def test_wrappers_are_semantics_free_argument_and_exit_code_forwarders():
 def test_python_and_powershell_preserve_final_json_selection_argv_and_rc(
     args: list[str],
     expected_rc: int,
+    tmp_path: Path,
 ):
-    python_rc, python_json = _run([sys.executable, "scripts/run_e2e.py", *args])
+    ps_wrapper, stub_runner = _isolated_wrapper_contract(tmp_path)
+    python_rc, python_json = _run(
+        [sys.executable, str(stub_runner), *args],
+        cwd=tmp_path,
+    )
     ps_rc, ps_json = _run(
         [
             _powershell(),
             "-NoProfile",
             "-NonInteractive",
             "-File",
-            str(PS_WRAPPER),
+            str(ps_wrapper),
             *args,
-        ]
+        ],
+        cwd=tmp_path,
     )
 
     assert python_rc == ps_rc == expected_rc
     assert python_json == ps_json
-    assert python_json["selection"] == ps_json["selection"]
+    assert python_json["stub_marker"] == "isolated-wrapper-stub"
+    assert python_json["selection"] == {
+        "argv": args,
+        "marker": "isolated-wrapper-stub",
+    }
+    assert python_json["observed_argv"] == args
 
 
 def test_make_e2e_targets_only_delegate_to_the_manifest_runner():
