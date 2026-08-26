@@ -143,10 +143,11 @@ if mode == "parallel_timeout_tree":
     raise SystemExit(9)
 
 if mode == "timeout_tree":
+    time.sleep(1.5)
     tree_marker = os.environ["RUNNER_TREE_MARKER"]
     child_code = (
         "import time; from pathlib import Path; "
-        "time.sleep(5.0); "
+        "time.sleep(12.0); "
         f"Path({tree_marker!r}).write_text('survived', encoding='utf-8')"
     )
     descendant = subprocess.Popen([sys.executable, "-c", child_code])
@@ -2752,7 +2753,7 @@ def test_keyboard_interrupt_finalizes_bounded_redacted_logs_before_rethrow(
 
 def test_timeout_kills_real_process_tree_and_continues(tmp_path: Path):
     cases = [
-        _case("e2e_timeout", timeout_s=1),
+        _case("e2e_timeout", timeout_s=5),
         _case("e2e_after", timeout_s=5),
     ]
     manifest = _write_repo(tmp_path, cases)
