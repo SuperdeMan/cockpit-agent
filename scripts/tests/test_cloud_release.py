@@ -2043,7 +2043,9 @@ def test_apply_prepares_upload_scps_once_and_deploys_through_entrypoint(
     )
     runner = FakeRunner(
         [
-            command_result(remote_state_payload(base, approved_digest=digest)),
+            command_result(
+                remote_state_payload(base[:7], approved_digest=digest)
+            ),
             command_result(incoming + "\n"),
             command_result(),
             command_result(),
@@ -2064,6 +2066,17 @@ def test_apply_prepares_upload_scps_once_and_deploys_through_entrypoint(
     assert sum(call.startswith("scp ") for call in joined) == 1
     assert sum("chmod 0600 --" in call for call in joined) == 1
     assert sum("remote-release.sh deploy" in call for call in joined) == 1
+    deploy_argv = next(
+        call
+        for call in runner.calls
+        if "remote-release.sh deploy" in " ".join(call)
+    )
+    assert len(base) == 40
+    assert deploy_argv[-1] == (
+        "sudo /opt/car-agent/shared/bin/remote-release.sh deploy "
+        f"--sha {request.revision} --upload-id "
+        f"{request.revision}-{'f' * 32} --expected-current {base}"
+    )
     assert all(
         "sudo /opt/car-agent/shared/bin/remote-release.sh" in call
         for call in joined

@@ -7,6 +7,43 @@
 readonly MIN_DISK_BYTES=$((30 * 1024 * 1024 * 1024))
 readonly MIN_MEMORY_BYTES=$((3 * 1024 * 1024 * 1024))
 
+validate_expected_current_release() {
+  local expected="${1:-}" current
+  [[ "${expected}" =~ ^[0-9a-f]{40}$ ]] \
+    || die "current release changed since plan" 2
+  current="$(readlink -f -- "${RELEASE_ROOT}/current")" \
+    || die "current release changed since plan"
+  [[ "${current}" == "${RELEASE_ROOT}/releases/${expected}" ]] \
+    || die "current release changed since plan"
+}
+
+validate_release_manifest_baseline() {
+  local manifest="${1:-}" expected="${2:-}"
+  [[ "${expected}" =~ ^[0-9a-f]{40}$ \
+    && -f "${manifest}" \
+    && ! -L "${manifest}" ]] \
+    || die "release manifest baseline mismatch" 2
+  python3 - "${manifest}" "${expected}" <<'PY' \
+    || die "release manifest baseline mismatch"
+import json
+import re
+from pathlib import Path
+import sys
+
+manifest_path = Path(sys.argv[1])
+expected = sys.argv[2]
+try:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+except (OSError, UnicodeError, json.JSONDecodeError):
+    raise SystemExit(1)
+deployed = payload.get("deployed_sha")
+if not isinstance(deployed, str) or re.fullmatch(r"[0-9a-f]{40}", deployed) is None:
+    raise SystemExit(1)
+if deployed != expected:
+    raise SystemExit(1)
+PY
+}
+
 require_capacity() {
   local disk_bytes memory_bytes
   disk_bytes="$(df --output=avail -B1 "${RELEASE_ROOT}" | awk 'NR==2 {print $1}')"
@@ -256,11 +293,15 @@ PY
 }
 
 build_release() {
-  local sha="$1" upload_id="$2" build_dir src manifest project
+  local sha="$1" upload_id="$2" expected_current="$3"
+  local build_dir src manifest project
   local row service image local_image image_id
   local -a compose_args release_rows
+  validate_expected_current_release "${expected_current}"
   require_capacity
   build_dir="$(receive_and_validate_artifact "${sha}" "${upload_id}")"
+  validate_release_manifest_baseline \
+    "${build_dir}/upload/manifest.json" "${expected_current}"
   src="${build_dir}/src"
   manifest="${src}/deploy/cloud/release-services.json"
   project="car-agent-release-${sha}"

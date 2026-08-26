@@ -92,7 +92,10 @@ def _git_bash() -> Path:
     pytest.skip("Git Bash is required for cloud shell failure injection")
 
 
-def _run_cloud_bash(body: str, *args: Path) -> subprocess.CompletedProcess[str]:
+def _run_cloud_bash(
+    body: str,
+    *args: str | Path,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(_git_bash()), "-c", textwrap.dedent(body), "cloud-test", *(str(arg) for arg in args)],
         cwd=ROOT,
@@ -101,6 +104,72 @@ def _run_cloud_bash(body: str, *args: Path) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         check=False,
     )
+
+
+def _run_remote_release(
+    tmp_path: Path,
+    *remote_args: str,
+    build_fails: bool = False,
+) -> tuple[subprocess.CompletedProcess[str], Path]:
+    script_root = tmp_path / "shared" / "bin"
+    script_root.mkdir(parents=True)
+    events = tmp_path / "release-events.txt"
+    (script_root / "transaction-lock.sh").write_text(
+        "transaction_lock_acquire() { "
+        f"printf 'lock:%s\\n' \"$1\" >>'{events.as_posix()}'; "
+        "}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (script_root / "remote-build.sh").write_text(
+        "build_release() { "
+        f"printf 'build:%s:%s:%s\\n' \"$1\" \"$2\" \"${{3:-missing}}\" >>'{events.as_posix()}'; "
+        "if [[ \"${CAR_AGENT_TEST_BUILD_FAIL:-}\" == \"1\" ]]; then "
+        "printf 'release manifest baseline mismatch\\n' >&2; return 1; fi; "
+        "}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (script_root / "activate-release.sh").write_text(
+        "activate_release() { "
+        f"printf 'activate:%s\\n' \"$1\" >>'{events.as_posix()}'; "
+        "}\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (script_root / "verify-release.sh").write_text(
+        "verify_current_release() { :; }\n"
+        "rollback_release() { :; }\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    release_copy = tmp_path / "remote-release.sh"
+    release_copy.write_text(
+        _required_text(REMOTE_RELEASE_PATH)
+        .replace(
+            'readonly RELEASE_ROOT="/opt/car-agent"',
+            f'readonly RELEASE_ROOT="{tmp_path.as_posix()}"',
+        )
+        .replace(
+            '[[ "${EUID}" -eq 0 ]] || die "must run as root"',
+            ":",
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    completed = subprocess.run(
+        [str(_git_bash()), str(release_copy), *remote_args],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "CAR_AGENT_TEST_BUILD_FAIL": "1" if build_fails else "0",
+        },
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
+    return completed, events
 
 
 class _ComposeLoader(yaml.SafeLoader):
@@ -722,7 +791,91 @@ def test_remote_release_validates_prepare_upload_and_deploy_ids():
     assert "validate_upload_id" in text
     assert "prepare-upload" in text
     assert 'prepare_upload "${5}"' in text
-    assert 'build_release "${3}" "${5}"' in text
+    assert 'build_release "${3}" "${5}" "${7}"' in text
+
+
+def test_remote_release_deploy_binds_expected_current_under_one_lock(
+    tmp_path: Path,
+):
+    target = "a" * 40
+    expected_current = "b" * 40
+    upload_id = f"{target}-{'c' * 32}"
+
+    result, events = _run_remote_release(
+        tmp_path,
+        "deploy",
+        "--sha",
+        target,
+        "--upload-id",
+        upload_id,
+        "--expected-current",
+        expected_current,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "lock:release",
+        f"build:{target}:{upload_id}:{expected_current}",
+        f"activate:{target}",
+    ]
+
+
+def test_remote_release_does_not_activate_when_bound_build_fails(
+    tmp_path: Path,
+):
+    target = "a" * 40
+    expected_current = "b" * 40
+    upload_id = f"{target}-{'c' * 32}"
+
+    result, events = _run_remote_release(
+        tmp_path,
+        "deploy",
+        "--sha",
+        target,
+        "--upload-id",
+        upload_id,
+        "--expected-current",
+        expected_current,
+        build_fails=True,
+    )
+
+    assert result.returncode != 0
+    assert "release manifest baseline mismatch" in result.stderr
+    assert events.read_text(encoding="utf-8").splitlines() == [
+        "lock:release",
+        f"build:{target}:{upload_id}:{expected_current}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        (),
+        ("--expected-current", "d" * 7),
+        ("--expected-current", "D" * 40),
+        ("--expected-current", "d" * 40, "unexpected"),
+    ],
+)
+def test_remote_release_deploy_rejects_missing_invalid_or_extra_expected_current(
+    tmp_path: Path,
+    tail: tuple[str, ...],
+):
+    target = "a" * 40
+    upload_id = f"{target}-{'c' * 32}"
+
+    result, events = _run_remote_release(
+        tmp_path,
+        "deploy",
+        "--sha",
+        target,
+        "--upload-id",
+        upload_id,
+        *tail,
+    )
+
+    assert result.returncode != 0
+    recorded = events.read_text(encoding="utf-8").splitlines()
+    assert recorded == ["lock:release"]
 
 
 def test_remote_helpers_cannot_be_executed_directly():
@@ -745,6 +898,9 @@ def test_remote_build_is_sequential_and_never_touches_runtime():
 
 def test_remote_build_checks_capacity_models_and_artifact_before_building():
     text = _required_text(REMOTE_BUILD_PATH)
+    match = re.search(r"(?ms)^build_release\(\) \{(?P<body>.*?)^\}", text)
+    assert match
+    body = match["body"]
     build_position = text.index(
         'docker compose "${compose_args[@]}" build "${service}"'
     )
@@ -762,6 +918,221 @@ def test_remote_build_checks_capacity_models_and_artifact_before_building():
     assert 'CAR_AGENT_HMI_MODELS_ROOT="${SHARED_ROOT}/models/hmi"' in text
     assert text.index('-f "${src}/deploy/cloud/compose.build.yaml"') < build_position
     assert text.index("CAR_AGENT_HMI_MODELS_ROOT") < build_position
+    ordered = [
+        "validate_expected_current_release",
+        "require_capacity",
+        "receive_and_validate_artifact",
+        "validate_release_manifest_baseline",
+        "verify_shared_models",
+    ]
+    positions = [body.index(item) for item in ordered]
+    assert positions == sorted(positions)
+
+
+@pytest.mark.parametrize("matches", [True, False])
+def test_remote_build_validates_exact_current_symlink_before_other_work(
+    tmp_path: Path,
+    matches: bool,
+):
+    expected = "a" * 40
+    actual = expected if matches else "b" * 40
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        ROOT="$(cygpath -u "$1")"
+        EXPECTED="$2"
+        ACTUAL="$3"
+        mkdir -p "$ROOT/releases/$ACTUAL"
+        MSYS=winsymlinks:sys ln -s "$ROOT/releases/$ACTUAL" "$ROOT/current"
+        RELEASE_ROOT="$ROOT"
+        SHARED_ROOT="$ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$(cygpath -u "$4")"
+        validate_expected_current_release "$EXPECTED"
+        printf 'validated\n'
+        """,
+        tmp_path,
+        expected,
+        actual,
+        REMOTE_BUILD_PATH,
+    )
+
+    if matches:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "validated"
+    else:
+        assert result.returncode != 0
+        assert "current release changed since plan" in result.stderr
+
+
+def test_remote_build_current_mismatch_precedes_capacity_receive_and_docker(
+    tmp_path: Path,
+):
+    expected = "a" * 40
+    actual = "b" * 40
+    events = tmp_path / "events.txt"
+    build_dir = tmp_path / "build"
+    (build_dir / "src").mkdir(parents=True)
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        ROOT="$(cygpath -u "$1")"
+        EVENTS="$(cygpath -u "$2")"
+        BUILD_DIR="$(cygpath -u "$3")"
+        EXPECTED="$4"
+        ACTUAL="$5"
+        mkdir -p "$ROOT/releases/$ACTUAL"
+        MSYS=winsymlinks:sys ln -s "$ROOT/releases/$ACTUAL" "$ROOT/current"
+        RELEASE_ROOT="$ROOT"
+        SHARED_ROOT="$ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$(cygpath -u "$6")"
+        require_capacity() { printf 'capacity\n' >>"$EVENTS"; }
+        receive_and_validate_artifact() {
+          printf 'receive\n' >>"$EVENTS"
+          printf '%s\n' "$BUILD_DIR"
+        }
+        validate_release_manifest_baseline() { printf 'manifest\n' >>"$EVENTS"; }
+        docker() { printf 'docker\n' >>"$EVENTS"; }
+        build_release "$(printf 'c%.0s' {1..40})" \
+          "$(printf 'c%.0s' {1..40})-$(printf 'd%.0s' {1..32})" "$EXPECTED"
+        """,
+        tmp_path,
+        events,
+        build_dir,
+        expected,
+        actual,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert "current release changed since plan" in result.stderr
+    assert not events.exists()
+
+
+def test_remote_build_rejects_current_symlink_changed_after_matching_check(
+    tmp_path: Path,
+):
+    expected = "a" * 40
+    replacement = "b" * 40
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        ROOT="$(cygpath -u "$1")"
+        EXPECTED="$2"
+        REPLACEMENT="$3"
+        mkdir -p "$ROOT/releases/$EXPECTED" "$ROOT/releases/$REPLACEMENT"
+        MSYS=winsymlinks:sys ln -s \
+          "$ROOT/releases/$EXPECTED" "$ROOT/current"
+        RELEASE_ROOT="$ROOT"
+        SHARED_ROOT="$ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$(cygpath -u "$4")"
+        validate_expected_current_release "$EXPECTED"
+        printf 'initial-match\n'
+        MSYS=winsymlinks:sys ln -sfn \
+          "$ROOT/releases/$REPLACEMENT" "$ROOT/current"
+        validate_expected_current_release "$EXPECTED"
+        """,
+        tmp_path,
+        expected,
+        replacement,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout.strip() == "initial-match"
+    assert "current release changed since plan" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("manifest_deployed_sha", "expected_current", "accepted"),
+    [
+        ("a" * 40, "a" * 40, True),
+        ("b" * 40, "a" * 40, False),
+        (None, "a" * 40, False),
+        ("a" * 7, "a" * 40, False),
+        ("A" * 40, "a" * 40, False),
+        ("a" * 40, "a" * 7, False),
+        ("a" * 40, "A" * 40, False),
+    ],
+)
+def test_release_manifest_baseline_requires_matching_full_lowercase_sha(
+    tmp_path: Path,
+    manifest_deployed_sha: str | None,
+    expected_current: str,
+    accepted: bool,
+):
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps({"deployed_sha": manifest_deployed_sha}),
+        encoding="utf-8",
+    )
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        RELEASE_ROOT="$(cygpath -u "$1")"
+        SHARED_ROOT="$RELEASE_ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$(cygpath -u "$2")"
+        validate_release_manifest_baseline "$(cygpath -u "$3")" "$4"
+        """,
+        tmp_path,
+        REMOTE_BUILD_PATH,
+        manifest,
+        expected_current,
+    )
+
+    if accepted:
+        assert result.returncode == 0, result.stderr
+    else:
+        assert result.returncode != 0
+        assert "release manifest baseline mismatch" in result.stderr
+
+
+def test_manifest_baseline_mismatch_stops_before_docker_build(
+    tmp_path: Path,
+):
+    expected = "a" * 40
+    target = "c" * 40
+    events = tmp_path / "events.txt"
+    build_dir = tmp_path / "build"
+    (build_dir / "src").mkdir(parents=True)
+    (build_dir / "upload").mkdir()
+    (build_dir / "upload" / "manifest.json").write_text(
+        json.dumps({"deployed_sha": "b" * 40}),
+        encoding="utf-8",
+    )
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        ROOT="$(cygpath -u "$1")"
+        EVENTS="$(cygpath -u "$2")"
+        BUILD_DIR="$(cygpath -u "$3")"
+        EXPECTED="$4"
+        TARGET="$5"
+        mkdir -p "$ROOT/releases/$EXPECTED"
+        MSYS=winsymlinks:sys ln -s "$ROOT/releases/$EXPECTED" "$ROOT/current"
+        RELEASE_ROOT="$ROOT"
+        SHARED_ROOT="$ROOT/shared"
+        die() { printf '%s\n' "$1" >&2; exit "${2:-1}"; }
+        source "$(cygpath -u "$6")"
+        require_capacity() { :; }
+        receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
+        docker() { printf 'docker\n' >>"$EVENTS"; }
+        build_release "$TARGET" "$TARGET-$(printf 'd%.0s' {1..32})" "$EXPECTED"
+        """,
+        tmp_path,
+        events,
+        build_dir,
+        expected,
+        target,
+        REMOTE_BUILD_PATH,
+    )
+
+    assert result.returncode != 0
+    assert "release manifest baseline mismatch" in result.stderr
+    assert not events.exists()
 
 
 def test_remote_build_preserves_failures_and_rejects_overwrite():
@@ -1420,15 +1791,20 @@ def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
     result = _run_cloud_bash(
         """
         set -Eeuo pipefail
-        RELEASE_ROOT="$1"
-        SHARED_ROOT="$1/shared"
-        BUILD_DIR="$2"
-        COUNTER="$3"
+        RELEASE_ROOT="$(cygpath -u "$1")"
+        SHARED_ROOT="$RELEASE_ROOT/shared"
+        BUILD_DIR="$(cygpath -u "$2")"
+        COUNTER="$(cygpath -u "$3")"
         SHA="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        BASE="eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        mkdir -p "$RELEASE_ROOT/releases/$BASE"
+        MSYS=winsymlinks:sys ln -s \
+          "$RELEASE_ROOT/releases/$BASE" "$RELEASE_ROOT/current"
         die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
-        source "$4"
+        source "$(cygpath -u "$4")"
         require_capacity() { :; }
         receive_and_validate_artifact() { printf '%s\n' "$BUILD_DIR"; }
+        validate_release_manifest_baseline() { :; }
         verify_shared_models() { :; }
         release_service_rows() {
           local number
@@ -1460,7 +1836,7 @@ def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
           [[ "$1 $2" == "image tag" ]] && return 0
           return 1
         }
-        build_release "$SHA" "${SHA}-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        build_release "$SHA" "${SHA}-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "$BASE"
         """,
         tmp_path,
         build_dir,
@@ -1469,6 +1845,7 @@ def test_ninth_service_build_failure_stops_the_transaction(tmp_path: Path):
     )
 
     assert result.returncode != 0
+    assert counter.exists(), result.stderr
     assert counter.read_text(encoding="utf-8").strip() == "9"
 
 

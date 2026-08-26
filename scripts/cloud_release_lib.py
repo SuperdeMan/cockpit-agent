@@ -1820,7 +1820,8 @@ def execute_deploy(
     )
     deploy_command = (
         "sudo /opt/car-agent/shared/bin/remote-release.sh deploy "
-        f"--sha {target_sha} --upload-id {upload_id}"
+        f"--sha {target_sha} --upload-id {upload_id} "
+        f"--expected-current {plan.deployed_sha}"
     )
     runner.run(
         request.ssh.ssh_argv(deploy_command),

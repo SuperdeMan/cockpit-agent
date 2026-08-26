@@ -56,11 +56,15 @@ main() {
 
   case "${1:-}" in
     deploy)
-      [[ "${2:-}" == "--sha" && "${4:-}" == "--upload-id" ]] \
-        || die "deploy requires --sha and --upload-id" 2
+      [[ "$#" -eq 7 \
+        && "${2:-}" == "--sha" \
+        && "${4:-}" == "--upload-id" \
+        && "${6:-}" == "--expected-current" ]] \
+        || die "deploy requires --sha, --upload-id, and --expected-current" 2
       validate_full_sha "${3:-}"
       validate_upload_id "${3}" "${5:-}"
-      build_release "${3}" "${5}"
+      validate_full_sha "${7:-}"
+      build_release "${3}" "${5}" "${7}"
       activate_release "${3}"
       ;;
     prepare-upload)
