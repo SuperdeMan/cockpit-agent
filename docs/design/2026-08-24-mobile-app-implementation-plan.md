@@ -320,7 +320,7 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   提及 window.AudioContext，naive 子串扫会假红）。
 - **M0-5 ✅（单测面）**：端点校验三判据与 dev_stack_lib.cloud_endpoints 同构（合法 3 /
   非法 7，含「整串正则过、label 校验拦」与「label 全合法、仅总长超 253」两个边界）；
-  token=expo-secure-store、其余=AsyncStorage、任一缺失按未配置 fail-closed；
+  token 存入 Expo SecureStore、其余配置存入 AsyncStorage、任一缺失按未配置 fail-closed；
   onboarding（预设 chips / 连接测试给 close code+「查 Tailscale/token」/ token 显尾
   4 位；prod 档隐藏 lan/custom 由 extra.allowCustomServer 门控）。真机持久化验收待 E3。
 - **M0-6 ✅（单测面）**：GatewaySession 用 @shared/ws.mjs（注入 fake WebSocket 实证
