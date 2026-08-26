@@ -1236,9 +1236,16 @@ TTS_STREAM_CATALOG = {
 _SENTENCE_END = "。！？!?…\n；;"
 
 
-def _find_sentence_end(s: str) -> int:
+# 软断点：只在**长连接类** TTS provider 上启用（_sentence_segments 的 soft_break）。
+# 它们在同一个会话里送片段，细分段不额外建连；而首音直接由第一个断点的到达时刻决定。
+# HTTP-per-request 类不要开——那会把一句话拆成多次请求。
+_SOFT_BREAK = "，,、：:"
+
+
+def _find_sentence_end(s: str, *, soft: bool = False) -> int:
+    stops = _SENTENCE_END + _SOFT_BREAK if soft else _SENTENCE_END
     for i, ch in enumerate(s):
-        if ch in _SENTENCE_END:
+        if ch in stops:
             return i
     return -1
 
@@ -1262,16 +1269,19 @@ def _strip_md_tts(text: str) -> str:
     return t.strip()
 
 
-async def _sentence_segments(text_deltas, *, max_chars: int = 60):
+async def _sentence_segments(text_deltas, *, max_chars: int = 60, soft_break: bool = False):
     """异步生成器：缓冲文本增量，遇句末标点或超 max_chars 即吐一整句，收尾 flush 余量。
-    句子组装完成后统一剥 markdown（跨增量的 ** 对已合并，此处剥不漏）。"""
+    句子组装完成后统一剥 markdown（跨增量的 ** 对已合并，此处剥不漏）。
+
+    soft_break=True 时逗号/顿号/冒号也算断点（见 _SOFT_BREAK 头注）：**只给长连接类
+    provider 用**。分段只改送出的时机，不改朗读文本（单测钉住拼接结果一字不差）。"""
     buf = ""
     async for delta in text_deltas:
         if not delta:
             continue
         buf += delta
         while True:
-            idx = _find_sentence_end(buf)
+            idx = _find_sentence_end(buf, soft=soft_break)
             if idx == -1:
                 break
             seg, buf = _strip_md_tts(buf[:idx + 1].strip()), buf[idx + 1:]
@@ -1607,9 +1617,115 @@ class MiMoStreamingTTSProvider(BaseStreamingTTSProvider):
             yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
 
 
+class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
+    """MiniMax T2A v2 **WebSocket** 流式 TTS：一条长连接内分片直送，音频 hex 在 data.audio。
+
+    为什么另起一个 provider 而不是调 HTTP 那个的参数（2026-08-27 真栈实测）：
+    两者的首音差在**传输形态**，不是参数。HTTP 版是 per-sentence 一次 POST，
+    必须等 `_sentence_segments` 吐出一整句才发得出去，而 `_SENTENCE_END` 不含逗号
+    ⇒「今天深圳晴，气温二十八度，适合出门。」要等到第 18 个字。同一句同一节奏
+    （逐字 50ms 到达）实测：**HTTP 首音 1453ms / WS 首音 704ms**；把第一个句号挪到
+    第 6 字，HTTP 降到 688ms 而 cosyvoice（WS 长连接）纹丝不动 563→562ms——
+    这就是形态差异的证据。
+
+    协议逐条实测取证（官方文档**没写**认证方式，不许猜）：
+      · `wss://api.minimaxi.com/ws/v1/t2a_v2`，`Authorization: Bearer <key>`（header，实测通）
+      · 收 `connected_success` → 发 `task_start` → 收 `task_started`
+        → N × `task_continue`（**text 要是有意义的片段**）→ 发 `task_finish` → 收 `task_finished`
+      · 音频在 `task_continued` 的 `data.audio`，**hex** 编码（不是 base64）
+      · ⚠ `is_final` 是**段级**标志不是任务级：实测首段 406ms 就 IS_FINAL，其后还有
+        200+ 条音频帧。拿它当收尾判据会把话截断一大半（首轮探针就这么读错过一次）
+      · ⚠ **逐字发 task_continue 是错误用法**：音频总长翻倍（重复合成 7.57s vs 3.98s）
+        且撞 `rate limit exceeded(RPM)`。所以这里仍走 `_sentence_segments`，
+        只是开 soft_break——长连接下细分段不额外建连，首音因此能贴着第一个逗号
+
+    与 MiniMax LLM 同一把 MINIMAX_API_KEY（Bearer）。
+    docs: https://platform.minimaxi.com/docs/api-reference/speech-t2a-websocket.md
+    """
+
+    def __init__(self, api_key: str, ws_url: str = "", model: str = "speech-2.8-turbo",
+                 voice: str = "female-tianmei", sample_rate: int = 24000):
+        self.api_key = api_key
+        self.ws_url = ws_url or os.getenv(
+            "MINIMAX_T2A_WS_URL", "wss://api.minimaxi.com/ws/v1/t2a_v2")
+        self.model = model
+        self.voice = voice
+        self.sample_rate = sample_rate
+
+    async def stream(self, text_deltas, *, voice="", sample_rate=0, instruct="", speed=0.0):
+        del instruct
+        import aiohttp
+        voice = voice or self.voice
+        sr = sample_rate or self.sample_rate
+        vs = {"voice_id": voice, "speed": float(speed) if speed and speed > 0 else 1.0,
+              "vol": 1.0, "pitch": 0}
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(
+                self.ws_url, headers={"Authorization": f"Bearer {self.api_key}"}, heartbeat=20.0,
+            ) as ws:
+                started = asyncio.Event()
+
+                async def pump():
+                    try:
+                        await started.wait()
+                        # soft_break：长连接下按逗号/顿号也断，首音贴着第一个断点
+                        async for seg in _sentence_segments(text_deltas, soft_break=True):
+                            await ws.send_json({"event": "task_continue", "text": seg})
+                        await ws.send_json({"event": "task_finish"})
+                    except Exception:
+                        pass  # 取消/断连时静默；WS 关闭即终止上游任务
+
+                pump_task = asyncio.create_task(pump())
+                meta_sent = False
+                try:
+                    while True:
+                        try:
+                            msg = await ws.receive(timeout=30.0)
+                        except asyncio.TimeoutError:
+                            break
+                        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR,
+                                        aiohttp.WSMsgType.CLOSING):
+                            break
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        m = json.loads(msg.data)
+                        evt = m.get("event") or ""
+                        if evt == "connected_success":
+                            await ws.send_json({
+                                "event": "task_start", "model": self.model,
+                                "voice_setting": vs,
+                                "audio_setting": {"format": "pcm", "sample_rate": sr, "channel": 1},
+                            })
+                            continue
+                        if evt == "task_started":
+                            started.set()
+                            continue
+                        if evt == "task_failed":
+                            raise RuntimeError(
+                                str(m.get("base_resp") or "minimax task_failed")[:200])
+                        audio_hex = (m.get("data") or {}).get("audio") or ""
+                        if audio_hex:
+                            if not meta_sent:
+                                meta_sent = True
+                                yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                            try:
+                                yield bytes.fromhex(audio_hex)
+                            except ValueError:
+                                pass
+                        # is_final 只标一段结束，**不能**据此收尾——整个任务的终点是 task_finished
+                        if evt == "task_finished":
+                            break
+                finally:
+                    pump_task.cancel()
+        if not meta_sent:
+            yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+
+
 class MiniMaxStreamingTTSProvider(BaseStreamingTTSProvider):
-    """MiniMax T2A v2 流式 TTS（stream:true → SSE，音频 hex 编码在 data.audio）。整段文本一次入 →
+    """MiniMax T2A v2 流式 TTS（HTTP，stream:true → SSE，音频 hex 编码在 data.audio）。整段文本一次入 →
     按句切分逐段流式合成。与 MiniMax LLM 同一把 MINIMAX_API_KEY（Bearer）。
+    ⚠ 首音比 WS 版慢一倍（per-sentence 一次 POST，见 MiniMaxWsStreamingTTSProvider 头注的实测）——
+    保留它作为回退挡位（`MINIMAX_TTS_TRANSPORT=http`）。
     docs: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http.md"""
 
     def __init__(self, api_key: str, url: str = "", model: str = "speech-2.8-turbo",
@@ -1700,8 +1816,15 @@ def build_tts_stream_provider(provider: str = "", model: str = "",
         if not key:
             return None
         cat = TTS_STREAM_CATALOG["minimax"]
-        return MiniMaxStreamingTTSProvider(key, model=model or cat["model"],
-                                           voice=voice or cat["voice"], sample_rate=cat["sample_rate"])
+        # 缺省走 WS 长连接（首音 704ms vs HTTP 1453ms，2026-08-27 真栈实测）；
+        # `MINIMAX_TTS_TRANSPORT=http` 一键退回旧形态——换传输是首音优化，不该是单程票
+        if os.getenv("MINIMAX_TTS_TRANSPORT", "ws").strip().lower() == "http":
+            return MiniMaxStreamingTTSProvider(key, model=model or cat["model"],
+                                               voice=voice or cat["voice"],
+                                               sample_rate=cat["sample_rate"])
+        return MiniMaxWsStreamingTTSProvider(key, model=model or cat["model"],
+                                             voice=voice or cat["voice"],
+                                             sample_rate=cat["sample_rate"])
     if provider in ("cosyvoice", "qwen", "dashscope"):
         key = os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY", "")
         if not key:

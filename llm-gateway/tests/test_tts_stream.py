@@ -20,6 +20,7 @@ from providers import (
     _cosyvoice_run_task, _cosyvoice_continue, _cosyvoice_finish, _qwen_session_update,
     _sentence_segments, DashScopeCosyVoiceProvider, DashScopeQwenTTSProvider,
     MockStreamingTTSProvider, MiMoStreamingTTSProvider, MiniMaxStreamingTTSProvider,
+    MiniMaxWsStreamingTTSProvider,
     build_tts_stream_provider, TTS_STREAM_CATALOG,
 )
 
@@ -159,6 +160,27 @@ async def test_sentence_segments_splits_on_punct():
 
 
 @pytest.mark.asyncio
+async def test_sentence_segments_soft_break_splits_on_comma():
+    """soft_break：逗号/顿号/冒号也断。**只给长连接类 provider 用**——
+    它们在同一会话里送片段，细分段不额外建连，而首音直接由第一个断点的到达时刻决定
+    （2026-08-27 实测：minimax HTTP 版等第 18 个字的句号，首音 1453ms）。"""
+    src = ["你好", "，今天", "天气不错。", "出门吗？好的"]
+    hard = [s async for s in _sentence_segments(_aiter(src))]
+    soft = [s async for s in _sentence_segments(_aiter(src), soft_break=True)]
+    assert hard == ["你好，今天天气不错。", "出门吗？", "好的"]
+    assert soft == ["你好，", "今天天气不错。", "出门吗？", "好的"]
+    # 断点更细但**内容一字不差**——分段只影响送出的时机，不该改朗读的文本
+    assert "".join(soft) == "".join(hard)
+
+
+@pytest.mark.asyncio
+async def test_sentence_segments_soft_break_default_off():
+    """默认关：HTTP-per-request 类 provider 开了会把一句话拆成多次请求。"""
+    out = [s async for s in _sentence_segments(_aiter(["甲，乙，丙。"]))]
+    assert out == ["甲，乙，丙。"]
+
+
+@pytest.mark.asyncio
 async def test_sentence_segments_flushes_on_max_chars():
     long = "啊" * 70  # 无标点长串 → 超 max_chars(60) 强制切
     out = [s async for s in _sentence_segments(_aiter([long]))]
@@ -183,11 +205,22 @@ def test_factory_mimo_needs_key(monkeypatch):
 
 def test_factory_minimax_needs_key(monkeypatch):
     monkeypatch.delenv("MINIMAX_API_KEY", raising=False)
+    monkeypatch.delenv("MINIMAX_TTS_TRANSPORT", raising=False)
     assert build_tts_stream_provider("minimax") is None
     monkeypatch.setenv("MINIMAX_API_KEY", "mmk")
     prov = build_tts_stream_provider("minimax", voice="male-qn-qingse")
-    assert isinstance(prov, MiniMaxStreamingTTSProvider)
+    # 缺省是 WS 长连接（2026-08-27：首音 704ms vs HTTP 1453ms，同句同节奏真栈实测）
+    assert isinstance(prov, MiniMaxWsStreamingTTSProvider)
     assert prov.voice == "male-qn-qingse" and prov.sample_rate == 24000
+
+
+def test_factory_minimax_transport_http_fallback(monkeypatch):
+    """换传输是首音优化，不该是单程票——`MINIMAX_TTS_TRANSPORT=http` 退回旧形态。"""
+    monkeypatch.setenv("MINIMAX_API_KEY", "mmk")
+    monkeypatch.setenv("MINIMAX_TTS_TRANSPORT", "http")
+    prov = build_tts_stream_provider("minimax")
+    assert isinstance(prov, MiniMaxStreamingTTSProvider)
+    assert not isinstance(prov, MiniMaxWsStreamingTTSProvider)
 
 
 # ── FakeHTTP 驱动 MiMo/MiniMax SSE 解析（离线验证按句切分 + 音频解码）─────────────

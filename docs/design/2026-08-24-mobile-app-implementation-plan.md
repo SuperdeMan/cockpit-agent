@@ -688,11 +688,22 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   - `CosyVoiceStreamingTTSProvider` 是 DashScope 的 **WS run-task 长连接**，
     文本增量直送、引擎边收边合成，所以它对句号位置不敏感。
 
-  **修法（网关侧，未做）**：让**首段**切分更激进（首段允许在逗号/顿号断，或首段
-  `max_chars` 收到 ~12），首音可降到 ~900ms。代价是第一个逗号处多一个段边界的微停顿
-  （只影响 HTTP-per-sentence 那一类 provider）。
-  ⚠ **这是 `llm-gateway` 的改动，超出本计划的 App 边界（§10「后端零改动」）**——
-  已挂账，要改需泓舟单独授权。App 侧无可优化项：它只是照收网关发来的帧。
+  **修法（泓舟 2026-08-27 授权，已实现待部署）**：不是「改切分阈值」而是**换传输**——
+  新写 `MiniMaxWsStreamingTTSProvider` 走 MiniMax 的 T2A **WebSocket**
+  （`wss://api.minimaxi.com/ws/v1/t2a_v2`），一条长连接内分片直送。
+  真栈验证（直接调 provider、同一句、同一逐字 50ms 节奏）：
+  **WS 首音 954ms / HTTP 2609ms（37%，省 1655ms）**，音频 4.02s 完整。
+  `MINIMAX_TTS_TRANSPORT=http` 可一键退回旧形态——换传输是首音优化，不该是单程票。
+
+  协议**逐条实测取证**（官方文档没写认证方式，不许猜）：`Authorization: Bearer` 走
+  header；`connected_success → task_start → task_started → N×task_continue →
+  task_finish → task_finished`；音频是 `data.audio` 的 **hex**。两个坑写进了源码头注：
+  ① **`is_final` 是段级不是任务级**（实测首段 406ms 就 IS_FINAL，其后还有 200+ 条音频帧，
+  拿它收尾会把话截断一大半——首轮探针就这么读错过一次）；
+  ② **逐字发 `task_continue` 是错误用法**（音频总长翻倍 7.57s vs 3.98s，且撞
+  `rate limit exceeded(RPM)`），所以仍走 `_sentence_segments`，只是开 `soft_break=True`
+  ——长连接下细分段不额外建连，首音因此能贴着第一个逗号。
+  ⚠ **尚未部署到云栈**：App 侧现在测到的仍是 1.4s，要等这版 llm-gateway 上线。
 
   **这一轮最有价值的产出不是「都过了」，是那个断网挂死**——它只在「失败态之后」出现，
   happy path 与单测都证明不了会话状态是对的（CLAUDE.md §6 的那条纪律，又一次实证）。
