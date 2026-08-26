@@ -178,7 +178,11 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 
 ### 2.6 卡片契约与分批清单
 
-唯一真相源 `hmi/src/types.ts:70-102`（29 型 + `card_group` 递归）。分批：
+唯一真相源 `hmi/src/types.ts` 的 `UiCard` 联合。**实际是 34 个 type 字符串**（`UiCard` 联合 32 个成员：31 个单行 `type:` 声明 + `card_group` 内联；再加 `merchant_checkout` 那条联合里的 `merchant_choices` / `merchant_order_preview` 两个别名）。
+> ⚠ **原文写的「29 型」是错的**（2026-08-27 M3-1 实测），且 M1 的守卫测试把本节清单**逐字手抄了一份**——于是清单在仓库里有了第二份，而漂掉的那份没有任何东西会红。
+> 现在 `mobile/test/cards.test.ts` **从 `types.ts::UiCard` 派生**并两个方向断言，本节清单只作导读，**加卡型不需要改测试**。
+
+分批：
 
 - **M1 首批 17 型**：`card_group`、`weather`、`forecast`、`poi_list`（含 `purpose:
   dest_choice/waypoint_choice` 语义）、`poi_detail`、`place_list`、`place_detail`、
@@ -751,7 +755,132 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 ### M3-6 ⛔ 里程碑验收
 §8.3 全清单 + 遗留问题出账（立卡进 AGENTS.md §4.2 或关闭）。
 
-**M3 实施记录**：
+**M3 实施记录**（2026-08-27，A 批代码面完成 + 真机验证第一轮；**原生依赖重建（B 批）与地图（M3-3）未做**）：
+
+- **⚠ 先纠一个数：§2.6 写的「29 型 + card_group」是错的，`hmi/src/types.ts` 实际 34 个 type
+  字符串**（31 个单行声明 + `card_group` 内联 + `merchant_choices`/`merchant_order_preview`
+  两个别名；`UiCard` 联合 32 个成员）。M1 已实现 18 个，**M3-1 补 16 个字符串 / 14 个渲染器**。
+  这个数错了不止是笔误——**M1 的守卫测试把 §2.6 的清单逐字手抄了一份**，于是「清单」在仓库里
+  有了第二份，而漂掉的那份**没有任何东西会红**。⇒ `test/cards.test.ts` 改成**从
+  `types.ts::UiCard` 联合派生**，两个方向都断言（缺=漏实现、多=注册了后端不会发的型）。
+  反向验证两头都做过：摘掉 `vision_answer` → 红；多注册一个 `bogus_card` → 红；还原即绿。
+
+- **M3-1 ✅（代码面）**：14 个渲染器落 4 个文件——`infoCards`+3（research_report /
+  sports_scores / sports_scorers）、`navCards`+2（charging_route / trip_itinerary）、
+  `miscCards`+3（scene_card / scene_list / vision_answer）、**新增 `merchantCards.tsx`**+6
+  （payment_qr / payment_receipt / parking_fee / mcp_order / mcp_result / merchant_checkout）。
+  商户族全部复用 `@shared/merchantUi.mjs`（品牌归一 / 行项归一 / 分转元 / 按钮合成 /
+  规格 chip 句式 / 图片与支付链接白名单），**App 侧只做渲染**；白名单 `currentPhase` 推进到 M3。
+
+- **M3-2 ✅（代码面）**：`VehiclePanel` 重写为三格指标（复用 `@shared/vehicleStage.mjs::stageMetrics`）
+  + 明细镜像；新增 `ReminderSection`（复用 `@shared/reminderStage.mjs::groupByDay`）；
+  平板右面板改成**车况 / 提醒 / 焦点卡**三段。提醒段的数据源刻意取「消息流里最近一张
+  `reminder_list` 卡」而不是另起一路查询——**App 与后端之间只有主链一条通道，右面板自己去拉
+  一遍等于凭空多一个会漂的真相**。
+
+- **M3-4 部分**：keep-awake 设置项（`expo-keep-awake` 已随 expo 传递依赖装好，**不需要重建**）
+  + 弱网提示条（**延迟 3 秒**才显示：重连本就是常态，每次都弹会把「正常自愈」渲染成「出事了」，
+  用户学会忽略之后真断网也没人看了）。**返回键语义与深浅主题全卡族尚未在真机过**（下方「仍未做」）。
+
+- **新增卡片画廊调试屏** `/card-gallery`（与「主链帧调试屏」「语音 spike」同类，设置页 §调试 入口）。
+  它不是锦上添花，是两条验收要求的**唯一可行落点**：① §8.3「全卡族截图归档」——一部分卡真栈
+  够不着或**不该**够（`payment_receipt` 要真付款，而契约 §9.17 明说系统不执行最终付款 ⇒ 它在
+  验收里**永远**只能靠样本）；② M3-4「深浅主题全卡族过一遍」。**屏内每条都标「真栈已验/样本」**
+  ——样本截图只证明渲染器对这份数据的输出长这样，不证明后端会发这样的数据，两者混为一谈
+  正是验收造假的常见形态。配套守卫：注册表卡型必须都有样本（**第一次跑就抓到 `merchant_checkout`
+  本名没样本**——两条商户样本用的都是别名，而注册表是按字符串查的）。
+
+- **真机读数（MIX Fold 4 / 云栈 `target=cloud`，2026-08-27 01:1x–02:0x）**。
+  驱动法沿用坑账 §9.20③ 的「临时验收 chips」（`adb input text` 不支持中文），验收后
+  `git checkout Composer.tsx` 已还原。
+
+  | 卡型 | 结果 | 读数 / 说明 |
+  |---|---|---|
+  | `sports_scores` | ✅ 真栈 | 「英超 · 08-26」+ **空 fixtures 分支**（暂无比赛安排）+ 数据来源角标 |
+  | `scene_card` | ✅ 真栈 | `confirm` 态「待确认」+ 编号步骤 + **step1「需确认」danger 角标**；点确认→`created`闭环 |
+  | `scene_list` | ✅ 真栈 | 「我建的·2」含刚创建的钓鱼模式 + 「内置·3」+ 步数 |
+  | `research_report` | ✅ 真栈 | 分节手风琴 + `high` 置信 + 「引用 [1][3][4][6][9][12]」+ **未覆盖 gaps**（琥珀）+ 编号信源 |
+  | `trip_itinerary` | ✅ 真栈 | D2/D3/D4 分天配色 + 每日天气「小雨 26-32℃」+ 点数 + 🏛 图标 + **接地点才给「导航」按钮** + 顶部补电摘要 |
+  | `mcp_result`(readonly) | ✅ 真栈 | 品牌胶囊「麦当劳」+「商户信息」+ prov `mcdonalds·17:34` + 来源 `list-nutrition-foods`；**刻意极简**（无订单号/状态/按钮）符合 I-022 |
+  | `parking_fee` | ✅ 真栈 | 「当前停车费 15元」+ 订单 |
+  | `place_list` 看菜单 | ✅ 真栈 | **本轮新补的能力**（下条） |
+  | `charging_route` | ⬜ 未达 | 两次尝试都停在异步「正在查询沿途充电桩并规划路线」超 2 分钟未回卡（后端行为）。**渲染器只在画廊样本上验过**（含「全程无需补电」空 stops 分支） |
+  | `sports_scorers` | ⬜ 未达 | 「英超射手榜」被路由到 info 检索域，出的是 `search_result`。**落域结果不是 App 缺陷**，渲染器只在样本上验过 |
+  | merchant / payment 族 | ⬜ 未达 | **被营业时间挡住**：验收时刻 01:30，附近瑞幸全部 07:00-18:00 已打烊（后端如实回「门店已打烊」），附近无麦当劳。渲染器只在样本上验过 |
+  | `vision_answer` | ⬜ 未达 | 需 M4 P4 视觉开关（opt-in 默认关），本轮未开 |
+
+- **本轮修的三处（都是真机逼出来的，不是计划里写着的）**：
+
+  1. **`place_list` 缺「看菜单」直达**。HMI 的 `PlaceListCardView` 对瑞幸/麦当劳门店经
+     `placeMenuAction` 补一个直达按钮，App 的 M1 版没有 ⇒ **「发现→看单→点单三步全可点按」
+     那条链在手机上是断的**。已补（句式仍由共享模块决定，App 不自己拼），真机复验每家门店
+     都出按钮。
+
+  2. **freshness 直显 ISO 原文**。三张卡上都出现（`2026-08-25T01:56:00.000Z` 这样的串当角标）。
+     HMI 走 `relativeTime()`，但那函数住在 `Cards.tsx` 里、**不是共享模块**，搬出来要动 hmi
+     五处调用点。⇒ 判定：**§10 的例外是「共享模块有 bug」，而这里 hmi 是对的、错的是 App**，
+     所以在边界内实现（`parts.tsx`），并把「这是第二份实现」写在函数注释与
+     `test/cardParts.test.ts` 的头部，阈值逐条钉死（60s/60min/24h/30d + mock/NaN 判空）。
+     **要收敛得先把它提成共享模块 + node:test + 台账，那是一次独立的共享面改动，挂账给泓舟裁。**
+
+  3. **⚠ 最重要的一条：`CardBoundary` 兜不住原生组件缺席，整屏红屏。**
+     打开画廊时 dev-client 直接崩到红屏：
+     `com.facebook.react.uimanager.IllegalViewOperationException` @
+     `ViewManagerRegistry.get(RNSVGSvgViewAndroid)` —— 因为 JS 已经引了 `react-native-svg`
+     而设备上是 M2 那版 APK（原生侧没有它）。
+     **根因不是「忘了重建」，是判据边界**：那是 Fabric 在**挂载期、原生线程**抛的异常，
+     不是 React 渲染异常，`getDerivedStateFromError` **根本不会触发** ⇒
+     **「未知/异常卡型不许抛崩整个列表」这条铁则只覆盖 JS 侧**。
+     修法＝`merchantCards.tsx` 顶部用 `TurboModuleRegistry.get('RNSVGSvgViewModule')` 探测
+     原生在场（拿不到就是没链接进来，零副作用），不在场就走契约里**本来就有**的
+     「无码→安全支付链接」降级分支。
+     ⚠ 同时补一条**诚实措辞**：`hasQr=true` 但渲不出时，`paymentPresentation` 仍是扫码档
+     （title=扫码支付 / hint=请用手机扫码），屏上却没有码——不说明就是**让用户去扫一个不存在的
+     东西**。已加显式提示（「本机暂时无法显示二维码，请用上面的安全支付链接」）。
+     ⚠ 这条**不是一次性的开发期补丁**：M5 规划的 expo-updates OTA 同样只推 JS 不推原生，
+     那时新增任何原生支撑的卡片都会以完全一样的形态炸掉整屏。
+
+- **移交 / 挂账（都不是 App 能修的，也都不在本批范围）**：
+  1. **RN 的 `URL` 实现把路径与查询串里的 `@` 读成 userinfo**
+     （`get username()` 的 `[^:@]+` 不在路径分隔符处停）⇒ `merchantUi.safeHttpsUrl` 会把
+     `https://host/x?e=a@b.com` 判成「带凭据」拒掉，而浏览器上同一个 URL 正常放行。
+     **方向是 fail closed（拒绝而非放行），不是安全漏洞**；代价是 `pay_url` 含 `@` 时 App 会说
+     「支付入口暂不可用」——**那是一句假话**；商品图含 `@`（国内 CDN 做尺寸变体的常见惯例）则静默不显示。
+     仓库里的样本 URL 都不含 `@`，**真实商户 URL 含不含我没有观测数据**。已在
+     `test/merchantCards.test.ts` 把差异**钉成可见的测试**（RN 拒 / Node 放行两条都断言），
+     真机一旦观测到含 `@` 的商户 URL 即升级为待修（修法＝改判 authority 段而不读 getter，两端都对）。
+  2. **澄清按钮的 `send_text` 会丢掉原句的位置依赖性**。`导航去杭州东站，沿途安排充电` 命中
+     `ORIGIN_TERMS` 的「导航」⇒ 带坐标；而 `intent_choice` 选项回发的
+     `规划去杭州东站的长途充能策略`（导航/补电/行程规划三个词一个不沾）⇒ 闸判 false、不带坐标，
+     后端于是回「需要您的当前位置」。**共享闸 `location.mjs`，HMI 同样如此，不是 App 缺陷。**
+  3. `trip_itinerary` 对「规划**三天**杭州行程」产出**四天**——与 M1 交接里已记的
+     「行程天数自述 4 天」同一条，仍在 QA 侧。
+  4. 已确认 Expo CLI 会加载 `mobile/.env.local` 并 export `AMAP_ANDROID_KEY`（Metro 启动日志
+     `env: load .env.local` / `env: export AMAP_ANDROID_KEY`），M3-3 的 key 通道成立。
+
+- **读数**：`tsc --noEmit` **0 error**；mobile jest **167/167**（M2 末 133 → **+34**：
+  卡片派生守卫 4 + 画廊覆盖 3 + `merchantCards` 14 + `cardParts` 12，另 1 条来自 M1 守卫拆分）；
+  hmi `npm test` **285/285**（改了 `merchantUi.d.mts` 后按 §10 复跑）；白名单守卫绿。
+
+- **共享面改了一处（§10 的正当情形）**：`hmi/src/merchantUi.d.mts` 补
+  `swapStoreAction`/`specChipAction`/`placeMenuAction` 三条声明——`.mjs` 一直导出它们、`.d.mts` 漏了。
+  hmi 走 vite（esbuild 不做类型检查）且 package.json 没有 typecheck 脚本，所以这缺口从没红过；
+  mobile 跑 tsc 才撞上。**与 M2 那次 `ttsQueue.d.mts` 同一形态，只补声明、实现一行未改。**
+
+- **仍未做（下一轮的入口）**：
+  - **B 批：原生依赖一次性重建**（`react-native-svg` 已在 `package.json`/`node_modules`，
+    原生侧未生效）⇒ `scripts/build_mobile.ps1`，镜像工作区增量约 15 分钟。**重建前
+    payment_qr 的二维码在真机上必然走降级分支**（上面第 3 条守卫兜住，不再红屏）。
+  - **M3-3 地图**：key 已就位（`mobile/.env.local`），config plugin `plugins/with-amap-key.js`
+    已写（缺 key 则整个插件不挂、`extra.mapEnabled=false`、入口不出现——「可降级」不是运行时
+    try/catch，是这个能力压根没被装进去）。**`react-native-amap3d` 仍未 spike**：它最后一版是
+    2023-07（v3.2.4，旧 Paper ViewManager），机制上不死（RN 0.86 Android 的
+    `ReactNativeFeatureFlagsDefaults.useFabricInterop()` 默认 `true`，已核源码），风险在构建面
+    （AMap aar 拉取）与 key 注入。⚠ **它正是上面第 3 条的同族风险**：又一个原生 ViewManager。
+  - **真机未过项**：画廊全卡族截图归档、深浅主题全卡族、返回键语义（Android 12+ 根 Activity
+    返回默认就是移到后台，**要先实测再决定要不要写代码**）、平板形态（E3 仍未办）。
+    ⚠ 本轮末尾设备锁屏且有安全锁，`wm dismiss-keyguard` 无效、adb 解不开，需泓舟解锁后续跑。
+  - M3-5 Maestro（泓舟已授权装 CLI，flow 未写）、M3-6 §8.3 全清单。
 
 ---
 
@@ -965,6 +1094,34 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     里的 `/sdcard/...` 会被 MSYS 当本地路径翻译成 `D:\Program Files\Git\sdcard\ui.xml`
     （报 `failed to stat remote object`）。`export MSYS_NO_PATHCONV=1` 即可，
     或者用 PowerShell 跑 adb。**这类故障看起来像"设备上没有那个文件"，其实命令根本没到设备。**
+
+27. **`CardBoundary` 兜不住原生组件缺席——整屏红屏，不是掉兜底卡**（M3-1，2026-08-27 实测）。
+    JS 引了 `react-native-svg` 而设备上的 APK 还没重建 ⇒ 打开卡片画廊直接红屏
+    `IllegalViewOperationException @ ViewManagerRegistry.get(RNSVGSvgViewAndroid)`。
+    **它是 Fabric 在挂载期、原生线程抛的**，不是 React 渲染异常，
+    `getDerivedStateFromError` 根本不触发 ⇒ **「未知/异常卡型不许抛崩整个列表」这条铁则
+    只覆盖 JS 侧异常**。判据：**引入任何原生支撑的卡片组件，都要在渲染前显式探测原生在场**
+    （`TurboModuleRegistry.get('<该库的 TurboModule>')`，拿不到就是没链接进来），
+    不在场时走契约里本来就有的降级分支。⚠ 这不只是开发期：M5 的 expo-updates OTA
+    同样只推 JS 不推原生，形态一模一样。
+    ⚠ 配套一条**措辞诚实**：降级后如果上层 presentation 仍是「扫码档」，屏上却没有码，
+    必须显式说「显示不了」——否则就是让用户去扫一个不存在的东西。
+28. **`adb shell input swipe` 太快会被当成点击**（M3-1）：`swipe x1 y1 x2 y2 90`（90ms）
+    对 FlashList **纹丝不动**，看起来像「列表不跟新消息」；换 **320ms 慢拖**才真的滚。
+    ⚠ 别把这个误读成 bug：`maintainVisibleContentPosition.autoscrollToBottomThreshold=0.2`
+    表示**用户手动上滚后就不再抢滚动位置**，那是刻意的，所以驱动侧本来就该自己滚到底。
+29. **验收跑到一半设备会锁屏，且 adb 解不开**（M3-1）：`stay_on_while_plugged_in` 本来就是
+    `2`（USB 常亮）也不管用——外屏进 `DOZE_SUSPEND`，`KEYCODE_WAKEUP` / `POWER` /
+    `wm dismiss-keyguard` 都过不了安全锁，`screencap` 一律返回纯黑（**16643 字节的全黑 PNG
+    就是这个签名**，别当成截图失败去查 adb）。折叠屏还多一层：`screencap -d 0` 报
+    `Display Id '0' is not valid`，真实 id 要 `dumpsys SurfaceFlinger --display-id` 取，
+    内外屏各一个（内 2224x2488 / 外 1080x2520）。⇒ **长时验收要么先请人解锁并关掉锁屏，
+    要么把需要人解锁的项排在一起做。**
+30. **卡片渲染验收不能只靠真栈**（M3-1）：一部分卡真栈**够不着或不该够**——`payment_receipt`
+    要真付款而契约 §9.17 明说系统不执行最终付款；商户菜单卡要门店营业（01:30 附近瑞幸
+    全部打烊，后端如实回「门店已打烊」）；边界分支（付款码过期置灰、充电路线「全程无需补电」）
+    真栈几乎不产。⇒ `/card-gallery` 画廊屏 + `fixtures.ts` 是**必需品不是装饰**。
+    ⚠ 但**样本不是读数**：画廊每条都标「真栈已验/样本」，混为一谈就是验收造假。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
