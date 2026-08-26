@@ -464,10 +464,32 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   @shopify/flash-list 2.0.2（后三者含原生面）⇒ 按纪律重跑镜像构建复验：
   **BUILD SUCCESSFUL in 15m15s**（696 tasks：411 executed / 285 from cache），
   app-debug.apk **243MB**（新 dev-client，含本批原生模块——真机装的是它）。
-- **M1-8 ⏳（真机验收轮，E3/E4 就绪后与 M0 五条补验同做）**：§8.1 清单整轮 +
-  App 专属 AUTH_TOKENS 条目（⚠ 泓舟，手机档不含 vehicle.control）。⚠ 本批新增了
-  **原生依赖**：设备上必须装**本批重构建出的新 dev-client APK**（旧 APK 热更不带
-  expo-location/clipboard 原生模块）。
+- **M1-8 ✅ 真机首轮（2026-08-25 深夜–08-26 晨，MIX Fold 4 / Android 16 / HyperOS 3；
+  与 M0 五条补验同轮做完）**。环境=本批 243MB dev-client APK + Metro（USB adb reverse）+
+  Tailscale 直连云栈；驱动=adb（screencap+uiautomator dump+input，泓舟穿插手测）。
+  **M0 五条**：①装机启动 ✓ ②共享 ws.mjs 队列语义以整链实证替代 console 冒烟
+  （断网入队→重连 flush 补达，两种断法各一次：进程后台冻结杀 VPN / 飞行模式）✓
+  ③配置持久化（force-stop 冷启直进对话）+ 错 token 可读失败（close code 1006 +
+  「查 Tailscale/token」，不保存退出）✓ ④天气链经位置征询/坐标两路（见下）✓
+  ⑤断网补发 ✓。**§8.1 清单**：流式渲染/17 族逐族（天气征询链、**forecast/place_list/
+  place_detail 按真实坐标出宝安区数据**、poi_list 选站卡点选合成句、stock/news_brief/
+  search_result（exa 徽章+置信 chip）/reminder_card created·fired、**trip_itinerary 走
+  兜底卡=铁则真机实证**（type 名+amap `_prov`+主字段））/危险动作双确认条并存→
+  逐条确认执行·取消收尾（对象=**后备箱/前备箱**）/快速连发不串轮/断网补发+失败态之后
+  再说一句（挂起台账跨离线周期存活，followUp 软提醒亲证「打开后备箱还在等你确认」）/
+  双形态（折叠展开实时切双栏+右栏车况全量镜像+最近卡片）/深浅主题即时切/主动提醒到点
+  33s 送达+完成按钮闭环+**重启 60s 零重投（ack 销账）**/看门狗超时轮转错误态且迟到
+  final 丢弃（socket 死亡期组织性复现）。**真机首轮修了两处**（commit `5c8fad9`）：
+  SafeArea 缺 top（顶栏顶进状态栏）；定位 20s 上限+last-known 兜底（下条）。
+  **多端并发与整轮回归复跑待第二轮**（PIN 解锁后补 weather 卡单证）。
+- **⚠ 计划语料勘误（M1-3 验收句）**：「打开车窗」**不是**危险动作——`commands.yaml`
+  的 `require_confirm=true` 对象是 **trunk/door_lock/fuel_tank_cover/charging_port/frunk**
+  五个；车窗/天窗直通执行是**正确行为**。确认条验收语句应为「打开后备箱/打开前备箱」。
+  按计划变更纪律在此记录，M1-3 原文不改（历史文本）。
+- **真机轮后端观察三条（移交后端 QA，非 App 面）**：① 同一提醒被记忆抽取**重复 offer
+  三次**（已创建后仍 offer——G7 准入或需「已建提醒」去重维）；② 「我有哪些提醒」报
+  「接下来没有提醒」但 8/27 09:00 开会提醒明明 pending（upcoming 读侧存疑）+ 50 条
+  过期存量该清；③ 「规划三天杭州行程」speech 自述「杭州**4天**行程」（餐厅日+1?）。
 
 ---
 
@@ -701,6 +723,27 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     `Cannot find module .../config-plugins/build/android/codeMod.js`，而两侧
     node_modules 顶层数量完全一致——**顶层对不代表深层对**）。要只挡顶层那一个目录，
     必须传**绝对路径**、且源侧与镜像侧都传（前者管拷贝面、后者管 /MIR 的删除面）。
+18. **Metro 别用 `CI=1` 起**（M1-8 真机首轮）：CI 模式首跑的转换缓存曾被污染，真机
+    红屏「Cannot read property 'EventEmitter' of undefined」（expo/src/Expo.ts 的
+    re-export 下游症状，`--clear` 后干净启动）。判读：**这类 undefined 红屏先想缓存，
+    再想缺原生模块**——本机 logcat 里 SoLoader/AppContext 全正常就是旁证。
+19. **本机 Metro 文件监听不可靠（两次实锤丢事件）**：改完源码必须在 Metro 输出看到
+    `Bundled` 行；没有就 `am force-stop` + deeplink 重拉——**新 bundle 请求会重读磁盘
+    最新文件**，不依赖 watch 事件。「我改了东西」≠「被测路径变了」在构建面同样成立。
+20. **adb 驱动真机的三个雷**（M1-8 首轮全踩过）：① `input text` 在焦点不在输入框时
+    字符成**全局键事件**——文本里 'r','r' 正是 dev-client 重载快捷键（两次莫名 reload
+    的成因；输入前必须 uiautomator 验 `focused="true"`）；② `keyevent 111`(ESC) 被译成
+    Back，根屏=退出 Activity；③ `input text` 不支持中文——中文语料用「临时验收 chips」
+    形态（Composer 临时加一排、验收后 git checkout 还原）。HyperOS 侧：装 APK 要
+    「USB 安装」、注入要「USB 调试（安全设置）」、shell 无 MOCK_LOCATION（test provider
+    注入被拒）。
+21. **「有 GMS ≠ GMS 能用」——expo-location 在 GMS 网络面死的国行设备上取不到 fix**
+    （结构性，**挂 M2 账**）：`getCurrentPositionAsync`（含 Highest）永不返回也不抛错，
+    而 `dumpsys location` 显示**系统 network provider 有 AMap 源 fix**（expo-location
+    走 GMS fused 读不到平台层）。本批修法=20s 上限 + `getLastKnownPositionAsync` 兜底
+    （坐标带真实时间戳上行，实测宝安区预报/周边闭环）；根治=换 platform-provider 取
+    坐标方案（M2 评估 @react-native-community/geolocation `locationProvider:'android'`
+    或 M4 一并入原生模块）。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
