@@ -100,6 +100,7 @@ if ($dryRc -ne 0) { throw "approved dry-run failed" }
 $dry = $dryJson | ConvertFrom-Json
 if ($dry.status -ne "dry_run") { throw "expected status=dry_run" }
 if ($dry.target_sha -ne $sha) { throw "dry-run target SHA changed" }
+if ($dry.deployed_sha -cnotmatch '^[0-9a-f]{40}$') { throw "dry-run deployed baseline is invalid" }
 if ($dry.target_ci_cd_sha256 -cne $digest) { throw "target CI/CD digest changed" }
 if ($dry.approved_ci_cd_sha256 -cne $digest) { throw "approved CI/CD digest mismatch" }
 if (@($dry.blocking_changes).Count -ne 0) { throw "dry-run still has blockers" }
@@ -117,11 +118,12 @@ if ($applyRc -ne 0) { throw "approved apply failed" }
 $submitted = $applyJson | ConvertFrom-Json
 if ($submitted.status -ne "submitted") { throw "expected status=submitted" }
 if ($submitted.target_sha -ne $sha) { throw "submitted target SHA changed" }
-if ($submitted.deployed_sha -ne $plan.deployed_sha) { throw "deployed baseline changed" }
+if ($submitted.deployed_sha -ne $dry.deployed_sha) { throw "deployed baseline changed since dry-run" }
 if ($submitted.target_ci_cd_sha256 -cne $digest) { throw "submitted target CI/CD digest changed" }
 if ($submitted.approved_ci_cd_sha256 -cne $digest) { throw "submitted approved CI/CD digest mismatch" }
 if (@($submitted.blocking_changes).Count -ne 0) { throw "submitted result still has blockers" }
 if (-not $submitted.artifact_directory) { throw "submitted artifact_directory is missing" }
+if ($submitted.artifact_directory -cne $dry.artifact_directory) { throw "submitted artifact differs from dry-run" }
 ```
 
 `$digest` 必须原样复制自**同一个** `$sha` 首轮输出的 `target_ci_cd_sha256`，防止操作时把另一次计划的摘要串进来。批准绑定 workflow 提交树摘要，不绑定 commit SHA；不同 target SHA 的 workflow 树相同，摘要也相同，但每次 plan / deploy 调用仍必须显式传 CLI 参数，不会自动继承。
@@ -134,6 +136,11 @@ if (-not $submitted.artifact_directory) { throw "submitted artifact_directory is
 这个批准是一次性的 CLI 参数，不支持环境变量，也不会写入或更新远端批准锚。它只放行该摘要覆盖的 `ci_cd` 项，不能抑制
 `runtime_config_contract`、`database_schema`、`secret_material`，也不能放行未匹配其自身
 `release-infrastructure.json` 批准锚的 `infrastructure`。
+
+首轮无批准 plan 只用于取得 workflow 树摘要并人工审核路径，不把它的 `deployed_sha` 当作 apply
+基线；approved dry-run 是权威 pre-apply baseline。dry-run 要返回完整 40 位 `deployed_sha`
+和非空 artifact，确定性 artifact manifest 同时绑定目标 SHA 与该部署基线。若 dry-run 到 apply
+之间远端基线漂移，apply 会在唯一一次只读 preflight 后因 artifact 全等校验不匹配，于任何远程写前 fail closed。
 
 `status=submitted` 只证明 apply 返回值与本次 SHA、摘要、基线和 artifact 闭合，**不等于最终
 verify 成功**。随后仍须在每个真栈动作前独立执行 `target show`，依次完成 `status`、`verify`、

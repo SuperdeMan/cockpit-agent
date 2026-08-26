@@ -1869,6 +1869,9 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         "不等于最终",
         "MiniMax long sessions",
         "HMI C14",
+        "approved dry-run 是权威 pre-apply baseline",
+        "确定性 artifact manifest",
+        "任何远程写前 fail closed",
     )
     operator_sequence = (
         "$targetJson = python scripts/dev_stack.py target show | Out-String",
@@ -1897,6 +1900,7 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         "$dry = $dryJson | ConvertFrom-Json",
         'if ($dry.status -ne "dry_run")',
         'if ($dry.target_sha -ne $sha)',
+        "if ($dry.deployed_sha -cnotmatch '^[0-9a-f]{40}$')",
         'if ($dry.target_ci_cd_sha256 -cne $digest)',
         'if ($dry.approved_ci_cd_sha256 -cne $digest)',
         'if (@($dry.blocking_changes).Count -ne 0)',
@@ -1912,11 +1916,12 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         "$submitted = $applyJson | ConvertFrom-Json",
         'if ($submitted.status -ne "submitted")',
         'if ($submitted.target_sha -ne $sha)',
-        'if ($submitted.deployed_sha -ne $plan.deployed_sha)',
+        'if ($submitted.deployed_sha -ne $dry.deployed_sha)',
         'if ($submitted.target_ci_cd_sha256 -cne $digest)',
         'if ($submitted.approved_ci_cd_sha256 -cne $digest)',
         'if (@($submitted.blocking_changes).Count -ne 0)',
         'if (-not $submitted.artifact_directory)',
+        'if ($submitted.artifact_directory -cne $dry.artifact_directory)',
     )
 
     approval_blocks: list[str] = []
@@ -1932,6 +1937,9 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         assert positions == sorted(positions), f"{path} must preserve the operator sequence"
         assert block.count("python scripts/dev_stack.py target show") == 2
         assert "$null -ne $plan.target_sha" not in block
+        assert "$dry.deployed_sha -ne $plan.deployed_sha" not in block
+        assert "$submitted.deployed_sha -ne $plan.deployed_sha" not in block
+        assert "$submitted.artifact_directory -ne $dry.artifact_directory" not in block
         for immediate_check in (
             "$targetJson = python scripts/dev_stack.py target show | Out-String\n"
             "$targetRc = $LASTEXITCODE\n"
@@ -1953,6 +1961,36 @@ def test_runbook_documents_one_shot_ci_digest_approval():
         approval_blocks.append(block)
 
     assert approval_blocks[0] == approval_blocks[1]
+
+
+def test_release_status_docs_separate_origin_checkpoint_from_local_hardening():
+    agents = _required_text(ROOT / "AGENTS.md")
+    release_design = _required_text(
+        ROOT / "docs" / "superpowers" / "specs"
+        / "2026-08-16-cloud-release-workflow-design.md"
+    )
+
+    for required in (
+        "origin/main",
+        "9fa1c6a",
+        "TOCTOU / runbook 后续硬化",
+        "本地 main",
+        "统一 push",
+        "云端仍为 `7a0e03a`",
+        "没有 current-SHA MiniMax long probe/C14",
+    ):
+        assert required in agents
+    assert "该实现尚未 push / deploy" not in agents
+
+    for required in (
+        "早期 checkpoint",
+        "origin/main",
+        "9fa1c6a",
+        "后续 TOCTOU / runbook 硬化",
+        "当前实现与云部署状态以 `AGENTS.md` §4.0 为准",
+    ):
+        assert required in release_design
+    assert "本扩展尚未 push 或 deploy" not in release_design
 
 
 @pytest.mark.parametrize(

@@ -121,13 +121,12 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 **cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` **1/1** + `e2e_remote_safe` **8/8**，
 零 skip；**2026-08-22 I-030 批在 release `7a0e03a` 上复跑实测**，
 `run_e2e --target cloud` 无 `--id`）。交接页
-> ⚠ **2026-08-26 发布门禁实现状态**：MiniMax QA 闭环 commit
-> `5c43bc9041d47a896718c90f25a8c37d4dd31860` 已推 main；针对累计差异中的
-> `.github/workflows/ci.yml` 与 `.github/workflows/mobile-apk.yml`，本地 main 已实现并测试
-> `--approve-ci-cd-sha256` 一次性精确摘要批准（只放行目标 workflow 提交树的 `ci_cd`，不支持
-> 环境变量、不写远端批准锚，其他受控类别仍 fail closed）。**该实现尚未 push / deploy；未执行
-> apply，云端仍是 `7a0e03a`，没有 current-SHA MiniMax long probe/C14 证据。** 原始阻塞结果见
-> history §69.6，本地实现证据见 §70。
+> ⚠ **2026-08-26 发布门禁 checkpoint**：MiniMax QA 闭环 commit
+> `5c43bc9041d47a896718c90f25a8c37d4dd31860` 已推 main；`--approve-ci-cd-sha256` 一次性批准
+> 核心也已进入 `origin/main`（截至 `9fa1c6a`）。TOCTOU / runbook 后续硬化在本地 main，待最终
+> 复审后统一 push；它们仍只放行精确 workflow 树摘要的 `ci_cd`，不支持环境变量、不写远端批准锚，
+> 其他受控类别 fail closed。**截至本次编辑尚未 cloud deploy / apply；云端仍为 `7a0e03a`，
+> 没有 current-SHA MiniMax long probe/C14 证据。** 原始阻塞见 history §69.6，实现证据见 §70。
 [`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
 §6 七条完成判据**全部达成**。**本地 Docker 已停**（32 容器全 `Exited`、Docker Desktop
 优雅退出、零进程残留；**只 stop 不 down**——卷停前停后同为 37 个、镜像/release/迁移包

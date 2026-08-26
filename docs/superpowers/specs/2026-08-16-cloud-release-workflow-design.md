@@ -319,14 +319,13 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scr
 未 push、未安装到服务器；这段话不是后续版本状态。首次 bootstrap、首次 `deploy --apply` 和
 未来 rollback 演练仍严格受 §7.2 与运行手册的单独审批约束。
 
-## 12. 2026-08-26 一次性 CI/CD 摘要批准扩展状态
+## 12. 2026-08-26 一次性 CI/CD 摘要批准 checkpoint
 
-泓舟已单独授权 CI/CD / 发布治理变更。Tasks 1–4（`96768b1`–`93c0368`）已在本地 main 完成，
-并通过定向测试、独立规格审查与独立质量审查：目标 commit 的完整 workflow 树生成规范摘要，
-计划只在显式摘要逐字相等时放行 `ci_cd`，CLI / artifact / `dev_stack` 输出保留 target 与
-approved 审计字段。后续 `c70eefc` 以失败反例补齐 `artifact_directory` 的统一入口安全投影，
-本地定向与联合回归均通过；该补丁的审查状态不在本段提前宣称。
+早期 checkpoint 记录的是 Tasks 1–4 当时仍只在本地 main、尚未 push 的状态；它只属于那个
+提交时点，不作为后续当前状态。Tasks 1–4 已通过定向测试、独立规格审查与独立质量审查；
+随后 `c70eefc` 以失败反例补齐统一入口的 `artifact_directory` 投影并通过本地定向回归，
+本段不提前声称该后续补丁的独立审查状态。
 
-截至 2026-08-26，本扩展尚未 push 或 deploy，也没有执行 cloud apply / verify；云端仍为
-`7a0e03a`，current-SHA MiniMax long probe 与 HMI C14 均无新证据。当前操作口径以两份 runbook
-的“CI/CD 一次性摘要批准”段为准。
+后续 checkpoint 中，一次性批准核心已进入 `origin/main`（截至 `9fa1c6a`）；后续 TOCTOU / runbook 硬化仍在本地 main，待最终复审和统一 push。当前实现与云部署状态以 `AGENTS.md` §4.0 为准；
+本设计只保留机制与分时点证据，不用整日概括覆盖后续提交。操作口径以两份 runbook 的
+“CI/CD 一次性摘要批准”段为准。
