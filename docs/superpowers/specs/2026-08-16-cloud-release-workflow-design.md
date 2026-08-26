@@ -326,6 +326,9 @@ python -m pytest --import-mode=importlib scripts/tests/test_cloud_release.py scr
 随后 `c70eefc` 以失败反例补齐统一入口的 `artifact_directory` 投影并通过本地定向回归，
 本段不提前声称该后续补丁的独立审查状态。
 
-后续 checkpoint 中，一次性批准核心已进入 `origin/main`（截至 `9fa1c6a`）；后续 TOCTOU / runbook 硬化仍在本地 main，待最终复审和统一 push。当前实现与云部署状态以 `AGENTS.md` §4.0 为准；
-本设计只保留机制与分时点证据，不用整日概括覆盖后续提交。操作口径以两份 runbook 的
-“CI/CD 一次性摘要批准”段为准。
+最终 checkpoint 中，一次性批准、Git 变化安全枚举、dry artifact baseline、远端 current TOCTOU
+与 runbook 硬化均已进入 `origin/main`；基础设施批准锚也已更新，release `c7c211b` 完成 apply、
+5/5 status 与统一 verify。该 release 的 MiniMax 长会话是探针自动 282/315、另有手工漏检，
+**不是 QA 全绿基线**；当前结果与问题只查 `AGENTS.md` §4.0、history §71 和
+`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`。本设计只保留机制与分时点证据，操作口径
+以两份 runbook 的“CI/CD 一次性摘要批准”段为准。

@@ -19,7 +19,7 @@ python -m pytest -q                             # 串行对照档（~25min，排
 那里同时给出**较上一个 SHA 的净增量与逐条点号**（§4.3：净增量要跟同一个 SHA 比，
 不能跟文档里那个数比）。skip 含 nightly 真实 LLM 默认跳过。
 注意 CI 按分组进程隔离跑（见 `.github/workflows/ci.yml` run_group），本地单命令与 CI
-口径一致；前端数字同样见 §4.0。
+口径一致；前端不在 `AGENTS.md` 重复维护计数，以本文件对应命令的本次输出为准。
 
 ### 测试分布
 | 模块 | 文件 | 覆盖 |
@@ -49,8 +49,8 @@ npm test
 npm run build
 ```
 
-`npm test` 覆盖语音回路、流式 TTS、卡片交互、设置与协议护栏。**当前结果：225/225；
-Vite 生产构建通过（2026-08-09 实测）。**
+`npm test` 覆盖语音回路、流式 TTS、卡片交互、设置与协议护栏；测试与 Vite 构建是否通过，
+以本次命令输出为准，不在运行手册维护易腐计数。
 
 ## 4. Dashboard 单测与构建
 
@@ -60,8 +60,8 @@ npm test
 npm run build
 ```
 
-覆盖 trace 聚合、状态 diff、Agent 健康与环境量 debug 交互。**当前结果：17/17；
-Vite 生产构建通过（2026-08-09 实测）。**
+覆盖 trace 聚合、状态 diff、Agent 健康与环境量 debug 交互；测试与 Vite 构建是否通过，
+以本次命令输出为准，不在运行手册维护易腐计数。
 
 ## 5. 端到端测试（需 docker compose 起全栈）
 ```bash

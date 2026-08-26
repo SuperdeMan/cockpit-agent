@@ -2130,34 +2130,81 @@ def test_runbook_documents_one_shot_ci_digest_approval():
     assert approval_blocks[0] == approval_blocks[1]
 
 
-def test_release_status_docs_separate_origin_checkpoint_from_local_hardening():
+def test_release_status_docs_record_deployed_non_green_checkpoint():
     agents = _required_text(ROOT / "AGENTS.md")
+    claude = _required_text(ROOT / "CLAUDE.md")
+    readme = _required_text(ROOT / "README.md")
+    test_readme = _required_text(ROOT / "test" / "README.md")
     release_design = _required_text(
         ROOT / "docs" / "superpowers" / "specs"
         / "2026-08-16-cloud-release-workflow-design.md"
     )
+    approval_design = _required_text(
+        ROOT / "docs" / "superpowers" / "specs"
+        / "2026-08-25-ci-cd-release-digest-approval-design.md"
+    )
+    approval_plan = _required_text(
+        ROOT / "docs" / "superpowers" / "plans"
+        / "2026-08-25-ci-cd-release-digest-approval.md"
+    )
 
     for required in (
-        "origin/main",
-        "9fa1c6a",
-        "TOCTOU / runbook 后续硬化",
-        "本地 main",
-        "统一 push",
-        "云端仍为 `7a0e03a`",
-        "没有 current-SHA MiniMax long probe/C14",
+        "c7c211bedb4ff504dfceaf09e652c7875bdaebb8",
+        "5/5 healthy",
+        "探针**自动计分 282 PASS / 33 FAIL**",
+        "手工漏检",
+        "不是 QA 全绿基线",
+        "docs/reviews/2026-08-26-minimax-cloud-qa-findings.md",
     ):
         assert required in agents
-    assert "该实现尚未 push / deploy" not in agents
+    for stale in (
+        "TOCTOU / runbook 后续硬化在本地 main",
+        "截至本次编辑尚未 cloud deploy / apply",
+        "没有 current-SHA MiniMax long probe/C14",
+    ):
+        assert stale not in agents
 
     for required in (
         "早期 checkpoint",
         "origin/main",
-        "9fa1c6a",
-        "后续 TOCTOU / runbook 硬化",
-        "当前实现与云部署状态以 `AGENTS.md` §4.0 为准",
+        "最终 checkpoint",
+        "release `c7c211b`",
+        "5/5 status",
+        "**不是 QA 全绿基线**",
+        "docs/reviews/2026-08-26-minimax-cloud-qa-findings.md",
     ):
         assert required in release_design
-    assert "本扩展尚未 push 或 deploy" not in release_design
+    assert "待最终复审和统一 push" not in release_design
+
+    assert "精确云端 release、健康状态与当前验收结论" in claude
+    assert "**进行中：探索式真实用户 QA 轮**" not in claude
+    assert "云端 release `34d72d7`" not in claude
+
+    assert "当前精确 SHA / passed / skipped 只查 `AGENTS.md` §4.0" in readme
+    assert "**6933 passed / 32 skipped / 0 failed**" not in readme
+    assert "README 不维护易腐计数" in readme
+
+    assert "前端不在 `AGENTS.md` 重复维护计数" in test_readme
+    assert "不在运行手册维护易腐计数" in test_readme
+    assert "**当前结果：225/225" not in test_readme
+    assert "**当前结果：17/17" not in test_readme
+
+    for required in (
+        "**已实现、已推送、已部署**",
+        "本设计启动时",
+        "docs/agents-history.md` §71",
+        "docs/reviews/2026-08-26-minimax-cloud-qa-findings.md",
+    ):
+        assert required in approval_design
+    assert "待规格复核后实施" not in approval_design
+
+    for required in (
+        "EXECUTED / HISTORICAL",
+        "unchecked boxes are **not current TODOs**",
+        "docs/agents-history.md` §71",
+        "docs/reviews/2026-08-26-minimax-cloud-qa-findings.md",
+    ):
+        assert required in approval_plan
 
 
 @pytest.mark.parametrize(

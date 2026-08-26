@@ -1,5 +1,10 @@
 # One-Shot CI/CD Release Digest Approval Implementation Plan
 
+> **Status (2026-08-26): EXECUTED / HISTORICAL.** The checklist below preserves the original TDD and
+> deployment sequence; unchecked boxes are **not current TODOs**. Implementation, infrastructure-anchor update,
+> cloud release and verification evidence are recorded in `docs/agents-history.md` §71. The deployed MiniMax
+> long-session result is not all green; use `docs/reviews/2026-08-26-minimax-cloud-qa-findings.md` for remediation.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an explicit one-shot SHA-256 approval that releases exactly one reviewed `.github/workflows/**` tree without weakening any other cloud release blocker.

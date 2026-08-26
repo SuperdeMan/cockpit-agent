@@ -2,13 +2,15 @@
 
 日期：2026-08-25
 
-状态：方向已由泓舟确认；待规格复核后实施
+状态：**已实现、已推送、已部署**。最终机制与分时点证据见
+`docs/agents-history.md` §71；被测 release `c7c211b` 的长会话不是 QA 全绿，问题只查
+`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`。
 
 适用范围：`car-agent` 腾讯云私网 demo 的固定发布工作流
 
 ## 1. 问题与目标
 
-云端当前运行 release `7a0e03aadbc7409d542d0567a4ed87924f56083a`。MiniMax QA 闭环代码已
+本设计启动时，云端运行 release `7a0e03aadbc7409d542d0567a4ed87924f56083a`。MiniMax QA 闭环代码已
 提交并推送，但从已部署 SHA 到目标 main 的累计差异包含：
 
 - `.github/workflows/ci.yml`
