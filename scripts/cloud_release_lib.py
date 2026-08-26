@@ -657,6 +657,7 @@ def git_changes(
     diffs = {
         path: _git(
             repo,
+            "--literal-pathspecs",
             "diff",
             "--unified=0",
             "--no-ext-diff",

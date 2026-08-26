@@ -671,6 +671,70 @@ def test_git_changes_requests_raw_nul_names_with_rename_detection_disabled(
     )
 
 
+def commit_plumbing_file(
+    repo: Path,
+    parent: str,
+    path: str,
+    content: bytes,
+) -> str:
+    blob = subprocess.run(
+        ["git", "hash-object", "-w", "--stdin"],
+        cwd=repo,
+        input=content,
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.strip()
+    base_tree = subprocess.run(
+        ["git", "ls-tree", "-z", f"{parent}^{{tree}}"],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout
+    records = [record for record in base_tree.split(b"\0") if record]
+    records.append(b"100644 blob " + blob + b"\t" + path.encode("utf-8"))
+    records.sort(key=lambda record: record.partition(b"\t")[2])
+    tree = subprocess.run(
+        ["git", "mktree", "-z"],
+        cwd=repo,
+        input=b"\0".join(records) + b"\0",
+        stdout=subprocess.PIPE,
+        check=True,
+    ).stdout.decode("ascii").strip()
+    return git(repo, "commit-tree", tree, "-p", parent, "-m", "plumbing path")
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ":(exclude)*.py",
+        ":(top,literal)magic.py",
+        "wild*?[]name.py",
+    ],
+)
+def test_git_changes_treats_pathspec_magic_filename_as_literal(
+    tmp_path: Path,
+    path: str,
+):
+    repo, base = make_repo(tmp_path)
+    ddl = b"ALTER TABLE users ADD COLUMN pwned TEXT;\n"
+    target = commit_plumbing_file(repo, base, path, ddl)
+
+    paths, diffs = git_changes(repo, base, target)
+    plan = make_release_plan(
+        deployed_sha=base,
+        target_sha=target,
+        changed_paths=paths,
+        diff_by_path=diffs,
+    )
+
+    assert paths == [path]
+    assert ddl.decode("utf-8").strip() in diffs[path]
+    assert plan.status == "plan_rejected"
+    assert plan.blocking_changes == (
+        ControlledChange(path, "database_schema"),
+    )
+
+
 def test_compute_infrastructure_digest_reads_committed_bytes_only(tmp_path: Path):
     repo, _ = make_repo(tmp_path)
     cloud = repo / "deploy" / "cloud"
