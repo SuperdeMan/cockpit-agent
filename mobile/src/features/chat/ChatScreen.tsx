@@ -136,7 +136,8 @@ function ChatBody({
   )
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['bottom']}>
+    // top 边必须显式包含：真机顶栏会顶进系统状态栏（M1-8 首轮实测，手机态露头的第一个 bug）
+    <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['top', 'bottom']}>
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}

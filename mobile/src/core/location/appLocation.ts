@@ -17,24 +17,33 @@ interface Fix {
   capturedAt?: number
 }
 
-async function currentFix(timeoutMs = 10_000): Promise<Fix | null> {
+function toFix(pos: Location.LocationObject | null): Fix | null {
+  if (!pos) return null
+  return {
+    lat: pos.coords.latitude,
+    lng: pos.coords.longitude,
+    accuracyM: pos.coords.accuracy ?? undefined,
+    capturedAt: pos.timestamp,
+  }
+}
+
+// 真机实测（MIX Fold 4，M1-8 首轮）：权限刚授予后的冷启动首查可超 10s ⇒ 上限 20s，
+// 且超时/异常回退「最近一次已知位置」——时间戳如实进 current_location_at，
+// 新鲜度交给下游判（陈旧坐标对天气/周边仍远好于没有）。
+async function currentFix(timeoutMs = 20_000): Promise<Fix | null> {
   try {
     const perm = await Location.getForegroundPermissionsAsync()
     const granted = perm.granted
       ? true
       : (await Location.requestForegroundPermissionsAsync()).granted
     if (!granted) return null
+    // Highest=GPS 硬件直取——Balanced 走 GMS fused，在部分网络环境会无限等 Google 服务
     const pos = await Promise.race([
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest }),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
-    ])
-    if (!pos) return null
-    return {
-      lat: pos.coords.latitude,
-      lng: pos.coords.longitude,
-      accuracyM: pos.coords.accuracy ?? undefined,
-      capturedAt: pos.timestamp,
-    }
+    ]).catch(() => null)
+    if (pos) return toFix(pos)
+    return toFix(await Location.getLastKnownPositionAsync().catch(() => null))
   } catch {
     return null
   }
