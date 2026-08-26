@@ -102,8 +102,17 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > **CI annotation 每 step 只保留 10 条**——红灯数到 9~10 就假定被截断，
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
-**当前部署形态（2026-08-22 更新）**：`dev-stack.local` = **`target=cloud`**。
-云端 release **`7a0e03a`**（2026-08-22 I-030 跨组批：组指代 + 跨组算子 + 下发面逐步
+**当前部署形态（2026-08-26 更新）**：`dev-stack.local` = **`target=cloud`**。
+云端 release **`c7c211bedb4ff504dfceaf09e652c7875bdaebb8`**；`status` = ok、5/5 healthy，
+统一 `verify` = verified（`e2e_remote_safe`、`minimax/MiniMax-M3`、lock `e2e`）。MiniMax-only
+长会话 5 persona 共 315 轮，探针**自动计分 282 PASS / 33 FAIL**，另有手工漏检（不代表
+282 轮业务全部通过）；0 persona 中止、388 次 LLM 全 pinned、fallback=0，TTS 5/5 可播放；
+但 vehicle cleanup 有 1 项“collector 无法回读恢复终态”，所以本
+release **不是 QA 全绿基线**。HMI C14 **1/1 PASS**（5/5 persona 真播放、PCM 1,271,154 bytes、
+barge cancel+stop=3，start/end 同 SHA、5/5 healthy）。本轮按泓舟要求只记录不修复，完整问题与
+trace 见 [`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](docs/reviews/2026-08-26-minimax-cloud-qa-findings.md)。
+
+此前 release **`7a0e03a`**（2026-08-22 I-030 跨组批：组指代 + 跨组算子 + 下发面逐步
 选组；`status` = ok、5/5 端点 healthy、`verify` = **verified**（`release_sha` 非空，
 不是那种「一趟什么都没跑」的空成功）；**迷你集 `--group candidate` 20/21**——
 考点 **CD5 3/3 `[det]`** / 对照 **CD7 3/3 `[det]`**（两条共用同一份前提＝干净 A/B）/
@@ -121,12 +130,6 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 **cloud 缺省 E2E 2/2 PASS**（`e2e_protocol_smoke` **1/1** + `e2e_remote_safe` **8/8**，
 零 skip；**2026-08-22 I-030 批在 release `7a0e03a` 上复跑实测**，
 `run_e2e --target cloud` 无 `--id`）。交接页
-> ⚠ **2026-08-26 发布门禁 checkpoint**：MiniMax QA 闭环 commit
-> `5c43bc9041d47a896718c90f25a8c37d4dd31860` 已推 main；`--approve-ci-cd-sha256` 一次性批准
-> 核心也已进入 `origin/main`（截至 `9fa1c6a`）。TOCTOU / runbook 后续硬化在本地 main，待最终
-> 复审后统一 push；它们仍只放行精确 workflow 树摘要的 `ci_cd`，不支持环境变量、不写远端批准锚，
-> 其他受控类别 fail closed。**截至本次编辑尚未 cloud deploy / apply；云端仍为 `7a0e03a`，
-> 没有 current-SHA MiniMax long probe/C14 证据。** 原始阻塞见 history §69.6，实现证据见 §70。
 [`…cloud-data-migration-handoff.md`](docs/reviews/2026-08-17-cloud-data-migration-handoff.md)
 §6 七条完成判据**全部达成**。**本地 Docker 已停**（32 容器全 `Exited`、Docker Desktop
 优雅退出、零进程残留；**只 stop 不 down**——卷停前停后同为 37 个、镜像/release/迁移包
@@ -159,11 +162,15 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
 > 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新后端全量基线（2026-08-25 MiniMax-only QA 复验闭环，`target=cloud` +
+**最新后端全量基线（2026-08-26 发布治理与进程树测试族收口，`target=cloud` +
 本地 Docker 已退）**：`python -m pytest -q -n auto --dist worksteal` =
-**7106 passed / 32 skipped 零红**（HEAD / 内容哈希 / mtime 前后完全一致）。
+**7225 passed / 32 skipped 零红**（代码 SHA `5e764aa`，HEAD / tracked / untracked 摘要前后一致，
+`TREE_STABLE=True`）。部署 SHA `c7c211b` 只比它多一条 mobile 计划文档的安全措辞修正，未把
+这条文档提交冒充成重新跑过全量。
 ⚠ 耗时受宿主负载影响很大（慢的都是真子进程/全语料守卫），**别拿时长当回归信号**。
-本跳 `6969 → 7106` 跨过本轮 QA 与同期 mobile 合入，**不得把 +137 整体归因给任一单批**；
+本跳 `7106 → 7225` 跨过一次性 CI/CD 发布治理、远端发布 TOCTOU、7 条真实进程树 readiness
+测试与同期 mobile 合入，**不得把 +119 整体归因给任一单批**。上一跳 `6969 → 7106` 跨过
+MiniMax QA 与同期 mobile 合入，**同样不得把 +137 整体归因给任一单批**；
 QA 增量覆盖 provider/trace/TTS 真证据、焦点时序、商户/提醒/导航/edge 负向边界与隐私 inventory
 剪枝反例，逐文件点号与真栈状态只查 history **§69**。上一跳 `6933 → 6969` = **+36**：cloud 编排净 +13（候选身份 / 后视镜焦点 /
 五类窄 route hint 与误伤集 / 评测清单同构）、edge 门锁极性 +10、mcp-bridge +4、
@@ -173,7 +180,7 @@ reminder 原子批建 +2、两套 QA 工具 +7。上一跳 `6902 → 6933` = **+
 `test_engine_candidate_shortcut.py` **+4**（**engine 层接线守卫**——反向验证第一处
 就露出「挂点零测试」）、三个产生方各 **+1**（组标签 = 卡上那个称呼，断言两处相等）。
 上一跳 `6897 → 6902` = **+5**（08-22 白天复验批：mcp-bridge 选品续跑 4 + 规格槽跨跳保真 1）。
-对账链：**7106**（08-25 MiniMax QA 闭环）← 6969（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
+对账链：**7225**（08-26 发布治理/测试族）← 7106（08-25 MiniMax QA 闭环）← 6969（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
 ← 6865（person-pickup 批）← 6786（第 8 步）。
 
 > ⚠ **那条「73 vs 32」的差额归因写了三版，前两版都错，2026-08-21 把成因直接修掉了**

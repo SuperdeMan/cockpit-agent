@@ -6331,3 +6331,72 @@ SHA / target digest / approved digest / 空 blocker / artifact 全部闭合，�
 该字段，但 `dev_stack` 的安全投影漏掉它。`c70eefc` 先用 **2 个失败反例**复现，再补齐投影；
 定向 **6 passed**，`dev_stack + cloud_release` 联合回归更新为 **277 passed / 3 skipped**。
 本节仍是未 push、未 deploy 状态，不产生任何新真栈结论。
+
+## §71 2026-08-26 一次性 CI/CD 发布治理、云端发布与 MiniMax 复验记录
+
+本节接 §69.6 / §70。泓舟先授权 CI/CD / 发布治理、main 提交推送与真栈发布；长会话完成前
+明确改为“**只记录问题，不修复**”。因此 §71.4 之后没有业务修复或定向复跑。
+
+### §71.1 本地发布门禁与全量终态
+
+一次性批准链最终不仅补了 workflow 树摘要，还在三轮独立对抗审查中关闭以下发布安全缺口：
+
+- `git_changes` 用 raw NUL + `--no-renames` + 删除 `D` + literal pathspec，删除、rename-out、
+  Unicode 与 Git magic 文件名不能绕过任何受控类别；
+- dry-run artifact manifest 全等绑定 `deployed_sha`，apply baseline 漂移在任何远端写前拒绝；
+- 远端事务锁内校验 full expected-current、真实 current 目录与 manifest baseline；artifact validator
+  不再通过 command substitution 吞掉非零；
+- 7 条真实进程树测试统一改成 PID/READY 后注入 timeout，Windows retained handle / POSIX pidfd
+  防 PID reuse；7 条 20 轮 **140/140**，4 文件连续 4 轮 **394 passed / 4 skipped**。
+
+固定环境下最终全量：代码 SHA `5e764aa818dced2efba6b71173677de807630513`，
+`python -m pytest -q -n auto --dist worksteal` = **7225 passed / 32 skipped / 0 failed**，
+12m13s，HEAD/tracked/untracked 摘要前后一致、`TREE_STABLE=True`。随后只改一条 mobile 计划文档
+中的 `token=...` 说明语法，以通过既有凭据赋值扫描；10 条 credential 定向测试与全源扫描通过，
+形成部署 SHA `c7c211bedb4ff504dfceaf09e652c7875bdaebb8`，没有冒充全量重跑。
+
+### §71.2 精确批准与基础设施锚
+
+真栈动作每次先独立 `target show=cloud`。旧 release `7a0e03a` 初始 5/5 healthy。对目标：
+
+- 无 CI 摘要：两份 workflow（`ci_cd`）+ 两份远端脚本（`infrastructure`）共 4 个 blocker；
+- 错误 CI 摘要：仍为同 4 个 blocker；
+- 精确 CI 摘要 `bc83088c...e80a987`：只移除两项 `ci_cd`，两项 infrastructure 仍
+  `bootstrap_required`，证明一次性批准不能越权。
+
+远端 TOCTOU 修复改变了 `remote-build.sh` / `remote-release.sh`，因此独立更新基础设施批准锚：
+旧 `fbf1ac7c...f52e89` → 新 `9b6f89b1...b9c380`。14 个 installed targets 中只有两脚本变化；
+其余 12 个远端 hash 与目标提交逐字一致。安装在 transaction lock 内按 build → release → anchor
+顺序执行，旧脚本/旧锚备份保留在：
+`/opt/car-agent/shared/evidence/infrastructure-approvals/5e764aa818dced2efba6b71173677de807630513-9b6f89b1`。
+第一次 root snapshot 因 pipeline 子 shell 改变 `BASHPID` 在 live 写入前 fail closed；只读坐实 live
+未变后，用锁定唯一残留 temp/hash 的 resume entry 原子续接并成功，未删除 stage/snapshot/backup。
+这段基础设施锚/backup/resume 证据来自当轮 PowerShell/SSH 终端输出与远端只读 hash 核对，未另存
+为 `dev-stack-verifications` JSON；`7225/32` 与 `TREE_STABLE=True` 同样来自当轮全量命令终局输出。
+
+### §71.3 发布、统一 verify 与 C14
+
+精确摘要 dry-run 返回 `status=dry_run`、blockers=[]、artifact 非空、两项摘要逐字匹配；apply 返回
+`submitted` 且同 SHA/baseline/artifact。发布后：
+
+- `dev_stack status`：release 精确 `c7c211b`，5/5 healthy，warnings=[]；
+- `dev_stack verify`：verified，case=`e2e_remote_safe`，provider/model=`minimax/MiniMax-M3`，
+  `lock_kind=e2e`，release 精确；artifact
+  `.artifacts/dev-stack-verifications/20260826T103954Z-c7c211b.json`；
+- HMI C14：**1/1 PASS**，5/5 persona MiniMax TTS 真播放，PCM 1,271,154 bytes，barge
+  cancel+stop=3，start/end release 均 `c7c211b`、5/5 healthy；artifact
+  `.artifacts/dev-stack-verifications/hmi-cdp-c14.json`。
+
+### §71.4 MiniMax 长会话结果：只记录，不修复
+
+5 persona 共 315 轮，探针**自动计分 282 PASS / 33 FAIL**；另有手工漏检，因此不代表
+282 轮业务全部通过。自动分项为 vehicle 55/59、family 58/69、merchant 61/66、
+adversarial 57/62、information 51/59。0 persona 中止；388 次 LLM 全部 pinned
+`minimax:MiniMax-M3`、fallback=0；5 persona MiniMax TTS 均得到可播放 PCM。
+
+终态证据：open operation IDs 全为 0，merchant draft cleanup 全部归零；vehicle cleanup 却因
+collector 无法回读终态而 `verified=false`，云端被测车态恢复终值未被证明。33 个失败行与探针未判红的
+安全/城市/提醒/偏好错误已去重记录到
+[`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](reviews/2026-08-26-minimax-cloud-qa-findings.md)。
+本节之后遵照泓舟指令没有修复、删除提醒、重置车态、清理 release/backup/snapshot/artifact 或
+执行 rollback；C14 后只读 status 仍为 `c7c211b`、5/5 healthy。
