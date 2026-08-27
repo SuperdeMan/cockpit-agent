@@ -17,10 +17,13 @@
   显示车态已被 QA 之后的流量改动（`hvac_on=true`、`media=playing`，与探针基线和探针终态
   都对不上）。**不要再做「恢复到 08-26 基线」的考古**——按 C2 修完探针的诊断出口后，
   下一轮跑批自然会重打基线快照。若要现在归位，先只读快照、再按红线单独取写授权。
-- **提醒存量处置**（P1-07 的遗留）：清单已于 2026-08-27 只读出具——u1 名下 ACTIVE **90 条**
-  （fired 89 + pending 1），逐条在 `.artifacts/reminder-cleanup-inventory-20260827.txt`；
-  处置方式已拍板（C10-D：`cancelled + extra.reason` 清扫，建议全清），**apply 前仍要
-  泓舟对清单点名确认**（同 2026-08-16 数据清洗批的口径）。
+- **提醒存量处置（P1-07 的遗留）✅ 已完结**：清单 2026-08-27 只读出具（u1 ACTIVE 90 条，
+  `.artifacts/reminder-cleanup-inventory-20260827.txt`）→ **泓舟点名「90 条全清」→ 当日执行**：
+  单事务按 ID 点名 `UPDATE 90`（置 `cancelled` + `extra.reason="expired_sweep"` +
+  `extra.batch="20260827-hongzhou-approved-90"`，不物理删除），事务内验证 UPDATED=90、
+  **u1 ACTIVE 归零**；终态 u1 = cancelled 189 + done 13。执行与验证输出
+  `.artifacts/sweep-apply-20260827.result.txt`。⚠ 残余小账：Redis `reminders_active`
+  可能还缓存着旧序数列表直到下次 list/刷新覆盖——C10-A（参照系统一）落地时一并消化。
 - 修任何一张卡后：跑该卡「验收」栏 + 全量 `python -m pytest -q -n auto --dist worksteal`
   （固定口径见 `AGENTS.md` §4.0）+ 对应组的真栈迷你集 `scripts/probe_qa_regression.py --group <g>`。
 - **本文档的行号是 2026-08-27 时点的**。接手时先 `git log --oneline -- <file>` 确认该文件
@@ -334,12 +337,11 @@
   `cancelled` + `extra.reason="expired_sweep"`**（零 schema/枚举变更——status 枚举扩散到
   全部查询面的影响大于收益，`extra` 里的 reason 足够区分「用户取消」与「系统沉积清扫」；
   这同时绕开了 schema 红线）；fired 超过 N 天（建议 N=7）由 hygiene 脚本「过期沉积」召回族
-  批量置之，dry-run 先行。**存量清单已按拍板出具**：u1 名下 ACTIVE 共 **90 条**
-  （fired 89 + pending 1，跨 08-16→10-01；带伞 ×17、拿文件(location, fire_at=0) ×4、
-  女儿钢琴比赛 ×4、探针评审会/周报代号族 ×2 各若干、唯一 pending 是「用户计划2026年国庆…
-  已确认4天行程」这条事实陈述假提醒），逐条清单在
-  `.artifacts/reminder-cleanup-inventory-20260827.txt`（gitignore 内不入库）——
-  **建议整组 90 条清扫，泓舟点名保留项或确认全清后由接手者执行 apply**。
+  批量置之，dry-run 先行。**存量 90 条已于 2026-08-27 清完**（泓舟点名「全清」后单事务
+  按 ID 执行：UPDATE 90、u1 ACTIVE 归零、审计标记 `extra.batch="20260827-hongzhou-approved-90"`；
+  清单与执行证据在 `.artifacts/reminder-cleanup-inventory-20260827.txt` 与
+  `sweep-apply-20260827.result.txt`）。**接手者剩两件**：hygiene 脚本的「过期沉积」召回族
+  机制化（用同一个 `extra.reason` 约定，别再发明第二个标记）；
   探针跑批结束补 reminder 清理段（按 run 号标题匹配自己建的、逐条取消并验证计数回落）。
 - **E（必做）**：`reminder.create_batch`/`create` 补跨轮幂等：同 owner + 同 title + 同 fire_at 的 pending 已存在 ⇒ 收编不新建（现在三条 09:00 重复是设计结果——「同轮不收编」的裁定保留，跨轮重复该挡）。
 - **F（建议）**：提醒批部分取消能力：`reminder.cancel` 已有 index 槽，缺的是「取消第N个 + 其余继续」的复合形态进 planner 的通道——范例补一条（「第二个先取消，其他继续」→ reminder.cancel(index=2)），不新增 intent。
@@ -504,8 +506,9 @@ C16 批实施。** 原裁决建议原文保留如下：
 
 **三处拍板 ✅ 已于 2026-08-27 由泓舟裁定（均按本方案推荐项）**：① C15——如实标注的 mock
 记 WARN 不判 fail、`deterministic` 收编 §9.3（契约已同批改，探针随 C16 落）；② C10-D——
-过期流转用 `cancelled + extra.reason="expired_sweep"`（零 schema 变更），90 条存量清单已出
-（`.artifacts/reminder-cleanup-inventory-20260827.txt`，建议全清、待点名后 apply）；
+过期流转用 `cancelled + extra.reason="expired_sweep"`（零 schema 变更），**90 条存量已按
+「全清」点名当日执行完**（UPDATE 90 / u1 ACTIVE 归零，证据见 §0 与
+`.artifacts/sweep-apply-20260827.result.txt`）；
 ③ C5-B——挂起不冻结兄弟步放行（实施时全族回归）。**本方案自此无外部阻塞项**。
 
 **两条已立的 §4.2 账本轮销掉**：「会话级数据源/降级账本（I-033）」启动条件（第二个消费方）已满足 → 随 C4 落地销账；「多意图复合句被单域吞掉」启动条件（稳定可复现族）已满足 → 随 C5 落地销账。
