@@ -17,17 +17,28 @@ maestro test mobile/e2e/01-text-weather.yaml      # 单条
    dev build 的 `launchApp` 打开的是 DevLauncherActivity，被测对象根本没在跑，
    而失败信息看起来像「App 里没有这个按钮」。
 
-## 状态：flow 已写，**没有实跑读数**（2026-08-28）
+## 状态：CLI 已装、flow 已写，**实跑差设备上一步**（2026-08-28）
 
-`maestro.zip` 315MB，本网络 ~30–50KB/s，两次下载都断在中途（且 `curl -C -` 配 `--retry`
-会把重复字节插进文件中间，坑账 §9.37）。**语法是逐条对着 cli-2.9.0 源码核过的**
-（`YamlFluentCommand.kt` 的字段表 / `Commands.kt::AirplaneValue` / `WorkspaceConfig.kt`），
-但**没跑过就是没跑过**，不许当成通过。
+- **CLI ✅**：`D:/Android/tools/maestro-dist/maestro/bin/maestro.bat --version` = **2.9.0**
+  （zip sha256 与官方 `checksums_sha256.txt` 逐字相符）。
+- **flow 语法 ✅**：逐条对着 cli-2.9.0 源码核过（`YamlFluentCommand.kt` 的字段表 /
+  `Commands.kt::AirplaneValue` / `WorkspaceConfig.kt`）。
+- **实跑 ⬜**：`maestro hierarchy` 起不来——它要往设备装自己的 driver APK，
+  MIUI/HyperOS 弹 `AdbInstallActivity` 要人确认，不确认就是
+  `INSTALL_FAILED_USER_RESTRICTED`（坑账 §9.42）。
+  ⚠ `install_non_market_apps=1` **不代表放行**，MIUI 的「USB 安装」是另一个开关。
 
-## 装 CLI
+  **接手只差这一步**（一次性，装上之后后续命令不再弹）：
+  1. 在设备上点一次「继续安装」，**或** 开发者选项 → 开「USB 安装」；
+  2. `maestro test mobile/e2e/ --include-tags online`。
+
+**没跑过就是没跑过**——本文件里任何一条 flow 都还没有实跑读数，不许当成通过。
+
+## 装 CLI（如果换机器）
 
 下 `maestro.zip`（GitHub releases），**下完先对 release 里的 `checksums_sha256.txt`**，
 解压后把 `bin` 加进 PATH。需要 JDK（本机 JDK 17 已装，见实施计划 §1.1）。
+⚠ 下载别把 `--retry` 和 `-C -` 一起用（会把重复字节插进文件中间，坑账 §9.37）。
 
 ## 已知风险：常驻动画 vs UiAutomator
 

@@ -1067,12 +1067,18 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   - **`subflows/open-app.yaml` 不是仪式**：dev-client 的 `launchApp` 打开的是
     **DevLauncherActivity**，此时所有 `tapOn` 都找不到元素，失败信息看起来像「App 里没这个按钮」，
     真相是被测对象没在跑（同坑账 §9.20 那条）。
-  - **⬜ CLI 未装成**：`maestro.zip` **315MB**，本网络实测 ~30KB/s（GitHub releases，
-    与坑账 §9.7 同一形态；三个 GitHub 代理镜像本网络全不可达，4 段并行也没提速）。
-    两次下载各花 40+ 分钟仍未完成，且**带 `-C -` 的 retry 把重复字节插进了文件中间**
-    （截断到官方声明大小后 sha256 仍对不上、zip 仍坏）——新坑账 §9.37。
-    ⇒ flow 已按 Maestro 2.9.0 语法写好，**装上 CLI 后直接 `maestro test e2e/` 即可**，
-    但**本轮没有实跑读数，不许把「写完了」说成「跑通了」**。
+  - **CLI ✅ 已装成 / 实跑 ⬜ 卡在设备侧一步**（2026-08-28 收尾）：
+    `maestro.zip` 315MB 前后花了约 3 小时（本网络 ~30–50KB/s，GitHub releases，
+    与坑账 §9.7 同形态；三个 GitHub 代理镜像全不可达、4 段并行也没提速），
+    中途踩了 `--retry` + `-C -` 把重复字节插进文件中间那个坑（坑账 §9.37，**已更正**：
+    单次续传是安全的，最后 21MB 就是这么补上的，**sha256 与官方值逐字相符**、zip 201 条目）。
+    `maestro.bat --version` = **2.9.0**。
+    **但 `maestro hierarchy` 起不来**：它要往设备装自己的 driver APK，MIUI 弹
+    `AdbInstallActivity` 要人确认 ⇒ `INSTALL_FAILED_USER_RESTRICTED`（新坑账 §9.42）。
+    ⚠ **这属于「在泓舟的设备上装应用」，不在「授权装 CLI」的范围内，本轮没有替他点。**
+    ⇒ **接手只差一步**：设备上点一次「继续安装」（或开发者选项开「USB 安装」，一次性），
+    然后 `maestro test mobile/e2e/ --include-tags online`。
+    **本轮仍然没有实跑读数，不许把「写完了」说成「跑通了」。**
 
 - **⚠ 本批最有价值的产出是一个真缺陷（不在计划里，真机逼出来的）**：
   **RN 的 WebSocket 在飞行模式下 `onclose`/`onerror` 都不来**（MIX Fold 4 / Android 16 实测，
@@ -1185,7 +1191,8 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 - [x] ✅ 平板面板三段（车况三格是真实推导 72%×550=396km）
 - [x] ✅ 地图入口（有 key）：真实瓦片 + marker 落点正确 + 回中 + **M3-W 三项打磨**
       （按点集自动缩放 / marker 点按详情 / 显式关闭）；无 key 干净降级由 `MAP_AVAILABLE` 两条件守
-- [ ] ⬜ **flow 写完、未实跑** Maestro 三流 3/3（`maestro.zip` 315MB 本网络下不动，坑账 §9.37）
+- [ ] ⬜ **CLI 已装（2.9.0）、flow 已写、未实跑** Maestro 三流 3/3
+      ——卡在 MIUI 的 ADB 安装确认（坑账 §9.42），**需要泓舟在设备上点一次「继续安装」**（一次性）
 - [x] ✅ CI mobile job 常绿 + APK 工件手动档可用（既有，M0-8）
       ——⚠ CI 的 e2e 步骤只能跑 `04-offline-smoke`（runner 无 Tailscale，理由见 M3-W）
 - [x] ✅ 返回键语义（二级页关层 / 根屏 finish——**计划原假设被推翻，泓舟已拍板维持现状**）
@@ -1422,11 +1429,16 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     半透明底叠在 AuroraBackground 的深空渐变上（M3-V 定的前提）。地图页底下是**地图瓦片**
     ——亮度不可控、内容不可预测，换上 Glass 后底部信息条**几乎读不出来**。
     判据：**压在不可控内容上的浮层用不透明底，玻璃质感只留边框与投影。**
-37. **`curl -C -` 配 `--retry` 会把重复字节插进文件中间**（M3-W，下 315MB 的 maestro.zip 时踩）：
-    多次断点续传后文件**比声明大小还大**，截断到正确大小后 sha256 仍对不上、zip 仍坏。
-    判据：**大文件下载失败就整个重来，别用 retry+续传；下完先对官方 sha256 再用**
-    （release 里就有 `checksums_sha256.txt`）。顺带：GitHub releases 本网络 ~30KB/s，
-    三个 GitHub 代理镜像全不可达，4 段并行也没提速（与坑账 §9.7 同一形态）。
+37. **`curl` 的 `--retry` 配上 `-C -` 会把重复字节插进文件中间**（M3-W，下 315MB 的
+    maestro.zip 时踩）：多次断点续传后文件**比声明大小还大**，截断到正确大小后 sha256
+    仍对不上、zip 仍坏。
+    ⚠ **后续更正（同轮实证）**：**单次 `-C -` 续传是安全的**——最后那 21MB 正是用
+    「不带 `--retry` 的单次续传」补上的，sha256 与官方值**逐字相符**、zip 201 条目正常。
+    ⇒ 判据不是「别用续传」，是**「别把 `--retry` 和 `-C -` 一起用」**：重试重新发起请求时
+    不认已写入的偏移。**无论哪种方式，下完都先对官方 sha256**（release 里就有
+    `checksums_sha256.txt`），否则损坏是静默的。
+    顺带：GitHub releases 本网络 ~30–50KB/s，三个 GitHub 代理镜像全不可达，
+    4 段并行也没提速（与坑账 §9.7 同一形态）；315MB 实际花了约 3 小时（分多次续传）。
 38. **RN 的 WebSocket 在飞行模式下 `onclose`/`onerror` 都不来**（M3-W，最要紧的一条）：
     观察 4 分钟 `readyState` 仍 OPEN ⇒ `send()` 把帧写进死 socket、**不入队、消息真的丢**。
     浏览器不是这样（HMI 因此从没暴露过）。修法与判据分界见 `mobile/src/core/api/liveness.ts`
@@ -1452,6 +1464,18 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     flag 全都在 ⇒ **这条清单项在 dev build 上没有区分度**，要么关掉 ①（有锁屏风险、
     设备有 PIN 我解不开）在无人值守时段验，要么留到 release 构建。**不许拿「代码路径对」
     充当「屏幕真的不睡」。**
+
+42. **Maestro 在 MIUI/HyperOS 上被「ADB 安装确认」挡住**（M3-W，2026-08-28）：
+    `maestro hierarchy` / `maestro test` 启动时会往设备装它自己的 driver APK
+    （`maestro-app` / `maestro-server`），MIUI 弹
+    `com.miui.securitycenter/.permcenter.install.AdbInstallActivity` 要人确认，
+    不确认就是 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`。
+    ⚠ **注意 `install_non_market_apps=1` 并不代表放行**——我查了那个开关是 1，照样被挡；
+    MIUI 的「USB 安装」是**另一个**开关（开发者选项里，需小米账号）。
+    ⇒ **这一步需要人在设备上做一次**（弹窗点「继续安装」，或开发者选项开「USB 安装」），
+    是**一次性**的：driver APK 装上之后后续命令不再弹。
+    ⚠ 判据留痕：**这属于「在别人的设备上装应用」，不在「授权装 CLI」的范围内**，
+    所以本轮没有替泓舟点——`maestro.bat --version` 已经能出 2.9.0，卡在设备侧那一步。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
