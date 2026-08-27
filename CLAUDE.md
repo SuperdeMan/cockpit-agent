@@ -97,7 +97,13 @@ observability/  可观测模块：NATS 事件出口、collector、trace/日志/�
 hmi/            React 座舱前端
 mobile/         Android 陪伴端 App（React Native + Expo，TypeScript）——与 hmi/ 共存的第二个
                 用户端，同一后端大脑；只读引用 hmi/src 纯逻辑模块，共享台账
-                mobile/shared-allowlist.json，改共享面两边一起看
+                mobile/shared-allowlist.json，改共享面两边一起看。
+                ⚠ 它有**自己的密钥落点** `mobile/.env.local`（已 gitignore，与根 `.env` 并列
+                而非替代）：目前放高德 Android key，构建期经 `app.config.ts` 注入 AndroidManifest。
+                同红线——不进代码、不进 commit、不进日志。
+                ⚠ 引入**原生支撑的组件**（地图/SVG/音频这类带 ViewManager 的）前必须先探原生在场：
+                原生缺席时 Fabric 在挂载期原生线程抛，React ErrorBoundary **兜不住**、整屏红屏
+                （计划文档坑账 §9.27；M5 的 OTA 只推 JS 不推原生，同形态）
 dashboard/      React 开发/演示可观测台（不进入车控执行主链）
 deploy/         docker-compose / helm / k8s
 scripts/        codegen、构建辅助（含 gen-certs.* 生成 mTLS 证书）、自进化流水线 evolve.py（M1b，nightly 经 Task Scheduler）

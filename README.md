@@ -250,6 +250,8 @@ payment-gateway/  统一支付网关（Agent 不持支付凭证）
 proactive/        统一主动引擎——「该不该现在打扰驾驶员」的唯一裁决点
 observability/    NATS 事件出口、collector、trace / 指标
 hmi/              React 座舱前端（Aurora Glass）
+mobile/           Android 陪伴端 App（React Native + Expo）——与座舱共存的第二个用户端，
+                  同一后端大脑、同 user_id 共享记忆；只读引用 hmi/src 的纯逻辑模块
 dashboard/        React 开发 / 演示可观测台
 runtime/          共享运行时（gRPC keepalive / mTLS / 优雅停机 + 主动消息出口）
 deploy/           docker-compose / 证书生成

@@ -59,6 +59,34 @@ App 专属条目（手机档不含 `vehicle.control`）由泓舟在 M1 期间加
 
 设备前置：真机装 Tailscale 官方 App 并登录同一 tailnet（连不上先查它，再查代码）。
 
+## 地图（M3-3，可降级）
+
+高德 Android SDK。**key 不进 git**——放本机 `mobile/.env.local`（已 gitignore，Expo CLI
+自动加载；Metro 启动日志会打印 `env: load .env.local`）：
+
+```dotenv
+AMAP_ANDROID_KEY=<你的高德 Android key>
+```
+
+链路：`app.config.ts` 读它 → `plugins/with-amap-key.js` 写进 AndroidManifest 的
+`com.amap.api.v2.apikey` → `extra.mapEnabled/amapKey` 透传给 JS。
+**缺 key 时插件根本不挂**：manifest 里没有这条 meta-data、`mapEnabled=false`、
+卡片上的「地图」入口不出现——「可降级」是这个意思，不是点进去报错。
+
+⚠ **高德 key 绑「包名 + 签名 SHA1」**，换签名（debug→release、换机器、换 keystore）
+必须在高德控制台补一条，否则地图只是灰屏、`logcat` 里报
+`Key验证失败：[INVALID_USER_SCODE]`。当前 debug 签名指纹（从 APK 本体
+`apksigner verify --print-certs` 读实，**不要从 keystore 推断**——本机有两把
+debug.keystore）：
+
+```
+包名   com.xiaozhou.companion
+SHA-1  5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25
+```
+
+地图入口只出现在**契约里真的带 `lat`/`lng`** 的卡上（`poi_detail` / `place_list` /
+`place_detail`）；`route_plan` / `poi_list` / `charging_route` 没有坐标，折线等后端补。
+
 ## 与 hmi/ 的共享面（单一真相源，不复制不搬家）
 
 `@shared/*` = `hmi/src/*`，**只许引白名单模块**：台账 [`shared-allowlist.json`](shared-allowlist.json)
@@ -69,10 +97,11 @@ App 专属条目（手机档不含 `vehicle.control`）由泓舟在 M1 期间加
 ## 目录
 
 ```
-app.config.ts          原生配置真相源（名称/包名/变体/插件）
-shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M2）
-src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / debug
-                       / voice-spike（M2 语音取证屏，不进主导航，深链接进）
+app.config.ts          原生配置真相源（名称/包名/变体/插件/高德 key 注入）
+shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M3）
+src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / map
+                       / debug / voice-spike（M2 语音取证屏）/ card-gallery（M3 卡片画廊，
+                       支持 ?only=<type> 直达某一族；后三个不进主导航，深链接进）
 src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts
 src/core/session/      M1 会话状态机：store.ts（8 型帧分发+看门狗+确认台账）/ sendRouter.ts
@@ -84,8 +113,13 @@ src/core/voice/        M2 语音面：recorder（16k 归一）/ resample / asr�
                        / tts（流式+收尾三分支）/ audioCtx（pcmPlayer 注入适配）/ speech
                        （SpeechSink 实现）/ audioFocus / catalog / wav / base64
 src/features/chat/     对话 UI：ChatScreen（双形态外壳）/ MessageBubble / Composer
-src/features/cards/    CardRenderer（M1 首批 17+1 型 + 兜底卡铁则 + ErrorBoundary + _prov 徽章）
-src/features/settings/ 设置页；src/features/vehicle/ 车况镜像面板
+src/core/map/          地图能力判据：MAP_AVAILABLE（有 key ∧ 原生在场）+ 坐标校验（0,0 判空）
+src/features/cards/    CardRenderer（**全量 34 型** + 兜底卡铁则 + ErrorBoundary + _prov 徽章）；
+                       infoCards / navCards / miscCards / merchantCards（商户支付族，复用
+                       @shared/merchantUi.mjs）/ parts（含 relativeTime）/ fixtures（画廊语料）
+src/features/settings/ 设置页；src/features/vehicle/ 车况面板（三格指标复用 vehicleStage.mjs）
+                       + ReminderSection（平板右面板提醒段，复用 reminderStage.mjs）
+types/                 第三方类型补丁：RN 内部 URL 实现 / react-native-amap3d（见文件头注）
 src/ui/                主题（深浅/跟随系统 + 字号两档）
-test/                  jest（jest-expo）：守卫 + 契约单测（134 条）
+test/                  jest（jest-expo）：守卫 + 契约单测（188 条）
 ```
