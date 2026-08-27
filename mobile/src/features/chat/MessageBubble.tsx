@@ -1,12 +1,15 @@
-// 消息气泡（实施计划 M1-3）：气泡态全集 user/assistant/pending/streaming/error/rejected/超时
-// + 过程区折叠条（execute 合并态在 store 已做）+ 确认条（按台账渲染、可多条并存）+
-// followUp 提示 + trace_id 长按复制。文案对照 hmi ChatView 语义，不追像素。
+// 消息气泡（M1-3 建立，Aurora Glass 复刻轮重皮）：气泡态全集 user/assistant/pending/streaming/
+// error/rejected/超时 + 过程区折叠条 + 确认条（按台账渲染、可多条并存）+ followUp + trace 长按复制。
+// 视觉照 hmi ChatView A-6：user=交互蓝玻璃右对齐（18/18/4/18），assistant=光球头像+玻璃（4/18/18/18），
+// confirm/error 换语义 tone 边框。光球头像只在气泡活跃（pending/streaming/process）时跑动画——
+// 判据取「这条消息此刻在动」而非「是不是最后一条」，列表里历史气泡全部静态（§10 性能纪律）。
 import * as Clipboard from 'expo-clipboard'
 import { useState } from 'react'
-import { ActivityIndicator, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import type { Msg } from '@shared/types.ts'
 
+import { AuroraOrb, StreamCursor, ThinkDots, type OrbState } from '../../ui/aurora'
 import type { Palette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
@@ -59,18 +62,21 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
   const [copied, setCopied] = useState(false)
   if (msg.role === 'user') {
     return (
-      <View style={{ alignItems: 'flex-end', marginVertical: 4 }}>
+      <View style={{ alignItems: 'flex-end', marginVertical: 5 }}>
         <View
           style={{
-            backgroundColor: p.accent,
-            borderRadius: 16,
+            backgroundColor: `${p.accent}1F`,
+            borderWidth: 1,
+            borderColor: `${p.accent}38`,
+            borderRadius: 18,
             borderBottomRightRadius: 4,
-            paddingHorizontal: 14,
-            paddingVertical: 9,
+            paddingHorizontal: 15,
+            paddingVertical: 10,
             maxWidth: '86%',
+            boxShadow: p.dark ? '0 4px 16px rgba(0,0,0,0.22)' : '0 2px 10px rgba(10,14,26,0.06)',
           }}
         >
-          <Text style={{ color: '#fff', fontSize: p.font(15) }}>{msg.text}</Text>
+          <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>{msg.text}</Text>
         </View>
       </View>
     )
@@ -85,20 +91,38 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
   }
 
   const proactive = msg.proactiveKind !== undefined || msg.text.startsWith('💡 ')
+  // 光球态与动画开关：活跃中（思考/流式/过程区推进）才动，历史气泡静态
+  const active = !!(msg.pending || msg.streaming || msg.processActive)
+  const orbState: OrbState = msg.pending || msg.processActive ? 'thinking' : msg.streaming ? 'speaking' : 'idle'
+  // 语义 tone：待确认=琥珀 / 错误=红 / 常态=玻璃（hmi AIBubbleBase toneStyle 同款）
+  const tone =
+    msg.needConfirm && confirmActive
+      ? { borderColor: 'rgba(245,158,11,0.32)', borderTopColor: 'rgba(245,158,11,0.45)' }
+      : msg.error
+        ? { borderColor: 'rgba(239,68,68,0.28)', borderTopColor: 'rgba(239,68,68,0.40)' }
+        : { borderColor: p.fill2, borderTopColor: p.hi }
+
   return (
-    <View style={{ alignItems: 'flex-start', marginVertical: 4 }}>
+    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginVertical: 5 }}>
+      <View style={{ marginTop: 2 }}>
+        <AuroraOrb size={28} state={orbState} animated={active} />
+      </View>
       <Pressable
         onLongPress={longPressTrace}
         style={{
-          backgroundColor: p.panel,
-          borderColor: msg.error ? p.red : proactive ? p.accentSoft : p.line,
+          flex: 1,
+          backgroundColor: p.fill,
           borderWidth: 1,
-          borderRadius: 16,
-          borderBottomLeftRadius: 4,
+          ...tone,
+          borderRadius: 18,
+          borderTopLeftRadius: 4,
           paddingHorizontal: 14,
-          paddingVertical: 10,
+          paddingVertical: 11,
           maxWidth: '92%',
           gap: 8,
+          boxShadow: p.dark
+            ? '0 4px 20px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06)'
+            : '0 3px 14px rgba(10,14,26,0.07), inset 0 1px 0 rgba(255,255,255,0.9)',
         }}
       >
         {proactive ? (
@@ -108,7 +132,7 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
         ) : null}
         {msg.pending ? (
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <ActivityIndicator size="small" color={p.accent} />
+            <ThinkDots color={p.accent} />
             <Text style={{ color: p.fg3, fontSize: p.font(13) }}>正在思考…</Text>
           </View>
         ) : null}
@@ -123,11 +147,11 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
             style={{
               color: msg.error ? p.red : p.fg1,
               fontSize: p.font(15),
-              lineHeight: p.font(22),
+              lineHeight: p.font(23),
             }}
           >
             {msg.text}
-            {msg.streaming ? ' ▍' : ''}
+            {msg.streaming ? <StreamCursor h={p.font(15)} /> : null}
           </Text>
         ) : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
@@ -143,9 +167,10 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
               style={{
                 flex: 1,
                 minHeight: 44,
-                borderRadius: 12,
+                borderRadius: 14,
                 borderWidth: 1,
-                borderColor: p.line,
+                borderColor: p.fill2,
+                backgroundColor: p.fill,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
@@ -157,8 +182,10 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
               style={{
                 flex: 2,
                 minHeight: 44,
-                borderRadius: 12,
+                borderRadius: 14,
                 backgroundColor: p.amberSoft,
+                borderWidth: 1,
+                borderColor: 'rgba(245,158,11,0.35)',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}

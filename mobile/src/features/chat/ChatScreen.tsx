@@ -1,7 +1,8 @@
-// 对话主屏（实施计划 M1-3/M1-6/M1-7 装配）：
+// 对话主屏（M1-3/M1-6/M1-7 装配，Aurora Glass 复刻轮重皮）：
 //  - GatewaySession（下行帧→SessionCore.handleFrame，状态→connStatus）
-//  - 双形态外壳：窗口短边 ≥600dp 平板双栏（右=车况摘要+最近卡片聚焦），旋转即时切
+//  - 双形态外壳：窗口短边 ≥600dp 平板双栏（右=玻璃舞台：车况+提醒+焦点卡），旋转即时切
 //  - 确认条按台账渲染（isPendingLive），位置征询条只激活最新一条
+//  - 视觉照 hmi shell.css：深空渐变+极光 blob 打底，顶栏=品牌光球+连接 pill，空对话=欢迎态大光球
 // 改服务器配置 → 回本屏时按 edgeUrl+token 判变 → 断开重连（M1-5 服务器分区语义）。
 import { FlashList } from '@shopify/flash-list'
 import { Link, Redirect, useFocusEffect } from 'expo-router'
@@ -17,6 +18,7 @@ import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { ensureWired, type Wired } from '../../core/session/wiring'
 import { settingsStore } from '../../core/settings/store'
+import { AuroraBackground, AuroraOrb, Glass } from '../../ui/aurora'
 import { usePalette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import { ReminderSection } from '../vehicle/ReminderSection'
@@ -58,18 +60,65 @@ export function ChatScreen() {
   if (cfgState === 'loading' || !wired) {
     return <View style={{ flex: 1, backgroundColor: p.bg }} />
   }
-  return <ChatBody p={p} wired={wired} tablet={tablet} cfg={cfgState} />
+  return <ChatBody p={p} wired={wired} tablet={tablet} width={width} cfg={cfgState} />
+}
+
+/** 欢迎态（hmi ChatView Welcome 同款）：大光球 + 问候 + 快捷指令，替代此前的空白列表 */
+function Welcome({
+  p,
+  name,
+  hasVoice,
+  quickCommands,
+  onSend,
+}: {
+  p: ReturnType<typeof usePalette>
+  name: string
+  hasVoice: boolean
+  quickCommands: string[]
+  onSend: (text: string) => void
+}) {
+  return (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 }}>
+      <AuroraOrb size={88} state="idle" animated />
+      <Text style={{ color: p.fg1, fontSize: p.font(26), fontWeight: '600', marginTop: 14 }}>
+        我是{name}
+      </Text>
+      <Text style={{ color: p.fg2, fontSize: p.font(14) }}>
+        {hasVoice ? '按住下方光球说话，或点指令试试' : '点下方指令试试，或直接输入'}
+      </Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginTop: 12 }}>
+        {quickCommands.slice(0, 3).map((q) => (
+          <Pressable
+            key={q}
+            onPress={() => onSend(q)}
+            style={{
+              backgroundColor: p.fill,
+              borderWidth: 1,
+              borderColor: p.fill2,
+              borderRadius: 999,
+              paddingHorizontal: 18,
+              paddingVertical: 10,
+            }}
+          >
+            <Text style={{ color: p.fg1, fontSize: p.font(13) }}>{q}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  )
 }
 
 function ChatBody({
   p,
   wired,
   tablet,
+  width,
   cfg,
 }: {
   p: ReturnType<typeof usePalette>
   wired: Wired
   tablet: boolean
+  width: number
   cfg: ServerConfig
 }) {
   const { core } = wired
@@ -113,8 +162,6 @@ function ChatBody({
     [messages],
   )
 
-  const dotColor = connStatus === 'open' ? p.green : connStatus === 'connecting' ? p.amber : p.red
-
   // 弱网提示条（M3-4）：**延迟 3 秒**再显示——重连本来就是常态（切基站/锁屏回来都会闪一下），
   // 每次都弹一条会把「正常自愈」渲染成「出事了」，用户学会忽略它之后真断网也就没人看了。
   const [linkWarn, setLinkWarn] = useState(false)
@@ -127,27 +174,44 @@ function ChatBody({
     return () => clearTimeout(t)
   }, [connStatus])
 
+  const conn =
+    connStatus === 'open'
+      ? { color: p.green, label: '在线' }
+      : connStatus === 'connecting'
+        ? { color: p.amber, label: '连接中' }
+        : { color: p.red, label: '已断开' }
+
   const chatColumn = (
     <View style={{ flex: 1 }}>
-      <FlashList
-        data={messages}
-        // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
-        maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-        extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale]}
-        keyExtractor={(m) => m.id}
-        renderItem={({ item }) => (
-          <View style={{ paddingHorizontal: 12 }}>
-            <MessageBubble
-              p={p}
-              msg={item}
-              confirmActive={confirmActiveOf(item)}
-              onConfirm={onConfirm}
-              onSend={onSend}
-            />
-          </View>
-        )}
-        contentContainerStyle={{ paddingVertical: 8 }}
-      />
+      {messages.length === 0 ? (
+        <Welcome
+          p={p}
+          name={settings.assistantName}
+          hasVoice={!!cfg.audioUrl}
+          quickCommands={settings.quickCommands}
+          onSend={onSend}
+        />
+      ) : (
+        <FlashList
+          data={messages}
+          // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
+          maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale]}
+          keyExtractor={(m) => m.id}
+          renderItem={({ item }) => (
+            <View style={{ paddingHorizontal: 12 }}>
+              <MessageBubble
+                p={p}
+                msg={item}
+                confirmActive={confirmActiveOf(item)}
+                onConfirm={onConfirm}
+                onSend={onSend}
+              />
+            </View>
+          )}
+          contentContainerStyle={{ paddingVertical: 10 }}
+        />
+      )}
       <Composer
         p={p}
         quickCommands={settings.quickCommands}
@@ -161,67 +225,105 @@ function ChatBody({
 
   return (
     // top 边必须显式包含：真机顶栏会顶进系统状态栏（M1-8 首轮实测，手机态露头的第一个 bug）
-    <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['top', 'bottom']}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 14,
-            paddingVertical: 10,
-            borderBottomWidth: 1,
-            borderColor: p.line,
-          }}
+    <View style={{ flex: 1, backgroundColor: p.bg }}>
+      <AuroraBackground p={p} />
+      <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         >
-          <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: dotColor }} />
-          <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '700', flex: 1 }}>
-            {settings.assistantName}随行
-          </Text>
-          {!tablet ? (
-            <Link href="/vehicle" style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
-              车辆
-            </Link>
-          ) : null}
-          <Link href="/settings" style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
-            设置
-          </Link>
-        </View>
-        {linkWarn ? (
-          <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
-            <Text style={{ color: p.amber, fontSize: p.font(12) }}>
-              {connStatus === 'connecting' ? '正在重连服务器…' : '连接已断开，正在重试'}
-              ——这期间发出的消息会排队，连上后自动补发
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              borderBottomWidth: 1,
+              borderColor: p.line,
+            }}
+          >
+            <AuroraOrb size={30} state={busy ? 'thinking' : 'idle'} animated={busy} />
+            <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+              {settings.assistantName}随行
             </Text>
-          </View>
-        ) : null}
-        {tablet ? (
-          <View style={{ flex: 1, flexDirection: 'row' }}>
-            {chatColumn}
-            {/* 平板右面板三段（M3-2）：车况 / 提醒 / 焦点卡。
-                三段都是**已经在会话里的事实的第二个视图**，不额外向后端取数 */}
-            <View style={{ width: 340, borderLeftWidth: 1, borderColor: p.line }}>
-              <ScrollView contentContainerStyle={{ padding: 12, gap: 14 }}>
-                <VehicleSection p={p} vehState={vehState} />
-                <ReminderSection p={p} messages={messages} />
-                <View style={{ gap: 6 }}>
-                  <Text style={{ color: p.fg3, fontSize: p.font(12) }}>焦点卡</Text>
-                  {latestCard ? (
-                    <CardRenderer p={p} card={latestCard} onSend={onSend} />
-                  ) : (
-                    <Text style={{ color: p.fg3, fontSize: p.font(11) }}>本轮还没有卡片</Text>
-                  )}
-                </View>
-              </ScrollView>
+            {/* 连接 pill（hmi .au-conn 同款）：点 + 短字 */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                backgroundColor: p.fill,
+                borderWidth: 1,
+                borderColor: p.fill2,
+                borderRadius: 999,
+                paddingHorizontal: 10,
+                paddingVertical: 3,
+              }}
+            >
+              <View
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 4,
+                  backgroundColor: conn.color,
+                  boxShadow: `0 0 8px ${conn.color}`,
+                }}
+              />
+              <Text style={{ color: p.fg2, fontSize: p.font(11) }}>{conn.label}</Text>
             </View>
+            <View style={{ flex: 1 }} />
+            {!tablet ? (
+              <Link href="/vehicle" style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
+                车辆
+              </Link>
+            ) : null}
+            <Link href="/settings" style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
+              设置
+            </Link>
           </View>
-        ) : (
-          chatColumn
-        )}
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+          {linkWarn ? (
+            <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
+              <Text style={{ color: p.amber, fontSize: p.font(12) }}>
+                {connStatus === 'connecting' ? '正在重连服务器…' : '连接已断开，正在重试'}
+                ——这期间发出的消息会排队，连上后自动补发
+              </Text>
+            </View>
+          ) : null}
+          {tablet ? (
+            <View style={{ flex: 1, flexDirection: 'row' }}>
+              {chatColumn}
+              {/* 平板右舞台（M3-2 三段，Aurora 复刻轮玻璃化）：车况 / 提醒 / 焦点卡。
+                  三段都是**已经在会话里的事实的第二个视图**，不额外向后端取数 */}
+              <Glass
+                p={p}
+                r={24}
+                style={{
+                  width: Math.min(400, Math.round(width * 0.42)),
+                  marginVertical: 10,
+                  marginRight: 10,
+                  overflow: 'hidden',
+                }}
+              >
+                <ScrollView contentContainerStyle={{ padding: 14, gap: 16 }}>
+                  <VehicleSection p={p} vehState={vehState} />
+                  <ReminderSection p={p} messages={messages} />
+                  <View style={{ gap: 6 }}>
+                    <Text style={{ color: p.fg3, fontSize: p.font(12) }}>焦点卡</Text>
+                    {latestCard ? (
+                      <CardRenderer p={p} card={latestCard} onSend={onSend} />
+                    ) : (
+                      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>本轮还没有卡片</Text>
+                    )}
+                  </View>
+                </ScrollView>
+              </Glass>
+            </View>
+          ) : (
+            chatColumn
+          )}
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   )
 }

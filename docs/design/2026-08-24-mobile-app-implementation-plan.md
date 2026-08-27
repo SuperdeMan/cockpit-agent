@@ -961,6 +961,42 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     ——折叠屏展开态与真平板的差别（DPI/输入法/多窗）没有覆盖到。
   - M3-5 Maestro（泓舟已授权装 CLI，flow 未写）、M3-6 §8.3 全清单。
 
+### M3-V 实施记录（2026-08-27 晚，Aurora Glass 复刻批——泓舟指定的插批，不在原 M 序列里）
+
+- **做了什么**：把 hmi 的 Aurora Glass 设计语言（`hmi/src/aurora.css` + `AuroraOrb.tsx`）
+  复刻到 App 端，VPA 光球形象落四个位：Composer PTT 按钮本体（52dp 热区，录音=speaking
+  波纹/识别中=thinking，隐喻照 hmi Composer）、欢迎态 88dp 大球（**此前空对话是纯空白**，
+  本批补齐欢迎态=大球+问候+quick chips）、assistant 气泡 28dp 头像、顶栏 30dp 品牌球。
+  落点：`ui/theme.ts`（token 逐值照 aurora.css，深浅两套，**旧字段名全保留** ⇒ 34 个
+  卡渲染器/设置/车辆/地图零改动自动换肤）+ 新目录 `ui/aurora/`（AuroraOrb 七层五态 /
+  AuroraBackground 深空渐变+三 blob / Glass 四边不等光照边框 / StreamCursor 虹彩流式光标 /
+  ThinkDots）+ 四个消费面重皮（cards/parts.tsx 卡壳、MessageBubble、Composer、ChatScreen
+  含平板右栏玻璃舞台化+宽度响应 `min(400, 42%)`）。
+- **技术定案（RN 0.86 新架构，零新原生依赖 ⇒ 全批免重建、Metro 热载直验）**：
+  渐变用 `experimental_backgroundImage`（TS 类型在 `types_generated/`，Flow 与手写 types
+  目录里都搜不到——**查 RN 样式能力要看 types_generated**）；玻璃投影/inset 顶缘高光用
+  `boxShadow` 字符串；**全程不用 `filter: blur`**（Android <12 RenderEffect 缺席会整层
+  失效），柔光一律 radial 透明衰减自带柔边；conic-gradient 不存在 → 光球晕环/漩涡改
+  「四色 blob 绕圆 + 整层旋转」，视觉等效流动彩环；RN 无 backdrop-filter → 玻璃走
+  aurora.css 自己声明的 `--au-glass-fallback` 降级路线的增强版（半透明底叠深空 blob 背景）。
+  虹彩纪律（§5）App 端守住 3 处：光球、发送按钮、流式光标——正文与数字零虹彩。
+- **性能纪律**：光球 `animated` 开关——列表历史气泡头像**零动画帧回调**，判据取
+  「这条消息此刻在动」（pending/streaming/processActive）而非「是不是最后一条」；
+  同屏循环动画常态只有 Composer 主球一个。
+- **真机读数（goku 24072PX77C，全部截图验证）**：手机态欢迎/对话（user 蓝玻璃+assistant
+  玻璃+真执行回执）/画廊 40 样本抽查（weather/stock A股红涨/scene_card danger 角标/
+  payment_qr 真码+过期置灰）/设置页；**浅色主题即时切换**全对；平板态
+  `cmd device_state state 3` 强制展开=左对话+右玻璃舞台三段（车况 72%·396km·P 真实推导）；
+  PTT 长按=「正在听…」+partial 实时上屏+系统麦克风指示亮。tsc 0、jest 188/188。
+- **本批踩的坑（已修）**：RN radial `ellipse` 缺省 farthest-corner——衰减在 View 边界外
+  才走完，真机上镜面高光渲染成**明显方块**（web 同款语法不显形是因为有 blur(2px) 且尺寸小）
+  ⇒ 光球内定位式柔光层一律 `closest-side` + 色标 ≤82% 收尾。
+- **刻意不做**：等宽数字 §7 铁律（34 个渲染器逐处标 mono 是独立批）、AuroraBorder
+  AI 虹彩描边（App 端暂无「整卡 AI 出品」标识需求）、speaking 波纹只在真机动态可见
+  （静帧抓不到峰值，真人按住肉眼验）。
+- **接手注意**：画廊全卡族的样式回归入口不变（`xiaozhou://card-gallery?only=…`）；
+  折叠屏截图要 `screencap -d <display-id>`（坑账 §9.28 同款）。
+
 ---
 
 ## 7. M4 / M5（触发条件与首任务，不展开）

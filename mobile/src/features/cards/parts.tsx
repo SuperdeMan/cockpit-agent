@@ -23,10 +23,12 @@ export function CardShell({
   return (
     <View
       style={{
+        // 玻璃气泡内的二级面（Aurora 复刻轮）：fill 底 + 顶缘高光边，不再叠整套玻璃投影
         backgroundColor: p.card,
         borderColor: p.line,
+        borderTopColor: p.hi,
         borderWidth: 1,
-        borderRadius: 14,
+        borderRadius: 16,
         padding: 12,
         gap: 8,
       }}
