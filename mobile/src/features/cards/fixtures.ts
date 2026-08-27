@@ -183,22 +183,22 @@ export function cardFixtures(): Fixture[] {
       items: [{ id: 'p1', name: '杭州站', address: '小营街道环城东路1号' }, { id: 'p2', name: '杭州东站', address: '天城路1号' }],
     },
   },
-  { label: 'poi_detail', card: { type: 'poi_detail', name: '杭州东站', address: '天城路1号', category: '交通枢纽', rating: '4.5' } },
+  { label: 'poi_detail', card: { type: 'poi_detail', name: '杭州东站', address: '天城路1号', category: '交通枢纽', rating: '4.5', lat: 30.2907, lng: 120.2129 } },
   {
     label: 'place_list（含「看菜单」直达）',
     realStack: true,
     card: {
       type: 'place_list', category: '咖啡', keyword: '瑞幸',
       items: [
-        { id: 's1', name: '瑞幸咖啡(富通城三期店)', address: '兴业路富通城三期一层103室', rating: '4.2', cost: '13.00', distance_km: 1.3, open_today: '07:00-18:00' },
-        { id: 's2', name: '麦当劳(西乡大道店)', address: '西乡大道100号', rating: '4.0', cost: '25.00', distance_km: 0.8, open_today: '24小时营业' },
+        { id: 's1', name: '瑞幸咖啡(富通城三期店)', address: '兴业路富通城三期一层103室', rating: '4.2', cost: '13.00', distance_km: 1.3, open_today: '07:00-18:00', lat: 22.5781, lng: 113.8563 },
+        { id: 's2', name: '麦当劳(西乡大道店)', address: '西乡大道100号', rating: '4.0', cost: '25.00', distance_km: 0.8, open_today: '24小时营业', lat: 22.5726, lng: 113.8608 },
       ],
       _prov: { mode: 'real', vendor: 'amap', fetched_at: iso(-900_000) },
     },
   },
   {
     label: 'place_detail',
-    card: { type: 'place_detail', name: '瑞幸咖啡(富通城三期店)', address: '兴业路富通城三期一层103室', rating: '4.2', cost: '13.00', tel: '400-000-0000', open_today: '07:00-18:00', tags: '咖啡,外带,自提' },
+    card: { type: 'place_detail', name: '瑞幸咖啡(富通城三期店)', address: '兴业路富通城三期一层103室', rating: '4.2', cost: '13.00', tel: '400-000-0000', open_today: '07:00-18:00', tags: '咖啡,外带,自提', lat: 22.5781, lng: 113.8563 },
   },
   {
     label: 'charging_route（有补电点）',

@@ -27,6 +27,7 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.2",
+    "react-native-amap3d": "^3.2.4",
     "react-native-audio-api": "^0.13.3",
     "react-native-audio-record": "^0.2.2",
     "react-native-gesture-handler": "~2.32.0",

@@ -15,6 +15,9 @@
       ],
       "@shared/*": [
         "../hmi/src/*"
+      ],
+      "react-native-amap3d": [
+        "./types/react-native-amap3d.d.ts"
       ]
     }
   },

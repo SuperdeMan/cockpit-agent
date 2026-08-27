@@ -5,6 +5,8 @@
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { Link } from 'expo-router'
+
 import { placeMenuAction } from '@shared/merchantUi.mjs'
 import type {
   ChargingRouteCard,
@@ -16,6 +18,7 @@ import type {
   TripItineraryCard,
 } from '@shared/types.ts'
 
+import { MAP_AVAILABLE, mapPointsOf, toMapPoint, type MapPoint } from '../../core/map/available'
 import type { Palette } from '../../ui/theme'
 import { CardButtons, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
 
@@ -83,6 +86,27 @@ function ItemRow({
   )
 }
 
+/** 「地图」入口（M3-3）。三个条件缺一不出现：地图能力可用 / 这张卡真的带坐标 /
+ *  至少有一个点。**不可用时入口根本不渲染**——卡片信息面零损失，
+ *  用户看不到一个按了会失望的按钮，这就是计划说的「可降级」。 */
+function MapEntry({ p, points, title }: { p: Palette; points: MapPoint[]; title: string }) {
+  if (!MAP_AVAILABLE || !points.length) return null
+  return (
+    <Link
+      href={{ pathname: '/map', params: { points: JSON.stringify(points), title } }}
+      style={{
+        alignSelf: 'flex-start',
+        color: p.accent,
+        fontSize: p.font(12),
+        paddingHorizontal: 10,
+        paddingVertical: 5,
+      }}
+    >
+      地图
+    </Link>
+  )
+}
+
 export function PoiList({ p, card, onSend }: { p: Palette; card: PoiListCard; onSend: SendFn }) {
   const purpose = card.purpose
   const title =
@@ -132,6 +156,7 @@ export function PoiDetail({ p, card, onSend }: { p: Palette; card: PoiDetailCard
       <KV p={p} k="地址" v={card.address} />
       <KV p={p} k="类型" v={card.category} />
       <KV p={p} k="评分" v={card.rating ? `★${card.rating}` : ''} />
+      <MapEntry p={p} points={[toMapPoint(card)].filter((x) => x !== null)} title={card.name} />
       <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: `导航去${card.name}` }]} />
     </CardShell>
   )
@@ -167,6 +192,11 @@ export function PlaceList({ p, card, onSend }: { p: Palette; card: PlaceListCard
           onPress={() => onSend(`看${it.name}的详情`, it.id ? { nearby_poi_id: it.id } : undefined)}
         />
       ))}
+      <MapEntry
+        p={p}
+        points={mapPointsOf(card.items)}
+        title={`周边 · ${card.category || card.keyword || '发现'}`}
+      />
       <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
         点选看详情；说「导航去第N个」直接导航；「换一批」看更多
       </Text>
@@ -193,6 +223,7 @@ export function PlaceDetail({ p, card, onSend }: { p: Palette; card: PlaceDetail
       <KV p={p} k="电话" v={card.tel} />
       <KV p={p} k="今日营业" v={card.open_today} />
       <KV p={p} k="每周" v={card.open_week} />
+      <MapEntry p={p} points={[toMapPoint(card)].filter((x) => x !== null)} title={card.name} />
       <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: `导航去${card.name}` }]} />
     </CardShell>
   )

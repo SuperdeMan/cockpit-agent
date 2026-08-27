@@ -227,6 +227,15 @@ try {
         } else {
             Info 'WARN 没探到 Git Bash——react-native-audio-api 的预编译产物下载可能失败'
         }
+        # 老式社区库（react-native-amap3d 这类 2023 年前后的包）读根工程 ext 拿 SDK 版本，
+        # 而 Expo 57 的根 build.gradle 不再设它们（坑账 §9.16）⇒ 静默回落到自己写死的
+        # 陈旧默认（compileSdk 33），撞上 RN 0.86 的 androidx 要求 34+。
+        # 值取自上面已解析的 libs.versions.toml（本机真实安装的那套），不另写死一份。
+        if ($compileSdk) { $gradleArgs += "-PlegacyCompileSdk=$compileSdk"; $gradleArgs += "-PlegacyTargetSdk=$compileSdk" }
+        if ($bt) { $gradleArgs += "-PlegacyBuildTools=$bt" }
+        $minSdkToml = TomlVal 'minSdk' $toml
+        if ($minSdkToml) { $gradleArgs += "-PlegacyMinSdk=$minSdkToml" }
+
         Info "gradlew $task（首跑会拉依赖，几分钟量级；CN 镜像 init script）"
         & .\gradlew.bat @gradleArgs
         if ($LASTEXITCODE -ne 0) { Fail "gradle $task 失败（exit $LASTEXITCODE）" }

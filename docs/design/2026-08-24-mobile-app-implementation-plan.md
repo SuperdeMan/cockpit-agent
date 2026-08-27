@@ -888,16 +888,72 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 
 - **画廊加了 `?only=` 过滤**（`xiaozhou://card-gallery?only=payment_qr` / 逗号分隔多个 / 子串匹配）。加它是被逼的：全表 40 条时 adb 滚动定位**极不可靠**——慢拖（700ms）会被卡内 Pressable 吃掉、快扫（260ms）带惯性一次跨 3 条，同一条指令时灵时不灵，为定位一张卡耗掉十几轮。**取证屏就该能直达要取的那一条。**
 
+- **B 批：原生重建 ✅ + M3-3 地图 spike ✅（2026-08-27 下午）**。**一次构建带上
+  `react-native-svg` 与 `react-native-amap3d`**（每趟镜像构建 ~24 分钟，分两次不值当）：
+  `BUILD SUCCESSFUL in 24m 6s`、APK **325MB**（M2 是 281MB）、`adb install -r` Success。
+
+  - **`react-native-svg` ✅ 端到端通**：付款码三条分支真机复验——有码那张渲出**真二维码**
+    且降级提示自动消失（`qrBlocked` 转 false）、过期那张置灰 + 「已过期」角标、无码那张走
+    安全链接档。**上一轮那条「本机暂时无法显示二维码」的守卫，这一轮自动让位**，
+    说明守卫判的是「原生在不在场」而不是写死的降级。
+
+  - **`react-native-amap3d` 的定性被实测改了两次，两次都是我先判悲观**：
+    1. 先判「`compileOnly 'com.facebook.react:react-native:+'` 是 RN 0.71 前的老坐标，
+       必炸」——**错了**：RN 0.86 的 gradle 插件**仍然做 `react-native` → `react-android`
+       的依赖替换**（`DependencyUtils.kt:135` 的注释直接点名这个场景）。**差点据此否掉一个
+       其实能用的库。**
+    2. 再判「`compileSdkVersion getExt('compileSdkVersion', 33)` 会回落到 33、撞 androidx 34+」
+       ——这条**是真的**（Expo 57 根 build.gradle 不设这些 ext，坑账 §9.16），但修法是通用的：
+       init script 里补 `rootProject.ext` 的四个 SDK 版本，值由 `build_mobile.ps1` 从
+       `libs.versions.toml` 解析后 `-P` 传入。**不是给某个库开后门——任何按约定读根 ext 的
+       老库都会受益，且值来自本机真实安装的那套，不是又写死一份。**
+    ⇒ 结论：**库能编译、能挂载、Paper ViewManager 在 Fabric interop 下正常工作**
+    （`ReactNativeFeatureFlagsDefaults.useFabricInterop()` 默认 `true` 那条预判是对的）。
+
+  - **⚠ 地图现在停在一处只有泓舟能解的地方：`Key验证失败：[INVALID_USER_SCODE]`**
+    （logcat `amapsdk` 标签）。高德这个码的含义是**包名 + 签名 SHA1 的组合与该 key 注册的不符**。
+    我们的 APK 是 **debug 签名**，从 APK 本体读实（`apksigner verify --print-certs`，
+    不是从 keystore 推断——本机有两个 debug.keystore，推错就给错指纹）：
+    - 包名：`com.xiaozhou.companion`
+    - **SHA-1：`5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`**
+      （即 RN/Expo 模板自带的 `android/app/debug.keystore`，**不是** `~/.android/debug.keystore`
+      那把 `BA:53:6B:57:…`）
+    ⇒ 请泓舟在高德控制台给该 key 增加这条「包名 + SHA1」。**代码侧无待办**。
+    ⚠ 顺带一条 M5 账：模板 debug keystore 是**全世界 RN 项目共用的那一把**，
+    正式签名必须换（M5 生产化项）。
+
+  - **另一处实测改了我自己的设计决定**：我最初在 `app.config.ts` 里**刻意只透传布尔、
+    不透传 key**（想把 key 留在原生侧）。实测地图灰屏且 **logcat 零输出**，查了三轮才定位：
+    库的 `initSDK` 是 `apiKey?.let { ... }`（`SdkModule.kt:19-25`），**传空则整块跳过**，
+    连高德 9.x 必需的 `updatePrivacyAgree`/`updatePrivacyShow` 四个调用一起跳过。
+    ⇒ 必须把 key 透传给 JS。**原来那个顾虑站不住**：key 本来就写在 APK 的 AndroidManifest
+    里、解包即可读，JS 侧多一份不增加任何暴露面；真正的防线是它绑「包名 + 签名」以及不进 git。
+    ⚠ 同一段还发现库**硬编码同意隐私政策**（`updatePrivacyShow(context, true, true)`）——
+    PoC 可以，发布前必须有真实的隐私声明呈现（M5 合规项，挂账）。
+
+  - **地图入口只挂在真的带坐标的卡上**。逐类型核过 `hmi/src/types.ts`：
+    `poi_detail` / `place_list` / `place_detail` **有** `lat`/`lng`；
+    **`poi_list` / `route_plan` / `charging_route` 没有**。
+    ⇒ 计划 §M3-3 点名的三张卡里有两张（`route_plan`/`poi_list`）**根本没有坐标**，
+    给它们挂地图入口只能靠客户端地理编码——那是另一件事（要 Web 服务 key + 一次外呼），
+    **挂账给后端在卡里带坐标**，比在客户端猜位置正确得多。
+    坐标校验落 `core/map/available.ts`：`0,0` 直接判空——**几内亚湾那个点画上去比不画更糟**，
+    用户看到一个 marker 不会怀疑它是「没有数据」（8 条守卫测试钉住）。
+
+  - **地图能力的判据是两条 AND**：构建期有 key（`extra.mapEnabled`）**且**原生模块在场
+    （`NativeModules.AMapSdk != null`）。第二条就是坑账 §9.27 那条的复用——amap3d 同样是
+    Paper ViewManager，原生缺席时整屏红屏，`CardBoundary` 兜不住。
+    不可用时**入口根本不渲染**（这就是「可降级」），直接深链进 `/map` 才给诊断页，
+    且**两个条件分开报**——「不可用」查不出是哪一半最耗时，这一轮就是靠它一次命中的。
+
 - **仍未做（下一轮的入口）**：
-  - **B 批：原生依赖一次性重建**（`react-native-svg` 已在 `package.json`/`node_modules`，
-    原生侧未生效）⇒ `scripts/build_mobile.ps1`，镜像工作区增量约 15 分钟。**重建前
-    payment_qr 的二维码在真机上必然走降级分支**（上面第 3 条守卫兜住，不再红屏）。
-  - **M3-3 地图**：key 已就位（`mobile/.env.local`），config plugin `plugins/with-amap-key.js`
-    已写（缺 key 则整个插件不挂、`extra.mapEnabled=false`、入口不出现——「可降级」不是运行时
-    try/catch，是这个能力压根没被装进去）。**`react-native-amap3d` 仍未 spike**：它最后一版是
-    2023-07（v3.2.4，旧 Paper ViewManager），机制上不死（RN 0.86 Android 的
-    `ReactNativeFeatureFlagsDefaults.useFabricInterop()` 默认 `true`，已核源码），风险在构建面
-    （AMap aar 拉取）与 key 注入。⚠ **它正是上面第 3 条的同族风险**：又一个原生 ViewManager。
+  - ~~B 批原生重建~~ / ~~M3-3 地图 spike~~ **✅ 均已完成**（见上）。
+    **地图只剩一条外部待办：泓舟在高德控制台给该 key 加「`com.xiaozhou.companion` +
+    SHA-1 `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`」**，
+    加完直接重开地图页即可（代码侧无待办、无需重建）。
+  - **地图余项**（key 通过之后才谈得上验的）：marker 落点是否正确、「回中」按钮、
+    浅色主题下的地图页、以及 `route_plan`/`charging_route` 要的**折线**——
+    后者还等后端在卡里带坐标（见上）。
   - ~~**真机未过项**：画廊全卡族截图归档 / 深浅主题全卡族 / 返回键语义 / 平板形态~~
     **✅ 均已在真机第二轮跑完**（见上）；其中「根=后台」被实测推翻，**待泓舟拍板**。
     ⚠ 平板形态是用 `cmd device_state state 3` 强制展开验的，**不等于 E3 那台真平板**

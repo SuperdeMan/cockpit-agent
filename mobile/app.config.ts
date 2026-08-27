@@ -103,8 +103,14 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // 「任意服务器入口」开关：onboarding 只在非 prod 档展示 lan/custom 预设
     allowCustomServer: VARIANT !== 'prod',
     // 地图入口的**唯一运行时判据**（M3-3「可降级」）：为 false 时卡片不出「地图」按钮。
-    // 刻意只透传布尔、**不透传 key 本身**——key 已经在 manifest 里给原生 SDK 用了，
-    // 再往 JS 侧放一份只是多一个泄露面。
     mapEnabled: Boolean(AMAP_KEY),
+    // ⚠ key 也要透传给 JS——这不是疏忽，是被库的 API 逼出来的（2026-08-27 实测）：
+    // `react-native-amap3d` 的 `initSDK(apiKey)` 实现是 `apiKey?.let { ... }`
+    // （SdkModule.kt:19-25），**传空则整块跳过**，连高德 9.x 必需的
+    // updatePrivacyAgree/updatePrivacyShow 四个调用一起跳过 ⇒ 地图白屏且不报任何错。
+    // 我最初刻意只透传布尔、想把 key 留在原生侧，那个顾虑站不住：**key 本来就写在
+    // APK 的 AndroidManifest 里，解包即可读**，JS 侧多一份不增加任何暴露面；
+    // 真正的防线是它绑「包名 + 签名 SHA1」，以及它不进 git（来自 .env.local）。
+    amapKey: AMAP_KEY,
   },
 })

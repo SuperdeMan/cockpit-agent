@@ -26,6 +26,29 @@ allprojects {
     repositories { addMirrors(delegate) }
 }
 
+// ── 给「老式社区库」补上根工程的 SDK 版本 ext（M3-3 实测，2026-08-27）──
+// RN 生态里 2023 年前后的库普遍写成
+//     compileSdkVersion getExt('compileSdkVersion', 33)      // 或 safeExtGet(...)
+// 也就是「根工程告诉我用哪个，没说就用我写死的那个」。而 **Expo SDK 57 生成的根
+// build.gradle 不再设这些 ext**（坑账 §9.16），于是它们**静默回落到自己那个陈旧默认值**
+// ——compileSdk 33 撞上 RN 0.86 拉进来的 androidx（要求 34+），报的是
+// 「Dependency ... requires compile against version 34 or later」，看起来像那个库跟
+// androidx 不兼容，其实只是没人告诉它该用哪个 SDK。
+// ⇒ 在这里把根工程的 ext 补齐。这不是给某个库开的后门：**任何按约定读根 ext 的库都会受益**，
+// 且值来自本机真实安装的 SDK（build_mobile.ps1 用 -P 传入），不是又一处写死。
+// 注意作用域：只设 rootProject 的 ext，各库自己显式写死的版本不受影响（那是它们的选择）。
+gradle.projectsLoaded { g ->
+    def root = g.rootProject
+    def put = { String k, Object v ->
+        if (v != null && !root.ext.has(k)) { root.ext.set(k, v) }
+    }
+    def asInt = { Object v -> v == null ? null : (v.toString().isInteger() ? v.toString().toInteger() : null) }
+    put('compileSdkVersion', asInt(root.findProperty('legacyCompileSdk')))
+    put('targetSdkVersion',  asInt(root.findProperty('legacyTargetSdk')))
+    put('minSdkVersion',     asInt(root.findProperty('legacyMinSdk')))
+    put('buildToolsVersion', root.findProperty('legacyBuildTools'))
+}
+
 settingsEvaluated { settings ->
     settings.pluginManagement.repositories { addMirrors(delegate) }
     try {
