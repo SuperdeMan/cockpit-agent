@@ -639,8 +639,8 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 
 ```jsonc
 "_prov": {
-  "mode": "real" | "cached" | "degraded" | "mock",
-  "vendor": "amap" | "qweather" | "exa" | "serpapi" | "api-football" | "tushare" | "mock" | "…",
+  "mode": "real" | "cached" | "degraded" | "mock" | "deterministic",
+  "vendor": "amap" | "qweather" | "exa" | "serpapi" | "api-football" | "tushare" | "mock" | "road-safety" | "…",
   "fetched_at": "2026-07-17T10:30:00+08:00",   // 数据获取时刻，非渲染时刻
   "note": "赛季回退 2024/25"                    // 可选：degraded/cached 的原因或缓存龄
 }
@@ -648,14 +648,28 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 
 - `degraded` = 真实数据但经降级路径（备选 vendor / 赛季回退 / 薄证据 / lexical 召回）；
   `cached` 当前无生产者（栈内无数据缓存层），词表前向兼容——**禁止无缓存装缓存**。
+- **`deterministic`（2026-08-27 泓舟拍板收编，fix plan C15）** = **内部确定性判据的产物**，
+  未经模型生成、也不是外部数据——road-safety 的 `safety_advice` 卡两处早已在打它
+  （「按会话未解除告警给出，未经模型生成」），是实现先于契约发明了一个正当的值，
+  本次补登而非放宽。它与 degraded/mock 正交：不是外部数据的降级，是可审计性对
+  「这答案怎么来的」的自我声明。`safety_advice` 据此登记为**内部确定性卡**：
+  `_prov` 可选，出现则 mode 必为 `deterministic`。
+- **mock 的 QA 口径（同批拍板）**：契约立场不变——mock **如实标注即合法**（§9.17 的
+  `payment_qr` 还强制要求打 mock）；QA 探针立场拆两档：**该卡型已声明「mock 可接受」**
+  （如 manual-rag 在真手册接入前）⇒ 记 **WARN 计数、不判 fail**；**mock 冒充 real**
+  （无 `_prov` 或标错 mode）⇒ 仍判 fail。落法=探针建「卡型 × 允许 mode」期望表，
+  把下面那份必带清单机械化成判据（一份声明两个消费方；实现随 fix plan C15/C16）。
 - **降级要点名是谁降级了**（QA I-033，2026-08-19）：体育结构化源不可用回落通用检索时，
   话术里写出 vendor、卡片 `_prov` 打 `degraded` + note。**真实性标记是结果的一部分，
   不是日志的一部分**——原实现只在服务端留了一行 `sports provider down`，用户追问
   「哪个数据源失败了」时系统手上没有可答的事实，只能让 LLM 猜（真栈实测把方向说反成
-  「联网检索不可用」）。⚠ 只做到「本轮披露」：跨轮追问要会话级数据源账本，独立一卡。
+  「联网检索不可用」）。⚠ 只做到「本轮披露」：跨轮追问要会话级数据源账本——该账本的
+  启动条件已于 2026-08-26 QA 轮满足（四个消费方），修法= fix plan C4。
 - 凡展示外源数据的卡必须带（P2 已推广：weather / forecast / search_result / news_brief /
   stock_quote / sports_scores / sports_scorers / place_list / place_detail / poi_list /
-  poi_detail / route_plan / charging_route），生产点 `agents/_sdk/provenance.py::attach()`。
+  poi_detail / route_plan / charging_route；**2026-08-27 拍板补登：air_quality /
+  weather_alerts / life_indices**——2026-08-26 QA 实测同文件 5 个 handler 两个盖章三个漏，
+  漏的正是这三张；盖章实现随 fix plan C9 落地），生产点 `agents/_sdk/provenance.py::attach()`。
   **刻意不标**（卡内已有更强证据链）：trip_itinerary（每停靠点 grounded 布尔粒度更细）、
   research_report（sources + 全局权威编号）、内部数据卡（reminder/scene/vehicle）。
   LLM 生成的对话内容**不标**（语言无真值可标；证据链由卡片 sources 字段承担）。
