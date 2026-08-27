@@ -11,7 +11,7 @@
 // ——哪天换库，要对齐的就是这个文件里的东西。
 declare module 'react-native-amap3d' {
   import type { ComponentType, ReactNode, Ref } from 'react'
-  import type { ViewStyle } from 'react-native'
+  import type { LayoutChangeEvent, NativeSyntheticEvent, ViewStyle } from 'react-native'
 
   export interface LatLng {
     latitude: number
@@ -25,11 +25,30 @@ declare module 'react-native-amap3d' {
     tilt?: number
   }
 
+  /** 西南/东北两角（`lib/src/types.ts::LatLngBounds`） */
+  export interface LatLngBounds {
+    southwest: LatLng
+    northeast: LatLng
+  }
+
+  /** 相机事件负载（`lib/src/map-view.tsx::CameraEvent`） */
+  export interface CameraEvent {
+    cameraPosition: CameraPosition
+    latLngBounds: LatLngBounds
+  }
+
   export interface MapViewProps {
     style?: ViewStyle
     initialCameraPosition?: CameraPosition
     myLocationEnabled?: boolean
     children?: ReactNode
+    /** 点空白处（`map-view.tsx:123`）——本项目用它收起 marker 详情 */
+    onPress?: (event: NativeSyntheticEvent<LatLng>) => void
+    /** 相机停下（`map-view.tsx:143`）——本项目用它跟踪当前 zoom */
+    onCameraIdle?: (event: NativeSyntheticEvent<CameraEvent>) => void
+    /** MapViewProps extends ViewProps（`map-view.tsx:16`），布局回调随之而来；
+     *  本项目用它拿真实视口尺寸算「装进画面」的 zoom */
+    onLayout?: (event: LayoutChangeEvent) => void
   }
 
   /** 命令式把手（本项目只用 moveCamera 做「回中」） */
@@ -44,6 +63,8 @@ declare module 'react-native-amap3d' {
     title?: string
     subtitle?: string
     children?: ReactNode
+    /** ⚠ 无参数（`marker.tsx:72`）——是哪个 marker 被点，只能靠调用方闭包捕获 */
+    onPress?: () => void
   }
 
   export const Marker: ComponentType<MarkerProps>

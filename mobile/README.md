@@ -87,6 +87,26 @@ SHA-1  5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25
 地图入口只出现在**契约里真的带 `lat`/`lng`** 的卡上（`poi_detail` / `place_list` /
 `place_detail`）；`route_plan` / `poi_list` / `charging_route` 没有坐标，折线等后端补。
 
+## e2e（Maestro，M3-5）
+
+```bash
+maestro test mobile/e2e/ --include-tags offline   # 零后端依赖，CI 与本地都能跑
+maestro test mobile/e2e/ --include-tags online    # 需真栈（target=cloud + 设备在 tailnet）
+maestro test mobile/e2e/01-text-weather.yaml      # 单条
+```
+
+前置：Metro 在跑（`npx expo start --dev-client`）+ `adb reverse tcp:8081 tcp:8081`。
+每条 flow 都先跑 `subflows/open-app.yaml` 经 dev-client 深链连 Metro——**这不是仪式**：
+dev build 的 `launchApp` 打开的是 DevLauncherActivity，被测对象根本没在跑，而失败信息
+看起来像「App 里没有这个按钮」。
+
+⚠ **CLI 尚未装成**（`maestro.zip` 315MB，本网络 ~30KB/s，坑账 §9.37）。flow 已按
+Maestro 2.9.0 语法写好但**没有实跑读数**。装 CLI：下 `maestro.zip`（下完先对
+release 里的 `checksums_sha256.txt`，**别用 `curl -C -` 续传**），解压后把 `bin` 加进 PATH。
+
+驱动用 testID（`composer-input`/`composer-send`/`confirm-accept`/`confirm-cancel`/
+`msg-pending`），断言用文本——**文案会变，而断言要验的正是语义内容**。
+
 ## 与 hmi/ 的共享面（单一真相源，不复制不搬家）
 
 `@shared/*` = `hmi/src/*`，**只许引白名单模块**：台账 [`shared-allowlist.json`](shared-allowlist.json)
@@ -104,6 +124,8 @@ src/app/               expo-router 屏：index=对话主屏 / settings / vehicle
                        支持 ?only=<type> 直达某一族；后三个不进主导航，深链接进）
 src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts
+                       + liveness.ts（前台探活：RN 的 WS 在飞行模式下 onclose 不来，
+                       send 会把帧写进死 socket——判据取「HTTP 探不通」不取「应用层静默」）
 src/core/session/      M1 会话状态机：store.ts（8 型帧分发+看门狗+确认台账）/ sendRouter.ts
                        （候选拦截+位置闸）/ candidates.ts / wiring.ts（跨路由单例）
 src/core/settings/     设置仓库（AsyncStorage 持久化；buildMeta 与 HMI settings.tsx 键集一致）
@@ -121,5 +143,6 @@ src/features/settings/ 设置页；src/features/vehicle/ 车况面板（三格�
                        + ReminderSection（平板右面板提醒段，复用 reminderStage.mjs）
 types/                 第三方类型补丁：RN 内部 URL 实现 / react-native-amap3d（见文件头注）
 src/ui/                主题（深浅/跟随系统 + 字号两档）
-test/                  jest（jest-expo）：守卫 + 契约单测（188 条）
+test/                  jest（jest-expo）：守卫 + 契约单测（209 条）
+e2e/                   Maestro flow（M3-5）：三条真栈流 + 一条离线冒烟（CI 用）
 ```

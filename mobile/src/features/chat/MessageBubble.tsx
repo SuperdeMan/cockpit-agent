@@ -108,6 +108,9 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
         <AuroraOrb size={28} state={orbState} animated={active} />
       </View>
       <Pressable
+        // e2e 判据（M3-5 flow ③）：**「消息补达」只能断言挂起态消失**——
+        // 断言回答文本会被用户自己那条气泡满足（同一句话），那是假绿。
+        testID={msg.pending ? 'msg-pending' : undefined}
         onLongPress={longPressTrace}
         style={{
           flex: 1,
@@ -163,6 +166,7 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
         {msg.needConfirm && confirmActive ? (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 2 }}>
             <Pressable
+              testID="confirm-cancel"
               onPress={() => onConfirm('取消', msg.operationId)}
               style={{
                 flex: 1,
@@ -178,6 +182,7 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
               <Text style={{ color: p.fg2, fontSize: p.font(14) }}>取消</Text>
             </Pressable>
             <Pressable
+              testID="confirm-accept"
               onPress={() => onConfirm('确认', msg.operationId)}
               style={{
                 flex: 2,

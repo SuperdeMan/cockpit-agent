@@ -106,6 +106,7 @@ export function Composer({
           </Pressable>
         ) : null}
         <TextInput
+          testID="composer-input"
           style={{
             flex: 1,
             backgroundColor: p.fill,
@@ -144,6 +145,7 @@ export function Composer({
           </Pressable>
         ) : null}
         <Pressable
+          testID="composer-send"
           onPress={submit}
           style={{
             experimental_backgroundImage: AURORA.gradient,

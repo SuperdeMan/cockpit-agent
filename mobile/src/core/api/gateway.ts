@@ -5,6 +5,7 @@
 import { ResilientWebSocket } from '@shared/ws.mjs'
 import { edgeWsUrl } from '../config/endpoints'
 import { genTraceId, newSessionId, uid } from '../obs/trace'
+import { httpProbe, startLiveness, type LivenessOpts } from './liveness'
 
 export type GatewayStatus = 'connecting' | 'open' | 'closed'
 
@@ -64,12 +65,17 @@ interface SessionOpts {
   sessionId?: string
   /** 测试注入；缺省用 RN 全局 WebSocket */
   wsFactory?: (url: string) => WebSocket
+  /** 探活注入（测试用）。传 `false` 关掉探活（单测里不想起真定时器时用） */
+  liveness?: Partial<Pick<LivenessOpts, 'probe' | 'intervalMs' | 'failThreshold' | 'timers' | 'appState'>> | false
 }
 
 export class GatewaySession {
   readonly sessionId: string
   private readonly ws: ResilientWebSocket
   private readonly onFrame?: GatewayHandlers['onFrame']
+  private stopLiveness: (() => void) | null = null
+  private readonly livenessOpts: SessionOpts['liveness']
+  private readonly edgeUrl: string
 
   constructor(
     cfg: { edgeUrl: string; token: string },
@@ -78,6 +84,8 @@ export class GatewaySession {
   ) {
     this.sessionId = opts.sessionId ?? newSessionId()
     this.onFrame = handlers.onFrame
+    this.edgeUrl = cfg.edgeUrl
+    this.livenessOpts = opts.liveness
     this.ws = new ResilientWebSocket(edgeWsUrl(cfg.edgeUrl, cfg.token), {
       onMessage: (frame: unknown) => this.onFrame?.('down', frame),
       onStatus: (s: GatewayStatus) => handlers.onStatus?.(s),
@@ -87,9 +95,24 @@ export class GatewaySession {
 
   start(): void {
     this.ws.start()
+    // 探活（见 liveness.ts 头注）：RN 上 onclose 可能永远不来，那时 send() 会把帧
+    // 写进死 socket、队列语义失效。探活失败＝确知断网 ⇒ 走 reconnectNow 让状态与队列回正。
+    if (this.livenessOpts === false) return
+    const o = this.livenessOpts ?? {}
+    this.stopLiveness = startLiveness({
+      probe: o.probe ?? httpProbe(this.edgeUrl),
+      isOpen: () => this.isOpen,
+      onDead: () => this.ws.reconnectNow(),
+      ...(o.intervalMs !== undefined ? { intervalMs: o.intervalMs } : {}),
+      ...(o.failThreshold !== undefined ? { failThreshold: o.failThreshold } : {}),
+      ...(o.timers ? { timers: o.timers } : {}),
+      ...(o.appState ? { appState: o.appState } : {}),
+    })
   }
 
   close(): void {
+    this.stopLiveness?.()
+    this.stopLiveness = null
     this.ws.close()
   }
 

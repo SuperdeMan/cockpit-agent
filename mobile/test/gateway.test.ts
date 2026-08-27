@@ -102,7 +102,9 @@ describe('GatewaySession（共享 ws.mjs 队列语义）', () => {
     const session = new GatewaySession(
       { edgeUrl: 'https://car.tail1234.ts.net:8443', token: 't0k' },
       { onFrame: (dir, frame) => dir === 'up' && up.push(frame) },
-      { wsFactory: (u) => new FakeWS(u) as unknown as WebSocket },
+      // liveness:false —— 探活会起真定时器，jest 里会「worker 无法优雅退出」。
+      // 探活自己的判据在 test/liveness.test.ts 里单测（注入定时器）。
+      { wsFactory: (u) => new FakeWS(u) as unknown as WebSocket, liveness: false },
     )
     session.start()
     const ws = FakeWS.instances[0]
@@ -130,7 +132,7 @@ describe('GatewaySession（共享 ws.mjs 队列语义）', () => {
     const session = new GatewaySession(
       { edgeUrl: 'https://car.tail1234.ts.net:8443', token: 't' },
       { onFrame: (dir, frame) => dir === 'down' && down.push(frame) },
-      { wsFactory: (u) => new FakeWS(u) as unknown as WebSocket, sessionId: 'app-fixed1' },
+      { wsFactory: (u) => new FakeWS(u) as unknown as WebSocket, sessionId: 'app-fixed1', liveness: false },
     )
     session.start()
     const ws = FakeWS.instances[0]

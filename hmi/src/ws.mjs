@@ -11,6 +11,15 @@
 // 静默。若按「应用层静默」强制重连会误杀健康的长任务连接，与服务端保活设计冲突。真正断连
 // 由浏览器 onclose 触发，交给这里的退避重连即可。请求级「永远思考中」的兜底放在 UI 看门狗。
 //
+// ⚠ 上面这条约束的是**判据**（不许拿「应用层静默」当断连证据），不是「不许外部判死」。
+// `reconnectNow()` 是给**拿到了独立断网证据**的调用方用的入口——RN 侧实测：飞行模式下
+// `onclose`/`onerror` 都不来（2026-08-27，MIX Fold 4，观察 4 分钟状态仍 open），
+// 这期间 `send()` 认为连接是开的、把帧直接写进死 socket，**队列语义在这个窗口里失效、
+// 消息真的会丢**（复现：开飞行模式后 1 秒内发一条，恢复网络后不补发，95s 后看门狗给
+// 「响应超时」）。移动端因此在 App 侧做 HTTP 探活（`core/api/liveness.ts`），
+// 探活失败＝真实的网络不可达证据，与「应用层静默」是两回事。
+// 浏览器侧不调用它，行为逐字不变。
+//
 // 纯逻辑 + 注入 WebSocket 工厂/定时器，可用 node:test 无 DOM 单测。
 
 // attempt=0,1,2,... → min*2^attempt 封顶 max，叠加 [0, base/2) 抖动，避免重连风暴同步化。
@@ -80,6 +89,28 @@ export class ResilientWebSocket {
       this._reconnectTimer = null
     }
     try { this._ws && this._ws.close() } catch { /* ignore */ }
+  }
+
+  // 外部判死 → 立即重连。与 close() 的区别是**不设 _userClosed**（还要自动重连），
+  // 与直接 _ws.close() 的区别是**不依赖 onclose 会到**（RN 飞行模式下它不来）。
+  // 队列刻意保留：断网期入队的帧要在重连后 flush，这正是本类存在的理由。
+  reconnectNow() {
+    if (this._userClosed) return
+    const old = this._ws
+    this._ws = null
+    if (old) {
+      // 先摘掉回调再关：旧 socket 的 onclose 可能迟到（RN 上实测会），
+      // 那时它会再排一次重连——两条重连链同时跑会把退避算乱。
+      try { old.onopen = null; old.onmessage = null; old.onerror = null; old.onclose = null } catch { /* ignore */ }
+      try { old.close() } catch { /* ignore */ }
+    }
+    if (this._reconnectTimer) {
+      this._timers.clear(this._reconnectTimer)
+      this._reconnectTimer = null
+    }
+    this._onStatus('closed')
+    this._attempt = 0 // 探活判死是「确知断了」，不该继承之前的退避档位
+    this._scheduleReconnect()
   }
 
   _connect() {

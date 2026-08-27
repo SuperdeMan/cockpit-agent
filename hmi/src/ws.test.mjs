@@ -132,3 +132,50 @@ test('reports status transitions and parses JSON messages', () => {
   assert.deepEqual(status, ['connecting', 'open'])
   assert.deepEqual(msgs, [{ type: 'final', speech: 'hi' }])
 })
+
+// ── reconnectNow：外部判死入口（RN 飞行模式下 onclose 不来，见 ws.mjs 头注）──
+
+test('reconnectNow: 关掉旧 socket、保留队列、立即重连并 flush', () => {
+  const { rws, instances, timers } = harness()
+  rws.start()
+  instances[0]._open()
+  rws.send({ a: 1 })
+  assert.equal(instances[0].sent.length, 1) // 连接开着时直接发
+
+  // 网络已死但 onclose 没来：此刻 send 会被写进死 socket（这正是要修的形态）
+  rws.reconnectNow()
+  assert.equal(rws.isOpen, false, '判死后不许再自称 open')
+
+  rws.send({ b: 2 }) // 判死之后发的，必须入队
+  timers.fireAll() // 退避定时器 → 新建连接
+  assert.equal(instances.length, 2, '应新建一条连接')
+  instances[1]._open()
+  assert.deepEqual(
+    instances[1].sent.map((r) => JSON.parse(r)),
+    [{ b: 2 }],
+    '重连后 flush 队列里的帧',
+  )
+})
+
+test('reconnectNow: 旧 socket 的 onclose 迟到不会排出第二条重连链', () => {
+  const { rws, instances, timers } = harness()
+  rws.start()
+  instances[0]._open()
+  const old = instances[0]
+
+  rws.reconnectNow()
+  old.close() // 迟到的 onclose（回调已被摘掉，应无副作用）
+  timers.fireAll()
+
+  assert.equal(instances.length, 2, '只应有一次重连，不是两次')
+})
+
+test('reconnectNow: close() 之后是 no-op（用户主动关了就别自己爬起来）', () => {
+  const { rws, instances, timers } = harness()
+  rws.start()
+  instances[0]._open()
+  rws.close()
+  rws.reconnectNow()
+  timers.fireAll()
+  assert.equal(instances.length, 1)
+})
