@@ -858,14 +858,35 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   4. 已确认 Expo CLI 会加载 `mobile/.env.local` 并 export `AMAP_ANDROID_KEY`（Metro 启动日志
      `env: load .env.local` / `env: export AMAP_ANDROID_KEY`），M3-3 的 key 通道成立。
 
-- **读数**：`tsc --noEmit` **0 error**；mobile jest **167/167**（M2 末 133 → **+34**：
-  卡片派生守卫 4 + 画廊覆盖 3 + `merchantCards` 14 + `cardParts` 12，另 1 条来自 M1 守卫拆分）；
+- **读数**：`tsc --noEmit` **0 error**；mobile jest **174/174**（M2 末 133 → **+41**：
+  卡片派生守卫 4 + 画廊覆盖 3 + `merchantCards` 14 + `cardParts` 12 + `reminderSection` 7，
+  另 1 条来自 M1 守卫拆分）；
   hmi `npm test` **285/285**（改了 `merchantUi.d.mts` 后按 §10 复跑）；白名单守卫绿。
 
 - **共享面改了一处（§10 的正当情形）**：`hmi/src/merchantUi.d.mts` 补
   `swapStoreAction`/`specChipAction`/`placeMenuAction` 三条声明——`.mjs` 一直导出它们、`.d.mts` 漏了。
   hmi 走 vite（esbuild 不做类型检查）且 package.json 没有 typecheck 脚本，所以这缺口从没红过；
   mobile 跑 tsc 才撞上。**与 M2 那次 `ttsQueue.d.mts` 同一形态，只补声明、实现一行未改。**
+
+- **真机第二轮（2026-08-27 上午，泓舟解锁 + 关自动锁屏后跑完）**：
+
+  | 项 | 结果 | 读数 |
+  |---|---|---|
+  | 画廊全卡族（暗色）| ✅ | 40 条样本 / 注册 34 型 / 「注册表卡型已全部有样本」；`charging_route` 两分支、`trip_itinerary` 未接地点不给导航按钮、`vision_answer` simulated 角标、商户选品与预览（规格 chips 选中态 + 「大杯 +3元」+ 优惠/实付 + `swapStoreAction`）、order 态三按钮、`mcp_order` 演示角标 + 降级 prov、`card_group` 递归、**兜底卡**逐张确认 |
+  | `payment_qr` 三分支 | ✅ | 有码降级（**「打开安全支付链接」按钮确实在上面**，提示是真话）+ 活的倒计时「03:17 后过期」/ 已过期只说过期 / 无码走安全链接档 |
+  | 深浅主题全卡族 | ✅ | `cmd uimode night no` 切浅色，**同一挂载实例实时重渲染**（倒计时 03:17→02:40 连续，不是重启）；sports 计分板/时间线、merchant 虚线与 chips、fallback 卡在浅色下对比度均可读 |
+  | `relativeTime` 上屏 | ✅ | 「31分钟前」「11分钟前」，不再是 ISO 原文 |
+  | 平板/展开态三段面板 | ✅ | `cmd device_state state 3` 强制展开（跑完 `reset`）：双栏 + **车况三格是真实推导**（真栈 vehicle_state 72% × `RANGE_FULL_KM` 550 = 396km，与 `vehicleStage.mjs` 逐字对上）+ 提醒段空态引导语 + 焦点卡段；手机态的「车辆」入口在平板态正确隐藏 |
+  | 返回键：二级页 | ✅ | 画廊返回 = 关层回对话根屏，应用仍在前台 |
+  | **返回键：根屏** | **❌ 与计划不符** | 见下条 |
+
+- **⚠ 「根屏返回=后台」这条计划假设被实测推翻**（需泓舟拍板）。计划写「返回键语义（设置/地图页返回=关层，**根=后台**）」，那是按 Android 12+ 根 Activity 的 back-to-home 优化写的。**这台机器（HyperOS / Android 16）没有那个行为**：
+  - 从桌面图标启动（App 是任务根）→ 根屏按返回 → `MainActivity` 被 finish，进程转 `cch-rec`（cached）；再打开是同一个 pid 但 **JS 上下文重建、会话消息清空、WS 重连**。
+  - 判据取证做了两遍：先用 deeplink 起（那次 App 不是任务根，结论不作数），换 `monkey -c LAUNCHER` 重测才坐实。**启动方式会改变返回键语义，测这条必须走真实入口。**
+  - 后果：陪伴端在用户按返回后**停止接收前台主动提醒**。⚠ 但这与 PoC 现有承诺并不矛盾——坑账 §9.5 早写了「系统省电模式会杀后台 socket，验收在前台做」，前台交互档本来就是 PoC 的档位。
+  - **不擅自修**：RN 不暴露 `moveTaskToBack`，纯 JS 的做法是发一个 `intent://...category.HOME` 把桌面拉到前台（hack，且改变任务栈语义），要做实得进原生模块；而**真正的修法是 M5 的前台服务 / 厂商推送**（主设计文档 §10 已挂账）。⇒ 三个选项请泓舟选：① 维持现状并把「前台档」写进产品承诺；② M3 内加 intent hack；③ 并入 M5 一起做。
+
+- **画廊加了 `?only=` 过滤**（`xiaozhou://card-gallery?only=payment_qr` / 逗号分隔多个 / 子串匹配）。加它是被逼的：全表 40 条时 adb 滚动定位**极不可靠**——慢拖（700ms）会被卡内 Pressable 吃掉、快扫（260ms）带惯性一次跨 3 条，同一条指令时灵时不灵，为定位一张卡耗掉十几轮。**取证屏就该能直达要取的那一条。**
 
 - **仍未做（下一轮的入口）**：
   - **B 批：原生依赖一次性重建**（`react-native-svg` 已在 `package.json`/`node_modules`，
@@ -877,9 +898,10 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     2023-07（v3.2.4，旧 Paper ViewManager），机制上不死（RN 0.86 Android 的
     `ReactNativeFeatureFlagsDefaults.useFabricInterop()` 默认 `true`，已核源码），风险在构建面
     （AMap aar 拉取）与 key 注入。⚠ **它正是上面第 3 条的同族风险**：又一个原生 ViewManager。
-  - **真机未过项**：画廊全卡族截图归档、深浅主题全卡族、返回键语义（Android 12+ 根 Activity
-    返回默认就是移到后台，**要先实测再决定要不要写代码**）、平板形态（E3 仍未办）。
-    ⚠ 本轮末尾设备锁屏且有安全锁，`wm dismiss-keyguard` 无效、adb 解不开，需泓舟解锁后续跑。
+  - ~~**真机未过项**：画廊全卡族截图归档 / 深浅主题全卡族 / 返回键语义 / 平板形态~~
+    **✅ 均已在真机第二轮跑完**（见上）；其中「根=后台」被实测推翻，**待泓舟拍板**。
+    ⚠ 平板形态是用 `cmd device_state state 3` 强制展开验的，**不等于 E3 那台真平板**
+    ——折叠屏展开态与真平板的差别（DPI/输入法/多窗）没有覆盖到。
   - M3-5 Maestro（泓舟已授权装 CLI，flow 未写）、M3-6 §8.3 全清单。
 
 ---
@@ -1122,6 +1144,27 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     全部打烊，后端如实回「门店已打烊」）；边界分支（付款码过期置灰、充电路线「全程无需补电」）
     真栈几乎不产。⇒ `/card-gallery` 画廊屏 + `fixtures.ts` 是**必需品不是装饰**。
     ⚠ 但**样本不是读数**：画廊每条都标「真栈已验/样本」，混为一谈就是验收造假。
+
+31. **折叠屏上 `screencap` 必须显式 `-d <displayId>`**（M3-1 真机第二轮）：不带 `-d` 时
+    adb 自己就警告「Defaulting to the first display found, **however this default is not
+    guaranteed to be consistent across captures**」——抓到关着的那块屏就是
+    **16643 字节的纯黑 PNG**。⚠ 我据此误判过一轮「设备锁屏了」，其实屏是亮的、只是抓错了。
+    显示器 id 用 `dumpsys SurfaceFlinger --display-id` 取（本机内屏 2224x2488 /
+    外屏 1080x2520，**折叠态活跃的是外屏**）。判据：**全黑截图先怀疑抓错屏，再怀疑息屏。**
+32. **`adb shell input swipe` 的时长要卡在中间档**（M3-1）：700ms 慢拖会被卡内 `Pressable`
+    当成按压吃掉（列表纹丝不动，连滚 9 次零位移）；90ms 快扫又被当成点击。
+    **260ms 左右才既能滚又不误触**，且一次跨约 3 个条目（有惯性，落点不可预测）。
+    ⇒ **长列表的取证不要靠滚动定位**——给取证屏一个直达参数（本轮 `?only=` 就是这么来的）。
+33. **deeplink 打到「已在栈顶的同一个路由」不会重新挂载**（M3-1）：`am start -d
+    xiaozhou://card-gallery` 在画廊已经是顶层时，Android 只 deliver intent
+    （`Warning: Activity not started, intent has been delivered to currently running
+    top-most instance`），React 组件**不重挂**，`useMemo(..., [])` 里的东西还是旧的。
+    症状是「代码明明改了、屏上没变」——我据此以为热更没生效，其实是没重挂。
+    判据：**要验「挂载时求值」的东西，必须 force-stop 重拉，光按返回可能也不够**
+    （expo-router 的 Stack 会留着屏）。
+34. **启动方式会改变返回键语义**（M3-1）：用 deeplink 从别的 App 起时，本 App 不是任务根，
+    根屏返回自然回到上一个 Activity；只有用 `monkey -c android.intent.category.LAUNCHER`
+    从桌面起才测得到真实语义。**第一次的结论因此不作数，换入口重测才坐实。**
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
