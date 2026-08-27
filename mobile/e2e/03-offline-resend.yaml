@@ -6,6 +6,9 @@
 # 气泡**满足——同一句话同时在屏上，assertVisible 立刻绿，而消息可能一直卡在队列里。
 # 这是本 flow 最容易写错的一处，MessageBubble 的 testID 注释里也钉了同一句。
 #
+# ⚠ `setAirplaneMode` 的取值是**枚举 `Enable`/`Disable`**（`Commands.kt::AirplaneValue`），
+# 不是 `enabled`/`disabled`——这是逐字对着 cli-2.9.0 的源码核过的，别按文档里的印象写。
+#
 # ⚠ 设备走 Tailscale 连云栈：关飞行模式后 tailnet 要重新握手，实测比 WiFi 自身恢复
 # 慢一截，所以补达的等待给到 90s。
 appId: com.xiaozhou.companion
@@ -15,11 +18,18 @@ tags:
 ---
 - runFlow: subflows/open-app.yaml
 
-- setAirplaneMode: enabled
-# 让连接真的断掉再发——立刻发会撞上「socket 还没意识到自己死了」的窗口，
-# 那验的是另一件事（看门狗），不是队列。
+- setAirplaneMode: Enable
+# ⚠ **这里必须等够 ~35 秒，不是 10 秒。** RN 的 WebSocket 在飞行模式下 onclose 不来，
+# 连接要靠 App 的探活判死（`core/api/liveness.ts`：15s 一轮、连续 2 次失败）——
+# 2026-08-27 真机实测 **25.7s** 才判死。在那之前 `send()` 仍认为连接是开的、
+# 会把帧直接写进死 socket（**已知残留窗口，见 M3-W**）⇒ 早发的那条根本不入队，
+# 这条 flow 会稳定红，而红的原因是那个已知窗口、不是回归。
+#
+# ⚠ `waitForAnimationToEnd` 严格讲是「等画面静止」不是 sleep，画面静了会提前返回。
+# 这里能当计时器用，是因为**本页常驻 Aurora 光球动画**、画面永远不静止。
+# 若哪天光球改成静止的，这里要换成 `extendedWaitUntil` 等一个永不出现的元素 + `optional: true`。
 - waitForAnimationToEnd:
-    timeout: 10000
+    timeout: "35000"
 
 - tapOn:
     id: "composer-input"
@@ -32,7 +42,7 @@ tags:
 - assertVisible:
     id: "msg-pending"
 
-- setAirplaneMode: disabled
+- setAirplaneMode: Disable
 
 # 补达=挂起态消失。90s 覆盖 tailnet 重握手 + 队列 flush + 后端一轮。
 - extendedWaitUntil:
