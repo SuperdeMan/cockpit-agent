@@ -406,7 +406,7 @@
 {"text": "查询一下美亚光电4分以上的酒店", "gold_object": "酒店", "pred_object": "酒店", "conf": 0.868, "ok": true}
 {"text": "回拨号码", "gold_object": "电话", "pred_object": "电话", "conf": 0.499, "ok": true}
 {"text": "号码重拨", "gold_object": "电话", "pred_object": "电话", "conf": 0.492, "ok": true}
-{"text": "拨号给13888882222", "gold_object": "电话", "pred_object": "电话", "conf": 0.434, "ok": true}
+{"text": "拨号给13800138000", "gold_object": "电话", "pred_object": "电话", "conf": 0.434, "ok": true}
 {"text": "请把号码重拨一下", "gold_object": "电话", "pred_object": "电话", "conf": 0.514, "ok": true}
 {"text": "请你把通讯录中47284728的联系人显示一下", "gold_object": "电话", "pred_object": "电话", "conf": 0.32, "ok": true}
 {"text": "拨号给8182结尾的号码", "gold_object": "电话", "pred_object": "电话", "conf": 0.579, "ok": true}

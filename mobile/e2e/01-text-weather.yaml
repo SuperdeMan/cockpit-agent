@@ -1,0 +1,30 @@
+# 流 ①：发文字 → 天气卡可见（M3-5 计划原文第一条）
+#
+# 需要真栈（`target=cloud`）：这条验的是**整链**——发送 → 云端规划 → weather agent →
+# 卡片下行 → App 渲染。断言取卡片标题而不是回答文本：文本模型每次都不一样，
+# 而「出没出天气卡」是确定的。
+appId: com.xiaozhou.companion
+name: 01 文字问答出天气卡
+tags:
+  - online
+---
+- runFlow: subflows/open-app.yaml
+
+- tapOn:
+    id: "composer-input"
+- inputText: "深圳今天天气怎么样"
+- tapOn:
+    id: "composer-send"
+
+# 先确认自己发出去了（用户气泡是本地渲染，这一步失败=输入没进去，与后端无关）
+- assertVisible: "深圳今天天气怎么样"
+
+# 卡片标题是 `天气 · <城市>`（infoCards.tsx::Weather），城市由后端定，所以用正则。
+# 45s：云端 planner + agent 冷启在真栈上量到过 20s+，给两倍余量。
+- extendedWaitUntil:
+    visible: "天气 · .*"
+    timeout: 45000
+
+# 兜底卡的标题是 `卡片 · <type>`（CardRenderer.tsx:124）。它可见 = 后端发了卡但
+# App 不认识这个型——那是**回归**，不是通过。这条断言是「铁则没被绕过」的探针。
+- assertNotVisible: "卡片 · weather"

@@ -1,0 +1,41 @@
+# 流 ②：危险动作 → 确认条 → 取消 → 台账清（M3-5 计划原文第二条）
+#
+# ⚠ 语料按 `orchestrator/edge/knowledge/commands.yaml` 的 `require_confirm=true` 名单选：
+# **trunk / door_lock / fuel_tank_cover / charging_port / frunk** 五个。
+# 「打开车窗」**不是**危险动作（M1-8 那次勘误，计划 §M1-3 原文写错过）——
+# 拿它当语料会得到「确认条没出现」的红，而系统行为其实是对的。
+#
+# 「台账清」的判据取**确认条消失**（ChatScreen 按 isPendingLive 渲染，台账里没有这条
+# 就不渲染），不取回执文案——文案由后端 responses.yaml 决定，而这条 flow 验的是客户端
+# 台账，两者不该绑在一起。
+appId: com.xiaozhou.companion
+name: 02 危险动作确认条取消
+tags:
+  - online
+---
+- runFlow: subflows/open-app.yaml
+
+- tapOn:
+    id: "composer-input"
+- inputText: "打开后备箱"
+- tapOn:
+    id: "composer-send"
+
+- extendedWaitUntil:
+    visible:
+      id: "confirm-cancel"
+    timeout: 45000
+# 两个按钮都得在——只有「确认」而没有「取消」的确认条是个陷阱
+- assertVisible:
+    id: "confirm-accept"
+
+- tapOn:
+    id: "confirm-cancel"
+
+# 台账清：确认条不再渲染。20s 是等后端回 final（取消也要走一轮）
+- extendedWaitUntil:
+    notVisible:
+      id: "confirm-cancel"
+    timeout: 20000
+- assertNotVisible:
+    id: "confirm-accept"

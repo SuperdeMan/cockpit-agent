@@ -1,0 +1,10 @@
+# Maestro workspace 配置（`maestro test e2e/` 读它）
+#
+# 分档跑：
+#   maestro test e2e/ --include-tags offline    # 无后端，CI 与本地都能跑
+#   maestro test e2e/ --include-tags online     # 需真栈（target=cloud + 设备在 tailnet）
+flows:
+  - "0*.yaml"
+
+executionOrder:
+  continueOnFailure: true

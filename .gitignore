@@ -1,6 +1,9 @@
 # Secrets
 .env
 *.local
+# 签名密钥：*.jks 已在 mobile/.gitignore 覆盖，这条补 *.keystore——release keystore
+# 泄露=别人能签出装得上的冒名 APK。指纹（SHA-1）是公开值，密钥文件不是，别混。
+*.keystore
 
 # Python
 __pycache__/

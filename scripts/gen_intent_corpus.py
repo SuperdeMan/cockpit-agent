@@ -20,6 +20,7 @@ edge_expected 三态（true=端侧应接住 / false=cloud-by-design / null=未�
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import Counter
@@ -81,6 +82,19 @@ def _split_utterances(cell) -> list[str]:
     return [s.strip() for s in str(cell).replace("\r", "\n").split("\n") if s.strip()]
 
 
+# 说法里的 11 位手机号一律换成本仓通用假号——语料是**公开仓库**资产，而意图表里的
+# 例句号码来源不可考（外部公版指令表），当真号处理。号段/长度/形状全保留（`1[3-9]` + 11 位），
+# 落域判定看的是「这是不是个手机号形态」，换数字零影响。
+# ⚠ 这条必须在**生成器**里，不能只刷产物：本文件可重跑幂等，只改产物下次重导出就带回来了
+#   （同 2026-08-02 卫生脱敏那批的判据——生成器与产物两侧同改）。
+_PHONE_RE = re.compile(r"(?<![0-9])1[3-9][0-9]{9}(?![0-9])")
+_PHONE_PLACEHOLDER = "13800138000"  # 全仓既有的假号（observability/tests/test_redact.py 同款）
+
+
+def scrub_pii(text: str) -> str:
+    return _PHONE_RE.sub(_PHONE_PLACEHOLDER, text)
+
+
 # §5.3 甄别：导航子类里「端侧车机控制」的关键词（播报开关/音量/静音）。
 _NAVI_EDGE_KEYWORDS = ("播报", "音量", "静音")
 
@@ -113,6 +127,7 @@ def build_corpus(records: list[dict]) -> list[dict]:
         domain = _scalar(rec.get("domain"))
         for cell in (rec.get("标准说法"), rec.get("高频说法")):
             for text in _split_utterances(cell):
+                text = scrub_pii(text)  # 去重之前刷：只差号码的两条说法本就该并成一条
                 if text in seen:
                     continue
                 seen.add(text)

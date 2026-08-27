@@ -1,0 +1,41 @@
+# 流 ③：飞行模式 10s → 恢复 → 消息补达（M3-5 计划原文第三条）
+#
+# 验的是共享 `ws.mjs` 的队列语义：断网时上行帧入队，重连后 flush。
+#
+# ⚠ **「补达」只能断言挂起态消失**（`msg-pending`）。断言回答文本会被**用户自己那条
+# 气泡**满足——同一句话同时在屏上，assertVisible 立刻绿，而消息可能一直卡在队列里。
+# 这是本 flow 最容易写错的一处，MessageBubble 的 testID 注释里也钉了同一句。
+#
+# ⚠ 设备走 Tailscale 连云栈：关飞行模式后 tailnet 要重新握手，实测比 WiFi 自身恢复
+# 慢一截，所以补达的等待给到 90s。
+appId: com.xiaozhou.companion
+name: 03 断网入队恢复补达
+tags:
+  - online
+---
+- runFlow: subflows/open-app.yaml
+
+- setAirplaneMode: enabled
+# 让连接真的断掉再发——立刻发会撞上「socket 还没意识到自己死了」的窗口，
+# 那验的是另一件事（看门狗），不是队列。
+- waitForAnimationToEnd:
+    timeout: 10000
+
+- tapOn:
+    id: "composer-input"
+- inputText: "现在几点了"
+- tapOn:
+    id: "composer-send"
+
+# 断网期：用户气泡在（本地渲染），助手气泡挂起中
+- assertVisible: "现在几点了"
+- assertVisible:
+    id: "msg-pending"
+
+- setAirplaneMode: disabled
+
+# 补达=挂起态消失。90s 覆盖 tailnet 重握手 + 队列 flush + 后端一轮。
+- extendedWaitUntil:
+    notVisible:
+      id: "msg-pending"
+    timeout: 90000

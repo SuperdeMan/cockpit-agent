@@ -1,0 +1,29 @@
+# 流 ④：离线冒烟（**不在计划的三条里**，是 CI 能跑的那一条）
+#
+# 为什么加这条：计划 M3-5 写「CI 手动档实跑一次」，但前三条流**全都要真栈**
+# （云栈在 tailnet 里，CI runner 没有 Tailscale，而给 CI 配 auth key 是红线动作）。
+# 在 CI 里跑那三条只会稳定红，然后被人加 `continue-on-error` 忽略掉——
+# **一条永远红的检查等于没有检查**。
+#
+# 所以 CI 跑的是这条：验「App 起得来、路由通、卡片渲染器不崩」，全部素材来自本地
+# fixtures（画廊屏），零后端依赖。它证明不了整链——**也不许拿它冒充整链**，
+# 三条真栈流的读数只能来自真机。
+appId: com.xiaozhou.companion
+name: 04 离线冒烟（画廊渲染）
+tags:
+  - offline
+---
+- runFlow: subflows/open-app.yaml
+
+# 画廊支持 ?only=<type> 直达（M3-1 加的，全表 40 条时 adb 滚动定位极不可靠）
+- openLink: "xiaozhou://card-gallery?only=weather,payment_qr"
+
+- extendedWaitUntil:
+    visible: "天气 · .*"
+    timeout: 20000
+# 付款码卡：原生 svg 在场时渲二维码，缺席时走「安全支付链接」降级档。
+# 两种都算通过——这条验的是**不崩**，不是二维码本身（坑账 §9.27 那条的回归探针）。
+- assertVisible: "扫码支付|安全支付链接|本机暂时无法显示二维码"
+
+# 兜底卡铁则：画廊里注册型都该有专门渲染器，出现 `卡片 · <type>` 说明注册表漏了
+- assertNotVisible: "卡片 · weather"

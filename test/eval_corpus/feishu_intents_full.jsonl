@@ -4940,9 +4940,9 @@
 {"text": "关温区同步功能", "domain": "setting", "object": "空调模式/功能控制", "edge_expected": null}
 {"text": "关闭一下温区同步功能", "domain": "setting", "object": "空调模式/功能控制", "edge_expected": null}
 {"text": "关一关温区同步功能", "domain": "setting", "object": "空调模式/功能控制", "edge_expected": null}
-{"text": "打电话给13888882222", "domain": "phone", "object": "电话", "edge_expected": null}
-{"text": "拨号给13888882222", "domain": "phone", "object": "电话", "edge_expected": null}
-{"text": "拨打13888882222", "domain": "phone", "object": "电话", "edge_expected": null}
+{"text": "打电话给13800138000", "domain": "phone", "object": "电话", "edge_expected": null}
+{"text": "拨号给13800138000", "domain": "phone", "object": "电话", "edge_expected": null}
+{"text": "拨打13800138000", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "请将电话拨打给号码1", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "把电话拨给号码2", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "打电话给号码11", "domain": "phone", "object": "电话", "edge_expected": null}
@@ -5033,7 +5033,7 @@
 {"text": "打给第三个", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "给第3个拨", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "拨一下号给第三个", "domain": "phone", "object": "电话", "edge_expected": null}
-{"text": "不是0888是17727271922", "domain": "phone", "object": "电话", "edge_expected": null}
+{"text": "不是0888是13800138000", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "请你把号码1更正为号码2", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "把号码1从号码改成号码2", "domain": "phone", "object": "电话", "edge_expected": null}
 {"text": "赶紧你把号码1修改成号码2", "domain": "phone", "object": "电话", "edge_expected": null}

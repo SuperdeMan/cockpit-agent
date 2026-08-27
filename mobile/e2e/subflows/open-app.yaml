@@ -1,0 +1,21 @@
+# 把 App 打开到**对话主屏**（所有 flow 的前置）。
+#
+# ⚠ 这一步不是仪式，是判据：当前 APK 是 **dev-client**（含 expo-dev-client），
+# `launchApp` 打开的是 **DevLauncherActivity**（一个「选择开发服务器」的界面），
+# 不是应用本身。此时所有 `tapOn` 都会找不到元素，而失败信息看起来像
+# 「App 里没有这个按钮」——真相是**被测对象根本没在跑**。
+# （同坑账 §9.20 那条「观察对象缺席时零事件=零证据」。）
+#
+# ⇒ 必须经 dev-client 深链把 Metro 地址交给它。Metro 要先起：
+#   cd mobile && npx expo start --dev-client
+#   adb reverse tcp:8081 tcp:8081     # 真机走 USB 时必须
+appId: com.xiaozhou.companion
+---
+- stopApp
+- openLink: "xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
+# JS bundle 首次加载在真机上 15~25s（dev 模式不压缩、走 Metro 现编）。
+# 判据取「输入框出现」而不是固定 sleep——设备快慢差一倍，写死秒数不是等待是赌博。
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 60000

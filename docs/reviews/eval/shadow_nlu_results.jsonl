@@ -5117,9 +5117,9 @@
 {"idx": 4939, "llm_domain": "setting", "llm_slots": {"object": "温区同步功能", "action": "关闭"}}
 {"idx": 4940, "llm_domain": "setting", "llm_slots": {"object": "温区同步功能", "action": "关闭"}}
 {"idx": 4941, "llm_domain": "setting", "llm_slots": {"object": "温区同步功能", "action": "关闭"}}
-{"idx": 4942, "llm_domain": "phone", "llm_slots": {"action": "拨打", "name": "13888882222"}}
-{"idx": 4943, "llm_domain": "phone", "llm_slots": {"contact": "13888882222"}}
-{"idx": 4944, "llm_domain": "phone", "llm_slots": {"contact": "13888882222"}}
+{"idx": 4942, "llm_domain": "phone", "llm_slots": {"action": "拨打", "name": "13800138000"}}
+{"idx": 4943, "llm_domain": "phone", "llm_slots": {"contact": "13800138000"}}
+{"idx": 4944, "llm_domain": "phone", "llm_slots": {"contact": "13800138000"}}
 {"idx": 4945, "llm_domain": "phone", "llm_slots": {"contact": "号码1"}}
 {"idx": 4946, "llm_domain": "phone", "llm_slots": {"contact": "号码2"}}
 {"idx": 4947, "llm_domain": "phone", "llm_slots": {"contact": "号码11"}}
@@ -5247,7 +5247,7 @@
 {"idx": 5032, "llm_domain": "phone", "llm_slots": {"action": "拨打", "object": "第三个联系人"}}
 {"idx": 5033, "llm_domain": "phone", "llm_slots": {"action": "拨打", "object": "第3个联系人"}}
 {"idx": 5034, "llm_domain": "phone", "llm_slots": {"action": "拨打", "object": "第三个联系人"}}
-{"idx": 5035, "llm_domain": "phone", "llm_slots": {"action": "拨打", "object": "17727271922"}}
+{"idx": 5035, "llm_domain": "phone", "llm_slots": {"action": "拨打", "object": "13800138000"}}
 {"idx": 5069, "llm_domain": "phone", "llm_slots": {"keyword": "妈妈的号码"}}
 {"idx": 5070, "llm_domain": "phone", "llm_slots": {"keyword": "妈妈的号码"}}
 {"idx": 5071, "llm_domain": "phone", "llm_slots": {"keyword": "联系人的号码"}}

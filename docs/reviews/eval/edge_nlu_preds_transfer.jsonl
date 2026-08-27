@@ -1243,7 +1243,7 @@
 {"text": "关温区同步功能", "gold_object": "空调模式/功能控制", "pred_object": "温度", "conf": 0.101, "ok": false}
 {"text": "关闭一下温区同步功能", "gold_object": "空调模式/功能控制", "pred_object": "辅助驾驶", "conf": 0.1, "ok": false}
 {"text": "关一关温区同步功能", "gold_object": "空调模式/功能控制", "pred_object": "辅助驾驶", "conf": 0.093, "ok": false}
-{"text": "拨号给13888882222", "gold_object": "电话", "pred_object": "电话", "conf": 0.387, "ok": true}
+{"text": "拨号给13800138000", "gold_object": "电话", "pred_object": "电话", "conf": 0.387, "ok": true}
 {"text": "拨一下电话号码3", "gold_object": "电话", "pred_object": "电话", "conf": 0.435, "ok": true}
 {"text": "拨号给177开头的号码", "gold_object": "电话", "pred_object": "电话", "conf": 0.45, "ok": true}
 {"text": "拨一下电话给137开头的号码", "gold_object": "电话", "pred_object": "电话", "conf": 0.456, "ok": true}
@@ -1272,7 +1272,7 @@
 {"text": "打给第三个", "gold_object": "电话", "pred_object": "电话", "conf": 0.119, "ok": true}
 {"text": "给第3个拨", "gold_object": "电话", "pred_object": "电话", "conf": 0.278, "ok": true}
 {"text": "拨一下号给第三个", "gold_object": "电话", "pred_object": "电话", "conf": 0.362, "ok": true}
-{"text": "不是0888是17727271922", "gold_object": "电话", "pred_object": "电话", "conf": 0.269, "ok": true}
+{"text": "不是0888是13800138000", "gold_object": "电话", "pred_object": "电话", "conf": 0.269, "ok": true}
 {"text": "请你把号码1更正为号码2", "gold_object": "电话", "pred_object": "电话", "conf": 0.308, "ok": true}
 {"text": "把号码1从号码改成号码2", "gold_object": "电话", "pred_object": "电话", "conf": 0.297, "ok": true}
 {"text": "赶紧你把号码1修改成号码2", "gold_object": "电话", "pred_object": "电话", "conf": 0.316, "ok": true}
