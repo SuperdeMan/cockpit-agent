@@ -997,6 +997,33 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 - **接手注意**：画廊全卡族的样式回归入口不变（`xiaozhou://card-gallery?only=…`）；
   折叠屏截图要 `screencap -d <display-id>`（坑账 §9.28 同款）。
 
+**第二轮（同日晚，泓舟真机四条反馈的收口）**：
+- **光球形态重做（反馈①「像几个同心圆旋转」）**：根因两条——四角小 blob 不重叠（有「点」感）
+  + 全程无 blur（三层裁切边界清晰=「圈层」感）。对照物先行：用 headless Edge 把 web 版
+  七层逐值渲成基准图（scratchpad orb-ref.html），确认 web 形态是**无边界流体**。修法：
+  瓣径 68%→132%、中心绕圆周分布相邻大幅重叠、正反两层 45° 相位错开；三层盘启用
+  `filter:[{blur}]`（此前「零 filter」是全机型一致的保守决策，**光球是设计记忆点，值得为它
+  破例**——API<31 无 RenderEffect 时瓣重叠仍柔和，只是少一层融合）；瓣浓度 C8→E6、
+  内层 opacity 0.85。真机对照基准逐轮收敛，终态与 web 版 96px 球形态一致。
+- **浅色「对话框顶边白线」（反馈②）**：根因=浅色 `hi`（顶缘高光）是 85% 白 + 气泡 inset
+  1px 纯白——aurora.css 的纯白 bd-top 压在 backdrop 磨砂上才成立，RN 无磨砂时它是一条
+  孤立白线。修法：浅色 `hi` 退成比 line 更淡的深色 `rgba(10,14,26,0.05)`、去浅色 inset 段；
+  深色不动。
+- **图标移植（反馈③，评估结论=数据共享、渲染各端自持）**：A-8 图标库两份数据文件
+  （icons.gen.ts 60+ / icons.custom.ts 21）是纯 `{w,h,body}` ⇒ 进 `shared-allowlist.json`
+  台账（M3 相），`mobile/src/ui/Icon.tsx` 用 SvgXml 复刻 hmi Icon.tsx 的 24×24/1.8 stroke
+  契约（aiMoment 渐变态无消费点刻意不做）；svg 原生探测走 merchantCards 同款
+  `TurboModuleRegistry` 判据、缺席回退文字。本轮消费点=顶栏「车辆/设置」换 40dp 图标钮
+  （`.au-icon-btn` 同款）；34 个卡渲染器内部图标不动（独立批）。
+  ⚠ 台账守卫①扫**全文含注释**：注释里写 `@shared/...` 不带扩展名会被当引用判红——
+  守卫第一次跑就抓到写它消费面的人（正确行为，注释改措辞）。
+- **应用图标=光球（反馈④）**：icon 渲染源即基准 HTML（scratchpad icon-gen.html，
+  querystring 六模式），headless Edge 出六件套：icon 1024（深空底+600px 球）/
+  adaptive 前景 512（**透明底必须垫不透明深空圆**——半透明球体没有深色底会整体泛白，
+  辉光同步减 35%）/ 背景 512（深空渐变+双 blob）/ monochrome 432（SVG mask 白剪影：
+  实心圆+高光挖空，按像素 alpha 验过形状）/ favicon 48 / splash 228×213。
+  换 icon 需重 prebuild+重装（README 既有约定）。
+
 ---
 
 ## 7. M4 / M5（触发条件与首任务，不展开）

@@ -122,7 +122,7 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
           gap: 8,
           boxShadow: p.dark
             ? '0 4px 20px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06)'
-            : '0 3px 14px rgba(10,14,26,0.07), inset 0 1px 0 rgba(255,255,255,0.9)',
+            : '0 3px 14px rgba(10,14,26,0.07)',
         }}
       >
         {proactive ? (

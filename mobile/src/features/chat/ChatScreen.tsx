@@ -19,6 +19,7 @@ import type { ServerConfig } from '../../core/config/types'
 import { ensureWired, type Wired } from '../../core/session/wiring'
 import { settingsStore } from '../../core/settings/store'
 import { AuroraBackground, AuroraOrb, Glass } from '../../ui/aurora'
+import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { usePalette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import { ReminderSection } from '../vehicle/ReminderSection'
@@ -61,6 +62,46 @@ export function ChatScreen() {
     return <View style={{ flex: 1, backgroundColor: p.bg }} />
   }
   return <ChatBody p={p} wired={wired} tablet={tablet} width={width} cfg={cfgState} />
+}
+
+/** 顶栏图标入口（hmi .au-icon-btn 同款：fill 底/圆角 12/40dp 热区）；svg 原生缺席回退文字 */
+function TopIconLink({
+  p,
+  href,
+  icon,
+  label,
+}: {
+  p: ReturnType<typeof usePalette>
+  href: '/vehicle' | '/settings'
+  icon: IconName
+  label: string
+}) {
+  if (!iconRuntimeAvailable()) {
+    return (
+      <Link href={href} style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
+        {label}
+      </Link>
+    )
+  }
+  return (
+    <Link href={href} asChild>
+      <Pressable
+        accessibilityLabel={label}
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 12,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: p.fill,
+          borderWidth: 1,
+          borderColor: p.fill2,
+        }}
+      >
+        <Icon name={icon} size={20} color={p.fg2} />
+      </Pressable>
+    </Link>
+  )
 }
 
 /** 欢迎态（hmi ChatView Welcome 同款）：大光球 + 问候 + 快捷指令，替代此前的空白列表 */
@@ -273,14 +314,8 @@ function ChatBody({
               <Text style={{ color: p.fg2, fontSize: p.font(11) }}>{conn.label}</Text>
             </View>
             <View style={{ flex: 1 }} />
-            {!tablet ? (
-              <Link href="/vehicle" style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
-                车辆
-              </Link>
-            ) : null}
-            <Link href="/settings" style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
-              设置
-            </Link>
+            {!tablet ? <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" /> : null}
+            <TopIconLink p={p} href="/settings" icon="settings" label="设置" />
           </View>
           {linkWarn ? (
             <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>

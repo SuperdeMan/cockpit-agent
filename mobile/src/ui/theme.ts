@@ -85,7 +85,9 @@ const LIGHT = {
   fg3: 'rgba(10,14,26,0.32)',
   accentSoft: 'rgba(10,143,204,0.10)',
   amberSoft: 'rgba(180,83,9,0.12)',
-  hi: 'rgba(255,255,255,0.85)',
+  // 浅色「顶缘高光」刻意不是白：RN 无 backdrop 磨砂，fill 灰底上压 1px 白边会渲成一条孤立白线
+  // （aurora.css 的纯白 bd-top 是压在 blur 玻璃上才成立），这里退成比 line 更淡的深色
+  hi: 'rgba(10,14,26,0.05)',
   fill: 'rgba(10,14,26,0.045)',
   fill2: 'rgba(10,14,26,0.08)',
   glassBg: 'rgba(255,255,255,0.76)',

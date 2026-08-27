@@ -27,15 +27,25 @@ const BLUE = '#5B8CFF'
 const VIOLET = '#9A6BFF'
 const MAGENTA = '#FF6BD6'
 
-/** 四色 blob 圆盘（替代 conic 彩环）：父层旋转时四色环绕流动 */
+/** 四色重叠瓣圆盘（替代 conic 彩环）：瓣直径 132%、中心绕圆周分布、相邻大幅重叠，
+ *  配合外层 filter:blur 融为一体的流动彩雾——瓣小了/不重叠就会退化成「四个点在转」，
+ *  那正是第一版被打回的原因（对照物 scratchpad orb-web-ref：web conic+blur 是无边界流体）。 */
 function AuroraDisk({ reversed = false }: { reversed?: boolean }) {
   const colors = reversed ? [VIOLET, BLUE, CYAN, MAGENTA] : [CYAN, BLUE, VIOLET, MAGENTA]
-  const spots: Array<Partial<ViewStyle>> = [
-    { top: '-12%', left: '-12%' },
-    { top: '-12%', right: '-12%' },
-    { bottom: '-12%', right: '-12%' },
-    { bottom: '-12%', left: '-12%' },
-  ]
+  // 中心在半径 26% 的圆周上（0/90/180/270° + 45° 相位错开正反两层），瓣径 132% ⇒ 位置 = 50%+26cos-66
+  const spots: Array<Partial<ViewStyle>> = reversed
+    ? [
+        { top: '-34.4%', left: '2.4%' },
+        { top: '2.4%', left: '20.8%' },
+        { top: '39.2%', left: '2.4%' },
+        { top: '2.4%', left: '-52.4%' },
+      ]
+    : [
+        { top: '-42%', left: '-16%' },
+        { top: '-16%', left: '10%' },
+        { top: '10%', left: '-16%' },
+        { top: '-16%', left: '-42%' },
+      ]
   return (
     <>
       {colors.map((c, i) => (
@@ -43,10 +53,10 @@ function AuroraDisk({ reversed = false }: { reversed?: boolean }) {
           key={i}
           style={{
             position: 'absolute',
-            width: '68%',
-            height: '68%',
+            width: '132%',
+            height: '132%',
             ...spots[i],
-            experimental_backgroundImage: `radial-gradient(circle, ${c}CC 0%, ${c}00 72%)`,
+            experimental_backgroundImage: `radial-gradient(circle, ${c}E6 0%, ${c}00 64%)`,
           }}
         />
       ))}
@@ -132,7 +142,7 @@ export function AuroraOrb({
           animated ? bodyStyle : null,
         ]}
       />
-      {/* 极光晕环（web: conic+blur → blob 盘旋转） */}
+      {/* 极光晕环（web: conic+blur → 重叠瓣盘旋转 + RenderEffect blur；API<31 无 blur 时靠瓣重叠柔化） */}
       <Animated.View
         style={[
           layer,
@@ -140,6 +150,7 @@ export function AuroraOrb({
             top: -size * 0.06, left: -size * 0.06, right: -size * 0.06, bottom: -size * 0.06,
             overflow: 'hidden',
             opacity: thinking ? 0.52 : 0.3,
+            filter: [{ blur: size * 0.115 }],
           },
           animated ? haloStyle : null,
         ]}
@@ -167,7 +178,8 @@ export function AuroraOrb({
           layer,
           {
             top: size * 0.16, left: size * 0.16, right: size * 0.16, bottom: size * 0.16,
-            overflow: 'hidden', opacity: 0.7,
+            overflow: 'hidden', opacity: 0.85,
+            filter: [{ blur: size * 0.05 }],
           },
           animated ? innerStyle : null,
         ]}
@@ -180,7 +192,8 @@ export function AuroraOrb({
           layer,
           {
             top: size * 0.28, left: size * 0.28, right: size * 0.28, bottom: size * 0.28,
-            overflow: 'hidden', opacity: 0.54,
+            overflow: 'hidden', opacity: 0.5,
+            filter: [{ blur: size * 0.04 }],
           },
           animated ? counterStyle : null,
         ]}
@@ -193,7 +206,7 @@ export function AuroraOrb({
           position: 'absolute',
           top: '9%', left: '13%', width: '44%', height: '33%',
           experimental_backgroundImage:
-            'radial-gradient(ellipse closest-side, rgba(255,255,255,0.66) 0%, rgba(255,255,255,0) 82%)',
+            'radial-gradient(ellipse closest-side, rgba(255,255,255,0.72) 0%, rgba(255,255,255,0.30) 45%, rgba(255,255,255,0) 88%)',
         }}
       />
       {/* 右下色散折射 */}

@@ -14,6 +14,8 @@
     { "file": "ttsQueue.mjs", "phase": "M2", "purpose": "TTS 收尾判定 speechCovered（final 与已流式文本是不是同一段话）", "notes": "只用 speechCovered；分句缓冲与 OrderedPlaybackQueue 是批处理路径的，App 未用" },
     { "file": "pcmRing.mjs", "phase": "M2", "purpose": "Float32↔Int16、int16ToWav（ASR 批处理兜底 WAV 构造）", "notes": "" },
     { "file": "merchantUi.mjs", "phase": "M3", "purpose": "商户卡逻辑（图片白名单/行项归一）", "notes": "" },
+    { "file": "components/icons.gen.ts", "phase": "M3", "purpose": "A-8 图标库数据（Figma 导出 {w,h,body}）", "notes": "纯数据；渲染器两端各自实现（hmi Icon.tsx / mobile ui/Icon.tsx）" },
+    { "file": "components/icons.custom.ts", "phase": "M3", "purpose": "A-8 补充图标数据（vehicle/settings 等）", "notes": "纯数据，同上" },
     { "file": "vehicleStage.mjs", "phase": "M3", "purpose": "车况右面板推导", "notes": "" },
     { "file": "reminderStage.mjs", "phase": "M3", "purpose": "提醒面板推导", "notes": "" },
     { "file": "voiceLoop.mjs", "phase": "M4", "purpose": "免唤醒 FSM", "notes": "预登记，M4 触发前不引" },
