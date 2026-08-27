@@ -1435,9 +1435,16 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 39. **HyperOS 的输入法首启同意页会截胡第一次点击**（M3-W）：点 App 输入框 → 弹出系统
     「剪贴板与常用语」授权页，`input text` 打到那个页面上去了。**症状是「输入没进去」，
     像是 App 的焦点 bug。** 处理：点「不同意」退出（不给多余权限）再重试。
-40. **`uiautomator dump` 会静默返回残缺树**（M3-W）：见过只有 1 个 node 的输出，
-    grep 什么都匹配不到。**拿它当「元素不存在」的证据会误判**——我据此以为「弱网提示条没出现」，
-    截图一看提示条明明在。判据：**dump 结果先验节点数，取证以截图为准。**
+40. **`uiautomator dump` 会静默返回残缺树，根因是本 App 的常驻动画**（M3-W）：
+    见过只有 1 个 node 的输出，grep 什么都匹配不到。**拿它当「元素不存在」的证据会误判**
+    ——我据此以为「弱网提示条没出现」，截图一看提示条明明在。
+    **根因（后来定位到）**：`uiautomator dump` 要等窗口 idle，而**对话主屏永远有一个循环
+    动画**（Composer 的 Aurora 光球；欢迎态还有 88dp 大球与背景 blob）⇒ 主屏**稳定**拿不到树
+    （连试 4 次都是 1 个 node），而设置页/地图页正常。
+    判据：**dump 结果先验节点数，取证以截图为准**；在有常驻动画的屏上根本别指望 dump。
+    ⚠ **对 Maestro 的影响待实测**：它的 Android driver 走 `AccessibilityNodeInfo`（不等 idle），
+    大概率不受影响，但**这是推断**——第一次跑之前先 `maestro hierarchy` 验一句
+    （`mobile/e2e/README.md` 写了不通过时的退路）。
 41. **dev-client + USB 调试线时 keep-awake 验不出来**（M3-W）：两个污染源叠在一起——
     ① `stay_on_while_plugged_in=2`（USB 充电常亮，坑账 §9.29 那次设的）；
     ② MainActivity 一起来就带 `fl=KEEP_SCREEN_ON`（dev launcher 屏没有，来源未定位，
