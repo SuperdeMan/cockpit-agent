@@ -8,6 +8,8 @@ from __future__ import annotations
 import re
 
 from runtime.polarity import is_negated_directive
+from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
+from runtime.question_shape import is_non_directive_question
 
 LOCAL_INTENTS = {
     # ⚠ `hvac.inc/dec` 2026-08-04 补入：温度增减此前**只以别名 `aircon.inc/dec` 登记**
@@ -15,7 +17,12 @@ LOCAL_INTENTS = {
     # 端侧反而认不出自己产出的规范名了。别名清理会照出这类漏网点，这是第二处。
     "hvac.set", "hvac.on", "hvac.off", "hvac.inc", "hvac.dec",
     "window.open", "window.close", "window.set", "window.inc", "window.dec",
-    "media.play", "media.pause", "media.next", "media.prev",
+    # ⚠ `media.stop` 2026-08-27 补入（QA N2）。`commands.yaml` 的 media 对象一直
+    # 声明着 `stop/close` operates，缺的只是**规则出口**：所有「关/停」形态都被
+    # `_to_legacy_name` 的 media_map 折成 `pause`，于是 VAL 初始态 `media=stopped`
+    # **靠语音永远回不去**——探针的车态恢复轮因此每次都留一条不可能达成的差异。
+    # 修的是出口不是尺子：「把 paused 也算作已停止」是把尺子改宽（卡 C2-B）。
+    "media.play", "media.pause", "media.stop", "media.next", "media.prev",
     # 座椅。⚠ 2026-08-16（Q13）删掉 `.open/.close` 那半：`commands.yaml` 的
     # `edge_intents` 声明的是 on/off，命名收敛成唯一实现后 `.open/.close` **不可达**
     # （700 组合穷举证明，含大量不可能的 object×mode 过近似）。
@@ -134,6 +141,24 @@ _SCENE_EDIT_RE = re.compile(
 _EDGE_MODE_RE = re.compile(
     r"(驾驶|运动|舒适|经济|节能|标准|雪地|越野|性能|省电|电量|动能回收)模式")
 
+# 后挡除雾的量词形态。**长形在前**：`挡` 与 `挡风玻璃` 并列时，只列单字会让
+# 「后挡风玻璃除雾」整句匹配不上（可选组吃掉「挡」之后紧跟的是「风」不是「除雾」，
+# 空组也接不上）——2026-08-26 QA 的 N1 就是这么发生的：词表里原本写的是
+# 「**档**风玻璃」（木字旁错字），于是**用户口误的那个写法能用、正确写法反而不行**，
+# 恢复轮「关闭后挡风玻璃除雾」被执行成 `front_defogger.close`，**关错了物理开关**。
+# 错字形保留并列（用户口误 / ASR 变体照收），它本来就没伤害；删掉它只会让另一半人踩坑。
+# ⚠ 这一族的教训写进 §4.3：**恢复/清理链路的词表要与业务链路同源**——
+# 探针的恢复命令撞上这个错字才把它照出来，恢复链是一次免费的对抗测试。
+_REAR_DEFOG_RE = re.compile(
+    r"后\s*(?:挡风玻璃|档风玻璃|风挡玻璃|挡风|风挡|玻璃|挡|窗)?\s*(?:除雾|除霜)")
+
+# 胎压**推荐值**问法（QA N3）。判据是「问的是规格还是读数」：带这些词的是手册域
+# 知识问句，端侧没有这份知识，抢答只会得到「暂不支持哦」或双话术拼接。
+# ⚠ 「正常吗」不在表里——那是拿读数对照规格，仍是状态查询。
+_TIRE_PRESSURE_SPEC_ASKS = ("应该", "该补", "该打", "标准", "多少合适", "合适的",
+                            "建议", "推荐", "正常值", "正常范围", "多少正常",
+                            "规定", "打到多少", "充到多少")
+
 
 # 场景激活/退出句（带动词的「X模式」）——句中的车控词是场景参数，不是当下指令
 _SCENE_ACT_RE = re.compile(
@@ -187,37 +212,11 @@ def _is_reminder_utterance(t: str) -> bool:
 
 
 # ── 疑问/假设框架否决（对抗测试 ei.noise.question-about-control / .hypothetical）────
-# 端侧认的是「对象 + 动作词」，于是「这车的天窗最大能开多大」命中天窗+开 → 真把天窗打开了。
-# 这一类不是落域偏好问题：**用户根本没有下指令**，行驶中被误开天窗是真实安全问题。
-#
-# 否决面只盖**控制类**结果，不盖查询类——「胎压是多少」「电量还有多少」「温度怎么样」都带
-# 疑问词，但它们要的正是端侧那条确定性查询，一刀切会把好用的秒回一起砍掉。判据是
-# **提问会不会被执行成写操作**，不是「这句话像不像问句」。
-_QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
-_CAPABILITY_ASKS = ("能不能", "可不可以", "会不会", "是不是", "支不支持", "行不行", "有没有")
-# 数量/属性疑问词：问的是**参数本身**，构不成指令 → 无条件否决写操作。
-_PROPERTY_ASKS = ("多大", "多高", "多宽", "多长", "多快", "多少", "多久", "多远")
-# 方式/原因疑问词：可以出现在祈使式里（「温度如何调高」要的是调、不是问怎么调），
-# 因此沿用 `_is_env_temp_query` 的同一判据——**带操作动词就仍算指令**。两处判据必须
-# 是同一条，否则同一句话在「让不让给天气查询」与「算不算提问」上会得到相反的结论。
-_MANNER_ASKS = ("怎么", "咋", "如何", "为什么", "为啥", "什么时候")
-_HYPOTHETICAL_FRAMES = ("要是", "如果", "假如", "万一", "假设")
-# 面向助手的祈使标记：带这些词的疑问句是**礼貌请求**（「能帮我关下车窗吗」），是指令不是提问。
-_DIRECTIVE_MARKERS = ("帮我", "帮忙", "给我", "替我", "麻烦", "请")
-
-
-def _is_non_directive_question(t: str) -> bool:
-    """这句话是在**问**，而不是在**下指令**。"""
-    if any(w in t for w in _DIRECTIVE_MARKERS):
-        return False
-    if t.rstrip("。！!.~ ").endswith(_QUESTION_TAILS):
-        return True
-    if any(w in t for w in _HYPOTHETICAL_FRAMES):
-        return True
-    if any(w in t for w in _CAPABILITY_ASKS) or any(w in t for w in _PROPERTY_ASKS):
-        return True
-    return (any(w in t for w in _MANNER_ASKS)
-            and not any(v in t for v in _OPERATION_VERBS))
+# ⚠ 2026-08-27 判据整体下沉到 `runtime/question_shape.py`——**云侧要用同一条**
+# （QA P0-01：同一句「红色机油灯亮了怎么办」在端侧被这道闸挡住、上云之后被 planner
+# 规划成 `warning_light.close` 并真的执行了）。云侧镜像够不着 `orchestrator/edge`，
+# 所以搬到 runtime 而不是在云侧抄第二份。这里只留一个本地别名，行为逐字不变。
+_is_non_directive_question = is_non_directive_question
 
 
 def _is_write_action(result: dict | None) -> bool:
@@ -420,8 +419,7 @@ def _classify_structured(text: str) -> dict | None:
         # 与体感入口收窄同一纪律——宁可漏接上云，也不要端侧替用户按下按钮。
         if not ("说明书" in t or "怎么" in t or "如何" in t or "为什么" in t
                 or "什么是" in t or "怎样" in t):
-            obj = ("rear_defogger"
-                   if re.search(r"后\s*(挡|窗|玻璃|风挡|档风玻璃)?\s*(除雾|除霜)", t)
+            obj = ("rear_defogger" if _REAR_DEFOG_RE.search(t)
                    else "front_defogger")
             return _s("setting", "control",
                       "close" if "关" in t else "open", obj, conf=0.92)
@@ -746,8 +744,24 @@ def _classify_structured(text: str) -> dict | None:
         return _s("setting", "control", "open", "charging_port", conf=0.93)
 
     # ── 胎压监测 ──────────────────────────────────────────
+    # ⚠ 两处 2026-08-27 修（QA N3 + 取证时扫出的 N8），它们是**两个不同的病**：
+    #
+    # ① **知识问句让路**：「胎压应该补到多少 / 标准胎压是多少」问的是**推荐值**
+    #    （手册域），不是读当前四个轮胎的读数。原规则按对象词一把抓，于是 adv T30
+    #    秒回「暂不支持哦」、info T23 端侧先答一句再由云端补答（**双话术拼接**）。
+    #    同上方除雾那条「查询式让路」先例：宁可漏接上云，也不要端侧替用户抢答。
+    #
+    # ② **对象名对不上知识库**（N8，findings 未记）：规则产的是 `tire_pressure`，
+    #    而 `commands.yaml` 声明的对象叫 `tire_pressure_monitoring` ⇒
+    #    `_validate_command` 一律不认，**「胎压是多少」这类真状态查询也一直是
+    #    「暂不支持哦」**。这正是 §9.29 五段链在 query 型上的复发（方向盘加热是
+    #    operate 对不上，这条是 object 对不上）——声明齐全、名字也对得上 intent，
+    #    唯独产出方吐的对象名知识库不认。云侧下发那条路（`decode_intent`）产的是
+    #    正确对象名，所以门禁一直是绿的：**同一个 intent 有两个产出方，门禁只走了一条。**
     if "胎压" in t or "轮胎气压" in t:
-        return _s("query", "query", "query", "tire_pressure", conf=0.92)
+        if any(w in t for w in _TIRE_PRESSURE_SPEC_ASKS):
+            return None                       # 推荐值 → 云端 manual-rag
+        return _s("query", "query", "query", "tire_pressure_monitoring", conf=0.92)
 
     # ── 行车记录仪 ────────────────────────────────────────
     if "行车记录仪" in t or "记录仪" in t:
@@ -1014,6 +1028,10 @@ def _classify_structured(text: str) -> dict | None:
             or "放首" in t or "来首" in t:
         if "关" in t:
             return _s("app", "control", "close", "music", conf=0.9)
+        # 「停止/停下」是**停止**，「暂停/停一下」是暂停，裸「停」按口语归暂停
+        # ——三者顺序即判据，改顺序等于改语义（QA N2）。
+        if "停止" in t or "停下" in t:
+            return _s("app", "control", "stop", "music", conf=0.9)
         if "暂停" in t or "停" in t:
             return _s("app", "control", "pause", "music", conf=0.9)
         if "下一首" in t or "下一曲" in t or "切歌" in t:
@@ -1390,6 +1408,12 @@ def _classify_structured(text: str) -> dict | None:
                 return _s("app", "control", operate, "app", tag=an, conf=0.88)
 
     # ── 通用媒体播放（旧保留，兜底）──────────────────────
+    # ⚠ 「停止播放」必须早于下面的 `"播放" in t`：它含「播放」二字，
+    # 旧序下被判成 `start`——**说「停止播放」把音乐放起来了**（2026-08-27 实测，
+    # 与 QA N2 同一次取证扫出）。这一条比 N2 更恶性：N2 是回不到某个终态，
+    # 这一条是**反向执行**。
+    if "停止" in t or "停下" in t or "关闭" in t:
+        return _s("app", "control", "stop", "media", conf=0.93)
     if "暂停" in t or "停一下" in t:
         return _s("app", "control", "pause", "media", conf=0.93)
     if "下一首" in t or "换一首" in t or "切歌" in t:
@@ -1452,7 +1476,6 @@ _ENV_TEMP_CTX = ("体感", "天气", "气温", "外面", "室外", "户外")
 _TEMP_INTERROGATIVES = ("怎么样", "怎样", "如何", "冷不冷", "热不热")
 # 操作动词集：`_is_env_temp_query` 与 `_is_non_directive_question` 共用同一条判据
 # ——「疑问词 + 操作动词」仍算指令。
-_OPERATION_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
 
 
 def _is_env_temp_query(t: str) -> bool:
@@ -1907,8 +1930,10 @@ def _to_legacy_name(intent: dict) -> str | None:
             # 缺原话时退回 next——`media.switch` 不在 LOCAL_INTENTS，
             # 退回它等于整句上云，**认不出方向不该连本地能力一起丢**。
             return "media.prev" if "上一" in raw_text else "media.next"
+        # `stop`/`close` 不再折成 `pause`（QA N2）：**暂停与停止是两个终态**，
+        # 折叠掉的那一个恰好是 VAL 的初始态，于是它变成一个「只能离开、回不来」的态。
         media_map = {"play": "play", "start": "play", "open": "play", "pause": "pause",
-                     "stop": "pause", "close": "pause", "resume": "play",
+                     "stop": "stop", "close": "stop", "resume": "play",
                      "query": "query"}
         return f"media.{media_map.get(operate, operate)}"
     # online_only：**给名字但不给本地能力**。这些名字都不在 LOCAL_INTENTS，路由结果与
@@ -1983,7 +2008,7 @@ def _to_legacy_name(intent: dict) -> str | None:
         return f"{obj}.{operate}"
     if obj in ("fuel_tank_cover", "charging_port"):
         return f"{obj}.{operate}"
-    if obj == "tire_pressure":
+    if obj == "tire_pressure_monitoring":
         return "tire_pressure.query"
     if obj == "dashcam":
         # ⚠ 这里原来走 `_on_off_map` 产 `dashcam.on/off`，而 `commands.yaml` 的

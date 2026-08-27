@@ -1,9 +1,17 @@
-"""安全信号判据——**唯一实现**（卡 Q9，2026-08-15）。
+"""安全信号判据——**唯一实现**（卡 Q9，2026-08-15；2026-08-27 从 `agents/_sdk` 迁入 runtime）。
 
-为什么在 `_sdk` 而不是各 Agent 里各写一份：阶段 1 落地时 manual-rag 与 road-safety
+为什么不在各 Agent 里各写一份：阶段 1 落地时 manual-rag 与 road-safety
 已经各自长出了一套词表，chitchat 还需要第三套。本仓 §4.3 刚为「容器时区」付过学费——
 **同一件事有三份各自正确的实现，就迟早会有第四份是错的**。这里是那句话的预防版：
 第三个消费方出现的**当天**就收口，而不是等它错了再收。
+
+## 为什么 2026-08-27 从 `agents/_sdk` 搬到了 `runtime/`
+
+因为出现了**第四个消费方，而它够不着 `agents/`**：云端编排要在**输入侧**扫本轮原话
+（卡 C1-B——告警登记不能是「恰好走了 manual-rag 这条路由」的副作用），而
+`orchestrator/cloud/Dockerfile` 只 `COPY runtime`，没有 `agents/`。
+落点判据就是这条**镜像依赖闭包**：谁都够得着的那一份才叫唯一实现
+（同 `polarity.py` / `cntime.py` / `clock.py` 的迁入理由）。
 
 三个判据，互不重叠：
   · `alert_level(text)`  车辆告警（警示语境词 × 关键系统）→ "critical" | "amber" | ""
@@ -62,13 +70,24 @@ def alert_level(text: str) -> str:
 
 def alert_signal(text: str) -> str:
     """告警的名字。取命中的词，**不取整句**——整句进会话态会把用户的措辞
-    变成告警名字（「慢一点开可以吗」不是一个告警）。"""
+    变成告警名字（「慢一点开可以吗」不是一个告警）。
+
+    ⚠ 系统名只在**命中词自己没带系统名**时才前缀（2026-08-26 QA 实录修）。
+    `ALERT_CONTEXT` 里的具名灯本身就含系统名（`机油灯`/`水温灯`），而
+    `CRITICAL_SYSTEMS` 又会独立扫出「机油」/「水温」，无条件拼接的结果是
+    **「机油机油灯」「水温水温灯」**——它原样进焦点、进卡片、进播报话术，
+    vehicle T35-36 与 family T62-63 四轮实录。
+    这个 bug 能活下来是因为既有断言只查 `len(sig) <= 12`：**长度对、内容错**。
+    所以下面那条回归断言钉的是**具体返回值**，不是形状。
+    """
     t = text or ""
     hit = next((w for w in ALERT_CONTEXT if w in t), "")
     if not hit:
         return ""
     system = next((w for w in CRITICAL_SYSTEMS if w in t), "")
-    return f"{system}{hit}" if system else hit
+    if not system or system in hit:
+        return hit
+    return f"{system}{hit}"
 
 
 def alert_advice(level: str) -> str:

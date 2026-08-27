@@ -6570,3 +6570,91 @@ I-030 跨组 2026-08-22 收口 history **§67**）、§4.1 ③ 支付余项，
 「今天要五点前到南山实验小学接女儿」）。**动这张卡前要处理的是这两条 `memory_item`**；
 那张卡写的「关系边里存的是全名、planner 转述丢了城市」仍未被证实，
 但**证伪它的实验已经做完了——不用再从关系边找**。
+
+---
+
+## §73 2026-08-28 MiniMax QA 修复批 · 第 1 批（C1 安全告警链 + C2 端侧车控 + C16 探针 1/6/8）
+
+方案与逐卡机制见
+[`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](design/2026-08-27-minimax-qa-root-cause-fix-plan.md)
+（§0 接手须知、§3 逐卡、§4 实施顺序与「第 1 批终态」、§6 本批新发现）。
+本节只记**流水与判据**，不复述方案。
+
+### §73.1 做了什么
+
+**C1 安全告警链（P0-01，四项全做）**
+
+- **A 云侧「问句 + 写车控步」确定性守卫**。判据下沉成 `runtime/question_shape.py`
+  （端侧 `fast_intent` 改为 import，行为逐字不变）——云侧镜像够不着 `orchestrator/edge`，
+  **落点判据是镜像依赖闭包**，不是在云侧抄第二份。读写判据同样下沉
+  （`runtime/intent_effect.py`，`capability_meta._READ_ONLY_OPERATES` 改为 import）。
+  挂点是 `PlanBuilder.build()` 的**唯一出口**（`route_hints.apply` 之后），
+  LLM 计划 / 降级语义路由 / hint 补步三条来源一并盖住；确定性省略消解那条早退单独也挂了一次。
+  拦下之后**落兜底 Agent 答一句**而不是留空计划——空计划会让 engine 说「没听清」，
+  而「X 灯亮了怎么办」恰恰最需要一个回答。
+- **B 告警登记搬家**：`extract_focus` 扫 `plan.raw_text`；road-safety 两条入口
+  （`_driving_advice` / `_driver_state_intent`）补「本轮原话优先于会话存储」，
+  并把扫出来的告警回写成 `_safety_alert`。
+- **C 同槽严重级比较** `merge_safety_alert`：critical 不被 amber 覆盖（过期除外），同级取新；
+  **跨轮粘性接力也走这条**（原来是「本轮为空才接」，新 amber 会顶掉未解除的 critical），
+  `previous` 焦点因此改成无条件载入。
+- **D `alert_signal` 拼接**：具名灯自己就带系统名，不再前缀 ⇒ 不再产出「机油机油灯」。
+
+**C2 端侧车控三 bug + 探针诊断出口**
+
+- N1 后挡除雾词表错字（「档风玻璃」）：改成长形在前的量词表，错字形保留并列；补长形语料。
+- N2 `media.stop`：`media_map` 不再把 `stop/close` 折成 `pause`，`MEDIA_INTENTS`/
+  `LOCAL_INTENTS`/VAL 旧接口/catalog 描述一并补齐。
+- N3 胎压规格问句让路 + **N8 对象名对不上知识库**（见 §73.2）。
+- C2-D 探针：`_settled_vehicle_state` 返回 `VehicleStateRead`（value/settled/reachable/missing），
+  三个调用点按「不可达 / 可达但不全 / 可达但不匹配」分开报，**逐键 diff 真跑起来**。
+
+**C16 的 1 / 6 / 8**：SF3 首轮补 `no_actions + intent_any`（原为 `expect: {}`，
+执行了 `warning_light.close` 照样绿）；恢复轮补动作-目标一致性判据 `judge_restore_turn`；
+诊断出口拆分同 C2-D。顺带把 SF2 首轮（N3 的现场）也补上，并加了一条**扫全 safety 组**
+的元断言——它防的是下一次再漏。
+
+### §73.2 本批新发现的两个缺陷（findings 与方案都未记，当批已修）
+
+- **N8 规则产的对象名知识库不认**：`fast_intent` 产 `tire_pressure`，`commands.yaml` 声明的是
+  `tire_pressure_monitoring` ⇒ **每一句「胎压是多少」都秒回「暂不支持哦」**，
+  不只是推荐值问句。等价类台账 `nlu_objects.yaml` 早就记着这处分歧
+  ——**记录一个缺陷不等于修它**。B4 门禁一直绿，因为它跑的是云侧下发那条路。
+  因此 C2-E 从「一次性扫错字的报告」换成机器闸
+  `orchestrator/edge/tests/test_rule_object_reachability.py`（AST 按产出方静态盘点），
+  反向验证做过：把对象名改回去，门禁当场红。同族存量 4 条逐条进台账（见方案 §6）。
+- **N9「停止播放」被执行成开始播放**：通用媒体兜底里 `播放` 分支早于 `停止`，
+  而「停止播放」含「播放」。**它比 N2 更恶性**——N2 是够不着一个终态，这条是反向执行。
+
+### §73.3 读数（**不许四舍五入成「QA 那几条已转绿」**）
+
+- 全量 `python -m pytest -q -n auto --dist worksteal`：**7309 passed / 32 skipped 零红**（3:58）。
+  基线 7225/32 ⇒ **+84 全部是本批新增断言**，无一条既有用例被改绿。
+- `python test/smoke_edge.py` 13 passed；`test/eval_capability_integrity.py` ✅ PASS；
+  `scripts/check_intent_gate.py` rc=0（discovery 85/85、gate 25/25）。
+- 改动的**行为锁**四处，都必须显式改：`_GOLDEN`（「停止音乐」pause→stop）、
+  catalog 153→154 条 / 13374→13400 字符 / 余量 2626→2600、对抗语料上限 624→628、
+  端侧能力面 84→85。
+- ⚠ **真栈迷你集与「修正后计分」都没跑**：这一批改了探针本身，按方案口径应在下一轮跑批时
+  连同 C16 其余条目一起验。**云端 release 的 QA 读数没有因此改变。**
+
+### §73.4 一处考古用的说明：safety_signal 的 move 落在了一个 mobile 提交里
+
+`{agents/_sdk => runtime}/safety_signal.py`（及其测试）的**重命名**出现在
+`85a99ef feat(mobile): M3 收尾…` 里，内容 0 改动；**这一批的内容修改才在本批提交**。
+成因是共享工作树 + `git mv` **立刻进暂存区**——并行会话按路径 commit 隔离不掉已暂存的
+重命名。**没有任何内容丢失**，只是「为什么它在那儿搬的家」需要这一行解释；
+不重写历史（红线），记下来即可。
+
+> 操作建议（两边都照做）：共享树里做 rename 前先打招呼；提交前先看一眼
+> `git diff --cached --stat`，暂存区里有没有别人的东西。
+
+### §73.5 一处未兑现的验收，留痕
+
+C1-A 的验收栏写着「怎么打开双闪」应被拦（「它是 manner 问句」），而同一张卡又要求
+**复用端侧判据、不许抄第二份**。两条在这一句上冲突：端侧那份刻意让「温度如何调高」
+保持为指令（带操作动词 ⇒ 仍是指令），改判据会把那条一起改掉。
+本批**选择保住复用**，把差异写成一条显式断言而不是沉默的缺口
+（`test_question_write_guard.py::test_known_gap_manner_question_with_an_operation_verb_is_not_blocked`）。
+要收这一类的方向是给 `MANNER_ASKS` 加「怎么…吗」的组合形态并在端侧同批回归——
+**那是独立一笔改动，不该混在安全闸这批里悄悄发生。**

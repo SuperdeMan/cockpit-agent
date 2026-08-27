@@ -16,7 +16,7 @@ import os
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT
 from agents._sdk.provenance import attach
-from agents._sdk.safety_signal import alert_advice, alert_level, alert_signal
+from runtime.safety_signal import alert_advice, alert_level, alert_signal
 from .providers import build_knowledge_retriever
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
@@ -34,7 +34,7 @@ _SYSTEM_GENERIC = (
     "资料中没有的内容明确说没有查到，不要编造。"
 )
 
-# 安全信号判据的**唯一实现**在 `agents/_sdk/safety_signal.py`（road-safety 与
+# 安全信号判据的**唯一实现**在 `runtime/safety_signal.py`（road-safety 与
 # chitchat 是同一份的另外两个消费方）。这里曾经有一份本地副本——收口发生在
 # 第三个消费方出现的**当天**，不是等它错了再收（§4.3 时区族那笔账）。
 _UNVERIFIED_NUMBERS = "具体数值请以车辆铭牌或随车手册为准，我这里没有本车型的权威数据。"

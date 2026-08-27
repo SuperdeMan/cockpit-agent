@@ -30,8 +30,12 @@ import os
 
 import yaml
 
+from runtime.intent_effect import READ_ONLY_OPERATES
+
 #: 只查不改的操作。对象的 operates 全落在这里 ⇒ 它是 read。
-_READ_ONLY_OPERATES = frozenset({"query", "locate"})
+#: ⚠ 2026-08-27 起集合本体住在 `runtime/intent_effect.py`——云侧安全闸要用同一份，
+#: 而云侧镜像够不着 `orchestrator/edge`。这里只保留本地名字，语义逐字不变。
+_READ_ONLY_OPERATES = READ_ONLY_OPERATES
 
 EFFECTS = ("read", "write")
 RISKS = ("low", "medium", "high")

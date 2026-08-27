@@ -28,6 +28,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from collections import Counter
+from typing import NamedTuple
 from pathlib import Path
 
 try:
@@ -676,6 +677,40 @@ def vehicle_restore_commands(before: dict, after: dict) -> list[tuple[str, str]]
     return commands
 
 
+def judge_restore_turn(state_key: str, target, actions: list) -> list[str]:
+    """恢复轮：**这一句真的动了它该动的那个东西吗**（N7 / C16-6）。
+
+    原判据只查 `need_confirm=False`，于是 2026-08-26 那轮里
+    「关闭后挡风玻璃除雾」执行成 `front_defogger.close`（关错了另一个物理开关）、
+    「关闭音乐」落 `media.pause`（到不了 `stopped`）**双双判绿**。
+    「动作发出去了」与「动作落在目标上」是两件事，探针只看了前一半。
+
+    三条，按顺序：
+      · 一个动作都没有 ⇒ 红。恢复命令说出去了却什么都没发生，本身就是失败。
+      · 动作落到**别的**受管状态键上 ⇒ 红。这条抓的是「关错对象」，
+        它比值不对更恶性：它在**改一个本来不该动的东西**。
+      · 落对了键但值不对 ⇒ 红（`media.pause` vs 目标 `stopped` 就死在这条）。
+
+    只对 `_VEHICLE_ACTION_TARGETS` 认得的动作下结论——认不出的动作（如
+    `window.set` 开到 50%）**不当证据也不当罪证**，那是尺子的覆盖面问题，
+    不该变成被测对象的红灯。
+    """
+    observed = [str(action) for action in (actions or [])]
+    if not observed:
+        return [f"恢复 {state_key} 没有产生任何动作"]
+    mapped = [(name, _VEHICLE_ACTION_TARGETS[name]) for name in observed
+              if name in _VEHICLE_ACTION_TARGETS]
+    wrong = [name for name, (key, _value) in mapped if key != state_key]
+    if wrong:
+        return [f"恢复 {state_key} 的动作落到了别的状态键：{wrong}（actions={observed}）"]
+    on_target = [value for _name, (key, value) in mapped if key == state_key]
+    if on_target and not any(
+            _vehicle_value_matches(value, target) for value in on_target):
+        return [f"恢复 {state_key} 的动作值不对：actions={observed} "
+                f"落到 {on_target!r}，目标 {target!r}"]
+    return []
+
+
 def audit_merchant_draft_cleanup(card_text: str) -> tuple[dict, list[str]]:
     """Validate the bridge's owner/session-scoped zero-state proof card."""
     try:
@@ -1204,20 +1239,51 @@ async def _vehicle_state(collector: str) -> dict:
         return {}
 
 
+class VehicleStateRead(NamedTuple):
+    """一次车态回读的结果。**「读不到」与「读到了但不对」永远分开报**（C2-D）。
+
+    原实现两种失败都返回 `{}`，上层于是只会说一句「collector 无法回读车辆恢复终态」
+    ——而真相是**回读通道一直是好的**，读回来的值就是不等于基线。逐键 diff 那段代码
+    因此成了**死代码**，2026-08-26 那轮 QA 的两个端侧真 bug（后挡除雾关错对象、
+    「关闭音乐」落 pause）被这句谎话整个盖住，最后写进 findings 的是
+    「探针基建问题：终值未知」。
+
+    这条判据 android-m3 那批已经沉淀过一次（「复合判据的诊断出口要拆开报」），
+    它在探针上原样复发——所以这次把它写进类型里，而不是写进注释里。
+    """
+    #: 最后一次拿到的原始状态。`{}` = collector 一次都没给出非空状态。
+    value: dict
+    #: 完整 + 匹配 expected + 连续两次稳定。只有它为真才算「已收敛」。
+    settled: bool
+    #: 至少读到过一次非空状态 = **回读通道是通的**。
+    reachable: bool
+    #: 期望键里始终没读到的那些（`reachable` 为真时才有意义）。
+    missing: tuple
+
+
 async def _settled_vehicle_state(
     collector: str,
     *,
     attempts: int = 8,
     required_keys: set[str] | tuple[str, ...] = (),
     expected: dict | None = None,
-) -> dict:
-    """Return only a complete state that is stable twice and matches a target."""
+) -> VehicleStateRead:
+    """回读车态，并**如实报告失败的种类**。
+
+    收敛判据一字未改（完整 + 匹配 + 稳定两次）；变的是没收敛时不再假装什么都没读到
+    ——把最后一次读数带回去，让上层的逐键 diff 真跑起来。
+    """
     required = set(required_keys) | set((expected or {}).keys())
     previous: tuple[tuple[str, object], ...] | None = None
     stable_reads = 0
+    last_value: dict = {}
+    last_missing: tuple = tuple(sorted(required))
     for attempt in range(attempts):
         value = await _vehicle_state(collector)
         projected = managed_vehicle_state(value, required_keys=required or None)
+        if value:
+            last_value = value
+            last_missing = tuple(sorted(required - set(projected)))
         complete = bool(value) and required.issubset(projected)
         matches = complete and all(
             _vehicle_value_matches(projected.get(key), wanted)
@@ -1231,13 +1297,13 @@ async def _settled_vehicle_state(
             stable_reads = stable_reads + 1 if snapshot == previous else 1
             previous = snapshot
             if stable_reads >= 2:
-                return value
+                return VehicleStateRead(value, True, True, ())
         else:
             previous = None
             stable_reads = 0
         if attempt + 1 < attempts:
             await asyncio.sleep(0.25)
-    return {}
+    return VehicleStateRead(last_value, False, bool(last_value), last_missing)
 
 
 def _navigation_is_active(rows: list[dict]) -> bool:
@@ -1310,12 +1376,12 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
     merchant_cleanup_proofs: list[dict] = []
     required_vehicle_keys = _required_vehicle_state_keys(cases)
     needs_vehicle = bool(required_vehicle_keys)
-    baseline_raw = await _settled_vehicle_state(
+    baseline_read = await _settled_vehicle_state(
         collector, required_keys=required_vehicle_keys,
-    ) if needs_vehicle else {}
+    ) if needs_vehicle else VehicleStateRead({}, True, True, ())
     baseline_state = managed_vehicle_state(
-        baseline_raw, required_keys=set(required_vehicle_keys),
-    ) if baseline_raw else {}
+        baseline_read.value, required_keys=set(required_vehicle_keys),
+    ) if baseline_read.value else {}
     missing_baseline_keys = [
         key for key in required_vehicle_keys if key not in baseline_state
     ]
@@ -1326,11 +1392,13 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
         "cleanup_session_id": "",
         "verified": not needs_vehicle, "failures": [],
     }
-    if needs_vehicle and (not baseline_raw or missing_baseline_keys):
+    if needs_vehicle and (not baseline_read.settled or missing_baseline_keys):
+        # 两种失败分开说（C2-D）：通道不通 vs 通道通但基线不全。
         detail = ", ".join(missing_baseline_keys) or "无可用状态"
         failure = (
-            "collector 无法提供完整车辆基线，拒绝执行会改变车态的 persona："
-            + detail
+            ("collector 不可达，拒绝执行会改变车态的 persona"
+             if not baseline_read.reachable else
+             "collector 可达但车辆基线不完整，拒绝执行会改变车态的 persona：" + detail)
         )
         vehicle_cleanup["failures"].append(failure)
         cleanup_failures.append(failure)
@@ -1567,17 +1635,20 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                 for row in rows
                 for action in row.get("actions") or []
             ]
-            after_business_raw = await _settled_vehicle_state(
+            after_business_read = await _settled_vehicle_state(
                 collector,
                 required_keys=required_vehicle_keys,
                 expected=_expected_vehicle_state(business_actions),
             )
             vehicle_cleanup["after_business"] = managed_vehicle_state(
-                after_business_raw,
+                after_business_read.value,
                 required_keys=set(required_vehicle_keys),
-            ) if after_business_raw else {}
-            if not after_business_raw:
-                failure = "collector 无法回读业务后的车辆状态"
+            ) if after_business_read.value else {}
+            # ⚠ 这一读的 `expected` 只是**加速收敛的目标**，不是判据：业务轮做了什么
+            # 本来就允许与预期不同（那正是探针要观测的）。所以门槛是 `reachable`
+            # 而不是 `settled`——读到了就往下走，读不到才是真的没法恢复。
+            if not after_business_read.reachable:
+                failure = "collector 不可达，无法回读业务后的车辆状态"
                 vehicle_cleanup["failures"].append(failure)
                 cleanup_failures.append(failure)
             else:
@@ -1631,6 +1702,12 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                         {"expect": {"need_confirm": False}}, obs, [], stamp=stamp)
                     if obs.get("error"):
                         failures.append(f"恢复 {key} transport/backend error")
+                    else:
+                        # N7：动作与目标状态键的一致性。`need_confirm=False` 证明不了
+                        # 这一句动对了东西——恢复链本身就是一次免费的对抗测试，
+                        # 它的失败要**逐键报因**（C2-D 同一条判据的另一半）。
+                        failures.extend(judge_restore_turn(
+                            key, baseline_state.get(key), obs.get("actions")))
                     rows.append({
                         "turn": len(rows) + 1, "case": "VEHICLE-RESTORE",
                         "case_instance": "", "local_turn": 0, "say": say,
@@ -1647,22 +1724,36 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                         abort_reason = f"vehicle restore uncertain for {key}"
                         break
 
-                final_raw = await _settled_vehicle_state(
+                final_read = await _settled_vehicle_state(
                     collector,
                     required_keys=required_vehicle_keys,
                     expected=baseline_state,
-                ) if restore_ws is not None else {}
+                ) if restore_ws is not None else VehicleStateRead({}, False, False, ())
                 final_state = managed_vehicle_state(
-                    final_raw,
+                    final_read.value,
                     required_keys=set(required_vehicle_keys),
-                ) if final_raw else {}
+                ) if final_read.value else {}
                 vehicle_cleanup["after_cleanup"] = final_state
                 expected_state = baseline_state
-                if not final_state:
+                # **「读不到」与「读到了但不对」分开报**（C2-D / C16-8）。
+                # 原实现把两者都塞成一句「collector 无法回读车辆恢复终态」，
+                # 于是下面这段逐键 diff 从来没有执行过——它是死代码，
+                # 而两个端侧真 bug（rear_defogger 关错对象、media 落 pause）
+                # 恰恰只有它报得出来。
+                if not final_read.reachable:
                     vehicle_cleanup["failures"].append(
-                        "collector 无法回读车辆恢复终态")
+                        "collector 不可达，无法回读车辆恢复终态")
+                elif not final_state:
+                    vehicle_cleanup["failures"].append(
+                        "collector 可达但恢复终态缺少全部权威键："
+                        + (", ".join(final_read.missing) or "未知"))
                 else:
+                    for key in final_read.missing:
+                        vehicle_cleanup["failures"].append(
+                            f"车辆恢复终态缺键 {key}（collector 没有给出这一维）")
                     for key, expected in expected_state.items():
+                        if key in final_read.missing:
+                            continue
                         if final_state.get(key) != expected:
                             vehicle_cleanup["failures"].append(
                                 f"车辆基线未恢复 {key}: "

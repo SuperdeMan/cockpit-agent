@@ -55,8 +55,15 @@ def _complete_vehicle_state_payload():
     }
 
 
+def _settled(payload: dict) -> long_qa.VehicleStateRead:
+    """已收敛的一次回读。2026-08-27 起 `_settled_vehicle_state` 返回的是
+    `VehicleStateRead`（两种失败分开报，C2-D），替身也要跟着换形状——
+    **替身的形状与被测函数不一致时，测的就不是那条路径了**。"""
+    return long_qa.VehicleStateRead(payload, True, True, ())
+
+
 async def _complete_vehicle_state(_collector, **_kwargs):
-    return _complete_vehicle_state_payload()
+    return _settled(_complete_vehicle_state_payload())
 
 
 def test_five_personas_each_have_a_continuous_50_to_100_turn_plan():
@@ -298,7 +305,7 @@ def test_transport_abort_restores_known_vehicle_delta_in_a_fresh_session(monkeyp
     ])
 
     async def settled(_collector, **_kwargs):
-        return next(states)
+        return _settled(next(states))
 
     async def turn(ws, session, say, *, operation_id="", trace_id,
                    is_confirmation=False):
@@ -846,7 +853,10 @@ def test_missing_vehicle_keys_are_not_invented_from_semantic_defaults():
 
 def test_vehicle_persona_rejects_missing_authoritative_baseline_key(monkeypatch):
     async def incomplete_state(_collector, **_kwargs):
-        return {"hvac_on": False}
+        """通道通、但只给得出一个键——**这是「读到了但不全」，不是「读不到」**。"""
+        required = set(long_qa._MANAGED_VEHICLE_KEYS)
+        return long_qa.VehicleStateRead(
+            {"hvac_on": False}, False, True, tuple(sorted(required - {"hvac_on"})))
 
     async def forbidden_connect(_url):
         raise AssertionError("missing baseline must fail before opening a session")
@@ -897,7 +907,9 @@ def test_settled_vehicle_state_waits_past_old_cache_for_expected_state(monkeypat
         expected={"rear_view_mirror": "folded"},
     ))
 
-    assert result["rear_view_mirror"] == "folded"
+    assert result.settled is True
+    assert result.reachable is True
+    assert result.value["rear_view_mirror"] == "folded"
     assert calls == 3
 
 
@@ -1110,3 +1122,134 @@ def test_state_check_still_reports_a_wrong_final_state():
     assert failures == [
         "状态未兑现 hvac.off: hvac_on=True, 期望 False",
     ]
+
+
+# ── 诊断出口：读不到 vs 读到了但不对（卡 C2-D / C16-8，2026-08-27）───────────
+# 2026-08-26 那轮 QA 的 vehicle persona 报的是「collector 无法回读车辆恢复终态，
+# 终值未知」——**回读通道一直是好的**，读回来的值就是不等于基线。两种失败被合并成
+# 一句谎话，于是逐键 diff 成了死代码，两个端侧真 bug（后挡除雾关错对象、
+# 「关闭音乐」落 pause）被整个盖住，最后写进 findings 的是「探针基建问题」。
+#
+# 判据（第二次沉淀，android-m3 那批在别处记过一次）：
+# **「读不到」与「读到了但不对」永远分开报。**
+
+def test_unmatched_read_returns_the_last_value_not_an_empty_dict(monkeypatch):
+    async def vehicle_state(_collector):
+        return {"rear_defogger": True}
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa, "_vehicle_state", vehicle_state)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    result = asyncio.run(long_qa._settled_vehicle_state(
+        "https://collector.invalid", attempts=2,
+        required_keys={"rear_defogger"}, expected={"rear_defogger": False}))
+
+    assert result.settled is False
+    assert result.reachable is True, "通道是通的，不许报成读不到"
+    assert result.value == {"rear_defogger": True}, "末次读数必须带回去，否则 diff 无从谈起"
+    assert result.missing == ()
+
+
+def test_unreachable_collector_is_reported_as_unreachable(monkeypatch):
+    async def vehicle_state(_collector):
+        return {}
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(long_qa, "_vehicle_state", vehicle_state)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", no_wait)
+
+    result = asyncio.run(long_qa._settled_vehicle_state(
+        "https://collector.invalid", attempts=2, required_keys={"rear_defogger"}))
+
+    assert result.reachable is False
+    assert result.value == {}
+    assert result.missing == ("rear_defogger",)
+
+
+def test_restore_failure_names_the_key_instead_of_blaming_the_collector(monkeypatch):
+    """整条 persona 跑一遍：恢复没到位时，failures 必须**逐键点名**。"""
+    class _Ws:
+        async def close(self):
+            return None
+
+    async def connect(_url):
+        return _Ws()
+
+    baseline = _complete_vehicle_state_payload()
+    after_business = {**baseline, "rear_defogger": True}
+    reads = iter([
+        _settled(baseline),                                   # 基线
+        _settled(after_business),                             # 业务后
+        long_qa.VehicleStateRead(after_business, False, True, ()),   # 恢复后仍没回去
+    ])
+
+    async def settled(_collector, **_kwargs):
+        return next(reads)
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        actions = ["rear_defogger.open"] if say == "打开后挡风玻璃除雾" else []
+        return {
+            "speech": "好的", "actions": actions, "need_confirm": False,
+            "operation_id": "", "closed_operation_ids": [],
+            "card_type": "", "card_text": "", "is_question": False,
+            "trace_id": trace_id,
+        }
+
+    async def detail(_collector, trace_id):
+        return {"turn": {"trace_id": trace_id, "status": "ok", "path": "local"},
+                "spans": [], "llm_calls": [], "logs": []}
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_settled_vehicle_state", settled)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+
+    result = asyncio.run(long_qa._run_persona(
+        "vehicle", [{"id": "DEFOG", "turns": [
+            {"say": "打开后挡风玻璃除雾",
+             "expect": {"actions_include": ["rear_defogger.open"]}}]}],
+        "wss://example.invalid", "https://collector.invalid", 1))
+
+    failures = " ".join(result["vehicle_cleanup"]["failures"])
+    assert "rear_defogger" in failures, f"必须点名到键：{failures}"
+    assert "无法回读" not in failures, f"通道是通的，不许报成读不到：{failures}"
+
+
+# ── 恢复轮动作-目标一致性（N7 / C16-6）─────────────────────────────────────
+
+def test_restore_turn_flags_an_action_on_the_wrong_object():
+    """T56 原样：恢复 `rear_defogger`，实际执行 `front_defogger.close`。"""
+    fails = long_qa.judge_restore_turn(
+        "rear_defogger", False, ["front_defogger.close"])
+    assert fails and "front_defogger.close" in fails[0]
+
+
+def test_restore_turn_flags_a_wrong_value_on_the_right_object():
+    """T59 原样：目标 `media=stopped`，实际落 `media.pause`。"""
+    fails = long_qa.judge_restore_turn("media", "stopped", ["media.pause"])
+    assert fails and "media.pause" in fails[0]
+
+
+def test_restore_turn_flags_no_action_at_all():
+    assert long_qa.judge_restore_turn("hvac_on", False, [])
+
+
+def test_restore_turn_accepts_the_correct_action():
+    assert long_qa.judge_restore_turn("media", "stopped", ["media.stop"]) == []
+    assert long_qa.judge_restore_turn(
+        "rear_defogger", False, ["rear_defogger.close"]) == []
+
+
+def test_restore_turn_tolerates_actions_the_ruler_does_not_know():
+    """尺子认不出的动作（开度型 `window.set`）**不当证据也不当罪证**。
+
+    这是「尺子覆盖面」问题，不该变成被测对象的红灯——否则下一个人会为了让探针变绿
+    去改被测系统。
+    """
+    assert long_qa.judge_restore_turn("window", "50%", ["window.set"]) == []

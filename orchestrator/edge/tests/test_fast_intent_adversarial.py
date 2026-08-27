@@ -135,3 +135,34 @@ class TestMirrorFoldIsLocal:
         result = classify_structured("把后视镜收起来")
         assert result["data"]["operate"] == "set"
         assert result["data"]["mode"] == "fold"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 4. 规格问句不是状态查询（2026-08-26 QA，卡 C2-C / N3）
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestSpecQuestionIsNotAStateQuery:
+    """「胎压应该补到多少」问的是**推荐值**，端侧手里只有当前读数。
+
+    实录两种错法、一个根因（端侧按对象词一把抓）：
+      · adv T30「胎压应该补到多少」→ 端侧 `tire_pressure.query` 秒回「暂不支持哦」；
+      · info T23 混合路径下端侧先答「暂不支持该控制指令」、云端再答一遍，
+        用户听到的是**两段拼接**。
+
+    与本文件第 1 组「提问不是指令」是同一形态在**查询侧**的复发：那一组守的是
+    「问句不许被执行成写操作」，这一组守的是「规格问句不许被端侧当成读操作抢答」。
+    收窄面照例两头钉：真状态查询必须仍然走端侧秒回。
+    """
+
+    def test_spec_asks_go_to_cloud(self):
+        for text in ("胎压应该补到多少", "标准胎压是多少", "胎压多少正常",
+                     "胎压建议打到多少", "不知道具体车型时，标准胎压应该是多少"):
+            assert classify_structured(text) is None, f"{text!r} 不该被端侧接管"
+
+    def test_state_queries_still_answered_locally(self):
+        for text in ("胎压是多少", "看下胎压", "帮我查一下胎压", "胎压正常吗",
+                     "轮胎气压查一下"):
+            result = classify_structured(text)
+            assert result is not None, f"{text!r} 认不出来了"
+            assert result["data"]["object"] == "tire_pressure_monitoring"
+            assert is_local(_name(text) or ""), f"{text!r} 不该上云"

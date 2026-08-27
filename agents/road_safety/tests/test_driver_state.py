@@ -67,7 +67,7 @@ def test_driver_state_intent_does_not_invent_fatigue():
     用户从头到尾没说自己困：**系统声称了一件用户根本没说的事**，
     与 nearby 那几例假个性化同族。
 
-    判据：**认不出就返回空，绝不回落到某一档**（`_sdk/safety_signal` 纪律 ②）。
+    判据：**认不出就返回空，绝不回落到某一档**（`runtime/safety_signal` 纪律 ②）。
     """
     res = asyncio.run(run_handle(
         _agent(), "safety.driver_state", raw_text="慢一点开可以吗？"))
@@ -101,3 +101,55 @@ def test_card_carries_provenance():
     res = _advice("困到睁不开眼了，还要开两个小时")
     prov = (res.ui_card or {}).get("_prov") or {}
     assert prov.get("mode"), f"安全建议卡必须带出处：{res.ui_card}"
+
+
+# ── 本轮原话里的车辆告警（卡 C1-B，2026-08-26 QA P0-01/T24-25）─────────────
+
+def _advice_state_intent(text: str):
+    return asyncio.run(run_handle(
+        _agent(), "safety.driver_state", raw_text=text))
+
+
+def test_spoken_alert_beats_the_weather_branch():
+    """「红色机油灯亮了还能继续开吗」不许被答成雨天注意事项。
+
+    实录（info persona T24-25）：这句话确实落到了 `safety.driving_advice`，
+    但本 Agent 只 import 了 `driver_state`，**`alert_level` 一个都没导入**；
+    分支序是 驾驶员状态 → 会话告警 → 天气建议，而 info persona 整场没有 manual 轮、
+    会话告警存储为空 ⇒ 一路落到天气分支，拉了 qweather 答了一段雨天建议。
+
+    判据：**本轮原话优先于会话存储**。用户此刻正在说的告警比存着的那条更新。
+    """
+    res = _advice("红色机油灯亮了还能继续开吗")
+    assert "机油灯" in res.speech
+    assert any(w in res.speech for w in ("停车", "熄火", "不建议继续", "救援")), res.speech
+    assert "适合出行" not in res.speech
+
+
+def test_spoken_alert_also_covers_the_driver_state_entry():
+    """两条入口都要有——planner 把这句路由到哪一条是有方差的。"""
+    res = _advice_state_intent("水温灯亮了还能开吗")
+    assert "水温灯" in res.speech
+    assert "适合出行" not in res.speech
+
+
+def test_spoken_alert_is_declared_into_session_state():
+    """本轮扫出来的告警要**登记进会话态**，否则下一轮换个 handler 又回到答天气。"""
+    res = _advice("红色机油灯亮了还能继续开吗")
+    declared = (res.data or {}).get("_safety_alert") or {}
+    assert declared.get("level") == "critical"
+    assert declared.get("signal") == "机油灯"
+
+
+def test_amber_alert_gets_the_amber_conclusion():
+    """分级不能塌成一档：黄灯给「降低车速尽快检查」，不是「立刻靠边熄火」。"""
+    res = _advice("胎压黄灯亮了还能开吗")
+    assert "降低车速" in res.speech or "尽快就近检查" in res.speech
+    assert "熄火" not in res.speech
+
+
+def test_ordinary_question_is_not_turned_into_an_alert():
+    """反方向：普通出行问句不许被这条新分支抢走（它是一条宽匹配面）。"""
+    res = _advice("今天适合出行吗")
+    assert "未解除" not in res.speech
+    assert not ((res.data or {}).get("_safety_alert") or {})

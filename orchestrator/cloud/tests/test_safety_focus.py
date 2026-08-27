@@ -86,3 +86,84 @@ def test_focus_with_only_safety_alert_is_not_empty():
     """只有安全态时 focus 也必须被持久化——否则它一轮就没了。"""
     assert not Focus(safety_alert={"level": "amber", "signal": "胎压",
                                    "ts": int(time.time())}).is_empty()
+
+
+# ── 登记挂在输入上（C1-B，2026-08-26 QA P0-01）─────────────────────────────
+# 上面那一批测的都是「Agent 声明了保留键之后会怎样」。P0-01 暴露的恰恰是**前一步**：
+# 那一轮根本没有 Agent 会声明——planner 把「红色机油灯亮了怎么办」规划成了
+# `warning_light.close`，而车控步没有 data 通道。于是「红色机油灯」这个事实
+# **整个没进系统**，后面三轮消费的还是更早那轮留下的黄灯。
+#
+# 判据：**登记不能是路由的副作用。** 下面这几条测的是「不管本轮走了哪条路由，
+# 只要用户说了，系统就知道」。
+
+def test_alert_is_registered_from_the_utterance_even_without_any_declaration():
+    """没有任何 Agent 声明 `_safety_alert`，告警照样进会话态。"""
+    plan = _plan(intent="warning_light.close", agent_id="edge-vehicle")
+    plan.raw_text = "红色机油灯亮了怎么办"
+    focus = extract_focus(plan, [_ok("s0", {})])
+    assert focus is not None
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "机油灯"
+
+
+def test_ordinary_utterance_registers_nothing():
+    """反方向：普通话术不许凭空造出一个告警（否则每轮 prompt 都被污染）。"""
+    plan = _plan(intent="info.weather", agent_id="info")
+    plan.raw_text = "今天天气怎么样"
+    focus = extract_focus(plan, [_ok("s0", {})])
+    assert not ((focus.safety_alert if focus else {}) or {})
+
+
+def test_agent_declaration_still_wins_when_it_is_more_severe():
+    """原话是事实、Agent 声明是补充：更高等级仍然赢。"""
+    plan = _plan()
+    plan.raw_text = "胎压黄灯亮了"          # 扫出来是 amber
+    focus = extract_focus(plan, [
+        _ok("s0", {"_safety_alert": {"level": "critical", "signal": "制动失效"}})])
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "制动失效"
+
+
+# ── 严重级比较（C1-C）───────────────────────────────────────────────────────
+
+def test_amber_declaration_does_not_downgrade_a_critical_utterance():
+    """**降级要有理由**——「Agent 后写了一条」不是理由。"""
+    plan = _plan()
+    plan.raw_text = "红色机油灯亮了怎么办"   # critical
+    focus = extract_focus(plan, [
+        _ok("s0", {"_safety_alert": {"level": "amber", "signal": "胎压"}})])
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "机油灯"
+
+
+def test_same_level_takes_the_newer_one():
+    """同级取新：它带着更新的 ts 与 signal。"""
+    plan = _plan()
+    plan.raw_text = "胎压黄灯亮了"
+    focus = extract_focus(plan, [
+        _ok("s0", {"_safety_alert": {"level": "amber", "signal": "水温异常"}})])
+    assert focus.safety_alert.get("signal") == "水温异常"
+
+
+def test_merge_lets_an_expired_alert_be_replaced():
+    """过期的 critical 不许永远挡着——否则一次告警会把会话锁死。"""
+    from orchestrator.cloud.context import merge_safety_alert
+    stale = {"level": "critical", "signal": "机油灯", "ts": int(time.time()) - 24 * 3600}
+    fresh = {"level": "amber", "signal": "胎压灯", "ts": int(time.time())}
+    assert merge_safety_alert(stale, fresh) is fresh
+
+
+def test_merge_keeps_the_live_critical_over_a_new_amber():
+    from orchestrator.cloud.context import merge_safety_alert
+    live = {"level": "critical", "signal": "机油灯", "ts": int(time.time())}
+    fresh = {"level": "amber", "signal": "胎压灯", "ts": int(time.time())}
+    assert merge_safety_alert(live, fresh) is live
+
+
+def test_merge_is_a_noop_when_one_side_is_empty():
+    """空的那种情况必须逐字同旧——粘性接力就是靠这条保持原行为。"""
+    from orchestrator.cloud.context import merge_safety_alert
+    live = {"level": "amber", "signal": "胎压灯", "ts": int(time.time())}
+    assert merge_safety_alert(live, {}) is live
+    assert merge_safety_alert({}, live) is live

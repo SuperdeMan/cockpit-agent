@@ -502,6 +502,60 @@ cases:
       - input: {utterance: 音乐停一下, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [media.pause]}], forbidden_intents: [media.play], allow_extra_intents: false}
+  # ── media.stop 覆盖（2026-08-27，QA N2 新增 active intent）────────────────
+  # 这一族的考点是**暂停 / 停止 / 播放三者不许互相顶替**：出 bug 之前端侧把全部
+  # 「关/停」形态折进 pause，`media=stopped` 因此语音不可达；折叠一旦回潮，
+  # 下面四条里必然有一条红。硬负例刻意成对（stop 顶掉 pause、pause 顶掉 stop），
+  # 「收窄/放宽面只写一边守不住」。
+  - id: tu.media.stop-vs-pause
+    title: 停止播放（不是暂停）
+    family_id: tu.media-stop-pause
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-27}
+    turns:
+      - input: {utterance: 停止播放, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.stop]}], forbidden_intents: [media.pause, media.play], allow_extra_intents: false}
+  - id: tu.media.stop-second
+    title: 停止播放（第二正例）
+    family_id: tu.media-stop
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-27}
+    turns:
+      - input: {utterance: 把音乐关了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.stop]}], forbidden_intents: [media.pause], allow_extra_intents: false}
+  - id: tu.media.pause-vs-stop
+    title: 暂停不是停止（对照）
+    family_id: tu.media-stop-pause
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-27}
+    relation: {base_case: tu.media.stop-vs-pause, type: route_flip, expectation: {forbidden_after: [media.stop], required_change: true}}
+    turns:
+      - input: {utterance: 先暂停, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.pause]}], forbidden_intents: [media.stop, media.next], allow_extra_intents: false}
+  - id: tu.media.play-vs-stop
+    title: 继续播放不是停止（硬负例）
+    family_id: tu.media-stop
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A2], mechanisms: [direction_flip], domains: [media], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-27}
+    turns:
+      - input: {utterance: 继续播放吧, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [media.play]}], forbidden_intents: [media.stop, media.pause], allow_extra_intents: false}
   - id: tu.media.prev-second
     title: 上一首（第二正例）
     family_id: tu.media-prev

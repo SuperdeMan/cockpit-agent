@@ -149,7 +149,12 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 落成半组。其余本批 route hint 都指向既有能力，不增加目录条数。
     # 2026-08-25 152→153：MiniMax-only QA 新增 `shop.preview_discard`，只清当前
     # 账号当前会话的 Redis 临时预览，不取消真实订单，也不处理历史订单。
-    assert len(catalog.ref_to_pair) == 153
+    # 2026-08-27 153→154：MiniMax QA 修复批第一批新增端侧 `media.stop`（卡 C2-B）。
+    # 它**不是新能力**——`commands.yaml` 的 media 对象一直声明着 `stop/close`，
+    # 缺的是端侧规则出口：所有「关/停」形态被折成 `media.pause`，于是
+    # `media=stopped` 这个 VAL 初始态**靠语音永远回不去**，探针每一轮车态恢复
+    # 都留一条不可能达成的差异。补出口 ⇒ catalog 里也就多了这一条。
+    assert len(catalog.ref_to_pair) == 154
     assert catalog.catalog_stats["dropped"] == []
     # object-key wire 去掉每项重复字段名后，完整生产 inventory 精确占用 10865。
     # info.sports 新增过去赛果/泛指赛事边界后增加 49 字符，仍完整落在 16k 预算内。
@@ -201,14 +206,18 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 2026-08-24 +116 → 13278：`reminder.create_batch` 的能力描述与一条判别化范例。
     # 有意新增 +1 条；默认 16k 下仍零裁剪。
     # 2026-08-25 +96 → 13374：`shop.preview_discard` 的窄生命周期描述与两条范例。
-    assert catalog.catalog_stats["chars_full"] == 13374
-    assert catalog.catalog_stats["chars_final"] == 13374
+    # 2026-08-27 +26 → 13400：端侧 `media.stop`（卡 C2-B）。描述刻意写成判别句
+    # （「与暂停不同——暂停保留播放位置、说『继续』能接上」）而不是机械短描述：
+    # stop / pause 正是 catalog 里最容易被一锅端的一对，**描述就是 planner 的
+    # 选择权重**（同 volume.mute 那一笔的理由）。有意新增 +1 条，仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 13400
+    assert catalog.catalog_stats["chars_final"] == 13400
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13374 → 2626）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13400 → 2600）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2626
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2600
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

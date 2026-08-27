@@ -110,12 +110,18 @@ schema_version: 1
 # `shop.preview_discard`。它只丢弃认证用户当前会话的临时商户预览，真实订单取消与历史
 # 查单必须严格让路；覆盖矩阵机械新增正例 2、硬负例 2、relation 对照 1。五条均为
 # `seen_regression`（能力声明与 route_hint 已参与修复），旧尺子一条没删。
+# 2026-08-27 放到 628：MiniMax QA 修复批第一批（C2-B / N2）新增 active intent
+# `media.stop`——`commands.yaml` 早就声明了 `stop/close`，缺的是端侧规则出口，
+# 于是 `media=stopped` 语音不可达、每一轮车态恢复都留一条不可能达成的差异。
+# 覆盖矩阵机械新增正例 2、硬负例 2（其中一条兼作 relation 对照，故本批 +4 不是 +5）。
+# 四条均为 `seen_regression`：**修复动的是分类规则本身，不能伪装成未见迁移**
+# （同上面两批的口径）。旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 624
+    max_cases: 628
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

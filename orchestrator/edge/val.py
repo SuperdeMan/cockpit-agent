@@ -196,6 +196,11 @@ class VAL:
         if command == "media.pause":
             self.state["media"] = "paused"
             return True, "已暂停播放"
+        # 端侧 MediaAgent 走的是**这条旧接口**（`val.execute(name, slots)`），
+        # 所以新增意图要在这里也落一笔——结构化那条路早就认 stop 了（QA N2）。
+        if command == "media.stop":
+            self.state["media"] = "stopped"
+            return True, "已停止播放"
         if command == "media.next":
             return True, "已切换到下一首"
         if command == "media.prev":

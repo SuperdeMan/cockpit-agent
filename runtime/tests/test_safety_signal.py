@@ -4,7 +4,7 @@
 判据宽一格的代价不是「多答一句」，是对着一盏正常的灯劝用户靠边停车。
 所以这里正例只占一半，另一半全是**不该命中**的句子。
 """
-from agents._sdk.safety_signal import (alert_level, alert_signal,
+from runtime.safety_signal import (alert_level, alert_signal,
                                        driver_state)
 
 
@@ -43,6 +43,22 @@ def test_signal_is_a_name_not_a_sentence():
     sig = alert_signal("胎压黄灯亮了，还能继续开吗？应该补到多少？")
     assert sig and len(sig) <= 12, f"signal 不该是整句：{sig!r}"
     assert alert_signal("讲个笑话吧") == ""
+
+
+def test_named_light_is_not_prefixed_with_its_own_system():
+    """具名灯自己就带系统名，再前缀一次就成了「机油机油灯」（2026-08-26 QA 实录）。
+
+    ⚠ 上面那条断言只查 `len(sig) <= 12`，而「机油机油灯」正好 5 个字——
+    **长度对、内容错**，四轮真栈实录（vehicle T35-36 / family T62-63）里它一路
+    进了焦点、卡片与播报话术，没有任何一条断言拦得住。
+    所以这条钉的是**具体返回值**：形状类断言抓不到内容错。
+    """
+    assert alert_signal("红色机油灯亮了怎么办") == "机油灯"
+    assert alert_signal("水温灯亮了") == "水温灯"
+    assert alert_signal("电池灯一直亮着") == "电池灯"
+    # 反方向：系统名与现象词是两个词时，拼接仍然是对的（别把这条一起修掉）
+    assert alert_signal("刹车有异响") == "刹车异响"
+    assert alert_signal("制动失灵") == "制动失灵"
 
 
 # ── 驾驶员状态：认不出必须返回空 ─────────────────────────────────────────

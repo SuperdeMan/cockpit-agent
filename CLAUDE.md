@@ -118,6 +118,12 @@ runtime/        共享运行时（gRPC keepalive/优雅停机/mTLS 工厂；+ �
                 少了一维时只观测不改值，判据零领域词）／openhours.py 营业时间窗口解析
                 （nearby 筛「此刻开着的」与云侧算「谁最晚」共用一份；跨零点归一成 >1440 可直接
                 比大小；判不出返回 None 不是 0——0 会让「时间未知」赢下「哪家最早关门」）
+                ／safety_signal.py 安全信号判据（告警等级·告警名字·驾驶员状态；2026-08-27
+                从 `agents/_sdk` 迁入——**第四个消费方是云端编排的输入侧扫描，而云侧镜像没有
+                `agents/`**）／question_shape.py 「这句话是在问还是在下指令」（端云共用；云侧
+                「问句 + 写车控步」安全闸的输入，判据零领域词、由源码级断言守）
+                ／intent_effect.py 只读操作名的唯一声明处（对象级 `effect_of` 与意图级
+                `is_write_intent` 是同一件事的两个粒度，集合只许有一份）
                 ／profile.py 部署形态闸／admission.py
 docs/           架构与设计文档
 test/           端到端场景测试

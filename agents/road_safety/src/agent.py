@@ -18,7 +18,8 @@ import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 from agents._sdk.provenance import attach
-from agents._sdk.safety_signal import DRIVER_STATE_ADVICE, driver_state
+from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
+                                   alert_signal, driver_state)
 from runtime.clock import hour_of as clock_hour
 from runtime.proactive import P_CRITICAL, publish_proactive
 
@@ -29,7 +30,7 @@ _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.y
 # NATS 主题：订阅车辆状态变更
 _STATE_SUBJECT = "vehicle.state.changed"
 
-# 驾驶员状态与车辆告警判据的**唯一实现**在 `agents/_sdk/safety_signal.py`。
+# 驾驶员状态与车辆告警判据的**唯一实现**在 `runtime/safety_signal.py`。
 # 这里曾经有一份本地副本、manual-rag 有第二份，chitchat 还要第三份——
 # 收口发生在第三个消费方出现的**当天**，不是等它错了再收（§4.3 时区族那笔账）。
 
@@ -49,7 +50,26 @@ def _focus_safety_alert(meta) -> dict:
     return alert
 
 
-_driver_state = driver_state          # 对外名字不变，实现指向 _sdk 的唯一份
+_driver_state = driver_state          # 对外名字不变，实现指向 runtime 的唯一份
+
+
+def _spoken_alert(intent) -> dict:
+    """**本轮原话**里的车辆告警（C1-B，2026-08-26 QA P0-01）。
+
+    为什么不能只读会话存储：`_focus_safety_alert` 读的是编排下发的会话态，
+    而会话态的唯一写入通道曾是「某个 Agent 恰好在 data 里声明了 `_safety_alert`」。
+    info persona 整场没有 manual 轮 ⇒ 存储为空 ⇒「红色机油灯亮了还能继续开吗」
+    一路落到**天气建议**分支，答了一段雨天注意事项（T24-25 实录）。
+
+    判据：**本轮原话优先于会话存储**。用户此刻正在说的告警，比会话里存着的那条更新，
+    也更不可能是别的意思。零 LLM、纯词表，与走了哪条路由无关。
+    """
+    text = getattr(intent, "raw_text", "") or ""
+    level = alert_level(text)
+    if not level:
+        return {}
+    return {"level": level, "signal": alert_signal(text) or "车辆告警",
+            "ts": int(time.time()), "spoken_this_turn": True}
 
 
 class RoadSafetyAgent(BaseAgent):
@@ -200,6 +220,12 @@ class RoadSafetyAgent(BaseAgent):
         if state:
             return self._driver_state_advice(state)
 
+        # ── 本轮原话里就有告警 → 直接按告警答（C1-B）────────────────────
+        # 排在会话存储**之前**：这一句是用户此刻说的，比存着的那条更新。
+        spoken = _spoken_alert(intent)
+        if spoken:
+            return self._alert_bound_advice(spoken)
+
         # ── 会话已有未解除的安全告警 → 不许按天气答（Q9 / QA 轮 I-054）────
         # SF3 实测：红色机油灯之后一句「现在在高速还能继续开吗」被答成
         # 「天气状况良好，适合出行」。`_general_advice` 只看天气现象，
@@ -278,17 +304,27 @@ class RoadSafetyAgent(BaseAgent):
         )
 
     def _alert_bound_advice(self, alert: dict) -> AgentResult:
-        """有未解除告警时的驾驶建议：结论由告警等级定，**不看天气**。"""
+        """有未解除告警时的驾驶建议：结论由告警等级定，**不看天气**。
+
+        开场白分两种：告警是**本轮说出来的**时就不能说「您这次会话里还有未解除的…」
+        ——那句话在用户刚说出口的那一轮听起来像系统在翻旧账。措辞分开，结论同一条。
+        """
         critical = alert.get("level") == "critical"
         sig = alert.get("signal") or "车辆告警"
-        speech = (f"您这次会话里还有未解除的{sig}。"
+        opening = (f"{sig}亮起时不要大意。" if alert.get("spoken_this_turn")
+                   else f"您这次会话里还有未解除的{sig}。")
+        speech = (opening
                   + ("在它排除之前不建议继续行驶——请尽快在安全位置靠边停车、熄火，"
                      "并联系救援或前往就近服务点检查。"
                      if critical else
                      "请降低车速、避免长时间或高速行驶，尽快就近检查处理。"))
         return AgentResult(
             speech=speech,
-            data={"safety_alert_bound": True, "level": alert.get("level")},
+            # `_safety_alert` 保留键：本轮原话扫出来的告警也要**登记进会话态**，
+            # 否则下一轮换个 handler 又回到「存储为空 ⇒ 答天气」（C1-B 的另一半）。
+            data={"safety_alert_bound": True, "level": alert.get("level"),
+                  "_safety_alert": {"level": alert.get("level"), "signal": sig,
+                                    "ts": int(alert.get("ts") or time.time())}},
             ui_card=attach({"type": "safety_advice", "advice": speech,
                             "alert": sig}, "road-safety", mode="deterministic",
                            note="按会话未解除告警给出，未经模型生成"),
@@ -306,6 +342,12 @@ class RoadSafetyAgent(BaseAgent):
         state = driver_state(intent.raw_text or "")
         if state:
             return self._driver_state_advice(state)
+        # 同 `_driving_advice`：本轮原话优先于会话存储（C1-B）。两条入口都要有，
+        # 因为 planner 把「X灯亮了还能开吗」路由到哪一条是有方差的
+        # ——**同一个事实不该取决于这次落到了哪个 handler**。
+        spoken = _spoken_alert(intent)
+        if spoken:
+            return self._alert_bound_advice(spoken)
         alert = _focus_safety_alert(meta)
         if alert:
             return self._alert_bound_advice(alert)

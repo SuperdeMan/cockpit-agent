@@ -30,6 +30,8 @@ from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
 from runtime.clock import BUSINESS_TZ
+from runtime.intent_effect import is_write_intent
+from runtime.question_shape import is_non_directive_question
 
 logger = logging.getLogger("planner.planning")
 
@@ -1369,6 +1371,14 @@ class PlanBuilder:
             focused_plan.actionability = _actionability.classify(
                 text, focus=getattr(working_set, "focus", None),
                 input_source=str((ctx.prefs or {}).get("input_source", ""))).as_attr()
+            # 同一道安全闸也盖这条早退路径（C1-A）。当前它的入口正则是祈使开关句、
+            # 结构上产不出问句，所以这一行**应当永远不触发**——留着是因为
+            # 「安全不变量放唯一出口」的反面是「每多一条出口就多一处要记得」，
+            # 而这条早退恰恰是最容易被下一个人忘掉的那一处。
+            if self._question_write_edge_steps(focused_plan.steps, text):
+                logger.warning(
+                    "Focused-ellipsis plan is a question-shaped write; dropping")
+                return await self._fallback(text, agents)
             return focused_plan
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
@@ -1621,6 +1631,32 @@ class PlanBuilder:
         plan.hint_effect = _hint_effect(
             hit, before, [(s.agent_id, s.intent) for s in plan.steps], had_clarify)
         plan.catalog_stats = dict(working_set.catalog_stats)
+        # ── 安全闸：问句不许被规划成写车控（C1-A）────────────────────────────
+        # 挂在**整个 build 的唯一出口**：LLM 计划、降级语义路由、route_hints 补步
+        # 三条来源在这一行之前都已经汇合，只在这里判一次就不会漏掉某一条。
+        # **原地改 steps 而不是换 plan 对象**——上面那批观测赋值已经作用在这一份上，
+        # 换对象要靠逐字段搬运，而「搬运也是读」，B6 那条源码级断言不接受
+        # （clarify_resume 那处的注释记着同一笔账）。
+        blocked = self._question_write_edge_steps(plan.steps, text)
+        if blocked:
+            logger.warning(
+                "Question-shaped utterance planned into edge write step(s) %s; "
+                "dropping them (text=%r)",
+                [s.intent for s in blocked], text[:60])
+            # 按**身份**过滤而不是按相等：`Step` 是 dataclass，两个字段相同的步会
+            # `==`，用 `not in` 在重复步的场景下会连坐。这里要丢的是「这几个对象」。
+            blocked_ids = {id(step) for step in blocked}
+            plan.steps = [s for s in plan.steps if id(s) not in blocked_ids]
+            plan.plan_mode = f"{plan.plan_mode or ''}_question_write_blocked"
+            if not plan.steps:
+                # 空计划的诚实出口是**让兜底 Agent 答一句**，不是宣布没听清：
+                # 这一类句子（「X灯亮了怎么办」）恰恰是最需要一个回答的。
+                # chitchat 自己就带安全信号判据（`runtime.safety_signal`），
+                # 落到它手里会得到分级建议而不是一句敷衍。
+                talk = self._talk_only_plan(text, agents)
+                if talk is not None:
+                    plan.steps = talk.steps
+                    plan.clarify = None
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -2288,6 +2324,41 @@ class PlanBuilder:
                             "deriving the missing edge(s)",
                             step.id, derived, step.depends_on)
                 step.depends_on = list(step.depends_on) + derived
+
+    @staticmethod
+    def _question_write_edge_steps(steps: list, text: str) -> list:
+        """「用户在问 + 这一步会改车的状态」= 必须拦下来的那一类（C1-A，P0-01）。
+
+        ## 它补的是哪条缝
+
+        端侧对这一形态**早就有闸**（`fast_intent.classify_structured` 出口：
+        问句形态的写操作一律不产出、整句上云）。缝在云侧：同一句
+        「红色机油灯亮了怎么办」上云之后，planner 把它规划成 `warning_light.close`
+        并**真的执行了**（family T28 / adv T32 实录）。执行链上没有任何一道闸拦得住它：
+        `actionability` 是 shadow 铁律不进主链、`Step` 没有 effect 字段、
+        `capability_meta.effect_of` 只有端侧消费，而 `warning_light` 恰好是
+        require_confirm / drive_restricted / voice_forbidden **三闸全 false** 的对象。
+
+        「红色机油灯（= warning light）」与 `warning_light.close` 字面高度相似，
+        而端侧能力进 catalog 时刻意只渲染 intent 名（省 token 的双臂实验裁的）——
+        planner 看到的字面就是 `warning_light.close`，没有「双闪」二字。
+        **这不是某个模型的问题，是这条链上少一道确定性闸。**
+
+        ## 为什么它不违反 R2.1「不改编排核心加硬编码」
+
+        判据三项全部零领域词、全部从声明派生：
+          · 「这一步在端侧执行」← `Step.deployment/kind`（manifest 声明）；
+          · 「这一步是写操作」← `runtime.intent_effect.is_write_intent`（只看操作名）；
+          · 「这句话是在问」← `runtime.question_shape`（封闭虚词类，源码级断言守着）。
+        它守的是**安全不变量**（CLAUDE.md §5「LLM 不直连车控」的残余缝：规划/执行
+        分离本该把这一类拦下来），按 B1 的判据放在唯一出口，不是给某个 Agent 的路由特判。
+        """
+        if not steps or not is_non_directive_question(text or ""):
+            return []
+        return [step for step in steps
+                if (getattr(step, "deployment", "") == "edge"
+                    or getattr(step, "kind", "") == "edge_fast")
+                and is_write_intent(getattr(step, "intent", ""))]
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:
         """把原话交给全局兜底 Agent（默认 chitchat）：**只回一句话，不做任何写操作。**

@@ -8,7 +8,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from val import VAL
 
 # 媒体意图白名单
-MEDIA_INTENTS = {"media.play", "media.pause", "media.next", "media.prev"}
+# ⚠ `media.stop` 2026-08-27 补入（QA N2）：commands.yaml 的 media 对象早就声明了
+# `stop/close`，端侧却没有任何规则出口产得出这个名字 ⇒ `media=stopped` 语音不可达。
+MEDIA_INTENTS = {"media.play", "media.pause", "media.stop",
+                 "media.next", "media.prev"}
 
 
 class MediaAgent:

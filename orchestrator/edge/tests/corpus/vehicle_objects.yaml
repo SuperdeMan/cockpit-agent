@@ -29,6 +29,18 @@ intent_recognition:
   - {text: 关闭双闪, object: warning_light}
   - {text: 静音, object: volume}
   - {text: 取消静音, object: volume}
+  # 2026-08-27（QA N1）新增除雾长形。⚠ 这一族此前**只有短形语料**（「开后除雾」），
+  # 而真车/探针说的是「关闭后挡风玻璃除雾」——长形匹配不上、静默落到前挡，
+  # **业务开的时候是对的、恢复关的时候关错了另一个物理开关**。
+  # 前挡长形一并入库：正例要成对，否则「后挡对了」可能只是把默认值猜对了。
+  - {text: 关闭后挡风玻璃除雾, object: rear_defogger}
+  - {text: 打开后挡风玻璃除雾, object: rear_defogger}
+  - {text: 关闭前挡风玻璃除雾, object: front_defogger}
+  # 2026-08-27（QA N3/N8）：胎压两侧各留一条。**状态查询**必须端侧可执行
+  # （此前对象名对不上知识库、一律「暂不支持哦」）；推荐值问句由 `test_defogger`
+  # 同族的让路断言守（语料这一组只收「认得出且 VAL 收得下」的句子）。
+  - {text: 胎压是多少, object: tire_pressure_monitoring}
+  - {text: 帮我查一下胎压, object: tire_pressure_monitoring}
 
 val_execution:
   - {object: aircon, operate: set, value: "23", expect: {hvac_on: true, hvac_temp: 23}}

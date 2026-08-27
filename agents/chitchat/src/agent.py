@@ -20,7 +20,7 @@ from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
 from .audit import audit_answer, is_execution_audit_question
 from .mem_source import with_provenance
-from agents._sdk.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
+from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
                                        alert_level, alert_signal, driver_state)
 
 logger = logging.getLogger("agent.chitchat")
@@ -136,7 +136,7 @@ def _safety_answer(text: str) -> tuple[str, dict]:
     road-safety 之后，兜底这条路就成了唯一没有护栏的入口**，而它恰恰是
     QA 轮答出「收到，那不提醒也不停车」的那一条（迷你集 SF4）。
 
-    判据取自 `agents/_sdk/safety_signal`（唯一实现，三个 Agent 共用）。
+    判据取自 `runtime/safety_signal`（唯一实现，三个 Agent 共用）。
     """
     state = driver_state(text)
     if state:

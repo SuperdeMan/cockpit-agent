@@ -24,6 +24,7 @@ from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext
 from runtime.clock import hhmm as clock_hhmm
+from runtime.safety_signal import alert_level, alert_signal
 from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
 
@@ -640,6 +641,34 @@ def _valid_safety_alert(raw) -> dict:
     return out
 
 
+#: 严重级序。**只用于同槽比较**，不落盘、不进话术。
+_SAFETY_RANK = {"amber": 1, "critical": 2}
+
+
+def merge_safety_alert(current: dict, candidate: dict, *,
+                       now: float | None = None) -> dict:
+    """同一格里两个告警谁留下（C1-C，2026-08-26 QA）。
+
+    原实现是**最后写入者胜**：一条 amber 能把仍然有效的 critical 顶掉，
+    于是「红色机油灯」之后随便问一句带黄灯的话，会话里的安全约束就降级了。
+    单槽不是问题，**没有比较**才是——所以这里加的是一次比较，不是第二个槽。
+
+    三条规则，按顺序：
+      · 现存那条已经**过期**（`safety_alert_active` 说了算）⇒ 新的直接顶上；
+      · 新的严重级 **≥** 现存 ⇒ 新的赢（同级取新，它带着更新的 ts 与 signal）；
+      · 否则保留现存——**降级要有理由，而「用户又说了一句别的」不是理由。**
+    """
+    if not candidate:
+        return current
+    if not current:
+        return candidate
+    if not safety_alert_active(current, now=now):
+        return candidate
+    new_rank = _SAFETY_RANK.get(str(candidate.get("level") or ""), 0)
+    old_rank = _SAFETY_RANK.get(str(current.get("level") or ""), 0)
+    return candidate if new_rank >= old_rank else current
+
+
 def safety_alert_active(alert, *, now: float | None = None) -> bool:
     """告警是否仍在有效期内。消费方一律经此判定，不各自算一遍。"""
     if not isinstance(alert, dict) or alert.get("level") not in _SAFETY_LEVELS:
@@ -1170,6 +1199,27 @@ def extract_focus(plan, results) -> "Focus | None":
             focus.last_places = places
             focus.last_places_ts = time.time()
 
+    # ── Q9 安全告警：**登记挂在输入上，不挂在路由上**（C1-B，2026-08-26 QA P0-01）──
+    # 原实现里告警只有一条写入通道：Agent 在 data 里声明保留键 `_safety_alert`，
+    # 而全仓只有 manual-rag / road-safety / chitchat 三家会声明。于是
+    # **同一句「红色机油灯亮了怎么办」在四个 persona 走了三条不同的错法**：
+    # 被规划成 `warning_light.close` 的那一轮里，「红色机油灯」这个事实**整个没进系统**
+    # （车控步没有 data 通道），后续三轮消费的还是更早那一轮留下的黄灯。
+    #
+    # 判据（本轮沉淀，§4.3）：**登记不能是路由的副作用**。告警、焦点、账本这类
+    # 「系统必须知道的事实」，写入要挂在**输入或产出的形态**上——路由是有方差的，
+    # 事实不能跟着抖。这里扫的是本轮原话，纯函数、零 LLM、与走了哪条路由无关。
+    #
+    # 顺序在保留键之前：原话是**事实**，Agent 声明是**补充**；两者经同一条严重级
+    # 比较合流，所以 Agent 报了更高等级仍然赢，报了更低等级不会把事实降级。
+    raw_text = str(getattr(plan, "raw_text", "") or "")
+    if raw_text:
+        scanned = _valid_safety_alert({
+            "level": alert_level(raw_text), "signal": alert_signal(raw_text),
+        })
+        if scanned:
+            focus.safety_alert = merge_safety_alert(focus.safety_alert, scanned)
+
     # G8 路线会话：任何成功步经保留键 `_route_session` 声明活动路线（通用契约，
     # 编排不认识 navigation 的私有字段——与 `_escalate` 同族，登记 conventions §9.1）。
     # 多步都声明时取最后一个成功声明（后发的 navigate 是最新路线）。
@@ -1188,11 +1238,12 @@ def extract_focus(plan, results) -> "Focus | None":
         if isinstance(data, dict) and data.get("_route_session_end") is True:
             focus.active_route = {}
             focus.route_ended = True      # 让接力知道这次空是**故意的**
-        # Q9 安全告警：同族保留键。多步都声明时取最后一个（后发的更新）。
+        # Q9 安全告警：同族保留键。多步都声明时按**严重级**比较（C1-C），
+        # 不再是「最后写入者胜」——amber 顶掉仍然有效的 critical 是降级，不是更新。
         alert = _valid_safety_alert(
             data.get("_safety_alert") if isinstance(data, dict) else None)
         if alert:
-            focus.safety_alert = alert
+            focus.safety_alert = merge_safety_alert(focus.safety_alert, alert)
     _derive_choice_view(focus)
     return None if focus.is_empty() else focus
 
@@ -1276,11 +1327,12 @@ class ContextManager:
                 # 下一句「这家的菜单」又变回「请先查询附近的瑞幸门店」。
                 # 2026-08-13 真栈三轮实证；两轮测试测不出来——第二轮恰好紧邻搜索轮。
                 # G8 active_route 同款粘性：只有新的 navigate 才替换活动路线。
-                previous = None
-                if (not focus.last_places or not focus.active_route
-                        or not focus.safety_alert or not focus.last_city
-                        or len(focus.candidate_sets) < _CANDIDATE_SETS_MAX):
-                    previous = await self._load_focus(session_id, user_id)
+                # ⚠ 2026-08-27 起**无条件载入**（C1-C）。原条件里的
+                # `not focus.safety_alert` 是「为空才去取旧值」，而严重级比较恰恰
+                # 只在**本轮有新告警**时才需要旧值——那一轮原条件不去取。
+                # 其余几维行为逐字不变：它们的接力分支都带 `not focus.X` 前置，
+                # 只要那个前置成立，原条件本来也会载入。代价是极少数轮多一次 Redis 读。
+                previous = await self._load_focus(session_id, user_id)
                 # Q2 候选集台账：**旧组保留、新组追加**，按 ts 限龄、封顶 N 组。
                 # 这里刻意**不是**「第四个字段也加一条粘性接力」——那是卡里点名
                 # 不要做的第三次打补丁。三格粘性（last_places/active_route/
@@ -1324,9 +1376,13 @@ class ContextManager:
                 # 这一格正是 SF3 那三轮缺的东西——第二轮问「高速还能开吗」不产生
                 # 任何告警，不接力的话安全态当场蒸发，第三轮自然就只剩音量可挑了。
                 # 同样**原样携带 ts 不续期**：告警时效从它响起那一刻算。
-                if previous is not None and not focus.safety_alert \
-                        and getattr(previous, "safety_alert", None):
-                    focus.safety_alert = dict(previous.safety_alert)
+                # ⚠ 2026-08-27 起这里**不再只在本轮为空时接力**（C1-C）：
+                # 本轮新来一条 amber、上一轮那条 critical 还没解除时，
+                # 「有新的就换掉」等于**用一句无关的话把安全约束降了级**。
+                # 改成同一条严重级比较——本轮为空那种情况仍然逐字同旧（merge 取旧）。
+                if previous is not None and getattr(previous, "safety_alert", None):
+                    focus.safety_alert = merge_safety_alert(
+                        dict(previous.safety_alert), focus.safety_alert)
                 if previous is not None and not focus.last_city \
                         and focus.last_intent not in WEATHER_CONTEXT_INTENTS \
                         and getattr(previous, "last_city", ""):

@@ -113,9 +113,14 @@ release **不是 QA 全绿基线**。HMI C14 **1/1 PASS**（5/5 persona 真播�
 barge cancel+stop=3，start/end 同 SHA、5/5 healthy）。本轮按泓舟要求只记录不修复，完整问题与
 trace 见 [`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](docs/reviews/2026-08-26-minimax-cloud-qa-findings.md)；
 **根因分析与修复方案 2026-08-27 已出**（17 症状卡 → 16 根因卡，逐卡定位到行 + 七处重判
-findings 定性 + 七个新发现，仍零实施）：
+findings 定性 + 七个新发现）：
 [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md)，
 接手从其 §0/§4 开始（那份文档也解释了「collector 无法回读」这句话本身是探针误报）。
+**第 1 批已于 2026-08-28 落地**（C1 安全告警链 A-D + C2 端侧三 bug 与探针诊断出口 +
+C16 的 1·6·8，另加实施时扫出的 N8/N9 两个新缺陷）；**下一批 = C4**。
+⚠ **本 release 的云端读数没有因此改变**——第 1 批只跑了本地全量与三道离线门禁，
+**真栈迷你集与「修正后计分」都还没跑**（探针本身也在这一批里改过）。
+下一轮跑批之前，上面那些 QA 读数仍按 `c7c211b` 那次的原样理解。
 
 此前 release **`7a0e03a`**（2026-08-22 I-030 跨组批：组指代 + 跨组算子 + 下发面逐步
 选组；`status` = ok、5/5 端点 healthy、`verify` = **verified**（`release_sha` 非空，
@@ -167,10 +172,15 @@ findings 定性 + 七个新发现，仍零实施）：
 > ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
 > 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新后端全量基线（2026-08-26 发布治理与进程树测试族收口，`target=cloud` +
+**最新后端全量基线（2026-08-28 MiniMax QA 修复批**第 1 批**，`target=cloud` +
 本地 Docker 已退）**：`python -m pytest -q -n auto --dist worksteal` =
-**7225 passed / 32 skipped 零红**（代码 SHA `5e764aa`，HEAD / tracked / untracked 摘要前后一致，
-`TREE_STABLE=True`）。部署 SHA `c7c211b` 只比它多一条 mobile 计划文档的安全措辞修正，未把
+**7309 passed / 32 skipped 零红**（3:58）。本跳 `7225 → 7309` = **+84，全部是第 1 批新增断言**
+——C1 安全告警链（问句写闸 17 / 焦点严重级 7 / road-safety 原话优先 5 / 拼接回归 1 /
+`runtime.question_shape` 两向 + 零领域词 17）、C2 端侧三 bug（对象可达性门禁 6 /
+规格问句让路 2 / 除雾与胎压语料 10）、C16 探针（诊断出口与恢复一致性 8 / 尺子自检 4）。
+**没有任何既有用例被改绿**；改动的是四处**行为锁**，逐条在 fix plan §4「第 1 批终态」。
+上一次基线 **7225 passed / 32 skipped**（2026-08-26，代码 SHA `5e764aa`，
+HEAD / tracked / untracked 摘要前后一致，`TREE_STABLE=True`）。部署 SHA `c7c211b` 只比它多一条 mobile 计划文档的安全措辞修正，未把
 这条文档提交冒充成重新跑过全量。
 ⚠ 耗时受宿主负载影响很大（慢的都是真子进程/全语料守卫），**别拿时长当回归信号**。
 本跳 `7106 → 7225` 跨过一次性 CI/CD 发布治理、远端发布 TOCTOU、7 条真实进程树 readiness
@@ -302,7 +312,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 | L3 gate | A1-2 在两模型均 **1/1**；正式 baseline 的 invocation 新鲜、exit 0，只证明该授权 case/claim。2026-08-10 新增 **A1-5**（weather→去处推荐，claim `adaptive_replan_continuity`）两趟独立各 **1/1**，但它服务的 case 仍是 `reviewed`，不进 gate 选集 |
 | fallback | DeepSeek 正式批 **2/122**，均为语料声明过的 A8，未声明 fallback **0**；MiniMax **11/122**，其中未声明 **2**（原 4） |
 | 工具通道（协议层，**可跨 provider 比**） | 走成 `toolcall` 的比例是 **provider 属性**：`minimax:MiniMax-M3` 同用例 **13/27（48%）**、跨域 20 条 **9/20（45%）**；`deepseek:deepseek-v4-flash` 两组 **35/35（100%）**（p≈0.0002）。⚠ 代价只在**需要模型自己填结构化字段**的多阶段计划上兑现——那 20 条 stable 上两档通过率都是 20/20（findings §24）。**2026-08-10 起 `PLANNER_TOOLCALL_SALVAGE_RETRY=on` 默认开**：gate L1 双臂实测把 MiniMax 从 **51.3%（60/117）抬到 85.5%（100/117）**，+34.2pp、p=2.3e-08、重试成功率 ≈70%，代价墙钟 +38.5%（findings §26.5）。**引用 45~48% 那组数时注意它是 off 档口径** |
-| 代码回归 | **全量基线只在本节顶部写一次**（本行刻意不复述那个数——它已经被这么写错过一次。「同一件事在两处各写一版」正是本文件记过会错三次的那个形态）；2026-08-24 fresh collect：`orchestrator/cloud` **1018** / edge **806** / mcp-bridge **559** / reminder **171**；其余最近读数：nearby **100** / navigation **167** / trip **85** / memory **265** / chitchat **62**。Skill / Exemplar **309 条 / 22 域**，四条确定性门禁均通过。catalog 目录 **153 条 / 13374 字符**，余量 16000−13374=**2626**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算。端侧能力面 **84 条**（vehicle 80 + media 4）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
+| 代码回归 | ⚠ 下面的分服务点号是 **2026-08-24 时点**，第 1 批之后 cloud/edge/runtime 三处已上涨（增量见顶部基线段）。**全量基线只在本节顶部写一次**（本行刻意不复述那个数——它已经被这么写错过一次。「同一件事在两处各写一版」正是本文件记过会错三次的那个形态）；2026-08-24 fresh collect：`orchestrator/cloud` **1018** / edge **806** / mcp-bridge **559** / reminder **171**；其余最近读数：nearby **100** / navigation **167** / trip **85** / memory **265** / chitchat **62**。Skill / Exemplar **309 条 / 22 域**，四条确定性门禁均通过。catalog 目录 **154 条 / 13400 字符**（2026-08-28：端侧 `media.stop` 补出口，见 fix plan C2-B），余量 16000−13400=**2600**——**每次加能力都要把余量重新看一眼**，撑满时该做的是检索化 catalog 不是放大预算。端侧能力面 **85 条**（vehicle 80 + media 5，2026-08-28 补 `media.stop`）/ VAL 车控对象 **68**。⚠ 2026-08-11 起 `VEHICLE_INTENTS` **不再手写**，由 `commands.yaml` 各对象的 `edge_intents` 派生（B4），数字不变但改的地方变了 |
 
 ⚠ **上表 MiniMax 行是 `32e8718` 读数，与当前代码已差好几批**（此后合入了 clarify 型范例
 机制、salvage 重试默认开、B1–B4 四批）。**当前 SHA 没有对应的全量 gate 读数**——要引用
@@ -332,7 +342,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 | 候选 | 为什么现在能做 / 不能做 | 入口 |
 |---|---|---|
-| **2026-08-26 MiniMax QA 修复批（17 症状卡 → 16 根因卡 C1–C16，方案 2026-08-27 已出、零实施）** | **可以开工（当前首选）**：根因全部定位到行、修法/验收/六批顺序已排。先修 **C1 安全告警链**与 **C2 端侧两个真车控 bug**（后挡除雾「档/挡」错字关错对象、「关闭音乐」落 pause——本轮唯二确定性误执行），再 **C4 会话事实确定性读出口**（一张卡覆盖 5 张症状卡）。✅ **三处拍板已于 2026-08-27 裁定并落地（按方案推荐项，方案 §4 有细节）**：C15 如实标注的 mock=WARN 不判 fail + `deterministic` 收编（契约 §9.3 已同批改）；C10-D 过期提醒用 `cancelled+extra.reason` 清扫——**90 条存量已按泓舟「全清」点名当日执行**（单事务 UPDATE 90、u1 ACTIVE 归零、审计标记 `extra.batch=20260827-hongzhou-approved-90`，证据 `.artifacts/sweep-apply-20260827.result.txt`）；C5-B 放行。**无外部阻塞项**。⚠ §4.2 两条既有账的启动条件已被本轮满足（I-033 数据源账本→C4、多意图复合句→C5），落地时一并销账 | [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md) §0 接手须知 + §4 实施顺序；问题原始记录 [`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](docs/reviews/2026-08-26-minimax-cloud-qa-findings.md) |
+| **2026-08-26 MiniMax QA 修复批（17 症状卡 → 16 根因卡 C1–C16；六批，**第 1 批 2026-08-28 已落地**）** | **可以开工（当前首选）：从第 2 批 C4 开始**（会话事实的确定性读出口族，一张卡覆盖 5 张症状卡；C10-T37 / C11-D / C12-C 三处都消费它，所以它排在那几张之前）。✅ **第 1 批已完成**：C1 安全告警链 A-D（云侧问句写闸落 `build()` 唯一出口 + 告警登记改成扫本轮原话 + 同槽严重级比较 + 「机油机油灯」拼接）、C2 端侧三 bug（后挡除雾错字 / `media.stop` 出口 / 胎压规格问句让路）与探针诊断出口拆分、C16 的 1·6·8；另在实施中扫出并当批修掉 **N8**（规则产的对象名知识库不认 ⇒「胎压是多少」一直答「暂不支持哦」）与 **N9**（「停止播放」被执行成开始播放）。⚠ **第 1 批只跑了本地全量 + 三道离线门禁，真栈迷你集与「修正后计分」都还没跑**——别把它读成「QA 那几条已验证转绿」。✅ **三处拍板已于 2026-08-27 裁定并落地（按方案推荐项，方案 §4 有细节）**：C15 如实标注的 mock=WARN 不判 fail + `deterministic` 收编（契约 §9.3 已同批改）；C10-D 过期提醒用 `cancelled+extra.reason` 清扫——**90 条存量已按泓舟「全清」点名当日执行**（单事务 UPDATE 90、u1 ACTIVE 归零、审计标记 `extra.batch=20260827-hongzhou-approved-90`，证据 `.artifacts/sweep-apply-20260827.result.txt`）；C5-B 放行。**无外部阻塞项**。⚠ §4.2 两条既有账的启动条件已被本轮满足（I-033 数据源账本→C4、多意图复合句→C5），落地时一并销账 | [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md) §0 接手须知 + §4 实施顺序；问题原始记录 [`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](docs/reviews/2026-08-26-minimax-cloud-qa-findings.md) |
 | **Android 陪伴端 App（新客户端 `mobile/`，2026-08-23 立项）** | **M0 地基 / M1 对话 MVP / M2 语音 / M3 卡片全量+车况+地图 四阶段代码面全部完成**（08-25 ~ 08-28）。读数：`tsc` 0、mobile jest **209/209**、hmi node:test **288/288**、APK **325MB**（含 svg + 高德）。M1 真机首轮 08-26 通过；**M3 真机三轮全过**（全卡族画廊 34 型 / 深浅主题实时切换 / `payment_qr` 三分支 / 平板三段面板 / 地图打通）；**Aurora Glass 复刻插批 ✅**（08-27 晚，`5727621`+`6f385b0`，另一 session 交付，实施记录 §6 末 **M3-V**）。**08-28 M3 收尾批 ✅**（记录 §6 末 **M3-W**）：① **地图打磨三项**真机验过——按点集自动缩放（amap3d **没有 fitBounds**，`core/map/fit.ts` 自己解 zoom，守卫 12 条 + 反向验证）/ marker 点按详情 / 显式关闭按钮；② **M3-5 Maestro flow 四条已写**（三条真栈 + 一条离线冒烟给 CI）+ 五个 e2e testID，**⬜ 但 CLI 未装成、没有实跑读数**（`maestro.zip` 315MB 本网络 ~30KB/s，坑账 §9.37，**不许把「写完了」说成「跑通了」**）；③ **§8.3 全清单逐条打钩完成**（打钩纪律写在 §8 抬头：✅ 只给有真机读数的，样本写样本，没跑写未验）；④ **返回键定案**（泓舟拍板：**维持现状 + 把「前台交互档」写进产品承诺**，不加 intent hack，真修法留 M5 前台服务）。⚠ **本批最有价值的产出是一个真缺陷**：**RN 的 WebSocket 在飞行模式下 `onclose`/`onerror` 都不来**（观察 4 分钟仍 open），`send()` 把帧写进死 socket、**不入队、消息真的丢**（复现：断网 1 秒内发 → 恢复不补发 → 95s 后「响应超时」）。修法＝共享 `hmi/src/ws.mjs` 加 `reconnectNow()`（外部判死入口，HMI 不调用、行为逐字不变）+ App 侧 `core/api/liveness.ts` 前台探活（判据取「HTTP 探不通」**不取「应用层静默」**——后者正是 ws.mjs 头注明令禁止的）。真机复验：**25.7s 判死** → 顶栏转「已断开」→ 断网期间发的消息**补达**。**残留**：探活周期内第一条仍可能丢（彻底修要自动重发，**涉及车控幂等，刻意不做**）。**同轮又补验掉四条**（都从「未验」转 ✅，读数在 §8 清单逐条）：**车况镜像双端同步**（云栈改 battery → App 未刷新即时变 72%/396km→55%/303km，续航是真实推导）/ **多端并发**（会话不串 + 记忆共享「瑞幸美式·偏好冰的」**带出处**）/ **重启零重投**（前台+WS 绿点 65s 零重现，M1-8 那两次无效观察窗清账）/ **跨端主动提醒**（HMI 创建、到点推到 App）。⚠ **M3 剩余（新会话从这里接）**：① **Maestro 实跑——只差泓舟在设备上点一次**：CLI **已装成 2.9.0**（315MB 下了约 3 小时，sha256 与官方逐字相符），flow 四条已写、语法逐条对着源码核过（`setAirplaneMode` 取值是枚举 `Enable`/`Disable`，文档没写清）；**`maestro hierarchy` 起不来**——它要往设备装自己的 driver APK，MIUI 弹 `AdbInstallActivity` 要人确认（`INSTALL_FAILED_USER_RESTRICTED`；⚠ `install_non_market_apps=1` **不代表放行**，「USB 安装」是另一个开关，坑账 §9.42）。**本轮没有替他点**——在他的设备上装应用不在「授权装 CLI」范围内。⇒ 点一次「继续安装」（一次性）后 `maestro test mobile/e2e/ --include-tags online` 即可，**目前仍无实跑读数**；CI 手动档 job 也已加（`run_e2e` 开关，只跑 offline 档）**同样没跑过**，**第一次跑要人盯着**（先看 `maestro hierarchy`：主屏常驻光球动画让 `uiautomator dump` 拿不到树，Maestro 走 AccessibilityNodeInfo 大概率不受影响但**那是推断**，坑账 §9.40 / `mobile/e2e/README.md`）；② **§8 里仍未验的四条**——无 key 引擎回退出声（**预期行为本身存疑**：App 的 fallback 是「流式→批处理」**同一个引擎**，要先说清是谁换引擎再验）/ 来电抢占四场景（需真实事件）/ 蜂窝网络 PTT（需真人语音）/ keep-awake（**dev build 上验不出**，`stay_on_while_plugged_in=2` + 来源未定位的 KEEP_SCREEN_ON 两个污染源，坑账 §9.41）；③ **探活修法的残留窗口**：判死前（~25s）发出的第一条消息仍可能丢，彻底修要自动重发而**重发同一 `request_id` 意味着车控可能执行两次**，刻意不做。⚠ **顺带记一条与设计意图不符的事实**：`AUTH_TOKENS` 目前**只有一个条目**（u1/v1，带 `vehicle.control`），`mobile/README.md` 写的「App 专属条目、手机档不含 vehicle.control」**没有落地**——App 用的就是 HMI 那把。⚠ **挂账给后端/QA（非 App 面）**：`route_plan`/`charging_route` 契约里没有 `lat`/`lng`，折线画不了；澄清按钮的 `send_text` 丢原句位置依赖性（共享闸 `location.mjs`，HMI 同样）；RN 的 `URL` 把路径/查询串里的 `@` 读成 userinfo（fail-closed，已钉成可见测试）；云栈 MiMo key 失效仍卡住 ASR 批处理兜底（全体客户端含 HMI）。⚠ **M5 合规两条**：amap3d 硬编码同意隐私政策；模板 debug keystore 是全世界 RN 项目共用那把，换正式签名要同步在高德控制台加 SHA1。⚠ **未达真栈的 6 个卡型**（charging_route 后端异步未回 / sports_scorers 落域到检索 / merchant·payment 族被门店营业时间挡住 / vision_answer 需 M4 开关）**只在画廊样本上验过，不算读数**。**每次开工先跑 `check_android_env.ps1`（退出码 0 才动手）** | 接手从 [`docs/design/2026-08-24-mobile-app-implementation-plan.md`](docs/design/2026-08-24-mobile-app-implementation-plan.md) **§0 接手须知**开始（逐任务执行真相源，**M0–M3 实施记录分别写在其 §3/§4/§5/§6 末**，**坑账 §9 已积到 41 条、开工前读一遍**）；日常命令与目录看 [`mobile/README.md`](mobile/README.md)；需求/选型/架构判断在 [`docs/design/2026-08-23-hmi-android-app-plan.md`](docs/design/2026-08-23-hmi-android-app-plan.md)（§9 决策记录） |
 | **I-024 门店侧**（Q10 残余）| **可以开工但影响面要先量**：门店选项卡是 `NEED_SLOT` 结果，而 `extract_focus` 只从**成功步**抽候选 ⇒ 门店候选集根本不存在。放宽抽取影响面远超本卡，**动之前先枚举谁在读候选集**。⚠ 2026-08-22 起**多了一个读候选集的地方**（组指代 `resolve_candidate_scope` + 逐步下发 `candidate_set_for`，§9.32）——那份枚举要把它算进去 | 下方 ① Q10 行、契约 §9.28「三条边界」/§9.32 |
 | **多意图复合句被单域吞掉**（2026-08-20 新立）| ~~等稳定可复现的族~~ **启动条件已满足**（2026-08-26 QA：merchant T18「先查瑞幸再点拿铁」丢下单步 / family T50 同形态，稳定复现）——**修复方案已并入上面 QA 修复批的 C5**（覆盖度机器判据 + 挂起不冻结兄弟步），不再单独接手；「换判定形态、不逐句补范例」的裁定在 C5 里原样保留 | fix plan **C5**；背景：§4.2 该行、卡 §6.7、history §64.6 |
@@ -423,6 +433,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | **EVA 余项**（①–⑤ 已于 2026-08-15 立卡 E1–E5 全部处理，见 §4.0 段与 history §39；本行只剩 ⑥） | ⑥ **G10 订座/票务维持搁置**（本表内唯一仍未启动项）：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，**不为对标造假订座**。⚠ E 批遗留的两处**已知边界**（不是待办，出现真实消费方再谈）：归城校正的判据是各城池质心，某城池被高德限流搜空时该城不参与判定（末轮真栈实例：潍坊）；方差面维持档案化，E4 探针首跑 15/15 未复现，**不加 hint、不动 gate 案例集** | [E1–E5 卡](docs/design/2026-08-15-eva-backlog-cards-e1-e5.md)、[验证报告](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md) §5、[缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md) §2 |
 | **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目。⚠ **2026-08-19 卡 Q8 没有从这 14 条里挑，是刻意的**：QA 轮实际抓到的四处缺席一条都不在这张表上——方向盘**已声明**（断在 VAL 校验）、双闪**对象根本不存在**（被生成器 family 表并进了 headlight）、静音是 `volume` 缺一个**操作**、估算在云侧。**台账列的是「有对象没意图」，而这四处是别的形态**；本批因此新增对象 `warning_light` 与操作 `volume.mute/unmute`，台账 39 条不变 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身 |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
+| **全量并行跑的一处偶发红**（2026-08-28 新记，**不是本批引入**）| `scripts/tests/test_e2e_stack_lease.py::test_restore_failure_is_identity_cleanup_and_overrides_pass` 在 `-n auto --dist worksteal` 全量下**两趟里红一趟**；**单跑 3/3 绿、只跑 `scripts/tests -n auto` 也 3/3 绿**（1335 passed × 3）。⚠ 根因是**假设、未确定性复现**：该文件多处 `repo_root=Path.cwd()`，而 `identity_lock_path()` 会把它解析成 **`.git/car-agent-e2e-identity-stack.lock` 这个真实 OS 锁文件**——它是**仓库级共享**的，xdist 多 worker 同时跑租约类用例就会互相抢。若成立，修法是让这几条用例各自用 `tmp_path` 当 repo_root（或给锁加 worker 后缀），**不是加重试**。⚠ 在确定性复现之前，**不许把它当「已知无害」一笔带过**：全量报绿时要点名它这一条 | 文件本身；本行由 QA 修复批第 1 批的两趟全量读数触发 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | `route_hints` 继续退役 | 当前实数 **18**（2026-08-24 QA 复验净增 7：MiniMax 重复采样残余的 5 条窄业务结构 + edge 门锁开/关极性 2 条）；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；本批只证明 MiniMax 主模型当前需要这些纠偏，退役仍须跨 provider 全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | M5 后续杠杆 | catalog 检索化当前是“有意不做”；16k 预算再次裁剪或保护集显著变瘦时重评。gold→范例现走 CLI；P4 仅在范例 ≥2k 且 N1 平台期 ≥2 周时启动 | [M5 P2/P4](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) |
@@ -723,6 +734,35 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
   这句话手抄一份词表就等于没写（迟早与知识库漂移）。改成从 `commands.yaml` 派生
   对象 id / display_name / edge_intents 段来比对，**首跑就抓到「导航」**——它同时是
   谓词和 VAL 对象名。同 B4「`VEHICLE_INTENTS` 从手工集合改为知识库派生」。
+- **登记不能是路由的副作用**（2026-08-28，QA 修复批第 1 批 C1）。告警、焦点、账本这类
+  「系统必须知道的事实」，写入要挂在**输入或产出的形态**上，不能挂在「恰好走了哪条路由」上
+  ——路由是有方差的，事实不能跟着抖。实证：会话告警的唯一写入通道是「某个 Agent 在 data 里
+  声明保留键」，于是「红色机油灯亮了怎么办」被规划成 `warning_light.close` 的那一轮，
+  **这个事实整个没进系统**，后面三轮消费的还是更早那轮留下的黄灯。
+- **同一症状在多 persona 下呈现三种错法，本身就是「无确定性护栏」的读数**（同批）。
+  同一句话在四个 persona 走了三条错法（执行车控 / 答手册 / 答天气）——
+  **修方差先找该确定性的那一层，不是逐个 persona 调**。这条是 §4.3 既有那句
+  「方差本身是能力缺席的签名」的孪生形态：那条说的是**能力缺席**，这条说的是**护栏缺席**。
+- **恢复/清理链路的词表要与业务链路同源**（同批，C2）。探针的车态恢复命令
+  「关闭后挡风玻璃除雾」撞上端侧词表里的一个错字（「**档**风玻璃」）才把 N1 照出来——
+  **开的时候是对的、关的时候关错了另一个物理开关**。反过来说明**恢复链是一次免费的
+  对抗测试**：它说的话与业务话术形态不同，覆盖面天然互补，它的失败要逐键报因。
+- **「读不到」与「读到了但不对」永远分开报**（同批，C2-D，**第二次沉淀**——
+  android-m3 那批在真机取证上记过一次，这次在探针上原样复发）。
+  `_settled_vehicle_state` 两种失败都返回 `{}`，上层于是只会说「collector 无法回读」，
+  **逐键 diff 成了死代码**，两个端侧真 bug 被这句谎话整个盖住，写进 findings 的是
+  「探针基建问题：终值未知」。这次把它写进**返回类型**（`VehicleStateRead`），不是写进注释。
+- **词表分支序就是语义：同族里「A 是 B 的子串」时长的那个必须在前**（同批，N1/N9）。
+  两处同形态：「后**挡风玻璃**除雾」被「挡」这个短选项吃掉前缀后匹配失败；
+  「**停止**播放」含「播放」二字被判成 start ⇒ **说「停止播放」把音乐放起来了**。
+  加词表时先问一句「新词是不是既有词的超串」。
+- **同一个 intent 有两个产出方时，门禁很可能只走了其中一条**（同批，N8——
+  QA I-004 那句话的第二次兑现，这次换成了 object 名）。端侧快路径产的对象名
+  `tire_pressure` 知识库不认（声明的是 `tire_pressure_monitoring`），
+  **每一句「胎压是多少」都秒回「暂不支持哦」**；而 B4 门禁跑的是云侧下发那条路
+  （从声明反解，结构上不可能对不上），一直绿着。
+  修法是**按产出方静态盘点**（AST 取全部 `_s(...)` 的对象名），不是补语料——
+  **没人给这个对象写过语料，正是它能活下来的原因**。
 
 ---
 

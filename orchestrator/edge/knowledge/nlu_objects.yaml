@@ -83,7 +83,12 @@ objects:
   车辆模式: [driving_mode, power_mode]        # 「设置车辆混动模式/舒适模式」
   能源: [energy_recovery, v2v_charging, energy_consumption]
   制动: [auto_hold]                          # 「打开自动驻车 / AHV打开」
-  轮胎: [tire_pressure_monitoring, tire_pressure, tire_temperature]
+  # ⚠ 2026-08-27 删掉 `tire_pressure`（QA N8）。它是**规则侧专名**，与 VAL 对象
+  # `tire_pressure_monitoring` 指同一件事——而规则产的正是这个知识库不认的名字，
+  # 于是「胎压是多少」一路走到 `_validate_command` 才被拒，端侧秒回「暂不支持哦」。
+  # 等价类台账记着这处分歧很久了：**记录一个缺陷不等于修它**（§4.3）。
+  # 规则改成直接产 VAL 对象名之后，这个别名没有任何产出方，留着就是死条目。
+  轮胎: [tire_pressure_monitoring, tire_temperature]
   情景模式: [scene_mode]                     # 「打开小憩模式」
 
   # ── 座舱交互与界面 ──
