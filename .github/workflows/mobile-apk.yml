@@ -12,6 +12,11 @@ on:
         description: "APP_VARIANT (dev/staging/prod)"
         required: false
         default: "dev"
+      run_e2e:
+        description: "构建后在模拟器上跑 Maestro 离线冒烟（只跑 offline 档，见下方注释）"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   debug-apk:
@@ -55,3 +60,90 @@ jobs:
           name: xiaozhou-companion-debug-apk-${{ github.run_id }}
           path: mobile/android/app/build/outputs/apk/debug/*.apk
           retention-days: 14
+
+  # ── Maestro 离线冒烟（M3-5）────────────────────────────────────────────
+  # ⚠ **只跑 `offline` 档，这是有意的**：另外三条 flow 全要真栈（云栈在 tailnet 里），
+  # 而给 CI 配 Tailscale auth key 是红线动作。在 CI 里挂那三条只会稳定红、
+  # 然后被人加 continue-on-error 忽略掉——**一条永远红的检查等于没有检查**。
+  # 这一条验的是「App 起得来、路由通、卡片渲染器不崩」，素材全是本地 fixtures；
+  # 它**证明不了整链，也不许拿它冒充整链**（真栈那三条的读数只能来自真机）。
+  #
+  # ⚠ **本 job 首次运行需要人盯着**：写的时候本机没能把 Maestro CLI 装成
+  # （maestro.zip 315MB，本网络 ~30KB/s），所以 flow 的语法是**对着 cli-2.9.0 源码核的**、
+  # 不是跑通的。第一次跑之前先看 `maestro hierarchy` 那一步的输出：
+  # 对话主屏有常驻 Aurora 光球动画，`uiautomator dump` 在这种屏上拿不到树（坑账 §9.40），
+  # Maestro 走 AccessibilityNodeInfo 大概率不受影响，但那是推断。
+  e2e-smoke:
+    needs: debug-apk
+    if: ${{ inputs.run_e2e }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install deps
+        working-directory: mobile
+        run: npm ci
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: xiaozhou-companion-debug-apk-${{ github.run_id }}
+          path: apk
+
+      - name: Install Maestro CLI
+        run: |
+          curl -fsSL "https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.9.0/maestro.zip" -o maestro.zip
+          curl -fsSL "https://github.com/mobile-dev-inc/Maestro/releases/download/cli-2.9.0/checksums_sha256.txt" -o checksums.txt
+          # 对官方校验和——本机那次就是「续传把重复字节插进文件中间」而 zip 静默损坏（坑账 §9.37）
+          grep maestro.zip checksums.txt | awk '{print $1"  maestro.zip"}' | sha256sum -c -
+          unzip -q maestro.zip -d "$HOME/.maestro-dist"
+          echo "$HOME/.maestro-dist/maestro/bin" >> "$GITHUB_PATH"
+
+      - name: Start Metro
+        working-directory: mobile
+        run: |
+          nohup npx expo start --dev-client --port 8081 > metro.log 2>&1 &
+          # 等 Metro 真的能服务再往下走——写死 sleep 在 runner 上不可靠
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8081/status && break
+            sleep 2
+          done
+
+      - name: Run offline smoke on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          disable-animations: false   # ⚠ 别关：本 App 的光球动画本来就在，关了等于测了另一个东西
+          script: |
+            adb reverse tcp:8081 tcp:8081
+            adb install -r apk/*.apk
+            maestro hierarchy > hierarchy.txt || true
+            maestro test mobile/e2e/ --include-tags offline
+
+      - name: Upload maestro artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-e2e-${{ github.run_id }}
+          path: |
+            ~/.maestro/tests/**
+            mobile/metro.log
+            hierarchy.txt
+          retention-days: 7
+          if-no-files-found: warn
