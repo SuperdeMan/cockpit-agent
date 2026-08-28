@@ -642,7 +642,13 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   "mode": "real" | "cached" | "degraded" | "mock" | "deterministic",
   "vendor": "amap" | "qweather" | "exa" | "serpapi" | "api-football" | "tushare" | "mock" | "road-safety" | "…",
   "fetched_at": "2026-07-17T10:30:00+08:00",   // 数据获取时刻，非渲染时刻
-  "note": "赛季回退 2024/25"                    // 可选：degraded/cached 的原因或缓存龄
+  "note": "赛季回退 2024/25",                   // 可选：degraded/cached 的原因或缓存龄
+  // 可选，成对出现（C4-A，2026-08-28）：**数据自身的时刻**及其称呼。
+  // 与 fetched_at 是两件事——行情卡 20:00 取到的是 20260826 那天的收盘价，
+  // 「取数时刻」回答不了「这数据是什么时候的」（真栈 T41 编出的「19:23 前后」
+  // 正是把两者混为一谈的形态）。
+  "data_time": "20260826",
+  "data_time_label": "行情时间"                 // **称呼由产生方声明**，缺省「数据时间」
 }
 ```
 
@@ -659,12 +665,18 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   （如 manual-rag 在真手册接入前）⇒ 记 **WARN 计数、不判 fail**；**mock 冒充 real**
   （无 `_prov` 或标错 mode）⇒ 仍判 fail。落法=探针建「卡型 × 允许 mode」期望表，
   把下面那份必带清单机械化成判据（一份声明两个消费方；实现随 fix plan C15/C16）。
+- **`data_time_label` 为什么由产生方给**（C4-A）：账本的读出口住在**编排层**，
+  而编排层不认识「行情时间」这种领域说法——把它写进编排核心正是 R2.1 禁的那件事。
+  同 `_candidate_label`（§9.32）：编排看不出 `mcd.menu` 那组该叫「麦当劳」，
+  也看不出 `stock_quote` 那一维该怎么称呼。**只有值没有称呼时用通用词「数据时间」，
+  绝不许只有称呼没有值**（那是一个空标签）。
 - **降级要点名是谁降级了**（QA I-033，2026-08-19）：体育结构化源不可用回落通用检索时，
   话术里写出 vendor、卡片 `_prov` 打 `degraded` + note。**真实性标记是结果的一部分，
   不是日志的一部分**——原实现只在服务端留了一行 `sports provider down`，用户追问
   「哪个数据源失败了」时系统手上没有可答的事实，只能让 LLM 猜（真栈实测把方向说反成
-  「联网检索不可用」）。⚠ 只做到「本轮披露」：跨轮追问要会话级数据源账本——该账本的
-  启动条件已于 2026-08-26 QA 轮满足（四个消费方），修法= fix plan C4。
+  「联网检索不可用」）。✅ **跨轮追问 2026-08-28 收口**（C4-A）：`_prov` 随
+  `AppendTurn.sources` 入账，读出口见 §9.34——`_prov` 此前**只活在卡上**，
+  渲染完就丢，全仓 orchestrator/memory 无一处读它。
 - 凡展示外源数据的卡必须带（P2 已推广：weather / forecast / search_result / news_brief /
   stock_quote / sports_scores / sports_scorers / place_list / place_detail / poi_list /
   poi_detail / route_plan / charging_route；**2026-08-27 拍板补登：air_quality /
@@ -1290,10 +1302,16 @@ HMI 每轮 dispatch 生成 `request_id` 随 WS 帧上行（`gateway/edge` 转成
    「往前找最近一条 user 轮」会张冠李戴（真栈实测答出「暂停音乐、暂停音乐」）。
    `exchange_id` 的既有契约就是把 user 请求与其可见回复「绑成一个不可拆的账目单元」。
 
-**消费面**：`agents/chitchat/src/audit.py`，确定性、零 LLM。
+**消费面**：~~`agents/chitchat/src/audit.py`~~ → **`runtime/session_facts.py`**
+（2026-08-28 C4-B 迁入，唯一实现；chitchat 仍在兜底位消费同一份）。确定性、零 LLM。
 判据要求**回顾指代 + 执行询问两类词同时命中**（chitchat 兜底看到的是全部流量，
 判宽一格就会劫持「刚才那家店叫什么」）。话术报**用户原话**而非 `window.open`
 ——两者都来自系统持有的记录，但原话天然可核对。
+
+⚠ **判据搬家会改变误伤代价**（C4-B 的教训）：同一张词表在 chitchat 兜底位与在
+编排层短路位上，命中的后果分别是「答得不对」与「整轮不进 Planner」——
+搬家时词表必须重看一遍。本次因此补了一条否决（`做什么的`：「刚才那家店是
+做什么的」原来两段全中）。
 
 ⚠ **`handle` 与 `handle_stream` 必须共用唯一入口 `_deterministic_reply`**，
 源码级守卫 `test_both_paths_share_one_deterministic_gate` 钉着。
@@ -1894,3 +1912,80 @@ edge-gateway WS / llm-gateway HTTP·WS 接入。两个网关本来不关心客�
 
 执行真相源（逐任务）：`docs/design/2026-08-24-mobile-app-implementation-plan.md`
 （协议逐字段指认见其 §2，坑账见其 §9；需求/选型在 `2026-08-23-hmi-android-app-plan.md`）。
+
+### 9.34 系统持有的会话事实：账本的数据源维 + 三条确定性读出口（QA C4，2026-08-28）
+
+**这一族问题问的都是系统自己手里的东西**，而它们被答错的方式不是「答得不好」，
+是**手里根本没有那些数**：落到 chitchat 之后它只拿得到 4 轮纯文本历史
+（actions / 卡片 / `_prov` 一个都不进 prompt），**编造是结构性的**。
+2026-08-26 MiniMax 长会话 QA 一次交来五张症状卡（T41 编「东方财富 19:23」/
+T43 编自我纠错 / T55 落进手册 mock 答「手册里没有查到」/ T51 答一个「嗯」/
+T56 答学校地址），根因只有一个。
+
+> 判据：**凡是「系统持有的事实」，判据面就得是闭合的**（§9.27 那条的第四次扩面）。
+
+#### A. 账本扩「数据源」维
+
+与 §9.24 的执行事实**同一个载体、同一条判据**：
+
+- `AppendTurnRequest.sources`（字段 11）与 `Turn.sources`（字段 10）**读写对称**，
+  元素为 `TurnSource{card, vendor, mode, fetched_at, note, data_time, data_time_label}`
+  ——字段与 `ui_card._prov`（§9.3）**逐字同名**：账本记的就是用户看到的那张卡上盖的
+  那个章，两边不许各自演化出一套叫法。
+- **新字段而不是往 `actions` 里塞 `"_prov:vendor=…"`**：魔法字符串会让「动作名」
+  这个值域不再闭合，而它有三处同口径消费方（端侧 / obs / 探针）。
+- 采集点在 engine 落账处，取 **final 帧的 `ui_card`**（`card_group` 逐张收）——
+  与 `_executed_action_names` 同一条口径：被聚合器丢掉的东西不该出现在账本里。
+- 归一逐条抄 `_clean_actions`：非 list 归空、非法元素**直接丢不做 `str()` 转换**、
+  封顶 5 条；**无 vendor 的条目直接丢**（不知道是谁给的数据，在「来源是什么」上
+  等于没有记录）。`sources` 进幂等比对集，且**两个列表字段归一后再比**——
+  存量轮次读出来是 `None`、新写入方给的是 `[]`，不归一会把一次合法重放判成篡改，
+  且只在**升级后的第一次重试**上出现。
+
+#### B. 三条确定性读出口（落域**之前**短路，零 LLM 零网络）
+
+判据与话术的唯一实现是 **`runtime/session_facts.py`**；挂点在
+`engine._session_fact_answer`，与 `candidate_query` 那两条短路同位。
+
+| 出口 | 判据（全部两段以上同时命中） | 答什么 |
+|---|---|---|
+| 挂起状态 | 挂起词表 ∧ 疑问形态 ∧ 非祈使 | 念挂起表（`load_all`，**多条就报多条**） |
+| 数据源 | 来源词表 ∧ 非祈使 ∧ **账本里有** | 念最近一轮有记录的那一轮 |
+| 执行史 | 回顾指代 ∧ 执行询问 | 念执行账本（问了时间才报时间） |
+
+四条纪律：
+
+1. **判据必须住在两边都够得着的地方。** Q6 把审计闸建在 chitchat 里，
+   2026-08-26 T37「刚才实际改了哪一条」被 planner 接给 reminder.list——
+   **判据一直是对的，够不着而已**。落点判据同 `runtime/` 那几个模块：
+   镜像依赖闭包（云侧编排镜像不 `COPY agents/`，agent 镜像不 `COPY orchestrator/`）。
+   **搬家与前移是两件事，只做一件都不够**：搬到 runtime 解决「够不着」，
+   挂到落域之前解决「被别的域接走」。
+2. **有账才答、无账明说**——但**数据源那条例外地要求「有账才劫持」**：
+   账本空说明此前没有任何外部数据卡，那就不是系统持有的事实，照常进 Planner
+   （`info.stock` 的域内直答比一句「我没记到」有用）。挂起与执行史**没有第二个
+   能答的人**，所以它们空账也答。
+3. **「读不到」与「读到了、是空的」永远分开报**（§9.29 那条在存储面的复发）：
+   两者都答「当前没有待确认的操作」，等于让一次存储故障说出一句听起来很确定的假话。
+4. **同一份账 → 逐字同一个答案。** 确定性的直接证据是零方差。
+
+#### C. 候选集第四种算子：重列
+
+`candidate_query` 增「重列」（`重新列出|再列一遍|再显示|刚才的选项…`），从候选台账
+重渲染**文字清单**（序号 + 名字 + 价格）并说清「按钮还在刚才那张卡上」。
+真栈 T19/T20 连着两次说「重新列出刚才可以选择的项目」，前三种算子一条都不认
+（它们全要求「算子 + 维度」），于是整句进 Planner **重搜了一遍**——两次搜回不同
+城市不同门店，第二次 LLM 还凭空把检索地点定到青岛平度。
+**不为重列扩白名单**：那 13 键是与产生方的契约（§9.27），而「再看一眼可选项」用
+文字清单已经闭环。零候选时**不劫持**——这条短路的立场是「手里有那份却给了新的」。
+
+#### D. 探针口径的同批调整（§4「探针判据与被验对象同批落」）
+
+`INF-STOCK` 第 2 轮的落域期望从 `[info.stock]` 放宽到
+`[info.stock, system.data_provenance]`，并去掉该轮的 `provenance_required`
+——读出口念的是账本不是新取的数，**它本来就不该有卡**，要求出卡等于要求它再打一次
+provider。**值级判据一个字没松**：`stock_provenance_from` 仍要求把上一轮卡里的真实
+provider 与 market_time 逐字复述出来，`speech_has` 的两个词也原样保留
+（「行情时间」由产生方经 `_prov.data_time_label` 声明）。
+新增三个 engine-only 节点进 `_ENGINE_ONLY_TRACE_NODES`：
+`cloud.pending_state` / `cloud.data_provenance` / `cloud.execution_audit`。

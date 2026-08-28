@@ -6674,3 +6674,91 @@ C1-A 的验收栏写着「怎么打开双闪」应被拦（「它是 manner 问�
 
 > 判据（§4.3 末条）：**报基线的那次跑批必须是本轮最后一次改动之后**，顺序不能反；
 > 数字落进文档时**连同「测的是哪个版本」一起落**。
+
+---
+
+## §74 2026-08-28 MiniMax QA 修复批 · 第 2 批（C4 会话事实的确定性读出口族）
+
+方案与逐卡机制见
+[`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](design/2026-08-27-minimax-qa-root-cause-fix-plan.md)
+（§3 的 C4 卡、§4「第 2 批终态」）。本节只记**流水与判据**，不复述方案。
+
+### §74.1 做了什么
+
+一张卡覆盖五张症状卡（P1-04 后半 / P1-10 / P1-13 / P1-16 / P1-07 追问轮），
+根因只有一个：**这一族问的都是系统自己手里的事实，而它们要么没被写下来、
+要么写下来了却没有一条通向用户的读路径。**
+
+- **A 账本扩「数据源」维**。proto 新增 `TurnSource`（`AppendTurnRequest.sources` 字段 11 /
+  `Turn.sources` 字段 10，字段与 `ui_card._prov` **逐字同名**），memory 写读两侧、
+  云侧 `clients` 写读两侧、`context.append_turn` 的签名探测一并接通；采集点在 engine
+  落账处取 **final 帧的 ui_card**（`card_group` 逐张收），归一逐条抄 `_clean_actions`，
+  `sources` 进幂等比对集。**新字段而不是往 `actions` 里塞魔法字符串**——那会让动作名
+  这个值域不再闭合，而它有三处同口径消费方。
+- **B 三条确定性读出口**（挂起状态 / 数据源 / 执行史）。判据与话术的唯一实现落
+  `runtime/session_facts.py`（Q6 的 `agents/chitchat/src/audit.py` **整体迁入**，
+  chitchat 仍在兜底位消费同一份），挂点 `engine._session_fact_answer`，
+  与 `candidate_query` 那两条短路同位、plan 构建之前。
+- **C 候选集第四种算子「重列」**。`candidate_query._relist_answer` 从台账重渲染文字清单
+  （序号 + 名字 + 价格）并说清按钮在哪；零候选不劫持，白名单一个键没扩。
+- **T44 的小修**：`_apply_focus_meta` 的股票焦点继承在**原话带回顾指代**时不再要求
+  「上一轮本身就是股票轮」，判据与审计闸共用同一张回顾词表。
+
+### §74.2 四处实施时的判断（方案里没有，记下来免得以后当成「本来就该这样」）
+
+1. **方案的验收栏与探针既有期望互相矛盾 ⇒ 显式裁决 + 留痕**（第 1 批 C1-A 的同款形态，
+   两批连着各撞一次）。C4-B ② 验收写「vendor/market_time 与 `_prov` 逐字一致」，
+   而 `_prov` **根本没有 market_time**；同一条探针用例还要求那一轮
+   `intent_any=[info.stock]` + `provenance_required`——**读出口一旦接管，这两条必红。**
+   裁决：给 `_prov` 补一对**产生方声明**的键 `data_time` / `data_time_label`
+   （编排层不该认识「行情时间」这个词，判据同 `_candidate_label`），
+   探针那一轮落域期望放宽到 `[info.stock, system.data_provenance]` 并去掉
+   `provenance_required`，**值级判据一个字没松**。
+2. **判据搬家会改变误伤代价。** 同一张词表在兜底位是「答得不对」，在编排层短路位是
+   **整轮不进 Planner**⇒ 当批补否决 `做什么的`（「刚才那家店是做什么的」原来两段全中）。
+3. **同一语义有两种语序，词表只写了一种。** 照 T37 补完「改了哪一条」，
+   拿 T55 原话一跑就红——「哪些**执行了**」疑问词在动词前面。**倒装那条是写测试才发现的。**
+4. **「有账才劫持」只给数据源那一条。** 挂起与执行史没有第二个能答的人，空账也答；
+   数据源有（`info.stock` 域内直答），空账放行给 Planner。三条一刀切会关掉一条更好的路径。
+
+### §74.3 两处不闭合，去向已定（不是漏做）
+
+- **T43「虚构自我纠错」** 归 **C11**（第 5 批的防编造面）。C4 只保证「问来源时不再由
+  chitchat 回答」。
+- **`agents/_sdk/clients.py::get_session` 没带 `sources`**：agent 侧当前零消费方，
+  按 B4「加字段要有真实消费方」刻意不加。
+
+### §74.4 一处评估后否掉的方案项
+
+C4-D（stock 产出进候选集）**不做**：① 它够不到自己那张卡——`candidate_query` 没有
+「总结」算子，加了候选集 T44 照样反问代码；② `_CANDIDATE_SETS_MAX=3`，一次股票查询会
+挤掉一组真实可选项，而单条行情不是「一组可选项」；③ T44 换了个更小的修法并当批做掉了。
+
+> 判据：**方案里的「建议」项要当成一个待证命题，不是待办事项。**
+> 「缺 X」与「补上 X 就能修」是两个命题——这是 §4.3 那条老账在方案项上的形态。
+
+### §74.5 读数
+
+- 全量 `python -m pytest -q -n auto --dist worksteal`：**7397 passed / 32 skipped 零红**（4:06）。
+  基线 7314/32 ⇒ **+83 全部是本批新增断言**，无一条既有用例被改绿。
+  **归属是逐文件点出来的，不是按差值分的**（`--collect-only` 对同一 SHA 的 HEAD 副本
+  逐文件比）：`test_session_facts.py` 46 / `test_engine_session_facts.py` 15 /
+  `test_turn_sources.py` 6 / `test_candidate_query.py` +14 / `test_engine_focus.py` +2
+  ＝ 83，**其余 320 个测试文件计数逐字未变**。
+  ⚠ 中途我按「函数条数」估成 +79，与实测的 +83 差 4——差在两条参数化用例上。
+  **对账要按收集器数的数，不是按你写了几个 `def`。**
+- `agents/chitchat/tests/test_audit_answer.py` 那 21 条**一条断言都没改**（只换 import）
+  ——判据迁移的验收标准就是「旧消费方的行为锁逐条仍然成立」，改断言等于把迁移变成改行为。
+- 三道离线门禁：`test/smoke_edge.py` 13 passed / 0 failed；
+  `test/eval_capability_integrity.py` ✅ PASS；`scripts/check_intent_gate.py` rc=0
+  （gate 25/25、cases 139、distinct_inputs 129）。本批不动端侧，跑它们是为了证明「没动」。
+- **§4.2 那条 `test_e2e_stack_lease` 欠账当批又复现一次，并且改写了它的复现条件**：
+  复跑途中有一趟报单条红（`test_parallel_owner_waits_for_survivor_after_other_child_crashes`），
+  **而当时只跑了一趟全量**——原记录写的是「同时跑两趟全量必红」。那一趟耗时 **6:00**
+  而相邻两趟 4:06/4:09 ⇒ **宿主负载本身就是那把 `.git/` 锁的第二个竞争源**，
+  「两个会话同时跑」不是必要条件。隔离复跑该文件 61 passed / 2 skipped，随后整趟全量零红。
+  > 判据：**共享资源类缺陷的「复现配方」写窄了，会让下一次复现被误读成新问题。**
+- ⚠ **真栈迷你集与「修正后计分」仍未跑**（与第 1 批同一条口径：两批都改过探针本身，
+  应在下一次跑批时连同 C16 其余条目一起验）。**云端 release 的 QA 读数没有因此改变。**
+- 四层知识对齐：架构 **v1.40 §5.2.14**、契约 **§9.34**（并更新 §9.3/§9.24）、
+  方案 §4「第 2 批终态」、本节。
