@@ -89,6 +89,43 @@ def test_weather_alert_uses_this_turn_gps_before_asking():
     assert agent._agents.calls == [("info", "info.alerts", {"city": "114.060000,22.540000"})]
 
 
+def test_gps_derived_locator_never_reaches_the_user_speech():
+    """**查询用的定位串与说给人听的地名是两个东西。**
+
+    真栈实测（2026-08-28 部署后第一趟迷你集）：用户听到
+    「**113.941200,22.541000**当前没有生效的天气预警。」——C9-A 把这条路径从
+    「mock 城市名」换成了 `lng,lat` 坐标串交给 provider，而兜底话术还在直接念
+    那个值。C9-D 在 info 那侧挡住了同一个形态（`_display_city` /
+    `_is_coordinate_label`），**偏偏漏了 C9-A 自己改的这个文件**。
+
+    判据：⇒ **新造一条数据通路时，要把它流向的每一个出口都走一遍。**
+    """
+    agent = RoadSafetyAgent()
+    # info 这一跳没给出话术 ⇒ 走本方法自己的兜底句，那句正是出事的地方。
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech=""))
+    res = asyncio.run(run_handle(
+        agent, "safety.weather_alert", slots={},
+        raw_text="现在有影响开车的天气预警吗", ctx=make_context(),
+        meta={"current_lat": "22.541", "current_lng": "113.9412"}))
+
+    assert res.status == "ok"
+    assert "113.9412" not in res.speech and "22.541" not in res.speech
+    assert res.speech.startswith("当前位置")
+    # provider 那一跳仍然必须拿到坐标——**挡的是出口，不是数据本身**。
+    assert agent._agents.calls == [
+        ("info", "info.alerts", {"city": "113.941200,22.541000"})]
+
+
+def test_user_named_city_is_still_spoken_verbatim():
+    """误伤对照：用户点名了城市就照原样念，别把它也换成「当前位置」。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech=""))
+    res = asyncio.run(run_handle(
+        agent, "safety.weather_alert", slots={"city": "深圳"},
+        raw_text="深圳有预警吗", ctx=make_context()))
+    assert res.speech == "深圳当前没有生效的天气预警。"
+
+
 def test_road_condition_needs_route():
     """safety.road_condition 无路线 → NEED_SLOT"""
     ctx = make_context()

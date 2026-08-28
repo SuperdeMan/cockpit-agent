@@ -21,7 +21,13 @@
 > 「第 6 批终态」，明细在 `.artifacts/dev-stack-verifications/qa-minimax-long-sessions-replay-20260828.json`
 > （`.artifacts/` 不入库，用 `python scripts/probe_qa_long_sessions.py --replay <artifact>` 可随时重算）。
 > ⚠ **回放不是真栈复跑**：它判的是「尺子会怎么判**当天那些话**」，不是「今天的系统会说什么」。
-> **真栈迷你集尚未重跑**，本文件里的读数仍是 `c7c211b` 那一次的原样。
+> ✅ **2026-08-28 六批已上线**（release `7ac2176` → **`6a65e7a`**，`verify` = verified），
+> **迷你集已在新 release 上重跑：58/61 PASS，三条原红全部转绿、仍红 0**
+> （SF2 ← 第 1 批、XS2/AU1 ← 第 2 批；新冒出的三条 `--repeat 3` 复跑全绿 ⇒ 方差）。
+> ⚠ **但长会话探针仍未在新 release 上跑**——本文件里那些靠长会话才复现的症状卡
+> （P1-06 城市漂移 / P1-04 候选重列 / P2-14 偏好 / P1-15 时限 / P1-03 接人…）
+> **一条都没验**，读数仍是 `c7c211b` 那一次的原样。**不许把「迷你集 58/61」读成「QA 全绿」。**
+> 逐条见 history **§79**。
 > 被测 release：`c7c211bedb4ff504dfceaf09e652c7875bdaebb8`；目标 `cloud`；LLM 仅
 > `minimax:MiniMax-M3`；TTS 仅 MiniMax `speech-2.8-turbo / female-tianmei`。
 

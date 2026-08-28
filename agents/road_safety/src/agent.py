@@ -412,11 +412,21 @@ class RoadSafetyAgent(BaseAgent):
         下游 provider 反查；再没有就 NEED_SLOT。
         """
         city = intent.slots.get("city", "").strip()
+        # **查询用的定位串** 与 **说给人听的地名** 是两个东西（2026-08-28 修）。
+        # C9-A 把这条路径从「mock 城市名」换成了 `lng,lat` 坐标串交给 provider，
+        # 而下面那句兜底话术还在直接念 `city` ⇒ 真栈实测用户听到
+        # 「**113.941200,22.541000**当前没有生效的天气预警。」
+        # C9-D 在 info 那侧挡住了同一个形态（`_display_city` / `_is_coordinate_label`），
+        # **偏偏漏了 C9-A 自己改的这个文件**——新造一条数据通路时，
+        # 要把它流向的**每一个出口**都走一遍，不能只修被点名的那几个。
+        spoken = city
         if not city:
             current = current_location_from_meta(meta)
             if current:
                 # 和风 GeoAPI 接受 `lng,lat`（与 info `_resolve_city` 逐字同格）。
                 city = f"{current.lng:.6f},{current.lat:.6f}"
+                # 用户没点名城市 ⇒ 话术里只说「当前位置」，坐标不进耳朵。
+                spoken = "当前位置"
         if not city:
             return AgentResult(
                 status=NEED_SLOT, speech="您想查询哪个城市的天气预警？",
@@ -435,7 +445,7 @@ class RoadSafetyAgent(BaseAgent):
         except Exception as e:
             logger.warning("weather alert query failed: %s", e)
 
-        return AgentResult(speech=f"{city}当前没有生效的天气预警。")
+        return AgentResult(speech=f"{spoken}当前没有生效的天气预警。")
 
     async def _road_condition(self, intent, ctx, meta) -> AgentResult:
         """查询路况。"""
