@@ -41,6 +41,15 @@ jobs:
         working-directory: mobile
         run: npm ci
 
+      # M4：KWS/VAD 的原生件与模型**不入 git**（体积 + 许可），CI 也要现取——
+      # 否则 `:kws` 模块的构建期断言会直接失败。刻意让它失败而不是静默跳过：
+      # 一个「悄悄没有唤醒词」的 APK 比一次红灯危险得多（B3/B4 反复点名的形态）。
+      - name: Fetch voice models (KWS + silero VAD)
+        run: bash scripts/fetch-voice-models.sh
+
+      - name: Fetch mobile voice assets (sherpa AAR -> jar/so + assets)
+        run: bash scripts/fetch_mobile_voice_assets.sh
+
       - name: Expo prebuild (android)
         working-directory: mobile
         env:

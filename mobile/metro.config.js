@@ -16,6 +16,10 @@ const config = getDefaultConfig(projectRoot)
 
 config.watchFolders = [hmiRoot]
 config.resolver.sourceExts = [...config.resolver.sourceExts, 'mjs']
+// 5. M4：.onnx 当**资产**而不是源码（默认 assetExts 里没有它，metro 会当模块去解析然后报错）。
+//    VAD 模型经 expo-asset 拿 localUri 再交给 onnxruntime-react-native；
+//    KWS 的三个模型不走这里——它们是 Android library assets，由原生侧 AssetManager 读。
+config.resolver.assetExts = [...config.resolver.assetExts, 'onnx']
 config.resolver.nodeModulesPaths = [path.join(projectRoot, 'node_modules')]
 config.resolver.disableHierarchicalLookup = true
 

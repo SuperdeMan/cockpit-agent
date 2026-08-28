@@ -1,7 +1,8 @@
 // 设置仓库（实施计划 M1-5，M2 追加语音面）：AsyncStorage 持久化 + zustand。
 // buildMeta 键集与 hmi/src/settings.tsx:79-90 逐键一致（单测硬拷贝键名钉住，漂移即红）；
 // **语音字段刻意不进 buildMeta**——它们是客户端本地行为（用哪个引擎合成/识别），
-// 不是会话偏好，上行了后端也不看。免唤醒/S2S/声纹等仍不搬（M4 再说）。
+// 不是会话偏好，上行了后端也不看。M4 追加的四项（免唤醒/唤醒词/S2S 挡位/视觉）同理，
+// 唯一例外是 S2S 与视觉在**发送时**要带 meta（挡位与 frame_id），那由发送路由带，不在这里。
 // theme 多一档 'system'（RN 跟随系统）。
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { createStore } from 'zustand/vanilla'
@@ -38,6 +39,16 @@ export interface AppSettings {
   autoplay: boolean
   ttsProvider: string
   voiceId: string
+  // ── M4 进阶语音 ──
+  /** 免唤醒回路总开关。默认关：常开麦是**采集面**，必须用户显式要（架构 §5 红线的同一条判据）。 */
+  handsFree: boolean
+  /** 唤醒词（KWS）。关掉后免唤醒只剩「答完 8s 内可直接接着说」，不常驻监听唤醒词。 */
+  wakeWord: boolean
+  /** 语音链路挡位：classic=三段式（只上行定稿文本）／s2s=端到端（**上行原始音频**）。
+   *  默认 classic 是红线要求，不是偏好——见 CLAUDE.md §5「唯一的受控例外」三条件①。 */
+  voicePipeline: 'classic' | 's2s'
+  /** 视觉抓帧。默认关；开了也只在端侧命中视觉触发词时抓一帧（红线三条件②）。 */
+  visionEnabled: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -63,6 +74,10 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   asrModel: 'fun-asr-realtime',
   ttsProvider: 'minimax',
   voiceId: 'female-tianmei',
+  handsFree: false,
+  wakeWord: true,
+  voicePipeline: 'classic',
+  visionEnabled: false,
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。

@@ -87,6 +87,30 @@ SHA-1  5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25
 地图入口只出现在**契约里真的带 `lat`/`lng`** 的卡上（`poi_detail` / `place_list` /
 `place_detail`）；`route_plan` / `poi_list` / `charging_route` 没有坐标，折线等后端补。
 
+## 端侧语音模型与原生件（M4，**不入 git，构建前必须先取件**）
+
+免唤醒要两样原生东西：`onnxruntime-react-native`（跑 silero VAD）与 sherpa-onnx
+（跑 KWS 唤醒词）。前者是 npm 依赖，后者的原生件与三个 KWS 模型**不进仓库**（体积 + 许可，
+同 `hmi/public/models` 的处置）：
+
+```powershell
+powershell -File scripts\fetch-voice-models.ps1              # 先拿 hmi 那份（KWS 模型 + silero VAD）
+powershell -File scripts\fetch_mobile_voice_assets.ps1       # 再拆成 mobile 要的形态
+```
+
+缺任何一件，`:kws` 模块会在构建期**明确失败**并指向取件脚本——刻意不静默跳过，
+一个「悄悄没有唤醒词」的 APK 比一次红灯危险得多。CI 的 APK job 也跑这两步（`.sh` 版）。
+
+⚠ 三条只有踩过才知道的（详见实施计划坑账 §9.43–47）：
+- `onnxruntime-react-native` 需要 **`mobile/react-native.config.js` 显式补登**，
+  否则它掉进 Expo/RN 两套 autolinking 之间的缝：**构建成功、装上去原生却没注册**。
+  取证看 `android/app/build/generated/autolinking/.../PackageList.java` 有没有
+  `OnnxruntimePackage`，别看 gradle 日志。
+- ABI 由 **`reactNativeArchitectures`**（编不编）+ `abiFilters`（打不打包）**两个杠杆**共同决定，
+  只配后者无效（`abiFilters` 是 Set，RN 插件随后会把四个 ABI 加回来取并集）。
+  `build_mobile.ps1` 已自动写前者：**x86 模拟器因此装不上也编不出**，验收本来就全在真机。
+- 改了 `metro.config.js` 必须**重启 Metro**，否则真机报「文件不存在」而那个文件明明在。
+
 ## e2e（Maestro，M3-5）
 
 **状态：4/4 全部跑通**（2026-08-28 真机，`4/4 Flows Passed in 7m 43s`）。
@@ -111,7 +135,10 @@ maestro test --no-reinstall-driver --include-tags online mobile/e2e/ # 只跑要
 
 ```
 app.config.ts          原生配置真相源（名称/包名/变体/插件/高德 key 注入）
-shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M3）
+shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M4）
+react-native.config.js RN 社区 autolinking 的显式补登（M4：onnxruntime-react-native）
+modules/kws/           Expo 本地原生模块：sherpa-onnx KeywordSpotter 的极窄桥（M4-2）
+                       android/libs + android/src/main/jniLibs + assets/kws 均 gitignore
 src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / map
                        / debug / voice-spike（M2 语音取证屏）/ card-gallery（M3 卡片画廊，
                        支持 ?only=<type> 直达某一族；后三个不进主导航，深链接进）
@@ -126,7 +153,13 @@ src/core/location/     定位桥（expo-location 取坐标；meta 键共享纯�
 src/core/obs/          trace_id（HMI 同构）+ 会话前缀 app-
 src/core/voice/        M2 语音面：recorder（16k 归一）/ resample / asr（流式+模型回退+批处理兜底）
                        / tts（流式+收尾三分支）/ audioCtx（pcmPlayer 注入适配）/ speech
-                       （SpeechSink 实现）/ audioFocus / catalog / wav / base64
+                       （SpeechSink 实现）/ audioFocus（+ M4 有界事件日志，四场景取证出口）
+                       / catalog / wav / base64
+                       M4 追加：micBus（一路麦多路消费，免唤醒的地基）/ vad（ORT+silero，
+                       端点判据共用 @shared/sileroEndpoint.mjs）/ kws（sherpa 原生桥的 JS 面）
+                       / handsFree（voiceLoop.mjs FSM 接 RN 引擎 + S2S）
+src/core/vision/       M4-6 视觉单帧：触发判据共用 @shared/visionFrame.mjs::needsFrame
+                       （采集面即隐私面，判据只许一份）；采集端在 features/vision/
 src/features/chat/     对话 UI：ChatScreen（双形态外壳）/ MessageBubble / Composer
 src/core/map/          地图能力判据：MAP_AVAILABLE（有 key ∧ 原生在场）+ 坐标校验（0,0 判空）
 src/features/cards/    CardRenderer（**全量 34 型** + 兜底卡铁则 + ErrorBoundary + _prov 徽章）；

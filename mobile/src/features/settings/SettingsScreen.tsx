@@ -3,7 +3,7 @@
 // disabled_agents 生效）/ 记忆 / 定位 / 调试入口。
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
 import { useStore } from 'zustand'
 
@@ -17,6 +17,7 @@ import {
   fetchTtsProviders,
   type AsrProviderInfo,
 } from '../../core/voice/catalog'
+import { handsFreeAvailability } from '../../core/voice/handsFree'
 import { speechController } from '../../core/voice/speech'
 import { usePalette, type Palette } from '../../ui/theme'
 import type { TtsProviderInfo } from '@shared/types.ts'
@@ -113,6 +114,13 @@ export function SettingsScreen() {
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
   const [asrCatalog, setAsrCatalog] = useState<AsrProviderInfo[]>([])
   const [previewing, setPreviewing] = useState(false)
+  // 免唤醒的原生可用性：**在渲染前问一次**。原生缺席时连开关都不渲染——
+  // 这不是 UI 洁癖，是坑账 §9.27：原生缺席时崩在原生线程，ErrorBoundary 兜不住整屏红屏。
+  const hfAvail = useMemo(() => handsFreeAvailability(), [])
+  // 试听没出声时的那句话（M3 遗留 R1）。空串=没试过或出声了。
+  // **必须有这个出口**：无 key 引擎在全链四段里没有任何一段会换引擎，结果就是完全安静，
+  // 而屏上此前一个字都不说——用户只能对着一台安静的手机猜是不是自己音量关了。
+  const [previewMsg, setPreviewMsg] = useState('')
 
   useEffect(() => {
     void loadServerConfig().then(setServer)
@@ -313,8 +321,12 @@ export function SettingsScreen() {
           disabled={previewing || !server?.audioUrl}
           onPress={() => {
             setPreviewing(true)
+            setPreviewMsg('')
             void speechController(server?.audioUrl)
               .preview('你好，我是' + settings.assistantName + '，这是当前音色的效果。')
+              .then((sounded) => {
+                if (!sounded) setPreviewMsg(`没有出声：${settings.ttsProvider} 这个引擎没返回音频（后端没配它的 key，或 key 已失效）。换一个引擎再试。`)
+              })
               .finally(() => setPreviewing(false))
           }}
           style={{
@@ -331,6 +343,79 @@ export function SettingsScreen() {
             {previewing ? '播放中…' : '试听'}
           </Text>
         </Pressable>
+        {previewMsg ? (
+          <Text style={{ color: p.amber, fontSize: p.font(12), marginTop: 8, lineHeight: p.font(18) }}>
+            {previewMsg}
+          </Text>
+        ) : null}
+      </Section>
+
+      {/* M4 进阶语音。三个开关**默认全关/最保守**，且每条都在屏上说清代价——
+          这不是文案洁癖：视觉与 S2S 是架构红线里点名要「文案说清差异」的两条
+          （CLAUDE.md §5「唯一的受控例外」条件③、「视觉单帧同款三条件」第三条）。 */}
+      <Section p={p} title="进阶语音（M4）">
+        {!hfAvail.usable ? (
+          <Text style={{ color: p.fg3, fontSize: p.font(12), lineHeight: p.font(18) }}>
+            这个安装包里没有端侧语音引擎（VAD={String(hfAvail.vad)} / 唤醒词={String(hfAvail.kws)}），
+            免唤醒不可用。装上带 M4 原生面的新版本后这里会自动出现。
+          </Text>
+        ) : (
+          <>
+            <SwitchRow
+              p={p}
+              label="免唤醒对话"
+              desc="开启后麦克风常开：说唤醒词即可开始，答完 8 秒内可直接接着说。耗电，默认关"
+              value={settings.handsFree}
+              onChange={(handsFree) => set({ handsFree })}
+            />
+            {settings.handsFree ? (
+              <SwitchRow
+                p={p}
+                label="唤醒词「小舟小舟」"
+                desc={
+                  hfAvail.kws
+                    ? '关掉后不常驻监听唤醒词，只保留「答完 8 秒内可接着说」'
+                    : '本安装包没有唤醒词引擎，只能用「答完接着说」'
+                }
+                value={settings.wakeWord && hfAvail.kws}
+                onChange={(wakeWord) => set({ wakeWord })}
+              />
+            ) : null}
+            <ChoiceRow
+              p={p}
+              label="语音链路"
+              value={settings.voicePipeline}
+              options={[
+                { v: 'classic' as const, label: '三段式（默认）' },
+                { v: 's2s' as const, label: '端到端' },
+              ]}
+              onPick={(voicePipeline) => set({ voicePipeline })}
+            />
+            <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
+              三段式：语音在本机转成文字后，只上传文字。
+              端到端：延迟更低，但会把你说话的原始音频上传到服务器（仅在唤醒后的对话窗内采集，
+              未唤醒不采）。默认三段式。
+            </Text>
+            {settings.voicePipeline === 's2s' ? (
+              <Text style={{ color: p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
+                已选端到端：本机麦克风的原始音频会在每次唤醒后的对话窗内上传。
+              </Text>
+            ) : null}
+          </>
+        )}
+        <SwitchRow
+          p={p}
+          label="看图问答"
+          desc="只有当你说「这是什么」这类看图的话时才拍一张，其余时候一帧都不拍。默认关"
+          value={settings.visionEnabled}
+          onChange={(visionEnabled) => set({ visionEnabled })}
+        />
+        {settings.visionEnabled ? (
+          <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
+            拍到的画面只用于回答当前这一句，服务器上最多保留两分钟，不落盘、不进记忆、不进日志。
+            手机上用的是后置摄像头（PoC 阶段代替车外摄像头，卡片上会标「模拟」）。
+          </Text>
+        ) : null}
       </Section>
 
       <Section p={p} title="能力开关（关掉的指令会被婉拒）">

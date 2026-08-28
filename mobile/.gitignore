@@ -42,3 +42,8 @@ example
 # generated native folders
 /ios
 /android
+
+# M4 端侧语音模型（VAD）——scripts/fetch_mobile_voice_assets.ps1 取件，切勿提交（体积 + 许可，
+# 同 hmi/public/models 的处置）。KWS 的三个模型与 sherpa AAR 由 modules/kws/.gitignore 管。
+assets/models/*
+!assets/models/.gitkeep

@@ -19,9 +19,15 @@ import { settingsStore } from '@/core/settings/store'
 import { AsrSession, recognizeBatch } from '@/core/voice/asr'
 import { TtsSession, synthesizeBatch } from '@/core/voice/tts'
 import { newPcmPlayer, playerCtxOf, sharedAudioContext } from '@/core/voice/audioCtx'
+import { audioFocusInstalled, audioFocusLog } from '@/core/voice/audioFocus'
+import { handsFreeAvailability } from '@/core/voice/handsFree'
+import { DEFAULT_KEYWORDS, KwsEngine, kwsNativeAvailable } from '@/core/voice/kws'
+import { micBusStats, micLease } from '@/core/voice/micBus'
 import { recorder } from '@/core/voice/recorder'
+import { VadEngine, vadNativeAvailable } from '@/core/voice/vad'
 import { speechController } from '@/core/voice/speech'
 import { Resampler } from '@/core/voice/resample'
+import { parseWav, toMono } from '@/core/voice/wav'
 import { usePalette } from '@/ui/theme'
 
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
@@ -604,6 +610,219 @@ export default function VoiceSpikeScreen() {
     }
   }, [ensurePermission, log])
 
+  /** 让手机自己放一句话当声源（扬声器 → 空气 → 麦克风）。
+   *  这不是偷懒：M2 的 barge-in 探针已经实证这条声学回路成立（播报中 mic peak 0.145、
+   *  停后 0.004），所以**取证不必依赖「现场有人说话」**——而依赖人说话的探针
+   *  没人在的时候就不能跑，跑出来的读数也不可复现。 */
+  const speakForProbe = useCallback(
+    async (text: string): Promise<boolean> => {
+      const cfg = await loadServerConfig()
+      if (!cfg?.audioUrl) {
+        log('（无服务器配置，改成请你对着手机说话）')
+        return false
+      }
+      void speechController(cfg.audioUrl).preview(text)
+      return true
+    },
+    [log],
+  )
+
+  // ── M4-1 ⛔ VAD spike：ORT 在真机上能不能跑 silero，端点判据能不能出事件 ──
+  //  取证要的是**概率分布**不只是事件：模型没跑起来（prob 恒 0）与「跑了但没人说话」
+  //  在只看事件时长得一模一样。所以下面同时打 p50/p95/max 与 start/end 时刻。
+  const probeVad = useCallback(async (ms = 12000) => {
+    setBusy('vad')
+    try {
+      log('vad: native=' + vadNativeAvailable())
+      if (!vadNativeAvailable()) return
+      const vad = new VadEngine(800)
+      const t0 = Date.now()
+      await vad.load()
+      log('vad: 模型载入 ' + (Date.now() - t0) + 'ms')
+      const probs: number[] = []
+      const events: string[] = []
+      vad.onProb = (pr) => probs.push(pr)
+      const tStart = Date.now()
+      await vad.start({
+        onSpeechStart: () => events.push('start@' + (Date.now() - tStart) + 'ms'),
+        onSpeechEnd: () => events.push('end@' + (Date.now() - tStart) + 'ms'),
+        onError: (m) => log('vad error: ' + m),
+      })
+      const mic = micLease()
+      let frames = 0
+      await mic.start((f) => {
+        frames += 1
+        vad.accept(f)
+      })
+      const spoke = await speakForProbe(
+        '你好，我是小舟。今天深圳天气不错，二十八度，适合出门走走。',
+      )
+      log('vad: ' + (spoke ? '手机自播一句当声源' : '请对着手机说两句话') +
+        '（' + Math.round(ms / 1000) + 's）…')
+      await new Promise((r) => setTimeout(r, ms))
+      await mic.stop()
+      vad.stop()
+      await vad.dispose()
+      const sorted = [...probs].sort((a, b) => a - b)
+      log(
+        'vad: frames=' + frames + ' windows=' + probs.length +
+        ' prob p50=' + (quantile(sorted, 0.5) ?? 0).toFixed(3) +
+        ' p95=' + (quantile(sorted, 0.95) ?? 0).toFixed(3) +
+        ' max=' + (sorted[sorted.length - 1] ?? 0).toFixed(3),
+      )
+      log('vad: events=' + (events.length ? events.join(' ') : '(无)'))
+      log('vad: ' + (probs.length === 0 ? '✗ 一个窗都没推理（模型/帧源问题）'
+        : (sorted[sorted.length - 1] ?? 0) < 0.5 ? '? 推理在跑但没有语音帧（说话了吗？麦克风被占？）'
+        : events.some((e) => e.startsWith('start')) ? '✓ 概率有峰且判出端点' : '✗ 有语音概率但没判出端点'))
+    } catch (e: any) {
+      log('vad: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      setBusy('')
+    }
+  }, [log, speakForProbe])
+
+  // ── M4-2 ⛔ KWS spike：说「小舟小舟」看有没有命中 ──
+  const probeKws = useCallback(async (ms = 25000) => {
+    setBusy('kws')
+    try {
+      log('kws: native=' + kwsNativeAvailable())
+      if (!kwsNativeAvailable()) return
+      const kws = new KwsEngine()
+      const t0 = Date.now()
+      const hits: string[] = []
+      await kws.start({ onKeyword: (k) => hits.push(k + '@' + (Date.now() - t0) + 'ms') }, DEFAULT_KEYWORDS)
+      log('kws: 模型载入 ' + (Date.now() - t0) + 'ms')
+      const mic = micLease()
+      let fed = 0
+      let refused = 0
+      await mic.start((f) => {
+        if (kws.accept(f)) fed += 1
+        else refused += 1
+      })
+      // 自播三遍唤醒词（间隔留够，让 KWS 的解码状态在两次之间归零）
+      const spoke = await speakForProbe('小舟小舟。')
+      log('kws: ' + (spoke ? '手机自播「小舟小舟」' : '请说「小舟小舟」') +
+        '（' + Math.round(ms / 1000) + 's，期间会再播两遍）…')
+      await new Promise((r) => setTimeout(r, 7000))
+      if (spoke) await speakForProbe('小舟小舟。')
+      await new Promise((r) => setTimeout(r, 7000))
+      if (spoke) await speakForProbe('小舟小舟。')
+      await new Promise((r) => setTimeout(r, Math.max(2000, ms - 14000)))
+      await mic.stop()
+      const st = kws.stats()
+      await kws.stop()
+      log('kws: fed=' + fed + ' refused=' + refused + ' stats=' + JSON.stringify(st))
+      log('kws: hits=' + (hits.length ? hits.join(' ') : '(无)'))
+      log('kws: ' + (hits.length ? '✓ 唤醒命中 ' + hits.length + ' 次'
+        : (st?.processed ?? 0) === 0 ? '✗ 原生一帧都没处理（载入/线程问题）'
+        : '✗ 处理了 ' + st?.processed + ' 帧但零命中（阈值/关键词串/麦克风？）'))
+    } catch (e: any) {
+      log('kws: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      setBusy('')
+    }
+  }, [log, speakForProbe])
+
+  // ── M4-2 KWS 直灌：绕过麦克风，用模型自带的测试音频喂引擎 ──
+  //  **它是为了把「零命中」的两种成因分开**：引擎不认 vs 麦克风没听见——两者在屏上
+  //  长得一模一样，而处置完全相反（改阈值/换模型 vs 调音量/靠近说）。
+  //  用的是模型自己的 keywords（不是「小舟小舟」）：这一条验的是**引擎**，不是我们的词。
+  const probeKwsInject = useCallback(async () => {
+    setBusy('kws-inject')
+    try {
+      if (!kwsNativeAvailable()) {
+        log('kws-inject: 原生不在场')
+        return
+      }
+      const { Asset } = require('expo-asset')
+      // 模型自带 keywords.txt 的前四条（test_keywords.txt 与 test_wavs 一一对应）
+      const testKeywords = [
+        'w én s ēn t è k ǎ s uǒ @文森特卡索',
+        'zh ōu w àng j ūn @周望军',
+        'zh ū l ì n án @朱丽楠',
+        'j iǎng y ǒu b ó @蒋友伯',
+        'n ǚ ér @女儿',
+        'f ǎ g uó @法国',
+        'j iàn m iàn h uì @见面会',
+        'l uò sh í @落实',
+      ].join('/')
+      const mods = [
+        require('../../assets/models/kws_test/0.wav'),
+        require('../../assets/models/kws_test/1.wav'),
+        require('../../assets/models/kws_test/2.wav'),
+        require('../../assets/models/kws_test/3.wav'),
+        require('../../assets/models/kws_test/4.wav'),
+        require('../../assets/models/kws_test/5.wav'),
+        require('../../assets/models/kws_test/6.wav'),
+      ]
+      let total = 0
+      for (let i = 0; i < mods.length; i += 1) {
+        const kws = new KwsEngine()
+        const hits: string[] = []
+        await kws.start({ onKeyword: (k) => hits.push(k) }, testKeywords)
+        const asset = Asset.fromModule(mods[i])
+        await asset.downloadAsync()
+        const uri: string = asset.localUri || asset.uri
+        const bytes = new Uint8Array(await (await fetch(uri)).arrayBuffer())
+        const wav = parseWav(bytes)
+        if (!wav) {
+          log('kws-inject: ' + i + '.wav 解析失败')
+          await kws.stop()
+          continue
+        }
+        const pcm = toMono(wav)
+        // 按 100ms 分帧喂（与真实帧形态一致；一次性灌完会撑爆有界队列）
+        for (let off = 0; off < pcm.length; off += 1600) {
+          kws.accept(pcm.subarray(off, Math.min(off + 1600, pcm.length)))
+          if (off % 16000 === 0) await new Promise((r) => setTimeout(r, 30))
+        }
+        await new Promise((r) => setTimeout(r, 1200)) // 等原生线程把队列跑完
+        const st = kws.stats()
+        await kws.stop()
+        total += hits.length
+        log('kws-inject: ' + i + '.wav rate=' + wav.sampleRate + ' samples=' + pcm.length +
+          ' processed=' + st?.processed + ' dropped=' + st?.dropped +
+          ' hits=' + (hits.length ? hits.join(',') : '(无)'))
+      }
+      log('kws-inject: ' + (total > 0
+        ? '✓ 引擎能认（共 ' + total + ' 次命中）⇒ 麦克风那轮零命中是声学路径问题，不是引擎'
+        : '✗ 直灌也零命中 ⇒ 问题在引擎/配置侧（阈值、关键词串格式、模型），与麦克风无关'))
+    } catch (e: any) {
+      log('kws-inject: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      setBusy('')
+    }
+  }, [log])
+
+  // ── M4-4 免唤醒整轮的无人取证：**只放一句话，不建任何引擎** ──
+  //  用法：先在设置里打开免唤醒 → 回对话页确认「待唤醒」→ 进本屏点它 → 回对话页看状态条。
+  //  它刻意**不自己建 KwsEngine**：原生侧的 KeywordSpotter 是单例，再建一个会把
+  //  免唤醒回路正在用的那个顶掉（`load()` 里先 releaseInternal）。这条按钮的全部作用
+  //  就是「当一次声源」，听的人是常开麦那条回路。
+  const probeSpeakWake = useCallback(async () => {
+    setBusy('speak-wake')
+    try {
+      const ok = await speakForProbe('小舟小舟。今天深圳天气怎么样？')
+      log('speak-wake: ' + (ok ? '已播「小舟小舟。今天深圳天气怎么样？」——回对话页看状态条'
+        : '无服务器配置，播不了'))
+      await new Promise((r) => setTimeout(r, 6000))
+    } finally {
+      setBusy('')
+    }
+  }, [log, speakForProbe])
+
+  // ── M4 可用性与音频焦点日志（M3 遗留 R2 的取证出口）──
+  const probeStatus = useCallback(() => {
+    const a = handsFreeAvailability()
+    log('avail: vad=' + a.vad + ' kws=' + a.kws + ' usable=' + a.usable + ' mic=' + JSON.stringify(micBusStats()))
+    log('focus: installed=' + audioFocusInstalled() + '（false ⇒ 四场景一个都不会到，先查这一位）')
+    const lg = audioFocusLog()
+    if (!lg.length) log('focus: 日志空——还没发生过中断/路由事件')
+    for (const e of lg) {
+      log('focus: ' + new Date(e.at).toLocaleTimeString() + ' ' + e.kind + ' ' + e.detail + ' stopped=' + e.stoppedPlayback)
+    }
+  }, [log])
+
   const Btn = ({ label, onPress }: { label: string; onPress: () => void }) => (
     <Pressable
       onPress={onPress}
@@ -632,6 +851,11 @@ export default function VoiceSpikeScreen() {
         <Btn label="asr 直灌" onPress={() => void probeAsrInject()} />
         <Btn label="tts 流式" onPress={() => void probeTtsStream()} />
         <Btn label="barge-in" onPress={() => void probeBargeIn()} />
+        <Btn label="M4 vad" onPress={() => void probeVad()} />
+        <Btn label="M4 kws" onPress={() => void probeKws()} />
+        <Btn label="M4 kws 直灌" onPress={() => void probeKwsInject()} />
+        <Btn label="M4 播唤醒句" onPress={() => void probeSpeakWake()} />
+        <Btn label="M4 状态/焦点" onPress={() => probeStatus()} />
         <Btn label="clear" onPress={() => setLines([])} />
       </View>
       <Text style={{ color: p.fg3, fontSize: p.font(12), paddingHorizontal: 12 }}>

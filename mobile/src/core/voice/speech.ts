@@ -20,10 +20,20 @@ function playPcm(pcm: Int16Array, sampleRate: number): { player: any; done: Prom
 }
 
 export class SpeechController implements SpeechSink {
+  /** 播报整段没出声时的出口（wiring 注入 → 屏上一句提示）。不设即静默，同旧行为。 */
+  onSilent: ((reason: string) => void) | null = null
+  /** M4 免唤醒回路的两条腿：真出声了 → FSM 进 SPEAKING；播完 → FSM 进 FOLLOWUP。
+   *  **必须挂在「首片音频真起播」而不是「begin 被调用」上**——begin 之后可能一个字节
+   *  都不出（引擎无 key / 纯卡片回复），那种情况下 FSM 不该进 SPEAKING 再等一个永远
+   *  不来的 ttsEnd。没出声的那条腿由 onSilent → 调用方补 turnEnded() 走。 */
+  onSpeechBegan: ((text: string) => void) | null = null
+  onSpeechEnded: (() => void) | null = null
   private session: TtsSession | null = null
   private extra: { player: any } | null = null
   private bubble = ''
   private beganAt = 0
+  /** 本轮已流式出去的文本（FSM 用它判「助手是不是念到了唤醒词」抑制自触发） */
+  private spokenText = ''
   /** 首音时延（ms，验收判据「体感 <1.5s」的机器读数）；未出声为 0 */
   lastFirstAudioMs = 0
 
@@ -57,12 +67,19 @@ export class SpeechController implements SpeechSink {
     this.bubble = bubbleId
     this.beganAt = Date.now()
     this.lastFirstAudioMs = 0
+    this.spokenText = ''
     const session = new TtsSession(this.cfg(emotion), {
       onFirstAudio: () => {
         this.lastFirstAudioMs = Date.now() - this.beganAt
+        this.onSpeechBegan?.(this.spokenText)
       },
       onEnd: () => {
         if (this.session === session) this.session = null
+        this.onSpeechEnded?.()
+      },
+      onSilent: () => {
+        const s = settingsStore.getState().settings
+        this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`)
       },
     })
     this.session = session
@@ -71,6 +88,7 @@ export class SpeechController implements SpeechSink {
 
   delta(bubbleId: string, text: string): void {
     if (!this.session || bubbleId !== this.bubble) return
+    this.spokenText += text
     this.session.append(text)
   }
 
@@ -99,17 +117,21 @@ export class SpeechController implements SpeechSink {
     this.extra = null
   }
 
-  /** 设置页试听：走**流式**这条真实路径（引擎不可用时 TtsSession 自己回退批处理，
-   *  「无 key 引擎无感回退出声」正是验收要验的那条）。返回播完的 promise。 */
-  async preview(text: string): Promise<void> {
+  /** 设置页试听：走**流式**这条真实路径。
+   *  **返回值是「有没有真出声」**——不是「有没有跑完」。原注释写的「无 key 引擎无感回退
+   *  出声」是个假前提（tts.ts 头注查实了四段链，没有一段会换引擎），设置页据此把
+   *  「没响」显式说出来，而不是让用户对着一个安静的手机猜。 */
+  async preview(text: string): Promise<boolean> {
     this.stop()
-    const session = new TtsSession(this.cfg(''), {})
+    let sounded = false
+    const session = new TtsSession(this.cfg(''), { onFirstAudio: () => { sounded = true } })
     this.session = session
     this.bubble = '__preview__'
     session.start()
     session.finish(text)
     await session.completion
     if (this.session === session) this.session = null
+    return sounded
   }
 
   /** 批处理播一段（divergent 补播 / 兜底共用） */

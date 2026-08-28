@@ -1,0 +1,6 @@
+# 二进制不入库（体积 + 许可，同 hmi/public/models 的处置）：
+# scripts/fetch_mobile_voice_assets.ps1 取件；缺失时 gradle 明确失败并指向该脚本。
+android/libs/*.jar
+android/src/main/jniLibs/
+android/src/main/assets/kws/*
+!android/src/main/assets/kws/.gitkeep

@@ -90,6 +90,21 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         disableFFmpeg: true,
       },
     ],
+    // M4 端侧语音（VAD/KWS/视觉）。三条各自的理由：
+    //  · onnxruntime-react-native：VAD 引擎，跑 hmi 那份 silero_vad.onnx。插件本身只往
+    //    app/build.gradle 加一行 `implementation project(':onnxruntime-react-native')`。
+    //  · expo-camera：M4 视觉抓帧。两个选项都是关的：`recordAudioAndroid` 关掉是因为
+    //    RECORD_AUDIO 已由 react-native-audio-api 声明（同一条权限声明两次没意义，
+    //    而「谁声明的」影响后来人找它）；`barcodeScannerEnabled` 关掉省体积——本 App
+    //    不扫码。⚠ 插件的 `cameraPermission` 是 **iOS 专用**（写 Info.plist），
+    //    Android 的权限用途文案只能落在 App 自己的 UI 上（设置页 + 首次申请引导），
+    //    见 §5.5「权限用途文案齐」。别以为在这里写了字就合规了。
+    //  · ./plugins/with-native-voice：abiFilters + noCompress，理由见该文件头注。
+    //    ⚠ 它必须在 expo-build-properties **之后**——两者都改 app/build.gradle，
+    //    而 mergeContents 靠锚点定位，锚点被前一个插件挪走过就找不到了。
+    'onnxruntime-react-native',
+    ['expo-camera', { recordAudioAndroid: false, barcodeScannerEnabled: false }],
+    './plugins/with-native-voice',
     // 有 key 才挂（见上方 AMAP_KEY 注释）。`...(cond ? [x] : [])` 而不是塞个 false 进去：
     // Expo 的 plugins 数组不接受假值项，会直接报配置错。
     ...(AMAP_KEY ? [['./plugins/with-amap-key', { apiKey: AMAP_KEY }] as [string, unknown]] : []),

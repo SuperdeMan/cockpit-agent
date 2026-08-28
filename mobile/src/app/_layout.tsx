@@ -4,6 +4,7 @@ import { useEffect } from 'react'
 import { useStore } from 'zustand'
 
 import { hydrateSettings, settingsStore } from '@/core/settings/store'
+import { VisionCapture } from '@/features/vision/VisionCapture'
 import { installAudioFocusHandlers } from '@/core/voice/audioFocus'
 import { usePalette } from '@/ui/theme'
 
@@ -27,7 +28,12 @@ export default function RootLayout() {
     }
   }, [settings.keepAwake])
   return (
-    <Stack
+    <>
+      {/* M4-6 视觉抓帧的采集端。挂在根布局但**平时什么都不渲染**——
+          它只在真要抓帧的那一瞬挂载 CameraView，拍完立刻卸载（=关摄像头）。
+          放根布局是因为抓帧可能由任何路由上的一句话触发。 */}
+      <VisionCapture enabled={settings.visionEnabled} />
+      <Stack
       screenOptions={{
         headerStyle: { backgroundColor: p.bg },
         headerTintColor: p.fg1,
@@ -42,6 +48,7 @@ export default function RootLayout() {
       <Stack.Screen name="voice-spike" options={{ title: '调试 · 语音 spike' }} />
       <Stack.Screen name="card-gallery" options={{ title: '调试 · 卡片画廊' }} />
       <Stack.Screen name="map" options={{ title: '地图' }} />
-    </Stack>
+      </Stack>
+    </>
   )
 }

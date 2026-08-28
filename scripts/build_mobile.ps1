@@ -145,6 +145,25 @@ try {
         $gpDirty = $true
         Info 'gradle.properties: 新增 org.gradle.jvmargs=-Dfile.encoding=UTF-8'
     }
+    # ---- 3c. reactNativeArchitectures 只留两个 arm（M4 实测，2026-08-28）----
+    # app 的 `ndk { abiFilters }`（plugins/with-native-voice.js）只决定**打包哪几个 ABI**，
+    # 拦不住各 native 库照旧为 x86/x86_64 跑一遍 CMake——M4 首次全量构建里，那两个用不上的
+    # ABI 占掉了 reanimated/screens/worklets/audio-api 四个库的一半编译时间。
+    # RN 的 gradle 插件认 `reactNativeArchitectures`，用它从源头砍掉。
+    # ⚠ 与 abiFilters 是**两件事，必须同时改**：这条管「编不编」，那条管「打不打包」。
+    # ⚠ 代价同 abiFilters：x86 模拟器装不上、也编不出。本项目验收全在真机（计划 §0.4）。
+    if ($gp -match '(?m)^reactNativeArchitectures=(.*)$') {
+        if ($Matches[1] -ne 'arm64-v8a,armeabi-v7a') {
+            $gp = $gp -replace '(?m)^reactNativeArchitectures=.*$', 'reactNativeArchitectures=arm64-v8a,armeabi-v7a'
+            $gpDirty = $true
+            Info 'gradle.properties: reactNativeArchitectures -> arm64-v8a,armeabi-v7a'
+        }
+    } else {
+        $gp = $gp.TrimEnd() + "`nreactNativeArchitectures=arm64-v8a,armeabi-v7a`n"
+        $gpDirty = $true
+        Info 'gradle.properties: 新增 reactNativeArchitectures=arm64-v8a,armeabi-v7a'
+    }
+
     if ($gpDirty) {
         [System.IO.File]::WriteAllText((Resolve-Path $gradleProps), $gp, (New-Object System.Text.UTF8Encoding $false))
     }

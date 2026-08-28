@@ -7,6 +7,16 @@
 //
 // 回退语义照抄不简化：**已经出过声就不整段重合成**（否则用户听到复读）；
 // 一个字都没出过才走批处理。这条在 HMI 是 `audioStarted` 守卫（audio.ts:443）。
+//
+// ⚠ **「流式→批处理」是传输回退，不是引擎回退**（2026-08-28 查实全链，M3 遗留 R1 定案）。
+// 系统里根本没有「换个引擎再试」这个概念，四段没有一段会换：
+//   ① `build_tts_stream_provider(无 key)` → None → 下发 `{type:unsupported}`
+//   ② 本文件 `fallback()` → `synthesizeBatch(**同一个 cfg**)`
+//   ③ 批处理 `/api/tts` 带 provider pin → 无 key → `MockTTSProvider`
+//   ④ `MockTTSProvider.synthesize` 返回 **`b""`** → `audio=""` → 下方 `if (!data.audio) return null`
+// ⇒ 选一个没 key 的引擎**就是不出声**，这是设计如此，不是缺陷。验收条目原来写反了。
+// **但「不出声」必须让用户知道**：`onSilent` 就是为此——系统知道自己没出声却不说，
+// 与 M3 那条「让用户去扫一个不存在的二维码」是同一类不诚实。
 import { speechCovered } from '@shared/ttsQueue.mjs'
 
 import { base64ToBytes } from './base64'
@@ -27,6 +37,9 @@ export interface TtsHooks {
   onFirstAudio?(): void
   /** 整段播完或放弃（无论成败都会调一次） */
   onEnd?(): void
+  /** 整段结束却**一个字节音频都没出过**（引擎无 key / 上游全失败）。
+   *  与 onEnd 分开是因为调用方要说的话不一样：onEnd 是「播完了」，这条是「压根没响」。 */
+  onSilent?(): void
 }
 
 export function ttsStreamUrl(audioUrl: string): string {
@@ -225,7 +238,14 @@ export class TtsSession {
       if (out && !this.disposed) {
         const player = newPcmPlayer({
           sampleRate: out.sampleRate,
-          onFirstAudio: () => this.hooks.onFirstAudio?.(),
+          // ⚠ `audioStarted` 必须在这里也置真。它原来只在流式分支置位，因为当时唯一的
+          // 消费方是「已经出过声就别重合成」那条守卫，而回退路径走到这已经不会再回退了。
+          // M4 给它加了第二个消费方（onSilent），漏这一行的后果是**批处理明明出了声
+          // 也报静默**——单测第一次跑就抓到。判据加消费方时要回头看它的每个置位点。
+          onFirstAudio: () => {
+            this.audioStarted = true
+            this.hooks.onFirstAudio?.()
+          },
         })
         this.player = player
         player.push(out.pcm)
@@ -265,6 +285,7 @@ export class TtsSession {
 
   private settle(): void {
     this.closeWs()
+    if (!this.audioStarted) this.hooks.onSilent?.()
     this.hooks.onEnd?.()
     this.resolve()
   }

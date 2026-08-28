@@ -1,26 +1,152 @@
 {
-  "$comment": "hmi/src 共享模块台账（实施计划 §2.7）。准入判据：零 DOM/BOM 全局、依赖闭包封闭于台账内、hmi 侧已有 node:test 覆盖。currentPhase 手动推进（进入新阶段时改这里）；守卫测试 test/sharedAllowlist.test.ts 三条断言：实际引用 ⊆ 台账、台账内文件不含 DOM/BOM 全局、phase 晚于当前阶段的模块不得被引用。",
-  "currentPhase": "M3",
-  "phaseOrder": ["M0", "M1", "M2", "M3", "M4"],
+  "$comment": "hmi/src 共享模块台账（实施计划 §2.7）。准入判据：零 DOM/BOM 全局、依赖闭包封闭于台账内、hmi 侧已有 node:test 覆盖。currentPhase 手动推进（进入新阶段时改这里）；守卫测试 test/sharedAllowlist.test.ts 断言：① 实际引用 ⊆ 台账；② 台账内文件不含 DOM/BOM 全局，**例外一律写在本文件的 domException 字段里**（守卫从台账派生，不在测试里另写一份文件名——清单有第二份就一定会漂，M3 的 34 卡型是同一教训）；③ phase 晚于当前阶段的模块不得被引用。",
+  "currentPhase": "M4",
+  "phaseOrder": [
+    "M0",
+    "M1",
+    "M2",
+    "M3",
+    "M4"
+  ],
   "modules": [
-    { "file": "ws.mjs", "phase": "M0", "purpose": "主链 WS 重连/有界发送队列（断线不丢消息）", "notes": "注入 RN 全局 WebSocket" },
-    { "file": "types.ts", "phase": "M0", "purpose": "全部数据契约（WS 消息/29 卡型/能力目录/默认值）", "notes": "契约唯一真相源" },
-    { "file": "requestRouting.mjs", "phase": "M1", "purpose": "响应按 request_id 归属（对不上即丢帧）", "notes": "" },
-    { "file": "pendingOps.mjs", "phase": "M1", "purpose": "确认台账（≤3、按 operation_id）", "notes": "" },
-    { "file": "nav.mjs", "phase": "M1", "purpose": "「第N个/换一批」序数与刷新判定", "notes": "" },
-    { "file": "location.mjs", "phase": "M1", "purpose": "位置 meta + 位置依赖闸", "notes": "仅纯导出；文件内允许出现 navigator（requestCurrentLocation 用），但 mobile 源码禁引 requestCurrentLocation——守卫 ② 例外条款点名断言" },
-    { "file": "proactiveSpeech.mjs", "phase": "M1", "purpose": "主动消息投递凭据幂等/播报仲裁（SPEAK/DEFER/INTERRUPT）", "notes": "" },
-    { "file": "pcmPlayer.mjs", "phase": "M2", "purpose": "流式 TTS PCM 分片播放调度", "notes": "ctx 注入 react-native-audio-api 的 AudioContext" },
-    { "file": "ttsQueue.mjs", "phase": "M2", "purpose": "TTS 收尾判定 speechCovered（final 与已流式文本是不是同一段话）", "notes": "只用 speechCovered；分句缓冲与 OrderedPlaybackQueue 是批处理路径的，App 未用" },
-    { "file": "pcmRing.mjs", "phase": "M2", "purpose": "Float32↔Int16、int16ToWav（ASR 批处理兜底 WAV 构造）", "notes": "" },
-    { "file": "merchantUi.mjs", "phase": "M3", "purpose": "商户卡逻辑（图片白名单/行项归一）", "notes": "" },
-    { "file": "components/icons.gen.ts", "phase": "M3", "purpose": "A-8 图标库数据（Figma 导出 {w,h,body}）", "notes": "纯数据；渲染器两端各自实现（hmi Icon.tsx / mobile ui/Icon.tsx）" },
-    { "file": "components/icons.custom.ts", "phase": "M3", "purpose": "A-8 补充图标数据（vehicle/settings 等）", "notes": "纯数据，同上" },
-    { "file": "vehicleStage.mjs", "phase": "M3", "purpose": "车况右面板推导", "notes": "" },
-    { "file": "reminderStage.mjs", "phase": "M3", "purpose": "提醒面板推导", "notes": "" },
-    { "file": "voiceLoop.mjs", "phase": "M4", "purpose": "免唤醒 FSM", "notes": "预登记，M4 触发前不引" },
-    { "file": "sileroEndpoint.mjs", "phase": "M4", "purpose": "VAD 端点判定", "notes": "预登记，M4 触发前不引" },
-    { "file": "utteranceHeuristics.mjs", "phase": "M4", "purpose": "话语完整性启发式", "notes": "预登记，M4 触发前不引" },
-    { "file": "s2sClient.mjs", "phase": "M4", "purpose": "S2S 会话客户端", "notes": "预登记，M4 触发前不引" }
+    {
+      "file": "ws.mjs",
+      "phase": "M0",
+      "purpose": "主链 WS 重连/有界发送队列（断线不丢消息）",
+      "notes": "注入 RN 全局 WebSocket"
+    },
+    {
+      "file": "types.ts",
+      "phase": "M0",
+      "purpose": "全部数据契约（WS 消息/29 卡型/能力目录/默认值）",
+      "notes": "契约唯一真相源"
+    },
+    {
+      "file": "requestRouting.mjs",
+      "phase": "M1",
+      "purpose": "响应按 request_id 归属（对不上即丢帧）",
+      "notes": ""
+    },
+    {
+      "file": "pendingOps.mjs",
+      "phase": "M1",
+      "purpose": "确认台账（≤3、按 operation_id）",
+      "notes": ""
+    },
+    {
+      "file": "nav.mjs",
+      "phase": "M1",
+      "purpose": "「第N个/换一批」序数与刷新判定",
+      "notes": ""
+    },
+    {
+      "file": "location.mjs",
+      "phase": "M1",
+      "purpose": "位置 meta + 位置依赖闸",
+      "notes": "仅纯导出；文件内允许出现 navigator（requestCurrentLocation 用），但 mobile 源码禁引 requestCurrentLocation——守卫 ② 例外条款点名断言",
+      "domException": {
+        "globals": [
+          "navigator"
+        ],
+        "forbiddenSymbols": [
+          "requestCurrentLocation"
+        ],
+        "why": "requestCurrentLocation 用 navigator.geolocation；mobile 走 expo-location，禁引该符号"
+      }
+    },
+    {
+      "file": "proactiveSpeech.mjs",
+      "phase": "M1",
+      "purpose": "主动消息投递凭据幂等/播报仲裁（SPEAK/DEFER/INTERRUPT）",
+      "notes": ""
+    },
+    {
+      "file": "pcmPlayer.mjs",
+      "phase": "M2",
+      "purpose": "流式 TTS PCM 分片播放调度",
+      "notes": "ctx 注入 react-native-audio-api 的 AudioContext"
+    },
+    {
+      "file": "ttsQueue.mjs",
+      "phase": "M2",
+      "purpose": "TTS 收尾判定 speechCovered（final 与已流式文本是不是同一段话）",
+      "notes": "只用 speechCovered；分句缓冲与 OrderedPlaybackQueue 是批处理路径的，App 未用"
+    },
+    {
+      "file": "pcmRing.mjs",
+      "phase": "M2",
+      "purpose": "Float32↔Int16、int16ToWav（ASR 批处理兜底 WAV 构造）",
+      "notes": ""
+    },
+    {
+      "file": "merchantUi.mjs",
+      "phase": "M3",
+      "purpose": "商户卡逻辑（图片白名单/行项归一）",
+      "notes": ""
+    },
+    {
+      "file": "components/icons.gen.ts",
+      "phase": "M3",
+      "purpose": "A-8 图标库数据（Figma 导出 {w,h,body}）",
+      "notes": "纯数据；渲染器两端各自实现（hmi Icon.tsx / mobile ui/Icon.tsx）"
+    },
+    {
+      "file": "components/icons.custom.ts",
+      "phase": "M3",
+      "purpose": "A-8 补充图标数据（vehicle/settings 等）",
+      "notes": "纯数据，同上"
+    },
+    {
+      "file": "vehicleStage.mjs",
+      "phase": "M3",
+      "purpose": "车况右面板推导",
+      "notes": ""
+    },
+    {
+      "file": "reminderStage.mjs",
+      "phase": "M3",
+      "purpose": "提醒面板推导",
+      "notes": ""
+    },
+    {
+      "file": "voiceLoop.mjs",
+      "phase": "M4",
+      "purpose": "免唤醒 FSM",
+      "notes": "预登记，M4 触发前不引"
+    },
+    {
+      "file": "sileroEndpoint.mjs",
+      "phase": "M4",
+      "purpose": "VAD 端点判定",
+      "notes": "预登记，M4 触发前不引"
+    },
+    {
+      "file": "utteranceHeuristics.mjs",
+      "phase": "M4",
+      "purpose": "话语完整性启发式",
+      "notes": "预登记，M4 触发前不引"
+    },
+    {
+      "file": "s2sClient.mjs",
+      "phase": "M4",
+      "purpose": "S2S 会话客户端",
+      "notes": "预登记，M4 触发前不引"
+    },
+    {
+      "file": "visionFrame.mjs",
+      "phase": "M4",
+      "purpose": "视觉触发词判据（needsFrame / VISION_TRIGGER / VISION_GUARD）——采集面即隐私面，判据只许一份",
+      "notes": "同文件里的 captureFrame 是 DOM 实现（video+canvas），App 侧另有 expo-camera 实现，见 domException",
+      "domException": {
+        "globals": [
+          "navigator",
+          "document."
+        ],
+        "forbiddenSymbols": [
+          "captureFrame"
+        ],
+        "why": "captureFrame 用 document/navigator；App 侧走 core/vision/frame.ts + expo-camera，禁引该符号"
+      }
+    }
   ]
 }

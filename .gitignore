@@ -100,3 +100,7 @@ docs/reviews/badcase/.work/
 
 # Private release/data-migration artifacts; never commit.
 .artifacts/
+
+# 取件脚本的下载缓存（scripts/fetch_mobile_voice_assets.ps1 的 sherpa AAR 等）——
+# 只是中间产物，产物本身已按各自的 .gitignore 落地，切勿提交（36MB 级）。
+.cache/

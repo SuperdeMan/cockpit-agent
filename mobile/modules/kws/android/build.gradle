@@ -1,0 +1,54 @@
+// KWS 原生桥（M4-2）。只做三件事：把 sherpa-onnx 的 AAR 接进来、把模型作为 library
+// assets 合并进 APK、把 KeywordSpotter 暴露成一个极窄的 Expo 模块。
+//
+// ⚠ AAR 与模型**不入 git**（体积 + 许可，同 hmi/public/models 的处置）：由
+//    `scripts/fetch_kws_assets.ps1` 落到 libs/ 与 src/main/assets/kws/。
+//    缺失时构建**明确失败**（下方 assertKwsAssets），不静默出一个没有唤醒词的包
+//    ——静默回落正是 B3/B4 点名要消灭的形态。
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.xiaozhou.kws'
+version = '0.1.0'
+
+android {
+  namespace "com.xiaozhou.kws"
+  // ⚠ 这两行不是样板：`expo-module-gradle-plugin` 会去读它们发布 maven 元数据，
+  //    缺 versionName 时报的是 `'android.defaultConfig.versionName' is not defined`，
+  //    而且**报在 :expo 头上**（错误现场是 node_modules/expo/android/build.gradle:3），
+  //    看起来像 expo 自己坏了。2026-08-28 首次构建就撞的这个。
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+// 构建期硬断言：缺 AAR 或缺模型直接失败并指向取件脚本
+def assertKwsAssets = tasks.register("assertKwsAssets") {
+  doFirst {
+    if (!new File("$projectDir/libs/sherpa-onnx-classes.jar").exists()) {
+      throw new GradleException("缺 modules/kws/android/libs/sherpa-onnx-classes.jar——先跑 scripts/fetch_mobile_voice_assets.ps1")
+    }
+    ["arm64-v8a", "armeabi-v7a"].each { abi ->
+      if (!new File("$projectDir/src/main/jniLibs/$abi/libsherpa-onnx-jni.so").exists()) {
+        throw new GradleException("缺 jniLibs/$abi/libsherpa-onnx-jni.so——先跑 scripts/fetch_mobile_voice_assets.ps1")
+      }
+    }
+    ["encoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+     "decoder-epoch-12-avg-2-chunk-16-left-64.onnx",
+     "joiner-epoch-12-avg-2-chunk-16-left-64.onnx",
+     "tokens.txt"].each { n ->
+      if (!new File("$projectDir/src/main/assets/kws/$n").exists()) {
+        throw new GradleException("KWS 模型缺 $n——先跑 scripts/fetch_mobile_voice_assets.ps1")
+      }
+    }
+  }
+}
+tasks.configureEach { t -> if (t.name.startsWith("preBuild")) t.dependsOn(assertKwsAssets) }
+
+dependencies {
+  // 本地 jar 是受支持的（会被打进本模块 AAR 的 libs/）；.so 由 src/main/jniLibs 自动打包
+  implementation fileTree(dir: "$projectDir/libs", include: ["*.jar"])
+}

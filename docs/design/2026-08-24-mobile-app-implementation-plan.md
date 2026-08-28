@@ -1169,23 +1169,126 @@ HMI 同病）；RN 的 `URL` 把路径/查询串里的 `@` 读成 userinfo（fai
 
 ---
 
-## 7. M4 / M5（触发条件与首任务，不展开）
+## 7. M4 进阶语音（2026-08-28 开工）/ M5（触发条件）
 
-> **触发条件的现状（2026-08-28 M3 收口时核）**：
-> **M3 已收口**（§M3-6 验收结论）；**M2 的验收清单还差三条**（R1 无 key 回退 / R2 来电抢占 /
-> R3 蜂窝 PTT，见 M3-6 的遗留出账表）+ 一条被后端挡住（`asrProvider=off` 批处理，云栈
-> `/api/asr` 401）。⇒ **M4 的第一个触发条件（M2 验收通过）严格说尚未满足**，
-> 而那三条都要人工配合、不是代码问题。**要不要因此卡住 M4，由泓舟裁**——
-> 写在这里是为了让接手的人不必自己去推断「M2 到底算不算过了」。
+> **触发裁决（泓舟 2026-08-28 当轮）**：M2 清单还差三条（R1/R2/R3）+ 一条被后端挡住，
+> 但泓舟裁定**不卡 M4，且范围取全量（含 KWS 唤醒词）**。三条余项与 M4 并行处理，
+> 处置见下方 M4-0。
 
-- **M4 进阶语音**：触发=M2 验收通过 **且** 泓舟确认手机形态需要免唤醒/S2S。首任务=
-  `onnxruntime-react-native` 跑 `hmi/public/models/silero_vad.onnx` 的可行性 spike
-  （复用 `sileroEndpoint.mjs` 判据），KWS 走 sherpa-onnx Android AAR。`voiceLoop.mjs`
-  FSM 零改动接 RN 引擎（引擎接口对照 `handsFreeController.ts` 的注入面）。
-  观察项：TTS divergent 段链（M2-3 简化处）是否在真实混合意图中造成可感知丢播。
 - **M5 生产化**：触发=泓舟决定发布。范围=主设计文档 §10 三条后端线 + 厂商推送 +
   正式签名/加固 + Sentry + expo-updates 自托管 + 商店合规物料。**开工前先立独立实施计划**
   （后端三条线不属于 mobile/）。
+
+### M4-0 M2/M3 遗留的处置（与 M4 同批，2026-08-28）
+
+| # | 原状 | 本批结论 |
+|---|---|---|
+| R1 | 「无 key 引擎回退出声」——**预期本身存疑** | **预期定案：不该出声，验收条目原来写反了。** 全链四段逐段查实（见下），没有任何一段会换引擎。产物不是「让它出声」，是**给静默失败一个可见出口** |
+| R2 | 来电/焦点抢占四场景「缺真实事件」 | **真正的障碍不是事件，是看不见事件**：`installAudioFocusHandlers(onEvent)` 的 `onEvent` **全仓没有任何消费方** ⇒ 补有界事件日志 + spike 屏出口，四场景才谈得上取证 |
+| R4 | keep-awake「dev build 上验不出」 | **根因定到具体一行**：`expo/src/launch/withDevTools.tsx:13` 在 dev build 里**无条件** `useKeepAwake(ExpoKeepAwakeTag)`，而 `ExpoKeepAwakeManager.deactivate` 只在 `tags.size == 1` 时清 flag ⇒ **dev build 上我们的开关物理上不可能关掉常亮**。生产构建里那段被 tree-shake |
+| R3 / R5–R8 | 蜂窝 PTT / 探活残留窗 / 6 卡型 / AUTH_TOKENS / 真平板 | 本批不动，理由与解锁条件见 §M3-6 出账表（R7 泓舟当轮裁定「继续挂账」） |
+
+**R1 的四段链（`build_tts_stream_provider` → 客户端 → `/api/tts` → Mock，逐段有源码）**：
+
+1. `llm-gateway/providers.py::build_tts_stream_provider`：无 key → `None`；
+   `/api/tts/stream` 据此下发 `{type:unsupported}`。**不换引擎**，注释明写「回退句级批处理」。
+2. `mobile/src/core/voice/tts.ts::fallback()` → `synthesizeBatch(**同一个 cfg**)`。**不换引擎**。
+3. `/api/tts` 带 `provider` pin → `build_tts_provider(pin)` → 无 key → `MockTTSProvider`。**不换引擎**。
+4. `MockTTSProvider.synthesize` 返回 **`b""`** → 响应 `audio=""` → `synthesizeBatch` 里
+   `if (!data.audio) return null` → 静默收尾。
+
+⇒ **「流式→批处理」是传输回退，不是引擎回退**；系统里根本没有「引擎回退」这个概念。
+⇒ 验收条目改写为：**选一个没 key 的引擎 → 不出声、不崩、UI 正确收尾，且屏上要说出来**。
+⚠ 顺带一条更要紧的：`/api/tts/stream/info` 的 `available` 只判 **env 里那个 key 字符串非空**，
+判不出「key 在但已失效」（云栈 MiMo 正是这个状态）⇒ 靠「（未配置）」角标挡不住这一类，
+**只能靠事后反馈**。所以修法是「试听/播报没出声就明说」，不是「禁选不可用引擎」。
+
+### M4-1 ⛔ VAD 引擎（onnxruntime-react-native + silero）
+
+`core/voice/vad.ts`：ORT 跑 **hmi 那一份** `silero_vad.onnx`，每帧出概率 →
+`@shared/sileroEndpoint.mjs` 判端点。**端点判据共用共享模块，不在 App 侧另写一套**
+——那是「说完没说完」的判据，分叉即两个端对同一句话给两个答案。
+与 HMI `vadEngine.ts` 的三处必然不同（帧源 1600 vs 512 要 carry 重切 / 模型走 expo-asset /
+原生缺席即禁用）写在文件头注。
+
+### M4-2 ⛔ KWS 唤醒词（sherpa-onnx 原生模块）
+
+`modules/kws/`（Expo 本地模块）+ `core/voice/kws.ts`。原生侧只做「喂音频 → 报命中」，
+**零策略**：唤醒词串/阈值/命中后做什么全在 JS。三条不显然的决定写在 `KwsModule.kt` 头注
+（推理不在 JS 线程 / 队列有界且丢帧要报数 / 样本必须在 acceptFrame 内拷完）。
+模型**刻意用 fp32 而非 int8**：与 HMI 逐字同一份，唤醒阈值（0.2/2.0）才继续成立。
+
+### M4-3 麦克风帧总线
+
+`core/voice/micBus.ts`：一路采集、多路消费、引用计数。**它是免唤醒的地基**——
+M2 只有 PTT 一个消费方时 `recorder()` 单例够用，M4 有四个且生命周期互相嵌套；
+没有这一层，ASR 收尾时的 `rec.stop()` 会把 VAD/KWS 一起掐掉，而那正是「答完接着说」
+赖以工作的东西。`AsrSession` 一行未改——给它注入一个 `PushRecorder`（假 recorder）即可。
+
+### M4-4 免唤醒回路 / M4-5 S2S / M4-6 视觉抓帧
+
+- `core/voice/handsFree.ts`：`@shared/voiceLoop.mjs` FSM **零改动**接 RN 引擎。
+- S2S 走 `@shared/s2sClient.mjs`，**会话级挡位、默认 classic**（红线：默认必须三段式，
+  且只能由用户在设置里显式选）。
+- 视觉走 `expo-camera`，触发判据共用 `@shared/visionFrame.mjs::needsFrame`
+  （采集面就是隐私面，判据只许一份）；**命中才挂载 CameraView、拍完立刻卸载**
+  ——在 RN 上「挂载 CameraView 就是打开摄像头」，常驻一个隐藏预览等于一直开着。
+- 三条红线文案落在设置页「进阶语音（M4）」区，不是只写在注释里。
+
+### M4 实施记录（2026-08-28）
+
+**读数**：`tsc --noEmit` 0 error；mobile jest **229/229**（21 suites，M3 末 209 → +20：
+micBus 6 + handsFree 6 + audioFocusLog 4 + ttsSilent 3 + 白名单守卫 +1）；
+APK **275.9MB**（M3 是 325MB——砍掉 x86 两个 ABI 省下 231MB，抵掉了新增的 38MB sherpa
+`.so` + 13MB KWS 模型）；构建 **22m42s**（首个成功版是 38m27s，差在 ABI）。
+
+**真机取证（MIX Fold 4 / Android 16 / 云栈 `target=cloud`）**：
+
+| 项 | 结果 | 读数 |
+|---|---|---|
+| 原生可用性 | ✅ | `avail: vad=true kws=true usable=true`；`PackageList.java` 里有 `OnnxruntimePackage` |
+| **M4-1 VAD** | ✅ | 模型载入 **210ms**；12s 窗口 371 个推理窗，prob p50=0.103 / p95=0.437 / **max=0.691**；事件 **start@647ms end@2449ms** |
+| **M4-2 KWS（引擎）** | ✅ | 模型载入 **535~696ms**；直灌模型自带 7 条测试音频 → **7 次命中**（文森特卡索/蒋友伯/女儿/周望军/落实/朱丽楠/见面会），`dropped=0` |
+| **M4-2 KWS（真实声学路径）** | ✅ | 真实唤醒词 **`hits=小舟小舟@14055ms`**——扬声器→空气→麦克风→端侧 sherpa 全链 |
+| 免唤醒开关 | ✅ | 打开 → 状态栏麦克风绿点 + `rec update … src:VOICE_RECOGNITION`；对话页状态条「● 待唤醒 · 说「小舟小舟」」；**关掉 → `rec stop`**（「常开麦必须能关掉」有客观读数） |
+| 设置页 M4 区 | ✅ | 默认全关/三段式默认；免唤醒开启后唤醒词子开关才出现；三条红线文案在屏上 |
+| 文本/chip 发送 | ✅ | 免唤醒开着时照常（「打开空调26度」→「26度 / 已执行 vehicle.control」），状态条停在「待唤醒」——**文本不进 FSM 是设计如此**（voiceLoop 头注） |
+| **完整语音轮**（唤醒→说一句→回答→续问） | ⬜ **未验** | 见下方「取证装置的限制」 |
+| R2 音频焦点四场景 | ⬜ 未验（机制已证） | 见下方 |
+
+**⚠ 取证装置的限制（必须写清，否则下一个人会拿这里的数当读数）**：
+本轮唯一可用的声源是**手机自己的扬声器**，而 Android 的回声消除正是要抵消它 ⇒
+对 VAD 够用（它只判「有没有人声」），对 KWS 是**边缘信噪比**：同一句唤醒词播 3 遍只中 1 遍。
+⇒ **不许拿这个比例当唤醒率**；真人对着手机说话的信噪比与它不是一回事。
+完整语音轮因此未验——它与 R3（蜂窝 PTT）同类，**需要真人说一句话**。
+
+**⚠ 本轮最该记住的一条：前面所有「KWS 零命中」的读数都是废的**——
+`dumpsys audio` 显示 STREAM_MUSIC 的 **`2 (speaker): 0`**，声源根本没出声。
+我差一点把「引擎/阈值有问题」当结论写下去。**是直灌探针救的场**：它证明了引擎能认，
+才逼我回头去查声源。⇒ **「A 不工作」的结论，必须先证明 A 的输入真的到达了 A。**
+（同族第二例：`installed=true` 那一位——「事件没来」与「事件来了没处理」也必须先分开。）
+
+**R2 的实际进展**：`audioFocusInstalled()=true`，且 `dumpsys audio` 的 Audio Focus stack 里
+能看到我们的 App 持 `GAIN`、监听者是 `com.swmansion.audioapi.system.AudioFocusListener`
+——**OS 层的实物证据，监听确实注册上了**。四场景本身仍未触发：来电要第二台手机、
+闹钟的 `SET_ALARM` 在本机弹应用选择器（`SKIP_UI` 不生效，且选「总是」会改用户的默认应用
+关联，不替他做）、别的 App 抢焦点要真的开始播放。**都要人工配合，与卡片原判一致。**
+
+**一次未复现的崩溃（记录，不是结论）**：`force-stop` 后重启的那一次出现
+`Fatal signal 11 (SIGSEGV)` in `mqt_v_js`，backtrace **全在 `libreactnative.so` 的
+`MountingCoordinator::pullTransaction`**（Fabric 挂载），不在 sherpa/ORT 里。
+之后清干净重启未复现。**没有证据说它是本批引入的**，留作观察项。
+
+**已知待办（M4 内，下一轮）**：
+1. `KwsModule.releaseInternal()` 与解码线程**有竞态**：worker 在 `synchronized` 之外捕获
+   `spotter`/`stream` 引用，而 release 不等线程退出就 `release()` ⇒ 可能用到已释放指针。
+   修法：worker 在锁内重读字段 + release 前 `join`。**尚未修**（要重构建）。
+2. 原生 `KwsModule` 是**单例**：再建一个 `KwsEngine` 会把免唤醒正在用的那个顶掉
+   （`load()` 先 `releaseInternal`）。目前只有调试屏会撞上，已在注释里写明。
+3. `noCompress 'onnx'` 似乎没生效（`compressed_assets/.../kws/*.onnx.jar` 仍存在）。
+   **只影响冷启动速度不影响正确性**，未追。
+4. 视觉抓帧（M4-6）与 S2S（M4-5）**代码面完成、真机未验**：视觉要开设置项并说一句
+   「这是什么」；S2S 要切端到端挡位并走一轮。
 
 ## 8. 里程碑验收清单（复制到实施记录逐条打钩）
 
@@ -1228,12 +1331,23 @@ HMI 同病）；RN 的 `URL` 把路径/查询串里的 `@` 读成 userinfo（fai
 - [x] ✅ 说话中断网兜底不挂死（首跑抓到真挂死并修掉，复验 29s 出错误态回 idle）
 - [x] ✅ TTS 自动播报首音 <1.5s（换 WS 传输后 516~563ms，2.7 倍余量）
 - [x] ✅ 播报中按 PTT 即停（物理面实证：麦克风 peak 0.145 → 0.004）
-- [ ] ⬜ **未验，且预期行为本身存疑**（2026-08-28 读码发现）：App 侧的 fallback 是
-      **流式失败 → `synthesizeBatch` 批处理**，而批处理用的是**同一个 cfg、同一个引擎**
-      （`core/voice/tts.ts::fallback`）。所以「选一个没 key 的引擎（mimo）还应该出声」这条
-      **要先说清是谁来换引擎**：网关侧自动换？还是 App 侧换？现有实现两者都不是。
-      ⇒ 先定预期再验，否则跑出来的「不出声」既可能是缺陷、也可能是设计本就如此
-- [ ] ⬜ **未验** 来电/焦点抢占四场景不崩（代码已落，缺真实事件）
+- [~] **条目已改写**（M4 批定案，2026-08-28）：原文「选一个没 key 的引擎还应该出声」
+      **写反了**——全链四段（网关流式 → App fallback → 批处理 `/api/tts` → `MockTTSProvider`
+      返回 `b""`）**没有任何一段会换引擎**，「流式→批处理」是**传输**回退不是**引擎**回退。
+      新条目：**选一个没 key 的引擎 → 不出声、不崩、UI 正确收尾，且屏上要说出来**。
+      产物：`TtsSession.onSilent` + 设置页试听的「没有出声：…」一行 + 播报静默出口，
+      守卫 `test/ttsSilent.test.ts` 3 条（写它时抓到我自己引入的一个真缺陷：批处理回退
+      路径没置 `audioStarted`，导致「批处理成功出了声」也会被判静默）。
+      逐段源码与理由见 §7 的 M4-0。**真机复验仍待做**（要一个确实没 key 的引擎）
+- [ ] ⬜ **未验** 来电/焦点抢占四场景不崩（代码已落）
+      ——⚠ **M4 批发现真正的障碍不是「缺真实事件」，是「看不见事件」**：
+      `installAudioFocusHandlers(onEvent)` 的 `onEvent` 形参注释写着「供调试屏观测」，
+      而**全仓没有任何消费方** ⇒ 只能靠「听起来停了吗」这种主观读数，
+      而这条链的第一个疑点恰恰是「`react-native-audio-api` 在这台设备上到底发不发这个事件」
+      （原生绑定，静默不发完全可能）。**「声明存在」不等于「能用」。**
+      ⇒ 已补有界事件日志（最近 30 条，带时刻与「停没停播报」）+ `audioFocusInstalled()`
+      诚实位 + spike 屏「M4 状态/焦点」出口；守卫 `test/audioFocusLog.test.ts` 4 条。
+      取证时**先看 installed 那一位**，别把「事件没来」读成「事件来了但没处理」。
 - [x] ✅ 语音设置（引擎/音色/试听）持久化
 
 ### 8.3 M3（追加）
@@ -1257,6 +1371,37 @@ HMI 同病）；RN 的 `URL` 把路径/查询串里的 `@` 读成 userinfo（fai
 - [x] ✅ 返回键语义（二级页关层 / 根屏 finish——**计划原假设被推翻，泓舟已拍板维持现状**）
 - [x] ✅ 弱网提示（**M3-W 修复后才是真的**：修前 onclose 不来、屏上一直显示「在线」）
 - [ ] ⬜ **验不出** keep-awake（dev build + USB 常亮两个污染源叠加，坑账 §9.41）
+      ——⚠ **M4 批把根因定死了，且原来的定性不完整**（2026-08-28）：
+      ① 机制级读数拿到了——`adb shell dumpsys window windows | fl=` 直接看
+      `KEEP_SCREEN_ON` 在不在，比掐秒表硬得多，**且不受 USB 常亮影响**
+      （那是 PowerManager 的事，不是窗口 flag）；
+      ② 实测时 `mStayOn=false`，**说明当时 USB 常亮那个污染源根本没在起作用**
+      ——原来的三态对照失败是另一个原因；
+      ③ 真原因是 `expo/src/launch/withDevTools.tsx:13` 在 dev build 里**无条件**
+      `useKeepAwake(ExpoKeepAwakeTag)`，而 `ExpoKeepAwakeManager.deactivate` 只在
+      `tags.size == 1` 时清 flag ⇒ **dev build 上我们的开关物理上不可能关掉常亮**。
+      真机复现：设置里开→关两次点击后，`SCREEN_BRIGHT_WAKE_LOCK`（ws=com.xiaozhou.companion）
+      连续持有 13m41s 未释放，而持久化的 `keepAwake` 是 `false`。
+      ⇒ 解锁条件收窄成一条：**在 release 构建上验**（那里 `__DEV__` 分支被 tree-shake）。
+
+### 8.4 M4（追加，2026-08-28 首轮）
+
+> 打钩纪律同 §8 抬头：✅ 只给**有真机读数**的；未跑写 ⬜，被装置挡住的写清挡在哪。
+
+- [x] ✅ ORT 在真机上跑得动 `silero_vad.onnx`（载入 210ms，371 窗，端点事件出）
+- [x] ✅ sherpa KWS 引擎正确（直灌自带 7 条测试音频 7 命中、零丢帧）
+- [x] ✅ **真实唤醒词经真实声学路径命中**（`小舟小舟@14055ms`）
+- [x] ✅ 免唤醒开关：开 → 麦克风真开（绿点 + `rec update`）；**关 → 麦克风真释放**（`rec stop`）
+- [x] ✅ 设置页「进阶语音」：默认全关 / 三段式默认 / 唤醒词子开关条件出现 / 三条红线文案在屏上
+- [x] ✅ 免唤醒开着时文本与 chip 发送不受影响（文本不进 FSM 是设计如此）
+- [x] ✅ 原生缺席不崩：`vadNativeAvailable()` 先问 `NativeModules` 再 require（旧 APK 上实测过崩，改后不崩）
+- [ ] ⬜ **未验（需真人说话）** 完整语音轮：唤醒 → 说一句 → 回答 → 8 秒内续问。
+      装置限制见 M4 实施记录「取证装置的限制」——**手机自播经 AEC 后对 KWS 是边缘信噪比
+      （3 播 1 中），不许拿它出唤醒率**。与 R3 同类
+- [ ] ⬜ **未验** S2S 端到端挡位走一轮（代码面完成）
+- [ ] ⬜ **未验** 视觉抓帧出 `vision_answer`（代码面完成；顺带能清 R6 里那一条）
+- [ ] ⬜ **未验** keep-awake（要 release 构建；根因已定，见 §8.3 那条的补注）
+- [ ] ⬜ **未修** `KwsModule` 释放竞态 + 单例冲突（见实施记录「已知待办」1/2，要重构建）
 
 ## 9. 已知坑账（开工前读一遍，踩新坑追加到这里）
 
@@ -1537,6 +1682,49 @@ HMI 同病）；RN 的 `URL` 把路径/查询串里的 `@` 读成 userinfo（fai
     **装上之后全程带 `--no-reinstall-driver`**，否则每跑一条 flow 都要人点一次。
     ⚠ 判据留痕：**这属于「在别人的设备上装应用」，不在「授权装 CLI」的范围内**，
     所以没有替泓舟点。
+43. **`onnxruntime-react-native` 掉进两套 autolinking 之间的缝**（M4-1，2026-08-28，
+    **本批最贵的一个坑：一趟 38 分钟的构建完全成功，装上去才发现原生根本没注册**）：
+    它带一个 `unimodule.json`（Expo 旧式 unimodules 标记）⇒ `expo-modules-autolinking`
+    把它认成自己人、从交给 RN 社区 autolinking 的清单里排除；但它又没有
+    `expo-module.config.json`，`ExpoModulesPackage` 也注册不了它 ⇒ **两边都没注册**。
+    症状极具误导性：gradle `BUILD SUCCESSFUL`、`:onnxruntime-react-native:assembleDebug`
+    跑过、`libonnxruntime.so` 也在 APK 里，**JS 侧却是
+    `TypeError: Cannot read property 'install' of null`**（`lib/binding.ts:14` 在模块顶层
+    调 `NativeModules.Onnxruntime.install()`）。
+    ⇒ **取证判据不是 gradle 日志，是
+    `android/app/build/generated/autolinking/src/main/java/com/facebook/react/PackageList.java`**
+    ——那里面没有 `OnnxruntimePackage` 就是没注册。`.so 在包里` 证明不了任何事。
+    修法：项目级 `mobile/react-native.config.js` 显式补登（不改 node_modules——镜像产物）。
+    ⚠ 写的时候还踩了第二层：`sourceDir` **必须相对包根**（解析器做
+    `path.join(packageRoot, sourceDir)`），给绝对路径会拼出垃圾路径 → 找不到 gradle →
+    **静默 return null**，症状与「压根没配」逐字一样。
+44. **`abiFilters` 拦不住 CMake，`reactNativeArchitectures` 才行**（M4，2026-08-28）：
+    `app/build.gradle` 的 `defaultConfig { ndk { abiFilters ... } }` 只管**打包哪几个 ABI**，
+    而且 `abiFilters` 是 **Set、加不是替换**——RN 的 gradle 插件随后按
+    `reactNativeArchitectures` 往里加，取并集 ⇒ 我配的两个 arm 白配了，
+    首个 M4 APK 里 x86/x86_64 照旧在（各带 36.7MB 的 `libonnxruntime.so`，APK 507MB）。
+    各 native 库也照旧为四个 ABI 各跑一遍 CMake，**那是首次全量构建 38 分钟里的一大块**。
+    ⇒ 两件事两个杠杆，**必须同时配**：`reactNativeArchitectures`（编不编）+
+    `abiFilters`（打不打包）。前者已落进 `build_mobile.ps1`。
+    ⚠ 代价明说：**x86 模拟器装不上也编不出**。本项目验收本来就全在真机（§0.4）。
+45. **Expo 本地模块（`modules/<name>`）的两处门槛**（M4-2，2026-08-28）：
+    ① `package.json` 要显式写 `expo.autolinking.nativeModulesDir = "./modules"`
+    ——**没有默认值**，不写就是压根不扫；
+    ② 模块的 `android/build.gradle` 里 `defaultConfig` **必须有 versionCode/versionName**
+    （`expo-module-gradle-plugin` 要它发布 maven 元数据）。缺了报的是
+    `'android.defaultConfig.versionName' is not defined`，而且**报在 `:expo` 头上**
+    （错误现场是 `node_modules/expo/android/build.gradle:3`），看起来像 expo 自己坏了。
+46. **AGP 禁止 library 模块直接依赖本地 `.aar`**（M4-2，2026-08-28）：
+    `implementation files('libs/x.aar')` 在 `:kws:bundleDebugAar` 上报
+    `Direct local .aar file dependencies are not supported when building an AAR`
+    ——产出的 AAR 不含被依赖 aar 的类，是个坏包。
+    ⇒ 把 AAR 拆开：`classes.jar` 走 `libs/`（本地 jar 是受支持的）、`.so` 走
+    `src/main/jniLibs/<abi>/`。取件脚本 `scripts/fetch_mobile_voice_assets.{ps1,sh}` 干这件事。
+47. **改了 `metro.config.js` 必须重启 Metro**（M4-1，2026-08-28）：给 `assetExts` 加了
+    `onnx` 之后没重启，真机上是 `Unable to resolve module ../../../assets/models/silero_vad.onnx`
+    + `None of these files exist`——**而那个文件明明在**。报错把「没配 assetExts」显示成
+    「文件不存在」，很容易顺着去查路径。同 §9.3「改了不生效」族，但那条说的是原生面，
+    这条是 Metro 配置面。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 

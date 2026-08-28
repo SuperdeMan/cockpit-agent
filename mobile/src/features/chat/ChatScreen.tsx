@@ -24,9 +24,30 @@ import { usePalette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import { ReminderSection } from '../vehicle/ReminderSection'
 import { VehicleSection } from '../vehicle/VehiclePanel'
+import { captureVisionFrame, needsVisionFrame } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { MessageBubble } from './MessageBubble'
+import { useHandsFree } from './useHandsFree'
 import { usePtt } from './usePtt'
+
+// 免唤醒 FSM 态 → 用户看得懂的一行字与一个点的颜色。
+// **不直接显示 FSM 名字**：ARMED/FOLLOWUP 对用户没有意义，而「在不在听」有。
+const HF_LABEL: Record<string, string> = {
+  ARMED: '待唤醒 · 说「小舟小舟」',
+  LISTENING: '在听…',
+  THINKING: '思考中…',
+  SPEAKING: '播报中 · 说话可打断',
+  FOLLOWUP: '可以直接接着说',
+  IDLE: '免唤醒未启动',
+}
+const HF_DOT: Record<string, string> = {
+  ARMED: '#64748B',
+  LISTENING: '#22D3EE',
+  THINKING: '#A78BFA',
+  SPEAKING: '#34D399',
+  FOLLOWUP: '#22D3EE',
+  IDLE: '#475569',
+}
 
 export function ChatScreen() {
   const [cfgState, setCfgState] = useState<'loading' | 'missing' | ServerConfig>('loading')
@@ -166,9 +187,26 @@ function ChatBody({
   const { messages, pendingOps, vehState, connStatus, pendingLocationText } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
+  const [notice, setNotice] = useState('')
+  // 发送入口（文本 / PTT / 免唤醒三条路共用这一个）。M4-6 视觉抓帧挂在这里，
+  // 分支与 hmi/src/App.tsx:718-723 逐条对照：
+  //  · 已带 vision_frame_id 的重发不再抓（`visionDone`）
+  //  · **判据用共享的 needsVisionFrame**——采集面就是隐私面，判据分叉等于两个端的
+  //    隐私边界不一样，而没有任何东西会红
+  //  ⚠ 已知代价：抓帧要等相机冷启动（真机几百毫秒），这段时间用户自己那条气泡还没上屏。
+  //    HMI 靠 `__bubbled` 先上屏再补发，App 侧的 SessionCore 没有那个入口 ⇒ 记为 M4 残留。
   const onSend = useCallback(
-    (text: string, metaExtra?: Record<string, string>) => core.send(text, metaExtra),
-    [core],
+    (text: string, metaExtra?: Record<string, string>) => {
+      const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
+      if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
+        void captureVisionFrame(cfg.audioUrl).then((fid) =>
+          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }),
+        )
+        return
+      }
+      core.send(text, metaExtra)
+    },
+    [core, settings.visionEnabled, cfg.audioUrl],
   )
   const onConfirm = useCallback(
     (reply: '确认' | '取消', operationId?: string) => core.confirmReply(reply, operationId),
@@ -180,7 +218,18 @@ function ChatBody({
   const ptt = usePtt({
     audioUrl: cfg.audioUrl,
     sessionId: wired.session.sessionId,
-    onFinal: (text) => core.send(text),
+    onFinal: (text) => onSend(text),
+  })
+  // 免唤醒（M4-4）。**定稿走的是同一个 onSend**——前置路由/位置闸/候选拦截/视觉抓帧
+  // 一条都不能因为「这句是免唤醒说出来的」而绕过。
+  const hf = useHandsFree({
+    audioUrl: cfg.audioUrl,
+    sessionId: wired.session.sessionId,
+    enabled: settings.handsFree,
+    needConfirm: pendingOps.length > 0,
+    onSend: (text) => onSend(text),
+    onNotice: setNotice,
+    onCancelTurn: () => core.cancelCurrentTurn(),
   })
 
   const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
@@ -253,6 +302,43 @@ function ChatBody({
           contentContainerStyle={{ paddingVertical: 10 }}
         />
       )}
+      {/* 免唤醒状态条（M4-4）。**只在真开着的时候占高度**——一个常驻的空条会让
+          「现在到底在不在听」这件事变得看不出来，而这正是常开麦最该让用户看见的事。
+          文案给的是 FSM 态的人话版，不是 FSM 名字：用户不需要知道 ARMED 是什么。 */}
+      {settings.handsFree && hf.availability.usable ? (
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            paddingHorizontal: 14,
+            paddingVertical: 6,
+            backgroundColor: hf.fsm === 'LISTENING' ? p.accentSoft : 'transparent',
+          }}
+        >
+          <View
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 999,
+              backgroundColor: HF_DOT[hf.fsm] ?? p.fg3,
+            }}
+          />
+          <Text style={{ color: p.fg2, fontSize: p.font(12), flexShrink: 0 }}>
+            {HF_LABEL[hf.fsm] ?? '免唤醒'}
+          </Text>
+          {hf.partial ? (
+            <Text numberOfLines={1} style={{ color: p.fg1, fontSize: p.font(12), flex: 1 }}>
+              {hf.partial}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+      {hf.error || notice ? (
+        <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
+          <Text style={{ color: p.amber, fontSize: p.font(12) }}>{hf.error || notice}</Text>
+        </View>
+      ) : null}
       <Composer
         p={p}
         quickCommands={settings.quickCommands}
