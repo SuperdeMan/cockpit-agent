@@ -47,6 +47,11 @@ orchestrator/   edge/ 端侧编排+FastIntent（+ knowledge/ VAL 车控知识库
                 + actionability.py 可执行性**形态**判定，**shadow 只写观测不进决策**：
                 特征全是封闭虚词类、不许出现任何领域词（源码断言从 commands.yaml
                 派生词表比对）；REJECT 声明但 v1 不产出（B6）
+                + slot_shape.py 槽位**值形状判据的唯一实现**（C3）：`wait_slot` 续接问的是
+                「这句话长得像不像这个槽的值」，长得不像即换题。**形状名由 Agent 在 manifest/
+                servers.yaml 的 `slot_shapes` 声明、判据本体在这里且零领域词**（源码级断言守）；
+                值域不在运行期校验——桥的镜像够不着这个模块，抄一份过去就是第二份声明，
+                改成由 `tests/test_slot_shape.py` 逐条比对全部声明方（契约 §9.35）
                 + candidate_query.py 候选集**聚合问答的唯一实现**，四种算子：最值（哪家最晚
                 关门）／合计（两个价格）／**序数取值**（第 N 个多少钱）／**重列**（「重新列出
                 刚才可以选择的项目」——没有它这句话会进 Planner **重搜一遍**，C4-C）
@@ -148,6 +153,7 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
    - **确定性路由（R2.1）**：弱 LLM 会漏/误路由该 Agent 的重域意图时，用 `route_hints` 声明兜底（`pattern`/`intent`/`policy`=`replace`\|`append`/`priority`/`guard`/`slots`；`slots` 值支持 `$text`=原话、`$1..`=捕获组）——编排核心 `orchestrator/cloud/route_hints.py::RouteHintEngine` 通用消费，**取代**过去在 `planning.py` 加正则兜底的做法。
    - **重域能力**（需开思考+过程区，如多轮检索/LLM 重生成）在该 capability 标 `heavy: true`（编排 `progress.is_complex` 据此判定）。
    - 出**主卡**的 Agent 在 `ui_card` 加 `display_priority`（`0`=主卡多意图下独显 / `1`=交互候选 / 缺省 `2`=普通信息卡），聚合器据此择优。
+   - **会追问自由文本槽的 Agent**（返回 `NEED_SLOT` + `missing_slots`）在该 capability 加 `slot_shapes`（`槽位名 -> 形状名`，C3）。补槽续接的默认是「**槽值必须长得像这个槽**」，声明了形状，用户下一句长得不像时编排判换题、不再把整句塞进槽里；不声明则行为与此前逐字一致。形状名的值域是 `orchestrator/cloud/slot_shape.py::SHAPES`（当前 `order_id` / `item_name`），拼错由 `tests/test_slot_shape.py` 当场报红。**别在 Agent 里自己判「这句是不是答案」**——那是编排的事，判据抄两份就会给同一句话两个答案（契约 §9.35）。
 3. 继承 `agents/_sdk` 的 `BaseAgent` 实现业务逻辑，**不要重新实现 gRPC 契约**。
 4. 写 `tests/` 契约测试 + 黄金用例。
 5. 在 `deploy/docker-compose.yaml` 注册服务。

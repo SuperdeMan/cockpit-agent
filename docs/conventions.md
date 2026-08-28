@@ -264,6 +264,7 @@
 | `OBS_SNAPSHOT_INTERVAL` | edge 周期广播全量车辆快照间隔（秒），供 collector 重启后自愈恢复镜像 | 否（默认 30）|
 | `AGENT_REREGISTER_INTERVAL` | Agent/edge/cloud-planner 周期重注册间隔（秒），供 registry 重启后能力自愈补注册 | 否（默认 10）|
 | `REGISTRY_EVICT_FAIL_COUNT` | Registry 长期不健康自动剔除：连续探测失败达此值整体注销（内存+PG 级联），Agent 改名/下线残留不再永生刷告警（如 food-ordering→nearby）；活 Agent 周期重注册自动豁免；0=禁用（2026-07-13）| 否（默认 120 ≈ 10min）|
+| `CLOUD_SLOT_RETRY_LIMIT` | 补槽黑洞的**止损底线**（默认 2，C3-D）：同一条挂起连续问**同一件事**这么多次还接不上，就放弃它、按全新请求规划并说一句。计数认「同一步 ∧ 同一组待补槽」——同一步换个槽再问是进展不是原地打转。它是换题判据**之外**的兜底：判据再准也有漏网的说法，这条只保证黑洞吞不了太多轮（§9.35 D）。⚠ **刻意不进 `.env.example`**：那份文件在发布闸里属 `runtime_config_contract`、该类别无放行通道，动一笔 `deploy` 就永远 `plan_rejected`（AGENTS.md §4.0 接手须知 ⑤ 实测过一次）——有默认值的可选项写在本表即可 | 否（默认 2）|
 | `MEMORY_OFFER_MIN_LEAD_S` | G7 询问式提醒建议的**最小提前量**（秒，默认 1800）：事件已经近在眼前时「要不要到时候提醒你」是噪声不是服务。准入判据的三条之一，唯一声明处 `memory/offer_admission.py`（§9.30）| 否（有默认值 1800）|
 | `MEMORY_EXTRACT_SKIP_PREFIXES` | 合成会话（eval/e2e/badcase 重放/探针）跳过 LLM 抽取巩固的 session_id 前缀表（逗号分隔，契约见 §9.2）：不烧 token、不污染真实画像；`memtest-` 刻意不在此列（2026-07-13）| 否（有默认表）|
 | `FAST_INTENT_THRESHOLD_HIGH` / `_LOW` | 快意图路由阈值。`_LOW` 从 **M5 P3** 起才真有消费方——此前 `.env`/compose/本表三处都声明了，代码只读 `_HIGH`（架构 §3.2 的双阈值伪码没有真概率可接）；端侧语义 NLU 给出真 softmax 概率后，它成为 θ_low | 否（0.85 / 0.5）|
@@ -1656,6 +1657,8 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 ---
 
 ### 9.30 G7 询问式提醒建议的准入（QA Q11 残余，2026-08-19）
+
+> ⚠ **同族但独立的第二条判据在 §9.35 G**（`reminder.create` 侧的任务性准入，2026-08-28）。两条别混：这一条判「值不值得主动 offer」，那一条判「这是不是一件事」。**要加第三条之前先确认它不是这两条之一的换皮。**
 
 **唯一声明处**：`memory/offer_admission.py::admit_event_offer`。零 LLM、纯函数。
 
