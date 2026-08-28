@@ -1257,6 +1257,15 @@ APK **275.9MB**（M3 是 325MB——砍掉 x86 两个 ABI 省下 231MB，抵掉�
 | R2 音频焦点四场景 | ⬜ 未验（机制已证） | 见下方 |
 
 **⚠ 取证装置的限制（必须写清，否则下一个人会拿这里的数当读数）**：
+
+> **⚠ 2026-08-28 M4-R1 更正：下面「Android 的回声消除正是要抵消它」这个因果是错的。**
+> 真机上**根本没有 AEC**——Oboe 输入流没设 inputPreset ⇒ 默认 `VoiceRecognition` ⇒
+> 平台按定义不加 AEC（`dumpsys audio` 侧证 `src client=VOICE_RECOGNITION`；泓舟实测
+> 「所有播报的内容都会被收音」）。**没有 AEC，「被 AEC 抵消」这个解释就不成立**，
+> 「3 播 1 中」得另找原因——同段自己记的「扬声器音量为 0」是更可能的那个。
+> ⇒ **「取证装置的限制」本身也是一条结论，同样要有证据**。
+> 详见 M4-R1 记录「无 AEC：泓舟真机观察的根因」。
+
 本轮唯一可用的声源是**手机自己的扬声器**，而 Android 的回声消除正是要抵消它 ⇒
 对 VAD 够用（它只判「有没有人声」），对 KWS 是**边缘信噪比**：同一句唤醒词播 3 遍只中 1 遍。
 ⇒ **不许拿这个比例当唤醒率**；真人对着手机说话的信噪比与它不是一回事。
@@ -1404,6 +1413,55 @@ S2S 先按外部阻塞处理。
 行为本身是对的（S2S 上行原始音频，默认关才是安全姿势），**错的是那句注释**。
 改它属 `deploy/`，不在本计划的改动边界（§0.2）内，**记在这里等一次授权**。
 
+**S2S 云端已开通（2026-08-28，泓舟当轮明确授权「S2S 部署红线我确认，你可以部署」）**：
+
+| 步骤 | 做了什么 | 读数 |
+|---|---|---|
+| 取证 | 云主机 `/opt/car-agent/shared/.env` 里 **零个 `S2S_*` 键**；容器内 `S2S_PROVIDER` 是**空串**（`[]` 而不是 `[<unset>]`） | 空串 ⇒ `s2s_available()` 走 off 分支，坐实了诊断 |
+| 备份 | `→ /opt/car-agent/shared/backups/env/.env.pre-s2s-20260828` | sha 与原文件一致；`root:root 600 7509` 逐项相同 |
+| 改动 | 追加 4 行（1 空行 + 2 注释 + `S2S_PROVIDER=dashscope`）。**不设 `S2S_MODEL`**——代码内默认 `qwen3.5-omni-flash-realtime` 不在 `_TOOLS_UNSUPPORTED` 里，key 走 `LLM_EMBED_API_KEY` 回退链 | 117 → 121 行；`root:root 600` 未变 |
+| 爆炸半径 | 渲染后的 compose config 里 **`S2S_` 只出现在 `llm-gateway:` 一个 service 块** | config sha `eeefe493…` → `2cccf287…` |
+| 生效 | **重建**（不是 restart）`llm-gateway` 一个容器——env 在**创建**时固化，`docker restart` 读不到新值（同 `AUTH_TOKENS` 那次「改身份配置必须整栈重建」） | 只有 `llm-gateway` 走了 Recreate，redis 仅被判定 Running |
+| 验证 | `/api/s2s/info` → `available:true, provider:"dashscope"`，**`default` 仍是 `classic`** | 红线成立：端到端只能由用户在设置里显式选 |
+| 回归 | `8443/healthz` 200、`8444/api/voices` 200、`/api/tts/stream/info` 正常；全部容器 `Up` | `dev_stack status` 报 `degraded` 但原因是 `remote cloud status is unavailable`（**读不到远端状态**，5/5 endpoint 全 healthy），与本次改动无关 |
+
+⚠ **一次我自己做废的对照，值得记**：我本想用「拿备份文件渲染一次 vs 拿新文件渲染一次，diff 应只有一行」来证明爆炸半径，
+结果 **diff = 0**。原因是 `/opt/car-agent/releases/<sha>/.env` 是一个**指向 `shared/.env` 的符号链接**，
+compose 优先读项目目录里的 `.env`、**把我传的 `--env-file` 无视了** ⇒ 两次渲染读的是**同一个（已改的）文件**，
+等于拿文件跟它自己比。**「diff 为空」在那一刻不是「没有别的变化」，是「这个对照根本没在对照」。**
+换成「S2S_ 落在哪个 service 块」才是真判据。⇒ 同「测试若替被测系统提供了某个前提，那条前提就不再被验证」。
+
+**⛔ 尚未验证**：App 侧真正走一轮 S2S（要在设置里切「端到端」并说话）。**云端可用 ≠ 端到端跑通**。
+
+### 无 AEC：泓舟真机观察的根因（2026-08-28）
+
+泓舟本轮实测反馈：**「现在没有 AEC，所有播报的内容都会被收音」**。根因在库里，链条两头都有证据：
+
+1. `node_modules/react-native-audio-api/android/src/main/cpp/audioapi/android/core/AndroidAudioRecorder.cpp:70-78`
+   建 Oboe 输入流时设了 sharing/format/performance/采样率转换，**唯独没有 `setInputPreset(...)`**。
+2. Oboe 的输入预设默认值是 `InputPreset::VoiceRecognition`。
+3. 落到平台就是 `MediaRecorder.AudioSource.VOICE_RECOGNITION`——**这个源的定义就是「尽量少加工」**，
+   AEC/NS 按设计不施加（要 AEC 得用 `VOICE_COMMUNICATION`，那是 VoIP 源）。
+4. 真机 `dumpsys audio` 侧证：`source client=VOICE_RECOGNITION`。
+
+⚠ **这条推翻了 M4 首轮记录里的一处因果**：那里写「**Android 的回声消除正是要抵消它**」，
+并据此把自播唤醒词「3 播 1 中」解释成 AEC 把自播声抵消了。**没有 AEC，这个解释就不成立**
+——那个低命中率得另找原因（当轮扬声器音量为 0 是更可能的那个，见首轮自己记的那条）。
+⇒ 判据：**「取证装置的限制」也是一条结论，同样要有证据**；写「AEC 在抵消」之前该先确认 AEC 开着。
+
+**设计侧其实已经预期了「没有 AEC」**，`@shared/voiceLoop.mjs` 里有一整套**文本级**回声防线
+（不是声学级）：`asrPartial` → `_overlapsTts(t)`（听到的和正在播的重叠）→ `_echoSuspected = true`
+→ `_bargeInFire` 看到它就**不打断、只计一次自触发** → 累计到阈值即会话级 `_bargeInDisabled`。
+选文本级是对的：**barge-in 要求播报期必须继续听**，所以「播报时关麦」这条路本来就被打断功能堵死了。
+
+**下一步的三条路（本轮不做，需要先有真机读数判断防线够不够）**：
+- (a) 把输入预设改成 `VoiceCommunication` 拿平台 AEC。⚠ 两个代价：要改 `node_modules`
+  （**镜像产物，坑账 §9.22 明确不许改**，得走 patch 或上游 PR）；且它会顺带上 NS/AGC，
+  **改变送进 KWS 的音频特性**，而唤醒阈值(0.2/2.0)是在另一种音频上定的 ⇒ 动它等于同时动两个变量。
+- (b) 加强文本级防线（`_overlapsTts` 的判据）。
+- (c) 播报期压低麦克风增益。
+⇒ **先要的是读数不是修法**：完整语音轮跑通后看 `_echoSuspected` / 自触发计数实际发生几次。
+
 **本轮新踩的两个坑**（已追加进 §9，编号 48/49）。
 
 ## 8. 里程碑验收清单（复制到实施记录逐条打钩）
@@ -1521,10 +1579,12 @@ S2S 先按外部阻塞处理。
 - [ ] ⬜ **未验（需真人说话）** 完整语音轮：唤醒 → 说一句 → 回答 → 8 秒内续问。
       装置限制见 M4 实施记录「取证装置的限制」——**手机自播经 AEC 后对 KWS 是边缘信噪比
       （3 播 1 中），不许拿它出唤醒率**。与 R3 同类
-- [ ] ❌ **被挡** S2S 端到端挡位走一轮：**云栈 `S2S_PROVIDER` 未配置**（`/api/s2s/info`
-      报 `available:false, provider:""`），而 `.env` 里压根没有 S2S 键、且 `.env` 被
-      release 流程明令禁止进包 ⇒ 要改的是**云主机上那份 env**，红线动作。
-      取证与根因见 M4-R1 实施记录「S2S 是外部阻塞」。**这不是「没跑」，是「跑不了」**
+- [x] ✅ **云端已开通**（2026-08-28，泓舟当轮授权）：云主机 `/opt/car-agent/shared/.env`
+      加 `S2S_PROVIDER=dashscope` + **重建**（非 restart）`llm-gateway` ⇒
+      `/api/s2s/info` `available:true, provider:"dashscope"`，`default` 仍 `classic`（红线成立）。
+      备份 / 爆炸半径 / 一次做废的对照见 M4-R1 实施记录「S2S 云端已开通」
+- [ ] ⬜ **未验** S2S 端到端挡位**走一轮**：要在设置里切「端到端」并说话。
+      ⚠ **云端可用 ≠ 端到端跑通**，这两条刻意分成两行
 - [ ] ⬜ **挂 M5**（泓舟 2026-08-28 裁定）keep-awake：要 release 构建，而 `-Release` 打 JS
       bundle 是未评估形态（坑账 §9.12）。根因已定到 `withDevTools.tsx:13`，信息价值已取到
 
