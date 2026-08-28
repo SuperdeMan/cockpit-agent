@@ -1421,7 +1421,7 @@ S2S 先按外部阻塞处理。
 | 备份 | `→ /opt/car-agent/shared/backups/env/.env.pre-s2s-20260828` | sha 与原文件一致；`root:root 600 7509` 逐项相同 |
 | 改动 | 追加 4 行（1 空行 + 2 注释 + `S2S_PROVIDER=dashscope`）。**不设 `S2S_MODEL`**——代码内默认 `qwen3.5-omni-flash-realtime` 不在 `_TOOLS_UNSUPPORTED` 里，key 走 `LLM_EMBED_API_KEY` 回退链 | 117 → 121 行；`root:root 600` 未变 |
 | 爆炸半径 | 渲染后的 compose config 里 **`S2S_` 只出现在 `llm-gateway:` 一个 service 块** | config sha `eeefe493…` → `2cccf287…` |
-| 生效 | **重建**（不是 restart）`llm-gateway` 一个容器——env 在**创建**时固化，`docker restart` 读不到新值（同 `AUTH_TOKENS` 那次「改身份配置必须整栈重建」） | 只有 `llm-gateway` 走了 Recreate，redis 仅被判定 Running |
+| 生效 | **重建**（不是 restart）`llm-gateway` 一个容器（容器名前缀 `4c1f479` 是**当时的 release**，不是当前值——当日晚些已被发到 `8892431`、再到 `ed53f8f`；**读数要标 release，否则下一个人会拿它当现状**）——env 在**创建**时固化，`docker restart` 读不到新值（同 `AUTH_TOKENS` 那次「改身份配置必须整栈重建」） | 只有 `llm-gateway` 走了 Recreate，redis 仅被判定 Running |
 | 验证 | `/api/s2s/info` → `available:true, provider:"dashscope"`，**`default` 仍是 `classic`** | 红线成立：端到端只能由用户在设置里显式选 |
 | 回归 | `8443/healthz` 200、`8444/api/voices` 200、`/api/tts/stream/info` 正常；全部容器 `Up` | ~~`dev_stack status` 报 `degraded`，原因是 `remote cloud status is unavailable`~~ **⚠ 2026-08-29 更正（另一个 agent 指出）：那个 `degraded` 是我自己制造的假象**——`dev_stack.py` 走 SSH，**在 Git Bash/MSYS 里会静默失败**，报出来就是 `release_sha:null` + `status:degraded`，读起来像「云端不健康」。同一条命令在 PowerShell 下是 `status:"ok"` / `release_sha:8892431` / `warnings:[]`。**真栈命令一律走 PowerShell**（AGENTS.md §4.0 ①，我没照做）。⇒ 结论没错（我另外直接 ssh 核过容器全 Up、5/5 endpoint healthy），但**归因整条是错的**——「工具读不到远端」和「我用错了 shell」是两回事，写错了下一个人会去查云端 |
 
