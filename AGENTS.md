@@ -182,10 +182,30 @@ D 项评估后不做，T44 换了个更小的修法当批做掉）；
 > ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
 > 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新后端全量基线（2026-08-28 MiniMax QA 修复批**第 4 批**，`target=cloud` +
+**最新后端全量基线（2026-08-28 MiniMax QA 修复批**第 5 批**，`target=cloud` +
 本地 Docker 已退）**：`python -m pytest -q -n auto --dist worksteal` =
-**7547 passed / 32 skipped 零红**（5:56；同一份代码上一趟 4:53，差在宿主负载）。
-本跳 `7493 → 7547` = **+54，全部是第 4 批（C5/C6/C7/C8）新增断言**
+**7598 passed / 32 skipped 零红**（5:36）。
+本跳 `7547 → 7598` = **+51，全部是第 5 批（C9/C11/C12/C13/C14）新增断言**
+——逐文件点号（`git archive HEAD` 副本 + **补齐 `gen/`** 后两边 `--collect-only`
+逐文件 diff；⚠ 不补 `gen/` 会有 114 个 collection error，那份读数作废）：
+`runtime/tests/test_execution_claim.py` **+16**（新文件）/
+`runtime/tests/test_session_constraints.py` **+16**（新文件）/
+`test_agent.py`(nearby) **+3** / `test_context.py` **+3** /
+`test_timewindow.py` **+2** / `test_agent.py`(navigation) **+2** /
+`test_agent.py`(road_safety) **+2** / `test_aggregator.py` **+2** /
+`test_agent.py`(chitchat) **+1** / `test_agent.py`(info) **+1** /
+`test_prov_cards.py` **+1** / `test_qweather_provider.py` **+1** /
+`test_engine_focus.py` **+1** ＝ **51**，其余 322 个测试文件计数逐字未变。
+**改过的行为锁有五处，全部显式**：①「20:00 说『5点』= 次日 05:00」**被推翻**
+（两处副本一起改：`test_timewindow.py` 与 navigation 的 `test_parse_arrive_by_rules`）；
+② `test_navigate_to_stamps_route_session` **冻住墙钟**——它原来用真实 `time.time()`
+断言时限在未来，**17:00 之后跑就不是**（用例数不变，所以它不在上面的点号表里）；
+③ catalog 13702 → **13759** / 余量 2298 → **2241**（`charging.plan` 描述补
+「只出建议卡、不发起导航」，条数不变）；④ 对抗语料上限 629 → **634**；
+⑤ 跨域边界台账计数 30 → **31**。逐条在 fix plan §4「第 5 批终态」与 history **§77**。
+
+上一次基线（第 4 批）**7547 passed / 32 skipped 零红**（5:56；同一份代码上一趟 4:53，差在宿主负载）。
+那一跳 `7493 → 7547` = **+54，全部是第 4 批（C5/C6/C7/C8）新增断言**
 ——逐文件点号（同下方口径）：`test_route_hints_clause.py` **+17**（新文件）/
 `test_agent.py`(trip_planner) **+14** / `test_obs_spans.py` **+6** /
 `test_actionability.py` **+5** / `test_executor.py` **+5** / `test_reroute.py` **+4** /
@@ -247,7 +267,7 @@ reminder 原子批建 +2、两套 QA 工具 +7。上一跳 `6902 → 6933` = **+
 `test_engine_candidate_shortcut.py` **+4**（**engine 层接线守卫**——反向验证第一处
 就露出「挂点零测试」）、三个产生方各 **+1**（组标签 = 卡上那个称呼，断言两处相等）。
 上一跳 `6897 → 6902` = **+5**（08-22 白天复验批：mcp-bridge 选品续跑 4 + 规格槽跨跳保真 1）。
-对账链：**7493**（08-28 QA 修复批第 3 批）← 7397（08-28 第 2 批）← 7314（08-28 第 1 批）← 7225（08-26 发布治理/测试族）← 7106（08-25 MiniMax QA 闭环）← 6969（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
+对账链：**7598**（08-28 QA 修复批第 5 批）← 7547（08-28 第 4 批）← 7493（08-28 第 3 批）← 7397（08-28 第 2 批）← 7314（08-28 第 1 批）← 7225（08-26 发布治理/测试族）← 7106（08-25 MiniMax QA 闭环）← 6969（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
 ← 6865（person-pickup 批）← 6786（第 8 步）。
 
 > ⚠ **那条「73 vs 32」的差额归因写了三版，前两版都错，2026-08-21 把成因直接修掉了**
@@ -404,7 +424,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 | 候选 | 为什么现在能做 / 不能做 | 入口 |
 |---|---|---|
-| **2026-08-26 MiniMax QA 修复批（17 症状卡 → 16 根因卡 C1–C16；六批，**第 1–4 批 2026-08-28 已落地**）** | **可以开工（当前首选）：从第 5 批开始 = C9（天气/模板）+ C12（会话内偏好）+ C13（到达时限）+ C14（charging 落域范例）+ C11（chitchat 防编造 + 聚合器失败出口）**——**相互独立的单点修，可并行/穿插**。✅ **第 4 批 C6+C5+C7+C8 已完成**：确定性路由加一维**匹配范围** `RouteHint.scope=clause`（分句级锚定，「接X + 任意后续」不再整句落空；**`guard` 仍对整句求值——放宽锚定不等于放宽守卫**，且 append 去重换成值级判据）+ 焦点让路（`suppress_sticky_places`：粘性地点/候选这一轮不注入，安全告警与车控焦点不在名单里）+ 条件式约束陈述 shadow（条件从句 ∧ 禁止式否定）；**挂起不冻结兄弟步**（`NEED_SLOT` 只挂该步及其下游、`NEED_CONFIRM` 维持当场停，且同层已算出的结果与动作不许被吞——挂起 final 现在合并兄弟步 actions）+ 覆盖度观测列 `clause_uncovered`（零决策）；trip 城市锚 + 跨城披露 / 天数守恒（回炉一次仍不等就变成显式选择）/ 约束已满足即零重规划直答 / `trip.status` 按天读；`navigation.reroute` 补 `origin` 维（算路·话术·卡片·动作载荷**四处一起换**）。五处实施判断（守卫范围不跟着锚定放宽 / 去重换值级 / **C7-A 评估后不整块复用 R1** / 没下沉 `_POSITIVE_PICKUP_PREFIX_RE` 而是把闭集写进 manifest / C6-C 覆盖不到「拿不准别自己猜」）见 fix plan「第 4 批终态」与 history §76。✅ **第 3 批 C3+C10 已完成**：`wait_slot` 的默认方向反转成「**槽值必须长得像这个槽**」并升成声明式契约 `slot_shapes`（形状名在 Agent、判据本体在编排侧`orchestrator/cloud/slot_shape.py` 且零领域词，值域由离线门禁比对全部声明方）+「这是一次新检索」词表收成一份 + 桥侧泛指词归一 + 补槽黑洞止损线（同一问题问到上限即放弃并说一句）；提醒域**序数参照系统一**（「第N条」只许指向用户最后一眼看到的那份列表）+ 标题精确度阶梯 + 任务性准入（问句 / 第三人称陈述拒建）+ 跨轮幂等 + 范例一条，**外加 C10-D 的两件接手残账**（hygiene 第 ⑤ 族 `--reminders-expired` 机制化 / 探针跑批结束的提醒清理段）。三处实施判断（阈值照抄会误伤真数据 / 值域闸放不进桥是镜像闭包逼的 / 止损计数要认「同一组待补槽」）见 fix plan「第 3 批终态」与 history §75。✅ **第 2 批 C4 已完成**：账本扩「数据源」维（proto `TurnSource`，写读两侧全接通）+ 编排层三条确定性读出口（挂起状态 / 数据源 / 执行史，判据下沉 `runtime/session_facts.py`、挂点在 plan 构建之前）+ 候选集第四种算子「重列」；**C4-D 评估后不做**（够不到自己那张卡 + 会挤掉真实候选组），T44 换成「回顾指代夺回股票焦点」当批做掉；**T43 归 C11**（第 5 批的防编造面），不是漏做。两处显式裁决见 fix plan「第 2 批终态」。✅ **第 1 批已完成**：C1 安全告警链 A-D（云侧问句写闸落 `build()` 唯一出口 + 告警登记改成扫本轮原话 + 同槽严重级比较 + 「机油机油灯」拼接）、C2 端侧三 bug（后挡除雾错字 / `media.stop` 出口 / 胎压规格问句让路）与探针诊断出口拆分、C16 的 1·6·8；另在实施中扫出并当批修掉 **N8**（规则产的对象名知识库不认 ⇒「胎压是多少」一直答「暂不支持哦」）与 **N9**（「停止播放」被执行成开始播放）。⚠ **四批都只跑了本地全量 + 三道离线门禁，真栈迷你集与「修正后计分」都还没跑**——别把它读成「QA 那几条已验证转绿」；探针本身在四批里都改过，应在下一次跑批时连同 C16 其余条目一起验。✅ **三处拍板已于 2026-08-27 裁定并落地（按方案推荐项，方案 §4 有细节）**：C15 如实标注的 mock=WARN 不判 fail + `deterministic` 收编（契约 §9.3 已同批改）；C10-D 过期提醒用 `cancelled+extra.reason` 清扫——**90 条存量已按泓舟「全清」点名当日执行**（单事务 UPDATE 90、u1 ACTIVE 归零、审计标记 `extra.batch=20260827-hongzhou-approved-90`，证据 `.artifacts/sweep-apply-20260827.result.txt`）；C5-B 放行。**无外部阻塞项**。✅ §4.2 两条既有账**均已销账**（I-033 数据源账本随 C4、多意图复合句随 C5/C6） | [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md) **§0 接手须知 + §4 实施顺序（四批终态读数与未做项逐批在列）+ §6 第 1 批实施时新发现的缺陷**；问题原始记录 [`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](docs/reviews/2026-08-26-minimax-cloud-qa-findings.md) |
+| **2026-08-26 MiniMax QA 修复批（17 症状卡 → 16 根因卡 C1–C16；六批，**第 1–5 批 2026-08-28 已落地**）** | **可以开工（当前首选）：只剩第 6 批 = C15（provenance 裁决落探针）+ C16 其余（2/3/4/5/7）**——**它是本方案最后一批，也是唯一能把前五批验成「转绿」的一批**：真栈迷你集与「修正后计分」五批都没跑过（探针本身被改过多次），按 §4 口径应在下一次跑批时一并验。✅ **第 5 批 C9+C11+C12+C13+C14 已完成**：拔掉全仓最后一条 mock 车辆位置回退（road-safety 天气预警改「本轮 GPS → 诚实 NEED_SLOT」，**诚实降级的顺序里没有 mock 这一档**）+ 三张外源卡补 `_prov` + 「署名摘要不是时间」+ 两处话术模板；chitchat 防编造从**禁语清单换成类别否定**（清单被绕过两轮：上次交易话术、这次导航）+ 聚合器**不再吞掉 Agent 自己的失败话术**（`AgentResult` 无 error 字段 ⇒ 查表恒命中默认值 ⇒ 每条失败都变成裸「抱歉，处理失败。」）+ 执行性声明零决策观测列（`runtime/execution_claim.py`）；会话内偏好有了载体（`Focus.session_constraints`，登记挂输入形态、判据落 `runtime/`、下发按 manifest scope 门控**不广播**、后说的覆盖先说的）+ nearby 挡板改问合并后的忌口事实（**限制性偏好赢过扩张性偏好**）+ chitchat 历史窗 4→8；裸时刻双过时**不再滚日改小时语义** + `_deadline_note` 两道闸（时限已过 / 余量 >6h）；charging 落域走范例+描述+语料三件声明式。**四处实施判断**（**C9-B 机制不复现 ⇒ 不做**、preview_discard 的 FAILED 不翻 OK 而是改写 §9.5 的理由、执行性声明判据刻意窄、加范例连带顶过边界门禁的成本）见 fix plan「第 5 批终态」与 history §77。✅ **第 4 批 C6+C5+C7+C8 已完成**：确定性路由加一维**匹配范围** `RouteHint.scope=clause`（分句级锚定，「接X + 任意后续」不再整句落空；**`guard` 仍对整句求值——放宽锚定不等于放宽守卫**，且 append 去重换成值级判据）+ 焦点让路（`suppress_sticky_places`：粘性地点/候选这一轮不注入，安全告警与车控焦点不在名单里）+ 条件式约束陈述 shadow（条件从句 ∧ 禁止式否定）；**挂起不冻结兄弟步**（`NEED_SLOT` 只挂该步及其下游、`NEED_CONFIRM` 维持当场停，且同层已算出的结果与动作不许被吞——挂起 final 现在合并兄弟步 actions）+ 覆盖度观测列 `clause_uncovered`（零决策）；trip 城市锚 + 跨城披露 / 天数守恒（回炉一次仍不等就变成显式选择）/ 约束已满足即零重规划直答 / `trip.status` 按天读；`navigation.reroute` 补 `origin` 维（算路·话术·卡片·动作载荷**四处一起换**）。五处实施判断（守卫范围不跟着锚定放宽 / 去重换值级 / **C7-A 评估后不整块复用 R1** / 没下沉 `_POSITIVE_PICKUP_PREFIX_RE` 而是把闭集写进 manifest / C6-C 覆盖不到「拿不准别自己猜」）见 fix plan「第 4 批终态」与 history §76。✅ **第 3 批 C3+C10 已完成**：`wait_slot` 的默认方向反转成「**槽值必须长得像这个槽**」并升成声明式契约 `slot_shapes`（形状名在 Agent、判据本体在编排侧`orchestrator/cloud/slot_shape.py` 且零领域词，值域由离线门禁比对全部声明方）+「这是一次新检索」词表收成一份 + 桥侧泛指词归一 + 补槽黑洞止损线（同一问题问到上限即放弃并说一句）；提醒域**序数参照系统一**（「第N条」只许指向用户最后一眼看到的那份列表）+ 标题精确度阶梯 + 任务性准入（问句 / 第三人称陈述拒建）+ 跨轮幂等 + 范例一条，**外加 C10-D 的两件接手残账**（hygiene 第 ⑤ 族 `--reminders-expired` 机制化 / 探针跑批结束的提醒清理段）。三处实施判断（阈值照抄会误伤真数据 / 值域闸放不进桥是镜像闭包逼的 / 止损计数要认「同一组待补槽」）见 fix plan「第 3 批终态」与 history §75。✅ **第 2 批 C4 已完成**：账本扩「数据源」维（proto `TurnSource`，写读两侧全接通）+ 编排层三条确定性读出口（挂起状态 / 数据源 / 执行史，判据下沉 `runtime/session_facts.py`、挂点在 plan 构建之前）+ 候选集第四种算子「重列」；**C4-D 评估后不做**（够不到自己那张卡 + 会挤掉真实候选组），T44 换成「回顾指代夺回股票焦点」当批做掉；**T43 归 C11**（第 5 批的防编造面），不是漏做。两处显式裁决见 fix plan「第 2 批终态」。✅ **第 1 批已完成**：C1 安全告警链 A-D（云侧问句写闸落 `build()` 唯一出口 + 告警登记改成扫本轮原话 + 同槽严重级比较 + 「机油机油灯」拼接）、C2 端侧三 bug（后挡除雾错字 / `media.stop` 出口 / 胎压规格问句让路）与探针诊断出口拆分、C16 的 1·6·8；另在实施中扫出并当批修掉 **N8**（规则产的对象名知识库不认 ⇒「胎压是多少」一直答「暂不支持哦」）与 **N9**（「停止播放」被执行成开始播放）。⚠ **五批都只跑了本地全量 + 三道离线门禁，真栈迷你集与「修正后计分」都还没跑**——别把它读成「QA 那几条已验证转绿」；探针本身在四批里都改过，应在下一次跑批时连同 C16 其余条目一起验。✅ **三处拍板已于 2026-08-27 裁定并落地（按方案推荐项，方案 §4 有细节）**：C15 如实标注的 mock=WARN 不判 fail + `deterministic` 收编（契约 §9.3 已同批改）；C10-D 过期提醒用 `cancelled+extra.reason` 清扫——**90 条存量已按泓舟「全清」点名当日执行**（单事务 UPDATE 90、u1 ACTIVE 归零、审计标记 `extra.batch=20260827-hongzhou-approved-90`，证据 `.artifacts/sweep-apply-20260827.result.txt`）；C5-B 放行。**无外部阻塞项**。✅ §4.2 两条既有账**均已销账**（I-033 数据源账本随 C4、多意图复合句随 C5/C6） | [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md) **§0 接手须知 + §4 实施顺序（四批终态读数与未做项逐批在列）+ §6 第 1 批实施时新发现的缺陷**；问题原始记录 [`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](docs/reviews/2026-08-26-minimax-cloud-qa-findings.md) |
 | **Android 陪伴端 App（新客户端 `mobile/`，2026-08-23 立项）** | **M0–M3 全部收口**（08-25~08-28），**M4 首轮已落地**（08-28，泓舟当轮裁定不卡 M4、范围取全量含 KWS）。读数：`tsc` 0 / mobile jest **229** / hmi node:test **288** / APK **275.9MB**（砍 x86 两 ABI 省 231MB）/ Maestro e2e `4/4 Flows Passed in 7m 43s`。**M4 真机已证**：ORT 跑 silero（载入 210ms、端点事件出）、sherpa KWS 引擎正确（直灌 7/7 命中）、**真实唤醒词经真实声学路径命中**（`小舟小舟@14055ms`）、免唤醒开关开→麦真开/关→麦真释放、设置页三条红线文案在屏上。**M4 未验四项**：完整语音轮（**需真人说话**——手机自播经 AEC 对 KWS 是边缘信噪比，3 播 1 中，**不许拿它当唤醒率**）/ S2S 走一轮 / 视觉抓帧 / keep-awake（要 release 构建）。**M4 未修两项**：`KwsModule` 释放竞态 + 原生单例冲突（要重构建）。**M2/M3 余项本批处置**：R1 预期定案（四段链无一段换引擎 ⇒「不出声」是设计如此，产物改成给静默一个可见出口）/ R2 障碍定性为「看不见事件」并补了取证出口（OS 焦点栈已证监听注册）/ R4 根因定到 `expo/src/launch/withDevTools.tsx:13`（dev build 无条件持 keep-awake tag ⇒ 开关物理上关不掉）；R3/R5–R8 维持挂账（R7 泓舟裁定继续挂）。⚠ **开工硬前提**：`check_android_env.ps1` 退出码 0；**构建前先跑 `scriptsetch_mobile_voice_assets.ps1`**（KWS 原生件与模型不入 git，缺了 gradle 明确失败）；跑 e2e 必须带 `--no-reinstall-driver`。 | 接手从 [`docs/design/2026-08-24-mobile-app-implementation-plan.md`](docs/design/2026-08-24-mobile-app-implementation-plan.md) **§0 接手须知** → **§7 的 M4 实施记录**（含「取证装置的限制」与「已知待办」）→ **§8.4 M4 验收清单** → **§M3-6 的「M3 遗留出账」表**；**坑账 §9 已积到 47 条、开工前读一遍**（§9.43 那条最贵：构建成功但原生没注册，取证看 `PackageList.java` 不看 gradle 日志）；日常命令看 [`mobile/README.md`](mobile/README.md)、e2e 看 [`mobile/e2e/README.md`](mobile/e2e/README.md) |
 | **I-024 门店侧**（Q10 残余）| **可以开工但影响面要先量**：门店选项卡是 `NEED_SLOT` 结果，而 `extract_focus` 只从**成功步**抽候选 ⇒ 门店候选集根本不存在。放宽抽取影响面远超本卡，**动之前先枚举谁在读候选集**。⚠ 2026-08-22 起**多了一个读候选集的地方**（组指代 `resolve_candidate_scope` + 逐步下发 `candidate_set_for`，§9.32）——那份枚举要把它算进去 | 下方 ① Q10 行、契约 §9.28「三条边界」/§9.32 |
 | **`memory_item` supersede 信息衰减**（同日新立）| **等第二个可复现实例**。实据只有一条链（`person.child` 四跳越记越少），而修法要先分清「事实被更精确地重述」与「偏好发生了变化」——**偏好类就该新的赢**，不能直接搬关系边那条规则 | §4.2 该行、卡 §6.8、history §64.7 |
@@ -494,6 +514,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | **EVA 余项**（①–⑤ 已于 2026-08-15 立卡 E1–E5 全部处理，见 §4.0 段与 history §39；本行只剩 ⑥） | ⑥ **G10 订座/票务维持搁置**（本表内唯一仍未启动项）：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，**不为对标造假订座**。⚠ E 批遗留的两处**已知边界**（不是待办，出现真实消费方再谈）：归城校正的判据是各城池质心，某城池被高德限流搜空时该城不参与判定（末轮真栈实例：潍坊）；方差面维持档案化，E4 探针首跑 15/15 未复现，**不加 hint、不动 gate 案例集** | [E1–E5 卡](docs/design/2026-08-15-eva-backlog-cards-e1-e5.md)、[验证报告](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md) §5、[缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md) §2 |
 | **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目。⚠ **2026-08-19 卡 Q8 没有从这 14 条里挑，是刻意的**：QA 轮实际抓到的四处缺席一条都不在这张表上——方向盘**已声明**（断在 VAL 校验）、双闪**对象根本不存在**（被生成器 family 表并进了 headlight）、静音是 `volume` 缺一个**操作**、估算在云侧。**台账列的是「有对象没意图」，而这四处是别的形态**；本批因此新增对象 `warning_light` 与操作 `volume.mute/unmute`，台账 39 条不变。⚠ **2026-08-28 新记一族「镜像形态」欠账（4 条，与上面那 14 条不是同一张表）**：上表列的是「**有对象没意图**」，这一族是「**有意图没对象**」——规则产得出、`LOCAL_INTENTS` 也收着，但 `commands.yaml` 压根没声明那个对象 ⇒ VAL 当场拒、用户听到「暂不支持哦」。逐条台账在 `orchestrator/edge/tests/test_rule_object_reachability.py::_KNOWN_UNREACHABLE`（格式「说什么话会踩到 + 为什么还没修」，禁通配符，自带「每行都要当场复现」与「修好一条必须删一行」两条断言）：`factory_settings`（恢复出厂设置——整车级破坏性动作，补声明前先定 require_confirm 与权限）／`launcher`（返回桌面——落点应是 hmi 域，**改落点比补对象正确**）／`memory`（清理内存——intent 名已是 `system.clean`，落点存疑，补 VAL 对象只会把错落点固化）／`sound_effect`（音效调成摇滚——与已声明的 `equalizer` 是同一件事的两个名字，**正解是合并到 equalizer 不是再声明一个对象**，这条最接近可以直接做）。新增第五条会让那个门禁当场红 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身；④ 那一族见 [fix plan](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md) **§6** |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
+| **隐私清单扫描撞上另一族测试的临时目录**（2026-08-28 第 5 批新记，**不是本批引入**）| **根因已定性，机制清楚，本批只记账不修**：`test/test_eval_intent_adversarial_cli.py::test_launch_worker_rejects_external_hardlink_to_repo_before_start` 会在**仓库根**下建临时目录（`tempfile.TemporaryDirectory(prefix="intent-worker-repo-target-", dir=cli.ROOT)`，它必须在仓库内才测得了「repo 内目标」的硬链接逃逸守卫），而 `scripts/e2e_contract.py::_controlled_privacy_source_paths` 会 `os.walk` 整个仓库根、且 `onerror` 是**故意 fail-closed 的**（扫不动就抛 `ManifestError`）。`-n auto` 下两族并发时，前者删目录、后者正走到它 ⇒ `cannot scan privacy source tree: [WinError 3]`，红的是 `test_remaining_e2e_protocol.py::test_journey_manifest_issues_two_memory_sessions_only_for_milestone`（隔离复跑 1 passed）。**与 `test_e2e_stack_lease` 那条是同一类（两个测试族共用仓库根这个资源），但不是同一条**。⚠ 两条候选修法都不该顺手做：① 放宽 `_walk_error`（「目录已消失就跳过」）动的是一条**安全面 fail-closed 守卫**；② 把临时目录挪进 `.artifacts/`（隐私扫描的 `_PRIVACY_EXCLUDED_DIRS` 已排除它）看起来最便宜，但要先确认被测守卫对该路径的判定逐字不变——**改安全用例的现场，先证明它还在测原来那件事** | 本行 + `test/test_eval_intent_adversarial_cli.py:329`、`scripts/e2e_contract.py::_controlled_privacy_source_paths` |
 | **`test_e2e_stack_lease` 抢真实 OS 锁**（2026-08-28 新记，**不是本批引入**）| **根因已定性，有复现配方**：该文件多处 `repo_root=Path.cwd()`，而 `identity_lock_path()` 把它解析成 **`.git/car-agent-e2e-identity-stack.lock` 这个真实 OS 锁文件**——它是**仓库级共享**的，谁持有别人就拿不到。取证：单跑 3/3 绿、`scripts/tests -n auto` 3/3 绿（1335×3）、全量单跑 2/3 绿；而**同时跑两趟全量必红**，且两趟各红了该文件里**不同的一条**（`test_restore_failure_…` / `test_single_owner_…`）——症状随「谁先抢到」漂移，正是共享锁的签名。⇒ 修法是让这几条用例各自用 `tmp_path` 当 `repo_root`（或给锁名加 worker 后缀），**不是加重试**。⚠ **2026-08-28 第 2 批把复现条件放宽了一档**：只跑一趟全量也撞红过一次（该趟 6:00，相邻两趟 4:06/4:09）——**宿主负载本身就是第二个竞争源**，「同时跑两趟」不是必要条件。隔离复跑该文件 61 passed / 2 skipped，随后整趟全量 7397 零红。⇒ 在修掉之前的两条缓解措施要按**降低概率**理解，不是保证：① 会话之间跑全量前打个招呼（只挡掉「同时两趟」那一类）；② **全量报绿时也要单独确认它这一条**，报红时先隔离复跑再判是不是回归。**唯一的真修法仍是 `tmp_path`。** | 文件本身；本行由 QA 修复批第 1 批的三趟全量读数触发，第 2 批补一次单趟复现 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | `route_hints` 继续退役 | 当前实数 **18**（2026-08-24 QA 复验净增 7：MiniMax 重复采样残余的 5 条窄业务结构 + edge 门锁开/关极性 2 条）；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；本批只证明 MiniMax 主模型当前需要这些纠偏，退役仍须跨 provider 全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
@@ -514,6 +535,22 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 
 ### 4.3 读数纪律
 
+- **接手别人的卡，先自己把机制重新证一遍**（2026-08-28，第 5 批 C9-B）。
+  方案把「天气域本轮空槽 ⇒ 焦点接力清零城市」写成了真栈答错城市的机制。
+  按真栈那五轮原样跑（`_apply_focus_meta` + `update_focus` 串起来），**城市一路都在**
+  ——注入发生在抽取之前，同域续接轮的槽根本不是空的，那条接力条件在这条链上
+  **一次都不求值**。⇒ 不做，改由「拔掉 mock 回退」兜住，并把五轮写成回归锁。
+  **「方案里的机制」与「真的会发生的机制」是两个命题，第二个要自己证**；
+  证不出来时**保证最坏情况**（诚实问一句）比按未经验证的机制改共享判据便宜。
+- **一条读数取决于几点跑的用例，绿和红都说明不了问题**（2026-08-28，第 5 批 C13）。
+  `test_navigate_to_stamps_route_session` 用真实 `time.time()` 断言「五点前要到」的
+  时限在未来——**17:00 之后跑就不是**，而旧解析器正是靠「滚到次日凌晨」把它喂绿的：
+  一个缺陷把一条测试养绿了三个月。修法是**冻住墙钟**，不是放宽断言。
+  收尾自查加一条：本批碰过时间语义时，`grep` 一遍用真实墙钟的用例。
+- **门禁读数是相对量时，红灯不一定指向你的改动**（2026-08-28，第 5 批 C14）。
+  范例库跨域近重复门禁按 **IDF 加权** Dice 判，IDF 是**语料级**的：加两条 charging
+  范例，把一对毫不相干的句子从 0.349 顶到 0.351。它不是「谁把冲突引进来了」，
+  是全表词权变了。⇒ **加范例的成本里要算上「可能连带一次边界裁定 + 双向各 2 条对照」**。
 - **反向验证要验到「哪一条断言真的被这次改动决定」**（2026-08-28，第 4 批 C5-B）。
   给「挂起不冻结兄弟步」写了四条断言，把旧语义注射回去后**一条都不红**：
   兄弟步同层、`asyncio.gather` 本来就会跑它们；更糟的是测试替身的 action 写成了 dict，
