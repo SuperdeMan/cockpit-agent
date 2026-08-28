@@ -1433,7 +1433,7 @@ compose 优先读项目目录里的 `.env`、**把我传的 `--env-file` 无视�
 
 **⛔ 尚未验证**：App 侧真正走一轮 S2S（要在设置里切「端到端」并说话）。**云端可用 ≠ 端到端跑通**。
 
-✅ **跨 release 存活性已复验**（2026-08-29）：另一个 agent 把云端发到了 `8892431`，`/api/s2s/info` 仍是 `available:true, provider:"dashscope"` ⇒ 「shared 那份 env 各 release 软链共用、新 release 自带」**从推断变成了读数**。
+✅ **跨 release 存活性已复验两次**（2026-08-29）：另一个 agent 先后把云端发到 `8892431`、再到 `ed53f8f`，两次之后 `/api/s2s/info` 都仍是 `available:true, provider:"dashscope"` ⇒ 「shared 那份 env 各 release 软链共用、新 release 自带」**从推断变成了稳定事实**——一次可能是巧合，**跨两次 release 才敢这么写**。
 
 ### 无 AEC：泓舟真机观察的根因（2026-08-28）
 
