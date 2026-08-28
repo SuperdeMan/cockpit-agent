@@ -795,6 +795,49 @@ def test_inspect_cloud_status_propagates_unexpected_discovery_errors(tmp_path: P
         )
 
 
+def _all_endpoints_ok() -> dict:
+    """五个端点全 200——这两条用例要测的是**SSH 那一跳失败时怎么报**，
+    端点健不健康不是变量，别让它进读数。"""
+    return {
+        "https://demo.ts.net/": dev.HttpResponse(200),
+        "https://demo.ts.net:8443/healthz": dev.HttpResponse(200),
+        "https://demo.ts.net:8444/api/llm/providers": dev.HttpResponse(200),
+        "https://demo.ts.net:8445/": dev.HttpResponse(200),
+        "https://demo.ts.net:8446/healthz": dev.HttpResponse(200),
+    }
+
+
+def test_unreachable_cloud_status_names_the_msys_ssh_cause_when_in_git_bash(
+        tmp_path: Path, monkeypatch):
+    """诊断出口要说出**最可能的成因**，不能只说「不可用」。
+
+    这条 warning 在 Git Bash 里的真实成因几乎总是 MSYS `ssh` 吃掉转义
+    （AGENTS.md §4.0 ①：真栈命令一律走 PowerShell），但它露出来的样子是
+    `release_sha: null` + `status: degraded`——**读起来像「云端不健康」**。
+    2026-08-28 同一个人一天里踩了两次，第二次让长会话探针 fail-closed 中止、
+    一轮都没发。同「『读不到』与『读到了但不对』永远分开报」那条纪律。
+    """
+    runner = FakeStatusRunner([dev.ReleaseError("ssh failed")], _all_endpoints_ok())
+    monkeypatch.setenv("MSYSTEM", "MINGW64")
+    status = dev.inspect_cloud_status(
+        make_cloud_request(tmp_path), dev.cloud_endpoints("demo.ts.net"), runner)
+
+    assert status.release_sha is None
+    hint = next(w for w in status.warnings if "unavailable" in w)
+    assert "PowerShell" in hint and "MSYS" in hint
+
+
+def test_the_same_warning_stays_plain_outside_msys(tmp_path: Path, monkeypatch):
+    """误伤对照：PowerShell / Linux 下不许挂那句提示——**说错成因比不说更糟**。"""
+    runner = FakeStatusRunner([dev.ReleaseError("ssh failed")], _all_endpoints_ok())
+    monkeypatch.delenv("MSYSTEM", raising=False)
+    status = dev.inspect_cloud_status(
+        make_cloud_request(tmp_path), dev.cloud_endpoints("demo.ts.net"), runner)
+
+    assert "remote cloud status is unavailable" in status.warnings
+    assert not any("PowerShell" in w for w in status.warnings)
+
+
 def test_default_status_runner_does_not_follow_same_origin_redirect():
     requests: list[str] = []
 

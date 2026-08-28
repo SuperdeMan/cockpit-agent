@@ -716,7 +716,18 @@ def inspect_cloud_status(
     try:
         state = discover_remote_state(cloud_request, runner=runner)
     except (ReleaseError, OSError):
-        warnings.append("remote cloud status is unavailable")
+        # ⚠ **让诊断出口说出最可能的成因**（2026-08-28）。这条 warning 在 Git Bash 里
+        # 的真实成因几乎总是「MSYS `ssh` 吃掉了 `subprocess.list2cmdline` 的转义」
+        # （AGENTS.md §4.0 接手须知 ①：真栈命令一律走 PowerShell）——但它报出来的样子是
+        # `release_sha: null` + `status: degraded`，**读起来像「云端不健康」**，
+        # 于是同一个人在同一天里踩了两次：第二次直接让长会话探针 fail-closed 中止、
+        # 一轮都没发。判据同「『读不到』与『读到了但不对』永远分开报」：
+        # **一个只说「不可用」的诊断出口，等于把排查成本原样转嫁给读的人。**
+        # `MSYSTEM` 是 Git Bash / MSYS2 自己设的环境变量，用它判 shell 不需要猜。
+        warnings.append(
+            "remote cloud status is unavailable"
+            + ("（当前在 MSYS/Git Bash 里跑：它的 `ssh` 会吃掉转义，"
+               "**真栈命令请改用 PowerShell**）" if os.environ.get("MSYSTEM") else ""))
     else:
         release_sha = state.current_release
         if not state.release_lock_available:

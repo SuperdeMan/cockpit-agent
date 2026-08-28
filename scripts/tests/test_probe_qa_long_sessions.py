@@ -573,7 +573,7 @@ def test_card_provenance_is_collected_and_mock_is_rejected():
       "_prov": {"provider": "qweather", "mode": "real"},
       "items": [{"_prov": {"provider": "amap", "mode": "degraded"}}]
     }'''
-    entries, failures, warnings = long_qa.audit_card_provenance(card_text)
+    entries, failures, warnings, notes = long_qa.audit_card_provenance(card_text)
     # ⚠ `card_type` 2026-08-28 随 C15 加进每一条章：**没有卡型就没法按卡型判**，
     # 而「按卡型判」正是这次裁决落地的形态（mock 两档 / deterministic 只对
     # 登记过的卡合法）。同一张卡里的子节点继承就近的 `type`。
@@ -581,9 +581,9 @@ def test_card_provenance_is_collected_and_mock_is_rejected():
         {"provider": "qweather", "mode": "real", "card_type": "weather"},
         {"provider": "amap", "mode": "degraded", "card_type": "weather"},
     ]
-    assert failures == [] and warnings == []
+    assert failures == [] and warnings == [] and notes == []
 
-    entries, failures, warnings = long_qa.audit_card_provenance(
+    entries, failures, warnings, _ = long_qa.audit_card_provenance(
         '{"type":"weather","_prov":{"provider":"qweather","mode":"mock"}}')
     assert entries == [
         {"provider": "qweather", "mode": "mock", "card_type": "weather"}]
@@ -592,36 +592,53 @@ def test_card_provenance_is_collected_and_mock_is_rejected():
 
 
 def test_required_external_card_without_provenance_is_rejected():
-    entries, failures, warnings = long_qa.audit_card_provenance(
+    """**出了卡却一个章都没有** —— 这一档才是这条判据要抓的。"""
+    entries, failures, warnings, notes = long_qa.audit_card_provenance(
         '{"type":"weather","city":"深圳"}', required=True)
 
     assert entries == []
-    assert failures == ["外部数据卡缺少真实性章"] and warnings == []
-    assert long_qa.audit_card_provenance("", required=True) == (
-        [], ["外部数据卡缺少真实性章"], [])
-    assert long_qa.audit_card_provenance("{}", required=True) == (
-        [], ["外部数据卡缺少真实性章"], [])
+    assert failures == ["外部数据卡缺少真实性章"]
+    assert warnings == [] and notes == []
+
+
+def test_no_card_at_all_is_a_note_not_a_failure():
+    """**「没出卡」与「出了卡没盖章」是两件事**（2026-08-28 真栈实测逼出来的）。
+
+    INF-WEATHER T4「现在有影响开车的天气预警吗」答「深圳当前没有生效的天气预警。」、
+    INF-STOCK T41 答「没有找到「000300.SH」的行情数据」——**没有数据所以不出卡**，
+    那是诚实降级、是**正确行为**，判红等于要求它编一张卡出来。
+    同 C2-D「『读不到』与『读到了但不对』永远分开报」。
+    ⇒ 无卡出 note；真要求「这一轮必须有卡」，用例写 `card_type`。
+    """
+    for blank in ("", "{}"):
+        entries, failures, warnings, notes = long_qa.audit_card_provenance(
+            blank, required=True)
+        assert entries == [] and failures == [] and warnings == []
+        assert notes and "不构成证据" in notes[0]
+
+    # 不 required 时连 note 都不出——那一轮本来就没主张过什么。
+    assert long_qa.audit_card_provenance("{}") == ([], [], [], [])
 
 
 def test_required_external_card_rejects_incomplete_or_unknown_provenance():
-    entries, failures, _ = long_qa.audit_card_provenance(
+    entries, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"weather","_prov":{"vendor":"qweather"}}', required=True)
     assert entries == [
         {"provider": "qweather", "mode": "unknown", "card_type": "weather"}]
     assert failures == [_illegal_mode("unknown", "weather")]
 
-    entries, failures, _ = long_qa.audit_card_provenance(
+    entries, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"weather","_prov":{"mode":"real"}}', required=True)
     assert entries == [
         {"provider": "unknown", "mode": "real", "card_type": "weather"}]
     assert failures == ["外部数据卡真实性章 provider 缺失"]
 
-    _, failures, _ = long_qa.audit_card_provenance(
+    _, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"weather","_prov":{"vendor":"qweather","mode":"typo"}}',
         required=True)
     assert failures == [_illegal_mode("typo", "weather")]
 
-    _, failures, _ = long_qa.audit_card_provenance(
+    _, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"weather","_prov":{"vendor":"qweather","mode":"typo"}}')
     assert failures == [_illegal_mode("typo", "weather")]
 
@@ -641,24 +658,24 @@ def _illegal_mode(mode: str, card_type: str) -> str:
 
 
 def test_deterministic_is_legal_only_on_the_registered_internal_cards():
-    _, failures, warnings = long_qa.audit_card_provenance(
+    _, failures, warnings, _n = long_qa.audit_card_provenance(
         '{"type":"safety_advice",'
         '"_prov":{"vendor":"road-safety","mode":"deterministic"}}')
     assert failures == [] and warnings == []
 
     # 外源数据卡打 deterministic 是**盖错章**——拿「我自己算的」躲开来源审计。
-    _, failures, _ = long_qa.audit_card_provenance(
+    _, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"weather","_prov":{"vendor":"qweather","mode":"deterministic"}}')
     assert failures == [_illegal_mode("deterministic", "weather")]
 
     # 反过来：内部确定性卡打 real 也是错的（§9.3「出现则 mode 必为 deterministic」）。
-    _, failures, _ = long_qa.audit_card_provenance(
+    _, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"safety_advice","_prov":{"vendor":"road-safety","mode":"real"}}')
     assert failures == [_illegal_mode("real", "safety_advice")]
 
 
 def test_truthfully_labelled_mock_is_a_warning_only_on_declared_card_types():
-    entries, failures, warnings = long_qa.audit_card_provenance(
+    entries, failures, warnings, _n = long_qa.audit_card_provenance(
         '{"type":"manual","_prov":{"vendor":"mock","mode":"mock"}}')
     assert entries == [
         {"provider": "mock", "mode": "mock", "card_type": "manual"}]
@@ -668,7 +685,7 @@ def test_truthfully_labelled_mock_is_a_warning_only_on_declared_card_types():
     assert warnings and warnings[0].startswith("manual 卡如实标注了 mock：mock")
 
     # 没登记过「mock 可接受」的卡型，出现 mock 仍是红。
-    _, failures, warnings = long_qa.audit_card_provenance(
+    _, failures, warnings, _n = long_qa.audit_card_provenance(
         '{"type":"place_list","_prov":{"vendor":"amap","mode":"mock"}}')
     assert failures == ["真栈卡片出现 mock provenance: amap"]
     assert warnings == []
@@ -676,18 +693,18 @@ def test_truthfully_labelled_mock_is_a_warning_only_on_declared_card_types():
 
 def test_mock_impersonating_real_is_still_a_failure_on_the_exempt_card():
     """豁免的是「如实标注的 mock」，不是「这张卡怎么盖章都行」。"""
-    _, failures, warnings = long_qa.audit_card_provenance(
+    _, failures, warnings, _n = long_qa.audit_card_provenance(
         '{"type":"manual","city":"深圳"}', required=True)
     assert failures == ["外部数据卡缺少真实性章"] and warnings == []
 
-    _, failures, _ = long_qa.audit_card_provenance(
+    _, failures, *_ = long_qa.audit_card_provenance(
         '{"type":"manual","_prov":{"vendor":"mock","mode":"typo"}}')
     assert failures == [_illegal_mode("typo", "manual")]
 
 
 def test_card_group_members_are_judged_by_their_own_card_type():
     """`card_group` 的章打在**成员卡**上（§9.3），判据也必须按成员的卡型走。"""
-    _, failures, warnings = long_qa.audit_card_provenance(json.dumps({
+    _, failures, warnings, _n = long_qa.audit_card_provenance(json.dumps({
         "type": "card_group",
         "items": [
             {"type": "safety_advice",

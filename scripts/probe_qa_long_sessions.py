@@ -489,7 +489,7 @@ def card_prov_rule(card_type: str) -> dict:
 
 def audit_card_provenance(
         card_text: str, *, required: bool = False,
-) -> tuple[list[dict], list[str], list[str]]:
+) -> tuple[list[dict], list[str], list[str], list[str]]:
     """提取卡片树里的真实性章 → `(章, 失败, 警告)`。
 
     ## 两把尺子方向相反，2026-08-27 由泓舟裁决拆开（fix plan C15）
@@ -506,6 +506,19 @@ def audit_card_provenance(
     · **「mock 冒充 real」永远是 fail**，这一档在上面两条之外：缺 `_prov`
       （`required` 那支）、provider 缺失、mode 写了个词表外的值，都判红。
 
+    ## `required` 的语义 2026-08-28 收窄成「**出了卡就必须有章**」
+
+    原来它把两件事判成同一件：「出了卡没盖章」（真缺陷）与「**这一轮压根没出卡**」。
+    后者在修好之后成了**正确行为**——真栈实测 INF-WEATHER T4「现在有影响开车的
+    天气预警吗」答「深圳当前没有生效的天气预警。」、INF-STOCK T41 答「没有找到
+    「000300.SH」的行情数据」，**没有数据所以不出卡**，判红等于要求它编一张卡。
+    ⇒ 无卡这一档改出 **note 不判 fail**（同 C2-D「『读不到』与『读到了但不对』
+    永远分开报」）。真要求「这一轮必须有卡」，用例请显式写 ``card_type``
+    ——**「要有章」和「要有卡」是两个主张，判据也该是两条。**
+
+    返回第四个通道就是这些 note：它们**不进 fail 也不进 WARN**，
+    只是让读数的人看见「这一轮为什么没被这条判据压到」。
+
     生产契约用的是 ``vendor``，少数外部卡历史上用 ``provider``。报告统一成
     ``provider``，但不把缺章的普通控制卡误判成 provider 卡。
     ``card_type`` 逐章记录（就近的 ``type``，`card_group` 成员用成员自己的）
@@ -513,11 +526,14 @@ def audit_card_provenance(
     """
     raw = str(card_text or "").strip()
     if not raw or raw == "{}":
-        return [], (["外部数据卡缺少真实性章"] if required else []), []
+        return [], [], [], ([
+            "本轮没有出卡（诚实降级也长这样）⇒ 对「外源卡必须盖章」**不构成证据**；"
+            "要求必须出卡请在用例上写 `card_type`"
+        ] if required else [])
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError) as exc:
-        return [], [f"卡片 JSON 无法审计 provenance: {type(exc).__name__}"], []
+        return [], [f"卡片 JSON 无法审计 provenance: {type(exc).__name__}"], [], []
 
     entries: list[dict] = []
 
@@ -542,7 +558,9 @@ def audit_card_provenance(
     walk(payload, "")
     failures: list[str] = []
     warnings: list[str] = []
+    notes: list[str] = []
     if required and not entries:
+        # 出了卡却一个章都没有 —— 这一档仍然是红，它才是原判据要抓的那件事。
         failures.append("外部数据卡缺少真实性章")
     for entry in entries:
         card_type = entry["card_type"]
@@ -562,7 +580,7 @@ def audit_card_provenance(
             failures.append(
                 f"外部数据卡真实性章 mode 非法: {mode}"
                 f"（{label}只许 {sorted(rule['modes'])}）")
-    return entries, failures, warnings
+    return entries, failures, warnings, notes
 
 
 def audit_stock_provenance_followup(row: dict, prior_rows: list[dict],
@@ -1266,12 +1284,14 @@ def audit_row_expectations(row: dict, rows: list[dict],
     """
     failures: list[str] = []
     warnings: list[str] = []
-    provenance, prov_failures, prov_warnings = audit_card_provenance(
+    provenance, prov_failures, prov_warnings, prov_notes = audit_card_provenance(
         row.get("card_text") or "",
         required=bool(expected.get("provenance_required")))
     row["provenance"] = provenance
     failures.extend(prov_failures)
     warnings.extend(prov_warnings)
+    if prov_notes:
+        row.setdefault("notes", []).extend(prov_notes)
 
     intents = ((row.get("trace") or {}).get("intents")) or []
     allowed = expected.get("intent_any") or []
