@@ -334,13 +334,20 @@ class WorkingSet:
     focus: "Focus | None" = None                       # 结构化焦点态（指代消解）
     # 落域可观测（数据飞轮 P0）：render_catalog 回填 {chars_full, chars_final, dropped}
     catalog_stats: dict = field(default_factory=dict)
+    # C6-B（2026-08-28，QA P1-03）：**本轮**要不要把粘性的地点/候选焦点注进 prompt。
+    # 「值得跨轮留住」与「这一轮该不该注入」是两个问题（§9.28 已有同款分离先例：
+    # 候选集的跨轮留存表与下发表刻意分开）。置位方是 `planning.build`——它按
+    # **声明式**判据置位（本轮命中了某条 `scope: clause` 的 route_hint ⇒ 这一轮有一个
+    # 自带完整语义的确定性诉求，不靠指代也说得清），编排核心不认识任何领域词。
+    suppress_sticky_places: bool = False
 
     def render_context(self) -> str:
         """焦点 + 记忆 + 历史块，统一字符预算、按优先级裁剪。
 
         优先级：焦点 > 记忆 > 历史（焦点/画像比旧对话轮更值得留）。无焦点且预算内时输出与旧
         `_format_memory + _format_history` 逐字一致（不扰动既有 LLM 行为）。"""
-        focus_block = _render_focus(self.focus)
+        focus_block = _render_focus(self.focus,
+                                    drop_sticky_places=self.suppress_sticky_places)
         mem_block = _render_memory(self.memories)
         budget_left = max(0, _CTX_BUDGET - len(focus_block) - len(mem_block))
         hist_block = _render_history(self.history, budget=budget_left)
@@ -489,8 +496,16 @@ def _render_history(history: list[dict] | None, budget: int = _CTX_BUDGET) -> st
     return ""
 
 
-def _render_focus(focus) -> str:
-    """结构化焦点 → 紧凑 prompt 块（仅非空字段）。供 LLM 在用户话术含指代时复用。"""
+def _render_focus(focus, drop_sticky_places: bool = False) -> str:
+    """结构化焦点 → 紧凑 prompt 块（仅非空字段）。供 LLM 在用户话术含指代时复用。
+
+    `drop_sticky_places=True`（C6-B）：**这一轮不注入粘性的地点/候选焦点**
+    （上个地点/上个目的地/上个城市/最新候选）。真栈 T55：三轮前的「万象城」与
+    「上海外滩」还挂在焦点里，planner 读到后把「先去接我妈」整个丢了，抓住
+    「川菜馆」+旧「万象城」组合出「万象城附近的川菜」并反问城市。
+    **安全告警、车控对象焦点与活动路线不在让路名单里**——前者是这轮回答的前提
+    （Q9），后两者是「这一句在说哪台设备/哪条路」的必要输入，让掉会制造新的洞。
+    """
     if not focus or focus.is_empty():
         return ""
     parts = []
@@ -510,15 +525,15 @@ def _render_focus(focus) -> str:
         parts.append("位置=" + "/".join(focus.positions))
     if focus.attr:
         parts.append(f"属性={focus.attr}")
-    if focus.last_poi:
+    if focus.last_poi and not drop_sticky_places:
         parts.append(f"上个地点={focus.last_poi}")
-    if focus.last_destination:
+    if focus.last_destination and not drop_sticky_places:
         parts.append(f"上个目的地={focus.last_destination}")
-    if focus.last_city:
+    if focus.last_city and not drop_sticky_places:
         parts.append(f"上个城市={focus.last_city}")
     if focus.last_stock_symbol:
         parts.append(f"上个股票标的={focus.last_stock_symbol}")
-    if focus.last_choices:
+    if focus.last_choices and not drop_sticky_places:
         purpose = ("顺路途经点选择"
                    if focus.last_choice_purpose == "waypoint" else "列表选择")
         parts.append(f"最新候选用途={purpose}")

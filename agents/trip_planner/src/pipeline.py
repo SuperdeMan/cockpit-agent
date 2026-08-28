@@ -320,10 +320,15 @@ def correct_stop_cities(trip: Trip, pool_by_city: dict | None = None) -> list[di
     return moved
 
 
-def _km_between(stop, ctr) -> float:
-    dlat = (float(stop.lat) - ctr.lat) * 111.0
-    dlng = (float(stop.lng) - ctr.lng) * 111.0
+def rough_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """等距近似的粗略公里数（本模块唯一一份，`_km_between` 与 C7-A 的城市锚共用）。"""
+    dlat = (float(lat1) - float(lat2)) * 111.0
+    dlng = (float(lng1) - float(lng2)) * 111.0
     return (dlat * dlat + dlng * dlng) ** 0.5
+
+
+def _km_between(stop, ctr) -> float:
+    return rough_km(stop.lat, stop.lng, ctr.lat, ctr.lng)
 
 
 # ─────────────────────────── propose ───────────────────────────

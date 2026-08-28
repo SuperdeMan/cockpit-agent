@@ -72,6 +72,11 @@ class Trip:
     days: int = 0
     theme: str = ""                 # G4 主题行程（《太平年》）；空=普通行程
     cities: list = field(default_factory=list)  # G9 多城市保序（["杭州","苏州"]）；空=单城市
+    # C7-B（2026-08-28）：用户点名要去的地方。此前它只是**规划期入参**，规划完就没了
+    # ——于是 `trip.modify` 的整程重规划路径把它整个丢掉（cities/theme 同理）。
+    # 「行程里有这几个点」和「用户点名要这几个点」是两件事：前者会被重规划洗掉，
+    # 后者是用户的要求，重规划必须把它再说一遍。
+    must_visit: list = field(default_factory=list)
     preferences: list = field(default_factory=list)
     status: str = "draft"           # draft|confirmed|active|completed
     cursor: dict = field(default_factory=lambda: {"day_index": 0, "stop_index": 0})
@@ -100,6 +105,7 @@ class Trip:
             days=int(d.get("days", 0) or 0),
             theme=d.get("theme", "") or "",
             cities=[str(c) for c in (d.get("cities") or []) if str(c).strip()],
+            must_visit=[str(c) for c in (d.get("must_visit") or []) if str(c).strip()],
             preferences=list(d.get("preferences") or []),
             status=d.get("status", "draft") or "draft",
             cursor=dict(d.get("cursor") or {"day_index": 0, "stop_index": 0}),

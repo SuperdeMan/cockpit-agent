@@ -1220,6 +1220,35 @@ cases:
       - input: {utterance: 从深圳欢乐海岸出发去世界之窗, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [navigation.estimate, navigation.search_poi], allow_extra_intents: false}
+  # C8（2026-08-28，QA P1-08）：**上面那条跑不到 T22 的真实条件**——它的 context 是空的，
+  # 而真栈里前一轮已经建起了路线会话，planner 读到焦点「当前正在导航」就落 reroute。
+  # reroute 当时**契约里没有 origin 维**，起点在算路/话术/卡片三处全硬编码「当前位置」。
+  # 所以这条变体验的不是「落哪个 intent」（两条都对），是**那一维有没有被接住**。
+  # ⚠ 家族与话术都要另起：同一条 utterance 跨 cohort、同一 family 跨 cohort 都被
+  # 契约守卫当场拒（本条第一版两样全犯）。cohort 取 `seen_regression` 是如实标注
+  # ——这条用例是**照着 C8 的修法**写的，不是未见迁移（同前三批的口径）。
+  - id: tu.nav.origin-with-active-route
+    title: 导航中说「从X出发去Y」（active_route 在场：换起点，不是丢起点）
+    family_id: tu.nav-reroute-origin
+    cohort: seen_regression
+    risk: high
+    status: reviewed
+    tags: {attacks: [A5], mechanisms: [focus, object_flip], domains: [navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    turns:
+      - input:
+          utterance: 从深圳北站出发去世界之窗
+          context:
+            focus: {last_intent: navigation.navigate_to, active_route: {destination: 世界之窗}}
+            history: [{role: user, text: 导航去世界之窗}, {role: assistant, text: 已为您规划路线}]
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [navigation.reroute, navigation.navigate_to]}]
+            forbidden_intents: [navigation.estimate, navigation.search_poi, trip.modify]
+            allow_extra_intents: false
+            slots:
+              - {intent: navigation.reroute, key: origin, matcher: presence}
+              - {intent: navigation.navigate_to, key: origin, matcher: presence}
   - id: tu.nav.estimate-paraphrase
     title: 去趟那儿得开多久（invariant 对照）
     family_id: tu.nav-estimate-vs-go

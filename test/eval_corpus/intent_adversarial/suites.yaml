@@ -116,12 +116,17 @@ schema_version: 1
 # 覆盖矩阵机械新增正例 2、硬负例 2（其中一条兼作 relation 对照，故本批 +4 不是 +5）。
 # 四条均为 `seen_regression`：**修复动的是分类规则本身，不能伪装成未见迁移**
 # （同上面两批的口径）。旧尺子一条没删。
+# 2026-08-28 放到 629：MiniMax QA 修复批第 4 批（C8）给 `navigation.reroute` 补了
+# `origin` 维。**这次 +1 不是新能力，是补一条跑得到真实条件的用例**——既有那条
+# `tu.nav.go-with-origin-not-estimate` 的 context 是空的，而 T22 的真实条件是
+# 焦点里已经有活动路线（planner 因此落 reroute 而不是 navigate_to），旧用例
+# 从来跑不到出事的那条路。`seen_regression`（照着修法写的），旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 628
+    max_cases: 629
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

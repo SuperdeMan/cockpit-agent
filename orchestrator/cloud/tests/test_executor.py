@@ -723,3 +723,136 @@ def test_streaming_direct_path_also_resolves_slots_before_dispatch():
     assert "_resolve_slot_refs" in branch, (
         "D0 流式直通分支必须先解析槽位；漏了它，挂在 executor 上的槽位逻辑"
         "（跨轮门店锚定等）在这条路上会静默失效")
+
+
+# ── C5-B：挂起不冻结兄弟步（2026-08-28，QA P1-03/P1-04）──────────────────
+# 真栈原形 T50「接孩子放学，顺便找麦当劳，5点到校」：nearby 丢了「麦当劳」槽反问，
+# **同轮的 navigate 一次都没发出去**——一个补槽问题把整轮劫持了。
+
+class _Act:
+    """action 是**对象**不是 dict，且 `_enforce_capability_confirm` 还要读
+    `.require_confirm`。⚠ 首版写成 dict，`_to_result` 当场 AttributeError、被
+    `gather(return_exceptions=True)` 兜成 FAILED——四条断言**全绿**，绿的却是
+    「步失败了」而不是「步挂起了」（FAILED 同样会拦住下游）。
+    **替身长得不像被测契约时，测试会走另一条路径给出同样的读数。**
+    所以这一族每条都显式断言 `status`，不只断言「哪些步跑了」。"""
+
+    def __init__(self, type_, payload=None):
+        self.type = type_
+        self.payload = payload or {}
+        self.require_confirm = False
+
+
+def _exec_with(statuses):
+    """按 intent 名给状态的执行器替身：{intent: grpc_status}。"""
+    seen = []
+
+    async def call(endpoint, intent, slots, ctx, meta):
+        seen.append(intent)
+        st = statuses.get(intent, 0)
+        return MockResponse(status=st, speech=f"{intent}-said",
+                            actions=[_Act(intent)])
+
+    return DagExecutor(call_agent_fn=call), seen
+
+
+def test_need_slot_does_not_freeze_an_independent_sibling():
+    import asyncio
+    ex, seen = _exec_with({"nearby.search": 2})     # 2 = NEED_SLOT
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="nearby", intent="nearby.search"),
+        Step(id="s2", agent_id="nav", intent="navigation.navigate_to"),
+    ])
+
+    async def run():
+        return [r async for r in ex.run(plan, None)]
+
+    results = asyncio.run(run())
+    assert {r.step_id for r in results} == {"s1", "s2"}
+    by_id = {r.step_id: r for r in results}
+    assert by_id["s1"].status == StepStatus.NEED_SLOT
+    assert by_id["s2"].status == StepStatus.OK
+    assert by_id["s2"].actions[0]["type"] == "navigation.navigate_to"
+    assert set(seen) == {"nearby.search", "navigation.navigate_to"}
+
+
+def test_need_slot_still_blocks_its_own_downstream():
+    """下游由 `_should_run`（依赖必须 OK）天然拦住——这里不需要第二份判据。"""
+    import asyncio
+    ex, seen = _exec_with({"nearby.search": 2})
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="nearby", intent="nearby.search"),
+        Step(id="s2", agent_id="shop", intent="shop.order", depends_on=["s1"]),
+    ])
+
+    async def run():
+        return [r async for r in ex.run(plan, None)]
+
+    results = asyncio.run(run())
+    assert [r.step_id for r in results] == ["s1"]
+    assert results[0].status == StepStatus.NEED_SLOT
+    assert seen == ["nearby.search"]
+
+
+def test_need_confirm_still_stops_the_whole_turn():
+    """对照：待确认是对**整轮**说的「先别做」，语义逐字不变。"""
+    import asyncio
+    ex, seen = _exec_with({"shop.order": 1})        # 1 = NEED_CONFIRM
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="shop", intent="shop.order"),
+        Step(id="s2", agent_id="w", intent="weather.query", depends_on=["s1"]),
+    ])
+
+    async def run():
+        return [r async for r in ex.run(plan, None)]
+
+    results = asyncio.run(run())
+    assert [r.step_id for r in results] == ["s1"]
+    assert results[0].status == StepStatus.NEED_CONFIRM
+    assert seen == ["shop.order"]
+
+
+def test_a_suspended_step_never_swallows_its_layer_mates_results():
+    """同层是 `asyncio.gather` 一次跑完的：挂起那条不许把已算出来的结果吞掉
+    ——那不是「没执行」，是「执行了但不报」。"""
+    import asyncio
+    ex, seen = _exec_with({"shop.order": 1})
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="shop", intent="shop.order"),      # NEED_CONFIRM
+        Step(id="s2", agent_id="w", intent="weather.query"),      # 同层、已执行
+    ])
+
+    async def run():
+        return [r async for r in ex.run(plan, None)]
+
+    results = asyncio.run(run())
+    assert {r.step_id for r in results} == {"s1", "s2"}
+    by_id = {r.step_id: r for r in results}
+    assert by_id["s1"].status == StepStatus.NEED_CONFIRM
+    assert by_id["s2"].status == StepStatus.OK
+    assert set(seen) == {"shop.order", "weather.query"}
+
+
+def test_need_slot_lets_a_later_layer_run_when_it_depends_on_something_else():
+    """跨层那一半：s3 依赖的是 s2（OK）不是挂起的 s1 ⇒ 它照跑。
+
+    ⚠ 这条是**反向验证补出来的**：前面三条里的兄弟步都在同一层，`asyncio.gather`
+    本来就会跑它们——把旧的「任一挂起当场 return」注射回去，那三条**一条都不红**。
+    真正被跨层语义决定的只有这一条。
+    """
+    import asyncio
+    ex, seen = _exec_with({"nearby.search": 2})
+    plan = Plan(steps=[
+        Step(id="s1", agent_id="nearby", intent="nearby.search"),      # NEED_SLOT
+        Step(id="s2", agent_id="w", intent="weather.query"),           # OK，同层
+        Step(id="s3", agent_id="r", intent="reminder.create",
+             depends_on=["s2"]),                                       # 下一层
+    ])
+
+    async def run():
+        return [r async for r in ex.run(plan, None)]
+
+    results = asyncio.run(run())
+    assert {r.step_id for r in results} == {"s1", "s2", "s3"}
+    assert {r.step_id: r.status for r in results}["s3"] == StepStatus.OK
+    assert "reminder.create" in seen

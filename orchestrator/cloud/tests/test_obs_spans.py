@@ -179,3 +179,49 @@ def test_goal_value_dropped_counts_any_step_slot():
     from orchestrator.cloud.engine import _goal_value_dropped
     plan = _plan_with('{"goal":"查明天天气并把空调调到26度"}', [{}, {"temperature": "26"}])
     assert _goal_value_dropped(plan) is False
+
+
+# ── C5-A 多意图覆盖度观测（2026-08-28，QA P1-04 前半 / P1-03 部分）───────
+# 真栈原形：同一句话在一个 persona 出两步、在另一个 persona 只出一步——
+# **方差本身就是零护栏的读数**。这一族断言把「哪一半丢了」变成机器可判的。
+
+def test_clause_uncovered_flags_the_t18_shape():
+    """「先查瑞幸，再点生椰拿铁不加糖」只出 nearby 一步 ⇒ 第二个诉求零覆盖。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"keyword": "瑞幸"}])
+    assert _clause_uncovered(plan, "先查瑞幸，再点生椰拿铁不加糖") == "1/2"
+
+
+def test_clause_uncovered_is_quiet_when_both_halves_landed():
+    """对照：两半都有 step 的槽值落在里面 ⇒ 不报（T21 成功轮）。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"keyword": "瑞幸"}, {"item": "生椰拿铁"}])
+    assert _clause_uncovered(plan, "先查瑞幸，再点生椰拿铁不加糖") == ""
+
+
+def test_clause_uncovered_needs_at_least_two_positive_clauses():
+    """这是个**多**意图判据：单句时它退化成「有没有槽值」，那是另一回事。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    assert _clause_uncovered(_plan_with("", [{}]), "打开空调") == ""
+    assert _clause_uncovered(_plan_with("", [{}]), "") == ""
+
+
+def test_clause_uncovered_drops_negated_clauses():
+    """「车窗别开」不是一个待覆盖的诉求——否定分句不进分母（runtime.polarity 共用）。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"keyword": "瑞幸"}])
+    # 两个分句里有一个是否定式 ⇒ 肯定分句只剩 1 个 ⇒ 无信号
+    assert _clause_uncovered(plan, "查一下瑞幸，别开车窗") == ""
+
+
+def test_clause_uncovered_ignores_one_char_slot_values():
+    """1 字的槽值在任何句子里都可能撞上，拿它判覆盖是把噪声当信号。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"n": "1"}, {"ok": "是"}])
+    assert _clause_uncovered(plan, "先查瑞幸，再点生椰拿铁") == "2/2"
+
+
+def test_clause_uncovered_needs_steps():
+    """零步计划归「缺步」检测器管，本条不重复报。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    assert _clause_uncovered(_plan_with("", []), "先查瑞幸，再点生椰拿铁") == ""

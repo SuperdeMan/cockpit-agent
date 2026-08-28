@@ -342,6 +342,14 @@ def test_compound_person_pickup_with_enroute_stop_routes_to_navigation():
 
 
 def test_compound_person_pickup_hint_does_not_take_other_user_goals():
+    """⚠ **这条锁 2026-08-28 显式改过一格**（C6-A）：「接孩子后去万象城」原本在
+    这张名单里——「带后续目的地的复合句均不命中」当时是刻意的裁定，把复合句留给
+    LLM。真栈把这笔账收了（T53 答成商场列表、T55 被三轮前的旧焦点劫持），
+    所以那一句移到下面 `..._now_keeps_the_pickup_half` 里，**由分句档 append 接住**。
+
+    名单其余各条一条没松：它们验的是**整句 replace 档不许劫持别的诉求**
+    ——replace 会把整条计划换掉，与分句档 append 的伤害面根本不是一回事。
+    """
     import pathlib
 
     from agents._sdk.manifest import load_manifest
@@ -352,11 +360,9 @@ def test_compound_person_pickup_hint_does_not_take_other_user_goals():
     for text in (
         "帮我找一家麦当劳",
         "明天下午提醒我接孩子放学",
-        "接孩子后去万象城",
         "今天不要接孩子，路上也别买咖啡",
         "怎么接孩子放学才不堵车",
         "接孩子时把手机声音调低",
-        "接孩子放学，路上咖啡洒了",
         "接女儿放学，路上买杯咖啡，然后播放音乐",
         "去接他爸",
         "送你妈",
@@ -364,6 +370,28 @@ def test_compound_person_pickup_hint_does_not_take_other_user_goals():
         plan = _plan("chitchat.talk")
         assert _engine().apply(plan, text, amap) is False, text
         assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_the_compound_pickup_sentence_now_keeps_the_pickup_half():
+    """C6-A 的**显式行为变更**：「接X + 任意后续」不再整句落空。
+
+    分句档 append 补一步 `navigate_to(destination=人称)`，LLM 原来那一半原样保留
+    ——`append` 不是 `replace`，它只保证接人那一半被看见一次。
+    """
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
+    amap = {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+    for text, person in (("接孩子后去万象城", "孩子"),
+                         ("去接孩子后去万象城", "孩子")):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is True, text
+        intents = [s.intent for s in plan.steps]
+        assert intents == ["chitchat.talk", "navigation.navigate_to"], text
+        assert plan.steps[1].slots == {"destination": person}
 
 
 def test_plain_person_pickup_routes_to_navigation_without_model_variance():
@@ -395,12 +423,13 @@ def test_plain_person_pickup_hint_does_not_take_negated_or_embedded_phrases():
     root = pathlib.Path(__file__).resolve().parents[3]
     navigation = load_manifest(str(root / "agents" / "navigation" / "manifest.yaml"))
     amap = {"navigation": SimpleNamespace(manifest=navigation, endpoint="x:0")}
+    # ⚠ 同上：「去接孩子后去万象城」2026-08-28 移出本名单（C6-A 显式变更），
+    # 由 `test_the_compound_pickup_sentence_now_keeps_the_pickup_half` 接管。
     for text in (
         "明天下午提醒我去接老婆",
         "我不想去接老婆",
         "怎么去接孩子才不堵车",
         "导航去机场接我爸",
-        "去接孩子后去万象城",
         "去接他爸",
         "送你妈",
     ):

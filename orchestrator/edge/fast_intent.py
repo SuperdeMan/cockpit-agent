@@ -7,6 +7,7 @@
 from __future__ import annotations
 import re
 
+from runtime.clause_split import SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
 from runtime.question_shape import is_non_directive_question
@@ -1542,14 +1543,11 @@ def is_local(name: str) -> bool:
 # "再" is short and ambiguous, so it requires a preceding comma.
 # Plain comma is the final fallback (tried last, only when no keyword follows).
 # "还有"作连接词才拆；"还有多少/几/没"是问量短语（如"电量还有多少"），不拆。
-_SPLIT_MARKERS = re.compile(
-    r"[，,]?\s*(?:并且|同时|然后|接着|顺便|顺带|还有(?!多少|几|没)|另外)\s*|"
-    r"(?<![合])并(?![且])\s*|"
-    r"[，,]\s*再\s*|"
-    r"[，,]\s*"
-)
-# 同一套分隔符，带捕获组——re.split 会把分隔符本身也交回来，供分组判「顺承还是补语」。
-_SPLIT_MARKERS_CAPTURING = re.compile(f"({_SPLIT_MARKERS.pattern})")
+# 分隔符表 2026-08-28 迁进 `runtime/clause_split.py`（C5-A）：云侧编排也要按同一张表
+# 拆句做覆盖度观测，而云侧镜像够不着 `orchestrator/edge`。**表共用、语义不共用**
+# ——下面的「和」二次拆分、并列对象展开、场景句拦截仍是端侧特有的。
+_SPLIT_MARKERS = SPLIT_MARKERS
+_SPLIT_MARKERS_CAPTURING = SPLIT_MARKERS_CAPTURING
 
 # 顺承连词：引出的是**新的一件事**。补语（「周杰伦的」「走最快的那条路」）跟在**裸逗号**后面
 # ——这是中文口语里稳定的分工，也是把「新请求」从「上一句的补语」里分出来的免费信号。

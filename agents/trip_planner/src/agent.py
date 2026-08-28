@@ -26,7 +26,7 @@ from .pipeline import (build_poi_pool, build_theme_pool, theme_hint,
                        ensure_must_visit_in_itinerary, correct_stop_cities,
                        propose, ground, solve, narrate,
                        plan_weather, _weather_hint, _norm_days,
-                       _ground_one, _poi_to_dict)
+                       rough_km, _ground_one, _poi_to_dict)
 from .extract import (extract_trip, extract_theme, extract_cities,
                       is_direction_dest, _CITY_SPLIT_RE)
 
@@ -88,6 +88,21 @@ _DAY_PREFIX_RE = re.compile(r"^第\s*[一二两三四五六七八九十0-9]+\s*�
 # 结构化编辑：删/加某个具体停靠点（『换』走整天重规划，不在此匹配）
 _REMOVE_RE = re.compile(r"(?:删掉|删除|去掉|不去|不想去|不要去|去不了|取消)\s*([^，。,、\s了]{2,12})")
 _ADD_RE = re.compile(r"(?:加一个|加个|再加|增加|多加|加上|想去|顺便去|顺路去)\s*([^，。,、\s]{2,12})")
+# C7-C（2026-08-28，QA P1-09）：否定式顺序约束「不要把A排到B前面」。
+# 它此前**三张词表一张都不含**（_REMOVE_RE/_ADD_RE/_replace 逐条实测 None）⇒ 必然掉进
+# 路径③整程重规划，而路径③把 cities/theme 全丢了——跨城混排与「3 天变 4 天」都源于此。
+# 判据零领域词：A/B 只在**行程自己的城市表**里解析，一个城市名都不写死。
+_ORDER_CONSTRAINT_RE = re.compile(
+    r"(?:不要|不想|别|不能|不许|不得)\s*(?:把|将)?\s*([^，。,、\s]{2,10}?)\s*"
+    r"(?:排|放|安排|调|摆)\s*(?:到|在|去|得)?\s*([^，。,、\s]{2,10}?)\s*"
+    r"(?:的)?\s*(?:前面|前边|之前|前头)")
+# C7-B：修改话术里**有没有点名天数**。「第N天」是定位不是天数，负向后顾排掉——
+# 不排掉的话「第二天换成宋城」会被当成「用户说了天数」，守恒闸整条失效。
+_DAY_COUNT_RE = re.compile(r"(?<!第)\s*(?:[0-9]+|[一二两三四五六七八九十]+)\s*天")
+# C7-A：裸 POI 名的跨城披露闸。150km 与 navigation R1 的区县级可信闸**同一把尺子**
+# ——「用户裸报一个名字时心智是本地」在两处是同一条判断。
+_CROSS_CITY_KM = 150.0
+
 # R8：天气驱动改排——「哪天要下雨的话，把那天的安排换成室内的」（雨×室内 / 雨×换改调）
 _RAIN_INDOOR_RE = re.compile(
     r"(下雨|有雨|雨天|要下雨).{0,15}(室内|屋里)|室内.{0,10}(雨|下雨)|"
@@ -178,11 +193,72 @@ class TripPlannerAgent(BaseAgent):
                     pool.append(p)
         return pool
 
+    # ── C7-A：接地的城市锚 ────────────────────────────────────
+    async def _city_anchor(self, dest: str, cities: list, meta):
+        """裸 POI 名的城市锚与跨城披露。返回 `(near, disclosure_or_None)`。
+
+        病历：`build_poi_pool` 四个调用点 `near` 恒 None（注释明写是设计：靠关键词
+        「{dest} 景点」定位）⇒ `place_text` 走全国序，「万象城 美食」命中**杭州**，
+        而唯一的校验 `name_matches` 是子串包含，「万象城」⊂「杭州万象城店」直接放行。
+
+        **为什么不整套复用 navigation 的 R1**（方案要求先评估）：R1 的救济链
+        （去偏置全国重搜 / 地标 LLM / 类目锚词复核）解的是**反方向**的问题——就近搜
+        返回垃圾时怎么捞回全国唯一的那个地标；trip 这边要的恰恰相反，是**别捞到
+        外地那个同名的**。整块下沉 `_find_destination` 要连 `_dest_matches`/
+        `_category_anchor`/`_grounds_to`/`_rough_km`/landmark 一起搬（数百行 + 全套
+        navigation 测试），换来的是一条方向相反的救济链。**复用的是它真正共用的那一件**：
+        `geocode_level`（provider 能力，charging_planner 已有同款复用先例）与
+        150km 这把尺子——「用户裸报一个名字时心智是本地」在两处是同一条判断。
+
+        三段判据，全部零领域词：
+        ① 多城行程（cities≥2）自己就点了城，不加锚；
+        ② 目的地本身是行政区划（geocode level）⇒ 用户说的就是城市，不加锚
+           （「去三亚玩三天」不该被锚在深圳）；
+        ③ 否则是裸 POI 名：以当前位置为锚。接地结果离当前位置超过 150km ⇒
+           **披露而不是直接排行程**（NEED_SLOT 让用户裁决，同 R1「区县级裸名
+           只在 150km 内可信」那条）。
+        """
+        if len(cities or []) >= 2 or not dest:
+            return None, None
+        current = current_location_from_meta(meta)
+        if current is None:
+            return None, None            # 没有锚就不猜——同「认不出就返回空」
+        level_fn = getattr(self.poi, "geocode_level", None)
+        if level_fn and 2 <= len(dest) <= 4:
+            try:
+                level, _loc = await level_fn(dest, meta=meta)
+            except Exception as e:       # provider 抖动不该阻断规划
+                logger.debug("trip geocode level probe failed: %s", e)
+                level = ""
+            if level in ("国家", "省", "市", "区县"):
+                return None, None
+        try:
+            found = await self.poi.search(dest, near=current, limit=1, meta=meta)
+        except Exception as e:
+            logger.debug("trip city anchor probe failed: %s", e)
+            return None, None
+        if not found or found[0].lat is None:
+            return None, None            # 搜不到交给流水线照常诚实降级
+        km = rough_km(current.lat, current.lng,
+                      float(found[0].lat), float(found[0].lng))
+        if km <= _CROSS_CITY_KM:
+            return current, None
+        top = found[0]
+        where = (top.address or "").strip()
+        return None, AgentResult(
+            status=NEED_SLOT,
+            speech=f"我找到的「{top.name}」在{where or '外地'}，"
+                   f"离您现在的位置约{round(km)}公里。要按这个地方排行程吗？"
+                   "如果是本地的那家，说一下城市我重新排。",
+            follow_up="例如「深圳的那家」",
+            missing_slots=["destination"])
+
     # ── 规划流水线 ─────────────────────────────────────────────
     async def _run_pipeline(self, ctx, meta, dest: str, days: str, prefs: str,
                             raw_text: str, theme: str = "",
                             cities: list[str] | None = None,
-                            must_visit: list[str] | None = None) -> tuple[Trip, dict]:
+                            must_visit: list[str] | None = None,
+                            near=None) -> tuple[Trip, dict]:
         """propose → ground → solve，产出结构化 Trip 与**软层观测**（E3）。
 
         G9 多城市（cities ≥2）：逐城建池（各「{city} 景点/美食」）、propose 按序分天
@@ -205,7 +281,9 @@ class TripPlannerAgent(BaseAgent):
         else:
             cities = []
             # 目的地是行程城市（非当前位置）→ pool 搜索 near=None，靠关键词「{dest} 景点」定位。
-            pool = await build_poi_pool(self.poi, dest, prefs, None, meta)
+            # C7-A 例外：目的地是**裸 POI 名**（「万象城」，geocode 判不出行政级）时
+            # `near` 由 `_city_anchor` 给出当前位置——全国序会把「万象城 美食」搜到杭州。
+            pool = await build_poi_pool(self.poi, dest, prefs, near, meta)
         # G4 主题检索步：主题相关地点经 LLM 提议 + 高德接地验证后**并入**池
         # （去重按名，池的封闭纪律不变——只是入池来源多一路）。
         theme_names: list[str] = []
@@ -258,6 +336,8 @@ class TripPlannerAgent(BaseAgent):
             obs["city_fixes"] = fixes
         if theme and theme_names:
             trip.theme = theme          # 接地成功才标主题（narrate 据此带主题话术）
+        # C7-B：点名地点随行程持久化——`trip.modify` 的整程重规划要把它再说一遍。
+        trip.must_visit = [w for w in (must_visit or []) if str(w).strip()]
         soc = await self._soc_pct(ctx, meta)
         trip = await solve(self.poi, trip, soc, meta)
         # 每天填天气（卡片/话术展示；按 day_index 对齐，超预报窗口的天保持 None）
@@ -326,9 +406,14 @@ class TripPlannerAgent(BaseAgent):
             dest, cities = cities[0], []       # 只剩一城 → 退回单城路径
         days = _days_for_cities(days, cities)
 
+        # C7-A：裸 POI 名先过跨城闸（「接孩子后去万象城」→ 杭州万象城 1 天行程）。
+        near, disclosure = await self._city_anchor(dest, cities, meta)
+        if disclosure is not None:
+            return disclosure
         trip, obs = await self._run_pipeline(ctx, meta, dest, days, prefs,
                                              intent.raw_text, theme=theme,
-                                             cities=cities, must_visit=must_visit)
+                                             cities=cities, must_visit=must_visit,
+                                             near=near)
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
         attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
@@ -363,6 +448,14 @@ class TripPlannerAgent(BaseAgent):
         prefs = "、".join(trip.preferences)
         soc = await self._soc_pct(ctx, meta)
 
+        # C7-C：**先问一句「这条约束是不是已经满足了」**。否定式顺序约束
+        # 「不要把A排到B前面」三张编辑词表一条都不认，于是必然掉进路径③整程重规划
+        # ——而重规划本身就是跨城混排与「3 天变 4 天」的来源。已满足就零重规划、
+        # 零确认直答：**没动您的方案**这句话本身就是答案。
+        satisfied = self._order_constraint_satisfied(trip, modification)
+        if satisfied:
+            return AgentResult(speech=satisfied, ui_card=trip.card_dict())
+
         # R8（旅程 B3-1）：「哪天要下雨就把那天换成室内的」——天气驱动按天改排。
         # 雨天判定用行程已存的 Day.weather（plan_weather 对齐的预报）**确定性**定位目标天，
         # 逐天走单天重规划（路径②同机制）+ 强室内约束；无雨天诚实说不用改。
@@ -371,6 +464,11 @@ class TripPlannerAgent(BaseAgent):
             return await self._modify_rainy_days_indoor(
                 ctx, meta, trip, dest, prefs, soc, modification)
 
+        # 重规划会整个换掉 trip 对象，这三样要在**换掉之前**取（C7-B）。
+        original_days = int(trip.days or 0)
+        theme_before = trip.theme
+        cities_before = list(trip.cities or [])
+        must_visit_before = list(trip.must_visit or [])
         # ① 结构化编辑优先：加/删某个具体停靠点（只动受影响项，跨天去重）。
         if await self._apply_structural_edit(trip, modification, meta):
             trip = await solve(self.poi, trip, soc, meta)
@@ -396,19 +494,99 @@ class TripPlannerAgent(BaseAgent):
                 trip = await solve(self.poi, trip, soc, meta)
             else:
                 # ③ 定位不到具体天 → 整程重规划（把修改并入偏好上下文）。
+                #    ⚠ **上下文要整套带过去**（C7-B）：路径③此前只传 6 个位置参数，
+                #    `cities/theme/must_visit` 全丢——多城逐城建池当场退化成把
+                #    「深圳、广州、珠海 景点」当一个高德关键词搜，跨城混排的池子
+                #    就是这么来的；多城 propose 的保序指令也只写在多城分支里，
+                #    cities 一丢就永远走不到。丢上下文是纯 bug，不是取舍。
                 trip, _ = await self._run_pipeline(
-                    ctx, meta, dest, str(trip.days or ""),
-                    f"{prefs} {modification}".strip(), modification)
+                    ctx, meta, dest, str(original_days or ""),
+                    f"{prefs} {modification}".strip(), modification,
+                    theme=theme_before, cities=list(cities_before),
+                    must_visit=list(must_visit_before))
+                trip = await self._keep_days(
+                    ctx, meta, trip, original_days, modification, prefs, dest,
+                    theme_before, cities_before, must_visit_before)
 
         await self._save_trip(ctx, trip)
         speech, card = narrate(trip)
         attach(card, self.poi)  # trip_itinerary 卡盖 _prov 章（验收补口：此前全族无标）
+        drift = self._days_drift_note(original_days, trip, modification)
         return AgentResult(
             status=NEED_CONFIRM,
-            speech=f"{speech}\n\n确认按此调整吗？",
+            speech=f"{speech}\n\n{drift}确认按此调整吗？",
             ui_card=card,
             follow_up="说『确认』即可",
         ).action("trip.modify", {"modification": modification}, require_confirm=True)
+
+    # ── C7（2026-08-28，QA P1-09）：修改的三条不变量 ───────────────────
+    @staticmethod
+    def _order_constraint_satisfied(trip: Trip, text: str) -> str:
+        """否定式顺序约束「不要把A排到B前面」已经成立时，返回一句直答；否则空串。
+
+        **判据零领域词**：A/B 只在 `trip.cities` 里解析，城市名一个都不写死
+        （同 `_candidate_label` 的分工——领域值由产生方给，判据这边只认结构）。
+        解析不出任何一侧就返回空串走原路：**认不出就让路**，不替用户裁决。
+        """
+        cities = [str(c).strip() for c in (trip.cities or []) if str(c).strip()]
+        if len(cities) < 2:
+            return ""
+        m = _ORDER_CONSTRAINT_RE.search(text or "")
+        if not m:
+            return ""
+
+        def _resolve(token: str) -> str:
+            token = (token or "").strip()
+            for c in cities:
+                if c and (c in token or token in c):
+                    return c
+            return ""
+
+        a, b = _resolve(m.group(1)), _resolve(m.group(2))
+        if not a or not b or a == b:
+            return ""
+        # 约束语义：A 不许排在 B 前面 ⇒ 现行程里 B 必须在 A 前面。
+        if cities.index(b) < cities.index(a):
+            return (f"现在就是{b}在{a}前面（{'、'.join(cities)}），"
+                    "没动您的方案。")
+        return ""
+
+    async def _keep_days(self, ctx, meta, trip: Trip, original_days: int,
+                         modification: str, prefs: str, dest: str,
+                         theme: str, cities: list, must_visit: list) -> Trip:
+        """C7-B 未提及维度守恒：这句修改里没提天数 ⇒ 天数不许自己变。
+
+        `solve` 在单日超上限时会新建整天并回写 `trip.days`（pipeline 既有语义），
+        跨城混排一撑爆 drive_min，3 天就「合法地」变成 4 天。这里**回炉一次**：
+        把「保持 N 天」显式写进重规划上下文再跑一遍。还不等就不再硬掰
+        ——由 `_days_drift_note` 把它变成一次**显式选择**，而不是静默扩天。
+        """
+        if not original_days or _DAY_COUNT_RE.search(modification or ""):
+            return trip
+        if int(trip.days or 0) == original_days:
+            return trip
+        retried, _ = await self._run_pipeline(
+            ctx, meta, dest, str(original_days),
+            f"{prefs} {modification} 保持{original_days}天不变".strip(),
+            modification, theme=theme, cities=list(cities),
+            must_visit=list(must_visit))
+        return retried if int(retried.days or 0) == original_days else trip
+
+    @staticmethod
+    def _days_drift_note(original_days: int, trip: Trip, modification: str) -> str:
+        """天数被改动且用户没要求过 ⇒ 在确认话术里**说出来**。
+
+        静默扩天最坏的地方不是多一天，是用户以为自己只提了一条顺序要求。
+        用户自己说了天数（「改成四天」）时这条不响——那不是漂移，是要求。
+        """
+        now = int(trip.days or 0)
+        if not original_days or now == original_days:
+            return ""
+        if _DAY_COUNT_RE.search(modification or ""):
+            return ""
+        verb = "放不下" if now > original_days else "用不满"
+        return (f"⚠ 按您这条要求调整，原来的{original_days}天{verb}，"
+                f"会变成{now}天。")
 
     async def _modify_rainy_days_indoor(self, ctx, meta, trip: Trip, dest: str,
                                         prefs: str, soc, modification: str) -> AgentResult:
@@ -628,10 +806,19 @@ class TripPlannerAgent(BaseAgent):
 
     # ── 在途状态查询（P2，只读）─────────────────────────────────
     async def _status(self, intent, ctx, meta) -> AgentResult:
-        """在途进度：在第几站/下一站/还剩几站/全程补电几次。不改行程。"""
+        """在途进度：在第几站/下一站/还剩几站/全程补电几次。不改行程。
+
+        C7-D（2026-08-28，QA P1-09）：**「第二天有哪些安排」以前答的是游标进度**。
+        缺的只是读侧——`itinerary[].day_index` 与每站 stops 早就是结构化的，
+        `_find_by_day_ordinal` 就在同一个文件里，`_status` 一个都没调（同 Q7 那条
+        「写侧齐全、缺的是读侧」）。按天读走 `day` 槽，槽空时从原话兜底解析。
+        """
         trip = await self._load_trip(ctx)
         if not trip or not trip.itinerary:
             return AgentResult(speech="您还没有规划行程。说『去某地玩几天』我就帮您安排。")
+        day_n = self._status_day(intent)
+        if day_n:
+            return self._status_of_day(trip, day_n)
         flat = self._flatten_grounded(trip)
         total = len(flat)
         cur = trip.cursor or {}
@@ -652,6 +839,40 @@ class TripPlannerAgent(BaseAgent):
         return AgentResult(
             speech="，".join(parts) + "。", ui_card=trip.card_dict(),
             data={"total": total, "remaining": len(remaining), "charging": charge_total})
+
+    @staticmethod
+    def _status_day(intent) -> int:
+        """本轮问的是第几天：`day` 槽优先，槽空回退原话。解析不到返回 0。"""
+        raw = str((intent.slots or {}).get("day") or "").strip()
+        if raw.isdigit():
+            return int(raw)
+        return (TripPlannerAgent._modify_day(raw)
+                or TripPlannerAgent._modify_day(intent.raw_text or ""))
+
+    def _status_of_day(self, trip: Trip, day_n: int) -> AgentResult:
+        """按天渲染这一天的停靠点。**没有这一天要如实说**，不要退回整程进度
+        ——退回去就是把「答非所问」包装成「答了」。"""
+        day = trip.day(day_n)
+        if day is None:
+            return AgentResult(
+                speech=f"这趟{trip.destination}行程一共{trip.days}天，没有第{day_n}天。",
+                ui_card=trip.card_dict())
+        flat = self._flatten_grounded(trip)
+        inday = [t[2] for t in flat if t[0] == day_n]
+        if not inday:
+            return AgentResult(
+                speech=f"第{day_n}天还没有排上具体的地点。",
+                ui_card=trip.card_dict())
+        where = f"（{day.city}）" if day.city else ""
+        names = "、".join(f"{i}. {s.name}" for i, s in enumerate(inday, 1))
+        charge = sum(len(leg.charging_stops) for leg in day.legs)
+        speech = f"第{day_n}天{where}共{len(inday)}站：{names}"
+        if charge:
+            speech += f"；这天需补电{charge}次"
+        return AgentResult(
+            speech=speech + "。", ui_card=trip.card_dict(),
+            data={"day": day_n, "stops": [s.name for s in inday],
+                  "charging": charge})
 
     # ── 在途重排：确定性精简剩余行程（P2）──────────────────────
     async def _reschedule(self, intent, ctx, meta) -> AgentResult:

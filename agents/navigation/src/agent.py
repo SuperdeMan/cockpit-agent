@@ -1326,8 +1326,9 @@ class NavigationAgent(BaseAgent):
         与顺路途经点的 route_plan 卡同一范式，让用户直观看到"已规划好路线（起点→终点）"。
 
         `origin`（Q8 的 origin 槽解析结果）非空时**它就是起点**：算路、卡片、动作载荷
-        三处一起换掉。⚠ **覆盖面写在这里**：接了 origin 的只有这条普通导航路径；
-        顺路停靠 / 途经点 / 常用地点三条仍按当前位置起算（行为与本批之前逐字一致）。
+        三处一起换掉。⚠ **覆盖面写在这里**：接了 origin 的是这条普通导航路径、
+        `_estimate` 与 `_reroute`（后者 2026-08-28 随 C8 补上，契约同批加了 origin 槽）；
+        顺路停靠 / 途经点 / 常用地点三条仍按当前位置起算（行为与那批之前逐字一致）。
         它们要接的时候在这三处各传一次即可——**不覆盖的部分要写下来，不要让读的人
         以为全都接上了**。
         """
@@ -1497,11 +1498,17 @@ class NavigationAgent(BaseAgent):
         return ""
 
     async def _reroute(self, intent, ctx, meta) -> AgentResult:
-        """G8：增量调整当前活动路线（删/加途经点、换路线策略、改目的地）。
+        """G8：增量调整当前活动路线（删/加途经点、换路线策略、改目的地、换起点）。
 
         只动被点名的那一项，其余约束（目的地/时限/策略/其余途经点）保持并重出
         G1 时限判定。产出仍是 navigate action（非危险动作，与 navigate_to 同级），
         坐标全部来自 meta 注入的路线会话与本轮高德接地——不经 LLM 转手。
+
+        C8（2026-08-28，QA P1-08）：`origin` 是本条**新补的一维**。此前用户在导航中
+        说「从深圳欢乐海岸出发去世界之窗」，planner 选 reroute 没错——错的是这个
+        intent **少一维**：起点在算路、话术、卡片三处全是硬编码的「当前位置」。
+        补法与 `_route_plan_to` 同款（`origin` 非空时三处一起换），解析不出走
+        `_resolve_point` 的「绝不悄悄回落当前位置」语义诚实反问。
         """
         raw_text = (intent.raw_text or "").strip()
         session = self._active_route_from(meta)
@@ -1509,6 +1516,21 @@ class NavigationAgent(BaseAgent):
             return AgentResult(
                 speech="当前没有正在进行的导航。直接说「导航去某地」，我就为您规划路线。",
                 follow_up="例如『导航去万象天地，顺路买杯咖啡』")
+
+        # ⓪ 换起点（C8）：**先于所有改动判**——解析不出要诚实反问，不能在改完
+        #    目的地/途经点之后才发现起点没着落。
+        origin_text = (intent.slots.get("origin") or "").strip()
+        origin_pair = None
+        if origin_text:
+            o_name, o_pt = await self._resolve_point(origin_text, ctx, meta)
+            if o_pt is None:
+                return AgentResult(
+                    status=NEED_SLOT,
+                    speech=f"我没找到您说的起点「{o_name or origin_text}」，"
+                           "换个说法再试试？",
+                    follow_up="可以说「从深圳北站出发」",
+                    missing_slots=["origin"])
+            origin_pair = (o_name, o_pt)
 
         orig_dest = session["destination"]
         dest_name, dest_lat, dest_lng = orig_dest, session["lat"], session["lng"]
@@ -1594,7 +1616,9 @@ class NavigationAgent(BaseAgent):
         if (add_word and add_word not in (remove_word or "")
                 and not self._dest_matches(add_word, dest_name)):
             keyword = self._stop_keyword(add_word)
-            current = current_location_from_meta(meta)
+            # 起点被显式换掉时，顺路点也该按**新起点**找——「当前位置」这时候
+            # 不再是这趟路的起点（C8）。
+            current = origin_pair[1] if origin_pair else current_location_from_meta(meta)
             near = (GeoPoint(lat=current.lat, lng=current.lng) if current
                     else GeoPoint(lat=dest_lat, lng=dest_lng))
             try:
@@ -1626,18 +1650,25 @@ class NavigationAgent(BaseAgent):
                          else "已按不走高速重新规划")
             changed = True
 
+        if origin_pair:
+            notes.append(f"起点改为{origin_pair[0]}")
+            changed = True
+
         if not changed and not notes:
             return AgentResult(
                 speech="您想怎么调整当前路线？可以说「某某不去了」「顺路加个加油站」"
                        "「换条避堵的路」或「目的地改成某地」。",
                 follow_up="告诉我要调整哪一项即可")
 
-        # ⑤ 重算路线（当前位置 →（途经点）→ 目的地）+ G1 时限判定 + 写回会话。
-        payload = self._navigate_payload(dest_name, dest_lat, dest_lng, meta)
+        # ⑤ 重算路线（起点 →（途经点）→ 目的地）+ G1 时限判定 + 写回会话。
+        #    起点：用户明说的 origin 优先于本轮 GPS（C8，同 `_navigate_payload` 的口径）。
+        origin_label = origin_pair[0] if origin_pair else "当前位置"
+        payload = self._navigate_payload(dest_name, dest_lat, dest_lng, meta,
+                                         origin_pair[1] if origin_pair else None)
         if waypoints:
             payload["waypoints"] = [dict(w) for w in waypoints]
         distance_km = duration_min = 0
-        current = current_location_from_meta(meta)
+        current = origin_pair[1] if origin_pair else current_location_from_meta(meta)
         if current:
             try:
                 route = await self.poi.get_route(
@@ -1652,12 +1683,12 @@ class NavigationAgent(BaseAgent):
                 logger.debug("reroute route recalc unavailable: %s", e)
         deadline_note, extra = self._deadline_note(duration_min, arrive_by_ts)
         wp_names = "、".join(str(w["name"]) for w in waypoints)
-        head = "；".join(notes) + "。当前路线：当前位置 → " \
+        head = "；".join(notes) + f"。当前路线：{origin_label} → " \
             + (f"{wp_names} → " if wp_names else "") + dest_name
         if distance_km:
             dur = self._fmt_dur(duration_min)
             head += f"，全程约{distance_km}公里" + (f"、约{dur}" if dur else "")
-        card = attach({"type": "route_plan", "origin": "当前位置",
+        card = attach({"type": "route_plan", "origin": origin_label,
                        "destination": dest_name,
                        "waypoints": [{"name": w["name"], "address": ""}
                                      for w in waypoints],

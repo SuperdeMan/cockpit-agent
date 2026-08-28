@@ -217,14 +217,24 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 「已经拿到一个宽词」之后补救，让它一开始就别放宽更便宜。
     # ⚠ 同批的「第二个先取消，其他继续」**刻意没进 examples**——那句要教的是
     # 复合说法怎么落域，归范例库（检索式 few-shot），不占 catalog 常驻预算。
-    assert catalog.catalog_stats["chars_full"] == 13449
-    assert catalog.catalog_stats["chars_final"] == 13449
+    # 2026-08-28 +253 → 13702：QA 修复批第 4 批的三笔**能力面**改动，条数不变。
+    # ① `navigation.reroute` 补 `origin` 维（C8）：描述加一句「换起点」+ 一条示例
+    #    ——planner 选 reroute 没错，错的是这个 intent **少一维**（用户在导航中说
+    #    「从X出发去Y」时契约表达不了，起点在算路/话术/卡片三处全是硬编码）。
+    # ② `trip.plan` 补**排除子句**（C7-E）：「单点当天出行/接送不归本条」。
+    #    它与 navigation 的判别化描述对齐——修落域的默认产物是描述与范例，不是 hint。
+    # ③ `trip.status` 补 `day` 槽与两条示例（C7-D）：写侧的 `itinerary[].day_index`
+    #    早就够了，缺的一直是读侧（「第二天有哪些安排」答成游标进度）。
+    # 三笔都是**判别句**而不是功能罗列——描述就是 planner 的选择权重（同 volume.mute
+    # 与 media.stop 两笔的理由）。默认 16k 下仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 13702
+    assert catalog.catalog_stats["chars_final"] == 13702
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13449 → 2551）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13702 → 2298）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2551
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2298
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

@@ -61,6 +61,8 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             priority=int(h.get("priority", 0)),
             guard=h.get("guard", ""),
             slots={k: str(v) for k, v in (h.get("slots") or {}).items()},
+            # C6-A：匹配范围。缺省空串=整句（行为逐字不变）；"clause"=逐分句锚定。
+            scope=str(h.get("scope", "") or ""),
         )
         for h in (data.get("route_hints") or [])
     ]

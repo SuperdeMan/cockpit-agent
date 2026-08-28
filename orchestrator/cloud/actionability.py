@@ -35,6 +35,8 @@ import re
 from dataclasses import dataclass
 from enum import Enum
 
+from runtime.polarity import NEG_WORDS
+
 
 class Actionability(str, Enum):
     EXECUTE = "execute"
@@ -99,6 +101,12 @@ _NUMERAL = tuple("0123456789一二三四五六七八九十两半零") + ("第",)
 # ——「看看」「讲讲」「找找」「试试」。它不认识任何具体动词。
 _REDUPLICATION_RE = re.compile(r"([一-鿿])\1")
 
+# 条件从句标记（C6-C，2026-08-28，QA P1-03/T54）。封闭虚词类，一个实词都没有。
+_CONDITIONAL = ("如果", "要是", "假如", "假设", "万一", "若是", "倘若", "的话", "一旦")
+# 禁止式否定——**「别做 X」而不是「X 没发生」**。词表逐字复用 `runtime.polarity.NEG_WORDS`
+# （极性判据的唯一声明处），这里只把它拆成元组用于形态计数，不另起一份表。
+_PROHIBITIVE = tuple(NEG_WORDS.removeprefix("(?:").removesuffix(")").split("|"))
+
 _MARKER_CLASSES = {
     "interrogative": _INTERROGATIVE,
     "preposition": _PREPOSITION,
@@ -111,6 +119,8 @@ _MARKER_CLASSES = {
     "numeral": _NUMERAL,
     "predicate": _PREDICATE,
     "copula": _COPULA,
+    "conditional": _CONDITIONAL,
+    "prohibitive": _PROHIBITIVE,
 }
 
 # 省略续问形态：整句只有指示/序数/替换，靠上一轮焦点才解释得通。
@@ -141,6 +151,27 @@ class ActionabilityFeatures:
     @property
     def predicated(self) -> bool:
         return bool(self.markers)
+
+    @property
+    def conditional_constraint(self) -> bool:
+        """条件从句 + **禁止式**否定 = 一句「怎么做事」的约束，不是本轮要做的事。
+
+        真栈 T54：「如果找不到她的地点就直接问我，不要猜另一个城市」——整句没有任何
+        本轮动作请求，planner 却产出了 `navigation.reroute` 加了个咖啡途经点。
+        本模块此前对它恒判 EXECUTE（谓述标记一大把），**REJECT 声明了但 v1 不产出**
+        的成本第一次在真栈兑现成误执行。
+
+        判据取两条形态的**合取**，都是封闭虚词类：
+        - 条件从句标记（如果/要是/的话…）；
+        - **禁止式**否定（别/不要/不许…，`runtime.polarity.NEG_WORDS`）——
+          不是普通否定。「如果明天**不**下雨就提醒我洗车」是真请求，用「不」；
+          「**不要**猜另一个城市」是在约束助手自己怎么选。这一条把两者分开。
+
+        ⚠ 已知误报面：「如果堵车就别走高速」这类**条件式动作请求**同样两条全中。
+        本判定只进 shadow 观测面（`plan.actionability`），不进任何决策——先看
+        真实分布里误报占多少（B6 §5：接管是 canary，要泓舟单独拍板）。
+        """
+        return "conditional" in self.markers and "prohibitive" in self.markers
 
 
 @dataclass(frozen=True)
@@ -187,6 +218,11 @@ def classify(text: str, *, focus=None, input_source: str = "",
     features = extract_features(text, focus=focus, input_source=input_source)
     if features.chars == 0:
         return ActionabilityVerdict(Actionability.CLARIFY, 0.5, features)
+    if features.conditional_constraint:
+        # C6-C：条件式约束陈述**排在谓述判定之前**——它谓述标记一大把，放在后面
+        # 永远轮不到。置信度压在 0.7：两条形态的合取比「整句零谓述」弱，
+        # 而形态判据永远不该自称确定。
+        return ActionabilityVerdict(Actionability.CLARIFY, 0.7, features)
     if features.predicated or features.chars > _BARE_MAX_CHARS:
         # 有谓述标记 = 用户已经说了要做什么。置信度按命中的标记类数递增，
         # 封顶 0.95——形态判据永远不该自称确定。

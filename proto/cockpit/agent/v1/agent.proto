@@ -71,6 +71,14 @@ message RouteHint {
   int32 priority = 4;               // 冲突时高优先先判（降序）
   string guard = 5;                 // 可选反例守卫正则：命中 guard 则本 hint 不生效
   map<string, string> slots = 6;    // 槽位模板：值为 $text=原话 / $1.. =捕获组 / 其余字面量原样
+  // 匹配范围（C6-A，MiniMax QA 修复批第 4 批）：""|"utterance"=整句（缺省，行为不变）；
+  // "clause"=**逐分句**匹配（分句表 `runtime/clause_split.py`）。
+  // 为什么要这一维：接送 hint 原本只锚两种整句形态，「接爸妈**去吃饭**」「接孩子**后去
+  // 万象城**」这类「接X + 任意后续」全部不命中，接人那一半就只能靠 LLM——长上下文里
+  // 它会被旧焦点带跑（真栈 T47/T53/T55）。分句级锚定让**每个诉求各自被看见一次**，
+  // 剩下那半仍交给正常规划。clause 档的 `$text` 解析成**命中的那一分句**，不是整句；
+  // append 的去重也按「这一步是不是已经带着本 hint 要填的值」判，不是只看 intent 在不在。
+  string scope = 7;
 }
 
 message ExecuteRequest {

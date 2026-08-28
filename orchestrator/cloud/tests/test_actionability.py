@@ -199,3 +199,44 @@ def test_engine_shadow_attrs_never_touch_decisions():
         src = f.read()
     assert src.count("_actionability_attrs") == 2      # 定义 + span 里那一次
     assert "if plan.actionability" not in src
+
+
+# ── C6-C：条件式约束陈述（2026-08-28，QA P1-03 / adv T54）────────────────
+# 「REJECT 声明了但 v1 不产出」的成本第一次在真栈兑现成误执行：整句只是一条
+# 「以后怎么做事」的约束，planner 却产出了 reroute 加了个咖啡途经点。
+
+def test_conditional_constraint_statement_is_clarify_not_execute():
+    """T54 原句。它谓述标记一大把，所以这一支必须**排在谓述判定之前**。"""
+    v = classify("如果找不到她的地点就直接问我，不要猜另一个城市")
+    assert v.decision is Actionability.CLARIFY
+    assert v.features.conditional_constraint is True
+
+
+def test_a_real_conditional_request_still_executes():
+    """对照一：条件式**动作请求**（语料 cp.adaptive.rain-umbrella 的形态）不许被拦。"""
+    v = classify("如果明天下雨就提醒我带伞")
+    assert v.decision is Actionability.EXECUTE
+    assert v.features.conditional_constraint is False
+
+
+def test_plain_negation_inside_a_condition_is_not_a_constraint():
+    """对照二：**禁止式**否定与普通否定要分开。
+    「如果明天**不**下雨」是在说世界状态，不是在约束助手怎么选。"""
+    v = classify("如果明天不下雨就提醒我洗车")
+    assert v.decision is Actionability.EXECUTE
+    assert v.features.conditional_constraint is False
+
+
+def test_prohibition_without_a_condition_is_not_a_constraint_statement():
+    """两条形态是**合取**：只有禁止式否定、没有条件从句时不判本形态
+    （「空调别开」归 runtime.polarity 的极性判据，不归这里）。"""
+    assert classify("空调别开").features.conditional_constraint is False
+
+
+def test_prohibitive_words_come_from_the_single_polarity_declaration():
+    """禁止式词表必须是 `runtime.polarity.NEG_WORDS` 本身，不是抄过来的第二份。"""
+    from runtime.polarity import NEG_WORDS
+    from orchestrator.cloud.actionability import _PROHIBITIVE
+    assert set(_PROHIBITIVE) == set(
+        NEG_WORDS.removeprefix("(?:").removesuffix(")").split("|"))
+    assert "别" in _PROHIBITIVE and "不" not in _PROHIBITIVE

@@ -622,6 +622,8 @@ _ADDRESSED_SECTION = (
     "\n\n== 受话判定（必须输出）==\n"
     "输出顶层布尔字段 \"addressed\"：这句话是否是对你（车载助手）说的。\n"
     "- true：请求/问题/指令/情绪表达也需要你回应\n"
+    "- **条件式指示不产生本轮动作步**：「如果找不到就问我」「拿不准别自己猜」这类"
+    "说的是**以后怎么做事**，不是这一轮要做的事——照做即可，不要为它规划任何 step；"
     "- 混合否定句：一个分句否定动作、另一个肯定请求时，必须 addressed=true；"
     "否定只影响 steps，不影响是否受话\n"
     "- false：明显不是对助手说的——乘客间对话片段（『妈你到哪了』）、自言自语、"
@@ -1357,6 +1359,12 @@ class PlanBuilder:
         agents = list(catalog.visible_agents)
         agent_map = catalog.agent_map
         working_set.catalog_stats = dict(catalog.catalog_stats)
+        # C6-B 焦点让路：本轮命中了某条 `scope: clause` 的 route_hint ⇒ 这一轮有一个
+        # 自带完整语义的确定性诉求，粘性地点/候选焦点该让路（判据在 hint 的声明里，
+        # 这里零领域词）。置位必须在两条 prompt 路径**之前**——json 与 toolcall 两档
+        # 的 user message 逐字一致是 A/B 单变量的前提，让路只能从这一格进去。
+        working_set.suppress_sticky_places = self._route_hints.matches_clause_scope(
+            text, agent_map)
 
         # Q7 EL1/OR2：动作明确、对象完全省略、且执行焦点能唯一落到本轮授权 capability
         # ⇒ **确定性成计划，一次 LLM 都不调**（连下面两次检索 embed 也省了）。

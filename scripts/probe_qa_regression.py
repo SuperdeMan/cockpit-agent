@@ -764,11 +764,19 @@ CASES = [
           "expect": {"speech_not_regex": [r"导航到[^。]{0,12}欢乐海岸"]}},
      ]},
     {"id": "SL4", "group": "slot", "card": "Q8", "issue": "I-029②",
-     "why": "用户明说了出发地，系统却静默用当前位置——取证条，根因是 navigate_to "
-            "manifest 没有 origin 槽（能力缺席，不是槽值保真）",
+     "why": "用户明说了出发地，系统却静默用当前位置——根因是 **origin 这一维在能力"
+            "契约里缺席**，不是槽值保真。⚠ 这行的事实陈述 2026-08-28 改过："
+            "navigate_to/estimate 的 origin 槽 2026-08-20 就加上了，同日 C8 补到 reroute"
+            "（旧文写的「manifest 没有 origin 槽」自那天起就不成立）",
      "known": "red",
      "turns": [
          {"say": "从深圳欢乐海岸出发去世界之窗",
+          "expect": {"card_text_not": ["\"origin\": \"当前位置\""]}},
+         # 同一句话在**已有活动路线**时会落 reroute 而不是 navigate_to
+         # （planner 读到焦点里的「当前正在导航」）——C8 之前那条路上
+         # 起点是硬编码的，所以得先起一趟导航再说。
+         {"say": "导航去世界之窗", "expect": {}},
+         {"say": "从深圳欢乐海岸出发",
           "expect": {"card_text_not": ["\"origin\": \"当前位置\""]}},
      ]},
 

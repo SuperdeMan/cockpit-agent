@@ -125,10 +125,21 @@ class DagExecutor:
 
     async def run(self, plan: Plan, ctx: PlanContext,
                   done: dict[str, StepResult] | None = None) -> AsyncIterator[StepResult]:
-        """执行 DAG 计划，yield 每个 step 的结果。遇到 NEED_CONFIRM/NEED_SLOT 立即停止。
+        """执行 DAG 计划，yield 每个 step 的结果。
 
         done: 已完成步骤的种子结果（多轮确认续接时由 engine 传入），
         这些步骤不再执行，但其结果可被后继步骤的依赖判定与 slot_refs 使用。
+
+        **挂起语义（C5-B，2026-08-28，QA P1-04/P1-03）**：
+
+        - `NEED_CONFIRM` 仍然当场停——「先别做」是对**整轮**说的。
+        - `NEED_SLOT` 只挂起**该步及其下游**：无依赖的兄弟步照常跑完。此前一个补槽
+          问题会把整轮劫持（真栈 T50「接孩子放学，顺便找麦当劳」——nearby 丢了
+          「麦当劳」槽反问，同轮的 navigate **一次都没发出去**）。下游由
+          `_should_run`（依赖必须 OK）天然拦住，这里不需要第二份判据。
+        - 两种情况都**先把本层已经算出来的结果全部交出去再判**。它们是
+          `asyncio.gather` 一次性跑完的，早就执行过了——在这里丢掉不是「没执行」，
+          是「执行了但不报」（同 C2 那条「读不到与读到了但不对分开报」）。
         """
         done = dict(done) if done else {}
         try:
@@ -149,6 +160,7 @@ class DagExecutor:
             results = await asyncio.gather(*coros, return_exceptions=True)
 
             # F17：用 zip(runnable, results) 还原 step_id，防止异常分支丢 step
+            layer_results: list[StepResult] = []
             for step, res in zip(runnable, results):
                 if isinstance(res, Exception):
                     res = StepResult(step_id=step.id, status=StepStatus.FAILED,
@@ -160,11 +172,12 @@ class DagExecutor:
                 res = self._stamp_source(step, res)
 
                 done[res.step_id] = res
+                layer_results.append(res)
                 yield res
 
-                # 终态：挂起（不继续后续层）
-                if res.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                    return
+            # 终态：待确认对整轮说话 → 当场停（本层结果已全部交出）
+            if any(r.status == StepStatus.NEED_CONFIRM for r in layer_results):
+                return
 
             # 部分失败：跳过依赖已失败 step 的后续步骤
             self._mark_skipped(plan.steps, done)
@@ -863,8 +876,13 @@ class DagExecutor:
         remaining = set(by_id.keys())
 
         while remaining:
-            # 入度为 0 的节点
-            layer_ids = [sid for sid in remaining if in_degree[sid] == 0]
+            # 入度为 0 的节点。**按 `steps` 的声明序**取，不按 `remaining` 这个 set
+            # 的迭代序——后者随进程 hash 种子变，同一份计划两次跑出来的层内顺序可能
+            # 不同（C5-B 写测试时撞到：同层两步谁先 yield 决定了读数，注射旧语义
+            # 验红时因此有两条断言时红时绿）。层内并行执行不受影响，受影响的是
+            # 「同轮多条挂起报哪一条」这类**读数**，那必须是确定的。
+            layer_ids = [s.id for s in steps
+                         if s.id in remaining and in_degree[s.id] == 0]
             if not layer_ids:
                 raise CyclicPlan(f"Cycle detected in plan: {remaining}")
 

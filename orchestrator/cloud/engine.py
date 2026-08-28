@@ -27,6 +27,8 @@ from .clients import set_llm_pin
 from . import candidate_query
 from . import slot_shape
 from runtime import session_facts
+from runtime.clause_split import split_clauses
+from runtime.polarity import is_negated_directive
 from .context import (ContextManager, build_context, candidate_downlink,
                       candidate_set_for,
                       references_a_candidate, resolve_candidate_scope,
@@ -165,6 +167,50 @@ def _goal_value_dropped(plan) -> bool:
         return False
     return not any(_DIGITS_RE.search(str(v))
                    for s in steps for v in (s.slots or {}).values())
+
+
+#: 一个槽值要至少这么长才算「落在某个分句里」。1 字的值（"1"、"是"）在任何句子里
+#: 都可能撞上，拿它判覆盖等于把噪声当信号。
+_COVER_MIN_LEN = 2
+
+
+def _clause_uncovered(plan, text: str) -> str:
+    """多意图复合句的覆盖度**观测**（C5-A）。返回 `"未覆盖数/肯定分句数"`，无信号返回空串。
+
+    ## 它要抓的形态
+
+    「先查瑞幸，再点生椰拿铁不加糖」只出了 nearby 一步、下单意图整个消失（真栈 T18）；
+    「接孩子放学，顺便找麦当劳」只出了 nearby、接人那半没了（T50）。**同一句话在另一个
+    persona 下又出对了两步**——方差本身就是「零护栏」的读数。此前这件事只有 prompt 里
+    一句软约束（「提交前逐个核对每个肯定诉求」），唯一的机器判据 `_goal_value_dropped`
+    **只判数字**，且它自认「组合意图漏第二步只能判到缺步」而没有实现。
+
+    ## 判据
+
+    按 `runtime.clause_split`（分隔符表的唯一声明处）拆句 → 丢掉否定分句
+    （`runtime.polarity`，「车窗别开」不是一个待覆盖的诉求）→ **肯定分句 ≥2 时才有信号**
+    （这是个*多*意图判据；单句时它退化成「有没有槽值」，那是另一回事）→ 每个分句问一句：
+    有没有任何一步的槽值落在它里面。
+
+    ## 已知误报面（**先拿真实分布**，B6 shadow 的纪律）
+
+    - **零槽步覆盖不了任何分句**（`navigation.locate` 这类）——它们会让所在分句报未覆盖；
+    - planner 把槽值**转述**过（「瑞幸」→「luckin」）时子串够不着。
+
+    两类都会抬高未覆盖率。这正是本批只发观测、不进决策的原因：先看两周真实分布里
+    误报占多少，再谈 C 的 salvage 重试。**误报的代价只是一位观测，漏报的代价是缺陷继续隐形。**
+
+    零领域字面量：不认识任何 intent，也不认识任何槽名。
+    """
+    steps = getattr(plan, "steps", None) or []
+    clauses = [c for c in split_clauses(text) if not is_negated_directive(c)]
+    if len(clauses) < 2 or not steps:
+        return ""
+    values = [v for s in steps for v in (s.slots or {}).values()
+              if isinstance(v, str) and len(v.strip()) >= _COVER_MIN_LEN]
+    uncovered = sum(1 for c in clauses
+                    if not any(v.strip() in c for v in values))
+    return f"{uncovered}/{len(clauses)}" if uncovered else ""
 
 
 def _goal_text(plan) -> str:
@@ -564,6 +610,7 @@ class PlannerEngine:
             # C. 解析 endpoint（Registry）
             # badcase 排查内容级采集（OBS_CONTENT_CAPTURE 门控）：plan 结构 + LLM 原始输出。
             # 此前 LLM raw 只进 stdout 截 500 字符（planning.py），与 trace 无关联。
+            clause_gap = _clause_uncovered(plan, text or plan.raw_text)
             await obs_events.get_emitter("cloud").emit_span(
                 ctx.trace_id,
                 "cloud.planning",
@@ -604,6 +651,10 @@ class PlannerEngine:
                     # step 的槽位里一个数字都没有。纯算术、零领域字面量，误报的代价只是
                     # 一个 obs 布尔位。
                     **({"goal_value_dropped": "true"} if _goal_value_dropped(plan) else {}),
+                    # C5-A 多意图覆盖度（观测，零决策）：「肯定分句里有没有哪一段
+                    # 一个 step 都没碰过」。与上面那条是同一族——前者判到**值**一级，
+                    # 这条判到**诉求**一级，正是那条注释里写着「只能判到缺步」的那半。
+                    **({"clause_uncovered": clause_gap} if clause_gap else {}),
                     # M5 P2-D2 端云分歧：端侧规则臂的初判 + 是否与云侧最终落域一致。
                     # **分歧轮是信息量最大的标注样本**——两个独立判断打架的地方，人看一眼
                     # 的边际收益最高。evolve mine 据此产 `edge_divergence` 信号进日报案族卡，
@@ -808,6 +859,10 @@ class PlannerEngine:
                 if s.id not in done_seed:
                     yield self._progress("execute", phase_label(s.intent),
                                          status="running", step_id=s.id)
+        # C5-B：**不在第一条挂起上 return**——executor 现在会把无依赖的兄弟步
+        # 跑完（NEED_SLOT 档）。这里记下第一条挂起、消费完再挂，兄弟步的话术与
+        # 动作才有机会进这一轮的 final。
+        suspend_at: StepResult | None = None
         async for step_result in self.executor.run(plan, ctx, done=done_seed):
             results.append(step_result)
 
@@ -837,10 +892,15 @@ class PlannerEngine:
             # 挂起：需确认/需补槽。prior=本轮新完成步（种子是上轮已播报过的，切掉）；
             # 非复杂路径逐步 speech 已流出，但那只在单步计划成立（多步即 is_complex），
             # 单步无前序——无双重播报面。
-            if step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                yield await self._suspend(step_result, results, plan, ctx,
-                                          prior=results[len(seed_results):])
-                return
+            if (step_result.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
+                    and suspend_at is None):
+                # 多步同轮挂起时按**声明序**取第一条，读数才稳定（同 escalate 的口径）。
+                suspend_at = step_result
+
+        if suspend_at is not None:
+            yield await self._suspend(suspend_at, results, plan, ctx,
+                                      prior=results[len(seed_results):])
+            return
 
         # 通用 escalate（一跳）：executor 路径——多步计划里第一个声明改派的步结果被
         # escalated 结果替换，其余步结果保留进聚合（每轮预算 1 跳，与 D0 路径共享同一机制）。
@@ -1290,11 +1350,17 @@ class PlannerEngine:
             ctx.closed_operation_ids.append(evicted.operation_id)
             follow_up = self._append_hint(
                 follow_up, f"（{self._pending_label(evicted)}已过期，需要的话再说一次。）")
+        # C5-B：兄弟步的动作也要发出去。挂起 final 此前只带挂起那一步的 actions
+        # ——而那些步**已经执行过了**（结果就在 results 里），把动作扣下就变成
+        # 「话说了、事没做」。合并走聚合器同一份 `compose_actions`（navigate 去重 +
+        # 充电途经点注入），不在这里写第二份合并语义。
+        actions = self.aggregator.compose_actions(
+            [r for r in (prior or []) if r.status == StepStatus.OK] + [step_result])
         return {
             "kind": "final",
             "speech": (brief + (step_result.speech or "")) if brief else step_result.speech,
             "follow_up": follow_up,
-            "actions": step_result.actions,
+            "actions": actions,
             "ui_card": step_result.ui_card,
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
             "operation_id": operation_id,

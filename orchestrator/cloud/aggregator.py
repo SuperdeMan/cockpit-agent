@@ -145,7 +145,7 @@ class Aggregator:
     async def compose(self, user_text: str, results: list[StepResult],
                       thinking: bool = False) -> dict:
         """聚合结果，返回 Final 事件结构。thinking=True 时多步合成开思考（复杂任务）。"""
-        actions = self._compose_actions(results)
+        actions = self.compose_actions(results)
         cards = [r.ui_card for r in results if r.ui_card]
         follow_ups = [r.follow_up for r in results if r.follow_up]
         # 交互卡（需用户选择/操作：充电路线、顺路停靠/目的地候选）单独展示——同屏多卡会干扰选择；
@@ -227,8 +227,12 @@ class Aggregator:
         return s
 
     @staticmethod
-    def _compose_actions(results: list[StepResult]) -> list[dict]:
+    def compose_actions(results: list[StepResult]) -> list[dict]:
         """汇总各步动作，并把充电途经点并入导航 navigate 动作。
+
+        2026-08-28 由 `_compose_actions` 改成公开：挂起 final（`engine._suspend`）
+        也要合并兄弟步的动作（C5-B），而合并语义只许有一份——去重与充电途经点
+        注入抄第二遍就会长成两种行为。
 
         - 收集途经点：充电步用 data.waypoint / data.waypoints 暴露最优充电站坐标；
         - navigate 去重：同目的地的重复 navigate 只保留首个（防御多意图重复导航）；

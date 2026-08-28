@@ -307,6 +307,16 @@ class TracingRouteHints:
         self.delegate = delegate
         self.sink = sink
 
+    def __getattr__(self, name):
+        """其余属性透传（同 `RecordingPlanner`）。
+
+        ⚠ 2026-08-28 补：C6-A 给引擎加了 `matches_clause_scope`，`planning.build`
+        在 LLM 调用**之前**就要问它一句（焦点让路）；这个替身只实现了 `apply`，
+        于是整条 L1 追踪链 AttributeError。**包装类复刻了被包装者的语义，
+        被包装者一扩接口它就会断**——透传是这类替身的默认姿势。
+        """
+        return getattr(self.delegate, name)
+
     def _enumerate(self, text: str, agent_map: dict) -> tuple[HintMatch, ...]:
         """命中名单。**枚举不出来就交空名单，绝不打断被观察的那次调用。**
 
@@ -322,7 +332,8 @@ class TracingRouteHints:
         matches: list[HintMatch] = []
         try:
             for agent_id, hint in self.delegate._ordered_hints(agent_map):
-                if self.delegate._match(hint, text) is None:
+                # `_match` 2026-08-28 起返回 `(match, 命中的那一段)`（C6-A 分句档）。
+                if self.delegate._match(hint, text)[0] is None:
                     continue
                 policy = (hint.policy or "replace").lower()
                 matches.append(HintMatch(agent_id, str(hint.intent), policy,
