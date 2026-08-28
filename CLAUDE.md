@@ -148,6 +148,15 @@ runtime/        共享运行时（gRPC keepalive/优雅停机/mTLS 工厂；+ �
                 执行史三条读出口；2026-08-28 从 `agents/chitchat/src/audit.py` 迁入——
                 **两个消费方够不着彼此**：编排层的确定性短路与 chitchat 的兜底闸。
                 Q6 把闸建在 chitchat 里，别的域接走就够不着，判据一直对、只是没人能用）
+                ／session_constraints.py **会话内说出来的偏好/忌口**的抽取判据与词表（C12）：
+                抽取在云侧编排（「我不吃辣」那句落的是 chitchat 轮，挂路由就永远抽不到）、
+                消费在 nearby，两头够不着彼此；跨轮语义是**后说的覆盖先说的**，
+                「没提到」写成**不写键**而不是 False——合成 False 会让一句无关的话
+                抹掉上一轮的约束
+                ／execution_claim.py 「这句话是不是在声称系统做了什么」（C11，**shadow**）：
+                只认指向用户的完成/进行体标记，零领域词、源码级断言守；
+                编排层 final 唯一出口按「命中 ∧ 本轮零动作」出一位观测，**不拦截**——
+                探针（C16）复用同一份，不许在 `scripts/` 抄第二张表
                 ／profile.py 部署形态闸／admission.py
 docs/           架构与设计文档
 test/           端到端场景测试
@@ -164,6 +173,9 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
 ### 新增一个 Agent 的标准流程（必须遵守）
 1. 在 `agents/<name>/` 下按模板建目录（参考 `agents/navigation/`）。
 2. 写 `manifest.yaml` 声明能力、权限、trust_level、deployment；需要精确位置/电量/车外画面等敏感上下文的 Agent 还要声明 `context_scopes`（`location`/`vehicle_state`/`vision`），否则编排最小化下发会剥掉这些键。
+   ⚠ `context_scopes` 还有两个**不是「敏感数据」而是「门控通道」**的值，同一条机制两种用途：
+   `candidates`（候选集最小投影下发，§9.28/§9.32）与 `session_constraints`（会话内说出来的
+   忌口/偏好，§9.37）——**声明了才收得到**，没有消费方就别声明。
    - **确定性路由（R2.1）**：弱 LLM 会漏/误路由该 Agent 的重域意图时，用 `route_hints` 声明兜底（`pattern`/`intent`/`policy`=`replace`\|`append`/`priority`/`guard`/`slots`/`scope`；`slots` 值支持 `$text`=原话、`$1..`=捕获组）——编排核心 `orchestrator/cloud/route_hints.py::RouteHintEngine` 通用消费，**取代**过去在 `planning.py` 加正则兜底的做法。**`scope` 决定 pattern 锚在哪一层**：缺省整句；`clause` 按 `runtime/clause_split.py` 逐分句试，用于「A + 任意后续」这类复合句里保住其中一个诉求（C6）。⚠ 三条配套语义别记错：`$text` 跟着 scope 走（clause 档=命中的那一分句）、**`guard` 不跟着走**（永远整句求值）、`append` 去重在 clause 档按**值**判（同 intent 的另一个诉求不算覆盖）——契约 `docs/conventions.md` §9.36。
    - **重域能力**（需开思考+过程区，如多轮检索/LLM 重生成）在该 capability 标 `heavy: true`（编排 `progress.is_complex` 据此判定）。
    - 出**主卡**的 Agent 在 `ui_card` 加 `display_priority`（`0`=主卡多意图下独显 / `1`=交互候选 / 缺省 `2`=普通信息卡），聚合器据此择优。

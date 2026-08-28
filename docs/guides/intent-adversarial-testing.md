@@ -22,7 +22,7 @@
 
 | 证据 | 当前口径 |
 |---|---|
-| L0 discovery | **85/85**；**668 条 / 629 唯一输入**（2026-08-28 读数，上界 629 仍**恰好用满**；614→629 的五次递进逐笔写在 `suites.yaml` 头部——**语料上界与实数永远以那里为准**，本表只是快照） |
+| L0 discovery | **85/85**；**676 条 / 634 唯一输入**（2026-08-28 第 5 批后读数，上界 634 仍**恰好用满**；614→634 的六次递进逐笔写在 `suites.yaml` 头部——**语料上界与实数永远以那里为准**，本表只是快照） |
 | gate 规模 | **139 stable / 129 唯一输入**；L0 strict **25/25，exit 0** |
 | DeepSeek 对比/参考 gate | **147/147**（`f0af9c0`）：L0 25、L1 117、L2 4、L3 1；L1/L2 各 **2 个独立进程 × 每进程 3 样本**；正式 baseline `eligible=True` |
 | MiniMax 主模型 gate | **141/147**（`32e8718`）；exact **116/121**、required **99/103**；raw 幻觉 **3/121**、校验后逃逸 **0/121**；不稳定 **4/121**；`pass 141 / unstable 4 / stable_fail 2`；`eligible=False` |
@@ -147,10 +147,10 @@ L0 覆盖：契约 + 覆盖矩阵 + cohort 隔离 + boundary 双向 + Edge ingre
 无关——见 §11 与 `docs/conventions.md` §9.15）。
 **L0 无模型参与，一次红就是结论**（不存在 `unstable`）。
 
-当前预期：discovery **85/85 exit 0**（cases 668 / 唯一输入 629，bounds 上界 629，
+当前预期：discovery **85/85 exit 0**（cases 676 / 唯一输入 634，bounds 上界 634，
 **余量为 0**——加语料前必须先说明新能力/新边界为何值得占额度，再有原则地抬
 `suites.yaml` 的 `max_cases`，**不得先加语料撞闸后补理由**，也不得删旧尺子压数字；
-540→629 的十七次递进与逐项占用写在 `suites.yaml` 头部，**那里是唯一真相源**）；
+540→634 的十八次递进与逐项占用写在 `suites.yaml` 头部，**那里是唯一真相源**）；
 gate `--strict` **25/25 exit 0**
 （gate 唯一输入 **129** ≥ `min_cases=120`）。
 ⚠ **这个绿只说明语料规模够了**——它判的是规模，不是 stable 全绿。
@@ -282,7 +282,7 @@ L1 有 `no-hints/no-skills/no-exemplars/empty-history`；L2 另加 `cloud-direct
 | 单句落错域 | `skills/exemplars/<domain>.yaml` 加范例（**说法必须避开评测语料原句** —— 用原句等于把 unseen 洗成 seen） |
 | 诊断行里 `exemplars=[]` | **先问这个域有没有范例文件**，别急着调阈值。范例库最初 199 条金标全部来自**云侧** manifest 的 `examples`，**端侧能力（车控/媒体）没有 manifest examples ⇒ 这些域天然是空白**。2026-08-03 `ex.homophone.aircon` 正是这样：整个 hvac 域一条范例都没有（`skills/exemplars/hvac.yaml` 由此新建） |
 | 组合意图缺步 / 判据缺失 | `skills/guides/<name>.yaml`（**先拿 goal 对照 steps**：goal 说推荐而 steps 无推荐步＝可检测的缺口）。⚠ **改判据前先读旧判据是怎么写的**——2026-08-03 `nq.umbrella.both` 的漏步根因是 guide 把「并列」定义成「提醒本身已有明确时间」，于是「没说时间」成了判条件句的证据。**放宽一分之前先列全所有分**（条件/否定/顺承三分，只修中间一分会把否定句一起翻正） |
-| 两个域反复互抢 | `skills/exemplars/boundaries.yaml` 加裁定，**并按台账契约补双向各 2 例对照** |
+| 两个域反复互抢 | `skills/exemplars/boundaries.yaml` 加裁定，**并按台账契约补双向各 2 例对照**（⚠ 触发裁定的**不一定是你新加的那句话**：近重复判据用 IDF 加权 Dice，而 IDF 是**语料级**的量——2026-08-28 加两条 charging 范例，顶过阈值的是一对毫不相干的句子。先看报出来的那一对是不是真冲突，别默认是自己引进来的）|
 | 弱模型稳定漏/误路由重域 | 才轮到 manifest `route_hints`（确定性路由），且要走跨 provider 交集判据 |
 | 系统根本没有这个能力 | **补能力，不是补描述**。描述治不了缺能力 |
 

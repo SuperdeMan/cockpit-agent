@@ -685,7 +685,11 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   stock_quote / sports_scores / sports_scorers / place_list / place_detail / poi_list /
   poi_detail / route_plan / charging_route；**2026-08-27 拍板补登：air_quality /
   weather_alerts / life_indices**——2026-08-26 QA 实测同文件 5 个 handler 两个盖章三个漏，
-  漏的正是这三张；盖章实现随 fix plan C9 落地），生产点 `agents/_sdk/provenance.py::attach()`。
+  漏的正是这三张；**盖章实现 2026-08-28 随 C9-C 落地**，回归锁
+  `agents/info/tests/test_prov_cards.py::test_the_three_weather_family_cards_carry_prov_too`
+  ——⚠ 那条用例里 `info.alerts` 要**造一条预警**才有卡可查：mock provider 无预警时
+  正确行为是**不出卡**，而「不出卡」证明不了「出卡时盖没盖章」），
+  生产点 `agents/_sdk/provenance.py::attach()`。
   **刻意不标**（卡内已有更强证据链）：trip_itinerary（每停靠点 grounded 布尔粒度更细）、
   research_report（sources + 全局权威编号）、内部数据卡（reminder/scene/vehicle）。
   LLM 生成的对话内容**不标**（语言无真值可标；证据链由卡片 sources 字段承担）。

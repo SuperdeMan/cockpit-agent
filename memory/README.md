@@ -8,6 +8,11 @@
 ## 分层
 - **L0 会话**：`AppendTurn` / `GetSession`（Redis，连不上自动降级内存）。**轮次带 OwnerKey**（M-B）。
 - **L1 车辆上下文**：`GetContext(scopes)` 按 scope 返回片段（敏感 scope 脱敏，如 `vehicle.location` 只给城市级）。
+  ⚠ **`vehicle.location` 的默认值是 PoC mock（上海·延安高架），生产路径上不许有消费方**
+  （2026-08-28 清掉最后一条：road-safety 的天气预警此前在 city 槽为空时回退它，
+  真栈答出「上海当前有1条天气预警」而用户问的是深圳，下一轮模型又从这句答案里学会了
+  上海）。定位一律走 `meta` 的本轮 GPS（`agents/_sdk/location.current_location_from_meta`），
+  取不到就诚实问一句。**留着这份 mock 是为了测试，不是为了兜底。**
 - **L2 语义画像**：稳定偏好/个人实体（`taste.*`、`person.pet` 等），带 `predicate`、向量化、`superseded_by` 时序-lite。
 - **L3 情景**：显著事件，聚合源。
 - **L4 程序记忆**：从 L3 高频行为派生 routine，经 `agent.proactive` 主动建议。
