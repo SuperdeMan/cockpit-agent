@@ -13,6 +13,32 @@
 // push-to-talk 与文本输入不进本 FSM（原路径原样保留）；hands-free 关闭即整个 FSM 挂空。
 
 import { looksComplete, isFiller, matchExitWord, graphemeLen } from './utteranceHeuristics.mjs'
+import { normSpeech } from './ttsQueue.mjs'
+
+/** 回声判据的重合比阈值（`_overlapsTts`）。**方向是泓舟 2026-08-29 当轮定的：宁可吞掉真续问**
+ *  ——判错成回声=用户多说一遍；判错成真话=进正反馈死循环、反复上云，回声里的词还可能被当指令。
+ *  两边代价不对称，所以阈值往「容易判成回声」那边偏。0.75 的由来：实测那句「深圳市的」(4 字)
+ *  与播报文本的最长连续重合是「深圳市」(3) = 0.75，要能收住它；而真续问「那明天呢」只有 0.25。 */
+const ECHO_OVERLAP_RATIO = 0.75
+
+/** 最长公共**连续**子串长度（滚动 DP，O(n·m) 时间 / O(m) 空间）。 */
+function longestCommonRun(a, b) {
+  if (!a || !b) return 0
+  let best = 0
+  let prev = new Uint16Array(b.length + 1)
+  let cur = new Uint16Array(b.length + 1)
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : 0
+      if (cur[j] > best) best = cur[j]
+    }
+    const swap = prev
+    prev = cur
+    cur = swap
+    cur.fill(0)
+  }
+  return best
+}
 
 export const VoiceState = {
   IDLE: 'IDLE',
@@ -331,6 +357,22 @@ export class VoiceLoop {
         return
       }
       this._selfTriggerCount = 0 // 真实打断 → 复位连续计数
+    } else if (this._listenSource === 'followup' && this._overlapsTts(t)) {
+      // 续问窗回声（2026-08-29 真机实证补）。此前这道自检**只挂在 barge-in 那一路**，
+      // 而 FOLLOWUP 进 LISTENING 走的是 `_enterListening({source:'followup'})`、
+      // `fromBargeIn` 缺省 false ⇒ 续问窗里的回声一路畅通。
+      // 端上没有平台 AEC（Oboe 输入流默认 VoiceRecognition 预设，见实施计划 M4-R1），
+      // 播报会被自己的麦收进来，余音正好落在 FOLLOWUP ⇒ 回声被当成「答完接着说」那一句
+      // 送上云 → 云端再答一遍 → 再播一遍 ⇒ **正反馈环**（实测天气答完后连着两轮「深圳市。」）。
+      //
+      // 与 barge-in 那条**刻意不同的两处处置**：
+      //  · **不计 `_countSelfTrigger`**——那个计数是给「要不要关掉 barge-in」用的，
+      //    而这里根本没有打断任何东西；混进去会让 barge-in 被无关的回声关掉。
+      //  · **不回 ARMED 而是回 FOLLOWUP**——没有 AEC 时几乎每轮都会命中，回 ARMED
+      //    等于把「答完 8 秒内接着说」在 Android 上整个废掉。丢掉这一句、把窗留着才对。
+      this.onMetric('echo_dismissed')
+      this._gotoFollowup()
+      return
     }
 
     if (!t) {
@@ -442,9 +484,17 @@ export class VoiceLoop {
   }
 
   _overlapsTts(t) {
-    const tts = this._ttsText
-    if (!tts || !t) return false
-    return tts.includes(t) || t.includes(tts)
+    // 归一复用 ttsQueue 的 normSpeech（去标点/空白只留字与数字）——**不写第二份**。
+    // 2026-08-29 真机实证：不归一时这条判据在标点面前直接失效——播报文本是
+    // 「深圳市当前阴，气温28℃…」，ASR 给回来的是「深圳市。」，`includes` 不成立。
+    const tts = normSpeech(this._ttsText)
+    const heard = normSpeech(t)
+    if (!tts || !heard) return false
+    if (tts.includes(heard) || heard.includes(tts)) return true
+    // 归一还不够：ASR 会**听错字**（同一轮实测「深圳市当前阴」被听成「深圳市的」）。
+    // 判据改成「听到的这句里，最长有多少**连续**字符出现在刚播的那句里」。
+    // 用连续子串不用子序列——子序列太宽松，任意一句话和一长段播报几乎总能凑出高比例。
+    return longestCommonRun(heard, tts) / heard.length >= ECHO_OVERLAP_RATIO
   }
 
   // ─── 供 UI / 测试读取 ───

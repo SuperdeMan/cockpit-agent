@@ -70,7 +70,7 @@
       "file": "ttsQueue.mjs",
       "phase": "M2",
       "purpose": "TTS 收尾判定 speechCovered（final 与已流式文本是不是同一段话）",
-      "notes": "只用 speechCovered；分句缓冲与 OrderedPlaybackQueue 是批处理路径的，App 未用"
+      "notes": "App 直接只用 speechCovered；分句缓冲与 OrderedPlaybackQueue 是批处理路径的，App 未用。2026-08-29 起 voiceLoop.mjs 也 import 它的 normSpeech 做回声判据的归一（**复用而不是写第二份**）⇒ 本模块经 voiceLoop 间接也在 App 里跑"
     },
     {
       "file": "pcmRing.mjs",

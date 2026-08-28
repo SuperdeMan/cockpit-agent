@@ -664,3 +664,73 @@ test('R4.4 P2：仅唤醒词模式下 wake() 仍能打断 SPEAKING（显式意�
   assert.equal(h.count('stopTts'), 1)
   assert.equal(h.vl.state, VoiceState.LISTENING)
 })
+
+// ─── 续问窗回声（2026-08-29 真机实证补）────────────────────────────────────────
+//
+// 被测的坏法是一个**正反馈环**，不是崩：端上没有平台 AEC（Oboe 输入流默认
+// VoiceRecognition 预设），播报会被自己的麦收进来，余音正好落在 FOLLOWUP ⇒
+// 回声被当成「答完接着说」的那一句送上云 → 云端再答一遍 → 再播一遍 → 再收一遍。
+// 真机实测（MIX Fold 4）：天气答完后连着两轮把播报开头当成用户话，第三轮「已打断」。
+//
+// 两个缺口各自独立，各有用例：
+//  A 判据太脆：`_overlapsTts` 原本是精确子串包含，而 ASR 会带标点、会听错字
+//  B 挂点太窄：自检原本只挂在 barge-in 那一路，续问窗那一路根本不过闸
+//
+// 下面用的两句**就是真机上抓到的原字**，不是编的。
+const ECHO_TTS = '深圳市当前阴，气温28℃，体感30℃，西南风2级。'
+
+/** 推到 FOLLOWUP 之后开口（= 免唤醒续问路径），返回 harness */
+function driveToFollowupSpeech(h, tts = ECHO_TTS) {
+  driveToSpeaking(h, { final: '今天深圳天气怎么样', tts })
+  h.vl.ttsEnd() // → FOLLOWUP
+  h.vl.vadSpeechStart() // → LISTENING(source=followup)
+}
+
+test('缺口B 续问窗回声：ASR 定稿是播报文本的一段 → 不上云、留在续问窗', () => {
+  const h = makeHarness()
+  driveToFollowupSpeech(h)
+  // ⚠ 基线必须取在 drive **之后**——driveToSpeaking 自己就发了一轮（「今天深圳天气怎么样」）。
+  const sendsBefore = h.count('send')
+  h.vl.asrFinal('深圳市。') // ← 真机原字：带句号，旧判据的 includes 在这里就失效
+  assert.equal(h.count('send'), sendsBefore, '回声绝不许上云')
+  assert.ok(h.last('metric')?.[1] === 'echo_dismissed', '要留下可观测的一位')
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP, '丢掉这句但把 8s 窗留着')
+})
+
+test('缺口A 判据：ASR 听错一个字（「当」→「的」）仍判回声', () => {
+  const h = makeHarness()
+  driveToFollowupSpeech(h)
+  const sendsBefore = h.count('send')
+  h.vl.asrFinal('深圳市的。') // ← 真机原字：ASR 把「深圳市当前阴」听成「深圳市的」
+  assert.equal(h.count('send'), sendsBefore)
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+})
+
+test('缺口A 反向：真续问不许被当回声吞掉', () => {
+  const h = makeHarness()
+  driveToFollowupSpeech(h)
+  const sendsBefore = h.count('send')
+  h.vl.asrFinal('那明天呢')
+  assert.equal(h.count('send'), sendsBefore + 1, '真续问必须上云')
+  assert.equal(h.last('send')[2].source, 'followup')
+})
+
+test('续问窗回声不计入 barge-in 自触发计数（两件事，不许混）', () => {
+  const h = makeHarness()
+  for (let i = 0; i < 4; i += 1) {
+    driveToFollowupSpeech(h)
+    h.vl.asrFinal('深圳市。')
+  }
+  assert.equal(h.count('disableBargeIn'), 0, '没打断任何东西，不该把 barge-in 关掉')
+  assert.equal(h.vl.bargeInDisabled, false)
+})
+
+test('缺口A 归一：SPEAKING 期 partial 带标点也判得出回声（旧判据在此失效）', () => {
+  const h = makeHarness()
+  driveToSpeaking(h, { tts: ECHO_TTS })
+  h.vl.vadSpeechStart()
+  h.vl.asrPartial('深圳市。') // 带句号；旧 includes 判不出 → 会误打断
+  h.advance(300)
+  assert.equal(h.count('stopTts'), 0, '回声不许触发打断')
+  assert.equal(h.vl.state, VoiceState.SPEAKING)
+})
