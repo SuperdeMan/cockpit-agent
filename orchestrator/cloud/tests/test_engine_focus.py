@@ -237,6 +237,40 @@ def test_stock_query_after_unrelated_turn_does_not_inherit_stale_symbol():
     assert "symbol" not in plan.steps[0].slots
 
 
+def test_an_explicit_look_back_reclaims_the_symbol_across_an_unrelated_turn():
+    """C4（QA T44）：**用户明确指了回去，系统却说不知道指的是谁。**
+
+    「只总结刚才查到的行情，不做投资建议」被中间那句「不要把生活指数当成股票指数」
+    隔开，`last_intent` 变成 chitchat ⇒ 上面那条守卫拒绝继承 ⇒ 真栈反问
+    「您想查询哪只股票或指数？」。回顾指代在场时那条限制让路——判据是形态，
+    与 `runtime.session_facts` 的审计闸共用同一张回顾词表。
+    """
+    plan = Plan(
+        raw_text="只总结刚才查到的行情，不做投资建议",
+        steps=[Step(id="stock", agent_id="info", intent="info.stock",
+                    slots={})],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_stock_symbol="宁德时代", last_intent="chitchat.talk"))
+
+    assert plan.steps[0].slots["symbol"] == "宁德时代"
+
+
+def test_a_look_back_never_overwrites_a_symbol_the_user_named_this_turn():
+    """**误伤对照**：「刚才那只不错，帮我看看茅台」里本轮显式标的永远优先。"""
+    plan = Plan(
+        raw_text="刚才那只不错，帮我看看茅台",
+        steps=[Step(id="stock", agent_id="info", intent="info.stock",
+                    slots={"symbol": "茅台"})],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(last_stock_symbol="宁德时代", last_intent="chitchat.talk"))
+
+    assert plan.steps[0].slots["symbol"] == "茅台"
+
+
 def test_waypoint_plan_inherits_current_destination_from_focus():
     """裸序号选途经点时，Planner 可能只给 waypoint；目的地应取系统持有的会话焦点。"""
     plan = Plan(steps=[

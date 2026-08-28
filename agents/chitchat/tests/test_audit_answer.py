@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import pytest
 
-from agents.chitchat.src.audit import (
+# 2026-08-28（C4）：判据与话术迁入 `runtime/session_facts`——编排层要用同一份，
+# 而云侧镜像不 COPY agents/。**本文件的断言一条不改**：迁移的验收标准是
+# 「旧消费方的行为锁逐条仍然成立」，改断言就等于把迁移变成改行为。
+from runtime.session_facts import (
     audit_answer, is_execution_audit_question,
 )
 

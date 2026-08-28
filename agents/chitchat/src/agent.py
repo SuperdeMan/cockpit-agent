@@ -18,7 +18,12 @@ from datetime import datetime
 
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.grounding import shanghai_now
-from .audit import audit_answer, is_execution_audit_question
+# Q6 审计出口 2026-08-28 从 `.audit` 迁入 `runtime/session_facts`（C4）：
+# 编排层也要用同一条判据，而云侧镜像不 COPY agents/——在两边各写一份
+# 正是 B1 那个 bug 的成因。这里只剩兜底位的消费，判据与话术都在那一份里。
+from runtime.session_facts import (
+    asks_when, audit_answer, is_execution_audit_question,
+)
 from .mem_source import with_provenance
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
                                        alert_level, alert_signal, driver_state)
@@ -281,7 +286,8 @@ class ChitchatAgent(BaseAgent):
             except Exception as e:      # 记忆不可用：诚实说查不到，别猜
                 logger.debug("audit history unavailable: %s", e)
                 return AgentResult(speech="我这会儿查不到执行记录，稍后再试。")
-            return AgentResult(speech=audit_answer(history))
+            return AgentResult(
+                speech=audit_answer(history, with_time=asks_when(text)))
         return None
 
     async def handle(self, intent, ctx, meta) -> AgentResult:

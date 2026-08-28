@@ -74,6 +74,29 @@ message AppendTurnRequest {
   // AppendTurn；挂这里是唯一同时覆盖 local/cloud/mixed 三条路径的位置。
   // 向后兼容：不传=空，旧调用方一个字不用改。
   repeated string actions = 10;
+  // C4-A 数据源维（2026-08-28，QA 修复批第 2 批）：这一轮**用了谁的数据、降没降级**。
+  // 与 `actions` 同一个载体、同一条判据：「这一轮做了什么」和「这一轮的数据从哪来」
+  // 都是**系统持有的事实**，而系统持有的事实绝不能让 LLM 答。缺它的代价 2026-08-26
+  // QA 一次性兑现了四笔（T41 编造「东方财富 19:23」、T43 编造自我纠错、T44 反问代码、
+  // T55 落进手册 mock）——`_prov` 此前**只活在卡上**，全仓 orchestrator/memory 无一处读它。
+  //
+  // **为什么是新字段而不是往 `actions` 里塞 `"_prov:vendor=…"`**：魔法字符串会让
+  // 「动作名」这个值域变得不闭合，而 `_executed_action_names` 的三处同口径消费方
+  // （端侧/obs/探针）都会跟着脏。加一维就加一维。
+  repeated TurnSource sources = 11;
+}
+// 一次外部数据使用事实。字段与 `ui_card._prov`（契约 §9.3）逐字同名——**账本记的
+// 就是用户看到的那张卡上盖的那个章**，两边不许各自演化出一套叫法。
+message TurnSource {
+  string card = 1;        // 卡型（`stock_quote`/`weather_now`…）：用户看到的是哪张卡
+  string vendor = 2;      // provider 决议出的厂商（`tushare`/`qweather`/`mock`…）
+  string mode = 3;        // real | mock | degraded | cached | deterministic
+  string fetched_at = 4;  // 数据获取时刻（ISO8601）——不是渲染时刻
+  string note = 5;        // 降级原因等，产生方给什么记什么
+  // 数据**自身**的时刻及其称呼（不是取数时刻）。称呼由产生方声明——账本的读出口
+  // 住在编排层，而编排层不认识「行情时间」这种领域说法（同 `_candidate_label`）。
+  string data_time = 6;
+  string data_time_label = 7;
 }
 message AppendTurnResponse {
   bool ok = 1;
@@ -110,6 +133,10 @@ message Turn {
   // 读侧必须也带上——**存下来而读不到等于没存**（同 M-B 那条「识别得出而数据面
   // 存不下来等于没识别」的读写对称形态）。审计问答的确定性 handler 消费的就是它。
   repeated string actions = 9;
+  // C4-A：数据源维的读侧。**存下来而读不到等于没存**——同 `actions` 那条读写
+  // 对称，且它已经被验证过一次：Q6 写侧上线时云侧 `clients.get_session` 漏了
+  // 一行，端侧 40% 的车控动作云端整整看不见（Q7-EL1 才补上）。
+  repeated TurnSource sources = 10;
 }
 message GetSessionResponse { repeated Turn turns = 1; }
 

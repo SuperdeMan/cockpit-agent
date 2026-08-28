@@ -459,3 +459,80 @@ def test_an_unnamed_sentence_keeps_the_old_single_group_behaviour():
     """**误伤对照**：没点名任何组时，逐字还是修改之前那条路。"""
     got = cq.answer("第二个多少钱", _G_LUCKIN, [])
     assert got is not None and "生椰拿铁" in got
+
+
+# ── 重列型：C4-C（2026-08-28，MiniMax QA 修复批第 2 批）──────────────────
+#
+# 真栈 merchant T19/T20 连着两次说「重新列出刚才可以选择的项目」，前三种算子
+# 一条都不认（它们全要求「算子 + 维度」），于是整句进 Planner **重搜了一遍**：
+# 两次搜回不同城市、不同门店的列表，第二次 LLM 还凭空把检索地点定到青岛平度。
+# **用户要的是「刚才那份」，系统手里就有那份，却给了他一份新的。**
+#
+# ⚠ 本节同样带误伤对照：重列的判据只有一段（算子词），比其余三种都松，
+# 所以「附近再列一遍」这类新检索必须仍然放行。
+
+def test_relist_replays_the_ledger_verbatim_instead_of_researching():
+    got = cq.answer("重新列出刚才可以选择的项目", _entry(_MENU, intent="mcd.menu"))
+    assert got is not None
+    for index, item in enumerate(_MENU, start=1):
+        assert f"{index}. {item['name']}" in got, got
+
+
+def test_relist_carries_the_price_the_ledger_actually_kept():
+    """序号 + 名字 + 价格——**台账里有的那几键**，一个字都不补。"""
+    got = cq.answer("再列一遍", _entry(_MENU, intent="mcd.menu"))
+    assert "26.5 元" in got and "9.5 元" in got
+
+
+def test_relist_says_where_the_buttons_are():
+    """候选台账里没有 `send_text`（白名单刻意不含交互载体）⇒ 文字清单回不到
+    那张卡的按钮。不说清就等于让用户以为按钮没了。"""
+    got = cq.answer("重新列出刚才的选项", _entry(_MENU, intent="mcd.menu"))
+    assert "按钮" in got and "刚才那张卡" in got
+
+
+def test_relist_without_price_still_lists_names():
+    """没有价格的候选（nearby 那类）照样能重列——**缺的维度不补，不是不答**。"""
+    got = cq.answer("再列一遍", _entry([{"name": "甲咖啡"}, {"name": "乙咖啡"}]))
+    assert got is not None and "1. 甲咖啡" in got and "2. 乙咖啡" in got
+
+
+def test_relist_is_verbatim_stable():
+    """确定性的直接证据是零方差。"""
+    entry = _entry(_MENU, intent="mcd.menu")
+    assert cq.answer("重新列出刚才可以选择的项目", entry) == \
+        cq.answer("重新列出刚才可以选择的项目", entry)
+
+
+@pytest.mark.parametrize("text", [
+    "附近再列一遍咖啡店",          # 新检索指示词在场
+    "帮我搜一下再列出来",          # 同上
+    "换一批重新列出",              # 同上
+])
+def test_a_new_search_still_wins_over_relist(text):
+    """**误伤对照**：带新检索指示词的句子照常进 Planner。"""
+    assert cq.answer(text, _entry(_MENU, intent="mcd.menu")) is None
+
+
+@pytest.mark.parametrize("text", [
+    "第二个多少钱",                # 序数取值，不是重列
+    "哪家最晚关门",                # 最值
+    "把第一个加入购物车",          # 指令
+    "刚才那家店叫什么",            # 追问单项
+])
+def test_ordinary_follow_ups_are_not_swallowed_by_relist(text):
+    """**误伤对照**：重列词表不许把其它说法一起吃掉。"""
+    got = cq.answer(text, _entry(_MENU, intent="mcd.menu"))
+    assert got is None or "按钮还在刚才那张卡上" not in got
+
+
+def test_relist_with_no_candidates_hands_back_to_the_planner():
+    """零候选时**不劫持**——这条短路的存在理由是「手里有那份却给了新的」，
+    手里没有那份时它没有立场说话（弃权那条由 I-052 守卫按序数指代管）。"""
+    assert cq.answer("重新列出刚才可以选择的项目", _entry([])) is None
+
+
+def test_relist_answers_from_the_named_group_not_the_newest():
+    """组指代对重列同样成立：点名了麦当劳就重列麦当劳那份。"""
+    got = cq.answer("重新列出麦当劳刚才可以选择的项目", _G_MCD, [_G_MCD])
+    assert got is not None and "巨无霸" in got and "生椰拿铁" not in got

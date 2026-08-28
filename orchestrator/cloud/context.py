@@ -75,6 +75,7 @@ def _adapt_append_turn_call(
     turn_id: str = "",
     exchange_id: str = "",
     actions=None,
+    sources=None,
 ) -> tuple[list, dict]:
     """Build one compatible call without probing by execution.
 
@@ -93,6 +94,8 @@ def _adapt_append_turn_call(
         # Q6 执行事实。**走同一条签名探测**——测试替身与旧客户端没有这个形参，
         # 硬塞会 TypeError（§4.3「执行器有这个形参≠尺子也在传它」的反面形态）。
         "actions": list(actions or []),
+        # C4-A 数据源事实。走同一条签名探测，理由逐字同上。
+        "sources": [s for s in (sources or []) if isinstance(s, dict)],
     }
     try:
         parameters = inspect.signature(fn).parameters
@@ -1400,7 +1403,7 @@ class ContextManager:
                           occupant_id: str = "",
                           e2e_memory_capability: str = "",
                           turn_id: str = "", exchange_id: str = "",
-                          actions=None):
+                          actions=None, sources=None):
         """写入一轮对话到 memory（指代/抽取的数据来源）。memory 不可用或 clients 未提供
         该能力时静默跳过（不阻塞主链路）。user_id 透传给 memory 触发异步偏好抽取。
 
@@ -1422,6 +1425,7 @@ class ContextManager:
                 turn_id=turn_id,
                 exchange_id=exchange_id,
                 actions=actions,
+                sources=sources,
             )
             await fn(*args, **kwargs)
         except Exception as e:

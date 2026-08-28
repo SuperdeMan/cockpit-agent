@@ -181,9 +181,19 @@ _INFORMATION_CASES = [
     _custom_case("INF-STOCK",
         {"say": "查一下宁德时代现在的股价", "expect": {"no_actions": True},
          "audit": {"intent_any": ["info.stock"], "provenance_required": True}},
+        # ⚠ 落域期望 2026-08-28（C4-B）**显式放宽了一格**：这一句现在由编排层的
+        # 数据源读出口确定性回答（`system.data_provenance`），不再必须走到
+        # `info.stock`。理由是被测行为变了、而且是往对的方向变——原来那条链
+        # 「路由对了才有护栏」正是 T41 的病（MiniMax 把它落到 chitchat，编出
+        # 「东方财富实时行情、19:23 前后」）。**值级判据一个字没松**：
+        # `stock_provenance_from` 仍要求把上一轮卡里的真实 provider 与
+        # market_time 逐字复述出来，`speech_has` 的两个词也原样保留
+        # （「行情时间」这四个字由产生方经 `_prov.data_time_label` 声明）。
+        # 同批放宽的还有 `provenance_required`——读出口念的是账本不是新取的数，
+        # **它本来就不该有卡**，要求出卡等于要求它再打一次 provider。
         {"say": "数据源和更新时间是什么", "expect": {"no_actions": True,
                                                           "speech_has": ["数据来源", "行情时间"]},
-         "audit": {"intent_any": ["info.stock"], "provenance_required": True,
+         "audit": {"intent_any": ["info.stock", "system.data_provenance"],
                    "stock_provenance_from": 1}},
         {"say": "再看一下沪深300", "expect": {"no_actions": True},
          "audit": {"intent_any": ["info.stock"], "provenance_required": True}},
@@ -312,6 +322,11 @@ _ENGINE_ONLY_TRACE_NODES = frozenset({
     "cloud.no_pending",
     "cloud.injection_reject",
     "cloud.no_plan",
+    # C4-B 会话事实读出口族（2026-08-28）：这三条与上面那些同类——**编排自己
+    # 答完就结束的轮**，没有 agent 归属 span 是它们的正常形态，不是缺证据。
+    "cloud.pending_state",
+    "cloud.data_provenance",
+    "cloud.execution_audit",
     "clarify",
     "rejected",
 })

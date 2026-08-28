@@ -133,6 +133,25 @@ _PICK_DIMS: tuple[tuple[str, str], ...] = (
     (r"评分(?:是)?多少|几分|多少分|评分怎么样", "rating"),
     (r"多远|几公里|距离(?:是)?多少", "distance"),
 )
+#: 第四种算子：**重列**（C4-C，2026-08-28 QA 修复批第 2 批）。
+#:
+#: 它补的是「用户想再看一眼可选项」这个诉求：真栈 merchant T19/T20 连着两次说
+#: 「重新列出刚才可以选择的项目」，前三种算子一条都不认（它们全要求「算子+维度」），
+#: 于是整句进 Planner **重搜了一遍**——两次搜回**不同城市、不同门店**的列表，
+#: 第二次 LLM 还凭空把检索地点定到了**青岛平度**。
+#: 用户要的是「刚才那份」，系统手里就有那份，却给了他一份新的。
+#:
+#: ⚠ **不为重列扩白名单**：`_CANDIDATE_ITEM_KEYS` 那 13 键是与产生方的契约（§9.27），
+#: 扩它要同步 `_PRODUCER_SHAPES`；而「再看一眼可选项」用**文字清单**（序号+名字+价格）
+#: 已经闭环——按钮本来就还在刚才那张卡上，话术里说清楚就够了。
+#:
+#: 判据只有一段（算子词）+ 一道否决（不是新检索）：重列没有「维度」可配对，
+#: 而这些说法本身已经在指向「刚才那份」——「重新列出」不可能是在说一次新检索。
+_RELIST_RE = re.compile(
+    r"重新列(?:出|表|一遍|一下)?|再列(?:一遍|一次|一下|出)|重列|"
+    r"再(?:显示|念|报|说)(?:一遍|一次|一下)|"
+    r"刚才(?:那)?(?:些|几)?(?:可以)?(?:选|选择|挑)?的?(?:选项|列表|清单|候选|项目)")
+
 #: 序数与维度问句之间允许的虚词。**只许虚词**——放行任何实词就等于放弃紧邻判据。
 _PICK_GLUE = r"(?:是|的|要|卖)?\s*"
 _ORDINAL_PICKS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
@@ -289,6 +308,32 @@ def _ordinal_pick_answer(text: str, items: list[dict]) -> str | None:
             return f"「{name}」这一项没带{_DIM_NOUN[dim]}，这个我算不出来。"
         return f"「{name}」{_render(dim, value)}。"
     return None
+
+
+def _relist_answer(text: str, items: list[dict]) -> str | None:
+    """「重新列出刚才的选项」→ 从候选台账重渲染**文字清单**，零 provider 调用。
+
+    只念台账里真有的那几键（序号 + 名字 + 价格）。**没有的字段一个字都不补**
+    ——重列的病本来就是「给了他一份新的」，再补一份想象出来的属性只是换个编法。
+
+    话术末尾必须说清按钮在哪：候选集里没有 `send_text` 这类交互载体
+    （白名单 13 键刻意不含它们），文字清单**回不到那张卡的按钮**，
+    不说清就等于让用户以为按钮没了。
+    """
+    if not _RELIST_RE.search(text) or _NEW_SEARCH_RE.search(text):
+        return None
+    lines = []
+    for index, item in enumerate(items, start=1):
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        price = dimension_value(item, "price")
+        lines.append(f"{index}. {name}"
+                     + (f"（{_render('price', price)}）" if price is not None else ""))
+    if not lines:
+        return None
+    return ("刚才那份列表我这边跟到这几项：" + "；".join(lines)
+            + "。想选哪个就说「第几个」——按钮还在刚才那张卡上。")
 
 
 def _group_slices(text: str, groups: list[dict]) -> list[tuple[dict, str]]:
@@ -459,9 +504,15 @@ def answer(text: str, entry: dict | None,
         # 零候选那一支由 I-052 那条守卫兜（它管的是「引用了却没有」），
         # 这里只是不劫持。
         return None
+    t = str(text).strip()
+    # 重列排在聚合判据**之前**：它自带引用（「刚才那份」），
+    # 而 `is_candidate_aggregate_question` 要的是「引用 + 算子 + 维度」三段，
+    # 重列一段都凑不齐——放在后面等于永远走不到。
+    got = _relist_answer(t, items)
+    if got:
+        return got
     if not is_candidate_aggregate_question(text, items):
         return None
-    t = str(text).strip()
     if len(items) >= 2:
         # 最值与合计**要求至少两项**——一项时没有「哪家最…」「一共」可言。
         # 序数取值没有这条限制：只读菜单命中单品后候选集就只有一项，

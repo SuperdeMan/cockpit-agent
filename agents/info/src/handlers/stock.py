@@ -5,13 +5,16 @@ import logging
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.provenance import attach
+from runtime.session_facts import PROVENANCE_MARKERS
 
 logger = logging.getLogger("agent.info")
 
-_PROVENANCE_MARKERS = (
-    "数据源", "行情来源", "报价来源", "股价来源", "价格来源",
-    "更新时间", "行情时间", "报价时间", "更新到",
-)
+# 来源问句词表 2026-08-28 下沉到 `runtime/session_facts.PROVENANCE_MARKERS`（C4），
+# 这里直接消费那一份、**不再留本地别名**（别名就是第二个名字）。
+# 理由：这份判据此前**只有路由到 info.stock 之后才够得着**，而 QA T41 的病恰恰是
+# 没路由到（MiniMax 把「数据源是什么」落给了 chitchat，编出「东方财富 19:23」）。
+# 编排层要在落域**之前**用同一条判据，两边只许有一份。
+# 下沉时净增两条说法（`数据来源`/`什么时候更新`），是同族补全不是扩面。
 
 
 def _source_label(vendor: str) -> str:
@@ -55,7 +58,7 @@ class StockMixin:
         raw_text = str(intent.raw_text or "")
         # “来源”本身可能在问公司收入/业务来源，不能因上一轮股票焦点就被
         # 改写成行情 provenance。只消费明确指向行情数据或更新时间的词组。
-        provenance_query = any(mark in raw_text for mark in _PROVENANCE_MARKERS)
+        provenance_query = any(mark in raw_text for mark in PROVENANCE_MARKERS)
         candles = []
         if not provenance_query:
             try:
@@ -80,11 +83,16 @@ class StockMixin:
                      "low": candle.low, "close": candle.close, "volume": candle.volume}
                     for candle in candles
                 ]}
-        # 真实性标记：主路径按配置源（tushare/mock）；东财降级路径如实标 degraded
+        # 真实性标记：主路径按配置源（tushare/mock）；东财降级路径如实标 degraded。
+        # `data_time` 是**行情自己的时刻**（C4-A）：跨轮来源追问要复述的是它，不是取数
+        # 时刻——真栈 T41 编出的「19:23 前后」正是把取数时刻当成了行情时刻的那个形态。
+        # 称呼由这里声明，编排层的来源读出口照着念（它不该认识「行情」这个词）。
         if stock_provider is self.stock:
-            attach(card, self.stock)
+            attach(card, self.stock, data_time=q.market_time or "",
+                   data_time_label="行情时间")
         else:
-            attach(card, "eastmoney", mode="degraded", note="Tushare 失败降级东方财富")
+            attach(card, "eastmoney", mode="degraded", note="Tushare 失败降级东方财富",
+                   data_time=q.market_time or "", data_time_label="行情时间")
         if provenance_query:
             vendor = str((card.get("_prov") or {}).get("vendor") or "")
             when = q.market_time or "上游未提供"

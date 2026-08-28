@@ -31,6 +31,16 @@ from cockpit.common.v1 import common_pb2
 
 _DEFAULT_TIMEOUT = 10
 
+#: 数据源章（C4-A）的写侧构造。**逐键取而不是 `TurnSource(**s)`**：上游给的是
+#: 从 `ui_card._prov` 收来的自由 dict，多一个键就在落库路径上抛 ValueError。
+_TURN_SOURCE_FIELDS = ("card", "vendor", "mode", "fetched_at", "note",
+                       "data_time", "data_time_label")
+
+
+def _turn_source_pb(raw: dict):
+    return memory_pb2.TurnSource(**{
+        k: raw[k] for k in _TURN_SOURCE_FIELDS if isinstance(raw.get(k), str)})
+
 
 class Clients:
     def __init__(self):
@@ -69,17 +79,21 @@ class Clients:
                           occupant_id: str = "primary",
                           e2e_memory_capability: str = "",
                           turn_id: str = "", exchange_id: str = "",
-                          actions=None):
+                          actions=None, sources=None):
         """写入一轮对话到 memory（指代消解的数据来源）。带 user_id 时 memory 侧据此触发异步抽取。
         occupant_id 决定抽取出的偏好归属哪个乘员（M4 P4；proto 字段 2026-06 就有，一直没人传）。
-        turn_id/exchange_id 让重试是重放而不是追加一轮新对话（M-B）。"""
+        turn_id/exchange_id 让重试是重放而不是追加一轮新对话（M-B）。
+        `sources` 是 C4-A 的数据源事实（这一轮用了谁的数据、降没降级）。"""
         await self._memory_stub().AppendTurn(
             memory_pb2.AppendTurnRequest(session_id=session_id, role=role, text=text,
                                          user_id=user_id, vehicle_id=vehicle_id,
                                          occupant_id=occupant_id or "primary",
                                          e2e_memory_capability=e2e_memory_capability,
                                          turn_id=turn_id, exchange_id=exchange_id,
-                                         actions=list(actions or [])),
+                                         actions=list(actions or []),
+                                         sources=[_turn_source_pb(s)
+                                                  for s in (sources or [])
+                                                  if isinstance(s, dict)]),
             timeout=_DEFAULT_TIMEOUT)
 
     async def get_session(self, session_id: str, last_n: int = 6, *,
@@ -108,7 +122,11 @@ class Clients:
             timeout=_DEFAULT_TIMEOUT)
         return [{"role": t.role, "text": t.text, "ts": t.ts,
                  "occupant_id": t.occupant_id,
-                 "actions": list(t.actions), "exchange_id": t.exchange_id}
+                 "actions": list(t.actions), "exchange_id": t.exchange_id,
+                 # C4-A：来源账本的读侧。**这一行就是上面那条教训的复刻位**——
+                 # 写侧加了字段而这里不读，云侧读出口手里就还是空的。
+                 "sources": [{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
+                             for s in t.sources]}
                 for t in resp.turns]
 
     async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",

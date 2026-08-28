@@ -27,6 +27,18 @@ from runtime.clock import BUSINESS_TZ
 
 logger = logging.getLogger("memory.server")
 
+#: 数据源章的读侧构造（C4-A）。**逐键取而不是 `TurnSource(**s)`**：存进 Redis 的
+#: 是自由 JSON，多一个键就会在读路径上抛 ValueError，而那条路径每一次规划轮都走。
+#: 同 CLAUDE.md §6：防御要防到真正被拿去用的那个值。
+_TURN_SOURCE_FIELDS = ("card", "vendor", "mode", "fetched_at", "note",
+                       "data_time", "data_time_label")
+
+
+def _turn_source_pb(raw: dict):
+    return memory_pb2.TurnSource(**{
+        k: raw[k] for k in _TURN_SOURCE_FIELDS if isinstance(raw.get(k), str)})
+
+
 _CONSOLIDATE_EVERY = 4  # 每累积 N 轮触发一次异步抽取巩固
 # routine 建议属**建议类**：可以攒着说（10 分钟 TTL），也可以不说——习惯建议不是
 # 用户显式约定，赶上高负荷/免打扰就该让路。治理见 docs/conventions.md §9.8。
@@ -86,7 +98,10 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 user_id=request.user_id, occupant_id=request.occupant_id,
                 vehicle_id=request.vehicle_id, turn_id=request.turn_id,
                 exchange_id=request.exchange_id,
-                actions=list(request.actions))   # Q6 执行事实
+                actions=list(request.actions),   # Q6 执行事实
+                # C4-A 数据源事实：与 actions 同一格、同一条判据。
+                sources=[{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
+                         for s in request.sources])
         except TurnConflict:
             # 重放可以，改写不行：保留原 Turn 并如实报错，不静默覆盖已发生的对话。
             return memory_pb2.AppendTurnResponse(ok=False, error="turn_conflict")
@@ -290,7 +305,11 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
                 occupant_id=t.get("occupant_id", ""), turn_id=t.get("turn_id", ""),
                 exchange_id=t.get("exchange_id", ""),
                 # `or []` 不是形式：存量轮次（本字段之前写入的）读出来没有这个键。
-                actions=t.get("actions") or [])
+                actions=t.get("actions") or [],
+                # C4-A：数据源维的读侧。**存下来而读不到等于没存**——写侧加了
+                # 字段不等于消费方够得着，Q6 那次云侧客户端就漏了这一行。
+                sources=[_turn_source_pb(s) for s in (t.get("sources") or [])
+                         if isinstance(s, dict)])
             for t in turns
         ])
 

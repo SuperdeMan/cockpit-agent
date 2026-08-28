@@ -111,6 +111,39 @@ def _clean_actions(value) -> list[str]:
     return out[:_MAX_TURN_ACTIONS]
 
 
+#: 一轮最多记几条数据源。一次多卡（card_group）实测最多 3~4 张，5 是余量。
+#: 同 `_MAX_TURN_ACTIONS`：封顶是为了别让一条畸形上游把会话历史撑爆。
+_MAX_TURN_SOURCES = 5
+#: 数据源记的**就是卡上那个章**（`ui_card._prov`，契约 §9.3）的五个字段。
+#: 白名单而不是整块 dict：`_prov` 是产生方给的自由结构，整块落库就等于让
+#: 上游随时往会话历史里塞任意负载（`_resume_result` 那次已经付过一次学费）。
+_TURN_SOURCE_KEYS = ("card", "vendor", "mode", "fetched_at", "note",
+                     "data_time", "data_time_label")
+#: 单个字段的长度闸。来源章是给人念的一行字，不是自由文本载体。
+_TURN_SOURCE_FIELD_MAX = 120
+
+
+def _clean_sources(value) -> list[dict]:
+    """数据源事实的归一（C4-A）。**上游给的同样是不可信输入。**
+
+    口径逐条抄 `_clean_actions`：非 list 归空、非法元素直接丢、不做 `str()` 转换、
+    有封顶。多一条：**没有 vendor 的条目直接丢**——一条不知道是谁给的数据，
+    在「来源是什么」这个问题上等于没有记录，留着只会让读出口报出一行空话。
+    """
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[dict] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        kept = {k: item[k].strip()[:_TURN_SOURCE_FIELD_MAX]
+                for k in _TURN_SOURCE_KEYS
+                if isinstance(item.get(k), str) and item[k].strip()}
+        if kept.get("vendor"):
+            out.append(kept)
+    return out[:_MAX_TURN_SOURCES]
+
+
 def _tail_whole_exchanges(turns: list[dict], last_n: int) -> list[dict]:
     """取末尾 `last_n` 条，但**不切开 exchange**：切中就整体舍弃最旧的那半个。
 
@@ -157,7 +190,8 @@ class MemoryStore:
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", occupant_id: str = "",
                           vehicle_id: str = "", turn_id: str = "",
-                          exchange_id: str = "", actions=None) -> bool:
+                          exchange_id: str = "", actions=None,
+                          sources=None) -> bool:
         """会话轮次原文。**有 TTL、有 user 索引、有 OwnerKey**。
 
         TTL 与 user 索引是 GDPR 侧的硬要求（无 TTL＝永久留存；无索引则 ForgetUser
@@ -178,12 +212,18 @@ class MemoryStore:
         幂等键与 `ltrim(-50)`——**保留期由既有机制兜住**，卡上「别做成只涨不清的表」
         自动满足。更关键的是：`local` 快路径那 313 个动作**根本不上云**，
         而端侧早就在调 `AppendTurn`，只是没带动作。
+
+        **`sources` 是 C4-A 的数据源事实（2026-08-28）**：这一轮用了谁的数据、
+        降没降级。落点与 `actions` 同一格，理由也同一条——「这一轮做了什么」与
+        「这一轮的数据从哪来」都是系统持有的事实，而 `_prov` 此前只活在卡上，
+        落库即丢，于是「刚才那个行情的来源是什么」只能让 LLM 编一个出来。
         """
         uid, occ = owner_of(user_id, occupant_id)
         turn = {"role": role, "text": text, "ts": int(time.time()),
                 "user_id": uid, "occupant_id": occ, "vehicle_id": vehicle_id or "",
                 "turn_id": turn_id or "", "exchange_id": exchange_id or turn_id or "",
-                "actions": _clean_actions(actions)}
+                "actions": _clean_actions(actions),
+                "sources": _clean_sources(sources)}
         r = await self._redis()
         key = f"sess:{session_id}"
         if r:
@@ -227,9 +267,19 @@ class MemoryStore:
         # 比没有记录更糟**——审计问答会照着它回答，而用户无从发现。
         # 幂等键的既有语义（「重试可以重放，但不能改写已经发生过的对话」）
         # 对执行事实只会更严，不会更松。
-        same = all(existing.get(k) == incoming.get(k)
+        # ⚠ `sources` 同理（C4-A，2026-08-28）：来源账本也是审计问答直接照念的东西，
+        # **一条被悄悄改过的来源记录比没有记录更糟**。
+        # ⚠ 两个列表字段要**归一后再比**：存量轮次读出来是 `None`（那一版还没有
+        # 这个键），而新写入方给的是 `[]`——不归一就会把一次合法重放判成篡改，
+        # 且只在**升级后的第一轮重试**上出现，本地永远复现不了。
+        def _same(key: str) -> bool:
+            if key in ("actions", "sources"):
+                return (existing.get(key) or []) == (incoming.get(key) or [])
+            return existing.get(key) == incoming.get(key)
+
+        same = all(_same(k)
                    for k in ("role", "text", "user_id", "occupant_id",
-                             "exchange_id", "actions"))
+                             "exchange_id", "actions", "sources"))
         if not same:
             logger.warning("turn_conflict session=%s turn=%s", session_id, turn_id)
             raise TurnConflict(f"{session_id}/{turn_id}")

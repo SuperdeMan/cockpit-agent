@@ -25,6 +25,7 @@ from .stream_state import (
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
+from runtime import session_facts
 from .context import (ContextManager, build_context, candidate_downlink,
                       candidate_set_for,
                       references_a_candidate, resolve_candidate_scope,
@@ -57,6 +58,42 @@ def _executed_action_names(actions) -> list[str]:
                    or a.get("type") or "").strip()
         if name:
             out.append(name)
+    return out
+
+
+def _turn_sources(ui_card) -> list[dict]:
+    """final 帧的卡 → 这一轮的**数据源事实**（C4-A，2026-08-28）。
+
+    `_prov`（契约 §9.3）此前**只活在卡上**：渲染完就丢，全仓 orchestrator/memory
+    没有任何一处读它。于是「刚才那个行情的数据源是什么」这类问题手里根本没有材料，
+    落到 chitchat 就地编一个——真栈 T41 编出「东方财富实时行情、19:23 前后」，
+    而真实 provider 是 Tushare、行情日 20260826。**每一个字都是假的，语气却是确定的。**
+
+    > 判据：**「这一轮用了谁、降级没降级」得像动作一样入账**（§4.2 I-033 那行的原判据）。
+    > 别在披露层加话术——话术层判据验证不了「说的是不是真的」（Q6 那条）。
+
+    取的是**用户看到的那张卡**（final 帧），不是中途某一步的结果：与
+    `_executed_action_names` 同一条口径，被聚合器丢掉的东西不该出现在账本里。
+    `card_group` 逐张收（同源场景 `attach()` 会把章打在每个成员卡上）。
+    """
+    cards = [ui_card] if isinstance(ui_card, dict) else []
+    if cards and cards[0].get("type") == "card_group":
+        cards = [c for c in (cards[0].get("items") or []) if isinstance(c, dict)]
+    out: list[dict] = []
+    for card in cards:
+        prov = card.get("_prov")
+        if not isinstance(prov, dict):
+            continue
+        record = {"card": str(card.get("type") or "")}
+        for key in ("vendor", "mode", "fetched_at", "note",
+                    "data_time", "data_time_label"):
+            value = prov.get(key)
+            if isinstance(value, str) and value.strip():
+                record[key] = value.strip()
+        if record.get("vendor"):
+            # 无 vendor 的章在「来源是什么」上等于没有记录——落库只会让读出口
+            # 报出一行空话。同 memory 侧 `_clean_sources` 的口径，两端一致。
+            out.append(record)
     return out
 
 # 取消判定已收敛到 `pending_cancel`（QA 卡 Q1-A）——**挂起态的两条分支
@@ -217,6 +254,7 @@ class PlannerEngine:
 
         assistant_speech = ""
         executed_actions: list[str] = []
+        turn_sources: list[dict] = []
         rejected = False
         async for ev in self._orchestrate(request, ctx, text, mem_on):
             # R4.4：剥离内部标记键，消费端（server.py）看不到；同时记本轮是否拒识。
@@ -233,6 +271,8 @@ class PlannerEngine:
                 # 取 final 帧而不是 step_result——**用户看到的那份就是这一份**，
                 # 中途被聚合器丢掉的步不该出现在审计回答里。
                 executed_actions = _executed_action_names(ev.get("actions"))
+                # C4-A：这一轮的数据源事实与动作事实同源同格，一起落库。
+                turn_sources = _turn_sources(ev.get("ui_card"))
             yield ev
 
         # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
@@ -252,7 +292,8 @@ class PlannerEngine:
                                                ctx.e2e_memory_capability,
                                                turn_id=f"{exch}:assistant:0",
                                                exchange_id=exch,
-                                               actions=executed_actions)
+                                               actions=executed_actions,
+                                               sources=turn_sources)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:
@@ -427,6 +468,21 @@ class PlannerEngine:
                         # 只有把「按谁答的」记下来才查得了。
                         "named_groups": len(named_candidates)})
                 yield {"kind": "final", "speech": aggregate}
+                return
+
+            # C4-B：**系统持有的会话事实**的确定性读出口族——挂起状态 / 数据源 /
+            # 执行史。与上面两条候选短路同挂点、同判据面，理由也是同一条：
+            # 这一族的病**不是模型答得不好，是它手里根本没有那些数**（chitchat 只
+            # 拿得到 4 轮纯文本，actions/卡片/`_prov` 一个都不进 prompt）。
+            # 所以短路必须在**落域之前**：Q6 把审计闸建在 chitchat 里，
+            # 2026-08-26 T37 被 planner 接给 reminder.list，闸就够不着了。
+            fact = await self._session_fact_answer(ctx, text, working_set)
+            if fact:
+                node, speech = fact
+                logger.info("Deterministic session fact (%s): %s", node, text[:40])
+                await _emit_engine_lifecycle(
+                    ctx, f"cloud.{node}", f"system.{node}")
+                yield {"kind": "final", "speech": speech}
                 return
 
             plan = await self.planner.build(
@@ -821,6 +877,63 @@ class PlannerEngine:
             "aggregate",
         )
         yield {"kind": "final", **final}
+
+    async def _pending_digest(self, ctx) -> list[dict] | None:
+        """挂起表 → 读出口能念的最小形状 `[{"what","phase"}]`；读不到返回 **None**。
+
+        取 `load_all` 而不是 `load`：用户问的是「还**有没有**」，只答最新那一条
+        等于把「还有几条」答错——挂起表本来就是多条（Q1-C）。
+
+        ⚠ **「读不到」与「读到了、是空的」必须分开报**（C2 第二次沉淀的那条）：
+        两者都返回 `[]` 就会让一次 Redis 故障说出「当前没有待确认的操作」——
+        一句听起来很确定的假话，而用户正是靠它决定要不要重说一遍。
+        """
+        try:
+            entries = await self.session.load_all(
+                ctx.session_id, owner_user_id=ctx.user_id)
+        except Exception as e:
+            logger.debug("pending digest unavailable: %s", e)
+            return None
+        out: list[dict] = []
+        for state in entries or []:
+            goal = ""
+            try:
+                goal = str((state.pending_plan or {}).get("goal") or "")
+            except AttributeError:
+                pass
+            # 目标描述与 `_append_pending_hint` 同源同截断——同一条挂起在两处
+            # 出现时必须是同一个称呼，否则用户会以为是两件事。
+            out.append({"what": goal[:20], "phase": getattr(state, "phase", "")})
+        return out
+
+    async def _session_fact_answer(self, ctx, text: str,
+                                   working_set) -> tuple[str, str] | None:
+        """「系统持有的会话事实」三条确定性读出口 → `(出口名, 话术)`，或 None（不劫持）。
+
+        判据与话术都在 `runtime.session_facts`（唯一实现，chitchat 兜底位共用同一份）；
+        **这里只做取数**——挂起表在编排手里，账本在 `working_set.history` 里。
+        零 LLM、零网络（`load_all` 读的是会话自己的挂起键）。
+
+        求值序 = 判据窄的排前面：挂起（三段）→ 数据源（两段 + 有账才劫持）→
+        执行史（两段）。三者判据面互不重叠，顺序只影响可读性不影响结果。
+        """
+        if session_facts.is_pending_question(text):
+            digest = await self._pending_digest(ctx)
+            if digest is None:
+                return ("pending_state", "我这会儿查不到待确认列表，稍后再问我一次。")
+            return ("pending_state", session_facts.pending_answer(digest))
+        history = list(getattr(working_set, "history", None) or [])
+        # **有账才劫持**：账本空说明这一轮之前没有任何外部数据卡，那就不是
+        # 「系统持有的事实」，照常进 Planner——`info.stock` 那条域内直答
+        # （重判 5：确定性面早就都在）比一句「我没记到」有用得多。
+        # 这也是本族三条里唯一带这个条件的：挂起与执行史**没有第二个能答的人**。
+        if (session_facts.is_provenance_question(text)
+                and session_facts.latest_sources(history)):
+            return ("data_provenance", session_facts.provenance_answer(history))
+        if session_facts.is_execution_audit_question(text):
+            return ("execution_audit", session_facts.audit_answer(
+                history, with_time=session_facts.asks_when(text)))
+        return None
 
     @staticmethod
     def _parse_escalate(result: StepResult) -> dict | None:
@@ -1434,8 +1547,18 @@ class PlannerEngine:
                     )
                 elif not raw_city:
                     step.slots["city"] = str(focus.last_city)
+        # 股票焦点的跨轮继承默认要求**上一轮本身就是股票轮**——跨过无关轮次后旧标的
+        # 已经失去指代资格（「现在什么行情值得关注」不该被塞进三轮前那只票）。
+        # C4（2026-08-28）：**原话带回顾指代时这条限制让路**。真栈 T44
+        # 「只总结**刚才查到的**行情，不做投资建议」被中间那句「不要把生活指数当成
+        # 股票指数」隔开 ⇒ `last_intent` 变成 chitchat ⇒ 不继承 ⇒ 反问「您想查询
+        # 哪只股票或指数？」——**用户明确指了回去，系统却说不知道指的是谁。**
+        # 判据是**形态**（回顾指代词，零领域词），且与 `session_facts` 的审计闸
+        # 共用同一张词表：两处各写一份就会长出「这边认得那边不认得」的分歧。
         if (getattr(focus, "last_stock_symbol", "")
-                and getattr(focus, "last_intent", "") == "info.stock"):
+                and (getattr(focus, "last_intent", "") == "info.stock"
+                     or session_facts.refers_to_an_earlier_turn(
+                         getattr(plan, "raw_text", "") or ""))):
             for step in plan.steps:
                 if step.intent == "info.stock" and not (step.slots or {}).get("symbol"):
                     step.slots["symbol"] = str(focus.last_stock_symbol)

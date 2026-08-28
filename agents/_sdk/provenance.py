@@ -73,12 +73,18 @@ def log_resolution(domain: str, vendor: str, real: bool, provider=None) -> None:
             pass
 
 
-def attach(card, source, *, mode: str = "", fetched_at: str = "", note: str = ""):
+def attach(card, source, *, mode: str = "", fetched_at: str = "", note: str = "",
+           data_time: str = "", data_time_label: str = ""):
     """给 ui_card 盖 `_prov` 真实性标记（契约 conventions §9.3；治理 P1）。
 
     - ``source``：provider 实例（读 log_resolution 盖的章）或 vendor 字符串。
     - ``mode`` 缺省从章取（real/mock）；``degraded``/``cached`` 由调用方显式传（note 说明原因）。
     - ``fetched_at`` 缺省=当下（ISO8601 本地时区）——数据获取时刻，非渲染时刻。
+    - ``data_time`` / ``data_time_label``：**数据自身的时刻**及其称呼（C4-A，2026-08-28）。
+      它与 `fetched_at` 是两件事：行情卡 20:00 取到的是 **20260826 那一天的收盘价**，
+      「取数时刻」回答不了「这数据是什么时候的」。**称呼由产生方声明**——编排层的
+      来源读出口不知道 `stock_quote` 那一维该叫「行情时间」，把领域词写进编排核心
+      正是 R2.1 禁的那件事（同 `_candidate_label` 的判据，§9.32）。缺省不写这两键。
     - card 为 None 原样返回；``card_group`` 打在成员卡上（同源场景）。返回 card 便于内联。
     """
     if card is None:
@@ -95,6 +101,10 @@ def attach(card, source, *, mode: str = "", fetched_at: str = "", note: str = ""
     }
     if note:
         prov["note"] = note
+    if data_time:
+        prov["data_time"] = data_time
+        # 没有称呼就用通用词。**不许只有 label 没有值**——那是一个空标签。
+        prov["data_time_label"] = data_time_label or "数据时间"
     if card.get("type") == "card_group":
         for item in card.get("items") or []:
             if isinstance(item, dict):
