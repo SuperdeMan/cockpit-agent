@@ -89,23 +89,16 @@ SHA-1  5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25
 
 ## e2e（Maestro，M3-5）
 
+**状态：4/4 全部跑通**（2026-08-28 真机，`4/4 Flows Passed in 7m 43s`）。
+
 ```bash
-maestro test mobile/e2e/ --include-tags offline   # 零后端依赖，CI 与本地都能跑
-maestro test mobile/e2e/ --include-tags online    # 需真栈（target=cloud + 设备在 tailnet）
-maestro test mobile/e2e/01-text-weather.yaml      # 单条
+maestro test --no-reinstall-driver mobile/e2e/                       # 全部四条
+maestro test --no-reinstall-driver --include-tags online mobile/e2e/ # 只跑要真栈的三条
 ```
 
-前置：Metro 在跑（`npx expo start --dev-client`）+ `adb reverse tcp:8081 tcp:8081`。
-每条 flow 都先跑 `subflows/open-app.yaml` 经 dev-client 深链连 Metro——**这不是仪式**：
-dev build 的 `launchApp` 打开的是 DevLauncherActivity，被测对象根本没在跑，而失败信息
-看起来像「App 里没有这个按钮」。
-
-⚠ **CLI 尚未装成**（`maestro.zip` 315MB，本网络 ~30KB/s，坑账 §9.37）。flow 已按
-Maestro 2.9.0 语法写好但**没有实跑读数**。装 CLI：下 `maestro.zip`（下完先对
-release 里的 `checksums_sha256.txt`，**别用 `curl -C -` 续传**），解压后把 `bin` 加进 PATH。
-
-驱动用 testID（`composer-input`/`composer-send`/`confirm-accept`/`confirm-cancel`/
-`msg-pending`），断言用文本——**文案会变，而断言要验的正是语义内容**。
+⚠ **`--no-reinstall-driver` 不是可选项**：Maestro 每个 session 都会重装它自己的 driver APK，
+而 MIUI 每次都弹安装确认（只给 5 秒、默认「拒绝」）。前置、判据取舍、以及实跑当场抓到的
+三个坑，**全部只写在** [`e2e/README.md`](e2e/README.md) —— 这里不复制第二份。
 
 ## 与 hmi/ 的共享面（单一真相源，不复制不搬家）
 
