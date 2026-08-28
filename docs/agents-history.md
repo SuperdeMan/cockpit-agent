@@ -6762,3 +6762,103 @@ C4-D（stock 产出进候选集）**不做**：① 它够不到自己那张卡�
   应在下一次跑批时连同 C16 其余条目一起验）。**云端 release 的 QA 读数没有因此改变。**
 - 四层知识对齐：架构 **v1.40 §5.2.14**、契约 **§9.34**（并更新 §9.3/§9.24）、
   方案 §4「第 2 批终态」、本节。
+
+---
+
+## §75 2026-08-28 MiniMax QA 修复批 · 第 3 批（C3 wait_slot 方向反转 + C10 提醒域）
+
+方案与逐卡机制见
+[`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](design/2026-08-27-minimax-qa-root-cause-fix-plan.md)
+（§3 的 C3/C10 卡、§4「第 3 批终态」）。本节只记**流水与判据**，不复述方案。
+
+### §75.1 做了什么
+
+两张卡是同一类病的两个面：**会话状态机把「这句话属于谁、这个序号指谁」判错了。**
+
+**C3（P1-05，真栈 merchant T44–T46 旧餐单三连吞）**
+
+- **A 方向反转 + `slot_shapes` 契约**。proto `Capability.slot_shapes`（字段 8）；
+  声明面 `manifest.yaml` / `servers.yaml`（四处 `item_query: item_name`），
+  装配面 `planning._validated_steps` → `Step.slot_shapes`（进程内），
+  持久面 `_suspend` **只抄待补那几个槽**的形状进 `SessionState.slot_shapes`，
+  消费面 `_is_topic_change`。判据本体 `orchestrator/cloud/slot_shape.py` 是唯一实现、
+  零领域词；`order_id` 那段硬编码**整体收编**进形状表（它此前是那里唯一的硬编码，
+  也是唯一把方向做对了的那一条）。
+- **B 词表合并**。`candidate_query._NEW_SEARCH_RE` 提成公开 `NEW_SEARCH_RE`，
+  `_is_topic_change` 与 `slot_shape` 都从它 import；疑问词表补「哪个」（旧表只有「哪些」）。
+- **C 桥侧防御**。`base.normalize_menu_query`（两家商户共用）把「全部/所有/都有啥/
+  整份菜单/随便」整句归一成空槽 = 整份菜单。
+- **D 止损底线**。`SLOT_RETRY_LIMIT`（默认 2）：同一条挂起连续问同一件事到上限即
+  放弃、按全新请求规划，并在 final 的 follow_up 说一句。
+
+**C10（P1-07 + P2-17 落域半边）**
+
+- **A 序数参照系统一**。`_refresh_active` 无参形式改成与 `_list` 默认视图同口径
+  （从现在起的未来项）；`store.get` 默认只给 ACTIVE（与 `find_by_title` 拉平）。
+- **B 精确度阶梯**。`_resolve_targets` 先逐字相等、没有再退回子串；
+  `reminder.cancel` 描述补一句填槽指令。
+- **C 任务性准入**。`agents/reminder/src/task_admission.py`：疑问收尾 / 第三人称主语开头
+  ⇒ 拒建并诚实说（OK 不是 FAILED）。
+- **E 跨轮幂等**。`_cross_turn_duplicate`：同 owner + 逐字同标题 + 同时刻的 pending
+  已存在 ⇒ 收编不新建；**同轮不收编的裁定原样保留**（`turn` 判据与 `_reschedule_target` 同源）。
+- **F 范例一条**：「第二个先取消，其他继续」→ `reminder.cancel(index=2)`，不新增 intent。
+- **D 的两件残账一并做掉**：`qa_data_hygiene.py` 新增第 ⑤ 族 `--reminders-expired`
+  （把 08-27 那次 90 条点名 SQL 机制化，同一个 `extra.reason` 约定）；
+  探针跑批结束补提醒清理段（按本次 run 号匹配、逐条取消、**复核计数回落**）。
+
+### §75.2 实施时的判断（方案里没有，记下来免得以后当成「本来就该这样」）
+
+1. **方案给的长度上限会当场误伤真数据。** C3-A 草案写「`item_name`：长度 ≤12」，
+   而 2026-08-13 真机菜单里最长的在售商品名是「马来咖喱风味薄皮肉骨鸡随心配」——
+   **14 字**。照抄就会把一个真商品名判成换话题。改取 20 并把那条 14 字的名字
+   写成用例，**上限来自观测而不是拍脑袋**。
+   > 判据：**方案里的阈值是待证参数，不是待办**（第 2 批 C4-D「建议项是待证命题」的同族）。
+2. **形状名的值域闸放不进桥，这是镜像依赖闭包逼出来的。** 桥的镜像没有
+   `orchestrator/`，把已知形状名抄一份过去就是第二份声明——正是本字段要消灭的
+   那类问题。所以运行期只校验「槽存不存在」，**值域由离线门禁逐条比对全部声明方**
+   （servers.yaml + 各 manifest.yaml）。反向验证做过：把形状名改成 `itemname`，
+   门禁当场红。
+3. **三值不是设计洁癖，是被两条形状逼出来的。** `order_id` 匹配上就是定案，
+   `item_name` 匹配上什么都不证明——「点一杯拿铁」完全长得像餐品名，
+   它却是既有「动词+数量+量词+宾语」判据认得的完整新指令。压成 bool 就得牺牲一条。
+4. **止损计数必须认「问的是不是同一件事」，只认 step 会误伤正常流程。**
+   商户流程「先问门店、再问餐品、再问数量」是**同一步**连续三次 NEED_SLOT——
+   按 step 计数会在第三问放弃一个正在正常推进的流程。判据补成「同一步 ∧ 同一组待补槽」。
+5. **零领域词的源码级断言不能裸扫源码。** 第一版把整个模块源码拿去比对知识库词表，
+   当场被 `volume.dec` 派生出来的 `dec` 撞红——它是 `declared` 的子串。
+   两处修正：ASCII 按**词边界**、中文按子串；扫描面用 `ast.unparse` **剥掉全部
+   docstring 与注释**——那里出现领域词是正常甚至必须的（讲的是这条判据的来历），
+   模式里出现才是退化。
+6. **探针清理段刻意做成「只观测不中止」。** 它跑在全部业务轮之后，中止已经没有
+   保护价值，而一个新写、且**本批无法对真栈验证**的清理段误判成失败，
+   会把下一趟跑批截断——那正是「修正后计分」那一趟最不能出的事。
+   同理它**只收带 `{run}` 的 case**：无差别收会让每个 persona 白跑两轮，
+   而多出来的轮次本身就会改变读数。
+7. **catalog 字符数是行为锁，改描述要显式改它并写清买了什么。**
+   `reminder.cancel` 描述 +49 字符（13400 → 13449，余量 2600 → 2551）。
+   同批的「第二个先取消，其他继续」**刻意没进 manifest examples**——那句要教的是
+   复合说法怎么落域，归范例库（检索式 few-shot），不占 catalog 常驻预算。
+
+### §75.3 读数（全部本地，真栈未跑）
+
+- 全量 `python -m pytest -q -n auto --dist worksteal` = **7493 passed / 32 skipped 零红**
+  （3:57）。基线 7397/32 ⇒ **+96 全部是本批新增断言**。
+- 逐文件点号（`git archive HEAD` 副本 + 两边 `--collect-only` 逐文件 diff，
+  **按收集器数的数不是按 `def` 数**）：
+  `test_merchant_base.py` **+26**（泛指词归一两向，误伤对照 7 条）、
+  `test_slot_shape.py` **+29**（形状两向 + 声明面值域门禁 + 零领域词钉子）、
+  `test_task_admission.py` **+22**（准入两向，误伤面 13 条）、
+  `test_agent.py`(reminder) **+8**、`test_engine_confirm.py` **+5**、
+  `test_probe_qa_long_sessions.py` **+3**、`test_merchant_mcdonalds.py` **+2**、
+  `test_merchant_luckin.py` **+1** ＝ **96**；其余 319 个测试文件计数逐字未变。
+- **改过的行为锁（都必须显式改、不许悄悄变）**：`test_catalog_budget.py`
+  13400 → **13449** / 余量 2600 → **2551**；`test_store.py::test_find_by_title_and_set_status`
+  与 `test_agent.py::test_ordinal_continuation_after_clarify` 各改一条——
+  `store.get` 默认过滤 ACTIVE 之后，**读终态要显式点名 `statuses`**。
+  除这三处外没有任何既有用例被改绿。
+- 三道离线门禁：`test/smoke_edge.py` 13 passed / 0 failed；
+  `test/eval_capability_integrity.py` ✅ PASS；`scripts/check_intent_gate.py` rc=0
+  （discovery 85/85、gate 25/25、cases 139、distinct_inputs 129）。
+- ⚠ **真栈迷你集与「修正后计分」仍未跑**（与第 1、2 批同一条口径：三批都改过探针本身，
+  应在下一次跑批时连同 C16 其余条目一起验）。**云端 release 的 QA 读数没有因此改变。**
+- 四层知识对齐：架构 **v1.41 §5.2.15**、契约 **§9.35**、方案 §4「第 3 批终态」、本节。
