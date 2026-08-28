@@ -2325,7 +2325,41 @@ def _summary(results: list[dict]) -> dict:
     }
 
 
-async def _run(selected: list[str], ws_url: str, collector: str) -> list[dict]:
+def _partial_path(out: Path) -> Path:
+    """整趟产物旁边的「已完成 persona」增量档。"""
+    return out.with_name(out.stem + ".partial" + out.suffix)
+
+
+def _write_partial(out: Path, results: list[dict]) -> None:
+    """**每跑完一个 persona 就落一次盘。**
+
+    2026-08-28 实证：一趟长会话跑到最后一个 persona 时被外部中止，而产物只在
+    **全部 persona 结束之后**才写——四个已经跑完的 persona 的 trace / 卡片明细
+    **全部丢失**，只剩控制台的 ✓/✗。一趟四十分钟的跑批把它的产物押在
+    「跑完不出事」上，本身就是个设计缺陷。
+
+    判据：**长时任务的中间产物要在产生的时候就落地，不是在结束的时候。**
+
+    刻意写成**旁边的另一个文件**而不是覆盖 `--out`：整趟成功时 `--out` 才是那份
+    带 release/TTS/summary 的完整证据，`.partial` 只是「中途没了也还剩点什么」，
+    两者不该互相冒充。写盘失败**绝不打断跑批**——它是保险不是主线。
+    """
+    try:
+        target = _partial_path(out)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({
+            "note": "逐 persona 增量档：整趟若被中止，这里是已完成 persona 的明细；"
+                    "**它没有 release / TTS / summary 对账**，不能当完整证据用",
+            "ts": int(time.time()),
+            "completed_personas": [r.get("persona") for r in results],
+            "personas": results,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:          # 保险失效不该拖垮被保的东西
+        print(f"（增量档写盘失败，不影响跑批：{type(exc).__name__}）", file=sys.stderr)
+
+
+async def _run(selected: list[str], ws_url: str, collector: str,
+               out: Path | None = None) -> list[dict]:
     plans = build_persona_plans()
     stamp = int(time.time())
     results = []
@@ -2333,6 +2367,8 @@ async def _run(selected: list[str], ws_url: str, collector: str) -> list[dict]:
         print(f"\n=== 长会话 persona: {name} ===")
         results.append(await _run_persona(
             name, plans[name], ws_url, collector, stamp + offset))
+        if out is not None:
+            _write_partial(out, results)
     return results
 
 
@@ -2411,7 +2447,8 @@ def main() -> int:
     print(
         f"真栈目标：{target}；release={release_start['release_sha']}；"
         f"persona={','.join(selected)}；LLM 锁=minimax:MiniMax-M3")
-    results = asyncio.run(_run(selected, ws_url, collector))
+    out = Path(args.out)
+    results = asyncio.run(_run(selected, ws_url, collector, out))
     print("\n=== 每 persona 真实业务回复的 MiniMax 云端 TTS 取证 ===")
     business_samples = select_tts_business_samples(results)
     tts_samples: dict[str, dict] = {}
@@ -2474,9 +2511,13 @@ def main() -> int:
         "summary": summary, "open_operations": open_operations,
         "personas": results,
     }
-    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 整趟成功 ⇒ 增量档功成身退，别留一份半截的在旁边误导下一个人。
+    try:
+        _partial_path(out).unlink(missing_ok=True)
+    except OSError:
+        pass
 
     print("\n=== 长会话汇总 ===")
     for result in results:

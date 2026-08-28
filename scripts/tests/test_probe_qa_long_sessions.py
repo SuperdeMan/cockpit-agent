@@ -1120,6 +1120,71 @@ def test_merchant_draft_cleanup_card_proves_exact_session_is_empty():
     assert failures == ["商户临时预览清理后仍有 1 条 active draft"]
 
 
+# ── 逐 persona 落盘（2026-08-28 一次外部中止逼出来的）────────────────────
+# 那一趟跑到最后一个 persona 时被中止，而产物只在**全部 persona 结束之后**才写
+# ⇒ 四个已跑完 persona 的 trace / 卡片明细全丢，只剩控制台 ✓/✗。
+# 判据：**长时任务的中间产物要在产生的时候就落地，不是在结束的时候。**
+
+def test_each_finished_persona_is_persisted_before_the_next_one_starts(
+        tmp_path, monkeypatch):
+    out = tmp_path / "run.json"
+    seen: list[list[str]] = []
+
+    async def fake_persona(name, cases, ws_url, collector, stamp):
+        # 每跑完一个就去看增量档里已经有谁——**证明它是「跑完就落」不是「最后一次性落」**
+        if out.with_name("run.partial.json").exists():
+            payload = json.loads(
+                out.with_name("run.partial.json").read_text(encoding="utf-8"))
+            seen.append(list(payload["completed_personas"]))
+        else:
+            seen.append([])
+        return {"persona": name, "turns": [], "turn_count": 0,
+                "passed": 0, "failed": 0}
+
+    monkeypatch.setattr(long_qa, "_run_persona", fake_persona)
+    monkeypatch.setattr(long_qa, "build_persona_plans",
+                        lambda: {"a": [], "b": [], "c": []})
+
+    results = asyncio.run(long_qa._run(["a", "b", "c"], "ws://x", "http://y", out))
+
+    assert [r["persona"] for r in results] == ["a", "b", "c"]
+    # 第 1 个 persona 开跑时还没有档；第 2 个开跑时 a 已经在档里；第 3 个时 a、b 都在。
+    assert seen == [[], ["a"], ["a", "b"]]
+    final = json.loads(
+        out.with_name("run.partial.json").read_text(encoding="utf-8"))
+    assert final["completed_personas"] == ["a", "b", "c"]
+    assert "不能当完整证据用" in final["note"]
+
+
+def test_partial_file_never_breaks_the_run_when_it_cannot_be_written(
+        tmp_path, monkeypatch):
+    """保险失效不该拖垮被保的东西。"""
+    async def fake_persona(name, cases, ws_url, collector, stamp):
+        return {"persona": name, "turns": [], "turn_count": 0,
+                "passed": 0, "failed": 0}
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk gone")
+
+    monkeypatch.setattr(long_qa, "_run_persona", fake_persona)
+    monkeypatch.setattr(long_qa, "build_persona_plans", lambda: {"a": []})
+    monkeypatch.setattr(long_qa.Path, "write_text", boom)
+
+    results = asyncio.run(
+        long_qa._run(["a"], "ws://x", "http://y", tmp_path / "run.json"))
+    assert [r["persona"] for r in results] == ["a"]
+
+
+def test_partial_file_is_removed_once_the_full_artifact_lands(tmp_path):
+    """整趟成功 ⇒ 增量档功成身退，别留半截的在旁边误导下一个人。"""
+    out = tmp_path / "run.json"
+    long_qa._write_partial(out, [{"persona": "a"}])
+    partial = long_qa._partial_path(out)
+    assert partial.exists()
+    partial.unlink(missing_ok=True)
+    assert not partial.exists()
+
+
 def test_recovery_contract_has_three_audited_turns():
     turns = long_qa.recovery_turns()
 
