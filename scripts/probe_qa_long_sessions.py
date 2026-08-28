@@ -10,6 +10,7 @@ LLM provider。所有 LLM 调用必须是 minimax:MiniMax-M3；商户与危险�
     python scripts/probe_qa_long_sessions.py
     python scripts/probe_qa_long_sessions.py --persona vehicle,merchant
     python scripts/probe_qa_long_sessions.py --dry-run
+    python scripts/probe_qa_long_sessions.py --replay <artifact.json>   # 修正后计分
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from runtime.execution_claim import execution_claim                       # noqa: E402
 from scripts import probe_qa_regression as probe                         # noqa: E402
 from scripts.dev_stack_lib import read_root_env                          # noqa: E402
 from scripts.e2e_target import endpoint_environment, resolve_e2e_target  # noqa: E402
@@ -96,20 +98,29 @@ def _custom_case(cid: str, *turns: dict) -> dict:
 
 
 _INFORMATION_CASES = [
+    # ⚠ `city_any` 2026-08-28 全组补上（C16-7 ＝ C9-E）：这五轮原来**只查了
+    # `_prov`**，于是 T4/T5 答上海（mock 车辆位置回退的产物）一路判绿，城市漂移
+    # 全靠人工漏检兜出来。本会话里用户只点过「深圳」一个城市，所以允许集就是它
+    # ——判据挂在**卡片的 `city` 机读字段**上，没有该字段时退回「话术里至少出现
+    # 一个」的正向要求（写成排除表就要一份全国城市名单，那是补不完的）。
     _custom_case("INF-WEATHER",
-        {"say": "深圳现在天气怎么样", "expect": {"no_actions": True},
+        {"say": "深圳现在天气怎么样",
+         "expect": {"no_actions": True, "city_any": ["深圳"]},
          "audit": {"intent_any": ["info.weather"], "provider_required": True,
                    "provenance_required": True}},
-        {"say": "明天呢", "expect": {"no_actions": True},
+        {"say": "明天呢", "expect": {"no_actions": True, "city_any": ["深圳"]},
          "audit": {"intent_any": ["info.weather", "info.forecast"],
                    "provenance_required": True}},
-        {"say": "空气质量也看一下", "expect": {"no_actions": True},
+        {"say": "空气质量也看一下",
+         "expect": {"no_actions": True, "city_any": ["深圳"]},
          "audit": {"intent_any": ["info.air_quality"],
                    "provenance_required": True}},
-        {"say": "现在有影响开车的天气预警吗", "expect": {"no_actions": True},
+        {"say": "现在有影响开车的天气预警吗",
+         "expect": {"no_actions": True, "city_any": ["深圳"]},
          "audit": {"intent_any": ["safety.weather_alert", "info.alerts"],
                    "provenance_required": True}},
-        {"say": "明天适合洗车吗", "expect": {"no_actions": True},
+        {"say": "明天适合洗车吗",
+         "expect": {"no_actions": True, "city_any": ["深圳"]},
          "audit": {"intent_any": ["info.indices"],
                    "provenance_required": True}},
     ),
@@ -153,9 +164,14 @@ _INFORMATION_CASES = [
         {"say": "你的判断依据来自车主手册还是通用安全建议", "expect": {"no_actions": True}},
         {"say": "好的，我会靠边停车检查", "expect": {"no_actions": True}},
     ),
+    # ⚠ `honors_no_spicy` 2026-08-28 补（C12-D）：真栈 T29 一轮里确定性地拼出
+    # 三句自相矛盾的话（「找到 10 家川菜」+「按您的口味优先川菜」+「记得您说过
+    # 不吃辣」），五轮判据里没有一条量得到它。判的是**两条分支签名**（检索词回显
+    # 与 taste_note），不是「话里有没有川菜」——修好之后的正确话术同样含「川菜」。
     _custom_case("INF-PREFERENCE",
         {"say": "我不吃辣，也不想排长队", "expect": {"no_actions": True}},
-        {"say": "推荐附近适合晚饭的地方", "expect": {"no_actions": True},
+        {"say": "推荐附近适合晚饭的地方",
+         "expect": {"no_actions": True, "honors_no_spicy": True},
          "audit": {"intent_any": ["nearby.search"], "provenance_required": True}},
         {"say": "为什么推荐这些", "expect": {"no_actions": True}},
         {"say": "只说我这轮明确给出的偏好", "expect": {"no_actions": True}},
@@ -288,15 +304,23 @@ def build_persona_plans() -> dict[str, list[dict]]:
                     "明天下午四点提醒我参加代号{run}的评审会，"
                     "三点半再提醒我一次"
                 )
+                # ⚠ `speech_has` 2026-08-28 补（C16-3）：这两轮原来只要
+                # `reminder.cancel` 成功就判绿，**没有人对「取消的那条」与
+                # 「用户点名的那条」**。真栈 T59 说「取消参加代号740945的评审会」，
+                # 系统答「好的，取消了『刚才那个提醒现在几点』」——取消了完全
+                # 另一条提醒，探针 `fails=[]`。**探针知道自己点名了什么**，
+                # 那就该要求答话里出现它。
                 case["turns"].extend([
                     {"say": "取消参加代号{run}的评审会",
                      "expect": {"no_actions": True, "card_items_at_least": 2},
                      "audit": {"intent_any": ["reminder.cancel"]}},
                     {"say": "取消第一条",
-                     "expect": {"no_actions": True},
+                     "expect": {"no_actions": True,
+                                "speech_has": ["代号{run}的评审会"]},
                      "audit": {"intent_any": ["reminder.cancel"]}},
                     {"say": "取消参加代号{run}的评审会",
-                     "expect": {"no_actions": True},
+                     "expect": {"no_actions": True,
+                                "speech_has": ["代号{run}的评审会"]},
                      "audit": {"intent_any": ["reminder.cancel"]}},
                     {"say": "列出我现在进行中的提醒",
                      "expect": {"no_actions": True,
@@ -420,53 +444,125 @@ def audit_trace_detail(
     }, failures
 
 
-def audit_card_provenance(card_text: str, *,
-                          required: bool = False) -> tuple[list[dict], list[str]]:
-    """提取卡片树里的真实性章；真栈出现显式 mock 一律失败。
+#: 外源数据卡的合法 `_prov.mode`（`mock` 由下面两档单独判，不在这里）。
+_EXTERNAL_PROV_MODES = frozenset({"real", "cached", "degraded"})
+#: 内部确定性卡的合法 mode。**只有登记过的卡型能打它**——外源卡打
+#: `deterministic` 是盖错章（拿「我自己算的」躲开来源审计），仍判红。
+_DETERMINISTIC_PROV_MODES = frozenset({"deterministic"})
+
+#: §9.3「凡展示外源数据的卡必须带 `_prov`」的清单，**卡型名逐字照抄契约**。
+#: 与契约的漂移由 `test_card_prov_rules_match_the_contract_mandatory_list`
+#: 当场报红——这张表存在的理由就是把那份清单机械化成探针判据
+#: （**一份声明两个消费方**：Agent 侧 `attach()` 盖章，探针侧按它验）。
+_EXTERNAL_PROV_CARDS = frozenset({
+    "weather", "forecast", "search_result", "news_brief", "stock_quote",
+    "sports_scores", "sports_scorers", "place_list", "place_detail",
+    "poi_list", "poi_detail", "route_plan", "charging_route",
+    "air_quality", "weather_alerts", "life_indices",
+})
+
+#: 内部确定性卡（§9.3，2026-08-27 泓舟拍板收编 `deterministic`）：
+#: `_prov` 可选，出现则 mode 必为 `deterministic`。road-safety 的 `safety_advice`
+#: 两处早就在打它——**实现先于契约发明了一个正当的值**，本次是补登不是放宽。
+_DETERMINISTIC_PROV_CARDS = frozenset({"safety_advice"})
+
+#: 已声明「mock 可接受」的卡型 → 为什么可接受。**逐卡型逐条写、禁通配符**
+#: （同 `capability_exemptions.yaml` 的口径）：一条豁免要能被读的人问出
+#: 「它什么时候能撤」。这里的答案是「真车型手册接入之日」。
+_MOCK_ACCEPTED_PROV_CARDS = {
+    "manual": "manual-rag 真车型手册未接入，PoC 已知形态（§9.3 裁决 ③：等真手册，不引入新工作）",
+}
+
+
+def card_prov_rule(card_type: str) -> dict:
+    """卡型 → `{"modes": 允许的非 mock mode 集合, "mock": "warn"|"fail"}`。
+
+    未登记的卡型按**外源默认**处理（modes=real/cached/degraded、mock 判红）
+    ——新卡型想打 `deterministic` 或想让 mock 过关，先在上面登记一行。
+    """
+    name = str(card_type or "").strip()
+    modes = (_DETERMINISTIC_PROV_MODES if name in _DETERMINISTIC_PROV_CARDS
+             else _EXTERNAL_PROV_MODES)
+    return {"modes": modes,
+            "mock": "warn" if name in _MOCK_ACCEPTED_PROV_CARDS else "fail"}
+
+
+def audit_card_provenance(
+        card_text: str, *, required: bool = False,
+) -> tuple[list[dict], list[str], list[str]]:
+    """提取卡片树里的真实性章 → `(章, 失败, 警告)`。
+
+    ## 两把尺子方向相反，2026-08-27 由泓舟裁决拆开（fix plan C15）
+
+    探针原来无条件把 `mode=mock` 判红，而契约 §9.3 / §9.17 要求 mock **如实标注
+    即合法**（`payment_qr` 的 mock 渠道**必须**打 mock）。两个立场说的不是一件事：
+    探针那条是**部署形态期望**（真栈不该有 mock），契约那条是**诚实契约**
+    （有 mock 必须承认）。裁决：
+
+    · **`deterministic` 收进合法 mode**——内部确定性产物的自我声明，与
+      degraded/mock 正交。但只对**登记过的内部确定性卡**（`safety_advice`）合法。
+    · **mock 拆两档**——该卡型已声明「mock 可接受」（`manual`，真手册接入前）
+      ⇒ 记 **WARN 不判 fail**；没声明的卡型出现 mock ⇒ 仍判 fail。
+    · **「mock 冒充 real」永远是 fail**，这一档在上面两条之外：缺 `_prov`
+      （`required` 那支）、provider 缺失、mode 写了个词表外的值，都判红。
 
     生产契约用的是 ``vendor``，少数外部卡历史上用 ``provider``。报告统一成
     ``provider``，但不把缺章的普通控制卡误判成 provider 卡。
+    ``card_type`` 逐章记录（就近的 ``type``，`card_group` 成员用成员自己的）
+    ——**没有卡型就没法按卡型判**，这是本次拆档的前提。
     """
     raw = str(card_text or "").strip()
     if not raw or raw == "{}":
-        return [], (["外部数据卡缺少真实性章"] if required else [])
+        return [], (["外部数据卡缺少真实性章"] if required else []), []
     try:
         payload = json.loads(raw)
     except (TypeError, ValueError) as exc:
-        return [], [f"卡片 JSON 无法审计 provenance: {type(exc).__name__}"]
+        return [], [f"卡片 JSON 无法审计 provenance: {type(exc).__name__}"], []
 
     entries: list[dict] = []
 
-    def walk(value) -> None:
+    def walk(value, card_type: str) -> None:
         if isinstance(value, dict):
+            node_type = str(value.get("type") or "").strip() or card_type
             prov = value.get("_prov")
             if isinstance(prov, dict):
                 provider = str(
                     prov.get("provider") or prov.get("vendor")
                     or prov.get("source") or "unknown").strip()
                 mode = str(prov.get("mode") or "unknown").strip().lower()
-                entries.append({"provider": provider, "mode": mode})
+                entries.append({"provider": provider, "mode": mode,
+                                "card_type": node_type})
             for key, child in value.items():
                 if key != "_prov":
-                    walk(child)
+                    walk(child, node_type)
         elif isinstance(value, list):
             for child in value:
-                walk(child)
+                walk(child, card_type)
 
-    walk(payload)
-    failures = [
-        f"真栈卡片出现 mock provenance: {entry['provider']}"
-        for entry in entries if entry["mode"] == "mock"
-    ]
+    walk(payload, "")
+    failures: list[str] = []
+    warnings: list[str] = []
     if required and not entries:
         failures.append("外部数据卡缺少真实性章")
     for entry in entries:
+        card_type = entry["card_type"]
+        label = f"{card_type or '未命名卡'} 卡"
+        rule = card_prov_rule(card_type)
         if not entry["provider"] or entry["provider"].lower() == "unknown":
             failures.append("外部数据卡真实性章 provider 缺失")
         mode = entry["mode"]
-        if mode != "mock" and mode not in {"real", "cached", "degraded"}:
-            failures.append(f"外部数据卡真实性章 mode 非法: {mode}")
-    return entries, failures
+        if mode == "mock":
+            if rule["mock"] == "warn":
+                warnings.append(
+                    f"{label}如实标注了 mock：{entry['provider']}"
+                    f"——{_MOCK_ACCEPTED_PROV_CARDS[card_type]}")
+            else:
+                failures.append(f"真栈卡片出现 mock provenance: {entry['provider']}")
+        elif mode not in rule["modes"]:
+            failures.append(
+                f"外部数据卡真实性章 mode 非法: {mode}"
+                f"（{label}只许 {sorted(rule['modes'])}）")
+    return entries, failures, warnings
 
 
 def audit_stock_provenance_followup(row: dict, prior_rows: list[dict],
@@ -1025,10 +1121,16 @@ async def audit_minimax_tts_barge_in(audio_url: str, text: str) -> dict:
 def recovery_turns() -> tuple[dict, dict, dict]:
     """Three post-failure turns with distinct state, domain and closeout checks."""
     return (
+        # ⚠ 2026-08-28（C16-5）补 `intent_any`。原来这一轮只有「别说某两句话」
+        # 的排除式判据，于是真栈里答**「嗯」**（vehicle T51）和答**一个学校地址**
+        # （information T56）双双判绿——「答非所问」不是措辞问题，排除表永远
+        # 抓不到它。C4-B 之后这句话有确定性读出口了（`system.pending_state`；
+        # 裸取消路径上是 `system.no_pending`），断言就该落在**出口命中**上：
+        # 落到 chitchat 就是「护栏建在被路由之后」的那个形态（重判 5）。
         {"say": "现在还有待确认的操作吗",
          "expect": {"no_actions": True, "need_confirm": False,
                     "speech_not": ["仍有待确认", "还有待确认的操作"]},
-         "audit": {}},
+         "audit": {"intent_any": ["system.pending_state", "system.no_pending"]}},
         {"say": "今天深圳天气怎么样",
          "expect": {"no_actions": True, "need_confirm": False},
          "audit": {"intent_any": ["info.weather"],
@@ -1147,6 +1249,58 @@ def judge_persona_turn(turn: dict, obs: dict, local_rows: list[dict], *,
     if obs.get("need_confirm") and expected.get("need_confirm") is not True:
         failures.append("只读/普通业务轮意外进入待确认")
     return failures, notes
+
+
+#: 兜底闲聊的落域名。C16-2 只在这条路径上判「说了没做」——**别的域的完成语
+#: 多半是真的**（trip/research 这类不出 action 的能力，「已为您规划3天行程」
+#: 就是事实），而 chitchat 手上一个执行通道都没有，它说自己做了就一定没做。
+_CHITCHAT_INTENT = "chitchat.talk"
+
+
+def audit_row_expectations(row: dict, rows: list[dict],
+                           expected: dict) -> tuple[list[str], list[str]]:
+    """行级审计判据（真实性章 / 落域 / provider / 编造执行）→ `(失败, 警告)`。
+
+    从跑批主循环里拎出来是为了**让回放模式跑的是同一份判据**（`--replay`）：
+    「修正后计分」如果用的是另一份实现，它就只能证明那一份实现是什么样。
+    """
+    failures: list[str] = []
+    warnings: list[str] = []
+    provenance, prov_failures, prov_warnings = audit_card_provenance(
+        row.get("card_text") or "",
+        required=bool(expected.get("provenance_required")))
+    row["provenance"] = provenance
+    failures.extend(prov_failures)
+    warnings.extend(prov_warnings)
+
+    intents = ((row.get("trace") or {}).get("intents")) or []
+    allowed = expected.get("intent_any") or []
+    if allowed and not any(want in intents for want in allowed):
+        failures.append(f"落域不符：期望其一 {allowed}，实际 {intents or '空'}")
+    forbidden = expected.get("intent_not") or []
+    hits = sorted(set(forbidden) & set(intents))
+    if hits:
+        failures.append(f"命中禁止落域：{hits}")
+    if expected.get("provider_required") and not (row.get("trace") or {}).get("providers"):
+        failures.append("该业务轮没有可核对的 LLM provider 记录")
+    if expected.get("stock_provenance_from") is not None:
+        failures.extend(audit_stock_provenance_followup(
+            row, rows, int(expected["stock_provenance_from"])))
+
+    # C16-2（N4）：**兜底闲聊说自己做了事，而这一轮一个动作都没有** ⇒ 红。
+    # 真栈 family T21 原样：「好的，已经为您重新计算路线，从华侨城欢乐海岸出发，
+    # 不走高速，全程大约1.6公里」——零 navigation 调用、零动作，探针 `fails=[]`。
+    # 判据本体复用 `runtime/execution_claim.py`（C11-C 落的那一份，形态、零领域词）
+    # ——**不许在 `scripts/` 抄第二张表**：抄两份就会长出「这边认得那边不认得」
+    # 的分歧。它是**无条件**的，不挂在用例的 expect 上：漏检最常见的形态就是
+    # 「新加的那一轮没人想到写这条断言」（同第 1 批那条扫全组的元断言）。
+    if _CHITCHAT_INTENT in intents and not (row.get("actions") or []):
+        family = execution_claim(str(row.get("speech") or ""))
+        if family:
+            failures.append(
+                f"兜底闲聊声称系统做了事（{family} 形态）却零动作"
+                f"：「{str(row.get('speech') or '')[:40]}」")
+    return failures, warnings
 
 
 async def _turn(ws, session: str, say: str, *, operation_id: str = "",
@@ -1891,30 +2045,19 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
             allow_cancelled=bool(expected.get("allow_cancelled")))
         row["trace"] = audit
         row["fails"].extend(failures)
-        provenance, provenance_failures = audit_card_provenance(
-            row.get("card_text") or "",
-            required=bool(expected.get("provenance_required")))
-        row["provenance"] = provenance
-        row["fails"].extend(provenance_failures)
-        intents = audit.get("intents") or []
-        allowed = expected.get("intent_any") or []
-        if allowed and not any(want in intents for want in allowed):
-            row["fails"].append(
-                f"落域不符：期望其一 {allowed}，实际 {intents or '空'}")
-        forbidden = expected.get("intent_not") or []
-        hits = sorted(set(forbidden) & set(intents))
-        if hits:
-            row["fails"].append(f"命中禁止落域：{hits}")
-        if expected.get("provider_required") and not audit.get("providers"):
-            row["fails"].append("该业务轮没有可核对的 LLM provider 记录")
-        if expected.get("stock_provenance_from") is not None:
-            row["fails"].extend(audit_stock_provenance_followup(
-                row, rows, int(expected["stock_provenance_from"])))
+        row_failures, row_warnings = audit_row_expectations(row, rows, expected)
+        row["fails"].extend(row_failures)
+        row.setdefault("warns", []).extend(row_warnings)
 
     return {
         "persona": name, "session_id": session, "turn_count": len(rows),
         "passed": sum(not row["fails"] for row in rows),
         "failed": sum(bool(row["fails"]) for row in rows),
+        # C15：**如实标注的 mock 记 WARN 不判 fail**（泓舟 2026-08-27 裁决）。
+        # 单开一列而不是塞进 notes：它要能被读数一眼看见，又绝不能进 `failed`
+        # ——「真栈不该有 mock」是部署形态期望，「有 mock 必须承认」是诚实契约，
+        # 两件事合成一个数就又回到了裁决之前那种自相矛盾。
+        "warned": sum(bool(row.get("warns")) for row in rows),
         "aborted": bool(abort_reason),
         "abort_reason": abort_reason,
         "open_operation_ids": sorted(active_ops),
@@ -1923,6 +2066,190 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
         "cleanup_failures": list(dict.fromkeys(cleanup_failures)),
         "turns": rows,
     }
+
+
+# ── 回放计分（C16 验收，2026-08-28）──────────────────────────────────────
+#
+# 「修正后计分」= **拿今天的尺子重量当天的那一趟**。它不打网络、不发一句话，
+# 只做一件事：把存档里逐轮的观测（speech / actions / card / trace）喂给**现在
+# 这一份判据**，再与存档里当时记下的 `fails` 逐行对比。
+#
+# 为什么必须有它：探针在第 1–6 批里被改过五次，而真栈迷你集一次都没重跑。
+# 没有回放就只能说「判据写好了」，说不出「它们会把当天那 33 行变成多少行」
+# ——**新判据的价值全在「当时绿的哪几行会变红」上**，而那正是回放能算出来的
+# 唯一一个数（§4.3「加了知识要拿对照跑证伪」的同款：判据也一样）。
+#
+# 回放的边界写在这里，别让读数越界：
+#   · **runner 自造的轮次不可完全回放**（AUTO-CANCEL / VEHICLE-RESTORE /
+#     NAVIGATION-CLEANUP / MERCHANT-DRAFT-CLEANUP / REMINDER-CLEANUP*）——
+#     它们的判据要的是运行期状态（服务端 closed id、collector 车态、清理前后
+#     计数），存档里没有。这些行**只跑无条件规则**，`replayable=False` 标出来。
+#   · trace 审计（`audit_trace_detail`）也不可回放：存档存的是它的**结论**
+#     不是 collector 原始详情。落域（`intent_any`）用的是结论里的 `intents`，
+#     那一份是可回放的。
+#   · 因此 `newly_green` 里可能混着「当时那条红来自不可回放的判据」——**逐行
+#     打出来给人看**，不做自动归因。
+
+def _replay_stamp(template: str, said: str) -> int | None:
+    """从存档里那句话反解出当时的 `{run}` 标记 → 可喂给 `probe._subst` 的 stamp。
+
+    `_subst` 用的是 `str(stamp)[-6:]`，所以反解出 6 位 tag 之后随便拼一个
+    前缀就能还原（`int("1" + tag)`）。反解不出来返回 None——**宁可标成
+    「这一行没法回放」，也不许拿一个错的标记去比对**：`{run}` 对不上会让
+    `speech_has` 整片假红，那种读数比没有读数更糟。
+    """
+    if "{run}" not in template:
+        return 0
+    parts = [re.escape(part) for part in template.split("{run}")]
+    match = re.fullmatch(r"(\d{6})".join(parts), said or "")
+    if not match:
+        return None
+    return int("1" + match.group(1))
+
+
+def _replay_index(plans: dict[str, list[dict]]) -> dict[tuple[str, int], dict]:
+    """`(case_instance, local_turn) -> turn spec`（当前用例集的那一份）。"""
+    index: dict[tuple[str, int], dict] = {}
+    for cases in plans.values():
+        for case in cases:
+            for local_turn, turn in enumerate(case["turns"], 1):
+                index[(case["id"], local_turn)] = turn
+    return index
+
+
+def _replay_case_stamps(rows: list[dict],
+                        index: dict[tuple[str, int], dict]) -> dict[str, int | None]:
+    """每个 case 实例的 `{run}` 标记 → `probe._subst` 能吃的 stamp。
+
+    None = 这个 case 带了 `{run}` 却反解不出来 ⇒ 整个 case 按不可回放处理。
+    **宁可标成不可回放，也不许拿一个错的标记去比对**：`{run}` 对不上会让
+    `speech_has` 整片假红，那种读数比没有读数更糟。
+    """
+    stamps: dict[str, int | None] = {}
+    for row in rows:
+        instance = str(row.get("case_instance") or "")
+        local_turn = int(row.get("local_turn") or 0)
+        if not instance or local_turn < 1 or stamps.get(instance):
+            continue
+        spec = index.get((instance, local_turn))
+        template = str((spec or {}).get("say") or "")
+        if "{run}" not in template:
+            stamps.setdefault(instance, 0)
+            continue
+        stamps[instance] = _replay_stamp(template, str(row.get("say") or ""))
+    return stamps
+
+
+def replay_scoring(payload: dict) -> dict:
+    """用当前判据重算存档里每一轮 → 修正后计分（纯函数，零网络）。"""
+    plans = build_persona_plans()
+    index = _replay_index(plans)
+    recovery = list(recovery_turns())
+    personas: list[dict] = []
+    for result in payload.get("personas") or []:
+        rows = [dict(row) for row in result.get("turns") or []]
+        # `{run}` 是**一个 case 一个**（`case_stamp = stamp + len(rows) + 1`），
+        # 而带 `{run}` 的往往只有那个 case 的第一轮。所以先扫一遍把每个 case
+        # 的标记反解出来，再逐轮回放——**按轮反解会让「取消第一条」这种不带
+        # 标记的轮拿到 0**，`speech_has` 立刻整片假红（首版实测 4 行）。
+        stamps = _replay_case_stamps(rows, index)
+        replayed: list[dict] = []
+        local_rows: dict[str, list[dict]] = {}
+        recovery_seen = 0
+        for row in rows:
+            case = str(row.get("case") or "")
+            instance = str(row.get("case_instance") or "")
+            local_turn = int(row.get("local_turn") or 0)
+            spec: dict | None = None
+            if case == "RECOVERY":
+                spec = (recovery[recovery_seen]
+                        if recovery_seen < len(recovery) else None)
+                recovery_seen += 1
+            elif local_turn >= 1:
+                spec = index.get((instance, local_turn))
+                # `say_button` 轮的那句话是**上一轮卡片给的**，缺按钮时 runner
+                # 会记一条「未编造 send_text」的前置失败——存档里没有按钮就
+                # 重算不出它。这类轮按不可回放处理（存档判读原样带过来）。
+                if spec is not None and spec.get("say_button") is not None:
+                    spec = None
+            stamp = stamps.get(instance, 0) if instance else 0
+            if spec is not None and stamp is None:
+                spec = None
+            replayable = spec is not None
+            failures: list[str] = []
+            notes: list[str] = []
+            audit_expect: dict = {}
+            if spec is not None:
+                failures, notes = judge_persona_turn(
+                    spec, row, local_rows.get(instance, []), stamp=stamp or 0)
+                audit_expect = probe._subst(dict(spec.get("audit") or {}),
+                                            stamp or 0)
+            audit_failures, warns = audit_row_expectations(
+                dict(row), rows, audit_expect)
+            failures = failures + audit_failures
+            stored = [str(f) for f in (row.get("fails") or [])]
+            if not replayable:
+                # **不可回放 ≠ 通过**：重算不出来的那部分原样保留存档的判读，
+                # 否则「回放红数」会因为尺子够不着而凭空变小（同 §4.3
+                # 「前提不成立 ≠ 通过」那条，这次是尺子这一侧）。
+                failures = stored + [f for f in failures if f not in stored]
+            local_rows.setdefault(instance, []).append(
+                {**row, "turn": local_turn})
+            replayed.append({
+                "turn": row.get("turn"), "case": case,
+                "case_instance": instance, "local_turn": local_turn,
+                "say": row.get("say"), "speech": row.get("speech"),
+                "replayable": replayable,
+                "stored_fails": stored, "replay_fails": failures,
+                "warns": warns, "notes": notes,
+            })
+        personas.append({
+            "persona": result.get("persona"),
+            "turn_count": len(replayed),
+            "stored_failed": sum(bool(r["stored_fails"]) for r in replayed),
+            "replay_failed": sum(bool(r["replay_fails"]) for r in replayed),
+            "warned": sum(bool(r["warns"]) for r in replayed),
+            "not_replayable": sum(not r["replayable"] for r in replayed),
+            "newly_red": [r for r in replayed
+                          if r["replay_fails"] and not r["stored_fails"]],
+            "newly_green": [r for r in replayed
+                            if r["stored_fails"] and not r["replay_fails"]],
+            "turns": replayed,
+        })
+    total = [row for result in personas for row in result["turns"]]
+    return {
+        "source_ts": payload.get("ts"),
+        "source_sha": payload.get("expected_sha"),
+        "summary": {
+            "turns": len(total),
+            "stored_failed": sum(bool(r["stored_fails"]) for r in total),
+            "replay_failed": sum(bool(r["replay_fails"]) for r in total),
+            "warned": sum(bool(r["warns"]) for r in total),
+            "not_replayable": sum(not r["replayable"] for r in total),
+            "newly_red": sum(bool(r["replay_fails"]) and not r["stored_fails"]
+                             for r in total),
+            "newly_green": sum(bool(r["stored_fails"]) and not r["replay_fails"]
+                               for r in total),
+        },
+        "personas": personas,
+    }
+
+
+def _print_replay(report: dict) -> None:
+    print("\n=== 修正后计分（回放，零网络）===")
+    print(json.dumps(report["summary"], ensure_ascii=False, indent=2))
+    for result in report["personas"]:
+        print(f"\n--- {result['persona']}: "
+              f"存档 {result['stored_failed']} 红 → 回放 {result['replay_failed']} 红"
+              f"（WARN {result['warned']}，不可回放 {result['not_replayable']}）")
+        for row in result["newly_red"]:
+            print(f"  ↑ 转红 T{row['turn']:02d} {row['case']} :: {row['say'][:34]}")
+            for failure in row["replay_fails"]:
+                print(f"      · {failure}")
+        for row in result["newly_green"]:
+            print(f"  ↓ 转绿 T{row['turn']:02d} {row['case']} :: {row['say'][:34]}")
+            for failure in row["stored_fails"]:
+                print(f"      · 原判：{failure}")
 
 
 def _summary(results: list[dict]) -> dict:
@@ -1934,6 +2261,8 @@ def _summary(results: list[dict]) -> dict:
     actions: Counter[str] = Counter()
     external_providers: Counter[str] = Counter()
     provenance_modes: Counter[str] = Counter()
+    provenance_cards: Counter[str] = Counter()
+    warnings = 0
     fallbacks = 0
     pinned_calls = 0
     for result in results:
@@ -1948,14 +2277,19 @@ def _summary(results: list[dict]) -> dict:
             if row.get("card_type"):
                 cards[row["card_type"]] += 1
             actions.update(row.get("actions") or [])
+            warnings += len(row.get("warns") or [])
             for provenance in row.get("provenance") or []:
                 external_providers[provenance.get("provider") or "unknown"] += 1
                 provenance_modes[provenance.get("mode") or "unknown"] += 1
+                provenance_cards[
+                    f"{provenance.get('card_type') or '未命名卡'}"
+                    f":{provenance.get('mode') or 'unknown'}"] += 1
     return {
         "turns": sum(r["turn_count"] for r in results),
         "passed": sum(r["passed"] for r in results),
         "failed": sum(r["failed"] for r in results),
         "aborted_personas": sum(bool(r.get("aborted")) for r in results),
+        "warned": sum(r.get("warned") or 0 for r in results),
         "cleanup_failures": sum(
             len(r.get("cleanup_failures") or []) for r in results),
         "paths": dict(paths), "intents": dict(intents),
@@ -1963,6 +2297,10 @@ def _summary(results: list[dict]) -> dict:
         "cards": dict(cards), "actions": dict(actions),
         "external_providers": dict(external_providers),
         "provenance_modes": dict(provenance_modes),
+        # 卡型×mode 的分布：C15 的期望表按卡型判，读数也得按卡型看
+        # ——只看 mode 分布会把「manual 卡的 mock」与「天气卡的 mock」并成一个数。
+        "provenance_cards": dict(provenance_cards),
+        "warnings": warnings,
         "fallbacks": fallbacks, "pinned_llm_calls": pinned_calls,
     }
 
@@ -1987,9 +2325,29 @@ def main() -> int:
         "qa-minimax-long-sessions.json"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--replay", default="",
+        help="拿当前判据重算一份已有 artifact（修正后计分）——纯本地、零网络")
+    parser.add_argument(
+        "--replay-out", default="",
+        help="回放报告落盘路径（缺省只打印）")
+    parser.add_argument(
         "--expected-sha", default="",
         help="必须与云端正在运行的完整 40 位 release SHA 一致；默认取当前 HEAD")
     args = parser.parse_args()
+
+    # 回放**排在真栈前置校验之前**：它不发一个字节，不该要求 `target=cloud`、
+    # 也不该被 release 校验挡住。这条顺序是它能在离线机器上跑的全部理由。
+    if args.replay:
+        source = Path(args.replay)
+        report = replay_scoring(json.loads(source.read_text(encoding="utf-8")))
+        _print_replay(report)
+        if args.replay_out:
+            out = Path(args.replay_out)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(report, ensure_ascii=False, indent=2),
+                           encoding="utf-8")
+            print(f"\n回放明细：{out}")
+        return 0
 
     plans = build_persona_plans()
     selected = list(plans)

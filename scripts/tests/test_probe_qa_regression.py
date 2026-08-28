@@ -431,3 +431,153 @@ def test_every_safety_turn_has_at_least_one_positive_expectation():
 def test_audit_is_an_allowed_turn_key():
     """`audit` 必须在允许键里——否则长会话入口跑同一份用例时会当场 ValueError。"""
     assert "audit" in probe._TURN_KEYS
+
+
+# ── 第 6 批新增的四条判据（C16-4 / C16-7 / C13-C / C12-D，2026-08-28）──────
+# 每条都两向：**该红的红、该绿的绿**。反向那一半是这几条真正的成本所在——
+# `honors_no_spicy` 的对照用的就是 C12-A 修完之后的正确话术（它同样含「川菜」），
+# 按词判会把修好的行为判成红，只有形态分得开。
+
+def test_capability_refusal_is_a_branch_signature_not_a_banned_word():
+    """「暂不支持」是**我们自己写死的串**，模型不会自发说出它。"""
+    fails = probe._judge({"no_capability_refusal": True}, _obs("暂不支持哦"), [], [])
+    assert fails and "端侧确定性拒绝串" in fails[0]
+    # 正常回答不受影响——包括**谈论**这个能力边界的回答。
+    assert probe._judge({"no_capability_refusal": True},
+                        _obs("常见乘用车冷胎胎压参考区间 2.2–2.5 bar。"), [], []) == []
+
+
+def test_every_safety_turn_refuses_the_capability_refusal_string():
+    """整个 safety 组扫一遍：知识/安全问句不许以端侧拒绝串收场。
+
+    与上面那条「至少有一个正向期望」是一对：那条防的是**空尺子**，
+    这条防的是**尺子看不见 N3 那个形态**（真栈两轮「暂不支持哦」判绿）。
+    同样是防**下一次**——新加一轮忘了带它，这里当场红。
+    """
+    missing = [
+        (case["id"], index)
+        for case in probe.CASES if case.get("group") == "safety"
+        for index, turn in enumerate(case["turns"], 1)
+        if not (turn.get("expect") or {}).get("no_capability_refusal")
+    ]
+    assert not missing, f"safety 组这些轮没有拒绝串判据：{missing}"
+
+
+def _city_obs(speech: str, card: dict | None = None) -> dict:
+    obs = _obs(speech)
+    obs["card_text"] = json.dumps(card or {}, ensure_ascii=False)
+    return obs
+
+
+def test_city_drift_is_caught_on_the_card_field():
+    fails = probe._judge({"city_any": ["深圳"]},
+                         _city_obs("上海当前有1条天气预警",
+                                   {"type": "weather_alerts", "city": "上海"}),
+                         [], [])
+    assert fails and "城市漂移" in fails[0]
+    assert probe._judge({"city_any": ["深圳"]},
+                        _city_obs("深圳空气质量优",
+                                  {"type": "air_quality", "city": "深圳"}),
+                        [], []) == []
+    # 「深圳市」含「深圳」——判的是包含关系，不是逐字相等（产生方写法不统一）。
+    assert probe._judge({"city_any": ["深圳"]},
+                        _city_obs("", {"city": "深圳市"}), [], []) == []
+
+
+def test_city_check_falls_back_to_a_positive_speech_requirement():
+    """卡上没有 city 字段时要求**话术里出现允许城市**——正向要求，不是排除表。
+
+    写成「不许出现别的城市」就需要一份全国城市名单，那是补不完的
+    （同 SF3 那次「安全类断言必须写成正向要求」的教训）。
+    """
+    assert probe._judge({"city_any": ["深圳"]},
+                        _city_obs("深圳当前小雨，气温28℃。"), [], []) == []
+    fails = probe._judge({"city_any": ["深圳"]},
+                         _city_obs("上海当前小雨，气温28℃。"), [], [])
+    assert fails and "无从确认" in fails[0]
+
+
+_PU5_REAL = ("路线已经规划好了，去深圳市南山实验教育集团明远学校，预计19:06到达，"
+             "不过这里有点对不上您说的5点——系统提示比要求早了593分钟。")
+
+
+def test_absurd_deadline_margin_is_red_and_names_the_rolled_over_time():
+    """真栈 family T8 的原话，一字未改。两条判据都该响。"""
+    notes: list[str] = []
+    fails = probe._judge(
+        {"deadline_sane": {"said_hour": 5, "max_margin_min": 360}},
+        _obs(_PU5_REAL), [], notes)
+    assert any("超过 360 分钟" in f for f in fails)
+    assert any("已跨日" in f for f in fails)
+    assert notes == []
+
+
+def test_a_normal_deadline_margin_passes():
+    sane = "路线已经规划好了，预计17:40到达，比要求早了20分钟。"
+    assert probe._judge(
+        {"deadline_sane": {"said_hour": 18, "max_margin_min": 360}},
+        _obs(sane), [], []) == []
+
+
+def test_no_deadline_statement_is_a_note_not_a_silent_pass():
+    """话术里压根没有余量表态 ⇒ 系统这一轮没对时限表态，那是另一件事。"""
+    notes: list[str] = []
+    fails = probe._judge(
+        {"deadline_sane": {"said_hour": 5, "max_margin_min": 360}},
+        _obs("已为您规划到学校的路线。"), [], notes)
+    assert fails == []
+    assert notes and "不构成证据" in notes[0]
+
+
+def test_margin_bound_still_applies_without_an_eta():
+    """没有 ETA 只是反推不出时限，**余量上界照判**——少一个维度不等于免检。"""
+    notes: list[str] = []
+    fails = probe._judge(
+        {"deadline_sane": {"said_hour": 5, "max_margin_min": 360}},
+        _obs("比您要求的时间早了593分钟。"), [], notes)
+    assert fails and "超过 360 分钟" in fails[0]
+    assert notes and "反推不出" in notes[0]
+
+
+_T29_REAL = ("为您找到 10 家川菜（按您的口味优先川菜；不合口味的已排后；"
+             "记得您说过不吃辣，需要的话我可以换清淡些的），推荐：川胖虎·美蛙肥肠鱼。")
+#: C12-A 修完之后 nearby 的正确话术（`agents/nearby/src/agent.py` 那一支）。
+#: **它同样含「川菜」两个字**——反向对照的全部价值就在这里。
+_T29_FIXED = ("您说过不吃辣，这次就不按平时爱吃的川菜找了。为您找到 10 家餐厅，"
+              "推荐：粥品世家。")
+
+
+def test_claiming_to_prioritise_the_forbidden_cuisine_is_red():
+    fails = probe._judge({"honors_no_spicy": True}, _obs(_T29_REAL), [], [])
+    assert any("检索词却是忌口菜系" in f for f in fails)
+    assert any("限制性偏好该赢过扩张性偏好" in f for f in fails)
+
+
+def test_the_fixed_wording_that_also_mentions_the_cuisine_stays_green():
+    """**误伤对照**：按词判会把修好的行为判成红，按分支签名判不会。"""
+    assert probe._judge({"honors_no_spicy": True}, _obs(_T29_FIXED), [], []) == []
+
+
+def test_spicy_marks_come_from_the_shared_table_not_a_probe_copy():
+    """忌辣词表只许有一份实现（`runtime.session_constraints`）。"""
+    from runtime.session_constraints import SPICY_MARKS
+
+    assert probe.SPICY_MARKS is SPICY_MARKS
+    for mark in SPICY_MARKS:
+        assert probe._judge({"honors_no_spicy": True},
+                            _obs(f"为您找到 3 家{mark}"), [], [])
+
+
+def test_pu5_declares_the_bare_clock_deadline_expectation():
+    """用例侧的接线：PU5 那句话里有「5点」，判据就该挂在它上面。"""
+    case = next(c for c in probe.CASES if c["id"] == "PU5")
+    sane = case["turns"][0]["expect"]["deadline_sane"]
+    assert sane == {"said_hour": 5, "max_margin_min": 360}
+    assert "5点" in case["turns"][0]["say"]
+
+
+def test_cf1_pending_question_expects_the_deterministic_read_out():
+    """「现在还有待确认的操作吗」在 C4-B 之后有确定性出口，落 chitchat 就是错的。"""
+    case = next(c for c in probe.CASES if c["id"] == "CF1")
+    assert case["turns"][2]["audit"]["intent_any"] == [
+        "system.pending_state", "system.no_pending"]

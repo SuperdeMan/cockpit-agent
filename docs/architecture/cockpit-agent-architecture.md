@@ -1738,12 +1738,21 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
   `payment` 自 2026-08-11 真实化起是**独立决议域且不进豁免**（网关内自实现同口径
   决议行 `provider[payment]=…`，conventions §9.17）。
 - **卡片 provenance**：外源数据 ui_card 统一携带保留键
-  `_prov={mode: real|cached|degraded|mock, vendor, fetched_at, note?}`（Struct 免 proto），
-  HMI 徽章渲染（mock 醒目/degraded 灰/real 小字来源·取数时间）；13 卡族已覆盖，
-  trip_itinerary（停靠点级 grounded 布尔）、research_report（sources+权威编号）与
-  内部数据卡**刻意不标**（已有更强或不适用的证据链）。
+  `_prov={mode: real|cached|degraded|mock|deterministic, vendor, fetched_at, note?}`
+  （Struct 免 proto），HMI 徽章渲染（mock 醒目/degraded 灰/real 小字来源·取数时间）；
+  **16 卡族已覆盖**（2026-08-27 拍板补登 air_quality / weather_alerts / life_indices，
+  2026-08-28 校准本行计数），trip_itinerary（停靠点级 grounded 布尔）、
+  research_report（sources+权威编号）与内部数据卡**刻意不标**（已有更强或不适用的证据链）。
+  `deterministic`（2026-08-27 泓舟拍板收编，2026-08-28 校准本行）= **内部确定性判据
+  的产物**，与 degraded/mock **正交**——不是外部数据的降级，是「这答案怎么来的」的
+  自我声明；只有登记过的内部确定性卡（当前 `safety_advice`）能打它。
 - **泄漏探针**：`test/e2e_strict_stack.py`（run_e2e 清单内）——真栈三问断言外源卡
   `_prov` 全非 mock，防「演示数据其实是假的」回归。
+  ⚠ **「真栈不该有 mock」与「有 mock 必须承认」是两个立场**（2026-08-27 裁决，
+  2026-08-28 校准本行）：前者是**部署形态期望**，后者是**诚实契约**（§9.17 的
+  `payment_qr` 还强制要求打 mock）。合成一把尺子就会互相打脸——长会话 QA 探针
+  因此把 mock 拆两档：该卡型已声明「mock 可接受」⇒ 记 WARN 不判 fail；
+  mock **冒充** real ⇒ 仍判 fail。契约与判据面见 `conventions.md` §9.3。
 
 ---
 

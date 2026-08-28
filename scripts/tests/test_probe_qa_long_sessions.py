@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from types import SimpleNamespace
 
 import pytest
@@ -572,49 +573,156 @@ def test_card_provenance_is_collected_and_mock_is_rejected():
       "_prov": {"provider": "qweather", "mode": "real"},
       "items": [{"_prov": {"provider": "amap", "mode": "degraded"}}]
     }'''
-    entries, failures = long_qa.audit_card_provenance(card_text)
+    entries, failures, warnings = long_qa.audit_card_provenance(card_text)
+    # ⚠ `card_type` 2026-08-28 随 C15 加进每一条章：**没有卡型就没法按卡型判**，
+    # 而「按卡型判」正是这次裁决落地的形态（mock 两档 / deterministic 只对
+    # 登记过的卡合法）。同一张卡里的子节点继承就近的 `type`。
     assert entries == [
-        {"provider": "qweather", "mode": "real"},
-        {"provider": "amap", "mode": "degraded"},
+        {"provider": "qweather", "mode": "real", "card_type": "weather"},
+        {"provider": "amap", "mode": "degraded", "card_type": "weather"},
     ]
-    assert failures == []
+    assert failures == [] and warnings == []
 
-    entries, failures = long_qa.audit_card_provenance(
-        '{"_prov":{"provider":"qweather","mode":"mock"}}')
-    assert entries == [{"provider": "qweather", "mode": "mock"}]
+    entries, failures, warnings = long_qa.audit_card_provenance(
+        '{"type":"weather","_prov":{"provider":"qweather","mode":"mock"}}')
+    assert entries == [
+        {"provider": "qweather", "mode": "mock", "card_type": "weather"}]
     assert failures == ["真栈卡片出现 mock provenance: qweather"]
+    assert warnings == []
 
 
 def test_required_external_card_without_provenance_is_rejected():
-    entries, failures = long_qa.audit_card_provenance(
+    entries, failures, warnings = long_qa.audit_card_provenance(
         '{"type":"weather","city":"深圳"}', required=True)
 
     assert entries == []
-    assert failures == ["外部数据卡缺少真实性章"]
+    assert failures == ["外部数据卡缺少真实性章"] and warnings == []
     assert long_qa.audit_card_provenance("", required=True) == (
-        [], ["外部数据卡缺少真实性章"])
+        [], ["外部数据卡缺少真实性章"], [])
     assert long_qa.audit_card_provenance("{}", required=True) == (
-        [], ["外部数据卡缺少真实性章"])
+        [], ["外部数据卡缺少真实性章"], [])
 
 
 def test_required_external_card_rejects_incomplete_or_unknown_provenance():
-    entries, failures = long_qa.audit_card_provenance(
-        '{"_prov":{"vendor":"qweather"}}', required=True)
-    assert entries == [{"provider": "qweather", "mode": "unknown"}]
-    assert failures == ["外部数据卡真实性章 mode 非法: unknown"]
+    entries, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"weather","_prov":{"vendor":"qweather"}}', required=True)
+    assert entries == [
+        {"provider": "qweather", "mode": "unknown", "card_type": "weather"}]
+    assert failures == [_illegal_mode("unknown", "weather")]
 
-    entries, failures = long_qa.audit_card_provenance(
-        '{"_prov":{"mode":"real"}}', required=True)
-    assert entries == [{"provider": "unknown", "mode": "real"}]
+    entries, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"weather","_prov":{"mode":"real"}}', required=True)
+    assert entries == [
+        {"provider": "unknown", "mode": "real", "card_type": "weather"}]
     assert failures == ["外部数据卡真实性章 provider 缺失"]
 
-    _, failures = long_qa.audit_card_provenance(
-        '{"_prov":{"vendor":"qweather","mode":"typo"}}', required=True)
-    assert failures == ["外部数据卡真实性章 mode 非法: typo"]
+    _, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"weather","_prov":{"vendor":"qweather","mode":"typo"}}',
+        required=True)
+    assert failures == [_illegal_mode("typo", "weather")]
 
-    _, failures = long_qa.audit_card_provenance(
-        '{"_prov":{"vendor":"qweather","mode":"typo"}}')
-    assert failures == ["外部数据卡真实性章 mode 非法: typo"]
+    _, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"weather","_prov":{"vendor":"qweather","mode":"typo"}}')
+    assert failures == [_illegal_mode("typo", "weather")]
+
+
+# ── C15 裁决落探针：deterministic 收编 + mock 两档（2026-08-27 泓舟拍板）──
+# 两把尺子过去方向相反（探针「真栈不该有 mock」vs 契约「有 mock 必须承认」），
+# 裁决把它们拆成**部署形态期望**与**诚实契约**两件事。下面每条都两向：
+# 该合法的合法、该判红的仍判红——只写一半就又是一把只会说「他没说错话」
+# 的尺子（同 CD1 那次的判据升级）。
+
+def _illegal_mode(mode: str, card_type: str) -> str:
+    """失败串按被测实现自己的规则表拼——**期望值从被消费方派生**，
+    改一次 modes 集合不用手改一堆字符串（同 `card_items_raw` 那条判据）。"""
+    allowed = sorted(long_qa.card_prov_rule(card_type)["modes"])
+    return (f"外部数据卡真实性章 mode 非法: {mode}"
+            f"（{card_type} 卡只许 {allowed}）")
+
+
+def test_deterministic_is_legal_only_on_the_registered_internal_cards():
+    _, failures, warnings = long_qa.audit_card_provenance(
+        '{"type":"safety_advice",'
+        '"_prov":{"vendor":"road-safety","mode":"deterministic"}}')
+    assert failures == [] and warnings == []
+
+    # 外源数据卡打 deterministic 是**盖错章**——拿「我自己算的」躲开来源审计。
+    _, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"weather","_prov":{"vendor":"qweather","mode":"deterministic"}}')
+    assert failures == [_illegal_mode("deterministic", "weather")]
+
+    # 反过来：内部确定性卡打 real 也是错的（§9.3「出现则 mode 必为 deterministic」）。
+    _, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"safety_advice","_prov":{"vendor":"road-safety","mode":"real"}}')
+    assert failures == [_illegal_mode("real", "safety_advice")]
+
+
+def test_truthfully_labelled_mock_is_a_warning_only_on_declared_card_types():
+    entries, failures, warnings = long_qa.audit_card_provenance(
+        '{"type":"manual","_prov":{"vendor":"mock","mode":"mock"}}')
+    assert entries == [
+        {"provider": "mock", "mode": "mock", "card_type": "manual"}]
+    # **WARN 不进 fail**：真栈里 manual-rag 是 mock 属于已知形态，
+    # 判红等于要求探针去修一件本轮不打算修的事（裁决 ③：等真手册）。
+    assert failures == []
+    assert warnings and warnings[0].startswith("manual 卡如实标注了 mock：mock")
+
+    # 没登记过「mock 可接受」的卡型，出现 mock 仍是红。
+    _, failures, warnings = long_qa.audit_card_provenance(
+        '{"type":"place_list","_prov":{"vendor":"amap","mode":"mock"}}')
+    assert failures == ["真栈卡片出现 mock provenance: amap"]
+    assert warnings == []
+
+
+def test_mock_impersonating_real_is_still_a_failure_on_the_exempt_card():
+    """豁免的是「如实标注的 mock」，不是「这张卡怎么盖章都行」。"""
+    _, failures, warnings = long_qa.audit_card_provenance(
+        '{"type":"manual","city":"深圳"}', required=True)
+    assert failures == ["外部数据卡缺少真实性章"] and warnings == []
+
+    _, failures, _ = long_qa.audit_card_provenance(
+        '{"type":"manual","_prov":{"vendor":"mock","mode":"typo"}}')
+    assert failures == [_illegal_mode("typo", "manual")]
+
+
+def test_card_group_members_are_judged_by_their_own_card_type():
+    """`card_group` 的章打在**成员卡**上（§9.3），判据也必须按成员的卡型走。"""
+    _, failures, warnings = long_qa.audit_card_provenance(json.dumps({
+        "type": "card_group",
+        "items": [
+            {"type": "safety_advice",
+             "_prov": {"vendor": "road-safety", "mode": "deterministic"}},
+            {"type": "manual", "_prov": {"vendor": "mock", "mode": "mock"}},
+            {"type": "route_plan", "_prov": {"vendor": "amap", "mode": "mock"}},
+        ],
+    }, ensure_ascii=False))
+    assert failures == ["真栈卡片出现 mock provenance: amap"]
+    assert len(warnings) == 1 and warnings[0].startswith("manual 卡")
+
+
+def test_unregistered_card_types_fall_back_to_the_external_default():
+    rule = long_qa.card_prov_rule("brand_new_card")
+    assert rule == {"modes": long_qa._EXTERNAL_PROV_MODES, "mock": "fail"}
+
+
+def test_card_prov_rules_match_the_contract_mandatory_list():
+    """§9.3 的必带清单与探针的卡型表**是一份声明两个消费方**，不许各自演化。
+
+    这条守的是 C15 落地的方式本身：裁决说「给探针建卡型清单，正好把 §9.3 的
+    必带清单机械化成探针判据」——两份表要是能分头改，那就还是两把尺子。
+    """
+    doc = (long_qa._ROOT / "docs" / "conventions.md").read_text(encoding="utf-8")
+    segment = re.search(r"凡展示外源数据的卡必须带（(.+?)——", doc, re.S)
+    assert segment, "§9.3 的必带清单段落找不到了——契约改了就要同批改这里"
+    declared = {
+        token.strip(" *`\n")
+        for token in re.split(r"[/；：,、\s]+", segment.group(1))
+    }
+    declared = {t for t in declared if re.fullmatch(r"[a-z][a-z_]+", t)}
+    assert declared == set(long_qa._EXTERNAL_PROV_CARDS)
+    # 内部确定性卡这一条也在契约里，同样不许只改一边。
+    assert "`safety_advice` 据此登记为**内部确定性卡**" in doc
+    assert set(long_qa._DETERMINISTIC_PROV_CARDS) == {"safety_advice"}
 
 
 def test_stock_source_followup_is_checked_against_the_previous_real_card():
@@ -1009,6 +1117,26 @@ def test_recovery_contract_has_three_audited_turns():
     assert turns[2]["expect"] == {"no_actions": True, "need_confirm": False}
 
 
+def test_recovery_first_turn_asserts_the_deterministic_read_out():
+    """C16-5：这一轮原来只有排除式判据，于是真栈里答「嗯」和答一个学校地址
+    双双判绿。**答非所问不是措辞问题**，排除表永远抓不到它——C4-B 之后
+    这句话有确定性出口了，断言就该落在**出口命中**上。"""
+    first = long_qa.recovery_turns()[0]
+    assert first["audit"]["intent_any"] == [
+        "system.pending_state", "system.no_pending"]
+
+    # 反向：落到 chitchat（真栈原样）当场红。
+    row = {"speech": "嗯", "actions": [], "card_text": "",
+           "trace": {"intents": ["chitchat.talk"]}}
+    failures, _ = long_qa.audit_row_expectations(row, [row], first["audit"])
+    assert failures and "落域不符" in failures[0]
+
+    # 正向：命中确定性出口就绿。
+    row["trace"] = {"intents": ["system.pending_state"]}
+    row["speech"] = "当前没有待确认的操作。"
+    assert long_qa.audit_row_expectations(row, [row], first["audit"]) == ([], [])
+
+
 def test_persona_judge_resolves_case_local_turn_references_not_global_turns():
     turn = {
         "expect": {"names_item_from": {"turn": 1, "index": 2}},
@@ -1382,3 +1510,181 @@ def test_reminder_cleanup_is_skipped_when_the_persona_built_nothing(monkeypatch)
         "https://collector.invalid", 1))
 
     assert sent == ["深圳明天天气"]
+
+
+# ── C16-2：兜底闲聊说自己做了事却零动作（N4，2026-08-28）─────────────────
+# 判据本体在 `runtime/execution_claim.py`——探针复用同一份，**不许抄第二张表**。
+
+def _claim_row(speech: str, intents: list[str], actions: list[str]) -> dict:
+    return {"speech": speech, "actions": actions, "card_text": "",
+            "trace": {"intents": intents}}
+
+
+def test_chitchat_claiming_an_execution_without_actions_is_red():
+    row = _claim_row(
+        "好的，已经为您重新计算路线，从华侨城欢乐海岸出发，不走高速，全程大约1.6公里。",
+        ["chitchat.talk"], [])
+    failures, _ = long_qa.audit_row_expectations(row, [row], {})
+    assert failures and "兜底闲聊声称系统做了事（done 形态）" in failures[0]
+
+
+def test_the_ongoing_form_is_reported_separately_from_the_done_form():
+    """两族分开报（`runtime.execution_claim` 的口径）：误报面不同，
+    合成一个布尔就分不开了。"""
+    row = _claim_row("正在为您查找附近的结果。", ["chitchat.talk"], [])
+    failures, _ = long_qa.audit_row_expectations(row, [row], {})
+    assert failures and "ongoing 形态" in failures[0]
+
+
+def test_a_chitchat_turn_that_really_acted_is_green():
+    row = _claim_row("好的，已为您打开空调。", ["chitchat.talk"], ["hvac.on"])
+    assert long_qa.audit_row_expectations(row, [row], {}) == ([], [])
+
+
+def test_other_domains_are_not_judged_by_this_rule():
+    """信息类能力的合法完成声明不归这条管——`trip`/`research` 本来就不出 action，
+    「已为您规划3天行程」是真的。**判据只压 chitchat 那一条兜底路径**：
+    它手上一个执行通道都没有，说自己做了就一定没做。"""
+    row = _claim_row("已为您规划好 3 天行程。", ["trip.plan"], [])
+    assert long_qa.audit_row_expectations(row, [row], {}) == ([], [])
+    # 取消挂起是编排自己干的确定性动作，没有 action 是它的正常形态。
+    row = _claim_row("好的，已为您取消。", ["system.pending_cancel"], [])
+    assert long_qa.audit_row_expectations(row, [row], {}) == ([], [])
+
+
+def test_a_plain_chitchat_answer_is_green():
+    row = _claim_row("深圳今天多云，气温28℃。", ["chitchat.talk"], [])
+    assert long_qa.audit_row_expectations(row, [row], {}) == ([], [])
+
+
+def test_the_execution_claim_ruler_is_the_shared_one():
+    """`scripts/` 里不许出现第二份形态表——抄两份就会长出分歧。"""
+    from runtime.execution_claim import execution_claim
+
+    assert long_qa.execution_claim is execution_claim
+
+
+# ── C16-3：取消的是不是用户点名的那条 ──────────────────────────────────
+
+def test_reminder_cancel_turns_require_the_named_title():
+    """真栈 T59：说「取消参加代号740945的评审会」，系统答「取消了『刚才那个
+    提醒现在几点』」——`reminder.cancel` 成功即绿，没人对过取消的是哪一条。"""
+    plans = long_qa.build_persona_plans()
+    case = next(c for c in plans["family"] if c.get("source_case_id") == "SL1")
+    cancels = [turn for turn in case["turns"]
+               if str(turn.get("say") or "").startswith("取消")]
+    assert cancels, "SL1 的清理段应当有取消轮"
+    named = [turn for turn in cancels
+             if "代号{run}的评审会" in (turn.get("expect") or {}).get(
+                 "speech_has", [])]
+    assert len(named) == 2, "两条真正执行取消的轮都要点名标题"
+
+
+# ── C16-7（＝C9-E）/ C12-D：语料侧接线 ─────────────────────────────────
+
+def test_every_weather_turn_pins_the_city_named_in_this_session():
+    plans = long_qa.build_persona_plans()
+    case = next(c for c in plans["information"] if c["id"] == "INF-WEATHER")
+    assert all(turn["expect"]["city_any"] == ["深圳"] for turn in case["turns"])
+
+
+def test_the_recommendation_turn_after_a_dietary_statement_is_judged():
+    plans = long_qa.build_persona_plans()
+    case = next(c for c in plans["information"] if c["id"] == "INF-PREFERENCE")
+    assert "不吃辣" in case["turns"][0]["say"]
+    assert case["turns"][1]["expect"]["honors_no_spicy"] is True
+
+
+# ── 回放计分（C16 验收）─────────────────────────────────────────────────
+
+def _replay_payload(rows: list[dict]) -> dict:
+    return {"ts": 1, "expected_sha": "0" * 40,
+            "personas": [{"persona": "family", "turns": rows}]}
+
+
+def _replay_row(**kwargs) -> dict:
+    row = {"turn": 1, "case": "", "case_instance": "", "local_turn": 0,
+           "say": "", "speech": "", "actions": [], "need_confirm": False,
+           "card_type": "", "is_question": False, "card_text": "",
+           "card_item_count": 0, "card_items": [], "card_items_raw": [],
+           "operation_id": "", "closed_operation_ids": [], "card_buttons": [],
+           "nav_targets": [], "follow_up": "", "trace": {"intents": []},
+           "fails": []}
+    row.update(kwargs)
+    return row
+
+
+def test_replay_recomputes_the_stored_run_with_todays_rulers():
+    """存档里那一轮当时是绿的（`expect: {}` 时代），今天的尺子该把它判红。"""
+    plans = long_qa.build_persona_plans()
+    case = next(c for c in plans["family"] if c.get("source_case_id") == "SF3")
+    row = _replay_row(
+        turn=28, case="SF3", case_instance=case["id"], local_turn=1,
+        say=case["turns"][0]["say"], speech="已为您关闭双闪。",
+        actions=["warning_light.close"],
+        trace={"intents": ["warning_light.close"]})
+    report = long_qa.replay_scoring(_replay_payload([row]))
+
+    assert report["summary"]["stored_failed"] == 0
+    assert report["summary"]["newly_red"] == 1
+    replayed = report["personas"][0]["turns"][0]
+    assert replayed["replayable"] is True
+    assert any("不该有动作" in f for f in replayed["replay_fails"])
+
+
+def test_replay_resolves_the_run_tag_per_case_not_per_turn():
+    """`{run}` 往往只出现在 case 的第一轮。**按轮反解会让后面那些轮拿到 0**，
+    `speech_has` 立刻整片假红（首版实测 4 行）。"""
+    plans = long_qa.build_persona_plans()
+    case = next(c for c in plans["family"] if c.get("source_case_id") == "SL1")
+    first = probe_subst(case["turns"][0]["say"])
+    rows = [
+        _replay_row(turn=1, case="SL1", case_instance=case["id"], local_turn=1,
+                    say=first, speech="好的，明天 16:00和明天 15:30各提醒你一次："
+                                      "参加代号740903的评审会。",
+                    card_item_count=2,
+                    card_text='{"items":[{"a":1},{"b":2}],"t":"15:30 16:00"}',
+                    trace={"intents": ["reminder.create"]}),
+        _replay_row(turn=2, case="SL1", case_instance=case["id"], local_turn=3,
+                    say="取消第一条",
+                    speech="好的，取消了「参加代号740903的评审会」。",
+                    trace={"intents": ["reminder.cancel"]}),
+    ]
+    report = long_qa.replay_scoring(_replay_payload(rows))
+    cancel = report["personas"][0]["turns"][1]
+    assert cancel["replayable"] is True
+    assert not [f for f in cancel["replay_fails"] if "代号" in f]
+
+
+def test_replay_never_turns_an_unreplayable_row_green():
+    """runner 自造的轮次重算不出来 ⇒ **原样保留存档判读**。
+    否则「回放红数」会因为尺子够不着而凭空变小。"""
+    row = _replay_row(turn=1, case="VEHICLE-RESTORE", local_turn=0,
+                      say="关闭音乐", speech="好的",
+                      fails=["恢复 media 的动作值不对"])
+    report = long_qa.replay_scoring(_replay_payload([row]))
+    replayed = report["personas"][0]["turns"][0]
+    assert replayed["replayable"] is False
+    assert replayed["replay_fails"] == ["恢复 media 的动作值不对"]
+    assert report["summary"]["newly_green"] == 0
+
+
+def test_replay_reports_the_c15_ruling_as_newly_green():
+    """`deterministic` 收编之后，当时那 11 行 mode 红该转绿——**并且能说出
+    是哪一条判据变了**（转绿逐行打出原判，不做自动归因）。"""
+    row = _replay_row(
+        turn=1, case="RECOVERY", local_turn=0, say="现在还有待确认的操作吗",
+        speech="当前没有待确认的操作。",
+        card_text='{"type":"safety_advice",'
+                  '"_prov":{"vendor":"road-safety","mode":"deterministic"}}',
+        trace={"intents": ["system.pending_state"]},
+        fails=["外部数据卡真实性章 mode 非法: deterministic"])
+    report = long_qa.replay_scoring(_replay_payload([row]))
+    assert report["summary"]["newly_green"] == 1
+    assert report["personas"][0]["newly_green"][0]["stored_fails"] == [
+        "外部数据卡真实性章 mode 非法: deterministic"]
+
+
+def probe_subst(template: str) -> str:
+    """把用例模板里的 `{run}` 换成回放测试固定用的那个标记。"""
+    return template.replace("{run}", "740903")

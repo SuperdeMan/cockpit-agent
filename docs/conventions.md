@@ -668,7 +668,15 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   `payment_qr` 还强制要求打 mock）；QA 探针立场拆两档：**该卡型已声明「mock 可接受」**
   （如 manual-rag 在真手册接入前）⇒ 记 **WARN 计数、不判 fail**；**mock 冒充 real**
   （无 `_prov` 或标错 mode）⇒ 仍判 fail。落法=探针建「卡型 × 允许 mode」期望表，
-  把下面那份必带清单机械化成判据（一份声明两个消费方；实现随 fix plan C15/C16）。
+  把下面那份必带清单机械化成判据（一份声明两个消费方）。
+  ✅ **2026-08-28 落地**（fix plan 第 6 批 C15）：表在
+  `scripts/probe_qa_long_sessions.py::card_prov_rule`（`_EXTERNAL_PROV_CARDS` /
+  `_DETERMINISTIC_PROV_CARDS` / `_MOCK_ACCEPTED_PROV_CARDS` 三张，后者**逐卡型
+  写理由、禁通配符**，同 `capability_exemptions.yaml` 的口径），与本节这份清单的
+  漂移由 `test_card_prov_rules_match_the_contract_mandatory_list` **直接解析本文档**
+  比对——两份表要是能分头改，那就还是两把尺子。**未登记的卡型走外源默认**
+  （real/cached/degraded、mock 判红）：新卡型想打 `deterministic` 或想让 mock
+  过关，先在这里登记一行。
 - **`data_time_label` 为什么由产生方给**（C4-A）：账本的读出口住在**编排层**，
   而编排层不认识「行情时间」这种领域说法——把它写进编排核心正是 R2.1 禁的那件事。
   同 `_candidate_label`（§9.32）：编排看不出 `mcd.menu` 那组该叫「麦当劳」，
