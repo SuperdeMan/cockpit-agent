@@ -137,7 +137,7 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "latest_closing_from", "sums_from",
                 "follow_up_any", "navigate_within_km", "navigate_named_any",
                 "no_capability_refusal", "city_any", "deadline_sane",
-                "honors_no_spicy"}
+                "honors_no_spicy", "card_nodes"}
 # 第 6 批（C16-4 / C16-7＝C9-E / C13-C / C12-D，2026-08-28）新增的四条判据，
 # 共同点是**判形态不判措辞**，逐条的理由写在 `_judge` 各自的分支上：
 #   `no_capability_refusal` —— 本轮不得以**我们自己的确定性拒绝串**收场
@@ -784,8 +784,19 @@ CASES = [
          # 卡片出现 `updated`。**本条读红时先查一次库**
          #（`select title, extra->>'turn' from reminder_item where title like '%周会%'`）：
          # 同一个 `turn` 下有两行就说明本卡要证的东西是对的，红的是探针的隔离。
+         # ⚠ `card_nodes` 2026-08-28 补（真栈跑批实测）：这一句建出了 **4 条**提醒
+         # ——两个 `card_group`、4 张 `reminder_card`、4 个不同 id，planner 产了
+         # 两步、每步把整组各建了一遍。而顶层 `items` 恰好是 2（那两个 group），
+         # 于是上面三条断言**全绿**。**下界量不出「建多了」。**
+         # ⚠ 这条判据会红在一个**已知且被刻意保留的裁定**上：
+         # `_cross_turn_duplicate` 明写「同轮不收编」（契约 §9.35 / fix plan C10-E），
+         # 所以同一轮里第二步不会被收编。留着它是因为**代价当时没算全**：
+         # 4 条一模一样的提醒**按标题取消会当场撞歧义**（真栈实测「有 4 条都能
+         # 对上，要取消哪条？」），于是这组提醒既清不掉、又一直参与序数参照系。
+         # 台账见 `AGENTS.md` §4.2 该行。
          {"say": "明天下午四点提醒我参加代号{run}的评审会，三点半再提醒我一次",
           "expect": {"card_items_at_least": 2,
+                     "card_nodes": {"reminder_card": 2},
                      "card_text_has": ["15:30", "16:00"],
                      "card_text_not": ["updated", "03:30"]}},
      ]},
@@ -1472,6 +1483,44 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
     least = expect.get("card_items_at_least")
     if least is not None and int(obs.get("card_item_count") or 0) < int(least):
         fails.append(f"卡片项数 {obs.get('card_item_count')} < 期望的 {least}")
+    # `card_nodes` 2026-08-28 补：**卡片树里某个卡型的节点数必须精确等于 N**。
+    #
+    # 为什么非要它：`card_items_at_least` 是**下界**，只会说「至少有两条」。
+    # 真栈 2026-08-28 跑批实测 SL1 一句话建出 **4 条**提醒（两个 `card_group`、
+    # 4 张 `reminder_card`、4 个不同 id——planner 产了两步，每步把整组各建一遍），
+    # 而顶层 `items` 恰好是 2（那两个 group）⇒ `card_item_count` 也是 2 ⇒
+    # **既有断言全绿**。SL1 立卡时防的是「说了两条只有一条」，没人想过会是 4 条。
+    # ⇒ **一把只有下界的尺子，量不出「建多了」**（同 CD1/AU1 那两次的判据升级：
+    # 「只会说他没说错话的尺子，量不出他有没有答对」）。
+    #
+    # 数的是**整棵树里该卡型的节点**，不是顶层项数：`card_group` 嵌套时这两个数
+    # 会分叉，而用户看到几张卡取决于前者。
+    want_nodes = expect.get("card_nodes") or {}
+    if want_nodes:
+        try:
+            tree = json.loads(str(obs.get("card_text") or "") or "{}")
+        except (TypeError, ValueError):
+            tree = {}
+        counts: dict[str, int] = {}
+
+        def _count(value) -> None:
+            if isinstance(value, dict):
+                kind = value.get("type")
+                if isinstance(kind, str) and kind:
+                    counts[kind] = counts.get(kind, 0) + 1
+                for child in value.values():
+                    _count(child)
+            elif isinstance(value, list):
+                for child in value:
+                    _count(child)
+
+        _count(tree)
+        for node_type, want in want_nodes.items():
+            got = counts.get(str(node_type), 0)
+            if got != int(want):
+                fails.append(
+                    f"卡片树里 `{node_type}` 有 {got} 张，期望正好 {want} 张"
+                    + ("——建多了" if got > int(want) else "——不够"))
     # Q2 残余（2026-08-19）：候选集上的**聚合问题**必须答对，不是「别说没查到」。
     # ⚠ CD1 原判据只压「不说未查到」+「别复读上一轮」，**压不到算得对不对**——
     # 于是「营业时间从来没进过候选集」这个缺陷在探针上一直看不见。

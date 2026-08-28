@@ -581,3 +581,74 @@ def test_cf1_pending_question_expects_the_deterministic_read_out():
     case = next(c for c in probe.CASES if c["id"] == "CF1")
     assert case["turns"][2]["audit"]["intent_any"] == [
         "system.pending_state", "system.no_pending"]
+
+
+# ── `card_nodes`：下界量不出「建多了」（2026-08-28 真栈跑批实测）──────────
+# 卡片形状逐字照抄那一轮：两个 `card_group`，每个里两张 `reminder_card`，
+# 4 个不同 id。顶层 `items` 恰好是 2 ⇒ `card_item_count` 也是 2 ⇒
+# `card_items_at_least: 2` 全绿。**这就是那条尺子看不见它的原因。**
+
+def _reminder_card(rid: str, display: str) -> dict:
+    return {"type": "reminder_card", "context": "created",
+            "item": {"id": rid, "title": "参加代号919841的评审会",
+                     "time_display": display, "status": "pending"}}
+
+
+def _double_created_card() -> dict:
+    return {"type": "card_group", "items": [
+        {"type": "card_group", "items": [_reminder_card("a", "明天 16:00"),
+                                         _reminder_card("b", "明天 15:30")]},
+        {"type": "card_group", "items": [_reminder_card("c", "明天 16:00"),
+                                         _reminder_card("d", "明天 15:30")]},
+    ]}
+
+
+def _single_created_card() -> dict:
+    return {"type": "card_group", "items": [_reminder_card("a", "明天 16:00"),
+                                            _reminder_card("b", "明天 15:30")]}
+
+
+def _card_obs(card: dict) -> dict:
+    obs = _obs("")
+    obs["card_text"] = json.dumps(card, ensure_ascii=False)
+    obs["card_item_count"] = len(card.get("items") or [])
+    return obs
+
+
+def test_the_old_lower_bound_cannot_see_a_double_creation():
+    """先证明这条判据是**必要**的：旧断言对 4 条照样全绿。"""
+    obs = _card_obs(_double_created_card())
+    assert obs["card_item_count"] == 2          # 顶层两个 group
+    assert probe._judge({"card_items_at_least": 2}, obs, [], []) == []
+
+
+def test_card_nodes_counts_the_whole_tree_and_flags_over_creation():
+    fails = probe._judge({"card_nodes": {"reminder_card": 2}},
+                         _card_obs(_double_created_card()), [], [])
+    assert fails == ["卡片树里 `reminder_card` 有 4 张，期望正好 2 张——建多了"]
+
+
+def test_card_nodes_passes_on_the_correct_shape():
+    assert probe._judge({"card_nodes": {"reminder_card": 2}},
+                        _card_obs(_single_created_card()), [], []) == []
+
+
+def test_card_nodes_also_flags_under_creation():
+    """两个方向都要报——SL1 立卡时防的正是「说了两条只有一条」。"""
+    one = {"type": "card_group", "items": [_reminder_card("a", "明天 16:00")]}
+    fails = probe._judge({"card_nodes": {"reminder_card": 2}},
+                         _card_obs(one), [], [])
+    assert fails == ["卡片树里 `reminder_card` 有 1 张，期望正好 2 张——不够"]
+
+
+def test_card_nodes_survives_an_unparseable_card():
+    """卡片解析不了时按 0 张算 ⇒ 红。**拿不到证据不许静默判绿。**"""
+    obs = _obs("")
+    obs["card_text"] = "not json"
+    fails = probe._judge({"card_nodes": {"reminder_card": 2}}, obs, [], [])
+    assert fails and "有 0 张" in fails[0]
+
+
+def test_sl1_pins_the_exact_reminder_count():
+    case = next(c for c in probe.CASES if c["id"] == "SL1")
+    assert case["turns"][0]["expect"]["card_nodes"] == {"reminder_card": 2}
