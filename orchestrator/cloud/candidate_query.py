@@ -13,7 +13,8 @@ I-018「哪家最晚关门」、I-023「已知两项价格却不算合计」。�
 「引用了候选而候选就在手里 ⇒ 确定性回答」。**一正一反，同一个判据面。**
 
 > 判据来源：`runtime/clock.py` 那条「系统持有的事实绝不让 LLM 答」，
-> 以及 Q6 `agents/chitchat/src/audit.py` 建好的形态（确定性 handler 回答系统事实）。
+> 以及 Q6 建好的那个形态（确定性 handler 回答系统事实）——它 2026-08-28 起住在
+> `runtime/session_facts.py`（C4-B，原 `agents/chitchat/src/audit.py`）。
 > 直接证据是零方差：同一份候选集，三次取样话术逐字相同。
 
 ## 判据为什么取窄（三段同时命中）

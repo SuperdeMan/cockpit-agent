@@ -71,8 +71,11 @@ M-B 让数据面记得下来**——识别对了却存不下来，等于没识�
 OwnerKey = (user_id, occupant_id)      # 空 occupant = primary，绝不等于共享
 ```
 
-- **Turn 存完整 owner + exchange**：`{turn_id, exchange_id, user_id, vehicle_id,
-  occupant_id, role, text, ts}`。一次请求 + 它可见的回复共用一个 `exchange_id`
+- **Turn 存完整 owner + exchange + 两维事实**：`{turn_id, exchange_id, user_id,
+  vehicle_id, occupant_id, role, text, ts, actions, sources}`。后两维是**系统持有的
+  事实的账本**：`actions` 是这一轮真实执行了哪些动作（Q6，契约 §9.24），
+  `sources` 是这一轮用了谁的数据、降没降级（C4-A，契约 §9.34）——两者都归一后落库、
+  都进幂等比对集（**一条被悄悄改过的记录比没有记录更糟**，审计会照着它回答）。一次请求 + 它可见的回复共用一个 `exchange_id`
   （cloud/edge 用 request_id、S2S 用 s2s turn_id），所以**重试是重放不是新一轮**；
   同 turn_id 异内容抛 `TurnConflict` 并保留原 Turn。
 - **读默认 OWNER_ONLY**：`last_n` 是过滤后的上限，切中 exchange 时整体舍弃最旧的
