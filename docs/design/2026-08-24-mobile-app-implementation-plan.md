@@ -1423,7 +1423,7 @@ S2S 先按外部阻塞处理。
 | 爆炸半径 | 渲染后的 compose config 里 **`S2S_` 只出现在 `llm-gateway:` 一个 service 块** | config sha `eeefe493…` → `2cccf287…` |
 | 生效 | **重建**（不是 restart）`llm-gateway` 一个容器——env 在**创建**时固化，`docker restart` 读不到新值（同 `AUTH_TOKENS` 那次「改身份配置必须整栈重建」） | 只有 `llm-gateway` 走了 Recreate，redis 仅被判定 Running |
 | 验证 | `/api/s2s/info` → `available:true, provider:"dashscope"`，**`default` 仍是 `classic`** | 红线成立：端到端只能由用户在设置里显式选 |
-| 回归 | `8443/healthz` 200、`8444/api/voices` 200、`/api/tts/stream/info` 正常；全部容器 `Up` | `dev_stack status` 报 `degraded` 但原因是 `remote cloud status is unavailable`（**读不到远端状态**，5/5 endpoint 全 healthy），与本次改动无关 |
+| 回归 | `8443/healthz` 200、`8444/api/voices` 200、`/api/tts/stream/info` 正常；全部容器 `Up` | ~~`dev_stack status` 报 `degraded`，原因是 `remote cloud status is unavailable`~~ **⚠ 2026-08-29 更正（另一个 agent 指出）：那个 `degraded` 是我自己制造的假象**——`dev_stack.py` 走 SSH，**在 Git Bash/MSYS 里会静默失败**，报出来就是 `release_sha:null` + `status:degraded`，读起来像「云端不健康」。同一条命令在 PowerShell 下是 `status:"ok"` / `release_sha:8892431` / `warnings:[]`。**真栈命令一律走 PowerShell**（AGENTS.md §4.0 ①，我没照做）。⇒ 结论没错（我另外直接 ssh 核过容器全 Up、5/5 endpoint healthy），但**归因整条是错的**——「工具读不到远端」和「我用错了 shell」是两回事，写错了下一个人会去查云端 |
 
 ⚠ **一次我自己做废的对照，值得记**：我本想用「拿备份文件渲染一次 vs 拿新文件渲染一次，diff 应只有一行」来证明爆炸半径，
 结果 **diff = 0**。原因是 `/opt/car-agent/releases/<sha>/.env` 是一个**指向 `shared/.env` 的符号链接**，
@@ -1432,6 +1432,8 @@ compose 优先读项目目录里的 `.env`、**把我传的 `--env-file` 无视�
 换成「S2S_ 落在哪个 service 块」才是真判据。⇒ 同「测试若替被测系统提供了某个前提，那条前提就不再被验证」。
 
 **⛔ 尚未验证**：App 侧真正走一轮 S2S（要在设置里切「端到端」并说话）。**云端可用 ≠ 端到端跑通**。
+
+✅ **跨 release 存活性已复验**（2026-08-29）：另一个 agent 把云端发到了 `8892431`，`/api/s2s/info` 仍是 `available:true, provider:"dashscope"` ⇒ 「shared 那份 env 各 release 软链共用、新 release 自带」**从推断变成了读数**。
 
 ### 无 AEC：泓舟真机观察的根因（2026-08-28）
 
