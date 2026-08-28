@@ -1889,7 +1889,7 @@ I-052 那类编造还能靠「这个商品不存在」抓出来，而这一条�
 > ⇒ fixture 把两家的 intent 和 label 配反了，段 A 那条红成「下发面选错组」，
 > 而下发面一直是对的。改成从 `_build_ref_maps` 反查——**装置和被测系统用同一份口径**。
 
-### 9.33 多端客户端网关契约（Android 陪伴端 `mobile/`，M0，2026-08-25）
+### 9.33 多端客户端网关契约（Android 陪伴端 `mobile/`，M0 立 / M4 补语音与视觉面，2026-08-28 更新）
 
 **背景**：座舱 HMI 之外的第二个用户端（`mobile/`，React Native + Expo）经同一
 edge-gateway WS / llm-gateway HTTP·WS 接入。两个网关本来不关心客户端是谁——
@@ -1916,8 +1916,37 @@ edge-gateway WS / llm-gateway HTTP·WS 接入。两个网关本来不关心客�
   meta 键值全 string（网关是 map[string]string，塞非 string 整帧静默丢弃）；
   `__` 前缀键不得上行。
 
+- **端侧判据必须共用，端侧引擎可以各自实现（M4 追加）**。这是本条最容易被绕开的一段：
+  M4 起 App 侧也有端侧 VAD / 唤醒词 / 视觉触发判定，很容易在 RN 侧「顺手写一套」。
+  分界是**判据 vs 引擎**——
+  · **判据只许一份**，走 `@shared/*`：`sileroEndpoint.mjs`（说完没说完：滞回/起播去抖/
+    静音尾）、`voiceLoop.mjs`（免唤醒 FSM 六态与误唤醒回收、打断确认窗）、
+    `utteranceHeuristics.mjs`（话语完整性/退出词）、`visionFrame.mjs::needsFrame`
+    （**这句话该不该抓一帧**）、`s2sClient.mjs`（S2S 协议翻译）。
+  · **引擎各平台各写**：HMI 是 `vadEngine.ts`（onnxruntime-web）/ `kwsEngine.ts`（sherpa WASM），
+    App 是 `core/voice/vad.ts`（onnxruntime-react-native）/ `modules/kws`（sherpa 原生）。
+    两边跑的是**同一份模型、同一组阈值**（KWS 刻意不换 int8——换模型等于换掉阈值成立的
+    前提，唤醒率出问题就分不清是「麦不同」还是「模型不同」）。
+  ⇒ 判据分叉的代价是**同一个用户在两个端对同一句话得到两个答案，而没有任何东西会红**。
+  白名单守卫的**例外条款从台账派生**（`domException.globals` / `forbiddenSymbols`），
+  不在测试里另写一份文件名——清单有第二份就一定会漂（M3 那 34 个卡型是同一形态）。
+- **App 侧新增两条上行面，红线三条件逐端成立（M4 追加）**：
+  · **S2S 挡位**（`/api/s2s`）会**上行原始音频**——设置默认 `classic`、用户显式选、
+    仅唤醒后交互窗内采集、隐私文案在设置页屏上（不是只写在代码注释里）；
+  · **视觉单帧**（`/api/vision/frame`）——默认关、**端侧命中触发词才抓一帧**、
+    图像只在网关内存活 TTL 秒。RN 侧还有一条平台特有的落实要求：
+    **挂载 CameraView 就是打开摄像头**，所以必须「命中才挂载、拍完立刻卸载」，
+    不许常驻一个隐藏预览。
+  · 声纹在 App 侧**不做**（§2.3 信道约束 + 「声纹不作鉴权因子」红线）。
+- **端侧模型与原生件不入 git（M4 追加）**：`mobile/modules/kws/android/{libs,src/main/jniLibs,
+  src/main/assets/kws}` 与 `mobile/assets/models/` 全部 gitignore，由
+  `scripts/fetch_mobile_voice_assets.{ps1,sh}` 取件；缺件时 gradle **明确失败并指向脚本**，
+  **刻意不静默跳过**——一个「悄悄没有唤醒词」的 APK 比一次红灯危险得多（同 B3/B4 的判据）。
+  CI 的 `mobile-apk.yml` 同步跑这两步。
+
 执行真相源（逐任务）：`docs/design/2026-08-24-mobile-app-implementation-plan.md`
-（协议逐字段指认见其 §2，坑账见其 §9；需求/选型在 `2026-08-23-hmi-android-app-plan.md`）。
+（协议逐字段指认见其 §2，坑账见其 §9——**§9.43–47 是 M4 的构建/原生面五条**；
+需求/选型在 `2026-08-23-hmi-android-app-plan.md`）。
 
 ### 9.34 系统持有的会话事实：账本的数据源维 + 三条确定性读出口（QA C4，2026-08-28）
 

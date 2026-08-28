@@ -110,6 +110,15 @@ mobile/         Android 陪伴端 App（React Native + Expo，TypeScript）—�
                 ⚠ 引入**原生支撑的组件**（地图/SVG/音频这类带 ViewManager 的）前必须先探原生在场：
                 原生缺席时 Fabric 在挂载期原生线程抛，React ErrorBoundary **兜不住**、整屏红屏
                 （计划文档坑账 §9.27；M5 的 OTA 只推 JS 不推原生，同形态）
+                ⚠ **M4 起构建前必须先取件**：`scripts/fetch_mobile_voice_assets.{ps1,sh}`
+                （端侧 VAD/唤醒词的模型与 sherpa 原生件不入 git）。缺件时 gradle 明确失败
+                并指向脚本——**刻意不静默跳过**，一个「悄悄没有唤醒词」的 APK 比一次红灯危险。
+                ⚠ **新增原生 npm 库要核它到底注册上没有**，判据是
+                `android/app/build/generated/autolinking/.../PackageList.java` 里有没有那个
+                Package 类——**不是 gradle 日志、更不是「.so 在 APK 里」**。带 `unimodule.json`
+                的老库会掉进 Expo/RN 两套 autolinking 之间的缝：**构建成功、装上去原生没注册**
+                （`onnxruntime-react-native` 实证，代价一趟 38 分钟构建；补登在
+                `mobile/react-native.config.js`）。坑账 §9.43–47 是这一族五条。
 dashboard/      React 开发/演示可观测台（不进入车控执行主链）
 deploy/         docker-compose / helm / k8s
 scripts/        codegen、构建辅助（含 gen-certs.* 生成 mTLS 证书）、自进化流水线 evolve.py（M1b，nightly 经 Task Scheduler）

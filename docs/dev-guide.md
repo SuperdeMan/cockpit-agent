@@ -222,10 +222,11 @@ gen/
 
 ---
 
-## 2.5 本地推理模型（可选，缺了不阻塞）
+## 2.5 本地推理模型（后端两处「缺了不阻塞」+ Android 一处「缺了构建失败」）
 
-两处**本地跑的模型**是 gitignore 的二进制，需要单独拉一次；**拉不到不影响其余功能**，
-对应能力会自动诚实禁用（不是报错，是"这个能力没上线"）：
+**本地跑的模型**都是 gitignore 的二进制，需要单独拉一次。**注意两种失败形态不同**——
+后端两处拉不到会自动诚实禁用（不是报错，是"这个能力没上线"），
+而 Android 那一处**缺件即构建失败**（下方 2.5b，刻意如此）：
 
 ```bash
 bash scripts/fetch-voice-models.sh                      # 全部
@@ -241,6 +242,38 @@ bash scripts/fetch-voice-models.sh voiceprint-campplus  # 只拉声纹（28MB）
 > 本机实测约 25KB/s、28MB 要十几分钟——**脚本支持 `curl -C -` 续传，中断了直接重跑**。
 > `models/voiceprint/.gitkeep` 必须在版本库里：`llm-gateway/Dockerfile` 有 `COPY models`，
 > 目录不存在会直接构建失败。
+
+### 2.5b Android 陪伴端的端侧语音资产（M4，**构建前必跑**）
+
+`mobile/` 的端侧 VAD/唤醒词要三样 gitignore 的东西：sherpa-onnx 原生件（`classes.jar` +
+两个 arm ABI 的 `.so`）、KWS zipformer 模型、silero VAD。取件脚本**依赖上面那一步**
+（KWS 模型与 HMI 共用同一份下载）：
+
+```powershell
+powershell -File scripts\fetch-voice-models.ps1            # 先拿 hmi 那份
+powershell -File scripts\fetch_mobile_voice_assets.ps1     # 再拆成 mobile 要的形态
+```
+```bash
+bash scripts/fetch-voice-models.sh && bash scripts/fetch_mobile_voice_assets.sh   # CI/Linux
+```
+
+| 产物 | 落点 | 来源 |
+|---|---|---|
+| `sherpa-onnx-classes.jar` | `mobile/modules/kws/android/libs/` | sherpa-onnx **static-link-onnxruntime** AAR 拆包 |
+| `libsherpa-onnx-jni.so` ×2 ABI | `mobile/modules/kws/android/src/main/jniLibs/<abi>/` | 同上（只留 arm64-v8a / armeabi-v7a） |
+| KWS zipformer 三件 + tokens/keywords | `mobile/modules/kws/android/src/main/assets/kws/` | 复制自 `hmi/public/models/` |
+| `silero_vad.onnx` | `mobile/assets/models/` | 同上 |
+
+⚠ **缺件时 gradle 明确失败并指向脚本，刻意不静默跳过**——一个「悄悄没有唤醒词」的 APK
+比一次红灯危险得多（同 B3/B4 的判据）。CI 的 `mobile-apk.yml` 也跑这两步。
+⚠ **必须是 static-link 版 AAR**：普通版自带 `libonnxruntime.so`，会和 VAD 用的
+`onnxruntime-react-native` 撞同名 `.so`。
+⚠ **不放 `.aar` 本体**：AGP 禁止 library 模块直接依赖本地 `.aar`
+（`Direct local .aar file dependencies are not supported when building an AAR`）。
+
+Android 的其余环境（JDK/SDK/ASCII 镜像工作区/真机）自检入口是
+`powershell -File scripts\check_android_env.ps1`（退出码 0 才动手）；
+日常命令见 [`mobile/README.md`](../mobile/README.md)。
 
 ## 3. 整栈运行
 

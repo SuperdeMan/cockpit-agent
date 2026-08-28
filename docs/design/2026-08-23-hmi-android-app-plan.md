@@ -202,6 +202,14 @@ mobile/
   引擎侧 VAD=`onnxruntime-react-native` 跑同一个 `silero_vad.onnx`，KWS=sherpa-onnx
   Android AAR。触发条件：M2 真机验收通过 + 产品确认手机形态需要免唤醒（手机不是车机，
   常开麦有它自己的产品/合规问题）。
+  > **状态（2026-08-28）：触发条件已由泓舟当轮裁定满足，M4 首轮已落地**（范围取全量、
+  > 含 KWS 唤醒词）。选型判断本身未变，本段保留；**进展与验收状态只查执行真相源**
+  > `2026-08-24-mobile-app-implementation-plan.md` §7（M4 实施记录）与 §8.4（验收清单）。
+  > ⚠ **一处「计划与现实冲突」已按 §0.5 纪律留痕**：KWS 最终**不是**直接依赖 Android
+  > AAR——AGP 禁止 library 模块依赖本地 `.aar`（产出的 AAR 会不含被依赖 aar 的类），
+  > 实际形态是把 AAR 拆成 `classes.jar`（走 `libs/`）+ `.so`（走 `jniLibs/`），
+  > 且必须取 **static-link-onnxruntime** 版以免与 `onnxruntime-react-native` 撞同名 `.so`。
+  > 取件由 `scripts/fetch_mobile_voice_assets.{ps1,sh}` 做。
 - 声纹：不做注册入口（§2.3 信道约束）；视觉抓帧：M4 随免唤醒一并评估。
 
 ### 5.5 Android 系统面（生产标准清单）
@@ -260,8 +268,9 @@ ASR 回退批处理路径走通；语音设置持久化。
 key 绑包名签名）。
 **验收**：Maestro e2e 流（对话/确认/重连/语音冒烟）进 CI 可跑档；两形态全卡族清单过。
 
-### M4 进阶语音（条件触发，不排期）
-免唤醒（voiceLoop+RN 引擎）/ S2S / 视觉抓帧。触发条件见 §5.4。
+### M4 进阶语音（条件已触发，2026-08-28 首轮落地）
+免唤醒（voiceLoop+RN 引擎）/ S2S / 视觉抓帧。触发条件与其现状见 §5.4；
+逐任务与验收状态在 `2026-08-24-mobile-app-implementation-plan.md` §7 / §8.4。
 
 ### M5 生产化清单（发布前，依赖 §10 后端）
 厂商推送接入、账号体系升级（静态 token → 正式鉴权）、Sentry、OTA 通道（expo-updates
