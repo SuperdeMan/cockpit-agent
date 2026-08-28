@@ -55,7 +55,7 @@
 | P3 | S2S 轮无记录 | 端到端挡位自答的轮，`onS2sUserUtterance / onS2sAnswerDelta` 有事件、`ChatScreen` 不接；只有 escalate 的轮进列表 | `M/core/voice/handsFree.ts:164,301`；`useHandsFree.ts:103-105`；`ChatScreen.tsx:225-233` | 对话记录与「实际说了什么/听到什么」**静默分叉**；「系统持有的事实」在这个端不可见 |
 | P4 | 转写落点不一致 | PTT 的 partial 在 Composer 提示行；免唤醒的 partial 在状态条；都不进列表；HMI 用的是列表尾部虚线「幽灵气泡」 | `Composer.tsx:42`；`ChatScreen.tsx:330-334`；对照 `H/components/ChatView.tsx:202-216` | 同一个动作（在说话）两种呈现 |
 | P5 | 确认是气泡不是承诺面 | 确认行内嵌在助手气泡里，随列表滚走；台账每 30s 剪枝，到期后按钮**无解释地消失**；无倒计时 | `M/features/chat/MessageBubble.tsx:166-201`；`M/core/session/store.ts:27,518-532` | 危险动作确认是安全链的一环，它的可见性不该受滚动位置支配 |
-| P6 | 键盘避让在 Android 上是空操作 | 三处 `KeyboardAvoidingView` 都传 `behavior = ios ? 'padding' : undefined`；e2e 不得不手动 `hideKeyboard` | `ChatScreen.tsx:358-360`；`onboarding.tsx:97-100`；`debug.tsx:96-99`；`M/e2e/01-text-weather.yaml:10-13` | 唯一交付平台上键盘会盖住 Composer |
+| P6 | 键盘避让在 Android 上是空操作 | 三处 `KeyboardAvoidingView` 都传 `behavior = ios ? 'padding' : undefined`，即在唯一交付平台上**什么都不做**；M1-6 写了「键盘全屏过一遍」但实施记录里**没有留读数**；e2e 的 `hideKeyboard` 是 Maestro 树里只剩输入法的问题（坑账），**不是遮挡证据** | `ChatScreen.tsx:358-360`；`onboarding.tsx:97-100`；`debug.tsx:96-99`；实施计划 §M1-6 / :1107 | 是否真的遮挡取决于 `softwareKeyboardLayoutMode=resize` 与 edge-to-edge 的组合，**未验**——B1 先用 Maestro 08 流取读数，再决定修法（§7.6） |
 | P7 | 形态只有一个布尔 | `tablet = min(w,h) >= 600`；无横屏布局、无姿态、无分屏/多窗、无尺寸类；只有地图页在旋转/展开时重 fit | `ChatScreen.tsx:58-59,414-442`；`M/app/map.tsx:107-117` | 折叠屏外屏→内屏、平板横竖、车载横向支架三种场景没有形态答案 |
 | P8 | 行车档缺席 | Edge 下发的 `driving` 标志存进 store，**没有任何组件读它**；有 keep-awake「车载支架」设置却没有行车布局 | `store.ts:286,295,303`；`SettingsScreen.tsx:155-184` | Figma A-6 的行车态（过程区单行锁定 / 56dp 目标 / 车速门禁）在 App 端没有落点 |
 | P9 | 卡片无优先级、一轮一张 | `display_priority` 全仓 mobile 零命中；`Msg.uiCard` 单数；`card_group` 只是竖排 `gap:8` | `CardRenderer.tsx:62-68`；`H/types.ts:26`；对照 `orchestrator/cloud/aggregator.py:155-158` | 聚合器精心算的主卡/候选卡序，在手机上被丢掉 |
@@ -384,9 +384,10 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 不做专门布局，但**必须不崩不遮**：分屏下 width 可能落到 compact 而 height medium——按 7.2 单栏；键盘避让在分屏尤其重要（7.6）。
 返回手势：RN 0.81 起对 targetSdk 36 **默认开启预测性返回**（[S-A3]），Android 16 真机上二级页（设置/地图/画廊）回退会带系统预览动画——语音层与 Dock 都不是路由页，**返回手势先收语音层、再退页面**（`BackHandler` 顺序写进 `presence` 的消费面），「根屏返回=退 Activity」的 M3-W 定案不变。
 
-### 7.6 键盘避让（P6，两步）
+### 7.6 键盘避让（P6，先取读数再修）
 
-1. 零依赖修法：`behavior='padding'` 对 Android 同样启用 + `keyboardVerticalOffset` 取顶栏高度；Expo `android.softwareKeyboardLayoutMode` 保持 `resize`；edge-to-edge（RN 0.86 默认）下用 `useSafeAreaInsets().bottom` 补底部。Maestro 断言：`inputText` 后**不 `hideKeyboard`** 直接 `assertVisible composer-send`。
+0. **先验再修**：真机（HyperOS 输入法）在对话页、Onboarding、分屏三处各弹一次键盘截图，Maestro 08 流去掉 `hideKeyboard` 跑一遍——如果 `resize` 模式下本来就不遮，这一条只剩把 `behavior=undefined` 这句死代码删掉。
+1. 零依赖修法（读数证明遮挡时）：`behavior='padding'` 对 Android 同样启用 + `keyboardVerticalOffset` 取顶栏高度；Expo `android.softwareKeyboardLayoutMode` 保持 `resize`；edge-to-edge（RN 0.86 默认）下用 `useSafeAreaInsets().bottom` 补底部。Maestro 断言：`inputText` 后**不 `hideKeyboard`** 直接 `assertVisible composer-send`。
 2. 若 1 在 HyperOS 输入法（独立窗口顶层）下仍不稳 ⇒ `react-native-keyboard-controller`（原生，归 B3 重建）。
 
 ---
