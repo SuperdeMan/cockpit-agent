@@ -1318,7 +1318,15 @@ S2S 先按外部阻塞处理。
 
 **读数**：`tsc --noEmit` 0；mobile jest **234/234**（229 → +5，新增 `test/kwsOwnership.test.ts`）；
 `expo lint` 50 problems / 24 errors——**与改动前逐字相同**（`git stash` 对照跑过，全是
-`ReminderSection.tsx`/`AuroraOrb.tsx` 的存量）；构建 **11m11s**（867 tasks，490 executed
+`ReminderSection.tsx`/`AuroraOrb.tsx` 的存量）。
+⚠ **这个读数默认不可复现，要先补一步**：`mobile/` 里**没有提交任何 eslint 配置**，
+`npm run lint` 第一次跑会自己生成一个 `eslint.config.js`（Expo 默认档）再开始检查。
+我那份是本轮跑出来的副产物、已删掉，仓库回到原状。⇒ 想复现这个数，先让 `expo lint`
+生成配置。**顺带一条**：`package.json` 声明了 `"lint": "expo lint"`，而 **CI 的 mobile job
+只跑 `typecheck` + `jest`、不跑 lint**（`ci.yml:310-331`），配置也没入库
+⇒ **这个 script 事实上是死的**，那 24 个 error 从没被任何闸看过。
+要不要让它活过来（补配置 + 修 24 个 + 进 CI）是一次独立的决定，本轮不擅自做。
+构建 **11m11s**（867 tasks，490 executed
 / 377 cached；首轮 22m42s 是全量）；APK **275.9MB**（与首轮同）。
 
 **反向验证**（摘掉守卫再跑）：`kwsOwnership` 五条里 **①②④ 变红、③⑤ 仍绿**。
@@ -1375,8 +1383,20 @@ S2S 先按外部阻塞处理。
   ⇒ 本地没定义就注入**空串**，而空串走的是 `off` 分支。**代码默认在任何 Compose 部署里都够不着。**
 - 本地 `.env` 共 109 行，**一个 `S2S_*` 键都没有**（模板只在 `.env.example` 里，且整段注释掉）。
 - 而且 `.env` **从来不会到云端**：`cloud_release_lib.py` 把它归 `secret_material`
-  且 `validate_archive_member_names` 明令禁止它进 release 包。
-⇒ 要开 S2S 得改**云主机上那份 env**（+ 重启 llm-gateway），属红线动作，等泓舟指令。
+  且 `validate_archive_member_names` 明令禁止它进 release 包。云端跑的是
+  `docker compose -f <release>/compose.yaml -f /opt/car-agent/shared/compose.cloud.yaml`，
+  运行时 env 是**云主机上单独一份** `/opt/car-agent/shared/.env`
+  （`activate-release.sh` 校验它 root:root / 600 / 非符号链接，再 `ln -s` 进 staging）。
+⇒ 要开 S2S 得改**那一份**（加 `S2S_PROVIDER=dashscope`，key 可复用已有的
+  `LLM_EMBED_API_KEY`——`s2s_available()` 的回退链里有它），然后重启 llm-gateway。
+  属红线动作，等泓舟指令。
+
+⚠ **这条诊断我差点写错，过程值得留**：第一版我指着 `deploy/docker-compose.yaml:229` 就下结论，
+**没有先问「云端跑的是不是这份 compose」**——`cloud_release_lib.py:1425` 显示云端另有
+`deploy/cloud/compose.cloud.yaml`。回头核过才确认那是**overlay**、没有重定义 llm-gateway 的
+`environment`，所以确实继承了那一行，结论侥幸成立。
+⇒ 判据：**在多份 compose 的部署里，引用某一行 env 之前先确认「跑的是哪几份、谁覆盖谁」**
+（同「尺子要照真实链路量」那一族）。
 ⇒ 验收条目从「⬜ 未验」改成「❌ 被云栈未配 `S2S_PROVIDER` 挡住」——**「没跑」和「跑不了」不是一回事**。
 
 ⚠ **顺带一条注释在说假话**（值得单记，因为它会让人查错方向）：compose 那段的注释写着
