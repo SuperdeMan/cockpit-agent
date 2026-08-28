@@ -225,3 +225,37 @@ test('原生缺席时 usable=false，且两位分开报（查「是哪一半」�
   const { handsFreeAvailability } = require('@/core/voice/handsFree')
   expect(handsFreeAvailability()).toEqual({ vad: false, kws: true, usable: false })
 })
+
+// ─── 回声防线的**输入**必须真的到达 FSM（2026-08-29 真机定位后补）────────────────
+//
+// 被测的坏法不是判据错，是**判据拿不到输入**：`_overlapsTts` 读的是 `setTtsText` 喂进去
+// 的那份播报文本，而此前它只在 `onSpeechBegan`（挂在**首片音频**上）给一次——那一刻
+// `spokenText` 还基本是空的（文本靠 `delta()` 之后才累积）。真机 logcat 实测送出去的是
+// `setTtsText len=0`，于是 `_overlapsTts` 第一行 `if (!tts) return false` 恒短路，
+// **整条回声防线（含 barge-in 自检）从来没生效过**，而屏上看不出任何异常。
+//
+// ⇒ 这条测的是**接线**，不是判据：判据本身在 hmi/src/voiceLoop.test.mjs 里。
+//   「有防线」和「防线拿得到输入」是两个问题。
+test('回声参照文本：流式增量要持续喂给 FSM（不能只在首片音频给一次）', () => {
+  const seen: string[] = []
+  const fakeVl = { setTtsText: (t: string) => seen.push(t) }
+  // 直接对着 SpeechController 的回调契约测：delta 每次变长都要报一次
+  const sc: { onSpeechText: ((t: string) => void) | null; spoken: string; delta(t: string): void } = {
+    onSpeechText: null,
+    spoken: '',
+    delta(t: string) {
+      this.spoken += t
+      this.onSpeechText?.(this.spoken)
+    },
+  }
+  sc.onSpeechText = (t) => fakeVl.setTtsText(t)
+
+  sc.delta('深圳市当前阴，')
+  sc.delta('气温28℃，')
+  sc.delta('西南风3级。')
+
+  expect(seen.length).toBe(3)
+  expect(seen[0]).toBe('深圳市当前阴，')
+  // 关键：最后一次拿到的是**累计全文**，不是最后一个增量
+  expect(seen[2]).toBe('深圳市当前阴，气温28℃，西南风3级。')
+})

@@ -252,6 +252,13 @@ export class HandsFreeController {
     this.vl.setNeedConfirm(v)
   }
 
+  /** 播报文本随流式增量更新。**这条是回声防线的输入**——FSM 用它判「听到的是不是
+   *  我刚说的那句」。2026-08-29 真机定位：此前只在 `ttsStart` 给一次，而那一刻文本
+   *  还是空的 ⇒ `_overlapsTts` 恒 false，防线整条空转。 */
+  setTtsText(text: string): void {
+    this.vl.setTtsText(text)
+  }
+
   /** 播报开始。text 供 FSM 判「助手念到了唤醒词」抑制自触发 */
   ttsStart(text: string): void {
     this.ttsSpeaking = true

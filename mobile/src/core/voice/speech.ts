@@ -27,6 +27,13 @@ export class SpeechController implements SpeechSink {
    *  都不出（引擎无 key / 纯卡片回复），那种情况下 FSM 不该进 SPEAKING 再等一个永远
    *  不来的 ttsEnd。没出声的那条腿由 onSilent → 调用方补 turnEnded() 走。 */
   onSpeechBegan: ((text: string) => void) | null = null
+  /** 本轮播报文本**每次变长都要报一次**（2026-08-29 真机定位）。
+   *  ⚠ 别指望 `onSpeechBegan` 那一次：它挂在**首片音频**上，而那一刻 `spokenText`
+   *  还基本是空的（文本靠 `delta()` 之后才累积）——真机实测送出去的是 `len=0`，
+   *  于是 FSM 的回声防线拿着空串，`_overlapsTts` 第一行就短路，**整条防线空转**。
+   *  拿它当回声参照的消费方要的是「**此刻已经播出去了什么**」，那是个会变的量，
+   *  只送一次必然是错的。 */
+  onSpeechText: ((text: string) => void) | null = null
   onSpeechEnded: (() => void) | null = null
   private session: TtsSession | null = null
   private extra: { player: any } | null = null
@@ -89,6 +96,7 @@ export class SpeechController implements SpeechSink {
   delta(bubbleId: string, text: string): void {
     if (!this.session || bubbleId !== this.bubble) return
     this.spokenText += text
+    this.onSpeechText?.(this.spokenText) // 让 FSM 手里那份参照文本跟着变长（见 onSpeechText 头注）
     this.session.append(text)
   }
 
@@ -136,6 +144,9 @@ export class SpeechController implements SpeechSink {
 
   /** 批处理播一段（divergent 补播 / 兜底共用） */
   async speakBatch(text: string): Promise<boolean> {
+    // 批处理这条腿不走 `delta()`，整句一次给 ⇒ 参照文本要在这里补一次，
+    // 否则「流式不可用 → 回落批处理」的那些轮回声防线又是空转的（同 onSpeechText 头注）
+    this.onSpeechText?.(text)
     try {
       const out = await synthesizeBatch(this.cfg(''), text)
       if (!out) return false

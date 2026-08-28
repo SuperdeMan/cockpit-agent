@@ -119,11 +119,18 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     //  直到 100s 兜底，那段时间整个回路是聋的——HMI R4.3b P0 的原账）
     const sc = speechController()
     const prevBegan = sc.onSpeechBegan
+    const prevText = sc.onSpeechText
     const prevEnded = sc.onSpeechEnded
     const prevSilent = sc.onSilent
     sc.onSpeechBegan = (text) => {
       prevBegan?.(text)
       ctl.ttsStart(text)
+    }
+    // 播报文本随流式变长 → 持续喂给 FSM。**回声防线的输入就是这一条**：
+    // `onSpeechBegan` 挂在首片音频上，那一刻文本还没累积起来（真机实测 len=0）。
+    sc.onSpeechText = (text) => {
+      prevText?.(text)
+      ctl.setTtsText(text)
     }
     sc.onSpeechEnded = () => {
       prevEnded?.()
@@ -135,6 +142,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     }
     return () => {
       sc.onSpeechBegan = prevBegan
+      sc.onSpeechText = prevText
       sc.onSpeechEnded = prevEnded
       sc.onSilent = prevSilent
       ctlRef.current = null
