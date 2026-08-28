@@ -20,7 +20,8 @@ from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from ..admission import normalize_hostname
 from ..candidate_ref import RESERVED_ID_SLOT
 from ..mcp_client import McpTimeout
-from .base import DeclaredBusinessRejected, MerchantWorkflow, parse_quantity
+from .base import (DeclaredBusinessRejected, MerchantWorkflow,
+                   normalize_menu_query, parse_quantity)
 from .models import MerchantChoice, MerchantDraft, MerchantItem, MerchantResult, yuan_to_cents
 
 
@@ -892,7 +893,9 @@ class McDonaldsWorkflow(MerchantWorkflow):
                 if label and label not in categories:
                     categories.append(label)
         total = len(products)
-        asked = self._choice_value(slots.get("item_query"), "餐品")
+        # C3-C：泛指词（全部/所有/都有啥/整份菜单）归一成空槽 = 整份菜单。
+        asked = normalize_menu_query(
+            self._choice_value(slots.get("item_query"), "餐品"))
         asked_category = str(slots.get("category") or "").strip()
         if asked_category:
             # 分类导航（demo-3ukshz #2）：108 款一屏列不全，按官方分类分组浏览。

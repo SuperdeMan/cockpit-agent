@@ -2244,6 +2244,12 @@ class PlanBuilder:
                 declared_slots=next(
                     (list(getattr(c, "slots", []) or [])
                      for c in manifest.capabilities if c.intent == intent), []),
+                # C3：槽位值形状（进程内，不下发）。`_suspend` 只抄待补那几个槽的
+                # 形状进挂起态，续接轮据此判「这句话长得像不像这个槽的值」。
+                slot_shapes=next(
+                    ({str(k): str(v) for k, v in
+                      (getattr(c, "slot_shapes", None) or {}).items()}
+                     for c in manifest.capabilities if c.intent == intent), {}),
             )
             steps.append(step)
 

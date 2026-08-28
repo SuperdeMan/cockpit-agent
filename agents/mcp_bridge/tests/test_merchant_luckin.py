@@ -2540,3 +2540,24 @@ async def test_product_choice_resume_without_a_draft_is_honest():
     assert result.status == NEED_SLOT
     assert result.missing_slots == ["item_query"]
     assert client.counts["searchProductForMcp"] == 0
+
+
+@pytest.mark.asyncio
+async def test_menu_wildcard_query_takes_the_multi_seed_path():
+    """C3-C：泛指词归一成空槽 ⇒ 走多种子聚合那条路，而不是拿「全部」当搜索词。
+
+    与 `mcd.menu` 共用同一份归一（`base.normalize_menu_query`）——判据只有一份，
+    两家商户各写一遍就会长出「麦当劳认得『全部』、瑞幸不认得」这种分歧。
+    """
+    workflow, client = _workflow(scripts={
+        "queryShopList": [SHOP_RESULT],
+        "searchProductForMcp": [SEARCH_RESULT] * 8,
+    })
+    res = await workflow.menu(_intent(name="luckin.menu", item_query="全部"),
+                              CTX, META)
+
+    assert res.status == OK
+    assert "没有找到" not in res.speech
+    queries = [args["query"] for name, args, _ in client.calls
+               if name == "searchProductForMcp"]
+    assert len(queries) > 1, "空槽路径是多种子聚合，单次搜索说明归一没生效"

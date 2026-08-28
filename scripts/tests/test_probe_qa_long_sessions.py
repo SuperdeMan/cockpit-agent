@@ -1253,3 +1253,132 @@ def test_restore_turn_tolerates_actions_the_ruler_does_not_know():
     去改被测系统。
     """
     assert long_qa.judge_restore_turn("window", "50%", ["window.set"]) == []
+
+
+# ── C10-D：跑批结束的提醒清理段 ─────────────────────────────────────────
+
+def _reminder_persona(monkeypatch, *, leftover_after_cancel: bool):
+    """一个建了提醒的 persona；`leftover_after_cancel` 控制复核轮还剩不剩。"""
+    sent: list[str] = []
+    listed = {"n": 0}
+
+    class _Ws:
+        async def close(self):
+            return None
+
+    async def connect(_url):
+        return _Ws()
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        sent.append(say)
+        items: list[dict] = []
+        if say == "列出我现在进行中的提醒":
+            listed["n"] += 1
+            first = listed["n"] == 1
+            if first or leftover_after_cancel:
+                items = [{"title": "交周报QA000002"}, {"title": "别人的提醒"}]
+            else:
+                items = [{"title": "别人的提醒"}]
+        card = ({"type": "reminder_list", "items": items} if items else {})
+        return {
+            "speech": "好的", "actions": [], "need_confirm": False,
+            "operation_id": "", "closed_operation_ids": [],
+            "card_type": card.get("type", ""),
+            "card_text": json.dumps(card, ensure_ascii=False),
+            "card_items": [it["title"] for it in items],
+            "is_question": False, "trace_id": trace_id,
+        }
+
+    async def detail(_collector, trace_id):
+        return {
+            "turn": {"trace_id": trace_id, "status": "ok", "path": "cloud",
+                     "intents": "reminder.list"},
+            "spans": [{"node": "agent", "attrs": {"agent_id": "reminder"}}],
+            "llm_calls": [], "logs": [],
+        }
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    monkeypatch.setattr(
+        long_qa, "_settled_vehicle_state", _complete_vehicle_state)
+    monkeypatch.setattr(long_qa, "recovery_turns", lambda: [])
+    cases = [{"id": "SL1", "turns": [
+        {"say": "明天下午四点提醒我交周报QA{run}", "expect": {}}]}]
+    result = asyncio.run(long_qa._run_persona(
+        "family", cases, "wss://example.invalid", "https://collector.invalid", 1))
+    return sent, result
+
+
+def test_reminder_cleanup_cancels_only_its_own_run_and_verifies(monkeypatch):
+    """C10-D：跑批自己建的提醒必须清掉——不清就永远沉在库里参与序数参照系。
+
+    匹配面是**本次 run 号**：别人的提醒一个字都不碰。
+    """
+    sent, result = _reminder_persona(monkeypatch, leftover_after_cancel=False)
+
+    assert sent[-3:] == ["列出我现在进行中的提醒", "取消交周报QA000002",
+                         "列出我现在进行中的提醒"]
+    assert "取消别人的提醒" not in sent
+    assert result["cleanup_failures"] == []
+
+
+def test_reminder_cleanup_reports_when_the_count_does_not_fall(monkeypatch):
+    """**计数要回落**——「发过取消指令」不等于「库里没有了」（Q6 那条判据）。
+
+    而且这一段**只观测不中止**：清理失败不该把下一趟跑批截断。
+    """
+    sent, result = _reminder_persona(monkeypatch, leftover_after_cancel=True)
+
+    assert any("提醒清理后仍有本次 run 的条目" in f
+               for f in result["cleanup_failures"])
+    assert result["aborted"] is False
+
+
+def test_reminder_cleanup_is_skipped_when_the_persona_built_nothing(monkeypatch):
+    """没有 `{run}` 的 persona **一轮都不多跑**。
+
+    多出来的轮次本身就会改变读数（同「测试替被测系统提供前提」那条）：
+    每个 persona 白搭两次 LLM 调用，还会把轮号往后推、让既有 fails 行对不上号。
+    """
+    class _Ws:
+        async def close(self):
+            return None
+
+    sent: list[str] = []
+
+    async def connect(_url):
+        return _Ws()
+
+    async def turn(_ws, _session, say, *, operation_id="", trace_id,
+                   is_confirmation=False):
+        sent.append(say)
+        return {
+            "speech": "好的", "actions": [], "need_confirm": False,
+            "operation_id": "", "closed_operation_ids": [], "card_type": "",
+            "card_text": "", "card_items": [], "is_question": False,
+            "trace_id": trace_id,
+        }
+
+    async def detail(_collector, trace_id):
+        return {
+            "turn": {"trace_id": trace_id, "status": "ok", "path": "cloud",
+                     "intents": "info.weather"},
+            "spans": [{"node": "agent", "attrs": {"agent_id": "info"}}],
+            "llm_calls": [], "logs": [],
+        }
+
+    monkeypatch.setattr(long_qa, "_connect", connect)
+    monkeypatch.setattr(long_qa, "_turn", turn)
+    monkeypatch.setattr(long_qa, "_fetch_detail", detail)
+    monkeypatch.setattr(
+        long_qa, "_settled_vehicle_state", _complete_vehicle_state)
+    monkeypatch.setattr(long_qa, "recovery_turns", lambda: [])
+    cases = [{"id": "INF", "turns": [{"say": "深圳明天天气", "expect": {}}]}]
+
+    asyncio.run(long_qa._run_persona(
+        "information", cases, "wss://example.invalid",
+        "https://collector.invalid", 1))
+
+    assert sent == ["深圳明天天气"]

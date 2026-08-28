@@ -33,8 +33,12 @@ capabilities:
     slots: [index, title]
     examples: ["完成第二条", "买牛奶那条办完了", "标记第一个完成", "完成提醒：给客户回电话"]
   - intent: reminder.cancel
-    description: 取消某条提醒，或清空全部（清空需二次确认）
+    description: 取消某条提醒，或清空全部（清空需二次确认）；按标题取消时 title 填用户
+      点名的原文，别转述或简写（子串匹配，放宽一个字就会命中另一条）
     slots: [index, title, all]
+    # ⚠ 「第二个先取消，其他继续」**刻意只进范例库不进这里**（C10-F）：同一句话
+    # 声明两遍就有两处要维护，而这条要教的是「复合说法怎么落域」——那正是范例库
+    # 的职责面（检索后作 few-shot），不是 catalog 的。
     examples: ["取消第二条提醒", "不用提醒我回电话了", "把提醒都清空"]
   - intent: reminder.update
     description: 修改某条提醒的时间（改到/推迟/提前/换个时间）；按标题或"第N条"定位，

@@ -731,3 +731,112 @@ def test_slot_pending_pure_cancel_unchanged():
     assert "取消" in events[-1]["speech"]
     assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
     assert spy.count("nearby.search") == 0
+
+
+# ── C3：wait_slot 方向反转（形状契约 + 词表合并 + 止损底线） ──────────────
+
+def test_slot_pending_declared_shape_rejects_a_new_request():
+    """C3-A（真栈 T45/T46）：`item_query` 声明了 `item_name` 形状之后，
+    「附近的川菜馆」「…哪个贵」不再被整句吞成搜索词。
+
+    这两句此前**每一句都能连答三轮**「在售餐单里没查到"<用户刚说的那句话>"」——
+    补槽把用户越推越远，而挂起一直不放。
+    """
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot", pending_step_id="s1",
+        missing_slots=["item_query"],
+        slot_shapes={"item_query": "item_name"})
+
+    assert PlannerEngine._is_topic_change("附近的川菜馆", pending) is True
+    assert PlannerEngine._is_topic_change(
+        "麦当劳的第二个和川菜的第二个哪个贵", pending) is True
+    # 反向对照：真餐品名仍然是槽位答案，别把补槽修死
+    assert PlannerEngine._is_topic_change("巨无霸", pending) is False
+    assert PlannerEngine._is_topic_change("拿铁", pending) is False
+    assert PlannerEngine._is_topic_change(
+        "马来咖喱风味薄皮肉骨鸡随心配", pending) is False
+
+
+def test_slot_pending_without_declaration_keeps_old_behaviour():
+    """没声明形状的槽**逐字维持原行为**——这条机制不许悄悄收紧全域补槽。"""
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["store_hint"])
+    assert PlannerEngine._is_topic_change("科苑南路店", pending) is False
+    assert PlannerEngine._is_topic_change("晚上九点", pending) is False
+
+
+def test_slot_pending_new_search_wordlist_is_shared_with_candidate_query():
+    """C3-B：「这是一次新检索」的词表只有一份——`candidate_query.NEW_SEARCH_RE`。
+
+    此前它只在候选集聚合那一侧生效，同一句「附近的川菜馆」在那边判成新检索、
+    在补槽这边被当成槽值：**同一判据两份实现，给同一句话两个答案**。
+    """
+    from orchestrator.cloud import candidate_query
+
+    for text in ("附近的川菜馆", "旁边有没有充电站", "帮我找家咖啡店", "重新搜一遍"):
+        assert candidate_query.NEW_SEARCH_RE.search(text), text
+        assert PlannerEngine._is_topic_change(text) is True, text
+    # 「哪个」补进疑问词表（旧表只有「哪些」）
+    assert PlannerEngine._is_topic_change("哪个更便宜") is True
+    # 误伤面对照：这些不含新检索词，仍是槽位答案
+    for text in ("路上经过深南大道", "科苑南路店", "到公司"):
+        assert PlannerEngine._is_topic_change(text) is False, text
+
+
+def test_slot_pending_is_abandoned_after_repeated_unanswered_asks():
+    """C3-D 止损底线：同一个问题问到上限还没接上就放弃它，并**说一句**。
+
+    判据再准也有漏网的说法（词表竞赛没有终点），这条保证黑洞只能吞有限轮。
+    """
+    from orchestrator.cloud.models import SessionState
+    from orchestrator.cloud.engine import SLOT_RETRY_LIMIT
+
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-stuck",
+        pending_step_id="s1", missing_slots=["item_query"],
+        slot_retry=SLOT_RETRY_LIMIT,
+        completed_results={}, pending_plan={"goal": "查看麦当劳菜单"})))
+
+    events = _run(engine, _req("帮我看看附近有什么景点"))
+    final = events[-1]
+
+    assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
+    assert spy.count("nearby.search") == 1          # 这一轮按全新请求真的执行了
+    assert "查看麦当劳菜单" in (final.get("follow_up") or "")
+    assert "放一放" in (final.get("follow_up") or "")
+    assert "op-stuck" in (final.get("closed_operation_ids") or [])
+
+
+def test_slot_retry_counts_only_the_same_question():
+    """计数只认「同一步 + 同一组待补槽」。
+
+    商户流程「先问门店、再问餐品」是**进展**，同一步换个槽再问不能被算成
+    原地打转——否则一个正常的多槽流程走到第三问就被放弃了。
+    """
+    from orchestrator.cloud.models import PlanContext, StepResult, StepStatus, Plan, Step
+
+    engine, _spy, session = _make_engine_interject()
+    plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent="mcd.menu")])
+
+    async def _suspend_with(probe, missing):
+        ctx = PlanContext(session_id="sess-x", user_id="u1",
+                          pending_operation_id="op-prev",
+                          pending_slot_probe=probe)
+        await engine._suspend(
+            StepResult(step_id="s1", status=StepStatus.NEED_SLOT,
+                       missing_slots=missing),
+            [], plan, ctx)
+        return (await session.load("sess-x", owner_user_id="u1")).slot_retry
+
+    same = asyncio.run(_suspend_with(
+        {"step_id": "s1", "missing": ["item_query"], "retry": 1}, ["item_query"]))
+    assert same == 2                                  # 同一个问题又问了一遍
+
+    progressed = asyncio.run(_suspend_with(
+        {"step_id": "s1", "missing": ["store_hint"], "retry": 1}, ["item_query"]))
+    assert progressed == 0                            # 换了槽 = 进展，归零

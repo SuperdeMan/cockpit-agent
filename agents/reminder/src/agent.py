@@ -17,7 +17,9 @@ from agents._sdk.shared_state import (REMINDABLE_ACTIVE, REMINDERS_ACTIVE,
 from runtime.proactive import publish_proactive
 
 from .placeparse import ARRIVE, parse_place_text
-from .store import Reminder, ReminderStore, DONE, CANCELLED, FIRED, LOCATION
+from .task_admission import admit_task_title
+from .store import (Reminder, ReminderStore, DONE, CANCELLED, FIRED,
+                    LOCATION, PENDING)
 from .timeparse import (OK as T_OK, FAIL as T_FAIL, ParsedTime, align_workday,
                         business_tz, format_display, parse_lead, parse_recur,
                         parse_time_text, recur_label, strip_time_expressions)
@@ -223,7 +225,26 @@ class ReminderAgent(BaseAgent):
                 missing_slots=["time_text"],
             )
 
+        # C10-C：同一条任务性准入（判据只有一份），批量口同样不许建垃圾标题。
+        ok, why = admit_task_title(title)
+        if not ok:
+            logger.info("reminder.create_batch 拒建（%s）：%s", why, title[:40])
+            return AgentResult(
+                speech=f"「{title}」听着不像一件要做的事，我没建提醒。",
+                follow_up="要建的话说清楚做什么，比如「明天九点提醒我交周报」。")
         turn = str((meta or {}).get("trace_id") or "")
+        # C10-E：**整组都已经存在**才算跨轮重复。本能力的写入是原子的
+        # （「任一无效时一条也不落」），所以幂等也按整组判——只挡「同一句话又说了
+        # 一遍」这个真实形态，不去拆一半建一半破坏原子语义。
+        existing = [await self._cross_turn_duplicate(ctx, title, pt.fire_at, turn)
+                    for pt in parsed]
+        if all(existing):
+            await self._refresh_active(ctx)
+            await self._clear_pending(ctx)
+            return AgentResult(
+                speech=(f"{parsed[0].display}和{parsed[1].display}的"
+                        f"「{title}」都已经有了，就不重复建了。"),
+                follow_up="要改时间说「改到几点」，不要了说「取消」。")
         reminders = [Reminder(
             user_id=self._uid(ctx), occupant_id=self._occ(ctx),
             vehicle_id=ctx.vehicle_id or "", title=title, kind="time",
@@ -275,6 +296,17 @@ class ReminderAgent(BaseAgent):
             return AgentResult(status=NEED_SLOT, speech="要提醒你什么事？",
                                follow_up="比如：明天早上八点提醒我带充电线",
                                missing_slots=["title"])
+        # C10-C 任务性准入：**这句话是不是一件待办**。写入闸此前只判 fire_at>0，
+        # 于是「刚才那个提醒现在几点」（问句）和「用户计划…4天行程」（第三人称
+        # 事实陈述）都建成了提醒，还进了序数参照系被后面的「取消第一条」选中。
+        # 判据取形态不取关键词（判据本体见 `task_admission`），拒建要**诚实说**。
+        ok, why = admit_task_title(title)
+        if not ok:
+            logger.info("reminder.create 拒建（%s）：%s", why, title[:40])
+            await self._clear_pending(ctx)
+            return AgentResult(
+                speech=f"「{title}」听着不像一件要做的事，我没建提醒。",
+                follow_up="要建的话说清楚做什么，比如「明天九点提醒我交周报」。")
         # 原话优先（B2-2 @M3 canonical 抓到：planner 对「提醒我吃降压药」误填 kind=todo，
         # todo 路径静默跳过时间追问）：显式「提醒/叫我」话术永远走定时提醒，槽位只在
         # 与原话不冲突时生效——同 scene custom_params 的「原话优先、槽位兜底」原则。
@@ -358,6 +390,15 @@ class ReminderAgent(BaseAgent):
                                       occupant_id=self._occ(ctx))
             return AgentResult(speech=f"好的，{display}再提醒你：{target.title}。",
                                ui_card=self._card_single(r2, "updated"))
+        duplicate = await self._cross_turn_duplicate(ctx, title, fire_at, turn)
+        if duplicate:
+            # C10-E：跨轮重复 ⇒ 收编不新建。真栈实录库里躺着三条一模一样的
+            # 09:00 pending——长会话里同一句被重复规划，每次都老实建了一条。
+            await self._refresh_active(ctx)
+            await self._clear_pending(ctx)
+            return AgentResult(
+                speech=f"「{title}」{display}已经有一条了，就不重复建了。",
+                follow_up="要改时间说「改到几点」，不要了说「取消」。")
         r = await self.store.add(Reminder(
             user_id=self._uid(ctx), occupant_id=self._occ(ctx),
                 vehicle_id=ctx.vehicle_id or "",
@@ -484,6 +525,23 @@ class ReminderAgent(BaseAgent):
             return fired[0]
         if _AGAIN_RE.search(raw) and exact:
             return exact[0]
+        return None
+
+    async def _cross_turn_duplicate(self, ctx, title: str, fire_at: int,
+                                    turn: str) -> Reminder | None:
+        """同 owner + **逐字同标题** + 同触发时刻的 pending 已存在 ⇒ 返回它（C10-E）。
+
+        `turn` 判据与 `_reschedule_target` 同源、理由也同一条：一句话被规划成
+        两步是**设计内**的（「同轮不收编」那条裁定保留），跨轮重复才是该挡的那个。
+        用「逐字同标题 + 同时刻」而不是模糊匹配：**收编的代价是少建一条**，
+        判宽了就会把「明天九点开会」和「明天九点开例会」当成同一件事。
+        """
+        for hit in await self.store.find_by_title(
+                self._uid(ctx), title, occupant_id=self._occ(ctx)):
+            if (hit.title == title and hit.fire_at == fire_at
+                    and hit.status == PENDING
+                    and not (turn and str(hit.extra.get("turn") or "") == turn)):
+                return hit
         return None
 
     async def _apply_update(self, ctx, rid: str, title: str, pt: ParsedTime) -> AgentResult:
@@ -821,7 +879,16 @@ class ReminderAgent(BaseAgent):
                 r"完成提醒[:：]|完成|办完|做完|搞定|取消|删掉|删除|不用|那条|这条"
                 r"|把|改到|改成|推迟到?|提前到?|延到|换到|改个?时间|的提醒|的待办|了",
                 "", raw))
-        return await self.store.find_by_title(uid, q, occupant_id=occ) if q else []
+        if not q:
+            return []
+        hits = await self.store.find_by_title(uid, q, occupant_id=occ)
+        # C10-B **精确度阶梯**：逐字相等优先于子串命中。planner 转述会把用户
+        # 点名的标题放宽（「取消参加评审会」→ title=「评审会」），子串于是同时
+        # 命中「评审会」与「准备评审会材料」；旧实现把两条都当候选，单条时
+        # 直接执行——**取消掉的可能不是他点名的那条**。有逐字相等的就只认它，
+        # 没有才退回子串（多条仍走澄清，那条既有行为不变）。
+        exact = [r for r in hits if r.title == q]
+        return exact or hits
 
     async def _clarify_multi(self, ctx, hits: list[Reminder], action: str) -> AgentResult:
         """标题命中多条时不擅自操作（P0 单条语义）：反问澄清，并把候选写入 active，
@@ -844,9 +911,23 @@ class ReminderAgent(BaseAgent):
 
     # ── shared_state（conventions §9）──
     async def _refresh_active(self, ctx, items: list | None = None) -> None:
+        """序数参照系（`第N条`）的唯一写入口。
+
+        ⚠ **无参形式必须与 `_list` 默认视图同一口径**（C10-A，2026-08-28）：
+        「从现在起」的未来项。此前它取 `list_split()` 的**整表最老 10 条**——
+        库里沉了 80 条过期垃圾时，取消成功后这里一刷新，参照系就被**静默换成**
+        一份用户从来没看见过的考古清单；下一句「取消第一条」于是取消了
+        「刚才那个提醒现在几点」（真栈 T59 逐字实录）。
+
+        判据一句话：**「第N条」只许指向用户最后一眼看到的那份列表**
+        （候选集下发面 §9.28 的同一条）。任何后台刷新参照系的动作
+        都是在给序数指代埋雷——所以刷新也得刷成用户看得见的那份。
+        """
         if items is None:
-            times, todos = await self.store.list_split(self._uid(ctx),
-                                                   occupant_id=self._occ(ctx))
+            cutoff = int(self._now_utc().timestamp())
+            times, todos = await self.store.list_split(
+                self._uid(ctx), from_ts=cutoff,
+                occupant_id=self._occ(ctx))
             items = times + todos
         await ctx.save_shared_state(self._state_key(ctx, REMINDERS_ACTIVE), {
             "items": [{"id": r.id, "title": r.title} for r in items[:10]]})

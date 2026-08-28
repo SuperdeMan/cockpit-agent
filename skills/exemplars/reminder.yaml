@@ -235,3 +235,19 @@ exemplars:
   tags:
   - badcase
   note: M-A A1-3 曾被条件提醒 guide 误读为只查天气；明确时间加“再看下”是并列双意图
+- text: 第二个先取消，其他继续
+  plan:
+  - agent: reminder
+    intent: reminder.cancel
+    slots:
+      index: '2'
+  source: trace
+  added: '2026-08-28'
+  tags:
+  - badcase
+  note: >-
+    C10-F（真栈 family T34）：提醒批的「部分取消」没有专门能力，planner 就近挑了
+    shop.preview_discard——一个零槽、整会话全清语义的工具，当时碰巧无草稿才走了
+    FAILED；有草稿就会全清而不是清第二个。缺的不是 intent（reminder.cancel 早有
+    index 槽），是「取消第N个 + 其余继续」这种复合说法进 planner 的通道，所以补
+    范例不新增能力。

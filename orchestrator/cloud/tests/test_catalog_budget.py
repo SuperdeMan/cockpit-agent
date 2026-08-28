@@ -210,14 +210,21 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # （「与暂停不同——暂停保留播放位置、说『继续』能接上」）而不是机械短描述：
     # stop / pause 正是 catalog 里最容易被一锅端的一对，**描述就是 planner 的
     # 选择权重**（同 volume.mute 那一笔的理由）。有意新增 +1 条，仍零裁剪。
-    assert catalog.catalog_stats["chars_full"] == 13400
-    assert catalog.catalog_stats["chars_final"] == 13400
+    # 2026-08-28 +49 → 13449：`reminder.cancel` 的描述补一句**填槽指令**
+    # （「按标题取消时 title 填用户点名的原文，别转述或简写」，卡 C10-B）。
+    # 条数不变。这一笔买的是**写路径的精确度**：标题是子串匹配，planner 一转述
+    # 就可能命中另一条并真的取消掉它（真栈 T17/T59）；桥侧的精确度阶梯只能在
+    # 「已经拿到一个宽词」之后补救，让它一开始就别放宽更便宜。
+    # ⚠ 同批的「第二个先取消，其他继续」**刻意没进 examples**——那句要教的是
+    # 复合说法怎么落域，归范例库（检索式 few-shot），不占 catalog 常驻预算。
+    assert catalog.catalog_stats["chars_full"] == 13449
+    assert catalog.catalog_stats["chars_final"] == 13449
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13400 → 2600）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13449 → 2551）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2600
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2551
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

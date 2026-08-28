@@ -45,6 +45,10 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             require_confirm=c.get("require_confirm", False),
             heavy=c.get("heavy", False),
             verification=build_verification(c.get("verification")),
+            # C3：槽位值形状（`槽位名 -> 形状名`）。**只声明名字**，判据本体在编排侧
+            # `orchestrator/cloud/slot_shape.py`——同 verification 的分工。
+            slot_shapes={str(k): str(v)
+                         for k, v in (c.get("slot_shapes") or {}).items()},
         )
         for c in (data.get("capabilities") or [])
     ]

@@ -19,7 +19,8 @@ from agents._sdk.ledger import DONE, FAILED, Duplicate, idem_key
 from ..admission import normalize_hostname
 from ..order_ref import (NEUTRAL, allows_history_fallback,
                          is_deictic_placeholder, reference_scope)
-from .base import DeclaredBusinessRejected, MerchantWorkflow, parse_quantity
+from .base import (DeclaredBusinessRejected, MerchantWorkflow,
+                   normalize_menu_query, parse_quantity)
 from .models import (
     MerchantChoice,
     MerchantDraft,
@@ -1686,7 +1687,9 @@ class LuckinWorkflow(MerchantWorkflow):
         # 2026-08-13 真机取证：`query=""` 被商户判 `code=1000 非法参数`，`query=" "`
         # 返回 0 条，任意实词返回**最多 3 条**——这个工具是「搜商品」不是「列全菜单」。
         # 所以①用户没说要什么时多种子聚合而不是单种子；②话术不许说成「全部菜单」。
-        asked = str(slots.get("item_query") or "").strip()
+        # C3-C：泛指词（全部/所有/都有啥/整份菜单）归一成空槽——走下面的多种子
+        # 聚合那条路，而不是拿「全部」当搜索词（同 mcd.menu，判据只有一份）。
+        asked = normalize_menu_query(slots.get("item_query"))
         if asked:
             try:
                 products_data = await self._read(

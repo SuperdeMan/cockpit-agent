@@ -269,6 +269,8 @@ class McpBridgeAgent(BaseAgent):
                 slots=spec.slots,
                 examples=spec.examples,
                 require_confirm=bool(spec.require_confirm),
+                # C3：槽位值形状随 capability 上注册中心——编排的换题判定要看它。
+                slot_shapes=dict(spec.slot_shapes or {}),
             ))
         for spec in self._local_capabilities:
             if not spec.expose:

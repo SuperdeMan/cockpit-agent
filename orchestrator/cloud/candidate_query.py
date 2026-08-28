@@ -57,7 +57,11 @@ _REFERENCE_RE = re.compile(
 #: 命中即**放行给 Planner**：这是一次新检索，不是对当前列表的聚合。
 #: ⚠ 刻意不含「最近」——「最近的一家」既可能是新搜索也可能是问当前列表，
 #: 交给 `_REFERENCE_RE` 去分（「附近最近的」有「附近」，会被这里挡住）。
-_NEW_SEARCH_RE = re.compile(
+#:
+#: **公开名 = 这份词表的唯一来源**（C3-B，2026-08-28）。此前 `engine._is_topic_change`
+#: 另有一份「这是不是新请求」的判据各自演化，于是「附近的川菜馆」在这里是新检索、
+#: 在那里是槽位答案——同一句话两个答案，正是 B1 那个 bug 的成因原型。
+NEW_SEARCH_RE = re.compile(
     r"附近|周边|就近|旁边|这边|哪里有|哪儿有|有没有|帮我找|帮我搜|再搜|换一批|重新搜")
 
 #: `(算子正则, 维度, 取最大?)`。**按声明序求值，第一条命中即用**——同
@@ -321,7 +325,7 @@ def _relist_answer(text: str, items: list[dict]) -> str | None:
     （白名单 13 键刻意不含它们），文字清单**回不到那张卡的按钮**，
     不说清就等于让用户以为按钮没了。
     """
-    if not _RELIST_RE.search(text) or _NEW_SEARCH_RE.search(text):
+    if not _RELIST_RE.search(text) or NEW_SEARCH_RE.search(text):
         return None
     lines = []
     for index, item in enumerate(items, start=1):
@@ -472,7 +476,7 @@ def is_candidate_aggregate_question(text: str,
     `items` 缺省时只走词表通道——名字通道要有候选集才判得了。
     """
     t = str(text or "").strip()
-    if not t or _NEW_SEARCH_RE.search(t):
+    if not t or NEW_SEARCH_RE.search(t):
         return False
     if not _has_reference(t, [it for it in (items or []) if isinstance(it, dict)]):
         return False
@@ -496,7 +500,7 @@ def answer(text: str, entry: dict | None,
     ——那正是 I-030 那个「答出另一家的真商品真价格」的形态。
     """
     groups = [g for g in (named or []) if isinstance(g, dict)]
-    if len(groups) >= 2 and not _NEW_SEARCH_RE.search(str(text or "")):
+    if len(groups) >= 2 and not NEW_SEARCH_RE.search(str(text or "")):
         got = _cross_group_answer(str(text).strip(), groups)
         if got:
             return got

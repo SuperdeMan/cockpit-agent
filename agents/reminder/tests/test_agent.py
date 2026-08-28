@@ -10,7 +10,7 @@ from agents._sdk.shared_state import (REMINDERS_ACTIVE, REMINDER_PENDING,
                                       owner_scoped)
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
 from agents.reminder.src.agent import ReminderAgent
-from agents.reminder.src.store import Reminder, ReminderStore
+from agents.reminder.src.store import CANCELLED, Reminder, ReminderStore
 from agents.reminder.src.timeparse import FAIL, ParsedTime
 
 _TZ = timezone(timedelta(hours=8))
@@ -627,7 +627,10 @@ async def test_ordinal_continuation_after_clarify():
         ensure_ascii=False)})
     res = await run_handle(a, "reminder.cancel", raw_text="取消第二条", ctx=ctx)
     assert res.status == "ok"
-    assert (await a.store.get("u1", r2.id)).status == "cancelled"
+    # C10-A 后 `store.get` 默认只给 ACTIVE，读终态要显式点名 statuses——
+    # 这条断言查的正是「它变成 cancelled 了没有」，属于该显式的那一类。
+    assert (await a.store.get(
+        "u1", r2.id, statuses=(CANCELLED,))).status == "cancelled"
     assert (await a.store.get("u1", r1.id)).status == "pending"
 
 
@@ -815,3 +818,140 @@ async def test_double_negative_still_creates():
     a = await _agent()
     res = await run_handle(a, "reminder.create", raw_text="别忘了明天八点提醒我开会")
     assert "不建提醒" not in res.speech
+
+
+# ── C10：序数参照系 / 标题精确度 / 任务性准入 / 跨轮幂等 ────────────────────
+
+@pytest.mark.asyncio
+async def test_ordinal_reference_frame_ignores_expired_backlog():
+    """C10-A（真栈 T59 的真根因）：库里沉着过期垃圾时，一次成功的取消**不许**
+    把序数参照系静默换成一份用户从来没看见过的考古清单。
+
+    F 组调查指出既有同形用例跑绿的前提是**空库**；这条把那个前提补掉。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    for idx in range(12):                       # 12 条过期沉积，够顶满 10 条上限
+        await _seed_raw(a, f"过期垃圾{idx:02d}", now - (idx + 1) * 86400)
+    await _seed_raw(a, "明天带伞", now + 86400)
+    await _seed_raw(a, "后天交周报", now + 2 * 86400)
+
+    ctx = make_context()
+    await run_handle(a, "reminder.complete", raw_text="完成明天带伞", ctx=ctx)
+
+    written = [c.args[2] for c in ctx._memory.upsert_profile.call_args_list
+               if c.args[1] == _ACTIVE_KEY]
+    assert written, "取消/完成后必须刷新序数参照系"
+    titles = [item["title"] for item in json.loads(written[-1])["items"]]
+    assert titles == ["后天交周报"], f"序数参照系指向了用户看不见的条目：{titles}"
+
+
+@pytest.mark.asyncio
+async def test_cancel_prefers_the_exact_title_over_a_substring_match():
+    """C10-B 精确度阶梯：planner 转述会放宽标题，子串于是同时命中两条。
+
+    逐字相等的那条存在时只认它——否则**取消掉的可能不是用户点名的那条**。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "评审会", now + 3600)
+    await _seed_raw(a, "准备评审会材料", now + 7200)
+
+    res = await run_handle(a, "reminder.cancel", slots={"title": "评审会"},
+                           raw_text="取消评审会")
+
+    assert res.status == "ok" and "「评审会」" in res.speech
+    remaining = sorted(r.title for r in (await a.store.list_split("u1"))[0])
+    assert remaining == ["准备评审会材料"]
+
+
+@pytest.mark.asyncio
+async def test_cancel_without_an_exact_match_still_clarifies():
+    """反向对照：没有逐字相等时，多条子串命中仍走澄清（既有行为不变）。"""
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "准备评审会材料", now + 3600)
+    await _seed_raw(a, "评审会纪要", now + 7200)
+
+    res = await run_handle(a, "reminder.cancel", slots={"title": "评审会"},
+                           raw_text="取消评审会")
+
+    assert res.status == "need_slot" and res.missing_slots == ["index"]
+    assert len((await a.store.list_split("u1"))[0]) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_a_question_shaped_title():
+    """C10-C：问句不是一件待办。真栈实录里它建成功了，还进了序数参照系。"""
+    a = await _agent()
+    res = await run_handle(
+        a, "reminder.create", raw_text="明天早上八点提醒我刚才那个提醒现在几点")
+
+    assert res.status == "ok"                    # 诚实拒绝用 OK（R9）
+    assert "不像一件要做的事" in res.speech
+    assert (await a.store.list_split("u1")) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_create_refuses_a_third_person_statement_title():
+    a = await _agent()
+    res = await run_handle(
+        a, "reminder.create",
+        slots={"title": "用户计划2026年国庆前往青岛4天行程",
+               "time_text": "明天早上八点"},
+        raw_text="明天早上八点提醒我用户计划2026年国庆前往青岛4天行程")
+
+    assert res.status == "ok" and "不像一件要做的事" in res.speech
+    assert (await a.store.list_split("u1")) == ([], [])
+
+
+@pytest.mark.asyncio
+async def test_create_still_admits_real_tasks():
+    """硬负对照：准入不许把真任务挡在外面（正 2）。"""
+    a = await _agent()
+    for raw in ("明天早上八点提醒我参加评审会", "明天早上九点提醒我交周报"):
+        res = await run_handle(a, "reminder.create", raw_text=raw)
+        assert res.status == "ok" and "不像一件要做的事" not in res.speech, raw
+    titles = sorted(r.title for r in (await a.store.list_split("u1"))[0])
+    assert titles == ["交周报", "参加评审会"]
+
+
+@pytest.mark.asyncio
+async def test_create_is_idempotent_across_turns():
+    """C10-E：同 owner + 逐字同标题 + 同时刻的 pending 已存在 ⇒ 收编不新建。
+
+    真栈实录：长会话里同一句被重复规划，库里于是躺着三条一模一样的 09:00。
+    """
+    a = await _agent()
+    first = await run_handle(a, "reminder.create",
+                             raw_text="明天早上九点提醒我吃药",
+                             meta={"trace_id": "turn-1"})
+    assert first.status == "ok" and "好的" in first.speech
+
+    again = await run_handle(a, "reminder.create",
+                             raw_text="明天早上九点提醒我吃药",
+                             meta={"trace_id": "turn-2"})
+
+    assert again.status == "ok" and "已经有一条了" in again.speech
+    assert again.ui_card is None, "没建东西就不该给一张「已创建」的卡"
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1
+
+
+@pytest.mark.asyncio
+async def test_same_turn_two_steps_are_still_not_deduplicated():
+    """Q12 的裁定原样保留：**同轮不收编**。
+
+    「明天下午四点提醒我开会，三点半再提醒我一次」会被规划成两个 create 步，
+    两步的 `raw` 是同一句话——按轮次排除，否则第二步会把第一步刚建的那条改掉/吞掉，
+    用户要两条、库里只有一条，而话术照说「各提醒你一次」。
+    """
+    a = await _agent()
+    await run_handle(a, "reminder.create", raw_text="明天下午四点提醒我开会",
+                     meta={"trace_id": "same-turn"})
+    second = await run_handle(a, "reminder.create", raw_text="明天下午四点提醒我开会",
+                              meta={"trace_id": "same-turn"})
+
+    assert "已经有一条了" not in second.speech
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 2

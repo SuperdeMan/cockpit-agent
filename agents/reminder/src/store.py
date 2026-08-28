@@ -204,16 +204,26 @@ class ReminderStore:
 
     # ── 读取 ──
     async def get(self, user_id: str, rid: str, *,
-                  occupant_id: str = "") -> Reminder | None:
+                  occupant_id: str = "", statuses: tuple = ACTIVE) -> Reminder | None:
+        """按 id 取一条。**默认只给 ACTIVE**（C10-A，2026-08-28）。
+
+        序数指代经 `REMINDERS_ACTIVE` 缓存拿到 id 再来这里回读，而那份缓存
+        可能落后于库（上一轮刚被取消、或别的会话改过）。此前不过滤 status，
+        于是「取消第一条」能选中一条**已经取消掉的**条目并再报一次它的标题。
+        要读终态条目（审计/回读刚落库的那条）显式传 `statuses`。
+        """
         _u, occ = owner_of(user_id, occupant_id)
         if self._pg_ok:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
                     "SELECT * FROM reminder_item WHERE id=$1 AND user_id=$2 "
-                    "AND occupant_id=$3", rid, user_id, occ)
+                    "AND occupant_id=$3 AND status=ANY($4)",
+                    rid, user_id, occ, list(statuses))
             return self._row(row) if row else None
         r = self._mem.get(rid)
-        return r if r and r.user_id == user_id and r.occupant_id == occ else None
+        if not r or r.user_id != user_id or r.occupant_id != occ:
+            return None
+        return r if r.status in statuses else None
 
     async def list_split(self, user_id: str, *, from_ts: int = 0, to_ts: int = 0,
                          statuses: tuple = ACTIVE, occupant_id: str = "",

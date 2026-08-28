@@ -25,6 +25,7 @@ from .stream_state import (
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
+from . import slot_shape
 from runtime import session_facts
 from .context import (ContextManager, build_context, candidate_downlink,
                       candidate_set_for,
@@ -40,6 +41,13 @@ from observability.redact import gate_content
 from observability.tracing import set_session_id, set_trace_id
 
 logger = logging.getLogger("planner.engine")
+
+#: C3-D 止损底线：同一条挂起**连续问同一件事**这么多次还填不上，就放弃它、
+#: 按全新请求重新规划。真栈 T44-T46 是这条线的由来——一条 `item_query` 挂起
+#: 连吞三轮，每一轮都答「没查到"<用户刚说的那句话>"」，用户越说越远。
+#: 换题判据（含 C3-A 的形状契约）总有漏网的说法，这条是**判据之外**的兜底：
+#: 判据再漏，黑洞也只能吞掉有限轮。
+SLOT_RETRY_LIMIT = int(os.getenv("CLOUD_SLOT_RETRY_LIMIT", "2"))
 
 
 def _executed_action_names(actions) -> list[str]:
@@ -367,7 +375,17 @@ class PlannerEngine:
         elif pending and pending.phase == "wait_slot":
             # F12：补槽续接——判定用户是在回答追问还是换了话题。
             # （取消已在上面的共用判据里处理完，此处只剩「答案 vs 换话题」。）
-            if self._is_topic_change(text, pending):
+            if int(getattr(pending, "slot_retry", 0) or 0) >= SLOT_RETRY_LIMIT:
+                # C3-D：同一个问题问到上限还没接上 —— **放弃它，别再问第四遍**。
+                # 这一轮按全新请求走：黑洞的止损不是「判得更准」，是「吞不了太多轮」。
+                # 放弃**必须有话术**（Q1-C「淘汰必须有话术」的同一条纪律），
+                # 名字随 ctx 带到本轮 final 的 follow_up。
+                logger.info("Abandoning pending %s after %d unanswered slot asks",
+                            (pending.operation_id or "")[:16], pending.slot_retry)
+                ctx.abandoned_pending_label = self._pending_label(pending)
+                await self._close_pending(ctx, pending)
+                pending, plan, seed_results = None, None, []
+            elif self._is_topic_change(text, pending):
                 # 答非所问：用户插话——保留挂起按新请求处理（R2，下轮裸答案仍可续接）
                 held_pending = pending
                 plan, seed_results = None, []
@@ -382,6 +400,13 @@ class PlannerEngine:
                            "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
                     return
                 ctx.pending_operation_id = pending.operation_id
+                # C3-D：带上这条挂起当时**问的是什么**，`_suspend` 才分得清
+                # 「同一个问题又问一遍」（计数 +1）与「同一步换了个槽再问」（进展，归零）。
+                ctx.pending_slot_probe = {
+                    "step_id": pending.pending_step_id,
+                    "missing": sorted(pending.missing_slots or []),
+                    "retry": int(getattr(pending, "slot_retry", 0) or 0),
+                }
                 # Phase 1 简单版：直接用用户原始文本填 slot（Agent LLM 能理解自然语言）
                 for step in plan.steps:
                     if step.id == pending.pending_step_id:
@@ -389,8 +414,10 @@ class PlannerEngine:
                             step.slots[slot_name] = self._slot_answer(
                                 slot_name, text)
                         break
-            logger.info("Resuming plan for session %s (slot fill step %s, text=%s)",
-                        ctx.session_id, pending.pending_step_id, text[:20])
+            if pending is not None:
+                logger.info(
+                    "Resuming plan for session %s (slot fill step %s, text=%s)",
+                    ctx.session_id, pending.pending_step_id, text[:20])
         elif not just_cancelled and (
                 ctx.is_confirmation or self._is_bare_confirm_word(text)):
             # 带确认标记，或裸"确认/取消"，但没有挂起任务（TTL 过期/上一步异常/重复点击）。
@@ -742,6 +769,7 @@ class PlannerEngine:
                         exchange_id=ctx.request_id)
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 self._append_pending_hint(final, held_pending)
+                self._append_abandoned_hint(final, ctx.abandoned_pending_label)
                 # M2 P2：会话级情绪信号随 final 透传给 HMI 选 TTS 情感参数（不入记忆）
                 if getattr(plan, "emotion", ""):
                     final["emotion"] = plan.emotion
@@ -870,6 +898,7 @@ class PlannerEngine:
         final = await self.aggregator.compose(
             text or plan.raw_text, results, thinking=complex_task)
         self._append_pending_hint(final, held_pending)
+        self._append_abandoned_hint(final, ctx.abandoned_pending_label)
         if getattr(plan, "emotion", ""):
             final["emotion"] = plan.emotion
         await obs_events.get_emitter("cloud").emit_span(
@@ -1207,6 +1236,21 @@ class PlannerEngine:
                 ctx.closed_operation_ids.append(ctx.pending_operation_id)
             ctx.pending_operation_id = ""
         operation_id = f"op-{uuid.uuid4().hex[:16]}"
+        # C3-A：把**待补那几个槽**的值形状抄进挂起态——续接轮据此判「这句话长得
+        # 像不像这个槽的值」。只抄待补的那几个：形状要回答的是「当时问的是什么」。
+        pending_step = next(
+            (item for item in plan.steps if item.id == step_result.step_id), None)
+        declared_shapes = dict(getattr(pending_step, "slot_shapes", None) or {})
+        slot_shapes = {name: declared_shapes[name]
+                       for name in (step_result.missing_slots or [])
+                       if name in declared_shapes}
+        # C3-D：同一步、同一组待补槽又问了一遍 ⇒ 原地打转，计数 +1；
+        # 换了槽（「先问门店再问餐品」）或换了步都是**进展**，归零。
+        probe = ctx.pending_slot_probe or {}
+        repeated = (
+            step_result.status == StepStatus.NEED_SLOT
+            and probe.get("step_id") == step_result.step_id
+            and probe.get("missing") == sorted(step_result.missing_slots or []))
         saved, evicted = await self.session.save_pending(
             ctx.session_id, SessionState(
                 phase=("wait_confirm"
@@ -1216,6 +1260,8 @@ class PlannerEngine:
                 operation_id=operation_id,
                 pending_step_id=step_result.step_id,
                 missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
+                slot_shapes=slot_shapes,
+                slot_retry=(int(probe.get("retry") or 0) + 1) if repeated else 0,
                 completed_results=completed,
                 pending_plan=self._serialize_plan(plan),
             ))
@@ -1311,6 +1357,18 @@ class PlannerEngine:
                 operation_id=ctx.pending_operation_id)
             if ctx.pending_operation_id not in ctx.closed_operation_ids:
                 ctx.closed_operation_ids.append(ctx.pending_operation_id)
+
+    @staticmethod
+    def _append_abandoned_hint(final: dict, label: str) -> None:
+        """C3-D：本轮放弃了一条问不动的挂起，**必须说一句**。原地改 final。
+
+        静默丢弃就是 Q1-C 那条「淘汰必须有话术」的同一件事：用户以为那件事
+        还在等他，其实系统早就忘了。"""
+        if not label or not isinstance(final, dict):
+            return
+        final["follow_up"] = PlannerEngine._append_hint(
+            final.get("follow_up"),
+            f"（{label}问了几次都没接上，先放一放；需要的话重新说一次。）")
 
     @staticmethod
     def _append_pending_hint(final: dict, held_pending) -> None:
@@ -1411,26 +1469,16 @@ class PlannerEngine:
         t = (text or "").strip()
         if not t:
             return False
-        # 订单取消/退款的 ``order_id`` 是写路径身份，不是自由文本槽。真栈长会话
-        # 复现过：系统追问订单号后，用户换题说「附近的咖啡店」，旧逻辑把整句填成
-        # order_id，下一跳直接生成“准备退款，确认吗”。确认闸挡住了最终写入，但错误
-        # 意图已经被推进到危险边界。
-        #
-        # 因此该槽只接受两种**显式引用**：10–40 位纯数字（两家官方订单号形状），
-        # 或带「订单号/单号」标签的有界字母数字 id。其余一律按换题处理并保留挂起；
-        # 「上次麦当劳那单」也应重新规划，由账本归属解析，而不是直塞权威 id 槽。
-        missing = set(getattr(pending, "missing_slots", None) or [])
-        if "order_id" in missing:
-            if re.fullmatch(r"[0-9]{10,40}", t):
-                return False
-            if re.fullmatch(
-                r"(?:订单号|单号)\s*(?:是|为|[:：])?\s*"
-                r"[0-9A-Za-z][0-9A-Za-z_-]{2,63}",
-                t,
-                flags=re.IGNORECASE,
-            ):
-                return False
-            return True
+        # C3-A **方向反转**：先问「这句话长得像不像这个槽的值」。形状由 capability
+        # 声明（`slot_shapes`），判据本体是 `slot_shape.py` 的唯一实现（零领域词）。
+        # 三值：不像=换题、定案=槽值、None=形状没意见，继续走下面的通用判据。
+        # `order_id` 那条写路径身份闸是本机制的先例，已整体收编进形状表——
+        # 它此前是这里唯一的硬编码，也是唯一把方向做对了的那一条。
+        shaped = slot_shape.verdict(
+            getattr(pending, "missing_slots", None) or [], t,
+            getattr(pending, "slot_shapes", None))
+        if shaped is not None:
+            return shaped
         # 裸序号是对最近列表/候选的选择，不是任意历史 NEED_SLOT 的自然语言答案。
         # 旧挂起若抢占“第二个”，会把咖啡候选选择错误填进数轮前的 route 槽。
         # 唯一例外是挂起步骤自身刚给出了 *_choice 选择卡：此时序号正是该槽位的
@@ -1459,8 +1507,15 @@ class PlannerEngine:
         # 疑问/回忆式不是槽位答案。「有什么/哪些」是句中问式（demo-3ukshz 探针实证：
         # 麦当劳选店挂起把「附近的瑞幸有什么可以点的」当 store_hint 吃掉——尾字「的」
         # 躲过了旧的句尾判据）。
-        if any(k in t for k in ("什么来着", "来着", "有什么", "有哪些", "哪些")) \
+        if any(k in t for k in
+               ("什么来着", "来着", "有什么", "有哪些", "哪些", "哪个")) \
                 or t.endswith(("吗", "？", "?", "呢")):
+            return True
+        # C3-B：**「这是一次新检索」的词表只许有一份**——直接消费 `candidate_query`
+        # 的那一份。此前它只在候选集聚合那一侧生效，于是「附近的川菜馆」在那边判成
+        # 新检索、在这边被当成 `item_query` 整句吞掉（真栈 T45）。同一判据两份实现
+        # 各自演化，正是 B1 那个 bug 的成因原型。
+        if candidate_query.NEW_SEARCH_RE.search(t):
             return True
         if any(k in t for k in ("为什么", "为何", "什么原因")):
             return True

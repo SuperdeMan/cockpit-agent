@@ -1,7 +1,7 @@
 """ReminderStore 内存分支语义（PG 分支由 test/e2e_reminder.py 真栈覆盖）。"""
 import pytest
 
-from agents.reminder.src.store import Reminder, ReminderStore
+from agents.reminder.src.store import DONE, Reminder, ReminderStore
 
 
 async def _store() -> ReminderStore:
@@ -57,7 +57,10 @@ async def test_find_by_title_and_set_status():
     r = await s.add(Reminder(user_id="u1", title="买牛奶", kind="time", fire_at=1000))
     assert [h.id for h in await s.find_by_title("u1", "牛奶")] == [r.id]
     assert await s.set_status("u1", r.id, "done")
-    assert (await s.get("u1", r.id)).status == "done"
+    # C10-A：`get` 的默认过滤与 `find_by_title` 拉平了——两条读路径此前
+    # 一条认 status 一条不认，序数指代于是能选中一条已经终态的条目。
+    assert await s.get("u1", r.id) is None            # done 不入默认过滤
+    assert (await s.get("u1", r.id, statuses=(DONE,))).status == "done"
     assert await s.find_by_title("u1", "牛奶") == []    # done 不入默认过滤
     assert not await s.set_status("u1", "no-such-id", "done")
 

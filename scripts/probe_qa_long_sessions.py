@@ -1381,6 +1381,87 @@ async def _merchant_draft_cleanup_turn(
     return row, proof_row, failures
 
 
+async def _reminder_cleanup_turns(
+    ws,
+    session: str,
+    *,
+    run_tags: set[str],
+    turn_no: int,
+) -> tuple[list[dict], list[str]]:
+    """跑批结束把**自己建的提醒**扫干净（C10-D 的第二件）。
+
+    为什么必须有：提醒的状态机 `pending→fired` 到头，**fired 永远算 ACTIVE**——
+    每一轮探针留下的条目都会永远参与 `find_by_title` 与序数参照系。2026-08-26
+    那一轮跑完，u1 底下沉了 90 条，直接后果是真栈 T59 的「取消第一条」取消掉了
+    一条八月初的探针垃圾。存量已在 2026-08-27 清完，**入口不堵就会再脏**
+    （§40 那次 `place.company` 复位已经证明过一次）。
+
+    匹配面是**本次 run 号**（`{run}` 替换后的那 6 位）：只清自己建的，
+    绝不按标题模式去猜哪些是垃圾——那会误删用户的真提醒。
+
+    ⚠ **只观测不中止**：这一段跑在全部业务轮之后，中止已经没有任何保护价值，
+    而一个新写的清理段误判成失败就会把下一趟跑批截断——那正是「修正后计分」
+    那一趟最不能出的事。失败进 `cleanup_failures`，读数照样看得见。
+    """
+    rows: list[dict] = []
+    failures: list[str] = []
+    if not run_tags:
+        return rows, failures
+
+    async def _say(text: str, case: str) -> dict:
+        trace_id = uuid.uuid4().hex
+        try:
+            obs = await _turn(ws, session, text, trace_id=trace_id)
+        except Exception as exc:
+            obs = {
+                "speech": f"[transport error] {type(exc).__name__}",
+                "actions": [], "need_confirm": False, "card_type": "",
+                "card_text": "", "card_items": [], "is_question": False,
+                "error": True, "trace_id": trace_id,
+            }
+        rows.append({
+            "turn": turn_no + len(rows), "case": case, "case_instance": "",
+            "local_turn": 0, "say": text, "audit_expect": {}, **obs,
+            "notes": [f"提醒清理（run {sorted(run_tags)}）"],
+            "fails": [],
+        })
+        return obs
+
+    def _mine(obs: dict) -> list[str]:
+        """列表里**属于本次 run** 的标题。认卡片 items，卡片缺失时退回话术包含。"""
+        titles = [str(name) for name in (obs.get("card_items") or [])]
+        mine = [t for t in titles if any(tag in t for tag in run_tags)]
+        if mine or titles:
+            return mine
+        speech = str(obs.get("speech") or "")
+        return [tag for tag in sorted(run_tags) if tag in speech]
+
+    listed = await _say("列出我现在进行中的提醒", "REMINDER-CLEANUP-LIST")
+    if listed.get("error"):
+        failures.append("提醒清理 transport/backend error（列表）")
+        return rows, failures
+    leftovers = _mine(listed)
+    for title in leftovers[:10]:
+        cancelled = await _say(f"取消{title}", "REMINDER-CLEANUP-CANCEL")
+        if cancelled.get("error"):
+            failures.append(f"提醒清理 transport/backend error（取消 {title}）")
+            return rows, failures
+
+    if not leftovers:
+        return rows, failures
+    verify = await _say("列出我现在进行中的提醒", "REMINDER-CLEANUP-VERIFY")
+    if verify.get("error"):
+        failures.append("提醒清理 transport/backend error（复核）")
+        return rows, failures
+    remaining = _mine(verify)
+    if remaining:
+        # **计数要回落**——「发过取消指令」不等于「库里没有了」（同 Q6 那条：
+        # 话术层判据验证不了它说的是不是真的）。
+        failures.append(
+            f"提醒清理后仍有本次 run 的条目：{remaining}")
+    return rows, failures
+
+
 async def _run_persona(name: str, cases: list[dict], ws_url: str,
                        collector: str, stamp: int) -> dict:
     session = f"probe-qa-long-{name}-{stamp}"
@@ -1389,6 +1470,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
     abort_reason = ""
     cleanup_failures: list[str] = []
     merchant_cleanup_proofs: list[dict] = []
+    run_tags: set[str] = set()
     required_vehicle_keys = _required_vehicle_state_keys(cases)
     needs_vehicle = bool(required_vehicle_keys)
     baseline_read = await _settled_vehicle_state(
@@ -1433,6 +1515,13 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
             # 一个 case 内的 `{run}` 是同一业务实体身份；逐轮换 token 会让创建、
             # 修改和取消各指向不同提醒，既测不到续接，也无法精确清理落库记录。
             case_stamp = stamp + len(rows) + 1
+            # 本 case 用的 run 号：跑批结束按它清掉自己建的提醒（C10-D）。
+            # **只收带 `{run}` 的 case**——那正是探针给「自己建的业务实体」
+            # 打的标记；无差别收会让每个 persona 都多跑两轮清理，
+            # 而多出来的轮次本身就会改变读数（同「测试替系统提供前提」那条）。
+            if any("{run}" in str(turn.get("say") or "")
+                   for turn in case["turns"]):
+                run_tags.add(str(case_stamp)[-6:])
             for local_turn, turn in enumerate(case["turns"], 1):
                 pre_failures: list[str] = []
                 operation_id = str(turn.get("op_literal") or "")
@@ -1589,6 +1678,14 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
             if failures:
                 abort_reason = "merchant draft cleanup not proven"
                 cleanup_failures.extend(failures)
+
+        # 提醒清理段（C10-D）：跑批自己建的提醒不清掉就会沉在库里，
+        # 永远参与序数参照系。**只观测不中止**，理由写在函数 docstring 里。
+        if not abort_reason:
+            cleanup_rows, reminder_failures = await _reminder_cleanup_turns(
+                ws, session, run_tags=run_tags, turn_no=len(rows) + 1)
+            rows.extend(cleanup_rows)
+            cleanup_failures.extend(reminder_failures)
 
         # 只有会话状态确定且所有挂起都明确关闭，才继续三种恢复合同。否则继续发任何
         # 文本（尤其裸“确认”）都可能接上一个未知危险操作。

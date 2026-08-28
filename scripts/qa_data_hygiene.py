@@ -39,6 +39,17 @@
      每次查任务都先看到它们。报告把这三条读成「其他会话的提醒泄漏」，
      实际是**三条永远不会触发的伪提醒**。
 
+  ⑤ `--reminders-expired`   `fired` 之后沉在库里超过 N 天（默认 7）的提醒
+     状态机 `pending→fired` 到头，**fired 永远算 ACTIVE**：永远参与 `find_by_title`、
+     永远占着序数参照系。2026-08-26 长会话跑完，u1 底下沉了 90 条这样的条目，
+     直接后果是「取消第一条」取消掉了一条八月初的探针垃圾（真栈 T59）。
+     形态是泓舟 2026-08-27 拍板的那一种：**复用 `cancelled` + `extra.reason=
+     "expired_sweep"`**，零 schema/枚举变更（status 枚举扩散到全部查询面的影响
+     大于收益，`extra` 里的 reason 足够分开「用户取消」与「系统沉积清扫」）。
+     ⚠ 那 90 条已于 2026-08-27 由单事务点名 SQL 清完（`extra.batch=
+     "20260827-hongzhou-approved-90"`）。**这一族是把那次一次性动作机制化**——
+     同一个 `extra.reason` 约定，不发明第二个标记；下一次沉积不必再手写 SQL。
+
 ⚠ **顺序纪律（泓舟 2026-08-15 拍板）**：清洗本身已授权，但 `--apply` **排在
 Q5/Q11 的写入闸落地之后**。在那之前本脚本只跑 dry-run 出盘点。
 
@@ -63,6 +74,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 
 # 人称词表与地点后缀：判据要窄，只认**明确**的两端特征，中间地带一律不动。
 _PERSON_WORDS = ("用户", "我", "本人", "老婆", "妻子", "老公", "丈夫", "爸爸", "妈妈",
@@ -168,6 +180,23 @@ async def scan_invalid_reminders(conn):
         "WHERE fire_at <= 0 AND status = 'pending' ORDER BY user_id")
 
 
+async def scan_expired_reminders(conn, days: int):
+    """`fired` 之后沉了超过 days 天、且**还没被扫过**的条目。
+
+    时刻取 `fired_at`，它是 0（老数据/未记录）时退回 `fire_at`——两者都判不出
+    就不算沉积，**认不出就不动它**（同 B3 那条「认不出就用默认值」的反面）。
+    已经带 `expired_sweep` 标记的不再重复召回：恒绿的清扫表比没有更糟。
+    """
+    cutoff = int(time.time()) - days * 86400
+    return await conn.fetch(
+        "SELECT id, user_id, title, fire_at, fired_at, status FROM reminder_item "
+        "WHERE status = 'fired' "
+        "AND COALESCE(NULLIF(fired_at, 0), fire_at) > 0 "
+        "AND COALESCE(NULLIF(fired_at, 0), fire_at) < $1 "
+        "AND COALESCE(extra->>'reason', '') <> 'expired_sweep' "
+        "ORDER BY user_id, COALESCE(NULLIF(fired_at, 0), fire_at)", cutoff)
+
+
 async def main_async(args) -> int:
     conn = await _connect()
     try:
@@ -250,6 +279,29 @@ async def main_async(args) -> int:
                     [r["id"] for r in rows])
                 print(f"   → 已置 cancelled {len(rows)} 条")
 
+        if args.all or args.reminders_expired:
+            rows = await scan_expired_reminders(conn, args.expired_days)
+            print(f"\n⑤ fired 后沉积超过 {args.expired_days} 天的提醒："
+                  f"{len(rows)} 条")
+            for r in rows:
+                when = r["fired_at"] or r["fire_at"]
+                print(f"   {r['user_id']}  fired_at={when}  {r['title'][:48]}")
+            total += len(rows)
+            if rows and args.apply and args.reminders_expired:
+                batch = f"expired-{time.strftime('%Y%m%d')}"
+                # 复用 `cancelled` + `extra.reason`（泓舟 2026-08-27 拍板的形态）：
+                # 零 schema 变更，且 reason 分得开「用户取消」与「系统沉积清扫」。
+                # **不物理删除**——审计要能回答「这条是谁清的、哪一批清的」。
+                await conn.execute(
+                    "UPDATE reminder_item SET status='cancelled', "
+                    "extra = COALESCE(extra, '{}'::jsonb) "
+                    "  || jsonb_build_object('reason', 'expired_sweep', "
+                    "                        'batch', $2::text) "
+                    "WHERE id = ANY($1)",
+                    [r["id"] for r in rows], batch)
+                print(f"   → 已置 cancelled + reason=expired_sweep {len(rows)} 条"
+                      f"（batch={batch}）")
+
         print(f"\n合计命中 {total} 条。", end=" ")
         if args.apply:
             print("已按所选族写库。")
@@ -271,11 +323,15 @@ def main() -> int:
                     help="③ 逐组授权：只对点名 subject 的冲突组写库（可重复）。"
                          "③ 的 --apply 必须带它——同一族内不同组性质可以相反")
     ap.add_argument("--reminders-invalid", action="store_true")
+    ap.add_argument("--reminders-expired", action="store_true")
+    ap.add_argument("--expired-days", type=int, default=7, metavar="N",
+                    help="⑤ 判「沉积」的天数阈值（默认 7）")
     ap.add_argument("--apply", action="store_true",
                     help="真正写库（只作用于同时点名的族；不点名族只盘点）")
     args = ap.parse_args()
     args.all = not any([args.relation_self_loops, args.relation_inverted,
-                        args.relation_conflicts, args.reminders_invalid])
+                        args.relation_conflicts, args.reminders_invalid,
+                        args.reminders_expired])
     if args.apply and args.all:
         print("--apply 必须与具体族一起用（逐族独立授权），不接受一次清全部",
               file=sys.stderr)

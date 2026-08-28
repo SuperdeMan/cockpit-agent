@@ -273,6 +273,11 @@ servers:
         # Q10 双入口收敛：「点第一个」「点巨无霸」先在**上一轮那张卡的候选集**里
         # 确定性翻译成商家原名，再进既有选品链——与点按钮送出的 send_text 逐字同路。
         candidate_slot: item_query
+        # C3 槽位值形状：`item_query` 是**一个餐品/商品名**，不是一句话。
+        # 真栈 T44-T46：一条 `item_query` 挂起把「附近的川菜馆」「…哪个贵」
+        # 整句吞进去当搜索词，连答三轮「没查到"<用户那句话>"」。判据本体在
+        # `orchestrator/cloud/slot_shape.py`（零领域词），这里只声明名字。
+        slot_shapes: {item_query: item_name}
         examples: ["在麦当劳点一份巨无霸套餐", "麦当劳来两份麦辣鸡腿堡到店自取"]
       # 当店菜单（2026-08-13）：官方 query-meals 返回真正的全店菜单——categories +
       # meals（每条带 name / image / currentPrice / originalPrice），比营养表能回答
@@ -292,6 +297,7 @@ servers:
         description: 查看某家麦当劳门店在售的餐品与价格（只读，不下单，支持按分类浏览）；「附近的麦当劳」需先经周边搜索取得门店名再传入 store_hint
         slots: [store_hint, city, item_query, category]
         candidate_slot: item_query
+        slot_shapes: {item_query: item_name}   # C3 值形状，理由见 mcd.order 那处
         examples: ["看看这家麦当劳的菜单", "麦当劳早餐多少钱", "看看麦当劳的汉堡类"]
 
   # ── 瑞幸官方 MCP（2026-08-11 真机核实激活：serverInfo=luckyordermcpmaster 1.0.0，
@@ -453,6 +459,7 @@ servers:
         description: 必须先消费 nearby.search 同一公开 POI 的可信门店名和坐标，再选商品规格（杯型/温度或冰量/糖度/奶底）、预览确认并创建未支付订单
         slots: [item_query, quantity, store_name, store_longitude, store_latitude, size, temperature, ice, sweetness, milk, checkout_token]
         candidate_slot: item_query
+        slot_shapes: {item_query: item_name}   # C3 值形状，理由见 mcd.order 那处
         # 规格槽的值域契约（B6 §4 `input_schema` 的首个消费方，2026-08-21 Q12 规格维）。
         # **值域的权威仍然是商家**：下单前逐项过官方 productAttrs 的 canSelected，
         # 这里声明的只有「这个槽对应哪个官方规格组」与「用户说法怎么翻译成官方项名」。
@@ -523,6 +530,7 @@ servers:
         description: 查看某家瑞幸门店在售的商品与价格（只读，不下单）；同样需要先由 nearby.search 选定门店
         slots: [store_name, store_longitude, store_latitude, item_query]
         candidate_slot: item_query
+        slot_shapes: {item_query: item_name}   # C3 值形状，理由见 mcd.order 那处
         examples: ["这家瑞幸有什么可以点的", "看看这家瑞幸的菜单", "瑞幸有哪些美式"]
       - intent: luckin.order_cancel
         handler: luckin

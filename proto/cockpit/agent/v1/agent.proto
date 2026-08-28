@@ -41,6 +41,11 @@ message Capability {
   bool require_confirm = 5;
   bool heavy = 6;                   // 重域能力：命中即开思考+过程区（progress.HEAVY_INTENTS 机制化，R2.1）
   Verification verification = 7;    // 执行后对账期望（M2 Outcome Verifier）：领域期望由 Agent 声明，中央只跑通用求值器
+  // 槽位值形状契约（C3，MiniMax QA 修复批第 3 批）：`槽位名 -> 形状名`。
+  // wait_slot 续接时编排通用消费——「这句话长得像不像这个槽的值」，长得不像即判换话题。
+  // 形状**只有名字在这里**，判据本体是编排侧 `orchestrator/cloud/slot_shape.py` 的唯一实现
+  // （零领域词）；同 `verification` 的分工：领域声明在 Agent，通用求值器在中央。
+  map<string, string> slot_shapes = 8;
 }
 
 // 执行后对账声明（M2 Outcome Verifier）：解「步骤 OK ≠ 结果达成」——

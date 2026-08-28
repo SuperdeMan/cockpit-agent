@@ -1180,7 +1180,8 @@ async def test_internal_write_incomplete_or_typed_drift_is_not_rejection(
 # ── P3（EVA 遗留卡）：数量槽容错解析 ──
 
 import pytest as _pytest
-from agents.mcp_bridge.src.merchant.base import parse_quantity
+from agents.mcp_bridge.src.merchant.base import (normalize_menu_query,
+                                                  parse_quantity)
 
 
 @_pytest.mark.parametrize("raw,expect", [
@@ -1197,3 +1198,34 @@ def test_parse_quantity_tolerant(raw, expect):
 def test_parse_quantity_bounds_not_loosened(raw):
     """校验边界不松：仍 1–20 整数，解析不出/越界一律 None。"""
     assert parse_quantity(raw) is None
+
+
+# ── C3-C：只读菜单的泛指词归一（判据只有一份，两家商户共用） ──────────────
+
+@_pytest.mark.parametrize("raw", [
+    "全部", "全部的", "所有", "所有的", "全都", "都有什么", "都有啥",
+    "有什么", "有啥", "整份菜单", "整份", "全部菜单", "所有菜单",
+    "菜单", "餐单", "随便", "任意", "  全部  ",
+])
+def test_menu_wildcards_become_an_empty_query(raw):
+    """「全部」不是一个餐品名，是**不筛**——归一成空槽走整份菜单那条路。"""
+    assert normalize_menu_query(raw) == ""
+
+
+@_pytest.mark.parametrize("raw", [
+    "巨无霸", "生椰拿铁", "标准美式", "早餐", "汉堡",
+    "全家桶",            # 含「全」但不是泛指词：只整句相等才算
+    "所有人都爱的那款",   # 以「所有」开头也不算——判据是**整句**匹配
+])
+def test_real_item_queries_are_untouched(raw):
+    """反向对照：归一只吃**整句就是泛指词**的那一类，真查询一个字不改。
+
+    用 `^…$` 而不是包含匹配是刻意的：包含匹配会把「全家桶」这种含泛指字的
+    真商品名一起吃掉，那就从「答不出来」变成「答成了另一件事」——更糟。
+    """
+    assert normalize_menu_query(raw) == raw.strip()
+
+
+def test_empty_query_stays_empty():
+    assert normalize_menu_query(None) == ""
+    assert normalize_menu_query("") == ""

@@ -41,6 +41,11 @@ class Step:
     # 跨轮门店锚定；此前锚定对所有步骤生效，把门店槽注进了 chitchat/nearby，
     # demo-mkemhn 2fd09d52/44943f00 实证）。
     declared_slots: list[str] = field(default_factory=list)
+    # C3：capability 声明的**槽位值形状**（`槽位名 -> 形状名`，planning 从 manifest 装配）。
+    # 判据本体在 `slot_shape.py`（零领域词），这里只带名字。**进程内字段**——它不进
+    # `_serialize_plan`，而是在挂起那一刻由 `_suspend` 把**待补那几个槽**的形状抄进
+    # SessionState：形状要回答的是「当时问的那个槽期望什么」，跟着挂起走比跟着计划走准。
+    slot_shapes: dict[str, str] = field(default_factory=dict)
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -168,6 +173,14 @@ class PlanContext:
     # 本轮结束/淘汰掉的挂起 id，随 final 回传 HMI 撤掉对应确认条。
     # **由服务端权威给出**——HMI 猜「这一轮是不是把某条挂起消费掉了」必然猜错。
     closed_operation_ids: list[str] = field(default_factory=list)
+    # C3-D：本轮**被放弃**的那条挂起的人话名字（连续追问到上限）。
+    # 空 = 没放弃过。**必须有话术**——静默丢弃就是 Q1-C 那条「淘汰必须有话术」的同一件事。
+    abandoned_pending_label: str = ""
+    # C3-D：本轮续接进来的那条挂起「在问什么、问过几次」——
+    # `{"step_id":…, "missing":[…], "retry":N}`。`_suspend` 拿它判**这次是不是同一个问题
+    # 又问了一遍**：同一步换了个槽再问是**进展**（商户流程「先问门店再问餐品」正是如此），
+    # 只有 step 与待补槽集**都没变**才算原地打转，计数才 +1。
+    pending_slot_probe: dict = field(default_factory=dict)
     trace_id: str = ""
     raw_text: str = ""  # 用户原始话术，透传给 Agent（供 fallback 槽位提取）
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
@@ -219,6 +232,13 @@ class SessionState:
     pending_plan: dict = field(default_factory=dict)  # 序列化的 Plan
     pending_step_id: str = ""
     missing_slots: list[str] = field(default_factory=list)
+    # C3-A：`missing_slots` 里每个槽的值形状（`槽位名 -> 形状名`，capability 声明）。
+    # 续接轮 `_is_topic_change` 据此判「这句话长得像不像这个槽的值」。
+    # 空 = 该能力没声明形状，行为与本机制诞生前逐字一致。
+    slot_shapes: dict[str, str] = field(default_factory=dict)
+    # C3-D：这条挂起**连续追问了几次都没填上**。每次「续接进来 → 又 NEED_SLOT 同一步」
+    # 就 +1；到上限即放弃挂起、按全新请求规划（黑洞的止损底线）。
+    slot_retry: int = 0
     completed_results: dict = field(default_factory=dict)  # step_id -> StepResult dict
     ttl_seconds: int = 300   # 确认/补槽挂起 TTL：行程等慢流程每轮数十秒+用户阅读，90s 太短致确认过期
     # 本条挂起的绝对截止时刻（epoch 秒，SessionStore 首次落盘时算）。挂起表（Q1-C）

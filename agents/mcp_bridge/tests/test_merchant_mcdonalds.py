@@ -1598,3 +1598,39 @@ async def test_menu_without_any_store_hint_discloses_the_default_store():
     assert "没指定门店" in result.speech
     assert "人民广场麦当劳餐厅" in result.speech
     assert "附近的麦当劳" in result.speech
+
+
+@pytest.mark.asyncio
+async def test_menu_wildcard_query_falls_back_to_the_whole_menu():
+    """C3-C（真栈 T44）：planner 给 `item_query` 填了「全部」，桥的严格匹配
+    一个都对不上，于是答「在售餐单里没查到"全部"」。
+
+    **空槽=整份菜单**那条路本来就在，一个泛指词把它变成了搜索词。归一是
+    **消费方防御**：模型输出是不可信输入，桥不该假设 planner 只会填真实商品名。
+    """
+    for wildcard in ("全部", "所有", "都有什么", "整份菜单", "随便"):
+        workflow, _ = _workflow(
+            workflow_intent="mcd.menu",
+            scripts={"query-nearby-stores": [STORE_RESULT],
+                     "query-meals": [MENU_RESULT]})
+        result = await workflow.menu(
+            SimpleNamespace(name="mcd.menu",
+                            slots={"store_hint": "人民广场", "item_query": wildcard}),
+            CTX, META)
+        assert result.status == "ok", wildcard
+        assert result.ui_card and result.ui_card["type"] == "merchant_choices", wildcard
+        assert "没查到" not in result.speech, wildcard
+
+
+@pytest.mark.asyncio
+async def test_menu_real_item_query_still_filters():
+    """反向对照：真餐品名照旧当搜索词用，归一不许把筛选功能一起吃掉。"""
+    workflow, _ = _workflow(
+        workflow_intent="mcd.menu",
+        scripts={"query-nearby-stores": [STORE_RESULT], "query-meals": [MENU_RESULT]})
+    result = await workflow.menu(
+        SimpleNamespace(name="mcd.menu",
+                        slots={"store_hint": "人民广场", "item_query": "巨无霸套餐"}),
+        CTX, META)
+    names = [item["name"] for item in result.ui_card["items"]]
+    assert names == ["巨无霸套餐"]

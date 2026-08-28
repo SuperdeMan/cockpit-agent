@@ -137,6 +137,12 @@ class WorkflowSpec:
     #: 组名与项名由 `test_merchant_spec_contract.py` 逐条比对真机观测台账
     #: `knowledge/merchant_specs_observed.yaml`——**不许靠常见叫法猜**。
     input_schema: dict = field(default_factory=dict)
+    #: **槽位值形状契约**（C3，2026-08-28）：`槽位名 -> 形状名`。
+    #: 只在这里声明**哪个槽长什么样**，形状怎么判是编排侧
+    #: `orchestrator/cloud/slot_shape.py` 的唯一实现（零领域词）。
+    #: 唯一消费方是 `wait_slot` 续接的换题判定——「这句话长得像不像这个槽的值」。
+    #: 落点判据同 `candidate_slot`/`input_schema`：**加一个形状=改表不改主循环**。
+    slot_shapes: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -241,6 +247,17 @@ def admit_workflow(spec: WorkflowSpec, admitted_by_name: dict) -> str:
             return f"workflow input_schema.{slot}.kind 必须是 {SPEC_KIND_MERCHANT}"
         if not body.get("groups"):
             return f"workflow input_schema.{slot}.groups 必须非空"
+    # `slot_shapes`（C3）：判据同 `input_schema` 与 `candidate_slot`——**声明一个
+    # 不存在的槽等于没声明**。
+    # ⚠ **形状名的值域不在这里校验，故意的**：判据本体住在
+    # `orchestrator/cloud/slot_shape.py`，而桥的镜像里没有 `orchestrator/`
+    # （依赖闭包见两个 Dockerfile）。把已知形状名抄一份到桥里就是第二份声明，
+    # 迟早与真正的那份漂移——正是本字段要消灭的那类问题。值域由离线门禁
+    # `orchestrator/cloud/tests/test_slot_shape.py` 逐条比对全部声明方
+    # （servers.yaml + 各 manifest.yaml），拼错当场具名红灯。
+    for slot in (spec.slot_shapes or {}):
+        if slot not in declared:
+            return f"workflow slot_shapes 声明了不存在的槽位={slot}"
     return ""
 
 
@@ -429,6 +446,8 @@ def load_servers(path: str) -> list:
             expose=bool(w.get("expose", True)),
             candidate_slot=str(w.get("candidate_slot") or ""),
             input_schema=_slot_schema(w.get("input_schema")),
+            slot_shapes={str(k): str(v) for k, v in
+                         (w.get("slot_shapes") or {}).items()},
         ) for w in (s.get("workflows") or [])]
         headers: dict[str, str] = {}
         env_error = ""
