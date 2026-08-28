@@ -6,8 +6,11 @@
 # 气泡**满足——同一句话同时在屏上，assertVisible 立刻绿，而消息可能一直卡在队列里。
 # 这是本 flow 最容易写错的一处，MessageBubble 的 testID 注释里也钉了同一句。
 #
-# ⚠ `setAirplaneMode` 的取值是**枚举 `Enable`/`Disable`**（`Commands.kt::AirplaneValue`），
-# 不是 `enabled`/`disabled`——这是逐字对着 cli-2.9.0 的源码核过的，别按文档里的印象写。
+# ⚠ `setAirplaneMode` 的取值是 **`enabled` / `disabled`**（小写），
+# 判据在 `YamlSetAirplaneModeDeserializer`——它**逐字匹配这两个字符串**。
+# ⚠ 别去看 `Commands.kt::AirplaneValue` 那个枚举（`Enable`/`Disable`）：那是内部模型名，
+# 与 YAML 层的关键字**不同名**。我按枚举名改过一次，结果 `Parsing Failed at …:25:26`。
+# ⇒ **核 YAML 关键字要看反序列化器，不是看内部枚举。**
 #
 # ⚠ 设备走 Tailscale 连云栈：关飞行模式后 tailnet 要重新握手，实测比 WiFi 自身恢复
 # 慢一截，所以补达的等待给到 90s。
@@ -15,10 +18,14 @@ appId: com.xiaozhou.companion
 name: 03 断网入队恢复补达
 tags:
   - online
+# ⚠ `inputText` 之后**必须 `hideKeyboard`**：MIUI 的输入法是独立窗口且会顶到最上层，
+# Maestro 此刻抓到的 hierarchy 里**只有键盘**（`android:id/inputArea` /
+# `android:id/miui_bottom_area`），App 的元素一个都不在树里 ⇒ 紧接着的 `tapOn` 必然报
+# 「Element not found」，而元素其实好好地在屏上。2026-08-28 实跑第一条就撞上了。
 ---
 - runFlow: subflows/open-app.yaml
 
-- setAirplaneMode: Enable
+- setAirplaneMode: enabled
 # ⚠ **这里必须等够 ~35 秒，不是 10 秒。** RN 的 WebSocket 在飞行模式下 onclose 不来，
 # 连接要靠 App 的探活判死（`core/api/liveness.ts`：15s 一轮、连续 2 次失败）——
 # 2026-08-27 真机实测 **25.7s** 才判死。在那之前 `send()` 仍认为连接是开的、
@@ -34,6 +41,8 @@ tags:
 - tapOn:
     id: "composer-input"
 - inputText: "现在几点了"
+# 收起键盘再点发送——理由见文件头注
+- hideKeyboard
 - tapOn:
     id: "composer-send"
 
@@ -42,7 +51,7 @@ tags:
 - assertVisible:
     id: "msg-pending"
 
-- setAirplaneMode: Disable
+- setAirplaneMode: disabled
 
 # 补达=挂起态消失。90s 覆盖 tailnet 重握手 + 队列 flush + 后端一轮。
 - extendedWaitUntil:

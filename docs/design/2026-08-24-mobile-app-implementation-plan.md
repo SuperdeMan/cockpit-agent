@@ -1067,18 +1067,37 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
   - **`subflows/open-app.yaml` 不是仪式**：dev-client 的 `launchApp` 打开的是
     **DevLauncherActivity**，此时所有 `tapOn` 都找不到元素，失败信息看起来像「App 里没这个按钮」，
     真相是被测对象没在跑（同坑账 §9.20 那条）。
-  - **CLI ✅ 已装成 / 实跑 ⬜ 卡在设备侧一步**（2026-08-28 收尾）：
+  - **✅ 全部跑通（2026-08-28 上午，泓舟点了安装确认之后）**：
+    **`4/4 Flows Passed in 7m 43s`**（01 天气 2m10s / 02 危险动作 2m43s / 03 断网补达 2m33s /
+    04 离线冒烟 16s），且这是**第二遍**——三条 online 流先各自单跑通过，再整目录复跑一次。
+    M3-5 的「三条流本地稳定 3/3」达成。
+    **实跑当场抓到三个只有跑起来才会暴露的问题**（都已修，这就是「没跑过就不算通过」的价值）：
+    1. **`inputText` 之后必须 `hideKeyboard`**：MIUI 的输入法是独立窗口且顶到最上层，
+       Maestro 此刻抓到的 hierarchy 里**只有键盘**（`android:id/inputArea` /
+       `android:id/miui_bottom_area`），App 元素一个都不在树里 ⇒ 紧接着的 `tapOn` 报
+       「Element not found」，而元素其实好好地在屏上。三条 flow 全要加。
+    2. **`setAirplaneMode` 的值是 `enabled`/`disabled`（小写）**——我前一晚「对着源码核实」时
+       **核错了层**：看的是 `Commands.kt::AirplaneValue` 那个内部枚举（`Enable`/`Disable`），
+       而 YAML 层的关键字由 `YamlSetAirplaneModeDeserializer` 决定，它**逐字匹配小写串**。
+       讽刺的是我最初凭印象写的是对的，"核实"之后反而改错了、`Parsing Failed at …:25:26`。
+       ⇒ **核 YAML 关键字要看反序列化器，不是看内部枚举**（两者可以不同名）。
+    3. **MIUI 每次启动都要重装 driver**：Maestro 每个 session 都 `installMaestroApks`，
+       而 MIUI 每次弹 `AdbInstallActivity`（5 秒倒计时、默认「拒绝」）。
+       ⇒ 装上一次之后**全程带 `--no-reinstall-driver`**，否则每跑一条都要人点一次。
+    ⚠ **那条「常驻动画会不会影响 Maestro」的推断被证实是对的**：`uiautomator dump` 在主屏
+    只能拿到 1 个节点，而 **Maestro 抓到 199KB / 完整树**（走 AccessibilityNodeInfo 不等 idle），
+    `composer-input` / `composer-send` 都能按 id 匹配到——RN 的 testID 在 Android 上落成了可匹配的 id。
+
+  - **装 CLI 的过程**（2026-08-28 收尾）：
     `maestro.zip` 315MB 前后花了约 3 小时（本网络 ~30–50KB/s，GitHub releases，
     与坑账 §9.7 同形态；三个 GitHub 代理镜像全不可达、4 段并行也没提速），
     中途踩了 `--retry` + `-C -` 把重复字节插进文件中间那个坑（坑账 §9.37，**已更正**：
     单次续传是安全的，最后 21MB 就是这么补上的，**sha256 与官方值逐字相符**、zip 201 条目）。
     `maestro.bat --version` = **2.9.0**。
-    **但 `maestro hierarchy` 起不来**：它要往设备装自己的 driver APK，MIUI 弹
-    `AdbInstallActivity` 要人确认 ⇒ `INSTALL_FAILED_USER_RESTRICTED`（新坑账 §9.42）。
-    ⚠ **这属于「在泓舟的设备上装应用」，不在「授权装 CLI」的范围内，本轮没有替他点。**
-    ⇒ **接手只差一步**：设备上点一次「继续安装」（或开发者选项开「USB 安装」，一次性），
-    然后 `maestro test mobile/e2e/ --include-tags online`。
-    **本轮仍然没有实跑读数，不许把「写完了」说成「跑通了」。**
+    ⚠ 中途卡过一段：`maestro hierarchy` 要往设备装 driver APK，MIUI 弹 `AdbInstallActivity`
+    要人确认（坑账 §9.42）。**这属于「在泓舟的设备上装应用」，不在「授权装 CLI」的范围内，
+    所以没有替他点**——改成循环触发让弹窗反复出现（它只给 5 秒且默认「拒绝」，
+    泓舟第一次没看到就是这个原因），第 7 次他点中了。
 
 - **⚠ 本批最有价值的产出是一个真缺陷（不在计划里，真机逼出来的）**：
   **RN 的 WebSocket 在飞行模式下 `onclose`/`onerror` 都不来**（MIX Fold 4 / Android 16 实测，
@@ -1191,8 +1210,10 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
 - [x] ✅ 平板面板三段（车况三格是真实推导 72%×550=396km）
 - [x] ✅ 地图入口（有 key）：真实瓦片 + marker 落点正确 + 回中 + **M3-W 三项打磨**
       （按点集自动缩放 / marker 点按详情 / 显式关闭）；无 key 干净降级由 `MAP_AVAILABLE` 两条件守
-- [ ] ⬜ **CLI 已装（2.9.0）、flow 已写、未实跑** Maestro 三流 3/3
-      ——卡在 MIUI 的 ADB 安装确认（坑账 §9.42），**需要泓舟在设备上点一次「继续安装」**（一次性）
+- [x] ✅ Maestro 三流 3/3（2026-08-28 真机实跑）：**`4/4 Flows Passed in 7m 43s`**
+      （01 天气 2m10s / 02 危险动作 2m43s / 03 断网补达 2m33s / 04 离线冒烟 16s），
+      且是**第二遍**——三条 online 先各自单跑通过，再整目录复跑。
+      ⚠ 跑法有个必须记住的前提：**全程带 `--no-reinstall-driver`**（MIUI 每次装 driver 都弹确认）
 - [x] ✅ CI mobile job 常绿 + APK 工件手动档可用（既有，M0-8）
       ——⚠ CI 的 e2e 步骤只能跑 `04-offline-smoke`（runner 无 Tailscale，理由见 M3-W）
 - [x] ✅ 返回键语义（二级页关层 / 根屏 finish——**计划原假设被推翻，泓舟已拍板维持现状**）
@@ -1472,10 +1493,12 @@ final 收尾语义（**照抄，别简化错**，`audio.ts:405-422`）：final �
     不确认就是 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`。
     ⚠ **注意 `install_non_market_apps=1` 并不代表放行**——我查了那个开关是 1，照样被挡；
     MIUI 的「USB 安装」是**另一个**开关（开发者选项里，需小米账号）。
-    ⇒ **这一步需要人在设备上做一次**（弹窗点「继续安装」，或开发者选项开「USB 安装」），
-    是**一次性**的：driver APK 装上之后后续命令不再弹。
+    ⚠ **弹窗只给 5 秒且默认选中「拒绝」**——泓舟第一次说「没看到安装确认」就是这个原因。
+    ⇒ 有效做法：**循环触发让它反复弹**（第 7 次点中的），而不是让人去掐那 5 秒。
+    ⚠ **Maestro 每个 session 都重装 driver**，所以点一次并不能一劳永逸：
+    **装上之后全程带 `--no-reinstall-driver`**，否则每跑一条 flow 都要人点一次。
     ⚠ 判据留痕：**这属于「在别人的设备上装应用」，不在「授权装 CLI」的范围内**，
-    所以本轮没有替泓舟点——`maestro.bat --version` 已经能出 2.9.0，卡在设备侧那一步。
+    所以没有替泓舟点。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 

@@ -17,22 +17,32 @@ maestro test mobile/e2e/01-text-weather.yaml      # 单条
    dev build 的 `launchApp` 打开的是 DevLauncherActivity，被测对象根本没在跑，
    而失败信息看起来像「App 里没有这个按钮」。
 
-## 状态：CLI 已装、flow 已写，**实跑差设备上一步**（2026-08-28）
+## 状态：**4/4 全部跑通**（2026-08-28 真机）
 
-- **CLI ✅**：`D:/Android/tools/maestro-dist/maestro/bin/maestro.bat --version` = **2.9.0**
-  （zip sha256 与官方 `checksums_sha256.txt` 逐字相符）。
-- **flow 语法 ✅**：逐条对着 cli-2.9.0 源码核过（`YamlFluentCommand.kt` 的字段表 /
-  `Commands.kt::AirplaneValue` / `WorkspaceConfig.kt`）。
-- **实跑 ⬜**：`maestro hierarchy` 起不来——它要往设备装自己的 driver APK，
-  MIUI/HyperOS 弹 `AdbInstallActivity` 要人确认，不确认就是
-  `INSTALL_FAILED_USER_RESTRICTED`（坑账 §9.42）。
-  ⚠ `install_non_market_apps=1` **不代表放行**，MIUI 的「USB 安装」是另一个开关。
+`4/4 Flows Passed in 7m 43s`——01 天气 2m10s / 02 危险动作 2m43s / 03 断网补达 2m33s /
+04 离线冒烟 16s。三条 online 先各自单跑通过，再整目录复跑一遍。
 
-  **接手只差这一步**（一次性，装上之后后续命令不再弹）：
-  1. 在设备上点一次「继续安装」，**或** 开发者选项 → 开「USB 安装」；
-  2. `maestro test mobile/e2e/ --include-tags online`。
+**跑法（必须带 `--no-reinstall-driver`）**：
 
-**没跑过就是没跑过**——本文件里任何一条 flow 都还没有实跑读数，不许当成通过。
+```bash
+maestro test --no-reinstall-driver mobile/e2e/                      # 全部四条
+maestro test --no-reinstall-driver --include-tags online mobile/e2e/
+```
+
+⚠ **第一次在一台新设备上跑**：Maestro 要装自己的 driver APK，MIUI/HyperOS 会弹
+`AdbInstallActivity`（**只给 5 秒、默认选中「拒绝」**）。有效做法是**循环触发让它反复弹**、
+人看到就点「继续安装」，而不是去掐那 5 秒。装上之后**全程带 `--no-reinstall-driver`**——
+Maestro 每个 session 都会重装 driver，不带这个开关就每跑一条都要人点一次。
+
+**实跑当场抓到的三个问题**（都已修在 flow 里，留作后来人的判据）：
+
+1. **`inputText` 之后必须 `hideKeyboard`**：MIUI 的输入法是独立窗口且顶到最上层，
+   Maestro 此刻抓到的 hierarchy 里**只有键盘**，App 元素一个都不在树里 ⇒ 紧接着的 `tapOn`
+   报「Element not found」，而元素其实好好地在屏上。
+2. **`setAirplaneMode` 的值是 `enabled`/`disabled`（小写）**：判据在
+   `YamlSetAirplaneModeDeserializer`，**不是** `Commands.kt::AirplaneValue` 那个内部枚举
+   （`Enable`/`Disable`）。⇒ 核 YAML 关键字要看反序列化器，不是看内部枚举。
+3. 见上面的 `--no-reinstall-driver`。
 
 ## 装 CLI（如果换机器）
 
@@ -46,8 +56,10 @@ maestro test mobile/e2e/01-text-weather.yaml      # 单条
 实测后果：`adb shell uiautomator dump` 在主屏**稳定拿不到树**（连试 4 次都只有 1 个 node），
 而设置页/地图页正常——因为 `uiautomator dump` 要等窗口 idle，而这里永远不 idle。
 
-Maestro 的 Android driver 走 `AccessibilityNodeInfo`（不等 idle），**大概率不受影响**——
-但这是**推断，没实测**。第一次跑之前先验一句：
+Maestro 的 Android driver 走 `AccessibilityNodeInfo`（不等 idle），**实测不受影响**
+（2026-08-28 证实：同一块主屏，`uiautomator dump` 只给 1 个节点，Maestro 抓到 199KB 完整树，
+`composer-input`/`composer-send` 都能按 id 匹配到——RN 的 testID 在 Android 上落成了可匹配的 id）。
+换设备/换 RN 版本后仍建议先验一句：
 
 ```bash
 maestro hierarchy     # 主屏能不能拿到完整树、testID 有没有落成可匹配的 id

@@ -12,12 +12,18 @@ appId: com.xiaozhou.companion
 name: 02 危险动作确认条取消
 tags:
   - online
+# ⚠ `inputText` 之后**必须 `hideKeyboard`**：MIUI 的输入法是独立窗口且会顶到最上层，
+# Maestro 此刻抓到的 hierarchy 里**只有键盘**（`android:id/inputArea` /
+# `android:id/miui_bottom_area`），App 的元素一个都不在树里 ⇒ 紧接着的 `tapOn` 必然报
+# 「Element not found」，而元素其实好好地在屏上。2026-08-28 实跑第一条就撞上了。
 ---
 - runFlow: subflows/open-app.yaml
 
 - tapOn:
     id: "composer-input"
 - inputText: "打开后备箱"
+# 收起键盘再点发送——理由见文件头注
+- hideKeyboard
 - tapOn:
     id: "composer-send"
 
