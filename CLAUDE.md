@@ -117,7 +117,12 @@ runtime/        共享运行时（gRPC keepalive/优雅停机/mTLS 工厂；+ �
                 服务经此建 channel/server、发主动消息）。**「同一件事只许一份实现」的那些判定住在这里**，
                 落点判据是**镜像依赖闭包**（端侧镜像没有 `agents/`、云侧编排镜像也没有，而它们都 `COPY runtime`）：
                 clock.py 业务时区墙钟（容器 TZ=UTC，写「几点」前先读它）／polarity.py 指令极性
-                （「车窗别开」，端侧与 reminder 共用）／cntime.py 中文时间词（时段词·日词含英文别名·
+                （「车窗别开」，端侧与 reminder 共用；其 `NEG_WORDS` 也是云侧 actionability
+                「禁止式否定」特征的词表来源，不许抄第二份）
+                ／clause_split.py 中文复合句**分隔符表的唯一声明处**（C5/C6）：端侧拆
+                「一句话里几条车控指令」、云侧拆「几个诉求」——**表共用、语义不共用**，
+                端侧特有的「和」二次拆分/并列对象展开/场景句拦截仍留在端侧
+                ／cntime.py 中文时间词（时段词·日词含英文别名·
                 中文数字·12h→24h 修正；此前 timeparse/timewindow/weather 三份各自演化，同一句话给三个答案）
                 ／slot_fidelity.py 下发前的**槽值原话回查**（planner 转述丢限定词，逐维补、三道闸，
                 唯一挂点 `executor._resolve_slot_refs`；同处还有 `undeclared_slots`——**契约**比原话

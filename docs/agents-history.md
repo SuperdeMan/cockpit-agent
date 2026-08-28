@@ -6862,3 +6862,125 @@ C4-D（stock 产出进候选集）**不做**：① 它够不到自己那张卡�
 - ⚠ **真栈迷你集与「修正后计分」仍未跑**（与第 1、2 批同一条口径：三批都改过探针本身，
   应在下一次跑批时连同 C16 其余条目一起验）。**云端 release 的 QA 读数没有因此改变。**
 - 四层知识对齐：架构 **v1.41 §5.2.15**、契约 **§9.35**、方案 §4「第 3 批终态」、本节。
+
+---
+
+## §76 2026-08-28 MiniMax QA 修复批 · 第 4 批（C6 接人分解 + C5 覆盖度/挂起 + C7 trip 三修 + C8 reroute origin）
+
+方案与逐卡机制见
+[`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](design/2026-08-27-minimax-qa-root-cause-fix-plan.md)
+（§3 的 C5/C6/C7/C8 卡、§4「第 4 批终态」）。本节只记**流水与判据**，不复述方案。
+
+### §76.1 做了什么
+
+四张卡是同一族病：**复合句里的第二个诉求没人保证它被看见一次**，
+外加一条「没被点名的维度被顺手改掉了」。
+
+**C6（P1-03，family T47/T53/T55 + info T54）**
+
+- **A 分句级路由锚定**。proto `RouteHint.scope`（字段 7）：`""`/`utterance`=整句（缺省，
+  行为逐字不变）、`clause`=按 `runtime/clause_split.py` 逐分句试。navigation 新增一条
+  分句档接送 hint（`policy: append`、priority 120、正向前缀闭集），
+  「接X + 任意后续」从此都先保住接人那一半，另一半仍交给正常规划。
+- **B 焦点让路**。`WorkingSet.suppress_sticky_places`：命中 clause 档 hint 的那一轮，
+  粘性的上个地点/上个目的地/上个城市/最新候选**不渲染进 prompt**；
+  安全告警、车控对象焦点与活动路线不在让路名单里。置位方是 `planning.build`，
+  判据完全声明式（hint 的 `scope`），编排核心零领域词。
+- **C 条件式约束陈述**。`actionability` 新增 `conditional_constraint` 形态
+  （条件从句 ∧ **禁止式**否定，后者逐字复用 `runtime.polarity.NEG_WORDS`）；
+  **仍是 shadow**，只进 `plan.actionability` 观测面。低成本止血落在 planner prompt
+  的意图拆分段：「条件式指示不产生本轮动作步」。
+- **D 不做**（T47 里那串记忆装饰，修 A 后自然消失）。
+
+**C5（P1-04 前半 / P1-03 部分）**
+
+- **A 覆盖度观测**。`engine._clause_uncovered` 与 `goal_value_dropped` 并列发
+  obs 列 `clause_uncovered="未覆盖数/肯定分句数"`：拆句 → 丢否定分句 →
+  **肯定分句 ≥2 才有信号** → 每句问「有没有任何一步的槽值落在它里面」。
+  **零决策**，误报面（零槽步 / 槽值被转述）写进 docstring 等真实分布。
+- **B 挂起不冻结兄弟步**。executor 先把整层结果全部交出去再判挂起；`NEED_SLOT`
+  不再终止（下游由 `_should_run` 天然拦住），`NEED_CONFIRM` 维持当场停；
+  engine 消费完整个执行器再挂；`_suspend` 合并兄弟步动作，走聚合器同一份
+  `compose_actions`（此前挂起 final 只带挂起那一步的 actions ⇒ 话说了事没做）。
+  顺手把 `_topo_layers` 的层内顺序从 `set` 迭代序改成 `steps` 声明序。
+
+**C7（P1-09 + adv T48 接地）**
+
+- **A 接地城市锚 + 跨城披露**。`_city_anchor`：多城行程不加锚 / 目的地是行政区划
+  不加锚 / 裸 POI 名以当前位置为锚，接地结果超 150km ⇒ **NEED_SLOT 披露**而不是
+  直接排一份外地行程。
+- **B 未提及维度守恒**。路径③补传 `cities/theme/must_visit`（`Trip.must_visit` 随行程
+  持久化）；`_keep_days` 回炉一次（把「保持 N 天」显式写进重规划上下文），
+  还不等就由 `_days_drift_note` 变成一次**显式选择**。
+- **C 约束已满足即直答**。`_order_constraint_satisfied`：否定式顺序约束解析成序对、
+  对照 `trip.cities` 现序，已满足 ⇒ 零重规划零确认。城市名只从 `trip.cities` 解析，
+  零领域词。
+- **D 按天读**。`trip.status` 加 `day` 槽 + `_status_of_day`；没有那一天要如实说。
+- **E** `trip.plan` 描述补排除子句（单点当天出行/接送不归本条）。
+
+**C8（P1-08，family T22）**
+
+- `navigation.reroute` 契约补 `origin` 槽；`_reroute` 消费它——算路起点、话术、卡片、
+  动作载荷**四处一起换**，解析不出走 `_resolve_point` 的「绝不悄悄回落当前位置」
+  语义诚实反问。语料补一条 **active_route 在场**的变体（旧那条 context 是空的，
+  **从来跑不到出事的那条路**）；两处过期事实陈述（`runtime/slot_fidelity.py`、
+  探针 SL4 的 why）改掉，判据本体一个字没动。
+
+### §76.2 本批新沉淀的判据
+
+- **放宽锚定与放宽守卫是两件事，只做前一件。** 分句档首版把 `guard` 也收进分句
+  （想让「接孩子，别忘了充电」不被另一句的「别」误杀），跑全量当场撞红三条既有
+  负向锁——「接女儿放学，路上买杯咖啡，然后播放音乐」这类**另一个域的诉求**靠的
+  正是整句 guard。**误伤一条正向句，比放开一整面守卫便宜。**
+- **补步的去重判据要跟着锚定范围一起换。** 按 intent 去重问的是「这个域在不在计划里」，
+  而分句档要问的是「**我这一分句的诉求**在不在计划里」——「接孩子后去万象城」的计划里
+  `navigate_to(destination=万象城)` 确实在，它回答的是另一半。
+- **反向验证要验到「哪一条断言真的被这次改动决定」。** C5-B 首轮四条断言在注射旧语义后
+  **一条都不红**：兄弟步同层、`asyncio.gather` 本来就会跑它们；而且测试替身的 action
+  写成了 dict，`_to_result` 当场 AttributeError、被 `return_exceptions=True` 兜成 FAILED
+  ——**FAILED 同样会拦住下游，于是四条断言全绿、绿的却是「步失败了」**。修法两条：
+  替身按契约长（`.type`/`.payload`/`.require_confirm`）+ 每条显式断言 `status`；
+  另补一条真正被跨层语义决定的用例（下一层依赖的是 OK 的那一步）。
+- **写测试时会撞出被测系统真实的不确定性。** `_topo_layers` 的层内顺序取自 `set` 迭代序，
+  随进程 hash 种子变——同一份计划两次跑「先报哪一条挂起」可能不同。层内并行执行不受影响，
+  **受影响的是读数**，所以改成按 `steps` 声明序。
+- **「优先评估复用 X」的结论可以是不复用，但理由要留下来。** C7-A 方案要求先评估复用
+  navigation 的 R1 接地组件：R1 的救济链（去偏置全国重搜/地标 LLM/类目锚词）解的是
+  **反方向**的问题——就近搜出垃圾时怎么捞回全国唯一的那个地标；trip 要的恰恰是
+  **别捞到外地那个同名的**。整块下沉要连 `_dest_matches`/`_category_anchor`/`_grounds_to`/
+  `_rough_km`/landmark 一起搬。**复用的是它真正共用的那一件**：`geocode_level`
+  （provider 能力，charging_planner 已有同款复用先例）与 150km 那把尺子。
+- **期望写窄了，红的是尺子。** 「送孩子上学，路上买杯咖啡」被既有的整句 replace 档接住
+  并一次给出两个槽（比分句档补出来的更完整），首版把它放进分句档那组期望里当场红。
+- **一次失败的编辑脚本会留下半份改动。** 本批 `engine.py` 里的 `_clause_uncovered`
+  被写进去**两份**（编辑脚本第一步写盘成功、第二步断言失败，随后整脚本又跑了一遍）。
+  Python 后定义覆盖前定义 ⇒ 测试全绿、`git diff` 才看得出来。当时我 `grep -c` 到 `2`
+  就当成「定义 + 引用」放过去了——**数出来的那个数要看清它数的是什么**。
+  收尾对账因此加了一道：对本批改过的每个 .py 做 AST 顶层/类内重名扫描。
+
+### §76.3 读数（**这一趟是最后一次改动之后跑的**）
+
+- 全量 `python -m pytest -q -n auto --dist worksteal` = **7547 passed / 32 skipped 零红**
+  （5:56；同一份代码上一趟 4:53，差在宿主负载）。基线 7493/32 ⇒ **+54 全部是本批新增断言**。
+- 逐文件点号（`git archive HEAD` 副本 + 两边 `--collect-only` 逐文件 diff，
+  **按收集器数的数**）：`test_route_hints_clause.py` **+17**（新文件）/
+  `test_agent.py`(trip_planner) **+14** / `test_obs_spans.py` **+6** /
+  `test_actionability.py` **+5** / `test_executor.py` **+5** /
+  `test_reroute.py` **+4** / `test_engine_sibling_steps.py` **+2**（新文件）/
+  `test_route_hints.py` **+1** ＝ **54**；其余 321 个测试文件计数逐字未变。
+- **改过的行为锁（都必须显式改、不许悄悄变）**：
+  ① `test_catalog_budget.py` 13449 → **13702** / 余量 2551 → **2298**
+     （reroute 补 origin 维、trip.plan 补排除子句、trip.status 补 day 槽，条数不变）；
+  ② 对抗语料上限 628 → **629**（新增 `tu.nav.origin-with-active-route`）；
+  ③ `test_route_hints.py` 的两张负向名单各移出一条（「接孩子后去万象城」
+     「去接孩子后去万象城」），移进新用例
+     `test_the_compound_pickup_sentence_now_keeps_the_pickup_half`
+     ——**「带后续目的地的复合句均不命中」当时是刻意的裁定，本批显式推翻它**。
+  除这三处外没有任何既有用例被改绿。
+- 三道离线门禁：`test/smoke_edge.py` 13 passed / 0 failed；
+  `test/eval_capability_integrity.py` ✅ PASS（八个车道全 0）；
+  `scripts/check_intent_gate.py` rc=0（discovery 85/85 cases=668 distinct=629、
+  gate 25/25 cases=139 distinct=129）。
+- ⚠ **真栈迷你集与「修正后计分」仍未跑**（与前三批同一条口径：四批都改过探针本身，
+  应在下一次跑批时连同 C16 其余条目一起验）。**云端 release 的 QA 读数没有因此改变。**
+- 四层知识对齐：架构 **v1.42 §5.2.16**、契约 **§9.36**、方案 §4「第 4 批终态」、本节。
