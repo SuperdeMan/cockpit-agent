@@ -22,7 +22,7 @@
 
 | 证据 | 当前口径 |
 |---|---|
-| L0 discovery | **85/85**；**653 条 / 614 唯一输入**（2026-08-20 person-pickup 跨域边界裁定 +4，上界 614 仍**恰好用满**；语料上界与实数以 `suites.yaml` 头部为准） |
+| L0 discovery | **85/85**；**668 条 / 629 唯一输入**（2026-08-28 读数，上界 629 仍**恰好用满**；614→629 的五次递进逐笔写在 `suites.yaml` 头部——**语料上界与实数永远以那里为准**，本表只是快照） |
 | gate 规模 | **139 stable / 129 唯一输入**；L0 strict **25/25，exit 0** |
 | DeepSeek 对比/参考 gate | **147/147**（`f0af9c0`）：L0 25、L1 117、L2 4、L3 1；L1/L2 各 **2 个独立进程 × 每进程 3 样本**；正式 baseline `eligible=True` |
 | MiniMax 主模型 gate | **141/147**（`32e8718`）；exact **116/121**、required **99/103**；raw 幻觉 **3/121**、校验后逃逸 **0/121**；不稳定 **4/121**；`pass 141 / unstable 4 / stable_fail 2`；`eligible=False` |
@@ -147,10 +147,11 @@ L0 覆盖：契约 + 覆盖矩阵 + cohort 隔离 + boundary 双向 + Edge ingre
 无关——见 §11 与 `docs/conventions.md` §9.15）。
 **L0 无模型参与，一次红就是结论**（不存在 `unstable`）。
 
-当前预期：discovery **85/85 exit 0**（cases 649 / 唯一输入 610，bounds 上界 610，
+当前预期：discovery **85/85 exit 0**（cases 668 / 唯一输入 629，bounds 上界 629，
 **余量为 0**——加语料前必须先说明新能力/新边界为何值得占额度，再有原则地抬
 `suites.yaml` 的 `max_cases`，**不得先加语料撞闸后补理由**，也不得删旧尺子压数字；
-560→610 的十一次递进与逐项占用写在 `suites.yaml` 头部）；gate `--strict` **25/25 exit 0**
+540→629 的十七次递进与逐项占用写在 `suites.yaml` 头部，**那里是唯一真相源**）；
+gate `--strict` **25/25 exit 0**
 （gate 唯一输入 **129** ≥ `min_cases=120`）。
 ⚠ **这个绿只说明语料规模够了**——它判的是规模，不是 stable 全绿。
 当前 live 必须按模型分账：DeepSeek 对比轨 147/147，MiniMax 主模型 141/147，见文首快照与

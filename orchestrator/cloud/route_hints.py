@@ -34,6 +34,9 @@ append 的去重跟着换判据：整句档问「这个 intent 在不在计划�
 **「有没有哪一步已经带着本 hint 要填的那个值」**——「接孩子后去万象城」的计划里
 `navigation.navigate_to(destination=万象城)` 确实在，但它回答的是另一半诉求，
 按 intent 去重会把接人那一半再丢一次。
+
+契约（三条语义分档 + 分句表落点）：`docs/conventions.md` §9.36；
+架构面：`cockpit-agent-architecture.md` §5.2.16。
 """
 from __future__ import annotations
 

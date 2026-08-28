@@ -15,6 +15,13 @@
 ## 安全约束
 车控只经 `val.VAL` 下发（指令校验 + 安全态门控 + 高速禁开窗等）。
 
+## 与云侧共用的判据（`runtime/`，落点由镜像依赖闭包决定）
+`polarity`（指令极性）／`question_shape`（问句还是指令）／`cntime`（中文时间词）／
+`clock`（业务时区墙钟）／`clause_split`（**复合句分隔符表**）。
+⚠ `clause_split` 是**表共用、语义不共用**：本目录拆完每段还要各自解出一条命令
+（`_resplit_on_he` 的「和」二次拆分、`_expand_paired_objects` 的并列对象展开、
+场景句整句拦截都留在这里），云侧拆完只问「这一段有没有被计划覆盖」。
+
 ## Phase 1 已落地
 - 端云双向流：Go Cloud Gateway（EdgeCloudChannel bidi）+ Go Edge Gateway（ChannelClient 重连+心跳+多路复用）
 - `edge_call`→VAL、动作卡回传与防双发
