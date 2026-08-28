@@ -579,7 +579,7 @@ C16 批实施。** 原裁决建议原文保留如下：
 
 | 项 | 读数 |
 |---|---|
-| 全量 `python -m pytest -q -n auto --dist worksteal` | **7309 passed / 32 skipped 零红**（3:58）；基线 7225/32 ⇒ **+84 条全部是本批新增断言**，无一条既有用例被改绿 |
+| 全量 `python -m pytest -q -n auto --dist worksteal` | **7314 passed / 32 skipped 零红**（3:56）；基线 7225/32 ⇒ **+89 条全部是本批新增断言**，无一条既有用例被改绿。⚠ 首版此处写的是 7309/+84——取数之后又补了 5 条断言，2026-08-28 收尾时校正 |
 | `python test/smoke_edge.py` | 13 passed / 0 failed |
 | `python test/eval_capability_integrity.py` | ✅ PASS（八个车道全 0） |
 | `python scripts/check_intent_gate.py` | rc=0（discovery 85/85、gate 25/25；`media.stop` 覆盖矩阵补齐，语料上限 624→628） |

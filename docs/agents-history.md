@@ -6628,8 +6628,10 @@ I-030 跨组 2026-08-22 收口 history **§67**）、§4.1 ③ 支付余项，
 
 ### §73.3 读数（**不许四舍五入成「QA 那几条已转绿」**）
 
-- 全量 `python -m pytest -q -n auto --dist worksteal`：**7309 passed / 32 skipped 零红**（3:58）。
-  基线 7225/32 ⇒ **+84 全部是本批新增断言**，无一条既有用例被改绿。
+- 全量 `python -m pytest -q -n auto --dist worksteal`：**7314 passed / 32 skipped 零红**（3:56）。
+  基线 7225/32 ⇒ **+89 全部是本批新增断言**，无一条既有用例被改绿。
+  ⚠ 收尾时发现四处文档写的是 **7309/+84** —— 那是**取读数之后又补了 5 条断言**之前的值，
+  且已经被提交过一轮。判据落 §4.3：**读数的有效期只到下一次改动为止**（见 §73.6）。
 - `python test/smoke_edge.py` 13 passed；`test/eval_capability_integrity.py` ✅ PASS；
   `scripts/check_intent_gate.py` rc=0（discovery 85/85、gate 25/25）。
 - 改动的**行为锁**四处，都必须显式改：`_GOLDEN`（「停止音乐」pause→stop）、
@@ -6658,3 +6660,17 @@ C1-A 的验收栏写着「怎么打开双闪」应被拦（「它是 manner 问�
 （`test_question_write_guard.py::test_known_gap_manner_question_with_an_operation_verb_is_not_blocked`）。
 要收这一类的方向是给 `MANNER_ASKS` 加「怎么…吗」的组合形态并在端侧同批回归——
 **那是独立一笔改动，不该混在安全闸这批里悄悄发生。**
+
+### §73.6 收尾时自己制造的一处过期读数（判据已落 §4.3）
+
+全量跑出 **7309 / +84** → 写进 `AGENTS.md` §4.0、history §73.3、fix plan §4 三处 →
+**自审 diff 时又补了 5 条**「安全闸误伤面」断言（`test_polite_request_with_a_question_tail_is_also_blocked`
+四条 + `test_directive_marker_still_rescues_the_common_polite_form` 一条）→
+真值变成 **7314 / +89**，而三处文档一个字没动，**并且已经随第一个提交推送出去了**。
+
+它躲过了洁癖整理的第一遍：那一遍在核**别人**留下的过期数（对抗语料上界 624、catalog 153 条、
+架构版本），**没核自己十分钟前刚写的那个**。移交前用户问「未处理的都记账了吧」时才被翻出来
+——重新取数确认 7314 passed / 32 skipped / 0 failed（3:56，含并行会话的 `a946999`/`f728772`）。
+
+> 判据（§4.3 末条）：**报基线的那次跑批必须是本轮最后一次改动之后**，顺序不能反；
+> 数字落进文档时**连同「测的是哪个版本」一起落**。
