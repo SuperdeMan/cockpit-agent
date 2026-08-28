@@ -112,7 +112,14 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
         explicit_city = _city_slot(intent.slots.get("city"))
         destination = _destination_focus_from_meta(intent, meta)
         if explicit_city and destination is None:
-            return explicit_city
+            # ⚠ **坐标串不是展示名，这里是它唯一的入口**（2026-08-29）。
+            # 上游可以拿 `lng,lat` 当 city 传进来（road-safety 的
+            # `safety.weather_alert` 就是这么调 `info.alerts` 的，和风 GeoAPI 认它），
+            # 而这一支**提前返回**、绕过了本函数末尾那道判定 ⇒ 五个 handler 的
+            # 展示名一起中招，`_current` 那条还被话术收敛器截成「113.94120」。
+            # 判据：**同一个值有几个出口，就在它的入口处判一次**——
+            # 在五个调用方各补一遍守卫，就是在等下一个调用方漏掉。
+            return "" if _is_coordinate_label(explicit_city) else explicit_city
         current = destination or current_location_from_meta(meta)
         if current:
             try:
@@ -120,7 +127,12 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
             except ProviderError as e:
                 logger.warning("weather reverse geocode unavailable: %s", e)
                 return ""
-        return city
+        # **坐标串永远不是「展示名」**（2026-08-29）：这里的 `city` 可能是上游传进来的
+        # `lng,lat`（road-safety 的 `safety.weather_alert` 就是这么调 `info.alerts` 的），
+        # 原样返回会被调用方当成可读地名直接念出去——真栈实录
+        # 「**113.941200,22.541000**当前没有生效的天气预警。」。
+        # 返回空串让调用方走它自己的「当前位置」兜底。
+        return "" if _is_coordinate_label(city) else city
 
     @staticmethod
     def _location_accuracy_note(meta: dict | None = None) -> str:

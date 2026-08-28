@@ -143,6 +143,30 @@ def test_indices_and_air_quality_never_speak_raw_coordinates():
         assert res.ui_card["city"] == "北京市朝阳区", intent
 
 
+def test_coordinate_city_slot_without_gps_meta_never_reaches_the_speech():
+    """**真栈实录的那条形态**（2026-08-29）：坐标当 city 传进来、而这一跳没有 GPS meta。
+
+    `road-safety` 的 `safety.weather_alert` 就是这么调 `info.alerts` 的——
+    它把 `lng,lat` 当 city（**查询用的定位串**，和风 GeoAPI 认它）交过来。
+    子调用里没有位置 meta ⇒ 反查走不通 ⇒ 兜底链
+    `display_city or ("当前位置" if 有GPS else city)` 落到 `city` ⇒
+    用户听到「**113.941200,22.541000**当前没有生效的天气预警。」
+
+    ⚠ **这是同一个坑的第三次**：C9-D 修过 `_indices`/`_air_quality`（上面那条），
+    2026-08-28 修过 road-safety 自己的兜底句，**两次都没走到这一条**。
+    上面两条既有用例都喂了 `current_lat/current_lng`，恰好绕开了它。
+    判据：**同一个值有几个出口，就要有几处判定。**
+    """
+    coord = "113.941200,22.541000"
+    for intent in ("info.alerts", "info.weather", "info.forecast",
+                   "info.indices", "info.air_quality"):
+        res = asyncio.run(run_handle(
+            InfoAgent(), intent, slots={"city": coord},
+            raw_text="现在有影响开车的天气预警吗"))          # **刻意不给 meta**
+        assert "113.941" not in res.speech, f"{intent} 把坐标念出去了：{res.speech}"
+        assert "22.541" not in res.speech, f"{intent} 把坐标念出去了：{res.speech}"
+
+
 def test_deictic_weather_uses_navigation_destination_before_current_location():
     """B1-2：「那边」必须查询上轮导航目的地，不能静默退回浏览器当前定位。"""
     agent = InfoAgent()

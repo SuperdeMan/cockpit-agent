@@ -19,6 +19,28 @@ from ._util import _is_coordinate_label, _shanghai_now
 logger = logging.getLogger("agent.info")
 
 
+def _spoken_place(display_city: str, city: str, meta: dict | None) -> str:
+    """说给人听的地名。**坐标串一个字都不许进来**（2026-08-29）。
+
+    真栈实录：「**113.941200,22.541000**当前没有生效的天气预警。」——
+    `road-safety` 的 `safety.weather_alert` 用 `lng,lat` 当 city 调 `info.alerts`
+    （那是**查询用的定位串**，和风 GeoAPI 认它），而这一族 handler 的兜底链是
+    `display_city or ("当前位置" if 有GPS else city)`：反查失败 + 子调用里没有 GPS meta
+    ⇒ 直接落到 `city`，坐标就这么念出去了。
+
+    ⚠ **这是同一个坑的第三次**：C9-D 修过 info 的 `_indices`/`_air_quality`
+    （过 `_display_city`），2026-08-28 又修过 road-safety 自己的兜底句，
+    **两次都没走到这一条**——`_current`（本文件 :234）其实早就用
+    `_is_coordinate_label` 挡过一模一样的东西，只是那道判据没被推广到兄弟 handler。
+    判据：**同一个值有几个出口，就要有几处判定；发现一处漏了，先把兄弟出口数一遍。**
+    """
+    if display_city and not _is_coordinate_label(display_city):
+        return display_city
+    if current_location_from_meta(meta):
+        return "当前位置"
+    return "当前位置" if _is_coordinate_label(city) else city
+
+
 # ── 意图先答 + speech 可读性（badcase f555cde3：「未来几天会下雨吗」只回模板罗列，
 #    且把完整逆地理地址整段念出、「预报：；」双标点）─────────────────────────
 
@@ -322,7 +344,7 @@ class WeatherMixin:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的天气预报？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
         display_city = await self._display_city(intent, city, meta)
-        name = display_city or ("当前位置" if current_location_from_meta(meta) else city)
+        name = _spoken_place(display_city, city, meta)
         days = int(intent.slots.get("days", 3) or 3)
         try:
             forecast = await self.weather.forecast(city, days=days, meta=meta)
@@ -354,7 +376,8 @@ class WeatherMixin:
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的天气预警？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
-        name = await self._display_city(intent, city, meta) or ("当前位置" if current_location_from_meta(meta) else city)
+        name = _spoken_place(
+            await self._display_city(intent, city, meta), city, meta)
         try:
             alerts = await self.weather.alerts(city, meta=meta)
         except ProviderError as e:
@@ -387,8 +410,8 @@ class WeatherMixin:
                                follow_up="请告诉我城市名", missing_slots=["city"])
         # 展示名过 `_display_city`（GPS 路径下 city 是「114.06,22.54」坐标串，
         # 裸用它会把坐标念进话术、写进卡片——同 `_weather`/`_alerts` 的既有口径）。
-        name = await self._display_city(intent, city, meta) or (
-            "当前位置" if current_location_from_meta(meta) else city)
+        name = _spoken_place(
+            await self._display_city(intent, city, meta), city, meta)
         try:
             indices = await self.weather.indices(city, meta=meta)
         except ProviderError as e:
@@ -414,8 +437,8 @@ class WeatherMixin:
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的空气质量？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
-        name = await self._display_city(intent, city, meta) or (
-            "当前位置" if current_location_from_meta(meta) else city)
+        name = _spoken_place(
+            await self._display_city(intent, city, meta), city, meta)
         try:
             aq = await self.weather.air_quality(city, meta=meta)
         except ProviderError as e:
