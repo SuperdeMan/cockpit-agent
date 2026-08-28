@@ -31,6 +31,41 @@ def test_single_card_unchanged():
     assert out["ui_card"]["type"] == "poi_list"
 
 
+def test_single_failed_step_speaks_the_agents_own_words(monkeypatch):
+    """C11-B（真栈 family T34）：桥说的是「未能确认本次订单预览清理完成，请稍后再试」，
+    用户听到的却是「抱歉，处理失败。」——**恢复指引连同「失败在哪一步」一起被吞掉**。
+
+    成因是一条空查表：`AgentResult` 没有 error 字段、executor 的 `_to_result` 也不设，
+    于是 `_ERROR_FRIENDLY.get("", "处理失败")` 恒命中默认值。
+    """
+    agg = Aggregator(_fake_llm)
+    failed = StepResult(
+        step_id="s1", status=StepStatus.FAILED,
+        speech="未能确认本次订单预览清理完成，请稍后再试。",
+        follow_up="您也可以说「查一下我的订单」核对",
+        ui_card={"type": "merchant_draft_cleanup", "drafts_after": 1})
+    out = asyncio.run(agg.compose("第二个先取消，其他继续", [failed]))
+
+    assert out["speech"] == "未能确认本次订单预览清理完成，请稍后再试。"
+    assert out["follow_up"] == "您也可以说「查一下我的订单」核对"
+    assert out["ui_card"]["type"] == "merchant_draft_cleanup"
+    assert out["actions"] == []
+
+
+def test_single_failed_step_without_speech_keeps_the_generic_wording():
+    """另一半必须仍然成立：**没有话术可播的真异常**（超时/熔断，error 由 executor 填）
+    照旧出通用失败话术——C11-B 换的是「有话术时谁说了算」，不是把闸拆了。"""
+    agg = Aggregator(_fake_llm)
+    boom = StepResult(step_id="s1", status=StepStatus.FAILED, speech="",
+                      error="step_timeout")
+    out = asyncio.run(agg.compose("查一下", [boom]))
+    assert out["speech"] == "抱歉，处理超时了，请稍后再试。"
+
+    naked = StepResult(step_id="s2", status=StepStatus.FAILED, speech="")
+    out2 = asyncio.run(agg.compose("查一下", [naked]))
+    assert out2["speech"] == "抱歉，处理失败。"
+
+
 def test_compose_strips_markdown_from_speech():
     """speech 出口统一剥 markdown（2026-07-12 决策：不上渲染）：单步与多步聚合两路都剥。"""
     agg = Aggregator(_fake_llm)

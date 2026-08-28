@@ -892,11 +892,16 @@ class _RoutePoiProvider(_ScriptedPoiProvider):
 
 
 def test_parse_arrive_by_rules():
-    """「五点前到」解析：裸 1-11 点取未来最近一次；段位/HH:MM/两位数字时直取。"""
+    """「五点前到」解析：裸 1-11 点取未来最近一次；段位/HH:MM/两位数字时直取。
+
+    ⚠ 「20:00 说 5 点 = 次日 05:00」那一行是**显式推翻**的行为锁（C13-A，
+    2026-08-28）：它与 `test_timewindow.py` 那份是同一条判据的第二处副本，
+    推翻要两处一起（判据本体在 `agents/_sdk/timewindow.py`）。
+    """
     now = epoch_at(2026, 8, 14, 14, 0)
     assert _wall(_parse_arrive_by("5点", now_ts=now)) == (2026, 8, 14, 17, 0)
     now_late = epoch_at(2026, 8, 14, 20, 0)
-    assert _wall(_parse_arrive_by("5点", now_ts=now_late)) == (2026, 8, 15, 5, 0)
+    assert _wall(_parse_arrive_by("5点", now_ts=now_late)) == (2026, 8, 14, 17, 0)
     assert _wall(_parse_arrive_by("下午5点半", now_ts=now)) == (2026, 8, 14, 17, 30)
     assert _wall(_parse_arrive_by("17:00", now_ts=now)) == (2026, 8, 14, 17, 0)
     # 两位数字时刻：「23点」不得被单字符类错拆成「3点」（自埋缺陷回归）
@@ -945,6 +950,58 @@ def test_navigate_arrive_by_eta_judgment_and_departure_remindable(monkeypatch):
     assert items[0]["title"] == "出发前往实验小学"
     assert _wall(items[0]["fire_at"]) == (2026, 8, 14, 16, 30)  # 时限-路程
     assert items[1]["title"] == "到达实验小学"
+
+
+def test_elapsed_bare_hour_deadline_is_reported_as_elapsed_not_as_a_huge_margin(monkeypatch):
+    """C13（真栈 family T8）：18:53 说「5点我要到学校」，旧链路把时限解成**次日凌晨
+    05:00**，于是播出「比您要求的5:00早约593分钟」——聚合 LLM 在同一句里自我吐槽
+    「应该是把5点当成凌晨5点了」。
+
+    修法两段各管一半：解析器不再靠滚日改变小时语义（今天 17:00，已过），
+    话术层看见「时限已经过去」就如实说、并把「按明天算吗」交还用户。
+    """
+    import agents.navigation.src.agent as nav_mod
+    fixed_now = epoch_at(2026, 8, 14, 18, 53)
+    monkeypatch.setattr(nav_mod.time, "time", lambda: fixed_now)
+
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"明远学校": [POI(id="x", name="明远学校", address="南山", lat=22.53, lng=113.93)]},
+        duration_min=13)
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "明远学校", "arrive_by": "5点"},
+        raw_text="带我去接孩子放学，5点我要到学校。",
+        meta={"current_lat": "22.5", "current_lng": "113.9"}))
+
+    assert "17:00" in res.speech and "已经过了" in res.speech
+    assert "早约" not in res.speech and "593" not in res.speech
+    assert res.data["deadline_elapsed"] is True
+
+
+def test_absurd_deadline_margin_hands_the_doubt_back_instead_of_a_precise_number(monkeypatch):
+    """C13-B：余量荒谬（>6h）时不播精确分钟数。
+
+    它与上一条是两道闸：那条管「时限已经过去」，这条管「时限在未来但远得不合常理」
+    ——两者都指向同一个成因（时刻解析选错了半天/日子），而**精确数字是有害的确定感**。
+    """
+    import agents.navigation.src.agent as nav_mod
+    fixed_now = epoch_at(2026, 8, 14, 8, 0)
+    monkeypatch.setattr(nav_mod.time, "time", lambda: fixed_now)
+
+    agent = NavigationAgent()
+    agent.poi = _RoutePoiProvider(
+        {"实验小学": [POI(id="x", name="实验小学", address="市区", lat=31.30, lng=121.50)]},
+        duration_min=30)
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "实验小学", "arrive_by": "晚上11点"},
+        raw_text="去实验小学，晚上11点前到",
+        meta={"current_lat": "31.2", "current_lng": "121.4"}))
+
+    assert "23:00" in res.speech and "小时以上" in res.speech
+    assert "早约" not in res.speech
+    assert res.data["deadline_uncertain"] is True
 
 
 def test_stop_choice_searches_along_route_not_destination():

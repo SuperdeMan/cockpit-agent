@@ -61,6 +61,24 @@ def test_system_has_date_anchor_and_no_fabrication_guard():
     assert "绝不编造" in sys_text
 
 
+def test_system_forbids_execution_claims_as_a_category_not_a_word_list():
+    """C11-A：防编造条款升级成**逐条款存在性断言**。
+
+    原来这里只断言「含『绝不编造』」，而那句话的射程只到**时效性事实**：
+    来源、执行史、自我纠错三类都不在里面，于是同一个洞被绕过两轮
+    （demo-mkemhn 从交易话术、2026-08-26 从导航）。清单式禁语挡不住换个说法，
+    所以判据换成类别否定；测试跟着换成逐条款查在不在，**少一条当场红**。
+    """
+    sys_text = _system({})
+    for clause in ("没有任何执行、检索、规划能力",
+                   "凡是描述",
+                   "接下来会做什么",
+                   "不管这句话出现在开头、中间还是结尾",
+                   "别否认系统查过",
+                   "不许虚构自己此前犯过的错误"):
+        assert clause in sys_text, f"防编造条款缺了「{clause}」"
+
+
 def test_system_anchor_includes_weekday_and_clock():
     """badcase 2026-07-15：锚只有日期时模型会编时刻——锚补星期+时刻。"""
     import re as _re

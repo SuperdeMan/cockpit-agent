@@ -1,5 +1,6 @@
 """nearby（周边发现）契约测试。"""
 import asyncio
+import json
 from types import SimpleNamespace
 
 from runtime.clock import epoch_at
@@ -1176,6 +1177,94 @@ def test_current_turn_no_spicy_overrides_remembered_cuisine():
     assert seen["keyword"] != "川菜"                      # 不拿爱吃的辣菜系去偏置
     assert "不要辣" in res.speech or "不按平时爱吃" in res.speech
     assert [i["name"] for i in res.data["items"]][0] == "淮扬人家"   # 重辣的排后
+
+
+def test_remembered_no_spicy_also_blocks_the_remembered_spicy_cuisine():
+    """C12-A（真栈 info T29）：记忆里同时有「爱吃川菜」与「不吃辣」而**这一句没提辣**时，
+    旧判据（只看当轮原话）会在同一轮确定性地拼出三句自相矛盾的话——
+    「按您的口味优先川菜」+「不合口味的已排后」+「记得您说过不吃辣」。
+
+    判据：**限制性偏好赢过扩张性偏好**（不吃辣 > 爱吃川菜），
+    挡板问的是合并后的 `taste["no_spicy"]`，不是当轮正则。
+    """
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "用户喜欢川菜和四川火锅", "predicate": "taste.cuisine",
+         "scope": "profile.taste", "polarity": "like"},
+        {"text": "用户不吃辣", "predicate": "taste.avoid",
+         "scope": "profile.taste", "polarity": "dislike"}])
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="老灶火锅", category="餐饮", rating=4.6),
+                Place(id="b", name="淮扬人家", category="餐饮", rating=4.2)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="推荐附近适合晚饭的地方",
+                                 ctx=ctx, meta=_LOC))
+    assert seen["keyword"] != "川菜"
+    assert "按您的口味优先川菜" not in res.speech
+    assert "您说过不吃辣" in res.speech
+
+
+def test_session_constraint_from_an_earlier_turn_reaches_this_search():
+    """C12-B（真栈 info T28→T29）：「我不吃辣，也不想排长队」落在 chitchat 轮，
+    下一句「推荐附近适合晚饭的地方」此前拿到的是 10 家川菜——**只读当轮原话的话，
+    上一轮说的约束根本到不了这里**，唯一通道是异步记忆抽取绕 PG 一圈。
+
+    载体是编排下发的 `focus_session_constraints`（Focus 一格 + manifest scope 门控）。
+    """
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "用户喜欢川菜和四川火锅", "predicate": "taste.cuisine",
+         "scope": "profile.taste", "polarity": "like"}])
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="老灶火锅", category="餐饮", rating=4.6),
+                Place(id="b", name="淮扬人家", category="餐饮", rating=4.2)]
+
+    agent.place.search = search
+    meta = dict(_LOC, focus_session_constraints=json.dumps(
+        {"no_spicy": True, "no_queue": True}, ensure_ascii=False))
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="推荐附近适合晚饭的地方",
+                                 ctx=ctx, meta=meta))
+    assert seen["keyword"] != "川菜"
+    assert "您说过不吃辣" in res.speech
+    assert "没有实时排队数据" in res.speech       # 不假装能筛，如实说按不上
+    assert [i["name"] for i in res.data["items"]][0] == "淮扬人家"
+
+
+def test_session_constraint_that_says_spicy_is_fine_does_not_block(monkeypatch):
+    """误伤对照：会话里**改口要辣**（`no_spicy=False`）时，记忆里的川菜偏好照常生效
+    ——一个永远解除不了的忌口会把「今天想吃点辣的」变成系统跟用户犟嘴。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "用户喜欢川菜和四川火锅", "predicate": "taste.cuisine",
+         "scope": "profile.taste", "polarity": "like"}])
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="老灶火锅", category="餐饮", rating=4.6)]
+
+    agent.place.search = search
+    meta = dict(_LOC, focus_session_constraints=json.dumps({"no_spicy": False}))
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="推荐附近适合晚饭的地方",
+                                 ctx=ctx, meta=meta))
+    assert seen["keyword"] == "川菜"
+    assert "按您的口味优先川菜" in res.speech
 
 
 def test_no_spicy_phrasings_are_recognized():

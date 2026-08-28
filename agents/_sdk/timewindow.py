@@ -17,7 +17,8 @@ import re
 import time
 
 from runtime.clock import epoch_at, hhmm, local_struct, minutes_of
-from runtime.cntime import CN_NUM_CHARS, SEG_ALT, cn_int, segment_kind, to_24h
+from runtime.cntime import (CN_NUM_CHARS, SEG_ALT, cn_int, day_offset_of,
+                            segment_kind, to_24h)
 
 # 时刻本体：HH:MM 或 N点[半|N分]，可带段位前缀（槽位值与原话片段共用）。
 # 数字时刻用 \d{1,2}（「10点」「23点」是两位——单字符类会把「10点」错拆成「0点」）。
@@ -35,8 +36,17 @@ _CLOCK_RE = re.compile(
 def parse_clock_time(text: str, now_ts: int | None = None) -> int | None:
     """「时刻」→ epoch 秒；解析不出返回 None。纯确定性，now 可注入供测试。
 
-    裸 1-11 点无段位按「未来最近一次」消歧：14:00 说「5点前到」= 今天 17:00；
-    20:00 说「5点前到」= 次日 05:00。带段位/24h 时刻过点即滚到明天同刻。
+    裸 1-11 点无段位按「未来最近一次」消歧：14:00 说「5点前到」= 今天 17:00。
+    带段位/24h 时刻过点即滚到明天同刻（「明早5点」「17:00」的滚日不改变小时语义）。
+
+    ⚠ **裸时刻两个候选都已过时的那一支返回「今天已经过去的那个时刻」，是过去的
+    epoch**（C13-A，2026-08-28）。原实现在这一支滚到次日同数字小时——18:53 说
+    「5点我要到学校」被解成**次日 05:00**，于是话术播出「比您要求的 5:00 早约
+    593 分钟」（真栈 family T8 实录，模型自己在同一句里吐槽「应该是把5点当成
+    凌晨5点了」）。**滚日不该改变小时语义**：说「5点」指的是今天 17:00（已经过了），
+    不是明天 05:00；滚到明天该算 17:00 还是 5:00 本身无解，说明这一支不该猜。
+    调用方据此判「时限已过」（判据就是 `ts <= now`，不需要第二个返回值——
+    其余各支一律返回未来时刻）。
     """
     m = _CLOCK_RE.search(text or "")
     if not m:
@@ -66,7 +76,18 @@ def parse_clock_time(text: str, now_ts: int | None = None) -> int | None:
         ts = _at(plus_day, hour)
         return ts if ts > now else _at(plus_day + 1, hour)
     cands = [t for t in (_at(0, hour), _at(0, hour + 12)) if t > now]
-    return min(cands) if cands else _at(1, hour)
+    if cands:
+        return min(cands)
+    # 两个候选皆过时：取**今天最近的那一个**（=下午那支），并让它留在过去。
+    # 见上方 docstring 的 C13-A 说明。
+    # ⚠ **原话点名了后面的日子时不走这一支**：「明早5点」的日子是用户自己说的，
+    #   滚日不是猜的。本模块整体不消费日词（那是 `timeparse` 的活，reminder 走它），
+    #   这里只判在场——滚日行为对该形态逐字保持旧样。
+    #   残余：日词在场且**候选未过时**时仍按今天算（「明早5点」14:00 说 → 今天
+    #   17:00），那是本模块不消费日词的既有缺口，本次刻意不扩大改动面去动它。
+    if (day_offset_of(text) or 0) > 0:
+        return _at(1, hour)
+    return max(_at(0, hour), _at(0, hour + 12))
 
 
 # ── 事件时刻（G1 余项：反推窗的输入）──────────────────────────────

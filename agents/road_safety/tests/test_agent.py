@@ -51,6 +51,44 @@ def test_weather_alert_needs_city():
     assert "city" in res.missing_slots
 
 
+def test_weather_alert_never_falls_back_to_the_mock_vehicle_location():
+    """C9-A（真栈 info T4）：深圳问了三轮之后，「现在有影响开车的天气预警吗」
+    答出「**上海**当前有1条天气预警」——那个上海逐字来自 `memory/store.py` 的
+    mock 车辆位置 `{"city":"上海","road":"延安高架"}`，本方法是全仓**最后一条**
+    还留着 `ctx.fetch("vehicle.location")` 回退的天气路径。
+
+    ⚠ 上一条用例（`test_weather_alert_needs_city`）用的是**空 context**，
+    恰好绕开了回退分支——**它一直是绿的**。这一条把 mock 值真的放进 context：
+    宁可诚实问一句城市，也不拿 mock 位置冒充「当前位置」。
+    """
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="上海当前有1条天气预警"))
+    ctx = make_context(context_values={
+        "vehicle.location": '{"lat": 31.23, "lng": 121.47, "city": "上海", "road": "延安高架"}'})
+    res = asyncio.run(run_handle(
+        agent, "safety.weather_alert", slots={},
+        raw_text="现在有影响开车的天气预警吗", ctx=ctx))
+
+    assert res.status == "need_slot"
+    assert "city" in res.missing_slots
+    assert "上海" not in (res.speech or "")
+    assert agent._agents.calls == [], "拿不到城市就不该去查——查了就会把 mock 说成事实"
+
+
+def test_weather_alert_uses_this_turn_gps_before_asking():
+    """有本轮 GPS 时用坐标（与 info `_resolve_city` 逐字同格 `lng,lat`），不问城市。
+    诚实降级的顺序是「本轮定位 → 问一句」，**中间没有 mock 这一档**。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="当前位置暂无生效预警"))
+    res = asyncio.run(run_handle(
+        agent, "safety.weather_alert", slots={},
+        raw_text="现在有影响开车的天气预警吗", ctx=make_context(),
+        meta={"current_lat": "22.54", "current_lng": "114.06"}))
+
+    assert res.status == "ok"
+    assert agent._agents.calls == [("info", "info.alerts", {"city": "114.060000,22.540000"})]
+
+
 def test_road_condition_needs_route():
     """safety.road_condition 无路线 → NEED_SLOT"""
     ctx = make_context()

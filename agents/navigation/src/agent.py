@@ -298,14 +298,33 @@ class NavigationAgent(BaseAgent):
         真栈实测「预计 05:17 到达，比您要求的 17:00 早约 703 分钟」）。"""
         return fmt_clock(ts)
 
+    # 荒谬余量的闸门（C13-B，2026-08-28）：余量绝对值超过它就**不再播精确分钟数**。
+    # 6 小时不是统计出来的阈值，是「一次出行的时限不可能差这么多」这条常识
+    # ——超了就说明时刻解析多半选错了半天或日子，此时精确数字是有害的确定感。
+    _DEADLINE_ABSURD_MIN = 6 * 60
+
     def _deadline_note(self, duration_min, arrive_by_ts) -> tuple[str, dict]:
         """ETA vs 到达时限的判定（G1）→（话术片段, data/卡片附加字段）。任一缺失 → ("", {})。"""
         if not (arrive_by_ts and duration_min):
             return "", {}
-        eta = int(time.time()) + int(float(duration_min) * 60)
+        now = int(time.time())
+        eta = now + int(float(duration_min) * 60)
         margin = round((int(arrive_by_ts) - eta) / 60)
         extra = {"eta_ts": eta, "arrive_by_ts": int(arrive_by_ts), "margin_min": margin}
         clock, want = self._fmt_clock(eta), self._fmt_clock(arrive_by_ts)
+        # ① 时限本身已经过去（`parse_clock_time` 的「裸时刻双过时」解，C13-A）：
+        #    18:53 说「5点我要到学校」，正确的回答是「17 点已经过了」，
+        #    而不是把时限静默改到明天凌晨再算出一个精确余量。
+        if int(arrive_by_ts) <= now:
+            extra["deadline_elapsed"] = True
+            return (f"您说的{want}按今天算已经过了，照当前路线预计{clock}到达；"
+                    "要按明天算的话告诉我一声。", extra)
+        # ② 余量荒谬：把解析疑点交还用户，不把它包装成精确数字。真栈 family T8
+        #    播出过「比您要求的5:00早约593分钟」，聚合 LLM 当场在同一句里自我吐槽。
+        if abs(margin) > self._DEADLINE_ABSURD_MIN:
+            extra["deadline_uncertain"] = True
+            return (f"预计{clock}到达，和您说的{want}差了{abs(margin) // 60}小时以上"
+                    "——如果时间点不是这个，请再说一次。", extra)
         if margin >= 5:
             return f"预计{clock}到达，比您要求的{want}早约{margin}分钟。", extra
         if margin >= 0:

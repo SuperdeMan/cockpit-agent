@@ -6,6 +6,7 @@ Provider 适配层（mock/amap 经 env 切换）；真实源运行期失败**诚
 不改供 mock 假 POI（治理 P0，conventions §9.4——假餐厅可能被导航过去，代价不对称）。
 """
 from __future__ import annotations
+import json
 import logging
 import os
 import re
@@ -15,6 +16,8 @@ from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
 from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
+from runtime.session_constraints import (NO_QUEUE_RE, NO_SPICY_RE,
+                                         SPICY_MARKS)
 from agents._sdk.timewindow import (
     clock_minutes, dining_window, fmt_clock, parse_event_time)
 from .providers import build_place_provider
@@ -97,8 +100,20 @@ _MOBILITY_MEM_RE = re.compile(
 # 「不排队」：**没有实时排队数据就说没有**，不拿评分/人气冒充（六#3 语料的另半边）。
 # 原话与**记忆文本**共用一条：记忆里是「老婆不喜欢排队」，原话里是「不排队」，
 # 两处各写一条正则迟早只改一处（P5 那个门禁漏洞就是同一形态）。
-_NO_QUEUE_RE = re.compile(
-    r"(?:不喜欢|不爱|讨厌|嫌|怕|不愿意?|不想|别|不用|不)\s*(?:排队|等位)|排队少")
+_NO_QUEUE_RE = NO_QUEUE_RE      # 同上，唯一实现在 runtime/session_constraints.py
+def _session_constraints_from_meta(meta) -> dict:
+    """读编排下发的会话偏好约束（C12-B）。解析失败一律当没有——**宁可少一条约束，
+    也不要按一个解析错的忌口去改用户的检索词**（同 `_focus_safety_alert` 的口径）。"""
+    raw = (meta or {}).get("focus_session_constraints") if hasattr(meta, "get") else None
+    if not raw:
+        return {}
+    try:
+        out = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return {}
+    return out if isinstance(out, dict) else {}
+
+
 _PARKING_PROBE_K = 4          # 停车探测的候选上限：高德免费档 QPS 紧，串行且有界
 _PARKING_RADIUS_KM = 0.3      # 「停车近」的近似半径
 
@@ -489,18 +504,36 @@ class NearbyAgent(BaseAgent):
             # 都推了川菜——记忆说爱吃川菜、当轮说不要辣，系统选了记忆）。
             # 记忆是背景，用户这句话是前景；前景与背景冲突时前景赢，并且要说出来。
             turn_no_spicy = bool(self._NO_SPICY_RE.search(raw))
+            # C12-B：**会话里说过的**也是前景。它由编排层从任意一轮原话抽出、
+            # 经 `focus_session_constraints` 下发（T28 那句落的是 chitchat 轮，
+            # 只读当轮原话的话这条约束到不了 T29）。当轮 > 会话 > 记忆。
+            session = _session_constraints_from_meta(meta)
             if turn_no_spicy:
+                session = dict(session, no_spicy=True)
+            if session:
                 # 没有任何口味记忆时也要生效——「不要太辣」本身就是一条约束，
                 # 不该因为画像是空的就被丢掉。
                 taste = dict(taste or {"like_cuisine": "", "dislikes": [],
-                                       "no_queue": False}, no_spicy=True)
+                                       "no_spicy": False, "no_queue": False})
+                if "no_spicy" in session:
+                    taste["no_spicy"] = bool(session["no_spicy"])
+                if session.get("no_queue"):
+                    taste["no_queue"] = True
             # 菜系偏置只限正餐类目（拿粤菜偏好偏置咖啡检索是错的）；
             # 忌口/店铺级降权按 _TASTE_CATS 全集生效（P5）。
             if (category in _FOOD_CATS and taste and taste["like_cuisine"]
                     and not (cuisine or brand or kw_slot.strip())):
                 liked = taste["like_cuisine"]
-                if turn_no_spicy and any(w in liked for w in self._SPICY_MARKS):
-                    taste_notes.append(f"您说了不要辣，这次就不按平时爱吃的{liked}找了")
+                # ⚠ 挡板问的是 `taste["no_spicy"]`（当轮 ∪ 会话 ∪ 记忆），
+                # **不是 `turn_no_spicy`**（C12-A）。旧判据只看当轮原话，于是
+                # 记忆里同时有「爱吃川菜」与「不吃辣」而这一句没提辣时，
+                # 同一轮确定性地拼出三句自相矛盾的话：`:505` 拿川菜当检索词、
+                # `:594` 又按记忆 no_spicy 把川菜排后、`:951` 再补一句
+                # 「记得您说过不吃辣」（真栈 info T29 原样复现）。
+                # 判据：**限制性偏好赢过扩张性偏好**——不吃辣 > 爱吃川菜。
+                if taste["no_spicy"] and any(w in liked for w in self._SPICY_MARKS):
+                    said = "您说了不要辣" if turn_no_spicy else "您说过不吃辣"
+                    taste_notes.append(f"{said}，这次就不按平时爱吃的{liked}找了")
                 else:
                     keyword = liked
                     taste_notes.append(f"按您的口味优先{liked}")
@@ -596,7 +629,7 @@ class NearbyAgent(BaseAgent):
             if caution:
                 taste_notes.append(caution)
         # E2：「不排队」原话或记忆在场 → 如实说没有这维数据（不拿评分/人气冒充）。
-        if _NO_QUEUE_RE.search(raw) or (taste and taste.get("no_queue")):
+        if _NO_QUEUE_RE.search(raw) or (taste and taste.get("no_queue")):  # 会话约束已并入 taste
             taste_notes.append("地图没有实时排队数据，这条我按不上")
         pref_note = f"（{'；'.join(taste_notes)}）" if taste_notes else ""
 
@@ -772,13 +805,12 @@ class NearbyAgent(BaseAgent):
     _CUISINE_WORDS = ("粤菜", "川菜", "湘菜", "火锅", "日料", "日本菜", "韩国料理",
                       "西餐", "江浙菜", "本帮菜", "东北菜", "新疆菜", "烧烤", "素食",
                       "面馆", "早茶", "茶餐厅")
-    _SPICY_MARKS = ("川菜", "湘菜", "火锅", "串串", "麻辣烫", "冒菜", "麻辣")
-    # 忌辣说法：**原话与记忆文本共用**。首版只认「不…吃/沾辣」，真栈实测
-    # 「不要太辣」根本不匹配——于是用户当轮明说的忌口连识别都没识别到，
-    # 记忆里的川菜偏好照样把检索词改成「川菜」（假个性化的第三种形态）。
-    # ⚠「特**别辣**」会被裸「别」吃掉（写完立刻被负例抓住）——加 lookbehind。
-    _NO_SPICY_RE = re.compile(
-        r"(?:不|(?<!特)别|少|忌|怕)(?:能|要|想|太|吃|沾|放|加|了)*辣|清淡")
+    # 忌辣词表与「重辣菜系」判据 2026-08-28 收敛进 `runtime/session_constraints.py`
+    # （C12-B）：**第三个消费方出现的当天就收**——云侧编排要拿同一条判据抽会话约束，
+    # 而云侧镜像够不着 `agents/`。名字在本类里原样保留，调用点与测试逐字不变。
+    # ⚠「特**别辣**」会被裸「别」吃掉（当年写完立刻被负例抓住）——lookbehind 随词表一起搬。
+    _SPICY_MARKS = SPICY_MARKS
+    _NO_SPICY_RE = NO_SPICY_RE
     _NEG_TASTE_RE = re.compile(r"不喜欢|不吃|不爱|讨厌|难吃|太[酸咸甜油腻辣]")
     # 话里点名家人 → 并取该家人的口味记忆（subject 维度）。词表与 memory/relation.py
     # 的亲属同义表同源——那边是权威登记，这里只做消费侧识别（跨服务不共享代码）。

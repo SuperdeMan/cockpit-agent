@@ -596,6 +596,99 @@ def test_current_location_weather_replaces_instead_of_reviving_an_old_city():
     assert focus.last_city == ""
 
 
+def test_the_real_weather_turn_sequence_keeps_the_city_all_the_way():
+    """C9-B **反向取证**：方案说「天气域本轮空槽 ⇒ 接力条件清零 last_city」是
+    T4 答上海的机制。按真栈 info persona 的五轮原样跑一遍，**它不复现**——
+
+        T1 深圳天气(city=深圳) → T2 明天呢 → T3 空气质量也看一下
+        → T4 现在有影响开车的天气预警吗 → T5 明天适合洗车吗
+
+    因为 `_apply_focus_meta` 在 extract 之前就把城市**注进了槽**：同域续接轮的
+    槽根本不是空的，那条接力条件在这条链上一次都不求值。它只在
+    `last_intent ∉ WEATHER_CONTEXT_INTENTS`（跨过无关轮）时才轮到，
+    而那正是既有两条行为锁刻意要清掉的情形
+    （`test_current_location_weather_replaces_instead_of_reviving_an_old_city`
+    与 `test_weather_after_unrelated_turn_does_not_inherit_stale_city`）。
+
+    ⇒ 第 5 批**不动接力条件**，改由 C9-A（拔掉 road-safety 的 mock 位置回退）
+    兜住 T4：拿不到城市时诚实问一句，而不是拿 `memory/store.py` 的
+    「上海·延安高架」冒充当前位置。这条用例从此是那条链的回归锁。
+    """
+    from orchestrator.cloud.engine import PlannerEngine
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    turns = [
+        ("info.weather", {"city": "深圳"}, "深圳现在天气怎么样"),
+        ("info.weather", {"city": ""}, "明天呢"),
+        ("info.air_quality", {"city": ""}, "空气质量也看一下"),
+        ("safety.weather_alert", {"city": ""}, "现在有影响开车的天气预警吗"),
+        ("info.indices", {"city": ""}, "明天适合洗车吗"),
+    ]
+
+    async def _run():
+        seen = []
+        for idx, (intent, slots, text) in enumerate(turns, start=1):
+            focus = await manager._load_focus("sess", "u1")
+            plan = Plan(raw_text=text, steps=[Step(
+                id=f"s{idx}", agent_id="info", intent=intent, slots=dict(slots))])
+            PlannerEngine._apply_focus_meta(plan, focus)
+            seen.append(plan.steps[0].slots.get("city"))
+            await manager.update_focus("sess", plan, [_ok(f"s{idx}")],
+                                       user_id="u1", exchange_id=f"e{idx}")
+        return seen, await manager._load_focus("sess", "u1")
+
+    cities, focus = asyncio.run(_run())
+
+    assert cities == ["深圳"] * 5, "同域续接轮的城市槽必须在执行前就被补齐"
+    assert focus.last_city == "深圳"
+
+
+def test_session_constraints_are_extracted_from_any_turn_and_stay_sticky():
+    """C12-B（真栈 info T28→T29）：「我不吃辣，也不想排长队」落的是 **chitchat** 轮。
+
+    登记因此必须挂在**输入的形态**上，不能挂在「恰好路由到了 nearby」上
+    （同 C1-B 那条判据）；并且普通轮不得把它抹掉——说过的话只算一轮，
+    和没有载体是一回事。
+    """
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    stated = Plan(raw_text="我不吃辣，也不想排长队",
+                  steps=[Step(id="s1", agent_id="chitchat", intent="chitchat.talk")])
+    unrelated = Plan(raw_text="推荐附近适合晚饭的地方",
+                     steps=[Step(id="s2", agent_id="nearby", intent="nearby.search")])
+
+    async def _run():
+        await manager.update_focus("sess", stated, [_ok("s1")], user_id="u1")
+        first = await manager._load_focus("sess", "u1")
+        await manager.update_focus("sess", unrelated, [_ok("s2")], user_id="u1")
+        return first, await manager._load_focus("sess", "u1")
+
+    first, second = asyncio.run(_run())
+
+    assert first.session_constraints == {"no_spicy": True, "no_queue": True}
+    assert second.session_constraints == {"no_spicy": True, "no_queue": True}
+
+
+def test_a_later_turn_can_take_the_dietary_constraint_back():
+    """改口是事实：**后说的覆盖先说的**，没提到的那一维沿用。
+    一个解除不了的忌口会让系统跟用户犟嘴。"""
+    store = SessionStore()
+    manager = ContextManager(clients=SimpleNamespace(), session=store)
+    stated = Plan(raw_text="我不吃辣，也不想排长队",
+                  steps=[Step(id="s1", agent_id="chitchat", intent="chitchat.talk")])
+    reversed_turn = Plan(raw_text="今天想吃辣的",
+                         steps=[Step(id="s2", agent_id="chitchat", intent="chitchat.talk")])
+
+    async def _run():
+        await manager.update_focus("sess", stated, [_ok("s1")], user_id="u1")
+        await manager.update_focus("sess", reversed_turn, [_ok("s2")], user_id="u1")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+
+    assert focus.session_constraints == {"no_spicy": False, "no_queue": True}
+
+
 def test_unrelated_turn_drops_the_previous_stock_symbol_from_focus():
     store = SessionStore()
     manager = ContextManager(clients=SimpleNamespace(), session=store)

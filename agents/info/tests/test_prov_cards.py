@@ -18,6 +18,42 @@ def test_weather_card_carries_prov_mock():
     assert prov["fetched_at"]
 
 
+class _AlertingWeather:
+    """只为 alerts 那张卡造一条预警——mock provider 无预警时**不出卡**（正确行为），
+    而「不出卡」证明不了「出卡时盖没盖章」。"""
+    provenance_vendor = "qweather"
+    provenance_mode = "real"
+
+    async def alerts(self, city, meta=None):
+        from agents.info.src.providers.base import WeatherAlert
+        return [WeatherAlert(title="深圳市气象台发布台风蓝色预警", level="蓝",
+                             type_name="台风", text="注意防范", pub_time="2026-08-26T11:00Z")]
+
+
+def test_the_three_weather_family_cards_carry_prov_too():
+    """C9-C（真栈 info T3/T4/T5 三张卡全缺章）：同一个 `weather.py` 里 5 个 handler，
+    2 个盖章 3 个漏——漏的恰好是 QA 抓到的这三张。契约 §9.3 的必带清单
+    2026-08-27 已补登 `air_quality / weather_alerts / life_indices`，
+    这一条是**实现侧的兑现**（契约与实现一起漏过一次，就不能只补一边）。
+    """
+    for intent in ("info.air_quality", "info.indices"):
+        res = asyncio.run(run_handle(
+            InfoAgent(), intent, slots={"city": "北京"}, raw_text="北京"))
+        prov = (res.ui_card or {}).get("_prov")
+        assert prov, f"{intent} 的卡必须带 _prov"
+        assert prov["mode"] == "mock" and prov["vendor"] == "mock"
+        assert prov["fetched_at"]
+
+    agent = InfoAgent()
+    agent.weather = _AlertingWeather()
+    res = asyncio.run(run_handle(
+        agent, "info.alerts", slots={"city": "深圳"}, raw_text="深圳有预警吗"))
+    prov = (res.ui_card or {}).get("_prov")
+    assert prov and prov["vendor"] == "qweather"
+    # C9-D：前缀不进 join 列表——真栈原话是「…天气预警：；台风蓝色预警」。
+    assert "：；" not in res.speech and "：，" not in res.speech
+
+
 def test_search_card_carries_prov():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.search", slots={"query": "人工智能"}, raw_text="搜一下人工智能"))

@@ -174,6 +174,20 @@ class Aggregator:
             if r.status == StepStatus.FAILED:
                 if self._exec_confirmed_by_state(r):
                     return {"speech": _EXEC_UNCERTAIN_SPEECH, "actions": []}
+                # C11-B（2026-08-28）：**Agent 自己的失败话术就是给用户看的**，
+                # 有就原样透传，连同 follow_up / 卡片。原实现无条件走
+                # `_ERROR_FRIENDLY`，而 `AgentResult` 根本没有 error 字段
+                # （`_to_result` 也不设）⇒ 查表恒命中空键 ⇒ 每一条失败都被换成
+                # 裸「抱歉，处理失败。」。真栈 family T34：桥说的是「未能确认本次
+                # 订单预览清理完成，请稍后再试」，用户听到的是「抱歉，处理失败。」
+                # ——**恢复指引连同「失败在哪一步」一起被吞掉了**。
+                # `_ERROR_FRIENDLY` 仍然管它本来该管的那半：超时/熔断这类
+                # **没有话术可播的真异常**（error 由 executor 填，Agent 不参与）。
+                speech = strip_markdown_speech(r.speech or "").strip()
+                if speech:
+                    return {"speech": self._append_verify_note(speech, results),
+                            "actions": [], "ui_card": ui_card,
+                            "follow_up": r.follow_up}
                 friendly = self._ERROR_FRIENDLY.get(r.error or "", r.error or "处理失败")
                 return {"speech": f"抱歉，{friendly}。", "actions": []}
             return {

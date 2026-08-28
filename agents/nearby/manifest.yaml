@@ -87,4 +87,8 @@ requires_permissions:
   - network.external
   - payment.invoke   # 仅 nearby.order 预留桩用；发现/详情只读
 edge_intents: []
-context_scopes: [location]   # 周边搜索按需下发精确位置（最小化）
+# `session_constraints`（C12-B，2026-08-28）：用户**在这次会话里说出来**的忌口/偏好
+# （「我不吃辣，也不想排长队」）。它与记忆画像是前景/背景两回事——真栈 T28 说完、
+# T29 就拿到 10 家川菜，因为那句话落在 chitchat 轮、nearby 只读得到当轮原话。
+# 判据与词表在 `runtime/session_constraints.py`，本 Agent 只消费。
+context_scopes: [location, session_constraints]   # 周边搜索按需下发精确位置（最小化）

@@ -716,3 +716,70 @@ cases:
       - input: {utterance: 别关空调，把音量调小就行, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [volume.dec]}], forbidden_intents: [hvac.off, hvac.on], allow_extra_intents: false}
+  # ── 2026-08-28 补（QA C14 / P1-11）：**肯定的规划诉求 + 否定的执行方式** ──────
+  # 既有 negation 家族覆盖的都是「整句诉求被否定」（nq.airport.hold「先别导航去机场」）
+  # 或「并列诉求里被否定的那一个不出步」（nq.hvac.keep-volume）。真栈 info T48
+  # 「规划去广州路上的补能，但先不要启动导航」是第三种形态：被否定的不是诉求，
+  # 是**执行方式**——而 `charging.plan` 本来就只出建议卡、不发导航，两者天然相容。
+  # 当时它落到 chitchat 并编造了一段路线（「为您规划路线：目的地"广州路补能"…」）。
+  # 四条：正 2（一条真栈原句作回归锁、一条换说法测迁移）+ 硬负 2（否定盖住规划本身 /
+  # 同句式但没有补能诉求）。
+  - id: nq.charging.plan-without-navigation
+    title: 规划沿途补能但先不要启动导航
+    family_id: nq.charging-plan-no-nav
+    cohort: seen_regression
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [charging, navigation], layers: [l1]}
+    provenance: {kind: real_badcase, source_ref: "docs/reviews/2026-08-26-minimax-cloud-qa-findings.md#P1-11", reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    turns:
+      - input: {utterance: 规划去广州路上的补能，但先不要启动导航, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [charging.plan]}]
+            forbidden_intents: [navigation.navigate_to, chitchat.talk]
+            allow_extra_intents: false
+            slots:
+              - {intent: charging.plan, key: destination, matcher: exact, value: 广州}
+  # ⚠ 家族**不许跨 cohort**（门禁 `family leakage`）：真栈原句那条是 seen_regression
+  # （它逐字进了范例库），迁移与硬负三条另立家族。
+  - id: nq.charging.plan-without-navigation-transfer
+    title: 同形态换说法（迁移）
+    family_id: nq.charging-plan-no-nav-transfer
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [charging, navigation], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    turns:
+      - input: {utterance: 去成都路上哪儿补电，先规划一下，暂时不要开始导航, context: {}}
+        expected:
+          plan:
+            required_intent_groups: [{any_of: [charging.plan]}]
+            forbidden_intents: [navigation.navigate_to]
+            allow_extra_intents: false
+  - id: nq.charging.hold-the-planning-itself
+    title: 硬负——否定盖住的是规划本身
+    family_id: nq.charging-plan-no-nav-transfer
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [charging, chitchat], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    relation: {base_case: nq.charging.plan-without-navigation-transfer, type: route_flip, expectation: {forbidden_after: [charging.plan], required_change: true}}
+    turns:
+      - input: {utterance: 先别规划充电了, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [chitchat.talk]}], forbidden_intents: [charging.plan, charging.find], allow_extra_intents: false}
+  - id: nq.charging.plan-route-not-charging
+    title: 硬负——同句式但没有补能诉求（别把「规划去X，但别…」整族拉进充电域）
+    family_id: nq.charging-plan-no-nav-transfer
+    cohort: unseen_transfer
+    risk: medium
+    status: reviewed
+    tags: {attacks: [A3], mechanisms: [negation_scope], domains: [navigation, charging], layers: [l1]}
+    provenance: {kind: authored, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    turns:
+      - input: {utterance: 规划一条去广州的路线，但先不要走高速, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [navigation.navigate_to]}], forbidden_intents: [charging.plan, charging.find], allow_extra_intents: false}

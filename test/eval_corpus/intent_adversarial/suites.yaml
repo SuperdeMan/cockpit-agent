@@ -121,12 +121,24 @@ schema_version: 1
 # `tu.nav.go-with-origin-not-estimate` 的 context 是空的，而 T22 的真实条件是
 # 焦点里已经有活动路线（planner 因此落 reroute 而不是 navigate_to），旧用例
 # 从来跑不到出事的那条路。`seen_regression`（照着修法写的），旧尺子一条没删。
+# 2026-08-28 放到 634：MiniMax QA 修复批第 5 批（C14）**两笔，一笔带出另一笔**。
+#   ① C14 本体 **+4**：`charging.plan` 的新句形「肯定的规划诉求 + 否定的执行方式」
+#      （真栈 T48「规划去广州路上的补能，但先不要启动导航」落到 chitchat 并编造路线）。
+#      既有 negation 家族只覆盖「整句被否定」与「并列里的一个被否定」，这是第三种。
+#      正 2（真栈原句作回归锁 seen_regression + 换说法测迁移）+ 硬负 2
+#      （否定盖住规划本身 / 同句式但没有补能诉求——防止「规划去X，但先别…」整族被拉进充电域）。
+#   ② 边界台账 `info-safety.weather-vs-road-condition` **+2 distinct**（4 条用例，
+#      seen 两条复用既有输入）：它是被 ① 顶过阈值的——**IDF 是语料级的量**，
+#      加任何一条范例都会让相邻对的分数浮动（0.349→0.351）。裁定为两回事
+#      （天气 vs 前方路况，「怎么样」框架的第三条腿），台账契约机械地要求双向各 2 例。
+#      **这一条记在这里是为了让下一个人知道：范例库的门禁读数是相对的，
+#      别把它读成「谁把冲突引进来了」。** 旧尺子一条没删。
 suites:
   discovery:
     statuses: [candidate, reviewed, stable]
     live_statuses: [reviewed, stable]
     min_cases: 450
-    max_cases: 629
+    max_cases: 634
     attack_minimums: {A1: 80, A2: 50, A3: 45, A4: 60, A5: 50, A6: 45, A7: 40, A8: 35, A9: 45}
     normal_repeats: 1
     failure_repeats: 3

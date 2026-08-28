@@ -281,7 +281,11 @@ class QWeatherProvider(WeatherProvider):
             o3=concentrations.get("o3", ""),
             co=concentrations.get("co", ""),
             so2=concentrations.get("so2", ""),
-            update_time=_s(metadata.get("updateTime") or metadata.get("tag")),
+            # ⚠ **不拿 `tag` 兜底**（N6，2026-08-28）：新版 airquality 端点的 metadata
+            # 只有 `tag`（厂商 64 位署名摘要），`or` 于是**永远**落到它——真栈 T3 的
+            # 空气质量卡 `update_time` 是一串 hex。署名摘要不是时间：认不出就留空，
+            # 同「判不出返回 None 不是 0」那条（`runtime/openhours.py`）。
+            update_time=_s(metadata.get("updateTime")),
         )
 
     async def air_quality(self, city: str,

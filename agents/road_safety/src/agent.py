@@ -17,6 +17,7 @@ import os
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
+from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
                                    alert_signal, driver_state)
@@ -398,12 +399,24 @@ class RoadSafetyAgent(BaseAgent):
                            follow_up="需要我按目的地给更具体的路线建议吗？")
 
     async def _weather_alert(self, intent, ctx, meta) -> AgentResult:
-        """查询天气预警。"""
+        """查询天气预警。
+
+        ⚠ **不回退 `vehicle.location`**（C9-A，2026-08-28）：那是 `memory/store.py`
+        的 mock 车辆位置（`{"city":"上海","road":"延安高架"}`），本方法是全仓**最后一条**
+        还留着这条回退的天气路径——info 的 `_resolve_city` 与 navigation 的
+        `current_location_from_meta` 早已显式移除并留了注释。真栈实测（2026-08-26 QA
+        info T4）：深圳三轮之后这一句答出「上海当前有1条天气预警」，且 T5 的模型
+        **从这句答案里学会了上海**，污染自我延续。
+        判据同 §9.5 铁律③：**宁可诚实问一句，不拿 mock 冒充真实位置**。
+        定位来源与 info 同源——本轮 GPS（`current_location_from_meta`）→ 坐标串交给
+        下游 provider 反查；再没有就 NEED_SLOT。
+        """
         city = intent.slots.get("city", "").strip()
         if not city:
-            # 尝试从位置解析
-            loc_values = await ctx.fetch("vehicle.location")
-            city = loc_values.get("vehicle.location", "")
+            current = current_location_from_meta(meta)
+            if current:
+                # 和风 GeoAPI 接受 `lng,lat`（与 info `_resolve_city` 逐字同格）。
+                city = f"{current.lng:.6f},{current.lat:.6f}"
         if not city:
             return AgentResult(
                 status=NEED_SLOT, speech="您想查询哪个城市的天气预警？",

@@ -25,6 +25,7 @@ from dataclasses import dataclass, field, fields, asdict
 from .models import PlanContext
 from runtime.clock import hhmm as clock_hhmm
 from runtime.safety_signal import alert_level, alert_signal
+from runtime.session_constraints import constraints_in, merge_constraints
 from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
 
@@ -301,6 +302,12 @@ class Focus:
     # 存在的理由：QA 轮 SF3 三轮实测——红色机油灯之后第二轮答天气、第三轮执行音量。
     # **一次安全警告必须是会话状态，不能是一句话说完就没了。**
     safety_alert: dict = field(default_factory=dict)
+    # C12-B 会话内偏好约束 `{no_spicy: bool, no_queue: True}`：用户**在这次会话里
+    # 说出来**的忌口/偏好。判据与词表在 `runtime/session_constraints.py`（唯一实现）。
+    # 与记忆画像的关系是**前景 vs 背景**：画像是「平时爱吃川菜」，这一格是
+    # 「我今天说了不吃辣」——冲突时前景赢（§4.3 那条判据的载体，写下一年才有）。
+    # 同 safety_alert 的粘性：普通轮不得把它抹掉，**只有用户改口才覆盖**。
+    session_constraints: dict = field(default_factory=dict)
     # **本轮 scratch，不跨轮**（保存前由 `update_focus` 复位）：这一轮显式终止了活动路线
     # （保留键 `_route_session_end`，QA I-017）。
     # ⚠ 存在的理由是**接力比清除更强**：粘性接力的条件是 `not focus.active_route`，
@@ -320,6 +327,7 @@ class Focus:
                     or self.last_choice_purpose or self.last_choices
                     or self.candidate_sets
                     or self.last_places or self.active_route or self.safety_alert
+                    or self.session_constraints
                     or self.route_ended
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
@@ -1231,6 +1239,13 @@ def extract_focus(plan, results) -> "Focus | None":
     # 顺序在保留键之前：原话是**事实**，Agent 声明是**补充**；两者经同一条严重级
     # 比较合流，所以 Agent 报了更高等级仍然赢，报了更低等级不会把事实降级。
     raw_text = str(getattr(plan, "raw_text", "") or "")
+    # C12-B 会话内偏好：与告警登记同一条判据——**登记挂在输入的形态上，不挂在路由上**。
+    # T28「我不吃辣，也不想排长队」落的是 chitchat，如果只在 nearby 那条路上抽，
+    # 下一轮的推荐就永远读不到它（那正是真栈发生的事）。
+    if raw_text:
+        stated = constraints_in(raw_text)
+        if stated:
+            focus.session_constraints = stated
     if raw_text:
         scanned = _valid_safety_alert({
             "level": alert_level(raw_text), "signal": alert_signal(raw_text),
@@ -1401,6 +1416,12 @@ class ContextManager:
                 if previous is not None and getattr(previous, "safety_alert", None):
                     focus.safety_alert = merge_safety_alert(
                         dict(previous.safety_alert), focus.safety_alert)
+                # C12-B：会话偏好约束**后说的覆盖先说的、没说的沿用**。
+                # 普通轮（这一句没提口味）必须原样保住——不接力就等于「说过的话
+                # 只算一轮」，那和没有载体是一回事。
+                if previous is not None and getattr(previous, "session_constraints", None):
+                    focus.session_constraints = merge_constraints(
+                        dict(previous.session_constraints), focus.session_constraints)
                 if previous is not None and not focus.last_city \
                         and focus.last_intent not in WEATHER_CONTEXT_INTENTS \
                         and getattr(previous, "last_city", ""):

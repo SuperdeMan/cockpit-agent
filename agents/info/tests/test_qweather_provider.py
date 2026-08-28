@@ -266,6 +266,30 @@ def test_air_quality_uses_current_air_endpoint_and_parses_cn_index():
     assert p._spy.last["url"].endswith("/airquality/v1/current/39.90/116.40")
 
 
+def test_air_quality_update_time_is_empty_when_the_vendor_gives_no_time():
+    """N6（真栈 info T3）：空气质量卡的 `update_time` 是一串 **64 位 hex**。
+
+    成因是 `metadata.get("updateTime") or metadata.get("tag")`——新版 airquality
+    端点的 metadata 只有 `tag`（厂商署名摘要），`or` 于是**永远**落到它。
+    署名摘要不是时间：认不出就留空，**宁缺勿假**（同 `openhours` 那条
+    「判不出返回 None 不是 0」）。
+    """
+    signature = "9875c685367bdeb6e01600758f696ab45985732b1715a4d559dc6f7aa76adcfb"
+    payload = dict(_AIR_CURRENT_OK, metadata={"tag": signature})
+    p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                   "/airquality/v1/current/39.90/116.40": payload},
+                  jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
+    aq = asyncio.run(p.air_quality("北京"))
+    assert aq.update_time == ""
+    # 反向：厂商真给了时间就照收
+    timed = dict(_AIR_CURRENT_OK,
+                 metadata={"tag": signature, "updateTime": "2026-08-26T19:00+08:00"})
+    p2 = _provider({"/geo/v2/city/lookup": _LOOKUP_OK,
+                    "/airquality/v1/current/39.90/116.40": timed},
+                   jwt_auth=QWeatherJWT("proj", "kid", _ed25519_pem()))
+    assert asyncio.run(p2.air_quality("北京")).update_time == "2026-08-26T19:00+08:00"
+
+
 def test_current_air_quality_requires_jwt_authentication():
     p = _provider({"/geo/v2/city/lookup": _LOOKUP_OK})
     with pytest.raises(ProviderError, match="JWT"):

@@ -168,6 +168,27 @@ def test_deictic_weather_followup_uses_last_city_even_if_model_invents_another()
     assert plan.steps[0].slots["city"] == "深圳"
 
 
+def test_session_constraints_go_only_to_steps_that_declared_the_scope():
+    """C12-B 下发面：与候选集同一条门控通道（manifest `context_scopes`）。
+
+    **刻意不广播**——它与安全告警的取舍相反：告警是所有域都得服从的约束，
+    忌口是个人数据，给不消费它的 Agent 只是多一处扩散面（最小化下发）。
+    """
+    plan = Plan(
+        raw_text="推荐附近适合晚饭的地方",
+        steps=[Step(id="near", agent_id="nearby", intent="nearby.search",
+                    context_scopes=["location", "session_constraints"]),
+               Step(id="talk", agent_id="chitchat", intent="chitchat.talk")],
+    )
+
+    PlannerEngine._apply_focus_meta(
+        plan, Focus(session_constraints={"no_spicy": True}))
+
+    assert json.loads(plan.steps[0].meta["focus_session_constraints"]) == {
+        "no_spicy": True}
+    assert "focus_session_constraints" not in plan.steps[1].meta
+
+
 def test_weather_after_unrelated_turn_does_not_inherit_stale_city():
     """城市焦点只服务同域续接，不能跨过一次无关会话污染新的当前位置查询。"""
     plan = Plan(

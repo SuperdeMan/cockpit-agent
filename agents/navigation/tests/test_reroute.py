@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+from runtime.clock import epoch_at
 from agents._sdk.testing import make_context, run_handle
 from agents.navigation.src.agent import NavigationAgent
 from agents.navigation.src.providers.base import POI
@@ -281,8 +282,18 @@ def test_reroute_no_recognized_edit_asks():
     assert not res.actions
 
 
-def test_navigate_to_stamps_route_session():
-    """挂点验证：普通导航成功 → data._route_session 结构完整（G8 抽取的数据源）。"""
+def test_navigate_to_stamps_route_session(monkeypatch):
+    """挂点验证：普通导航成功 → data._route_session 结构完整（G8 抽取的数据源）。
+
+    ⚠ **墙钟必须冻住**（2026-08-28，C13-A 落地时被这条抓到）：它原来用真实
+    `time.time()` 断言「时限在未来」，而「五点前要到」在**17:00 之后**跑就不再是
+    未来——旧解析器靠滚到次日凌晨把这条断言喂绿了，那正是 C13-A 修掉的行为。
+    一条**读数取决于几点跑**的用例，绿和红都说明不了问题。
+    """
+    import agents.navigation.src.agent as nav_mod
+    fixed_now = epoch_at(2026, 8, 14, 14, 0)
+    monkeypatch.setattr(nav_mod.time, "time", lambda: fixed_now)
+
     dest = POI(id="d1", name="万象天地", address="南山区", lat=22.53, lng=113.95)
     agent, _ = _agent(search_results=[dest])
     res = asyncio.run(run_handle(
@@ -293,7 +304,7 @@ def test_navigate_to_stamps_route_session():
     assert session["destination"] == "万象天地"
     assert session["lat"] == 22.53 and session["lng"] == 113.95
     assert session["ts"] > 0
-    assert session.get("arrive_by_ts", 0) > int(time.time())
+    assert session.get("arrive_by_ts", 0) > fixed_now
 
 
 # ── C8：显式出发地（2026-08-28，QA P1-08）────────────────────────────────

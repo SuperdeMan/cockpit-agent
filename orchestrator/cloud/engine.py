@@ -27,6 +27,7 @@ from .clients import set_llm_pin
 from . import candidate_query
 from . import slot_shape
 from runtime import session_facts
+from runtime.execution_claim import execution_claim
 from runtime.clause_split import split_clauses
 from runtime.polarity import is_negated_directive
 from .context import (ContextManager, build_context, candidate_downlink,
@@ -327,6 +328,11 @@ class PlannerEngine:
                 executed_actions = _executed_action_names(ev.get("actions"))
                 # C4-A：这一轮的数据源事实与动作事实同源同格，一起落库。
                 turn_sources = _turn_sources(ev.get("ui_card"))
+                # C11-C：「话里有一次执行，账上没有」的**观测列**（零决策）。
+                # 挂在这里而不是聚合器：final 有四条出口（adaptive/stream/reactive/E），
+                # 而它们全都从这个 for 里流过——**同一条纪律写成注释还是写成结构，
+                # 差别就是会不会有第三次**（`_deterministic_reply` 那条老账）。
+                await self._emit_execution_claim(ctx, ev, executed_actions)
             yield ev
 
         # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
@@ -348,6 +354,27 @@ class PlannerEngine:
                                                exchange_id=exch,
                                                actions=executed_actions,
                                                sources=turn_sources)
+
+    @staticmethod
+    async def _emit_execution_claim(ctx, event: dict, actions: list) -> None:
+        """本轮 final 说了「已为您…」却零动作 ⇒ 出一位 obs 观测（C11-C，shadow）。
+
+        判据本体在 `runtime/execution_claim.py`（形态、零领域词），探针 C16-2 复用
+        同一份。**只观测不拦截**：直拦的误伤面（信息类能力的合法完成语、转述历史）
+        没量过，先拿两周真实分布——同 B6 `actionability` 与 C5-A `clause_uncovered`
+        的纪律。命中就发一条 span，不命中一个字都不发（多一个恒空字段就是多一处噪声）。
+        """
+        if actions:
+            return
+        family = execution_claim(str(event.get("speech") or ""))
+        if not family:
+            return
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                ctx.trace_id, "cloud.execution_claim",
+                attrs={"family": family})
+        except Exception as e:      # 观测绝不阻塞主链路
+            logger.debug("execution claim obs failed: %s", e)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:
@@ -1749,6 +1776,18 @@ class PlannerEngine:
             if candidates:
                 step.meta = {**step.meta, "focus_candidate_set": json.dumps(
                     candidates, ensure_ascii=False)}
+
+        # C12-B 会话偏好约束下发：与候选集同一条门控通道（manifest 声明
+        # `context_scopes: [session_constraints]` 的步才收得到）。
+        # **不广播**——它与安全告警的取舍相反：告警是所有域都必须服从的约束，
+        # 而忌口是个人数据，给不消费它的 Agent 只是多一处扩散面（最小化下发）。
+        constraints = getattr(focus, "session_constraints", None) or {}
+        if constraints:
+            constraint_meta = {"focus_session_constraints": json.dumps(
+                constraints, ensure_ascii=False)}
+            for step in plan.steps:
+                if "session_constraints" in (step.context_scopes or []):
+                    step.meta = {**step.meta, **constraint_meta}
 
         # Q9 安全告警下发：**不按 scope 门控，广播给所有步**。
         # 与上面那条坐标下发的取舍正相反，理由也正相反：坐标是敏感数据，给多了是泄漏；

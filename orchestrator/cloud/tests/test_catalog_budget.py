@@ -227,14 +227,19 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     #    早就够了，缺的一直是读侧（「第二天有哪些安排」答成游标进度）。
     # 三笔都是**判别句**而不是功能罗列——描述就是 planner 的选择权重（同 volume.mute
     # 与 media.stop 两笔的理由）。默认 16k 下仍零裁剪。
-    assert catalog.catalog_stats["chars_full"] == 13702
-    assert catalog.catalog_stats["chars_final"] == 13702
+    # 2026-08-28 +57 → 13759：第 5 批 C14-B 给 `charging.plan` 的描述补一句
+    # **「只出补能建议卡、不发起导航」**。这一笔买的是「否定的执行方式与本能力相容」
+    # 这条判断力：真栈 T48「规划去广州路上的补能，但**先不要启动导航**」落到了
+    # chitchat 并编造了一段路线——`charging.plan` 的实现本来就是 advisory、不发导航
+    # 动作，但**这个性质只写在代码注释里**，planner 无从知道。条数不变。
+    assert catalog.catalog_stats["chars_full"] == 13759
+    assert catalog.catalog_stats["chars_final"] == 13759
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13702 → 2298）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13759 → 2241）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2298
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2241
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

@@ -368,14 +368,16 @@ class WeatherMixin:
             return AgentResult(speech=f"{name}当前没有生效的天气预警。",
                                data={"alerts": []})
 
-        parts = [f"{name}当前有{len(alerts)}条天气预警："]
-        for a in alerts:
-            parts.append(f"{a.title}（{a.level}级）")
-        speech = "；".join(parts) + "。请注意防范。"
+        # 前缀**不进 join 列表**（照 :338-342 `_forecast` 的既有修法）：带「：」的
+        # 首项跟在分隔符前面会播成「…天气预警：；台风蓝色预警」（真栈 T4 原样复现）。
+        parts = [f"{a.title}（{a.level}级）" for a in alerts]
+        speech = (f"{name}当前有{len(alerts)}条天气预警："
+                  + "；".join(parts) + "。请注意防范。")
 
         items = [{"title": a.title, "level": a.level, "type": a.type_name,
                   "text": a.text, "pub_time": a.pub_time} for a in alerts]
-        card = {"type": "weather_alerts", "city": name, "items": items}
+        card = attach({"type": "weather_alerts", "city": name, "items": items},
+                      self.weather)
         return AgentResult(speech=speech, ui_card=card, data={"alerts": items})
 
     async def _indices(self, intent, ctx, meta) -> AgentResult:
@@ -383,6 +385,10 @@ class WeatherMixin:
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的生活指数？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
+        # 展示名过 `_display_city`（GPS 路径下 city 是「114.06,22.54」坐标串，
+        # 裸用它会把坐标念进话术、写进卡片——同 `_weather`/`_alerts` 的既有口径）。
+        name = await self._display_city(intent, city, meta) or (
+            "当前位置" if current_location_from_meta(meta) else city)
         try:
             indices = await self.weather.indices(city, meta=meta)
         except ProviderError as e:
@@ -392,16 +398,15 @@ class WeatherMixin:
                                speech=f"暂时无法获取「{asked}」的生活指数，请稍后再试。")
 
         if not indices:
-            return AgentResult(speech=f"暂无{city}的生活指数数据。")
+            return AgentResult(speech=f"暂无{name}的生活指数数据。")
 
-        parts = [f"{city}生活指数："]
-        for idx in indices:
-            parts.append(f"{idx.name} {idx.level}——{idx.text}")
-        speech = "，".join(parts) + "。"
+        parts = [f"{idx.name} {idx.level}——{idx.text}" for idx in indices]
+        speech = f"{_speech_place(name)}生活指数：" + "，".join(parts) + "。"
 
         items = [{"category": idx.category, "name": idx.name,
                   "level": idx.level, "text": idx.text} for idx in indices]
-        card = {"type": "life_indices", "city": city, "items": items}
+        card = attach({"type": "life_indices", "city": name, "items": items},
+                      self.weather)
         return AgentResult(speech=speech, ui_card=card, data={"indices": items})
 
     async def _air_quality(self, intent, ctx, meta) -> AgentResult:
@@ -409,6 +414,8 @@ class WeatherMixin:
         if not city:
             return AgentResult(status=NEED_SLOT, speech="您想查询哪个城市的空气质量？",
                                follow_up="请告诉我城市名", missing_slots=["city"])
+        name = await self._display_city(intent, city, meta) or (
+            "当前位置" if current_location_from_meta(meta) else city)
         try:
             aq = await self.weather.air_quality(city, meta=meta)
         except ProviderError as e:
@@ -417,7 +424,7 @@ class WeatherMixin:
             return AgentResult(status=FAILED,
                                speech=f"暂时无法获取「{asked}」的空气质量，请稍后再试。")
 
-        parts = [f"{city}空气质量{aq.category or '未知'}"]
+        parts = [f"{_speech_place(name)}空气质量{aq.category or '未知'}"]
         if aq.aqi:
             parts.append(f"，AQI {aq.aqi}")
         if aq.pm2p5:
@@ -426,9 +433,9 @@ class WeatherMixin:
             parts.append(f"，首要污染物{aq.primary_pollutant}")
         speech = "".join(parts) + "。"
 
-        card = {"type": "air_quality", "city": city, "aqi": aq.aqi,
-                "category": aq.category, "pm2p5": aq.pm2p5, "pm10": aq.pm10,
-                "primary_pollutant": aq.primary_pollutant,
-                "no2": aq.no2, "o3": aq.o3, "co": aq.co, "so2": aq.so2,
-                "update_time": aq.update_time}
+        card = attach({"type": "air_quality", "city": name, "aqi": aq.aqi,
+                       "category": aq.category, "pm2p5": aq.pm2p5, "pm10": aq.pm10,
+                       "primary_pollutant": aq.primary_pollutant,
+                       "no2": aq.no2, "o3": aq.o3, "co": aq.co, "so2": aq.so2,
+                       "update_time": aq.update_time}, self.weather)
         return AgentResult(speech=speech, ui_card=card, data={"air_quality": card})

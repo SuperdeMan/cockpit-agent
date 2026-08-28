@@ -1300,3 +1300,60 @@ cases:
       - input: {utterance: 然后去吃顿火锅吧, context: {}}
         expected:
           plan: {required_intent_groups: [{any_of: [nearby.search]}], forbidden_intents: [navigation.navigate_to], allow_extra_intents: false}
+
+  # ── 台账（2026-08-28 新登记）：info-safety.weather-vs-road-condition ──────
+  # 「怎么样」框架的**第三条腿**（另两条：nearby-safety.poi-vs-road-condition、
+  # info-nearby.weather-vs-poi）。它是被 C14 加两条 charging 范例顶过阈值的——
+  # IDF 是语料级的量，加任何范例都会让相邻对的分数浮动（0.349→0.351）。
+  # 裁定为**两回事**（天气 vs 前方路况），台账契约要求双向各 2 例。
+  # 两条 seen 侧刻意复用既有输入（不增 distinct input），unseen 侧各出一条新说法。
+  - id: bd.is-weather-road.left.seen
+    title: 今天天气怎么样（对照路上怎么样）
+    family_id: bd.is-weather-road.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, safety], boundary_ledger: info-safety.weather-vs-road-condition, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.weather-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    turns:
+      - input: {utterance: 今天天气怎么样, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [safety.road_condition, safety.driving_advice], allow_extra_intents: false}
+  - id: bd.is-weather-road.right.seen
+    title: 路上怎么样（对照今天天气怎么样）
+    family_id: bd.is-weather-road.seen
+    cohort: seen_regression
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, safety], boundary_ledger: info-safety.weather-vs-road-condition, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.weather-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    relation: {base_case: bd.is-weather-road.left.seen, type: route_flip, expectation: {forbidden_after: [info.weather], required_change: true}}
+    turns:
+      - input: {utterance: 路上怎么样, context: {focus: {last_intent: nearby.search, last_poi: 海底捞（体育中心店）}}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.road_condition]}], forbidden_intents: [info.weather, info.forecast], allow_extra_intents: false}
+  - id: bd.is-weather-road.left.unseen
+    title: 外面下雨了吗（天气那半换说法）
+    family_id: bd.is-weather-road.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, safety], boundary_ledger: info-safety.weather-vs-road-condition, boundary_side: left, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.weather-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    turns:
+      - input: {utterance: 外面下雨了吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [info.weather]}], forbidden_intents: [safety.road_condition, safety.driving_advice], allow_extra_intents: false}
+  - id: bd.is-weather-road.right.unseen
+    title: 高速现在通畅吗（路况那半换说法）
+    family_id: bd.is-weather-road.unseen
+    cohort: unseen_transfer
+    risk: low
+    status: reviewed
+    tags: {attacks: [A1], mechanisms: [domain_collision, shared_frame], domains: [info, safety], boundary_ledger: info-safety.weather-vs-road-condition, boundary_side: right, layers: [l1]}
+    provenance: {kind: boundary_ledger, source_ref: info-safety.weather-vs-road-condition, reviewed_by: human, reviewed_via: blanket_authorisation, reviewed_at: 2026-08-28}
+    relation: {base_case: bd.is-weather-road.left.unseen, type: route_flip, expectation: {forbidden_after: [info.weather], required_change: true}}
+    turns:
+      - input: {utterance: 高速现在通畅吗, context: {}}
+        expected:
+          plan: {required_intent_groups: [{any_of: [safety.road_condition]}], forbidden_intents: [info.weather, info.forecast], allow_extra_intents: false}

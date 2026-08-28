@@ -103,6 +103,16 @@ rulings:
     domains: [info, nearby]
     why: 同上——「怎么样」框架
 
+  - id: info-safety.weather-vs-road-condition
+    texts: [今天天气怎么样, 路上怎么样]
+    domains: [info, safety]
+    why: 「怎么样」框架的**第三条腿**（另两条：nearby-safety.poi-vs-road-condition、
+      info-nearby.weather-vs-poi）；对象是天气 vs 前方路况，两回事。
+      ⚠ 它 2026-08-28 才被顶过阈值，**不是因为语料里新增了相似句**——
+      是因为 C14 往 charging 域加了两条范例，而 IDF 是**语料级**的量：
+      加任何一条范例都会改变全表词权，相邻对的分数跟着浮动（0.349→0.351）。
+      **这条门禁的读数是相对的，别把它读成「谁把冲突引进来了」。**
+
   - id: charging-nearby.charger-vs-restaurant
     texts: [附近的充电站, 附近的餐厅]
     domains: [charging, nearby]

@@ -894,7 +894,15 @@ def test_boundary_ledger_maps_stable_ids_to_declared_domain_order():
     # 兑现物已证：bd.pickup-meal.{left.parents,left.son} ×
     # bd.pickup-meal.{right.dinner,right.hotpot}（同一句有没有「接/送+人称」，
     # 计划必须不同），L0 strict 2/2 exit 0（614 唯一输入，上界同步 610→614）。
-    assert len(ledger) == 30
+    # 2026-08-28 30→31：QA 修复批第 5 批（C14）落一条 `info-safety.weather-vs-road-condition`。
+    # **它不是新裁定出来的冲突，是被顶过阈值的**：C14 给 charging 域加了两条范例，
+    # 而 IDF 是**语料级**的量 ⇒ 全表词权变了，'今天天气怎么样' ↔ '路上怎么样'
+    # 从 0.349 浮到 0.351。裁为两回事（「怎么样」框架的第三条腿，另两条是
+    # nearby-safety.poi-vs-road-condition 与 info-nearby.weather-vs-poi）。
+    # 兑现物已证：bd.is-weather-road.{left,right}.{seen,unseen} 四条，
+    # `validate_boundary_coverage` 零错误、L0 strict 2/2 exit 0（634 唯一输入，
+    # 上界同步 629→634）。seen 两条复用既有输入，只 unseen 两条是新说法。
+    assert len(ledger) == 31
 
 
 def test_boundary_ledger_rejects_missing_duplicate_id_and_empty_why(tmp_path):

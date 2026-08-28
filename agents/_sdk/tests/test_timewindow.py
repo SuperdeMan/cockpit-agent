@@ -25,12 +25,36 @@ def _wall(ts):
 
 def test_clock_time_disambiguates_bare_hours():
     assert _wall(parse_clock_time("5点", now_ts=_NOW)) == (2026, 8, 14, 17, 0)
-    late = epoch_at(2026, 8, 14, 20, 0)
-    assert _wall(parse_clock_time("5点", now_ts=late)) == (2026, 8, 15, 5, 0)
     assert _wall(parse_clock_time("下午5点半", now_ts=_NOW)) == (2026, 8, 14, 17, 30)
     assert _wall(parse_clock_time("17:00", now_ts=_NOW)) == (2026, 8, 14, 17, 0)
     assert _wall(parse_clock_time("23点", now_ts=_NOW)) == (2026, 8, 14, 23, 0)
     assert parse_clock_time("尽快", now_ts=_NOW) is None
+
+
+def test_bare_hour_with_both_candidates_elapsed_stays_today(monkeypatch):
+    """**行为锁显式推翻**（C13-A，2026-08-28）：这一行原来断言 20:00 说「5点」
+    = 次日 05:00，而真栈 family T8 兑现的正是它的后果——18:53 说
+    「5点我要到学校」被解成次日凌晨，话术播出「比您要求的5:00早约593分钟」，
+    聚合 LLM 在同一句里自我吐槽「应该是把5点当成凌晨5点了」。
+
+    判据：**滚日不该改变小时语义**。「5点」说的是今天 17:00（已经过了），
+    滚到明天该算 17:00 还是 05:00 本身无解——这一支不该猜，
+    应该返回过去的那个时刻，由上层把疑点交还用户（navigation `_deadline_note`）。
+    """
+    late = epoch_at(2026, 8, 14, 20, 0)
+    ts = parse_clock_time("5点", now_ts=late)
+    assert _wall(ts) == (2026, 8, 14, 17, 0)
+    assert ts <= late, "过时解必须留在过去——上层就是按 `ts <= now` 判「时限已过」的"
+
+
+def test_segment_word_still_rolls_to_the_next_day():
+    """收窄只针对「裸时刻双过时」一种形态：带段位词的滚日**逐字不变**
+    （reminder 的「明早5点提醒我」靠的正是这一支）。"""
+    late = epoch_at(2026, 8, 14, 20, 0)
+    assert _wall(parse_clock_time("早上5点", now_ts=late)) == (2026, 8, 15, 5, 0)
+    assert _wall(parse_clock_time("明早5点", now_ts=late)) == (2026, 8, 15, 5, 0)
+    # 24h 写法同样不在本支内：过点滚到明天**同一个小时**，语义没被改。
+    assert _wall(parse_clock_time("17:00", now_ts=late)) == (2026, 8, 15, 17, 0)
 
 
 def test_segment_words_come_from_the_shared_table(monkeypatch):

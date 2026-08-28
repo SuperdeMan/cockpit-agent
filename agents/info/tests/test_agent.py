@@ -127,6 +127,22 @@ def test_weather_never_shows_raw_coordinates_when_reverse_geocoding_is_unavailab
     assert "116.410000" not in res.speech
 
 
+def test_indices_and_air_quality_never_speak_raw_coordinates():
+    """C9-D：这两个 handler 一直用**裸 city** 出话术与卡片，而 GPS 路径下 city 就是
+    「114.060000,22.540000」这串坐标——同族的 `_weather`/`_forecast`/`_alerts`
+    早就过 `_display_city` 了，这两处是漏网（E 组调查发现，QA 那轮没触发但形态在）。
+    """
+    for intent in ("info.indices", "info.air_quality"):
+        agent = InfoAgent()
+        agent.location_resolver = _LocationResolver()
+        res = asyncio.run(run_handle(
+            agent, intent, slots={}, raw_text="现在怎么样",
+            meta={"current_lat": "39.92", "current_lng": "116.41"}))
+        assert res.status == "ok", intent
+        assert "116.410000" not in res.speech, intent
+        assert res.ui_card["city"] == "北京市朝阳区", intent
+
+
 def test_deictic_weather_uses_navigation_destination_before_current_location():
     """B1-2：「那边」必须查询上轮导航目的地，不能静默退回浏览器当前定位。"""
     agent = InfoAgent()

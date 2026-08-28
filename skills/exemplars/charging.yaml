@@ -134,3 +134,31 @@ exemplars:
   tags:
   - boundary
   note: 明确询问当前电量归 charging.status；不等同于陈述电量耗尽后的补能求助
+# ── 2026-08-28 补（QA C14 / P1-11）：肯定的规划诉求 + 否定的执行方式 ────────
+# 真栈 info T48「规划去广州路上的补能，但先不要启动导航」落到 chitchat 并**编造**了
+# 一段路线（「为您规划路线：目的地"广州路补能"…请确认是否发起导航？」）。
+# 三条成因叠在一起：① `charging.plan` 本来就只出建议卡、不发导航，但这个性质
+# **没写进 manifest 描述**，planner 无从知道「先不要启动导航」与它相容；
+# ② 否定 policy 的既有 golden 只覆盖「先别导航去机场」这类**整句被否定**的形态，
+# 「肯定诉求 + 否定执行方式」没有任何范例；③ 「去广州路上的补能」被读成地名
+# 「广州路补能」是次生症状——落对域之后 destination 槽就是「广州」。
+- text: 规划去广州路上的补能，但先不要启动导航
+  plan:
+  - agent: charging-planner
+    intent: charging.plan
+    slots: {destination: 广州}
+  source: trace
+  added: '2026-08-28'
+  tags:
+  - badcase
+  note: 否定的是「启动导航」这个执行方式，不是规划本身；charging.plan 只出建议卡，本就不发导航
+- text: 帮我算一下去杭州路上在哪补电，先别导航
+  plan:
+  - agent: charging-planner
+    intent: charging.plan
+    slots: {destination: 杭州}
+  source: manual
+  added: '2026-08-28'
+  tags:
+  - badcase
+  note: 同族换说法（第二正例）；「先别导航」是对执行方式的限定，规划诉求照常成立
