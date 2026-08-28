@@ -169,6 +169,10 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
    ⚠ **门禁覆盖 ①②⑤ 三段，不覆盖 ③④**（规则产得出命令 / 命令过得了校验）：它逐条跑的是
    `edge_call.decode_intent` 那**一个**产出方且跳过 `_validate_command`。③④ 由
    `test_classifier_exit_parity.py` 与 `test_corpus_objects.py` 的两条 VAL 校验断言守。
+   ⚠ **③′「规则吐的对象名知识库认不认」是第三条**（2026-08-28 补，QA N8）：
+   上面两条都只走**有人写过用例的那些对象**，而这一段断了的时候恰恰没人写过用例
+   （「胎压是多少」因此长期答「暂不支持哦」）。`test_rule_object_reachability.py`
+   改成**从产出方静态盘点**（AST 取全部 `_s(...)` 的对象名），不需要有人先想到写用例。
 
 ## 4. 命名约定
 - Intent：`<domain>.<action>`，如 `hvac.set`、`navigation.search_poi`。

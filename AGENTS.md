@@ -195,7 +195,7 @@ reminder 原子批建 +2、两套 QA 工具 +7。上一跳 `6902 → 6933` = **+
 `test_engine_candidate_shortcut.py` **+4**（**engine 层接线守卫**——反向验证第一处
 就露出「挂点零测试」）、三个产生方各 **+1**（组标签 = 卡上那个称呼，断言两处相等）。
 上一跳 `6897 → 6902` = **+5**（08-22 白天复验批：mcp-bridge 选品续跑 4 + 规格槽跨跳保真 1）。
-对账链：**7225**（08-26 发布治理/测试族）← 7106（08-25 MiniMax QA 闭环）← 6969（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
+对账链：**7309**（08-28 QA 修复批第 1 批）← 7225（08-26 发布治理/测试族）← 7106（08-25 MiniMax QA 闭环）← 6969（08-24 MiniMax QA 批）← 6933（08-22 I-030 批）← 6902（08-22 复验批）← 6897（08-21 规格值域批）
 ← 6865（person-pickup 批）← 6786（第 8 步）。
 
 > ⚠ **那条「73 vs 32」的差额归因写了三版，前两版都错，2026-08-21 把成因直接修掉了**
@@ -264,7 +264,7 @@ G4 主题行程检索步 / G9 跨城市 / G7 陈述 vs 请求台账（§36）；
 
 当前对标状态一句话：时间约束（到达时限 + 事件反推用餐窗）、真沿途、多城保序与归城校正、
 模糊目的地推断、记忆六维消费（subject/polarity/轨迹/路线偏好/口味/无障碍）均**真栈在案**；
-对抗语料 **624 唯一输入**（上界 624，余量 0）、catalog **153 条**、架构 **v1.38**
+对抗语料 **628 唯一输入**（上界 628，余量 0）、catalog **154 条**、架构 **v1.39**
 （该行的 v1.26 是 EVA 批时点读数，2026-08-16 随 QA 轮 Q6/Q10/Q5 与 Q12 两跳补齐、
 2026-08-17 随 Q7 残余到 v1.29——新增 **§5.2.4 省略式开关的确定性消解**；
 2026-08-19 随 Q2 残余到 v1.30——新增 §5.2.5 候选集上的聚合问答；
@@ -277,7 +277,9 @@ G4 主题行程检索步 / G9 跨城市 / G7 陈述 vs 请求台账（§36）；
 「哪一组」：指代要闭合到组这一维；2026-08-24 随 MiniMax-only QA 复验到
 **v1.37**——新增 §5.2.11 尾部方差闭环：确定事实不经过模型转述；
 2026-08-25 随 MiniMax-only QA 闭环到 **v1.38**——新增 §5.2.12：验收证据也必须收口到
-同一事务，不能拿起点、默认值或晚到前的局部快照冒充终态）。
+同一事务，不能拿起点、默认值或晚到前的局部快照冒充终态；
+2026-08-28 随 QA 修复批第 1 批到 **v1.39**——新增 §5.2.13 安全事实的登记与执行闸：
+判据要住在两边都够得着的地方、闸放唯一出口且零领域词、**登记不能是路由的副作用**）。
 **仍未做**：G10 订座票务（搁置，诚实桩）与 **I-024 门店侧**（Q10 残余，入口见 §4.1 挑选表）
 ——探索式 QA 轮其余**全部收口**（逐卡终态、收口叙述与排序判据 2026-08-27 归档 history
 **§72**；流水 §41–§53 + §58–§67、归档索引 §47.5——此前这里逐条列划线完成项，
@@ -304,7 +306,7 @@ B4）。四条都是确定性检查、零 LLM、零网络——「跌破基线�
 
 | 意图落域证据 | 当前可引用事实 |
 |---|---|
-| L0 discovery | **85/85**，663 条 / **624 唯一输入**（bounds [450,**624**]，仍**恰好用满**。十四次递进 560→…→610→614→619→624，逐次占用理由写在 `suites.yaml` 头部——最近一跳是 `shop.preview_discard` 的正 2 / 硬负 2 / relation 1，严格区分当前会话临时预览、真实订单取消与历史查单；上一跳是 `reminder.create_batch`。两族因进入 route_hint 修复资产均标 `seen_regression`，没有删除旧尺子压数字） |
+| L0 discovery | **85/85**，667 条 / **628 唯一输入**（bounds [450,**628**]，仍**恰好用满**。十五次递进 560→…→614→619→624→628，逐次占用理由写在 `suites.yaml` 头部——2026-08-28 一跳是端侧 `media.stop` 的正 2 / 硬负 2（其中一条兼作 relation 对照，故 **+4 不是 +5**），考点是「暂停 / 停止 / 播放三者不许互相顶替」；上一跳是 `shop.preview_discard`，再上一跳 `reminder.create_batch`。这几族都标 `seen_regression`（修复动的是分类规则或 route_hint，**不能伪装成未见迁移**），没有删除旧尺子压数字） |
 | gate 规模 | **139 stable / 129 唯一输入**，L0 strict **25/25，exit 0** |
 | 对比模型正式 baseline | [`baseline_intent_adversarial.json`](docs/reviews/eval/baseline_intent_adversarial.json)；干净 `f0af9c0`，锁定 `deepseek:deepseek-v4-flash`，由当前 L3 原始字节/摘要/时间/精确路径契约重新取证并写入。**未随 `32e8718` 重取**——它仍是 DeepSeek 在 `f0af9c0` 的证据 |
 | DeepSeek 完整 gate | **147/147**：L0 25、L1 117、L2 4、L3 1；exact **121/121**，raw 幻觉/校验后逃逸/不稳定均 **0/121**；L1/L2 各 **2 个独立进程 × 每进程 3 样本**（`f0af9c0`） |
@@ -405,9 +407,9 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 或该族再成主要矛盾），是泓舟 2026-08-11 直接指示推进的。两份方案的头部都留了痕——
 **别把它读成「条件曾经满足过」**，那会让下一次「条件启动」的分量被稀释。
 
-⚠ **对抗语料唯一输入 624 / 上界 624**（`suites.yaml` 的 `max_cases`，权威值）——当前余量仍为 0。下次加 L0 语料必须先说明新增
+⚠ **对抗语料唯一输入 628 / 上界 628**（`suites.yaml` 的 `max_cases`，权威值）——当前余量仍为 0。下次加 L0 语料必须先说明新增
 能力或边界为何值得占额度，再有原则地调整 `suites.yaml` 的 `max_cases`；不得删旧尺子压数字，
-也不得先加语料撞闸后再补理由。560→624 的十四次递进与逐项占用写在 `suites.yaml` 头部。
+也不得先加语料撞闸后再补理由。560→628 的十五次递进与逐项占用写在 `suites.yaml` 头部。
 ⚠ 第十二跳（2026-08-20，person-pickup 卡）**理由回到最早那一条**：新裁定一条跨域边界
 （`navigation-nearby.pickup-plus-meal`），台账契约要求**双向各 2 例**，机械地 +4。
 它同时留下一条**门禁覆盖面的账**：`skills/exemplars/boundaries.yaml` 加裁定时，
@@ -433,7 +435,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 | **EVA 余项**（①–⑤ 已于 2026-08-15 立卡 E1–E5 全部处理，见 §4.0 段与 history §39；本行只剩 ⑥） | ⑥ **G10 订座/票务维持搁置**（本表内唯一仍未启动项）：诚实桩现状可接受，有合适 provider 时按 mcp-bridge 准入流程走，**不为对标造假订座**。⚠ E 批遗留的两处**已知边界**（不是待办，出现真实消费方再谈）：归城校正的判据是各城池质心，某城池被高德限流搜空时该城不参与判定（末轮真栈实例：潍坊）；方差面维持档案化，E4 探针首跑 15/15 未复现，**不加 hint、不动 gate 案例集** | [E1–E5 卡](docs/design/2026-08-15-eva-backlog-cards-e1-e5.md)、[验证报告](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md) §5、[缺口分析](docs/design/2026-08-14-eva-round2-capability-gaps.md) §2 |
 | **端侧车控能力台账余项**（B4 产出） | 门禁台账 `orchestrator/edge/knowledge/capability_exemptions.yaml` 共 **39 条**，四类：媒体别名 8 / 云侧域对象 11 / 座舱 UI 面 6 —— 这 25 条是「本来就不该有端侧 intent」，**不是欠账**；剩下 **14 条是欠账、只是本批不做**（`air_purifier`/`auto_hold`/`bluetooth`/`epb`/`equalizer`/`frunk`/`hotspot`/`key_tone`/`low_beam`/`navi_broadcast`/`surround_view`/`wifi`/`driving_mode`/`battery`——VAL 侧多有分支或话术，只是端侧没给 fast_intent 规则与意图名；云端计划仍可经 `action_to_structured` 走到）。这 14 条里有 **3 条待人裁**：① `frunk` 是 `require_confirm=true` 的危险对象却没有任何端侧 intent、与 `trunk` 不对称，**是刻意不给语音开还是漏了**；② `driving_mode` 与 `power_mode` 语义高度重叠，可能是同一件事的两个对象名（若重复应合并——别让 planner 面对两个分不开的工具）；③ `battery` 查询要不要补端侧意图。新增端侧意图时**从这 14 条里挑**并同步删台账条目。⚠ **2026-08-19 卡 Q8 没有从这 14 条里挑，是刻意的**：QA 轮实际抓到的四处缺席一条都不在这张表上——方向盘**已声明**（断在 VAL 校验）、双闪**对象根本不存在**（被生成器 family 表并进了 headlight）、静音是 `volume` 缺一个**操作**、估算在云侧。**台账列的是「有对象没意图」，而这四处是别的形态**；本批因此新增对象 `warning_light` 与操作 `volume.mute/unmute`，台账 39 条不变 | [B4 方案](docs/design/2026-08-10-b4-capability-pack.md) §6.5、台账文件本身 |
 | **P3b operate 抽取与放量** | 原表里并列的两个具体缺口（除雾能力缺席、「穿衣指数→股指」）已于 2026-08-10 修完，详见 history §23.1/§23.2，本行只留放量条件。**放量门槛不变**：operate 抽取 + 真实错对象率 <0.3%。⚠ 压这个数的手段是 **R4.1b P1 执行侧对象化**（让 VAL object 数从当前 67 继续长），**不是调阈值**；且当前 PoC 没有真实流量，这个数只有观测面、还没有分母 | [M5 P3 收尾](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) §P3 收尾 |
-| **全量并行跑的一处偶发红**（2026-08-28 新记，**不是本批引入**）| `scripts/tests/test_e2e_stack_lease.py::test_restore_failure_is_identity_cleanup_and_overrides_pass` 在 `-n auto --dist worksteal` 全量下**两趟里红一趟**；**单跑 3/3 绿、只跑 `scripts/tests -n auto` 也 3/3 绿**（1335 passed × 3）。⚠ 根因是**假设、未确定性复现**：该文件多处 `repo_root=Path.cwd()`，而 `identity_lock_path()` 会把它解析成 **`.git/car-agent-e2e-identity-stack.lock` 这个真实 OS 锁文件**——它是**仓库级共享**的，xdist 多 worker 同时跑租约类用例就会互相抢。若成立，修法是让这几条用例各自用 `tmp_path` 当 repo_root（或给锁加 worker 后缀），**不是加重试**。⚠ 在确定性复现之前，**不许把它当「已知无害」一笔带过**：全量报绿时要点名它这一条 | 文件本身；本行由 QA 修复批第 1 批的两趟全量读数触发 |
+| **`test_e2e_stack_lease` 抢真实 OS 锁**（2026-08-28 新记，**不是本批引入**）| **根因已定性，有复现配方**：该文件多处 `repo_root=Path.cwd()`，而 `identity_lock_path()` 把它解析成 **`.git/car-agent-e2e-identity-stack.lock` 这个真实 OS 锁文件**——它是**仓库级共享**的，谁持有别人就拿不到。取证：单跑 3/3 绿、`scripts/tests -n auto` 3/3 绿（1335×3）、全量单跑 2/3 绿；而**同时跑两趟全量必红**，且两趟各红了该文件里**不同的一条**（`test_restore_failure_…` / `test_single_owner_…`）——症状随「谁先抢到」漂移，正是共享锁的签名。⇒ 修法是让这几条用例各自用 `tmp_path` 当 `repo_root`（或给锁名加 worker 后缀），**不是加重试**。⚠ 在修掉之前：**不许两个会话同时跑全量**，全量报绿时也要单独确认它这一条 | 文件本身；本行由 QA 修复批第 1 批的三趟全量读数触发 |
 | live 路由回归进 CI | hint 退役后的召回保护目前是 live 人工车道，不是 CI 阻断；有稳定凭证、预算与 provider 方差处置后再接 CI | [旅程体系](docs/design/2026-07-14-journey-e2e-test-system.md) §4.3、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | `route_hints` 继续退役 | 当前实数 **18**（2026-08-24 QA 复验净增 7：MiniMax 重复采样残余的 5 条窄业务结构 + edge 门锁开/关极性 2 条）；`mcp-bridge#0` 必须先过专项安全回归。旧三条单档候选不得按历史索引直接执行；本批只证明 MiniMax 主模型当前需要这些纠偏，退役仍须跨 provider 全覆盖取交集 | [M5 P2](docs/design/2026-07-28-intent-accuracy-data-flywheel.md)、[评测说明](docs/reviews/eval/README.md) §规则退役 |
 | M5 后续杠杆 | catalog 检索化当前是“有意不做”；16k 预算再次裁剪或保护集显著变瘦时重评。gold→范例现走 CLI；P4 仅在范例 ≥2k 且 N1 平台期 ≥2 周时启动 | [M5 P2/P4](docs/design/2026-07-28-intent-accuracy-data-flywheel.md) |
@@ -817,9 +819,9 @@ python scripts/dev_stack.py hmi             # 前端联调（dashboard 同理）
 | proto | `make proto` 重新生成，确认 codegen 无错 |
 | 端到端链路 | `make up` 后 `python test/e2e_ws.py` |
 | 新增 Agent | 契约测试（参考 `agents/navigation/tests`）+ 在 compose 注册 |
-| 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针 **与两条 VAL 校验断言**）。⚠ **门禁覆盖不到「规则产的命令过不过得了校验」那一段**——它只走 `edge_call.decode_intent` 一个产出方且跳过 `_validate_command`；端侧快路径那条由 `test_classifier_exit_parity.py::test_fast_path_command_is_accepted_by_val` 与 `test_corpus_objects.py::test_recognized_command_is_accepted_by_val` 守（**名字对不代表命令合法**，契约 §9.29 五段链）。SOP 见 §7.1 |
+| 端侧车控能力（知识库 / 意图 / 话术）| `python test/eval_capability_integrity.py`（六维逐对象，CI blocking）+ `python scripts/check_intent_gate.py`（对抗覆盖 strict）+ `python -m pytest orchestrator/edge/tests -q`（含意图面迁移探针 **与两条 VAL 校验断言**）。⚠ **门禁覆盖不到「规则产的命令过不过得了校验」那一段**——它只走 `edge_call.decode_intent` 一个产出方且跳过 `_validate_command`；端侧快路径那条由 `test_classifier_exit_parity.py::test_fast_path_command_is_accepted_by_val` 与 `test_corpus_objects.py::test_recognized_command_is_accepted_by_val` 守（**名字对不代表命令合法**，契约 §9.29 五段链）。⚠ 那两条只走「有人写过用例的对象」，**对象名本身知识库认不认**由 2026-08-28 新增的 `orchestrator/edge/tests/test_rule_object_reachability.py` 按产出方静态盘点（§9.29 ③′）。SOP 见 §7.1 |
 | 新增服务（compose 里加一个自建镜像）| `python -m pytest runtime/tests -q`——它断言每个自建服务都拿到 `DEPLOY_PROFILE`、入口够得着部署形态闸、**且该服务 Dockerfile 真的 `COPY runtime`**；**加进 `x-python-env` anchor 不等于配上了**（有服务不用那个 anchor），**源码 import 得到不等于镜像里有**（collector/proactive 就这么断过 40 小时）|
-| 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| **另外查一遍有没有独立脚本直接 import 它**——`pytest` 绿不代表裸跑绿：根 `conftest.py` 会替测试把仓库根挂进 `sys.path`，**独立脚本没有这个待遇**。2026-08-16 实测：`fast_intent` 加了 `runtime.polarity` 之后，§5「任何人接手都先做这个」的 `python test/smoke_edge.py` 直接 `ModuleNotFoundError`，而全量 pytest 一条红都没有。再查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类 |
+| 给某个服务的入口加共享包 import（`runtime.*` / `observability.*`）| **另外查一遍有没有独立脚本直接 import 它**——`pytest` 绿不代表裸跑绿：根 `conftest.py` 会替测试把仓库根挂进 `sys.path`，**独立脚本没有这个待遇**。2026-08-16 实测：`fast_intent` 加了 `runtime.polarity` 之后，§5「任何人接手都先做这个」的 `python test/smoke_edge.py` 直接 `ModuleNotFoundError`，而全量 pytest 一条红都没有。再查**那个服务 Dockerfile 的依赖闭包**——少一行 `COPY` 就是「一重建就起不来」，而既有容器跑着旧镜像时**完全没有症状**。`python -m pytest runtime/tests -q` 会抓 `runtime` 那一类。⚠ **把一份判据「搬家」到 `runtime/` 时（不只是新增 import），旧消费方的 Dockerfile 也要核一遍**——它们此前可能只需要 `COPY agents`（2026-08-28 `safety_signal.py` 从 `agents/_sdk` 迁入 runtime 时核过：chitchat/manual-rag/road-safety 三个镜像都已有 `COPY runtime`，**是核过不是碰巧**）|
 | Planner 重试/守卫规则（B5）| **先改 `orchestrator/cloud/retry_policy.py` 的表，不要在主循环里加 `elif`**；同步方案附录 A 的清单表（`test_retry_policy.py` 逐列比对，改一处不改另一处即红）；`python -m pytest orchestrator/cloud/tests -q` |
 | 中文时间词（时段/日词/中文数字/12h 修正）| **改 `runtime/cntime.py`，不要在消费方本地再写一张表**（此前三份实现给出三个答案）；`python -m pytest runtime/tests/test_cntime.py agents/_sdk/tests/test_timewindow.py agents/reminder/tests/test_timeparse.py agents/info/tests/test_weather_answer.py -q` |
 | 槽值保真 / 给 `_resolve_slot_refs` 加挂点 | `python -m pytest runtime/tests/test_slot_fidelity.py orchestrator/cloud/tests/test_slot_fidelity_wiring.py -q`（同文件另有 `undeclared_slots`：**契约**比原话少一维时只观测不改值，判据零领域词）——后者含**覆盖面守卫**：每个调用点必须传 `ctx`（三条执行路径 executor / D0 / T2 共用这一个收口，少传不会报错、只会让挂点在那条路上不发生）|
@@ -862,6 +864,11 @@ python scripts/gen_capability_skeleton.py rear_wiper --display-name 后雨刷 --
 （方向盘加热就是这么断的：一个产 `set`+`enabled`、一个产 `open`，后者知识库不认）。
 ③④ 由 `test_classifier_exit_parity.py` 与 `test_corpus_objects.py` 的两条 VAL 校验断言守
 ——**新对象要在 `orchestrator/edge/tests/corpus/vehicle_objects.yaml` 留一条识别语料**。
+⚠ **2026-08-28 又补了一段 ③′**（QA N8）：上面那两条都只走「有人写过用例的对象」，
+而 `tire_pressure` 这种**规则吐的对象名知识库压根不认**的情况两处都没条目，
+于是「胎压是多少」长期答「暂不支持哦」。`test_rule_object_reachability.py` 因此
+**按产出方静态盘点**（AST 取全部 `_s(...)` 的对象名），不依赖有人先想到写用例；
+同族存量 4 条在该文件的 `_KNOWN_UNREACHABLE` 台账里逐条登记。
 五段链全表见 `docs/conventions.md` §9.29。
 
 ---

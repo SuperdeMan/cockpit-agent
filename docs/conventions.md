@@ -54,7 +54,7 @@
 | intent | 归属 | 处理位置 | 槽位 | 备注 |
 |---|---|---|---|---|
 | `hvac.*` / `window.*` / `seat.*` / `sunroof.*` / `sunshade.*` / `trunk.*` / `door_lock.*` / `ambient_light.*` / `headlight.*` / `wiper.*` / `rear_view_mirror.*` / `fragrance.*` / `volume.*` / `fuel_tank_cover.*` / `charging_port.*` / `steering_wheel.*` / `energy_recovery.*` / `lane_*` / `scene_mode.*` / `power_mode.*` / `driving_mode.*` / `screen.*` / `accompany_home.*` / `tire_pressure.*` / `battery.query` / `dashcam.*` / `aircon.*` / `air_purifier.*` / `navi_broadcast.*` / `key_tone.*` / `front_defogger.*` / `rear_defogger.*` | 端侧车控 | edge | value/unit/positions/mode/tag | 经 VAL 知识库校验；端侧意图 pattern（R4.1 增气象/设置页族/空气净化·导航播报·按键音对象；2026-08-10 增前/后挡除雾——除雾此前只是 `aircon` 的一个 mode，**既进不了能力面也表达不了「关」**，详见 `commands.yaml` 的 `front_defogger` 注释）；新对象命名须 `.open/.close`（与主快路径 `classify()` 口径一致，见 `docs/design/2026-07-04-r4.1b-*`） |
-| `media.play` / `media.pause` / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL |
+| `media.play` / `media.pause` / **`media.stop`** / `media.next` / `media.prev` | 端侧媒体 | edge | — | 经 VAL。⚠ **`pause` 与 `stop` 是两个终态，不许折叠**（2026-08-28 补 `stop` 出口，卡 C2-B）：`commands.yaml` 一直声明着 `stop/close`，缺的是端侧规则出口，所有「关/停」形态被折成 `pause` ⇒ VAL 初始态 `media=stopped` **靠语音永远回不去**。catalog 描述刻意写成判别句（「与暂停不同——暂停保留播放位置、说『继续』能接上」），因为 stop/pause 是最容易被 planner 一锅端的一对 |
 | `navigation.search_poi` | navigation | cloud | keyword, category, near, rating_min | |
 | `navigation.navigate_to` | navigation | cloud | destination, stop_category, waypoint, place_address, arrive_by, route_pref | 视觉地标描述（“像笋的建筑”，含俗称与自然地物「苏州大秋裤/圆圆的湖」）优先经 LLM 解析正式名称再由地图验证，不盲信高德模糊匹配；多 agent「导航+充电」时途经充电站经聚合器并入 navigate.payload.waypoints。顺路用餐：`stop_category`（吃饭/咖啡…）→ 导航到目的地+给**真沿途**候选（路线几何 45% 里程采样，拿不到几何回落目的地附近并如实说；waypoint_choice 卡）让用户二次选；`waypoint`（已选停靠点名/raw_text『途经X』，**支持 、/和 连写多个保口述序** ≤6）→ near 目的地解析坐标并入 navigate.waypoints，出 **route_plan 卡**（含绕行Δ分钟）。EVA 二轮（2026-08-14）：`arrive_by`（「五点前到」时限原话，slot 优先+原话兜底）→ ETA 三档量化判定进话术/卡片（eta_ts/arrive_by_ts/margin_min）+ REMINDABLE 增「出发前往X」反向事件；`route_pref`（不走高速/避堵/少收费/风景）→ 高德 v3 strategy（风景诚实降档为不走高速），槽缺省时消费记忆 route.* 偏好（**不按 polarity 过滤**——方向编码在谓词名里）。person-pickup（2026-08-20，架构 §5.2.8）：**接送句四段兜底**——槽值判「只是个人称」→ 一跳解析；**接不着目的地**或**常用地点别名没设过**时按原话 `接/送+人称` 再回退一次（已设置的别名不许被顶掉，「导航去学校」原话无接送人称照旧走设置引导）；查不到给教学问（两个挂点共用同一份话术，探针据此判分支）；命中结果 >`PICKUP_MAX_KM`（默认 100km）**不导航、报出距离反问**，无定位则不判、不回落成拒绝。配套接地面：`_DEST_CATEGORY_ANCHORS` 增校园族，且候选集内名字+类目双匹配从 `results[0]` 起扫（top1 不能受一条比后面所有候选都严的判据） |
 | `navigation.reverse_geocode` | navigation | cloud | lng, lat | 逆地理编码：给定坐标→地址 |
@@ -1598,7 +1598,8 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 | ① 知识库有这个**对象** | 规则认得出名字但对象不存在 ⇒ 名字进不了 `LOCAL_INTENTS` ⇒ 整句上云 ⇒ 就近误执行 | `lane_execution`（对象无 intent） |
 | ② 对象声明了 **intent**（`edge_intents`）| 能力不可达且**无任何报错** | `lane_execution`（孤儿 intent / 挂错对象块） |
 | ③ 端侧规则产得出**结构化命令** | 单句/复合句走不同的路 | `test_classifier_exit_parity`（Q13 收敛） |
-| ④ 那条命令过得了 **VAL 校验** | 端侧秒回「暂不支持哦」 | **本节新增**：`test_fast_path_command_is_accepted_by_val` + `test_recognized_command_is_accepted_by_val` |
+| ③′ 规则吐的**对象名**知识库认得 | 端侧秒回「暂不支持哦」，且**任何语料都测不到**（没人给这个对象写过语料，正是它能活下来的原因）| **2026-08-28 新增**：`test_rule_object_reachability`（AST 按**产出方**盘点，不按语料） |
+| ④ 那条命令过得了 **VAL 校验** | 端侧秒回「暂不支持哦」 | `test_fast_path_command_is_accepted_by_val` + `test_recognized_command_is_accepted_by_val` |
 | ⑤ 有专属**状态键与话术** | 执行了对不上账 / 用户听不出做了什么 | `lane_verification` / `lane_speech` |
 
 **④ 为什么原来没人守**：B4 门禁逐条跑的是 `edge_call.decode_intent`（云侧计划面）
@@ -1615,6 +1616,24 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
 **新增能力时**：`scripts/gen_capability_skeleton.py` 产的待办清单覆盖 ①②⑤；
 ③④ 由上面两条断言守——**新对象要在 `orchestrator/edge/tests/corpus/vehicle_objects.yaml`
 里留一条识别语料**，那条语料同时验「认出哪个对象」与「这条命令 VAL 收不收」。
+
+#### ③′ 是 2026-08-28 补的一段，因为 ④ 的守卫**只走金标与语料**（QA N8）
+
+`fast_intent` 的胎压分支产 `object=tire_pressure`，而知识库声明的对象叫
+`tire_pressure_monitoring` ⇒ `_validate_command` 一律不认，**每一句「胎压是多少」
+都秒回「暂不支持哦」**。③④ 那两条断言都没抓到它：一条按 `_GOLDEN` 文本逐句走、
+一条按语料逐条走，而这个对象**两处都没有条目**。
+
+> **这正是 ④ 那句「门禁走的是流水线的一段」的下一层**：③④ 的守卫本身也只覆盖
+> 「有人写过用例的那些对象」。所以 ③′ 的判据换成**从产出方静态盘点**——
+> AST 取 `fast_intent` 里全部 `_s(...)` 的对象名，走唯一实现 `_to_legacy_name` 得到
+> 意图名，凡 `is_local` 的对象必须在 `commands.yaml` 里声明。
+> **它不需要任何人先想到写一条用例。**
+>
+> 同族存量 4 条（`factory_settings` / `launcher` / `memory` / `sound_effect`）在
+> `test_rule_object_reachability._KNOWN_UNREACHABLE` 逐条登记，格式是
+> 「说什么话会踩到 + 为什么还没修」，**禁通配符**（同 `capability_exemptions.yaml` 口径）；
+> 台账自带「每一行都要当场复现」与「修好一条必须删一行」两条断言。
 
 ---
 

@@ -1,6 +1,11 @@
 # 2026-08-26 MiniMax-only 云端长会话 QA 复验问题记录
 
-> 状态：**只记录，不修复**。泓舟在长会话完成前明确要求本轮不再改实现；本文件是后续会话的修复入口。
+> 状态：**只记录，不修复**（本文件是**问题原始记录**，逐条保留 2026-08-26 时点的原文，不回改）。
+> **修复进度看这两处**：根因与方案 [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](../design/2026-08-27-minimax-qa-root-cause-fix-plan.md)
+> （17 症状卡 → 16 根因卡 C1–C16，**七处定性被取证推翻**，以那份为准）；
+> **第 1 批已于 2026-08-28 落地**（C1 安全告警链 / C2 端侧车控三 bug / C16 的 1·6·8，
+> 覆盖本文件的 P0-01、P0-02 及其散落漏检），流水 `docs/agents-history.md` §73，下一批 = C4。
+> ⚠ **真栈迷你集尚未重跑**，本文件里的读数仍是 `c7c211b` 那一次的原样。
 > 被测 release：`c7c211bedb4ff504dfceaf09e652c7875bdaebb8`；目标 `cloud`；LLM 仅
 > `minimax:MiniMax-M3`；TTS 仅 MiniMax `speech-2.8-turbo / female-tianmei`。
 

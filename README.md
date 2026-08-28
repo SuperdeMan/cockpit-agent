@@ -253,7 +253,9 @@ hmi/              React 座舱前端（Aurora Glass）
 mobile/           Android 陪伴端 App（React Native + Expo）——与座舱共存的第二个用户端，
                   同一后端大脑、同 user_id 共享记忆；只读引用 hmi/src 的纯逻辑模块
 dashboard/        React 开发 / 演示可观测台
-runtime/          共享运行时（gRPC keepalive / mTLS / 优雅停机 + 主动消息出口）
+runtime/          共享运行时（gRPC keepalive / mTLS / 优雅停机 + 主动消息出口），
+                  以及**端云共用的确定性判定**（时区墙钟 / 指令极性 / 中文时间词 /
+                  营业时间 / 安全信号 / 问句形态 / 意图读写效果）——同一件事只许一份实现
 deploy/           docker-compose / 证书生成
 test/             e2e、评测基线、旅程语料、CDP 用例
 docs/             架构（真相源）、设计记录、指南
