@@ -31,6 +31,10 @@ import java.util.concurrent.atomic.AtomicLong
  *     但丢帧会降低唤醒率 ⇒ `stats()` 把 dropped 暴露出去，**不静默**。
  *  3. **样本必须在 acceptFrame 内拷完**。Int16Array 背后是 JS 堆上的 ArrayBuffer，
  *     函数返回后不保证有效——异步线程再去读就是读野内存。
+ *  4. **解码线程与 release 之间的两条纪律**（2026-08-28 补，M4 首轮遗留的竞态）：
+ *     解码线程**在锁内重读 spotter/stream**（锁外抓到的引用可能已经 release 掉），
+ *     且 release **join 掉解码线程再返回**（不 join 的话 release→load 会并存两条
+ *     解码线程喂同一条 stream）。两条各治一个问题，缺一条都不够。
  */
 private const val TAG = "KwsModule"
 private const val ASSET_DIR = "kws"
@@ -38,6 +42,8 @@ private const val MODEL_TAG = "epoch-12-avg-2-chunk-16-left-64"
 private const val SAMPLE_RATE = 16000
 /** 队列上限 ≈ 3 秒音频（30 帧 @100ms）。超过说明推理已经严重落后，继续攒没有意义。 */
 private const val MAX_QUEUED_FRAMES = 30
+/** release 等解码线程退出的上限。一次解码是毫秒级，1s 够宽；超时只记日志不阻塞调用方。 */
+private const val JOIN_TIMEOUT_MS = 1000L
 
 class KwsModule : Module() {
   private var spotter: KeywordSpotter? = null
@@ -66,9 +72,12 @@ class KwsModule : Module() {
 
     /** 重置解码状态（唤醒命中后必须调，否则同一段音频会连续命中） */
     AsyncFunction("reset") {
-      val s = stream
-      val sp = spotter
-      if (s != null && sp != null) synchronized(this@KwsModule) { sp.reset(s) }
+      // 同 loop()：字段在锁内重读，锁外抓到的引用可能已被 release 掉（头注 4）
+      synchronized(this@KwsModule) {
+        val s = stream
+        val sp = spotter
+        if (s != null && sp != null) sp.reset(s)
+      }
     }
 
     /** 喂一帧 16k mono s16le。立即返回；命中走 onKeyword 事件。 */
@@ -147,20 +156,27 @@ class KwsModule : Module() {
       } catch (e: InterruptedException) {
         null
       } ?: continue
-      val sp = spotter ?: continue
-      val st = stream ?: continue
+      var decoded = false
       try {
         synchronized(this) {
-          st.acceptWaveform(frame, SAMPLE_RATE)
-          while (sp.isReady(st)) sp.decode(st)
-          val r = sp.getResult(st)
-          if (r.keyword.isNotEmpty()) {
-            // 命中即重置：不重置的话同一段音频会在后续帧里持续复现同一个 keyword
-            sp.reset(st)
-            sendEvent("onKeyword", mapOf("keyword" to r.keyword))
+          // **字段必须在锁内重读**（头注 4）。在锁外抓 spotter/stream 的引用，
+          // 与 releaseInternal 之间就有一个窗口：引用拿到手之后、进锁之前 release
+          // 跑完，锁一放开我们就拿着已经 release 掉的原生指针去 acceptWaveform。
+          val sp = spotter
+          val st = stream
+          if (running.get() && sp != null && st != null) {
+            st.acceptWaveform(frame, SAMPLE_RATE)
+            while (sp.isReady(st)) sp.decode(st)
+            val r = sp.getResult(st)
+            if (r.keyword.isNotEmpty()) {
+              // 命中即重置：不重置的话同一段音频会在后续帧里持续复现同一个 keyword
+              sp.reset(st)
+              sendEvent("onKeyword", mapOf("keyword" to r.keyword))
+            }
+            decoded = true
           }
         }
-        processed.incrementAndGet()
+        if (decoded) processed.incrementAndGet()
       } catch (e: Throwable) {
         Log.w(TAG, "decode failed: ${e.message}")
       }
@@ -169,9 +185,24 @@ class KwsModule : Module() {
 
   private fun releaseInternal() {
     running.set(false)
-    worker?.interrupt()
+    val t = worker
     worker = null
     queue.clear()
+    // **等解码线程真的退出再往下走**（头注 4）。只 interrupt 不 join 的直接后果不是
+    // 野指针（那由锁内重读挡住了），是 loadInternal 的 release→load 序列会造出
+    // **两条解码线程**：老线程还在 while 里，新的 running=true 一置它就继续跑，
+    // 两条线程喂同一条 stream。join 之后「上一轮已经彻底结束」才是真的。
+    if (t != null && t !== Thread.currentThread()) {
+      t.interrupt()
+      try {
+        t.join(JOIN_TIMEOUT_MS)
+      } catch (e: InterruptedException) {
+        Thread.currentThread().interrupt()
+      }
+      // 超时不静默：走到这里说明解码卡在一次 JNI 调用里，下一轮 load 会与它并存。
+      // 仍然继续 release——锁内重读保证它读到的是 null，不会用到已释放的指针。
+      if (t.isAlive) Log.w(TAG, "kws-decode 未在 ${JOIN_TIMEOUT_MS}ms 内退出")
+    }
     synchronized(this) {
       // 顺序有讲究：stream 持有 spotter 内部的解码状态，先放 stream 再放 spotter
       stream?.release()

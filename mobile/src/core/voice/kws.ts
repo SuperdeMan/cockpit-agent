@@ -25,6 +25,23 @@ export function kwsNativeAvailable(): boolean {
   return KWS_NATIVE_AVAILABLE
 }
 
+/**
+ * 原生 KeywordSpotter 是**进程内单例**——一个 spotter、一条 stream。所以「谁在用它」
+ * 这件事只能由 JS 侧记（原生侧零策略，见 KwsModule.kt 头注）。
+ *
+ * 不记的下场不是崩，是**静默串台**：第二个 KwsEngine 调 `load()` 时原生会先
+ * `releaseInternal()` 把第一个顶掉，而第一个的 JS 侧仍然 `loaded=true`——
+ * 它继续 `accept()` 的帧全进了别人的流，它 `stop()` 时关掉的是别人的引擎。
+ * M4 首轮把这条写在注释里让调用方自己躲（voice-spike 那句「刻意不自己建 KwsEngine」），
+ * **靠记性的约定迟早会漏**，改成显式所有权 + 当场报错。
+ */
+let owner: KwsEngine | null = null
+
+/** 现在有没有人占着原生 KWS。调用方据此给出「先关掉 X」这类可读提示，而不是吞掉异常。 */
+export function kwsBusy(): boolean {
+  return owner != null
+}
+
 export class KwsEngine {
   private sub: { remove(): void } | null = null
   private loaded = false
@@ -37,6 +54,12 @@ export class KwsEngine {
     if (this.loaded) return
     const native = KwsNative
     if (!native) throw new Error('KWS 原生模块不在本 APK 里')
+    if (owner && owner !== this) {
+      throw new Error('KWS 已被另一处占用（原生 KeywordSpotter 是单例）——先停掉它再启动')
+    }
+    // 先占位再 await：`load()` 是异步的，不先占的话两个几乎同时进来的调用方会
+    // 双双通过上面那道检查（JS 单线程也拦不住——await 之间是可以插进别人的）。
+    owner = this
     this.sub = native.addListener('onKeyword', (e) => {
       const k = e?.keyword || ''
       if (k) cb.onKeyword(k)
@@ -47,6 +70,7 @@ export class KwsEngine {
     } catch (e) {
       this.sub?.remove()
       this.sub = null
+      owner = null
       throw e
     }
   }
@@ -54,7 +78,7 @@ export class KwsEngine {
   /** 喂一帧 16k mono s16le。原生侧立即返回（推理在它自己的线程上）。
    *  返回 false = 这帧被丢了（队列满/未载入），调用方不必处理，诊断看 `stats()`。 */
   accept(frame: Int16Array): boolean {
-    if (!this.loaded || !KwsNative) return false
+    if (!this.loaded || owner !== this || !KwsNative) return false
     try {
       return KwsNative.acceptFrame(frame)
     } catch {
@@ -64,7 +88,7 @@ export class KwsEngine {
 
   /** 唤醒后必须调：不重置的话同一段音频会在后续帧里持续复现同一个命中 */
   async reset(): Promise<void> {
-    if (!this.loaded || !KwsNative) return
+    if (!this.loaded || owner !== this || !KwsNative) return
     try {
       await KwsNative.reset()
     } catch {
@@ -87,6 +111,10 @@ export class KwsEngine {
     this.sub = null
     if (!this.loaded) return
     this.loaded = false
+    // **不是自己占着就不许 release**：否则一个已经被顶掉的旧引擎在收尾时会把
+    // 现任占用方的引擎一起关了（这正是单例串台里最难查的那一半）。
+    if (owner !== this) return
+    owner = null
     try {
       await KwsNative?.release()
     } catch {

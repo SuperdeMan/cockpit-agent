@@ -21,7 +21,7 @@ import { TtsSession, synthesizeBatch } from '@/core/voice/tts'
 import { newPcmPlayer, playerCtxOf, sharedAudioContext } from '@/core/voice/audioCtx'
 import { audioFocusInstalled, audioFocusLog } from '@/core/voice/audioFocus'
 import { handsFreeAvailability } from '@/core/voice/handsFree'
-import { DEFAULT_KEYWORDS, KwsEngine, kwsNativeAvailable } from '@/core/voice/kws'
+import { DEFAULT_KEYWORDS, KwsEngine, kwsBusy, kwsNativeAvailable } from '@/core/voice/kws'
 import { micBusStats, micLease } from '@/core/voice/micBus'
 import { recorder } from '@/core/voice/recorder'
 import { VadEngine, vadNativeAvailable } from '@/core/voice/vad'
@@ -687,6 +687,12 @@ export default function VoiceSpikeScreen() {
     try {
       log('kws: native=' + kwsNativeAvailable())
       if (!kwsNativeAvailable()) return
+      // 原生 KeywordSpotter 是单例：免唤醒正开着的时候本探针抢不到它。**先说清楚**，
+      // 别让「引擎被占用」以一条抛错的形式出现（那看起来像引擎坏了）。
+      if (kwsBusy()) {
+        log('kws: ✗ 原生 KWS 已被免唤醒回路占用——先在设置里关掉「免唤醒」再跑本探针')
+        return
+      }
       const kws = new KwsEngine()
       const t0 = Date.now()
       const hits: string[] = []
@@ -732,6 +738,10 @@ export default function VoiceSpikeScreen() {
     try {
       if (!kwsNativeAvailable()) {
         log('kws-inject: 原生不在场')
+        return
+      }
+      if (kwsBusy()) {
+        log('kws-inject: ✗ 原生 KWS 已被免唤醒回路占用——先在设置里关掉「免唤醒」再跑本探针')
         return
       }
       const { Asset } = require('expo-asset')
@@ -796,9 +806,11 @@ export default function VoiceSpikeScreen() {
 
   // ── M4-4 免唤醒整轮的无人取证：**只放一句话，不建任何引擎** ──
   //  用法：先在设置里打开免唤醒 → 回对话页确认「待唤醒」→ 进本屏点它 → 回对话页看状态条。
-  //  它刻意**不自己建 KwsEngine**：原生侧的 KeywordSpotter 是单例，再建一个会把
-  //  免唤醒回路正在用的那个顶掉（`load()` 里先 releaseInternal）。这条按钮的全部作用
-  //  就是「当一次声源」，听的人是常开麦那条回路。
+  //  它刻意**不自己建 KwsEngine**：原生侧的 KeywordSpotter 是单例，本按钮的全部作用
+  //  就是「当一次声源」，听的人是常开麦那条回路——建第二个引擎会把要被取证的那个
+  //  换掉，取证对象就不是免唤醒回路了。
+  //  （2026-08-28 起抢占本身已被 kws.ts 的所有权守卫当场拦下并报错，不再静默串台；
+  //   但「不该建」的理由与那道守卫无关，所以这段注释留着。）
   const probeSpeakWake = useCallback(async () => {
     setBusy('speak-wake')
     try {
