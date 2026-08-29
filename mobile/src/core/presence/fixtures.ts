@@ -1,7 +1,10 @@
 // mobile/src/core/presence/fixtures.ts
 // 状态画廊语料：**每次调用重新取时间基准**（倒计时是相对量，同 cards/fixtures.ts 的教训）。
 // 样本走的是 derivePresence 本尊——画廊里看到的就是生产代码算出来的，不是手摆的快照；
-// `safety_blocked` B1 没有生产产出方，这里只证明「渲得出来」，不证明「会出现」。
+// `recoverable_error` / `safety_blocked` / `fatal` 三种 B1 **没有生产产出方**（`usePresence`
+//   只 push permission_denied / audio_echo_degraded / service_degraded / transport_unknown），
+//   标 `producible: false`——这里只证明「渲得出来」，不证明「会出现」。这条由
+//   `presenceFixtures.test.ts` 从**产出方源码**盘点比对，手写标记漂了当场红。
 // ⚠ `slot` 连这一步都做不到：`derivePresence` **没有产出 slot 项的代码路径**（协议无
 //   `missing_slots`），而本文件的纪律是「样本走 derivePresence 本尊」⇒ 画廊**无从证明**
 //   slot 渲得出来。要证明它就得手搓一个假 snapshot，那正是这条纪律要挡的事，所以不做。
@@ -53,8 +56,8 @@ export function presenceFixtures(): PresenceFixture[] {
     mk('deg-service', { degradations: [{ kind: 'service_degraded', text: '语音链路降级，本轮回落三段式' }] }),
     mk('deg-echo', { degradations: [{ kind: 'audio_echo_degraded', reason: 'repeated-self-trigger' }] }),
     mk('deg-transport-unknown', { degradations: [{ kind: 'transport_unknown', messageIds: ['m1'] }] }),
-    mk('deg-recoverable', { degradations: [{ kind: 'recoverable_error', text: '响应超时了', at: NOW }] }),
+    mk('deg-recoverable', { degradations: [{ kind: 'recoverable_error', text: '响应超时了', at: NOW }] }, false),
     mk('deg-safety-blocked', { degradations: [{ kind: 'safety_blocked', text: '高速行驶中请勿打开车窗/天窗' }] }, false),
-    mk('deg-fatal', { degradations: [{ kind: 'fatal', text: 'token 握手失败，请重新配置服务器' }] }),
+    mk('deg-fatal', { degradations: [{ kind: 'fatal', text: 'token 握手失败，请重新配置服务器' }] }, false),
   ]
 }

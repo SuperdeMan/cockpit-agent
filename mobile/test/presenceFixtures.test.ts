@@ -2,6 +2,9 @@
 // 状态画廊的覆盖度守卫（同 card-gallery 的「注册表卡型必须都有样本」）：
 // 每个 primary（8 个光球态）与每种 degradation（7 种）都要有样本，缺一即红——
 // 「少了谁」得当场看得见，不能等到事后数截图。
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
 import { pinCommitment, type DockItem } from '@/core/presence/commitment'
 import { presenceFixtures } from '@/core/presence/fixtures'
 import type { Degradation, OrbState } from '@/core/presence/presence'
@@ -43,4 +46,21 @@ test('可产出的三种 DockItem 各有一条样本会被 pin 住（只有被�
   )
   const PINNABLE: DockItem['kind'][] = ['confirm', 'task', 'queue']
   expect(PINNABLE.filter((k) => !pinned.has(k))).toEqual([])
+})
+
+// 第五条守卫（第 2 批实测补）：「真栈可产」那个 chip 是**取证屏上的一句断言**，而手写的断言会漂。
+// 实测：`deg-recoverable` 与 `deg-fatal` 两条都标着「真栈可产」，可 `usePresence` 从来不产它们
+// ——截图上那个 chip 就是一句假话，而它恰恰是这块屏用来分「读数」与「样本」的唯一标记
+// （同 card-gallery 头注那条「样本截图不是读数」）。
+// ⇒ 判据从**产出方源码**盘点，不从这份文件的自我声明里取（同族做法：产出方静态盘点）。
+test('降级样本的「真栈可产」标记必须与 usePresence 的实际产出方一致', () => {
+  const src = readFileSync(resolve(__dirname, '../src/features/chat/usePresence.ts'), 'utf8')
+  const produced = new Set([...src.matchAll(/degradations\.push\(\{\s*kind:\s*'([a-z_]+)'/g)].map((m) => m[1]))
+  // 观测通道自检：正则一旦被改坏，`produced` 会是空集，而空集会把**每一条**样本都判成说谎
+  // ——那时红灯指向的是这条测试自己，不是样本。先证明通道开着再读结论。
+  expect(produced.size).toBeGreaterThan(0)
+  const lying = presenceFixtures()
+    .filter((f) => f.producible && f.snapshot.degradation.some((d) => !produced.has(d.kind)))
+    .map((f) => f.label)
+  expect(lying).toEqual([])
 })
