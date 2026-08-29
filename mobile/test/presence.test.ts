@@ -78,6 +78,48 @@ describe('A. primary 优先级', () => {
     ).toBe('muted')
   })
 
+  // 第 1 批遗留②：上面那条的名字强于它的覆盖——补齐余下四对。每条都让**被比较的两态同时在场**，
+  // 判据是「交换那一对的两行即红」（本批逐对做过变异验证，读数进 §6.2）。
+  // ⚠ 其中两对（speaking↔thinking / thinking↔followup）的裁决**不在 primary 链上**：
+  //   primary 那两行都读 `agent`，而 agent 是单值 ⇒ 两个分支永不同真，交换它们是空操作。
+  //   真正的裁决点在 agent 轴自己的优先级里，所以这两对断言同时钉 `agent` 与 `primary`。
+  test('共存④ listening↔speaking：在听时对方开播 → 光球仍 listening（麦优先于嘴）', () => {
+    const both = base({ ptt: 'recording', speaking: true })
+    const snap = derivePresence(both)
+    expect(snap.capture).toBe('listening')
+    expect(snap.agent).toBe('speaking')
+    expect(snap.primary).toBe('listening')
+  })
+
+  test('共存⑤ speaking↔thinking：边播报边有在飞轮 → speaking（裁决在 agent 轴）', () => {
+    const both = base({
+      speaking: true,
+      turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 },
+    })
+    const snap = derivePresence(both)
+    expect(snap.agent).toBe('speaking')
+    expect(snap.primary).toBe('speaking')
+  })
+
+  test('共存⑥ thinking↔followup：接话窗内又发起了一轮 → thinking（裁决在 agent 轴）', () => {
+    const both = base({
+      hfEnabled: true,
+      hfUsable: true,
+      hfFsm: 'FOLLOWUP',
+      turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 },
+    })
+    const snap = derivePresence(both)
+    expect(snap.agent).toBe('thinking')
+    expect(snap.primary).toBe('thinking')
+  })
+
+  test('共存⑦ followup↔armed：FOLLOWUP 同时满足 capture=armed 与 agent=followup → listening', () => {
+    const snap = derivePresence(base({ hfEnabled: true, hfUsable: true, hfFsm: 'FOLLOWUP' }))
+    expect(snap.capture).toBe('armed')
+    expect(snap.agent).toBe('followup')
+    expect(snap.primary).toBe('listening')
+  })
+
   test('error 只在无在飞轮时短显 4s，之后回 idle', () => {
     expect(derivePresence(base({ lastError: { text: '出错了', at: NOW - 1000 } })).primary).toBe('idle')
     expect(derivePresence(base({ lastError: { text: '出错了', at: NOW - 1000 } })).capsule?.text).toBe('出错了')
