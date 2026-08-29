@@ -28,6 +28,8 @@ export interface PttHandle {
   partial: string
   /** 上一次的失败原因（供 UI 一行提示；下次按下即清） */
   error: string
+  /** 失败的**类别**（UI 据此决定给什么救济：去设置授权 / 重试 / 换一句）；空串=没错 */
+  errorKind: 'permission' | 'start' | 'asr' | ''
   /** 定稿等太久（兜底链在走）：UI 换一句中间反馈，别让人以为卡死了 */
   slow: boolean
   pressDown(): void
@@ -42,6 +44,7 @@ export function usePtt(opts: {
   const [state, setState] = useState<PttState>('idle')
   const [partial, setPartial] = useState('')
   const [error, setError] = useState('')
+  const [errorKind, setErrorKind] = useState<PttHandle['errorKind']>('')
   const [slow, setSlow] = useState(false)
   const sessionRef = useRef<AsrSession | null>(null)
   const startingRef = useRef(false)
@@ -68,6 +71,7 @@ export function usePtt(opts: {
     startingRef.current = true
     pendingStopRef.current = false
     setError('')
+    setErrorKind('')
     setPartial('')
     setState('recording')
     startedAtRef.current = Date.now()
@@ -91,13 +95,17 @@ export function usePtt(opts: {
           setState('idle')
           const text = t.trim()
           if (text) opts.onFinal(text)
-          else setError('没听清，再说一次？')
+          else {
+            setError('没听清，再说一次？')
+            setErrorKind('asr')
+          }
         },
         onError: (msg) => {
           sessionRef.current = null
           setPartial('')
           setState('idle')
           setError(msg)
+          setErrorKind('asr')
         },
       },
     )
@@ -117,11 +125,9 @@ export function usePtt(opts: {
         pendingStopRef.current = false
         sessionRef.current = null
         setState('idle')
-        setError(
-          e instanceof PermissionDeniedError
-            ? '需要麦克风权限，请在系统设置里允许'
-            : '录音启动失败',
-        )
+        const denied = e instanceof PermissionDeniedError
+        setError(denied ? '需要麦克风权限，请在系统设置里允许' : '录音启动失败')
+        setErrorKind(denied ? 'permission' : 'start')
       })
   }, [finishSession, opts])
 
@@ -142,5 +148,5 @@ export function usePtt(opts: {
     void finishSession()
   }, [finishSession])
 
-  return { state, partial, error, slow, pressDown, pressUp }
+  return { state, partial, error, errorKind, slow, pressDown, pressUp }
 }

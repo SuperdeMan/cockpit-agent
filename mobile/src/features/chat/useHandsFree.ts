@@ -40,6 +40,10 @@ export interface HandsFreeUi {
   availability: { vad: boolean; kws: boolean; usable: boolean }
   /** 载模型/开麦失败时的原因（UI 据此把开关自动弹回并解释） */
   error: string
+  /** 会话级关闭了语音打断（回声连续自触发）；空串=未关。会话级不可恢复（voiceLoop 语义） */
+  bargeInDisabled: string
+  /** 本轮语音链路降级说明；下一轮 FSM 进 LISTENING 时清 */
+  pipelineDegraded: string
 }
 
 export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
@@ -48,6 +52,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const [orb, setOrb] = useState<string | null>(null)
   const [partial, setPartial] = useState('')
   const [error, setError] = useState('')
+  const [bargeInDisabled, setBargeInDisabled] = useState('')
+  const [pipelineDegraded, setPipelineDegraded] = useState('')
   const ctlRef = useRef<HandsFreeController | null>(null)
   // 回调用 ref 存：它们每次渲染都是新函数，进依赖会让控制器反复重建（=反复开关麦）。
   // **在 effect 里更新而不是渲染期直接赋值**：渲染期写 ref 违反 React 的纯度约束
@@ -86,6 +92,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         setOrb(o)
         setFsm(f)
         if (f !== 'LISTENING') setPartial('')
+        // 降级是**本轮**的事实：下一轮真的开始听了就该消失，否则那行字会一直挂着
+        if (f === 'LISTENING') setPipelineDegraded('')
       },
       onPartialText: (t) => {
         setPartial(t)
@@ -93,6 +101,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       },
       onCancelTurn: () => cbRef.current.onCancelTurn?.(),
       onNotice: (m) => cbRef.current.onNotice?.(m),
+      onBargeInDisabled: (r) => setBargeInDisabled(r),
+      onPipelineDegraded: (_k, m) => setPipelineDegraded(m),
       wakeWord: () => settingsStore.getState().settings.wakeWord,
       getVoicePipeline: () => settingsStore.getState().settings.voicePipeline,
       getS2sConfig: () => {
@@ -150,6 +160,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setOrb(null)
       setFsm('IDLE')
       setPartial('')
+      setBargeInDisabled('')
+      setPipelineDegraded('')
     }
   }, [wantOn])
 
@@ -159,5 +171,5 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     ctlRef.current?.setNeedConfirm(needConfirm)
   }, [needConfirm, wantOn])
 
-  return { fsm, orb, partial, availability, error }
+  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded }
 }

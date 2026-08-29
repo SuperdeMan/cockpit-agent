@@ -259,3 +259,16 @@ test('回声参照文本：流式增量要持续喂给 FSM（不能只在首片�
   // 关键：最后一次拿到的是**累计全文**，不是最后一个增量
   expect(seen[2]).toBe('深圳市当前阴，气温28℃，西南风3级。')
 })
+
+test('⑤ FSM 关闭 barge-in → onBargeInDisabled(reason) 与 onNotice 同时收到（UX v2.1 B1-5）', () => {
+  const bargeIn: string[] = []
+  const notices: string[] = []
+  const { ctl } = makeCtl({
+    onNotice: (m: string) => notices.push(m),
+    onBargeInDisabled: (r: string) => bargeIn.push(r),
+  })
+  // 直接触发 FSM 的回调（VoiceLoop 构造时由控制器注入 onDisableBargeIn），不跑引擎
+  ctl.vl.onDisableBargeIn('repeated-self-trigger')
+  expect(bargeIn).toEqual(['repeated-self-trigger'])
+  expect(notices[0]).toContain('语音打断')
+})

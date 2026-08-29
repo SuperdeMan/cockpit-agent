@@ -29,6 +29,27 @@ export function visionCaptureReady(): boolean {
   return capturer != null
 }
 
+let capturing = false
+const capturingSubs = new Set<(v: boolean) => void>()
+
+/** 抓帧进行中（挂载相机 → 拍完卸载）。Presence 的 `looking` 态与隐私栏读它。 */
+export function subscribeVisionCapturing(fn: (v: boolean) => void): () => void {
+  capturingSubs.add(fn)
+  return () => {
+    capturingSubs.delete(fn)
+  }
+}
+
+function setCapturing(v: boolean): void {
+  if (capturing === v) return
+  capturing = v
+  for (const fn of capturingSubs) fn(v)
+}
+
+export function isVisionCapturing(): boolean {
+  return capturing
+}
+
 /**
  * 抓一帧并上传，返回 frame_id；**任何失败返回空串**——由 Agent 侧诚实说「没拿到画面」，
  * 不在这里弹错误打断对话（与 hmi/src/visionFrame.mjs 同一处置）。
@@ -36,6 +57,7 @@ export function visionCaptureReady(): boolean {
 export async function captureVisionFrame(audioUrl: string): Promise<string> {
   const fn = capturer
   if (!fn || !audioUrl) return ''
+  setCapturing(true)
   try {
     const uri = await fn()
     if (!uri) return ''
@@ -51,5 +73,7 @@ export async function captureVisionFrame(audioUrl: string): Promise<string> {
     return j.frame_id || ''
   } catch {
     return ''
+  } finally {
+    setCapturing(false)
   }
 }

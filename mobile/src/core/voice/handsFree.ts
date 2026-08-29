@@ -89,6 +89,9 @@ export interface HandsFreeDeps {
   /** THINKING 期被唤醒词打断 → 取消在飞的云端轮 */
   onCancelTurn?(): void
   onNotice?(msg: string): void
+  /** 结构化降级信号（UX v2.1 §12.1）。与 onNotice 并行：notice 是人话，这两条是给 Presence 的事实 */
+  onBargeInDisabled?(reason: string): void
+  onPipelineDegraded?(kind: 'degraded' | 'unsupported', message: string): void
   /** 是否开唤醒词（关掉则只有「答完续问」，没有常开唤醒） */
   wakeWord?(): boolean
   config?: { followupWindowMs?: number; silenceTailMs?: number; endpointGraceMs?: number }
@@ -174,8 +177,10 @@ export class HandsFreeController {
         if (this.s2s) this.s2s.cancelTurn()
         this.deps.onCancelTurn?.()
       },
-      onDisableBargeIn: (reason: string) =>
-        this.deps.onNotice?.('已关闭本次会话的语音打断（' + reason + '）'),
+      onDisableBargeIn: (reason: string) => {
+        this.deps.onNotice?.('已关闭本次会话的语音打断（' + reason + '）')
+        this.deps.onBargeInDisabled?.(reason)
+      },
       onMetric: (name: string) => {
         // 本地消化的三类事件：provider 不知道我们把这句判掉了，要显式让它别答
         if (this.s2s && S2S_LOCAL_HANDLED.has(name)) this.s2s.cancelTurn()
@@ -320,10 +325,14 @@ export class HandsFreeController {
         if (utt) this.deps.onS2sEscalated?.(utt, r.turnId)
       },
       onSessionState: (st: string) => {
-        if (st === 'degraded') this.deps.onNotice?.('语音链路降级，本轮回落三段式')
+        if (st === 'degraded') {
+          this.deps.onNotice?.('语音链路降级，本轮回落三段式')
+          this.deps.onPipelineDegraded?.('degraded', '语音链路降级，本轮回落三段式')
+        }
       },
       onUnsupported: (msg: string) => {
         this.deps.onNotice?.(msg + '（已回落三段式）')
+        this.deps.onPipelineDegraded?.('unsupported', msg)
         this.s2s = null // 之后 openAsr 会走 classic 分支
       },
     })

@@ -35,6 +35,10 @@ export class SpeechController implements SpeechSink {
    *  只送一次必然是错的。 */
   onSpeechText: ((text: string) => void) | null = null
   onSpeechEnded: (() => void) | null = null
+  /** 播报中（首片音频起播 → 播完/停）。Presence 的 agent 轴读它；**可多订阅**，
+   *  不再要求消费方链式覆盖 onSpeechBegan/Ended（那套写法第二个消费方就会把第一个顶掉）。 */
+  speaking = false
+  private readonly speakingSubs = new Set<(v: boolean) => void>()
   private session: TtsSession | null = null
   private extra: { player: any } | null = null
   private bubble = ''
@@ -48,6 +52,19 @@ export class SpeechController implements SpeechSink {
 
   setAudioUrl(url: string): void {
     this.audioUrl = url
+  }
+
+  subscribeSpeaking(fn: (v: boolean) => void): () => void {
+    this.speakingSubs.add(fn)
+    return () => {
+      this.speakingSubs.delete(fn)
+    }
+  }
+
+  private setSpeaking(v: boolean): void {
+    if (this.speaking === v) return
+    this.speaking = v
+    for (const fn of this.speakingSubs) fn(v)
   }
 
   private cfg(emotion: string): TtsConfig {
@@ -78,10 +95,12 @@ export class SpeechController implements SpeechSink {
     const session = new TtsSession(this.cfg(emotion), {
       onFirstAudio: () => {
         this.lastFirstAudioMs = Date.now() - this.beganAt
+        this.setSpeaking(true)
         this.onSpeechBegan?.(this.spokenText)
       },
       onEnd: () => {
         if (this.session === session) this.session = null
+        this.setSpeaking(false)
         this.onSpeechEnded?.()
       },
       onSilent: () => {
@@ -123,6 +142,7 @@ export class SpeechController implements SpeechSink {
   }
 
   stop(): void {
+    this.setSpeaking(false)
     const s = this.session
     this.session = null
     this.bubble = ''
@@ -138,12 +158,18 @@ export class SpeechController implements SpeechSink {
   async preview(text: string): Promise<boolean> {
     this.stop()
     let sounded = false
-    const session = new TtsSession(this.cfg(''), { onFirstAudio: () => { sounded = true } })
+    const session = new TtsSession(this.cfg(''), {
+      onFirstAudio: () => {
+        sounded = true
+        this.setSpeaking(true)
+      },
+    })
     this.session = session
     this.bubble = '__preview__'
     session.start()
     session.finish(text)
     await session.completion
+    this.setSpeaking(false)
     if (this.session === session) this.session = null
     return sounded
   }
@@ -158,7 +184,9 @@ export class SpeechController implements SpeechSink {
       if (!out) return false
       const { player, done } = playPcm(out.pcm, out.sampleRate)
       this.extra = { player }
+      this.setSpeaking(true)
       await done
+      this.setSpeaking(false)
       if (this.extra?.player === player) this.extra = null
       return true
     } catch {
