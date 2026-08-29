@@ -925,3 +925,53 @@ def test_slot_retry_counts_only_the_same_question():
     progressed = asyncio.run(_suspend_with(
         {"step_id": "s1", "missing": ["store_hint"], "retry": 1}, ["item_query"]))
     assert progressed == 0                            # 换了槽 = 进展，归零
+
+
+# ── I-024 第二层：挂起轮从来不写焦点（2026-08-30）─────────────────────────
+
+def _suspend_with_card(card: dict) -> list:
+    """跑一次 `_suspend`，返回 `update_focus` 被调用的次数记录。"""
+    from orchestrator.cloud.models import Plan, Step, StepResult, StepStatus, PlanContext
+
+    engine, _, _ = _make_engine_interject()
+    calls = []
+
+    async def _spy_update_focus(session_id, plan, results, **kw):
+        calls.append((session_id, len(results)))
+    engine.context.update_focus = _spy_update_focus
+
+    step = Step(id="s1", agent_id="mcp-bridge", endpoint="x",
+                intent="luckin.order", slots={})
+    plan = Plan(steps=[step], raw_text="先查附近的瑞幸，再点一杯生椰拿铁")
+    sr = StepResult(step_id="s1", status=StepStatus.NEED_SLOT,
+                    speech="要在哪家下？", ui_card=card,
+                    missing_slots=["store_hint"])
+    ctx = PlanContext(session_id="sess-1", user_id="u1", request_id="r1")
+    asyncio.run(engine._suspend(sr, [sr], plan, ctx))
+    return calls
+
+
+def test_a_choice_card_suspend_writes_the_focus():
+    """**抽取改对了，而调用方在它之前就返回了。**
+
+    三个 `_suspend` 调用点都是 `yield await self._suspend(...)` 紧跟 `return`，
+    而 `update_focus` 在它们**之后** ⇒ 把「可见选择卡的候选」收进 `extract_focus`
+    之后，那份候选**仍然到不了存储**（真栈实测：重列仍答「没有您刚才那页选项的记录」）。
+
+    同一形态的第三例——前两次是「安全告警登记在 clarify/no_plan 的 return 之后」
+    与「`_refresh_active` 刷成了用户没看见的那份」。
+    """
+    assert _suspend_with_card(
+        {"type": "merchant_choices", "purpose": "store_choice"}) == [("sess-1", 1)]
+    assert _suspend_with_card(
+        {"type": "poi_list", "purpose": "dest_choice"}) == [("sess-1", 1)]
+
+
+def test_an_ordinary_suspend_still_writes_nothing():
+    """误伤对照：**普通的确认/补槽挂起行为逐字不变**——不写焦点。
+
+    判据窄到「挂起步自己出的是选择卡」，那正是 C10-A 说的
+    「用户最后一眼看到的那份列表」；别的挂起没有这份列表，写它就是给序数指代埋雷。
+    """
+    assert _suspend_with_card({"type": "merchant_order_preview"}) == []
+    assert _suspend_with_card(None) == []

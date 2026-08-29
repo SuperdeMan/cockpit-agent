@@ -31,7 +31,7 @@ from runtime.execution_claim import execution_claim
 from runtime.clause_split import split_clauses
 from runtime.polarity import is_negated_directive
 from .context import (ContextManager, build_context, candidate_downlink,
-                      candidate_set_for,
+                      candidate_set_for, _is_choice_card,
                       references_a_candidate, resolve_candidate_scope,
                       safety_alert_active,
                       WEATHER_CONTEXT_INTENTS, normalize_weather_city_slot,
@@ -1294,6 +1294,25 @@ class PlannerEngine:
         挂起 final 又会整体替换 HMI 气泡——不前缀简报，用户就会被凭空追问
         （「查到雨才建提醒」却没听到有雨）。调用方负责剔除确认续接种子与已流式
         播报的结果，防双重播报；挂起步自身不进前缀（trip 确认话术本就是完整叙述）。"""
+        # I-024 第二层（2026-08-30）：**挂起轮从来不写焦点**——三个调用点都是
+        # `yield await self._suspend(...)` 紧跟 `return`，`update_focus` 在它们**之后**。
+        # 于是把「可见选择卡的候选」收进 `extract_focus`（§9.39 C）之后，
+        # 那份候选**仍然到不了存储**：真栈实测重列仍答「没有您刚才那页选项的记录」。
+        # ⇒ **抽取改对了，而调用方在它之前就返回了**——同一形态的第三例
+        # （前两次：安全告警登记在 clarify/no_plan 的 return 之后；
+        # `_refresh_active` 刷成了用户没看见的那份）。
+        #
+        # 判据面刻意窄：**只有挂起步自己出的是选择卡时才写**。那正是 C10-A 说的
+        # 「用户最后一眼看到的那份列表」——不写它，下一句「第几个」「重新列一遍」
+        # 就没有参照系；而普通的确认/补槽挂起**行为逐字不变**（不写焦点）。
+        if (ctx.prefs.get("memory_enabled", "true") != "false"
+                and _is_choice_card(step_result.ui_card)):
+            try:
+                await self.context.update_focus(
+                    ctx.session_id, plan, results,
+                    user_id=ctx.user_id, exchange_id=ctx.request_id)
+            except Exception as exc:            # 焦点是 best-effort，绝不拖垮挂起
+                logger.debug("focus update on a choice-card suspend failed: %s", exc)
         # The pending step is always re-run from ``pending_plan``.  Keeping its
         # full result would create a second persisted copy of merchant checkout
         # tokens, store/specification data and amounts in ``planner:sess:*``
