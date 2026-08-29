@@ -102,6 +102,12 @@ export class SpeechController implements SpeechSink {
 
   finish(bubbleId: string, text: string): void {
     if (!this.enabled || !text) return
+    // **整句定稿在这里，三条分支都要报**（2026-08-29 第二次真机复跑才补上）：
+    // 上一版只在 `delta()` 与 `speakBatch()` 报，而 `sameSegment=true`（流式正常收尾）
+    // 这条**最常走的路径**两个都不经过；答案若是一次性 final 送达（一次 delta 都没有），
+    // `spokenText` 更是从头到尾空着 ⇒ FSM 的回声参照仍是空串，防线照旧空转。
+    // `text` 就是本轮要播的整句，正是回声判据要比对的那一份。
+    this.onSpeechText?.(text)
     // 会话对不上（begin 时还没开播报 / 已被停）：整段走批处理，不静默丢掉这次播报
     if (!this.session || bubbleId !== this.bubble) {
       void this.speakBatch(text)

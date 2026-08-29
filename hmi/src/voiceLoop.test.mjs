@@ -706,6 +706,20 @@ test('缺口A 判据：ASR 听错一个字（「当」→「的」）仍判回�
   assert.equal(h.vl.state, VoiceState.FOLLOWUP)
 })
 
+test('缺口A 同音字：ASR 把「阿伽门农」听成「阿加门农」仍判回声（真机原字）', () => {
+  // 2026-08-29 第二次真机复跑打穿了上一版判据：当时用「最长**连续**重合」，
+  // 中间一个同音字替换（伽→加）把匹配劈成 `阿` 和 `门农` 两段，最长一段 2/4=0.5，判不出。
+  // **同音字替换是中文 ASR 的主要错误形态**，所以度量必须容忍替换 ⇒ 换成公共**子序列**。
+  const h = makeHarness()
+  driveToSpeaking(h, { final: '阿伽门农是谁', tts: '阿伽门农是希腊联军统帅，' })
+  h.vl.ttsEnd()
+  h.vl.vadSpeechStart()
+  const sendsBefore = h.count('send')
+  h.vl.asrFinal('阿加门农。') // ← 真机原字
+  assert.equal(h.count('send'), sendsBefore, '同音字回声也不许上云')
+  assert.equal(h.vl.state, VoiceState.FOLLOWUP)
+})
+
 test('缺口A 反向：真续问不许被当回声吞掉', () => {
   const h = makeHarness()
   driveToFollowupSpeech(h)

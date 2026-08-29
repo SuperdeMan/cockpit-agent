@@ -17,27 +17,33 @@ import { normSpeech } from './ttsQueue.mjs'
 
 /** 回声判据的重合比阈值（`_overlapsTts`）。**方向是泓舟 2026-08-29 当轮定的：宁可吞掉真续问**
  *  ——判错成回声=用户多说一遍；判错成真话=进正反馈死循环、反复上云，回声里的词还可能被当指令。
- *  两边代价不对称，所以阈值往「容易判成回声」那边偏。0.75 的由来：实测那句「深圳市的」(4 字)
- *  与播报文本的最长连续重合是「深圳市」(3) = 0.75，要能收住它；而真续问「那明天呢」只有 0.25。 */
+ *  两边代价不对称，所以阈值往「容易判成回声」那边偏。0.75 的由来是两条**真机原字**都要收住：
+ *  「深圳市的」(4) 与播报的公共子序列是「深圳市」(3)=0.75；
+ *  「阿加门农」(4) 与「阿伽门农是…」的是「阿门农」(3)=0.75。而真续问「那明天呢」只有 0.25，留了间距。 */
 const ECHO_OVERLAP_RATIO = 0.75
 
-/** 最长公共**连续**子串长度（滚动 DP，O(n·m) 时间 / O(m) 空间）。 */
+/** 最长公共**子序列**长度（滚动 DP，O(n·m) 时间 / O(m) 空间）。
+ *
+ *  ⚠ **这里刻意不用「最长连续子串」——那一版被真机打穿过**（2026-08-29）：
+ *  播报「阿**伽**门农是希腊联军统帅，」，ASR 听成「阿**加**门农」，
+ *  中间一个同音字替换就把连续匹配劈成 `阿` 与 `门农` 两段，最长一段只有 2/4=0.5，
+ *  判不出是回声。**同音字替换正是中文 ASR 的主要错误形态**，而它恰好是连续子串最怕的。
+ *  子序列容忍替换：`阿门农` 仍是 3/4=0.75，收得住。
+ *  代价是判据变松（子序列可以跳着匹配），这个方向是刻意选的——见 ECHO_OVERLAP_RATIO 头注。 */
 function longestCommonRun(a, b) {
   if (!a || !b) return 0
-  let best = 0
   let prev = new Uint16Array(b.length + 1)
   let cur = new Uint16Array(b.length + 1)
   for (let i = 1; i <= a.length; i += 1) {
     for (let j = 1; j <= b.length; j += 1) {
-      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : 0
-      if (cur[j] > best) best = cur[j]
+      cur[j] = a[i - 1] === b[j - 1] ? prev[j - 1] + 1 : Math.max(prev[j], cur[j - 1])
     }
     const swap = prev
     prev = cur
     cur = swap
     cur.fill(0)
   }
-  return best
+  return prev[b.length]
 }
 
 export const VoiceState = {
