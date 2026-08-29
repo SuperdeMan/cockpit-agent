@@ -20,7 +20,21 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated'
 
-export type OrbState = 'idle' | 'thinking' | 'speaking' | 'armed' | 'listening'
+import type { OrbState } from '../../core/presence/presence'
+
+export type { OrbState }
+
+/** TalkBack 读法随状态变（§8.1）；Composer 上的可点光球再包一层 button role */
+export const ORB_A11Y: Record<OrbState, string> = {
+  idle: '小舟',
+  thinking: '小舟，正在思考',
+  speaking: '小舟，播报中',
+  armed: '小舟，等待唤醒',
+  listening: '小舟，在听',
+  attention: '小舟，等你确认',
+  looking: '小舟，正在看一眼',
+  muted: '小舟，已断开',
+}
 
 const CYAN = '#5BE9FF'
 const BLUE = '#5B8CFF'
@@ -68,17 +82,25 @@ export function AuroraOrb({
   size = 40,
   state = 'idle',
   animated = true,
+  dim = false,
 }: {
   size?: number
   state?: OrbState
   /** false=完全静态（无动画帧回调）——列表内 idle 头像用 */
   animated?: boolean
+  /** reconnecting 期整体 ×0.6 亮度（不是新态，随 PresenceSnapshot.dim 走） */
+  dim?: boolean
 }) {
   const thinking = state === 'thinking'
   const speaking = state === 'speaking'
   const listening = state === 'listening'
   const armed = state === 'armed'
-  const glow = speaking ? 1.35 : listening ? 1.15 : armed ? 0.8 : 1
+  const attention = state === 'attention'
+  const looking = state === 'looking'
+  const muted = state === 'muted'
+  // 三个新态只加环与节律，不碰七层、四色、波纹色（方案 §10.1 十条不变量）
+  const spins = animated && !muted
+  const glow = speaking ? 1.35 : listening ? 1.15 : armed ? 0.8 : muted ? 0.6 : 1
 
   // 三组旋转 + 一组呼吸/脉冲（数值照 web 版：thinking 最快，armed 最缓）
   const haloDur = (thinking ? 1.6 : listening ? 4 : armed ? 10 : 8) * 1000
@@ -92,7 +114,8 @@ export function AuroraOrb({
   const breathe = useSharedValue(0) // 0→1→0 呼吸相位
 
   useEffect(() => {
-    if (!animated) return
+    // muted 整段 return：旋转与呼吸一起停（离线态是静止的）
+    if (!spins) return
     const linear = { easing: Easing.linear }
     spinHalo.value = 0
     spinInner.value = 0
@@ -113,7 +136,7 @@ export function AuroraOrb({
       cancelAnimation(spinCounter)
       cancelAnimation(breathe)
     }
-  }, [animated, haloDur, innerDur, counterDur, bodyDur, spinHalo, spinInner, spinCounter, breathe])
+  }, [spins, haloDur, innerDur, counterDur, bodyDur, spinHalo, spinInner, spinCounter, breathe])
 
   const haloStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${spinHalo.value}deg` }] }))
   const innerStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${spinInner.value}deg` }] }))
@@ -130,7 +153,17 @@ export function AuroraOrb({
   const layer: ViewStyle = { position: 'absolute', borderRadius: 9999 }
 
   return (
-    <View style={{ width: size, height: size }} accessibilityLabel="小舟">
+    <View
+      style={{
+        width: size,
+        height: size,
+        opacity: dim ? 0.6 : 1,
+        // RN 0.86 Android 支持 filter.saturate；iOS 不支持时静默忽略（本 App 只交付 Android）
+        ...(muted ? { filter: [{ saturate: 0.4 }] } : {}),
+      }}
+      accessibilityLabel={ORB_A11Y[state]}
+      accessibilityRole="image"
+    >
       {/* 环境辉光 */}
       <Animated.View
         style={[
@@ -236,6 +269,38 @@ export function AuroraOrb({
           ]}
         />
       )}
+      {/* 等你确认：琥珀环（琥珀本就是确认态语义色，A-6.4）；呼吸复用 bodyStyle，
+          attention 不命中 thinking/speaking/listening/armed ⇒ bodyDur 落到 idle 的 4s。不改球体 */}
+      {attention && (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            layer,
+            {
+              top: -size * 0.14, left: -size * 0.14, right: -size * 0.14, bottom: -size * 0.14,
+              borderWidth: 2,
+              borderColor: 'rgba(245,158,11,0.35)',
+            },
+            animated ? bodyStyle : null,
+          ]}
+        />
+      )}
+      {/* 看一眼：一次性白环扩散（与 speaking 的三青环区分：一次 vs 连续） */}
+      {animated && looking && <Shutter size={size} />}
+      {/* 离线：灰环，静止 */}
+      {muted && (
+        <View
+          pointerEvents="none"
+          style={[
+            layer,
+            {
+              top: -size * 0.1, left: -size * 0.1, right: -size * 0.1, bottom: -size * 0.1,
+              borderWidth: 1,
+              borderColor: 'rgba(255,255,255,0.22)',
+            },
+          ]}
+        />
+      )}
     </View>
   )
 }
@@ -265,6 +330,35 @@ function Ripple({ size, i }: { size: number; i: number }) {
           top: (size - d) / 2, left: (size - d) / 2,
           width: d, height: d, borderRadius: 9999,
           borderWidth: 1, borderColor: `rgba(70,214,224,${0.3 / i + 0.1})`,
+        },
+        style,
+      ]}
+    />
+  )
+}
+
+/** looking 快门：白环 0.9→1.35 扩散并淡出，**只放一次**（300ms），之后停在不可见 */
+function Shutter({ size }: { size: number }) {
+  const t = useSharedValue(0)
+  useEffect(() => {
+    t.value = 0
+    t.value = withTiming(1, { duration: 300, easing: Easing.out(Easing.ease) })
+    return () => cancelAnimation(t)
+  }, [t])
+  const style = useAnimatedStyle(() => ({
+    transform: [{ scale: 0.9 + 0.45 * t.value }],
+    opacity: 0.9 * (1 - t.value),
+  }))
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: 'absolute',
+          top: -size * 0.1, left: -size * 0.1, right: -size * 0.1, bottom: -size * 0.1,
+          borderRadius: 9999,
+          borderWidth: 1.5,
+          borderColor: 'rgba(255,255,255,0.8)',
         },
         style,
       ]}
