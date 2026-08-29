@@ -2767,11 +2767,137 @@ T1/T2/T4/T5/T7 互不依赖，可由不同 subagent 并行（各自只加自己�
 
 ### 6.2 第 2 批「光球与取证屏」（T6 / T7 / T8 / T9 / T14）
 
-- 开工基线：
-- 完成任务与提交：
-- 真机读数（画廊深浅各一套截图路径、Maestro 09 时长、画廊滚动帧率主观）：
+- 开工基线：`npm test` **26 suites / 285 tests 全通过**（20.4s）/ `tsc` **0 error**；
+  `scripts\check_android_env.ps1` **18 pass / 0 warn / 0 fail**、退出码 0
+  （2026-08-29 夜～08-30 凌晨，worktree：**主工作树**——泓舟仍未授权分树）
+- 完成任务与提交（并行度：T6/T7 两个 subagent 同时开跑，T8 → T9 → T14 串行；
+  §0.1 的两条附加项在 T6 之前先做，各自单独提交）：
+
+| 任务 | commit | 文件 / 行 | 新增用例 |
+|---|---|---|---|
+| 附加项① 四对共存用例 | `74f907e` | 1 文件 +42 | 4 |
+| 附加项② 删死变量 `hfListening` | `b673750` | 1 文件 −1 | — |
+| T6 光球三新态 | `71f8ed7` | 1 文件 +99 −5 | 0（任务规格即无 jest） |
+| T7 实验室开关 + `deviceRole` | `4fe6714` | 5 文件 +54 | 3 |
+| T8 activityLog + usePresence | `131ac13` | 3 文件 +199 | 3 |
+| T9 胶囊 + Focus Dock | `9787cf4` | 2 文件 +247 | 0（同 T6） |
+| T14 状态画廊 | `cd77cbb` | 3 文件 +137 −3 | 3 |
+| T14 补 Dock 分支守卫 + `offline-queue-only` 样本 | `dd1a6c9` | 2 文件 +28 −1 | 1 |
+| T15（**提前**）Maestro 09 | `e0a74cc` | 1 文件 +40 | — |
+| T14 修两条假「真栈可产」+ 产出方守卫 | `4bf7a16` | 2 文件 +26 −3 | 1 |
+| 截图目录不入库 | `0400867` | 1 文件 +4 | — |
+
+- 读数：收口 `npm test` = **28 suites / 300 tests 全通过**（42.6s），`tsc` **0 error**。
+  相对基线 **+2 suites / +15 tests**，逐条对得上：4+3+3+3+1+1=15。`npm test` 条数只增不减
+  （§4 回归判据）满足；本批未碰 `hmi/`、未改编排核心。
+- 真机读数（Mix Fold 4 `5d432b6d`，显示屏 id `4630947090644569220`；**Metro 用的是工作树里
+  别的会话已经起着的那一个 dev server**——先核过它的命令行确认服务的就是本仓 `mobile/`，
+  自己再起会撞 8081）：
+  - 截图 `mobile/e2e/artifacts/b1-14-gallery-{dark,light}-{1..7}.png` 共 14 张，深浅各一套、
+    各自从表头滚到表尾，24 条样本全覆盖。**不入库**（`0400867` 已 gitignore 该目录：
+    全仓从来没有提交过验收截图，且**截图是取证不是读数**）。
+  - 三个新光球态真机可见：`attention` 琥珀环（`dark-4`）、`muted` 去饱和 + 灰环（`light-5`，
+    与同屏其它彩色球对比明显 ⇒ `filter: [{ saturate: 0.4 }]` 在 Android 上确实生效）；
+    **`looking` 快门白环是 300ms 一次性动画，截图抓不到**，本批**没有**它的静态取证（出账遗留⑥）。
+  - 评审 P0-1「待确认时断网」在 `light-5` 上成立：`primary=muted`、胶囊「已断开 · 消息会排队」，
+    而琥珀确认卡**照样钉着**（`4:15 后过期` + 「另有 1 个待处理 ›」）。
+  - Maestro 09：**通过**，**退出码 0**（专门单跑一趟只为拿退出码——管道里 `tail` 的退出码是老账），
+    实跑 5 分 10 秒，其中约 40s 是 dev-client 起 + bundle。
+  - 画廊滚动主观：24 个动画光球同屏，滚动跟手、无明显掉帧。`adb shell input swipe` **300ms 以内
+    的快扫会被列表当成 fling 且实际位移极小**（换 400ms 才稳）——这是取证脚本的事、不是渲染卡；
+    我头一套深色截图就是这么只拍到了前 10 条，重拍才补齐。
+  - 截图右上角那个半透明齿轮浮标**不是 App 的**（`_layout.tsx` / `state-gallery.tsx` grep 无 FAB），
+    是设备上的系统/开发浮窗；它会盖住第一条样本的 chip，看图时别读成 UI。
 - 本批踩的坑：
+  1. **我自己的第一次变异验证是空转的，而且它「全绿」**（本批最值钱的一条）。四对共存用例写完跑变异，
+     脚本里写的是 `/tmp/presence.orig.ts`——MSYS 会把**命令行参数**里的 `/tmp/mut.py` 转成 Windows 路径，
+     但**脚本源码里的字符串字面量不转**，Python 按 cwd 解析成 `D:\tmp\...`，四次「变异」一次都没落盘，
+     四轮读数全是 `34 passed`。**只看 PASS 数就会把「一次都没变异」读成「测试很稳」**（第 1 批那条
+     「逐对交换」是同族老账：绿在了没被交换的那一对上）。⇒ **变异测试的第一条断言是「变异真的发生了」**：
+     改完先 `git diff --stat` 核一眼，再读测试读数。
+  2. **四对里有两对根本不能在 `primary` 链上验**。`primary` 的 `speaking` / `thinking` / `followup`
+     三条分支都读**单值**的 `agent`，两两永不同真 ⇒ 交换它们是**空操作**，写在那儿的断言无论如何都绿。
+     真正的优先级住在 `agent` 轴自己的三元链里。⇒ 这两对同时钉 `agent` 与 `primary`，逐对变异确认
+     各只红自己那条（第四对 followup↔armed 连带红了既有参数化例，符合预期）。
+     **「给每一对都写了断言」不等于每一对都被验到——先问这一对的裁决点在哪一层。**
+  3. **计划里 Maestro 09 那四条断言实跑红了三条，三个成因互不相同**，而三条红看起来都像
+     「东西没渲出来」：① `"另有 1 个待处理"`——Maestro 的文本选择器是**整串正则不是包含匹配**，
+     屏上是「另有 1 个待处理 ›」，**hierarchy 里那行明明在**（去 dump `screen-hierarchy/*.json`
+     才分得清「断言红」与「没渲出来」）；② `"条消息排队中"`——在原 `only=` 集合下**永远渲不出来**
+     （见坑⑧），是样本集的洞不是断言的错；③ `"环境回声较强"`——在屏幕外，`assertVisible` 不会自己滚。
+  4. **`scrollUntilVisible` 在这块屏上判不出可见，而 `scroll` + `assertVisible` 同一目标当场绿**。
+     它确实滚到了（失败瞬间的 hierarchy 里目标文本就在），换 `id` 选择器、把 `visibilityPercentage`
+     从 100 降到 50 都照红。⇒ **两条命令的「可见」判定不是同一个**。最终改成「滚到触底
+     （`repeat: 6`，滚过头无害）再断言」，三条判据全写进流的头注释——防的是下一个人把它改回去。
+  5. **画廊里的倒计时会走，但那恰恰不能当成「倒计时是对的」的证据——方向是反的。**
+     `CommitmentCard` 的秒表 `useEffect` 依赖 `[item]` **对象引用**；画廊喂的是 `useMemo` 只算一次的
+     静态 snapshot，引用稳定 ⇒ 秒表正常跑（真机实测 `4:28 → 4:15` 在走）。而生产路径上
+     `usePresence` 每秒 tick、`derivePresence` 每次 `.map()` 现造新的 `DockItem` ⇒ **每秒 cleanup +
+     重建 interval，本地 `now` 会冻在挂载那一刻**。**取证屏与生产路径在这一点上的输入形态相反，
+     画廊绿证明不了生产绿**（修法与验证入口见遗留②）。
+  6. **同一块屏上「0s 后过期」有两种成因**。头一轮截图里两张确认卡都写着 `0s 后过期`、进度条空——
+     不是倒计时坏了，是 **expo-router 复用了已挂载的画廊屏**：`useMemo(() => presenceFixtures(), [])`
+     只在挂载时取一次时间基准，而我隔了 18 分钟用 `openLink` 再进来，样本早过期。`force-stop` 后
+     重进就是 `4:28`。⇒ **取证前先 force-stop**，别用深链去「刷新」一个有时间基准的屏。
+  7. **取证屏自己写的标记也是断言，也会漂**。`deg-recoverable` 与 `deg-fatal` 两条挂着「真栈可产」，
+     可全仓 grep，`usePresence` 只 push 四种降级、这两种一次都不产——那个 chip 就是**截图上的一句假话**，
+     而它恰恰是这块屏用来分「读数」与「样本」的唯一标记（同 card-gallery 头注「样本截图不是读数」）。
+     ⇒ 改成 `producible: false` + 一条**从产出方源码盘点**的守卫（`4bf7a16`），守卫里带观测通道自检
+     （正则被改坏 ⇒ 空集 ⇒ 把每条样本都判成说谎，那时红指向测试自己不指向样本）。
+  8. **覆盖度守卫守的面比它的名字窄**：只守 `primary`（8）与 `degradation`（7），**不守 Dock 的四个分支**，
+     而 Maestro 09 的断言全落在 Dock 分支文案上。实测（对样本逐条跑 `pinCommitment`）：
+     confirm 4 条 / task 1 条 / **queue 0 条** / slot 0 条。queue 是 0 不是漏写样本，是排序：
+     带 `queued` 的两条样本都同时带 `pendingOps`，confirm rank 0、queue rank 4 ⇒ queue 只进
+     「另有 N 个」的计数。补第四条守卫（`dd1a6c9`）之后这条缝才有人看着。**`slot` 刻意不进守卫**
+     ——`derivePresence` 没有产出它的代码路径，进了守卫只会逼人手搓假 snapshot 来喂绿灯。
+  9. **expo-router 的 typed routes 闸依赖「有没有 dev server 在跑」**（T7 实测）：
+     `.expo/types/router.d.ts` 是 gitignore 的本地生成物、由 dev server watch 生成，`tsc` 自己不生成它。
+     推论两条：干净 checkout（CI）里这道 href 闸**根本不存在**，**CI 的 tsc 绿证明不了路由注册了**；
+     反过来本地没起 dev server 时新建路由会**假红**——那时别去改 `Link`。
+  10. **新建文件的提交要多一步**：`git commit -- <未跟踪路径>` 会报 `pathspec did not match`，
+      得先 `git add -- <路径>` 再**紧接着同一条命令链**里 commit（中间不许停下来做别的事——
+      已暂存未提交比未暂存更有害，会污染别的会话的发版闸）。另：`git commit` 的 `-m` 必须写在 `--` 之前。
+      共享树里全程有别的会话在写 `AGENTS.md` / `scripts/probe_qa_regression.py` /
+      `docs/design/2026-08-27-…`，pathspec 隔离全程有效，11 个提交无一夹带。
 - 遗留 / 给第 3 批的话：
+  1. **`uxV2Presence` / `uxV2Dock` 两个开关目前零消费方**——「设置页有开关、关了没反应」比没开关更糟。
+     T10 接线时**必须让 v2 组件读这两个开关**，否则回滚路径（§11.5）只是一句话。
+  2. **确认卡倒计时在生产路径上大概率冻住**（坑⑤）。两条一行修法：① `useEffect` 依赖换成
+     `[item.kind, item.id]`；② 更好——删掉组件里那份本地时钟，`now` 从 snapshot 走
+     （`usePresence` 已经在每秒 tick，本地这份是第二个不同步的 1s 时钟）。**本批没改**：组件还没有
+     消费方，改了也无法证伪。验证入口：T10 接进 ChatScreen 后触发一次危险动作确认，盯 15 秒看数字动不动。
+     ⚠ 连带：`dock-confirm` 挂着 `accessibilityLiveRegion="assertive"` 且倒计时是它的后代——秒表一旦
+     真跑起来，TalkBack 会**每秒重播整张卡**；修①的同时要把 live region 挪出倒计时子树或降成 `polite`。
+  3. **`usePresence` 有三个字段喂不出正确的值**（T8 按计划原样落，未擅自改）：
+     - `driving` **实质恒为 false**：`Msg.driving` 全仓只由 `process` 帧写，空闲/简单轮/纯流式全是 false。
+       真信号该来自 `vehState`，但「哪个键算行车」的判据**目前不存在**，写进收集器就是第二份判据
+       （撞方案自纠的那条「车速阈值不许进 UI、VAL 才是安全裁决点」）。⇒ T10 按已有判据接，别在收集器里判。
+     - `lastError.at` 是「hook 第一次看见它」不是「它发生的时刻」（`Msg` 无时间戳，靠本地 `seenAt` 登记）。
+       后果：挂载时若历史最后一条是 error 气泡，会闪一次 4s 红胶囊。
+     - `connChangedAt` 挂载时被重置成 now：挂载那刻已经是 `connecting` 的话，「正在重连…」最晚迟 3s。
+  4. **秒级 `setInterval` 无条件常开**：全空闲时也每秒 setState。`derivePresence` 本身不贵，
+     但 T10 接进 ChatScreen 后要看它会不会带着 FlashList 与光球动画一起重渲。
+  5. **两条未验前提原样搁置**（第 1 批遗留③⑦；本批既没动它们，也没写任何依赖它们成立的代码）：
+     `queued` 只由 `transport.send()` 返回 `false` 驱动，真实 `GatewaySession` 断线时到底返不返 `false`
+     **仍未验**——`offline-queue-only` 那条样本标着「真栈可产」正是压在这个未验前提上；
+     `setStatus` 对同值状态早退。T10 或第 4 批真机验收要单独确认。
+  6. **`looking` 快门环没有静态取证**（300ms 一次性动画，截图抓不到）。要么第 4 批录一段屏，
+     要么接受「只有类型与代码路径被守着」——别把「画廊里有这条样本」读成「白环验过了」。
+  7. **B1 不可达的那几种，不是本批的洞**：`slot` 分支（`derivePresence` 无产出路径 + 协议无
+     `missing_slots`）在 B1 完全不可达；`recoverable_error` / `safety_blocked` / `fatal` 三种降级
+     同样无产出方（样本上已标「仅样本」）。这些挂账方案 §13 Q16 / Q19 的后端。
+  8. **`PresenceCapsule` 是 `Pressable` 但 `accessibilityRole="text"`、`minHeight` 只有 26dp**
+     （远低于 `TARGET.parked=48`）。作为状态读出这是对的；T10 一旦给 `onPress` 接真实动作，
+     它就成了一个读屏不播报、热区又不达标的可点区域——接线时再判一次。
+  9. **`DegradationRow` 用 `key={d.kind}`**：今天安全（每种 kind 上游最多 push 一次），
+     将来出现同 kind 两条（mic + camera 两个 `permission_denied`）就是 React key 冲突。
+  10. **计划自身一处不一致，本批按收口判据处置**：§0.1 第 2 批收口判据要求「Maestro 09 通过」，
+      而 Task 15（06 + 09 + README）整体排在第 4 批。我把 **09 提前落了**（`e0a74cc`），
+      **06 流与 `e2e/README.md` 仍留给第 4 批 T15**（README 里那三条流的状态与读数也一并留给它）。
+  11. **光球在浅色主题下对比度明显偏低**（`light-1` / `light-4`：极光球压在磨砂白底上糊成一团淡紫）。
+      这是 B1 之前就有的形态、不是本批引入，但状态画廊第一次把 24 个球并排放在浅色底上，一眼可见。
+      记一笔给 B2/B3 的视觉批。
+  12. **未推送**：本批 11 个提交，连同第 1 批那 6 个，都还在本地 `main`。`git push` 需泓舟单独授权。
 
 ### 6.3 第 3 批「接线」（T10–T13）
 
