@@ -700,6 +700,7 @@ v2 的 `error`「无在飞轮时短显 4s」太粗——今天代码里已经有
 | Q16 | **后端挂账**：`final.confirm_policy`（risk / allowed_channels / reason_code / expires_at） | UI 先按「touch + voice 都允许 + VAL 拒绝原话钉住」运行 | §5.3.1 |
 | Q17 | **后端挂账**：proactive 用户偏好 API（稍后提醒 / 本类静音 / 今日不再）+ 投递带 `reason` | UI 留按钮位不渲染 | §5.6 |
 | Q18 | 播报三档默认「自动」；行车档只强制安全告警 | 同 Q11，行车档不再「强制开」 | §6 |
+| Q19 | **后端挂账**：`final.missing_slots`（NEED_SLOT 的结构化字段：槽名 + 中文名 + 建议值） | 协议里今天没有（2026-08-29 grep 全空）⇒ Dock 的 `slot` 项在 B1 只有类型与画廊样本；**客户端不猜「这句是不是在补槽」** | §5.3、B1 计划 §0 接手须知 5 |
 
 ---
 
