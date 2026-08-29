@@ -1,0 +1,40 @@
+# 流 ⑨：状态画廊离线冒烟（CI 跑）：三个新光球态 + 承诺面 + 降级行渲得出来、不崩。
+#
+# ⚠ 三条写这条流时**实测**撞出来的判据，改它之前先读（每条都是一次红换来的）：
+# 1. **Maestro 的文本选择器是整串正则，不是包含匹配**。屏上是「另有 1 个待处理 ›」，
+#    断言写「另有 1 个待处理」会 FAILED，而 hierarchy 里那行**明明在**——
+#    「断言红」不等于「东西没渲出来」。同仓 04 里那句 "天气 · .*" 是同一个写法。
+# 2. **`scrollUntilVisible` 在这块屏上不可用**：它确实滚了（失败时的 hierarchy 里
+#    目标文本就在），但它自己的可见性判定始终判否——换 id 选择器、把
+#    `visibilityPercentage` 降到 50 都一样红。而 `scroll` + `assertVisible` 同一目标
+#    当场绿。⇒ **两条命令的「可见」判定不是同一个**，别把这里改回 `scrollUntilVisible`。
+# 3. 滚到**触底**再断言（`repeat: 6` 是「滚过头也无害」的量），不要数屏数——
+#    数出来的屏数只对这一台设备成立。
+appId: com.xiaozhou.companion
+name: 09 状态画廊离线冒烟
+tags:
+  - offline
+---
+- runFlow: subflows/open-app.yaml
+- openLink: "xiaozhou://state-gallery?only=attention-two,looking,offline-with-confirm,offline-queue-only,deg-echo"
+- extendedWaitUntil:
+    visible:
+      id: "state-attention-two"
+    timeout: 20000
+
+# 承诺面：两条待确认 → 钉住最早到期的那条 + 倒计时 + 「另有 N 个」计数
+- assertVisible: "另有 2 个待处理.*"
+- assertVisible: ".*后过期"
+# 评审 P0-1 的取证样本：断网（primary=muted）不许盖掉那条确认
+- assertVisible: "另有 1 个待处理.*"
+
+# 滚到底：离线队列项 + 降级行
+- repeat:
+    times: 6
+    commands:
+      - scroll
+# ⚠ 这句**只有 queue 项被 pin 住时**才渲得出来。带 pendingOps 的样本里 confirm 排 rank 0、
+#   queue 排 rank 4，queue 只进上面那个「另有 N 个」计数 ⇒ 必须有一条「断网 + 有排队 +
+#   无待确认」的样本（`offline-queue-only`）。计划原稿的 only= 里没有它，那条断言必红。
+- assertVisible: ".*条消息排队中.*"
+- assertVisible: ".*环境回声较强.*"
