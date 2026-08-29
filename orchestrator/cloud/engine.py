@@ -1622,6 +1622,16 @@ class PlannerEngine:
         # 各自演化，正是 B1 那个 bug 的成因原型。
         if candidate_query.NEW_SEARCH_RE.search(t):
             return True
+        # 「再给我看一眼刚才那份可选项」**定义上就不是某个待补槽的值**（2026-08-30）。
+        # 真栈实录：充电规划出了 `dest_choice` 选择卡之后，
+        # 「请重新列出刚才可以选择的项目」被整句填进 `destination` 槽，答成
+        # 「暂时无法获取前往**请重新列出刚才可以选择的项目**的路线」（2/2 复现）
+        # ——与 `index` 那个黑洞同族，只是换了个槽。
+        # ⚠ **只收「重列」不收序数**：裸「第一个」正是选择卡的**合法答案**
+        # （上面那段 `*_choice` 白名单就是为它写的），收进来会把整条选店流程修死。
+        # 词表复用 `candidate_query.RELIST_RE`——同 C3-B 那笔，判据只许有一份。
+        if candidate_query.RELIST_RE.search(t):
+            return True
         if any(k in t for k in ("为什么", "为何", "什么原因")):
             return True
         # 「动词+数量+量词+宾语」是完整新指令（在X点一杯标准美式/来两份炒饭）——

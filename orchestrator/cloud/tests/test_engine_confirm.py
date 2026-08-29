@@ -841,6 +841,37 @@ def test_pending_cancel_does_not_swallow_a_named_cancel_instruction():
     assert spy.count("nearby.search") >= 1, "「取消导航」被吞掉了，没有走到规划"
 
 
+def test_asking_to_relist_the_candidates_is_never_a_slot_answer():
+    """真栈（release `538335f`，2/2 复现）：充电规划出了 `dest_choice` 选择卡之后，
+    「请重新列出刚才可以选择的项目」被**整句填进 `destination` 槽**，答成
+    「暂时无法获取前往**请重新列出刚才可以选择的项目**的路线」。
+
+    与 `index` 那个黑洞同族，只是换了个槽——而这一族**没有终点**，
+    所以判据不是补词表：**「这句话是在问候选集」定义上就不是某个待补槽的值**，
+    词表复用 `candidate_query.RELIST_RE`（同 C3-B 那笔，判据只许有一份）。
+    """
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(phase="wait_slot", pending_step_id="s1",
+                           missing_slots=["destination"])
+    for text in ("请重新列出刚才可以选择的项目", "再列一遍", "刚才那些选项再说一下"):
+        assert PlannerEngine._is_topic_change(text, pending) is True, text
+
+
+def test_a_bare_ordinal_on_a_choice_card_is_still_the_answer():
+    """误伤对照：**裸「第一个」正是选择卡的合法答案**——收进换题判据会把整条
+    选店/选目的地流程修死。上面那条只收「重列」，一个序数都不许沾。
+    """
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["destination"],
+        completed_results={"s1": {"ui_card": {"type": "poi_list",
+                                              "purpose": "dest_choice"}}})
+    for text in ("第一个", "第二个", "第3个"):
+        assert PlannerEngine._is_topic_change(text, pending) is False, text
+
+
 def test_slot_pending_is_abandoned_after_repeated_unanswered_asks():
     """C3-D 止损底线：同一个问题问到上限还没接上就放弃它，并**说一句**。
 
