@@ -2,6 +2,7 @@
 // 状态画廊的覆盖度守卫（同 card-gallery 的「注册表卡型必须都有样本」）：
 // 每个 primary（8 个光球态）与每种 degradation（7 种）都要有样本，缺一即红——
 // 「少了谁」得当场看得见，不能等到事后数截图。
+import { pinCommitment, type DockItem } from '@/core/presence/commitment'
 import { presenceFixtures } from '@/core/presence/fixtures'
 import type { Degradation, OrbState } from '@/core/presence/presence'
 
@@ -23,4 +24,23 @@ test('每种 degradation 至少一条样本', () => {
 test('样本标签唯一（?only= 直达靠它）', () => {
   const labels = presenceFixtures().map((f) => f.label)
   expect(new Set(labels).size).toBe(labels.length)
+})
+
+// 第四条守卫（第 2 批实测补）：上面两条只守 primary 与 degradation，**不守 Dock 分支**——
+// 而 Maestro 09 的断言恰恰落在 Dock 分支的文案上。实测：queue 分支曾经 0 条样本渲得出来
+// （两条带 queued 的样本都同时带 pendingOps，confirm 排 rank 0、queue 排 rank 4，
+//  queue 永远只进「另有 N 个待处理」的计数），于是计划里那条 `assertVisible: "条消息排队中"`
+// 是一条**永远红**的断言，而没有任何单测能告诉你这件事。
+// ⚠ `slot` 刻意不在这条守卫里：`derivePresence` 没有产出它的代码路径（协议无 missing_slots），
+// 在「样本走 derivePresence 本尊」这条纪律下画廊**无从证明**它渲得出来——把它写进守卫
+// 只会逼人手搓一个假 snapshot 来喂绿灯。
+test('可产出的三种 DockItem 各有一条样本会被 pin 住（只有被钉住的那项才渲分支文案）', () => {
+  const pinned = new Set(
+    presenceFixtures().flatMap((f) => {
+      const top = pinCommitment(f.snapshot.commitment)
+      return top ? [top.item.kind] : []
+    }),
+  )
+  const PINNABLE: DockItem['kind'][] = ['confirm', 'task', 'queue']
+  expect(PINNABLE.filter((k) => !pinned.has(k))).toEqual([])
 })

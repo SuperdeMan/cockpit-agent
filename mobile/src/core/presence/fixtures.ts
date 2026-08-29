@@ -1,7 +1,10 @@
 // mobile/src/core/presence/fixtures.ts
 // 状态画廊语料：**每次调用重新取时间基准**（倒计时是相对量，同 cards/fixtures.ts 的教训）。
 // 样本走的是 derivePresence 本尊——画廊里看到的就是生产代码算出来的，不是手摆的快照；
-// `slot` 与 `safety_blocked` 两种 B1 没有生产产出方，这里只证明「渲得出来」，不证明「会出现」。
+// `safety_blocked` B1 没有生产产出方，这里只证明「渲得出来」，不证明「会出现」。
+// ⚠ `slot` 连这一步都做不到：`derivePresence` **没有产出 slot 项的代码路径**（协议无
+//   `missing_slots`），而本文件的纪律是「样本走 derivePresence 本尊」⇒ 画廊**无从证明**
+//   slot 渲得出来。要证明它就得手搓一个假 snapshot，那正是这条纪律要挡的事，所以不做。
 import { derivePresence, type PresenceInput, type PresenceSnapshot } from './presence'
 
 export interface PresenceFixture {
@@ -41,6 +44,10 @@ export function presenceFixtures(): PresenceFixture[] {
     mk('looking', { visionCapturing: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
     mk('offline-with-confirm', { connStatus: 'closed', connChangedAt: NOW - 30_000, pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }], queued: 2 }),
+    // 断网但没有待确认——这是 queue 项**唯一**会被 pin 住的形态。上面两条带 queued 的样本
+    // 都同时带 pendingOps，confirm 排 rank 0、queue 排 rank 4 ⇒ queue 只进「另有 N 个」计数，
+    // 它自己那句「N 条消息排队中」一条都渲不出来（第 2 批实测，Maestro 09 因此曾必红）。
+    mk('offline-queue-only', { connStatus: 'closed', connChangedAt: NOW - 30_000, queued: 3 }),
     mk('error', { lastError: { text: '出错了', at: NOW - 500 } }),
     mk('deg-permission', { degradations: [{ kind: 'permission_denied', what: 'mic', text: '需要麦克风权限，请在系统设置里允许' }] }),
     mk('deg-service', { degradations: [{ kind: 'service_degraded', text: '语音链路降级，本轮回落三段式' }] }),
