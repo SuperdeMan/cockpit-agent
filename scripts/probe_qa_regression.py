@@ -2025,15 +2025,23 @@ async def _run_case(case: dict, stamp: int) -> dict:
 
 
 async def run(cases: list[dict], repeat: int = 1) -> list[dict]:
+    # ⚠ **标记必须逐用例不同**（2026-08-29 修）：此前是 `stamp + rep`，而 `stamp`
+    # 一趟只算一次 ⇒ **同一趟里所有用例的 `{run}` 逐字相同**。SL1 独占这个标题模板时
+    # 看不出来（它只需要与自己**上一趟**隔开），`residual` 组一进来当场撞：
+    # RS1 与 SL1 拿到同一个 `014118`，RS1 的 T1 于是命中 `_cross_turn_duplicate`
+    # 「都已经有了，就不重复建了」——**0 张卡、判红，而系统的行为完全正确**。
+    # ⇒ 判据：**「唯一标记」的作用域要和「谁会撞它」的作用域对齐**。
+    # 注释里写的是「本次取样的唯一标记」，实现只做到了「本次跑批」，
+    # 两者的差没人量过——因为在只有一个消费方时它们恰好等价。
     stamp = int(time.time())
     out = []
-    for case in cases:
+    for index, case in enumerate(cases):
         print(f"\n=== {case['id']}｜{case['card']}｜{case['issue']}｜立卡时={case['known']}")
         print(f"    考点：{case['why']}")
         for rep in range(1, repeat + 1):
             if repeat > 1:
                 print(f"  -- 第 {rep}/{repeat} 次取样")
-            row = await _run_case(case, stamp + rep)
+            row = await _run_case(case, stamp + index * 100 + rep)
             row["rep"] = rep
             out.append(row)
     return out
