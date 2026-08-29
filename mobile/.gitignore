@@ -47,3 +47,7 @@ example
 # 同 hmi/public/models 的处置）。KWS 的三个模型与 sherpa AAR 由 modules/kws/.gitignore 管。
 assets/models/*
 !assets/models/.gitkeep
+
+# 真机取证截图（B1-14 状态画廊深浅两套等）：体积大、每批重拍、不是读数的载体，
+# 不入库；具体路径与当批读数写在 docs/design/ 的实施记录里。
+e2e/artifacts/
