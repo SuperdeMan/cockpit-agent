@@ -115,6 +115,66 @@ def test_ordinary_utterance_registers_nothing():
     assert not ((focus.safety_alert if focus else {}) or {})
 
 
+# ── 驾驶员状态同样要从原话登记（余项 ①，2026-08-29）──────────────────────────
+# C1-B 立的判据是「登记挂在输入上，不挂在路由上」，可首版只扫了**车辆告警**
+# ——驾驶员状态（疲劳/酒后/不适）的登记于是仍然是路由的副作用。
+# 真栈取证（deployed `ed53f8f`，SF4 `--repeat 5`）：「困到睁不开眼了，还要开两个
+# 小时」有 2/5 落 `system.clarify`，那两轮会话里一个疲劳信号都没留下；紧接着的
+# 「别提醒我，继续开就行」于是由 chitchat 答成「好的，我就不打扰你了，路上小心。」
+# ——chitchat 那条「不得表示可以继续危险驾驶」的 prompt 由 `focus_safety_alert`
+# 门控，**没登记就等于没有那条 prompt**。
+
+def test_driver_state_is_registered_from_the_utterance_even_without_any_declaration():
+    """疲劳同款：不管本轮走了哪条路由，只要用户说了，系统就知道。"""
+    plan = _plan(intent="chitchat.talk", agent_id="chitchat")
+    plan.raw_text = "困到睁不开眼了，还要开两个小时"
+    focus = extract_focus(plan, [_ok("s0", {})])
+    assert focus is not None
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "疲劳驾驶"
+
+
+def test_alcohol_and_unwell_are_registered_with_their_own_levels():
+    """三档各自的等级取 `DRIVER_STATE_ADVICE`，**不在编排里另立一张表**。"""
+    cases = [("刚喝了酒，还能开吗", "critical", "酒后/服药驾驶"),
+             ("有点头晕，还要开一个小时", "amber", "驾驶员身体不适")]
+    for raw, level, signal in cases:
+        plan = _plan(intent="chitchat.talk", agent_id="chitchat")
+        plan.raw_text = raw
+        focus = extract_focus(plan, [_ok("s0", {})])
+        assert focus.safety_alert.get("level") == level, raw
+        assert focus.safety_alert.get("signal") == signal, raw
+
+
+def test_driver_state_wins_over_a_milder_vehicle_alert_in_the_same_utterance():
+    """一句话里两类信号都在时取更不可让步的那一档。"""
+    plan = _plan(intent="chitchat.talk", agent_id="chitchat")
+    plan.raw_text = "困到睁不开眼了，胎压黄灯还亮着"      # fatigue=critical / 胎压灯=amber
+    focus = extract_focus(plan, [_ok("s0", {})])
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "疲劳驾驶"
+
+
+def test_vague_tiredness_registers_nothing():
+    """反方向：**模糊说法不进词表**（`safety_signal` 纪律：宁可漏接也不要在用户
+    只是随口一说时给出一段劝阻）。这条同时钉住「别把判据放宽成语义相似」。"""
+    for raw in ("有点累", "今天上班好累啊", "这条路开着真困难"):
+        plan = _plan(intent="chitchat.talk", agent_id="chitchat")
+        plan.raw_text = raw
+        focus = extract_focus(plan, [_ok("s0", {})])
+        assert not ((focus.safety_alert if focus else {}) or {}), raw
+
+
+def test_input_safety_alert_is_the_only_judge_and_returns_a_declared_shape():
+    """判据本体两向自检：认得出的给形状，认不出的给空级别（由 `_valid_…` 丢掉）。"""
+    from orchestrator.cloud.context import input_safety_alert
+    assert input_safety_alert("困到睁不开眼了") == {
+        "level": "critical", "signal": "疲劳驾驶"}
+    assert input_safety_alert("红色机油灯亮了") == {
+        "level": "critical", "signal": "机油灯"}
+    assert input_safety_alert("今天天气怎么样") == {"level": "", "signal": ""}
+
+
 def test_agent_declaration_still_wins_when_it_is_more_severe():
     """原话是事实、Agent 声明是补充：更高等级仍然赢。"""
     plan = _plan()

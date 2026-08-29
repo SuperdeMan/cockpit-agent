@@ -18,7 +18,9 @@ from .context import (
     WorkingSet,
     _FALLBACK_AGENT,
     _is_edge_core,
+    _valid_safety_alert,
     assemble_budgeted_catalog,
+    input_safety_alert,
 )
 from .route_hints import RouteHintEngine
 from .retry_policy import (
@@ -1665,6 +1667,28 @@ class PlanBuilder:
                 if talk is not None:
                     plan.steps = talk.steps
                     plan.clarify = None
+        # ── 安全闸二：安全信号在场时不许以「澄清 / 没听清」收场（余项 ①，2026-08-29）──
+        # 挂在**同一个唯一出口**、紧随上一条之后：上面那条只管「问句被规划成写车控之后
+        # 空了」，这条管**planner 自己就没产出步**的那一类——真栈取样里它才是主形态。
+        # 取证（deployed `ed53f8f`，`--repeat 5`）：「困到睁不开眼了，还要开两个小时」
+        # **2/5 落 system.clarify**，用户听到的是「你听起来很困，接下来想怎么处理？」；
+        # 而 `driver_state()` 这个零 LLM 判据一次都没认错——**系统持有这个事实，
+        # 却把它交给澄清卡去问用户**。同族第二例：「红色机油灯亮了还能继续开吗」
+        # 长会话 T23 同样落 `system.clarify`（C1 拦住了危险执行，但没答对）。
+        #
+        # 判据面刻意窄：**只在 planner 已经弃权（零步）时才接管**。有步的轮一个字不改
+        # ——「太困了，把空调调低一点」照旧执行车控，这里根本不会被走到。
+        # 产物复用既有机制（`_talk_only_plan` 的第四个调用方），不新增路由、不加正则：
+        # 兜底 Agent 自带 `runtime.safety_signal` 的分级建议，并经保留键 `_safety_alert`
+        # 把会话态登记上——**「答一句」与「记下来」在这一条修法里是同一个动作**。
+        if not plan.steps and _valid_safety_alert(input_safety_alert(text)):
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                logger.info("safety signal with empty plan → 兜底 Agent 应答: %s",
+                            text[:40])
+                plan.steps = talk.steps
+                plan.clarify = None
+                plan.plan_mode = f"{plan.plan_mode or ''}_safety_talk"
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan

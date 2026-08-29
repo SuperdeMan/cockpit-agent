@@ -955,3 +955,66 @@ async def test_same_turn_two_steps_are_still_not_deduplicated():
     assert "已经有一条了" not in second.speech
     times, _ = await a.store.list_split("u1")
     assert len(times) == 2
+
+
+# ── 域词漏进标题槽：查空之后再削一次尾（余项 ③ 症状②，2026-08-29）─────────────
+# 真栈逐字实录（deployed `ed53f8f`，干净会话）：
+#   「取消参加代号17879686214的评审会的提醒」→ 落域正确（`reminder.cancel`）
+#   → 「没找到这条提醒」，而紧接着同一 owner 的列表里**它还在**。
+# 机制：`find_by_title` 是 `title LIKE %q%`，q 比库里那条标题**长**就必然不匹配；
+# planner 把整串（含「的提醒」）塞进 `title` 槽时，`q == raw` 那条兜底削尾不触发。
+# 讽刺的地方值得记一笔：**「取消X的提醒」正是落域最可靠的那种说法**
+# （同日受控对照：带域词 18/18，不带 3/12）——说得更清楚反而查不到。
+
+@pytest.mark.asyncio
+async def test_cancel_finds_target_when_domain_word_leaks_into_the_title_slot():
+    a = await _agent()
+    ctx = make_context()
+    await run_handle(a, "reminder.create",
+                     raw_text="明天下午四点提醒我参加代号889001的评审会", ctx=ctx)
+    res = await run_handle(a, "reminder.cancel",
+                           slots={"title": "参加代号889001的评审会的提醒"},
+                           raw_text="取消参加代号889001的评审会的提醒", ctx=ctx)
+    assert res.status == "ok", res.speech
+    assert "取消了" in res.speech and "参加代号889001的评审会" in res.speech
+    times, todos = await a.store.list_split("u1")
+    assert len(times) + len(todos) == 0, "削尾之后应当真的取消掉，不是只把话说对"
+
+
+@pytest.mark.asyncio
+async def test_domain_tail_trim_only_runs_after_an_empty_lookup():
+    """**只能把「没找到」变成「找到」**：本来就命中的那次匹配一个字都不许变。
+
+    库里真有一条叫「妈妈的提醒」时，第一次逐字查就命中，削尾这一步压根不该发生
+    （削了会变成「妈妈」，可能捞到另一条）。
+    """
+    a = await _agent()
+    ctx = make_context()
+    await run_handle(a, "reminder.create",
+                     raw_text="明天下午四点提醒我妈妈的提醒", ctx=ctx)
+    await run_handle(a, "reminder.create",
+                     raw_text="明天下午五点提醒我妈妈生日", ctx=ctx)
+    res = await run_handle(a, "reminder.cancel", slots={"title": "妈妈的提醒"},
+                           raw_text="取消妈妈的提醒", ctx=ctx)
+    assert res.status == "ok", res.speech
+    assert "妈妈的提醒" in res.speech
+    times, todos = await a.store.list_split("u1")
+    left = [r.title for r in times + todos]
+    assert left == ["妈妈生日"], f"削尾误伤了另一条：{left}"
+
+
+@pytest.mark.asyncio
+async def test_bare_domain_word_is_not_trimmed():
+    """光杆「提醒」不削——`_TITLE_DOMAIN_TAIL_RE` 要求带「的/这条/那条」这类连接词。
+
+    一条真叫「买提醒」的待办被削成「买」，就会去捞「买牛奶」；
+    **扩大匹配面这一步必须比缩小匹配面更保守。**
+    """
+    a = await _agent()
+    ctx = make_context()
+    await run_handle(a, "reminder.create", raw_text="明天下午四点提醒我买牛奶", ctx=ctx)
+    res = await run_handle(a, "reminder.cancel", slots={"title": "买提醒"},
+                           raw_text="取消买提醒", ctx=ctx)
+    assert "没找到这条提醒" in res.speech, res.speech
+    times, todos = await a.store.list_split("u1")
+    assert [r.title for r in times + todos] == ["买牛奶"], "削光杆域词捞错了条目"

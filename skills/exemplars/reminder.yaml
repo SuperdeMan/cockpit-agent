@@ -251,3 +251,37 @@ exemplars:
     FAILED；有草稿就会全清而不是清第二个。缺的不是 intent（reminder.cancel 早有
     index 槽），是「取消第N个 + 其余继续」这种复合说法进 planner 的通道，所以补
     范例不新增能力。
+- text: 取消带伞
+  plan:
+  - agent: reminder
+    intent: reminder.cancel
+    slots:
+      title: 带伞
+  source: trace
+  added: '2026-08-29'
+  tags:
+  - badcase
+  note: >-
+    余项 ③（2026-08-29 受控对照）：**判据是句里有没有点名提醒域，不是标题长什么样。**
+    同一条句式模板五个臂、每臂 6 次干净会话：带域词的「取消第二条提醒」「取消带伞的
+    提醒」「取消…的提醒」共 18/18 落对，不带域词的「取消带伞」0/6、「取消参加代号
+    889001的评审会」3/6。0/6 那一臂里 **2 次落 `luckin.order_cancel`**——说「取消带伞」
+    被听成取消一杯咖啡，与 C10-F「就近挑了 shop.preview_discard」同形。
+    `reminder.cancel` 的 route_hint 2026-07-29 退役时判据没错，但**它的语料面全是序数
+    式**（「取消第二条提醒」/「取消第二条」，都自带域词），点名事项且不点名域的那种
+    取消句从来不在里面 ⇒ 退役之后没有任何尺子量得到它。补范例不新增能力。
+- text: 取消明天的评审会
+  plan:
+  - agent: reminder
+    intent: reminder.cancel
+    slots:
+      title: 评审会
+  source: trace
+  added: '2026-08-29'
+  tags:
+  - badcase
+  note: >-
+    同上一条的第二个形状：**带日期限定但仍不点名域**。真栈实测这一族的错法有四种，
+    最恶性的两种都是写：`reminder.create`（说取消，系统问「什么时候提醒你？」）与
+    `luckin.order_cancel`（跨域写）。另两种是 `system.clarify` 与兜底闲聊，
+    后者还会**零动作地声称已经取消了**（「好的，已为你取消…」，C11 那一族）。

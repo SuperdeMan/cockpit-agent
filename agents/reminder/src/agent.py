@@ -37,6 +37,10 @@ _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
 
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
+#: 标题尾巴上的**域词**（「…的提醒」「…那条待办」）。查空之后再削一次尾，见
+#: `_resolve_targets`。**必须带「的/这条/那条」这类连接词**——只削光杆「提醒」会把
+#: 一条真叫「买提醒」的待办削成「买」，而那一步是在扩大匹配面，不是缩小。
+_TITLE_DOMAIN_TAIL_RE = re.compile(r"(?:的|这条|那条|这个|那个)\s*(?:提醒|待办)\s*$")
 # Q11 否定守卫（I-009②）：用户明说「别建提醒」。**极性词表来自 `runtime.polarity`**
 # ——卡 §3-Q11 明写它与 Q7 的极性维度同源，共用一份，别写第二份。
 # 这里只补「否定的宾语是**提醒这件事**」这半：`polarity` 判的是「别做某个动作」，
@@ -882,6 +886,23 @@ class ReminderAgent(BaseAgent):
         if not q:
             return []
         hits = await self.store.find_by_title(uid, q, occupant_id=occ)
+        if not hits:
+            # 域词漏进标题槽 ⇒ 库里永远查不到（2026-08-29 真栈实录，余项 ③ 症状②）。
+            # `find_by_title` 是 `title LIKE %q%`：**q 比库里那条标题长就一定不匹配**。
+            # 而「取消X**的提醒**」恰恰是最可靠的那种说法——同日受控对照实测，带域词的
+            # 取消句落域 18/18、不带的只有 3/12。于是「说得更清楚」反而查不到：
+            # planner 把整串（含「的提醒」）塞进 title 槽时，上面那条 `q == raw` 的
+            # 兜底削尾**不会触发**（槽有值且不等于原话）。
+            # 逐字实录：`取消参加代号17879686214的评审会的提醒` → `reminder.cancel`
+            # →「没找到这条提醒」，紧接着同一 owner 的列表里它**还在**。
+            # **只在查空之后再削一次**：这一步只能把「没找到」变成「找到」，
+            # 不会改变任何一次已经命中的匹配。
+            trimmed = _TITLE_DOMAIN_TAIL_RE.sub("", q).strip()
+            if trimmed and trimmed != q:
+                hits = await self.store.find_by_title(uid, trimmed,
+                                                      occupant_id=occ)
+                if hits:
+                    q = trimmed      # 让下面的「逐字相等优先」比的是削过的那份
         # C10-B **精确度阶梯**：逐字相等优先于子串命中。planner 转述会把用户
         # 点名的标题放宽（「取消参加评审会」→ title=「评审会」），子串于是同时
         # 命中「评审会」与「准备评审会材料」；旧实现把两条都当候选，单条时

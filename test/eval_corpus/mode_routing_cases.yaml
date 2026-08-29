@@ -866,6 +866,24 @@
   expect_intents: [reminder.cancel]
   source: "reminder.cancel 的 route_hint 已退役（M5 P2）——回归保护改端到端口径"
 
+# ⚠ 2026-08-29（QA 余项 ③）补两条：上面两条**都自带域词**（「提醒」）或是纯序数，
+# 而退役判据的 4 条命中语料同样如此 ⇒ **点名事项、不点名域**的那种取消句
+# 从退役那天起就没有任何尺子量得到。真栈受控对照（每臂 6 次干净会话）：
+# 带域词 18/18 落对，不带域词 3/12——错法四种，最恶性的两种是写
+# （`reminder.create` 反向建提醒 / `luckin.order_cancel` 跨域写）。
+# 判据是**句里有没有点名域**，与标题形状无关（长编号标题带上域词照样 6/6）。
+- text: 取消带伞
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.cancel
+  expect_intents: [reminder.cancel]
+  source: "退役语料面缺口（QA 余项 ③，2026-08-29）——不点名域的取消句"
+
+- text: 取消明天的评审会
+  tags: [mode_guardrail, retired_hint]
+  expect_mode: other:reminder.cancel
+  expect_intents: [reminder.cancel]
+  source: "退役语料面缺口（QA 余项 ③，2026-08-29）——不点名域 + 日期限定"
+
 - text: 把接孩子的提醒改到五点
   tags: [mode_guardrail, retired_hint]
   expect_mode: other:reminder.update

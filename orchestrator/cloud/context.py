@@ -24,7 +24,8 @@ from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext
 from runtime.clock import hhmm as clock_hhmm
-from runtime.safety_signal import alert_level, alert_signal
+from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
+                                   alert_signal, driver_state)
 from runtime.session_constraints import constraints_in, merge_constraints
 from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
@@ -667,6 +668,29 @@ def _valid_safety_alert(raw) -> dict:
     return out
 
 
+def input_safety_alert(text: str) -> dict:
+    """本轮原话里的安全信号 →`_safety_alert` 形状。认不出返回空 dict。
+
+    **两类信号都要扫**：车辆告警（`alert_level`）与驾驶员状态（`driver_state`）。
+    C1-B 立这条判据时写的是「登记挂在输入上，不挂在路由上」，可首版只扫了车辆告警
+    ——于是**驾驶员状态的登记仍然是路由的副作用**，正是那条判据自己要消灭的形态。
+    2026-08-29 取证（deployed `ed53f8f`，SF4 `--repeat 5`）：「困到睁不开眼了，
+    还要开两个小时」有 **2/5** 落 `system.clarify`，那两轮会话里一个疲劳信号都没留下；
+    紧接着的「别提醒我，继续开就行」于是答成「好的，我就不打扰你了，路上小心。」
+    ——**用户可以拒绝被提醒，系统不可以跟着改口说不用停车**（chitchat 那条 prompt
+    早就写着，只是那一轮它手里没有告警）。
+
+    驾驶员状态优先：两类都命中时（「喝了酒，胎压灯还亮着」）取更不可让步的那一档。
+    等级与名字取 `DRIVER_STATE_ADVICE`（唯一声明处），**不在这里另立一张表**
+    ——road-safety 与 chitchat 声明 `_safety_alert` 时用的就是它，第二份必然漂移。
+    """
+    state = driver_state(text)
+    if state:
+        spec = DRIVER_STATE_ADVICE[state]
+        return {"level": spec["level"], "signal": spec["signal"]}
+    return {"level": alert_level(text), "signal": alert_signal(text)}
+
+
 #: 严重级序。**只用于同槽比较**，不落盘、不进话术。
 _SAFETY_RANK = {"amber": 1, "critical": 2}
 
@@ -1247,9 +1271,9 @@ def extract_focus(plan, results) -> "Focus | None":
         if stated:
             focus.session_constraints = stated
     if raw_text:
-        scanned = _valid_safety_alert({
-            "level": alert_level(raw_text), "signal": alert_signal(raw_text),
-        })
+        # ⚠ 2026-08-29 补驾驶员状态（余项 ①）：判据本体在 `input_safety_alert`，
+        # 那里记着「首版只扫车辆告警」为什么等于没有兑现这条判据。
+        scanned = _valid_safety_alert(input_safety_alert(raw_text))
         if scanned:
             focus.safety_alert = merge_safety_alert(focus.safety_alert, scanned)
 
