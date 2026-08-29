@@ -111,6 +111,17 @@ WS_URL, WS_TARGET = "", ""
 # 「过度澄清 100%」，实际是 nearby 的位置缺席诚实降级——**抽掉前提与提供前提一样糟**。
 PROBE_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
 
+#: **不是城市名的城市字段值**：产生方拿不到可读地名时写的占位符。
+#: 唯一来源是 `agents/info/src/handlers/weather.py::_spoken_place`——那里只有这一个。
+#: 它出现在 `city` 字段里意味着「系统承认自己没解析出地名」，
+#: 与「系统说了另一座城市」是两回事（见 `city_any` 那段）。
+_NON_CITY_PLACEHOLDERS = {"当前位置"}
+
+#: 商户此刻不营业的签名。词表来自两家商户 Agent 的**同一条短路分支**
+#: （`luckin.py` / `mcdonalds.py` 的 `if not open_stores`）——那一支在
+#: 产生选店卡**之前**返回，所以它一命中，`say_button` 的前提就物理上不成立。
+_MERCHANT_CLOSED_RE = re.compile(r"已打烊|均已打烊|打烊|停业|休息中")
+
 # 判定原语。每条 expect 只用这些键，**判据写在这里不散在用例里**。
 #   actions_include / actions_exclude : 动作 payload.command（回退 type）
 #   no_actions        : 本轮不得有任何动作
@@ -1294,11 +1305,50 @@ def _observe(msg: dict) -> dict:
     }
 
 
+def _say_button_failure(case_id: str, turn_no: int, ref_turn: int,
+                        index: int, have: int, ref_speech: str) -> str:
+    """`say_button` 前提不成立时的**具名理由**。
+
+    ⚠ **区分「没给按钮」与「商户此刻不营业」**（2026-08-30）：
+    `luckin.py` 的 `if not open_stores: return _reselect_store(...)`
+    **在 `_store_choices` 之前短路** ⇒ 打烊时物理上不会有选店卡。
+    于是 SP1/SP2/SP3 在营业时间外**跑不了**，而它们的红与「有门店可选却没给按钮」
+    长得一模一样——真栈 00:30 那趟 0/3 全红，逐条读 T1 话术才看出来。
+
+    这是同一天里同形态的第三条（`provenance_required` 的「没出卡 vs 没盖章」、
+    `city_any` 的「说错城市 vs 没说城市」）：
+    **一把尺子把两种不同的失败判成同一件事，读的人就会归错因。**
+
+    抽成纯函数是因为**反向验证发现它零断言**——挂在 `_run_case` 的 WS 循环里
+    单测够不着，于是「加了一条判据、没有任何东西守着它」
+    （§4.3「可选断言=托付给人记得」）。
+    """
+    head = (f"{case_id} T{turn_no} 要点第 {index} 个按钮，但第 "
+            f"{ref_turn} 轮只给了 {have} 个——")
+    closed = _MERCHANT_CLOSED_RE.search(ref_speech or "")
+    if closed:
+        return (head + f"**前提没成立：商户此刻不营业**（第 {ref_turn} 轮话术："
+                       f"「…{closed.group(0)}…」），本条用例需要商户营业时间，读数不作数")
+    return head + "**探针不许自己编一句**（同 op_from 那条）"
+
+
 def _nav_targets(msg: dict) -> list[dict]:
     """本轮 navigate 动作的目的地 `{name, lat, lng}`（`_navigate_payload` 的形状）。
 
     **从动作派生而不是从卡派生**：多意图轮里赢下主卡的可能是别的 Agent，
     而「车被导去哪」这件事只有动作说了算。
+
+    ⚠ **动作名必须逐字相等，不能做子串**（2026-08-30）：旧判据是
+    `if "navigate" not in name`，于是 **`navigate_cancel` 也被当成了导航目的地**
+    ——取消动作的载荷里有 `destination`（取消的是去哪儿那一程）却**天然没有坐标**，
+    判据于是报「navigate 到「深圳湾万象城桔子水晶酒店」却没有坐标，按红算」。
+    真栈长会话 `538335f` family T53 就是这么红的：那一轮的两个动作是
+    `navigate_cancel` + `navigate`，**系统一点毛病没有**。
+    ⇒ 同一天里同形态的第四条（`provenance_required` 没卡 vs 没章 /
+    `city_any` 说错城市 vs 没说城市 / `say_button` 没按钮 vs 商户打烊）：
+    **判据放宽一格，报出来的就是另一件事的名字。**
+    全仓 `navigate*` 动作名只有两个（`navigate` 75 处 / `navigate_cancel` 2 处），
+    这里只认前者。
     """
     out: list[dict] = []
     for a in msg.get("actions") or []:
@@ -1306,7 +1356,7 @@ def _nav_targets(msg: dict) -> list[dict]:
             continue
         payload = a.get("payload") or {}
         name = str(payload.get("command") or a.get("type") or "")
-        if "navigate" not in name:
+        if name != "navigate":
             continue
         try:
             lat, lng = float(payload["lat"]), float(payload["lng"])
@@ -1748,6 +1798,18 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
         except (TypeError, ValueError):
             card = {}
         card_city = str((card or {}).get("city") or "").strip()
+        # ⚠ **占位符不是城市名**（2026-08-30）：产生方在拿不到可读地名时写
+        # 「当前位置」（`handlers/weather.py::_spoken_place` 的唯一占位符）。
+        # 把它当成「漂移」是**把两个不同的主张判成了同一件事**——
+        # 「说了另一座城市」是错答，「没说城市」是**诚实降级**。
+        # 同 C15 那次 `provenance_required` 的裁决（「要有章」与「要有卡」是两条），
+        # 也同 `openhours` 那条「判不出返回 None 不是 0」。
+        # ⇒ 占位符走**下面那一支**（话术里仍必须出现允许城市之一），
+        # 原始 C9 那个 badcase（卡片 city=「上海」）**照样报红**，一分没放松。
+        # 真栈来历：长会话 `538335f` info T4，反查瞬时失败 ⇒ 卡片 city 落「当前位置」，
+        # 而同轮话术里「深圳市气象台发布暴雨黄色预警」明明白白写着是哪座城。
+        if card_city in _NON_CITY_PLACEHOLDERS:
+            card_city = ""
         if card_city:
             if not any(want in card_city for want in cities):
                 fails.append(
@@ -1981,10 +2043,9 @@ async def _run_case(case: dict, stamp: int) -> dict:
                 buttons = (src or {}).get("card_buttons") or []
                 index = int(ref.get("index", 1))
                 if len(buttons) < index:
-                    failure = (
-                        f"{case['id']} T{i} 要点第 {index} 个按钮，但第 "
-                        f"{ref['turn']} 轮只给了 {len(buttons)} 个——"
-                        f"**探针不许自己编一句**（同 op_from 那条）")
+                    failure = _say_button_failure(
+                        case["id"], i, int(ref["turn"]), index, len(buttons),
+                        str((src or {}).get("speech") or ""))
                     say = f"[缺失第 {index} 个卡片按钮]"
                     obs = _observe({"speech": "[probe precondition failed]"})
                     obs["error"] = True

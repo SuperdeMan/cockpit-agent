@@ -922,6 +922,57 @@ async def test_cancel_keeps_executing_when_the_title_came_from_the_utterance():
     assert len((await a.store.list_split("u1"))[0]) == 0
 
 
+def test_create_keeps_the_fuller_title_the_user_actually_said():
+    """C10-B 的**建侧半边**（QA 长会话 `538335f` info T33–T39）：planner 转述把
+    「交周报**QA015958**」缩成「交周报」，那条提醒从建成起就**再也找不回来**
+    ——T35 改期「没找到要改的提醒」、T38 取消「没找到这条提醒」，而 T39 列表里它还在。
+
+    方向由数据结构定：`find_by_title` 是 `title LIKE %q%`，**存长的永远找得回、
+    存短的永远找不回**。两侧代价不对称到没有可争论余地。
+    """
+    from agents.reminder.src.agent import ReminderAgent as R
+    assert R._fuller_title(
+        "交周报", "明天下午四点提醒我交周报QA015958") == "交周报QA015958"
+    # 用户自己说了「带」——存他说的那份
+    assert R._fuller_title("充电线", "明天早上八点提醒我带充电线") == "带充电线"
+
+
+def test_fuller_title_leaves_everything_else_alone():
+    """误伤对照：**槽值与抽取结果互不包含时一个字都不动**。
+
+    planner 换了说法（不是丢了一截）时，两者讲的可能不是同一件事——
+    同 `slot_fidelity` 那条「认不出的一律让路，宁可不回填也不要回填错」。
+    """
+    from agents.reminder.src.agent import ReminderAgent as R
+    # ① 逐字相同 ⇒ 不动
+    assert R._fuller_title("开会", "明天下午四点提醒我开会") == "开会"
+    assert R._fuller_title("买牛奶", "记一下要买牛奶") == "买牛奶"
+    # ② 槽值**不是**抽取结果的子串 ⇒ 不动（planner 改写过，不是丢了一截）
+    assert R._fuller_title("周会", "明天下午四点提醒我参加例会") == "周会"
+    # ③ 抽取结果为空 ⇒ 不动
+    assert R._fuller_title("交周报", "") == "交周报"
+    # ④ 槽值为空由调用方那条既有分支处理，这里不许把空串换成别的
+    assert R._fuller_title("", "明天下午四点提醒我开会") == ""
+
+
+@pytest.mark.asyncio
+async def test_create_stores_the_fuller_title_end_to_end():
+    """端到端：建完之后**用户用自己的原话找得回来**（这才是这条修法的目的）。"""
+    a = await _agent()
+    await run_handle(a, "reminder.create",
+                     slots={"title": "交周报", "time_text": "明天下午四点"},
+                     raw_text="明天下午四点提醒我交周报QA015958")
+
+    titles = [r.title for r in (await a.store.list_split("u1"))[0]]
+    assert titles == ["交周报QA015958"], titles
+
+    res = await run_handle(a, "reminder.cancel",
+                           slots={"title": "交周报QA015958"},
+                           raw_text="取消交周报QA015958的提醒")
+    assert res.status == "ok" and "取消了" in res.speech
+    assert (await a.store.list_split("u1"))[0] == []
+
+
 @pytest.mark.asyncio
 async def test_create_refuses_a_question_shaped_title():
     """C10-C：问句不是一件待办。真栈实录里它建成功了，还进了序数参照系。"""

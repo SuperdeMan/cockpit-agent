@@ -88,6 +88,26 @@ _PICKUP_RE = re.compile(
 _PICKUP_MAX_KM = float(os.getenv("PICKUP_MAX_KM", "100"))
 
 
+def _grounded_in_raw(dest: str, raw_text: str) -> bool:
+    """这个目的地是不是**用户自己说出来的**（哪怕只沾了一小截）。
+
+    判据取「dest 的任意**两字连续片段**出现在原话里」。方向是刻意保守的：
+    只要沾上一点就算用户说的、**一个字不动**；只有一个字都不沾时才认为
+    planner 是从上下文里继承来的。误判成「用户说的」的代价是「和以前一样」，
+    误判成「planner 编的」的代价是**替用户改了目的地**——两侧不对称。
+
+    ⚠ 两字而不是整值相等：planner 会把「万象城」写成「深圳万象城」，
+    要求逐字相等会把它判成没根据（同 `find_by_title` 那条
+    「q 比库里标题长就必不匹配」的镜像形态）。
+    """
+    d, r = (dest or "").strip(), (raw_text or "")
+    if not d or not r:
+        return False
+    if d in r:
+        return True
+    return any(d[i:i + 2] in r for i in range(len(d) - 1))
+
+
 def _pickup_person(raw_text: str) -> str:
     """原话里的接送对象人称词；不是接送句返回空串。"""
     m = _PICKUP_RE.search(raw_text or "")
@@ -599,6 +619,44 @@ class NavigationAgent(BaseAgent):
         # M2 记忆图谱 P1：人称目的地一跳解析（「去接孩子放学」→ 孩子=小雨 → 小雨在 XX 小学）。
         # 这是母提案 §1.2-E2 的 Eva 例子，也是关系边唯一非做不可的消费面。
         person_word = _person_destination(dest) or _person_destination(raw_text)
+        # PU6（QA 长会话 `538335f` family T54，2026-08-30）：**长会话后段，
+        # planner 把 `destination` 填成了上一次接送的地点。**
+        # 逐字实录——同一条会话里 T9「接女儿放学，路上买杯咖啡。」导到
+        # 「深圳市南山实验教育集团明远学校」（对），T54 同一句导到
+        # 「**深圳湾万象城桔子水晶酒店**」（T3/T48「去接老婆」的地点）。
+        # 干净会话 3/3 全对 ⇒ 是**跨轮污染**，不是解析能力问题。
+        #
+        # 上面那两档都够不着它：`_person_destination(dest)` 看到的是一个真地名、
+        # `_person_destination(raw_text)` 对复合句**天然失效**（本文件 :76 注释）。
+        # 而 `_pickup_person` 这条**局部形态**判据一直都在，只是此前只在下面的
+        # 常用地点别名分支里被用。
+        #
+        # 判据是既有那条的直接应用——**planner 改写是不可信指代通道，只信 raw**：
+        # 只有当 planner 填的目的地**与用户这句话一个字都不沾**时才让人称赢。
+        # ⚠ 误伤面就是 PU7 那条反向对照「接孩子后去万象城」：`万象城` 明明白白在
+        # 原话里 ⇒ 判为「用户自己说的」⇒ 一个字不动。**这条护栏比修法本身重要**：
+        # 没有它，这个修法会把「给了具体地点的接送句」全部改写成那个人的常去地，
+        # 正是卡 §4.3 要防的东西。
+        if not person_word and not _match_place_alias(dest)[0]:
+            # ⚠ **常用地点别名让路给下面那条既有分支**（第二版补，测试当场按住）：
+            # `destination=学校` 且用户配过「学校」时，裁定是**用它当地址簿**，
+            # 不许被人称解析顶掉。那一段自己已经带了同形态的 pickup 兜底
+            # （「接不着地点时回退人称」），本闸挤进去只会写第二份。
+            pickup = _pickup_person(str(raw_text or ""))
+            if pickup and dest and not _grounded_in_raw(dest, str(raw_text or "")):
+                # ⚠ **只有真的知道更好的答案时才改写**（第一版没有这一条，
+                # 当场撞红三条既有反向对照）：planner 为接送句填一个**具体校名**
+                # 是它的正常职责（「带我去接孩子放学」→ `destination=南山实验小学`），
+                # 那个名字同样不在原话里。**「不在原话里」只说明它是推断的，
+                # 不说明它是错的。** 分界是：这个人的地点我们查得到吗？
+                # 查不到就一个字不动（既有的「诚实追问，绝不猜」那条不受影响）。
+                hit = await ctx.resolve_person_place(pickup)
+                better = (hit or {}).get("place") if isinstance(hit, dict) else ""
+                if isinstance(better, str) and better and better != dest:
+                    logger.info(
+                        "pickup destination %r is not grounded in the utterance; "
+                        "using the person's own place %r instead", dest, better)
+                    dest = better
         if person_word:
             hit = await ctx.resolve_person_place(person_word)
             if hit and hit.get("place"):

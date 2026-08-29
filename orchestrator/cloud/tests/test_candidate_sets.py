@@ -642,3 +642,61 @@ def test_candidate_set_for_keeps_the_n5_preference_within_a_domain():
     fb = _labelled("nearby.search", "美食", [{"name": "美食·丙"}], fallback=True)
     got = candidate_set_for(Focus(candidate_sets=[real, fb]), "nearby")
     assert got["items"][0]["name"] == "川菜·甲"
+
+
+# ── I-024（Q10 残余，2026-08-30）：看得见的选择卡，它的候选也要进候选集 ────────
+
+def _need_slot_result(step_id, data, card, intent=""):
+    return SimpleNamespace(step_id=step_id, status=_St("need_slot"), data=data,
+                           ui_card=card, source_intent=intent)
+
+
+_STORES = [{"name": "瑞幸咖啡(海王银河科技大厦大堂店)", "id": "s-1"},
+           {"name": "瑞幸咖啡(麻雀岭东区餐饮街店)", "id": "s-2"}]
+
+
+def test_visible_choice_card_contributes_its_candidates():
+    """商户选店卡是 `NEED_SLOT` 的产物（「要在哪家下？」），而 `extract_focus`
+    原先只扫**成功步** ⇒ **门店候选集根本不存在**，下一句「第一个」无处可解、
+    探针的 `say_button` 也拿不到按钮（真栈 SP1/SP2/SP3 的那一层）。
+    """
+    focus = extract_focus(
+        _plan(("s1", "luckin.order", "mcp-bridge")),
+        [_need_slot_result("s1", {"items": _STORES},
+                           {"type": "merchant_choices", "purpose": "store_choice"},
+                           "luckin.order")])
+
+    assert focus is not None
+    assert [c["items"][0]["name"] for c in focus.candidate_sets] == [_STORES[0]["name"]]
+
+
+def test_a_need_slot_step_without_a_choice_card_contributes_nothing():
+    """误伤对照 ①：**没渲染成选择卡的 NEED_SLOT 步，一个候选都不许进来。**
+
+    C10-A 的铁律：「第N条」只许指向**用户最后一眼看到的那份列表**。
+    用户一眼没见过的 items 收进来就是给序数指代埋雷——放宽的是**可见性**，
+    不是「成功与否」。
+    """
+    focus = extract_focus(
+        _plan(("s1", "luckin.order", "mcp-bridge")),
+        [_need_slot_result("s1", {"items": _STORES},
+                           {"type": "merchant_order_preview"}, "luckin.order")])
+
+    assert focus is None or not focus.candidate_sets
+
+
+def test_a_visible_choice_card_does_not_move_the_control_focus():
+    """误伤对照 ②：这一步**没做成**，所以只取候选集这一维。
+
+    目的地/城市/控制焦点都是「这一步做成了什么」——它没做成，
+    那些一个字都不许被它改写。
+    """
+    plan = SimpleNamespace(steps=[SimpleNamespace(
+        id="s1", intent="navigation.search_poi", agent_id="navigation",
+        slots={"destination": "世界之窗"})])
+    focus = extract_focus(plan, [_need_slot_result(
+        "s1", {"items": _STORES},
+        {"type": "poi_list", "purpose": "dest_choice"}, "navigation.search_poi")])
+
+    assert focus is not None and focus.candidate_sets
+    assert not focus.last_destination, "没做成的步不许改写目的地焦点"

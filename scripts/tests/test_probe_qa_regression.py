@@ -678,3 +678,84 @@ def test_card_nodes_survives_an_unparseable_card():
 def test_sl1_pins_the_exact_reminder_count():
     case = next(c for c in probe.CASES if c["id"] == "SL1")
     assert case["turns"][0]["expect"]["card_nodes"] == {"reminder_card": 2}
+
+
+# ── `city_any`：「说了另一座城市」与「没说城市」是两条主张（2026-08-30）──────
+
+# ⚠ 复用上面那个 `_city_obs(speech, card)`——我第一版在这里又定义了一个同名的
+# **签名不同**的辅助函数，它把上面那个覆盖掉，于是一条毫不相关的既有用例
+# （`test_city_check_falls_back_to_a_positive_speech_requirement`）报 `TypeError`。
+# **在同一个文件里追加测试，先 grep 一遍自己要用的名字。**
+
+
+def test_non_city_placeholder_falls_through_to_the_speech_check():
+    """真栈长会话 `538335f` info T4：反查瞬时失败 ⇒ 卡片 city 落「当前位置」，
+    而同轮话术里「**深圳**市气象台发布暴雨黄色预警」写得明明白白。
+
+    「说了另一座城市」是错答，「没说城市」是**诚实降级**——判据也该是两条
+    （同 C15 那次 `provenance_required` 的裁决）。
+    """
+    fails = probe._judge(
+        {"city_any": ["深圳"]},
+        _city_obs("当前位置当前有1条天气预警：深圳市气象台发布暴雨黄色预警（黄级）。",
+                  {"type": "weather_alerts", "city": "当前位置"}), [], [])
+    assert fails == [], fails
+
+
+def test_placeholder_with_no_city_in_the_speech_is_still_a_failure():
+    """反向对照：占位符 **+ 话术里也没有任何允许城市** ⇒ 仍然红。
+    放宽的只有「占位符不算漂移」这一条，不是「有占位符就免检」。"""
+    fails = probe._judge({"city_any": ["深圳"]},
+                         _city_obs("当前位置当前没有生效的天气预警。",
+                                   {"type": "weather_alerts", "city": "当前位置"}),
+                         [], [])
+    assert fails and "无从确认" in fails[0]
+
+
+# ── `_nav_targets`：取消动作不是导航目的地（2026-08-30）─────────────────────
+
+def _act(command: str, **payload) -> dict:
+    return {"payload": {"command": command, **payload}}
+
+
+def test_nav_targets_ignores_the_cancel_action():
+    """真栈长会话 `538335f` family T53：那一轮的两个动作是
+    `navigate_cancel` + `navigate`，旧判据做**子串**匹配 ⇒ 取消动作被当成
+    导航目的地，而它天然没有坐标 ⇒ 报「发得出动作却验不了去哪，按红算」。
+    **系统一点毛病没有，红的是尺子。**
+    """
+    msg = {"actions": [
+        _act("navigate_cancel", destination="深圳湾万象城桔子水晶酒店"),
+        _act("navigate", destination="深圳市南山实验教育集团明远学校",
+             lat=22.529034, lng=113.928937),
+    ]}
+    targets = probe._nav_targets(msg)
+    assert [t["name"] for t in targets] == ["深圳市南山实验教育集团明远学校"]
+    assert targets[0]["lat"] == 22.529034
+
+
+def test_nav_targets_still_flags_a_real_navigate_without_coordinates():
+    """反向对照：**真的 `navigate` 少了坐标仍然要看得见**——
+    收紧的只有「取消不算目的地」，不是「没坐标不算数」。
+    """
+    msg = {"actions": [_act("navigate", destination="某个没解析出来的地方")]}
+    targets = probe._nav_targets(msg)
+    assert targets and targets[0]["lat"] is None
+
+
+def test_say_button_names_the_closed_merchant_precondition():
+    """SP1/SP2/SP3 在营业时间外**物理上跑不了**（`luckin.py` 的
+    `if not open_stores` 在产生选店卡之前短路）。它们的红与「有门店可选却没给按钮」
+    长得一模一样——真栈 00:30 那趟 0/3 全红，逐条读 T1 话术才看出来。
+    """
+    msg = probe._say_button_failure(
+        "SP1", 2, 1, 1, 0,
+        "附近搜到 10 家瑞幸…找到的瑞幸门店已打烊，请换一家或稍后再试。")
+    assert "商户此刻不营业" in msg and "读数不作数" in msg
+
+
+def test_say_button_still_says_it_cannot_invent_a_sentence():
+    """反向对照：**没有打烊签名时，理由一个字不变**——
+    收紧的只有「打烊要说出来」，不是「没按钮就免检」。"""
+    msg = probe._say_button_failure("SP1", 2, 1, 1, 0, "这是您的门店列表。")
+    assert "探针不许自己编一句" in msg and "商户" not in msg

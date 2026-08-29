@@ -295,6 +295,8 @@ class ReminderAgent(BaseAgent):
         time_text = (intent.slots.get("time_text") or "").strip()
         if not title or title == raw:            # route_hints 灌整句 / planner 未抽槽
             title = self._extract_title(raw)
+        else:
+            title = self._fuller_title(title, raw)
         if title and not _REMINDABLE_REF_RE.sub("", title).strip(" ，。,、的时候了吧呀"):
             title = ""    # P1c：纯事件指代（「开赛的时候」）不是标题 → 走 pending/跨域推导
         pend_update_id = ""
@@ -680,6 +682,36 @@ class ReminderAgent(BaseAgent):
         t = _CMD_STRIP_RE.sub("", t).strip()
         t = re.sub(r"^(我?要|去|该)", "", t)
         return t.strip(" ，。,、！!？?的哦啊呀吧")
+
+    @classmethod
+    def _fuller_title(cls, slot_title: str, raw: str) -> str:
+        """planner 的 title 槽比用户原话短了一截时，**存原话那份**（C10-B 的建侧半边）。
+
+        真栈实录（长会话 `538335f` `information` T33–T39，**一条会话里连着三件事**）：
+        T33「明天下午四点提醒我交周报**QA015958**」→ 存进库的标题是「**交周报**」
+        （`_extract_title` 其实保住了标记，削掉它的是 **planner 转述**）；
+        T35「把交周报QA015958那条改到明天下午四点半」→「**没找到要改的提醒**」；
+        T38「取消交周报QA015958的提醒」→「**没找到这条提醒**」；T39 列表里**它还在**。
+        ⇒ 那条提醒从建成的那一刻起就**再也无法用用户自己的说法找到**。
+
+        **方向由数据结构定，不是拍脑袋**：`find_by_title` 是 `title LIKE %q%`
+        ——**存长的永远找得回**（用户后面说任何一截子串都命中），
+        **存短的永远找不回**（q 比库里标题长就必不匹配）。两侧代价不对称到
+        没有可争论的余地，所以这一维的默认是「宁长勿短」。
+        与 C10-B 的**查侧**精确度阶梯是同一件事的两半：那边挡「放宽之后别删错」，
+        这边挡「放宽之后别存丢」。
+
+        判据窄到只认那一种形态：**槽值必须是原话抽取结果的子串**。
+        两者互不包含时说明它们讲的可能不是同一件事（planner 换了说法），
+        **一个字都不动**——同 `slot_fidelity` 那条「认不出的一律让路，
+        宁可不回填也不要回填错」。
+        """
+        fuller = cls._extract_title(raw)
+        if not fuller or fuller == slot_title:
+            return slot_title
+        if slot_title and slot_title in fuller:
+            return fuller
+        return slot_title
 
     async def _llm_time_fallback(self, text: str) -> ParsedTime:
         """规则未命中（"下下周三饭点"）→ LLM @fast 抽 ISO；失败 FAIL（外层追问）。"""

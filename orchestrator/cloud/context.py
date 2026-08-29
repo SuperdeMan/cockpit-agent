@@ -1143,6 +1143,20 @@ def augment_focus_with_execution(
     return None if focus.is_empty() else focus
 
 
+def _is_choice_card(card) -> bool:
+    """这张卡是不是**用户看得见的选择卡**（序号是它的合法答案）。
+
+    判据逐字同 `engine._suspend` 里那条：`purpose` 以 `_choice` 结尾，
+    或 `type == "merchant_choices"`。**同一个问题只许有一份判据**——
+    那边判「挂起时要不要留下这张卡的标记」，这边判「它的候选要不要进候选集」，
+    问的都是「用户是不是看见了一份可以按序号选的列表」。
+    """
+    if not isinstance(card, dict):
+        return False
+    purpose = str(card.get("purpose") or "")
+    return purpose.endswith("_choice") or str(card.get("type") or "") == "merchant_choices"
+
+
 def extract_focus(plan, results) -> "Focus | None":
     """从本轮执行的 plan + 成功结果抽取焦点（best-effort，启发式）。
 
@@ -1150,10 +1164,43 @@ def extract_focus(plan, results) -> "Focus | None":
     全空返回 None（不持久、不注入）。绝不抛错——抽取失败由调用方吞掉。"""
     ok = {r.step_id for r in results if getattr(r, "status", None)
           and getattr(r.status, "value", "") == "ok"}
+    # I-024（Q10 残余，2026-08-30）：**用户看得见的选择卡，它的候选也要进候选集。**
+    # 商户选店卡是 `NEED_SLOT` 的产物（「要在哪家下？」），而本函数原先只扫成功步
+    # ⇒ **门店候选集根本不存在** ⇒ 下一句「第一个」无处可解、`say_button` 也没按钮。
+    #
+    # 放宽面刻意窄到只剩一种形态：**NEED_SLOT ∧ 它的卡是选择卡**。
+    # 判据逐字复用 `engine._suspend` 那条既有的（`purpose` 以 `_choice` 结尾
+    # 或 `type == "merchant_choices"`）——那里认定「这张卡用户看得见、序号是它的
+    # 合法答案」，这里问的是同一个问题，**不许写第二份**。
+    # ⚠ 为什么不能干脆收全部 NEED_SLOT：C10-A 的那条铁律——
+    # **「第N条」只许指向用户最后一眼看到的那份列表**。没有渲染成选择卡的
+    # NEED_SLOT 步，它的 items 用户一眼都没见过，收进来就是给序数指代埋雷。
+    visible_choice = {
+        r.step_id for r in results
+        if getattr(getattr(r, "status", None), "value", "") == "need_slot"
+        and _is_choice_card(getattr(r, "ui_card", None))}
     by_id = {r.step_id: r for r in results}
     focus = Focus()
     for step in getattr(plan, "steps", []):
-        if step.id not in ok:
+        if step.id not in ok and step.id not in visible_choice:
+            continue
+        if step.id in visible_choice and step.id not in ok:
+            # 只取候选集这一维：控制焦点/目的地/城市等都是「这一步做成了什么」，
+            # 而它没做成。**放宽的是可见性，不是成功与否。**
+            data = getattr(by_id.get(step.id), "data", None) or {}
+            choice_items = data.get("stops") or data.get("items")
+            if isinstance(choice_items, list):
+                items = _candidate_items(choice_items)
+                if items:
+                    focus.candidate_sets.append({
+                        "source_intent": step.intent or "",
+                        "agent_id": step.agent_id or "",
+                        "purpose": "list",
+                        "ts": time.time(),
+                        "is_fallback": bool(data.get("_fallback")),
+                        "label": _candidate_label(data),
+                        "items": items,
+                    })
             continue
         domain = (step.intent or "").split(".")[0]
         if domain in _CONTROL_FOCUS:

@@ -544,3 +544,80 @@ def test_pickup_guard_is_skipped_without_a_current_position():
         agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
         raw_text="带我去接孩子放学。", ctx=_ctx_with(None), meta={}))
     assert res.status == "ok"
+
+
+# ── PU6：长会话后段 planner 继承上一次接送的目的地（2026-08-30）────────────
+
+_HOTEL = _POI(id="h1", name="深圳湾万象城桔子水晶酒店",
+              category="住宿服务;宾馆酒店", lat=22.5165, lng=113.9463)
+_SCHOOL = _POI(id="s9", name="深圳市南山实验教育集团明远学校",
+               category="科教文化服务;学校;中学", lat=22.529, lng=113.9289)
+
+
+def test_pickup_destination_inherited_from_an_earlier_turn_loses_to_the_person():
+    """真栈长会话 `538335f` family：**同一条会话里同一句话，前段对、后段错**。
+
+    T9「接女儿放学，路上买杯咖啡。」→ 明远学校（对）；
+    T54 同一句 → **深圳湾万象城桔子水晶酒店**（T3/T48「去接老婆」的地点）。
+    干净会话 `--repeat 3` 全对 ⇒ **跨轮污染**，不是解析能力问题。
+
+    上面两档都够不着：`_person_destination(dest)` 看到的是一个真地名，
+    `_person_destination(raw_text)` 对复合句天然失效（agent.py :76 注释）。
+    """
+    agent, _ = _agent_with_search({"深圳市南山实验教育集团明远学校": [_SCHOOL],
+                                   "深圳湾万象城桔子水晶酒店": [_HOTEL]})
+    ctx = _ctx_with({"person": "小雨", "place": "深圳市南山实验教育集团明远学校",
+                     "object_ref": ""})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "深圳湾万象城桔子水晶酒店"},
+        raw_text="接女儿放学，路上买杯咖啡。", ctx=ctx, meta=_SZ_META))
+
+    assert res.status == "ok"
+    assert "明远学校" in res.speech, res.speech
+    assert "酒店" not in res.speech
+
+
+def test_a_destination_the_user_actually_said_is_never_rewritten():
+    """误伤对照 ①（卡 §4.3 的原始铁律）：**给了具体地点的接送句不许被改写。**
+
+    「接孩子后去万象城」里的「万象城」明明白白在原话里 ⇒ 一个字不动。
+    没有这条护栏，本修法会把这一整类句子改写成那个人的常去地。
+    """
+    wanted = _POI(id="w1", name="深圳湾万象城", category="购物服务;商场",
+                  lat=22.5165, lng=113.9463)
+    agent, _ = _agent_with_search({"万象城": [wanted], "深圳湾万象城": [wanted]})
+    ctx = _ctx_with({"person": "小雨", "place": "深圳市南山实验教育集团明远学校",
+                     "object_ref": ""})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "万象城"},
+        raw_text="接孩子后去万象城。", ctx=ctx, meta=_SZ_META))
+
+    assert res.status == "ok" and "万象城" in res.speech
+
+
+def test_an_inferred_but_correct_destination_is_kept_when_we_know_nothing_better():
+    """误伤对照 ②：planner 为接送句填一个**具体校名**是它的正常职责，
+    那个名字同样不在原话里。**「不在原话里」只说明它是推断的，不说明它是错的**
+    ——查不到这个人的地点时一个字不动（这条第一版没写，当场撞红三条既有用例）。
+    """
+    agent, _ = _agent_with_search({"南山实验小学": [_SCHOOL]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学。", ctx=_ctx_with(None), meta=_SZ_META))
+
+    assert res.status == "ok" and "明远学校" in res.speech
+
+
+def test_a_sentence_without_a_pickup_person_never_reaches_this_guard():
+    """误伤对照 ③：原话没有接送人称 ⇒ 这道闸根本不该被执行到
+    （「什么情况下它不会被执行到」和「它判得对不对」一样重要）。"""
+    agent, _ = _agent_with_search({"深圳湾万象城桔子水晶酒店": [_HOTEL]})
+    ctx = _ctx_with({"person": "小雨", "place": "深圳市南山实验教育集团明远学校",
+                     "object_ref": ""})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to",
+        slots={"destination": "深圳湾万象城桔子水晶酒店"},
+        raw_text="导航去桔子水晶酒店。", ctx=ctx, meta=_SZ_META))
+
+    assert res.status == "ok" and "酒店" in res.speech
