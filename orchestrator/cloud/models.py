@@ -46,6 +46,9 @@ class Step:
     # `_serialize_plan`，而是在挂起那一刻由 `_suspend` 把**待补那几个槽**的形状抄进
     # SessionState：形状要回答的是「当时问的那个槽期望什么」，跟着挂起走比跟着计划走准。
     slot_shapes: dict[str, str] = field(default_factory=dict)
+    # 整句型能力（QA 余项，2026-08-29）：这一步消费的是整句原话，一次把这句话里的
+    # 事全办完 ⇒ **同一份计划里最多一步**。声明在 capability，编排通用消费。
+    whole_utterance: bool = False
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -91,6 +94,10 @@ class Plan:
     # R4.4 路由歧义澄清：{"question": str, "options": [{"label","send_text"}]}；与非空 steps 互斥
     # （steps 非空时忽略 clarify，母卡 D6-2>D6-3）。None = 无澄清。
     clarify: dict | None = None
+    # 取消闸（QA 余项，2026-08-29）：这句取消话没能落到任何可执行的东西上，
+    # 值是用户说的那个宾语。engine 据此出**诚实追问**而不是让兜底编一句
+    # 「已经取消啦」。空串 = 本轮与它无关。
+    cancel_unresolved: str = ""
     # 观测（badcase 排查）：Planner LLM 最后一次原始输出。仅供 cloud.planning span
     # 门控采集（engine），不参与任何编排逻辑；解析失败走 fallback 时它保留失败现场。
     raw_llm: str = ""

@@ -881,6 +881,48 @@ async def test_cancel_without_an_exact_match_still_clarifies():
 
 
 @pytest.mark.asyncio
+async def test_cancel_of_a_single_loose_substring_hit_asks_instead_of_deleting():
+    """C10-B 精确度阶梯**补的那一档**（QA 余项，2026-08-29）：`exact` 为空、
+    子串只命中一条时，旧实现 `return exact or hits` 退回子串、调用方看见一条就
+    **直接执行**——真栈实录（deployed `ed53f8f`，D 臂第 1 轮）用户说
+    「取消参加**代号889001**的评审会」，系统答「好的，取消了「参加**代号926818**
+    的评审会」」，取消了一条他没点名的提醒。
+
+    planner 转述把 title 放宽成「评审会」是**常态**，所以这一支必须自己有判据：
+    库里那条标题既没逐字相等、也没在原话里出现过、覆盖率还只有 3/14 ⇒ 反问。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "参加代号926818的评审会", now + 3600)
+
+    res = await run_handle(a, "reminder.cancel", slots={"title": "评审会"},
+                           raw_text="取消参加代号889001的评审会")
+
+    assert res.status == "need_slot" and res.missing_slots == ["index"]
+    assert "参加代号926818的评审会" in res.speech      # 说清楚它沾的是哪条
+    # **一条都没被删掉**——这才是本条断言的核心
+    assert len((await a.store.list_split("u1"))[0]) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancel_keeps_executing_when_the_title_came_from_the_utterance():
+    """反向对照（误伤面）：库里那条标题**逐字出现在用户原话里**时仍然直接执行。
+
+    这一档是既有用例逼出来的——`_extract_title` 会把时间词削掉（「完成明天带伞」
+    的 q 是「带伞」），而库里存的是「明天带伞」：**光看覆盖率会把我们自己的抽取
+    算成用户含糊**（2/4=0.5），把一条完全正常的操作变成反问。
+    """
+    a = await _agent()
+    now = int(_NOW.timestamp())
+    await _seed_raw(a, "明天带伞", now + 86400)
+
+    res = await run_handle(a, "reminder.cancel", raw_text="取消明天带伞")
+
+    assert res.status == "ok" and "明天带伞" in res.speech
+    assert len((await a.store.list_split("u1"))[0]) == 0
+
+
+@pytest.mark.asyncio
 async def test_create_refuses_a_question_shaped_title():
     """C10-C：问句不是一件待办。真栈实录里它建成功了，还进了序数参照系。"""
     a = await _agent()

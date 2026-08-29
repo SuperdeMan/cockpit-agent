@@ -260,6 +260,6 @@ def test_shape_predicates_contain_no_domain_word():
 
 def test_shape_table_is_the_only_place_that_names_a_shape():
     """加一种形状=加一行表，不改主循环（同 `retry_policy` 的表驱动纪律）。"""
-    assert set(SHAPES) == {"order_id", "item_name"}
+    assert set(SHAPES) == {"order_id", "item_name", "ordinal"}
     for name, fn in SHAPES.items():
         assert callable(fn), name

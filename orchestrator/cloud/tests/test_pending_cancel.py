@@ -113,8 +113,23 @@ def test_a_second_clause_means_it_is_not_a_bare_cancel():
 
 # ─── 反向：注入缺陷要红（§4.3「恒绿的断言比没有更糟」）───
 
-def test_threshold_is_the_documented_one():
-    """阈值是 6 字。剥后 5 字仍是纯取消、6 字起是复合——这条钉住的是那个具体数字，
-    改阈值必须同时改这条断言，不能让它悄悄跟着实现走。"""
-    assert detect_cancel("那个提醒不用了，取消吧").compound is False   # 剥后 5 字
-    assert detect_cancel("不用了，帮我看看天气").compound is True      # 剥后 6 字
+def test_compound_judgment_is_anaphora_not_length():
+    """⚠ **2026-08-29 换判据**：分界是「余量是不是一个指着挂起的回指短语」，
+    不再是「余量够不够 6 字」。这条钉住的是判据的**形状**，改它必须同时改这条断言。
+
+    旧断言钉的是那个数字（「剥后 5 字仍是纯取消、6 字起是复合」），而那个数字正是
+    真栈 turn 77 的成因：「取消**导航**」剥后 2 字 ⇒ 被判纯取消 ⇒ 导航没被取消，
+    用户还收到一句关于另一件事的「已为您取消」。
+    """
+    # ① 短回指短语 ⇒ 纯取消（I-046 的守护面，真栈 48 次命中里占 4 次）
+    assert detect_cancel("那个提醒不用了，取消吧").compound is False
+    assert detect_cancel("取消刚才解锁").compound is False
+    assert detect_cancel("取消刚才那笔订单").compound is False
+    # ② 没有回指的实质余量 ⇒ 复合，**不论长短**（这一条是本次修的那个 bug）
+    assert detect_cancel("取消导航").compound is True            # 剥后 2 字
+    assert detect_cancel("不用了，关掉空调").compound is True      # 剥后 4 字
+    assert detect_cancel("不用了，帮我看看天气").compound is True
+    # ③ 回指只是残片、后面还挂着一整条新请求 ⇒ 仍是复合（长度在这一支里才管用）
+    assert detect_cancel("算了那个不要了，先去帮我看看附近有什么景点").compound is True
+    # ④ 剥完只剩承接词 ⇒ 纯取消（「先不用了吧」只剩一个「先」）
+    assert detect_cancel("先不用了吧").compound is False

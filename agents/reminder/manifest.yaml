@@ -22,6 +22,10 @@ capabilities:
     description: 为同一事项一次创建两个明确时刻的提醒；仅处理“某时提醒我某事，另一时刻
       再提醒我一次”的同日双提醒句，两个时刻整组写入，不依赖规划器生成两个步骤。
     slots: []
+    # **整句型能力**：它消费整句原话（`_create_batch` 读 `raw_text`、不读槽），
+    # 一步把这句话里的两个时刻都建完 ⇒ 同一份计划里排两步就是把整组建两遍。
+    # 真栈 SL1 实测出过 4 张卡 4 个 id，且那组提醒随后既清不掉又占着序数参照系。
+    whole_utterance: true
     examples: ["明天下午四点提醒我开会，三点半再提醒我一次"]
   - intent: reminder.list
     description: 查询提醒/待办/日程安排（今天/明天/后天/未来三天/这周/全部/待办）
@@ -31,11 +35,18 @@ capabilities:
   - intent: reminder.complete
     description: 完成某条提醒/待办（按序号或内容）
     slots: [index, title]
+    slot_shapes: {index: ordinal}   # C3 值形状，理由见 reminder.cancel 那处
     examples: ["完成第二条", "买牛奶那条办完了", "标记第一个完成", "完成提醒：给客户回电话"]
   - intent: reminder.cancel
     description: 取消某条提醒，或清空全部（清空需二次确认）；按标题取消时 title 填用户
       点名的原文，别转述或简写（子串匹配，放宽一个字就会命中另一条）
     slots: [index, title, all]
+    # C3 值形状：`_clarify_multi` 追问「要取消哪条？说「取消第几条」」，而 `index` 是
+    # **封闭值域**槽——`_resolve_targets` 只认数字与「第N条」。不声明形状时 wait_slot
+    # 会把用户下一句整句塞进来：真栈长会话 `e15ac1e` family turn 18/73/76 连撞三轮
+    # （「列出我现在进行中的提醒」被当成序号答案），挂起一直活着，直到 turn 77
+    # 「取消导航」被挂起取消吞掉——**黑洞喂大了下一个洞**。
+    slot_shapes: {index: ordinal}
     # ⚠ 「第二个先取消，其他继续」**刻意只进范例库不进这里**（C10-F）：同一句话
     # 声明两遍就有两处要维护，而这条要教的是「复合说法怎么落域」——那正是范例库
     # 的职责面（检索后作 few-shot），不是 catalog 的。
@@ -44,6 +55,7 @@ capabilities:
     description: 修改某条提醒的时间（改到/推迟/提前/换个时间）；按标题或"第N条"定位，
       缺新时间会追问后续接
     slots: [index, title, time_text]
+    slot_shapes: {index: ordinal}   # C3 值形状，理由见 reminder.cancel 那处
     examples: ["把接孩子改到五点", "买牛奶那条推迟到明天九点", "改第二条到晚上八点",
                "带充电线的提醒改个时间"]
 

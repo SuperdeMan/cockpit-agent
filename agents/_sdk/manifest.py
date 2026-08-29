@@ -49,6 +49,8 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             # `orchestrator/cloud/slot_shape.py`——同 verification 的分工。
             slot_shapes={str(k): str(v)
                          for k, v in (c.get("slot_shapes") or {}).items()},
+            # 整句型能力：编排据此保证同一份计划里最多一步（理由见 proto 注释）。
+            whole_utterance=bool(c.get("whole_utterance", False)),
         )
         for c in (data.get("capabilities") or [])
     ]

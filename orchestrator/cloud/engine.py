@@ -616,6 +616,18 @@ class PlannerEngine:
                     yield {"kind": "final", "speech": clarify["question"],
                            "ui_card": {"type": "intent_choice", **clarify}}
                     return
+                # 取消闸（余项，2026-08-29）：这句取消话没落到任何可执行的东西上。
+                # **「没听清」在这里是假的**——我们听清了，只是不知道他说的是哪一件事
+                # （planner 看不见用户有哪些提醒/订单）。两句话的区别就是这一条闸的
+                # 全部意义：不许答「已经取消啦」，也不该赖用户说不清楚。
+                if getattr(plan, "cancel_unresolved", ""):
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.cancel_unresolved", "system.cancel_unresolved")
+                    yield {"kind": "final",
+                           "speech": f"我没找到和「{plan.cancel_unresolved}」"
+                                     f"对得上的事，你说的是哪一件？"
+                                     f"说得再具体点我就能取消。"}
+                    return
                 # R4.4 D5-2：诚实降级话术（含 fallback 低分不硬执行的场景），比「无法处理」更引导重说。
                 await _emit_engine_lifecycle(
                     ctx, "cloud.no_plan", "system.no_plan")

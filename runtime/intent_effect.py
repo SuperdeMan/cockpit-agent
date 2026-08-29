@@ -25,6 +25,24 @@ from __future__ import annotations
 READ_ONLY_OPERATES = frozenset({"query", "locate"})
 
 
+#: **新建**语义的操作名。与 `READ_ONLY_OPERATES` 同族——都是「这一步在做哪一类事」
+#: 的声明，粒度是操作名，零对象名（编排核心消费的前提）。
+#: 用途只有一个：一句取消话被规划成新建时，**方向是反的**（QA 余项，2026-08-29
+#: 真栈实录「取消交周报」→ `reminder.create` →「记下了：交周报。」）。
+#: ⚠ 刻意**只收无歧义的那几个**：`set`/`open` 这类既能是新建也能是改状态的不进来，
+#: 宁可闸少拦一次——判据放宽的代价是把正常请求拦掉，那比漏拦贵。
+CREATE_OPERATES = frozenset({"create", "create_batch", "add", "new", "remember"})
+
+
+def is_create_intent(intent_name: str) -> bool:
+    """`<object>[.<path>].<operate>` 的最后一段是不是「新建」。
+
+    判据只看操作名，理由同 `is_write_intent`；认不出返回 False（不当新建）。
+    """
+    tail = str(intent_name or "").rsplit(".", 1)[-1].strip().lower()
+    return bool(tail) and tail in CREATE_OPERATES
+
+
 def is_write_intent(intent_name: str) -> bool:
     """`<object>[.<path>].<operate>` 的最后一段不在只读集合里 ⇒ 这一步是写操作。
 

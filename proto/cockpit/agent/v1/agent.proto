@@ -46,6 +46,17 @@ message Capability {
   // 形状**只有名字在这里**，判据本体是编排侧 `orchestrator/cloud/slot_shape.py` 的唯一实现
   // （零领域词）；同 `verification` 的分工：领域声明在 Agent，通用求值器在中央。
   map<string, string> slot_shapes = 8;
+  // **整句型能力**（QA 余项，2026-08-29）：这个 capability 消费的是**整句原话**，
+  // 一次把这句话里的事全办完（如 reminder.create_batch 一步建完同一事项的两个时刻）。
+  // 编排据此保证**同一份计划里最多一步**——多的那些做的是同一件事。
+  // 真栈实录（长会话 `e15ac1e` family SL1）：planner 给同一句话排了两个
+  // `reminder.create_batch` 步（span 里两个 `step.agent:reminder`），每步都把整组
+  // 建了一遍 ⇒ **4 张 reminder_card、4 个不同 id**，随后按标题取消当场撞歧义，
+  // 这组提醒既清不掉又一直占着序数参照系。执行器的副作用防抖挡不住它：
+  // 指纹是 `(intent, 归一化 slots)`，而 planner 给两步发明了不同的槽名
+  // （9 次取样里出现过 7 种），**指纹不同、防抖不命中**——而这个 Agent
+  // 根本不读槽、读的是 raw_text。声明式解决：谁消费整句谁自己说出来。
+  bool whole_utterance = 9;
 }
 
 // 执行后对账声明（M2 Outcome Verifier）：解「步骤 OK ≠ 结果达成」——

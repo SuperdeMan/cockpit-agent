@@ -28,7 +28,8 @@ def _load_route_hints(agent_id):
 
 class MockAgent:
     def __init__(self, agent_id, intents, *, kind="agent", deployment="cloud",
-                 permissions=None, trust_level="first_party"):
+                 permissions=None, trust_level="first_party",
+                 whole_utterance=()):
         self.manifest = MagicMock()
         self.manifest.agent_id = agent_id
         self.manifest.capabilities = []
@@ -44,6 +45,9 @@ class MockAgent:
             cap.description = ""
             cap.examples = []
             cap.heavy = False          # 真 bool，避免 MagicMock 恒真误标 step.heavy
+            # 同上，理由一模一样：`bool(MagicMock())` 恒真，不显式给假值的话
+            # **每个 mock 能力都会被当成整句型**，同 intent 的第二步被静默收掉。
+            cap.whole_utterance = intent in (whole_utterance or ())
             self.manifest.capabilities.append(cap)
         # 真实 manifest 的确定性路由提示（R2.1）；未声明的 agent 为空列表。
         self.manifest.route_hints = _load_route_hints(agent_id)

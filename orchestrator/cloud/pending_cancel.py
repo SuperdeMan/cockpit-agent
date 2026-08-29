@@ -47,10 +47,18 @@ _STRONG_RE = re.compile("|".join(_STRONG_WORDS))
 # 复合取消句的「实质余量」量具（EVA 三§3，2026-08-15 真栈实测）：「算了咖啡不买了，
 # 先去加点油，但还是别迟到」命中取消词后整句被吞、4.6ms 直回「已取消」——后半句是
 # 新请求。剥掉取消词/标点/语气尾后余量 ≥ _COMPOUND_MIN 字 = 复合句。
+#: 余量量具：把**取消词本身**从句子里剥掉，剩下的才是「用户还说了什么」。
 _STRIP_RE = re.compile(
     "|".join(_STRONG_WORDS) + r"|不买了|不去了"
     r"|[，。,、！!？?；;\s]|吧$|啦$")
-_COMPOUND_MIN = 6
+#: 第二遍：WEAK 词。⚠ **必须在 STRONG 之后单独跑一遍，不能并进上面那条**
+#: （2026-08-29，既有用例连报两次才定形）：正则按**最左位置**匹配、不按词表顺序，
+#: 「先不用了吧」会先在位置 0 命中 WEAK 的「先不」，把 STRONG 的「不用了」劈成两半，
+#: 剥完剩一个「用」⇒ 被判成复合句。**「把词表按语义排好序」在同一条 alternation 里
+#: 是不生效的**——语义优先级要靠分遍来表达。
+#: 剥 WEAK 本身也是 2026-08-29 补的：此前只剥 STRONG，「先不」剥完还剩「不」，
+#: 旧的 6 字阈值恰好把它盖住，换成新判据后当场露出来。
+_WEAK_STRIP_RE = re.compile("|".join(_WEAK_WORDS) + r"|[，。,、！!？?；;\s]|吧$|啦$")
 
 
 @dataclass(frozen=True)
@@ -79,6 +87,65 @@ _CLAUSE_SEP_RE = re.compile(r"[，,。；;！!？?]")
 _CANCEL_FILLER_RE = re.compile(
     r"一下|好吗|好了|谢谢|麻烦|帮我|请|[了吧啦呢的呀啊嘛哦噢喔嗯~\s"
     r"，,。；;！!？?、\.]")
+
+
+#: **回指标记**：余量在指「刚才那件事」⇒ 它说的就是挂起本身，不是一个新请求。
+#: 这条是「取消 X」两种含义的**唯一分界**，也是 I-046 那条修复的守护面——
+#: 「取消**刚才**解锁」必须继续被判成纯取消（真栈 48 次 `system.pending_cancel`
+#: 里它占 4 次）。全是指示/时间回指虚词，零领域词。
+_ANAPHORA_RE = re.compile(
+    r"刚才|刚刚|方才|上一(?:步|条|个|次)|前面|上面|这个|那个|这条|那条"
+    r"|这次|那次|这单|那单|这件|那件|这事|那事")
+
+#: 话语副词：它们**只是承接**，不构成一个请求。`_CANCEL_FILLER_RE` 是取消词自己的
+#: 虚词面（语气/客套），这几个是**复合判定专用**的那一小片——「先不用了吧」剥完
+#: 只剩一个「先」，那不是新请求。刻意不并进上面那份：`_CANCEL_FILLER_RE` 同时被
+#: `is_standalone_cancel` 消费，往那里加词会顺手放宽**另一条**路径的判据。
+_COMPOUND_ADVERB_RE = re.compile(r"先|就|还是|再|然后|另外|不然|干脆|反正")
+#: ⚠ 这里**不许放裸「那」/「这」**：它们会把「那个」剥成「个」，
+#: 回指判据当场瞎掉（既有用例「那个提醒不用了，取消吧」当场报红）。
+
+#: 回指短语的长度上限（旧 `_COMPOUND_MIN` 的值，作用域收窄到只剩这一支）。
+#: 「刚才解锁」「刚才那笔订单」是**指着挂起说的一个名词短语**；而
+#: 「那个先去帮我看看附近有什么景点」里的「那个」只是被取消掉那半截的残片，
+#: 后面跟着一整条新请求。**长度在这里才是它真正管用的地方**——
+#: 它区分的不再是「有没有实质」，而是「这个回指短语后面还挂没挂一条新指令」。
+_ANAPHORIC_PHRASE_MAX = 6
+
+
+def _is_compound_remainder(remainder: str) -> bool:
+    """取消词之外的余量，是**一个新请求**还是**在指挂起本身**？
+
+    ⚠ **2026-08-29 从「余量 ≥ 6 字」换成本判据**（QA 长会话 `e15ac1e` family
+    turn 77）。旧阈值把「取消**导航**」的余量数成 2 字 ⇒ 判成纯取消 ⇒
+    挂起被清掉、回一句「好的，已为您取消。」，而**导航从头到尾没有被取消过**
+    ——用户的指令被静默吞掉，还收到一句关于**另一件事**的完成声明（C11 那一族）。
+    同族第二例，同一条阈值造成：「不用了，**关掉空调**」余量 4 字，空调也没关。
+
+    换判据前先量了误伤面（全部长会话 artifact，48 次命中）：
+    **43 次裸「取消」**（余量为空，两套判据都判纯取消，不受影响）、
+    **4 次「取消刚才解锁」**（I-046 的原始用例）、**1 次就是上面那条 bug**。
+    ⇒ 分界不在长度上，在**余量是不是一个指着挂起的回指短语**。
+
+    ⚠ **既有测试当场抓到我第一版判据的两处误判**，两条都保留成了本函数的形状：
+    ① 只看「有没有回指」会把「算了那个不要了，先去帮我看看附近有什么景点」判成
+    纯取消——那里的「那个」是被取消掉那半截的**残片**，不是余量的主体；
+    ⇒ 回指只在**短余量**里才作数。② 「先不用了吧」剥完只剩一个「先」，
+    它不是新请求 ⇒ 话语副词单列一份虚词面。**反向验证要验到判据本身的形状，
+    不只是验到它想修的那一条。**
+
+    ⚠ 代价明写：挂起本身就是 X、用户又不带回指地说「取消X」时（例如确认下单期间
+    说「取消订单」），新判据会**先清掉挂起、再把这句话按新请求规划**，用户可能
+    多听到一句「没找到要取消的订单」。两侧代价不对称：那一侧是多一句诚实的话，
+    这一侧是一条指令被吞掉 + 一句假的完成声明。
+    """
+    rest = _CANCEL_FILLER_RE.sub("", remainder or "")
+    rest = _COMPOUND_ADVERB_RE.sub("", rest)
+    if not rest:
+        return False                      # 全是虚词/承接词 ⇒ 这就是一句纯取消
+    if _ANAPHORA_RE.search(rest) and len(rest) <= _ANAPHORIC_PHRASE_MAX:
+        return False                      # 短回指短语 ⇒ 它指的就是挂起本身
+    return True
 
 
 def _no_substance_left(text: str) -> bool:
@@ -133,9 +200,51 @@ def detect_cancel(text: str) -> CancelDecision:
     if not (_STRONG_RE.search(lowered)
             or _whole_sentence_hit(lowered, _WEAK_WORDS)):
         return _NOT_CANCEL
-    remainder = _STRIP_RE.sub("", t)
+    remainder = _WEAK_STRIP_RE.sub("", _STRIP_RE.sub("", t))
     return CancelDecision(
         cancelled=True,
         remainder=remainder,
-        compound=len(remainder) >= _COMPOUND_MIN,
+        compound=_is_compound_remainder(remainder),
     )
+
+
+# ── 没有挂起时的第三个问法：这句话是不是「取消 X」？（QA 余项，2026-08-29）──
+#
+# 前两个问法各有语境（`detect_cancel` 有挂起 / `is_standalone_cancel` 裸取消词），
+# 这一个问的是**规划出来之后**：用户说的是一句取消，计划却在新建或在编造。
+# 三个问法共用上面那一份词表——这正是本模块存在的理由，别在编排层写第四份。
+
+
+#: 宾语两端的语法虚词：处置式标记与结果补语。剥它们只为让**话术里念出来的那截**
+#: 通顺（「把带伞的提醒取消掉」→「带伞提醒」），判据本身不依赖它。
+_OBJECT_TRIM_RE = re.compile(r"^(?:把|将|给)+|(?:掉)+$")
+
+
+def cancel_instruction_object(text: str) -> str:
+    """「取消 X」形态里的那个 X；不是这个形态则返回空串。
+
+    判据三条，缺一不可：
+    - **STRONG 取消词**在句中（WEAK 裸否定词做子串会误伤，见模块 docstring）；
+    - **没有第二个分句**——「算了，帮我找家咖啡店」「不用了，帮我记一下明天买牛奶」
+      里的取消词是**话语承接**，后面那半才是请求。这一条是本判据的主要误伤面，
+      刻意用与 `is_standalone_cancel` 同一条 `_CLAUSE_SEP_RE`；
+    - **剥完还剩实质内容**——裸取消（「取消」「算了」）归 `is_standalone_cancel`，
+      不该在这里被判第二遍。
+
+    真栈来历（deployed `e15ac1e`，F 留出臂 6 轮）：「取消交周报」落域散成五处，
+    其中 **`reminder.create` 反向建了一条提醒**（「记下了：交周报。」）、
+    **`chitchat.talk` 零动作却说「好嘞，周报提醒已经取消啦」**。
+    根因是 planner 看不见用户有哪些提醒 ⇒ 这句话对它本来就是歧义的；
+    **修法只要求「错得诚实」，不要求「猜得准」**（§4.2 三条候选路里代价最小的那条）。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    if not _STRONG_RE.search(t.lower()):
+        return ""
+    parts = _CLAUSE_SEP_RE.split(t, 1)
+    if len(parts) > 1 and parts[1].strip():
+        return ""
+    rest = _WEAK_STRIP_RE.sub("", _STRIP_RE.sub("", parts[0]))
+    rest = _CANCEL_FILLER_RE.sub("", rest)
+    return _OBJECT_TRIM_RE.sub("", rest).strip()

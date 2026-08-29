@@ -1243,6 +1243,65 @@ def test_session_constraint_from_an_earlier_turn_reaches_this_search():
     assert [i["name"] for i in res.data["items"]][0] == "淮扬人家"
 
 
+def test_planner_filled_spicy_cuisine_loses_to_a_session_no_spicy():
+    """C12-C（QA 余项，真栈长会话 `e15ac1e` INF-PREFERENCE T28 逐字实录）：
+    **忌口要压过检索词本身，不只压过记忆偏置。**
+
+    上一条（C12-B）挡的是「记忆里爱吃川菜 ⇒ 拿川菜当检索词」那一支，
+    而它的前置条件写着 `not (cuisine or brand or kw_slot)`——**planner 自己把
+    `cuisine=川菜` 填进槽时，那道挡板压根走不到**。真栈话术因此是：
+    「为您找到 10 家**川菜**（不合口味的已排后；记得您说过不吃辣…）」
+    ——约束被拿去排序了，却没能拦住检索词。
+
+    ⚠ 与 `test_search_names_the_conflict_when_user_asks_for_the_disliked_cuisine`
+    是一对：**用户自己点名要川菜时不许改**（真栈 CD5 T4「附近的川菜馆」），
+    判据就是「这个词是不是他这一轮说出来的」。
+    """
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="淮扬人家", category="餐饮", rating=4.2)]
+
+    agent.place.search = search
+    meta = dict(_LOC, focus_session_constraints=json.dumps({"no_spicy": True}))
+    res = asyncio.run(run_handle(
+        agent, "nearby.search",
+        slots={"category": "餐饮", "cuisine": "川菜"},   # ← planner 自己填的
+        raw_text="推荐附近适合晚饭的地方", ctx=ctx, meta=meta))
+
+    assert seen["keyword"] != "川菜", "忌口没能拦住 planner 填进槽的重辣菜系"
+    assert "没按川菜找" in res.speech
+
+
+def test_a_spicy_cuisine_the_user_named_this_turn_is_still_searched():
+    """误伤对照：**用户这一轮自己说的**「附近的川菜馆」照常按川菜检索。
+
+    真栈 CD5 T4/T43 两轮都是这个形态且都判 PASS——它诚实提一句
+    「记得您说过不吃辣」，但不擅自改用户点名的东西。**把这条一起改掉，
+    就是从「没拦住」滑到另一个方向的错。**
+    """
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="川胖虎", category="餐饮", rating=4.5)]
+
+    agent.place.search = search
+    meta = dict(_LOC, focus_session_constraints=json.dumps({"no_spicy": True}))
+    asyncio.run(run_handle(agent, "nearby.search",
+                           slots={"category": "餐饮", "cuisine": "川菜"},
+                           raw_text="附近的川菜馆", ctx=ctx, meta=meta))
+
+    assert seen["keyword"] == "川菜"
+
+
 def test_session_constraint_that_says_spicy_is_fine_does_not_block(monkeypatch):
     """误伤对照：会话里**改口要辣**（`no_spicy=False`）时，记忆里的川菜偏好照常生效
     ——一个永远解除不了的忌口会把「今天想吃点辣的」变成系统跟用户犟嘴。"""

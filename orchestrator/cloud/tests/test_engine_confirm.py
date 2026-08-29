@@ -787,6 +787,60 @@ def test_slot_pending_new_search_wordlist_is_shared_with_candidate_query():
         assert PlannerEngine._is_topic_change(text) is False, text
 
 
+def test_slot_pending_index_shape_rejects_a_new_instruction():
+    """C3 续（QA 余项，真栈长会话 `e15ac1e` family turn 18/73/76 连撞三轮）：
+    `index` 声明 `ordinal` 形状之后，一句新指令不再被当成序号答案。
+
+    原始形态：系统问「有 3 条都能对上…要取消哪条？」，用户下一句说
+    「**列出我现在进行中的提醒**」——整句被填进 `index` 槽，Agent 认不出序号、
+    退回标题路径、又查出同样三条、**又问一遍**。三轮之后挂起还活着，
+    turn 77 用户说「取消导航」时被它接走，导航从头到尾没被取消过。
+    **一个黑洞会喂大下一个洞。**
+    """
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot", pending_step_id="s1",
+        missing_slots=["index"], slot_shapes={"index": "ordinal"})
+
+    # 真栈那三轮的原话
+    assert PlannerEngine._is_topic_change("列出我现在进行中的提醒", pending) is True
+    # 同族：不是序号的任何说法都判换题（`_resolve_targets` 也用不上它们）
+    for text in ("都取消", "取消全部", "看看我的待办", "现在几点了"):
+        assert PlannerEngine._is_topic_change(text, pending) is True, text
+    # 反向对照：真序号答案仍然是槽值，别把补槽修死
+    for text in ("第一条", "取消第一条", "完成第二条", "改第二条", "1", "第2个"):
+        assert PlannerEngine._is_topic_change(text, pending) is False, text
+
+
+def test_pending_cancel_does_not_swallow_a_named_cancel_instruction():
+    """QA 余项（真栈长会话 `e15ac1e` family turn 77）：有挂起时说「取消导航」，
+    **挂起该清、导航也该被规划**——旧判据把整轮吞掉，回一句关于另一件事的
+    「好的，已为您取消。」，而导航一次都没被取消（C11 那一族的假完成声明）。
+
+    这条与 `test_cancel_with_short_reference_is_pure_cancel` 是一对：
+    带回指的（「取消刚才解锁」）仍判纯取消，不带的按新请求继续走。
+    """
+    from orchestrator.cloud.models import SessionState
+
+    engine, spy, session = _make_engine_interject()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-stuck",
+        pending_step_id="s1", missing_slots=["index"],
+        slot_shapes={"index": "ordinal"},
+        completed_results={}, pending_plan={"goal": "取消提醒"})))
+
+    events = _run(engine, _req("取消导航"))
+
+    # ① 原挂起被清掉了（`op-stuck` 不复存在）
+    left = asyncio.run(session.load("sess-1", owner_user_id="u1"))
+    assert left is None or left.operation_id != "op-stuck"
+    # ② 但**不许**只回一句「已为您取消」就收场——那句话说的是另一件事
+    assert "已为您取消" not in (events[-1].get("speech") or "")
+    # ③ 余句真的被当成新请求规划、执行了（替身计划落到 nearby）
+    assert spy.count("nearby.search") >= 1, "「取消导航」被吞掉了，没有走到规划"
+
+
 def test_slot_pending_is_abandoned_after_repeated_unanswered_asks():
     """C3-D 止损底线：同一个问题问到上限还没接上就放弃它，并**说一句**。
 

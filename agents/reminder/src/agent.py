@@ -41,6 +41,20 @@ _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「�
 #: `_resolve_targets`。**必须带「的/这条/那条」这类连接词**——只削光杆「提醒」会把
 #: 一条真叫「买提醒」的待办削成「买」，而那一步是在扩大匹配面，不是缩小。
 _TITLE_DOMAIN_TAIL_RE = re.compile(r"(?:的|这条|那条|这个|那个)\s*(?:提醒|待办)\s*$")
+#: 子串命中的**最低覆盖率**（C10-B 精确度阶梯补的那一档，2026-08-29）。
+#: 用户说的那截要占到库里标题的这么大一片，单条才允许直接执行；不够就反问。
+#: 方向由代价定：不够高 ⇒ 多问一句；不够低 ⇒ 删掉一条他没点名的提醒。
+#: 0.6 的具体值是**待证参数不是待办**——真栈那条 badcase 是 3/14 = 0.21，
+#: 而正常说法基本都走 `exact`；改这个数必须同时改钉住它的那条断言。
+_TITLE_COVERAGE_MIN = 0.6
+
+
+def _title_coverage(query: str, title: str) -> float:
+    """用户说的那截占库里标题的比例。标题为空按 0 算（不精确 ⇒ 反问）。"""
+    q, t = (query or "").strip(), (title or "").strip()
+    if not t:
+        return 0.0
+    return len(q) / len(t)
 # Q11 否定守卫（I-009②）：用户明说「别建提醒」。**极性词表来自 `runtime.polarity`**
 # ——卡 §3-Q11 明写它与 Q7 的极性维度同源，共用一份，别写第二份。
 # 这里只补「否定的宾语是**提醒这件事**」这半：`polarity` 判的是「别做某个动作」，
@@ -631,12 +645,12 @@ class ReminderAgent(BaseAgent):
     # ── update（P1a：改时间；缺时间经 REMINDER_PENDING(action=update) 两轮续接）──
     async def _update(self, intent, ctx, meta) -> AgentResult:
         raw = intent.raw_text or ""
-        hits = await self._resolve_targets(ctx, raw, intent.slots)
+        hits, precise = await self._resolve_targets(ctx, raw, intent.slots)
         if not hits:
             # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
             return AgentResult(
                 speech="没找到要改的提醒，说「看看我的提醒」我给你列一下。")
-        if len(hits) > 1:
+        if len(hits) > 1 or not precise:
             return await self._clarify_multi(ctx, hits, "改")
         r = hits[0]
         now = self._now_utc()
@@ -798,12 +812,13 @@ class ReminderAgent(BaseAgent):
 
     # ── complete / cancel ──
     async def _complete(self, intent, ctx, meta) -> AgentResult:
-        hits = await self._resolve_targets(ctx, intent.raw_text or "", intent.slots)
+        hits, precise = await self._resolve_targets(
+            ctx, intent.raw_text or "", intent.slots)
         if not hits:
             # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
             return AgentResult(
                 speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
-        if len(hits) > 1:
+        if len(hits) > 1 or not precise:
             return await self._clarify_multi(ctx, hits, "完成")
         r = hits[0]
         if r.recur:
@@ -840,12 +855,12 @@ class ReminderAgent(BaseAgent):
             })
             return AgentResult(status=NEED_CONFIRM,
                                speech=f"确定要清空全部 {n} 条提醒和待办吗？清掉就找不回来了。")
-        hits = await self._resolve_targets(ctx, raw, intent.slots)
+        hits, precise = await self._resolve_targets(ctx, raw, intent.slots)
         if not hits:
             # R9：诚实降级话术用 OK（FAILED 会被聚合器吞）
             return AgentResult(
                 speech="没找到这条提醒，说「看看我的提醒」我给你列一下。")
-        if len(hits) > 1:
+        if len(hits) > 1 or not precise:
             return await self._clarify_multi(ctx, hits, "取消")
         r = hits[0]
         await self.store.set_status(self._uid(ctx), r.id, CANCELLED,
@@ -853,9 +868,22 @@ class ReminderAgent(BaseAgent):
         await self._refresh_active(ctx)
         return AgentResult(speech=f"好的，取消了「{r.title}」。")
 
-    async def _resolve_targets(self, ctx, raw: str, slots: dict) -> list[Reminder]:
-        """序号经 REMINDERS_ACTIVE（须本会话列过/建过）→ 唯一命中；
-        标题走 store 子串匹配 → 可能多条，全部返回由调用方决定（单条直接执行、多条反问澄清）。"""
+    async def _resolve_targets(self, ctx, raw: str,
+                               slots: dict) -> tuple[list[Reminder], bool]:
+        """定位要操作的那几条，并给出**这次定位精不精确**。
+
+        序号经 REMINDERS_ACTIVE（须本会话列过/建过）→ 唯一命中；
+        标题走 store 子串匹配 → 可能多条，由调用方决定（精确单条直接执行、
+        其余一律反问澄清）。
+
+        返回 `(hits, precise)`。`precise=False` 时**即使只命中一条也不许直接执行**
+        ——C10-B 的精确度阶梯此前只覆盖「有逐字相等」那一支，`exact` 为空退回子串
+        的那一支是裸奔的，而它正是 T59「取消错对象」那一族：
+        真栈实录（deployed `ed53f8f`）用户说「取消参加**代号889001**的评审会」，
+        planner 转述把 title 放宽成「评审会」，子串命中库里的
+        「参加**代号926818**的评审会」，`exact` 为空 ⇒ 退回子串 ⇒ 只有一条 ⇒
+        **直接取消了一条用户没点名的提醒**。
+        """
         uid, occ = self._uid(ctx), self._occ(ctx)
         idx = None
         idx_slot = (slots.get("index") or "").strip()
@@ -875,8 +903,9 @@ class ReminderAgent(BaseAgent):
                 items = []
             if 0 < idx <= len(items):
                 r = await self.store.get(uid, items[idx - 1]["id"], occupant_id=occ)
-                return [r] if r else []
-            return []
+                # 序号指的是**用户刚看到的那份列表**里的一项，没有放宽可言 ⇒ 精确。
+                return ([r], True) if r else ([], True)
+            return [], True
         q = (slots.get("title") or "").strip()
         if not q or q == raw:
             q = self._extract_title(re.sub(
@@ -884,7 +913,7 @@ class ReminderAgent(BaseAgent):
                 r"|把|改到|改成|推迟到?|提前到?|延到|换到|改个?时间|的提醒|的待办|了",
                 "", raw))
         if not q:
-            return []
+            return [], True
         hits = await self.store.find_by_title(uid, q, occupant_id=occ)
         if not hits:
             # 域词漏进标题槽 ⇒ 库里永远查不到（2026-08-29 真栈实录，余项 ③ 症状②）。
@@ -909,7 +938,24 @@ class ReminderAgent(BaseAgent):
         # 直接执行——**取消掉的可能不是他点名的那条**。有逐字相等的就只认它，
         # 没有才退回子串（多条仍走澄清，那条既有行为不变）。
         exact = [r for r in hits if r.title == q]
-        return exact or hits
+        if exact:
+            return exact, True
+        # `exact` 为空这一支：**这条标题是不是用户自己说出来的**，决定它算不算精确。
+        # 「取消评审会」这类合理放宽仍然查得到（`or hits` 那条老理由成立，别删它），
+        # 只是**不再单条直接执行**——多问一句 vs 删错一条，两侧代价不对称。
+        #
+        # 两档，缺一不可：
+        # ① **库里那条标题逐字出现在原话里** ⇒ 精确。这一档是既有用例逼出来的：
+        #    「完成明天带伞」里 `_extract_title` 会把时间词削掉（q=「带伞」），
+        #    而库里存的是「明天带伞」——**光看覆盖率会把我们自己的抽取算成用户含糊**
+        #    （2/4=0.5 判不精确，当场报红 `test_ordinal_reference_frame_ignores_expired_backlog`）。
+        # ② 覆盖率兜底：用户说的那截占库里标题足够大一片。
+        raw_text = (raw or "").strip()
+        precise = bool(hits) and all(
+            (r.title and r.title in raw_text)
+            or _title_coverage(q, r.title) >= _TITLE_COVERAGE_MIN
+            for r in hits)
+        return hits, precise
 
     async def _clarify_multi(self, ctx, hits: list[Reminder], action: str) -> AgentResult:
         """标题命中多条时不擅自操作（P0 单条语义）：反问澄清，并把候选写入 active，
@@ -924,9 +970,17 @@ class ReminderAgent(BaseAgent):
         card = {"type": "reminder_list", "view": "multi", "date_label": f"待{action}",
                 "items": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if r.fire_at],
                 "todos": [r.to_card_item(now=now_utc, tz=self._tz) for r in hits if not r.fire_at]}
+        # 单条低精度（`exact` 为空、子串覆盖率不达标）也走这里——话术要说清楚
+        # **它跟你说的不是逐字一样**，否则「有 1 条都能对上」既不通顺、也读不出
+        # 「这可能不是你要的那条」。判据在 `_resolve_targets`，这里只负责说人话。
+        speech = (
+            f"没找到逐字对得上的，只有「{hits[0].title}」沾边。"
+            f"要{action}它就说「{action}第一条」，不是的话换个更具体的说法。"
+            if len(hits) == 1 else
+            f"有 {len(hits)} 条都能对上：{lines}。要{action}哪条？"
+            f"说「{action}第几条」或换个更具体的说法。")
         return AgentResult(status=NEED_SLOT,
-                           speech=f"有 {len(hits)} 条都能对上：{lines}。要{action}哪条？"
-                                  f"说「{action}第几条」或换个更具体的说法。",
+                           speech=speech,
                            missing_slots=["index"],
                            ui_card=card)
 

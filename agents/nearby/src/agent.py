@@ -537,6 +537,26 @@ class NearbyAgent(BaseAgent):
                 else:
                     keyword = liked
                     taste_notes.append(f"按您的口味优先{liked}")
+            # C12-C（QA 余项，2026-08-29）：**忌口要压过检索词本身，不只压过记忆偏置。**
+            # 上面那道挡板（C12-A）只管 `liked` 这一支——它的前置条件里写着
+            # `not (cuisine or brand or kw_slot)`，**槽里已经有菜系时它压根走不到**。
+            # 真栈长会话 `e15ac1e` INF-PREFERENCE T28 逐字实录：用户上一轮说
+            # 「我不吃辣，也不想排长队」，这一轮说「推荐附近适合晚饭的地方」，
+            # planner 从记忆里把 `cuisine=川菜` 直接填进了槽 ⇒ 话术播成
+            # 「为您找到 10 家**川菜**（不合口味的已排后；记得您说过不吃辣…）」
+            # ——**约束被拿去排序，却没能拦住检索词本身**。
+            #
+            # 判据是「**这个重辣菜系是不是他这一轮自己说出来的**」：
+            # 自己说的照办（既有 `_taste_conflict_note` 会诚实提一句，
+            # 真栈 CD5 T4「附近的川菜馆」正是这一支，不许动它）；
+            # 不是自己说的，就不许拿它当检索词——退回干净类目词重搜。
+            if taste and taste.get("no_spicy") and category in _FOOD_CATS:
+                spicy_kw = [w for w in self._SPICY_MARKS if w in keyword]
+                if spicy_kw and not any(w in raw for w in spicy_kw):
+                    keyword = self._build_keyword(category, "", brand, "")
+                    said = "您说了不要辣" if turn_no_spicy else "您说过不吃辣"
+                    taste_notes.append(
+                        f"{said}，就没按{'/'.join(spicy_kw)}找")
         rating_min = _to_float(intent.slots.get("rating_min"))
         # 价位/排序/营业中：原话解析优先（『一百左右』的区间语义只在原话里，LLM 填的 price_max
         # 槽位会丢下限 → 之前『左右』返回太便宜的）；原话无价位再退回 LLM 槽位。

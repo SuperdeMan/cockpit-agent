@@ -22,6 +22,7 @@ from .context import (
     assemble_budgeted_catalog,
     input_safety_alert,
 )
+from . import pending_cancel
 from .route_hints import RouteHintEngine
 from .retry_policy import (
     NEXT_WIRE_CLARIFICATION, NEXT_WIRE_PLAN_ONLY, STAGE_ACCEPT, STAGE_GUARD,
@@ -32,7 +33,7 @@ from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
 from runtime.clock import BUSINESS_TZ
-from runtime.intent_effect import is_write_intent
+from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import is_non_directive_question
 
 logger = logging.getLogger("planner.planning")
@@ -1689,6 +1690,46 @@ class PlanBuilder:
                 plan.steps = talk.steps
                 plan.clarify = None
                 plan.plan_mode = f"{plan.plan_mode or ''}_safety_talk"
+        # ── 取消闸：一句取消话不许被规划成「新建」或交给兜底编造（余项，2026-08-29）──
+        # 挂在**同一个唯一出口**、排在两条安全闸之后：三条闸判的都是「这份计划与
+        # 用户那句话的方向对不对得上」，共用一个汇合点就不会漏掉某条计划来源。
+        #
+        # 真栈来历（deployed `e15ac1e`，F 留出臂「取消交周报」6 轮）：落域散成五处，
+        # 其中 `reminder.create` **反向建了一条提醒**（「记下了：交周报。」）、
+        # `chitchat.talk` **零动作却说「好嘞，周报提醒已经取消啦」**。
+        # 根因是 **planner 看不见用户有哪些提醒**——「交周报」对它本来就是歧义的，
+        # 范例覆盖得了词面、覆盖不了「这个名字是不是一条提醒」这个它没有的事实
+        # （同批 A/B 已证伪：留出臂 1/6，p=0.0076）。⇒ 本闸**不要求猜得准，
+        # 只要求错得诚实**（§4.2 三条候选路里代价最小的那条）。
+        #
+        # 判据面刻意窄，三道门：
+        # ① 是「取消 X」形态（`pending_cancel` 那一份词表的第三个问法，
+        #    分句符挡住「算了，帮我找家咖啡店」这类话语承接——那是主要误伤面）；
+        # ② **不是问句**（「刚才那个取消了吗」该由兜底老实回答，不该被拦）；
+        # ③ 只丢**新建**语义的步（`is_create_intent` 只收无歧义的那几个操作名）——
+        #    「取消静音」→ `volume.unmute` 一个字不改。
+        cancel_object = pending_cancel.cancel_instruction_object(text)
+        if cancel_object and not is_non_directive_question(text):
+            wrong_way = [s for s in plan.steps if is_create_intent(s.intent)]
+            if wrong_way:
+                logger.warning(
+                    "Cancel-shaped utterance planned into create step(s) %s; "
+                    "dropping them (text=%r)",
+                    [s.intent for s in wrong_way], text[:60])
+                wrong_ids = {id(step) for step in wrong_way}
+                plan.steps = [s for s in plan.steps if id(s) not in wrong_ids]
+                plan.plan_mode = f"{plan.plan_mode or ''}_cancel_create_blocked"
+            # 零步、或只剩兜底 Agent ⇒ 没有任何东西真的会被取消。让它答一句
+            # 「已经取消啦」是这一族里最坏的产物（C11 的执行性编造），
+            # 换成一句**诚实的追问**：名字带到 engine，由那里出话术。
+            if not plan.steps or all(s.agent_id == _FALLBACK_AGENT
+                                     for s in plan.steps):
+                logger.info("Cancel-shaped utterance resolved to nothing "
+                            "actionable (object=%r); asking instead", cancel_object)
+                plan.steps = []
+                plan.clarify = None
+                plan.cancel_unresolved = cancel_object
+                plan.plan_mode = f"{plan.plan_mode or ''}_cancel_unresolved"
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
@@ -2282,6 +2323,9 @@ class PlanBuilder:
                     ({str(k): str(v) for k, v in
                       (getattr(c, "slot_shapes", None) or {}).items()}
                      for c in manifest.capabilities if c.intent == intent), {}),
+                whole_utterance=next(
+                    (bool(getattr(c, "whole_utterance", False))
+                     for c in manifest.capabilities if c.intent == intent), False),
             )
             steps.append(step)
 
@@ -2290,6 +2334,8 @@ class PlanBuilder:
         # so the caller retries or falls back with the original utterance.
         if invalid:
             return []
+
+        steps = PlanBuilder._collapse_whole_utterance_steps(steps)
 
         valid_ids = {step.id for step in steps}
         for step in steps:
@@ -2309,6 +2355,51 @@ class PlanBuilder:
     # 把模型输出里**自相矛盾**的部分补成一致，不发明任何路由——被引用的步必须真实
     # 存在于本计划（`valid_ids`），自引用不补（那是环不是依赖）。
     _REF_HEAD_RE = re.compile(r"^\$?\{?\s*([A-Za-z_][A-Za-z0-9_]*)\.data\.")
+
+    @staticmethod
+    def _collapse_whole_utterance_steps(steps: list) -> list:
+        """**整句型能力在同一份计划里最多一步**（QA 余项，2026-08-29）。
+
+        真栈实录（长会话 `e15ac1e` family SL1，累计 1/11 复现）：
+        「明天下午四点提醒我参加代号992535的评审会，三点半再提醒我一次」
+        planner 排了**两个** `reminder.create_batch` 步（span 里两个
+        `step.agent:reminder`），而 `_create_batch` 读的是 `intent.raw_text`、
+        每一步都把整组建了一遍 ⇒ **4 张 reminder_card、4 个不同 id**。
+        代价不止「多几条记录」：4 条一模一样的条目让按标题取消当场撞歧义
+        （「有 4 条都能对上，要取消哪条？」），这组提醒**既清不掉、
+        又一直占着序数参照系**。
+
+        为什么既有的两道防抖都挡不住它，逐条核过：
+        - `executor._exec_step` 的副作用指纹是 `(intent, 归一化 slots)`，而 planner
+          给这两步**发明了不同的槽名**（9 次取样里出现过 7 种：`title1/time1_text`、
+          `time_text_1/2`、`item_1/item_2`…）⇒ 指纹不同、不命中。而这个 Agent
+          **根本不读槽**。
+        - `reminder._cross_turn_duplicate` 里明写着裁定「一句话被规划成两步是设计内的，
+          **同轮不收编**」（契约 §9.35 / fix plan C10-E / history 三处都记着）。
+          本方法**不推翻那条裁定**——它管的不是「两步做了同一件事」，
+          而是「这个能力按声明就只该有一步」。
+
+        判据零领域词：只读 capability 自己声明的 `whole_utterance`
+        （同 `heavy` / `require_confirm` / `slot_shapes` 的分工），
+        编排核心不出现任何 agent_id/intent 字面量。
+        保留**第一步**，其余同 intent 的整句步丢掉；依赖指向被丢掉那些步的边，
+        由下面既有的 `valid_ids` 过滤统一收拾。
+        """
+        seen: set[str] = set()
+        kept = []
+        for step in steps:
+            if not getattr(step, "whole_utterance", False):
+                kept.append(step)
+                continue
+            if step.intent in seen:
+                logger.warning(
+                    "Whole-utterance capability %s planned %d+ times in one plan; "
+                    "keeping the first (step %s dropped)",
+                    step.intent, len(seen) + 1, step.id)
+                continue
+            seen.add(step.intent)
+            kept.append(step)
+        return kept
 
     @staticmethod
     def _derive_store_hint_edges(steps: list) -> None:

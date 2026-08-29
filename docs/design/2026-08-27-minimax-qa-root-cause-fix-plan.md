@@ -1286,6 +1286,87 @@ D 臂的转述放宽又清掉一条（就是上面第 1 条缺陷）。
 
 ---
 
+### QA 轮剩余项收尾批（2026-08-29）——长会话 12 红逐条定性 → 六条主机制
+
+> **入口**：上一批（余项收尾批）留下 12 条长会话红灯与 §4.2 两条新立的取消域账。
+> 本批**先把 12 条红逐条定性**，再从中挑出六条**机制级、有逐字实证、改动面可控**的落地。
+> 泓舟当轮拍板三处：范围＝六条主机制 + 云端验证；SL1 走 manifest 声明式；
+> 取消错对象走精确度阶梯补档。
+
+#### 0. 先做的事：12 红逐条定性（不是逐条修）
+
+从 `.artifacts/…/qa-long-sessions-e15ac1e.json` 回读全部 `fails`，逐条读 trace：
+
+| # | 红 | 定性 | 本批 |
+|---|---|---|---|
+| 1 | family SL1 建 4 张 `reminder_card` | **span 里两个 `step.agent:reminder`** ⇒ 卡上「planner 产两步」的假设**得到实证** | ✅ M6 |
+| 2 | family SL1「列出我现在进行中的提醒」落 `reminder.cancel` | **它根本没进 planner**（`providers=[]`、`pinned_calls=0`、span 只有 `step.agent:reminder`+`suspended`）⇒ 是 `wait_slot` 续接吞的 | ✅ M1 |
+| 3 | family NAVIGATION-CLEANUP「取消导航」零动作 | 上游 turn 73/76 反复重挂的那条挂起还活着，被 `detect_cancel` 接走 | ✅ M2 |
+| 4 | information INF-PREFERENCE 说过忌口仍推川菜 | 话术证明约束**到了** nearby（「记得您说过不吃辣」），但检索词已经是川菜 ⇒ C12-A 那块板走不到 | ✅ M5 |
+| 5 | merchant SP3 缺按钮 / 缺「半糖」 | 商户规格面，需真机探规格组 | ❌ 范围外 |
+| 6 | merchant CD5 落 `chitchat.talk` 不出卡 | 长会话后段落域漂移，拿记忆里的旧菜单冒充实时查询 | ❌ 范围外 |
+| 7 | merchant CD5 第二问「前提没成立」 | 跟随 #6 | ❌ |
+| 8 | adversarial SF3 落 `chitchat.talk` | **corpus 已在 `d56db6a` 裁决加入名单**，这一趟跑在改之前 | 无需动作 |
+| 9 | adversarial LONG-ORDER-INTERRUPT 落 `system.clarify` | 订单归属，需账本侧取证 | ❌ 范围外 |
+| 10 | information INF-TRIP T20 零动作宣称已取消 | C11 明确记账不修（shadow 要两周分布）| 按其纪律不动 |
+| 11 | information INF-MANUAL-SAFETY T23 落 `info.search` | **同日反方向裁决，刻意不加名单** | 按裁决不动 |
+| 12 | family SL1 那组提醒取消不掉 | #1 的下游代价 | ✅ 随 M6 |
+
+> **本节最值钱的一条**：#2 与 #3 **是同一条链**——turn 18/73/76 的黑洞把挂起养活着，
+> turn 77 那句「取消导航」才会被它接走。**一个黑洞会喂大下一个洞。**
+> 只看 fails 列表会把它们读成三条独立的红。
+
+#### 1. 六条主机制（逐条：改哪、真栈原话、误伤对照）
+
+| # | 机制 | 落点 | 契约 |
+|---|---|---|---|
+| M1 | `ordinal` 值形状 + `index` 声明 | `slot_shape.py` +`_ordinal`；`reminder/manifest.yaml` 三个 capability 声明 `slot_shapes: {index: ordinal}` | §9.35 A |
+| M2 | 复合取消的分界换成**回指** | `pending_cancel._is_compound_remainder`（+ WEAK 分遍剥）| §9.38 A |
+| M3 | 精确度阶梯补第三档 | `reminder._resolve_targets` 返回 `(hits, precise)`，三处调用点 | §9.35 F |
+| M4 | 取消闸 | `pending_cancel.cancel_instruction_object` + `build()` 唯一出口 + `Plan.cancel_unresolved` + engine 诚实追问 | §9.38 B |
+| M5 | 忌口压过检索词本身 | `nearby._search`（C12-C）| §9.37 A |
+| M6 | 整句型能力 | proto `Capability.whole_utterance`(9) → SDK → `Step` → `_collapse_whole_utterance_steps` | §9.38 C |
+
+#### 2. 反向验证（逐条注入缺陷，看红的是不是它该抓的那条）
+
+| 机制 | 注入 | 红 |
+|---|---|---|
+| M1 | 摘掉 `SHAPES["ordinal"]` | 1 条：`test_slot_pending_index_shape_rejects_a_new_instruction`（真序号那 6 条对照仍绿）|
+| M2 | 复原 `compound = len(remainder) >= 6` | 2 条：判据锁 + engine 那条「取消导航不许被吞」|
+| M3 | 复原 `return hits, True` | 1 条：`test_cancel_of_a_single_loose_substring_hit_asks_instead_of_deleting` |
+| M4 | 短路整条闸 | 2 条：两种坏产物各一（5 条误伤对照仍绿）|
+| M5 | 短路守卫 | 1 条：`test_planner_filled_spicy_cuisine_loses_to_a_session_no_spicy`（「用户自己点名要川菜」那条对照仍绿）|
+| M6 | 摘掉收敛调用 | 1 条：`test_two_whole_utterance_steps_collapse_to_one`（「没声明的能力保留两步」对照仍绿）|
+
+#### 3. 本批读数
+
+| 项 | 读数 |
+|---|---|
+| 全量 `pytest -q -n 8 --dist worksteal` | **7691 passed / 32 skipped 零红**（基线 7672，**+19 与本批新增用例数逐字相符**：engine +2 / reminder +2 / nearby +2 / `test_planning_cancel_gate.py` 9 / `test_planning_whole_utterance.py` 4）。⚠ 用 `-n 8` 不是 `-n auto`——同 §4.0 那条 OOM 老账 |
+| 三道离线门禁 | 与基线**逐字相同**：smoke_edge 13/0；capability ✅；intent gate discovery 85/85 cases=676 distinct=634、gate 25/25 cases=139 distinct=129 |
+| `test/eval_exemplars.py` | ✅ PASS（域错配率 2.4%，上限 20%；本批**没有加范例**——上一批的 A/B 刚证伪过范例修法）|
+| 反向验证 | 见上表，六条全部红在它该抓的那条断言上，**14 条误伤对照全绿** |
+
+#### 4. 本批沉淀的判据
+
+- **既有测试是判据的第二个设计者。** M2 那条判据在既有用例手里**改了三版**才定形：
+  ① 只看回指 ⇒ 「算了那个不要了，先去…」被判纯取消；② 加长度门 ⇒ 「先不用了吧」
+  剥完剩一个「先」被判复合；③ 把 WEAK 词并进同一条 alternation ⇒ 正则**最左匹配**
+  把「不用了」劈成两半。**每一版我都以为写完了，都是既有用例告诉我没有。**
+- **「把词表按语义排好序」在同一条 alternation 里是不生效的**——正则按最左位置匹配，
+  语义优先级只能靠**分遍**表达。
+- **同一个坑在同一个类里会踩第二次。** `MockAgent` 里 `heavy` 那行注释写着
+  「真 bool，避免 MagicMock 恒真误标」，而我加 `whole_utterance` 时照样没给假值
+  ——**那条注释只挡住了写它的人**。判据：给测试替身加布尔字段，先问「不给值时它是什么」。
+- **阈值型判据要先问「误伤的是不是我们自己」。** M3 第一版用纯覆盖率，
+  当场把「完成明天带伞」判成不精确——而那个 0.5 是 `_extract_title` 削掉时间词造成的，
+  **不是用户含糊**。⇒ 阶梯补了「库里那条标题逐字出现在原话里」这一档。
+- **改判据之前先量它的误伤面有多大。** M2 动手前把全部长会话 artifact 里
+  48 次 `system.pending_cancel` 的原话去重列出来（43/4/1），分界该画在哪一眼就看出来了
+  ——**如果只盯着要修的那 1 次，几乎必然会把那 4 次一起改坏**。
+
+---
+
 ## 5. 本轮沉淀的判据（供 AGENTS.md §4.3 择录）
 
 - **登记不能是路由的副作用**。告警、焦点、账本这类「系统必须知道的事实」，写入要挂在**输入或产出的形态**上，不能挂在「恰好走了哪条路由」上——路由是有方差的，事实不能跟着抖（C1）。
