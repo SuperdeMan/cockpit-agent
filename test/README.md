@@ -407,7 +407,9 @@ python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线
 ——车态恢复那一段还要逐键比对「动作落在目标上没有」，不是「有没有发出动作」。
 
 ```bash
-# 真栈动作前先确认目标（红线）
+# ⚠ 真栈命令一律走 PowerShell —— Git Bash 的 MSYS `ssh` 会吃掉转义，
+#   报出来是 `release_sha: null` + `status: degraded`，**读起来像「云端不健康」**。
+#   （那条 warning 现在会自己提醒你换 shell，但别等它提醒。）
 python scripts/dev_stack.py target show
 
 python scripts/probe_qa_long_sessions.py                      # 全部 5 个 persona
@@ -418,6 +420,14 @@ python scripts/probe_qa_long_sessions.py --dry-run            # 只数计划轮�
 python scripts/probe_qa_long_sessions.py --replay .artifacts/dev-stack-verifications/qa-minimax-long-sessions.json
 python scripts/probe_qa_long_sessions.py --replay <artifact> --replay-out <report.json>
 ```
+
+**跑批中途被打断也不会全丢**（2026-08-29 加）。每跑完一个 persona 就写一次
+`<out>.partial.json`（整趟成功即删除）。起因是一趟跑到最后一个 persona 时被外部中止，
+而产物只在**全部 persona 结束之后**才写 ⇒ 四个已跑完 persona 的 trace / 卡片明细全丢，
+只剩控制台 ✓/✗。
+> **判据：长时任务的中间产物要在产生的时候就落地，不是在结束的时候。**
+> 增量档**不带 release / TTS / summary 对账**，不能当完整证据用——
+> 刻意写成旁边的另一个文件而不是覆盖 `--out`，**两者不该互相冒充**。
 
 **`--replay` 是什么、不是什么**（2026-08-28 加）。它把存档里逐轮的观测喂给**现在
 这一份判据**，与当时记下的 `fails` 逐行对比，输出「转红 / 转绿 / WARN / 不可回放」。
