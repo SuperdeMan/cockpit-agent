@@ -158,3 +158,25 @@ def test_without_a_fallback_agent_the_plan_is_left_alone():
     plan = _build("困到睁不开眼了，还要开两个小时", agents=agents)
     assert not plan.steps and plan.clarify is not None
     assert not (plan.plan_mode or "").endswith("_safety_talk")
+
+
+# ── 5. 本闸的代价，**钉成可见断言**：交通信号灯的「黄灯」也会被当成车辆告警 ────────
+
+@pytest.mark.parametrize("text", ["前面黄灯了", "刚才那个红灯我是不是闯了"])
+def test_traffic_light_words_also_route_to_the_fallback_agent(text):
+    """这一类**会被接管**——它是本闸的代价，不是遗漏，所以钉在这里而不是藏着。
+
+    ## 为什么代价可以接受
+
+    `runtime.safety_signal.WARNING_LIGHTS` 里有「黄灯」「红灯」（它们要认的是仪表盘
+    告警灯），交通信号灯的说法会一并命中。但**本闸不产生这个误判、只是让它可达**：
+    chitchat 的 `_safety_answer` 对任何路由到它的轮都是这么判的，变的只是
+    「零步轮以前落到『抱歉，我没听清』，现在落到兜底 Agent」。
+    **两个都答不对，而后者至少答了一句**——且它零动作、不碰车控。
+
+    真要收窄，该收的是 `WARNING_LIGHTS` 那张表（把「黄灯/红灯」换成要求仪表盘语境），
+    **不是在这里加一条「交通灯例外」**——那会让本闸开始认识领域词。
+    """
+    plan = _build(text)
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+    assert (plan.plan_mode or "").endswith("_safety_talk")
