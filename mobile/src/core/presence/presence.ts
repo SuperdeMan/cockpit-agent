@@ -97,7 +97,6 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
 
   // ── capture ──
   const hfOn = i.hfEnabled && i.hfUsable
-  const hfListening = hfOn && (i.hfFsm === 'LISTENING' || i.hfFsm === 'FOLLOWUP')
   const capture: PresenceSnapshot['capture'] = i.visionCapturing
     ? 'looking'
     : i.ptt === 'recording' || (hfOn && i.hfFsm === 'LISTENING')
