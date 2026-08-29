@@ -45,6 +45,15 @@
 - 记住 `setStatus` 已对同值状态早退、`queued` 只由 `transport.send()` 返回 `false` 驱动（真实 `GatewaySession` 断线时是否返 false **未验**）——这两条不在第 2 批动，但 T8/T9 别假设它们成立；第 3 批 T10 与第 4 批真机验收要专门确认。
 - 第 1 批没有分树（泓舟未授权），提交都在本地 `main` 未推送；第 2 批继续在主工作树，`git status` 的有效期只到别人下一次落盘为止，据它判断前先重采。
 
+**第 3 批附加项（第 2 批 §6.2 遗留转入；①②③ 是 T10 的一部分，④⑤ 随 T10/T11 顺手，各自单独提交）**：
+- ① **两个实验室开关必须在 T10 里有消费方**：`uxV2Presence` 关 ⇒ 四条 v1 状态条与旧光球推导回来；`uxV2Dock` 关 ⇒ 气泡内确认按钮回来。收口时真机各关一次截图——「设置页有开关、关了没反应」比没开关更糟。
+- ② **修确认卡倒计时冻住**（§6.2 坑⑤）：`FocusDock.tsx` 的 `CommitmentCard` 删掉组件本地的 `setInterval` 时钟，`now` 从 `snapshot` 走（`usePresence` 已每秒 tick；`PresenceSnapshot` 加一个 `now: number` 字段由 `derivePresence` 原样透传输入的 `now`）；同时把 `accessibilityLiveRegion="assertive"` 从含倒计时的子树挪到只含摘要行的 `View` 上（否则 TalkBack 每秒重播整张卡）。验证：接线后触发「打开后备箱」，盯 15 秒数字必须在走。
+- ③ **`usePresence` 三处已知偏差，T10 按既有判据接、不在收集器里发明判据**：`driving` 实质恒 false（`Msg.driving` 只由 `process` 帧写；「哪个 vehState 键算行车」的判据不存在，写进收集器就是第二份 VAL）——B1 接受恒 false，B4 再接；`lastError.at` 是「hook 第一次看见」不是发生时刻——T10 只对**挂载之后**出现的 error 气泡显示 4s 红胶囊（挂载时已存在的不算）；`connChangedAt` 挂载时重置——接受最晚迟 3s。
+- ④ 秒级 `setInterval` 无条件常开：T10 接进 `ChatScreen` 后看一眼是否带着 FlashList 与光球一起重渲（React DevTools 或 `console.count`）；若明显，只在「有 pendingOps / processActive / reconnecting / 4s 内 error」任一成立时才 tick，否则停表。
+- ⑤ `PresenceCapsule` 在 B1 **不接 `onPress`**（它是 `accessibilityRole="text"`、26dp，接了点按就同时违反读屏与热区两条）；`DegradationRow` 的 `key` 改成 `${d.kind}:${'what' in d ? d.what : 'reason' in d ? d.reason : ''}`。
+- ⑥ **`queued` 的真实前提本批要验**：飞行模式下发一条 → 探活判死（≤30s）→ Dock 出现「N 条消息排队中」；若不出现，先查 `GatewaySession.sendRaw`/`ws.mjs.send` 断线时是否返 `false`（第 1 批遗留③，单测里是替身写死的）。**没出现不许读成「没有排队」。**
+- ⑦ 取证纪律（§6.2 坑⑥⑩）：取证前 `adb shell am force-stop com.xiaozhou.companion` 再进（有时间基准的屏不许用深链「刷新」）；Metro 若已有别的会话起着的 dev server，先核它的命令行服务的是本仓 `mobile/`，**复用、别再起一个**（撞 8081）；新建文件 `git add -- <路径>` 与 `git commit` 必须在同一条命令链里。
+
 **每批开工的固定五步**（写进新会话的第一条提示词）：
 1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批可跳过——纯 jest）；
 2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
