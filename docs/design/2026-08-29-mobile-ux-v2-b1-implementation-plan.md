@@ -2727,10 +2727,36 @@ T1/T2/T4/T5/T7 互不依赖，可由不同 subagent 并行（各自只加自己�
 ### 6.1 第 1 批「纯逻辑层」（T1–T5）
 
 - 开工基线：`npm test` **22 suites / 235 tests 全通过**（50.9s；计划里写的 234 是当时读数，开工当日实为 235）/ `tsc` **0 error**（2026-08-29，worktree：**主工作树**——泓舟未授权分树，按 §0.1 「没有分树就在主工作树做」）
-- 完成任务与提交：
-- 读数：
+- 完成任务与提交（并行度：T1/T2/T4/T5 四个 subagent 同时开跑，T3 等 T2 落地后起；每个只提交自己的路径）：
+
+| 任务 | commit | 文件 / 行 | 新增用例 |
+|---|---|---|---|
+| T1 tokens | `3cc6b74` | 2 文件 +85 | 7 |
+| T2 commitment | `1471f34` | 2 文件 +130 | 6 |
+| T4 store 账本侧 | `64b2bc6` | 2 文件 +144 −18 | 4（该文件 25 → 29） |
+| T5 四路信号 | `1538bc0` | 7 文件 +143 −12 | 3（presenceSignals 2 + handsFree ⑤） |
+| T3 derivePresence | `152b738` | 2 文件 +373 | 30 |
+| （基线记录） | `9f3a133` | 本文件 §6.1 1 行 | — |
+
+- 读数：收口 `npm test` = **26 suites / 285 tests 全通过**（20.8s），`tsc` **0 error**。相对基线 **+4 suites / +50 tests**，逐条对得上：7+6+30+4+2+1=50。`npm test` 条数只增不减（§4 回归判据）满足；本批未碰 `hmi/`。
 - 本批踩的坑：
+  1. **计划自己指定的那次反向验证是空转的**（T3，本批最值钱的一条）。按 Step 5 原样交换 `primary` 里 `hasAttention` 与 `capture === 'looking'` 两行，`30 passed, 30 total`——**一条都不红**。查证：「逐对交换」那条实测覆盖的是 attention↔listening（`ptt:'recording'` 的 capture 是 `listening` 不是 `looking`）、looking↔speaking、offline↔全部，**唯独没有一处让 attention 与 looking 同时在场**，而那正是被交换的相邻对。补一条共存断言后变异红在 `test/presence.test.ts:72`（Expected `attention` / Received `looking`），还原即绿。判据：**变异测试要盖的是「被改的那一对」，不是名字相近的那一对**——测试名写着「逐对交换」不等于它逐对覆盖了。若不做这步，commit message 里那句「交换 attention/looking 顺序即红」就是一句假话。
+  2. **T4 第 1 条用例的时序断言是搭便车的**。计划的预判成立：旧 `setInterval(30s)` 在 300s 整那一跳恰好命中，299s / 300s 两条断言**碰巧全绿**，真正驱动这次改动的红只有「确认已过期」那条文案断言。⇒ **「按项到期精确调度」本身在单测里没有被独立证伪过**。要真守它，得挑一个不是 30s 整数倍的到期时刻（例如让 `ts` 偏移 7s）。这条**留着没补**，出账在此。
+  3. **四个 subagent 共享一个工作树**：没撞 `index.lock`（各自 `git commit -- <pathspec>` + 重试兜底），但 **`tsc` 是全项目扫描，会看到别人半途的文件**——T1 看到 T2 的、T2 看到 T4 的、T4 看到 T5 的，各报了一轮对方的过渡态错误。约定「错误落在自己文件里才算自己的红」有效且必要。另：全量 `npm test` 只由协调者在收口时跑一次，四路各跑会抢 CPU 且读数互相污染。
+  4. **另一条会话（car-agent-08）的云端发版闸要求工作树 `--porcelain --untracked-files=normal` 全空**，被本批在飞的 TDD 循环挡住。处置：立刻把自己那 1 行文档提交掉（`9f3a133`）解开一个，其余等收口——**不为了让树干净去打断跑到一半的 TDD 循环**（半截提交比等 15 分钟贵）。同时**拒绝了它「顺带把你几个提交一起 push」的提议**：它手上那份 push 授权是给它那批的，覆盖不到本条线。
+  5. **照抄计划前先核真实结构**：计划 (e) 说 `usePtt` 有「三处 `setError`」，真实代码只有**一处**（permission / start 是它内部的三元）。落法改成提一个 `const denied` 给 `setError` 与 `setErrorKind` 共用——`instanceof` 只求值一次，**同一判据不写第二份**。
+  6. 基线本身与计划记的不一致：计划 §0.1 写「当前 234 通过」，开工实测 **235**。读数有效期只到下一次改动为止。
 - 遗留 / 给第 2 批的话：
+  1. **`presence.ts` 里 `hfListening` 是死变量**（声明后无消费方，计划代码块的残留）。计划说「若 `tsc` 报红就删」——实测**没报**：`expo/tsconfig.base` 的 `noUnusedLocals` 是 `undefined`，且仓库**没有 eslint 配置**（`npx eslint` 报找不到 `eslint.config.js`）⇒ 当前**没有任何门禁能抓到它**。按「条件未成立不许删」保留原样。第 2 批碰这个文件时顺手删掉，或让它有真实消费方。
+  2. **「逐对交换」这条测试的名字仍强于它的覆盖**：本批只补齐了被变异触及的 attention↔looking，**listening↔speaking / speaking↔thinking / thinking↔followup / followup↔armed 四对仍无共存用例**。T6 光球直接读 `primary`，接线前值得补齐——否则改错优先级顺序时红不出来。
+  3. **`queued` 计数依赖 `transport.send()` 返回 `false`**。单测里是替身写死返回 false；**真实 `GatewaySession.send` 断线时到底返不返 `false`，本批没有验证过**。T10 接线或第 4 批真机验收要单独确认——否则 Dock 的离线队列项永远不出现，而「没出现」会被读成「没有排队」（同 §5 第 5 条那个形态：别把「没触发」读成「修好了」）。
+  4. **`isVisionCapturing()` 目前零消费方**（`subscribeVisionCapturing` 有测试覆盖，它没有）。T8 `usePresence` 若不接它，收口时该删。
+  5. **`useHandsFree` / `usePtt` 两个 hook 本批无单测覆盖**（`mobile/test/` 原本就没有它们的套件）：新增的 `bargeInDisabled` / `pipelineDegraded` / `errorKind` 目前只有 `tsc` 与下游 `ChatScreen`/`Composer` 的类型面在守，真正验到它们的是 T8 / T10。
+  6. `uncertainIds` **只在 `open → closed` 那一跳写入**；`connecting → closed` 不标。这是设计语义（残留窗只在真写过 socket 之后才存在），**不是漏标**，记一笔防后续误读。
+  7. `setStatus` 现在**对同值状态早退**。`wiring.ts` 的 `onStatus` 若重复推同一状态不再触发订阅；当前无消费方依赖那个副作用，接线批留意。
+  8. `Jest did not exit one second after the test run has completed` 是 `handsFree.test.ts` 的**既有**噪声（在 Step 2 那次红跑里就已经在了，那时实现一行未改），不是本批引入。
+  9. **未推送**：本批 5 个代码提交 + 1 个文档提交，连同批前的 `141d60f`，都还在本地 `main`。`git push` 需泓舟单独授权。
+  10. 本批期间 `AGENTS.md` 一度带着 100 行未提交改动，**我据此在初稿里判了「树里有第三条线」——错的**：那是 car-agent-08 那条线的，已随 `e5e85b8` 提交。它同一时间也把我的 `git status` 采成了旧的（漏了 T3/T4/T5 三个已落提交）。**一小时里我们互相采到对方的中间态各两次** ⇒ **共享树里 `git status` 的有效期只到下一次别人落盘为止**，据它下任何判断前先重采一次。§0 第 3 条对 T17 的要求不变：动 `AGENTS.md` 前先 `git diff --stat -- AGENTS.md` 核行数。
 
 ### 6.2 第 2 批「光球与取证屏」（T6 / T7 / T8 / T9 / T14）
 
