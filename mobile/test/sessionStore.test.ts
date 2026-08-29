@@ -451,3 +451,71 @@ describe('SpeechSink 挂点（M2-3）', () => {
     core.dispose()
   })
 })
+
+describe('UX v2.1 B1-4：承诺面的账本侧', () => {
+  test('剪枝按项到期精确调度：到期那一秒出账，并在记录里留「确认已过期」', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid, speech: '要打开后备箱吗？', need_confirm: true, operation_id: 'op1' })
+    expect(core.store.getState().pendingOps.map((o) => o.id)).toEqual(['op1'])
+    // 共享 TTL 300s：到 299s 还在
+    jest.advanceTimersByTime(299_000)
+    expect(core.store.getState().pendingOps).toHaveLength(1)
+    // 300s 整出账（v1 是固定 30s 轮询，最坏晚 30s；现在按项到期调度）
+    jest.advanceTimersByTime(1_100)
+    expect(core.store.getState().pendingOps).toHaveLength(0)
+    const last = msgs(core)[msgs(core).length - 1]
+    expect(last.role).toBe('assistant')
+    expect(last.text).toContain('确认已过期')
+    expect(last.text).toContain('打开后备箱') // 摘要来自原气泡
+    core.dispose()
+  })
+
+  test('服务端 closed 出账不留「过期」痕（那是被处理了，不是过期）', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid, speech: '要打开后备箱吗？', need_confirm: true, operation_id: 'op1' })
+    core.send('算了')
+    const rid2 = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid2, speech: '好的', closed_operation_ids: ['op1'] })
+    expect(msgs(core).some((m) => m.text.includes('确认已过期'))).toBe(false)
+    core.dispose()
+  })
+
+  test('离线入队计数：transport.send 返回 false 累加，连上归零', () => {
+    const transport = new FakeTransport()
+    transport.send = (frame: object) => {
+      transport.sent.push(frame)
+      return false // 断线：入队
+    }
+    const core = new SessionCore({
+      transport,
+      sessionId: 'app-test01',
+      getMeta: () => ({}),
+      location: fakeLocation(false),
+    })
+    core.setStatus('closed')
+    core.send('现在几点')
+    core.send('讲个笑话')
+    expect(core.store.getState().queued).toBe(2)
+    core.setStatus('open') // ws.mjs onopen 时 flush 队列 → 计数归零
+    expect(core.store.getState().queued).toBe(0)
+    core.dispose()
+  })
+
+  test('探活判死时在飞轮标「发送状态未知」，收到终态帧即清', () => {
+    const { transport, core } = newCore()
+    core.setStatus('open')
+    core.send('现在几点')
+    const rid = transport.lastUserFrame().request_id
+    const pendingId = assistants(core)[0].id
+    core.setStatus('closed') // liveness.onDead → reconnectNow → onStatus('closed')
+    expect(core.store.getState().uncertainIds).toEqual([pendingId])
+    core.setStatus('open')
+    core.handleFrame({ type: 'final', request_id: rid, speech: '八点' })
+    expect(core.store.getState().uncertainIds).toEqual([])
+    core.dispose()
+  })
+})

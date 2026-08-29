@@ -10,7 +10,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import { RequestRegistry } from '@shared/requestRouting.mjs'
-import { closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
+import { PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
 import { deliveryIdsOf } from '@shared/proactiveSpeech.mjs'
 import type { Msg, ProcessStep } from '@shared/types.ts'
 
@@ -24,7 +24,8 @@ import { routeSend } from './sendRouter'
 
 // App.tsx:52 同值：略高于两网关 90s 端到端窗口
 export const REQUEST_TIMEOUT_MS = 95000
-// pendingOps 本地限龄轮询间隔（App.tsx:632-640 的 30s interval）
+// 剪枝调度上界：按项到期精确调度，min(下一条到期, 30s)。30s 是没有任何挂起时的兜底轮询上界，
+// 不再是「最坏晚 30s 才出账」——那正是 P5「按钮无解释消失」的一半成因
 const PRUNE_INTERVAL_MS = 30_000
 
 export interface PendingOp {
@@ -41,6 +42,12 @@ export interface SessionState {
   pendingLocationText: string | null
   /** final.emotion：只影响**下一轮**语气（M2 TTS start 取用；本轮流式已开播） */
   lastEmotion: string
+  /** 断线期间入队（transport.send 返回 false）的上行帧数；连上即归零（ws.mjs onopen 会 flush） */
+  queued: number
+  /** 探活判死那一刻仍在飞的助手气泡 id——它们的请求可能写进了死 socket（M3-W 残留窗），
+   *  UI 标「发送状态未知」；终态帧到达或超时即清。**不自动重发**（重发同一 request_id
+   *  意味着车控可能执行两次，M3-W 定案） */
+  uncertainIds: string[]
 }
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
@@ -97,7 +104,9 @@ export class SessionCore {
   private readonly watchdogs = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly presented = new Set<string>()
   private justCancelled = false
-  private pruneTimer: ReturnType<typeof setInterval> | null = null
+  private pruneTimer: ReturnType<typeof setTimeout> | null = null
+  /** 在飞轮气泡 id（RequestRegistry 是共享模块不加方法，这份账住在 SessionCore） */
+  private readonly inFlight = new Set<string>()
 
   private readonly speech: SpeechSink
 
@@ -111,10 +120,25 @@ export class SessionCore {
       connStatus: 'closed',
       pendingLocationText: null,
       lastEmotion: '',
+      queued: 0,
+      uncertainIds: [],
     }))
   }
 
   setStatus(status: GatewayStatus): void {
+    const prev = this.store.getState().connStatus
+    if (status === prev) return
+    if (status === 'closed' && prev === 'open') {
+      // 探活判死 / onclose：此刻在飞的轮可能写进了死 socket（M3-W 残留窗）——标未知，不重发
+      const inFlight = [...this.inFlight]
+      this.store.setState({ connStatus: status, uncertainIds: inFlight })
+      return
+    }
+    if (status === 'open') {
+      // onopen 时 ws.mjs 已 flush 队列
+      this.store.setState({ connStatus: status, queued: 0 })
+      return
+    }
     this.store.setState({ connStatus: status })
   }
 
@@ -123,7 +147,7 @@ export class SessionCore {
     for (const t of this.watchdogs.values()) clearTimeout(t)
     this.watchdogs.clear()
     if (this.pruneTimer) {
-      clearInterval(this.pruneTimer)
+      clearTimeout(this.pruneTimer)
       this.pruneTimer = null
     }
   }
@@ -229,9 +253,11 @@ export class SessionCore {
       metaBase: { ...this.deps.getMeta(), ...(locationMeta ?? {}) },
       ...(metaExtra ? { metaExtra } : {}),
     })
-    this.deps.transport.send(frame)
+    const sentNow = this.deps.transport.send(frame)
+    if (!sentNow) this.store.setState((s) => ({ queued: s.queued + 1 }))
     const pendingId = uid()
     this.registry.open(frame.request_id, pendingId)
+    this.inFlight.add(pendingId)
     // 播报会话提前建（App.tsx:677-679 同位）：等第一个 delta 再握手会把首音推后一个 RTT。
     // 上一轮的 emotion 决定本轮语气（M2 P2 契约）
     this.speech.begin(pendingId, this.store.getState().lastEmotion)
@@ -453,6 +479,8 @@ export class SessionCore {
     const timer = setTimeout(() => {
       this.watchdogs.delete(id)
       this.registry.dropBubble(id)
+      this.inFlight.delete(id)
+      this.dropUncertain(id)
       this.speech.stop() // 超时轮不会再有 final，播报会话留着就是个永不收尾的空会话
       this.store.setState((s) => ({
         messages: s.messages.map((msg) =>
@@ -478,6 +506,16 @@ export class SessionCore {
     if (t) {
       clearTimeout(t)
       this.watchdogs.delete(bubbleId)
+    }
+    this.inFlight.delete(bubbleId)
+    this.dropUncertain(bubbleId)
+  }
+
+  /** 终态到达 → 「发送状态未知」的标撤掉（所有终态路径都经 clearWatchdog / 看门狗超时） */
+  private dropUncertain(bubbleId: string): void {
+    const s = this.store.getState()
+    if (s.uncertainIds.includes(bubbleId)) {
+      this.store.setState({ uncertainIds: s.uncertainIds.filter((x) => x !== bubbleId) })
     }
   }
 
@@ -513,21 +551,41 @@ export class SessionCore {
     })
   }
 
-  /** 本地限龄（App.tsx:630-640）：后端挂起 TTL 到点就没了，前端跟着老化。
-   *  台账非空时保持 30s 轮询，清空即停——静默失效比明说过期更糟。 */
+  /** 本地限龄（App.tsx:630-640 的语义 + B1 的精确调度）：后端挂起 TTL 到点就没了，前端跟着老化。
+   *  v1 固定 30s 轮询，最坏晚 30s 出账、且**静默消失**；现在按「下一条到期时刻」调度，
+   *  到期出账时在记录里留一行「确认已过期」（P5：承诺消失必有理由）。 */
   private syncPruneTimer(): void {
-    const hasPending = this.store.getState().pendingOps.length > 0
-    if (hasPending && !this.pruneTimer) {
-      this.pruneTimer = setInterval(() => {
-        this.store.setState((s) => {
-          const next = prunePendings(s.pendingOps)
-          return next.length === s.pendingOps.length ? s : { ...s, pendingOps: next }
-        })
-        this.syncPruneTimer()
-      }, PRUNE_INTERVAL_MS)
-    } else if (!hasPending && this.pruneTimer) {
-      clearInterval(this.pruneTimer)
+    if (this.pruneTimer) {
+      clearTimeout(this.pruneTimer)
       this.pruneTimer = null
     }
+    const ops = this.store.getState().pendingOps
+    if (!ops.length) return
+    const now = Date.now()
+    const nextExpiry = Math.min(...ops.map((o) => o.ts + PENDING_TTL_MS))
+    const delay = Math.max(0, Math.min(nextExpiry - now, PRUNE_INTERVAL_MS))
+    this.pruneTimer = setTimeout(() => {
+      this.pruneTimer = null
+      const before = this.store.getState().pendingOps
+      // 显式标注：prunePendings 来自 .mjs，推断返回 any，any 上的回调参数会掉进 TS7006
+      const after: PendingOp[] = prunePendings(before)
+      if (after.length !== before.length) {
+        const expired = before.filter((o) => !after.some((a) => a.id === o.id))
+        this.store.setState({ pendingOps: after })
+        for (const op of expired) this.noteExpired(op.id)
+      }
+      this.syncPruneTimer()
+    }, delay)
+  }
+
+  /** 到期留痕：找到带这条 operationId 的助手气泡，取其原话做摘要，追加一条说明 */
+  private noteExpired(operationId: string): void {
+    const src = this.store.getState().messages.find((m) => m.operationId === operationId)
+    const summary = (src?.text || '').replace(/\s+/g, ' ').slice(0, 24)
+    this.appendMessage({
+      id: uid(),
+      role: 'assistant',
+      text: summary ? `⏱ 「${summary}」的确认已过期，需要的话再说一次` : '⏱ 刚才那条确认已过期，需要的话再说一次',
+    })
   }
 }
