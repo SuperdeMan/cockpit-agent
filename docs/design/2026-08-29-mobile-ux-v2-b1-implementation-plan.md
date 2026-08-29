@@ -19,7 +19,7 @@
 
 1. **开工前提**（不变）：`powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0；Metro `cd mobile && npx expo start --dev-client`；真机 dev-client 已装（本批**不重建**，任何「要重建」的念头都说明走偏了——B1 零新原生依赖）。
 2. **每个任务的顺序是固定的**：写失败测试 → 跑出红 → 最小实现 → 跑绿 → `tsc` → 提交。`mobile/` 的测试命令：`cd mobile && npx jest test/<file>.test.ts`（单文件）/ `npm test`（全量，当前 234 通过）/ `npm run typecheck`。
-3. **提交只加自己的路径**：`git add -- <paths>` 再 `git commit`。共享工作树里可能有别的会话的改动（2026-08-29 当时是 `docs/design/2026-08-24-…`、`mobile/package.json`、`mobile/patches/`），**不要 `git add -A`**（坑账：共享树 `git add` 会扫进别人的改动）。
+3. **提交只加自己的路径**：`git commit -- <paths>`（比 `git add` 再 commit 少一步暂存态）；提交后 **`git show --stat HEAD` 复核行数**。共享工作树里可能有别的会话的改动（2026-08-29 当时是 `docs/design/2026-08-24-…`、`mobile/package.json`、`mobile/patches/`），**不要 `git add -A`**。⚠ 按路径隔离得了「文件」，隔离不了**同一个文件里别人未提交的行**——`AGENTS.md` 正是所有会话都在写的那一个（2026-08-29 出过一次：55 行被扫进别人的 commit，靠 soft reset + `hash-object`/`update-index` 只暂存自己那行才拆开）。动 `AGENTS.md` 前先 `git diff --stat -- AGENTS.md` 看行数对不对得上自己的预期。另：全仓提交都是同一个 git 身份，「这个 commit 是哪条会话的」靠元数据答不出来，只能靠会话自己说——别按「紧挨着」推断归属。
 4. **真机取证一律截图**（`adb exec-out screencap -p -d <displayId>`，折叠屏 id 用 `dumpsys SurfaceFlinger --display-id` 取）；`uiautomator dump` 在有常驻动画的屏上不可信（坑账 §9.40/48）。
 5. **三个结构性事实，写代码前记住**：
    - `Msg` 类型在 `hmi/src/types.ts`（共享，**不能加字段**）——任何「气泡上要多显示一个态」都走 `SessionState` 的并列字段（本计划的 `uncertainIds` 就是这么做的），或追加一条新消息。
@@ -2691,7 +2691,7 @@ T1/T2/T4/T5/T7 互不依赖，可由不同 subagent 并行（各自只加自己�
 2. **剪枝调度改 `setTimeout` 链**而不是继续 `setInterval`：判据（`prunePendings`）一字不改，只改触发粒度；测试用假时钟量「300s 整出账」。
 3. **`slot` / `safety_blocked` 只有类型与样本**：协议里没有 `missing_slots`、没有 VAL 拒绝标记，客户端不许猜。方案 Q16 已挂 `confirm_policy`；本计划**新增 Q19：`final.missing_slots`**（NEED_SLOT 的结构化字段）——写进方案 §13 由泓舟排期。
 4. **回声「重新开启插话」= 关再开免唤醒**：voiceLoop 的 `_bargeInDisabled` 会话级不可恢复，B1 不改共享 FSM；B2 语音层给它正式出口。
-5. **`audio_echo_degraded` 的可见性依赖 M4-R1 那条「回声防线拿不到播报文本」的修复已提交但真机未复验**（AGENTS.md）——B1 验收若 Dock 从不出现这条，先证明 `onDisableBargeIn` 有没有被调到（Task 5 的单测证明接线，真机证明触发），别把「没出现」读成「修好了」。
+5. **`audio_echo_degraded` 的可见性依赖 M4-R1 那条「回声防线拿不到播报文本」的修复已提交但真机未复验**（AGENTS.md）——B1 验收若 Dock 从不出现这条，先证明 `onDisableBargeIn` 有没有被调到（Task 5 的单测证明接线，真机证明触发），别把「没出现」读成「修好了」。⚠ 同一条上还有一个变量：`96a6830` 用 patch-package 给 `react-native-audio-api` 的 Oboe 输入流改了 `VoiceCommunication` 预设（**开平台 AEC**）——那是 C++ 侧改动，`postinstall` 会把 patch 打进 `node_modules`，但**只在下一次原生构建后才进 APK**。B1 不重建，所以真机上的回声读数取决于装的是哪次构建：写读数时带上 APK 的构建时间（`adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime`），并标明「无 AEC」还是「有 AEC」——两台状态不同的机器上「回声 Dock 出没出现」不能互相比。
 6. **顶栏品牌球不读 `primary`**：方案 §5.1 写明它只 idle/thinking；状态锚是 Composer 主球，两个球同时表达状态会打架。
 7. **画廊 23 个光球同屏全动**：取证屏不管帧率；但如果真机滚动明显掉帧，记读数、不改（B4 的 reduce-motion 会给画廊一个静帧开关）。
 8. **Task 12 的两条路径都要留 Maestro 08**：读数是「今天这台机、这个输入法」的，流才是以后不回退的判据。
