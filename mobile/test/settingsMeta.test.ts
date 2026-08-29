@@ -67,3 +67,19 @@ describe('默认值与存量合并', () => {
     expect(mergeStoredSettings('{oops')).toEqual(DEFAULT_APP_SETTINGS)
   })
 })
+
+describe('UX v2.1 开关与身份（B1-7）', () => {
+  test('缺省：两个 v2 开关开、身份=手持', () => {
+    expect(DEFAULT_APP_SETTINGS.uxV2Presence).toBe(true)
+    expect(DEFAULT_APP_SETTINGS.uxV2Dock).toBe(true)
+    expect(DEFAULT_APP_SETTINGS.deviceRole).toBe('handheld')
+  })
+  test('存量设置没有这三个键 → 合并后取缺省（向前兼容）', () => {
+    const merged = mergeStoredSettings(JSON.stringify({ theme: 'dark' }))
+    expect(merged.uxV2Presence).toBe(true)
+    expect(merged.deviceRole).toBe('handheld')
+  })
+  test('三个键**不上行**（buildMeta 键集不变）', () => {
+    expect(Object.keys(buildMeta(DEFAULT_APP_SETTINGS)).sort()).toEqual([...HMI_META_KEYS].sort())
+  })
+})

@@ -47,6 +47,7 @@ export default function RootLayout() {
       <Stack.Screen name="debug" options={{ title: '调试 · 主链帧' }} />
       <Stack.Screen name="voice-spike" options={{ title: '调试 · 语音 spike' }} />
       <Stack.Screen name="card-gallery" options={{ title: '调试 · 卡片画廊' }} />
+      <Stack.Screen name="state-gallery" options={{ title: '调试 · 状态画廊' }} />
       <Stack.Screen name="map" options={{ title: '地图' }} />
       </Stack>
     </>

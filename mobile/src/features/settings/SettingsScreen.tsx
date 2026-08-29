@@ -448,6 +448,28 @@ export function SettingsScreen() {
         />
       </Section>
 
+      {/* UX v2.1 实验室：两个开关是**回滚路径**（§11.5）——纯 JS 批次出问题关开关，不重装。
+          v1 的状态条与气泡内确认在 B1/B2 期间不删。 */}
+      <Section p={p} title="实验室（UX v2.1）">
+        <SwitchRow
+          p={p}
+          label="光球状态锚 + 状态胶囊"
+          desc="关闭后回到 v1：免唤醒状态条、弱网横幅、通知条分开显示"
+          value={settings.uxV2Presence}
+          onChange={(uxV2Presence) => set({ uxV2Presence })}
+        />
+        <SwitchRow
+          p={p}
+          label="承诺面 Focus Dock"
+          desc="确认 / 长任务 / 离线队列钉在输入区上方；关闭后回到气泡内确认按钮"
+          value={settings.uxV2Dock}
+          onChange={(uxV2Dock) => set({ uxV2Dock })}
+        />
+        <Link href="/state-gallery" style={{ color: p.accent, fontSize: p.font(14) }}>
+          状态画廊（在场 13 态 + 7 种降级 / 主题过检）
+        </Link>
+      </Section>
+
       <Section p={p} title="调试">
         <Link href="/debug" style={{ color: p.accent, fontSize: p.font(14) }}>
           主链帧调试屏（M0）

@@ -49,6 +49,13 @@ export interface AppSettings {
   voicePipeline: 'classic' | 's2s'
   /** 视觉抓帧。默认关；开了也只在端侧命中视觉触发词时抓一帧（红线三条件②）。 */
   visionEnabled: boolean
+  // ── UX v2.1（B1）──
+  /** 在场模型 + 光球主态 + 状态胶囊。关掉即回 v1 的四条状态条（回滚路径，§11.5） */
+  uxV2Presence: boolean
+  /** Focus Dock 承诺面。关掉即回气泡内确认按钮 */
+  uxV2Dock: boolean
+  /** 产品身份（方案 §6.0）。B1 只占位，B4 才有 UI 与行为差异；**窗口尺寸不决定它** */
+  deviceRole: 'handheld' | 'mount' | 'trusted-tablet'
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -78,6 +85,9 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   wakeWord: true,
   voicePipeline: 'classic',
   visionEnabled: false,
+  uxV2Presence: true,
+  uxV2Dock: true,
+  deviceRole: 'handheld',
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。
