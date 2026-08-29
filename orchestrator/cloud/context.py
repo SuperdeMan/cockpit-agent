@@ -1187,8 +1187,21 @@ def extract_focus(plan, results) -> "Focus | None":
         if step.id in visible_choice and step.id not in ok:
             # 只取候选集这一维：控制焦点/目的地/城市等都是「这一步做成了什么」，
             # 而它没做成。**放宽的是可见性，不是成功与否。**
-            data = getattr(by_id.get(step.id), "data", None) or {}
-            choice_items = data.get("stops") or data.get("items")
+            #
+            # ⚠ **候选从卡里取，不是从 `data` 里取**（2026-08-30，第三层）：
+            # 成功步的候选走 `data["items"]`（那是产生方给下游用的结构化结果），
+            # 而**选择卡的产生方把候选放在 `ui_card["items"]`**——
+            # `luckin._store_choices` 的 `data` 只有 `checkout_token`，
+            # `charging` 那条 `data` 干脆是空的。
+            # 于是前两层都改对了、真栈仍答「没有您刚才那页选项的记录」。
+            # **而这一支本来就该读卡**：它的主张是「**用户看得见的那份列表**」，
+            # 卡片正是他看见的东西，`data` 不是。
+            result = by_id.get(step.id)
+            data = getattr(result, "data", None) or {}
+            card = getattr(result, "ui_card", None) or {}
+            choice_items = (card.get("items") if isinstance(card, dict) else None)
+            if not isinstance(choice_items, list):
+                choice_items = data.get("stops") or data.get("items")
             if isinstance(choice_items, list):
                 items = _candidate_items(choice_items)
                 if items:

@@ -659,11 +659,17 @@ def test_visible_choice_card_contributes_its_candidates():
     """商户选店卡是 `NEED_SLOT` 的产物（「要在哪家下？」），而 `extract_focus`
     原先只扫**成功步** ⇒ **门店候选集根本不存在**，下一句「第一个」无处可解、
     探针的 `say_button` 也拿不到按钮（真栈 SP1/SP2/SP3 的那一层）。
+
+    ⚠ **fixture 用产生方的真实形状**：`luckin._store_choices` 的
+    `data` 里只有 `checkout_token`，候选在 **`ui_card["items"]`**。
+    首版 fixture 把候选塞进 `data`，于是测试绿、真栈仍答「没有您刚才那页选项的记录」
+    ——**装置不真实，读数就会指向错误的根因**（同 `_obs` 那次）。
     """
     focus = extract_focus(
         _plan(("s1", "luckin.order", "mcp-bridge")),
-        [_need_slot_result("s1", {"items": _STORES},
-                           {"type": "merchant_choices", "purpose": "store_choice"},
+        [_need_slot_result("s1", {"checkout_token": "tok"},
+                           {"type": "merchant_choices", "purpose": "store_choice",
+                            "items": _STORES},
                            "luckin.order")])
 
     assert focus is not None
@@ -679,8 +685,9 @@ def test_a_need_slot_step_without_a_choice_card_contributes_nothing():
     """
     focus = extract_focus(
         _plan(("s1", "luckin.order", "mcp-bridge")),
-        [_need_slot_result("s1", {"items": _STORES},
-                           {"type": "merchant_order_preview"}, "luckin.order")])
+        [_need_slot_result("s1", {"checkout_token": "tok"},
+                           {"type": "merchant_order_preview", "items": _STORES},
+                           "luckin.order")])
 
     assert focus is None or not focus.candidate_sets
 
@@ -695,8 +702,9 @@ def test_a_visible_choice_card_does_not_move_the_control_focus():
         id="s1", intent="navigation.search_poi", agent_id="navigation",
         slots={"destination": "世界之窗"})])
     focus = extract_focus(plan, [_need_slot_result(
-        "s1", {"items": _STORES},
-        {"type": "poi_list", "purpose": "dest_choice"}, "navigation.search_poi")])
+        "s1", {},
+        {"type": "poi_list", "purpose": "dest_choice", "items": _STORES},
+        "navigation.search_poi")])
 
     assert focus is not None and focus.candidate_sets
     assert not focus.last_destination, "没做成的步不许改写目的地焦点"
