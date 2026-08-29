@@ -38,6 +38,13 @@
 | **第 3 批「接线」** | T10 对话屏接线 → T11 隐私栏 → T12 键盘（先读数）→ T13 Onboarding | 用户可见的形态切换；两个回滚开关必须验 | 串行 | 真机：危险动作进 Dock / 关开关回 v1 / 隐私栏三行 / 键盘读数 + Maestro 08 通过 / Onboarding 深浅截图；§6 第 3 批记录 | 是 |
 | **第 4 批「验收与记录」** | T15 Maestro 06 → T16 真机 13 条验收表（**第 2 条唤醒、第 4 条 300s 到期需泓舟在场**）→ T17 记录 + AGENTS.md | 取证与收口 | 串行 | 13 条逐条 ✅/⬜/❌ 写实、反向验证两条、遗留出账；AGENTS.md Android 行更新（先 `git diff --stat` 核行数） | 是 |
 
+**第 2 批附加项（第 1 批 §6.1 遗留转入，做在 T6 之前或随所在任务顺手做，各自单独提交）**：
+- 补 `test/presence.test.ts` 的四对共存用例：listening↔speaking、speaking↔thinking、thinking↔followup、followup↔armed（每对让两态**同时在场**，断言 `primary` 取高档）。T6 光球直接读 `primary`，改错顺序要红得出来。
+- 删 `presence.ts:100` 的死变量 `hfListening`（仓库没有 eslint 配置、`noUnusedLocals` 未开，没有门禁会抓它）。
+- T8 的 `usePresence` 必须消费 `isVisionCapturing()`（计划代码里 `useState(isVisionCapturing)` 就是）；若最终没消费，收口时把它删掉。
+- 记住 `setStatus` 已对同值状态早退、`queued` 只由 `transport.send()` 返回 `false` 驱动（真实 `GatewaySession` 断线时是否返 false **未验**）——这两条不在第 2 批动，但 T8/T9 别假设它们成立；第 3 批 T10 与第 4 批真机验收要专门确认。
+- 第 1 批没有分树（泓舟未授权），提交都在本地 `main` 未推送；第 2 批继续在主工作树，`git status` 的有效期只到别人下一次落盘为止，据它判断前先重采。
+
 **每批开工的固定五步**（写进新会话的第一条提示词）：
 1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批可跳过——纯 jest）；
 2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
