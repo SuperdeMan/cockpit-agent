@@ -157,6 +157,15 @@ _INFORMATION_CASES = [
     ),
     _custom_case("INF-MANUAL-SAFETY",
         {"say": "不知道具体车型时，标准胎压应该是多少", "expect": {"no_actions": True}},
+        # ⚠ 2026-08-29 **刻意不加 `info.search`**（与迷你集 SF3 首轮那条同日裁决，方向相反）。
+        # 真栈实测这一轮现在落 `info.search`，**答案很好**（「不能继续开。红色机油灯亮起
+        # 表示机油压力严重低于标准…」），但**路径是错的**：它把一句安全问句当成了搜索题，
+        # 没走手册域、没有 provenance，答对靠的是模型自己的知识。
+        # **SF3 那条加 `chitchat.talk` 是因为那是安全闸开的设计内出口；这条不加，
+        # 是因为 `info.search` 不是任何人设计的安全出口。**「都红了」不等于「同一种红」。
+        # ⚠ 同批更正一处我自己写错的话：本轮安全闸让它**不再落 `system.clarify`**，
+        # 但**没有**让它落进这份名单——「不再危险」和「落对域」是两栏，别合成一句
+        # 「T23 修好了」。
         {"say": "红色机油灯亮了还能继续开吗", "expect": {"no_actions": True},
          "audit": {"intent_any": ["safety.driver_state", "safety.driving_advice", "manual.query"]}},
         {"say": "慢一点开可以吗", "expect": {"no_actions": True},
