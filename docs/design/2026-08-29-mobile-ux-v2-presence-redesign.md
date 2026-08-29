@@ -1,6 +1,7 @@
-# Android 陪伴端交互设计升级方案（UX v2：以光球为锚的三层在场）
+# Android 陪伴端交互设计升级方案（UX v2.1：以光球为锚的三层在场）
 
-> 状态：**草案（待泓舟评审；评审通过后按 §11 拆实施计划）**
+> 状态：**v2.1 —— 方向已获泓舟同意（2026-08-29）；外部评审「附条件通过」的补充意见已逐条裁决并并入（§15 采纳记录）；下一步按 §11 拆 B1 实施计划**
+> 版本：v2（2026-08-29 上午草案）→ **v2.1**（同日，采纳外部评审：多轴 Presence、Composer 手势契约、ConfirmPolicy 只投影 VAL、隐私在场、产品身份、材质制度、降级矩阵、增量沉淀、追溯矩阵）
 > 交付对象：`mobile/` 后续执行者（人或 Agent）；评审对象：泓舟
 > 关联：`2026-08-23-hmi-android-app-plan.md`（选型与形态判断）、
 > `2026-08-24-mobile-app-implementation-plan.md`（执行真相源；§M3-V 光球复刻批、§M4、坑账 §9）、
@@ -31,6 +32,9 @@
 2. **HyperOS 是 Android 系，也是我们唯一真机**（MIX Fold 4 / Android 16）——超级小爱**既是参照也是同台的系统级竞争者**：它能做的系统面我们做不到，所以方案在「App 内体验」上必须比它更专（座舱/车况/记忆/确认链），而不是在「系统面」上追它。
 
 **「不负优化」的保障**（§11.4）：每条改动都带可量的判据；新增「状态画廊」调试屏（同 `card-gallery` 哲学）让每个在场状态可截图回归；Maestro 扩 5 条流；§10 列出**刻意不动**的清单（光球十条不变量、对话记录不被临时层取代、共享判据不分叉、红线逐条对等）。
+
+**v2.1 相对 v2 改了什么（外部评审的八条 P0 里采纳七条、部分采纳一条，§15 逐条有裁决理由）**：
+① Presence 从「一个枚举 + 固定优先级」改成**多轴事实 + 单一视觉主态**（§4）——离线时待确认的承诺不再被盖掉；② 新增 **Composer 手势契约**（§5.1.1）——轻点光球**始终**能说话，不再受免唤醒开关影响；③ **确认策略只投影 VAL**（§5.3.1）——删掉 v2 里 UI 自己发明的「车速 >0 只准语音 / >5km/h 全屏拦截」，`val.py::_safety_gate` 早就是裁决点；④ **隐私在场**（§5.10）——麦/摄像头/S2S 上行/当前用户的实时指示与一键关闭，端到端**开录即告知**；⑤ **产品身份**（§6.0）——手持 / 支架协同 / 可信车载平板由 token scope 与设备角色决定，**窗口尺寸不决定权限、横屏不决定你是驾驶员**；⑥ **材质制度**（§5.11）——G0 实色（安全/错误/隐私）/ G1 磨砂 / G2 反应式（只给光球与把手）；⑦ **降级矩阵**（§12.1）——`error` 拆成七种，回声/权限/服务降级进 Dock 给出口；⑧ 语音层**增量沉淀**（§5.2.1）——语音层是「记录里当前轮」的视图，不再等收起才写。
 
 ---
 
@@ -69,7 +73,7 @@
 ### 1.3 设计侧已有、App 端未落的（是「捡」不是「创」）
 
 - Figma A-6 六个对话态齐全（思考 / 流式 / 过程区三形态 / 确认 / 主动两色 / 错误），**含行车态开关**；A-8「行车态 + 浅色」**未定稿**（`2026-06-29-figma-hmi-implementation-plan.md:155-161`）。
-- A-1 §10 光球动效表与「行车 ×0.5 频率 ×0.6 透明度」「`prefers-reduced-motion` → 0.01ms」两条降级规则；触控目标「泊车 48 / 行车 56」；确认「车速 >0 禁用、>5km/h 升级全屏拦截」（Guidelines `:325-327`、A-6 spec `:712-718`）。
+- A-1 §10 光球动效表与「行车 ×0.5 频率 ×0.6 透明度」「`prefers-reduced-motion` → 0.01ms」两条降级规则；触控目标「泊车 48 / 行车 56」；确认「车速 >0 禁用、>5km/h 升级全屏拦截」（Guidelines `:325-327`、A-6 spec `:712-718`）——**这一条 v2.1 不照抄**：车速门禁在 VAL 里已有、不归 UI（§5.3.1）。
 - HMI 里设计了、从未挂载的 `.au-edge-glow`（听/想时屏幕边缘 2px 极光呼吸，`H/aurora.css:193-201`）——手机上正好可用作**语音层的边缘信号**。
 
 ---
@@ -117,7 +121,7 @@
 | ① **按住即说、抬手即走**，不换页 | 长按导航条 | 长按小白条「按住就能说，抬手即走」 | §5.1 光球按住 = PTT；§5.2 语音层从底部升起不换页 |
 | ② **两层容器**：紧凑层 → 上滑全屏 | 紧凑面板 → 上滑对话页 | 悬浮态界面 | §5.2 语音层 62% + 对话记录变暗仍可见；下拉收起、上滑展开为全屏（Q1） |
 | ③ **一个视觉锚承载状态** | 导航条流光 = 执行中 | 超级岛 = 思考/执行 | §4 Presence + 光球三新态 + 状态胶囊 |
-| ④ **决策点从锚上冒出，不弹模态** | 提示胶囊（选项 / 停止 / 付款前确认） | 岛展开态 ≤3 按钮、5s 自动收起 | §5.3 Focus Dock（确认 flex2 / 取消 flex1 / 倒计时）；行车全屏拦截是唯一模态 |
+| ④ **决策点从锚上冒出，不弹模态** | 提示胶囊（选项 / 停止 / 付款前确认） | 岛展开态 ≤3 按钮、5s 自动收起 | §5.3 Focus Dock（确认 flex2 / 取消 flex1 / 倒计时）；不做全屏拦截，唯一的模态是 `fatal` 级降级（§12.1） |
 | ⑤ **长任务可后台、完成自动展开结果** | 上滑导航条送后台 | 长任务上岛、完成自动展开 | §5.3 `task` Dock 项 + §9 Live Updates（同一份数据两个出口） |
 | ⑥ **语音与文字同一面** | 按住说话 + 键盘并列 | 双击=文字、长按=语音 | §5.1 Composer 保留输入框，文字不升层 |
 | ⑦ **大屏自动分屏：左对话右内容** | Mate X7 自动分屏、分屏问小艺 | （无资料） | §7.2 双栏 + 舞台 = 卡的大视图 |
@@ -167,38 +171,48 @@
 | P3 | **承诺面不许消失** | 系统欠用户的动作/结果（确认、补槽、长任务、离线队列）钉在固定位置，有倒计时，消失必有理由 | 确认按钮 30s 后静默蒸发 |
 | P4 | **一种输入，一份记录** | 按住 / 唤醒 / 端到端 / 打字进同一条转写与回答通道，记录逐字相同 | S2S 轮无记录；PTT 与免唤醒 partial 两处 |
 | P5 | **形态按窗口尺寸类与姿态，不按设备** | compact / medium / expanded × book / tabletop / flat；手机横屏、平板竖屏、折叠内屏各得其所 | `min(w,h)>=600` 一个布尔 |
-| P6 | **行车是产品档位，不是主题** | `driving` 或用户档位开关 ⇒ 目标 56dp、过程区单行、无文本输入、TTS 自动、确认按 A-6 车速门禁 | 只改一下字号叫「车载模式」 |
+| P6 | **行车是产品档位，不是主题；权限是身份，不是形态** | `driving` 或用户档位开关 ⇒ 目标 56dp、过程区单行、按身份收文本输入、安全告警强制播报；**确认只投影 VAL 的策略**（§5.3.1），UI 不据车速自定规则；身份由 token scope + 设备角色决定（§6.0） | 只改一下字号叫「车载模式」；横屏了就当你是驾驶员 |
 | P7 | **出 App 在场只用公开机制，跟着 M5** | Live Updates / QS Tile / 快捷方式 / 小组件 / 默认助理角色；不做系统浮层，不做后台保活 | 用 `SYSTEM_ALERT_WINDOW` 造一个「小舟胶囊」 |
 
 ---
 
-## 4. 在场模型（Presence）：一个派生态，四个消费面
+## 4. 在场模型（PresenceSnapshot：多轴事实 + 单一视觉主态）
 
 ### 4.1 为什么是派生态而不是新状态机
 
 App 里已经有三台状态机：轮态（`Msg` 的 `pending/streaming/processActive/needConfirm/error`）、免唤醒 FSM（`@shared/voiceLoop.mjs` 六态，**判据只许一份**，§9.33）、PTT（`usePtt.ts` 三态），外加连接态、S2S 挡位、视觉抓帧、主动消息、`driving`。**它们各自都对，错的是没有一个地方把它们合成「此刻该让用户看到什么」。**
-所以 U1 加的不是第四台状态机，是一个纯函数：
+所以 U1 加的不是第四台状态机，是一个纯函数——**但它的输出不是一个枚举**（v2 草案写成单值 `mode` + 固定优先级，外部评审指出的失败案例成立：待确认时断网，`offline` 盖掉 `attention`，Dock 又换成离线队列，那条确认就被藏起来了。网络 / 采集 / Agent / 承诺 / 隐私 / 降级是**正交维度**，压成一个值必有信息损失）：
 
 ```ts
 // M/core/presence/presence.ts —— 纯函数、零副作用、node 可测（同 sendRouter 形态）
-type Presence = {
-  mode: 'offline' | 'reconnecting' | 'idle' | 'armed' | 'listening' | 'recognizing'
-      | 'thinking' | 'processing' | 'speaking' | 'followup' | 'attention' | 'looking' | 'error'
-  orb: OrbState            // 'idle'|'armed'|'listening'|'thinking'|'speaking' + 新增 'attention'|'looking'|'muted'
-  capsule?: { text: string; tone: 'neutral'|'accent'|'amber'|'red'; live?: boolean }
-  dock?: DockItem          // 见 §5.3；attention 态必有
-  driving: boolean
-  input: 'voice-sheet' | 'composer' | 'none'
+type PresenceSnapshot = {
+  transport:   'online' | 'reconnecting' | 'offline'
+  capture:     'off' | 'armed' | 'listening' | 'recognizing' | 'looking'
+  agent:       'idle' | 'thinking' | 'processing' | 'speaking' | 'followup'
+  commitment:  DockItem[]                 // §5.3：确认 / 补槽 / 长任务 / 离线队列，稳定排序
+  privacy:     { mic: 'off' | 'edge' | 'cloudAudio'; camera: 'off' | 'singleFrame'; user: string }
+  degradation: Degradation[]              // §12.1：permission_denied / service_degraded / audio_echo_degraded / …
+  identity:    'handheld' | 'mount' | 'trusted-tablet'   // §6.0，来自 token scope + 设备角色，不来自窗口尺寸
+  driving:     boolean
+  // ↓ 唯一的「视觉主态」：光球与胶囊只读这两个字段
+  primary:     OrbState                   // 'idle'|'armed'|'listening'|'thinking'|'speaking' + 新增 'attention'|'looking'|'muted'
+  capsule?:    { text: string; tone: 'neutral'|'accent'|'amber'|'red'; live?: boolean }
+  input:       'voice-sheet' | 'composer' | 'none'
 }
-function derivePresence(i: PresenceInput): Presence
+function derivePresence(i: PresenceInput): PresenceSnapshot
 ```
 
-输入 = `connStatus`、`hf.fsm`、`ptt.state`、最新在飞 `Msg` 的四个布尔、`pendingOps`、`voicePipeline`、`visionCapturing`、`proactiveUnread`、`driving`。**优先级固定且写进测试**：
-`offline/reconnecting` > `attention`（有活的确认/补槽）> `looking` > `listening/recognizing` > `speaking` > `processing/thinking` > `followup` > `armed` > `idle`；`error` 只在无在飞轮时短显 4s。
+输入 = `connStatus`、`hf.fsm`、`ptt.state`、最新在飞 `Msg` 的四个布尔、`pendingOps`、`voicePipeline`、`visionCapturing`、`proactiveUnread`、`driving`、token scope、设备角色、降级信号（权限结果 / 引擎可用性 / 回声守卫）。
 
-这条纯函数是 **U1 的唯一新真相**；光球、状态胶囊、Focus Dock、无障碍播报四个消费面都只读它。反向验证：把任一输入维度置空，对应消费面必须回到上一优先级（测试逐维断言）。
+**各消费面只读自己那一轴**：光球读 `primary`；胶囊读 `capsule`（最重要的**瞬时**状态）；Focus Dock 读 `commitment[]`（**永不被别的轴盖掉**）；顶栏健康点读 `transport`；隐私栏读 `privacy`（§5.10）；降级出口读 `degradation`（§12.1）。「光球是唯一状态锚」指的是**视觉主态只有一处**，不是「所有系统状态只能压成一个枚举」。
+
+**`primary` 的选择顺序固定且写进测试**：`offline`（muted）> `attention`（有活的确认/补槽）> `looking` > `listening/recognizing` > `speaking` > `thinking/processing` > `followup` > `armed` > `idle`。评审那个案例在多轴下的答案：待确认 + 断网 ⇒ 光球 `muted`、胶囊「已断开 · 消息会排队」、**Dock 仍钉着那条确认**（副标「离线中，连上后发送」，倒计时照走）、队列作为第二项。
+
+这条纯函数是 **U1 的唯一新真相**。反向验证：把任一输入维度置空，对应消费面必须回到上一档，而**其它轴的消费面不许变**（测试逐维断言——这是多轴与单枚举的可测差别）。
 
 ### 4.2 状态矩阵（每个状态用户看到 / 听到 / 摸到什么）
+
+> 表里的「Presence」列是 `primary`（视觉主态）；Dock 一列写的是**这个主态常伴随的承诺项**，不是「只有这时才有 Dock」——Dock 永远读 `commitment[]`。
 
 | Presence | 触发 | 光球态 | 环 / 辉光 | 状态胶囊 | Focus Dock | 声音 · 触感 | TalkBack 播报 |
 |---|---|---|---|---|---|---|---|
@@ -221,7 +235,7 @@ function derivePresence(i: PresenceInput): Presence
 ### 4.3 状态胶囊（Capsule）
 
 一枚 Composer 上方居中的 28dp 高胶囊（r=999，玻璃底，Aurora 纪律：**文字不用极光**），替代 P2 那四条窄条：
-- 只显示 `Presence.capsule`，一次一条；连接态与语音态**合成一条**（优先级见 §4.1）。
+- 只显示 `snapshot.capsule`，一次一条；连接态与语音态**合成一条**（`primary` 的顺序见 §4.1）；降级类信息不进胶囊、进 Dock（§12.1）——胶囊说的是「此刻」，Dock 说的是「欠着」。
 - 含 `live` 的胶囊（在听 / 追问窗）左侧带 6dp 青点；琥珀/红胶囊不带点。
 - 3s 延迟规则沿用弱网横幅那条（`ChatScreen.tsx:255-265`）：`reconnecting` 3s 内不显示。
 - 点按胶囊 = 打开语音层（`listening/recognizing/followup`）或滚到 Dock（`attention`）或重连（`offline`）。
@@ -251,9 +265,27 @@ function derivePresence(i: PresenceInput): Presence
 
 Composer 改动（`M/features/chat/Composer.tsx`）：
 - 光球热区 52 → **56dp**（Figma 行车档目标；泊车档也用 56——手机是手持设备，Material 最小 48，56 不冒犯任何场景），球体 40 → 44dp。
-- **按住 = PTT，轻点 = 打开语音层并进入 `listening`（免唤醒开着时）或提示「按住说话」（关着时）**；长按松手前上滑 = 取消本次录音（微信惯例，行车档禁用此手势）。
+- 光球的点按语义按 §5.1.1 的手势契约，**轻点始终能说话**（v2 草案「免唤醒关着时只提示」被评审否掉——用户会觉得麦克风按钮点了没反应，采纳）。
 - 提示行（`:75-88`）**删除**，其职责由状态胶囊与语音层接管；`■ 打断` 按钮保留但移入语音层（§5.2）；发送键极光填充不变（虹彩纪律三处之一）。
 - 输入框 `returnKeyType=send` 不变；**键盘避让改为 Android 有效实现**（§7.6）。
+
+#### 5.1.1 Composer 手势契约（ComposerGestureContract）
+
+「对话框可以按住录音」这个诉求成立，但**手势范围要定死**：作用区是 **Composer 操作区**（光球 + 空输入框/占位区 + 背板），不是历史气泡（长按已用于复制 trace），也不抢 `TextInput` 的原生长按（选择/复制/粘贴）。
+
+| 手势 | 空闲 | 录音中 | 播报中 | 思考/执行中 |
+|---|---|---|---|---|
+| **轻点光球** | 打开语音层并开始录音（**与免唤醒开关无关**；收尾用 ASR 网关的 `vad_silence_ms` 服务端静音尾，`llm-gateway/http_server.py:394` 已透传；端侧 VAD 在场时用 `@shared/sileroEndpoint.mjs` 更早收尾） | 结束并提交 | 原子化停止 TTS（`speechController().stop()`）再进入录音 | 展开语音层看状态 |
+| **长按光球 / 空输入框 / 背板 ≥300ms**（`usePtt` 现有 `MIN_DURATION_MS=320` 保留） | 按住说话（PTT） | — | 先停 TTS 再录 | 先取消在飞轮再录（现状 `onCancelTurn` 语义） |
+| **按住时上滑** | **取消**本次录音（微信惯例；不采纳评审的「上滑锁定 / 左滑取消」——那是 Telegram/WhatsApp 的心智，中文用户的默认是微信；「锁定」要解决的「说长内容」由轻点录音 + VAD 收尾覆盖，一个控件不装两套惯例，Q13） | | | |
+| **松手** | 发送 | | | |
+
+配套规则：
+- **取消的隐私文案**：取消后不进 Agent、不形成正式记录；但流式 ASR **已上传的音频不能宣称「从未上传」**——文案是「已取消，这段话不会发给小舟」，不是「未上传」。
+- **手势冲突**：列表纵向滚动与 chips 横向滑动不得误触 PTT——长按识别前的移动阈值 12dp，`Gesture.Exclusive(longPress, scroll)`（react-native-gesture-handler 已随 expo-router 在场）；输入框有文字时长按走原生选择，**只有光球仍可 PTT**。
+- **行车档 / 可信车载平板**：只保留「按住—松开发送」，禁用上滑取消这类空间手势；主入口仍是唤醒词；按下给一次明确触感。
+- **无障碍**：长按不是唯一入口——TalkBack / Switch Access 下**轻点切换开始/停止**，光球 label 随状态变（「小舟，开始说话」/「小舟，结束并发送」）；语义点击区 ≥48dp（Material）——是**整个可点区域**而不只是视觉球体（§8.1）。
+- **免唤醒开关的职责收窄**：只控制唤醒词常驻监听与追问窗，**不影响手动点击麦克风**。
 
 ### 5.2 Tier 1 —— 语音层（Voice Sheet）
 
@@ -265,7 +297,7 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 │ ┌────────────────────────────┐ │  ← 顶缘：极光 2px 呼吸（listening/thinking）= .au-edge-glow 的移植
 │ │  「附近有什么好吃的」        │ │  转写区：ASR partial 大字 20pt，定稿后转为用户气泡样式
 │ │                             │ │
-│ │           ◉ 88dp            │ │  大光球：Presence.orb 驱动（listening→thinking→speaking→followup）
+│ │           ◉ 88dp            │ │  大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）
 │ │       在听… ● 可打断         │ │  胶囊文案（同 §4.3，此处放大）
 │ │  为你找到 5 家……（流式）     │ │  回答区：speech_delta 逐字 + StreamCursor；行车档 18pt
 │ │  ┌ 主卡（display_priority 0）┐│ │  主卡只放一张；其余卡收起成「还有 2 张卡片 ›」
@@ -277,18 +309,38 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 ```
 
 规则：
-1. **三种说话方式一张层**：PTT 按住（`usePtt`）、唤醒词（`handsFree` FSM）、S2S（`s2sClient`）都通过 `Presence.input === 'voice-sheet'` 升起同一张层；文字输入**不升层**（沿用 voiceLoop 头注「文本不进 FSM」）。
-2. **沉淀规则（P4）**：语音层里出现的每一句转写与回答，在层收起时**逐字**写入对话记录（`SessionCore` 已有的 user/assistant 气泡通道）。S2S 自答轮走 `onS2sUserUtterance/onS2sAnswerDelta` → 新增 `store.appendS2sTurn()`（**只写记录，不进 `requestRouting`**——它没有 `request_id`，按「无在飞轮的续流 adopt 新气泡」语义单独开一条 `source:'s2s'` 气泡，气泡带「端到端」小角标，让用户分得清哪些轮是没过 planner 的）。
-3. **收起时机**：`followup` 窗关闭（8s）或用户下拉/点「收起」或点了主卡的按钮；`attention` 态下**不自动收起**（等确认）；行车档下 TTS 结束后 +3s 自动收起。
+1. **三种说话方式一张层**：PTT 按住（`usePtt`）、唤醒词（`handsFree` FSM）、S2S（`s2sClient`）都通过 `snapshot.input === 'voice-sheet'` 升起同一张层；文字输入**不升层**（沿用 voiceLoop 头注「文本不进 FSM」）。
+2. **沉淀规则（P4，v2.1 改为增量）**：语音层**不持有自己的转写/回答状态**——它是「对话记录里当前这一轮」的视图。ASR 的每个稳定 segment、回答的每批 delta 都**即时**写进记录（`draft_user → final_user`、`draft_assistant → final_assistant`，见 §5.2.1）；收起、切后台、折叠/展开、点卡片跳转都不会丢，因为根本没有「等收起再写」这一步。S2S 自答轮走 `onTranscript/onS2sAnswerDelta` → `store.appendS2sTurn()`（**只写记录，不进 `requestRouting`**——它没有 `request_id`，按「无在飞轮的续流 adopt 新气泡」语义单独开一条 `source:'s2s'` 气泡，角标「端到端」），语义见 §5.2.2。
+3. **收起时机与高度**：高度是**自适应 detent** 不是定值——只录音 40%、有回答 62%（默认）、有主卡或多步任务 78%、height-compact 横屏接近全高但留安全区；键盘出现时重排；下拉先到 40% 再关闭。收起：`followup` 窗关闭（8s）或用户下拉/点「收起」或点了主卡的按钮；`attention` 态下**不自动收起**（等确认）；行车档下 TTS 结束后 +3s 自动收起。**地图页上方只用 40% detent**——语音层不许遮住正在看的路线。
 4. **打断**：`speaking` 时开口（barge-in）或点 `■ 打断`——层不收，光球从 `speaking` 直接转 `listening`，回答区文字定格并标「已打断」（不再改成红色错误样式；打断不是错误，A-6 也没把它归错误态）。
 5. **回声提示**：voiceLoop 的 `_overlapsTts → _echoSuspected` 命中时（`H/voiceLoop.mjs`，按符号找——这个文件 2026-08-29 正被另一条线改，行号在变），胶囊短显「像是我自己的声音，没算数」2s——把「吞掉的那句」变成可见的，否则用户以为没听见。
 6. **边缘极光**：层顶缘 2px `AURORA` 呼吸 1.6s，只在 `listening/thinking`（虹彩纪律允许的「听/想时屏幕边缘」那一处，Guidelines `:113-119`）。RN 实现 = 一条 2dp 高的 `experimental_backgroundImage` 线性渐变 View + opacity 呼吸，零新依赖。
 7. **主卡规则**：`final.ui_card` 为 `card_group` 时按 `display_priority` 升序取首张为主卡，其余折叠；`display_priority` 缺省按 §CLAUDE.md 卡片优先级默认 2。**这是 P9 的修法**，聚合器的排序终于有消费方。
 8. **播报策略三档**（小艺同款，[S-H15]）：`总是 / 静音 / 自动`，**自动 = 语音提问才播报、打字提问只显示文字**，默认「自动」。替换现在 `ttsEnabled && autoplay` 两个近义开关（`M/core/voice/speech.ts:58`、`SettingsScreen.tsx:271-290`）——两个开关同时为真才出声，用户分不清哪个是哪个。迁移：旧值 `ttsEnabled=false` → 静音；`autoplay=false` → 静音；否则 → 自动（旧行为里打字也播报，若泓舟要保留那个行为则默认取「总是」，Q11）。
 
+#### 5.2.1 语音层生命周期、草稿与恢复
+
+```text
+turn.user:      draft_user ──(ASR final / PTT 松手 / VAD 收尾)──▶ final_user
+                draft_user ──(上滑取消 / 退出词 / 误唤醒回收)──▶ 删除（不留气泡）
+turn.assistant: draft_assistant ──(final 帧)──▶ final_assistant
+                draft_assistant ──(barge-in / 打断按钮)──▶ final_assistant + 「已打断」（保留已显示部分）
+```
+
+- **写入粒度**：ASR partial 按稳定 segment 写 `draft_user`（HMI 的 `PartialUserBubble` 就是这个形态，`H/components/ChatView.tsx:202-216`）；回答按 `speech_delta` 写 `draft_assistant`（现状 `store.ts:259-263` 已是逐 delta 追加——所以「增量沉淀」对回答侧**不是新机制**，只是把转写侧对齐过来）。
+- **恢复**：旋转 / 折叠展开是 configuration change，JS 状态在 store 里不丢；App 切后台再回来，语音层按 `snapshot.input` 重新决定是否升起；进程被杀——本来「每次启动新会话」（§9.33），不承诺跨进程恢复，**不假装能恢复**。
+- **异常退出**：语音层组件卸载时不做任何写入（它没有独有状态）；在飞轮由既有看门狗（95s）收尾成「响应超时」。
+- **取消**：`draft_user` 删除、不发请求；若 ASR 流已开，发 `{type:'stop'}` 并丢弃 final（现有「迟到 final 要挡」守卫）。
+
+#### 5.2.2 S2S 记录语义与副作用升级链
+
+- 端到端轮的转写来自 provider 的 `turn.transcript` 帧（`H/s2sClient.mjs:31,250-252`，`onTranscript(text, final)`），**不是传统 ASR 逐字稿**。记录里存 `{ source:'s2s', transcript, transcriptKind:'model_inferred', final }`；气泡角标「端到端」，长按可看「转写由语音模型生成」——不向用户暗示逐字准确。
+- **开录即告知**（红线三条件③在交互时刻的落实，不只在设置页）：S2S 挡位下语音层升起的第一行是 `端到端语音 · 原始音频将在本轮上传`（G0 实色条）；设置里把挡位从三段式切到端到端时弹**一次性显式同意**（不是只有开关）。
+- **副作用只走主链**：S2S 会话内唯一工具是 `escalate`（CLAUDE.md §5）——凡涉及车控、支付、导航启动、账户/记忆修改，**必须**经 `turn.escalated` 回到 planner → 权限 → VAL → Executor；语音层对 escalate 的轮按普通轮渲染（有 `request_id`，进 `requestRouting`）。这条不是 UI 决定的，UI 只负责**让用户看得出**哪些轮走了主链（有「已执行」行 / 有 `_prov`）、哪些是端到端直答。
+
 ### 5.3 Tier 2 —— 对话记录 + Focus Dock（承诺面）
 
-对话记录保持现状（FlashList、气泡、卡片内嵌、过程区折叠条、trace 长按）——**它是沉淀层，不是被替换的对象**（§10.2）。加的是 Focus Dock：Composer 上方、状态胶囊之上的一块固定区，**只在 `Presence.dock` 存在时渲染**，最多 1 项（多确认并存时按台账顺序轮显，头部标「1/2」）。四种 DockItem：
+对话记录保持现状（FlashList、气泡、卡片内嵌、过程区折叠条、trace 长按）——**它是沉淀层，不是被替换的对象**（§10.2）。加的是 Focus Dock：Composer 上方、状态胶囊之上的一块固定区，读 `snapshot.commitment[]`，**只在非空时渲染**。多项并存时**不轮播**（v2 草案的「1/2 轮显」被评审否掉，采纳）：固定显示**风险最高、最早到期**的那一项，副标「另有 N 个待处理 ›」点开进承诺列表；排序稳定：高风险确认 > 低风险确认 > 补槽 > 长任务 > 离线队列。四种 DockItem：
 
 | DockItem | 内容 | 关闭方式 | 关闭时对话记录里留什么 |
 |---|---|---|---|
@@ -297,7 +349,42 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | `task` | 长任务名 + 阶段（复用 `process` 帧）+ 取消 | 终态帧 | 过程区折叠条（现状） |
 | `queue` | 「N 条消息排队，连上自动补发」 | 队列清空 | 无 |
 
-`confirm` 项的**剩余时间来自台账**：`pendingOps` 的 `prunePendings` 用的 TTL（共享模块内）就是倒计时的上界，UI 不另存一份时间；到期由 store 的 30s 剪枝改成**按项到期精确调度**（`syncPruneTimer` 从固定 30s 改为 `min(nextExpiry, 30s)`，判据不变，只改触发粒度）。**行车档**：Dock 的确认按钮遵守 A-6 `:712-718`——`vehicle_state.speed > 0` 时禁用点按（只允许语音「确认」）；`> 5 km/h` 时 Dock 展开成全屏拦截层。手机档默认没有 `vehicle.control` scope，这条主要作用于平板车载档，但**判据与 UI 一起做**，不让「手机上永远碰不到」变成漏做的理由。
+`confirm` 项的**剩余时间来自台账**：`pendingOps` 的 `prunePendings` 用的 TTL（共享模块内）就是倒计时的上界，UI 不另存一份时间；到期由 store 的 30s 剪枝改成**按项到期精确调度**（`syncPruneTimer` 从固定 30s 改为 `min(nextExpiry, 30s)`，判据不变，只改触发粒度）。Dock 的材质是 **G0 实色**（§5.11）——确认、错误、隐私说明不许半透明。
+
+#### 5.3.1 ConfirmPolicy：VAL 策略的 UI 投影（v2.1，替换 v2 的车速门禁）
+
+v2 草案照抄 Figma A-6 写了「`speed > 0` 只准语音确认、`> 5 km/h` 全屏拦截」。**两条都删。** 理由（外部评审提出，源码核实成立）：
+1. **安全裁决点已经存在且不在 UI**：`orchestrator/edge/val.py::_safety_gate` 有 `drive_restricted`（行车中禁开/禁关）、车窗/天窗 >80 / >120 km/h、倒挡、儿童锁、低电量六类门控，`_is_driving` = `speed_kmh > 0 或挡位非 P/N`（`val.py:353-421`）。UI 再写一份阈值就是**第二份判据**，而且 5 km/h 那条 VAL 里根本没有——它是 Figma 上的猜。
+2. **语音不比触控更可信**：车内其他乘员、广播、TTS 回采（端上无 AEC，M4-R1 实证）都能说出「确认」；把语音定义成行驶中唯一的确认通道，等于把最不可靠的通道当成更安全的。
+3. **全屏拦截比原界面更分散注意力**；行驶中的危险动作应当**被 VAL 直接阻止 + 简短播报原因**，不是弹一层让驾驶员去点。
+
+UI 的职责收窄成**渲染确定性策略结果**：
+
+```ts
+type ConfirmPolicyView = {
+  action: string; target: string; impact: string        // 「打开后备箱 · 当前车辆 · 后备箱将开启」
+  riskLevel: 'low' | 'medium' | 'high'
+  allowedChannels: Array<'touch' | 'voice'>               // UI 不得自行扩大
+  blockedReason?: string                                  // VAL 的拒绝话术原文（_safety_gate 返回的那句）
+  expiresAt: number                                       // = 台账 TTL
+}
+```
+
+- **今天协议里有什么**：`final.need_confirm + operation_id`（确认请求）、VAL 拒绝时的 `speech`（一句话，如「高速行驶中请勿打开车窗/天窗」）、`process/driving`。**没有** riskLevel / allowedChannels / 结构化 reason。
+- **第一阶段（B1，零后端改动）**：`need_confirm` 到达 ⇒ Dock 按 **touch + voice 都允许**渲染（就是今天的行为，只是换了面）；VAL 拒绝 ⇒ Dock 出一条 `safety_blocked`（§12.1）显示 VAL 原话 + 「停车后再说一次」，**UI 不据 `driving` 做任何额外限制**——宁可保守到「只是把 VAL 的话钉住不滚走」，也不在客户端发明安全边界。
+- **挂账给后端**（§13 Q16）：`final` 增加 `confirm_policy`（risk / allowed_channels / reason_code / expires_at），由 VAL 与 `require_confirm` 台账合成，编排层透传；届时 Dock 才按 `allowedChannels` 隐藏按钮、按 `riskLevel` 决定是否要求「先复述对象再确认」。**可信车载平板（§6.0 身份 C）上的更严规则也走这条，不走 UI 常量。**
+
+#### 5.3.2 执行回执（Execution Receipt）
+
+项目最有价值的不是思考动画，是 **VAL 的确定性执行**——但今天用户看到的只是一行灰字「已执行 media.control」，trace 长按又是给开发者的。v2.1 加一张用户可读的回执，**全部字段来自已有数据，零后端改动**：
+
+```text
+已理解    打开后备箱                 ← 用户原话 / 意图中文名（commands.yaml display_name）
+目标      当前车辆                   ← vehicle_id 归属
+确认      你在手机端点了「确认」 00:41 ← 本端台账（pendingOps 关闭方式）
+执行      成功 · 00:42               ← action 帧 + final
+```
+信息服务的回执 = `_prov` 的展开：`数据源 高德 · 更新 17:34 · 定位 当前位置 · 状态 实时/缓存/降级/模拟`。回执默认折叠成一行「已执行 · 展开回执」，行车档只播不展。「安全检查：车辆静止，允许执行」这一栏**今天拿不到**（VAL 只在拒绝时说话）——留位，随 §5.3.1 的挂账一起来。
 
 ### 5.4 卡片与序数候选
 
@@ -311,8 +398,9 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 
 ### 5.6 主动消息呈现
 
-- 前台：沿用 💡 气泡 + 类别头；**新增**：`priority` 高（scene_verify / 告警词表命中，HMI `ALERT_RE`）的主动消息进 **Dock `task` 位短驻 6s**（琥珀），并触发光球 `speaking`（若治理器决定播报）。
-- 后台/锁屏：属 U5（§9）。
+- 前台：沿用 💡 气泡 + 类别头；**新增**：`priority` 高（scene_verify / 告警词表命中，HMI `ALERT_RE`）的主动消息进 **Dock `task` 位短驻 6s**（琥珀），并触发光球 `speaking`（若治理器决定播报）。气泡头部补「**为什么收到**」（`proactiveKind` 中文化：AI 建议 / 执行反馈 / 提醒到点 / 任务提示）与卡上的 `_prov`（来源 · 更新时间）。
+- **治理不在客户端复制**：免打扰时段、驾驶负荷（>80 km/h 只放安全类）、每小时频控、同类合并已在 `proactive/governor.py`（「该不该现在打扰驾驶员」的**唯一裁决点**，头注原话），App 不再本地限频。「稍后提醒 / 本类静音 / 今日不再」这类**按用户的偏好**今天没有 API（governor 的参数是服务级配置）——**挂账后端**（§13 Q17：proactive 偏好读写端点 + 投递时带 `reason`），UI 先留按钮位不渲染。
+- 后台/锁屏：属 U5（§9）；锁屏面**脱敏**（不带记忆内容与支付信息，§2.4 ⑫）。
 
 ### 5.7 离线与弱网
 
@@ -327,18 +415,58 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 
 `M/ui/tokens.ts`（新）：`space = [4,8,12,16,24,32,48]`、`radius = {sm:8, md:12, lg:16, xl:20, '2xl':24, '3xl':28, full:999}`、`type = {display:32, h1:24, h2:18, body:15, caption:12, mono:'monospace'}`、`motion = {fast:120, base:180, slow:260, orbIdle:4000…}`、`target = {parked:48, driving:56}`。逐值照 A-1 §「间距/圆角/字阶」；`Palette.font()` 扩成 `scale(size, kind)`，**「大字」同时放大 target 与行高**。迁移只做**新组件必用 + 触碰到的旧组件顺手换**，不做全仓扫荡（34 个卡渲染器逐处改是独立批，与 M3-V「等宽数字铁律」同一处置）。
 
+### 5.10 隐私在场：采集路径与当前用户（Privacy Rail）
+
+红线三条件今天只活在设置页与事后角标；采集是**实时**发生的，指示也得实时。顶栏健康点旁加一枚 8dp「采集点」（麦开=青、S2S 上行=琥珀、抓帧=白闪一次），点开是一张 G0 实色的隐私栏（读 `snapshot.privacy`）：
+
+| 行 | 内容 | 数据来源 |
+|---|---|---|
+| 麦克风 | 关 / 唤醒词待机（端侧，不上传）/ 转文字后上传（三段式）/ **原始音频上传中**（端到端） | `hf.fsm` + `voicePipeline` + `ptt.state` |
+| 摄像头 | 关 / 正在抓一帧（触发词：「这是什么」） | `visionCapturing` + `needsVisionFrame` 命中的原话 |
+| 最近一次激活 | 「00:41 麦克风 · 唤醒词命中」/「00:38 摄像头 · 触发词」 | 本端环形日志（20 条，不上传） |
+| 当前用户 | 「当前：泓舟（手机端 token）」 | token 的 user_id；**App 端没有声纹**（§2.3 信道约束），不做「未确认说话人 / 访客模式」——那是座舱端的多乘员 UX，App 上身份就是 token |
+| 一键关闭 | 本轮麦克风 / 摄像头 / 免唤醒 | 直接调 `handsFreeOff` / `visionEnabled=false` / 断当前 ASR 流 |
+| 差异说明 | 「三段式：本机转文字后只上传文字；端到端：上传原始音频，仅在唤醒后的对话窗内」 | 设置页文案同源（`SettingsScreen.tsx:394-403`） |
+
+**开录即告知**（§5.2.2）+ **首次开启端到端的显式同意**是这一节的两条硬要求；隐私栏本身是 B1 范围（读 snapshot 即可）。
+
+### 5.11 材质制度（Glass Material System）
+
+`Glass.tsx` 今天是「半透明填充 + 四边不等光边框 + 顶缘高光 + 投影」——RN 无 backdrop-filter，这是**玻璃感皮肤**不是液态玻璃（`M/ui/aurora/Glass.tsx:1-3`）。把它变成三档**制度**，每个面只能选一档：
+
+| 档 | 用在哪 | 视觉 / 实现 | 落点 |
+|---|---|---|---|
+| **G0 Solid / Safety** | Focus Dock、确认、错误、隐私栏、行车限制、地图上的浮层 | 不透明（≥0.96）、不模糊、不随背景变 | 已是坑账 §9.36 的判据，现在成制度 |
+| **G1 Frosted** | 顶栏、语音层外壳、舞台抽屉、Onboarding 容器、卡壳 | 染色 + 细边框 + 静态高光；**真模糊是 B3 的 spike**（`expo-blur` 未安装，是新原生依赖；API<31 无 RenderEffect 回落 G1-tint） | 现状 `Glass` 即 G1-tint |
+| **G2 Reactive** | **只有**：光球、语音层把手、选中态 chip | 跟随触摸 / 音量 / 状态轻微改变高光与形状（Reanimated，零新依赖） | B2 |
+
+**不做**：34 型卡全玻璃化（卡壳停在 G1-tint）、玻璃叠玻璃、把确认/错误/隐私做成半透明、同屏多个动态 Blur、把「液态」理解成组件持续扭曲、一上来引 Skia。token：`glass = { solid:{blur:0, opacity:.96}, frosted:{blur:28, tint:.58, border:.16}, reactive:{blur:34, tint:.42, specular:.32} }`（B3 spike 决定 frosted/reactive 的 blur 是否真的上）。reduce-transparency / 行车档 / 低电量 ⇒ 全部回落 G0/G1-tint。
+
 ---
 
 ## 6. 行车档（Driving Mode）
 
-**触发**（任一）：Edge 帧 `driving=true`（`store.ts:286`，已存在）；用户在语音层/设置里手动切「行车」；平板车载档 token（全 scope）+ 横屏 + keep-awake 同时成立时**建议**开启（弹一次胶囊「切到行车档？」，不自动切——自动切会在副驾用平板时误伤）。
+### 6.0 先定产品身份，再定行车档
 
-**规则**（照 Figma A-1/A-6 行车条款 + NHTSA 视线原则）：
+v2 草案把「手机 / 平板 / 横屏 / 车载支架 / 有没有车控 scope」揉在一起。三个身份分开，**身份由 token scope + 设备角色决定，窗口尺寸不决定权限，横屏不决定你是驾驶员，平板不自动获得车控**：
+
+| 身份 | 判据 | 能做什么 | 行车档下的差异 |
+|---|---|---|---|
+| **A 手持陪伴端** | token 无 `vehicle.control`（默认档）；设备角色未设 | 车况/记忆/提醒/路线/行程/商户；文字输入常驻 | `driving=true` 只放大目标、减信息密度；**不隐藏文字输入**（可能是乘客在用） |
+| **B 支架 / 副驾协同** | 用户在设置里选「支架模式」（或 keep-awake + 横屏成立时**建议**一次） | 同 A | 大目标、单卡、TTS 按当前播报策略；文字输入折叠成键盘图标但可点开 |
+| **C 可信车载平板** | 全 scope token + 设备绑定（§5.6 的「平板车载档」条目） | + 车控（经 VAL） | 完整行车 HMI：文本输入隐藏、过程区单行、确认按 §5.3.1 的 VAL 策略 |
+
+**「本机能做什么」要让用户看得懂**：设置页顶部一行身份说明（「手持陪伴端 · 不控车」/「可信车载平板 · 可控车」），车控被拒时的话术已有，Dock 的 `safety_blocked` 项再补一句「本机不控车，去车上说」。
+
+**触发**（任一）：Edge 帧 `driving=true`（`store.ts:286`，已存在）；用户手动切「行车」；身份 C + 横屏 + keep-awake 同时成立时**建议**开启（弹一次胶囊「切到行车档？」，不自动切——自动切会在副驾用平板时误伤）。
+
+**规则**（照 Figma A-1/A-6 行车条款 + NHTSA 视线原则；按身份分档见 6.0）：
 - 语音层常驻（不自动收起到 idle，收起到 `armed`），光球 120dp 居中；转写/回答字号 18/20pt；一屏只有一张卡、只显示标题 + ≤2 个字段 + 1 个主按钮。
-- 过程区单行锁定（A-6.3 行车形态）；快捷 chips ≤3；**文本输入框隐藏**（点光球右侧「键盘」图标才出）。
-- 目标 ≥56dp；光球动效 ×0.5 频率、×0.6 透明度（A-1 §10）；TTS 自动播报强制开；barge-in 开。
-- 确认：§5.3 车速门禁；手机档无车控 scope 时此条不触发但 UI 判据在场。
-- 横屏（车载支架）：光球与转写在左 40%，卡/回答在右 60%（§7.2 medium-height 规则的行车变体）。
+- 过程区单行锁定（A-6.3 行车形态）；快捷 chips ≤3；文本输入按身份（A 常驻 / B 折叠 / C 隐藏）。
+- 目标 ≥56dp；光球动效 ×0.5 频率、×0.6 透明度（A-1 §10）；barge-in 开。
+- **播报收紧**（评审意见，采纳）：安全告警强制播报；普通问答遵循 §5.2 规则 8 的播报策略；非紧急主动消息在高驾驶负荷时静默（治理器已按 >80 km/h 判负荷，App 不重复判）。
+- 确认：§5.3.1——UI 只投影 VAL，不据车速自定规则。
+- 横屏（车载支架）：光球与转写在左 40%，卡/回答在右 60%；语音层**不遮关键车况与地图**（地图页 40% detent）。
 - 退出：Edge `driving=false` 持续 30s 或用户手动；退出时不清对话记录。
 
 ---
@@ -353,7 +481,11 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 |---|---|---|---|
 | compact | < 600dp | compact | < 480dp |
 | medium | 600–839dp | medium | 480–899dp |
-| expanded | ≥ 840dp | expanded | ≥ 900dp |
+| expanded | 840–1199dp | expanded | ≥ 900dp |
+| large | 1200–1599dp | | |
+| extra-large | ≥ 1600dp | | |
+
+large / extra-large（WindowSizeClass v2 新增）今天没有设备命中，但**枚举要齐**：桌面窗口、外接屏、大平板到了不该落进 expanded 的分支里；这两档暂时与 expanded 同布局，只把舞台上限放宽到 520dp。
 
 我们的真机（换算按 420dpi 估，**实施时用 `adb shell wm size`/`wm density` 读实**，别信换算）：MIX Fold 4 外屏 1080×2520 ≈ 411×960dp → 竖屏 compact×expanded，横屏 expanded×compact；内屏 2224×2488 ≈ 847×948dp → **expanded×expanded**（若系统密度取 440 则 809dp = medium，所以双栏阈值**不要卡 840**，见 7.2）。真平板（E3 一直没到位，实施计划 R8）按同表处理。
 
@@ -366,7 +498,7 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | **双栏** | **width ≥ 720dp** 且 height ≥ medium | 左对话 + 右舞台；舞台宽 `clamp(320, 42%, 440)`（现状 `min(400, 42%)` 放宽上限）；语音层只覆盖**左栏**，右栏舞台同步显示主卡（舞台=卡的大视图，同 HMI `ContextualStage` 场景判定：地图族→地图、天气→天气、提醒→日程、其余→焦点卡） |
 | 横屏车载 | width expanded × height compact + 行车档 | §6 横屏行车布局 |
 
-双栏阈值取 720 而不是 840：折叠内屏密度不确定（7.1），而**「内屏展开一定双栏」是用户对折叠屏的基本预期**，宁可 medium 高段也给双栏。
+双栏阈值 720 的依据改成**内容约束**而不是「为了折叠屏一定双栏」：`chatMinWidth 360 + stageMinWidth 320 + gap 24 (+ 铰链/安全区) ≈ 704–740dp`——达到内容可用宽度才双栏。折叠内屏密度不确定（7.1）只是说明为什么不能卡 840，不是阈值本身的理由。
 
 ### 7.3 折叠姿态（book / tabletop）
 
@@ -400,6 +532,13 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 - **TalkBack**：光球 `accessibilityRole="button"` + label 随 Presence 变（「小舟，在听」）；转写区与回答区 `accessibilityLiveRegion="polite"`；Dock 进入时 `AccessibilityInfo.announceForAccessibility`；卡片按钮补 role/label。
 - **对比与字号**：token 层落地后「大字」= 1.15× 文字 + 1.1× 目标 + 行高；浅色主题下胶囊/Dock 用不透明底（坑账 §9.36：压在不可控内容上的浮层一律不透明——语音层压在变暗的对话上算可控，用玻璃；Dock 压在列表上，用不透明）。
 
+### 8.1 长按之外的输入路径与三条补项（v2.1）
+
+- **系统字号 200% 的真实重排**：RN `allowFontScaling` 默认开，文字会跟系统缩放，但固定高度容器（输入框 38dp、胶囊 26dp、Dock 按钮 32dp）今天会裁字——B1 在 200% 下截图过一遍：能重排的重排（Dock / 语音层 / 卡），不能重排的用 `maxFontSizeMultiplier=1.3` 封顶并保证仍 ≥ 4.5:1 对比（小字）/ 3:1（大字）。
+- **减少透明度 / 高对比度**：读 `AccessibilityInfo.isReduceTransparencyEnabled()`（Android 上无原生开关则给 App 内设置项）⇒ 全部材质回落 G0/G1-tint（§5.11）。
+- **ASR partial 节流播报**：TalkBack 下按稳定短句（服务端 partial 的「稳定前缀」）播报，不逐 token——否则读屏会不断打断自己。
+- **轻点切换**：TalkBack / Switch Access 下光球轻点 = 开始/停止（§5.1.1），长按永远不是唯一入口。
+
 ---
 
 ## 9. 出 App 在场（U5，跟着 M5；本轮只定形态）
@@ -407,7 +546,7 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | 机制 | 平台事实 | 我们怎么用 | 前提 |
 |---|---|---|---|
 | **Live Updates**（`Notification.ProgressStyle`） | Android 16（API 36）起对三方开放：`POST_PROMOTED_NOTIFICATIONS` + `setRequestPromotedOngoing` + 必须 ongoing、有 `contentTitle`、不用 RemoteViews（§14 [S-A1]）；真机 Android 16 ✓ | 长任务（沿途充电规划 / 商户订单 / 提醒倒计时 / 导航接续）作为进度式通知常驻状态栏与锁屏——**它就是我们能用的「实况窗 / 超级岛」** | 前台服务（M5）；Android <16 回落普通 ongoing 通知 |
-| **默认数字助理角色**（`VoiceInteractionService` + `ROLE_ASSISTANT`） | AOSP 公开机制，三方可申请；**设置路径**「设置 → 应用 → 默认应用 → 默认数字助理」；触发靠系统手势/电源键设置（§14 [S-A2]）。**HyperOS 上电源键是否只绑小爱 = 未验**（§13 Q5） | 长按/手势直接升起语音层（跳过冷启动进对话页）；实现是一个原生 Service 壳 + deeplink `xiaozhou://voice` | 原生模块（B3 重建）；真机验证角色是否可选 |
+| **默认数字助理角色**（`VoiceInteractionService` + `ROLE_ASSISTANT`） | AOSP 公开机制，三方可申请；**设置路径**「设置 → 应用 → 默认应用 → 默认数字助理」；触发靠系统手势/电源键设置（§14 [S-A2]）。**HyperOS 上电源键是否只绑小爱 = 未验**（§13 Q5） | 长按/手势直接升起语音层（跳过冷启动进对话页）；实现是一个原生 Service 壳 + deeplink `xiaozhou://voice` | 独立 spike 分支构建（B3′，不进主线、不发版）；真机验证角色是否可选；**只在前台且已解锁时响应，进入语音层后仍需一次手势才开麦**（§12.2） |
 | **QS Tile**（`TileService`） | 三方可用 | 下拉一键「小舟」→ 语音层 | 原生 Service |
 | **App Shortcuts** | 三方可用（`expo-quick-actions` 或 config plugin） | 长按图标：「说话」「车况」「今日提醒」 | 无需重建（config plugin 需 prebuild） |
 | **小组件** | 三方可用（`react-native-android-widget`） | 光球 + 一句今日摘要 + 车况三格 | B5 再评估 |
@@ -443,18 +582,20 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 |---|---|---|---|---|---|
 | **B1 在场与锚** | U1 + U3 | `presence.ts` + 测试；光球三新态；状态胶囊；Focus Dock 四项；确认倒计时精确调度；Onboarding 上品牌；token 层骨架；键盘避让第一步；`/state-gallery` 调试屏 | 否（全 JS） | 3–4d | — |
 | **B2 语音层** | U2 | Voice Sheet（PTT / 唤醒 / S2S 三入口）；S2S 轮沉淀（`appendS2sTurn` + 角标）；边缘极光；主卡/折叠卡；follow-up chips；视觉抓帧反馈 + 先落气泡；回声提示；播报三档 | 否 | 4–5d | B1 |
-| **B3 原生一次重建** | （U4/U5 的原生前提） | `expo-haptics`；折叠姿态模块；（若需）`react-native-keyboard-controller`；默认助理角色的 Service 壳（**只注册不启用**，等真机验证） | **是（一次）** | 2d + 一趟构建 | B1；坑账 §9.43 验 `PackageList.java` |
+| **B3 原生一次重建** | （U4/U5 的原生前提） | `expo-haptics`；折叠姿态模块；（若需）`react-native-keyboard-controller`；`expo-blur` 材质 spike（§5.11，不通过就不进主线）。**默认助理角色不再捆在这一趟**——它改 manifest 与 Service，未验证就不该进正式构建，改成独立的兼容性 spike 分支构建（B3′，不发版） | **是（一次）** | 2d + 一趟构建 | B1；坑账 §9.43 验 `PackageList.java` |
 | **B4 形态与行车档** | U4 | 尺寸类 × 姿态布局；舞台抽屉 / 双栏 / tabletop；行车档全套（触发、布局、门禁、动效降级）；无障碍与 reduce-motion；提示音合成 | 否（依赖 B3 的姿态模块，缺席时按 flat 降级） | 4–5d | B1–B3 |
 | **B5 出 App 在场** | U5 | Live Updates / QS Tile / Shortcuts / 小组件 / 角色启用 | 是 | 随 M5 | **M5 前台服务 + 推送** |
 
 **顺序理由**：B1 是所有后续消费面的唯一真相，必须先；B2 用到 B1 的 orb/capsule；B3 把新原生依赖压成一次 22–38 分钟的构建（实施计划 M3-B 的教训：分两次不值当）；B4 的姿态在 B3 缺席时按 flat 降级，所以 B4 不被 B3 阻塞，只是少一种形态。
 
+**B2 → B3/B4 之间加一道闸**（评审建议，采纳）：在 MIX Fold 4 上完成**真人语音轮**（唤醒→说→答→追问）、回声降级、键盘、折叠切换、帧率五项读数，再做一轮 **5 人外部小样本**的「状态识别 + 录音手势」测试（§11.4 的可读性判据在这里取数）；闸不过，B3/B4 不开工——避免状态系统、语音层、折叠屏、行车、材质、无障碍一次整包。
+
 ### 11.2 每批验收（含反向验证，沿用实施计划 §0 纪律）
 
-- **B1**：`presence.test.ts` 逐维断言优先级（反向：交换任意两级优先级 → 对应用例红）；真机：免唤醒开→光球 `armed` 青环可见（截图，`screencap -d`）；唤醒→`listening` 环 + 胶囊「在听…」；危险动作→Dock 出现 + 倒计时递减 + 到期后记录里有「确认已过期」一行（**这条是 P5 的判据**）；断网→`muted` + 「已断开」；`/state-gallery` 13 态全部有样本且深浅主题各一套截图；键盘：Maestro 三条 online 流去掉 `hideKeyboard` 仍通过。
-- **B2**：真人说一句（R3 同类，需泓舟）→ 语音层升起 → 转写大字 → 回答流式 → 8s 追问窗环递减 → 收起后对话记录里两条气泡逐字等于层里显示的；S2S 挡位走一轮（M4 挂账「端到端未验」在此一并）→ 记录里出现带「端到端」角标的两条；`card_group` 两卡 → 主卡在上、「还有 1 张 ›」可展开；「这是什么」→ 用户气泡**先于**相机出现（时间戳比对）；打字提问在「自动」档不出声、语音提问出声。
+- **B1**：`presence.test.ts` 逐维断言优先级（反向：交换任意两级优先级 → 对应用例红）；真机：免唤醒开→光球 `armed` 青环可见（截图，`screencap -d`）；唤醒→`listening` 环 + 胶囊「在听…」；危险动作→Dock 出现 + 倒计时递减 + 到期后记录里有「确认已过期」一行（**这条是 P5 的判据**）；断网→`muted` + 「已断开」，**且此时已有的确认仍钉在 Dock 上**（多轴的判据）；隐私栏三行读数与实际一致（免唤醒开→「唤醒词待机」；PTT 中→「转文字后上传」；端到端录音中→「原始音频上传中」）；造一条 VAL 拒绝（云栈 debug 注入 `speed_kmh`，说「打开天窗」）→ Dock `safety_blocked` 显示 VAL 原话；`/state-gallery` 13 态 + 7 种降级全部有样本且深浅主题各一套截图；系统字号 200% 下 Dock / 语音层 / 胶囊不裁字；键盘：Maestro 三条 online 流去掉 `hideKeyboard` 仍通过。
+- **B2**：**轻点**光球（免唤醒关着）→ 语音层升起、开始录音、停顿后由服务端静音尾收尾并发送；真人说一句（R3 同类，需泓舟）→ 语音层升起 → 转写大字 → 回答流式 → 8s 追问窗环递减 → **录音中途切后台再回来 / 折叠展开**，记录里的草稿气泡仍在且最终与层里显示的逐字相同；端到端挡位下语音层首行「原始音频将在本轮上传」可见、首次切挡位有显式同意；S2S 挡位走一轮（M4 挂账「端到端未验」在此一并）→ 记录里出现带「端到端」角标的两条；`card_group` 两卡 → 主卡在上、「还有 1 张 ›」可展开；「这是什么」→ 用户气泡**先于**相机出现（时间戳比对）；打字提问在「自动」档不出声、语音提问出声。
 - **B3**：`PackageList.java` 含新 Package；haptics 四种触感在真机各触发一次；姿态 hook 在 Fold 4 半开时报 `isTableTop=true`（`cmd device_state` 无法模拟半开，**要真机手折**）。
-- **B4**：形态矩阵截图（外屏竖 / 外屏横 / 内屏 / 内屏 book / tabletop）；行车档：`driving=true` 帧（云栈 debug 注入）→ 目标 ≥56dp（无障碍扫描器读实）、输入框隐藏、过程区单行；`speed>5` → 确认全屏拦截；reduce-motion 开 → 光球静帧。
+- **B4**：形态矩阵截图（外屏竖 / 外屏横 / 内屏 / 内屏 book / tabletop）；行车档：`driving=true` 帧（云栈 debug 注入）→ 目标 ≥56dp（无障碍扫描器读实）、文本输入按身份（A 常驻 / B 折叠 / C 隐藏）、过程区单行；云栈 debug 注入 `speed_kmh=90` 后说「打开天窗」→ VAL 拒绝 → Dock `safety_blocked` 显示原话、**无全屏层**；reduce-motion 开 → 光球静帧。
 - **B5**：随 M5 计划另立。
 
 ### 11.3 Maestro 扩流（进 `mobile/e2e/`）
@@ -474,6 +615,27 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | 无障碍 | Android Accessibility Scanner 严重项 | 0（现状未测，先取基线） |
 | 回归 | mobile jest / hmi node:test / 4 条既有 Maestro 流 | 全绿，条数只增不减 |
 
+### 11.5 开关、回滚、埋点与可用性闸门（v2.1）
+
+- **开关**：设置页「实验室」三个开关 `uxV2.presence` / `uxV2.voiceSheet` / `uxV2.dock`，缺省开；关掉即回到 v1 形态（状态条 + 气泡内确认）——**v1 代码在 B1/B2 期间不删**，是回滚路径；B4 稳定后再删。
+- **回滚粒度**：按开关，不按构建；纯 JS 批次（B1/B2/B4）出问题 = 关开关，不重装。
+- **埋点**：本端 20 条环形日志记录 `PresenceSnapshot` 变化（时间戳、变化的轴、触发输入），调试屏「主链帧」旁加「在场轨迹」页；**不上行**——meta 的 `__` 键不得上行（§9.33），obs 侧接入是另一件事，挂账。
+- **可用性闸门**：§11.4 八条 + 11.1 的 B2→B3 闸；任一条未达标不进下一批。
+
+### 11.6 追溯矩阵（问题 → 升级点 → 代码 → 测试 → 指标 → 回滚开关）
+
+| 问题 | 升级点 | 代码落点 | 测试 | 指标（§11.4） | 回滚 |
+|---|---|---|---|---|---|
+| P1 光球不承载状态 | U1 | `core/presence/presence.ts`、`ui/aurora/AuroraOrb.tsx`（三新态）、`Composer.tsx` | `presence.test.ts`、`/state-gallery`、Maestro 09 | 首反馈 / 可读性 | `uxV2.presence` |
+| P2 状态散在四条 | U1 | `ChatScreen.tsx`（拆 4 条 → 胶囊）| 同上 | 可读性 | 同上 |
+| P3 S2S 无记录 / P4 转写两处 | U2 | `core/session/store.ts`（draft/final、`appendS2sTurn`）、`features/chat/VoiceSheet.tsx` | `store` 单测 + Maestro 05 | 记录完整性 | `uxV2.voiceSheet` |
+| P5 确认随列表滚走 | U3 | `features/chat/FocusDock.tsx`、`store.ts::syncPruneTimer` | Maestro 06 | 承诺不丢 | `uxV2.dock` |
+| P6 键盘 | U4 | `ChatScreen.tsx` KAV / `app.config.ts` | Maestro 08 | 键盘遮挡 | — |
+| P7 形态 / P8 行车 | U4 | `ui/layout/sizeClass.ts`、`features/chat/DrivingLayout.tsx`、`core/identity.ts` | Maestro 07 + 形态截图矩阵 | 性能 | 身份/行车开关 |
+| P9 卡无优先级 | U2 | `features/cards/CardRenderer.tsx`（`card_group` 主卡） | `cards.test.ts` | — | `uxV2.voiceSheet` |
+| P10 视觉零反馈 | U1/U2 | `features/vision/VisionCapture.tsx`、`ChatScreen.tsx` 先落气泡 | 时间戳比对 | — | — |
+| P12 Onboarding / P13 token / P14 a11y | U1/U4 | `app/onboarding.tsx`、`ui/tokens.ts` | 截图 + Accessibility Scanner | 无障碍 | — |
+
 ---
 
 ## 12. 风险与对策
@@ -488,6 +650,32 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | 新状态让光球「更花」 | 三新态只加环；同一时刻最多一环一辉光；reduce-motion 全降；`/state-gallery` 里并排对照 Figma A-6 截图 |
 | U5 形态定早了 M5 变卦 | U5 只定接口（Dock `task` 数据 → 通知），不写实现 |
 
+### 12.1 音频与服务降级状态矩阵（v2.1，替换单一 `error`）
+
+v2 的 `error`「无在飞轮时短显 4s」太粗——今天代码里已经有六种彼此不同的失败，各有不同的出口：
+
+| `degradation` | 触发（现有信号） | 停留 | 面 | 出口 |
+|---|---|---|---|---|
+| `recoverable_error` | `error` 帧 / 超时 | 4s 胶囊 + 气泡红 | 胶囊 | 「重试」= 重发上一句（HMI `ErrorBubble` 已有） |
+| `transport_unknown` | 探活残留窗内发出的消息（M3-W） | 直到补达/超时 | 气泡灰字「发送状态未知」 | 无（诚实降级，§5.7） |
+| `permission_denied` | 麦 / 摄像头 / 定位权限拒绝（`usePtt.ts:120-124` 等） | **持久**，直到授予 | **Dock** | 「去系统设置」 |
+| `service_degraded` | ASR 回退批处理 / TTS 无声（M4-0 R1）/ S2S 回落三段式（`handsFree.ts:316-319`） | 本轮 | Dock 一行 | 「换引擎」进设置 |
+| `safety_blocked` | VAL 拒绝（§5.3.1） | 直到用户关闭 | **Dock（G0）** | 显示 VAL 原话；身份 A 补「本机不控车」 |
+| `audio_echo_degraded` | voiceLoop 会话级关 barge-in（`_echoSuspected` 累计，AGENTS.md M4-R1） | **持久**，直到本会话结束或用户重开 | **Dock** | 「环境回声较强，本轮已关闭插话；点『停止播报』后再说」+「重新开启插话」 |
+| `fatal` | 配置坏 / token 握手失败 | 持久 | 全屏 G0 | 「重新配置」进 Onboarding |
+
+回声那条尤其要**持久**而不是一次性提示：端上无 AEC 是已知事实，回声防线的修复「仍未真机复验」（AGENTS.md）；默默吞掉用户输入比说出来更不可信。
+
+### 12.2 威胁模型：麦克风 / 摄像头 / S2S / 默认助理角色（v2.1）
+
+| 面 | 威胁 | 现有防线 | v2.1 补的 |
+|---|---|---|---|
+| 麦克风（唤醒词） | 误唤醒采音、TTS 回采自触发正反馈 | 5s 无人声静默回收、`_echoSuspected`→会话级关 barge-in | 隐私栏实时指示 + 一键关；`audio_echo_degraded` 可见 |
+| 麦克风（S2S） | 原始音频离开设备 | 默认三段式、唤醒后交互窗内才采、设置文案 | 开录即告知、首次显式同意、隐私栏标「原始音频上传中」 |
+| 摄像头 | 常驻预览、帧落盘 | 命中触发词才挂载、拍完卸载、不落盘不进记忆 | `looking` 一次快门可见、隐私栏记最近一次激活原因、**不出预览** |
+| 默认助理角色 / deeplink `xiaozhou://voice` | 锁屏或其它 App 拉起后**未经手势就开麦**；锁屏读记忆 | — | 只在**前台且已解锁**时响应，进入语音层后仍需一次轻点/长按才开麦（不自动录）；锁屏面零记忆内容 |
+| 承诺面 | 确认按钮被误触 | 台账服务端权威、危险动作二次确认 | G0 实色 + 取消 flex1/确认 flex2 + 倒计时；UI 不扩大 `allowedChannels` |
+
 ---
 
 ## 13. 假设与可调点（本轮无法当面确认，按最合理默认执行；泓舟一句话即可改）
@@ -495,7 +683,7 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | # | 问题 | 默认取值 | 改了会动哪里 |
 |---|---|---|---|
 | Q1 | 语音层覆盖高度 | 手机竖屏 62%，对话记录变暗仍可见 | §5.2；若要全屏沉浸（小爱式）改 100% + 顶部留记录入口 |
-| Q2 | PTT 轻点行为 | 免唤醒开=进 `listening`；关=提示「按住说话」 | §5.1；也可轻点=切换免唤醒（有误触开麦风险，默认不选） |
+| Q2 | 光球轻点行为 | **v2.1 改**：轻点始终开始录音（服务端 `vad_silence_ms` 收尾），与免唤醒开关无关；播报中轻点=停播 | §5.1.1 |
 | Q3 | 双栏阈值 | 720dp | §7.2 |
 | Q4 | 行车档是否自动进入 | 只由 `driving` 帧或手动；平板三条件成立时只**建议** | §6 |
 | Q5 | 是否申请默认助理角色 | B3 注册 Service 壳、**不启用**，先在 HyperOS 真机验「设置里能否选到 + 电源键/手势是否响应」 | §9 |
@@ -506,12 +694,19 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 | Q10 | 是否把 `relativeTime` 等第二份实现顺手收敛 | 不动（独立共享面批） | — |
 | Q11 | 播报三档的默认值 | 「自动」（语音提问才播报）；旧行为等价于「总是」 | §5.2 规则 8 |
 | Q12 | 「备车 / 导航流转到车」要不要立卡 | **本轮不做**，只在 Dock `task` 留落点；前提有两个都不在 App 侧：手机档是否给 `vehicle.control` 子集（产品 + 安全评审，主设计文档 §4.4 明写不由客户端夹带）、焦点跨会话流转（后端） | §2.4 ⑬、§9 |
+| Q13 | 按住录音的取消手势 | **上滑取消**（微信惯例）；不做「上滑锁定 / 左滑取消」 | §5.1.1；若目标用户群更熟悉 Telegram 式可换，但一个控件只装一套 |
+| Q14 | 真模糊（`expo-blur`）要不要上 | 先 spike（B3），不通过就停在 G1-tint | §5.11 |
+| Q15 | 设备角色（支架 / 可信车载平板）由谁设 | 用户在设置里选；C 身份还要绑定（全 scope token 那条）| §6.0 |
+| Q16 | **后端挂账**：`final.confirm_policy`（risk / allowed_channels / reason_code / expires_at） | UI 先按「touch + voice 都允许 + VAL 拒绝原话钉住」运行 | §5.3.1 |
+| Q17 | **后端挂账**：proactive 用户偏好 API（稍后提醒 / 本类静音 / 今日不再）+ 投递带 `reason` | UI 留按钮位不渲染 | §5.6 |
+| Q18 | 播报三档默认「自动」；行车档只强制安全告警 | 同 Q11，行车档不再「强制开」 | §6 |
 
 ---
 
 ## 14. 参考来源
 
 > 调研日 2026-08-29；公开资料，读数有时效。华为官方支持页 / 开发者文档优先，媒体报道只用于官方页没写的行为描述。
+> **证据等级**（v2.1 补）：**A** 官方开发者文档 = [S-H16 白皮书][S-H17][S-H20][S-X9][S-X10][S-X15][S-A1][S-A2 前两条][S-A3][S-F1]；**B** 官方营销/支持页 = [S-H3][S-H4][S-H5 首条][S-H6][S-H9 首条][S-H10][S-H12][S-H15][S-H19 次条][S-H22 次条][S-H24][S-X1][S-X12 次条][S-X20 次条]；**C** 媒体实测/报道 = 其余各条；**D** 推断 = 正文里标「推断」的句子（§2.2 状态视觉一行）。凡是 C/D 级支撑的机制（如「悬浮态」的具体形态、超级岛展开 5s 收起的体感）**不作为硬约束**，只作为参照。
 
 **华为 / 小艺**
 - [S-H1] HarmonyOS NEXT 不兼容 APK：<https://cloud.tencent.com/developer/article/2486636>；<https://www.zhihu.com/question/616067090/answer/3156290969>
@@ -572,3 +767,29 @@ Composer 改动（`M/features/chat/Composer.tsx`）：
 
 **项目内**
 - 盘点读数：`mobile/src/**`（2026-08-29 逐行核对，file:line 见 §1）；HMI 光球 `hmi/src/components/aurora/AuroraOrb.tsx`、`hmi/src/aurora.css`；Figma Make 导出 `docs/design/【新】座舱Agent-HMI-A-1 Design System.zip`（`guidelines/Guidelines.md` §10 光球、§触控目标）与 `A-6 Conversation States.zip`（六态 + 行车开关）。
+- v2.1 核实用到的源码：`orchestrator/edge/val.py:353-421`（安全门控 / `_is_driving`）、`llm-gateway/http_server.py:394`（`vad_silence_ms`）、`hmi/src/s2sClient.mjs:31,250-252`（`turn.transcript`）、`proactive/governor.py:1,154-167`（免打扰 / 负荷 / 频控在服务端）、`mobile/package.json`（无 `expo-blur`）。
+
+---
+
+## 15. 外部评审采纳记录（2026-08-29，评审结论「附条件通过」）
+
+| # | 评审意见 | 裁决 | 理由 / 落点 |
+|---|---|---|---|
+| P0-1 | Presence 单枚举 → 多轴 Snapshot | **采纳** | 失败案例（待确认 + 断网）成立；§4 重写，Dock 读 `commitment[]` 永不被盖 |
+| P0-2 | Composer 手势契约；轻点始终能说；长按 + 锁定 + 取消；滚动冲突；无障碍替代 | **采纳（取消手势除外）** | §5.1.1；`vad_silence_ms` 已在网关透传使「轻点即说」可行。**不采纳**「上滑锁定 / 左滑取消」：中文用户默认是微信的上滑取消，「锁定」的用途由轻点录音覆盖，一个控件不装两套惯例（Q13） |
+| P0-3 | 确认不能由 UI 按车速发明规则；只投影 VAL；去掉全屏拦截 | **采纳** | 源码核实 `val.py::_safety_gate` 已是裁决点、`_is_driving` 已定义、5 km/h 那条 VAL 里没有 ⇒ v2 的两条阈值是第二份判据，删；§5.3.1 + 后端挂账 Q16 |
+| P0-4 | 隐私栏；S2S 开录即告知 + 首次同意；多用户 UX | **采纳前两项，第三项不适用** | §5.10 / §5.2.2。App 端没有声纹（`occupant_id` 恒 `primary`，§2.3 信道约束），身份=token，「未确认说话人 / 访客模式」是座舱端的题；隐私栏只显示「当前：{user}」 |
+| P0-5 | 语音层增量沉淀（draft→final）；S2S `transcriptKind`；副作用必须升级主链 | **采纳** | §5.2 规则 2、§5.2.1、§5.2.2；回答侧本来就是逐 delta 写，转写侧对齐；S2S 唯一工具 `escalate` 是既有红线，这里只是让它**可见** |
+| P0-6 | 材质制度 G0/G1/G2；`expo-blur`；token | **采纳制度，模糊留 spike** | §5.11；`expo-blur` 未安装=新原生依赖，B3 spike 不通过就停在 G1-tint；G2 只给光球/把手/选中 chip |
+| P0-7 | 降级态矩阵；回声降级持久提示 | **采纳** | §12.1，七种降级各有停留与出口；回声那条进 Dock 持久 |
+| P0-8 | 三种产品身份；窗口尺寸不决定权限；行车档不一刀切藏输入/强制 TTS | **采纳** | §6.0 + §6 规则改写；身份来自 token scope + 设备角色 |
+| P1-1 | 语音层自适应 detent | 采纳 | §5.2 规则 3（40/62/78；地图页 40） |
+| P1-2 | Dock 不轮播、钉最高风险最早到期、稳定排序 | 采纳 | §5.3 |
+| P1-3 | 执行回执 | 采纳 | §5.3.2，字段全部来自已有数据；「安全检查」栏留位随 Q16 |
+| P1-4 | 主动消息治理 UI（稍后/静音/安静时段/频控） | **部分采纳** | 「为什么收到」+ 来源/时间 + 锁屏脱敏采纳；频控/负荷/免打扰**不在客户端复制**（`governor.py` 是唯一裁决点）；按用户偏好无 API ⇒ 挂账 Q17 |
+| P1-5 | large / extra-large；720 改成内容约束 | 采纳 | §7.1 / §7.2 |
+| P1-6 | 200% 字号重排；减少透明度；partial 节流 | 采纳 | §8.1 |
+| 章节 | §4.0 / 5.1.1 / 5.2.1 / 5.2.2 / 5.3.1 / 5.10 / 5.11 / 6.0 / 8.1 / 11.5 / 12.1 / 12.2 | 采纳（编号按本文档既有结构落） | 见各节 |
+| 默认值 | Q2 改；上滑取消→锁定/左滑；Presence 多轴；确认只投影 VAL；62% 是 detent；B3 解绑助理角色；来源证据等级；追溯矩阵 | 除「上滑锁定/左滑取消」外全部采纳 | Q2 / §4 / §5.3.1 / §5.2 / §11.1 B3′ / §14 / §11.6 |
+| 顺序 | B1 → B2 → 真机语音轮 + 外部小样本 → B3/B4；U5 留 M5 | 采纳 | §11.1 加闸 |
+| 评审自述限制 | 预览页在评审侧无法加载，视觉/动效未做像素级检查 | 记录 | 视觉判断以 Figma 源与 `/state-gallery` 真机截图为准，不以本方案的伴读页为准 |
