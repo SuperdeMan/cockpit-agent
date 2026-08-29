@@ -1,0 +1,19 @@
+diff --git a/node_modules/react-native-audio-api/android/src/main/cpp/audioapi/android/core/AndroidAudioRecorder.cpp b/node_modules/react-native-audio-api/android/src/main/cpp/audioapi/android/core/AndroidAudioRecorder.cpp
+index adb0512..4fc5359 100644
+--- a/node_modules/react-native-audio-api/android/src/main/cpp/audioapi/android/core/AndroidAudioRecorder.cpp
++++ b/node_modules/react-native-audio-api/android/src/main/cpp/audioapi/android/core/AndroidAudioRecorder.cpp
+@@ -75,6 +75,14 @@ Result<NoneType, std::string> AndroidAudioRecorder::openAudioStream() {
+       ->setFormatConversionAllowed(true)
+       ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
+       ->setSampleRateConversionQuality(oboe::SampleRateConversionQuality::Medium)
++      // [car-agent patch] 平台回声消除（AEC）。上游这里不设 inputPreset，落 Oboe 默认
++      // VoiceRecognition —— 那个源按定义就是「尽量少加工」，AEC/NS 都不施加，于是
++      // 免唤醒回路会把自己的 TTS 播报收进麦、当成用户的下一句，形成正反馈环
++      // （2026-08-29 真机实证：天气答完自己冒出「深圳市。」再答一遍）。
++      // VoiceCommunication 是 VoIP 输入源，平台在这条路上施加 AEC。
++      // ⚠ 它同时带上 NS/AGC，**会改变送进 VAD/KWS 的音频特性**，而唤醒阈值(0.2/2.0)
++      // 是在旧路径上定的 ⇒ 换了这一行之后唤醒率必须重新量，不能沿用旧读数。
++      ->setInputPreset(oboe::InputPreset::VoiceCommunication)
+       ->setDataCallback(shared_from_this())
+       ->setErrorCallback(shared_from_this());
+ 

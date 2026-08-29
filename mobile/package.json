@@ -49,6 +49,7 @@
     "eslint-config-expo": "~57.0.2",
     "jest": "~29.7.0",
     "jest-expo": "~57.0.4",
+    "patch-package": "^8.0.1",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -58,7 +59,8 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "test": "jest"
+    "test": "jest",
+    "postinstall": "patch-package"
   },
   "private": true,
   "expo": {
