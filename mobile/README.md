@@ -111,6 +111,29 @@ powershell -File scripts\fetch_mobile_voice_assets.ps1       # 再拆成 mobile 
   `build_mobile.ps1` 已自动写前者：**x86 模拟器因此装不上也编不出**，验收本来就全在真机。
 - 改了 `metro.config.js` 必须**重启 Metro**，否则真机报「文件不存在」而那个文件明明在。
 
+## 平台回声消除（AEC）——一个 node_modules 补丁（2026-08-29）
+
+`react-native-audio-api` 建 Oboe 输入流时不设 inputPreset，落 Oboe 默认
+`VoiceRecognition`——**那个源按定义就是「尽量少加工」，不施加 AEC**，于是免唤醒回路会把
+自己的 TTS 播报收进麦、当成用户的下一句，形成正反馈环（真机实证）。
+
+修法是一行 `setInputPreset(oboe::InputPreset::VoiceCommunication)`，落在
+**`mobile/patches/react-native-audio-api+0.13.3.patch`**，由 `postinstall` 的
+`patch-package` 自动应用 —— `npm ci` / 新克隆 / CI 都会自动打上，**不需要手动做什么**。
+
+⚠ 两条：
+- **要改 node_modules 一律走 `patch-package`**，不要直接改（它是镜像产物，
+  `robocopy /MIR` 每次同步都会覆盖，且换台机器就没了）。
+- 生成补丁时**必须 `--include` 限定到真正改的那个文件**：
+  `npx patch-package <pkg> --include "<文件名正则>"`。不限定的话它会把包目录里**所有**
+  与发布版的差异都收进去——本项目第一次生成得到 12.5KB / 30 个文件，绝大多数是
+  `downloadPrebuiltBinaries` 下下来的 `.a` 静态库（见上文「预先下载」那条）与 `.DS_Store`。
+  **「包目录里的东西」不等于「这个包的源码」。**
+
+⚠ **改了这个预设，唤醒率与 VAD 端点的旧读数一律作废**：`VoiceCommunication` 连带上
+NS/AGC，改变了送进 VAD/KWS 的音频，而唤醒阈值（0.2/2.0）是在旧路径上定的。
+换预设之后**必须重新量**（2026-08-29 已重量一次：仍能唤醒）。
+
 ## e2e（Maestro，M3-5）
 
 **状态：4/4 全部跑通**（2026-08-28 真机，`4/4 Flows Passed in 7m 43s`）。
