@@ -4323,12 +4323,38 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
 
 ### 6.1 第 1 批「遗留修正与判据层」（T1–T2）
 
-- **开工基线**（日期）：`check_android_env.ps1` 退出码；`npm test` suites / tests；`npm run typecheck`；工作树状态、`origin/main..HEAD`；是否分树。
-- **T1** —— commit：读数（新增用例数 / 反向验证两条各红在哪 / 真机 200% 截图与两条并存截图）。
-- **T2** —— commit：读数（四条反向验证各红在哪 / 画廊深浅两套 / 真机五项：armed 连拍、D3 红胶囊、隐私栏 PTT 行琥珀、空闲「关」非琥珀、TalkBack 读法）。
-- **收口读数**：`npm test` / `tsc`。
+- **开工基线**（2026-08-30 15:20，主工作树，**未分树**）：`check_android_env.ps1` 退出码 0（18 pass / 0 warn / 0 fail）；`npm test` = **29 suites / 315 tests 全绿**；`npm run typecheck` = **0 error**；`git status --short` 空；`git log --oneline origin/main..HEAD | wc -l` = **17**。
+- **T1** —— commit `a751390`（8 文件，`--stat` 与计划 Files 逐条对上：4 新建 + 4 修改，148+/10−）。新增用例 **11 条**（`actionSummary` 5 + `dockLabel` 5 + `sessionStore` 1）。反向验证两条：① `actionSummary` 退回 B1 取法（`messages[at].text`）⇒ `actionSummary.test` **5 条全红** + `sessionStore` 新用例红，`dockLabel.test` 仍绿——计划预期写的是「前三条」，实测第 4/5 条（空串兜底、空白归一）同样只由被改的那一行决定，**不是红错地方**；② `dockLabelMode` 的 `>=` 改 `>` ⇒ 只红 `pref=normal × 1.3 → hidden` 那一行。真机：`b2-01-font100-dock.png`（默认字号，Dock 标题=「打开后备箱」**用户原话**、右侧标签渲染）／`b2-01-font200-dock.png`（200%，标题=「解锁车门」两行完整、**标签不渲染**）／`b2-01-attention-two.png`（两条并存，两条助手气泡逐字相同、Dock 钉「打开后备箱」+「另有 1 个待处理 ›」）／`b2-01-attention-card2.png`（取消第一条后第二张卡标题=「解锁车门」⇒ **两张卡逐字不同**）／`b2-01-note-expired.png`（**D1 第二个出口**：留痕行「⏱「解锁车门」的确认已过期」而非那句通用句）。标签有无是**程序化数的**（原图 x[650,1030) 亮度≥135）：默认 2112/1038 像素 vs 200% **18** 像素，通道自检=默认那两张必须>300 才读结论。
+- **T2** —— commit `128896a`（8 文件，129+/43−；比计划 Files **多一个** `mobile/test/presenceSeen.test.ts`，见「本批踩的坑」①）。新增用例 **5 条**（privacy 四档改写净 +1、`MIC_LABEL` +1、armed 3s +1、D3 +1、画廊守卫 +2 中的净增）。四条反向验证**各红各自那条**（每条都先 `grep` 核对变异真落盘）：
+  1. `errorLive` / `armedCapsule` 两行对调 ⇒ 只红「error 在免唤醒开着（armed）时也出红胶囊（D3）」；
+  2. `armedCapsule` 去掉时间条件 ⇒ 只红「armed 胶囊只在进入待机 3s 内显示（D2）」+ 画廊「armed 两条样本」守卫；
+  3. `MIC_LABEL.cloudAsr.tone` 改 `'plain'` ⇒ 只红「MIC_LABEL 四档齐全 / 只有两个上传档琥珀」；
+  4. `mic` 派生 `micActive ? 'cloudAsr'` 改回 `'edge'` ⇒ 只红「privacy 轴四档」+ 画廊「四档各有样本」守卫。
+  画廊深浅各一套（`b2-02-gallery-dark-1/2.png`、`b2-02-gallery-light.png`，样本 26 条）：`armed`（胶囊「说「小舟小舟」」）／`armed-quiet`（**无胶囊**、青环仍在）／`error-hf-on`（**红「出错了」**）三条并列可见；四档 `mic=off`(idle) / `edge`(armed 三条) / `cloudAsr`(listening-ptt、recognizing-partial) / `cloudAudio`(listening-s2s) 全部有样本。
+  真机五项：
+  - **armed 3s ✅**（`b2-02-armed-f09..f13.png`）。以 logcat `KwsModule: KWS loaded`（15:56:13.386）为零点连拍 14 帧、每帧记墙钟；胶囊区（原图 x[384,700) y[2085,2150)）亮像素：+0.36s=0（未进 armed）→ **+1.13s / +1.92s / +2.79s / +3.70s = 1352（胶囊在）** → **+4.63s = 82（消失）**。同帧青环（Composer 光球 r76–81 的 G−R）：+8.76 / +8.38 / +7.90 / +7.92 / **+8.48**，对照 idle（免唤醒关）**−0.98** ⇒ **胶囊 3s 后消失、青环全程在**。⚠ 青环半径是**按半径逐环差分找出来的**（armed−idle 在 r=79 差 +12.87），第一次凭尺寸估的 r52–68 差值只有 1.6、不足以下结论。
+  - **D3 红胶囊 ✅**（`b2-02-d3-error-capsule.png` / `b2-02-d3-after-4s.png`）。免唤醒开（顶栏采集点青色）+ 发一句 + busy 期点「■ 打断」：胶囊区红像素 1135 连续 4 帧（≈3.6–4.5s，与 `ERROR_SHOW_MS=4000` 一致）显示**红「已打断」**，第 5 帧起归零且**无 armed 胶囊**（进 ARMED 已超 3s ⇒ D2/D3 两条判据同时生效）。
+  - **空闲「关」非琥珀 ✅**（`b2-02-rail-idle.png`，D5）。隐私栏麦克风行：`edge` 档「唤醒词待机（端侧监听，不上传）」RGB(193,194,197) R−B=−4；关掉免唤醒后 `off` 档「关」RGB(196,196,199) R−B=**−3** ⇒ 都不是琥珀（B1 那条 `capture !== 'armed'` 会把空闲态的「关」涂琥珀）。同帧顶栏采集点随之**不渲染**。
+  - **cloudAsr 档琥珀 ✅**（`b2-02-dot-edge-teal.png` / `b2-02-dot-cloudasr-amber.png`）。按住光球期间（后台跑 `input swipe` 长按、前台连拍）顶栏采集点：按住前 RGB(100,200,184) G−R=+100=**青 teal(edge)**，按住中 RGB(222,155,59) R−B=+163=**琥珀(cloudAsr)**，4 帧一致。
+  - **隐私栏 PTT 行琥珀 ⬜ 未验**：需要「按住光球 + 点顶栏健康点」同时发生，**adb 单点注入做不到**（B1 第 4 批同一条坑）；非流式档松手后的 `finalizing` 窗口在无人声输入时太短，隐私栏动画放完已回 `edge`（实拍到过渡帧，其「最近一次：麦 16:37 按住说话」证明 PTT 确实录了）。判据与已验的采集点**同源**（都读 `MIC_LABEL[snapshot.privacy.mic]`，一个取 `.long` 一个取 `.short`，`tone` 同一份），但那一行本身**没有直接取到读数**。
+  - **TalkBack 读屏 ⬜ 未验**：`uiautomator dump` 在对话主屏只拿到 **1 个节点**（e2e/README 已记：常驻动画屏永不 idle），content-desc 取不到；未装 TalkBack（改系统无障碍设置不在本批授权内）。
+- **收口读数**：`npm test` = **31 suites / 331 tests 全绿**（315 → 331，净增 16 = T1 11 + T2 5；suites +2 = 两个新测试文件）；`npm run typecheck` = **0 error**。两个 commit，`origin/main..HEAD` = **19**（未推送）。
 - **本批踩的坑**：
+  1. **计划的 Files 漏了一个文件**：`mobile/test/presenceSeen.test.ts` 也构造 `PresenceInput`，加必填 `hfFsmChangedAt` 后它先在 `tsc` 红。判据是**先 grep 全部构造方**再改类型（`grep -rn "PresenceInput" src test`），不要照 Files 清单照单全收。同一轮 grep 还查出 `state-gallery.tsx` 把 `privacy.mic` 拼进字符串——那个**不受**加档影响，「看起来是消费方」和「会被类型波及」是两回事。
+  2. **`git commit -- <paths> -m '…'` 在本机 git 下把 `-m` 当 pathspec**（计划两条命令都是这个写法，直接跑必报 `pathspec '-m' did not match`）。改成 **`git commit -m '…' -- <paths>`**。
+  3. **一条超长 heredoc 把 `presence.ts` 写成了半份**（bash 报 `here-document ... delimited by end-of-file`，文件停在第 187 行、末尾是半句 `'cloudAudio`）。当场 `git checkout` 还原，改成**增量 patch + 每个锚点断言唯一命中**，再用 `git diff | grep '^-'` 核对「只删了预期的 3 行」。教训与「一次失败的编辑脚本会留下半份改动」同族——**整文件替换的失败模式是静默的**，增量 patch 至少会在锚点上报错。
+  4. **计划锚点漂移**：`sessionStore.test.ts` 末尾的 describe 已不是计划说的 `UX v2.1 B1-4：承诺面的账本侧`（别的会话在它后面加了 `B1-16 前置：离线期间暂停看门狗`）。按「先 `grep -n "^describe("` 核结构」把新用例搬回正确的组。
+  5. **判据量错了对象，读数照样返回**（本批三次）：① 判 busy 时量的是**发送按钮**（它永远在，打断按钮在它左边）⇒ 四帧都报「不 busy」而屏上明明有「■ 打断」；② 标签让位第一次取的 y 范围窄了 40px ⇒ 两张都报 0 像素，**默认字号那张本该有**，这是通道坏了不是结论；③ 并发 tap 打断了 swipe、隐私栏根本没开，判据仍从对话气泡的青色文字里算出一个「非琥珀」。三次都是**先做通道自检**（拿一张肉眼确认过的图跑同一判据）才救回来的。
+  6. **发中文的路子**：`adb shell input text` 不支持中文；Maestro IME 装在设备上但 `am broadcast` 接口不对；**Maestro CLI 已不在本机**（`~/.maestro` 只剩 `tests/` 日志与 `deps/`，没有 `bin/`）。最终走 `run-as` + 拉改推 `databases/RKStorage`（AsyncStorage）把 `quickCommands` 前两条临时换成「打开后备箱」「解锁车门」，取证完**整库还原**并逐字比对（`两键逐字一致: True`）。滚设置页时误触把「回答长度」改成了「详细」，也是靠这次比对发现并改回的——**改过设备设置就要有一次逐字段 diff 收尾**。
+  7. **MSYS 路径转换又踩两次**：`adb push … /data/local/tmp/…` 被翻成 `D:/Program Files/Git/data/local/tmp/…`；`/tmp/x.png` 在 bash 与 Windows python 眼里不是同一个目录。一律 `MSYS_NO_PATHCONV=1` + scratchpad 绝对路径。
+  8. **Metro 已有一个在跑**（8081 被占，`npx expo start` 非交互模式直接退出）。先 `netstat` + `Get-CimInstance Win32_Process` 核对那个 PID 的 CommandLine **确实是本仓的 mobile 目录**，再复用它——不另起第二个（两个 dev server 时「App 连的是哪个」就说不清了）。
+  9. `xiaozhou://state-gallery` 深链在 dev-client 里**没跳转**（`am start` 只报 "delivered to top-most instance"），改从设置页「实验室」分区的入口进。
+  10. 折叠屏两块屏都要试：本轮活跃的是**外屏** `4630947090644569220`（1080×2520），内屏 `4630946481727302019` 折叠着、截出来是全黑。
 - **遗留 / 给第 2 批的话**：
+  - 上面两格 ⬜（隐私栏 PTT 行、TalkBack 读屏）**没有取到读数**，不要当成已验。想补的话：PTT 行需要多点触控（`sendevent` 或真人手指）；读屏 label 可以在 T3 给 `PresenceCapsule` 加 `onPress` 时顺带用 Maestro（要先把 CLI 装回来）或真人开 TalkBack 验一次。
+  - `mobile/e2e/artifacts/` 是 **gitignore** 的，19 张截图只在本机；文件名已逐条记在上面。
+  - T3 会动 `presence.ts` 的 `input` / 新增 `sheetDetent`：**本批新加的 `hfFsmChangedAt` 是必填字段**，再有新的 `PresenceInput` 构造方（`fixtures.ts` 的 `sheet-*` 三条）记得带上，且 `presenceSeen.test.ts` 的 `base()` 也在名单里。
+  - 本批**没有动** `AGENTS.md`（T15 的事），**没有 push**；`origin/main..HEAD` 19 个提交里有别的会话的，推送前按计划 §0 第 3 条念一遍谁的东西在里面。
 
 ### 6.2 第 2 批「语音层骨架与记录沉淀」（T3–T5）
 
