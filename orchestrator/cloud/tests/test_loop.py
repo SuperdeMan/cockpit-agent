@@ -40,10 +40,12 @@ class _Executor(DagExecutor):
         super().__init__(call_agent_fn=_unused_call)
         self.results_by_step = results_by_step
         self.runs = []
+        self.plans = []
         self.done_seeds = []
 
     async def run(self, plan, ctx, done=None):
         self.runs.append([step.id for step in plan.steps])
+        self.plans.append(plan)
         self.done_seeds.append(set((done or {}).keys()))
         for step in plan.steps:
             yield self.results_by_step[step.id]
@@ -62,6 +64,42 @@ def _collect(controller, **kwargs):
     async def run():
         return [event async for event in controller.run(**kwargs)]
     return asyncio.run(run())
+
+
+def _replan_case(replan_steps, *, user_text, goal="LLM goal", results=None,
+                 skill_effects=None):
+    planner = _Planner([
+        ReplanDecision(
+            done=False,
+            steps=replan_steps,
+            skill_effects=list(skill_effects or []),
+        ),
+    ])
+    scripted_results = {
+        "s1": StepResult("s1", StepStatus.OK, speech="已取得初始事实"),
+        **{
+            step.id: StepResult(step.id, StepStatus.OK, speech="不应执行")
+            for step in replan_steps
+        },
+        **(results or {}),
+    }
+    executor = _Executor(scripted_results)
+    controller = LoopController(
+        planner, executor, _Aggregator(), None,
+        max_iters=1, budget_ms=5000,
+    )
+    events = _collect(
+        controller,
+        goal=goal,
+        initial_plan=Plan(
+            steps=[Step(id="s1", agent_id="info", intent="manual.query")],
+            complexity="adaptive",
+            skills=["full:safety-guide"],
+            exemplars=["full:manual#safety@lex"],
+        ),
+        agents=[], ctx=PlanContext(), user_text=user_text,
+    )
+    return planner, executor, events
 
 
 def test_observation_summary_carries_known_step_intent():
@@ -126,6 +164,88 @@ def test_adaptive_loop_executes_initial_batch_then_replans_until_done():
     assert planner.observations[0][-1]["data"] == {"available": False}
     assert events[-1]["speech"] == "best effort"
     assert suspended == []
+
+
+def test_question_replan_edge_write_uses_user_text_not_llm_goal_and_never_dispatches():
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    planner, executor, events = _replan_case(
+        [step], user_text="红色机油灯亮了怎么办", goal="关闭故障灯",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert planner.observations[0][-1]["step_id"] == "s1"
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"] == "best effort"
+
+
+def test_question_replan_confirmed_cloud_step_never_dispatches():
+    step = Step(
+        id="r1", agent_id="mcp-bridge", intent="luckin.order",
+        deployment="cloud", kind="agent", require_confirm=True,
+    )
+
+    _, executor, events = _replan_case(
+        [step], user_text="红色机油灯亮了还能继续开吗",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"] == "best effort"
+
+
+def test_question_replan_cloud_read_still_dispatches():
+    step = Step(
+        id="r1", agent_id="manual", intent="manual.query",
+        deployment="cloud", kind="agent",
+    )
+
+    _, executor, _ = _replan_case(
+        [step], user_text="红色机油灯亮了怎么办",
+        results={"r1": StepResult(
+            "r1", StepStatus.OK, speech="请停车检查",
+        )},
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+
+
+def test_directive_replan_edge_write_still_dispatches():
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    _, executor, _ = _replan_case(
+        [step], user_text="关闭双闪",
+        results={"r1": StepResult("r1", StepStatus.OK, speech="已关闭")},
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+
+
+def test_mixed_question_replan_keeps_read_and_preserves_observation_chain():
+    read = Step(id="r1", agent_id="manual", intent="manual.query")
+    write = Step(
+        id="r2", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    planner, executor, _ = _replan_case(
+        [read, write], user_text="红色机油灯亮了怎么办",
+        results={"r1": StepResult("r1", StepStatus.OK, speech="停车检查")},
+        skill_effects=["repair:keep-read"],
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+    assert executor.plans[1].steps[0] is read
+    assert executor.plans[1].skill_effects == ["repair:keep-read"]
+    assert executor.plans[1].skills == ["full:safety-guide"]
+    assert executor.plans[1].exemplars == ["full:manual#safety@lex"]
+    assert [obs["step_id"] for obs in planner.observations[0]] == ["s1"]
 
 
 def test_adaptive_selfcheck_flag_is_raised_only_on_the_first_replan():

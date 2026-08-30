@@ -7,7 +7,8 @@ import time
 from typing import AsyncIterator
 
 from .executor import DagExecutor
-from .models import Plan, PlanContext, StepResult, StepStatus
+from .models import Plan, PlanContext, ReplanDecision, StepResult, StepStatus
+from .planning import PlanBuilder
 from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
@@ -172,6 +173,22 @@ class LoopController:
                 replans += 1
                 if decision.done or not decision.steps:
                     break
+                kept, blocked = PlanBuilder._filter_question_side_effect_steps(
+                    decision.steps, user_text,
+                )
+                if blocked:
+                    logger.warning(
+                        "Question-shaped utterance replanned into side-effecting "
+                        "step(s) %s; dropping before dispatch",
+                        [step.intent for step in blocked],
+                    )
+                if not kept:
+                    break
+                decision = ReplanDecision(
+                    done=False,
+                    steps=kept,
+                    skill_effects=list(decision.skill_effects),
+                )
                 current = decision.to_plan(goal)
                 # T2 知识继承贯通挂起链（2026-07-27 评审三批）：to_plan 新建的 Plan
                 # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
