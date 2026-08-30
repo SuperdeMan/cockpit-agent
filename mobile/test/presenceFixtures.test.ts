@@ -76,3 +76,9 @@ test('降级样本的「真栈可产」标记必须与 usePresence 的实际产�
     .map((f) => f.label)
   expect(lying).toEqual([])
 })
+
+test('语音层三档 detent 各有一条 input=voice-sheet 的样本（B2 T3）', () => {
+  const open = presenceFixtures().filter((f) => f.snapshot.input === 'voice-sheet')
+  const detents = new Set(open.map((f) => f.snapshot.sheetDetent))
+  expect([0.4, 0.62, 0.78].filter((d) => !detents.has(d as 0.4 | 0.62 | 0.78))).toEqual([])
+})

@@ -9,6 +9,8 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { Msg } from '@shared/types.ts'
 
+import { isProactive } from '../../core/session/turnView'
+
 import { AuroraOrb, StreamCursor, ThinkDots, type OrbState } from '../../ui/aurora'
 import type { Palette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
@@ -95,7 +97,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
     })
   }
 
-  const proactive = msg.proactiveKind !== undefined || msg.text.startsWith('💡 ')
+  const proactive = isProactive(msg)
   // 光球态与动画开关：活跃中（思考/流式/过程区推进）才动，历史气泡静态
   const active = !!(msg.pending || msg.streaming || msg.processActive)
   const orbState: OrbState = msg.pending || msg.processActive ? 'thinking' : msg.streaming ? 'speaking' : 'idle'

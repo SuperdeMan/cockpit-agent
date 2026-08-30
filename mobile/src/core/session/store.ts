@@ -29,6 +29,20 @@ export const REQUEST_TIMEOUT_MS = 95000
 // 不再是「最坏晚 30s 才出账」——那正是 P5「按钮无解释消失」的一半成因
 const PRUNE_INTERVAL_MS = 30_000
 
+/** 这一轮是谁发起的。语音层只对语音发起的轮保持升起（方案 §5.2 规则 1：文字不升层）；
+ *  播报三档的「自动」也读它（T12）。S2S 逃逸轮回到主链后来源仍记 s2s——它是语音发起的。 */
+export type TurnSource = 'text' | 'ptt' | 'handsfree' | 's2s'
+
+/** 轮元数据：键=助手气泡 id。`Msg` 是共享类型不能加字段，所以并列存（B1 计划 §0 第 5 条） */
+export interface TurnMeta {
+  sentAt: number
+  source: TurnSource
+}
+
+export interface SendOpts {
+  source?: TurnSource
+}
+
 export interface PendingOp {
   id: string
   ts: number
@@ -49,6 +63,8 @@ export interface SessionState {
    *  UI 标「发送状态未知」；终态帧到达或超时即清。**不自动重发**（重发同一 request_id
    *  意味着车控可能执行两次，M3-W 定案） */
   uncertainIds: string[]
+  /** 轮元数据（键=助手气泡 id）：这一轮谁发起的。语音层的开合判据读它（方案 §5.2 规则 1） */
+  turnMeta: Record<string, TurnMeta>
 }
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
@@ -127,6 +143,7 @@ export class SessionCore {
       lastEmotion: '',
       queued: 0,
       uncertainIds: [],
+      turnMeta: {},
     }))
   }
 
@@ -165,7 +182,7 @@ export class SessionCore {
   // ── 发送侧（App.tsx:680-876 对照）───────────────────────────────
 
   /** 用户消息入口（Composer/卡片按钮 send_text 共用）：加用户气泡 → 前置路由 → 派发 */
-  send(text: string, metaExtra?: Record<string, string>): void {
+  send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
     this.appendMessage({ id: uid(), role: 'user', text })
     const decision = routeSend(
       text,
@@ -200,21 +217,21 @@ export class SessionCore {
       void this.deps.location
         .refreshMeta()
         .catch(() => ({}) as Record<string, string>)
-        .then((loc) => this.dispatch(decision.text, false, loc, decision.metaExtra))
+        .then((loc) => this.dispatch(decision.text, false, loc, decision.metaExtra, undefined, opts.source ?? 'text'))
       return
     }
-    this.dispatch(decision.text, false, undefined, decision.metaExtra)
+    this.dispatch(decision.text, false, undefined, decision.metaExtra, undefined, opts.source ?? 'text')
   }
 
   /** 确认条按钮（App.tsx:850-876 对照）：哪一条由 operationId 决定 */
-  confirmReply(reply: '确认' | '取消', operationId?: string): void {
+  confirmReply(reply: '确认' | '取消', operationId?: string, opts: SendOpts = {}): void {
     this.appendMessage({ id: uid(), role: 'user', text: reply })
     const pendingText = this.store.getState().pendingLocationText
     if (pendingText !== null) {
       this.store.setState({ pendingLocationText: null })
       if (reply === '确认') {
         void this.deps.location.enable().then((loc) => {
-          if (loc) this.dispatch(pendingText, false, loc)
+          if (loc) this.dispatch(pendingText, false, loc, undefined, undefined, opts.source ?? 'text')
           else
             this.appendMessage({
               id: uid(),
@@ -225,7 +242,7 @@ export class SessionCore {
         })
       } else {
         // 与 HMI 的差异（实施计划 M1-2 明写）：拒绝 → 照发不带坐标，由后端诚实降级
-        this.dispatch(pendingText, false)
+        this.dispatch(pendingText, false, undefined, undefined, undefined, opts.source ?? 'text')
       }
       return
     }
@@ -234,7 +251,7 @@ export class SessionCore {
       this.store.setState((s) => ({ pendingOps: closePendings(s.pendingOps, [operationId]) }))
       this.syncPruneTimer()
     }
-    this.dispatch(reply, true, undefined, undefined, operationId)
+    this.dispatch(reply, true, undefined, undefined, operationId, opts.source ?? 'text')
   }
 
   /** U2 真打断（App.tsx:664-678）：发网关取消 + 本地把当前在飞轮（FIFO 头）标「已打断」 */
@@ -256,6 +273,7 @@ export class SessionCore {
     locationMeta?: Record<string, string>,
     metaExtra?: Record<string, string>,
     operationId?: string,
+    source: TurnSource = 'text',
   ): void {
     const frame = buildUserFrame(text, this.deps.sessionId, {
       isConfirmation,
@@ -278,6 +296,7 @@ export class SessionCore {
       pending: true,
       traceId: frame.meta.trace_id,
     })
+    this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [pendingId]: { sentAt: Date.now(), source } } }))
     this.armWatchdog(pendingId)
   }
 

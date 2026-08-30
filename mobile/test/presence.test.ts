@@ -7,7 +7,7 @@
 //     评审那个案例（待确认时断网，确认被盖掉）在这里有一条专门的断言
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
-import { MIC_LABEL, derivePresence, type PresenceInput } from '@/core/presence/presence'
+import { MIC_LABEL, derivePresence, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
 
 const NOW = 5_000_000
 
@@ -258,5 +258,53 @@ describe('now 透传（Dock 倒计时的唯一时钟）', () => {
     const a = derivePresence(base({ now: NOW }))
     const b = derivePresence(base({ now: NOW + 1000 }))
     expect(b.now - a.now).toBe(1000)
+  })
+})
+
+describe('语音层开合与 detent（B2 T3，方案 §5.2 规则 1/3/4、§4.3）', () => {
+  const thinking = { turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 } }
+  const hfOn = { hfEnabled: true, hfUsable: true }
+  const v = (over: Partial<VoiceFacts> = {}): VoiceFacts => ({ turnSource: 'ptt', override: null, answer: false, card: false, ...over })
+
+  test('三入口收音中都升层（PTT / 免唤醒 / S2S），不需要 voice 事实', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING', voicePipeline: 's2s' })).input).toBe('voice-sheet')
+  })
+
+  test('语音发起的轮在飞 / 播报 / 追问窗内层保持升起；**文字轮不升层**（voiceLoop 头注「文本不进 FSM」的 UI 版）', () => {
+    expect(derivePresence(base({ ...thinking, voice: v() })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ speaking: true, voice: v({ turnSource: 'handsfree' }) })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'FOLLOWUP', voice: v({ turnSource: 'handsfree' }) })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text' }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...thinking })).input).toBe('composer')
+  })
+
+  test('追问窗关闭（回 ARMED、agent idle）→ 收起', () => {
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'ARMED', voice: v({ turnSource: 'handsfree', answer: true }) })).input).toBe('composer')
+  })
+
+  test('attention 态下不自动收起；用户下拉才收；下拉之后再开口又升', () => {
+    const att = { pendingOps: [{ id: 'op1', ts: NOW, summary: '打开后备箱' }] }
+    expect(derivePresence(base({ ...att, voice: v() })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...att, voice: v({ override: 'dismissed' }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...att, ptt: 'recording', voice: v({ override: 'dismissed' }) })).input).toBe('voice-sheet')
+  })
+
+  test('点按胶囊 = 打开语音层（override=open），哪怕是文字轮', () => {
+    expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text', override: 'open' }) })).input).toBe('voice-sheet')
+  })
+
+  test('detent：只录音 0.4 / 有回答 0.62 / 有主卡或长任务 0.78', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).sheetDetent).toBe(0.4)
+    expect(derivePresence(base({ ...thinking, voice: v({ answer: true }) })).sheetDetent).toBe(0.62)
+    expect(derivePresence(base({ ...thinking, voice: v({ answer: true, card: true }) })).sheetDetent).toBe(0.78)
+    const longTask = { turn: { pending: false, streaming: false, processActive: true, processLabel: '规划路线', processSince: NOW - 12_000 } }
+    expect(derivePresence(base({ ...longTask, voice: v() })).sheetDetent).toBe(0.78)
+  })
+
+  test('turnSource 透传（S2S 告知条读它）；没有 voice 事实 = text', () => {
+    expect(derivePresence(base()).turnSource).toBe('text')
+    expect(derivePresence(base({ voice: v({ turnSource: 's2s' }) })).turnSource).toBe('s2s')
   })
 })

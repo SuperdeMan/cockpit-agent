@@ -1,5 +1,6 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake'
 import { Stack } from 'expo-router'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useEffect } from 'react'
 import { useStore } from 'zustand'
 
@@ -28,7 +29,9 @@ export default function RootLayout() {
     }
   }, [settings.keepAwake])
   return (
-    <>
+    // RNGH 的 `GestureDetector`（B2 语音层下拉收起）在 Android 上必须在这个根容器之内，
+    // 而 expo-router 不包根、App 此前也没有任何 RNGH 手势 ⇒ B2 T3 在这里补上（零依赖、不重建）
+    <GestureHandlerRootView style={{ flex: 1 }}>
       {/* M4-6 视觉抓帧的采集端。挂在根布局但**平时什么都不渲染**——
           它只在真要抓帧的那一瞬挂载 CameraView，拍完立刻卸载（=关摄像头）。
           放根布局是因为抓帧可能由任何路由上的一句话触发。 */}
@@ -50,6 +53,6 @@ export default function RootLayout() {
       <Stack.Screen name="state-gallery" options={{ title: '调试 · 状态画廊' }} />
       <Stack.Screen name="map" options={{ title: '地图' }} />
       </Stack>
-    </>
+    </GestureHandlerRootView>
   )
 }

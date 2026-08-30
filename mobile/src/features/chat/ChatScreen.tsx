@@ -17,6 +17,8 @@ import type { Msg } from '@shared/types.ts'
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { ensureWired, type Wired } from '../../core/session/wiring'
+import type { SendOpts } from '../../core/session/store'
+import { currentTurn } from '../../core/session/turnView'
 import { settingsStore } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
 import { MIC_LABEL } from '../../core/presence/presence'
@@ -32,8 +34,9 @@ import { FocusDock } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
 import { PresenceCapsule } from './PresenceCapsule'
 import { PrivacyRail } from './PrivacyRail'
+import { VoiceSheet } from './VoiceSheet'
 import { useHandsFree } from './useHandsFree'
-import { usePresence } from './usePresence'
+import { usePresence, type SheetOverride } from './usePresence'
 import { usePtt } from './usePtt'
 
 // 免唤醒 FSM 态 → 用户看得懂的一行字与一个点的颜色。
@@ -204,16 +207,16 @@ function ChatBody({
   //  ⚠ 已知代价：抓帧要等相机冷启动（真机几百毫秒），这段时间用户自己那条气泡还没上屏。
   //    HMI 靠 `__bubbled` 先上屏再补发，App 侧的 SessionCore 没有那个入口 ⇒ 记为 M4 残留。
   const onSend = useCallback(
-    (text: string, metaExtra?: Record<string, string>) => {
+    (text: string, metaExtra?: Record<string, string>, opts?: SendOpts) => {
       const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
       if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
         activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
         void captureVisionFrame(cfg.audioUrl).then((fid) =>
-          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }),
+          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }, opts),
         )
         return
       }
-      core.send(text, metaExtra)
+      core.send(text, metaExtra, opts)
     },
     [core, settings.visionEnabled, cfg.audioUrl],
   )
@@ -227,7 +230,7 @@ function ChatBody({
   const ptt = usePtt({
     audioUrl: cfg.audioUrl,
     sessionId: wired.session.sessionId,
-    onFinal: (text) => onSend(text),
+    onFinal: (text) => onSend(text, undefined, { source: 'ptt' }),
   })
   // 免唤醒（M4-4）。**定稿走的是同一个 onSend**——前置路由/位置闸/候选拦截/视觉抓帧
   // 一条都不能因为「这句是免唤醒说出来的」而绕过。
@@ -236,13 +239,19 @@ function ChatBody({
     sessionId: wired.session.sessionId,
     enabled: settings.handsFree,
     needConfirm: pendingOps.length > 0,
-    onSend: (text) => onSend(text),
+    onSend: (text) => onSend(text, undefined, { source: 'handsfree' }),
     onNotice: setNotice,
     onCancelTurn: () => core.cancelCurrentTurn(),
   })
 
+  // 语音层的显式操作（点胶囊打开 / 下拉收起），钉在当前轮上；换轮自动失效（判据在 derivePresence）
+  const [sheetOverride, setSheetOverride] = useState<SheetOverride | null>(null)
+  const turn = useMemo(() => currentTurn(messages), [messages])
+  const latestTurnId = turn.assistant?.id ?? ''
+  const [listHeight, setListHeight] = useState(0)
+
   // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
-  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4) })
+  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
   const v2 = settings.uxV2Presence
   const dock = settings.uxV2Dock
   // 回滚分支的光球态（v1 推导，逐字照搬 B1 之前 Composer 里的那一行）：
@@ -326,6 +335,7 @@ function ChatBody({
 
   const chatColumn = (
     <View style={{ flex: 1 }}>
+      <View style={{ flex: 1 }} onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}>
       {messages.length === 0 ? (
         <Welcome
           p={p}
@@ -357,6 +367,19 @@ function ChatBody({
           contentContainerStyle={{ paddingVertical: 10 }}
         />
       )}
+      {v2 ? (
+        <VoiceSheet
+          p={p}
+          fontScale={settings.fontScale}
+          snapshot={snapshot}
+          turn={turn}
+          containerHeight={listHeight}
+          onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
+          onInterrupt={onInterrupt}
+          onSend={(t) => onSend(t)}
+        />
+      ) : null}
+      </View>
       {/* 免唤醒状态条（M4-4）。**只在真开着的时候占高度**——一个常驻的空条会让
           「现在到底在不在听」这件事变得看不出来，而这正是常开麦最该让用户看见的事。
           文案给的是 FSM 态的人话版，不是 FSM 名字：用户不需要知道 ARMED 是什么。 */}
@@ -423,7 +446,14 @@ function ChatBody({
       ) : null}
       {/* 状态胶囊：一次只说一件「此刻」的事。**B1 不接 onPress**——它是 26dp +
           accessibilityRole="text"，接了点按就同时违反读屏与热区两条（第 2 批遗留⑧） */}
-      {v2 ? <PresenceCapsule p={p} fontScale={settings.fontScale} snapshot={snapshot} /> : null}
+      {v2 ? (
+        <PresenceCapsule
+          p={p}
+          fontScale={settings.fontScale}
+          snapshot={snapshot}
+          onPress={() => setSheetOverride({ turnId: latestTurnId, mode: 'open' })}
+        />
+      ) : null}
       <Composer
         p={p}
         quickCommands={settings.quickCommands}
@@ -434,6 +464,7 @@ function ChatBody({
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
+        orbAnimated={snapshot.input !== 'voice-sheet'}
       />
     </View>
   )

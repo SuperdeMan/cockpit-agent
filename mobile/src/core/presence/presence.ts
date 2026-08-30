@@ -20,6 +20,21 @@ import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
 import { sortCommitments, type DockItem } from './commitment'
 
+import type { TurnSource } from '../session/store'
+
+/** 语音层要的三个事实（B2 T3）。全部来自记录与 UI 的既有状态，收集器只搬运：
+ *  turnSource=最近一轮的发起方（turnMeta）；override=用户对这一轮的显式操作（点胶囊 / 下拉）；
+ *  answer/card=当前轮助手气泡有没有字、有没有卡。没有这个入参 = 文字世界（层只在收音时升）。 */
+export interface VoiceFacts {
+  turnSource: TurnSource
+  override: 'open' | 'dismissed' | null
+  answer: boolean
+  card: boolean
+}
+
+/** 自适应 detent（方案 §5.2 规则 3）：只录音 / 有回答 / 有主卡或长任务 */
+export type SheetDetent = 0.4 | 0.62 | 0.78
+
 export type OrbState =
   | 'idle'
   | 'thinking'
@@ -92,6 +107,8 @@ export interface PresenceInput {
   driving: boolean
   identity: Identity
   user: string
+  /** 语音层的三个事实（B2 T3）；缺省=文字世界，层只在收音时升 */
+  voice?: VoiceFacts
 }
 
 export interface PresenceSnapshot {
@@ -112,6 +129,10 @@ export interface PresenceSnapshot {
   dim: boolean
   capsule?: { text: string; tone: 'neutral' | 'accent' | 'amber' | 'red'; live?: boolean }
   input: 'voice-sheet' | 'composer' | 'none'
+  /** 语音层高度档（input==='voice-sheet' 时有意义） */
+  sheetDetent: SheetDetent
+  /** 最近一轮的发起方（S2S 告知条读它；没有轮 = text） */
+  turnSource: TurnSource
 }
 
 /** reconnecting 胶囊延迟（沿用 ChatScreen 弱网横幅那条 3s：重连是常态，每次都弹会让真断网没人看） */
@@ -223,8 +244,17 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else if (errorLive) capsule = { text: i.lastError!.text, tone: 'red' }
   else if (armedCapsule) capsule = { text: '说「小舟小舟」', tone: 'neutral' }
 
-  const input: PresenceSnapshot['input'] =
-    capture === 'listening' || capture === 'recognizing' ? 'voice-sheet' : 'composer'
+  // ── 语音层开合（方案 §5.2 规则 1/3/4、§4.3）──
+  // 收音中一律升（三入口共用）；语音发起的轮在飞 / 播报 / 追问窗 / 等确认时保持升起；
+  // 用户下拉过这一轮就不再自动升（再开口另算）；点胶囊 = 显式打开（哪怕是文字轮）。
+  // PTT 轮没有追问窗：播报结束、agent 回 idle 即收（方案只给免唤醒定义了 8s 窗）。
+  const voice = i.voice
+  const capturing = capture === 'listening' || capture === 'recognizing'
+  const voiceTurnLive = !!voice && voice.turnSource !== 'text' && (agent !== 'idle' || hasAttention)
+  const sheetOpen = capturing || voice?.override === 'open' || (voice?.override !== 'dismissed' && voiceTurnLive)
+  const input: PresenceSnapshot['input'] = sheetOpen ? 'voice-sheet' : 'composer'
+  const sheetDetent: SheetDetent =
+    commitment.some((c) => c.kind === 'task') || !!voice?.card ? 0.78 : voice?.answer ? 0.62 : 0.4
 
   return {
     now: i.now,
@@ -240,5 +270,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
     dim: transport === 'reconnecting',
     ...(capsule ? { capsule } : {}),
     input,
+    sheetDetent,
+    turnSource: voice?.turnSource ?? 'text',
   }
 }

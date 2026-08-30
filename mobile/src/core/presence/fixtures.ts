@@ -48,6 +48,17 @@ export function presenceFixtures(): PresenceFixture[] {
     mk('attention-confirm', { pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }] }),
     mk('attention-two', { pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }, { id: 'op2', ts: NOW - 5_000, summary: '要解锁车门吗？' }], queued: 1 }),
     mk('attention-location', { pendingLocation: true }),
+    // B2 T3 语音层三档 detent：只录音 0.4（listening-ptt 那条就是）/ 有回答 0.62 / 有主卡 0.78；
+    // 外加一条「用户下拉过」证明 dismissed 真的收得起来
+    mk('sheet-answering', {
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'ptt', override: null, answer: true, card: false },
+    }),
+    mk('sheet-card', { speaking: true, voice: { turnSource: 'handsfree', override: null, answer: true, card: true } }),
+    mk('sheet-dismissed', {
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'ptt', override: 'dismissed', answer: true, card: false },
+    }),
     mk('looking', { visionCapturing: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
     mk('offline-with-confirm', { connStatus: 'closed', connChangedAt: NOW - 30_000, pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }], queued: 2 }),

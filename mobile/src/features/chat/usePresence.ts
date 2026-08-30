@@ -5,6 +5,7 @@ import { useStore } from 'zustand'
 
 import { actionSummary } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
+import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
 import { speechController } from '@/core/voice/speech'
 import { isVisionCapturing, subscribeVisionCapturing } from '@/core/vision/frame'
@@ -15,10 +16,17 @@ import {
   RECONNECTING_GRACE_MS,
   type Degradation,
   type PresenceSnapshot,
+  type VoiceFacts,
 } from '@/core/presence/presence'
 
 import type { HandsFreeUi } from './useHandsFree'
 import type { PttHandle } from './usePtt'
+
+/** 用户对语音层的显式操作，钉在某一轮上（换轮即失效） */
+export interface SheetOverride {
+  turnId: string
+  mode: 'open' | 'dismissed'
+}
 
 export interface UsePresenceOpts {
   core: SessionCore
@@ -26,13 +34,14 @@ export interface UsePresenceOpts {
   ptt: PttHandle | null
   /** token 对应的 user_id（隐私栏「当前：xx」）；ServerConfig 里没有就显示 token 尾 4 位 */
   user: string
+  sheetOverride: SheetOverride | null
 }
 
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
 const TICK_MS = 1000
 
-export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceSnapshot {
-  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds } = useStore(core.store)
+export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceOpts): PresenceSnapshot {
+  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
   // 播报中 / 抓帧中：订阅式信号（Task 5）
@@ -67,6 +76,16 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
 
   // 最近一条错误（4s 短显）
   const lastError = useMemo(() => pickLastError(messages, (k) => seen.firstSeen(k)), [messages])
+
+  // 语音层的三个事实（判据在 derivePresence）：这一轮谁发起、用户有没有下拉过、有没有字/卡
+  const turn = currentTurn(messages)
+  const latestTurnId = turn.assistant?.id ?? ''
+  const voice: VoiceFacts = {
+    turnSource: (latestTurnId && turnMeta[latestTurnId]?.source) || 'text',
+    override: sheetOverride && sheetOverride.turnId === latestTurnId ? sheetOverride.mode : null,
+    answer: !!turn.assistant?.text,
+    card: !!turn.assistant?.uiCard,
+  }
 
   // 在飞轮 + 过程区
   const active = [...messages].reverse().find((m) => m.role === 'assistant' && (m.pending || m.streaming || m.processActive))
@@ -137,6 +156,7 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     driving: !!active?.driving,
     identity: settings.deviceRole,
     user,
+    voice,
   })
 }
 

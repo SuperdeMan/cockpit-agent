@@ -601,3 +601,22 @@ describe('UX v2.1 B1-16 前置：离线期间暂停看门狗（第 3 批遗留�
     core.dispose()
   })
 })
+
+describe('UX v2 B2-3：轮来源（语音层开合的事实住在记录里）', () => {
+  test('send 不带 opts → turnMeta[助手气泡].source=text；带 source=ptt → ptt；confirmReply 同理', () => {
+    const { core } = newCore()
+    // ⚠ 语料刻意避开「天气 / 附近」——它们命中 routeSend 的位置征询闸（consent 分支不派发），
+    // 于是 turnMeta 一个键都不会有，红的是测试不是判据（B1 M1 那条同族教训）
+    core.send('讲个笑话')
+    core.send('再讲一个', undefined, { source: 'ptt' })
+    const [a1, a2] = assistants(core)
+    const meta = core.store.getState().turnMeta
+    expect(meta[a1.id].source).toBe('text')
+    expect(meta[a2.id].source).toBe('ptt')
+    expect(meta[a2.id].sentAt).toBeGreaterThan(0)
+    core.confirmReply('确认', 'op1', { source: 'handsfree' })
+    expect(meta[assistants(core)[2].id]).toBeUndefined() // 上面的 meta 是旧快照
+    expect(core.store.getState().turnMeta[assistants(core)[2].id].source).toBe('handsfree')
+    core.dispose()
+  })
+})
