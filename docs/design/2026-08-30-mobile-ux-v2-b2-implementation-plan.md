@@ -51,6 +51,27 @@
 
 **B1 §6.4 出账表在 B2 的去向**（接手时逐条核，不复述）：① 200% 下 Dock 标题被挤 → T1；② 隐私栏颜色与文案不同源 → T2；③ `gfxinfo` CPU 侧不可信 → T15 改用 `framestats` 逐帧口径；④ `missing_slots` 分层措辞 → 已在 §0 第 5 条写清；⑤⑥ 隐私栏第二/三行活证 → T2 补第二行（PTT 行，单人可取）、T15 补第三行（端到端，随 S2S 轮）；⑦ Accessibility Scanner 未装 → T15（**装 APK 到泓舟设备要授权**，没授权就记 ⬜）；⑧ `looking` 白环无静态取证 → T10 随「先落气泡」用录屏取（§0 第 4 条的路径坑已定位）。B1 前三批仍开的两条：`handsFree.test.ts` 的 `Jest did not exit` 噪声（非本批引入，T6 动该文件时看一眼是否是未清的定时器）；浅色下光球对比度（给 B3 视觉批，B2 不动）。
 
+**第 3 批附加项（第 2 批 §6.2 遗留转入；⓪ 先于 T6、①②③ 随所在任务顺手，各自单独提交）**：
+- ⓪ **取证探针落进仓库**：第 1/2 批的颜色类读数一直没做 PNG 反滤波（§6.2 坑⑨，只有 filter=0 的扫描线碰巧对）。把带 defilter 的最小解码器落到 `mobile/e2e/tools/png_probe.py`（纯 stdlib：解 IDAT + 五种 filter；命令行给矩形 → 输出平均 RGB、亮像素计数、两图逐字节差异比）——上一批的脚本若只在 scratchpad 就重写；单独一个 commit。之后所有颜色 / 亮度类读数都经它，逐字节差异类读数不受影响。
+- ① **T7 附加：语音层壳底不够实**（§6.2 遗留：记录里的气泡透过 `Glass` 与层内文字重叠，`b2-03-capsule-attention.png`）。方案 §5.11 给语音层外壳的是 G1 frosted，token 已有 `GLASS.frosted.tint = 0.58`——`VoiceSheet` 的壳底改成 `p.bg` 同色系实色叠 `GLASS.frosted.tint` 的不透明度（`Glass` 组件的 `glassBg` 是 5.6%，那是卡壳用的），不够读再把暗区 0.4 → 0.6；真机同一场景截图对比、取可读的那个，写进 §6.3 并注明「这是 §5.11 G1 的 tint 落地，不是新裁决」。方案 §5.2「记录变暗 40%、仍可见」的「仍可见」保留。
+- ② **T11 附加：S2S 挡位下 FSM 判回声丢弃要显式取消 provider 的轮**（§6.2 遗留：真机实录 `深圳市宝安区当前音。`——主链 TTS 被麦收回、S2S 转写成用户话并自答一整轮）。`handsFree.ts` 的 `S2S_LOCAL_HANDLED` 只有 `exit_word / filler_dismissed / false_wake_dismissed`，**没有 `echo_dismissed`**——FSM 把这句判成回声进 FOLLOWUP 时，provider 不知道、照答。加进去 + `handsFree.test.ts` 一条（**App 侧一行，共享 FSM 不动**）：
+  ```ts
+  test('B2-11 附加：S2S 挡位下 FSM 判回声丢弃 → 显式 cancelTurn（provider 不知道我们把这句判掉了，会自答一整轮）', async () => {
+    const cancelled: number[] = []
+    const { ctl } = makeCtl()
+    await ctl.enable()
+    // 假 S2S 客户端：只看 cancelTurn 有没有被叫到（真的 S2SClient 要 WebSocket，jest 里没有）
+    ctl.s2s = { cancelTurn: () => cancelled.push(1) }
+    ctl.vl.onMetric('echo_dismissed')
+    expect(cancelled).toEqual([1])
+    ctl.vl.onMetric('endpoint_merge') // 对照：不在名单里的事件不取消
+    expect(cancelled).toEqual([1])
+  })
+  ```
+  ⚠ 这只堵「判出来的回声」；AEC 那一行没覆盖 S2S 采集路径这件事（§6.2 遗留）仍是 B3/B4 或 hmi 侧的，本批零原生变更。
+- ③ **T6 真机顺手两条**：a) 第 2 批 ⬜ 的「打断留痕灰字」——busy 窗口只有 5–15s、adb 往返押不准（§6.2 坑⑩），改用「讲一个三百字的故事」把流式窗口拉长到 30s+ 再点「■ 打断」，取 `b2-04-interrupted.png`；b) 上滑取消不能用 `input swipe`（它没有按住阶段、长按判定过不了），用 `adb shell input motionevent DOWN x y` → `sleep 0.5` → `input motionevent MOVE x y-300` → `input motionevent UP x y-300` 三段式注入，或真人手指。
+- ④ **开工前 `git log --oneline origin/main..HEAD` 念一遍**：第 2 批中途 `origin/main` 被另一条会话推进、把本线的 T3 一并带上去了（§6.2 遗留第一条）——共享 main 上「请不要推我的」不是可执行防线，念一遍至少知道谁的东西在里面。
+
 **每批开工的固定五步**（写进新会话的第一条提示词）：
 1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批的 T1/T2 纯 jest 可先做，真机截图在收口时补）；
 2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
