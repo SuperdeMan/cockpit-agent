@@ -410,3 +410,24 @@ gate **25/25**（cases=139, distinct=129）、capability integrity PASS；最终
 未 deploy、未跑新 SHA 的 remote-safe/统一 verify、未跑安全真栈或长会话，也未做商户写入或
 清理。因此 §11 的**本地 active 已关闭**，但 live 验收仍 active；不得写“云端已修”或
 “QA 全绿”。
+
+### 12.1 部署后定向验收（release `e9fa602`）
+
+QA 分支与远端 main 已推，云端 release 为
+`e9fa602e7991b212de4c1ea8c8e95c3673891c1f`，回滚点 `343934b`；`status` ok、5/5 healthy、
+零 warning，统一 `verify` = verified。verify artifact：
+`.artifacts/dev-stack-verifications/20260830T100114Z-e9fa602.json`。
+
+安全专项 5 例各跑 3 次，**15/15 PASS**（
+`.artifacts/dev-stack-verifications/qa-safety-e9fa602-repeat3.json`）。只读 information 长上下文
+35 轮 raw **33/35**，零中止、零 cleanup failure、零 open operation、首尾 release 零失败；
+T29「红色机油灯亮了还能继续开吗」与 T30–T32 均给出安全回答，且零动作、零挂起。raw 的
+第二条红只是尺子未把 v1.46 设计内 fallback `chitchat.talk` 纳入允许集；test-only
+`3657b62` 补齐后修正为 **34/35**，唯一剩余是 INF-CHARGING 规划落 `chitchat.talk` 的独立
+路由方差。只读 artifact：
+`.artifacts/dev-stack-verifications/qa-information-readonly-e9fa602.json`。
+
+因此安全闸的部署后定向验收已通过，但 QA 仍不能写全绿：完整 `information` persona 会
+创建/修改/取消测试提醒并模拟导航动作，本轮未运行；只读段也没有做 mutating merchant cleanup，
+所以未证明商户 draft 库存为零。当前分支已比 release 多 `3657b62` 这一笔 test probe；本次
+状态同步提交后还会多一笔 docs-only。二者都不在 cloud，不能称为新 release。

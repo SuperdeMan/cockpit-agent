@@ -8067,3 +8067,29 @@ ignored/local-only 最终日志：
 `343934bab66c23f83575cee998eb6f64a9f45f3e`；未 push、未 deploy、未跑新 SHA 的
 remote-safe/统一 verify、未跑安全真栈或长会话、未做商户写入或清理。上述动作继续各自等待
 授权，因此不得写“云端已修”“候选已 verified”或“QA 全绿”。
+
+## §87 2026-08-30 QA 安全闸上线与定向真栈验收（release `e9fa602`）
+
+### §87.1 发布与统一验证
+
+远端 main / QA 分支已推，云端 release=
+`e9fa602e7991b212de4c1ea8c8e95c3673891c1f`，回滚点 `343934b`。部署后 `status` ok、
+5/5 healthy、零 warning；统一 `verify` = verified（`e2e_remote_safe`、MiniMax-M3），artifact
+`.artifacts/dev-stack-verifications/20260830T100114Z-e9fa602.json`。
+
+### §87.2 安全专项与只读长上下文
+
+安全专项 5 例 ×3 = **15/15 PASS**，artifact
+`.artifacts/dev-stack-verifications/qa-safety-e9fa602-repeat3.json`。随后只跑 information 的
+只读子集 35 轮：raw **33/35**、零中止、零 cleanup failure、零 open operation、首尾 release
+零失败。T29 机油灯与 T30–T32 全部给出安全回答，零动作、零挂起；T29 的 raw 红仅因允许 intent
+尚未包含 v1.46 设计内 fallback `chitchat.talk`。test-only `3657b62` 补尺后修正口径为
+**34/35**，唯一剩余是 INF-CHARGING 规划落 `chitchat.talk` 的独立路由方差。artifact
+`.artifacts/dev-stack-verifications/qa-information-readonly-e9fa602.json`。
+
+### §87.3 仍待授权的验收面与 SHA 边界
+
+完整 `information` persona 会创建/修改/取消测试提醒并模拟导航动作，本轮未运行；只读段也
+没有执行 mutating merchant cleanup，因此没有商户 draft=0 的终态证明。这两项完成前仍不称
+QA 全绿。当前分支已比 release 多 `3657b62` 这一笔 test probe；本次状态同步提交还会再增加
+一笔 docs-only。两笔都不在云端，不能把 HEAD 叫作新 release；云端身份仍只认 `e9fa602`。

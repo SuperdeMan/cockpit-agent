@@ -103,20 +103,24 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > **CI annotation 每 step 只保留 10 条**——红灯数到 9~10 就假定被截断，
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
-**当前部署形态（2026-08-30 本轮只读复核）**：`dev-stack.local` = **`target=cloud`**。
+**当前部署形态（2026-08-30 QA 安全闸部署后复核）**：`dev-stack.local` = **`target=cloud`**。
 
-- **云端已部署对象**：release **`343934bab66c23f83575cee998eb6f64a9f45f3e`**（QA 轮全量收尾批），
-  `status` = ok、**5/5 healthy**、零 warning；回滚点 `538335f2cd958be0159ce47cad818d051bce68d1`。
-  同日连发四跳：`7da0d1b` → `61160a4` → `c3ec022` → `343934b`（后三跳是 I-024
-  的三层，每层部署后真栈仍红，第三层才通）。本轮只读状态 artifact
-  `.artifacts/qa-safety-confirmed-write/cloud-status-predeploy-343934-utf8.log`
-  SHA256=`890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`，为 ignored/local-only。
-- **本地安全闸审计对象**：本地全量、门禁与 targeted 测试绑定的代码与契约 SHA 为
-  **`d89db30e8ef8f0cd08aaa4aaa688f8bdbcc390de`**；安全确认写闸已在本地闭合 build/replan/
-  escalate/fallback、`response_only` 执行契约与跨挂起 `safety_origin_text`，但**不在 cloud**，
-  尚未 push/deploy，也没有该 SHA 的统一 `verify`、remote-safe、安全真栈或 `information`
-  长会话证据。后续文档提交只做状态同步，**不承接、不重新声称上述测试**。引用“云上跑的
-  是什么”仍只认 `343934b`。
+- **云端已部署对象**：release **`e9fa602e7991b212de4c1ea8c8e95c3673891c1f`**（QA 安全闸），
+  `status` = ok、**5/5 healthy**、零 warning；回滚点
+  `343934bab66c23f83575cee998eb6f64a9f45f3e`。统一 `verify` = **verified**
+  （`e2e_remote_safe`、MiniMax-M3），根工作树 artifact
+  `.artifacts/dev-stack-verifications/20260830T100114Z-e9fa602.json`。
+- **安全闸部署后定向读数**：`--repeat 3` 的 5 个 safety case 共 **15/15 PASS**，artifact
+  `.artifacts/dev-stack-verifications/qa-safety-e9fa602-repeat3.json`。只读 information 长上下文
+  **35 轮 raw 33/35**，零中止、零 cleanup failure、零 open operation、首尾 release 零失败；
+  T29 机油灯与 T30–T32 全部给出安全回答，且零动作、零挂起。`3657b62` 将 v1.46 设计内出口
+  `chitchat.talk` 补入尺子后，修正口径为 **34/35**；唯一剩余是 INF-CHARGING 规划落
+  `chitchat.talk` 的独立路由方差。artifact
+  `.artifacts/dev-stack-verifications/qa-information-readonly-e9fa602.json`。
+- **证据边界**：完整 `information` persona 仍未跑（会创建/修改/取消测试提醒并模拟导航动作）；
+  本轮只读段也没有做 mutating merchant cleanup，故尚未证明商户 draft 库存为零。当前工作分支
+  已比 release 多 `3657b62` 这一笔 test probe；本次状态同步提交后还会再多一笔 docs-only。
+  **这两笔都不在 cloud，不是新 release。** 引用“云上跑的是什么”仍只认 `e9fa602`。
 
 ⚠ **上一轮 main 的 `git push` 已推（不含本地安全候选）**（2026-08-30，泓舟当轮指示）：
 `b673750..4a5af78` 共 18 个提交，
@@ -310,7 +314,7 @@ reminder 域劫持**（「别提醒我，继续开就行」→「你具体不想
 > ⑦ 跑全量单测的固定口径（importlib / PATH / 干净 env / 隔离）**见下方「跑全量的
 > 固定口径」块**——那里是唯一版本，这里不再抄。
 
-**最新本地候选全量基线（2026-08-30，QA 安全确认写闸最终本地闭合；未部署）**：测试绑定的
+**安全闸本地测试绑定基线（2026-08-30；代码子集后来随 `e9fa602` 上线，但本地证据不转借给 release）**：测试绑定的
 代码 SHA `d89db30e8ef8f0cd08aaa4aaa688f8bdbcc390de` 上，以 `TZ=UTC0`、
 `PYTHONIOENCODING` 未设置运行 `python -X utf8 -m pytest -q -n 8 --dist worksteal` =
 **7769 passed / 32 skipped / 13 warnings**（556.27s，rc=0）。Cloud+registry 聚焦集
@@ -701,7 +705,7 @@ raw 幻觉、未声明 fallback 与 `unstable_results` 被资格闸拒绝。后�
 商户 SP1/2/3 的**业务面需营业时间复跑**（`if not open_stores` 在产生选店卡之前短路，
 夜里物理上跑不了，判据已改成自己说出这一点）。
 
-#### QA 安全确认写闸收尾（2026-08-30，**本地实现与验证完成，待外部动作/真栈**）
+#### QA 安全确认写闸收尾（2026-08-30，**已部署且安全定向验收通过；完整 information/商户清理证明待授权**）
 
 本地实现已经闭合所有 dispatch-bound 出口：focused/normal build、adaptive replan、Agent
 escalate mini-plan 与 fallback 共用同一问句副作用过滤；capability `response_only` 从 manifest
@@ -714,10 +718,11 @@ replan、挂起与恢复保持最初请求，legacy 来源未知的副作用 fai
 本地审计证据：Cloud+registry 聚焦 **231 passed**；此前 Cloud 全族 **1267/1**；smoke
 **13/0**、Skill 22/22、Exemplar 314、strict 85/85（676/634）、gate 25/25（139/129）、
 capability PASS；全量 **7769 passed / 32 skipped / 13 warnings**（556.27s，`TZ=UTC0`、
-`PYTHONIOENCODING` 未设置），全部 rc=0。**未完成**：列出并授权 push、
-deploy 摘要与 `--apply`、新 SHA 的 `status` + 统一 `verify`/remote-safe、干净会话 3/3、原
-`information` persona、商户草稿/挂起/探针副作用清理核验。故本行仍是活跃验收项，
-不能写成云端已修或 QA 全绿。权威设计见
+`PYTHONIOENCODING` 未设置），全部 rc=0。release `e9fa602` 已 push/deploy，`status` 5/5 healthy、
+统一 `verify` verified；安全专项 5 例 ×3 = **15/15 PASS**，只读 information 长上下文按 v1.46
+尺子修正后 **34/35**，安全 T29–T32 零动作零挂起。**未完成**：完整 `information` persona；
+mutating merchant cleanup 与商户 draft=0 证明。故本行仍是活跃验收项，不能写成 QA 全绿。
+当前 HEAD 比 release 多 test probe，本文提交后还会再多 docs-only；二者都不是新 release。权威设计见
 [`2026-08-30-qa-safety-confirmed-write-guard.md`](docs/design/2026-08-30-qa-safety-confirmed-write-guard.md)。
 
 #### QA 轮剩余项收尾批（2026-08-29，**六条主机制已落地，云端验证见 §4.0**）
@@ -935,7 +940,7 @@ INF-TRIP T20（C11 shadow 要两周分布）、INF-MANUAL-SAFETY T23（同日反
 | **Android 陪伴端 App（新客户端 `mobile/`，2026-08-23 立项）** | **M0–M3 全部收口**（08-25~08-28），**M4 首轮已落地**（08-28，泓舟当轮裁定不卡 M4、范围取全量含 KWS）。读数：`tsc` 0 / mobile jest **229** / hmi node:test **288** / APK **275.9MB**（砍 x86 两 ABI 省 231MB）/ Maestro e2e `4/4 Flows Passed in 7m 43s`。**M4 真机已证**：ORT 跑 silero（载入 210ms、端点事件出）、sherpa KWS 引擎正确（直灌 7/7 命中）、**真实唤醒词经真实声学路径命中**（`小舟小舟@14055ms`）、免唤醒开关开→麦真开/关→麦真释放、设置页三条红线文案在屏上。**M4-R1（08-28 晚）已收口三项**：① `KwsModule` 释放竞态 —— **锁内重读 `spotter`/`stream`** 治野指针、**`release` 前 `join`** 治「release→load 造出两条解码线程」，**两条治的是两个问题、缺一条都不够**（M4 首轮把它们写成一条修法的两半）；② 原生单例冲突 —— 改成 `kws.ts` 的**模块级所有权 + 当场报错**（原生维持零策略），**「已在注释里写明」不是修法**；③ **M4-6 视觉抓帧真机已验**。M4-R1 读数：`tsc` 0 / mobile jest **234**（+5 `kwsOwnership`）/ lint 与改前**逐字相同**（stash 对照）——⚠ 但 `mobile/` **没提交 eslint 配置**、`npm run lint` 会自己生成一个，且 **CI 不跑 lint** ⇒ **那 24 个存量 error 从没被任何闸看过**，这个 script 事实上是死的 / 构建 11m11s / APK 275.9MB。真机：占用中的探针被**当场拒绝且被占用方存活**（OS `riid 2247 active? true` 为证）；直灌 **7 轮 load-release、7 命中 dropped=0、零 SIGSEGV/零 join 超时**——⚠ **这不是「竞态已修好」的证明**（那条本就没人复现过），只证明没弄坏引擎 + join 要防的场景跑了七遍干净；视觉：相机 `CONNECT`→**2s**→`DISCONNECT`、`vision_answer` 卡 +「模拟车外摄像头」角标在屏上，硬负例「这家怎么样」**一次都没开相机**，回答「看不清，画面全黑了」——**弃权恰恰证明它在看真帧**。**新发现（泓舟真机实测）：端上没有 AEC，播报会被自己的麦收进去**——根因是 `react-native-audio-api` 的 `AndroidAudioRecorder.cpp` 建 Oboe 输入流时**没设 `setInputPreset`**，默认 `VoiceRecognition` 而该源按定义不加 AEC（`dumpsys` 侧证 `src client=VOICE_RECOGNITION`）。⚠ **这推翻了 M4 首轮「AEC 正在抵消自播声」那条因果**（据此解释的「3 播 1 中」不成立）。设计侧其实已预期：`voiceLoop.mjs` 有**文本级**回声防线（`_overlapsTts` → `_echoSuspected` → 不打断+计自触发 → 会话级关 barge-in），选文本级是对的——barge-in 要求播报期继续听，「播报时关麦」这条路本来就被堵死。**回声环已收口（08-29，最终靠平台 AEC 治本）**：端上原本没有 AEC——`react-native-audio-api` 建 Oboe 输入流时没调 `setInputPreset`，落默认 `VoiceRecognition`（该源按定义不加 AEC）⇒ 播报被自己的麦收成下一句、成**正反馈环**。修法=`mobile/patches/` 里一行 `setInputPreset(VoiceCommunication)`（走 `patch-package` 入库 + `postinstall`——**改 node_modules 一律走这条路**）。真机三条同批过：**OS 侧 `rec update src:VOICE_COMMUNICATION`**（旧为 `VOICE_RECOGNITION`）／天气卡后**零回声轮**／唤醒仍灵。⚠ **唤醒率与 VAD 端点的旧读数一律作废**——`VoiceCommunication` 连带 NS/AGC，改变了送进 KWS 的音频。⚠ 途中先做了两批**症状层**软件兜底（FSM 文本回声判据），**不回退**——它们修的是兜底层自身三缺陷（参照文本是空的／自检只挂 barge-in 一路／判据在标点前失效），**与有无 AEC 无关**；但**「子序列 ≥0.75」这一个参数绑在无 AEC 前提上，已立显式待办要重新裁定松紧**。**教训**：我用两轮真机复跑打磨那个判据（先输标点、再输同音字），而标准 AEC 一直在——第一天列了又自己否了，理由「改不了 node_modules」，而**那个约束绕得开、我没去找**。**M4 剩余两项**：**完整语音轮 ✅ 已通过**（08-29 泓舟真人：唤醒 →「今天天气怎么样呀?」出天气卡 → **8 秒内不带唤醒词的「明天呢?」直接进去**）——⚠ 同段另记两条**不属 App** 的观察：「明天呢?」丢了上一轮城市焦点（后端上下文面）；尾部连着 6 轮「退下吧。」→「已打断」**尚未定性**（按代码退出词该本地消化不上云，只凭屏幕分不清是人在反复试还是另有路径）/ S2S **云端已开通**（2026-08-28 泓舟授权：云主机 `/opt/car-agent/shared/.env` 加 `S2S_PROVIDER=dashscope` + **重建**（非 restart，env 在创建时固化）`llm-gateway` ⇒ `/api/s2s/info` `available:true`、`default` 仍 `classic`；备份 + 「`S2S_` 只落 llm-gateway 一个 service」的爆炸半径核过）——⚠ **端到端走一轮仍未验**，云端可用 ≠ 跑通/ keep-awake ⬜ **泓舟 08-28 裁定挂 M5**（要 release 构建，未评估形态）。**M2/M3 余项本批处置**：R1 预期定案（四段链无一段换引擎 ⇒「不出声」是设计如此，产物改成给静默一个可见出口）/ R2 障碍定性为「看不见事件」并补了取证出口（OS 焦点栈已证监听注册）/ R4 根因定到 `expo/src/launch/withDevTools.tsx:13`（dev build 无条件持 keep-awake tag ⇒ 开关物理上关不掉）；R3/R5–R8 维持挂账（R7 泓舟裁定继续挂）。⚠ **开工硬前提**：`check_android_env.ps1` 退出码 0；**构建前先跑 `scripts/fetch_mobile_voice_assets.ps1`**（KWS 原生件与模型不入 git，缺了 gradle 明确失败）；跑 e2e 必须带 `--no-reinstall-driver`。 | 接手从 [`docs/design/2026-08-24-mobile-app-implementation-plan.md`](docs/design/2026-08-24-mobile-app-implementation-plan.md) **§0 接手须知** → **§7 的 M4 实施记录**（含「取证装置的限制」与「已知待办」）→ **§8.4 M4 验收清单** → **§M3-6 的「M3 遗留出账」表**；**坑账 §9 已积到 49 条、开工前读一遍**（§9.43 那条最贵：构建成功但原生没注册，取证看 `PackageList.java` 不看 gradle 日志；§9.48/49 是 M4-R1 新增：`uiautomator dump` 会返回**陈旧但完整**的树——节点数正常、内容是上一屏，**「完整」和「新鲜」是两件事**，判屏一律截图；adb 滑长设置页会**顺手把开关翻过去**，起点要落在没控件的那一列)；日常命令看 [`mobile/README.md`](mobile/README.md)、e2e 看 [`mobile/e2e/README.md`](mobile/e2e/README.md)。**交互设计升级方案 UX v2.2：方向已获泓舟同意、外部评审附条件通过并已并入（2026-08-29）**：[`docs/design/2026-08-29-mobile-ux-v2-presence-redesign.md`](docs/design/2026-08-29-mobile-ux-v2-presence-redesign.md)（§0 结论 / §11 批次 B1–B5 + B2→B3 真机闸 / §13 十八条可调点含两条**后端挂账** Q16 `final.confirm_policy`、Q17 proactive 偏好 API / §15 采纳记录）。**B1「在场与锚」四批已全部收口（2026-08-30），下一步 B2**：[`docs/design/2026-08-29-mobile-ux-v2-b1-implementation-plan.md`](docs/design/2026-08-29-mobile-ux-v2-b1-implementation-plan.md)（17 任务全 JS 不重建；**接手入口 = 其 §0.1，逐批读数与遗留出账在其 §6.1–§6.4**：纯逻辑层 → 光球与取证屏 → 接线 → 验收与记录）。**收口读数**：`tsc` 0 / mobile jest **29 suites 315 tests**（B1 期间 234→315）/ Maestro **06 193.7s · 08 126.0s · 09 326.4s** 三条新流退出码全 0（09 随 `--include-tags offline` 进 CI，⚠ 那个 job 挂 `run_e2e` 开关、不是每次 push 都跑）/ 真机 13 条**逐条有实录**：✅8（含**倒计时真在走** 4:37→4:27、**300s 到期留痕**、**回滚两开关各关一次 + Maestro 02 仍绿**、唤醒 `listening` 青环 G−R 37–42 vs armed 18–22）、⚠3（**200% 字号下 Dock 标题被挤成「这..」**、隐私栏三行差两行活证、`gfxinfo` CPU 侧读数自相矛盾只取 GPU 侧）、⬜2（VAL 拒绝**未接、待 Q16**——`safety_blocked` 全仓零产出方，是预期不是红；Accessibility Scanner 设备未装）。⚠ **验收前先修了一条真缺陷**（`59b742b`）：**离线期间看门狗照跑 ⇒ 排队消息补发回来时 `request_id` 已注销、答复被当丢帧丢掉，用户永远拿不到答案**。修法只在 `SessionCore`：非 open 摘表、open 重起整 95s，且**链路已知断开时压根不起表**（计划原写法只覆盖「跳变时摘表」，而真机观测到的是**发送那一刻就已离线**（帧入队＝`send()` 返 false）那条路径）。真机复验：断网发出后 **164s 仍 pending 不超时** → 关飞行 → **补发答复上屏**。顺带**真机确认了一条挂了三批的未验前提**：`GatewaySession` 断线时 `send()` **确实返 false**（离线队列项会出现）；⚠ 确认面**只投影 VAL**（`val.py::_safety_gate` 已是裁决点），任何人在 UI 里写车速阈值都是第二份判据；⚠ `Msg` 是共享类型不能加字段——气泡上要多显示的态走 `SessionState` 并列字段或追加消息。**B1 落地评审已做（2026-08-30，[`docs/reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md`](docs/reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md)）：✅29 / ⚠8 / ❌1 / ⏭5 / 🔁5，红线 8/8**；五条 🔁 已回写成方案 **v2.2**，❌-1 与 D1–D9 的落点在方案 §13 Q20；**B2「语音层」实施计划已拆（2026-08-30）：[`docs/design/2026-08-30-mobile-ux-v2-b2-implementation-plan.md`](docs/design/2026-08-30-mobile-ux-v2-b2-implementation-plan.md)（15 任务四批，T1 修 D1、T2 D2–D5 一组、末尾 B2→B3 闸；接手入口 = 其 §0.1）——草案待泓舟批准，批准前 `mobile/` 不按它动手。计划自己核出两条新事实：`vad_silence_ms` 只有 qwen3 消费（缺省 fun-asr 收不了尾 ⇒ 轻点即说改端侧 VAD 收尾）；PTT 在免唤醒开着时今天是坏的（recorder 单例）⇒ T6 前置修** |
 | ~~**长会话仍红三条（商户 SP3 / CD5 / LONG-ORDER-INTERRUPT）**~~ **（2026-08-30 逐条取样，两条不是缺陷、一条只剩营业时间复跑）** | **✅ 已按本行要求各取一次样，结论与卡上定性都不同**：① **CD5 `--repeat 3` = 3/3 PASS**（CD6/CD7/XS7 同样 3/3）⇒ 长会话那次是**方差**，不是「拿记忆里的旧菜单冒充实时查询」这个稳定缺陷；② **LONG-ORDER-INTERRUPT 在 `538335f` 的长会话里已自行转绿**（「没有找到可确定归属于你的瑞幸订单。」，两处采样）；③ **SP1/SP2/SP3 仍 0/3，但那是「跑不了」不是「跑挂了」**——`luckin.py` 的 `if not open_stores: return _reselect_store(...)` **在 `_store_choices` 之前短路** ⇒ 打烊时物理上不会有带按钮的选店卡，夜里跑这三条永远红。判据已改成**自己说出这一点**（`_say_button_failure`）。⇒ **唯一剩下的动作：在商户营业时间跑一次 `--cases SP1,SP2,SP3 --repeat 3`**，那才是它们业务面的第一次真读数。⚠ 本行是「先取证再定性」的又一个标本：**三条里两条的卡上定性都被自己的取样推翻**。以下为原始记录：**可以开工，但三条各需一次真栈取样才定得住**：① **SP3** 缺第 1 个真实按钮 + 话术缺「半糖」——商户规格组面，动之前要按 `scripts/probe_merchant_specs.py` 探一次真机（§9.31 那条「外部系统持有的值域必须有机器闸对着真机」）；② **CD5** 同一句「看看麦当劳有什么可以点的」在 turn 3 正确落 `mcd.menu`、turn 42 落 `chitchat.talk`，**话术里却有完整菜单内容和「（这是您8月15日提过的）」** ⇒ 拿记忆里的旧菜单冒充实时查询、不出卡，形态比「落域漂移」更重（provenance 面）；③ **LONG-ORDER-INTERRUPT**「帮我取消刚才那笔订单」落 `system.clarify`，要先查账本侧能不能归属「刚才那笔」。⚠ 三条都**先 `--repeat 3` 定性再动手**（§4.3 单次取样那条），CD5 尤其——它在同一趟里有一次是对的 | 长会话 artifact `.artifacts/dev-stack-verifications/qa-long-sessions-e15ac1e.json`（回读 `fails`）；[fix plan「QA 轮剩余项收尾批」§0 那张 12 红定性表](docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md) |
 | ~~**I-024 门店侧**（Q10 残余）~~ **（2026-08-30 已修——编号序列至此零残余）** | **✅ 已处置，详见 §4.1「QA 轮全量收尾批」B4。** 影响面按本行要求先枚举了（`context.py` 30 处 / `candidate_query` 7 / `engine` 6 + 三个 Agent 侧），放宽面因此窄到只剩一种形态：**NEED_SLOT ∧ 它的卡是选择卡**，判据**逐字复用** `engine._suspend` 那条（不写第二份），且**只取候选集这一维**（目的地/城市/控制焦点都是「这一步做成了什么」，它没做成）。⚠ 为什么不收全部 NEED_SLOT：C10-A 的铁律「「第N条」只许指向用户最后一眼看到的那份列表」——**放宽的是可见性，不是成功与否**。⚠ 商户 SP1/2/3 的业务面**仍需营业时间复跑**才验得了（`luckin.py` 的 `if not open_stores` 在产生选店卡之前短路）。以下为原始记录：**可以开工但影响面要先量**：门店选项卡是 `NEED_SLOT` 结果，而 `extract_focus` 只从**成功步**抽候选 ⇒ 门店候选集根本不存在。放宽抽取影响面远超本卡，**动之前先枚举谁在读候选集**。⚠ 2026-08-22 起**多了一个读候选集的地方**（组指代 `resolve_candidate_scope` + 逐步下发 `candidate_set_for`，§9.32）——那份枚举要把它算进去 | 下方 ① Q10 行、契约 §9.28「三条边界」/§9.32 |
-| **安全问句被商户下单域劫持（长会话专有）**（2026-08-30 长会话 `343934b` info T24 新记；**本地闭合，待外部动作/真栈**）| 云端实录仍是：「红色机油灯亮了还能继续开吗」→ `luckin.order` →「想点哪一款瑞幸饮品？」并挂起；当前 cloud `343934b` **仍未包含修法**。本地候选已把守卫闭合到 build/replan/escalate/fallback，并增加 capability `response_only` 纵深契约与跨挂起 `safety_origin_text`；测试绑定 SHA `d89db30e8ef8f0cd08aaa4aaa688f8bdbcc390de`，全量 **7769 passed / 32 skipped / 13 warnings**、聚焦 **231 passed**、门禁全 rc0。后续 docs commit 不承接测试声明。⚠ **这不是云端已修**。未完成清单：push 授权；deploy 摘要与 `--apply` 授权；新 SHA `status` + 统一 `verify`/remote-safe；干净会话 3/3；原 `information` persona；零商户草稿、零挂起、零探针副作用与清理核验。完成前保持未划线/active | [安全闸设计](docs/design/2026-08-30-qa-safety-confirmed-write-guard.md) §12；history §84–§86；云端原始 artifact `.artifacts/dev-stack-verifications/qa-long-sessions-343934b.json` |
+| **安全问句被商户下单域劫持（长会话专有）**（2026-08-30 `343934b` info T24 新记；**`e9fa602` 已修并定向验收，完整 information/商户清理证明待授权**）| release `e9fa602` 已 push/deploy，`status` 5/5 healthy、零 warning，统一 `verify` verified；安全专项 **15/15 PASS**。只读 information 35 轮 raw 33/35；v1.46 尺子补入设计内 `chitchat.talk` 后为 **34/35**，T29 机油灯与 T30–T32 全部安全、零动作、零挂起，唯一剩余是 INF-CHARGING 的独立路由方差。⚠ **仍不是 QA 全绿**：完整 `information` 会写测试提醒/模拟导航，尚未执行；本轮未做 mutating merchant cleanup，商户 draft=0 未证明。当前 HEAD 的 `3657b62` 与本次 docs-only 都领先 release，不能称新 release。完成这两项前保持未划线/active | [安全闸设计](docs/design/2026-08-30-qa-safety-confirmed-write-guard.md) §12；history §84–§87；artifact `.artifacts/dev-stack-verifications/qa-safety-e9fa602-repeat3.json`、`.artifacts/dev-stack-verifications/qa-information-readonly-e9fa602.json` |
 | **麦当劳深夜（早餐系菜单）下单撞 `calculate-price` 异常**（2026-08-30 迷你集 `--repeat 3` = 0/3 新记）| **不是本批引入，已用两条独立证据排除**：① 失败点具名——麦当劳官方 `calculate-price` **抛异常**，走 `_read_failure("核对商品详情和价格")`，是外部系统响应不是我们的分支；② **本批三处改动一处都不在这条路径上**（`visible_choice` 分支要 `need_slot`、`_suspend` 写焦点要真的挂起、`RELIST_RE` 要有 wait_slot 挂起），而 MC2 T1 的 `operation_id` **改动前后两趟都是空**（从没挂起过）。⇒ **这是证明不是相关性。** 时段假设：`538335f`（00:20）那趟菜单首项是「泰式炭烤风味猪猪堡随心配」（常规菜单）且 T2 正常出预览卡，`343934b`（01:40）首项变成「枫糖风味厚松饼猪柳蛋堡三件套」（**麦满分早餐系**）就下不了单。⚠ **启动条件：白天复跑一次 `--cases MC2 --repeat 3`**——绿了就说明是时段（那本身值得记进商户契约：**深夜菜单的首项可能是不可下单的**），仍红才是真缺陷 | 本行；`agents/mcp_bridge/src/merchant/mcdonalds.py:202`、artifact `.artifacts/dev-stack-verifications/qa-4reds-343934b.json` |
 | **`memory_item` supersede 信息衰减**（同日新立）| **等第二个可复现实例**。实据只有一条链（`person.child` 四跳越记越少），而修法要先分清「事实被更精确地重述」与「偏好发生了变化」——**偏好类就该新的赢**，不能直接搬关系边那条规则 | §4.2 该行、卡 §6.8、history §64.7 |
 | **③ 支付余项** | **等外部**：支付宝沙箱恢复后重跑探针；微信商户号到位后真实联调 | 下方 ③ |
