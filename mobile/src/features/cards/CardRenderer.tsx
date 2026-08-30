@@ -45,6 +45,7 @@ import {
   RoutePlan,
   TripItinerary,
 } from './navCards'
+import { CardGroup } from './CardGroup'
 import { CardButtons, CardShell, ProvBadge, type SendFn } from './parts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -59,13 +60,7 @@ interface CardProps {
 // 守卫 test/cards.test.ts **从 types.ts 直接派生**清单逐字比对——不再手抄：
 // 实施计划 §2.6 那句「29 型」就是手抄清单漂移的现成证据（真实是 34）。
 const REGISTRY: Record<string, (props: CardProps) => ReactNode> = {
-  card_group: ({ p, card, onSend }) => (
-    <View style={{ gap: 8 }}>
-      {(card.items || []).map((sub: any, i: number) => (
-        <CardRenderer key={i} p={p} card={sub} onSend={onSend} />
-      ))}
-    </View>
-  ),
+  card_group: ({ p, card, onSend }) => <CardGroup p={p} items={card.items || []} onSend={onSend} />,
   weather: ({ p, card, onSend }) => <Weather p={p} card={card} onSend={onSend} />,
   forecast: ({ p, card, onSend }) => <Forecast p={p} card={card} onSend={onSend} />,
   poi_list: ({ p, card, onSend }) => <PoiList p={p} card={card} onSend={onSend} />,
