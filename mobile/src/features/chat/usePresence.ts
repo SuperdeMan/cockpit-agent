@@ -107,8 +107,10 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
   // 而这块表**只在真的有人依赖 now 时才走**：无条件常开时真机实测（对话屏静置 10s、零交互、
   // 零消息）ChatBody 重渲 11 次、FlashList 可见气泡重渲 88 次——每秒把整列表重画一遍，
   // 而屏上什么都没变。下面四条是 `derivePresence` 里**全部**读 now 的分支，都不成立就停表。
-  // 2s 提示：取消（§5.1.1 的隐私文案——「不会发给」而不是「未上传」）；T11 把回声并进来
-  const notice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
+  // 2s 提示：取消（§5.1.1 的隐私文案——「不会发给」而不是「未上传」）与回声（§5.2 规则 5）——取更晚的那个
+  const cancelNotice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
+  const echoNotice = hf.echoAt ? { text: '像是我自己的声音，没算数', at: hf.echoAt } : null
+  const notice = !cancelNotice ? echoNotice : !echoNotice ? cancelNotice : echoNotice.at > cancelNotice.at ? echoNotice : cancelNotice
   const now = Date.now()
   const [, bumpTick] = useState(0)
   const needsTick =

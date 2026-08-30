@@ -54,6 +54,8 @@ export interface HandsFreeUi {
   endUtterance(): void
   /** 结束本轮收音 / 重新开启插话（评审 D7） */
   recycle(): void
+  /** 上一次回声被丢弃的时刻；0=没有 */
+  echoAt: number
 }
 
 export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
@@ -64,6 +66,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const [error, setError] = useState('')
   const [bargeInDisabled, setBargeInDisabled] = useState('')
   const [pipelineDegraded, setPipelineDegraded] = useState('')
+  const [echoAt, setEchoAt] = useState(0)
   const ctlRef = useRef<HandsFreeController | null>(null)
   // 回调用 ref 存：它们每次渲染都是新函数，进依赖会让控制器反复重建（=反复开关麦）。
   // **在 effect 里更新而不是渲染期直接赋值**：渲染期写 ref 违反 React 的纯度约束
@@ -112,6 +115,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       onCancelTurn: () => cbRef.current.onCancelTurn?.(),
       onNotice: (m) => cbRef.current.onNotice?.(m),
       onBargeInDisabled: (r) => setBargeInDisabled(r),
+      onEchoDismissed: () => setEchoAt(Date.now()),
       onPipelineDegraded: (_k, m) => setPipelineDegraded(m),
       wakeWord: () => settingsStore.getState().settings.wakeWord,
       getVoicePipeline: () => settingsStore.getState().settings.voicePipeline,
@@ -178,6 +182,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setPartial('')
       setBargeInDisabled('')
       setPipelineDegraded('')
+      setEchoAt(0)
     }
   }, [wantOn])
 
@@ -190,5 +195,5 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const wake = useCallback(() => ctlRef.current?.wakeManually(), [])
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
   const recycle = useCallback(() => ctlRef.current?.recycle(), [])
-  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle }
+  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, echoAt }
 }

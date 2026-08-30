@@ -40,7 +40,7 @@ const MAX_PRE_ROLL_MS = 1200
 const WAKE_WORDS = ['小舟小舟', '小舟']
 /** FSM 判为「本地消化、不上云」的语义事件——S2S 下必须额外取消 provider 在飞的生成
  *  （它不知道我们把这句判成了噪声/退出）。名字与 voiceLoop.onMetric 的事件名一一对应。 */
-const S2S_LOCAL_HANDLED = new Set(['exit_word', 'filler_dismissed', 'false_wake_dismissed'])
+const S2S_LOCAL_HANDLED = new Set(['exit_word', 'filler_dismissed', 'false_wake_dismissed', 'echo_dismissed'])
 
 /**
  * 假 recorder：实现 `Recorder` 接口但不碰设备，帧由控制器 `push` 进来。
@@ -85,6 +85,8 @@ export interface HandsFreeDeps {
   onStopTts(): void
   /** (orbState, fsmState)；orbState=null 表示回 IDLE，把麦态交还给 PTT */
   onOrbState(orb: string | null, fsm: string): void
+  /** 续问窗回声被 FSM 丢弃（voiceLoop echo_dismissed）→ UI 短显提示（方案 §5.2 规则 5） */
+  onEchoDismissed?(): void
   onPartialText?(text: string): void
   /** THINKING 期被唤醒词打断 → 取消在飞的云端轮 */
   onCancelTurn?(): void
@@ -182,8 +184,11 @@ export class HandsFreeController {
         this.deps.onBargeInDisabled?.(reason)
       },
       onMetric: (name: string) => {
-        // 本地消化的三类事件：provider 不知道我们把这句判掉了，要显式让它别答
+        // 本地消化的四类事件：provider 不知道我们把这句判掉了，要显式让它别答
+        // （第 4 类 echo_dismissed 是第 3 批附加②：真机实录过一整轮「自己答自己的回声」）
         if (this.s2s && S2S_LOCAL_HANDLED.has(name)) this.s2s.cancelTurn()
+        // 回声提示只有这一路信号（barge-in 那一路的 _countSelfTrigger 没有 metric——共享文件不改，记遗留）
+        if (name === 'echo_dismissed') this.deps.onEchoDismissed?.()
       },
     })
   }

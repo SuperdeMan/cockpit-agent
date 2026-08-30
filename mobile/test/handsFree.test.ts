@@ -333,3 +333,36 @@ test('B2-6 recycle（评审 D7）：FSM 拆机再装机、麦不停、会话级�
   expect(ctl.vl.bargeInDisabled).toBe(false)
   expect(bargeIn).toEqual([''])
 })
+
+test('B2-11 续问窗回声：FSM 吐 echo_dismissed → onEchoDismissed 收到（胶囊「像是我自己的声音，没算数」的信号源）', async () => {
+  const echoes: number[] = []
+  const { ctl, sent } = makeCtl({ onEchoDismissed: () => echoes.push(1) })
+  await ctl.enable()
+  ctl.wakeManually()
+  FakeAsr.last!.cb.onFinal('今天天气怎么样') // 定稿 → THINKING（走调用方 onSend）
+  expect(sent).toEqual(['今天天气怎么样'])
+  ctl.ttsStart('深圳市当前阴')
+  ctl.setTtsText('深圳市当前阴，气温28℃，西南风3级。')
+  ctl.ttsEnd() // SPEAKING → FOLLOWUP
+  vad.cb.onSpeechStart() // 续问窗内开口 → LISTENING(source=followup)
+  FakeAsr.last!.cb.onFinal('深圳市的') // 真机原字：与播报的公共子序列「深圳市」=3/4=0.75 ⇒ 回声
+  expect(echoes).toEqual([1])
+  expect(sent).toEqual(['今天天气怎么样']) // 回声那句没上云
+  expect(ctl.state).toBe('FOLLOWUP') // 窗留着（voiceLoop:377 的裁决）
+})
+
+// 第 3 批附加项②（第 2 批 §6.2 遗留）：S2S 挡位下 FSM 把一句判成回声丢掉时，**provider 不知道**
+// ——它照样会答一整轮。真机实录：主链 TTS 被麦收回 → S2S 转写成用户话「深圳市宝安区当前音。」→
+// 自答一整轮。`S2S_LOCAL_HANDLED` 原本只有 exit_word / filler_dismissed / false_wake_dismissed。
+// ⚠ 这只堵「判出来的回声」；AEC 没覆盖 S2S 采集路径那件事仍是 B3/B4 或 hmi 侧的（本批零原生变更）。
+test('B2-11 附加：S2S 挡位下 FSM 判回声丢弃 → 显式 cancelTurn（provider 不知道我们把这句判掉了，会自答一整轮）', async () => {
+  const cancelled: number[] = []
+  const { ctl } = makeCtl()
+  await ctl.enable()
+  // 假 S2S 客户端：只看 cancelTurn 有没有被叫到（真的 S2SClient 要 WebSocket，jest 里没有）
+  ctl.s2s = { cancelTurn: () => cancelled.push(1) }
+  ctl.vl.onMetric('echo_dismissed')
+  expect(cancelled).toEqual([1])
+  ctl.vl.onMetric('endpoint_merge') // 对照：不在名单里的事件不取消
+  expect(cancelled).toEqual([1])
+})
