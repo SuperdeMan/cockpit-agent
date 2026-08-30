@@ -30,6 +30,7 @@ import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
 import { PresenceCapsule } from './PresenceCapsule'
+import { PrivacyRail } from './PrivacyRail'
 import { useHandsFree } from './useHandsFree'
 import { usePresence } from './usePresence'
 import { usePtt } from './usePtt'
@@ -306,6 +307,18 @@ function ChatBody({
   // v2 健康点：**在线是灰的**——一个持续亮着的绿点会一直占用注意力，而它什么也没说
   const healthColor =
     snapshot.transport === 'online' ? p.fg3 : snapshot.transport === 'reconnecting' ? p.amber : p.red
+  // v2 采集点（隐私栏入口旁的第二颗点）：**没在采集就不渲染**——一个常驻的灰点会让
+  // 「现在到底在不在采」这件事看不出来，而这正是常开麦最该让用户一眼看见的事（方案 §5.10）。
+  // 顺序即优先级：原始音频上传 > 麦在开 > 正在抓一帧。
+  const captureDot =
+    snapshot.privacy.mic === 'cloudAudio'
+      ? { color: p.amber, label: '正在上传原始音频' }
+      : snapshot.privacy.mic !== 'off'
+        ? { color: p.teal, label: '麦克风在本机处理' }
+        : snapshot.privacy.camera === 'singleFrame'
+          ? { color: p.fg1, label: '正在抓一帧画面' }
+          : null
+  const [privacyOpen, setPrivacyOpen] = useState(false)
 
   const chatColumn = (
     <View style={{ flex: 1 }}>
@@ -448,17 +461,42 @@ function ChatBody({
             {/* 连接：v2 只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时
                 才是信息，而那时状态胶囊已经在说这件事了（方案 §5.1）。v1 保留原来的 pill */}
             {v2 ? (
-              <View
+              <Pressable
                 testID="health-dot"
-                accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}`}
+                accessibilityRole="button"
+                accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}${captureDot ? '，' + captureDot.label : ''}；打开隐私栏`}
+                onPress={() => setPrivacyOpen(true)}
                 style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 4,
-                  backgroundColor: healthColor,
-                  boxShadow: snapshot.transport === 'online' ? undefined : `0 0 8px ${healthColor}`,
+                  minWidth: 40,
+                  height: 40,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 5,
                 }}
-              />
+              >
+                <View
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 4,
+                    backgroundColor: healthColor,
+                    boxShadow: snapshot.transport === 'online' ? undefined : `0 0 8px ${healthColor}`,
+                  }}
+                />
+                {captureDot ? (
+                  <View
+                    testID="capture-dot"
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      backgroundColor: captureDot.color,
+                      boxShadow: `0 0 8px ${captureDot.color}`,
+                    }}
+                  />
+                ) : null}
+              </Pressable>
             ) : (
               <View
                 style={{
@@ -529,6 +567,19 @@ function ChatBody({
           ) : (
             chatColumn
           )}
+          {v2 ? (
+            <PrivacyRail
+              p={p}
+              fontScale={settings.fontScale}
+              snapshot={snapshot}
+              visible={privacyOpen}
+              onClose={() => setPrivacyOpen(false)}
+              onStopMic={() => {
+                ptt.pressUp()
+                if (settings.handsFree) reenableBargeIn()
+              }}
+            />
+          ) : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>

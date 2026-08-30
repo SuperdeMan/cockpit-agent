@@ -152,7 +152,14 @@ describe('B. 轴独立', () => {
     expect(derivePresence(base({ connStatus: 'connecting', connChangedAt: NOW - 1000 })).capsule).toBeUndefined()
     expect(derivePresence(base({ connStatus: 'connecting', connChangedAt: NOW - 3500 })).capsule?.text).toBe('正在重连…')
   })
-  test('privacy 轴：唤醒词待机=edge；端到端录音中=cloudAudio；PTT=edge（三段式只上传文字）', () => {
+  // ⚠ 这条断言的**取值**没变，但它原来的理由是假的：括号里写着「PTT=edge（三段式只上传
+  //    文字）」——App 的 PTT 走的是**服务端** ASR（`core/voice/asr.ts` 连 `ws://…/api/asr/stream`），
+  //    录音那一刻音频是上传的。`edge` 这一档实际并了两件事：唤醒词端侧待机（真的不出机）
+  //    与「音频上传给 ASR」。判据层要不要多一档（`cloudAsr`）留给 B2/B4 裁——那会动
+  //    PresenceSnapshot 类型、画廊样本与覆盖度守卫；B1 先在 `PrivacyRail.micText` 用文案
+  //    把两件事分开（隐私面板说的每句话都得是真的）。
+  //    留着这条注释是为了**下一个人别再把这个理由当成事实**（2026-08-30 第 3 批 T11 实证）。
+  test('privacy 轴：唤醒词待机=edge；端到端收音中=cloudAudio；PTT=edge（见上方注释：edge 并了两件事）', () => {
     expect(derivePresence(base({ hfEnabled: true, hfUsable: true, hfFsm: 'ARMED' })).privacy.mic).toBe('edge')
     expect(
       derivePresence(base({ hfEnabled: true, hfUsable: true, hfFsm: 'LISTENING', voicePipeline: 's2s' })).privacy.mic,
