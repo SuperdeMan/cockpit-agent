@@ -1,0 +1,25 @@
+# 流 ⑧：键盘弹出时发送键仍可点（UX v2.1 P6）。**刻意不 hideKeyboard**——
+# 01/02/03 里的 hideKeyboard 是 Maestro 树里只剩输入法的问题（坑账），不是遮挡证据；
+# 这条才是遮挡的直接判据：树里拿不到发送键就红。
+#
+# ⚠ 这条流不是凭空写的，它钉的是 2026-08-30 真机实测过的一个**红**：
+#   修之前 `tapOn: id=composer-send` 当场 FAILED（`Element not found`），
+#   同一时刻的截图 `artifacts/b1-12-chat-kbd.png` 显示输入框与发送键被键盘整个盖住
+#   ——两个读数指向同一件事。根因是三处 `KeyboardAvoidingView` 在 Android 上
+#   `behavior={Platform.OS === 'ios' ? 'padding' : undefined}`，即**什么都不做**，
+#   而 edge-to-edge 下系统的 adjustResize 也没顶上来。修法是两端都用 `padding`。
+# ⇒ 把 `behavior` 改回 undefined，这条流必红。别把它改成先 hideKeyboard 再点。
+appId: com.xiaozhou.companion
+name: 08 键盘弹出不遮发送键
+tags:
+  - online
+---
+- runFlow: subflows/open-app.yaml
+- tapOn:
+    id: "composer-input"
+- inputText: "现在几点"
+- assertVisible:
+    id: "composer-send"
+- tapOn:
+    id: "composer-send"
+- assertVisible: "现在几点"

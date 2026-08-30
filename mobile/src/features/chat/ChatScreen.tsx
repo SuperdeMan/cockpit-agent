@@ -7,7 +7,7 @@
 import { FlashList } from '@shopify/flash-list'
 import { Link, Redirect, useFocusEffect } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native'
+import { KeyboardAvoidingView, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -439,10 +439,13 @@ function ChatBody({
     <View style={{ flex: 1, backgroundColor: p.bg }}>
       <AuroraBackground p={p} />
       <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        >
+        {/* 键盘避让（B1-12，真机读数=遮）：Android 上 `behavior=undefined` 等于什么都不做，
+            而 edge-to-edge 下系统的 adjustResize 也没把内容顶上去——实测键盘弹起后输入框
+            与发送键**整个被盖住**（`e2e/artifacts/b1-12-chat-kbd.png`，Maestro 08 拿不到
+            `composer-send` 是同一件事的第二个读数）。两端都用 `padding`：由 RN 按键盘
+            高度补底。**不改 app.config 的 softwareKeyboardLayoutMode**——那是原生配置，
+            动它要重建，而 B1 零原生变更。 */}
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
           <View
             style={{
               flexDirection: 'row',

@@ -92,11 +92,12 @@ export default function DebugScreen() {
     setInput('')
   }
 
+  // 键盘避让（B1-12）：Android 上 `behavior=undefined` 等于什么都不做，而 edge-to-edge 下
+  // 系统的 adjustResize 也没把内容顶上去 ⇒ 两端都用 `padding`，由 RN 按键盘高度补底。
+  // **不改 app.config 的 softwareKeyboardLayoutMode**——那是原生配置，动它要重建，B1 零原生变更。
+  // 同 ChatScreen / onboarding：Android 上 `behavior=undefined` 等于什么都不做。
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.flex} behavior="padding">
       <View style={styles.header}>
         <View
           style={[
