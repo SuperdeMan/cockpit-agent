@@ -1,10 +1,11 @@
-# UX v2.1 · B1「在场与锚」实施计划（逐任务）
+# UX v2.2 · B1「在场与锚」实施计划（已收口；逐任务历史）
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 状态：**已批准开工（泓舟 2026-08-29「开工，拆实施计划」）**
+> 状态：**四批已收口；2026-08-30 落地评审完成（✅29 / ⚠8 / ❌1 / ⏭5 / 🔁5）；五条 🔁 已回写上游总方案 v2.2；下一步 = 新会话拆 B2「语音层」，第一件事 D1**
 > 交付对象：`mobile/` 执行者（人或 Agent）
-> 上游真相源：[`2026-08-29-mobile-ux-v2-presence-redesign.md`](2026-08-29-mobile-ux-v2-presence-redesign.md)（方案 v2.1；本计划只展开 **B1**，B2–B5 见其 §11.1）
+> 上游真相源：[`2026-08-29-mobile-ux-v2-presence-redesign.md`](2026-08-29-mobile-ux-v2-presence-redesign.md)（方案 v2.2；本计划只展开 **B1**，B2–B5 见其 §11.1）
+> 历史边界：正文 Task / commit / 实施记录中的“UX v2.1”是实施时标签，作为历史证据保留，不批量改名。
 > 纪律：沿用 [`2026-08-24-mobile-app-implementation-plan.md`](2026-08-24-mobile-app-implementation-plan.md) §0 接手须知 + §9 坑账；每任务「先测后码、一任务一提交」；**不动 `hmi/`、不动共享判据、不改编排核心**（唯一例外走 §10 的「共享模块有 bug」条款，本批没有）
 
 **Goal:** 把 App 的「此刻在干嘛」收成一个多轴派生态 `PresenceSnapshot`，由光球（含三个新态）+ 一枚状态胶囊 + 一块承诺面 Focus Dock + 一张隐私栏承载；顺带落 token 层、Onboarding 上品牌、键盘避让读数、`/state-gallery` 取证屏与三条 Maestro 流。**全 JS，不重建 APK。**

@@ -2,7 +2,7 @@
 
 > 状态：**落地中（本地验证完成，待 push/deploy/真栈）**（2026-08-30）
 > 交付对象：Cloud Planner / QA 探针维护者
-> 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84、
+> 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84/§85、
 > `orchestrator/cloud/planning.py::_question_side_effect_steps`、
 > `orchestrator/cloud/planning.py::_apply_question_side_effect_guard`、
 > `orchestrator/cloud/tests/test_question_write_guard.py`
@@ -255,7 +255,7 @@ TDD 与反向验证证据保存在 gitignore 的本地 artifact 中：
 - `.artifacts/qa-safety-confirmed-write/focused-fallback-green.log`：恢复统一终结器后 32 passed。
 
 这些 ignored artifact 只是本地 RED/GREEN 运行记录，**不是 commit 证据**；可追溯实现仍以
-上述四个生产代码提交为准。两轮文档收口为 `660153a` / `dfad687`，本地候选的精确对象是
+上述四个生产代码提交为准。两轮文档收口为 `660153a` / `dfad687`，测试绑定审计对象是
 `dfad68730b50d094993c328d33cb774d29642e16`。
 
 ## 10. 本地审计证据与剩余边界
