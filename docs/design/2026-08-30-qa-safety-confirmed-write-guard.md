@@ -361,3 +361,22 @@ trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；�
 全部完成，且最终审查确认不存在第四个 post-build dispatch 出口后，才可恢复“本地验证完成，
 待外部动作/真栈”的表述。push、deploy、remote-safe 与长会话仍分别是后续人工授权点，不能由
 本地绿自动推出。
+
+### Capability-level response-only authority
+
+- `Capability.response_only` is the only authority; intent suffixes and LLM wire fields have none.
+- Missing declarations and legacy pending records default to `false`.
+- `_validated_steps()` copies only the matched manifest value onto `Step`.
+- Direct output may be `OK` with zero actions, or a zero-action `FAILED` result may remain failed.
+  `NEED_CONFIRM`, `NEED_SLOT`, any direct action, and `response_only=true + require_confirm=true`
+  are contract violations.
+- The static contradiction `response_only=true + require_confirm=true` becomes `FAILED`,
+  `actions=[]`, `error=response_only_contract_violation` before any provider dispatch.
+- Runtime output violations become the same `FAILED` before the confirmation and
+  outcome-verification gates; verifier retry runs both preflight and post-dispatch checks again.
+- `_escalate` is a control-plane request, not a direct action. It remains in a valid zero-action
+  result, but only Task 3's original-text-guarded receiver may consume it.
+- D0/T2 keep legal speech streaming. For response-only steps an action event is dropped before
+  `yield`; it records a terminal violation, suppresses any later final, and forbids unary fallback.
+- `_talk_only_plan()` scans all fallback capabilities and requires `response_only=true`,
+  `require_confirm=false`, and survival of the same question-side-effect guard.
