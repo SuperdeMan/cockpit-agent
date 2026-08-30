@@ -659,6 +659,133 @@ def test_pending_plan_preserves_skills_across_suspend_restore():
     assert restored.skills == plan.skills
 
 
+def test_pending_plan_preserves_server_owned_safety_origin_separately_from_slot_answer():
+    """pending 只持久化首句安全依据；续接轮 raw_text 仍可保持当前槽答案。"""
+    from orchestrator.cloud.models import Plan, PlanContext, SessionState, Step
+
+    origin = "红色机油灯亮了还能继续开吗"
+    plan = Plan(
+        steps=[Step(id="s1", agent_id="manual", intent="manual.query")],
+        raw_text=origin, complexity="adaptive", goal="关闭故障灯",
+        safety_origin_text=origin,
+    )
+
+    snap = PlannerEngine._serialize_plan(plan)
+    assert snap["safety_origin_text"] == origin
+    restored, _ = PlannerEngine._restore(
+        None,
+        SessionState(
+            phase="wait_slot", pending_plan=snap, pending_step_id="s1",
+        ),
+        inject_confirmed=False,
+    )
+    ctx = PlanContext(
+        raw_text="深圳", safety_origin_text=restored.safety_origin_text,
+    )
+
+    assert restored.safety_origin_text == origin
+    assert ctx.safety_origin_text == origin
+    assert ctx.raw_text == "深圳"
+
+
+def test_legacy_pending_origin_falls_back_only_to_persisted_raw_text_not_goal():
+    """滚动升级旧记录可用服务端 raw_text；goal 绝不升级成安全授权来源。"""
+    from orchestrator.cloud.models import SessionState
+
+    with_raw, _ = PlannerEngine._restore(
+        None,
+        SessionState(
+            phase="wait_slot", pending_step_id="s1",
+            pending_plan={
+                "steps": [{"id": "s1", "agent_id": "manual",
+                           "intent": "manual.query"}],
+                "raw_text": "红色机油灯亮了还能继续开吗",
+                "goal": "关闭故障灯",
+            },
+        ),
+        inject_confirmed=False,
+    )
+    without_raw, _ = PlannerEngine._restore(
+        None,
+        SessionState(
+            phase="wait_slot", pending_step_id="s1",
+            pending_plan={
+                "steps": [{"id": "s1", "agent_id": "manual",
+                           "intent": "manual.query"}],
+                "raw_text": "",
+                "goal": "关闭故障灯",
+            },
+        ),
+        inject_confirmed=False,
+    )
+
+    assert with_raw.safety_origin_text == "红色机油灯亮了还能继续开吗"
+    assert without_raw.safety_origin_text == ""
+
+
+def test_unknown_legacy_pending_confirmed_side_effect_fails_closed_before_dispatch():
+    """旧 pending 无 origin/raw_text 时，当前“确认”和 goal 都不能放行原挂起写步。"""
+    from orchestrator.cloud.models import SessionState
+
+    engine, spy, session = _make_engine()
+    asyncio.run(session.save("sess-legacy-write", SessionState(
+        phase="wait_confirm",
+        owner_user_id="u1",
+        operation_id="op-legacy-write",
+        pending_step_id="s1",
+        pending_plan={
+            "steps": [{
+                "id": "s1", "agent_id": "nearby", "endpoint": "stub:50063",
+                "intent": "nearby.order", "require_confirm": True,
+            }],
+            "raw_text": "",
+            "goal": "预订餐厅",
+        },
+    )))
+
+    events = _run(engine, _req(
+        "确认", session_id="sess-legacy-write", is_confirmation=True,
+        operation_id="op-legacy-write",
+    ))
+
+    assert spy.count("nearby.order") == 0
+    assert "重新发起" in events[-1]["speech"]
+    assert asyncio.run(session.load(
+        "sess-legacy-write", owner_user_id="u1",
+        operation_id="op-legacy-write",
+    )) is None
+
+
+def test_unknown_legacy_pending_read_still_dispatches_with_current_slot_answer():
+    """unknown origin 只挡声明式副作用；恢复后的只读补槽仍使用当前回答。"""
+    from orchestrator.cloud.models import SessionState
+
+    engine, spy, session = _make_engine()
+    asyncio.run(session.save("sess-legacy-read", SessionState(
+        phase="wait_slot",
+        owner_user_id="u1",
+        operation_id="op-legacy-read",
+        pending_step_id="s1",
+        missing_slots=["cuisine"],
+        pending_plan={
+            "steps": [{
+                "id": "s1", "agent_id": "nearby", "endpoint": "stub:50063",
+                "intent": "nearby.search", "slots": {},
+            }],
+            "raw_text": "",
+            "goal": "查找餐厅",
+        },
+    )))
+
+    events = _run(engine, _req(
+        "川菜", session_id="sess-legacy-read",
+        operation_id="op-legacy-read",
+    ))
+
+    assert spy.count("nearby.search") == 1
+    assert events[-1]["kind"] == "final"
+
+
 def test_slot_pending_compound_cancel_continues_as_fresh_request():
     """EVA 三§3（2026-08-15 真栈实测）：wait_slot 挂起中「算了咖啡不买了，先去
     帮我看看附近有什么景点」——取消词只该作用于挂起，后半句是新请求。此前命中

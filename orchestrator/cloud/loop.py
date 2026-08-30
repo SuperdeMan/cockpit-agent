@@ -123,6 +123,13 @@ class LoopController:
         self.max_iters, self.budget_ms = self._budget_for(complexity)
         deadline = self.clock() + self.budget_ms / 1000.0
         current = initial_plan
+        # 安全依据与本轮 user_text 分轨：补槽/确认续接时 user_text 是“深圳/拿铁/确认”，
+        # 只有初始计划/engine 注入的任务起点原话有权决定 replan 能否产生副作用。
+        safety_origin_text = str(
+            getattr(initial_plan, "safety_origin_text", "")
+            or getattr(ctx, "safety_origin_text", "")
+            or ""
+        )
         replans = 0
         exhausted = False
 
@@ -173,8 +180,8 @@ class LoopController:
                 replans += 1
                 if decision.done or not decision.steps:
                     break
-                kept, blocked = PlanBuilder._filter_question_side_effect_steps(
-                    decision.steps, user_text,
+                kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
+                    decision.steps, safety_origin_text,
                 )
                 if blocked:
                     logger.warning(
@@ -189,7 +196,9 @@ class LoopController:
                     steps=kept,
                     skill_effects=list(decision.skill_effects),
                 )
-                current = decision.to_plan(goal)
+                current = decision.to_plan(
+                    goal, safety_origin_text=safety_origin_text,
+                )
                 # T2 知识继承贯通挂起链（2026-07-27 评审三批）：to_plan 新建的 Plan
                 # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
                 # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。

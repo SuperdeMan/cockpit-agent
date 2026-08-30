@@ -2431,16 +2431,8 @@ class PlanBuilder:
                 step.depends_on = list(step.depends_on) + derived
 
     @staticmethod
-    def _question_side_effect_steps(steps: list, text: str) -> list:
-        """Select side-effecting steps that a non-directive question must not execute.
-
-        Edge writes use the shared operation-name effect classifier. Cloud steps are
-        selected only when the capability authority already marked them
-        `require_confirm`; applying `is_write_intent` to every cloud operation would
-        misclassify read-like names such as search/menu/talk/status.
-        """
-        if not steps or not is_non_directive_question(text or ""):
-            return []
+    def _side_effect_steps(steps: list) -> list:
+        """Select side effects using only declaration-backed, zero-domain facts."""
         return [
             step for step in steps
             if (
@@ -2451,10 +2443,44 @@ class PlanBuilder:
         ]
 
     @staticmethod
+    def _question_side_effect_steps(steps: list, text: str) -> list:
+        """Select side-effecting steps that a non-directive question must not execute.
+
+        Edge writes use the shared operation-name effect classifier. Cloud steps are
+        selected only when the capability authority already marked them
+        `require_confirm`; applying `is_write_intent` to every cloud operation would
+        misclassify read-like names such as search/menu/talk/status.
+        """
+        if not steps or not is_non_directive_question(text or ""):
+            return []
+        return PlanBuilder._side_effect_steps(steps)
+
+    @staticmethod
     def _filter_question_side_effect_steps(
             steps: list, text: str) -> tuple[list, list]:
         """按对象身份拆分合法/被拦步骤，供所有计划出口复用。"""
         blocked = PlanBuilder._question_side_effect_steps(steps, text)
+        blocked_ids = {id(step) for step in blocked}
+        return (
+            [step for step in steps if id(step) not in blocked_ids],
+            blocked,
+        )
+
+    @staticmethod
+    def _filter_safety_origin_side_effect_steps(
+            steps: list, safety_origin_text: str) -> tuple[list, list]:
+        """Apply the question guard with a fail-closed branch for unknown origins.
+
+        A restored legacy plan may predate ``safety_origin_text``.  Its persisted
+        ``raw_text`` is the only permitted compatibility source; if that is empty as
+        well, current slot answers and LLM goal/reason are not authorization.  In
+        that case declaration-backed side effects are blocked while reads remain.
+        """
+        origin = str(safety_origin_text or "").strip()
+        blocked = (
+            PlanBuilder._question_side_effect_steps(steps, origin)
+            if origin else PlanBuilder._side_effect_steps(steps)
+        )
         blocked_ids = {id(step) for step in blocked}
         return (
             [step for step in steps if id(step) not in blocked_ids],

@@ -67,7 +67,7 @@ def _collect(controller, **kwargs):
 
 
 def _replan_case(replan_steps, *, user_text, goal="LLM goal", results=None,
-                 skill_effects=None):
+                 skill_effects=None, safety_origin_text=None):
     planner = _Planner([
         ReplanDecision(
             done=False,
@@ -88,16 +88,20 @@ def _replan_case(replan_steps, *, user_text, goal="LLM goal", results=None,
         planner, executor, _Aggregator(), None,
         max_iters=1, budget_ms=5000,
     )
+    origin = user_text if safety_origin_text is None else safety_origin_text
+    initial = Plan(
+        steps=[Step(id="s1", agent_id="info", intent="manual.query")],
+        complexity="adaptive",
+        skills=["full:safety-guide"],
+        exemplars=["full:manual#safety@lex"],
+        safety_origin_text=origin,
+    )
+    ctx = PlanContext(raw_text=user_text, safety_origin_text=origin)
     events = _collect(
         controller,
         goal=goal,
-        initial_plan=Plan(
-            steps=[Step(id="s1", agent_id="info", intent="manual.query")],
-            complexity="adaptive",
-            skills=["full:safety-guide"],
-            exemplars=["full:manual#safety@lex"],
-        ),
-        agents=[], ctx=PlanContext(), user_text=user_text,
+        initial_plan=initial,
+        agents=[], ctx=ctx, user_text=user_text,
     )
     return planner, executor, events
 
@@ -180,6 +184,24 @@ def test_question_replan_edge_write_uses_user_text_not_llm_goal_and_never_dispat
     assert planner.observations[0][-1]["step_id"] == "s1"
     assert events[-1]["kind"] == "final"
     assert events[-1]["speech"] == "best effort"
+
+
+def test_resumed_replan_uses_original_request_not_current_slot_answer():
+    """补槽轮的“深圳”不是授权；安全闸必须继续看最初的机油灯问句。"""
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    _, executor, events = _replan_case(
+        [step],
+        user_text="深圳",
+        goal="红色机油灯亮了还能继续开吗",
+        safety_origin_text="红色机油灯亮了还能继续开吗",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert events[-1]["kind"] == "final"
 
 
 def test_question_replan_confirmed_cloud_step_never_dispatches():
@@ -648,6 +670,103 @@ def test_replan_plan_inherits_skills_through_suspend_chain():
     restored, _ = PlannerEngine._restore(None, state, inject_confirmed=False)
     assert restored is not None and restored.skills == skills
     assert restored.exemplars == exemplars
+
+
+def test_replan_safety_origin_survives_suspend_restore_and_blocks_next_write():
+    """replan→NEED_SLOT→pending round-trip 后，下一次 replan 仍由首句安全问句约束。"""
+    from orchestrator.cloud.engine import PlannerEngine
+    from orchestrator.cloud.models import SessionState
+
+    origin = "红色机油灯亮了还能继续开吗"
+    first_planner = _Planner([ReplanDecision(done=False, steps=[
+        Step(id="r1", agent_id="manual", intent="manual.query"),
+    ])])
+    first_executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="需要查手册"),
+        "r1": StepResult(
+            "r1", StepStatus.NEED_SLOT, speech="请说车型",
+            missing_slots=["model"],
+        ),
+    })
+    captured = []
+
+    async def suspend(_result, _results, plan, _ctx, prior=None):
+        captured.append(plan)
+        return {"kind": "final", "speech": "suspended"}
+
+    initial = Plan(
+        steps=[Step(id="s1", agent_id="info", intent="info.search")],
+        raw_text=origin, complexity="adaptive", goal=origin,
+        safety_origin_text=origin,
+    )
+    first_ctx = PlanContext(raw_text=origin, safety_origin_text=origin)
+    _collect(
+        LoopController(
+            first_planner, first_executor, _Aggregator(), suspend,
+            max_iters=2, budget_ms=5000,
+        ),
+        goal=origin, initial_plan=initial, agents=[], ctx=first_ctx,
+        user_text=origin,
+    )
+
+    assert captured and captured[0].safety_origin_text == origin
+    snap = PlannerEngine._serialize_plan(captured[0])
+    assert snap["safety_origin_text"] == origin
+    restored, _ = PlannerEngine._restore(
+        None,
+        SessionState(
+            phase="wait_slot", pending_plan=snap, pending_step_id="r1",
+        ),
+        inject_confirmed=False,
+    )
+    assert restored is not None and restored.safety_origin_text == origin
+
+    write = Step(
+        id="r2", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+    second_planner = _Planner([
+        ReplanDecision(done=False, steps=[write]),
+    ])
+    second_executor = _Executor({
+        "r1": StepResult(
+            "r1", StepStatus.OK, speech="车型已收到", data={"replan": True},
+        ),
+        "r2": StepResult("r2", StepStatus.OK, speech="不应执行"),
+    })
+    second_ctx = PlanContext(
+        raw_text="深圳", safety_origin_text=restored.safety_origin_text,
+    )
+    events = _collect(
+        LoopController(
+            second_planner, second_executor, _Aggregator(), None,
+            max_iters=1, budget_ms=5000,
+        ),
+        goal=restored.goal, initial_plan=restored, agents=[], ctx=second_ctx,
+        user_text="深圳",
+    )
+
+    assert second_executor.runs == [["r1"]]
+    assert events[-1]["kind"] == "final"
+
+
+def test_unknown_legacy_origin_blocks_side_effect_but_keeps_read_step():
+    """旧 pending 连 raw_text 都没有时，不可信 goal/current answer 均不能授权副作用。"""
+    read = Step(id="r1", agent_id="manual", intent="manual.query")
+    write = Step(
+        id="r2", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    _, executor, _ = _replan_case(
+        [read, write],
+        user_text="确认",
+        goal="关闭故障灯",
+        safety_origin_text="",
+        results={"r1": StepResult("r1", StepStatus.OK, speech="请停车检查")},
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
 
 
 def _wrap_planner(planner):

@@ -97,6 +97,7 @@ class _EscSpy:
         self.unary_seq = list(unary_seq or [])   # [(intent_expected_or_None, _Resp)] 顺序出队
         self.stream_calls: list[str] = []
         self.unary_calls: list[tuple[str, dict, dict]] = []
+        self.unary_ctx_raw_texts: list[str] = []
 
     async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
         self.stream_calls.append(intent)
@@ -105,6 +106,7 @@ class _EscSpy:
 
     async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None):
         self.unary_calls.append((intent, dict(slots or {}), dict(meta or {})))
+        self.unary_ctx_raw_texts.append(str(getattr(ctx, "raw_text", "") or ""))
         if self.unary_seq:
             return self.unary_seq.pop(0)
         return _Resp(speech=f"（{intent} 兜底）")
@@ -342,3 +344,53 @@ def test_blocked_escalate_without_safe_response_has_no_dispatch():
     assert "warning_light.close" not in [call[0] for call in spy.unary_calls]
     assert sink == {}
     assert events == []
+
+
+@pytest.mark.parametrize("intent", ["warning_light.close", "luckin.order"])
+def test_resumed_escalate_uses_origin_but_agent_keeps_current_slot_answer(intent):
+    """安全判定看首句，Agent 上下文仍看本轮“拿铁”；两者不可互相覆盖。"""
+    async def run_case():
+        safe = _Resp(speech="请立即安全停车并联系救援。")
+        spy = _EscSpy(unary_seq=[safe])
+        engine, _ = _make_engine(spy)
+        sink = {}
+        ctx = PlanContext(
+            raw_text="拿铁",
+            safety_origin_text="红色机油灯亮了还能继续开吗",
+        )
+        events = [event async for event in engine._run_escalated(
+            {"intent": intent, "slots": {}, "reason": "redirect"},
+            ctx, _agents(), sink,
+        )]
+        return spy, sink, events, ctx
+
+    spy, sink, _events, ctx = asyncio.run(run_case())
+
+    called = [item[0] for item in spy.unary_calls]
+    assert intent not in called
+    assert called == ["chitchat.talk"]
+    assert spy.unary_calls[0][1]["text"] == "红色机油灯亮了还能继续开吗"
+    assert spy.unary_ctx_raw_texts == ["拿铁"]
+    assert ctx.raw_text == "拿铁"
+    assert sink["results"][0].speech == "请立即安全停车并联系救援。"
+
+
+def test_unknown_legacy_origin_blocks_escalated_write_but_allows_read():
+    async def run_target(intent):
+        spy = _EscSpy(unary_seq=[_Resp(speech="read result")])
+        engine, _ = _make_engine(spy)
+        sink = {}
+        ctx = PlanContext(raw_text="确认", safety_origin_text="")
+        awaitables = engine._run_escalated(
+            {"intent": intent, "slots": {}, "reason": "legacy"},
+            ctx, _agents(), sink,
+        )
+        _ = [event async for event in awaitables]
+        return spy, sink
+
+    write_spy, _ = asyncio.run(run_target("warning_light.close"))
+    read_spy, read_sink = asyncio.run(run_target("manual.query"))
+
+    assert "warning_light.close" not in [item[0] for item in write_spy.unary_calls]
+    assert [item[0] for item in read_spy.unary_calls] == ["manual.query"]
+    assert read_sink["results"][0].speech == "read result"
