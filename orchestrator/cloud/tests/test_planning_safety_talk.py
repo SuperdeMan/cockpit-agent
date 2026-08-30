@@ -66,7 +66,8 @@ def _offline_retrieval(monkeypatch):
 
 
 def _agents():
-    return [MockAgent("chitchat", ["chitchat.talk"]),
+    return [MockAgent("chitchat", ["chitchat.talk"],
+                      response_only=("chitchat.talk",)),
             MockAgent("edge-vehicle", ["hvac.set"],
                       kind="edge_fast", deployment="edge"),
             MockAgent("navigation", ["navigation.navigate_to"])]

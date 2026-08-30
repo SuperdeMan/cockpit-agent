@@ -259,7 +259,8 @@ class LoopController:
 
                 if response_violation is not None:
                     final_sr = response_violation
-                elif final_sr is not None:
+                elif (final_sr is not None
+                      and bool(getattr(step, "response_only", False))):
                     final_sr = self.executor._enforce_response_only(step, final_sr)
 
                 if final_sr is not None:

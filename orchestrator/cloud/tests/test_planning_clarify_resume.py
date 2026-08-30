@@ -34,7 +34,8 @@ _EMPTY = '{"addressed":true,"steps":[]}'
 
 
 def _agents():
-    return [MockAgent("chitchat", ["chitchat.talk"]),
+    return [MockAgent("chitchat", ["chitchat.talk"],
+                      response_only=("chitchat.talk",)),
             MockAgent("navigation", ["navigation.navigate_to"])]
 
 
