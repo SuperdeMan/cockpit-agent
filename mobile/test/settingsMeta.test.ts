@@ -8,6 +8,7 @@ import {
   DEFAULT_APP_SETTINGS,
   buildMeta,
   mergeStoredSettings,
+  needsS2sConsent,
 } from '@/core/settings/store'
 
 // hmi/src/settings.tsx buildMeta 的返回键，逐字硬拷贝
@@ -80,6 +81,18 @@ describe('UX v2.1 开关与身份（B1-7）', () => {
     expect(merged.deviceRole).toBe('handheld')
   })
   test('三个键**不上行**（buildMeta 键集不变）', () => {
+    expect(Object.keys(buildMeta(DEFAULT_APP_SETTINGS)).sort()).toEqual([...HMI_META_KEYS].sort())
+  })
+})
+
+describe('UX v2 B2-5：端到端首次显式同意', () => {
+  test('缺省未同意（s2sConsentAt=0）；存量没有这个键 → 0；同意过 → 不再需要', () => {
+    expect(DEFAULT_APP_SETTINGS.s2sConsentAt).toBe(0)
+    expect(needsS2sConsent(DEFAULT_APP_SETTINGS)).toBe(true)
+    expect(needsS2sConsent(mergeStoredSettings(JSON.stringify({ voicePipeline: 's2s' })))).toBe(true)
+    expect(needsS2sConsent({ ...DEFAULT_APP_SETTINGS, s2sConsentAt: 1_700_000_000_000 })).toBe(false)
+  })
+  test('s2sConsentAt 不上行（buildMeta 键集不变）', () => {
     expect(Object.keys(buildMeta(DEFAULT_APP_SETTINGS)).sort()).toEqual([...HMI_META_KEYS].sort())
   })
 })

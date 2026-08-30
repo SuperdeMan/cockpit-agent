@@ -32,6 +32,8 @@ export interface VoiceSheetProps {
   draftUserId: string | null
   /** 被打断的助手气泡（方案 §5.2 规则 4）：回答定格 + 灰字「已打断」，不改红 */
   interruptedIds: readonly string[]
+  /** 端到端挡位的开录即告知（红线三条件③）：层的第一行 G0 实色条 */
+  s2sNotice: boolean
   /** 下拉 / 点「收起」/ 点暗区 */
   onCollapse(): void
   /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
@@ -99,6 +101,17 @@ export function VoiceSheet(props: VoiceSheetProps) {
           >
             {/* 把手（G2 只给光球与把手，§5.11） */}
             <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2, marginTop: 8 }} />
+            {props.s2sNotice ? (
+              <View
+                testID="s2s-notice"
+                accessibilityLiveRegion="polite"
+                style={{ backgroundColor: p.dark ? '#3B2A0A' : '#FFF4DB', paddingVertical: 6, paddingHorizontal: 12, marginTop: 8 }}
+              >
+                <Text style={{ color: p.amber, fontSize: scale(TYPE.caption, 'text', fontScale), textAlign: 'center' }}>
+                  端到端语音 · 原始音频将在本轮上传
+                </Text>
+              </View>
+            ) : null}
             <ScrollView contentContainerStyle={{ padding: 16, gap: 12, alignItems: 'center' }} keyboardShouldPersistTaps="handled">
               {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条 */}
               {user ? (

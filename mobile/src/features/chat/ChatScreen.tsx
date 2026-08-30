@@ -195,8 +195,9 @@ function ChatBody({
   cfg: ServerConfig
 }) {
   const { core } = wired
-  const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds } =
-    useStore(core.store)
+  const {
+    messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds, s2sIds,
+  } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
   const [notice, setNotice] = useState('')
@@ -244,6 +245,12 @@ function ChatBody({
     needConfirm: pendingOps.length > 0,
     onPartial: (t) => core.draftUser(t),
     onSend: (text) => onSend(text, undefined, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),
+    // S2S 自答轮沉淀（方案 §5.2.2）：这一轮此前在对话里零痕迹
+    onS2sUserUtterance: (t) => core.s2sUserUtterance(t),
+    onS2sAnswerDelta: (t) => core.s2sAnswerDelta(t),
+    onS2sTurnEnd: (r) => core.s2sTurnEnd(r.reason),
+    // 逃逸走的是同一个 onSend（视觉抓帧 / 前置路由 / 位置闸一条不少）；用户气泡复用 S2S 那条
+    onS2sEscalated: (utt) => onSend(utt, undefined, { source: 's2s', bubbleId: core.takeS2sUserBubble() ?? undefined }),
     onNotice: setNotice,
     onCancelTurn: () => core.cancelCurrentTurn(),
   })
@@ -262,6 +269,8 @@ function ChatBody({
 
   // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
+  // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
+  const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
   const v2 = settings.uxV2Presence
   const dock = settings.uxV2Dock
   // 回滚分支的光球态（v1 推导，逐字照搬 B1 之前 Composer 里的那一行）：
@@ -359,7 +368,7 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -371,6 +380,7 @@ function ChatBody({
                 uncertain={uncertainIds.includes(item.id)}
                 draft={item.id === draftUserId}
                 interrupted={interruptedIds.includes(item.id)}
+                s2s={s2sIds.includes(item.id)}
                 onConfirm={onConfirm}
                 onSend={onSend}
               />
@@ -388,6 +398,7 @@ function ChatBody({
           containerHeight={listHeight}
           draftUserId={draftUserId}
           interruptedIds={interruptedIds}
+          s2sNotice={s2sNotice}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
           onInterrupt={onInterrupt}
           onSend={(t) => onSend(t)}

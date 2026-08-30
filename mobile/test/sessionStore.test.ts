@@ -707,3 +707,55 @@ describe('UX v2 B2-4：增量沉淀（方案 §5.2.1）、打断留痕（§5.2 �
     core.dispose()
   })
 })
+
+describe('UX v2 B2-5：S2S 自答轮沉淀（方案 §5.2.2）', () => {
+  test('用户话 + 回答增量 + turn.end → 记录里两条、都在 s2sIds、不进 requestRouting（没有上行帧）', () => {
+    const { transport, core } = newCore()
+    core.draftUser('今天天气') // S2S 的 transcript partial 也走草稿
+    core.s2sUserUtterance('今天天气怎么样')
+    core.s2sAnswerDelta('深圳今天')
+    core.s2sAnswerDelta('多云。')
+    core.s2sTurnEnd('completed')
+    const all = msgs(core)
+    expect(all).toHaveLength(2)
+    expect(all[0]).toMatchObject({ role: 'user', text: '今天天气怎么样' })
+    expect(all[1]).toMatchObject({ role: 'assistant', text: '深圳今天多云。', streaming: false })
+    expect(core.store.getState().s2sIds).toEqual([all[0].id, all[1].id])
+    expect(core.store.getState().draftUserId).toBeNull()
+    expect(transport.sent.filter((f: any) => typeof f.text === 'string')).toHaveLength(0)
+    core.dispose()
+  })
+
+  test('逃逸：takeS2sUserBubble 交给主链 send({bubbleId}) 复用——只有一条用户气泡、不再在 s2sIds、有上行帧', () => {
+    const { transport, core } = newCore()
+    core.s2sUserUtterance('打开后备箱')
+    const id = core.takeS2sUserBubble() as string
+    core.s2sTurnEnd('escalated')
+    core.send('打开后备箱', undefined, { source: 's2s', bubbleId: id })
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(1)
+    expect(core.store.getState().s2sIds).toEqual([])
+    expect(transport.lastUserFrame().text).toBe('打开后备箱')
+    expect(core.store.getState().turnMeta[assistants(core)[0].id].source).toBe('s2s')
+    core.dispose()
+  })
+
+  test('取消且一个字没出 → 那条助手气泡删除；出了字 → 定格并进 interruptedIds', () => {
+    const { core } = newCore()
+    core.s2sUserUtterance('讲个笑话')
+    core.s2sAnswerDelta('')
+    core.s2sTurnEnd('cancelled')
+    expect(assistants(core)).toHaveLength(0)
+    core.s2sUserUtterance('再讲一个')
+    core.s2sAnswerDelta('从前')
+    core.s2sTurnEnd('cancelled')
+    expect(assistants(core)[0].text).toBe('从前')
+    expect(core.store.getState().interruptedIds).toEqual([assistants(core)[0].id])
+    core.dispose()
+  })
+
+  test('takeS2sUserBubble 没有待归属的用户话时返回 null（逃逸帧先于 transcript 到达的兜底）', () => {
+    const { core } = newCore()
+    expect(core.takeS2sUserBubble()).toBeNull()
+    core.dispose()
+  })
+})

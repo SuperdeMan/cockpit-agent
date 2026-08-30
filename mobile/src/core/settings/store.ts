@@ -47,6 +47,9 @@ export interface AppSettings {
   /** 语音链路挡位：classic=三段式（只上行定稿文本）／s2s=端到端（**上行原始音频**）。
    *  默认 classic 是红线要求，不是偏好——见 CLAUDE.md §5「唯一的受控例外」三条件①。 */
   voicePipeline: 'classic' | 's2s'
+  /** 端到端挡位的一次性显式同意时刻（ms）；0=从未同意。红线三条件②「用户显式选择」的
+   *  持久化证据——只有开关不算显式（方案 §5.2.2） */
+  s2sConsentAt: number
   /** 视觉抓帧。默认关；开了也只在端侧命中视觉触发词时抓一帧（红线三条件②）。 */
   visionEnabled: boolean
   // ── UX v2.1（B1）──
@@ -84,6 +87,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   handsFree: false,
   wakeWord: true,
   voicePipeline: 'classic',
+  s2sConsentAt: 0,
   visionEnabled: false,
   uxV2Presence: true,
   uxV2Dock: true,
@@ -107,6 +111,11 @@ export function mergeStoredSettings(raw: string | null): AppSettings {
   } catch {
     return DEFAULT_APP_SETTINGS
   }
+}
+
+/** 切到端到端前要不要弹一次性同意（判据只此一处：设置页与任何未来入口都问它） */
+export function needsS2sConsent(s: AppSettings): boolean {
+  return s.s2sConsentAt <= 0
 }
 
 /** 透传后端的会话级偏好（hmi/src/settings.tsx:79-90 逐键对照；值全 string） */

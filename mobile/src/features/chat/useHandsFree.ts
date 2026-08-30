@@ -26,6 +26,10 @@ export interface UseHandsFreeOpts {
   /** S2S 自答轮的用户话/回答增量（classic 挡位下不会触发） */
   onS2sUserUtterance?(text: string): void
   onS2sAnswerDelta?(text: string): void
+  /** turn.end（reason: completed / cancelled / escalated / error…）；不传只清 partial */
+  onS2sTurnEnd?(r: { turnId: string; reason: string; detail: string }): void
+  /** 逃逸：不传就退回 onSend(utterance)（B1 行为） */
+  onS2sEscalated?(utterance: string): void
   /** 主链有待确认动作（危险车控）的镜像。FSM 据此**不把「确认/取消」本地消化掉**
    *  ——那两个字必须上主链走 require_confirm 闸（红线）。 */
   needConfirm?: boolean
@@ -112,8 +116,11 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       getSessionMeta: () => ({ sessionId: cbRef.current.sessionId }),
       onS2sUserUtterance: (t) => cbRef.current.onS2sUserUtterance?.(t),
       onS2sAnswerDelta: (t) => cbRef.current.onS2sAnswerDelta?.(t),
-      onS2sEscalated: (utterance) => cbRef.current.onSend(utterance),
-      onS2sTurnEnd: () => setPartial(''),
+      onS2sEscalated: (utterance) => (cbRef.current.onS2sEscalated ?? cbRef.current.onSend)(utterance),
+      onS2sTurnEnd: (r) => {
+        setPartial('')
+        cbRef.current.onS2sTurnEnd?.(r)
+      },
     }
     const ctl = new HandsFreeController(deps)
     ctlRef.current = ctl

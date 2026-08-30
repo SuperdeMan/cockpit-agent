@@ -65,16 +65,27 @@ export interface BubbleProps {
   draft?: boolean
   /** 被打断（方案 §5.2 规则 4）：文字定格 + 灰字「已打断」，不是错误样式 */
   interrupted?: boolean
+  /** 端到端自答轮：角标「端到端」，长按看「转写由语音模型生成」（方案 §5.2.2，Q7） */
+  s2s?: boolean
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
+  const [hint, setHint] = useState(false)
   if (msg.role === 'user') {
     return (
       <View style={{ alignItems: 'flex-end', marginVertical: 5 }}>
-        <View
+        <Pressable
+          onLongPress={
+            s2s
+              ? () => {
+                  setHint(true)
+                  setTimeout(() => setHint(false), 2500)
+                }
+              : undefined
+          }
           style={{
             backgroundColor: `${p.accent}1F`,
             borderWidth: 1,
@@ -88,11 +99,15 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             boxShadow: p.dark ? '0 4px 16px rgba(0,0,0,0.22)' : '0 2px 10px rgba(10,14,26,0.06)',
           }}
         >
+          {s2s ? <Text style={{ color: p.teal, fontSize: p.font(10), marginBottom: 2 }}>端到端</Text> : null}
           <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>
             {msg.text}
             {draft ? <StreamCursor h={p.font(15)} /> : null}
           </Text>
-        </View>
+          {hint ? (
+            <Text style={{ color: p.fg3, fontSize: p.font(10), marginTop: 4 }}>转写由语音模型生成，可能与原话有出入</Text>
+          ) : null}
+        </Pressable>
       </View>
     )
   }
@@ -143,6 +158,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             : '0 3px 14px rgba(10,14,26,0.07)',
         }}
       >
+        {s2s ? <Text style={{ color: p.teal, fontSize: p.font(11), fontWeight: '600' }}>端到端</Text> : null}
         {proactive ? (
           <Text style={{ color: p.teal, fontSize: p.font(11), fontWeight: '600' }}>
             {PROACTIVE_LABEL[msg.proactiveKind || ''] || '主动播报 · 任务提示'}

@@ -11,7 +11,7 @@ import { AGENT_CATALOG } from '@shared/types.ts'
 
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
-import { settingsStore, type AppSettings } from '../../core/settings/store'
+import { needsS2sConsent, settingsStore, type AppSettings } from '../../core/settings/store'
 import {
   fetchAsrProviders,
   fetchTtsProviders,
@@ -20,6 +20,7 @@ import {
 import { handsFreeAvailability } from '../../core/voice/handsFree'
 import { speechController } from '../../core/voice/speech'
 import { usePalette, type Palette } from '../../ui/theme'
+import { S2sConsentSheet } from './S2sConsentSheet'
 import type { TtsProviderInfo } from '@shared/types.ts'
 
 function Section({ p, title, children }: { p: Palette; title: string; children: ReactNode }) {
@@ -121,6 +122,8 @@ export function SettingsScreen() {
   // **必须有这个出口**：无 key 引擎在全链四段里没有任何一段会换引擎，结果就是完全安静，
   // 而屏上此前一个字都不说——用户只能对着一台安静的手机猜是不是自己音量关了。
   const [previewMsg, setPreviewMsg] = useState('')
+  // 首次切端到端的一次性显式同意（方案 §5.2.2；红线三条件②的持久化证据）
+  const [consentOpen, setConsentOpen] = useState(false)
 
   useEffect(() => {
     void loadServerConfig().then(setServer)
@@ -139,6 +142,8 @@ export function SettingsScreen() {
   const set = (patch: Partial<AppSettings>) => update(patch)
 
   return (
+    // Modal 与 ScrollView 并列：同意页要盖住整屏，塞进 ScrollView 里会跟着滚
+    <View style={{ flex: 1, backgroundColor: p.bg }}>
     <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ padding: 14, gap: 16 }}>
       <Section p={p} title="服务器">
         <Text style={{ color: p.fg2, fontSize: p.font(13) }}>
@@ -389,7 +394,11 @@ export function SettingsScreen() {
                 { v: 'classic' as const, label: '三段式（默认）' },
                 { v: 's2s' as const, label: '端到端' },
               ]}
-              onPick={(voicePipeline) => set({ voicePipeline })}
+              onPick={(voicePipeline) => {
+                // 首次切端到端弹一次性显式同意（方案 §5.2.2）；同意过的直接切；切回三段式永远不问
+                if (voicePipeline === 's2s' && needsS2sConsent(settings)) setConsentOpen(true)
+                else set({ voicePipeline })
+              }}
             />
             <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
               三段式：语音在本机转成文字后，只上传文字。
@@ -399,6 +408,11 @@ export function SettingsScreen() {
             {settings.voicePipeline === 's2s' ? (
               <Text style={{ color: p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
                 已选端到端：本机麦克风的原始音频会在每次唤醒后的对话窗内上传。
+              </Text>
+            ) : null}
+            {settings.s2sConsentAt > 0 ? (
+              <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
+                已于 {new Date(settings.s2sConsentAt).toLocaleString('zh-CN', { hour12: false })} 同意端到端上传原始音频
               </Text>
             ) : null}
           </>
@@ -482,5 +496,16 @@ export function SettingsScreen() {
         </Link>
       </Section>
     </ScrollView>
+      <S2sConsentSheet
+        p={p}
+        fontScale={settings.fontScale}
+        visible={consentOpen}
+        onAccept={() => {
+          set({ voicePipeline: 's2s', s2sConsentAt: Date.now() })
+          setConsentOpen(false)
+        }}
+        onDecline={() => setConsentOpen(false)}
+      />
+    </View>
   )
 }

@@ -71,6 +71,10 @@ export interface SessionState {
   draftUserId: string | null
   /** 被打断的助手气泡：文字定格、标「已打断」，**不是错误**（方案 §5.2 规则 4） */
   interruptedIds: string[]
+  /** 端到端（S2S）自答轮的气泡（用户话 + 回答）：转写由语音模型生成、不是逐字 ASR（方案 §5.2.2
+   *  的 `source:'s2s' + transcriptKind:'model_inferred'`——只有 S2S 轮是模型推断的，一个集合够用）。
+   *  逃逸轮回到主链后从这里摘掉——它按普通轮渲染 */
+  s2sIds: string[]
 }
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
@@ -136,6 +140,9 @@ export class SessionCore {
   private readonly inFlight = new Set<string>()
   /** 断线期间入队的轮（按气泡 id 记）：取消 / 终态都能把它摘掉，「N 条消息排队中」才不会报错数（评审 D9） */
   private readonly queuedIds = new Set<string>()
+  /** 当前 S2S 轮的两条气泡（用户话等归属：自答留在 s2sIds、逃逸交给主链） */
+  private s2sUserId: string | null = null
+  private s2sAssistantId: string | null = null
 
   private readonly speech: SpeechSink
 
@@ -154,6 +161,7 @@ export class SessionCore {
       turnMeta: {},
       draftUserId: null,
       interruptedIds: [],
+      s2sIds: [],
     }))
   }
 
@@ -309,6 +317,67 @@ export class SessionCore {
 
   private setText(id: string, text: string): void {
     this.store.setState((s) => ({ messages: s.messages.map((m) => (m.id === id ? { ...m, text } : m)) }))
+  }
+
+  // ── S2S 自答轮（方案 §5.2.2）：只写记录，不进 requestRouting——它没有 request_id ──
+
+  /** 已过 FSM 本地治理的用户话：有草稿就转正为它，没有就建；进 s2sIds，等归属（自答 / 逃逸） */
+  s2sUserUtterance(text: string): void {
+    const draft = this.commitDraftUser()
+    const id = draft ?? uid()
+    if (draft) this.setText(id, text)
+    else this.appendMessage({ id, role: 'user', text })
+    this.s2sUserId = id
+    this.store.setState((s) => ({ s2sIds: s.s2sIds.includes(id) ? s.s2sIds : [...s.s2sIds, id] }))
+  }
+
+  /** 回答增量：按「无在飞轮的续流 adopt 新气泡」语义单独开一条（§5.2 规则 2） */
+  s2sAnswerDelta(delta: string): void {
+    if (!delta) return
+    const cur = this.s2sAssistantId
+    if (cur && this.store.getState().messages.some((m) => m.id === cur)) {
+      this.store.setState((s) => ({
+        messages: s.messages.map((m) => (m.id === cur ? { ...m, text: m.text + delta, streaming: true } : m)),
+      }))
+      return
+    }
+    const id = uid()
+    this.s2sAssistantId = id
+    this.store.setState((s) => ({
+      messages: [...s.messages, { id, role: 'assistant', text: delta, streaming: true }],
+      s2sIds: [...s.s2sIds, id],
+    }))
+  }
+
+  /** turn.end：收尾。cancelled 且没出字 → 删；出了字 → 定格 + 打断留痕；escalated 的用户话留给 takeS2sUserBubble */
+  s2sTurnEnd(reason: string): void {
+    const id = this.s2sAssistantId
+    this.s2sAssistantId = null
+    if (reason !== 'escalated') this.s2sUserId = null
+    if (!id) return
+    const text = this.store.getState().messages.find((m) => m.id === id)?.text ?? ''
+    if (!text) {
+      this.store.setState((s) => ({
+        messages: s.messages.filter((m) => m.id !== id),
+        s2sIds: s.s2sIds.filter((x) => x !== id),
+      }))
+      return
+    }
+    this.store.setState((s) => ({
+      messages: s.messages.map((m) => (m.id === id ? { ...m, streaming: false } : m)),
+      interruptedIds:
+        reason === 'cancelled' && !s.interruptedIds.includes(id) ? [...s.interruptedIds, id] : s.interruptedIds,
+    }))
+  }
+
+  /** 逃逸（红线：S2S 会话内无执行通道，原话交回主链）：这条用户气泡不再是端到端轮——
+   *  交给 send({ bubbleId }) 复用，**不许出现第二条**。没有待归属的用户话返回 null */
+  takeS2sUserBubble(): string | null {
+    const id = this.s2sUserId
+    this.s2sUserId = null
+    if (!id) return null
+    this.store.setState((s) => ({ s2sIds: s.s2sIds.filter((x) => x !== id) }))
+    return id
   }
 
   /** 派发一轮请求（App.tsx:680-720）：上行帧 + 「思考中」占位 + 登记归属 + 看门狗 */
