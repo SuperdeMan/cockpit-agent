@@ -416,3 +416,22 @@ describe('fallbackModel 换模型重试', () => {
     expect(calls.final).toEqual(['批处理结果'])
   })
 })
+
+// B2 T6：`vad_silence_ms` 是**轻点即说**专用的服务端静音尾，hold（按住说话）由松手定稿、
+// 免唤醒由端侧 VAD 定稿，两者都不该带它。而且它只有 qwen3 realtime 消费
+// （`llm-gateway/providers.py:762`：fun-asr 走客户端 stop 端点，不受此影响）——
+// 缺省引擎是 fun-asr，所以「传了」并不等于「收得了尾」，收尾主判据在 tapTalk.ts 的端侧 VAD。
+test('B2-6：hold 模式（不传 vadSilenceMs）start 帧不带 vad_silence_ms；传了才带（只有 qwen3 消费它）', async () => {
+  const s = new AsrSession(CFG, { onFinal() {}, onError() {} }, new FakeRecorder())
+  live.push(s)
+  await s.start()
+  FakeWs.last!.open()
+  const start = FakeWs.last!.jsonSent.find((m) => m.type === 'start')
+  expect(start).toBeDefined()
+  expect('vad_silence_ms' in start!).toBe(false)
+  const s2 = new AsrSession({ ...CFG, vadSilenceMs: 800 }, { onFinal() {}, onError() {} }, new FakeRecorder())
+  live.push(s2)
+  await s2.start()
+  FakeWs.last!.open()
+  expect(FakeWs.last!.jsonSent.find((m) => m.type === 'start')?.vad_silence_ms).toBe(800)
+})

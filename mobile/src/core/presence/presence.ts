@@ -109,6 +109,8 @@ export interface PresenceInput {
   user: string
   /** 语音层的三个事实（B2 T3）；缺省=文字世界，层只在收音时升 */
   voice?: VoiceFacts
+  /** 2s 短提示（取消 / 回声）；判据 NOTICE_SHOW_MS 在这里 */
+  notice?: { text: string; at: number } | null
 }
 
 export interface PresenceSnapshot {
@@ -143,6 +145,9 @@ export const ERROR_SHOW_MS = 4000
 export const LONG_TASK_MS = 8000
 /** armed 胶囊「说「小舟小舟」」只在进入待机后短显（方案 §4.2，评审 D2）；光球的 armed 青环不受它影响 */
 export const ARMED_CAPSULE_MS = 3000
+
+/** 2s 短提示（取消 / 回声）的显示时长（方案 §5.1.1 / §5.2 规则 5） */
+export const NOTICE_SHOW_MS = 2000
 
 export function derivePresence(i: PresenceInput): PresenceSnapshot {
   // ── transport ──
@@ -239,6 +244,8 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else if (agent === 'speaking') capsule = { text: '播报中 · 说话可打断', tone: 'accent' }
   else if (agent === 'processing') capsule = { text: `${i.turn.processLabel || '处理中'}…`, tone: 'neutral' }
   else if (agent === 'thinking') capsule = { text: '正在思考…', tone: 'neutral' }
+  // 2s 短提示（取消 / 回声）：压过 followup 与 armed 这两个「常态提示」，但让位给收音 / 播报 / 思考
+  else if (!!i.notice && i.now - i.notice.at < NOTICE_SHOW_MS) capsule = { text: i.notice.text, tone: 'neutral' }
   else if (agent === 'followup') capsule = { text: '可以接着说', tone: 'accent', live: true }
   // error 在 armed 之前（评审 D3）：免唤醒开着时 capture 恒 armed，排后面就永远出不来
   else if (errorLive) capsule = { text: i.lastError!.text, tone: 'red' }

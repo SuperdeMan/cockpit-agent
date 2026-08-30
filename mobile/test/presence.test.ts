@@ -245,6 +245,16 @@ describe('capsule 文案', () => {
       tone: 'red',
     })
   })
+
+  test('notice（取消 / 回声）2s 短显：压过 followup 与 armed，让位给收音 / 播报 / 思考（B2 T6/T11）', () => {
+    const n = { text: '已取消，这段话不会发给小舟', at: NOW - 500 }
+    expect(derivePresence(base({ notice: n })).capsule).toEqual({ text: n.text, tone: 'neutral' })
+    expect(derivePresence(base({ notice: { ...n, at: NOW - 2_000 } })).capsule).toBeUndefined()
+    expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'FOLLOWUP' })).capsule?.text).toBe(n.text)
+    expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'ARMED', hfFsmChangedAt: NOW - 100 })).capsule?.text).toBe(n.text)
+    expect(derivePresence(base({ notice: n, ptt: 'recording' })).capsule?.text).toBe('在听…')
+    expect(derivePresence(base({ notice: n, speaking: true })).capsule?.text).toBe('播报中 · 说话可打断')
+  })
 })
 
 describe('now 透传（Dock 倒计时的唯一时钟）', () => {

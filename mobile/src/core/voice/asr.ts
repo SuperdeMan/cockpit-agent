@@ -31,6 +31,9 @@ export interface AsrConfig {
    *  这不是锦上添花——批处理那条兜底在当前云栈上是 401（MiMo key），
    *  所以「一次说话只有一次机会」的第二次机会就靠它。 */
   fallbackModel?: string
+  /** 服务端静音尾（ms）——**只给轻点即说**：PTT 由松手定稿、免唤醒由端侧 VAD 定稿，两者不传。
+   *  只有 qwen3 realtime 消费它（llm-gateway/providers.py:762），fun-asr 忽略：传了不坏，别指望它 */
+  vadSilenceMs?: number
   sessionId?: string
 }
 
@@ -144,7 +147,7 @@ export class AsrSession {
           language: this.cfg.language,
           provider: this.cfg.provider,
           model: this.activeModel,
-          // vad_silence_ms 刻意不传：那是免唤醒（hands-free）的静音尾，PTT 由松手定稿
+          ...(this.cfg.vadSilenceMs ? { vad_silence_ms: this.cfg.vadSilenceMs } : {}),
           ...(this.cfg.sessionId ? { session_id: this.cfg.sessionId } : {}),
         }),
       )

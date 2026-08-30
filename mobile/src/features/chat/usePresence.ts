@@ -13,6 +13,7 @@ import {
   ARMED_CAPSULE_MS,
   derivePresence,
   ERROR_SHOW_MS,
+  NOTICE_SHOW_MS,
   RECONNECTING_GRACE_MS,
   type Degradation,
   type PresenceSnapshot,
@@ -106,6 +107,8 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
   // 而这块表**只在真的有人依赖 now 时才走**：无条件常开时真机实测（对话屏静置 10s、零交互、
   // 零消息）ChatBody 重渲 11 次、FlashList 可见气泡重渲 88 次——每秒把整列表重画一遍，
   // 而屏上什么都没变。下面四条是 `derivePresence` 里**全部**读 now 的分支，都不成立就停表。
+  // 2s 提示：取消（§5.1.1 的隐私文案——「不会发给」而不是「未上传」）；T11 把回声并进来
+  const notice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
   const now = Date.now()
   const [, bumpTick] = useState(0)
   const needsTick =
@@ -113,7 +116,8 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     !!active?.processActive || // 长任务 8s 门槛
     (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
     (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
-    (hf.fsm === 'ARMED' && now - hfFsmChangedAt.current < ARMED_CAPSULE_MS) // armed 胶囊 3s 隐藏
+    (hf.fsm === 'ARMED' && now - hfFsmChangedAt.current < ARMED_CAPSULE_MS) || // armed 胶囊 3s 隐藏
+    (!!notice && now - notice.at < NOTICE_SHOW_MS) // 取消 / 回声提示 2s 短显
   useEffect(() => {
     if (!needsTick) return
     const t = setInterval(() => bumpTick((n) => n + 1), TICK_MS)
@@ -157,6 +161,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     identity: settings.deviceRole,
     user,
     voice,
+    notice,
   })
 }
 

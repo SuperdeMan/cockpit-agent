@@ -280,11 +280,33 @@ function ChatBody({
   // 回滚分支要拿回来，否则「关了开关」只退回三条
   const legacyHint = ptt.partial || (ptt.state === 'finalizing' ? (ptt.slow ? '网络似乎不太顺，正在重试…' : '识别中…') : '') || ptt.error || ''
   const legacyHintIsError = !ptt.partial && ptt.state !== 'finalizing' && !!ptt.error
-  // 降级出口「重新开启插话」：关再开一次免唤醒 = 重建收音窗（B2 的语音层会给更准的实现）
-  const reenableBargeIn = useCallback(() => {
-    settingsStore.getState().update({ handsFree: false })
-    setTimeout(() => settingsStore.getState().update({ handsFree: true }), 50)
-  }, [])
+  // 轻点光球：哪个引擎持有麦，就由谁开始听——免唤醒开着 = 手动唤醒（FSM 自带 VAD 收尾）；
+  // 否则 = PTT 的 tap 会话（端侧 VAD / 服务端尾 / 15s 三层收尾）。这是「谁持有麦」的事实，不是判据
+  const hfOn = settings.handsFree && hf.availability.usable
+  const startListening = useCallback(() => {
+    if (!hfOn) {
+      ptt.tap()
+      return
+    }
+    if (hf.fsm === 'LISTENING') hf.endUtterance()
+    else hf.wake()
+  }, [hfOn, hf, ptt])
+  // ■ 打断 / 播报中轻点：先停（cancel 帧 + stop TTS），再听（方案 §5.2 规则 4：层不收、speaking→listening）
+  const interruptAndListen = useCallback(() => {
+    core.cancelCurrentTurn()
+    startListening()
+  }, [core, startListening])
+  // 光球轻点契约（方案 §5.1.1 表）：播报中 = 停播再录；思考 / 执行中 = 展开语音层；其余 = 开始 / 结束录音
+  const onOrbTap = useCallback(() => {
+    if (snapshot.agent === 'speaking') interruptAndListen()
+    else if (snapshot.agent === 'thinking' || snapshot.agent === 'processing') setSheetOverride({ turnId: latestTurnId, mode: 'open' })
+    else startListening()
+  }, [snapshot.agent, interruptAndListen, latestTurnId, startListening])
+  // 「关闭本轮麦克风」（隐私栏）与「重新开启插话」（Dock）：评审 D7——不再翻持久化开关
+  const stopMic = useCallback(() => {
+    ptt.cancel()
+    if (hfOn) hf.recycle()
+  }, [ptt, hfOn, hf])
 
   // ── 采集激活日志（隐私栏「最近一次」读它）：**在麦克风/摄像头真的开起来的那一处写** ──
   useEffect(() => {
@@ -400,7 +422,7 @@ function ChatBody({
           interruptedIds={interruptedIds}
           s2sNotice={s2sNotice}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
-          onInterrupt={onInterrupt}
+          onInterrupt={interruptAndListen}
           onSend={(t) => onSend(t)}
         />
       ) : null}
@@ -466,7 +488,7 @@ function ChatBody({
           snapshot={snapshot}
           onConfirm={onConfirm}
           onCancelTurn={onInterrupt}
-          onReenableBargeIn={reenableBargeIn}
+          onReenableBargeIn={hf.recycle}
         />
       ) : null}
       {/* 状态胶囊：一次只说一件「此刻」的事。**B1 不接 onPress**——它是 26dp +
@@ -490,6 +512,7 @@ function ChatBody({
         onSend={onSend}
         onInterrupt={onInterrupt}
         orbAnimated={snapshot.input !== 'voice-sheet'}
+        onTap={onOrbTap}
       />
     </View>
   )
@@ -637,10 +660,7 @@ function ChatBody({
               snapshot={snapshot}
               visible={privacyOpen}
               onClose={() => setPrivacyOpen(false)}
-              onStopMic={() => {
-                ptt.pressUp()
-                if (settings.handsFree) reenableBargeIn()
-              }}
+              onStopMic={stopMic}
             />
           ) : null}
         </KeyboardAvoidingView>

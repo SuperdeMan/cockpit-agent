@@ -4,7 +4,7 @@
 // **默认关，且原生缺席时连开关都不该出现**——`availability` 就是给 UI 判这个的。
 // 判据分开报（vad / kws 各一位）：「不可用」查不出是哪一半最耗时，M3-3 地图那次
 // 就是靠分开报一次命中的。
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   HandsFreeController,
@@ -48,6 +48,12 @@ export interface HandsFreeUi {
   bargeInDisabled: string
   /** 本轮语音链路降级说明；下一轮 FSM 进 LISTENING 时清 */
   pipelineDegraded: string
+  /** 轻点光球 = 手动唤醒（免唤醒开着时由它开始听） */
+  wake(): void
+  /** 录音中轻点 = 结束并提交 */
+  endUtterance(): void
+  /** 结束本轮收音 / 重新开启插话（评审 D7） */
+  recycle(): void
 }
 
 export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
@@ -181,5 +187,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     ctlRef.current?.setNeedConfirm(needConfirm)
   }, [needConfirm, wantOn])
 
-  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded }
+  const wake = useCallback(() => ctlRef.current?.wakeManually(), [])
+  const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
+  const recycle = useCallback(() => ctlRef.current?.recycle(), [])
+  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle }
 }

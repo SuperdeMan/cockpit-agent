@@ -294,3 +294,42 @@ test('⑥ useHandsFree 的 getS2sConfig 不把 TTS 引擎/音色当成 S2S 的�
   expect(body).not.toMatch(/ttsProvider/)
   expect(body).not.toMatch(/voiceId/)
 })
+
+// ─── B2 T6：轻点光球的三个 FSM 入口（方案 §5.1.1、评审 D7）。
+//     判据是「谁持有麦，就由谁开始听」：免唤醒开着时轻点走 FSM 的公开入口，不另起 TapTalk
+//     （那样会有两份 VAD 抢同一路麦）。FSM 本身一字不改，这三个方法只是把它的入口透出来。
+
+test('B2-6 wakeManually：ARMED 下等同 KWS 命中——开一条 ASR（轻点光球 = 手动唤醒，FSM 不改）', async () => {
+  const { ctl } = makeCtl()
+  await ctl.enable()
+  ctl.wakeManually()
+  expect(asrLog).toEqual(['start'])
+  expect(kws.resets).toBe(1)
+})
+
+test('B2-6 endUtterance：LISTENING 下请定稿（= onEndpoint 的效果）；非 LISTENING 时 no-op', async () => {
+  const { ctl } = makeCtl()
+  await ctl.enable()
+  ctl.endUtterance() // ARMED：什么都不做
+  expect(asrLog).toEqual([])
+  ctl.wakeManually()
+  ctl.endUtterance()
+  expect(asrLog).toEqual(['start', 'stop'])
+})
+
+test('B2-6 recycle（评审 D7）：FSM 拆机再装机、麦不停、会话级关闭的 barge-in 被复位并以空串通知', async () => {
+  const bargeIn: string[] = []
+  const states: string[] = []
+  const { ctl } = makeCtl({
+    onBargeInDisabled: (r: string) => bargeIn.push(r),
+    onOrbState: (_o: unknown, f: string) => states.push(f),
+  })
+  await ctl.enable()
+  ctl.vl._bargeInDisabled = true // FSM 自己的会话级标志：只有 _gotoIdle 会复位它
+  const stopsBefore = recStarts.stops
+  ctl.recycle()
+  expect(states.slice(-2)).toEqual(['IDLE', 'ARMED'])
+  expect(recStarts.stops).toBe(stopsBefore) // 麦没停（不是 disable/enable）
+  expect(ctl.vl.bargeInDisabled).toBe(false)
+  expect(bargeIn).toEqual([''])
+})

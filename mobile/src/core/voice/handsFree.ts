@@ -283,6 +283,31 @@ export class HandsFreeController {
     this.vl.ttsEnd()
   }
 
+  /** 轻点光球（方案 §5.1.1）= 一次「手动唤醒」：FSM 的公开入口 wake()——ARMED/FOLLOWUP 进聆听、
+   *  SPEAKING 先停播再听、THINKING 取消在飞轮再听。FSM 一字不改，KWS 与命中时同样 reset */
+  wakeManually(): void {
+    void this.kws.reset()
+    this.vl.wake()
+  }
+
+  /** 录音中轻点 = 结束并提交：与 FSM 的 onEndpoint 效果逐字同构（S2S 请收尾 / classic 请定稿） */
+  endUtterance(): void {
+    if (this.vl.state !== 'LISTENING') return
+    if (this.s2s) this.s2s.commitAudio()
+    else void this.asr?.stop()
+  }
+
+  /** 「结束本轮收音」/「重新开启插话」的正式实现（评审 D7）：FSM 拆机再装机——
+   *  handsFreeOff → IDLE（关 ASR、清定时器、**复位会话级 _bargeInDisabled**）→ handsFreeOn → ARMED。
+   *  引擎、麦、KWS 都不动（不是 disable/enable），也不碰持久化设置（B1 那 50ms 的 false 窗口没了）。
+   *  onBargeInDisabled('') = 「已复位」，Presence 据此撤掉 Dock 里那条降级 */
+  recycle(): void {
+    if (!this.on) return
+    this.vl.handsFreeOff()
+    this.vl.handsFreeOn()
+    this.deps.onBargeInDisabled?.('')
+  }
+
   stats(): { fsm: string; ringFrames: number; kws: unknown } {
     return { fsm: this.vl.state, ringFrames: this.ring.frames, kws: this.kws.stats() }
   }
