@@ -1,0 +1,33 @@
+# 流 ⑥：危险动作 → Focus Dock 钉住确认（倒计时在走）→ 取消 → Dock 消失（UX v2.1 P5）。
+# 与 02 的区别：02 验的是**气泡内**确认（v1 路径，uxV2Dock 关时仍有效）；这条验**承诺面**。
+# 「到期留痕」（300s）不在这里等——那条由 sessionStore.test.ts 用假时钟守（共享 TTL
+# PENDING_TTL_MS 不许为了缩短验收去改，它 hmi 也在用）；这里只验「钉住 + 倒计时可见 + 取消后消失」。
+#
+# ⚠ `hideKeyboard` 保留：它防的是 Maestro 树里只剩输入法（README 判据 1），
+#   与 08 验的「键盘遮不遮发送键」是两件事，别把这条也改成不 hideKeyboard。
+appId: com.xiaozhou.companion
+name: 06 危险动作进 Focus Dock
+tags:
+  - online
+---
+- runFlow: subflows/open-app.yaml
+- tapOn:
+    id: "composer-input"
+- inputText: "打开后备箱"
+- hideKeyboard
+- tapOn:
+    id: "composer-send"
+- extendedWaitUntil:
+    visible:
+      id: "dock-confirm"
+    timeout: 45000
+- assertVisible:
+    id: "dock-countdown"
+- assertVisible:
+    id: "presence-capsule"
+- tapOn:
+    id: "dock-cancel"
+- extendedWaitUntil:
+    notVisible:
+      id: "dock-confirm"
+    timeout: 20000

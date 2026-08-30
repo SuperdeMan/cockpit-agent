@@ -22,6 +22,28 @@ maestro test mobile/e2e/01-text-weather.yaml      # 单条
 `4/4 Flows Passed in 7m 43s`——01 天气 2m10s / 02 危险动作 2m43s / 03 断网补达 2m33s /
 04 离线冒烟 16s。三条 online 先各自单跑通过，再整目录复跑一遍。
 
+### UX v2.1 B1 新增三条：**06 / 08 / 09 全部跑通**（2026-08-30 真机，各单跑）
+
+| 流 | tag | 验的是 | 读数 |
+|---|---|---|---|
+| `06-confirm-dock` | online | 危险动作 → **承诺面**钉住确认（倒计时可见）→ 取消 → Dock 消失 | 退出码 0，墙钟 **193.7s** |
+| `08-keyboard-no-hide` | online | 键盘弹出时发送键仍在树里、可点（**刻意不 hideKeyboard**） | 退出码 0，墙钟 **126.0s** |
+| `09-state-gallery` | offline | 状态画廊：三个新光球态 + 承诺面 + 离线队列 + 降级行渲得出来 | 退出码 0，墙钟 **326.4s / 323.9s**（两趟） |
+
+三条读数的口径：**墙钟含 JVM 启动、driver 连接与 dev bundle 首载**（dev build 现编，
+release 会短很多），不是 Maestro 自己报的 flow 时间。09 那 5 分半**几乎全在 `repeat 6 × scroll`**
+——两趟差 0.8%，是稳定的，不是抖动。
+
+⚠ 06 与 02 验的不是同一件事：**02 = 气泡内确认**（v1 路径，实验室开关 `uxV2Dock` 关掉时仍有效），
+**06 = 承诺面**。两条都要留着——回滚路径没有测试守着就只是一句话。
+
+⚠ 「到期留痕」（300s）**刻意不在 06 里等**：那条由 `mobile/test/sessionStore.test.ts` 用假时钟守。
+共享 TTL `pendingOps.mjs::PENDING_TTL_MS` **不许为了缩短 e2e 去改**——hmi 也在读它。
+
+CI：`.github/workflows/mobile-apk.yml` 跑的是 `maestro test mobile/e2e/ --include-tags offline`，
+所以 09 **不改 workflow 就自动进** 那个 job（04 也在）。⚠ 但那个 job 挂在 `workflow_dispatch`
+的 `run_e2e` 开关下，**不是每次 push 都跑**——别把「进了 CI」读成「每次都跑」。
+
 **跑法（必须带 `--no-reinstall-driver`）**：
 
 ```bash
