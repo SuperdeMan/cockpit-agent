@@ -1,6 +1,6 @@
 # QA 收尾：安全问句禁止进入需确认的云侧写能力
 
-> 状态：**落地中（本地验证完成，待 push/deploy/真栈）**（2026-08-30）
+> 状态：**最终审查重开（post-build 出口待修）**（2026-08-30）
 > 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84/§85、
 > `orchestrator/cloud/planning.py::_question_side_effect_steps`、
@@ -308,3 +308,56 @@ trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；�
 
 因此当前只能写“本地验证完成，待 push/deploy/真栈”，不得写成“云端已修”“QA 全绿”或
 该候选已经 `verified`。
+
+## 11. 最终审查增补：post-build 三个执行出口仍可绕过守卫
+
+### 11.1 只读复现与当前裁决
+
+最终审查在本地 `HEAD=a07cc7b6cf14886f8f172af0f41a6acd63e1b71e` 上沿真实调用链只读核对，
+确认 v1.45 当前实现只闭合了 `PlanBuilder.build()` 的 focused/normal 出口，尚未闭合下列
+三个 **post-build 执行出口**：
+
+1. **replan 旁路**：`LoopController.run()` 接收 `planner.replan()` 返回的
+   `ReplanDecision.steps` 后直接 `to_plan()` 并进入流式或 executor；问句可被 LLM 的二次规划
+   改写成 `warning_light.close`。这里必须以 `run(..., user_text=...)` 收到的服务端原始用户文本
+   重新过滤，不能使用 LLM 生成的 `goal`。全删时本轮按 `done` 收场，禁止 dispatch；mixed
+   计划只删违规步骤，合法步骤、既有结果与 observation 链保持不变。
+2. **escalate 旁路**：`PlannerEngine._run_escalated()` 将 `_validated_steps()` 生成的 mini-plan
+   直接交给 executor；T1 D0 流式分支与普通 executor 分支都汇入这里。这里必须以
+   `ctx.raw_text` 重新过滤：问句产生的端侧写和 `require_confirm=true` cloud 步骤都拒绝，
+   普通指令、端侧读与 cloud read 保留。
+3. **talk fallback 旁路**：`_talk_only_plan()` 只看 fallback manifest 的
+   `capabilities[0]`，且当前只拒绝 `require_confirm=true`；若第一项是未确认的 edge write，
+   它可在主守卫之后被重新插回计划。修法是按 manifest 声明序扫描 capabilities，每个候选都先
+   经 `_validated_steps()` 装配，再用与主守卫完全相同的判据筛选；被拒绝后继续查找后续安全
+   talk，全部不合格才返回 `None`。
+
+`a07cc7b` 因此**不可 push**，更不可拿去 deploy 或做真栈验收。此前
+`dfad68730b50d094993c328d33cb774d29642e16` 的 7723/32/13 warnings 与 `a07cc7b` 上的审查前
+本地绿，只能作为历史基线；它们没有覆盖上述三条执行出口，**不得转借给增补代码**。增补实现
+落地后必须从 RED、targeted、Cloud Planner、四道门禁到全量重新取数，并绑定最终代码与契约 SHA。
+
+### 11.2 增补设计决议
+
+1. **覆盖所有计划出口**：安全边界不是“`build()` 返回前过滤一次”，而是“任何新计划即将首次
+   进入 dispatch 前过滤一次”。`build`、replan receiver、escalate mini-plan 与 fallback
+   候选必须复用同一份步骤选择判据，不得复制公式。
+2. **只信服务端原始文本**：`build` 使用其 `text` 入参，loop 使用 `user_text`，escalate 使用
+   `ctx.raw_text`；`plan.goal`、replan goal、escalate reason 都是模型或 Agent 可影响的数据，
+   不得作为问句/指令安全判据。
+3. **fail closed 且不制造空转**：replan/escalate 全删后零 dispatch、零挂起；build 全删后只有
+   经同一守卫放行的安全 talk 才能补回，否则保持空计划。若 build 的 adaptive 计划被全阻断后
+   只剩 talk 或空计划，`complexity` 必须降为 `simple`，避免无意义进入 adaptive replan。
+4. **保留合法部分与观测**：mixed replan/escalate 只按 `Step` 对象身份删除违规步；已有结果、
+   observation、合法 read/directive 步骤和聚合输入不丢失。禁止把“发现一个违规步”实现成整份
+   计划拒绝。
+5. **纵深防御**：build 守卫仍是第一层，LoopController 与 engine escalate 是接收新计划时的
+   第二层。后两层不是重复逻辑，而是防止 post-build 新产物绕开第一层；三层必须调用同一个
+   纯步骤过滤原语，以免边界漂移。
+
+### 11.3 新完成口径
+
+本设计重新进入 active。只有增补 TDD、三阶段规格/质量审查、fresh 全量验证与新 manifest
+全部完成，且最终审查确认不存在第四个 post-build dispatch 出口后，才可恢复“本地验证完成，
+待外部动作/真栈”的表述。push、deploy、remote-safe 与长会话仍分别是后续人工授权点，不能由
+本地绿自动推出。
