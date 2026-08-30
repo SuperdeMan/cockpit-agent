@@ -42,12 +42,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_planning import MockAgent  # noqa: E402  复用真实装配路径的 mock agent
 
 
-def _step(intent: str, *, deployment: str = "edge", kind: str = "edge_fast") -> Step:
-    return Step(id="s1", agent_id="edge-vehicle", intent=intent,
-                deployment=deployment, kind=kind, slots={})
+def _step(
+    intent: str,
+    *,
+    agent_id: str = "edge-vehicle",
+    deployment: str = "edge",
+    kind: str = "edge_fast",
+    require_confirm: bool = False,
+) -> Step:
+    return Step(
+        id="s1", agent_id=agent_id, intent=intent,
+        deployment=deployment, kind=kind,
+        require_confirm=require_confirm, slots={},
+    )
 
 
-_GUARD = PlanBuilder._question_write_edge_steps
+_GUARD = PlanBuilder._question_side_effect_steps
 
 
 # ── 1. 问句 + 写车控 = 拦 ──────────────────────────────────────────────────
@@ -84,11 +94,26 @@ def test_question_shaped_read_is_allowed(text):
 
 # ── 4. 问句 + 云端步 = 放（闸只盖端侧写，不盖查资料/查天气）────────────────────
 
-def test_question_shaped_cloud_step_is_allowed():
-    cloud_step = _step("manual.query", deployment="cloud", kind="agent")
+@pytest.mark.parametrize("intent", ["manual.query", "info.search", "chitchat.talk"])
+def test_question_shaped_unconfirmed_cloud_step_is_allowed(intent):
+    cloud_step = _step(intent, deployment="cloud", kind="agent")
     assert _GUARD([cloud_step], "红色机油灯亮了怎么办") == []
-    talk = _step("chitchat.talk", deployment="cloud", kind="agent")
-    assert _GUARD([talk], "红色机油灯亮了怎么办") == []
+
+
+def test_question_shaped_confirmed_cloud_step_is_blocked():
+    order = _step(
+        "luckin.order", agent_id="mcp-bridge", deployment="cloud",
+        kind="agent", require_confirm=True,
+    )
+    assert _GUARD([order], "红色机油灯亮了还能继续开吗") == [order]
+
+
+def test_directive_to_confirmed_cloud_step_is_allowed():
+    order = _step(
+        "luckin.order", agent_id="mcp-bridge", deployment="cloud",
+        kind="agent", require_confirm=True,
+    )
+    assert _GUARD([order], "帮我点一杯生椰拿铁") == []
 
 
 # ── 5. 混合计划只丢被拦的那一步 ─────────────────────────────────────────────
@@ -98,6 +123,16 @@ def test_only_the_offending_step_is_selected():
              _step("warning_light.close")]
     blocked = _GUARD(steps, "红色机油灯亮了怎么办")
     assert [s.intent for s in blocked] == ["warning_light.close"]
+
+
+def test_mixed_plan_only_selects_the_confirmed_cloud_step():
+    manual = _step("manual.query", deployment="cloud", kind="agent")
+    order = _step(
+        "luckin.order", agent_id="mcp-bridge", deployment="cloud",
+        kind="agent", require_confirm=True,
+    )
+    blocked = _GUARD([manual, order], "红色机油灯亮了还能继续开吗")
+    assert blocked == [order]
 
 
 # ── 6. 端到端：整条 build() 上真的拦得住，并且给得出回答 ──────────────────────
@@ -139,6 +174,28 @@ def _build(text: str):
                                      PlanContext(session_id="t")))
 
 
+def _build_cloud_order(text: str):
+    agents = [
+        MockAgent("mcp-bridge", ["luckin.order"],
+                  require_confirm=("luckin.order",)),
+        MockAgent("chitchat", ["chitchat.talk"]),
+    ]
+    catalog = _assemble_capability_catalog(agents)
+    ref = catalog.pair_to_ref[("mcp-bridge", "luckin.order")]
+    wire = ('{"steps":[{"id":"s1","capability_ref":"%s",'
+            '"slots":{},"depends_on":[],"slot_refs":{}}]}' % ref)
+
+    async def mock_llm(messages):
+        return wire
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    return asyncio.run(builder.build(text, WorkingSet(catalog=agents),
+                                     PlanContext(session_id="t")))
+
+
 def test_end_to_end_question_does_not_reach_a_vehicle_write_step():
     """**这条才是 P0-01 的复现**：模型照旧产 `warning_light.close`，闸在出口拦下。
 
@@ -157,6 +214,19 @@ def test_end_to_end_directive_still_executes():
     """对照：同一份 catalog、同一条计划，祈使句照常落到车控步。"""
     plan = _build("关闭双闪")
     assert [s.intent for s in plan.steps] == ["warning_light.close"]
+    assert "question_write_blocked" not in (plan.plan_mode or "")
+
+
+def test_end_to_end_question_does_not_reach_confirmed_cloud_write():
+    plan = _build_cloud_order("红色机油灯亮了还能继续开吗")
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+    assert "question_write_blocked" in (plan.plan_mode or "")
+
+
+def test_end_to_end_cloud_order_directive_still_reaches_confirmation_boundary():
+    plan = _build_cloud_order("帮我点一杯生椰拿铁")
+    assert [s.intent for s in plan.steps] == ["luckin.order"]
+    assert plan.steps[0].require_confirm is True
     assert "question_write_blocked" not in (plan.plan_mode or "")
 
 
