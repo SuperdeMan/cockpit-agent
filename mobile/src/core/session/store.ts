@@ -102,6 +102,10 @@ export class SessionCore {
   private readonly deps: SessionDeps
   private readonly registry = new RequestRegistry()
   private readonly watchdogs = new Map<string, ReturnType<typeof setTimeout>>()
+  /** 离线期间被摘下 / 未起表的轮（重连后整 95s 重新起表）——见 pauseWatchdogs 注释 */
+  private readonly pausedWatchdogs = new Set<string>()
+  /** 链路是否已知断开：只由 setStatus 驱动，初始 false＝「还没人告诉过我链路状态」 */
+  private linkDown = false
   private readonly presented = new Set<string>()
   private justCancelled = false
   private pruneTimer: ReturnType<typeof setTimeout> | null = null
@@ -127,6 +131,10 @@ export class SessionCore {
 
   setStatus(status: GatewayStatus): void {
     const prev = this.store.getState().connStatus
+    // 看门狗的表跟着**链路**走，与 connStatus 的值变没变无关：退避重连期间
+    // closed↔connecting 反复摆动，同值早退不该让表漏摘/漏起。
+    if (status === 'open') this.resumeWatchdogs()
+    else this.pauseWatchdogs()
     if (status === prev) return
     if (status === 'closed' && prev === 'open') {
       // 探活判死 / onclose：此刻在飞的轮可能写进了死 socket（M3-W 残留窗）——标未知，不重发
@@ -146,6 +154,7 @@ export class SessionCore {
   dispose(): void {
     for (const t of this.watchdogs.values()) clearTimeout(t)
     this.watchdogs.clear()
+    this.pausedWatchdogs.clear()
     if (this.pruneTimer) {
       clearTimeout(this.pruneTimer)
       this.pruneTimer = null
@@ -476,6 +485,12 @@ export class SessionCore {
 
   /** 请求看门狗（App.tsx:612-628）：**每轮一只**，超时转提示、注销该轮，迟到 final 丢弃 */
   private armWatchdog(id: string): void {
+    if (this.linkDown) {
+      // 链路已知断开：帧要么在 ws.mjs 的队列里等 flush、要么写进了死 socket。
+      // 这段时间不计入 95s——否则重连前就超时，补发的答复回来时对不上号（见 pauseWatchdogs）。
+      this.pausedWatchdogs.add(id)
+      return
+    }
     const timer = setTimeout(() => {
       this.watchdogs.delete(id)
       this.registry.dropBubble(id)
@@ -507,8 +522,33 @@ export class SessionCore {
       clearTimeout(t)
       this.watchdogs.delete(bubbleId)
     }
+    this.pausedWatchdogs.delete(bubbleId)
     this.inFlight.delete(bubbleId)
     this.dropUncertain(bubbleId)
+  }
+
+  /**
+   * 离线期间不给看门狗计时（B1 第 3 批遗留③）：飞行模式下 RN 的 onclose 不来，靠 HTTP 探活
+   * `reconnectNow()` 判死，退避重连实测约 2 分钟。旧行为里那一轮的 95s 表在断网期间就跑完了
+   * ——气泡被收成「响应超时」且该轮已从 registry 注销 ⇒ 重连 flush 后回来的 final 带着一个
+   * 已注销的 request_id、按「对不上＝丢帧」被丢，**用户永远拿不到答案**。
+   * 摘表不动 registry / inFlight / uncertainIds：气泡保持 pending，「已断开·消息会排队」由胶囊与 Dock 说。
+   */
+  private pauseWatchdogs(): void {
+    this.linkDown = true
+    for (const [id, t] of this.watchdogs) {
+      clearTimeout(t)
+      this.pausedWatchdogs.add(id)
+    }
+    this.watchdogs.clear()
+  }
+
+  /** 重连：被摘的轮（含离线期间发出、当时就没起表的那些）各自重新起整 95s */
+  private resumeWatchdogs(): void {
+    this.linkDown = false
+    const paused = [...this.pausedWatchdogs]
+    this.pausedWatchdogs.clear()
+    for (const id of paused) this.armWatchdog(id)
   }
 
   /** 终态到达 → 「发送状态未知」的标撤掉（所有终态路径都经 clearWatchdog / 看门狗超时） */

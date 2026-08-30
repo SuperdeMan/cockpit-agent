@@ -519,3 +519,67 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
     core.dispose()
   })
 })
+
+// 第 3 批遗留③的机制：飞行模式下 RN 的 onclose 不来，靠 HTTP 探活 reconnectNow() 判死；
+// 退避重连约 2 分钟期间状态在 connecting/closed 之间摆动、**不会回 open**。旧行为里那一轮的
+// 95s 看门狗在断网期间就跑完了：气泡被收成「响应超时」且该轮已从 registry 注销 ⇒ 重连后帧
+// 确实补发了，回来的 final 却带着一个已注销的 request_id、按「对不上=丢帧」被丢——用户永远
+// 拿不到答案。修法只在 SessionCore：离线期间不计时，重连后整 95s 重新起表。
+describe('UX v2.1 B1-16 前置：离线期间暂停看门狗（第 3 批遗留③）', () => {
+  test('在飞轮：断开期间不计时（150s 仍 pending），重连后重新整 95s', () => {
+    const { core } = newCore()
+    core.setStatus('open')
+    core.send('永远不回的问题')
+    core.setStatus('closed') // 探活判死 → reconnectNow
+    jest.advanceTimersByTime(150_000) // 断网期间远超 95s
+    expect(assistants(core)[0]).toMatchObject({ pending: true })
+    expect(assistants(core)[0].text).not.toContain('响应超时')
+    core.setStatus('open') // 重连
+    jest.advanceTimersByTime(REQUEST_TIMEOUT_MS - 1_000) // 94s：整 95s 重新起表 ⇒ 还没到
+    expect(assistants(core)[0]).toMatchObject({ pending: true })
+    jest.advanceTimersByTime(2_000) // 96s
+    expect(assistants(core)[0]).toMatchObject({ error: true, text: '响应超时了，请稍后重试。' })
+    core.dispose()
+  })
+
+  test('重连后补发的答复能上屏：closed 150s → open → 30s 收到 final → 正常收尾、无「响应超时」', () => {
+    const { transport, core } = newCore()
+    core.setStatus('open')
+    core.send('现在几点')
+    const rid = transport.lastUserFrame().request_id
+    core.setStatus('closed')
+    jest.advanceTimersByTime(150_000)
+    core.setStatus('open')
+    jest.advanceTimersByTime(30_000)
+    core.handleFrame({ type: 'final', request_id: rid, speech: '八点' })
+    expect(assistants(core)[0]).toMatchObject({ text: '八点', pending: false })
+    expect(msgs(core).some((m) => m.text.includes('响应超时'))).toBe(false)
+    core.dispose()
+  })
+
+  test('断开期间**发出**的轮同样不起表（观测到的正是这条：send 返 false=帧入队）', () => {
+    const transport = new FakeTransport()
+    transport.send = (frame: object) => {
+      transport.sent.push(frame)
+      return false // 退避重连期间：readyState !== OPEN ⇒ 入队
+    }
+    const core = new SessionCore({
+      transport,
+      sessionId: 'app-test01',
+      getMeta: () => ({}),
+      location: fakeLocation(false),
+    })
+    core.setStatus('connecting') // 退避重连中（closed↔connecting 摆动，不会回 open）
+    core.send('断网时问的问题')
+    const rid = transport.lastUserFrame().request_id
+    jest.advanceTimersByTime(150_000)
+    expect(core.store.getState().queued).toBe(1)
+    expect(assistants(core)[0]).toMatchObject({ pending: true })
+    core.setStatus('open') // ws.mjs onopen 先 flush 队列，答复随后到
+    jest.advanceTimersByTime(30_000)
+    core.handleFrame({ type: 'final', request_id: rid, speech: '补发的答案' })
+    expect(assistants(core)[0]).toMatchObject({ text: '补发的答案', pending: false })
+    expect(msgs(core).some((m) => m.text.includes('响应超时'))).toBe(false)
+    core.dispose()
+  })
+})
