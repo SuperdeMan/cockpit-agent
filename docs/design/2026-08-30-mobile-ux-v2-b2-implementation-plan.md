@@ -1,0 +1,4365 @@
+# UX v2.1 · B2「语音层」实施计划（逐任务，按方案 v2.2）
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+> 状态：**草案（2026-08-30）——待泓舟批准开工；批准前 `mobile/` 不按它动手**
+> 交付对象：`mobile/` 执行者（人或 Agent）
+> 上游真相源：[`2026-08-29-mobile-ux-v2-presence-redesign.md`](2026-08-29-mobile-ux-v2-presence-redesign.md)（方案 **v2.2**；本计划只展开 **B2**，读 §0 / §5.1.1 / §5.2–§5.2.2 / §5.3.2 / §5.5 / §11.1 / §11.4 / §13 Q2·Q11·Q20）；
+> B1 落地评审 [`docs/reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md`](../reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md)（§4 D1–D9、§6 B2 入口五条）；
+> B1 计划 [`2026-08-29-mobile-ux-v2-b1-implementation-plan.md`](2026-08-29-mobile-ux-v2-b1-implementation-plan.md)（§0.1 分批纪律、§6.4 遗留出账——B2 从那张表接活）
+> 纪律：沿用 B1 计划 §0 + [`2026-08-24-mobile-app-implementation-plan.md`](2026-08-24-mobile-app-implementation-plan.md) §9 坑账；每任务「先测后码、一任务一提交」；**零新原生依赖、不重建 APK；共享判据（`hmi/src/*.mjs`、`pendingOps.mjs` TTL）一字不动；`hmi/` 不碰**（唯一例外走主计划 §10「共享模块有 bug」条款，本批没有——回声那条不是 bug 是缺出口，记遗留）
+
+**Goal:** 把 PTT / 唤醒词 / S2S 三种说话方式收进**同一张从底部升起的语音层**；语音层不持有自己的状态——它是「对话记录里当前这一轮」的视图，转写与回答**增量沉淀**进记录（S2S 自答轮从此有记录、带「端到端」角标、开录即告知、首次显式同意）；轻点光球始终能说（端侧 VAD 收尾）；主卡/折叠卡、follow-up chips、视觉先落气泡、回声提示、播报三档、执行回执、在场轨迹页。**开工第一件事修 B1 评审的 D1（承诺卡摘要取错源），第二件事把 D2–D5 当一组判据修正做完**——它们不是语音层，但 B2 不做就没有别的批会做。末尾是 **B2→B3 闸**：真人语音轮五项读数 + 5 人外部小样本。**全 JS，不重建 APK。**
+
+**Architecture:** 判断仍只住在 `core/presence/presence.ts::derivePresence`（B1 的纯函数）——B2 给它加四个事实输入（`hfFsmChangedAt` / `voice` / `notice`，以及麦克风第四档 `cloudAsr` 的派生）与两个派生输出（`input` 的语音层开合、`sheetDetent`），**不新增状态机、不改共享 FSM**。记录侧只动 `SessionCore`（`core/session/store.ts`）：草稿气泡 `draftUserId`、打断留痕 `interruptedIds`、端到端轮 `s2sIds`、视觉轮 `visionIds`、轮元数据 `turnMeta`、确认台账回复 `confirmLog`——全部是 `SessionState` 的**并列字段**（`Msg` 是共享类型不能加字段）。UI 侧新增 `VoiceSheet`（读 snapshot + 当前轮）、`EdgeGlow`、`CardGroup`、`FollowUpChips`、`ExecutionReceipt`、`S2sConsentSheet`、`/presence-trail`；`Composer` 换成手势契约（RNGH 已随 expo-router 在 APK 里注册）；`usePtt` 长出 `tap()` / `cancel()`，`HandsFreeController` 长出 `wakeManually()` / `endUtterance()` / `recycle()`（全是 FSM 的**公开**入口，FSM 一字不改）。
+
+**Tech Stack:** React Native 0.86 / Expo 57 / expo-router / zustand / react-native-reanimated 4.5 / react-native-gesture-handler 2.32（已在场）/ jest-expo（`mobile/test/**/*.test.ts`，纯逻辑）/ Maestro 2.9（`mobile/e2e/`）。
+
+---
+
+## 0. 接手须知（先读）
+
+1. **开工前提**（不变）：`powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0；Metro `cd mobile && npx expo start --dev-client`；真机 dev-client 已装（本批**不重建**——B2 零新原生依赖；任何「要重建」的念头都说明走偏了）。**B2 唯一的原生前提是 RNGH 已注册**，判据不是 `package.json`、是 `PackageList.java`（坑账 §9.43）：
+   ```bash
+   grep -n "RNGestureHandlerPackage" "D:/Android/builds/xiaozhou-mobile/android/app/build/generated/autolinking/src/main/java/com/facebook/react/PackageList.java"
+   # 2026-08-30 读数：第 73 行 `new com.swmansion.gesturehandler.RNGestureHandlerPackage()`（Reanimated 第 75 行）
+   ```
+   若你换了构建目录且这一行不在 ⇒ Task 6 的手势退回 RN 核心 `PanResponder`（写进 §6 记录），**不加依赖、不重建**。
+2. **每个任务的顺序是固定的**：写失败测试 → 跑出红 → 最小实现 → 跑绿 → `tsc` → 提交。`mobile/` 的测试命令：`cd mobile && npx jest test/<file>.test.ts`（单文件）/ `npm test`（全量，**开工基线 29 suites / 315 tests**，B1 收口读数）/ `npm run typecheck`。
+3. **提交只加自己的路径**：新建文件 `git add -- <路径> && git commit -- <路径>` **同一条命令链**（已暂存未提交比未暂存更有害，会污染别人的发版闸）；提交后 **`git show --stat HEAD` 复核行数**。共享工作树里可能有别的会话的改动，**不要 `git add -A`**。⚠ 按路径隔离得了「文件」，隔离不了**同一个文件里别人未提交的行**——`AGENTS.md` 正是所有会话都在写的那一个：动它前先 `git diff --stat -- AGENTS.md` 看行数对不对得上自己的预期。全仓提交都是同一个 git 身份，「这个 commit 是哪条会话的」靠元数据答不出来，只能靠会话自己说。
+4. **真机取证一律截图**（`adb exec-out screencap -p -d <displayId>`；折叠屏 id 用 `dumpsys SurfaceFlinger --display-id` 取）；`uiautomator dump` 在有常驻动画的屏上不可信（坑账 §9.40/48）。**录屏路径要写 `//sdcard/…` 或带 `MSYS_NO_PATHCONV=1`**（B1 第 4 批坑①：MSYS 把 `/sdcard/` 翻成 Windows 路径，`screenrecord` 与 `adb pull` 双双落空）。`adb shell` 里的 PNG **不要经 PowerShell 的 `>`**（会损坏）。
+5. **六个结构性事实，写代码前记住**（每条都有 `文件:行号`，别按印象）：
+   - **`Msg` 不能加字段**（`hmi/src/types.ts:9`，共享）⇒ B2 全部「气泡上要多显示一个态」都是 `SessionState` 的并列字段：`draftUserId` / `interruptedIds` / `s2sIds` / `visionIds` / `turnMeta` / `confirmLog`（Task 4/5/10/13 逐个引入；类型在 §1）。到期留痕、回执都用**追加消息 / 并列表**，不改原气泡。
+   - **共享判据只读**：`voiceLoop.mjs` / `s2sClient.mjs` / `sileroEndpoint.mjs` / `pendingOps.mjs::PENDING_TTL_MS`。后果之一：回声提示（§5.2 规则 5）只能挂 FSM **已经吐出来的** `onMetric('echo_dismissed')`（`hmi/src/voiceLoop.mjs:379`，续问窗回声那一路）；barge-in 那一路的回声（`_bargeInFire` → `_countSelfTrigger`，`:476`）**没有 metric**，App 看不见 ⇒ Task 11 只做前者，后者写进遗留、由 hmi 侧另立。
+   - **`vad_silence_ms` 只有 qwen3 realtime 消费**：`llm-gateway/providers.py:762`「fun-asr 走客户端 stop 端点，不受此影响」，而 App 默认 `asrModel='fun-asr-realtime'`（泓舟 2026-08-26 指示，`core/settings/store.ts:81`）⇒ 方案 §5.1.1「轻点光球 → 服务端静音尾收尾」在缺省引擎上**收不了尾**。Task 6 的收尾主判据改成**端侧 VAD**（`VadEngine` 已在这个 APK 里，M4 真机已验），`vad_silence_ms` 照传（qwen3 用户白得一层），VAD 缺席时 15s 硬上限——**方案里的参数是待证命题不是待办**（B1 计划 §5 同款教训）。
+   - **PTT 在免唤醒开着时今天是坏的**（写计划时从源码读出来的，B1 验收表第 6 条第二行「PTT 中」恰好没取证）：`usePtt` 的 `AsrSession` 用 `recorder()` 单例，`AudioApiRecorder.start()` 在已录时**静默 return**（`core/voice/recorder.ts:50`）⇒ PTT 一帧都收不到；`session.stop()` → `AudioApiRecorder.stop()` 会**把免唤醒正在用的真麦停掉**（`:89`，micBus 的 `running` 还是 true，从此免唤醒是聋的）。⇒ Task 6 的前置修：`AsrSession` 的 recorder 换 `micLease()`（`core/voice/micBus.ts:105`，Lease 实现 `Recorder`、引用计数、真麦只在最后一个 lease 停下才关）。**这一条要先于手势契约落，且要有 jest 钉住**。
+   - **S2S 逃逸的双气泡风险**：`onS2sUserUtterance`（`core/voice/handsFree.ts:167`）与 `onS2sEscalated`（`:325` → `useHandsFree.ts:115` → `ChatScreen.onSend`）都会产生一条用户气泡。B1 没接前者所以没撞上；Task 5 接了就必须用 `takeS2sUserBubble()` 把那条气泡**交给主链轮复用**，不许两条。
+   - **协议里仍然没有** `missing_slots` / `confirm_policy` / VAL 拒绝结构化标记（方案 Q16 / Q19 挂账后端）⇒ 回执（Task 13）的「安全检查」栏**留位不渲染**；`DockItem.slot` / `safety_blocked` 仍只有类型与画廊样本。不许在客户端用正则猜。
+6. **评审交给 B2 的两条「别踩」**（评审 §6 第 5 条）：① `PresenceCapsule` 是 26dp + `accessibilityRole="text"`——Task 3 接 `onPress`（§4.3「点按胶囊 = 打开语音层」）时**必须同时改 role 与热区**（`hitSlop` 补到 48dp、role 换 `button`）；② `SessionCore` 的看门狗暂停 / 恢复语义（`linkDown` / `pausedWatchdogs`，`store.ts:531-552`）修的是「重连后用户永远拿不到答案」，**重构时别当成多余的复杂度删掉**——判据在 `sessionStore.test.ts:529/545/560` 三条，第三条有变异验证钉着。Task 4 动 `store.ts` 时这三条必须仍绿。
+7. **方案 §13 Q20 的落点在本计划里是**：D1 → Task 1；D2/D3/D4/D5 → Task 2（一组，不拆）；D6 → **B4**（不在本计划）；D7 → Task 6；D8 → Task 14；D9 → Task 4；S2S 首次显式同意 → Task 5（设置页那一半）；在场轨迹页（🔁-1）→ Task 14。方案已裁决的默认值（Q1–Q20）不在本计划重议；本计划新增的实施判断集中在 §5。
+
+### 0.1 分批执行：一批一个会话（新会话从这里开始）
+
+本计划很长，一个会话读不完也不该读完。**分四批，每批一个新会话**，每批以「jest 全绿 + `tsc` 0 + 逐任务已提交 + §6 实施记录回填」收口；下一批冷启动只读 §0 + §0.1 + §1 + 自己那几个 `### Task N` 块（用 `grep -n "^### Task" <本文件>` 取行号，`sed -n` 只读自己的段），**不读整份计划、不读方案全文**（方案只在任务里点名的 §号处查）。
+
+| 批 | 会话任务 | 性质 | 并行度 | 收口判据 | 真机？ |
+|---|---|---|---|---|---|
+| **第 1 批「遗留修正与判据层」** | T1 D1 摘要源 → T2 D2–D5 胶囊与隐私栏判据修正 | 两处纯函数 + 三个组件的取值处；全部 jest 可跑 | 串行（两条都动 `usePresence.ts` / `presence.test.ts`） | `npm test` 全绿（315 → ≈340）、`tsc` 0、2 个 commit、画廊深浅各一套、真机 4 张（Dock 标题「打开后备箱」/ 200% 标题不裁 / armed 胶囊 3s 消失 / 隐私栏 PTT 行琥珀）、§6.1 | 是（画廊 + 对话屏，不需要泓舟） |
+| **第 2 批「语音层骨架与记录沉淀」** | T3 Voice Sheet 三入口一张层 → T4 draft→final 增量沉淀 → T5 S2S 轮沉淀 + 角标 + 开录即告知 + 首次同意 | 新组件 + `SessionCore` 长方法 | T4 的 store 半边（`store.ts` + `sessionStore.test.ts`）可与 T3 并行；接线串行 | 全绿、`tsc` 0、3 个 commit、真机：三入口各升一次层 / 草稿气泡逐字与层同 / **S2S 走通一轮**（M4 挂账「端到端未验」在此一并）、§6.2 | 是（**S2S 一轮与「录音中途切后台」需泓舟真人**） |
+| **第 3 批「手势与层内元素」** | T6 轻点即说 + 手势契约（含 PTT-lease 前置修、D7）→ T7 边缘极光 ∥ T8 card_group 主卡/折叠 ∥ T9 follow-up chips → T10 视觉先落气泡 → T11 回声提示 | 手势 + 四个小组件 | **T7/T8/T9 三个 subagent 并行**（互不相干的新文件，各自只加自己的路径提交）；T6/T10/T11 串行（都动 `ChatScreen.tsx`） | 全绿、`tsc` 0、6 个 commit、真机：轻点即说（免唤醒关）/ 上滑取消 + 文案 / 主卡「还有 N 张 ›」/ chips 可点 / 「这是什么」气泡先于相机 / 回声提示（带 APK 构建时间与有无 AEC）、§6.3 | 是 |
+| **第 4 批「播报·回执·轨迹 + 闸」** | T12 播报三档 → T13 执行回执 → T14 在场轨迹页 → **T15 B2→B3 闸**（含 Maestro 05、记录收口） | 设置 + 两个组件 + 取证 | T12/T13/T14 可并行（不同文件；`MessageBubble.tsx` 只有 T13 动、`SettingsScreen.tsx` T12 与 T14 各改一个分区——**串行提交**） | 闸五项读数 + 5 人小样本 ≥5/6 + §11.4 取数 + §6.4；AGENTS.md 只改指针；未推送清单报给泓舟 | 是（**泓舟 + 5 名外部用户**） |
+
+**B1 §6.4 出账表在 B2 的去向**（接手时逐条核，不复述）：① 200% 下 Dock 标题被挤 → T1；② 隐私栏颜色与文案不同源 → T2；③ `gfxinfo` CPU 侧不可信 → T15 改用 `framestats` 逐帧口径；④ `missing_slots` 分层措辞 → 已在 §0 第 5 条写清；⑤⑥ 隐私栏第二/三行活证 → T2 补第二行（PTT 行，单人可取）、T15 补第三行（端到端，随 S2S 轮）；⑦ Accessibility Scanner 未装 → T15（**装 APK 到泓舟设备要授权**，没授权就记 ⬜）；⑧ `looking` 白环无静态取证 → T10 随「先落气泡」用录屏取（§0 第 4 条的路径坑已定位）。B1 前三批仍开的两条：`handsFree.test.ts` 的 `Jest did not exit` 噪声（非本批引入，T6 动该文件时看一眼是否是未清的定时器）；浅色下光球对比度（给 B3 视觉批，B2 不动）。
+
+**每批开工的固定五步**（写进新会话的第一条提示词）：
+1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批的 T1/T2 纯 jest 可先做，真机截图在收口时补）；
+2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
+3. 只读 §0 / §0.1 / §1 + 自己批次的 `### Task N` 块；
+4. 按任务顺序：写失败测试 → 跑红 → 实现 → 跑绿 → `tsc` → `git add -- <新文件> && git commit -- <只加自己的路径>` → `git show --stat HEAD` 复核；
+5. 收口：全量 `npm test` + `tsc`，把读数、遗留、撞到的坑写进 §6，**然后停下**——下一批是另一个会话的事。
+
+**worktree**：B1 期间三条线共用一个工作树出过两次事故（B1 计划 §0 第 3 条；`git push` 的粒度是分支不是提交）。**若泓舟同意分树**，第 1 批开工前执行一次并写进 §6：`git worktree add ../car-agent-ux-b2 -b ux-v2-b2`，四批都在该 worktree 里做，最后由泓舟决定合回 `main` 的方式（`git push` 仍需单独授权）。没有分树就在主工作树做，纪律同 §0 第 3 条——但**这一条不再是可选项的措辞**：不分树就要在每次提交前 `git status` 重采、`git log origin/main..HEAD --oneline` 念一遍谁的提交在前面。
+
+**批与批之间的状态只靠两处传递**：git 提交（代码）与本文件 §6（读数与遗留）。新会话不要去翻上一批会话的对话——那些不在仓库里。
+
+---
+
+## 1. 文件结构（先定边界，再拆任务）
+
+### 新建
+
+| 文件 | 职责 | 依赖 | 任务 |
+|---|---|---|---|
+| `mobile/src/core/session/actionSummary.ts` | `actionSummary(messages, operationId)`：承诺卡 / 到期留痕的动作摘要——**紧邻的上一条用户原话**，跳过「确认/取消」回复 | 无 RN import | T1 |
+| `mobile/src/features/chat/dockLabel.ts` | `dockLabelMode(pref, windowFontScale)`：承诺卡右侧固定标签的让位规则（❌-1） | 无 RN import | T1 |
+| `mobile/src/core/session/turnView.ts` | `currentTurn(messages)`：「当前这一轮」= 最后一条用户气泡 + 其后的助手气泡；`isProactive(msg)` 从 `MessageBubble` 搬来共用 | 无 RN import | T3 |
+| `mobile/src/features/chat/VoiceSheet.tsx` | 语音层：读 `snapshot` + 当前轮，**零自有状态**；detent / 收起手势 / 打断 / 大光球 / 转写 / 回答 / 主卡 / chips / S2S 告知条 | reanimated、RNGH、`CardRenderer`、`FollowUpChips`、`EdgeGlow` | T3（T5/T7/T9 追加） |
+| `mobile/src/core/voice/tapTalk.ts` | `TapTalkSession`：轻点即说 = `AsrSession` + 端侧 VAD 端点 + 15s 上限；`vadEndpoint()` 生产端点、测试注入假端点 | `asr.ts`、`vad.ts`、`micBus.ts` | T6 |
+| `mobile/src/ui/aurora/EdgeGlow.tsx` | 语音层顶缘 2dp 极光呼吸（1.6s，只在 listening/thinking） | reanimated、`AURORA.gradient` | T7 |
+| `mobile/src/core/cards/cardGroup.ts` | `cardPriority(card)` / `splitCardGroup(items)`：按 `display_priority` 升序取主卡，其余折叠（core 层：T13 的回执也读它） | 无 RN import | T8 |
+| `mobile/src/features/cards/CardGroup.tsx` | `card_group` 的渲染器：主卡全展 + 「还有 N 张 ›」竖排展开 | `CardRenderer` | T8 |
+| `mobile/src/core/session/followUps.ts` | `followUpChips(followUp, candidates)`：`final.follow_up` + 候选集 → ≤4 枚 chip，文本以 `sendRouter` 能消费为准 | `candidates.ts` | T9 |
+| `mobile/src/features/chat/FollowUpChips.tsx` | chips 行（语音层内；点按 = 普通 `send`） | tokens | T9 |
+| `mobile/src/features/settings/S2sConsentSheet.tsx` | 端到端挡位的**一次性显式同意**（G0 实色） | tokens | T5 |
+| `mobile/src/core/session/receipt.ts` | `buildReceipt(...)`：执行回执（车控四行 / 信息服务 `_prov` 展开），字段全部来自已有数据 | `actionSummary.ts` | T13 |
+| `mobile/src/features/chat/ExecutionReceipt.tsx` | 回执组件：默认折叠成「已执行 · 展开回执」 | tokens | T13 |
+| `mobile/src/core/presence/presenceTrail.ts` | `PresenceTrail`：20 条环形，记 `PresenceSnapshot` 变化的轴 + 变化的输入摘要（不上传） | `presence.ts` | T14 |
+| `mobile/src/app/presence-trail.tsx` | 调试屏「在场轨迹」：轨迹 + 采集激活日志（`activityLog.list()` 的第一个消费方，D8） | `presenceTrail.ts`、`activityLog.ts` | T14 |
+| `mobile/test/actionSummary.test.ts` `dockLabel.test.ts` `turnView.test.ts` `tapTalk.test.ts` `pttLease.test.ts` `cardGroup.test.ts` `followUps.test.ts` `speakPolicy.test.ts` `receipt.test.ts` `presenceTrail.test.ts` | 纯逻辑守卫 | jest | 各任务 |
+| `mobile/e2e/05-voice-sheet-ptt.yaml` | Maestro 流 ⑤（`manual`）：按住光球 → `voice-sheet` 可见 → 松手 → 收起 | — | T15 |
+
+### 修改
+
+| 文件 | 改什么 | 为什么 | 任务 |
+|---|---|---|---|
+| `mobile/src/features/chat/usePresence.ts` | 摘要改 `actionSummary`；登记 `hfFsmChangedAt`；产 `voice` 事实（轮来源 / 层开合覆盖 / 有无回答 / 有无卡）；产 `notice`（取消 / 回声）；每次派生后喂 `presenceTrail` | D1 / D2 / §5.2 规则 1·3 / §5.1.1 取消文案 / §5.2 规则 5 / 🔁-1 | T1 T2 T3 T6 T11 T14 |
+| `mobile/src/features/chat/FocusDock.tsx` | 标题两行、右侧标签按 `dockLabelMode` 让位、卡片 a11y label 补分类 | ❌-1 | T1 |
+| `mobile/src/core/session/store.ts` | `noteExpired` 用 `actionSummary`；`SendOpts`（`source` / `bubbleId` / `vision`）；草稿三方法；`interruptedIds`；`queued` 按 id 计数（D9）；S2S 四方法；`visionIds`；`turnMeta` / `confirmLog`；`SpeechSink.begin` 第三参 `voice` | T1 / §5.2.1 / §5.2.2 / §5.5 / §5.3.2 / §5.2 规则 8 | T1 T4 T5 T10 T12 T13 |
+| `mobile/src/core/presence/presence.ts` | `MicState` 四档 + `MIC_LABEL` 表；`ARMED_CAPSULE_MS`；error 提到 armed 之前；`voice` 输入 → `input` 开合 + `sheetDetent` + `turnSource`；`notice` 输入 → 2s 胶囊 | D2 D3 D4 D5 / §5.2 规则 1·3 / §5.1.1 / §5.2 规则 5 | T2 T3 T6 |
+| `mobile/src/core/presence/fixtures.ts` | base 加 `hfFsmChangedAt`；新样本 `armed-quiet` / `error-hf-on` / `sheet-*` 三条 | 画廊要能看见「3s 后没胶囊」「免唤醒下的 error」「三档 detent」 | T2 T3 |
+| `mobile/test/presence.test.ts` `presenceFixtures.test.ts` | base 补字段；privacy 轴改四档；armed 3s / error 可见；`MIC_LABEL` 覆盖；`input` / `sheetDetent`；notice；画廊「四档各有样本」 | 同上 | T2 T3 T6 |
+| `mobile/src/features/chat/PrivacyRail.tsx` | 删 `micText`，行文案与颜色都取 `MIC_LABEL[mic]`；「关闭本轮麦克风」改调 `ptt.cancel()` + `hf.recycle()` | D4 D5 / D7 | T2 T6 |
+| `mobile/src/features/chat/ChatScreen.tsx` | 采集点 label/颜色取 `MIC_LABEL`；语音层接线（容器高度、`sheetOverride`、胶囊 `onPress`、Composer 主球在层开时静态）；草稿/提交/丢弃接线；S2S 四回调；手势契约的 `startListening` / `interruptAndListen`；视觉先落气泡；`hf.recycle()` 替代 `reenableBargeIn` | 各任务 | T2 T3 T4 T5 T6 T10 |
+| `mobile/src/features/chat/PresenceCapsule.tsx` | 有 `onPress` 时 role=`button` + `hitSlop` 到 48dp；无则维持 `text` | §4.3 + 评审「别踩」① | T3 |
+| `mobile/src/features/chat/Composer.tsx` | 手势契约（轻点 / 长按 ≥300ms / 上滑取消 / 松手发送；输入框有字时只有光球可 PTT）；`orbAnimated` prop；a11y 轻点切换 | §5.1.1 | T6 |
+| `mobile/src/features/chat/usePtt.ts` | recorder 换 `micLease()`；`onPartial` / `onDiscard` 出口；`tap()` / `cancel()`；`cancelledAt` | §0 第 5 条 / §5.2.1 / §5.1.1 | T4 T6 |
+| `mobile/src/core/voice/asr.ts` | `AsrConfig.vadSilenceMs?` → start 帧 `vad_silence_ms`（hold 不传、tap 传） | §5.1.1 | T6 |
+| `mobile/src/core/voice/handsFree.ts` | `wakeManually()` / `endUtterance()` / `recycle()`；deps 加 `onEchoDismissed?` | §5.1.1 / D7 / §5.2 规则 5 | T6 T11 |
+| `mobile/src/features/chat/useHandsFree.ts` | 透出 `wake` / `endUtterance` / `recycle` / `echoAt`；`onS2sEscalated?` / `onS2sTurnEnd?` 交给调用方 | 同上 / §5.2.2 | T5 T6 T11 |
+| `mobile/src/features/chat/MessageBubble.tsx` | `draft` / `interrupted` / `s2s` / `vision` 四个并列态的呈现；`isProactive` 改从 `turnView` 引；「已执行 …」行换 `ExecutionReceipt` | §5.2.1 / §5.2.2 / §5.5 / §5.3.2 | T3 T4 T5 T10 T13 |
+| `mobile/src/features/cards/CardRenderer.tsx` | REGISTRY `card_group` → `CardGroup` | §5.2 规则 7 / §5.4 | T8 |
+| `mobile/src/core/settings/store.ts` | `s2sConsentAt`；`speakPolicy` 三档替换 `ttsEnabled && autoplay`（存量迁移） | §5.2.2 / §5.2 规则 8 · Q11 | T5 T12 |
+| `mobile/src/features/settings/SettingsScreen.tsx` | 切端到端弹一次性同意；「语音播报」两开关 → 三档；调试分区加「在场轨迹」 | 同上 / 🔁-1 | T5 T12 T14 |
+| `mobile/src/core/voice/speech.ts` | `enabledFor(voice)`；`begin` 第三参；`finish` 尊重 begin 时的裁决 | §5.2 规则 8 | T12 |
+| `mobile/test/sessionStore.test.ts` `settingsMeta.test.ts` `handsFree.test.ts` `voiceAsr.test.ts` | 各任务追加用例（只追加不改既有断言，看门狗三条必须仍绿） | — | T1 T4 T5 T6 T11 T12 T13 |
+| `mobile/src/app/_layout.tsx` | T3：根包 `GestureHandlerRootView`（Android 上 RNGH 手势的必要条件，今天不在）；T14：注册 `presence-trail` 路由 | — | T3 T14 |
+| `mobile/e2e/README.md`、`2026-08-24-mobile-app-implementation-plan.md`（只加 §B2 指针）、`docs/design/README.md`、`AGENTS.md` §4.1（只改指针） | 记录 | 收口 | T15 |
+
+### 1.1 追溯：方案 / 评审的每条要求指到哪个任务（自检用，写完计划逐行核过）
+
+| 来源 | 要求 | 任务 |
+|---|---|---|
+| 评审 §6 ① / D1 / 🔁-4 | 承诺卡摘要取紧邻上一条用户原话；同时验 Dock 标题、`noteExpired` 留痕、两条并存；❌-1 右侧标签让位 | **T1** |
+| 评审 §6 ② / D2 D3 D4 D5 / B1 出账② | armed 胶囊 3s 隐藏；error 不被 armed 遮蔽；判据层加 `cloudAsr`；隐私栏文案与颜色同源；读屏 label 同源；连带类型 / 画廊样本 / 覆盖度守卫 | **T2** |
+| 方案 §5.2 规则 1 | 三种说话方式一张层，`snapshot.input === 'voice-sheet'` 升起，文字不升层 | T3 |
+| 方案 §5.2 规则 3 | 自适应 detent 40/62/78；收起时机（追问窗关 / 下拉 / 点收起 / 点主卡按钮）；`attention` 不自动收 | T3（行车档 +3s 自动收 → B4） |
+| 方案 §5.2 规则 4 | 打断：层不收、光球 speaking→listening、文字定格标「已打断」不改红 | T3（免唤醒路径）+ T4（留痕）+ T6（PTT 路径的「再听」） |
+| 方案 §4.3 / 评审「别踩」① | 点按胶囊 = 打开语音层，同时改 role 与热区 | T3 |
+| 方案 §11.4 性能 | 同屏循环动画常态 1 个：层开时 Composer 球转静态 | T3 |
+| 方案 §5.2 规则 2 / §5.2.1 | 增量沉淀：`draft_user → final_user`、取消即删、`draft_assistant` 已是逐 delta；恢复不假装；异常退出不写 | **T4** |
+| 评审 D9 | `queued` 取消一轮要减 | T4 |
+| 方案 §5.2.2 / §11.2 B2 | S2S 轮记 `source:'s2s' + transcriptKind` 语义、角标「端到端」、长按提示「转写由语音模型生成」；开录即告知首行 G0；设置里切挡位弹一次性显式同意；副作用只走主链、逃逸轮按普通轮渲染 | **T5** |
+| 评审 §6 ③ | S2S 首次显式同意放 B2 设置页那一半 | T5 |
+| 方案 §5.1.1 表 + 配套规则 / Q2 | 轻点始终能说（与免唤醒开关无关）；录音中轻点=结束提交；播报中轻点=先停 TTS；长按 ≥300ms PTT；按住上滑取消 + 隐私文案；松手发送；12dp 移动阈值；输入框有字时只有光球可 PTT；TalkBack 轻点切换 + label 随状态；热区 ≥48dp；免唤醒开关职责收窄 | **T6** |
+| 评审 D7 | `reenableBargeIn` 复用与 50ms 假窗口 → 语音层给「结束本轮收音」正式实现 | T6 |
+| §0 第 5 条（本计划新发现） | PTT 在免唤醒下坏 → `micLease()` | T6（前置） |
+| 方案 §5.2 规则 6 | 顶缘 2dp 极光呼吸 1.6s，只在 listening/thinking，零依赖 | **T7** |
+| 方案 §5.2 规则 7 / §5.4 | `card_group` 按 `display_priority` 取主卡、其余折叠竖排展开；行高不在本批（B4 无障碍/触控批） | **T8** |
+| 方案 §5.2 图 / §11.1 B2 行 | follow-up chips（`final.follow_up` + 候选集） | **T9** |
+| 方案 §5.5 | `looking`：气泡**立刻**出现带 📷 角标，`vision_frame_id` 迟到补进 meta；不做预览 | **T10** |
+| 方案 §5.2 规则 5 | 回声命中时胶囊短显「像是我自己的声音，没算数」2s | **T11** |
+| 方案 §5.2 规则 8 / Q11 | 播报三档 总是/静音/自动，默认自动，迁移规则 | **T12** |
+| 方案 §5.3.2 | 执行回执四行 + 信息服务 `_prov` 展开；默认折叠；「安全检查」留位 | **T13** |
+| 🔁-1 / 评审 §6 ④ / D8 | `PresenceSnapshot` 变化轨迹 + 调试屏页；`activityLog.list()` 有消费方 | **T14** |
+| 方案 §11.1「B2→B3 闸」/ §11.2 B2 / §11.3 流 05 / §11.4 | 真人语音轮五项读数 + 5 人外部小样本；B2 真机验收 7 条；Maestro 05 `manual`；八条判据取数 | **T15** |
+| 方案 §0 / §11.1 | 零新原生依赖、不重建 APK | 全部（§0 第 1 条） |
+| CLAUDE.md §5 S2S 红线 | 会话内唯一工具 `escalate`，不注入 capability；三条件（默认 classic / 显式选 / 文案）| T5 只让它**可见**，不改任何一条 |
+
+---
+## 2. 任务清单
+
+> 每个任务：**Files** → 为什么/落点 → 步骤（写失败测试 → 跑红 → 实现 → 跑绿 → `tsc`）→ **反向验证**（注入缺陷要红在自己那条上、对照仍绿）→ 提交（只加自己的路径）。代码块是**完整代码**，不是示意；改既有文件的地方给「锚点 + 替换后的整段」——那些片段里的 `…` **只表示原样保留的既有代码**（旁边都写了「原样 / 其余不变」），不是待填的占位符。
+
+### Task 1: D1——承诺卡摘要改取紧邻的上一条用户原话（+ ❌-1 标签让位）
+
+**Files:**
+- 新建 `mobile/src/core/session/actionSummary.ts`、`mobile/src/features/chat/dockLabel.ts`
+- 新建 `mobile/test/actionSummary.test.ts`、`mobile/test/dockLabel.test.ts`
+- 修改 `mobile/src/features/chat/usePresence.ts`（摘要取值处）、`mobile/src/core/session/store.ts`（`noteExpired`）、`mobile/src/features/chat/FocusDock.tsx`（标题两行 + 标签让位 + a11y）、`mobile/test/sessionStore.test.ts`（追加 1 条）
+
+**为什么**：评审 D1 / 🔁-4——`usePresence.ts:97` 取的是带 `operationId` 的助手气泡正文，而那句在端侧是硬编码通用句（`orchestrator/edge/edge_call.py:272`），于是 Dock 标题恒为「这项操作可能影响车辆…」、两条并存时两张卡逐字相同、200% 下被挤成「这..」（❌-1）。客户端可得的正确源是**紧邻的上一条用户原话**。**三处同时验**：Dock 标题、`noteExpired` 留痕行、`attention-two` 两条并存——所以摘要函数只能有一份，两个出口都从它取（「同一个值有几个出口，就在入口处判一次」）。❌-1 的表象另有一半在 `FocusDock.tsx:97-99` 的右侧固定标签随字号同比放大——给它让位规则；**`numberOfLines` / `flexShrink` 单独不算修法**（评审原话），它们只在摘要源修对之后才有意义。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/actionSummary.test.ts`：
+
+```ts
+// mobile/test/actionSummary.test.ts
+// 承诺卡 / 到期留痕的摘要源（评审 D1 / 🔁-4）：紧邻的上一条用户原话，不是助手那句通用确认句。
+import type { Msg } from '@shared/types.ts'
+
+import { SUMMARY_MAX, actionSummary } from '@/core/session/actionSummary'
+
+const u = (id: string, text: string): Msg => ({ id, role: 'user', text })
+const a = (id: string, text: string, operationId?: string): Msg => ({
+  id,
+  role: 'assistant',
+  text,
+  ...(operationId ? { needConfirm: true, operationId } : {}),
+})
+/** 端侧硬编码的那句（edge_call.py:272）——每个危险动作都是它 */
+const GENERIC = '这项操作可能影响车辆安全，请确认是否继续。'
+
+test('Dock 标题：取紧邻的上一条用户原话，不取带 operation_id 的助手气泡正文', () => {
+  const msgs = [u('u1', '打开后备箱'), a('a1', GENERIC, 'op1')]
+  expect(actionSummary(msgs, 'op1')).toBe('打开后备箱')
+})
+
+test('两条并存：两张卡的摘要逐字不同（今天 attention-two 形态两张卡逐字相同）', () => {
+  const msgs = [u('u1', '打开后备箱'), a('a1', GENERIC, 'op1'), u('u2', '解锁车门'), a('a2', GENERIC, 'op2')]
+  expect(actionSummary(msgs, 'op1')).toBe('打开后备箱')
+  expect(actionSummary(msgs, 'op2')).toBe('解锁车门')
+  expect(actionSummary(msgs, 'op1')).not.toBe(actionSummary(msgs, 'op2'))
+})
+
+test('「确认」「取消」是台账回复不是原话：跳过它们往前找', () => {
+  const msgs = [u('u1', '打开后备箱'), a('a1', GENERIC, 'op1'), u('u2', '确认'), a('a2', GENERIC, 'op2')]
+  expect(actionSummary(msgs, 'op2')).toBe('打开后备箱')
+})
+
+test('找不到对应助手气泡 / 前面没有用户原话 → 空串（兜底文案由调用方决定）', () => {
+  expect(actionSummary([], 'op1')).toBe('')
+  expect(actionSummary([a('a1', GENERIC, 'op1')], 'op1')).toBe('')
+  expect(actionSummary([u('u1', '打开后备箱'), a('a1', GENERIC, 'op1')], 'op9')).toBe('')
+})
+
+test('空白归一 + 截到 SUMMARY_MAX（Dock 一行 / 留痕一句）', () => {
+  const long = '帮我把  后备箱\n打开一下然后再把车窗也都关上好吗谢谢你了'
+  const s = actionSummary([u('u1', long), a('a1', GENERIC, 'op1')], 'op1')
+  expect(s).not.toMatch(/\s{2,}|\n/)
+  expect([...s].length).toBeLessThanOrEqual(SUMMARY_MAX)
+  expect(s.startsWith('帮我把 后备箱 打开')).toBe(true)
+})
+```
+
+`mobile/test/dockLabel.test.ts`：
+
+```ts
+// mobile/test/dockLabel.test.ts
+// 承诺卡右侧固定标签的让位规则（评审 ❌-1）：标题是承诺卡的全部价值，抢一行时让的是标签。
+import { LABEL_HIDE_FONT_SCALE, dockLabelMode } from '@/features/chat/dockLabel'
+
+test.each([
+  ['normal', 1.0, 'full'],
+  ['normal', 1.29, 'full'],
+  ['normal', LABEL_HIDE_FONT_SCALE, 'hidden'],
+  ['normal', 2.0, 'hidden'], // B1 验收表第 9 条那台机（settings put system font_scale 2.0）
+  ['large', 1.0, 'hidden'], // App 内「大字」档本身已 ×1.15，再加标签就抢标题
+] as const)('pref=%s × 系统字号 %s → %s', (pref, sys, mode) => {
+  expect(dockLabelMode(pref, sys)).toBe(mode)
+})
+```
+
+`mobile/test/sessionStore.test.ts` 在 `describe('UX v2.1 B1-4：承诺面的账本侧')` 末尾追加：
+
+```ts
+  test('到期留痕的摘要是用户原话，不是那句通用确认句（评审 D1 的第二个出口）', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({
+      type: 'final',
+      request_id: rid,
+      speech: '这项操作可能影响车辆安全，请确认是否继续。',
+      need_confirm: true,
+      operation_id: 'op1',
+    })
+    jest.advanceTimersByTime(300_000 + 1_100)
+    const last = msgs(core)[msgs(core).length - 1]
+    expect(last.text).toContain('「打开后备箱」的确认已过期')
+    expect(last.text).not.toContain('可能影响')
+    core.dispose()
+  })
+```
+
+- [ ] **步骤 2：跑红** — `cd mobile && npx jest test/actionSummary.test.ts test/dockLabel.test.ts test/sessionStore.test.ts`：前两个文件「模块不存在」红；第三个新用例红在 `not.toContain('可能影响')`（今天的留痕取的正是那句）。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/session/actionSummary.ts`：
+
+```ts
+// mobile/src/core/session/actionSummary.ts
+// 承诺卡 / 到期留痕的「动作摘要」（方案 §5.3 v2.2 🔁-4、评审 D1）。
+//
+// **今天协议里没有动作名**：端侧车控确认的 `speech` 是硬编码通用句
+// （`orchestrator/edge/edge_call.py:272`「这项操作可能影响车辆安全，请确认是否继续。」），
+// `final` 里也没有任何动作名字段。B1 取的是带 operation_id 的助手气泡正文 ⇒ 每个危险动作
+// 都是同一句话：两条并存时两张卡逐字相同，200% 字号下退化成「这..」（评审 ❌-1）。
+// 客户端可得的正确源是**紧邻的上一条用户原话**（实拍里就是「打开后备箱」）；
+// 结构化的 action / target / impact 随方案 Q16 的 `confirm_policy` 一起挂账后端。
+//
+// **同一个值有几个出口，就在入口处判一次**：Dock 标题（usePresence）与到期留痕
+// （store.noteExpired）都从这里取，别再各抄一份 `messages.find(...)?.text`。零 RN import。
+import type { Msg } from '@shared/types.ts'
+
+/** 摘要上限（与 B1 的 24 同值：Dock 标题一行 / 留痕一句） */
+export const SUMMARY_MAX = 24
+
+/** 台账回复的字面值——`store.confirmReply` 追加的用户气泡就是这两个字，它们不是原话 */
+const CONFIRM_REPLIES = new Set(['确认', '取消'])
+
+/** 紧邻的上一条用户原话；找不到返回空串（兜底文案由调用方决定） */
+export function actionSummary(messages: readonly Msg[], operationId: string): string {
+  const at = messages.findIndex((m) => m.role === 'assistant' && m.operationId === operationId)
+  if (at < 0) return ''
+  for (let i = at - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (m.role !== 'user') continue
+    const text = m.text.replace(/\s+/g, ' ').trim()
+    if (!text || CONFIRM_REPLIES.has(text)) continue
+    return text.slice(0, SUMMARY_MAX)
+  }
+  return ''
+}
+```
+
+`mobile/src/features/chat/dockLabel.ts`：
+
+```ts
+// mobile/src/features/chat/dockLabel.ts
+// 承诺卡右侧固定标签「危险动作 · 需二次确认」的让位规则（评审 ❌-1）。
+// 标题（用户原话）是承诺卡的全部价值，标签只是分类；两者抢一行时**让的是标签不是标题**。
+// 判据是系统字号倍数（`useWindowDimensions().fontScale`）与 App 内「大字」档——纯函数，jest 直接跑。
+import type { FontScalePref } from '@/core/settings/store'
+
+/** 系统字号放大到这个倍数起隐藏标签（Android「大」档 = 1.3；200% = 2.0） */
+export const LABEL_HIDE_FONT_SCALE = 1.3
+
+export type DockLabelMode = 'full' | 'hidden'
+
+export function dockLabelMode(pref: FontScalePref, windowFontScale: number): DockLabelMode {
+  if (pref === 'large') return 'hidden'
+  return windowFontScale >= LABEL_HIDE_FONT_SCALE ? 'hidden' : 'full'
+}
+```
+
+`mobile/src/features/chat/usePresence.ts`——锚点 `// pendingOps 的摘要：带该 operationId 的助手气泡原话`，整段替换：
+
+```ts
+  // pendingOps 的摘要：**紧邻的上一条用户原话**（评审 D1）。带 operationId 的那条助手气泡
+  // 对每个危险动作都是同一句通用话，不是摘要。判据在 actionSummary.ts，留痕行也从它取。
+  const ops = pendingOps.map((op) => ({
+    id: op.id,
+    ts: op.ts,
+    summary: actionSummary(messages, op.id) || '待确认的操作',
+  }))
+```
+并在 import 区加 `import { actionSummary } from '@/core/session/actionSummary'`。
+
+`mobile/src/core/session/store.ts`——`noteExpired` 整段替换（import 加 `import { actionSummary } from './actionSummary'`）：
+
+```ts
+  /** 到期留痕：摘要取**紧邻的上一条用户原话**（actionSummary，与 Dock 标题同源），追加一条说明 */
+  private noteExpired(operationId: string): void {
+    const summary = actionSummary(this.store.getState().messages, operationId)
+    this.appendMessage({
+      id: uid(),
+      role: 'assistant',
+      text: summary ? `⏱ 「${summary}」的确认已过期，需要的话再说一次` : '⏱ 刚才那条确认已过期，需要的话再说一次',
+    })
+  }
+```
+
+`mobile/src/features/chat/FocusDock.tsx`——`CommitmentCard` 的 confirm 分支头部整段替换（import 加 `useWindowDimensions` 与 `import { dockLabelMode } from './dockLabel'`）：
+
+```tsx
+  // 右侧标签的让位（评审 ❌-1）：200% 字号下它随标题同比放大、把标题挤成「这..」。
+  // 隐藏时把分类并进标题的读屏 label，信息不丢，只是不再抢那一行。
+  const { fontScale: sysScale } = useWindowDimensions()
+  const labelMode = dockLabelMode(fontScale, sysScale)
+  const kindLabel = item.kind === 'confirm' ? (item.subkind === 'location' ? '位置授权' : '危险动作 · 需二次确认') : ''
+```
+
+```tsx
+          <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>⚠</Text>
+            <Text
+              numberOfLines={2}
+              accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：${item.summary}` : undefined}
+              style={{ color: p.fg1, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600', flex: 1, flexShrink: 1 }}
+            >
+              {item.summary}
+            </Text>
+            {labelMode === 'full' ? (
+              <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), flexShrink: 0 }}>{kindLabel}</Text>
+            ) : null}
+          </View>
+```
+
+- [ ] **步骤 4：跑绿 + `tsc`** — 三个测试文件绿；`npm run typecheck` 0。
+
+- [ ] **反向验证**（每条注入后只红自己那条，还原后全绿）：
+  1. `actionSummary` 改成 `return messages[at].text.slice(0, SUMMARY_MAX)`（B1 的取法）⇒ `actionSummary.test` 前三条 + `sessionStore` 新用例红；`dockLabel.test` 仍绿。
+  2. `dockLabelMode` 的 `>=` 改 `>` ⇒ `dockLabel.test` 只红 `LABEL_HIDE_FONT_SCALE` 那一行。
+  3. 真机（第 1 批收口时）：`settings put system font_scale 2.0` → 说「打开后备箱」→ Dock 标题两行显示原话、右侧标签不渲染（截图 `b2-01-font200-dock.png`）；还原 1.0 → 标签回来。再造两条并存（「打开后备箱」→「解锁车门」）→ 「另有 1 个待处理 ›」两张卡文案不同（`b2-01-attention-two.png`）。
+
+- [ ] **提交**（同一条命令链）：
+```bash
+git add -- mobile/src/core/session/actionSummary.ts mobile/src/features/chat/dockLabel.ts mobile/test/actionSummary.test.ts mobile/test/dockLabel.test.ts && git commit -- mobile/src/core/session/actionSummary.ts mobile/src/features/chat/dockLabel.ts mobile/test/actionSummary.test.ts mobile/test/dockLabel.test.ts mobile/src/features/chat/usePresence.ts mobile/src/core/session/store.ts mobile/src/features/chat/FocusDock.tsx mobile/test/sessionStore.test.ts -m "fix(mobile): UX v2 B2-1 承诺卡摘要取紧邻上一条用户原话（D1）+ 右侧标签让位（❌-1）" && git show --stat HEAD
+```
+
+### Task 2: D2/D3/D4/D5——胶囊与隐私栏的判据修正（一组，不拆）
+
+**Files:**
+- 修改 `mobile/src/core/presence/presence.ts`（`MicState` 四档 + `MIC_LABEL`；`ARMED_CAPSULE_MS`；`hfFsmChangedAt` 输入；error 提到 armed 之前）
+- 修改 `mobile/src/core/presence/fixtures.ts`（base 补字段 + 三条新样本）、`mobile/test/presence.test.ts`（base 补字段、privacy 轴改写、四条新用例）、`mobile/test/presenceFixtures.test.ts`（四档覆盖守卫）
+- 修改 `mobile/src/features/chat/usePresence.ts`（登记 `hfFsmChangedAt` + tick 条件）、`mobile/src/features/chat/PrivacyRail.tsx`（删 `micText`，取 `MIC_LABEL`）、`mobile/src/features/chat/ChatScreen.tsx`（采集点取 `MIC_LABEL`）
+
+**为什么**：四条缺陷在两条判据链上——D2（armed 胶囊永不隐藏）与 D3（error 被 armed 遮蔽）在 `presence.ts:187-188` 同一条 if/else 链；D4（读屏「本机处理」假话）与 D5（「关」涂琥珀）在同一个 `privacy.mic` 判据上。**在判据层加第四档 `cloudAsr` 能一次堵掉所有出口**（评审 §6 ②）；逐处改文案会再漏下一个出口——D4 就是这么活下来的（B1 第 3 批改了隐私栏文案，`ChatScreen.tsx:317` 的读屏 label 原样留着）。加档会动 `PresenceSnapshot` 类型、画廊样本与覆盖度守卫，正因如此 B1 刻意不动，现在该动了。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/presence.test.ts`：① `base()` 加一行 `hfFsmChangedAt: NOW - 1000,`；② 把 `test('privacy 轴：唤醒词待机=edge；…PTT=edge…')` 及其上方那段「edge 并了两件事」的注释整体替换为：
+
+```ts
+  // B2 T2：`privacy.mic` 从三档改四档。B1 的 `edge` 并了「唤醒词待机（端侧 KWS，一个字节不出机）」
+  // 与「正在录音（音频上传给服务端 ASR）」两件事，隐私栏因此说过假话（第 3 批坑②）。
+  // 现在四档各说各的：off / edge / cloudAsr / cloudAudio。
+  test('privacy 轴四档：待机=edge；PTT 与免唤醒三段式收音=cloudAsr；端到端收音=cloudAudio；空闲=off', () => {
+    const hfOn = { hfEnabled: true, hfUsable: true }
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'ARMED' })).privacy.mic).toBe('edge')
+    expect(derivePresence(base({ ptt: 'recording' })).privacy.mic).toBe('cloudAsr')
+    expect(derivePresence(base({ ptt: 'finalizing' })).privacy.mic).toBe('cloudAsr') // 识别中也在传
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING' })).privacy.mic).toBe('cloudAsr')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING', voicePipeline: 's2s' })).privacy.mic).toBe('cloudAudio')
+    // 挡位选了 s2s 但用户按住光球：走的是服务端 ASR，不是原始音频上传——档要说真话
+    expect(derivePresence(base({ ptt: 'recording', voicePipeline: 's2s' })).privacy.mic).toBe('cloudAsr')
+    expect(derivePresence(base()).privacy.mic).toBe('off')
+    expect(derivePresence(base({ visionCapturing: true })).privacy.camera).toBe('singleFrame')
+  })
+
+  test('MIC_LABEL：四档齐全；只有两个「上传」档是琥珀（评审 D5：「关」不许再涂琥珀）；读屏不许再说「本机处理」（评审 D4）', () => {
+    expect(Object.keys(MIC_LABEL).sort()).toEqual(['cloudAsr', 'cloudAudio', 'edge', 'off'])
+    expect(MIC_LABEL.off.tone).toBe('plain')
+    expect(MIC_LABEL.edge.tone).toBe('plain')
+    expect(MIC_LABEL.cloudAsr.tone).toBe('amber')
+    expect(MIC_LABEL.cloudAudio.tone).toBe('amber')
+    for (const v of Object.values(MIC_LABEL)) {
+      expect(v.short).not.toContain('本机处理')
+      expect(v.long).not.toContain('本机处理')
+    }
+  })
+```
+
+③ 在 `describe('capsule 文案')` 里追加：
+
+```ts
+  test('armed 胶囊只在进入待机 3s 内显示，之后无胶囊（方案 §4.2，评审 D2）', () => {
+    const on = { hfEnabled: true, hfUsable: true, hfFsm: 'ARMED' }
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 2_999 })).capsule?.text).toBe('说「小舟小舟」')
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 3_000 })).capsule).toBeUndefined()
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 600_000 })).capsule).toBeUndefined()
+    // 胶囊隐藏了，光球仍是 armed——这是胶囊的判据，不是在场的判据
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 600_000 })).primary).toBe('armed')
+  })
+
+  test('error 在免唤醒开着（armed）时也出红胶囊——显式排在 armed 之前，不靠 D2 顺手带走（评审 D3）', () => {
+    // 刚进待机 100ms：armed 胶囊也在自己的 3s 窗内，两者同时成立时 error 赢
+    const on = { hfEnabled: true, hfUsable: true, hfFsm: 'ARMED', hfFsmChangedAt: NOW - 100 }
+    expect(derivePresence(base({ ...on, lastError: { text: '出错了', at: NOW - 500 } })).capsule).toEqual({
+      text: '出错了',
+      tone: 'red',
+    })
+  })
+```
+
+④ import 行改为 `import { MIC_LABEL, derivePresence, type PresenceInput } from '@/core/presence/presence'`。
+
+`mobile/test/presenceFixtures.test.ts` 追加（import 加 `type MicState`）：
+
+```ts
+test('privacy.mic 四档各有样本（B2 T2 加档：画廊要能看见每一档的文案与颜色）', () => {
+  const covered = new Set(presenceFixtures().map((f) => f.snapshot.privacy.mic))
+  const MICS: MicState[] = ['off', 'edge', 'cloudAsr', 'cloudAudio']
+  expect(MICS.filter((m) => !covered.has(m))).toEqual([])
+})
+
+test('armed 有「胶囊在窗内」与「3s 后无胶囊」两条样本（评审 D2 的画廊证据）', () => {
+  const armed = presenceFixtures().filter((f) => f.snapshot.primary === 'armed')
+  expect(armed.some((f) => f.snapshot.capsule?.text === '说「小舟小舟」')).toBe(true)
+  expect(armed.some((f) => f.snapshot.capsule === undefined)).toBe(true)
+})
+```
+
+- [ ] **步骤 2：跑红** — `npx jest test/presence.test.ts test/presenceFixtures.test.ts`：`tsc` 层面 `hfFsmChangedAt` 未知字段 / `MIC_LABEL` 不存在先红；跑得起来后 privacy 四档、armed 3s、D3、覆盖守卫各红。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/presence/presence.ts` 完整替换为：
+
+```ts
+// mobile/src/core/presence/presence.ts
+// 在场模型（UX v2.1 §4）：`derivePresence()` 是一个**纯函数**——输入是既有状态机各自的事实
+// （SessionCore store / 免唤醒 FSM / PTT / 设置 / 播报 / 视觉 / 时钟），输出是
+// `PresenceSnapshot`：六个正交轴（transport / capture / agent / commitment / privacy / degradation）
+// + **唯一的视觉主态** `primary`。
+//
+// 不是第四台状态机：voiceLoop / PTT / 轮态一字不改，这里只回答「此刻该让用户看到什么」。
+// 输出是多轴不是单枚举（外部评审 P0-1，采纳）：待确认时断网，`offline` 不许盖掉那条确认——
+// Dock 读 `commitment[]`，永远不被别的轴覆盖；光球与胶囊只读 `primary` / `capsule`。
+//
+// B2 T2 判据修正（B1 落地评审 D2–D5，一组）：
+//  · armed 胶囊只在进入待机后 ARMED_CAPSULE_MS 内显示（方案 §4.2「3s 后隐藏」）。输入是
+//    「FSM 什么时候变的」这个**事实**（收集器登记），「显示多久」这个判据只在这里；
+//  · errorLive 提到 armed 之前——免唤醒开着时 error 胶囊原来永远出不来；
+//  · 麦克风隐私档从三档改四档 `MicState`；`MIC_LABEL` 是所有出口（隐私栏行 / 采集点 / 读屏 label）
+//    的唯一文案与颜色表——「同一个值有几个出口，就在入口处判一次」。
+//
+// 零 RN import；jest 直接跑（test/presence.test.ts）。
+import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
+
+import { sortCommitments, type DockItem } from './commitment'
+
+export type OrbState =
+  | 'idle'
+  | 'thinking'
+  | 'speaking'
+  | 'armed'
+  | 'listening'
+  | 'attention'
+  | 'looking'
+  | 'muted'
+
+export type Degradation =
+  | { kind: 'recoverable_error'; text: string; at: number }
+  | { kind: 'transport_unknown'; messageIds: string[] }
+  | { kind: 'permission_denied'; what: 'mic' | 'camera' | 'location'; text: string }
+  | { kind: 'service_degraded'; text: string }
+  | { kind: 'safety_blocked'; text: string }
+  | { kind: 'audio_echo_degraded'; reason: string }
+  | { kind: 'fatal'; text: string }
+
+export type Identity = 'handheld' | 'mount' | 'trusted-tablet'
+
+/** 麦克风隐私档（四档）。B1 的 `edge` 并了「唤醒词待机（端侧 KWS，一个字节不出机）」与
+ *  「正在录音（音频上传给服务端 ASR，识别完只留文字）」两件事——App 的 PTT 与免唤醒三段式
+ *  都连 `ws://…/api/asr/stream`，音频是上传的；合成一句「转文字后只上传文字」在录音那一刻
+ *  就是假话，而隐私栏存在的全部理由是它说的是真的。 */
+export type MicState = 'off' | 'edge' | 'cloudAsr' | 'cloudAudio'
+
+/** 四档的文案与颜色——**唯一的一份**。short 给采集点 / 读屏 label，long 给隐私栏那一行；
+ *  tone=amber 只给两个「音频离机」的档（评审 D5：「关」与「待机」不许涂琥珀，警示色贬值）。 */
+export const MIC_LABEL: Record<MicState, { short: string; long: string; tone: 'plain' | 'amber' }> = {
+  off: { short: '关', long: '关', tone: 'plain' },
+  edge: { short: '唤醒词监听在本机，不上传', long: '唤醒词待机（端侧监听，不上传）', tone: 'plain' },
+  cloudAsr: {
+    short: '正在录音，音频上传做识别',
+    long: '正在录音 · 音频上传到语音识别服务（识别完只留文字）',
+    tone: 'amber',
+  },
+  cloudAudio: { short: '正在上传原始音频', long: '原始音频上传中（端到端对话）', tone: 'amber' },
+}
+
+export interface PresenceInput {
+  now: number
+  connStatus: 'connecting' | 'open' | 'closed'
+  /** 上次 connStatus 变化的时刻（reconnecting 3s 延迟用） */
+  connChangedAt: number
+  hfEnabled: boolean
+  hfUsable: boolean
+  hfFsm: 'IDLE' | 'ARMED' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'FOLLOWUP' | string
+  /** 上次 hfFsm 变化的时刻（armed 胶囊 3s 隐藏的基准，评审 D2）。收集器登记事实，判据在这里 */
+  hfFsmChangedAt: number
+  ptt: 'idle' | 'recording' | 'finalizing'
+  partial: string
+  turn: {
+    pending: boolean
+    streaming: boolean
+    processActive: boolean
+    processLabel: string
+    /** process 首帧到达时刻；0=无 */
+    processSince: number
+  }
+  /** 播报控制器：首片音频已起播且未结束 */
+  speaking: boolean
+  pendingOps: Array<{ id: string; ts: number; summary: string }>
+  pendingLocation: boolean
+  voicePipeline: 'classic' | 's2s'
+  visionCapturing: boolean
+  queued: number
+  lastError: { text: string; at: number } | null
+  degradations: Degradation[]
+  driving: boolean
+  identity: Identity
+  user: string
+}
+
+export interface PresenceSnapshot {
+  /** 输入的 `now` 原样带下来。**Dock 的倒计时只许读它**——组件自己起秒表就是第二个不同步的
+   *  1s 时钟，而生产路径上 `derivePresence` 每秒现造新的 `DockItem`，那份秒表会被每秒
+   *  cleanup 重建、本地 now 冻在挂载那一刻（第 2 批坑⑤，取证屏与生产路径输入形态相反）。 */
+  now: number
+  transport: 'online' | 'reconnecting' | 'offline'
+  capture: 'off' | 'armed' | 'listening' | 'recognizing' | 'looking'
+  agent: 'idle' | 'thinking' | 'processing' | 'speaking' | 'followup'
+  commitment: DockItem[]
+  privacy: { mic: MicState; camera: 'off' | 'singleFrame'; user: string }
+  degradation: Degradation[]
+  identity: Identity
+  driving: boolean
+  primary: OrbState
+  /** reconnecting 期间光球 ×0.6 亮度（不是新态） */
+  dim: boolean
+  capsule?: { text: string; tone: 'neutral' | 'accent' | 'amber' | 'red'; live?: boolean }
+  input: 'voice-sheet' | 'composer' | 'none'
+}
+
+/** reconnecting 胶囊延迟（沿用 ChatScreen 弱网横幅那条 3s：重连是常态，每次都弹会让真断网没人看） */
+export const RECONNECTING_GRACE_MS = 3000
+/** error 胶囊短显 */
+export const ERROR_SHOW_MS = 4000
+/** process 持续多久才算「长任务」进 Dock */
+export const LONG_TASK_MS = 8000
+/** armed 胶囊「说「小舟小舟」」只在进入待机后短显（方案 §4.2，评审 D2）；光球的 armed 青环不受它影响 */
+export const ARMED_CAPSULE_MS = 3000
+
+export function derivePresence(i: PresenceInput): PresenceSnapshot {
+  // ── transport ──
+  const transport: PresenceSnapshot['transport'] =
+    i.connStatus === 'open' ? 'online' : i.connStatus === 'connecting' ? 'reconnecting' : 'offline'
+  const reconnectingShown = transport === 'reconnecting' && i.now - i.connChangedAt >= RECONNECTING_GRACE_MS
+
+  // ── capture ──
+  const hfOn = i.hfEnabled && i.hfUsable
+  const capture: PresenceSnapshot['capture'] = i.visionCapturing
+    ? 'looking'
+    : i.ptt === 'recording' || (hfOn && i.hfFsm === 'LISTENING')
+      ? i.partial
+        ? 'recognizing'
+        : 'listening'
+      : i.ptt === 'finalizing'
+        ? 'recognizing'
+        : hfOn && (i.hfFsm === 'ARMED' || i.hfFsm === 'FOLLOWUP')
+          ? 'armed'
+          : 'off'
+
+  // ── agent ──
+  const agent: PresenceSnapshot['agent'] = i.speaking
+    ? 'speaking'
+    : i.turn.processActive
+      ? 'processing'
+      : i.turn.pending || i.turn.streaming || (hfOn && i.hfFsm === 'THINKING')
+        ? 'thinking'
+        : hfOn && i.hfFsm === 'FOLLOWUP'
+          ? 'followup'
+          : 'idle'
+
+  // ── commitment ──
+  const items: DockItem[] = i.pendingOps.map((op) => ({
+    kind: 'confirm',
+    id: op.id,
+    summary: op.summary,
+    risk: 'high',
+    expiresAt: op.ts + PENDING_TTL_MS,
+  }))
+  if (i.pendingLocation) {
+    items.push({
+      kind: 'confirm',
+      id: '__location__',
+      summary: '使用当前位置',
+      risk: 'low',
+      expiresAt: Number.MAX_SAFE_INTEGER,
+      subkind: 'location',
+    })
+  }
+  if (i.turn.processActive && i.turn.processSince > 0 && i.now - i.turn.processSince > LONG_TASK_MS) {
+    items.push({ kind: 'task', id: '__task__', label: i.turn.processLabel || '处理中', startedAt: i.turn.processSince })
+  }
+  if (i.queued > 0) items.push({ kind: 'queue', id: '__queue__', count: i.queued })
+  const commitment = sortCommitments(items)
+  const hasAttention = commitment.some((c) => c.kind === 'confirm' || c.kind === 'slot')
+
+  // ── privacy ──
+  const micActive = capture === 'listening' || capture === 'recognizing'
+  // 端到端只在免唤醒的 LISTENING 期推流（s2sClient 的 collecting 门控）；PTT 即便挡位选了 s2s
+  // 也走服务端 ASR——档位说的必须是此刻真发生的事
+  const s2sCollecting = hfOn && i.hfFsm === 'LISTENING' && i.voicePipeline === 's2s'
+  const mic: MicState = s2sCollecting ? 'cloudAudio' : micActive ? 'cloudAsr' : capture === 'armed' ? 'edge' : 'off'
+  const privacy: PresenceSnapshot['privacy'] = {
+    mic,
+    camera: i.visionCapturing ? 'singleFrame' : 'off',
+    user: i.user,
+  }
+
+  // ── primary（固定顺序，写进测试）──
+  const errorLive = !!i.lastError && i.now - i.lastError.at < ERROR_SHOW_MS && agent === 'idle'
+  let primary: OrbState
+  if (transport === 'offline') primary = 'muted'
+  else if (hasAttention) primary = 'attention'
+  else if (capture === 'looking') primary = 'looking'
+  else if (capture === 'listening' || capture === 'recognizing') primary = 'listening'
+  else if (agent === 'speaking') primary = 'speaking'
+  else if (agent === 'thinking' || agent === 'processing') primary = 'thinking'
+  else if (agent === 'followup') primary = 'listening'
+  else if (capture === 'armed') primary = 'armed'
+  else primary = 'idle'
+
+  // ── capsule（一次一条；胶囊说「此刻」，Dock 说「欠着」）──
+  const armedCapsule = capture === 'armed' && i.now - i.hfFsmChangedAt < ARMED_CAPSULE_MS
+  let capsule: PresenceSnapshot['capsule']
+  if (transport === 'offline') capsule = { text: '已断开 · 消息会排队', tone: 'red' }
+  else if (reconnectingShown) capsule = { text: '正在重连…', tone: 'amber' }
+  else if (hasAttention) {
+    const first = commitment.find((c) => c.kind === 'confirm' || c.kind === 'slot')
+    capsule = { text: first?.kind === 'slot' ? '还差一个信息' : '等你确认', tone: 'amber' }
+  } else if (capture === 'looking') capsule = { text: '看一眼…', tone: 'accent' }
+  else if (capture === 'recognizing') capsule = { text: i.partial || '识别中…', tone: 'accent', live: true }
+  else if (capture === 'listening') capsule = { text: '在听…', tone: 'accent', live: true }
+  else if (agent === 'speaking') capsule = { text: '播报中 · 说话可打断', tone: 'accent' }
+  else if (agent === 'processing') capsule = { text: `${i.turn.processLabel || '处理中'}…`, tone: 'neutral' }
+  else if (agent === 'thinking') capsule = { text: '正在思考…', tone: 'neutral' }
+  else if (agent === 'followup') capsule = { text: '可以接着说', tone: 'accent', live: true }
+  // error 在 armed 之前（评审 D3）：免唤醒开着时 capture 恒 armed，排后面就永远出不来
+  else if (errorLive) capsule = { text: i.lastError!.text, tone: 'red' }
+  else if (armedCapsule) capsule = { text: '说「小舟小舟」', tone: 'neutral' }
+
+  const input: PresenceSnapshot['input'] =
+    capture === 'listening' || capture === 'recognizing' ? 'voice-sheet' : 'composer'
+
+  return {
+    now: i.now,
+    transport,
+    capture,
+    agent,
+    commitment,
+    privacy,
+    degradation: i.degradations,
+    identity: i.identity,
+    driving: i.driving,
+    primary,
+    dim: transport === 'reconnecting',
+    ...(capsule ? { capsule } : {}),
+    input,
+  }
+}
+```
+
+`mobile/src/core/presence/fixtures.ts`：`base` 里 `hfFsm: 'IDLE'` 后加 `hfFsmChangedAt: NOW - 500,`（刚进态：armed 样本的胶囊在窗内）；`return [...]` 里 `mk('armed', hf('ARMED')),` 之后插入：
+
+```ts
+    // 评审 D2：进入待机 3s 后胶囊消失、青环仍在——画廊要能看见「没有胶囊」这个态
+    mk('armed-quiet', hf('ARMED', { hfFsmChangedAt: NOW - 10_000 })),
+    // 评审 D3：免唤醒开着时 error 也要出得来（此前被 armed 遮蔽）
+    mk('error-hf-on', hf('ARMED', { hfFsmChangedAt: NOW - 10_000, lastError: { text: '出错了', at: NOW - 500 } })),
+```
+
+`mobile/src/features/chat/usePresence.ts`——在 `connChangedAt` 那段之后插入，并把 `needsTick` 与 `derivePresence` 调用补上字段（import 加 `ARMED_CAPSULE_MS`）：
+
+```ts
+  // hf.fsm 变化时刻（armed 胶囊 3s 的基准，评审 D2）：登记的是事实，判据在 presence.ts
+  const hfFsmChangedAt = useRef(Date.now())
+  const prevFsm = useRef(hf.fsm)
+  if (prevFsm.current !== hf.fsm) {
+    prevFsm.current = hf.fsm
+    hfFsmChangedAt.current = Date.now()
+  }
+```
+
+```ts
+  const needsTick =
+    pendingOps.length > 0 || // 确认卡倒计时（每秒要变）
+    !!active?.processActive || // 长任务 8s 门槛
+    (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
+    (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
+    (hf.fsm === 'ARMED' && now - hfFsmChangedAt.current < ARMED_CAPSULE_MS) // armed 胶囊 3s 隐藏
+```
+
+```ts
+    hfFsm: hf.fsm,
+    hfFsmChangedAt: hfFsmChangedAt.current,
+```
+
+`mobile/src/features/chat/PrivacyRail.tsx`：删掉 `micText` 函数及其头注，import 改 `import { MIC_LABEL, type PresenceSnapshot } from '@/core/presence/presence'`，麦克风那一行替换为：
+
+```tsx
+          {/* 四档文案与颜色都取 MIC_LABEL（B2 T2）：颜色与文字不许说两件事——
+              B1 那条 `mic==='cloudAudio' || capture!=='armed'` 让默认空闲态的「关」也涂成琥珀（评审 D5） */}
+          {row('麦克风', MIC_LABEL[snapshot.privacy.mic].long, MIC_LABEL[snapshot.privacy.mic].tone === 'amber' ? p.amber : p.fg1)}
+```
+
+`mobile/src/features/chat/ChatScreen.tsx`——`captureDot` 整段替换（import 加 `import { MIC_LABEL } from '../../core/presence/presence'`）：
+
+```ts
+  // v2 采集点（隐私栏入口旁的第二颗点）：**没在采集就不渲染**——一个常驻的灰点会让
+  // 「现在到底在不在采」这件事看不出来，而这正是常开麦最该让用户一眼看见的事（方案 §5.10）。
+  // 文案与颜色只取 MIC_LABEL（评审 D4：读屏 label 里那句「本机处理」在 PTT 那一刻是假话）。
+  // 顺序即优先级：音频离机（两档琥珀）> 正在抓一帧 > 唤醒词待机——待机是常态、抓帧是事件，
+  // 事件排在常态前面（B1 第 4 批坑⑥：待机排前面时，免唤醒开着抓帧那档永远显示不出来）。
+  const mic = snapshot.privacy.mic
+  const captureDot =
+    mic !== 'off' && MIC_LABEL[mic].tone === 'amber'
+      ? { color: p.amber, label: MIC_LABEL[mic].short }
+      : snapshot.privacy.camera === 'singleFrame'
+        ? { color: p.fg1, label: '正在抓一帧画面' }
+        : mic !== 'off'
+          ? { color: p.teal, label: MIC_LABEL[mic].short }
+          : null
+```
+
+- [ ] **步骤 4：跑绿 + `tsc`** — `npx jest test/presence.test.ts test/presenceFixtures.test.ts`；然后**全量** `npm test`（`presence.ts` 类型变了，`usePresence` / `PrivacyRail` / `ChatScreen` 的编译错误只有 `tsc` 抓得到）；`npm run typecheck` 0。画廊 `xiaozhou://state-gallery?only=armed,error` 深浅各一张：`armed` 有胶囊、`armed-quiet` 无胶囊青环仍在、`error-hf-on` 红胶囊。
+
+- [ ] **反向验证**（四条各红自己那一条）：
+  1. 把 `else if (errorLive)` 与 `else if (armedCapsule)` 两行对调 ⇒ 只红「D3」用例。
+  2. `armedCapsule` 改成 `capture === 'armed'`（去掉时间条件）⇒ 只红「D2」用例 + 画廊「两条样本」守卫。
+  3. `MIC_LABEL.cloudAsr.tone` 改 `'plain'` ⇒ 只红 `MIC_LABEL` 用例。
+  4. `mic` 派生里 `micActive ? 'cloudAsr'` 改回 `'edge'` ⇒ 只红 privacy 四档用例 + 画廊四档守卫。
+  5. 真机（第 1 批收口）：① 免唤醒开 → 回对话屏连拍 0/1/2/3/4s（`b2-02-armed-{0..4}s.png`），胶囊在 ≤3s 那几帧、4s 帧没有、青环全程在；② 免唤醒开 + 发一句 + 点「■ 打断」→ 红胶囊「已打断」4s（D3，今天这一帧是「说「小舟小舟」」；⚠ T4 之后「已打断」不再是 error，这条复现只在第 1 批有效）；③ 隐私栏 PTT 行：设置 `识别引擎=不用流式（整段识别）` → 按住光球说两秒松手 → 识别中（`finalizing`，最长 10s 批处理窗）立刻点顶栏健康点 → 麦克风行「正在录音 · 音频上传到语音识别服务（识别完只留文字）」**琥珀**（`b2-02-rail-ptt.png`，B1 出账⑥收口——单指就能做，不需要双指）；④ 默认空闲态开隐私栏 → 「关」是 `fg1` 不是琥珀（`b2-02-rail-idle.png`，D5）；⑤ TalkBack 开、PTT 中焦点落健康点 → 读的是「正在录音，音频上传做识别」（D4；读不到就录屏，`//sdcard/`）。
+
+- [ ] **提交**：
+```bash
+git commit -- mobile/src/core/presence/presence.ts mobile/src/core/presence/fixtures.ts mobile/test/presence.test.ts mobile/test/presenceFixtures.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/PrivacyRail.tsx mobile/src/features/chat/ChatScreen.tsx -m "fix(mobile): UX v2 B2-2 胶囊与隐私栏判据修正——armed 胶囊 3s 隐藏、error 不被 armed 遮蔽、麦克风四档 MIC_LABEL 一处出口（D2–D5）" && git show --stat HEAD
+```
+### Task 3: Voice Sheet——三入口一张层（升起 / detent / 收起 / 打断 / 胶囊点按）
+
+**Files:**
+- 新建 `mobile/src/features/chat/VoiceSheet.tsx`、`mobile/src/core/session/turnView.ts`、`mobile/test/turnView.test.ts`
+- 修改 `mobile/src/core/presence/presence.ts`（`VoiceFacts` 输入 → `input` 开合 + `sheetDetent` + `turnSource`）、`mobile/src/core/presence/fixtures.ts`（三条 detent 样本）、`mobile/test/presence.test.ts`（新 describe）、`mobile/test/presenceFixtures.test.ts`（detent 守卫）
+- 修改 `mobile/src/core/session/store.ts`（`TurnSource` / `TurnMeta` / `SendOpts.source`——「这一轮是谁发起的」这个事实住在记录里）、`mobile/test/sessionStore.test.ts`（追加 1 条）
+- 修改 `mobile/src/features/chat/usePresence.ts`（产 `voice` 事实；`sheetOverride` 入参）、`mobile/src/features/chat/PresenceCapsule.tsx`（`onPress` 时 role=button + 48dp 热区）、`mobile/src/features/chat/Composer.tsx`（`orbAnimated`）、`mobile/src/features/chat/ChatScreen.tsx`（接线）、`mobile/src/features/chat/MessageBubble.tsx`（`isProactive` 改从 `turnView` 引）
+
+**为什么**：方案 §5.2 规则 1「三种说话方式一张层」、规则 3「自适应 detent + 收起时机」、规则 4「打断层不收」；§4.3「点按胶囊 = 打开语音层」；§11.4「同屏循环动画常态 1 个」。**层不持有状态**（规则 2）——它渲染的是 `snapshot` + `currentTurn(messages)`，所以 T3 先于 T4 也成立：T4 把转写变成草稿气泡之后，层不用改一行就会显示草稿。开合与 detent 是**判据**，住在 `derivePresence`；层只读 `snapshot.input` / `snapshot.sheetDetent`。B1 的 `input` 只在收音时是 `'voice-sheet'`，B2 加的事实是「这一轮是语音发起的」——它住在记录里（`turnMeta[气泡].source`），收集器只做搬运。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/turnView.test.ts`：
+
+```ts
+// mobile/test/turnView.test.ts
+// 「当前这一轮」= 最后一条用户气泡 + 其后的助手气泡（语音层读它；主动播报与到期留痕不算这一轮的回答）。
+import type { Msg } from '@shared/types.ts'
+
+import { currentTurn, isAside, isProactive } from '@/core/session/turnView'
+
+const u = (id: string, text: string): Msg => ({ id, role: 'user', text })
+const a = (id: string, text: string, extra: Partial<Msg> = {}): Msg => ({ id, role: 'assistant', text, ...extra })
+
+test('最后一条用户气泡 + 其后的助手气泡', () => {
+  const t = currentTurn([u('u1', '你好'), a('a1', '你好呀'), u('u2', '天气'), a('a2', '晴')])
+  expect(t.user?.id).toBe('u2')
+  expect(t.assistant?.id).toBe('a2')
+})
+
+test('用户刚说完、助手还没答：assistant=null，且不许把上一轮的助手气泡当成回答', () => {
+  const t = currentTurn([u('u1', '你好'), a('a1', '你好呀'), u('u2', '天气')])
+  expect(t.user?.id).toBe('u2')
+  expect(t.assistant).toBeNull()
+})
+
+test('主动播报与到期留痕是旁白，不是这一轮的回答', () => {
+  const t = currentTurn([u('u2', '打开后备箱'), a('a2', '要打开后备箱吗？'), a('x1', '💡 前方拥堵', { proactiveKind: 'scene_suggest' }), a('x2', '⏱ 「打开后备箱」的确认已过期，需要的话再说一次')])
+  expect(t.assistant?.id).toBe('a2')
+  expect(isProactive(a('x1', '💡 前方拥堵'))).toBe(true)
+  expect(isAside(a('x2', '⏱ 过期'))).toBe(true)
+  expect(isAside(a('a2', '要打开后备箱吗？'))).toBe(false)
+})
+
+test('空记录 / 只有助手：两边都 null', () => {
+  expect(currentTurn([])).toEqual({ user: null, assistant: null })
+  expect(currentTurn([a('a1', '欢迎')])).toEqual({ user: null, assistant: null })
+})
+```
+
+`mobile/test/presence.test.ts` 追加一个 describe（import 加 `type VoiceFacts`）：
+
+```ts
+describe('语音层开合与 detent（B2 T3，方案 §5.2 规则 1/3/4、§4.3）', () => {
+  const thinking = { turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 } }
+  const hfOn = { hfEnabled: true, hfUsable: true }
+  const v = (over: Partial<VoiceFacts> = {}): VoiceFacts => ({ turnSource: 'ptt', override: null, answer: false, card: false, ...over })
+
+  test('三入口收音中都升层（PTT / 免唤醒 / S2S），不需要 voice 事实', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING', voicePipeline: 's2s' })).input).toBe('voice-sheet')
+  })
+
+  test('语音发起的轮在飞 / 播报 / 追问窗内层保持升起；**文字轮不升层**（voiceLoop 头注「文本不进 FSM」的 UI 版）', () => {
+    expect(derivePresence(base({ ...thinking, voice: v() })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ speaking: true, voice: v({ turnSource: 'handsfree' }) })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'FOLLOWUP', voice: v({ turnSource: 'handsfree' }) })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text' }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...thinking })).input).toBe('composer')
+  })
+
+  test('追问窗关闭（回 ARMED、agent idle）→ 收起', () => {
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'ARMED', voice: v({ turnSource: 'handsfree', answer: true }) })).input).toBe('composer')
+  })
+
+  test('attention 态下不自动收起；用户下拉才收；下拉之后再开口又升', () => {
+    const att = { pendingOps: [{ id: 'op1', ts: NOW, summary: '打开后备箱' }] }
+    expect(derivePresence(base({ ...att, voice: v() })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...att, voice: v({ override: 'dismissed' }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...att, ptt: 'recording', voice: v({ override: 'dismissed' }) })).input).toBe('voice-sheet')
+  })
+
+  test('点按胶囊 = 打开语音层（override=open），哪怕是文字轮', () => {
+    expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text', override: 'open' }) })).input).toBe('voice-sheet')
+  })
+
+  test('detent：只录音 0.4 / 有回答 0.62 / 有主卡或长任务 0.78', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).sheetDetent).toBe(0.4)
+    expect(derivePresence(base({ ...thinking, voice: v({ answer: true }) })).sheetDetent).toBe(0.62)
+    expect(derivePresence(base({ ...thinking, voice: v({ answer: true, card: true }) })).sheetDetent).toBe(0.78)
+    const longTask = { turn: { pending: false, streaming: false, processActive: true, processLabel: '规划路线', processSince: NOW - 12_000 } }
+    expect(derivePresence(base({ ...longTask, voice: v() })).sheetDetent).toBe(0.78)
+  })
+
+  test('turnSource 透传（S2S 告知条读它）；没有 voice 事实 = text', () => {
+    expect(derivePresence(base()).turnSource).toBe('text')
+    expect(derivePresence(base({ voice: v({ turnSource: 's2s' }) })).turnSource).toBe('s2s')
+  })
+})
+```
+
+`mobile/test/presenceFixtures.test.ts` 追加：
+
+```ts
+test('语音层三档 detent 各有一条 input=voice-sheet 的样本（B2 T3）', () => {
+  const open = presenceFixtures().filter((f) => f.snapshot.input === 'voice-sheet')
+  const detents = new Set(open.map((f) => f.snapshot.sheetDetent))
+  expect([0.4, 0.62, 0.78].filter((d) => !detents.has(d as 0.4 | 0.62 | 0.78))).toEqual([])
+})
+```
+
+`mobile/test/sessionStore.test.ts` 追加：
+
+```ts
+describe('UX v2 B2-3：轮来源（语音层开合的事实住在记录里）', () => {
+  test('send 不带 opts → turnMeta[助手气泡].source=text；带 source=ptt → ptt；confirmReply 同理', () => {
+    const { core } = newCore()
+    core.send('天气')
+    core.send('附近有什么', undefined, { source: 'ptt' })
+    const [a1, a2] = assistants(core)
+    const meta = core.store.getState().turnMeta
+    expect(meta[a1.id].source).toBe('text')
+    expect(meta[a2.id].source).toBe('ptt')
+    expect(meta[a2.id].sentAt).toBeGreaterThan(0)
+    core.confirmReply('确认', 'op1', { source: 'handsfree' })
+    expect(meta[assistants(core)[2].id]).toBeUndefined() // 上面的 meta 是旧快照
+    expect(core.store.getState().turnMeta[assistants(core)[2].id].source).toBe('handsfree')
+    core.dispose()
+  })
+})
+```
+
+- [ ] **步骤 2：跑红** — `npx jest test/turnView.test.ts test/presence.test.ts test/presenceFixtures.test.ts test/sessionStore.test.ts`。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/session/turnView.ts`：
+
+```ts
+// mobile/src/core/session/turnView.ts
+// 「当前这一轮」的判定（语音层读它，方案 §5.2 规则 2：层是记录里当前轮的视图）。
+// 纯函数，零 RN import。`isProactive` 从 MessageBubble 搬到这里——同一个「这条是不是主动播报」
+// 的判据两处各写一份就会漂（MessageBubble 改成从这里引）。
+import type { Msg } from '@shared/types.ts'
+
+/** 主动播报（网关 advisory 透传成 proactiveKind；老帧只有 💡 前缀） */
+export function isProactive(m: Msg): boolean {
+  return m.proactiveKind !== undefined || m.text.startsWith('💡 ')
+}
+
+/** 旁白：主动播报、到期留痕——它们在记录里，但不是「这一轮的回答」 */
+export function isAside(m: Msg): boolean {
+  return isProactive(m) || m.text.startsWith('⏱ ')
+}
+
+export interface TurnView {
+  user: Msg | null
+  assistant: Msg | null
+}
+
+/** 最后一条用户气泡 + 其后第一条非旁白的助手气泡（从后往前找，只看它之后的） */
+export function currentTurn(messages: readonly Msg[]): TurnView {
+  let ui = -1
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (messages[i].role === 'user') {
+      ui = i
+      break
+    }
+  }
+  if (ui < 0) return { user: null, assistant: null }
+  let assistant: Msg | null = null
+  for (let i = ui + 1; i < messages.length; i += 1) {
+    const m = messages[i]
+    if (m.role === 'assistant' && !isAside(m)) {
+      assistant = m
+      break
+    }
+  }
+  return { user: messages[ui], assistant }
+}
+```
+
+`mobile/src/core/presence/presence.ts`——四处追加：
+
+① 文件顶部 import 之后加类型：
+```ts
+import type { TurnSource } from '../session/store'
+
+/** 语音层要的三个事实（B2 T3）。全部来自记录与 UI 的既有状态，收集器只搬运：
+ *  turnSource=最近一轮的发起方（turnMeta）；override=用户对这一轮的显式操作（点胶囊 / 下拉）；
+ *  answer/card=当前轮助手气泡有没有字、有没有卡。没有这个入参 = 文字世界（层只在收音时升）。 */
+export interface VoiceFacts {
+  turnSource: TurnSource
+  override: 'open' | 'dismissed' | null
+  answer: boolean
+  card: boolean
+}
+
+/** 自适应 detent（方案 §5.2 规则 3）：只录音 / 有回答 / 有主卡或长任务 */
+export type SheetDetent = 0.4 | 0.62 | 0.78
+```
+② `PresenceInput` 末尾加 `voice?: VoiceFacts`；③ `PresenceSnapshot` 在 `input` 后加：
+```ts
+  /** 语音层高度档（input==='voice-sheet' 时有意义） */
+  sheetDetent: SheetDetent
+  /** 最近一轮的发起方（S2S 告知条读它；没有轮 = text） */
+  turnSource: TurnSource
+```
+④ `const input = …` 那两行整段替换：
+```ts
+  // ── 语音层开合（方案 §5.2 规则 1/3/4、§4.3）──
+  // 收音中一律升（三入口共用）；语音发起的轮在飞 / 播报 / 追问窗 / 等确认时保持升起；
+  // 用户下拉过这一轮就不再自动升（再开口另算）；点胶囊 = 显式打开（哪怕是文字轮）。
+  // PTT 轮没有追问窗：播报结束、agent 回 idle 即收（方案只给免唤醒定义了 8s 窗）。
+  const voice = i.voice
+  const capturing = capture === 'listening' || capture === 'recognizing'
+  const voiceTurnLive = !!voice && voice.turnSource !== 'text' && (agent !== 'idle' || hasAttention)
+  const sheetOpen = capturing || voice?.override === 'open' || (voice?.override !== 'dismissed' && voiceTurnLive)
+  const input: PresenceSnapshot['input'] = sheetOpen ? 'voice-sheet' : 'composer'
+  const sheetDetent: SheetDetent =
+    commitment.some((c) => c.kind === 'task') || !!voice?.card ? 0.78 : voice?.answer ? 0.62 : 0.4
+```
+并在 `return` 里加 `sheetDetent,` 与 `turnSource: voice?.turnSource ?? 'text',`。
+
+`mobile/src/core/presence/fixtures.ts` 追加三条（放在 `mk('looking', …)` 之前）：
+```ts
+    // B2 T3 语音层三档 detent：只录音 0.4（listening-ptt 那条就是）/ 有回答 0.62 / 有主卡 0.78；
+    // 外加一条「用户下拉过」证明 dismissed 真的收得起来
+    mk('sheet-answering', {
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'ptt', override: null, answer: true, card: false },
+    }),
+    mk('sheet-card', { speaking: true, voice: { turnSource: 'handsfree', override: null, answer: true, card: true } }),
+    mk('sheet-dismissed', {
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'ptt', override: 'dismissed', answer: true, card: false },
+    }),
+```
+
+`mobile/src/core/session/store.ts`——三处：
+
+① `PendingOp` 之前加：
+```ts
+/** 这一轮是谁发起的。语音层只对语音发起的轮保持升起（方案 §5.2 规则 1：文字不升层）；
+ *  播报三档的「自动」也读它（T12）。S2S 逃逸轮回到主链后来源仍记 s2s——它是语音发起的。 */
+export type TurnSource = 'text' | 'ptt' | 'handsfree' | 's2s'
+
+/** 轮元数据：键=助手气泡 id。`Msg` 是共享类型不能加字段，所以并列存（B1 计划 §0 第 5 条） */
+export interface TurnMeta {
+  sentAt: number
+  source: TurnSource
+}
+
+export interface SendOpts {
+  source?: TurnSource
+}
+```
+② `SessionState` 加 `turnMeta: Record<string, TurnMeta>`，构造里初始化 `turnMeta: {}`；
+③ `send` / `confirmReply` / `dispatch` 签名与调用：
+```ts
+  send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
+```
+（函数体内四处 `this.dispatch(...)` 末尾都补上 `opts.source ?? 'text'` 这个实参；`consent` 分支不派发，不动）
+```ts
+  confirmReply(reply: '确认' | '取消', operationId?: string, opts: SendOpts = {}): void {
+```
+（体内两处 `this.dispatch(pendingText, false, loc)` / `this.dispatch(pendingText, false)` 与最后的 `this.dispatch(reply, true, undefined, undefined, operationId)` 都补 `source`）
+```ts
+  private dispatch(
+    text: string,
+    isConfirmation: boolean,
+    locationMeta?: Record<string, string>,
+    metaExtra?: Record<string, string>,
+    operationId?: string,
+    source: TurnSource = 'text',
+  ): void {
+```
+`dispatch` 里 `this.appendMessage({ id: pendingId, … })` 之后加：
+```ts
+    this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [pendingId]: { sentAt: Date.now(), source } } }))
+```
+
+`mobile/src/features/chat/usePresence.ts`：
+```ts
+import { currentTurn } from '@/core/session/turnView'
+import { derivePresence, ARMED_CAPSULE_MS, ERROR_SHOW_MS, RECONNECTING_GRACE_MS, type Degradation, type PresenceSnapshot, type VoiceFacts } from '@/core/presence/presence'
+
+/** 用户对语音层的显式操作，钉在某一轮上（换轮即失效） */
+export interface SheetOverride {
+  turnId: string
+  mode: 'open' | 'dismissed'
+}
+
+export interface UsePresenceOpts {
+  core: SessionCore
+  hf: HandsFreeUi
+  ptt: PttHandle | null
+  user: string
+  sheetOverride: SheetOverride | null
+}
+```
+`useStore(core.store)` 解构里加 `turnMeta`；在 `const active = …` 之前加：
+```ts
+  // 语音层的三个事实（判据在 derivePresence）：这一轮谁发起、用户有没有下拉过、有没有字/卡
+  const turn = currentTurn(messages)
+  const latestTurnId = turn.assistant?.id ?? ''
+  const voice: VoiceFacts = {
+    turnSource: (latestTurnId && turnMeta[latestTurnId]?.source) || 'text',
+    override: sheetOverride && sheetOverride.turnId === latestTurnId ? sheetOverride.mode : null,
+    answer: !!turn.assistant?.text,
+    card: !!turn.assistant?.uiCard,
+  }
+```
+`derivePresence({...})` 里加 `voice,`；函数签名解构加 `sheetOverride`。
+
+`mobile/src/features/chat/PresenceCapsule.tsx`——`Pressable` 替换（import 加 `TARGET`）：
+```tsx
+      <Pressable
+        testID="presence-capsule"
+        onPress={onPress}
+        disabled={!onPress}
+        // 接了 onPress 就是按钮：role 与热区一起改（评审「别踩」①）——视觉仍 26dp，
+        // hitSlop 补到 48dp（Material 触控目标是**可点区域**不是球体，方案 §8.1）
+        accessibilityRole={onPress ? 'button' : 'text'}
+        accessibilityHint={onPress ? '打开语音层' : undefined}
+        hitSlop={onPress ? Math.ceil((TARGET.parked - 26) / 2) : undefined}
+        accessibilityLiveRegion="polite"
+```
+
+`mobile/src/features/chat/Composer.tsx`：props 加 `/** 语音层开着时主球转静态（同屏循环动画常态 1 个，方案 §11.4） */ orbAnimated?: boolean`，`<AuroraOrb size={44} state={orbState} dim={orbDim} animated={orbAnimated ?? true} />`。
+
+`mobile/src/features/chat/MessageBubble.tsx`：`const proactive = msg.proactiveKind !== undefined || msg.text.startsWith('💡 ')` 改为 `const proactive = isProactive(msg)`，import 加 `import { isProactive } from '@/core/session/turnView'`。
+
+`mobile/src/features/chat/VoiceSheet.tsx`：
+
+```tsx
+// mobile/src/features/chat/VoiceSheet.tsx
+// 语音层（方案 §5.2）：PTT / 唤醒词 / S2S 三种说话方式升起的**同一张层**。
+// **它不持有任何转写 / 回答状态**——它是「对话记录里当前这一轮」的视图（§5.2 规则 2）：
+// 转写读当前用户气泡、回答读当前助手气泡、卡片读 final.ui_card；收起、切后台、折叠展开都不会丢，
+// 因为根本没有「等收起再写」这一步。升不升起、升多高由 derivePresence 定（`snapshot.input` /
+// `snapshot.sheetDetent`），这里只渲染与转发手势。
+// 材质：外壳 G1（Glass）；零新依赖——手势用随 expo-router 在场的 react-native-gesture-handler
+// （PackageList.java:73 已注册），高度用 reanimated。
+// 性能纪律（方案 §11.4）：层开着时它的 88dp 大球是**唯一**跑循环动画的光球，Composer 主球转静态。
+import { useEffect, useState } from 'react'
+import { Pressable, ScrollView, Text, View } from 'react-native'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
+
+import type { PresenceSnapshot } from '@/core/presence/presence'
+import type { TurnView } from '@/core/session/turnView'
+import type { FontScalePref } from '@/core/settings/store'
+import { CardRenderer } from '@/features/cards/CardRenderer'
+import { AuroraOrb, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
+import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import type { Palette } from '@/ui/theme'
+
+export interface VoiceSheetProps {
+  p: Palette
+  fontScale: FontScalePref
+  snapshot: PresenceSnapshot
+  /** 当前这一轮（core/session/turnView.ts::currentTurn 算出来的事实） */
+  turn: TurnView
+  /** 层可用的高度（包裹列表的那个 View 的 onLayout 高度）；0=还没量到，不渲染 */
+  containerHeight: number
+  /** 下拉 / 点「收起」/ 点暗区 */
+  onCollapse(): void
+  /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
+  onInterrupt(): void
+  onSend(text: string): void
+}
+
+/** 下拉多少算「收起」（dp） */
+export const SHEET_DISMISS_DY = 80
+/** 收起动画时长（ms） */
+const COLLAPSE_MS = 180
+
+export function VoiceSheet(props: VoiceSheetProps) {
+  const { p, fontScale, snapshot, turn, containerHeight } = props
+  const open = snapshot.input === 'voice-sheet' && containerHeight > 0
+  const target = Math.round(containerHeight * snapshot.sheetDetent)
+  // 挂载态比 open 晚 COLLAPSE_MS 关掉：让收起动画播完再卸载
+  const [mounted, setMounted] = useState(open)
+  const h = useSharedValue(0)
+  useEffect(() => {
+    if (open) {
+      setMounted(true)
+      h.value = withSpring(target, { damping: 18, stiffness: 160 })
+      return
+    }
+    h.value = withTiming(0, { duration: COLLAPSE_MS })
+    const t = setTimeout(() => setMounted(false), COLLAPSE_MS)
+    return () => clearTimeout(t)
+  }, [open, target, h])
+  const sheetStyle = useAnimatedStyle(() => ({ height: h.value }))
+  const pan = Gesture.Pan()
+    .runOnJS(true)
+    .onEnd((e) => {
+      if (e.translationY > SHEET_DISMISS_DY) props.onCollapse()
+    })
+  if (!mounted) return null
+
+  const user = turn.user
+  const assistant = turn.assistant
+  const busy = snapshot.agent !== 'idle'
+  const body = scale(TYPE.body, 'text', fontScale)
+  const target48 = scale(TARGET.parked, 'target', fontScale)
+  const capsuleColor =
+    snapshot.capsule?.tone === 'red' ? p.red : snapshot.capsule?.tone === 'amber' ? p.amber : snapshot.capsule?.tone === 'accent' ? p.accent : p.fg2
+  return (
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+      {/* 记录变暗 40%、仍可见（§5.2）：点暗区 = 收起 */}
+      <Pressable
+        accessibilityLabel="收起语音层"
+        onPress={props.onCollapse}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }}
+      />
+      <GestureDetector gesture={pan}>
+        <Animated.View testID="voice-sheet" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, sheetStyle]}>
+          <Glass p={p} r={RADIUS['2xl']} style={{ flex: 1, overflow: 'hidden', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}>
+            {/* 把手（G2 只给光球与把手，§5.11） */}
+            <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2, marginTop: 8 }} />
+            <ScrollView contentContainerStyle={{ padding: 16, gap: 12, alignItems: 'center' }} keyboardShouldPersistTaps="handled">
+              {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条 */}
+              {user ? (
+                <Text
+                  testID="voice-sheet-transcript"
+                  style={{ color: p.fg1, fontSize: scale(20, 'text', fontScale), lineHeight: scale(28, 'line', fontScale), textAlign: 'center' }}
+                >
+                  {user.text}
+                  {snapshot.capture === 'recognizing' ? <StreamCursor h={scale(20, 'text', fontScale)} /> : null}
+                </Text>
+              ) : null}
+              {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内 */}
+              <AuroraOrb size={88} state={snapshot.primary} dim={snapshot.dim} animated />
+              {/* 胶囊文案（同 §4.3，此处放大） */}
+              {snapshot.capsule ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {snapshot.capsule.live ? (
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
+                  ) : null}
+                  <Text style={{ color: capsuleColor, fontSize: body }}>{snapshot.capsule.text}</Text>
+                </View>
+              ) : null}
+              {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots */}
+              {assistant?.pending ? <ThinkDots color={p.accent} /> : null}
+              {assistant?.text ? (
+                <Text
+                  testID="voice-sheet-answer"
+                  style={{ color: assistant.error ? p.red : p.fg1, fontSize: scale(TYPE.body + 1, 'text', fontScale), lineHeight: scale(24, 'line', fontScale), alignSelf: 'stretch' }}
+                >
+                  {assistant.text}
+                  {assistant.streaming ? <StreamCursor h={scale(TYPE.body + 1, 'text', fontScale)} /> : null}
+                </Text>
+              ) : null}
+              {/* 卡片：card_group 的主卡/折叠由 CardRenderer 的注册表决定（T8），这里不判 */}
+              {assistant?.uiCard ? (
+                <View style={{ alignSelf: 'stretch' }}>
+                  <CardRenderer p={p} card={assistant.uiCard} onSend={props.onSend} />
+                </View>
+              ) : null}
+            </ScrollView>
+            <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 24, paddingVertical: 8, borderTopWidth: 1, borderColor: p.line }}>
+              <Pressable
+                testID="voice-sheet-collapse"
+                accessibilityRole="button"
+                onPress={props.onCollapse}
+                style={{ minHeight: target48, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
+              >
+                <Text style={{ color: p.fg2, fontSize: body }}>⌄ 收起</Text>
+              </Pressable>
+              {busy ? (
+                <Pressable
+                  testID="voice-sheet-interrupt"
+                  accessibilityRole="button"
+                  onPress={props.onInterrupt}
+                  style={{ minHeight: target48, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
+                >
+                  <Text style={{ color: p.amber, fontSize: body }}>■ 打断</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </Glass>
+        </Animated.View>
+      </GestureDetector>
+    </View>
+  )
+}
+```
+
+`mobile/src/features/chat/ChatScreen.tsx` 接线（按锚点）：
+
+① import 加：
+```ts
+import type { SendOpts } from '../../core/session/store'
+import { currentTurn } from '../../core/session/turnView'
+import { VoiceSheet } from './VoiceSheet'
+import { usePresence, type SheetOverride } from './usePresence'
+```
+② `onSend` 签名改 `(text: string, metaExtra?: Record<string, string>, opts?: SendOpts)`，两处 `core.send(...)` 都把 `opts` 传下去；`ptt` 的 `onFinal: (text) => onSend(text, undefined, { source: 'ptt' })`；`hf` 的 `onSend: (text) => onSend(text, undefined, { source: 'handsfree' })`。
+③ `usePresence` 调用之前加状态，调用补入参：
+```ts
+  // 语音层的显式操作（点胶囊打开 / 下拉收起），钉在当前轮上；换轮自动失效（判据在 derivePresence）
+  const [sheetOverride, setSheetOverride] = useState<SheetOverride | null>(null)
+  const turn = useMemo(() => currentTurn(messages), [messages])
+  const latestTurnId = turn.assistant?.id ?? ''
+  const [listHeight, setListHeight] = useState(0)
+```
+```ts
+  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
+```
+④ `chatColumn` 里 `messages.length === 0 ? <Welcome…/> : <FlashList…/>` 整段包进一个量高度的容器，并把语音层放进去：
+```tsx
+      <View style={{ flex: 1 }} onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}>
+        {messages.length === 0 ? (
+          <Welcome … />  {/* 原入参不变 */}
+        ) : (
+          <FlashList … />  {/* 原入参不变 */}
+        )}
+        {v2 ? (
+          <VoiceSheet
+            p={p}
+            fontScale={settings.fontScale}
+            snapshot={snapshot}
+            turn={turn}
+            containerHeight={listHeight}
+            onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
+            onInterrupt={onInterrupt}
+            onSend={(t) => onSend(t)}
+          />
+        ) : null}
+      </View>
+```
+⑤ 胶囊接 `onPress`、Composer 主球在层开时静态：
+```tsx
+      {v2 ? (
+        <PresenceCapsule
+          p={p}
+          fontScale={settings.fontScale}
+          snapshot={snapshot}
+          onPress={() => setSheetOverride({ turnId: latestTurnId, mode: 'open' })}
+        />
+      ) : null}
+      <Composer
+        …（其余原样）
+        orbAnimated={snapshot.input !== 'voice-sheet'}
+```
+（v2 关闭时 `snapshot.input` 仍会算，但层不渲染、主球照旧动——回滚路径不受影响。）
+⑥ `mobile/src/app/_layout.tsx`：RNGH 的 `GestureDetector` 在 Android 上必须在 `GestureHandlerRootView` 之内，而 App 今天没有任何 RNGH 手势、根上也没有它（`grep -rn GestureHandlerRootView mobile/src` 为空；expo-router 的构建产物里只有 react-navigation stack 内部用到它，**不包根**）。`return` 整段替换（JS 改动，零依赖、不重建）：
+```tsx
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      {/* M4-6 视觉抓帧的采集端。挂在根布局但**平时什么都不渲染**——
+          它只在真要抓帧的那一瞬挂载 CameraView，拍完立刻卸载（=关摄像头）。
+          放根布局是因为抓帧可能由任何路由上的一句话触发。 */}
+      <VisionCapture enabled={settings.visionEnabled} />
+      <Stack
+        screenOptions={{
+          headerStyle: { backgroundColor: p.bg },
+          headerTintColor: p.fg1,
+          contentStyle: { backgroundColor: p.bg },
+        }}
+      >
+        <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ title: '连接服务器' }} />
+        <Stack.Screen name="settings" options={{ title: '设置' }} />
+        <Stack.Screen name="vehicle" options={{ title: '车辆' }} />
+        <Stack.Screen name="debug" options={{ title: '调试 · 主链帧' }} />
+        <Stack.Screen name="voice-spike" options={{ title: '调试 · 语音 spike' }} />
+        <Stack.Screen name="card-gallery" options={{ title: '调试 · 卡片画廊' }} />
+        <Stack.Screen name="state-gallery" options={{ title: '调试 · 状态画廊' }} />
+        <Stack.Screen name="map" options={{ title: '地图' }} />
+      </Stack>
+    </GestureHandlerRootView>
+  )
+```
+（import 加 `import { GestureHandlerRootView } from 'react-native-gesture-handler'`；T14 再往里加 `presence-trail` 一行。）
+
+- [ ] **步骤 4：跑绿 + `tsc`** — 四个测试文件绿、全量绿、`tsc` 0；Metro 热载：按住光球说一句 → 层升起（40%）→ 松手 → 回答流式（62%）→ 播报完收起。画廊 `?only=sheet` 三条样本的 `input` / `sheetDetent` 打印正确（画廊不渲染层本身——层要 `containerHeight`，画廊只证明判据）。
+
+- [ ] **反向验证**：
+  1. `sheetOpen` 里删掉 `voice?.override === 'open' ||` ⇒ 只红「点按胶囊」用例。
+  2. `voiceTurnLive` 去掉 `voice.turnSource !== 'text'` ⇒ 只红「文字轮不升层」两行。
+  3. `sheetDetent` 的 0.62 / 0.78 对调 ⇒ 只红 detent 用例 + 画廊 detent 守卫。
+  4. `currentTurn` 改成「最后一条助手气泡」⇒ 只红「用户刚说完」与「旁白」两条。
+  5. 真机（第 2 批收口）：三入口各一次（按住 / 说「小舟小舟」/ 端到端挡位说话）→ `voice-sheet` 可见（截图 `b2-03-sheet-{ptt,hf,s2s}.png`）；打字发送 → 层**不**升；层开着时 Composer 主球静止（连拍两帧逐字节相同）、层内大球在动；点胶囊 → 层升；下拉 80dp → 收起；有待确认时不自动收、Dock 仍在层下方可见。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/session/turnView.ts mobile/test/turnView.test.ts && git commit -- mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/session/turnView.ts mobile/test/turnView.test.ts mobile/src/core/presence/presence.ts mobile/src/core/presence/fixtures.ts mobile/test/presence.test.ts mobile/test/presenceFixtures.test.ts mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/PresenceCapsule.tsx mobile/src/features/chat/Composer.tsx mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/app/_layout.tsx -m "feat(mobile): UX v2 B2-3 语音层——三入口一张层、detent 三档、收起/打断、胶囊点按（判据在 derivePresence，层零自有状态）" && git show --stat HEAD
+```
+
+### Task 4: draft → final 增量沉淀（转写草稿气泡、打断留痕、D9）
+
+**Files:**
+- 修改 `mobile/src/core/session/store.ts`（`SendOpts.bubbleId`；`draftUserId` 三方法；`interruptedIds`；`queued` 按 id 计数）、`mobile/test/sessionStore.test.ts`（新 describe）
+- 修改 `mobile/src/features/chat/usePtt.ts`（`onPartial` / `onDiscard` 出口）、`mobile/src/features/chat/ChatScreen.tsx`（草稿接线）、`mobile/src/features/chat/MessageBubble.tsx`（`draft` / `interrupted` 呈现）、`mobile/src/features/chat/VoiceSheet.tsx`（转写光标读草稿、回答区「已打断」）
+
+**为什么**：方案 §5.2 规则 2 / §5.2.1——ASR 的每个稳定 segment **即时**写进记录（`draft_user → final_user`），取消即删、不留气泡；回答侧 `store.ts:294-298` 已是逐 delta 追加，**不是新机制**，只把转写侧对齐过来。打断（§5.2 规则 4）：文字定格并标「已打断」，**不再改成红色错误样式**——今天 `markInterrupted` 写 `error: true`，B2 起它不是错误。D9：`queued` 只增不减，断线期间取消一轮仍按旧数报——承诺型文案报错数比不报更糟。
+
+- [ ] **步骤 1：写失败测试**（`mobile/test/sessionStore.test.ts` 追加）
+
+```ts
+describe('UX v2 B2-4：增量沉淀（方案 §5.2.1）、打断留痕（§5.2 规则 4）、D9', () => {
+  test('draftUser：第一次建草稿气泡，之后只更新同一条；commit 后 send({bubbleId}) 复用不追加第二条', () => {
+    const { transport, core } = newCore()
+    core.draftUser('附近')
+    core.draftUser('附近有什么')
+    core.draftUser('附近有什么好吃的')
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(1)
+    const id = core.store.getState().draftUserId as string
+    expect(msgs(core)[0].text).toBe('附近有什么好吃的')
+    expect(core.commitDraftUser()).toBe(id)
+    core.send('附近有什么好吃的？', undefined, { source: 'ptt', bubbleId: id })
+    const users = msgs(core).filter((m) => m.role === 'user')
+    expect(users).toHaveLength(1)
+    expect(users[0].id).toBe(id)
+    expect(users[0].text).toBe('附近有什么好吃的？') // 定稿可能与最后一个 partial 不同，以定稿为准
+    expect(core.store.getState().draftUserId).toBeNull()
+    expect(transport.lastUserFrame().text).toBe('附近有什么好吃的？')
+    core.dispose()
+  })
+
+  test('discardDraftUser：取消 / 误唤醒回收 / 空定稿 → 草稿删除、不留气泡；没有草稿时是 no-op', () => {
+    const { core } = newCore()
+    core.discardDraftUser()
+    expect(msgs(core)).toHaveLength(0)
+    core.draftUser('你好')
+    core.discardDraftUser()
+    expect(msgs(core)).toHaveLength(0)
+    expect(core.store.getState().draftUserId).toBeNull()
+    core.dispose()
+  })
+
+  test('commit 没有草稿返回 null；send 不带 bubbleId 仍追加（文字路径逐字不变）', () => {
+    const { core } = newCore()
+    expect(core.commitDraftUser()).toBeNull()
+    core.send('天气')
+    core.send('天气', undefined, { bubbleId: 'no-such-id' }) // 对不上的 id 当没给
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(2)
+    core.dispose()
+  })
+
+  test('打断：已显示的回答定格、不改成错误；interruptedIds 记下它（方案 §5.2 规则 4）', () => {
+    const { transport, core } = newCore()
+    core.send('讲个故事')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'speech_delta', request_id: rid, delta: '从前有座山' })
+    core.cancelCurrentTurn()
+    const a = assistants(core)[0]
+    expect(a.text).toBe('从前有座山')
+    expect(a.streaming).toBe(false)
+    expect(a.error).toBeFalsy()
+    expect(core.store.getState().interruptedIds).toEqual([a.id])
+    core.dispose()
+  })
+
+  test('打断时一个字都没出 → 文本「已打断」，同样不是 error', () => {
+    const { core } = newCore()
+    core.send('讲个故事')
+    core.cancelCurrentTurn()
+    const a = assistants(core)[0]
+    expect(a.text).toBe('已打断')
+    expect(a.error).toBeFalsy()
+    expect(a.pending).toBe(false)
+    core.dispose()
+  })
+
+  test('D9：断线期间取消一轮，「N 条消息排队中」跟着减（承诺型文案不许报错数）', () => {
+    const { transport, core } = newCore()
+    transport.send = (frame: object) => {
+      transport.sent.push(frame)
+      return false // 断线：帧入 ws.mjs 队列
+    }
+    core.setStatus('closed')
+    core.send('a')
+    core.send('b')
+    expect(core.store.getState().queued).toBe(2)
+    core.cancelCurrentTurn() // 结算 FIFO 头（a）
+    expect(core.store.getState().queued).toBe(1)
+    core.setStatus('open')
+    expect(core.store.getState().queued).toBe(0)
+    core.dispose()
+  })
+})
+```
+⚠ 既有用例「⑥ 本地 cancel 后网关 cancelled 幂等」若断言了被打断气泡的 `error: true`，那条断言改成 `interruptedIds` 包含——**这是判据变更（打断不是错误），不是测试让步**，写进 §6.2。
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/session/store.ts`：
+
+① `SendOpts` 与 `SessionState`：
+```ts
+export interface SendOpts {
+  source?: TurnSource
+  /** 这条用户气泡已经在记录里（草稿转正 / 视觉先落气泡 / S2S 逃逸）：把文本对齐成定稿，不追加第二条 */
+  bubbleId?: string
+}
+```
+```ts
+  /** 转写草稿气泡（方案 §5.2.1 draft_user）：ASR partial 按稳定 segment 写进记录；定稿转正、取消删除 */
+  draftUserId: string | null
+  /** 被打断的助手气泡：文字定格、标「已打断」，**不是错误**（方案 §5.2 规则 4） */
+  interruptedIds: string[]
+```
+（构造里初始化 `draftUserId: null, interruptedIds: []`。）
+
+② 类字段加 `private readonly queuedIds = new Set<string>()`；`send` 开头替换：
+```ts
+  send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
+    const reuse = opts.bubbleId && this.store.getState().messages.some((m) => m.id === opts.bubbleId) ? opts.bubbleId : null
+    if (reuse) this.setText(reuse, text)
+    else this.appendMessage({ id: uid(), role: 'user', text })
+```
+③ 新增四个方法（放在 `cancelCurrentTurn` 之后）：
+```ts
+  // ── 转写草稿（方案 §5.2.1）：语音层不持有转写状态，草稿就是记录里的一条用户气泡 ──
+
+  /** 有草稿就更新，没有就建。partial 按稳定 segment 来，每次都是全文不是增量 */
+  draftUser(text: string): void {
+    const s = this.store.getState()
+    if (s.draftUserId && s.messages.some((m) => m.id === s.draftUserId)) {
+      this.setText(s.draftUserId, text)
+      return
+    }
+    const id = uid()
+    this.store.setState((st) => ({ messages: [...st.messages, { id, role: 'user', text }], draftUserId: id }))
+  }
+
+  /** 取消 / 误唤醒回收 / 空定稿：草稿删除，不留气泡 */
+  discardDraftUser(): void {
+    const id = this.store.getState().draftUserId
+    if (!id) return
+    this.store.setState((s) => ({ messages: s.messages.filter((m) => m.id !== id), draftUserId: null }))
+  }
+
+  /** 定稿：草稿转正，返回它的 id 供 send({ bubbleId }) 复用；没有草稿返回 null */
+  commitDraftUser(): string | null {
+    const id = this.store.getState().draftUserId
+    if (!id) return null
+    this.store.setState({ draftUserId: null })
+    return id
+  }
+
+  private setText(id: string, text: string): void {
+    this.store.setState((s) => ({ messages: s.messages.map((m) => (m.id === id ? { ...m, text } : m)) }))
+  }
+```
+④ `markInterrupted` 整段替换：
+```ts
+  /** 打断留痕（方案 §5.2 规则 4）：已显示的部分定格；一个字没出就写「已打断」。**不是错误**——
+   *  打断是用户的动作，A-6 也没把它归错误态；红色留给 error 帧与超时 */
+  private markInterrupted(id: string): void {
+    this.store.setState((s) => ({
+      messages: s.messages.map((msg) =>
+        msg.id === id && (msg.pending || msg.streaming || msg.processActive)
+          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断' }
+          : msg,
+      ),
+      interruptedIds: s.interruptedIds.includes(id) ? s.interruptedIds : [...s.interruptedIds, id],
+    }))
+  }
+```
+⑤ D9——`dispatch` 里 `if (!sentNow) this.store.setState((s) => ({ queued: s.queued + 1 }))` 改为：
+```ts
+    const pendingId = uid()
+    if (!sentNow) this.queuedIds.add(pendingId) // 按轮计数：取消 / 终态都能把它摘掉（评审 D9）
+    this.syncQueued()
+```
+（`const pendingId = uid()` 原来在 `sentNow` 之后一行，上移即可；）`setStatus` 的 `open` 分支 `this.store.setState({ connStatus: status, queued: 0 })` 之前加 `this.queuedIds.clear()`；`clearWatchdog` 末尾与看门狗超时回调里各加 `this.queuedIds.delete(id); this.syncQueued()`（`clearWatchdog` 里用 `bubbleId`）；新增：
+```ts
+  private syncQueued(): void {
+    const n = this.queuedIds.size
+    if (this.store.getState().queued !== n) this.store.setState({ queued: n })
+  }
+```
+
+`mobile/src/features/chat/usePtt.ts`：`usePtt(opts)` 的入参类型加两个可选回调，并在四处调用：
+```ts
+export function usePtt(opts: {
+  audioUrl: string
+  sessionId: string
+  onFinal(text: string): void
+  /** 稳定 partial（全文）→ 记录里的草稿气泡（方案 §5.2.1） */
+  onPartial?(text: string): void
+  /** 太短 / 出错 / 空定稿 / 取消 → 草稿不留气泡 */
+  onDiscard?(): void
+}): PttHandle {
+```
+- `finishSession` 的 `tooShort` 分支 `await session.cancel()` 之前加 `opts.onDiscard?.()`；
+- `onPartial: (t) => { setPartial(t); opts.onPartial?.(t) }`；
+- `onFinal` 的 `else`（空定稿）分支加 `opts.onDiscard?.()`；
+- `onError` 分支加 `opts.onDiscard?.()`；
+- `.catch` 分支（启动失败）加 `opts.onDiscard?.()`。
+
+`mobile/src/features/chat/ChatScreen.tsx`：
+```ts
+  const ptt = usePtt({
+    audioUrl: cfg.audioUrl,
+    sessionId: wired.session.sessionId,
+    onPartial: (t) => core.draftUser(t),
+    onDiscard: () => core.discardDraftUser(),
+    onFinal: (text) => onSend(text, undefined, { source: 'ptt', bubbleId: core.commitDraftUser() ?? undefined }),
+  })
+  const hf = useHandsFree({
+    …（其余入参原样）
+    onPartial: (t) => core.draftUser(t),
+    onSend: (text) => onSend(text, undefined, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),
+    …（其余原样）
+  })
+  // 免唤醒离开 LISTENING 而没有定稿（退出词 / 语气词 / 误唤醒回收 / 回声）：草稿不留气泡。
+  // 定稿路径里 commit 先于 FSM 换态（onSend 同步发生在 _finalizeSend 内），到这里已是 no-op
+  useEffect(() => {
+    if (hf.fsm !== 'LISTENING') core.discardDraftUser()
+  }, [hf.fsm, core])
+```
+`useStore(core.store)` 解构加 `draftUserId, interruptedIds`；FlashList `extraData` 加这两个；`MessageBubble` 传 `draft={item.id === draftUserId}` `interrupted={interruptedIds.includes(item.id)}`；`VoiceSheet` 传 `draftUserId={draftUserId} interruptedIds={interruptedIds}`。
+
+`mobile/src/features/chat/MessageBubble.tsx`：`BubbleProps` 加
+```ts
+  /** 转写草稿（方案 §5.2.1）：虚线边 + 光标，定稿后由同一条气泡接管（HMI PartialUserBubble 同款形态） */
+  draft?: boolean
+  /** 被打断（方案 §5.2 规则 4）：文字定格 + 灰字「已打断」，不是错误样式 */
+  interrupted?: boolean
+```
+用户气泡分支的容器 style 里边框改为 `borderWidth: 1, borderStyle: draft ? 'dashed' : 'solid', borderColor: draft ? \`${p.accent}4D\` : \`${p.accent}38\``，文本后 `{draft ? <StreamCursor h={p.font(15)} /> : null}`；助手气泡在 `{msg.text ? (…) : null}` 之后加：
+```tsx
+        {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}
+```
+
+`mobile/src/features/chat/VoiceSheet.tsx`：props 加 `draftUserId: string | null` 与 `interruptedIds: readonly string[]`；转写光标条件改为 `user.id === props.draftUserId`；回答文本之后加 `{assistant && props.interruptedIds.includes(assistant.id) ? <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text> : null}`。
+
+- [ ] **步骤 4：跑绿 + `tsc`**；全量 `npm test`（**看门狗三条 `sessionStore.test.ts:529/545/560` 必须仍绿**——D9 改了 `clearWatchdog`）。
+
+- [ ] **反向验证**：
+  1. `send` 里去掉 `reuse` 分支（总是追加）⇒ 只红「复用不追加第二条」。
+  2. `markInterrupted` 恢复 `error: true` ⇒ 只红两条「打断」用例。
+  3. `cancelCurrentTurn` 路径不 `queuedIds.delete` ⇒ 只红 D9。
+  4. 真机（第 2 批收口，需泓舟真人一句）：说「附近有什么好吃的」——层里转写逐字变、记录里同一条气泡（虚线）逐字同变；**录音中途切后台再回来 / 折叠展开**，草稿仍在且与层里显示逐字相同（`b2-04-draft-{fg,bg,fold}.png`）；说到一半上滑（T6 才有；本批用误唤醒回收：唤醒后不说话 5s）→ 草稿消失、记录里没有空气泡；播报中点「■ 打断」→ 回答定格 + 灰字「已打断」、气泡不变红。
+
+- [ ] **提交**：
+```bash
+git commit -- mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/usePtt.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx -m "feat(mobile): UX v2 B2-4 转写增量沉淀（草稿气泡 draft→final）、打断留痕不改红、queued 按轮计数（D9）" && git show --stat HEAD
+```
+
+### Task 5: S2S 轮沉淀 + 「端到端」角标 + 开录即告知 + 设置页首次显式同意
+
+**Files:**
+- 修改 `mobile/src/core/session/store.ts`（`s2sIds` + 四方法）、`mobile/test/sessionStore.test.ts`
+- 修改 `mobile/src/features/chat/useHandsFree.ts`（`onS2sEscalated?` / `onS2sTurnEnd?` 交给调用方）、`mobile/src/features/chat/ChatScreen.tsx`（四回调接线 + `s2sNotice`）、`mobile/src/features/chat/MessageBubble.tsx`（`s2s` 角标 + 长按提示）、`mobile/src/features/chat/VoiceSheet.tsx`（首行告知条）
+- 修改 `mobile/src/core/settings/store.ts`（`s2sConsentAt` + `needsS2sConsent`）、`mobile/test/settingsMeta.test.ts`；新建 `mobile/src/features/settings/S2sConsentSheet.tsx`；修改 `mobile/src/features/settings/SettingsScreen.tsx`
+
+**为什么**：方案 §5.2 规则 2 末段 + §5.2.2——S2S 自答轮今天在对话里**零痕迹**（方案 §0 表 U2 的现状证据）；记录语义 `{ source:'s2s', transcriptKind:'model_inferred' }` 在本 App 里的载体是并列字段 `s2sIds`（只有 S2S 轮才是模型推断的转写，所以一个集合表达两件事）；角标「端到端」（Q7）；长按可看「转写由语音模型生成」。**开录即告知**：S2S 挡位下语音层升起的第一行是 G0 实色条——这是红线三条件③在**交互时刻**的落实；设置里把挡位切到端到端时弹**一次性显式同意**（评审 §6 ③：零依赖语音层，但 B2 不做就没有别的批会做）。副作用只走主链（CLAUDE.md §5）：本任务**不改任何一条红线**，只让它看得见——逃逸轮有 `request_id`、进 `requestRouting`、按普通轮渲染。**双气泡风险**（§0 第 5 条）：`onS2sUserUtterance` 与 `onS2sEscalated` 都会产生用户气泡，用 `takeS2sUserBubble()` 交给主链复用。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/sessionStore.test.ts` 追加：
+
+```ts
+describe('UX v2 B2-5：S2S 自答轮沉淀（方案 §5.2.2）', () => {
+  test('用户话 + 回答增量 + turn.end → 记录里两条、都在 s2sIds、不进 requestRouting（没有上行帧）', () => {
+    const { transport, core } = newCore()
+    core.draftUser('今天天气') // S2S 的 transcript partial 也走草稿
+    core.s2sUserUtterance('今天天气怎么样')
+    core.s2sAnswerDelta('深圳今天')
+    core.s2sAnswerDelta('多云。')
+    core.s2sTurnEnd('completed')
+    const all = msgs(core)
+    expect(all).toHaveLength(2)
+    expect(all[0]).toMatchObject({ role: 'user', text: '今天天气怎么样' })
+    expect(all[1]).toMatchObject({ role: 'assistant', text: '深圳今天多云。', streaming: false })
+    expect(core.store.getState().s2sIds).toEqual([all[0].id, all[1].id])
+    expect(core.store.getState().draftUserId).toBeNull()
+    expect(transport.sent.filter((f: any) => typeof f.text === 'string')).toHaveLength(0)
+    core.dispose()
+  })
+
+  test('逃逸：takeS2sUserBubble 交给主链 send({bubbleId}) 复用——只有一条用户气泡、不再在 s2sIds、有上行帧', () => {
+    const { transport, core } = newCore()
+    core.s2sUserUtterance('打开后备箱')
+    const id = core.takeS2sUserBubble() as string
+    core.s2sTurnEnd('escalated')
+    core.send('打开后备箱', undefined, { source: 's2s', bubbleId: id })
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(1)
+    expect(core.store.getState().s2sIds).toEqual([])
+    expect(transport.lastUserFrame().text).toBe('打开后备箱')
+    expect(core.store.getState().turnMeta[assistants(core)[0].id].source).toBe('s2s')
+    core.dispose()
+  })
+
+  test('取消且一个字没出 → 那条助手气泡删除；出了字 → 定格并进 interruptedIds', () => {
+    const { core } = newCore()
+    core.s2sUserUtterance('讲个笑话')
+    core.s2sAnswerDelta('')
+    core.s2sTurnEnd('cancelled')
+    expect(assistants(core)).toHaveLength(0)
+    core.s2sUserUtterance('再讲一个')
+    core.s2sAnswerDelta('从前')
+    core.s2sTurnEnd('cancelled')
+    expect(assistants(core)[0].text).toBe('从前')
+    expect(core.store.getState().interruptedIds).toEqual([assistants(core)[0].id])
+    core.dispose()
+  })
+
+  test('takeS2sUserBubble 没有待归属的用户话时返回 null（逃逸帧先于 transcript 到达的兜底）', () => {
+    const { core } = newCore()
+    expect(core.takeS2sUserBubble()).toBeNull()
+    core.dispose()
+  })
+})
+```
+
+`mobile/test/settingsMeta.test.ts` 追加：
+
+```ts
+describe('UX v2 B2-5：端到端首次显式同意', () => {
+  test('缺省未同意（s2sConsentAt=0）；存量没有这个键 → 0；同意过 → 不再需要', () => {
+    expect(DEFAULT_APP_SETTINGS.s2sConsentAt).toBe(0)
+    expect(needsS2sConsent(DEFAULT_APP_SETTINGS)).toBe(true)
+    expect(needsS2sConsent(mergeStoredSettings(JSON.stringify({ voicePipeline: 's2s' })))).toBe(true)
+    expect(needsS2sConsent({ ...DEFAULT_APP_SETTINGS, s2sConsentAt: 1_700_000_000_000 })).toBe(false)
+  })
+  test('s2sConsentAt 不上行（buildMeta 键集不变）', () => {
+    expect(Object.keys(buildMeta(DEFAULT_APP_SETTINGS)).sort()).toEqual([...HMI_META_KEYS].sort())
+  })
+})
+```
+（import 加 `needsS2sConsent`。）
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/session/store.ts`：`SessionState` 加
+```ts
+  /** 端到端（S2S）自答轮的气泡（用户话 + 回答）：转写由语音模型生成、不是逐字 ASR（方案 §5.2.2
+   *  的 `source:'s2s' + transcriptKind:'model_inferred'`——只有 S2S 轮是模型推断的，一个集合够用）。
+   *  逃逸轮回到主链后从这里摘掉——它按普通轮渲染 */
+  s2sIds: string[]
+```
+（初始化 `s2sIds: []`），类字段加 `private s2sUserId: string | null = null` / `private s2sAssistantId: string | null = null`，新增方法（放在草稿三方法之后）：
+
+```ts
+  // ── S2S 自答轮（方案 §5.2.2）：只写记录，不进 requestRouting——它没有 request_id ──
+
+  /** 已过 FSM 本地治理的用户话：有草稿就转正为它，没有就建；进 s2sIds，等归属（自答 / 逃逸） */
+  s2sUserUtterance(text: string): void {
+    const draft = this.commitDraftUser()
+    const id = draft ?? uid()
+    if (draft) this.setText(id, text)
+    else this.appendMessage({ id, role: 'user', text })
+    this.s2sUserId = id
+    this.store.setState((s) => ({ s2sIds: s.s2sIds.includes(id) ? s.s2sIds : [...s.s2sIds, id] }))
+  }
+
+  /** 回答增量：按「无在飞轮的续流 adopt 新气泡」语义单独开一条（§5.2 规则 2） */
+  s2sAnswerDelta(delta: string): void {
+    if (!delta) return
+    const cur = this.s2sAssistantId
+    if (cur && this.store.getState().messages.some((m) => m.id === cur)) {
+      this.store.setState((s) => ({
+        messages: s.messages.map((m) => (m.id === cur ? { ...m, text: m.text + delta, streaming: true } : m)),
+      }))
+      return
+    }
+    const id = uid()
+    this.s2sAssistantId = id
+    this.store.setState((s) => ({
+      messages: [...s.messages, { id, role: 'assistant', text: delta, streaming: true }],
+      s2sIds: [...s.s2sIds, id],
+    }))
+  }
+
+  /** turn.end：收尾。cancelled 且没出字 → 删；出了字 → 定格 + 打断留痕；escalated 的用户话留给 takeS2sUserBubble */
+  s2sTurnEnd(reason: string): void {
+    const id = this.s2sAssistantId
+    this.s2sAssistantId = null
+    if (reason !== 'escalated') this.s2sUserId = null
+    if (!id) return
+    const text = this.store.getState().messages.find((m) => m.id === id)?.text ?? ''
+    if (!text) {
+      this.store.setState((s) => ({ messages: s.messages.filter((m) => m.id !== id), s2sIds: s.s2sIds.filter((x) => x !== id) }))
+      return
+    }
+    this.store.setState((s) => ({
+      messages: s.messages.map((m) => (m.id === id ? { ...m, streaming: false } : m)),
+      interruptedIds: reason === 'cancelled' && !s.interruptedIds.includes(id) ? [...s.interruptedIds, id] : s.interruptedIds,
+    }))
+  }
+
+  /** 逃逸（红线：S2S 会话内无执行通道，原话交回主链）：这条用户气泡不再是端到端轮——
+   *  交给 send({ bubbleId }) 复用，**不许出现第二条**。没有待归属的用户话返回 null */
+  takeS2sUserBubble(): string | null {
+    const id = this.s2sUserId
+    this.s2sUserId = null
+    if (!id) return null
+    this.store.setState((s) => ({ s2sIds: s.s2sIds.filter((x) => x !== id) }))
+    return id
+  }
+```
+
+`mobile/src/features/chat/useHandsFree.ts`：`UseHandsFreeOpts` 加
+```ts
+  /** turn.end（reason: completed / cancelled / escalated / error…）；不传只清 partial */
+  onS2sTurnEnd?(r: { turnId: string; reason: string; detail: string }): void
+  /** 逃逸：不传就退回 onSend(utterance)（B1 行为） */
+  onS2sEscalated?(utterance: string): void
+```
+deps 里两行改为：
+```ts
+      onS2sEscalated: (utterance) => (cbRef.current.onS2sEscalated ?? cbRef.current.onSend)(utterance),
+      onS2sTurnEnd: (r) => {
+        setPartial('')
+        cbRef.current.onS2sTurnEnd?.(r)
+      },
+```
+
+`mobile/src/features/chat/ChatScreen.tsx`：`useHandsFree` 调用加四个回调；`useStore` 解构加 `s2sIds`；`extraData` 加它；`MessageBubble` 传 `s2s={s2sIds.includes(item.id)}`；`VoiceSheet` 传 `s2sNotice`：
+```ts
+    onS2sUserUtterance: (t) => core.s2sUserUtterance(t),
+    onS2sAnswerDelta: (t) => core.s2sAnswerDelta(t),
+    onS2sTurnEnd: (r) => core.s2sTurnEnd(r.reason),
+    // 逃逸走的是同一个 onSend（视觉抓帧 / 前置路由 / 位置闸一条不少）；用户气泡复用 S2S 那条
+    onS2sEscalated: (utt) => onSend(utt, undefined, { source: 's2s', bubbleId: core.takeS2sUserBubble() ?? undefined }),
+    …（其余入参原样）
+```
+```ts
+  // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
+  const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
+```
+
+`mobile/src/features/chat/VoiceSheet.tsx`：props 加 `s2sNotice: boolean`，把手之后、ScrollView 之前插入：
+```tsx
+            {props.s2sNotice ? (
+              <View
+                testID="s2s-notice"
+                accessibilityLiveRegion="polite"
+                style={{ backgroundColor: p.dark ? '#3B2A0A' : '#FFF4DB', paddingVertical: 6, paddingHorizontal: 12, marginTop: 8 }}
+              >
+                <Text style={{ color: p.amber, fontSize: scale(TYPE.caption, 'text', fontScale), textAlign: 'center' }}>
+                  端到端语音 · 原始音频将在本轮上传
+                </Text>
+              </View>
+            ) : null}
+```
+（G0 实色：不透明底，§5.11。）
+
+`mobile/src/features/chat/MessageBubble.tsx`：`BubbleProps` 加 `/** 端到端自答轮：角标「端到端」，长按看「转写由语音模型生成」（方案 §5.2.2，Q7） */ s2s?: boolean`；用户气泡分支改成 `Pressable`（`onLongPress` 时 `s2s` 才有动作）：
+```tsx
+  const [hint, setHint] = useState(false)
+  if (msg.role === 'user') {
+    return (
+      <View style={{ alignItems: 'flex-end', marginVertical: 5 }}>
+        <Pressable
+          onLongPress={s2s ? () => { setHint(true); setTimeout(() => setHint(false), 2500) } : undefined}
+          style={{ … 原样式 … }}
+        >
+          {s2s ? <Text style={{ color: p.teal, fontSize: p.font(10), marginBottom: 2 }}>端到端</Text> : null}
+          <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>{msg.text}{draft ? <StreamCursor h={p.font(15)} /> : null}</Text>
+          {hint ? <Text style={{ color: p.fg3, fontSize: p.font(10), marginTop: 4 }}>转写由语音模型生成，可能与原话有出入</Text> : null}
+        </Pressable>
+      </View>
+    )
+  }
+```
+助手气泡：`proactive` 标题行之前加 `{s2s ? <Text style={{ color: p.teal, fontSize: p.font(11), fontWeight: '600' }}>端到端</Text> : null}`。
+
+`mobile/src/core/settings/store.ts`：`AppSettings` 加
+```ts
+  /** 端到端挡位的一次性显式同意时刻（ms）；0=从未同意。红线三条件②「用户显式选择」的
+   *  持久化证据——只有开关不算显式（方案 §5.2.2） */
+  s2sConsentAt: number
+```
+默认 `s2sConsentAt: 0`；导出
+```ts
+/** 切到端到端前要不要弹一次性同意（判据只此一处：设置页与任何未来入口都问它） */
+export function needsS2sConsent(s: AppSettings): boolean {
+  return s.s2sConsentAt <= 0
+}
+```
+
+`mobile/src/features/settings/S2sConsentSheet.tsx`：
+
+```tsx
+// mobile/src/features/settings/S2sConsentSheet.tsx
+// 端到端挡位的一次性显式同意（方案 §5.2.2「设置里把挡位从三段式切到端到端时弹一次性显式同意（不是只有开关）」）。
+// G0 实色（§5.11：隐私说明不许半透明）。文案逐条对应 CLAUDE.md §5「唯一的受控例外」三条件。
+import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+
+import type { FontScalePref } from '@/core/settings/store'
+import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import type { Palette } from '@/ui/theme'
+
+export const S2S_CONSENT_TEXT = [
+  '端到端语音会把你说话的**原始音频**上传到服务器上的语音大模型，而三段式只上传识别后的文字。',
+  '只在你唤醒之后的对话窗内采集；没唤醒时一帧都不传。',
+  '它不能直接执行任何动作：涉及车控、支付、导航、账户或记忆的话会交回文本主链，经权限与二次确认。',
+  '随时可以在这里切回三段式；切回后立即停止上传。',
+]
+
+export function S2sConsentSheet({
+  p,
+  fontScale,
+  visible,
+  onAccept,
+  onDecline,
+}: {
+  p: Palette
+  fontScale: FontScalePref
+  visible: boolean
+  onAccept(): void
+  onDecline(): void
+}) {
+  const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
+  const h = scale(TARGET.parked, 'target', fontScale)
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDecline}>
+      <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)' }} onPress={onDecline} accessibilityLabel="仍用三段式" />
+      <View testID="s2s-consent" style={{ backgroundColor: solid, borderTopLeftRadius: RADIUS['2xl'], borderTopRightRadius: RADIUS['2xl'], padding: 16, gap: 12 }}>
+        <Text style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fontScale), fontWeight: '600' }}>切到端到端语音之前</Text>
+        <ScrollView style={{ maxHeight: 260 }}>
+          {S2S_CONSENT_TEXT.map((line, i) => (
+            <Text key={i} style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale), lineHeight: scale(22, 'line', fontScale), paddingVertical: 3 }}>
+              {i + 1}. {line.replace(/\*\*/g, '')}
+            </Text>
+          ))}
+        </ScrollView>
+        <View style={{ flexDirection: 'row', gap: 10 }}>
+          <Pressable testID="s2s-consent-decline" accessibilityRole="button" onPress={onDecline} style={{ flex: 1, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: p.fg2, fontSize: scale(TYPE.body, 'text', fontScale) }}>仍用三段式</Text>
+          </Pressable>
+          <Pressable testID="s2s-consent-accept" accessibilityRole="button" onPress={onAccept} style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)', backgroundColor: p.amberSoft, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600' }}>我知道了，切到端到端</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
+  )
+}
+```
+
+`mobile/src/features/settings/SettingsScreen.tsx`：import `needsS2sConsent` 与 `S2sConsentSheet`；`const [consentOpen, setConsentOpen] = useState(false)`；「语音链路」`ChoiceRow` 的 `onPick` 改为：
+```tsx
+              onPick={(voicePipeline) => {
+                // 首次切端到端弹一次性显式同意（方案 §5.2.2）；同意过的直接切；切回三段式永远不问
+                if (voicePipeline === 's2s' && needsS2sConsent(settings)) setConsentOpen(true)
+                else set({ voicePipeline })
+              }}
+```
+分区末尾加 `{settings.s2sConsentAt > 0 ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已于 {new Date(settings.s2sConsentAt).toLocaleString('zh-CN', { hour12: false })} 同意端到端上传原始音频</Text> : null}`；`ScrollView` 之后（同级）渲染：
+```tsx
+      <S2sConsentSheet
+        p={p}
+        fontScale={settings.fontScale}
+        visible={consentOpen}
+        onAccept={() => {
+          set({ voicePipeline: 's2s', s2sConsentAt: Date.now() })
+          setConsentOpen(false)
+        }}
+        onDecline={() => setConsentOpen(false)}
+      />
+```
+（`ScrollView` 外要包一层 `View style={{flex:1}}`，Modal 与 ScrollView 并列。）
+
+- [ ] **步骤 4：跑绿 + `tsc`**。
+
+- [ ] **反向验证**：
+  1. ChatScreen 的 `onS2sEscalated` 不调 `takeS2sUserBubble`（`bubbleId: undefined`）⇒ 单测层在 store 用例「只有一条用户气泡」红（store 用例直接调 `takeS2sUserBubble`，所以再加一条**接线**证据：真机逃逸轮记录里恰好一条用户气泡）。
+  2. `s2sAnswerDelta` 总是新建气泡 ⇒ 只红第一条（`toHaveLength(2)`）。
+  3. `needsS2sConsent` 改成 `s.s2sConsentAt >= 0` ⇒ 只红同意用例的第三行。
+  4. 真机（第 2 批收口，**需泓舟真人 + 云端 S2S 已开通**——AGENTS.md：`/api/s2s/info available:true`、端到端一轮**从未验过**，这一批就是验它的时候）：设置切端到端 → 同意页出现一次（截图 `b2-05-consent.png`）→ 「仍用三段式」→ 挡位不变；再切 → 同意 → 挡位变、页脚出现同意时间；再切回三段式再切端到端 → **不再弹**。唤醒说一句 → 层首行「端到端语音 · 原始音频将在本轮上传」（`b2-05-notice.png`）→ 记录里出现带「端到端」角标的两条（`b2-05-turn.png`）——**§11.4「记录完整性」在此取数：S2S 轮记录条数 / 实际轮数 = 100%**（此前是 0）；说「打开后备箱」→ 逃逸 → 记录里恰好一条用户气泡、无角标、Dock 出现确认（主链闸生效，`b2-05-escalate.png`）。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/features/settings/S2sConsentSheet.tsx && git commit -- mobile/src/features/settings/S2sConsentSheet.tsx mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/settings/store.ts mobile/test/settingsMeta.test.ts mobile/src/features/settings/SettingsScreen.tsx -m "feat(mobile): UX v2 B2-5 S2S 自答轮沉淀 + 「端到端」角标 + 开录即告知条 + 首次显式同意（逃逸轮复用用户气泡，红线只让它可见）" && git show --stat HEAD
+```
+### Task 6: 轻点光球即说 + Composer 手势契约（含 PTT-lease 前置修、D7）
+
+**Files:**
+- 新建 `mobile/src/core/voice/tapTalk.ts`、`mobile/test/tapTalk.test.ts`、`mobile/test/pttLease.test.ts`
+- 修改 `mobile/src/core/voice/asr.ts`（`AsrConfig.vadSilenceMs`）、`mobile/test/voiceAsr.test.ts`（追加 1 条）
+- 修改 `mobile/src/features/chat/usePtt.ts`（recorder 换 `micLease()`；`tap()` / `cancel()` / `mode` / `cancelledAt`）
+- 修改 `mobile/src/core/voice/handsFree.ts`（`wakeManually()` / `endUtterance()` / `recycle()`）、`mobile/test/handsFree.test.ts`（追加 3 条）、`mobile/src/features/chat/useHandsFree.ts`（透出三个方法）
+- 修改 `mobile/src/features/chat/Composer.tsx`（手势契约）、`mobile/src/features/chat/ChatScreen.tsx`（`startListening` / `interruptAndListen` / `onOrbTap` / `stopMic`）
+- 修改 `mobile/src/core/presence/presence.ts`（`notice` 输入 + `NOTICE_SHOW_MS`）、`mobile/src/features/chat/usePresence.ts`（取消提示）、`mobile/test/presence.test.ts`（追加 1 条）
+
+**为什么**：方案 §5.1.1 手势契约 + Q2「轻点始终开始录音，与免唤醒开关无关」。三条写计划时核出来的事实决定了实现形态（§0 第 5 条）：① `vad_silence_ms` 只有 qwen3 消费、缺省引擎 fun-asr 收不了尾 ⇒ 收尾主判据是**端侧 VAD**（`core/voice/tapTalk.ts` 三层收尾：VAD 端点 / 服务端尾 / 15s 上限）；② **PTT 在免唤醒开着时今天是坏的**（recorder 单例）⇒ `AsrSession` 领 `micLease()`，先于手势落、有 jest 钉住；③ 免唤醒开着时「轻点」= FSM 的公开入口 `wake()`（VAD 收尾是它本来就有的），不另起一条会话——**哪个引擎持有麦，就由谁开始听**，这是 ChatScreen 知道的事实，不是判据。D7：`reenableBargeIn` 翻持久化开关 50ms 的假窗口 ⇒ `HandsFreeController.recycle()`（FSM 拆机再装机，引擎与麦都不动，`_bargeInDisabled` 随 `_gotoIdle` 复位）。取消的隐私文案（§5.1.1）：「已取消，这段话不会发给小舟」——**不是**「未上传」。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/pttLease.test.ts`：
+
+```ts
+// mobile/test/pttLease.test.ts
+// §0 第 5 条：PTT 在免唤醒开着时今天是坏的——AsrSession 用 recorder() 单例，已录时 start 静默 return
+// （一帧收不到，recorder.ts:50）、stop 会把免唤醒的真麦停掉（:89）。修法：PTT 的 AsrSession 也领一路 micLease。
+// 这里验的是**组合**：一路 lease 常开（免唤醒）时，第二路（PTT）能收到帧、停下时真麦不关。
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+import { AsrSession } from '@/core/voice/asr'
+import { micBusStats, micLease, resetMicBusForTest } from '@/core/voice/micBus'
+import { setRecorderForTest, type FrameSink, type Recorder } from '@/core/voice/recorder'
+
+class FakeRecorder implements Recorder {
+  starts = 0
+  stops = 0
+  sink: FrameSink | null = null
+  deviceRate = 16000
+  get recording(): boolean {
+    return !!this.sink
+  }
+  async start(onFrame: FrameSink): Promise<void> {
+    this.starts += 1
+    this.sink = onFrame
+  }
+  async stop(): Promise<void> {
+    this.stops += 1
+    this.sink = null
+  }
+  emit(n = 1600): void {
+    this.sink?.(new Int16Array(n))
+  }
+}
+
+class FakeWs {
+  static last: FakeWs | null = null
+  readyState = 0
+  binaryType = ''
+  sent: unknown[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((ev: { data: unknown }) => void) | null = null
+  onerror: (() => void) | null = null
+  onclose: (() => void) | null = null
+  constructor(readonly url: string) {
+    FakeWs.last = this
+  }
+  send(d: unknown): void {
+    this.sent.push(d)
+  }
+  close(): void {
+    this.readyState = 3
+  }
+  open(): void {
+    this.readyState = 1
+    this.onopen?.()
+  }
+  get binarySent(): unknown[] {
+    return this.sent.filter((s) => typeof s !== 'string')
+  }
+}
+
+const origWs = (global as unknown as { WebSocket: unknown }).WebSocket
+let rec: FakeRecorder
+beforeEach(() => {
+  resetMicBusForTest()
+  rec = new FakeRecorder()
+  setRecorderForTest(rec)
+  ;(global as unknown as { WebSocket: unknown }).WebSocket = FakeWs
+})
+afterEach(() => {
+  setRecorderForTest(null)
+  ;(global as unknown as { WebSocket: unknown }).WebSocket = origWs
+})
+
+test('免唤醒常开一路时，PTT 的 AsrSession（micLease）能收到帧并上行；PTT 停下真麦不关', async () => {
+  const handsFree = micLease()
+  await handsFree.start(() => {})
+  expect(rec.starts).toBe(1)
+  const ptt = new AsrSession(
+    { audioUrl: 'https://x', language: 'zh', provider: 'dashscope', model: 'fun-asr-realtime' },
+    { onFinal() {}, onError() {} },
+    micLease(),
+  )
+  await ptt.start()
+  FakeWs.last!.open()
+  expect(micBusStats().active).toBe(2)
+  rec.emit(1600)
+  expect(FakeWs.last!.binarySent).toHaveLength(1) // PTT 这一路拿到了帧
+  await ptt.cancel()
+  expect(rec.stops).toBe(0) // 真麦仍开着——免唤醒那一路还在
+  expect(micBusStats().active).toBe(1)
+  await handsFree.stop()
+  expect(rec.stops).toBe(1)
+})
+
+test('usePtt 的 AsrSession 必须领 micLease，不再用 recorder() 单例（源码级断言）', () => {
+  const src = readFileSync(resolve(__dirname, '../src/features/chat/usePtt.ts'), 'utf8')
+  expect(src).toContain('micLease()')
+  expect(src).not.toMatch(/\brecorder\(\)/)
+})
+```
+
+`mobile/test/tapTalk.test.ts`：
+
+```ts
+// mobile/test/tapTalk.test.ts
+// 轻点即说的三层收尾（方案 §5.1.1 Q2）：端侧 VAD 端点 / 硬上限 / 用户再点一下——**没有一层是「不收尾」**。
+// 假端点 + 假 recorder + 假 WebSocket，不碰真机也不碰网（同 voiceAsr.test.ts 的做法）。
+import { TAP_MAX_MS, TAP_SILENCE_MS, TapTalkSession, type TapEndpoint } from '@/core/voice/tapTalk'
+import type { FrameSink, Recorder } from '@/core/voice/recorder'
+
+class FakeRecorder implements Recorder {
+  sink: FrameSink | null = null
+  recording = false
+  deviceRate = 16000
+  stops = 0
+  async start(onFrame: FrameSink): Promise<void> {
+    this.sink = onFrame
+    this.recording = true
+  }
+  async stop(): Promise<void> {
+    this.recording = false
+    this.stops += 1
+  }
+}
+
+class FakeEndpoint implements TapEndpoint {
+  onEnd: (() => void) | null = null
+  started = 0
+  stopped = 0
+  async start(onSpeechEnd: () => void): Promise<void> {
+    this.onEnd = onSpeechEnd
+    this.started += 1
+  }
+  async stop(): Promise<void> {
+    this.stopped += 1
+  }
+}
+
+class FakeWs {
+  static last: FakeWs | null = null
+  readyState = 0
+  binaryType = ''
+  sent: unknown[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((ev: { data: unknown }) => void) | null = null
+  onerror: (() => void) | null = null
+  onclose: (() => void) | null = null
+  constructor(readonly url: string) {
+    FakeWs.last = this
+  }
+  send(d: unknown): void {
+    this.sent.push(d)
+  }
+  close(): void {
+    this.readyState = 3
+  }
+  open(): void {
+    this.readyState = 1
+    this.onopen?.()
+  }
+  get jsonSent(): Array<Record<string, unknown>> {
+    return this.sent.filter((s): s is string => typeof s === 'string').map((s) => JSON.parse(s) as Record<string, unknown>)
+  }
+}
+
+const origWs = (global as unknown as { WebSocket: unknown }).WebSocket
+beforeEach(() => {
+  jest.useFakeTimers()
+  ;(global as unknown as { WebSocket: unknown }).WebSocket = FakeWs
+})
+afterEach(() => {
+  jest.useRealTimers()
+  ;(global as unknown as { WebSocket: unknown }).WebSocket = origWs
+})
+
+const CFG = { audioUrl: 'https://x', language: 'zh', provider: 'dashscope', model: 'fun-asr-realtime' }
+const CB = { onFinal() {}, onError() {} }
+const flush = async (n = 6) => {
+  for (let i = 0; i < n; i += 1) await Promise.resolve()
+}
+
+test('start 帧带 vad_silence_ms（qwen3 用户的服务端尾；hold 模式不带——见 voiceAsr.test）', async () => {
+  const rec = new FakeRecorder()
+  const s = new TapTalkSession(CFG, CB, { endpoint: null, rec })
+  await s.start()
+  FakeWs.last!.open()
+  expect(FakeWs.last!.jsonSent.find((m) => m.type === 'start')?.vad_silence_ms).toBe(TAP_SILENCE_MS)
+})
+
+test('端侧 VAD 端点 → 自动 stop（发 stop 帧、放开 recorder、端点自己也停）', async () => {
+  const rec = new FakeRecorder()
+  const ep = new FakeEndpoint()
+  const s = new TapTalkSession(CFG, CB, { endpoint: ep, rec })
+  await s.start()
+  FakeWs.last!.open()
+  expect(ep.started).toBe(1)
+  ep.onEnd!()
+  await flush()
+  expect(FakeWs.last!.jsonSent.some((m) => m.type === 'stop')).toBe(true)
+  expect(rec.stops).toBe(1)
+  expect(ep.stopped).toBe(1)
+})
+
+test('端点缺席 → TAP_MAX_MS 硬上限收尾；上限前一毫秒还在录', async () => {
+  const rec = new FakeRecorder()
+  const s = new TapTalkSession(CFG, CB, { endpoint: null, rec })
+  await s.start()
+  FakeWs.last!.open()
+  jest.advanceTimersByTime(TAP_MAX_MS - 1)
+  await flush()
+  expect(rec.stops).toBe(0)
+  jest.advanceTimersByTime(1)
+  await flush()
+  expect(rec.stops).toBe(1)
+})
+
+test('用户再点一下 = 结束并提交；stop 幂等（端点随后再到不会二次 stop）', async () => {
+  const rec = new FakeRecorder()
+  const ep = new FakeEndpoint()
+  const s = new TapTalkSession(CFG, CB, { endpoint: ep, rec })
+  await s.start()
+  FakeWs.last!.open()
+  await s.stop()
+  ep.onEnd!()
+  await flush()
+  expect(rec.stops).toBe(1)
+  expect(FakeWs.last!.jsonSent.filter((m) => m.type === 'stop')).toHaveLength(1)
+})
+
+test('cancel：不定稿不回调；端点与 recorder 都放开', async () => {
+  const rec = new FakeRecorder()
+  const ep = new FakeEndpoint()
+  const onFinal = jest.fn()
+  const s = new TapTalkSession(CFG, { onFinal, onError() {} }, { endpoint: ep, rec })
+  await s.start()
+  FakeWs.last!.open()
+  await s.cancel()
+  FakeWs.last!.onmessage?.({ data: JSON.stringify({ type: 'final', text: '迟到的定稿' }) })
+  expect(onFinal).not.toHaveBeenCalled()
+  expect(rec.stops).toBe(1)
+  expect(ep.stopped).toBe(1)
+})
+```
+
+`mobile/test/voiceAsr.test.ts` 追加：
+
+```ts
+test('B2-6：hold 模式（不传 vadSilenceMs）start 帧不带 vad_silence_ms；传了才带（只有 qwen3 消费它）', async () => {
+  const rec = new FakeRecorder()
+  const s = new AsrSession(CFG, { onFinal() {}, onError() {} }, rec)
+  await s.start()
+  FakeWs.last!.open()
+  const start = FakeWs.last!.jsonSent.find((m) => m.type === 'start')
+  expect(start).toBeDefined()
+  expect('vad_silence_ms' in start!).toBe(false)
+  const s2 = new AsrSession({ ...CFG, vadSilenceMs: 800 }, { onFinal() {}, onError() {} }, new FakeRecorder())
+  await s2.start()
+  FakeWs.last!.open()
+  expect(FakeWs.last!.jsonSent.find((m) => m.type === 'start')?.vad_silence_ms).toBe(800)
+})
+```
+
+`mobile/test/handsFree.test.ts` 追加：
+
+```ts
+test('B2-6 wakeManually：ARMED 下等同 KWS 命中——开一条 ASR（轻点光球 = 手动唤醒，FSM 不改）', async () => {
+  const { ctl } = makeCtl()
+  await ctl.enable()
+  ctl.wakeManually()
+  expect(asrLog).toEqual(['start'])
+  expect(kws.resets).toBe(1)
+})
+
+test('B2-6 endUtterance：LISTENING 下请定稿（= onEndpoint 的效果）；非 LISTENING 时 no-op', async () => {
+  const { ctl } = makeCtl()
+  await ctl.enable()
+  ctl.endUtterance() // ARMED：什么都不做
+  expect(asrLog).toEqual([])
+  ctl.wakeManually()
+  ctl.endUtterance()
+  expect(asrLog).toEqual(['start', 'stop'])
+})
+
+test('B2-6 recycle（评审 D7）：FSM 拆机再装机、麦不停、会话级关闭的 barge-in 被复位并以空串通知', async () => {
+  const bargeIn: string[] = []
+  const states: string[] = []
+  const { ctl } = makeCtl({
+    onBargeInDisabled: (r: string) => bargeIn.push(r),
+    onOrbState: (_o: unknown, f: string) => states.push(f),
+  })
+  await ctl.enable()
+  ctl.vl._bargeInDisabled = true // FSM 自己的会话级标志：只有 _gotoIdle 会复位它
+  const stopsBefore = recStarts.stops
+  ctl.recycle()
+  expect(states.slice(-2)).toEqual(['IDLE', 'ARMED'])
+  expect(recStarts.stops).toBe(stopsBefore) // 麦没停（不是 disable/enable）
+  expect(ctl.vl.bargeInDisabled).toBe(false)
+  expect(bargeIn).toEqual([''])
+})
+```
+
+`mobile/test/presence.test.ts` 在 `describe('capsule 文案')` 追加：
+
+```ts
+  test('notice（取消 / 回声）2s 短显：压过 followup 与 armed，让位给收音 / 播报 / 思考（B2 T6/T11）', () => {
+    const n = { text: '已取消，这段话不会发给小舟', at: NOW - 500 }
+    expect(derivePresence(base({ notice: n })).capsule).toEqual({ text: n.text, tone: 'neutral' })
+    expect(derivePresence(base({ notice: { ...n, at: NOW - 2_000 } })).capsule).toBeUndefined()
+    expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'FOLLOWUP' })).capsule?.text).toBe(n.text)
+    expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'ARMED', hfFsmChangedAt: NOW - 100 })).capsule?.text).toBe(n.text)
+    expect(derivePresence(base({ notice: n, ptt: 'recording' })).capsule?.text).toBe('在听…')
+    expect(derivePresence(base({ notice: n, speaking: true })).capsule?.text).toBe('播报中 · 说话可打断')
+  })
+```
+
+- [ ] **步骤 2：跑红**（`pttLease` 源码断言红——今天 `usePtt.ts` 用的正是 `recorder()`；其余「模块 / 方法不存在」红）。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/voice/asr.ts`：`AsrConfig` 加
+```ts
+  /** 服务端静音尾（ms）——**只给轻点即说**：PTT 由松手定稿、免唤醒由端侧 VAD 定稿，两者不传。
+   *  只有 qwen3 realtime 消费它（llm-gateway/providers.py:762），fun-asr 忽略：传了不坏，别指望它 */
+  vadSilenceMs?: number
+```
+start 帧里那行注释 `// vad_silence_ms 刻意不传：…` 替换为
+```ts
+          ...(this.cfg.vadSilenceMs ? { vad_silence_ms: this.cfg.vadSilenceMs } : {}),
+```
+
+`mobile/src/core/voice/tapTalk.ts`：
+
+```ts
+// mobile/src/core/voice/tapTalk.ts
+// 轻点即说（方案 §5.1.1、Q2）：轻点光球开始录音，**说完自动收尾**——与免唤醒开关无关。
+//
+// 方案写的收尾是「ASR 网关的 vad_silence_ms 服务端静音尾」。写计划时核了消费方：
+// `llm-gateway/providers.py:762`「仅 qwen3 realtime 的 server_vad 消费；fun-asr 走客户端 stop 端点」，
+// 而 App 默认 `asrModel='fun-asr-realtime'`（settings/store.ts:81）⇒ 缺省引擎上服务端尾**收不了尾**。
+// 所以主判据是**端侧 VAD**（VadEngine：M4 已在 APK 里、真机已验）：语音结束事件 → asr.stop()；
+// vad_silence_ms 照传（qwen3 用户白得一层）；VAD 缺席（原生不在 / 载入失败）→ TAP_MAX_MS 硬上限。
+// 三层都是「收尾」，谁先到谁收；**没有任何一层是「不收尾」**——轻点录音不能变成永远开着的麦。
+//
+// 麦：ASR 与 VAD 各领一路 micLease（一路采集多路消费，micBus 头注）。免唤醒开着时不走这里
+// （那时轻点 = HandsFreeController.wakeManually，FSM 自带 VAD 收尾），所以 VAD 引擎不会有两份。
+import { micLease } from './micBus'
+import type { Recorder } from './recorder'
+import { AsrSession, type AsrCallbacks, type AsrConfig } from './asr'
+import { VadEngine, vadNativeAvailable } from './vad'
+
+/** 端侧 VAD 静音尾（ms）。与 voiceLoop DEFAULTS.silenceTailMs 同值——那是共享判据，
+ *  这里只是把同一个数交给 VadEngine 与 ASR 网关，不另立判据 */
+export const TAP_SILENCE_MS = 800
+/** 无端点时的硬上限（ms；HMI listenSeconds 同值） */
+export const TAP_MAX_MS = 15_000
+
+/** 端点源：生产用 VAD，测试注入假的 */
+export interface TapEndpoint {
+  start(onSpeechEnd: () => void): Promise<void>
+  stop(): Promise<void>
+}
+
+/** 生产端点：VadEngine + 自己的一路 micLease。原生缺席返回 null（→ 只剩硬上限 + 服务端尾） */
+export function vadEndpoint(): TapEndpoint | null {
+  if (!vadNativeAvailable()) return null
+  const vad = new VadEngine(TAP_SILENCE_MS)
+  const lease = micLease()
+  return {
+    async start(onSpeechEnd) {
+      await vad.load()
+      await vad.start({ onSpeechStart: () => {}, onSpeechEnd, onError: () => {} })
+      await lease.start((f) => vad.accept(f))
+    },
+    async stop() {
+      await lease.stop()
+      vad.stop()
+      await vad.dispose()
+    },
+  }
+}
+
+export interface TapTalkDeps {
+  endpoint: TapEndpoint | null
+  /** ASR 的 recorder（缺省 micLease()；测试注入假的） */
+  rec?: Recorder
+}
+
+export class TapTalkSession {
+  private readonly asr: AsrSession
+  private cap: ReturnType<typeof setTimeout> | null = null
+  private ended = false
+
+  constructor(
+    cfg: AsrConfig,
+    cb: AsrCallbacks,
+    private readonly deps: TapTalkDeps,
+  ) {
+    this.asr = new AsrSession({ ...cfg, vadSilenceMs: cfg.vadSilenceMs ?? TAP_SILENCE_MS }, cb, deps.rec ?? micLease())
+  }
+
+  get active(): boolean {
+    return this.asr.active
+  }
+
+  async start(): Promise<void> {
+    await this.asr.start()
+    if (this.deps.endpoint) {
+      try {
+        await this.deps.endpoint.start(() => void this.stop())
+      } catch {
+        // 端点起不来（模型载入失败等）：不阻塞录音，硬上限兜底
+      }
+    }
+    this.cap = setTimeout(() => void this.stop(), TAP_MAX_MS)
+  }
+
+  /** 收尾（端点到 / 上限到 / 用户再点一下）：幂等 */
+  async stop(): Promise<void> {
+    if (this.ended) return
+    this.ended = true
+    this.clearCap()
+    await this.deps.endpoint?.stop()
+    await this.asr.stop()
+  }
+
+  /** 取消：不定稿、不回调 */
+  async cancel(): Promise<void> {
+    if (this.ended) return
+    this.ended = true
+    this.clearCap()
+    await this.deps.endpoint?.stop()
+    await this.asr.cancel()
+  }
+
+  private clearCap(): void {
+    if (this.cap !== null) {
+      clearTimeout(this.cap)
+      this.cap = null
+    }
+  }
+}
+```
+
+`mobile/src/features/chat/usePtt.ts` 完整替换：
+
+```ts
+// mobile/src/features/chat/usePtt.ts
+// PTT 状态机（实施计划 M2-2）+ B2 T6 的手势契约入口（方案 §5.1.1）：
+//  · 按住 / 松手（hold）：三个竞态守卫照旧（快按快松 pendingStop / <320ms 误触 / 并发按下忽略）
+//  · 轻点（tap）：开始录音、说完自动收尾（core/voice/tapTalk.ts 三层收尾）；录音中再点 = 结束并提交
+//  · 取消（cancel）：按住时上滑 / 隐私栏「关闭本轮麦克风」——不定稿、草稿删除；胶囊说
+//    「已取消，这段话不会发给小舟」（**不是**「未上传」：流式 ASR 已上传的音频不能宣称从未上传）
+//
+// 麦：AsrSession 领一路 micLease（§0 第 5 条：recorder() 单例在免唤醒开着时让 PTT 收不到帧、
+// 且 stop 会把免唤醒的真麦停掉——pttLease.test.ts 钉住）。
+// barge-in 的 App 版：按下先停播报再开麦，物理上不会自听（计划 M2-3 的 stopTTS 硬停）。
+import { useCallback, useEffect, useRef, useState } from 'react'
+
+import { AsrSession, type AsrCallbacks, type AsrConfig } from '@/core/voice/asr'
+import { micLease } from '@/core/voice/micBus'
+import { PermissionDeniedError } from '@/core/voice/recorder'
+import { speechController } from '@/core/voice/speech'
+import { TapTalkSession, vadEndpoint } from '@/core/voice/tapTalk'
+import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
+
+const MIN_DURATION_MS = 320
+// 定稿超过它仍无结果 → UI 给中间反馈（兜底链最长 ≈24s，一直只写「识别中…」会让人以为卡死）
+const SLOW_HINT_MS = 8000
+
+export type PttState = 'idle' | 'recording' | 'finalizing'
+export type PttMode = 'hold' | 'tap' | ''
+
+export interface PttHandle {
+  state: PttState
+  /** 这次录音是按住还是轻点（空=没在录） */
+  mode: PttMode
+  partial: string
+  error: string
+  errorKind: 'permission' | 'start' | 'asr' | ''
+  slow: boolean
+  /** 上一次取消的时刻（胶囊短显「已取消…」用）；0=没有 */
+  cancelledAt: number
+  pressDown(): void
+  pressUp(): void
+  /** 轻点契约：空闲 = 开始录音（自动收尾）；录音中 = 结束并提交；识别中 = 忽略 */
+  tap(): void
+  /** 取消本次录音：不定稿、不回调 onFinal、草稿删除 */
+  cancel(): void
+}
+
+interface VoiceSession {
+  start(): Promise<void>
+  stop(): Promise<void>
+  cancel(): Promise<void>
+}
+
+export function usePtt(opts: {
+  audioUrl: string
+  sessionId: string
+  onFinal(text: string): void
+  /** 稳定 partial（全文）→ 记录里的草稿气泡（方案 §5.2.1） */
+  onPartial?(text: string): void
+  /** 太短 / 出错 / 空定稿 / 取消 → 草稿不留气泡 */
+  onDiscard?(): void
+}): PttHandle {
+  const [state, setState] = useState<PttState>('idle')
+  const [mode, setMode] = useState<PttMode>('')
+  const [partial, setPartial] = useState('')
+  const [error, setError] = useState('')
+  const [errorKind, setErrorKind] = useState<PttHandle['errorKind']>('')
+  const [slow, setSlow] = useState(false)
+  const [cancelledAt, setCancelledAt] = useState(0)
+  const sessionRef = useRef<VoiceSession | null>(null)
+  const startingRef = useRef(false)
+  const pendingStopRef = useRef(false)
+  const pendingCancelRef = useRef(false)
+  const startedAtRef = useRef(0)
+
+  const reset = useCallback(() => {
+    sessionRef.current = null
+    startingRef.current = false
+    pendingStopRef.current = false
+    pendingCancelRef.current = false
+    setPartial('')
+    setState('idle')
+    setMode('')
+  }, [])
+
+  const asrConfig = useCallback((): AsrConfig => {
+    const s = settingsStore.getState().settings
+    return {
+      audioUrl: opts.audioUrl,
+      language: s.asrLanguage,
+      provider: s.asrProvider,
+      model: s.asrModel,
+      // 选中的就是备用模型时不再指自己（否则失败后原地重试一次，白等一个来回）
+      ...(s.asrModel === ASR_FALLBACK_MODEL ? {} : { fallbackModel: ASR_FALLBACK_MODEL }),
+      sessionId: opts.sessionId,
+    }
+  }, [opts.audioUrl, opts.sessionId])
+
+  const callbacks = useCallback(
+    (): AsrCallbacks => ({
+      onPartial: (t) => {
+        setPartial(t)
+        opts.onPartial?.(t)
+      },
+      onFinal: (t) => {
+        reset()
+        const text = t.trim()
+        if (text) opts.onFinal(text)
+        else {
+          setError('没听清，再说一次？')
+          setErrorKind('asr')
+          opts.onDiscard?.()
+        }
+      },
+      onError: (msg) => {
+        reset()
+        setError(msg)
+        setErrorKind('asr')
+        opts.onDiscard?.()
+      },
+    }),
+    [opts, reset],
+  )
+
+  const finishSession = useCallback(async () => {
+    const session = sessionRef.current
+    if (!session) return
+    if (Date.now() - startedAtRef.current < MIN_DURATION_MS) {
+      // ② 误触：不定稿——否则每次误触都往后端发一次空识别
+      reset()
+      opts.onDiscard?.()
+      await session.cancel()
+      return
+    }
+    setState('finalizing')
+    await session.stop()
+  }, [opts, reset])
+
+  const begin = useCallback(
+    (kind: 'hold' | 'tap') => {
+      if (startingRef.current || sessionRef.current) return // ③ 并发按下忽略
+      startingRef.current = true
+      pendingStopRef.current = false
+      pendingCancelRef.current = false
+      setError('')
+      setErrorKind('')
+      setPartial('')
+      setState('recording')
+      setMode(kind)
+      startedAtRef.current = Date.now()
+      speechController().stop() // barge-in：先停播报，再开麦
+      const session: VoiceSession =
+        kind === 'tap'
+          ? new TapTalkSession(asrConfig(), callbacks(), { endpoint: vadEndpoint() })
+          : new AsrSession(asrConfig(), callbacks(), micLease())
+      sessionRef.current = session
+      void session
+        .start()
+        .then(() => {
+          startingRef.current = false
+          if (pendingCancelRef.current) {
+            pendingCancelRef.current = false
+            void session.cancel()
+            return
+          }
+          if (pendingStopRef.current) {
+            // ① 会话就绪前就松手了：这时才真正停
+            pendingStopRef.current = false
+            void finishSession()
+          }
+        })
+        .catch((e: unknown) => {
+          reset()
+          const denied = e instanceof PermissionDeniedError
+          setError(denied ? '需要麦克风权限，请在系统设置里允许' : '录音启动失败')
+          setErrorKind(denied ? 'permission' : 'start')
+          opts.onDiscard?.()
+        })
+    },
+    [asrConfig, callbacks, finishSession, opts, reset],
+  )
+
+  useEffect(() => {
+    if (state !== 'finalizing') {
+      setSlow(false)
+      return
+    }
+    const t = setTimeout(() => setSlow(true), SLOW_HINT_MS)
+    return () => clearTimeout(t)
+  }, [state])
+
+  const pressDown = useCallback(() => begin('hold'), [begin])
+
+  const pressUp = useCallback(() => {
+    if (startingRef.current) {
+      pendingStopRef.current = true
+      return
+    }
+    void finishSession()
+  }, [finishSession])
+
+  const tap = useCallback(() => {
+    if (state === 'finalizing') return
+    if (sessionRef.current || startingRef.current) {
+      pressUp() // 录音中轻点 = 结束并提交
+      return
+    }
+    begin('tap')
+  }, [begin, pressUp, state])
+
+  const cancel = useCallback(() => {
+    if (!sessionRef.current && !startingRef.current) return
+    if (startingRef.current) {
+      pendingCancelRef.current = true // 会话还没建起来：就绪后立刻 cancel，别留一个开着的麦
+      setState('idle')
+      setMode('')
+      setPartial('')
+    } else {
+      const session = sessionRef.current
+      reset()
+      void session?.cancel()
+    }
+    setCancelledAt(Date.now())
+    opts.onDiscard?.()
+  }, [opts, reset])
+
+  return { state, mode, partial, error, errorKind, slow, cancelledAt, pressDown, pressUp, tap, cancel }
+}
+```
+
+`mobile/src/core/voice/handsFree.ts`——`stats()` 之前加三个方法：
+
+```ts
+  /** 轻点光球（方案 §5.1.1）= 一次「手动唤醒」：FSM 的公开入口 wake()——ARMED/FOLLOWUP 进聆听、
+   *  SPEAKING 先停播再听、THINKING 取消在飞轮再听。FSM 一字不改，KWS 与命中时同样 reset */
+  wakeManually(): void {
+    void this.kws.reset()
+    this.vl.wake()
+  }
+
+  /** 录音中轻点 = 结束并提交：与 FSM 的 onEndpoint 效果逐字同构（S2S 请收尾 / classic 请定稿） */
+  endUtterance(): void {
+    if (this.vl.state !== 'LISTENING') return
+    if (this.s2s) this.s2s.commitAudio()
+    else void this.asr?.stop()
+  }
+
+  /** 「结束本轮收音」/「重新开启插话」的正式实现（评审 D7）：FSM 拆机再装机——
+   *  handsFreeOff → IDLE（关 ASR、清定时器、**复位会话级 _bargeInDisabled**）→ handsFreeOn → ARMED。
+   *  引擎、麦、KWS 都不动（不是 disable/enable），也不碰持久化设置（B1 那 50ms 的 false 窗口没了）。
+   *  onBargeInDisabled('') = 「已复位」，Presence 据此撤掉 Dock 里那条降级 */
+  recycle(): void {
+    if (!this.on) return
+    this.vl.handsFreeOff()
+    this.vl.handsFreeOn()
+    this.deps.onBargeInDisabled?.('')
+  }
+```
+
+`mobile/src/features/chat/useHandsFree.ts`：`HandsFreeUi` 加
+```ts
+  /** 轻点光球 = 手动唤醒（免唤醒开着时由它开始听） */
+  wake(): void
+  /** 录音中轻点 = 结束并提交 */
+  endUtterance(): void
+  /** 结束本轮收音 / 重新开启插话（评审 D7） */
+  recycle(): void
+```
+实现（放在 `return` 之前）：
+```ts
+  const wake = useCallback(() => ctlRef.current?.wakeManually(), [])
+  const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
+  const recycle = useCallback(() => ctlRef.current?.recycle(), [])
+  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle }
+```
+（import 加 `useCallback`。）
+
+`mobile/src/features/chat/Composer.tsx` 完整替换：
+
+```tsx
+// mobile/src/features/chat/Composer.tsx
+// 输入区（M1-3 + M2-2 PTT，Aurora Glass 复刻轮重皮）+ B2 T6 手势契约（方案 §5.1.1）：
+//  · 轻点光球：开始录音（与免唤醒开关无关）/ 录音中 = 结束并提交 / 播报中 = 先停 TTS 再录 / 思考中 = 展开语音层
+//  · 长按光球 / 空输入框 ≥300ms：按住说话；**按住时上滑 ≥60dp 取消**（微信惯例，Q13）；松手发送
+//  · 长按识别前允许移动 12dp（列表纵向滚动与 chips 横滑不得误触）
+//  · 输入框有字时长按走原生选择，**只有光球仍可 PTT**
+//  · TalkBack：轻点切换开始 / 停止，label 随状态；热区 56dp（≥48）
+// 手势用 react-native-gesture-handler（PackageList.java:73 已注册，零新依赖）。
+// 「轻点到底做什么」的判据不在这里——Composer 只报告手势，ChatScreen 的 onTap 决定走免唤醒的
+// 手动唤醒还是 PTT 的 tap 会话（哪个引擎持有麦是 ChatScreen 知道的事实）。
+import { useRef, useState } from 'react'
+import { ScrollView, Text, TextInput, View, Pressable } from 'react-native'
+import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+
+import type { FontScalePref } from '../../core/settings/store'
+import { AuroraOrb, type OrbState } from '../../ui/aurora'
+import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
+import { AURORA, type Palette } from '../../ui/theme'
+import { RADIUS, TARGET, scale } from '../../ui/tokens'
+import type { PttHandle } from './usePtt'
+
+/** 长按判定（ms）：方案 §5.1.1 的 ≥300；usePtt 的 MIN_DURATION_MS=320 是「录了多久」，是另一件事 */
+export const HOLD_MS = 300
+/** 长按识别前允许的移动（dp）：超过就交给滚动 */
+export const HOLD_MAX_DISTANCE = 12
+/** 按住时上滑多少算取消（dp） */
+export const CANCEL_DY = 60
+
+export interface ComposerProps {
+  p: Palette
+  quickCommands: string[]
+  /** 有在飞轮（pending/streaming/process 任一）→ 显示打断 */
+  busy: boolean
+  /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
+  ptt: PttHandle | null
+  /** 光球主态由调用方给（v2=snapshot.primary，v1=ChatScreen 里的旧推导） */
+  orbState: OrbState
+  orbDim?: boolean
+  /** 语音层开着时主球转静态（同屏循环动画常态 1 个，方案 §11.4） */
+  orbAnimated?: boolean
+  fontScale: FontScalePref
+  onSend(text: string): void
+  onInterrupt(): void
+  /** 轻点光球（判据在 ChatScreen） */
+  onTap(): void
+}
+
+export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
+  const [input, setInput] = useState('')
+  const heldRef = useRef(false)
+  const cancelledRef = useRef(false)
+  const submit = () => {
+    const text = input.trim()
+    if (!text) return
+    onSend(text)
+    setInput('')
+  }
+  const recording = ptt?.state === 'recording'
+  const finalizing = ptt?.state === 'finalizing'
+
+  // 按住 = Pan.activateAfterLongPress：激活即按下；onUpdate 看上滑；结束即松手（取消过就不发）
+  const makeHold = (enabled: boolean) =>
+    Gesture.Pan()
+      .runOnJS(true)
+      .enabled(enabled)
+      .maxPointers(1)
+      .minDistance(HOLD_MAX_DISTANCE)
+      .activateAfterLongPress(HOLD_MS)
+      .onStart(() => {
+        heldRef.current = true
+        cancelledRef.current = false
+        ptt?.pressDown()
+      })
+      .onUpdate((e) => {
+        if (heldRef.current && !cancelledRef.current && e.translationY < -CANCEL_DY) {
+          cancelledRef.current = true
+          ptt?.cancel()
+        }
+      })
+      .onFinalize(() => {
+        if (heldRef.current && !cancelledRef.current) ptt?.pressUp()
+        heldRef.current = false
+      })
+  const tap = Gesture.Tap()
+    .runOnJS(true)
+    .maxDuration(HOLD_MS - 20)
+    .onEnd(() => onTap())
+  const orbGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), tap)
+  // 空输入框 = 背板的一部分：有字时关掉（原生长按选择接管），轻点仍由原生聚焦
+  const plateGesture = makeHold(!!ptt && !finalizing && input.length === 0)
+
+  const a11yLabel = recording ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`
+
+  return (
+    <View
+      style={{
+        borderTopWidth: 1,
+        borderColor: p.line,
+        backgroundColor: p.dark ? 'rgba(6,8,15,0.55)' : 'rgba(237,241,250,0.72)',
+      }}
+    >
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
+        {quickCommands.map((c) => (
+          <Pressable
+            key={c}
+            onPress={() => onSend(c)}
+            style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 }}
+          >
+            <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{c}</Text>
+          </Pressable>
+        ))}
+      </ScrollView>
+      <View style={{ flexDirection: 'row', gap: 10, padding: 10, alignItems: 'flex-end' }}>
+        {ptt ? (
+          <GestureDetector gesture={orbGesture}>
+            <View
+              testID="composer-orb"
+              accessible
+              accessibilityRole="button"
+              accessibilityLabel={a11yLabel}
+              accessibilityHint="轻点开始说话，说完自动发送；长按可按住说话，上滑取消"
+              style={{
+                width: scale(TARGET.driving, 'target', fontScale),
+                height: scale(TARGET.driving, 'target', fontScale),
+                borderRadius: RADIUS.full,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: recording ? p.accentSoft : 'transparent',
+              }}
+            >
+              <AuroraOrb size={44} state={orbState} dim={orbDim} animated={orbAnimated ?? true} />
+            </View>
+          </GestureDetector>
+        ) : null}
+        <GestureDetector gesture={plateGesture}>
+          <View style={{ flex: 1 }}>
+            <TextInput
+              testID="composer-input"
+              style={{
+                backgroundColor: p.fill,
+                borderWidth: 1,
+                borderColor: p.fill2,
+                borderRadius: 14,
+                paddingHorizontal: 14,
+                paddingVertical: 10,
+                fontSize: p.font(15),
+                color: p.fg1,
+                maxHeight: 120,
+              }}
+              value={input}
+              onChangeText={setInput}
+              placeholder={recording ? '正在听…' : '和小舟说点什么…'}
+              placeholderTextColor={p.fg3}
+              multiline
+              onSubmitEditing={submit}
+              submitBehavior="blurAndSubmit"
+              returnKeyType="send"
+            />
+          </View>
+        </GestureDetector>
+        {busy ? (
+          <Pressable
+            onPress={onInterrupt}
+            style={{ backgroundColor: p.amberSoft, borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)', borderRadius: 14, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' }}
+          >
+            <Text style={{ color: p.amber, fontSize: p.font(14) }}>■ 打断</Text>
+          </Pressable>
+        ) : null}
+        <Pressable
+          testID="composer-send"
+          onPress={submit}
+          style={{ experimental_backgroundImage: AURORA.gradient, borderRadius: 14, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center', boxShadow: '0 4px 22px rgba(91,140,255,0.45)' }}
+        >
+          <Text style={{ color: '#fff', fontSize: p.font(15), fontWeight: '600' }}>发送</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+```
+⚠ RNGH 的根容器 `GestureHandlerRootView` 在 T3 已包进 `_layout.tsx`；手势仍不响应时先核它在（`grep -n GestureHandlerRootView mobile/src/app/_layout.tsx`），再考虑 §0 第 1 条的 `PanResponder` 退路。
+
+`mobile/src/features/chat/ChatScreen.tsx`：删掉 `reenableBargeIn`；`usePresence` 之后加：
+```ts
+  // 轻点光球：哪个引擎持有麦，就由谁开始听——免唤醒开着 = 手动唤醒（FSM 自带 VAD 收尾）；
+  // 否则 = PTT 的 tap 会话（端侧 VAD / 服务端尾 / 15s 三层收尾）。这是「谁持有麦」的事实，不是判据
+  const hfOn = settings.handsFree && hf.availability.usable
+  const startListening = useCallback(() => {
+    if (!hfOn) {
+      ptt.tap()
+      return
+    }
+    if (hf.fsm === 'LISTENING') hf.endUtterance()
+    else hf.wake()
+  }, [hfOn, hf, ptt])
+  // ■ 打断 / 播报中轻点：先停（cancel 帧 + stop TTS），再听（方案 §5.2 规则 4：层不收、speaking→listening）
+  const interruptAndListen = useCallback(() => {
+    core.cancelCurrentTurn()
+    startListening()
+  }, [core, startListening])
+  // 光球轻点契约（方案 §5.1.1 表）：播报中 = 停播再录；思考 / 执行中 = 展开语音层；其余 = 开始 / 结束录音
+  const onOrbTap = useCallback(() => {
+    if (snapshot.agent === 'speaking') interruptAndListen()
+    else if (snapshot.agent === 'thinking' || snapshot.agent === 'processing') setSheetOverride({ turnId: latestTurnId, mode: 'open' })
+    else startListening()
+  }, [snapshot.agent, interruptAndListen, latestTurnId, startListening])
+  // 「关闭本轮麦克风」（隐私栏）与「重新开启插话」（Dock）：评审 D7——不再翻持久化开关
+  const stopMic = useCallback(() => {
+    ptt.cancel()
+    if (hfOn) hf.recycle()
+  }, [ptt, hfOn, hf])
+```
+接线：`FocusDock onReenableBargeIn={hf.recycle}`、`PrivacyRail onStopMic={stopMic}`、`VoiceSheet onInterrupt={interruptAndListen}`、`Composer onTap={onOrbTap}`。
+
+`mobile/src/core/presence/presence.ts`：`PresenceInput` 加
+```ts
+  /** 2s 短提示（取消 / 回声）；判据 NOTICE_SHOW_MS 在这里 */
+  notice?: { text: string; at: number } | null
+```
+常量 `export const NOTICE_SHOW_MS = 2000`；胶囊链里 `else if (agent === 'thinking') …` 之后、`else if (agent === 'followup')` 之前插入：
+```ts
+  else if (!!i.notice && i.now - i.notice.at < NOTICE_SHOW_MS) capsule = { text: i.notice.text, tone: 'neutral' }
+```
+
+`mobile/src/features/chat/usePresence.ts`：`derivePresence` 调用前加（import `NOTICE_SHOW_MS`）：
+```ts
+  // 2s 提示：取消（§5.1.1 的隐私文案——「不会发给」而不是「未上传」）；T11 把回声并进来
+  const notice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
+```
+`needsTick` 加 `|| (!!notice && now - notice.at < NOTICE_SHOW_MS)`；`derivePresence({...})` 加 `notice,`。
+
+- [ ] **步骤 4：跑绿 + `tsc`**；全量。
+
+- [ ] **反向验证**：
+  1. `usePtt` 改回 `new AsrSession(…, recorder())`（要 import）⇒ `pttLease` 源码断言红。
+  2. `TapTalkSession.start` 不设 `cap` ⇒ 只红「硬上限」。
+  3. `stop()` 里去掉 `endpoint.stop()` ⇒ 只红「VAD 端点」与「cancel」两条的 `ep.stopped`。
+  4. `recycle()` 里去掉 `handsFreeOff()` ⇒ 只红 recycle 用例（`states` 与 `bargeInDisabled`）。
+  5. `notice` 分支挪到 `followup` 之后 ⇒ 只红 notice 用例第三行。
+  6. 真机（第 3 批收口）：**免唤醒关** → 轻点 → 层升、胶囊「在听…」→ 说一句停 1s → 自动收尾发送（VAD 在场；`b2-06-tap.png` 连拍）；再轻点一次中途 → 立刻收尾；**免唤醒开** → 轻点 → 同（FSM）；**免唤醒开 + 按住说话** → 有转写、松手发送、之后说「小舟小舟」仍能唤醒（麦没被掐——§0 第 5 条的真机确认，B1 验收表第 6 条第二行顺便收口）；长按 → 上滑 60dp → 胶囊「已取消，这段话不会发给小舟」2s、记录无气泡；输入框有字 → 长按输入框走原生选择、长按光球仍 PTT；TalkBack 开 → 光球 label「小舟，开始说话」/ 录音中「小舟，结束并发送」；播报中轻点 → 停播 + 进入收音（层不收）；隐私栏「关闭本轮麦克风」→ 免唤醒回 ARMED、设置里开关仍是开的（D7）。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/core/voice/tapTalk.ts mobile/test/tapTalk.test.ts mobile/test/pttLease.test.ts && git commit -- mobile/src/core/voice/tapTalk.ts mobile/test/tapTalk.test.ts mobile/test/pttLease.test.ts mobile/src/core/voice/asr.ts mobile/test/voiceAsr.test.ts mobile/src/features/chat/usePtt.ts mobile/src/core/voice/handsFree.ts mobile/test/handsFree.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/Composer.tsx mobile/src/features/chat/ChatScreen.tsx mobile/src/core/presence/presence.ts mobile/src/features/chat/usePresence.ts mobile/test/presence.test.ts -m "feat(mobile): UX v2 B2-6 轻点光球即说（端侧 VAD 三层收尾）+ Composer 手势契约（长按/上滑取消/松手）+ PTT 领 micLease（免唤醒下 PTT 修复）+ recycle 替代翻开关（D7）" && git show --stat HEAD
+```
+
+### Task 7: 边缘极光（语音层顶缘 2dp 呼吸）
+
+**Files:**
+- 新建 `mobile/src/ui/aurora/EdgeGlow.tsx`；修改 `mobile/src/ui/aurora/index.ts`（导出）、`mobile/src/features/chat/VoiceSheet.tsx`（顶缘挂载）
+
+**为什么**：方案 §5.2 规则 6——层顶缘 2px `AURORA` 呼吸 1.6s，只在 `listening/thinking`（虹彩纪律允许的「听/想时屏幕边缘」那一处）。RN 实现 = 一条 2dp 高的 `experimental_backgroundImage` 线性渐变 View + opacity 呼吸，零新依赖。纯动效、无判据 ⇒ 没有 jest；验收是真机录屏。
+
+- [ ] **步骤 1：实现**
+
+```tsx
+// mobile/src/ui/aurora/EdgeGlow.tsx
+// 语音层顶缘极光（方案 §5.2 规则 6）：2dp 线性渐变 + 1.6s 呼吸，**只在 listening / thinking**——
+// 虹彩纪律允许的「听/想时屏幕边缘」那一处（Guidelines :113-119），hmi .au-edge-glow 的移植。
+// 零依赖：experimental_backgroundImage 渐变 + reanimated opacity。reduce-motion 的静帧留 B4。
+import { useEffect } from 'react'
+import Animated, {
+  Easing,
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withSequence,
+  withTiming,
+} from 'react-native-reanimated'
+
+import { AURORA } from '../theme'
+
+/** 呼吸周期（ms）——方案原文 1.6s */
+export const EDGE_GLOW_PERIOD_MS = 1600
+
+export function EdgeGlow({ active }: { active: boolean }) {
+  const t = useSharedValue(0)
+  useEffect(() => {
+    cancelAnimation(t)
+    if (!active) {
+      t.value = withTiming(0, { duration: 200 })
+      return
+    }
+    t.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: EDGE_GLOW_PERIOD_MS / 2, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.35, { duration: EDGE_GLOW_PERIOD_MS / 2, easing: Easing.inOut(Easing.ease) }),
+      ),
+      -1,
+    )
+    return () => cancelAnimation(t)
+  }, [active, t])
+  const style = useAnimatedStyle(() => ({ opacity: t.value }))
+  return <Animated.View pointerEvents="none" testID="edge-glow" style={[{ height: 2, experimental_backgroundImage: AURORA.gradient }, style]} />
+}
+```
+`mobile/src/ui/aurora/index.ts` 加 `export { EdgeGlow } from './EdgeGlow'`。`VoiceSheet.tsx` 的 `<Glass …>` 内第一个子元素（把手之前）加：
+```tsx
+            <EdgeGlow active={snapshot.primary === 'listening' || snapshot.primary === 'thinking'} />
+```
+（import 从 `@/ui/aurora` 加 `EdgeGlow`。）
+
+- [ ] **步骤 2：`tsc` 0；真机**：轻点说话 → `screenrecord`（`//sdcard/b2-07.mp4`，8s）→ 抽 4 帧（0/0.4/0.8/1.2s）顶缘 2dp 的取样色亮度不同（同 B1 第 4 批的 stdlib PNG 取色法）；回答定稿、播报中 → 顶缘不亮（`speaking` 不在允许列表）。
+
+- [ ] **反向验证**：`active` 恒 true ⇒ 播报中顶缘仍亮（录屏可见）——用来证明「只在 listening/thinking」不是巧合；还原。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/ui/aurora/EdgeGlow.tsx && git commit -- mobile/src/ui/aurora/EdgeGlow.tsx mobile/src/ui/aurora/index.ts mobile/src/features/chat/VoiceSheet.tsx -m "feat(mobile): UX v2 B2-7 语音层顶缘极光 2dp 呼吸（只在 listening/thinking，零依赖）" && git show --stat HEAD
+```
+
+### Task 8: `card_group` 主卡 / 折叠（`display_priority` 终于有消费方）
+
+**Files:**
+- 新建 `mobile/src/core/cards/cardGroup.ts`、`mobile/src/features/cards/CardGroup.tsx`、`mobile/test/cardGroup.test.ts`
+- 修改 `mobile/src/features/cards/CardRenderer.tsx`（REGISTRY `card_group` → `CardGroup`）
+
+**为什么**：方案 §5.2 规则 7 / §5.4——`final.ui_card` 为 `card_group` 时按 `display_priority` 升序取首张为主卡，其余「还有 N 张 ›」折叠、展开是竖排（不做轮播——语音场景里轮播等于藏卡）。聚合器（`orchestrator/cloud/aggregator.py:158`）用同一个缺省 2，**这是它的排序第一次有消费方（P9 的修法）**。判据放 `core/cards/`（零 RN）：T13 的回执要从 card_group 的主卡取 `_prov`，core 不能反向依赖 features。语音层不用改——它经 `CardRenderer` 渲染，注册表换了它就换了。
+
+- [ ] **步骤 1：写失败测试**
+
+```ts
+// mobile/test/cardGroup.test.ts
+// card_group 主卡判定（方案 §5.2 规则 7 / §5.4）：display_priority 升序，缺省 2，同级保原序。
+import { cardPriority, splitCardGroup } from '@/core/cards/cardGroup'
+
+test('display_priority 升序取主卡；缺省 2（CLAUDE.md 卡片优先级默认）；同级保原序', () => {
+  const items = [
+    { type: 'weather' },
+    { type: 'trip_itinerary', display_priority: 0 },
+    { type: 'news_digest', display_priority: 2 },
+    { type: 'poi_list', display_priority: 1 },
+  ]
+  const { main, rest } = splitCardGroup(items)
+  expect(main).toEqual({ type: 'trip_itinerary', display_priority: 0 })
+  expect(rest.map((c) => c.type)).toEqual(['poi_list', 'weather', 'news_digest'])
+})
+
+test('非法 display_priority（字符串 / NaN / 缺 / null 卡）都按 2', () => {
+  expect(cardPriority({ display_priority: '0' })).toBe(2)
+  expect(cardPriority({ display_priority: NaN })).toBe(2)
+  expect(cardPriority({})).toBe(2)
+  expect(cardPriority(null)).toBe(2)
+})
+
+test('空组 → main=null（CardGroup 渲染 null——CardRenderer 铁则「没有卡才允许空」）', () => {
+  expect(splitCardGroup([])).toEqual({ main: null, rest: [] })
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+```ts
+// mobile/src/core/cards/cardGroup.ts
+// card_group 的主卡判定（方案 §5.2 规则 7 / §5.4）：按 display_priority 升序取首张为主卡（缺省 2，
+// CLAUDE.md 卡片优先级默认），其余折叠。聚合器（orchestrator/cloud/aggregator.py:158）用同一个缺省
+// ——这是它的排序第一次有消费方（P9）。稳定排序：同优先级保原序。零 RN import（回执也读它）。
+export function cardPriority(card: unknown): number {
+  const v = (card as { display_priority?: unknown } | null)?.display_priority
+  return typeof v === 'number' && Number.isFinite(v) ? v : 2
+}
+
+export interface CardSplit<T> {
+  main: T | null
+  rest: T[]
+}
+
+export function splitCardGroup<T>(items: readonly T[]): CardSplit<T> {
+  const sorted = items
+    .map((c, i) => ({ c, i }))
+    .sort((a, b) => cardPriority(a.c) - cardPriority(b.c) || a.i - b.i)
+    .map((x) => x.c)
+  return { main: sorted[0] ?? null, rest: sorted.slice(1) }
+}
+```
+
+```tsx
+// mobile/src/features/cards/CardGroup.tsx
+// card_group 渲染（方案 §5.2 规则 7 / §5.4）：主卡全展 + 其余「还有 N 张 ›」竖排展开
+// （不做轮播——语音场景里轮播等于藏卡）。判据在 core/cards/cardGroup.ts；这里只渲染。
+// 与 CardRenderer 互相 import 是**渲染期**的循环（子卡在函数体里才引用），与今天注册表的递归同形。
+import { useState } from 'react'
+import { Pressable, Text, View } from 'react-native'
+
+import { splitCardGroup } from '../../core/cards/cardGroup'
+import type { Palette } from '../../ui/theme'
+import { TARGET } from '../../ui/tokens'
+import { CardRenderer } from './CardRenderer'
+import type { SendFn } from './parts'
+
+export function CardGroup({ p, items, onSend }: { p: Palette; items: unknown[]; onSend: SendFn }) {
+  const [open, setOpen] = useState(false)
+  const { main, rest } = splitCardGroup(items)
+  if (!main) return null
+  return (
+    <View style={{ gap: 8 }}>
+      <CardRenderer p={p} card={main} onSend={onSend} />
+      {rest.length ? (
+        <Pressable
+          testID="card-group-more"
+          accessibilityRole="button"
+          onPress={() => setOpen((o) => !o)}
+          style={{ minHeight: TARGET.parked, justifyContent: 'center' }}
+        >
+          <Text style={{ color: p.accent, fontSize: p.font(12) }}>{open ? '收起其余卡片 ⌃' : `还有 ${rest.length} 张 ›`}</Text>
+        </Pressable>
+      ) : null}
+      {open ? rest.map((sub, i) => <CardRenderer key={i} p={p} card={sub} onSend={onSend} />) : null}
+    </View>
+  )
+}
+```
+`CardRenderer.tsx`：import `CardGroup`，REGISTRY 的 `card_group` 项替换为
+```tsx
+  card_group: ({ p, card, onSend }) => <CardGroup p={p} items={card.items || []} onSend={onSend} />,
+```
+
+- [ ] **步骤 4：跑绿 + `tsc`**；`cards.test.ts` 的注册表守卫仍绿（键没变）。
+
+- [ ] **反向验证**：排序改降序 ⇒ 只红第一条；缺省改 0 ⇒ 只红第二条。真机（第 3 批收口）：「查英伟达股价和新闻」→ 记录里与语音层里都是主卡在上、「还有 1 张 ›」可展开、展开竖排（`b2-08-group-{fold,open}.png`）；卡片画廊 `card_group` 样本同样折叠。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/core/cards/cardGroup.ts mobile/src/features/cards/CardGroup.tsx mobile/test/cardGroup.test.ts && git commit -- mobile/src/core/cards/cardGroup.ts mobile/src/features/cards/CardGroup.tsx mobile/test/cardGroup.test.ts mobile/src/features/cards/CardRenderer.tsx -m "feat(mobile): UX v2 B2-8 card_group 主卡/折叠——display_priority 升序取主卡，其余竖排展开（P9）" && git show --stat HEAD
+```
+
+### Task 9: follow-up chips（`final.follow_up` + 候选集）
+
+**Files:**
+- 新建 `mobile/src/core/session/followUps.ts`、`mobile/src/features/chat/FollowUpChips.tsx`、`mobile/test/followUps.test.ts`
+- 修改 `mobile/src/features/chat/VoiceSheet.tsx`（chips 行）、`mobile/src/features/chat/ChatScreen.tsx`（传 `candidates`）
+
+**为什么**：方案 §5.2 图「follow-up chips（来自 `final.follow_up` 与候选集）」。chip 点按 = 合成一句话走普通 `send`（架构约束：卡内动作 / chip 都不直连执行，§5.4）。**文本以 `sendRouter` 能消费为准**——测试直接拿 `routeSend` 验，而不是猜 `nav.mjs` 的正则；若某句不命中，改 chip 文本不改共享模块。
+
+- [ ] **步骤 1：写失败测试**
+
+```ts
+// mobile/test/followUps.test.ts
+// follow-up chips（方案 §5.2）：follow_up 排第一、去重、上限 4；候选集 chip 的文本 sendRouter 必须认得。
+import { emptyCandidates, type CandidateState } from '@/core/session/candidates'
+import { MAX_CHIPS, followUpChips } from '@/core/session/followUps'
+import { routeSend } from '@/core/session/sendRouter'
+
+const ctx = (candidates: CandidateState) => ({ candidates, locationEnabled: true })
+
+test('follow_up 排第一；空候选 + 无 follow_up → 空数组（chips 行不渲染）', () => {
+  expect(followUpChips('要不要看明天的？', emptyCandidates())).toEqual([{ label: '要不要看明天的？', text: '要不要看明天的？' }])
+  expect(followUpChips(undefined, emptyCandidates())).toEqual([])
+  expect(followUpChips('  ', emptyCandidates())).toEqual([])
+})
+
+test('候选集 chips 的文本 sendRouter 都认得（chip 是合成一句话，不是新通道）', () => {
+  const cand: CandidateState = {
+    ...emptyCandidates(),
+    category: { keyword: '咖啡', page: 1 },
+    poiNames: ['星巴克', '瑞幸'],
+    placeItems: [
+      { id: 'B1', name: '星巴克' },
+      { id: 'B2', name: '瑞幸' },
+    ],
+  }
+  const chips = followUpChips(undefined, cand)
+  const refresh = routeSend(chips.find((c) => c.label === '换一批')!.text, ctx(cand))
+  expect(refresh.kind).toBe('dispatch')
+  expect(refresh.kind === 'dispatch' && refresh.categoryPage).toBe(2)
+  const nav = routeSend(chips.find((c) => c.label === '导航去第一个')!.text, ctx(cand))
+  expect(nav.kind === 'dispatch' && nav.text).toBe('导航去星巴克')
+})
+
+test('poi_list（无 placeItems）的「第一个」→ 导航去{名称}', () => {
+  const cand: CandidateState = { ...emptyCandidates(), poiNames: ['加油站A', '加油站B'] }
+  const chips = followUpChips(undefined, cand)
+  const nav = routeSend(chips.find((c) => c.label === '导航去第一个')!.text, ctx(cand))
+  expect(nav.kind === 'dispatch' && nav.text).toBe('导航去加油站A')
+})
+
+test('intent_choice 选项直接成 chip（label→send_text）；去重；上限 MAX_CHIPS', () => {
+  const cand: CandidateState = {
+    ...emptyCandidates(),
+    intentChoice: { options: [{ label: '查天气', send_text: '查深圳天气' }, { label: '查空气', send_text: '查深圳空气质量' }, { label: '查天气', send_text: '查深圳天气' }] },
+    category: { keyword: '咖啡', page: 1 },
+    poiNames: ['a', 'b'],
+  }
+  const chips = followUpChips('要不要看明天的？', cand)
+  expect(chips).toHaveLength(MAX_CHIPS)
+  expect(new Set(chips.map((c) => c.text)).size).toBe(MAX_CHIPS)
+  expect(chips[0].text).toBe('要不要看明天的？')
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+```ts
+// mobile/src/core/session/followUps.ts
+// follow-up chips（方案 §5.2 图：「来自 final.follow_up 与候选集」）。chip 点按 = 合成一句话走普通 send
+// （架构约束：卡内动作 / chip 都不直连执行）。**文本以 sendRouter 能消费为准**——测试直接拿 routeSend 验，
+// 不猜 nav.mjs 的正则；某句不命中就改这里的文本，不改共享模块。零 RN import。
+import type { CandidateState } from './candidates'
+
+export interface FollowUpChip {
+  label: string
+  text: string
+}
+
+export const MAX_CHIPS = 4
+
+export function followUpChips(followUp: string | undefined, cand: CandidateState): FollowUpChip[] {
+  const out: FollowUpChip[] = []
+  const push = (label: string, text: string) => {
+    const t = text.trim()
+    if (!t || out.some((c) => c.text === t) || out.length >= MAX_CHIPS) return
+    out.push({ label: label.trim() || t, text: t })
+  }
+  if (followUp) push(followUp, followUp)
+  if (cand.category) push('换一批', '换一批')
+  // 周边发现（place_list，带 id）：「导航去第N个」命中 sendRouter 的 PLACE_NAVIGATE_RE 分支；
+  // 普通 poi_list：poiSelectionIndex 认「第一个」
+  if (cand.placeItems?.length) push('导航去第一个', '导航去第一个')
+  else if (cand.poiNames?.length) push('导航去第一个', '第一个')
+  for (const o of cand.intentChoice?.options ?? []) push(o.label, o.send_text)
+  return out
+}
+```
+
+```tsx
+// mobile/src/features/chat/FollowUpChips.tsx
+// chips 行（语音层内）：横向、48dp 触控高度、点按 = 普通 send。零判据——chips 由 followUps.ts 算。
+import { Pressable, ScrollView, Text } from 'react-native'
+
+import type { FollowUpChip } from '@/core/session/followUps'
+import type { FontScalePref } from '@/core/settings/store'
+import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import type { Palette } from '@/ui/theme'
+
+export function FollowUpChips({ p, fontScale, chips, onSend }: { p: Palette; fontScale: FontScalePref; chips: FollowUpChip[]; onSend(text: string): void }) {
+  if (!chips.length) return null
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }} style={{ alignSelf: 'stretch' }}>
+      {chips.map((c) => (
+        <Pressable
+          key={c.text}
+          testID="followup-chip"
+          accessibilityRole="button"
+          onPress={() => onSend(c.text)}
+          style={{ minHeight: scale(TARGET.parked, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 14, borderRadius: RADIUS.full, backgroundColor: p.accentSoft, borderWidth: 1, borderColor: p.accent }}
+        >
+          <Text style={{ color: p.accent, fontSize: scale(TYPE.caption + 1, 'text', fontScale) }}>{c.label}</Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  )
+}
+```
+`VoiceSheet.tsx`：props 加 `candidates: CandidateState`（import type from `@/core/session/candidates`；import `followUpChips` 与 `FollowUpChips`）；卡片之后加：
+```tsx
+              {assistant && !assistant.streaming && !assistant.pending ? (
+                <FollowUpChips p={p} fontScale={fontScale} chips={followUpChips(assistant.followUp, props.candidates)} onSend={props.onSend} />
+              ) : null}
+```
+`ChatScreen.tsx`：`<VoiceSheet … candidates={core.candidates} />`（`core.candidates` 是普通字段不是 store——它只在 final 到达时变，而 final 同时改 `messages`，层随之重渲，够用）。
+
+- [ ] **步骤 4：跑绿 + `tsc`**。⚠ 第二条用例若红在 `routeSend`（`ordinalSelectIn('导航去第一个')` 不命中）：改 `followUps.ts` 里那句文本到命中为止，**不改 `nav.mjs`**，把最终文本写进 §6.3。
+
+- [ ] **反向验证**：`push` 去掉去重 ⇒ 只红第四条；`if (followUp)` 挪到最后 ⇒ 只红 `chips[0]` 断言。真机：「附近有什么咖啡」→ 层里出现「换一批」「导航去第一个」→ 点「换一批」→ 第二页卡（`b2-09-chips.png`）。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/core/session/followUps.ts mobile/src/features/chat/FollowUpChips.tsx mobile/test/followUps.test.ts && git commit -- mobile/src/core/session/followUps.ts mobile/src/features/chat/FollowUpChips.tsx mobile/test/followUps.test.ts mobile/src/features/chat/VoiceSheet.tsx mobile/src/features/chat/ChatScreen.tsx -m "feat(mobile): UX v2 B2-9 语音层 follow-up chips（final.follow_up + 候选集，文本以 sendRouter 判定为准）" && git show --stat HEAD
+```
+
+### Task 10: 视觉抓帧——先落气泡（📷 角标，`vision_frame_id` 迟到补进 meta）
+
+**Files:**
+- 修改 `mobile/src/core/session/store.ts`（`beginUserBubble` / `markVision` / `visionIds`）、`mobile/test/sessionStore.test.ts`
+- 修改 `mobile/src/features/chat/ChatScreen.tsx`（`onSend` 视觉分支顺序倒过来）、`mobile/src/features/chat/MessageBubble.tsx`（📷 角标）、`mobile/src/features/chat/VoiceSheet.tsx`（转写前缀）
+
+**为什么**：方案 §5.5——`looking` 态用户气泡**立刻**出现并带 📷（不等相机冷启动几百毫秒），`vision_frame_id` 迟到再补进 meta；HMI 的 `__bubbled` 先例（`hmi/src/App.tsx:719-726`）。SessionCore 的对应入口 = `beginUserBubble()` + `send({ bubbleId })`（T4 已有复用语义）。**拍完 0.5s 内不出预览**（红线：图像不落端——预览也是一份落端，刻意不做）。B1 出账⑧（`looking` 白环无静态取证）随本任务用录屏取。
+
+- [ ] **步骤 1：写失败测试**（`sessionStore.test.ts` 追加）
+
+```ts
+describe('UX v2 B2-10：视觉先落气泡（方案 §5.5）', () => {
+  test('beginUserBubble 立刻上屏并返回 id；markVision 记 visionIds；随后 send({bubbleId}) 复用、meta 带 vision_frame_id', () => {
+    const { transport, core } = newCore()
+    const id = core.beginUserBubble('这是什么')
+    core.markVision(id)
+    expect(msgs(core)).toHaveLength(1)
+    expect(core.store.getState().visionIds).toEqual([id])
+    expect(transport.sent).toHaveLength(0) // 还没发：相机在冷启动
+    core.send('这是什么', { vision_frame_id: 'f1' }, { source: 'text', bubbleId: id })
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(1)
+    expect(transport.lastUserFrame().meta.vision_frame_id).toBe('f1')
+    core.dispose()
+  })
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+`store.ts`：`SessionState` 加 `/** 带过视觉抓帧的用户气泡（📷 角标）；帧本身不落端、不进记录 */ visionIds: string[]`（初始化 `[]`）；方法：
+```ts
+  /** 先落气泡（方案 §5.5 / HMI __bubbled 同款）：用户那句话立刻上屏，请求稍后用 send({ bubbleId }) 发 */
+  beginUserBubble(text: string): string {
+    const id = uid()
+    this.appendMessage({ id, role: 'user', text })
+    return id
+  }
+
+  markVision(id: string): void {
+    this.store.setState((s) => ({ visionIds: s.visionIds.includes(id) ? s.visionIds : [...s.visionIds, id] }))
+  }
+```
+`ChatScreen.tsx` 的 `onSend` 视觉分支整段替换：
+```ts
+      if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
+        activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
+        // 先落气泡（方案 §5.5）：用户那句话**立刻**上屏带 📷，vision_frame_id 迟到再补进 meta——
+        // 相机冷启动几百毫秒，这段时间用户自己的话不该还没出现。草稿 / S2S 转正的气泡直接复用
+        const bubbleId = opts?.bubbleId ?? core.beginUserBubble(text)
+        core.markVision(bubbleId)
+        void captureVisionFrame(cfg.audioUrl).then((fid) =>
+          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }, { ...(opts || {}), bubbleId }),
+        )
+        return
+      }
+```
+`useStore` 解构加 `visionIds`、`extraData` 加它、`MessageBubble` 传 `vision={visionIds.includes(item.id)}`、`VoiceSheet` 传 `visionIds={visionIds}`。
+
+`MessageBubble.tsx`：`BubbleProps` 加 `/** 带过视觉抓帧：📷 角标（方案 §5.5）；不做预览 */ vision?: boolean`；用户气泡文本前加 `{vision ? <Text style={{ color: p.fg3, fontSize: p.font(10), marginBottom: 2 }}>📷 看图</Text> : null}`。`VoiceSheet.tsx`：props 加 `visionIds: readonly string[]`，转写文本前 `{user && props.visionIds.includes(user.id) ? '📷 ' : ''}`。
+
+- [ ] **步骤 4：跑绿 + `tsc`**。
+
+- [ ] **反向验证**：`onSend` 视觉分支改回「先抓再 send」⇒ 单测层无区分（这是接线），所以真机证据是这条的判据：说「这是什么」→ `screenrecord`（`//sdcard/b2-10.mp4`）逐帧：用户气泡（带 📷）出现的帧 **早于** `looking` 白环 / 采集点出现的帧；`adb logcat -s CameraService` 的 `connect` 时间戳晚于气泡上屏帧的时间（录屏帧号 × 1/30s 对墙钟）。同一段录屏顺手补 B1 出账⑧的 `looking` 白环静态取证（抽帧 `b2-10-looking.png`）。拍完不出预览（录屏里没有任何画面帧）。
+
+- [ ] **提交**：
+```bash
+git commit -- mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx -m "feat(mobile): UX v2 B2-10 视觉抓帧先落气泡（📷 角标，vision_frame_id 迟到补进 meta；不做预览）" && git show --stat HEAD
+```
+
+### Task 11: 回声提示——「像是我自己的声音，没算数」
+
+**Files:**
+- 修改 `mobile/src/core/voice/handsFree.ts`（`onEchoDismissed?`）、`mobile/test/handsFree.test.ts`（追加 1 条）、`mobile/src/features/chat/useHandsFree.ts`（`echoAt`）、`mobile/src/features/chat/usePresence.ts`（并进 `notice`）
+
+**为什么**：方案 §5.2 规则 5——回声判据命中时胶囊短显「像是我自己的声音，没算数」2s，把「吞掉的那句」变成可见的，否则用户以为没听见。共享判据只读（§0 第 5 条）⇒ App 能观测到的只有 FSM 已经吐出来的 `onMetric('echo_dismissed')`（`hmi/src/voiceLoop.mjs:379`，续问窗回声，**Android 无 AEC 时几乎每轮都命中的那一路**）；barge-in 那一路（`:476` `_countSelfTrigger`）没有 metric，看不见——记遗留给 hmi 侧加 `onMetric('echo_suspected')`，本任务不碰共享文件。
+
+- [ ] **步骤 1：写失败测试**（`handsFree.test.ts` 追加）
+
+```ts
+test('B2-11 续问窗回声：FSM 吐 echo_dismissed → onEchoDismissed 收到（胶囊「像是我自己的声音，没算数」的信号源）', async () => {
+  const echoes: number[] = []
+  const { ctl, sent } = makeCtl({ onEchoDismissed: () => echoes.push(1) })
+  await ctl.enable()
+  ctl.wakeManually()
+  FakeAsr.last!.cb.onFinal('今天天气怎么样') // 定稿 → THINKING（走调用方 onSend）
+  expect(sent).toEqual(['今天天气怎么样'])
+  ctl.ttsStart('深圳市当前阴')
+  ctl.setTtsText('深圳市当前阴，气温28℃，西南风3级。')
+  ctl.ttsEnd() // SPEAKING → FOLLOWUP
+  vad.cb.onSpeechStart() // 续问窗内开口 → LISTENING(source=followup)
+  FakeAsr.last!.cb.onFinal('深圳市的') // 真机原字：与播报的公共子序列「深圳市」=3/4=0.75 ⇒ 回声
+  expect(echoes).toEqual([1])
+  expect(sent).toEqual(['今天天气怎么样']) // 回声那句没上云
+  expect(ctl.state).toBe('FOLLOWUP') // 窗留着（voiceLoop:377 的裁决）
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+`handsFree.ts`：`HandsFreeDeps` 加 `/** 续问窗回声被 FSM 丢弃（voiceLoop echo_dismissed）→ UI 短显提示（方案 §5.2 规则 5） */ onEchoDismissed?(): void`；构造里 `onMetric` 回调替换为：
+```ts
+      onMetric: (name: string) => {
+        // 本地消化的三类事件：provider 不知道我们把这句判掉了，要显式让它别答
+        if (this.s2s && S2S_LOCAL_HANDLED.has(name)) this.s2s.cancelTurn()
+        // 回声提示只有这一路信号（barge-in 那一路的 _countSelfTrigger 没有 metric——共享文件不改，记遗留）
+        if (name === 'echo_dismissed') this.deps.onEchoDismissed?.()
+      },
+```
+`useHandsFree.ts`：`HandsFreeUi` 加 `/** 上一次回声被丢弃的时刻；0=没有 */ echoAt: number`；state `const [echoAt, setEchoAt] = useState(0)`；deps 加 `onEchoDismissed: () => setEchoAt(Date.now())`；cleanup 里 `setEchoAt(0)`；返回加 `echoAt`。
+
+`usePresence.ts`：`notice` 那行替换为
+```ts
+  // 2s 提示：取消（§5.1.1）与回声（§5.2 规则 5）——取更晚的那个
+  const cancelNotice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
+  const echoNotice = hf.echoAt ? { text: '像是我自己的声音，没算数', at: hf.echoAt } : null
+  const notice = !cancelNotice ? echoNotice : !echoNotice ? cancelNotice : echoNotice.at > cancelNotice.at ? echoNotice : cancelNotice
+```
+
+- [ ] **步骤 4：跑绿 + `tsc`**。
+
+- [ ] **反向验证**：`onMetric` 里去掉 `echo_dismissed` 那行 ⇒ 只红新用例；真机（第 3 批收口）：**读数要带 APK 的构建时间与有无 AEC**（`adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime`；B1 计划 §5 第 5 条：`96a6830` 的 `VoiceCommunication` 预设只在下一次原生构建后才进 APK，B2 不重建 ⇒ 装的是哪次构建决定回声出不出现）。无 AEC 的包：天气答完 → 胶囊「像是我自己的声音，没算数」2s（`b2-11-echo.png`）；有 AEC 的包：不出现是**预期**，写「未触发（AEC 在场）」不写 ✅。
+
+- [ ] **提交**：
+```bash
+git commit -- mobile/src/core/voice/handsFree.ts mobile/test/handsFree.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/usePresence.ts -m "feat(mobile): UX v2 B2-11 回声提示——FSM echo_dismissed → 胶囊「像是我自己的声音，没算数」2s（共享判据不改）" && git show --stat HEAD
+```
+### Task 12: 播报三档（总是 / 静音 / 自动）——替换 `ttsEnabled && autoplay`
+
+**Files:**
+- 修改 `mobile/src/core/settings/store.ts`（`SpeakPolicy` + `speakPolicy` + `speakAllowed()` + 存量迁移）、`mobile/src/core/voice/speech.ts`（`begin` 第三参、裁决只在 `begin`）、`mobile/src/core/session/store.ts`（`SpeechSink.begin(…, voice)`；`dispatch` 传 `source !== 'text'`）、`mobile/src/features/settings/SettingsScreen.tsx`（两开关 → 三档）
+- 新建 `mobile/test/speakPolicy.test.ts`；修改 `mobile/test/sessionStore.test.ts`（追加 1 条）
+
+**为什么**：方案 §5.2 规则 8 / Q11——`总是 / 静音 / 自动`，**自动 = 语音提问才播报、打字只显示文字**，默认「自动」；替换现在 `ttsEnabled && autoplay` 两个近义开关（`speech.ts:80-83`、`SettingsScreen.tsx:271-290`，两个同时为真才出声，用户分不清哪个是哪个）。「这一轮是不是语音提问」的事实 T3 已经进了记录（`turnMeta.source`），播报端口在 `begin` 时拿到它。迁移：旧值任一为 false → 静音，否则 → 自动（旧行为「打字也播报」= 「总是」，泓舟要保留就把默认改一行）。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/speakPolicy.test.ts`：
+
+```ts
+// mobile/test/speakPolicy.test.ts
+// 播报三档（方案 §5.2 规则 8，Q11）：判据 speakAllowed 只此一处；存量迁移规则；默认「自动」。
+import { DEFAULT_APP_SETTINGS, mergeStoredSettings, speakAllowed } from '@/core/settings/store'
+
+test.each([
+  ['always', true, true],
+  ['always', false, true],
+  ['auto', true, true],
+  ['auto', false, false], // 自动：打字提问不出声
+  ['silent', true, false],
+  ['silent', false, false],
+] as const)('policy=%s × 语音提问=%s → 播报=%s', (policy, voice, allowed) => {
+  expect(speakAllowed(policy, voice)).toBe(allowed)
+})
+
+test('默认「自动」（Q11）', () => {
+  expect(DEFAULT_APP_SETTINGS.speakPolicy).toBe('auto')
+})
+
+test('存量迁移：ttsEnabled=false 或 autoplay=false → silent；两者都真 → auto；已有 speakPolicy 原样；旧键不留', () => {
+  expect(mergeStoredSettings(JSON.stringify({ ttsEnabled: false, autoplay: true })).speakPolicy).toBe('silent')
+  expect(mergeStoredSettings(JSON.stringify({ ttsEnabled: true, autoplay: false })).speakPolicy).toBe('silent')
+  expect(mergeStoredSettings(JSON.stringify({ ttsEnabled: true, autoplay: true })).speakPolicy).toBe('auto')
+  expect(mergeStoredSettings(JSON.stringify({ speakPolicy: 'always', ttsEnabled: false })).speakPolicy).toBe('always')
+  expect('ttsEnabled' in mergeStoredSettings(JSON.stringify({ ttsEnabled: true }))).toBe(false)
+  expect('autoplay' in mergeStoredSettings(JSON.stringify({ autoplay: true }))).toBe(false)
+})
+```
+
+`mobile/test/sessionStore.test.ts` 追加：
+
+```ts
+describe('UX v2 B2-12：播报端口拿到「这一轮是不是语音发起」', () => {
+  test('dispatch 把 source!==text 交给 SpeechSink.begin 第三参', () => {
+    const calls: string[] = []
+    const speech: SpeechSink = {
+      begin: (_b, e, voice) => calls.push(`begin:${e}:${String(voice)}`),
+      delta() {},
+      finish() {},
+      stop() {},
+    }
+    const { core } = newCore({ speech })
+    core.send('天气')
+    core.send('天气', undefined, { source: 'ptt' })
+    expect(calls).toEqual(['begin::false', 'begin::true'])
+    core.dispose()
+  })
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/settings/store.ts`：
+- 类型：`export type SpeakPolicy = 'always' | 'silent' | 'auto'`；`AppSettings` 删 `ttsEnabled` / `autoplay`，加
+```ts
+  /** 播报三档（方案 §5.2 规则 8，Q11）：总是 / 静音 / 自动=语音提问才播报、打字只显示文字。
+   *  替换 B1 之前的 ttsEnabled && autoplay 两个近义开关（两个同时为真才出声，用户分不清哪个是哪个） */
+  speakPolicy: SpeakPolicy
+```
+- `DEFAULT_APP_SETTINGS` 删 `ttsEnabled: DEFAULT_SETTINGS.ttsEnabled,` / `autoplay: DEFAULT_SETTINGS.autoplay,` 两行，加 `speakPolicy: 'auto',`；
+- 判据函数：
+```ts
+/** 这一轮要不要出声——判据只此一处（SpeechController.begin 读它） */
+export function speakAllowed(policy: SpeakPolicy, voice: boolean): boolean {
+  return policy === 'always' || (policy === 'auto' && voice)
+}
+```
+- `mergeStoredSettings` 整段替换：
+```ts
+/** 存量合并（同 hmi settings.load()）：合并默认值向前兼容新增字段；agents 深合并；
+ *  播报三档迁移（方案 §5.2 规则 8）：旧值任一为 false → 静音；否则 → 自动（Q11：不保留「打字也播报」）。 */
+export function mergeStoredSettings(raw: string | null): AppSettings {
+  if (!raw) return DEFAULT_APP_SETTINGS
+  try {
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { ttsEnabled?: boolean; autoplay?: boolean }
+    const { ttsEnabled, autoplay, ...rest } = parsed
+    const speakPolicy: SpeakPolicy =
+      rest.speakPolicy ?? (ttsEnabled === false || autoplay === false ? 'silent' : DEFAULT_APP_SETTINGS.speakPolicy)
+    return {
+      ...DEFAULT_APP_SETTINGS,
+      ...rest,
+      speakPolicy,
+      agents: { ...DEFAULT_APP_SETTINGS.agents, ...(parsed.agents || {}) },
+    }
+  } catch {
+    return DEFAULT_APP_SETTINGS
+  }
+}
+```
+
+`mobile/src/core/session/store.ts`：`SpeechSink.begin` 签名改 `begin(bubbleId: string, emotion: string, voice?: boolean): void`（注释加「voice=这一轮是语音发起的（播报三档的「自动」读它）」）；`dispatch` 里 `this.speech.begin(pendingId, this.store.getState().lastEmotion)` 改为 `this.speech.begin(pendingId, this.store.getState().lastEmotion, source !== 'text')`。
+
+`mobile/src/core/voice/speech.ts`：删 `private get enabled()`；类字段加 `/** begin 时按三档裁决的结果；finish 尊重它（同一轮不许 begin 说播、finish 又不播） */ private allowed = false`；import 加 `speakAllowed`；
+```ts
+  begin(bubbleId: string, emotion: string, voice = false): void {
+    this.allowed = speakAllowed(settingsStore.getState().settings.speakPolicy, voice)
+    if (!this.allowed) {
+      this.stop()
+      return
+    }
+    …（其余不变）
+```
+```ts
+  finish(bubbleId: string, text: string): void {
+    // 三档在 begin 裁过；这里再看一眼「静音」——用户可能在这一轮中途把它关了
+    if (!this.allowed || settingsStore.getState().settings.speakPolicy === 'silent' || !text) return
+    …（其余不变）
+```
+
+`mobile/src/features/settings/SettingsScreen.tsx`：「语音播报」分区的两个 `SwitchRow`（播报回答 / 自动播报）整段替换为：
+```tsx
+        <ChoiceRow
+          p={p}
+          label="播报"
+          value={settings.speakPolicy}
+          options={[
+            { v: 'auto' as const, label: '自动' },
+            { v: 'always' as const, label: '总是' },
+            { v: 'silent' as const, label: '静音' },
+          ]}
+          onPick={(speakPolicy) => {
+            set({ speakPolicy })
+            if (speakPolicy === 'silent') speechController().stop() // 关掉要立刻停当前这段
+          }}
+        />
+        <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
+          自动：用语音问才播报，打字只显示文字（默认）。总是：打字也播报。静音：完全不出声（试听仍可用）。
+        </Text>
+```
+
+- [ ] **步骤 4：跑绿 + `tsc`**——`tsc` 会把所有还在读 `ttsEnabled` / `autoplay` 的地方指出来（`speech.ts`、`SettingsScreen.tsx`，以及 `voiceTts.test.ts` 若引用了它们：改成 `speakPolicy`，这是判据变更不是测试让步，写进 §6.4）。
+
+- [ ] **反向验证**：`speakAllowed` 的 `auto` 分支改成恒 true ⇒ 只红 `auto × false`；迁移里 `'silent'` 与默认对调 ⇒ 只红迁移用例前两行。真机（第 4 批收口）：「自动」档打字问天气 → 不出声（`speaking` 从未变 true，看轨迹页）；轻点说「天气」→ 出声；切「静音」→ 播报中立刻停；切「总是」→ 打字也出声（§11.2 B2 最后一条）。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/test/speakPolicy.test.ts && git commit -- mobile/test/speakPolicy.test.ts mobile/src/core/settings/store.ts mobile/src/core/voice/speech.ts mobile/src/core/session/store.ts mobile/src/features/settings/SettingsScreen.tsx mobile/test/sessionStore.test.ts -m "feat(mobile): UX v2 B2-12 播报三档 总是/静音/自动（自动=语音提问才播报），替换 ttsEnabled&&autoplay，存量迁移" && git show --stat HEAD
+```
+
+### Task 13: 执行回执（Execution Receipt）
+
+**Files:**
+- 新建 `mobile/src/core/session/receipt.ts`、`mobile/src/features/chat/ExecutionReceipt.tsx`、`mobile/test/receipt.test.ts`
+- 修改 `mobile/src/core/session/actionSummary.ts`（抽出 `precedingUserUtterance`）、`mobile/src/core/session/store.ts`（`TurnMeta` 三字段 + `confirmLog`）、`mobile/test/sessionStore.test.ts`、`mobile/src/features/chat/MessageBubble.tsx`（「已执行 …」行 → 回执）、`mobile/src/features/chat/ChatScreen.tsx`（传 `receipt`）
+
+**为什么**：方案 §5.3.2——项目最有价值的不是思考动画，是 VAL 的确定性执行，但今天用户只看到一行灰字「已执行 media.control」。回执四行**全部来自已有数据，零后端改动**：已理解（紧邻上一条用户原话——与 T1 同一份判据）/ 目标（`vehState.vehicle_id`，没有就「当前车辆」）/ 确认（本端台账：`confirmReply` 的时刻与方式）/ 执行（action 帧 + final 时刻）。信息服务 = `_prov` 展开（card_group 取主卡的，与 T8 同一份主卡判据）。「安全检查」栏**今天拿不到**（VAL 只在拒绝时说话）——留位不渲染，随 Q16 来。默认折叠成一行「已执行 · 展开回执」；行车档只播不展 → B4。
+
+- [ ] **步骤 1：写失败测试**
+
+`mobile/test/receipt.test.ts`：
+
+```ts
+// mobile/test/receipt.test.ts
+// 执行回执（方案 §5.3.2）：字段全部来自已有数据；车控四行 / 信息服务 _prov 展开；两者都没有 → null。
+import type { Msg } from '@shared/types.ts'
+
+import { buildReceipt, provOf } from '@/core/session/receipt'
+
+const u = (id: string, text: string): Msg => ({ id, role: 'user', text })
+const a = (id: string, text: string, extra: Partial<Msg> = {}): Msg => ({ id, role: 'assistant', text, ...extra })
+
+test('车控回执：已理解=紧邻上一条用户原话（跳过「确认」）；目标=vehicle_id；确认来自本端台账；执行=action 类型 + final 时刻', () => {
+  const msgs = [
+    u('u1', '打开后备箱'),
+    a('a1', '这项操作可能影响车辆安全，请确认是否继续。', { needConfirm: true, operationId: 'op1' }),
+    u('u2', '确认'),
+    a('a2', '已打开', { actions: [{ type: 'vehicle.control' }] }),
+  ]
+  const r = buildReceipt({
+    messages: msgs,
+    assistant: msgs[3],
+    turnMeta: { a2: { sentAt: 1_000, finalAt: 2_000, source: 'text', operationId: 'op1' } },
+    confirmLog: { op1: { reply: '确认', at: 1_500 } },
+    vehicleId: 'V-001',
+  })
+  expect(r).toEqual({
+    kind: 'action',
+    understood: '打开后备箱',
+    target: 'V-001',
+    confirm: { reply: '确认', at: 1_500 },
+    executed: { ok: true, at: 2_000, types: ['vehicle.control'] },
+  })
+})
+
+test('没有 vehicle_id → 「当前车辆」；没有确认记录 → confirm=null；error → ok=false；没有 turnMeta → at=null', () => {
+  const msgs = [u('u1', '打开车窗'), a('a1', '出错了', { error: true, actions: [{ type: 'vehicle.control' }] })]
+  const r = buildReceipt({ messages: msgs, assistant: msgs[1], turnMeta: {}, confirmLog: {} })
+  expect(r).toEqual({
+    kind: 'action',
+    understood: '打开车窗',
+    target: '当前车辆',
+    confirm: null,
+    executed: { ok: false, at: null, types: ['vehicle.control'] },
+  })
+})
+
+test('信息回执 = _prov 展开；card_group 取主卡的 _prov（与 T8 同一份主卡判据）；无 _prov 无 actions → null', () => {
+  const card = {
+    type: 'card_group',
+    items: [
+      { type: 'news_digest', display_priority: 2, _prov: { mode: 'cached', vendor: 'x' } },
+      { type: 'weather', display_priority: 0, _prov: { mode: 'real', vendor: '高德', fetched_at: '2026-08-30T09:34:00Z' } },
+    ],
+  } as unknown as Msg['uiCard']
+  expect(provOf(card)?.vendor).toBe('高德')
+  const r = buildReceipt({
+    messages: [],
+    assistant: a('a1', '晴', { uiCard: card }),
+    turnMeta: { a1: { sentAt: 1, source: 'ptt', withLocation: true } },
+    confirmLog: {},
+  })
+  expect(r).toEqual({ kind: 'info', vendor: '高德', fetchedAt: '2026-08-30T09:34:00Z', located: true, mode: 'real', note: '' })
+  expect(buildReceipt({ messages: [], assistant: a('a2', '你好'), turnMeta: {}, confirmLog: {} })).toBeNull()
+})
+```
+
+`mobile/test/sessionStore.test.ts` 追加：
+
+```ts
+describe('UX v2 B2-13：回执的账本侧（方案 §5.3.2）', () => {
+  test('confirmReply 记 confirmLog[operationId]；该轮 turnMeta 记 operationId；final 到达记 finalAt', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid, speech: '请确认', need_confirm: true, operation_id: 'op1' })
+    core.confirmReply('确认', 'op1')
+    expect(core.store.getState().confirmLog.op1.reply).toBe('确认')
+    expect(core.store.getState().confirmLog.op1.at).toBeGreaterThan(0)
+    const a2 = assistants(core)[1]
+    expect(core.store.getState().turnMeta[a2.id].operationId).toBe('op1')
+    expect(core.store.getState().turnMeta[a2.id].finalAt).toBeUndefined()
+    const rid2 = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid2, speech: '已打开', actions: [{ type: 'vehicle.control' }] })
+    expect(core.store.getState().turnMeta[a2.id].finalAt).toBeGreaterThan(0)
+    core.dispose()
+  })
+
+  test('带坐标发出的轮 turnMeta.withLocation=true（回执「定位 当前位置」）', async () => {
+    const { core } = newCore({ location: fakeLocation(true, { lat: '22.5', lng: '113.9' }) })
+    core.send('附近有什么好吃的')
+    await flush()
+    expect(core.store.getState().turnMeta[assistants(core)[0].id].withLocation).toBe(true)
+    core.dispose()
+  })
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+`mobile/src/core/session/actionSummary.ts`——把循环抽成可复用函数（`actionSummary.test` 不变仍绿）：
+```ts
+/** 从 messages[before] 往前找最近一条用户原话（跳过台账回复「确认/取消」）；空串=没有 */
+export function precedingUserUtterance(messages: readonly Msg[], before: number): string {
+  for (let i = Math.min(before, messages.length) - 1; i >= 0; i -= 1) {
+    const m = messages[i]
+    if (m.role !== 'user') continue
+    const text = m.text.replace(/\s+/g, ' ').trim()
+    if (!text || CONFIRM_REPLIES.has(text)) continue
+    return text.slice(0, SUMMARY_MAX)
+  }
+  return ''
+}
+
+/** 紧邻的上一条用户原话；找不到返回空串（兜底文案由调用方决定） */
+export function actionSummary(messages: readonly Msg[], operationId: string): string {
+  const at = messages.findIndex((m) => m.role === 'assistant' && m.operationId === operationId)
+  return at < 0 ? '' : precedingUserUtterance(messages, at)
+}
+```
+
+`mobile/src/core/session/store.ts`：
+```ts
+export interface TurnMeta {
+  sentAt: number
+  source: TurnSource
+  /** final 到达时刻（回执「执行 · 00:42」）；没到过就没有 */
+  finalAt?: number
+  /** 这一轮是对哪条挂起的回复（confirmReply 派发的那轮；回执「确认」行据它找 confirmLog） */
+  operationId?: string
+  /** 发出时带了坐标（回执「定位 当前位置」） */
+  withLocation?: boolean
+}
+
+/** 本端台账里的一次确认 / 取消（回执「你在手机端点了「确认」 00:41」） */
+export interface ConfirmEntry {
+  reply: '确认' | '取消'
+  at: number
+}
+```
+`SessionState` 加 `confirmLog: Record<string, ConfirmEntry>`（初始化 `{}`）；`confirmReply` 的 `if (operationId) { … }` 里加 `this.store.setState((s) => ({ confirmLog: { ...s.confirmLog, [operationId]: { reply, at: Date.now() } } }))`；`dispatch` 里 `turnMeta` 那行改为：
+```ts
+    this.store.setState((s) => ({
+      turnMeta: {
+        ...s.turnMeta,
+        [pendingId]: {
+          sentAt: Date.now(),
+          source,
+          ...(operationId ? { operationId } : {}),
+          ...(locationMeta && Object.keys(locationMeta).length ? { withLocation: true } : {}),
+        },
+      },
+    }))
+```
+`handleFrame` 的 `final` 分支在 `this.clearWatchdog(id)` 之后加：
+```ts
+      if (id) {
+        this.store.setState((s) =>
+          s.turnMeta[id] ? { turnMeta: { ...s.turnMeta, [id]: { ...s.turnMeta[id], finalAt: Date.now() } } } : {},
+        )
+      }
+```
+
+`mobile/src/core/session/receipt.ts`：
+
+```ts
+// mobile/src/core/session/receipt.ts
+// 执行回执（方案 §5.3.2）：字段**全部来自已有数据，零后端改动**。
+//  车控：已理解（紧邻上一条用户原话，与 Dock 标题同一份判据）/ 目标（vehState.vehicle_id，没有就「当前车辆」）
+//       / 确认（本端台账 confirmLog[operationId]）/ 执行（action 帧 + final 时刻）。
+//       「安全检查：车辆静止，允许执行」今天拿不到（VAL 只在拒绝时说话）——**留位不渲染**，随 Q16 来。
+//  信息服务：_prov 展开（数据源 · 更新 · 定位 · 状态）；card_group 取主卡的 _prov（与 T8 同一份主卡判据）。
+// 零 RN import。
+import type { Msg, Provenance } from '@shared/types.ts'
+
+import { splitCardGroup } from '../cards/cardGroup'
+import { precedingUserUtterance } from './actionSummary'
+import type { ConfirmEntry, TurnMeta } from './store'
+
+export interface ActionReceipt {
+  kind: 'action'
+  understood: string
+  target: string
+  confirm: ConfirmEntry | null
+  executed: { ok: boolean; at: number | null; types: string[] }
+}
+
+export interface InfoReceipt {
+  kind: 'info'
+  vendor: string
+  fetchedAt: string
+  located: boolean
+  mode: Provenance['mode']
+  note: string
+}
+
+export type Receipt = ActionReceipt | InfoReceipt
+
+/** 卡的 _prov；card_group 取主卡的（同一份主卡判据）；没有就 null */
+export function provOf(card: unknown): Provenance | null {
+  const c = card as { type?: string; _prov?: Provenance; items?: unknown[] } | null | undefined
+  if (!c) return null
+  if (c.type === 'card_group') return provOf(splitCardGroup(c.items ?? []).main)
+  return c._prov?.mode ? c._prov : null
+}
+
+export function buildReceipt(args: {
+  messages: readonly Msg[]
+  assistant: Msg
+  turnMeta: Record<string, TurnMeta>
+  confirmLog: Record<string, ConfirmEntry>
+  vehicleId?: string
+}): Receipt | null {
+  const { messages, assistant, turnMeta, confirmLog } = args
+  const meta = turnMeta[assistant.id]
+  if (assistant.actions?.length) {
+    const at = messages.findIndex((m) => m.id === assistant.id)
+    const opId = meta?.operationId
+    return {
+      kind: 'action',
+      understood: at >= 0 ? precedingUserUtterance(messages, at) : '',
+      target: args.vehicleId || '当前车辆',
+      confirm: opId && confirmLog[opId] ? confirmLog[opId] : null,
+      executed: { ok: !assistant.error, at: meta?.finalAt ?? null, types: assistant.actions.map((x) => x.type) },
+    }
+  }
+  const prov = provOf(assistant.uiCard)
+  if (prov) {
+    return {
+      kind: 'info',
+      vendor: prov.vendor ?? '',
+      fetchedAt: prov.fetched_at ?? '',
+      located: !!meta?.withLocation,
+      mode: prov.mode,
+      note: prov.note ?? '',
+    }
+  }
+  return null
+}
+```
+
+`mobile/src/features/chat/ExecutionReceipt.tsx`：
+
+```tsx
+// mobile/src/features/chat/ExecutionReceipt.tsx
+// 回执组件（方案 §5.3.2）：默认折叠成一行「已执行 · 展开回执」；展开四行。判据在 core/session/receipt.ts。
+// 行车档「只播不展」留 B4。「安全检查」栏留位不渲染（Q16）。
+import { useState } from 'react'
+import { Pressable, Text, View } from 'react-native'
+
+import type { InfoReceipt, Receipt } from '@/core/session/receipt'
+import { KV } from '@/features/cards/parts'
+import type { Palette } from '@/ui/theme'
+
+function hhmm(ms: number | null): string {
+  if (!ms) return ''
+  const d = new Date(ms)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+const MODE_LABEL: Record<InfoReceipt['mode'], string> = { real: '实时', cached: '缓存', degraded: '降级', mock: '模拟' }
+
+export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt }) {
+  const [open, setOpen] = useState(false)
+  const head = receipt.kind === 'action' ? (receipt.executed.ok ? '已执行' : '执行失败') : '数据来源'
+  return (
+    <View style={{ gap: 4 }}>
+      <Pressable testID="receipt-toggle" accessibilityRole="button" onPress={() => setOpen((o) => !o)} style={{ minHeight: 32, justifyContent: 'center' }}>
+        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
+          {head} · {open ? '收起回执' : '展开回执'}
+        </Text>
+      </Pressable>
+      {open ? (
+        receipt.kind === 'action' ? (
+          <View style={{ gap: 2 }}>
+            <KV p={p} k="已理解" v={receipt.understood || receipt.executed.types.join('、')} />
+            <KV p={p} k="目标" v={receipt.target} />
+            <KV p={p} k="确认" v={receipt.confirm ? `你在手机端点了「${receipt.confirm.reply}」 ${hhmm(receipt.confirm.at)}` : '无需确认'} />
+            <KV p={p} k="执行" v={`${receipt.executed.ok ? '成功' : '失败'}${receipt.executed.at ? ' · ' + hhmm(receipt.executed.at) : ''} · ${receipt.executed.types.join('、')}`} />
+          </View>
+        ) : (
+          <View style={{ gap: 2 }}>
+            <KV p={p} k="数据源" v={receipt.vendor || '未知'} />
+            <KV p={p} k="更新" v={receipt.fetchedAt ? receipt.fetchedAt.slice(11, 16) : ''} />
+            <KV p={p} k="定位" v={receipt.located ? '当前位置' : '未使用定位'} />
+            <KV p={p} k="状态" v={`${MODE_LABEL[receipt.mode]}${receipt.note ? ' · ' + receipt.note : ''}`} />
+          </View>
+        )
+      ) : null}
+    </View>
+  )
+}
+```
+
+`mobile/src/features/chat/MessageBubble.tsx`：`BubbleProps` 加 `/** 执行回执（core/session/receipt.ts 算好传进来；null=这条没有可回执的事） */ receipt?: Receipt | null`；把 `{(msg.actions || []).length ? (<Text …>已执行 …</Text>) : null}` 整段替换为 `{receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}`。
+
+`mobile/src/features/chat/ChatScreen.tsx`：`useStore(core.store)` 解构加 `turnMeta, confirmLog`；`extraData` 加它们；`renderItem` 里：
+```tsx
+                receipt={
+                  item.role === 'assistant'
+                    ? buildReceipt({ messages, assistant: item, turnMeta, confirmLog, vehicleId: String(vehState.vehicle_id ?? '') })
+                    : null
+                }
+```
+
+- [ ] **步骤 4：跑绿 + `tsc`**。
+
+- [ ] **反向验证**：`buildReceipt` 的 `understood` 改取 `assistant.text` ⇒ 只红第一条；`provOf` 对 card_group 取 `items[0]` ⇒ 只红第三条（主卡是第二张）；`dispatch` 不记 `operationId` ⇒ 只红账本侧第一条。真机（第 4 批收口）：「打开后备箱」→ 确认 → 回执展开四行「已理解 打开后备箱 / 目标 当前车辆 / 确认 你在手机端点了「确认」 hh:mm / 执行 成功 · hh:mm · vehicle.control」（`b2-13-receipt.png`）；「深圳天气」→ 「数据来源 · 展开回执」四行（数据源 / 更新 / 定位 / 状态 实时）。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/core/session/receipt.ts mobile/src/features/chat/ExecutionReceipt.tsx mobile/test/receipt.test.ts && git commit -- mobile/src/core/session/receipt.ts mobile/src/features/chat/ExecutionReceipt.tsx mobile/test/receipt.test.ts mobile/src/core/session/actionSummary.ts mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/ChatScreen.tsx -m "feat(mobile): UX v2 B2-13 执行回执——车控四行 / 信息服务 _prov 展开，字段全来自已有数据，默认折叠" && git show --stat HEAD
+```
+
+### Task 14: 在场轨迹页（🔁-1）+ `activityLog.list()` 的第一个消费方（D8）
+
+**Files:**
+- 新建 `mobile/src/core/presence/presenceTrail.ts`、`mobile/src/app/presence-trail.tsx`、`mobile/test/presenceTrail.test.ts`
+- 修改 `mobile/src/features/chat/usePresence.ts`（每次派生后 `record`）、`mobile/src/features/chat/useHandsFree.ts`（FSM 回调时刻 `mark`）、`mobile/src/features/chat/ChatScreen.tsx`（位置授权同意 → `activityLog.push('location', …)`）、`mobile/src/app/_layout.tsx`（路由）、`mobile/src/features/settings/SettingsScreen.tsx`（调试入口）
+
+**为什么**：方案 §11.5（v2.2 🔁-1）——B1 落的是**采集激活日志**（`activityLog`：麦为什么开了）；方案要的那份 **`PresenceSnapshot` 变化轨迹 + 调试屏「在场轨迹」页**今天不在任何批次里，评审 §6 ④ 让 B2 落（语音层会大量制造在场变化，正是要看轨迹的时候）。D8：`activityLog.list()` 与 `ActivitySource='location'` 零消费方 / 零产出方——本任务给 `list()` 一个消费方（轨迹页）、给 `location` 一个产出方（位置授权同意）。轨迹还承担 §11.4「首反馈时延」的取数：`mark('fsm:LISTENING')` 是 FSM 回调时刻（≈KWS 命中），随后第一条 `primary=listening` 的快照条目是屏上变化时刻，两者之差就是读数——不加打点库，不加依赖。内存、20 条、不上传。
+
+- [ ] **步骤 1：写失败测试**
+
+```ts
+// mobile/test/presenceTrail.test.ts
+// 在场轨迹（方案 §11.5）：只在轴变化时记、每秒 tick 不刷屏；记变化的轴与变化的输入；环形 20；mark 打点。
+import { derivePresence, type PresenceInput } from '@/core/presence/presence'
+import { PresenceTrail } from '@/core/presence/presenceTrail'
+
+const NOW = 5_000_000
+function base(over: Partial<PresenceInput> = {}): PresenceInput {
+  return {
+    now: NOW, connStatus: 'open', connChangedAt: NOW - 60_000,
+    hfEnabled: false, hfUsable: false, hfFsm: 'IDLE', hfFsmChangedAt: NOW - 1000, ptt: 'idle', partial: '',
+    turn: { pending: false, streaming: false, processActive: false, processLabel: '', processSince: 0 },
+    speaking: false, pendingOps: [], pendingLocation: false, voicePipeline: 'classic',
+    visionCapturing: false, queued: 0, lastError: null, degradations: [], driving: false,
+    identity: 'handheld', user: 'u1',
+    ...over,
+  }
+}
+
+test('只在轴变化时记；同快照每秒 tick 不刷屏；记下变化的轴与变化的输入', () => {
+  let t = 0
+  const trail = new PresenceTrail(20, () => (t += 1))
+  const i1 = base()
+  trail.record(i1, derivePresence(i1))
+  expect(trail.list()).toHaveLength(1)
+  const tick = base({ now: NOW + 1000 })
+  trail.record(tick, derivePresence(tick)) // 只有 now 变了：不记
+  expect(trail.list()).toHaveLength(1)
+  const i2 = base({ now: NOW + 2000, ptt: 'recording' })
+  trail.record(i2, derivePresence(i2))
+  const top = trail.list()[0]
+  expect(top.kind).toBe('snapshot')
+  if (top.kind === 'snapshot') {
+    expect(top.primary).toBe('listening')
+    expect(top.input).toBe('voice-sheet')
+    expect(top.changedAxes).toEqual(expect.arrayContaining(['capture', 'primary', 'input', 'capsule', 'privacy.mic']))
+    expect(top.changedInputs).toEqual(['ptt'])
+  }
+})
+
+test('环形 20 条，最新在前', () => {
+  const trail = new PresenceTrail(20, () => 1)
+  for (let k = 0; k < 25; k += 1) {
+    const i = base({ ptt: k % 2 ? 'recording' : 'idle' })
+    trail.record(i, derivePresence(i))
+  }
+  expect(trail.list()).toHaveLength(20)
+})
+
+test('mark：外设时刻打点（首反馈时延 = mark 到下一条 listening 快照的时间差）', () => {
+  let t = 100
+  const trail = new PresenceTrail(20, () => (t += 30))
+  trail.mark('fsm:LISTENING')
+  const i = base({ hfEnabled: true, hfUsable: true, hfFsm: 'LISTENING' })
+  trail.record(i, derivePresence(i))
+  const [snap, mark] = trail.list()
+  expect(mark).toEqual({ kind: 'mark', at: 130, label: 'fsm:LISTENING' })
+  expect(snap.kind === 'snapshot' && snap.primary).toBe('listening')
+  expect(snap.at - mark.at).toBe(30)
+})
+
+test('clear 清空并复位「上一次」：清空后第一条快照重新算作全轴变化', () => {
+  const trail = new PresenceTrail(20, () => 1)
+  const i = base()
+  trail.record(i, derivePresence(i))
+  trail.clear()
+  expect(trail.list()).toHaveLength(0)
+  trail.record(i, derivePresence(i))
+  expect(trail.list()).toHaveLength(1)
+})
+```
+
+- [ ] **步骤 2：跑红**。
+
+- [ ] **步骤 3：实现**
+
+```ts
+// mobile/src/core/presence/presenceTrail.ts
+// 在场轨迹（方案 §11.5，v2.2 🔁-1）：20 条环形，记 PresenceSnapshot **变化的轴** + 变化的输入摘要 + 时间戳。
+// 内存、不上传、不持久化。与 activityLog（采集激活）是两件事：那份答「麦为什么开了」，这份答「光球为什么变了」。
+// mark()：外设时刻打点（FSM 换态的回调时刻）——§11.4「首反馈时延」= mark 到相应快照条目的时间差。
+// 零 RN import；jest 直接跑。
+import type { PresenceInput, PresenceSnapshot } from './presence'
+
+export type TrailEntry =
+  | {
+      kind: 'snapshot'
+      at: number
+      changedAxes: string[]
+      changedInputs: string[]
+      primary: PresenceSnapshot['primary']
+      input: PresenceSnapshot['input']
+      capsule: string
+    }
+  | { kind: 'mark'; at: number; label: string }
+
+/** 轴的投影：投影相同即「没变」（每秒 tick 只改 now，不在这里） */
+const AXES: Array<[string, (s: PresenceSnapshot) => string]> = [
+  ['transport', (s) => s.transport],
+  ['capture', (s) => s.capture],
+  ['agent', (s) => s.agent],
+  ['commitment', (s) => s.commitment.map((c) => `${c.kind}:${c.id}`).join(',')],
+  ['privacy.mic', (s) => s.privacy.mic],
+  ['privacy.camera', (s) => s.privacy.camera],
+  ['degradation', (s) => s.degradation.map((d) => d.kind).join(',')],
+  ['primary', (s) => s.primary],
+  ['input', (s) => s.input],
+  ['sheetDetent', (s) => String(s.sheetDetent)],
+  ['capsule', (s) => s.capsule?.text ?? ''],
+]
+
+/** 输入的投影：答「是哪个输入变了」 */
+const INPUTS: Array<[string, (i: PresenceInput) => string]> = [
+  ['connStatus', (i) => i.connStatus],
+  ['hfFsm', (i) => i.hfFsm],
+  ['ptt', (i) => i.ptt],
+  ['partial', (i) => (i.partial ? 'yes' : '')],
+  ['turn', (i) => `${i.turn.pending ? 'p' : ''}${i.turn.streaming ? 's' : ''}${i.turn.processActive ? 'x' : ''}`],
+  ['speaking', (i) => String(i.speaking)],
+  ['pendingOps', (i) => String(i.pendingOps.length)],
+  ['pendingLocation', (i) => String(i.pendingLocation)],
+  ['queued', (i) => String(i.queued)],
+  ['visionCapturing', (i) => String(i.visionCapturing)],
+  ['lastError', (i) => (i.lastError ? String(i.lastError.at) : '')],
+  ['degradations', (i) => i.degradations.map((d) => d.kind).join(',')],
+  ['voice', (i) => (i.voice ? `${i.voice.turnSource}/${i.voice.override ?? '-'}/${i.voice.answer ? 'a' : ''}${i.voice.card ? 'c' : ''}` : '')],
+  ['notice', (i) => (i.notice ? String(i.notice.at) : '')],
+]
+
+export class PresenceTrail {
+  private items: TrailEntry[] = []
+  private prevSnap: PresenceSnapshot | null = null
+  private prevInput: PresenceInput | null = null
+  private readonly subs = new Set<() => void>()
+
+  constructor(
+    private readonly capacity = 20,
+    private readonly clock: () => number = () => Date.now(),
+  ) {}
+
+  /** 每次派生后喂一次；轴没变就不记（渲染期调用是幂等的——同一份输入再喂一次什么都不发生） */
+  record(input: PresenceInput, snap: PresenceSnapshot): void {
+    const prevSnap = this.prevSnap
+    const prevInput = this.prevInput
+    const changedAxes = AXES.filter(([, f]) => !prevSnap || f(prevSnap) !== f(snap)).map(([k]) => k)
+    const changedInputs = INPUTS.filter(([, f]) => !prevInput || f(prevInput) !== f(input)).map(([k]) => k)
+    this.prevSnap = snap
+    this.prevInput = input
+    if (!changedAxes.length) return
+    this.push({ kind: 'snapshot', at: this.clock(), changedAxes, changedInputs, primary: snap.primary, input: snap.input, capsule: snap.capsule?.text ?? '' })
+  }
+
+  mark(label: string): void {
+    this.push({ kind: 'mark', at: this.clock(), label })
+  }
+
+  /** 最新在前 */
+  list(): TrailEntry[] {
+    return this.items.slice()
+  }
+
+  clear(): void {
+    this.items = []
+    this.prevSnap = null
+    this.prevInput = null
+    this.notify()
+  }
+
+  subscribe(fn: () => void): () => void {
+    this.subs.add(fn)
+    return () => {
+      this.subs.delete(fn)
+    }
+  }
+
+  private push(e: TrailEntry): void {
+    this.items = [e, ...this.items].slice(0, this.capacity)
+    this.notify()
+  }
+
+  private notify(): void {
+    for (const fn of this.subs) fn()
+  }
+}
+
+/** App 级单例（usePresence 写、轨迹页读、useHandsFree 打点） */
+export const presenceTrail = new PresenceTrail()
+```
+
+`mobile/src/app/presence-trail.tsx`：
+
+```tsx
+// mobile/src/app/presence-trail.tsx
+// 调试屏「在场轨迹」（方案 §11.5，v2.2 🔁-1）：PresenceSnapshot 变化轨迹（20 条环形）+ 采集激活日志
+// （activityLog.list() 的第一个消费方，评审 D8）。dev 取证入口，不进主链路；不上传。
+import * as Clipboard from 'expo-clipboard'
+import { useEffect, useState } from 'react'
+import { Pressable, ScrollView, Text, View } from 'react-native'
+import { useStore } from 'zustand'
+
+import { activityLog } from '@/core/presence/activityLog'
+import { presenceTrail, type TrailEntry } from '@/core/presence/presenceTrail'
+import { settingsStore } from '@/core/settings/store'
+import { usePalette } from '@/ui/theme'
+
+function hms(ms: number): string {
+  const d = new Date(ms)
+  const two = (n: number) => String(n).padStart(2, '0')
+  return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`
+}
+
+function line(e: TrailEntry): string {
+  if (e.kind === 'mark') return `${hms(e.at)} ◇ ${e.label}`
+  return `${hms(e.at)} ${e.primary} · ${e.input}${e.capsule ? ` · 「${e.capsule}」` : ''}\n   轴 ${e.changedAxes.join(',')}\n   输入 ${e.changedInputs.join(',') || '—'}`
+}
+
+export default function PresenceTrailScreen() {
+  const { settings } = useStore(settingsStore)
+  const p = usePalette(settings)
+  const [, force] = useState(0)
+  useEffect(() => presenceTrail.subscribe(() => force((n) => n + 1)), [])
+  useEffect(() => activityLog.subscribe(() => force((n) => n + 1)), [])
+  const trail = presenceTrail.list()
+  const acts = activityLog.list()
+  const btn = (label: string, run: () => void) => (
+    <Pressable accessibilityRole="button" onPress={run} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill }}>
+      <Text style={{ color: p.fg1, fontSize: p.font(13) }}>{label}</Text>
+    </Pressable>
+  )
+  return (
+    <View style={{ flex: 1, backgroundColor: p.bg }}>
+      <View style={{ flexDirection: 'row', gap: 8, padding: 12 }}>
+        {btn('复制 JSON', () => void Clipboard.setStringAsync(JSON.stringify({ trail, activity: acts })))}
+        {btn('清空轨迹', () => presenceTrail.clear())}
+      </View>
+      <ScrollView contentContainerStyle={{ padding: 12, gap: 10 }}>
+        <Text style={{ color: p.fg2, fontSize: p.font(12) }}>在场轨迹 {trail.length}/20（最新在前；只记轴变化，不上传）</Text>
+        {trail.map((e, i) => (
+          <Text key={i} testID="trail-entry" style={{ color: p.fg2, fontSize: p.font(11), fontFamily: 'monospace' }}>
+            {line(e)}
+          </Text>
+        ))}
+        <Text style={{ color: p.fg2, fontSize: p.font(12), marginTop: 12 }}>采集激活 {acts.length}/20（麦 / 摄像头 / 定位为什么开了）</Text>
+        {acts.map((a, i) => (
+          <Text key={i} style={{ color: p.fg2, fontSize: p.font(11), fontFamily: 'monospace' }}>
+            {hms(a.at)} {a.source} · {a.note}
+          </Text>
+        ))}
+      </ScrollView>
+    </View>
+  )
+}
+```
+
+`mobile/src/features/chat/usePresence.ts`：末尾 `return derivePresence({...})` 改为
+```ts
+  const input: PresenceInput = { … 原来那个对象字面量 … }
+  const snapshot = derivePresence(input)
+  presenceTrail.record(input, snapshot) // 轴没变就不记：渲染期调用是幂等的
+  return snapshot
+```
+（import `PresenceInput` 类型与 `presenceTrail`。）
+
+`mobile/src/features/chat/useHandsFree.ts`：`onOrbState` 回调第一行加 `presenceTrail.mark('fsm:' + f)`（import `presenceTrail`）。
+
+`mobile/src/features/chat/ChatScreen.tsx`：`onConfirm` 改为
+```ts
+  const onConfirm = useCallback(
+    (reply: '确认' | '取消', operationId?: string) => {
+      // 位置授权同意 = 定位这一档「开了」：激活日志有了第三个产出方（评审 D8 那条 location）
+      if (!operationId && pendingLocationText !== null && reply === '确认') activityLog.push('location', '位置授权 · 同意')
+      core.confirmReply(reply, operationId)
+    },
+    [core, pendingLocationText],
+  )
+```
+`mobile/src/app/_layout.tsx`：`<Stack.Screen name="presence-trail" options={{ title: '调试 · 在场轨迹' }} />`；`SettingsScreen.tsx` 调试分区加 `<Link href="/presence-trail" style={{ color: p.accent, fontSize: p.font(14) }}>在场轨迹（B2：光球为什么变了 / 麦为什么开了）</Link>`。⚠ expo-router typed routes：`Link href` 的字面量类型由 Metro 生成（B1 第 2 批坑：**闸依赖 dev server 在跑**）——`tsc` 若报 `"/presence-trail"` 不是合法路由，先起一次 `npx expo start --dev-client` 让 `.expo/types` 更新，不是去改 href 类型。
+
+- [ ] **步骤 4：跑绿 + `tsc`**；Metro：设置 → 在场轨迹 → 回对话屏轻点说一句 → 回轨迹页：`◇ fsm:LISTENING`（免唤醒开时）/ `listening · voice-sheet` 等条目按时间排列；「复制 JSON」能贴出。
+
+- [ ] **反向验证**：`record` 里去掉 `if (!changedAxes.length) return` ⇒ 只红第一条（tick 也记了）；`push` 不切片 ⇒ 只红环形。真机：D8 的 `location` 产出——第一次问「附近有什么」→ 同意定位 → 轨迹页「采集激活」出现 `location · 位置授权 · 同意`。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/src/core/presence/presenceTrail.ts mobile/src/app/presence-trail.tsx mobile/test/presenceTrail.test.ts && git commit -- mobile/src/core/presence/presenceTrail.ts mobile/src/app/presence-trail.tsx mobile/test/presenceTrail.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/app/_layout.tsx mobile/src/features/settings/SettingsScreen.tsx -m "feat(mobile): UX v2 B2-14 在场轨迹页（PresenceSnapshot 变化 20 条环形 + FSM 打点）+ activityLog.list() 首个消费方与 location 产出方（🔁-1、D8）" && git show --stat HEAD
+```
+
+### Task 15: B2→B3 闸——真机验收 7 条 + 真人语音轮五项读数 + 5 人外部小样本 + 记录收口
+
+**Files:**
+- 新建 `mobile/e2e/05-voice-sheet-ptt.yaml`
+- 修改 `mobile/e2e/README.md`、`docs/design/2026-08-24-mobile-app-implementation-plan.md`（只加 §B2 指针）、`docs/design/README.md`（本计划状态）、`AGENTS.md` §4.1（只改指针）、本文件 §6.4
+
+**为什么**：方案 §11.1「B2 → B3/B4 之间加一道闸」（评审建议，采纳）：在 MIX Fold 4 上完成**真人语音轮**（唤醒→说→答→追问）、回声降级、键盘、折叠切换、帧率五项读数，再做一轮 **5 人外部小样本**的「状态识别 + 录音手势」测试（§11.4 可读性判据在这里取数）；**闸不过，B3/B4 不开工**——避免状态系统、语音层、折叠屏、行车、材质、无障碍一次整包。§11.2 的 B2 清单 7 条也在这里逐条打钩。**打钩纪律**（主计划 §8）：✅ 只给有真机读数的条目；只在画廊 / 单测上验过的写「样本」；没跑的写 ⬜ **未验**；被外部挡住的写 ❌ 并写清挡在哪。
+
+- [ ] **步骤 1：Maestro 流 ⑤（`manual`）**
+
+```yaml
+# mobile/e2e/05-voice-sheet-ptt.yaml
+# 流 ⑤：语音层 PTT（UX v2.1 §11.3）——按住光球 → voice-sheet 可见 → 松手 → 收起。
+# tag=manual：Maestro 的 longPressOn 只按不说话，ASR 会以「没听清」收尾（层在识别中仍可见，
+# 收尾后收起）；要真验转写得有人在旁说话，或用 M4 的直灌探针灌音频。
+# CI 的 offline / online 两档都不带 manual；`maestro test mobile/e2e/` 不带 tag 会跑到它——README 写明。
+appId: com.xiaozhou.companion
+name: 05 语音层 PTT（manual）
+tags:
+  - manual
+---
+- runFlow: subflows/open-app.yaml
+- longPressOn:
+    id: "composer-orb"
+- assertVisible:
+    id: "voice-sheet"
+- extendedWaitUntil:
+    notVisible:
+      id: "voice-sheet"
+    timeout: 30000
+```
+跑法：`maestro test --no-reinstall-driver --include-tags manual mobile/e2e/05-voice-sheet-ptt.yaml`（绝对路径，B1 第 4 批坑④）。
+
+- [ ] **步骤 2：B2 真机验收表（方案 §11.2 B2 七条，MIX Fold 4，`target=cloud`；截图进 `mobile/e2e/artifacts/b2-15-*.png`，目录已 gitignore）**
+
+| # | 项 | 怎么取 | 结论（回填 §6.4） |
+|---|---|---|---|
+| 1 | **轻点**光球（免唤醒关）→ 层升起、开始录音、停顿后由端侧 VAD 收尾并发送 | T6 已取；这里复跑一次留最终截图 | |
+| 2 | 真人说一句（**需泓舟**）→ 层升起 → 转写大字 → 回答流式 → 8s 追问窗环递减 → **录音中途切后台再回来 / 折叠展开**，记录里的草稿气泡仍在且最终与层里显示逐字相同 | T4 已取一半；追问窗与折叠展开在这里补：`cmd device_state`（B1 计划 T16 第 3 批坑：折叠要真机手折） | |
+| 3 | 端到端挡位下层首行「原始音频将在本轮上传」可见；首次切挡位有显式同意 | T5 已取 | |
+| 4 | S2S 挡位走一轮 → 记录里出现带「端到端」角标的两条（M4 挂账「端到端未验」一并） | T5 已取；**§11.4 记录完整性 100%** 在此写读数 | |
+| 5 | `card_group` 两卡 → 主卡在上、「还有 1 张 ›」可展开 | T8 已取 | |
+| 6 | 「这是什么」→ 用户气泡**先于**相机出现（时间戳比对） | T10 已取（录屏帧号 + logcat） | |
+| 7 | 打字提问在「自动」档不出声、语音提问出声 | T12 已取 | |
+
+- [ ] **步骤 3：闸的五项读数（真人语音轮，需泓舟在场；读数带 APK 构建时间 `dumpsys package … lastUpdateTime` 与有无 AEC）**
+
+| # | 项 | 度量 | 目标 | 读数 |
+|---|---|---|---|---|
+| G1 | 真人语音轮：唤醒 → 说 → 答 → 追问（不带唤醒词） | 轨迹页：`◇ fsm:LISTENING` 到下一条 `listening` 快照的时间差 = **首反馈时延**（§11.4 第 1 条）；追问窗内第二句进去 | ≤100ms；追问成功 | |
+| G2 | 回声降级 | 天气答完后 5s 内：胶囊「像是我自己的声音，没算数」出现次数 / Dock `audio_echo_degraded` 是否出现 / 是否出现正反馈环（连着两轮同一句） | 无 AEC 包：提示出现、无环；有 AEC 包：三者都 0 | |
+| G3 | 键盘 | Maestro 08 复跑退出码；层开着时键盘弹起 → 层重排、发送键仍在树里 | 0；在 | |
+| G4 | 折叠切换 | 层开着 + 草稿存在时外屏→内屏、内屏→外屏各一次：层仍在、草稿逐字相同、detent 按新高度重算 | 两个方向都不丢 | |
+| G5 | 帧率 | `adb shell dumpsys gfxinfo com.xiaozhou.companion framestats` 在层升起的 2s 内取一次（**用 framestats 逐帧口径，B1 出账③：直方图在本机自相矛盾**）；同屏循环动画实例数（层开时 Composer 主球静止：连拍两帧逐字节相同） | ≥55fps（dev build 读数注明不能当 release）；1 个 | |
+
+- [ ] **步骤 4：5 人外部小样本（§11.4「状态可读性」；需泓舟组织，不录像、不留个人信息，只记编号 P1–P5）**
+  1. 状态识别：画廊 `?only=armed,listening-ptt,thinking,speaking,attention-confirm,offline-with-confirm` 深色套 6 张截图（**每张只露光球 + 胶囊 + Dock**，裁掉记录），逐张问「它现在在干嘛？」，答案与预期语义一致记 1：目标 **≥5/6**，五人各一行。
+  2. 录音手势：把手机交给对方（免唤醒关、对话屏空），说「用语音问它明天天气」，不给任何提示：记「找到入口用了多少秒 / 用的是轻点还是长按 / 是否成功发出」。目标：5 人全部 ≤15s 内发出。
+  3. 记录表进 §6.4；**读数是分布不是结论**——低于目标的项写「未过」，闸的裁决由泓舟按表做。
+
+- [ ] **步骤 5：§11.4 其余取数**（无障碍：Android Accessibility Scanner——**设备上未装，装 APK 到泓舟的设备要授权**（B1 出账⑦）；没授权就记 ⬜ 未跑，并把 T6 的 TalkBack 手动读数当替代证据写清「不是 Scanner 读数」）。
+
+- [ ] **步骤 6：记录收口**
+  1. `mobile/e2e/README.md`：加 05（manual，怎么跑、为什么 manual）；06/08/09 三条复跑一次写读数（层加进对话屏后 06 的 `dock-confirm` 仍要在树里——层在 Dock **上方**、不遮 Dock）。
+  2. `docs/design/2026-08-24-mobile-app-implementation-plan.md`：B1 指针块下面加一段同款 B2 指针（实施记录在本文件 §6）。
+  3. `docs/design/README.md`：本计划那一行状态改「四批收口，闸结论：过 / 未过（列未过项）」。
+  4. `AGENTS.md` §4.1 Android 行：只改指针段（B2 四批收口 + 闸结论 + 下一步 B3/B4 或「闸未过、B3/B4 不开工」）——**动前 `git diff --stat -- AGENTS.md` 核行数、提交后 `git show --stat` 复核**。
+  5. 本文件 §6.4：读数、坑、遗留出账表（含前三批汇总——逐条核过再写「现状」，不复述）、**未推送清单**（`git log origin/main..HEAD --oneline`，**只报数不推送**，`git push` 需泓舟单独授权）。
+  6. 闸的结论一句话写在 §6.4 第一行：**「过 → B3/B4 开工」或「未过：G? / 小样本 ?/6 → B3/B4 不开工」**。
+
+- [ ] **提交**：
+```bash
+git add -- mobile/e2e/05-voice-sheet-ptt.yaml && git commit -- mobile/e2e/05-voice-sheet-ptt.yaml mobile/e2e/README.md docs/design/2026-08-24-mobile-app-implementation-plan.md docs/design/README.md docs/design/2026-08-30-mobile-ux-v2-b2-implementation-plan.md -m "docs(mobile): UX v2 B2-15 闸——真机验收 7 条 + 五项读数 + 外部小样本 + Maestro 05（manual）+ 记录收口" && git show --stat HEAD
+# AGENTS.md 单独一个 commit（它是所有会话都在写的文件）：
+git diff --stat -- AGENTS.md && git commit -- AGENTS.md -m "docs(agents): Android 行指向 UX v2 B2 收口与闸结论" && git show --stat HEAD
+```
+
+---
+## 3. 任务依赖与并行度
+
+```
+T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► T4 草稿沉淀 ─► T5 S2S ─► T6 手势 + 轻点 ─┬─ T7 边缘极光 ─┐
+                                                                                            ├─ T8 card_group ─┼─► T10 视觉先落气泡 ─► T11 回声提示 ─► T12 播报三档 ─► T13 回执 ─► T14 轨迹页 ─► T15 闸
+                                                                                            └─ T9 chips ──────┘
+```
+
+- **T1 → T2 串行**：都动 `usePresence.ts` 与 `presence.test.ts`，且 T2 的 `hfFsmChangedAt` 会改 `base()`。
+- **T3 先于 T4**：层不持状态，T4 的草稿只是记录里的一条用户气泡，层不改一行就会显示它；T3 引入 `turnMeta.source` 是因为「层为语音轮保持升起」这个事实要住在记录里。
+- **T6 是第 3 批的门**：`ptt.tap()` / `hf.wake()` / `recycle()` 被 T3 的打断、T11 的回声、隐私栏都用到；`micLease` 前置修不做，真机的免唤醒 + PTT 读数全是假的。
+- **T7 ∥ T8 ∥ T9**：三个互不相干的新文件（各自只碰自己的路径 + `VoiceSheet.tsx` 的一行插入——**三个 subagent 并行时 `VoiceSheet.tsx` 由协调者最后合一次**，或三条各自 `git commit -- 自己的新文件`、层的三行插入由协调者一个 commit 收）。
+- **T12 / T13 / T14 可并行**（不同文件；`SettingsScreen.tsx` T12 与 T14 各改一个分区——串行提交，谁后提谁 rebase 自己那段）；T15 最后。
+
+## 4. 「不负优化」判据在 B2 的取数点（方案 §11.4）
+
+| 判据 | B2 取数 |
+|---|---|
+| 首反馈时延 | T14 的轨迹：`◇ fsm:LISTENING`（FSM 回调时刻 ≈ KWS 命中）到下一条 `primary=listening` 快照的时间差；T15 G1 取真人读数，目标 ≤100ms。B1 计划 §4 把它留给 B2「那里才有唤醒→听的真实链」，就是这里 |
+| 状态可读性 | T15 步骤 4 的 5 人小样本（6 张画廊截图），目标 ≥5/6——现状基线 B1 没取，B2 这一次就是基线也是读数 |
+| 记录完整性 | T5 真机：一次会话中语音轮（含 S2S）在记录里的条数 / 实际轮数 = 100%（现状 S2S 为 0） |
+| 承诺不丢 | B1 已收；T1 复验「到期留痕带原话」（留痕不再说一句通用句） |
+| 键盘遮挡 | T15 G3：Maestro 08 复跑 + 层开着时键盘弹起的重排 |
+| 性能 | T3：层开时 Composer 主球静态（同屏循环动画常态 1 个）；T15 G5：`framestats` 逐帧口径 ≥55fps（dev build 注明） |
+| 无障碍 | T6：TalkBack 光球 label 随状态、轻点切换；T15 步骤 5：Scanner 基线（需授权装 APK） |
+| 回归 | `npm test` 条数只增不减（315 → 预计 ≈380：T1 +6 / T2 +5 / T3 +12 / T4 +6 / T5 +6 / T6 +12 / T8 +3 / T9 +4 / T10 +1 / T11 +1 / T12 +9 / T13 +5 / T14 +4）；hmi node:test **288 不变**（本批不碰 hmi）；4 条既有 Maestro 流 + B1 的 06/08/09 复跑全绿 |
+
+## 5. 实施判断（写在开工前，做的时候撞到再补）
+
+1. **`Msg` 不能加字段**（共享类型）⇒ B2 的六个并列字段：`draftUserId` / `interruptedIds` / `s2sIds` / `visionIds` / `turnMeta` / `confirmLog`，全部住 `SessionState`；层与气泡按 id 查表。到期留痕、回执用追加消息 / 并列表，不改原气泡。
+2. **`vad_silence_ms` 只有 qwen3 realtime 消费**（`llm-gateway/providers.py:762`），缺省引擎 fun-asr 走客户端 stop ⇒ 轻点即说的收尾主判据是端侧 VAD，服务端尾照传、15s 硬上限兜底（T6）。方案 §5.1.1 那句「服务端静音尾收尾」在缺省引擎上是假前提——**方案里的参数是待证命题不是待办**。
+3. **PTT 在免唤醒开着时今天是坏的**（recorder 单例，`recorder.ts:50/89`）⇒ `AsrSession` 领 `micLease()`，先于手势契约落、`pttLease.test.ts` 钉住（T6）。B1 验收表第 6 条第二行恰好没取证——「没取证」的那一格可能正藏着缺陷。
+4. **免唤醒开着时轻点 = FSM 的 `wake()`**，不另起 TapTalk（那样会有两份 VAD 抢同一路麦）。「哪个引擎持有麦」是 ChatScreen 知道的事实，不是判据；Composer 只报告手势。
+5. **语音层开合与 detent 是派生态**（`derivePresence`），层零自有状态。PTT 轮没有追问窗 ⇒ 播报结束、agent 回 idle 即收；若泓舟要「答完再停 8s」，加一个 `SHEET_LINGER_MS` 常量读 `turnMeta.finalAt`（T13 之后才有）——一行判据，不是新机制。
+6. **回声提示只有 `echo_dismissed` 一路信号**（续问窗回声，`voiceLoop.mjs:379`）；barge-in 那一路（`:476`）没有 metric，App 看不见。共享文件不改 ⇒ 记遗留给 hmi 侧加 `onMetric('echo_suspected')`，本批不做。
+7. **打断不是错误**（方案 §5.2 规则 4）⇒ `markInterrupted` 不再写 `error: true`，改 `interruptedIds`。既有用例若断言了 `error: true`，那是判据变更、改断言并写进 §6.2。副作用：B1 那条「打断 → 4s 红胶囊」的复现在 T4 之后失效（T2 真机取证在第 1 批做完，不受影响）。
+8. **播报三档迁移**：旧值任一为 false → 静音，否则 → 自动（Q11 默认自动，不保留「打字也播报」）。泓舟若要保留旧行为，`DEFAULT_APP_SETTINGS.speakPolicy` 改 `'always'` 一行。
+9. **回执「安全检查」栏留位不渲染**（VAL 只在拒绝时说话，Q16 挂账后端）；「目标」取 `vehState.vehicle_id`，没有就「当前车辆」——不猜。
+10. **轨迹在渲染期记录**（`usePresence` 里 `presenceTrail.record`）：按轴投影去重，同一份输入再喂一次什么都不发生，React 严格模式的双渲染不会写两条。
+11. **零新原生依赖**：RNGH 已随 expo-router 注册（`PackageList.java:73`），但根容器 `GestureHandlerRootView` 今天不在（expo-router 不包根、App 也没包）——T3 把它包进 `_layout.tsx`（Android 上 `GestureDetector` 必须在它之内）；仍不响应再退 RN 核心 `PanResponder`——两条都不重建。
+12. **`CardGroup` ↔ `CardRenderer` 的循环 import 是渲染期的**（子卡在函数体里才引用），与今天注册表 `card_group` 的递归同形；主卡判据放 `core/cards/`，core 不反向依赖 features（T13 的回执要读它）。
+13. **chip 文本以 `routeSend` 判定为准**（T9 测试直接跑路由）：某句不命中就改 `followUps.ts` 的文本，**不改 `nav.mjs`**。
+14. **FOLLOWUP→ARMED 会让 armed 胶囊再显示 3s**（`hfFsmChangedAt` 随 FSM 换态重置）——这是想要的提示（「接话窗关了，要再说唤醒词」），不是 bug；写在这里免得被当成 D2 没修好。
+15. **Composer 的「背板」= 空输入框区域**：方案 §5.1.1 写的「光球 + 空输入框/占位区 + 背板」，实现里第二个手势探测器只包输入框那一块（有字时关掉）；chips 横滑区与「打断/发送」按钮不在长按热区内——嵌套两个 `activateAfterLongPress` 探测器会互相抢，这是刻意收窄，写进 §6.3。
+16. **`Link href="/presence-trail"` 的类型由 Metro 生成**（expo-router typed routes，B1 第 2 批坑）：`tsc` 报路由不合法时先起一次 dev server，不改 href 类型。
+17. **S2S 一轮从未验过**（AGENTS.md：云端已开通、端到端未走通）——T5 的真机读数是这件事的第一次验证；若走不通，红的可能在网关侧，先看 `session.state` 帧再改 App。
+
+## 6. 实施记录（分批回填；每批一个会话，写完即停）
+
+> 格式照 B1 计划 §6：先**开工基线**（自己跑出来的数）、再逐任务的提交与读数、再**反向验证**、再「本批踩的坑」、最后「遗留 / 给下一批的话」。读数只写自己跑出来的数，不复述计划里的预期；**未跑的一律不写 ✅**。
+
+### 6.1 第 1 批「遗留修正与判据层」（T1–T2）
+
+- **开工基线**（日期）：`check_android_env.ps1` 退出码；`npm test` suites / tests；`npm run typecheck`；工作树状态、`origin/main..HEAD`；是否分树。
+- **T1** —— commit：读数（新增用例数 / 反向验证两条各红在哪 / 真机 200% 截图与两条并存截图）。
+- **T2** —— commit：读数（四条反向验证各红在哪 / 画廊深浅两套 / 真机五项：armed 连拍、D3 红胶囊、隐私栏 PTT 行琥珀、空闲「关」非琥珀、TalkBack 读法）。
+- **收口读数**：`npm test` / `tsc`。
+- **本批踩的坑**：
+- **遗留 / 给第 2 批的话**：
+
+### 6.2 第 2 批「语音层骨架与记录沉淀」（T3–T5）
+
+- **开工基线**：
+- **T3** —— commit：真机三入口截图、层开时主球静止的两帧比对、胶囊点按、下拉收起、attention 不自动收。
+- **T4** —— commit：既有用例⑥是否改了断言（判据变更说明）；真机草稿三态（前台 / 切后台回来 / 折叠展开）。
+- **T5** —— commit：同意页出现一次 / 二次不弹；S2S 一轮（**这是端到端的第一次真机验证**——通不通都写清红在哪一侧）；逃逸轮一条用户气泡；§11.4 记录完整性读数。
+- **反向验证**（三条各红在哪）：
+- **本批踩的坑**：
+- **遗留 / 给第 3 批的话**：
+
+### 6.3 第 3 批「手势与层内元素」（T6–T11）
+
+- **开工基线**：
+- **T6** —— commit：`pttLease` 源码断言红→绿；真机十项（轻点自动收尾 / 中途再点 / 免唤醒下轻点 / 免唤醒下 PTT 后仍能唤醒 / 上滑取消文案 / 有字输入框 / TalkBack label / 播报中轻点 / 关闭本轮麦克风后开关仍开）；若 RNGH 手势退回了 PanResponder 写在这里。
+- **T7 ∥ T8 ∥ T9** —— 三个 commit：极光录屏四帧亮度；card_group 折叠展开截图；chips 最终文本（若改过）与「换一批」翻页截图。
+- **T10** —— commit：录屏帧号 vs logcat `CameraService` 时间戳；`looking` 白环抽帧（B1 出账⑧收口）。
+- **T11** —— commit：APK 构建时间 + 有无 AEC；回声提示出现 / 未触发（预期）。
+- **反向验证**：
+- **本批踩的坑**：
+- **遗留 / 给第 4 批的话**：
+
+### 6.4 第 4 批「播报·回执·轨迹 + 闸」（T12–T15）
+
+- **闸的结论（第一行）**：过 → B3/B4 开工 ／ 未过：G? / 小样本 ?/6 → B3/B4 不开工。
+- **开工基线**：
+- **T12** —— commit：`voiceTts.test` 是否改了断言；真机三档各一次。
+- **T13** —— commit：真机车控回执四行 / 信息回执四行截图。
+- **T14** —— commit：轨迹页截图；`location` 产出实拍。
+- **T15**：Maestro 05 手动跑一次的读数；B2 真机验收表 7 条（✅/⬜/❌ 逐条写实）；闸五项读数表；5 人小样本两张表；§11.4 取数；Accessibility Scanner（跑了 / 未授权 ⬜）。
+- **反向验证**：
+- **本批踩的坑**：
+- **遗留出账（含前三批汇总，逐条核过再写「现状」）**：
+- **未推送清单**（`git log origin/main..HEAD --oneline`；只报数，`git push` 需泓舟单独授权）：
