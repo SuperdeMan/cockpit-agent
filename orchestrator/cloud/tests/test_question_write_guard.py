@@ -22,7 +22,7 @@ voice_forbidden）全 false。
 ## 覆盖形状
 
 四向，缺一条都守不住（收窄面的老规矩）：
-  · 问句 + 写 = 拦；· 祈使 + 写 = 放；· 问句 + 读 = 放；· 问句 + 云端步 = 放。
+  · 问句 + 写 = 拦；· 祈使 + 写 = 放；· 问句 + 读 = 放；· 问句 + 未确认云侧步 = 放。
 """
 from __future__ import annotations
 
@@ -92,7 +92,7 @@ def test_question_shaped_read_is_allowed(text):
     assert _GUARD([_step("tire_pressure.query")], text) == []
 
 
-# ── 4. 问句 + 云端步 = 放（闸只盖端侧写，不盖查资料/查天气）────────────────────
+# ── 4. 问句 + 未确认云侧步 = 放（不盖查资料/查天气）────────────────────────────
 
 @pytest.mark.parametrize("intent", ["manual.query", "info.search", "chitchat.talk"])
 def test_question_shaped_unconfirmed_cloud_step_is_allowed(intent):
@@ -228,6 +228,36 @@ def test_end_to_end_cloud_order_directive_still_reaches_confirmation_boundary():
     assert [s.intent for s in plan.steps] == ["luckin.order"]
     assert plan.steps[0].require_confirm is True
     assert "question_write_blocked" not in (plan.plan_mode or "")
+
+
+def test_question_fallback_registry_confirmed_capability_is_blocked():
+    order = MockAgent("mcp-bridge", ["luckin.order"],
+                      require_confirm=("luckin.order",))
+    order.score = 1.0
+
+    async def mock_llm(messages):
+        return "not valid JSON"
+
+    async def mock_resolve(query, top_k=1):
+        return [order]
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    plan = asyncio.run(builder.build(
+        "红色机油灯亮了还能继续开吗", WorkingSet(catalog=[order]),
+        PlanContext(session_id="fallback-confirmed"),
+    ))
+
+    assert plan.steps == []
+    assert all(step.intent != "luckin.order" for step in plan.steps)
+    assert "question_write_blocked" in (plan.plan_mode or "")
+
+
+def test_talk_only_plan_rejects_confirmed_fallback_capability():
+    agent = MockAgent("chitchat", ["shop.order"],
+                      require_confirm=("shop.order",))
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+
+    assert builder._talk_only_plan("红色机油灯亮了还能继续开吗", [agent]) is None
 
 
 # ── 7. 本闸的行为代价，**钉成可见断言**：礼貌请求会被答而不是被做 ─────────────

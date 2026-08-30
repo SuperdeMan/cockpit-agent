@@ -1643,7 +1643,7 @@ class PlanBuilder:
         plan.hint_effect = _hint_effect(
             hit, before, [(s.agent_id, s.intent) for s in plan.steps], had_clarify)
         plan.catalog_stats = dict(working_set.catalog_stats)
-        # ── 安全闸：问句不许被规划成写车控（C1-A）────────────────────────────
+        # ── 安全闸：问句不许执行端侧写或需确认步骤（C1-A）────────────────────
         # 挂在**整个 build 的唯一出口**：LLM 计划、降级语义路由、route_hints 补步
         # 三条来源在这一行之前都已经汇合，只在这里判一次就不会漏掉某一条。
         # **原地改 steps 而不是换 plan 对象**——上面那批观测赋值已经作用在这一份上，
@@ -1661,16 +1661,16 @@ class PlanBuilder:
             plan.steps = [s for s in plan.steps if id(s) not in blocked_ids]
             plan.plan_mode = f"{plan.plan_mode or ''}_question_write_blocked"
             if not plan.steps:
-                # 空计划的诚实出口是**让兜底 Agent 答一句**，不是宣布没听清：
-                # 这一类句子（「X灯亮了怎么办」）恰恰是最需要一个回答的。
-                # chitchat 自己就带安全信号判据（`runtime.safety_signal`），
-                # 落到它手里会得到分级建议而不是一句敷衍。
+                # 空计划优先交给**未确认的**兜底 Agent 答一句，而不是宣布没听清：
+                # 这一类句子（「X灯亮了怎么办」）恰恰最需要一个回答。默认 chitchat
+                # 自己就带安全信号判据（`runtime.safety_signal`），会给出分级建议；
+                # 配置为需确认的兜底能力则保持空计划，不能借回答出口执行写操作。
                 talk = self._talk_only_plan(text, agents)
                 if talk is not None:
                     plan.steps = talk.steps
                     plan.clarify = None
         # ── 安全闸二：安全信号在场时不许以「澄清 / 没听清」收场（余项 ①，2026-08-29）──
-        # 挂在**同一个唯一出口**、紧随上一条之后：上面那条只管「问句被规划成写车控之后
+        # 挂在**同一个唯一出口**、紧随上一条之后：上面那条只管「问句被规划成端侧写或需确认步骤之后
         # 空了」，这条管**planner 自己就没产出步**的那一类——真栈取样里它才是主形态。
         # 取证（deployed `ed53f8f`，`--repeat 5`）：「困到睁不开眼了，还要开两个小时」
         # **2/5 落 system.clarify**，用户听到的是「你听起来很困，接下来想怎么处理？」；
@@ -2485,16 +2485,20 @@ class PlanBuilder:
         """
         for a in (agents or []):
             if a.manifest.agent_id == _FALLBACK_AGENT:
-                intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else "chitchat.talk"
-                return Plan(steps=[Step(
-                    id="s1", agent_id=a.manifest.agent_id, endpoint=a.endpoint,
-                    kind=getattr(a.manifest, "kind", "") or "agent",
-                    deployment=getattr(a.manifest, "deployment", "") or "cloud",
-                    intent=intent, slots={"text": text},
-                    required_permissions=list(
-                        getattr(a.manifest, "requires_permissions", []) or []),
-                    trust_level=getattr(a.manifest, "trust_level", "") or "",
-                )], raw_text=text)
+                intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else ""
+                steps = self._validated_steps(
+                    [{"id": "s1", "agent_id": a.manifest.agent_id,
+                      "intent": intent, "slots": {"text": text},
+                      "depends_on": [], "slot_refs": {}}],
+                    {a.manifest.agent_id: a},
+                )
+                if len(steps) != 1:
+                    return None
+                if steps[0].require_confirm:
+                    logger.warning("Fallback talk capability %s requires confirmation; dropping",
+                                   steps[0].intent)
+                    return None
+                return Plan(steps=steps, raw_text=text)
         return None
 
     async def _fallback(self, text: str, agents: list = None) -> Plan:
@@ -2521,15 +2525,13 @@ class PlanBuilder:
                             float(getattr(a, "score", 0.0) or 0.0))
                 return Plan(steps=[])
             intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else ""
-            return Plan(steps=[Step(
-                id="s1", agent_id=a.manifest.agent_id, endpoint=a.endpoint,
-                kind=getattr(a.manifest, "kind", "") or "agent",
-                deployment=getattr(a.manifest, "deployment", "") or "cloud",
-                intent=intent, slots={},
-                required_permissions=list(
-                    getattr(a.manifest, "requires_permissions", []) or []),
-                trust_level=getattr(a.manifest, "trust_level", "") or "",
-            )])
+            steps = self._validated_steps(
+                [{"id": "s1", "agent_id": a.manifest.agent_id,
+                  "intent": intent, "slots": {},
+                  "depends_on": [], "slot_refs": {}}],
+                {a.manifest.agent_id: a},
+            )
+            return Plan(steps=steps)
         except Exception as e:
             logger.error("Fallback routing failed: %s", e)
             return Plan(steps=[])
