@@ -1544,6 +1544,45 @@ RS4 走的是 C12-A 的 `liked` 挡板不是 C12-C。**「兜底型修法的『�
 | 支付余项 | **等外部**（支付宝沙箱恢复 / 微信商户号）|
 | 商户 SP1/SP2/SP3 的**业务面** | **需营业时间复跑**才验得了：`luckin.py` 的 `if not open_stores` 在产生选店卡之前短路 ⇒ 夜里物理上跑不了。判据已改成自己说出这一点 |
 
+### 安全问句云侧确认写闸收尾（本地完成，待真栈）
+
+**触发**：已部署 `343934b` 的 `information` 长会话里，「红色机油灯亮了还能继续开吗」
+被 planner 落为 `luckin.order` 并挂起；同一句干净会话 3/3 正确，因此缺口只在长上下文里暴露。
+
+**裁决**：最初候选“拦所有云侧写”爆炸半径过大，最终收窄为：非指令问句继续拦既有端侧写，
+云侧只新增拦截 manifest 权威字段 `require_confirm=true` 的高代价能力。它不声称覆盖全部云侧
+副作用，也不靠操作名猜 `info.search` / `chitchat.talk` 等读能力。
+
+**三层 TDD 与评审**：主 guard 先 RED/GREEN；第一轮质量评审掀开 fallback 手工构造 `Step`
+会把 `require_confirm` 丢成默认假值，故 `_talk_only_plan` / registry fallback 统一经
+`_validated_steps`；第二轮评审又掀开 focused early return 绕过常规出口、且旧分支会在拦截后
+由 registry 引回 confirmed capability，故抽出 `_apply_question_side_effect_guard` 供 focused +
+normal 共用，零步只接受 unconfirmed talk，否则 fail closed。生产代码链为 `a83fa88` →
+`ab88f4e` → `01cc57c` → `1105829`；本地候选 HEAD 为
+`dfad68730b50d094993c328d33cb774d29642e16`，**尚未进入 cloud**。
+
+**本地审计读数**：targeted **159 passed**（2.77s）；Cloud Planner 全族
+**1235 passed / 1 skipped**（60.81s）；四道门禁 Skill 22/22、Exemplar 314、strict
+85/85（cases=676, distinct=634）、gate 25/25（cases=139, distinct=129）、capability PASS；
+全量 `python -m pytest -q -n 8 --dist worksteal` =
+**7723 passed / 32 skipped / 13 warnings**（449.89s），全部 rc=0。相对 7712 的 +11 精确来自
+`test_planning.py` +1、`test_question_write_guard.py` +10。
+
+本地 ignored manifest
+`.artifacts/qa-safety-confirmed-write/verification-manifest-utf8.json` SHA256=
+`add919e7a16a838b700b45a1a0b6767226fc28df8a6138ac9d125c927889fc65`；可读 blocking log
+SHA256=`7f47f1c048f8d101445648f275e8401d998876f814d0c0732571caf5f1aac06a`。
+这些 artifact 是 local-only，不能当可移植 commit 证据。
+
+**warning 边界**：13 条 `UnaryUnaryCall._invoke was never awaited` 已定性为 pre-existing trip
+测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；`15ff116..HEAD` 相关 diff
+为空。生产持久 loop 未证实受影响，但这也**不能证明生产安全**；单列 test-only 债务，不在本批
+顺手修。
+
+**尚未完成**：push 授权；deploy 摘要与 `--apply` 授权；新 SHA 的 `status` + 统一
+`verify`/remote-safe；干净会话 3/3；原 `information` persona；零商户草稿、零挂起操作、
+零探针副作用与清理复核。故只能写“本地实现与验证完成，待真栈”，不能写云端已修或 QA 全绿。
+
 ## 5. 本轮沉淀的判据（供 AGENTS.md §4.3 择录）
 
 - **登记不能是路由的副作用**。告警、焦点、账本这类「系统必须知道的事实」，写入要挂在**输入或产出的形态**上，不能挂在「恰好走了哪条路由」上——路由是有方差的，事实不能跟着抖（C1）。

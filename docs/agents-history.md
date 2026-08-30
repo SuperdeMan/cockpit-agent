@@ -7967,3 +7967,58 @@ fallback=0、349 次 LLM 全 pinned。
 （`is_write_intent` 本来就通用，误伤由既有的 `is_non_directive_question` 挡）。
 ⚠ **放宽一道安全闸的作用域，爆炸半径是全部云侧写能力，留给泓舟拍板，未擅自改。**
 同族第三例（前两次被 `volume.dec`、`reminder` 劫持）。
+
+---
+
+## §85 2026-08-30 QA 安全收尾：问句不进入需确认的云侧能力（本地验证态）
+
+### §85.1 取证与裁决
+
+起点仍是 §84 的云端 `343934b` 实录：安全问句被落成 `luckin.order` 并挂起；本轮没有改写
+那份历史事实。设计评估否掉了“拦所有云侧写”的宽口径，最终裁决为：既有非指令问句端侧写闸
+保持，云侧仅增加拦截 manifest 已声明 `require_confirm=true` 的高代价能力。云侧只读、正常
+礼貌指令与 mixed 计划中的合法步骤不受影响。
+
+### §85.2 TDD 三层与评审掀开的两旁路
+
+生产代码按 `a83fa88`（Mock bool）→ `ab88f4e`（confirmed guard）→ `01cc57c`
+（fallback 保 confirm）→ `1105829`（focused + normal 统一终结器）落地。主 guard RED/GREEN 后，
+第一轮评审掀开 fallback 手工 `Step` 丢 `require_confirm`，第二轮评审又掀开 focused early
+return 绕闸并由 registry 引回 confirmed capability。前者收敛到 `_validated_steps`，后者收敛到
+`_apply_question_side_effect_guard`；零步只接受 unconfirmed talk，否则空计划 fail closed。
+
+### §85.3 审计版本地读数 / hashes
+
+本地候选 HEAD=`dfad68730b50d094993c328d33cb774d29642e16`，尚未集成 main、尚未部署。
+审计第二趟：targeted **159 passed / 2.77s / rc0**；`orchestrator/cloud/tests`
+**1235 passed / 1 skipped / 60.81s / rc0**；门禁 Skill 22/22、Exemplar 314、strict discovery
+85/85（cases=676, distinct=634）、gate 25/25（cases=139, distinct=129）、capability PASS，
+全部 rc0；全量 `python -m pytest -q -n 8 --dist worksteal` =
+**7723 passed / 32 skipped / 13 warnings / 449.89s / rc0**。`7723 - 7712 = +11`，准确来自
+`test_planning.py` +1 与 `test_question_write_guard.py` +10。
+
+ignored/local-only manifest：
+`.artifacts/qa-safety-confirmed-write/verification-manifest-utf8.json`，自身 SHA256=
+`add919e7a16a838b700b45a1a0b6767226fc28df8a6138ac9d125c927889fc65`；可读 blocking log
+SHA256=`7f47f1c048f8d101445648f275e8401d998876f814d0c0732571caf5f1aac06a`。
+这些 artifact 不随 commit 移植，deprecated 乱码 raw 不作权威。
+
+### §85.4 warning 定性
+
+13 条 `UnaryUnaryCall._invoke was never awaited` 已稳定定性：pre-existing trip 测试 fixture
+跨多个 `asyncio.run` 复用 loop-affine gRPC channel；`15ff116..HEAD` 相关 diff 为空。
+`warning-investigation-utf8.log` 已被 manifest 固化。生产使用持久 loop，未证实生产受影响；
+这同样**不能证明生产安全**。它是 test-only 独立债务，可单独修 fixture，不归本安全闸生产回归。
+
+### §85.5 尚未完成
+
+- `git push`：未授权、未执行；
+- deploy：未取受控摘要与 `--apply` 授权、未执行；
+- 新 SHA：未跑精确 `status` + 统一 `verify`/remote-safe；
+- live：未跑干净会话 3/3、未复跑原 `information` persona；
+- cleanup：未核验零商户草稿、零挂起操作、零探针副作用与清理失败为空。
+
+因此本节只记**本地验证态**，不称云端已修、QA 全绿或该候选已经 `verified`。当前云端仍是
+`343934bab66c23f83575cee998eb6f64a9f45f3e`；本轮只读 `status` 为 ok、5/5 healthy、零 warning。
+原根工作树取得的 ignored/local-only `cloud-status-predeploy-343934-utf8.log` SHA256=
+`890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。

@@ -1,6 +1,6 @@
 # QA 收尾：安全问句禁止进入需确认的云侧写能力
 
-> 状态：**落地中（核心实现完成，待全量与真栈）**（2026-08-30）
+> 状态：**落地中（本地验证完成，待 push/deploy/真栈）**（2026-08-30）
 > 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84、
 > `orchestrator/cloud/planning.py::_question_side_effect_steps`、
@@ -186,7 +186,7 @@ confirmed cloud capability；旧实现会在拦截后重新走 registry，把 `l
 
 ### 6.2 真栈验证（需单独授权）
 
-本轮不把“本地全绿”写成“真栈已修好”。真栈顺序为：
+本轮不把“本地验证完成”写成“真栈已修好”。真栈顺序为：
 
 1. 按部署规则产出干净、已提交、main 可达的 SHA；
 2. 推送前列出 `origin/main..HEAD` 全部提交，另取 `git push` 授权；
@@ -221,7 +221,7 @@ confirmed cloud capability；旧实现会在拦截后重新走 registry，把 `l
 5. 干净会话与原长会话双层验证里，安全问句不再进入任何需确认的写能力，用户拿到分级安全建议，且商户草稿、挂起操作和探针副作用全部归零；
 6. `AGENTS.md` 不再把“修复批闭合”写成“QA 全绿”。
 
-## 9. 核心实现记录（待全量与真栈）
+## 9. 核心实现记录（本地验证完成，待真栈）
 
 核心实现已分四笔提交落地：
 
@@ -254,9 +254,54 @@ TDD 与反向验证证据保存在 gitignore 的本地 artifact 中：
 - `.artifacts/qa-safety-confirmed-write/focused-fallback-green.log`：恢复统一终结器后 32 passed。
 
 这些 ignored artifact 只是本地 RED/GREEN 运行记录，**不是 commit 证据**；可追溯实现仍以
-上述四个提交为准。当前 targeted 读数为：守卫 **32 passed**、规划回归 **47 passed**、
-相邻安全/取消闸 **23 passed**、execution focus **57 passed**。
+上述四个生产代码提交为准。两轮文档收口为 `660153a` / `dfad687`，本地候选的精确对象是
+`dfad68730b50d094993c328d33cb774d29642e16`。
 
-截至本记录，尚未运行 Cloud Planner 全族、四道离线门禁或全量 pytest；也尚未部署、
-未复跑干净会话与原 `information` 长会话。因此完成判据 **3–6 均未满足**，当前状态只能是
-“核心实现完成，待全量与真栈”，不得写成“本地全量完成”或“已修好”。
+## 10. 本地审计证据与剩余边界
+
+### 10.1 审计读数
+
+| 层级 | 命令 / 结果 |
+|---|---|
+| targeted | `test_question_write_guard.py` + 相邻规划/安全/取消/focus：**159 passed**，2.77s，rc=0 |
+| Cloud Planner 全族 | `python -m pytest -q orchestrator/cloud/tests`：**1235 passed / 1 skipped**，60.81s，rc=0 |
+| 四道离线门禁 | Skill **22/22**；Exemplar **314**；strict discovery **85/85**（cases=676, distinct=634）；gate **25/25**（cases=139, distinct=129）；capability PASS；全部 rc=0 |
+| 全量 | `python -m pytest -q -n 8 --dist worksteal`：**7723 passed / 32 skipped / 13 warnings**，449.89s，rc=0 |
+
+`7723 - 7712 = +11`，准确来自 `test_planning.py` +1、
+`test_question_write_guard.py` +10；没有把已部署 `343934b` 的 7712 证据转借给本地候选。
+
+### 10.2 manifest、哈希与可移植性边界
+
+本地验证清单是
+`.artifacts/qa-safety-confirmed-write/verification-manifest-utf8.json`，自身 SHA256=
+`add919e7a16a838b700b45a1a0b6767226fc28df8a6138ac9d125c927889fc65`。可读 blocking artifact
+`blocking-gates-readable-utf8.log` 的实际 SHA256=
+`7f47f1c048f8d101445648f275e8401d998876f814d0c0732571caf5f1aac06a`。
+manifest 与其列出的日志均在 `.artifacts/`，是 **ignored/local-only** 证据，不是可移植的 commit
+证据；deprecated 乱码 raw 不作权威来源。
+
+### 10.3 warning 定性
+
+13 条 `UnaryUnaryCall._invoke was never awaited` 已由
+`warning-investigation-utf8.log` 固化（SHA256=
+`a1a95fd4c9bee3ce7814482d5430f8e6d87414694274416b61331a2f84cc6067`）：trip 测试 fixture
+跨多个 `asyncio.run` 复用 loop-affine gRPC channel；`15ff116..HEAD` 相关 diff 为空。
+当前证据支持“pre-existing、test-only 独立债务”，没有证实生产持久 loop 受影响；反过来也
+**不能用这份定性声称生产安全已证明**。修 test fixture 另立，不归本安全闸生产回归。
+
+### 10.4 完成判据状态
+
+- 判据 **1–2 已满足**：旧实现 RED、三层最小实现、误伤对照与反向验证均有本地证据。
+- 判据 **3–6 仍保持 pending**：3 的 Cloud Planner/门禁/全量读数已经取得，但包含上述
+  test-only warnings，且只绑定 ignored/local 候选证据；4–5 所需 push、deploy、精确新 SHA
+  `status` + 统一 `verify`/remote-safe、干净会话 3/3、原 `information` persona 与零商户草稿/
+  零挂起/零探针副作用清理核验均未做；6 要等最终状态文档不再混淆“开发批闭合”与“QA 全绿”。
+
+当前云端只读复核仍是 `343934bab66c23f83575cee998eb6f64a9f45f3e`：`status` ok、
+5/5 healthy、零 warning；本地候选不在其中。原根工作树取得的 ignored/local-only 状态 artifact
+`cloud-status-predeploy-343934-utf8.log` SHA256=
+`890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。
+
+因此当前只能写“本地验证完成，待 push/deploy/真栈”，不得写成“云端已修”“QA 全绿”或
+该候选已经 `verified`。
