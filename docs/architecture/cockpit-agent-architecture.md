@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.45（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-08-30（v1.45 校准 §5.2.13 云侧确认边界）
+> 版本：v1.46（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-08-30（v1.46 闭合 §5.2.13 全部 dispatch-bound 安全出口）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -937,7 +937,7 @@ owner/session 原子清理并要求 after=0；提醒、导航与挂起操作同�
 剪枝，但 source pattern 大小写不敏感、排除目录严格精确，通用 `build/dist/coverage` 只能在
 已知生成前缀剪，不能造一个未来可藏真实 source 的全局命名空间。
 
-### 5.2.13 安全事实的登记与执行闸：不能挂在路由上（v1.39 建立；v1.45 扩展云侧确认边界）
+### 5.2.13 安全事实的登记与执行闸：不能挂在路由上（v1.39 建立；v1.46 闭合 dispatch 边界）
 
 「规划/执行分离」（§5.3）保证的是**谁有权产生副作用**。它有一条残余缝：
 **当模型把一句提问规划成一个车控写步时，这条链上没有任何一处会说「这不是指令」。**
@@ -1025,6 +1025,31 @@ fail closed；两种结果都保留 `question_write_blocked`。默认 chitchat �
 副作用。因此所有 fallback `Step` 构造也必须经过 `_validated_steps`；`_talk_only_plan`
 若选中的兜底 capability 本身 `require_confirm=true`，必须返回 `None`，不能把“安全回答兜底”
 变成另一条需确认写路径。
+
+#### 五、安全边界覆盖每个 dispatch-bound 出口，不只覆盖 build
+
+v1.46 把守卫从“`build()` 返回前过滤一次”提升为“**任何新计划首次进入 dispatch 前都过滤**”：
+`build`（含 focused/normal）、adaptive `replan` 的接收点、Agent `_escalate` 生成的 mini-plan，
+以及 fallback 候选都复用同一份步骤过滤原语。mixed 计划只删除违规 `Step`；全部被删时零
+dispatch、零挂起。legacy pending plan 若既没有 `safety_origin_text`，也没有可兼容回填的持久化
+`raw_text`，则声明可知的副作用一律 fail closed，不能拿当前补槽答案或模型生成字段补授权。
+
+为此新增服务端权威字段 `safety_origin_text`：新任务只由 engine 以最初 `request.text` 盖章，
+并随 plan、adaptive replan、suspend/restore 与 pending 序列化保持不变。`ctx.raw_text` 仍然表示
+**当前这一轮**的补槽/确认答案；LLM `goal`、replan goal、Agent escalate reason 都没有安全
+授权权威。这样“深圳”“拿铁”“确认”不会在恢复轮被升级成最初用户下过副作用指令的证据。
+
+#### 六、回答兜底用 capability 级 `response_only` 契约纵深兜住
+
+“intent 名看起来像 talk”不是安全契约。唯一权威是 capability manifest 的
+`response_only=true`，字段必须经 SDK manifest → registry 持久化 round-trip →
+`Step.response_only` 装配到执行层；Planner wire 同名字段无权生效。缺声明与 legacy 记录默认
+`false`。`response_only=true + require_confirm=true` 在 provider dispatch 前即判契约冲突；
+direct output 只允许零动作 `OK`，或维持零动作 `FAILED`，`NEED_CONFIRM` / `NEED_SLOT` / 任意
+action 均转成 `response_only_contract_violation` 且 `actions=[]`。Executor 在普通执行、重试前后，
+D0 与 T2 流式出口都执行同一契约；流式 action 在 yield 前丢弃，并禁止再走 unary fallback。
+因此 `_talk_only_plan()` 只扫描声明为 `response_only=true`、`require_confirm=false` 且通过同一
+问句守卫的能力，找不到就保持空计划。
 
 ### 5.2.14 系统持有的会话事实要有读出口，且出口在落域之前（v1.40，MiniMax QA 修复批 C4）
 
@@ -1993,6 +2018,7 @@ agents/<name>/
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.46 | 2026-08-30 | 内容性校准（QA 安全确认写闸最终本地闭合）：将 §5.2.13 从 build-only 扩展为所有 dispatch-bound 计划出口——focused/normal build、adaptive replan receiver、Agent escalate mini-plan 与 fallback 均复用同一过滤原语；新增服务端权威 `safety_origin_text`，从最初请求跨 replan、suspend/restore 保真，明确 `ctx.raw_text` 仍是当前补槽答案，LLM goal/reason 无授权权威，legacy 来源未知时副作用 fail closed；新增 capability 级 `response_only` 权威链（manifest → registry round-trip → Step → Executor/D0/T2），回答能力出现确认、补槽或 action 一律在 dispatch/yield 前转为零动作契约失败。契约 `conventions.md` §9.40。 |
 | v1.45 | 2026-08-30 | 内容性校准（QA 长会话安全收尾）：扩展 **§5.2.13 的云侧确认边界**。release `343934b` 长会话中「红色机油灯亮了还能继续开吗」被规划成 `luckin.order` 并挂起，而干净会话 3/3 正确，证明这是长上下文高代价方差；问句写闸唯一判据收敛为“非指令问句 ∧（端侧写步骤 ∨ `Step.require_confirm=true`）”，cloud 分支不滥用会误杀 `search/menu/talk/status` 的 `is_write_intent`，`require_confirm` 只由 manifest/servers 权威装配、LLM 无权修改；正常指令、未确认 cloud 步骤与 mixed 合法步骤不变。所有 `build()` 出口（focused + normal）共用 `_apply_question_side_effect_guard` 终结器，focused 被拦后绝不走 registry fallback；零步只尝试 unconfirmed talk，找不到则保持空计划 fail closed，并保留 `question_write_blocked`。质量审查补齐 fallback 旁路：所有 fallback `Step` 也必须经 `_validated_steps` 保留 manifest 字段，`_talk_only_plan` 拿到 confirmed capability 必须拒绝；默认 chitchat 能否给出分级建议留给部署验收实证。契约 `conventions.md` §9.40。 |
 | v1.44 | 2026-08-28 | 内容性合入（MiniMax QA 修复批第 5 批，卡 C9/C11/C12/C13/C14）：新增 **§5.2.17 说出口的每一句话都要对得上账**。四类话术在同一轮 QA 里同时出现，共同点不是「答错了」而是**每一句听起来都像有依据**：答案城市来自 mock 车辆位置（全仓最后一条 `vehicle.location` 回退，且下一轮模型从这句答案里学会了那个城市）、chitchat 零调用却说「已经为您重新计算路线…1.6公里」、同一轮确定性拼出三句互相打脸的口味话术、把一个滚了日的时限报成「早约593分钟」。四条内容：① **诚实降级的顺序里没有 mock 这一档**（本轮定位 → 诚实问一句；配套「署名摘要不是时间，认不出就留空」与三张外源卡补 `_prov`——契约的必带清单与实现**一起**漏了同样三张）；② **防编造要用类别否定不要禁语清单**（清单被绕过两轮：上次从交易话术、这次从导航），配套聚合器不再吞掉 Agent 自己的失败话术（`AgentResult` 无 error 字段 ⇒ 查表恒命中默认值 ⇒ 每条失败都变成裸「抱歉，处理失败。」）与一位零决策观测列；③ **前景赢过背景，但前景要有载体**（`Focus.session_constraints`：登记挂输入形态不挂路由、判据落 `runtime/`、下发按 manifest scope 门控且**不广播**、合并语义是后说的覆盖先说的），同卡另一半是**判据用错了变量**（挡板问「本轮说没说」而不是合并后的忌口事实）；④ **解析器没把握的分支把疑点交还用户**（滚日不改小时语义 + 荒谬余量闸；精确数字是有害的确定感）。通用判据：**每一句话都要能回答「这个说法的依据在账上是哪一条」**，中间那一档（拿个像样的值顶上）在任何一面都是最坏选择；第五张卡 C14 是它在声明面的同一件事（能力性质写不进 manifest 就等于不存在）。契约 `conventions.md` §9.37，流水 history §77。 |
 | v1.43 | 2026-08-28 | 内容性合入（补一条**历史遗漏**，非新设计）：新增 **§2.4 用户端不止一个：座舱 HMI 与 Android 陪伴端**。`mobile/`（RN+Expo）自 2026-08-25 起就是第二个正式用户端，经同一 edge-gateway/llm-gateway 接同一个后端大脑，而本文从 M0 到 M4 四个批次一直只画 `hmi/` 一个端——接手者会按「只有车机屏」来设计。补记三条架构级事实：① **一个大脑两个端**（同 user_id 共享记忆、独立会话与 token、主动消息推所有在线端）；② **共享的是判据不是 UI**——两端直引 `hmi/src` 纯逻辑模块并由台账+守卫机器守，「这句话说完了没有」「该不该抓一帧」「响应归谁」这类判据分叉时，同一用户在两端得到两个答案而**没有任何东西会红**（与 `runtime/` 那批端云共用判定同一落点判据）；③ **端侧能力两端不必对等，红线必须对等**（M4 起 App 也有端侧 VAD/唤醒词，走同一份模型同一组阈值；S2S 默认三段式、视觉默认关、声纹不作鉴权因子这三条在每个用户端都成立）。顺带补目录树里的 `mobile/`。多端最小契约面见 `conventions.md` §9.33。 |

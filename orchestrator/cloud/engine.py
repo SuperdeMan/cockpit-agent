@@ -505,6 +505,37 @@ class PlannerEngine:
             return
 
         new_plan = plan is None
+        if plan is not None:
+            # 恢复轮只从 pending_plan 取得任务起点；本轮 text 仍留在 ctx.raw_text
+            # 给 Agent 填槽，绝不能把“深圳/拿铁/确认”升级成副作用授权依据。
+            ctx.safety_origin_text = str(
+                getattr(plan, "safety_origin_text", "") or ""
+            )
+            kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
+                plan.steps, ctx.safety_origin_text,
+            )
+            if blocked:
+                logger.warning(
+                    "Restored plan has side-effecting step(s) incompatible with "
+                    "its safety origin %s; dropping before dispatch",
+                    [step.intent for step in blocked],
+                )
+                plan.steps = kept
+                if not kept:
+                    await self._close_pending(ctx, pending)
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.safety_origin_blocked",
+                        "system.safety_origin_blocked",
+                    )
+                    speech = (
+                        "刚才挂起的操作和最初请求不一致，为安全起见没有执行，"
+                        "请重新发起。"
+                        if ctx.safety_origin_text else
+                        "刚才挂起的操作缺少可验证的原始请求，为安全起见没有执行，"
+                        "请重新发起。"
+                    )
+                    yield {"kind": "final", "speech": speech}
+                    return
         if plan is None:
             # ws8 P1: 注入检测——疑似 prompt injection 时拦截，不进 Planner
             from security.injection import detect_injection
@@ -588,6 +619,10 @@ class PlannerEngine:
             plan = await self.planner.build(
                 text, working_set, ctx,
                 granted_permissions=ctx.granted_permissions)
+            # 新任务的起点只能由 engine 使用本轮服务端 request.text 盖章。
+            # Planner/Agent 给出的 goal/reason 即使看起来更像指令也没有这项权威。
+            plan.safety_origin_text = text
+            ctx.safety_origin_text = text
 
             # R4.4 D6-1：hands-free 语音源 + LLM 判非受话 → 静默拒识（route_hints 兜底的 steps
             # 一并作废）。显式输入（push-to-talk/文本/候选选择）无 input_source，永不拒识。必须在
@@ -784,6 +819,7 @@ class PlannerEngine:
             stream = StreamTracker()
             softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
             final_sr: StepResult | None = None
+            response_violation: StepResult | None = None
             try:
                 async for kind, payload in self.clients.call_agent_stream(
                         step.endpoint, step.intent, step.slots, ctx, step.meta):
@@ -797,12 +833,27 @@ class PlannerEngine:
                         if payload:
                             yield {"kind": "speech", "delta": payload}
                     elif kind == "action":
+                        if bool(getattr(step, "response_only", False)):
+                            response_violation = self.executor._enforce_response_only(
+                                step,
+                                StepResult(
+                                    step_id=step.id,
+                                    status=StepStatus.OK,
+                                    actions=[{"type": "stream_action"}],
+                                ),
+                            )
+                            continue
                         stream.on_action()
                         yield {"kind": "action", "action": payload}
                     elif kind == "final":
                         final_sr = DagExecutor._to_result(step.id, payload)
             except Exception as e:
                 logger.warning("Single-step stream failed (%s); falling back to unary", e)
+
+            if response_violation is not None:
+                final_sr = response_violation
+            elif final_sr is not None:
+                final_sr = self.executor._enforce_response_only(step, final_sr)
 
             if final_sr is not None:
                 stream.on_final()
@@ -1109,7 +1160,39 @@ class PlannerEngine:
             logger.warning("Escalate target intent %r has no serving agent; ignored",
                            esc["intent"])
             return
-        mini = Plan(steps=steps, raw_text=ctx.raw_text)
+
+        # Agent 的改派声明仍是非可信控制面输入：目标步已先经 manifest 权威装配，
+        # 但在发过程事件、记 span 或交 executor 之前，还必须用服务端持有的本轮原话
+        # 过同一份问句副作用闸。esc.reason / 原计划 goal / Agent speech 都不具备
+        # 这项安全权威。两条消费路径（D0 与普通 executor）在此唯一接收点汇合。
+        safety_origin_text = str(
+            getattr(ctx, "safety_origin_text", "") or ""
+        )
+        kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
+            steps, safety_origin_text,
+        )
+        if blocked:
+            logger.warning(
+                "Question-shaped utterance escalated into side-effecting step(s) %s; "
+                "dropping before dispatch",
+                [step.intent for step in blocked],
+            )
+        if kept:
+            mini = Plan(
+                steps=kept,
+                raw_text=ctx.raw_text,
+                safety_origin_text=safety_origin_text,
+            )
+        else:
+            # 全部被拦时只允许 declaration-backed、未确认且能再次通过同一 guard
+            # 的 response-only 能力回答。没有这样的出口就保持 sink 为空，零 dispatch。
+            if not safety_origin_text:
+                return
+            mini = self.planner._talk_only_plan(safety_origin_text, agents)
+            if mini is None:
+                return
+            mini.safety_origin_text = safety_origin_text
+        steps = mini.steps
         show_esc_process = is_complex(mini)
         if show_esc_process:
             for s in mini.steps:
@@ -1913,6 +1996,13 @@ class PlannerEngine:
             restored = Plan(
                 steps=steps,
                 raw_text=state.pending_plan.get("raw_text", ""),
+                # Rolling-upgrade compatibility is deliberately narrow: only the
+                # persisted server-owned raw_text may backfill an older record.
+                # goal is LLM-controlled and must never become an authorization source.
+                safety_origin_text=(
+                    state.pending_plan.get("safety_origin_text", "")
+                    or state.pending_plan.get("raw_text", "")
+                ),
                 complexity=state.pending_plan.get("complexity", "simple"),
                 goal=state.pending_plan.get("goal", ""),
             )
@@ -1959,6 +2049,7 @@ class PlannerEngine:
                  "kind": s.kind, "deployment": s.deployment,
                  "intent": s.intent, "slots": s.slots, "depends_on": s.depends_on,
                  "slot_refs": s.slot_refs, "require_confirm": s.require_confirm,
+                 "response_only": bool(getattr(s, "response_only", False)),
                  "latency_budget_ms": s.latency_budget_ms,
                  "required_permissions": s.required_permissions,
                  "trust_level": s.trust_level,
@@ -1969,6 +2060,9 @@ class PlannerEngine:
                 for s in plan.steps
             ],
             "raw_text": plan.raw_text,
+            "safety_origin_text": str(
+                getattr(plan, "safety_origin_text", "") or ""
+            ),
             "complexity": plan.complexity,
             "goal": plan.goal,
             # T2 知识继承跨挂起（2026-07-27 评审二批）：不存 skills 的话，补槽/确认恢复后

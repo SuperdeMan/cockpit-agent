@@ -49,6 +49,8 @@ class Step:
     # 整句型能力（QA 余项，2026-08-29）：这一步消费的是整句原话，一次把这句话里的
     # 事全办完 ⇒ **同一份计划里最多一步**。声明在 capability，编排通用消费。
     whole_utterance: bool = False
+    # 直接回答能力：只能返回零动作 OK/FAILED；manifest 是唯一权威。
+    response_only: bool = False
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -141,6 +143,11 @@ class Plan:
     # catalog_stats=能力目录渲染统计 {chars_full, chars_final, dropped:[agent_id]}——
     # D1「预算裁剪静默丢域」从此可见；空 dict=本轮未采集。
     catalog_stats: dict = field(default_factory=dict)
+    # 服务端持有的**任务起点原话**，只用于跨 replan/escalate 的安全判定。
+    # 与 raw_text 分开：挂起续接时 raw_text/PlanContext.raw_text 必须继续承载当前槽答案，
+    # 而本字段从最初请求起保持不变并随 pending_plan 持久化。LLM goal/reason 无权写它。
+    # 放在末尾以保持既有 Plan 位置参数契约不变。
+    safety_origin_text: str = ""
 
 
 @dataclass
@@ -150,8 +157,9 @@ class ReplanDecision:
     steps: list[Step] = field(default_factory=list)
     skill_effects: list[str] = field(default_factory=list)
 
-    def to_plan(self, goal: str = "") -> Plan:
+    def to_plan(self, goal: str = "", safety_origin_text: str = "") -> Plan:
         return Plan(steps=self.steps, complexity="adaptive", goal=goal,
+                    safety_origin_text=safety_origin_text,
                     skill_effects=list(self.skill_effects))
 
 
@@ -189,7 +197,9 @@ class PlanContext:
     # 只有 step 与待补槽集**都没变**才算原地打转，计数才 +1。
     pending_slot_probe: dict = field(default_factory=dict)
     trace_id: str = ""
-    raw_text: str = ""  # 用户原始话术，透传给 Agent（供 fallback 槽位提取）
+    # **当前这一轮**的用户原话，透传给 Agent（补槽轮就是“深圳/拿铁/确认”）。
+    # 安全判定不得复用它；跨挂起不变的任务起点在 safety_origin_text。
+    raw_text: str = ""
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
     # 来源 HandleRequest.meta，调用 Agent 时并入 ExecuteRequest.meta 透传。
     prefs: dict[str, str] = field(default_factory=dict)
@@ -223,6 +233,9 @@ class PlanContext:
     # 承诺被架空——executor 按本字段限龄（MERCHANT_STORE_ANCHOR_MAX_AGE_S），
     # 0 = 来源没有时间戳（旧焦点数据），按过期处理。
     focus_places_ts: float = 0.0
+    # 服务端权威的任务起点原话；不来自 Agent/LLM，不下发替代 raw_text。
+    # 放在末尾以保持既有 PlanContext 位置参数契约不变。
+    safety_origin_text: str = ""
 
 
 @dataclass

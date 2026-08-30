@@ -593,7 +593,8 @@ def _manifest_to_dict(manifest) -> dict:
     caps = []
     for c in getattr(manifest, "capabilities", []):
         cap = {}
-        for ck in ("intent", "description", "examples", "require_confirm", "heavy"):
+        for ck in ("intent", "description", "examples", "require_confirm", "heavy",
+                   "response_only"):
             cap[ck] = getattr(c, ck, None if ck != "examples" else [])
         cap["slots"] = list(getattr(c, "slots", []))
         # M2 Verifier：非 proto manifest（测试/内存 Store 的 dataclass 形态）也要带上声明，
@@ -652,6 +653,7 @@ def _dict_to_manifest(d: dict):
             examples=list(c.get("examples") or []),
             require_confirm=bool(c.get("require_confirm", False)),
             heavy=bool(c.get("heavy", False)),
+            response_only=bool(c.get("response_only", False)),
             # M2 Verifier：**必须随 round-trip 还原**——R2.1 当年 route_hints 正是在这里丢过，
             # registry 重启恢复后声明静默失效、执行后对账形同虚设（契约测试 test_store_roundtrip）。
             verification=_dict_to_verification(c.get("verification")),

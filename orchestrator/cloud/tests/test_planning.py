@@ -29,7 +29,7 @@ def _load_route_hints(agent_id):
 class MockAgent:
     def __init__(self, agent_id, intents, *, kind="agent", deployment="cloud",
                  permissions=None, trust_level="first_party",
-                 whole_utterance=(), require_confirm=()):
+                 whole_utterance=(), require_confirm=(), response_only=()):
         self.manifest = MagicMock()
         self.manifest.agent_id = agent_id
         self.manifest.capabilities = []
@@ -49,6 +49,7 @@ class MockAgent:
             # **每个 mock 能力都会被当成整句型**，同 intent 的第二步被静默收掉。
             cap.whole_utterance = intent in (whole_utterance or ())
             cap.require_confirm = intent in (require_confirm or ())
+            cap.response_only = intent in (response_only or ())
             self.manifest.capabilities.append(cap)
         # 真实 manifest 的确定性路由提示（R2.1）；未声明的 agent 为空列表。
         self.manifest.route_hints = _load_route_hints(agent_id)
@@ -60,11 +61,15 @@ def test_mock_agent_confirmation_flags_are_plain_booleans():
         "demo",
         ["demo.query", "demo.write"],
         require_confirm=("demo.write",),
+        response_only=("demo.query",),
     )
 
     flags = [cap.require_confirm for cap in agent.manifest.capabilities]
     assert flags == [False, True]
     assert all(type(flag) is bool for flag in flags)
+    response_flags = [cap.response_only for cap in agent.manifest.capabilities]
+    assert response_flags == [True, False]
+    assert all(type(flag) is bool for flag in response_flags)
 
 
 def test_build_with_valid_json():

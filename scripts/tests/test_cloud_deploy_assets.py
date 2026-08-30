@@ -2135,6 +2135,9 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
     claude = _required_text(ROOT / "CLAUDE.md")
     readme = _required_text(ROOT / "README.md")
     test_readme = _required_text(ROOT / "test" / "README.md")
+    qa_handoff = _required_text(
+        ROOT / "docs" / "reviews" / "2026-08-30-qa-closeout-handoff.md"
+    )
     release_design = _required_text(
         ROOT / "docs" / "superpowers" / "specs"
         / "2026-08-16-cloud-release-workflow-design.md"
@@ -2149,20 +2152,29 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
     )
 
     for required in (
-        "c7c211bedb4ff504dfceaf09e652c7875bdaebb8",
-        "5/5 healthy",
-        "探针**自动计分 282 PASS / 33 FAIL**",
-        "手工漏检",
-        "不是 QA 全绿基线",
-        "docs/reviews/2026-08-26-minimax-cloud-qa-findings.md",
+        "a729b984a7e66f508d0a11218713b6e51c8f7620",
+        "5/5 endpoint healthy",
+        "QA 仍非全绿",
+        "docs/reviews/2026-08-30-qa-closeout-handoff.md",
+        "origin/main..HEAD",
     ):
         assert required in agents
     for stale in (
-        "TOCTOU / runbook 后续硬化在本地 main",
-        "截至本次编辑尚未 cloud deploy / apply",
-        "没有 current-SHA MiniMax long probe/C14",
+        "c7c211bedb4ff504dfceaf09e652c7875bdaebb8",
+        "云端 release **`538335f",
+        "#### QA 轮剩余项收尾批",
     ):
         assert stale not in agents
+
+    for required in (
+        "7770 passed / 32 skipped / 13 warnings",
+        "57/59 PASS",
+        "安全问句偶尔落 `info.search`",
+        "safety focus 持续阻断后续 charging plan",
+        "rate limit exceeded (RPM)",
+        "QA 验收仍非全绿",
+    ):
+        assert required in qa_handoff
 
     for required in (
         "早期 checkpoint",
@@ -2176,13 +2188,14 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
         assert required in release_design
     assert "待最终复审和统一 push" not in release_design
 
-    assert "精确云端 release、健康状态与当前验收结论" in claude
+    assert "QA/发布交接" in claude
+    assert "当前 release、测试数字、QA 活项不在本文件维护" in claude
     assert "**进行中：探索式真实用户 QA 轮**" not in claude
     assert "云端 release `34d72d7`" not in claude
 
-    assert "当前精确 SHA / passed / skipped 只查 `AGENTS.md` §4.0" in readme
+    assert "docs/reviews/2026-08-30-qa-closeout-handoff.md" in readme
     assert "**6933 passed / 32 skipped / 0 failed**" not in readme
-    assert "README 不维护易腐计数" in readme
+    assert "当前 release、QA 证据与活项以" in readme
 
     assert "前端不在 `AGENTS.md` 重复维护计数" in test_readme
     assert "不在运行手册维护易腐计数" in test_readme

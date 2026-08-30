@@ -1033,6 +1033,26 @@ def test_toolcall_numeric_slot_normalized_via_validated_steps(monkeypatch):
     assert plan.steps[0].slots["temperature"] == "24"
 
 
+def test_toolcall_null_slot_is_absent_but_other_falsey_values_survive(monkeypatch):
+    """JSON null means an omitted optional slot; 0/false/empty-string remain real values."""
+    monkeypatch.setenv("PLANNER_TOOLCALL", "on")
+    args = {"addressed": True,
+            "steps": [{"id": "s1", "capability_ref": "cap_0002",
+                       "slots": {"query": "钠离子电池", "limit": None,
+                                 "offset": 0, "enabled": False, "empty": ""},
+                       "depends_on": [], "slot_refs": {}}]}
+    spy = _SpyLLM(tool_reply=("", [{"id": "c1", "name": _SUBMIT_PLAN_NAME,
+                                    "arguments": args}]))
+    builder = PlanBuilder(
+        llm_fn=spy.llm, registry_fn=_no_resolve, llm_tool_fn=spy.llm_tools)
+
+    plan = _build(builder, "再搜索一下钠离子电池最近的产业化进展")
+
+    assert plan.steps[0].slots == {
+        "query": "钠离子电池", "offset": "0", "enabled": "False", "empty": "",
+    }
+
+
 def test_toolcall_unwraps_provider_freeform_object_text_envelope(monkeypatch):
     """MiniMax may encode a free-form object in a synthetic ``$text`` field."""
     monkeypatch.setenv("PLANNER_TOOLCALL", "on")

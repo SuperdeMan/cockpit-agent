@@ -17,10 +17,13 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
+from orchestrator.cloud.models import PlanContext
 from orchestrator.cloud.session import SessionStore
 
 _SINGLE_PLAN = json.dumps({"steps": [
@@ -40,9 +43,12 @@ _ESC = {"_escalate": {"intent": "info.search",
 
 
 class _Cap:
-    def __init__(self, intent, heavy=False):
+    def __init__(self, intent, heavy=False, require_confirm=False,
+                 response_only=False):
         self.intent, self.slots, self.description = intent, [], intent
         self.heavy = heavy
+        self.require_confirm = require_confirm
+        self.response_only = response_only
         self.examples = []
 
 
@@ -50,14 +56,29 @@ def _agents():
     chitchat = SimpleNamespace(manifest=SimpleNamespace(
         agent_id="chitchat", trust_level="first_party", latency_budget_ms=2000,
         deployment="cloud", requires_permissions=[], context_scopes=[],
-        capabilities=[_Cap("chitchat.talk")], route_hints=[],
+        capabilities=[_Cap("chitchat.talk", response_only=True)], route_hints=[],
     ), endpoint="stub:50062")
     info = SimpleNamespace(manifest=SimpleNamespace(
         agent_id="info", trust_level="first_party", latency_budget_ms=50000,
         deployment="cloud", requires_permissions=[], context_scopes=[],
         capabilities=[_Cap("info.search", heavy=True)], route_hints=[],
     ), endpoint="stub:50063")
-    return [chitchat, info]
+    edge = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="edge-vehicle", trust_level="first_party", latency_budget_ms=2000,
+        deployment="edge", kind="edge_fast", requires_permissions=[], context_scopes=[],
+        capabilities=[_Cap("warning_light.close")], route_hints=[],
+    ), endpoint="stub:50064")
+    merchant = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="mcp-bridge", trust_level="first_party", latency_budget_ms=5000,
+        deployment="cloud", kind="agent", requires_permissions=[], context_scopes=[],
+        capabilities=[_Cap("luckin.order", require_confirm=True)], route_hints=[],
+    ), endpoint="stub:50065")
+    manual = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="manual", trust_level="first_party", latency_budget_ms=5000,
+        deployment="cloud", kind="agent", requires_permissions=[], context_scopes=[],
+        capabilities=[_Cap("manual.query")], route_hints=[],
+    ), endpoint="stub:50066")
+    return [chitchat, info, edge, merchant, manual]
 
 
 class _Resp:
@@ -76,6 +97,7 @@ class _EscSpy:
         self.unary_seq = list(unary_seq or [])   # [(intent_expected_or_None, _Resp)] 顺序出队
         self.stream_calls: list[str] = []
         self.unary_calls: list[tuple[str, dict, dict]] = []
+        self.unary_ctx_raw_texts: list[str] = []
 
     async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
         self.stream_calls.append(intent)
@@ -84,6 +106,7 @@ class _EscSpy:
 
     async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None):
         self.unary_calls.append((intent, dict(slots or {}), dict(meta or {})))
+        self.unary_ctx_raw_texts.append(str(getattr(ctx, "raw_text", "") or ""))
         if self.unary_seq:
             return self.unary_seq.pop(0)
         return _Resp(speech=f"（{intent} 兜底）")
@@ -214,3 +237,160 @@ def test_streamed_reply_ignores_escalate():
 
     assert not spy.unary_calls                                   # 未改派
     assert events[-1]["speech"] == "早上好呀。"
+
+
+@pytest.mark.parametrize("route", ["d0", "executor"])
+@pytest.mark.parametrize("intent", ["warning_light.close", "luckin.order"])
+def test_question_escalate_replaces_blocked_target_with_safe_response(route, intent):
+    """问句改派不能执行 edge 写/manifest-confirmed cloud，须走声明式安全回答。"""
+    esc = {"_escalate": {
+        "intent": intent, "slots": {}, "reason": "model_redirect",
+    }}
+    safe = _Resp(
+        speech="红色机油灯表示润滑系统可能异常，请立即安全停车并联系救援。",
+        data={"_escalate": {
+            "intent": "warning_light.close", "slots": {},
+            "reason": "second_hop",
+        }},
+    )
+    if route == "d0":
+        spy = _EscSpy(
+            script=[("final", _Resp(speech="", data=esc))],
+            unary_seq=[safe],
+        )
+    else:
+        spy = _EscSpy(unary_seq=[_Resp(speech="", data=esc), safe])
+    engine, session = _make_engine(spy)
+
+    events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
+
+    called = [call[0] for call in spy.unary_calls]
+    assert intent not in called
+    assert called[-1] == "chitchat.talk"
+    assert "请立即安全停车" in events[-1]["speech"]
+    assert not any(event.get("kind") == "action" for event in events)
+    assert not any(event.get("need_confirm") for event in events)
+    assert called.count("warning_light.close") == 0  # replacement 的二跳也不得消费
+    assert asyncio.run(session.load("sess-esc", owner_user_id="u1")) is None
+
+
+def test_directive_escalate_to_edge_write_still_dispatches():
+    esc = {"_escalate": {
+        "intent": "warning_light.close", "slots": {},
+        "reason": "model_redirect",
+    }}
+    spy = _EscSpy(
+        script=[("final", _Resp(speech="", data=esc))],
+        unary_seq=[_Resp(speech="已关闭双闪。")],
+    )
+    engine, _ = _make_engine(spy)
+
+    events = _run(engine, _req("关闭双闪"))
+
+    assert [call[0] for call in spy.unary_calls].count("warning_light.close") == 1
+    assert events[-1]["speech"] == "已关闭双闪。"
+
+
+def test_d0_question_escalate_to_cloud_read_still_dispatches():
+    esc = {"_escalate": {
+        "intent": "manual.query", "slots": {}, "reason": "model_redirect",
+    }}
+    spy = _EscSpy(
+        script=[("final", _Resp(speech="", data=esc))],
+        unary_seq=[_Resp(speech="请立即安全停车并查阅车辆手册。")],
+    )
+    engine, _ = _make_engine(spy)
+
+    events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
+
+    assert [call[0] for call in spy.unary_calls] == ["manual.query"]
+    assert events[-1]["speech"] == "请立即安全停车并查阅车辆手册。"
+
+
+def test_executor_question_escalate_to_cloud_read_still_dispatches():
+    esc = {"_escalate": {
+        "intent": "manual.query", "slots": {}, "reason": "model_redirect",
+    }}
+    spy = _EscSpy(unary_seq=[
+        _Resp(speech="", data=esc),
+        _Resp(speech="请立即安全停车并查阅车辆手册。"),
+    ])
+    engine, _ = _make_engine(spy)
+
+    events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
+
+    assert [call[0] for call in spy.unary_calls].count("manual.query") == 1
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"]
+
+
+def test_blocked_escalate_without_safe_response_has_no_dispatch():
+    async def run_case():
+        spy = _EscSpy()
+        engine, _ = _make_engine(spy)
+        sink = {}
+        ctx = PlanContext(raw_text="红色机油灯亮了还能继续开吗")
+        agents = [agent for agent in _agents()
+                  if agent.manifest.agent_id != "chitchat"]
+        events = [event async for event in engine._run_escalated(
+            {"intent": "warning_light.close", "slots": {},
+             "reason": "redirect"},
+            ctx, agents, sink,
+        )]
+        return spy, sink, events
+
+    spy, sink, events = asyncio.run(run_case())
+
+    assert "warning_light.close" not in [call[0] for call in spy.unary_calls]
+    assert sink == {}
+    assert events == []
+
+
+@pytest.mark.parametrize("intent", ["warning_light.close", "luckin.order"])
+def test_resumed_escalate_uses_origin_but_agent_keeps_current_slot_answer(intent):
+    """安全判定看首句，Agent 上下文仍看本轮“拿铁”；两者不可互相覆盖。"""
+    async def run_case():
+        safe = _Resp(speech="请立即安全停车并联系救援。")
+        spy = _EscSpy(unary_seq=[safe])
+        engine, _ = _make_engine(spy)
+        sink = {}
+        ctx = PlanContext(
+            raw_text="拿铁",
+            safety_origin_text="红色机油灯亮了还能继续开吗",
+        )
+        events = [event async for event in engine._run_escalated(
+            {"intent": intent, "slots": {}, "reason": "redirect"},
+            ctx, _agents(), sink,
+        )]
+        return spy, sink, events, ctx
+
+    spy, sink, _events, ctx = asyncio.run(run_case())
+
+    called = [item[0] for item in spy.unary_calls]
+    assert intent not in called
+    assert called == ["chitchat.talk"]
+    assert spy.unary_calls[0][1]["text"] == "红色机油灯亮了还能继续开吗"
+    assert spy.unary_ctx_raw_texts == ["拿铁"]
+    assert ctx.raw_text == "拿铁"
+    assert sink["results"][0].speech == "请立即安全停车并联系救援。"
+
+
+def test_unknown_legacy_origin_blocks_escalated_write_but_allows_read():
+    async def run_target(intent):
+        spy = _EscSpy(unary_seq=[_Resp(speech="read result")])
+        engine, _ = _make_engine(spy)
+        sink = {}
+        ctx = PlanContext(raw_text="确认", safety_origin_text="")
+        awaitables = engine._run_escalated(
+            {"intent": intent, "slots": {}, "reason": "legacy"},
+            ctx, _agents(), sink,
+        )
+        _ = [event async for event in awaitables]
+        return spy, sink
+
+    write_spy, _ = asyncio.run(run_target("warning_light.close"))
+    read_spy, read_sink = asyncio.run(run_target("manual.query"))
+
+    assert "warning_light.close" not in [item[0] for item in write_spy.unary_calls]
+    assert [item[0] for item in read_spy.unary_calls] == ["manual.query"]
+    assert read_sink["results"][0].speech == "read result"

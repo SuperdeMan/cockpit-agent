@@ -6,6 +6,8 @@ registry 重启恢复经 _manifest_to_dict→JSON→_dict_to_manifest 还原 Age
 踩过），verification 丢了执行后对账不生效（M2 同一类坑，故一并钉死在本文件）。
 单测用 MockAgent 直挂字段会漏掉这条真栈路径。
 """
+from types import SimpleNamespace
+
 from google.protobuf.struct_pb2 import Struct
 from cockpit.agent.v1 import agent_pb2
 from registry.store import _manifest_to_dict, _dict_to_manifest
@@ -91,3 +93,35 @@ def test_manifest_roundtrip_survives_json_serialization():
     assert restored.capabilities[0].verification.mode == "state_match"
     assert dict(dict(restored.capabilities[0].verification.expect)["keys"]) == {
         "hvac_on": "true"}
+
+
+def test_manifest_roundtrip_preserves_response_only_and_default_false():
+    """Registry 重启后 response-only 权威不得丢失，未声明能力仍保持 false。"""
+    manifest = agent_pb2.AgentManifest(
+        agent_id="chitchat",
+        capabilities=[
+            agent_pb2.Capability(intent="chitchat.talk", response_only=True),
+            agent_pb2.Capability(intent="chitchat.audit"),
+        ],
+    )
+
+    restored = _dict_to_manifest(_manifest_to_dict(manifest))
+
+    assert restored.capabilities[0].response_only is True
+    assert restored.capabilities[1].response_only is False
+
+
+def test_non_proto_manifest_roundtrip_preserves_response_only():
+    """测试/内存形态同样要把 response_only 写入持久化 dict。"""
+    manifest = SimpleNamespace(
+        agent_id="chitchat",
+        capabilities=[
+            SimpleNamespace(intent="chitchat.talk", response_only=True),
+        ],
+    )
+
+    serialized = _manifest_to_dict(manifest)
+    assert serialized["capabilities"][0].get("response_only") is True
+
+    restored = _dict_to_manifest(serialized)
+    assert restored.capabilities[0].response_only is True

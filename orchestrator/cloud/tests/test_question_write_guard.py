@@ -33,7 +33,8 @@ import sys
 import pytest
 
 from orchestrator.cloud.context import WorkingSet
-from orchestrator.cloud.models import Plan, PlanContext, Step
+from orchestrator.cloud.engine import PlannerEngine
+from orchestrator.cloud.models import Plan, PlanContext, SessionState, Step
 from orchestrator.cloud.planning import (
     PlanBuilder, _assemble_capability_catalog,
 )
@@ -55,6 +56,13 @@ def _step(
         deployment=deployment, kind=kind,
         require_confirm=require_confirm, slots={},
     )
+
+
+def _response(agent, intent):
+    next(
+        c for c in agent.manifest.capabilities if c.intent == intent
+    ).response_only = True
+    return agent
 
 
 _GUARD = PlanBuilder._question_side_effect_steps
@@ -156,7 +164,8 @@ def _build(text: str):
     agents = [
         MockAgent("edge-vehicle", ["warning_light.close"],
                   kind="edge_fast", deployment="edge"),
-        MockAgent("chitchat", ["chitchat.talk"]),
+        MockAgent("chitchat", ["chitchat.talk"],
+                  response_only=("chitchat.talk",)),
     ]
     catalog = _assemble_capability_catalog(agents)
     ref = catalog.pair_to_ref[("edge-vehicle", "warning_light.close")]
@@ -178,7 +187,8 @@ def _build_cloud_order(text: str):
     agents = [
         MockAgent("mcp-bridge", ["luckin.order"],
                   require_confirm=("luckin.order",)),
-        MockAgent("chitchat", ["chitchat.talk"]),
+        MockAgent("chitchat", ["chitchat.talk"],
+                  response_only=("chitchat.talk",)),
     ]
     catalog = _assemble_capability_catalog(agents)
     ref = catalog.pair_to_ref[("mcp-bridge", "luckin.order")]
@@ -258,6 +268,115 @@ def test_talk_only_plan_rejects_confirmed_fallback_capability():
     builder = PlanBuilder(llm_fn=None, registry_fn=None)
 
     assert builder._talk_only_plan("红色机油灯亮了还能继续开吗", [agent]) is None
+
+
+def test_manifest_value_reaches_step_and_llm_cannot_forge_it():
+    declared = _response(MockAgent("answer", ["answer.render"]), "answer.render")
+    step = PlanBuilder._validated_steps([{
+        "id": "s1", "agent_id": "answer", "intent": "answer.render",
+        "slots": {}, "depends_on": [], "slot_refs": {}, "response_only": False,
+    }], {"answer": declared})[0]
+    assert getattr(step, "response_only", False) is True
+
+    plain = MockAgent("plain", ["plain.render"])
+    step = PlanBuilder._validated_steps([{
+        "id": "s1", "agent_id": "plain", "intent": "plain.render",
+        "slots": {}, "depends_on": [], "slot_refs": {}, "response_only": True,
+    }], {"plain": plain})[0]
+    assert getattr(step, "response_only", False) is False
+
+
+def test_fallback_rejects_undeclared_talk_names():
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+    for intent in ("chitchat.talk", "foo.talk"):
+        assert builder._talk_only_plan(
+            "机油灯亮了怎么办", [MockAgent("chitchat", [intent])]
+        ) is None
+
+
+def test_fallback_allows_declared_non_talk_and_scans_past_ineligible_entries():
+    agent = MockAgent(
+        "chitchat",
+        ["chitchat.talk", "chitchat.confirmed", "chitchat.answer"],
+        require_confirm=("chitchat.confirmed",),
+    )
+    _response(agent, "chitchat.confirmed")
+    _response(agent, "chitchat.answer")
+    plan = PlanBuilder(llm_fn=None, registry_fn=None)._talk_only_plan(
+        "机油灯亮了怎么办", [agent]
+    )
+    assert [s.intent for s in plan.steps] == ["chitchat.answer"]
+    assert getattr(plan.steps[0], "response_only", False) is True
+
+
+def test_declared_response_still_has_to_survive_question_side_effect_guard():
+    edge = _response(
+        MockAgent(
+            "chitchat",
+            ["warning_light.close"],
+            kind="edge_fast",
+            deployment="edge",
+        ),
+        "warning_light.close",
+    )
+    assert PlanBuilder(llm_fn=None, registry_fn=None)._talk_only_plan(
+        "机油灯亮了怎么办", [edge]
+    ) is None
+
+
+def test_total_block_downgrades_adaptive_but_mixed_plan_does_not():
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+    fallback = _response(
+        MockAgent("chitchat", ["chitchat.answer"]), "chitchat.answer"
+    )
+    total = Plan(
+        steps=[_step("warning_light.close")],
+        complexity="adaptive",
+        raw_text="机油灯亮了怎么办",
+    )
+    total = builder._apply_question_side_effect_guard(
+        total, total.raw_text, [fallback]
+    )
+    assert total.complexity == "simple"
+    assert [s.intent for s in total.steps] == ["chitchat.answer"]
+
+    mixed = Plan(
+        steps=[
+            _step("warning_light.close"),
+            _step("manual.query", deployment="cloud", kind="agent"),
+        ],
+        complexity="adaptive",
+        raw_text="机油灯亮了怎么办",
+    )
+    mixed = builder._apply_question_side_effect_guard(
+        mixed, mixed.raw_text, [fallback]
+    )
+    assert mixed.complexity == "adaptive"
+    assert [s.intent for s in mixed.steps] == ["manual.query"]
+
+
+def test_response_only_round_trip_and_legacy_default_false():
+    step = Step(id="s1", agent_id="chitchat", intent="chitchat.answer")
+    step.response_only = True
+    state = SessionState(
+        phase="wait_slot",
+        pending_plan=PlannerEngine._serialize_plan(Plan(steps=[step])),
+        pending_step_id="s1",
+    )
+    restored, _ = PlannerEngine._restore(None, state, inject_confirmed=False)
+    assert getattr(restored.steps[0], "response_only", False) is True
+
+    legacy = SessionState(
+        phase="wait_slot",
+        pending_plan={
+            "steps": [{
+                "id": "s1", "agent_id": "legacy", "intent": "legacy.answer"
+            }]
+        },
+        pending_step_id="s1",
+    )
+    restored, _ = PlannerEngine._restore(None, legacy, inject_confirmed=False)
+    assert getattr(restored.steps[0], "response_only", False) is False
 
 
 def test_focused_question_does_not_bypass_confirmed_fallback_guard(monkeypatch):

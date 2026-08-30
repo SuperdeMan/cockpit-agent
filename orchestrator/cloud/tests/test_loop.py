@@ -40,10 +40,12 @@ class _Executor(DagExecutor):
         super().__init__(call_agent_fn=_unused_call)
         self.results_by_step = results_by_step
         self.runs = []
+        self.plans = []
         self.done_seeds = []
 
     async def run(self, plan, ctx, done=None):
         self.runs.append([step.id for step in plan.steps])
+        self.plans.append(plan)
         self.done_seeds.append(set((done or {}).keys()))
         for step in plan.steps:
             yield self.results_by_step[step.id]
@@ -62,6 +64,46 @@ def _collect(controller, **kwargs):
     async def run():
         return [event async for event in controller.run(**kwargs)]
     return asyncio.run(run())
+
+
+def _replan_case(replan_steps, *, user_text, goal="LLM goal", results=None,
+                 skill_effects=None, safety_origin_text=None):
+    planner = _Planner([
+        ReplanDecision(
+            done=False,
+            steps=replan_steps,
+            skill_effects=list(skill_effects or []),
+        ),
+    ])
+    scripted_results = {
+        "s1": StepResult("s1", StepStatus.OK, speech="已取得初始事实"),
+        **{
+            step.id: StepResult(step.id, StepStatus.OK, speech="不应执行")
+            for step in replan_steps
+        },
+        **(results or {}),
+    }
+    executor = _Executor(scripted_results)
+    controller = LoopController(
+        planner, executor, _Aggregator(), None,
+        max_iters=1, budget_ms=5000,
+    )
+    origin = user_text if safety_origin_text is None else safety_origin_text
+    initial = Plan(
+        steps=[Step(id="s1", agent_id="info", intent="manual.query")],
+        complexity="adaptive",
+        skills=["full:safety-guide"],
+        exemplars=["full:manual#safety@lex"],
+        safety_origin_text=origin,
+    )
+    ctx = PlanContext(raw_text=user_text, safety_origin_text=origin)
+    events = _collect(
+        controller,
+        goal=goal,
+        initial_plan=initial,
+        agents=[], ctx=ctx, user_text=user_text,
+    )
+    return planner, executor, events
 
 
 def test_observation_summary_carries_known_step_intent():
@@ -126,6 +168,106 @@ def test_adaptive_loop_executes_initial_batch_then_replans_until_done():
     assert planner.observations[0][-1]["data"] == {"available": False}
     assert events[-1]["speech"] == "best effort"
     assert suspended == []
+
+
+def test_question_replan_edge_write_uses_user_text_not_llm_goal_and_never_dispatches():
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    planner, executor, events = _replan_case(
+        [step], user_text="红色机油灯亮了怎么办", goal="关闭故障灯",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert planner.observations[0][-1]["step_id"] == "s1"
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"] == "best effort"
+
+
+def test_resumed_replan_uses_original_request_not_current_slot_answer():
+    """补槽轮的“深圳”不是授权；安全闸必须继续看最初的机油灯问句。"""
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    _, executor, events = _replan_case(
+        [step],
+        user_text="深圳",
+        goal="红色机油灯亮了还能继续开吗",
+        safety_origin_text="红色机油灯亮了还能继续开吗",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert events[-1]["kind"] == "final"
+
+
+def test_question_replan_confirmed_cloud_step_never_dispatches():
+    step = Step(
+        id="r1", agent_id="mcp-bridge", intent="luckin.order",
+        deployment="cloud", kind="agent", require_confirm=True,
+    )
+
+    _, executor, events = _replan_case(
+        [step], user_text="红色机油灯亮了还能继续开吗",
+    )
+
+    assert executor.runs == [["s1"]]
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"] == "best effort"
+
+
+def test_question_replan_cloud_read_still_dispatches():
+    step = Step(
+        id="r1", agent_id="manual", intent="manual.query",
+        deployment="cloud", kind="agent",
+    )
+
+    _, executor, _ = _replan_case(
+        [step], user_text="红色机油灯亮了怎么办",
+        results={"r1": StepResult(
+            "r1", StepStatus.OK, speech="请停车检查",
+        )},
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+
+
+def test_directive_replan_edge_write_still_dispatches():
+    step = Step(
+        id="r1", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    _, executor, _ = _replan_case(
+        [step], user_text="关闭双闪",
+        results={"r1": StepResult("r1", StepStatus.OK, speech="已关闭")},
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+
+
+def test_mixed_question_replan_keeps_read_and_preserves_observation_chain():
+    read = Step(id="r1", agent_id="manual", intent="manual.query")
+    write = Step(
+        id="r2", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    planner, executor, _ = _replan_case(
+        [read, write], user_text="红色机油灯亮了怎么办",
+        results={"r1": StepResult("r1", StepStatus.OK, speech="停车检查")},
+        skill_effects=["repair:keep-read"],
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+    assert executor.plans[1].steps[0] is read
+    assert executor.plans[1].skill_effects == ["repair:keep-read"]
+    assert executor.plans[1].skills == ["full:safety-guide"]
+    assert executor.plans[1].exemplars == ["full:manual#safety@lex"]
+    assert [obs["step_id"] for obs in planner.observations[0]] == ["s1"]
 
 
 def test_adaptive_selfcheck_flag_is_raised_only_on_the_first_replan():
@@ -530,6 +672,103 @@ def test_replan_plan_inherits_skills_through_suspend_chain():
     assert restored.exemplars == exemplars
 
 
+def test_replan_safety_origin_survives_suspend_restore_and_blocks_next_write():
+    """replan→NEED_SLOT→pending round-trip 后，下一次 replan 仍由首句安全问句约束。"""
+    from orchestrator.cloud.engine import PlannerEngine
+    from orchestrator.cloud.models import SessionState
+
+    origin = "红色机油灯亮了还能继续开吗"
+    first_planner = _Planner([ReplanDecision(done=False, steps=[
+        Step(id="r1", agent_id="manual", intent="manual.query"),
+    ])])
+    first_executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="需要查手册"),
+        "r1": StepResult(
+            "r1", StepStatus.NEED_SLOT, speech="请说车型",
+            missing_slots=["model"],
+        ),
+    })
+    captured = []
+
+    async def suspend(_result, _results, plan, _ctx, prior=None):
+        captured.append(plan)
+        return {"kind": "final", "speech": "suspended"}
+
+    initial = Plan(
+        steps=[Step(id="s1", agent_id="info", intent="info.search")],
+        raw_text=origin, complexity="adaptive", goal=origin,
+        safety_origin_text=origin,
+    )
+    first_ctx = PlanContext(raw_text=origin, safety_origin_text=origin)
+    _collect(
+        LoopController(
+            first_planner, first_executor, _Aggregator(), suspend,
+            max_iters=2, budget_ms=5000,
+        ),
+        goal=origin, initial_plan=initial, agents=[], ctx=first_ctx,
+        user_text=origin,
+    )
+
+    assert captured and captured[0].safety_origin_text == origin
+    snap = PlannerEngine._serialize_plan(captured[0])
+    assert snap["safety_origin_text"] == origin
+    restored, _ = PlannerEngine._restore(
+        None,
+        SessionState(
+            phase="wait_slot", pending_plan=snap, pending_step_id="r1",
+        ),
+        inject_confirmed=False,
+    )
+    assert restored is not None and restored.safety_origin_text == origin
+
+    write = Step(
+        id="r2", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+    second_planner = _Planner([
+        ReplanDecision(done=False, steps=[write]),
+    ])
+    second_executor = _Executor({
+        "r1": StepResult(
+            "r1", StepStatus.OK, speech="车型已收到", data={"replan": True},
+        ),
+        "r2": StepResult("r2", StepStatus.OK, speech="不应执行"),
+    })
+    second_ctx = PlanContext(
+        raw_text="深圳", safety_origin_text=restored.safety_origin_text,
+    )
+    events = _collect(
+        LoopController(
+            second_planner, second_executor, _Aggregator(), None,
+            max_iters=1, budget_ms=5000,
+        ),
+        goal=restored.goal, initial_plan=restored, agents=[], ctx=second_ctx,
+        user_text="深圳",
+    )
+
+    assert second_executor.runs == [["r1"]]
+    assert events[-1]["kind"] == "final"
+
+
+def test_unknown_legacy_origin_blocks_side_effect_but_keeps_read_step():
+    """旧 pending 连 raw_text 都没有时，不可信 goal/current answer 均不能授权副作用。"""
+    read = Step(id="r1", agent_id="manual", intent="manual.query")
+    write = Step(
+        id="r2", agent_id="edge-vehicle", intent="warning_light.close",
+        deployment="edge", kind="edge_fast",
+    )
+
+    _, executor, _ = _replan_case(
+        [read, write],
+        user_text="确认",
+        goal="关闭故障灯",
+        safety_origin_text="",
+        results={"r1": StepResult("r1", StepStatus.OK, speech="请停车检查")},
+    )
+
+    assert executor.runs == [["s1"], ["r1"]]
+
+
 def _wrap_planner(planner):
     """记录 replan 收到的 skill_names / exemplar_names（不改共享 _Planner 契约面）。"""
     class _Rec:
@@ -560,12 +799,13 @@ def _wrap_planner(planner):
 # 对照 engine.py 的 T1 D0 路径（speech/action 一到就置 True）实现是对的。
 
 
-def _one_step_plan(intent="test.do"):
-    return Plan(
-        steps=[Step(id="s1", agent_id="a", kind="agent", deployment="cloud",
-                    intent=intent, latency_budget_ms=5000)],
-        complexity="adaptive",
+def _one_step_plan(intent="test.do", *, response_only=False):
+    step = Step(
+        id="s1", agent_id="a", kind="agent", deployment="cloud",
+        intent=intent, latency_budget_ms=5000,
     )
+    step.response_only = response_only
+    return Plan(steps=[step], complexity="adaptive")
 
 
 def _run_stream_case(stream_fn):
@@ -582,6 +822,87 @@ def _run_stream_case(stream_fn):
         ctx=PlanContext(), user_text="test",
     )
     return executor, events
+
+
+def _capture_response_only_stream_result(stream_fn):
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="executor result"),
+    })
+    aggregator = _Aggregator()
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    events = _collect(
+        controller,
+        goal="answer safely",
+        initial_plan=_one_step_plan("chitchat.talk", response_only=True),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="红色机油灯亮了怎么办",
+    )
+    captured = [
+        result
+        for _text, results in aggregator.calls
+        for result in results
+    ][-1]
+    return executor, captured, events
+
+
+def test_t2_response_only_action_before_final_is_dropped_and_failed_closed():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+
+        yield ("action", {"type": "external.write", "payload": {"id": "x"}})
+        yield ("final", agent_pb2.ExecuteResponse(status=0, speech="已处理"))
+
+    executor, captured, events = _capture_response_only_stream_result(stream_fn)
+
+    assert not [event for event in events if event["kind"] == "action"]
+    assert executor.runs == []
+    assert captured.status == StepStatus.FAILED
+    assert captured.actions == []
+    assert captured.error == "response_only_contract_violation"
+    assert not events[-1].get("need_confirm")
+
+
+def test_t2_response_only_action_without_final_is_terminal_without_unary_fallback():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("action", {"type": "external.write", "payload": {"id": "x"}})
+
+    executor, captured, events = _capture_response_only_stream_result(stream_fn)
+
+    assert not [event for event in events if event["kind"] == "action"]
+    assert executor.runs == []
+    assert captured.status == StepStatus.FAILED
+    assert captured.actions == []
+    assert captured.error == "response_only_contract_violation"
+    assert not events[-1].get("need_confirm")
+
+
+def test_t2_response_only_legal_speech_stream_is_unchanged():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+
+        yield ("speech", "先停车，")
+        yield ("speech", "再检查机油液位。")
+        yield (
+            "final",
+            agent_pb2.ExecuteResponse(
+                status=0,
+                speech="先停车，再检查机油液位。",
+            ),
+        )
+
+    executor, captured, events = _capture_response_only_stream_result(stream_fn)
+
+    deltas = [event.get("delta") for event in events if event["kind"] == "speech"]
+    assert "先停车，" in deltas
+    assert "再检查机油液位。" in deltas
+    assert executor.runs == []
+    assert captured.status == StepStatus.OK
+    assert captured.actions == []
 
 
 def test_stream_speech_then_lost_final_does_not_rerun():

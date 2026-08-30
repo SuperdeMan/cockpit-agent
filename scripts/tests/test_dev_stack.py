@@ -812,7 +812,7 @@ def test_unreachable_cloud_status_names_the_msys_ssh_cause_when_in_git_bash(
     """诊断出口要说出**最可能的成因**，不能只说「不可用」。
 
     这条 warning 在 Git Bash 里的真实成因几乎总是 MSYS `ssh` 吃掉转义
-    （AGENTS.md §4.0 ①：真栈命令一律走 PowerShell），但它露出来的样子是
+    （AGENTS.md §3.2：Windows 真栈命令一律走 PowerShell），但它露出来的样子是
     `release_sha: null` + `status: degraded`——**读起来像「云端不健康」**。
     2026-08-28 同一个人一天里踩了两次，第二次让长会话探针 fail-closed 中止、
     一轮都没发。同「『读不到』与『读到了但不对』永远分开报」那条纪律。

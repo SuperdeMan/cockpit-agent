@@ -13,6 +13,7 @@ from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.aggregator import Aggregator
+from orchestrator.cloud.models import StepStatus
 from orchestrator.cloud.session import SessionStore
 
 _SINGLE_PLAN = json.dumps({"steps": [
@@ -28,16 +29,23 @@ _TWO_STEP_PLAN = json.dumps({"steps": [
 
 
 class _Cap:
-    def __init__(self, intent, slots):
+    def __init__(self, intent, slots, *, response_only=False):
         self.intent, self.slots, self.description = intent, slots, intent
+        self.response_only = response_only
+        self.require_confirm = False
+
+
+def _agent(intent="test.stream", *, response_only=False):
+    manifest = SimpleNamespace(
+        agent_id="chitchat", trust_level="first_party", latency_budget_ms=2000,
+        requires_permissions=[],
+        capabilities=[_Cap(intent, [], response_only=response_only)],
+    )
+    return SimpleNamespace(manifest=manifest, endpoint="stub:50062")
 
 
 def _chitchat_agent():
-    manifest = SimpleNamespace(
-        agent_id="chitchat", trust_level="first_party", latency_budget_ms=2000,
-        requires_permissions=[], capabilities=[_Cap("chitchat.talk", [])],
-    )
-    return SimpleNamespace(manifest=manifest, endpoint="stub:50062")
+    return _agent("chitchat.talk", response_only=True)
 
 
 class _Resp:
@@ -47,10 +55,12 @@ class _Resp:
 
 
 class _StreamSpy:
-    def __init__(self, plan_json=_SINGLE_PLAN, script=None, stream_error=False):
+    def __init__(self, plan_json=_SINGLE_PLAN, script=None, stream_error=False,
+                 agent=None):
         self.plan_json = plan_json
         self.script = script or []
         self.stream_error = stream_error
+        self.agent = agent or _agent()
         self.stream_calls: list[tuple[str, dict]] = []
         self.unary_calls: list[tuple[str, dict]] = []
 
@@ -71,10 +81,10 @@ class _StreamSpy:
         return "（聚合话术）"
 
     async def resolve(self, query="", intent="", top_k=1):
-        return [_chitchat_agent()]
+        return [self.agent]
 
     async def list_agents(self):
-        return [_chitchat_agent()]
+        return [self.agent]
 
 
 def _make_engine(spy):
@@ -131,7 +141,63 @@ def test_d0_stream_result_is_stamped_with_executed_intent():
 
     engine.aggregator.compose = compose
     _run(engine, _req("讲个笑话"))
-    assert captured["source_intent"] == "chitchat.talk"
+    assert captured["source_intent"] == "test.stream"
+
+
+def _capture_response_only_result(script):
+    spy = _StreamSpy(script=script, agent=_chitchat_agent())
+    engine, _ = _make_engine(spy)
+    captured = {}
+
+    async def compose(text, results, **kwargs):
+        captured["result"] = results[0]
+        return {"speech": results[0].speech, "actions": [], "cards": []}
+
+    engine.aggregator.compose = compose
+    events = _run(engine, _req("红色机油灯亮了怎么办"))
+    return spy, captured["result"], events
+
+
+def test_d0_response_only_action_before_final_is_dropped_and_failed_closed():
+    spy, captured, events = _capture_response_only_result([
+        ("action", {"type": "external.write", "payload": {"id": "x"}}),
+        ("final", _Resp(status=0, speech="已处理")),
+    ])
+
+    assert not [event for event in events if event["kind"] == "action"]
+    assert spy.unary_calls == []
+    assert captured.status == StepStatus.FAILED
+    assert captured.actions == []
+    assert captured.error == "response_only_contract_violation"
+    assert not events[-1].get("need_confirm")
+
+
+def test_d0_response_only_action_without_final_is_terminal_without_unary_fallback():
+    spy, captured, events = _capture_response_only_result([
+        ("action", {"type": "external.write", "payload": {"id": "x"}}),
+    ])
+
+    assert not [event for event in events if event["kind"] == "action"]
+    assert spy.unary_calls == []
+    assert captured.status == StepStatus.FAILED
+    assert captured.actions == []
+    assert captured.error == "response_only_contract_violation"
+    assert not events[-1].get("need_confirm")
+
+
+def test_d0_response_only_legal_speech_stream_is_unchanged():
+    spy, captured, events = _capture_response_only_result([
+        ("speech", "先停车，"),
+        ("speech", "再检查机油液位。"),
+        ("final", _Resp(status=0, speech="先停车，再检查机油液位。")),
+    ])
+
+    assert [event["delta"] for event in events if event["kind"] == "speech"] == [
+        "先停车，", "再检查机油液位。",
+    ]
+    assert spy.unary_calls == []
+    assert captured.status == StepStatus.OK
+    assert captured.actions == []
 
 
 def test_stream_need_confirm_still_suspends():

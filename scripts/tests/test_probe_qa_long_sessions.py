@@ -1259,6 +1259,23 @@ def test_persona_judge_rejects_unexpected_confirmation_on_read_only_turn():
     assert "只读/普通业务轮意外进入待确认" in failures
 
 
+def test_persona_judge_rejects_agent_internal_error_speech():
+    failures, _ = long_qa.judge_persona_turn(
+        {"expect": {"no_actions": True}},
+        {
+            "speech": "Agent 内部错误：ValueError",
+            "actions": [],
+            "need_confirm": False,
+            "card_type": "",
+            "is_question": False,
+        },
+        [],
+        stamp=123456,
+    )
+
+    assert "Agent 返回内部错误" in failures
+
+
 def test_persona_judge_allows_confirmation_when_case_explicitly_requires_it():
     turn = {"expect": {"need_confirm": True}}
     obs = {

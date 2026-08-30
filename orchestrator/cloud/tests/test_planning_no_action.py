@@ -38,7 +38,8 @@ REAL_PLAN = ('{"addressed":true,"steps":[{"id":"s1","capability_ref":"cap_0003",
 
 
 def _agents():
-    return [MockAgent("chitchat", ["chitchat.talk"]),
+    return [MockAgent("chitchat", ["chitchat.talk"],
+                      response_only=("chitchat.talk",)),
             MockAgent("hvac", ["hvac.set", "hvac.off"])]
 
 

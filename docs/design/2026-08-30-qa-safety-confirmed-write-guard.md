@@ -1,6 +1,6 @@
 # QA 收尾：安全问句禁止进入需确认的云侧写能力
 
-> 状态：**落地中（本地验证完成，待 push/deploy/真栈）**（2026-08-30）
+> 状态：**生产已部署并验证；安全主链闭合，独立错域/TTS 残余仍 active**（2026-08-30）
 > 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84/§85、
 > `orchestrator/cloud/planning.py::_question_side_effect_steps`、
@@ -306,5 +306,151 @@ trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；�
 `cloud-status-predeploy-343934-utf8.log` SHA256=
 `890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。
 
-因此当前只能写“本地验证完成，待 push/deploy/真栈”，不得写成“云端已修”“QA 全绿”或
-该候选已经 `verified`。
+因此在**该本地验证时点**只能写“本地验证完成，待 push/deploy/真栈”；后续生产状态见 §12，
+且任何时点都不得把独立残余省略成“QA 全绿”。
+
+## 11. 最终审查增补：post-build 三个执行出口仍可绕过守卫
+
+### 11.1 只读复现与当前裁决
+
+最终审查在本地 `HEAD=a07cc7b6cf14886f8f172af0f41a6acd63e1b71e` 上沿真实调用链只读核对，
+确认 v1.45 当前实现只闭合了 `PlanBuilder.build()` 的 focused/normal 出口，尚未闭合下列
+三个 **post-build 执行出口**：
+
+1. **replan 旁路**：`LoopController.run()` 接收 `planner.replan()` 返回的
+   `ReplanDecision.steps` 后直接 `to_plan()` 并进入流式或 executor；问句可被 LLM 的二次规划
+   改写成 `warning_light.close`。这里必须以 `run(..., user_text=...)` 收到的服务端原始用户文本
+   重新过滤，不能使用 LLM 生成的 `goal`。全删时本轮按 `done` 收场，禁止 dispatch；mixed
+   计划只删违规步骤，合法步骤、既有结果与 observation 链保持不变。
+2. **escalate 旁路**：`PlannerEngine._run_escalated()` 将 `_validated_steps()` 生成的 mini-plan
+   直接交给 executor；T1 D0 流式分支与普通 executor 分支都汇入这里。这里必须以
+   `ctx.raw_text` 重新过滤：问句产生的端侧写和 `require_confirm=true` cloud 步骤都拒绝，
+   普通指令、端侧读与 cloud read 保留。
+3. **talk fallback 旁路**：`_talk_only_plan()` 只看 fallback manifest 的
+   `capabilities[0]`，且当前只拒绝 `require_confirm=true`；若第一项是未确认的 edge write，
+   它可在主守卫之后被重新插回计划。修法是按 manifest 声明序扫描 capabilities，每个候选都先
+   经 `_validated_steps()` 装配，再用与主守卫完全相同的判据筛选；被拒绝后继续查找后续安全
+   talk，全部不合格才返回 `None`。
+
+`a07cc7b` 因此**不可 push**，更不可拿去 deploy 或做真栈验收。此前
+`dfad68730b50d094993c328d33cb774d29642e16` 的 7723/32/13 warnings 与 `a07cc7b` 上的审查前
+本地绿，只能作为历史基线；它们没有覆盖上述三条执行出口，**不得转借给增补代码**。增补实现
+落地后必须从 RED、targeted、Cloud Planner、四道门禁到全量重新取数，并绑定最终代码与契约 SHA。
+
+### 11.2 增补设计决议
+
+1. **覆盖所有计划出口**：安全边界不是“`build()` 返回前过滤一次”，而是“任何新计划即将首次
+   进入 dispatch 前过滤一次”。`build`、replan receiver、escalate mini-plan 与 fallback
+   候选必须复用同一份步骤选择判据，不得复制公式。
+2. **只信服务端原始文本**：`build` 使用其 `text` 入参，loop 使用 `user_text`，escalate 使用
+   `ctx.raw_text`；`plan.goal`、replan goal、escalate reason 都是模型或 Agent 可影响的数据，
+   不得作为问句/指令安全判据。
+3. **fail closed 且不制造空转**：replan/escalate 全删后零 dispatch、零挂起；build 全删后只有
+   经同一守卫放行的安全 talk 才能补回，否则保持空计划。若 build 的 adaptive 计划被全阻断后
+   只剩 talk 或空计划，`complexity` 必须降为 `simple`，避免无意义进入 adaptive replan。
+4. **保留合法部分与观测**：mixed replan/escalate 只按 `Step` 对象身份删除违规步；已有结果、
+   observation、合法 read/directive 步骤和聚合输入不丢失。禁止把“发现一个违规步”实现成整份
+   计划拒绝。
+5. **纵深防御**：build 守卫仍是第一层，LoopController 与 engine escalate 是接收新计划时的
+   第二层。后两层不是重复逻辑，而是防止 post-build 新产物绕开第一层；三层必须调用同一个
+   纯步骤过滤原语，以免边界漂移。
+
+### 11.3 新完成口径
+
+本设计重新进入 active。只有增补 TDD、三阶段规格/质量审查、fresh 全量验证与新 manifest
+全部完成，且最终审查确认不存在第四个 post-build dispatch 出口后，才可恢复“本地验证完成，
+待外部动作/真栈”的表述。push、deploy、remote-safe 与长会话仍分别是后续人工授权点，不能由
+本地绿自动推出。
+
+### Capability-level response-only authority
+
+- `Capability.response_only` is the only authority; intent suffixes and LLM wire fields have none.
+- Missing declarations and legacy pending records default to `false`.
+- `_validated_steps()` copies only the matched manifest value onto `Step`.
+- Direct output may be `OK` with zero actions, or a zero-action `FAILED` result may remain failed.
+  `NEED_CONFIRM`, `NEED_SLOT`, any direct action, and `response_only=true + require_confirm=true`
+  are contract violations.
+- The static contradiction `response_only=true + require_confirm=true` becomes `FAILED`,
+  `actions=[]`, `error=response_only_contract_violation` before any provider dispatch.
+- Runtime output violations become the same `FAILED` before the confirmation and
+  outcome-verification gates; verifier retry runs both preflight and post-dispatch checks again.
+- `_escalate` is a control-plane request, not a direct action. It remains in a valid zero-action
+  result, but only Task 3's original-text-guarded receiver may consume it.
+- D0/T2 keep legal speech streaming. For response-only steps an action event is dropped before
+  `yield`; it records a terminal violation, suppresses any later final, and forbids unary fallback.
+- `_talk_only_plan()` scans all fallback capabilities and requires `response_only=true`,
+  `require_confirm=false`, and survival of the same question-side-effect guard.
+
+## 12. 最终闭合与生产验收（2026-08-30）
+
+§11 重新打开的 active 实现项已在本地关闭。生产代码链为：`ba977dc` 建立 capability 级
+`response_only` 契约并在 Executor/D0/T2 纵深执行；`f986d37` 闭合 adaptive replan 接收点；
+`70d3d07` 闭合 D0/普通路径共用的 escalate mini-plan 接收点；`1158922` 保证
+`response_only` 经 registry 持久化 round-trip 不丢；`dd07b40` 以服务端
+`safety_origin_text` 贯穿 replan、挂起与恢复，并让 legacy 来源未知的副作用 fail closed。
+其后 `7c47d86`、`d89db30` 只修测试导入/fixture 事实，不改变生产实现。最终 critical review
+在 `dd07b4081166c0a9070f96a997571ba59226cf98` 对 replan 与 escalate 两条 Critical 回查 PASS。
+
+最终测试绑定代码 SHA 为 **`d89db30e8ef8f0cd08aaa4aaa688f8bdbcc390de`**。后续文档提交只做
+状态同步，**不承接或重新声称这些测试**。本地 fresh 读数：Cloud+registry 聚焦集
+**231 passed**；此前 Cloud 全族 **1267 passed / 1 skipped**；smoke edge **13/0**、Skill
+**22/22**、Exemplar **314**、strict discovery **85/85**（cases=676, distinct=634）、intent
+gate **25/25**（cases=139, distinct=129）、capability integrity PASS；最终
+`TZ=UTC0`、`PYTHONIOENCODING` 未设置口径下全量
+`python -X utf8 -m pytest -q -n 8 --dist worksteal` =
+**7769 passed / 32 skipped / 13 warnings**（556.27s，rc=0）。13 条 warning 类别与 §10.3
+一致。
+
+最终本地日志位于隔离工作树 ignored 路径
+`.artifacts/qa-safety-confirmed-write-postbuild/final-local-verification-utf8.log`，SHA256=
+`7a7a241a94e0b825e7b841f52084ed89795beb7a50e45010fe4766fb9d87e787`；根工作树尚未复制，
+因此它仍不是随 commit 移植的证据。
+
+本段记录的是**本地闭合当时**的边界：当时 cloud 仍为 `343934b`，尚未 push/deploy。
+后续生产事实以 §12.1/§12.2 为准；本地证据不得跨 SHA 转借，生产验收同样不等于 QA 全绿。
+
+### 12.1 部署后定向验收（release `e9fa602`；历史中间态，已由 §12.2 续写）
+
+QA 分支与远端 main 已推，云端 release 为
+`e9fa602e7991b212de4c1ea8c8e95c3673891c1f`，回滚点 `343934b`；`status` ok、5/5 healthy、
+零 warning，统一 `verify` = verified。verify artifact：
+`.artifacts/dev-stack-verifications/20260830T100114Z-e9fa602.json`。
+
+安全专项 5 例各跑 3 次，**15/15 PASS**（
+`.artifacts/dev-stack-verifications/qa-safety-e9fa602-repeat3.json`）。只读 information 长上下文
+35 轮 raw **33/35**，零中止、零 cleanup failure、零 open operation、首尾 release 零失败；
+T29「红色机油灯亮了还能继续开吗」与 T30–T32 均给出安全回答，且零动作、零挂起。raw 的
+第二条红只是尺子未把 v1.46 设计内 fallback `chitchat.talk` 纳入允许集；test-only
+`3657b62` 补齐后修正为 **34/35**，唯一剩余是 INF-CHARGING 规划落 `chitchat.talk` 的独立
+路由方差。只读 artifact：
+`.artifacts/dev-stack-verifications/qa-information-readonly-e9fa602.json`。
+
+因此安全闸的部署后定向验收已通过，但 QA 仍不能写全绿：完整 `information` persona 会
+创建/修改/取消测试提醒并模拟导航动作，本轮未运行；只读段也没有做 mutating merchant cleanup，
+所以未证明商户 draft 库存为零。当前分支已比 release 多 `3657b62` 这一笔 test probe；本次
+状态同步提交后还会多一笔 docs-only。二者都不在 cloud，不能称为新 release。
+
+### 12.2 完整 information 与后续生产修复（release `e9fa602` → `a729b98`）
+
+完整 `information` persona 已在 `e9fa602` 上跑完：**57/59 PASS、1 warning**，零 abort、
+cleanup failure、open operation 与 fallback，104 次 LLM 调用全 pinned；提醒与导航清理均有
+终态证明，且零商户 intent、零 draft。两条红都没有动作：T24 安全问句落 `info.search`，但
+回答内容安全；T47 安全 focus 持续让 charging plan 落 `system.clarify`。前者是既有错域，后者
+是安全闸代价，均待单独裁决，不能据此写 QA 全绿。artifact：
+`.artifacts/dev-stack-verifications/qa-long-information-e9fa602.json`。
+
+同趟新闻链还抓到一条独立 internal error：LLM toolcall 的 `limit:null` 被权威装配成字符串
+`"None"`，`info.search` 再执行 `int("None")` 抛 `ValueError`。生产修复
+`a729b984a7e66f508d0a11218713b6e51c8f7620` 只丢弃 `None`，保留 `0` / `false` / `""`。
+测试绑定该 SHA：Planner+Info **289 passed**、Cloud **1278 passed / 1 skipped**、全量
+**7770 passed / 32 skipped / 13 warnings**。部署后 release=`a729b98`、回滚点=`e9fa602`，
+status 5/5 healthy、零 warning，verify verified（
+`.artifacts/dev-stack-verifications/20260830T110922Z-a729b98.json`）；新闻 3 个干净会话共
+15 个业务轮零 internal error、首尾 release 连续（
+`.artifacts/dev-stack-verifications/qa-news-repeat3-a729b98.json`）。
+
+外部/协议已知活项不因这次修复消失：同一段 887 字 TTS 两次命中 RPM rate limit，但生成的
+PCM 可播放；barge-in 后仍收到 6144 / 8192 字节残帧，但分别在 16 / 31ms 内关闭。`862617b`
+已把 agent internal error 升为探针硬红；它和本次 docs-only 均领先生产 release，不是新 release。
+两个临时部署目录已在用户授权后移入 Windows 回收站（可恢复）；权威 release artifacts 已复制到
+根仓 `.artifacts/releases/`。
