@@ -1,7 +1,7 @@
 # QA 收尾：安全问句禁止进入需确认的云侧写能力
 
-> 状态：**已批准，待落地**（2026-08-30）  
-> 交付对象：Cloud Planner / QA 探针维护者  
+> 状态：**已批准，待落地**（2026-08-30）
+> 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84、
 > `orchestrator/cloud/planning.py::_question_write_edge_steps`、
 > `orchestrator/cloud/tests/test_question_write_guard.py`
