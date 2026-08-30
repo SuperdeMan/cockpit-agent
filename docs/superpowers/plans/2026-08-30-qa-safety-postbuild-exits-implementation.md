@@ -4,7 +4,7 @@
 
 **Goal:** Close post-build safety exits with a capability-level `response_only` authority so a non-directive question cannot regain an edge write or a manifest-confirmed cloud action through fallback, executor results, replan, or escalate.
 
-**Architecture:** `Capability.response_only` is a server-owned manifest declaration appended to the Agent proto; `PlanBuilder._validated_steps()` alone copies it to `Step`, and LLM wire fields are ignored. Fallback scans declarations rather than intent suffixes, while `DagExecutor._enforce_response_only()` fail-closes direct actions/pending results before confirm and verification. D0 and T2 keep speech streaming, but both feed response-only action/final events through the same executor helper: action events are dropped before `yield`, a violation synthesizes a terminal `FAILED` and forbids unary fallback, and action-free finals remain streaming. `_escalate` remains a control-plane handoff for Task 3's separately guarded receiver.
+**Architecture:** `Capability.response_only` is a server-owned manifest declaration appended to the Agent proto; `PlanBuilder._validated_steps()` alone copies it to `Step`, and LLM wire fields are ignored. Fallback scans declarations rather than intent suffixes. `DagExecutor._response_only_preflight()` rejects the static `response_only + require_confirm` contradiction before any provider dispatch; after dispatch, `_enforce_response_only()` fail-closes direct actions/pending results before confirm and verification. D0 and T2 keep speech streaming, but both feed response-only action/final events through the same executor helper: action events are dropped before `yield`, a violation synthesizes a terminal `FAILED` and forbids unary fallback, and action-free finals remain streaming. `_escalate` remains a control-plane handoff for Task 3's separately guarded receiver.
 
 **Tech Stack:** Protocol Buffers + buf, ignored Python/Go generated bindings, YAML manifests, Python 3.12 dataclasses/asyncio, pytest, PowerShell, Markdown architecture and evidence records.
 
@@ -22,7 +22,7 @@
 | `agents/_sdk/tests/test_manifest_response_only.py` | Real-loader/default behavior without import-dependent RED |
 | `orchestrator/cloud/models.py` | Add `Step.response_only: bool = False`; legacy restored state remains false |
 | `orchestrator/cloud/planning.py` | Manifest-only Step assembly, reusable question filter, declaration-backed fallback scan, adaptive downgrade |
-| `orchestrator/cloud/executor.py` | Central direct-output contract after every dispatch/retry and before confirm/verify |
+| `orchestrator/cloud/executor.py` | Static conflict preflight before every dispatch/retry, then central direct-output contract before confirm/verify |
 | `orchestrator/cloud/engine.py` | Persist/restore the field; gate D0 response-only stream actions/finals before yield/fallback; later guard escalated mini-plans |
 | `orchestrator/cloud/loop.py` | Gate T2 response-only stream actions/finals before yield/fallback; later guard replan decisions with `user_text` |
 | `orchestrator/cloud/tests/test_question_write_guard.py` | Assembly/non-authority/fallback scan/complexity contracts |
@@ -74,8 +74,10 @@ Append this contract to the approved design and commit it before implementation:
 - Direct output may be `OK` with zero actions, or a zero-action `FAILED` result may remain failed.
   `NEED_CONFIRM`, `NEED_SLOT`, any direct action, and `response_only=true + require_confirm=true`
   are contract violations.
-- Violations become `FAILED`, `actions=[]`, `error=response_only_contract_violation` before
-  the confirmation and outcome-verification gates; verifier retry applies the same helper again.
+- The static contradiction `response_only=true + require_confirm=true` becomes `FAILED`,
+  `actions=[]`, `error=response_only_contract_violation` before any provider dispatch.
+- Runtime output violations become the same `FAILED` before the confirmation and
+  outcome-verification gates; verifier retry runs both preflight and post-dispatch checks again.
 - `_escalate` is a control-plane request, not a direct action. It remains in a valid zero-action
   result, but only Task 3's original-text-guarded receiver may consume it.
 - D0/T2 keep legal speech streaming. For response-only steps an action event is dropped before
@@ -196,6 +198,10 @@ def test_total_block_downgrades_adaptive_but_mixed_plan_does_not():
 Add a pending-state RED without constructing the future field:
 
 ```python
+from orchestrator.cloud.engine import PlannerEngine
+from orchestrator.cloud.models import SessionState
+
+
 def test_response_only_round_trip_and_legacy_default_false():
     step = Step(id="s1", agent_id="chitchat", intent="chitchat.answer")
     step.response_only = True
@@ -282,8 +288,23 @@ def test_malicious_action_is_failed_closed():
 
 
 def test_response_only_confirm_configuration_never_becomes_need_confirm():
-    result = _run(_response_step(require_confirm=True), _Resp(status=0))[0]
+    calls = 0
+
+    async def call(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _Resp(status=0)
+
+    executor = DagExecutor(call_agent_fn=call)
+    step = _response_step(require_confirm=True)
+
+    async def collect():
+        return [result async for result in executor.run(Plan(steps=[step]), None)]
+
+    result = asyncio.run(collect())[0]
+    assert calls == 0, "static response_only/confirm conflict must fail before dispatch"
     assert result.status == StepStatus.FAILED
+    assert result.actions == []
     assert result.error == "response_only_contract_violation"
 
 
@@ -344,13 +365,15 @@ $exitCode = $LASTEXITCODE
 "EXIT=$exitCode" | Add-Content -Encoding utf8 $log
 if ($exitCode -eq 0) { throw 'RED did not fail' }
 if (Select-String -LiteralPath $log `
-    -Pattern 'ImportError|ModuleNotFoundError|ERROR collecting' -Quiet) {
-  throw 'invalid RED: import or collection failed'
+    -Pattern 'ImportError|ModuleNotFoundError|NameError|fixture .* not found|ERROR at setup|ERROR collecting' `
+    -Quiet) {
+  throw 'invalid RED: import, collection, name, or fixture setup failed'
 }
 ```
 
 Expected: assertion/runtime behavior failures in loader/assembly/fallback/persistence/executor/stream
-contracts, never import or collection failure.
+contracts. Assertion failures and the expected `AttributeError` for a not-yet-created helper are
+valid; import, collection, `NameError`, missing-fixture, and fixture-setup errors are not.
 
 - [ ] **Step 5: Append proto field 10 and regenerate ignored bindings**
 
@@ -442,7 +465,7 @@ return None
 No suffix check exists: undeclared `chitchat.talk`/`foo.talk` fail; explicitly declared
 `chitchat.answer` passes. Confirmed response capabilities are skipped and scanning continues.
 
-- [ ] **Step 8: Enforce direct output after every dispatch and retry, before confirm/verify**
+- [ ] **Step 8: Reject static conflicts before dispatch, then enforce every returned result**
 
 Add:
 
@@ -450,26 +473,63 @@ Add:
 _RESPONSE_ONLY_CONTRACT_ERROR = "response_only_contract_violation"
 
 @staticmethod
+def _response_only_violation(step_id: str) -> StepResult:
+    return StepResult(step_id=step_id, status=StepStatus.FAILED,
+                      actions=[], error=_RESPONSE_ONLY_CONTRACT_ERROR)
+
+
+@staticmethod
+def _response_only_preflight(step: Step) -> StepResult | None:
+    if (bool(getattr(step, "response_only", False))
+            and bool(getattr(step, "require_confirm", False))):
+        logger.error(
+            "Step %s(%s): response_only conflicts with require_confirm; "
+            "rejecting before dispatch", step.id, step.intent)
+        return DagExecutor._response_only_violation(step.id)
+    return None
+
+
+@staticmethod
 def _enforce_response_only(step: Step, result: StepResult) -> StepResult:
     if not bool(getattr(step, "response_only", False)):
         return result
-    if (result.status == StepStatus.FAILED
-            and not result.actions and not step.require_confirm):
+    conflict = DagExecutor._response_only_preflight(step)
+    if conflict is not None:       # defense in depth for callers outside run/retry
+        return conflict
+    if result.status == StepStatus.FAILED and not result.actions:
         return result
-    if (result.status == StepStatus.OK
-            and not result.actions and not step.require_confirm):
+    if result.status == StepStatus.OK and not result.actions:
         # data._escalate is control-plane; Task 3 guards its receiver.
         return result
     logger.error("Step %s(%s): response_only contract violation", step.id, step.intent)
-    return StepResult(step_id=result.step_id, status=StepStatus.FAILED,
-                      actions=[], error=_RESPONSE_ONLY_CONTRACT_ERROR)
+    return DagExecutor._response_only_violation(result.step_id)
 ```
 
-In `_exec_step()` order calls as dispatch → `_enforce_response_only` →
-`_enforce_capability_confirm` → `_verify_outcome`. In `_verify_outcome()` retry, wrap the second
-`_dispatch_once()` with `_enforce_response_only` before the confirm gate as well. Thus
-`response_only + require_confirm=true` can never become `NEED_CONFIRM`, and a malicious retry
-cannot bypass the first check.
+In `_exec_step()`, immediately after slot resolution and before fingerprint/dedup/provider work, run:
+
+```python
+preflight = self._response_only_preflight(step)
+if preflight is not None:
+    return preflight
+```
+
+Only after that may `_dispatch_once()` run. The result order is dispatch →
+`_enforce_response_only` → `_enforce_capability_confirm` → `_verify_outcome`.
+
+Verifier retry is another provider dispatch, so `_verify_outcome()` must repeat both stages:
+
+```python
+preflight = self._response_only_preflight(step)
+if preflight is not None:
+    return preflight
+retried = self._enforce_response_only(
+    step, await self._dispatch_once(step, ctx))
+retried = self._enforce_capability_confirm(step, retried)
+```
+
+No `_dispatch_once()` may appear on either path before this preflight. Therefore
+`response_only + require_confirm=true` produces zero provider calls and can never degrade into
+`NEED_CONFIRM`; a malicious retry result cannot bypass the post-dispatch check.
 
 Add a retry test by scripting first response as valid `OK`, monkeypatching `_evaluate` to return
 `UNSAT`, and returning an action on the retry. Assert two dispatches occurred and the terminal result
@@ -503,9 +563,48 @@ def test_verifier_retry_reapplies_response_only_gate():
     assert result.status == StepStatus.FAILED
     assert result.actions == []
     assert result.error == "response_only_contract_violation"
+
+
+def test_verifier_retry_preflight_rejects_static_conflict_without_dispatch(monkeypatch):
+    from orchestrator.cloud import executor as executor_module
+
+    calls = 0
+
+    async def call(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return _Resp(status=0)
+
+    executor = DagExecutor(call_agent_fn=call)
+
+    async def unsat(*_args, **_kwargs):
+        return "unsat"
+
+    executor._evaluate = unsat
+    # Force the retry branch open so this test proves its own preflight rather
+    # than passing because retry_allowed normally rejects confirmed steps.
+    monkeypatch.setattr(executor_module._verify, "retry_allowed",
+                        lambda _verification, _confirm, attempts: attempts < 1)
+    step = _response_step(
+        require_confirm=True,
+        verification={"mode": "schema", "on_fail": "retry", "max_attempts": 1},
+    )
+    initial = StepResult("s1", StepStatus.OK)
+    result = asyncio.run(executor._verify_outcome(step, initial, None))
+
+    assert calls == 0
+    assert result.status == StepStatus.FAILED
+    assert result.actions == []
+    assert result.error == "response_only_contract_violation"
 ```
 
 - [ ] **Step 9: Gate D0 and T2 stream events through the same helper before yield/fallback**
+
+Both existing streaming conditions already require `not step.require_confirm`. Preserve that gate:
+a contradictory `response_only + require_confirm` step cannot enter D0 or T2 streaming and therefore
+falls through to `DagExecutor.run()`, where `_response_only_preflight()` returns the contract failure
+with zero provider calls. Add a source-level assertion for both condition blocks so neither stream
+path can later bypass this preflight by dropping the existing confirm exclusion.
 
 In both stream loops, keep a `response_violation: StepResult | None = None`. For an action event:
 
@@ -562,8 +661,8 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
 Expected: loader/default, manifest-only assembly, LLM non-authority, pending-state round-trip,
-fallback scan, normal/retry direct-output gates, config conflict, valid failure, `_escalate` boundary,
-D0/T2 action-before-final/action-no-final, and legal streaming controls all pass.
+fallback scan, zero-dispatch static conflict, normal/retry direct-output gates, valid failure,
+`_escalate` boundary, D0/T2 action-before-final/action-no-final, and legal streaming controls all pass.
 
 ```powershell
 git add proto/cockpit/agent/v1/agent.proto `
