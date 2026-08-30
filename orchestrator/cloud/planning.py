@@ -1382,16 +1382,9 @@ class PlanBuilder:
             focused_plan.actionability = _actionability.classify(
                 text, focus=getattr(working_set, "focus", None),
                 input_source=str((ctx.prefs or {}).get("input_source", ""))).as_attr()
-            # 同一道安全闸也盖这条早退路径（C1-A）。当前它的入口正则是祈使开关句、
-            # 结构上产不出问句，所以这一行**应当永远不触发**——留着是因为
-            # 「安全不变量放唯一出口」的反面是「每多一条出口就多一处要记得」，
-            # 而这条早退恰恰是最容易被下一个人忘掉的那一处。
-            if self._question_side_effect_steps(focused_plan.steps, text):
-                logger.warning(
-                    "Focused-ellipsis plan is a question-shaped side-effecting plan; "
-                    "dropping")
-                return await self._fallback(text, agents)
-            return focused_plan
+            # 两个 build 出口共用同一终结器：blocked 后只允许未确认的 talk 兜底，
+            # 否则保持空计划 fail closed；不能由早退路径绕开确认写安全闸。
+            return self._apply_question_side_effect_guard(focused_plan, text, agents)
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
         # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
@@ -1644,33 +1637,11 @@ class PlanBuilder:
             hit, before, [(s.agent_id, s.intent) for s in plan.steps], had_clarify)
         plan.catalog_stats = dict(working_set.catalog_stats)
         # ── 安全闸：问句不许执行端侧写或需确认步骤（C1-A）────────────────────
-        # 挂在**整个 build 的唯一出口**：LLM 计划、降级语义路由、route_hints 补步
-        # 三条来源在这一行之前都已经汇合，只在这里判一次就不会漏掉某一条。
-        # **原地改 steps 而不是换 plan 对象**——上面那批观测赋值已经作用在这一份上，
-        # 换对象要靠逐字段搬运，而「搬运也是读」，B6 那条源码级断言不接受
-        # （clarify_resume 那处的注释记着同一笔账）。
-        blocked = self._question_side_effect_steps(plan.steps, text)
-        if blocked:
-            logger.warning(
-                "Question-shaped utterance planned into side-effecting step(s) %s; "
-                "dropping them (text=%r)",
-                [s.intent for s in blocked], text[:60])
-            # 按**身份**过滤而不是按相等：`Step` 是 dataclass，两个字段相同的步会
-            # `==`，用 `not in` 在重复步的场景下会连坐。这里要丢的是「这几个对象」。
-            blocked_ids = {id(step) for step in blocked}
-            plan.steps = [s for s in plan.steps if id(s) not in blocked_ids]
-            plan.plan_mode = f"{plan.plan_mode or ''}_question_write_blocked"
-            if not plan.steps:
-                # 空计划优先交给**未确认的**兜底 Agent 答一句，而不是宣布没听清：
-                # 这一类句子（「X灯亮了怎么办」）恰恰最需要一个回答。默认 chitchat
-                # 自己就带安全信号判据（`runtime.safety_signal`），会给出分级建议；
-                # 配置为需确认的兜底能力则保持空计划，不能借回答出口执行写操作。
-                talk = self._talk_only_plan(text, agents)
-                if talk is not None:
-                    plan.steps = talk.steps
-                    plan.clarify = None
+        # 所有 build 出口共用同一终结器：LLM 计划、降级语义路由、route_hints 补步
+        # 与 focused 早退均按同一份判据收束，避免任何一路绕开确认写安全闸。
+        plan = self._apply_question_side_effect_guard(plan, text, agents)
         # ── 安全闸二：安全信号在场时不许以「澄清 / 没听清」收场（余项 ①，2026-08-29）──
-        # 挂在**同一个唯一出口**、紧随上一条之后：上面那条只管「问句被规划成端侧写或需确认步骤之后
+        # 挂在常规规划出口、紧随终结器之后：上面那条只管「问句被规划成端侧写或需确认步骤之后
         # 空了」，这条管**planner 自己就没产出步**的那一类——真栈取样里它才是主形态。
         # 取证（deployed `ed53f8f`，`--repeat 5`）：「困到睁不开眼了，还要开两个小时」
         # **2/5 落 system.clarify**，用户听到的是「你听起来很困，接下来想怎么处理？」；
@@ -1692,8 +1663,8 @@ class PlanBuilder:
                 plan.clarify = None
                 plan.plan_mode = f"{plan.plan_mode or ''}_safety_talk"
         # ── 取消闸：一句取消话不许被规划成「新建」或交给兜底编造（余项，2026-08-29）──
-        # 挂在**同一个唯一出口**、排在两条安全闸之后：三条闸判的都是「这份计划与
-        # 用户那句话的方向对不对得上」，共用一个汇合点就不会漏掉某条计划来源。
+        # 挂在常规规划出口、排在两条安全处理之后：三条判据都检查「这份计划与
+        # 用户那句话的方向对不对得上」，并保持既有执行顺序。
         #
         # 真栈来历（deployed `e15ac1e`，F 留出臂「取消交周报」6 轮）：落域散成五处，
         # 其中 `reminder.create` **反向建了一条提醒**（「记下了：交周报。」）、
@@ -2474,6 +2445,32 @@ class PlanBuilder:
                   and is_write_intent(getattr(step, "intent", "")))
                 or bool(getattr(step, "require_confirm", False))))
         ]
+
+    def _apply_question_side_effect_guard(
+            self, plan: Plan, text: str, agents: list = None) -> Plan:
+        """Remove question-shaped side effects while preserving the same plan object."""
+        blocked = self._question_side_effect_steps(plan.steps, text)
+        if not blocked:
+            return plan
+        logger.warning(
+            "Question-shaped utterance planned into side-effecting step(s) %s; "
+            "dropping them (text=%r)",
+            [s.intent for s in blocked], text[:60])
+        # 按**身份**过滤而不是按相等：`Step` 是 dataclass，两个字段相同的步会
+        # `==`，用 `not in` 在重复步的场景下会连坐。这里要丢的是「这几个对象」。
+        blocked_ids = {id(step) for step in blocked}
+        plan.steps = [s for s in plan.steps if id(s) not in blocked_ids]
+        plan.plan_mode = f"{plan.plan_mode or ''}_question_write_blocked"
+        if not plan.steps:
+            # 空计划优先交给**未确认的**兜底 Agent 答一句，而不是宣布没听清：
+            # 这一类句子（「X灯亮了怎么办」）恰恰最需要一个回答。默认 chitchat
+            # 自己就带安全信号判据（`runtime.safety_signal`），会给出分级建议；
+            # 配置为需确认的兜底能力则保持空计划，不能借回答出口执行写操作。
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                plan.steps = talk.steps
+                plan.clarify = None
+        return plan
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:
         """把原话交给全局兜底 Agent（默认 chitchat）：**只回一句话，不做任何写操作。**

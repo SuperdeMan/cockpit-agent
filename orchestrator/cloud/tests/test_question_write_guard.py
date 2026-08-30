@@ -33,7 +33,7 @@ import sys
 import pytest
 
 from orchestrator.cloud.context import WorkingSet
-from orchestrator.cloud.models import PlanContext, Step
+from orchestrator.cloud.models import Plan, PlanContext, Step
 from orchestrator.cloud.planning import (
     PlanBuilder, _assemble_capability_catalog,
 )
@@ -258,6 +258,41 @@ def test_talk_only_plan_rejects_confirmed_fallback_capability():
     builder = PlanBuilder(llm_fn=None, registry_fn=None)
 
     assert builder._talk_only_plan("红色机油灯亮了还能继续开吗", [agent]) is None
+
+
+def test_focused_question_does_not_bypass_confirmed_fallback_guard(monkeypatch):
+    order = MockAgent("mcp-bridge", ["luckin.order"],
+                      require_confirm=("luckin.order",))
+    order.score = 1.0
+    registry_calls = []
+
+    async def mock_llm(messages):
+        return "unused"
+
+    async def mock_resolve(query, top_k=1):
+        registry_calls.append((query, top_k))
+        return [order]
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    focused = Plan(
+        steps=[_step("warning_light.close")],
+        raw_text="红色机油灯亮了还能继续开吗",
+        goal="focused guard regression",
+    )
+    monkeypatch.setattr(
+        builder, "_focused_control_ellipsis_plan",
+        lambda text, working_set, catalog: focused,
+    )
+
+    plan = asyncio.run(builder.build(
+        "红色机油灯亮了还能继续开吗", WorkingSet(catalog=[order]),
+        PlanContext(session_id="focused-confirmed-fallback"),
+    ))
+
+    assert plan.steps == []
+    assert all(step.intent != "luckin.order" for step in plan.steps)
+    assert "question_write_blocked" in (plan.plan_mode or "")
+    assert registry_calls == []
 
 
 # ── 7. 本闸的行为代价，**钉成可见断言**：礼貌请求会被答而不是被做 ─────────────
