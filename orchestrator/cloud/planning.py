@@ -2279,6 +2279,10 @@ class PlanBuilder:
                 require_confirm=next(
                     (bool(getattr(c, "require_confirm", False))
                      for c in manifest.capabilities if c.intent == intent), False),
+                # 直接回答权威同样只读 capability manifest；LLM wire 同名字段无效。
+                response_only=next(
+                    (bool(getattr(c, "response_only", False))
+                     for c in manifest.capabilities if c.intent == intent), False),
                 # M2 Verifier：执行后对账期望同样只从 capability 读（LLM 字段不读——
                 # 「验不验、验什么」不是模型的决定权，与 require_confirm 同一条权威链）。
                 verification=next(
@@ -2446,10 +2450,21 @@ class PlanBuilder:
                 or bool(getattr(step, "require_confirm", False))))
         ]
 
+    @staticmethod
+    def _filter_question_side_effect_steps(
+            steps: list, text: str) -> tuple[list, list]:
+        """按对象身份拆分合法/被拦步骤，供所有计划出口复用。"""
+        blocked = PlanBuilder._question_side_effect_steps(steps, text)
+        blocked_ids = {id(step) for step in blocked}
+        return (
+            [step for step in steps if id(step) not in blocked_ids],
+            blocked,
+        )
+
     def _apply_question_side_effect_guard(
             self, plan: Plan, text: str, agents: list = None) -> Plan:
         """Remove question-shaped side effects while preserving the same plan object."""
-        blocked = self._question_side_effect_steps(plan.steps, text)
+        kept, blocked = self._filter_question_side_effect_steps(plan.steps, text)
         if not blocked:
             return plan
         logger.warning(
@@ -2458,10 +2473,10 @@ class PlanBuilder:
             [s.intent for s in blocked], text[:60])
         # 按**身份**过滤而不是按相等：`Step` 是 dataclass，两个字段相同的步会
         # `==`，用 `not in` 在重复步的场景下会连坐。这里要丢的是「这几个对象」。
-        blocked_ids = {id(step) for step in blocked}
-        plan.steps = [s for s in plan.steps if id(s) not in blocked_ids]
+        plan.steps = kept
         plan.plan_mode = f"{plan.plan_mode or ''}_question_write_blocked"
         if not plan.steps:
+            plan.complexity = "simple"
             # 空计划优先交给**未确认的**兜底 Agent 答一句，而不是宣布没听清：
             # 这一类句子（「X灯亮了怎么办」）恰恰最需要一个回答。默认 chitchat
             # 自己就带安全信号判据（`runtime.safety_signal`），会给出分级建议；
@@ -2481,21 +2496,28 @@ class PlanBuilder:
         实测代价见 `build()` 里那段注释。找不到兜底 Agent 时返回 None，由调用方决定。
         """
         for a in (agents or []):
-            if a.manifest.agent_id == _FALLBACK_AGENT:
-                intent = a.manifest.capabilities[0].intent if a.manifest.capabilities else ""
+            if a.manifest.agent_id != _FALLBACK_AGENT:
+                continue
+            for cap in (a.manifest.capabilities or []):
+                if not bool(getattr(cap, "response_only", False)):
+                    continue
+                if bool(getattr(cap, "require_confirm", False)):
+                    continue
                 steps = self._validated_steps(
                     [{"id": "s1", "agent_id": a.manifest.agent_id,
-                      "intent": intent, "slots": {"text": text},
+                      "intent": cap.intent, "slots": {"text": text},
                       "depends_on": [], "slot_refs": {}}],
                     {a.manifest.agent_id: a},
                 )
-                if len(steps) != 1:
-                    return None
-                if steps[0].require_confirm:
-                    logger.warning("Fallback talk capability %s requires confirmation; dropping",
-                                   steps[0].intent)
-                    return None
-                return Plan(steps=steps, raw_text=text)
+                if (len(steps) != 1 or not steps[0].response_only
+                        or steps[0].require_confirm):
+                    continue
+                kept, blocked = self._filter_question_side_effect_steps(steps, text)
+                if blocked or len(kept) != 1:
+                    continue
+                return Plan(
+                    steps=kept, raw_text=text, complexity="simple",
+                )
         return None
 
     async def _fallback(self, text: str, agents: list = None) -> Plan:

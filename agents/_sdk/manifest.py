@@ -51,6 +51,8 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
                          for k, v in (c.get("slot_shapes") or {}).items()},
             # 整句型能力：编排据此保证同一份计划里最多一步（理由见 proto 注释）。
             whole_utterance=bool(c.get("whole_utterance", False)),
+            # 只回答、不允许直接动作/挂起。缺省 false 保持旧 manifest 行为。
+            response_only=bool(c.get("response_only", False)),
         )
         for c in (data.get("capabilities") or [])
     ]

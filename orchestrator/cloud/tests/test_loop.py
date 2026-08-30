@@ -560,12 +560,13 @@ def _wrap_planner(planner):
 # 对照 engine.py 的 T1 D0 路径（speech/action 一到就置 True）实现是对的。
 
 
-def _one_step_plan(intent="test.do"):
-    return Plan(
-        steps=[Step(id="s1", agent_id="a", kind="agent", deployment="cloud",
-                    intent=intent, latency_budget_ms=5000)],
-        complexity="adaptive",
+def _one_step_plan(intent="test.do", *, response_only=False):
+    step = Step(
+        id="s1", agent_id="a", kind="agent", deployment="cloud",
+        intent=intent, latency_budget_ms=5000,
     )
+    step.response_only = response_only
+    return Plan(steps=[step], complexity="adaptive")
 
 
 def _run_stream_case(stream_fn):
@@ -582,6 +583,87 @@ def _run_stream_case(stream_fn):
         ctx=PlanContext(), user_text="test",
     )
     return executor, events
+
+
+def _capture_response_only_stream_result(stream_fn):
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="executor result"),
+    })
+    aggregator = _Aggregator()
+    controller = LoopController(
+        planner, executor, aggregator, None,
+        max_iters=2, budget_ms=5000, stream_fn=stream_fn,
+    )
+    events = _collect(
+        controller,
+        goal="answer safely",
+        initial_plan=_one_step_plan("chitchat.talk", response_only=True),
+        agents=[],
+        ctx=PlanContext(),
+        user_text="红色机油灯亮了怎么办",
+    )
+    captured = [
+        result
+        for _text, results in aggregator.calls
+        for result in results
+    ][-1]
+    return executor, captured, events
+
+
+def test_t2_response_only_action_before_final_is_dropped_and_failed_closed():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+
+        yield ("action", {"type": "external.write", "payload": {"id": "x"}})
+        yield ("final", agent_pb2.ExecuteResponse(status=0, speech="已处理"))
+
+    executor, captured, events = _capture_response_only_stream_result(stream_fn)
+
+    assert not [event for event in events if event["kind"] == "action"]
+    assert executor.runs == []
+    assert captured.status == StepStatus.FAILED
+    assert captured.actions == []
+    assert captured.error == "response_only_contract_violation"
+    assert not events[-1].get("need_confirm")
+
+
+def test_t2_response_only_action_without_final_is_terminal_without_unary_fallback():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        yield ("action", {"type": "external.write", "payload": {"id": "x"}})
+
+    executor, captured, events = _capture_response_only_stream_result(stream_fn)
+
+    assert not [event for event in events if event["kind"] == "action"]
+    assert executor.runs == []
+    assert captured.status == StepStatus.FAILED
+    assert captured.actions == []
+    assert captured.error == "response_only_contract_violation"
+    assert not events[-1].get("need_confirm")
+
+
+def test_t2_response_only_legal_speech_stream_is_unchanged():
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=30):
+        from cockpit.agent.v1 import agent_pb2
+
+        yield ("speech", "先停车，")
+        yield ("speech", "再检查机油液位。")
+        yield (
+            "final",
+            agent_pb2.ExecuteResponse(
+                status=0,
+                speech="先停车，再检查机油液位。",
+            ),
+        )
+
+    executor, captured, events = _capture_response_only_stream_result(stream_fn)
+
+    deltas = [event.get("delta") for event in events if event["kind"] == "speech"]
+    assert "先停车，" in deltas
+    assert "再检查机油液位。" in deltas
+    assert executor.runs == []
+    assert captured.status == StepStatus.OK
+    assert captured.actions == []
 
 
 def test_stream_speech_then_lost_final_does_not_rerun():

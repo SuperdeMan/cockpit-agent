@@ -210,6 +210,7 @@ class LoopController:
                     self.executor._resolve_slot_refs(step, done_seed, ctx)
                 timeout = step.latency_budget_ms / 1000.0
                 final_sr = None
+                response_violation: StepResult | None = None
                 stream_start = self.clock()
                 try:
                     async for kind, payload in self._stream(
@@ -219,6 +220,16 @@ class LoopController:
                             stream.on_speech(payload)
                             yield {"kind": "speech", "delta": payload}
                         elif kind == "action":
+                            if bool(getattr(step, "response_only", False)):
+                                response_violation = self.executor._enforce_response_only(
+                                    step,
+                                    StepResult(
+                                        step_id=step.id,
+                                        status=StepStatus.OK,
+                                        actions=[{"type": "stream_action"}],
+                                    ),
+                                )
+                                continue
                             stream.on_action()
                             yield {"kind": "action", "action": payload}
                         elif kind == "final":
@@ -228,6 +239,11 @@ class LoopController:
                         "T2 stream failed for %s, falling back: %s",
                         step.id, exc)
                     final_sr = None
+
+                if response_violation is not None:
+                    final_sr = response_violation
+                elif final_sr is not None:
+                    final_sr = self.executor._enforce_response_only(step, final_sr)
 
                 if final_sr is not None:
                     stream.on_final()

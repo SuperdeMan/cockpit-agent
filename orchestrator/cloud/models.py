@@ -49,6 +49,8 @@ class Step:
     # 整句型能力（QA 余项，2026-08-29）：这一步消费的是整句原话，一次把这句话里的
     # 事全办完 ⇒ **同一份计划里最多一步**。声明在 capability，编排通用消费。
     whole_utterance: bool = False
+    # 直接回答能力：只能返回零动作 OK/FAILED；manifest 是唯一权威。
+    response_only: bool = False
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用

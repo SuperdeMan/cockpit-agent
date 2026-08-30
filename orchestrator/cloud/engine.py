@@ -784,6 +784,7 @@ class PlannerEngine:
             stream = StreamTracker()
             softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
             final_sr: StepResult | None = None
+            response_violation: StepResult | None = None
             try:
                 async for kind, payload in self.clients.call_agent_stream(
                         step.endpoint, step.intent, step.slots, ctx, step.meta):
@@ -797,12 +798,27 @@ class PlannerEngine:
                         if payload:
                             yield {"kind": "speech", "delta": payload}
                     elif kind == "action":
+                        if bool(getattr(step, "response_only", False)):
+                            response_violation = self.executor._enforce_response_only(
+                                step,
+                                StepResult(
+                                    step_id=step.id,
+                                    status=StepStatus.OK,
+                                    actions=[{"type": "stream_action"}],
+                                ),
+                            )
+                            continue
                         stream.on_action()
                         yield {"kind": "action", "action": payload}
                     elif kind == "final":
                         final_sr = DagExecutor._to_result(step.id, payload)
             except Exception as e:
                 logger.warning("Single-step stream failed (%s); falling back to unary", e)
+
+            if response_violation is not None:
+                final_sr = response_violation
+            elif final_sr is not None:
+                final_sr = self.executor._enforce_response_only(step, final_sr)
 
             if final_sr is not None:
                 stream.on_final()
@@ -1959,6 +1975,7 @@ class PlannerEngine:
                  "kind": s.kind, "deployment": s.deployment,
                  "intent": s.intent, "slots": s.slots, "depends_on": s.depends_on,
                  "slot_refs": s.slot_refs, "require_confirm": s.require_confirm,
+                 "response_only": bool(getattr(s, "response_only", False)),
                  "latency_budget_ms": s.latency_budget_ms,
                  "required_permissions": s.required_permissions,
                  "trust_level": s.trust_level,

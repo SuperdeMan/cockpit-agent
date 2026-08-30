@@ -33,6 +33,7 @@ _EXEC_UNCERTAIN = "uncertain_confirmed"
 # 分开取值是为了让「Agent 回了传输不确定的失败」和「流断在 final 之前」在观测上分得开
 # ——两者的补救动作相同，成因不同。
 _EXEC_STREAM_LOST_FINAL = "stream_lost_final"
+_RESPONSE_ONLY_CONTRACT_ERROR = "response_only_contract_violation"
 
 # 流式丢 final 后按 readback 结果分档的话术（B5 §4.2）。三句**零领域字面量**：
 # 不提任何具体对象或动作，只说「发出了 / 生效了 / 不确定」。
@@ -187,13 +188,18 @@ class DagExecutor:
         # 解析 slot_refs：用前序结果填 slot（**防抖判定必须在此之后**——指纹要含真实槽位）
         self._resolve_slot_refs(step, done, ctx)
 
+        preflight = self._response_only_preflight(step)
+        if preflight is not None:
+            return preflight
+
         fingerprint = self._fingerprint(step)
         prior = self._find_duplicate(fingerprint, done)
         if prior is not None:
             return await self._replay_prior(step, prior, ctx)
 
-        result = self._enforce_capability_confirm(
+        result = self._enforce_response_only(
             step, await self._dispatch_once(step, ctx))
+        result = self._enforce_capability_confirm(step, result)
         result = await self._verify_outcome(step, result, ctx)
         # 只给「真产生了副作用」的成功结果打指纹：纯查询步重复执行无害（还可能要刷新数据）
         if result.status == StepStatus.OK and result.actions:
@@ -327,8 +333,12 @@ class DagExecutor:
             attempts += 1
             logger.info("Step %s(%s): verify unsat, retrying (%d)",
                         step.id, step.intent, attempts)
-            retried = self._enforce_capability_confirm(
+            preflight = self._response_only_preflight(step)
+            if preflight is not None:
+                return preflight
+            retried = self._enforce_response_only(
                 step, await self._dispatch_once(step, ctx))
+            retried = self._enforce_capability_confirm(step, retried)
             if retried.status != StepStatus.OK:
                 return retried          # 重试本身失败：交回常规失败通道，不再对账
             result = retried
@@ -460,6 +470,49 @@ class DagExecutor:
         except Exception:
             pass
         return verdict
+
+    @staticmethod
+    def _response_only_violation(step_id: str) -> StepResult:
+        return StepResult(
+            step_id=step_id,
+            status=StepStatus.FAILED,
+            actions=[],
+            error=_RESPONSE_ONLY_CONTRACT_ERROR,
+        )
+
+    @staticmethod
+    def _response_only_preflight(step: Step) -> StepResult | None:
+        if (
+            bool(getattr(step, "response_only", False))
+            and bool(getattr(step, "require_confirm", False))
+        ):
+            logger.error(
+                "Step %s(%s): response_only conflicts with require_confirm; "
+                "rejecting before dispatch",
+                step.id,
+                step.intent,
+            )
+            return DagExecutor._response_only_violation(step.id)
+        return None
+
+    @staticmethod
+    def _enforce_response_only(step: Step, result: StepResult) -> StepResult:
+        if not bool(getattr(step, "response_only", False)):
+            return result
+        conflict = DagExecutor._response_only_preflight(step)
+        if conflict is not None:
+            return conflict
+        if result.status == StepStatus.FAILED and not result.actions:
+            return result
+        if result.status == StepStatus.OK and not result.actions:
+            # data._escalate 是控制面请求；Task 3 在接收处再以原始文本守卫。
+            return result
+        logger.error(
+            "Step %s(%s): response_only contract violation",
+            step.id,
+            step.intent,
+        )
+        return DagExecutor._response_only_violation(result.step_id)
 
     @staticmethod
     def _enforce_capability_confirm(step: Step, result: StepResult) -> StepResult:

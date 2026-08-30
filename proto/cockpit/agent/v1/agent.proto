@@ -57,6 +57,8 @@ message Capability {
   // （9 次取样里出现过 7 种），**指纹不同、防抖不命中**——而这个 Agent
   // 根本不读槽、读的是 raw_text。声明式解决：谁消费整句谁自己说出来。
   bool whole_utterance = 9;
+  // 只允许直接回答：manifest 是唯一权威，planner wire 无权设置。
+  bool response_only = 10;
 }
 
 // 执行后对账声明（M2 Outcome Verifier）：解「步骤 OK ≠ 结果达成」——
