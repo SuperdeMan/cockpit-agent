@@ -26,7 +26,7 @@
    ```
    若你换了构建目录且这一行不在 ⇒ Task 6 的手势退回 RN 核心 `PanResponder`（写进 §6 记录），**不加依赖、不重建**。
 2. **每个任务的顺序是固定的**：写失败测试 → 跑出红 → 最小实现 → 跑绿 → `tsc` → 提交。`mobile/` 的测试命令：`cd mobile && npx jest test/<file>.test.ts`（单文件）/ `npm test`（全量，**开工基线 29 suites / 315 tests**，B1 收口读数）/ `npm run typecheck`。
-3. **提交只加自己的路径**：新建文件 `git add -- <路径> && git commit -- <路径>` **同一条命令链**（已暂存未提交比未暂存更有害，会污染别人的发版闸）；提交后 **`git show --stat HEAD` 复核行数**。共享工作树里可能有别的会话的改动，**不要 `git add -A`**。⚠ 按路径隔离得了「文件」，隔离不了**同一个文件里别人未提交的行**——`AGENTS.md` 正是所有会话都在写的那一个：动它前先 `git diff --stat -- AGENTS.md` 看行数对不对得上自己的预期。全仓提交都是同一个 git 身份，「这个 commit 是哪条会话的」靠元数据答不出来，只能靠会话自己说。
+3. **提交只加自己的路径**：新建文件 `git add -- <路径> && git commit -m '…' -- <路径>` **同一条命令链**（**`-m` 必须写在 `--` 之前**——`--` 之后的一切都是 pathspec，第 1 批实测 `pathspec '-m' did not match`）（已暂存未提交比未暂存更有害，会污染别人的发版闸）；提交后 **`git show --stat HEAD` 复核行数**。共享工作树里可能有别的会话的改动，**不要 `git add -A`**。⚠ 按路径隔离得了「文件」，隔离不了**同一个文件里别人未提交的行**——`AGENTS.md` 正是所有会话都在写的那一个：动它前先 `git diff --stat -- AGENTS.md` 看行数对不对得上自己的预期。全仓提交都是同一个 git 身份，「这个 commit 是哪条会话的」靠元数据答不出来，只能靠会话自己说。
 4. **真机取证一律截图**（`adb exec-out screencap -p -d <displayId>`；折叠屏 id 用 `dumpsys SurfaceFlinger --display-id` 取）；`uiautomator dump` 在有常驻动画的屏上不可信（坑账 §9.40/48）。**录屏路径要写 `//sdcard/…` 或带 `MSYS_NO_PATHCONV=1`**（B1 第 4 批坑①：MSYS 把 `/sdcard/` 翻成 Windows 路径，`screenrecord` 与 `adb pull` 双双落空）。`adb shell` 里的 PNG **不要经 PowerShell 的 `>`**（会损坏）。
 5. **六个结构性事实，写代码前记住**（每条都有 `文件:行号`，别按印象）：
    - **`Msg` 不能加字段**（`hmi/src/types.ts:9`，共享）⇒ B2 全部「气泡上要多显示一个态」都是 `SessionState` 的并列字段：`draftUserId` / `interruptedIds` / `s2sIds` / `visionIds` / `turnMeta` / `confirmLog`（Task 4/5/10/13 逐个引入；类型在 §1）。到期留痕、回执都用**追加消息 / 并列表**，不改原气泡。
@@ -55,7 +55,7 @@
 1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批的 T1/T2 纯 jest 可先做，真机截图在收口时补）；
 2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
 3. 只读 §0 / §0.1 / §1 + 自己批次的 `### Task N` 块；
-4. 按任务顺序：写失败测试 → 跑红 → 实现 → 跑绿 → `tsc` → `git add -- <新文件> && git commit -- <只加自己的路径>` → `git show --stat HEAD` 复核；
+4. 按任务顺序：写失败测试 → 跑红 → 实现 → 跑绿 → `tsc` → `git add -- <新文件> && git commit -m '…' -- <只加自己的路径>` → `git show --stat HEAD` 复核；
 5. 收口：全量 `npm test` + `tsc`，把读数、遗留、撞到的坑写进 §6，**然后停下**——下一批是另一个会话的事。
 
 **worktree**：B1 期间三条线共用一个工作树出过两次事故（B1 计划 §0 第 3 条；`git push` 的粒度是分支不是提交）。**若泓舟同意分树**，第 1 批开工前执行一次并写进 §6：`git worktree add ../car-agent-ux-b2 -b ux-v2-b2`，四批都在该 worktree 里做，最后由泓舟决定合回 `main` 的方式（`git push` 仍需单独授权）。没有分树就在主工作树做，纪律同 §0 第 3 条——但**这一条不再是可选项的措辞**：不分树就要在每次提交前 `git status` 重采、`git log origin/main..HEAD --oneline` 念一遍谁的提交在前面。
@@ -376,7 +376,7 @@ export function dockLabelMode(pref: FontScalePref, windowFontScale: number): Doc
 
 - [ ] **提交**（同一条命令链）：
 ```bash
-git add -- mobile/src/core/session/actionSummary.ts mobile/src/features/chat/dockLabel.ts mobile/test/actionSummary.test.ts mobile/test/dockLabel.test.ts && git commit -- mobile/src/core/session/actionSummary.ts mobile/src/features/chat/dockLabel.ts mobile/test/actionSummary.test.ts mobile/test/dockLabel.test.ts mobile/src/features/chat/usePresence.ts mobile/src/core/session/store.ts mobile/src/features/chat/FocusDock.tsx mobile/test/sessionStore.test.ts -m "fix(mobile): UX v2 B2-1 承诺卡摘要取紧邻上一条用户原话（D1）+ 右侧标签让位（❌-1）" && git show --stat HEAD
+git add -- mobile/src/core/session/actionSummary.ts mobile/src/features/chat/dockLabel.ts mobile/test/actionSummary.test.ts mobile/test/dockLabel.test.ts && git commit -m "fix(mobile): UX v2 B2-1 承诺卡摘要取紧邻上一条用户原话（D1）+ 右侧标签让位（❌-1）" -- mobile/src/core/session/actionSummary.ts mobile/src/features/chat/dockLabel.ts mobile/test/actionSummary.test.ts mobile/test/dockLabel.test.ts mobile/src/features/chat/usePresence.ts mobile/src/core/session/store.ts mobile/src/features/chat/FocusDock.tsx mobile/test/sessionStore.test.ts && git show --stat HEAD
 ```
 
 ### Task 2: D2/D3/D4/D5——胶囊与隐私栏的判据修正（一组，不拆）
@@ -788,7 +788,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
 
 - [ ] **提交**：
 ```bash
-git commit -- mobile/src/core/presence/presence.ts mobile/src/core/presence/fixtures.ts mobile/test/presence.test.ts mobile/test/presenceFixtures.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/PrivacyRail.tsx mobile/src/features/chat/ChatScreen.tsx -m "fix(mobile): UX v2 B2-2 胶囊与隐私栏判据修正——armed 胶囊 3s 隐藏、error 不被 armed 遮蔽、麦克风四档 MIC_LABEL 一处出口（D2–D5）" && git show --stat HEAD
+git commit -m "fix(mobile): UX v2 B2-2 胶囊与隐私栏判据修正——armed 胶囊 3s 隐藏、error 不被 armed 遮蔽、麦克风四档 MIC_LABEL 一处出口（D2–D5）" -- mobile/src/core/presence/presence.ts mobile/src/core/presence/fixtures.ts mobile/test/presence.test.ts mobile/test/presenceFixtures.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/PrivacyRail.tsx mobile/src/features/chat/ChatScreen.tsx && git show --stat HEAD
 ```
 ### Task 3: Voice Sheet——三入口一张层（升起 / detent / 收起 / 打断 / 胶囊点按）
 
@@ -1381,7 +1381,7 @@ import { usePresence, type SheetOverride } from './usePresence'
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/session/turnView.ts mobile/test/turnView.test.ts && git commit -- mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/session/turnView.ts mobile/test/turnView.test.ts mobile/src/core/presence/presence.ts mobile/src/core/presence/fixtures.ts mobile/test/presence.test.ts mobile/test/presenceFixtures.test.ts mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/PresenceCapsule.tsx mobile/src/features/chat/Composer.tsx mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/app/_layout.tsx -m "feat(mobile): UX v2 B2-3 语音层——三入口一张层、detent 三档、收起/打断、胶囊点按（判据在 derivePresence，层零自有状态）" && git show --stat HEAD
+git add -- mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/session/turnView.ts mobile/test/turnView.test.ts && git commit -m "feat(mobile): UX v2 B2-3 语音层——三入口一张层、detent 三档、收起/打断、胶囊点按（判据在 derivePresence，层零自有状态）" -- mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/session/turnView.ts mobile/test/turnView.test.ts mobile/src/core/presence/presence.ts mobile/src/core/presence/fixtures.ts mobile/test/presence.test.ts mobile/test/presenceFixtures.test.ts mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/PresenceCapsule.tsx mobile/src/features/chat/Composer.tsx mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/app/_layout.tsx && git show --stat HEAD
 ```
 
 ### Task 4: draft → final 增量沉淀（转写草稿气泡、打断留痕、D9）
@@ -1637,7 +1637,7 @@ export function usePtt(opts: {
 
 - [ ] **提交**：
 ```bash
-git commit -- mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/usePtt.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx -m "feat(mobile): UX v2 B2-4 转写增量沉淀（草稿气泡 draft→final）、打断留痕不改红、queued 按轮计数（D9）" && git show --stat HEAD
+git commit -m "feat(mobile): UX v2 B2-4 转写增量沉淀（草稿气泡 draft→final）、打断留痕不改红、queued 按轮计数（D9）" -- mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/usePtt.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx && git show --stat HEAD
 ```
 
 ### Task 5: S2S 轮沉淀 + 「端到端」角标 + 开录即告知 + 设置页首次显式同意
@@ -1969,7 +1969,7 @@ export function S2sConsentSheet({
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/features/settings/S2sConsentSheet.tsx && git commit -- mobile/src/features/settings/S2sConsentSheet.tsx mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/settings/store.ts mobile/test/settingsMeta.test.ts mobile/src/features/settings/SettingsScreen.tsx -m "feat(mobile): UX v2 B2-5 S2S 自答轮沉淀 + 「端到端」角标 + 开录即告知条 + 首次显式同意（逃逸轮复用用户气泡，红线只让它可见）" && git show --stat HEAD
+git add -- mobile/src/features/settings/S2sConsentSheet.tsx && git commit -m "feat(mobile): UX v2 B2-5 S2S 自答轮沉淀 + 「端到端」角标 + 开录即告知条 + 首次显式同意（逃逸轮复用用户气泡，红线只让它可见）" -- mobile/src/features/settings/S2sConsentSheet.tsx mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx mobile/src/core/settings/store.ts mobile/test/settingsMeta.test.ts mobile/src/features/settings/SettingsScreen.tsx && git show --stat HEAD
 ```
 ### Task 6: 轻点光球即说 + Composer 手势契约（含 PTT-lease 前置修、D7）
 
@@ -2953,7 +2953,7 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/core/voice/tapTalk.ts mobile/test/tapTalk.test.ts mobile/test/pttLease.test.ts && git commit -- mobile/src/core/voice/tapTalk.ts mobile/test/tapTalk.test.ts mobile/test/pttLease.test.ts mobile/src/core/voice/asr.ts mobile/test/voiceAsr.test.ts mobile/src/features/chat/usePtt.ts mobile/src/core/voice/handsFree.ts mobile/test/handsFree.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/Composer.tsx mobile/src/features/chat/ChatScreen.tsx mobile/src/core/presence/presence.ts mobile/src/features/chat/usePresence.ts mobile/test/presence.test.ts -m "feat(mobile): UX v2 B2-6 轻点光球即说（端侧 VAD 三层收尾）+ Composer 手势契约（长按/上滑取消/松手）+ PTT 领 micLease（免唤醒下 PTT 修复）+ recycle 替代翻开关（D7）" && git show --stat HEAD
+git add -- mobile/src/core/voice/tapTalk.ts mobile/test/tapTalk.test.ts mobile/test/pttLease.test.ts && git commit -m "feat(mobile): UX v2 B2-6 轻点光球即说（端侧 VAD 三层收尾）+ Composer 手势契约（长按/上滑取消/松手）+ PTT 领 micLease（免唤醒下 PTT 修复）+ recycle 替代翻开关（D7）" -- mobile/src/core/voice/tapTalk.ts mobile/test/tapTalk.test.ts mobile/test/pttLease.test.ts mobile/src/core/voice/asr.ts mobile/test/voiceAsr.test.ts mobile/src/features/chat/usePtt.ts mobile/src/core/voice/handsFree.ts mobile/test/handsFree.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/Composer.tsx mobile/src/features/chat/ChatScreen.tsx mobile/src/core/presence/presence.ts mobile/src/features/chat/usePresence.ts mobile/test/presence.test.ts && git show --stat HEAD
 ```
 
 ### Task 7: 边缘极光（语音层顶缘 2dp 呼吸）
@@ -3019,7 +3019,7 @@ export function EdgeGlow({ active }: { active: boolean }) {
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/ui/aurora/EdgeGlow.tsx && git commit -- mobile/src/ui/aurora/EdgeGlow.tsx mobile/src/ui/aurora/index.ts mobile/src/features/chat/VoiceSheet.tsx -m "feat(mobile): UX v2 B2-7 语音层顶缘极光 2dp 呼吸（只在 listening/thinking，零依赖）" && git show --stat HEAD
+git add -- mobile/src/ui/aurora/EdgeGlow.tsx && git commit -m "feat(mobile): UX v2 B2-7 语音层顶缘极光 2dp 呼吸（只在 listening/thinking，零依赖）" -- mobile/src/ui/aurora/EdgeGlow.tsx mobile/src/ui/aurora/index.ts mobile/src/features/chat/VoiceSheet.tsx && git show --stat HEAD
 ```
 
 ### Task 8: `card_group` 主卡 / 折叠（`display_priority` 终于有消费方）
@@ -3136,7 +3136,7 @@ export function CardGroup({ p, items, onSend }: { p: Palette; items: unknown[]; 
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/core/cards/cardGroup.ts mobile/src/features/cards/CardGroup.tsx mobile/test/cardGroup.test.ts && git commit -- mobile/src/core/cards/cardGroup.ts mobile/src/features/cards/CardGroup.tsx mobile/test/cardGroup.test.ts mobile/src/features/cards/CardRenderer.tsx -m "feat(mobile): UX v2 B2-8 card_group 主卡/折叠——display_priority 升序取主卡，其余竖排展开（P9）" && git show --stat HEAD
+git add -- mobile/src/core/cards/cardGroup.ts mobile/src/features/cards/CardGroup.tsx mobile/test/cardGroup.test.ts && git commit -m "feat(mobile): UX v2 B2-8 card_group 主卡/折叠——display_priority 升序取主卡，其余竖排展开（P9）" -- mobile/src/core/cards/cardGroup.ts mobile/src/features/cards/CardGroup.tsx mobile/test/cardGroup.test.ts mobile/src/features/cards/CardRenderer.tsx && git show --stat HEAD
 ```
 
 ### Task 9: follow-up chips（`final.follow_up` + 候选集）
@@ -3282,7 +3282,7 @@ export function FollowUpChips({ p, fontScale, chips, onSend }: { p: Palette; fon
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/core/session/followUps.ts mobile/src/features/chat/FollowUpChips.tsx mobile/test/followUps.test.ts && git commit -- mobile/src/core/session/followUps.ts mobile/src/features/chat/FollowUpChips.tsx mobile/test/followUps.test.ts mobile/src/features/chat/VoiceSheet.tsx mobile/src/features/chat/ChatScreen.tsx -m "feat(mobile): UX v2 B2-9 语音层 follow-up chips（final.follow_up + 候选集，文本以 sendRouter 判定为准）" && git show --stat HEAD
+git add -- mobile/src/core/session/followUps.ts mobile/src/features/chat/FollowUpChips.tsx mobile/test/followUps.test.ts && git commit -m "feat(mobile): UX v2 B2-9 语音层 follow-up chips（final.follow_up + 候选集，文本以 sendRouter 判定为准）" -- mobile/src/core/session/followUps.ts mobile/src/features/chat/FollowUpChips.tsx mobile/test/followUps.test.ts mobile/src/features/chat/VoiceSheet.tsx mobile/src/features/chat/ChatScreen.tsx && git show --stat HEAD
 ```
 
 ### Task 10: 视觉抓帧——先落气泡（📷 角标，`vision_frame_id` 迟到补进 meta）
@@ -3353,7 +3353,7 @@ describe('UX v2 B2-10：视觉先落气泡（方案 §5.5）', () => {
 
 - [ ] **提交**：
 ```bash
-git commit -- mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx -m "feat(mobile): UX v2 B2-10 视觉抓帧先落气泡（📷 角标，vision_frame_id 迟到补进 meta；不做预览）" && git show --stat HEAD
+git commit -m "feat(mobile): UX v2 B2-10 视觉抓帧先落气泡（📷 角标，vision_frame_id 迟到补进 meta；不做预览）" -- mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/VoiceSheet.tsx && git show --stat HEAD
 ```
 
 ### Task 11: 回声提示——「像是我自己的声音，没算数」
@@ -3413,7 +3413,7 @@ test('B2-11 续问窗回声：FSM 吐 echo_dismissed → onEchoDismissed 收到�
 
 - [ ] **提交**：
 ```bash
-git commit -- mobile/src/core/voice/handsFree.ts mobile/test/handsFree.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/usePresence.ts -m "feat(mobile): UX v2 B2-11 回声提示——FSM echo_dismissed → 胶囊「像是我自己的声音，没算数」2s（共享判据不改）" && git show --stat HEAD
+git commit -m "feat(mobile): UX v2 B2-11 回声提示——FSM echo_dismissed → 胶囊「像是我自己的声音，没算数」2s（共享判据不改）" -- mobile/src/core/voice/handsFree.ts mobile/test/handsFree.test.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/usePresence.ts && git show --stat HEAD
 ```
 ### Task 12: 播报三档（总是 / 静音 / 自动）——替换 `ttsEnabled && autoplay`
 
@@ -3566,7 +3566,7 @@ export function mergeStoredSettings(raw: string | null): AppSettings {
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/test/speakPolicy.test.ts && git commit -- mobile/test/speakPolicy.test.ts mobile/src/core/settings/store.ts mobile/src/core/voice/speech.ts mobile/src/core/session/store.ts mobile/src/features/settings/SettingsScreen.tsx mobile/test/sessionStore.test.ts -m "feat(mobile): UX v2 B2-12 播报三档 总是/静音/自动（自动=语音提问才播报），替换 ttsEnabled&&autoplay，存量迁移" && git show --stat HEAD
+git add -- mobile/test/speakPolicy.test.ts && git commit -m "feat(mobile): UX v2 B2-12 播报三档 总是/静音/自动（自动=语音提问才播报），替换 ttsEnabled&&autoplay，存量迁移" -- mobile/test/speakPolicy.test.ts mobile/src/core/settings/store.ts mobile/src/core/voice/speech.ts mobile/src/core/session/store.ts mobile/src/features/settings/SettingsScreen.tsx mobile/test/sessionStore.test.ts && git show --stat HEAD
 ```
 
 ### Task 13: 执行回执（Execution Receipt）
@@ -3892,7 +3892,7 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/core/session/receipt.ts mobile/src/features/chat/ExecutionReceipt.tsx mobile/test/receipt.test.ts && git commit -- mobile/src/core/session/receipt.ts mobile/src/features/chat/ExecutionReceipt.tsx mobile/test/receipt.test.ts mobile/src/core/session/actionSummary.ts mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/ChatScreen.tsx -m "feat(mobile): UX v2 B2-13 执行回执——车控四行 / 信息服务 _prov 展开，字段全来自已有数据，默认折叠" && git show --stat HEAD
+git add -- mobile/src/core/session/receipt.ts mobile/src/features/chat/ExecutionReceipt.tsx mobile/test/receipt.test.ts && git commit -m "feat(mobile): UX v2 B2-13 执行回执——车控四行 / 信息服务 _prov 展开，字段全来自已有数据，默认折叠" -- mobile/src/core/session/receipt.ts mobile/src/features/chat/ExecutionReceipt.tsx mobile/test/receipt.test.ts mobile/src/core/session/actionSummary.ts mobile/src/core/session/store.ts mobile/test/sessionStore.test.ts mobile/src/features/chat/MessageBubble.tsx mobile/src/features/chat/ChatScreen.tsx && git show --stat HEAD
 ```
 
 ### Task 14: 在场轨迹页（🔁-1）+ `activityLog.list()` 的第一个消费方（D8）
@@ -4189,7 +4189,7 @@ export default function PresenceTrailScreen() {
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/src/core/presence/presenceTrail.ts mobile/src/app/presence-trail.tsx mobile/test/presenceTrail.test.ts && git commit -- mobile/src/core/presence/presenceTrail.ts mobile/src/app/presence-trail.tsx mobile/test/presenceTrail.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/app/_layout.tsx mobile/src/features/settings/SettingsScreen.tsx -m "feat(mobile): UX v2 B2-14 在场轨迹页（PresenceSnapshot 变化 20 条环形 + FSM 打点）+ activityLog.list() 首个消费方与 location 产出方（🔁-1、D8）" && git show --stat HEAD
+git add -- mobile/src/core/presence/presenceTrail.ts mobile/src/app/presence-trail.tsx mobile/test/presenceTrail.test.ts && git commit -m "feat(mobile): UX v2 B2-14 在场轨迹页（PresenceSnapshot 变化 20 条环形 + FSM 打点）+ activityLog.list() 首个消费方与 location 产出方（🔁-1、D8）" -- mobile/src/core/presence/presenceTrail.ts mobile/src/app/presence-trail.tsx mobile/test/presenceTrail.test.ts mobile/src/features/chat/usePresence.ts mobile/src/features/chat/useHandsFree.ts mobile/src/features/chat/ChatScreen.tsx mobile/src/app/_layout.tsx mobile/src/features/settings/SettingsScreen.tsx && git show --stat HEAD
 ```
 
 ### Task 15: B2→B3 闸——真机验收 7 条 + 真人语音轮五项读数 + 5 人外部小样本 + 记录收口
@@ -4264,9 +4264,9 @@ tags:
 
 - [ ] **提交**：
 ```bash
-git add -- mobile/e2e/05-voice-sheet-ptt.yaml && git commit -- mobile/e2e/05-voice-sheet-ptt.yaml mobile/e2e/README.md docs/design/2026-08-24-mobile-app-implementation-plan.md docs/design/README.md docs/design/2026-08-30-mobile-ux-v2-b2-implementation-plan.md -m "docs(mobile): UX v2 B2-15 闸——真机验收 7 条 + 五项读数 + 外部小样本 + Maestro 05（manual）+ 记录收口" && git show --stat HEAD
+git add -- mobile/e2e/05-voice-sheet-ptt.yaml && git commit -m "docs(mobile): UX v2 B2-15 闸——真机验收 7 条 + 五项读数 + 外部小样本 + Maestro 05（manual）+ 记录收口" -- mobile/e2e/05-voice-sheet-ptt.yaml mobile/e2e/README.md docs/design/2026-08-24-mobile-app-implementation-plan.md docs/design/README.md docs/design/2026-08-30-mobile-ux-v2-b2-implementation-plan.md && git show --stat HEAD
 # AGENTS.md 单独一个 commit（它是所有会话都在写的文件）：
-git diff --stat -- AGENTS.md && git commit -- AGENTS.md -m "docs(agents): Android 行指向 UX v2 B2 收口与闸结论" && git show --stat HEAD
+git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 UX v2 B2 收口与闸结论" -- AGENTS.md && git show --stat HEAD
 ```
 
 ---
