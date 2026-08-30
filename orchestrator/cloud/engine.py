@@ -1125,7 +1125,29 @@ class PlannerEngine:
             logger.warning("Escalate target intent %r has no serving agent; ignored",
                            esc["intent"])
             return
-        mini = Plan(steps=steps, raw_text=ctx.raw_text)
+
+        # Agent 的改派声明仍是非可信控制面输入：目标步已先经 manifest 权威装配，
+        # 但在发过程事件、记 span 或交 executor 之前，还必须用服务端持有的本轮原话
+        # 过同一份问句副作用闸。esc.reason / 原计划 goal / Agent speech 都不具备
+        # 这项安全权威。两条消费路径（D0 与普通 executor）在此唯一接收点汇合。
+        kept, blocked = PlanBuilder._filter_question_side_effect_steps(
+            steps, ctx.raw_text,
+        )
+        if blocked:
+            logger.warning(
+                "Question-shaped utterance escalated into side-effecting step(s) %s; "
+                "dropping before dispatch",
+                [step.intent for step in blocked],
+            )
+        if kept:
+            mini = Plan(steps=kept, raw_text=ctx.raw_text)
+        else:
+            # 全部被拦时只允许 declaration-backed、未确认且能再次通过同一 guard
+            # 的 response-only 能力回答。没有这样的出口就保持 sink 为空，零 dispatch。
+            mini = self.planner._talk_only_plan(ctx.raw_text, agents)
+            if mini is None:
+                return
+        steps = mini.steps
         show_esc_process = is_complex(mini)
         if show_esc_process:
             for s in mini.steps:
