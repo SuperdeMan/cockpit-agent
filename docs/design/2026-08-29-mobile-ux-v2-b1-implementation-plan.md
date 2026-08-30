@@ -2916,10 +2916,96 @@ T1/T2/T4/T5/T7 互不依赖，可由不同 subagent 并行（各自只加自己�
   （2026-08-30，worktree：**主工作树**——泓舟仍未授权分树）。
   ⚠ 与第 2 批遗留⑲不同的一处事实：第 1/2 批那 17 个提交**已经在 `origin/main` 上了**
   （开工时 `git log origin/main..HEAD` = 0，不是我推的；共享 main 上 push 的粒度是分支不是提交）。
-- 完成任务与提交：
-- 真机读数（Dock 三张截图、两开关回滚、隐私栏三行、**键盘读数=遮/不遮 + 选的 A/B**、Onboarding 深浅、APK 构建时间与 AEC 档位）：
+- 完成任务与提交（串行；共享树里中间夹着别的会话的两个提交 `5c21e21` / `b16cfb7`，pathspec 隔离全程有效）：
+
+| 任务 | commit | 文件 / 行 | 新增用例 |
+|---|---|---|---|
+| （开工基线） | `98963fc` | 本文件 +6 −1 | — |
+| T10 对话屏接线（含附加项②③⑤） | `fa9b4f9` | 8 文件 +367 −83 | 12 |
+| T10 附加项④ 秒级时钟停表 | `fffee7b` | 1 文件 +27 −8 | 0 |
+| T11 隐私栏 + 顶栏采集点 | `5833a39` | 3 文件 +203 −9 | 0 |
+| T12 键盘避让 + Maestro 08 | `561a37a` | 4 文件 +43 −14 | 0 |
+| T13 Onboarding 上品牌 | `542cb00` | 1 文件 +201 −156 | 0 |
+
+- 读数：收口 `npm test` = **29 suites / 312 tests 全通过**（62.9s），`tsc` **0 error**。
+  相对基线 **+1 suite / +12 tests**，逐条对得上：`presenceSeen` 10 + `presence` 的 now 透传 2。
+  条数只增不减满足；本批未碰 `hmi/`、未改编排核心。
+- 真机读数（Mix Fold 4 `5d432b6d`，显示屏 id `4630947090644569220`；**Metro 复用别的会话已起着的
+  dev server**——先核过它的命令行确认服务的就是本仓 `mobile/`。截图存 `mobile/e2e/artifacts/`，不入库）：
+  - **a) 危险动作进 Dock**：「打开后备箱」→ `dock-confirm` 出现（琥珀实色卡 + 「危险动作 · 需二次确认」
+    + 进度条 + 取消/确认 1:2），胶囊「等你确认」，光球转 `attention` 琥珀环，**气泡内确认按钮消失**；
+    倒计时 **`4:57` → `4:22`**（35s 间隔，真的在走 ⇒ 附加项②修掉了生产路径上的冻表）；
+    点「取消」→ Dock 消失 + 上行「取消」+ 「好的，已为您取消。」
+  - **b) 两开关回滚**（`b1-10-dock-off-inline-confirm.png` / `b1-10-v1-rollback.png` / `b1-10-v1-ptt-hint.png`）：
+    关 `uxV2Dock` → Dock 不再出现、**确认按钮回到气泡内**，胶囊仍在（两个开关各管各的轴）；
+    关 `uxV2Presence` → 顶栏回 v1 连接 pill（绿点+「在线」）、底部回「待唤醒 · 说「小舟小舟」」、
+    胶囊消失、光球回 v1 三态；长按光球验第四条窄条 → 「识别中…」也回来了。
+  - **c) 隐私栏**：待机 `b1-11-privacy-armed.png`（「唤醒词待机（端侧监听，不上传）」+
+    「最近一次 麦 09:10 按住说话」← activityLog 端到端通了 + 「token ····j2_Z」）；
+    PTT 中 `b1-11-privacy-ptt-top.png`（胶囊「● 在听…」+ 采集点青）；
+    s2s 收音 `b1-11-capture-dot-s2s.png`（采集点**琥珀**）。采集点三态真机全见：不渲染 / 青 / 琥珀。
+    ⚠ **`cloudAudio` 那一行的隐私栏截图没取到**（见遗留①）。
+  - **d) 飞行模式（附加项⑥，第 1/2 批那条未验前提到此为止）**：发出后 **3 秒**就出
+    「1 条消息排队中，连上后自动补发」——**不需要等 30s 判死**；同屏健康点红、胶囊「已断开 · 消息会排队」、
+    光球 `muted`。⇒ **`transport.send()` 在真实断线时确实返 `false`，队列语义成立**。
+    关飞行模式后约 2 分钟自动重连（指数退避，不是立刻）：健康点转灰、Dock 消失、胶囊回 armed。
+  - **e) 键盘读数 = 遮（两处都遮），选 A 修法**：对话页 `b1-12-chat-kbd.png` 输入框/光球/发送键
+    **整个被盖住**、页面不上移；Onboarding `b1-12-onboarding-kbd.png`「保存并进入」被完全盖住。
+    修后 `b1-12-chat-kbd-after.png` Composer 整体在键盘上方。**Maestro 08 通过、退出码 0**
+    （专门单跑一趟取退出码），反向验证：`behavior` 改回 `undefined` → 08 在
+    `assertVisible composer-send` 当场 FAILED，还原即绿。
+  - **f) Onboarding 深浅**：`b1-13-onboarding-{dark,dark-2,light,light-top}.png`，改造前留档
+    `b1-13-onboarding-before.png`（两张并排看差别最直观）。
+  - **APK 构建时间：本批零构建**（B1 全 JS、走 Metro 热载；`check_android_env.ps1` 18 pass / 0 fail）。
+    **AEC 档位**：`mobile/patches/react-native-audio-api+0.13.3.patch` 的
+    `setInputPreset(oboe::InputPreset::VoiceCommunication)`（平台 AEC 那条路），本批未动。
 - 本批踩的坑：
+  1. **「抓不到 cloudAudio」我先归因成时序，真因是那个开关根本没切中**（本批最值钱的一条）。
+     点了「端到端」没当场核选中态就往下走，之后用「多点触控注入不生效 / 松手时序太紧」解释了三轮，
+     每一条都自洽、都能独立成立。回到设置页才看见它还停在「三段式（默认）」。
+     ⇒ **改完一个设置，当场截图确认它真的变了再往下走**；一个自洽的错误解释比没有解释更难被推翻，
+     而它最爱出现在「我刚操作过这里」的时候（同族老账第 N 次）。
+  2. **隐私面板上有一句假话，而「说的是真的」正是这块屏存在的全部理由**。原文案
+     「本机处理（唤醒词待机 / 转文字后只上传文字）」把两件事并成一句——App 的 PTT 走的是
+     **服务端** ASR（`core/voice/asr.ts` 连 `ws://…/api/asr/stream`），录音那一刻音频是上传的。
+     更糟的是 `test/presence.test.ts` 那条用例名把这个错误理由**焊死成了预期行为**
+     （「PTT=edge（三段式只上传文字）」）。⇒ 判据层 `edge` 并了「端侧待机」与「音频上传给 ASR」两件事，
+     B1 先在 `PrivacyRail.micText` 用文案分开、断言不动、把正确的理由写进注释留给下一个人。
+  3. **`secureTextEntry` 输入框聚焦时 `screencap` 全黑**（HyperOS 的截屏保护），稳定复现两次。
+     我差点把它读成「Onboarding 在键盘弹起时崩了/白屏」。换非密码框当场截图正常 ⇒ 证伪。
+     **任何「没看到 X」的结论，先证明观测通道还开着**。
+  4. **停表的读数必须两头都取**。只证明「空闲不再 tick」（10s 内 ChatBody 11→**0** 次、
+     可见气泡 88→**0** 次）不够——那也可能是把表停死了；还要证明「该走时真的走」
+     （有待确认时 11 次/10s、倒计时 4:35→4:20）与「渲染没被冻住」（一次真实重挂载仍 1/8）。
+  5. **Maestro 08 第一趟红在最后一条断言上**，而那趟是热载中途起的 app；`force-stop` 后连跑两趟都绿，
+     加上反向验证红，才定性成「工具时序」而不是 flaky。
+  6. **PowerShell 的 `>` 会损坏二进制**：`adb exec-out screencap > x.png` 在 PS 里会写出带 BOM 的坏 PNG
+     （`ef bb bf ef bf bd 50 4e`）。截图一律走 bash。
+  7. **反引号在 bash 的 commit message 里会被当命令替换执行**——T12 那条 message 里三处
+     `` `artifacts/xxx.png` `` 被替换成空，报 `No such file or directory` 才发现。
+     ⇒ 多行 message 用 `git commit -F -` + heredoc（已 amend 修回）。
+  8. **飞行模式验不到探活**。飞行模式下 socket 立刻失效、`send()` 当场返 `false`，
+     `ws.mjs` 头注说的那个「RN 上 onclose 不来、帧被写进死 socket」的窗口**根本不出现**
+     ——所以这次验的是队列语义，**不是**探活。要验探活得换断网形态（关 AP / 丢包）。
+  9. `input motionevent DOWN/UP` 在这台设备上不驱动 RN 的 `Pressable`（想「按住光球的同时点顶栏」
+     取 cloudAudio 隐私栏截图，三种注入法全部无效）。
 - 遗留 / 给第 4 批的话：
+  1. **`cloudAudio` 的隐私栏那一行没有截图**（adb 的多点触控注入不驱动 RN Pressable，按住光球时点不动顶栏）。
+     该态由三条独立证据成立：真机采集点变琥珀、`presence.test.ts` 的 `cloudAudio` 断言、`micText` 源码分支。
+     第 4 批若录屏可补一张。
+  2. **`privacy.mic` 判据层三档并了两件事**（坑②）。要不要加第四档 `cloudAsr` 是 B2/B4 的裁决——
+     它会牵动 `PresenceSnapshot` 类型、画廊样本与覆盖度守卫，B1 刻意不动。
+  3. **排队消息补发之后没有第二次答复上屏**：那一轮已被 95s 看门狗以「响应超时了，请稍后重试。」收尾，
+     重连后 Dock 消失、`queued` 清零，但没有新气泡。**这是现象记录，未定性**——后端到底收没收到、
+     回没回，要查 trace 才知道。UI 文案承诺的是「连上后自动补发」，值得第 4 批查一次。
+  4. 恢复网络后**不是立刻重连**（指数退避，实测约 2 分钟）。这期间胶囊一直说「已断开」，是对的。
+  5. 第 2 批遗留⑪（浅色下光球对比度偏低）在 Onboarding 顶部第二次出现（`b1-13-onboarding-light-top.png`）。
+     不是本批引入，继续记给 B2/B3 的视觉批。
+  6. `usePresence` 的 `driving` 恒 false 与 `connChangedAt` 挂载重置**按既有判据原样接**（附加项③要求），
+     未在收集器里发明判据；`lastError.at` 那条已修（`SeenRegistry.seed`）。
+  7. **Maestro 06 与 `e2e/README.md` 仍留给第 4 批 T15**（第 2 批已把 09 提前落了）。
+  8. **未推送**：本批 6 个提交仍在本地 `main`。⚠ 与第 2 批遗留⑫不同的是：**第 1/2 批那 17 个提交
+     开工时已经在 `origin/main` 上了**（不是我推的）。`git push` 仍需泓舟单独授权。
 
 ### 6.4 第 4 批「验收与记录」（T15–T17）
 
