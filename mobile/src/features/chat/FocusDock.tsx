@@ -2,7 +2,6 @@
 // 承诺面（方案 §5.3）：读 `commitment[]`（钉一项 + 其余个数）与 `degradation[]`（有出口的降级）。
 // 材质 **G0 实色**（§5.11：确认/错误/隐私说明不许半透明；坑账 §9.36 同判据）。
 // 确认按钮比例照 A-6.4：取消 flex1 / 确认 flex2；剩余时间**只读共享 TTL**（commitment.ts）。
-import { useEffect, useState } from 'react'
 import { Linking, Pressable, Text, View } from 'react-native'
 
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
@@ -39,7 +38,16 @@ export function FocusDock(props: FocusDockProps) {
     <View testID="focus-dock" style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}>
       {pinned ? <CommitmentCard {...props} item={pinned.item} others={pinned.others} solid={solid} /> : null}
       {degradations.map((d) => (
-        <DegradationRow key={d.kind} p={p} fontScale={fontScale} d={d} solid={solid} onReenableBargeIn={props.onReenableBargeIn} />
+        // key 带上区分维：同一种 kind 上游今天最多 push 一次，但 mic + camera 两个
+        // permission_denied 是随时会出现的形态，那时 `key={d.kind}` 就是 React key 冲突
+        <DegradationRow
+          key={`${d.kind}:${'what' in d ? d.what : 'reason' in d ? d.reason : ''}`}
+          p={p}
+          fontScale={fontScale}
+          d={d}
+          solid={solid}
+          onReenableBargeIn={props.onReenableBargeIn}
+        />
       ))}
     </View>
   )
@@ -48,6 +56,7 @@ export function FocusDock(props: FocusDockProps) {
 function CommitmentCard({
   p,
   fontScale,
+  snapshot,
   item,
   others,
   solid,
@@ -55,18 +64,19 @@ function CommitmentCard({
   onCancelTurn,
   onOthers,
 }: FocusDockProps & { item: DockItem; others: number; solid: string }) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (item.kind !== 'confirm' || item.subkind === 'location') return
-    const t = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(t)
-  }, [item])
+  // **时钟只有一个**：`usePresence` 已经在每秒 tick，`snapshot.now` 是那一份的读数。
+  // 这里曾经自己起过一份 `setInterval`，而它在生产路径上是冻的——`derivePresence` 每秒现造
+  // 新的 `DockItem`，`useEffect(…, [item])` 依赖的是对象引用 ⇒ 每秒 cleanup + 重建，本地
+  // now 停在挂载那一刻。状态画廊里它反而会走（静态 snapshot、引用稳定）：**取证屏与生产
+  // 路径在这一点上的输入形态相反，画廊绿证明不了生产绿**（第 2 批坑⑤）。
+  const now = snapshot.now
   const h = scale(TARGET.parked, 'target', fontScale)
   const border = item.kind === 'confirm' ? 'rgba(245,158,11,0.38)' : p.line
   return (
+    // ⚠ `accessibilityLiveRegion` **不在这一层**：这个子树里有每秒变的倒计时，挂在根上会让
+    // TalkBack 每秒重播整张卡。live region 只挂在下面那些「内容变了才该播一次」的摘要行上。
     <View
       testID={item.kind === 'confirm' ? 'dock-confirm' : `dock-${item.kind}`}
-      accessibilityLiveRegion="assertive"
       style={{
         backgroundColor: solid,
         borderRadius: RADIUS.lg,
@@ -79,7 +89,7 @@ function CommitmentCard({
     >
       {item.kind === 'confirm' ? (
         <>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>⚠</Text>
             <Text numberOfLines={1} style={{ color: p.fg1, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600', flex: 1 }}>
               {item.summary}
@@ -124,7 +134,7 @@ function CommitmentCard({
           </View>
         </>
       ) : item.kind === 'task' ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={{ color: p.teal, fontSize: scale(TYPE.body, 'text', fontScale) }}>⟳</Text>
           <Text numberOfLines={1} style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale), flex: 1 }}>{item.label}…</Text>
           <Pressable accessibilityRole="button" onPress={onCancelTurn} style={{ minHeight: h, paddingHorizontal: 12, justifyContent: 'center' }}>
@@ -132,11 +142,13 @@ function CommitmentCard({
           </Pressable>
         </View>
       ) : item.kind === 'queue' ? (
-        <Text style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>
+        <Text accessibilityLiveRegion="assertive" style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>
           {item.count} 条消息排队中，连上后自动补发
         </Text>
       ) : (
-        <Text style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>还差一个信息：{item.missing}</Text>
+        <Text accessibilityLiveRegion="assertive" style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>
+          还差一个信息：{item.missing}
+        </Text>
       )}
       {others > 0 ? (
         <Pressable onPress={onOthers} accessibilityRole="button">

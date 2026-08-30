@@ -41,11 +41,16 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     connChangedAt.current = Date.now()
   }
 
-  // 最近一条错误（4s 短显）：取最后一条 error 气泡的出现时刻
-  const lastError = useMemo(() => {
-    const m = [...messages].reverse().find((x) => x.role === 'assistant' && x.error)
-    return m ? { text: m.text.startsWith('出错了') ? '出错了' : m.text.slice(0, 20), at: errorSeenAt(m.id) } : null
-  }, [messages])
+  // 挂载那一刻列表里就已经有的 error 气泡**不算刚发生**（第 2 批遗留③）：登记成 0 =
+  // 永远过期，红胶囊只留给挂载之后新出现的那条。
+  const seeded = useRef(false)
+  if (!seeded.current) {
+    seeded.current = true
+    for (const m of messages) if (m.role === 'assistant' && m.error) seen.seed('err:' + m.id, 0)
+  }
+
+  // 最近一条错误（4s 短显）
+  const lastError = useMemo(() => pickLastError(messages, (k) => seen.firstSeen(k)), [messages])
 
   // 秒级时钟：只驱动依赖 now 的分支
   const [now, setNow] = useState(Date.now)
@@ -57,7 +62,7 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
   // 在飞轮 + 过程区
   const active = [...messages].reverse().find((m) => m.role === 'assistant' && (m.pending || m.streaming || m.processActive))
   const processLabel = active?.process?.length ? active.process[active.process.length - 1].label : ''
-  const processSince = active?.processActive ? processSeenAt(active.id) : 0
+  const processSince = active?.processActive ? seen.firstSeen('proc:' + active.id) : 0
 
   // 降级轴（§12.1）：B1 只接今天就有信号的四种
   const degradations: Degradation[] = []
@@ -103,19 +108,51 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
   })
 }
 
-// ── 时刻登记：Msg 类型是共享的、不能加字段，所以「这条错误/过程是什么时候出现的」在这里记 ──
-const seenAt = new Map<string, number>()
-function firstSeen(key: string): number {
-  const t = seenAt.get(key)
-  if (t) return t
-  const n = Date.now()
-  seenAt.set(key, n)
-  if (seenAt.size > 200) seenAt.delete(seenAt.keys().next().value as string)
-  return n
+// ── 时刻登记：`Msg` 是共享类型、不能加字段（计划 §0 第 5 条），所以「这条错误/过程是什么
+//    时候出现的」记在这里。**它答的是「hook 第一次看见它」**——两者只在一种情形下不一样：
+//    挂载那一刻列表里就已经有的那条。第 2 批遗留③的后果具体：几天前的一条 error 气泡会在
+//    进屏时白闪一次 4s 红胶囊。B1 的判据是 `seed()`：挂载时就在的登记成一个永远过期的时刻，
+//    只有挂载**之后**新出现的才算「刚发生」。──
+export class SeenRegistry {
+  private readonly map = new Map<string, number>()
+
+  constructor(
+    private readonly capacity = 200,
+    private readonly clock: () => number = () => Date.now(),
+  ) {}
+
+  /** 只在缺席时登记；已登记的不覆盖——第二次挂载的 seed 不许把新错误洗成旧的 */
+  seed(key: string, at: number): void {
+    if (!this.map.has(key)) this.map.set(key, at)
+  }
+
+  /** 第一次问到时登记 clock()，之后钟走了也返回同一个值 */
+  firstSeen(key: string): number {
+    const t = this.map.get(key)
+    if (t !== undefined) return t
+    const n = this.clock()
+    this.map.set(key, n)
+    if (this.map.size > this.capacity) this.map.delete(this.map.keys().next().value as string)
+    return n
+  }
 }
-function errorSeenAt(id: string): number {
-  return firstSeen('err:' + id)
+
+/** 收集器共用的登记表（模块级：hook 重挂载时不重置，否则「刚发生」会被重挂载刷新一遍） */
+const seen = new SeenRegistry()
+
+export interface ErrorLike {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  error?: boolean
 }
-function processSeenAt(id: string): number {
-  return firstSeen('proc:' + id)
+
+/** 最后一条助手 error 气泡 → 胶囊要的 `{ text, at }`；`at` 由调用方给的登记表决定。 */
+export function pickLastError(
+  messages: readonly ErrorLike[],
+  at: (key: string) => number,
+): { text: string; at: number } | null {
+  const m = [...messages].reverse().find((x) => x.role === 'assistant' && x.error)
+  if (!m) return null
+  return { text: m.text.startsWith('出错了') ? '出错了' : m.text.slice(0, 20), at: at('err:' + m.id) }
 }

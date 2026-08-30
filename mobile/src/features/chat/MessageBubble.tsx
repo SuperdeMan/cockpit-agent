@@ -54,11 +54,16 @@ export interface BubbleProps {
   msg: Msg
   /** 该气泡的确认条此刻是否可点（台账 live / 位置征询挂起） */
   confirmActive: boolean
+  /** 气泡内还渲不渲确认按钮：Focus Dock 开着时为 false——**同一个待确认不许有两个入口**，
+   *  两处都能点会让「点了哪一个」变成猜（承诺面开关关掉时它就回来） */
+  inlineConfirm: boolean
+  /** 发送状态未知（断线瞬间发出的那条，`SessionState.uncertainIds`） */
+  uncertain?: boolean
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   if (msg.role === 'user') {
     return (
@@ -139,6 +144,11 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
             <Text style={{ color: p.fg3, fontSize: p.font(13) }}>正在思考…</Text>
           </View>
         ) : null}
+        {uncertain ? (
+          <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
+            发送状态未知（网络刚断过；连上后若无回音请再说一次）
+          </Text>
+        ) : null}
         <ProcessFold p={p} msg={msg} />
         {msg.rejected ? (
           <Text style={{ color: p.fg3, fontSize: p.font(12), fontStyle: 'italic' }}>
@@ -163,7 +173,7 @@ export function MessageBubble({ p, msg, confirmActive, onConfirm, onSend }: Bubb
             已执行 {(msg.actions || []).map((a) => a.type).join('、')}
           </Text>
         ) : null}
-        {msg.needConfirm && confirmActive ? (
+        {msg.needConfirm && confirmActive && inlineConfirm ? (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 2 }}>
             <Pressable
               testID="confirm-cancel"

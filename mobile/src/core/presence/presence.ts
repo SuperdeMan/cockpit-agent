@@ -67,6 +67,10 @@ export interface PresenceInput {
 }
 
 export interface PresenceSnapshot {
+  /** 输入的 `now` 原样带下来。**Dock 的倒计时只许读它**——组件自己起秒表就是第二个不同步的
+   *  1s 时钟，而生产路径上 `derivePresence` 每秒现造新的 `DockItem`，那份秒表会被每秒
+   *  cleanup 重建、本地 now 冻在挂载那一刻（第 2 批坑⑤，取证屏与生产路径输入形态相反）。 */
+  now: number
   transport: 'online' | 'reconnecting' | 'offline'
   capture: 'off' | 'armed' | 'listening' | 'recognizing' | 'looking'
   agent: 'idle' | 'thinking' | 'processing' | 'speaking' | 'followup'
@@ -187,6 +191,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
     capture === 'listening' || capture === 'recognizing' ? 'voice-sheet' : 'composer'
 
   return {
+    now: i.now,
     transport,
     capture,
     agent,

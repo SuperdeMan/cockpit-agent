@@ -18,7 +18,8 @@ import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { ensureWired, type Wired } from '../../core/session/wiring'
 import { settingsStore } from '../../core/settings/store'
-import { AuroraBackground, AuroraOrb, Glass } from '../../ui/aurora'
+import { activityLog } from '../../core/presence/activityLog'
+import { AuroraBackground, AuroraOrb, Glass, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { usePalette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
@@ -26,12 +27,17 @@ import { ReminderSection } from '../vehicle/ReminderSection'
 import { VehicleSection } from '../vehicle/VehiclePanel'
 import { captureVisionFrame, needsVisionFrame } from '../../core/vision/frame'
 import { Composer } from './Composer'
+import { FocusDock } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
+import { PresenceCapsule } from './PresenceCapsule'
 import { useHandsFree } from './useHandsFree'
+import { usePresence } from './usePresence'
 import { usePtt } from './usePtt'
 
 // 免唤醒 FSM 态 → 用户看得懂的一行字与一个点的颜色。
 // **不直接显示 FSM 名字**：ARMED/FOLLOWUP 对用户没有意义，而「在不在听」有。
+// ⚠ B1 之后这两张表只在 **`uxV2Presence=false` 的回滚分支**里用（v2 下这些话由状态胶囊说）。
+// 它们**刻意留着**——回滚路径不是一句话，是一段真的要能跑起来的代码（§11.5）；B4 稳定后再删。
 const HF_LABEL: Record<string, string> = {
   ARMED: '待唤醒 · 说「小舟小舟」',
   LISTENING: '在听…',
@@ -184,7 +190,7 @@ function ChatBody({
   cfg: ServerConfig
 }) {
   const { core } = wired
-  const { messages, pendingOps, vehState, connStatus, pendingLocationText } = useStore(core.store)
+  const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
   const [notice, setNotice] = useState('')
@@ -199,6 +205,7 @@ function ChatBody({
     (text: string, metaExtra?: Record<string, string>) => {
       const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
       if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
+        activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
         void captureVisionFrame(cfg.audioUrl).then((fid) =>
           core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }),
         )
@@ -231,6 +238,32 @@ function ChatBody({
     onNotice: setNotice,
     onCancelTurn: () => core.cancelCurrentTurn(),
   })
+
+  // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
+  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4) })
+  const v2 = settings.uxV2Presence
+  const dock = settings.uxV2Dock
+  // 回滚分支的光球态（v1 推导，逐字照搬 B1 之前 Composer 里的那一行）：
+  // 关掉开关时光球要真的退回 v1 的三态，而不是停在 v2 的某个态上
+  const legacyOrb: OrbState = ptt.state === 'recording' ? 'speaking' : ptt.state === 'finalizing' ? 'thinking' : 'idle'
+  // v1 的第四条窄条（PTT 提示行）：B1 把它从 Composer 里删了，v2 下由状态胶囊表达；
+  // 回滚分支要拿回来，否则「关了开关」只退回三条
+  const legacyHint = ptt.partial || (ptt.state === 'finalizing' ? (ptt.slow ? '网络似乎不太顺，正在重试…' : '识别中…') : '') || ptt.error || ''
+  const legacyHintIsError = !ptt.partial && ptt.state !== 'finalizing' && !!ptt.error
+  // 降级出口「重新开启插话」：关再开一次免唤醒 = 重建收音窗（B2 的语音层会给更准的实现）
+  const reenableBargeIn = useCallback(() => {
+    settingsStore.getState().update({ handsFree: false })
+    setTimeout(() => settingsStore.getState().update({ handsFree: true }), 50)
+  }, [])
+
+  // ── 采集激活日志（隐私栏「最近一次」读它）：**在麦克风/摄像头真的开起来的那一处写** ──
+  useEffect(() => {
+    if (ptt.state === 'recording') activityLog.push('mic', '按住说话')
+  }, [ptt.state])
+  useEffect(() => {
+    if (hf.fsm === 'LISTENING')
+      activityLog.push('mic', settings.voicePipeline === 's2s' ? '唤醒词命中 · 端到端（原始音频上传）' : '唤醒词命中')
+  }, [hf.fsm, settings.voicePipeline])
 
   const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
@@ -270,6 +303,9 @@ function ChatBody({
       : connStatus === 'connecting'
         ? { color: p.amber, label: '连接中' }
         : { color: p.red, label: '已断开' }
+  // v2 健康点：**在线是灰的**——一个持续亮着的绿点会一直占用注意力，而它什么也没说
+  const healthColor =
+    snapshot.transport === 'online' ? p.fg3 : snapshot.transport === 'reconnecting' ? p.amber : p.red
 
   const chatColumn = (
     <View style={{ flex: 1 }}>
@@ -286,7 +322,7 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -294,6 +330,8 @@ function ChatBody({
                 p={p}
                 msg={item}
                 confirmActive={confirmActiveOf(item)}
+                inlineConfirm={!(v2 && dock)}
+                uncertain={uncertainIds.includes(item.id)}
                 onConfirm={onConfirm}
                 onSend={onSend}
               />
@@ -305,7 +343,7 @@ function ChatBody({
       {/* 免唤醒状态条（M4-4）。**只在真开着的时候占高度**——一个常驻的空条会让
           「现在到底在不在听」这件事变得看不出来，而这正是常开麦最该让用户看见的事。
           文案给的是 FSM 态的人话版，不是 FSM 名字：用户不需要知道 ARMED 是什么。 */}
-      {settings.handsFree && hf.availability.usable ? (
+      {!v2 && settings.handsFree && hf.availability.usable ? (
         <View
           style={{
             flexDirection: 'row',
@@ -334,16 +372,49 @@ function ChatBody({
           ) : null}
         </View>
       ) : null}
-      {hf.error || notice ? (
+      {!v2 && (hf.error || notice) ? (
         <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
           <Text style={{ color: p.amber, fontSize: p.font(12) }}>{hf.error || notice}</Text>
         </View>
       ) : null}
+      {/* v1 的第四条窄条：PTT 提示行。B1 把它从 Composer 里删了（v2 下由状态胶囊表达），
+          回滚分支要把它拿回来——否则「关掉开关」只退回三条，不叫回到 v1 */}
+      {!v2 && legacyHint ? (
+        <Text
+          numberOfLines={2}
+          style={{
+            color: legacyHintIsError ? p.amber : p.fg2,
+            fontSize: p.font(13),
+            paddingHorizontal: 14,
+            paddingTop: 6,
+          }}
+        >
+          {ptt.state === 'recording' ? '🎙 ' : ''}
+          {legacyHint}
+        </Text>
+      ) : null}
+      {/* 承诺面：**永远不被别的轴覆盖**（评审 P0-1——待确认时断网，那条确认照样钉着） */}
+      {v2 && dock ? (
+        <FocusDock
+          p={p}
+          fontScale={settings.fontScale}
+          snapshot={snapshot}
+          onConfirm={onConfirm}
+          onCancelTurn={onInterrupt}
+          onReenableBargeIn={reenableBargeIn}
+        />
+      ) : null}
+      {/* 状态胶囊：一次只说一件「此刻」的事。**B1 不接 onPress**——它是 26dp +
+          accessibilityRole="text"，接了点按就同时违反读屏与热区两条（第 2 批遗留⑧） */}
+      {v2 ? <PresenceCapsule p={p} fontScale={settings.fontScale} snapshot={snapshot} /> : null}
       <Composer
         p={p}
         quickCommands={settings.quickCommands}
         busy={busy}
         ptt={cfg.audioUrl ? ptt : null}
+        orbState={v2 ? snapshot.primary : legacyOrb}
+        orbDim={v2 && snapshot.dim}
+        fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
       />
@@ -374,36 +445,51 @@ function ChatBody({
             <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
               {settings.assistantName}随行
             </Text>
-            {/* 连接 pill（hmi .au-conn 同款）：点 + 短字 */}
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 6,
-                backgroundColor: p.fill,
-                borderWidth: 1,
-                borderColor: p.fill2,
-                borderRadius: 999,
-                paddingHorizontal: 10,
-                paddingVertical: 3,
-              }}
-            >
+            {/* 连接：v2 只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时
+                才是信息，而那时状态胶囊已经在说这件事了（方案 §5.1）。v1 保留原来的 pill */}
+            {v2 ? (
               <View
+                testID="health-dot"
+                accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}`}
                 style={{
                   width: 7,
                   height: 7,
                   borderRadius: 4,
-                  backgroundColor: conn.color,
-                  boxShadow: `0 0 8px ${conn.color}`,
+                  backgroundColor: healthColor,
+                  boxShadow: snapshot.transport === 'online' ? undefined : `0 0 8px ${healthColor}`,
                 }}
               />
-              <Text style={{ color: p.fg2, fontSize: p.font(11) }}>{conn.label}</Text>
-            </View>
+            ) : (
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 6,
+                  backgroundColor: p.fill,
+                  borderWidth: 1,
+                  borderColor: p.fill2,
+                  borderRadius: 999,
+                  paddingHorizontal: 10,
+                  paddingVertical: 3,
+                }}
+              >
+                <View
+                  style={{
+                    width: 7,
+                    height: 7,
+                    borderRadius: 4,
+                    backgroundColor: conn.color,
+                    boxShadow: `0 0 8px ${conn.color}`,
+                  }}
+                />
+                <Text style={{ color: p.fg2, fontSize: p.font(11) }}>{conn.label}</Text>
+              </View>
+            )}
             <View style={{ flex: 1 }} />
             {!tablet ? <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" /> : null}
             <TopIconLink p={p} href="/settings" icon="settings" label="设置" />
           </View>
-          {linkWarn ? (
+          {!v2 && linkWarn ? (
             <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
               <Text style={{ color: p.amber, fontSize: p.font(12) }}>
                 {connStatus === 'connecting' ? '正在重连服务器…' : '连接已断开，正在重试'}

@@ -5,8 +5,10 @@
 import { useState } from 'react'
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native'
 
+import type { FontScalePref } from '../../core/settings/store'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { AURORA, type Palette } from '../../ui/theme'
+import { RADIUS, TARGET, scale } from '../../ui/tokens'
 import type { PttHandle } from './usePtt'
 
 export function Composer({
@@ -14,6 +16,9 @@ export function Composer({
   quickCommands,
   busy,
   ptt,
+  orbState,
+  orbDim,
+  fontScale,
   onSend,
   onInterrupt,
 }: {
@@ -23,6 +28,12 @@ export function Composer({
   busy: boolean
   /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
   ptt: PttHandle | null
+  /** 光球主态**由调用方给**（v2=`snapshot.primary`，v1=ChatScreen 里的旧推导）——
+   *  Composer 自己不再推导：同一个「此刻是什么态」的判据抄两份就会给出两个答案 */
+  orbState: OrbState
+  /** reconnecting 期 ×0.6 亮度（`snapshot.dim`） */
+  orbDim?: boolean
+  fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
 }) {
@@ -35,12 +46,8 @@ export function Composer({
   }
   const recording = ptt?.state === 'recording'
   const finalizing = ptt?.state === 'finalizing'
-  // 语音光球三态（hmi Composer 同款隐喻）：录音=speaking 波纹、识别=thinking 律动、空闲=idle 呼吸
-  const orbState: OrbState = recording ? 'speaking' : finalizing ? 'thinking' : 'idle'
-  // 一行状态条：识别中的实时文字优先，其次失败原因（两者都没有就不占高度）
-  const finalizingHint = ptt?.slow ? '网络似乎不太顺，正在重试…' : '识别中…'
-  const hint = ptt?.partial || (finalizing ? finalizingHint : '') || ptt?.error || ''
-  const hintIsError = !ptt?.partial && !finalizing && !!ptt?.error
+  // 提示行（partial / 识别中 / 失败原因）搬去了 ChatScreen 的 **v1 回滚分支**：
+  // 它是 v1 那四条窄条里的第四条，v2 下由状态胶囊表达（方案 §4.3）。
 
   return (
     <View
@@ -72,37 +79,25 @@ export function Composer({
           </Pressable>
         ))}
       </ScrollView>
-      {hint ? (
-        <Text
-          numberOfLines={2}
-          style={{
-            color: hintIsError ? p.amber : p.fg2,
-            fontSize: p.font(13),
-            paddingHorizontal: 14,
-            paddingTop: 6,
-          }}
-        >
-          {recording ? '🎙 ' : ''}
-          {hint}
-        </Text>
-      ) : null}
       <View style={{ flexDirection: 'row', gap: 10, padding: 10, alignItems: 'flex-end' }}>
         {ptt ? (
           <Pressable
+            testID="composer-orb"
             onPressIn={ptt.pressDown}
             onPressOut={ptt.pressUp}
             disabled={finalizing}
-            accessibilityLabel="按住说话"
+            accessibilityRole="button"
+            accessibilityLabel={recording ? '松开发送' : '按住说话'}
             style={{
-              width: 52,
-              height: 52,
-              borderRadius: 26,
+              width: scale(TARGET.driving, 'target', fontScale),
+              height: scale(TARGET.driving, 'target', fontScale),
+              borderRadius: RADIUS.full,
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: recording ? p.accentSoft : 'transparent',
             }}
           >
-            <AuroraOrb size={40} state={orbState} animated />
+            <AuroraOrb size={44} state={orbState} dim={orbDim} animated />
           </Pressable>
         ) : null}
         <TextInput

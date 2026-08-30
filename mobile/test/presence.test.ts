@@ -209,3 +209,17 @@ describe('capsule 文案', () => {
     expect(derivePresence(base({ turn })).capsule?.text).toBe('规划路线…')
   })
 })
+
+describe('now 透传（Dock 倒计时的唯一时钟）', () => {
+  // 第 2 批坑⑤：`CommitmentCard` 自己起了一份 1s 秒表，而生产路径上 `derivePresence` 每秒
+  // 现造新的 `DockItem` ⇒ 那份秒表每秒被 cleanup 重建、本地 now 冻在挂载那一刻。
+  // 修法是「时钟只有一个」：收集器已经在 tick，snapshot 把它原样带下去，组件不再自己计时。
+  test('snapshot.now === 输入的 now（原样透传，不加工）', () => {
+    expect(derivePresence(base({ now: 1_234_567 })).now).toBe(1_234_567)
+  })
+  test('now 每跳一秒，snapshot.now 跟着跳一秒（倒计时靠它走）', () => {
+    const a = derivePresence(base({ now: NOW }))
+    const b = derivePresence(base({ now: NOW + 1000 }))
+    expect(b.now - a.now).toBe(1000)
+  })
+})
