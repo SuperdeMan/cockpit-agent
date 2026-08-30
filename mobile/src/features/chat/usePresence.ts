@@ -9,6 +9,7 @@ import { settingsStore } from '@/core/settings/store'
 import { speechController } from '@/core/voice/speech'
 import { isVisionCapturing, subscribeVisionCapturing } from '@/core/vision/frame'
 import {
+  ARMED_CAPSULE_MS,
   derivePresence,
   ERROR_SHOW_MS,
   RECONNECTING_GRACE_MS,
@@ -48,6 +49,14 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     connChangedAt.current = Date.now()
   }
 
+  // hf.fsm 变化时刻（armed 胶囊 3s 的基准，评审 D2）：登记的是事实，判据在 presence.ts
+  const hfFsmChangedAt = useRef(Date.now())
+  const prevFsm = useRef(hf.fsm)
+  if (prevFsm.current !== hf.fsm) {
+    prevFsm.current = hf.fsm
+    hfFsmChangedAt.current = Date.now()
+  }
+
   // 挂载那一刻列表里就已经有的 error 气泡**不算刚发生**（第 2 批遗留③）：登记成 0 =
   // 永远过期，红胶囊只留给挂载之后新出现的那条。
   const seeded = useRef(false)
@@ -84,7 +93,8 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     pendingOps.length > 0 || // 确认卡倒计时（每秒要变）
     !!active?.processActive || // 长任务 8s 门槛
     (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
-    (!!lastError && now - lastError.at < ERROR_SHOW_MS) // error 胶囊 4s 短显
+    (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
+    (hf.fsm === 'ARMED' && now - hfFsmChangedAt.current < ARMED_CAPSULE_MS) // armed 胶囊 3s 隐藏
   useEffect(() => {
     if (!needsTick) return
     const t = setInterval(() => bumpTick((n) => n + 1), TICK_MS)
@@ -106,6 +116,7 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     hfEnabled: settings.handsFree,
     hfUsable: hf.availability.usable,
     hfFsm: hf.fsm,
+    hfFsmChangedAt: hfFsmChangedAt.current,
     ptt: ptt?.state ?? 'idle',
     partial: ptt?.partial || hf.partial || '',
     turn: {

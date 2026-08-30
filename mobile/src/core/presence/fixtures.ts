@@ -21,7 +21,7 @@ export function presenceFixtures(): PresenceFixture[] {
   const NOW = Date.now()
   const base: PresenceInput = {
     now: NOW, connStatus: 'open', connChangedAt: NOW - 60_000,
-    hfEnabled: false, hfUsable: false, hfFsm: 'IDLE', ptt: 'idle', partial: '',
+    hfEnabled: false, hfUsable: false, hfFsm: 'IDLE', hfFsmChangedAt: NOW - 500, ptt: 'idle', partial: '',
     turn: { pending: false, streaming: false, processActive: false, processLabel: '', processSince: 0 },
     speaking: false, pendingOps: [], pendingLocation: false, voicePipeline: 'classic',
     visionCapturing: false, queued: 0, lastError: null, degradations: [], driving: false,
@@ -34,6 +34,10 @@ export function presenceFixtures(): PresenceFixture[] {
   return [
     mk('idle', {}),
     mk('armed', hf('ARMED')),
+    // 评审 D2：进入待机 3s 后胶囊消失、青环仍在——画廊要能看见「没有胶囊」这个态
+    mk('armed-quiet', hf('ARMED', { hfFsmChangedAt: NOW - 10_000 })),
+    // 评审 D3：免唤醒开着时 error 也要出得来（此前被 armed 遮蔽）
+    mk('error-hf-on', hf('ARMED', { hfFsmChangedAt: NOW - 10_000, lastError: { text: '出错了', at: NOW - 500 } })),
     mk('listening-ptt', { ptt: 'recording' }),
     mk('recognizing-partial', { ptt: 'recording', partial: '附近有什么好吃的' }),
     mk('listening-s2s', hf('LISTENING', { voicePipeline: 's2s' })),

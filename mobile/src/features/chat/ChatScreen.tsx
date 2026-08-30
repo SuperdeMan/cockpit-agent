@@ -19,6 +19,7 @@ import type { ServerConfig } from '../../core/config/types'
 import { ensureWired, type Wired } from '../../core/session/wiring'
 import { settingsStore } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
+import { MIC_LABEL } from '../../core/presence/presence'
 import { AuroraBackground, AuroraOrb, Glass, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { usePalette } from '../../ui/theme'
@@ -309,14 +310,17 @@ function ChatBody({
     snapshot.transport === 'online' ? p.fg3 : snapshot.transport === 'reconnecting' ? p.amber : p.red
   // v2 采集点（隐私栏入口旁的第二颗点）：**没在采集就不渲染**——一个常驻的灰点会让
   // 「现在到底在不在采」这件事看不出来，而这正是常开麦最该让用户一眼看见的事（方案 §5.10）。
-  // 顺序即优先级：原始音频上传 > 麦在开 > 正在抓一帧。
+  // 文案与颜色只取 MIC_LABEL（评审 D4：读屏 label 里那句「本机处理」在 PTT 那一刻是假话）。
+  // 顺序即优先级：音频离机（两档琥珀）> 正在抓一帧 > 唤醒词待机——待机是常态、抓帧是事件，
+  // 事件排在常态前面（B1 第 4 批坑⑥：待机排前面时，免唤醒开着抓帧那档永远显示不出来）。
+  const mic = snapshot.privacy.mic
   const captureDot =
-    snapshot.privacy.mic === 'cloudAudio'
-      ? { color: p.amber, label: '正在上传原始音频' }
-      : snapshot.privacy.mic !== 'off'
-        ? { color: p.teal, label: '麦克风在本机处理' }
-        : snapshot.privacy.camera === 'singleFrame'
-          ? { color: p.fg1, label: '正在抓一帧画面' }
+    mic !== 'off' && MIC_LABEL[mic].tone === 'amber'
+      ? { color: p.amber, label: MIC_LABEL[mic].short }
+      : snapshot.privacy.camera === 'singleFrame'
+        ? { color: p.fg1, label: '正在抓一帧画面' }
+        : mic !== 'off'
+          ? { color: p.teal, label: MIC_LABEL[mic].short }
           : null
   const [privacyOpen, setPrivacyOpen] = useState(false)
 
