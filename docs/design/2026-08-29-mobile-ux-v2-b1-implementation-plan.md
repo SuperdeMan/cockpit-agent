@@ -54,6 +54,14 @@
 - ⑥ **`queued` 的真实前提本批要验**：飞行模式下发一条 → 探活判死（≤30s）→ Dock 出现「N 条消息排队中」；若不出现，先查 `GatewaySession.sendRaw`/`ws.mjs.send` 断线时是否返 `false`（第 1 批遗留③，单测里是替身写死的）。**没出现不许读成「没有排队」。**
 - ⑦ 取证纪律（§6.2 坑⑥⑩）：取证前 `adb shell am force-stop com.xiaozhou.companion` 再进（有时间基准的屏不许用深链「刷新」）；Metro 若已有别的会话起着的 dev server，先核它的命令行服务的是本仓 `mobile/`，**复用、别再起一个**（撞 8081）；新建文件 `git add -- <路径>` 与 `git commit` 必须在同一条命令链里。
 
+**第 4 批附加项（第 3 批 §6.3 遗留转入 + 验收表按实情校准）**：
+- ① **T16 前置修复（先做，单独提交，有 jest）——离线期间暂停看门狗、重连后重新计时**。§6.3 遗留③的现象有确定的机制：飞行模式下发出的帧入队，恢复网络后退避重连约 2 分钟，而那一轮的 95s 看门狗早已把气泡收成「响应超时」并从 `registry` 注销 ⇒ 重连后帧确实补发了（文案没说谎），但回来的 `final` 带着一个已注销的 `request_id`，按「对不上=丢帧」被丢——**用户永远拿不到答案**。修法只在 `SessionCore`（共享路由一字不动）：`setStatus('closed')` 时对所有在飞 id `clearTimeout` 并记入 `pausedWatchdogs: Set<string>`；`setStatus('open')` 时对每个 paused id 重新 `armWatchdog`（整 95s）；`uncertainIds` 语义不变。测试（`sessionStore.test.ts` 追加，假时钟）：send → `setStatus('closed')` → 推进 150s → 气泡**仍 pending** → `setStatus('open')` → 推进 94s 仍 pending → 96s 转超时；再一条：closed → open → 在 30s 时收到 final → 正常收尾、无「响应超时」。真机复验：飞行模式发一句 → 等 2 分钟以上 → 关飞行模式 → **答复气泡出现**（这就是 T16 第 5 条的另一半）。
+- ② **T16 验收表按实情改三处**：第 6 条隐私栏「端到端录音中」那一行要真人说话——与第 2 条（唤醒）合并成泓舟在场的同一段，顺手用 `adb shell screenrecord` 录 20s（`looking` 快门白环、`cloudAudio` 行都靠这一段录屏，§6.2 遗留⑥ / §6.3 遗留①）；第 7 条 VAL 拒绝**预期写「未接、待 Q16」**，不是绿；第 4 条 300s 到期不需要人，但要 5 分钟不碰手机（keep-awake 开着）。
+- ③ **不改 `PENDING_TTL_MS` 去缩短验收等待**——那是共享判据（`pendingOps.mjs`），改了 hmi 也跟着变。等 5 分钟。
+- ④ 第 3 批坑②留下的判据层问题（`privacy.mic='edge'` 并了「端侧待机」与「音频上传给服务端 ASR」两件事）**B1 不动**，写进遗留出账给 B2/B4 裁；文案层已分开。
+- ⑤ T17 除记录外还要：`mobile/e2e/README.md` 把 06/08/09 三条流的状态与实跑时长补齐（08/09 已过、06 本批跑）；`AGENTS.md` Android 行改成「B1 四批收口 + 下一步 B2」——**动前 `git diff --stat -- AGENTS.md` 核行数、提交后 `git show --stat` 复核**；前三批 §6 的遗留汇总成一张出账表（含未推送清单：`git log origin/main..HEAD --oneline`）。
+- ⑥ **推送需泓舟单独授权**：收口时把待推送提交数报给泓舟，不擅自 `git push`。
+
 **每批开工的固定五步**（写进新会话的第一条提示词）：
 1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批可跳过——纯 jest）；
 2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
