@@ -8093,3 +8093,37 @@ remote-safe/统一 verify、未跑安全真栈或长会话、未做商户写入�
 没有执行 mutating merchant cleanup，因此没有商户 draft=0 的终态证明。这两项完成前仍不称
 QA 全绿。当前分支已比 release 多 `3657b62` 这一笔 test probe；本次状态同步提交还会再增加
 一笔 docs-only。两笔都不在云端，不能把 HEAD 叫作新 release；云端身份仍只认 `e9fa602`。
+
+## §88 2026-08-30 完整 information 收尾与 Planner null 槽生产修复
+
+### §88.1 完整 information（release `e9fa602`）
+
+完整 persona 结果 **57/59 PASS、1 warning**，零 abort / cleanup failure / open operation /
+fallback，104 次 LLM 全 pinned；提醒与导航清理均有终态证明，零商户 intent、零 draft。
+两条红均无动作：T24「红色机油灯亮了还能继续开吗」落 `info.search`，但回答明确停车检查，
+属既有错域；T47 规划沿途补能时仍受 safety focus 影响，落 `system.clarify`，属安全闸代价，
+待裁。artifact `.artifacts/dev-stack-verifications/qa-long-information-e9fa602.json`。
+
+同一份 887 字 TTS 文本两次命中 RPM rate limit，但 PCM 均可播放；barge-in 后仍收到
+6144 / 8192 字节残帧，但连接分别在 16 / 31ms 内关闭。这两项维持外部/协议活项，不并入
+Planner 修复结论。
+
+### §88.2 `limit:null` 根因、修复与上线（release `a729b98`）
+
+新闻轮 internal error 的根因不是 provider：LLM toolcall 的 `limit:null` 被 Planner 权威装配成
+字符串 `"None"`，`info.search` 执行 `int("None")` 抛 `ValueError`。`a729b984a7e66f508d0a11218713b6e51c8f7620`
+改为丢弃值为 `None` 的槽，同时保留合法 `0` / `false` / `""`。测试绑定该生产 SHA：
+Planner+Info **289 passed**、Cloud **1278 passed / 1 skipped**、全量
+**7770 passed / 32 skipped / 13 warnings**。
+
+部署后回滚点为 `e9fa602`；status 5/5 healthy、零 warning，verify verified，artifact
+`.artifacts/dev-stack-verifications/20260830T110922Z-a729b98.json`。新闻专项 3 个干净会话、
+15 个业务轮零 internal error，首尾 release 连续，artifact
+`.artifacts/dev-stack-verifications/qa-news-repeat3-a729b98.json`。
+
+### §88.3 证据与工作树边界
+
+`862617b` 只把 Agent internal error 升为长会话硬红；本次状态同步提交只改文档。两者均领先
+release `a729b98`，不能把 HEAD 称为新 release，也不能把 §88.1 的 `e9fa602` 完整 information
+身份转借给 `a729b98`。工具安全策略拒绝删除临时目录，因此目录仍存在；权威 artifact 已复制
+到根仓。T24/T47 与 TTS/barge 活项未清，故本节不称 QA 全绿。

@@ -431,3 +431,27 @@ T29「红色机油灯亮了还能继续开吗」与 T30–T32 均给出安全回
 创建/修改/取消测试提醒并模拟导航动作，本轮未运行；只读段也没有做 mutating merchant cleanup，
 所以未证明商户 draft 库存为零。当前分支已比 release 多 `3657b62` 这一笔 test probe；本次
 状态同步提交后还会多一笔 docs-only。二者都不在 cloud，不能称为新 release。
+
+### 12.2 完整 information 与后续生产修复（release `e9fa602` → `a729b98`）
+
+完整 `information` persona 已在 `e9fa602` 上跑完：**57/59 PASS、1 warning**，零 abort、
+cleanup failure、open operation 与 fallback，104 次 LLM 调用全 pinned；提醒与导航清理均有
+终态证明，且零商户 intent、零 draft。两条红都没有动作：T24 安全问句落 `info.search`，但
+回答内容安全；T47 安全 focus 持续让 charging plan 落 `system.clarify`。前者是既有错域，后者
+是安全闸代价，均待单独裁决，不能据此写 QA 全绿。artifact：
+`.artifacts/dev-stack-verifications/qa-long-information-e9fa602.json`。
+
+同趟新闻链还抓到一条独立 internal error：LLM toolcall 的 `limit:null` 被权威装配成字符串
+`"None"`，`info.search` 再执行 `int("None")` 抛 `ValueError`。生产修复
+`a729b984a7e66f508d0a11218713b6e51c8f7620` 只丢弃 `None`，保留 `0` / `false` / `""`。
+测试绑定该 SHA：Planner+Info **289 passed**、Cloud **1278 passed / 1 skipped**、全量
+**7770 passed / 32 skipped / 13 warnings**。部署后 release=`a729b98`、回滚点=`e9fa602`，
+status 5/5 healthy、零 warning，verify verified（
+`.artifacts/dev-stack-verifications/20260830T110922Z-a729b98.json`）；新闻 3 个干净会话共
+15 个业务轮零 internal error、首尾 release 连续（
+`.artifacts/dev-stack-verifications/qa-news-repeat3-a729b98.json`）。
+
+外部/协议已知活项不因这次修复消失：同一段 887 字 TTS 两次命中 RPM rate limit，但生成的
+PCM 可播放；barge-in 后仍收到 6144 / 8192 字节残帧，但分别在 16 / 31ms 内关闭。`862617b`
+已把 agent internal error 升为探针硬红；它和本次 docs-only 均领先生产 release，不是新 release。
+工具安全策略拒绝删除临时目录，目录仍在；权威 artifacts 已复制到根仓。
