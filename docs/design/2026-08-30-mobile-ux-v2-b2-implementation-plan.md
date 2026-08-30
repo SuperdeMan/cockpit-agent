@@ -4358,13 +4358,53 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
 
 ### 6.2 第 2 批「语音层骨架与记录沉淀」（T3–T5）
 
-- **开工基线**：
-- **T3** —— commit：真机三入口截图、层开时主球静止的两帧比对、胶囊点按、下拉收起、attention 不自动收。
-- **T4** —— commit：既有用例⑥是否改了断言（判据变更说明）；真机草稿三态（前台 / 切后台回来 / 折叠展开）。
-- **T5** —— commit：同意页出现一次 / 二次不弹；S2S 一轮（**这是端到端的第一次真机验证**——通不通都写清红在哪一侧）；逃逸轮一条用户气泡；§11.4 记录完整性读数。
-- **反向验证**（三条各红在哪）：
+- **开工基线**（2026-08-30 17:35，主工作树，**未分树**）：`check_android_env.ps1` 退出码 0（18 pass / 0 warn / 0 fail）；`npm test` = **31 suites / 331 tests 全绿**；`npm run typecheck` = **0 error**；`git status --short` 空；`git log --oneline origin/main..HEAD | wc -l` = **21**；HEAD = `36957e8`。
+- **T3** —— commit `41fae55`（15 文件，486+/26−，`--stat` 与计划 Files 逐条对上：3 新建 + 12 修改）。新增用例 **13 条**（`turnView` 4 + `presence` 7 + `presenceFixtures` 1 + `sessionStore` 1）。判据全部落在 `derivePresence`：`VoiceFacts` 三个事实 → `input` 开合 + `sheetDetent` 三档 + `turnSource` 透传；`VoiceSheet` 零自有状态（除挂载动画）；`_layout.tsx` 补 `GestureHandlerRootView`（真机下拉收起生效＝这条补对了，见真机项）。
+- **T4** —— commit `e948f71`（6 文件，200+/20−）。新增用例 **6 条**。**改了既有用例⑥的断言**（`必测边界 › ⑥ 本地 cancel 后网关 cancelled 幂等`，`sessionStore.test.ts:301`）：原 `toMatchObject({ text: '已打断', error: true })` → 拆成 `toMatchObject({ text: '已打断' })` + `expect(interrupted.error).toBeFalsy()` + `expect(interruptedIds).toContain(id)`。**这是判据变更（方案 §5.2 规则 4「打断不是错误」），不是测试让步**——红色留给 error 帧与超时，留痕改由并列表 `interruptedIds` 承担。看门狗三条（`:529/545/560`）动 `clearWatchdog` 后**仍全绿**（单独 `-t` 跑过一遍取证）。
+- **T5** —— commit `890c0d1`（10 文件，327+/10−）。新增用例 **6 条**（`sessionStore` 4 + `settingsMeta` 2）。
+- **T5 真机取证时新发现的缺陷，另立 commit `2187ca3`**（2 文件，29+/4−）：**App 把 TTS 的 provider/音色当成 S2S 的传上去了**——`useHandsFree.getS2sConfig()` 返回 `{voice: s.voiceId, provider: s.ttsProvider}`（真机上是 `minimax` / `female-shaonv`），而网关 S2S provider 的值域只有 dashscope/mock/off（`llm-gateway/s2s/provider.py:388-419`）⇒ `build_s2s_provider('minimax')` 一路 `return None` ⇒ 每次 `session.start` 都回 `unsupported`「S2S 未配置或无凭据」。**这就是「端到端从未走通」的直接原因，红在 App 侧不在云栈**（HMI 侧 `getS2sConfig()` 只给 `{pipeline, voice: s2sVoice}`、**不给 provider**，走网关 env 缺省）。修法＝两个都不给（App 没有 `s2sVoice` 这个设置项）；**源码级断言钉住**（`handsFree.test.ts` ⑥，含通道自检：先断言真的抓到了 `getS2sConfig` 那个块）——值域住在网关 env，运行期这一侧没有任何东西会红。
+- **收口读数**：`npm test` = **32 suites / 356 tests 全绿**（331 → 356，净增 25 = T3 13 + T4 6 + T5 6；suites +1 = `turnView.test.ts`；`handsFree` 那条源码断言是既有文件内 +1，已含在 356）；`npm run typecheck` = **0 error**。
+- **反向验证**（每条都先 `grep` 核对变异真落盘，跑完逐条还原并复跑全绿）：
+  - **T3-1** `sheetOpen` 删掉 `voice?.override === 'open' ||` ⇒ 只红「点按胶囊 = 打开语音层」1 条 ✅
+  - **T3-2** `voiceTurnLive` 去掉 `voice.turnSource !== 'text'` ⇒ 只红「文字轮不升层」1 条 ✅
+  - **T3-3** `sheetDetent` 的 0.62/0.78 对调 ⇒ 只红 detent 用例 1 条；**画廊 detent 守卫没红**——计划预期它也红，实测它验的是「三档各有样本」这个**覆盖度**，对调后三档集合不变（`sheet-answering` 0.62↔`sheet-card` 0.78 互换）⇒ **不是红错地方，是那条守卫的判据面本来就不含「哪条样本是哪档」**
+  - **T3-4** `currentTurn` 改成「最后一条助手气泡」⇒ 只红「用户刚说完」+「旁白」2 条 ✅（与计划预期一致）
+  - **T4-1** `send` 去掉 `reuse` 分支 ⇒ 只红「复用不追加第二条」1 条 ✅
+  - **T4-2** `markInterrupted` 恢复 `error: true` ⇒ 红 **3 条**（两条新用例 + 既有用例⑥）——计划写「只红两条」，第三条正是我这次改的那句判据变更断言，方向一致
+  - **T4-3** `clearWatchdog` 不摘 `queuedIds` ⇒ 只红 D9 1 条 ✅
+  - **T5-1** ChatScreen 的 `onS2sEscalated` 不调 `takeS2sUserBubble` ⇒ **一条都不红**（计划已预告：store 用例直接调 `takeS2sUserBubble`，**接线层零 jest 覆盖**）。补了一条**对照变异**证明用例本身有效：`takeS2sUserBubble` 改成恒返回 null ⇒ 只红「逃逸」1 条 ✅。接线证据只能来自真机（逃逸轮恰好一条用户气泡）⇒ 列在下面的 ⬜。
+  - **T5-2** `s2sAnswerDelta` 总是新建气泡 ⇒ 只红第一条（`toHaveLength(2)`）✅
+  - **T5-3** `needsS2sConsent` 的 `<=` 改 `>=` ⇒ 只红同意用例第 3 行（`s2sConsentAt: 1_700_000_000_000` → false）✅
+  - **fix 那条** 把 `provider: ttsProvider` 注射回去 ⇒ 源码断言红 ✅；**真机对照**见下。
+- **真机取证**（设备 `5d432b6d`，外屏 `4630947090644569220`，Metro 复用既有 PID 56952 = 本仓 `mobile/`；`dev_stack target show` = **cloud**；`https://…:8444/api/s2s/info` = `{"available": true, "provider": "dashscope"}`）：
+  - **PTT 升层 ✅**（`b2-03-sheet-ptt.png`）：按住光球 → 层从底部升起（detent 0.4）、层内 88dp 大光球青环、层内胶囊「● 在听…」、「⌄ 收起」、记录变暗、顶栏采集点转**琥珀**（cloudAsr）、输入框占位变「正在听…」。
+  - **同屏循环动画常态 1 个 ✅**（方案 §11.4 的硬读数，程序化逐字节比对，非肉眼）：层**开**着时 Composer 主球框（原图 x[44,182] y[2356,2494]）5 帧与首帧 **0 字节不同（0.00%）**，同帧层内大球框（x[400,678] y[1460,1740]）**52.8–53.3% 字节不同**；**通道自检**＝层**关**着时同一个 Composer 框 **51.2–54.4% 不同**（证明这个框里本来就有会动的东西，0.00% 不是「框里没东西」）。
+  - **文字轮不升层 ✅**（`b2-03-text-turn-no-sheet.png`）：快捷指令「播放音乐」发出 → 执行完成（「好的 / 已执行 media.control」），全程层未升起。
+  - **点胶囊升层 ✅ + attention 不自动收 ✅ + Dock 在层下方可见 ✅**（`b2-03-capsule-attention.png`，一张图三项）：pending 期点胶囊「正在思考…」→ 层升起（**文字轮也能开**，override=open）；转写区显示当前轮用户原话「打开后备箱」、层内光球**琥珀**（attention）、层内胶囊「等你确认」、回答区是助手原文；**Dock 确认卡完整显示在层下方**（「⚠ 打开后备箱 / 危险动作 · 需二次确认 / 3:52 后过期 / 取消·确认」），层没有自动收。detent = 0.62（有回答无卡无 task），与判据一致。
+  - **下拉收起 ✅**（`b2-03-collapse-swipe.png`）：层内下滑 500px（≈182dp > `SHEET_DISMISS_DY` 80dp）→ 层收起、记录恢复、Dock 与胶囊仍在。**这一条同时证明 `GestureHandlerRootView` 补对了**——RNGH 的 `GestureDetector` 在 Android 上不在根容器内根本不响应。
+  - **S2S 首次显式同意四项全 ✅**（`b2-05-consent.png` / `b2-05-consent-accepted.png` / `b2-05-consent-second-noprompt.png`，每步都当场回读 `RKStorage` 而不是只看屏）：设备存量正好是「`voicePipeline=s2s` 且**没有** `s2sConsentAt` 键」⇒ 合并后 `s2sConsentAt=0`、页脚无同意行（存量场景对了）；切回三段式（回读 `classic`）→ 切端到端 → **同意页弹出且背后挡位仍是三段式**（没有预先切）→「仍用三段式」→ 回读仍 `classic`、`s2sConsentAt` 仍 0 → 再切 → 同意 → 回读 `voicePipeline=s2s`、`s2sConsentAt=1788085468272`、页脚出现「已于 2026/8/30 18:24:28 同意端到端上传原始音频」→ 切回三段式再切端到端 → **不再弹**。
+  - **S2S 会话建立 ✅（这条链的第一次真机验证，AGENTS.md 挂账「端到端未走通」的前半程到此为止）**：`startS2s()` 是 `enable()` 时就建的（会话级常驻，`handsFree.ts:224`），所以「启动后有没有那条 unsupported 通知」就是「会话建没建成」的判据。三点对照，同一像素判据（notice 区 y[2000,2140] 亮像素）：**修前 1513**（`b2-05-s2s-unsupported-before.png`，屏上是「S2S 未配置或无凭据」）→ **修后 461**（`b2-05-s2s-ok-after.png`，无 notice）→ **把 bug 注射回去 1513**（与修前逐数相同）⇒ notice 消失确由 `2187ca3` 决定，不是别的原因。
+  - **免唤醒升层 ⬜ 未验**（要真人说「小舟小舟」）。
+  - **端到端挡位说话升层 / S2S 一轮（角标 + 告知条 + §11.4 记录完整性）/ 逃逸轮恰好一条用户气泡 ⬜ 未验**（要真人说话；会话已能建起来，**没走通的部分只剩「说一句」**）。
+  - **草稿气泡三态（前台 / 切后台回来 / 折叠展开）与「打断 → 灰字已打断不变红」⬜ 未验**（要真人说一句长话）。
+  - **第 1 批遗留的两个 ⬜ 仍未验**：隐私栏 PTT 行琥珀（要多点触控，adb 单点注入做不到，同第 1 批）；TalkBack 读屏 label（要开系统无障碍 + 真人）。
 - **本批踩的坑**：
+  1. **计划给的测试语料撞上了被测系统的前置闸**：T3 那条 `sessionStore` 用例用「天气」「附近有什么」，两句都命中 `routeSend` 的位置征询（`decision.kind==='consent'` 分支**不派发**）⇒ `turnMeta` 一个键都没有，红的是测试不是判据。换成「讲个笑话 / 再讲一个」即绿，并在用例里写了原因。判据：**先打印一次真实产出**（我是靠一个临时 `zzdbg.test.ts` 打出 `messages`/`turnMeta` 才看出来的），别对着断言猜。
+  2. **`adb shell cat` 拉二进制会损坏**（LF→CRLF 转换）：`run-as … cat databases/RKStorage` 经 `adb shell` 拉下来 `pragma integrity_check` 报 `database disk image is malformed`，而**第一次读还能读出几个 key**（部分页面没坏）——差点当成「库本身坏了」。一律用 **`adb exec-out`**。
+  3. **点击落空会把「功能没实现」和「我没点中」混成一件事**：第一次测同意页，两次 `input tap` 都落在说明文字上（上一条 swipe 的惯性还在滚，按钮已移出坐标），屏上「没弹同意页」——差点据此定性成「Modal 没接上」。改成**先连拍两帧比对确认页面静止**（两帧字节差 0）→ 再从静止图取坐标 → 点完**立刻回读 `RKStorage`** 核对值真的变了。第 3 批那条「改完一个设置要当场核它真的变了」原样应验。
+  4. **「没看到 X」要证明观测通道开着，两处都用上了**：① Composer 主球 0.00% 差异 → 拿「层关着」的同一个框做通道自检（51–54%）；② S2S notice 消失 → 把 bug 注射回真机再测一遍（1513 逐数复现）。没有这两步，两条读数都可以用别的原因解释。
+  5. **计划的反向验证预期可能比实际判据面宽**（T3-3 画廊守卫、T4-2 第三条红、T5-1 零红）：三条都不是红错地方，是「这条守卫到底在验什么」与计划的措辞有出入。**红的条数与计划不符时，先问「这条守卫的判据面包不包含这个变异」，再问是不是自己写错了。**
+  6. **一条只有 store 用例的判据，接线层是没被验证过的**（T5-1）：`takeS2sUserBubble` 在 store 里有 4 条用例，但「ChatScreen 有没有真的调它」零覆盖——单测能证明的最远边界就在 core/。这类判据的真机项不是锦上添花，是**唯一**的证据来源。
+  7. **`getS2sConfig` 这个 bug 单测永远抓不到**：值域住在网关的 env 与 `build_s2s_provider`，App 侧传什么都「类型正确」。它是被**真机上那条 notice** 抓到的，而那条 notice 在屏上挂了不知道多久没人当回事——**屏上常驻的降级提示要当成红灯读**。
+  8. **`git commit -- <paths>` 隔离得了文件、隔离不了 `origin/main` 的推进**（见下条遗留）。
 - **遗留 / 给第 3 批的话**：
+  - **⚠ `origin/main` 在本批中途被另一条会话推进，把我的 T3 `41fae55` 一并推上去了**（`git reflog show origin/main`：`e9fa602` 那次 push；那条线是 QA safety guard，随后还有 `3657b62`/`5e88ae8`）。**我一次 `git push` 都没跑**。所以 `origin/main..HEAD` 现在 = **3**（T4 `e948f71` / T5 `890c0d1` / fix `2187ca3`），不是「21+4」。这与 B1 那次同形态、方向相反（那次是我的 push 带走了别人的）——**push 的粒度是分支不是提交，共享 main 上「请不要推我的」不是可执行防线**；可执行的那条仍是计划 §0.1 写着的 `git worktree` 分支隔离。第 3 批开工前先 `git log --oneline origin/main..HEAD` 念一遍谁的东西在里面。
+  - **⚠ 真机上发现的渲染问题（本批不改，交视觉批）**：`VoiceSheet` 的外壳是 `Glass`（G1 半透明）+ 身后 40% 暗区，**记录里的气泡会透过层与层内文字重叠**（`b2-03-capsule-attention.png` 里「等你确认」与助手气泡的正文叠在一起，两边都难读）。欢迎屏（记录空）时看不出来，有气泡且正好落在层区域时才出现。方案 §5.2 要的是「记录变暗 40%、**仍可见**」，所以不是判据错，是**层自己的底不够实**。改它要动材质分级（§5.11），属方案层裁决——建议给 T7（边缘极光那批一起做视觉）或 B3 视觉批：要么暗区提到 60%，要么层底改 G0 实色。
+  - **T6 会重写 `usePtt.ts` 与 `Composer.tsx`，我在这两个文件里动过的行**：`usePtt.ts` —— 入参类型加了 `onPartial?` / `onDiscard?` 两个可选回调，并在 **5 处**调用（`finishSession` 的 `tooShort` 分支、`onPartial`、`onFinal` 的空定稿 `else`、`onError`、`.catch` 启动失败）；T6 换 `micLease()` 时这 5 处**不要丢**，草稿气泡靠它们才不会留空气泡。`Composer.tsx` —— 只加了一个 `orbAnimated?: boolean` prop 并传给 `<AuroraOrb animated={orbAnimated ?? true} />`（默认值保证回滚路径逐字不变），T6 做手势契约时保留它，否则「层开时主球静止」那条读数当场作废。
+  - `ChatScreen.tsx` 里 T4 加的那个 effect（`hf.fsm !== 'LISTENING'` 时 `discardDraftUser()`）**没有真机验过**（要真人说话）；计划 §5 第 5 条说的 FOLLOWUP→ARMED 撞上 PTT 草稿的罕见误丢路径，本批也没撞到。
+  - **设备当前状态**：`voicePipeline=s2s`、`s2sConsentAt=1788085468272`（真实同意记录，**故意不还原**）、`quickCommands` 已还原（临时改过 `[0]` 为「打开后备箱」造 attention 态，用完整库还原并**逐字段 diff = 零差异**）；测试期间发过的那条「打开后备箱」确认卡已点**取消**、未执行。
+  - `mobile/e2e/artifacts/` 是 gitignore 的，本批 9 张截图只在本机，文件名已逐条记在上面。
+  - 本批**没有动** `AGENTS.md`（T15 的事），**没有 push**。
 
 ### 6.3 第 3 批「手势与层内元素」（T6–T11）
 
