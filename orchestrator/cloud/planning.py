@@ -2237,7 +2237,11 @@ class PlanBuilder:
                 kind=getattr(manifest, "kind", "") or "agent",
                 deployment=getattr(manifest, "deployment", "") or "cloud",
                 intent=intent,
-                slots={k: str(v) for k, v in raw_slots.items()},
+                # JSON null means the optional slot was not provided.  The wire
+                # contract is map<string,string>; spelling null as "None" turns
+                # absence into a bogus value (for example int("None") in
+                # info.search).  Preserve other falsey values such as 0/false/"".
+                slots={k: str(v) for k, v in raw_slots.items() if v is not None},
                 # 同族防御：模型会把这两个字段输出成 ""（真栈日志实证）。depends_on 非
                 # list 会被逐字符迭代、slot_refs 非 dict 在 executor._resolve_slot_refs
                 # 处 .items() 同款崩——都归一为空（依赖丢失顶多退化为顺序执行）。
