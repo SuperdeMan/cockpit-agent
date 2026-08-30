@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 
+import { actionSummary } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
 import { settingsStore } from '@/core/settings/store'
 import { speechController } from '@/core/voice/speech'
@@ -90,11 +91,12 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     return () => clearInterval(t)
   }, [needsTick])
 
-  // pendingOps 的摘要：带该 operationId 的助手气泡原话
+  // pendingOps 的摘要：**紧邻的上一条用户原话**（评审 D1）。带 operationId 的那条助手气泡
+  // 对每个危险动作都是同一句通用话，不是摘要。判据在 actionSummary.ts，留痕行也从它取。
   const ops = pendingOps.map((op) => ({
     id: op.id,
     ts: op.ts,
-    summary: (messages.find((m) => m.operationId === op.id)?.text || '待确认的操作').replace(/\s+/g, ' ').slice(0, 24),
+    summary: actionSummary(messages, op.id) || '待确认的操作',
   }))
 
   return derivePresence({

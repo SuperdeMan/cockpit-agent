@@ -518,6 +518,24 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
     expect(core.store.getState().uncertainIds).toEqual([])
     core.dispose()
   })
+
+  test('到期留痕的摘要是用户原话，不是那句通用确认句（评审 D1 的第二个出口）', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({
+      type: 'final',
+      request_id: rid,
+      speech: '这项操作可能影响车辆安全，请确认是否继续。',
+      need_confirm: true,
+      operation_id: 'op1',
+    })
+    jest.advanceTimersByTime(300_000 + 1_100)
+    const last = msgs(core)[msgs(core).length - 1]
+    expect(last.text).toContain('「打开后备箱」的确认已过期')
+    expect(last.text).not.toContain('可能影响')
+    core.dispose()
+  })
 })
 
 // 第 3 批遗留③的机制：飞行模式下 RN 的 onclose 不来，靠 HTTP 探活 reconnectNow() 判死；

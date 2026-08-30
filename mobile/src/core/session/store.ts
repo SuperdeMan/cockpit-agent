@@ -17,6 +17,7 @@ import type { Msg, ProcessStep } from '@shared/types.ts'
 import { buildUserFrame } from '../api/gateway'
 import type { GatewayStatus } from '../api/gateway'
 import { uid } from '../obs/trace'
+import { actionSummary } from './actionSummary'
 import { emptyCandidates, recordCandidates, type CandidateState } from './candidates'
 import { routeSend } from './sendRouter'
 
@@ -618,10 +619,9 @@ export class SessionCore {
     }, delay)
   }
 
-  /** 到期留痕：找到带这条 operationId 的助手气泡，取其原话做摘要，追加一条说明 */
+  /** 到期留痕：摘要取**紧邻的上一条用户原话**（actionSummary，与 Dock 标题同源），追加一条说明 */
   private noteExpired(operationId: string): void {
-    const src = this.store.getState().messages.find((m) => m.operationId === operationId)
-    const summary = (src?.text || '').replace(/\s+/g, ' ').slice(0, 24)
+    const summary = actionSummary(this.store.getState().messages, operationId)
     this.appendMessage({
       id: uid(),
       role: 'assistant',
