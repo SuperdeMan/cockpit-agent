@@ -468,16 +468,37 @@ git diff --cached --check
 git commit -m "fix: guard escalated plan dispatch"
 ```
 
-### Task 4: Run three review stages and retain RED provenance
+### Task 4: Review each completed TDD task for specification and implementation quality
 
 **Files:**
 - No tracked file changes required by the review itself
 - Write ignored evidence: `.artifacts/qa-safety-confirmed-write-postbuild/`
 
-- [ ] **Step 1: Stage 1 specification review after RED, before broad GREEN**
+- [ ] **Step 1: Confirm each implementation task captured its RED shape at the time it ran**
 
-Review the staged tests against this matrix and write the verdict to
-`.artifacts/qa-safety-confirmed-write-postbuild/review-1-spec.md`:
+The Task 1–3 implementation agent or execution controller must have inspected the focused pytest output immediately after each RED command and before writing that task's production change. Task 4 does not recreate that temporal fact after GREEN; it verifies the retained evidence. Check these pairs:
+
+```powershell
+$pairs = @(
+  @('01-talk-red.log', '01-talk-green.log'),
+  @('02-loop-red.log', '02-loop-green.log'),
+  @('03-escalate-red.log', '03-escalate-green.log')
+)
+foreach ($pair in $pairs) {
+  foreach ($name in $pair) {
+    $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $name
+    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -eq 0) {
+      throw "missing TDD evidence: $path"
+    }
+  }
+}
+```
+
+Expected: every RED/GREEN pair exists and is non-empty. The RED logs show the intended pre-fix failure rather than collection, import, fixture, path, or environment failure; the GREEN logs show the same focused scope exiting 0. If a RED shape is invalid, return that task to its original implementation agent to write the missing failing test, recapture valid RED, restore GREEN, and recommit before any reviewer signs off.
+
+- [ ] **Step 2: Run one post-completion specification review per task**
+
+The specification reviewer checks the completed tests and retained RED log against this matrix:
 
 | Exit | Unsafe negative | Safe positive | Text authority | Full-block behavior | Mixed/observability |
 |---|---|---|---|---|---|
@@ -485,13 +506,23 @@ Review the staged tests against this matrix and write the verdict to
 | replan | edge write + confirmed cloud | directive + cloud read | `user_text` | break, zero dispatch | legal step + prior observation retained |
 | escalate | D0 + normal × edge/confirmed | directive + cloud read | `ctx.raw_text` | empty sink, zero dispatch | existing caller result/aggregation preserved |
 
-Expected review verdict: every cell points to a named test; none relies on `goal`, `reason`, or hard-coded safety-domain words in production logic. If a cell lacks a named test, add it before implementation proceeds.
+Write separate verdicts to:
 
-- [ ] **Step 2: Stage 2 implementation-quality review after Tasks 1–3 GREEN**
+- `.artifacts/qa-safety-confirmed-write-postbuild/review-task1-spec.md`
+- `.artifacts/qa-safety-confirmed-write-postbuild/review-task2-spec.md`
+- `.artifacts/qa-safety-confirmed-write-postbuild/review-task3-spec.md`
 
-Inspect these exact diffs:
+Each verdict begins with `Verdict: PASS` or `Verdict: FAIL` and names the reviewed commit, test names, RED log, required matrix row, and findings. Expected: every cell points to a named test and a valid RED shape; no test substitutes `goal` or `reason` for the original-text authority. On FAIL, the specification reviewer returns the issue to the original Task 1, 2, or 3 implementation agent; that agent updates the test first, demonstrates RED against the pre-fix shape or a controlled reversal, restores GREEN, commits, and requests a fresh specification review.
+
+- [ ] **Step 3: Run one post-completion implementation-quality review per task**
+
+The quality reviewer inspects each task commit separately, then the combined diff:
 
 ```powershell
+git log --oneline a07cc7b6cf14886f8f172af0f41a6acd63e1b71e..HEAD -- `
+  orchestrator/cloud/planning.py orchestrator/cloud/loop.py orchestrator/cloud/engine.py `
+  orchestrator/cloud/tests/test_question_write_guard.py `
+  orchestrator/cloud/tests/test_loop.py orchestrator/cloud/tests/test_engine_escalate.py
 git diff a07cc7b6cf14886f8f172af0f41a6acd63e1b71e -- `
   orchestrator/cloud/planning.py `
   orchestrator/cloud/loop.py `
@@ -501,29 +532,26 @@ git diff a07cc7b6cf14886f8f172af0f41a6acd63e1b71e -- `
   orchestrator/cloud/tests/test_engine_escalate.py
 ```
 
-Record PASS/FAIL in `.artifacts/qa-safety-confirmed-write-postbuild/review-2-quality.md` for: one filter formula only; object-identity filtering; no LLM goal/reason authority; full block has zero executor/stream dispatch; mixed plans retain legal steps; fallback scans beyond a rejected first capability; no new agent/intent literal in production code; no broad exception swallowing; no proto/schema/config change.
+Write separate verdicts to:
 
-Expected: all checks PASS before documentation updates. A FAIL returns to the responsible TDD task and requires that task’s focused file to be rerun.
+- `.artifacts/qa-safety-confirmed-write-postbuild/review-task1-quality.md`
+- `.artifacts/qa-safety-confirmed-write-postbuild/review-task2-quality.md`
+- `.artifacts/qa-safety-confirmed-write-postbuild/review-task3-quality.md`
 
-- [ ] **Step 3: Stage 3 final exit audit after documentation and full verification**
+Each verdict begins with `Verdict: PASS` or `Verdict: FAIL`, names every reviewed task/rework commit, and records findings for its applicable checks: one filter formula only; object-identity filtering; no LLM goal/reason authority; full block has zero executor/stream dispatch; mixed plans retain legal steps; fallback scans beyond a rejected first capability; no new agent/intent literal in production code; no broad exception swallowing; no proto/schema/config change.
 
-Run:
+Expected: all task-level quality checks PASS before Task 5 documentation updates. On FAIL, the quality reviewer returns concrete findings to the original Task 1, 2, or 3 implementation agent; that agent adds or strengthens the failing test, fixes the implementation, reruns the focused GREEN file, commits, and requests both specification and quality re-review for that task.
 
-```powershell
-rg -n "to_plan\(|_validated_steps\(|executor\.run\(|_stream\(|call_agent\(" orchestrator/cloud
-```
-
-For each hit that can create or receive a new plan after `PlanBuilder.build()`, record its guarding reason in
-`.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md`. The required conclusion is either “covered by build”, “covered by replan receiver”, “covered by `_run_escalated`”, or “does not accept planner/Agent-produced steps”. Any fourth unguarded dispatch receiver reopens Task 1 architecture before push.
-
-- [ ] **Step 4: Verify all RED/GREEN artifacts exist and are non-empty**
+- [ ] **Step 4: Verify only the task-level evidence and reviews required at this point**
 
 ```powershell
 $required = @(
   '01-talk-red.log','01-talk-green.log',
   '02-loop-red.log','02-loop-green.log',
   '03-escalate-red.log','03-escalate-green.log',
-  'review-1-spec.md','review-2-quality.md','review-3-final.md'
+  'review-task1-spec.md','review-task1-quality.md',
+  'review-task2-spec.md','review-task2-quality.md',
+  'review-task3-spec.md','review-task3-quality.md'
 )
 $required | ForEach-Object {
   $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $_
@@ -533,7 +561,7 @@ $required | ForEach-Object {
 }
 ```
 
-Expected: no exception; each RED log contains a non-zero pytest result and each paired GREEN log contains exit-0 output.
+Expected: no exception; each task has valid RED/GREEN evidence plus PASS specification and quality verdicts. `review-3-final.md` is deliberately absent from this checkpoint because its inputs—fresh verification, final documents, manifest, and evidence-only commit—do not exist until Tasks 5–6 complete.
 
 ### Task 5: Reconcile architecture, contract, current state, history, and indexes
 
@@ -697,7 +725,7 @@ Do not write “non-production risk” or infer production safety from a test-on
 
 - [ ] **Step 7: Generate the fresh verification manifest and hashes**
 
-Create `.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json` with UTF-8 JSON containing: `tested_code_contract_sha` from `git rev-parse HEAD` before the evidence-only document commit; clean `git status --porcelain`; exact commands; exact exit codes and counts; warning categories; review artifact names; SHA256 for every listed log; deployed release explicitly still `343934b`; `live_verified=false`; and `risk_statement="production impact not established"`.
+Create `.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json` with UTF-8 JSON containing: `tested_code_contract_sha` from `git rev-parse HEAD` before the evidence-only document commit; clean `git status --porcelain`; exact commands; exact exit codes and counts; warning categories; the six Task 4 task-level review artifact names; `final_review_pending=true`; SHA256 for every listed log; deployed release explicitly still `343934b`; `live_verified=false`; and `risk_statement="production impact not established"`. The overall final review is a consumer of this manifest and is therefore created later in Task 7, not falsely listed as already complete here.
 
 Hash the manifest after all fields are final:
 
@@ -758,7 +786,7 @@ git diff --stat a07cc7b6cf14886f8f172af0f41a6acd63e1b71e..HEAD
 git diff --name-only a07cc7b6cf14886f8f172af0f41a6acd63e1b71e..HEAD
 ```
 
-Expected: only the mapped production/test/docs files changed; the worktree is clean; Task 4 review 3 is PASS. The manifest’s `tested_code_contract_sha` is an ancestor of HEAD, and this command proves every later path is evidence-only documentation:
+Expected: only the mapped production/test/docs files changed and the worktree is clean. The manifest’s `tested_code_contract_sha` is an ancestor of HEAD, and this command proves every later path is evidence-only documentation:
 
 ```powershell
 $manifest = Get-Content -Raw -Encoding utf8 `
@@ -771,11 +799,108 @@ git diff --name-only "$($manifest.tested_code_contract_sha)..HEAD"
 
 Expected: the ancestor check returns 0 and the later diff contains only the evidence documents named in Task 6 Step 9.
 
-- [ ] **Step 2: Stop for main-worktree integration authorization**
+- [ ] **Step 2: Run the overall final review with every production path and fresh artifact available**
+
+Only now—after Task 4 task-level reviews, Task 5 documents, and Task 6 fresh verification/manifest—assign an overall final reviewer. Run:
+
+```powershell
+rg -n "to_plan\(|_validated_steps\(|executor\.run\(|_stream\(|call_agent\(" orchestrator/cloud
+git diff a07cc7b6cf14886f8f172af0f41a6acd63e1b71e..HEAD -- `
+  orchestrator/cloud/planning.py `
+  orchestrator/cloud/loop.py `
+  orchestrator/cloud/engine.py
+Get-Content -Raw -Encoding utf8 `
+  '.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json'
+```
+
+The final reviewer must inspect all dispatch-bound production hits and classify each as “covered by build”, “covered by replan receiver”, “covered by `_run_escalated`”, or “does not accept planner/Agent-produced steps”. The reviewer also cross-checks fresh targeted/Cloud/gate/full logs against the manifest, manifest hashes against copied root artifacts, warning wording against `production impact not established`, document claims against `tested_code_contract_sha`, and the evidence-only diff after that SHA.
+
+Write `.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md` with these exact sections:
+
+```markdown
+# Overall Final Review
+
+Verdict: PASS
+
+## Production-path audit
+## Fresh verification and manifest audit
+## Documentation and SHA-boundary audit
+## Push readiness
+```
+
+`Verdict: PASS` is permitted only when every production path and evidence check passes. Any fourth unguarded receiver, stale count, hash mismatch, missing warning category, or claim attached to the wrong SHA produces `Verdict: FAIL`; return the finding to the responsible original implementation agent or documentation owner, rerun every invalidated Task 4/6 checkpoint, and repeat this overall review. A failed or missing final review forbids main integration and `git push`.
+
+After the reviewer writes PASS, copy that final artifact into the canonical root evidence directory without overwriting anything:
+
+```powershell
+$sourceReview = (Resolve-Path `
+  '.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md').Path
+$rootReview = 'D:\Personal\AI\Claude Code\产品\car-agent\.artifacts\qa-safety-confirmed-write-postbuild\review-3-final.md'
+if (-not (Select-String -LiteralPath $sourceReview -SimpleMatch 'Verdict: PASS' -Quiet)) {
+  throw 'overall final review did not pass'
+}
+if (Test-Path -LiteralPath $rootReview) {
+  throw "canonical final review already exists: $rootReview"
+}
+Copy-Item -LiteralPath $sourceReview -Destination $rootReview
+Get-FileHash -Algorithm SHA256 $sourceReview, $rootReview
+```
+
+Expected: source and root-copy SHA256 values are identical. The Task 6 manifest remains immutable and retains `final_review_pending=true`; the final review is later evidence that consumed that manifest, not content retroactively inserted into it.
+
+- [ ] **Step 3: Verify all three review types and all fresh evidence before authorization**
+
+```powershell
+$required = @(
+  '01-talk-red.log','01-talk-green.log',
+  '02-loop-red.log','02-loop-green.log',
+  '03-escalate-red.log','03-escalate-green.log',
+  'review-task1-spec.md','review-task1-quality.md',
+  'review-task2-spec.md','review-task2-quality.md',
+  'review-task3-spec.md','review-task3-quality.md',
+  'review-3-final.md',
+  'targeted.log','cloud-tests.log',
+  'gate-skills.log','gate-exemplars.log','gate-intent.log','gate-capability.log',
+  'full-pytest.log','warning-classification.md',
+  'verification-manifest-utf8.json'
+)
+$required | ForEach-Object {
+  $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $_
+  if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -eq 0) {
+    throw "missing final evidence: $path"
+  }
+}
+$reviewFiles = @(
+  'review-task1-spec.md','review-task1-quality.md',
+  'review-task2-spec.md','review-task2-quality.md',
+  'review-task3-spec.md','review-task3-quality.md',
+  'review-3-final.md'
+)
+foreach ($name in $reviewFiles) {
+  $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $name
+  if (-not (Select-String -LiteralPath $path -SimpleMatch 'Verdict: PASS' -Quiet)) {
+    throw "review not passed: $path"
+  }
+}
+```
+
+Expected: task-level specification, task-level quality, and overall final reviews all say `Verdict: PASS`; every RED/GREEN and fresh verification artifact exists. Do not proceed to integration or push on any exception.
+
+Also verify the canonical root copy of the overall final review remains byte-identical:
+
+```powershell
+Get-FileHash -Algorithm SHA256 `
+  '.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md', `
+  'D:\Personal\AI\Claude Code\产品\car-agent\.artifacts\qa-safety-confirmed-write-postbuild\review-3-final.md'
+```
+
+Expected: both hashes match.
+
+- [ ] **Step 4: Stop for main-worktree integration authorization**
 
 Before changing `D:\Personal\AI\Claude Code\产品\car-agent`, show the full commit list and changed-file list from Step 1, plus root `git status --short --branch`. Obtain explicit approval for the chosen integration operation. Do not merge into a dirty or concurrently used main worktree.
 
-- [ ] **Step 3: Stop separately for `git push` authorization**
+- [ ] **Step 5: Stop separately for `git push` authorization**
 
 After integration and before push, run in root:
 
@@ -787,19 +912,19 @@ git diff --name-status origin/main..HEAD
 
 Present every commit that the branch-level push would carry. Execute no `git push` until the user explicitly authorizes that exact list.
 
-- [ ] **Step 4: Stop separately for deploy authorization**
+- [ ] **Step 6: Stop separately for deploy authorization**
 
 After an authorized push, require a clean, committed, main-reachable SHA. Run only the documented deploy dry-run to obtain the controlled-path summary/digest, present it, and request a separate deploy `--apply` authorization for that exact SHA and digest. Do not alter `.env`, CI/CD, infrastructure, schema, or system configuration.
 
-- [ ] **Step 5: Stop separately for live verification authorization**
+- [ ] **Step 7: Stop separately for live verification authorization**
 
 After an authorized deploy, run `python scripts/dev_stack.py status`, then the documented unified `verify`/remote-safe lane bound to the exact deployed SHA. Merchant writes, payments, real vehicle control, data deletion, cleanup writes, or `remote_mutating=true` remain excluded without their own explicit approval.
 
-- [ ] **Step 6: Run the approved live acceptance only after all prior checkpoints**
+- [ ] **Step 8: Run the approved live acceptance only after all prior checkpoints**
 
 The live acceptance set is: clean-session safety question repetitions, the original `information` long-session persona, release/readback equality, zero merchant drafts, zero new pending operations, and cleanup verification. Record exact commands, release SHA, results, and side-effect inventory; do not transfer local full-suite claims to the deployed SHA.
 
-- [ ] **Step 7: Close the design only when live evidence exists**
+- [ ] **Step 9: Close the design only when live evidence exists**
 
 If and only if the exact deployed SHA passes the approved live set, update AGENTS, fix plan, design, design README, and history with the deployed release and evidence. Otherwise keep the item active and record the precise failed or unrun checkpoint.
 
@@ -810,7 +935,8 @@ If and only if the exact deployed SHA passes the approved live set, update AGENT
 - [ ] Every A–G requirement maps to Tasks 1–7.
 - [ ] No unknown test total is asserted as a required future result; every verification step records its fresh exact output.
 - [ ] All three receivers use server-owned original text and one shared formula.
-- [ ] RED, GREEN, three reviews, warnings, manifest, root artifact copy, and SHA256 checks are named.
+- [ ] Task topology is forward-only: Tasks 1–3 create RED/GREEN; Task 4 consumes those logs for per-task specification and quality reviews; Tasks 5–6 create docs/fresh evidence/manifest; Task 7 alone creates the overall final review before any integration or push authorization.
+- [ ] RED, GREEN, three review types, warnings, manifest, root artifact copy, and SHA256 checks are named.
 - [ ] The phrase `production impact not established` is used; “non-production risk” is absent.
 - [ ] Main integration, push, deploy, remote-safe/live, and mutating actions are separate authorization points.
 - [ ] `git diff --check` passes and all Markdown code fences are balanced.
