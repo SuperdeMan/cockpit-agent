@@ -1,5 +1,6 @@
 export { AuroraOrb, type OrbState } from './AuroraOrb'
 export { AuroraBackground } from './AuroraBackground'
+export { EdgeGlow } from './EdgeGlow'
 export { Glass } from './Glass'
 export { StreamCursor } from './StreamCursor'
 export { ThinkDots } from './ThinkDots'

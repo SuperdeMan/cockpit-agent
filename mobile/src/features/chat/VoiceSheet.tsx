@@ -16,8 +16,8 @@ import type { PresenceSnapshot } from '@/core/presence/presence'
 import type { TurnView } from '@/core/session/turnView'
 import type { FontScalePref } from '@/core/settings/store'
 import { CardRenderer } from '@/features/cards/CardRenderer'
-import { AuroraOrb, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
-import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
+import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
+import { GLASS, RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
 export interface VoiceSheetProps {
@@ -43,6 +43,16 @@ export interface VoiceSheetProps {
 
 /** 下拉多少算「收起」（dp） */
 export const SHEET_DISMISS_DY = 80
+
+/** 层壳底（第 3 批附加项①，**§5.11 G1 的 tint 落地，不是新裁决**）：`Glass` 的 `glassBg` 在暗色下
+ *  只有 5.6%（那是**卡壳**用的），语音层套上它之后记录里的气泡会透过层与层内文字重叠、两边都难读
+ *  （第 2 批真机 `b2-03-capsule-attention.png`）。这里在 Glass 内垫一层 `p.bg` 同色系实色，
+ *  不透明度取 G1 的 `GLASS.frosted.tint`；Glass 自己的白色薄膜与光照边框仍叠在它上面。
+ *  方案 §5.2「记录变暗 40%、**仍可见**」保留——身后暗区一字未动。 */
+function shellTint(bg: string, alpha: number): string {
+  const n = parseInt(bg.replace('#', ''), 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`
+}
 /** 收起动画时长（ms） */
 const COLLAPSE_MS = 180
 
@@ -99,6 +109,14 @@ export function VoiceSheet(props: VoiceSheetProps) {
             r={RADIUS['2xl']}
             style={{ flex: 1, overflow: 'hidden', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}
           >
+            {/* 壳底：先垫实色再叠 Glass 的白膜（附加项①） */}
+            <View
+              pointerEvents="none"
+              testID="voice-sheet-shell"
+              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
+            />
+            {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
+            <EdgeGlow active={snapshot.primary === 'listening' || snapshot.primary === 'thinking'} />
             {/* 把手（G2 只给光球与把手，§5.11） */}
             <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2, marginTop: 8 }} />
             {props.s2sNotice ? (
