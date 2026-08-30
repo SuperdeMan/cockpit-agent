@@ -2528,7 +2528,7 @@ T9「接女儿放学，路上买杯咖啡。」→ 明远学校；T54 同一句 
 
 release `343934b` 的长会话里，「红色机油灯亮了还能继续开吗」被规划成
 `luckin.order` 并挂起；干净会话同句 3/3 正确，说明这是长上下文里的高代价方差，
-不能靠单轮落域调优收口。计划构建唯一出口的选中公式为：
+不能靠单轮落域调优收口。所有 `build()` 出口共用终结器的选中公式为：
 
 ```text
 is_non_directive_question(text)
@@ -2543,6 +2543,10 @@ is_non_directive_question(text)
 Planner 的 LLM 输出协议不读取这个字段，模型无权补写、删除或降级。cloud 分支不可改用
 `is_write_intent`：当前操作名粒度会把 `search/menu/talk/status` 等读取或应答能力误判为写。
 
+所有 `build()` 出口都必须调用同一个 `_apply_question_side_effect_guard` 终结器：常规出口
+与 focused deterministic early return 不得各写一份判据。focused 计划被拦后不得再走
+registry fallback；语义检索可能把刚删除的 confirmed capability 原样引回，是安全旁路。
+
 | 计划形态 | 结果 |
 |---|---|
 | 非指令问句 + edge/edge_fast 写步骤 | 丢弃该步骤（既有行为） |
@@ -2551,8 +2555,10 @@ Planner 的 LLM 输出协议不读取这个字段，模型无权补写、删除�
 | 非指令问句 + `require_confirm=false` 的 cloud 步骤 | 保留；本契约不声称覆盖这类 cloud 副作用 |
 | mixed 计划 | 只丢违规 `Step` 对象，合法读取/应答步骤逐字保留 |
 
-过滤后零步仍走既有兜底，`plan_mode` 继续保留 `question_write_blocked`；不得把它改成新的
-观测签名，也不得把安全问句降级成空计划“没听清”。
+过滤后零步只尝试 `_talk_only_plan`：存在经 manifest 装配且 `require_confirm=false` 的
+talk capability 时才补回答；不存在合格能力时保持空计划 fail closed，不得为了保证话术
+再走 registry fallback。两种结果的 `plan_mode` 都继续保留 `question_write_blocked`，
+不得改成新的观测签名。默认 chitchat 配置能否给出分级安全建议，必须由部署验收实证。
 
 fallback 不是例外：`_talk_only_plan` 与 registry fallback 构造的步骤都必须经过
 `_validated_steps`，以保留 manifest 的 `require_confirm` 等权威字段；

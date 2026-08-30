@@ -4,6 +4,7 @@
 > 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84、
 > `orchestrator/cloud/planning.py::_question_side_effect_steps`、
+> `orchestrator/cloud/planning.py::_apply_question_side_effect_guard`、
 > `orchestrator/cloud/tests/test_question_write_guard.py`
 
 ## 1. 现场与证据
@@ -24,8 +25,11 @@
 旧现场中的 C1 安全闸为：
 
 ```text
-非指令问句 ∧ 端侧步骤 ∧ 写意图 ⇒ 丢弃该步骤，交给全局兜底 Agent 回答
+非指令问句 ∧ 端侧步骤 ∧ 写意图 ⇒ 丢弃该步骤
 ```
+
+旧实现意图在丢弃后交给全局兜底回答；v1.45 已将它收紧为“只接受 unconfirmed talk，
+没有合格能力时保持空计划 fail closed”。
 
 `luckin.order` 是 `deployment=cloud` 且 `require_confirm=true`，因此绕过了只看
 `deployment/kind` 的第一道闸。
@@ -38,7 +42,8 @@
 2. 保留现有端侧写闸全部行为，包括其已明记的礼貌问句代价。
 3. 不误伤 `manual.query`、`info.search`、`chitchat.talk` 等云侧读取或应答步骤。
 4. 混合计划只丢弃违规步骤，已合法的读取/安全应答步骤保留。
-5. 沿用现有兜底回答和 `question_write_blocked` 观测签名，不改变历史报表口径。
+5. 沿用 `question_write_blocked` 观测签名；仅在存在 unconfirmed talk capability 时回答，
+   否则以空计划 fail closed。
 
 ### 2.2 非目标
 
@@ -79,13 +84,16 @@ is_non_directive_question(text)
 
 ### 3.2 出口行为
 
-既有出口保持不变：
+所有 `build()` 出口统一经 `_apply_question_side_effect_guard` 终结：常规出口与 focused
+deterministic early return 不得各写一份安全判据。终结器行为为：
 
 1. 按对象身份从 `plan.steps` 中删掉选中步骤；
 2. 保留其他合法步骤；
 3. 记录 `question_write_blocked`；
-4. 若已无步骤，调 `_talk_only_plan`，由带安全信号判据的全局兜底 Agent 给出建议；
-5. 后续的“安全信号 + 空计划”闸与取消闸的顺序不变。
+4. 若已无步骤，只尝试 `_talk_only_plan`；仅当它返回经 manifest 装配且
+   `require_confirm=false` 的 talk 步骤时补回答；
+5. 找不到合格 talk 时保持空计划 fail closed；focused 被拦后绝不再走 registry fallback；
+6. 常规出口后续的“安全信号 + 空计划”闸与取消闸顺序不变。
 
 兜底构造同样受 manifest 权威链约束：`_talk_only_plan` 与 registry fallback 产生的
 `Step` 必须经 `_validated_steps` 装配，不能手工构造后把 `require_confirm` 丢成默认假值；
@@ -96,12 +104,13 @@ is_non_directive_question(text)
 
 | 输入 / 步骤 | 预期 |
 |---|---|
-| “红色机油灯亮了还能继续开吗” + `luckin.order(require_confirm=true)` | 丢弃订单步骤，改走安全应答 |
+| “红色机油灯亮了还能继续开吗” + `luckin.order(require_confirm=true)` | 丢弃订单步骤；有 unconfirmed talk 时回答，无则空计划 fail closed |
 | 同句 + `manual.query` | 保留 |
 | 同句 + `info.search` | 保留，不因 `is_write_intent` 的操作名粒度被误杀 |
 | 同句 + `chitchat.talk` | 保留 |
 | “帮我点一杯生椰拿铁” + `luckin.order(require_confirm=true)` | 保留，继续走确认流程 |
 | 安全问句 + `manual.query` + `luckin.order` | 只丢弃 `luckin.order` |
+| focused 早退 + 问句形态写步骤 | 走同一终结器；被拦后不得 registry fallback |
 | 普通问句 + 端侧只读步骤 | 保留 |
 | 普通指令 + 端侧写步骤 | 保留 |
 
@@ -118,6 +127,9 @@ is_non_directive_question(text)
 2. 完整 `build()` 把安全问句中的 `luckin.order` 替换为 `chitchat.talk`；
 3. 混合计划仅删除 `luckin.order`，保留 `manual.query`。
 
+质量审查追加 focused RED：构造 focused early return 的问句写计划，并让 registry 返回
+confirmed cloud capability；旧实现会在拦截后重新走 registry，把 `luckin.order` 引回计划。
+
 ### 4.2 GREEN 与误伤对照
 
 最小实现通过 RED 后，再补齐对照：
@@ -128,7 +140,9 @@ is_non_directive_question(text)
 4. 现有四向对照（问句+端侧写 / 指令+端侧写 / 问句+端侧读 / 问句+云侧读）全绿；
 5. `question_write_blocked` 观测签名保持；
 6. `_talk_only_plan` 与 registry fallback 经 `_validated_steps` 后保留
-   `require_confirm`，confirmed fallback 被拒绝，普通 fallback 行为不变。
+   `require_confirm`，confirmed fallback 被拒绝，普通 fallback 行为不变；
+7. focused 与常规出口都调用 `_apply_question_side_effect_guard`；focused 被拦后 registry
+   调用次数为零；缺失或 confirmed talk 时得到空计划。
 
 ### 4.3 反向验证
 
@@ -136,13 +150,18 @@ is_non_directive_question(text)
 `or step.require_confirm` 条件移除，确认新增的云侧安全用例精确转红，既有端侧用例不受影响；然后恢复实现再跑绿。
 另对 fallback 做同形反向验证：临时恢复手工 `Step` 构造，确认 registry fallback 与
 `_talk_only_plan` 的 confirmed capability 用例精确转红；恢复 `_validated_steps` 装配后再跑绿。
+质量审查再补一轮 focused 反向验证：恢复旧 focused 分支的“拦截后 `_fallback`”行为，
+确认 `test_focused_question_does_not_bypass_confirmed_fallback_guard` 精确转红；恢复统一终结器后
+守卫全文件转绿。
 
 ## 5. 实施面
 
 ### 5.1 代码与测试
 
 - 修改 `orchestrator/cloud/planning.py`：判据扩面、方法改名、日志/注释与真实行为对齐；
-  `_talk_only_plan` 与 registry fallback 统一经 `_validated_steps` 装配，并拒绝 confirmed talk。
+  抽取 `_apply_question_side_effect_guard` 作为 focused + normal 所有 build 出口的统一终结器；
+  focused 被拦后不再 registry fallback；`_talk_only_plan` 与 registry fallback 统一经
+  `_validated_steps` 装配，并拒绝 confirmed talk，零步无合格 talk 时保持 fail closed。
 - 修改 `orchestrator/cloud/tests/test_question_write_guard.py`：RED/GREEN/对照/反向验证用例。
 
 ### 5.2 契约与状态文档
@@ -173,7 +192,8 @@ is_non_directive_question(text)
 2. 推送前列出 `origin/main..HEAD` 全部提交，另取 `git push` 授权；
 3. 部署前输出受控路径摘要，另取 deploy `--apply` 授权；
 4. 部署后运行精确 release 的 `status` 和统一 `verify`;
-5. 干净会话反例 + 原长会话 `information` persona 双层复验；
+5. 干净会话反例 + 原长会话 `information` persona 双层复验，并证明部署中的默认 chitchat
+   配置确实给出分级安全建议；
 6. 确认零商户草稿、零挂起操作、清理失败为空。
 
 ## 7. 风险与止损
@@ -183,6 +203,8 @@ is_non_directive_question(text)
 | `require_confirm` 被误用为“全部写操作”的第二份声明 | 文档只主张“需确认的高代价步骤”，不主张它覆盖全部写操作 |
 | 云侧只读能力被 `is_write_intent` 误杀 | 云侧分支只看 `require_confirm`，不看操作名 |
 | fallback 手工构造 `Step`，把 manifest 的确认字段丢成默认假值 | 所有 fallback 统一经 `_validated_steps`；confirmed talk 明确返回 `None`，并用反向验证锁住 |
+| focused early return 绕过常规出口，或被拦后 registry 把 confirmed capability 引回 | focused + normal 共用 `_apply_question_side_effect_guard`；focused 被拦后禁止 registry fallback |
+| 把“安全回答”误写成必然结果，配置缺失时为出话术重新放宽安全边界 | 只接受 unconfirmed talk；缺失或 confirmed 时空计划 fail closed；默认 chitchat 的分级建议留给部署验收 |
 | 礼貌请求被判成问句 | 保留 `DIRECTIVE_MARKERS` 判据和两向用例；无标记的问句尾代价延续既有裁决 |
 | 只验干净会话，结论再次假绿 | 必须复跑原 `information` 长会话；干净会话只是对照 |
 | 发版时带走并行 mobile 提交 | 推送前列出完整 `origin/main..HEAD`，对并行提交取得明示授权 |
@@ -192,7 +214,8 @@ is_non_directive_question(text)
 只有同时满足以下条件，这条安全欠账才能划掉：
 
 1. RED 用例在旧实现上按预期失败；
-2. 最小实现后，问句守卫、fallback 权威字段、既有误伤对照与相邻规划用例全绿；
+2. 最小实现后，问句守卫、fallback 权威字段、focused/normal 统一终结器、既有误伤对照与
+   相邻规划用例全绿；
 3. Cloud Planner 全族、四道离线门禁与全量 pytest 全绿，且读数属于最后一次改动后的 HEAD；
 4. 精确部署 SHA 的 `status`/`verify` 通过；
 5. 干净会话与原长会话双层验证里，安全问句不再进入任何需确认的写能力，用户拿到分级安全建议，且商户草稿、挂起操作和探针副作用全部归零；
@@ -200,16 +223,20 @@ is_non_directive_question(text)
 
 ## 9. 核心实现记录（待全量与真栈）
 
-核心实现已分三笔提交落地：
+核心实现已分四笔提交落地：
 
 1. `a83fa88`：`MockAgent.require_confirm` 改为显式 bool，避免 `MagicMock` 恒真污染确认边界测试；
 2. `ab88f4e`：落地 `_question_side_effect_steps`，在非指令问句下拦截
-   `(edge/edge_fast ∧ is_write_intent) ∨ Step.require_confirm`，接入两个计划出口；
+   `(edge/edge_fast ∧ is_write_intent) ∨ Step.require_confirm`，接入当时两处常规调用点；
    `plan_mode` 继续使用 `question_write_blocked`，并覆盖 confirmed cloud、正常指令、
    unconfirmed cloud 与 mixed 计划；
 3. `01cc57c`：质量审查发现 fallback 手工 `Step` 丢失 `require_confirm`，将
    `_talk_only_plan` 与 registry fallback 收敛到 `_validated_steps`，并让 confirmed talk
-   明确拒绝，闭合守卫之后的旁路。
+   明确拒绝，闭合守卫之后的旁路；
+4. `1105829d518c87732c963d0b7672731e08e2319a`：第二轮质量审查发现 focused early return
+   绕过常规终结路径，且旧分支在拦截后会走 registry fallback；抽取
+   `_apply_question_side_effect_guard` 供 focused + normal 共用，focused 被拦后不再 registry，
+   零步只接受 unconfirmed talk，否则保持空计划 fail closed。
 
 TDD 与反向验证证据保存在 gitignore 的本地 artifact 中：
 
@@ -221,11 +248,14 @@ TDD 与反向验证证据保存在 gitignore 的本地 artifact 中：
 - `.artifacts/qa-safety-confirmed-write/fallback-red-old-construction.log`：恢复 fallback 手工构造后
   2 条权威字段用例按预期转红；
 - `.artifacts/qa-safety-confirmed-write/fallback-green-restored.log`：恢复 `_validated_steps` 后
-  31 passed。
+  31 passed；
+- `.artifacts/qa-safety-confirmed-write/focused-fallback-red.log`：恢复旧 focused fallback 后，
+  confirmed registry capability 被重新引入，目标用例 1 failed / 31 deselected；
+- `.artifacts/qa-safety-confirmed-write/focused-fallback-green.log`：恢复统一终结器后 32 passed。
 
 这些 ignored artifact 只是本地 RED/GREEN 运行记录，**不是 commit 证据**；可追溯实现仍以
-上述三个提交为准。当前 targeted 读数为：守卫 **31 passed**、规划回归 **47 passed**、
-相邻安全/取消闸 **23 passed**。
+上述四个提交为准。当前 targeted 读数为：守卫 **32 passed**、规划回归 **47 passed**、
+相邻安全/取消闸 **23 passed**、execution focus **57 passed**。
 
 截至本记录，尚未运行 Cloud Planner 全族、四道离线门禁或全量 pytest；也尚未部署、
 未复跑干净会话与原 `information` 长会话。因此完成判据 **3–6 均未满足**，当前状态只能是
