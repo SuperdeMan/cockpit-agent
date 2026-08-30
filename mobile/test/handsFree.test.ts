@@ -12,6 +12,8 @@
 //  ④ 定稿 → 走的是调用方的 onSend：绕过它就等于绕过前置路由/位置闸/候选拦截
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import fs from 'node:fs'
+import path from 'node:path'
 
 const recStarts = { n: 0, stops: 0 }
 
@@ -271,4 +273,24 @@ test('⑤ FSM 关闭 barge-in → onBargeInDisabled(reason) 与 onNotice 同时�
   ctl.vl.onDisableBargeIn('repeated-self-trigger')
   expect(bargeIn).toEqual(['repeated-self-trigger'])
   expect(notices[0]).toContain('语音打断')
+})
+
+// ⑥ S2S 的 provider/voice **不许拿 TTS 的设置去填**（B2 T5 真机取证抓到的）。
+//    `ttsProvider` 的值域是 TTS 引擎（minimax / cosyvoice…），而网关的 S2S provider 值域是
+//    dashscope / mock / off（llm-gateway/s2s/provider.py:388-419）——传 `minimax` 上去
+//    `build_s2s_provider` 一路走到最后 `return None`，网关每次 session.start 都回
+//    `unsupported`「S2S 未配置或无凭据」，端到端一轮**永远走不通**（真机实测，2026-08-30）。
+//    `voiceId`（`female-shaonv`）同理不在 S2S 音色值域（/api/s2s/info: Tina/Cherry/…）。
+//    HMI 侧 `getS2sConfig()` 只给 `{pipeline, voice:s2sVoice}`、**不给 provider**，让网关走
+//    env 缺省——App 没有 s2sVoice 这个设置项，所以两个都不给。
+//    这条是**源码级断言**：值域住在另一侧（网关 env），运行期这边没有任何东西会红。
+test('⑥ useHandsFree 的 getS2sConfig 不把 TTS 引擎/音色当成 S2S 的（值域不同，网关会 fail 成 unsupported）', () => {
+  const src = fs.readFileSync(path.resolve(__dirname, '../src/features/chat/useHandsFree.ts'), 'utf8')
+  const m = src.match(/getS2sConfig:[\s\S]*?\n {6}\}/)
+  // 通道自检：先证明真的抓到了那个块，抓不到时红灯指向的是这条测试自己
+  expect(m).not.toBeNull()
+  const body = m![0]
+  expect(body).toMatch(/getS2sConfig/)
+  expect(body).not.toMatch(/ttsProvider/)
+  expect(body).not.toMatch(/voiceId/)
 })

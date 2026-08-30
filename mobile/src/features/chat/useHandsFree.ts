@@ -109,10 +109,13 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       onPipelineDegraded: (_k, m) => setPipelineDegraded(m),
       wakeWord: () => settingsStore.getState().settings.wakeWord,
       getVoicePipeline: () => settingsStore.getState().settings.voicePipeline,
-      getS2sConfig: () => {
-        const s = settingsStore.getState().settings
-        return { voice: s.voiceId, provider: s.ttsProvider }
-      },
+      // S2S 的 provider / 音色**不是** TTS 的那两个（值域不同：网关 S2S provider 只认
+      // dashscope / mock / off，`llm-gateway/s2s/provider.py:388-419`）。B1 这里填的是
+      // `ttsProvider='minimax'` + `voiceId='female-shaonv'` ⇒ `build_s2s_provider` 一路
+      // `return None`，网关每次 session.start 都回 unsupported「S2S 未配置或无凭据」，
+      // 端到端一轮从来没走通过（B2 T5 真机取证定位）。两个都不给＝走网关 env 缺省，
+      // 与 HMI 同（HMI 给的 voice 是它自己的 `s2sVoice` 设置项，App 没有这一项）。
+      getS2sConfig: () => ({}),
       getSessionMeta: () => ({ sessionId: cbRef.current.sessionId }),
       onS2sUserUtterance: (t) => cbRef.current.onS2sUserUtterance?.(t),
       onS2sAnswerDelta: (t) => cbRef.current.onS2sAnswerDelta?.(t),
