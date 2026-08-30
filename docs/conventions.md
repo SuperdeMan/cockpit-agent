@@ -2521,3 +2521,40 @@ T9「接女儿放学，路上买杯咖啡。」→ 明远学校；T54 同一句 
 > **一个缺陷三层，每一层都只有真栈能露出来**：抽取只扫成功步 →
 > 调用方在写入前返回 → 候选根本不在它读的那个字段里。
 > **判据：「我改对了」与「它生效了」之间，隔着每一个我没验过的中间层。**
+
+---
+
+### 9.40 非指令问句不得进入需确认的云侧能力（QA 长会话安全收尾，2026-08-30）
+
+release `343934b` 的长会话里，「红色机油灯亮了还能继续开吗」被规划成
+`luckin.order` 并挂起；干净会话同句 3/3 正确，说明这是长上下文里的高代价方差，
+不能靠单轮落域调优收口。计划构建唯一出口的选中公式为：
+
+```text
+is_non_directive_question(text)
+∧
+(
+  ((edge/edge_fast) ∧ is_write_intent(intent))
+  ∨ Step.require_confirm
+)
+```
+
+`Step.require_confirm` 只由 capability manifest/servers 经 `_validated_steps` 装配；
+Planner 的 LLM 输出协议不读取这个字段，模型无权补写、删除或降级。cloud 分支不可改用
+`is_write_intent`：当前操作名粒度会把 `search/menu/talk/status` 等读取或应答能力误判为写。
+
+| 计划形态 | 结果 |
+|---|---|
+| 非指令问句 + edge/edge_fast 写步骤 | 丢弃该步骤（既有行为） |
+| 非指令问句 + `require_confirm=true` 的 cloud 步骤 | 丢弃，且不得形成确认/补槽挂起 |
+| 指令 + edge 写或 confirmed cloud 步骤 | 保留，继续原确认与执行链 |
+| 非指令问句 + `require_confirm=false` 的 cloud 步骤 | 保留；本契约不声称覆盖这类 cloud 副作用 |
+| mixed 计划 | 只丢违规 `Step` 对象，合法读取/应答步骤逐字保留 |
+
+过滤后零步仍走既有兜底，`plan_mode` 继续保留 `question_write_blocked`；不得把它改成新的
+观测签名，也不得把安全问句降级成空计划“没听清”。
+
+fallback 不是例外：`_talk_only_plan` 与 registry fallback 构造的步骤都必须经过
+`_validated_steps`，以保留 manifest 的 `require_confirm` 等权威字段；
+`_talk_only_plan` 若选中 confirmed capability 必须返回 `None`，不能在守卫之后重新引入
+需确认副作用。

@@ -1,9 +1,9 @@
 # QA 收尾：安全问句禁止进入需确认的云侧写能力
 
-> 状态：**已批准，待落地**（2026-08-30）
+> 状态：**落地中（核心实现完成，待全量与真栈）**（2026-08-30）
 > 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84、
-> `orchestrator/cloud/planning.py::_question_write_edge_steps`、
+> `orchestrator/cloud/planning.py::_question_side_effect_steps`、
 > `orchestrator/cloud/tests/test_question_write_guard.py`
 
 ## 1. 现场与证据
@@ -21,7 +21,7 @@
 干净会话 `--repeat 3` 三次都正确，所以这不是稳定的单轮落域错，而是只在长上下文中
 暴露的高代价方差。
 
-现有 C1 安全闸为：
+旧现场中的 C1 安全闸为：
 
 ```text
 非指令问句 ∧ 端侧步骤 ∧ 写意图 ⇒ 丢弃该步骤，交给全局兜底 Agent 回答
@@ -51,9 +51,9 @@
 
 ### 3.1 唯一判据
 
-将内部私有方法 `_question_write_edge_steps` 改名为
-`_question_side_effect_steps`，使名字与新的行为边界一致。其输入输出形状不变：输入
-`steps + text`，返回应被丢弃的 `Step` 对象列表。
+当前内部私有方法是 `_question_side_effect_steps`（设计时旧名为 `_question_write_edge_steps`），
+名字与扩展后的行为边界一致。其输入输出形状不变：输入 `steps + text`，返回应被丢弃的
+`Step` 对象列表。
 
 选中条件为：
 
@@ -86,6 +86,11 @@ is_non_directive_question(text)
 3. 记录 `question_write_blocked`；
 4. 若已无步骤，调 `_talk_only_plan`，由带安全信号判据的全局兜底 Agent 给出建议；
 5. 后续的“安全信号 + 空计划”闸与取消闸的顺序不变。
+
+兜底构造同样受 manifest 权威链约束：`_talk_only_plan` 与 registry fallback 产生的
+`Step` 必须经 `_validated_steps` 装配，不能手工构造后把 `require_confirm` 丢成默认假值；
+`_talk_only_plan` 若选中的 capability 本身 `require_confirm=true`，必须返回 `None`，
+不能在主守卫之后重新引入需确认副作用。
 
 ### 3.3 具体边界
 
@@ -121,18 +126,23 @@ is_non_directive_question(text)
 2. `require_confirm=false` 的云侧步骤保持旧行为；
 3. 带“帮我/麻烦/请”指令标记的瑞幸下单继续可达；
 4. 现有四向对照（问句+端侧写 / 指令+端侧写 / 问句+端侧读 / 问句+云侧读）全绿；
-5. `question_write_blocked` 观测签名保持。
+5. `question_write_blocked` 观测签名保持；
+6. `_talk_only_plan` 与 registry fallback 经 `_validated_steps` 后保留
+   `require_confirm`，confirmed fallback 被拒绝，普通 fallback 行为不变。
 
 ### 4.3 反向验证
 
 在本批实施记录中留一次反向验证：临时将新增的
 `or step.require_confirm` 条件移除，确认新增的云侧安全用例精确转红，既有端侧用例不受影响；然后恢复实现再跑绿。
+另对 fallback 做同形反向验证：临时恢复手工 `Step` 构造，确认 registry fallback 与
+`_talk_only_plan` 的 confirmed capability 用例精确转红；恢复 `_validated_steps` 装配后再跑绿。
 
 ## 5. 实施面
 
 ### 5.1 代码与测试
 
-- 修改 `orchestrator/cloud/planning.py`：判据扩面、方法改名、日志/注释与真实行为对齐。
+- 修改 `orchestrator/cloud/planning.py`：判据扩面、方法改名、日志/注释与真实行为对齐；
+  `_talk_only_plan` 与 registry fallback 统一经 `_validated_steps` 装配，并拒绝 confirmed talk。
 - 修改 `orchestrator/cloud/tests/test_question_write_guard.py`：RED/GREEN/对照/反向验证用例。
 
 ### 5.2 契约与状态文档
@@ -142,7 +152,7 @@ is_non_directive_question(text)
 - 更新 `docs/conventions.md` 的对应契约段。
 - 在 `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` 和 `AGENTS.md`
   记录实施终态、本地读数与真栈授权检查点。
-- 实施完成后将本文档状态改为“已归档”。
+- 完成判据全部满足后将本文档状态改为“已归档”。
 
 ## 6. 验证层级
 
@@ -172,6 +182,7 @@ is_non_directive_question(text)
 |---|---|
 | `require_confirm` 被误用为“全部写操作”的第二份声明 | 文档只主张“需确认的高代价步骤”，不主张它覆盖全部写操作 |
 | 云侧只读能力被 `is_write_intent` 误杀 | 云侧分支只看 `require_confirm`，不看操作名 |
+| fallback 手工构造 `Step`，把 manifest 的确认字段丢成默认假值 | 所有 fallback 统一经 `_validated_steps`；confirmed talk 明确返回 `None`，并用反向验证锁住 |
 | 礼貌请求被判成问句 | 保留 `DIRECTIVE_MARKERS` 判据和两向用例；无标记的问句尾代价延续既有裁决 |
 | 只验干净会话，结论再次假绿 | 必须复跑原 `information` 长会话；干净会话只是对照 |
 | 发版时带走并行 mobile 提交 | 推送前列出完整 `origin/main..HEAD`，对并行提交取得明示授权 |
@@ -181,8 +192,41 @@ is_non_directive_question(text)
 只有同时满足以下条件，这条安全欠账才能划掉：
 
 1. RED 用例在旧实现上按预期失败；
-2. 最小实现后，新用例、既有误伤对照、Cloud Planner 回归、离线门禁与全量 pytest 全绿；
-3. 精确部署 SHA 的 `status`/`verify` 通过；
-4. 干净会话与原长会话双层验证里，安全问句不再进入任何需确认的写能力，且用户拿到分级安全建议；
-5. 商户草稿、挂起操作和探针副作用全部归零；
+2. 最小实现后，问句守卫、fallback 权威字段、既有误伤对照与相邻规划用例全绿；
+3. Cloud Planner 全族、四道离线门禁与全量 pytest 全绿，且读数属于最后一次改动后的 HEAD；
+4. 精确部署 SHA 的 `status`/`verify` 通过；
+5. 干净会话与原长会话双层验证里，安全问句不再进入任何需确认的写能力，用户拿到分级安全建议，且商户草稿、挂起操作和探针副作用全部归零；
 6. `AGENTS.md` 不再把“修复批闭合”写成“QA 全绿”。
+
+## 9. 核心实现记录（待全量与真栈）
+
+核心实现已分三笔提交落地：
+
+1. `a83fa88`：`MockAgent.require_confirm` 改为显式 bool，避免 `MagicMock` 恒真污染确认边界测试；
+2. `ab88f4e`：落地 `_question_side_effect_steps`，在非指令问句下拦截
+   `(edge/edge_fast ∧ is_write_intent) ∨ Step.require_confirm`，接入两个计划出口；
+   `plan_mode` 继续使用 `question_write_blocked`，并覆盖 confirmed cloud、正常指令、
+   unconfirmed cloud 与 mixed 计划；
+3. `01cc57c`：质量审查发现 fallback 手工 `Step` 丢失 `require_confirm`，将
+   `_talk_only_plan` 与 registry fallback 收敛到 `_validated_steps`，并让 confirmed talk
+   明确拒绝，闭合守卫之后的旁路。
+
+TDD 与反向验证证据保存在 gitignore 的本地 artifact 中：
+
+- `.artifacts/qa-safety-confirmed-write/tdd-red-old-guard.log`：旧守卫下 3 条 cloud confirmed
+  用例按预期转红（3 failed / 4 passed / 22 deselected）；
+- `.artifacts/qa-safety-confirmed-write/tdd-green-restored.log`：恢复实现后 29 passed；
+- `.artifacts/qa-safety-confirmed-write/tdd-red-edge-control.log`：反向条件下既有端侧四向对照
+  4 passed，证明新增 cloud 条件没有替代旧 edge 判据；
+- `.artifacts/qa-safety-confirmed-write/fallback-red-old-construction.log`：恢复 fallback 手工构造后
+  2 条权威字段用例按预期转红；
+- `.artifacts/qa-safety-confirmed-write/fallback-green-restored.log`：恢复 `_validated_steps` 后
+  31 passed。
+
+这些 ignored artifact 只是本地 RED/GREEN 运行记录，**不是 commit 证据**；可追溯实现仍以
+上述三个提交为准。当前 targeted 读数为：守卫 **31 passed**、规划回归 **47 passed**、
+相邻安全/取消闸 **23 passed**。
+
+截至本记录，尚未运行 Cloud Planner 全族、四道离线门禁或全量 pytest；也尚未部署、
+未复跑干净会话与原 `information` 长会话。因此完成判据 **3–6 均未满足**，当前状态只能是
+“核心实现完成，待全量与真栈”，不得写成“本地全量完成”或“已修好”。
