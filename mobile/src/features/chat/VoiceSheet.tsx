@@ -13,9 +13,13 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 
 import type { PresenceSnapshot } from '@/core/presence/presence'
+import type { CandidateState } from '@/core/session/candidates'
+import { followUpChips } from '@/core/session/followUps'
 import type { TurnView } from '@/core/session/turnView'
 import type { FontScalePref } from '@/core/settings/store'
 import { CardRenderer } from '@/features/cards/CardRenderer'
+
+import { FollowUpChips } from './FollowUpChips'
 import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
 import { GLASS, RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
@@ -34,6 +38,8 @@ export interface VoiceSheetProps {
   interruptedIds: readonly string[]
   /** 端到端挡位的开录即告知（红线三条件③）：层的第一行 G0 实色条 */
   s2sNotice: boolean
+  /** 上一轮 final 记下的候选集（chips 的第二个来源；判据在 core/session/followUps.ts） */
+  candidates: CandidateState
   /** 下拉 / 点「收起」/ 点暗区 */
   onCollapse(): void
   /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
@@ -175,6 +181,10 @@ export function VoiceSheet(props: VoiceSheetProps) {
               ) : null}
               {assistant && props.interruptedIds.includes(assistant.id) ? (
                 <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
+              ) : null}
+              {/* follow-up chips（方案 §5.2 图）：答完了才给——流式/思考中给等于催人打断自己 */}
+              {assistant && !assistant.streaming && !assistant.pending ? (
+                <FollowUpChips p={p} fontScale={fontScale} chips={followUpChips(assistant.followUp, props.candidates)} onSend={props.onSend} />
               ) : null}
               {/* 卡片：card_group 的主卡/折叠由 CardRenderer 的注册表决定（T8），这里不判 */}
               {assistant?.uiCard ? (

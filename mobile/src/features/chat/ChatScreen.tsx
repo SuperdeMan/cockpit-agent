@@ -421,6 +421,7 @@ function ChatBody({
           draftUserId={draftUserId}
           interruptedIds={interruptedIds}
           s2sNotice={s2sNotice}
+          candidates={core.candidates}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
           onInterrupt={interruptAndListen}
           onSend={(t) => onSend(t)}
