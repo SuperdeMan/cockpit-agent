@@ -1,7 +1,7 @@
 # Android 陪伴端交互设计升级方案（UX v2.1：以光球为锚的三层在场）
 
 > 状态：**v2.1 —— 方向已获泓舟同意（2026-08-29）；外部评审「附条件通过」的补充意见已逐条裁决并并入（§15 采纳记录）；下一步按 §11 拆 B1 实施计划**
-> 版本：v2（2026-08-29 上午草案）→ **v2.1**（同日，采纳外部评审：多轴 Presence、Composer 手势契约、ConfirmPolicy 只投影 VAL、隐私在场、产品身份、材质制度、降级矩阵、增量沉淀、追溯矩阵）
+> 版本：v2（2026-08-29 上午草案）→ **v2.1**（同日，采纳外部评审：多轴 Presence、Composer 手势契约、ConfirmPolicy 只投影 VAL、隐私在场、产品身份、材质制度、降级矩阵、增量沉淀、追溯矩阵）→ **v2.2**（2026-08-30，B1 落地评审 [`docs/reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md`](../reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md) 的五条 🔁 回写：§4.2 `looking` 不缩球体、§5.3 确认摘要取上一条用户原话、§5.7 离线暂停看门狗、§11.3 流 06 不等到期、§11.5 在场轨迹页归 B2；评审读数 ✅29 / ⚠8 / ❌1 / ⏭5 / 🔁5，❌ 与 D1–D9 进 B2 入口）
 > 交付对象：`mobile/` 后续执行者（人或 Agent）；评审对象：泓舟
 > 关联：`2026-08-23-hmi-android-app-plan.md`（选型与形态判断）、
 > `2026-08-24-mobile-app-implementation-plan.md`（执行真相源；§M3-V 光球复刻批、§M4、坑账 §9）、
@@ -225,7 +225,7 @@ function derivePresence(i: PresenceInput): PresenceSnapshot
 | `speaking` | TTS 在放 | `speaking` 0.72s ×1.35 | 三层青波纹 | 「播报中 · 说话可打断」 | — | 首音不加提示音（避免与 TTS 叠） | — |
 | `followup` | TTS 完、8s 追问窗 | `listening`（邀请式） | 青环 0.4α，**环按剩余时间递减** | 「可以接着说」+ 环倒计时 | — | 窗关闭：无声（刻意） | 「可以接着说」 |
 | `attention` | 台账有活的确认 / `NEED_SLOT` / 位置授权 | **新 `attention`**：`idle` 节律 + **琥珀环** | 琥珀环 0.35α 呼吸 3s | 「等你确认」/「还差一个信息」 | **必有**：确认卡 / 补槽卡（§5.3） | 进入：双触感（重-轻） | 「需要你确认：{摘要}」 |
-| `looking` | 视觉触发词命中、相机在拍 | **新 `looking`**：体缩 0.96 一次「快门」 | 一圈白环 300ms 扩散一次 | 「看一眼…」 | — | 快门轻触感 | 「正在拍摄一帧」 |
+| `looking` | 视觉触发词命中、相机在拍 | **新 `looking`**：一次性白环 0.9→1.35 扩散淡出（300ms），**不缩球体**（v2.2 回写：不变量①正圆不变形、⑧它同时是麦克风/头像/品牌标，动球体的收益不抵风险） | 一圈白环 300ms 扩散一次 | 「看一眼…」 | — | 快门轻触感 | 「正在拍摄一帧」 |
 | `reconnecting` | `connStatus=connecting` >3s | `idle` ×0.6 亮度 | 灰环 | 「正在重连…」琥珀 | 离线队列 ≥1 条时：「N 条消息排队中」 | — | 「连接中」 |
 | `offline` | 探活判死 | **新 `muted`**：去饱和、停旋转 | 灰环 | 「已断开 · 消息会排队」红 | 同上 | 判死 1 次触感 | 「已断开」 |
 | `error` | error / cancelled / 超时（无在飞） | `idle` | 红环闪 1 次 | 「出错了」4s | — | 1 次触感 | 播报错误文案 |
@@ -344,7 +344,7 @@ turn.assistant: draft_assistant ──(final 帧)──▶ final_assistant
 
 | DockItem | 内容 | 关闭方式 | 关闭时对话记录里留什么 |
 |---|---|---|---|
-| `confirm` | ⚠ 图标 + 动作摘要（「打开后备箱」）+ **取消 flex1 / 确认 flex2**（A-6.4 比例与琥珀色）+ **剩余时间环** | 点按 / 语音「确认/取消」/ 到期 / `closed_operation_ids` | 到期：气泡追加一行「确认已过期，需要的话再说一次」；被服务端关：「已由座舱端处理」 |
+| `confirm` | ⚠ 图标 + 动作摘要 + **取消 flex1 / 确认 flex2**（A-6.4 比例与琥珀色）+ **剩余时间条**（v2.2：RN 无 conic，用 2dp 进度条替代环）。**动作摘要今天协议里不存在**（v2.2 回写，评审 🔁-4 / D1）：端侧车控确认的 `speech` 是硬编码通用句（`orchestrator/edge/edge_call.py:272`「这项操作可能影响车辆安全，请确认是否继续。」），`final` 里无动作名字段 ⇒ **摘要取紧邻的上一条用户原话**（客户端可得，即「打开后备箱」），结构化 `action/target/impact` 随 Q16 的 `confirm_policy` 一起挂账；到期留痕那一行用同一来源。B1 取的是助手气泡原话，于是承诺卡说不出它在确认什么——B2 第一件事修它 | 点按 / 语音「确认/取消」/ 到期 / `closed_operation_ids` | 到期：气泡追加一行「⏱ 「{用户原话}」的确认已过期，需要的话再说一次」；被服务端关：「已由座舱端处理」 |
 | `slot` | 「还差一个信息：{missing_slots 中文名}」+ 建议 chips | 用户补槽 / 换题（`slot_shapes` 判换题时 Dock 自动撤） | 无（补槽本身进记录） |
 | `task` | 长任务名 + 阶段（复用 `process` 帧）+ 取消 | 终态帧 | 过程区折叠条（现状） |
 | `queue` | 「N 条消息排队，连上自动补发」 | 队列清空 | 无 |
@@ -405,6 +405,7 @@ type ConfirmPolicyView = {
 ### 5.7 离线与弱网
 
 - 判死→`offline`：光球 `muted` + 胶囊红 + Dock `queue`；恢复→补达时 Dock 逐条消失。
+- **离线期间必须暂停请求看门狗**（v2.2 回写，评审 🔁-2；B1 附加项①已实现 `store.ts::linkDown/pausedWatchdogs` + 3 条假时钟用例）：飞行模式下 RN 的 `onclose` 不来、靠 HTTP 探活判死、退避重连约 2 分钟，而 95s 看门狗会在断网期间跑完并把该轮从 `registry` 注销 ⇒ 重连后补发的 `final` 带着已注销的 `request_id`、按「对不上=丢帧」被丢，**用户永远拿不到答案**。表跟着**链路**走：`setStatus` 非 open 即摘表寄存、open 时各自重新起整 95s；链路已知断开时 `armWatchdog` 不起表。共享路由（`requestRouting.mjs`）一字不动。没有这条，「连上后自动补发」是一句做不到的承诺。
 - 探活残留窗（M3-W 记录：判死前 ~25s 发出的第一条可能丢）**在 UI 上如实说**：`reconnecting` 期间发送后气泡带「发送状态未知」灰字，补达/超时后更新——不许因为 UI 好看就把不确定写成确定。
 
 ### 5.8 Onboarding 上品牌（P12）
@@ -600,7 +601,7 @@ large / extra-large（WindowSizeClass v2 新增）今天没有设备命中，但
 
 ### 11.3 Maestro 扩流（进 `mobile/e2e/`）
 
-`05-voice-sheet-ptt`（按住 testID `composer-orb` 2s → 断言 `voice-sheet` 可见 → 松手 → 断言收起后新气泡）—需真人/直灌音频，标 `manual`；`06-confirm-dock-expire`（危险动作 → `dock-confirm` 可见 → 等到期 → 断言「确认已过期」文本）；`07-tablet-two-pane`（`cmd device_state state 3` → 断言 `stage-pane`）；`08-keyboard-no-hide`（去掉 hideKeyboard 的 01 流）；`09-state-gallery`（离线，CI 跑：`xiaozhou://state-gallery` 13 态各 assertVisible）。新增 testID：`composer-orb / voice-sheet / presence-capsule / dock-confirm / dock-slot / stage-pane`。
+`05-voice-sheet-ptt`（按住 testID `composer-orb` 2s → 断言 `voice-sheet` 可见 → 松手 → 断言收起后新气泡）—需真人/直灌音频，标 `manual`；`06-confirm-dock`（危险动作 → `dock-confirm` + `dock-countdown` + `presence-capsule` 可见 → 取消 → Dock 消失；v2.2 回写：**「到期留痕」不在 e2e 里等**——共享 TTL `pendingOps.mjs::PENDING_TTL_MS=300_000` 是 hmi 也在读的判据、不许为缩短验收去改，那条由 `sessionStore.test.ts` 假时钟守、真机各批各跑一次）；`07-tablet-two-pane`（`cmd device_state state 3` → 断言 `stage-pane`）；`08-keyboard-no-hide`（去掉 hideKeyboard 的 01 流）；`09-state-gallery`（离线，CI 跑：`xiaozhou://state-gallery` 13 态各 assertVisible）。新增 testID：`composer-orb / voice-sheet / presence-capsule / dock-confirm / dock-slot / stage-pane`。
 
 ### 11.4 「不负优化」判据（每条可量、上线前后各测一次）
 
@@ -619,7 +620,7 @@ large / extra-large（WindowSizeClass v2 新增）今天没有设备命中，但
 
 - **开关**：设置页「实验室」三个开关 `uxV2.presence` / `uxV2.voiceSheet` / `uxV2.dock`，缺省开；关掉即回到 v1 形态（状态条 + 气泡内确认）——**v1 代码在 B1/B2 期间不删**，是回滚路径；B4 稳定后再删。
 - **回滚粒度**：按开关，不按构建；纯 JS 批次（B1/B2/B4）出问题 = 关开关，不重装。
-- **埋点**：本端 20 条环形日志记录 `PresenceSnapshot` 变化（时间戳、变化的轴、触发输入），调试屏「主链帧」旁加「在场轨迹」页；**不上行**——meta 的 `__` 键不得上行（§9.33），obs 侧接入是另一件事，挂账。
+- **埋点（v2.2 回写，评审 🔁-1）**：两份日志是两件事，不再合成一条——① **采集激活日志**（B1 已落：`core/presence/activityLog.ts`，20 条环形、mic/camera、隐私栏「最近一次激活」的数据源，不上传）；② **`PresenceSnapshot` 变化轨迹**（时间戳、变化的轴、触发输入）+ 调试屏「主链帧」旁的「在场轨迹」页——**归 B2**（语音层会大量制造在场变化，正是要看轨迹的时候；`activityLog.list()` 届时才有消费方）。两份都**不上行**——meta 的 `__` 键不得上行（§9.33），obs 侧接入是另一件事，挂账。
 - **可用性闸门**：§11.4 八条 + 11.1 的 B2→B3 闸；任一条未达标不进下一批。
 
 ### 11.6 追溯矩阵（问题 → 升级点 → 代码 → 测试 → 指标 → 回滚开关）
@@ -700,7 +701,8 @@ v2 的 `error`「无在飞轮时短显 4s」太粗——今天代码里已经有
 | Q16 | **后端挂账**：`final.confirm_policy`（risk / allowed_channels / reason_code / expires_at） | UI 先按「touch + voice 都允许 + VAL 拒绝原话钉住」运行 | §5.3.1 |
 | Q17 | **后端挂账**：proactive 用户偏好 API（稍后提醒 / 本类静音 / 今日不再）+ 投递带 `reason` | UI 留按钮位不渲染 | §5.6 |
 | Q18 | 播报三档默认「自动」；行车档只强制安全告警 | 同 Q11，行车档不再「强制开」 | §6 |
-| Q19 | **后端挂账**：`final.missing_slots`（NEED_SLOT 的结构化字段：槽名 + 中文名 + 建议值） | 协议里今天没有（2026-08-29 grep 全空）⇒ Dock 的 `slot` 项在 B1 只有类型与画廊样本；**客户端不猜「这句是不是在补槽」** | §5.3、B1 计划 §0 接手须知 5 |
+| Q19 | **后端挂账**：`final.missing_slots`（NEED_SLOT 的结构化字段：槽名 + 中文名 + 建议值） | agent gRPC 契约里有（`proto/cockpit/agent/v1/agent.proto:119`），**客户端下行帧没有**（`gateway/edge/main.go` 不透传）⇒ Dock 的 `slot` 项在 B1 只有类型与画廊样本；**客户端不猜「这句是不是在补槽」** | §5.3、B1 计划 §0 接手须知 5 |
+| Q20 | B1 评审 ❌-1 / D1–D9 的落点（v2.2） | **D1 承诺卡摘要取上一条用户原话 = B2 第一件事**（❌-1 的根因）；D2/D3/D4/D5「胶囊与隐私栏判据修正」一组做（判据层加第四档 `cloudAsr`，一次堵掉所有出口）；D6 归 B4；D7/D8/D9 随 B2；S2S 首次显式同意弹窗进 B2 设置页那一半；在场轨迹页归 B2（Q11.5） | 评审 §4/§6 |
 
 ---
 
