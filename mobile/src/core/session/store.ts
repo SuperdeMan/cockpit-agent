@@ -41,6 +41,8 @@ export interface TurnMeta {
 
 export interface SendOpts {
   source?: TurnSource
+  /** 这条用户气泡已经在记录里（草稿转正 / 视觉先落气泡 / S2S 逃逸）：把文本对齐成定稿，不追加第二条 */
+  bubbleId?: string
 }
 
 export interface PendingOp {
@@ -65,6 +67,10 @@ export interface SessionState {
   uncertainIds: string[]
   /** 轮元数据（键=助手气泡 id）：这一轮谁发起的。语音层的开合判据读它（方案 §5.2 规则 1） */
   turnMeta: Record<string, TurnMeta>
+  /** 转写草稿气泡（方案 §5.2.1 draft_user）：ASR partial 按稳定 segment 写进记录；定稿转正、取消删除 */
+  draftUserId: string | null
+  /** 被打断的助手气泡：文字定格、标「已打断」，**不是错误**（方案 §5.2 规则 4） */
+  interruptedIds: string[]
 }
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
@@ -128,6 +134,8 @@ export class SessionCore {
   private pruneTimer: ReturnType<typeof setTimeout> | null = null
   /** 在飞轮气泡 id（RequestRegistry 是共享模块不加方法，这份账住在 SessionCore） */
   private readonly inFlight = new Set<string>()
+  /** 断线期间入队的轮（按气泡 id 记）：取消 / 终态都能把它摘掉，「N 条消息排队中」才不会报错数（评审 D9） */
+  private readonly queuedIds = new Set<string>()
 
   private readonly speech: SpeechSink
 
@@ -144,6 +152,8 @@ export class SessionCore {
       queued: 0,
       uncertainIds: [],
       turnMeta: {},
+      draftUserId: null,
+      interruptedIds: [],
     }))
   }
 
@@ -162,6 +172,7 @@ export class SessionCore {
     }
     if (status === 'open') {
       // onopen 时 ws.mjs 已 flush 队列
+      this.queuedIds.clear()
       this.store.setState({ connStatus: status, queued: 0 })
       return
     }
@@ -183,7 +194,9 @@ export class SessionCore {
 
   /** 用户消息入口（Composer/卡片按钮 send_text 共用）：加用户气泡 → 前置路由 → 派发 */
   send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
-    this.appendMessage({ id: uid(), role: 'user', text })
+    const reuse = opts.bubbleId && this.store.getState().messages.some((m) => m.id === opts.bubbleId) ? opts.bubbleId : null
+    if (reuse) this.setText(reuse, text)
+    else this.appendMessage({ id: uid(), role: 'user', text })
     const decision = routeSend(
       text,
       { candidates: this.candidates, locationEnabled: this.deps.location.isEnabled() },
@@ -266,6 +279,38 @@ export class SessionCore {
     }
   }
 
+  // ── 转写草稿（方案 §5.2.1）：语音层不持有转写状态，草稿就是记录里的一条用户气泡 ──
+
+  /** 有草稿就更新，没有就建。partial 按稳定 segment 来，每次都是全文不是增量 */
+  draftUser(text: string): void {
+    const s = this.store.getState()
+    if (s.draftUserId && s.messages.some((m) => m.id === s.draftUserId)) {
+      this.setText(s.draftUserId, text)
+      return
+    }
+    const id = uid()
+    this.store.setState((st) => ({ messages: [...st.messages, { id, role: 'user', text }], draftUserId: id }))
+  }
+
+  /** 取消 / 误唤醒回收 / 空定稿：草稿删除，不留气泡 */
+  discardDraftUser(): void {
+    const id = this.store.getState().draftUserId
+    if (!id) return
+    this.store.setState((s) => ({ messages: s.messages.filter((m) => m.id !== id), draftUserId: null }))
+  }
+
+  /** 定稿：草稿转正，返回它的 id 供 send({ bubbleId }) 复用；没有草稿返回 null */
+  commitDraftUser(): string | null {
+    const id = this.store.getState().draftUserId
+    if (!id) return null
+    this.store.setState({ draftUserId: null })
+    return id
+  }
+
+  private setText(id: string, text: string): void {
+    this.store.setState((s) => ({ messages: s.messages.map((m) => (m.id === id ? { ...m, text } : m)) }))
+  }
+
   /** 派发一轮请求（App.tsx:680-720）：上行帧 + 「思考中」占位 + 登记归属 + 看门狗 */
   private dispatch(
     text: string,
@@ -282,8 +327,9 @@ export class SessionCore {
       ...(metaExtra ? { metaExtra } : {}),
     })
     const sentNow = this.deps.transport.send(frame)
-    if (!sentNow) this.store.setState((s) => ({ queued: s.queued + 1 }))
     const pendingId = uid()
+    if (!sentNow) this.queuedIds.add(pendingId) // 按轮计数：取消 / 终态都能把它摘掉（评审 D9）
+    this.syncQueued()
     this.registry.open(frame.request_id, pendingId)
     this.inFlight.add(pendingId)
     // 播报会话提前建（App.tsx:677-679 同位）：等第一个 delta 再握手会把首音推后一个 RTT。
@@ -516,6 +562,8 @@ export class SessionCore {
       this.registry.dropBubble(id)
       this.inFlight.delete(id)
       this.dropUncertain(id)
+      this.queuedIds.delete(id)
+      this.syncQueued()
       this.speech.stop() // 超时轮不会再有 final，播报会话留着就是个永不收尾的空会话
       this.store.setState((s) => ({
         messages: s.messages.map((msg) =>
@@ -545,6 +593,14 @@ export class SessionCore {
     this.pausedWatchdogs.delete(bubbleId)
     this.inFlight.delete(bubbleId)
     this.dropUncertain(bubbleId)
+    this.queuedIds.delete(bubbleId)
+    this.syncQueued()
+  }
+
+  /** 「N 条消息排队中」的唯一出口：数的是**还没落地的轮**，不是「入过队多少次」（评审 D9） */
+  private syncQueued(): void {
+    const n = this.queuedIds.size
+    if (this.store.getState().queued !== n) this.store.setState({ queued: n })
   }
 
   /**
@@ -579,20 +635,16 @@ export class SessionCore {
     }
   }
 
+  /** 打断留痕（方案 §5.2 规则 4）：已显示的部分定格；一个字没出就写「已打断」。**不是错误**——
+   *  打断是用户的动作，A-6 也没把它归错误态；红色留给 error 帧与超时 */
   private markInterrupted(id: string): void {
     this.store.setState((s) => ({
       messages: s.messages.map((msg) =>
         msg.id === id && (msg.pending || msg.streaming || msg.processActive)
-          ? {
-              ...msg,
-              pending: false,
-              streaming: false,
-              processActive: false,
-              text: msg.text || '已打断',
-              error: true,
-            }
+          ? { ...msg, pending: false, streaming: false, processActive: false, text: msg.text || '已打断' }
           : msg,
       ),
+      interruptedIds: s.interruptedIds.includes(id) ? s.interruptedIds : [...s.interruptedIds, id],
     }))
   }
 

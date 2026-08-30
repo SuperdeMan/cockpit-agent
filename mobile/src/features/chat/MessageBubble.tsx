@@ -61,11 +61,15 @@ export interface BubbleProps {
   inlineConfirm: boolean
   /** 发送状态未知（断线瞬间发出的那条，`SessionState.uncertainIds`） */
   uncertain?: boolean
+  /** 转写草稿（方案 §5.2.1）：虚线边 + 光标，定稿后由同一条气泡接管（HMI PartialUserBubble 同款形态） */
+  draft?: boolean
+  /** 被打断（方案 §5.2 规则 4）：文字定格 + 灰字「已打断」，不是错误样式 */
+  interrupted?: boolean
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   if (msg.role === 'user') {
     return (
@@ -74,7 +78,8 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
           style={{
             backgroundColor: `${p.accent}1F`,
             borderWidth: 1,
-            borderColor: `${p.accent}38`,
+            borderStyle: draft ? 'dashed' : 'solid',
+            borderColor: draft ? `${p.accent}4D` : `${p.accent}38`,
             borderRadius: 18,
             borderBottomRightRadius: 4,
             paddingHorizontal: 15,
@@ -83,7 +88,10 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             boxShadow: p.dark ? '0 4px 16px rgba(0,0,0,0.22)' : '0 2px 10px rgba(10,14,26,0.06)',
           }}
         >
-          <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>{msg.text}</Text>
+          <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>
+            {msg.text}
+            {draft ? <StreamCursor h={p.font(15)} /> : null}
+          </Text>
         </View>
       </View>
     )
@@ -169,6 +177,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             {msg.streaming ? <StreamCursor h={p.font(15)} /> : null}
           </Text>
         ) : null}
+        {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
         {(msg.actions || []).length ? (
           <Text style={{ color: p.fg3, fontSize: p.font(11) }}>

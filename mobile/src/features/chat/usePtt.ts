@@ -40,6 +40,10 @@ export function usePtt(opts: {
   audioUrl: string
   sessionId: string
   onFinal(text: string): void
+  /** 稳定 partial（全文）→ 记录里的草稿气泡（方案 §5.2.1） */
+  onPartial?(text: string): void
+  /** 太短 / 出错 / 空定稿 / 取消 → 草稿不留气泡 */
+  onDiscard?(): void
 }): PttHandle {
   const [state, setState] = useState<PttState>('idle')
   const [partial, setPartial] = useState('')
@@ -59,6 +63,7 @@ export function usePtt(opts: {
       sessionRef.current = null
       setState('idle')
       setPartial('')
+      opts.onDiscard?.()
       await session.cancel()
       return
     }
@@ -88,7 +93,10 @@ export function usePtt(opts: {
         sessionId: opts.sessionId,
       },
       {
-        onPartial: (t) => setPartial(t),
+        onPartial: (t) => {
+          setPartial(t)
+          opts.onPartial?.(t)
+        },
         onFinal: (t) => {
           sessionRef.current = null
           setPartial('')
@@ -96,6 +104,7 @@ export function usePtt(opts: {
           const text = t.trim()
           if (text) opts.onFinal(text)
           else {
+            opts.onDiscard?.()
             setError('没听清，再说一次？')
             setErrorKind('asr')
           }
@@ -104,6 +113,7 @@ export function usePtt(opts: {
           sessionRef.current = null
           setPartial('')
           setState('idle')
+          opts.onDiscard?.()
           setError(msg)
           setErrorKind('asr')
         },
@@ -125,6 +135,7 @@ export function usePtt(opts: {
         pendingStopRef.current = false
         sessionRef.current = null
         setState('idle')
+        opts.onDiscard?.()
         const denied = e instanceof PermissionDeniedError
         setError(denied ? '需要麦克风权限，请在系统设置里允许' : '录音启动失败')
         setErrorKind(denied ? 'permission' : 'start')

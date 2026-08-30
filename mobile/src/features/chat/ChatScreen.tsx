@@ -195,7 +195,8 @@ function ChatBody({
   cfg: ServerConfig
 }) {
   const { core } = wired
-  const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds } = useStore(core.store)
+  const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds } =
+    useStore(core.store)
   const { settings } = useStore(settingsStore)
 
   const [notice, setNotice] = useState('')
@@ -230,7 +231,9 @@ function ChatBody({
   const ptt = usePtt({
     audioUrl: cfg.audioUrl,
     sessionId: wired.session.sessionId,
-    onFinal: (text) => onSend(text, undefined, { source: 'ptt' }),
+    onPartial: (t) => core.draftUser(t),
+    onDiscard: () => core.discardDraftUser(),
+    onFinal: (text) => onSend(text, undefined, { source: 'ptt', bubbleId: core.commitDraftUser() ?? undefined }),
   })
   // 免唤醒（M4-4）。**定稿走的是同一个 onSend**——前置路由/位置闸/候选拦截/视觉抓帧
   // 一条都不能因为「这句是免唤醒说出来的」而绕过。
@@ -239,7 +242,8 @@ function ChatBody({
     sessionId: wired.session.sessionId,
     enabled: settings.handsFree,
     needConfirm: pendingOps.length > 0,
-    onSend: (text) => onSend(text, undefined, { source: 'handsfree' }),
+    onPartial: (t) => core.draftUser(t),
+    onSend: (text) => onSend(text, undefined, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),
     onNotice: setNotice,
     onCancelTurn: () => core.cancelCurrentTurn(),
   })
@@ -249,6 +253,12 @@ function ChatBody({
   const turn = useMemo(() => currentTurn(messages), [messages])
   const latestTurnId = turn.assistant?.id ?? ''
   const [listHeight, setListHeight] = useState(0)
+
+  // 免唤醒离开 LISTENING 而没有定稿（退出词 / 语气词 / 误唤醒回收 / 回声）：草稿不留气泡。
+  // 定稿路径里 commit 先于 FSM 换态（onSend 同步发生在 _finalizeSend 内），到这里已是 no-op
+  useEffect(() => {
+    if (hf.fsm !== 'LISTENING') core.discardDraftUser()
+  }, [hf.fsm, core])
 
   // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
@@ -349,7 +359,7 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -359,6 +369,8 @@ function ChatBody({
                 confirmActive={confirmActiveOf(item)}
                 inlineConfirm={!(v2 && dock)}
                 uncertain={uncertainIds.includes(item.id)}
+                draft={item.id === draftUserId}
+                interrupted={interruptedIds.includes(item.id)}
                 onConfirm={onConfirm}
                 onSend={onSend}
               />
@@ -374,6 +386,8 @@ function ChatBody({
           snapshot={snapshot}
           turn={turn}
           containerHeight={listHeight}
+          draftUserId={draftUserId}
+          interruptedIds={interruptedIds}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
           onInterrupt={onInterrupt}
           onSend={(t) => onSend(t)}

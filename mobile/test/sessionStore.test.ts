@@ -298,7 +298,11 @@ describe('必测边界（每条对应一次真实事故）', () => {
     core.cancelCurrentTurn()
     expect(transport.sent.at(-1)).toEqual({ type: 'cancel', session_id: 'app-test01' })
     const interrupted = assistants(core)[0]
-    expect(interrupted).toMatchObject({ text: '已打断', error: true })
+    // B2 T4 判据变更（方案 §5.2 规则 4「打断不是错误」）：留痕从气泡上的 error 换成
+    // SessionState.interruptedIds——红色留给 error 帧与超时，打断是用户自己的动作
+    expect(interrupted).toMatchObject({ text: '已打断' })
+    expect(interrupted.error).toBeFalsy()
+    expect(core.store.getState().interruptedIds).toContain(interrupted.id)
     const snapshot = msgs(core)
     core.handleFrame({ type: 'cancelled' }) // 网关确认：本地已标记 → 幂等忽略
     expect(msgs(core)).toEqual(snapshot)
@@ -617,6 +621,89 @@ describe('UX v2 B2-3：轮来源（语音层开合的事实住在记录里）', 
     core.confirmReply('确认', 'op1', { source: 'handsfree' })
     expect(meta[assistants(core)[2].id]).toBeUndefined() // 上面的 meta 是旧快照
     expect(core.store.getState().turnMeta[assistants(core)[2].id].source).toBe('handsfree')
+    core.dispose()
+  })
+})
+
+describe('UX v2 B2-4：增量沉淀（方案 §5.2.1）、打断留痕（§5.2 规则 4）、D9', () => {
+  test('draftUser：第一次建草稿气泡，之后只更新同一条；commit 后 send({bubbleId}) 复用不追加第二条', () => {
+    const { transport, core } = newCore()
+    core.draftUser('附近')
+    core.draftUser('附近有什么')
+    core.draftUser('讲个笑话给我听')
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(1)
+    const id = core.store.getState().draftUserId as string
+    expect(msgs(core)[0].text).toBe('讲个笑话给我听')
+    expect(core.commitDraftUser()).toBe(id)
+    core.send('讲个笑话给我听吧？', undefined, { source: 'ptt', bubbleId: id })
+    const users = msgs(core).filter((m) => m.role === 'user')
+    expect(users).toHaveLength(1)
+    expect(users[0].id).toBe(id)
+    expect(users[0].text).toBe('讲个笑话给我听吧？') // 定稿可能与最后一个 partial 不同，以定稿为准
+    expect(core.store.getState().draftUserId).toBeNull()
+    expect(transport.lastUserFrame().text).toBe('讲个笑话给我听吧？')
+    core.dispose()
+  })
+
+  test('discardDraftUser：取消 / 误唤醒回收 / 空定稿 → 草稿删除、不留气泡；没有草稿时是 no-op', () => {
+    const { core } = newCore()
+    core.discardDraftUser()
+    expect(msgs(core)).toHaveLength(0)
+    core.draftUser('你好')
+    core.discardDraftUser()
+    expect(msgs(core)).toHaveLength(0)
+    expect(core.store.getState().draftUserId).toBeNull()
+    core.dispose()
+  })
+
+  test('commit 没有草稿返回 null；send 不带 bubbleId 仍追加（文字路径逐字不变）', () => {
+    const { core } = newCore()
+    expect(core.commitDraftUser()).toBeNull()
+    core.send('讲个笑话')
+    core.send('讲个笑话', undefined, { bubbleId: 'no-such-id' }) // 对不上的 id 当没给
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(2)
+    core.dispose()
+  })
+
+  test('打断：已显示的回答定格、不改成错误；interruptedIds 记下它（方案 §5.2 规则 4）', () => {
+    const { transport, core } = newCore()
+    core.send('讲个故事')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'speech_delta', request_id: rid, delta: '从前有座山' })
+    core.cancelCurrentTurn()
+    const a = assistants(core)[0]
+    expect(a.text).toBe('从前有座山')
+    expect(a.streaming).toBe(false)
+    expect(a.error).toBeFalsy()
+    expect(core.store.getState().interruptedIds).toEqual([a.id])
+    core.dispose()
+  })
+
+  test('打断时一个字都没出 → 文本「已打断」，同样不是 error', () => {
+    const { core } = newCore()
+    core.send('讲个故事')
+    core.cancelCurrentTurn()
+    const a = assistants(core)[0]
+    expect(a.text).toBe('已打断')
+    expect(a.error).toBeFalsy()
+    expect(a.pending).toBe(false)
+    core.dispose()
+  })
+
+  test('D9：断线期间取消一轮，「N 条消息排队中」跟着减（承诺型文案不许报错数）', () => {
+    const { transport, core } = newCore()
+    transport.send = (frame: object) => {
+      transport.sent.push(frame)
+      return false // 断线：帧入 ws.mjs 队列
+    }
+    core.setStatus('closed')
+    core.send('讲个笑话')
+    core.send('再讲一个')
+    expect(core.store.getState().queued).toBe(2)
+    core.cancelCurrentTurn() // 结算 FIFO 头
+    expect(core.store.getState().queued).toBe(1)
+    core.setStatus('open')
+    expect(core.store.getState().queued).toBe(0)
     core.dispose()
   })
 })

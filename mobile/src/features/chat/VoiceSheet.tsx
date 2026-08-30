@@ -28,6 +28,10 @@ export interface VoiceSheetProps {
   turn: TurnView
   /** 层可用的高度（包裹列表的那个 View 的 onLayout 高度）；0=还没量到，不渲染 */
   containerHeight: number
+  /** 转写草稿气泡 id（`SessionState.draftUserId`）：光标跟着草稿走，不跟着 capture 轴走 */
+  draftUserId: string | null
+  /** 被打断的助手气泡（方案 §5.2 规则 4）：回答定格 + 灰字「已打断」，不改红 */
+  interruptedIds: readonly string[]
   /** 下拉 / 点「收起」/ 点暗区 */
   onCollapse(): void
   /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
@@ -108,7 +112,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                   }}
                 >
                   {user.text}
-                  {snapshot.capture === 'recognizing' ? <StreamCursor h={scale(20, 'text', fontScale)} /> : null}
+                  {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} /> : null}
                 </Text>
               ) : null}
               {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内 */}
@@ -137,6 +141,9 @@ export function VoiceSheet(props: VoiceSheetProps) {
                   {assistant.text}
                   {assistant.streaming ? <StreamCursor h={scale(TYPE.body + 1, 'text', fontScale)} /> : null}
                 </Text>
+              ) : null}
+              {assistant && props.interruptedIds.includes(assistant.id) ? (
+                <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
               ) : null}
               {/* 卡片：card_group 的主卡/折叠由 CardRenderer 的注册表决定（T8），这里不判 */}
               {assistant?.uiCard ? (
