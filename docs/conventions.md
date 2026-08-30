@@ -2564,3 +2564,20 @@ fallback 不是例外：`_talk_only_plan` 与 registry fallback 构造的步骤�
 `_validated_steps`，以保留 manifest 的 `require_confirm` 等权威字段；
 `_talk_only_plan` 若选中 confirmed capability 必须返回 `None`，不能在守卫之后重新引入
 需确认副作用。
+
+v1.46 把“所有出口”明确为所有 **dispatch-bound** 计划产出/接收点，而不只指 `build()`：
+focused/normal build、adaptive replan receiver、Agent escalate mini-plan 与 fallback 候选均
+调用同一过滤原语。mixed 计划只删违规对象；全删后零 dispatch、零挂起。来源未知的 legacy
+pending plan 对声明可知的副作用 fail closed。
+
+安全判定只认服务端 `safety_origin_text`。新任务由 engine 用最初 `request.text` 写入，并随
+replan、suspend/restore 与 pending 序列化保持不变；`ctx.raw_text` 仍是当前补槽/确认答案，
+不能取代任务起点。LLM `goal`、replan goal、Agent escalate reason 均无授权权威。
+
+回答兜底的唯一权威是 capability manifest 的 `response_only=true`，并须经 SDK manifest →
+registry round-trip → `Step` → Executor/D0/T2 全链保真；缺声明或 legacy 记录默认 `false`。
+`response_only` 步骤只允许零动作 `OK`，或维持零动作 `FAILED`；与 `require_confirm` 同时为真、
+返回 `NEED_CONFIRM` / `NEED_SLOT` 或任意 action 都转为
+`response_only_contract_violation`、`actions=[]`，且在 provider dispatch 或流式 action yield 前
+截断。`_talk_only_plan()` 只接受 `response_only=true`、`require_confirm=false` 且通过同一问句
+守卫的 capability；intent 后缀与 Planner wire 字段均不构成回答能力证明。

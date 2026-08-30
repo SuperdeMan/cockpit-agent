@@ -380,3 +380,33 @@ trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；�
   `yield`; it records a terminal violation, suppresses any later final, and forbids unary fallback.
 - `_talk_only_plan()` scans all fallback capabilities and requires `response_only=true`,
   `require_confirm=false`, and survival of the same question-side-effect guard.
+
+## 12. 最终本地闭合（2026-08-30，live 仍待验）
+
+§11 重新打开的 active 实现项已在本地关闭。生产代码链为：`ba977dc` 建立 capability 级
+`response_only` 契约并在 Executor/D0/T2 纵深执行；`f986d37` 闭合 adaptive replan 接收点；
+`70d3d07` 闭合 D0/普通路径共用的 escalate mini-plan 接收点；`1158922` 保证
+`response_only` 经 registry 持久化 round-trip 不丢；`dd07b40` 以服务端
+`safety_origin_text` 贯穿 replan、挂起与恢复，并让 legacy 来源未知的副作用 fail closed。
+其后 `7c47d86`、`d89db30` 只修测试导入/fixture 事实，不改变生产实现。最终 critical review
+在 `dd07b4081166c0a9070f96a997571ba59226cf98` 对 replan 与 escalate 两条 Critical 回查 PASS。
+
+最终测试绑定代码 SHA 为 **`d89db30e8ef8f0cd08aaa4aaa688f8bdbcc390de`**。后续文档提交只做
+状态同步，**不承接或重新声称这些测试**。本地 fresh 读数：Cloud+registry 聚焦集
+**231 passed**；此前 Cloud 全族 **1267 passed / 1 skipped**；smoke edge **13/0**、Skill
+**22/22**、Exemplar **314**、strict discovery **85/85**（cases=676, distinct=634）、intent
+gate **25/25**（cases=139, distinct=129）、capability integrity PASS；最终
+`TZ=UTC0`、`PYTHONIOENCODING` 未设置口径下全量
+`python -X utf8 -m pytest -q -n 8 --dist worksteal` =
+**7769 passed / 32 skipped / 13 warnings**（556.27s，rc=0）。13 条 warning 类别与 §10.3
+一致。
+
+最终本地日志位于隔离工作树 ignored 路径
+`.artifacts/qa-safety-confirmed-write-postbuild/final-local-verification-utf8.log`，SHA256=
+`7a7a241a94e0b825e7b841f52084ed89795beb7a50e45010fe4766fb9d87e787`；根工作树尚未复制，
+因此它仍不是随 commit 移植的证据。
+
+外部边界没有变化：当前 cloud 仍为 `343934bab66c23f83575cee998eb6f64a9f45f3e`；本轮未 push、
+未 deploy、未跑新 SHA 的 remote-safe/统一 verify、未跑安全真栈或长会话，也未做商户写入或
+清理。因此 §11 的**本地 active 已关闭**，但 live 验收仍 active；不得写“云端已修”或
+“QA 全绿”。

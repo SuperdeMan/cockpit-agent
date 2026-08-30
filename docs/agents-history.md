@@ -8027,3 +8027,43 @@ fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel，测试绑定�
 `343934bab66c23f83575cee998eb6f64a9f45f3e`；本轮只读 `status` 为 ok、5/5 healthy、零 warning。
 本轮只读状态 artifact `cloud-status-predeploy-343934-utf8.log`（ignored/local-only）SHA256=
 `890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。
+
+## §86 2026-08-30 QA 安全收尾增补：闭合 post-build dispatch 旁路（最终本地验证态）
+
+### §86.1 RED 与落地链
+
+§85 的 build 守卫仍留有三类 dispatch 旁路。反事实 RED 先钉住：response-only 权威链
+**18 failed / 60 passed**；adaptive replan **3 failed / 2 passed**；escalate D0/普通路径
+**5 failed / 3 passed**。随后依次落地 `ba977dc`（capability `response_only` 从 manifest 到
+Executor/D0/T2）→ `f986d37`（replan receiver）→ `70d3d07`（escalate receiver）→
+`1158922`（registry round-trip）→ `dd07b40`（服务端 `safety_origin_text` 跨 replan、挂起与恢复；
+legacy 来源未知的副作用 fail closed）。三组直接 GREEN 分别为 **179 passed**、loop **28 passed**
+（相邻规划 **113 passed**）、escalate **14 passed**。`7c47d86` 与 `d89db30` 只修测试导入/
+fixture 事实，不改变生产实现。
+
+### §86.2 关键审查与最终本地读数
+
+最终 critical review 在 `dd07b4081166c0a9070f96a997571ba59226cf98` 对 replan 与 escalate 两条
+Critical 回查 PASS。最终测试绑定代码 SHA 为
+**`d89db30e8ef8f0cd08aaa4aaa688f8bdbcc390de`**；后续 docs commit 不承接测试声明。
+
+fresh 读数：Cloud+registry 聚焦 **231 passed**；此前 Cloud 全族 **1267 passed / 1 skipped**；
+smoke edge **13/0**、Skill **22/22**、Exemplar **314**、strict discovery **85/85**
+（cases=676, distinct=634）、intent gate **25/25**（cases=139, distinct=129）、capability
+integrity PASS，全部 rc=0。最终以 `TZ=UTC0`、`PYTHONIOENCODING` 未设置运行
+`python -X utf8 -m pytest -q -n 8 --dist worksteal` =
+**7769 passed / 32 skipped / 13 warnings**（556.27s，rc=0）。warning 类别维持 §85 的
+8 StarletteDeprecation + 2 WordPiece Deprecation + 1 gRPC test-fixture RuntimeWarning +
+1 audioop Deprecation + 1 regex FutureWarning。
+
+ignored/local-only 最终日志：
+`.artifacts/qa-safety-confirmed-write-postbuild/final-local-verification-utf8.log`，SHA256=
+`7a7a241a94e0b825e7b841f52084ed89795beb7a50e45010fe4766fb9d87e787`；当前只在隔离工作树，
+根工作树尚未复制，不随 commit 移植。
+
+### §86.3 授权边界
+
+本节关闭的是 §85/§11 的**本地实现与确定性验证**，不是 live QA。当前 cloud 仍为
+`343934bab66c23f83575cee998eb6f64a9f45f3e`；未 push、未 deploy、未跑新 SHA 的
+remote-safe/统一 verify、未跑安全真栈或长会话、未做商户写入或清理。上述动作继续各自等待
+授权，因此不得写“云端已修”“候选已 verified”或“QA 全绿”。
