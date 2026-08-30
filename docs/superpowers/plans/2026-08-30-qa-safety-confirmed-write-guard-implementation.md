@@ -342,7 +342,7 @@ Use `_question_side_effect_steps` consistently:
 _GUARD = PlanBuilder._question_side_effect_steps
 ```
 
-Update the focused-ellipsis path and the normal plan-exit path. Do not leave an alias; repository searches should find zero `_question_write_edge_steps` references after the implementation and before historical documentation is updated.
+Update the focused-ellipsis path and the normal plan-exit path. Do not leave an alias; searches under `orchestrator/cloud/` should find zero `_question_write_edge_steps` references after the implementation. Historical documentation is updated separately in Task 5.
 
 - [ ] **Step 2: Replace the selector with the minimal predicate**
 
