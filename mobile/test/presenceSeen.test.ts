@@ -22,6 +22,7 @@ function base(over: Partial<PresenceInput> = {}): PresenceInput {
     hfEnabled: false,
     hfUsable: false,
     hfFsm: 'IDLE',
+    hfFsmChangedAt: NOW - 1000,
     ptt: 'idle',
     partial: '',
     turn: { pending: false, streaming: false, processActive: false, processLabel: '', processSince: 0 },

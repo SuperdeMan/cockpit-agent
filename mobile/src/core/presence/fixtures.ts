@@ -21,7 +21,7 @@ export function presenceFixtures(): PresenceFixture[] {
   const NOW = Date.now()
   const base: PresenceInput = {
     now: NOW, connStatus: 'open', connChangedAt: NOW - 60_000,
-    hfEnabled: false, hfUsable: false, hfFsm: 'IDLE', ptt: 'idle', partial: '',
+    hfEnabled: false, hfUsable: false, hfFsm: 'IDLE', hfFsmChangedAt: NOW - 500, ptt: 'idle', partial: '',
     turn: { pending: false, streaming: false, processActive: false, processLabel: '', processSince: 0 },
     speaking: false, pendingOps: [], pendingLocation: false, voicePipeline: 'classic',
     visionCapturing: false, queued: 0, lastError: null, degradations: [], driving: false,
@@ -34,6 +34,10 @@ export function presenceFixtures(): PresenceFixture[] {
   return [
     mk('idle', {}),
     mk('armed', hf('ARMED')),
+    // 评审 D2：进入待机 3s 后胶囊消失、青环仍在——画廊要能看见「没有胶囊」这个态
+    mk('armed-quiet', hf('ARMED', { hfFsmChangedAt: NOW - 10_000 })),
+    // 评审 D3：免唤醒开着时 error 也要出得来（此前被 armed 遮蔽）
+    mk('error-hf-on', hf('ARMED', { hfFsmChangedAt: NOW - 10_000, lastError: { text: '出错了', at: NOW - 500 } })),
     mk('listening-ptt', { ptt: 'recording' }),
     mk('recognizing-partial', { ptt: 'recording', partial: '附近有什么好吃的' }),
     mk('listening-s2s', hf('LISTENING', { voicePipeline: 's2s' })),
@@ -44,6 +48,17 @@ export function presenceFixtures(): PresenceFixture[] {
     mk('attention-confirm', { pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }] }),
     mk('attention-two', { pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }, { id: 'op2', ts: NOW - 5_000, summary: '要解锁车门吗？' }], queued: 1 }),
     mk('attention-location', { pendingLocation: true }),
+    // B2 T3 语音层三档 detent：只录音 0.4（listening-ptt 那条就是）/ 有回答 0.62 / 有主卡 0.78；
+    // 外加一条「用户下拉过」证明 dismissed 真的收得起来
+    mk('sheet-answering', {
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'ptt', override: null, answer: true, card: false },
+    }),
+    mk('sheet-card', { speaking: true, voice: { turnSource: 'handsfree', override: null, answer: true, card: true } }),
+    mk('sheet-dismissed', {
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'ptt', override: 'dismissed', answer: true, card: false },
+    }),
     mk('looking', { visionCapturing: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
     mk('offline-with-confirm', { connStatus: 'closed', connChangedAt: NOW - 30_000, pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }], queued: 2 }),

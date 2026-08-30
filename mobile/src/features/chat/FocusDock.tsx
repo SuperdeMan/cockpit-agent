@@ -2,7 +2,7 @@
 // 承诺面（方案 §5.3）：读 `commitment[]`（钉一项 + 其余个数）与 `degradation[]`（有出口的降级）。
 // 材质 **G0 实色**（§5.11：确认/错误/隐私说明不许半透明；坑账 §9.36 同判据）。
 // 确认按钮比例照 A-6.4：取消 flex1 / 确认 flex2；剩余时间**只读共享 TTL**（commitment.ts）。
-import { Linking, Pressable, Text, View } from 'react-native'
+import { Linking, Pressable, Text, useWindowDimensions, View } from 'react-native'
 
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
@@ -11,6 +11,8 @@ import type { Degradation, PresenceSnapshot } from '@/core/presence/presence'
 import type { FontScalePref } from '@/core/settings/store'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
+
+import { dockLabelMode } from './dockLabel'
 
 export interface FocusDockProps {
   p: Palette
@@ -72,6 +74,11 @@ function CommitmentCard({
   const now = snapshot.now
   const h = scale(TARGET.parked, 'target', fontScale)
   const border = item.kind === 'confirm' ? 'rgba(245,158,11,0.38)' : p.line
+  // 右侧标签的让位（评审 ❌-1）：200% 字号下它随标题同比放大、把标题挤成「这..」。
+  // 隐藏时把分类并进标题的读屏 label，信息不丢，只是不再抢那一行。
+  const { fontScale: sysScale } = useWindowDimensions()
+  const labelMode = dockLabelMode(fontScale, sysScale)
+  const kindLabel = item.kind === 'confirm' ? (item.subkind === 'location' ? '位置授权' : '危险动作 · 需二次确认') : ''
   return (
     // ⚠ `accessibilityLiveRegion` **不在这一层**：这个子树里有每秒变的倒计时，挂在根上会让
     // TalkBack 每秒重播整张卡。live region 只挂在下面那些「内容变了才该播一次」的摘要行上。
@@ -91,12 +98,16 @@ function CommitmentCard({
         <>
           <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>⚠</Text>
-            <Text numberOfLines={1} style={{ color: p.fg1, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600', flex: 1 }}>
+            <Text
+              numberOfLines={2}
+              accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：${item.summary}` : undefined}
+              style={{ color: p.fg1, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600', flex: 1, flexShrink: 1 }}
+            >
               {item.summary}
             </Text>
-            <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
-              {item.subkind === 'location' ? '位置授权' : '危险动作 · 需二次确认'}
-            </Text>
+            {labelMode === 'full' ? (
+              <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), flexShrink: 0 }}>{kindLabel}</Text>
+            ) : null}
           </View>
           {item.subkind !== 'location' ? (
             <View style={{ gap: 4 }}>

@@ -7,7 +7,7 @@ import { resolve } from 'node:path'
 
 import { pinCommitment, type DockItem } from '@/core/presence/commitment'
 import { presenceFixtures } from '@/core/presence/fixtures'
-import type { Degradation, OrbState } from '@/core/presence/presence'
+import type { Degradation, MicState, OrbState } from '@/core/presence/presence'
 
 const PRIMARIES: OrbState[] = ['idle', 'armed', 'listening', 'thinking', 'speaking', 'attention', 'looking', 'muted']
 const DEGRADATIONS: Degradation['kind'][] = [
@@ -22,6 +22,18 @@ test('每个 primary 至少一条样本', () => {
 test('每种 degradation 至少一条样本', () => {
   const covered = new Set(presenceFixtures().flatMap((f) => f.snapshot.degradation.map((d) => d.kind)))
   expect(DEGRADATIONS.filter((k) => !covered.has(k))).toEqual([])
+})
+
+test('privacy.mic 四档各有样本（B2 T2 加档：画廊要能看见每一档的文案与颜色）', () => {
+  const covered = new Set(presenceFixtures().map((f) => f.snapshot.privacy.mic))
+  const MICS: MicState[] = ['off', 'edge', 'cloudAsr', 'cloudAudio']
+  expect(MICS.filter((m) => !covered.has(m))).toEqual([])
+})
+
+test('armed 有「胶囊在窗内」与「3s 后无胶囊」两条样本（评审 D2 的画廊证据）', () => {
+  const armed = presenceFixtures().filter((f) => f.snapshot.primary === 'armed')
+  expect(armed.some((f) => f.snapshot.capsule?.text === '说「小舟小舟」')).toBe(true)
+  expect(armed.some((f) => f.snapshot.capsule === undefined)).toBe(true)
 })
 
 test('样本标签唯一（?only= 直达靠它）', () => {
@@ -63,4 +75,10 @@ test('降级样本的「真栈可产」标记必须与 usePresence 的实际产�
     .filter((f) => f.producible && f.snapshot.degradation.some((d) => !produced.has(d.kind)))
     .map((f) => f.label)
   expect(lying).toEqual([])
+})
+
+test('语音层三档 detent 各有一条 input=voice-sheet 的样本（B2 T3）', () => {
+  const open = presenceFixtures().filter((f) => f.snapshot.input === 'voice-sheet')
+  const detents = new Set(open.map((f) => f.snapshot.sheetDetent))
+  expect([0.4, 0.62, 0.78].filter((d) => !detents.has(d as 0.4 | 0.62 | 0.78))).toEqual([])
 })

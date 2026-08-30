@@ -518,6 +518,24 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
     expect(core.store.getState().uncertainIds).toEqual([])
     core.dispose()
   })
+
+  test('到期留痕的摘要是用户原话，不是那句通用确认句（评审 D1 的第二个出口）', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({
+      type: 'final',
+      request_id: rid,
+      speech: '这项操作可能影响车辆安全，请确认是否继续。',
+      need_confirm: true,
+      operation_id: 'op1',
+    })
+    jest.advanceTimersByTime(300_000 + 1_100)
+    const last = msgs(core)[msgs(core).length - 1]
+    expect(last.text).toContain('「打开后备箱」的确认已过期')
+    expect(last.text).not.toContain('可能影响')
+    core.dispose()
+  })
 })
 
 // 第 3 批遗留③的机制：飞行模式下 RN 的 onclose 不来，靠 HTTP 探活 reconnectNow() 判死；
@@ -580,6 +598,25 @@ describe('UX v2.1 B1-16 前置：离线期间暂停看门狗（第 3 批遗留�
     core.handleFrame({ type: 'final', request_id: rid, speech: '补发的答案' })
     expect(assistants(core)[0]).toMatchObject({ text: '补发的答案', pending: false })
     expect(msgs(core).some((m) => m.text.includes('响应超时'))).toBe(false)
+    core.dispose()
+  })
+})
+
+describe('UX v2 B2-3：轮来源（语音层开合的事实住在记录里）', () => {
+  test('send 不带 opts → turnMeta[助手气泡].source=text；带 source=ptt → ptt；confirmReply 同理', () => {
+    const { core } = newCore()
+    // ⚠ 语料刻意避开「天气 / 附近」——它们命中 routeSend 的位置征询闸（consent 分支不派发），
+    // 于是 turnMeta 一个键都不会有，红的是测试不是判据（B1 M1 那条同族教训）
+    core.send('讲个笑话')
+    core.send('再讲一个', undefined, { source: 'ptt' })
+    const [a1, a2] = assistants(core)
+    const meta = core.store.getState().turnMeta
+    expect(meta[a1.id].source).toBe('text')
+    expect(meta[a2.id].source).toBe('ptt')
+    expect(meta[a2.id].sentAt).toBeGreaterThan(0)
+    core.confirmReply('确认', 'op1', { source: 'handsfree' })
+    expect(meta[assistants(core)[2].id]).toBeUndefined() // 上面的 meta 是旧快照
+    expect(core.store.getState().turnMeta[assistants(core)[2].id].source).toBe('handsfree')
     core.dispose()
   })
 })

@@ -6,24 +6,10 @@ import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 import { useStore } from 'zustand'
 
 import { activityLog, type ActivityEntry } from '@/core/presence/activityLog'
-import type { PresenceSnapshot } from '@/core/presence/presence'
+import { MIC_LABEL, type PresenceSnapshot } from '@/core/presence/presence'
 import { settingsStore, type FontScalePref } from '@/core/settings/store'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
-
-// 麦克风这一行**按 capture 再分一次**，不是直接映射 `privacy.mic` 的三档。
-// 原因是判据层把两件事并进了同一个 `edge`：唤醒词待机（端侧 KWS，一个字节都不出机）
-// 与**正在录音**（App 的 PTT 走的是服务端 ASR——`core/voice/asr.ts` 连的是
-// `ws://…/api/asr/stream`，音频是上传的）。合成一句「转文字后只上传文字」在录音那一刻
-// 就是**一句假话**，而这块屏的全部价值就是它说的是真的。
-// 判据层要不要多一档（`cloudAsr`）留给 B2/B4 裁——那会动 PresenceSnapshot 类型、
-// 画廊样本与覆盖度守卫；B1 先用文案把两件事分开。
-function micText(snapshot: PresenceSnapshot): string {
-  if (snapshot.privacy.mic === 'off') return '关'
-  if (snapshot.privacy.mic === 'cloudAudio') return '原始音频上传中（端到端对话）'
-  if (snapshot.capture === 'armed') return '唤醒词待机（端侧监听，不上传）'
-  return '正在录音 · 音频上传到语音识别服务（识别完只留文字）'
-}
 
 function when(e: ActivityEntry | null): string {
   if (!e) return '—'
@@ -94,7 +80,9 @@ export function PrivacyRail({
           隐私 · 现在在采集什么
         </Text>
         <ScrollView>
-          {row('麦克风', micText(snapshot), snapshot.privacy.mic === 'cloudAudio' || snapshot.capture !== 'armed' ? p.amber : p.fg1)}
+          {/* 四档文案与颜色都取 MIC_LABEL（B2 T2）：颜色与文字不许说两件事——
+              B1 那条 `mic==='cloudAudio' || capture!=='armed'` 让默认空闲态的「关」也涂成琥珀（评审 D5） */}
+          {row('麦克风', MIC_LABEL[snapshot.privacy.mic].long, MIC_LABEL[snapshot.privacy.mic].tone === 'amber' ? p.amber : p.fg1)}
           {row('摄像头', snapshot.privacy.camera === 'singleFrame' ? '正在抓一帧（触发词命中）' : '关')}
           {row('最近一次', `麦 ${when(activityLog.lastOf('mic'))}`)}
           {row('', `摄像头 ${when(activityLog.lastOf('camera'))}`)}

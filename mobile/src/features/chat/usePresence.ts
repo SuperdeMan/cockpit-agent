@@ -3,20 +3,30 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 
+import { actionSummary } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
+import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
 import { speechController } from '@/core/voice/speech'
 import { isVisionCapturing, subscribeVisionCapturing } from '@/core/vision/frame'
 import {
+  ARMED_CAPSULE_MS,
   derivePresence,
   ERROR_SHOW_MS,
   RECONNECTING_GRACE_MS,
   type Degradation,
   type PresenceSnapshot,
+  type VoiceFacts,
 } from '@/core/presence/presence'
 
 import type { HandsFreeUi } from './useHandsFree'
 import type { PttHandle } from './usePtt'
+
+/** 用户对语音层的显式操作，钉在某一轮上（换轮即失效） */
+export interface SheetOverride {
+  turnId: string
+  mode: 'open' | 'dismissed'
+}
 
 export interface UsePresenceOpts {
   core: SessionCore
@@ -24,13 +34,14 @@ export interface UsePresenceOpts {
   ptt: PttHandle | null
   /** token 对应的 user_id（隐私栏「当前：xx」）；ServerConfig 里没有就显示 token 尾 4 位 */
   user: string
+  sheetOverride: SheetOverride | null
 }
 
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
 const TICK_MS = 1000
 
-export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceSnapshot {
-  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds } = useStore(core.store)
+export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceOpts): PresenceSnapshot {
+  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
   // 播报中 / 抓帧中：订阅式信号（Task 5）
@@ -47,6 +58,14 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     connChangedAt.current = Date.now()
   }
 
+  // hf.fsm 变化时刻（armed 胶囊 3s 的基准，评审 D2）：登记的是事实，判据在 presence.ts
+  const hfFsmChangedAt = useRef(Date.now())
+  const prevFsm = useRef(hf.fsm)
+  if (prevFsm.current !== hf.fsm) {
+    prevFsm.current = hf.fsm
+    hfFsmChangedAt.current = Date.now()
+  }
+
   // 挂载那一刻列表里就已经有的 error 气泡**不算刚发生**（第 2 批遗留③）：登记成 0 =
   // 永远过期，红胶囊只留给挂载之后新出现的那条。
   const seeded = useRef(false)
@@ -57,6 +76,16 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
 
   // 最近一条错误（4s 短显）
   const lastError = useMemo(() => pickLastError(messages, (k) => seen.firstSeen(k)), [messages])
+
+  // 语音层的三个事实（判据在 derivePresence）：这一轮谁发起、用户有没有下拉过、有没有字/卡
+  const turn = currentTurn(messages)
+  const latestTurnId = turn.assistant?.id ?? ''
+  const voice: VoiceFacts = {
+    turnSource: (latestTurnId && turnMeta[latestTurnId]?.source) || 'text',
+    override: sheetOverride && sheetOverride.turnId === latestTurnId ? sheetOverride.mode : null,
+    answer: !!turn.assistant?.text,
+    card: !!turn.assistant?.uiCard,
+  }
 
   // 在飞轮 + 过程区
   const active = [...messages].reverse().find((m) => m.role === 'assistant' && (m.pending || m.streaming || m.processActive))
@@ -83,18 +112,20 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     pendingOps.length > 0 || // 确认卡倒计时（每秒要变）
     !!active?.processActive || // 长任务 8s 门槛
     (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
-    (!!lastError && now - lastError.at < ERROR_SHOW_MS) // error 胶囊 4s 短显
+    (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
+    (hf.fsm === 'ARMED' && now - hfFsmChangedAt.current < ARMED_CAPSULE_MS) // armed 胶囊 3s 隐藏
   useEffect(() => {
     if (!needsTick) return
     const t = setInterval(() => bumpTick((n) => n + 1), TICK_MS)
     return () => clearInterval(t)
   }, [needsTick])
 
-  // pendingOps 的摘要：带该 operationId 的助手气泡原话
+  // pendingOps 的摘要：**紧邻的上一条用户原话**（评审 D1）。带 operationId 的那条助手气泡
+  // 对每个危险动作都是同一句通用话，不是摘要。判据在 actionSummary.ts，留痕行也从它取。
   const ops = pendingOps.map((op) => ({
     id: op.id,
     ts: op.ts,
-    summary: (messages.find((m) => m.operationId === op.id)?.text || '待确认的操作').replace(/\s+/g, ' ').slice(0, 24),
+    summary: actionSummary(messages, op.id) || '待确认的操作',
   }))
 
   return derivePresence({
@@ -104,6 +135,7 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     hfEnabled: settings.handsFree,
     hfUsable: hf.availability.usable,
     hfFsm: hf.fsm,
+    hfFsmChangedAt: hfFsmChangedAt.current,
     ptt: ptt?.state ?? 'idle',
     partial: ptt?.partial || hf.partial || '',
     turn: {
@@ -124,6 +156,7 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
     driving: !!active?.driving,
     identity: settings.deviceRole,
     user,
+    voice,
   })
 }
 

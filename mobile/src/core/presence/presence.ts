@@ -8,10 +8,32 @@
 // 输出是多轴不是单枚举（外部评审 P0-1，采纳）：待确认时断网，`offline` 不许盖掉那条确认——
 // Dock 读 `commitment[]`，永远不被别的轴覆盖；光球与胶囊只读 `primary` / `capsule`。
 //
+// B2 T2 判据修正（B1 落地评审 D2–D5，一组）：
+//  · armed 胶囊只在进入待机后 ARMED_CAPSULE_MS 内显示（方案 §4.2「3s 后隐藏」）。输入是
+//    「FSM 什么时候变的」这个**事实**（收集器登记），「显示多久」这个判据只在这里；
+//  · errorLive 提到 armed 之前——免唤醒开着时 error 胶囊原来永远出不来；
+//  · 麦克风隐私档从三档改四档 `MicState`；`MIC_LABEL` 是所有出口（隐私栏行 / 采集点 / 读屏 label）
+//    的唯一文案与颜色表——「同一个值有几个出口，就在入口处判一次」。
+//
 // 零 RN import；jest 直接跑（test/presence.test.ts）。
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
 import { sortCommitments, type DockItem } from './commitment'
+
+import type { TurnSource } from '../session/store'
+
+/** 语音层要的三个事实（B2 T3）。全部来自记录与 UI 的既有状态，收集器只搬运：
+ *  turnSource=最近一轮的发起方（turnMeta）；override=用户对这一轮的显式操作（点胶囊 / 下拉）；
+ *  answer/card=当前轮助手气泡有没有字、有没有卡。没有这个入参 = 文字世界（层只在收音时升）。 */
+export interface VoiceFacts {
+  turnSource: TurnSource
+  override: 'open' | 'dismissed' | null
+  answer: boolean
+  card: boolean
+}
+
+/** 自适应 detent（方案 §5.2 规则 3）：只录音 / 有回答 / 有主卡或长任务 */
+export type SheetDetent = 0.4 | 0.62 | 0.78
 
 export type OrbState =
   | 'idle'
@@ -34,6 +56,25 @@ export type Degradation =
 
 export type Identity = 'handheld' | 'mount' | 'trusted-tablet'
 
+/** 麦克风隐私档（四档）。B1 的 `edge` 并了「唤醒词待机（端侧 KWS，一个字节不出机）」与
+ *  「正在录音（音频上传给服务端 ASR，识别完只留文字）」两件事——App 的 PTT 与免唤醒三段式
+ *  都连 `ws://…/api/asr/stream`，音频是上传的；合成一句「转文字后只上传文字」在录音那一刻
+ *  就是假话，而隐私栏存在的全部理由是它说的是真的。 */
+export type MicState = 'off' | 'edge' | 'cloudAsr' | 'cloudAudio'
+
+/** 四档的文案与颜色——**唯一的一份**。short 给采集点 / 读屏 label，long 给隐私栏那一行；
+ *  tone=amber 只给两个「音频离机」的档（评审 D5：「关」与「待机」不许涂琥珀，警示色贬值）。 */
+export const MIC_LABEL: Record<MicState, { short: string; long: string; tone: 'plain' | 'amber' }> = {
+  off: { short: '关', long: '关', tone: 'plain' },
+  edge: { short: '唤醒词监听在本机，不上传', long: '唤醒词待机（端侧监听，不上传）', tone: 'plain' },
+  cloudAsr: {
+    short: '正在录音，音频上传做识别',
+    long: '正在录音 · 音频上传到语音识别服务（识别完只留文字）',
+    tone: 'amber',
+  },
+  cloudAudio: { short: '正在上传原始音频', long: '原始音频上传中（端到端对话）', tone: 'amber' },
+}
+
 export interface PresenceInput {
   now: number
   connStatus: 'connecting' | 'open' | 'closed'
@@ -42,6 +83,8 @@ export interface PresenceInput {
   hfEnabled: boolean
   hfUsable: boolean
   hfFsm: 'IDLE' | 'ARMED' | 'LISTENING' | 'THINKING' | 'SPEAKING' | 'FOLLOWUP' | string
+  /** 上次 hfFsm 变化的时刻（armed 胶囊 3s 隐藏的基准，评审 D2）。收集器登记事实，判据在这里 */
+  hfFsmChangedAt: number
   ptt: 'idle' | 'recording' | 'finalizing'
   partial: string
   turn: {
@@ -64,6 +107,8 @@ export interface PresenceInput {
   driving: boolean
   identity: Identity
   user: string
+  /** 语音层的三个事实（B2 T3）；缺省=文字世界，层只在收音时升 */
+  voice?: VoiceFacts
 }
 
 export interface PresenceSnapshot {
@@ -75,7 +120,7 @@ export interface PresenceSnapshot {
   capture: 'off' | 'armed' | 'listening' | 'recognizing' | 'looking'
   agent: 'idle' | 'thinking' | 'processing' | 'speaking' | 'followup'
   commitment: DockItem[]
-  privacy: { mic: 'off' | 'edge' | 'cloudAudio'; camera: 'off' | 'singleFrame'; user: string }
+  privacy: { mic: MicState; camera: 'off' | 'singleFrame'; user: string }
   degradation: Degradation[]
   identity: Identity
   driving: boolean
@@ -84,6 +129,10 @@ export interface PresenceSnapshot {
   dim: boolean
   capsule?: { text: string; tone: 'neutral' | 'accent' | 'amber' | 'red'; live?: boolean }
   input: 'voice-sheet' | 'composer' | 'none'
+  /** 语音层高度档（input==='voice-sheet' 时有意义） */
+  sheetDetent: SheetDetent
+  /** 最近一轮的发起方（S2S 告知条读它；没有轮 = text） */
+  turnSource: TurnSource
 }
 
 /** reconnecting 胶囊延迟（沿用 ChatScreen 弱网横幅那条 3s：重连是常态，每次都弹会让真断网没人看） */
@@ -92,6 +141,8 @@ export const RECONNECTING_GRACE_MS = 3000
 export const ERROR_SHOW_MS = 4000
 /** process 持续多久才算「长任务」进 Dock */
 export const LONG_TASK_MS = 8000
+/** armed 胶囊「说「小舟小舟」」只在进入待机后短显（方案 §4.2，评审 D2）；光球的 armed 青环不受它影响 */
+export const ARMED_CAPSULE_MS = 3000
 
 export function derivePresence(i: PresenceInput): PresenceSnapshot {
   // ── transport ──
@@ -151,8 +202,12 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
 
   // ── privacy ──
   const micActive = capture === 'listening' || capture === 'recognizing'
+  // 端到端只在免唤醒的 LISTENING 期推流（s2sClient 的 collecting 门控）；PTT 即便挡位选了 s2s
+  // 也走服务端 ASR——档位说的必须是此刻真发生的事
+  const s2sCollecting = hfOn && i.hfFsm === 'LISTENING' && i.voicePipeline === 's2s'
+  const mic: MicState = s2sCollecting ? 'cloudAudio' : micActive ? 'cloudAsr' : capture === 'armed' ? 'edge' : 'off'
   const privacy: PresenceSnapshot['privacy'] = {
-    mic: micActive ? (i.voicePipeline === 's2s' && hfOn ? 'cloudAudio' : 'edge') : capture === 'armed' ? 'edge' : 'off',
+    mic,
     camera: i.visionCapturing ? 'singleFrame' : 'off',
     user: i.user,
   }
@@ -171,6 +226,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else primary = 'idle'
 
   // ── capsule（一次一条；胶囊说「此刻」，Dock 说「欠着」）──
+  const armedCapsule = capture === 'armed' && i.now - i.hfFsmChangedAt < ARMED_CAPSULE_MS
   let capsule: PresenceSnapshot['capsule']
   if (transport === 'offline') capsule = { text: '已断开 · 消息会排队', tone: 'red' }
   else if (reconnectingShown) capsule = { text: '正在重连…', tone: 'amber' }
@@ -184,11 +240,21 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else if (agent === 'processing') capsule = { text: `${i.turn.processLabel || '处理中'}…`, tone: 'neutral' }
   else if (agent === 'thinking') capsule = { text: '正在思考…', tone: 'neutral' }
   else if (agent === 'followup') capsule = { text: '可以接着说', tone: 'accent', live: true }
-  else if (capture === 'armed') capsule = { text: '说「小舟小舟」', tone: 'neutral' }
+  // error 在 armed 之前（评审 D3）：免唤醒开着时 capture 恒 armed，排后面就永远出不来
   else if (errorLive) capsule = { text: i.lastError!.text, tone: 'red' }
+  else if (armedCapsule) capsule = { text: '说「小舟小舟」', tone: 'neutral' }
 
-  const input: PresenceSnapshot['input'] =
-    capture === 'listening' || capture === 'recognizing' ? 'voice-sheet' : 'composer'
+  // ── 语音层开合（方案 §5.2 规则 1/3/4、§4.3）──
+  // 收音中一律升（三入口共用）；语音发起的轮在飞 / 播报 / 追问窗 / 等确认时保持升起；
+  // 用户下拉过这一轮就不再自动升（再开口另算）；点胶囊 = 显式打开（哪怕是文字轮）。
+  // PTT 轮没有追问窗：播报结束、agent 回 idle 即收（方案只给免唤醒定义了 8s 窗）。
+  const voice = i.voice
+  const capturing = capture === 'listening' || capture === 'recognizing'
+  const voiceTurnLive = !!voice && voice.turnSource !== 'text' && (agent !== 'idle' || hasAttention)
+  const sheetOpen = capturing || voice?.override === 'open' || (voice?.override !== 'dismissed' && voiceTurnLive)
+  const input: PresenceSnapshot['input'] = sheetOpen ? 'voice-sheet' : 'composer'
+  const sheetDetent: SheetDetent =
+    commitment.some((c) => c.kind === 'task') || !!voice?.card ? 0.78 : voice?.answer ? 0.62 : 0.4
 
   return {
     now: i.now,
@@ -204,5 +270,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
     dim: transport === 'reconnecting',
     ...(capsule ? { capsule } : {}),
     input,
+    sheetDetent,
+    turnSource: voice?.turnSource ?? 'text',
   }
 }

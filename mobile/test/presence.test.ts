@@ -7,7 +7,7 @@
 //     评审那个案例（待确认时断网，确认被盖掉）在这里有一条专门的断言
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
-import { derivePresence, type PresenceInput } from '@/core/presence/presence'
+import { MIC_LABEL, derivePresence, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
 
 const NOW = 5_000_000
 
@@ -19,6 +19,7 @@ function base(over: Partial<PresenceInput> = {}): PresenceInput {
     hfEnabled: false,
     hfUsable: false,
     hfFsm: 'IDLE',
+    hfFsmChangedAt: NOW - 1000,
     ptt: 'idle',
     partial: '',
     turn: { pending: false, streaming: false, processActive: false, processLabel: '', processSince: 0 },
@@ -152,21 +153,32 @@ describe('B. 轴独立', () => {
     expect(derivePresence(base({ connStatus: 'connecting', connChangedAt: NOW - 1000 })).capsule).toBeUndefined()
     expect(derivePresence(base({ connStatus: 'connecting', connChangedAt: NOW - 3500 })).capsule?.text).toBe('正在重连…')
   })
-  // ⚠ 这条断言的**取值**没变，但它原来的理由是假的：括号里写着「PTT=edge（三段式只上传
-  //    文字）」——App 的 PTT 走的是**服务端** ASR（`core/voice/asr.ts` 连 `ws://…/api/asr/stream`），
-  //    录音那一刻音频是上传的。`edge` 这一档实际并了两件事：唤醒词端侧待机（真的不出机）
-  //    与「音频上传给 ASR」。判据层要不要多一档（`cloudAsr`）留给 B2/B4 裁——那会动
-  //    PresenceSnapshot 类型、画廊样本与覆盖度守卫；B1 先在 `PrivacyRail.micText` 用文案
-  //    把两件事分开（隐私面板说的每句话都得是真的）。
-  //    留着这条注释是为了**下一个人别再把这个理由当成事实**（2026-08-30 第 3 批 T11 实证）。
-  test('privacy 轴：唤醒词待机=edge；端到端收音中=cloudAudio；PTT=edge（见上方注释：edge 并了两件事）', () => {
-    expect(derivePresence(base({ hfEnabled: true, hfUsable: true, hfFsm: 'ARMED' })).privacy.mic).toBe('edge')
-    expect(
-      derivePresence(base({ hfEnabled: true, hfUsable: true, hfFsm: 'LISTENING', voicePipeline: 's2s' })).privacy.mic,
-    ).toBe('cloudAudio')
-    expect(derivePresence(base({ ptt: 'recording' })).privacy.mic).toBe('edge')
+  // B2 T2：`privacy.mic` 从三档改四档。B1 的 `edge` 并了「唤醒词待机（端侧 KWS，一个字节不出机）」
+  // 与「正在录音（音频上传给服务端 ASR）」两件事，隐私栏因此说过假话（第 3 批坑②）。
+  // 现在四档各说各的：off / edge / cloudAsr / cloudAudio。
+  test('privacy 轴四档：待机=edge；PTT 与免唤醒三段式收音=cloudAsr；端到端收音=cloudAudio；空闲=off', () => {
+    const hfOn = { hfEnabled: true, hfUsable: true }
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'ARMED' })).privacy.mic).toBe('edge')
+    expect(derivePresence(base({ ptt: 'recording' })).privacy.mic).toBe('cloudAsr')
+    expect(derivePresence(base({ ptt: 'finalizing' })).privacy.mic).toBe('cloudAsr') // 识别中也在传
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING' })).privacy.mic).toBe('cloudAsr')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING', voicePipeline: 's2s' })).privacy.mic).toBe('cloudAudio')
+    // 挡位选了 s2s 但用户按住光球：走的是服务端 ASR，不是原始音频上传——档要说真话
+    expect(derivePresence(base({ ptt: 'recording', voicePipeline: 's2s' })).privacy.mic).toBe('cloudAsr')
     expect(derivePresence(base()).privacy.mic).toBe('off')
     expect(derivePresence(base({ visionCapturing: true })).privacy.camera).toBe('singleFrame')
+  })
+
+  test('MIC_LABEL：四档齐全；只有两个「上传」档是琥珀（评审 D5：「关」不许再涂琥珀）；读屏不许再说「本机处理」（评审 D4）', () => {
+    expect(Object.keys(MIC_LABEL).sort()).toEqual(['cloudAsr', 'cloudAudio', 'edge', 'off'])
+    expect(MIC_LABEL.off.tone).toBe('plain')
+    expect(MIC_LABEL.edge.tone).toBe('plain')
+    expect(MIC_LABEL.cloudAsr.tone).toBe('amber')
+    expect(MIC_LABEL.cloudAudio.tone).toBe('amber')
+    for (const v of Object.values(MIC_LABEL)) {
+      expect(v.short).not.toContain('本机处理')
+      expect(v.long).not.toContain('本机处理')
+    }
   })
 })
 
@@ -215,6 +227,24 @@ describe('capsule 文案', () => {
     const turn = { pending: false, streaming: false, processActive: true, processLabel: '规划路线', processSince: NOW }
     expect(derivePresence(base({ turn })).capsule?.text).toBe('规划路线…')
   })
+
+  test('armed 胶囊只在进入待机 3s 内显示，之后无胶囊（方案 §4.2，评审 D2）', () => {
+    const on = { hfEnabled: true, hfUsable: true, hfFsm: 'ARMED' }
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 2_999 })).capsule?.text).toBe('说「小舟小舟」')
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 3_000 })).capsule).toBeUndefined()
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 600_000 })).capsule).toBeUndefined()
+    // 胶囊隐藏了，光球仍是 armed——这是胶囊的判据，不是在场的判据
+    expect(derivePresence(base({ ...on, hfFsmChangedAt: NOW - 600_000 })).primary).toBe('armed')
+  })
+
+  test('error 在免唤醒开着（armed）时也出红胶囊——显式排在 armed 之前，不靠 D2 顺手带走（评审 D3）', () => {
+    // 刚进待机 100ms：armed 胶囊也在自己的 3s 窗内，两者同时成立时 error 赢
+    const on = { hfEnabled: true, hfUsable: true, hfFsm: 'ARMED', hfFsmChangedAt: NOW - 100 }
+    expect(derivePresence(base({ ...on, lastError: { text: '出错了', at: NOW - 500 } })).capsule).toEqual({
+      text: '出错了',
+      tone: 'red',
+    })
+  })
 })
 
 describe('now 透传（Dock 倒计时的唯一时钟）', () => {
@@ -228,5 +258,53 @@ describe('now 透传（Dock 倒计时的唯一时钟）', () => {
     const a = derivePresence(base({ now: NOW }))
     const b = derivePresence(base({ now: NOW + 1000 }))
     expect(b.now - a.now).toBe(1000)
+  })
+})
+
+describe('语音层开合与 detent（B2 T3，方案 §5.2 规则 1/3/4、§4.3）', () => {
+  const thinking = { turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 } }
+  const hfOn = { hfEnabled: true, hfUsable: true }
+  const v = (over: Partial<VoiceFacts> = {}): VoiceFacts => ({ turnSource: 'ptt', override: null, answer: false, card: false, ...over })
+
+  test('三入口收音中都升层（PTT / 免唤醒 / S2S），不需要 voice 事实', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING', voicePipeline: 's2s' })).input).toBe('voice-sheet')
+  })
+
+  test('语音发起的轮在飞 / 播报 / 追问窗内层保持升起；**文字轮不升层**（voiceLoop 头注「文本不进 FSM」的 UI 版）', () => {
+    expect(derivePresence(base({ ...thinking, voice: v() })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ speaking: true, voice: v({ turnSource: 'handsfree' }) })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'FOLLOWUP', voice: v({ turnSource: 'handsfree' }) })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text' }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...thinking })).input).toBe('composer')
+  })
+
+  test('追问窗关闭（回 ARMED、agent idle）→ 收起', () => {
+    expect(derivePresence(base({ ...hfOn, hfFsm: 'ARMED', voice: v({ turnSource: 'handsfree', answer: true }) })).input).toBe('composer')
+  })
+
+  test('attention 态下不自动收起；用户下拉才收；下拉之后再开口又升', () => {
+    const att = { pendingOps: [{ id: 'op1', ts: NOW, summary: '打开后备箱' }] }
+    expect(derivePresence(base({ ...att, voice: v() })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...att, voice: v({ override: 'dismissed' }) })).input).toBe('composer')
+    expect(derivePresence(base({ ...att, ptt: 'recording', voice: v({ override: 'dismissed' }) })).input).toBe('voice-sheet')
+  })
+
+  test('点按胶囊 = 打开语音层（override=open），哪怕是文字轮', () => {
+    expect(derivePresence(base({ ...thinking, voice: v({ turnSource: 'text', override: 'open' }) })).input).toBe('voice-sheet')
+  })
+
+  test('detent：只录音 0.4 / 有回答 0.62 / 有主卡或长任务 0.78', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).sheetDetent).toBe(0.4)
+    expect(derivePresence(base({ ...thinking, voice: v({ answer: true }) })).sheetDetent).toBe(0.62)
+    expect(derivePresence(base({ ...thinking, voice: v({ answer: true, card: true }) })).sheetDetent).toBe(0.78)
+    const longTask = { turn: { pending: false, streaming: false, processActive: true, processLabel: '规划路线', processSince: NOW - 12_000 } }
+    expect(derivePresence(base({ ...longTask, voice: v() })).sheetDetent).toBe(0.78)
+  })
+
+  test('turnSource 透传（S2S 告知条读它）；没有 voice 事实 = text', () => {
+    expect(derivePresence(base()).turnSource).toBe('text')
+    expect(derivePresence(base({ voice: v({ turnSource: 's2s' }) })).turnSource).toBe('s2s')
   })
 })

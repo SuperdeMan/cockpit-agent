@@ -18,6 +18,7 @@ export function Composer({
   ptt,
   orbState,
   orbDim,
+  orbAnimated,
   fontScale,
   onSend,
   onInterrupt,
@@ -33,6 +34,8 @@ export function Composer({
   orbState: OrbState
   /** reconnecting 期 ×0.6 亮度（`snapshot.dim`） */
   orbDim?: boolean
+  /** 语音层开着时主球转静态（同屏循环动画常态 1 个，方案 §11.4） */
+  orbAnimated?: boolean
   fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
@@ -97,7 +100,7 @@ export function Composer({
               backgroundColor: recording ? p.accentSoft : 'transparent',
             }}
           >
-            <AuroraOrb size={44} state={orbState} dim={orbDim} animated />
+            <AuroraOrb size={44} state={orbState} dim={orbDim} animated={orbAnimated ?? true} />
           </Pressable>
         ) : null}
         <TextInput

@@ -4,7 +4,7 @@
 import { Pressable, Text, View } from 'react-native'
 
 import type { PresenceSnapshot } from '@/core/presence/presence'
-import { RADIUS, TYPE, scale } from '@/ui/tokens'
+import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 import type { FontScalePref } from '@/core/settings/store'
 
@@ -27,7 +27,12 @@ export function PresenceCapsule({
       <Pressable
         testID="presence-capsule"
         onPress={onPress}
-        accessibilityRole="text"
+        disabled={!onPress}
+        // 接了 onPress 就是按钮：role 与热区一起改（评审「别踩」①）——视觉仍 26dp，
+        // hitSlop 补到 48dp（Material 触控目标是**可点区域**不是球体，方案 §8.1）
+        accessibilityRole={onPress ? 'button' : 'text'}
+        accessibilityHint={onPress ? '打开语音层' : undefined}
+        hitSlop={onPress ? Math.ceil((TARGET.parked - 26) / 2) : undefined}
         accessibilityLiveRegion="polite"
         style={{
           flexDirection: 'row',
