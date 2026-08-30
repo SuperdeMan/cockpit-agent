@@ -4,7 +4,7 @@
 
 **Goal:** Close the replan, escalate, and fallback post-build paths so a non-directive question cannot dispatch an edge write or a manifest-confirmed cloud capability after the primary Planner guard has run.
 
-**Architecture:** Extract one declaration-backed step-filter primitive from the existing question side-effect guard and call it immediately before every newly produced plan can dispatch: `PlanBuilder.build()`, `LoopController` replan reception, `PlannerEngine._run_escalated()`, and fallback capability selection. Each receiver uses server-owned original text (`text`, `user_text`, or `ctx.raw_text`), never an LLM goal or Agent reason; full blocking terminates without dispatch, while mixed plans preserve legal steps, completed observations, and aggregation inputs.
+**Architecture:** Add a response-only operation contract beside the existing read/write operation contract, then extract one declaration-backed step-filter primitive from the existing question side-effect guard and call it immediately before every newly produced plan can dispatch: `PlanBuilder.build()`, `LoopController` replan reception, `PlannerEngine._run_escalated()`, and fallback capability selection. Each receiver uses server-owned original text (`text`, `user_text`, or `ctx.raw_text`), never an LLM goal or Agent reason; a blocked replan terminates normally, while a blocked escalate executes only a validated, unconfirmed response-only fallback when available and otherwise fails closed.
 
 **Tech Stack:** Python 3.12, dataclasses, asyncio, pytest, existing Planner/Loop/Engine contracts, PowerShell, Markdown architecture and evidence records.
 
@@ -16,12 +16,14 @@
 
 | File | Responsibility in this change |
 |---|---|
-| `orchestrator/cloud/planning.py` | One reusable question-side-effect filter; guarded fallback capability scan; blocked adaptive plan downgrade |
-| `orchestrator/cloud/tests/test_question_write_guard.py` | Fallback scan, same-guard rejection, later safe talk, and simple-complexity contracts |
+| `runtime/intent_effect.py` | Zero-domain response-only operation contract (`talk`) and shared `is_response_intent` classifier |
+| `runtime/tests/test_intent_effect.py` | Exact-tail response classification, non-write relationship, and negative non-talk controls |
+| `orchestrator/cloud/planning.py` | One reusable question-side-effect filter; response-only fallback selection; blocked adaptive plan downgrade |
+| `orchestrator/cloud/tests/test_question_write_guard.py` | First-edge/later-talk, confirmed talk, cloud non-talk rejection, and simple-complexity contracts |
 | `orchestrator/cloud/loop.py` | Guard `ReplanDecision.steps` with server-owned `user_text` before stream/executor dispatch |
-| `orchestrator/cloud/tests/test_loop.py` | Edge/confirmed/read/directive/mixed replan cases, zero dispatch, and observation preservation |
-| `orchestrator/cloud/engine.py` | Guard the validated escalate mini-plan with `ctx.raw_text` before either D0 or normal executor dispatch |
-| `orchestrator/cloud/tests/test_engine_escalate.py` | D0 and normal-path negatives for edge/confirmed targets; directive/read positives |
+| `orchestrator/cloud/tests/test_loop.py` | Edge/confirmed/read/directive/mixed replan cases, zero dispatch, normal final, and observation preservation |
+| `orchestrator/cloud/engine.py` | Guard the validated escalate mini-plan with `ctx.raw_text`, then execute only safe response fallback or fail closed |
+| `orchestrator/cloud/tests/test_engine_escalate.py` | D0/normal unsafe redirects with safe user result; D0/read and directive positives; one-hop enforcement |
 | `docs/architecture/cockpit-agent-architecture.md` | Amend v1.45 §5.2.13 so “all exits” includes post-build receivers |
 | `docs/conventions.md` | Amend §9.40 with raw-text authority and replan/escalate/fallback behavior |
 | `AGENTS.md` | Reopen current state, correct external/environment count 5→6, and later record fresh evidence |
@@ -32,18 +34,50 @@
 
 No proto, manifest, `servers.yaml`, `.env`, CI/CD, schema, payment, merchant workflow, or live-data change belongs in this implementation.
 
-### Task 1: Make fallback selection reuse the guard and stop blocked adaptive empty loops
+### Task 1: Define response-only intent semantics and make fallback select only safe responses
 
 **Files:**
+- Modify: `runtime/intent_effect.py`
+- Create: `runtime/tests/test_intent_effect.py`
 - Modify: `orchestrator/cloud/tests/test_question_write_guard.py`
-- Modify: `orchestrator/cloud/planning.py:2430-2502`
+- Modify: `orchestrator/cloud/planning.py:36,2430-2502`
 
-- [ ] **Step 1: Add fallback and complexity RED tests**
+- [ ] **Step 1: Add response-contract, fallback, and complexity RED tests**
 
-Extend `test_question_write_guard.py` with these concrete contracts:
+Create `runtime/tests/test_intent_effect.py` with exact-tail and non-write contracts:
 
 ```python
-def test_talk_only_plan_skips_guarded_first_capability_and_uses_later_safe_talk():
+import pytest
+
+from runtime.intent_effect import (
+    RESPONSE_ONLY_OPERATES,
+    is_response_intent,
+    is_write_intent,
+)
+
+
+def test_response_only_operates_are_zero_domain_and_exact():
+    assert RESPONSE_ONLY_OPERATES == frozenset({"talk"})
+    assert is_response_intent("chitchat.talk") is True
+    assert is_response_intent("any.namespace.talk") is True
+
+
+@pytest.mark.parametrize("intent", [
+    "shop.order", "manual.query", "info.search", "media.status", "", "talking",
+])
+def test_non_response_operates_are_rejected(intent):
+    assert is_response_intent(intent) is False
+
+
+def test_response_only_intent_is_not_a_write_intent():
+    assert is_write_intent("any.namespace.talk") is False
+    assert is_write_intent("warning_light.close") is True
+```
+
+Extend `test_question_write_guard.py` with these concrete fallback contracts:
+
+```python
+def test_talk_only_plan_skips_first_edge_write_and_uses_later_response():
     agent = MockAgent(
         "chitchat",
         ["warning_light.close", "chitchat.talk"],
@@ -58,14 +92,24 @@ def test_talk_only_plan_skips_guarded_first_capability_and_uses_later_safe_talk(
     assert [step.intent for step in plan.steps] == ["chitchat.talk"]
 
 
-def test_talk_only_plan_returns_none_when_every_capability_matches_guard():
+def test_talk_only_plan_rejects_unconfirmed_cloud_non_response():
+    agent = MockAgent("chitchat", ["info.search"])
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+
+    assert builder._talk_only_plan("红色机油灯亮了怎么办", [agent]) is None
+
+
+def test_talk_only_plan_rejects_confirmed_response():
     agent = MockAgent(
-        "chitchat",
-        ["warning_light.close", "shop.order"],
-        kind="edge_fast",
-        deployment="edge",
-        require_confirm=("shop.order",),
+        "chitchat", ["chitchat.talk"], require_confirm=("chitchat.talk",),
     )
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+
+    assert builder._talk_only_plan("红色机油灯亮了怎么办", [agent]) is None
+
+
+def test_talk_only_plan_returns_none_when_no_response_capability_exists():
+    agent = MockAgent("chitchat", ["warning_light.close", "shop.order"])
     builder = PlanBuilder(llm_fn=None, registry_fn=None)
 
     assert builder._talk_only_plan("红色机油灯亮了怎么办", [agent]) is None
@@ -104,24 +148,56 @@ def test_all_blocked_adaptive_plan_without_safe_talk_is_empty_simple():
     assert guarded.complexity == "simple"
 ```
 
-- [ ] **Step 2: Capture the fallback RED artifact**
+- [ ] **Step 2: Capture the fallback RED artifact with immutable run metadata**
 
 ```powershell
 New-Item -ItemType Directory -Force -Path '.artifacts/qa-safety-confirmed-write-postbuild' | Out-Null
-python -m pytest -q `
-  orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_skips_guarded_first_capability_and_uses_later_safe_talk `
-  orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_returns_none_when_every_capability_matches_guard `
-  orchestrator/cloud/tests/test_question_write_guard.py::test_all_blocked_adaptive_plan_with_safe_talk_is_downgraded_to_simple `
-  orchestrator/cloud/tests/test_question_write_guard.py::test_all_blocked_adaptive_plan_without_safe_talk_is_empty_simple 2>&1 |
-  Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/01-talk-red.log'
-if ($LASTEXITCODE -eq 0) { throw 'RED did not fail' }
+$log = '.artifacts/qa-safety-confirmed-write-postbuild/01-talk-red.log'
+$args = @(
+  '-m','pytest','-q',
+  'runtime/tests/test_intent_effect.py',
+  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_skips_first_edge_write_and_uses_later_response',
+  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_rejects_unconfirmed_cloud_non_response',
+  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_rejects_confirmed_response',
+  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_returns_none_when_no_response_capability_exists',
+  'orchestrator/cloud/tests/test_question_write_guard.py::test_all_blocked_adaptive_plan_with_safe_talk_is_downgraded_to_simple',
+  'orchestrator/cloud/tests/test_question_write_guard.py::test_all_blocked_adaptive_plan_without_safe_talk_is_empty_simple'
+)
+$command = 'python ' + ($args -join ' ')
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "COMMAND=$command"
+) | Set-Content -Encoding utf8 $log
+& python @args 2>&1 | Tee-Object -FilePath $log -Append
+$exitCode = $LASTEXITCODE
+"EXIT=$exitCode" | Add-Content -Encoding utf8 $log
+if ($exitCode -eq 0) { throw 'RED did not fail' }
 ```
 
-Expected: the first test exposes `capabilities[0]` selection, the second exposes unsafe reinsertion or premature selection, and both complexity tests expose `adaptive` surviving after every executable step was removed.
+Expected: the new runtime module imports fail before the contract exists; after adding only the declarations, the fallback tests still expose `capabilities[0]`, cloud non-talk acceptance, confirmed talk acceptance, and adaptive complexity retention. The log has one anchored `TIMESTAMP`, `HEAD`, `COMMAND`, and immediate `EXIT` value.
 
-- [ ] **Step 3: Extract one pure filter and make the build finalizer consume it**
+- [ ] **Step 3: Add the response-only operation contract and shared step filter**
 
-In `PlanBuilder`, keep `_question_side_effect_steps()` as the only selection formula and add this identity-preserving primitive:
+In `runtime/intent_effect.py`, add the response contract beside `READ_ONLY_OPERATES` and exclude it from writes:
+
+```python
+RESPONSE_ONLY_OPERATES = frozenset({"talk"})
+
+
+def is_response_intent(intent_name: str) -> bool:
+    """Return whether the exact final operation is response-only."""
+    tail = str(intent_name or "").rsplit(".", 1)[-1].strip().lower()
+    return bool(tail) and tail in RESPONSE_ONLY_OPERATES
+
+
+def is_write_intent(intent_name: str) -> bool:
+    tail = str(intent_name or "").rsplit(".", 1)[-1].strip().lower()
+    non_write = READ_ONLY_OPERATES | RESPONSE_ONLY_OPERATES
+    return bool(tail) and tail not in non_write
+```
+
+The set contains only the operation `talk`, never an agent id or domain intent. In `PlanBuilder`, keep `_question_side_effect_steps()` as the only side-effect selection formula and add this identity-preserving primitive:
 
 ```python
 @staticmethod
@@ -134,24 +210,26 @@ def _filter_question_side_effect_steps(
     return [step for step in steps if id(step) not in blocked_ids], blocked
 ```
 
-Change `_apply_question_side_effect_guard()` to call this primitive, preserve `question_write_blocked`, and set `plan.complexity = "simple"` only when all original steps were blocked and the result is safe talk or empty. Do not downgrade a mixed plan that retains a legitimate adaptive step.
+Change `_apply_question_side_effect_guard()` to call this primitive, preserve `question_write_blocked`, and set `plan.complexity = "simple"` only when all original steps were blocked and the result is response-only talk or empty. Do not downgrade a mixed plan that retains a legitimate adaptive step.
 
-- [ ] **Step 4: Scan fallback capabilities in manifest order**
+- [ ] **Step 4: Scan only response-only, unconfirmed, guard-safe fallback capabilities**
 
-Replace the `capabilities[0]` logic in `_talk_only_plan()` with a loop that validates each candidate and asks the same primitive whether it is safe for the original text:
+Import `is_response_intent` from `runtime.intent_effect`. Replace the `capabilities[0]` logic in `_talk_only_plan()` with:
 
 ```python
 for agent in (agents or []):
     if agent.manifest.agent_id != _FALLBACK_AGENT:
         continue
     for capability in (agent.manifest.capabilities or []):
+        if not is_response_intent(capability.intent):
+            continue
         steps = self._validated_steps(
             [{"id": "s1", "agent_id": agent.manifest.agent_id,
               "intent": capability.intent, "slots": {"text": text},
               "depends_on": [], "slot_refs": {}}],
             {agent.manifest.agent_id: agent},
         )
-        if len(steps) != 1:
+        if len(steps) != 1 or steps[0].require_confirm:
             continue
         kept, blocked = self._filter_question_side_effect_steps(steps, text)
         if blocked or len(kept) != 1:
@@ -160,22 +238,36 @@ for agent in (agents or []):
 return None
 ```
 
-The same guard, not a second “confirmed only” condition, rejects both edge writes and confirmed cloud candidates. Continuing the loop is required so a later safe `chitchat.talk` remains reachable.
+All three predicates are required: response-only operation, unconfirmed manifest authority, and same-guard survival. A cloud `info.search` remains rejected even when unconfirmed; a confirmed `*.talk` remains rejected; the first edge write cannot prevent selection of a later safe talk; no talk yields `None`.
 
-- [ ] **Step 5: Run GREEN and adjacent guard tests**
+- [ ] **Step 5: Run GREEN and adjacent guard tests with immutable run metadata**
 
 ```powershell
-python -m pytest -q orchestrator/cloud/tests/test_question_write_guard.py 2>&1 |
-  Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/01-talk-green.log'
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$log = '.artifacts/qa-safety-confirmed-write-postbuild/01-talk-green.log'
+$args = @(
+  '-m','pytest','-q',
+  'runtime/tests/test_intent_effect.py',
+  'orchestrator/cloud/tests/test_question_write_guard.py'
+)
+$command = 'python ' + ($args -join ' ')
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "COMMAND=$command"
+) | Set-Content -Encoding utf8 $log
+& python @args 2>&1 | Tee-Object -FilePath $log -Append
+$exitCode = $LASTEXITCODE
+"EXIT=$exitCode" | Add-Content -Encoding utf8 $log
+if ($exitCode -ne 0) { exit $exitCode }
 ```
 
-Expected: exit 0, every test in the file passes, confirmed fallback remains rejected, and the four historical edge-direction controls remain green.
+Expected: exit 0; runtime exact-tail/non-write tests, response-only fallback selection, confirmed/non-talk rejection, complexity downgrade, and the four historical edge-direction controls all pass.
 
 - [ ] **Step 6: Commit Task 1**
 
 ```powershell
-git add orchestrator/cloud/planning.py orchestrator/cloud/tests/test_question_write_guard.py
+git add runtime/intent_effect.py runtime/tests/test_intent_effect.py `
+  orchestrator/cloud/planning.py orchestrator/cloud/tests/test_question_write_guard.py
 git diff --cached --check
 git commit -m "fix: guard fallback safety exits"
 ```
@@ -219,20 +311,24 @@ Use it for these named tests and exact expectations:
 def test_question_replan_edge_write_uses_user_text_not_llm_goal_and_never_dispatches():
     step = Step(id="r1", agent_id="edge-vehicle", intent="warning_light.close",
                 deployment="edge", kind="edge_fast")
-    planner, executor, _ = _replan_case(
+    planner, executor, events = _replan_case(
         [step], user_text="红色机油灯亮了怎么办", goal="关闭故障灯",
     )
     assert executor.runs == [["s1"]]
     assert planner.observations[0][-1]["step_id"] == "s1"
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"] == "best effort"
 
 
 def test_question_replan_confirmed_cloud_step_never_dispatches():
     step = Step(id="r1", agent_id="mcp-bridge", intent="luckin.order",
                 deployment="cloud", kind="agent", require_confirm=True)
-    _, executor, _ = _replan_case(
+    _, executor, events = _replan_case(
         [step], user_text="红色机油灯亮了还能继续开吗",
     )
     assert executor.runs == [["s1"]]
+    assert events[-1]["kind"] == "final"
+    assert events[-1]["speech"] == "best effort"
 
 
 def test_question_replan_cloud_read_still_dispatches():
@@ -267,15 +363,27 @@ def test_mixed_question_replan_keeps_read_and_preserves_observation_chain():
     assert [obs["step_id"] for obs in planner.observations[0]] == ["s1"]
 ```
 
-- [ ] **Step 2: Capture the loop RED artifact**
+- [ ] **Step 2: Capture the loop RED artifact with immutable run metadata**
 
 ```powershell
-python -m pytest -q orchestrator/cloud/tests/test_loop.py -k 'question_replan or directive_replan or mixed_question_replan' 2>&1 |
-  Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/02-loop-red.log'
-if ($LASTEXITCODE -eq 0) { throw 'RED did not fail' }
+$log = '.artifacts/qa-safety-confirmed-write-postbuild/02-loop-red.log'
+$args = @(
+  '-m','pytest','-q','orchestrator/cloud/tests/test_loop.py',
+  '-k','question_replan or directive_replan or mixed_question_replan'
+)
+$command = 'python ' + ($args -join ' ')
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "COMMAND=$command"
+) | Set-Content -Encoding utf8 $log
+& python @args 2>&1 | Tee-Object -FilePath $log -Append
+$exitCode = $LASTEXITCODE
+"EXIT=$exitCode" | Add-Content -Encoding utf8 $log
+if ($exitCode -eq 0) { throw 'RED did not fail' }
 ```
 
-Expected: edge and confirmed question replans reach `_Executor.runs`; the read/directive controls already pass or fail only because the shared fixture is not yet complete.
+Expected: edge and confirmed question replans reach `_Executor.runs`; the read/directive controls already pass. The eventual all-blocked contract explicitly requires a normal `final` event with existing best-effort results rather than an exception or silent generator abort. The log records one anchored `TIMESTAMP`, `HEAD`, `COMMAND`, and immediate non-zero `EXIT`.
 
 - [ ] **Step 3: Filter immediately after `ReplanDecision` reception**
 
@@ -293,21 +401,34 @@ if blocked:
     )
 if not kept:
     break
-decision.steps = kept
+decision = ReplanDecision(
+    done=False,
+    steps=kept,
+    skill_effects=list(decision.skill_effects),
+)
 current = decision.to_plan(goal)
 ```
 
-If direct mutation of `ReplanDecision.steps` conflicts with a test asserting decision reuse, construct a new `ReplanDecision(done=False, steps=kept, skill_effects=list(decision.skill_effects))`. In both forms, use `user_text`; do not use `goal`, `initial_plan.goal`, or `current.raw_text`. Preserve `results`, `observations`, `initial_plan.skills`, and `initial_plan.exemplars` exactly as the existing code does.
+Use `user_text`; do not use `goal`, `initial_plan.goal`, or `current.raw_text`. Constructing a new decision avoids mutating the Planner-owned object. Preserve `results`, `observations`, `initial_plan.skills`, and `initial_plan.exemplars` exactly as the existing code does. Breaking on all-blocked steps falls through the existing aggregator path so already completed results produce a normal final response.
 
-- [ ] **Step 4: Run GREEN and the whole loop file**
+- [ ] **Step 4: Run GREEN and the whole loop file with immutable run metadata**
 
 ```powershell
-python -m pytest -q orchestrator/cloud/tests/test_loop.py 2>&1 |
-  Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/02-loop-green.log'
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$log = '.artifacts/qa-safety-confirmed-write-postbuild/02-loop-green.log'
+$args = @('-m','pytest','-q','orchestrator/cloud/tests/test_loop.py')
+$command = 'python ' + ($args -join ' ')
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "COMMAND=$command"
+) | Set-Content -Encoding utf8 $log
+& python @args 2>&1 | Tee-Object -FilePath $log -Append
+$exitCode = $LASTEXITCODE
+"EXIT=$exitCode" | Add-Content -Encoding utf8 $log
+if ($exitCode -ne 0) { exit $exitCode }
 ```
 
-Expected: exit 0; all-new blocked cases show zero `r1/r2` dispatch; cloud read, directive, mixed retention, prior observation, streaming, suspension, and skill inheritance tests remain green.
+Expected: exit 0; all-new blocked cases show zero `r1/r2` dispatch and end with normal best-effort `final`; cloud read, directive, mixed retention, prior observation, streaming, suspension, and skill inheritance tests remain green. The log records the immediate zero exit code.
 
 - [ ] **Step 5: Commit Task 2**
 
@@ -357,30 +478,43 @@ Keep the original chitchat/info agents first, then append these three manifests 
     return [chitchat, info, edge, merchant, manual]
 ```
 
-- [ ] **Step 2: Add D0 and normal executor RED cases**
+- [ ] **Step 2: Add D0 and normal executor RED cases with safe user-visible fallback**
 
-Parameterize route and unsafe target so both source paths prove both rejection classes:
+Parameterize route and unsafe target so both source paths prove both rejection classes, user-visible safe advice, and one-hop stripping:
 
 ```python
 @pytest.mark.parametrize("route", ["d0", "executor"])
 @pytest.mark.parametrize("intent", ["warning_light.close", "luckin.order"])
-def test_question_escalate_rejects_side_effect_before_dispatch(route, intent):
+def test_question_escalate_replaces_blocked_target_with_safe_response(route, intent):
     esc = {"_escalate": {"intent": intent, "slots": {}, "reason": "model_redirect"}}
+    safe = _Resp(
+        speech="红色机油灯表示润滑系统可能异常，请立即安全停车并联系救援。",
+        data={"_escalate": {
+            "intent": "warning_light.close", "slots": {}, "reason": "second_hop",
+        }},
+    )
     if route == "d0":
-        spy = _EscSpy(script=[("final", _Resp(speech="", data=esc))])
-        text = "红色机油灯亮了还能继续开吗"
+        spy = _EscSpy(
+            script=[("final", _Resp(speech="", data=esc))],
+            unary_seq=[safe],
+        )
     else:
-        spy = _EscSpy(unary_seq=[_Resp(speech="", data=esc)])
-        text = "红色机油灯亮了还能继续开吗"
+        spy = _EscSpy(unary_seq=[_Resp(speech="", data=esc), safe])
     engine, _ = _make_engine(spy)
 
-    events = _run(engine, _req(text))
+    events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
 
-    assert intent not in [call[0] for call in spy.unary_calls]
+    called = [call[0] for call in spy.unary_calls]
+    assert intent not in called
+    assert called[-1] == "chitchat.talk"
+    assert "请立即安全停车" in events[-1]["speech"]
     assert not any(event.get("need_confirm") for event in events)
+    assert called.count("warning_light.close") == 0
 ```
 
-Add two positive controls:
+The safe response deliberately contains a second `_escalate`; the zero `warning_light.close` call count proves the existing one-hop stripping still applies to the replacement mini-plan.
+
+Add D0 directive, D0 safety-read, and normal safety-read positive controls:
 
 ```python
 def test_directive_escalate_to_edge_write_still_dispatches():
@@ -398,7 +532,22 @@ def test_directive_escalate_to_edge_write_still_dispatches():
     assert events[-1]["speech"] == "已关闭双闪。"
 
 
-def test_question_escalate_to_cloud_read_still_dispatches():
+def test_d0_question_escalate_to_cloud_read_still_dispatches():
+    esc = {"_escalate": {"intent": "manual.query", "slots": {},
+                          "reason": "model_redirect"}}
+    spy = _EscSpy(
+        script=[("final", _Resp(speech="", data=esc))],
+        unary_seq=[_Resp(speech="请立即安全停车并查阅车辆手册。")],
+    )
+    engine, _ = _make_engine(spy)
+
+    events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
+
+    assert [call[0] for call in spy.unary_calls] == ["manual.query"]
+    assert events[-1]["speech"] == "请立即安全停车并查阅车辆手册。"
+
+
+def test_executor_question_escalate_to_cloud_read_still_dispatches():
     esc = {"_escalate": {"intent": "manual.query", "slots": {},
                           "reason": "model_redirect"}}
     spy = _EscSpy(
@@ -416,15 +565,51 @@ def test_question_escalate_to_cloud_read_still_dispatches():
     assert events[-1]["speech"]
 ```
 
-- [ ] **Step 3: Capture the escalate RED artifact**
+Add a direct fail-closed control for a catalog without the fallback response agent:
 
-```powershell
-python -m pytest -q orchestrator/cloud/tests/test_engine_escalate.py -k 'question_escalate or directive_escalate' 2>&1 |
-  Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/03-escalate-red.log'
-if ($LASTEXITCODE -eq 0) { throw 'RED did not fail' }
+```python
+def test_blocked_escalate_without_safe_response_has_no_dispatch():
+    async def run_case():
+        spy = _EscSpy()
+        engine, _ = _make_engine(spy)
+        sink = {}
+        ctx = PlanContext(raw_text="红色机油灯亮了还能继续开吗")
+        agents = [agent for agent in _agents()
+                  if agent.manifest.agent_id != "chitchat"]
+        events = [event async for event in engine._run_escalated(
+            {"intent": "warning_light.close", "slots": {}, "reason": "redirect"},
+            ctx, agents, sink,
+        )]
+        return spy, sink, events
+
+    spy, sink, events = asyncio.run(run_case())
+
+    assert "warning_light.close" not in [call[0] for call in spy.unary_calls]
+    assert sink["results"] == []
+    assert events == []
 ```
 
-Expected: all four question/unsafe combinations dispatch before the fix; read and directive controls either pass or expose fixture metadata that must be corrected without weakening assertions.
+- [ ] **Step 3: Capture the escalate RED artifact with immutable run metadata**
+
+```powershell
+$log = '.artifacts/qa-safety-confirmed-write-postbuild/03-escalate-red.log'
+$args = @(
+  '-m','pytest','-q','orchestrator/cloud/tests/test_engine_escalate.py',
+  '-k','question_escalate or directive_escalate or blocked_escalate_without_safe_response'
+)
+$command = 'python ' + ($args -join ' ')
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "COMMAND=$command"
+) | Set-Content -Encoding utf8 $log
+& python @args 2>&1 | Tee-Object -FilePath $log -Append
+$exitCode = $LASTEXITCODE
+"EXIT=$exitCode" | Add-Content -Encoding utf8 $log
+if ($exitCode -eq 0) { throw 'RED did not fail' }
+```
+
+Expected: all four question/unsafe combinations dispatch before the fix and therefore fail the safe-advice/no-write assertions; D0 read, normal read, and directive controls pass. The log records one anchored `TIMESTAMP`, `HEAD`, `COMMAND`, and immediate non-zero `EXIT`.
 
 - [ ] **Step 4: Filter the validated mini-plan with `ctx.raw_text`**
 
@@ -441,24 +626,36 @@ if blocked:
         "dropping before dispatch",
         [step.intent for step in blocked],
     )
-if not kept:
-    sink["results"] = []
-    sink["plan"] = Plan(steps=[], raw_text=ctx.raw_text)
-    return
-mini = Plan(steps=kept, raw_text=ctx.raw_text)
+if kept:
+    mini = Plan(steps=kept, raw_text=ctx.raw_text)
+else:
+    mini = self.planner._talk_only_plan(ctx.raw_text, agents)
+    if mini is None:
+        sink["results"] = []
+        sink["plan"] = Plan(steps=[], raw_text=ctx.raw_text)
+        return
 ```
 
-Keep the existing one-hop loop prevention, heavy progress events, NEED_CONFIRM suspension, and sink contract. Do not use `esc["reason"]`, the original plan goal, or Agent-provided speech for the safety decision. Both the D0 call site and the normal executor call site already converge on `_run_escalated()`; do not duplicate the guard at those callers.
+The replacement mini-plan comes from Task 1's response-only + unconfirmed + same-guard contract and therefore cannot be cloud non-talk or a confirmed response. Execute it through the existing executor path so both D0 and normal callers receive a real safe `StepResult` instead of D0's “联网失败” branch. Keep the existing one-hop loop prevention: the current result loop removes `_escalate` from every replacement result and never calls `_run_escalated()` again. Keep heavy progress events, NEED_CONFIRM suspension, and sink semantics. Do not use `esc["reason"]`, the original plan goal, or Agent-provided speech for the safety decision. Both callers already converge here; do not duplicate the guard at the callers. Only when no safe response capability exists may the sink remain empty and fail closed.
 
-- [ ] **Step 5: Run GREEN and all escalate tests**
+- [ ] **Step 5: Run GREEN and all escalate tests with immutable run metadata**
 
 ```powershell
-python -m pytest -q orchestrator/cloud/tests/test_engine_escalate.py 2>&1 |
-  Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/03-escalate-green.log'
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$log = '.artifacts/qa-safety-confirmed-write-postbuild/03-escalate-green.log'
+$args = @('-m','pytest','-q','orchestrator/cloud/tests/test_engine_escalate.py')
+$command = 'python ' + ($args -join ' ')
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "COMMAND=$command"
+) | Set-Content -Encoding utf8 $log
+& python @args 2>&1 | Tee-Object -FilePath $log -Append
+$exitCode = $LASTEXITCODE
+"EXIT=$exitCode" | Add-Content -Encoding utf8 $log
+if ($exitCode -ne 0) { exit $exitCode }
 ```
 
-Expected: exit 0; four unsafe question redirects have no target dispatch or confirmation suspension; the directive edge write and question read dispatch once; all existing D0/normal, one-hop, NEED_CONFIRM, streamed, and heavy-progress contracts remain green.
+Expected: exit 0; four unsafe question redirects have no target dispatch or confirmation suspension and end in the safe response speech; D0 and normal reads plus the directive edge write dispatch once; no-response catalog fails closed; all existing D0/normal, one-hop, NEED_CONFIRM, streamed, and heavy-progress contracts remain green. The log records the immediate zero exit code.
 
 - [ ] **Step 6: Commit Task 3**
 
@@ -479,17 +676,33 @@ git commit -m "fix: guard escalated plan dispatch"
 The Task 1–3 implementation agent or execution controller must have inspected the focused pytest output immediately after each RED command and before writing that task's production change. Task 4 does not recreate that temporal fact after GREEN; it verifies the retained evidence. Check these pairs:
 
 ```powershell
-$pairs = @(
-  @('01-talk-red.log', '01-talk-green.log'),
-  @('02-loop-red.log', '02-loop-green.log'),
-  @('03-escalate-red.log', '03-escalate-green.log')
+$runs = @(
+  @{ Name='01-talk-red.log'; ShouldPass=$false },
+  @{ Name='01-talk-green.log'; ShouldPass=$true },
+  @{ Name='02-loop-red.log'; ShouldPass=$false },
+  @{ Name='02-loop-green.log'; ShouldPass=$true },
+  @{ Name='03-escalate-red.log'; ShouldPass=$false },
+  @{ Name='03-escalate-green.log'; ShouldPass=$true }
 )
-foreach ($pair in $pairs) {
-  foreach ($name in $pair) {
-    $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $name
-    if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -eq 0) {
-      throw "missing TDD evidence: $path"
-    }
+foreach ($run in $runs) {
+  $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $run.Name
+  if (-not (Test-Path -LiteralPath $path) -or (Get-Item -LiteralPath $path).Length -eq 0) {
+    throw "missing TDD evidence: $path"
+  }
+  $timestamp = @(Select-String -LiteralPath $path -Pattern '^TIMESTAMP=\d{4}-\d{2}-\d{2}T')
+  $head = @(Select-String -LiteralPath $path -Pattern '^HEAD=[0-9a-f]{40}$')
+  $command = @(Select-String -LiteralPath $path -Pattern '^COMMAND=\S.+$')
+  $exit = @(Select-String -LiteralPath $path -Pattern '^EXIT=-?\d+$')
+  if ($timestamp.Count -ne 1 -or $head.Count -ne 1 -or
+      $command.Count -ne 1 -or $exit.Count -ne 1) {
+    throw "invalid TDD header/footer: $path"
+  }
+  $exitCode = [int]($exit[0].Line -replace '^EXIT=', '')
+  if ($run.ShouldPass -and $exitCode -ne 0) {
+    throw "GREEN did not pass: $path"
+  }
+  if (-not $run.ShouldPass -and $exitCode -eq 0) {
+    throw "RED did not fail: $path"
   }
 }
 ```
@@ -502,9 +715,9 @@ The specification reviewer checks the completed tests and retained RED log again
 
 | Exit | Unsafe negative | Safe positive | Text authority | Full-block behavior | Mixed/observability |
 |---|---|---|---|---|---|
-| fallback | edge write + confirmed cloud | later safe talk | `text` | `None` | capability scan continues |
+| fallback | edge write + confirmed talk + unconfirmed cloud non-talk | later unconfirmed response-only talk | `text` | `None` | capability scan continues |
 | replan | edge write + confirmed cloud | directive + cloud read | `user_text` | break, zero dispatch | legal step + prior observation retained |
-| escalate | D0 + normal × edge/confirmed | directive + cloud read | `ctx.raw_text` | empty sink, zero dispatch | existing caller result/aggregation preserved |
+| escalate | D0 + normal × edge/confirmed | D0 directive + D0/normal cloud read | `ctx.raw_text` | safe response mini-plan; absent response ⇒ empty fail-closed | safe advice replaces blocked result; no confirm/write |
 
 Write separate verdicts to:
 
@@ -512,7 +725,7 @@ Write separate verdicts to:
 - `.artifacts/qa-safety-confirmed-write-postbuild/review-task2-spec.md`
 - `.artifacts/qa-safety-confirmed-write-postbuild/review-task3-spec.md`
 
-Each verdict begins with `Verdict: PASS` or `Verdict: FAIL` and names the reviewed commit, test names, RED log, required matrix row, and findings. Expected: every cell points to a named test and a valid RED shape; no test substitutes `goal` or `reason` for the original-text authority. On FAIL, the specification reviewer returns the issue to the original Task 1, 2, or 3 implementation agent; that agent updates the test first, demonstrates RED against the pre-fix shape or a controlled reversal, restores GREEN, commits, and requests a fresh specification review.
+Each verdict contains exactly one anchored line `Verdict: PASS` or `Verdict: FAIL` and names the reviewed commit, test names, RED log, required matrix row, and findings. It must not contain an `Issues unresolved` heading when passing. Expected: every cell points to a named test and a valid RED shape; no test substitutes `goal` or `reason` for the original-text authority. On FAIL, the specification reviewer returns the issue to the original Task 1, 2, or 3 implementation agent; that agent updates the test first, demonstrates RED against the pre-fix shape or a controlled reversal, restores GREEN, commits, and requests a fresh specification review.
 
 - [ ] **Step 3: Run one post-completion implementation-quality review per task**
 
@@ -538,7 +751,7 @@ Write separate verdicts to:
 - `.artifacts/qa-safety-confirmed-write-postbuild/review-task2-quality.md`
 - `.artifacts/qa-safety-confirmed-write-postbuild/review-task3-quality.md`
 
-Each verdict begins with `Verdict: PASS` or `Verdict: FAIL`, names every reviewed task/rework commit, and records findings for its applicable checks: one filter formula only; object-identity filtering; no LLM goal/reason authority; full block has zero executor/stream dispatch; mixed plans retain legal steps; fallback scans beyond a rejected first capability; no new agent/intent literal in production code; no broad exception swallowing; no proto/schema/config change.
+Each verdict contains exactly one anchored line `Verdict: PASS` or `Verdict: FAIL`, names every reviewed task/rework commit, and records findings for its applicable checks: response-only contract is zero-domain and exact-tail; `is_write_intent` excludes response-only; one side-effect filter formula only; object-identity filtering; no LLM goal/reason authority; blocked replan has zero dispatch and normal final; blocked escalate returns safe advice through executor or fails closed only when response capability is absent; mixed plans retain legal steps; fallback rejects cloud non-talk/confirmed talk and scans beyond a rejected first capability; no new agent/intent literal in production code; no broad exception swallowing; no proto/schema/config change. It must not contain an `Issues unresolved` heading when passing.
 
 Expected: all task-level quality checks PASS before Task 5 documentation updates. On FAIL, the quality reviewer returns concrete findings to the original Task 1, 2, or 3 implementation agent; that agent adds or strengthens the failing test, fixes the implementation, reruns the focused GREEN file, commits, and requests both specification and quality re-review for that task.
 
@@ -559,6 +772,17 @@ $required | ForEach-Object {
     throw "missing review evidence: $path"
   }
 }
+function Assert-PassingReview([string]$Path) {
+  $verdicts = @(Select-String -LiteralPath $Path -Pattern '^Verdict: (PASS|FAIL)$')
+  if ($verdicts.Count -ne 1) { throw "review verdict is not unique: $Path" }
+  if ($verdicts[0].Line -ne 'Verdict: PASS') { throw "review failed: $Path" }
+  if (Select-String -LiteralPath $Path -Pattern '^Issues unresolved' -Quiet) {
+    throw "review has unresolved issues: $Path"
+  }
+}
+$required | Where-Object { $_ -like 'review-*.md' } | ForEach-Object {
+  Assert-PassingReview (Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $_)
+}
 ```
 
 Expected: no exception; each task has valid RED/GREEN evidence plus PASS specification and quality verdicts. `review-3-final.md` is deliberately absent from this checkpoint because its inputs—fresh verification, final documents, manifest, and evidence-only commit—do not exist until Tasks 5–6 complete.
@@ -576,15 +800,17 @@ Expected: no exception; each task has valid RED/GREEN evidence plus PASS specifi
 
 - [ ] **Step 1: Amend v1.45 and §9.40 without inventing a second rule**
 
-In architecture v1.45 §5.2.13 and its version-table row, replace “all `build()` exits” with “every dispatch-bound plan exit”, enumerate build/replan/escalate/fallback receivers, and state the source-text mapping `build:text / loop:user_text / escalate:ctx.raw_text`. Keep the formula unchanged and keep cloud unconfirmed side effects outside the current claim.
+In architecture v1.45 §5.2.13 and its version-table row, replace “all `build()` exits” with “every dispatch-bound plan exit”, enumerate build/replan/escalate/fallback receivers, and state the source-text mapping `build:text / loop:user_text / escalate:ctx.raw_text`. Keep the side-effect formula unchanged and keep cloud unconfirmed side effects outside that formula's claim. Add the separate response-only contract: `runtime.intent_effect.RESPONSE_ONLY_OPERATES={"talk"}` is zero-domain, exact-tail, and excluded from writes; `_talk_only_plan` requires response-only + unconfirmed + same-guard survival, so an unconfirmed cloud non-talk can never be used as an answer.
 
 In conventions §9.40 add:
 
 ```text
 新的 plan 产物在首次 dispatch 前必须重新过同一判据：build 读 text，replan receiver
 读 user_text，escalate 读 ctx.raw_text；goal/reason 不具备安全权威。replan 全删按 done
-终止，escalate 全删返回空 sink，mixed 只删违规对象。build 全删后只允许同守卫放行的
-fallback capability；只剩 talk/空计划时 complexity=simple。
+终止且保留既有结果正常出 final；escalate 拦截后只允许 response-only、unconfirmed、
+同守卫放行的 fallback mini-plan 经 executor 返回安全回答，无合格 response 才空 sink
+fail closed；mixed 只删违规对象。build 全删后使用同一 response-only 契约；只剩 talk/空计划时
+complexity=simple。cloud unconfirmed non-talk 与 confirmed talk 都不是合法回答出口。
 ```
 
 Do not bump the architecture beyond v1.45 for this corrective addendum unless the repository owner separately chooses a version change.
@@ -594,7 +820,9 @@ Do not bump the architecture beyond v1.45 for this corrective addendum unless th
 Update AGENTS, the root-cause fix plan, the design, and the design README so they say:
 
 - `dfad687` and `a07cc7b` counts are historical baselines that did not cover post-build exits;
+- response-only intent semantics, blocked-escalate safe advice, and no-response fail-closed are part of the final local contract;
 - the final implementation SHA and fresh exact counts come only from Task 6;
+- CI-equivalent local claims require the recorded `TZ=UTC0` and unset `PYTHONIOENCODING` environment;
 - local completion is distinct from push/deploy/live completion;
 - `343934b` remains the cloud release until a later live status proves otherwise.
 
@@ -644,23 +872,54 @@ Expected: old SHAs are labeled historical; no file calls local evidence live pro
 - Write ignored evidence: `.artifacts/qa-safety-confirmed-write-postbuild/`
 - Copy canonical ignored evidence to: `D:\Personal\AI\Claude Code\产品\car-agent\.artifacts\qa-safety-confirmed-write-postbuild\`
 
-- [ ] **Step 1: Verify target, Python, environment, and process isolation**
+- [ ] **Step 1: Pin and record the CI-equivalent environment before any fresh run**
+
+Run all Task 6 commands in the same PowerShell session:
 
 ```powershell
-python scripts/dev_stack.py target show
-python --version
-"PYTHONIOENCODING=$env:PYTHONIOENCODING"
-Get-CimInstance Win32_Process |
-  Where-Object { $_.CommandLine -match 'pytest|run_e2e|dev_stack\.py (deploy|status|verify)' } |
-  Select-Object ProcessId, Name, CommandLine
-git status --short --branch
+$artifactDir = '.artifacts/qa-safety-confirmed-write-postbuild'
+New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
+Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
+$env:TZ = 'UTC0'
+if ($env:TZ -ne 'UTC0') { throw 'TZ must be UTC0' }
+if (Test-Path Env:PYTHONIOENCODING) { throw 'PYTHONIOENCODING must be unset' }
+$pythonVersion = (& python --version 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $pythonVersion -notmatch '^Python 3\.12\.') {
+  throw "Python 3.12 required: $pythonVersion"
+}
+$targetOutput = (& python scripts/dev_stack.py target show 2>&1 | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $targetOutput -notmatch 'cloud') {
+  throw "feature worktree target is not cloud: $targetOutput"
+}
+$busy = @(Get-CimInstance Win32_Process | Where-Object {
+  $_.ProcessId -ne $PID -and
+  $_.CommandLine -match 'pytest|run_e2e|dev_stack\.py (deploy|status|verify)'
+})
+if ($busy.Count -ne 0) {
+  $busy | Format-Table ProcessId, Name, CommandLine -AutoSize
+  throw 'competing verification process detected'
+}
+$tracked = @(git status --porcelain)
+if ($tracked.Count -ne 0) { throw "tracked worktree is not clean: $tracked" }
+@(
+  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+  "HEAD=$(git rev-parse HEAD)",
+  "TZ=$env:TZ",
+  'PYTHONIOENCODING=<unset>',
+  "PYTHON=$pythonVersion",
+  "TARGET=$targetOutput",
+  'COMPETING_PROCESSES=0'
+) | Set-Content -Encoding utf8 (Join-Path $artifactDir 'verification-environment.log')
 ```
 
-Expected: target is `cloud`; Python is 3.12; no competing test/E2E/deploy/status/verify process is using shared resources. Clear `PYTHONIOENCODING` with `Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue` before tests. Do not start local Docker.
+Expected: `TZ=UTC0`, `PYTHONIOENCODING=<unset>`, Python 3.12, target cloud, clean tracked tree, and zero competing processes are recorded before testing. Every pytest and gate subprocess below inherits this PowerShell environment. If `TZ` is not `UTC0`, the results may still be informative but must not be called CI-equivalent.
 
 - [ ] **Step 2: Run fresh targeted safety tests**
 
 ```powershell
+if ($env:TZ -ne 'UTC0' -or (Test-Path Env:PYTHONIOENCODING)) {
+  throw 'verification environment drifted'
+}
 python -m pytest -q `
   orchestrator/cloud/tests/test_question_write_guard.py `
   orchestrator/cloud/tests/test_loop.py `
@@ -677,6 +936,9 @@ Expected: exit 0 and zero failures. Record the exact pass/skip/warning counts em
 - [ ] **Step 3: Run all Cloud Planner tests**
 
 ```powershell
+if ($env:TZ -ne 'UTC0' -or (Test-Path Env:PYTHONIOENCODING)) {
+  throw 'verification environment drifted'
+}
 python -m pytest -q orchestrator/cloud/tests 2>&1 |
   Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/cloud-tests.log'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -687,6 +949,9 @@ Expected: exit 0 and zero failures. Record the fresh exact counts from this run.
 - [ ] **Step 4: Run the four deterministic blocking gates**
 
 ```powershell
+if ($env:TZ -ne 'UTC0' -or (Test-Path Env:PYTHONIOENCODING)) {
+  throw 'verification environment drifted'
+}
 python test/eval_skills.py 2>&1 |
   Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/gate-skills.log'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -706,6 +971,9 @@ Expected: all four return 0; the intent gate is strict, not an informational lis
 - [ ] **Step 5: Run the full repository after the last tracked change**
 
 ```powershell
+if ($env:TZ -ne 'UTC0' -or (Test-Path Env:PYTHONIOENCODING)) {
+  throw 'verification environment drifted'
+}
 python -m pytest -q -n 8 --dist worksteal 2>&1 |
   Tee-Object -FilePath '.artifacts/qa-safety-confirmed-write-postbuild/full-pytest.log'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -725,36 +993,119 @@ Do not write “non-production risk” or infer production safety from a test-on
 
 - [ ] **Step 7: Generate the fresh verification manifest and hashes**
 
-Create `.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json` with UTF-8 JSON containing: `tested_code_contract_sha` from `git rev-parse HEAD` before the evidence-only document commit; clean `git status --porcelain`; exact commands; exact exit codes and counts; warning categories; the six Task 4 task-level review artifact names; `final_review_pending=true`; SHA256 for every listed log; deployed release explicitly still `343934b`; `live_verified=false`; and `risk_statement="production impact not established"`. The overall final review is a consumer of this manifest and is therefore created later in Task 7, not falsely listed as already complete here.
+Create `.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json` with UTF-8 JSON containing: `tested_code_contract_sha` from `git rev-parse HEAD` before the evidence-only document commit; clean `git status --porcelain`; exact commands; exact exit codes and counts; `environment={"TZ":"UTC0","PYTHONIOENCODING":"<unset>","ci_equivalent":true}`; warning categories; the six Task 4 task-level review artifact names; `final_review_pending=true`; deployed release explicitly still `343934b`; `live_verified=false`; `risk_statement="production impact not established"`; and an `artifacts` array. Every array entry has exactly `path` (relative to the artifact directory), `bytes` (integer), and lowercase `sha256`. Mandatory entries are the six RED/GREEN logs, six task-level review files, `verification-environment.log`, targeted/Cloud/four-gate/full logs, and `warning-classification.md`. Do not list the manifest itself because self-hashing would be recursive; `root-copy-preflight.log` and `review-3-final.md` are created later and are checked separately. The overall final review is a consumer of this manifest and is created later in Task 7.
 
-Hash the manifest after all fields are final:
+Validate the parsed manifest entry-by-entry rather than inspecting printed hashes:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 `
-  '.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json'
-Get-ChildItem '.artifacts/qa-safety-confirmed-write-postbuild' -File |
-  Sort-Object Name |
-  Get-FileHash -Algorithm SHA256 |
-  Format-Table Path, Hash -AutoSize
+$manifestPath = Join-Path $artifactDir 'verification-manifest-utf8.json'
+$manifest = Get-Content -Raw -Encoding utf8 $manifestPath | ConvertFrom-Json
+if ($manifest.environment.TZ -ne 'UTC0' -or
+    $manifest.environment.PYTHONIOENCODING -ne '<unset>' -or
+    $manifest.environment.ci_equivalent -ne $true) {
+  throw 'manifest environment is not CI-equivalent'
+}
+if ($manifest.tested_code_contract_sha -ne (git rev-parse HEAD)) {
+  throw 'manifest tested SHA does not match HEAD'
+}
+if ($manifest.live_verified -ne $false -or $manifest.final_review_pending -ne $true) {
+  throw 'manifest local/live review boundary is wrong'
+}
+$base = [IO.Path]::GetFullPath((Resolve-Path $artifactDir).Path)
+$seen = @{}
+foreach ($entry in @($manifest.artifacts)) {
+  $relative = [string]$entry.path
+  if ([string]::IsNullOrWhiteSpace($relative) -or [IO.Path]::IsPathRooted($relative)) {
+    throw "invalid manifest relative path: $relative"
+  }
+  if ($seen.ContainsKey($relative)) { throw "duplicate manifest path: $relative" }
+  $seen[$relative] = $true
+  $actualPath = [IO.Path]::GetFullPath((Join-Path $base $relative))
+  if (-not $actualPath.StartsWith($base + [IO.Path]::DirectorySeparatorChar,
+                                  [StringComparison]::OrdinalIgnoreCase)) {
+    throw "manifest path escapes artifact directory: $relative"
+  }
+  if (-not (Test-Path -LiteralPath $actualPath -PathType Leaf)) {
+    throw "manifest artifact missing: $relative"
+  }
+  $actualBytes = (Get-Item -LiteralPath $actualPath).Length
+  $actualSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $actualPath).Hash.ToLowerInvariant()
+  if ($actualBytes -ne [int64]$entry.bytes) {
+    throw "manifest byte mismatch: $relative"
+  }
+  if ($actualSha -ne ([string]$entry.sha256).ToLowerInvariant()) {
+    throw "manifest SHA256 mismatch: $relative"
+  }
+}
+$manifestSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
+"MANIFEST_SHA256=$manifestSha"
 ```
 
-Expected: every manifest-listed file exists and its computed SHA256 matches the manifest; `live_verified` is false.
+Expected: `ConvertFrom-Json` succeeds; every listed path stays inside the artifact directory and matches actual bytes/SHA256; environment and SHA boundaries match; `live_verified=false`; `final_review_pending=true`.
 
-- [ ] **Step 8: Copy the canonical evidence into root `.artifacts`**
+- [ ] **Step 8: Prove the root worktree is idle, then copy and byte-verify canonical evidence**
+
+First ask the active-session controller to confirm no agent is editing, testing, integrating, or using `.artifacts` in `D:\Personal\AI\Claude Code\产品\car-agent`. After that coordination succeeds, append exactly `ROOT_OCCUPANCY_CONFIRMED=clear` to the feature artifact `root-copy-preflight.log`. If coordination is unavailable or reports busy, stop here and perform no root write.
 
 ```powershell
+$rootRepo = 'D:\Personal\AI\Claude Code\产品\car-agent'
+$preflightLog = Join-Path $artifactDir 'root-copy-preflight.log'
+if (-not (Test-Path -LiteralPath $preflightLog) -or
+    -not (Select-String -LiteralPath $preflightLog `
+      -Pattern '^ROOT_OCCUPANCY_CONFIRMED=clear$' -Quiet)) {
+  throw 'root occupancy was not coordinated; defer copy without writing root'
+}
+$rootStatus = @(git -C $rootRepo status --porcelain)
+if ($rootStatus.Count -ne 0) {
+  throw "root worktree is not clean; defer copy: $rootStatus"
+}
+Push-Location $rootRepo
+try {
+  $rootTarget = (& python scripts/dev_stack.py target show 2>&1 | Out-String).Trim()
+  $rootTargetExit = $LASTEXITCODE
+} finally {
+  Pop-Location
+}
+if ($rootTargetExit -ne 0 -or $rootTarget -notmatch 'cloud') {
+  throw "root target is not cloud; defer copy: $rootTarget"
+}
+$rootBusy = @(Get-CimInstance Win32_Process | Where-Object {
+  $_.ProcessId -ne $PID -and
+  $_.CommandLine -match 'car-agent' -and
+  $_.CommandLine -match 'pytest|run_e2e|dev_stack\.py (deploy|status|verify)'
+})
+if ($rootBusy.Count -ne 0) {
+  $rootBusy | Format-Table ProcessId, Name, CommandLine -AutoSize
+  throw 'root-related test/E2E/dev-stack process active; defer copy without writing root'
+}
 $source = (Resolve-Path '.artifacts/qa-safety-confirmed-write-postbuild').Path
-$rootArtifacts = 'D:\Personal\AI\Claude Code\产品\car-agent\.artifacts'
+$rootArtifacts = Join-Path $rootRepo '.artifacts'
 $target = Join-Path $rootArtifacts 'qa-safety-confirmed-write-postbuild'
 if (Test-Path -LiteralPath $target) { throw "canonical target already exists: $target" }
 New-Item -ItemType Directory -Force -Path $rootArtifacts | Out-Null
 Copy-Item -LiteralPath $source -Destination $target -Recurse
-Get-FileHash -Algorithm SHA256 `
-  (Join-Path $source 'verification-manifest-utf8.json'), `
-  (Join-Path $target 'verification-manifest-utf8.json')
+$sourceFiles = @(Get-ChildItem -LiteralPath $source -Recurse -File)
+$targetFiles = @(Get-ChildItem -LiteralPath $target -Recurse -File)
+if ($sourceFiles.Count -ne $targetFiles.Count) {
+  throw 'canonical copy file-count mismatch'
+}
+foreach ($sourceFile in $sourceFiles) {
+  $relative = [IO.Path]::GetRelativePath($source, $sourceFile.FullName)
+  $targetFile = Join-Path $target $relative
+  if (-not (Test-Path -LiteralPath $targetFile -PathType Leaf)) {
+    throw "canonical copy missing file: $relative"
+  }
+  $sourceBytes = $sourceFile.Length
+  $targetBytes = (Get-Item -LiteralPath $targetFile).Length
+  $sourceSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceFile.FullName).Hash
+  $targetSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $targetFile).Hash
+  if ($sourceBytes -ne $targetBytes -or $sourceSha -ne $targetSha) {
+    throw "canonical copy mismatch: $relative"
+  }
+}
 ```
 
-Expected: source and root-copy manifest hashes are identical. The copy is ignored/local-only and does not change tracked root files. If the target exists, stop and inspect it; do not overwrite or delete evidence.
+Expected: root tracked status is clean, root target is cloud, coordination says clear, relevant root pytest/E2E/dev-stack process count is zero, target does not exist, then and only then the copy occurs. Every source/target relative path has identical bytes and SHA256; any mismatch throws. The copy is ignored/local-only and does not change tracked root files. Busy, dirty, ambiguous, or pre-existing target means defer with no root write.
 
 - [ ] **Step 9: Commit fresh evidence references after rerunning affected doc checks**
 
@@ -813,7 +1164,7 @@ Get-Content -Raw -Encoding utf8 `
   '.artifacts/qa-safety-confirmed-write-postbuild/verification-manifest-utf8.json'
 ```
 
-The final reviewer must inspect all dispatch-bound production hits and classify each as “covered by build”, “covered by replan receiver”, “covered by `_run_escalated`”, or “does not accept planner/Agent-produced steps”. The reviewer also cross-checks fresh targeted/Cloud/gate/full logs against the manifest, manifest hashes against copied root artifacts, warning wording against `production impact not established`, document claims against `tested_code_contract_sha`, and the evidence-only diff after that SHA.
+The final reviewer must inspect all dispatch-bound production hits and classify each as “covered by build”, “covered by replan receiver”, “covered by `_run_escalated`”, or “does not accept planner/Agent-produced steps”. The reviewer confirms fallback is response-only + unconfirmed + same-guard safe; blocked escalate returns safe advice through executor rather than a false network-error final; D0/normal still share one guard; and no-response remains fail closed. The reviewer also cross-checks fresh targeted/Cloud/gate/full logs against the parsed manifest, `TZ=UTC0`/unset `PYTHONIOENCODING`, source/root bytes and hashes, warning wording against `production impact not established`, document claims against `tested_code_contract_sha`, and the evidence-only diff after that SHA.
 
 Write `.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md` with these exact sections:
 
@@ -836,14 +1187,22 @@ After the reviewer writes PASS, copy that final artifact into the canonical root
 $sourceReview = (Resolve-Path `
   '.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md').Path
 $rootReview = 'D:\Personal\AI\Claude Code\产品\car-agent\.artifacts\qa-safety-confirmed-write-postbuild\review-3-final.md'
-if (-not (Select-String -LiteralPath $sourceReview -SimpleMatch 'Verdict: PASS' -Quiet)) {
-  throw 'overall final review did not pass'
+$verdicts = @(Select-String -LiteralPath $sourceReview -Pattern '^Verdict: (PASS|FAIL)$')
+if ($verdicts.Count -ne 1 -or $verdicts[0].Line -ne 'Verdict: PASS') {
+  throw 'overall final review verdict is missing, duplicated, or failed'
+}
+if (Select-String -LiteralPath $sourceReview -Pattern '^Issues unresolved' -Quiet) {
+  throw 'overall final review has unresolved issues'
 }
 if (Test-Path -LiteralPath $rootReview) {
   throw "canonical final review already exists: $rootReview"
 }
 Copy-Item -LiteralPath $sourceReview -Destination $rootReview
-Get-FileHash -Algorithm SHA256 $sourceReview, $rootReview
+$sourceReviewSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourceReview).Hash
+$rootReviewSha = (Get-FileHash -Algorithm SHA256 -LiteralPath $rootReview).Hash
+if ($sourceReviewSha -ne $rootReviewSha) {
+  throw 'canonical final review SHA256 mismatch'
+}
 ```
 
 Expected: source and root-copy SHA256 values are identical. The Task 6 manifest remains immutable and retains `final_review_pending=true`; the final review is later evidence that consumed that manifest, not content retroactively inserted into it.
@@ -862,6 +1221,7 @@ $required = @(
   'targeted.log','cloud-tests.log',
   'gate-skills.log','gate-exemplars.log','gate-intent.log','gate-capability.log',
   'full-pytest.log','warning-classification.md',
+  'verification-environment.log','root-copy-preflight.log',
   'verification-manifest-utf8.json'
 )
 $required | ForEach-Object {
@@ -878,8 +1238,15 @@ $reviewFiles = @(
 )
 foreach ($name in $reviewFiles) {
   $path = Join-Path '.artifacts/qa-safety-confirmed-write-postbuild' $name
-  if (-not (Select-String -LiteralPath $path -SimpleMatch 'Verdict: PASS' -Quiet)) {
-    throw "review not passed: $path"
+  $verdicts = @(Select-String -LiteralPath $path -Pattern '^Verdict: (PASS|FAIL)$')
+  if ($verdicts.Count -ne 1) {
+    throw "review verdict is not unique: $path"
+  }
+  if ($verdicts[0].Line -ne 'Verdict: PASS') {
+    throw "review failed: $path"
+  }
+  if (Select-String -LiteralPath $path -Pattern '^Issues unresolved' -Quiet) {
+    throw "review has unresolved issues: $path"
   }
 }
 ```
@@ -889,12 +1256,16 @@ Expected: task-level specification, task-level quality, and overall final review
 Also verify the canonical root copy of the overall final review remains byte-identical:
 
 ```powershell
-Get-FileHash -Algorithm SHA256 `
-  '.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md', `
-  'D:\Personal\AI\Claude Code\产品\car-agent\.artifacts\qa-safety-confirmed-write-postbuild\review-3-final.md'
+$sourceReviewSha = (Get-FileHash -Algorithm SHA256 -LiteralPath `
+  '.artifacts/qa-safety-confirmed-write-postbuild/review-3-final.md').Hash
+$rootReviewSha = (Get-FileHash -Algorithm SHA256 -LiteralPath `
+  'D:\Personal\AI\Claude Code\产品\car-agent\.artifacts\qa-safety-confirmed-write-postbuild\review-3-final.md').Hash
+if ($sourceReviewSha -ne $rootReviewSha) {
+  throw 'overall final review source/root SHA256 mismatch'
+}
 ```
 
-Expected: both hashes match.
+Expected: both hashes match; mismatch throws and blocks integration/push.
 
 - [ ] **Step 4: Stop for main-worktree integration authorization**
 
@@ -935,8 +1306,12 @@ If and only if the exact deployed SHA passes the approved live set, update AGENT
 - [ ] Every A–G requirement maps to Tasks 1–7.
 - [ ] No unknown test total is asserted as a required future result; every verification step records its fresh exact output.
 - [ ] All three receivers use server-owned original text and one shared formula.
+- [ ] Fallback requires response-only + unconfirmed + same-guard survival; cloud non-talk and confirmed talk are explicit negatives.
+- [ ] Blocked escalate returns executor-produced safe advice in D0 and normal paths, strips a second hop, and is empty only without a safe response capability.
 - [ ] Task topology is forward-only: Tasks 1–3 create RED/GREEN; Task 4 consumes those logs for per-task specification and quality reviews; Tasks 5–6 create docs/fresh evidence/manifest; Task 7 alone creates the overall final review before any integration or push authorization.
-- [ ] RED, GREEN, three review types, warnings, manifest, root artifact copy, and SHA256 checks are named.
+- [ ] Every RED/GREEN log has anchored `TIMESTAMP/HEAD/COMMAND/EXIT`; every review has one anchored PASS and no FAIL/unresolved marker.
+- [ ] Fresh verification pins `TZ=UTC0`, unsets `PYTHONIOENCODING`, records both, and all subprocesses inherit them.
+- [ ] Manifest entries are parsed and checked for path/bytes/SHA; root copy waits for clean/idle/coordinated root state and throws on any source/target mismatch.
 - [ ] The phrase `production impact not established` is used; “non-production risk” is absent.
 - [ ] Main integration, push, deploy, remote-safe/live, and mutating actions are separate authorization points.
 - [ ] `git diff --check` passes and all Markdown code fences are balanced.
