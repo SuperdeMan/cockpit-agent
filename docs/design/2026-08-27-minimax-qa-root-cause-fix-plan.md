@@ -1,5 +1,10 @@
 # 2026-08-26 MiniMax 云端长会话 QA：17 张问题卡的根因分析与修复方案
 
+> **当前状态：已归档。** C1–C16 与后续余项开发批均已完成；当前生产 release、验证证据和
+> 剩余活项统一看
+> [`docs/reviews/2026-08-30-qa-closeout-handoff.md`](../reviews/2026-08-30-qa-closeout-handoff.md)。
+> 本文保留当时方案、被取证推翻的判断和逐批实施记录，不再作为“下一步”清单。
+>
 > **性质：方案文档，本轮零实施**（泓舟 2026-08-27 指示：只分析根因、输出修复方案，代码一行不改）。
 > 来源：[`docs/reviews/2026-08-26-minimax-cloud-qa-findings.md`](../reviews/2026-08-26-minimax-cloud-qa-findings.md)
 > （被测 release `c7c211b`，5 persona × 315 轮，自动计分 282/33 + 手工漏检）。

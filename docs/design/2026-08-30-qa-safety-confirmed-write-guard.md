@@ -1,6 +1,6 @@
 # QA 收尾：安全问句禁止进入需确认的云侧写能力
 
-> 状态：**最终审查重开（post-build 出口待修）**（2026-08-30）
+> 状态：**生产已部署并验证；安全主链闭合，独立错域/TTS 残余仍 active**（2026-08-30）
 > 交付对象：Cloud Planner / QA 探针维护者
 > 关联：`AGENTS.md` §4.1/§4.2、`docs/agents-history.md` §84/§85、
 > `orchestrator/cloud/planning.py::_question_side_effect_steps`、
@@ -306,8 +306,8 @@ trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；�
 `cloud-status-predeploy-343934-utf8.log` SHA256=
 `890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。
 
-因此当前只能写“本地验证完成，待 push/deploy/真栈”，不得写成“云端已修”“QA 全绿”或
-该候选已经 `verified`。
+因此在**该本地验证时点**只能写“本地验证完成，待 push/deploy/真栈”；后续生产状态见 §12，
+且任何时点都不得把独立残余省略成“QA 全绿”。
 
 ## 11. 最终审查增补：post-build 三个执行出口仍可绕过守卫
 
@@ -381,7 +381,7 @@ trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；�
 - `_talk_only_plan()` scans all fallback capabilities and requires `response_only=true`,
   `require_confirm=false`, and survival of the same question-side-effect guard.
 
-## 12. 最终本地闭合（2026-08-30，live 仍待验）
+## 12. 最终闭合与生产验收（2026-08-30）
 
 §11 重新打开的 active 实现项已在本地关闭。生产代码链为：`ba977dc` 建立 capability 级
 `response_only` 契约并在 Executor/D0/T2 纵深执行；`f986d37` 闭合 adaptive replan 接收点；
@@ -406,12 +406,10 @@ gate **25/25**（cases=139, distinct=129）、capability integrity PASS；最终
 `7a7a241a94e0b825e7b841f52084ed89795beb7a50e45010fe4766fb9d87e787`；根工作树尚未复制，
 因此它仍不是随 commit 移植的证据。
 
-外部边界没有变化：当前 cloud 仍为 `343934bab66c23f83575cee998eb6f64a9f45f3e`；本轮未 push、
-未 deploy、未跑新 SHA 的 remote-safe/统一 verify、未跑安全真栈或长会话，也未做商户写入或
-清理。因此 §11 的**本地 active 已关闭**，但 live 验收仍 active；不得写“云端已修”或
-“QA 全绿”。
+本段记录的是**本地闭合当时**的边界：当时 cloud 仍为 `343934b`，尚未 push/deploy。
+后续生产事实以 §12.1/§12.2 为准；本地证据不得跨 SHA 转借，生产验收同样不等于 QA 全绿。
 
-### 12.1 部署后定向验收（release `e9fa602`）
+### 12.1 部署后定向验收（release `e9fa602`；历史中间态，已由 §12.2 续写）
 
 QA 分支与远端 main 已推，云端 release 为
 `e9fa602e7991b212de4c1ea8c8e95c3673891c1f`，回滚点 `343934b`；`status` ok、5/5 healthy、
@@ -454,4 +452,5 @@ status 5/5 healthy、零 warning，verify verified（
 外部/协议已知活项不因这次修复消失：同一段 887 字 TTS 两次命中 RPM rate limit，但生成的
 PCM 可播放；barge-in 后仍收到 6144 / 8192 字节残帧，但分别在 16 / 31ms 内关闭。`862617b`
 已把 agent internal error 升为探针硬红；它和本次 docs-only 均领先生产 release，不是新 release。
-工具安全策略拒绝删除临时目录，目录仍在；权威 artifacts 已复制到根仓。
+两个临时部署目录已在用户授权后移入 Windows 回收站（可恢复）；权威 release artifacts 已复制到
+根仓 `.artifacts/releases/`。

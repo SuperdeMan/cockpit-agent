@@ -5196,15 +5196,15 @@ e2e_protocol_smoke.command executable does not exist: python`），scripts/tests
 ① P3 簇三 RFC（history **§36**）——G8 导航路线会话 + `navigation.reroute` 增量改道、
 G4 主题行程检索步、G9 trip 跨城市（`Trip.cities` + 跨天衔接 leg）、G7 陈述 vs 请求入台账。
 ② 指令集全量真栈验证（报告
-[`…eva-instruction-set-e2e-verification.md`](docs/reviews/2026-08-15-eva-instruction-set-e2e-verification.md)、
+[`…eva-instruction-set-e2e-verification.md`](reviews/2026-08-15-eva-instruction-set-e2e-verification.md)、
 history **§37/§38**）——25 语料首轮 ✅12/⚠️10/🔒3，遗留六卡 P1–P6 收口后
 **✅17/⚠️5/🔒3**；同批建了跨厂商备份档 `LLM_BACKUP=deepseek:deepseek-v4-flash`。
 ③ 余项立卡 E1–E5（卡
-[`…eva-backlog-cards-e1-e5.md`](docs/design/2026-08-15-eva-backlog-cards-e1-e5.md)、
+[`…eva-backlog-cards-e1-e5.md`](design/2026-08-15-eva-backlog-cards-e1-e5.md)、
 history **§39**）——事件时刻反推用餐窗 / 停车便利·无障碍·不排队属性维 / 多城确定性归城校正 +
 主题接地读数 / 方差面只读探针 / 谓词别名老账（消费面两路并集 + 存量 18 行归一）。
 ④ 双档复跑修复（报告
-[`…eva-dual-provider-rerun-and-fixes.md`](docs/reviews/2026-08-15-eva-dual-provider-rerun-and-fixes.md)、
+[`…eva-dual-provider-rerun-and-fixes.md`](reviews/2026-08-15-eva-dual-provider-rerun-and-fixes.md)、
 history **§40**）——25 语料 × MiniMax/DeepSeek 各 27 轮，据「两档是否同时错」定位并修掉
 **容器时区族**（所有「几点」判定偏 8 小时，8 处；唯一实现下沉 `runtime/clock.py` + 两条源码级守卫）、
 **当轮忌口被记忆压过**、**约束词被当检索词**，外加画像 `place.company` 存量污染复位。
@@ -6421,9 +6421,9 @@ collector 无法回读终态而 `verified=false`，云端被测车态恢复终�
 （Q12 规格维 2026-08-21 收口、08-22 真栈复验 9/9 通过；**I-030 跨组 2026-08-22 收口**，
 history §67），
 各有独立成因、都不是「下一个动手」的默认对象——见下方逐卡表与 §4.2。报告
-[`…exploratory-real-user-qa-deepseek-minimax.md`](docs/reviews/2026-08-15-exploratory-real-user-qa-deepseek-minimax.md)、
+[`…exploratory-real-user-qa-deepseek-minimax.md`](reviews/2026-08-15-exploratory-real-user-qa-deepseek-minimax.md)、
 方案与全部读数
-[`…qa-exploratory-root-cause-cards.md`](docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)、
+[`…qa-exploratory-root-cause-cards.md`](design/2026-08-15-qa-exploratory-root-cause-cards.md)、
 流水 history **§41–§53 + §58/§59/§61/§62/§63/§64/§65/§66**，本轮归档索引 **§47.5**。）
 
 接手先读卡的 **§1**（**八处**与报告定性不同的重判——每一处都改变了「该修什么」；
@@ -6442,7 +6442,7 @@ I-030 跨组 08-22 收口），见下表；⚠ 同批掀开的**记忆语义召�
 
 **逐卡终态**（**新会话不从这张表开始**——从上方的接手入口挑选表开始；这张表用来
 回答「某张卡当时是怎么裁的、读数在哪」。每张卡的落点、判据、读数在
-[卡 §4 的各「实施记录」段](docs/design/2026-08-15-qa-exploratory-root-cause-cards.md)，
+[卡 §4 的各「实施记录」段](design/2026-08-15-qa-exploratory-root-cause-cards.md)，
 流水在 history §42–§53，**这里只留状态与残余**）：
 
 > ⚠ **这张表已经没有「下一个」了——整张只作查证入口。** 2026-08-22 起 QA 轮逐卡**全部 ✅**，原来那条「以下已收口」的分隔行因此被删掉：**一个只有一侧有内容的分隔符是噪声**。行序是历史接手顺序的残留、**不再有含义**，按卡号 Ctrl+F 找即可。
@@ -6563,7 +6563,7 @@ I-030 跨组 2026-08-22 收口 history **§67**）、§4.1 ③ 支付余项，
 `_person_destination` 的「去掉人称词后还剩不剩实质内容」判据对**槽值**是对的，
 套到**整句原话**上天然失效（复合请求必然有剩余内容）；一#1 另有独立成因=planner
 转述记忆地点时丢了「深圳市」。修法候选、落点与**接手取证清单**（先建红绿迷你集再动码）
-全在 [`docs/design/2026-08-15-person-pickup-resolution-card.md`](docs/design/2026-08-15-person-pickup-resolution-card.md)。
+全在 [`docs/design/2026-08-15-person-pickup-resolution-card.md`](design/2026-08-15-person-pickup-resolution-card.md)。
 ⚠ **「究竟召回了哪一条边」这个悬案已由 2026-08-16 数据清洗批关掉，答案是「两条都不是」**
 （history **§48.3**）：不带城市那条**边**已 supersede、现行边只剩
 `女儿 --place_of--> 深圳市南山实验小学`，而探针 XS3 三次取样**仍有两次答「南山实验小学」**
@@ -8127,3 +8127,38 @@ Planner+Info **289 passed**、Cloud **1278 passed / 1 skipped**、全量
 release `a729b98`，不能把 HEAD 称为新 release，也不能把 §88.1 的 `e9fa602` 完整 information
 身份转借给 `a729b98`。工具安全策略拒绝删除临时目录，因此目录仍存在；权威 artifact 已复制
 到根仓。T24/T47 与 TTS/barge 活项未清，故本节不称 QA 全绿。
+
+## §89 2026-08-30 QA 知识库洁癖收尾
+
+### §89.1 根入口去流水化
+
+`AGENTS.md` 已从 **1871 行 / 244559 bytes** 收敛为 **236 行 / 12469 bytes**。删除的是根入口中
+重复的 QA 逐批叙事、旧 release 原文、已划线待办和事故复盘；没有删除历史证据，完整过程仍在
+本文件 §41–§88、专题 design/reviews 与 git history。根入口只保留：项目地图、硬红线、当前
+release、活项、验证命令和常见任务。
+
+`CLAUDE.md` 同步去掉 QA 批次流水、事故式长叙事与可由专题文档替代的目录机制全文，保留工程
+权威、声明源、安全红线和标准流程；文件由 378 行降至 187 行。README 的文档导航不再维护
+过期的设计文档篇数，新增 QA 当前交接入口。
+
+### §89.2 新的 QA 当前真相源
+
+新增 `docs/reviews/2026-08-30-qa-closeout-handoff.md`，统一维护：
+
+- 远端 docs/test HEAD `26de242` 与生产 release `a729b98` 的边界；
+- 已闭合的 Q1–Q13、C1–C16、M1–M6、B1–B7、安全闸与 Planner null 槽；
+- safety 15/15、完整 information 57/59、a729 新闻 3 会话零 internal error；
+- T24 错域、T47 safety focus 代价、TTS RPM、barge 残帧、manual mock 和 13 warnings；
+- artifact、清理、采样与 SHA 纪律。
+
+从此接手 QA 不再从 implementation plan 或 AGENTS 的旧批次表顺序执行：先读交接页当前活项，
+需要原因才下钻专题设计和本 history。
+
+### §89.3 本节纠正的最新事实
+
+§88.3 写“临时目录仍存在”是删除命令被安全策略拦截时的中间态；用户随后明确授权，两目录已
+通过 Windows 回收站完成可恢复清理，原路径均不存在。release artifact 已逐文件 SHA256 回读后
+复制到根仓 `.artifacts/releases/e9fa602…/` 与 `.artifacts/releases/a729b98…/`。
+
+本次洁癖收尾只改文档与 Codex memory 更新说明，不改变生产 release；QA 仍非全绿。
+链接维护例外：修正了 7 个迁入 history 后仍带 `docs/` 前缀的相对链接，历史文字与事实未改。

@@ -265,11 +265,12 @@ docs/             架构（真相源）、设计记录、指南
 
 | 想了解 | 看这里 |
 |---|---|
-| 当前真实进展、接手第一步、自检入口 | [`AGENTS.md`](AGENTS.md) |
+| 接手第一步、红线、自检入口 | [`AGENTS.md`](AGENTS.md) |
+| 当前 release、QA 证据与剩余活项 | [`docs/reviews/2026-08-30-qa-closeout-handoff.md`](docs/reviews/2026-08-30-qa-closeout-handoff.md) |
 | 工程约定、目录规范、安全红线 | [`CLAUDE.md`](CLAUDE.md) |
 | 为什么这么设计（架构唯一真相源） | [`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md) |
 | 分期计划与量产 DoD | [`docs/architecture/phase1-implementation-plan.md`](docs/architecture/phase1-implementation-plan.md) |
-| 各主题设计与落地记录（101 篇，按日期，截至 2026-08-19） | [`docs/design/`](docs/design/) |
+| 各主题设计与落地记录 | [`docs/design/README.md`](docs/design/README.md) |
 | 怎么接真实 Provider（高德/和风样板） | [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md) |
 | 怎么跑意图落域对抗测试、怎么修落域 badcase | [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) |
 | 环境 / 端口 / 命名 / 错误码速查 | [`docs/dev-guide.md`](docs/dev-guide.md)、[`docs/conventions.md`](docs/conventions.md) |
@@ -288,7 +289,8 @@ docs/             架构（真相源）、设计记录、指南
 - **声学层指标**（真麦命中率 / 误唤醒率）属人工验收范畴；浏览器内 KWS / VAD 链路已真机验证。
 - **MCP 生态桥已接真实商户，但仍是 PoC 账号模型**：麦当劳/瑞幸官方复合工作流已打通到“创建未支付订单、展示受控支付入口、查单”，瑞幸可再次确认取消；不执行最终付款，麦当劳官方工具面无远程取消。写工具不可自动重放，支付链接经桥与 payment-gateway 双层 host 白名单。两家凭证当前都是服务级全局 token/账号，只允许网关权威 scope 下的已认证主用户使用；多乘员独立商户账号、token 自动刷新、通用 HTTP 工具面均未产品化。商户与支付 host 必须由运行时安全配置提供，空配置 fail-closed。
 
-实时状态、测试证据与待办清单以 [`AGENTS.md`](AGENTS.md) 为准。
+接手规则以 [`AGENTS.md`](AGENTS.md) 为准；当前 release、QA 证据与活项以
+[`QA 当前交接页`](docs/reviews/2026-08-30-qa-closeout-handoff.md) 为准。
 
 ## 许可
 

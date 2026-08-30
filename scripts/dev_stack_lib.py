@@ -718,7 +718,7 @@ def inspect_cloud_status(
     except (ReleaseError, OSError):
         # ⚠ **让诊断出口说出最可能的成因**（2026-08-28）。这条 warning 在 Git Bash 里
         # 的真实成因几乎总是「MSYS `ssh` 吃掉了 `subprocess.list2cmdline` 的转义」
-        # （AGENTS.md §4.0 接手须知 ①：真栈命令一律走 PowerShell）——但它报出来的样子是
+        # （AGENTS.md §3.2：Windows 真栈命令一律走 PowerShell）——但它报出来的样子是
         # `release_sha: null` + `status: degraded`，**读起来像「云端不健康」**，
         # 于是同一个人在同一天里踩了两次：第二次直接让长会话探针 fail-closed 中止、
         # 一轮都没发。判据同「『读不到』与『读到了但不对』永远分开报」：

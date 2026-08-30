@@ -1,5 +1,9 @@
 # 2026-08-26 MiniMax-only 云端长会话 QA 复验问题记录
 
+> **当前状态不要从本文件判断。** 本文永久保留 2026-08-26 原始问题与读数；当前 release、
+> 已闭合范围和活项统一看
+> [`2026-08-30-qa-closeout-handoff.md`](2026-08-30-qa-closeout-handoff.md)。
+>
 > 状态：**只记录，不修复**（本文件是**问题原始记录**，逐条保留 2026-08-26 时点的原文，不回改）。
 > **修复进度看这两处**：根因与方案 [`docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md`](../design/2026-08-27-minimax-qa-root-cause-fix-plan.md)
 > （17 症状卡 → 16 根因卡 C1–C16，**七处定性被取证推翻**，以那份为准）；

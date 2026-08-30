@@ -1,5 +1,8 @@
 # QA Safety Confirmed-Write Guard Implementation Plan
 
+> **Status: completed and archived.** Do not resume this checklist. Current production evidence and
+> remaining QA work are in [`docs/reviews/2026-08-30-qa-closeout-handoff.md`](../../reviews/2026-08-30-qa-closeout-handoff.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Prevent a non-directive question from entering a cloud capability that requires confirmation, while preserving existing edge-write protection, cloud reads, ordinary directives, mixed plans, and historical observability.

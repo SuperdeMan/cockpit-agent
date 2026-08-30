@@ -6,6 +6,10 @@
 >
 > 这里的文档是"给后续执行者（人或 Agent）照着做"的蓝图：先讲清现状与问题，再给目标、方案、分阶段落地步骤与验收标准。**一旦某提案落地并稳定，应把定稿内容并入 `docs/architecture/` 并在此处标注「已归档」。**
 
+> 当前 QA release、生产证据和剩余活项不在本索引维护，统一看
+> [`docs/reviews/2026-08-30-qa-closeout-handoff.md`](../reviews/2026-08-30-qa-closeout-handoff.md)。
+> 已完成的 QA implementation plan 是历史实施证据，不是当前待办入口。
+
 ## 命名与结构约定
 
 - 文件名：`YYYY-MM-DD-<topic-kebab>.md`
