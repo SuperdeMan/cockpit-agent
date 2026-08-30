@@ -7989,7 +7989,9 @@ return 绕闸并由 registry 引回 confirmed capability。前者收敛到 `_val
 
 ### §85.3 审计版本地读数 / hashes
 
-本地候选 HEAD=`dfad68730b50d094993c328d33cb774d29642e16`，尚未集成 main、尚未部署。
+本地全量、门禁与 targeted 测试绑定的代码与契约 SHA=
+`dfad68730b50d094993c328d33cb774d29642e16`，尚未集成 main、尚未部署。后续 `9111681` 与
+本次修正文档提交都只改文档，不承接或重新声称下述测试证据。
 审计第二趟：targeted **159 passed / 2.77s / rc0**；`orchestrator/cloud/tests`
 **1235 passed / 1 skipped / 60.81s / rc0**；门禁 Skill 22/22、Exemplar 314、strict discovery
 85/85（cases=676, distinct=634）、gate 25/25（cases=139, distinct=129）、capability PASS，

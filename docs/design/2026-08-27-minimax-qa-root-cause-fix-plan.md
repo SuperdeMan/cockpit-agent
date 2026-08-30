@@ -1558,8 +1558,9 @@ RS4 走的是 C12-A 的 `liked` 挡板不是 C12-C。**「兜底型修法的『�
 `_validated_steps`；第二轮评审又掀开 focused early return 绕过常规出口、且旧分支会在拦截后
 由 registry 引回 confirmed capability，故抽出 `_apply_question_side_effect_guard` 供 focused +
 normal 共用，零步只接受 unconfirmed talk，否则 fail closed。生产代码链为 `a83fa88` →
-`ab88f4e` → `01cc57c` → `1105829`；本地候选 HEAD 为
-`dfad68730b50d094993c328d33cb774d29642e16`，**尚未进入 cloud**。
+`ab88f4e` → `01cc57c` → `1105829`；本地全量、门禁与 targeted 测试绑定的代码与契约 SHA 为
+`dfad68730b50d094993c328d33cb774d29642e16`，**尚未进入 cloud**。后续 `9111681` 与本次
+修正文档提交都只改文档，不承接或重新声称该测试证据。
 
 **本地审计读数**：targeted **159 passed**（2.77s）；Cloud Planner 全族
 **1235 passed / 1 skipped**（60.81s）；四道门禁 Skill 22/22、Exemplar 314、strict
