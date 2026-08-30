@@ -4439,14 +4439,60 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
 
 ### 6.3 第 3 批「手势与层内元素」（T6–T11）
 
-- **开工基线**：
-- **T6** —— commit：`pttLease` 源码断言红→绿；真机十项（轻点自动收尾 / 中途再点 / 免唤醒下轻点 / 免唤醒下 PTT 后仍能唤醒 / 上滑取消文案 / 有字输入框 / TalkBack label / 播报中轻点 / 关闭本轮麦克风后开关仍开）；若 RNGH 手势退回了 PanResponder 写在这里。
-- **T7 ∥ T8 ∥ T9** —— 三个 commit：极光录屏四帧亮度；card_group 折叠展开截图；chips 最终文本（若改过）与「换一批」翻页截图。
-- **T10** —— commit：录屏帧号 vs logcat `CameraService` 时间戳；`looking` 白环抽帧（B1 出账⑧收口）。
-- **T11** —— commit：APK 构建时间 + 有无 AEC；回声提示出现 / 未触发（预期）。
-- **反向验证**：
+- **开工基线**（2026-08-30 22:53，主工作树，**未分树**）：`check_android_env.ps1` 退出码 0（18 pass / 0 warn / 0 fail，含 `E3 devices PASS 1 attached: 5d432b6d`）；`npm test` = **32 suites / 357 tests 全绿**；`npm run typecheck` = **0 error**；`git status --short` 空；HEAD = `61097e2`；`git log --oneline origin/main..HEAD | wc -l` = **0**。
+  ⚠ **不是计划预期的 7**：`git reflog show origin/main` 显示 `61097e2 … @{2026-08-30 22:47:11}: update by push`——第 2 批的 merge 落在 22:39:15，**8 分钟后另一条会话推了 main**，把本线 7 个提交（T4 `e948f71` / T5 `890c0d1` / fix `2187ca3` / 三条 docs / merge）一并带上去了。**我一次 `git push` 都没跑。** 与第 2 批同形态、连续第三次（B1 那次方向相反）——「共享 main 上『请不要推我的』不是可执行防线」再次应验；可执行的仍是 §0.1 里那条 `git worktree`。
+- **附加⓪ PNG 探针入仓** —— commit `8b26989`（1 文件，378+）。`mobile/e2e/tools/png_probe.py`，纯 stdlib：解 IDAT + 五种 filter 反滤波，子命令 `info / px / region / rows / diff` + **`selftest`**。三点通道自检：
+  - `selftest`（造图 → 五种 filter 各编一次 → 解回来逐像素比 + 部分解码与全解一致）= **6/6 PASS**；
+  - **变异**：Paeth 分支退化成 Sub ⇒ **只有 filter 4 FAIL**（`(1,1) 解出 (14,40,242)，应为 (18,43,242)`），其余四种与部分解码仍 PASS；
+  - **真实 screencap 上反滤波确实在起作用**：`b2-02-dot-*.png` 的 filter 直方图 = `{1:344, 2:669, 3:45, 4:1462}`——**filter 0 一行都没有**（比第 2 批坑⑨说的「只有 filter=0 的行碰巧对」更糟：**一行都没对**）。同一点 (230,62) 反滤波读 `(255,197,42)` 琥珀、裸读 `(0,253,248)` 青——不是偏差，是另一个颜色。
+  - `diff` 顺带两端都验了：两图共有的状态栏区 `[224,58)-[244,86)` = **0.00%**，胶囊带 `[0,150)-[1080,260)` = **4.56%**。
+- **T6** —— commit `0a317b9`（**14 文件，774+/200−**，与计划 Files 逐条对上：3 新建 + 11 修改）。新增用例 **12 条**（`pttLease` 2 + `tapTalk` 5 + `voiceAsr` 1 + `handsFree` 3 + `presence` 1）。
+  - ⚠ **计划自相矛盾，改了一处判据写法**：计划给的 `pttLease` 源码断言是 `expect(src).not.toMatch(/\brecorder\(\)/)`，而计划给的 `usePtt.ts` **全文头注里就写着「`recorder()` 单例…」**——两边照抄必红在注释上。改成**先剥注释再扫**（只剥整行 `//` 与块注释，不动字符串字面量），并加一条通道自检 `expect(code).toContain('export function usePtt')`（否则「没匹配到」可能只是因为把整个文件剥没了）。同「零领域词断言不能裸扫源码」。
+  - 计划要求核的两处，实现后 grep 过：`usePtt.ts` 的 `onPartial?`/`onDiscard?` **6 处都在**（`onPartial` 1 + `onDiscard` 5：tooShort / 空定稿 else / onError / .catch / cancel）；`Composer.tsx` 的 `orbAnimated?: boolean` 与 `animated={orbAnimated ?? true}` 保留。
+  - §5 第 15 条落地：第二个长按探测器 `plateGesture` **只包 TextInput 那一块**（`input.length === 0` 时才 enabled），chips 横滑区与「打断/发送」按钮不在长按热区内——刻意收窄，避免嵌套 `activateAfterLongPress` 互相抢。
+- **T7 + 附加①** —— commit `81b63e4`（3 文件，61+/2−）。`EdgeGlow`（2dp `experimental_backgroundImage` 渐变 + 1.6s 呼吸，`active = primary ∈ {listening, thinking}`），零 jest（纯动效，计划明写）。**附加①**：`VoiceSheet` 在 `Glass` 内垫一层绝对定位实色 `shellTint(p.bg, GLASS.frosted.tint)`（暗色 = `rgba(6,8,15,0.58)`），Glass 自己的白膜与光照边框仍叠在上面。**这是 §5.11 G1 的 tint 落地，不是新裁决**；身后 40% 暗区一字未动（方案 §5.2「记录变暗 40%、仍可见」保留）。选这个改法的理由：`glassBg` 暗色只有 **5.6%**（`theme.ts:68`，那是卡壳用的），浅色下本来就是 76% ⇒ 问题只在暗色，垫一层比改 `Glass` 影响面小。
+- **T8** —— commit `d48ccf4`（4 文件，80+/7−）。新增用例 **3 条**。判据在 `core/cards/cardGroup.ts`（零 RN import，T13 回执要读它）；`CardRenderer` 的 `card_group` 项换成 `<CardGroup>`，注册表键没变 ⇒ `cards.test.ts` 的注册表守卫仍绿。
+- **T9** —— commit `4743470`（5 文件，127+）。新增用例 **5 条**（计划给 4 条 + 我补的 1 条，见反向验证 T9-1）。**chip 文本一句都没改**——四条都被 `routeSend` 直接认下：`换一批`→`categoryPage=2`；`导航去第一个`（有 `placeItems`）→`导航去星巴克`；`第一个`（只有 `poiNames`）→`导航去加油站A`；`intent_choice` 的 `label→send_text` 原样。`nav.mjs` 一字未动。
+- **T10** —— commit `a0bcb5e`（5 文件，45+/6−）。新增用例 **1 条**。`SessionState.visionIds` + `beginUserBubble()` / `markVision()`；`ChatScreen` 的视觉分支改成「先落气泡 → 抓帧 → `send({bubbleId})`」；`MessageBubble` 加 📷 角标、`VoiceSheet` 转写加 `📷 ` 前缀。**拍完不出预览**（红线：预览也是一份落端）。
+- **T11 + 附加②** —— commit `84de435`（4 文件，50+/5−）。新增用例 **2 条**。`onMetric` 里两件事分开写：`S2S_LOCAL_HANDLED` 加 `echo_dismissed`（附加②，让 provider 别自答）+ `onEchoDismissed?.()`（胶囊信号源）。`useHandsFree.echoAt` → `usePresence` 与取消提示取更晚的那个。**共享 `voiceLoop.mjs` 一字未动。**
+- **收口读数**：`npm test` = **36 suites / 380 tests 全绿**（357 → 380，净增 **23** = 附加⓪ 0 + T6 12 + T7 0 + T8 3 + T9 5 + T10 1 + T11 2；suites +4 = `pttLease` / `tapTalk` / `cardGroup` / `followUps`）；`npm run typecheck` = **0 error**。
+- **反向验证**（每条先断言变异真的落盘再跑；跑完还原并核对文件逐字回到原样）：
+  - **⓪** Paeth 退化成 Sub ⇒ selftest **只 FAIL filter 4** ✅
+  - **T6-1** `usePtt` 构造处换回 `recorder()` ⇒ 只红 `pttLease` 源码断言 1 条 ✅（⚠ 第一版变异我写成 `recorderMUT()`，它匹配不到 `\brecorder\(\)`、红的其实是 `micLease()` 那句子断言——**变异要落在被验的那个字面量上**，重做后才算数）
+  - **T6-2** `TapTalkSession.start` 不设 `cap` ⇒ 只红「硬上限」1 条 ✅
+  - **T6-3** `stop()` 去掉 `endpoint.stop()` ⇒ **只红 1 条**（计划预期 2 条）。不是红错地方：`cancel()` 有**它自己那一处** `endpoint?.stop()`，cancel 用例的 `ep.stopped` 由 `cancel()` 决定、不由 `stop()` 决定 ⇒ 那条用例的判据面不含这个变异。
+  - **T6-4** `recycle()` 去掉 `handsFreeOff()` ⇒ 只红 recycle 1 条 ✅
+  - **T6-5** `notice` 分支挪到 `followup` 之后 ⇒ 只红 notice 1 条 ✅
+  - **T8-1** 排序改降序 ⇒ 只红第一条 ✅
+  - **T8-2** 缺省 2 改 0 ⇒ **红 2 条**（计划预期 1 条）。同样不是红错地方：第一条用例的 `{type:'weather'}` 没有 `display_priority`，**它排第几由缺省值决定**（缺省 0 时它会变成主卡）⇒ 那条用例的判据面本来就含缺省值。
+  - **T9-1** `push` 去掉去重 ⇒ **零红**。查明原因**不是判据面问题、是够不到**：计划给的夹具里重复项排在第 5 位，`MAX_CHIPS=4` 先把它挡了 ⇒ **去重那个分支没有任何用例走得到**。**补了第 5 条用例**（`category` 与 `intentChoice` 各出一个 `换一批`，共 2 条 chip、离上限还远），同一变异重跑 ⇒ 只红这条新用例 ✅
+  - **T9-2** `followUp` 挪到 `intentChoice` 之后（挪不是删——删掉量的是「有没有」不是「顺序」）⇒ 只红 `chips[0]` 那条 ✅
+  - **T10-1** `onSend` 改回「先抓帧再 send」⇒ **零红**（计划已预告：这是接线，单测层无区分）。补**对照变异** `markVision` 改成 no-op ⇒ 只红新用例 ✅ ⇒ 用例本身有效，缺的只有接线证据，只能来自真机。
+  - **T11-1** `onMetric` 去掉 `echo_dismissed → onEchoDismissed` 那行 ⇒ 只红 T11 用例 ✅
+  - **T11-2（附加②）** `S2S_LOCAL_HANDLED` 拿掉 `echo_dismissed` ⇒ 只红附加②用例 ✅
+- **真机取证**：⬜ **本批未取到**——收口时 `adb devices` 为空、`Get-PnpDevice` 在 OS 层也看不到 Android 设备（开工时 `check_android_env.ps1` 还是 `1 attached: 5d432b6d`，中途掉线）；tailnet 上手机在线（`100.78.231.58`）但 5555 未监听、`adb connect` 被拒。**设备回来后按下面的清单补，读数回填到本节**（未跑的一律不写 ✅）：
+  - T6 十项：轻点即说（免唤醒关）自动收尾 / 中途再点立刻收尾 / 15s 硬上限收「没听清」 / 免唤醒开时轻点 / **免唤醒开 + 按住说话仍能转写且之后仍能唤醒（§0 第 5 条的真机确认，B1 验收表第 6 条第二行）** / 上滑取消文案 2s + 记录无气泡 / 输入框有字时长按走原生选择 / 播报中轻点停播进收音 / 隐私栏「关闭本轮麦克风」后 `RKStorage` 的 `handsFree` 仍 `true`（D7）/ TalkBack 光球 label
+  - T7 两项：极光四帧亮度（`png_probe rows` 找 2dp 那一行）+ 壳底对比（附加①同场景前后）
+  - T8：「查英伟达股价和新闻」→ 主卡 +「还有 N 张 ›」展开
+  - T9：「附近有什么咖啡」→ 层里 chips → 点「换一批」出第二页
+  - T10：连拍里带 📷 的用户气泡帧 **早于** `looking` 白环 / 采集点；`logcat -s CameraService` 的 `connect` 时间戳晚于那一帧；同组连拍补 B1 出账⑧的 `looking` 白环静态取证
+  - T11：**带 APK 构建时间**（`dumpsys package com.xiaozhou.companion | grep lastUpdateTime`）与有无 AEC；无 AEC 的包应出提示，有 AEC 的包写「未触发（AEC 在场）」不写 ✅
+  - 附加③：a) 打断留痕灰字（先用「讲一个三百字的故事」把流式窗口拉到 30s+）b) 上滑取消用 `input motionevent DOWN/MOVE/UP` 三段式
 - **本批踩的坑**：
+  1. **计划的验收栏与计划自己给的实现全文自相矛盾**（`pttLease` 的 `not.toMatch(/\brecorder\(\)/)` vs `usePtt.ts` 头注里的 `recorder()`）。两边都照抄 = 一开工就红在注释上。**「计划给了全文」不等于「这份全文和它自己的断言一致」**——同族第二次（第 1 批 C1-A 是验收栏与原则栏矛盾）。
+  2. **变异要落在被验的那个字面量上**（T6-1）：我第一版写 `recorderMUT()`，红是红了，但红的是另一条子断言 ⇒ `\brecorder\(\)` 这半条判据那一趟根本没被验证。**「红了」不等于「你想验的那一条红了」。**
+  3. **反向验证零红时，先分清「判据面不含」与「用例够不到」**（T9-1）。这次是后者：夹具里的重复项排在第 5 位、被 `MAX_CHIPS` 先挡下 ⇒ 去重整句删掉四条用例一条不红。**判据面不含是设计如此，够不到是覆盖漏洞**——第 2 批坑⑤只写了前者，这一批补上后者：零红时要读夹具，看那条分支到底有没有机会执行。
+  4. **计划的反向验证条数预期可能两头都不准**（T6-3 少 1、T8-2 多 1），原因各不相同：前者是「另一个调用点自己也管着那件事」，后者是「那条用例的输入本来就依赖被变异的缺省值」。**照旧：先问判据面，再问是不是自己写错了。**
+  5. **前两批所有颜色类读数的错误面比记的还大**：不是「只有 filter=0 的行碰巧对」，而是真实 screencap 里**一行 filter=0 都没有**（直方图 1/2/3/4 = 344/669/45/1462）⇒ 那些读数**没有一行是对的**。第 2 批坑⑨对症状的定性对，对规模的定性偏轻。
+  6. **`git status` 干净不等于「你的提交还在本地」**：开工第一条命令读到 `origin/main..HEAD = 0`，不是我推的、也不是我漏提交，是别人的 push 把我的一并带走了。**开工先念这一句的价值就在这——它答的是「谁的东西在里面」，不是「我有没有推」。**
 - **遗留 / 给第 4 批的话**：
+  - **⚠ 真机取证整批欠着**（见上面清单）。设备 `5d432b6d` 在本批中途掉线；第 4 批开工前先确认 `adb devices` 有它，**并且这批的真机项要补跑**——它是 T6 与 T10 唯一的接线证据来源（两条的零红已经说明这一点）。
+  - **`Maestro CLI` 已不在本机**（T15 要用它跑 05/06/08/09）。装回来的两条路：① `curl -Ls "https://get.maestro.mobile.dev" | bash`（官方脚本，装到 `~/.maestro/bin`，Windows 下在 Git Bash 里跑并把该目录加进 PATH）；② 直接下 release zip（`https://github.com/mobile-dev-inc/maestro/releases`）解压后用绝对路径调 `maestro.bat`。**替代路径**：`mobile/e2e/*.yaml` 的断言绝大多数是「文本可见 / 可点」，可以 `adb shell uiautomator dump` + 文本 grep 手工走——但第 2 批坑已记：**常驻动画屏上 `uiautomator dump` 出 0 节点**，所以替代路径只对 05/06 这类静止屏有效，08（键盘）09（画廊）仍需 Maestro。装 CLI 需要泓舟单独授权。
+  - **barge-in 那一路的回声仍看不见**（`voiceLoop.mjs:476 _countSelfTrigger` 没有 metric）——共享文件不改，记给 hmi 侧加 `onMetric('echo_suspected')`。T11 只覆盖续问窗那一路。
+  - **AEC 没覆盖 S2S 采集路径**（第 2 批遗留）仍在。附加②只堵「FSM 判出来的回声」——判不出来的那些照旧会被 S2S 转写成用户话。B3/B4 或 hmi 侧。
+  - **`EdgeGlow` 零 jest**（计划明写「纯动效、无判据」）：`active` 的那个表达式住在 `VoiceSheet.tsx` 的 JSX 里，没有任何用例钉它。要钉的最小改法是把它提成 `core/presence` 的一个纯函数——B4 视觉批顺手。
+  - **设备当前状态（本批一字未改）**：`voicePipeline=classic`（第 2 批为测三段式切的）；`s2sConsentAt=1788085468272` 保留；`quickCommands` 已还原；TalkBack 已装但已关。**要测 S2S 就在设置里切回端到端**（同意过了不会再弹）。本批**没有连上过设备**，所以也没有任何设备设置被改动。
+  - 本批**没有动** `AGENTS.md`，**没有 push**；`git log --oneline origin/main..HEAD` = **7**（附加⓪ + T6–T11），只报数。
 
 ### 6.4 第 4 批「播报·回执·轨迹 + 闸」（T12–T15）
 
