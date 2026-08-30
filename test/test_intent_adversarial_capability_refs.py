@@ -27,7 +27,9 @@ _MISSING = object()
 
 def _agent(agent_id: str, *intents: str):
     caps = [SimpleNamespace(intent=intent, slots=[], description="", examples=[],
-                            heavy=False, require_confirm=False, verification=None)
+                            heavy=False, require_confirm=False,
+                            response_only=(intent == "chitchat.talk"),
+                            verification=None)
             for intent in intents]
     manifest = SimpleNamespace(
         agent_id=agent_id, capabilities=caps, latency_budget_ms=5000,
