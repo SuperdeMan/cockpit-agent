@@ -7,7 +7,13 @@ import type { SessionCore } from '@/core/session/store'
 import { settingsStore } from '@/core/settings/store'
 import { speechController } from '@/core/voice/speech'
 import { isVisionCapturing, subscribeVisionCapturing } from '@/core/vision/frame'
-import { derivePresence, type Degradation, type PresenceSnapshot } from '@/core/presence/presence'
+import {
+  derivePresence,
+  ERROR_SHOW_MS,
+  RECONNECTING_GRACE_MS,
+  type Degradation,
+  type PresenceSnapshot,
+} from '@/core/presence/presence'
 
 import type { HandsFreeUi } from './useHandsFree'
 import type { PttHandle } from './usePtt'
@@ -52,13 +58,6 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
   // 最近一条错误（4s 短显）
   const lastError = useMemo(() => pickLastError(messages, (k) => seen.firstSeen(k)), [messages])
 
-  // 秒级时钟：只驱动依赖 now 的分支
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), TICK_MS)
-    return () => clearInterval(t)
-  }, [])
-
   // 在飞轮 + 过程区
   const active = [...messages].reverse().find((m) => m.role === 'assistant' && (m.pending || m.streaming || m.processActive))
   const processLabel = active?.process?.length ? active.process[active.process.length - 1].label : ''
@@ -70,6 +69,26 @@ export function usePresence({ core, hf, ptt, user }: UsePresenceOpts): PresenceS
   if (hf.bargeInDisabled) degradations.push({ kind: 'audio_echo_degraded', reason: hf.bargeInDisabled })
   if (hf.pipelineDegraded) degradations.push({ kind: 'service_degraded', text: hf.pipelineDegraded })
   if (uncertainIds.length) degradations.push({ kind: 'transport_unknown', messageIds: uncertainIds })
+
+  // ── 秒级时钟 ──
+  // `now` **每次渲染都取当前值**，tick 只负责「让它重渲一次」——把 now 存进 state 会在停表
+  // 期间留下一个陈旧的读数，重新起表的**那一帧**倒计时就是错的。
+  //
+  // 而这块表**只在真的有人依赖 now 时才走**：无条件常开时真机实测（对话屏静置 10s、零交互、
+  // 零消息）ChatBody 重渲 11 次、FlashList 可见气泡重渲 88 次——每秒把整列表重画一遍，
+  // 而屏上什么都没变。下面四条是 `derivePresence` 里**全部**读 now 的分支，都不成立就停表。
+  const now = Date.now()
+  const [, bumpTick] = useState(0)
+  const needsTick =
+    pendingOps.length > 0 || // 确认卡倒计时（每秒要变）
+    !!active?.processActive || // 长任务 8s 门槛
+    (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
+    (!!lastError && now - lastError.at < ERROR_SHOW_MS) // error 胶囊 4s 短显
+  useEffect(() => {
+    if (!needsTick) return
+    const t = setInterval(() => bumpTick((n) => n + 1), TICK_MS)
+    return () => clearInterval(t)
+  }, [needsTick])
 
   // pendingOps 的摘要：带该 operationId 的助手气泡原话
   const ops = pendingOps.map((op) => ({
