@@ -178,8 +178,9 @@ models/         本地推理模型（gitignore，scripts/fetch-*.* 拉取或本�
    忌口/偏好，§9.37）——**声明了才收得到**，没有消费方就别声明。
    - **确定性路由（R2.1）**：弱 LLM 会漏/误路由该 Agent 的重域意图时，用 `route_hints` 声明兜底（`pattern`/`intent`/`policy`=`replace`\|`append`/`priority`/`guard`/`slots`/`scope`；`slots` 值支持 `$text`=原话、`$1..`=捕获组）——编排核心 `orchestrator/cloud/route_hints.py::RouteHintEngine` 通用消费，**取代**过去在 `planning.py` 加正则兜底的做法。**`scope` 决定 pattern 锚在哪一层**：缺省整句；`clause` 按 `runtime/clause_split.py` 逐分句试，用于「A + 任意后续」这类复合句里保住其中一个诉求（C6）。⚠ 三条配套语义别记错：`$text` 跟着 scope 走（clause 档=命中的那一分句）、**`guard` 不跟着走**（永远整句求值）、`append` 去重在 clause 档按**值**判（同 intent 的另一个诉求不算覆盖）——契约 `docs/conventions.md` §9.36。
    - **重域能力**（需开思考+过程区，如多轮检索/LLM 重生成）在该 capability 标 `heavy: true`（编排 `progress.is_complex` 据此判定）。
+   - **整句型能力**（消费整句原话、一步把这句话里的事全办完，如 `reminder.create_batch`）标 `whole_utterance: true`（proto `Capability` 字段 9，2026-08-30）。编排据此保证**同一份计划里最多一步**——多的那些做的是同一件事。⚠ 它挡的不是「两步做了同一件事」（那是执行器指纹防抖的事，而指纹含槽、planner 会给两步发明不同槽名所以不命中），是「**这个能力按自己的声明就只该有一步**」（契约 §9.38 C）。
    - 出**主卡**的 Agent 在 `ui_card` 加 `display_priority`（`0`=主卡多意图下独显 / `1`=交互候选 / 缺省 `2`=普通信息卡），聚合器据此择优。
-   - **会追问自由文本槽的 Agent**（返回 `NEED_SLOT` + `missing_slots`）在该 capability 加 `slot_shapes`（`槽位名 -> 形状名`，C3）。补槽续接的默认是「**槽值必须长得像这个槽**」，声明了形状，用户下一句长得不像时编排判换题、不再把整句塞进槽里；不声明则行为与此前逐字一致。形状名的值域是 `orchestrator/cloud/slot_shape.py::SHAPES`（当前 `order_id` / `item_name`），拼错由 `tests/test_slot_shape.py` 当场报红。**别在 Agent 里自己判「这句是不是答案」**——那是编排的事，判据抄两份就会给同一句话两个答案（契约 §9.35）。
+   - **会追问自由文本槽的 Agent**（返回 `NEED_SLOT` + `missing_slots`）在该 capability 加 `slot_shapes`（`槽位名 -> 形状名`，C3）。补槽续接的默认是「**槽值必须长得像这个槽**」，声明了形状，用户下一句长得不像时编排判换题、不再把整句塞进槽里；不声明则行为与此前逐字一致。形状名的值域是 `orchestrator/cloud/slot_shape.py::SHAPES`（当前 `order_id` / `item_name` / `ordinal`），拼错由 `tests/test_slot_shape.py` 当场报红。⚠ **有界值域槽一定要声明**（`ordinal` 就是为它加的，2026-08-30）：`index` 这类槽消费方只认「数字 / 第N条」，不声明时 wait_slot 会把用户下一句**整句塞进来**，真栈长会话连撞三轮、还把下一条挂起养大到吞掉一句「取消导航」。**别在 Agent 里自己判「这句是不是答案」**——那是编排的事，判据抄两份就会给同一句话两个答案（契约 §9.35）。
 3. 继承 `agents/_sdk` 的 `BaseAgent` 实现业务逻辑，**不要重新实现 gRPC 契约**。
 4. 写 `tests/` 契约测试 + 黄金用例。
 5. 在 `deploy/docker-compose.yaml` 注册服务。

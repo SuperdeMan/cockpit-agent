@@ -102,21 +102,31 @@ cloud deploy 只接受干净、已提交、main 可达的 SHA，不自动 commit
 > **CI annotation 每 step 只保留 10 条**——红灯数到 9~10 就假定被截断，
 > 改用 Linux 容器（`git bundle --all` + `python:3.12` + 非 root + `--init`）取全集。
 
-**当前部署形态（2026-08-29 二次更新）**：`dev-stack.local` = **`target=cloud`**。
-云端 release **`538335f2cd958be0159ce47cad818d051bce68d1`**（**QA 轮剩余项收尾批**）。
-`status` = ok、**5/5 healthy**、零 warning。**回滚点 `e15ac1e87c5722d345904b75c51380cc6c70465c`。**
+**当前部署形态（2026-08-30 更新）**：`dev-stack.local` = **`target=cloud`**。
+云端 release **`343934bab66c23f83575cee998eb6f64a9f45f3e`**（**QA 轮全量收尾批**）。
+`status` = ok、**5/5 healthy**、零 warning。**回滚点 `538335f2cd958be0159ce47cad818d051bce68d1`。**
+同日连发四跳：`7da0d1b` → `61160a4` → `c3ec022` → `343934b`
+（后三跳是 I-024 的三层，**每层部署后真栈仍红，第三层才通**）。
 
-⚠ **这一版里装着三条线的东西，别当成一批**：本批（云侧编排 + reminder/nearby +
-proto 字段 9）／M4-R2 线的**平台 AEC 回声环收口**（`96a6830` Oboe
-`setInputPreset(VoiceCommunication)` + `ba3337b` 判据换公共子序列，**含 `hmi/src/voiceLoop.mjs`，
-是会随发版上线的**）／B1 线的 `mobile/` 前 8 个提交（**纯 JS、不进后端镜像**）。
-`plan` 的 `blocking_changes` 为空、受控路径一处未动，所以本次**没有**命中 CI/CD 摘要闸。
+⚠ **HEAD 领先 release 两个提交，都是文档/探针**：`4a5af78`（迷你集定性 + SF4 尺子补词）
+与 `5c21e21`（长会话补跑读数）。**引用「云上跑的是什么」时以 `343934b` 为准**，别按 HEAD 读；
+跑长会话必须显式传 `--expected-sha 343934b…`（默认取 HEAD 会被前置校验拦，
+那个默认值防的正是这件事）。
 
-⚠ **`git push` 不是我推的，但已经发生了**：本地 main 由并行线在推自己那批时**连带推送**
-（`git push` 的粒度是**分支**不是提交），我的三个提交与 B1 前 8 个都已在 origin，
-而 B1 那条线**明确要求过不要推**。事实与逐条 SHA 见 §4.1 本批段末。
+⚠ **`git push` 已推**（2026-08-30，泓舟当轮指示）：`b673750..4a5af78` 共 18 个提交，
+`ahead = 0`。**推之前把 `origin/main..HEAD` 逐条列给泓舟看过**——这是昨天那次
+「推 main 连带推走别人的东西」沉淀下来的可执行防线：机制改不了（`git push` 的粒度
+是**分支**不是提交），能做的是让「这条命令会带走谁的东西」变成一张摆在面前的清单，
+而不是任何人需要记住的事。**它当场自证了价值**：我上一条报的「13 个」已过期，
+真实是 11，列表一摆就露了。
 
-以下是上一档的原始记录：
+以下是上一档（`538335f`）的原始记录：
+云端 release **`538335f2cd958be0159ce47cad818d051bce68d1`**（QA 轮剩余项收尾批）。
+`status` = ok、5/5 healthy、零 warning。回滚点 `e15ac1e`。
+⚠ 那一版里装着三条线的东西：本批 ／ M4-R2 线的平台 AEC 回声环收口
+（含 `hmi/src/voiceLoop.mjs`，**会随发版上线**）／ B1 线的 `mobile/`（纯 JS、不进后端镜像）。
+
+以下是更早一档的原始记录：
 云端 release **`e15ac1e87c5722d345904b75c51380cc6c70465c`**（QA 余项收尾批）。
 `status` = ok、**5/5 healthy**、零 warning。**回滚点 `ed53f8f55ba854d4a7a4c656cc049c7d24136831`。**
 在此之前同日连发：`7ac2176` → `6a65e7a`「**MiniMax QA 修复批六批全部上线**」
