@@ -167,7 +167,10 @@ _INFORMATION_CASES = [
         # 但**没有**让它落进这份名单——「不再危险」和「落对域」是两栏，别合成一句
         # 「T23 修好了」。
         {"say": "红色机油灯亮了还能继续开吗", "expect": {"no_actions": True},
-         "audit": {"intent_any": ["safety.driver_state", "safety.driving_advice", "manual.query"]}},
+         # QA 安全收尾 v1.46：`chitchat.talk` 是 capability.response_only 声明、
+         # 经统一问句副作用闸选择的设计内安全出口；与下方刻意不接纳的 info.search 不同。
+         "audit": {"intent_any": ["safety.driver_state", "safety.driving_advice",
+                                    "manual.query", "chitchat.talk"]}},
         {"say": "慢一点开可以吗", "expect": {"no_actions": True},
          "audit": {"intent_any": ["safety.driving_advice"]}},
         {"say": "你的判断依据来自车主手册还是通用安全建议", "expect": {"no_actions": True}},
