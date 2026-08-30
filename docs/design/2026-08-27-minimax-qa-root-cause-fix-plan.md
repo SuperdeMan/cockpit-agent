@@ -1575,10 +1575,12 @@ normal 共用，零步只接受 unconfirmed talk，否则 fail closed。生产�
 SHA256=`7f47f1c048f8d101445648f275e8401d998876f814d0c0732571caf5f1aac06a`。
 这些 artifact 是 local-only，不能当可移植 commit 证据。
 
-**warning 边界**：13 条 `UnaryUnaryCall._invoke was never awaited` 已定性为 pre-existing trip
-测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；`15ff116..HEAD` 相关 diff
-为空。生产持久 loop 未证实受影响，但这也**不能证明生产安全**；单列 test-only 债务，不在本批
-顺手修。
+**warning 边界**：全量共 **13 warnings**（StarletteDeprecation×8、WordPiece Deprecation×2、
+gRPC `UnaryUnaryCall._invoke was never awaited` Runtime×1、audioop Deprecation×1、regex Future×1）。
+其中只有这 1 条 gRPC RuntimeWarning 已稳定定性为 pre-existing trip test-only fixture 债务：
+fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel，测试绑定代码范围
+`15ff116..dfad687` 相关 diff 为空。其余 12 条按原始类别保留，本轮未逐条消除。生产持久 loop
+未证实受影响，但这也**不能证明生产安全**；该 gRPC warning 单列债务，不在本批顺手修。
 
 **尚未完成**：push 授权；deploy 摘要与 `--apply` 授权；新 SHA 的 `status` + 统一
 `verify`/remote-safe；干净会话 3/3；原 `information` persona；零商户草稿、零挂起操作、

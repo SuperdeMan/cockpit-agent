@@ -215,10 +215,11 @@ confirmed cloud capability；旧实现会在拦截后重新走 registry，把 `l
 
 1. RED 用例在旧实现上按预期失败；
 2. 最小实现后，问句守卫、fallback 权威字段、focused/normal 统一终结器、既有误伤对照与
-   相邻规划用例全绿；
-3. Cloud Planner 全族、四道离线门禁与全量 pytest 全绿，且读数属于最后一次改动后的 HEAD；
-4. 精确部署 SHA 的 `status`/`verify` 通过；
-5. 干净会话与原长会话双层验证里，安全问句不再进入任何需确认的写能力，用户拿到分级安全建议，且商户草稿、挂起操作和探针副作用全部归零；
+   相邻规划用例通过；Cloud Planner 全族、四道离线门禁与全量 pytest 均 rc=0，且读数绑定
+   明确的代码与契约 SHA；
+3. 精确部署 SHA 的 `status`/`verify` 通过；
+4. 干净会话与原长会话双层验证里，安全问句不再进入任何需确认的写能力，用户拿到分级安全建议；
+5. 商户草稿、挂起操作、探针副作用与清理失败全部归零；
 6. `AGENTS.md` 不再把“修复批闭合”写成“QA 全绿”。
 
 ## 9. 核心实现记录（本地验证完成，待真栈）
@@ -283,23 +284,25 @@ manifest 与其列出的日志均在 `.artifacts/`，是 **ignored/local-only** 
 
 ### 10.3 warning 定性
 
-13 条 `UnaryUnaryCall._invoke was never awaited` 已由
-`warning-investigation-utf8.log` 固化（SHA256=
-`a1a95fd4c9bee3ce7814482d5430f8e6d87414694274416b61331a2f84cc6067`）：trip 测试 fixture
-跨多个 `asyncio.run` 复用 loop-affine gRPC channel；`15ff116..HEAD` 相关 diff 为空。
-当前证据支持“pre-existing、test-only 独立债务”，没有证实生产持久 loop 受影响；反过来也
-**不能用这份定性声称生产安全已证明**。修 test fixture 另立，不归本安全闸生产回归。
+全量共 **13 warnings**：StarletteDeprecation×8、WordPiece Deprecation×2、gRPC
+`UnaryUnaryCall._invoke was never awaited` Runtime×1、audioop Deprecation×1、regex Future×1。
+其中只有这 1 条 gRPC RuntimeWarning 已由 `warning-investigation-utf8.log` 稳定定性并固化
+（SHA256=`a1a95fd4c9bee3ce7814482d5430f8e6d87414694274416b61331a2f84cc6067`）：
+trip 测试 fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel；测试绑定代码范围
+`15ff116..dfad687` 相关 diff 为空。其余 12 条按原始类别保留，本轮未逐条消除。
+当前证据支持该 gRPC warning 是“pre-existing、test-only 独立债务”，没有证实生产持久 loop
+受影响；反过来也**不能用这份定性声称生产安全已证明**。修 test fixture 另立，不归本安全闸生产回归。
 
 ### 10.4 完成判据状态
 
 - 判据 **1–2 已满足**：旧实现 RED、三层最小实现、误伤对照与反向验证均有本地证据。
-- 判据 **3–6 仍保持 pending**：3 的 Cloud Planner/门禁/全量读数已经取得，但包含上述
-  test-only warnings，且只绑定 ignored/local 候选证据；4–5 所需 push、deploy、精确新 SHA
-  `status` + 统一 `verify`/remote-safe、干净会话 3/3、原 `information` persona 与零商户草稿/
-  零挂起/零探针副作用清理核验均未做；6 要等最终状态文档不再混淆“开发批闭合”与“QA 全绿”。
+- 判据 **3–5 仍保持 pending**：尚未 push/deploy，未取得精确新 SHA 的 `status` + 统一
+  `verify`/remote-safe；未跑干净会话 3/3 与原 `information` persona；未核验零商户草稿、
+  零挂起、零探针副作用与清理失败为空。
+- 判据 **6 已满足**：`AGENTS.md` 已明确分开“既定开发批闭合”与“QA 验收未全绿”。
 
 当前云端只读复核仍是 `343934bab66c23f83575cee998eb6f64a9f45f3e`：`status` ok、
-5/5 healthy、零 warning；本地候选不在其中。原根工作树取得的 ignored/local-only 状态 artifact
+5/5 healthy、零 warning；本地候选不在其中。本轮只读状态 artifact
 `cloud-status-predeploy-343934-utf8.log` SHA256=
 `890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。
 

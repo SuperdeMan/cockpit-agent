@@ -8007,10 +8007,13 @@ SHA256=`7f47f1c048f8d101445648f275e8401d998876f814d0c0732571caf5f1aac06a`。
 
 ### §85.4 warning 定性
 
-13 条 `UnaryUnaryCall._invoke was never awaited` 已稳定定性：pre-existing trip 测试 fixture
-跨多个 `asyncio.run` 复用 loop-affine gRPC channel；`15ff116..HEAD` 相关 diff 为空。
-`warning-investigation-utf8.log` 已被 manifest 固化。生产使用持久 loop，未证实生产受影响；
-这同样**不能证明生产安全**。它是 test-only 独立债务，可单独修 fixture，不归本安全闸生产回归。
+全量共 **13 warnings**：StarletteDeprecation×8、WordPiece Deprecation×2、gRPC
+`UnaryUnaryCall._invoke was never awaited` Runtime×1、audioop Deprecation×1、regex Future×1。
+其中只有这 1 条 gRPC RuntimeWarning 已稳定定性为 pre-existing trip test-only fixture 债务：
+fixture 跨多个 `asyncio.run` 复用 loop-affine gRPC channel，测试绑定代码范围
+`15ff116..dfad687` 相关 diff 为空；`warning-investigation-utf8.log` 已被 manifest 固化。
+其余 12 条按原始类别保留，本轮未逐条消除。生产使用持久 loop，未证实生产受影响；这同样
+**不能证明生产安全**。该 gRPC warning 可单独修 fixture，不归本安全闸生产回归。
 
 ### §85.5 尚未完成
 
@@ -8022,5 +8025,5 @@ SHA256=`7f47f1c048f8d101445648f275e8401d998876f814d0c0732571caf5f1aac06a`。
 
 因此本节只记**本地验证态**，不称云端已修、QA 全绿或该候选已经 `verified`。当前云端仍是
 `343934bab66c23f83575cee998eb6f64a9f45f3e`；本轮只读 `status` 为 ok、5/5 healthy、零 warning。
-原根工作树取得的 ignored/local-only `cloud-status-predeploy-343934-utf8.log` SHA256=
+本轮只读状态 artifact `cloud-status-predeploy-343934-utf8.log`（ignored/local-only）SHA256=
 `890ccdcffc3fc9d6f6d15ab1617fd6c2f4df7802448306d824d15a7f3ab9e761`。
