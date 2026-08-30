@@ -75,6 +75,8 @@ export interface SessionState {
    *  的 `source:'s2s' + transcriptKind:'model_inferred'`——只有 S2S 轮是模型推断的，一个集合够用）。
    *  逃逸轮回到主链后从这里摘掉——它按普通轮渲染 */
   s2sIds: string[]
+  /** 带过视觉抓帧的用户气泡（📷 角标）；帧本身不落端、不进记录 */
+  visionIds: string[]
 }
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
@@ -162,6 +164,7 @@ export class SessionCore {
       draftUserId: null,
       interruptedIds: [],
       s2sIds: [],
+      visionIds: [],
     }))
   }
 
@@ -320,6 +323,17 @@ export class SessionCore {
   }
 
   // ── S2S 自答轮（方案 §5.2.2）：只写记录，不进 requestRouting——它没有 request_id ──
+
+  /** 先落气泡（方案 §5.5 / HMI __bubbled 同款）：用户那句话立刻上屏，请求稍后用 send({ bubbleId }) 发 */
+  beginUserBubble(text: string): string {
+    const id = uid()
+    this.appendMessage({ id, role: 'user', text })
+    return id
+  }
+
+  markVision(id: string): void {
+    this.store.setState((s) => ({ visionIds: s.visionIds.includes(id) ? s.visionIds : [...s.visionIds, id] }))
+  }
 
   /** 已过 FSM 本地治理的用户话：有草稿就转正为它，没有就建；进 s2sIds，等归属（自答 / 逃逸） */
   s2sUserUtterance(text: string): void {

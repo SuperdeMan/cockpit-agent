@@ -40,6 +40,8 @@ export interface VoiceSheetProps {
   s2sNotice: boolean
   /** 上一轮 final 记下的候选集（chips 的第二个来源；判据在 core/session/followUps.ts） */
   candidates: CandidateState
+  /** 带过视觉抓帧的用户气泡（层里的转写前缀 📷；方案 §5.5，不做预览） */
+  visionIds: readonly string[]
   /** 下拉 / 点「收起」/ 点暗区 */
   onCollapse(): void
   /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
@@ -148,6 +150,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                     textAlign: 'center',
                   }}
                 >
+                  {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
                   {user.text}
                   {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} /> : null}
                 </Text>

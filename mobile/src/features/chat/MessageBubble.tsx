@@ -67,11 +67,13 @@ export interface BubbleProps {
   interrupted?: boolean
   /** 端到端自答轮：角标「端到端」，长按看「转写由语音模型生成」（方案 §5.2.2，Q7） */
   s2s?: boolean
+  /** 带过视觉抓帧：📷 角标（方案 §5.5）；不做预览 */
+  vision?: boolean
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   if (msg.role === 'user') {
@@ -100,6 +102,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
           }}
         >
           {s2s ? <Text style={{ color: p.teal, fontSize: p.font(10), marginBottom: 2 }}>端到端</Text> : null}
+          {vision ? <Text style={{ color: p.fg3, fontSize: p.font(10), marginBottom: 2 }}>📷 看图</Text> : null}
           <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>
             {msg.text}
             {draft ? <StreamCursor h={p.font(15)} /> : null}

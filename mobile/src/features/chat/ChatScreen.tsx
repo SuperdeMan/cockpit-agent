@@ -196,7 +196,7 @@ function ChatBody({
 }) {
   const { core } = wired
   const {
-    messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds, s2sIds,
+    messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds,
   } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
@@ -206,15 +206,17 @@ function ChatBody({
   //  · 已带 vision_frame_id 的重发不再抓（`visionDone`）
   //  · **判据用共享的 needsVisionFrame**——采集面就是隐私面，判据分叉等于两个端的
   //    隐私边界不一样，而没有任何东西会红
-  //  ⚠ 已知代价：抓帧要等相机冷启动（真机几百毫秒），这段时间用户自己那条气泡还没上屏。
-  //    HMI 靠 `__bubbled` 先上屏再补发，App 侧的 SessionCore 没有那个入口 ⇒ 记为 M4 残留。
   const onSend = useCallback(
     (text: string, metaExtra?: Record<string, string>, opts?: SendOpts) => {
       const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
       if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
         activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
+        // 先落气泡（方案 §5.5）：用户那句话**立刻**上屏带 📷，vision_frame_id 迟到再补进 meta——
+        // 相机冷启动几百毫秒，这段时间用户自己的话不该还没出现。草稿 / S2S 转正的气泡直接复用
+        const bubbleId = opts?.bubbleId ?? core.beginUserBubble(text)
+        core.markVision(bubbleId)
         void captureVisionFrame(cfg.audioUrl).then((fid) =>
-          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }, opts),
+          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }, { ...(opts || {}), bubbleId }),
         )
         return
       }
@@ -390,7 +392,7 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -402,6 +404,7 @@ function ChatBody({
                 uncertain={uncertainIds.includes(item.id)}
                 draft={item.id === draftUserId}
                 interrupted={interruptedIds.includes(item.id)}
+                vision={visionIds.includes(item.id)}
                 s2s={s2sIds.includes(item.id)}
                 onConfirm={onConfirm}
                 onSend={onSend}
@@ -420,6 +423,7 @@ function ChatBody({
           containerHeight={listHeight}
           draftUserId={draftUserId}
           interruptedIds={interruptedIds}
+          visionIds={visionIds}
           s2sNotice={s2sNotice}
           candidates={core.candidates}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}

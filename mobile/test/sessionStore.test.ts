@@ -759,3 +759,18 @@ describe('UX v2 B2-5：S2S 自答轮沉淀（方案 §5.2.2）', () => {
     core.dispose()
   })
 })
+
+describe('UX v2 B2-10：视觉先落气泡（方案 §5.5）', () => {
+  test('beginUserBubble 立刻上屏并返回 id；markVision 记 visionIds；随后 send({bubbleId}) 复用、meta 带 vision_frame_id', () => {
+    const { transport, core } = newCore()
+    const id = core.beginUserBubble('这是什么')
+    core.markVision(id)
+    expect(msgs(core)).toHaveLength(1)
+    expect(core.store.getState().visionIds).toEqual([id])
+    expect(transport.sent).toHaveLength(0) // 还没发：相机在冷启动
+    core.send('这是什么', { vision_frame_id: 'f1' }, { source: 'text', bubbleId: id })
+    expect(msgs(core).filter((m) => m.role === 'user')).toHaveLength(1)
+    expect(transport.lastUserFrame().meta.vision_frame_id).toBe('f1')
+    core.dispose()
+  })
+})
