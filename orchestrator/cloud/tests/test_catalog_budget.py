@@ -26,6 +26,9 @@ import orchestrator.cloud.context as ctxmod
 from orchestrator.cloud.context import WorkingSet
 
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_TEST_DIR = os.path.join(_ROOT, "test")
+if _TEST_DIR not in sys.path:
+    sys.path.insert(0, _TEST_DIR)
 # 既非 core、又没声明 route_hints 的 agent——预算不够时只有它们该被裁
 #
 # 2026-07-30 `nearby` 加入本集合：它的两条 route_hints 已由数据退役（跨两档全覆盖双臂裸跑），
