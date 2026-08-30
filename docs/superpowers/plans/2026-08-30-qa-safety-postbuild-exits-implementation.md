@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Close the replan, escalate, and fallback post-build paths so a non-directive question cannot dispatch an edge write or a manifest-confirmed cloud capability after the primary Planner guard has run.
+**Goal:** Close post-build safety exits with a capability-level `response_only` authority so a non-directive question cannot regain an edge write or a manifest-confirmed cloud action through fallback, executor results, replan, or escalate.
 
-**Architecture:** Add a response-only operation contract beside the existing read/write operation contract, then extract one declaration-backed step-filter primitive from the existing question side-effect guard and call it immediately before every newly produced plan can dispatch: `PlanBuilder.build()`, `LoopController` replan reception, `PlannerEngine._run_escalated()`, and fallback capability selection. Each receiver uses server-owned original text (`text`, `user_text`, or `ctx.raw_text`), never an LLM goal or Agent reason; a blocked replan terminates normally, while a blocked escalate executes only a validated, unconfirmed response-only fallback when available and otherwise fails closed.
+**Architecture:** `Capability.response_only` is a server-owned manifest declaration appended to the Agent proto; `PlanBuilder._validated_steps()` alone copies it to `Step`, and LLM wire fields are ignored. Fallback scans declarations rather than intent suffixes, while `DagExecutor._enforce_response_only()` fail-closes direct actions/pending results before confirm and verification. D0 and T2 keep speech streaming, but both feed response-only action/final events through the same executor helper: action events are dropped before `yield`, a violation synthesizes a terminal `FAILED` and forbids unary fallback, and action-free finals remain streaming. `_escalate` remains a control-plane handoff for Task 3's separately guarded receiver.
 
-**Tech Stack:** Python 3.12, dataclasses, asyncio, pytest, existing Planner/Loop/Engine contracts, PowerShell, Markdown architecture and evidence records.
+**Tech Stack:** Protocol Buffers + buf, ignored Python/Go generated bindings, YAML manifests, Python 3.12 dataclasses/asyncio, pytest, PowerShell, Markdown architecture and evidence records.
 
-> **Execution boundary:** Work only in `D:\Personal\AI\Claude Code\产品\car-agent-qa-safety-guard` until local implementation and review are complete. Local source, test, document, ignored artifact, and local commit changes are in scope. Do not alter `.env`, `dev-stack.local`, schemas, CI/CD, secrets, merchant data, or production state. `git push`, main-worktree integration, deploy `--apply`, remote-safe verification, long-session probes, and any live or mutating cleanup each stop at the explicit authorization checkpoints in Task 7.
+> **Execution boundary:** Work only in `D:\Personal\AI\Claude Code\产品\car-agent-qa-safety-guard` until local implementation and review are complete. `proto/cockpit/agent/v1/agent.proto`, ignored `gen/python`/`gen/go` outputs from `buf generate proto`, `agents/_sdk/manifest.py`, and `agents/chitchat/manifest.yaml` are explicitly in scope. Do not alter `.env`, `dev-stack.local`, `servers.yaml`, schemas, CI/CD, secrets, merchant data, or production state. The root worktree currently has an active mobile line; no root write is allowed before the later clean/idle/target-cloud/copy-hash checkpoint. `git push`, root integration, deploy `--apply`, remote-safe verification, long-session probes, and live/mutating cleanup remain separate authorization checkpoints.
 
 ---
 
@@ -16,13 +16,19 @@
 
 | File | Responsibility in this change |
 |---|---|
-| `runtime/intent_effect.py` | Zero-domain response-only operation contract (`talk`) and shared `is_response_intent` classifier |
-| `runtime/tests/test_intent_effect.py` | Exact-tail response classification, non-write relationship, and negative non-talk controls |
-| `orchestrator/cloud/planning.py` | One reusable question-side-effect filter; response-only fallback selection; blocked adaptive plan downgrade |
-| `orchestrator/cloud/tests/test_question_write_guard.py` | First-edge/later-talk, confirmed talk, cloud non-talk rejection, and simple-complexity contracts |
-| `orchestrator/cloud/loop.py` | Guard `ReplanDecision.steps` with server-owned `user_text` before stream/executor dispatch |
-| `orchestrator/cloud/tests/test_loop.py` | Edge/confirmed/read/directive/mixed replan cases, zero dispatch, normal final, and observation preservation |
-| `orchestrator/cloud/engine.py` | Guard the validated escalate mini-plan with `ctx.raw_text`, then execute only safe response fallback or fail closed |
+| `proto/cockpit/agent/v1/agent.proto` | Append `Capability.response_only = 10`; missing declarations remain proto-default `false` |
+| `gen/python/cockpit/agent/v1/agent_pb2.py` / `gen/go/cockpit/agent/v1/agent.pb.go` | Ignored bindings regenerated by `buf generate proto`; inspect/hash, never hand-edit or force-add |
+| `agents/_sdk/manifest.py` / `agents/chitchat/manifest.yaml` | Load the boolean with default false; declare only the real `chitchat.talk` capability true |
+| `agents/_sdk/tests/test_manifest_response_only.py` | Real-loader/default behavior without import-dependent RED |
+| `orchestrator/cloud/models.py` | Add `Step.response_only: bool = False`; legacy restored state remains false |
+| `orchestrator/cloud/planning.py` | Manifest-only Step assembly, reusable question filter, declaration-backed fallback scan, adaptive downgrade |
+| `orchestrator/cloud/executor.py` | Central direct-output contract after every dispatch/retry and before confirm/verify |
+| `orchestrator/cloud/engine.py` | Persist/restore the field; gate D0 response-only stream actions/finals before yield/fallback; later guard escalated mini-plans |
+| `orchestrator/cloud/loop.py` | Gate T2 response-only stream actions/finals before yield/fallback; later guard replan decisions with `user_text` |
+| `orchestrator/cloud/tests/test_question_write_guard.py` | Assembly/non-authority/fallback scan/complexity contracts |
+| `orchestrator/cloud/tests/test_capability_response_only.py` | Malicious action, pending status, config conflict, retry, failure, and `_escalate` boundary contracts |
+| `orchestrator/cloud/tests/test_engine_stream.py` | D0 action-before-final, action-without-final, and legal response-only streaming controls |
+| `orchestrator/cloud/tests/test_loop.py` | T2 action-before-final/action-without-final/legal streaming plus edge/confirmed/read/directive/mixed replan receiver coverage |
 | `orchestrator/cloud/tests/test_engine_escalate.py` | D0/normal unsafe redirects with safe user result; D0/read and directive positives; one-hop enforcement |
 | `docs/architecture/cockpit-agent-architecture.md` | Amend v1.45 §5.2.13 so “all exits” includes post-build receivers |
 | `docs/conventions.md` | Amend §9.40 with raw-text authority and replan/escalate/fallback behavior |
@@ -32,246 +38,551 @@
 | `docs/design/README.md` | Change the design index from local-complete to final-review-reopened, then to the proved local state |
 | `docs/agents-history.md` | Append §86 with RED/GREEN, reviews, fresh counts, warnings, and external authorization boundary |
 
-No proto, manifest, `servers.yaml`, `.env`, CI/CD, schema, payment, merchant workflow, or live-data change belongs in this implementation.
+`runtime/intent_effect.py` is deliberately not an authority here: operation suffixes are names, not a security contract. An undeclared `chitchat.talk` and undeclared `foo.talk` are both rejected, while an explicitly declared non-`talk` response capability is eligible. `servers.yaml`, `.env`, CI/CD, schema, payment, merchant workflow, and live-data changes remain out of scope.
 
-### Task 1: Define response-only intent semantics and make fallback select only safe responses
+### Task 1: Add the capability-level response-only authority, fallback scan, and direct-output gate
 
 **Files:**
-- Modify: `runtime/intent_effect.py`
-- Create: `runtime/tests/test_intent_effect.py`
+- Modify first (normative): `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md`
+- Modify: `proto/cockpit/agent/v1/agent.proto`
+- Regenerate, ignored/local-only: `gen/python/cockpit/agent/v1/agent_pb2.py`
+- Regenerate, ignored/local-only: `gen/go/cockpit/agent/v1/agent.pb.go`
+- Modify: `agents/_sdk/manifest.py`
+- Modify: `agents/chitchat/manifest.yaml`
+- Create: `agents/_sdk/tests/test_manifest_response_only.py`
+- Modify: `orchestrator/cloud/models.py`
+- Modify: `orchestrator/cloud/planning.py:2164-2310,2430-2500`
+- Modify: `orchestrator/cloud/engine.py:780-870,1954-1980`
+- Modify: `orchestrator/cloud/loop.py:190-270`
+- Modify: `orchestrator/cloud/executor.py:185-205,296-340,465-510`
+- Modify: `orchestrator/cloud/tests/test_planning.py`
 - Modify: `orchestrator/cloud/tests/test_question_write_guard.py`
-- Modify: `orchestrator/cloud/planning.py:36,2430-2502`
+- Create: `orchestrator/cloud/tests/test_capability_response_only.py`
+- Modify: `orchestrator/cloud/tests/test_engine_stream.py`
+- Modify: `orchestrator/cloud/tests/test_loop.py`
 
-- [ ] **Step 1: Add response-contract, fallback, and complexity RED tests**
+- [ ] **Step 1: Freeze the normative contract before production changes**
 
-Create `runtime/tests/test_intent_effect.py` with exact-tail and non-write contracts:
+Append this contract to the approved design and commit it before implementation:
+
+```markdown
+### Capability-level response-only authority
+
+- `Capability.response_only` is the only authority; intent suffixes and LLM wire fields have none.
+- Missing declarations and legacy pending records default to `false`.
+- `_validated_steps()` copies only the matched manifest value onto `Step`.
+- Direct output may be `OK` with zero actions, or a zero-action `FAILED` result may remain failed.
+  `NEED_CONFIRM`, `NEED_SLOT`, any direct action, and `response_only=true + require_confirm=true`
+  are contract violations.
+- Violations become `FAILED`, `actions=[]`, `error=response_only_contract_violation` before
+  the confirmation and outcome-verification gates; verifier retry applies the same helper again.
+- `_escalate` is a control-plane request, not a direct action. It remains in a valid zero-action
+  result, but only Task 3's original-text-guarded receiver may consume it.
+- D0/T2 keep legal speech streaming. For response-only steps an action event is dropped before
+  `yield`; it records a terminal violation, suppresses any later final, and forbids unary fallback.
+- `_talk_only_plan()` scans all fallback capabilities and requires `response_only=true`,
+  `require_confirm=false`, and survival of the same question-side-effect guard.
+```
+
+```powershell
+git diff --check
+git add docs/design/2026-08-30-qa-safety-confirmed-write-guard.md
+git diff --cached --check
+git commit -m "docs: define response-only capability authority"
+```
+
+Expected: one docs-only commit and no implementation/evidence claim.
+
+- [ ] **Step 2: Write collectible behavior RED tests using only current symbols**
+
+Create `agents/_sdk/tests/test_manifest_response_only.py` with the existing loader and `getattr`:
 
 ```python
+from pathlib import Path
+from agents._sdk.manifest import load_manifest
+
+_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _cap(path, intent):
+    manifest = load_manifest(str(_ROOT / path))
+    return next(c for c in manifest.capabilities if c.intent == intent)
+
+
+def test_real_chitchat_declares_response_only():
+    assert getattr(_cap("agents/chitchat/manifest.yaml", "chitchat.talk"),
+                   "response_only", False) is True
+
+
+def test_ordinary_capability_defaults_false():
+    assert getattr(_cap("agents/info/manifest.yaml", "info.search"),
+                   "response_only", False) is False
+```
+
+In `test_question_write_guard.py`, set attributes on today's `MagicMock` capability so RED does not
+need the future dataclass/proto field:
+
+```python
+def _response(agent, intent):
+    next(c for c in agent.manifest.capabilities if c.intent == intent).response_only = True
+    return agent
+
+
+def test_manifest_value_reaches_step_and_llm_cannot_forge_it():
+    declared = _response(MockAgent("answer", ["answer.render"]), "answer.render")
+    step = PlanBuilder._validated_steps([{
+        "id": "s1", "agent_id": "answer", "intent": "answer.render",
+        "slots": {}, "depends_on": [], "slot_refs": {}, "response_only": False,
+    }], {"answer": declared})[0]
+    assert getattr(step, "response_only", False) is True
+
+    plain = MockAgent("plain", ["plain.render"])
+    step = PlanBuilder._validated_steps([{
+        "id": "s1", "agent_id": "plain", "intent": "plain.render",
+        "slots": {}, "depends_on": [], "slot_refs": {}, "response_only": True,
+    }], {"plain": plain})[0]
+    assert getattr(step, "response_only", False) is False
+
+
+def test_fallback_rejects_undeclared_talk_names():
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+    for intent in ("chitchat.talk", "foo.talk"):
+        assert builder._talk_only_plan("机油灯亮了怎么办", [
+            MockAgent("chitchat", [intent])]) is None
+
+
+def test_fallback_allows_declared_non_talk_and_scans_past_ineligible_entries():
+    agent = MockAgent(
+        "chitchat", ["chitchat.talk", "chitchat.confirmed", "chitchat.answer"],
+        require_confirm=("chitchat.confirmed",))
+    _response(agent, "chitchat.confirmed")
+    _response(agent, "chitchat.answer")
+    plan = PlanBuilder(llm_fn=None, registry_fn=None)._talk_only_plan(
+        "机油灯亮了怎么办", [agent])
+    assert [s.intent for s in plan.steps] == ["chitchat.answer"]
+    assert getattr(plan.steps[0], "response_only", False) is True
+
+
+def test_declared_response_still_has_to_survive_the_question_side_effect_guard():
+    edge = _response(
+        MockAgent("chitchat", ["warning_light.close"],
+                  kind="edge_fast", deployment="edge"),
+        "warning_light.close",
+    )
+    assert PlanBuilder(llm_fn=None, registry_fn=None)._talk_only_plan(
+        "机油灯亮了怎么办", [edge]) is None
+
+
+def test_total_block_downgrades_adaptive_but_mixed_plan_does_not():
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+    fallback = _response(
+        MockAgent("chitchat", ["chitchat.answer"]), "chitchat.answer")
+    total = Plan(steps=[_step("warning_light.close")],
+                 complexity="adaptive", raw_text="机油灯亮了怎么办")
+    total = builder._apply_question_side_effect_guard(
+        total, total.raw_text, [fallback])
+    assert total.complexity == "simple"
+    assert [s.intent for s in total.steps] == ["chitchat.answer"]
+
+    mixed = Plan(steps=[
+        _step("warning_light.close"),
+        _step("manual.query", deployment="cloud", kind="agent"),
+    ], complexity="adaptive", raw_text="机油灯亮了怎么办")
+    mixed = builder._apply_question_side_effect_guard(mixed, mixed.raw_text, [fallback])
+    assert mixed.complexity == "adaptive"
+    assert [s.intent for s in mixed.steps] == ["manual.query"]
+```
+
+Add a pending-state RED without constructing the future field:
+
+```python
+def test_response_only_round_trip_and_legacy_default_false():
+    step = Step(id="s1", agent_id="chitchat", intent="chitchat.answer")
+    step.response_only = True
+    state = SessionState(
+        phase="wait_slot",
+        pending_plan=PlannerEngine._serialize_plan(Plan(steps=[step])),
+        pending_step_id="s1")
+    restored, _ = PlannerEngine._restore(None, state, inject_confirmed=False)
+    assert getattr(restored.steps[0], "response_only", False) is True
+
+    legacy = SessionState(
+        phase="wait_slot",
+        pending_plan={"steps": [{"id": "s1", "agent_id": "legacy",
+                                  "intent": "legacy.answer"}]},
+        pending_step_id="s1")
+    restored, _ = PlannerEngine._restore(None, legacy, inject_confirmed=False)
+    assert getattr(restored.steps[0], "response_only", False) is False
+```
+
+Create `test_capability_response_only.py` with existing `Step`/`StepResult`; use a dynamic
+`step.response_only = True`, then execute a real `DagExecutor` against scripted responses. Cover:
+
+```python
+import asyncio
+from types import SimpleNamespace
+
 import pytest
 
-from runtime.intent_effect import (
-    RESPONSE_ONLY_OPERATES,
-    is_response_intent,
-    is_write_intent,
-)
+from orchestrator.cloud.executor import DagExecutor
+from orchestrator.cloud.models import Plan, Step, StepResult, StepStatus
 
 
-def test_response_only_operates_are_zero_domain_and_exact():
-    assert RESPONSE_ONLY_OPERATES == frozenset({"talk"})
-    assert is_response_intent("chitchat.talk") is True
-    assert is_response_intent("any.namespace.talk") is True
+class _Resp:
+    def __init__(self, *, status=0, actions=None, data=None):
+        self.status = status
+        self.speech = ""
+        self.actions = list(actions or [])
+        self.data = data
+        self.ui_card = None
+        self.follow_up = ""
+        self.missing_slots = []
 
 
-@pytest.mark.parametrize("intent", [
-    "shop.order", "manual.query", "info.search", "media.status", "", "talking",
-])
-def test_non_response_operates_are_rejected(intent):
-    assert is_response_intent(intent) is False
+def _action():
+    return SimpleNamespace(type="vehicle.control", payload=None,
+                           require_confirm=False)
 
 
-def test_response_only_intent_is_not_a_write_intent():
-    assert is_write_intent("any.namespace.talk") is False
-    assert is_write_intent("warning_light.close") is True
+def _response_step(*, require_confirm=False, verification=None):
+    step = Step(id="s1", agent_id="answer", intent="answer.render",
+                require_confirm=require_confirm,
+                verification=dict(verification or {}))
+    step.response_only = True
+    return step
+
+
+def _run(step, *responses):
+    queue = list(responses)
+
+    async def call(*_args, **_kwargs):
+        return queue.pop(0)
+
+    executor = DagExecutor(call_agent_fn=call)
+
+    async def collect():
+        return [result async for result in executor.run(Plan(steps=[step]), None)]
+
+    return asyncio.run(collect())
+
+
+@pytest.mark.parametrize("status", [1, 2])
+def test_pending_response_is_failed_closed(status):
+    result = _run(_response_step(), _Resp(status=status))[0]
+    assert result.status == StepStatus.FAILED
+    assert result.actions == []
+    assert result.error == "response_only_contract_violation"
+
+
+def test_malicious_action_is_failed_closed():
+    result = _run(_response_step(), _Resp(status=0, actions=[_action()]))[0]
+    assert result.status == StepStatus.FAILED
+    assert result.actions == []
+    assert result.error == "response_only_contract_violation"
+
+
+def test_response_only_confirm_configuration_never_becomes_need_confirm():
+    result = _run(_response_step(require_confirm=True), _Resp(status=0))[0]
+    assert result.status == StepStatus.FAILED
+    assert result.error == "response_only_contract_violation"
+
+
+def test_zero_action_failure_and_escalate_control_are_preserved():
+    failure = StepResult("s1", StepStatus.FAILED, error="provider_down")
+    assert DagExecutor._enforce_response_only(_response_step(), failure) is failure
+    esc = StepResult("s1", StepStatus.OK,
+                     data={"_escalate": {"intent": "info.search", "slots": {}}})
+    assert DagExecutor._enforce_response_only(_response_step(), esc) is esc
 ```
 
-Extend `test_question_write_guard.py` with these concrete fallback contracts:
+Use today's objects/imports only. A missing helper may fail at test runtime, but `ImportError`,
+`ModuleNotFoundError`, and collection errors are forbidden as RED evidence.
+
+- [ ] **Step 3: Add D0/T2 stream RED for action-before-final, action-without-final, and legal speech**
+
+Extend `_Cap`/fixtures with an explicit plain boolean. Keep existing generic streaming tests on a
+synthetic non-response capability; mark the real-shaped `chitchat.talk` fixture response-only.
+For both `test_engine_stream.py` and `test_loop.py`, add these three cases:
 
 ```python
-def test_talk_only_plan_skips_first_edge_write_and_uses_later_response():
-    agent = MockAgent(
-        "chitchat",
-        ["warning_light.close", "chitchat.talk"],
-        kind="edge_fast",
-        deployment="edge",
-    )
-    builder = PlanBuilder(llm_fn=None, registry_fn=None)
-
-    plan = builder._talk_only_plan("红色机油灯亮了怎么办", [agent])
-
-    assert plan is not None
-    assert [step.intent for step in plan.steps] == ["chitchat.talk"]
-
-
-def test_talk_only_plan_rejects_unconfirmed_cloud_non_response():
-    agent = MockAgent("chitchat", ["info.search"])
-    builder = PlanBuilder(llm_fn=None, registry_fn=None)
-
-    assert builder._talk_only_plan("红色机油灯亮了怎么办", [agent]) is None
-
-
-def test_talk_only_plan_rejects_confirmed_response():
-    agent = MockAgent(
-        "chitchat", ["chitchat.talk"], require_confirm=("chitchat.talk",),
-    )
-    builder = PlanBuilder(llm_fn=None, registry_fn=None)
-
-    assert builder._talk_only_plan("红色机油灯亮了怎么办", [agent]) is None
-
-
-def test_talk_only_plan_returns_none_when_no_response_capability_exists():
-    agent = MockAgent("chitchat", ["warning_light.close", "shop.order"])
-    builder = PlanBuilder(llm_fn=None, registry_fn=None)
-
-    assert builder._talk_only_plan("红色机油灯亮了怎么办", [agent]) is None
-
-
-def test_all_blocked_adaptive_plan_with_safe_talk_is_downgraded_to_simple():
-    builder = PlanBuilder(llm_fn=None, registry_fn=None)
-    agents = [MockAgent("chitchat", ["chitchat.talk"])]
-    plan = Plan(
-        steps=[_step("warning_light.close")],
-        raw_text="红色机油灯亮了怎么办",
-        complexity="adaptive",
-    )
-
-    guarded = builder._apply_question_side_effect_guard(
-        plan, plan.raw_text, agents,
-    )
-
-    assert [step.intent for step in guarded.steps] == ["chitchat.talk"]
-    assert guarded.complexity == "simple"
-
-
-def test_all_blocked_adaptive_plan_without_safe_talk_is_empty_simple():
-    builder = PlanBuilder(llm_fn=None, registry_fn=None)
-    plan = Plan(
-        steps=[_step("warning_light.close")],
-        raw_text="红色机油灯亮了怎么办",
-        complexity="adaptive",
-    )
-
-    guarded = builder._apply_question_side_effect_guard(
-        plan, plan.raw_text, [],
-    )
-
-    assert guarded.steps == []
-    assert guarded.complexity == "simple"
+# action then final: action is never yielded; final is FAILED; unary is never called
+# action and stream ends without final: synthesize the same FAILED; unary is never called
+# speech + action-free final: speech deltas still stream and final stays OK
 ```
 
-- [ ] **Step 2: Capture the fallback RED artifact with immutable run metadata**
+The two violation cases must capture the `StepResult` passed to aggregation and assert:
+
+```python
+assert not [event for event in events if event["kind"] == "action"]
+assert unary_calls == []
+assert captured.status == StepStatus.FAILED
+assert captured.actions == []
+assert captured.error == "response_only_contract_violation"
+assert not events[-1].get("need_confirm")
+```
+
+The legal control must assert the existing deltas and action-free final are unchanged. These are
+behavioral tests, not source-string checks.
+
+- [ ] **Step 4: Capture the RED artifact and reject import/collection failures**
 
 ```powershell
 New-Item -ItemType Directory -Force -Path '.artifacts/qa-safety-confirmed-write-postbuild' | Out-Null
 $log = '.artifacts/qa-safety-confirmed-write-postbuild/01-talk-red.log'
-$args = @(
-  '-m','pytest','-q',
-  'runtime/tests/test_intent_effect.py',
-  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_skips_first_edge_write_and_uses_later_response',
-  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_rejects_unconfirmed_cloud_non_response',
-  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_rejects_confirmed_response',
-  'orchestrator/cloud/tests/test_question_write_guard.py::test_talk_only_plan_returns_none_when_no_response_capability_exists',
-  'orchestrator/cloud/tests/test_question_write_guard.py::test_all_blocked_adaptive_plan_with_safe_talk_is_downgraded_to_simple',
-  'orchestrator/cloud/tests/test_question_write_guard.py::test_all_blocked_adaptive_plan_without_safe_talk_is_empty_simple'
-)
-$command = 'python ' + ($args -join ' ')
-@(
-  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+$args = @('-m','pytest','-q',
+  'agents/_sdk/tests/test_manifest_response_only.py',
+  'orchestrator/cloud/tests/test_question_write_guard.py',
+  'orchestrator/cloud/tests/test_capability_response_only.py',
+  'orchestrator/cloud/tests/test_engine_stream.py',
+  'orchestrator/cloud/tests/test_loop.py')
+@("TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
   "HEAD=$(git rev-parse HEAD)",
-  "COMMAND=$command"
-) | Set-Content -Encoding utf8 $log
+  "DIFF_SHA=$(git diff --binary | git hash-object --stdin)",
+  "COMMAND=python $($args -join ' ')") | Set-Content -Encoding utf8 $log
 & python @args 2>&1 | Tee-Object -FilePath $log -Append
 $exitCode = $LASTEXITCODE
 "EXIT=$exitCode" | Add-Content -Encoding utf8 $log
 if ($exitCode -eq 0) { throw 'RED did not fail' }
+if (Select-String -LiteralPath $log `
+    -Pattern 'ImportError|ModuleNotFoundError|ERROR collecting' -Quiet) {
+  throw 'invalid RED: import or collection failed'
+}
 ```
 
-Expected: the new runtime module imports fail before the contract exists; after adding only the declarations, the fallback tests still expose `capabilities[0]`, cloud non-talk acceptance, confirmed talk acceptance, and adaptive complexity retention. The log has one anchored `TIMESTAMP`, `HEAD`, `COMMAND`, and immediate `EXIT` value.
+Expected: assertion/runtime behavior failures in loader/assembly/fallback/persistence/executor/stream
+contracts, never import or collection failure.
 
-- [ ] **Step 3: Add the response-only operation contract and shared step filter**
+- [ ] **Step 5: Append proto field 10 and regenerate ignored bindings**
 
-In `runtime/intent_effect.py`, add the response contract beside `READ_ONLY_OPERATES` and exclude it from writes:
+```proto
+  // Direct-response capability. Manifest is authoritative; planner wire cannot set it.
+  bool response_only = 10;
+```
+
+```powershell
+& .\scripts\gen-proto.ps1 2>&1 |
+  Tee-Object '.artifacts/qa-safety-confirmed-write-postbuild/01-codegen.log'
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+rg -n 'response_only|ResponseOnly' `
+  gen/python/cockpit/agent/v1/agent_pb2.py `
+  gen/go/cockpit/agent/v1/agent.pb.go
+git check-ignore -v `
+  gen/python/cockpit/agent/v1/agent_pb2.py `
+  gen/go/cockpit/agent/v1/agent.pb.go
+```
+
+Expected: `buf generate proto` succeeds; both ignored bindings expose field 10. Never hand-edit or
+force-add `gen/`.
+
+- [ ] **Step 6: Implement manifest → Step → pending-state authority**
+
+Add `response_only=bool(c.get("response_only", False))` in `agents/_sdk/manifest.py` and
+`response_only: true` only under the real `chitchat.talk` YAML capability. Add
+`Step.response_only: bool = False`.
+
+Give `MockAgent` a `response_only=()` argument and assign a real bool for every capability:
 
 ```python
-RESPONSE_ONLY_OPERATES = frozenset({"talk"})
-
-
-def is_response_intent(intent_name: str) -> bool:
-    """Return whether the exact final operation is response-only."""
-    tail = str(intent_name or "").rsplit(".", 1)[-1].strip().lower()
-    return bool(tail) and tail in RESPONSE_ONLY_OPERATES
-
-
-def is_write_intent(intent_name: str) -> bool:
-    tail = str(intent_name or "").rsplit(".", 1)[-1].strip().lower()
-    non_write = READ_ONLY_OPERATES | RESPONSE_ONLY_OPERATES
-    return bool(tail) and tail not in non_write
+cap.response_only = intent in (response_only or ())
 ```
 
-The set contains only the operation `talk`, never an agent id or domain intent. In `PlanBuilder`, keep `_question_side_effect_steps()` as the only side-effect selection formula and add this identity-preserving primitive:
+In `_validated_steps()`, copy only manifest authority:
+
+```python
+response_only=next(
+    (bool(getattr(c, "response_only", False))
+     for c in manifest.capabilities if c.intent == intent), False),
+```
+
+Do not read `s.get("response_only")`. In `_serialize_plan()` add
+`"response_only": bool(getattr(s, "response_only", False))`; `_restore()` remains `Step(**s)`,
+so new state preserves the field and old state takes dataclass default false.
+
+- [ ] **Step 7: Replace suffix fallback with declaration-backed scanning**
+
+Add an identity-preserving shared filter:
 
 ```python
 @staticmethod
-def _filter_question_side_effect_steps(
-        steps: list, text: str) -> tuple[list, list]:
+def _filter_question_side_effect_steps(steps: list, text: str) -> tuple[list, list]:
     blocked = PlanBuilder._question_side_effect_steps(steps, text)
-    if not blocked:
-        return list(steps), []
     blocked_ids = {id(step) for step in blocked}
-    return [step for step in steps if id(step) not in blocked_ids], blocked
+    return ([step for step in steps if id(step) not in blocked_ids], blocked)
 ```
 
-Change `_apply_question_side_effect_guard()` to call this primitive, preserve `question_write_blocked`, and set `plan.complexity = "simple"` only when all original steps were blocked and the result is response-only talk or empty. Do not downgrade a mixed plan that retains a legitimate adaptive step.
+Make `_apply_question_side_effect_guard()` use it; when all original steps are blocked, set
+`plan.complexity = "simple"` before installing any fallback. Mixed plans retaining a legitimate
+step keep their prior complexity.
 
-- [ ] **Step 4: Scan only response-only, unconfirmed, guard-safe fallback capabilities**
-
-Import `is_response_intent` from `runtime.intent_effect`. Replace the `capabilities[0]` logic in `_talk_only_plan()` with:
+Replace `_talk_only_plan()` with a complete capability scan:
 
 ```python
 for agent in (agents or []):
     if agent.manifest.agent_id != _FALLBACK_AGENT:
         continue
-    for capability in (agent.manifest.capabilities or []):
-        if not is_response_intent(capability.intent):
+    for cap in (agent.manifest.capabilities or []):
+        if not bool(getattr(cap, "response_only", False)):
             continue
-        steps = self._validated_steps(
-            [{"id": "s1", "agent_id": agent.manifest.agent_id,
-              "intent": capability.intent, "slots": {"text": text},
-              "depends_on": [], "slot_refs": {}}],
-            {agent.manifest.agent_id: agent},
-        )
-        if len(steps) != 1 or steps[0].require_confirm:
+        if bool(getattr(cap, "require_confirm", False)):
+            continue
+        steps = self._validated_steps([{
+            "id": "s1", "agent_id": agent.manifest.agent_id,
+            "intent": cap.intent, "slots": {"text": text},
+            "depends_on": [], "slot_refs": {},
+        }], {agent.manifest.agent_id: agent})
+        if len(steps) != 1 or not steps[0].response_only or steps[0].require_confirm:
             continue
         kept, blocked = self._filter_question_side_effect_steps(steps, text)
         if blocked or len(kept) != 1:
             continue
-        return Plan(steps=kept, raw_text=text)
+        return Plan(steps=kept, raw_text=text, complexity="simple")
 return None
 ```
 
-All three predicates are required: response-only operation, unconfirmed manifest authority, and same-guard survival. A cloud `info.search` remains rejected even when unconfirmed; a confirmed `*.talk` remains rejected; the first edge write cannot prevent selection of a later safe talk; no talk yields `None`.
+No suffix check exists: undeclared `chitchat.talk`/`foo.talk` fail; explicitly declared
+`chitchat.answer` passes. Confirmed response capabilities are skipped and scanning continues.
 
-- [ ] **Step 5: Run GREEN and adjacent guard tests with immutable run metadata**
+- [ ] **Step 8: Enforce direct output after every dispatch and retry, before confirm/verify**
+
+Add:
+
+```python
+_RESPONSE_ONLY_CONTRACT_ERROR = "response_only_contract_violation"
+
+@staticmethod
+def _enforce_response_only(step: Step, result: StepResult) -> StepResult:
+    if not bool(getattr(step, "response_only", False)):
+        return result
+    if (result.status == StepStatus.FAILED
+            and not result.actions and not step.require_confirm):
+        return result
+    if (result.status == StepStatus.OK
+            and not result.actions and not step.require_confirm):
+        # data._escalate is control-plane; Task 3 guards its receiver.
+        return result
+    logger.error("Step %s(%s): response_only contract violation", step.id, step.intent)
+    return StepResult(step_id=result.step_id, status=StepStatus.FAILED,
+                      actions=[], error=_RESPONSE_ONLY_CONTRACT_ERROR)
+```
+
+In `_exec_step()` order calls as dispatch → `_enforce_response_only` →
+`_enforce_capability_confirm` → `_verify_outcome`. In `_verify_outcome()` retry, wrap the second
+`_dispatch_once()` with `_enforce_response_only` before the confirm gate as well. Thus
+`response_only + require_confirm=true` can never become `NEED_CONFIRM`, and a malicious retry
+cannot bypass the first check.
+
+Add a retry test by scripting first response as valid `OK`, monkeypatching `_evaluate` to return
+`UNSAT`, and returning an action on the retry. Assert two dispatches occurred and the terminal result
+is the contract `FAILED` with zero actions.
+
+```python
+def test_verifier_retry_reapplies_response_only_gate():
+    calls = 0
+    responses = [_Resp(status=0), _Resp(status=0, actions=[_action()])]
+
+    async def call(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return responses.pop(0)
+
+    executor = DagExecutor(call_agent_fn=call)
+
+    async def unsat(*_args, **_kwargs):
+        return "unsat"
+
+    executor._evaluate = unsat
+    step = _response_step(verification={
+        "mode": "schema", "on_fail": "retry", "max_attempts": 1,
+    })
+
+    async def collect():
+        return [result async for result in executor.run(Plan(steps=[step]), None)]
+
+    result = asyncio.run(collect())[0]
+    assert calls == 2
+    assert result.status == StepStatus.FAILED
+    assert result.actions == []
+    assert result.error == "response_only_contract_violation"
+```
+
+- [ ] **Step 9: Gate D0 and T2 stream events through the same helper before yield/fallback**
+
+In both stream loops, keep a `response_violation: StepResult | None = None`. For an action event:
+
+```python
+if bool(getattr(step, "response_only", False)):
+    response_violation = self.executor._enforce_response_only(
+        step,
+        StepResult(step_id=step.id, status=StepStatus.OK,
+                   actions=[{"type": "stream_action"}]),
+    )
+    continue  # never stream.on_action(), never yield the action
+stream.on_action()
+yield {"kind": "action", "action": payload}
+```
+
+After the stream iterator ends, before ordinary final handling:
+
+```python
+if response_violation is not None:
+    final_sr = response_violation
+elif final_sr is not None:
+    final_sr = self.executor._enforce_response_only(step, final_sr)
+```
+
+The existing `if final_sr is not None` branch then calls `stream.on_final()`, so an action without a
+provider final becomes a synthetic terminal failure and cannot enter unary fallback. An action before
+a later final keeps the earlier violation; the later final cannot erase it. Legal speech + zero-action
+final remains streaming. Apply identical semantics to engine D0 and loop T2; do not maintain two
+independent definitions.
+
+- [ ] **Step 10: Run GREEN and commit without generated files**
 
 ```powershell
 $log = '.artifacts/qa-safety-confirmed-write-postbuild/01-talk-green.log'
-$args = @(
-  '-m','pytest','-q',
-  'runtime/tests/test_intent_effect.py',
-  'orchestrator/cloud/tests/test_question_write_guard.py'
-)
-$command = 'python ' + ($args -join ' ')
-@(
-  "TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
+$args = @('-m','pytest','-q',
+  'agents/_sdk/tests/test_manifest_response_only.py',
+  'orchestrator/cloud/tests/test_planning.py',
+  'orchestrator/cloud/tests/test_question_write_guard.py',
+  'orchestrator/cloud/tests/test_capability_response_only.py',
+  'orchestrator/cloud/tests/test_engine_stream.py',
+  'orchestrator/cloud/tests/test_loop.py',
+  'orchestrator/cloud/tests/test_capability_confirm.py',
+  'orchestrator/cloud/tests/test_engine_confirm.py')
+@("TIMESTAMP=$([DateTimeOffset]::Now.ToString('o'))",
   "HEAD=$(git rev-parse HEAD)",
-  "COMMAND=$command"
-) | Set-Content -Encoding utf8 $log
+  "DIFF_SHA=$(git diff --binary | git hash-object --stdin)",
+  "COMMAND=python $($args -join ' ')") | Set-Content -Encoding utf8 $log
 & python @args 2>&1 | Tee-Object -FilePath $log -Append
 $exitCode = $LASTEXITCODE
 "EXIT=$exitCode" | Add-Content -Encoding utf8 $log
 if ($exitCode -ne 0) { exit $exitCode }
+& buf lint proto
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 ```
 
-Expected: exit 0; runtime exact-tail/non-write tests, response-only fallback selection, confirmed/non-talk rejection, complexity downgrade, and the four historical edge-direction controls all pass.
-
-- [ ] **Step 6: Commit Task 1**
+Expected: loader/default, manifest-only assembly, LLM non-authority, pending-state round-trip,
+fallback scan, normal/retry direct-output gates, config conflict, valid failure, `_escalate` boundary,
+D0/T2 action-before-final/action-no-final, and legal streaming controls all pass.
 
 ```powershell
-git add runtime/intent_effect.py runtime/tests/test_intent_effect.py `
-  orchestrator/cloud/planning.py orchestrator/cloud/tests/test_question_write_guard.py
+git add proto/cockpit/agent/v1/agent.proto `
+  agents/_sdk/manifest.py agents/chitchat/manifest.yaml `
+  agents/_sdk/tests/test_manifest_response_only.py `
+  orchestrator/cloud/models.py orchestrator/cloud/planning.py `
+  orchestrator/cloud/engine.py orchestrator/cloud/loop.py `
+  orchestrator/cloud/executor.py `
+  orchestrator/cloud/tests/test_planning.py `
+  orchestrator/cloud/tests/test_question_write_guard.py `
+  orchestrator/cloud/tests/test_capability_response_only.py `
+  orchestrator/cloud/tests/test_engine_stream.py `
+  orchestrator/cloud/tests/test_loop.py
 git diff --cached --check
-git commit -m "fix: guard fallback safety exits"
+git commit -m "fix: enforce response-only capability contract"
 ```
 
+Expected: tracked commit contains proto/loader/manifest/runtime/tests; ignored generated bindings are
+present locally but never staged.
 ### Task 2: Guard replan reception with the original user text
 
 **Files:**
