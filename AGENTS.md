@@ -112,7 +112,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App B2 | 先看 `git status` / `git log -- mobile`，再读 B2 实施计划；mobile 线可能有未推提交 |
+| Android App B2 | **四批已收口（2026-08-31）；B2→B3 闸未过：G1 真人语音轮 / G2 回声 / G4 折叠切换 / 5 人外部小样本四格无读数 ⇒ B3/B4 暂不开工，裁决权在泓舟**。补齐这四格需泓舟在场。接手先看 `git status` / `git log -- mobile`（mobile 线有未推提交），读数与遗留出账在 B2 实施计划 §6.4（第一行是闸的结论）。⚠ 设备两项待处理：`locationEnabled` 被取证改成 false 未还原；USB 链路失效需重插数据线 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
