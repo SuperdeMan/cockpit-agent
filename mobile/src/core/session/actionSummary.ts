@@ -18,11 +18,10 @@ export const SUMMARY_MAX = 24
 /** 台账回复的字面值——`store.confirmReply` 追加的用户气泡就是这两个字，它们不是原话 */
 const CONFIRM_REPLIES = new Set(['确认', '取消'])
 
-/** 紧邻的上一条用户原话；找不到返回空串（兜底文案由调用方决定） */
-export function actionSummary(messages: readonly Msg[], operationId: string): string {
-  const at = messages.findIndex((m) => m.role === 'assistant' && m.operationId === operationId)
-  if (at < 0) return ''
-  for (let i = at - 1; i >= 0; i -= 1) {
+/** 从 messages[before] 往前找最近一条用户原话（跳过台账回复「确认/取消」）；空串=没有。
+ *  回执的「已理解」行（B2-13）与 Dock 标题共用它——同一个值有几个出口就在入口处判一次。 */
+export function precedingUserUtterance(messages: readonly Msg[], before: number): string {
+  for (let i = Math.min(before, messages.length) - 1; i >= 0; i -= 1) {
     const m = messages[i]
     if (m.role !== 'user') continue
     const text = m.text.replace(/\s+/g, ' ').trim()
@@ -30,4 +29,10 @@ export function actionSummary(messages: readonly Msg[], operationId: string): st
     return text.slice(0, SUMMARY_MAX)
   }
   return ''
+}
+
+/** 紧邻的上一条用户原话；找不到返回空串（兜底文案由调用方决定） */
+export function actionSummary(messages: readonly Msg[], operationId: string): string {
+  const at = messages.findIndex((m) => m.role === 'assistant' && m.operationId === operationId)
+  return at < 0 ? '' : precedingUserUtterance(messages, at)
 }

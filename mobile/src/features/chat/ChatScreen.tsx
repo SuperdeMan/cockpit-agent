@@ -16,6 +16,7 @@ import type { Msg } from '@shared/types.ts'
 
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
+import { buildReceipt } from '../../core/session/receipt'
 import { ensureWired, type Wired } from '../../core/session/wiring'
 import type { SendOpts } from '../../core/session/store'
 import { currentTurn } from '../../core/session/turnView'
@@ -197,6 +198,7 @@ function ChatBody({
   const { core } = wired
   const {
     messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds,
+    turnMeta, confirmLog,
   } = useStore(core.store)
   const { settings } = useStore(settingsStore)
 
@@ -392,7 +394,7 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -406,6 +408,11 @@ function ChatBody({
                 interrupted={interruptedIds.includes(item.id)}
                 vision={visionIds.includes(item.id)}
                 s2s={s2sIds.includes(item.id)}
+                receipt={
+                  item.role === 'assistant'
+                    ? buildReceipt({ messages, assistant: item, turnMeta, confirmLog, vehicleId: String(vehState.vehicle_id ?? '') })
+                    : null
+                }
                 onConfirm={onConfirm}
                 onSend={onSend}
               />

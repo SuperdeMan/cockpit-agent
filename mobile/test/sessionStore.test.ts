@@ -795,3 +795,32 @@ describe('UX v2 B2-12：播报端口拿到「这一轮是不是语音发起」',
     core.dispose()
   })
 })
+
+describe('UX v2 B2-13：回执的账本侧（方案 §5.3.2）', () => {
+  test('confirmReply 记 confirmLog[operationId]；该轮 turnMeta 记 operationId；final 到达记 finalAt', () => {
+    const { transport, core } = newCore()
+    core.send('打开后备箱')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid, speech: '请确认', need_confirm: true, operation_id: 'op1' })
+    core.confirmReply('确认', 'op1')
+    expect(core.store.getState().confirmLog.op1.reply).toBe('确认')
+    expect(core.store.getState().confirmLog.op1.at).toBeGreaterThan(0)
+    const a2 = assistants(core)[1]
+    expect(core.store.getState().turnMeta[a2.id].operationId).toBe('op1')
+    expect(core.store.getState().turnMeta[a2.id].finalAt).toBeUndefined()
+    const rid2 = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid2, speech: '已打开', actions: [{ type: 'vehicle.control' }] })
+    expect(core.store.getState().turnMeta[a2.id].finalAt).toBeGreaterThan(0)
+    core.dispose()
+  })
+
+  test('带坐标发出的轮 turnMeta.withLocation=true（回执「定位 当前位置」）', async () => {
+    // ⚠ 必须 fakeLocation(true, …)：定位没开时 routeSend 走 consent 分支**不派发**，
+    // turnMeta 一个键都不会有，红的会是测试不是判据（第 2 批已记的坑）
+    const { core } = newCore({ location: fakeLocation(true, { lat: '22.5', lng: '113.9' }) })
+    core.send('附近有什么好吃的')
+    await flush()
+    expect(core.store.getState().turnMeta[assistants(core)[0].id].withLocation).toBe(true)
+    core.dispose()
+  })
+})

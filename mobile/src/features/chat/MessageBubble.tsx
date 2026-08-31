@@ -9,12 +9,14 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { Msg } from '@shared/types.ts'
 
+import type { Receipt } from '../../core/session/receipt'
 import { isProactive } from '../../core/session/turnView'
 
 import { AuroraOrb, StreamCursor, ThinkDots, type OrbState } from '../../ui/aurora'
 import type { Palette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
+import { ExecutionReceipt } from './ExecutionReceipt'
 
 // 主动播报标题按**种类**取（hmi ChatView PROACTIVE_LABEL 同款）
 const PROACTIVE_LABEL: Record<string, string> = {
@@ -69,11 +71,13 @@ export interface BubbleProps {
   s2s?: boolean
   /** 带过视觉抓帧：📷 角标（方案 §5.5）；不做预览 */
   vision?: boolean
+  /** 执行回执（core/session/receipt.ts 算好传进来；null=这条没有可回执的事） */
+  receipt?: Receipt | null
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   if (msg.role === 'user') {
@@ -198,11 +202,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
         ) : null}
         {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
-        {(msg.actions || []).length ? (
-          <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
-            已执行 {(msg.actions || []).map((a) => a.type).join('、')}
-          </Text>
-        ) : null}
+        {receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}
         {msg.needConfirm && confirmActive && inlineConfirm ? (
           <View style={{ flexDirection: 'row', gap: 10, marginTop: 2 }}>
             <Pressable

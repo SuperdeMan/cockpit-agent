@@ -37,6 +37,18 @@ export type TurnSource = 'text' | 'ptt' | 'handsfree' | 's2s'
 export interface TurnMeta {
   sentAt: number
   source: TurnSource
+  /** final 到达时刻（回执「执行 · 00:42」）；没到过就没有 */
+  finalAt?: number
+  /** 这一轮是对哪条挂起的回复（confirmReply 派发的那轮；回执「确认」行据它找 confirmLog） */
+  operationId?: string
+  /** 发出时带了坐标（回执「定位 当前位置」） */
+  withLocation?: boolean
+}
+
+/** 本端台账里的一次确认 / 取消（回执「你在手机端点了「确认」 00:41」） */
+export interface ConfirmEntry {
+  reply: '确认' | '取消'
+  at: number
 }
 
 export interface SendOpts {
@@ -67,6 +79,8 @@ export interface SessionState {
   uncertainIds: string[]
   /** 轮元数据（键=助手气泡 id）：这一轮谁发起的。语音层的开合判据读它（方案 §5.2 规则 1） */
   turnMeta: Record<string, TurnMeta>
+  /** 本端确认台账（键=operation_id）：回执「确认」行的唯一来源——服务端不回传「谁点的、几点点的」 */
+  confirmLog: Record<string, ConfirmEntry>
   /** 转写草稿气泡（方案 §5.2.1 draft_user）：ASR partial 按稳定 segment 写进记录；定稿转正、取消删除 */
   draftUserId: string | null
   /** 被打断的助手气泡：文字定格、标「已打断」，**不是错误**（方案 §5.2 规则 4） */
@@ -162,6 +176,7 @@ export class SessionCore {
       queued: 0,
       uncertainIds: [],
       turnMeta: {},
+      confirmLog: {},
       draftUserId: null,
       interruptedIds: [],
       s2sIds: [],
@@ -274,6 +289,8 @@ export class SessionCore {
     // 台账即时出账（App.tsx:871-875）：服务端仍是权威，closed 到达时幂等
     if (operationId) {
       this.store.setState((s) => ({ pendingOps: closePendings(s.pendingOps, [operationId]) }))
+      // 回执要说「你在手机端点了「确认」几点几分」——这一下只有本端知道（B2-13）
+      this.store.setState((s) => ({ confirmLog: { ...s.confirmLog, [operationId]: { reply, at: Date.now() } } }))
       this.syncPruneTimer()
     }
     this.dispatch(reply, true, undefined, undefined, operationId, opts.source ?? 'text')
@@ -426,7 +443,17 @@ export class SessionCore {
       pending: true,
       traceId: frame.meta.trace_id,
     })
-    this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [pendingId]: { sentAt: Date.now(), source } } }))
+    this.store.setState((s) => ({
+      turnMeta: {
+        ...s.turnMeta,
+        [pendingId]: {
+          sentAt: Date.now(),
+          source,
+          ...(operationId ? { operationId } : {}),
+          ...(locationMeta && Object.keys(locationMeta).length ? { withLocation: true } : {}),
+        },
+      },
+    }))
     this.armWatchdog(pendingId)
   }
 
@@ -524,6 +551,12 @@ export class SessionCore {
       const id = this.registry.settle(data)
       if (id === null && data.request_id) return // Q3：孤儿帧丢弃
       this.clearWatchdog(id)
+      // 回执的「执行 · 00:42」时刻（B2-13）：终态到达那一刻，不是渲染时刻
+      if (id) {
+        this.store.setState((s) =>
+          s.turnMeta[id] ? { turnMeta: { ...s.turnMeta, [id]: { ...s.turnMeta[id], finalAt: Date.now() } } } : {},
+        )
+      }
       // Q1-C：待确认台账**服务端权威**——closed 列表出账、need_confirm&&operation_id 进账
       const closed: string[] = Array.isArray(data.closed_operation_ids)
         ? data.closed_operation_ids
