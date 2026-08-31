@@ -55,6 +55,8 @@ const INPUTS: Array<[string, (i: PresenceInput) => string]> = [
 
 export class PresenceTrail {
   private items: TrailEntry[] = []
+  /** 已排队的通知（同一同步段里合并成一次；见 notify 头注） */
+  private pendingNotify = false
   private prevSnap: PresenceSnapshot | null = null
   private prevInput: PresenceInput | null = null
   private readonly subs = new Set<() => void>()
@@ -112,8 +114,18 @@ export class PresenceTrail {
     this.notify()
   }
 
+  /** 通知推迟一个微任务，并把同一个同步段里的多次变化合并成一次。
+   *  **不是优化，是正确性**：`record()` 按设计在 `usePresence` 的**渲染期**调用（计划 §5 第 10 条），
+   *  同步 `notify()` 就等于在渲染 A 组件时给 B 组件 `setState`。真机实录（2026-08-31 logcat）：
+   *  `Cannot update a component (PresenceTrailScreen) while rendering a different component (ChatBody)`。
+   *  订阅者要的只是「有变化」这一个事实，晚一个微任务拿到完全等价；`list()` 仍是同步真值。 */
   private notify(): void {
-    for (const fn of this.subs) fn()
+    if (this.pendingNotify) return
+    this.pendingNotify = true
+    void Promise.resolve().then(() => {
+      this.pendingNotify = false
+      for (const fn of this.subs) fn()
+    })
   }
 }
 

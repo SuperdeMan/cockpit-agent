@@ -67,3 +67,35 @@ test('clear 清空并复位「上一次」：清空后第一条快照重新算�
   trail.record(i, derivePresence(i))
   expect(trail.list()).toHaveLength(1)
 })
+
+test('B2-14 真机修正：record 在渲染期调用 → 订阅者不得在同一个同步段里被回调', async () => {
+  // 真机实录（2026-08-31，logcat）：`Cannot update a component (PresenceTrailScreen)
+  // while rendering a different component (ChatBody)` —— usePresence 在 ChatBody 渲染期
+  // 调 record()，同步 notify() 就等于在渲染另一个组件时给轨迹屏 setState。
+  // 数据仍要同步可读（record 是同步的，去重与顺序不变），只把「通知」推迟一个微任务。
+  const calls: number[] = []
+  const trail = new PresenceTrail(20, () => 1)
+  trail.subscribe(() => calls.push(1))
+  const i = base({ ptt: 'recording' })
+  trail.record(i, derivePresence(i))
+  expect(calls).toEqual([])
+  expect(trail.list()).toHaveLength(1)
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(calls).toEqual([1])
+})
+
+test('B2-14 真机修正：同一个同步段里多次 push 只通知一次（渲染期不刷屏）', async () => {
+  const calls: number[] = []
+  const trail = new PresenceTrail(20, () => 1)
+  trail.subscribe(() => calls.push(1))
+  for (const ptt of ['recording', 'idle', 'recording'] as const) {
+    const i = base({ ptt })
+    trail.record(i, derivePresence(i))
+  }
+  expect(calls).toEqual([])
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(calls).toEqual([1])
+  expect(trail.list()).toHaveLength(3)
+})
