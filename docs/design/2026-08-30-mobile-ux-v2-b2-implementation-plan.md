@@ -4761,6 +4761,8 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
   - 蓝牙 A2DP `STATE_DISCONNECTED`（本批未主动断开，接手时就是断的）；
   - `mobile/e2e/artifacts/` 是 gitignore 的；本批 20 余张截图只在 scratchpad，文件名逐条记在上面。
 
-- **未推送清单**（只报数，`git push` 需泓舟单独授权）：`git log --oneline origin/main..HEAD` = **7**
-  （本批 5 个：`78baa58` T12 / `578db3f` T13 / `36352bc` T14 / `bcc63a0` 真机修正 / T15 记录收口，外加 `AGENTS.md` 单独一个；
-  再加上开工时就在 HEAD 上的、**别的会话的** `0a38fb0`）。**本批一次 push 都没跑。**
+- **未推送清单**（`git push` 需泓舟单独授权，本批一次都没跑）：本批的提交是
+  `78baa58` T12 播报三档 / `578db3f` T13 执行回执 / `36352bc` T14 轨迹页 / `bcc63a0` T14 真机修正 /
+  `432b283` T15 记录收口 / `26aed1d` AGENTS.md 指针，**外加开工时就在 HEAD 上的、别的会话的 `0a38fb0`**，
+  以及本节自身的若干次修正提交。**确切条数以现场 `git log --oneline origin/main..HEAD` 为准**——
+  写死数字必然过期（这一条本身就把数从 7 推到了 8，是「读数有效期只到下一次改动为止」的自指版本）。
