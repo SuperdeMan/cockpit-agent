@@ -72,6 +72,17 @@
 - ③ **T6 真机顺手两条**：a) 第 2 批 ⬜ 的「打断留痕灰字」——busy 窗口只有 5–15s、adb 往返押不准（§6.2 坑⑩），改用「讲一个三百字的故事」把流式窗口拉长到 30s+ 再点「■ 打断」，取 `b2-04-interrupted.png`；b) 上滑取消不能用 `input swipe`（它没有按住阶段、长按判定过不了），用 `adb shell input motionevent DOWN x y` → `sleep 0.5` → `input motionevent MOVE x y-300` → `input motionevent UP x y-300` 三段式注入，或真人手指。
 - ④ **开工前 `git log --oneline origin/main..HEAD` 念一遍**：第 2 批中途 `origin/main` 被另一条会话推进、把本线的 T3 一并带上去了（§6.2 遗留第一条）——共享 main 上「请不要推我的」不是可执行防线，念一遍至少知道谁的东西在里面。
 
+**第 4 批附加项（第 3 批 §6.3 遗留转入；⓪ 是开工前提，其余随所在任务顺手）**：
+- ⓪ **设备上 TalkBack 仍开着**（泓舟为 T6⑪ 手动开的，`touchExplorationEnabled=true`）。TalkBack 开着时 adb 的单击语义会变（单击=聚焦、双击=激活），**所有 `input tap` 类取证都会失真**。开工先 `adb shell dumpsys accessibility | grep -iE "touchExploration|talkback"` 核一眼；开着就停下交泓舟关（他手动开的，关也交回给他），关完复核 `Enabled services:{}` 再动真机。
+- ① **层 Pan 方向约束（`e5f514c` 的 `activeOffsetY(10)`）真机未复验**——随 T15 真机段做，配方照 §6.3 遗留第一条：出一轮带 chips 的答案 → 答案出来后再点胶囊开层 → `input swipe` 横滑 chips 带 → `png_probe diff` chips 带有变化（**同帧层内大球框 diff 做通道自检**）→ 再验向下拖 500px 仍能收起。
+- ② **T11 回声提示仍 ⬜**（装的包 `lastUpdateTime 2026-08-29 17:22:24` 早于 AEC 提交 `96a6830`，**没有 AEC，本应能触发**）——归 T15 G2 一并取，配方照 §6.3：断开/忽略 vivo TWS 4 蓝牙耳机确认音频走扬声器；用长播报（「讲一个三百字的故事」）；在播报结束进 FOLLOWUP 窗那几秒连拍胶囊区。仍未触发就写 ⬜ 与排查过的原因，**不写「预期」**；若期间重建过带 `96a6830` 的 APK，才能写「未触发（AEC 在场）」。
+- ③ **T10「气泡早于相机」的顺序取证**——ffmpeg/ffprobe 6.1.1 已装（`C:/Users/Super/tools/ffmpeg/bin`，追加在用户 PATH 末尾；**已在跑的终端读不到新 PATH，用绝对路径**）。设备半段未验：先试通 `adb shell screenrecord --time-limit 8 //sdcard/x.mp4` → `adb exec-out cat` 拉回 → `ffmpeg -vf fps=30` 抽帧 → `png_probe`，帧号 × 1/30s 对 logcat `CameraService::connect` 墙钟；试不通走**反向法**：`pm revoke com.xiaozhou.companion android.permission.CAMERA` 后说「这是什么」——新代码气泡同步先落、抓帧失败照样在，**用完 `pm grant` 还原并写进记录**。
+- ④ **T6 两格补取**：a) 15s 硬上限单独取证（**安静环境**，全程静默 ⇒ 只能是硬上限收的尾）；b) 输入框有字时长按走原生选择、只有光球仍可 PTT（`input text a` 一个 ASCII 字符就够，不需要中文）。
+- ⑤ **Maestro CLI 已不在本机**（T15 的 05/06/08/09 要用）。装回需泓舟授权，两条路：`curl -Ls "https://get.maestro.mobile.dev" | bash`（Git Bash，装到 `~/.maestro/bin`）或下 release zip 用绝对路径调 `maestro.bat`；国内慢就按 §6.3 那条镜像教训先找镜像。跑时全程 `--no-reinstall-driver`；第一次装 driver 的 MIUI 弹窗坑见 `mobile/e2e/README.md`。**uiautomator 手工替代只对静止屏有效**（常驻动画屏 `could not get idle state` 且会留陈旧文件），08/09 没有 Maestro 就 ⬜。
+- ⑥ **设备重连后 `adb reverse` 会消失**（§6.3 坑12，症状伪装成「应用坏了」）：每次设备重插先 `adb reverse tcp:8081 tcp:8081` 再 `adb reverse --list` 复核。
+- ⑦ 「换一批」chip 真机从没出现过（`place_list` 分支显式清 `category`）——T15 真机段用「附近的充电站」这类出 `poi_list` 的语料顺手补一张。
+- ⑧ T15 动 `AGENTS.md` 时注意：CLAUDE.md 已于 2026-08-31 重写，明确 AGENTS.md 不是变更日志——照计划只改 Android 行的指针段，动前 `git diff --stat -- AGENTS.md`。
+
 **每批开工的固定五步**（写进新会话的第一条提示词）：
 1. `powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1` 退出码 0（第 1 批的 T1/T2 纯 jest 可先做，真机截图在收口时补）；
 2. `cd mobile && npm test && npm run typecheck` 取**开工基线**（条数与 0 error），写进 §6 该批记录的第一行——读数有效期只到下一次改动；
