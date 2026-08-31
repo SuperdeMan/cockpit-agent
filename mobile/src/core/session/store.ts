@@ -96,8 +96,9 @@ export interface LocationBridge {
 /** 播报端口（core/voice/speech.ts 实现；测试注入 fake）。
  *  「开没开播报」的判定住在实现里不在这里——SessionCore 只有 getMeta，不读设置。 */
 export interface SpeechSink {
-  /** 本轮发出：预建播报会话（带上一轮 emotion）。关着播报时实现内部转成 stop */
-  begin(bubbleId: string, emotion: string): void
+  /** 本轮发出：预建播报会话（带上一轮 emotion）。关着播报时实现内部转成 stop。
+   *  voice=这一轮是语音发起的（播报三档的「自动」读它，T12）；可选 —— M2 起的两参实现照旧可用 */
+  begin(bubbleId: string, emotion: string, voice?: boolean): void
   /** 流式增量（只有最新轮会调到） */
   delta(bubbleId: string, text: string): void
   /** 本轮定稿（只有最新轮会调到） */
@@ -417,7 +418,7 @@ export class SessionCore {
     this.inFlight.add(pendingId)
     // 播报会话提前建（App.tsx:677-679 同位）：等第一个 delta 再握手会把首音推后一个 RTT。
     // 上一轮的 emotion 决定本轮语气（M2 P2 契约）
-    this.speech.begin(pendingId, this.store.getState().lastEmotion)
+    this.speech.begin(pendingId, this.store.getState().lastEmotion, source !== 'text')
     this.appendMessage({
       id: pendingId,
       role: 'assistant',

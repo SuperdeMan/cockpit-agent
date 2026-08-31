@@ -274,26 +274,23 @@ export function SettingsScreen() {
       </Section>
 
       <Section p={p} title="语音播报">
-        <SwitchRow
+        <ChoiceRow
           p={p}
-          label="播报回答"
-          desc="关闭后完全静默（试听仍可用）"
-          value={settings.ttsEnabled}
-          onChange={(ttsEnabled) => {
-            set({ ttsEnabled })
-            if (!ttsEnabled) speechController().stop() // 关掉要立刻停当前这段
+          label="播报"
+          value={settings.speakPolicy}
+          options={[
+            { v: 'auto' as const, label: '自动' },
+            { v: 'always' as const, label: '总是' },
+            { v: 'silent' as const, label: '静音' },
+          ]}
+          onPick={(speakPolicy) => {
+            set({ speakPolicy })
+            if (speakPolicy === 'silent') speechController().stop() // 关掉要立刻停当前这段
           }}
         />
-        <SwitchRow
-          p={p}
-          label="自动播报"
-          desc="关闭后只显示文字，不出声"
-          value={settings.autoplay}
-          onChange={(autoplay) => {
-            set({ autoplay })
-            if (!autoplay) speechController().stop()
-          }}
-        />
+        <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
+          自动：用语音问才播报，打字只显示文字（默认）。总是：打字也播报。静音：完全不出声（试听仍可用）。
+        </Text>
         {ttsCatalog.length ? (
           <ChoiceRow
             p={p}

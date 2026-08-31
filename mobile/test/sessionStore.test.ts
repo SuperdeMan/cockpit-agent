@@ -774,3 +774,24 @@ describe('UX v2 B2-10：视觉先落气泡（方案 §5.5）', () => {
     core.dispose()
   })
 })
+
+describe('UX v2 B2-12：播报端口拿到「这一轮是不是语音发起」', () => {
+  test('dispatch 把 source!==text 交给 SpeechSink.begin 第三参', () => {
+    const calls: string[] = []
+    const speech: SpeechSink = {
+      begin: (_b, e, voice) => {
+        calls.push(`begin:${e}:${String(voice)}`)
+      },
+      delta() {},
+      finish() {},
+      stop() {},
+    }
+    // ⚠ 语料同 B2-3：避开「天气 / 附近」——它们命中 routeSend 的位置征询闸（consent 分支
+    // 不派发），begin 一次都不会被调到，红的会是测试不是判据
+    const { core } = newCore({ speech })
+    core.send('讲个笑话')
+    core.send('再讲一个', undefined, { source: 'ptt' })
+    expect(calls).toEqual(['begin::false', 'begin::true'])
+    core.dispose()
+  })
+})

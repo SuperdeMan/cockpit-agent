@@ -13,6 +13,7 @@ export type ThemePref = 'system' | 'dark' | 'light'
 export type FontScalePref = 'normal' | 'large'
 export type AnswerLength = 'short' | 'standard' | 'detailed'
 export type ModelPref = 'fast' | 'deep' | 'auto'
+export type SpeakPolicy = 'always' | 'silent' | 'auto'
 
 export interface AppSettings {
   theme: ThemePref
@@ -34,9 +35,9 @@ export interface AppSettings {
   asrModel: string
   asrLanguage: string
   // ── 语音播报（M2-3）──
-  ttsEnabled: boolean
-  /** 自动播报本轮回答；关掉后仍可在设置页试听 */
-  autoplay: boolean
+  /** 播报三档（方案 §5.2 规则 8，Q11）：总是 / 静音 / 自动=语音提问才播报、打字只显示文字。
+   *  替换 B1 之前的 ttsEnabled && autoplay 两个近义开关（两个同时为真才出声，用户分不清哪个是哪个） */
+  speakPolicy: SpeakPolicy
   ttsProvider: string
   voiceId: string
   // ── M4 进阶语音 ──
@@ -75,8 +76,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   // 开关类默认值取自共享契约（hmi/src/types.ts::DEFAULT_SETTINGS），不抄第二份字面量
   asrProvider: DEFAULT_SETTINGS.asrProvider,
   asrLanguage: DEFAULT_SETTINGS.asrLanguage,
-  ttsEnabled: DEFAULT_SETTINGS.ttsEnabled,
-  autoplay: DEFAULT_SETTINGS.autoplay,
+  speakPolicy: 'auto',
   // ⚠ 引擎选型三项**刻意偏离共享契约**（泓舟 2026-08-26 当轮指示：ASR 主用 fun-asr、
   // 其次 qwen3-asr；TTS 主用 minimax）。HMI 侧的 DEFAULT_SETTINGS 仍是 qwen3/cosyvoice
   // ——那是 hmi/ 的改动，本计划禁区（§10），要改由泓舟另行决定。**两边不一致是已知的**，
@@ -98,14 +98,24 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
  *  泓舟 2026-08-26：fun-asr 主、qwen3-asr 次。 */
 export const ASR_FALLBACK_MODEL = 'qwen3-asr-flash-realtime-2026-02-10'
 
-/** 存量合并（同 hmi settings.load()）：合并默认值向前兼容新增字段；agents 深合并 */
+/** 这一轮要不要出声——判据只此一处（SpeechController.begin 读它） */
+export function speakAllowed(policy: SpeakPolicy, voice: boolean): boolean {
+  return policy === 'always' || (policy === 'auto' && voice)
+}
+
+/** 存量合并（同 hmi settings.load()）：合并默认值向前兼容新增字段；agents 深合并；
+ *  播报三档迁移（方案 §5.2 规则 8）：旧值任一为 false → 静音；否则 → 自动（Q11：不保留「打字也播报」）。 */
 export function mergeStoredSettings(raw: string | null): AppSettings {
   if (!raw) return DEFAULT_APP_SETTINGS
   try {
-    const parsed = JSON.parse(raw) as Partial<AppSettings>
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { ttsEnabled?: boolean; autoplay?: boolean }
+    const { ttsEnabled, autoplay, ...rest } = parsed
+    const speakPolicy: SpeakPolicy =
+      rest.speakPolicy ?? (ttsEnabled === false || autoplay === false ? 'silent' : DEFAULT_APP_SETTINGS.speakPolicy)
     return {
       ...DEFAULT_APP_SETTINGS,
-      ...parsed,
+      ...rest,
+      speakPolicy,
       agents: { ...DEFAULT_APP_SETTINGS.agents, ...(parsed.agents || {}) },
     }
   } catch {

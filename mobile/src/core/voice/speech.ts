@@ -4,7 +4,7 @@
 // SessionCore 只管「哪一轮该出声」。这样会话状态机继续是零副作用、jest 可回放的纯逻辑，
 // 而设置一改（关掉播报）立刻能停当前这段——两件事各自有唯一的落点。
 import type { SpeechSink } from '../session/store'
-import { settingsStore } from '../settings/store'
+import { settingsStore, speakAllowed } from '../settings/store'
 import { newPcmPlayer } from './audioCtx'
 import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
 
@@ -47,6 +47,8 @@ export class SpeechController implements SpeechSink {
   private spokenText = ''
   /** 首音时延（ms，验收判据「体感 <1.5s」的机器读数）；未出声为 0 */
   lastFirstAudioMs = 0
+  /** begin 时按三档裁决的结果；finish 尊重它（同一轮不许 begin 说播、finish 又不播） */
+  private allowed = false
 
   constructor(private audioUrl: string) {}
 
@@ -77,13 +79,9 @@ export class SpeechController implements SpeechSink {
     }
   }
 
-  private get enabled(): boolean {
-    const s = settingsStore.getState().settings
-    return s.ttsEnabled && s.autoplay
-  }
-
-  begin(bubbleId: string, emotion: string): void {
-    if (!this.enabled) {
+  begin(bubbleId: string, emotion: string, voice = false): void {
+    this.allowed = speakAllowed(settingsStore.getState().settings.speakPolicy, voice)
+    if (!this.allowed) {
       this.stop()
       return
     }
@@ -120,7 +118,8 @@ export class SpeechController implements SpeechSink {
   }
 
   finish(bubbleId: string, text: string): void {
-    if (!this.enabled || !text) return
+    // 三档在 begin 裁过；这里再看一眼「静音」——用户可能在这一轮中途把它关了
+    if (!this.allowed || settingsStore.getState().settings.speakPolicy === 'silent' || !text) return
     // **整句定稿在这里，三条分支都要报**（2026-08-29 第二次真机复跑才补上）：
     // 上一版只在 `delta()` 与 `speakBatch()` 报，而 `sameSegment=true`（流式正常收尾）
     // 这条**最常走的路径**两个都不经过；答案若是一次性 final 送达（一次 delta 都没有），
