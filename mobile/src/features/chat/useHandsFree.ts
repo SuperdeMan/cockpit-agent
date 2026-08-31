@@ -6,6 +6,7 @@
 // 就是靠分开报一次命中的。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import { presenceTrail } from '@/core/presence/presenceTrail'
 import {
   HandsFreeController,
   handsFreeAvailability,
@@ -102,6 +103,9 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       },
       onStopTts: () => speechController().stop(),
       onOrbState: (o, f) => {
+        // §11.4「首反馈时延」的取数源：这里是 FSM 换态的**回调时刻**（≈KWS 命中），
+        // 与随后第一条 primary=listening 的轨迹快照之差 = 屏上多久才有反应（B2 T14）
+        presenceTrail.mark('fsm:' + f)
         setOrb(o)
         setFsm(f)
         if (f !== 'LISTENING') setPartial('')

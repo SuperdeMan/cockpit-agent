@@ -491,6 +491,9 @@ export function SettingsScreen() {
         <Link href="/card-gallery" style={{ color: p.accent, fontSize: p.font(14) }}>
           卡片画廊（M3 全卡族 / 主题过检）
         </Link>
+        <Link href="/presence-trail" style={{ color: p.accent, fontSize: p.font(14) }}>
+          在场轨迹（B2：光球为什么变了 / 麦为什么开了）
+        </Link>
       </Section>
     </ScrollView>
       <S2sConsentSheet

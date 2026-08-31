@@ -16,9 +16,11 @@ import {
   NOTICE_SHOW_MS,
   RECONNECTING_GRACE_MS,
   type Degradation,
+  type PresenceInput,
   type PresenceSnapshot,
   type VoiceFacts,
 } from '@/core/presence/presence'
+import { presenceTrail } from '@/core/presence/presenceTrail'
 
 import type { HandsFreeUi } from './useHandsFree'
 import type { PttHandle } from './usePtt'
@@ -134,7 +136,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     summary: actionSummary(messages, op.id) || '待确认的操作',
   }))
 
-  return derivePresence({
+  const input: PresenceInput = {
     now,
     connStatus,
     connChangedAt: connChangedAt.current,
@@ -164,7 +166,11 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     user,
     voice,
     notice,
-  })
+  }
+  const snapshot = derivePresence(input)
+  // 在场轨迹（B2 T14，§11.5）：轴没变就不记 ⇒ 渲染期调用是幂等的（每秒 tick / StrictMode 双渲都不留痕）
+  presenceTrail.record(input, snapshot)
+  return snapshot
 }
 
 // ── 时刻登记：`Msg` 是共享类型、不能加字段（计划 §0 第 5 条），所以「这条错误/过程是什么

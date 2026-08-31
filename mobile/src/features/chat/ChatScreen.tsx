@@ -227,8 +227,12 @@ function ChatBody({
     [core, settings.visionEnabled, cfg.audioUrl],
   )
   const onConfirm = useCallback(
-    (reply: '确认' | '取消', operationId?: string) => core.confirmReply(reply, operationId),
-    [core],
+    (reply: '确认' | '取消', operationId?: string) => {
+      // 位置授权同意 = 定位这一档「开了」：激活日志有了第三个产出方（评审 D8 那条 location）
+      if (!operationId && pendingLocationText !== null && reply === '确认') activityLog.push('location', '位置授权 · 同意')
+      core.confirmReply(reply, operationId)
+    },
+    [core, pendingLocationText],
   )
   const onInterrupt = useCallback(() => core.cancelCurrentTurn(), [core])
   // 语音输入（M2-2）：定稿走与文本完全相同的 send 路径——前置路由/位置闸/候选拦截
