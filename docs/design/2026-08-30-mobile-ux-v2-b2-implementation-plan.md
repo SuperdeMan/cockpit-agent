@@ -4455,6 +4455,7 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
 - **T9** —— commit `4743470`（5 文件，127+）。新增用例 **5 条**（计划给 4 条 + 我补的 1 条，见反向验证 T9-1）。**chip 文本一句都没改**——四条都被 `routeSend` 直接认下：`换一批`→`categoryPage=2`；`导航去第一个`（有 `placeItems`）→`导航去星巴克`；`第一个`（只有 `poiNames`）→`导航去加油站A`；`intent_choice` 的 `label→send_text` 原样。`nav.mjs` 一字未动。
 - **T10** —— commit `a0bcb5e`（5 文件，45+/6−）。新增用例 **1 条**。`SessionState.visionIds` + `beginUserBubble()` / `markVision()`；`ChatScreen` 的视觉分支改成「先落气泡 → 抓帧 → `send({bubbleId})`」；`MessageBubble` 加 📷 角标、`VoiceSheet` 转写加 `📷 ` 前缀。**拍完不出预览**（红线：预览也是一份落端）。
 - **T11 + 附加②** —— commit `84de435`（4 文件，50+/5−）。新增用例 **2 条**。`onMetric` 里两件事分开写：`S2S_LOCAL_HANDLED` 加 `echo_dismissed`（附加②，让 provider 别自答）+ `onEchoDismissed?.()`（胶囊信号源）。`useHandsFree.echoAt` → `usePresence` 与取消提示取更晚的那个。**共享 `voiceLoop.mjs` 一字未动。**
+- **真机取证驱动的两处修正，另立 commit `e5f514c`**（1 文件，11+/2−）：① 附加①的暗区 `0.4 → 0.6`（计划 §0.1 预先授权的升级档，读数见下）；② `VoiceSheet` 的 `Gesture.Pan` 加 `.activeOffsetY(10)`——不加方向约束时它把层内 chips 的横滑一并吃掉（T9 真机抓到，见下）。**两条都不是新裁决**：前者是计划写好的第二档，后者是 T3 那条手势缺方向约束、被 T9 的横滑区暴露出来。
 - **收口读数**：`npm test` = **36 suites / 380 tests 全绿**（357 → 380，净增 **23** = 附加⓪ 0 + T6 12 + T7 0 + T8 3 + T9 5 + T10 1 + T11 2；suites +4 = `pttLease` / `tapTalk` / `cardGroup` / `followUps`）；`npm run typecheck` = **0 error**。
 - **反向验证**（每条先断言变异真的落盘再跑；跑完还原并核对文件逐字回到原样）：
   - **⓪** Paeth 退化成 Sub ⇒ selftest **只 FAIL filter 4** ✅
@@ -4470,29 +4471,52 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
   - **T10-1** `onSend` 改回「先抓帧再 send」⇒ **零红**（计划已预告：这是接线，单测层无区分）。补**对照变异** `markVision` 改成 no-op ⇒ 只红新用例 ✅ ⇒ 用例本身有效，缺的只有接线证据，只能来自真机。
   - **T11-1** `onMetric` 去掉 `echo_dismissed → onEchoDismissed` 那行 ⇒ 只红 T11 用例 ✅
   - **T11-2（附加②）** `S2S_LOCAL_HANDLED` 拿掉 `echo_dismissed` ⇒ 只红附加②用例 ✅
-- **真机取证**：⬜ **本批未取到**——收口时 `adb devices` 为空、`Get-PnpDevice` 在 OS 层也看不到 Android 设备（开工时 `check_android_env.ps1` 还是 `1 attached: 5d432b6d`，中途掉线）；tailnet 上手机在线（`100.78.231.58`）但 5555 未监听、`adb connect` 被拒。**设备回来后按下面的清单补，读数回填到本节**（未跑的一律不写 ✅）：
-  - T6 十项：轻点即说（免唤醒关）自动收尾 / 中途再点立刻收尾 / 15s 硬上限收「没听清」 / 免唤醒开时轻点 / **免唤醒开 + 按住说话仍能转写且之后仍能唤醒（§0 第 5 条的真机确认，B1 验收表第 6 条第二行）** / 上滑取消文案 2s + 记录无气泡 / 输入框有字时长按走原生选择 / 播报中轻点停播进收音 / 隐私栏「关闭本轮麦克风」后 `RKStorage` 的 `handsFree` 仍 `true`（D7）/ TalkBack 光球 label
-  - T7 两项：极光四帧亮度（`png_probe rows` 找 2dp 那一行）+ 壳底对比（附加①同场景前后）
-  - T8：「查英伟达股价和新闻」→ 主卡 +「还有 N 张 ›」展开
-  - T9：「附近有什么咖啡」→ 层里 chips → 点「换一批」出第二页
-  - T10：连拍里带 📷 的用户气泡帧 **早于** `looking` 白环 / 采集点；`logcat -s CameraService` 的 `connect` 时间戳晚于那一帧；同组连拍补 B1 出账⑧的 `looking` 白环静态取证
-  - T11：**带 APK 构建时间**（`dumpsys package com.xiaozhou.companion | grep lastUpdateTime`）与有无 AEC；无 AEC 的包应出提示，有 AEC 的包写「未触发（AEC 在场）」不写 ✅
-  - 附加③：a) 打断留痕灰字（先用「讲一个三百字的故事」把流式窗口拉到 30s+）b) 上滑取消用 `input motionevent DOWN/MOVE/UP` 三段式
+- **真机取证**（设备 `5d432b6d`，外屏 `4630947090644569220`；Metro 复用既有 PID 56952 = 本仓 `mobile/`；装载方式 = `adb reverse tcp:8081 tcp:8081` + 深链 `xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081`——**dev-launcher 首屏不算应用在跑**，`monkey -c LAUNCHER` 只到那一屏；**APK `lastUpdateTime = 2026-08-29 17:22:24`**）。⚠ 设备在收口时掉过一次线（`adb devices` 空、`Get-PnpDevice` 在 OS 层也无、tailnet 在线但 5555 未监听），泓舟插回数据线后才取到。
+  - **T6① 免唤醒开时轻点 = FSM 手动唤醒 ✅**（`b2-07-f1.png`）：层升起 detent 0.4、层内 88dp 大球青环、层内外胶囊都是「● 在听…」、顶栏采集点转**琥珀**（cloudAsr）、「⌄ 收起」在位。
+  - **T6② 轻点即说（免唤醒关）✅**（`b2-06-tap.png`，本批最关键的一格）：`handsFree=false` 回读确认后单击光球 → 层升起、**输入框占位变「正在听…」**（=`ptt.state==='recording'`）、层内实时转写「啊，对了，啊，就是这个」、记录里同一句是**虚线草稿气泡**、采集点琥珀。⇒ 方案 Q2「轻点始终能说、与免唤醒开关无关」成立，走的是 `ptt.tap()` 而不是 FSM。
+  - **T6③ 说完自动收尾并发送 ✅**（`b2-06-tap-cap.png`，同一次会话 +19s）：层**自行收起**、草稿转正为实线用户气泡、助手已回答——**全程没有任何松手动作**。⚠ **哪一层收的尾这一趟分不出来**：现场有持续环境人声，端侧 VAD 端点与 15s 硬上限都能解释。要分开得在安静环境各测一次（全程静默 ⇒ 只能是 15s 上限；说一句停 1s ⇒ VAD）。三层各自有单测钉着。
+  - **T6④ 录音中再点 = 结束并提交 ✅**（`b2-06-a1/a2.png` → 记录里多出「好了。」/「好的，您说。」一轮）。
+  - **T6⑤ 按住上滑取消 ✅**（`b2-06-cancel-k2.png`，附加③b 的三段式注入奏效）：`input motionevent DOWN → 0.8s → MOVE ×3（上移 407px ≈ 136dp > CANCEL_DY 60dp）→ UP` ⇒ 胶囊「**已取消，这段话不会发给小舟**」且**记录里没有新气泡**；连拍 k4 帧该区亮像素 8825 → 3050 ⇒ 2s 窗口到期。（`input swipe` 没有按住阶段，长按判定过不去——计划说的这条属实。）
+  - **T6⑥ 播报中轻点 = 停播 + 进入收音、层不收 ✅**（`b2-06-speaking-tap.png`）：故事流式播报中点光球 → 「播报中 · 说话可打断」消失、层升起「● 在听…」、采集点琥珀，助手气泡定格并标灰字「已打断」。
+  - **T6⑦ 思考 / 执行中轻点 = 展开语音层 ✅**（`b2-07-shell-06.png`：`正在思考…` 态下点光球，层升起；`b2-07-speaking-edge.png`：`处理中…` 五步过程 + Dock 任务项，层内可见）。
+  - **T6⑧ D7 隐私栏「关闭本轮麦克风」✅**（`b2-06-privacy.png` / `b2-06-d7.png`）：点完**当场回读 `RKStorage`** —— `handsFree = True`、`wakeWord = True`、`voicePipeline = classic`。旧的 `reenableBargeIn` 会把持久化开关翻成 false 50ms，现在 `stopMic` 一次都不碰它。
+  - **T6⑨ 15s 硬上限单独取证 ⬜**（被上面 T6③ 的环境人声吞掉，见那条的说明）；**T6⑩ 输入框有字时长按走原生选择 ⬜**（`input text` 不支持中文、本批没造出「输入框有字」的场景）；**T6⑪ TalkBack 光球 label ⬜**（MIUI 的触摸浏览要在系统设置里人工确认，同第 1/2 批）。
+  - **T7 顶缘极光 ✅**（`b2-07-f1..f3.png`，`png_probe rows` 先定位再取值）：层顶缘结构 = 边框行 1364–1366（luma ~70）+ **极光行 1367–1372**（6px ≈ 2dp）。同一窗口三帧 x[100,980) 的读数：**avg B 130.2 → 146.9 → 238.2、亮像素比 78.2% → 83.3% → 100%** ⇒ 在呼吸。f4–f6 归零是因为 **FSM 自己从 LISTENING 回了 ARMED、层收了**（不是极光灭了），这是 FSM 行为不是本批改动。
+  - **T7 反向「只在 listening/thinking」✅（真机观测对照）**：正例（`b2-07-speaking-edge.png`，`处理中…` ⇒ primary=thinking）边框行 654–656 之后 **657–662 luma 77.3、B=119.3**；负例（`b2-07-edge-speaking1.png`，层仍开着但 agent 已非 listening/thinking）边框行 722–724 之后 **725–727 luma 33.6、B 无抬升**。同一结构位置，一亮一不亮。
+  - **附加① 层壳底 ✅（取了 0.6 那一档）**：58% 壳底之后，同一帧里层外未压暗文字带幅度 **41.9**、层内透出文字带幅度 **18.8** ⇒ 记录仍以 **~45%** 强度透过来（`b2-06-speaking-tap.png` 上层内答案与记录里同一段故事叠在一起、两边都难读）。按计划授权把暗区 **0.4 → 0.6** 后同流程复拍（`b2-07-shell-06.png`）：记录已不可读。⚠ **两张图的记录内容不同**，所以 0.6 那张只有定性判断 + 合成算术（暗区 0.4→0.6 把透出乘 (1−0.6)/(1−0.4)=0.667，45% → ~30%），没有逐像素同场景对比。「仍可见」保留。
+  - **T8 card_group ✅**（`b2-08-group-fold.png` / `b2-08-group-open.png`）：「查英伟达股价和新闻」→ 折叠态 = **主卡 NVDA 股价卡 +「还有 1 张 ›」**；点开 = 「收起其余卡片 ^」+ 第二张 `news_digest`（要闻·英伟达）竖排在下。语音层与记录里是同一份渲染（都过 `CardRenderer` 注册表）。
+  - **T9 follow-up chips ✅**（`b2-09-chips.png`）：「附近有什么咖啡」→ 层内 chips 行两条：`final.follow_up`「说『看第 1 个详情』或『导航去第 2 个』」+「导航去第…」（`placeItems` 那条）。**「换一批」没有出现，原因查清了且不是缺陷**：chip 的来源是 `candidates.category`，而 `candidates.ts:42` 的 **`place_list`（周边发现）分支显式 `next.category = null`**，只有 `poi_list` 才记 keyword ⇒ 咖啡这一轮根本没有 category 候选。要在真机上验「换一批」得用出 `poi_list` 的语料（如「附近的充电站」），单测那条（`routeSend('换一批') → categoryPage=2`）已经绿着。
+  - **T9 顺带抓到一个缺陷并当场修了**：层内 chips **横滑不动**——`b2-09-chips-scroll.png`/`b2-09-scroll2.png` 两次横滑（400ms / 900ms、800px）在 chips 带上 `diff` = **0.00%**，而**同两帧的层内大球框 diff = 99.98%**（观测通道自检：屏是活的）⇒ 第二个 chip 永远够不到。根因是 T3 那条 `Gesture.Pan()` 没有方向约束，把横向拖拽一并吃掉。修法 = `.activeOffsetY(10)`（只在向下超过 10dp 才激活；收起需要的 500px 下拖远超它）。⚠ **这条修复真机未复验**——两次复现场景都失败（一次胶囊落空、一次热更新中间态），复验配方写进遗留。
+  - **T10 视觉先落气泡 ✅（气泡本身）/ ⬜（顺序）**（`b2-10-bubble.png` / `b2-10-v1.png` / `b2-10-v12.png`）：「这是什么」→ 用户气泡带 **📷 看图** 角标、答案是视觉卡（模拟车外摄像头）、**记录里没有任何预览画面**（红线：预览也是一份落端）。时间线：点击 `10:29:54.319` → logcat `CameraService::connect call (PID … com.xiaozhou.companion, camera ID 0)` **`10:29:55.059`（+740ms）**——**这就是这次改动消掉的那段窗口的实测大小**。但「气泡帧早于相机连接帧」这条**顺序没取到**：本机无 ffmpeg（`screenrecord` 抽不了帧），`screencap` 单帧往返 450–1000ms，第一帧落在 +1.06s，已经晚于 +0.74s。取证法见遗留。
+  - **B1 出账⑧ `looking` 白环静态取证 ✅ 收口**（`b2-10-v1.png`，+1.06s）：胶囊「看一眼…」、顶栏采集点变**白**（与待机 teal / 收音琥珀三档可分）。
+  - **T11 回声提示 ⬜ 未触发，且不能记成「预期」**：APK `lastUpdateTime = 2026-08-29 17:22:24`，而开 AEC 的 `96a6830`（Oboe `setInputPreset(VoiceCommunication)`）作者时间是 **2026-08-29 17:27:50** ⇒ **装的这个包在 AEC 之前、没有 AEC**，所以「未触发」**不是**「AEC 在场」那种预期结果，只是这一趟没测到。两条具体原因：① 最后一轮的播报只有「开了」两个字，回声判据是与播报文本求公共子序列比，这么短不可能命中；② 手机上配着 **vivo TWS 4 蓝牙耳机**（当前未连接，但一连上音频就不走扬声器、麦克风根本收不到自己的播报）。复现配方见遗留。
+  - **附加③a 打断留痕灰字 ✅**（`b2-04-int-pre.png` / `b2-04-interrupted.png`，第 2 批 ⬜ 到此收口）：用「讲一个三百字的故事」把流式窗口拉长，**点之前先拍一帧**证明按钮在（rect(600,2380)-(830,2465) 平均 RGB **(65.4, 49.1, 33.9)** = 琥珀、亮像素 11.4%）；点完气泡定格在「有一盏路灯，照了小镇一百年。它见过」+ 灰字「已打断」。取色：「已打断」**(61.5, 59.2, 87.1)**、同气泡正文 **(97.6, 94.9, 119.5)** —— 两者都是 B>R≈G 的冷灰，**没有变红**。
+  - **设备当前状态：与接手时逐字段 diff = 0**。取证期间为造语料改过 `quickCommands`、为测「免唤醒关」改过 `handsFree`，用完把 10:02 的备份原样灌回（**sha256 `c381c59046b655f0` 逐字节一致**），关掉应用后再回读一次做**逐字段对账：键集合一致、差异 0**（`voicePipeline=classic`、`s2sConsentAt=1788085468272`、`quickCommands` 八条原样、`serverConfig` 原样）。取证期间发出的都是无害指令（故事/股价新闻/咖啡/看图/座椅加热），没有危险动作确认。
 - **本批踩的坑**：
-  1. **计划的验收栏与计划自己给的实现全文自相矛盾**（`pttLease` 的 `not.toMatch(/\brecorder\(\)/)` vs `usePtt.ts` 头注里的 `recorder()`）。两边都照抄 = 一开工就红在注释上。**「计划给了全文」不等于「这份全文和它自己的断言一致」**——同族第二次（第 1 批 C1-A 是验收栏与原则栏矛盾）。
-  2. **变异要落在被验的那个字面量上**（T6-1）：我第一版写 `recorderMUT()`，红是红了，但红的是另一条子断言 ⇒ `\brecorder\(\)` 这半条判据那一趟根本没被验证。**「红了」不等于「你想验的那一条红了」。**
+  1. **计划的验收栏与计划自己给的实现全文自相矛盾**（`pttLease` 的 `not.toMatch(/\brecorder\(\)/)` vs 计划给的 `usePtt.ts` 头注里就写着 `recorder()`）。两边都照抄 = 一开工就红在注释上。**「计划给了全文」不等于「这份全文和它自己的断言一致」**——同族第二次（第 1 批 C1-A 是验收栏与原则栏矛盾）。
+  2. **变异要落在被验的那个字面量上**（T6-1）：第一版我写 `recorderMUT()`，红是红了，但红的是另一条子断言 ⇒ `\brecorder\(\)` 那半条判据那一趟根本没被验证。**「红了」不等于「你想验的那一条红了」。**
   3. **反向验证零红时，先分清「判据面不含」与「用例够不到」**（T9-1）。这次是后者：夹具里的重复项排在第 5 位、被 `MAX_CHIPS` 先挡下 ⇒ 去重整句删掉四条用例一条不红。**判据面不含是设计如此，够不到是覆盖漏洞**——第 2 批坑⑤只写了前者，这一批补上后者：零红时要读夹具，看那条分支到底有没有机会执行。
-  4. **计划的反向验证条数预期可能两头都不准**（T6-3 少 1、T8-2 多 1），原因各不相同：前者是「另一个调用点自己也管着那件事」，后者是「那条用例的输入本来就依赖被变异的缺省值」。**照旧：先问判据面，再问是不是自己写错了。**
-  5. **前两批所有颜色类读数的错误面比记的还大**：不是「只有 filter=0 的行碰巧对」，而是真实 screencap 里**一行 filter=0 都没有**（直方图 1/2/3/4 = 344/669/45/1462）⇒ 那些读数**没有一行是对的**。第 2 批坑⑨对症状的定性对，对规模的定性偏轻。
+  4. **计划的反向验证条数预期可能两头都不准**（T6-3 少 1、T8-2 多 1），原因各不相同：前者是「另一个调用点自己也管着那件事」，后者是「那条用例的输入本来就依赖被变异的缺省值」。照旧：先问判据面，再问是不是自己写错了。
+  5. **前两批所有颜色类读数的错误面比记的还大**：不是「只有 filter=0 的行碰巧对」，而是真实 screencap 里**一行 filter=0 都没有**（直方图 1/2/3/4 = 344/669/45/1462）⇒ 那些读数**没有一行是对的**。第 2 批坑⑨对症状的定性对、对规模偏轻。
   6. **`git status` 干净不等于「你的提交还在本地」**：开工第一条命令读到 `origin/main..HEAD = 0`，不是我推的、也不是我漏提交，是别人的 push 把我的一并带走了。**开工先念这一句的价值就在这——它答的是「谁的东西在里面」，不是「我有没有推」。**
+  7. **「我没点中」这一批出现了三次，每次都差点被读成「功能没做」**：① 点 ■ 打断落到输入框（弹出键盘）——那一刻按钮已经因为轮结束而消失；② 点胶囊落空两次（一次胶囊已过期、一次页面滚动过）。**修法就是第 2 批坑③那条，这次真的用上了：点之前在同一条 `adb shell` 里先拍一帧，把「目标在不在」变成可查的证据**（附加③a 的琥珀读数就是这么来的）。
+  8. **`run-as` 读不了 `/sdcard`，但 shell 的重定向已经先把目标文件清空了**——`run-as … sh -c 'cat /sdcard/x > databases/RKStorage'` 报 `Permission denied`，而 `RKStorage` 已经是 **0 字节**。**写入类命令的失败点可能在读那一侧，破坏却已经发生在写那一侧**。可用的通道是 **base64 经 stdin**：`base64 -w0 f | adb shell "run-as PKG sh -c 'tr -d \"\r\" | base64 -d > databases/RKStorage'"`（`tr -d '\r'` 是必须的，adb shell 会做 LF→CRLF）。事后要 `rm databases/RKStorage-journal`（截断留下的热日志会在下次打开时回滚），并**用 sha256 对账**。
+  9. **音量键把系统面板拉出来，之后 18 帧量的全是系统页**（`avg_rgb` 三帧一模一样 = 13.1/13.1/13.1、亮像素恒 0）。「读数完全不变」这件事本身就该触发通道自检——一看图是 vivo TWS 耳机设置页，**演员根本没上场**（B1 第 4 批同族）。
+  10. **热更新的中间态不能取读数**：改完 `VoiceSheet` 之后 fast refresh 那一帧里，暗区在、极光在、层高度却是 0（`containerHeight` 没重新量到）。全量重载后同一流程立刻正常。**改了组件就重载再拍，别在 Fast Refresh 的中间态上量。**
+  11. **`input swipe` 与 `input motionevent` 不是一回事，这次两边都应验**：横滑用 `input swipe` 是对的（chips 那条 0.00% 是真的没滚）；而「按住 → 上滑取消」必须 `motionevent DOWN/MOVE/UP` 三段式，`input swipe` 没有按住阶段、长按判定过不去（计划附加③b 说的属实）。
 - **遗留 / 给第 4 批的话**：
-  - **⚠ 真机取证整批欠着**（见上面清单）。设备 `5d432b6d` 在本批中途掉线；第 4 批开工前先确认 `adb devices` 有它，**并且这批的真机项要补跑**——它是 T6 与 T10 唯一的接线证据来源（两条的零红已经说明这一点）。
-  - **`Maestro CLI` 已不在本机**（T15 要用它跑 05/06/08/09）。装回来的两条路：① `curl -Ls "https://get.maestro.mobile.dev" | bash`（官方脚本，装到 `~/.maestro/bin`，Windows 下在 Git Bash 里跑并把该目录加进 PATH）；② 直接下 release zip（`https://github.com/mobile-dev-inc/maestro/releases`）解压后用绝对路径调 `maestro.bat`。**替代路径**：`mobile/e2e/*.yaml` 的断言绝大多数是「文本可见 / 可点」，可以 `adb shell uiautomator dump` + 文本 grep 手工走——但第 2 批坑已记：**常驻动画屏上 `uiautomator dump` 出 0 节点**，所以替代路径只对 05/06 这类静止屏有效，08（键盘）09（画廊）仍需 Maestro。装 CLI 需要泓舟单独授权。
+  - **⚠ 层 Pan 的方向约束（`activeOffsetY(10)`）真机未复验**。复验配方：出一轮 `poi_list` 或带 `follow_up` 的答案 → **等答案出来之后**再点胶囊开层（早点会落空）→ `input swipe <x=1000> <chips 行 y> 200 <同 y> 700` → `png_probe diff` 同一 chips 带；**必须同时对层内大球框做一次 diff 做通道自检**（本批那次是 99.98%）。顺带复核向下拖 500px 仍能收起（T3 已验路径）。
+  - **T11 回声复现配方**：装的包**没有 AEC**（APK `lastUpdateTime 2026-08-29 17:22:24` 早于 `96a6830` 的 17:27:50），所以它**应该**能触发。要点三条：① 断开 / 忽略 **vivo TWS 4 蓝牙耳机**，确认音频走扬声器；② 用**长播报**（「讲一个三百字的故事」这类），回声判据是与播报文本求公共子序列比，两三个字的「开了」不可能命中；③ 在**播报结束进 FOLLOWUP 窗**那几秒连拍胶囊区。若第 4 批之前重建过 APK（带上 `96a6830`），那时「未触发」才可以写成「预期（AEC 在场）」。
+  - **T10「气泡早于相机」的顺序取证法**：本机无 ffmpeg ⇒ `screenrecord` 抽帧做不了，`screencap` 单帧 450–1000ms 分辨不出 740ms 的窗口。两条路：① 装 ffmpeg（`winget install Gyan.FFmpeg` 或解压 release 到 PATH），`adb shell screenrecord --time-limit 8 //sdcard/x.mp4` 后按帧号 × 1/30s 对 logcat 墙钟；② **反向法**：`adb shell pm revoke com.xiaozhou.companion android.permission.CAMERA` 之后说「这是什么」——新代码里气泡是同步先落的、抓帧失败也照样在，旧代码（先抓再 send）则整条 `.then` 拿不到帧 ⇒ 两者在屏上直接可分。用完 `pm grant` 还原。
+  - **T6 三格没取到，第 4 批补**：① 15s 硬上限单独取证（要**安静环境**——本批被持续环境人声吞掉，端侧 VAD 与硬上限都能解释同一个读数）；② 输入框有字时长按走原生选择（`input text` 不支持中文，得先想办法造出「输入框有字」——ASCII 一个字符也够）；③ TalkBack 光球 label（MIUI 触摸浏览要人工在系统设置里确认，第 1/2/3 批连续三次卡在这）。
+  - **需泓舟真人的两条**（本批未安排）：① 轻点说一句停 1s → 端侧 VAD 自动收尾（这是把 T6③ 那个「分不出来」拆开的关键一测）；② **免唤醒开 + 按住说话** → 有转写、松手发送、之后说「小舟小舟」仍能唤醒——这是 §0 第 5 条「PTT 在免唤醒开着时今天是坏的」这次修复的真机确认，也是 B1 验收表第 6 条第二行一直空着的那格。
+  - **`Maestro CLI` 已不在本机**（T15 要用它跑 05/06/08/09）。装回来两条路：① `curl -Ls "https://get.maestro.mobile.dev" | bash`（装到 `~/.maestro/bin`，Windows 下在 Git Bash 里跑并把该目录加进 PATH）；② 下 release zip（`https://github.com/mobile-dev-inc/maestro/releases`）解压后用绝对路径调 `maestro.bat`。**替代路径**：`mobile/e2e/*.yaml` 的断言多是「文本可见 / 可点」，可以 `adb shell uiautomator dump` + 文本 grep 手工走——但第 2 批坑已记：**常驻动画屏上 `uiautomator dump` 出 0 节点**，所以替代只对 05/06 这类静止屏有效，08（键盘）09（画廊）仍需 Maestro。装 CLI 需泓舟单独授权。
   - **barge-in 那一路的回声仍看不见**（`voiceLoop.mjs:476 _countSelfTrigger` 没有 metric）——共享文件不改，记给 hmi 侧加 `onMetric('echo_suspected')`。T11 只覆盖续问窗那一路。
   - **AEC 没覆盖 S2S 采集路径**（第 2 批遗留）仍在。附加②只堵「FSM 判出来的回声」——判不出来的那些照旧会被 S2S 转写成用户话。B3/B4 或 hmi 侧。
-  - **`EdgeGlow` 零 jest**（计划明写「纯动效、无判据」）：`active` 的那个表达式住在 `VoiceSheet.tsx` 的 JSX 里，没有任何用例钉它。要钉的最小改法是把它提成 `core/presence` 的一个纯函数——B4 视觉批顺手。
-  - **设备当前状态（本批一字未改）**：`voicePipeline=classic`（第 2 批为测三段式切的）；`s2sConsentAt=1788085468272` 保留；`quickCommands` 已还原；TalkBack 已装但已关。**要测 S2S 就在设置里切回端到端**（同意过了不会再弹）。本批**没有连上过设备**，所以也没有任何设备设置被改动。
-  - 本批**没有动** `AGENTS.md`，**没有 push**；`git log --oneline origin/main..HEAD` = **7**（附加⓪ + T6–T11），只报数。
+  - **`EdgeGlow` 零 jest**（计划明写「纯动效、无判据」）：`active` 那个表达式住在 `VoiceSheet.tsx` 的 JSX 里，没有任何用例钉它。最小改法是提成 `core/presence` 的纯函数——B4 视觉批顺手。
+  - **「换一批」chip 在真机上没有出现过**：来源 `candidates.category` 只在 `poi_list` 分支被记（`candidates.ts:42` 的 `place_list` 分支显式置空）。第 4 批若要补，用「附近的充电站」这类出 `poi_list` 的语料。
+  - **取证语料是靠改 `quickCommands` 造出来的**（`input text` 不支持中文、设置页也没有编辑入口）。方法与风险都写在坑⑧；下次要么沿用 base64 灌库法（记得 sha256 对账 + 逐字段 diff），要么给 e2e 加一条「测试语料」入口。
+  - 本批**没有动** `AGENTS.md`，**没有 push**；`mobile/e2e/artifacts/` 是 gitignore 的，本批 30 余张截图只在本机、文件名已逐条记在上面。`git log --oneline origin/main..HEAD` = **10**（附加⓪ + T6–T11 + 真机两处修正 + 本节），只报数。
 
 ### 6.4 第 4 批「播报·回执·轨迹 + 闸」（T12–T15）
 
