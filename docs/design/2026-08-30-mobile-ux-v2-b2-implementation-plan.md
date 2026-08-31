@@ -4716,7 +4716,7 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
   7. **⚠ 取证会话末尾 adb / USB 链路失效，剩余取证被迫中断**。演进顺序：`dumpsys bluetooth_manager | grep` 卡住 →
      连 `adb devices` 都不返回 → `taskkill` server + `start-server` 恢复过一次 → 随后 `adb pull` / `exec-out` 稳定 timeout（而 `adb shell echo` 一度还能回）
      → 最后 `adb devices` 也 timeout。机器上残留一个**杀不掉的 `adb.exe` PID 14604**（`taskkill /F` 报「拒绝访问」，
-     很可能就是 `check_android_env` 报的那个 shadow 副本），怀疑它占着 USB 句柄。**修法需要物理重插数据线或提权杀进程，两件都得泓舟做。**
+     很可能就是 `check_android_env` 报的那个 shadow 副本），怀疑它占着 USB 句柄。**修法需要物理重插数据线或提权杀进程，两件都得泓舟做。** 收口时最后探一次：`adb devices` 本身 rc=0 但**设备列表是空的** ⇒ 设备已完全不在枚举中，不是 adb 慢。
      副教训：**每一条 adb 调用都该带 `timeout`**——我前后被卡掉 5 条命令、每条 45–180s，其中 3 条还要 `TaskStop` 才停得下来。
   8. **`input text` 不支持中文**（当场复现 `NullPointerException: Attempt to get length of null array`）。
      可用替代是 **Maestro 的 `inputText` + `-e` 变量**（`maestro test -e QUERY="深圳天气" ask.yaml`），它走 driver 的 unicode 通道，
@@ -4761,6 +4761,6 @@ T1 D1 摘要源 ─► T2 D2–D5 判据修正 ─► T3 语音层骨架 ─► 
   - 蓝牙 A2DP `STATE_DISCONNECTED`（本批未主动断开，接手时就是断的）；
   - `mobile/e2e/artifacts/` 是 gitignore 的；本批 20 余张截图只在 scratchpad，文件名逐条记在上面。
 
-- **未推送清单**（只报数，`git push` 需泓舟单独授权）：`git log --oneline origin/main..HEAD` = **6**
+- **未推送清单**（只报数，`git push` 需泓舟单独授权）：`git log --oneline origin/main..HEAD` = **7**
   （本批 5 个：`78baa58` T12 / `578db3f` T13 / `36352bc` T14 / `bcc63a0` 真机修正 / T15 记录收口，外加 `AGENTS.md` 单独一个；
   再加上开工时就在 HEAD 上的、**别的会话的** `0a38fb0`）。**本批一次 push 都没跑。**
