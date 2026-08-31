@@ -34,6 +34,17 @@ maestro test mobile/e2e/01-text-weather.yaml      # 单条
 release 会短很多），不是 Maestro 自己报的 flow 时间。09 那 5 分半**几乎全在 `repeat 6 × scroll`**
 ——两趟差 0.8%，是稳定的，不是抖动。
 
+### UX v2.1 B2 收口复跑（2026-08-31 真机，HEAD 含 T12–T14）
+
+| 流 | tag | rc | 墙钟 | 备注 |
+|---|---|---|---|---|
+| `09-state-gallery` | offline | **0** | **315s** | 与 B1 的 326.4/323.9s 同量级 |
+| `08-keyboard-no-hide` | online | **0** | **133s** | 闸 G3 前半；B1 是 126.0s |
+| `06-confirm-dock` | online | **0** | **207s** | `dock-confirm` / `dock-countdown` / `presence-capsule` 三条断言全过 ⇒ **语音层加进对话屏后没有遮住 Dock**（B1 是 193.7s） |
+| `05-voice-sheet-ptt` | manual | **1** | 101s | 红在 `assertVisible: voice-sheet`；**不是功能坏**，是没人说话时的竞态，见该文件头注与 B2 计划 §6.4 |
+
+⚠ **跑之前先关 dev-client 的 Tools button**（见下节），否则 `scrollUntilVisible` 会点开 Expo dev 菜单。
+
 ⚠ 06 与 02 验的不是同一件事：**02 = 气泡内确认**（v1 路径，实验室开关 `uxV2Dock` 关掉时仍有效），
 **06 = 承诺面**。两条都要留着——回滚路径没有测试守着就只是一句话。
 
@@ -66,11 +77,32 @@ Maestro 每个 session 都会重装 driver，不带这个开关就每跑一条�
    （`Enable`/`Disable`）。⇒ 核 YAML 关键字要看反序列化器，不是看内部枚举。
 3. 见上面的 `--no-reinstall-driver`。
 
-## 装 CLI（如果换机器）
+## CLI 在哪（本机）／换机器怎么装
 
-下 `maestro.zip`（GitHub releases），**下完先对 release 里的 `checksums_sha256.txt`**，
+**本机不用装**：Maestro **2.9.0** 的 dist 一直在 `D:/Android/tools/maestro-dist/maestro/bin/maestro.bat`
+（zip 原件在 `D:/Android/tools/maestro.zip`，314,827,824 B = GitHub `cli-2.9.0` 原大小），
+设备上的 driver（`dev.mobile.maestro` + `dev.mobile.maestro.test`）也还在 ⇒ 直接带
+`--no-reinstall-driver` 用绝对路径调即可。
+
+> ⚠ **「不在 PATH」≠「不在本机」**：B2 计划 §6.3 曾据 `which maestro` 与 `~/.maestro/bin` 为空
+> 判定「CLI 已不在本机」，并把「装回来」列成需要授权的阻塞项。2026-08-31 复核：`~/.maestro/`
+> 里只有 `deps/`、`tests/`、`analytics.json` 这些**运行期状态**，从来就不放 CLI 本体；
+> dist 在别处。判据应该是 `find` 整盘，不是 `which`。（顺带实测：直连 GitHub 拉 300MB 的
+> `maestro.zip` 只有 **111 KB/s**（10s 拿到 1,112,220 B），`ghfast.top` 更慢（8s / 294,067 B），
+> `gh-proxy.com` / `ghproxy.net` 直接失败 ⇒ 真要重下得先找镜像，别硬拉。）
+
+换机器时：下 `maestro.zip`（GitHub releases），**下完先对 release 里的 `checksums_sha256.txt`**，
 解压后把 `bin` 加进 PATH。需要 JDK（本机 JDK 17 已装，见实施计划 §1.1）。
 ⚠ 下载别把 `--retry` 和 `-C -` 一起用（会把重复字节插进文件中间，坑账 §9.37）。
+
+## ⚠ dev-client 的悬浮 Tools 按钮会截走手势
+
+dev build 右上角那颗悬浮齿轮（expo-dev-client 的 **Tools button**）是**盖在 App 之上**的独立视图。
+Maestro 的 `scrollUntilVisible` 用屏幕中线附近的 swipe，实测会**抓到它并弹出 Expo dev 菜单**，
+表现成「flow 莫名其妙失败 / 点到了别的东西」。取证前先关掉：`adb shell input keyevent 82`
+打开 dev 菜单 → 关 **Tools button** → 关闭菜单。判据不要靠眼睛：关前后对同一矩形做
+`png_probe region`（本机读数 880,180–1030,330：关前 `avg(46.6,48.0,52.6)` / 亮像素 **8.85%**，
+关后 `avg(6.0,8.0,14.0)` / **0.00%**）。
 
 ## 已知风险：常驻动画 vs UiAutomator
 

@@ -1,0 +1,28 @@
+# mobile/e2e/05-voice-sheet-ptt.yaml
+# 流 ⑤：语音层 PTT（UX v2.1 §11.3）——按住光球 → voice-sheet 可见 → 松手 → 收起。
+# tag=manual：Maestro 的 longPressOn 只按不说话，ASR 会以「没听清」收尾（层在识别中仍可见，
+# 收尾后收起）；要真验转写得有人在旁说话，或用 M4 的直灌探针灌音频。
+# CI 的 offline / online 两档都不带 manual；`maestro test mobile/e2e/` 不带 tag 会跑到它——README 写明。
+#
+# ⚠⚠ **没人说话时这条流稳定红在 `assertVisible: voice-sheet` 上，而功能是好的**（2026-08-31 实测）。
+# 原因：`longPressOn` 按完就松，松手那一刻没有任何语音 ⇒ `usePtt.finishSession` 走空定稿/tooShort
+# 分支立刻丢弃，层同帧收起；Maestro 的断言跑在**松手之后**，必然扑空。
+# 取证（B2 §6.4）：用三段式注入把手指按住不放
+#   adb shell "input motionevent DOWN 113 2410; sleep 5; input motionevent UP 113 2410"
+# 在按住的第 3 秒截屏 —— 层升起、顶缘极光在、层内大球「在听…」、Composer 占位「正在听…」。
+# ⇒ **manual 的跑法是：看到光球变「在听…」就立刻开口说一句**，层会在识别中保持可见，断言才有意义。
+# 别把这条红读成「层没升起来」。
+appId: com.xiaozhou.companion
+name: 05 语音层 PTT（manual）
+tags:
+  - manual
+---
+- runFlow: subflows/open-app.yaml
+- longPressOn:
+    id: "composer-orb"
+- assertVisible:
+    id: "voice-sheet"
+- extendedWaitUntil:
+    notVisible:
+      id: "voice-sheet"
+    timeout: 30000
