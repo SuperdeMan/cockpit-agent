@@ -82,8 +82,14 @@ export function VoiceSheet(props: VoiceSheetProps) {
     return () => clearTimeout(t)
   }, [open, target, h])
   const sheetStyle = useAnimatedStyle(() => ({ height: h.value }))
+  // 只认「向下拖」。不加方向约束时这条 Pan 会把层内 chips 的横滑一并吃掉——T9 真机实测：
+  // 400ms / 900ms 两次横滑，chips 带逐字节 **0.00%** 变化，而同两帧的层内大球框差 **99.98%**
+  // （屏是活的，观测通道开着）⇒ 第二个 chip 永远够不到。只在向下超过 10dp 才激活：横滑
+  // 永远够不到这个阈值，手势留给 FollowUpChips 的 ScrollView；收起只需要向下，所以这条
+  // 约束不影响 T3 已验的收起路径（500px 下拖远超 10dp）。⚠ 真机复验见 §6.3。
   const pan = Gesture.Pan()
     .runOnJS(true)
+    .activeOffsetY(10)
     .onEnd((e) => {
       if (e.translationY > SHEET_DISMISS_DY) props.onCollapse()
     })
@@ -104,11 +110,14 @@ export function VoiceSheet(props: VoiceSheetProps) {
           : p.fg2
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
-      {/* 记录变暗 40%、仍可见（§5.2）：点暗区 = 收起 */}
+      {/* 记录变暗、仍可见（§5.2）：点暗区 = 收起。
+          40% → 60% 是第 3 批附加项①授权的升级档：58% 的壳底之后记录仍以未压暗的 ~45% 强度
+          透过来（真机同帧两条同类文字带：层外幅度 41.9 / 层内 18.8），层内答案与记录里的
+          同一段话叠在一起两边都难读。60% 之后透出降到 ~30%。「仍可见」保留 */}
       <Pressable
         accessibilityLabel="收起语音层"
         onPress={props.onCollapse}
-        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.4)' }}
+        style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }}
       />
       <GestureDetector gesture={pan}>
         <Animated.View testID="voice-sheet" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, sheetStyle]}>
