@@ -13,9 +13,32 @@ def MIRRORS = [
     'https://mirrors.cloud.tencent.com/nexus/repository/maven-public/',
 ]
 
+// ── 实测在镜像上「有 POM 却拿不到 artifact」的 JitPack 坐标（B3 实测，2026-09-01）──
+// expo-blur 依赖 com.github.Dimezis:BlurView:version-3.1.0（JitPack 专属坐标形态
+// com.github.<GitHub 用户名>）。首次重建报
+//     Could not find BlurView-version-3.1.0.jar ... Searched in: <腾讯镜像>/....aar, ....jar
+// 而 **android/build.gradle 里那条 `maven { url 'https://www.jitpack.io' }` 根本没被尝试**。
+// 逐条取证（curl 实测，不是猜）：
+//   · 腾讯镜像该路径 **GET 200**（.pom 1121B / .aar 26973B application/zip），
+//     **HEAD 404**——nexus 对两个动词行为不一致；
+//   · gradle 缓存里**只有 .pom 没有 .aar**（说明元数据下成功、artifact 下失败）；
+//   · jitpack.io 上 .aar GET 200 / 26973B，可达。
+// 机制：Gradle 一旦从某个仓库解析到模块**元数据**，该模块的 artifact 就**只从那个仓库找**
+// （不跨仓库混合）⇒ 镜像的 artifact 存在性探测判否之后，不会回落到后面的 jitpack。
+// ⚠ 只排这一个 group、不排 `com.github.*` 全族：缓存里的 com.github.bumptech.glide 与
+//    com.github.penfeizhou.android.animation **在镜像上是好的**（artifact 都在），把它们
+//    赶去 jitpack 反而要现场构建。判据是「实测在镜像上坏了」，不是「名字长得像 JitPack」
+//    ——再撞到同形态的坐标就往这个列表里加一行，并把取证写进坑账。
+def MIRROR_EXCLUDED_GROUPS = [
+    'com.github.Dimezis',
+]
+
 def addMirrors = { repoHandler ->
     MIRRORS.each { u ->
-        repoHandler.maven { url u }
+        repoHandler.maven {
+            url u
+            content { c -> MIRROR_EXCLUDED_GROUPS.each { g -> c.excludeGroup(g) } }
+        }
     }
 }
 
