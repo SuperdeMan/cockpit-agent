@@ -1554,7 +1554,242 @@ speaking 时点光球会走 `onOrbTap` 的 `interruptAndListen()`（有竞态）
 
 ### 6.2 第 2 批「依赖引入 + 一趟重建」（T4–T8）
 
-（回填：开工基线 / T4 落盘与 unimodule 检查 / T5–T7 各自 jest 与提交 / T8 构建时长 + APK 体积 + 注册验证三件 + AEC patch 核证 + `lastUpdateTime` + 冒烟五格 / 反向验证 / 坑 / 遗留）
+> 泓舟 2026-09-01 批准本批开工。本批**零语音类读数**（唤醒率 / 回声 / 端点全归第 3 批 T10）
+> ——装机取到 `lastUpdateTime` 就停。
+
+**开工基线（自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `scripts\check_android_env.ps1` | 退出码 **0**；18 pass / 0 warn / 0 fail；设备 `5d432b6d` 在线 |
+| `npm test` | **40 suites / 402 tests 全绿**（与 §6.1 收口读数一致，无人动过） |
+| `npm run typecheck` | **0 error** |
+| `git log origin/main..HEAD` | **0 个提交**——§6.1 遗留⑥ 的六条已推送，`origin/main` = `HEAD` = `5f544c6`；`git status` 干净 |
+| Metro | 已在跑，**PID 18496**（与 §6.1 同一进程未重启），命令行核过服务的是本仓 `mobile/`；`/status` = `packager-status:running` |
+| worktree | 泓舟仍未授权分树 ⇒ 主工作树，每次提交前重采 `git status`（四次都只有自己的文件） |
+
+**T4（原生依赖一次落盘）——提交 `37fe212`，6 文件 +145**
+
+`npx expo install expo-haptics expo-blur` ⇒ `expo-blur@~57.0.2` + `expo-haptics@~57.0.2`。
+`git diff -- package.json` **恰好两行新增**（lock +22）；`postinstall` 的 patch-package 复跑，
+`react-native-audio-api@0.13.3 ✔`（AEC 补丁仍在，T8 步骤 4 再核一次进包）。
+
+§0 第 3 条的 30 秒注册通道检查（**结论：两件都走 Expo 通道，`react-native.config.js` 不动**）：
+
+| 件 | `expo-module.config.json` | `unimodule.json` | android 模块类名（T8 grep 用） |
+|---|---|---|---|
+| expo-haptics | ✅ 在（341 B） | ✅ No such file | `expo.modules.haptics.HapticsModule` |
+| expo-blur | ✅ 在（333 B） | ✅ No such file | `expo.modules.blur.BlurModule` |
+
+`modules/foldstate` 四件按 `modules/kws` 模板落盘。写 Kotlin 前**先核过三处 API 在
+expo-modules-core 57.0.13 上真的存在**（构建一趟 20–38 分钟，编译期才发现太贵）：
+`OnStartObserving`/`OnStopObserving` 无参重载（`ObjectDefinitionBuilder.kt:483/516`）、
+`sendEvent(String, Map<String, Any?>)`（`Module.kt:50`）、`appContext.currentActivity: Activity?`
+（`AppContext.kt:402`）。tsc 0、全量 **402（零增量）**——本任务是落盘，判据在 T6 的纯函数与 T8 的注册验证。
+
+**T5（触感四种）——提交 `0a9c004`，7 文件 +122**
+
+`npm test` 402 → **409**（`hapticCue` 5 条 + `settingsMeta` 2 条），tsc 0。
+
+⚠ 计划步骤 3 写的水合入口名 `hydrate` 在仓库里**不存在**，实际是
+`mergeStoredSettings`（`store.ts`）——计划自己写了「以文件里实际的函数名为准」，照此改。
+新用例两条（B2 坑① 的守卫：既有「空/损坏存量 → 默认值」两条走提前返回与 catch，**够不到合并体**）：
+旧库缺键 → `true`；旧库显式 `false` → **保持 false**（第二条计划没写，补的是「合并不许把用户的关覆盖回默认开」这半）。
+
+| 反向验证 | 落盘证据 | 结果 |
+|---|---|---|
+| ① `wake` 去掉 `prev.primary !== 'listening'` 守卫 | grep 到第 16 行少了守卫 | **恰好红「唤醒轻」1 条**，其余 4 条绿 |
+| ② `isDead` 只认 `fatal` | grep 到第 12 行 | **恰好红「判死一」1 条**（`Expected "dead" / Received null`） |
+| ③ 四个 return 全换 null（带 `MUT3` 标记） | `grep -c MUT3` = **4** | 红 4 条，**阴性用例「无转移 → null」仍绿**（它跟着红就说明测试写反了） |
+| 还原 | grep 回四个 return + 双 kind 判据、`MUT3` 计数 **0** | 5 passed |
+
+⚠ **`impactAsync` 在 Android 上不是官方推荐路径**（读 d.ts 时发现，写进 `core/haptics.ts` 头注）：
+`Haptics.d.ts` 原话是 Android 的 `Vibrator` API "not recommended"，推荐
+`performAndroidHapticsAsync`（走 `View.performHapticFeedback`、免 VIBRATE 权限）。
+本轮按计划先上 impact/notification 族；**T9 真机若四种分不出手感，换 `AndroidHaptics` 族比在 impact 里调参更有希望**。
+
+**T6（折叠姿态 JS 面）——提交 `8948380`，6 文件 +119**
+
+`npm test` 409 → **413**（`foldPosture` 4 条），tsc 0。
+
+| 反向验证 | 落盘证据 | 结果 |
+|---|---|---|
+| ① horizontal/vertical 两分支对调 | grep 到第 9 行 `? 'book' : 'tabletop'` | **恰好红 tabletop 与 book 两条**，另两条绿 |
+| ② 去掉 `state !== 'halfOpened'` 守卫 | grep 到第 8 行 | **恰好红「全开 → flat」1 条** |
+| 还原 | grep 回两行原样 | 4 passed |
+
+⚠ 计划 §1 的文件表**漏了 `src/app/_layout.tsx`**：既有 5 块调试屏每块都在那里注册
+`Stack.Screen` 给标题，不加只是标题变成文件名（不崩），但与仓库现状不一致 ⇒ T6/T7 各加一行。
+typed routes 不是「tsc 过了就算」：核过 `.expo/types/router.d.ts`（17:16 更新）里
+**真的有 `/native-spike`**，所以 tsc 0 是判据不是宽松通过。
+
+**T7（材质 spike 屏）——提交 `0c9e601`，3 文件 +117**
+
+tsc 0、全量 **413（零增量，取证装置无 jest）**。
+
+⚠⚠ **计划写的 spike 屏结构在 SDK 57 上量不到真模糊**——照字面实现的话，③ 会和 ② 长得一模一样，
+而屏上看不出任何异常（「跑了、但量的是回落路径」）。两条事实都从**装出来的包的源码**读到，不是猜：
+
+1. `experimentalBlurMethod` 已 **deprecated**（`BlurView.types.d.ts:58`），正式 prop 是 `blurMethod`；
+   仍可用，但 `componentDidMount` 会 `console.warn`。
+2. `BlurView.js` 的 `_maybeWarnAboutBlurMethod()` 原话：Android 上给了
+   `blurMethod='dimezisBlurView'` 却**没配 `blurTarget`** 时，
+   "The blur view will **fallback to "none"** blur method to avoid errors"——**原生侧静默回落**。
+   SDK 57 的真模糊接法是 `<BlurTargetView>` 包住要被糊的背景 + BlurView 的 `blurTarget` 指向它。
+
+⇒ spike 屏改成**四块**，第 ④ 块是**仪器自检格**（照计划字面的写法：`blurMethod` 无 `blurTarget`）：
+① G1-tint 现状（`GLASS.frosted` 的 tint 0.58 / border 0.16，字段名核过）／② `BlurView` 无
+`blurMethod`（= `'none'` 半透明回退，对照组）／③ `blurMethod` + `blurTarget`（真模糊路径）／
+④ `blurMethod` 无 `blurTarget`。**判据**：④ 与 ③ 长得一样 ⇒ `blurTarget` 没起作用、③ 也没糊；
+④≈② 而 ③ 不同，才说明 ③ 量的是真模糊。另加一行 `blur-target-state` 读数（`attached` / `null`）
+——读的是 `ref.current` 的真实值，不是我自己写的一句声明。
+⚠ ref 时序：`BlurView` 只在 `componentDidMount` 与 `blurTarget.current` **变化**时读它，首帧 ref
+还是 null 就会当成「没配」⇒ 用 `useEffect` 置 `ready` 后才渲 ③ 的 BlurView。
+
+**T8（一趟重建 + 注册验证 + 重装重核）——构建两趟，第一趟失败**
+
+| 项 | 读数 |
+|---|---|
+| 前置 | `check_android_env.ps1` 退出码 **0**；`fetch_mobile_voice_assets.ps1` 退出码 **0**（kws 原生件 + silero_vad 都在） |
+| 第 1 趟（`-Clean`） | **FAILED in 5m21s**，`:app:checkDebugAarMetadata`（根因见下） |
+| 第 2 趟 | **BUILD SUCCESSFUL in 12m35s**；897 tasks（515 executed / 382 cached） |
+| APK 体积 | **275.9 MB** —— 与 M4 读数 **275.9MB 持平（涨幅 0）**，远低于 >20MB 的停查线 |
+| `lastUpdateTime` | **2026-09-01 19:21:55**（装机 9s）⇒ **晚于 AEC 补丁 `96a6830` 的 2026-08-29 17:27:50，本包第一次含平台 AEC**。这是第 3 批所有语音读数的口径锚 |
+
+**⚠ 第 1 趟失败的根因（三件事叠起来，前两个假设都被自己的取证推翻）**
+
+报错是 `Could not find BlurView-version-3.1.0.jar (com.github.Dimezis:BlurView:version-3.1.0)`，
+搜索位置**只列腾讯镜像两行**（完整日志核过，没截断）。`expo-blur` 的 `android/build.gradle`
+依赖它，是 JitPack 坐标。
+
+| 假设 | 取证 | 结论 |
+|---|---|---|
+| ①「项目没配 jitpack 仓库」 | `android/build.gradle` 里 `maven { url 'https://www.jitpack.io' }` **本来就有** | **推翻** |
+| ②「腾讯镜像上没有这个包」 | `GET` **200**：`.pom` 1121B / `.aar` 26973B（application/zip）；POM 的 `<packaging>aar</packaging>` 也正确 | **推翻** |
+| ③ 真因 | 同一路径 **`HEAD` 返回 404、`GET` 返回 200**（nexus 对两个动词行为不一致）；gradle 缓存里**只有 `.pom` 没有 `.aar`**（元数据下成功、artifact 下失败）；而 **Gradle 一旦从某个仓库解析到模块元数据，该模块的 artifact 就只从那个仓库找**（不跨仓库回落）⇒ 后面的 jitpack 根本没被尝试 | **成立** |
+
+⇒ 修法落在 `scripts/gradle_cn_mirrors.init.gradle`（它头注写明就是这类「本机环境形态与库的
+假设不符」的落点）：给四个镜像加 `content { excludeGroup(...) }`，让该坐标绕开镜像直连
+jitpack.io（实测 `.aar` GET 200 / 26973B 可达）。**只排 `com.github.Dimezis` 一个 group、
+不排 `com.github.*` 全族**——缓存里的 `com.github.bumptech.glide` 与
+`com.github.penfeizhou.android.animation` **在镜像上是好的**，把它们赶去 jitpack 反而要现场构建；
+判据是「实测在镜像上坏了」，不是「名字长得像 JitPack」。第 2 趟不再带 `-Clean`：第 1 趟的
+`-Clean` prebuild 已经跑完且 `> Task :foldstate:` 已出现在日志里（新模块进 settings.gradle 这个
+目的**已达成**），而 prebuild 判定受管文件变化时照样整目录重生成（第 2 趟日志里仍有
+`Clearing android`）。
+
+**⚠⚠ 注册验证：计划 §0 第 3 条的 Expo 侧路径与文件名在 SDK 57 上都不存在**（出账）
+
+计划写「`android/app/build/generated/**/ExpoModulesProvider*`」。实测：全盘
+`find -name "ExpoModulesProvider*"` **零命中**，`app/build/generated/` 下只有
+`ap_generated_sources / autolinking / res / source` 四个目录。**先证明观测通道再下结论**——
+从 `expo-modules-autolinking` 的 `ExpoAutolinkingPlugin.kt:18-20` 读到真名与真路径：
+
+- 文件名是 **`ExpoModulesPackageList.kt`**（不是 `ExpoModulesProvider`）；
+- 生成在 **`:expo` 工程下**（第 2 趟日志第 178 行 `> Task :expo:generatePackagesList`），不是 `:app`；
+- 全路径：`node_modules/expo/android/build/generated/expo/src/main/java/expo/modules/ExpoModulesPackageList.kt`。
+
+| 通道 | 判据 | 读数 | |
+|---|---|---|---|
+| Expo · expo-blur | `ExpoModulesPackageList.kt` 的 `modulesMap` | `expo.modules.blur.BlurModule::class.java` | ✅ |
+| Expo · expo-haptics | 同上 | `expo.modules.haptics.HapticsModule::class.java` | ✅ |
+| Expo · **自写 foldstate** | 同上 | `com.xiaozhou.foldstate.FoldStateModule::class.java` | ✅ |
+| Expo · 既有 kws 不许丢 | 同上 | `com.xiaozhou.kws.KwsModule::class.java` | ✅ |
+| RN 社区 · 既有件不许丢 | `PackageList.java` | Onnxruntime **65 行** / RNGH **73 行** / Reanimated **75 行**；共 14 条目 | ✅ |
+| foldstate 真编译了 | gradle task 与产物 | `> Task :foldstate:` **38 条**；`FoldStateModule.class` + `foldstate-debug.aar` 产出 | ✅ |
+
+⚠ `:expo-blur:` / `:expo-haptics:` 的 gradle task 数是 **0**——这不是缺陷：SDK 57 的 npm 包走
+`publication: { repository: "local-maven-repo" }`（预编译 aar），不从源码建工程。判据是
+`ExpoModulesPackageList`，不是有没有 `> Task :`。
+
+**AEC patch 进包核证（步骤 4，不在就停）**：
+`node_modules/react-native-audio-api/android/src/main/cpp/audioapi/android/core/AndroidAudioRecorder.cpp:85`
+= `->setInputPreset(oboe::InputPreset::VoiceCommunication)` ✅（同 grep 另有 4 条命中在
+`libs/miniaudio/miniaudio.h`，那是 miniaudio 自带的同名符号，**不是补丁**）；
+`patches/react-native-audio-api+0.13.3.patch` 1643B 已随 robocopy 同步进镜像区。
+
+**装机后全套重核（§0 第 4 条）**
+
+| 项 | 读数 |
+|---|---|
+| `adb install -r` | Success，**9s** |
+| `adb reverse` | 重建 + `--list` = `UsbFfs tcp:8081 tcp:8081` ✅ |
+| Metro（宿主侧） | `curl localhost:8081/status` = `packager-status:running` ✅ |
+| Maestro driver | `dev.mobile.maestro` + `dev.mobile.maestro.test` **重装 APK 后仍在** ✅ |
+
+**冒烟五格**
+
+| # | 判据 | 读数 | |
+|---|---|---|---|
+| 1 | App 起 + 一轮文字问答（主链没断） | 主屏渲染正常；点「播放音乐」⇒ 用户气泡 +「**好的** · 已执行 · 展开回执」——App→Gateway→Planner→Executor→VAL→回执整条通 | ✅ |
+| 2 | `/native-spike`：native available、posture 有值 | **`native: available`**（运行时 `requireOptionalNativeModule` 非 null，不是静态文件）／`posture: flat`（设备 CLOSED，正确）／`state: none`／**`events: 1`——原生事件真推上来一条**（WindowManager 注册即回推），证明事件通道也活着 | ✅ |
+| 2b | 触感四按钮**有振感** | 见下「⚠ 系统触感开关」——**振感这一格 ⬜**，但「原生活着」有更硬的证据 | ⚠ |
+| 3 | `/blur-spike`：三块渲染、无崩溃 | 四块全渲染、零崩溃；`blurTarget: attached`（运行时读数）；**③ 的小字完全糊到读不出，①② 清晰可读** | ✅ |
+| 4 | **KWS/VAD 仍在**（`-Clean` 重生成过 android/） | `/voice-spike` 探针：**`avail: vad=true kws=true usable=true`**，另 `focus: installed=true` | ✅ |
+| 5 | Maestro 09 离线冒烟 | **rc=0**，253.7s，全部断言 COMPLETED（`--no-reinstall-driver`） | ✅ |
+
+**⚠ 系统触感开关把振动静默吞掉（B2「音量 0」那一族的第三次）**
+
+点四个触感按钮后 logcat：四条 `VibratorManagerService: Starting vibrate for vibration
+695/696/697/698`，`uid=10423`（本 App）⇒ **expo-haptics 的原生调用真的到达了系统振动服务**
+（比「不崩」硬得多的肯定式证据；四条的 `mUsage` 还分成 TOUCH×3 与 UNKNOWN×1，说明四种确实
+走了不同原生路径）。但四条**全部** `ended with status IGNORED_FOR_SETTINGS` ⇒ **一次都没真振**。
+逐项查到根因：`settings get system haptic_feedback_enabled` = **0**（而
+`haptic_feedback_intensity=2`、`haptic_feedback_disable=0`、`zen_mode=0` 都正常，就是这一个开关）。
+⇒ **T9 验触感四种之前必须先打开它**，否则会量到「四种都没感觉」的假读数，然后回头查我们自己的代码。
+改设备系统设置命中 CLAUDE.md 红线，**本轮没动**，作为遗留交给泓舟。
+
+**T7 的源码判断在运行时被坐实**：blur-spike 屏的 logcat **只有一条**
+`W ReactNativeJS: You have selected the "dimezisBlurView" blur method, but the blurTarget prop
+has not been configured. The blur view will fallback to "none"...` ⇒ 它来自 ④ 号自检格
+（故意不给 blurTarget），而 ③（给了 blurTarget）**不发** ⇒ ③ 真走了真模糊路径。
+④ 这一格因此不是凑数：它让「③ 到底糊没糊」有了**不依赖肉眼**的判据。
+
+**本批踩的坑**
+
+1. **用 `HEAD` 探测 maven 仓库会得到反向结论**：`mirrors.cloud.tencent.com` 的 nexus 对同一路径
+   `HEAD` 返回 404、`GET` 返回 200。我第一次就是用 `Invoke-WebRequest -Method Head` 测的，据此
+   差点判成「镜像上没有这个包」。**探仓库一律用 GET**。
+2. **Gradle 的模块与仓库是绑定的**：某个仓库提供了 POM，该模块的 artifact 就只从那里找，
+   **不会**回落到后面的仓库——所以 `android/build.gradle` 里配了 jitpack 也没用。
+   「配了仓库」与「这个模块会去那个仓库找」是两件事。
+3. **MIUI 锁屏下 `screencap` 返回全黑**（两块屏都是），而 M3 坑账里「全黑 = 抓错屏」这条会把人
+   引偏。判据链：`dumpsys power` 的 `mWakefulness=Dozing` + `dumpsys window` 的
+   `screenState=SCREEN_STATE_OFF` / `mDreamingLockscreen=true` ⇒ 是**息屏+锁屏**。
+   `KEYCODE_WAKEUP` + `KEYCODE_HOME` 解锁后同一条命令截出 4.2MB 正常图（本机 `deviceLocked=0`，无密码锁）。
+4. **`screencap -d` 要的是物理 display id 不是逻辑 displayId**：`-d 0` 报
+   `Display Id '0' is not valid`。逻辑↔物理映射从 `dumpsys display` 的 `mViewports` 读：
+   本机 CLOSED 态活跃屏 = 逻辑 `displayId=0` ↔ 物理 **`4630947090644569220`**（1080×2520，state ON）；
+   内屏是 `4630946481727302019`（2224×2488，state OFF）。
+5. **Maestro 跑完后 `am start -n .../.MainActivity` 不会退出 expo-router 的 navigation stack**：
+   屏上还停在 state-gallery，而我按主屏坐标点了 chip ⇒ 那一 tap 打在画廊上、**零证据**
+   （「观察对象缺席时零事件 = 零证据」）。修法是先 `KEYCODE_BACK` 回主屏并**截图核对**再点。
+6. **dev-client 重装后第一次启动进的是 `DevLauncherActivity`**（`dumpsys window` 的
+   `mCurrentFocus` 能看出来），不是应用。深链
+   `xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081` 直接连 Metro，
+   之后 `mCurrentFocus` 才变成 `MainActivity`。
+
+**遗留 / 给下一批的话**
+
+1. ⚠ **T9 的前提：设备 `system/haptic_feedback_enabled = 0`**，四种触感一次都不会真振
+   （原生调用到达了系统、被 `IGNORED_FOR_SETTINGS` 吞掉，取证见上）。要么泓舟在系统设置里
+   打开「触感反馈」，要么单独授权 `adb shell settings put system haptic_feedback_enabled 1`
+   （改系统配置命中红线，本轮没动）。**不解决这条就取不到 §11.2 B3 ② 的读数。**
+2. ⬜ **blur spike 的裁决三判据本轮只拿到「视觉」那条**（③ 糊到小字不可读、①② 清晰）。
+   `framestats` 60fps 与「挂载/卸载 20 次不崩」归 T9。④ 号自检格的截图没取（要滚屏，
+   §6.1 坑⑦ 裸 adb swipe 滚不动本 App 的 ScrollView）——但它的判据已由 logcat 那条唯一 warning 给出。
+3. ⚠ **计划 §0 第 3 条与 §1 两处要改**（本轮实测推翻）：① Expo 侧注册判据的路径与文件名
+   （`ExpoModulesProvider*` → `:expo` 工程下的 `ExpoModulesPackageList.kt`，全路径见上）；
+   ② §1 文件表漏了 `src/app/_layout.tsx`（T6/T7 各加一行 `Stack.Screen` 标题）。
+4. ⚠ **`impactAsync` 在 Android 上不是官方推荐路径**（d.ts 原话），推荐
+   `performAndroidHapticsAsync`（免 VIBRATE 权限）。T9 若四种手感分不出，换 `AndroidHaptics`
+   族比在 impact 里调参更有希望；备选已写进 `core/haptics.ts` 头注。
+5. 设备状态：**App 设置一字未改、系统设置一字未改**（发现 `haptic_feedback_enabled=0` 但没动）；
+   屏幕已解锁、`adb reverse tcp:8081` 已建、Metro PID 18496 仍是本仓那个。
+   取证图 8 张在 `mobile/e2e/artifacts/`（gitignore，不入库）。
+6. **推送**：本批 5 个提交（T4 `37fe212` / T5 `0a9c004` / T6 `8948380` / T7 `0c9e601` /
+   init script 修复 + 本条记录）**未推送**，等泓舟单独授权。
+   ⛔ push 的粒度是分支不是提交——推前列完整 `origin/main..HEAD` 并核 `git fetch`。
 
 ### 6.3 第 3 批「真机验收 + AEC 读数重取」（T9–T10）
 
