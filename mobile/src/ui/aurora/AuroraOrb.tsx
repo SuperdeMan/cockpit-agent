@@ -158,12 +158,28 @@ export function AuroraOrb({
         width: size,
         height: size,
         opacity: dim ? 0.6 : 1,
-        // RN 0.86 Android 支持 filter.saturate；iOS 不支持时静默忽略（本 App 只交付 Android）
-        ...(muted ? { filter: [{ saturate: 0.4 }] } : {}),
       }}
       accessibilityLabel={ORB_A11Y[state]}
       accessibilityRole="image"
     >
+      {/* B3-2（B2 出账 S6）：filter 挂在覆盖到最远子层（环境辉光 −52%）的 oversize 盒上，
+          不挂根盒——RN 0.86 Android 的 filter 会把子元素裁到容器盒内，而离线灰环（−10%）与
+          辉光（−52%）刻意画在盒外 ⇒ 挂根盒时只有 muted（唯一同时用上这两样的态）被裁成方框。
+          修前真机读数：盒外灰环应在的四个带，亮像素各 0/195。内层再造一个 size×size 相对系，
+          七层子元素与各环一个字符不改（含缩进——刻意不重排，让 diff 只剩这几行）。
+          非 muted 时这两层是无样式 View，零成本。pointerEvents=none：纯视觉层，球自己从不
+          接触摸（手势在 Composer 的容器上）；a11y label 仍留在根上。
+          filter.saturate 是 RN 0.86 Android 能力；iOS 不支持时静默忽略（本 App 只交付 Android）。 */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: -size * 0.52, left: -size * 0.52,
+          width: size * 2.04, height: size * 2.04,
+          ...(muted ? { filter: [{ saturate: 0.4 }] } : {}),
+        }}
+      >
+      <View style={{ position: 'absolute', top: size * 0.52, left: size * 0.52, width: size, height: size }}>
       {/* 环境辉光 */}
       <Animated.View
         style={[
@@ -321,6 +337,8 @@ export function AuroraOrb({
           ]}
         />
       )}
+      </View>
+      </View>
     </View>
   )
 }
