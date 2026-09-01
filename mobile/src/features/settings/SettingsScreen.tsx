@@ -501,6 +501,9 @@ export function SettingsScreen() {
         <Link href="/presence-trail" style={{ color: p.accent, fontSize: p.font(14) }}>
           在场轨迹（B2：光球为什么变了 / 麦为什么开了）
         </Link>
+        <Link href="/native-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
+          B3 原生件取证（折叠姿态 / 触感四种）
+        </Link>
       </Section>
     </ScrollView>
       <S2sConsentSheet

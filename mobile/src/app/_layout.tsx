@@ -52,6 +52,7 @@ export default function RootLayout() {
       <Stack.Screen name="card-gallery" options={{ title: '调试 · 卡片画廊' }} />
       <Stack.Screen name="state-gallery" options={{ title: '调试 · 状态画廊' }} />
       <Stack.Screen name="presence-trail" options={{ title: '调试 · 在场轨迹' }} />
+      <Stack.Screen name="native-spike" options={{ title: '调试 · B3 原生件' }} />
       <Stack.Screen name="map" options={{ title: '地图' }} />
       </Stack>
     </GestureHandlerRootView>
