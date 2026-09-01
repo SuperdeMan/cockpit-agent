@@ -22,6 +22,7 @@ import type { SendOpts } from '../../core/session/store'
 import { currentTurn } from '../../core/session/turnView'
 import { settingsStore } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
+import { composerOrbAnimated } from '../../core/presence/orbPolicy'
 import { MIC_LABEL } from '../../core/presence/presence'
 import { AuroraBackground, AuroraOrb, Glass, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
@@ -527,7 +528,7 @@ function ChatBody({
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
-        orbAnimated={snapshot.input !== 'voice-sheet'}
+        orbAnimated={composerOrbAnimated(snapshot)}
         onTap={onOrbTap}
       />
     </View>

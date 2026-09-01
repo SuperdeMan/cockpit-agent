@@ -253,6 +253,26 @@ export function AuroraOrb({
       />
       {/* 说话态：向外三层同心波纹（交互蓝，非极光，§10 克制） */}
       {animated && speaking && [1, 2, 3].map((i) => <Ripple key={i} size={size} i={i} />)}
+      {/* 说话态·静态标记（B3-1 / B2 出账 S4）：animated=false（语音层开着，Composer 球让出
+          那「1 个」循环动画名额）时，「在播报」仍要可读——画两圈固定透明度的青环（波纹的
+          「定格」）。零动画帧回调 ⇒ G5「层开时主球两帧逐字节相同」的读数不受影响；
+          与 listening 单圈青环的区分：一圈 vs 两圈。青 #46D6E0（§10.1 ⑤ 波纹用青不用极光）。 */}
+      {!animated && speaking && [1, 2].map((i) => {
+        const d = size * (0.66 + i * 0.34)
+        return (
+          <View
+            key={i}
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: (size - d) / 2, left: (size - d) / 2,
+              width: d, height: d, borderRadius: 9999,
+              borderWidth: 1,
+              borderColor: `rgba(70,214,224,${0.55 - i * 0.18})`,
+            }}
+          />
+        )
+      })}
       {/* 聆听/待机态：单圈交互蓝聆听环（接收式呼吸） */}
       {(listening || armed) && (
         <Animated.View
