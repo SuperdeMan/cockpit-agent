@@ -1771,10 +1771,16 @@ has not been configured. The blur view will fallback to "none"...` ⇒ 它来自
 
 **遗留 / 给下一批的话**
 
-1. ⚠ **T9 的前提：设备 `system/haptic_feedback_enabled = 0`**，四种触感一次都不会真振
-   （原生调用到达了系统、被 `IGNORED_FOR_SETTINGS` 吞掉，取证见上）。要么泓舟在系统设置里
-   打开「触感反馈」，要么单独授权 `adb shell settings put system haptic_feedback_enabled 1`
-   （改系统配置命中红线，本轮没动）。**不解决这条就取不到 §11.2 B3 ② 的读数。**
+1. ✅ **已解决（同轮回填）**：泓舟 2026-09-01 在手机系统设置里打开了触感反馈。
+   当场复验（改完设置要核它真的变了）：`settings get system haptic_feedback_enabled` = **1**
+   （intensity 仍 2）；再点四个触感按钮后 logcat：`Check AppOp VIBRATE ... returned
+   audio=allow, op=allow` → `Starting vibration ... on thread` → `step 0 on vibrator 0 complete`
+   → **`ended with status FINISHED` × 4，`IGNORED_FOR_SETTINGS` × 0** ⇒ 四次**都真振了**。
+   ⚠ **但这证明不了「四种手感可辨」**：四次的 `attrs.usage` 是
+   **TOUCH(18) × 3 + UNKNOWN(0) × 1**，只分得出 `notificationAsync`（confirm）与 impact 族，
+   而 wake / dead / shutter 三者在系统属性层**看不出区别**（区别在振动波形，logcat 这一层读不到）。
+   ⇒ §11.2 B3 ② 「四种各触发一次」的**手感可辨性仍归 T9，需泓舟本人**；
+   另 logcat 里有 `weakenVibrationIfNecessary time50`（系统对触感做了衰减），若 T9 手感普遍偏弱先查这一位。
 2. ⬜ **blur spike 的裁决三判据本轮只拿到「视觉」那条**（③ 糊到小字不可读、①② 清晰）。
    `framestats` 60fps 与「挂载/卸载 20 次不崩」归 T9。④ 号自检格的截图没取（要滚屏，
    §6.1 坑⑦ 裸 adb swipe 滚不动本 App 的 ScrollView）——但它的判据已由 logcat 那条唯一 warning 给出。
