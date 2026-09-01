@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 状态：**草案（2026-09-01）——待泓舟批准开工；批准前 `mobile/` 不按它动手**
+> 状态：**第 1 批（T1–T3）泓舟 2026-09-01 批准开工，已完成**——三条缺陷各一提交、逐格读数见 §6.1；第 2–4 批待开工
 > 交付对象：`mobile/` 执行者（人或 Agent）
 > 上游真相源：[`2026-08-29-mobile-ux-v2-presence-redesign.md`](2026-08-29-mobile-ux-v2-presence-redesign.md)（方案 **v2.2**；本计划只展开 **B3**，读 §5.11 / §7.3 / §7.4 / §7.6 / §8 / §9 表中 B3′ 那一行 / §11.1 B3 行 / §11.2 B3 / §12.2 / §13 Q5·Q14）；
 > B2 计划 [`2026-08-30-mobile-ux-v2-b2-implementation-plan.md`](2026-08-30-mobile-ux-v2-b2-implementation-plan.md)（**§6.4 第一行是闸结论：过，泓舟 2026-09-01 裁定放行**；其遗留出账表是本计划的输入——S4 / S6 / `plateGesture` 三条缺陷泓舟裁定记给本批）；
@@ -1393,7 +1393,158 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 
 ### 6.1 第 1 批「重建前的三条 JS 缺陷」（T1–T3）
 
-（回填：开工基线 / T1 静态标记 + orbPolicy 读数与真机四格 / T2 wrapper 读数与画廊回归 / T3 的 A-spike 结果或 B 方案 + 真机六格 / 反向验证 / 坑 / 遗留）
+> 泓舟 2026-09-01 批准本批开工（计划头部「草案待批」以该条为准）。全批在旧 APK
+> （`lastUpdateTime=2026-08-29 17:22:24`，**AEC 补丁 17:27:50 之前**，§0 第 5 条口径核过）
+> + Metro 热载上做，**未产出任何语音类读数**（唤醒率 / 回声 / 端点归第 3 批）。
+
+**开工基线（自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `scripts\check_android_env.ps1` | 退出码 **0**；18 pass / 0 warn / 0 fail；设备 `5d432b6d` 在线 |
+| `npm test` | **39 suites / 400 tests 全绿** |
+| `npm run typecheck` | **0 error** |
+| `git log origin/main..HEAD` | **2 个提交**，都是计划撰写会话的：`3ca90e2` / `80782c3`；`git status` 干净 |
+| Metro | 已在跑，PID 18496，命令行核过服务的是**本仓** `mobile/`（`/status` = `packager-status:running`） |
+| `dev_stack target show` | `cloud` |
+| APK | `versionName=0.1.0`、`lastUpdateTime=2026-08-29 17:22:24` |
+| worktree | 泓舟未授权分树 ⇒ **在主工作树做**，每次提交前重采 `git status`（三次都只有自己的文件） |
+
+**T1（S4 静态 speaking 标记）——提交 `124d152`，4 文件 +47/−1**
+
+`npm test` 400 → **402**（新 `test/orbPolicy.test.ts` 2 条），tsc 0，既有断言零改动。
+
+真机取证走**生产路径**（不是取证屏）。到达目标态 `input=voice-sheet + primary=speaking` 的路子：
+播报设「总是」→ 发文字 → 等 speaking → **点状态胶囊**显式开层。⚠ 计划里没写这条：
+speaking 时点光球会走 `onOrbTap` 的 `interruptAndListen()`（有竞态），而 `PresenceCapsule`
+接了 `onPress = setSheetOverride(open)`（`ChatScreen.tsx:518`；`presence.ts:258` 注释原话
+「点胶囊 = 显式打开，哪怕是文字轮」）⇒ **点胶囊无竞态**。⚠ `ChatScreen.tsx:511` 那条
+「B1 不接 onPress」的注释是**过期的**，代码里已经接了。
+
+| 格 | 判据 | 读数 | |
+|---|---|---|---|
+| 肯定式主证 | 环带 G−R > +15 | 内环 r=64：**+39 / +39**；外环 r=86：**+16 / +20** | ✅ |
+| 几何自洽 | 两环比值 | 实测 86/64 = **1.34** = 实现的 (0.66+2×0.34)/(0.66+0.34) | ✅ |
+| 阴性对照 A（**只变 speaking**） | 层仍开、TTS 已结束、同四点 | **−2 / −1 / −3 / 0** | ✅ 无青 |
+| 阴性对照 B（计划字面：层收起 + idle） | 同四点 | **+4 / +5 / 0 / −3** | ✅ 无青 |
+| **G5 口径复核** | 层开播报中两帧 Composer 球区 diff | **0.00%**（0 / 36100 px，不同字节 0） | ✅ 不破 |
+| 通道自检 | 同两帧层内大球区 diff | **99.99%**（14399 / 14400，单通道最大偏差 57） | ✅ 通道活着 |
+
+图：`b3-01-orb-speaking-static.png` / `b3-01-frame2.png` / `b3-01-orb-idle-negative.png` /
+`b3-01-orb-idle-collapsed.png`（`mobile/e2e/artifacts/`，gitignore）。
+
+**T2（S6 oversize filter wrapper）——提交 `1e86d4a`，1 文件 +20/−2**
+
+`npm test` **402（零增量、条数不减）**，tsc 0。七层子元素含缩进一字未动（刻意不重排，让 diff 只剩 wrapper 那几行）。
+
+| 格 | 判据 | 修前 | 修后 | |
+|---|---|---|---|---|
+| 盒外灰环带 · 右 | 亮像素(≥60) / 195 | **0（0.00%）** | **195（100.00%）** | ✅ |
+| 同 · 左 | | **0（0.00%）** | **104（53.33%）** | ✅ |
+| 同 · 上 | | **0（0.00%）** | **168（86.15%）** | ✅ |
+| 同 · 下 | | **0（0.00%）** | **168（86.15%）** | ✅ |
+| 盒边硬悬崖 | 水平 / 垂直剖面 | ±66 处 **101→20 悬崖**（= 方框） | 无悬崖；环峰在 **±78**（设计 79.2），盒外平滑衰减 | ✅ |
+| 非 muted 回归 | 盒外环仍在设计半径 | — | armed **r=80**（设计 79.2）；listening **r=83/84**（84.5）；attention **r=80/82** 且 R−B 由 −40 翻正到 **+25/+33**（琥珀签名） | ✅ |
+| **生产路径** | 对话屏开飞行模式 | — | 红健康点 +「已断开 · 消息会排队」，Composer 球去饱和且**灰环完整成圆**，环峰 r=76–78 | ✅ |
+| Maestro 09 离线冒烟 | rc | — | **rc=0** | ✅ |
+
+⚠ 非 muted 回归**不能用逐字节 diff**：画廊的球是 `animated`，两帧必然不同，diff 百分比分不出
+「还在但在动」和「没了」⇒ 换成**结构判据**（环在不在设计半径上、琥珀环的 R−B 符号）。
+
+图：`b3-02-muted-before.png` / `b3-02-muted-after.png` / `b3-02-nonmuted-after.png` /
+`b3-02-muted-production.png`。
+
+**T3（plateGesture）——提交 `9e54407`，1 文件 +51/−28**
+
+`npm test` **402（零增量）**，tsc 0。
+
+先自己把红重新证一遍（没照抄 B2 的定性）：空输入框长按 4s ⇒ 层不升、屏上出现**文本光标水滴柄**
++ 输入法选择工具条 ⇒ 原生 EditText 吃掉触摸，机制与 B2 出账一致（`b3-03-plate-hold-red.png`）。
+
+**A-spike 逐候选**（每个都真机验；证据自带出处——`placeholder` 里带 `[A1]`/`[A2]` 标记，
+否则「候选不工作」可能只是新代码没到设备）
+
+| # | 配置 | 半 1 长按起 PTT | 半 2 轻点聚焦 | 结论 |
+|---|---|---|---|---|
+| A1 | `makeHold(...).blocksExternalGesture(ref)` + TextInput 外包 `Gesture.Native().withRef()` | ❌ 层不升、水滴柄仍在（截图 placeholder 显示 `[A1]`，出处自证） | 未验（两半都要过才算过） | **败** |
+| A2 | `Gesture.Exclusive(makeHold(...), Gesture.Native())` | ❌ 同上（placeholder 显示 `[A2]`） | 未验 | **败** |
+| A3 | `makeHold(...).disallowInterruption(true)` | ❌ **Render Error: undefined is not a function**；`tsc` 同时红：`TS2339: Property 'disallowInterruption' does not exist on type 'PanGesture'` | — | **败（API 在 RNGH 2.32 上根本不存在）** |
+
+⇒ 三候选全败，走 **B 方案：空输入框时铺透明触摸层**（`composer-plate-overlay`；
+`Gesture.Exclusive(hold, tap→inputRef.focus())`；`plateOverlayOn = !!ptt && !finalizing && input.length === 0`）。
+
+| 格 | 判据 | 读数 | |
+|---|---|---|---|
+| **肯定式主证（B2 从来没绿过的那格）** | 空输入框长按 4s ⇒ 层升 + 录音中 | 层升起 + 层内大球 +「在听…」胶囊 + Composer placeholder 变「正在听…」 | ✅ |
+| 轻点回归 | 轻点 ⇒ 键盘弹起可打字 | 键盘弹起（且是在轮次在飞时点的，更强） | ✅ |
+| 反例 a | 有字时长按输入框 ⇒ 不触发 PTT | 框里有「a」，长按 4s：层不升、走原生选择（水滴柄） | ✅ |
+| 反例 b | 长按光球 ⇒ PTT 仍可 | 框里有字时长按光球：层升 +「在听…」 | ✅ |
+| 上滑取消 | 长按后上滑 ≥60dp 松手 ⇒ 不发送、层收起 | 中途帧「**已取消，这段话不会发给小舟**」（证明 PTT 真起来过，不是「压根没触发」）；松手后层收起、**零消息发出** | ✅ |
+| 15s 硬上限 | 见遗留① | 设备时钟：轻点 `15:48:16.253` → 收尾 `15:48:32.176` = **15.92s**（`TAP_MAX_MS=15s` + `asr.start()` 建链 ≈0.9s） | ⚠ 遗留① |
+| Maestro 05 | rc | **rc=0** | ⚠ 遗留③ |
+
+图：`b3-03-plate-hold-red.png` / `b3-03-a1c-hold.png` / `b3-03-a2-hold.png` /
+`b3-03-plateB-hold.png` / `b3-03-plateB-tap.png` / `b3-03-neg-typed-hold.png` /
+`b3-03-orb-hold.png` / `b3-03-cancel2-plate-mid.png` / `b3-03-cancel2-plate-after.png` /
+`b3-03-tapcap-trail2.png`。
+
+**反向验证**（每条先 grep 证明变异真的落盘，跑完还原复跑全绿）
+
+| 任务 | 变异 | 落盘证据 | 结果 |
+|---|---|---|---|
+| T1 ① | `composerOrbAnimated` 恒 `return true` | grep 到第 10 行 `return true` | **恰好红第 1 条**（voice-sheet），第 2 条绿 |
+| T1 ② | 恒 `return false` | grep 到第 10 行 `return false` | **恰好红第 2 条**，第 1 条绿 |
+| T1 还原 | | grep 回 `return s.input !== 'voice-sheet'` | 2 passed |
+| T2 | filter 挪回根 View | grep 到 `saturate` 紧跟 `opacity` 行（第 161 行） | 四个环带**全部回到 0.00%**、方框复现；还原后 `git diff --stat` 回到 +20/−2 |
+| T3 | 真机对照就是本任务的变异测试 | A1/A2/A3 各自的失败态 | B 的正反两侧都有读数 |
+
+**本批踩的坑**（每条都是一次红换来的）
+
+1. **MSYS 路径转换两头都有代价**：`adb pull /sdcard/x.png` 被改写成 `D:/Program Files/Git/sdcard/…`；
+   不加引号的 `adb shell screencap -p -d <id> /sdcard/x.png` 同样被改写、报 usage。修法
+   `export MSYS_NO_PATHCONV=1`——但**设了之后** `python /tmp/scan.py` 又会被当成 `D:\tmp\scan.py`
+   （同一个开关，两个方向各坏一次）。
+2. **Maestro `scrollUntilVisible` 在设置页判定恒否**（它确实滚了，但自己判「不可见」）——与
+   `e2e/09-state-gallery.yaml` 文件头记的**同一条坑，本轮第二次撞**。可用组合是 `scroll` + 可见性断言；
+   写成 `repeat + runFlow(when: notVisible) + scroll` 的「条件下滚」一次过。
+3. **设置页 `openLink` 不重挂、保留上次滚动位置** ⇒ 固定次数滚动第一跑就滚过头（4 次直接到底部「调试」段），
+   第二跑又因为停在底部而找不到顶部的元素。修法：先向上滚过头回顶，再条件下滚。
+4. **连按两次 back 把应用退到桌面** ⇒ 那一轮截图拍的是桌面壁纸编辑页，读数作废
+   （「观察对象缺席时零事件 = 零证据」）。脚本里加了前台核对，不通过直接 `exit 2`。
+5. **候选测试必须让证据自带出处**：给每个 A 候选在 `placeholder` 里塞 `[A1]`/`[A2]` 标记，
+   截图里看得见才算「跑的是这个候选」——否则「A 不工作」和「A 的代码没到设备」长得一模一样。
+6. **分进程 `input motionevent MOVE` 形不成连贯手势流**：上滑取消首测失败，看起来像 B 方案的缺陷。
+   **对照实验**（同一套注入打在 T3 一字未动的**光球**路径上）同样取消不了 ⇒ 定性成**仪器问题**
+   而非被测系统问题。换单进程慢速 `input swipe`（3s 走 230px：t=300ms 时才移动 7.7dp <
+   `minDistance` 12dp ⇒ 由 `activateAfterLongPress` 激活，随后位移长到 −76dp < −60dp）后当场取消成功。
+7. **裸 `adb shell input swipe` 滚不动本 App 的 ScrollView**（轨迹页、设置页都试过），而 Maestro 的 `swipe` 可以。
+8. **Maestro 的文本选择器命中同名的第一个**：还原设置时 `tapOn: "自动"` 点到了「模型偏好」的自动、
+   `tapOn: "标准"` 点到了「字号」的标准。修法：相对选择器 `tapOn: {text: "标准", below: {text: "回答长度"}}`。
+9. **计划的候选表里可以有一个不可能的选项**：A3 的 `disallowInterruption` 在 RNGH 2.32 上不存在，
+   `tsc` 一跑就红 ⇒ spike 的候选**先过 tsc 再上真机**能省一趟 20s 重载。
+
+**遗留 / 给下一批的话**
+
+1. ⚠ **计划的「15s 硬上限」格与 `tapTalk.ts` 的三层设计自相矛盾，出账**：
+   `tapTalk.ts:8` 写明收尾有三层——端侧 VAD（`TAP_SILENCE_MS=800`）/ 服务端 `vad_silence_ms`
+   （只有 qwen3 消费，App 默认 `fun-asr-realtime` ⇒ 收不了尾）/ `TAP_MAX_MS=15_000`，**谁先到谁收**。
+   ⇒ **安静环境下应由 VAD 800ms 尾收尾（≈1–2s），根本走不到 15s**；真走到 15s 反而说明 VAD 没载上。
+   计划步骤 4.5 写的「安静环境 ⇒ 15s 自动收尾」把两层弄反了。本轮实测环境**有持续人声**
+   （转写到旁人整段对话），VAD 静音尾从未触发——这恰恰是**单独暴露硬上限那一层的条件**，量到 **15.92s**。
+   **「安静环境下轻点不说话」这一格仍是 ⬜**（环境不满足，不写「预期」）；下一批要么在安静环境补量
+   VAD 那一层（判据应是 ≈1–2s 而不是 15s），要么把计划这条判据改掉。
+2. ⬜ 轨迹页的「采集激活」段这次没读到（ScrollView 吃不到裸 adb swipe，坑 ⑦）；不影响 T3 结论
+   （收尾时刻用设备时钟 + 轨迹主表读的）。
+3. ⚠ **Maestro 流 05 本轮 rc=0，但这条流的绿红都不能单独当读数**：文件头记着「没人说话时稳定红在
+   `assertVisible: voice-sheet` 上，而功能是好的」（2026-08-31 实测）——本轮是**环境有持续人声**、
+   层保持到断言才绿的。它是 `tags: manual`，无人说话时拿不到确定的 rc。
+4. `ChatScreen.tsx:511` 的注释「**B1 不接 onPress**」已过期——`PresenceCapsule` 现在接了
+   （`:518` 传 onPress；组件里 `testID="presence-capsule"`，`accessibilityRole` 随 onPress 变）。
+   纯注释漂移，**没改**（不在本批范围）；出账给 B4 视觉批顺手清。
+5. 设备状态已还原：回答长度 标准 / 播报 自动 / 模型偏好 自动 / 免唤醒 关 / 飞行模式 关；
+   `adb reverse tcp:8081` 已建。取证图全在 `mobile/e2e/artifacts/`（gitignore，不入库）。
+6. **未推送**：本批 3 个提交（`124d152` / `1e86d4a` / `9e54407`）+ 计划撰写会话的 2 个
+   （`3ca90e2` / `80782c3`），共 5 个在 `origin/main..HEAD`。push 需泓舟单独授权。
 
 ### 6.2 第 2 批「依赖引入 + 一趟重建」（T4–T8）
 
