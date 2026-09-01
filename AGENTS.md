@@ -112,7 +112,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App B2 | **四批已收口（2026-08-31）；B2→B3 闸未过：G1 真人语音轮 / G4 折叠切换 / 5 人外部小样本三格无读数（都要真人在场）⇒ B3/B4 暂不开工，裁决权在泓舟**。接手先看 `git status` / `git log -- mobile`（mobile 线有未推提交），读数与遗留出账在 B2 实施计划 §6.4（第一行是闸的结论） |
+| Android App B3/B4 | **B2 四批已收口，B2→B3 闸：过（泓舟 2026-09-01 裁定）⇒ B3/B4 可开工**。接手先看 `git status` / `git log -- mobile`（mobile 线有未推提交），读数与遗留出账在 B2 实施计划 §6.4（第一行是闸的结论）。⚠ 两件事带进 B3/B4：① 5 人外部小样本是**裁定算过、没有分布读数**，§11.4 状态可读性仍无外部基线；② 验收轮查出三条缺陷（S4 Composer 球在语音轮不可读 / S6 muted 光球被 filter 裁 / `plateGesture` 空输入框长按录音不工作）|
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
