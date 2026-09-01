@@ -1,0 +1,27 @@
+// 折叠姿态原生桥（B3 / 方案 §7.3）。只做一件事：把 Jetpack WindowManager 的
+// FoldingFeature 事实（state/orientation/isSeparating/bounds）透传成 Expo 事件。
+// 不判定 tabletop/book——派生住 src/ui/layout/foldPosture.ts（纯函数，jest 钉住）。
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.xiaozhou.foldstate'
+version = '0.1.0'
+
+android {
+  namespace "com.xiaozhou.foldstate"
+  // ⚠ 这两行不是样板（坑账 §9.45②）：缺 versionName 时报错在 :expo 头上，
+  //    看起来像 expo 自己坏了。kws 首次构建就撞过。
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  // window-java 提供 WindowInfoTrackerCallbackAdapter（回调式适配层）——
+  // 刻意不走 Kotlin Flow：collect 要协程作用域，回调式零额外依赖、生命周期一目了然
+  implementation "androidx.window:window:1.3.0"
+  implementation "androidx.window:window-java:1.3.0"
+}
