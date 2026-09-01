@@ -32,7 +32,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | MiniMax 原始 QA 问题 | `docs/reviews/2026-08-26-minimax-cloud-qa-findings.md` |
 | MiniMax 根因与修复批 | `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` |
 | 安全确认写闸 | `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md` |
-| Android App 当前计划 | `docs/design/2026-08-30-mobile-ux-v2-b2-implementation-plan.md` |
+| Android App 当前计划 | `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md`（B3 草案待批；B2 已收口，读数在其 §6.4） |
 | 历史流水 | `docs/agents-history.md`（只追加） |
 
 服务子目录各有 README；改某个服务前先读该目录 README。
@@ -112,7 +112,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App B3/B4 | **B2 四批已收口，B2→B3 闸：过（泓舟 2026-09-01 裁定）⇒ B3/B4 可开工**。接手先看 `git status` / `git log -- mobile`（mobile 线有未推提交），读数与遗留出账在 B2 实施计划 §6.4（第一行是闸的结论）。⚠ 两件事带进 B3/B4：① 5 人外部小样本是**裁定算过、没有分布读数**，§11.4 状态可读性仍无外部基线；② 验收轮查出三条缺陷（S4 Composer 球在语音轮不可读 / S6 muted 光球被 filter 裁 / `plateGesture` 空输入框长按录音不工作）|
+| Android App B3/B4 | **B2 四批已收口，B2→B3 闸：过（泓舟 2026-09-01 裁定）⇒ B3/B4 可开工**。**B3 逐任务计划已拆**：`docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md`（2026-09-01 草案，待泓舟批准开工；三条缺陷的落点 T1–T3 与 B2 出账逐条去向在其 §0.1）。接手先看 `git status` / `git log -- mobile`（mobile 线有未推提交），读数与遗留出账在 B2 实施计划 §6.4（第一行是闸的结论）。⚠ 两件事带进 B3/B4：① 5 人外部小样本是**裁定算过、没有分布读数**，§11.4 状态可读性仍无外部基线；② 验收轮查出三条缺陷（S4 Composer 球在语音轮不可读 / S6 muted 光球被 filter 裁 / `plateGesture` 空输入框长按录音不工作）|
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
