@@ -96,3 +96,15 @@ describe('UX v2 B2-5：端到端首次显式同意', () => {
     expect(Object.keys(buildMeta(DEFAULT_APP_SETTINGS)).sort()).toEqual([...HMI_META_KEYS].sort())
   })
 })
+
+describe('UX v2 B3-5：触感开关', () => {
+  // ⚠ 守卫只能是本用例自己：上面「空/损坏存量 → 默认值」两条的入参是 null 与坏 JSON，
+  //    走的是提前返回与 catch，**够不到合并体**，对新增键零敏感（B2 坑①）。
+  test('旧库没有 hapticsEnabled → 水合补默认 true（触感默认开，§8）', () => {
+    expect(DEFAULT_APP_SETTINGS.hapticsEnabled).toBe(true)
+    expect(mergeStoredSettings(JSON.stringify({ speakPolicy: 'always' })).hapticsEnabled).toBe(true)
+  })
+  test('存量显式关掉 → 保持 false（合并不许把用户的关覆盖回默认开）', () => {
+    expect(mergeStoredSettings(JSON.stringify({ hapticsEnabled: false })).hapticsEnabled).toBe(false)
+  })
+})

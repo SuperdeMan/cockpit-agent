@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from 'zustand'
 
+import { performHaptic } from '@/core/haptics'
 import { actionSummary } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
@@ -20,6 +21,7 @@ import {
   type PresenceSnapshot,
   type VoiceFacts,
 } from '@/core/presence/presence'
+import { hapticCueForTransition } from '@/core/presence/hapticCue'
 import { presenceTrail } from '@/core/presence/presenceTrail'
 
 import type { HandsFreeUi } from './useHandsFree'
@@ -170,6 +172,20 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
   const snapshot = derivePresence(input)
   // 在场轨迹（B2 T14，§11.5）：轴没变就不记 ⇒ 渲染期调用是幂等的（每秒 tick / StrictMode 双渲都不留痕）
   presenceTrail.record(input, snapshot)
+
+  // B3-5 触感：判据纯函数、执行挂 effect——**不挂渲染期**（触感不幂等，StrictMode 双渲会双振；
+  // 上面 presenceTrail.record 能住渲染期是因为它按轴投影去重、幂等，触感没有这个性质。
+  // B2 T14 的红条「渲染 A 时动 B」是同一族）。prev 用 ref，首帧不振（prev=null）。
+  // 无依赖数组 = 每次渲染后跑；「没变就不振」由转移判据自己保证，不靠依赖数组去重。
+  const hapticPrev = useRef<PresenceSnapshot | null>(null)
+  useEffect(() => {
+    const prev = hapticPrev.current
+    hapticPrev.current = snapshot
+    if (!prev || !settings.hapticsEnabled) return
+    const kind = hapticCueForTransition(prev, snapshot)
+    if (kind) performHaptic(kind)
+  })
+
   return snapshot
 }
 

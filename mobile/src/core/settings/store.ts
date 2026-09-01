@@ -53,6 +53,10 @@ export interface AppSettings {
   s2sConsentAt: number
   /** 视觉抓帧。默认关；开了也只在端侧命中视觉触发词时抓一帧（红线三条件②）。 */
   visionEnabled: boolean
+  // ── UX v2（B3）──
+  /** 触感四种（方案 §8：唤醒轻/确认双/判死一/快门轻）。默认开——§8「设置项默认开」。
+   *  判据在 core/presence/hapticCue.ts，执行在 core/haptics.ts，接线在 usePresence 的 effect。 */
+  hapticsEnabled: boolean
   // ── UX v2.1（B1）──
   /** 在场模型 + 光球主态 + 状态胶囊。关掉即回 v1 的四条状态条（回滚路径，§11.5） */
   uxV2Presence: boolean
@@ -89,6 +93,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   voicePipeline: 'classic',
   s2sConsentAt: 0,
   visionEnabled: false,
+  hapticsEnabled: true,
   uxV2Presence: true,
   uxV2Dock: true,
   deviceRole: 'handheld',

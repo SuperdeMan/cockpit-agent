@@ -291,6 +291,13 @@ export function SettingsScreen() {
         <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
           自动：用语音问才播报，打字只显示文字（默认）。总是：打字也播报。静音：完全不出声（试听仍可用）。
         </Text>
+        <SwitchRow
+          p={p}
+          label="触感"
+          desc="唤醒、需要确认、出错、拍一张时轻微振动。默认开"
+          value={settings.hapticsEnabled}
+          onChange={(hapticsEnabled) => set({ hapticsEnabled })}
+        />
         {ttsCatalog.length ? (
           <ChoiceRow
             p={p}
