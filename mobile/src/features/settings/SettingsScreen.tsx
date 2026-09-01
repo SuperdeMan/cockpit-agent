@@ -504,6 +504,9 @@ export function SettingsScreen() {
         <Link href="/native-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
           B3 原生件取证（折叠姿态 / 触感四种）
         </Link>
+        <Link href="/blur-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
+          材质 spike（B3：真模糊 vs G1-tint 对照）
+        </Link>
       </Section>
     </ScrollView>
       <S2sConsentSheet
