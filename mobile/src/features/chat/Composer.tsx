@@ -87,8 +87,22 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
     .maxDuration(HOLD_MS - 20)
     .onEnd(() => onTap())
   const orbGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), tap)
-  // 空输入框 = 背板的一部分：有字时关掉（原生长按选择接管），轻点仍由原生聚焦
-  const plateGesture = makeHold(!!ptt && !finalizing && input.length === 0)
+  // 空输入框的「背板即录音键」（B3-3 / B2 出账 plateGesture）：不再把手势挂在包 TextInput 的
+  // 父 View 上——Android 的 TextInput 自己消费触摸（长按=光标/选择），RNGH 抢不到（B2 真机
+  // 实录 + 本轮自证：长按 4s 出的是光标水滴柄，层不升）。A-spike 三个竞争配置全败：
+  // blocksExternalGesture(Native ref) 与 Exclusive(hold, Gesture.Native()) 真机均不起作用，
+  // disallowInterruption 在 RNGH 2.32 的 PanGesture 上根本不存在（tsc TS2339）。
+  // ⇒ 改为空输入框时铺一层透明触摸层，把「与原生 TextInput 抢触摸」整个绕开：
+  // 轻点→聚焦弹键盘（原生 focus 语义由我们转发），长按→PTT（与光球同款、已验证可用的形态）。
+  // 有字时该层卸载，原生长按选择完整回归。a11y：触摸层不进无障碍树（TalkBack 的双击激活走
+  // a11y action 直达 TextInput，不经普通触摸；长按录音对 TalkBack 本来就不是唯一入口，§8.1）。
+  const inputRef = useRef<TextInput>(null)
+  const plateTap = Gesture.Tap()
+    .runOnJS(true)
+    .maxDuration(HOLD_MS - 20)
+    .onEnd(() => inputRef.current?.focus())
+  const plateGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), plateTap)
+  const plateOverlayOn = !!ptt && !finalizing && input.length === 0
 
   const a11yLabel = recording ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`
 
@@ -133,32 +147,41 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
             </View>
           </GestureDetector>
         ) : null}
-        <GestureDetector gesture={plateGesture}>
-          <View style={{ flex: 1 }}>
-            <TextInput
-              testID="composer-input"
-              style={{
-                backgroundColor: p.fill,
-                borderWidth: 1,
-                borderColor: p.fill2,
-                borderRadius: 14,
-                paddingHorizontal: 14,
-                paddingVertical: 10,
-                fontSize: p.font(15),
-                color: p.fg1,
-                maxHeight: 120,
-              }}
-              value={input}
-              onChangeText={setInput}
-              placeholder={recording ? '正在听…' : '和小舟说点什么…'}
-              placeholderTextColor={p.fg3}
-              multiline
-              onSubmitEditing={submit}
-              submitBehavior="blurAndSubmit"
-              returnKeyType="send"
-            />
-          </View>
-        </GestureDetector>
+        <View style={{ flex: 1 }}>
+          <TextInput
+            ref={inputRef}
+            testID="composer-input"
+            style={{
+              backgroundColor: p.fill,
+              borderWidth: 1,
+              borderColor: p.fill2,
+              borderRadius: 14,
+              paddingHorizontal: 14,
+              paddingVertical: 10,
+              fontSize: p.font(15),
+              color: p.fg1,
+              maxHeight: 120,
+            }}
+            value={input}
+            onChangeText={setInput}
+            placeholder={recording ? '正在听…' : '和小舟说点什么…'}
+            placeholderTextColor={p.fg3}
+            multiline
+            onSubmitEditing={submit}
+            submitBehavior="blurAndSubmit"
+            returnKeyType="send"
+          />
+          {plateOverlayOn ? (
+            <GestureDetector gesture={plateGesture}>
+              <View
+                testID="composer-plate-overlay"
+                accessible={false}
+                importantForAccessibility="no"
+                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+              />
+            </GestureDetector>
+          ) : null}
+        </View>
         {busy ? (
           <Pressable
             onPress={onInterrupt}
