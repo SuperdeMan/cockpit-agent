@@ -21,7 +21,7 @@ import {
   type PresenceSnapshot,
   type VoiceFacts,
 } from '@/core/presence/presence'
-import { DRIVING_EXIT_GRACE_MS, drivingActive } from '@/core/presence/drivingMode'
+import { DRIVING_EXIT_GRACE_MS, drivingActive, drivingSuggested } from '@/core/presence/drivingMode'
 import { hapticCueForTransition } from '@/core/presence/hapticCue'
 import { cueToneAllowed, soundCueForTransition, type CueSlice } from '@/core/presence/soundCue'
 import { playCueTone } from '@/core/voice/cueTone'
@@ -43,12 +43,15 @@ export interface UsePresenceOpts {
   /** token 对应的 user_id（隐私栏「当前：xx」）；ServerConfig 里没有就显示 token 尾 4 位 */
   user: string
   sheetOverride: SheetOverride | null
+  /** 窗口横屏（§6 触发③的一个条件）。**不经 layout**——useLayout 读 snapshot.driving，
+   *  排在 usePresence 之后；这里要的是 useWindowDimensions 直接算的那一份 */
+  landscape: boolean
 }
 
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
 const TICK_MS = 1000
 
-export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceOpts): PresenceSnapshot {
+export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: UsePresenceOpts): PresenceSnapshot {
   const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge } =
     useStore(core.store)
   const { settings } = useStore(settingsStore)
@@ -172,6 +175,13 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     lastError,
     degradations,
     driving: drivingNow,
+    // B4-10 §6 触发③：身份 C + 横屏 + 常亮 ⇒ **只建议**（判据在 drivingMode.ts，这里只搬事实）
+    drivingSuggest: drivingSuggested({
+      identity: settings.deviceRole,
+      landscape,
+      keepAwake: settings.keepAwake,
+      active: drivingNow,
+    }),
     identity: settings.deviceRole,
     user,
     voice,

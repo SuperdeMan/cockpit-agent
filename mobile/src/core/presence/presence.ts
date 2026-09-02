@@ -109,6 +109,8 @@ export interface PresenceInput {
   user: string
   /** 语音层的三个事实（B2 T3）；缺省=文字世界，层只在收音时升 */
   voice?: VoiceFacts
+  /** 建议开行车档（§6 触发③三条件由收集器算：drivingMode.ts::drivingSuggested）；**只建议不切** */
+  drivingSuggest?: boolean
   /** 2s 短提示（取消 / 回声）；判据 NOTICE_SHOW_MS 在这里 */
   notice?: { text: string; at: number } | null
 }
@@ -129,7 +131,14 @@ export interface PresenceSnapshot {
   primary: OrbState
   /** reconnecting 期间光球 ×0.6 亮度（不是新态） */
   dim: boolean
-  capsule?: { text: string; tone: 'neutral' | 'accent' | 'amber' | 'red'; live?: boolean }
+  /** 胶囊点按做什么：缺省 open-sheet（ChatScreen 的既有行为，不写在这里）；
+   *  建议胶囊是唯一的另一种。判据在下面的胶囊链，不在组件里。 */
+  capsule?: {
+    text: string
+    tone: 'neutral' | 'accent' | 'amber' | 'red'
+    live?: boolean
+    action?: 'open-sheet' | 'enable-driving'
+  }
   input: 'voice-sheet' | 'composer' | 'none'
   /** 语音层高度档（input==='voice-sheet' 时有意义） */
   sheetDetent: SheetDetent
@@ -249,6 +258,9 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else if (agent === 'followup') capsule = { text: '可以接着说', tone: 'accent', live: true }
   // error 在 armed 之前（评审 D3）：免唤醒开着时 capture 恒 armed，排后面就永远出不来
   else if (errorLive) capsule = { text: i.lastError!.text, tone: 'red' }
+  // 建议开行车档（§6 触发③）：常态提示 ⇒ 让位给收音 / 播报 / 思考 / 错误，只压过 armed 那句。
+  // **只建议不切**——自动切会误伤副驾用平板（§6.0：横屏不决定你是驾驶员）
+  else if (i.drivingSuggest) capsule = { text: '切到行车档？点一下开启', tone: 'accent', action: 'enable-driving' }
   else if (armedCapsule) capsule = { text: '说「小舟小舟」', tone: 'neutral' }
 
   // ── 语音层开合（方案 §5.2 规则 1/3/4、§4.3）──

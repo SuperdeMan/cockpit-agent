@@ -157,6 +157,38 @@ export function SettingsScreen() {
         </Link>
       </Section>
 
+      {/* 身份与行车（B4-10 / 方案 §6.0）：身份由 token scope + 设备角色决定——**窗口尺寸不决定权限、
+          横屏不决定你是驾驶员、平板不自动获得车控**。App 端判不了 token 的 scope（不透明串、无查询
+          端点），所以说明行只说布局、**不承诺「可控车」**：选了「可信车载平板」也不会多出任何权限，
+          车控可用与否始终在服务端按 token 裁（§5 第 6 条；Q15 的绑定另议）。 */}
+      <Section p={p} title="身份与行车">
+        <Text style={{ color: p.fg2, fontSize: p.font(13) }}>
+          {settings.deviceRole === 'handheld'
+            ? '手持陪伴端 · 不控车'
+            : settings.deviceRole === 'mount'
+              ? '支架 · 副驾协同 · 不控车'
+              : '可信车载平板 · 车控由服务端 token 决定，这里只决定布局'}
+        </Text>
+        <ChoiceRow
+          p={p}
+          label="设备角色"
+          value={settings.deviceRole}
+          options={[
+            { v: 'handheld' as const, label: '手持' },
+            { v: 'mount' as const, label: '支架 / 副驾' },
+            { v: 'trusted-tablet' as const, label: '可信车载平板' },
+          ]}
+          onPick={(deviceRole) => set({ deviceRole })}
+        />
+        <SwitchRow
+          p={p}
+          label="行车档"
+          desc="目标放大、过程区单行、文本输入按角色收起。座舱判定行车时自动进入，停车 30 秒后自动退出"
+          value={settings.drivingManual}
+          onChange={(drivingManual) => set({ drivingManual })}
+        />
+      </Section>
+
       <Section p={p} title="显示">
         <ChoiceRow
           p={p}

@@ -8,7 +8,7 @@ import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, useFocusEffect } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BackHandler, KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
+import { BackHandler, KeyboardAvoidingView, Pressable, Text, useWindowDimensions, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -278,7 +278,17 @@ function ChatBody({
   }, [hf.fsm, core])
 
   // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
-  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
+  // B4-10：横屏是 §6 触发③ 的一个条件，直接从窗口算——**不能经 layout**（useLayout 读
+  // snapshot.driving，排在 usePresence 之后；拿它当入参就成环了）
+  const win = useWindowDimensions()
+  const snapshot = usePresence({
+    core,
+    hf,
+    ptt: cfg.audioUrl ? ptt : null,
+    user: cfg.token.slice(-4),
+    sheetOverride,
+    landscape: win.width > win.height,
+  })
   // B4-6 布局：`tablet = min(w,h) >= 600` 那个单布尔换成 useLayout 五模式（判据全在 sizeClass.ts，本文件零判断）。
   // 放在 usePresence 之后——它读 snapshot.driving（行车档改布局，§7.2 第四行）。
   const layout = useLayout(snapshot.driving)
@@ -564,14 +574,18 @@ function ChatBody({
           onReenableBargeIn={hf.recycle}
         />
       ) : null}
-      {/* 状态胶囊：一次只说一件「此刻」的事。**B1 不接 onPress**——它是 26dp +
-          accessibilityRole="text"，接了点按就同时违反读屏与热区两条（第 2 批遗留⑧） */}
+      {/* 状态胶囊：一次只说一件「此刻」的事。点按默认打开语音层；建议胶囊（§6 触发③）
+          点按 = 开行车档——**做什么由 derivePresence 给的 capsule.action 决定，判据不在这里**。 */}
       {v2 ? (
         <PresenceCapsule
           p={p}
           fontScale={settings.fontScale}
           snapshot={snapshot}
-          onPress={() => setSheetOverride({ turnId: latestTurnId, mode: 'open' })}
+          onPress={() =>
+            snapshot.capsule?.action === 'enable-driving'
+              ? settingsStore.getState().update({ drivingManual: true })
+              : setSheetOverride({ turnId: latestTurnId, mode: 'open' })
+          }
         />
       ) : null}
       <Composer

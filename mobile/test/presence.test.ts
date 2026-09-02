@@ -318,3 +318,29 @@ describe('语音层开合与 detent（B2 T3，方案 §5.2 规则 1/3/4、§4.3�
     expect(derivePresence(base({ voice: v({ turnSource: 's2s' }) })).turnSource).toBe('s2s')
   })
 })
+
+describe('B4-10 行车档建议胶囊（§6 触发③：只建议不自动切）', () => {
+  // ⚠ 下面三条「让位」用例在实现之前就是绿的——drivingSuggest 此刻什么都不做，
+  //    期望值恰等于初值 ⇒ 它们对「接没接上」零敏感（B4 第 1 批坑③同族）。它们钉的是
+  //    **建议胶囊插在胶囊链的哪一段**，红要到反向验证（把那行挪到 errorLive 之前）才看得见；
+  //    步骤 2 真红的只有第一条正例。四条各一个 test：同一个 test 里 jest 在第一个失败断言
+  //    就停，「两侧都红」就看不见了（B4 第 1 批坑）。
+  test('drivingSuggest=true 且无更高优先级胶囊 ⇒ 「切到行车档？」带 action=enable-driving，且不切档', () => {
+    const s = derivePresence(base({ drivingSuggest: true }))
+    expect(s.capsule).toEqual({ text: '切到行车档？点一下开启', tone: 'accent', action: 'enable-driving' })
+    expect(s.driving).toBe(false) // 只建议，不切
+  })
+  test('收音在场时建议让位', () => {
+    expect(derivePresence(base({ drivingSuggest: true, ptt: 'recording' })).capsule?.text).toBe('在听…')
+  })
+  test('播报在场时建议让位，且那条胶囊没有 action', () => {
+    const s = derivePresence(base({ drivingSuggest: true, speaking: true }))
+    expect(s.capsule?.text).toBe('播报中 · 说话可打断')
+    expect(s.capsule?.action).toBeUndefined()
+  })
+  test('错误在场时建议让位', () => {
+    expect(
+      derivePresence(base({ drivingSuggest: true, lastError: { text: '出错了', at: NOW - 500 } })).capsule?.tone,
+    ).toBe('red')
+  })
+})
