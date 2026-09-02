@@ -13,6 +13,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 
 import type { FontScalePref } from '../../core/settings/store'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
+import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import { AURORA, type Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
@@ -192,12 +193,29 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
             <Text style={{ color: p.amber, fontSize: p.font(14) }}>■ 打断</Text>
           </Pressable>
         ) : null}
+        {/* 发送键改圆形极光图标（B2 出账④，对标小艺 / 小爱）。虹彩纪律三处之一不变，只是从矩形「发送」
+            变成圆形图标；Maestro 流都按 id 驱动（`grep '"发送"' e2e/*.yaml` 为空，核过）。
+            svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
         <Pressable
           testID="composer-send"
+          accessibilityRole="button"
+          accessibilityLabel="发送"
           onPress={submit}
-          style={{ experimental_backgroundImage: AURORA.gradient, borderRadius: 14, paddingHorizontal: 18, minHeight: 44, justifyContent: 'center', boxShadow: '0 4px 22px rgba(91,140,255,0.45)' }}
+          style={{
+            experimental_backgroundImage: AURORA.gradient,
+            width: scale(44, 'target', fontScale),
+            height: scale(44, 'target', fontScale),
+            borderRadius: RADIUS.full,
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 22px rgba(91,140,255,0.45)',
+          }}
         >
-          <Text style={{ color: '#fff', fontSize: p.font(15), fontWeight: '600' }}>发送</Text>
+          {iconRuntimeAvailable() ? (
+            <Icon name="send" size={22} color="#fff" />
+          ) : (
+            <Text style={{ color: '#fff', fontSize: p.font(15), fontWeight: '600' }}>发</Text>
+          )}
         </Pressable>
       </View>
     </View>

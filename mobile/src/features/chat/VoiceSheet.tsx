@@ -178,6 +178,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
               {user ? (
                 <Text
                   testID="voice-sheet-transcript"
+                  accessibilityLiveRegion="polite"
                   style={{
                     color: p.fg1,
                     fontSize: scale(20, 'text', fontScale),
@@ -206,6 +207,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
               {assistant?.text ? (
                 <Text
                   testID="voice-sheet-answer"
+                  accessibilityLiveRegion="polite"
                   style={{
                     color: assistant.error ? p.red : p.fg1,
                     fontSize: scale(TYPE.body + 1, 'text', fontScale),

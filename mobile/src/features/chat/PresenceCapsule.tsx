@@ -33,7 +33,9 @@ export function PresenceCapsule({
         accessibilityRole={onPress ? 'button' : 'text'}
         accessibilityHint={onPress ? '打开语音层' : undefined}
         hitSlop={onPress ? Math.ceil((TARGET.parked - 26) / 2) : undefined}
-        accessibilityLiveRegion="polite"
+        // §8.1 partial 节流：逐 token 的 partial 交给转写区按**稳定 segment** 播（B2 T4 那一层本来就是节流过的粒度），
+        // 胶囊在识别中闭嘴——两个 live region 同时说会让 TalkBack 不断打断自己（B4-9）
+        accessibilityLiveRegion={snapshot.capture === 'recognizing' ? 'none' : 'polite'}
         style={{
           flexDirection: 'row',
           alignItems: 'center',

@@ -11,9 +11,12 @@ import { SvgXml } from 'react-native-svg'
 import { ICON_CUSTOM } from '@shared/components/icons.custom.ts'
 import { ICON_DATA, type IconName as GenIconName } from '@shared/components/icons.gen.ts'
 
-const REGISTRY: Record<string, { w: number; h: number; body: string }> = { ...ICON_DATA, ...ICON_CUSTOM }
+import { LOCAL_ICONS, type LocalIconName } from './icons.local'
 
-export type IconName = GenIconName | keyof typeof ICON_CUSTOM
+// 本地图标合并在最后（B4-9）：共享台账不为 mobile 单方需求扩，mobile 专有的两枚住 icons.local.ts
+const REGISTRY: Record<string, { w: number; h: number; body: string }> = { ...ICON_DATA, ...ICON_CUSTOM, ...LOCAL_ICONS }
+
+export type IconName = GenIconName | keyof typeof ICON_CUSTOM | LocalIconName
 
 let probed: boolean | null = null
 /** svg 原生在场探测（merchantCards.tsx 同款判据）；结果进程内缓存 */

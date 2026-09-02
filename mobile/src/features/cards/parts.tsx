@@ -96,12 +96,17 @@ export function CardButtons({
       {usable.map((b, i) => (
         <Pressable
           key={i}
+          // B4-9：TalkBack 读「按钮 + 标签」（§8「卡片按钮补 role/label」）；
+          // 44 + 2×2 hitSlop = 48 目标（§5.4 候选列表行高 ≥48）
+          accessibilityRole="button"
+          accessibilityLabel={b.label}
+          hitSlop={2}
           onPress={() => onSend(b.send_text!)}
           style={{
             backgroundColor: p.accentSoft,
             borderRadius: 10,
             paddingHorizontal: 12,
-            minHeight: 36,
+            minHeight: 44,
             justifyContent: 'center',
           }}
         >
