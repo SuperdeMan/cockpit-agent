@@ -3,9 +3,13 @@ import { useEffect } from 'react'
 import { View } from 'react-native'
 import Animated, { Easing, cancelAnimation, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming } from 'react-native-reanimated'
 
-function Dot({ color, delay }: { color: string; delay: number }) {
+function Dot({ color, delay, animated = true }: { color: string; delay: number; animated?: boolean }) {
   const t = useSharedValue(0)
   useEffect(() => {
+    if (!animated) {
+      t.value = 0.5 // 定格：三点停在中间幅值（reduce-motion，B4-3）
+      return
+    }
     t.value = withDelay(
       delay,
       withRepeat(
@@ -17,7 +21,7 @@ function Dot({ color, delay }: { color: string; delay: number }) {
       ),
     )
     return () => cancelAnimation(t)
-  }, [delay, t])
+  }, [delay, animated, t])
   const style = useAnimatedStyle(() => ({
     transform: [{ scale: 0.6 + 0.4 * t.value }],
     opacity: 0.35 + 0.65 * t.value,
@@ -25,11 +29,11 @@ function Dot({ color, delay }: { color: string; delay: number }) {
   return <Animated.View style={[{ width: 6, height: 6, borderRadius: 3, backgroundColor: color }, style]} />
 }
 
-export function ThinkDots({ color }: { color: string }) {
+export function ThinkDots({ color, animated = true }: { color: string; animated?: boolean }) {
   return (
     <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 4 }}>
       {[0, 200, 400].map((d) => (
-        <Dot key={d} color={color} delay={d} />
+        <Dot key={d} color={color} delay={d} animated={animated} />
       ))}
     </View>
   )

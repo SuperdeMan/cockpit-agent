@@ -12,6 +12,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 
+import { edgeGlowActive, type OrbTempo } from '@/core/presence/orbPolicy'
 import type { PresenceSnapshot } from '@/core/presence/presence'
 import type { CandidateState } from '@/core/session/candidates'
 import { followUpChips } from '@/core/session/followUps'
@@ -42,6 +43,8 @@ export interface VoiceSheetProps {
   candidates: CandidateState
   /** 带过视觉抓帧的用户气泡（层里的转写前缀 📷；方案 §5.5，不做预览） */
   visionIds: readonly string[]
+  /** 动效策略（判据 core/presence/orbPolicy.ts；B4-3）：大球节律 + 循环类小动效动不动 */
+  motion: { orb: OrbTempo; loops: boolean }
   /** 下拉 / 点「收起」/ 点暗区 */
   onCollapse(): void
   /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
@@ -133,7 +136,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
               style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
             />
             {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
-            <EdgeGlow active={snapshot.primary === 'listening' || snapshot.primary === 'thinking'} />
+            <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} />
             {/* 把手（G2 只给光球与把手，§5.11） */}
             <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2, marginTop: 8 }} />
             {props.s2sNotice ? (
@@ -161,11 +164,11 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 >
                   {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
                   {user.text}
-                  {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} /> : null}
+                  {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
                 </Text>
               ) : null}
               {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内 */}
-              <AuroraOrb size={88} state={snapshot.primary} dim={snapshot.dim} animated />
+              <AuroraOrb size={88} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
               {/* 胶囊文案（同 §4.3，此处放大） */}
               {snapshot.capsule ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -176,7 +179,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 </View>
               ) : null}
               {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots */}
-              {assistant?.pending ? <ThinkDots color={p.accent} /> : null}
+              {assistant?.pending ? <ThinkDots color={p.accent} animated={props.motion.loops} /> : null}
               {assistant?.text ? (
                 <Text
                   testID="voice-sheet-answer"
@@ -188,7 +191,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                   }}
                 >
                   {assistant.text}
-                  {assistant.streaming ? <StreamCursor h={scale(TYPE.body + 1, 'text', fontScale)} /> : null}
+                  {assistant.streaming ? <StreamCursor h={scale(TYPE.body + 1, 'text', fontScale)} animated={props.motion.loops} /> : null}
                 </Text>
               ) : null}
               {assistant && props.interruptedIds.includes(assistant.id) ? (

@@ -5,15 +5,19 @@ import Animated, { cancelAnimation, useAnimatedStyle, useSharedValue, withRepeat
 
 import { AURORA } from '../theme'
 
-export function StreamCursor({ h = 16 }: { h?: number }) {
+export function StreamCursor({ h = 16, animated = true }: { h?: number; animated?: boolean }) {
   const on = useSharedValue(1)
   useEffect(() => {
+    if (!animated) {
+      on.value = 1 // 定格：光标常显（reduce-motion，B4-3）
+      return
+    }
     on.value = withRepeat(
       withSequence(withTiming(1, { duration: 500 }), withTiming(0, { duration: 0 }), withTiming(0, { duration: 500 }), withTiming(1, { duration: 0 })),
       -1,
     )
     return () => cancelAnimation(on)
-  }, [on])
+  }, [animated, on])
   const style = useAnimatedStyle(() => ({ opacity: on.value }))
   return (
     <Animated.View

@@ -18,10 +18,14 @@ import { AURORA } from '../theme'
 /** 呼吸周期（ms）——方案原文 1.6s */
 export const EDGE_GLOW_PERIOD_MS = 1600
 
-export function EdgeGlow({ active }: { active: boolean }) {
+export function EdgeGlow({ active, animated = true }: { active: boolean; animated?: boolean }) {
   const t = useSharedValue(0)
   useEffect(() => {
     cancelAnimation(t)
+    if (!animated) {
+      t.value = withTiming(active ? 0.6 : 0, { duration: 0 }) // 定格：常亮 0.6 或熄灭，零循环
+      return
+    }
     if (!active) {
       t.value = withTiming(0, { duration: 200 })
       return
@@ -34,7 +38,7 @@ export function EdgeGlow({ active }: { active: boolean }) {
       -1,
     )
     return () => cancelAnimation(t)
-  }, [active, t])
+  }, [active, animated, t])
   const style = useAnimatedStyle(() => ({ opacity: t.value }))
   return <Animated.View pointerEvents="none" testID="edge-glow" style={[{ height: 2, experimental_backgroundImage: AURORA.gradient }, style]} />
 }

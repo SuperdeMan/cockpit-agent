@@ -83,6 +83,7 @@ export function AuroraOrb({
   state = 'idle',
   animated = true,
   dim = false,
+  driving = false,
 }: {
   size?: number
   state?: OrbState
@@ -90,6 +91,8 @@ export function AuroraOrb({
   animated?: boolean
   /** reconnecting 期整体 ×0.6 亮度（不是新态，随 PresenceSnapshot.dim 走） */
   dim?: boolean
+  /** 行车档（§6 / A-1 §10）：四组时长 ×2（频率 ×0.5）+ 整体 0.6 透明度——逐值照 HMI AuroraOrb.tsx:30,50 */
+  driving?: boolean
 }) {
   const thinking = state === 'thinking'
   const speaking = state === 'speaking'
@@ -103,10 +106,12 @@ export function AuroraOrb({
   const glow = speaking ? 1.35 : listening ? 1.15 : armed ? 0.8 : muted ? 0.6 : 1
 
   // 三组旋转 + 一组呼吸/脉冲（数值照 web 版：thinking 最快，armed 最缓）
-  const haloDur = (thinking ? 1.6 : listening ? 4 : armed ? 10 : 8) * 1000
-  const innerDur = (thinking ? 1.1 : listening ? 3.2 : armed ? 6 : 5) * 1000
-  const counterDur = (thinking ? 0.8 : listening ? 2.6 : armed ? 4.6 : 3.8) * 1000
-  const bodyDur = (thinking ? 1.4 : speaking ? 0.72 : listening ? 1.15 : armed ? 5 : 4) * 1000
+  // 行车档：四组时长同乘 dm=2 ⇒ 频率 ×0.5（HMI AuroraOrb.tsx:30 同名量）
+  const dm = driving ? 2 : 1
+  const haloDur = (thinking ? 1.6 : listening ? 4 : armed ? 10 : 8) * 1000 * dm
+  const innerDur = (thinking ? 1.1 : listening ? 3.2 : armed ? 6 : 5) * 1000 * dm
+  const counterDur = (thinking ? 0.8 : listening ? 2.6 : armed ? 4.6 : 3.8) * 1000 * dm
+  const bodyDur = (thinking ? 1.4 : speaking ? 0.72 : listening ? 1.15 : armed ? 5 : 4) * 1000 * dm
 
   const spinHalo = useSharedValue(0)
   const spinInner = useSharedValue(0)
@@ -157,7 +162,7 @@ export function AuroraOrb({
       style={{
         width: size,
         height: size,
-        opacity: dim ? 0.6 : 1,
+        opacity: dim || driving ? 0.6 : 1,
       }}
       accessibilityLabel={ORB_A11Y[state]}
       accessibilityRole="image"
@@ -268,7 +273,7 @@ export function AuroraOrb({
         }}
       />
       {/* 说话态：向外三层同心波纹（交互蓝，非极光，§10 克制） */}
-      {animated && speaking && [1, 2, 3].map((i) => <Ripple key={i} size={size} i={i} />)}
+      {animated && speaking && [1, 2, 3].map((i) => <Ripple key={i} size={size} i={i} dm={dm} />)}
       {/* 说话态·静态标记（B3-1 / B2 出账 S4）：animated=false（语音层开着，Composer 球让出
           那「1 个」循环动画名额）时，「在播报」仍要可读——画两圈固定透明度的青环（波纹的
           「定格」）。零动画帧回调 ⇒ G5「层开时主球两帧逐字节相同」的读数不受影响；
@@ -344,16 +349,16 @@ export function AuroraOrb({
 }
 
 /** speaking 外扩波纹：scale 0.85→1.6 + 淡出，三环各自周期（0.9+i*0.28）s 自然错开 */
-function Ripple({ size, i }: { size: number; i: number }) {
+function Ripple({ size, i, dm = 1 }: { size: number; i: number; dm?: number }) {
   const t = useSharedValue(0)
   useEffect(() => {
     t.value = 0
     t.value = withDelay(
       i * 120,
-      withRepeat(withTiming(1, { duration: (0.9 + i * 0.28) * 1000, easing: Easing.out(Easing.ease) }), -1),
+      withRepeat(withTiming(1, { duration: (0.9 + i * 0.28) * 1000 * dm, easing: Easing.out(Easing.ease) }), -1),
     )
     return () => cancelAnimation(t)
-  }, [i, t])
+  }, [i, dm, t])
   const style = useAnimatedStyle(() => ({
     transform: [{ scale: 0.85 + 0.75 * t.value }],
     opacity: 0.5 * (1 - t.value),

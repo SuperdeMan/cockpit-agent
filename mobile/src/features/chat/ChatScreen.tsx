@@ -22,7 +22,8 @@ import type { SendOpts } from '../../core/session/store'
 import { currentTurn } from '../../core/session/turnView'
 import { settingsStore } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
-import { composerOrbAnimated } from '../../core/presence/orbPolicy'
+import { useReduceMotion } from '../../core/a11y/reduceMotion'
+import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
 import { MIC_LABEL } from '../../core/presence/presence'
 import { AuroraBackground, AuroraOrb, Glass, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
@@ -144,17 +145,20 @@ function Welcome({
   name,
   hasVoice,
   quickCommands,
+  animated = true,
   onSend,
 }: {
   p: ReturnType<typeof usePalette>
   name: string
   hasVoice: boolean
   quickCommands: string[]
+  /** reduce-motion（B4-3）：欢迎球也是循环动画的一份 */
+  animated?: boolean
   onSend: (text: string) => void
 }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 }}>
-      <AuroraOrb size={88} state="idle" animated />
+      <AuroraOrb size={88} state="idle" animated={animated} />
       <Text style={{ color: p.fg1, fontSize: p.font(26), fontWeight: '600', marginTop: 14 }}>
         我是{name}
       </Text>
@@ -278,6 +282,9 @@ function ChatBody({
 
   // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
+  // B4-3 动效环境：事实在 core/a11y/reduceMotion.ts，判据在 orbPolicy.ts，这里只把布尔发下去
+  const reduceMotion = useReduceMotion()
+  const motionEnv = { reduceMotion }
   // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
   const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
   const v2 = settings.uxV2Presence
@@ -392,6 +399,7 @@ function ChatBody({
           name={settings.assistantName}
           hasVoice={!!cfg.audioUrl}
           quickCommands={settings.quickCommands}
+          animated={loopsAnimated(motionEnv)}
           onSend={onSend}
         />
       ) : (
@@ -399,13 +407,14 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
               <MessageBubble
                 p={p}
                 msg={item}
+                loops={loopsAnimated(motionEnv)}
                 confirmActive={confirmActiveOf(item)}
                 inlineConfirm={!(v2 && dock)}
                 uncertain={uncertainIds.includes(item.id)}
@@ -438,6 +447,7 @@ function ChatBody({
           visionIds={visionIds}
           s2sNotice={s2sNotice}
           candidates={core.candidates}
+          motion={{ orb: orbTempo(snapshot, motionEnv), loops: loopsAnimated(motionEnv) }}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
           onInterrupt={interruptAndListen}
           onSend={(t) => onSend(t)}
@@ -528,7 +538,8 @@ function ChatBody({
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
-        orbAnimated={composerOrbAnimated(snapshot)}
+        orbAnimated={composerOrbAnimated(snapshot, motionEnv)}
+        orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
         onTap={onOrbTap}
       />
     </View>
@@ -557,7 +568,7 @@ function ChatBody({
               borderColor: p.line,
             }}
           >
-            <AuroraOrb size={30} state={busy ? 'thinking' : 'idle'} animated={busy} />
+            <AuroraOrb size={30} state={busy ? 'thinking' : 'idle'} animated={busy && loopsAnimated(motionEnv)} />
             <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
               {settings.assistantName}随行
             </Text>

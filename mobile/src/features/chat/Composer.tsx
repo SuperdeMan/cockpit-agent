@@ -39,6 +39,8 @@ export interface ComposerProps {
   orbDim?: boolean
   /** 语音层开着时主球转静态（同屏循环动画常态 1 个，方案 §11.4） */
   orbAnimated?: boolean
+  /** 行车档：光球 ×0.5 频率 ×0.6 透明度（判据 orbPolicy.orbTempo，B4-3） */
+  orbDriving?: boolean
   fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
@@ -46,7 +48,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
+export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
   const [input, setInput] = useState('')
   const heldRef = useRef(false)
   const cancelledRef = useRef(false)
@@ -143,7 +145,7 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
                 backgroundColor: recording ? p.accentSoft : 'transparent',
               }}
             >
-              <AuroraOrb size={44} state={orbState} dim={orbDim} animated={orbAnimated ?? true} />
+              <AuroraOrb size={44} state={orbState} dim={orbDim} animated={orbAnimated ?? true} driving={orbDriving} />
             </View>
           </GestureDetector>
         ) : null}

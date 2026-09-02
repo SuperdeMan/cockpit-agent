@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 import { useStore } from 'zustand'
 
+import { useReduceMotion } from '@/core/a11y/reduceMotion'
 import { presenceFixtures } from '@/core/presence/fixtures'
 import { settingsStore } from '@/core/settings/store'
 import { Chip } from '@/features/cards/parts'
@@ -15,6 +16,7 @@ import { usePalette } from '@/ui/theme'
 
 export default function StateGallery() {
   const { settings } = useStore(settingsStore)
+  const reduceMotion = useReduceMotion()
   const p = usePalette(settings)
   const { only } = useLocalSearchParams<{ only?: string }>()
   const all = useMemo(() => presenceFixtures(), [])
@@ -36,7 +38,7 @@ export default function StateGallery() {
               <Chip p={p} tone={f.producible ? 'accent' : 'amber'} text={f.producible ? '真栈可产' : '仅样本'} />
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-              <AuroraOrb size={44} state={f.snapshot.primary} dim={f.snapshot.dim} animated />
+              <AuroraOrb size={44} state={f.snapshot.primary} dim={f.snapshot.dim} animated={!reduceMotion} />
               <View style={{ flex: 1 }}>
                 <PresenceCapsule p={p} fontScale={settings.fontScale} snapshot={f.snapshot} />
               </View>

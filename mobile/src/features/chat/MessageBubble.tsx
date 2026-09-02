@@ -73,11 +73,13 @@ export interface BubbleProps {
   vision?: boolean
   /** 执行回执（core/session/receipt.ts 算好传进来；null=这条没有可回执的事） */
   receipt?: Receipt | null
+  /** 循环类小动效要不要动（reduce-motion，判据 orbPolicy.loopsAnimated；B4-3） */
+  loops: boolean
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, loops, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   if (msg.role === 'user') {
@@ -109,7 +111,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
           {vision ? <Text style={{ color: p.fg3, fontSize: p.font(10), marginBottom: 2 }}>📷 看图</Text> : null}
           <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>
             {msg.text}
-            {draft ? <StreamCursor h={p.font(15)} /> : null}
+            {draft ? <StreamCursor h={p.font(15)} animated={loops} /> : null}
           </Text>
           {hint ? (
             <Text style={{ color: p.fg3, fontSize: p.font(10), marginTop: 4 }}>转写由语音模型生成，可能与原话有出入</Text>
@@ -142,7 +144,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
   return (
     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginVertical: 5 }}>
       <View style={{ marginTop: 2 }}>
-        <AuroraOrb size={28} state={orbState} animated={active} />
+        <AuroraOrb size={28} state={orbState} animated={active && loops} />
       </View>
       <Pressable
         // e2e 判据（M3-5 flow ③）：**「消息补达」只能断言挂起态消失**——
@@ -173,7 +175,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
         ) : null}
         {msg.pending ? (
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-            <ThinkDots color={p.accent} />
+            <ThinkDots color={p.accent} animated={loops} />
             <Text style={{ color: p.fg3, fontSize: p.font(13) }}>正在思考…</Text>
           </View>
         ) : null}
@@ -197,7 +199,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             }}
           >
             {msg.text}
-            {msg.streaming ? <StreamCursor h={p.font(15)} /> : null}
+            {msg.streaming ? <StreamCursor h={p.font(15)} animated={loops} /> : null}
           </Text>
         ) : null}
         {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}

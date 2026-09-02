@@ -67,6 +67,8 @@ export interface AppSettings {
   // ── UX v2（B4）──
   /** 手动行车档（方案 §6 触发②）。Edge 标 true 也进；两者取或（判据在 core/presence/drivingMode.ts） */
   drivingManual: boolean
+  /** 实验室：强制减少动效——系统开关的 App 内等价物，判据取或（core/a11y/reduceMotion.ts） */
+  reduceMotionForce: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -101,6 +103,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   uxV2Dock: true,
   deviceRole: 'handheld',
   drivingManual: false,
+  reduceMotionForce: false,
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。

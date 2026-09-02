@@ -117,4 +117,8 @@ describe('UX v2 B4：行车档 / 提示音 / 减少动效 / 减少透明度四�
   test('B4-2：旧库显式 drivingManual:true → 保持（合并不许把用户的开覆盖回默认关）', () => {
     expect(mergeStoredSettings(JSON.stringify({ drivingManual: true })).drivingManual).toBe(true)
   })
+  test('B4-3：旧库没有 reduceMotionForce → 水合补默认 false', () => {
+    expect(DEFAULT_APP_SETTINGS.reduceMotionForce).toBe(false)
+    expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).reduceMotionForce).toBe(false)
+  })
 })
