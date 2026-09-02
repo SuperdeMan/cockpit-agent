@@ -21,6 +21,7 @@ import {
   type PresenceSnapshot,
   type VoiceFacts,
 } from '@/core/presence/presence'
+import { DRIVING_EXIT_GRACE_MS, drivingActive } from '@/core/presence/drivingMode'
 import { hapticCueForTransition } from '@/core/presence/hapticCue'
 import { presenceTrail } from '@/core/presence/presenceTrail'
 
@@ -46,7 +47,8 @@ export interface UsePresenceOpts {
 const TICK_MS = 1000
 
 export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceOpts): PresenceSnapshot {
-  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta } = useStore(core.store)
+  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge } =
+    useStore(core.store)
   const { settings } = useStore(settingsStore)
 
   // 播报中 / 抓帧中：订阅式信号（Task 5）
@@ -116,9 +118,13 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
   const echoNotice = hf.echoAt ? { text: '像是我自己的声音，没算数', at: hf.echoAt } : null
   const notice = !cancelNotice ? echoNotice : !echoNotice ? cancelNotice : echoNotice.at > cancelNotice.at ? echoNotice : cancelNotice
   const now = Date.now()
+  // B4-2 行车档：手动 ∨ Edge 标 true ∨ 标 false 后 30s 内（判据在 drivingMode.ts）。
+  // 不再读 active?.driving——那只在在飞轮上有值，轮一结束就掉回 false
+  const drivingNow = drivingActive({ manual: settings.drivingManual, edge: drivingEdge, now })
   const [, bumpTick] = useState(0)
   const needsTick =
     pendingOps.length > 0 || // 确认卡倒计时（每秒要变）
+    (drivingEdge.falseAt > drivingEdge.trueAt && now - drivingEdge.falseAt < DRIVING_EXIT_GRACE_MS) || // 行车档 30s 退出宽限（到点要重渲一次才退得出）
     !!active?.processActive || // 长任务 8s 门槛
     (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
     (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
@@ -163,7 +169,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     queued,
     lastError,
     degradations,
-    driving: !!active?.driving,
+    driving: drivingNow,
     identity: settings.deviceRole,
     user,
     voice,

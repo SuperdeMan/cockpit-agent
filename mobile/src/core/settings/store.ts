@@ -64,6 +64,9 @@ export interface AppSettings {
   uxV2Dock: boolean
   /** 产品身份（方案 §6.0）。B1 只占位，B4 才有 UI 与行为差异；**窗口尺寸不决定它** */
   deviceRole: 'handheld' | 'mount' | 'trusted-tablet'
+  // ── UX v2（B4）──
+  /** 手动行车档（方案 §6 触发②）。Edge 标 true 也进；两者取或（判据在 core/presence/drivingMode.ts） */
+  drivingManual: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -97,6 +100,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   uxV2Presence: true,
   uxV2Dock: true,
   deviceRole: 'handheld',
+  drivingManual: false,
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。

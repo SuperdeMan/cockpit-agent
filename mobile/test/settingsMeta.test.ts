@@ -108,3 +108,13 @@ describe('UX v2 B3-5：触感开关', () => {
     expect(mergeStoredSettings(JSON.stringify({ hapticsEnabled: false })).hapticsEnabled).toBe(false)
   })
 })
+
+describe('UX v2 B4：行车档 / 提示音 / 减少动效 / 减少透明度四键的水合', () => {
+  // 同上：守卫只能是本用例自己（入参必须是合法 JSON，走得到合并体——B2 坑①）
+  test('B4-2：旧库没有 drivingManual → 水合补默认 false', () => {
+    expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).drivingManual).toBe(false)
+  })
+  test('B4-2：旧库显式 drivingManual:true → 保持（合并不许把用户的开覆盖回默认关）', () => {
+    expect(mergeStoredSettings(JSON.stringify({ drivingManual: true })).drivingManual).toBe(true)
+  })
+})

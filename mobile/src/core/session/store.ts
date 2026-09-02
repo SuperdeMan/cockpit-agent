@@ -17,6 +17,7 @@ import type { Msg, ProcessStep } from '@shared/types.ts'
 import { buildUserFrame } from '../api/gateway'
 import type { GatewayStatus } from '../api/gateway'
 import { uid } from '../obs/trace'
+import { NO_EDGE_DRIVING, recordEdgeDriving, type DrivingEdgeFact } from '../presence/drivingMode'
 import { actionSummary } from './actionSummary'
 import { emptyCandidates, recordCandidates, type CandidateState } from './candidates'
 import { routeSend } from './sendRouter'
@@ -66,6 +67,9 @@ export interface SessionState {
   messages: Msg[]
   pendingOps: PendingOp[]
   vehState: Record<string, unknown>
+  /** 行车档事实（B4-2）：Edge 在 process 帧上的 driving 标注。判据在 core/presence/drivingMode.ts，
+   *  这里只登记「最近一次 true / 由 true 转 false 的时刻」——不靠在飞轮，轮结束后仍在 */
+  drivingEdge: DrivingEdgeFact
   connStatus: GatewayStatus
   /** 位置授权征询（纯前端确认，无 operation_id、不上行）待重发的原句 */
   pendingLocationText: string | null
@@ -170,6 +174,7 @@ export class SessionCore {
       messages: [],
       pendingOps: [],
       vehState: {},
+      drivingEdge: NO_EDGE_DRIVING,
       connStatus: 'closed',
       pendingLocationText: null,
       lastEmotion: '',
@@ -496,6 +501,9 @@ export class SessionCore {
         return [...prev, step]
       }
       const driving = !!data.driving
+      // B4-2：行车档事实登记（跨轮存在；判据 core/presence/drivingMode.ts）。气泡上那份 `driving`
+      // 是「这一轮的显示语义」（行车极简、不可展开），轮一结束就没了——两者刻意分开
+      this.store.setState((s) => ({ drivingEdge: recordEdgeDriving(s.drivingEdge, driving, Date.now()) }))
       const targetId = this.streamTargetId(data)
       if (targetId === null) return
       this.upsertBubble(targetId, (msg) =>

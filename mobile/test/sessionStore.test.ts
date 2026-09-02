@@ -824,3 +824,38 @@ describe('UX v2 B2-13：回执的账本侧（方案 §5.3.2）', () => {
     core.dispose()
   })
 })
+
+describe('B4-2 行车档事实登记（Edge process 帧的 driving 标）', () => {
+  test('driving:true 登记 trueAt，轮结束后仍在（不靠在飞轮）', () => {
+    const { transport, core } = newCore()
+    core.send('帮我规划去杭州的充电路线')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'process', request_id: rid, phase: 'plan', label: '规划', status: 'running', driving: true })
+    expect(core.store.getState().drivingEdge.trueAt).toBeGreaterThan(0)
+    core.handleFrame({ type: 'final', request_id: rid, speech: '好的' })
+    expect(core.store.getState().drivingEdge.trueAt).toBeGreaterThan(0)
+    core.dispose()
+  })
+  test('true 之后的 false 登记 falseAt；再来一条 false 不刷新起点', () => {
+    const { transport, core } = newCore()
+    core.send('a')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'process', request_id: rid, phase: 'plan', label: '规划', status: 'running', driving: true })
+    jest.advanceTimersByTime(5_000)
+    core.handleFrame({ type: 'process', request_id: rid, phase: 'execute', label: '检索', status: 'running', step_id: 's1', driving: false })
+    const first = core.store.getState().drivingEdge.falseAt
+    expect(first).toBeGreaterThan(core.store.getState().drivingEdge.trueAt)
+    jest.advanceTimersByTime(5_000)
+    core.handleFrame({ type: 'process', request_id: rid, phase: 'execute', label: '检索', status: 'done', step_id: 's1', driving: false })
+    expect(core.store.getState().drivingEdge.falseAt).toBe(first)
+    core.dispose()
+  })
+  test('从没行车过的 false 不登记', () => {
+    const { transport, core } = newCore()
+    core.send('a')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'process', request_id: rid, phase: 'plan', label: '规划', status: 'running', driving: false })
+    expect(core.store.getState().drivingEdge).toEqual({ trueAt: 0, falseAt: 0 })
+    core.dispose()
+  })
+})
