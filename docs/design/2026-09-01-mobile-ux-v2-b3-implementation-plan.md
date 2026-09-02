@@ -28,6 +28,7 @@
 3. **原生注册的判据按注册通道分流**（⚠ 方案 §11.2 B3 写的「`PackageList.java` 含新 Package」对本批**三件新原生都不适用**——它们全走 Expo 通道，这不是方案错了是方案写那行时默认新库是 RN 社区库；照字面在 PackageList 里找 `HapticsPackage` 会白找一场然后误判失败）：
    - **RN 社区库**（本批没有新增；既有的 RNGH/Reanimated/Onnxruntime 不许丢）→ `D:/Android/builds/xiaozhou-mobile/android/app/build/generated/autolinking/src/main/java/com/facebook/react/PackageList.java`（坑账 §9.43，2026-08-30 读数：RNGH 第 73 行 / Reanimated 第 75 行）；
    - **Expo 模块**（`expo-haptics` / `expo-blur` / `modules/foldstate`）→ `android/app/build/generated/**/ExpoModulesProvider*`（expo-modules-autolinking 生成；路径在构建目录里 `grep -rn` 找，T8 有精确命令）+ **运行时探针**（`requireOptionalNativeModule` 非 null，照 `modules/kws/index.ts` 的模式）；
+     ⚠ **本条的 Expo 侧路径与文件名已被 T8 实测推翻**（2026-09-01，原文保留不改，见 §6.2「注册验证」段与 §6.2 遗留③）：全盘 `find -name "ExpoModulesProvider*"` **零命中**；真名是 **`ExpoModulesPackageList.kt`**，生成在 **`:expo` 工程**下（`node_modules/expo/android/build/generated/expo/src/main/java/expo/modules/`）。B3′ 另补第三条通道：本地模块自带的 `AndroidManifest.xml` 走 AGP library manifest merger，**两个清单都看不到它**，判据是 `app/build/intermediates/merged_manifests/.../AndroidManifest.xml`（§6.4 步骤 3）。已收进主计划坑账 §9.50。
    - **带 `unimodule.json` 的老式库要登 `mobile/react-native.config.js`**（坑账 §9.43 的修法）。本批三件按现代规范都不该带它，但装完必须验：`ls node_modules/expo-haptics/unimodule.json node_modules/expo-blur/unimodule.json`（应 No such file）+ `ls node_modules/expo-haptics/expo-module.config.json`（应存在）。若哪件真带了 `unimodule.json` ⇒ 按 §9.43 补登再构建，**别等一趟 30 分钟构建之后用运行时报错来发现**。
 4. **重建后 dev-client 是重装的 ⇒ 全套重核**（B2 §6.4 附加⑤⑥与坑⑦⑪ 的合订）：
    - `adb reverse tcp:8081 tcp:8081` + `adb reverse --list` 复核——且判据是「**每次 adb server 生命周期变化后都重建**」（daemon 自重启 / kill-server / 拔插都算），不是「重插过没有」；
@@ -2301,3 +2302,262 @@ pid 29623）是我们的麦流。
      **判据：改完设置一定要 `png_probe` 回读，别信 tapOn 的 COMPLETED。**
    - **USB 掉线后应用会落回 `DevLauncherActivity`**：`am start -n …/.MainActivity` 只能把它拉到
      dev launcher，要用 `xiaozhou://expo-development-client/?url=…` 重连 Metro 才回得到 `MainActivity`。
+
+### 6.4 第 4 批「B3′ spike + 收口」（T11–T12）
+
+> 泓舟 2026-09-02 批准本批开工。**B3 四批到此收口。**
+> 本批唯一的代码改动全在 spike 分支 `spike/b3p-assistant-role` 上（主线 `mobile/` 零改动），
+> 主线只有文档。spike 分支**保留、不合并、不发版**（§5 第 10 条）。
+
+**开工基线（自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `scripts\check_android_env.ps1` | 退出码 **0**；18 pass / 0 warn / 0 fail；设备 `5d432b6d` 在线 |
+| `npm test` | **42 suites / 413 tests 全绿**（与 §6.3 收口一致，无人动过） |
+| `npm run typecheck` | **0 error** |
+| **`lastUpdateTime`** | **2026-09-01 19:21:55** —— 与 §6.2/§6.3 记的**逐字一致**，设备上仍是第 2 批装的主线包 |
+| `git log origin/main..HEAD` | **0 个提交**——§6.3 遗留⑦ 的 2 条已被推送，`origin/main` = `HEAD` = `63885ff`；`git status` 干净（T11 切分支的前提成立） |
+| `dev_stack target show` | `cloud`；E4 tailnet android peer online、cloud `:8443` `/healthz` **HTTP 200** |
+| worktree | 泓舟仍未授权分树 ⇒ 主工作树 + spike 分支 |
+
+---
+
+#### T11 步骤 0（计划没写，必须先做）：主线 APK 先备份
+
+spike 构建的 APK **输出到与主线包同一路径**，`-Clean` 还会整目录重生成 `android/`
+⇒ **构建一开跑，主线那个 275.9MB 的产物就没了**，而步骤 5 要用它装回去。
+构建启动后立刻抢救：`D:/Android/builds/_b3-mainline-apk-backup/mainline-app-debug.apk`，
+**289317943 B**，与 §6.2 记的 T8 产物逐字节同大小。
+
+⚠ 顺带更正计划/交底里的一句判据：**「重装后复核 `lastUpdateTime` 回到基线值」不成立**——
+重装必然产生**新的**时刻。能证明「装回的是主线包」的判据是另外三条（见步骤 5）。
+
+#### T11 步骤 1–2：分支与代码——提交 `eeac764`，8 文件 +205/−1
+
+`git status` 干净 ⇒ 从 `63885ff` 拉 `spike/b3p-assistant-role`。tsc 0、jest **413（零增量**——
+spike 是取证装置，按 §1 就没有 jest 面）。
+
+⚠ **计划正文之外补了一件 `RecognitionService` 壳**（落地判断，记账）：AOSP 的
+`VoiceInteractionServiceInfo` 解析 `voice-interaction` xml 时 `sessionService` 与
+`recognitionService` **两个都必需**，缺一 parse error ⇒ `getSupportsAssist()` 恒 false ⇒
+`AssistantRoleBehavior` 压根不把我们放进角色候选。计划把 `recognitionService` 指向了
+`VoiceInteractionService` 类本身（AOSP 解析层确实不校验类型，照写能过），但 ROM 可以自己加校验，
+而**「HyperOS 不给三方助理」与「我们的 manifest 被判非法」在设置界面里长得一模一样**
+⇒ 按平台规范配全，先把这一面的歧义消掉。壳不做识别、不碰麦（`onStartListening` 直接回
+`ERROR_CLIENT`）。事后读数证明这一层没被启用（见步骤 4 的 `voice_recognition_service`）。
+
+写 Kotlin 前先核过三处 API 存在（构建一趟十几分钟，编译期才发现太贵）：
+`ObjectDefinitionBuilder.kt:106` 的 `Function(name){body}` 无参重载、`AppContext.kt:227` 的
+`reactContext: Context?`、merged manifest 的 `minSdkVersion=24` ⇒ `RoleManager`（API 29）
+必须带 `Build.VERSION.SDK_INT` guard，代码里有。
+
+#### T11 步骤 3：spike 构建与装机
+
+| 项 | 读数 |
+|---|---|
+| 前置 | `check_android_env.ps1` **0**；`fetch_mobile_voice_assets.ps1` **0**（kws 原生件 + silero_vad 都在） |
+| 构建 | **BUILD SUCCESSFUL in 13m13s**；927 tasks（535 executed / 392 cached）；**一趟过**（第 2 批那条 Dimezis 镜像坑已被 `gradle_cn_mirrors.init.gradle` 治住，本轮零复发） |
+| 新模块进工程 | autolinking 输出列 `assistrole (0.1.0)`；`> Task :assistrole:` **27 条** |
+| **merged manifest** | `com.xiaozhou.assistrole.{XiaozhouVoiceInteractionService,XiaozhouVoiceSessionService,XiaozhouRecognitionService}` **三件全在**，`BIND_VOICE_INTERACTION` 2 处 —— library manifest 确实 merge 进了 app（这是 Expo 模块的**第三条**注册通道，`ExpoModulesPackageList` 与 `PackageList.java` 都管不到它） |
+| APK | **289318703 B**，比主线 **+760 B**（就是那几个类 + manifest + xml 资源） |
+| 装机 | Success，**8.8s**；spike 包锚 **`lastUpdateTime=2026-09-02 16:01:15`** |
+
+#### T11 步骤 4·第一问「角色可选吗」——**可选（五条独立断言一致）**
+
+| # | 判据（互相独立） | 读数 | |
+|---|---|---|---|
+| 1 | `cmd package query-services --brief -a android.service.voice.VoiceInteractionService` | 装机前 **5 条**（小爱 / Perplexity / Claude / Google / ChatGPT）→ 装机后 **6 条**，多的正是 `com.xiaozhou.companion/...XiaozhouVoiceInteractionService` | ✅ |
+| 2 | UI 候选列表 | 「小舟随行 (Dev)」出现（`b3p-04-assistcand-fresh.png`）；**阴性对照** `b3p-02-assistcand-before.png` 无 | ✅ |
+| 3 | 点选后平台授权框 | 「这个小助手将能够读取与您系统中正在使用的应用相关的信息…」→ 确定（`b3p-05-after-tap.png`） | ✅ |
+| 4 | 三条 secure/role 设置 | `secure.assistant` / `secure.voice_interaction_service` / `cmd role get-role-holders ASSISTANT` **全部指向我们** | ✅ |
+| 5 | **运行时** `RoleManager.isRoleHeld(ROLE_ASSISTANT)` | `/native-spike` 屏 `assistRole: HELD（默认助理 = 小舟随行）`（`b3p-07-nativespike-held.png`） | ✅ |
+
+**平台面的结论比「我们进去了」更有用**：候选列表里本来就有 **ChatGPT / Claude / Google / Perplexity**
+四个三方，且 `query-services` 证明它们走的**就是 `VoiceInteractionService` 路径**（不是
+`ACTION_ASSIST` Activity）⇒ **HyperOS 的默认数字助理不是白名单制**。这一条在装 spike **之前**
+就取到了，所以「我们出现了」是有出处的增量，不是孤证。
+
+⚠ **`secure.voice_recognition_service` 全程未变**（一直是 `com.xiaomi.mibrain.speech/.asr.AsrService`）
+⇒ 系统**没有**启用我们的 `RecognitionService` 壳。它只在 manifest 解析那一层起作用，运行期零副作用。
+
+#### T11 步骤 4·第二问「手势响应吗」——**AOSP 通路响应；三个 MIUI 手势全部不响应**
+
+装置上做了一处计划没写的分层：把**「AOSP 通路通不通」**与**「MIUI 把手势绑给了谁」**分开量。
+理由是装机前读到的静态指向（`long_press_power_launch_xiaoai=1`、
+`entity_config_key_voice_assistant` 的 `pkgName` 写死 `com.miui.voiceassist`、
+`startFromValue=double_click_and_long_click_fullscreen_gesture_line`）——
+**不分层的话，「没响应」会只剩一个「不知道为什么」的读数**。
+
+| 通路 | 触发 | 时刻 | `AssistRoleSpike` | 结果 |
+|---|---|---|---|---|
+| **AOSP** `keyevent 219` · 解锁 | 我发 | 16:10:18 | `onNewSession` → `onShow reached keyguardLocked=false` → `startActivity` **3 条** | 落对话页 |
+| **AOSP** 同上 · 复现 | 我发 | 16:32:10 | 2 条 | 同上 |
+| **MIUI** 电源键长按 · 解锁 | 泓舟 | 16:15 | **0** | 起小爱 |
+| **MIUI** 双击小白条 | 泓舟 | 16:25:03 | **0** | 起小爱 |
+| **MIUI** 电源键长按 · 锁屏 | 泓舟 | 16:34:16 | **0** | 起小爱 |
+| **AOSP** `keyevent 219` · 息屏锁屏 | 我发 | — | **0** | 系统压根不派发 |
+| **AOSP** `keyevent 219` · 亮屏+keyguard | 我发 | 16:37:24 | **onShow 到达 ×2，`keyguardLocked=true`，refused** | 见「红线」 |
+
+**成因是具名的，而且是从系统日志里读到的、不是推断**：
+
+```
+16:25:03 ActivityManager: Background started FGS: Allowed
+  [callingPackage: com.miui.home; callingUid: 10140;
+   intent: Intent{ act=android.intent.action.ASSIST xflg=0x4
+                   cmp=com.miui.voiceassist/com.xiaomi.voiceassistant.VoiceService }]
+  Starting FGS with type microphone
+
+16:34:16 ActivityManager: Background started FGS: Allowed
+  [callingPackage: android; callingUid: 1000; uidState: PER;      ← system_server 自己
+   intent: Intent{ act=ASSIST  pkg=com.miui.voiceassist
+                   cmp=com.miui.voiceassist/...VoiceService }]     ← 仍是写死的组件名
+```
+
+⇒ **两个不同的调用方（系统桌面 `com.miui.home` 与 `system_server`）都用显式 `ComponentName`
+直接拉起小爱，根本不做 `ROLE_ASSISTANT` 解析**。所以「角色给了谁」与「手势拉起谁」在 HyperOS 上
+是两条互不相干的链——这不是我们没注册好，也不是 AOSP 机制不工作（同一台设备上 AOSP 那条通路
+当场就响应了）。泓舟另口述一条：**双击小白条 = 唤起小爱，长按小白条 = 小爱识屏**，两个小白条手势都已被占。
+
+#### T11 步骤 4·§12.2 红线——**两侧都有活证**
+
+| 侧 | 判据 | 读数 | |
+|---|---|---|---|
+| 解锁态 | deeplink 只到对话页，**不升层不开麦** | 落在欢迎态：光球 idle、placeholder「和小舟说点什么…」、无「在听…」胶囊、无采集点（`b3p-08-assist-unlocked-landing.png`）；`dumpsys audio` **全机 0 条 `active? true` riid** | ✅ |
+| 锁屏态 | **什么都不发生**，且要能分开「没被触发」与「响应了但拒了」 | `onShow reached showFlags=7 keyguardLocked=true` + `onShow refused: keyguard locked, nothing started` **×2**；`startActivity` 计数 **0**；开麦 **0**；应用未被拉到前台 | ✅ |
+
+⚠ **这条活证只在「亮屏 + keyguard 显示中」那个窗口取得到**，而它在本机极难制造：
+① 息屏锁屏态下**系统根本不派发** assist 键（`AssistRoleSpike` 0 条——效果上满足红线，
+但机制是系统挡的、不是我们拒的，两件事不能混记）；② 本机**未设锁屏凭据**，`keyevent 224`
+常常直接把 keyguard 一起解掉；③ 屏幕超时很短，中间插一条 `dumpsys` 查询窗口就没了。
+最后是把唤醒与触发放进**同一条 `adb shell`**（`input keyevent 224; sleep 0.3; input keyevent 219`）
+才抓住的，判据用的是**我们自己 log 里那一刻读到的 `keyguardLocked` 值**（读数自带出处，
+不依赖事后去查设备状态）。
+
+#### T11 步骤 5：设备系统设置对账 + 装回主线包
+
+**系统设置对账**（泓舟本批的显式要求；计划正文没写这一步）
+
+| 项 | 开工原值（改之前记的） | 本批改成 | 还原后**回读** | |
+|---|---|---|---|---|
+| `secure.assistant` | `com.miui.voiceassist/com.xiaomi.voiceassistant.AssistInteractionService` | 我们 | **原值** | ✅ |
+| `secure.voice_interaction_service` | 同上 | 我们 | **原值** | ✅ |
+| `cmd role get-role-holders ASSISTANT` | `com.miui.voiceassist` | `com.xiaozhou.companion` | **`com.miui.voiceassist`** | ✅ |
+| `secure.voice_recognition_service` | `com.xiaomi.mibrain.speech/.asr.AsrService` | **未动** | 同原值 | ✅ |
+
+⚠ **切回小爱同样要过一次确认框**，而我第一次点完就直接回读——四条**一条都没变**。
+「点了」≠「改了」（§6.3 坑⑨ 同族，本轮第二次）。回读是唯一判据。
+
+**本批未动**：`long_press_power_launch_xiaoai` 等 MIUI 手势绑定（只读，改它超出授权范围）、
+系统触感开关、音量、自动旋转、飞行模式、蓝牙，以及**全部 App 内设置**。
+
+**装回主线包**（`adb install -r` 备份文件，Success **8.5s**）——三条判据，**没有一条是「lastUpdateTime 回到基线」**：
+
+| # | 判据 | 读数 | |
+|---|---|---|---|
+| 1 | 装的就是备份的那个文件 | `_b3-mainline-apk-backup/mainline-app-debug.apk` **289317943 B**，与 T8 产物逐字节同大小 | ✅ |
+| 2 | 系统面：`query-services` | **6 → 5 条**，`xiaozhou` **0 命中** | ✅ |
+| 3 | **功能面**：运行时 `requireOptionalNativeModule('AssistRole')` | `null` ⇒ 取证屏显示 `MISSING`；**同屏 `native: available`** ⇒ foldstate 等其余原生件完好 | ✅ |
+
+**新包锚：`lastUpdateTime=2026-09-02 16:45:36`**。B3 §6.1–§6.3 的语音读数锚仍是
+`2026-09-01 19:21:55`（那些读数绑在那个包上，不受重装影响）；**B4 起取语音读数用新锚**——
+APK 内容与 19:21:55 那个逐字节同源，变的只是安装时刻。
+
+⚠ 判据 3 的读法要精确：`assistRole` 那一行**本身是 spike 分支的 JS**（Metro 当时仍服务 spike 源码），
+它显示 `MISSING` 说明的是 **APK 原生面里没有 assistrole**——这正是要验的。顺带给
+`modules/assistrole/index.ts` 的「原生缺席不崩」降级路径（照 `modules/kws` 铁则写的）拿了一次实证。
+
+#### T12：记录收口
+
+文档五处：本节（§6.4）、`mobile/e2e/README.md` 的「B3 重建后」一节、主计划
+`2026-08-24-mobile-app-implementation-plan.md` 的 B3 指针段 + §9 坑账追加、
+`docs/design/README.md` 本计划行状态、`AGENTS.md` §4.1 指针段（**单独 commit**）。
+**零后端改动、`hmi/` 未碰、共享判据一字未动。**
+
+**收口读数**
+
+| 项 | 读数 |
+|---|---|
+| `npm test` | **42 suites / 413 tests 全绿（零增量）**——本批主线零代码改动，对得上 |
+| `npm run typecheck` | **0 error** |
+| `python scripts/run_e2e.py --target cloud` | **exit 0**；`e2e_protocol_smoke` **PASS**（1/1）、`e2e_remote_safe` **PASS**（8/8）；`run_id=e2e-20260902085641-2920d54058b2`。⚠ 结果里带 `"stale": true`（`canonical_metadata_missing`）与 `runtime_freshness: unverified` 两条 warning——本批**零后端改动**，这一跑是廉价保险不是基线，别拿它当 canonical |
+
+**反向验证**（本批形态与前三批都不同：主线零代码改动、spike 无 jest 面
+⇒ 反向验证只能靠**装置自身的阴性对照**，而且要在真机上成对取）
+
+| 对 | 阴性侧 | 阳性侧 | 说明 |
+|---|---|---|---|
+| 角色可见性 · 系统面 | 装机前 `query-services` **5 条**、`dumpsys package` grep `voiceinteraction` **零命中** | 装机后 **6 条**、含我们 | 同一条命令、同一台设备，只差一次装机 |
+| 角色可见性 · UI 面 | `b3p-02`（主线包）无「小舟随行」 | `b3p-04`（spike 包）有 | 同一路径同一屏 |
+| 角色可见性 · 观测通道 | **不强杀 permissioncontroller 时，装机后的列表与装机前一模一样**（`b3p-03`） | 强杀后才出现（`b3p-04`） | 见坑① |
+| 触发通路 | MIUI 三个手势 `AssistRoleSpike` **0 条** | AOSP `keyevent 219` **两次都有** | 同一台设备同一时段，把「我们没接上」排除掉 |
+| 红线 | 解锁态 `startActivity` **1**、开麦 0 | 锁屏态 `startActivity` **0**、`refused` 有行 | 两侧都取，不是只验一侧 |
+| 装回主线 | spike 包 `assistRole: HELD` | 主线包 `assistRole: MISSING` + `native: available` | 功能面证明装回去的是主线包 |
+
+**本批踩的坑**（每条都是一次错读数换来的）
+
+1. ⛔ **`permissioncontroller` 会缓存角色候选列表**：spike 包装完、`query-services` 已经
+   变成 6 条，UI 列表却**与装机前逐项一模一样**——照这个读数就会得出「HyperOS 不给三方
+   数字助理」这个**完全错误的平台结论**，而且它看起来非常可信（列表里明明有 ChatGPT/Claude，
+   显得"我们就是被挡了"）。判据是 `mCurrentFocus` 的 **window id 没变**（`1ed009b` 复用）
+   ⇒ `am force-stop com.android.permissioncontroller` 后重开，`58bc075` 新实例，我们就在里面。
+   **凡是读系统设置 UI 的读数，先把承载它的进程杀掉重开。**
+2. **`screencap -d` 的 display id 不能从 `dumpsys SurfaceFlinger --display-id | head -1` 取**：
+   本机第一行是**内屏**（`4630946481727302019`，CLOSED 时 state OFF）⇒ 抓出 2224×2488 的全黑图。
+   活跃外屏是第二行 `4630947090644569220`（1080×2520）。映射要从 `dumpsys display` 的
+   `mViewports` 读逻辑 `displayId=0` ↔ `uniqueId=local:...` 那一对。§6.2 坑④ 的新形态：
+   那条说的是「逻辑 id 不能用」，这条是「物理 id 也要挑对哪一个」。
+3. **`grep -c` 返回 0 会让 `&&` 链后面的命令全部不执行**——「读数为空」和「命令没跑」长得一样。
+   取零命中类读数时用 `;` 串联，并**始终带一条通道自检**（本轮用 logcat 总行数，
+   67106 / 89868 / 110833 各段都有）。
+4. **`adb` daemon 自己重启会打死宿主侧流式 logcat**（exit 255）**并带走 `adb reverse`**——
+   §0 第 4 条「adb server 生命周期变化后都要重建」的又一个实例，这次触发它的不是拔插而是
+   daemon 自重启。长观测要么容忍中断（改用 `-d` 直读设备缓冲），要么捕获进程死了要能发现。
+5. **设置页两次进入之间的坐标不可复用**（§6.3 坑⑥ 第二次）：还原时照着设置时的坐标点，
+   落到了「语音输入」空页面；且「默认应用」页与「助手和语音输入」页**长得像但项不同**，
+   同一个 `(400,545)` 在两个页面上是两件事。判据：每次 `dumpsys window` 看 Activity 名 + 截图定坐标。
+6. **切回原值同样要过确认框**：点完「超级小爱」直接回读，四条设置**一条都没变**（对话框还挂着）。
+   「点了」≠「改了」——改设置的唯一判据是回读（§6.3 坑⑨ 同族，本轮第二次）。
+7. **本机造不出「亮屏 + keyguard 锁着」的稳定窗口**（未设锁屏凭据 + 屏幕超时短）
+   ⇒ 需要在该状态下取的读数，必须把「制造状态」和「触发」放进同一条 `adb shell`，
+   中间不能插查询命令。
+
+**遗留 / 给下一批的话**
+
+1. ⛔ **B3′ 的结论交泓舟裁**：**第一问过、第二问不过**。角色能选、能生效（五条断言），
+   但 **HyperOS 的三个触发手势全部拿不到**，且成因是 MIUI 用**显式 ComponentName** 绕过
+   角色解析（两个调用方都是），不是我们的实现问题、也不是 AOSP 机制不可用。
+   ⇒ **B5 若要做「角色启用」，得先回答：在 HyperOS 上拿到默认助理角色而拿不到任何系统手势，
+   这个角色还值不值得做**。可能的替代入口（都要另立评估，本批不做）：Android 16 Live Updates、
+   桌面小组件/快捷方式、`ACTION_ASSIST` Activity 路径、耳机键。
+   ⚠ **本结论只对本机 HyperOS 这一台成立**（一台设备、一次读数）——换 ROM/换机型要重取。
+2. ⚠ **§12.2 红线的锁屏分支只在一种人造窗口下被走到**（亮屏 + keyguard）。真实场景里更常见的是
+   息屏锁屏，而那时**系统不派发** assist 键、我们的 `onShow` 根本收不到 ⇒ 红线在效果上成立，
+   但「我们主动拒绝」这条代码路径的真机覆盖面只有那一个窗口。B5 正式做角色时，
+   这条应该有**设备设了锁屏凭据**的复验（本批设备无凭据，且设它超出授权范围）。
+3. ⚠ **spike 代码不 cherry-pick**（§5 第 10 条）。但有两件**结论**要带进 B5，别重新踩：
+   ① library manifest 是 Expo 模块的**第三条注册通道**，`ExpoModulesPackageList` 与
+   `PackageList.java` 都看不到它，判据是 **merged manifest**；
+   ② `voice-interaction` xml 的 `recognitionService` 必须指向真的 `RecognitionService`
+   （理由见步骤 1–2），否则失败态与「平台不给」不可区分。
+4. **B3 三批的遗留全部原样转出，本批未动**（本批是 spike + 文档批）：
+   唤醒率 5–6/10 交裁（§6.3 遗留①）、播报卡顿需无 AEC 对照构建（②）、`shutter` ≡ `wake`（③）、
+   两条被推翻的计划判据（④）、`Reanimated: synchronouslyUpdateUIProps failed`（⑤）、
+   B2 表#6 与「换一批」chip 两格未取（⑥）。**去向：全部 → B4/B5。**
+5. **设备状态**：系统设置四项**已逐条回读还原**（见步骤 5 表）；App 内设置**一字未改**；
+   主线包已装回，新包锚 `2026-09-02 16:45:36`；`adb reverse` = `UsbFfs tcp:8081 tcp:8081`（重建过两次）；
+   Metro `packager-status:running`；折叠态 `CLOSED(0)`。
+   ⚠ 一处**派生状态未还原也无法还原**：切换助理期间「助手和语音输入」页的「闪烁屏幕」开关
+   变成了**灰色不可用**（跟随当前助理的能力，不是独立设置项），切回小爱后由系统自行恢复，本批未动它。
+   取证图 16 张在 `mobile/e2e/artifacts/`（gitignore，不入库）。
+   **spike APK 已不在设备上**；构建产物仍在镜像区（下次构建会覆盖），主线 APK 备份留在
+   `D:/Android/builds/_b3-mainline-apk-backup/`（**不入库，B4 若不需要可删**）。
+6. **推送**：本批提交**未推送**，等泓舟单独授权。构成（**只列构成、不写死条数**——§6.1 遗留⑥ 那条纪律）：
+   主线上是 T12 的文档 commit 与 `AGENTS.md` 单独 commit；spike 分支上是 `eeac764`（**不推、不合并**）。
+   推前列完整 `git log --oneline origin/main..HEAD` 并 `git fetch` 核 `origin/main` 有没有被别的会话推进过。
+   ⛔ **push 的粒度是分支不是提交**（M4-R1 推 main 带走别人 33 个提交的教训）。
+
+---
+
+> **B3 到此四批收口。** 下一轮（B4）是新会话的事：接手读 `AGENTS.md` §4.1 的指针段、
+> 本文件 §6.1–§6.4 的遗留出账，以及主计划 §9 的坑账。

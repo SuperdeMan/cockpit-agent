@@ -77,6 +77,74 @@ Maestro 每个 session 都会重装 driver，不带这个开关就每跑一条�
    （`Enable`/`Disable`）。⇒ 核 YAML 关键字要看反序列化器，不是看内部枚举。
 3. 见上面的 `--no-reinstall-driver`。
 
+### B3 重建后（2026-09-01 起，APK 含三件新原生 + 平台 AEC）
+
+B3 那一趟 `-Clean` 重建换掉了设备上的包。下面四条是**跑 flow 之前**要核的，
+每条都对应一次实测过的失败形态，不是仪式。
+
+**① 包锚：语音类读数一律带 `lastUpdateTime`**
+
+```bash
+adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime
+```
+
+AEC 补丁 `96a6830` 的提交时刻是 **2026-08-29 17:27:50**——只有 `lastUpdateTime` 晚于它的
+APK 才含平台 AEC。B2 整批用的包是 17:22:24 的，**差 5 分钟就没有**，那一批的唤醒率／回声／
+端点读数因此全部作废重取。⇒ **没记包锚的语音读数视为无效**。
+（B3 §6.1–§6.3 的锚是 `2026-09-01 19:21:55`；B3′ spike 验完装回主线包后锚变成
+`2026-09-02 16:45:36`——APK 内容同源，变的只是安装时刻。）
+
+**② Maestro driver 在不在**（重装 APK 不会删 driver，但要核过才知道）
+
+```bash
+adb shell pm list packages | grep maestro        # dev.mobile.maestro + .test 两条
+D:/Android/tools/maestro-dist/maestro/bin/maestro.bat test <flow> --no-reinstall-driver
+```
+
+driver 不在就要重装，MIUI 的 ADB 安装确认弹窗要人点。
+
+**③ 两个取证屏的深链**（B3 新增，设置页「调试」段也有入口）
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "xiaozhou://native-spike"   # 折叠姿态 + 触感四种 + 原生在场
+adb shell am start -a android.intent.action.VIEW -d "xiaozhou://blur-spike"     # 材质四块对照（③ 是真模糊路径）
+```
+
+⚠ **深链在 bundle 加载完之前发会被吞掉**：USB 掉线、手折导致进程重启之后，应用会落回
+`DevLauncherActivity`，要先
+
+```bash
+adb shell am start -a android.intent.action.VIEW -d "xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
+```
+
+重连 Metro，**等应用真起来**（logcat 出现 `Running "main"`）再发上面那条——立刻发的那次
+没有反应，别当成路由缺陷。`am start -n .../.MainActivity` 只能把它拉到 dev launcher，回不到 MainActivity。
+
+**④ 设备系统开关会静默吞掉被测行为**（已发生三次，同一族）
+
+```bash
+adb shell settings get system haptic_feedback_enabled   # 0 ⇒ 振动全部 IGNORED_FOR_SETTINGS
+adb shell dumpsys audio | grep -A2 "STREAM_MUSIC"       # 扬声器 0 ⇒ 听不到 = 以为没播报
+```
+
+两条都**不报错、不崩、日志里看着像成功**（`Starting vibrate` 照打），只有读到最后那行
+`ended with status IGNORED_FOR_SETTINGS` 才看得出。抬音量在本机**只有** `input keyevent 24`
++ `dumpsys audio` 回读一条路（`adb shell media volume` 不存在，`cmd media_session` 静默失败），
+且必须**解锁 + 应用前台**时按。
+
+**⑤ 截图取物理 display id**（折叠屏，B3′ 又踩一次）
+
+```bash
+adb shell dumpsys display | grep -oE "displayId=[0-9]+|uniqueId='local:[0-9]+'"
+adb shell screencap -p -d <物理id> /sdcard/x.png && adb pull /sdcard/x.png
+```
+
+`-d 0` 会报 `Display Id '0' is not valid`（那是逻辑 id）；而
+`dumpsys SurfaceFlinger --display-id | head -1` 取到的是**内屏**（本机
+`4630946481727302019`，合盖时 state OFF ⇒ 抓出 2224×2488 全黑图）。活跃外屏是
+`4630947090644569220`（1080×2520）。**全黑先查 `dumpsys power` 的 `mWakefulness`，
+息屏+锁屏与抓错屏是两件事。**
+
 ## CLI 在哪（本机）／换机器怎么装
 
 **本机不用装**：Maestro **2.9.0** 的 dist 一直在 `D:/Android/tools/maestro-dist/maestro/bin/maestro.bat`

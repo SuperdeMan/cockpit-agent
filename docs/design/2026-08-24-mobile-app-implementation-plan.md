@@ -1585,6 +1585,17 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
 > §6.4 播报·回执·轨迹 + 闸）。B2 于 2026-08-31 四批收口，**§6.4 第一行是 B2→B3 闸的结论**
 > ——B3/B4 开不开工按那张读数表由泓舟裁。
 
+> **UX v2.1 B3「原生一次重建」的实施记录同样不在本文件**：四批（T1–T12）的读数、坑与遗留出账
+> 逐批写在 [`2026-09-01-mobile-ux-v2-b3-implementation-plan.md`](2026-09-01-mobile-ux-v2-b3-implementation-plan.md)
+> **§6**（§6.1 重建前三条 JS 缺陷 / §6.2 依赖引入与一趟重建 / §6.3 真机验收与 AEC 读数重取 /
+> §6.4 B3′ spike 与收口）。B3 于 2026-09-02 四批收口。三条要带进 B4 的结论：
+> ① **AEC（`96a6830`）已首次进包**（包锚 `2026-09-01 19:21:55`，B3′ 验完重装后为
+> `2026-09-02 16:45:36`，APK 同源）⇒ **此前所有语音类读数作废**，且**没记 `lastUpdateTime`
+> 的语音读数一律无效**；② **blur 材质裁决：过**（三判据齐，B4 可把 G1 frosted 换真模糊，
+> 换法与参数见 §6.3）；③ **B3′ 默认助理角色：第一问过、第二问不过**——角色能选能生效（五条断言），
+> 但 HyperOS 三个触发手势全部拿不到，成因是 MIUI 用显式 ComponentName 绕过角色解析
+> （spike 分支 `spike/b3p-assistant-role` 保留未合并，**永不合并**）。
+
 ## 8. 里程碑验收清单（复制到实施记录逐条打钩）
 
 > **打钩纪律（2026-08-28 M3-6 收口时定的）**：✅ 只给**有真机读数**的条目；
@@ -2051,6 +2062,86 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
     ② **验收前后各截一次设置页存档**，改了什么一目了然。
     ⚠ 配套一条：**同样的滑动次数落点不一样**——开关状态会改变页面高度（免唤醒关掉后
     「唤醒词」子开关整行消失），所以「滚 7 次到某某区」这种配方不可复用，每次都要截图核。
+
+50. **Expo 模块的注册判据不在 `:app`、也不叫 `ExpoModulesProvider`**（B3 T8，2026-09-01）：
+    方案与本计划都写过「看 `app/build/generated/**/ExpoModulesProvider*`」——**全盘 find 零命中**。
+    真名真路径从 `expo-modules-autolinking` 的 `ExpoAutolinkingPlugin.kt:18-20` 读出来：
+    文件是 **`ExpoModulesPackageList.kt`**，生成在 **`:expo` 工程**下
+    （`node_modules/expo/android/build/generated/expo/src/main/java/expo/modules/`），不是 `:app`。
+    配套两条：① `:expo-blur:` / `:expo-haptics:` 的 gradle task 数是 **0** 且**正常**
+    （SDK 57 的 npm 包走 `local-maven-repo` 预编译 aar，不从源码建工程）⇒ 判据是
+    `ExpoModulesPackageList` 里有没有那一行，不是有没有 `> Task :`；② **`PackageList.java`
+    只管 RN 社区库**，Expo 通道的件永远不会出现在里面——照字面在那里找会白找一场然后误判失败。
+    ③ **还有第三条通道**（B3′ 补，2026-09-02）：本地模块自带的 `AndroidManifest.xml`
+    由 AGP 的 library manifest merger 合进 APK，**上面两个清单都看不到它**，判据是
+    `app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml`。
+
+51. **Gradle 的模块与仓库是绑定的；探 maven 仓库一律用 GET 不用 HEAD**（B3 T8，2026-09-01）：
+    `expo-blur` 依赖 JitPack 坐标 `com.github.Dimezis:BlurView`，构建报「找不到」，
+    而 `android/build.gradle` 里 jitpack 仓库**本来就配着**。真因两层：
+    ① **某个仓库提供了 POM，该模块的 artifact 就只从那个仓库找，不会回落到后面的仓库**
+    ——「配了仓库」与「这个模块会去那个仓库找」是两件事；
+    ② 腾讯镜像的 nexus 对同一路径 **`HEAD` 返回 404、`GET` 返回 200**，我用
+    `Invoke-WebRequest -Method Head` 探，据此差点判成「镜像上没有这个包」。
+    修法落在 `scripts/gradle_cn_mirrors.init.gradle`：给镜像加 `content { excludeGroup(...) }`
+    只排**实测坏掉的那一个 group**，不排 `com.github.*` 全族（同前缀的 glide 与
+    penfeizhou 在镜像上是好的，赶去 jitpack 反而要现场构建）。判据是「实测在镜像上坏了」，
+    不是「名字长得像 JitPack」。
+
+52. **折叠屏 `screencap` 的 display id 要挑对哪一块物理屏**（B3′，2026-09-02）：
+    坑账 §9 早前只说过「逻辑 id 不能用」（`-d 0` 报 `Display Id '0' is not valid`）。
+    本轮的新形态是**物理 id 也会拿错**：`dumpsys SurfaceFlinger --display-id | head -1`
+    取到的是**内屏**（本机 `4630946481727302019`，合盖时 state OFF）⇒ 抓出 2224×2488 全黑图。
+    活跃外屏是 `4630947090644569220`（1080×2520）。正确来源是 `dumpsys display` 的
+    `mViewports`：逻辑 `displayId=0` ↔ `uniqueId='local:...'` 那一对。
+    ⚠ 与之相邻的另一条：**MIUI 锁屏下截图也是全黑**，判据链是 `dumpsys power` 的
+    `mWakefulness=Dozing` + `mDreamingLockscreen=true`——「息屏+锁屏」和「抓错屏」是两件事。
+
+53. **`adb logcat -c` 不清 system 缓冲；长观测要宿主侧流式捕获**（B3 T9/T10，2026-09-01）：
+    振动日志写在 system buffer，`-c` 只清默认几个 ⇒ 上一趟的读数会混进这一趟（「4 下变 8 下」）。
+    用 **`adb logcat -b all -c`**。另外 **logcat 环形缓冲会被 Maestro 的无障碍树 dump 冲掉**
+    （跑一趟 Maestro，缓冲起点被推到 7 分钟之后）⇒ 跨 Maestro 的长观测必须
+    `adb logcat > 文件` 常驻。⚠ 但**流式捕获会被 adb daemon 自重启打死**（B3′ 实测 exit 255，
+    同时带走 `adb reverse`）——捕获进程死了要能发现，否则「没有日志」会被读成「没有事件」。
+
+54. **系统级开关会静默吞掉被测行为**（B3 T8/T9，2026-09-01；与「音量 0」同族的**第三次**）：
+    触感四种在真机上「一点感觉都没有」，而 logcat 里 `VibratorManagerService: Starting vibrate`
+    四条俱全、uid 正确——**原生调用真的到达了系统振动服务**。判据在最后那一行：
+    `ended with status IGNORED_FOR_SETTINGS`，根因是 `settings get system
+    haptic_feedback_enabled` = **0**（而 intensity/zen_mode 都正常，就这一个开关）。
+    ⇒ 取任何「设备是否真的做了某事」的读数前，先查承载它的系统开关；
+    **成功的调用日志不是读数，最终状态才是**。
+
+55. **改设置的唯一判据是回读**（B3 T9/B3′，两轮各一次）：
+    ① Maestro `tapOn` 报 COMPLETED 而设置没变——`swipe start "50%,25%"` 在已经到顶时会被
+    系统吃成**下拉通知栏**，那两下打在通知面板上；② 平台的角色切换**有确认对话框**，
+    点完选项直接回读，四条 secure/role 设置**一条都没变**。⇒ 改完一律 `png_probe` 回读
+    或 `settings get` 回读。配套：**设置页两次进入之间坐标会漂**（~60px），且
+    「默认应用」页与「助手和语音输入」页长得像但项不同，同一个坐标在两页上是两件事
+    ⇒ 每次 `dumpsys window` 看 Activity 名 + 截图重取坐标。
+
+56. **读系统设置 UI 的读数，先把承载它的进程杀掉重开**（B3′，2026-09-02）：
+    spike 包装完、`cmd package query-services` 已经从 5 条变 6 条，
+    **UI 的角色候选列表却与装机前逐项一模一样** ⇒ 照这个读数会得出「HyperOS 不给三方数字助理」
+    这个**完全错误的平台结论**（而且看起来很可信：列表里明明有 ChatGPT/Claude，
+    显得"就是我们被挡了"）。真因是 `com.android.permissioncontroller` 复用了旧 Activity 实例，
+    判据是 **`mCurrentFocus` 的 window id 没变**。`am force-stop com.android.permissioncontroller`
+    后重开，新实例里我们就在列表中。
+
+57. **HyperOS 的助理手势不走 AOSP 的 `ROLE_ASSISTANT`**（B3′，2026-09-02，一台设备的读数）：
+    拿到默认助理角色（五条断言全一致）之后，电源键长按（解锁/锁屏）与双击小白条**三个手势
+    一个都不到我们**，而同一时刻 AOSP 的 `keyevent 219` 通路当场响应。系统日志给出机制：
+    `com.miui.home` 与 `system_server` **都用带 `cmp=` 显式组件名的 `ACTION_ASSIST` Intent
+    直接拉起 `com.miui.voiceassist`**，不做角色解析；静态面对应
+    `system.long_press_power_launch_xiaoai=1` 与 `secure.entity_config_key_voice_assistant`
+    里写死的 `pkgName`。⇒ 在这类 ROM 上，**「角色注册成功」与「手势能触发」是两条独立的链**，
+    验收必须分开量，否则「没响应」只会剩一个查不下去的结论。
+
+58. **深链在 bundle 加载完之前发会被吞掉**（B3 T9/B3′，2026-09-01/02）：
+    进程重启（手折、USB 掉线、重装）后应用会落回 `DevLauncherActivity`，
+    `am start -n .../.MainActivity` 只能把它拉到 dev launcher。要先用
+    `xiaozhou://expo-development-client/?url=...` 重连 Metro，**等 logcat 出现
+    `Running "main"` 之后**再发业务深链——重连后立刻发的那条没有反应，别当成路由缺陷。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
