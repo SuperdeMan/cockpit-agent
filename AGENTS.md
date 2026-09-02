@@ -32,7 +32,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | MiniMax 原始 QA 问题 | `docs/reviews/2026-08-26-minimax-cloud-qa-findings.md` |
 | MiniMax 根因与修复批 | `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` |
 | 安全确认写闸 | `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md` |
-| Android App 当前计划 | `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md`（**B3 四批已收口 2026-09-02**，读数与遗留出账在其 §6.1–§6.4；下一轮 B4 待拆） |
+| Android App 当前计划 | `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md`（**B4 计划已拆 2026-09-02，草案待批**；§0 第 3 条两个待裁项先裁；B3 收口读数与遗留出账仍在 `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md` §6.1–§6.4） |
 | 历史流水 | `docs/agents-history.md`（只追加） |
 
 服务子目录各有 README；改某个服务前先读该目录 README。
@@ -112,7 +112,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App B4 | **B3 四批已收口（2026-09-02）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md` §6.1–§6.4；**下一轮是 B4，计划待拆**。接手先看 `git status` / `git log --oneline origin/main..HEAD`（mobile 线有未推提交）。⛔ **语音读数口径已换**：AEC 补丁 `96a6830` 于 B3 第 2 批**首次进包**（包锚 `2026-09-01 19:21:55`；B3′ 验完装回主线包后为 `2026-09-02 16:45:36`，APK 同源）⇒ **此前所有唤醒率/回声/端点读数作废**，且**没记 `adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime` 的语音读数视为无效**。带进 B4 的活项：① **唤醒率 5–6/10 不达标**（判据 N≥8，未触 N<5 红线；引擎直灌对照已证「引擎能认」⇒ 问题在声学链路。按计划 §5 第 11 条**未自行调阈值**，交泓舟裁）；② **新缺陷·播报卡顿**（本应用麦流 HAL 阻塞 71–104ms，播报时 2.2 次/分 vs 无播报 0.7 次/分；**不能归因给 AEC**——没有同条件的无 AEC 对照包，要坐实需一趟不带 `96a6830` 的对照构建）；③ **blur 材质裁决：过**，B4 可换真模糊，接法要 `<BlurTargetView>` + `blurTarget`（首帧 ref 为 null 会静默回落成 none）；④ **B3′ 默认助理角色：第一问过、第二问不过**——角色能选能生效（五条断言），但 HyperOS 三个触发手势全拿不到，成因是 MIUI 用显式 ComponentName 绕过 `ROLE_ASSISTANT`（spike 分支 `spike/b3p-assistant-role` 保留、**永不合并**）；⑤ 5 人外部小样本仍是**裁定算过、无分布读数**，§11.4 状态可读性无外部基线；⑥ 归 B4 的既有条目：发送按钮图标 / `charging_list` 卡型 / `EdgeGlow` 零 jest / 壳底与浅色对比度 / `shutter`≡`wake` / `Reanimated: synchronouslyUpdateUIProps failed` / B2 表#6 与「换一批」chip 两格未取 |
+| Android App B4 | **B3 四批已收口（2026-09-02）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md` §6.1–§6.4；**B4 计划已拆：`docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md`（草案待批；§0 第 3 条两个待裁项——唤醒率调阈值批、播报卡顿对照构建——先裁；§0 第 9 条把下面每条「带进 B4 的活项」指到了任务）**。接手先看 `git status` / `git log --oneline origin/main..HEAD`（mobile 线有未推提交）。⛔ **语音读数口径已换**：AEC 补丁 `96a6830` 于 B3 第 2 批**首次进包**（包锚 `2026-09-01 19:21:55`；B3′ 验完装回主线包后为 `2026-09-02 16:45:36`，APK 同源）⇒ **此前所有唤醒率/回声/端点读数作废**，且**没记 `adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime` 的语音读数视为无效**。带进 B4 的活项：① **唤醒率 5–6/10 不达标**（判据 N≥8，未触 N<5 红线；引擎直灌对照已证「引擎能认」⇒ 问题在声学链路。按计划 §5 第 11 条**未自行调阈值**，交泓舟裁）；② **新缺陷·播报卡顿**（本应用麦流 HAL 阻塞 71–104ms，播报时 2.2 次/分 vs 无播报 0.7 次/分；**不能归因给 AEC**——没有同条件的无 AEC 对照包，要坐实需一趟不带 `96a6830` 的对照构建）；③ **blur 材质裁决：过**，B4 可换真模糊，接法要 `<BlurTargetView>` + `blurTarget`（首帧 ref 为 null 会静默回落成 none）；④ **B3′ 默认助理角色：第一问过、第二问不过**——角色能选能生效（五条断言），但 HyperOS 三个触发手势全拿不到，成因是 MIUI 用显式 ComponentName 绕过 `ROLE_ASSISTANT`（spike 分支 `spike/b3p-assistant-role` 保留、**永不合并**）；⑤ 5 人外部小样本仍是**裁定算过、无分布读数**，§11.4 状态可读性无外部基线；⑥ 归 B4 的既有条目：发送按钮图标 / `charging_list` 卡型 / `EdgeGlow` 零 jest / 壳底与浅色对比度 / `shutter`≡`wake` / `Reanimated: synchronouslyUpdateUIProps failed` / B2 表#6 与「换一批」chip 两格未取 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
