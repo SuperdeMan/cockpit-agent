@@ -2676,7 +2676,175 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 
 ### 6.2 第 2 批「形态落地」（T6–T9）
 
-> （待开工。含 T6 步骤 1 的真机 dp 读实、形态前三张、Maestro 07 正反两跑、T8 的 tintOverBlur 裁决与浅色对比裁决、T7 需泓舟的四格若挪到第 3 批要在此注明）
+> 泓舟 2026-09-02 批准本批开工。计划头部状态行本批不改（四批走完由收口批统一改）。
+
+#### 开工基线（2026-09-02，本会话自跑；有效期只到下一次改动）
+
+| 项 | 读数 | 取法 |
+|---|---|---|
+| jest | **47 suites / 466 tests 全绿** | `cd mobile && npm test` |
+| tsc | **0 error** | `npm run typecheck` |
+| 包锚 | `lastUpdateTime=2026-09-02 16:45:36` | `adb shell dumpsys package com.xiaozhou.companion \| grep lastUpdateTime` ✅ 与 §0 一致 |
+| 未推送 | **`origin/main..HEAD` = 0 条**，`HEAD` = `origin/main` = `d3dde0a` | §6.1 遗留⑦ 那 8 条**泓舟已推**；工作树干净 |
+
+环境：`check_android_env.ps1` 退出码 0（18 pass / 0 warn / 0 fail）；`dev_stack target show` = **cloud**；
+`adb devices` = `5d432b6d`；`adb reverse --list` = `UsbFfs tcp:8081 tcp:8081`（非空）；Metro PID 18496（别人起的，全程没重启）。
+
+#### 逐任务
+
+| 任务 | 提交 | 全量 | 关键读数 |
+|---|---|---|---|
+| T6 舞台面板 / 抽屉 / 布局切换 + Maestro 07 | `0ff7c10` | 466（零增量） | 真机 dp 读实、Maestro 07 rc=0 + 反向验证、形态三张 + 抽屉 |
+| T7 折叠姿态消费 | `91d1113` | 466（零增量） | tabletop 分界逐像素落在铰链上；返回顺序两组 rc=0 |
+| T8 材质（真模糊 + 减少透明度 + 胶囊浅色实底） | `cca08e0` | **467**（+1） | ⬜ 真机读数未取到（USB 被拔） |
+| T9 发送键图标 + 无障碍补项 | `d7635e6` | 467（零增量） | ⬜ 真机读数未取到（同上） |
+
+收口：`npm test` **47 suites / 467 tests 全绿**、`npm run typecheck` **0 error**、`git diff --stat -- hmi/` **为空**、工作树干净。
+全量 466→467 只增不减：**tokens 的 `tintOverBlur` 断言是往既有用例里追的**（不新增收集器），`settingsMeta` 才 +1
+——计划预估的「+2 ⇒ 465」两处都不准（基线本来就是 466，不是 463）。
+
+#### T6 步骤 1：真机 dp 读实——**计划的估算全错，但没有一格落到另一种布局**
+
+| 屏 | `wm size` × `wm density` | 换算 dp | 计划里的估算 | `layout` 行实测（`/native-spike`） |
+|---|---|---|---|---|
+| 外屏 `CLOSED(0)` | 1080×2520 @480dpi（3.0x） | **360×840** | 411×960（按 420dpi 算的） | `single · compact×medium` / `dp: 360×840 @3x` |
+| 内屏 `OPENED(3)` | 2224×2488 @480dpi | **741×829** | 847×948（420dpi）/ 809（440dpi） | `two-pane · medium×medium` / `dp: 741×829 @3x` |
+| 内屏横（半开时实测） | 2488×2224 | **829×741** | — | `two-pane · medium×medium`（半开时是 `tabletop`，见 T7） |
+
+三条要记住的：
+
+1. **RN 的 `useWindowDimensions` 与 `wm size ÷ density` 逐位对上**（`native-spike` 的 `dp` 行就是这个对账物）——
+   不用担心 RN 会扣掉状态栏/导航栏，本机 edge-to-edge 下拿到的就是整窗。
+2. **两块屏的 `heightClass` 实测都是 `medium`，不是计划预期的 `expanded`**（840 与 829 都 < 900）。
+   模式没变（`single` / `two-pane` 都由宽度决定），所以按 §0 的口径**不需要停下来交裁**，但计划里
+   「`layout` 行应 `compact×expanded` / `expanded×expanded`」这两句预期是错的，截图对照时别照它核。
+3. ⚠ **内屏宽 741 离双栏阈值 720 只剩 21dp 余量，且 `widthClass` 是 `medium`**——
+   阈值若按 M3 的 840 卡，这台设备的内屏就双不了栏。这正是 §7.1「不能卡 840」那句话的实测支撑，
+   已连同实测数写进 `test/sizeClass.test.ts` 的顶部注释与用例（只改数、判据一字未动，13 条仍全绿）。
+
+#### T6 步骤 5：Maestro 07（正反两跑）
+
+| 跑 | 命令 | 结果 |
+|---|---|---|
+| 正 | `device_state state 3` → `maestro test --no-reinstall-driver mobile/e2e/07-tablet-two-pane.yaml` | **rc=0**：`stage-pane` 可见、「舞台 · 双栏」可见 |
+| 反 | `sizeClass.ts` 的 `TWO_PANE_MIN_WIDTH` 临时改 `9999`（先 `grep` 证明落盘）热载再跑 | **rc=1，红在 `assert stage-pane is visible`** ——正是它要抓的那件事 |
+| 还原 | `cp` 回原文件 + `git diff` 为空 + 复跑 | **rc=0** |
+
+抽屉那条同样带了阴性：`wm size 1900x2100`（→ 633×700dp，`layout: drawer · medium×medium`）下，
+临时流里 `assertVisible stage-handle` → **`assertNotVisible stage-pane`**（关着）→ `tapOn stage-handle` →
+`assertVisible stage-pane` + 「舞台 · 舞台抽屉」，一跑里正反两侧都在，rc=0。`wm size reset` 已做且回读无 override 行。
+
+#### T6 步骤 6：形态取证（前三张里拿到两张 + 抽屉；两格需泓舟）
+
+| 格 | 图 | 读数 | 状态 |
+|---|---|---|---|
+| 外屏竖 | `b4-06-outer-portrait.png` / `b4-06-outer-spike.png` | `single · compact×medium`；顶栏「车辆」入口**在**（单栏保留） | ✅ |
+| 外屏横 | — | 需转手机；单人做要改 `accelerometer_rotation`/`user_rotation`（命中「修改系统配置」红线） | ⬜ 需泓舟 |
+| 内屏双栏 | `b4-06-inner-two-pane.png` / `b4-06-inner-spike.png` | `two-pane · medium×medium`；左对话右舞台、「舞台 · 双栏」在图上；顶栏「车辆」入口**按设计消失** | ✅ |
+| 抽屉 | `b4-06-drawer-spike.png` / `b4-06-drawer.png` | `drawer · medium×medium` / `633×700`；把手在右缘、点开后舞台 320dp 拉出、对话区压缩 | ✅ |
+| 分屏不崩不遮 | — | 需泓舟拖成 MIUI 分屏 | ⬜ 需泓舟 |
+| 回归 | — | Maestro **06 / 08 / 09 各 rc=0** | ✅ |
+
+#### T7：折叠姿态消费
+
+**tabletop 拿到了，而且比计划要求的更硬。** 机身半开横放（`device_state print-state` = `HALF_OPENED(2)`，内屏 829×741dp）时：
+
+- `/native-spike`：`posture: tabletop` / `state: halfOpened` / `orientation: horizontal` / `isSeparating: true` /
+  `bounds: {"left":0,"top":1112,"right":2488,"bottom":1112}`（整宽零高的水平线，与 B3 的描述一致）/
+  `hinge(dp): {leftDp:0, topDp:370.667, widthDp:829.333, heightDp:0}` / `layout: tabletop · medium×medium`；
+- 对话页 `b4-07-tabletop.png`：上半「舞台 · 桌面」+ 120dp 大光球 + 车况三格，下半 Welcome + Composer；
+- **分界的机器读数**（`png_probe rows`，x[100,2388)）：luma 在 **y=1112 → 1113 从 34.9 掉到 15.8**
+  （1111 还是 47.6），而 `FoldingFeature.bounds.top` **就是 1112** ⇒ **分界逐像素落在铰链上缘**。
+  计划只要求「上下各 6dp 取平均亮度对比」，那两个数是 (50.0,54.5,67.3) vs (16.5,20.8,32.8)。
+
+**返回顺序**（Maestro rc=0 + adb 回读）：
+
+| 组 | 结果 |
+|---|---|
+| ② 隐私栏开着 → BACK | `privacy-rail` 不可见、`composer-input` 仍在 ⇒ 栏关、应用仍前台 ✅ |
+| ③ 阴性：都没开 → BACK | `mCurrentFocus` = `com.miui.home/...Launcher` ⇒ 退到桌面，根屏语义（M3-W 定案）不变 ✅ |
+| ① 语音层开着 → BACK | ⬜ **做不了**，原因见坑③ ⇒ 归需泓舟的格 |
+
+**需泓舟的四格**（读数仍记在 T7 名下，做的时候可以并进第 3 批 T13）：
+
+| 格 | 状态 |
+|---|---|
+| book（半开竖持 → `two-pane` + 铰链落 gap 的竖带机器读数） | ⬜（本轮只等到横放的 tabletop，没等到竖持的 book） |
+| tabletop | ✅ **已完成**（上面那一段） |
+| PTT 松手（按住不放 + 展开手机 ⇒ 草稿转正、消息发出） | ⬜ |
+| 层不收起只重排（层开着外↔内各一次，草稿逐字不变） | ⬜ |
+
+#### T8 / T9：代码全绿，**真机读数全部 ⬜**
+
+做到 T8 步骤 5 的第一条时 **USB 被拔、`adb devices` 空**，此后没再回来。未取到的读数：
+
+- T8-1 真模糊真的在（`W ReactNativeJS.*blurTarget` 0 条 + `hfreq.py` 梯度 ≤19.2 + 开「减少透明度」的反例回到 100+）；
+- T8-2 **`tintOverBlur` 的裁决**——层内/层外文字带幅度比 ≤0.5 才算过。**没有读数 ⇒ 常量仍是计划给的 `0.40`，
+  仍是「待证参数」**，不是「验过了」。不达标的处置（抬 .50 / 回 .58）原样留给取到读数的那一轮；
+- T8-3 浅色对比（球体边缘环带 vs 壳底环带 ≥40/255）与 T8-4 胶囊浅色实底 `#FFFFFF`；
+- T8-6 层开合 20 次零崩、零 `E/`/`F/`；
+- T9-1 发送键深浅两张截图（**泓舟要看图标方案**）、T9-2 Maestro 01/06/08、T9-3 TalkBack（需泓舟开无障碍服务）。
+
+T8 的 `settingsMeta` 那条与 `tokens` 那条都做了「先跑红再实现」：两条各自红在自己那一句上
+（`● tokens 数值照 A-1 设计系统 › 材质三档…` 与 `● …B4-8：旧库没有 reduceTransparency…`），不是「红了两条」而已。
+
+#### 本批踩的坑
+
+1. ⛔ **`device_state` 的强制值与机身物理姿态不一致时，被「激活」的那块屏可能物理是关的 ⇒ `screencap` 全黑。**
+   机身合着强制 `state 3`：内屏、外屏两张都是 16643 字节的纯黑；机身展开强制 `state 0` 同理。
+   第一次撞上时它还和「息屏 + 锁屏」叠在一起，看起来像「截图坏了」——**三件事要分开查**：
+   `dumpsys power` 的 `mWakefulness`（Dozing？）、`dumpsys window` 的 `mDreamingLockscreen`（锁着？）、
+   `dumpsys display` 里那块屏的 `mState`（ON/OFF？）。
+2. **`cmd device_state state reset` 回的是机身的物理姿态，不是「你上一次设的值」。**
+   本轮 `reset` 三次分别回到 0 / 3 / 2 ——因为机身在被人动。**每次 `reset` 之后必须 `print-state` 回读**，
+   不能假设它回到开工时那个值（坑账「设置类 adb 动作必须回读」的第三次应验）。
+3. **MIUI 在锁屏时拒绝 USB 安装**：Maestro 第一跑死在 `INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`，
+   而 `--no-reinstall-driver` 并不能跳过（driver 当时确实不在设备上）。解锁后一次就过。
+   ⇒ **报错文案里的 "canceled by user" 不是「有人点了取消」，是「屏锁着」。**
+4. **`adb shell input keyevent 82` 在应用前台时会打开 RN dev menu**（拿它解锁屏幕之后要再按一次 BACK 关掉，
+   否则接下来的截图全是 dev menu 盖在上面）。本轮的 `b4-06-outer-portrait.png` 第一张就是这么废掉的。
+5. ⛔ **`presence-capsule` 是瞬态的，Maestro 抓不稳**：`snapshot.capsule` 为 null 时它**根本不渲染**（idle 就是 null），
+   发一句文本后只在 thinking 那一小段出现。三跑三种死法：① 直接 `tapOn` 找不到；
+   ② `extendedWaitUntil visible` **过了**、紧接着的 `tapOn` **找不到**（元素在两步之间消失）；③ 换更慢的问句也一样。
+   ⇒ **「先 assertVisible 再 tapOn」对瞬态元素是错的写法**（两步之间有真实的时间缝）；而对这个元素，
+   连合并成一步的 `tapOn` 也不够——**要稳定造出「层开着且不在收音」得有人真说一句话**。
+6. **`stage-pane` 的 `assertNotVisible` 是抽屉那条流里最有价值的一句**：没有它，`tapOn stage-handle` 之后
+   看到 `stage-pane` 只能证明「面板在」，证明不了「是这一点把它拉出来的」（B2 坑「只验反例不验正例」的镜像）。
+
+#### 遗留 / 给第 3 批的话
+
+1. ⛔ **撞到一条 B3 的前提被实测推翻，且**不能**在本批修**：`modules/foldstate` 的注释与 `useFoldState`
+   的注释都写着「WindowManager 在注册监听时会立即回推当前值，所以**订阅就是查询**」——**不成立**。
+   实测：应用在机身**已经半开**时启动，`/native-spike` 读到 `posture: flat` / `state: —` / `events: 0`；
+   adb 走一趟 `device_state 3 → 2` 之后才变成 `tabletop` / `halfOpened` / `events: 2`。
+   **后果不小**：切屏本来就会重启进程（B3 坑），进程起来时姿态可能停在 `flat`，
+   直到铰链**再动一次**才对——也就是「展开手机 → 停在单栏」这种用户看得见的错。
+   根因还没定死（候选：`OnStartObserving` 时 `appContext.currentActivity` 为 null 而**静默** `return@OnStartObserving`；
+   或注册那一刻恰好没有 FoldingFeature）。**定性要么加原生日志、要么给模块补一个「查当前值」的方法，两条都要重建**
+   ⇒ 命中 §0 第 2 条硬边界①，**本批不做，交泓舟裁**：并进 B5 那趟重建，还是单开一趟。
+2. **另一条 B3 记录被推翻（方向相反，是好消息）**：`07` 的 yaml 注释与 B3 记录都写着
+   「`cmd device_state` 模拟不了半开」。本轮实测 `state 3 → 2` **确实产生了正确的 `halfOpened` FoldingFeature 事件**。
+   ⚠ 但要说准：**当时机身本来就是物理半开的**，所以这只证明「device_state 能驱动事件」，
+   **没有**证明「机身摊平时强制 `state 2` 也能造出铰链」。要用它当仪器，得先补这个对照。
+3. **`tintOverBlur = 0.40` 仍是待证参数，别当成验过的**（见上「T8 / T9」一节）。真模糊这条路径本身
+   在真机上**一次都没跑过**——B3 的裁决是在 `blur-spike` 那个取证屏上做的，
+   语音层这条生产路径（`BlurTargetView` 包 `FlashList` + `blurTarget` 指过去）**只有 tsc 与 jest 保证它编得过**。
+   §6.1 遗留③ 那句「只有单测一个消费方」在这里换了个形态：**这次连单测都没有，靠的是类型**。
+4. **一条本批新增的、判据外的例外**：tabletop 下 Composer 球按
+   `composerOrbAnimated(...) && layout.mode !== 'tabletop'` 让位给舞台的 120dp 大球（§11.4「同屏常态 1 个」）。
+   按计划的话它不进纯函数，写在 `ChatScreen.tsx` 那一行的注释里——**记在这里是因为它是唯一一处
+   「动效动不动」不完全由 `orbPolicy` 决定的地方**，将来查动效问题要知道有这一处。
+5. **临时取证流不入库**：`drawer-tap.yaml` / `back-order.yaml` 两个只活在 scratchpad
+   （`e2e/` 里只加了 `07-tablet-two-pane.yaml` 一个）。抽屉那条流的正反结构值得在第 3 批
+   补进 `e2e/` 或写进 README——本批只把跑法与两条新坑写进了 `e2e/README.md`。
+6. **硬边界全程未破**：零重建、零新原生依赖（`expo-blur` 的 `BlurTargetView`/`BlurView` 是 APK 里已有的）、
+   零后端改动、`hmi/` 一行没碰（`git diff --stat -- hmi/` 为空）、共享判据一字未动。
+   撞上要突破边界的那件事（遗留①）已经停下并出账，没自行突破。
+7. **未推送**：本批 4 个代码提交 `0ff7c10`(T6) / `91d1113`(T7) / `cca08e0`(T8) / `d7635e6`(T9)，
+   外加本节的记录提交，**全部只在本地 `main`，一条都没推**。开工时 `origin/main..HEAD` 是 0 条
+   （`HEAD` = `origin/main` = `d3dde0a`），所以这些提交里**没有别人的东西**。
+   推之前要列完整 `origin/main..HEAD` 并单独取得泓舟授权（⛔ push 的粒度是分支不是提交）。
+8. **两个待裁项（§0 第 3 条①②）本批一字未碰**，仍等泓舟裁；本批也没有捎带任何语音类读数。
 
 ### 6.3 第 3 批「行车档」（T10–T13）
 
