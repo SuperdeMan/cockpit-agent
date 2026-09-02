@@ -2130,14 +2130,30 @@ FSM 判定层已有 jest 钉住（B2 T11 的 `echo_dismissed` 用例），**真�
 | 6 | 「这是什么」→ 用户气泡先于相机 | **未重取**（通路 B2 已验通、且与 AEC 无关；本轮设备在收尾前掉线） | ⬜ |
 | 7 | 语音提问出声（自动档） | `AudioPlaybackConfiguration piid:10055 type:AAudio uid:10423 **state:started** deviceIds:[3]（扬声器） sampleRate=48000` + 屏上「播报中 · 说话可打断」+ 泓舟**确认能听到** | ✅ |
 
-#### T10 步骤 8：附加（非闸门）——**未完成**
+#### T10 步骤 8：附加（非闸门）——**读数仍 ⬜，但把 B2 附加⑦ 的定位换掉了**
 
-「换一批」chip：试的语料是 **`附近的川菜馆`**（带品类词，按 B2 附加⑦ 的定位
-`candidates.ts` 只有 `poi_list` 且 `c.keyword` 非空才记 category）。
-`inputText` 已 COMPLETED，**发送前设备 USB 掉线**（`adb: no devices/emulators found`），
-`kill-server`/`start-server` 未恢复、需要物理重插 ⇒ 这一格 ⬜。
-（另：本轮 12:38 前后另一条语料 `附近的川菜馆` 之外，对话页里已自然出现过一次 `poi_list`
-餐馆卡，卡上有「说『看第 1 个详情』或『导航去第 2 个』」提示行——下一批可从那条复现。）
+语料 **`附近的川菜馆`**（带品类词）**产出了正牌 `poi_list`**：10 家川菜馆、带评分/人均/距离/营业时间
+（`b3-10-chip2.png`）⇒ **「找不到带 keyword 的语料」这个定位不成立**。
+
+**真正的位置在别处**（本轮读源码定的，不是猜）：
+
+- `followUpChips`（`core/session/followUps.ts:21` 的 `if (cand.category) push('换一批','换一批')`）
+  **全仓只有一个消费方——`features/chat/VoiceSheet.tsx:199`**
+  ⇒ **「换一批」chip 只在语音层里渲染**，主对话页底部那一行是**快捷指令**，不是 followUp chips。
+  我第一次就是在对话页底部找它、当然找不到（`chip2` 那张图里连
+  `followUps.ts:24-25` 的「导航去第一个」也一并没有——这是「整行都不是那行」的签名）。
+- 还有第二层条件：`VoiceSheet.tsx:198` 的 `assistant && !assistant.streaming && !assistant.pending`
+  （注释原话「答完了才给——流式/思考中给等于催人打断自己」）。
+
+⇒ **要取这一格，需要一条「语音发起 + 答复带 `poi_list` 卡 + 答完后层仍开着」的轮次**。
+本轮两次尝试都没造出来：① 轮次结束后 `presence-capsule` 不可见，开不了层；
+② 轻点光球开层会**起新一轮**，把 `assistant` 打回 `pending`（chips 按设计不渲染），
+且那一轮答的是纯文本没有卡片。**归下一批**，配方如上。
+
+⚠ 断言写法：`assertVisible: "换一批"` 红而 `".*换一批.*"` 绿——但绿的那条匹配到的是
+**卡片里的提示文字**「…『换一批』看更多」，**不是 chip**。这是
+`e2e/09-state-gallery.yaml` 文件头判据 1（整串正则）的反向陷阱：**宽松正则会匹配到别的东西，
+「断言绿」不等于「那个东西在」**。这一格必须看图或用 chip 的 testID。
 
 #### ⚠ 本批撞出的新缺陷（出账，未修）
 
@@ -2255,23 +2271,33 @@ pid 29623）是我们的麦流。
 7. **推送**：本批 2 个提交（`876bdea` 触感映射修复 + 本条记录）**未推送**，等泓舟单独授权。
    ⛔ push 的粒度是分支不是提交——推前列完整 `origin/main..HEAD` 并核 `git fetch`。
 
-8. ⛔ **设备状态：本批改过的三项尚未还原**（收尾前 USB 掉线，`adb devices` 空列表、
-   `kill-server`/`start-server` 与 `adb connect …:5555` 都无效，需物理重插）。
-   **下一批开工第一件事就是把这三项还原并复核**，否则会拿着被本批改过的设备状态取读数：
+8. **设备状态：三项已还原并逐项复核**（泓舟重插 USB 后补做；`adb reverse` 又是空的，已重建）：
 
-   | 项 | 本批改成 | 应还原成 | 状态 |
-   |---|---|---|---|
-   | App · 播报 | **总是** | **自动**（开工基线） | ⛔ 未还原 |
-   | App · 免唤醒对话 | **开** | **关**（开工基线） | ⛔ 未还原 |
-   | 系统 · 扬声器媒体音量 | **150/150** | 开工基线是 **0** | ⚠ 交泓舟裁（0 本身就是个缺陷现场，见步骤 5 ①；不建议还原成 0） |
-   | App · 语音链路 | s2s → classic | classic | ✅ 已还原并 `png_probe` 回读 |
-   | App · 触感 | 关 → 开 | 开 | ✅ 已还原并 `png_probe` 回读（G−R +37.9） |
+   | 项 | 本批改成 | 还原为 | 复核方式 | |
+   |---|---|---|---|---|
+   | App · 播报 | 总是 | **自动** | `png_probe`：自动 G−R +1.9→**+22.4**、总是 +21.8→+1.9 | ✅ |
+   | App · 免唤醒对话 | 开 | **关** | `png_probe` G−R +28.0→**+1.4**，且 `dumpsys audio` 的 active riid **随之消失**（双重确认） | ✅ |
+   | App · 语音链路 | s2s | **classic** | `png_probe` + 屏上「三段式（默认）」选中 | ✅ |
+   | App · 触感 | 关→开 | **开** | `png_probe` G−R +37.9 | ✅ |
+   | 系统 · 扬声器媒体音量 | 0 → 110 → 150 | **未强行还原**（见下） | `dumpsys audio` | ⚠ |
 
-   本批**未动**：系统触感开关（仍 `haptic_feedback_enabled=1`）、自动旋转、飞行模式、
-   `voicePipeline` 以外的 App 设置、`quickCommands`、RKStorage。
-   取证图 30 余张在 `mobile/e2e/artifacts/`（gitignore，不入库）。
+   ⚠ **音量这一项没有「还原成基线」**，理由记清楚：开工基线是 **0**，那本身就是本批抓到的缺陷现场
+   （§步骤 5 ①：音量 0 会让整轮语音读数变成「听不到 = 以为没播报」），还原成 0 等于把坑埋回去。
+   泓舟在被问到时答「继续收尾」。**另外这个读数在本机不是稳定量**：收尾时读到
+   `2 (speaker): 20`（我设的是 150），而同一行 `80 (bt_a2dp): 50`——期间有蓝牙耳机接入
+   （控制中心里可见，非本批操作），MIUI 会按活跃设备改每设备音量。**下一批取语音读数前
+   必须先读一次 `dumpsys audio` 的 `STREAM_MUSIC Current`，别假设它还是上次的值。**
 
+   本批**未动**：系统触感开关（收尾复核仍 `haptic_feedback_enabled=1`）、自动旋转、飞行模式、
+   蓝牙、`quickCommands`、RKStorage、`voicePipeline` 以外的 App 设置。
+   收尾环境：设备 `5d432b6d` 在线、`adb reverse` = `UsbFfs tcp:8081 tcp:8081`、
+   Metro `packager-status:running`、折叠态 `CLOSED(0)`、包锚仍 `2026-09-01 19:21:55`。
+   取证图 40 余张在 `mobile/e2e/artifacts/`（gitignore，不入库）。
 
-### 6.4 第 4 批「B3′ spike + 收口」（T11–T12）
-
-（回填：T11 两问读数（角色可选？手势响应？）+ 分支名与提交 + 主线包重装对账 / T12 文档五处 + 全量终值 + 条数账 / **未推送清单**（列构成不写死条数）/ 设备状态逐字段对账 / 坑 / 遗留出账给 B4）
+9. ⚠ **两条新的操作坑（补进本批坑账）**：
+   - **设置页「滚到顶」的上滑起点必须远离屏幕顶部**：`swipe start "50%,25%"` 在已经到顶时
+     会被系统吃成**下拉通知栏**，而 Maestro 仍报 COMPLETED
+     ⇒ 我据此以为「播报已还原」，实际那两下打在通知面板上。改用 `start "50%,45%" → "50%,90%"`。
+     **判据：改完设置一定要 `png_probe` 回读，别信 tapOn 的 COMPLETED。**
+   - **USB 掉线后应用会落回 `DevLauncherActivity`**：`am start -n …/.MainActivity` 只能把它拉到
+     dev launcher，要用 `xiaozhou://expo-development-client/?url=…` 重连 Metro 才回得到 `MainActivity`。
