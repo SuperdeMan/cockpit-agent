@@ -2590,9 +2590,9 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 | `cd mobile && npm test` | **42 suites / 413 tests 全绿**（72.7s） |
 | `npm run typecheck` | **0 error** |
 | `git log --oneline origin/main..HEAD` | **0 条**；`HEAD` = `origin/main` = `e248deb`；`git status` 干净 |
-| `adb shell dumpsys package com.xiaozhou.companion \| grep lastUpdateTime` | ⬜ **未取——设备不在线**（下一条） |
+| `adb shell dumpsys package com.xiaozhou.companion \| grep lastUpdateTime` | 开工时 ⬜ **取不到（设备离线）**；泓舟中途插上 USB 后补取：**`lastUpdateTime=2026-09-02 16:45:36`**（`versionName=0.1.0`）——与 §0 第 1 条的主线包一致 |
 
-**设备缺席（开工第一件没做成的事）**：`adb devices` 是空列表；按 B3 §0 的补救做了 `adb kill-server && adb start-server` 重新枚举 USB，**仍空**。tailnet 上手机在线（`tailscale status`：`100.78.231.58  superdemanxiaomi-mix-fold-4  android`），但 `adb connect 100.78.231.58:5555` 被拒（`10061 目标计算机积极拒绝`——无线调试没开、`adb tcpip` 也没设过）⇒ **USB 物理没插，adb 这条路今天没有**。后果只有一种：**本批全部真机动作未做**（批次级步骤 4 的 Metro 热载冒烟 + T2/T3/T4/T5 各自的步骤 6），逐条记在「遗留」里。代码侧判据不依赖设备（T1–T5 全是纯函数 + jest），**但「没有回归」这一半证据本批没有**。
+**设备缺席（开工时）与补做**：开工时 `adb devices` 是空列表；按 B3 §0 的补救做了 `adb kill-server && adb start-server` 重新枚举 USB，**仍空**。tailnet 上手机在线（`tailscale status`：`100.78.231.58  superdemanxiaomi-mix-fold-4  android`），但 `adb connect 100.78.231.58:5555` 被拒（`10061 目标计算机积极拒绝`——无线调试没开、`adb tcpip` 也没设过）⇒ 当时 **USB 物理没插**。T1–T5 全部代码与 jest 在无设备下做完；随后泓舟当轮插上 USB（`5d432b6d  device  model:24072PX77C`），**批次级步骤 4 与 T2/T3/T4/T5 的步骤 6 全部补做完毕**，读数见下面「真机冒烟」。`adb reverse --list` 开工时是**空的**（B3 坑⑬ 第三次），已重建 `tcp:8081 tcp:8081`。
 
 #### 逐任务
 
@@ -2603,7 +2603,7 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 | T3 动效策略 | `b791414` | 446 → **451**（+5） | 0 |
 | T4 提示音 | `b3c65d4` | 451 → **458**（+7） | 0 |
 | T5 舞台场景 + 兜底卡 | `d7029f7` | 458 → **466**（+8，含反向验证补的 1 格） | 0 |
-| **收口全量** | — | **47 suites / 466 tests 全绿** | **0 error** |
+| **收口全量**（真机冒烟做完后复跑） | — | **47 suites / 466 tests 全绿**（34.8s） | **0 error** |
 
 计划预期是 413 → ≈463；实到 **466**，差在 T2 的 `test.each` 四格（计划按 1 条估）与 T5 反向验证补的 1 格。只增不减达标。
 
@@ -2630,21 +2630,43 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 | T5③ | `cardListRows` 的 `total > 0` → `>= 0` | `cardFields.ts:38` | **不红** → **补格后红** | ⚠ **计划预期落空**：fixture 两个站 `total` 是 8 / 4，全仓没有任何用例走到 `total === 0`，这条守卫**是裸的**。已补一格（`total===0 的站不写「0/0 空闲」`，`cardFields.test.ts`），复验：变异落盘 → 恰好红这一条 → 还原 → 4 条全绿 |
 | T5④ | `mainCard` 不走 `splitCardGroup`、直接取 `items[0]` | `stageScene.ts:20` | 「card_group：主卡决定场景」 | ✅ |
 
+#### 真机冒烟（泓舟插上 USB 后当轮补做；`lastUpdateTime=2026-09-02 16:45:36`，外屏 `displayId=4630947090644569220` 1080×2520，`device_state=CLOSED`，`mWakefulness=Awake`）
+
+**先证明新代码到了设备**（「A 不工作」先证明 A 的输入到达了 A）：Metro 是本仓库那份（`node … expo/bin/cli start --dev-client --port 8081`，cwd = `…\car-agent\mobile`，PID 18496——**别人已经起着，全程没动它**）；`am force-stop` 后 `am start -n …/.MainActivity` 只能落回 `DevLauncherActivity`（B3 §0 原话），改用深链 `xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081` 才拉起 MainActivity 并取新 bundle。**证据物**：设置页「语音播报」分区里 **「提示音」开关行已在**（在「触感」之下，文案逐字是 T4 写的那句），且**默认为开**——旧存量库没有 `cueToneEnabled` 这个键，开着就是 `mergeStoredSettings` 补了 `DEFAULT` 的 `true`（settingsMeta 那条单测的真机对应物）；`/native-spike` 底部多出「提示音两种（§8，B4）」两个按钮。
+
+| 项 | 判据 | 读数 |
+|---|---|---|
+| **批次级步骤 4** | App 起得来 | ✅ 冷启后欢迎屏正常（`b4-b1-smoke-02.png`）：顶栏 30dp 球 / 欢迎 88dp 球 / Composer 44dp 球三处都在，快捷指令三条、发送键、健康点都在，**与 B3 收口时一致** |
+| | 发一句文字 | ✅ 点「播放音乐」→ 用户气泡 →「好的」+「已执行 · 展开回执」（`b4-b1-smoke-03.png`）；另一轮打字「附近的充电站」走完整链出卡 |
+| | 光球与胶囊无回归 | ✅ 胶囊在 thinking 期显示「正在思考…」并在答完消失（`/presence-trail` 21:40:40 两条 + `b4-05-charging-list.png` 前一帧）；三处光球渲染与动画正常 |
+| | 键盘避让（B1-12 顺手回归） | ✅ 输入法弹起后 Composer 与发送键**没被盖住**（`b4-t5a.png`），`behavior="padding"` 仍有效 |
+| **T2 步骤 6** | `/presence-trail` 的 `driving` 轴恒 false | ✅ 一整轮（idle → thinking → idle，4 条轨迹）的「轴」列表分别是 `agent,primary,sheetDetent,capsule` / `agent,primary,capsule` / `transport` / 初始种子，**`driving` 一次都没出现**。⚠ **这条读数的边界**：没有 Edge `driving=true` 帧时，旧实现（`!!active?.driving`）同样恒 false ⇒ **它证明「没有回归」，证明不了「修好了」**；真正的分辨要靠云栈注入 `speed_kmh`，归 T13 |
+| **T3 步骤 6** | reduce-motion → 光球静帧（**A/B + 活体对照**） | ✅ **A（`reduceMotionForce: false`，出厂态）**：1.8s 内三帧，Composer 球区 `[50,2310)-[175,2440)` 逐像素差 **100.00% / 99.77%**；同两帧的静态对照区（顶栏标题带）**0.00%** ⇒ 观测通道是好的。**B（临时把默认值改 true + 重启水合）**：Composer 球区 **0.00%**、欢迎 88dp 球区 **0.00%**、顶栏 30dp 球区 **0.00%**、**整屏 2,721,600 px 全部 0.00%**（跨 1.8s 三帧）。**活体对照**：同一状态下点一次快捷指令，整屏差 **31.90%**（屏在重绘、App 没死），答完再静置 12s 整屏又回 **0.00%**。**「仍显示正确的态」**：`b4-mB1.png` 三处球七层结构完整、idle 态可读，不是空球。**C（改回 false + 重启）**：欢迎球区 **100.00%**、Composer 球区 **100.00%**、静态对照 **0.00%** ⇒ 还原生效。`git diff -- mobile/src/core/settings/store.ts` 已回到**空**（临时改动零残留） |
+| **T4 步骤 6** | 两个提示音按钮不崩 + 音频侧可观测 | ✅ **干净 A/B**：冷启后（未按任何键）`dumpsys audio` 里 **uid 10423 没有任何 `AudioPlaybackConfiguration`**；进 `/native-spike` 仍没有；按下提示音按钮后出现 **`AudioPlaybackConfiguration piid:11039 type:AAudio u/pid:10423/7467 state:started … sampleRate=48000 channelMask=0x3`** ⇒ `playCueTone` 真的走到了原生音频层并起了输出流。logcat 本应用 pid **零 JS 错误、零 FATAL、零 redbox、零 Reanimated 告警**；E 行只有两条平台噪声（`AudioTrack: Failed to load XML file: /odm/etc/audio/audio_lowpower_app_list.xml`、`libprocessgroup: set_timerslack_ns write failed`），都是建 AudioTrack 时 ODM 配置缺失，与本改动无关 |
+| | 音量基线（B3 坑⑨） | ⚠ **`STREAM_MUSIC` speaker 音量 = 0**（`streamVolume:0`，`Devices: speaker(2)`），所以上面那条流的 `mutedState:streamVolume`。`cmd media_session volume --stream 3 --set 75` **打印了成功但回读没变**（「成功输出不是读数」第二次应验）⇒ **没改泓舟的设备音量**。后果：**「响不响 / 两种分不分得出」这条人耳读数在音量抬起来之前做不了**，仍归 T13 步骤 2 |
+| **T5 步骤 6** | 兜底卡渲通用列表行 | ✅ **B2 出账⑨ 的肯定式**：真栈发「附近的充电站」→ 兜底卡渲出 **卡头「卡片 · charging_list」+ 主字段 `soc: 72` + 5 行**（车电网汽车充电站 0km / 电动汽车充电站 0km / 云快充 0.3km / 电动汽车充电站 0.3km / 润诚达 0.4km）+ followUp chip。机器读数（`maestro hierarchy`）：**`fallback-row` = 5**（`cardListRows` 的 max）、**「暂未适配」= 0**。图 `mobile/e2e/artifacts/b4-05-charging-list.png`。**卡头仍是型名、仍无 `_prov` 徽章——这两条是出账不是缺陷**（hmi / agent 侧的账）。⚠ 顺带印证了反向验证补的那一格：真实 `charging_list` 的 `items` **不带 `total`**，正是 `total > 0` 这条守卫让「0/0 空闲」没冒出来 |
+
+**中文输入的做法**（`adb shell input text` 不支持 CJK）：一次性 Maestro 探针（只 `tapOn composer-input` + `inputText`，**不写 `hideKeyboard`**——B3 坑⑤ 它发的是 BACK），发送那一下用 `adb shell input tap` 打绝对坐标，绕开「MIUI 输入法窗口盖住 hierarchy」。探针文件在 scratchpad，**不入库**。⚠ `maestro.bat` 的 `--no-reinstall-driver` 是 **`test` 子命令的选项**，写成全局选项会报 `Unknown option`。
+
+**设备状态还原表**：`adb reverse tcp:8081 tcp:8081`（开工时空的，已重建，**留着**）；App 前台停在 `/presence-trail`（无副作用）；**设备音量一字未动**（仍是 speaker 0）；**没有安装 / 卸载任何东西**；**没有动别人的 Metro**（PID 18496 全程在跑）；`DEFAULT_APP_SETTINGS.reduceMotionForce` 的临时改动已还原且 `git diff` 为空。
+
 #### 本批踩的坑
 
 1. **计划给的 fixture 常量撞上判据自己的哨兵**（`drivingMode.test.ts`）：`NOW = 1_000_000`（≈16 分钟）减一小时是**负数**，正好落进 `trueAt <= 0 = 从未标注过`（`NO_EDGE_DRIVING` 的定义）⇒「最近一次 Edge 标 true ⇒ 行车」红了。红的是 fixture 不是判据——真实时钟不会为负。改成 `1_700_000_000_000` 并把原因写进测试注释。
 2. **计划给的 `test.each` 过不了 tsc**：`ok` 里写 `identity: 'trusted-tablet' as const` 会把 `Partial<typeof ok>` 的 `identity` 窄成那个字面量，`{ identity: 'mount' }` 不可赋值。显式标注 `identity: Identity` 才过。
 3. **「存量显式 true → 保持」这一类 settings 用例，在实现之前就是绿的**：`mergeStoredSettings` 的 `...rest` 展开会把任何未知键原样带出（运行时不受 `AppSettings` 类型约束）⇒ 这半条断言对「键有没有加进 `DEFAULT_APP_SETTINGS`」**零敏感**。真正先红的只有「旧库没有 X → 补默认」那半（T2 / T3 / T4 各一条）。B2 坑① 说的是「入参得是合法 JSON 才够得到合并体」，这是它的第二层。
 4. **多 suite 一起跑时 jest 不打逐条 `×` 行**，只在总结区打 `●  <describe> › <test>`；单 suite 才有 `×`。反向验证要读「红的是哪几条」就得取 `●` 行（或一次只跑一个 suite）——否则只能数到「几条红」，正是计划反复警告的那种读法。
+5. **Git Bash 把 `adb` 的 `/sdcard/...` argv 转成了 Windows 路径**：`adb pull /sdcard/x.png` 报 `failed to stat remote object 'D:/Program Files/Git/sdcard/x.png'`，而 `screencap -d <id> -p /sdcard/x.png` 因为转出来的路径含空格被拆成多个 argv、报 usage。CLAUDE.md §6.1「Windows 真栈一律 PowerShell」不只是引号的事，**远端路径同样会被 MSYS 改写**——真机取证整段改走 PowerShell 后一次就过。
+6. **`screencap` 的参数顺序**：`screencap -p -d <id> <file>` 报 usage，`screencap -d <id> -p <file>` 才对（`-d` 的值必须紧跟）。
+7. **`cmd media_session volume --set` 是静默失败的**（第二次）：打印 `[V] will set volume to index=75` 之后 `dumpsys audio` 回读**一点没变**。凡是「设置类」的 adb 动作都必须回读（坑账 §9.55），成功输出不算读数。
+8. **PowerShell 的 `-replace` 只吃两个参数**：`$x -replace 'p','a'+$v+'b'` 会报 `The -ireplace operator allows only two elements to follow it`——字符串拼接要先算好再传。同理 `$(...)`、`&`、`seq` 在传给 `adb shell` 的字符串里会被 PowerShell 先吃掉，设备侧脚本要用**单引号**包。
 
 #### 遗留 / 给第 2 批的话
 
-1. ⬜ **本批所有真机动作未做（USB 没插）**，逐条列清，谁先插上谁做（T13 一并收也行）：
-   - **批次级步骤 4**：Metro 热载冒烟——App 起得来、发一句文字、光球与胶囊无回归（判据：第 1 批结束时 App 的样子应与 B3 收口时一模一样）；
-   - **T2 步骤 6**：`/presence-trail` 里 `driving` 轴不再随轮结束翻转（此时没有 Edge 标，应恒 false）；
-   - **T3 步骤 6**：临时把 `DEFAULT_APP_SETTINGS.reduceMotionForce` 改 `true` 热载一次，看 Composer 球 / 顶栏球 / 欢迎球全部静止且**仍显示正确的态**，改回再热载一次球又动了。⚠ **本批没做这一步，所以 `settings/store.ts` 的 diff 里只有四个新键，没有临时改动残留**；
-   - **T4 步骤 6**：`/native-spike` 的 `cue-wake` / `cue-attention` 两按钮各按一次——不崩、logcat 本应用 pid 零 E/F、`dumpsys audio` 抓 `AudioPlaybackConfiguration`（60ms×2 太短，抓不到只记「未观测」不写「不出声」）；按前先按 B3 坑⑨ 读一次 `STREAM_MUSIC Current`（音量 0 是「不出声」惯犯第三次）。**「响不响、两种分不分得出」是 T13 泓舟的人耳读数，本批不产出任何语音读数**；
-   - **T5 步骤 6**：真栈发「附近的充电站」，兜底卡应渲出站名 + 距离 + 空闲（`testID=fallback-row` 数 ≥1，`b4-05-charging-list.png`）；卡头仍是「卡片 · charging_list」且无 `_prov` 徽章——**这两条是出账不是缺陷**。
+1. ✅ **真机冒烟已全部补做**（见上一节）。仍开的只剩两条，都要**别的前提**才做得了：
+   - ⬜ **提示音的人耳读数**（响不响 / 两种分不分得出）——设备 `STREAM_MUSIC` speaker 音量是 **0**，且 `cmd media_session volume --set` 改不动；抬音量是泓舟的动作，读数归 **T13 步骤 2 / 步骤 10**（与 `shutter`≡`wake` 盲测同一轮做）；
+   - ⬜ **行车档「修好了」的那一半**——T2 步骤 6 只能证「没有回归」（无 Edge 标时新旧实现都恒 false）；要分辨得靠云栈 `POST /api/debug/vehicle {"key":"speed_kmh","value":30}` 造出 `driving=true` 的 `process` 帧，归 **T13 步骤 1**。
+   顺带：§11.2 B4 ④「reduce-motion 开 → 光球静帧」这条**读数本批已经拿到了**（整屏 0.00% + 活体对照 31.90%），T13 步骤 7 可以直接引这一段，或用**系统开关**（而非实验室强制开关）再取一次作为第二个入口的确认。
 2. **对计划接线清单的一处扩写**：`MessageBubble` 内的 `ThinkDots` 与两处 `StreamCursor`，计划的接线清单只写了「头像球 `animated={active && loops}`」没写它们，但同任务的「为什么」段写明「ThinkDots / StreamCursor / EdgeGlow 呼吸也是循环……一并可定格」。`loops` 这个 prop 本来就要传进 `MessageBubble`，所以按语义一并接上了（三处 `animated={loops}`）。**不是新判据**，判据仍只有 `orbPolicy.loopsAnimated` 一份。
 3. **五份判据里有四份此刻零生产消费方**（`useLayout` / `stageScene` / `cardFields.cardPrimaryButton` / `drivingMode` 的 `composerInputMode`·`sheetResident`·`drivingSuggested`）——分批就是这么切的（T6/T10/T11 才接）。但要记住：**它们现在只有单测一个消费方**，「两个消费方才算真收敛」这条到第 2/3 批才兑现。
 4. `charging_list` 仍不在 `hmi/src/types.ts::UiCard`、仍无 `_prov`：B2 出账⑨ 的 **hmi / agent 侧那一半原样转出**（本批只做了 mobile 兜底卡这一半）。`cards.test.ts:79` 断言 `CARD_FIXTURES ⊆ KNOWN_CARD_TYPES` 已复核——**加画廊样本会红，计划的警告是对的，没加**。
