@@ -145,6 +145,24 @@ adb shell screencap -p -d <物理id> /sdcard/x.png && adb pull /sdcard/x.png
 `4630947090644569220`（1080×2520）。**全黑先查 `dumpsys power` 的 `mWakefulness`，
 息屏+锁屏与抓错屏是两件事。**
 
+### B4「形态落地」新增：**07 内屏双栏**（2026-09-02 真机，rc=0 + 反向验证）
+
+Maestro **没有 adb 命令**——`device_state` 由外部先设、跑完还原，两步都要回读：
+
+```powershell
+adb shell cmd device_state state 3 ; adb shell cmd device_state print-state       # 期望 OPENED(3)
+D:/Android/tools/maestro-dist/maestro/bin/maestro.bat test --no-reinstall-driver mobile/e2e/07-tablet-two-pane.yaml
+adb shell cmd device_state state reset ; adb shell cmd device_state print-state   # 回物理姿态
+```
+
+判据物是 `stage-pane` 与标题文本「舞台 · 双栏」，不是「屏上看起来有两栏」。反向验证已做：
+把 `sizeClass.ts` 的 `TWO_PANE_MIN_WIDTH` 临时改 9999 热载再跑 ⇒ **红在 `stage-pane`**，还原后复跑绿。
+
+**⑥ `device_state` 的强制值与机身物理姿态不一致时，被「激活」的那块屏可能物理是关的 ⇒ `screencap` 全黑**
+（B4-6 实测：机身合着强制 `state 3`，两块屏都抓出全黑；机身展开强制 `state 0` 同理）。
+`state reset` 回的是**物理**姿态，不是你上一次设的值——`print-state` 回读才知道现在是哪种。
+另：`input keyevent 82` 在应用前台时会**打开 RN dev menu**（拿它解锁屏幕的话记得再按一次 BACK 关掉）。
+
 ## CLI 在哪（本机）／换机器怎么装
 
 **本机不用装**：Maestro **2.9.0** 的 dist 一直在 `D:/Android/tools/maestro-dist/maestro/bin/maestro.bat`

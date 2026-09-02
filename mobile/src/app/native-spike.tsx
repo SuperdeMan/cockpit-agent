@@ -4,7 +4,7 @@
 //  ② 触感四种：四个按钮各触发一次（§8：唤醒轻/确认双/判死一/快门轻）；
 //     自然挂点的代表性验证另有两条（计划 T9——按钮验的是「振感对不对」，挂点验的是「时机对不对」）。
 import { useEffect, useState } from 'react'
-import { Pressable, ScrollView, Text } from 'react-native'
+import { PixelRatio, Pressable, ScrollView, Text, useWindowDimensions } from 'react-native'
 import { useStore } from 'zustand'
 
 import { HAPTIC_KINDS, performHaptic } from '@/core/haptics'
@@ -12,6 +12,7 @@ import { settingsStore } from '@/core/settings/store'
 import { playCueTone } from '@/core/voice/cueTone'
 import { foldPosture } from '@/ui/layout/foldPosture'
 import { useFoldState } from '@/ui/layout/useFoldState'
+import { useLayout } from '@/ui/layout/useLayout'
 import { usePalette } from '@/ui/theme'
 
 import FoldNative, { FOLD_NATIVE_AVAILABLE } from '../../modules/foldstate'
@@ -20,6 +21,10 @@ export default function NativeSpikeScreen() {
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
   const fold = useFoldState()
+  // B4-6 形态矩阵截图的机器读数：布局模式 / 尺寸类 / 实测 dp / 铰链 dp——不靠肉眼数屏数。
+  // driving=false：本屏不接会话，行车档形态的读数在 /state-gallery 与 T13。
+  const layout = useLayout(false)
+  const { width, height } = useWindowDimensions()
   const [events, setEvents] = useState(0)
   useEffect(() => {
     if (!FoldNative) return
@@ -35,6 +40,9 @@ export default function NativeSpikeScreen() {
     ['isSeparating', String(fold?.isSeparating ?? '—')],
     ['bounds', fold?.bounds ? JSON.stringify(fold.bounds) : '—'],
     ['events', String(events)],
+    ['layout', `${layout.mode} · ${layout.widthClass}×${layout.heightClass}`],
+    ['dp', `${Math.round(width)}×${Math.round(height)} @${PixelRatio.get()}x`],
+    ['hinge(dp)', layout.hinge ? JSON.stringify(layout.hinge) : '—'],
   ]
 
   return (

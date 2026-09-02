@@ -1,0 +1,14 @@
+# 流 ⑦：折叠内屏（展开态）→ 双栏：舞台面板在、标题写「舞台 · 双栏」（方案 §11.3）。
+# ⚠ Maestro 没有 adb 命令：`cmd device_state state 3`（OPENED）由**外部脚本**先设，跑完 `state reset`
+#   （M3-2 验收就是这么强制展开验的，主计划 §8.3；它不等于真平板——R8 那台一直没到位）。
+#   展开会让 App 进程落回 DevLauncher（B3 坑：切屏重启进程）——open-app 子流的深链把它拉回来。
+# ⚠ 判据物是 testID 与标题文本，不是「屏上看起来有两栏」；tag=manual：CI 设不了 device_state。
+appId: com.xiaozhou.companion
+name: 07 内屏双栏
+tags:
+  - manual
+---
+- runFlow: subflows/open-app.yaml
+- assertVisible:
+    id: "stage-pane"
+- assertVisible: "舞台 · 双栏"

@@ -7,7 +7,7 @@
 import { FlashList } from '@shopify/flash-list'
 import { Link, Redirect, useFocusEffect } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { KeyboardAvoidingView, Pressable, ScrollView, Text, View, useWindowDimensions } from 'react-native'
+import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -25,12 +25,13 @@ import { activityLog } from '../../core/presence/activityLog'
 import { useReduceMotion } from '../../core/a11y/reduceMotion'
 import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
 import { MIC_LABEL } from '../../core/presence/presence'
-import { AuroraBackground, AuroraOrb, Glass, type OrbState } from '../../ui/aurora'
+import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
+import { PANE_GAP } from '../../ui/layout/sizeClass'
+import { useLayout } from '../../ui/layout/useLayout'
 import { usePalette } from '../../ui/theme'
-import { CardRenderer } from '../cards/CardRenderer'
-import { ReminderSection } from '../vehicle/ReminderSection'
-import { VehicleSection } from '../vehicle/VehiclePanel'
+import { StageDrawer } from '../stage/StageDrawer'
+import { StagePane } from '../stage/StagePane'
 import { captureVisionFrame, needsVisionFrame } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
@@ -69,8 +70,6 @@ export function ChatScreen() {
 
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
-  const { width, height } = useWindowDimensions()
-  const tablet = Math.min(width, height) >= 600
 
   // 配置装载与变更检测（回本屏即重查：设置页改完服务器返回时生效）
   useFocusEffect(
@@ -96,7 +95,7 @@ export function ChatScreen() {
   if (cfgState === 'loading' || !wired) {
     return <View style={{ flex: 1, backgroundColor: p.bg }} />
   }
-  return <ChatBody p={p} wired={wired} tablet={tablet} width={width} cfg={cfgState} />
+  return <ChatBody p={p} wired={wired} cfg={cfgState} />
 }
 
 /** 顶栏图标入口（hmi .au-icon-btn 同款：fill 底/圆角 12/40dp 热区）；svg 原生缺席回退文字 */
@@ -190,14 +189,10 @@ function Welcome({
 function ChatBody({
   p,
   wired,
-  tablet,
-  width,
   cfg,
 }: {
   p: ReturnType<typeof usePalette>
   wired: Wired
-  tablet: boolean
-  width: number
   cfg: ServerConfig
 }) {
   const { core } = wired
@@ -282,6 +277,9 @@ function ChatBody({
 
   // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride })
+  // B4-6 布局：`tablet = min(w,h) >= 600` 那个单布尔换成 useLayout 五模式（判据全在 sizeClass.ts，本文件零判断）。
+  // 放在 usePresence 之后——它读 snapshot.driving（行车档改布局，§7.2 第四行）。
+  const layout = useLayout(snapshot.driving)
   // B4-3 动效环境：事实在 core/a11y/reduceMotion.ts，判据在 orbPolicy.ts，这里只把布尔发下去
   const reduceMotion = useReduceMotion()
   const motionEnv = { reduceMotion }
@@ -347,11 +345,6 @@ function ChatBody({
     if (m.operationId) return isPendingLive(pendingOps, m.operationId)
     return pendingLocationText !== null && m.id === lastConsentId
   }
-
-  const latestCard = useMemo(
-    () => [...messages].reverse().find((m) => m.role === 'assistant' && m.uiCard)?.uiCard,
-    [messages],
-  )
 
   // 弱网提示条（M3-4）：**延迟 3 秒**再显示——重连本来就是常态（切基站/锁屏回来都会闪一下），
   // 每次都弹一条会把「正常自愈」渲染成「出事了」，用户学会忽略它之后真断网也就没人看了。
@@ -638,7 +631,10 @@ function ChatBody({
               </View>
             )}
             <View style={{ flex: 1 }} />
-            {!tablet ? <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" /> : null}
+            {/* 舞台常驻的两种形态（双栏 / 桌面）里车况已在屏上，不重复给入口；抽屉与单栏保留 */}
+            {layout.mode !== 'two-pane' && layout.mode !== 'tabletop' ? (
+              <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" />
+            ) : null}
             <TopIconLink p={p} href="/settings" icon="settings" label="设置" />
           </View>
           {!v2 && linkWarn ? (
@@ -649,36 +645,30 @@ function ChatBody({
               </Text>
             </View>
           ) : null}
-          {tablet ? (
+          {layout.mode === 'two-pane' ? (
             <View style={{ flex: 1, flexDirection: 'row' }}>
-              {chatColumn}
-              {/* 平板右舞台（M3-2 三段，Aurora 复刻轮玻璃化）：车况 / 提醒 / 焦点卡。
-                  三段都是**已经在会话里的事实的第二个视图**，不额外向后端取数 */}
-              <Glass
+              {/* book：左栏宽 = 铰链左缘 − gap/2，铰链落在 gap 正中（§7.3）；flat 双栏：对话 flex、舞台 stageWidth */}
+              <View style={layout.posture === 'book' ? { width: layout.book.chat } : { flex: 1 }}>{chatColumn}</View>
+              <View style={{ width: layout.posture === 'book' ? layout.book.gap : PANE_GAP }} />
+              <StagePane
                 p={p}
-                r={24}
-                style={{
-                  width: Math.min(400, Math.round(width * 0.42)),
-                  marginVertical: 10,
-                  marginRight: 10,
-                  overflow: 'hidden',
-                }}
-              >
-                <ScrollView contentContainerStyle={{ padding: 14, gap: 16 }}>
-                  <VehicleSection p={p} vehState={vehState} />
-                  <ReminderSection p={p} messages={messages} />
-                  <View style={{ gap: 6 }}>
-                    <Text style={{ color: p.fg3, fontSize: p.font(12) }}>焦点卡</Text>
-                    {latestCard ? (
-                      <CardRenderer p={p} card={latestCard} onSend={onSend} />
-                    ) : (
-                      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>本轮还没有卡片</Text>
-                    )}
-                  </View>
-                </ScrollView>
-              </Glass>
+                mode="双栏"
+                messages={messages}
+                vehState={vehState}
+                onSend={onSend}
+                style={[
+                  { marginVertical: 10, marginRight: 10 },
+                  layout.posture === 'book' ? { flex: 1 } : { width: layout.stage },
+                ]}
+              />
+            </View>
+          ) : layout.mode === 'drawer' ? (
+            <View style={{ flex: 1, flexDirection: 'row' }}>
+              <View style={{ flex: 1 }}>{chatColumn}</View>
+              <StageDrawer p={p} messages={messages} vehState={vehState} onSend={onSend} />
             </View>
           ) : (
+            // single / tabletop（T7 填）/ driving-landscape（T11 填）
             chatColumn
           )}
           {v2 ? (

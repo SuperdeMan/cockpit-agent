@@ -1,6 +1,9 @@
 // mobile/test/sizeClass.test.ts
-// 尺寸类 × 姿态 × 行车 → 布局模式（方案 §7.1–§7.5）。真机 dp 是估算（420dpi：外屏 411×960 / 内屏 847×948，
-// 440dpi 时内屏 809）——T6 步骤 1 用 wm size/density 读实后，把这里的数改成实测值再跑一遍。
+// 尺寸类 × 姿态 × 行车 → 布局模式（方案 §7.1–§7.5）。真机 dp **已读实**（B4-6 步骤 1，2026-09-02，5d432b6d）：
+//   外屏 CLOSED(0)  `wm size`=1080×2520 `wm density`=480 ⇒ 3.0x ⇒ **360×840 dp**（原估 411×960 是按 420dpi 算的，错）
+//   内屏 OPENED(3)  `wm size`=2224×2488 `wm density`=480 ⇒ 3.0x ⇒ **741×829 dp**（原估 847×948 / 809 都偏大）
+// ⚠ 内屏实测宽 741 离双栏阈值 720 只有 **21dp** 余量，且 widthClass 是 medium（不是 expanded）——
+//   阈值若按 M3 的 840 卡，这台设备的内屏就双不了栏。这正是 §7.1「不能卡 840」那句的实测支撑。
 import {
   TWO_PANE_MIN_WIDTH,
   bookSplit,
@@ -33,14 +36,20 @@ describe('尺寸类（Material 3 WindowSizeClass v2，宽高各算）', () => {
 describe('layoutMode：真机 dp 逐格', () => {
   const flat = (width: number, height: number, driving = false) =>
     layoutMode({ width, height, posture: 'flat', driving })
-  test('外屏竖 411×960 → 单栏', () => expect(flat(411, 960)).toBe('single'))
-  test('外屏横 960×411 → 高度 compact 且非行车 → 单栏；行车 → 横屏车载', () => {
-    expect(flat(960, 411)).toBe('single')
-    expect(flat(960, 411, true)).toBe('driving-landscape')
+  test('外屏竖 360×840（实测）→ 单栏', () => {
+    expect(flat(360, 840)).toBe('single')
+    expect(widthClass(360)).toBe('compact')
+    expect(heightClass(840)).toBe('medium')
   })
-  test('内屏 847×948 → 双栏；密度 440 时 809 也双栏（阈值不卡 840，§7.1）', () => {
-    expect(flat(847, 948)).toBe('two-pane')
-    expect(flat(809, 905)).toBe('two-pane')
+  test('外屏横 840×360（实测转 90°）→ 高度 compact 且非行车 → 单栏；行车 → 横屏车载', () => {
+    expect(flat(840, 360)).toBe('single')
+    expect(flat(840, 360, true)).toBe('driving-landscape')
+  })
+  test('内屏 741×829（实测）→ 双栏；宽是 medium 档 ⇒ 阈值若卡 840 这台就双不了栏（§7.1）', () => {
+    expect(flat(741, 829)).toBe('two-pane')
+    expect(widthClass(741)).toBe('medium')
+    // 离 720 只有 21dp 余量：再少 22dp（分屏 / 未来机型）就落回抽屉
+    expect(flat(719, 829)).toBe('drawer')
   })
   test('720 是内容约束的边：719 不双栏（medium ⇒ 舞台抽屉），720 双栏', () => {
     expect(TWO_PANE_MIN_WIDTH).toBe(720)
@@ -48,14 +57,14 @@ describe('layoutMode：真机 dp 逐格', () => {
     expect(flat(720, 900)).toBe('two-pane')
   })
   test('分屏：宽 compact / 高 compact 都落单栏（§7.5 不崩不遮）', () => {
-    expect(flat(411, 470)).toBe('single')
+    expect(flat(360, 470)).toBe('single')
     expect(flat(600, 470)).toBe('single')
   })
   test('行车但宽度不到 expanded → 单栏（手机横屏 medium 不是车载支架）', () =>
     expect(flat(700, 411, true)).toBe('single'))
   test('姿态压过尺寸：book 在 720 以下也强制双栏；tabletop 上下半', () => {
     expect(layoutMode({ width: 700, height: 900, posture: 'book', driving: false })).toBe('two-pane')
-    expect(layoutMode({ width: 847, height: 948, posture: 'tabletop', driving: false })).toBe('tabletop')
+    expect(layoutMode({ width: 741, height: 829, posture: 'tabletop', driving: false })).toBe('tabletop')
   })
 })
 
