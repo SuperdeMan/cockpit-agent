@@ -23,6 +23,8 @@ import {
 } from '@/core/presence/presence'
 import { DRIVING_EXIT_GRACE_MS, drivingActive } from '@/core/presence/drivingMode'
 import { hapticCueForTransition } from '@/core/presence/hapticCue'
+import { cueToneAllowed, soundCueForTransition, type CueSlice } from '@/core/presence/soundCue'
+import { playCueTone } from '@/core/voice/cueTone'
 import { presenceTrail } from '@/core/presence/presenceTrail'
 
 import type { HandsFreeUi } from './useHandsFree'
@@ -190,6 +192,18 @@ export function usePresence({ core, hf, ptt, user, sheetOverride }: UsePresenceO
     if (!prev || !settings.hapticsEnabled) return
     const kind = hapticCueForTransition(prev, snapshot)
     if (kind) performHaptic(kind)
+  })
+
+  // B4-4 提示音：与触感同一形态（判据纯函数 + effect 执行，不挂渲染期）。切片多带 hfFsm——
+  // 唤醒确认音只给唤醒（ARMED→LISTENING），PTT 按下进 listening 不响（§4.2）。行车档强制开（Q6）
+  const cuePrev = useRef<CueSlice | null>(null)
+  useEffect(() => {
+    const prev = cuePrev.current
+    const cur: CueSlice = { primary: snapshot.primary, hfFsm: input.hfFsm }
+    cuePrev.current = cur
+    if (!prev || !cueToneAllowed(settings.cueToneEnabled, snapshot.driving)) return
+    const kind = soundCueForTransition(prev, cur)
+    if (kind) playCueTone(kind)
   })
 
   return snapshot

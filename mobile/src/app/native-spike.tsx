@@ -9,6 +9,7 @@ import { useStore } from 'zustand'
 
 import { HAPTIC_KINDS, performHaptic } from '@/core/haptics'
 import { settingsStore } from '@/core/settings/store'
+import { playCueTone } from '@/core/voice/cueTone'
 import { foldPosture } from '@/ui/layout/foldPosture'
 import { useFoldState } from '@/ui/layout/useFoldState'
 import { usePalette } from '@/ui/theme'
@@ -56,6 +57,18 @@ export default function NativeSpikeScreen() {
           <Text style={{ color: p.fg1, fontSize: p.font(14) }}>
             {kind}（{kind === 'wake' ? '唤醒·轻' : kind === 'confirm' ? '确认·双' : kind === 'dead' ? '判死·一记重' : '快门·轻'}）
           </Text>
+        </Pressable>
+      ))}
+      <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '600', marginTop: 16 }}>提示音两种（§8，B4）</Text>
+      {(['wake', 'attention'] as const).map((kind) => (
+        <Pressable
+          key={kind}
+          testID={`cue-${kind}`}
+          accessibilityRole="button"
+          onPress={() => playCueTone(kind)}
+          style={{ backgroundColor: p.fill, borderRadius: 12, padding: 12, minHeight: 44, justifyContent: 'center' }}
+        >
+          <Text style={{ color: p.fg1, fontSize: p.font(14) }}>{kind}（{kind === 'wake' ? '唤醒 · 两音上行' : '需确认 · 两音下行'}）</Text>
         </Pressable>
       ))}
     </ScrollView>

@@ -69,6 +69,9 @@ export interface AppSettings {
   drivingManual: boolean
   /** 实验室：强制减少动效——系统开关的 App 内等价物，判据取或（core/a11y/reduceMotion.ts） */
   reduceMotionForce: boolean
+  /** 提示音（方案 §8 / Q6）：唤醒确认两音 + 需要确认时一次。默认开；行车档强制开
+   *  ——判据 core/presence/soundCue.ts::cueToneAllowed */
+  cueToneEnabled: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -104,6 +107,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   deviceRole: 'handheld',
   drivingManual: false,
   reduceMotionForce: false,
+  cueToneEnabled: true,
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。

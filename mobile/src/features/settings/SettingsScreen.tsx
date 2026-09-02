@@ -298,6 +298,13 @@ export function SettingsScreen() {
           value={settings.hapticsEnabled}
           onChange={(hapticsEnabled) => set({ hapticsEnabled })}
         />
+        <SwitchRow
+          p={p}
+          label="提示音"
+          desc="唤醒命中、需要你确认时的两音提示（合成，不用音频文件）。默认开；行车档强制开"
+          value={settings.cueToneEnabled}
+          onChange={(cueToneEnabled) => set({ cueToneEnabled })}
+        />
         {ttsCatalog.length ? (
           <ChoiceRow
             p={p}
