@@ -7,12 +7,14 @@ import { ScrollView, Text, View, type StyleProp, type ViewStyle } from 'react-na
 
 import type { Msg } from '@shared/types.ts'
 
+import type { OrbState } from '@/ui/aurora'
+
 import { stageScene } from '@/core/stage/stageScene'
 import { CardRenderer } from '@/features/cards/CardRenderer'
 import type { SendFn } from '@/features/cards/parts'
 import { ReminderSection } from '@/features/vehicle/ReminderSection'
 import { VehicleSection } from '@/features/vehicle/VehiclePanel'
-import { Glass } from '@/ui/aurora'
+import { AuroraOrb, Glass } from '@/ui/aurora'
 import type { Palette } from '@/ui/theme'
 import { RADIUS } from '@/ui/tokens'
 
@@ -32,6 +34,7 @@ export function StagePane({
   messages,
   vehState,
   onSend,
+  orb,
   style,
 }: {
   p: Palette
@@ -39,6 +42,8 @@ export function StagePane({
   messages: Msg[]
   vehState: Record<string, unknown>
   onSend: SendFn
+  /** tabletop（B4-7 / §7.3）：上半是舞台 + 一颗大光球；其余形态不传（同屏只跑一个循环动画，§11.4） */
+  orb?: { state: OrbState; animated: boolean; driving: boolean }
   style?: StyleProp<ViewStyle>
 }) {
   const scene = stageScene(messages)
@@ -48,6 +53,11 @@ export function StagePane({
         <Text testID="stage-mode" style={{ color: p.fg3, fontSize: p.font(11) }}>
           舞台 · {mode}
         </Text>
+        {orb ? (
+          <View style={{ alignItems: 'center', marginVertical: 12 }}>
+            <AuroraOrb size={120} state={orb.state} animated={orb.animated} driving={orb.driving} />
+          </View>
+        ) : null}
         <VehicleSection p={p} vehState={vehState} />
         {scene.kind !== 'agenda' ? <ReminderSection p={p} messages={messages} /> : null}
         <View style={{ gap: 6 }}>

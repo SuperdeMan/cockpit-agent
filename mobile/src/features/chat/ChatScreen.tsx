@@ -6,8 +6,8 @@
 // 改服务器配置 → 回本屏时按 edgeUrl+token 判变 → 断开重连（M1-5 服务器分区语义）。
 import { FlashList } from '@shopify/flash-list'
 import { Link, Redirect, useFocusEffect } from 'expo-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BackHandler, KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -24,10 +24,11 @@ import { settingsStore } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
 import { useReduceMotion } from '../../core/a11y/reduceMotion'
 import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
+import { sheetResident } from '../../core/presence/drivingMode'
 import { MIC_LABEL } from '../../core/presence/presence'
 import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
-import { PANE_GAP } from '../../ui/layout/sizeClass'
+import { PANE_GAP, screenSwitch, tabletopSplit } from '../../ui/layout/sizeClass'
 import { useLayout } from '../../ui/layout/useLayout'
 import { usePalette } from '../../ui/theme'
 import { StageDrawer } from '../stage/StageDrawer'
@@ -283,6 +284,26 @@ function ChatBody({
   // B4-3 动效环境：事实在 core/a11y/reduceMotion.ts，判据在 orbPolicy.ts，这里只把布尔发下去
   const reduceMotion = useReduceMotion()
   const motionEnv = { reduceMotion }
+
+  // B4-7 tabletop（§7.3）：分界 = 铰链上缘（窗口坐标）− 内容区在窗口里的 y。onLayout 给的是相对父级的 y，
+  // 这里要的是窗口坐标 ⇒ measureInWindow；量一次不够（旋转 / 展开会变），随 layout 重量
+  const contentRef = useRef<View | null>(null)
+  const [contentBox, setContentBox] = useState({ y: 0, h: 0 })
+  useEffect(() => {
+    if (layout.mode !== 'tabletop') return
+    contentRef.current?.measureInWindow((_x, y, _w, h) => setContentBox({ y, h }))
+  }, [layout.mode, layout.width, layout.height])
+
+  // §7.4：外屏↔内屏切换瞬间，正在按住的 PTT 按松手处理（手指物理上一定离开了那块屏）；轻点会话按「结束并提交」。
+  // 切屏判定在 effect 里（渲染期用 ref 记 prev 会被 StrictMode 双渲吞掉事件）
+  const prevFoldRef = useRef(layout.fold)
+  useEffect(() => {
+    const sw = screenSwitch(prevFoldRef.current, layout.fold)
+    prevFoldRef.current = layout.fold
+    if (!sw || ptt.state !== 'recording') return
+    if (ptt.mode === 'hold') ptt.pressUp()
+    else if (ptt.mode === 'tap') ptt.tap()
+  }, [layout.fold, ptt])
   // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
   const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
   const v2 = settings.uxV2Presence
@@ -382,6 +403,25 @@ function ChatBody({
           ? { color: p.teal, label: MIC_LABEL[mic].short }
           : null
   const [privacyOpen, setPrivacyOpen] = useState(false)
+
+  // §7.5 返回顺序：隐私栏 > 语音层（行车档 B/C 的常驻层除外——它不是「可收」的层）> 页面默认
+  // （根屏返回 = 退 Activity，M3-W 定案不变；predictiveBackGestureEnabled 是原生配置，本批不碰）。
+  // 收音中按返回：derivePresence 的 capturing 分支让层保持——返回不等于取消录音，
+  // 取消只有上滑与「关闭本轮麦克风」两条路，刻意不加第三条。
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (privacyOpen) {
+        setPrivacyOpen(false)
+        return true
+      }
+      if (snapshot.input === 'voice-sheet' && !sheetResident(snapshot.identity, snapshot.driving)) {
+        setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })
+        return true
+      }
+      return false
+    })
+    return () => sub.remove()
+  }, [privacyOpen, snapshot.input, snapshot.identity, snapshot.driving, latestTurnId])
 
   const chatColumn = (
     <View style={{ flex: 1 }}>
@@ -531,7 +571,9 @@ function ChatBody({
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
-        orbAnimated={composerOrbAnimated(snapshot, motionEnv)}
+        // tabletop 下舞台已有一颗 120dp 大球在跑循环 ⇒ Composer 球让位（§11.4「同屏常态 1 个」）。
+        // 判据仍是 orbPolicy，这一条例外太小不值得进纯函数（B4 §6.2 记一句）
+        orbAnimated={composerOrbAnimated(snapshot, motionEnv) && layout.mode !== 'tabletop'}
         orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
         onTap={onOrbTap}
       />
@@ -667,8 +709,29 @@ function ChatBody({
               <View style={{ flex: 1 }}>{chatColumn}</View>
               <StageDrawer p={p} messages={messages} vehState={vehState} onSend={onSend} />
             </View>
+          ) : layout.mode === 'tabletop' ? (
+            <View ref={contentRef} style={{ flex: 1 }}>
+              {/* 上半：舞台 + 大光球（铰链上方）；下半：转写 / 记录 + Composer。分界 = 铰链上缘（§7.3） */}
+              <View style={{ height: tabletopSplit(contentBox.h, layout.hinge?.topDp ?? 0, contentBox.y) }}>
+                <StagePane
+                  p={p}
+                  mode="桌面"
+                  messages={messages}
+                  vehState={vehState}
+                  onSend={onSend}
+                  orb={{
+                    state: snapshot.primary,
+                    animated: loopsAnimated(motionEnv),
+                    driving: orbTempo(snapshot, motionEnv) === 'slow',
+                  }}
+                  style={{ flex: 1, marginHorizontal: 10, marginTop: 10 }}
+                />
+              </View>
+              <View style={{ height: 8 }} />
+              <View style={{ flex: 1 }}>{chatColumn}</View>
+            </View>
           ) : (
-            // single / tabletop（T7 填）/ driving-landscape（T11 填）
+            // single / driving-landscape（T11 填）
             chatColumn
           )}
           {v2 ? (
