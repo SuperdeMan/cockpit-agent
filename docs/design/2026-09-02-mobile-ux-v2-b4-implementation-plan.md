@@ -2579,7 +2579,78 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 
 ### 6.1 第 1 批「判据层」（T1–T5）
 
-> （待开工。开工基线表 → T1…T5 各自的提交 / jest 增量 / 反向验证 → Metro 冒烟 → 踩的坑 → 遗留）
+**本批开工授权**：泓舟 **2026-09-02** 当轮批准第 1 批开工——计划头部「草案待批（2026-09-02）」对本批以本条为准（头部状态行本批不改，四批走完再由收口批统一改）。
+
+#### 开工基线（2026-09-02，本会话自跑；有效期只到下一次改动）
+
+| 项 | 读数 |
+|---|---|
+| `powershell -File scripts\check_android_env.ps1` | 退出码 **0**（17 pass / 1 warn / 0 fail；唯一 WARN = E3 `no device attached`） |
+| `python scripts/dev_stack.py target show` | `{"source":"file","status":"target","target":"cloud"}` |
+| `cd mobile && npm test` | **42 suites / 413 tests 全绿**（72.7s） |
+| `npm run typecheck` | **0 error** |
+| `git log --oneline origin/main..HEAD` | **0 条**；`HEAD` = `origin/main` = `e248deb`；`git status` 干净 |
+| `adb shell dumpsys package com.xiaozhou.companion \| grep lastUpdateTime` | ⬜ **未取——设备不在线**（下一条） |
+
+**设备缺席（开工第一件没做成的事）**：`adb devices` 是空列表；按 B3 §0 的补救做了 `adb kill-server && adb start-server` 重新枚举 USB，**仍空**。tailnet 上手机在线（`tailscale status`：`100.78.231.58  superdemanxiaomi-mix-fold-4  android`），但 `adb connect 100.78.231.58:5555` 被拒（`10061 目标计算机积极拒绝`——无线调试没开、`adb tcpip` 也没设过）⇒ **USB 物理没插，adb 这条路今天没有**。后果只有一种：**本批全部真机动作未做**（批次级步骤 4 的 Metro 热载冒烟 + T2/T3/T4/T5 各自的步骤 6），逐条记在「遗留」里。代码侧判据不依赖设备（T1–T5 全是纯函数 + jest），**但「没有回归」这一半证据本批没有**。
+
+#### 逐任务
+
+| 任务 | 提交 | jest 条数 | tsc |
+|---|---|---|---|
+| T1 尺寸类与布局判据 | `db97a33` | 413 → **426**（+13，`sizeClass.test.ts`） | 0 |
+| T2 行车档事实与判据 | `156b2c6` | 426 → **446**（+20：drivingMode **15** + sessionStore 3 + settingsMeta 2） | 0 |
+| T3 动效策略 | `b791414` | 446 → **451**（+5） | 0 |
+| T4 提示音 | `b3c65d4` | 451 → **458**（+7） | 0 |
+| T5 舞台场景 + 兜底卡 | `d7029f7` | 458 → **466**（+8，含反向验证补的 1 格） | 0 |
+| **收口全量** | — | **47 suites / 466 tests 全绿** | **0 error** |
+
+计划预期是 413 → ≈463；实到 **466**，差在 T2 的 `test.each` 四格（计划按 1 条估）与 T5 反向验证补的 1 格。只增不减达标。
+
+#### 反向验证（每条先 `grep` 证明变异落盘，跑完 `cp` 还原并复跑全绿）
+
+| 任务 | 变异 | 落盘证据 | 实际红的是哪几条 | 与计划预期 |
+|---|---|---|---|---|
+| T1① | `i.width >= TWO_PANE_MIN_WIDTH` → `>= 840` | `sizeClass.ts:60` | 「内屏 847×948 → 双栏；密度 440 时 809 也双栏」+「720 是内容约束的边」 | ✅ 一致 |
+| T1② | 删掉 `posture` 两行 | `grep -c` = 0 | 「姿态压过尺寸」 | ✅ |
+| T1③ | `heightClass` 边界 480 → 600 | `sizeClass.ts:23` | **只有「高度三档边界」1 条** | ⚠ **不一致**：计划以为 layoutMode 那边也会红。实测 layoutMode 的六个 height 用例，compact 侧全部 `< 480`、expanded 侧全部 `≥ 900`——**480 这条边只有 heightClass 单测钉着，layoutMode 层零敏感** |
+| T1④ | `bookSplit` 的 `gap / 2` → `gap` | `sizeClass.ts:81` | 「book：铰链落 gap 正中」 | ✅ |
+| T2① | `drivingActive` 末行 `<` → `<=` | `drivingMode.ts:24` | 「Edge 标 false 后 30s 内仍算行车，满 30s 退出」 | ✅ |
+| T2② | 删 `prev.falseAt > prev.trueAt` 守卫 | `grep -c` = 0 | **两层同时红**：`drivingMode`「之后的 false 不刷新起点」+ `sessionStore` 同名用例 | ✅ 这正是「store 真的走了这个 reducer」要的形状 |
+| T2③ | store 的 `setState` 登记注释掉 | `store.ts:506` | sessionStore **2 条**（trueAt / falseAt），drivingMode 全绿 | ⚠ 计划写「三条全红」。第三条「从没行车过的 false 不登记」**仍绿**——它的期望 `{trueAt:0,falseAt:0}` 恰好等于「没人登记」的初值，**对「登记接没接上」零敏感**，只钉 reducer 语义 |
+| T2④ | `composerInputMode` 的 mount / trusted-tablet 对调 | `drivingMode.ts:40` | 「行车：A 常驻 / B 折叠 / C 隐藏」 | ✅ |
+| T3① | 删 `orbTempo` 的 reduceMotion 分支 | `grep -c` = 0 | 「orbTempo：静帧 > 行车 ×0.5 > 全速」 | ✅ |
+| T3② | `edgeGlowActive` 的 `thinking` → `speaking` | `orbPolicy.ts:32` | 「edgeGlowActive：只在 listening / thinking」 | ⚠ 计划要的「两侧都红」**看不出来**：正例与反例写在同一个 `test()` 里，jest 在第一个失败断言（`thinking` 正例）就停，`speaking` 反例那半根本没执行 |
+| T3③ | `composerOrbAnimated` 忽略 `env` | `orbPolicy.ts:25` | 「reduce-motion 压过一切」 | ✅ |
+| T4① | `wake` 分支去掉 `prev.hfFsm === 'ARMED'` | `soundCue.ts:17` | 「唤醒确认音…持续 LISTENING 不再响」+「追问窗里开口不响」 | ⚠ **点名错了**：计划说会红「PTT 按下不响」，实测它**仍绿**——PTT 那条 `next.hfFsm` 是 `IDLE`，挡住它的是 `next.hfFsm === 'LISTENING'` 那一半，不是 ARMED 守卫。ARMED 守卫真正钉住的是「持续 LISTENING 不重复响」 |
+| T4② | `attention` 去掉 `prev.primary !== 'attention'` | `soundCue.ts:18` | 「attention 进入响一次；持续不响」 | ✅ |
+| T4③ | `cueToneAllowed` 的 `\|\|` → `&&` | `soundCue.ts:24` | 「cueToneAllowed：设置关就不响，除非行车档」 | ✅（挂在第一个断言 `(true,false)`，不是计划说的第三个） |
+| T5① | `STAGE_MAP_TYPES` 少写 `trip_itinerary` | `stageScene.ts:12` | 「对账：与 hmi `MAP_TYPES` 逐字一致」 | ✅ 这就是它存在的理由 |
+| T5② | agenda 与 weather 两行对调 | 源码逐行核过 | **不红** | ✅ 计划预写的预期（两者互斥、顺序无关），不是测试漏洞 |
+| T5③ | `cardListRows` 的 `total > 0` → `>= 0` | `cardFields.ts:38` | **不红** → **补格后红** | ⚠ **计划预期落空**：fixture 两个站 `total` 是 8 / 4，全仓没有任何用例走到 `total === 0`，这条守卫**是裸的**。已补一格（`total===0 的站不写「0/0 空闲」`，`cardFields.test.ts`），复验：变异落盘 → 恰好红这一条 → 还原 → 4 条全绿 |
+| T5④ | `mainCard` 不走 `splitCardGroup`、直接取 `items[0]` | `stageScene.ts:20` | 「card_group：主卡决定场景」 | ✅ |
+
+#### 本批踩的坑
+
+1. **计划给的 fixture 常量撞上判据自己的哨兵**（`drivingMode.test.ts`）：`NOW = 1_000_000`（≈16 分钟）减一小时是**负数**，正好落进 `trueAt <= 0 = 从未标注过`（`NO_EDGE_DRIVING` 的定义）⇒「最近一次 Edge 标 true ⇒ 行车」红了。红的是 fixture 不是判据——真实时钟不会为负。改成 `1_700_000_000_000` 并把原因写进测试注释。
+2. **计划给的 `test.each` 过不了 tsc**：`ok` 里写 `identity: 'trusted-tablet' as const` 会把 `Partial<typeof ok>` 的 `identity` 窄成那个字面量，`{ identity: 'mount' }` 不可赋值。显式标注 `identity: Identity` 才过。
+3. **「存量显式 true → 保持」这一类 settings 用例，在实现之前就是绿的**：`mergeStoredSettings` 的 `...rest` 展开会把任何未知键原样带出（运行时不受 `AppSettings` 类型约束）⇒ 这半条断言对「键有没有加进 `DEFAULT_APP_SETTINGS`」**零敏感**。真正先红的只有「旧库没有 X → 补默认」那半（T2 / T3 / T4 各一条）。B2 坑① 说的是「入参得是合法 JSON 才够得到合并体」，这是它的第二层。
+4. **多 suite 一起跑时 jest 不打逐条 `×` 行**，只在总结区打 `●  <describe> › <test>`；单 suite 才有 `×`。反向验证要读「红的是哪几条」就得取 `●` 行（或一次只跑一个 suite）——否则只能数到「几条红」，正是计划反复警告的那种读法。
+
+#### 遗留 / 给第 2 批的话
+
+1. ⬜ **本批所有真机动作未做（USB 没插）**，逐条列清，谁先插上谁做（T13 一并收也行）：
+   - **批次级步骤 4**：Metro 热载冒烟——App 起得来、发一句文字、光球与胶囊无回归（判据：第 1 批结束时 App 的样子应与 B3 收口时一模一样）；
+   - **T2 步骤 6**：`/presence-trail` 里 `driving` 轴不再随轮结束翻转（此时没有 Edge 标，应恒 false）；
+   - **T3 步骤 6**：临时把 `DEFAULT_APP_SETTINGS.reduceMotionForce` 改 `true` 热载一次，看 Composer 球 / 顶栏球 / 欢迎球全部静止且**仍显示正确的态**，改回再热载一次球又动了。⚠ **本批没做这一步，所以 `settings/store.ts` 的 diff 里只有四个新键，没有临时改动残留**；
+   - **T4 步骤 6**：`/native-spike` 的 `cue-wake` / `cue-attention` 两按钮各按一次——不崩、logcat 本应用 pid 零 E/F、`dumpsys audio` 抓 `AudioPlaybackConfiguration`（60ms×2 太短，抓不到只记「未观测」不写「不出声」）；按前先按 B3 坑⑨ 读一次 `STREAM_MUSIC Current`（音量 0 是「不出声」惯犯第三次）。**「响不响、两种分不分得出」是 T13 泓舟的人耳读数，本批不产出任何语音读数**；
+   - **T5 步骤 6**：真栈发「附近的充电站」，兜底卡应渲出站名 + 距离 + 空闲（`testID=fallback-row` 数 ≥1，`b4-05-charging-list.png`）；卡头仍是「卡片 · charging_list」且无 `_prov` 徽章——**这两条是出账不是缺陷**。
+2. **对计划接线清单的一处扩写**：`MessageBubble` 内的 `ThinkDots` 与两处 `StreamCursor`，计划的接线清单只写了「头像球 `animated={active && loops}`」没写它们，但同任务的「为什么」段写明「ThinkDots / StreamCursor / EdgeGlow 呼吸也是循环……一并可定格」。`loops` 这个 prop 本来就要传进 `MessageBubble`，所以按语义一并接上了（三处 `animated={loops}`）。**不是新判据**，判据仍只有 `orbPolicy.loopsAnimated` 一份。
+3. **五份判据里有四份此刻零生产消费方**（`useLayout` / `stageScene` / `cardFields.cardPrimaryButton` / `drivingMode` 的 `composerInputMode`·`sheetResident`·`drivingSuggested`）——分批就是这么切的（T6/T10/T11 才接）。但要记住：**它们现在只有单测一个消费方**，「两个消费方才算真收敛」这条到第 2/3 批才兑现。
+4. `charging_list` 仍不在 `hmi/src/types.ts::UiCard`、仍无 `_prov`：B2 出账⑨ 的 **hmi / agent 侧那一半原样转出**（本批只做了 mobile 兜底卡这一半）。`cards.test.ts:79` 断言 `CARD_FIXTURES ⊆ KNOWN_CARD_TYPES` 已复核——**加画廊样本会红，计划的警告是对的，没加**。
+5. **两个待裁项（§0 第 3 条①②）本批一字未碰**，仍等泓舟裁。
+6. **硬边界全程未破**：零重建、零新原生依赖、零后端改动、`hmi/` 只读不写（`stageScene.test.ts` 只 `readFileSync` 对账）、共享判据一字未动、无任何布局改动。
+7. **未推送**：本批 5 个提交全部在本地 `main`（`origin/main..HEAD` = `db97a33` / `156b2c6` / `b791414` / `b3c65d4` / `d7029f7`），**没推**，等泓舟单独授权。
 
 ### 6.2 第 2 批「形态落地」（T6–T9）
 
