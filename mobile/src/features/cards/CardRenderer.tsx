@@ -5,6 +5,7 @@
 import { Component, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 
+import { cardListRows, cardPrimaryFields } from '../../core/cards/cardFields'
 import type { Palette } from '../../ui/theme'
 import {
   Forecast,
@@ -105,24 +106,29 @@ const REGISTRY: Record<string, (props: CardProps) => ReactNode> = {
 export const KNOWN_CARD_TYPES: string[] = Object.keys(REGISTRY)
 
 // 兜底卡主字段的探取顺序：拿得出一个「人能认出这是什么」的值就够
-const FALLBACK_PRIMARY_KEYS = [
-  'title', 'name', 'question', 'query', 'topic', 'destination', 'answer', 'merchant',
-  'brand', 'store_name', 'order_id', 'amount', 'status', 'city',
-]
-
-/** 兜底卡（铁则）：type 名 + 可识别主字段 + buttons + _prov，绝不 null */
+/** 兜底卡（铁则）：type 名 + 可识别主字段 + **通用列表行（items[]）** + buttons + _prov，绝不 null。
+ *  B4-5：charging_list（types.ts 里没有、mobile 不能注册——cards.test 两向断言）落在这里时
+ *  至少要能读出「哪几个站、多远、几个空闲」，而不是一句「暂未适配」。 */
 export function FallbackCard({ p, card, onSend }: CardProps) {
-  const fields = FALLBACK_PRIMARY_KEYS.map((k) => [k, card?.[k]] as const).filter(
-    ([, v]) => typeof v === 'string' || typeof v === 'number',
-  )
+  const fields = cardPrimaryFields(card)
+  const rows = cardListRows(card)
   return (
     <CardShell p={p} title={`卡片 · ${card?.type || '未知'}`} right={<ProvBadge p={p} prov={card?._prov} />}>
-      {fields.slice(0, 4).map(([k, v]) => (
+      {fields.map(([k, v]) => (
         <Text key={k} style={{ color: p.fg2, fontSize: p.font(12) }} numberOfLines={2}>
-          {k}: {String(v)}
+          {k}: {v}
         </Text>
       ))}
-      {!fields.length ? (
+      {rows.map((r, i) => (
+        <View key={i} testID="fallback-row" style={{ flexDirection: 'row', gap: 8, alignItems: 'baseline' }}>
+          <Text style={{ color: p.fg3, fontSize: p.font(12), width: 20 }}>{i + 1}</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: p.fg1, fontSize: p.font(13) }} numberOfLines={1}>{r.title}</Text>
+            {r.sub ? <Text style={{ color: p.fg3, fontSize: p.font(11) }} numberOfLines={1}>{r.sub}</Text> : null}
+          </View>
+        </View>
+      ))}
+      {!fields.length && !rows.length ? (
         <Text style={{ color: p.fg3, fontSize: p.font(12) }}>该卡型暂未适配，内容已收到</Text>
       ) : null}
       <CardButtons p={p} onSend={onSend} buttons={card?.buttons} />
