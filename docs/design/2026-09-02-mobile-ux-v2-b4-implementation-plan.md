@@ -2672,7 +2672,7 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 U
 4. `charging_list` 仍不在 `hmi/src/types.ts::UiCard`、仍无 `_prov`：B2 出账⑨ 的 **hmi / agent 侧那一半原样转出**（本批只做了 mobile 兜底卡这一半）。`cards.test.ts:79` 断言 `CARD_FIXTURES ⊆ KNOWN_CARD_TYPES` 已复核——**加画廊样本会红，计划的警告是对的，没加**。
 5. **两个待裁项（§0 第 3 条①②）本批一字未碰**，仍等泓舟裁。
 6. **硬边界全程未破**：零重建、零新原生依赖、零后端改动、`hmi/` 只读不写（`stageScene.test.ts` 只 `readFileSync` 对账）、共享判据一字未动、无任何布局改动。
-7. **未推送**：本批 5 个提交全部在本地 `main`（`origin/main..HEAD` = `db97a33` / `156b2c6` / `b791414` / `b3c65d4` / `d7029f7`），**没推**，等泓舟单独授权。
+7. **未推送**：本批**代码 5 个提交**——`db97a33`(T1) / `156b2c6`(T2) / `b791414`(T3) / `b3c65d4`(T4) / `d7029f7`(T5)——外加本节的记录提交（`91a417a` 判据层记录、`6cce750` 真机冒烟、以及本行所在这一条），**全部只在本地 `main`，一条都没推**。推之前要列完整 `origin/main..HEAD` 并单独取得泓舟授权（⛔ push 的粒度是分支不是提交，M4-R1 教训）。开工时 `origin/main..HEAD` 是 0 条、`HEAD` = `origin/main` = `e248deb`，所以这些提交里**没有别人的东西**。
 
 ### 6.2 第 2 批「形态落地」（T6–T9）
 
