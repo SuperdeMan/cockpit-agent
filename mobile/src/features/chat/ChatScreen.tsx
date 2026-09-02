@@ -5,6 +5,7 @@
 //  - 视觉照 hmi shell.css：深空渐变+极光 blob 打底，顶栏=品牌光球+连接 pill，空对话=欢迎态大光球
 // 改服务器配置 → 回本屏时按 edgeUrl+token 判变 → 断开重连（M1-5 服务器分区语义）。
 import { FlashList } from '@shopify/flash-list'
+import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, useFocusEffect } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BackHandler, KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
@@ -404,6 +405,15 @@ function ChatBody({
           : null
   const [privacyOpen, setPrivacyOpen] = useState(false)
 
+  // §5.11 真模糊（B3 T9 裁决过）：被糊的背景 = 对话列表，BlurTargetView 包住它；ref 要先挂上再给 VoiceSheet
+  // 渲 BlurView（首帧 null 会被 expo-blur 当成「没配」静默回落成 none——blur-spike.tsx 的 ready 模板）。
+  // 回落 G1-tint 的三种情形（§5.11 末句）：减少透明度 / 行车档 / ref 还没挂上；低电量不做（无 expo-battery）
+  const blurTargetRef = useRef<View | null>(null)
+  const [blurReady, setBlurReady] = useState(false)
+  useEffect(() => setBlurReady(true), [])
+  const blurTarget =
+    blurReady && blurTargetRef.current && !settings.reduceTransparency && !snapshot.driving ? blurTargetRef : null
+
   // §7.5 返回顺序：隐私栏 > 语音层（行车档 B/C 的常驻层除外——它不是「可收」的层）> 页面默认
   // （根屏返回 = 退 Activity，M3-W 定案不变；predictiveBackGestureEnabled 是原生配置，本批不碰）。
   // 收音中按返回：derivePresence 的 capturing 分支让层保持——返回不等于取消录音，
@@ -426,6 +436,7 @@ function ChatBody({
   const chatColumn = (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }} onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}>
+      <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
       {messages.length === 0 ? (
         <Welcome
           p={p}
@@ -468,6 +479,7 @@ function ChatBody({
           contentContainerStyle={{ paddingVertical: 10 }}
         />
       )}
+      </BlurTargetView>
       {v2 ? (
         <VoiceSheet
           p={p}
@@ -481,6 +493,7 @@ function ChatBody({
           s2sNotice={s2sNotice}
           candidates={core.candidates}
           motion={{ orb: orbTempo(snapshot, motionEnv), loops: loopsAnimated(motionEnv) }}
+          blurTarget={blurTarget}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
           onInterrupt={interruptAndListen}
           onSend={(t) => onSend(t)}

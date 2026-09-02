@@ -121,6 +121,10 @@ describe('UX v2 B4：行车档 / 提示音 / 减少动效 / 减少透明度四�
     expect(DEFAULT_APP_SETTINGS.reduceMotionForce).toBe(false)
     expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).reduceMotionForce).toBe(false)
   })
+  test('B4-8：旧库没有 reduceTransparency → 水合补默认 false（Android 无系统开关，App 内给一个，§8.1）', () => {
+    expect(DEFAULT_APP_SETTINGS.reduceTransparency).toBe(false)
+    expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).reduceTransparency).toBe(false)
+  })
   test('B4-4：旧库没有 cueToneEnabled → 水合补默认 true（提示音默认开，§8 / Q6）', () => {
     expect(DEFAULT_APP_SETTINGS.cueToneEnabled).toBe(true)
     expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).cueToneEnabled).toBe(true)

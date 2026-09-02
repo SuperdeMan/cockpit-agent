@@ -490,6 +490,20 @@ export function SettingsScreen() {
           value={settings.uxV2Dock}
           onChange={(uxV2Dock) => set({ uxV2Dock })}
         />
+        <SwitchRow
+          p={p}
+          label="减少动效（强制）"
+          desc="光球、光标、思考点全部静止（系统「移除动画」开着时自动生效，这里是强制开）"
+          value={settings.reduceMotionForce}
+          onChange={(reduceMotionForce) => set({ reduceMotionForce })}
+        />
+        <SwitchRow
+          p={p}
+          label="减少透明度"
+          desc="语音层不再对背景做模糊，回到染色玻璃"
+          value={settings.reduceTransparency}
+          onChange={(reduceTransparency) => set({ reduceTransparency })}
+        />
         <Link href="/state-gallery" style={{ color: p.accent, fontSize: p.font(14) }}>
           状态画廊（在场 13 态 + 7 种降级 / 主题过检）
         </Link>

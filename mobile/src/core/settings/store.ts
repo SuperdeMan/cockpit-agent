@@ -72,6 +72,9 @@ export interface AppSettings {
   /** 提示音（方案 §8 / Q6）：唤醒确认两音 + 需要确认时一次。默认开；行车档强制开
    *  ——判据 core/presence/soundCue.ts::cueToneAllowed */
   cueToneEnabled: boolean
+  /** 实验室：减少透明度（§8.1）——Android 无系统开关，App 内给一个；
+   *  开 ⇒ 全部材质回落 G1-tint（语音层不糊），与行车档回落同一条路 */
+  reduceTransparency: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -108,6 +111,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   drivingManual: false,
   reduceMotionForce: false,
   cueToneEnabled: true,
+  reduceTransparency: false,
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。

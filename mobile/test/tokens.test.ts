@@ -16,6 +16,8 @@ describe('tokens 数值照 A-1 设计系统', () => {
     expect(GLASS.solid.opacity).toBeGreaterThanOrEqual(0.96)
     expect(GLASS.frosted.blur).toBeGreaterThan(0)
     expect(GLASS.reactive.blur).toBeGreaterThanOrEqual(GLASS.frosted.blur)
+    // B4-8：真模糊在场时壳底的染色只能**更薄**——厚了模糊就白做了（.58 是无模糊时为可读性抬上去的，B2 附加①）
+    expect(GLASS.frosted.tintOverBlur).toBeLessThan(GLASS.frosted.tint)
   })
   test('MOTION 含光球四态基准时长（毫秒）', () => {
     expect(MOTION.orbIdle).toBe(4000)

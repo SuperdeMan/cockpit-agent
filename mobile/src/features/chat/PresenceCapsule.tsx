@@ -41,7 +41,8 @@ export function PresenceCapsule({
           minHeight: scale(26, 'target', fontScale),
           paddingHorizontal: 12,
           borderRadius: RADIUS.full,
-          backgroundColor: p.glassBg,
+          // §8「浅色主题下胶囊 / Dock 用不透明底」——Dock 已 G0，胶囊补上（B4-8）；深色仍 G1-tint
+          backgroundColor: p.dark ? p.glassBg : '#FFFFFF',
           borderWidth: 1,
           borderColor: p.glassBdRight,
           borderTopColor: p.glassBdTop,

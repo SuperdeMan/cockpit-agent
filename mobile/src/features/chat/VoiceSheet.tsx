@@ -7,7 +7,8 @@
 // 材质：外壳 G1（Glass）；零新依赖——手势用随 expo-router 在场的 react-native-gesture-handler
 // （PackageList.java:73 已注册），高度用 reanimated。
 // 性能纪律（方案 §11.4）：层开着时它的 88dp 大球是**唯一**跑循环动画的光球，Composer 主球转静态。
-import { useEffect, useState } from 'react'
+import { BlurView } from 'expo-blur'
+import { useEffect, useState, type RefObject } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
@@ -45,6 +46,9 @@ export interface VoiceSheetProps {
   visionIds: readonly string[]
   /** 动效策略（判据 core/presence/orbPolicy.ts；B4-3）：大球节律 + 循环类小动效动不动 */
   motion: { orb: OrbTempo; loops: boolean }
+  /** 被糊的背景（B4-8 / §5.11）：非 null ⇒ 真模糊路径（BlurView + 更薄的 tint）；
+   *  null ⇒ 回落 G1-tint（减少透明度 / 行车档 / ref 还没挂上）。判据全在 ChatScreen，本组件只消费 */
+  blurTarget: RefObject<View | null> | null
   /** 下拉 / 点「收起」/ 点暗区 */
   onCollapse(): void
   /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
@@ -129,12 +133,31 @@ export function VoiceSheet(props: VoiceSheetProps) {
             r={RADIUS['2xl']}
             style={{ flex: 1, overflow: 'hidden', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}
           >
-            {/* 壳底：先垫实色再叠 Glass 的白膜（附加项①） */}
-            <View
-              pointerEvents="none"
-              testID="voice-sheet-shell"
-              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
-            />
+            {/* 壳底（§5.11 G1 frosted）：真模糊在场 = BlurView + 更薄的 tint；否则 = B2 附加①的 tint（.58）。
+                同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」）——顶栏与舞台压在静态深空底上，糊了没收益 */}
+            {props.blurTarget ? (
+              <>
+                <BlurView
+                  pointerEvents="none"
+                  blurMethod="dimezisBlurView"
+                  blurTarget={props.blurTarget}
+                  intensity={60}
+                  tint={p.dark ? 'dark' : 'light'}
+                  style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+                />
+                <View
+                  pointerEvents="none"
+                  testID="voice-sheet-shell"
+                  style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tintOverBlur) }}
+                />
+              </>
+            ) : (
+              <View
+                pointerEvents="none"
+                testID="voice-sheet-shell"
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
+              />
+            )}
             {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
             <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} />
             {/* 把手（G2 只给光球与把手，§5.11） */}

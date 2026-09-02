@@ -29,7 +29,9 @@ export const GLASS = {
   /** G0 Solid/Safety：确认、错误、隐私说明、行车限制、压在不可控内容上的浮层 */
   solid: { blur: 0, opacity: 0.96 },
   /** G1 Frosted：顶栏、语音层外壳、舞台抽屉、Onboarding 容器、卡壳 */
-  frosted: { blur: 28, tint: 0.58, border: 0.16 },
+  /** `tintOverBlur`：真模糊在场时壳底的染色（B4-8）；.58 是无模糊时为可读性抬上去的（B2 附加①），
+   *  糊了之后高频没了、可以更薄——**待证参数**，T8 步骤 5 取数后可改 */
+  frosted: { blur: 28, tint: 0.58, border: 0.16, tintOverBlur: 0.4 },
   /** G2 Reactive：只给光球、语音层把手、选中态 chip */
   reactive: { blur: 34, tint: 0.42, specular: 0.32 },
 } as const
