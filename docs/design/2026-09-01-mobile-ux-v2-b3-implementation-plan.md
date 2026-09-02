@@ -1799,7 +1799,478 @@ has not been configured. The blur view will fallback to "none"...` ⇒ 它来自
 
 ### 6.3 第 3 批「真机验收 + AEC 读数重取」（T9–T10）
 
-（回填：`lastUpdateTime` 基线 / T9 触感四种表 + 姿态表 + **blur spike 裁决一句话** / T10 的 dumpsys 核证、S2S 覆盖面终裁、唤醒率 N/10、VAD 两判据、G2 口径收口、G5 复测、B2 遗留四格、B2 §6.4 出账表逐条核销 / 坑 / 遗留）
+> 泓舟 2026-09-01 批准本批开工。本批代码预期零改动（撞上缺陷才修）。
+> **本批所有语音类读数的包锚：`lastUpdateTime=2026-09-01 19:21:55`**（晚于 AEC 补丁
+> `96a6830` 的 2026-08-29 17:27:50 ⇒ 含平台 AEC 的第一个包，§0 第 5 条口径）。
+
+**开工基线（自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `scripts\check_android_env.ps1` | 退出码 **0**；18 pass / 0 warn / 0 fail；设备 `5d432b6d` 在线 |
+| `npm test` | **42 suites / 413 tests 全绿**（与 §6.2 收口一致，无人动过） |
+| `npm run typecheck` | **0 error** |
+| **`lastUpdateTime`** | **2026-09-01 19:21:55** —— 与 §6.2 记的**逐字一致**，设备上的包就是第 2 批装的那个 |
+| `git log origin/main..HEAD` | **1 个提交**（`72bed31`，§6.2 遗留① 的更正）；`origin/main` = `71ff58e`，§6.2 的 5 条已被推送；`git status` 干净 |
+| Metro | 已在跑，**PID 18496**（与 §6.1/§6.2 同一进程未重启），命令行核过服务的是本仓 `mobile/`；`/status` = `packager-status:running` |
+| `dev_stack target show` | `cloud` |
+| worktree | 泓舟仍未授权分树 ⇒ 主工作树 |
+| ⚠ `adb reverse` | 开工时 `--list` **是空的**（§0 第 4 条那条「adb server 生命周期变化后重建」的实例）⇒ 已重建，`UsbFfs tcp:8081 tcp:8081` |
+| 设备 App 设置基线 | 播报=自动 / 触感=**开** / 免唤醒=关 / 唤醒词=开 / 语音链路=classic / ASR=fun-asr-realtime / TTS=MiniMax·流式 少女音 / 回答长度=标准 / 模型偏好=自动 |
+| 设备系统设置基线 | `haptic_feedback_enabled=1`（§6.2 遗留① 泓舟打开的那个，仍是 1）、`intensity=2`、`zen_mode=0`、自动旋转=开 |
+
+---
+
+#### T9 步骤 3：blur spike 裁决（Q14 落锤）——**三判据全过 ⇒ 过**
+
+**判据 1 · 视觉**：`/blur-spike` 同图四块对照（`b3-09-blur-spike.png` / `b3-09-blur-selfcheck.png`）。
+③ 的判据行小字**完全糊到读不出**，①②④ 清晰可读；屏上 `blur-target-state` 读数
+= **`attached`**（读的是 `ref.current` 真实值）。
+
+`png_probe` 佐证不是「相邻像素方差」而是**水平相邻像素亮度梯度**的分布（判据物是小字＝水平高频；
+色带本身水平方向是常量、不贡献高频。工具：`hfreq.py`，复用 `png_probe.decode`，
+`png_probe selftest` 五种 filter 全 PASS）：
+
+| 块 | mean&#124;Δ&#124; | **梯度方差** | p95 | **max 梯度** | |
+|---|---|---|---|---|---|
+| ① G1-tint | 3.23 | **155.9** | 27.0 | **100.0** | 锐边在 |
+| ② BlurView 无 blurMethod（对照组） | 4.42 | **328.7** | 36.0 | **140.0** | 锐边在 |
+| ③ blurMethod + blurTarget | 4.77 | **11.9** | 11.3 | **19.2** | **锐边全没了** |
+| ④ blurMethod 无 blurTarget（自检格） | 4.68 | **309.2** | 40.5 | **140.0** | 锐边在 |
+
+⇒ ③ 的梯度方差比 ① 低 **13 倍**、比 ② 低 **26 倍**，最大梯度 19.2 vs 100/140（**一条锐边都没有**
+＝低通签名）。⚠ `mean|Δ|` 反而是 ③ 略高——糊把「大片平坦 + 少数锐边」摊成「处处小梯度」，
+**能分开两者的是 max/p95 与方差，不是均值**（若只看均值会得出相反结论）。
+
+**④ 号自检格在数量上也成立**：④≈②（方差 309 vs 329，max 均 140）而 ③ 低 26 倍 ⇒ ③ 量的
+确实是真模糊路径，不是静默回落。**独立的第二条自检**（不靠肉眼）：干净窗口的 logcat 里
+`blurTarget` 的 `console.warn` **恰好 1 条**（来自 ④），③ 不发。
+⚠ 这条证据第一次取的时候是废的：logcat 环形缓冲被 Maestro 的无障碍树 dump 冲掉了
+（缓冲最早一条 21:48:07，而我 21:41 才 clear 的）⇒ 「0 条 warning」不是不存在的证据。
+重取时改成纯 adb 操作（不跑 Maestro），缓冲起点 21:53:25 早于挂载 21:53:30、App 行 39 条
+（通道自检），才拿到那条唯一 warning。
+
+**判据 2 · 性能**：⚠ **本机是 120Hz 屏，不是 60Hz**——`framestats` 的 `FrameInterval` 列
+读出来是 **8.33ms**（先读 24 列表头再解析；本机表头是
+`Flags,FrameTimelineVsyncId,IntendedVsync,…` 共 **24 列**，数据行首是 `32,` 不是 `0,`）。
+所以判据不是「≈16.7ms」而是「≈8.33ms」；计划写的 <55fps 停查线换算成间隔 >18.2ms。
+
+做成 **A/B**（同一屏、同一套滚动，只差 ③ 挂不挂载）比绝对值更有说服力：
+
+| 臂 | 帧数 | Janky | 50th | 90th | 95th | 99th | Missed Vsync |
+|---|---|---|---|---|---|---|---|
+| **A1** ③ 挂载 | 3124 | **0.93%** | 18ms | 23ms | 24ms | 29ms | 6 |
+| **A2** ③ 挂载 | 1970 | **1.83%** | 18ms | 24ms | 26ms | 30ms | 7 |
+| **B1** ③ 卸载 | 2840 | **1.90%** | 17ms | 23ms | 24ms | 28ms | 5 |
+| **B2** ③ 卸载 | 1440 | **1.25%** | 22ms | 27ms | 28ms | 29ms | 1 |
+
+呈现间隔（PROFILEDATA 的 `IntendedVsync` 逐帧差，剔除滚动结束后的空闲间隙）：
+两臂**都是**中位 **8.33ms（120.1 fps）**、p90 16.66ms（60 fps）。
+⇒ **A 与 B 分不开，真模糊在本机上没有可测的帧率代价**，全程没有掉到 55fps 以下。
+
+⚠ **这个「分不开」的结论是有尺子的**：B1 与 B2 是**同一配置的两趟**，却给出
+Janky 1.90% vs 1.25%、50th 17ms vs 22ms ⇒ **聚合读数的噪声底就有 5ms / 0.65pp 那么宽**，
+比它小的 A/B 差异不算读数。没有这条对照，「A 比 B 慢 1ms」会被读成结论。
+
+⚠ **PROFILEDATA 是 120 帧环形缓冲**（120Hz 下只有 1 秒），滚动一结束就会被空闲帧冲掉
+⇒ 逐帧表只能当补充；覆盖整个窗口的是 `reset` 之后的**聚合统计**（空闲不渲染帧、不进聚合，
+所以聚合窗口是干净的）。
+
+**判据 3 · 稳定**：③ 挂载/卸载**连点 20 次**（屏上计数从 2 走到 20，用 Maestro
+`assertVisible: ".*已切 20 次"` 断言，不靠肉眼）+ 中间夹滚动。logcat 用**宿主侧流式捕获**
+（`adb logcat > 文件` 常驻，避开 Maestro 冲设备缓冲）：
+
+| 判据 | 读数 | |
+|---|---|---|
+| App 进程未重启 | pid **28340** 从 22:04:33 一路活到 22:16:10，**与 21:53 发那条 warning 的是同一个 pid** | ✅ |
+| App pid 的 E/F 级红条 | **0 条** | ✅ |
+| 通道自检：App pid 的日志行数 | **278 行**（>0，通道活着） | ✅ |
+| ANR / process died | **0** | ✅ |
+
+⚠ **两处「红条」和「warning」的计数一开始都是假的**，定性到进程/来源才作数：
+① 粗筛 `FATAL|AndroidRuntime.*Exception` 命中 **36 条**，全在 pid 22209 / 22531
+（`app_process`）——是**我自己跑的 `uiautomator dump` 与 Maestro 已注册的 UiAutomation 撞了**
+（`UiAutomationService … already registered!`），与被测应用无关；
+② 粗筛 `blurTarget` 命中 **113 条**，全是 Maestro 无障碍 dump 里回显的 ④ 号**标签文字**，
+不是 `console.warn`。判据要写成「该 pid 的 `E/`、`F/` 行」与「行首 `W/ReactNativeJS`」才准。
+
+**裁决（三选一 → 过）**：**过**。B4 材质批可以把 G1 frosted 换真模糊。
+⚠ **换法不是把 tint 换成 BlurView 那么简单**：SDK 57 的真模糊要求被糊的背景被
+`<BlurTargetView>` 包住、BlurView 的 `blurTarget` 指向它的 ref，且 ref 要先挂上再渲 BlurView
+（首帧 ref 为 null 会被当成「没配」而静默回落成 `none`）。B4 落地参数：
+`blurMethod="dimezisBlurView"` + `blurTarget={ref}` + `intensity={60}` + `tint="dark"`。
+
+---
+
+#### T9 步骤 1：触感四种——**原映射不达标 → 改映射后达标**（改动已提交 `876bdea`）
+
+**① 按钮面（振感对不对）**。方法上做了一处改进：**不让泓舟自己按**（他会看见按钮标签，就不是盲测了），
+改成我用 adb 按他不知道的顺序触发、他只报手感。每一轮发完先核振动服务，核过才作数。
+
+**第 1 轮（原映射，四种打乱）**
+
+| 下 | 种类 | 实现 | OS 参数 | 泓舟 |
+|---|---|---|---|---|
+| 1 | wake | `impactAsync(Light)` | 1 脉冲 50ms | 弱 |
+| 2 | dead | `impactAsync(Heavy)` | 1 脉冲 60ms | 强 |
+| 3 | **shutter** | `selectionAsync()` | 1 脉冲 50ms | **强** |
+| 4 | confirm | `notificationAsync(Warning)` | **2 脉冲** 40+60ms | **两下** |
+
+⚠ **第 1 下与第 3 下是逐字节相同的波形**（读 expo-haptics 的 Android 源码：
+`HapticsSelectionType.kt` 与 `HapticsImpactType.kt` 的 `"light"` **都是**
+`timings=[0,50]` / `amplitudes=[0,30]`）——却被报成「弱」与「强」⇒ **这条强弱判断量的不是信号**。
+没有 shutter 这个「意外的重复刺激」，「他分出了 wake 与 dead」会被当成达标。
+
+**第 2 轮（原映射，wake×3 / dead×3 打乱，分组任务）**：真值 `D D W W D W`，泓舟 `A A A A B B`
+⇒ 两种映射都命中 **3/6 = 3+3 分组的随机期望**，且他分出的是 4+2 而不是 3+3 ⇒ **wake 与 dead 不可辨**。
+代码上二者名义差 2.3 倍振幅（Light 50ms@30 vs Heavy 60ms@70），但 MIUI 有
+`weakenVibrationIfNecessary`，把振幅差压平了（§6.2 遗留① 已经预警过这一位）。
+
+**备胎 `AndroidHaptics` 试过并否掉**（写进 `haptics.ts` 头注，免得下一批再试一遍）：
+换成 `performAndroidHapticsAsync` 后本机 logcat 明写
+`KeyboardFeature::Vibrator: performHapticFeedback: not support vibrator effect: 17`（REJECT）
+与 `: 4`（CLOCK_TICK）⇒ **设备不支持这两个常量、静默回落成默认效果**，三者签名依旧一样。
+（`VIRTUAL_KEY` 是支持的，但它解决不了 dead 那一档。）
+
+⇒ **改用能被区分的维度：时间结构不是振幅**。`dead` 换 `notificationAsync(Error)`（3 脉冲）。
+仪器复核（**HAL 级**，见坑③；四次全 FINISHED、uid 全为本应用）：
+
+| 种类 | 脉冲数 | 时长 | 振幅 | usage |
+|---|---|---|---|---|
+| wake | 1 | `[50]`ms | `[30]` | TOUCH |
+| confirm | 2 | `[40,60]`ms | `[40,60]` | UNKNOWN |
+| **dead** | **3** | `[60,40,50]`ms | — | UNKNOWN |
+| shutter | 1 | `[50]`ms | `[30]` | TOUCH（≡ wake，见下） |
+
+**第 3 轮（新映射，wake/confirm/dead 各 2 下打乱，分组任务）**：
+真值 `confirm wake wake confirm dead dead`，泓舟 `B A A B C C` ⇒ **分组完全同构、6/6**
+（随机达成这个完美划分的概率 1/15 ≈ 6.7%）⇒ **§11.2 B3 ②「分出 wake/confirm/dead 三档」达标**。
+
+⚠ **`shutter` ≡ `wake` 未修，出账**：§8 里两者本就都是「轻」，且不在 B3 的验收判据里；
+要真分开只能自己写波形（expo-haptics 不暴露 `createWaveform`）⇒ **归 B4/B5**。
+
+**② 挂点面（时机对不对——按钮验不了）**：两条代表各跑一次，流本身必须 COMPLETED 才算数。
+
+| 挂点 | 到达证据 | 振动 | |
+|---|---|---|---|
+| 轻点光球 ⇒ 进 `listening` | `tapOn composer-orb` COMPLETED | **1 条**，1 脉冲 `[50]ms@30` = wake | ✅ |
+| 「打开后备箱」⇒ 球转 `attention` | `dock-confirm` + `dock-countdown` 皆可见 | **1 条**，2 脉冲 `[40,60]ms@[40,60]` = confirm | ✅ |
+
+**③ 开关**（正反两侧都取，负例的流必须成功——否则「0 振动」只是演员没上场）：
+
+| 触感 | 轻点光球 | 「打开后备箱」 | 本应用振动数 |
+|---|---|---|---|
+| **开** | 流 COMPLETED | Dock + 倒计时可见 | **各 1 条** |
+| **关** | 流 COMPLETED | Dock + 倒计时可见 | **0 条** |
+
+开关状态不靠肉眼：`png_probe` 读那颗 Switch 的 `G−R`——**开 = +37.9 ~ +45.0（青）/ 关 = +1.5 ~ +2.0（灰）**。
+测完已恢复为**开**并当场复核（+37.9）。
+
+**④ 双振探针（阴性）**：上面四次挂点观测**每次都恰好 1 条振动**，零双振
+⇒ T5 的 `useEffect` 接线没有被挪进渲染期。
+
+---
+
+#### T9 步骤 2：折叠姿态（泓舟手折）——**四格全有读数**
+
+同一次手折走完四态，每格用 `cmd device_state state` 独立佐证、截图存 `mobile/e2e/artifacts/`。
+
+| 姿态 | `posture` | `state` | `orientation` | `isSeparating` | `bounds`（铰链几何） | `events` | `cmd device_state` | 图 |
+|---|---|---|---|---|---|---|---|---|
+| **半开 · 横放桌面** | **`tabletop`** | `halfOpened` | `horizontal` | `true` | `{left:0,top:1112,right:2488,bottom:1112}`（整宽零高**水平**线） | 1 | `HALF_OPENED(2)` | `b3-09-tabletop.png` |
+| 半开 · 竖持 | **`book`** | `halfOpened` | `vertical` | `true` | `{left:1112,top:0,right:1112,bottom:2488}`（整高零宽**垂直**线） | 4 | `HALF_OPENED(2)` | `b3-09-book.png` |
+| 完全展平 | `flat` | `flat` | `vertical` | **`false`** | 同上（几何还在，但不再分隔） | 5 | `OPENED(3)` | `b3-09-flat.png` |
+| 外屏（合上） | `flat` | **`none`** | `none` | `false` | `—` | 8 | `CLOSED(0)` | `b3-09-outer.png` |
+
+⇒ **§11.2 B3 ③「姿态 hook 在 Fold 4 半开报 isTableTop=true」达标**（第一行）。
+两条附加读数比计划要的更硬：① **`bounds` 在 tabletop↔book 之间正好转置**
+（水平零高线 ↔ 垂直零宽线），说明透上来的是 `FoldingFeature` 的真实几何而不是一个枚举；
+② **`events` 全程 1→4→5→8 单调递增**，事件流活着、不是初值糊弄。
+外屏一格照实记：模块报 `state: none`（外屏没有 FoldingFeature），姿态因此降级为 `flat`
+——这是 B4 外屏布局的先验。
+
+⚠ **手折会让应用进程重启并落回 DevLauncher**（本轮实测）：展开的那一下 app 重启、
+`mCurrentFocus` 是 `DevLauncherActivity`，要先用
+`xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081` 重连 Metro；
+且**重连后立刻发的 `xiaozhou://native-spike` 会被吞掉**（bundle 还没加载完），要等应用起来再发一次。
+下一批做折叠相关取证时按这个次序走，别把「深链没反应」当成路由缺陷。
+
+---
+
+#### T10 步骤 1：AEC 生效核证（整段前提）——**通过**
+
+免唤醒开（麦常开）⇒ `dumpsys audio` 的 `RecordActivityMonitor`（包锚 `2026-09-01 19:21:55`）：
+
+```
+riid 9279; active? true
+  session:11001 -- source client=VOICE_COMMUNICATION, dev=2ch 16000Hz ENCODING_PCM_16BIT
+  -- uid:10423 -- pack:com.xiaozhou.companion -- silenced:false
+  -- effects client='Acoustic Echo Canceler' 'Noise Suppression' ,
+       dev='Acoustic Echo Canceler' 'Noise Suppression'
+```
+
+⇒ 不止计划要的 `src client=VOICE_COMMUNICATION`，**`effects` 行直接把 AEC / NS 的实例列了出来**
+（client 侧与 dev 侧各一份）——这比「preset 请求过」硬：它是「效果真的挂上了」。
+阴性对照（顺手取的）：关掉免唤醒后同一条 dump **没有任何 active riid** ⇒ 那条流确实归本应用。
+历史事件里 `20:02:04` 起本应用的 `rec update/start` **全是 `src:VOICE_COMMUNICATION`**
+（旧包是 `VOICE_RECOGNITION`）。
+
+#### T10 步骤 2：S2S 采集路径的 AEC 覆盖面——**B2 出账⑥ 销账**
+
+设置切 `voicePipeline=s2s`（chip 选中态用 `png_probe` 判：三段式 G−R +22.3→+1.9 / 端到端 +1.9→+24.3），
+泓舟真人说一轮（「今天天气怎么样?」→ 深圳宝安 26℃ 天气卡，**轮次真的发生过**，不是只切了挡位）。
+包锚 `2026-09-01 19:21:55`。dumpsys：
+
+- `riid 10047; active? true — source client=VOICE_COMMUNICATION … effects client='Acoustic Echo Canceler' 'Noise Suppression'`
+- **全机只有 1 条 riid**（`grep -c "^riid "` = 1）⇒ S2S 没有另开流；
+- 本应用历史 `rec start/update/stop` 事件**无一例外**是 `src:VOICE_COMMUNICATION`（旧包才是 `VOICE_RECOGNITION`）。
+
+⇒ B2 出账⑥「AEC 没覆盖 S2S 采集路径」**被推翻，销账**（§0 第 6 条的静态证据方向正确）。
+测完已切回 `classic` 并 `png_probe` 回读确认。
+
+⚠ 静态面另有一条佐证（写计划时没盘到）：`react-native-audio-record` 在源码里**只出现在
+`src/app/voice-spike.tsx`**（M2 的候选 A spike，懒加载），生产链路一条都没有；
+`recorder.ts:105` 的全局单例注释写明「同时开两个 AudioRecorder 是设备级冲突，用一个把并发挡在门口」
+⇒ 结构上就不可能有第二条流。
+
+#### T10 步骤 3：唤醒率重取——**不达标，未触红线，交泓舟裁**
+
+装置：免唤醒开 + 唤醒词开 + classic + 包锚 `2026-09-01 19:21:55`。
+**计数不靠人数**：每次成功唤醒必然进 `listening`、必然触发一次 wake 触感（1 脉冲 50ms@振幅30），
+用 logcat 数振动比数「感觉唤醒了几次」硬。
+
+| 口径 | 读数 |
+|---|---|
+| **仪器（wake 触感计数）** | **5 / 10** —— `11:20:12.571 / 11:20:19.939 / 11:20:27.670 / 11:21:06.623 / 11:21:24.551` |
+| 泓舟自数 | **6 / 10** |
+| 通道自检 | 本应用 pid 29623 在该窗口有 1568 行日志；同窗口另有 4 次振动是 `uid=1000`（系统），已剔除 |
+
+⇒ **N = 5–6 / 10，低于 §5 判据的 N≥8；但未低于 N<5 的红线**。按 §5 第 11 条
+**不自行调阈值**（阈值 0.2/2.0 的重定要 A/B，是独立批），本批只取数定性，交泓舟裁。
+
+**引擎对照（把「零命中」的两种成因分开）**：`/voice-spike` 的 `M4 kws 直灌`（绕过麦克风，
+喂模型自带 test_wavs）——`3.wav→文森特卡索 / 4.wav→蒋友伯,女儿 / 5.wav→周望军,落实 /
+6.wav→朱丽楠,见面会`，**共 7 次命中、`dropped=0`**，屏上自己的结论是
+「✓ 引擎能认 ⇒ 麦克风那轮零命中是声学路径问题，不是引擎」。
+⇒ **唤醒率偏低的原因在声学链路（麦 → AEC/NS/AGC → KWS），不是引擎坏了**。
+
+#### T10 步骤 4：VAD 端点重取——**达标**
+
+1. **TapTalk 路径（免唤醒关、泓舟本人）**：轻点光球 → 说一句 → **住口后不到 1s 自动收尾发送**
+   （判据 ≤2s，达标）。**没有提前截断的证据**：屏上转写是完整句子
+   「你。你告诉我一下今天有什么新…」，不是半句；也**没走到 15s 硬上限**
+   ⇒ §6.1 遗留① 挂着的「安静环境下 VAD 800ms 尾收尾」这一格，**本轮补上了**（≈1s，
+   而不是计划步骤 4.5 写的 15s——那条判据把三层收尾弄反了，见 §6.1 遗留①）。
+2. **`M4 vad` 探针**：`native=true`、模型载入 104ms、`frames=119 windows=371
+   prob p50=0.790 p95=0.984 max=0.994`、`events=start@887ms`。
+   `start@887ms` 与 M4 基线 `647ms` 同量级 ✓；**但 12s 窗口内没有 `end@` 事件**。
+   ⚠ **这条判据的前提在计划里是错的**：计划写「直灌探针…直灌不经 AEC」，而
+   `probeVad` 实际是 `micLease()` 开真麦 + 手机自播一句当声源的**回环**测试
+   ⇒ 它**必然经过 AEC**，而且被测的声源就是手机自己的播放（AEC 要消的正是它）。
+   所以「没有 end 事件 / p50 0.790」这组数**不能读成「VAD 引擎坏了」**——它同时受
+   AEC 残余与环境噪声影响，而 1 的真人读数（住口后 ≈1s 收尾）才是干净的端点证据。
+   下一批要么给这条判据换一个真·直灌装置，要么把它从「引擎对照」降级成「回环观察」。
+
+#### T10 步骤 5：G2 回声口径收口
+
+**① AEC 在场的回声观测**（装置：免唤醒开麦常开 + 播报「总是」+ 扬声器 **150/150** +
+长播报 10+ 条新闻，观测 60s；包锚同上）：
+
+| 判据 | 读数 |
+|---|---|
+| 回声提示 / `echo_dismissed` / 「环境回声较强」降级行 | **0 次** |
+| barge-in 自触发 | **0 次** |
+| 本应用麦流 `AudioIn_92E` Xruns | **0 次** |
+| 本应用 E 级日志 | **0 条** |
+| 通道自检 | 本应用 964 行日志；录音流全程 `VOICE_COMMUNICATION` |
+
+⚠ **音量这一格差点毁掉整轮语音读数**：开工时 `dumpsys audio` 读到
+**`2 (speaker): 0`——扬声器媒体音量是 0**（B2 坑③「音量 0 是音频不触发惯犯」的**第三次**）。
+用 `input keyevent 24` 抬起并**回读**（0 → 110 → 150/150）。`adb shell media volume` 在本机
+**不存在**（`/system/bin/sh: media: inaccessible or not found`），`cmd media_session` 按 B2 是静默失败
+⇒ **本机唯一可用的抬音量法是 `keyevent 24` + `dumpsys audio` 回读**，且**必须在解锁且应用前台时按**
+（锁屏期间按 24 会打到别的流上，实测音量反而从 120 掉到 40）。
+
+**② 口径裁决（§5 第 8 条落地）**：
+**「回声提示在 AEC 健康的设备上不可自然触发」正式入账**——提示是 AEC 失效时的兜底，
+FSM 判定层已有 jest 钉住（B2 T11 的 `echo_dismissed` 用例），**真机触发验证从验收清单除名**，
+不再逐批抬着「⬜ 未触发」走。可选的双设备装置（第二台设备播本机 TTS 音色的录音、贴近麦、
+与本机播报同步）**默认不做**，泓舟当场要才做；配方记档在此。
+
+平台侧还有一条**硬佐证**（本轮顺手抓到，不在计划里）：音频 HAL 日志出现
+`PAL: ResourceManager getActiveEchoReferenceRxDevices_l`（Enter/Exit status 0）
+⇒ **平台 AEC 在主动取播放参考信号**，不只是「preset 请求过」。
+
+**③ 吞真续问计数（主计划「⛔ 待裁定：回声判据松紧」的取数）**：
+本段全部语音轮里「真续问被当回声吞掉」**0 次**——特别是泓舟真人轮第 2 步
+「答完 8 秒内不带唤醒词直接追问」**成功**。⇒ `ECHO_OVERLAP_RATIO 0.75` 在本轮没有产生误伤。
+**共享 `voiceLoop.mjs` 本批一字未动**；阈值裁决交泓舟 / hmi 侧另立。
+
+#### T10 步骤 6：G5 帧率复测——**零回退**
+
+装置：发新闻 → 等「播报中」可见 → 点状态胶囊显式开层 → `reset` → 采 12s。
+
+| 判据 | 读数 |
+|---|---|
+| 目标 `FrameInterval` | **8.33ms（120Hz 屏）** |
+| **呈现间隔 中位 / p90** | **16.66ms / 16.66ms ⇒ 稳定 60.0 fps** |
+| p95 / max | 24.99ms / 58.30ms |
+| Janky frames | **0（0.00%）** |
+| Number Missed Vsync | **0** |
+
+中位 **16.66ms 与 B2 G5 的口径一字不差** ⇒ 三件原生进包后性能零回退。
+同屏循环动画仍 1 个（T1 步骤 5 的 `png_probe` 两帧 0.00% 读数，本处引用不重取）。
+
+#### T10 步骤 7：B2 验收表遗留四格
+
+| B2 表# | 项 | 读数 | |
+|---|---|---|---|
+| 1 | 轻点光球（免唤醒关）→ 层升、录音、端侧 VAD 收尾并发送 | 与步骤 4.1 同一趟取：住口后 <1s 收尾、转写完整、自动发送 | ✅ |
+| 2 | 真人语音轮全链 | 泓舟逐条报：唤醒→问→答**能听到声音**；答完 8s 内**不带唤醒词追问成功**；录音中**切后台再回来草稿不丢**、**展开又合上也不丢** | ✅ |
+| 6 | 「这是什么」→ 用户气泡先于相机 | **未重取**（通路 B2 已验通、且与 AEC 无关；本轮设备在收尾前掉线） | ⬜ |
+| 7 | 语音提问出声（自动档） | `AudioPlaybackConfiguration piid:10055 type:AAudio uid:10423 **state:started** deviceIds:[3]（扬声器） sampleRate=48000` + 屏上「播报中 · 说话可打断」+ 泓舟**确认能听到** | ✅ |
+
+#### T10 步骤 8：附加（非闸门）——**未完成**
+
+「换一批」chip：试的语料是 **`附近的川菜馆`**（带品类词，按 B2 附加⑦ 的定位
+`candidates.ts` 只有 `poi_list` 且 `c.keyword` 非空才记 category）。
+`inputText` 已 COMPLETED，**发送前设备 USB 掉线**（`adb: no devices/emulators found`），
+`kill-server`/`start-server` 未恢复、需要物理重插 ⇒ 这一格 ⬜。
+（另：本轮 12:38 前后另一条语料 `附近的川菜馆` 之外，对话页里已自然出现过一次 `poi_list`
+餐馆卡，卡上有「说『看第 1 个详情』或『导航去第 2 个』」提示行——下一批可从那条复现。）
+
+#### ⚠ 本批撞出的新缺陷（出账，未修）
+
+**播报卡顿**（泓舟在真人轮第 1、2 步各报一次「正常，但是有播报卡顿的现象」）。
+客观证据与**定性到进程/流之后**的结论：
+
+| 段 | 时长 | 本应用麦流 `AudioIn_92E` Xruns | 频率 |
+|---|---|---|---|
+| 真人轮（麦常开 **+ 播报**） | ~5 min | **11** | 2.2 次/分 |
+| 唤醒率（麦常开、**无播报**） | ~16 min | **11** | 0.7 次/分 |
+| G2 长播报轮（麦常开 + 播报） | ~1 min | **0** | 0 |
+| blur 20 次（**免唤醒关**，昨晚） | ~12 min | **0**（该流根本不存在） | — |
+
+HAL 阻塞读数：`Critical HAL Block: HAL write blocked for 71.14ms / 104.41ms, exceeds 3.0x period (20.00ms), tid=29917`。
+
+⚠ **两个把人引偏的粗筛，定性到来源才作数**：
+① `AudioIn_5E` 在**完全没有音频**的 blur 段也有 38 条 ⇒ **那不是我们的流**（是系统热词
+`com.miui.voicetrigger`，dumpsys 里 `src:HOTWORD`）；只有 `AudioIn_92E`（tid 29917 ∈ 本应用
+pid 29623）是我们的麦流。
+② `Reanimated: synchronouslyUpdateUIProps failed` 在真人轮段有 **150** 条，看着像元凶——
+但**无音频的 blur 段有 376 条**、只开麦不播报的段也有 150 条 ⇒ **与播报无关的环境噪声**，
+不是卡顿成因（但它本身是一条独立的、一直在发生的 W 级错误，出账给 B4）。
+
+**定性到此为止，不再往前推**：本批**没有同条件的「无 AEC」对照包**（AEC 是这一趟第一次进包），
+所以只能说「本应用麦流在播报时 HAL 阻塞明显增多、且是间歇性的（G2 那轮 0 次）」，
+**不能说是 AEC 造成的**。要坐实需要一趟不带 `96a6830` 的对照构建，归 B4/B5。
+
+**收口读数**：`npm test` **42 suites / 413 tests 全绿（零增量）**、`npm run typecheck` **0 error**。
+零增量是对的——本批是取证批；唯一的代码改动 `876bdea` 动的是 `core/haptics.ts`
+（执行薄壳，按 §1 就没有 jest 覆盖，判据在 `hapticCue.ts` 的纯函数里、本批一字未动）。
+
+**反向验证**（本批的形态与前两批不同：唯一的改动没有 jest 面，反向验证就是**真机 A/B 本身**）
+
+| 对 | 旧映射 | 新映射 | |
+|---|---|---|---|
+| wake vs dead 可辨性（泓舟盲测分组） | **3/6 = 随机期望**，分出 4+2 而非 3+3 | — | 旧的被否 |
+| wake/confirm/dead 三档（泓舟盲测分组） | — | **6/6 完全同构**（随机概率 1/15） | 新的成立 |
+| 触感总开关 | 关 → **0 振动**（两条挂点流均 COMPLETED）／开 → **各 1 条** | 同 | 正反两侧都有读数 |
+| 双振探针（阴性） | 四次挂点观测**每次恰好 1 条**振动 | 同 | effect 没被挪进渲染期 |
+
+**B2 §6.4 出账表逐条核销**
+
+| # | 项 | 去向与结果 |
+|---|---|---|
+| ① | S4 Composer 球语音轮不可读 | **已修**（§6.1 T1，`124d152`） |
+| ② | S6 muted 被 `filter` 裁 | **已修**（§6.1 T2，`1e86d4a`） |
+| ③ | `plateGesture` 空输入框长按不工作 | **已修**（§6.1 T3，`9e54407`） |
+| ④ | 发送按钮改图标 | 归 B4（本批未动） |
+| ⑤ | 回声提示从未被观测到触发过 | **销账**——本批按 §5 第 8 条裁决：AEC 在场**不可自然触发**，正式入账、从验收清单除名 |
+| ⑥ | AEC 没覆盖 S2S 采集路径 | **销账**——真机终裁推翻（步骤 2） |
+| ⑦ | 顺序取证（气泡先于相机） | ⬜ 未重取（通路 B2 已验通、与 AEC 无关；收尾前设备掉线） |
+| ⑧ | 「换一批」chip 要带 keyword 的 `poi_list` 语料 | ⬜ 未完成（`附近的川菜馆` 已输入，发送前设备掉线）；**非闸门** |
+| ⑨ | `charging_list` 卡型未适配 | 归 B4/卡片批 |
+| ⑩ | `EdgeGlow` 零 jest | 归 B4 视觉批 |
+| ⑪ | barge-in 那一路回声无 metric | hmi 侧另立（共享 `voiceLoop.mjs` 本批一字未动） |
+| ⑫ | VoiceSheet 壳底与浅色光球对比度 | 归 B4 视觉批（blur 裁决已过 ⇒ 材质落地时一并裁） |
+| ⑬ | 设备 USB / adb reverse / Maestro dist | 已收进 §0 第 4 条；**本轮两条都又发生一次**（开工时 reverse 为空；收尾时 USB 掉线） |
+
+**本批踩的坑**
+
+1. ⛔ **同一台设备被两个操作者共用，坐标读数会过期**——盲测第一轮我按 `/native-spike` 的按钮坐标
+   连点 4 下并跟泓舟说「4 下已发出」，实际屏上早已被人操作成对话页的餐馆列表，
+   `Starting vibrate` = **0**。修法：**每次注入前用 Maestro 断言目标元素可见，注入后立刻核振动服务**，
+   两头都过了才对人说「发出去了」。
+2. **`adb logcat -c` 不清 system 缓冲**：振动日志写在 system buffer，`-c` 只清默认几个
+   ⇒ 上一趟的 4 条会混进这一趟，「4 下变 8 下」。用 **`adb logcat -b all -c`**。
+3. **`Vibration N step M complete` 的行数是不可靠的脉冲数代理**（同一个 `notificationAsync(Warning)`
+   时而数出 2、时而数出 1）。真值在 vendor HAL：`vendor.hardware.vibratorfeature:
+   Vibrator on for timeoutMs: N` + `Vibrator set amplitude: x`（振幅×255 正好对上源码的
+   `amplitudes` 数组）。本批把解析器换成 HAL 行（`vib.py`）。
+4. **重载后 presence 迁移会自发触发触感**：`rr` 热载后连接态迁移把 wake/dead 打了出来，
+   混进按钮读数。修法：**测前先做 12 秒静默基线**（本轮基线 0 次自发振动才继续）。
+5. ⛔ **Maestro 的 `hideKeyboard` 发的是 BACK**：键盘没弹起时它就把应用退到桌面——
+   本轮**三次**「应用跑到桌面、后续读数全废」全是这一条（§6.1 坑④ 的新形态）。
+   本仓既有流里 `hideKeyboard` 是有理由的（06 的文件头写了），但**写新流时默认别加**；
+   发送键在键盘弹起时仍在树上（B1 T12 / B2 G3 的读数）。
+6. **设置页的滚动位置在两次进入之间会漂 ~60px** ⇒ 开关坐标每次重取，别用上一张截图的
+   （本轮「关掉触感后又打不开」就是照旧坐标点在了说明文字上）。
+7. **`uiautomator dump` 与 Maestro 的 UiAutomation 会话冲突**：抛
+   `UiAutomationService … already registered!` 的 **FATAL EXCEPTION**——粗筛 `FATAL` 命中的
+   36 条**全是我自己的仪器**（pid 是 `app_process`，不是被测应用）。判据要写成
+   「**该应用 pid 的 `E/`、`F/` 行**」。
+8. **MIUI 锁屏后 `wm dismiss-keyguard` 不生效**，`KEYCODE_WAKEUP + HOME`、划屏、BACK 都只到
+   `NotificationShade`（`mDreamingLockscreen=true`）⇒ **只能请人划开**。
+   锁屏期间取的一切读数作废（本轮音量回读与 chip 选中态都栽在这）。
+9. **`adb shell media volume` 在本机不存在**（`media: inaccessible or not found`），
+   `cmd media_session` 按 B2 是静默失败 ⇒ **本机唯一可用的抬音量法是 `keyevent 24` + `dumpsys audio` 回读**，
+   而且**必须解锁 + 应用前台**（锁屏时按 24 打在别的流上，音量反而从 120 掉到 40）。
+10. **Maestro 的 `swipe: direction: DOWN` 在本屏一格不动**，要写显式 `start/end` 百分比坐标。
+11. **logcat 环形缓冲会被 Maestro 的无障碍树 dump 冲掉**（跑一趟 Maestro，缓冲起点就被推到 7 分钟之后）
+    ⇒ 跨 Maestro 的长观测必须**宿主侧流式捕获**（`adb logcat > 文件` 常驻）。
+12. **深链在 bundle 加载完之前发会被吞掉**：折叠导致进程重启后，
+    `xiaozhou://expo-development-client/?url=…` 重连 Metro 之后**立刻**发的
+    `xiaozhou://native-spike` 没有反应，要等应用起来再发一次。
+
+**遗留 / 给下一批的话**
+
+1. ⛔ **唤醒率 5–6 / 10 不达标（判据 N≥8），未触 N<5 红线 ⇒ 交泓舟裁**。
+   引擎对照已证明「引擎能认」，所以问题在声学链路。按 §5 第 11 条本批**没有调阈值**。
+   下一批若要动 0.2/2.0，要按独立批做 A/B，且**必须在同一个含 AEC 的包上**取对照。
+2. ⛔ **新缺陷：播报卡顿**（详见上「本批撞出的新缺陷」）。要坐实与 AEC 的因果，
+   需要一趟**不带 `96a6830` 的对照构建**——归 B4/B5，不在本批。
+3. ⚠ **`shutter` ≡ `wake` 未修**（expo-haptics 的 `selectionAsync` 与 `impactAsync(Light)`
+   逐字节相同）。§8 里两者本就都是「轻」，且不在 B3 验收判据内；要真分开只能自己写波形
+   （expo-haptics 不暴露 `createWaveform`）⇒ B4/B5。
+4. ⚠ **计划里两条判据的前提被实测推翻，改计划时一起改**：
+   ① 步骤 4.2 写「直灌探针…直灌不经 AEC」——`/voice-spike` 的 `M4 vad` 实际是
+   `micLease()` 回环 + 手机自播，**必然经过 AEC**；
+   ② §0 第 8 条与 §11.2 B3 ② 的「四种各触发一次」默认四种是四个波形，
+   而 expo-haptics 在 Android 上只给得出三个。
+5. ⚠ **`Reanimated: synchronouslyUpdateUIProps failed` 是一直在发生的 W 级错误**
+   （无音频的 blur 段 12 分钟 376 条），与播报无关，本批没查 ⇒ 出账给 B4。
+6. ⬜ **步骤 7 表#6 与步骤 8 未取**（设备 USB 在收尾前掉线，`kill-server`/`start-server`
+   未恢复、需物理重插）。两条都非闸门。
+7. **推送**：本批 2 个提交（`876bdea` 触感映射修复 + 本条记录）**未推送**，等泓舟单独授权。
+   ⛔ push 的粒度是分支不是提交——推前列完整 `origin/main..HEAD` 并核 `git fetch`。
+
+8. ⛔ **设备状态：本批改过的三项尚未还原**（收尾前 USB 掉线，`adb devices` 空列表、
+   `kill-server`/`start-server` 与 `adb connect …:5555` 都无效，需物理重插）。
+   **下一批开工第一件事就是把这三项还原并复核**，否则会拿着被本批改过的设备状态取读数：
+
+   | 项 | 本批改成 | 应还原成 | 状态 |
+   |---|---|---|---|
+   | App · 播报 | **总是** | **自动**（开工基线） | ⛔ 未还原 |
+   | App · 免唤醒对话 | **开** | **关**（开工基线） | ⛔ 未还原 |
+   | 系统 · 扬声器媒体音量 | **150/150** | 开工基线是 **0** | ⚠ 交泓舟裁（0 本身就是个缺陷现场，见步骤 5 ①；不建议还原成 0） |
+   | App · 语音链路 | s2s → classic | classic | ✅ 已还原并 `png_probe` 回读 |
+   | App · 触感 | 关 → 开 | 开 | ✅ 已还原并 `png_probe` 回读（G−R +37.9） |
+
+   本批**未动**：系统触感开关（仍 `haptic_feedback_enabled=1`）、自动旋转、飞行模式、
+   `voicePipeline` 以外的 App 设置、`quickCommands`、RKStorage。
+   取证图 30 余张在 `mobile/e2e/artifacts/`（gitignore，不入库）。
+
 
 ### 6.4 第 4 批「B3′ spike + 收口」（T11–T12）
 
