@@ -17,6 +17,7 @@ import {
 import type { GatewayStatus } from '@/core/api/gateway'
 import { GatewaySession } from '@/core/api/gateway'
 import { loadServerConfig } from '@/core/config/storage'
+import { getWired } from '@/core/session/wiring'
 
 interface FrameRow {
   id: number
@@ -45,6 +46,18 @@ export default function DebugScreen() {
   const [sessionId, setSessionId] = useState('')
   const sessionRef = useRef<GatewaySession | null>(null)
   const seqRef = useRef(0)
+
+  // 主动消息本地回放（B4-12）：帧形状照 `store.ts` 的 proactive 分支读的键
+  const replayProactive = (priority: string) => {
+    getWired()?.core.handleFrame({
+      type: 'proactive',
+      priority,
+      speech: priority === 'critical' ? '后备箱没有关好' : '前面路况还行',
+      advisory: 'scene_suggest',
+      card: { type: 'scene_card', title: priority === 'critical' ? '后备箱未关' : '路况提示' },
+      delivery_ids: ['local-' + Date.now()],
+    })
+  }
 
   useEffect(() => {
     let closed = false
@@ -123,6 +136,21 @@ export default function DebugScreen() {
           </View>
         )}
       />
+      {/* B4-12 取证装置：本地回放一条主动消息帧，喂给**真的那个** SessionCore（getWired），
+          于是对话页会长出气泡、播报仲裁会真的跑一遍。零后端——云栈没有 proactive 注入入口
+          （`grep -rn proactive scripts/ observability/collector/server.py` 核过：零命中）。
+          `delivery_ids` 每次唯一，否则幂等呈现会把第二次吞掉。 */}
+      <View style={styles.composer}>
+        <Pressable
+          onPress={() => replayProactive('critical')}
+          style={[styles.sendBtn, { backgroundColor: '#C2410C' }]}
+        >
+          <Text style={styles.sendText}>回放 critical</Text>
+        </Pressable>
+        <Pressable onPress={() => replayProactive('')} style={[styles.sendBtn, { backgroundColor: '#475569' }]}>
+          <Text style={styles.sendText}>回放 普通（阴性）</Text>
+        </Pressable>
+      </View>
       <View style={styles.composer}>
         <TextInput
           style={styles.input}

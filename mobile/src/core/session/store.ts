@@ -123,6 +123,9 @@ export interface SpeechSink {
   finish(bubbleId: string, text: string): void
   /** 打断 / 超时 / 关掉播报：硬停 */
   stop(): void
+  /** 主动消息到达（B4-12）：**仲裁在实现里**（它读设置 + 行车事实），SessionCore 只报事实。
+   *  可选——M2 起的四方法实现（含测试里的 FakeSpeech）不实现也照跑 */
+  proactive?(text: string, msg: { priority?: string; hasCard: boolean; deliveryId?: string }): void
 }
 
 const NOOP_SPEECH: SpeechSink = {
@@ -629,6 +632,13 @@ export class SessionCore {
           text: text ? '💡 ' + text : '',
           uiCard: card,
           proactiveKind: typeof data.advisory === 'string' ? data.advisory : undefined,
+        })
+        // B4-12 播报收紧：SessionCore **只报事实**（这一条是什么优先级、有没有字/卡），
+        // 「该不该出声」的仲裁在 SpeechController 里——它读设置，本类的头注约定是不读设置
+        this.speech.proactive?.(text, {
+          priority: typeof data.priority === 'string' ? data.priority : undefined,
+          hasCard: !!card,
+          deliveryId: deliveryIds[0],
         })
         // 呈现即回执——通知合同唯一完成条件；不回执下次连上还会补投
         if (deliveryIds.length) {

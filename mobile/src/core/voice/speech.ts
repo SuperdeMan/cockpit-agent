@@ -3,9 +3,12 @@
 // 职责分界刻意画在这：**「开没开播报」「用哪个引擎/音色」这类读设置的判定住在这里**，
 // SessionCore 只管「哪一轮该出声」。这样会话状态机继续是零副作用、jest 可回放的纯逻辑，
 // 而设置一改（关掉播报）立刻能停当前这段——两件事各自有唯一的落点。
+import { PendingSpeech } from '@shared/proactiveSpeech.mjs'
+
 import type { SpeechSink } from '../session/store'
 import { settingsStore, speakAllowed } from '../settings/store'
 import { newPcmPlayer } from './audioCtx'
+import { proactiveSpeechDecision } from './proactivePolicy'
 import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -49,11 +52,56 @@ export class SpeechController implements SpeechSink {
   lastFirstAudioMs = 0
   /** begin 时按三档裁决的结果；finish 尊重它（同一轮不许 begin 说播、finish 又不播） */
   private allowed = false
+  /** 主动消息仲裁要的两个事实（ChatScreen 用 setter 喂，同 setAudioUrl 形态）：
+   *  控制器本来就读设置，但它不认识行车档与 S2S 在不在忙 */
+  private proactiveCtx = { driving: false, s2sBusy: false }
+  /** DEFER 队列（共享 `PendingSpeech`：有界 3 条、按 deliveryId 去重、溢出丢最旧） */
+  private readonly deferred = new PendingSpeech()
+  private flushing = false
 
   constructor(private audioUrl: string) {}
 
   setAudioUrl(url: string): void {
     this.audioUrl = url
+  }
+
+  setProactiveCtx(ctx: { driving: boolean; s2sBusy: boolean }): void {
+    const wasBusy = this.proactiveCtx.s2sBusy
+    this.proactiveCtx = ctx
+    // 「S2S 空闲即补播」（M-C 头注）：DEFER 的**阻塞条件就是 s2sBusy**（decideSpeech 只在
+    // s2sBusy 时给 DEFER），所以补播挂在这一刻
+    if (wasBusy && !ctx.s2sBusy) void this.flushDeferred()
+  }
+
+  /** 主动消息到达：三档 + 行车事实 → 说 / 抢话 / 排队 / 只气泡（判据 proactivePolicy.ts） */
+  proactive(text: string, msg: { priority?: string; hasCard: boolean; deliveryId?: string }): void {
+    const policy = settingsStore.getState().settings.speakPolicy
+    const d = proactiveSpeechDecision(
+      { priority: msg.priority, hasText: !!text.trim(), hasCard: msg.hasCard },
+      { policy, driving: this.proactiveCtx.driving, s2sBusy: this.proactiveCtx.s2sBusy },
+    )
+    if (d === 'bubble') return
+    if (d === 'defer') {
+      this.deferred.push({ text, deliveryId: msg.deliveryId })
+      return
+    }
+    if (d === 'interrupt') this.stop()
+    void this.speakBatch(text)
+  }
+
+  /** 补播 DEFER 队列。
+   *  ⚠ **两个触发点都不是 `stop()`**：`begin()` 第一件事就是 `stop()`，把补播挂在那里会让
+   *  攒下的旧话在**新一轮开口的瞬间**倒出来，两段音频叠着放——正是 M-C 头注要避免的那件事。
+   *  真正的阻塞条件是 ① S2S 在忙、② 自己的播报在跑，所以挂在这两条各自解除的那一刻。 */
+  private async flushDeferred(): Promise<void> {
+    if (this.flushing || this.speaking || this.proactiveCtx.s2sBusy) return
+    this.flushing = true
+    try {
+      // 串行：drain() 一次给全部，同时喂给 speakBatch 就是几段音频叠着放
+      for (const it of this.deferred.drain()) await this.speakBatch(it.text)
+    } finally {
+      this.flushing = false
+    }
   }
 
   subscribeSpeaking(fn: (v: boolean) => void): () => void {
@@ -100,6 +148,8 @@ export class SpeechController implements SpeechSink {
         if (this.session === session) this.session = null
         this.setSpeaking(false)
         this.onSpeechEnded?.()
+        // 播报自然收尾 ⇒ 攒着的主动消息可以补播了（`stop()` 那条路刻意不挂，见 flushDeferred 头注）
+        void this.flushDeferred()
       },
       onSilent: () => {
         const s = settingsStore.getState().settings

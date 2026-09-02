@@ -34,6 +34,7 @@ import { useLayout } from '../../ui/layout/useLayout'
 import { usePalette } from '../../ui/theme'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
+import { speechController } from '../../core/voice/speech'
 import { captureVisionFrame, needsVisionFrame } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
@@ -292,6 +293,13 @@ function ChatBody({
   // B4-6 布局：`tablet = min(w,h) >= 600` 那个单布尔换成 useLayout 五模式（判据全在 sizeClass.ts，本文件零判断）。
   // 放在 usePresence 之后——它读 snapshot.driving（行车档改布局，§7.2 第四行）。
   const layout = useLayout(snapshot.driving)
+  // B4-12 主动消息仲裁要的两个事实喂给播报控制器（它读设置，但不认识行车档与 S2S 在不在忙）。
+  // 判据全在 proactivePolicy.ts，这里只搬事实
+  useEffect(() => {
+    const s2sBusy =
+      settings.voicePipeline === 's2s' && (hf.fsm === 'LISTENING' || hf.fsm === 'THINKING' || hf.fsm === 'SPEAKING')
+    speechController().setProactiveCtx({ driving: snapshot.driving, s2sBusy })
+  }, [snapshot.driving, hf.fsm, settings.voicePipeline])
   // B4-3 动效环境：事实在 core/a11y/reduceMotion.ts，判据在 orbPolicy.ts，这里只把布尔发下去
   const reduceMotion = useReduceMotion()
   const motionEnv = { reduceMotion }
