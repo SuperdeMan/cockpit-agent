@@ -7,10 +7,11 @@
 // 手势用 react-native-gesture-handler（PackageList.java:73 已注册，零新依赖）。
 // 「轻点到底做什么」的判据不在这里——Composer 只报告手势，ChatScreen 的 onTap 决定走免唤醒的
 // 手动唤醒还是 PTT 的 tap 会话（哪个引擎持有麦是 ChatScreen 知道的事实）。
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ScrollView, Text, TextInput, View, Pressable } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 
+import type { ComposerInputMode } from '../../core/presence/drivingMode'
 import type { FontScalePref } from '../../core/settings/store'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
@@ -42,6 +43,10 @@ export interface ComposerProps {
   orbAnimated?: boolean
   /** 行车档：光球 ×0.5 频率 ×0.6 透明度（判据 orbPolicy.orbTempo，B4-3） */
   orbDriving?: boolean
+  /** 行车档（`snapshot.driving`）：目标 56、快捷指令 ≤3、**上滑取消禁用**（§6 / §5.1.1 行车条款） */
+  driving?: boolean
+  /** 文本输入形态（判据 drivingMode.ts::composerInputMode）：A 常驻 / B 折叠成键盘键 / C 隐藏 */
+  inputMode?: ComposerInputMode
   fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
@@ -49,8 +54,12 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
+export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
   const [input, setInput] = useState('')
+  // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
+  // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
+  const [inputOpen, setInputOpen] = useState(false)
+  useEffect(() => setInputOpen(false), [inputMode])
   const heldRef = useRef(false)
   const cancelledRef = useRef(false)
   const submit = () => {
@@ -61,6 +70,8 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
   }
   const recording = ptt?.state === 'recording'
   const finalizing = ptt?.state === 'finalizing'
+  // B4-11 §6「目标 ≥56dp」：行车 56 / 泊车 48。光球热区本来就是 TARGET.driving，不受影响
+  const target = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
 
   // 按住 = Pan.activateAfterLongPress：激活即按下；onUpdate 看上滑；结束即松手（取消过就不发）
   const makeHold = (enabled: boolean) =>
@@ -76,7 +87,9 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
         ptt?.pressDown()
       })
       .onUpdate((e) => {
-        if (heldRef.current && !cancelledRef.current && e.translationY < -CANCEL_DY) {
+        // §5.1.1 行车条款：行车档**只保留**「按住—松开发送」，上滑取消禁用
+        // （开车时的空间手势不可靠；取消这条路留给泊车态）
+        if (!driving && heldRef.current && !cancelledRef.current && e.translationY < -CANCEL_DY) {
           cancelledRef.current = true
           ptt?.cancel()
         }
@@ -118,11 +131,12 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
       }}
     >
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
-        {quickCommands.map((c) => (
+        {/* 行车档快捷指令 ≤3（§6「chips ≤3」）、行高 56 */}
+        {quickCommands.slice(0, driving ? 3 : quickCommands.length).map((c) => (
           <Pressable
             key={c}
             onPress={() => onSend(c)}
-            style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 }}
+            style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, minHeight: driving ? target : undefined, justifyContent: 'center' }}
           >
             <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{c}</Text>
           </Pressable>
@@ -150,41 +164,75 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
             </View>
           </GestureDetector>
         ) : null}
-        <View style={{ flex: 1 }}>
-          <TextInput
-            ref={inputRef}
-            testID="composer-input"
-            style={{
-              backgroundColor: p.fill,
-              borderWidth: 1,
-              borderColor: p.fill2,
-              borderRadius: 14,
-              paddingHorizontal: 14,
-              paddingVertical: 10,
-              fontSize: p.font(15),
-              color: p.fg1,
-              maxHeight: 120,
-            }}
-            value={input}
-            onChangeText={setInput}
-            placeholder={recording ? '正在听…' : '和小舟说点什么…'}
-            placeholderTextColor={p.fg3}
-            multiline
-            onSubmitEditing={submit}
-            submitBehavior="blurAndSubmit"
-            returnKeyType="send"
-          />
-          {plateOverlayOn ? (
-            <GestureDetector gesture={plateGesture}>
-              <View
-                testID="composer-plate-overlay"
-                accessible={false}
-                importantForAccessibility="no"
-                style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-              />
-            </GestureDetector>
-          ) : null}
-        </View>
+        {/* 文本输入按身份（§6.0，判据 drivingMode.ts::composerInputMode）：
+            A 手持=常驻 / B 支架=折叠成键盘键 / C 可信车载平板=隐藏。非行车一律 'always'。 */}
+        {inputMode === 'hidden' ? (
+          <View style={{ flex: 1 }} />
+        ) : (
+          <View style={{ flex: 1, flexDirection: 'row', gap: 8, alignItems: 'flex-end' }}>
+            {inputMode === 'folded' ? (
+              <Pressable
+                testID="composer-keyboard"
+                accessibilityRole="button"
+                accessibilityLabel={inputOpen ? '收起键盘' : '打开键盘'}
+                onPress={() => setInputOpen(!inputOpen)}
+                style={{
+                  width: target,
+                  height: target,
+                  borderRadius: RADIUS.full,
+                  backgroundColor: p.fill,
+                  borderWidth: 1,
+                  borderColor: inputOpen ? p.accent : p.fill2,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                {iconRuntimeAvailable() ? (
+                  <Icon name="keyboard" size={22} color={inputOpen ? p.accent : p.fg2} />
+                ) : (
+                  <Text style={{ color: inputOpen ? p.accent : p.fg2, fontSize: p.font(16) }}>⌨</Text>
+                )}
+              </Pressable>
+            ) : null}
+            {inputMode === 'folded' && !inputOpen ? null : (
+              <View style={{ flex: 1 }}>
+                <TextInput
+                  ref={inputRef}
+                  testID="composer-input"
+                  style={{
+                    backgroundColor: p.fill,
+                    borderWidth: 1,
+                    borderColor: p.fill2,
+                    borderRadius: 14,
+                    paddingHorizontal: 14,
+                    paddingVertical: 10,
+                    fontSize: p.font(15),
+                    color: p.fg1,
+                    maxHeight: 120,
+                  }}
+                  value={input}
+                  onChangeText={setInput}
+                  placeholder={recording ? '正在听…' : '和小舟说点什么…'}
+                  placeholderTextColor={p.fg3}
+                  multiline
+                  onSubmitEditing={submit}
+                  submitBehavior="blurAndSubmit"
+                  returnKeyType="send"
+                />
+                {plateOverlayOn ? (
+                  <GestureDetector gesture={plateGesture}>
+                    <View
+                      testID="composer-plate-overlay"
+                      accessible={false}
+                      importantForAccessibility="no"
+                      style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+                    />
+                  </GestureDetector>
+                ) : null}
+              </View>
+            )}
+          </View>
+        )}
         {busy ? (
           <Pressable
             onPress={onInterrupt}
@@ -196,15 +244,20 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
         {/* 发送键改圆形极光图标（B2 出账④，对标小艺 / 小爱）。虹彩纪律三处之一不变，只是从矩形「发送」
             变成圆形图标；Maestro 流都按 id 驱动（`grep '"发送"' e2e/*.yaml` 为空，核过）。
             svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
+        {/* ⚠ C 身份行车档没有输入框 ⇒ 这枚键恒无字可发：显式 disabled + 降透明度，
+            但**仍然在场**——§6「目标 ≥56dp」的读数（T13 步骤 3 的 composer-send）要有演员。
+            「一枚永远点不动的键」是这条设计的代价，记在 §6.3 交泓舟看。 */}
         <Pressable
           testID="composer-send"
           accessibilityRole="button"
           accessibilityLabel="发送"
+          disabled={inputMode === 'hidden'}
           onPress={submit}
           style={{
             experimental_backgroundImage: AURORA.gradient,
-            width: scale(44, 'target', fontScale),
-            height: scale(44, 'target', fontScale),
+            opacity: inputMode === 'hidden' ? 0.45 : 1,
+            width: driving ? target : scale(44, 'target', fontScale),
+            height: driving ? target : scale(44, 'target', fontScale),
             borderRadius: RADIUS.full,
             alignItems: 'center',
             justifyContent: 'center',

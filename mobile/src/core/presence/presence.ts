@@ -19,6 +19,7 @@
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
 import { sortCommitments, type DockItem } from './commitment'
+import { sheetResident } from './drivingMode'
 
 import type { TurnSource } from '../session/store'
 
@@ -30,6 +31,8 @@ export interface VoiceFacts {
   override: 'open' | 'dismissed' | null
   answer: boolean
   card: boolean
+  /** 本轮 final 到达时刻（`turnMeta[id].finalAt`）；行车档 +3s 回落读它。0 / 缺省 = 还没答完 */
+  answeredAt?: number
 }
 
 /** 自适应 detent（方案 §5.2 规则 3）：只录音 / 有回答 / 有主卡或长任务 */
@@ -158,6 +161,10 @@ export const ARMED_CAPSULE_MS = 3000
 /** 2s 短提示（取消 / 回声）的显示时长（方案 §5.1.1 / §5.2 规则 5） */
 export const NOTICE_SHOW_MS = 2000
 
+/** 行车档答完多久内容回落（§5.2 规则 3 行车条款「TTS 结束后 +3s 自动收起」）。
+ *  「收起」= 内容回落到只球 + 胶囊（detent 0.4）；**层本身常驻不消失**（§5 第 15 条的合并写法）。 */
+export const DRIVING_SHEET_SETTLE_MS = 3000
+
 export function derivePresence(i: PresenceInput): PresenceSnapshot {
   // ── transport ──
   const transport: PresenceSnapshot['transport'] =
@@ -270,10 +277,18 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   const voice = i.voice
   const capturing = capture === 'listening' || capture === 'recognizing'
   const voiceTurnLive = !!voice && voice.turnSource !== 'text' && (agent !== 'idle' || hasAttention)
-  const sheetOpen = capturing || voice?.override === 'open' || (voice?.override !== 'dismissed' && voiceTurnLive)
+  // 行车档 B/C：层**常驻**（§6「语音层常驻」）——没有在飞轮也开着。A（手持）不常驻：
+  // 可能是乘客在打字。常驻**不是不可收**：用户下拉过这一轮（override='dismissed'）仍然收得起来。
+  const resident = sheetResident(i.identity, i.driving)
+  const sheetOpen =
+    capturing || voice?.override === 'open' || (voice?.override !== 'dismissed' && (voiceTurnLive || resident))
   const input: PresenceSnapshot['input'] = sheetOpen ? 'voice-sheet' : 'composer'
+  // 行车档答后回落（§5.2 规则 3 行车条款）：答完、没在播报、过了 3s ⇒ 内容回落到只球 + 胶囊。
+  // 有卡 / 长任务那一档压过它（一屏一卡要看得见）。非行车不受影响——这是行车条款。
+  const settled =
+    i.driving && !!voice?.answeredAt && agent !== 'speaking' && i.now - voice.answeredAt >= DRIVING_SHEET_SETTLE_MS
   const sheetDetent: SheetDetent =
-    commitment.some((c) => c.kind === 'task') || !!voice?.card ? 0.78 : voice?.answer ? 0.62 : 0.4
+    commitment.some((c) => c.kind === 'task') || !!voice?.card ? 0.78 : voice?.answer && !settled ? 0.62 : 0.4
 
   return {
     now: i.now,

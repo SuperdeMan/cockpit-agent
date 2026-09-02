@@ -13,6 +13,7 @@ import { isVisionCapturing, subscribeVisionCapturing } from '@/core/vision/frame
 import {
   ARMED_CAPSULE_MS,
   derivePresence,
+  DRIVING_SHEET_SETTLE_MS,
   ERROR_SHOW_MS,
   NOTICE_SHOW_MS,
   RECONNECTING_GRACE_MS,
@@ -97,6 +98,8 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
     override: sheetOverride && sheetOverride.turnId === latestTurnId ? sheetOverride.mode : null,
     answer: !!turn.assistant?.text,
     card: !!turn.assistant?.uiCard,
+    // B4-11：本轮 final 到达时刻（行车档 +3s 内容回落读它）。0 = 还没答完
+    answeredAt: (latestTurnId && turnMeta[latestTurnId]?.finalAt) || 0,
   }
 
   // 在飞轮 + 过程区
@@ -130,6 +133,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
   const needsTick =
     pendingOps.length > 0 || // 确认卡倒计时（每秒要变）
     (drivingEdge.falseAt > drivingEdge.trueAt && now - drivingEdge.falseAt < DRIVING_EXIT_GRACE_MS) || // 行车档 30s 退出宽限（到点要重渲一次才退得出）
+    (drivingNow && !!voice.answeredAt && now - voice.answeredAt < DRIVING_SHEET_SETTLE_MS) || // 行车档答后 3s 内容回落（到点要重渲一次才落得下去）
     !!active?.processActive || // 长任务 8s 门槛
     (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
     (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显

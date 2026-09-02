@@ -6,7 +6,20 @@ import type { FontScalePref } from '@/core/settings/store'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
-export function FollowUpChips({ p, fontScale, chips, onSend }: { p: Palette; fontScale: FontScalePref; chips: FollowUpChip[]; onSend(text: string): void }) {
+export function FollowUpChips({
+  p,
+  fontScale,
+  chips,
+  target = TARGET.parked,
+  onSend,
+}: {
+  p: Palette
+  fontScale: FontScalePref
+  chips: FollowUpChip[]
+  /** 触控目标（dp）：行车档 TARGET.driving=56，其余 48（B4-11 / §6） */
+  target?: number
+  onSend(text: string): void
+}) {
   if (!chips.length) return null
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 2 }} style={{ alignSelf: 'stretch' }}>
@@ -16,7 +29,7 @@ export function FollowUpChips({ p, fontScale, chips, onSend }: { p: Palette; fon
           testID="followup-chip"
           accessibilityRole="button"
           onPress={() => onSend(c.text)}
-          style={{ minHeight: scale(TARGET.parked, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 14, borderRadius: RADIUS.full, backgroundColor: p.accentSoft, borderWidth: 1, borderColor: p.accent }}
+          style={{ minHeight: scale(target, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 14, borderRadius: RADIUS.full, backgroundColor: p.accentSoft, borderWidth: 1, borderColor: p.accent }}
         >
           <Text style={{ color: p.accent, fontSize: scale(TYPE.caption + 1, 'text', fontScale) }}>{c.label}</Text>
         </Pressable>

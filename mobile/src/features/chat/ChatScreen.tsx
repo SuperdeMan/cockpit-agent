@@ -25,7 +25,7 @@ import { settingsStore } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
 import { useReduceMotion } from '../../core/a11y/reduceMotion'
 import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
-import { sheetResident } from '../../core/presence/drivingMode'
+import { composerInputMode, sheetResident } from '../../core/presence/drivingMode'
 import { MIC_LABEL } from '../../core/presence/presence'
 import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
@@ -461,7 +461,7 @@ function ChatBody({
           data={messages}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -469,6 +469,7 @@ function ChatBody({
                 p={p}
                 msg={item}
                 loops={loopsAnimated(motionEnv)}
+                driving={snapshot.driving}
                 confirmActive={confirmActiveOf(item)}
                 inlineConfirm={!(v2 && dock)}
                 uncertain={uncertainIds.includes(item.id)}
@@ -503,6 +504,8 @@ function ChatBody({
           s2sNotice={s2sNotice}
           candidates={core.candidates}
           motion={{ orb: orbTempo(snapshot, motionEnv), loops: loopsAnimated(motionEnv) }}
+          driving={snapshot.driving}
+          split={layout.mode === 'driving-landscape'}
           blurTarget={blurTarget}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
           onInterrupt={interruptAndListen}
@@ -602,6 +605,8 @@ function ChatBody({
         // 判据仍是 orbPolicy，这一条例外太小不值得进纯函数（B4 §6.2 记一句）
         orbAnimated={composerOrbAnimated(snapshot, motionEnv) && layout.mode !== 'tabletop'}
         orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
+        driving={snapshot.driving}
+        inputMode={composerInputMode(snapshot.identity, snapshot.driving)}
         onTap={onOrbTap}
       />
     </View>

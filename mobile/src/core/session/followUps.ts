@@ -10,11 +10,12 @@ export interface FollowUpChip {
 
 export const MAX_CHIPS = 4
 
-export function followUpChips(followUp: string | undefined, cand: CandidateState): FollowUpChip[] {
+/** @param max 上限；行车档给 3（§6「chips ≤3」），其余用 MAX_CHIPS */
+export function followUpChips(followUp: string | undefined, cand: CandidateState, max = MAX_CHIPS): FollowUpChip[] {
   const out: FollowUpChip[] = []
   const push = (label: string, text: string) => {
     const t = text.trim()
-    if (!t || out.some((c) => c.text === t) || out.length >= MAX_CHIPS) return
+    if (!t || out.some((c) => c.text === t) || out.length >= max) return
     out.push({ label: label.trim() || t, text: t })
   }
   if (followUp) push(followUp, followUp)

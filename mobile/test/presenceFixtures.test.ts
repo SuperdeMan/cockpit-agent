@@ -82,3 +82,14 @@ test('语音层三档 detent 各有一条 input=voice-sheet 的样本（B2 T3）
   const detents = new Set(open.map((f) => f.snapshot.sheetDetent))
   expect([0.4, 0.62, 0.78].filter((d) => !detents.has(d as 0.4 | 0.62 | 0.78))).toEqual([])
 })
+
+// B4-11：画廊要能看见行车档（三条样本都 producible——手动开关就能造）。
+// 一条断言里一次摆出三格：分成三条 expect 的话第一条红就看不见后两条了。
+test('行车档三条样本能被 derivePresence 本尊造出来（常驻 / 播报 / 建议）', () => {
+  const by = new Map(presenceFixtures().map((f) => [f.label, f]))
+  expect([
+    by.get('driving-resident-C')?.snapshot.input,
+    by.get('driving-answer-B')?.snapshot.primary,
+    by.get('driving-suggest')?.snapshot.capsule?.action,
+  ]).toEqual(['voice-sheet', 'speaking', 'enable-driving'])
+})

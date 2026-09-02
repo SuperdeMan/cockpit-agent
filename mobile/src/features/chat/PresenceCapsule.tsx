@@ -31,8 +31,12 @@ export function PresenceCapsule({
         // 接了 onPress 就是按钮：role 与热区一起改（评审「别踩」①）——视觉仍 26dp，
         // hitSlop 补到 48dp（Material 触控目标是**可点区域**不是球体，方案 §8.1）
         accessibilityRole={onPress ? 'button' : 'text'}
-        accessibilityHint={onPress ? '打开语音层' : undefined}
-        hitSlop={onPress ? Math.ceil((TARGET.parked - 26) / 2) : undefined}
+        // 建议胶囊点按 = 开行车档（B4-10）：提示语要说对，action 由 derivePresence 给
+        accessibilityHint={onPress ? (c.action === 'enable-driving' ? '开启行车档' : '打开语音层') : undefined}
+        // 行车档目标 56（B4-11 / §6「目标 ≥56dp」）：视觉仍 26dp，靠 hitSlop 补到位。
+        // ⚠ `maestro hierarchy` 量的是**视觉 bounds**，量不到 hitSlop——target_probe 上这一个
+        //   FAIL 是读法的限制不是缺陷（T13 步骤 3 单列说明）
+        hitSlop={onPress ? Math.ceil(((snapshot.driving ? TARGET.driving : TARGET.parked) - 26) / 2) : undefined}
         // §8.1 partial 节流：逐 token 的 partial 交给转写区按**稳定 segment** 播（B2 T4 那一层本来就是节流过的粒度），
         // 胶囊在识别中闭嘴——两个 live region 同时说会让 TalkBack 不断打断自己（B4-9）
         accessibilityLiveRegion={snapshot.capture === 'recognizing' ? 'none' : 'polite'}

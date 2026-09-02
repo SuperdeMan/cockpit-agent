@@ -59,6 +59,13 @@ export function presenceFixtures(): PresenceFixture[] {
       turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
       voice: { turnSource: 'ptt', override: 'dismissed', answer: true, card: false },
     }),
+    // B4-11 行车档：常驻（C）/ 播报中（B）/ 建议胶囊。三条都 producible——手动开关 + 角色就能造
+    mk('driving-resident-C', { driving: true, identity: 'trusted-tablet' }),
+    mk('driving-answer-B', {
+      driving: true, identity: 'mount', speaking: true,
+      voice: { turnSource: 'handsfree', override: null, answer: true, card: false },
+    }),
+    mk('driving-suggest', { drivingSuggest: true, identity: 'trusted-tablet' }),
     mk('looking', { visionCapturing: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
     mk('offline-with-confirm', { connStatus: 'closed', connChangedAt: NOW - 30_000, pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }], queued: 2 }),

@@ -25,16 +25,26 @@ const PROACTIVE_LABEL: Record<string, string> = {
   reminder_fired: '主动播报 · 提醒到点',
 }
 
-function ProcessFold({ p, msg }: { p: Palette; msg: Msg }) {
+function ProcessFold({ p, msg, driving }: { p: Palette; msg: Msg; driving: boolean }) {
   const [open, setOpen] = useState(false)
   const steps = msg.process || []
   if (!steps.length) return null
-  const expanded = msg.processActive || open
+  // 行车极简（B4-11 / §6「过程区单行」）。两个来源都算：`Msg.driving` 是 Edge 按 VAL 标在
+  // **这条气泡**上的事实（types.ts:28 原话「行车态（由 Edge 按 VAL 标注）：行车极简、不可展开」），
+  // `driving` 是**此刻**的行车档——历史气泡在行车时也不该展开成十行。
+  const terse = !!msg.driving || driving
+  const expanded = !terse && (msg.processActive || open)
   return (
     <View style={{ gap: 4 }}>
-      <Pressable onPress={() => setOpen(!open)} disabled={!!msg.processActive}>
-        <Text style={{ color: p.teal, fontSize: p.font(11) }}>
-          {msg.processActive ? '⟳ 处理中…' : `${open ? '▾' : '▸'} 过程 ${steps.length} 步`}
+      <Pressable onPress={() => setOpen(!open)} disabled={terse || !!msg.processActive}>
+        <Text testID="process-fold" numberOfLines={1} style={{ color: p.teal, fontSize: p.font(11) }}>
+          {msg.processActive
+            ? terse
+              ? `⟳ ${steps[steps.length - 1]?.label || '处理中'}…`
+              : '⟳ 处理中…'
+            : terse
+              ? `过程 ${steps.length} 步`
+              : `${open ? '▾' : '▸'} 过程 ${steps.length} 步`}
         </Text>
       </Pressable>
       {expanded &&
@@ -75,11 +85,13 @@ export interface BubbleProps {
   receipt?: Receipt | null
   /** 循环类小动效要不要动（reduce-motion，判据 orbPolicy.loopsAnimated；B4-3） */
   loops: boolean
+  /** 此刻行车档（§6「过程区单行」）：与气泡自带的 `Msg.driving` 取或 */
+  driving: boolean
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, loops, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   if (msg.role === 'user') {
@@ -184,7 +196,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             发送状态未知（网络刚断过；连上后若无回音请再说一次）
           </Text>
         ) : null}
-        <ProcessFold p={p} msg={msg} />
+        <ProcessFold p={p} msg={msg} driving={driving} />
         {msg.rejected ? (
           <Text style={{ color: p.fg3, fontSize: p.font(12), fontStyle: 'italic' }}>
             已忽略疑似环境人声（点错了可重说一遍）

@@ -60,3 +60,19 @@ test('去重：候选 chip 与另一个候选撞同一句时只留一条（上�
   const chips = followUpChips(undefined, cand)
   expect(chips.map((c) => c.text)).toEqual(['换一批', '查深圳空气质量']) // 只 2 条，离 MAX_CHIPS 还远
 })
+
+// B4-11 §6「chips ≤3」：行车档给 max=3。上一条用例（MAX_CHIPS）证明不了这件事——
+// 它量的是默认值那一档；这条量的是**传进来的那个 max 真的在管事**。
+test('max 参数：行车档 3 条封顶，且留下的是排在前面的三条（顺序判据不变）', () => {
+  const cand: CandidateState = {
+    ...emptyCandidates(),
+    intentChoice: { options: [{ label: '查天气', send_text: '查深圳天气' }, { label: '查空气', send_text: '查深圳空气质量' }] },
+    category: { keyword: '咖啡', page: 1 },
+    poiNames: ['a', 'b'],
+  }
+  const parked = followUpChips('要不要看明天的？', cand)
+  const driving = followUpChips('要不要看明天的？', cand, 3)
+  expect(parked).toHaveLength(MAX_CHIPS)
+  expect(driving).toHaveLength(3)
+  expect(driving.map((c) => c.text)).toEqual(parked.slice(0, 3).map((c) => c.text))
+})

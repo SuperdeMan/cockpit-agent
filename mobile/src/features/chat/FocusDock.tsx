@@ -46,6 +46,7 @@ export function FocusDock(props: FocusDockProps) {
           key={`${d.kind}:${'what' in d ? d.what : 'reason' in d ? d.reason : ''}`}
           p={p}
           fontScale={fontScale}
+          driving={props.snapshot.driving}
           d={d}
           solid={solid}
           onReenableBargeIn={props.onReenableBargeIn}
@@ -72,7 +73,8 @@ function CommitmentCard({
   // now 停在挂载那一刻。状态画廊里它反而会走（静态 snapshot、引用稳定）：**取证屏与生产
   // 路径在这一点上的输入形态相反，画廊绿证明不了生产绿**（第 2 批坑⑤）。
   const now = snapshot.now
-  const h = scale(TARGET.parked, 'target', fontScale)
+  // B4-11 §6「目标 ≥56dp」：行车 56 / 泊车 48（TARGET 是唯一的一份，不在这里写数）
+  const h = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
   const border = item.kind === 'confirm' ? 'rgba(245,158,11,0.38)' : p.line
   // 右侧标签的让位（评审 ❌-1）：200% 字号下它随标题同比放大、把标题挤成「这..」。
   // 隐藏时把分类并进标题的读屏 label，信息不丢，只是不再抢那一行。
@@ -181,12 +183,14 @@ const DEGRADATION_TEXT: Record<Exclude<Degradation['kind'], 'transport_unknown' 
 function DegradationRow({
   p,
   fontScale,
+  driving,
   d,
   solid,
   onReenableBargeIn,
 }: {
   p: Palette
   fontScale: FontScalePref
+  driving: boolean
   d: Degradation
   solid: string
   onReenableBargeIn?(): void
@@ -206,7 +210,7 @@ function DegradationRow({
     >
       <Text style={{ color: p.fg2, fontSize: scale(TYPE.caption, 'text', fontScale), flex: 1 }}>{text}</Text>
       {action ? (
-        <Pressable accessibilityRole="button" onPress={action.run} style={{ minHeight: scale(TARGET.parked, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 8 }}>
+        <Pressable accessibilityRole="button" onPress={action.run} style={{ minHeight: scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale), justifyContent: 'center', paddingHorizontal: 8 }}>
           <Text style={{ color: p.accent, fontSize: scale(TYPE.caption, 'text', fontScale) }}>{action.label}</Text>
         </Pressable>
       ) : null}

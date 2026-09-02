@@ -344,3 +344,51 @@ describe('B4-10 行车档建议胶囊（§6 触发③：只建议不自动切）
     ).toBe('red')
   })
 })
+
+describe('B4-11 行车档下的语音层（§6 常驻 + §5.2 规则 3 行车条款）', () => {
+  const drivingB = { driving: true, identity: 'mount' as const }
+  const answered = (ago: number, over: Partial<PresenceInput> = {}) =>
+    base({
+      ...drivingB,
+      voice: { turnSource: 'handsfree', override: null, answer: true, card: false, answeredAt: NOW - ago },
+      ...over,
+    })
+  test('B/C 行车：无轮也常驻（input=voice-sheet、detent 0.4）', () => {
+    expect(derivePresence(base(drivingB)).input).toBe('voice-sheet')
+    expect(derivePresence(base(drivingB)).sheetDetent).toBe(0.4)
+    expect(derivePresence(base({ driving: true, identity: 'trusted-tablet' })).input).toBe('voice-sheet')
+  })
+  test('反例：A（手持）行车不常驻——可能是乘客在打字', () => {
+    expect(derivePresence(base({ driving: true, identity: 'handheld' })).input).toBe('composer')
+  })
+  test('答完 3s 内 detent 仍 0.62（还没到点）', () => {
+    expect(derivePresence(answered(1_000)).sheetDetent).toBe(0.62)
+  })
+  test('答完满 3s 回落 0.4（层不消失，只是内容回落）', () => {
+    expect(derivePresence(answered(3_000)).sheetDetent).toBe(0.4)
+  })
+  test('播报中不回落（answeredAt 早于 3s 但 speaking）', () => {
+    expect(derivePresence(answered(10_000, { speaking: true })).sheetDetent).toBe(0.62)
+  })
+  test('有卡仍 0.78（一屏一卡要看得见）', () => {
+    const withCard = base({
+      ...drivingB,
+      voice: { turnSource: 'handsfree', override: null, answer: true, card: true, answeredAt: NOW - 10_000 },
+    })
+    expect(derivePresence(withCard).sheetDetent).toBe(0.78)
+  })
+  test('常驻不是不可收：用户下拉过这一轮仍收得起来', () => {
+    const dismissed = base({
+      ...drivingB,
+      voice: { turnSource: 'handsfree', override: 'dismissed', answer: true, card: false },
+    })
+    expect(derivePresence(dismissed).input).toBe('composer')
+  })
+  test('反例：非行车时 answeredAt 不影响 detent（3s 回落只是行车条款）', () => {
+    const parked = base({
+      voice: { turnSource: 'ptt', override: null, answer: true, card: false, answeredAt: NOW - 10_000 },
+      turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
+    })
+    expect(derivePresence(parked).sheetDetent).toBe(0.62)
+  })
+})

@@ -16,10 +16,11 @@ import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } fr
 import { edgeGlowActive, type OrbTempo } from '@/core/presence/orbPolicy'
 import type { PresenceSnapshot } from '@/core/presence/presence'
 import type { CandidateState } from '@/core/session/candidates'
-import { followUpChips } from '@/core/session/followUps'
+import { followUpChips, MAX_CHIPS } from '@/core/session/followUps'
 import type { TurnView } from '@/core/session/turnView'
 import type { FontScalePref } from '@/core/settings/store'
 import { CardRenderer } from '@/features/cards/CardRenderer'
+import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 
 import { FollowUpChips } from './FollowUpChips'
 import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
@@ -46,6 +47,10 @@ export interface VoiceSheetProps {
   visionIds: readonly string[]
   /** 动效策略（判据 core/presence/orbPolicy.ts；B4-3）：大球节律 + 循环类小动效动不动 */
   motion: { orb: OrbTempo; loops: boolean }
+  /** 行车档（`snapshot.driving`）：120dp 球、18pt 回答、按钮 56、一屏一卡、chips ≤3（§6） */
+  driving: boolean
+  /** 横屏车载（`layout.mode === 'driving-landscape'`）：左 40% 球 + 转写 / 右 60% 回答 + 卡 */
+  split: boolean
   /** 被糊的背景（B4-8 / §5.11）：非 null ⇒ 真模糊路径（BlurView + 更薄的 tint）；
    *  null ⇒ 回落 G1-tint（减少透明度 / 行车档 / ref 还没挂上）。判据全在 ChatScreen，本组件只消费 */
   blurTarget: RefObject<View | null> | null
@@ -106,7 +111,13 @@ export function VoiceSheet(props: VoiceSheetProps) {
   const assistant = turn.assistant
   const busy = snapshot.agent !== 'idle'
   const body = scale(TYPE.body, 'text', fontScale)
-  const target48 = scale(TARGET.parked, 'target', fontScale)
+  const driving = props.driving
+  // B4-11 §6「目标 ≥56dp」：层内按钮 / chips 行车 56、泊车 48
+  const targetBtn = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
+  const capturing = snapshot.capture === 'listening' || snapshot.capture === 'recognizing'
+  // 行车档答后回落（§5.2 规则 3 行车条款）：detent 已回 0.4 且此刻不忙 ⇒ 层里只剩球 + 胶囊。
+  // **层不消失**（常驻，§6），消失的是内容。判据在 derivePresence 的 sheetDetent，这里只读结果。
+  const terse = driving && snapshot.sheetDetent === 0.4 && snapshot.agent === 'idle' && !capturing
   const capsuleColor =
     snapshot.capsule?.tone === 'red'
       ? p.red
@@ -173,65 +184,104 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 </Text>
               </View>
             ) : null}
-            <ScrollView contentContainerStyle={{ padding: 16, gap: 12, alignItems: 'center' }} keyboardShouldPersistTaps="handled">
-              {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条 */}
-              {user ? (
-                <Text
-                  testID="voice-sheet-transcript"
-                  accessibilityLiveRegion="polite"
-                  style={{
-                    color: p.fg1,
-                    fontSize: scale(20, 'text', fontScale),
-                    lineHeight: scale(28, 'line', fontScale),
-                    textAlign: 'center',
-                  }}
+            <ScrollView
+              contentContainerStyle={
+                props.split
+                  ? { padding: 16, gap: 16, flexDirection: 'row', alignItems: 'flex-start' }
+                  : { padding: 16, gap: 12, alignItems: 'center' }
+              }
+              keyboardShouldPersistTaps="handled"
+            >
+              {/* 横屏车载 split（§6「横屏 40:60」）：左 40% 球 + 转写 + 胶囊 / 右 60% 回答 + chips + 卡。
+                  **非 split 时这两个容器只是透明分组**（同样 gap 12 + 居中 + 撑满宽），逐项排版不变。 */}
+              <View
+                style={
+                  props.split
+                    ? { width: '40%', gap: 12, alignItems: 'center' }
+                    : { alignSelf: 'stretch', gap: 12, alignItems: 'center' }
+                }
+              >
+                {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条。
+                    行车档回落后（terse）只剩球 + 胶囊，转写也收掉 */}
+                {!terse && user ? (
+                  <Text
+                    testID="voice-sheet-transcript"
+                    accessibilityLiveRegion="polite"
+                    style={{
+                      color: p.fg1,
+                      fontSize: scale(20, 'text', fontScale),
+                      lineHeight: scale(28, 'line', fontScale),
+                      textAlign: 'center',
+                    }}
+                  >
+                    {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
+                    {user.text}
+                    {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
+                  </Text>
+                ) : null}
+                {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。
+                    行车档 120dp（§6），泊车 88 */}
+                <AuroraOrb size={driving ? 120 : 88} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+                {/* 胶囊文案（同 §4.3，此处放大） */}
+                {snapshot.capsule ? (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    {snapshot.capsule.live ? (
+                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
+                    ) : null}
+                    <Text style={{ color: capsuleColor, fontSize: body }}>{snapshot.capsule.text}</Text>
+                  </View>
+                ) : null}
+              </View>
+              {terse ? null : (
+                <View
+                  style={
+                    props.split ? { flex: 1, gap: 12 } : { alignSelf: 'stretch', gap: 12, alignItems: 'center' }
+                  }
                 >
-                  {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
-                  {user.text}
-                  {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
-                </Text>
-              ) : null}
-              {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内 */}
-              <AuroraOrb size={88} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
-              {/* 胶囊文案（同 §4.3，此处放大） */}
-              {snapshot.capsule ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  {snapshot.capsule.live ? (
-                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
+                  {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots。行车档 18pt（§6） */}
+                  {assistant?.pending ? <ThinkDots color={p.accent} animated={props.motion.loops} /> : null}
+                  {assistant?.text ? (
+                    <Text
+                      testID="voice-sheet-answer"
+                      accessibilityLiveRegion="polite"
+                      style={{
+                        color: assistant.error ? p.red : p.fg1,
+                        fontSize: scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale),
+                        lineHeight: scale(driving ? 28 : 24, 'line', fontScale),
+                        alignSelf: 'stretch',
+                      }}
+                    >
+                      {assistant.text}
+                      {assistant.streaming ? <StreamCursor h={scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale)} animated={props.motion.loops} /> : null}
+                    </Text>
                   ) : null}
-                  <Text style={{ color: capsuleColor, fontSize: body }}>{snapshot.capsule.text}</Text>
+                  {assistant && props.interruptedIds.includes(assistant.id) ? (
+                    <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
+                  ) : null}
+                  {/* follow-up chips（方案 §5.2 图）：答完了才给——流式/思考中给等于催人打断自己。
+                      行车档 ≤3 条、行高 56（§6） */}
+                  {assistant && !assistant.streaming && !assistant.pending ? (
+                    <FollowUpChips
+                      p={p}
+                      fontScale={fontScale}
+                      target={driving ? TARGET.driving : TARGET.parked}
+                      chips={followUpChips(assistant.followUp, props.candidates, driving ? 3 : MAX_CHIPS)}
+                      onSend={props.onSend}
+                    />
+                  ) : null}
+                  {/* 卡片：泊车走注册表全量渲（card_group 的主卡/折叠由 CardRenderer 判，这里不判）；
+                      行车档走压缩卡「标题 + ≤2 字段 + 1 主按钮」（§6 一屏一卡）——**不改 34 个渲染器** */}
+                  {assistant?.uiCard ? (
+                    <View style={{ alignSelf: 'stretch' }}>
+                      {driving ? (
+                        <DrivingCardSummary p={p} fontScale={fontScale} card={assistant.uiCard} onSend={props.onSend} />
+                      ) : (
+                        <CardRenderer p={p} card={assistant.uiCard} onSend={props.onSend} />
+                      )}
+                    </View>
+                  ) : null}
                 </View>
-              ) : null}
-              {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots */}
-              {assistant?.pending ? <ThinkDots color={p.accent} animated={props.motion.loops} /> : null}
-              {assistant?.text ? (
-                <Text
-                  testID="voice-sheet-answer"
-                  accessibilityLiveRegion="polite"
-                  style={{
-                    color: assistant.error ? p.red : p.fg1,
-                    fontSize: scale(TYPE.body + 1, 'text', fontScale),
-                    lineHeight: scale(24, 'line', fontScale),
-                    alignSelf: 'stretch',
-                  }}
-                >
-                  {assistant.text}
-                  {assistant.streaming ? <StreamCursor h={scale(TYPE.body + 1, 'text', fontScale)} animated={props.motion.loops} /> : null}
-                </Text>
-              ) : null}
-              {assistant && props.interruptedIds.includes(assistant.id) ? (
-                <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
-              ) : null}
-              {/* follow-up chips（方案 §5.2 图）：答完了才给——流式/思考中给等于催人打断自己 */}
-              {assistant && !assistant.streaming && !assistant.pending ? (
-                <FollowUpChips p={p} fontScale={fontScale} chips={followUpChips(assistant.followUp, props.candidates)} onSend={props.onSend} />
-              ) : null}
-              {/* 卡片：card_group 的主卡/折叠由 CardRenderer 的注册表决定（T8），这里不判 */}
-              {assistant?.uiCard ? (
-                <View style={{ alignSelf: 'stretch' }}>
-                  <CardRenderer p={p} card={assistant.uiCard} onSend={props.onSend} />
-                </View>
-              ) : null}
+              )}
             </ScrollView>
             <View
               style={{
@@ -247,7 +297,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 testID="voice-sheet-collapse"
                 accessibilityRole="button"
                 onPress={props.onCollapse}
-                style={{ minHeight: target48, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
+                style={{ minHeight: targetBtn, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
               >
                 <Text style={{ color: p.fg2, fontSize: body }}>⌄ 收起</Text>
               </Pressable>
@@ -256,7 +306,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                   testID="voice-sheet-interrupt"
                   accessibilityRole="button"
                   onPress={props.onInterrupt}
-                  style={{ minHeight: target48, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
+                  style={{ minHeight: targetBtn, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
                 >
                   <Text style={{ color: p.amber, fontSize: body }}>■ 打断</Text>
                 </Pressable>
