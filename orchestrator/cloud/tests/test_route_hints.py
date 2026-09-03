@@ -585,7 +585,7 @@ def test_charging_hints_never_hijack_device_charging():
 
 
 def test_manual_production_badcases_are_deterministically_recovered():
-    """2026-09-03 f2dcb46 真栈：10 个错域 + 1 个方差问法必须统一落 manual。"""
+    """2026-09-03 两版生产扩面出现的手册错域必须统一落 manual。"""
     import pathlib
 
     from agents._sdk.manifest import load_manifest
@@ -604,6 +604,7 @@ def test_manual_production_badcases_are_deterministically_recovered():
         ("支持 Android Auto 吗", "info.search"),
         ("发动机机油多久换一次", "chitchat.talk"),
         ("三元锂电池平时充到多少", "battery.query"),
+        ("车辆长期停放时电池怎么保养", "chitchat.talk"),
         ("SU7 发动机排量多大", "info.search"),
     )
     for text, initial in cases:
@@ -628,6 +629,8 @@ def test_manual_recovery_hints_preserve_adjacent_non_manual_intents():
         ("哪些车型支持 Android Auto", "info.search"),
         ("用手机怎么呼叫道路救援", "chitchat.talk"),
         ("研究三元锂电池技术", "research.run"),
+        ("研究车辆长期停放的电池衰减", "research.run"),
+        ("手机长期不用电池怎么保养", "chitchat.talk"),
         ("帮我换空调滤芯", "chitchat.talk"),
     )
     for text, initial in cases:

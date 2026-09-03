@@ -131,3 +131,11 @@ exemplars:
   source: trace
   added: '2026-09-03'
   tags: [badcase, winter]
+- text: 车停几个月不开时动力电池该怎么养护
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, maintenance, long-storage]
+  note: 长期停放的当前车型电池养护必须查手册，不能套燃油车低压电瓶经验

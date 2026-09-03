@@ -112,6 +112,12 @@
   source: "2026-09-03 production full/repeat probes: 0/3 manual"
   tags: [manual, seen_regression, specification, replace]
 
+- text: 车辆长期停放时电池怎么保养
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 b3a2aed production full probe: chitchat with fuel-car battery advice"
+  tags: [manual, seen_regression, maintenance, replace]
+
 - text: SU7 发动机排量多大
   initial_intents: [info.search]
   expect_final_intents: [manual.query]
@@ -153,6 +159,18 @@
   expect_final_intents: [research.run]
   source: "manual boundary: battery technology research stays research"
   tags: [manual, guardrail, research]
+
+- text: 研究车辆长期停放的电池衰减
+  initial_intents: [research.run]
+  expect_final_intents: [research.run]
+  source: "manual boundary: research request stays research"
+  tags: [manual, guardrail, research]
+
+- text: 手机长期不用电池怎么保养
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "manual boundary: non-vehicle battery maintenance is not vehicle handbook"
+  tags: [manual, guardrail, device]
 
 - text: 帮我换空调滤芯
   initial_intents: [chitchat.talk]
