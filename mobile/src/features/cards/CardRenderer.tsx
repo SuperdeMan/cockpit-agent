@@ -31,6 +31,7 @@ import {
 } from './merchantCards'
 import {
   IntentChoice,
+  ManualEvidence,
   ReminderList,
   ReminderSingle,
   SceneList,
@@ -57,9 +58,9 @@ interface CardProps {
   onSend: SendFn
 }
 
-// 全量卡型（M1 首批 18 键 + M3-1 补齐 16 键 = types.ts 的全部 34 个 type 字符串）。
+// 全量卡型（M1 首批 18 键 + M3-1 补齐 16 键；manual-rag v2 再补 manual 图文卡）。
 // 守卫 test/cards.test.ts **从 types.ts 直接派生**清单逐字比对——不再手抄：
-// 实施计划 §2.6 那句「29 型」就是手抄清单漂移的现成证据（真实是 34）。
+// 实施计划 §2.6 那句「29 型」就是手抄清单漂移的现成证据；当前数量继续由类型派生测试算。
 const REGISTRY: Record<string, (props: CardProps) => ReactNode> = {
   card_group: ({ p, card, onSend }) => <CardGroup p={p} items={card.items || []} onSend={onSend} />,
   weather: ({ p, card, onSend }) => <Weather p={p} card={card} onSend={onSend} />,
@@ -89,6 +90,7 @@ const REGISTRY: Record<string, (props: CardProps) => ReactNode> = {
   scene_card: ({ p, card, onSend }) => <SceneSingle p={p} card={card} onSend={onSend} />,
   scene_list: ({ p, card, onSend }) => <SceneList p={p} card={card} onSend={onSend} />,
   vision_answer: ({ p, card, onSend }) => <VisionAnswer p={p} card={card} onSend={onSend} />,
+  manual: ({ p, card }) => <ManualEvidence p={p} card={card} />,
   payment_qr: ({ p, card, onSend }) => <PaymentQr p={p} card={card} onSend={onSend} />,
   payment_receipt: ({ p, card, onSend }) => <PaymentReceipt p={p} card={card} onSend={onSend} />,
   parking_fee: ({ p, card, onSend }) => <ParkingFee p={p} card={card} onSend={onSend} />,

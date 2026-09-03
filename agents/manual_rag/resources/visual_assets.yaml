@@ -1,0 +1,67 @@
+schema_version: 1
+document_id: xiaomi-su7-2024-user-manual
+source_sha256: ef16d204c2ad711b2aa6c2a5f2a6607cfc2d47ed3f5d5a4e1db4085f75e4705d
+
+# 大幅 JPEG 原样保留；FlateDecode 只接小图标，避免把十几 MB 解码位图重新塞进包。
+max_flate_pixels: 300000
+
+# 按页面视觉位置从上到下绑定。构建时图片数与 labels 数不一致即失败，防止图标错行。
+table_pages:
+  "191":
+    labels:
+      - {caption: 动力电池电量低指示灯}
+      - caption: 乌龟灯（功率受限灯）
+        aliases: [乌龟图标, 小乌龟灯, 仪表上有只乌龟]
+      - {caption: 电子稳定系统故障指示灯}
+      - {caption: 电子稳定系统受限指示灯}
+      - {caption: 制动系统异常指示灯}
+      - {caption: 防抱死系统故障指示灯}
+      - {caption: 驻车制动故障指示灯}
+      - {caption: 自动驻车故障指示灯}
+      - {caption: 转向助力系统故障指示灯}
+      - {caption: 空气悬架故障指示灯}
+  "192":
+    labels:
+      - {caption: 胎压监测报警指示灯}
+      - {caption: 自适应前照明系统故障指示灯}
+      - {caption: 外灯照明系统故障指示灯}
+      - {caption: 后雾灯}
+      - {caption: 前向紧急制动辅助功能异常指示灯}
+      - {caption: 车道保持辅助功能异常指示灯}
+      - {caption: Ready 指示灯}
+      - {caption: 自动驻车指示灯}
+      - {caption: 近光灯}
+      - {caption: 位置灯}
+      - {caption: 左转向}
+      - {caption: 右转向}
+  "193":
+    labels:
+      - {caption: 危险警告灯}
+      - {caption: 动力电池电量正常指示灯}
+      - {caption: 整车系统故障指示灯}
+      - {caption: 电机及控制器过温报警指示灯}
+      - {caption: 充电枪连接指示灯}
+      - {caption: 制动系统故障指示灯}
+      - {caption: 驻车制动已拉起指示灯}
+      - {caption: 转向助力系统严重故障指示灯}
+      - {caption: 空气悬架故障指示灯}
+      - {caption: 低压电池异常指示灯}
+      - caption: 安全气囊故障指示灯
+        aliases: [小人前面一个圆球, 小人抱着圆球, 人前面有个圆的灯]
+        description: 此灯常亮，表示安全气囊存在故障，请将车辆停放至安全位置并联系小米汽车服务中心。
+      - caption: 安全带未系提醒指示灯
+        aliases: [小人背着宝剑, 小人背着把宝剑, 背剑小人, 小人身上有条斜线, 斜带小人]
+        description: 此灯点亮，表示驾驶员、副驾乘客或后排乘客未系好座椅安全带；若系好安全带后提示灯仍亮，请联系小米汽车服务中心。
+      - {caption: 冷却液温度过高指示灯}
+
+asset_overrides:
+  - page_start: 95
+    xobject_name: /I1
+    caption: 前风挡雨刮拨杆开关操作示意
+    role: illustration
+    aliases: [雨刮器怎么打开, 怎么打开雨刮器, 雨刷怎么打开, 雨刮怎么开启]
+    description: 轻按雨刮拨杆开关（点动）后松开，前雨刮会往复刮刷一次；也可在中控屏下方控制栏进入“车辆控制 > 雨刮调节”，选择刮刷挡位或自动模式。
+  - page_start: 96
+    xobject_name: /I1
+    caption: 前风挡雨刮拨杆开关操作示意
+    role: illustration

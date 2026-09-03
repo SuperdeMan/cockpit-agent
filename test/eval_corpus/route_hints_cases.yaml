@@ -20,6 +20,37 @@
 #   source: 溯源
 #   tags:
 
+# ── manual-rag v2：操作方法与图标含义必须落手册，明确车控/非车辆/拍照请求不得被抢 ──
+- text: 雨刮器怎么打开
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production trace bb91420ff85c40c7889c666928e2096f"
+  tags: [manual, howto, replace, asr_no_punctuation]
+
+- text: 我的仪表上有个小人背着把宝剑的灯亮了是怎么回事
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production trace b17e943da8e340f0b347ce304f1b2c1d"
+  tags: [manual, warning_icon, replace, colloquial]
+
+- text: 帮我打开雨刮器
+  initial_intents: [wiper.on]
+  expect_final_intents: [wiper.on]
+  source: "manual how-to guardrail: explicit vehicle command"
+  tags: [manual, guardrail, vehicle_control]
+
+- text: 手机 App 怎么打开
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "manual how-to guardrail: non-vehicle software"
+  tags: [manual, guardrail, app]
+
+- text: 帮我看看照片里这个故障灯是什么
+  initial_intents: [vision.describe]
+  expect_final_intents: [vision.describe]
+  source: "manual warning guardrail: user supplied image belongs to vision"
+  tags: [manual, guardrail, vision]
+
 - text: 帮我深入调研一下固态电池
   initial_intents: []
   expect_final_intents: [research.run]

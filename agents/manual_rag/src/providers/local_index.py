@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import base64
 from collections import Counter
 from dataclasses import dataclass
 from itertools import combinations
@@ -16,8 +17,8 @@ from typing import Any
 
 import yaml
 
-from agents.manual_rag.src.index_format import IndexFormatError, load_index_bundle
-from .base import Chunk, KnowledgeRetriever
+from agents.manual_rag.src.index_format import IndexFormatError, load_manual_package
+from .base import Chunk, KnowledgeRetriever, ManualImage
 
 
 _CJK_SEQUENCE_RE = re.compile(r"[\u3400-\u9fff]+")
@@ -35,6 +36,9 @@ _MEASUREMENT_SPACE_RE = re.compile(
 _ASCII_GATE_EXEMPT = frozenset({
     "bar", "km/h", "km", "mm", "cm", "m", "l", "w", "v", "h", "s", "min",
 })
+_MAX_IMAGE_BYTES = 640 * 1024
+_MAX_IMAGE_TOTAL_BYTES = 768 * 1024
+_MAX_IMAGES = 2
 
 
 class ManualIndexError(ValueError):
@@ -112,7 +116,8 @@ def _load_retrieval_config(
     return sorted(set(noise), key=len, reverse=True), aliases, expansions
 
 
-def _validate_trusted_catalog(path: Path, document: dict[str, Any]) -> dict[str, Any]:
+def _validate_trusted_catalog(path: Path, document: dict[str, Any],
+                              visual: dict[str, Any]) -> dict[str, Any]:
     """以 tracked 指纹表作为信任锚；索引自带 hash 只能证明自洽，不能证明获准。"""
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -130,6 +135,16 @@ def _validate_trusted_catalog(path: Path, document: dict[str, Any]) -> dict[str,
             raise ManualIndexError(
                 f"手册 catalog 指纹不一致：{key}，"
                 f"expected={trusted.get(key)!r}, actual={document.get(key)!r}")
+    if visual:
+        expected_visual = {
+            "visual_assets_sha256": visual["assets_sha256"],
+            "visual_asset_count": visual["asset_count"],
+        }
+        for key, actual in expected_visual.items():
+            if trusted.get(key) != actual:
+                raise ManualIndexError(
+                    f"手册 catalog 指纹不一致：{key}，"
+                    f"expected={trusted.get(key)!r}, actual={actual!r}")
     return dict(trusted)
 
 
@@ -141,7 +156,8 @@ class ManualIndexRetriever(KnowledgeRetriever):
                  catalog_path: str | Path | None = None):
         self.index_path = Path(index_path)
         try:
-            bundle = load_index_bundle(self.index_path)
+            self.package = load_manual_package(self.index_path)
+            bundle = self.package.index
         except FileNotFoundError as exc:
             raise ManualIndexError(f"手册索引不存在：{self.index_path}") from exc
         except IndexFormatError as exc:
@@ -151,7 +167,17 @@ class ManualIndexRetriever(KnowledgeRetriever):
         resources = Path(__file__).resolve().parents[2] / "resources"
         trusted_path = (Path(catalog_path) if catalog_path
                         else resources / "manual_catalog.yaml")
-        self.catalog_entry = _validate_trusted_catalog(trusted_path, self.document)
+        self.visual_manifest = dict(self.package.visual)
+        self.visual_assets = list(self.visual_manifest.get("assets") or [])
+        self.catalog_entry = _validate_trusted_catalog(
+            trusted_path, self.document, self.visual_manifest)
+        if self.visual_manifest:
+            self.document.update({
+                "visual_assets_sha256": self.visual_manifest["assets_sha256"],
+                "visual_asset_count": self.visual_manifest["asset_count"],
+                "visual_skipped_asset_count": self.visual_manifest[
+                    "skipped_asset_count"],
+            })
         configured_model = _normalize(vehicle_model).replace(" ", "-")
         indexed_model = _normalize(self.document["vehicle_model"]).replace(" ", "-")
         if configured_model and configured_model != indexed_model:
@@ -171,6 +197,24 @@ class ManualIndexRetriever(KnowledgeRetriever):
             token for alias in self._vehicle_aliases
             for token in _ASCII_TOKEN_RE.findall(alias)
         }
+        self._assets_by_page: dict[int, list[dict[str, Any]]] = {}
+        self._visual_needles: list[tuple[str, str, dict[str, Any]]] = []
+        for asset in self.visual_assets:
+            self._assets_by_page.setdefault(asset["page_start"], []).append(asset)
+            for alias in asset.get("aliases") or []:
+                needle = _compact(alias)
+                if len(needle) >= 3:
+                    self._visual_needles.append((needle, "visual_alias", asset))
+            caption = _compact(asset.get("caption", ""))
+            if len(caption) >= 4:
+                self._visual_needles.append((caption, "visual_caption", asset))
+        self._visual_needles.sort(key=lambda value: (-len(value[0]), value[2]["asset_id"]))
+        for page_assets in self._assets_by_page.values():
+            page_assets.sort(key=lambda item: (
+                item.get("role") != "illustration",
+                -(int(item.get("width", 0)) * int(item.get("height", 0))),
+                item["asset_id"],
+            ))
 
         self._chunks: list[_PreparedChunk] = []
         self._document_frequency: Counter[str] = Counter()
@@ -356,6 +400,44 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 unknown.add(phrase)
         return unknown
 
+    def _matched_visual_assets(self, query: str) -> list[tuple[dict[str, Any], str]]:
+        compact = _compact(query)
+        matched: list[tuple[dict[str, Any], str]] = []
+        seen: set[str] = set()
+        for needle, kind, asset in self._visual_needles:
+            if needle not in compact or asset["asset_id"] in seen:
+                continue
+            matched.append((asset, kind))
+            seen.add(asset["asset_id"])
+        return matched
+
+    def _materialize_image(self, asset: dict[str, Any], match_kind: str,
+                           remaining: int) -> ManualImage | None:
+        byte_length = int(asset.get("byte_length") or 0)
+        if byte_length <= 0 or byte_length > _MAX_IMAGE_BYTES or byte_length > remaining:
+            return None
+        try:
+            data = self.package.read_asset(asset["asset_id"])
+        except IndexFormatError:
+            # 启动期已经全量验过；运行期读取仍失败说明包在进程存活期间被替换/损坏，
+            # 该图 fail closed，不影响已经核验过的文本答案。
+            return None
+        encoded = base64.b64encode(data).decode("ascii")
+        return ManualImage(
+            asset_id=asset["asset_id"],
+            caption=asset["caption"],
+            description=asset.get("description", ""),
+            page_start=asset["page_start"],
+            media_type=asset["media_type"],
+            data_uri=f"data:{asset['media_type']};base64,{encoded}",
+            sha256=asset["blob_sha256"],
+            width=asset["width"],
+            height=asset["height"],
+            bbox=tuple(float(value) for value in asset["bbox"]),
+            role=asset["role"],
+            match_kind=match_kind,
+        )
+
     async def retrieve(self, query: str, vehicle_model: str = "",
                        top_k: int = 4) -> list[Chunk]:
         if not str(query or "").strip() or top_k <= 0:
@@ -371,17 +453,34 @@ class ManualIndexRetriever(KnowledgeRetriever):
         if not variants:
             return []
 
+        visual_matches = self._matched_visual_assets(query)
+        visual_by_page: dict[int, list[tuple[dict[str, Any], str]]] = {}
+        for asset, kind in visual_matches:
+            visual_by_page.setdefault(asset["page_start"], []).append((asset, kind))
+
         ranked: list[tuple[float, int, _PreparedChunk]] = []
         for chunk in self._chunks:
             quality, coverage = self._score(variants, chunk)
+            page = chunk.raw["page_start"]
+            if page in visual_by_page:
+                # 人工审定别名/正式 caption 是比词法近似更强的证据；只提升其所属物理页，
+                # 不把 caption/答案注入其它页，也不对未知视觉描述做模糊匹配。
+                quality = max(quality, 24.0 + max(
+                    len(_compact(asset["caption"]))
+                    for asset, _ in visual_by_page[page]))
+                coverage = 1.0
             if quality < 1.0 or coverage < 0.42:
                 continue
             ranked.append((quality, chunk.raw["page_start"], chunk))
         ranked.sort(key=lambda item: (-item[0], item[1]))
 
         result: list[Chunk] = []
+        embedded_bytes = 0
+        embedded_count = 0
+        embedded_blobs: set[str] = set()
         title = self.document["title"]
-        for quality, _, prepared in ranked[:min(int(top_k), 10)]:
+        for rank, (quality, _, prepared) in enumerate(
+                ranked[:min(int(top_k), 10)]):
             raw = prepared.raw
             section_path = tuple(raw["section_path"])
             page_start, page_end = raw["page_start"], raw["page_end"]
@@ -389,6 +488,33 @@ class ManualIndexRetriever(KnowledgeRetriever):
                      else f"PDF第{page_start}-{page_end}页")
             section = " > ".join(section_path)
             source = " · ".join(item for item in (title, section, pages) if item)
+            image_candidates: list[tuple[dict[str, Any], str]] = list(
+                visual_by_page.get(page_start, ()))
+            if not image_candidates and rank == 0:
+                page_assets = self._assets_by_page.get(page_start, ())
+                # 多图页若没有正式 caption/别名命中，随便挑一张会把图标与名称再次错配；
+                # 只有单图页或明确标成 illustration 的大图才作为同页证据返回。
+                illustrations = [item for item in page_assets
+                                 if item.get("role") == "illustration"]
+                if len(page_assets) == 1:
+                    image_candidates = [(page_assets[0], "page_evidence")]
+                elif illustrations:
+                    image_candidates = [(illustrations[0], "page_evidence")]
+            images: list[ManualImage] = []
+            for asset, match_kind in image_candidates:
+                if embedded_count >= _MAX_IMAGES:
+                    break
+                if asset["blob_sha256"] in embedded_blobs:
+                    continue
+                image = self._materialize_image(
+                    asset, match_kind,
+                    _MAX_IMAGE_TOTAL_BYTES - embedded_bytes)
+                if image is None:
+                    continue
+                images.append(image)
+                embedded_count += 1
+                embedded_bytes += int(asset["byte_length"])
+                embedded_blobs.add(asset["blob_sha256"])
             result.append(Chunk(
                 content=raw["content"],
                 source=source,
@@ -399,5 +525,6 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 page_start=page_start,
                 page_end=page_end,
                 section_path=section_path,
+                images=tuple(images),
             ))
         return result

@@ -2,10 +2,11 @@
 // + scene_card / scene_list / vision_answer（M3-1）。
 // 澄清卡按钮回发 send_text 经普通 send——candidates 拦截层自动补 clarify_resume=1
 // （与语音「第N个」同一条路，sendRouter.ts）。
-import { Pressable, Text, View } from 'react-native'
+import { Image, Pressable, Text, View } from 'react-native'
 
 import type {
   IntentChoiceCard,
+  ManualCard as ManualCardType,
   ReminderCard,
   ReminderItem,
   ReminderListCard,
@@ -14,9 +15,58 @@ import type {
   SceneListCard,
   VisionAnswerCard,
 } from '@shared/types.ts'
+import { manualImages } from '@shared/manualCard.mjs'
 
 import type { Palette } from '../../ui/theme'
-import { CardButtons, CardShell, Chip, type SendFn } from './parts'
+import { CardButtons, CardShell, Chip, ProvBadge, type SendFn } from './parts'
+
+export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }) {
+  const images = manualImages(card)
+  const chunks = (card.chunks || []).slice(0, 2)
+  const title = card.document?.title || '车型用户手册'
+  return (
+    <CardShell p={p} title={title} right={<ProvBadge p={p} prov={card._prov} />}>
+      {images.map((image) => (
+        <View key={String(image.asset_id)} style={{ gap: 5 }}>
+          <View style={{ height: image.role === 'warning_icon' ? 148 : 180, borderRadius: 12, overflow: 'hidden', backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+            <Image
+              source={{ uri: String(image.data_uri) }}
+              accessibilityRole="image"
+              accessibilityLabel={String(image.caption || '手册配图')}
+              resizeMode="contain"
+              style={{
+                width: image.role === 'warning_icon' ? 116 : '100%',
+                height: image.role === 'warning_icon' ? 116 : '100%',
+              }}
+            />
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 8 }}>
+            <Text style={{ color: p.fg2, fontSize: p.font(11), flex: 1 }} numberOfLines={2}>
+              {String(image.caption || '手册配图')}
+            </Text>
+            <Text style={{ color: p.fg3, fontSize: p.font(10) }}>
+              PDF 第 {Number(image.page_start || 0)} 页
+            </Text>
+          </View>
+        </View>
+      ))}
+      {chunks.map((chunk, index) => (
+        <View key={`${chunk.page_start || 0}:${index}`} style={{ gap: 3 }}>
+          <Text style={{ color: p.accent, fontSize: p.font(11), fontWeight: '600' }} numberOfLines={1}>
+            {chunk.section_path?.slice(-1)[0] || `引用 ${index + 1}`}
+            {chunk.page_start ? ` · PDF 第 ${chunk.page_start} 页` : ''}
+          </Text>
+          <Text style={{ color: p.fg2, fontSize: p.font(12), lineHeight: p.font(18) }} numberOfLines={4}>
+            {chunk.content}
+          </Text>
+        </View>
+      ))}
+      {!images.length && !chunks.length ? (
+        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>手册中没有查到可展示的证据</Text>
+      ) : null}
+    </CardShell>
+  )
+}
 
 export function IntentChoice({ p, card, onSend }: { p: Palette; card: IntentChoiceCard; onSend: SendFn }) {
   return (

@@ -77,7 +77,7 @@ services:
       - "/opt/car-agent/shared/models/manual_rag:/app/models/manual_rag:ro"
     environment:
       KNOWLEDGE_VENDOR: local
-      MANUAL_INDEX_PATH: /app/models/manual_rag/xiaomi-su7-2024.v1.json.gz
+      MANUAL_INDEX_PATH: /app/models/manual_rag/xiaomi-su7-2024.v2.mrag
       KNOWLEDGE_VEHICLE_MODEL: xiaomi-su7-2024
 
   trip-planner-agent:

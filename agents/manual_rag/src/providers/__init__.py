@@ -13,7 +13,7 @@ from .mock import MockKnowledgeRetriever
 
 
 _DEFAULT_INDEX = (Path(__file__).resolve().parents[4] / "models" / "manual_rag"
-                  / "xiaomi-su7-2024.v1.json.gz")
+                  / "xiaomi-su7-2024.v2.mrag")
 _DEFAULT_CATALOG = (Path(__file__).resolve().parents[2] / "resources"
                     / "manual_catalog.yaml")
 

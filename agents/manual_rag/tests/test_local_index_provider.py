@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import gzip
 import json
 from pathlib import Path
@@ -14,9 +15,13 @@ from agents._sdk.testing import run_handle
 from agents.manual_rag.src.agent import ManualRagAgent
 from agents.manual_rag.src.index_format import (
     ExtractedPage,
+    ExtractedVisualAsset,
     build_index_bundle,
+    build_visual_manifest,
     load_index_bundle,
+    load_manual_package,
     write_index_bundle,
+    write_manual_package,
 )
 from agents.manual_rag.src.providers.local_index import (
     ManualIndexError,
@@ -70,10 +75,14 @@ def _bundle_path(tmp_path: Path) -> Path:
 
 
 def _catalog_path(tmp_path: Path, index_path: Path, **overrides) -> Path:
-    document = load_index_bundle(index_path)["document"]
+    loaded = load_manual_package(index_path)
+    document = loaded.index["document"]
     keys = ("title", "publisher", "vehicle_model", "revision", "source_pages",
             "source_sha256", "content_sha256")
     trusted = {key: document[key] for key in keys}
+    if loaded.visual:
+        trusted["visual_assets_sha256"] = loaded.visual["assets_sha256"]
+        trusted["visual_asset_count"] = loaded.visual["asset_count"]
     trusted.update(overrides)
     payload = {
         "schema_version": 1,
@@ -82,6 +91,81 @@ def _catalog_path(tmp_path: Path, index_path: Path, **overrides) -> Path:
     path = tmp_path / "manual_catalog.yaml"
     path.write_text(yaml.safe_dump(
         payload, allow_unicode=True, sort_keys=True), encoding="utf-8")
+    return path
+
+
+_ONE_PIXEL_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUB"
+    "AScY42YAAAAASUVORK5CYII="
+)
+
+
+def _visual_package_path(tmp_path: Path, *, oversized: bool = False) -> Path:
+    pages = [
+        ExtractedPage(
+            page_number=95,
+            section_path=("驾驶和操作", "雨刮器和后视镜", "前风挡雨刮"),
+            content=("前风挡雨刮。轻按雨刮拨杆开关后松开，前雨刮往复刮刷一次。"
+                     "也可进入车辆控制>雨刮调节进行设置。"),
+        ),
+        ExtractedPage(
+            page_number=193,
+            section_path=("信息显示和娱乐", "中控显示屏", "警告灯和指示灯"),
+            content=("安全气囊故障指示灯：此灯常亮表示安全气囊存在故障。"
+                     "安全带未系提醒指示灯：此灯点亮表示乘员未系好座椅安全带。"),
+        ),
+    ]
+    bundle = build_index_bundle(
+        pages,
+        document_id="xiaomi-su7-2024-user-manual",
+        title="SU7用户手册",
+        publisher="小米汽车",
+        vehicle_model="xiaomi-su7-2024",
+        vehicle_aliases=["SU7", "小米SU7"],
+        revision="2024-04-15",
+        source_file="manual.pdf",
+        source_sha256="d" * 64,
+        source_pages=278,
+    )
+    large = b"\x89PNG\r\n\x1a\n" + b"x" * (700 * 1024) if oversized else _ONE_PIXEL_PNG
+    assets = [
+        ExtractedVisualAsset(
+            asset_id="xiaomi-su7-2024-user-manual:p0095:i1",
+            page_number=95,
+            xobject_name="/I1",
+            media_type="image/png",
+            width=2668,
+            height=1501,
+            bbox=(80.0, 300.0, 520.0, 560.0),
+            caption="前风挡雨刮拨杆开关操作示意",
+            aliases=("雨刮器怎么打开", "怎么打开雨刮器"),
+            description=("轻按雨刮拨杆开关后松开可单次刮刷；也可进入车辆控制的"
+                         "雨刮调节选择挡位。"),
+            role="illustration",
+            data=large,
+        ),
+        ExtractedVisualAsset(
+            asset_id="xiaomi-su7-2024-user-manual:p0193:i12",
+            page_number=193,
+            xobject_name="/I12",
+            media_type="image/png",
+            width=167,
+            height=168,
+            bbox=(85.72, 131.0, 109.58, 155.0),
+            caption="安全带未系提醒指示灯",
+            aliases=("小人背着宝剑", "小人背着把宝剑", "背剑小人"),
+            description="此灯点亮表示乘员未系好座椅安全带。",
+            role="warning_icon",
+            data=_ONE_PIXEL_PNG,
+        ),
+    ]
+    visual, blobs = build_visual_manifest(
+        assets,
+        document_id=bundle["document"]["document_id"],
+        source_sha256=bundle["document"]["source_sha256"],
+    )
+    path = tmp_path / "manual.v2.mrag"
+    write_manual_package(path, bundle, visual, blobs)
     return path
 
 
@@ -268,3 +352,118 @@ def test_agent_keeps_number_grounded_in_real_manual(tmp_path):
 
     assert result.speech == "手册标注的前后轮压力为 2.9 bar。"
     assert not (result.data or {}).get("grounding_rejected")
+
+
+def test_visual_alias_retrieves_official_icon_page_and_image(tmp_path):
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+
+    chunks = _retrieve(provider, "我的仪表上有个小人背着把宝剑的灯亮了是怎么回事")
+
+    assert chunks and chunks[0].page_start == 193
+    assert "安全带未系提醒指示灯" in chunks[0].content
+    assert len(chunks[0].images) == 1
+    image = chunks[0].images[0]
+    assert image.caption == "安全带未系提醒指示灯"
+    assert image.match_kind == "visual_alias"
+    assert image.data_uri.startswith("data:image/png;base64,")
+    assert "安全带" in image.description
+
+
+def test_top_text_page_returns_same_page_illustration_without_putting_it_in_text(tmp_path):
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+
+    chunks = _retrieve(provider, "前风挡雨刮轻按开关")
+
+    assert chunks and chunks[0].page_start == 95
+    assert chunks[0].images[0].caption == "前风挡雨刮拨杆开关操作示意"
+    assert chunks[0].images[0].match_kind == "page_evidence"
+    assert "data:image" not in chunks[0].content
+
+
+def test_unknown_visual_metaphor_does_not_near_match_warning_table(tmp_path):
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+
+    assert _retrieve(provider, "仪表上有个小人拿雨伞的图标是什么意思") == []
+
+
+def test_oversized_visual_asset_is_not_embedded_in_card_payload(tmp_path):
+    path = _visual_package_path(tmp_path, oversized=True)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+
+    chunks = _retrieve(provider, "雨刮器怎么打开")
+
+    assert chunks and chunks[0].page_start == 95
+    assert chunks[0].images == ()
+
+
+def test_visual_catalog_fingerprint_mismatch_rejects_startup(tmp_path):
+    path = _visual_package_path(tmp_path)
+    catalog = _catalog_path(tmp_path, path, visual_assets_sha256="f" * 64)
+
+    with pytest.raises(ManualIndexError, match="visual_assets_sha256"):
+        ManualIndexRetriever(path, catalog_path=catalog)
+
+
+def test_visual_alias_answer_is_deterministic_and_does_not_ask_llm_to_guess(tmp_path):
+    from unittest.mock import AsyncMock
+
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+    provider.provenance_mode = "real"
+    provider.provenance_vendor = provider.document["document_id"]
+    agent = ManualRagAgent(retriever=provider)
+    agent.llm.complete = AsyncMock(return_value="错误地说成安全气囊故障灯")
+
+    result = asyncio.run(run_handle(
+        agent, "manual.query", raw_text="仪表上小人背着宝剑的灯亮了是怎么回事"))
+
+    assert "安全带未系提醒指示灯" in result.speech
+    assert "安全气囊" not in result.speech
+    agent.llm.complete.assert_not_awaited()
+    card = result.ui_card or {}
+    assert card["images"][0]["caption"] == "安全带未系提醒指示灯"
+    assert card["images"][0]["data_uri"].startswith("data:image/png;base64,")
+    assert card["images"][0]["page_start"] == 193
+
+
+def test_wiper_howto_alias_uses_grounded_deterministic_instruction(tmp_path):
+    from unittest.mock import AsyncMock
+
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+    provider.provenance_mode = "real"
+    provider.provenance_vendor = provider.document["document_id"]
+    agent = ManualRagAgent(retriever=provider)
+    agent.llm.complete = AsyncMock(return_value="方向盘右边上下推动拨杆")
+
+    result = asyncio.run(run_handle(
+        agent, "manual.query", raw_text="雨刮器怎么打开"))
+
+    assert "轻按雨刮拨杆开关" in result.speech
+    assert "雨刮调节" in result.speech
+    assert "方向盘右边" not in result.speech
+    agent.llm.complete.assert_not_awaited()
+
+
+def test_page_image_is_visible_in_card_but_never_copied_into_llm_prompt(tmp_path):
+    from unittest.mock import AsyncMock
+
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+    provider.provenance_mode = "real"
+    provider.provenance_vendor = provider.document["document_id"]
+    agent = ManualRagAgent(retriever=provider)
+    agent.llm.complete = AsyncMock(return_value="前风挡雨刮用于保持玻璃视野清晰。")
+
+    result = asyncio.run(run_handle(
+        agent, "manual.query", raw_text="前风挡雨刮轻按开关"))
+
+    messages = agent.llm.complete.await_args[0][0]
+    prompt = json.dumps(messages, ensure_ascii=False)
+    assert "配图：前风挡雨刮拨杆开关操作示意" in prompt
+    assert "data:image" not in prompt
+    assert (result.ui_card or {})["images"][0]["data_uri"].startswith(
+        "data:image/png;base64,")

@@ -3661,6 +3661,7 @@ _ARCH_EXCLUDED_DIRS = frozenset({
     ".pytest_cache",
     ".venv",
     "venv",
+    "node_modules",
     "gen",
     "test",
     "tests",

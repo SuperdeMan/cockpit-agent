@@ -72,8 +72,8 @@ CLIENT_RUNTIME_MODELS = {
 }
 
 MANUAL_RUNTIME_MODELS = {
-    "models/manual_rag/xiaomi-su7-2024.v1.json.gz":
-        "b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa",
+    "models/manual_rag/xiaomi-su7-2024.v2.mrag":
+        "648cdf3d1d5001f199fce12e3983f3d016d929f772d0eb8aa058512dcd4400ed",
 }
 
 
@@ -1894,7 +1894,7 @@ def test_cloud_manual_rag_requires_real_shared_readonly_index():
 
     assert manual["environment"] == {
         "KNOWLEDGE_VENDOR": "local",
-        "MANUAL_INDEX_PATH": "/app/models/manual_rag/xiaomi-su7-2024.v1.json.gz",
+        "MANUAL_INDEX_PATH": "/app/models/manual_rag/xiaomi-su7-2024.v2.mrag",
         "KNOWLEDGE_VEHICLE_MODEL": "xiaomi-su7-2024",
     }
     assert manual["volumes"] == [
@@ -2173,7 +2173,7 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
     )
 
     for required in (
-        "a729b984a7e66f508d0a11218713b6e51c8f7620",
+        "a406e222b3fe08ea462c06ccf676d0698f1f443a",
         "5/5 endpoint healthy",
         "QA 仍非全绿",
         "docs/reviews/2026-08-30-qa-closeout-handoff.md",
@@ -2188,7 +2188,7 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
         assert stale not in agents
 
     for required in (
-        "7770 passed / 32 skipped / 13 warnings",
+        "7796 passed / 34 skipped / 11 warnings",
         "57/59 PASS",
         "安全问句偶尔落 `info.search`",
         "safety focus 持续阻断后续 charging plan",

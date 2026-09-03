@@ -25,6 +25,7 @@ planner 把它规划成 `warning_light.close` 并**真的执行了**——云端
 它与 `actionability.py` 的「特征全是封闭虚词类」同一条纪律。
 """
 from __future__ import annotations
+import re
 
 #: 疑问尾词。判据是**结尾**（先剥掉标点），不是「句中出现过问号」。
 QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
@@ -44,10 +45,44 @@ DIRECTIVE_MARKERS = ("帮我", "帮忙", "给我", "替我", "麻烦", "请")
 #: 操作动词。与 `MANNER_ASKS` 配对：「怎么把温度调高」带「调」⇒ 仍是指令。
 OPERATION_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
 
+# 方法问句中的动作词。它们仍是零领域的句法词，不包含任何车辆对象；“对象在前/动作在前，
+# 中间带怎么/如何”的形态由本模块统一判定，端侧与云侧共用。刻意不含“调高/调低”：
+# 既有“温度如何调高”按祈使处理的合同不在本批扩大。
+HOW_TO_ACTIONS = (
+    "打开", "开启", "关闭", "关掉", "使用", "操作", "进入", "连接", "设置",
+    "更换", "启动", "停用", "开", "关",
+)
+_HOW_TO_ACTION_ALT = "|".join(sorted(map(re.escape, HOW_TO_ACTIONS), key=len,
+                                      reverse=True))
+_OBJECT_FIRST_HOW_TO_RE = re.compile(
+    rf"^.+(?:怎么|咋|如何)(?:才|才能|可以|应该|要|去)?(?:{_HOW_TO_ACTION_ALT})"
+    r"(?:一下|呢|啊|呀|吧|才行)?$"
+)
+_ACTION_FIRST_HOW_TO_RE = re.compile(
+    rf"^(?:怎么|咋|如何)(?:才|才能|可以|应该|要|去)?(?:{_HOW_TO_ACTION_ALT}).+"
+    r"(?:一下|呢|啊|呀|吧|才行)?$"
+)
+
+
+def _is_how_to_question(t: str) -> bool:
+    """无标点 ASR 的操作方法问句；显式“把/将”执行框架不在本形态内。"""
+    cleaned = (t or "").strip().rstrip("。！!？?~ ")
+    if "怎么把" in cleaned or "如何把" in cleaned or "咋把" in cleaned:
+        return False
+    return bool(
+        _OBJECT_FIRST_HOW_TO_RE.fullmatch(cleaned)
+        or _ACTION_FIRST_HOW_TO_RE.fullmatch(cleaned)
+    )
+
 
 def is_non_directive_question(t: str) -> bool:
     """这句话是在**问**，而不是在**下指令**。"""
     t = t or ""
+    # 真实 ASR 常不带问号。“雨刮器怎么打开”若继续落入下方“疑问词+操作动词”旧档，
+    # 会被端侧直接执行成 wiper.on。对象/动作的词序已经给出方法询问信号，先于礼貌
+    # marker 判定；“帮我把/怎么把”仍由上面的显式执行框架挡住。
+    if _is_how_to_question(t):
+        return True
     if any(w in t for w in DIRECTIVE_MARKERS):
         return False
     if t.rstrip("。！!.~ ").endswith(QUESTION_TAILS):

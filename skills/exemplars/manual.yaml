@@ -54,3 +54,25 @@ exemplars:
   tags:
   - badcase
   note: 未接入车控能力的车内功能操作问法归说明书，不落空计划或闲聊
+# 2026-09-03 生产 badcase 的改写样本。刻意不抄 trace 原句，避免把评测 seen 化；
+# 一个教“对象在前的方法问句”，一个教“视觉俗称已经足以查手册，不抓帧”。
+- text: 前挡雨刷的开关在哪里操作
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags:
+  - badcase
+  - asr-no-punctuation
+  note: 方法咨询不是立即车控；原生产问法误落 chitchat，端侧无标点形态还会误执行
+- text: 状态栏有个斜着系带的小人一直亮
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags:
+  - badcase
+  - visual-description
+  note: 描述足以匹配手册图标目录，归 manual；真实照片识别才归 vision

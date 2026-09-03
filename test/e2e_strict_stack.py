@@ -4,7 +4,8 @@
   1. active LLM 不是 mock（严格栈基本面）；
   2. 天气/周边/导航/充电/车型手册五条 WS 请求返回的所有带 `_prov` 的卡，mode 不得为
      "mock"；且至少 2 张卡带 `_prov`（探针有效性下限，防止「全都没标所以全过」）；
-  3. 手册探针必须落 `manual` 卡，带 SU7 车型、PDF 页引用和 real provenance。
+  3. 三条手册探针必须落 `manual` 卡，带 SU7 车型、预期 PDF 页和 real provenance；
+     雨刮/视觉俗称还必须带对应手册图片，且全部零 action。
 
 mock 栈上跑无意义：检测到 active=mock 写结构化 whole-skip（退出码 77）——本探针属 live 车道。
 用法：python test/e2e_strict_stack.py
@@ -33,10 +34,20 @@ LLM_HTTP = "http://localhost:50059"
 # 仍盖真实 provider 章（评审核实的 §9.5 铁律③违例，已改诚实降级）。泄漏形态（mock 数据
 # 盖 real 章）本探针按 vendor/mode 一致性兜不住故障注入场景——运行期降级契约由
 # agents/{navigation,charging_planner,nearby}/tests 的 outage 用例在 unit 层锁定。
-MANUAL_PROBE = "SU7 的冷态胎压应该打到多少"
+MANUAL_PROBES = {
+    "SU7 的冷态胎压应该打到多少": {
+        "pages": {245, 256}, "image_caption": "",
+    },
+    "雨刮器怎么打开": {
+        "pages": {95}, "image_caption": "前风挡雨刮拨杆开关操作示意",
+    },
+    "我的仪表上有个小人背着把宝剑的灯亮了是怎么回事": {
+        "pages": {193}, "image_caption": "安全带未系提醒指示灯",
+    },
+}
 PROBES = (
     "北京今天天气怎么样", "附近有什么川菜馆", "导航去天安门",
-    "帮我找附近的充电站", MANUAL_PROBE,
+    "帮我找附近的充电站", *MANUAL_PROBES,
 )
 
 
@@ -122,10 +133,12 @@ async def main() -> int:
 
             prov_seen = 0
             leaks: list[str] = []
-            manual_seen = False
+            manual_seen: set[str] = set()
             manual_errors: list[str] = []
             for index, text in enumerate(PROBES, start=1):
                 msg = await _ask(recorder, text, recorder.session_id(index))
+                if text in MANUAL_PROBES and msg.get("actions"):
+                    manual_errors.append(f"{text}: manual probe returned actions")
                 for card in _cards(msg):
                     prov = card.get("_prov")
                     if not prov:
@@ -138,17 +151,37 @@ async def main() -> int:
                     print(f"  [{text}] {mark}")
                     if prov.get("mode") == "mock":
                         leaks.append(f"{text} -> {mark}")
-                    if text == MANUAL_PROBE and card.get("type") == "manual":
+                    if text in MANUAL_PROBES and card.get("type") == "manual":
+                        expected = MANUAL_PROBES[text]
                         document = card.get("document") or {}
                         sources = card.get("sources") or []
+                        pages = {
+                            int(chunk.get("page_start"))
+                            for chunk in (card.get("chunks") or [])
+                            if isinstance(chunk, dict) and chunk.get("page_start")
+                        }
+                        images = [item for item in (card.get("images") or [])
+                                  if isinstance(item, dict)]
                         if prov.get("mode") != "real":
-                            manual_errors.append("manual provenance is not real")
+                            manual_errors.append(f"{text}: manual provenance is not real")
                         elif document.get("vehicle_model") != "xiaomi-su7-2024":
-                            manual_errors.append("manual vehicle_model is not xiaomi-su7-2024")
+                            manual_errors.append(
+                                f"{text}: manual vehicle_model is not xiaomi-su7-2024")
                         elif not any("PDF第" in str(source) for source in sources):
-                            manual_errors.append("manual card has no PDF page citation")
+                            manual_errors.append(f"{text}: manual card has no PDF page citation")
+                        elif not expected["pages"].intersection(pages):
+                            manual_errors.append(
+                                f"{text}: expected pages {sorted(expected['pages'])}, "
+                                f"got {sorted(pages)}")
+                        elif expected["image_caption"] and not any(
+                                expected["image_caption"] in str(image.get("caption") or "")
+                                and str(image.get("data_uri") or "").startswith(
+                                    ("data:image/png;base64,", "data:image/jpeg;base64,"))
+                                for image in images):
+                            manual_errors.append(
+                                f"{text}: manual card has no expected trusted image")
                         else:
-                            manual_seen = True
+                            manual_seen.add(text)
 
             if leaks:
                 recorder.fail_case(
@@ -157,8 +190,10 @@ async def main() -> int:
                     f"real stack returned {len(leaks)} mock provenance cards",
                 )
                 print("✗ 真栈出现 mock 数据卡（泄漏）：\n  " + "\n  ".join(leaks))
-            elif manual_errors or not manual_seen:
-                detail = "; ".join(manual_errors) or "manual probe returned no valid manual card"
+            elif manual_errors or set(MANUAL_PROBES) - manual_seen:
+                missing = sorted(set(MANUAL_PROBES) - manual_seen)
+                detail = "; ".join(manual_errors) or (
+                    f"manual probes returned no valid manual card: {missing}")
                 recorder.fail_case(
                     "strict_stack_provider_provenance",
                     "manual_provider_invalid",

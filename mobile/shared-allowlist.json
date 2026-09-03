@@ -18,7 +18,7 @@
     {
       "file": "types.ts",
       "phase": "M0",
-      "purpose": "全部数据契约（WS 消息/29 卡型/能力目录/默认值）",
+      "purpose": "全部数据契约（WS 消息/卡型/能力目录/默认值）",
       "notes": "契约唯一真相源"
     },
     {
@@ -147,6 +147,12 @@
         ],
         "why": "captureFrame 用 document/navigator；App 侧走 core/vision/frame.ts + expo-camera，禁引该符号"
       }
+    },
+    {
+      "file": "manualCard.mjs",
+      "phase": "M4",
+      "purpose": "manual 图文卡 PNG/JPEG data URI 的协议、体积、去重与数量守卫",
+      "notes": "零 DOM/BOM；HMI 与 Android 共享同一份图片准入判据"
     }
   ]
 }

@@ -144,3 +144,41 @@ test('preserves the existing parked vehicle confirmation by default', () => {
   assert.match(html, /已泊车/)
   assert.match(html, /危险操作需二次确认/)
 })
+
+test('renders a grounded manual image with caption, page and source excerpt', () => {
+  const uri = 'data:image/png;base64,eA=='
+  const html = renderCard({
+    type: 'manual', source_type: 'manual',
+    document: { title: 'SU7用户手册', vehicle_model: 'xiaomi-su7-2024', revision: '2024-04-15' },
+    images: [{
+      asset_id: 'manual:p0193:i12', caption: '安全带未系提醒指示灯', page_start: 193,
+      media_type: 'image/png', data_uri: uri, sha256: 'a'.repeat(64),
+      width: 167, height: 168, role: 'warning_icon', match_kind: 'visual_alias',
+    }],
+    chunks: [{
+      content: '此灯点亮表示乘员未系好座椅安全带。', page_start: 193,
+      section_path: ['信息显示和娱乐', '警告灯和指示灯'],
+    }],
+    _prov: { mode: 'real', vendor: 'xiaomi-su7-2024-user-manual' },
+  })
+
+  assert.match(html, /<img/)
+  assert.match(html, /data:image\/png;base64,eA==/)
+  assert.match(html, /alt="安全带未系提醒指示灯"/)
+  assert.match(html, /PDF 第 193 页/)
+  assert.match(html, /未系好座椅安全带/)
+})
+
+test('manual card rejects SVG and remote image sources at render time', () => {
+  const html = renderCard({
+    type: 'manual',
+    images: [
+      { asset_id: 'svg', data_uri: 'data:image/svg+xml;base64,eA==' },
+      { asset_id: 'remote', data_uri: 'https://example.com/manual.png' },
+    ],
+    chunks: [{ content: '仍保留文本证据。', page_start: 95 }],
+  })
+
+  assert.doesNotMatch(html, /<img/)
+  assert.match(html, /仍保留文本证据/)
+})

@@ -65,6 +65,8 @@ export type Provenance = {
   vendor?: string
   fetched_at?: string   // 数据获取时刻（ISO8601），非渲染时刻
   note?: string         // degraded/cached 的原因或缓存龄
+  data_time?: string    // 手册版本等来源自身日期
+  data_time_label?: string
 }
 
 export type UiCard =
@@ -94,6 +96,7 @@ export type UiCard =
   | SceneListCard
   | IntentChoiceCard
   | VisionAnswerCard
+  | ManualCard
   | PaymentQrCard
   | PaymentReceiptCard
   | ParkingFeeCard
@@ -108,6 +111,56 @@ export type VisionAnswerCard = {
   answer: string
   question?: string
   simulated?: boolean
+}
+
+export type ManualImage = {
+  asset_id: string
+  caption: string
+  description?: string
+  page_start: number
+  media_type: 'image/png' | 'image/jpeg'
+  data_uri: string
+  sha256: string
+  width: number
+  height: number
+  bbox?: number[]
+  role?: 'illustration' | 'warning_icon' | 'icon'
+  match_kind?: 'visual_alias' | 'visual_caption' | 'page_evidence'
+}
+
+export type ManualChunk = {
+  content: string
+  source?: string
+  score?: number
+  document_id?: string
+  vehicle_model?: string
+  page_start?: number
+  page_end?: number
+  section_path?: string[]
+  asset_ids?: string[]
+}
+
+// 真实车型手册证据卡。图片只能是后端 hash 校验后的 PNG/JPEG data URI；渲染端仍经
+// manualCard.mjs 二次过滤。卡片不带可执行按钮，保持 response_only。
+export type ManualCard = {
+  type: 'manual'
+  source_type?: 'manual' | 'mock' | 'web' | ''
+  sources?: string[]
+  chunks?: ManualChunk[]
+  images?: ManualImage[]
+  document?: {
+    document_id?: string
+    title?: string
+    publisher?: string
+    vehicle_model?: string
+    revision?: string
+    source_sha256?: string
+    content_sha256?: string
+    visual_assets_sha256?: string
+    visual_asset_count?: number
+    visual_skipped_asset_count?: number
+  }
+  _prov?: Provenance
 }
 
 // 支付付款码卡（§9.17，2026-08-11 批 2）：qr_svg 是网关生成的 data URI（<img> 直渲，

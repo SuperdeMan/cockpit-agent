@@ -29,7 +29,9 @@ _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."
 _TEST_DIR = os.path.join(_ROOT, "test")
 if _TEST_DIR not in sys.path:
     sys.path.insert(0, _TEST_DIR)
-# 既非 core、又没声明 route_hints 的 agent——预算不够时只有它们该被裁
+# 既非 core、又没声明 route_hints 的 agent——预算不够时只有它们该被裁。
+# manual-rag v2 为无标点方法问句/仪表图标两条生产 badcase 增加窄 hint 后，按机制成为
+# 受保护 Agent；不能一边依赖 hint 做确定性兜底，一边仍断言它会被预算裁掉。
 #
 # 2026-07-30 `nearby` 加入本集合：它的两条 route_hints 已由数据退役（跨两档全覆盖双臂裸跑），
 # 而它是 `category: ecosystem`（trust_level third_party，高德 POI）——**保护是随 hint 一起
@@ -41,7 +43,7 @@ if _TEST_DIR not in sys.path:
 #      等于把 category 变成第二个「有 hint 就保护」；
 #   ④ 但要记一笔风险：若预算再被追上，被裁的将包含**周边发现这个高频功能**。
 #      正确动作是启用 catalog 检索化预筛（RFC §5-P2-4），不是回填规则或改分类。
-_UNPROTECTED = {"manual-rag", "parking-payment", "nearby"}
+_UNPROTECTED = {"parking-payment", "nearby"}
 # 核心域：无论预算多紧都不许被裁（P0 时 navigation/road-safety 恰恰会被裁，那是 D1 根因）
 _CORE_MUST_SURVIVE = {"navigation", "road-safety", "info", "reminder",
                       "scene-orchestrator", "vision", "charging-planner"}

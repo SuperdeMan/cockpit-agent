@@ -61,6 +61,14 @@ class TestQuestionIsNotACommand:
         """与 `_is_env_temp_query` 同一条判据：疑问词 + 操作动词仍算指令。"""
         assert (_name("温度如何调高") or "").startswith(("hvac", "aircon"))
 
+    def test_object_first_how_to_question_without_punctuation_does_not_execute(self):
+        """真实 ASR 通常没有问号；“对象怎么打开”问方法，不是替用户按开关。"""
+        assert classify_structured("雨刮器怎么打开") is None
+        assert classify_structured("空调怎么关闭") is None
+
+    def test_explicit_wiper_command_remains_local(self):
+        assert _name("帮我打开雨刮器") == "wiper.on"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 2. 独立请求 ≠ 上一句的补语（findings §1.2）

@@ -37,6 +37,13 @@ cases:
     expect_top_page: 261
     expect_pages_any: [261]
     expect_text_all: ["雨刮维护模式", "固定卡"]
+  - id: wiper-operation-howto
+    query: 雨刮器怎么打开
+    expect_top_page: 95
+    expect_pages_any: [95]
+    expect_text_all: ["雨刮拨杆开关", "车辆控制", "雨刮调节"]
+    expect_image_pages_any: [95]
+    expect_image_caption_all: ["前风挡雨刮拨杆开关操作示意"]
   - id: brake-fluid-interval
     query: 制动液多久换一次
     expect_top_page: 252
@@ -95,6 +102,23 @@ cases:
     query: 制动系统故障灯亮了怎么办
     expect_pages_any: [191, 193]
     expect_text_all: ["停放至安全位置", "小米汽车服务中心"]
+  - id: seatbelt-warning-visual-metaphor
+    query: 我的仪表上有个小人背着把宝剑的灯亮了是怎么回事
+    expect_top_page: 193
+    expect_pages_any: [193]
+    expect_text_all: ["安全带未系提醒指示灯", "未系好座椅安全带"]
+    expect_image_pages_any: [193]
+    expect_image_caption_all: ["安全带未系提醒指示灯"]
+  - id: airbag-warning-visual-metaphor
+    query: 仪表上小人前面一个圆球的灯是什么
+    expect_top_page: 193
+    expect_pages_any: [193]
+    expect_text_all: ["安全气囊故障指示灯", "安全气囊存在故障"]
+    expect_image_pages_any: [193]
+    expect_image_caption_all: ["安全气囊故障指示灯"]
+  - id: unknown-warning-visual-metaphor
+    query: 仪表上有个小人拿雨伞的图标是什么意思
+    expect_empty: true
   - id: unsupported-carplay
     query: SU7 支持 CarPlay 吗
     expect_empty: true
@@ -143,6 +167,14 @@ cases:
     expect_top_page: 9
     expect_pages_any: [9]
     expect_text_all: ["自动闭锁"]
+  - id: holdout-seatbelt-visual-paraphrase
+    split: holdout
+    query: 仪表上小人身上有条斜线一直亮
+    expect_top_page: 193
+    expect_pages_any: [193]
+    expect_text_all: ["安全带未系提醒指示灯"]
+    expect_image_pages_any: [193]
+    expect_image_caption_all: ["安全带未系提醒指示灯"]
   - id: holdout-absent-engine-displacement
     split: holdout
     query: SU7 发动机排量多大

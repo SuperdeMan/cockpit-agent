@@ -133,6 +133,27 @@ class ManualRagAgent(BaseAgent):
 
     def _card(self, chunks, source_type: str) -> dict:
         sources = list(dict.fromkeys(c.source for c in chunks if c.source))
+        images = []
+        seen_images: set[str] = set()
+        for chunk in chunks:
+            for image in getattr(chunk, "images", ()):
+                if image.asset_id in seen_images:
+                    continue
+                seen_images.add(image.asset_id)
+                images.append({
+                    "asset_id": image.asset_id,
+                    "caption": image.caption,
+                    **({"description": image.description} if image.description else {}),
+                    "page_start": image.page_start,
+                    "media_type": image.media_type,
+                    "data_uri": image.data_uri,
+                    "sha256": image.sha256,
+                    "width": image.width,
+                    "height": image.height,
+                    "bbox": list(image.bbox),
+                    "role": image.role,
+                    "match_kind": image.match_kind,
+                })
         card = {
             "type": "manual",
             "source_type": source_type,
@@ -146,14 +167,18 @@ class ManualRagAgent(BaseAgent):
                 **({"page_start": c.page_start} if c.page_start else {}),
                 **({"page_end": c.page_end} if c.page_end else {}),
                 **({"section_path": list(c.section_path)} if c.section_path else {}),
+                **({"asset_ids": [image.asset_id for image in c.images]}
+                   if getattr(c, "images", ()) else {}),
             } for c in chunks],
+            "images": images,
         }
         document = getattr(self.kb, "document", None)
         if isinstance(document, dict):
             card["document"] = {
                 key: document[key] for key in (
                     "document_id", "title", "publisher", "vehicle_model", "revision",
-                    "source_sha256", "content_sha256",
+                    "source_sha256", "content_sha256", "visual_assets_sha256",
+                    "visual_asset_count", "visual_skipped_asset_count",
                 ) if document.get(key)
             }
         revision = str((document or {}).get("revision", "")) \
@@ -204,8 +229,37 @@ class ManualRagAgent(BaseAgent):
                 data=self._safety_data(level, question, source_type=source_type),
                 ui_card=self._card(chunks, source_type))
 
+        # 受控视觉目录已经把俗称/正式 caption 与 PDF 内具体图片绑定，并在启动时逐 blob
+        # 校验。此时不再让 LLM 在同一张告警表的相邻行之间猜一次（真实生产曾把安全带
+        # “背宝剑小人”猜成安全气囊）。有目录说明就直接确定性转述；没有说明仍走正文生成。
+        visual_matches = [
+            image for chunk in chunks for image in getattr(chunk, "images", ())
+            if image.match_kind in {"visual_alias", "visual_caption"}
+            and image.description
+        ]
+        if authoritative and visual_matches:
+            image = visual_matches[0]
+            description = image.description.rstrip("。！？! ") + "。"
+            document = getattr(self.kb, "document", None)
+            manual_title = str((document or {}).get("title") or "车型用户手册") \
+                if isinstance(document, dict) else "车型用户手册"
+            if image.role == "warning_icon":
+                answer = f"根据《{manual_title}》的图标目录，这是“{image.caption}”。{description}"
+            else:
+                answer = f"根据《{manual_title}》，{description}"
+            speech = f"{alert_advice(level)}{answer}" if level else answer
+            return AgentResult(
+                speech=speech,
+                data=self._safety_data(
+                    level, question, source_type=source_type,
+                    visual_match=image.caption),
+                ui_card=self._card(chunks, source_type),
+            )
+
         context_block = "\n\n".join(
-            f"[资料{i}｜{c.source or '来源未标注'}]\n{c.content}"
+            f"[资料{i}｜{c.source or '来源未标注'}]"
+            f"{''.join(f'｜配图：{image.caption}' for image in getattr(c, 'images', ())) }"
+            f"\n{c.content}"
             for i, c in enumerate(chunks, start=1)
         )
         answer = await self.llm.complete([                  # 2) generate

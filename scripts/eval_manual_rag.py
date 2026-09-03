@@ -49,6 +49,9 @@ async def evaluate_cases(retriever, cases: list[dict[str, Any]], *, top_k: int =
         latency_ms = (time.perf_counter() - started) * 1000
         latencies.append(latency_ms)
         actual_pages = _pages(chunks)
+        images = [image for chunk in chunks for image in getattr(chunk, "images", ())]
+        image_pages = {int(image.page_start) for image in images}
+        image_captions = _comparable("\n".join(image.caption for image in images))
         combined = "\n".join(chunk.content for chunk in chunks)
         comparable = _comparable(combined)
         reasons: list[str] = []
@@ -87,6 +90,19 @@ async def evaluate_cases(retriever, cases: list[dict[str, Any]], *, top_k: int =
             if expected_any and not any(
                     _comparable(item) in comparable for item in expected_any):
                 reasons.append(f"missing any text: {expected_any}")
+            expected_image_pages = {
+                int(page) for page in case.get("expect_image_pages_any") or []}
+            if expected_image_pages and not expected_image_pages.intersection(image_pages):
+                reasons.append(
+                    f"missing expected image page, want any "
+                    f"{sorted(expected_image_pages)}, got {sorted(image_pages)}")
+            missing_image_captions = [
+                str(item) for item in case.get("expect_image_caption_all") or []
+                if _comparable(item) not in image_captions
+            ]
+            if missing_image_captions:
+                reasons.append(
+                    f"missing image caption: {missing_image_captions}")
 
         passed = not reasons
         results.append({
@@ -104,6 +120,14 @@ async def evaluate_cases(retriever, cases: list[dict[str, Any]], *, top_k: int =
                 "page_end": chunk.page_end,
                 "excerpt": " ".join(chunk.content.split())[:180],
             } for chunk in chunks],
+            "images": [{
+                "asset_id": image.asset_id,
+                "caption": image.caption,
+                "page_start": image.page_start,
+                "media_type": image.media_type,
+                "sha256": image.sha256,
+                "match_kind": image.match_kind,
+            } for image in images],
         })
     passed_count = sum(item["passed"] for item in results)
     split_summary: dict[str, dict[str, int]] = {}
@@ -156,6 +180,9 @@ def main(argv: list[str] | None = None) -> int:
         "content_sha256": retriever.document["content_sha256"],
         "vehicle_model": retriever.vehicle_model,
         "revision": retriever.revision,
+        "visual_asset_count": len(getattr(retriever, "visual_assets", ())),
+        "visual_assets_sha256": str(
+            getattr(retriever, "visual_manifest", {}).get("assets_sha256") or ""),
     }
     rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
     if args.output:

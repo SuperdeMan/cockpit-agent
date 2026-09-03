@@ -372,6 +372,43 @@ def test_compound_person_pickup_hint_does_not_take_other_user_goals():
         assert [s.intent for s in plan.steps] == ["chitchat.talk"]
 
 
+def test_manual_hints_recover_howto_and_described_warning_badcases():
+    """生产两条 chitchat badcase 由 manual manifest 自己兜底，不改 Planner 核心。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    manual = load_manifest(str(root / "agents" / "manual_rag" / "manifest.yaml"))
+    amap = {"manual-rag": SimpleNamespace(manifest=manual, endpoint="x:0")}
+    for text in (
+        "雨刮器怎么打开",
+        "我的仪表上有个小人背着把宝剑的灯亮了是怎么回事",
+    ):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [step.intent for step in plan.steps] == ["manual.query"]
+        assert plan.steps[0].slots == {"question": text}
+
+
+def test_manual_hints_do_not_take_commands_apps_or_real_image_requests():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    manual = load_manifest(str(root / "agents" / "manual_rag" / "manifest.yaml"))
+    amap = {"manual-rag": SimpleNamespace(manifest=manual, endpoint="x:0")}
+    for text, intent in (
+        ("帮我打开雨刮器", "wiper.on"),
+        ("手机 App 怎么打开", "chitchat.talk"),
+        ("帮我看看照片里这个故障灯是什么", "vision.describe"),
+    ):
+        plan = _plan(intent)
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [step.intent for step in plan.steps] == [intent]
+
+
 def test_the_compound_pickup_sentence_now_keeps_the_pickup_half():
     """C6-A 的**显式行为变更**：「接X + 任意后续」不再整句落空。
 

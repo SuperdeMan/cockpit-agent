@@ -1,0 +1,31 @@
+owner: manual-rag
+version: 1
+name: manual-help-boundary
+type: guide
+description: 车型部件操作方法和仪表告警图标含义的手册问答边界，区分无标点怎么操作、立即车控与真实照片识别
+priority: 58
+capability_dependencies: [manual.query]
+keywords: [怎么打开, 如何开启, 怎么使用, 操作方法, 从哪设置, 哪里设置, 仪表上, 仪表灯, 故障灯, 指示灯, 警告灯, 图标, 背宝剑, 用户手册, 说明书]
+knowledge: |
+  **先判用户要“知道方法”还是要“现在执行”。**
+
+  - `对象 + 怎么/如何/从哪 + 打开/开启/使用/设置` 是操作方法咨询，即使 ASR 没有问号，
+    也只出 `manual.query`，不得把“打开”单字当成立即车控。
+  - `帮我/替我/现在/马上 + 打开/关闭/调到` 是立即执行，不出 `manual.query`；具体动作仍由
+    capability 目录、权限和 VAL 决定。
+  - 用户已经用颜色、形状、俗称或亮/闪状态描述了仪表灯，问“代表什么/怎么回事”，出
+    `manual.query` 查正式名称、含义与处置。用户要求看照片/摄像头画面时不套用文字手册问答。
+  - 手册没有命中就如实弃权，不能让闲聊常识补成车型结论。
+
+few_shots:
+  - user: 前挡雨刷的开关要怎样用
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"前挡雨刷的开关要怎样用"},"depends_on":[],"slot_refs":{}}]}
+  - user: 状态栏有个斜带小人一直亮代表什么
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"状态栏有个斜带小人一直亮代表什么"},"depends_on":[],"slot_refs":{}}]}
+
+golden:
+  - text: 后视镜自动下翻该从哪里设置
+    expect_intents: [manual.query]
+  - text: 挡风玻璃下雨时要怎样启动刮刷
+    expect_intents: [manual.query]
+    holdout: true

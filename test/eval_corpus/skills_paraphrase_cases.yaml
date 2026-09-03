@@ -41,3 +41,10 @@
   text: 外面在下雨，附近还有什么地方能逛
 - skill: weather-outing
   text: 今天这么热，去哪儿凉快凉快
+
+- skill: manual-help-boundary
+  text: 前挡下雨时该怎样让它刮起来
+- skill: manual-help-boundary
+  text: 屏幕顶上冒出一个斜线小人是啥情况
+- skill: manual-help-boundary
+  text: 车里这项功能不会用，想找原厂操作说明
