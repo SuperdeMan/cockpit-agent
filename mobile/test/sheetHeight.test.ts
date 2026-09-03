@@ -4,10 +4,13 @@
 // 照 §6 与 `VoiceSheet.tsx` 的排版**独立列一遍**，不 import 实现的常量：
 // 拿实现的常量去断言实现，等于什么都没验（B1 第 1 批坑③「期望值恰等于初值」的同一处陷阱）。
 //
-// 三个容器高是 2026-09-03 真机实测的**记录区高度**（`listHeight`，不是屏高）：
-//   外屏竖 728dp（1080×2520 @480 ⇒ 360×840dp 减顶栏/Composer）
-//   外屏横 192dp（840×360dp；缺陷 A 症状一就出在这里：0.4×192 = 77dp）
-//   内屏   573dp（2224×2488 @480 ⇒ 741×829dp，two-pane 的对话列；症状二：0.78×573 = 447dp）
+// 三个容器高都是**记录区高度**（`listHeight`，不是屏高）。⚠ 只有第一个是直接量到的：
+//   外屏竖 **578.67dp** —— 2026-09-03 真机**直接实测**：uiautomator 里那个 [0,313][1080,2049] 的
+//     容器节点（顶接头栏底 313、底与 voice-sheet 底重合），1736px @480dpi ÷ 3。
+//     ⛔ 本文件第一版写的 728dp 是**估值冒充实测**（840 屏高减估算 chrome），据它断言「外屏竖三档
+//     不受下限影响」——实测下来 0.4 与 0.78 两档都受下限影响。估算不能进判据。
+//   外屏横 192dp / 内屏 573dp —— **推导值不是实测**：由 §6.3 记的层高 77dp@0.4 与 447dp@0.78 反推
+//     （假设了当时的 detent 档位）。真机直接量这两个要转屏/展开，归 T13 余格。
 import type { SheetDetent } from '@/core/presence/presence'
 import { drivingSheetMinDp, sheetHeightDp } from '@/ui/layout/sheetHeight'
 
@@ -46,7 +49,7 @@ const ratio = (h: number, d: SheetDetent) => Math.round(h * d)
 const call = (containerH: number, detent: SheetDetent, o: { driving?: boolean; split?: boolean } = {}) =>
   sheetHeightDp({ containerH, detent, driving: o.driving ?? true, split: o.split ?? false, fontScale: 'normal' })
 
-const OUTER_PORTRAIT = 728
+const OUTER_PORTRAIT = 578.67 // 实测（见头注）
 const OUTER_LANDSCAPE = 192
 const INNER = 573
 
@@ -78,12 +81,26 @@ test('缺陷 A 症状二：0.78 的最小高比 0.62 恰好多一张压缩卡、
 })
 
 // ── 回归护栏：主形态与泊车路径一字不动 ────────────────────────────────
-test('外屏竖三档全部不受下限影响（比例本来就够）', () => {
-  expect([call(OUTER_PORTRAIT, 0.4), call(OUTER_PORTRAIT, 0.62), call(OUTER_PORTRAIT, 0.78)]).toEqual([
-    ratio(OUTER_PORTRAIT, 0.4),
-    ratio(OUTER_PORTRAIT, 0.62),
-    ratio(OUTER_PORTRAIT, 0.78),
-  ])
+test('外屏竖（实测 578.67dp）：0.4 与 0.78 受下限、0.62 仍走比例', () => {
+  // 真机 A/B（2026-09-03，角色 C）：行车档 ON 时容器 578.67 与 544.67 两种情况下层高**都是 269.0dp**
+  // ——容器差 34dp 而层高不动，纯比例做不到这件事 ⇒ 绑的是下限；行车档 OFF 时容器 568.33 ⇒ 层高
+  // 227.0dp = round(568.33×0.4) 逐 dp 等于纯比例。下面三条把这两侧都钉住。
+  expect(call(OUTER_PORTRAIT, 0.4)).toBe(need(0.4, false)) // 269 > round(231)
+  expect(call(OUTER_PORTRAIT, 0.4)).toBeGreaterThan(ratio(OUTER_PORTRAIT, 0.4))
+  expect(call(OUTER_PORTRAIT, 0.62)).toBe(ratio(OUTER_PORTRAIT, 0.62)) // 359 > 下限 337
+  expect(call(OUTER_PORTRAIT, 0.78)).toBe(need(0.78, false)) // 476 > round(451)
+})
+
+test('容器变了而下限没变时，层高不跟着容器动——真机 A/B 的判据形式', () => {
+  // 这条才是「绑的是下限不是比例」的判别式：两个不同容器给出同一个层高。
+  // 真机读到的正是这一对（578.67 与 544.67 都给 269.0dp）。
+  expect(call(578.67, 0.4)).toBe(call(544.67, 0.4))
+  expect(ratio(578.67, 0.4)).not.toBe(ratio(544.67, 0.4)) // 纯比例两者必然不同
+})
+
+test('泊车阴性：同一屏行车档关 ⇒ 逐 dp 退回纯比例（真机 568.33dp ⇒ 227）', () => {
+  expect(call(568.33, 0.4, { driving: false })).toBe(227)
+  expect(ratio(568.33, 0.4)).toBe(227)
 })
 
 test('泊车档：三个容器 × 三档一律等于纯比例（下限只给行车档）', () => {
