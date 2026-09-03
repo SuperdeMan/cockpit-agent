@@ -1,9 +1,9 @@
 # Xiaomi SU7 真实手册 RAG v2：问句落域与视觉证据 implementation plan
 
-> 状态：**v2 已生产；v2.1 真栈落域修复已完成本地验证，待受控发布**（2026-09-03）
-> 基线：`origin/main=3ae1622ab8d25118d288e231a0b2ef0a40ab669d`；生产 release
-> `f2dcb46fe6764f4087982e1216d7c1da98ab88f5`；修复候选
-> `b3a2aedd3c360c230709551502e5568e8bba8286`
+> 状态：**v2.1 已生产并关闭原错例；新增长期停放漏口的补丁已完成本地验证，待受控发布**（2026-09-03）
+> 基线：`origin/main=91c1828f36d5677902c8e581df1026d19cf9715e`；生产 release
+> `b3a2aedd3c360c230709551502e5568e8bba8286`；修复候选
+> `434a0461d07e7652de6605954f6df3fddb846553`
 > 工作分支：`feat/manual-rag-v2-grounded-visuals`  
 > 输入：`D:\Personal\AI\Claude Code\产品\2024-小米SU7-Pro-Max-用户手册.pdf`
 
@@ -236,9 +236,45 @@ release `f2dcb46` 上以独立 session/trace 跑完整 retrieval corpus：主集
   `6bfd14fdb0bfe240efd0eff1bb247b541c3b578568933c005b7d55267bd23f61`。这是低并发完整批，
   不是固定 `-n 8` 读数。
 
-### 6.4 发布与生产复验边界
+### 6.4 b3a2aed 发布前边界（历史）
 
-当前生产仍是 `f2dcb46`，上述修复尚未 push/deploy；`.mrag` 包和 cloud infrastructure 未变，
+当时生产仍是 `f2dcb46`，上述修复尚未 push/deploy；`.mrag` 包和 cloud infrastructure 未变，
 无需重装模型或修改 schema。后续发布必须单独授权 push 和 deploy，并锁定 `b3a2aed`：dry-run
 无阻断后部署，独立 status/verify；真栈复验先记录车态，再跑 36/36 和高风险 repeat 3，要求
 单域 `manual.query`、内容 36/36、零 action、前后车态 diff=0。未经该证据不得称生产闭合。
+
+## 7. b3a2aed 生产复验与长期停放补丁
+
+### 7.1 发布与复验结果
+
+`b3a2aed` 经 dry-run `blocking_changes=[]`、`bootstrap=ready` 后发布；独立 status 为 5/5
+healthy、零 warning，统一 verify 通过。部署容器内先直调分类器：`空调滤网怎么换`、`胎压报警
+怎么办`、`三元锂电池平时充到多少` 均返回 None，上云前不经过 VAL；明确打开空调、当前胎压和
+当前电量对照保持原端侧结果。
+
+生产 WS 随后运行完整 36 题一次，并对 13 个原高风险问法各补两遍，共 62 轮。首轮
+**35/36**；所有真正进入 manual 的调用 **61/61** 内容正确，13 个高风险问法全部 **3/3**，
+含三次 `空调滤网怎么换` 均零 action。62 轮逐轮读取车态，action=0、全量 state diff={}。
+Artifact：`.artifacts/manual-rag-live-validation/20260903T112920Z-postfix-b3a2aed.json`，SHA-256=
+`6d085a875f4fe08296404cc2cfe768deacffdddbfc2111c5c7db57f641783cf2`。
+
+唯一失败为 `车辆长期停放时电池怎么保养`：规划为 `chitchat.talk`，未取手册 PDF 255/264，
+并给出“拆低压电瓶负极、每隔一两周启动”的燃油车式通用建议。它没有 action/车态变化，但
+证明 36 题仍未全闭合；不能用原 13 条 repeat 全绿覆盖这一条新漏口。
+
+### 7.2 补丁与本地验证
+
+补丁 `434a0461d07e7652de6605954f6df3fddb846553` 将 manifest 升到 0.3.1，仅增加“车辆长期
+停放/闲置 + 动力电池 + 保养/维护”的窄 canonical；manual guide v3 增长期停放知识锚，并追加
+一条不同措辞 exemplar。反例明确锁住手机电池养护与电池衰减研究，不把开放设备/研究话题抢进
+车型手册。
+
+TDD RED 精确为 1 failed / 1 passed；修复后 route hints **106/106**、专项 **127 passed**、
+skill 24/24、exemplar 契约 324 条且域错配率 1.8%、edge smoke 13/13、edge eval 69/69、
+L0 85/85 + 25/25、capability integrity PASS。guide 与常驻 policy 合计 2461/2600，余量 139。
+
+最终 exact `434a046` 在约 1.5GB 可用内存下串行完整运行：
+**7833 passed / 34 skipped / 4 warnings**，1308.46s；日志
+`.artifacts/manual-rag-live-routing-fix/full-434a046-n1.log`，SHA-256=
+`2f43970c945815ddf90a703c4b930abb9c264a3c14ec59df88f2692ceec161ac`。检索包未变，36/36，
+p95 31.327ms。该提交尚未 push/deploy；当前生产仍是 35/36 的 `b3a2aed`。

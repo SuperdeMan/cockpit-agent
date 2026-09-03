@@ -113,23 +113,23 @@ Artifact：`.artifacts/dev-stack-verifications/qa-long-information-e9fa602.json`
 3 个干净会话、每个 5 个新闻业务轮：15/15 无 internal error，零中止、零 cleanup failure、
 release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-a729b98.json`。
 
-### 4.4 真实车型手册（生产 `f2dcb46`；修复候选 `b3a2aed` 待发布）
+### 4.4 真实车型手册（生产 `b3a2aed`；修复候选 `434a046` 待发布）
 
 - 278 页 `SU7用户手册` 生成 269 个文本 chunk、350 个图片放置 / 299 个 blob；v2 包
   `648cdf3d…400ed` 经 shared-model bootstrap 只读挂载，启动决议仍为 approved real provider；
-- release `f2dcb46` 的冷态胎压、雨刮、背宝剑图标与 CarPlay 负例基础探针通过；雨刮和安全带
-  各 repeat 3，均为 `manual.query`、正确 PDF 页/图片、零 action；
-- 随后扩到完整 36 题：检索控制组 36/36；生产中进入 manual 后累计 33/33 内容正确，但首轮
-  自然问法仅 26/36 精确落域。10 条错域含胎压/电量状态抢答、chitchat/info/clarify；
-  `空调滤网怎么换` 还误执行 `hvac.on`，故生产 RAG **未闭合**；
-- 候选 `b3a2aed` 已修端侧问句/状态边界、guide/exemplar/hint，并把 `e2e_strict_stack` 升为
-  完整 36 题门禁；本地完整批 7833/34/5。未 push/deploy，不能转借为生产结论。
+- release `b3a2aed` 已关闭原 10 个错域：13 个高风险问法全部 3/3；三次空调滤网问句均零
+  action。生产 62 轮逐轮车态 diff={}，进入 manual 后内容 61/61；
+- 完整 36 题首轮仍为 35/36。唯一失败“车辆长期停放时电池怎么保养”落 `chitchat.talk`，给出
+  拆低压电瓶负极/每两周启动的燃油车通用建议；虽零 action，仍无手册 provenance，故生产
+  RAG **未闭合**；
+- 候选 `434a046` 增长期停放电池养护窄 hint、guide/exemplar 与反例；本地全量 7833/34/4，
+  检索 36/36。尚未 push/deploy，不能转借为生产结论。
 
 ## 5. 当前活项
 
 | 活项 | 当前证据 | 下一步 / 启动条件 |
 |---|---|---|
-| 手册 RAG 真栈落域 | `f2dcb46` 首轮 26/36；进入 manual 后 33/33 内容正确；`空调滤网怎么换` 误执行 `hvac.on` | 受控发布候选 `b3a2aed`；先记车态，复验 36/36 + 高风险 repeat 3，要求零 action 与车态 diff=0 |
+| 手册 RAG 真栈落域 | `b3a2aed` 首轮 35/36；manual 61/61、原高风险 13 组 3/3、62 轮零 action/diff；长期停放电池养护仍错落闲聊 | 受控发布候选 `434a046`；复验完整 36/36，并将长期停放问法补到 3/3，仍要求零 action 与车态 diff=0 |
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |

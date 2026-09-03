@@ -8332,3 +8332,22 @@ canonical digest。
 
 本节只代表本地候选：两个提交均未 push/deploy，生产仍为 `f2dcb46`。后续需单独授权发布并
 以车态前后快照验证 36/36、稳定错例 repeat 3、零 action、diff=0；模型包和云基础设施未变。
+
+## §93 2026-09-03 b3a2aed 发布、62 轮生产复验与长期停放补丁
+
+获授权后推送四个提交并发布代码 SHA `b3a2aed`；dry-run 无阻断、无需更新模型/基础设施，
+发布后 5/5 healthy、统一 verify 通过。容器内无副作用分类先证三条原危险问句均返回 None，
+正常开空调/当前胎压/当前电量保持。生产再跑 36 题 + 13 个高风险各补两遍，共 62 轮：原高风险
+全部 3/3，`空调滤网怎么换` 三次零 action；逐轮车态 diff={}；进入 manual 的 61 次内容 61/61。
+
+但完整首轮只到 35/36：`车辆长期停放时电池怎么保养` 落 `chitchat.talk`，给出拆低压电瓶负极、
+每隔一两周启动的燃油车式建议，未取手册 PDF 255/264。该轮零 action/零车态变化，但没有 manual
+provenance，故按错域不收口。Artifact `20260903T112920Z-postfix-b3a2aed.json`，SHA=
+`6d085a875f4fe08296404cc2cfe768deacffdddbfc2111c5c7db57f641783cf2`。
+
+补丁 `434a046` 将 manifest 升 0.3.1，增加长期停放动力电池养护窄 hint；guide v3 与一条改写
+exemplar 补泛化，手机电池和研究话题作反例。专项 127、route 106/106、skills 24/24、
+exemplars 324 条、L0 与 capability 门禁全过；policy+guide=2461/2600。约 1.5GB 可用内存下串行
+全量 **7833 passed / 34 skipped / 4 warnings**（1308.46s），日志 SHA=
+`2f43970c945815ddf90a703c4b930abb9c264a3c14ec59df88f2692ceec161ac`。本补丁未 push/deploy，
+生产仍是 `b3a2aed` 的 35/36 状态。
