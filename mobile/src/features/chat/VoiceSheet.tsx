@@ -24,6 +24,7 @@ import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 
 import { FollowUpChips } from './FollowUpChips'
 import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
+import { SHEET_ORB, sheetHeightDp } from '@/ui/layout/sheetHeight'
 import { GLASS, RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
@@ -79,7 +80,15 @@ const COLLAPSE_MS = 180
 export function VoiceSheet(props: VoiceSheetProps) {
   const { p, fontScale, snapshot, turn, containerHeight } = props
   const open = snapshot.input === 'voice-sheet' && containerHeight > 0
-  const target = Math.round(containerHeight * snapshot.sheetDetent)
+  // B4-13 缺陷 A：detent 是比例，表达不了「内容有固有最小高」——行车档下要过 sheetHeightDp
+  // 的下限（判据与三个真机容器读数都在 ui/layout/sheetHeight.ts）。泊车路径逐字节不变。
+  const target = sheetHeightDp({
+    detent: snapshot.sheetDetent,
+    containerH: containerHeight,
+    driving: props.driving,
+    split: props.split,
+    fontScale,
+  })
   // 挂载态比 open 晚 COLLAPSE_MS 关掉：让收起动画播完再卸载
   const [mounted, setMounted] = useState(open)
   const h = useSharedValue(0)
@@ -221,7 +230,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 ) : null}
                 {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。
                     行车档 120dp（§6），泊车 88 */}
-                <AuroraOrb size={driving ? 120 : 88} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+                <AuroraOrb size={driving ? SHEET_ORB.driving : SHEET_ORB.parked} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
                 {/* 胶囊文案（同 §4.3，此处放大） */}
                 {snapshot.capsule ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
