@@ -8224,3 +8224,32 @@ index SHA；cloud profile 强制 local Provider，并把远端 manual_rag 目录
 mount。接线后固定全量 **7797 passed / 32 skipped / 13 warnings**（300.17s），warning 类别
 不变。此处仍是 pre-release 候选；bootstrap、批准锚、dry-run、apply 与 exact release 真栈
 读数在完成前不得倒填为已发布。
+
+### §90.5 生产发布、真问法掀缺口与最终 release `a406e22`
+
+基础设施以摘要 `5314f8961ef2a8bdbdcbd3f5645cc3aa3c3746beeadcc727fe328f4698535efd`
+重新批准，索引 `b290fde…406cfa` 经 shared-model bootstrap 安装为 root:root 0644 并只读
+挂载。首次上传 cloud compose 时，Windows checkout 把 LF Git blob 转成 CRLF：远端 hash
+`eeef…` 与批准锚的 `5047…` 不同，preflight 只报批准锚无效。旧 compose/锚已先备份；修法
+不是放宽 hash，而是从 `git show <sha>:deploy/cloud/compose.cloud.yaml` 生成精确 blob 再安装，
+之后 blocking=0、bootstrap ready。这个坑证明受控配置的证据对象是 commit blob，不是当前
+工作树看起来相同的文件。
+
+首发 `423ed23996a141616e78019589c70f4e0c85259b` 已 5/5 healthy、verify 通过；容器内短问法
+正确。但生产 WS 用完整问法“请查 SU7 用户手册，冷态胎压应该打到多少？”只召回 PDF 256，
+缺少 PDF 245 的 2.9 bar 参数页，故不拿首发成功收口。补一条可要求多页互补证据的 evaluator
+RED（30/31），将“请查/帮我查”归问法壳，并加“冷态胎压→轮胎压力参数”受控映射；修复后
+main 23/23 + holdout 8/8，p95 21.613ms，专项 124 passed。
+
+最终 release `a406e222b3fe08ea462c06ccf676d0698f1f443a` 的 clean-clone 全量为
+**7796 passed / 34 skipped / 11 warnings**（255.90s；未复制 ignored NLU 模型，故比根工作区
+少两条 WordPiece warning、多两条 skip）。部署后 5/5 healthy、零 warning；统一 verify
+`verified`，artifact `20260903T053150Z-a406e22.json`，`e2e_remote_safe`、
+`minimax:MiniMax-M3`。容器内完整问法返回页 245/256/257/255，real provenance、2.9 bar、
+零动作；生产 WS 独立 session repeat 3 为 **3/3**，CarPlay 负例 **1/1** sources 为空、零动作。
+
+两次探针假红均来自 Windows PowerShell stdin 把中文查询或“PDF第245页”断言编码成 `?`；
+改用环境变量/ASCII `\uXXXX` 后通过，未归罪 Provider。`e2e_strict_stack` 因 manifest 明确
+非 remote-safe/real signed profile，没有用 `--allow-mutating` 绕过；改用无持久化容器探针和
+单轮生产 WS。原工作区全过程有并发 mobile 提交/文档改动，本批只推精确 SHA，不 reset、
+rebase、stash 或夹带；最终 production 的直接回滚点为 `423ed23`。

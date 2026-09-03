@@ -80,15 +80,16 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `a729b984a7e66f508d0a11218713b6e51c8f7620` |
-| 回滚点 | `e9fa602e7991b212de4c1ea8c8e95c3673891c1f` |
+| 生产 release | `a406e222b3fe08ea462c06ccf676d0698f1f443a` |
+| 回滚点 | `423ed23996a141616e78019589c70f4e0c85259b` |
 | status | 5/5 endpoint healthy，零 warning |
-| verify | `verified`；artifact `20260830T110922Z-a729b98.json` |
-| 全量单测 | `7770 passed / 32 skipped / 13 warnings` |
-| Cloud Planner | `1278 passed / 1 skipped` |
-| Planner + Info | `289 passed` |
+| verify | `verified`；artifact `20260903T053150Z-a406e22.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| a406 clean-clone 全量 | `7796 passed / 34 skipped / 11 warnings`；`TZ=UTC0`，未设置 `PYTHONIOENCODING` |
+| manual-rag | Xiaomi SU7 真手册：source `ef16d20…e4705d`，index `b290fde…406cfa`，retrieval main 23/23 + holdout 8/8；生产 WS 正例 3/3、CarPlay 负例 1/1，零动作 |
+| a406 专项边界 | 未单独重跑 Cloud Planner / Planner+Info 历史口径；统一 remote-safe verify 已通过，不转借 a729 的 1278/289 数字 |
 
-`862617b` 与 `26de242` 是 release 之后的探针/文档提交，不是新生产 release。
+`423ed23` 是同日首发后被真实 WS 问法掀开召回缺口的中间 release，已由 `a406e22` 替代；
+不要把 `423ed23` 的单次成功或 `a729b98` 的旧专项数字转借给当前 release。
 
 ### 4.1 QA 状态
 
@@ -96,6 +97,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 安全专项在 `e9fa602` 上 5 例、15/15 PASS；
 - 完整 information persona 在 `e9fa602` 上 57/59，提醒/导航清理、零挂起与 release 连续均证明；
 - `limit:null → "None" → ValueError` 已由 `a729b98` 修复，新闻 3 个干净会话零 internal error；
+- manual-rag 已在 `a406e22` 使用 Xiaomi SU7 真实手册索引，真实问法与 CarPlay 负例已闭合；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
 当前主要活项：
@@ -105,7 +107,6 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 安全问句偶尔落 `info.search` | 回答安全但错域、无 manual provenance | QA 交接页 §5 |
 | safety focus 持续阻断后续 charging plan | 安全状态解除时机的产品裁决 | QA 交接页 §5 |
 | MiniMax TTS RPM / barge-in 残帧 | 外部配额与协议/客户端边界 | QA 交接页 §5 |
-| manual-rag 生产发布差额 | 当前工作树已实现并本地验证 Xiaomi SU7 真实手册索引（278 页→269 chunks；retrieval 主集 22/22 + holdout 8/8）；shared-model 哈希清单、远端 preflight 与 cloud 只读挂载已接线。生产 `a729b98` 仍为 mock | `docs/design/2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md` + QA 交接页 §5；2026-09-03 已取得基础设施/push/deploy 授权，下一步按 exact SHA bootstrap 索引与批准锚、dry-run、deploy、real 决议/卡片/问答验收；完成前不写已关闭 |
 | gRPC RuntimeWarning | test-only fixture 债务 | QA 交接页 §5 |
 
 ### 4.2 当前活项与其他可接工作
