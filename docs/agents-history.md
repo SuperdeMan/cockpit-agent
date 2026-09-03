@@ -8308,3 +8308,27 @@ holdout）；专项 180 passed；发布接线 349 passed / 1 skipped；五道 bl
 没有远端 bootstrap、push 或 deploy。生产仍是 `a406e22` 文本版；严格栈探针已升级为三条手册
 问法都必须 `manual + real + 预期页 + 预期图片 + 0 action`。在新 release 真栈通过前，本节只
 代表本地候选闭合，不代表生产闭合。
+
+## §92 2026-09-03 手册 RAG 生产 36 题扩面与落域修复（本地候选）
+
+生产 `f2dcb46` 将基础三题扩成 retrieval corpus 全量 36 题后，确定性检索仍 36/36，且所有
+真正进入 `manual.query` 的 33 次调用内容 33/33 正确；但首轮精确落域仅 26/36。稳定错域包括
+胎压报警被当当前胎压、三元锂充电建议被当当前电量、防滑链/SOS/Android Auto 0/3 落 manual；
+另有五条模型方差。`空调滤网怎么换` 被端侧执行 `hvac.on`，因此本批按安全缺陷处理，不把
+“检索器全绿”写成端到端全绿。原始/复验/复核工件均在 ignored
+`.artifacts/manual-rag-live-validation/`。
+
+修复提交 `2f5af9c`：`question_shape` 增零领域“换/选择/要求”问句，fast-intent 分开胎压报警
+处置/当前读数与电池充电目标/当前 SOC；manual guide v2、7 条改写 exemplar、manifest 0.3.0
+窄 hint 覆盖已复现规格/维护/兼容/SOS 句族；route 反例保留当前车况、设备问题、手机求救、
+研究话题和明确命令。`e2e_strict_stack` 改为直接加载完整 36 题 corpus，并把该 corpus 纳入
+canonical digest。
+
+首轮全量精确抓到 guide 超预算：常驻 policy + manual guide=2794 > 2600，两条预算测试红，
+运行时会把 guide 标成 `!clipped`。没有调大全局预算；后续提交 `b3a2aed` 删除与 exemplar 重复
+的两条 few-shot，降到 2450、留 150。最终 exact `b3a2aedd3c360c230709551502e5568e8bba8286`
+低并发全量为 **7833 passed / 34 skipped / 5 warnings**（`-n2`，721.49s），日志 SHA=
+`6bfd14fdb0bfe240efd0eff1bb247b541c3b578568933c005b7d55267bd23f61`；五道门禁全过。
+
+本节只代表本地候选：两个提交均未 push/deploy，生产仍为 `f2dcb46`。后续需单独授权发布并
+以车态前后快照验证 36/36、稳定错例 repeat 3、零 action、diff=0；模型包和云基础设施未变。

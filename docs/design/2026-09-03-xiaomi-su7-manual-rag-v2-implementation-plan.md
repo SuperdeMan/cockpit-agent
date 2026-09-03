@@ -1,8 +1,9 @@
 # Xiaomi SU7 真实手册 RAG v2：问句落域与视觉证据 implementation plan
 
-> 状态：**已实现并完成本地验证，待受控发布**（2026-09-03）
-> 基线：`origin/main=9774932384c23cc27d39759891b39fbe9fe1235d`；生产 release
-> `a406e222b3fe08ea462c06ccf676d0698f1f443a`  
+> 状态：**v2 已生产；v2.1 真栈落域修复已完成本地验证，待受控发布**（2026-09-03）
+> 基线：`origin/main=3ae1622ab8d25118d288e231a0b2ef0a40ab669d`；生产 release
+> `f2dcb46fe6764f4087982e1216d7c1da98ab88f5`；修复候选
+> `b3a2aedd3c360c230709551502e5568e8bba8286`  
 > 工作分支：`feat/manual-rag-v2-grounded-visuals`  
 > 输入：`D:\Personal\AI\Claude Code\产品\2024-小米SU7-Pro-Max-用户手册.pdf`
 
@@ -181,9 +182,63 @@ deploy。生产 E2E 需在代码提交后另行展示精确提交清单，并按
 截图时没有可用浏览器实例，因此本轮 UI 证据为 SSR、两端测试、Vite build 与原图核对；生产
 HMI 截图留给发布后的真实 WS 验收。
 
-### 5.4 尚未完成的发布边界
+### 5.4 v2 当时尚未完成的发布边界（历史）
 
-生产仍为 `a406e22` 文本版。v2 包尚未安装到远端 shared models，代码尚未 push/deploy，三条
+本节记录实现完成当时的边界：生产仍为 `a406e22` 文本版，v2 包尚未安装到远端 shared models，三条
 生产 WS 探针（冷态胎压、无标点雨刮、背宝剑图标）也尚未在新 release 上执行。对应
 `e2e_strict_stack.py` 已升级为必须同时断言 `manual + real + 预期页 + 预期图片 + 0 action`；
-发布前不得把本地结果写成生产闭合。
+发布前不得把本地结果写成生产闭合。v2 后续已发布为 `f2dcb46`；当前状态由下方 §6 接管。
+
+## 6. v2.1：生产 36 题扩面后的落域修复
+
+### 6.1 生产证据与问题拆分
+
+release `f2dcb46` 上以独立 session/trace 跑完整 retrieval corpus：主集 27、holdout 9，正例
+29、负例 7。确定性检索控制组仍为 **36/36**；生产中只要进入 `manual.query`，首轮 26/26、
+含错例复验累计 **33/33** 的页码、正文、图片或零命中均正确。自然问法的精确落域只有
+**26/36（72.22%）**，所以端到端 RAG 同为 26/36；失败在检索前，不能归因给 BM25，也不能
+用换向量库处理。
+
+10 个首轮错域中，`胎压报警怎么办` 3/3 被端侧当 `tire_pressure.query`，`三元锂电池平时
+充到多少` 3/3 被当 `battery.query`；`防滑链应该装在哪个轮子上`、`紧急情况怎么呼叫救援`、
+`支持 Android Auto 吗` 均 0/3 落 manual。另有 5 条在 1/3–2/3 间波动。最严重的是
+`空调滤网怎么换` 被端侧执行成 `hvac.on`；因测试前未记录车态，未擅自发反向动作。
+
+原始证据位于 ignored `.artifacts/manual-rag-live-validation/`。复核时修正两条探针假红：
+`7°C` 与 `7℃` 应按检索器同源 NFKC 比较；安全告警会在“手册未查到”前追加处置建议，负例
+应判 chunk/image 为空而不是要求话术从固定前缀开始。
+
+### 6.2 修复实现
+
+- `runtime.question_shape` 只增加“换、哪个/哪侧、什么要求”等零领域句形；`空调滤网怎么换`
+  因此不再进入写操作。明确“帮我打开/设置”仍是指令。
+- `fast_intent` 分开当前状态与手册知识：胎压报警处置不再抢成当前胎压；电池容量、充电目标
+  不再抢成当前 SOC，`胎压现在多少`、`电池还有多少` 仍保持端侧查询。
+- `manual-help-boundary` v2 扩到规格建议、维护、冬季用胎、兼容性和车内 SOS；manual exemplar
+  只追加生产原句的实质改写。manifest 0.3.0 增窄 canonical hint，同时保留实时车况、设备
+  兼容性、手机求救、研究话题和明确执行命令反例。
+- `e2e_strict_stack` 从三题子集升级为直接消费完整 36 题 corpus，并核对单一 manual 卡、real
+  provenance、页码、NFKC 正文、图片、负例零命中和零 action；corpus 进入 canonical digest。
+
+### 6.3 本地验证
+
+- TDD RED：新增边界精确得到 **7 failed / 163 passed**；实现后同组 **170 passed**。
+- route hints **103/103**；edge eval **69/69**；edge smoke **13/13**；skill golden **24/24**；
+  exemplar 契约 **323 条**，未见范例域错配率仍为 1.8%；L0 discovery 85/85、gate 25/25；
+  capability integrity PASS；E2E CHECK OK。
+- 首次完整批在候选 `2f5af9c` 得到 **7831 passed / 34 skipped / 2 failed / 5 warnings**；两红
+  同源为 manual guide 与常驻 policy 合计 2794 字符，超过 2600 预算，运行时会 `!clipped`。
+  未放大全局预算，而是删除与 exemplar 重复的两条 few-shot；合计降到 2450，余量 150，
+  budget/skill/exemplar 专项 **94 passed**。
+- 最终精确代码 SHA `b3a2aedd3c360c230709551502e5568e8bba8286`，在本机仅约 2.5GB 可用
+  内存下以 `-n 2 --dist worksteal` 完整运行：**7833 passed / 34 skipped / 5 warnings**，
+  721.49s；日志 `.artifacts/manual-rag-live-routing-fix/full-b3a2aed-n2.log`，SHA-256=
+  `6bfd14fdb0bfe240efd0eff1bb247b541c3b578568933c005b7d55267bd23f61`。这是低并发完整批，
+  不是固定 `-n 8` 读数。
+
+### 6.4 发布与生产复验边界
+
+当前生产仍是 `f2dcb46`，上述修复尚未 push/deploy；`.mrag` 包和 cloud infrastructure 未变，
+无需重装模型或修改 schema。后续发布必须单独授权 push 和 deploy，并锁定 `b3a2aed`：dry-run
+无阻断后部署，独立 status/verify；真栈复验先记录车态，再跑 36/36 和高风险 repeat 3，要求
+单域 `manual.query`、内容 36/36、零 action、前后车态 diff=0。未经该证据不得称生产闭合。

@@ -4,8 +4,9 @@
 简短回答。v2 同时处理无标点操作方法问句、受控图标俗称和同页原图；mock 只保留给 CI
 和无私有手册资产的离线开发。
 
-生产状态（2026-09-03）：release `a406e222b3fe08ea462c06ccf676d0698f1f443a` 已使用
-shared-model 只读索引；统一 verify 与生产 WS 正/负例见实施计划 §8.6。
+生产状态（2026-09-03）：release `f2dcb46fe6764f4087982e1216d7c1da98ab88f5` 已使用 v2
+shared-model 只读图文包。随后 36 题生产扩面确认“进入 manual 后内容正确、前置落域仍有缺口”；
+修复候选 `b3a2aedd3c360c230709551502e5568e8bba8286` 已完成本地验证，尚未 push/deploy。
 
 | intent | 说明 |
 |---|---|
@@ -107,3 +108,6 @@ python -X utf8 scripts/eval_manual_rag.py `
 
 真实评测必须同时核对 top 页和关键正文；“页号碰对”不算通过。实现与证据边界见
 `docs/design/2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md`。
+
+里程碑 `e2e_strict_stack` 会直接加载完整 36 题 corpus，而不是再维护一份三题子集；每题须
+同时满足 `manual` 单域卡、approved real provenance、预期页/正文/图片或正确零命中、零 action。

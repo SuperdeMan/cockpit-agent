@@ -113,22 +113,23 @@ Artifact：`.artifacts/dev-stack-verifications/qa-long-information-e9fa602.json`
 3 个干净会话、每个 5 个新闻业务轮：15/15 无 internal error，零中止、零 cleanup failure、
 release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-a729b98.json`。
 
-### 4.4 真实车型手册（release `a406e22`）
+### 4.4 真实车型手册（生产 `f2dcb46`；修复候选 `b3a2aed` 待发布）
 
-- 278 页 `SU7用户手册` 生成 269 个页级 chunk；源、内容、索引 SHA 与 tracked catalog
-  指纹全部对账；索引经 shared-model bootstrap 安装并只读挂载；
-- 容器/宿主索引 SHA 同为 `b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa`，
-  启动决议 `provider[knowledge]=xiaomi-su7-2024-user-manual(real)`；
-- 生产 WS 同一句“请查 SU7 用户手册，冷态胎压应该打到多少？”3/3：`manual` 卡、
-  `_prov.mode=real`、车型 `xiaomi-su7-2024`、PDF 245+256、话术含 2.9 bar、零动作；
-- CarPlay 负例 1/1：仍落 real manual 卡但 sources 为空，明确手册未查到，零动作；
-- `e2e_strict_stack` 因 manifest 明确为非 remote-safe/real signed profile，没有绕过 runner；
-  上述验证使用无持久化容器 Agent 探针 + 生产单轮 WS，只读且逐轮核对 card/speech/actions。
+- 278 页 `SU7用户手册` 生成 269 个文本 chunk、350 个图片放置 / 299 个 blob；v2 包
+  `648cdf3d…400ed` 经 shared-model bootstrap 只读挂载，启动决议仍为 approved real provider；
+- release `f2dcb46` 的冷态胎压、雨刮、背宝剑图标与 CarPlay 负例基础探针通过；雨刮和安全带
+  各 repeat 3，均为 `manual.query`、正确 PDF 页/图片、零 action；
+- 随后扩到完整 36 题：检索控制组 36/36；生产中进入 manual 后累计 33/33 内容正确，但首轮
+  自然问法仅 26/36 精确落域。10 条错域含胎压/电量状态抢答、chitchat/info/clarify；
+  `空调滤网怎么换` 还误执行 `hvac.on`，故生产 RAG **未闭合**；
+- 候选 `b3a2aed` 已修端侧问句/状态边界、guide/exemplar/hint，并把 `e2e_strict_stack` 升为
+  完整 36 题门禁；本地完整批 7833/34/5。未 push/deploy，不能转借为生产结论。
 
 ## 5. 当前活项
 
 | 活项 | 当前证据 | 下一步 / 启动条件 |
 |---|---|---|
+| 手册 RAG 真栈落域 | `f2dcb46` 首轮 26/36；进入 manual 后 33/33 内容正确；`空调滤网怎么换` 误执行 `hvac.on` | 受控发布候选 `b3a2aed`；先记车态，复验 36/36 + 高风险 repeat 3，要求零 action 与车态 diff=0 |
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |
