@@ -7,6 +7,11 @@ cases:
     expect_top_page: 245
     expect_pages_any: [245]
     expect_text_all: ["2.9"]
+  - id: tire-pressure-cold-manual-prefixed
+    query: 请查 SU7 用户手册，冷态胎压应该打到多少？
+    expect_top_page: 245
+    expect_pages_all: [245, 256]
+    expect_text_all: ["2.9", "冷态胎压"]
   - id: tire-pressure-alert
     query: 胎压报警怎么办
     expect_top_page: 257

@@ -66,6 +66,12 @@ async def evaluate_cases(retriever, cases: list[dict[str, Any]], *, top_k: int =
                 reasons.append(
                     f"missing expected page, want any {sorted(expected_pages)}, "
                     f"got {sorted(actual_pages)}")
+            required_pages = {int(page) for page in case.get("expect_pages_all") or []}
+            missing_pages = required_pages - actual_pages
+            if missing_pages:
+                reasons.append(
+                    f"missing required pages {sorted(missing_pages)}, "
+                    f"got {sorted(actual_pages)}")
             expected_top = case.get("expect_top_page")
             if expected_top is not None:
                 top_pages = _pages(chunks[:1])

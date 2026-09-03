@@ -49,3 +49,13 @@ def test_evaluator_does_not_pass_on_page_number_alone():
 
     assert report["summary"]["failed"] == 1
     assert "missing text" in report["cases"][0]["reason"]
+
+
+def test_evaluator_can_require_multiple_complementary_pages():
+    cases = [{"id": "needs-spec-and-context", "query": "胎压多少",
+              "expect_pages_all": [245, 256]}]
+
+    report = asyncio.run(evaluate_cases(_Retriever(), cases, top_k=4))
+
+    assert report["summary"]["failed"] == 1
+    assert "missing required pages [256]" in report["cases"][0]["reason"]
