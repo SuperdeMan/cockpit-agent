@@ -13,8 +13,9 @@ import pytest
 import yaml
 
 from runtime.question_shape import (
-    CAPABILITY_ASKS, DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES, MANNER_ASKS,
-    HOW_TO_ACTIONS, OPERATION_VERBS, PROPERTY_ASKS, QUESTION_TAILS,
+    CAPABILITY_ASKS, CHOICE_ASKS, DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
+    MANNER_ASKS, HOW_TO_ACTIONS, OPERATION_VERBS, PROPERTY_ASKS,
+    QUESTION_TAILS, REFERENCE_ASKS,
     is_non_directive_question,
 )
 
@@ -25,6 +26,8 @@ _CLASSES = {
     "QUESTION_TAILS": QUESTION_TAILS,
     "CAPABILITY_ASKS": CAPABILITY_ASKS,
     "PROPERTY_ASKS": PROPERTY_ASKS,
+    "CHOICE_ASKS": CHOICE_ASKS,
+    "REFERENCE_ASKS": REFERENCE_ASKS,
     "MANNER_ASKS": MANNER_ASKS,
     "HYPOTHETICAL_FRAMES": HYPOTHETICAL_FRAMES,
     "DIRECTIVE_MARKERS": DIRECTIVE_MARKERS,
@@ -121,9 +124,19 @@ def test_manner_ask_without_operation_verb_is_a_question():
     "前风挡雨刮怎么使用",
     "怎么打开雨刮器",
     "雨刮器怎么打开一下",
+    "空调滤网怎么换",
 ])
 def test_object_first_how_to_shape_is_a_question_without_asr_punctuation(text):
     """对象在前的“怎么操作”是方法询问；ASR 没有问号也不得执行成车控。"""
+    assert is_non_directive_question(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "防滑链应该装在哪个轮子上",
+    "冬天轮胎有什么要求",
+])
+def test_choice_and_requirements_shapes_are_questions_without_punctuation(text):
+    """选择/要求型咨询也不是执行命令，云侧写闸应看见它们的问句形态。"""
     assert is_non_directive_question(text) is True
 
 

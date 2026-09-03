@@ -583,3 +583,55 @@ def test_charging_hints_never_hijack_device_charging():
         eng.apply(plan, t, amap)
         assert not plan.steps, f"{t!r} 被 charging hint 接管: {[s.intent for s in plan.steps]}"
 
+
+def test_manual_production_badcases_are_deterministically_recovered():
+    """2026-09-03 f2dcb46 真栈：10 个错域 + 1 个方差问法必须统一落 manual。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    manual = load_manifest(str(root / "agents" / "manual_rag" / "manifest.yaml"))
+    amap = {"manual-rag": SimpleNamespace(manifest=manual, endpoint="x:0")}
+    cases = (
+        ("胎压报警怎么办", "tire_pressure.query"),
+        ("充电上限设多少合适", "chitchat.talk"),
+        ("冬天轮胎有什么要求", "chitchat.talk"),
+        ("防滑链应该装在哪个轮子上", "info.search"),
+        ("紧急情况怎么呼叫救援", "chitchat.talk"),
+        ("空调滤网怎么换", "hvac.on"),
+        ("机油灯亮了怎么办", "chitchat.talk"),
+        ("支持 Android Auto 吗", "info.search"),
+        ("发动机机油多久换一次", "chitchat.talk"),
+        ("三元锂电池平时充到多少", "battery.query"),
+        ("SU7 发动机排量多大", "info.search"),
+    )
+    for text, initial in cases:
+        plan = _plan(initial)
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [step.intent for step in plan.steps] == ["manual.query"], text
+        assert plan.steps[0].slots == {"question": text}, text
+
+
+def test_manual_recovery_hints_preserve_adjacent_non_manual_intents():
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    manual = load_manifest(str(root / "agents" / "manual_rag" / "manifest.yaml"))
+    amap = {"manual-rag": SimpleNamespace(manifest=manual, endpoint="x:0")}
+    cases = (
+        ("胎压现在多少", "tire_pressure.query"),
+        ("车现在还有多少电", "battery.query"),
+        ("帮我把充电上限设成80%", "battery.query"),
+        ("哪些车型支持 Android Auto", "info.search"),
+        ("用手机怎么呼叫道路救援", "chitchat.talk"),
+        ("研究三元锂电池技术", "research.run"),
+        ("帮我换空调滤芯", "chitchat.talk"),
+    )
+    for text, initial in cases:
+        plan = _plan(initial)
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [step.intent for step in plan.steps] == [initial], text
+

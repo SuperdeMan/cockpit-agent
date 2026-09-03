@@ -35,6 +35,7 @@ CANONICAL_INPUTS = [
     "test/**/*.py",
     "test/journeys/*.yaml",
     "test/journeys/**/*.yaml",
+    "test/eval_corpus/manual_rag_retrieval.yaml",
     "scripts/**",
     "runtime/**",
 ]
@@ -176,7 +177,7 @@ EXPECTED: dict[
         "default", ("milestone",), 900, "root", F, True, True, 0, None,
     ),
     "e2e_strict_stack": (
-        "provider_probe", ("milestone",), 600, "real", P,
+        "provider_probe", ("milestone",), 900, "real", P,
         True, True, 0, None,
     ),
     # 2026-08-01 退出 nightly：每一轮都要求规划落到 trip-planner，mock 全栈做不到
@@ -443,6 +444,7 @@ def test_manifest_declares_canonical_inputs_dependencies_and_public_config():
     manifest = _contract().load_manifest(MANIFEST_PATH, repo_root=REPO_ROOT)
 
     assert "test/journeys/**/*.yaml" in manifest.canonical_inputs
+    assert "test/eval_corpus/manual_rag_retrieval.yaml" in manifest.canonical_inputs
     assert "test/journeys/*.yaml" in manifest.canonical_inputs
     assert "test/*.py" in manifest.canonical_inputs
     assert "scripts/**" in manifest.canonical_inputs

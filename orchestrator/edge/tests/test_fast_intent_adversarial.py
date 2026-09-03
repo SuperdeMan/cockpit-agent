@@ -65,6 +65,7 @@ class TestQuestionIsNotACommand:
         """真实 ASR 通常没有问号；“对象怎么打开”问方法，不是替用户按开关。"""
         assert classify_structured("雨刮器怎么打开") is None
         assert classify_structured("空调怎么关闭") is None
+        assert classify_structured("空调滤网怎么换") is None
 
     def test_explicit_wiper_command_remains_local(self):
         assert _name("帮我打开雨刮器") == "wiper.on"
@@ -164,12 +165,13 @@ class TestSpecQuestionIsNotAStateQuery:
 
     def test_spec_asks_go_to_cloud(self):
         for text in ("胎压应该补到多少", "标准胎压是多少", "胎压多少正常",
-                     "胎压建议打到多少", "不知道具体车型时，标准胎压应该是多少"):
+                     "胎压建议打到多少", "不知道具体车型时，标准胎压应该是多少",
+                     "胎压报警怎么办", "胎压异常该怎么处理"):
             assert classify_structured(text) is None, f"{text!r} 不该被端侧接管"
 
     def test_state_queries_still_answered_locally(self):
         for text in ("胎压是多少", "看下胎压", "帮我查一下胎压", "胎压正常吗",
-                     "轮胎气压查一下"):
+                     "轮胎气压查一下", "胎压报警了吗"):
             result = classify_structured(text)
             assert result is not None, f"{text!r} 认不出来了"
             assert result["data"]["object"] == "tire_pressure_monitoring"

@@ -51,6 +51,115 @@
   source: "manual warning guardrail: user supplied image belongs to vision"
   tags: [manual, guardrail, vision]
 
+# ── manual-rag v2.1：f2dcb46 生产 36 题真栈错域闭环 ────────────────────
+- text: 胎压报警怎么办
+  initial_intents: [tire_pressure.query]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 0/3 manual"
+  tags: [manual, seen_regression, alert, replace]
+
+- text: 充电上限设多少合适
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 1/3 manual"
+  tags: [manual, seen_regression, specification, replace]
+
+- text: 冬天轮胎有什么要求
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 2/3 manual"
+  tags: [manual, seen_regression, winter, replace]
+
+- text: 防滑链应该装在哪个轮子上
+  initial_intents: [info.search]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 0/3 manual"
+  tags: [manual, seen_regression, winter, replace]
+
+- text: 紧急情况怎么呼叫救援
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 0/3 manual"
+  tags: [manual, seen_regression, emergency, replace]
+
+- text: 空调滤网怎么换
+  initial_intents: [hvac.on]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production probe executed hvac.on"
+  tags: [manual, seen_regression, safety, maintenance, replace]
+
+- text: 机油灯亮了怎么办
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 2/3 manual"
+  tags: [manual, seen_regression, negative, replace]
+
+- text: 支持 Android Auto 吗
+  initial_intents: [info.search]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 0/3 manual"
+  tags: [manual, seen_regression, compatibility, negative, replace]
+
+- text: 发动机机油多久换一次
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 2/3 manual"
+  tags: [manual, seen_regression, maintenance, negative, replace]
+
+- text: 三元锂电池平时充到多少
+  initial_intents: [battery.query]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 0/3 manual"
+  tags: [manual, seen_regression, specification, replace]
+
+- text: SU7 发动机排量多大
+  initial_intents: [info.search]
+  expect_final_intents: [manual.query]
+  source: "2026-09-03 production full/repeat probes: 1/3 manual"
+  tags: [manual, seen_regression, specification, negative, replace]
+
+- text: 胎压现在多少
+  initial_intents: [tire_pressure.query]
+  expect_final_intents: [tire_pressure.query]
+  source: "manual boundary: current state remains edge query"
+  tags: [manual, guardrail, current_state]
+
+- text: 车现在还有多少电
+  initial_intents: [battery.query]
+  expect_final_intents: [battery.query]
+  source: "manual boundary: current SOC remains edge query"
+  tags: [manual, guardrail, current_state]
+
+- text: 帮我把充电上限设成80%
+  initial_intents: [battery.query]
+  expect_final_intents: [battery.query]
+  source: "manual boundary: explicit setting command is not a handbook question"
+  tags: [manual, guardrail, directive]
+
+- text: 哪些车型支持 Android Auto
+  initial_intents: [info.search]
+  expect_final_intents: [info.search]
+  source: "manual boundary: cross-model compatibility list is web search"
+  tags: [manual, guardrail, compatibility]
+
+- text: 用手机怎么呼叫道路救援
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "manual boundary: phone help is not in-car SOS operation"
+  tags: [manual, guardrail, emergency]
+
+- text: 研究三元锂电池技术
+  initial_intents: [research.run]
+  expect_final_intents: [research.run]
+  source: "manual boundary: battery technology research stays research"
+  tags: [manual, guardrail, research]
+
+- text: 帮我换空调滤芯
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "manual boundary: explicit physical replacement request is not how-to"
+  tags: [manual, guardrail, directive]
+
 - text: 帮我深入调研一下固态电池
   initial_intents: []
   expect_final_intents: [research.run]

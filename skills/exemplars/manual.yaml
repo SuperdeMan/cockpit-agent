@@ -76,3 +76,58 @@ exemplars:
   - badcase
   - visual-description
   note: 描述足以匹配手册图标目录，归 manual；真实照片识别才归 vision
+# 2026-09-03 f2dcb46 生产 36 题扩面：以下均为原错例的实质改写，不复制评测原句。
+- text: 电池平常充八成还是充满更合适
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, specification]
+  note: 推荐充电目标不是读取当前 SOC
+- text: 雪天装链条应该套前轴还是后轴
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, winter]
+  note: 当前车型的防滑链安装位置必须查手册，不能用通用驱动轮常识
+- text: 车顶上的 SOS 按钮怎样联系救援
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, emergency]
+- text: 空调滤芯自己拆换要走哪些步骤
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, maintenance, asr-no-punctuation]
+  note: 方法咨询不得因“空调”对象词执行 hvac.on
+- text: 这台车兼容 Android Auto 吗
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, compatibility]
+  note: 当前车型兼容性先查手册；不存在时零命中，不联网泛答其他车型
+- text: 纯电车的机油保养周期怎么查
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, negative]
+  note: 当前车型手册不存在的部件也由 manual 诚实弃权
+- text: 车辆冬季使用轮胎有哪些限制
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-03'
+  tags: [badcase, winter]

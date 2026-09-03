@@ -1,11 +1,11 @@
 owner: manual-rag
-version: 1
+version: 2
 name: manual-help-boundary
 type: guide
-description: 车型部件操作方法和仪表告警图标含义的手册问答边界，区分无标点怎么操作、立即车控与真实照片识别
+description: 车型部件操作、规格建议、维护周期、兼容性、车内应急和仪表告警的手册问答边界，区分当前状态、立即车控与真实照片识别
 priority: 58
 capability_dependencies: [manual.query]
-keywords: [怎么打开, 如何开启, 怎么使用, 操作方法, 从哪设置, 哪里设置, 仪表上, 仪表灯, 故障灯, 指示灯, 警告灯, 图标, 背宝剑, 用户手册, 说明书]
+keywords: [怎么打开, 如何开启, 怎么使用, 操作方法, 从哪设置, 哪里设置, 充电上限, 三元锂, 磷酸铁锂, 冬季轮胎, 防滑链, 保养周期, 空调滤芯, SOS, 呼叫救援, CarPlay, Android Auto, 规格, 排量, 仪表上, 仪表灯, 故障灯, 指示灯, 警告灯, 图标, 背宝剑, 用户手册, 说明书]
 knowledge: |
   **先判用户要“知道方法”还是要“现在执行”。**
 
@@ -15,6 +15,11 @@ knowledge: |
     capability 目录、权限和 VAL 决定。
   - 用户已经用颜色、形状、俗称或亮/闪状态描述了仪表灯，问“代表什么/怎么回事”，出
     `manual.query` 查正式名称、含义与处置。用户要求看照片/摄像头画面时不套用文字手册问答。
+  - `现在/当前/还剩 + 胎压/电量` 是端侧状态查询；`应该/推荐/上限/平时充到多少/报警怎么办`
+    问的是车型规格或处置，出 `manual.query`，不得拿当前读数代替手册答案。
+  - 维护周期、耗材更换、冬季轮胎/防滑链、当前车型的手机互联兼容性、车内 SOS/救援操作
+    都属于手册事实。即使手册不存在该项目，也应由 `manual.query` 零命中诚实弃权，不去
+    闲聊或联网拿通用车型知识补成当前车型结论。
   - 手册没有命中就如实弃权，不能让闲聊常识补成车型结论。
 
 few_shots:
@@ -22,10 +27,19 @@ few_shots:
     plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"前挡雨刷的开关要怎样用"},"depends_on":[],"slot_refs":{}}]}
   - user: 状态栏有个斜带小人一直亮代表什么
     plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"状态栏有个斜带小人一直亮代表什么"},"depends_on":[],"slot_refs":{}}]}
+  - user: 平时给三元锂电池充到几成比较合适
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"平时给三元锂电池充到几成比较合适"},"depends_on":[],"slot_refs":{}}]}
+  - user: 雪地里防滑链该套前轮还是后轮
+    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"雪地里防滑链该套前轮还是后轮"},"depends_on":[],"slot_refs":{}}]}
 
 golden:
   - text: 后视镜自动下翻该从哪里设置
     expect_intents: [manual.query]
   - text: 挡风玻璃下雨时要怎样启动刮刷
+    expect_intents: [manual.query]
+    holdout: true
+  - text: 这台车能不能接 Android Auto
+    expect_intents: [manual.query]
+  - text: 车顶 SOS 按钮怎样呼救
     expect_intents: [manual.query]
     holdout: true

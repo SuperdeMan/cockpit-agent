@@ -1269,6 +1269,54 @@ def test_provider_inventory_timeout_is_not_skip_eligible(
         getattr(module, function_name)()
 
 
+def test_strict_stack_loads_the_full_manual_retrieval_corpus():
+    module = _load("e2e_strict_stack")
+
+    assert len(module.MANUAL_PROBES) == 36
+    assert sum(not case.get("expect_empty") for case in module.MANUAL_PROBES.values()) == 29
+    assert sum(bool(case.get("expect_empty")) for case in module.MANUAL_PROBES.values()) == 7
+
+
+def test_strict_stack_manual_card_contract_normalizes_celsius_and_empty_negatives():
+    module = _load("e2e_strict_stack")
+    document = dict(module.MANUAL_DOCUMENT)
+    document["document_id"] = "xiaomi-su7-2024-user-manual"
+    base = {
+        "type": "manual",
+        "_prov": {"mode": "real", "vendor": "xiaomi-su7-2024-user-manual"},
+        "document": document,
+        "sources": ["SU7用户手册 · PDF第258页"],
+        "chunks": [{
+            "page_start": 258,
+            "page_end": 258,
+            "content": "环境温度低于 7°C 时性能衰减，建议安装冬季轮胎。",
+        }],
+        "images": [],
+    }
+
+    winter = module.MANUAL_PROBES["冬天轮胎有什么要求"]
+    assert module._manual_card_errors(base, winter) == []
+    assert module._manual_response_errors(
+        {"ui_card": base, "actions": []}, winter,
+    ) == []
+
+    grouped = {
+        "type": "card_group",
+        "items": [base, {"type": "weather"}],
+    }
+    response_errors = module._manual_response_errors(
+        {"ui_card": grouped, "actions": [{"type": "vehicle.control"}]},
+        winter,
+    )
+    assert "manual probe returned actions" in response_errors
+    assert any("other card types" in error for error in response_errors)
+
+    empty = dict(base)
+    empty.update(sources=[], chunks=[], images=[])
+    unsupported = module.MANUAL_PROBES["支持 Android Auto 吗"]
+    assert module._manual_card_errors(empty, unsupported) == []
+
+
 def test_voiceprint_health_http_error_is_runtime_failure(
     monkeypatch: pytest.MonkeyPatch,
 ):

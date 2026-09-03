@@ -33,6 +33,10 @@ QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
 CAPABILITY_ASKS = ("能不能", "可不可以", "会不会", "是不是", "支不支持", "行不行", "有没有")
 #: 数量/属性疑问词：问的是**参数本身**，构不成指令 → 无条件否决写操作。
 PROPERTY_ASKS = ("多大", "多高", "多宽", "多长", "多快", "多少", "多久", "多远")
+#: 选择/位置疑问词。它们问的是“哪一个”，不是让系统当场操作。
+CHOICE_ASKS = ("哪个", "哪种", "哪边", "哪侧", "哪儿", "哪里", "在哪")
+#: 规范/注意事项问法。仍只放封闭句法，不放轮胎、保养等领域对象。
+REFERENCE_ASKS = ("什么要求", "有何要求", "注意什么", "需要注意什么")
 #: 方式/原因疑问词：可以出现在祈使式里（「温度如何调高」要的是调、不是问怎么调），
 #: 因此与 `OPERATION_VERBS` 配对判断——**带操作动词就仍算指令**。
 #: 两处判据必须是同一条，否则同一句话在「让不让给天气查询」与「算不算提问」上
@@ -50,7 +54,7 @@ OPERATION_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
 # 既有“温度如何调高”按祈使处理的合同不在本批扩大。
 HOW_TO_ACTIONS = (
     "打开", "开启", "关闭", "关掉", "使用", "操作", "进入", "连接", "设置",
-    "更换", "启动", "停用", "开", "关",
+    "更换", "启动", "停用", "换", "开", "关",
 )
 _HOW_TO_ACTION_ALT = "|".join(sorted(map(re.escape, HOW_TO_ACTIONS), key=len,
                                       reverse=True))
@@ -89,7 +93,10 @@ def is_non_directive_question(t: str) -> bool:
         return True
     if any(w in t for w in HYPOTHETICAL_FRAMES):
         return True
-    if any(w in t for w in CAPABILITY_ASKS) or any(w in t for w in PROPERTY_ASKS):
+    if (any(w in t for w in CAPABILITY_ASKS)
+            or any(w in t for w in PROPERTY_ASKS)
+            or any(w in t for w in CHOICE_ASKS)
+            or any(w in t for w in REFERENCE_ASKS)):
         return True
     return (any(w in t for w in MANNER_ASKS)
             and not any(v in t for v in OPERATION_VERBS))
