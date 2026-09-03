@@ -143,7 +143,7 @@ deploy。生产 E2E 需在代码提交后另行展示精确提交清单，并按
 
 - 实现提交：`f2dcb46fe6764f4087982e1216d7c1da98ab88f5`；分支
   `feat/manual-rag-v2-grounded-visuals`，未 push、未 deploy。
-- `.mrag` 大小 64,886,876 bytes；包 SHA-256=
+- `.mrag` 大小 64,886,928 bytes；包 SHA-256=
   `648cdf3d1d5001f199fce12e3983f3d016d929f772d0eb8aa058512dcd4400ed`。
 - 文本 content SHA 保持 `530b8538…233b5`；视觉 manifest SHA=
   `be594128e827afb207dc611f389a14a1d626d542df0ae17b77dc0da4c8676511`。
