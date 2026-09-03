@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.47（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-09-03（v1.47 接入 Xiaomi SU7 真实车型手册索引）
+> 版本：v1.48（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-09-03（v1.48 增加真实手册安全落域与视觉证据包）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -2023,6 +2023,7 @@ agents/<name>/
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.48 | 2026-09-03 | 内容性合入（真实手册 RAG v2）：把验收面从“检索器命中文本”扩到用户端完整链路。共享 `question_shape` 以零领域句形阻止无标点“对象怎么打开”误执行，`manual-help-boundary` PlanningGuide 与 manual exemplars 负责模型原生泛化，Agent manifest 只对生产复现的操作方法/仪表灯两族保留窄 route hint；三层分别承担安全、泛化和 canonical 保险。索引仍兼容 v1 文本 bundle，新增 deterministic `.mrag` 私有 ZIP，绑定视觉 manifest 与逐图片 blob SHA；警告灯按物理页和视觉顺序匹配人审 caption/俗称，未知描述零近似，命中说明可确定性转述。卡片最多返回两张、仅 PNG/JPEG、单图/总量有硬帽，图片不进 LLM prompt；HMI 与 Android 共用 URI 守卫并新增 manual 图文证据卡。源 PDF/图不入 Git，不支持的 LZW/超大 Flate 显式记 skipped；真实照片仍走 vision，不扩大采集面。契约 `conventions.md` §9.41。 |
 | v1.47 | 2026-09-03 | 内容性合入（Xiaomi SU7 真实车型手册 RAG）：`manual-rag` 从 5 条演示语料增加真实 `ManualIndexRetriever`，输入 PDF 经离线构建器按物理页与 outline 形成 deterministic gzip JSON，绑定 source/content/chunk SHA、车型与手册版本，并与 tracked `manual_catalog.yaml` 的批准指纹对账；在线采用中文双字 n-gram BM25 + 受控同义词 + 章节/短语/IDF 覆盖率重排，显著 Latin/多词产品名缺失、低覆盖和错车型均零命中。每个 chunk/card 带章节与 PDF 页码，`_prov=real` 只在完整性与信任锚校验后盖章，带单位/小数的生成数值必须能在本轮引用片段核对。源 PDF/索引正文作为 ignored 私有资产不进 Git；`knowledge` 退出严格栈默认豁免，`manual` mock 退出 QA WARN 白名单。单车型静态语料暂不引入数据库迁移；多车型/真实 badcase 达阈值后以同一 Provider 契约和 retrieval corpus A/B 迁移向量库。契约 `conventions.md` §9.41。 |
 | v1.46 | 2026-08-30 | 内容性校准（QA 安全确认写闸最终本地闭合）：将 §5.2.13 从 build-only 扩展为所有 dispatch-bound 计划出口——focused/normal build、adaptive replan receiver、Agent escalate mini-plan 与 fallback 均复用同一过滤原语；新增服务端权威 `safety_origin_text`，从最初请求跨 replan、suspend/restore 保真，明确 `ctx.raw_text` 仍是当前补槽答案，LLM goal/reason 无授权权威，legacy 来源未知时副作用 fail closed；新增 capability 级 `response_only` 权威链（manifest → registry round-trip → Step → Executor/D0/T2），回答能力出现确认、补槽或 action 一律在 dispatch/yield 前转为零动作契约失败。契约 `conventions.md` §9.40。 |
 | v1.45 | 2026-08-30 | 内容性校准（QA 长会话安全收尾）：扩展 **§5.2.13 的云侧确认边界**。release `343934b` 长会话中「红色机油灯亮了还能继续开吗」被规划成 `luckin.order` 并挂起，而干净会话 3/3 正确，证明这是长上下文高代价方差；问句写闸唯一判据收敛为“非指令问句 ∧（端侧写步骤 ∨ `Step.require_confirm=true`）”，cloud 分支不滥用会误杀 `search/menu/talk/status` 的 `is_write_intent`，`require_confirm` 只由 manifest/servers 权威装配、LLM 无权修改；正常指令、未确认 cloud 步骤与 mixed 合法步骤不变。所有 `build()` 出口（focused + normal）共用 `_apply_question_side_effect_guard` 终结器，focused 被拦后绝不走 registry fallback；零步只尝试 unconfirmed talk，找不到则保持空计划 fail closed，并保留 `question_write_blocked`。质量审查补齐 fallback 旁路：所有 fallback `Step` 也必须经 `_validated_steps` 保留 manifest 字段，`_talk_only_plan` 拿到 confirmed capability 必须拒绝；默认 chitchat 能否给出分级建议留给部署验收实证。契约 `conventions.md` §9.40。 |

@@ -8224,3 +8224,143 @@ index SHA；cloud profile 强制 local Provider，并把远端 manual_rag 目录
 mount。接线后固定全量 **7797 passed / 32 skipped / 13 warnings**（300.17s），warning 类别
 不变。此处仍是 pre-release 候选；bootstrap、批准锚、dry-run、apply 与 exact release 真栈
 读数在完成前不得倒填为已发布。
+
+### §90.5 生产发布、真问法掀缺口与最终 release `a406e22`
+
+基础设施以摘要 `5314f8961ef2a8bdbdcbd3f5645cc3aa3c3746beeadcc727fe328f4698535efd`
+重新批准，索引 `b290fde…406cfa` 经 shared-model bootstrap 安装为 root:root 0644 并只读
+挂载。首次上传 cloud compose 时，Windows checkout 把 LF Git blob 转成 CRLF：远端 hash
+`eeef…` 与批准锚的 `5047…` 不同，preflight 只报批准锚无效。旧 compose/锚已先备份；修法
+不是放宽 hash，而是从 `git show <sha>:deploy/cloud/compose.cloud.yaml` 生成精确 blob 再安装，
+之后 blocking=0、bootstrap ready。这个坑证明受控配置的证据对象是 commit blob，不是当前
+工作树看起来相同的文件。
+
+首发 `423ed23996a141616e78019589c70f4e0c85259b` 已 5/5 healthy、verify 通过；容器内短问法
+正确。但生产 WS 用完整问法“请查 SU7 用户手册，冷态胎压应该打到多少？”只召回 PDF 256，
+缺少 PDF 245 的 2.9 bar 参数页，故不拿首发成功收口。补一条可要求多页互补证据的 evaluator
+RED（30/31），将“请查/帮我查”归问法壳，并加“冷态胎压→轮胎压力参数”受控映射；修复后
+main 23/23 + holdout 8/8，p95 21.613ms，专项 124 passed。
+
+最终 release `a406e222b3fe08ea462c06ccf676d0698f1f443a` 的 clean-clone 全量为
+**7796 passed / 34 skipped / 11 warnings**（255.90s；未复制 ignored NLU 模型，故比根工作区
+少两条 WordPiece warning、多两条 skip）。部署后 5/5 healthy、零 warning；统一 verify
+`verified`，artifact `20260903T053150Z-a406e22.json`，`e2e_remote_safe`、
+`minimax:MiniMax-M3`。容器内完整问法返回页 245/256/257/255，real provenance、2.9 bar、
+零动作；生产 WS 独立 session repeat 3 为 **3/3**，CarPlay 负例 **1/1** sources 为空、零动作。
+
+两次探针假红均来自 Windows PowerShell stdin 把中文查询或“PDF第245页”断言编码成 `?`；
+改用环境变量/ASCII `\uXXXX` 后通过，未归罪 Provider。`e2e_strict_stack` 因 manifest 明确
+非 remote-safe/real signed profile，没有用 `--allow-mutating` 绕过；改用无持久化容器探针和
+单轮生产 WS。原工作区全过程有并发 mobile 提交/文档改动，本批只推精确 SHA，不 reset、
+rebase、stash 或夹带；最终 production 的直接回滚点为 `423ed23`。
+
+## §91 2026-09-03 真实手册 RAG v2：安全落域、skill 泛化与视觉证据
+
+### §91.1 由真实用户问法重新定义完成标准
+
+生产 `a406e22` 已是真实 PDF 文本源，但补测暴露“检索器对，不等于用户链路对”：
+`雨刮器怎么打开` 直调检索器 top-1 为 PDF 95，无标点入口却会被端侧当 `wiper.on`；加问号
+后生产又落 `chitchat.talk`，回答了与手册图片不符的右侧拨杆通用常识。`小人背着把宝剑`
+直调索引零命中，生产闲聊将它错判成安全气囊；PDF 193 原图实际是安全带未系提醒。旧
+31/31 只证明文本 retrieval corpus，不证明这两类端到端泛化，也不包含图片。
+
+本批据此把验收改成五项同时成立：无标点问句零动作、落 `manual.query`、命中正式页与正文、
+返回对应原图、两端真实渲染；任何一项失败都不能用“真实 Provider 已接”洗绿。
+
+### §91.2 三层落域：runtime 安全、skill 泛化、hint 保险
+
+共享 `runtime.question_shape` 新增零领域词序判据：`对象 + 怎么/如何 + 打开/使用` 与
+`怎么 + 打开 + 对象` 是方法问句；`怎么把…打开`、`帮我打开…`、`温度如何调高` 保留既有
+指令合同。端侧与云侧继续消费同一实现。
+
+用户追问是否能用 skill 优化后，方案从“只加 hint”调整为三层：新增
+`manual-help-boundary` PlanningGuide 讲清方法咨询/立即车控/文字图标描述/真实照片四分边界，
+manual exemplar 只追加与生产原句不同的改写；manifest hint 仅兜两条已复现高风险 canonical，
+并保留明确车控、手机 App 与照片 vision 反例。skills 23/23、exemplars 316 条，域错配仍
+2.4%；route hints 85/85。hint 未来仍须按双臂重复证据退役，不能因它顺带保护 catalog 就常驻。
+
+### §91.3 deterministic `.mrag` 与图片真实性链
+
+v1 文本 schema 保持兼容，新增 `.mrag` ZIP：canonical `index.json`、
+`visual-assets.json` 与按 SHA 去重的 JPEG/PNG blob。包 entry 顺序、时间与权限固定；文本、视觉
+manifest、逐 blob、运行资产清单四层 hash 均校验。警告灯 191–193 页按视觉位置从上到下与
+35 个正式名称一一绑定，数量漂移即构建失败；“背宝剑小人”等高歧义俗称及说明由人工对照
+原页审定，未知视觉描述不做模糊猜测。
+
+真实包 64,886,928 bytes，SHA=`648cdf3…400ed`；visual SHA=`be59412…76511`；269 文本
+chunks、350 可展示图片放置、299 去重 blobs，17 skipped（7 LZW、10 超大 Flate）。独立重建
+SHA 逐字相同。运行时最多返回 2 张，单图 ≤640KiB、总计 ≤768KiB，只允许 PNG/JPEG；图片不进
+LLM prompt。雨刮与受控图标说明走确定性回答，两个目标问法均 LLM 0 次。
+
+HMI 从“manual 卡直接 render null”补成图文证据卡；Android 同步实现并共用
+`manualCard.mjs` 协议/体积守卫。HMI 298/298 + Vite build，Android 49 suites / 488 tests +
+typecheck。浏览器实例不可用，故未产完整卡截图；SSR 已反验 PNG/JPEG 可见、SVG/HTTP 拒绝，
+实际雨刮 JPEG 与安全带 PNG 另做原图视觉核对。
+
+### §91.4 验证与发布边界
+
+实现 SHA `f2dcb46fe6764f4087982e1216d7c1da98ab88f5`：retrieval 36/36（27 main + 9
+holdout）；专项 180 passed；发布接线 349 passed / 1 skipped；五道 blocking 门禁全过。
+固定 `-n8` 在约 4GB 可用内存下两次只剩资源压力失败，相关 3 项串行全过；完整 `-n4` 为
+**7824 passed / 34 skipped / 7 warnings**。必须如实称为低并发完整批，不能改写成固定口径全绿。
+
+代码库的 runtime-models/bootstrap/Compose 已指向 v2 包和精确 SHA，但本批没有改根 `.env`，
+没有远端 bootstrap、push 或 deploy。生产仍是 `a406e22` 文本版；严格栈探针已升级为三条手册
+问法都必须 `manual + real + 预期页 + 预期图片 + 0 action`。在新 release 真栈通过前，本节只
+代表本地候选闭合，不代表生产闭合。
+
+## §92 2026-09-03 手册 RAG 生产 36 题扩面与落域修复（本地候选）
+
+生产 `f2dcb46` 将基础三题扩成 retrieval corpus 全量 36 题后，确定性检索仍 36/36，且所有
+真正进入 `manual.query` 的 33 次调用内容 33/33 正确；但首轮精确落域仅 26/36。稳定错域包括
+胎压报警被当当前胎压、三元锂充电建议被当当前电量、防滑链/SOS/Android Auto 0/3 落 manual；
+另有五条模型方差。`空调滤网怎么换` 被端侧执行 `hvac.on`，因此本批按安全缺陷处理，不把
+“检索器全绿”写成端到端全绿。原始/复验/复核工件均在 ignored
+`.artifacts/manual-rag-live-validation/`。
+
+修复提交 `2f5af9c`：`question_shape` 增零领域“换/选择/要求”问句，fast-intent 分开胎压报警
+处置/当前读数与电池充电目标/当前 SOC；manual guide v2、7 条改写 exemplar、manifest 0.3.0
+窄 hint 覆盖已复现规格/维护/兼容/SOS 句族；route 反例保留当前车况、设备问题、手机求救、
+研究话题和明确命令。`e2e_strict_stack` 改为直接加载完整 36 题 corpus，并把该 corpus 纳入
+canonical digest。
+
+首轮全量精确抓到 guide 超预算：常驻 policy + manual guide=2794 > 2600，两条预算测试红，
+运行时会把 guide 标成 `!clipped`。没有调大全局预算；后续提交 `b3a2aed` 删除与 exemplar 重复
+的两条 few-shot，降到 2450、留 150。最终 exact `b3a2aedd3c360c230709551502e5568e8bba8286`
+低并发全量为 **7833 passed / 34 skipped / 5 warnings**（`-n2`，721.49s），日志 SHA=
+`6bfd14fdb0bfe240efd0eff1bb247b541c3b578568933c005b7d55267bd23f61`；五道门禁全过。
+
+本节只代表本地候选：两个提交均未 push/deploy，生产仍为 `f2dcb46`。后续需单独授权发布并
+以车态前后快照验证 36/36、稳定错例 repeat 3、零 action、diff=0；模型包和云基础设施未变。
+
+## §93 2026-09-03 b3a2aed 发布、62 轮生产复验与长期停放补丁
+
+获授权后推送四个提交并发布代码 SHA `b3a2aed`；dry-run 无阻断、无需更新模型/基础设施，
+发布后 5/5 healthy、统一 verify 通过。容器内无副作用分类先证三条原危险问句均返回 None，
+正常开空调/当前胎压/当前电量保持。生产再跑 36 题 + 13 个高风险各补两遍，共 62 轮：原高风险
+全部 3/3，`空调滤网怎么换` 三次零 action；逐轮车态 diff={}；进入 manual 的 61 次内容 61/61。
+
+但完整首轮只到 35/36：`车辆长期停放时电池怎么保养` 落 `chitchat.talk`，给出拆低压电瓶负极、
+每隔一两周启动的燃油车式建议，未取手册 PDF 255/264。该轮零 action/零车态变化，但没有 manual
+provenance，故按错域不收口。Artifact `20260903T112920Z-postfix-b3a2aed.json`，SHA=
+`6d085a875f4fe08296404cc2cfe768deacffdddbfc2111c5c7db57f641783cf2`。
+
+补丁 `434a046` 将 manifest 升 0.3.1，增加长期停放动力电池养护窄 hint；guide v3 与一条改写
+exemplar 补泛化，手机电池和研究话题作反例。专项 127、route 106/106、skills 24/24、
+exemplars 324 条、L0 与 capability 门禁全过；policy+guide=2461/2600。约 1.5GB 可用内存下串行
+全量 **7833 passed / 34 skipped / 4 warnings**（1308.46s），日志 SHA=
+`2f43970c945815ddf90a703c4b930abb9c264a3c14ec59df88f2692ceec161ac`。本补丁未 push/deploy，
+生产仍是 `b3a2aed` 的 35/36 状态。
+
+## §94 2026-09-03 434a046 最终生产闭合
+
+获第二次精确授权后推送 `434a046` 与其状态文档并发布代码 SHA；dry-run 无阻断、模型包和基础
+设施不变。独立 status 为 5/5 healthy、零 warning，统一 verify 通过。最终生产验证运行完整
+36 题 + 14 个高风险问法各补两遍，共 64 轮：完整落域/内容 36/36，高风险全部 3/3，所有
+manual 调用 64/64；零 action、零 need_confirm、零 probe error，逐轮完整车态最终 diff={}。
+
+长期停放电池养护从 `b3a2aed` 的闲聊燃油车建议翻为 3/3 `manual.query`；空调滤网、胎压报警、
+三元锂充电建议、防滑链、SOS、Android Auto、机油/排量负例、雨刮与安全带俗称同样保持 3/3。
+Artifact `20260903T130655Z-final-434a046.json`，SHA=
+`3fed8c9476d5928f502877a962b1f9453e8032e64798dfe0819878483cead63a`。manual-rag 项据此关闭，
+但 QA 仍有独立 safety focus、MiniMax TTS RPM、barge-in 残帧和 test-only warning 活项。

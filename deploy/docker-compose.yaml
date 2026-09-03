@@ -507,7 +507,7 @@ services:
       AGENT_PORT: "50065"
       # 默认 mock 保持 CI/无私有资产开发可启动；验收/生产显式 local，缺索引即 fail-fast。
       KNOWLEDGE_VENDOR: ${KNOWLEDGE_VENDOR:-mock}
-      MANUAL_INDEX_PATH: ${MANUAL_INDEX_PATH:-/app/models/manual_rag/xiaomi-su7-2024.v1.json.gz}
+      MANUAL_INDEX_PATH: ${MANUAL_INDEX_PATH:-/app/models/manual_rag/xiaomi-su7-2024.v2.mrag}
       KNOWLEDGE_VEHICLE_MODEL: ${KNOWLEDGE_VEHICLE_MODEL:-}
     depends_on:
       registry:

@@ -32,7 +32,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | MiniMax 原始 QA 问题 | `docs/reviews/2026-08-26-minimax-cloud-qa-findings.md` |
 | MiniMax 根因与修复批 | `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` |
 | 安全确认写闸 | `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md` |
-| Android App 当前计划 | `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md`（**B4 计划已拆 2026-09-02，草案待批**；§0 第 3 条两个待裁项先裁；B3 收口读数与遗留出账仍在 `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md` §6.1–§6.4） |
+| Android App 当前入口 | `mobile/README.md` + `docs/design/README.md` 中最新的 mobile implementation plan；mobile 独立工作树可能领先当前 checkout，先核对状态 |
 | 历史流水 | `docs/agents-history.md`（只追加） |
 
 服务子目录各有 README；改某个服务前先读该目录 README。
@@ -80,15 +80,16 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `a729b984a7e66f508d0a11218713b6e51c8f7620` |
-| 回滚点 | `e9fa602e7991b212de4c1ea8c8e95c3673891c1f` |
+| 生产 release | `434a0461d07e7652de6605954f6df3fddb846553` |
+| 回滚点 | `b3a2aedd3c360c230709551502e5568e8bba8286` |
 | status | 5/5 endpoint healthy，零 warning |
-| verify | `verified`；artifact `20260830T110922Z-a729b98.json` |
-| 全量单测 | `7770 passed / 32 skipped / 13 warnings` |
-| Cloud Planner | `1278 passed / 1 skipped` |
-| Planner + Info | `289 passed` |
+| verify | `verified`；artifact `20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| exact-code 全量 | `7833 passed / 34 skipped / 4 warnings`；内存约 1.5GB 时串行 `-n 1`，1308.46s |
+| manual-rag | SU7 v2 `.mrag`=`648cdf3…400ed`；retrieval 36/36；生产完整 36/36 + 14 个高风险问法各 3/3，合计 64/64，图文证据、零 action、车态 diff={} |
+| 证据边界 | 本地全量、部署、verify 与手册真栈均绑定 `434a046`；旧 release 的专项数字不转借 |
 
-`862617b` 与 `26de242` 是 release 之后的探针/文档提交，不是新生产 release。
+`b3a2aed` 是 v2 首次生产 release，现作为回滚点；`a406e22` / `423ed23` 是 v1 发布历史。
+当前 release 不借用 `a729b98` 的 Cloud Planner、Planner+Info 或新闻专项数字。
 
 ### 4.1 QA 状态
 
@@ -96,6 +97,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 安全专项在 `e9fa602` 上 5 例、15/15 PASS；
 - 完整 information persona 在 `e9fa602` 上 57/59，提醒/导航清理、零挂起与 release 连续均证明；
 - `limit:null → "None" → ValueError` 已由 `a729b98` 修复，新闻 3 个干净会话零 internal error；
+- manual-rag 已在 `434a046` 用 Xiaomi SU7 v2 图文包闭合 36/36 全量语料与 14×3 高风险复验；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
 当前主要活项：
@@ -105,14 +107,13 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 安全问句偶尔落 `info.search` | 回答安全但错域、无 manual provenance | QA 交接页 §5 |
 | safety focus 持续阻断后续 charging plan | 安全状态解除时机的产品裁决 | QA 交接页 §5 |
 | MiniMax TTS RPM / barge-in 残帧 | 外部配额与协议/客户端边界 | QA 交接页 §5 |
-| manual-rag 生产发布差额 | 当前工作树已实现并本地验证 Xiaomi SU7 真实手册索引（278 页→269 chunks；retrieval 主集 22/22 + holdout 8/8）；shared-model 哈希清单、远端 preflight 与 cloud 只读挂载已接线。生产 `a729b98` 仍为 mock | `docs/design/2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md` + QA 交接页 §5；2026-09-03 已取得基础设施/push/deploy 授权，下一步按 exact SHA bootstrap 索引与批准锚、dry-run、deploy、real 决议/卡片/问答验收；完成前不写已关闭 |
 | gRPC RuntimeWarning | test-only fixture 债务 | QA 交接页 §5 |
 
 ### 4.2 当前活项与其他可接工作
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App B5 | **B4 四批已收口（2026-09-03）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md` §6.1–§6.4（**§6.4 是收口节：交裁清单 / 出账去向核销 / §1.1 逐行核销**）。接手先看 `git status` / `git log --oneline origin/main..HEAD`——⛔ **本地与远端已分叉**（两边各有对方没有的提交），怎么合未定。⛔ **语音读数口径仍是 B3 那条**：AEC 补丁 `96a6830` 于 B3 第 2 批首次进包（主线包锚 `2026-09-02 16:45:36`）⇒ 此前所有唤醒率/回声/端点读数作废，**没记 `adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime` 的语音读数视为无效**。B4 交付：**§11.2 B4 四条 ✅✅✅✅**（形态矩阵五张齐；Edge 标 `driving` → 行车档自动进入 + 目标 ≥56dp 机器读数 56.0 PASS vs 44.0 FAIL + 30s 退出宽限翻转；VAL 拒绝原话是安全话术非权限拒绝、无全屏层；reduce-motion 静帧 0.00% 配活体 99.49%），提示音人耳盲测 6/6（补均衡约束后），book 铰链逐像素落 gap；两缺陷已修（`sheetDetent` 纯比例装不下行车档内容 → 新判据 `ui/layout/sheetHeight.ts` 给内容最小高下限；`/native-spike` 写死 `useLayout(false)` 的取证装置在说谎）。**仍开的活项**：① **T13 八格 + T14 五人小样本等一次真机轮**——分屏 / PTT 松手 / 「换一批」chip / `shutter` 盲测 / TalkBack·Scanner / 系统动画缩放那一路 / `Msg.driving` 单独验（**这一格不需要人在场，只差设备**）/ B2 表#6 顺序取证（**核销时才发现它一直没进任何 ⬜ 表**）；② **Maestro 06/07/08/09 全部取不到**——driver 装不上（`INSTALL_FAILED_USER_RESTRICTED`，与锁屏无关，**需设备侧放行 USB 安装**）；③ **§11.4 状态可读性至今无外部分布读数**（唯一那次是 B2 闸里泓舟自评 6/6，1 人非外部；T14 协议与计分表已备好，材料要真机截图）；④ **Dock `safety_blocked` 待 Q16**（协议无结构化标记，客户端不许正则猜）。**下一步 B5（一趟重建收三笔账）**：`foldstate`「订阅即查询」不成立的定性（**任何新挂载的 `useFoldState` 实例都停在 flat 直到铰链再动**，坑账 §9.72）、B3′ 默认助理角色启用（第一问过、第二问不过；spike 分支永不合并）、`expo-battery` 低电量材质回落；另转 B5：`charging_list` 的 hmi `types.ts` 型名 + `_prov`、浅色下光球与壳底对比 12.4/255 不达标（转「动光球浅色高光参数」A-1 §10）、缺陷 A 在外屏横那一半（容器 192dp < 内容需求 269dp，要动 `ChatScreen` 布局才装得下 120dp 球）。**待裁**：唤醒率 5–6/10 不达标已裁**另开 KWS 阈值 A/B 批**（必须在同一个含 AEC 的包上做，排期未定）；**播报卡顿的无 AEC 对照构建归哪一趟仍待澄清**（并进 B5 vs 单开 B4′，两条互斥选项被同时选中） |
+| Android App | 先读 `mobile/README.md` 与 `docs/design/README.md` 中最新 mobile 计划；mobile 线可在独立工作树领先本分支，先核对 `git status` / `git log --oneline origin/main..HEAD`，不从本入口复制批次长读数。**UX v2 B4 四批已收口（2026-09-03）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md` §6.1–§6.4（**§6.4 是收口节**：交裁清单 / 出账去向核销 / §1.1 逐行核销；三个待裁项、B4 抓到的三个缺陷、仍开的真机格子与 B5 的账全在那一节）。下一步 **B5 = 一趟重建**（`foldstate` 定性 / B3′ 角色启用 / `expo-battery`） |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
@@ -142,7 +143,7 @@ git log -5 --oneline --decorate
 - QA：`docs/reviews/2026-08-30-qa-closeout-handoff.md`；
 - 云端迁移/发布：`docs/dev-guide.md` + `docs/reviews/2026-08-17-cloud-data-migration-handoff.md`；
 - Planner/安全：架构 §5.2.13、约定 §9.40、安全专题设计；
-- mobile：当前 B2 实施计划和 `mobile/README.md`。
+- mobile：`mobile/README.md` + `docs/design/README.md` 中最新 mobile implementation plan。
 
 引用任何 release、测试数或长会话结果前，先核对 SHA 与 artifact；不得从旧段落抄数字。
 

@@ -15,6 +15,7 @@ canonical_inputs:
   - test/journeys/**/*.yaml
   - test/journeys/*.yml
   - test/journeys/**/*.yml
+  - test/eval_corpus/manual_rag_retrieval.yaml
   - agents/**
   - orchestrator/**
   - gateway/**
@@ -783,7 +784,7 @@ cases:
     command: [python, test/e2e_strict_stack.py]
     group: provider_probe
     lanes: [milestone]
-    timeout_s: 600
+    timeout_s: 900
     profile: real
     skip_reasons: [credential_unavailable, provider_unavailable]
     signed_identity: true

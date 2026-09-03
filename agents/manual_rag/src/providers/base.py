@@ -4,6 +4,25 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
+@dataclass(frozen=True)
+class ManualImage:
+    """已校验、可直接展示的手册视觉证据；只允许 PNG/JPEG data URI。"""
+
+    asset_id: str
+    caption: str
+    description: str
+    page_start: int
+    media_type: str
+    data_uri: str
+    sha256: str
+    width: int
+    height: int
+    bbox: tuple[float, float, float, float]
+    role: str
+    # visual_alias = 用户描述命中受控视觉目录；page_evidence = 文本命中页的同页配图。
+    match_kind: str
+
+
 @dataclass
 class Chunk:
     content: str = ""
@@ -20,6 +39,7 @@ class Chunk:
     page_start: int = 0
     page_end: int = 0
     section_path: tuple[str, ...] = ()
+    images: tuple[ManualImage, ...] = ()
 
 
 class KnowledgeRetriever(ABC):

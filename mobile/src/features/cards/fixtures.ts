@@ -263,6 +263,23 @@ export function cardFixtures(): Fixture[] {
     },
   },
   { label: 'vision_answer（simulated 必须显式）', card: { type: 'vision_answer', question: '看看外面是什么', answer: '前方是一条双向四车道的城市道路，右侧有一排行道树，路面干燥。', simulated: true } },
+  {
+    label: 'manual（真实手册图文证据）',
+    card: {
+      type: 'manual', source_type: 'manual',
+      document: { title: 'SU7用户手册', vehicle_model: 'xiaomi-su7-2024', revision: '2024-04-15' },
+      images: [{
+        asset_id: 'manual:p0193:i12', caption: '安全带未系提醒指示灯', page_start: 193,
+        media_type: 'image/png', data_uri: 'data:image/png;base64,eA==', sha256: 'a'.repeat(64),
+        width: 167, height: 168, role: 'warning_icon', match_kind: 'visual_alias',
+      }],
+      chunks: [{
+        content: '此灯点亮，表示驾驶员、副驾乘客或后排乘客未系好座椅安全带。',
+        page_start: 193, section_path: ['信息显示和娱乐', '警告灯和指示灯'],
+      }],
+      _prov: { mode: 'real', vendor: 'xiaomi-su7-2024-user-manual', data_time: '2024-04-15', data_time_label: '手册版本' },
+    },
+  },
   // ── 商户 / 支付 ──
   {
     label: 'merchant_checkout（choices·带图与分类）',

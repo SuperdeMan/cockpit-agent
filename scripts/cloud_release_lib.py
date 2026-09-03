@@ -1284,9 +1284,9 @@ MODEL_BOOTSTRAP_FILES = (
         None,
     ),
     (
-        "models/manual_rag/xiaomi-su7-2024.v1.json.gz",
-        "b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa",
-        "approved local asset:models/manual_rag/xiaomi-su7-2024.v1.json.gz",
+        "models/manual_rag/xiaomi-su7-2024.v2.mrag",
+        "648cdf3d1d5001f199fce12e3983f3d016d929f772d0eb8aa058512dcd4400ed",
+        "approved local asset:models/manual_rag/xiaomi-su7-2024.v2.mrag",
     ),
     (
         "models/hmi/public/models/silero_vad.onnx",
@@ -1410,7 +1410,7 @@ MODELS = {
     SHARED / "models/nlu/labels.json": "11720e1620a6aefafb719ac151052600a8272906762aeff83c9132b6fc5f17d5",
     SHARED / "models/nlu/vocab.json": "43ad94d3586ba0c3ddafdf0f989833f730aa6a2cc0b88d10ea6ac7eba85d56b5",
     SHARED / "models/voiceprint/campplus_zh-cn_16k-common.onnx": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
-    SHARED / "models/manual_rag/xiaomi-su7-2024.v1.json.gz": "b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa",
+    SHARED / "models/manual_rag/xiaomi-su7-2024.v2.mrag": "648cdf3d1d5001f199fce12e3983f3d016d929f772d0eb8aa058512dcd4400ed",
     SHARED / "models/hmi/public/models/silero_vad.onnx": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
     SHARED / "models/hmi/public/kws/sherpa-onnx-kws.js": "d2113885f82cf307f52906ddf2a8786315db86fca53209c2d1e54c7fff8c6c76",
     SHARED / "models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data": "b91b148aa19d386fe27624867c21111c6a6bfa739a619538bb705408a8eb7165",

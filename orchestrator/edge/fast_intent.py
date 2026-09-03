@@ -159,6 +159,22 @@ _REAR_DEFOG_RE = re.compile(
 _TIRE_PRESSURE_SPEC_ASKS = ("应该", "该补", "该打", "标准", "多少合适", "合适的",
                             "建议", "推荐", "正常值", "正常范围", "多少正常",
                             "规定", "打到多少", "充到多少")
+# 胎压**报警处置**同样属于手册知识，不是当前四轮读数。裸“报警了吗”仍保留本地查询；
+# 只有明确问处置/能否继续驾驶时才让路，避免把 L1 状态查询一刀切掉。
+_TIRE_PRESSURE_ADVICE_ASKS = (
+    "怎么办", "怎么处理", "如何处理", "怎么处置", "如何处置",
+    "还能开", "继续开", "还能不能开", "要停车", "需要停车",
+)
+
+# “电池多少”曾作为当前 SOC 的宽入口，但它也吞掉容量/充电目标等车型规格问句。
+# 当前态要有现在/剩余/状态等锚；充到几成、容量多大由云端手册回答。
+_BATTERY_GUIDANCE_ASKS = (
+    "充到", "充至", "充电上限", "充电限值", "容量", "建议", "推荐", "合适",
+)
+_BATTERY_STATE_ASKS = (
+    "现在", "当前", "目前", "还有", "剩", "几成", "百分", "状态", "健康",
+    "够不够", "够用", "满电",
+)
 
 
 # 场景激活/退出句（带动词的「X模式」）——句中的车控词是场景参数，不是当下指令
@@ -760,8 +776,9 @@ def _classify_structured(text: str) -> dict | None:
     #    唯独产出方吐的对象名知识库不认。云侧下发那条路（`decode_intent`）产的是
     #    正确对象名，所以门禁一直是绿的：**同一个 intent 有两个产出方，门禁只走了一条。**
     if "胎压" in t or "轮胎气压" in t:
-        if any(w in t for w in _TIRE_PRESSURE_SPEC_ASKS):
-            return None                       # 推荐值 → 云端 manual-rag
+        if (any(w in t for w in _TIRE_PRESSURE_SPEC_ASKS)
+                or any(w in t for w in _TIRE_PRESSURE_ADVICE_ASKS)):
+            return None                       # 推荐值/报警处置 → 云端 manual-rag
         return _s("query", "query", "query", "tire_pressure_monitoring", conf=0.92)
 
     # ── 行车记录仪 ────────────────────────────────────────
@@ -1322,12 +1339,12 @@ def _classify_structured(text: str) -> dict | None:
     # 注意"开车去X多远"是距离非续航，不含"还能跑/能跑多"等前缀，不会误命中。
     # "电池"单独出现太宽（"固态电池/电池技术/电池行业"是话题，"深入调研固态电池"曾被劫持成
     # 电量查询）→ 必须与电量级/状态词（多少/还有/剩/几成/百分/状态/健康/够不够/满电）同现才判电量查询。
+    if "电池" in t and any(w in t for w in _BATTERY_GUIDANCE_ASKS):
+        return None                           # 容量/充电建议 → 云端 manual-rag
     if ("电量" in t or "续航" in t or "还能跑" in t or "能跑多" in t
             or "还能开多" in t or "跑多少公里" in t or "开多少公里" in t
             or ("剩" in t and "电" in t)
-            or ("电池" in t and any(w in t for w in
-                                    ("多少", "还有", "几成", "百分", "状态", "健康",
-                                     "够不够", "够用", "满电")))):
+            or ("电池" in t and any(w in t for w in _BATTERY_STATE_ASKS))):
         return _s("query", "query", "query", "battery", conf=0.9)
     if "能耗" in t:
         return _s("query", "query", "query", "energy_consumption", conf=0.88)

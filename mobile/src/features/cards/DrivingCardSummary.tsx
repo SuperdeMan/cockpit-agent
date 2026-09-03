@@ -1,6 +1,6 @@
 // mobile/src/features/cards/DrivingCardSummary.tsx
 // 行车压缩卡（B4-11 / 方案 §6「一屏只有一张卡、只显示标题 + ≤2 个字段 + 1 个主按钮」）。
-// **不改 34 个渲染器**：从任意卡里探取（core/cards/cardFields.ts），card_group 取主卡
+// **不逐个改全量渲染器**：从任意卡里探取（core/cards/cardFields.ts），card_group 取主卡
 // （display_priority 的判据在 cardGroup.ts，这里不判）。只在行车档的语音层里用——
 // 记录里的卡照旧全量渲（记录在常驻层身后）。目标 56dp（TARGET.driving）。
 import { Pressable, Text } from 'react-native'

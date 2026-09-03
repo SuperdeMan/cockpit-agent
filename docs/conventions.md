@@ -228,7 +228,7 @@
 | `REQUIRE_REAL_PROVIDERS` | **数据真实性严格栈**（治理 P2，§9.4）：`on`=任何 provider 决议落 mock 即启动失败（含 llm-gateway 的 llm/embed/asr/tts 四闸），演示/验收前翻开自证全真 | 否（默认 off，CI/离线全 mock 照跑）|
 | `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：当前默认仅 `parking`=停车数据源（ETCP）未接真。`knowledge` 自 2026-09-03 有真实 SU7 手册索引后退出默认豁免；`payment` 是独立决议域且**不在豁免**（2026-08-11 真实化，§9.17） | 否（默认 `parking`）|
 | `KNOWLEDGE_VENDOR` | 车书知识源：`mock`=CI/离线演示语料；`local`（兼容别名 `manual`/`file`）=经过 source/content SHA 校验的真实手册只读索引；`pgvector` 尚未实现，显式选择 fail-fast | 否（默认 `mock`）|
-| `MANUAL_INDEX_PATH` | `KNOWLEDGE_VENDOR=local` 的索引路径；索引是 ignored 私有运行资产，容器默认 `/app/models/manual_rag/xiaomi-su7-2024.v1.json.gz`。缺失/损坏即启动失败，不回 mock | local 必填（有容器默认）|
+| `MANUAL_INDEX_PATH` | `KNOWLEDGE_VENDOR=local` 的索引路径；索引是 ignored 私有运行资产，容器默认 `/app/models/manual_rag/xiaomi-su7-2024.v2.mrag`。v2 包含 hash 绑定的文本与视觉证据；旧 `.json.gz` 可读但无图片。缺失/损坏即启动失败，不回 mock | local 必填（有容器默认）|
 | `KNOWLEDGE_VEHICLE_MODEL` | 可选车型钉死；非空时必须与索引 `document.vehicle_model` 一致，否则启动失败。当前 SU7 索引值 `xiaomi-su7-2024` | 否 |
 | `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |
 | `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
@@ -2591,22 +2591,26 @@ registry round-trip → `Step` → Executor/D0/T2 全链保真；缺声明或 le
 ### 9.41 真实车型手册索引与引用契约（2026-09-03）
 
 `manual-rag` 的领域知识不进 memory，也不从 mock/网页在运行期回填。真实手册 Provider 的
-当前实现是 `ManualIndexRetriever`：离线从有权使用的 PDF 构建 deterministic gzip JSON，
-在线只读加载；单车型静态语料采用中文双字 n-gram BM25 + 章节/短语/IDF 覆盖率重排。
+当前实现是 `ManualIndexRetriever`：离线从有权使用的 PDF 构建 deterministic `.mrag` 图文包
+（旧 gzip JSON 仍兼容但无图片），在线只读加载；单车型静态语料采用中文双字 n-gram BM25
++ 章节/短语/IDF 覆盖率重排，受控视觉目录只做精确俗称/caption 匹配。
 未来迁移 pgvector/Milvus 时不得改变下面的消费契约与 golden corpus。
 
 | 层 | 强制契约 |
 |---|---|
 | 源 | `document.source_sha256` 绑定输入 PDF；只保存源文件名，不保存构建机绝对路径 |
-| 内容 | 每个 chunk 与全量 chunks 都带 SHA-256；并须命中 tracked `resources/manual_catalog.yaml` 的批准指纹；schema/hash/page/model 任一非法则启动失败 |
+| 内容 | 每个 chunk 与全量 chunks 都带 SHA-256；视觉 manifest、每个图片 blob 也分别带 SHA-256；并须命中 tracked `resources/manual_catalog.yaml` 的文本+视觉批准指纹；schema/hash/page/model 任一非法则启动失败 |
 | 车型 | 一份索引一个 `vehicle_model`；显式配置不一致启动失败，请求车型不一致零命中 |
 | 引用 | `Chunk.source_type=manual`；source 和卡片必须带手册标题、章节路径、PDF 物理页码 |
-| 召回 | 显著 Latin token 或多词产品名在手册不存在时零命中；低覆盖/低分零命中，不凑 top-k |
-| 生成 | 每段 prompt 资料带稳定来源；零命中不调 LLM；真实手册答案中带单位/小数的数值必须能在本轮引用片段核对，否则整段弃权 |
+| 召回 | 显著 Latin token 或多词产品名在手册不存在时零命中；低覆盖/低分零命中，不凑 top-k；视觉俗称只认 `visual_assets.yaml` 人审映射，未知外观不近似猜图标 |
+| 生成 | 每段 prompt 资料带稳定来源；图片二进制不进 prompt；视觉目录命中且有手册说明时确定性转述，避免相邻图标被 LLM 改判；零命中不调 LLM；真实手册答案中带单位/小数的数值必须能在本轮引用片段核对，否则整段弃权 |
 | 真实性 | 完整性校验通过后才 `provider[knowledge]=<document_id>(real)`；`manual` 卡 `_prov.mode=real` 且 `data_time_label=手册版本` |
-| 资产 | 源 PDF 与索引正文不进 Git；`models/manual_rag/` 只跟踪 README/`.gitkeep`，生产构建工作区单独注入已核验索引 |
+| 图片消费 | `manual` 卡最多 2 张，单图原始数据 ≤640 KiB、总计 ≤768 KiB，只允许 hash 已校验的 PNG/JPEG data URI；HMI 与 Android 复用 `manualCard.mjs` 再做协议、大小与去重校验；SVG/HTTP/任意 URI 拒绝 |
+| 落域 | `runtime.question_shape` 以零领域句形保证“对象怎么打开”无标点也不执行；`manual-help-boundary` guide + manual exemplars 教泛化；manifest hint 只兜生产复现的窄 canonical，并须保留明确车控/非车辆/真实拍照反例 |
+| 资产 | 源 PDF、索引正文与图片不进 Git；`models/manual_rag/` 只跟踪 README/`.gitkeep`，生产构建工作区单独注入已核验 `.mrag`。无法解码/超像素上限的图片计入 `skipped_assets`，不得声称全图覆盖 |
 
 默认 `KNOWLEDGE_VENDOR=mock` 只为了无私有资产的 CI/离线开发可运行，不构成真栈豁免。
 `REQUIRE_REAL_PROVIDERS=on` 时 `knowledge` 不在默认 `REQUIRE_REAL_EXEMPT`；QA 探针同样不再
-接受 `manual` mock 为 WARN。生产验收必须同时看到启动 real 决议、卡片 real 章、预期页/正文
-retrieval 读数；任何一项不能用相邻 SHA 或本地 ignored artifact 转借。
+接受 `manual` mock 为 WARN。生产验收必须同时看到启动 real 决议、卡片 real 章、预期页/正文/
+图片、无标点问句 0 action；任何一项不能用相邻 SHA 或本地 ignored artifact 转借。用户上传
+真实照片仍归 `vision.describe`，本契约只处理手册内图片与人审文字俗称，不扩张摄像头采集面。

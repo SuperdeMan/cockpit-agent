@@ -9,9 +9,11 @@ import type {
   PlaceListCard, PlaceDetailCard, IntentChoiceCard,
   ReminderListCard, ReminderCard, SceneCard, SceneListCard, Provenance,
   CardButton, MerchantCheckoutCard, PaymentQrCard, McpOrderCard, McpResultCard,
+  ManualCard, ManualImage,
 } from '../types'
 import { airQualityBadge, buildKlineGeometry, priceDirection } from '../cardMath.mjs'
 import { weatherAlertStatus, weatherAlertSummary } from '../weatherCard.mjs'
+import { manualImages } from '../manualCard.mjs'
 import {
   merchantActionButtons,
   merchantImageUrl,
@@ -174,6 +176,7 @@ export function CardRenderer({ card, onAction }: { card: UiCard; onAction?: (tex
     case 'scene_list': return <SceneListCardView card={card} onAction={onAction} />
     case 'intent_choice': return <IntentChoiceCardView card={card} onAction={onAction} />
     case 'vision_answer': return <VisionAnswerCardView card={card} />
+    case 'manual': return <ManualCardView card={card} />
     case 'payment_qr': return <PaymentQrCardView card={card} onAction={onAction} />
     case 'payment_receipt': return <PaymentReceiptCardView card={card} />
     case 'parking_fee': return <ParkingFeeCardView card={card} />
@@ -206,6 +209,72 @@ function ProvBadge({ prov }: { prov?: Provenance }) {
     <span title="数据来源 · 取数时间" style={{ fontSize: 10, color: 'var(--au-text-3)', whiteSpace: 'nowrap', flexShrink: 0 }}>
       {prov.vendor}{t ? ` · ${t}` : ''}
     </span>
+  )
+}
+
+function ManualCardView({ card }: { card: ManualCard }) {
+  const images = manualImages(card) as ManualImage[]
+  const chunks = (card.chunks || []).slice(0, 2)
+  const title = card.document?.title || '车型用户手册'
+  const revision = card.document?.revision || card._prov?.data_time || ''
+  return (
+    <div className="card card-evidence" style={{ padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '15px 16px 12px', display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+        <span style={{ width: 34, height: 34, borderRadius: 11, display: 'grid', placeItems: 'center', background: 'rgba(70,214,224,0.10)', border: '1px solid rgba(70,214,224,0.22)', flexShrink: 0 }}>
+          <Icon name="manual" size={18} color="var(--au-primary)" />
+        </span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 650, color: 'var(--au-text)' }}>{title}</div>
+          <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--au-text-3)' }}>
+            {[card.document?.vehicle_model, revision && `版本 ${revision}`].filter(Boolean).join(' · ')}
+          </div>
+        </div>
+        <ProvBadge prov={card._prov} />
+      </div>
+      {images.length > 0 && (
+        <>
+          <CardHR />
+          <div style={{ display: 'grid', gridTemplateColumns: images.length > 1 ? '1fr 1fr' : '1fr', gap: 10, padding: 12 }}>
+            {images.map((image) => (
+              <figure key={image.asset_id} style={{ margin: 0, minWidth: 0 }}>
+                <div style={{ minHeight: image.role === 'warning_icon' ? 148 : 128, maxHeight: 250, borderRadius: 12, overflow: 'hidden', background: 'rgba(255,255,255,0.96)', border: '1px solid var(--au-line-2)', display: 'grid', placeItems: 'center' }}>
+                  <img
+                    src={image.data_uri}
+                    alt={image.caption || '手册配图'}
+                    loading="lazy"
+                    style={{ display: 'block', width: image.role === 'warning_icon' ? 116 : '100%', height: image.role === 'warning_icon' ? 116 : 'auto', maxHeight: 250, objectFit: 'contain' }}
+                  />
+                </div>
+                <figcaption style={{ marginTop: 7, display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 10.5, color: 'var(--au-text-3)' }}>
+                  <span style={{ color: 'var(--au-text-2)' }}>{image.caption || '手册配图'}</span>
+                  <span style={{ whiteSpace: 'nowrap' }}>PDF 第 {image.page_start} 页</span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+        </>
+      )}
+      {chunks.length > 0 && (
+        <>
+          <CardHR />
+          <div style={{ padding: '11px 16px 13px', display: 'flex', flexDirection: 'column', gap: 9 }}>
+            {chunks.map((chunk, index) => (
+              <div key={`${chunk.page_start || 0}:${index}`} style={{ minWidth: 0 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 650, color: 'var(--au-primary)' }}>
+                    {chunk.section_path?.slice(-1)[0] || `引用 ${index + 1}`}
+                  </span>
+                  {chunk.page_start ? <span style={{ fontSize: 10, color: 'var(--au-text-3)', whiteSpace: 'nowrap' }}>PDF 第 {chunk.page_start} 页</span> : null}
+                </div>
+                <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.65, color: 'var(--au-text-2)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                  {chunk.content}
+                </p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 

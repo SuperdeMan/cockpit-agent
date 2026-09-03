@@ -1,6 +1,6 @@
 # Xiaomi SU7 真实车型手册 RAG implementation plan
 
-> 状态：**已归档（本地实现与离线验证完成；生产发布仍受控）**（2026-09-03）
+> 状态：**已归档（生产 release `a406e22` 已验证）**（2026-09-03）
 > 交付对象：`manual-rag` Agent、离线手册索引构建工具、检索评测与真实性治理
 > 关联：`agents/manual_rag/`、`scripts/build_manual_index.py`、
 > `docs/architecture/detailed/ws6-real-capabilities-and-agent-collaboration.md` §3、
@@ -176,7 +176,7 @@ PDF 可核验页码，避免固定字符窗口把“数值”和“单位/车型
 | P2 ✅ | 实现 deterministic PDF 构建器 | 278 页输入产出合法索引；同参两次 hash 相同；绝对路径不泄漏 |
 | P3 ✅ | 实现 `ManualIndexRetriever` 与工厂 `local` 分支 | real 决议、完整性/信任锚校验、BM25+重排、零命中和车型隔离通过 |
 | P4 ✅ | Agent 引用与 provenance 增强 | 卡片页码/章节/车型/手册版本齐；数值接地与既有四道安全护栏不回归 |
-| P5 ✅ | 真实手册构建和 retrieval golden eval | 主集 22/22、holdout 8/8；报告落 `.artifacts/` |
+| P5 ✅ | 真实手册构建和 retrieval golden eval | 主集 23/23、holdout 8/8；报告落 `.artifacts/` |
 | P6 ✅ | 收口真实性治理与文档 | `knowledge` 退出严格栈默认豁免；`manual` mock 退出 QA WARN 白名单；架构/指南/交接同步 |
 | P7 ✅ | 本地验证 | 专项、相邻契约、五道门禁和全量按风险分层跑完；结果绑定当前工作树 |
 
@@ -256,7 +256,7 @@ commit 生成的 `source.tar`，不会携带 ignored 索引；本计划不替代
   短语/IDF 覆盖率重排、Latin token/多词产品名/错车型/低相关 fail closed；
 - Agent manifest 升至 `0.2.0` 并声明 `response_only=true`；prompt、卡片与 `_prov` 带
   稳定引用，真实手册生成答案增加数值接地闸；
-- `eval_manual_rag.py` + retrieval corpus：主集 22 条、独立改写/负例 holdout 8 条，
+- `eval_manual_rag.py` + retrieval corpus：主集 23 条、独立改写/负例 holdout 8 条，
   同时校验 top 页、正文和零命中，不以页号碰巧命中洗绿；
 - Docker/Compose 具备本机打包与显式 `local` 配置；源 PDF 和真实索引正文均保持 ignored。
 
@@ -269,7 +269,7 @@ commit 生成的 `source.tar`，不会携带 ignored 索引；本计划不替代
 | content SHA-256 | `530b8538484d076cccb3739bde80fec3927b15514a65c7abfd3ad56fdad233b5` |
 | index SHA-256 / size | `b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa` / 133,061 bytes |
 | deterministic rebuild | 第二路径重建 SHA 与主索引逐字节相同 |
-| retrieval | main 22/22，holdout 8/8；最终记录 p50 13.928ms / p95 21.841ms / max 23.331ms |
+| retrieval | main 23/23，holdout 8/8；最终报告 p50 13.713ms / p95 22.828ms / max 22.931ms |
 | handler probe | 启动行 `provider[knowledge]=xiaomi-su7-2024-user-manual(real)`；胎压 top source=PDF 245；CarPlay 零命中且 LLM 调用数不增加 |
 
 评测报告：`.artifacts/manual-rag/xiaomi-su7-2024-retrieval.json`；重建对照：
@@ -288,21 +288,21 @@ commit 生成的 `source.tar`，不会携带 ignored 索引；本计划不替代
 | intent gate | discovery 85/85（676 cases / 634 distinct）；gate 25/25（139 / 129） |
 | capability integrity | PASS；manifest 53 / servers 20 / edge 85 |
 | compile/YAML/Compose/diff | compileall、4 个新增/修改 YAML、Compose config、`git diff --check` 均通过 |
-| 固定全量 | `7796 passed / 32 skipped / 13 warnings`，374.49s，`TZ=UTC0`、未设置 `PYTHONIOENCODING` |
+| 最终 release 全量 | `7796 passed / 34 skipped / 11 warnings`，255.90s，clean clone exact `a406e22`，`TZ=UTC0`、未设置 `PYTHONIOENCODING` |
 
-13 个 warning 仍是既有类别：8 Starlette、2 WordPiece、1 gRPC test fixture、1 audioop、
-1 regex；没有新增 warning。全量与上述读数属于**当前未提交工作树**，不得转借给生产
-`a729b98` 或未来提交 SHA。
+11 个 warning 仍是既有类别：8 Starlette、1 gRPC test fixture、1 audioop、1 regex；
+clean clone 未复制 ignored NLU 模型，因此没有触发根工作区的 2 条 WordPiece warning。
+本行只属于 exact `a406e22`，不向其他 SHA 转借。
 
-### 8.4 未完成边界
+### 8.4 发布边界
 
-- 未修改根 `.env`，未 push、未 deploy、未调用真实 LLM 做新 release 真栈问答；
-- 当前 `main` 原本就比 `origin/main` 领先 2 个 mobile 提交；2026-09-03 用户已明确授权
-  将它们与本批提交一并 push；
-- 生产仍是 `a729b98` 的 manual mock。经二次授权后，shared-model hash 清单、远端
-  preflight 与 cloud 只读挂载已接线；尚待 exact SHA bootstrap、基础设施批准锚更新与 deploy；
-- `test/e2e_strict_stack.py` 已增加 SU7 real manual 卡断言，但只能在索引资产通道落地并发布
-  新 exact release 后运行；旧 production 上运行只会如实失败，不能作为本地完成证据。
+- 未修改根 `.env`、数据库、密钥、Tailscale、systemd 或 CI workflow；
+- `test/e2e_strict_stack.py` 的 manifest 明确为非 remote-safe/real signed profile，云端 runner
+  正确拒绝，未用 `--allow-mutating` 绕过；改用容器内无持久化 Agent 探针和单轮生产 WS；
+- 原工作区在发布期间持续出现并发 mobile 提交/文档改动，全部保留且未并入本批；push
+  使用精确 `<sha>:main`，发布从独立 clean clone 执行，没有 reset/rebase/stash；
+- 根工作区一次 `verify` 因隔离 clone 推送后尚未 fetch 新对象而产出 `unknown` artifact；
+  fetch 后同一 remote release 重跑为 `verified`，失败不是远端健康或 E2E 失败。
 
 ### 8.5 发布接线增量（授权后）
 
@@ -313,3 +313,24 @@ commit 生成的 `source.tar`，不会携带 ignored 索引；本计划不替代
 - cloud release / deploy assets / dev-stack 专项 **491 passed / 4 skipped**；真实 Compose
   merge 回读同时保留 `/certs:ro` 与 `/app/models/manual_rag:ro`；
 - 接线后固定全量 **7797 passed / 32 skipped / 13 warnings**（300.17s），warning 类别不变。
+
+### 8.6 生产发布与真栈读数
+
+- 基础设施批准摘要：`5314f8961ef2a8bdbdcbd3f5645cc3aa3c3746beeadcc727fe328f4698535efd`；
+  bootstrap index SHA `b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa`；
+- Windows checkout 首次把 cloud compose 以 CRLF 上传，批准锚按 Git blob LF hash 对账失败；
+  从 `git show <sha>:deploy/cloud/compose.cloud.yaml` 生成 artifact 后修复，preflight
+  `blocking=0 / bootstrap=ready`。旧 compose/批准锚与错误 CRLF 文件均保留在 staging；
+- 首发 `423ed23` 5/5 healthy 且 verify 通过，但生产 WS 带“请查…用户手册、冷态…”前缀
+  只召回 PDF 256，未带 2.9 bar 参数页；新增 RED 为 30/31；
+- `a406e22` 把“请查/帮我查”归问法壳，补“冷态胎压→轮胎压力参数”词义映射，并让
+  evaluator 可要求多张互补页面；retrieval 31/31、专项 124 passed、exact 全量见 §8.3；
+- 最终 production release `a406e222b3fe08ea462c06ccf676d0698f1f443a`，回滚点 `423ed23`；
+  status 5/5 healthy、零 warning；统一 verify `verified`，artifact
+  `.artifacts/dev-stack-verifications/20260903T053150Z-a406e22.json`，
+  `e2e_remote_safe` / `minimax:MiniMax-M3`；
+- 容器内同一带前缀问法返回页 `[245,256,257,255]`、speech 含 2.9 bar、real provenance、
+  零动作；生产 WS 独立 session repeat 3 为 3/3，逐轮 `manual + real + SU7 + PDF245/256 +
+  2.9 bar + plain speech + zero actions`；CarPlay 负例 1/1 sources 为空、零动作；
+- 两次探针假红来自 Windows PowerShell stdin 把中文字面量/页码断言编码成 `?`；改用环境
+  变量或 ASCII `\uXXXX` 后同一生产结果通过。该问题属于验证工具输入，不是 Provider。

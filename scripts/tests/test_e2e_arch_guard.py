@@ -1855,5 +1855,17 @@ def test_missing_fixed_target_is_fail_closed_and_diagnostic(tmp_path: Path):
         guard_architecture(root)
 
 
+def test_architecture_guard_ignores_dependency_node_modules(tmp_path: Path):
+    """依赖树不是仓库源码；worktree 的 node_modules junction 也不得被解析为源码逃逸。"""
+    root = _repo(tmp_path)
+    _write(
+        root,
+        "node_modules/vendor/python/generated.py",
+        'DYNAMIC_VENDOR_INTENT = "sample.query"\n',
+    )
+
+    assert guard_architecture(root) == ()
+
+
 def test_repository_architecture_guard_passes():
     assert_architecture_guard(REPO_ROOT)

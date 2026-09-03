@@ -36,7 +36,7 @@
 
 - `runtime-models.json` 是服务器端与客户端运行时模型的统一哈希清单；远端构建在任何镜像构建前逐文件校验。
 - Edge NLU 与 CAM++ 声纹位于 `/opt/car-agent/shared/models/{nlu,voiceprint}`，分别进入 edge-orchestrator 与 llm-gateway。
-- Xiaomi SU7 手册索引位于 `/opt/car-agent/shared/models/manual_rag/xiaomi-su7-2024.v1.json.gz`，
+- Xiaomi SU7 手册图文包位于 `/opt/car-agent/shared/models/manual_rag/xiaomi-su7-2024.v2.mrag`，
   以只读 volume 挂到 `manual-rag-agent`；cloud profile 固定 `KNOWLEDGE_VENDOR=local`，
   缺失或 hash 不符必须在构建/启动前失败，不回 mock。
 - Silero VAD 与 sherpa-onnx KWS 四件套位于 `/opt/car-agent/shared/models/hmi/public/**`，只在云端 HMI 专用构建中按精确文件名复制进镜像；不得用目录通配把训练包、测试音频或其他忽略文件带入镜像。

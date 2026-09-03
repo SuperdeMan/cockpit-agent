@@ -237,7 +237,7 @@ bash scripts/fetch-voice-models.sh voiceprint-campplus  # 只拉声纹（28MB）
 |---|---|---|
 | KWS 唤醒词 + silero VAD | `hmi/public/models/` | HMI 免唤醒/唤醒词不可用，push-to-talk 照常 |
 | 声纹 CAM++ ONNX（28MB） | `models/voiceprint/` | 网关决议 `provider[voiceprint]=disabled`，HMI 隐藏「乘员与声纹」入口，`occupant_id` 恒 primary |
-| Xiaomi SU7 手册索引（约 130KB） | `models/manual_rag/xiaomi-su7-2024.v1.json.gz` | 默认 mock 开发档仍可启动；显式 `KNOWLEDGE_VENDOR=local`（cloud 固定）时 fail-fast，不回 mock。构建与 hash 见 `agents/manual_rag/README.md` |
+| Xiaomi SU7 手册图文包（约 65MB） | `models/manual_rag/xiaomi-su7-2024.v2.mrag` | 默认 mock 开发档仍可启动；显式 `KNOWLEDGE_VENDOR=local`（cloud 固定）时逐文本/视觉 hash fail-fast，不回 mock。旧 `.json.gz` 仅兼容文本。构建与 hash 见 `agents/manual_rag/README.md` |
 
 > 声纹模型只有 sherpa-onnx 的 GitHub release 有 ONNX 版（ModelScope 官方仓库只有 PyTorch 权重）。
 > 本机实测约 25KB/s、28MB 要十几分钟——**脚本支持 `curl -C -` 续传，中断了直接重跑**。

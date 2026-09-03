@@ -455,17 +455,15 @@ def test_directive_marker_still_rescues_the_common_polite_form():
     assert _GUARD([_step("hvac.off")], "麻烦把空调关一下") == []
 
 
-# ── 8. 已知边界，**留痕**：manner 问法带操作动词时闸不生效 ────────────────────
+# ── 8. manual-rag v2：动作在前的方法问句也必须被拦 ─────────────────────────
 
-def test_known_gap_manner_question_with_an_operation_verb_is_not_blocked():
-    """「怎么打开双闪」**不会**被拦——它带操作动词，共享判据判它是指令。
+def test_action_first_howto_question_is_blocked_without_changing_adjustment_command():
+    """「怎么打开双闪」是方法问句；无标点也不能执行成 warning_light.open。
 
-    卡 C1-A 的验收栏里写着这句应当被拦（「它是 manner 问句」），而同一张卡又要求
-    **复用端侧判据、不许抄第二份**。两条要求在这一句上冲突：端侧那份判据刻意让
-    「温度如何调高」保持为指令（用户说这句话就是要调温度），改判据会把那条一起改掉。
-
-    这里选择**保住复用**、把差异写成一条显式断言而不是留一个沉默的缺口。
-    真要收这一类，方向是给 `MANNER_ASKS` 加「怎么…」+ 疑问尾词的组合形态，
-    并在端侧同批回归——那是独立一笔改动，不该混在安全闸这批里悄悄发生。
+    v2 在共享 question_shape 中用词序收口：`怎么 + 打开 + 对象` 与
+    `对象 + 怎么 + 打开` 是询问；`怎么把对象打开`、`温度如何调高` 仍按既有祈使合同。
+    端侧与云侧继续复用同一实现，没有为 manual 另抄判据。
     """
-    assert _GUARD([_step("warning_light.open")], "怎么打开双闪") == []
+    step = _step("warning_light.open")
+    assert _GUARD([step], "怎么打开双闪") == [step]
+    assert _GUARD([step], "温度如何调高") == []

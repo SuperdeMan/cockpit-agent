@@ -527,6 +527,22 @@ class TestBatteryQuery:
             assert r is not None, text
             assert r["data"]["object"] == "battery", text
 
+    def test_battery_recommendation_is_not_current_state_query(self):
+        """电池类型/充电目标问的是手册建议，不是读取当前 SOC。"""
+        for text in ("三元锂电池平时充到多少", "磷酸铁锂电池充到几成合适",
+                     "动力电池容量是多少"):
+            result = classify_structured(text)
+            if result is not None:
+                assert result["data"].get("object") != "battery", (
+                    f"{text!r} 被端侧 battery.query 抢答: {result}")
+
+    def test_explicit_current_battery_question_stays_local(self):
+        for text in ("电池现在多少", "当前电池还有多少", "目前电池状态",
+                     "电池平时还有多少"):
+            result = classify_structured(text)
+            assert result is not None, text
+            assert result["data"]["object"] == "battery", text
+
     def test_remaining_phrase_not_split_but_conjunction_still_splits(self):
         import fast_intent as fi
         # "还有多少"是问量短语，不能被当连接词"还有"拆开（否则碎片上云乱答）

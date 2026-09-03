@@ -80,9 +80,11 @@ proto 契约、Agent SDK、Registry/LLM-Gateway/Planner/Memory/Gateway/Edge 骨�
 - media：接媒体内容源播放控制。
 - info：天气/新闻/日程/提醒真实数据源。
 - food-ordering / parking-payment：接到店/停车平台 + **统一支付网关**（Agent 不持凭证）。
-- manual-rag：✅ 2026-09-03 已接 Xiaomi SU7 真实手册只读索引（source/content hash、车型隔离、
-  PDF 页/章节出处、中文 n-gram BM25 + 重排、数值接地闸）；多车型规模或真实召回 badcase
-  达触发条件后再迁移 pgvector/Milvus，不提前做 schema 迁移。
+- manual-rag：✅ 2026-09-03 已在生产 `434a046` 接入 Xiaomi SU7 v2 真实手册只读图文包
+  （source/content/visual hash、车型隔离、PDF 页/章节出处、中文 n-gram BM25 + 重排、数值接地闸）；
+  无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称与 HMI/Android 图文卡
+  均已验证。多车型规模或真实召回 badcase 达触发条件后再迁移
+  pgvector/Milvus，不提前做 schema 迁移。
 - trip-planner：升级为**跨 Agent 协作**（调 navigation/info 等），作为子规划者。
 - 交付物：各 Agent v0.2（真实能力）+ 各自外部适配层 + 契约测试。
 - 验收：每个 Agent 黄金用例（真实/沙箱环境）通过；支付走网关且可审计；trip-planner 能联动至少 2 个 Agent。
