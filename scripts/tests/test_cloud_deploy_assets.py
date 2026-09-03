@@ -71,6 +71,11 @@ CLIENT_RUNTIME_MODELS = {
         "ca2a000807ab83b20a37b512ff4613872528471a227f738dd30d07efaf563492",
 }
 
+MANUAL_RUNTIME_MODELS = {
+    "models/manual_rag/xiaomi-su7-2024.v1.json.gz":
+        "b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa",
+}
+
 
 def _git_bash() -> Path:
     if sys.platform != "win32":
@@ -488,9 +493,11 @@ def test_runtime_model_manifest_has_exact_validated_files():
         "models/nlu/labels.json",
         "models/nlu/vocab.json",
         "models/voiceprint/campplus_zh-cn_16k-common.onnx",
+        *MANUAL_RUNTIME_MODELS,
         *CLIENT_RUNTIME_MODELS,
     }
     assert {path: actual[path] for path in CLIENT_RUNTIME_MODELS} == CLIENT_RUNTIME_MODELS
+    assert {path: actual[path] for path in MANUAL_RUNTIME_MODELS} == MANUAL_RUNTIME_MODELS
     assert all(
         re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
         for item in models
@@ -1879,6 +1886,20 @@ def test_cloud_planner_consumes_the_fail_closed_permission_setting():
             "${PERMISSIONS_FAIL_OPEN:?PERMISSIONS_FAIL_OPEN required}"
         )
     }
+
+
+def test_cloud_manual_rag_requires_real_shared_readonly_index():
+    _, compose = _cloud_compose()
+    manual = compose["services"]["manual-rag-agent"]
+
+    assert manual["environment"] == {
+        "KNOWLEDGE_VENDOR": "local",
+        "MANUAL_INDEX_PATH": "/app/models/manual_rag/xiaomi-su7-2024.v1.json.gz",
+        "KNOWLEDGE_VEHICLE_MODEL": "xiaomi-su7-2024",
+    }
+    assert manual["volumes"] == [
+        "/opt/car-agent/shared/models/manual_rag:/app/models/manual_rag:ro",
+    ]
 
 
 def test_cloud_frontends_use_tailnet_https_bases_and_derive_websockets_in_code():

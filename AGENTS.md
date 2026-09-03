@@ -72,7 +72,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 7. `Capability.response_only` 是只响应能力的权威；D0/T2/Executor 都必须 fail closed。
 8. 安全问句的权威文本是服务端 `safety_origin_text`；LLM goal/reason 和补槽短句无授权权威。
 
-## 4. 当前真实状态（2026-08-30）
+## 4. 当前真实状态（2026-09-03）
 
 ### 4.0 发布快照
 
@@ -105,7 +105,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 安全问句偶尔落 `info.search` | 回答安全但错域、无 manual provenance | QA 交接页 §5 |
 | safety focus 持续阻断后续 charging plan | 安全状态解除时机的产品裁决 | QA 交接页 §5 |
 | MiniMax TTS RPM / barge-in 残帧 | 外部配额与协议/客户端边界 | QA 交接页 §5 |
-| manual-rag mock | 等真实车型手册 Provider | QA 交接页 §5 |
+| manual-rag 生产发布差额 | 当前工作树已实现并本地验证 Xiaomi SU7 真实手册索引（278 页→269 chunks；retrieval 主集 22/22 + holdout 8/8）；shared-model 哈希清单、远端 preflight 与 cloud 只读挂载已接线。生产 `a729b98` 仍为 mock | `docs/design/2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md` + QA 交接页 §5；2026-09-03 已取得基础设施/push/deploy 授权，下一步按 exact SHA bootstrap 索引与批准锚、dry-run、deploy、real 决议/卡片/问答验收；完成前不写已关闭 |
 | gRPC RuntimeWarning | test-only fixture 债务 | QA 交接页 §5 |
 
 ### 4.2 当前活项与其他可接工作

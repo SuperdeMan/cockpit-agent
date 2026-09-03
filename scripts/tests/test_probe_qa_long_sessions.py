@@ -674,15 +674,13 @@ def test_deterministic_is_legal_only_on_the_registered_internal_cards():
     assert failures == [_illegal_mode("real", "safety_advice")]
 
 
-def test_truthfully_labelled_mock_is_a_warning_only_on_declared_card_types():
+def test_manual_mock_is_a_failure_after_real_manual_provider_exists():
     entries, failures, warnings, _n = long_qa.audit_card_provenance(
         '{"type":"manual","_prov":{"vendor":"mock","mode":"mock"}}')
     assert entries == [
         {"provider": "mock", "mode": "mock", "card_type": "manual"}]
-    # **WARN 不进 fail**：真栈里 manual-rag 是 mock 属于已知形态，
-    # 判红等于要求探针去修一件本轮不打算修的事（裁决 ③：等真手册）。
-    assert failures == []
-    assert warnings and warnings[0].startswith("manual 卡如实标注了 mock：mock")
+    assert failures == ["真栈卡片出现 mock provenance: mock"]
+    assert warnings == []
 
     # 没登记过「mock 可接受」的卡型，出现 mock 仍是红。
     _, failures, warnings, _n = long_qa.audit_card_provenance(
@@ -691,8 +689,7 @@ def test_truthfully_labelled_mock_is_a_warning_only_on_declared_card_types():
     assert warnings == []
 
 
-def test_mock_impersonating_real_is_still_a_failure_on_the_exempt_card():
-    """豁免的是「如实标注的 mock」，不是「这张卡怎么盖章都行」。"""
+def test_manual_missing_or_illegal_provenance_is_still_a_failure():
     _, failures, warnings, _n = long_qa.audit_card_provenance(
         '{"type":"manual","city":"深圳"}', required=True)
     assert failures == ["外部数据卡缺少真实性章"] and warnings == []
@@ -713,8 +710,11 @@ def test_card_group_members_are_judged_by_their_own_card_type():
             {"type": "route_plan", "_prov": {"vendor": "amap", "mode": "mock"}},
         ],
     }, ensure_ascii=False))
-    assert failures == ["真栈卡片出现 mock provenance: amap"]
-    assert len(warnings) == 1 and warnings[0].startswith("manual 卡")
+    assert failures == [
+        "真栈卡片出现 mock provenance: mock",
+        "真栈卡片出现 mock provenance: amap",
+    ]
+    assert warnings == []
 
 
 def test_unregistered_card_types_fall_back_to_the_external_default():

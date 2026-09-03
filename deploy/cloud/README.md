@@ -36,9 +36,12 @@
 
 - `runtime-models.json` 是服务器端与客户端运行时模型的统一哈希清单；远端构建在任何镜像构建前逐文件校验。
 - Edge NLU 与 CAM++ 声纹位于 `/opt/car-agent/shared/models/{nlu,voiceprint}`，分别进入 edge-orchestrator 与 llm-gateway。
+- Xiaomi SU7 手册索引位于 `/opt/car-agent/shared/models/manual_rag/xiaomi-su7-2024.v1.json.gz`，
+  以只读 volume 挂到 `manual-rag-agent`；cloud profile 固定 `KNOWLEDGE_VENDOR=local`，
+  缺失或 hash 不符必须在构建/启动前失败，不回 mock。
 - Silero VAD 与 sherpa-onnx KWS 四件套位于 `/opt/car-agent/shared/models/hmi/public/**`，只在云端 HMI 专用构建中按精确文件名复制进镜像；不得用目录通配把训练包、测试音频或其他忽略文件带入镜像。
 - HMI 镜像只是向浏览器提供这些静态文件。VAD/KWS 推理仍在电脑或手机浏览器本地执行，唤醒前音频不因模型交付方式改变而上传云端。
-- 模型二进制继续由 `.gitignore` 排除，不进入提交。新增、替换文件或改变任何 SHA-256 都属于基础设施变更，必须重新审查并更新 `release-infrastructure.json` 后才能发布。
+- 模型二进制与手册索引继续由 `.gitignore` 排除，不进入提交。新增、替换文件或改变任何 SHA-256 都属于基础设施变更，必须重新审查并更新 `release-infrastructure.json` 后才能发布。
 
 ## 数据与备份
 
@@ -248,7 +251,7 @@ SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 
 | `CAR_AGENT_SSH_IDENTITY` | 本机 SSH 私钥路径 |
 | `CAR_AGENT_SSH_KEX_ALGORITHMS` | 服务器明确要求时使用的 KEX 算法 |
 
-首次运行预期返回 `bootstrap_required`：服务器还没有满足新工作流所需的共享 scripts/models。`plan` 只列出源、目标路径、权限和模型 SHA-256，不生成复制命令；脚本来源必须是受审目标提交，服务端模型来源必须是当前已验证 release，HMI 客户端模型来源必须是哈希匹配的已批准本地资产。首次 bootstrap 必须单独批准并完成以下共享底座：runtime project 名、五个脚本、九个运行时文件，以及 `/opt/car-agent/shared/release-infrastructure.json`。
+首次运行预期返回 `bootstrap_required`：服务器还没有满足新工作流所需的共享 scripts/models。`plan` 只列出源、目标路径、权限和 SHA-256，不生成复制命令；脚本来源必须是受审目标提交，服务端模型来源必须是当前已验证 release，HMI 客户端模型与手册索引来源必须是哈希匹配的已批准本地资产。2026-09-03 清单为 runtime project 名、十个脚本、十个运行时资产，以及 `/opt/car-agent/shared/release-infrastructure.json`。
 
 `release-infrastructure.json` 是唯一的基础设施批准锚，记录受审提交的 `deploy/cloud/**` 聚合摘要、逐文件摘要及安装位置。普通 deploy 只能读取，不能创建或更新它。命中 `runtime_config_contract`、`database_schema` 或 `secret_material` 时始终停止；`infrastructure` 只有与自身批准锚逐字一致才可继续。CI/CD 只能按上节对目标 workflow 提交树摘要做一次性精确批准，不能借此放行任何其他类别。
 

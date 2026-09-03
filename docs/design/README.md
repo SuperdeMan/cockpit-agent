@@ -21,6 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
+| [2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md) | Xiaomi SU7 真实车型手册 RAG：PDF 哈希绑定、deterministic 私有索引、中文 n-gram BM25/重排、页码章节引用、错车型/低相关/数值 fail-closed 与 mock 豁免退出 | ✅ 本地实现/离线验证与 cloud shared-model 接线完成：主集 22/22 + holdout 8/8、候选全量 7797 passed；已授权，待 exact SHA bootstrap/deploy/真栈验收 |
 | [2026-06-13-vehicle-control-command-architecture.md](2026-06-13-vehicle-control-command-architecture.md) | 车控域升级到「公版语音指令表」统一 schema | P1 已落地：知识库三件套（62对象/150意图）+ VAL + fast_intent + 飞书全量导入脚本；P2/P3 待做，P2 缺口已量化见下方 2026-07-03 意图覆盖分析 |
 | [2026-06-13-multi-intent-and-context.md](2026-06-13-multi-intent-and-context.md) | 多意图拆分 + 对话上下文/指代消解 | 已全部落地：上下文 + M1云侧DAG + M2端侧切分 + M3黄金用例 |
 | [2026-06-13-asr-pipeline-analysis.md](2026-06-13-asr-pipeline-analysis.md) | ASR 收音失败根因分析与修复链 | 已全部落地：前端竞态 + 后端转码 + E2E + HTTPS提示 |

@@ -14,6 +14,12 @@ class Chunk:
     # 带着「第3章·轮胎保养」一路走到用户面前，被称作车型手册的推荐值。
     #   manual = 真实车型手册；web = 联网检索；mock = 演示语料（**不绑定任何车型**）
     source_type: str = "manual"
+    # 真实手册引用的结构化定位。mock/web 可留空，兼容原接口。
+    document_id: str = ""
+    vehicle_model: str = ""
+    page_start: int = 0
+    page_end: int = 0
+    section_path: tuple[str, ...] = ()
 
 
 class KnowledgeRetriever(ABC):

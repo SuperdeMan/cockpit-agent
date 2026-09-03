@@ -8162,3 +8162,65 @@ release、活项、验证命令和常见任务。
 
 本次洁癖收尾只改文档与 Codex memory 更新说明，不改变生产 release；QA 仍非全绿。
 链接维护例外：修正了 7 个迁入 history 后仍带 `docs/` 前缀的相对链接，历史文字与事实未改。
+
+## §90 2026-09-03 Xiaomi SU7 真实车型手册 RAG（本地实现与离线验证态）
+
+### §90.1 方案与落地
+
+以用户提供的 278 页 `SU7用户手册` 为输入，源 SHA-256=
+`ef16d204c2ad711b2aa6c2a5f2a6607cfc2d47ed3f5d5a4e1db4085f75e4705d`。本批没有在
+“架构写了向量库”与“单车型静态语料的直接解”之间照搬：数据库 schema/migration 是人工
+授权红线，手册只有约 14 万文本字符，因此先落 deterministic 私有文件索引 + 中文双字
+n-gram BM25/重排。`KnowledgeRetriever` 接口保持不变；多车型或真实 badcase 达触发条件
+后再以同一 corpus A/B pgvector/Milvus。
+
+`build_manual_index.py` 读取 PDF 文本层/outline、清页脚、按物理页生成 269 chunks；索引绑定
+source/chunk/content SHA、车型和版本。内部 hash 之外新增 tracked `manual_catalog.yaml`
+信任锚——自洽但未登记的索引也不能盖 real。在线 `ManualIndexRetriever` 有受控 alias、
+规格/周期意图扩展、章节/短语/IDF 覆盖率重排；显著 Latin 与多词产品名缺失、低覆盖和
+错车型均零命中。曾在扩充问法时抓到 `Android Auto` 两个 token 分别命中不同段落的真缺陷，
+改成多词产品名必须整短语存在；也删掉了一个把答案词“后车轮”注入查询的过拟合 alias，
+改成不含答案的通用词义/意图扩展。
+
+Agent manifest 升 `0.2.0` 并声明 `response_only=true`；真实卡带车型、章节、PDF 页、
+source/content hash 和手册版本 provenance。生成答案里带单位/小数的数值无法在本轮引用
+片段核对时整段弃权。既有零命中不调 LLM、来源降权和安全告警确定性前缀均保留。
+
+### §90.2 索引与测试读数
+
+最终 content SHA=`530b8538484d076cccb3739bde80fec3927b15514a65c7abfd3ad56fdad233b5`；
+gzip 索引 133,061 bytes，SHA=`b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa`。
+从同一 PDF 在第二路径重建，两个 index SHA 逐字节相同。真实 retrieval 主集 22/22、holdout
+8/8，最终报告 p50 13.928ms / p95 21.841ms / max 23.331ms；胎压推荐 top-1=PDF 245，
+CarPlay/Android Auto/机油灯/发动机排量等手册缺失项零命中。真实 handler 假 LLM 探针看到
+`provider[knowledge]=xiaomi-su7-2024-user-manual(real)`，CarPlay 轮 LLM 调用数不增加。
+
+专项 38 passed；相邻契约 548 passed / 1 既有 audioop warning；五道门禁为 edge 13/13、
+skills 22/22、exemplars 314（域错配 2.4%）、L0 discovery 85/85 + gate 25/25、capability
+integrity PASS。固定全量 `TZ=UTC0`、未设置 `PYTHONIOENCODING`：
+**7796 passed / 32 skipped / 13 warnings**（374.49s）；warning 类别仍为 8 Starlette +
+2 WordPiece + 1 gRPC fixture + 1 audioop + 1 regex，零新增。
+
+### §90.3 资产、发布与 SHA 边界
+
+手册导言含复制/提取/再发布限制，因此源 PDF 与抽取索引都不进 Git；只跟踪构建器、信任
+指纹、评测与 `models/manual_rag/` 的 README/`.gitkeep`。当前 cloud release 的
+`source.tar` 只从目标 commit 生成，ignored 索引不会上传。修改 release/CI-CD 是用户红线，
+本批没有绕过：生产 `a729b98` 仍为 manual mock，必须另行授权私有资产通道或预置只读挂载，
+再授权 deploy 并按 exact release 验 real 决议、real 卡和只读问答。
+
+本批全量属于当前**未提交工作树**，也没有 push/deploy。开始时 `main` 已领先
+`origin/main` 两个既有 mobile 提交，本批未处理它们。`manual` 已退出 QA mock WARN 白名单，
+`knowledge` 也退出严格栈默认豁免；这是让下次缺资产的真栈明确失败，不是声称生产已关闭。
+
+### §90.4 发布接线授权与候选验证
+
+用户随后明确授权基础设施变更、将两个既有 mobile 提交随本批一并 push，以及生产 deploy。
+本批没有把手册正文塞进 Git `source.tar`：复用已有 shared-model 机制，在
+`runtime-models.json`、本地 bootstrap 表和 inline remote preflight 三处以漂移测试锁同一
+index SHA；cloud profile 强制 local Provider，并把远端 manual_rag 目录只读挂载到容器。
+
+发布专项 491 passed / 4 skipped；真实 Compose merge 同时保留 cert 与 manual 两个只读
+mount。接线后固定全量 **7797 passed / 32 skipped / 13 warnings**（300.17s），warning 类别
+不变。此处仍是 pre-release 候选；bootstrap、批准锚、dry-run、apply 与 exact release 真栈
+读数在完成前不得倒填为已发布。

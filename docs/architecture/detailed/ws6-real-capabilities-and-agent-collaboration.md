@@ -9,7 +9,8 @@
 > 新闻=NewsAPI / 股票=Alpha Vantage 真实 Provider 已落地**（见 `docs/guides/provider-integration.md`、
 > `test/e2e_real_providers.py`）；trip-planner 经受控 AgentClient 协作跑通；
 > **§4 协作护栏已修复**（depth/stack 经 meta→contextvar 跨进程传递，护栏拒绝发审计 span）。
-> 车型向量库仍待接入。PaymentGateway 已于 2026-08-11 真实化接线（parking-payment
+> **车型手册已于 2026-09-03 接入 Xiaomi SU7 只读真实索引**；多车型向量库按规模/
+> badcase 触发，不再是关闭 mock 的前置条件。PaymentGateway 已于 2026-08-11 真实化接线（parking-payment
 > 走 Authorize/Capture 幂等重取时序，双渠道扫码收单 + 商户收银登记，§2 与
 > conventions §9.17）。
 
@@ -54,7 +55,7 @@ def build_poi_provider() -> POIProvider:
 | info | `WeatherProvider`/`NewsProvider` | 气象/资讯源 | 多源聚合 |
 | food-ordering | `RestaurantProvider` + `PaymentGateway` | 到店点评/预订平台 | 支付走网关，见 §2 |
 | parking-payment | `ParkingProvider` + `PaymentGateway` | 停车平台 | 无感支付走网关 |
-| manual-rag | `KnowledgeRetriever` | 车型向量库 | 见 §3 |
+| manual-rag | `KnowledgeRetriever` | 当前：车型手册只读索引；多车型目标：pgvector/Milvus | 见 §3 |
 | trip-planner | （无外部，靠协作） | — | 见 §4 |
 
 ---
@@ -99,16 +100,31 @@ external_pay_url) 登记会话落 pending_pay；本地只做过期收口，订�
 
 ---
 
-## 3. manual-rag 接车型向量库
+## 3. manual-rag 接真实车型手册索引
 
-把 mock KB 换为真实检索：
+> **2026-09-03 实现校准**：Xiaomi SU7 2024 用户手册已接入真实 Provider。单车型静态
+> 语料当前不建数据库：PDF 离线构建成 hash 绑定的只读索引，在线用中文 n-gram BM25 +
+> 确定性重排。多车型规模或真实 badcase 证明词法上限后再迁移 pgvector/Milvus；接口不变。
+
 ```python
 class KnowledgeRetriever:
     async def retrieve(self, query: str, vehicle_model: str, top_k: int = 4) -> list[Chunk]: ...
 ```
-- 离线建库：车型手册分章节切块 → embedding → 写 pgvector/Milvus，按 `vehicle_model` 分区隔离。
-- 在线：query embedding → 向量召回 top_k → （可选）重排 → 拼 prompt（沿用 Phase 0 的"仅依据资料作答"）。
-- 出处：`Chunk` 带来源（章节/页），随 `ui_card.sources` 返回，前端可展示引用。
+
+- 离线：`scripts/build_manual_index.py` 校验输入 PDF SHA，按物理页抽取正文，结合 PDF outline
+  记录章节，产 deterministic gzip JSON；源/内容/chunk hash、车型、版本、页数均进入 metadata。
+- 在线：`ManualIndexRetriever` 启动期完整校验并对账 tracked 手册 catalog 指纹 → 中文双字 n-gram BM25 → 受控同义词、章节、
+  短语与 IDF 覆盖率重排。显著 Latin/多词产品名缺失、低相关、错车型一律零命中。
+- 出处：`Chunk` 带 `source_type=manual`、章节、PDF 物理页、车型；`ui_card` 同时保留结构化
+  citation、source/content hash 与手册版本，完整性通过后才盖 `_prov.mode=real`。
+- 生成：沿用“只依据资料作答”，并新增数值接地闸；真实手册答案中带单位或小数的数值
+  无法在本轮引用片段核对时整段弃权。
+- 资产：源 PDF 和索引正文不进 Git；`models/manual_rag/` 是 ignored 私有运行资产，生产
+  镜像构建工作区单独注入已核验索引。缺索引/损坏的显式 real 配置 fail-fast，不回 mock。
+  cloud release 的 `source.tar` 只来自目标 commit；ignored 索引不混入源码包，而是进入既有
+  shared-model SHA 清单，经单独 bootstrap 安装到远端后只读挂载给 `manual-rag-agent`。
+- 向量化触发：车型数大于 1、实际改写 badcase 无法由受控扩展覆盖，或文件索引超出时延/
+  内存预算；迁移时用 `test/eval_corpus/manual_rag_retrieval.yaml` 做 A/B，不改 Agent 契约。
 
 ---
 
@@ -209,7 +225,7 @@ trip-planner 协作链路**跑通**（并行 + `gather(return_exceptions=True)` 
 **集成（需 registry+agents 起）**：
 - navigation 切到真实/沙箱 POI，黄金用例通过；回退 mock 也通过。
 - food/parking：Authorize→NEED_CONFIRM→Capture 全流程；未确认不扣款。
-- manual-rag：向量检索命中相关章节并带出处。
+- manual-rag：真实索引检索命中相关章节并带 PDF 页码；低相关/错车型零命中，数值声明可核对。
 - trip-planner：联动 navigation+info（≥2 Agent），部分失败仍产出行程。
 
 **契约不回归**：新增/切换 Provider 不改 Agent 对外契约；新增协作不改编排核心。
@@ -221,7 +237,8 @@ trip-planner 协作链路**跑通**（并行 + `gather(return_exceptions=True)` 
 1. Provider 范式落地：navigation 先行（`POIProvider` + mock/amap + `build_provider`）作为模板。
 2. 其余 core/eco Agent 按模板接 Provider（可并行多人）。
 3. `payment-gateway` 服务 + `payment.proto`；food/parking 接入（Authorize/Capture + 幂等）。
-4. manual-rag 接车型向量库（离线建库脚本 + 在线检索 + 出处）。
+4. ✅ manual-rag 接 Xiaomi SU7 真实手册只读索引（离线建库脚本 + 在线检索 + 出处，
+   2026-09-03）；pgvector/Milvus 留作规模触发后的可替换实现。
 5. SDK `AgentClient` + 护栏（深度/环/权限/超时）+ meta 透传调用栈。
 6. trip-planner 改造为子规划者（并行协作 + 降级）。
 7. 各 Agent 黄金用例（real + mock 双跑）+ 协作集成测试。

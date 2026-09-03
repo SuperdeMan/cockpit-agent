@@ -2,8 +2,16 @@
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from agents._sdk.testing import run_handle
 from agents.manual_rag.src.agent import ManualRagAgent
+
+
+@pytest.fixture(autouse=True)
+def _mock_knowledge(monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_VENDOR", "mock")
+    monkeypatch.delenv("REQUIRE_REAL_PROVIDERS", raising=False)
 
 
 def test_query_retrieves_and_answers():
@@ -23,3 +31,9 @@ def test_query_retrieves_and_answers():
 def test_query_missing_question_asks():
     res = asyncio.run(run_handle(ManualRagAgent(), "manual.query", raw_text=""))
     assert res.status == "need_slot"
+
+
+def test_manual_query_is_declared_response_only():
+    capability = ManualRagAgent().manifest.capabilities[0]
+    assert capability.intent == "manual.query"
+    assert capability.response_only is True

@@ -98,7 +98,7 @@ python test/e2e_auth.py                    # 断言型：会话鉴权（需 AUTH
 python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GRPC_TLS=on + scripts/gen-certs.*，非默认栈配置）
 python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自主执行 × 全场景连续对话（见下节）；--provider <pid> 锁定 active LLM（评测中途漂移=报告作废、退出码 1）
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
-python test/e2e_strict_stack.py            # 断言型：数据真实性——严格栈冒烟 + mock 泄漏探针（三问外源卡 _prov 全 real；active=mock 自动 SKIP，属 live 车道）（2026-07-17）
+python test/e2e_strict_stack.py            # 断言型：数据真实性——严格栈冒烟 + mock 泄漏探针（五问外源卡 _prov 全 real；SU7 手册必须带车型/PDF 页引用；active=mock 自动 SKIP，属 live 车道）（2026-09-03 校准）
 python test/e2e_planner_toolcall.py        # 协议探针：各 provider tool-calling 真实行为矩阵（M1a submit_plan；named tool_choice/arguments 合法性/finish_reason，--providers 指定逐家 pin）（2026-07-24）
 python test/e2e_voiceprint_probe.py        # 模型探针：M4 P4 声纹可分性——同人/异人余弦分布、混淆对、端到端识别率与**阈值扫描**、最短有效语音、分布外音频。**产出是三个阈值的实测值**（改阈值前必重跑）；需宿主 pip install sherpa-onnx（2026-07-26）
 python test/e2e_s2s_probe.py               # 协议探针：M4 S2S provider（omni realtime）行为矩阵——tools 支持度/escalate 分流/cancel 残包/回注不双播/多轮上下文/首音频时延；--case 单跑、--model 换厂商验证「锁协议不锁厂商」（2026-07-25）
@@ -374,6 +374,8 @@ python scripts/probe_qa_regression.py --repeat 3 --out base.json   # **定基线
    后者是**诚实契约**（有 mock 必须承认）。合成一个判定，每一次 PoC 现实
    （manual-rag 没有真手册）都判自己红。拆成 **WARN／fail 两档**之后这几行才有意义：
    该卡型已声明「mock 可接受」⇒ 记 WARN 不判 fail；mock **冒充** real ⇒ 仍判 fail。
+   2026-09-03 Xiaomi SU7 真手册索引落地后，`manual` 已退出这张临时豁免表；当前表为空，
+   真栈再出现 manual mock 会判 fail。两档机制保留给未来有明确撤销条件的卡型。
    > 配套：判据表按**卡型 × 允许 mode**建，与契约 §9.3 的必带清单之间有一道
    > **直接解析 `docs/conventions.md`** 的漂移闸——**一份声明两个消费方**，
    > 两份表能分头改就还是两把尺子。

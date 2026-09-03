@@ -19,8 +19,16 @@ QA 轮报告把「未知车型却给出 2.4–2.5 bar」定性成「LLM 用通�
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from agents._sdk.testing import run_handle
 from agents.manual_rag.src.agent import ManualRagAgent
+
+
+@pytest.fixture(autouse=True)
+def _mock_knowledge(monkeypatch):
+    monkeypatch.setenv("KNOWLEDGE_VENDOR", "mock")
+    monkeypatch.delenv("REQUIRE_REAL_PROVIDERS", raising=False)
 
 
 def _agent(answer: str = "答案"):
@@ -89,6 +97,26 @@ def test_real_manual_source_keeps_manual_wording():
     assert (res.ui_card or {}).get("source_type") == "manual"
     system = agent.llm.complete.await_args[0][0][0]["content"]
     assert "车型手册问答助手" in system
+
+
+def test_mixed_manual_and_web_sources_use_non_authoritative_wording():
+    """混入一条非手册资料时不能因字符串排序把整轮误判成 manual。"""
+    from agents.manual_rag.src.providers.base import Chunk
+
+    agent = _agent()
+
+    async def _mixed(query, vehicle_model="", top_k=4):
+        return [
+            Chunk(content="手册内容。", source="手册第1页", source_type="manual"),
+            Chunk(content="网页内容。", source="网页", source_type="web"),
+        ]
+
+    agent.kb.retrieve = _mixed
+    result = asyncio.run(run_handle(agent, "manual.query", raw_text="某项配置是什么"))
+
+    assert (result.ui_card or {}).get("source_type") == "web"
+    system = agent.llm.complete.await_args[0][0][0]["content"]
+    assert "车型手册问答助手" not in system
 
 
 # ── ③ 安全信号词 → 分级安全建议 ──────────────────────────────────────────

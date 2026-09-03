@@ -49,6 +49,12 @@ models/voiceprint/*
 !models/nlu/
 models/nlu/*
 !models/nlu/.gitkeep
+# manual-rag 私有手册索引：由 scripts/build_manual_index.py 从有权使用的 PDF 生成。
+# 源 PDF 与抽取正文均不得进 Git；只跟踪目录说明和占位，保证 Docker COPY 在新克隆可用。
+!models/manual_rag/
+models/manual_rag/*
+!models/manual_rag/.gitkeep
+!models/manual_rag/README.md
 
 # IDE / OS
 .idea/

@@ -1,0 +1,148 @@
+version: 1
+vehicle_model: xiaomi-su7-2024
+top_k: 4
+cases:
+  - id: tire-pressure-spec
+    query: 胎压应该打多少
+    expect_top_page: 245
+    expect_pages_any: [245]
+    expect_text_all: ["2.9"]
+  - id: tire-pressure-alert
+    query: 胎压报警怎么办
+    expect_top_page: 257
+    expect_pages_any: [257]
+    expect_text_all: ["2.3bar", "停放至安全位置"]
+  - id: charging-limit
+    query: 充电上限设多少合适
+    expect_top_page: 213
+    expect_pages_any: [213]
+    expect_text_all: ["80%", "100%"]
+  - id: maintenance-interval
+    query: 多久保养一次
+    expect_top_page: 251
+    expect_pages_any: [251]
+    expect_text_all: ["1 年", "20000 公里", "先达到者"]
+  - id: automatic-parking
+    query: 自动泊车怎么开启
+    expect_top_page: 164
+    expect_pages_any: [163, 164]
+    expect_text_any: ["中控屏", "智能泊车"]
+  - id: wiper-replacement
+    query: 雨刮片怎么换
+    expect_top_page: 261
+    expect_pages_any: [261]
+    expect_text_all: ["雨刮维护模式", "固定卡"]
+  - id: brake-fluid-interval
+    query: 制动液多久换一次
+    expect_top_page: 252
+    expect_pages_any: [252]
+    expect_text_all: ["制动液更换"]
+  - id: phone-key
+    query: 怎么用手机解锁车辆
+    expect_top_page: 10
+    expect_pages_any: [9, 10, 11]
+    expect_text_any: ["手机钥匙", "手机蓝牙钥匙", "手机 NFC 钥匙"]
+  - id: battery-long-storage
+    query: 车辆长期停放时电池怎么保养
+    expect_pages_any: [264, 255]
+    expect_text_any: ["3 个月", "长期停放"]
+  - id: refrigerator-open
+    query: 车载冰箱怎么打开
+    expect_top_page: 113
+    expect_pages_any: [113]
+    expect_text_all: ["冰箱门开启按钮", "整车电量大于 20%"]
+  - id: charging-port-manual-open
+    query: 充电口怎么手动打开
+    expect_top_page: 211
+    expect_pages_any: [211, 212]
+    expect_text_all: ["按压一下充电口盖板"]
+  - id: winter-tires
+    query: 冬天轮胎有什么要求
+    expect_top_page: 258
+    expect_pages_any: [258]
+    expect_text_all: ["低于 7℃", "冬季轮胎"]
+  - id: snow-chains
+    query: 防滑链应该装在哪个轮子上
+    expect_top_page: 259
+    expect_pages_any: [259]
+    expect_text_all: ["仅允许在后车轮上安装"]
+  - id: emergency-sos
+    query: 紧急情况怎么呼叫救援
+    expect_top_page: 224
+    expect_pages_any: [224, 225]
+    expect_text_all: ["SOS", "2s-10s"]
+  - id: cabin-filter
+    query: 空调滤网怎么换
+    expect_top_page: 263
+    expect_pages_any: [263]
+    expect_text_all: ["空调滤芯盖板", "取出旧的空调滤芯"]
+  - id: carlink-connect
+    query: CarLink 怎么连接
+    expect_top_page: 186
+    expect_pages_any: [186]
+    expect_text_all: ["部分安卓手机"]
+  - id: emergency-trunk
+    query: 后备箱怎么应急打开
+    expect_top_page: 227
+    expect_pages_any: [227]
+    expect_text_all: ["机械方式从车内开启后备箱"]
+  - id: brake-warning
+    query: 制动系统故障灯亮了怎么办
+    expect_pages_any: [191, 193]
+    expect_text_all: ["停放至安全位置", "小米汽车服务中心"]
+  - id: unsupported-carplay
+    query: SU7 支持 CarPlay 吗
+    expect_empty: true
+  - id: absent-oil-warning
+    query: 机油灯亮了怎么办
+    expect_empty: true
+  - id: unsupported-android-auto
+    query: 支持 Android Auto 吗
+    expect_empty: true
+  - id: absent-engine-oil-maintenance
+    query: 发动机机油多久换一次
+    expect_empty: true
+  - id: holdout-tire-pressure-paraphrase
+    split: holdout
+    query: 轮胎气压推荐值是多少
+    expect_top_page: 245
+    expect_pages_any: [245]
+    expect_text_all: ["2.9"]
+  - id: holdout-maintenance-paraphrase
+    split: holdout
+    query: 车子隔多长时间做一次保养
+    expect_top_page: 251
+    expect_pages_any: [251]
+    expect_text_all: ["20000 公里"]
+  - id: holdout-parking-entry
+    split: holdout
+    query: 我从哪里进入智能泊车
+    expect_top_page: 164
+    expect_pages_any: [164]
+    expect_text_all: ["泊车入口"]
+  - id: holdout-brake-fluid-colloquial
+    split: holdout
+    query: 刹车油几年换
+    expect_top_page: 252
+    expect_pages_any: [252]
+    expect_text_all: ["制动液更换"]
+  - id: holdout-charge-chemistry
+    split: holdout
+    query: 三元锂电池平时充到多少
+    expect_top_page: 213
+    expect_pages_any: [213]
+    expect_text_all: ["80%"]
+  - id: holdout-nfc-lock
+    split: holdout
+    query: 卡片钥匙怎么锁车
+    expect_top_page: 9
+    expect_pages_any: [9]
+    expect_text_all: ["自动闭锁"]
+  - id: holdout-absent-engine-displacement
+    split: holdout
+    query: SU7 发动机排量多大
+    expect_empty: true
+  - id: holdout-absent-apple-carplay
+    split: holdout
+    query: 支持 Apple CarPlay 吗
+    expect_empty: true

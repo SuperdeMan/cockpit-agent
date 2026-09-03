@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.46（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-08-30（v1.46 闭合 §5.2.13 全部 dispatch-bound 安全出口）
+> 版本：v1.47（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-09-03（v1.47 接入 Xiaomi SU7 真实车型手册索引）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -1396,7 +1396,9 @@ sequenceDiagram
 - **working/core 装配层**：每个规划轮由编排器 `ContextManager` 把 catalog（registry 语义预筛 top-K）、对话历史、长期记忆召回、焦点态在**统一 token 预算**下按优先级装配成 Planner 上下文；初规划与再规划（T2 replan）复用同一装配。详见上述上下文重构设计稿。
 - **活动任务的会话状态经结果保留键声明**（v1.25，G8）：Agent 用 `AgentResult.data` 的 `_route_session` 类保留键把「正在进行的任务」（如本次导航的目的地/途经点/时限/策略）交给焦点态，编排通用消费不认识领域字段；出口两个且分工固定——**prompt 只渲染名字与约束、绝不渲染坐标**（防模型转述时自己编），结构化事实经 `step.meta` 按 `context_scopes` 门控下发给消费 Agent（LLM 与客户端都写不到）。增量修改类意图（「途经点不去了/换条路」）据此有对象可指，做增量改道而非全新任务。契约 `docs/conventions.md` §9.1。
 - **上下文按引用传递**：Execute 请求只带 `context_ref`，Agent 按需向记忆服务拉取所需片段（最小权限）；敏感片段（精确位置等）按 Agent manifest 声明的 `context_scopes` 最小化下发，未声明不发。
-- **车书 Agent 的 RAG 知识库**属于"领域知识"而非用户记忆，单独建库（车型手册向量库）。
+- **车书 Agent 的 RAG 知识库**属于"领域知识"而非用户记忆，单独建库。当前单车型
+  静态手册用 hash 绑定的只读文件索引 + 中文 n-gram BM25/确定性重排；多车型规模或真实
+  badcase 证明词法上限后，再沿同一 `KnowledgeRetriever` 契约迁移 pgvector/Milvus。
 - **可遗忘**：用户可一键清除画像（合规要求），记忆服务提供删除/导出接口。
 
 ### 7.1 记忆图谱：带权偏好与关系边（2026-07-25 定稿归档）
@@ -1795,20 +1797,23 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
   顺带给 provider 盖来源章），全栈 `docker compose logs | grep "provider\["` 一屏审计。
 - **严格栈**：`REQUIRE_REAL_PROVIDERS=on`（默认 off）时任何 mock 决议拒绝启动，含
   llm-gateway 侧 llm/embed/asr/tts 四闸；豁免域 `REQUIRE_REAL_EXEMPT`
-  （默认 `parking,knowledge`——停车数据源 ETCP 未接真、车书暂无真实实现）。
+  （默认仅 `parking`——停车数据源 ETCP 未接真；`knowledge` 自 2026-09-03 有真实
+  SU7 手册索引后退出豁免）。
   `payment` 自 2026-08-11 真实化起是**独立决议域且不进豁免**（网关内自实现同口径
   决议行 `provider[payment]=…`，conventions §9.17）。
 - **卡片 provenance**：外源数据 ui_card 统一携带保留键
   `_prov={mode: real|cached|degraded|mock|deterministic, vendor, fetched_at, note?}`
   （Struct 免 proto），HMI 徽章渲染（mock 醒目/degraded 灰/real 小字来源·取数时间）；
-  **16 卡族已覆盖**（2026-08-27 拍板补登 air_quality / weather_alerts / life_indices，
+  **17 卡族已覆盖**（2026-08-27 拍板补登 air_quality / weather_alerts / life_indices，
+  2026-09-03 补登真实手册 `manual`，
   2026-08-28 校准本行计数），trip_itinerary（停靠点级 grounded 布尔）、
   research_report（sources+权威编号）与内部数据卡**刻意不标**（已有更强或不适用的证据链）。
   `deterministic`（2026-08-27 泓舟拍板收编，2026-08-28 校准本行）= **内部确定性判据
   的产物**，与 degraded/mock **正交**——不是外部数据的降级，是「这答案怎么来的」的
   自我声明；只有登记过的内部确定性卡（当前 `safety_advice`）能打它。
-- **泄漏探针**：`test/e2e_strict_stack.py`（run_e2e 清单内）——真栈三问断言外源卡
-  `_prov` 全非 mock，防「演示数据其实是假的」回归。
+- **泄漏探针**：`test/e2e_strict_stack.py`（run_e2e 清单内）——真栈五问断言外源卡
+  `_prov` 全非 mock，并要求 SU7 手册问法落带车型/PDF 页引用的 real `manual` 卡，
+  防「演示数据其实是假的」或“有实现但没进发布资产”的回归。
   ⚠ **「真栈不该有 mock」与「有 mock 必须承认」是两个立场**（2026-08-27 裁决，
   2026-08-28 校准本行）：前者是**部署形态期望**，后者是**诚实契约**（§9.17 的
   `payment_qr` 还强制要求打 mock）。合成一把尺子就会互相打脸——长会话 QA 探针
@@ -1868,7 +1873,7 @@ turns/spans/llm_calls/logs 落 SQLite 持久化（`OBS_RETENTION_DAYS` 保留期
 | ASR/TTS | 端侧流式 ASR + 云端增强；TTS 流式 | 低时延、离线兜底 | 厂商方案可替换 |
 | 意图分类(Fast Intent) | 规则引擎 + 轻量分类模型（端侧） | 确定性 + 低时延 | — |
 | 记忆/画像 | Redis（短期）+ PostgreSQL + 向量库（pgvector/Milvus） | 成熟 | — |
-| RAG（车书） | 向量库 + 重排 | 车型手册问答 | — |
+| RAG（车书） | 单车型：hash 绑定只读索引 + 中文 n-gram BM25/重排；多车型目标：pgvector/Milvus | 先闭合真实来源、页码引用和离线确定性；由规模/真实 badcase 触发向量化 | `KnowledgeRetriever` 保持可替换 |
 | 车控抽象 | **C++**（对接 SOME-IP/AUTOSAR AP / VSOA / CAN） | 车规、实时 | 依平台 |
 | HMI | **React + TypeScript**（车机 WebView/原生混合） | 复用 web 生态 | 视座舱方案 |
 | 部署 | 云：K8s + Helm；端：容器/原生进程 + OTA | 标准化 | — |
@@ -2018,6 +2023,7 @@ agents/<name>/
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.47 | 2026-09-03 | 内容性合入（Xiaomi SU7 真实车型手册 RAG）：`manual-rag` 从 5 条演示语料增加真实 `ManualIndexRetriever`，输入 PDF 经离线构建器按物理页与 outline 形成 deterministic gzip JSON，绑定 source/content/chunk SHA、车型与手册版本，并与 tracked `manual_catalog.yaml` 的批准指纹对账；在线采用中文双字 n-gram BM25 + 受控同义词 + 章节/短语/IDF 覆盖率重排，显著 Latin/多词产品名缺失、低覆盖和错车型均零命中。每个 chunk/card 带章节与 PDF 页码，`_prov=real` 只在完整性与信任锚校验后盖章，带单位/小数的生成数值必须能在本轮引用片段核对。源 PDF/索引正文作为 ignored 私有资产不进 Git；`knowledge` 退出严格栈默认豁免，`manual` mock 退出 QA WARN 白名单。单车型静态语料暂不引入数据库迁移；多车型/真实 badcase 达阈值后以同一 Provider 契约和 retrieval corpus A/B 迁移向量库。契约 `conventions.md` §9.41。 |
 | v1.46 | 2026-08-30 | 内容性校准（QA 安全确认写闸最终本地闭合）：将 §5.2.13 从 build-only 扩展为所有 dispatch-bound 计划出口——focused/normal build、adaptive replan receiver、Agent escalate mini-plan 与 fallback 均复用同一过滤原语；新增服务端权威 `safety_origin_text`，从最初请求跨 replan、suspend/restore 保真，明确 `ctx.raw_text` 仍是当前补槽答案，LLM goal/reason 无授权权威，legacy 来源未知时副作用 fail closed；新增 capability 级 `response_only` 权威链（manifest → registry round-trip → Step → Executor/D0/T2），回答能力出现确认、补槽或 action 一律在 dispatch/yield 前转为零动作契约失败。契约 `conventions.md` §9.40。 |
 | v1.45 | 2026-08-30 | 内容性校准（QA 长会话安全收尾）：扩展 **§5.2.13 的云侧确认边界**。release `343934b` 长会话中「红色机油灯亮了还能继续开吗」被规划成 `luckin.order` 并挂起，而干净会话 3/3 正确，证明这是长上下文高代价方差；问句写闸唯一判据收敛为“非指令问句 ∧（端侧写步骤 ∨ `Step.require_confirm=true`）”，cloud 分支不滥用会误杀 `search/menu/talk/status` 的 `is_write_intent`，`require_confirm` 只由 manifest/servers 权威装配、LLM 无权修改；正常指令、未确认 cloud 步骤与 mixed 合法步骤不变。所有 `build()` 出口（focused + normal）共用 `_apply_question_side_effect_guard` 终结器，focused 被拦后绝不走 registry fallback；零步只尝试 unconfirmed talk，找不到则保持空计划 fail closed，并保留 `question_write_blocked`。质量审查补齐 fallback 旁路：所有 fallback `Step` 也必须经 `_validated_steps` 保留 manifest 字段，`_talk_only_plan` 拿到 confirmed capability 必须拒绝；默认 chitchat 能否给出分级建议留给部署验收实证。契约 `conventions.md` §9.40。 |
 | v1.44 | 2026-08-28 | 内容性合入（MiniMax QA 修复批第 5 批，卡 C9/C11/C12/C13/C14）：新增 **§5.2.17 说出口的每一句话都要对得上账**。四类话术在同一轮 QA 里同时出现，共同点不是「答错了」而是**每一句听起来都像有依据**：答案城市来自 mock 车辆位置（全仓最后一条 `vehicle.location` 回退，且下一轮模型从这句答案里学会了那个城市）、chitchat 零调用却说「已经为您重新计算路线…1.6公里」、同一轮确定性拼出三句互相打脸的口味话术、把一个滚了日的时限报成「早约593分钟」。四条内容：① **诚实降级的顺序里没有 mock 这一档**（本轮定位 → 诚实问一句；配套「署名摘要不是时间，认不出就留空」与三张外源卡补 `_prov`——契约的必带清单与实现**一起**漏了同样三张）；② **防编造要用类别否定不要禁语清单**（清单被绕过两轮：上次从交易话术、这次从导航），配套聚合器不再吞掉 Agent 自己的失败话术（`AgentResult` 无 error 字段 ⇒ 查表恒命中默认值 ⇒ 每条失败都变成裸「抱歉，处理失败。」）与一位零决策观测列；③ **前景赢过背景，但前景要有载体**（`Focus.session_constraints`：登记挂输入形态不挂路由、判据落 `runtime/`、下发按 manifest scope 门控且**不广播**、合并语义是后说的覆盖先说的），同卡另一半是**判据用错了变量**（挡板问「本轮说没说」而不是合并后的忌口事实）；④ **解析器没把握的分支把疑点交还用户**（滚日不改小时语义 + 荒谬余量闸；精确数字是有害的确定感）。通用判据：**每一句话都要能回答「这个说法的依据在账上是哪一条」**，中间那一档（拿个像样的值顶上）在任何一面都是最坏选择；第五张卡 C14 是它在声明面的同一件事（能力性质写不进 manifest 就等于不存在）。契约 `conventions.md` §9.37，流水 history §77。 |

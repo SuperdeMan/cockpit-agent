@@ -470,7 +470,7 @@ _EXTERNAL_PROV_CARDS = frozenset({
     "weather", "forecast", "search_result", "news_brief", "stock_quote",
     "sports_scores", "sports_scorers", "place_list", "place_detail",
     "poi_list", "poi_detail", "route_plan", "charging_route",
-    "air_quality", "weather_alerts", "life_indices",
+    "air_quality", "weather_alerts", "life_indices", "manual",
 })
 
 #: 内部确定性卡（§9.3，2026-08-27 泓舟拍板收编 `deterministic`）：
@@ -478,12 +478,9 @@ _EXTERNAL_PROV_CARDS = frozenset({
 #: 两处早就在打它——**实现先于契约发明了一个正当的值**，本次是补登不是放宽。
 _DETERMINISTIC_PROV_CARDS = frozenset({"safety_advice"})
 
-#: 已声明「mock 可接受」的卡型 → 为什么可接受。**逐卡型逐条写、禁通配符**
-#: （同 `capability_exemptions.yaml` 的口径）：一条豁免要能被读的人问出
-#: 「它什么时候能撤」。这里的答案是「真车型手册接入之日」。
-_MOCK_ACCEPTED_PROV_CARDS = {
-    "manual": "manual-rag 真车型手册未接入，PoC 已知形态（§9.3 裁决 ③：等真手册，不引入新工作）",
-}
+#: 已声明「mock 可接受」的卡型 → 为什么可接受。**逐卡型逐条写、禁通配符**。
+#: 2026-09-03 真车型手册索引落地后 `manual` 已退出；当前没有豁免卡型。
+_MOCK_ACCEPTED_PROV_CARDS: dict[str, str] = {}
 
 
 def card_prov_rule(card_type: str) -> dict:
@@ -513,8 +510,8 @@ def audit_card_provenance(
 
     · **`deterministic` 收进合法 mode**——内部确定性产物的自我声明，与
       degraded/mock 正交。但只对**登记过的内部确定性卡**（`safety_advice`）合法。
-    · **mock 拆两档**——该卡型已声明「mock 可接受」（`manual`，真手册接入前）
-      ⇒ 记 **WARN 不判 fail**；没声明的卡型出现 mock ⇒ 仍判 fail。
+    · **mock 拆两档**——该卡型已声明「mock 可接受」时记 **WARN 不判 fail**；
+      没声明的卡型出现 mock ⇒ 仍判 fail。2026-09-03 起当前豁免表为空。
     · **「mock 冒充 real」永远是 fail**，这一档在上面两条之外：缺 `_prov`
       （`required` 那支）、provider 缺失、mode 写了个词表外的值，都判红。
 

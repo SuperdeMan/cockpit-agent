@@ -92,8 +92,13 @@ def build_x_provider():
   `docker compose logs | grep "provider\["` 一屏审计），并给 provider 实例盖来源章
   （Step 6 的 `attach()` 出卡时读）。
 - **严格栈**：`REQUIRE_REAL_PROVIDERS=on` 时 mock 决议在 `log_resolution` 处直接拒绝启动
-  （豁免 `REQUIRE_REAL_EXEMPT`，默认 `parking,knowledge`）。
+  （豁免 `REQUIRE_REAL_EXEMPT`，2026-09-03 起默认仅 `parking`；`knowledge` 已有真实
+  SU7 手册索引）。
 > 样板：`agents/navigation/src/providers/__init__.py`、`agents/info/src/providers/__init__.py`。
+
+本地静态真实源（如 `manual-rag` 的车型手册索引）不走 HTTP，但工厂、fail-fast、决议日志、
+卡片 provenance 和运行期不得回 mock 的契约完全相同；额外要求对源/内容 hash 与车型做
+启动期完整性校验。见 `docs/conventions.md` §9.41。
 
 ### Step 5 — 凭证经 env/secret，绝不进代码（红线，CLAUDE.md §5）
 - 普通 key：`<VENDOR>_KEY` env，compose 里**只注入需要它的那个 Agent**（最小化，见 `deploy/docker-compose.yaml` navigation-agent / info-agent）。

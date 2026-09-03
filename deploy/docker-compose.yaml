@@ -21,7 +21,7 @@ x-python-env: &python-env
   # 数据真实性严格栈（治理 P2）：on=任何 provider 决议落 mock 即启动失败（含 LLM/embed/ASR/TTS），
   # 演示/验收前翻开；默认 off=CI 与离线开发全 mock 照跑。豁免域见 .env.example。
   REQUIRE_REAL_PROVIDERS: ${REQUIRE_REAL_PROVIDERS:-off}
-  REQUIRE_REAL_EXEMPT: ${REQUIRE_REAL_EXEMPT:-parking,knowledge}
+  REQUIRE_REAL_EXEMPT: ${REQUIRE_REAL_EXEMPT:-parking}
   # 开放域模型分层（task 4）：Agent（如 chitchat）据此选快/重模型
   LLM_MODEL_PRIMARY: ${LLM_MODEL_PRIMARY:-mimo-v2.5-pro}
   LLM_MODEL_FAST: ${LLM_MODEL_FAST:-mimo-v2.5}
@@ -505,6 +505,10 @@ services:
     environment:
       <<: *python-env
       AGENT_PORT: "50065"
+      # 默认 mock 保持 CI/无私有资产开发可启动；验收/生产显式 local，缺索引即 fail-fast。
+      KNOWLEDGE_VENDOR: ${KNOWLEDGE_VENDOR:-mock}
+      MANUAL_INDEX_PATH: ${MANUAL_INDEX_PATH:-/app/models/manual_rag/xiaomi-su7-2024.v1.json.gz}
+      KNOWLEDGE_VEHICLE_MODEL: ${KNOWLEDGE_VEHICLE_MODEL:-}
     depends_on:
       registry:
         condition: service_healthy

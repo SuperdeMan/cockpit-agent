@@ -1,0 +1,2 @@
+# 仅离线 PDF 建库脚本使用；manual-rag 在线镜像不安装 PDF 解析器。
+pypdf==6.9.2

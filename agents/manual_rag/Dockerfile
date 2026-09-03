@@ -7,6 +7,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install -r /tm
 
 COPY gen/python /app/gen/python
 COPY agents /app/agents
+COPY models/manual_rag /app/models/manual_rag
 COPY runtime /app/runtime
 COPY observability /app/observability
 

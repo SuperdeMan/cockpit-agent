@@ -73,6 +73,12 @@ services:
     image: "car-agent-release/manual-rag-agent:${RELEASE_SHA:?RELEASE_SHA required}"
     pull_policy: never
     build: !reset null
+    volumes:
+      - "/opt/car-agent/shared/models/manual_rag:/app/models/manual_rag:ro"
+    environment:
+      KNOWLEDGE_VENDOR: local
+      MANUAL_INDEX_PATH: /app/models/manual_rag/xiaomi-su7-2024.v1.json.gz
+      KNOWLEDGE_VEHICLE_MODEL: xiaomi-su7-2024
 
   trip-planner-agent:
     image: "car-agent-release/trip-planner-agent:${RELEASE_SHA:?RELEASE_SHA required}"

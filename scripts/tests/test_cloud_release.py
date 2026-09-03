@@ -1906,6 +1906,7 @@ def test_preflight_reports_exact_bootstrap_candidates():
         "/opt/car-agent/shared/models/nlu/labels.json",
         "/opt/car-agent/shared/models/nlu/vocab.json",
         "/opt/car-agent/shared/models/voiceprint/campplus_zh-cn_16k-common.onnx",
+        "/opt/car-agent/shared/models/manual_rag/xiaomi-su7-2024.v1.json.gz",
         "/opt/car-agent/shared/models/hmi/public/models/silero_vad.onnx",
         "/opt/car-agent/shared/models/hmi/public/kws/sherpa-onnx-kws.js",
         "/opt/car-agent/shared/models/hmi/public/kws/sherpa-onnx-wasm-kws-main.data",
@@ -1926,6 +1927,13 @@ def test_preflight_reports_exact_bootstrap_candidates():
         "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.js",
         "approved local asset:hmi/public/kws/sherpa-onnx-wasm-kws-main.wasm",
     ]
+    manual_details = [
+        item for item in model_details if "/models/manual_rag/" in item.path
+    ]
+    assert [(item.source, item.sha256) for item in manual_details] == [(
+        "approved local asset:models/manual_rag/xiaomi-su7-2024.v1.json.gz",
+        "b290fde73a2e1c3eced1f80e4fbb423d00a1150504ae82605709d22831406cfa",
+    )]
 
 
 def test_bootstrap_requires_all_shared_transaction_scripts():

@@ -226,7 +226,10 @@
 | `LLM_429_WAIT_CAP_S` | 上游 429 带 Retry-After 时最多等待重试同模型的秒数上限；更长直接 `RESOURCE_EXHAUSTED` 让上层诚实降级（运行时硬化 D3，2026-07-17）| 否（默认 2）|
 | `LLM_BACKUP` | 跨厂商备份档 `provider[:model]`（如 `deepseek:deepseek-v4-flash`）：active 厂商**整链**（含 429/上游抖动）耗尽后兜底一跳。与 `LLM_MODEL_FALLBACK` 是两层——那是厂商内档位链，同厂 fast=primary 时上游一抖整链即死（2026-08-15 MiniMax 抖动实测）。**pinned 请求恒不跨**（pin=不许漂移，D2）；toolcall 请求且备份厂商不支持 tool calling 时跳过；每请求现读可热切 | 否（空=关，行为与无此功能逐字一致）|
 | `REQUIRE_REAL_PROVIDERS` | **数据真实性严格栈**（治理 P2，§9.4）：`on`=任何 provider 决议落 mock 即启动失败（含 llm-gateway 的 llm/embed/asr/tts 四闸），演示/验收前翻开自证全真 | 否（默认 off，CI/离线全 mock 照跑）|
-| `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：`parking`=停车数据源（ETCP）未接真、`knowledge`=车书暂无真实实现。`payment` 是独立决议域且**不在豁免**（2026-08-11 真实化，§9.17） | 否（默认 `parking,knowledge`）|
+| `REQUIRE_REAL_EXEMPT` | 严格栈豁免域（逗号分隔）：当前默认仅 `parking`=停车数据源（ETCP）未接真。`knowledge` 自 2026-09-03 有真实 SU7 手册索引后退出默认豁免；`payment` 是独立决议域且**不在豁免**（2026-08-11 真实化，§9.17） | 否（默认 `parking`）|
+| `KNOWLEDGE_VENDOR` | 车书知识源：`mock`=CI/离线演示语料；`local`（兼容别名 `manual`/`file`）=经过 source/content SHA 校验的真实手册只读索引；`pgvector` 尚未实现，显式选择 fail-fast | 否（默认 `mock`）|
+| `MANUAL_INDEX_PATH` | `KNOWLEDGE_VENDOR=local` 的索引路径；索引是 ignored 私有运行资产，容器默认 `/app/models/manual_rag/xiaomi-su7-2024.v1.json.gz`。缺失/损坏即启动失败，不回 mock | local 必填（有容器默认）|
+| `KNOWLEDGE_VEHICLE_MODEL` | 可选车型钉死；非空时必须与索引 `document.vehicle_model` 一致，否则启动失败。当前 SU7 索引值 `xiaomi-su7-2024` | 否 |
 | `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |
 | `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
 | `MIMO_AUDIO_BASE_URL` | MiMo 音频端点（批/流式 ASR/TTS 共用，与 chat 的 `LLM_BASE_URL` 独立），空=官方集群 | 否 |
@@ -666,13 +669,14 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   `_prov` 可选，出现则 mode 必为 `deterministic`。
 - **mock 的 QA 口径（同批拍板）**：契约立场不变——mock **如实标注即合法**（§9.17 的
   `payment_qr` 还强制要求打 mock）；QA 探针立场拆两档：**该卡型已声明「mock 可接受」**
-  （如 manual-rag 在真手册接入前）⇒ 记 **WARN 计数、不判 fail**；**mock 冒充 real**
+  ⇒ 记 **WARN 计数、不判 fail**；**mock 冒充 real**
   （无 `_prov` 或标错 mode）⇒ 仍判 fail。落法=探针建「卡型 × 允许 mode」期望表，
   把下面那份必带清单机械化成判据（一份声明两个消费方）。
   ✅ **2026-08-28 落地**（fix plan 第 6 批 C15）：表在
   `scripts/probe_qa_long_sessions.py::card_prov_rule`（`_EXTERNAL_PROV_CARDS` /
   `_DETERMINISTIC_PROV_CARDS` / `_MOCK_ACCEPTED_PROV_CARDS` 三张，后者**逐卡型
-  写理由、禁通配符**，同 `capability_exemptions.yaml` 的口径），与本节这份清单的
+  写理由、禁通配符**，同 `capability_exemptions.yaml` 的口径；2026-09-03 真手册接入后
+  当前表为空，`manual` 的 mock 在真栈重新判 fail），与本节这份清单的
   漂移由 `test_card_prov_rules_match_the_contract_mandatory_list` **直接解析本文档**
   比对——两份表要是能分头改，那就还是两把尺子。**未登记的卡型走外源默认**
   （real/cached/degraded、mock 判红）：新卡型想打 `deterministic` 或想让 mock
@@ -692,7 +696,7 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
 - 凡展示外源数据的卡必须带（P2 已推广：weather / forecast / search_result / news_brief /
   stock_quote / sports_scores / sports_scorers / place_list / place_detail / poi_list /
   poi_detail / route_plan / charging_route；**2026-08-27 拍板补登：air_quality /
-  weather_alerts / life_indices**——2026-08-26 QA 实测同文件 5 个 handler 两个盖章三个漏，
+  weather_alerts / life_indices / manual**——2026-08-26 QA 实测同文件 5 个 handler 两个盖章三个漏，
   漏的正是这三张；**盖章实现 2026-08-28 随 C9-C 落地**，回归锁
   `agents/info/tests/test_prov_cards.py::test_the_three_weather_family_cards_carry_prov_too`
   ——⚠ 那条用例里 `info.alerts` 要**造一条预警**才有卡可查：mock provider 无预警时
@@ -731,7 +735,7 @@ provider 跑，是归属盲区之一）。短期轮次存取（`AppendTurn`/`Get
   数据**（weather / alerts / stock / news / nearby 已对齐）。
 - **严格栈（P2）**：`REQUIRE_REAL_PROVIDERS=on`（默认 off）时任何 mock 决议直接拒绝启动，
   含 llm-gateway 侧 llm / embed / asr / tts 四闸；豁免域 `REQUIRE_REAL_EXEMPT`
-  （默认 `parking,knowledge`）。泄漏探针 `test/e2e_strict_stack.py`（run_e2e 已挂，
+  （默认仅 `parking`；`knowledge` 已有真实手册索引）。泄漏探针 `test/e2e_strict_stack.py`（run_e2e 已挂，
   mock 栈自动 SKIP）。
 - 域名清单：weather / search / news / sports / stock / poi(navigation) / place(nearby) /
   charging / knowledge(manual-rag) / parking(停车数据源未接真，严格栈豁免) /
@@ -2581,3 +2585,28 @@ registry round-trip → `Step` → Executor/D0/T2 全链保真；缺声明或 le
 `response_only_contract_violation`、`actions=[]`，且在 provider dispatch 或流式 action yield 前
 截断。`_talk_only_plan()` 只接受 `response_only=true`、`require_confirm=false` 且通过同一问句
 守卫的 capability；intent 后缀与 Planner wire 字段均不构成回答能力证明。
+
+---
+
+### 9.41 真实车型手册索引与引用契约（2026-09-03）
+
+`manual-rag` 的领域知识不进 memory，也不从 mock/网页在运行期回填。真实手册 Provider 的
+当前实现是 `ManualIndexRetriever`：离线从有权使用的 PDF 构建 deterministic gzip JSON，
+在线只读加载；单车型静态语料采用中文双字 n-gram BM25 + 章节/短语/IDF 覆盖率重排。
+未来迁移 pgvector/Milvus 时不得改变下面的消费契约与 golden corpus。
+
+| 层 | 强制契约 |
+|---|---|
+| 源 | `document.source_sha256` 绑定输入 PDF；只保存源文件名，不保存构建机绝对路径 |
+| 内容 | 每个 chunk 与全量 chunks 都带 SHA-256；并须命中 tracked `resources/manual_catalog.yaml` 的批准指纹；schema/hash/page/model 任一非法则启动失败 |
+| 车型 | 一份索引一个 `vehicle_model`；显式配置不一致启动失败，请求车型不一致零命中 |
+| 引用 | `Chunk.source_type=manual`；source 和卡片必须带手册标题、章节路径、PDF 物理页码 |
+| 召回 | 显著 Latin token 或多词产品名在手册不存在时零命中；低覆盖/低分零命中，不凑 top-k |
+| 生成 | 每段 prompt 资料带稳定来源；零命中不调 LLM；真实手册答案中带单位/小数的数值必须能在本轮引用片段核对，否则整段弃权 |
+| 真实性 | 完整性校验通过后才 `provider[knowledge]=<document_id>(real)`；`manual` 卡 `_prov.mode=real` 且 `data_time_label=手册版本` |
+| 资产 | 源 PDF 与索引正文不进 Git；`models/manual_rag/` 只跟踪 README/`.gitkeep`，生产构建工作区单独注入已核验索引 |
+
+默认 `KNOWLEDGE_VENDOR=mock` 只为了无私有资产的 CI/离线开发可运行，不构成真栈豁免。
+`REQUIRE_REAL_PROVIDERS=on` 时 `knowledge` 不在默认 `REQUIRE_REAL_EXEMPT`；QA 探针同样不再
+接受 `manual` mock 为 WARN。生产验收必须同时看到启动 real 决议、卡片 real 章、预期页/正文
+retrieval 读数；任何一项不能用相邻 SHA 或本地 ignored artifact 转借。
