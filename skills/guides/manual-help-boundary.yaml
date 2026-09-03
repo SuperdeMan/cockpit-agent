@@ -27,10 +27,6 @@ few_shots:
     plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"前挡雨刷的开关要怎样用"},"depends_on":[],"slot_refs":{}}]}
   - user: 状态栏有个斜带小人一直亮代表什么
     plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"状态栏有个斜带小人一直亮代表什么"},"depends_on":[],"slot_refs":{}}]}
-  - user: 平时给三元锂电池充到几成比较合适
-    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"平时给三元锂电池充到几成比较合适"},"depends_on":[],"slot_refs":{}}]}
-  - user: 雪地里防滑链该套前轮还是后轮
-    plan: {"complexity":"simple","steps":[{"id":"s1","agent_id":"manual-rag","intent":"manual.query","slots":{"question":"雪地里防滑链该套前轮还是后轮"},"depends_on":[],"slot_refs":{}}]}
 
 golden:
   - text: 后视镜自动下翻该从哪里设置
