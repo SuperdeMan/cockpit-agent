@@ -163,6 +163,70 @@ adb shell cmd device_state state reset ; adb shell cmd device_state print-state 
 `state reset` 回的是**物理**姿态，不是你上一次设的值——`print-state` 回读才知道现在是哪种。
 另：`input keyevent 82` 在应用前台时会**打开 RN dev menu**（拿它解锁屏幕的话记得再按一次 BACK 关掉）。
 
+### B4「行车档」真机验收（T13）：三条取证通道 + 两处卡点
+
+**⛔ 卡点①：Maestro 的 driver 在本机装不上，Maestro 类读数全部取不到。**
+设备上只剩 `dev.mobile.maestro.test`，主包 `dev.mobile.maestro` 不在，装它一律
+`INSTALL_FAILED_USER_RESTRICTED: Install canceled by user`。解锁、亮屏、应用前台都试过，**照样拒**
+——所以上面 B2/B3 记的「解锁后就过了」是巧合或另有条件，**与锁屏无关**。唯一站得住的结论是
+报错文案里的 "canceled by user" 不是「有人点了取消」。**要跑 06/07/08/09 得先在设备的开发者选项里
+放行 USB 安装**（需设备主人授权）。在此之前用下面的 uiautomator 路径替代。
+
+**⛔ 卡点②：`adb shell input text` 送中文直接抛 NPE**，不是「要加转义」——这条路在本机不存在：
+
+```
+java.lang.NullPointerException: Attempt to get length of null array
+    at com.android.commands.input.InputShellCommand.sendText     # KeyCharacterMap 里没有这些字符
+```
+
+后果不小：「说一句会出过程区的复杂任务」是 §11.2 B4 ②③ 四格取证的**共同前提**。试过的替代都不通：
+ADBKeyboard 要装 APK（与 Maestro driver 同一堵墙）、`service call clipboard` 的 parcel 格式随版本变、
+`am start` 没有可带文本的路由。⇒ **要么人手输，要么另立一条输入通道**（B5 的账）。
+
+**通道一：目标尺寸读实 `tools/target_probe.py`（走 uiautomator XML，不走 Maestro）**
+
+```powershell
+# ⚠ 先在设置 → 实验室里开「减少动效（强制）」，否则对话页 uiautomator 只吐到 ComposeView 一层
+#    （3.7KB、零 RN 节点）——那一屏永远不 idle。开了之后同一屏是 80KB 完整树。
+adb shell uiautomator dump /sdcard/ui.xml ; adb pull /sdcard/ui.xml
+adb shell wm density                       # 取 Physical/Override density（本机 480）
+python mobile/e2e/tools/target_probe.py ui.xml --density 480 --min 56 `
+  composer-orb composer-send dock-accept dock-cancel followup-chip voice-sheet-collapse driving-card-button
+```
+
+退出码 0 全过 / 1 有不达标 / 2 找不到某个 id（**演员没上场**）。
+**阴性对照是必须的**：行车档关了再跑同一条，`composer-send` 应该 44.0dp FAIL（rc 0→1）——
+探针量得出差别才算探针活着。`presence-capsule` 视觉 26dp 靠 hitSlop，在这里必然 FAIL，那是
+**读法的限制**不是缺陷（Scanner 才量无障碍树上的可点区域，装它要授权）。
+
+**通道二：行车 `driving` 帧——云栈 debug 注入（零后端改动）**
+
+```powershell
+$fqdn = (Select-String -Path .env -Pattern '^TAILNET_FQDN=' | ForEach-Object { $_.Line.Split('=')[1].Trim() })
+Invoke-RestMethod -Method Post -Uri "https://$fqdn`:8446/api/debug/vehicle" -ContentType 'application/json' -Body '{"key":"speed_kmh","value":30}'
+Invoke-RestMethod -Uri "https://$fqdn`:8446/api/vehicle/state"     # 回读；做完一定还原 speed_kmh=0 + gear=P
+```
+
+白名单只有 `speed_kmh / battery / gear / location / cabin_temp`（`orchestrator/edge/server.py`）。
+⚠ **只有会出过程区的复杂任务才带这个标**——`driving` 住在 `type:'process'` 帧上，简单轮没有它。
+
+**通道三：四个实验室开关在取证里各自的用途**
+
+| 开关 | 取证里干什么 |
+|---|---|
+| 减少动效（强制） | ① §11.2 B4 ④ 的静帧读数；② **让 `uiautomator dump` 能 idle**（意外收益，见通道一） |
+| 行车档（手动） | 不依赖云栈就能造行车形态；但**验「Edge 会不会标」必须关掉它**，否则分不清是哪一支 |
+| 常亮 | §6 触发③ 建议胶囊的三条件之一（身份 C + 横屏 + keep-awake） |
+| 免唤醒 | 语音轮的入口；PTT 那条路要关掉它 |
+
+**两条一般纪律（本轮各中一次）**
+
+- **音频类读数每轮回读 `dumpsys audio` 的 `Devices:` 行**：音量对不代表从你以为的喇叭出
+  （本轮路由跑到 `bt_a2dp(80)`，怎么放都听不见）。这是「音频不触发」惯犯的第三种形态，前两次都是音量 0。
+- **靠坐标驱动的取证，坐标必须现取现用**：文案换行会把下面的控件整体推走（角色 C 的说明行变两行 ⇒
+  行车档开关从 y=1213 移到 y=1266），按旧坐标 tap **打空是静默的**。把 `uiautomator dump` 取 bounds
+  做进脚本，坐标就再没错过。
+
 ## CLI 在哪（本机）／换机器怎么装
 
 **本机不用装**：Maestro **2.9.0** 的 dist 一直在 `D:/Android/tools/maestro-dist/maestro/bin/maestro.bat`
