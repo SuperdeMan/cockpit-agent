@@ -8,6 +8,8 @@ import { PixelRatio, Pressable, ScrollView, Text, useWindowDimensions } from 're
 import { useStore } from 'zustand'
 
 import { HAPTIC_KINDS, performHaptic } from '@/core/haptics'
+import { drivingActive, NO_EDGE_DRIVING, type DrivingEdgeFact } from '@/core/presence/drivingMode'
+import { getWired } from '@/core/session/wiring'
 import { settingsStore } from '@/core/settings/store'
 import { playCueTone } from '@/core/voice/cueTone'
 import { foldPosture } from '@/ui/layout/foldPosture'
@@ -22,8 +24,20 @@ export default function NativeSpikeScreen() {
   const p = usePalette(settings)
   const fold = useFoldState()
   // B4-6 形态矩阵截图的机器读数：布局模式 / 尺寸类 / 实测 dp / 铰链 dp——不靠肉眼数屏数。
-  // driving=false：本屏不接会话，行车档形态的读数在 /state-gallery 与 T13。
-  const layout = useLayout(false)
+  // ⛔ B4-13 缺陷 B：这一行原来写死 `useLayout(false)`（T6 加它时 T11 的行车档还没接上），
+  //    于是行车档下它必然显示错的 mode（实测行车 + expanded×compact 显示 single，真实应是 driving-landscape）。
+  //    改成读**真实**行车事实：判据仍是 drivingMode.drivingActive（唯一一份），本屏只搬事实。
+  const [edge, setEdge] = useState<DrivingEdgeFact>(() => getWired()?.core.store.getState().drivingEdge ?? NO_EDGE_DRIVING)
+  useEffect(() => {
+    const core = getWired()?.core
+    if (!core) return
+    setEdge(core.store.getState().drivingEdge) // 挂载与订阅之间的缝
+    return core.store.subscribe((st) => setEdge(st.drivingEdge))
+  }, [])
+  // ⚠ 事件驱动，**不加 1s ticker**：取证屏加轮询会让 `uiautomator dump` 拿不到 idle（§6.2 补取轮坑⑨）。
+  //    代价是 30s 退出宽限的那一跳不会自己刷新——所以下面把 edge 的两个时刻一起打出来，读的人看得见。
+  const driving = drivingActive({ manual: settings.drivingManual, edge, now: Date.now() })
+  const layout = useLayout(driving)
   const { width, height } = useWindowDimensions()
   const [events, setEvents] = useState(0)
   useEffect(() => {
@@ -40,6 +54,7 @@ export default function NativeSpikeScreen() {
     ['isSeparating', String(fold?.isSeparating ?? '—')],
     ['bounds', fold?.bounds ? JSON.stringify(fold.bounds) : '—'],
     ['events', String(events)],
+    ['driving', `${driving}（manual=${settings.drivingManual} edge.trueAt=${edge.trueAt} edge.falseAt=${edge.falseAt}）`],
     ['layout', `${layout.mode} · ${layout.widthClass}×${layout.heightClass}`],
     ['dp', `${Math.round(width)}×${Math.round(height)} @${PixelRatio.get()}x`],
     ['hinge(dp)', layout.hinge ? JSON.stringify(layout.hinge) : '—'],
