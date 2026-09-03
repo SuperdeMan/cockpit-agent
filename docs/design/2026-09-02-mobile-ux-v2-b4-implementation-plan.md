@@ -3923,6 +3923,67 @@ B3 §6.1 遗留④ 过期注释 ✅ 已清（T10）；B3 §6.3 遗留④ 不动 
 `hmi/` 一行没碰（`git diff --stat -- hmi/` 为空）、共享判据一字未动。
 撞上「缺陷 A 的外屏横那一半要动 `ChatScreen` 布局」时**停下来出账**，没自行突破（见上）。
 
+#### ✅ 已合并并推送（泓舟 2026-09-03 授权：「拉取然后下最新的代码，然后自己的可以推送」）
+
+**用 merge 不用 rebase**，理由是本节与多条提交信息里**写死了本线的 SHA**
+（`01aec93` / `27b7b7a` / `976dfe9` / `5da3808` / `cb0264d` / `87b42d5` / `7adfff3` / `f60fdf4` …），
+rebase 会把它们全部改写 ⇒ 记录里的证据指向不存在的提交，正撞「证据绑定精确 SHA / 不跨 SHA 转借」。
+
+推前逐条念归属（**两边作者都是同一个 git 身份，只能按内容判、不能按 `%an`**）：
+我这侧 14 条全是 `docs(mobile)` / `docs(agents)` / `fix(mobile)` 的 B4 线（含第 3 批会话的
+`fb24346` / `71b5b47`），**没有 manual-rag、没有别的会话的东西**；远端 14 条全是 manual-rag / release / skills。
+两线文件交集只有 `AGENTS.md` 与 `docs/design/README.md`，后者自动合上（两边内容都在），前者冲突一处。
+
+⚠ **`AGENTS.md` 的冲突解决是一次自我更正**：别人那侧把 Android 行收成 170 字的短指针，
+并明写「**不从本入口复制批次长读数**」；而我 `036a5ac` 写的那行有 **1655 字**批次读数——
+**违反了 CLAUDE.md §7「`AGENTS.md` 不是变更日志；逐批过程只进 history」与本计划 Task 15
+「只改指针段」**。⇒ 采纳他们的结构，只补最小 B4/B5 指针，解决后 428 字。
+（`036a5ac` 的提交信息里写的「标题改 B5」也随之作废——最终标题是他们的 `Android App`。）
+
+推送结果：`410ca48..faf8b31 main -> main`；推后 `origin/main..HEAD` 与 `HEAD..origin/main` **都是 0**，
+`origin/main = HEAD = faf8b31`。
+
+**合并后全量（这是本批的终值，覆盖前面那份 497）**：
+
+| 项 | 值 |
+|---|---|
+| `cd mobile && npm test` | **50 suites / 499 tests 全绿**（我的 497 + 他们新增的 `manualCard.test.ts` 2 条） |
+| `npm run typecheck` | **0 error** |
+| `python -m pytest -q -n auto --dist worksteal` | **8097 passed / 32 skipped / 2 failed**（745s） |
+
+⛔ **那 2 条红都不是我的，逐条定性过**：
+
+1. `scripts/tests/test_cloud_deploy_assets.py::test_release_status_docs_record_deployed_non_green_checkpoint`
+   ——守卫要求 `AGENTS.md` 里出现 release SHA `a406e222b3fe08ea462c06ccf676d0698f1f443a`。
+   `git log -S` 定位到这条要求是**别人的 `f2dcb46`** 加的，而 **`origin/main` 自己的 `AGENTS.md` 里也没有这个 SHA**
+   （逐串对过 count=0）⇒ **它在远端就已经红了**，我合并前后都红，且我 `scripts/` 下一个文件没碰。
+   ⇒ **不去「顺手补上那行」**——那等于我替别人猜他们的 release 状态（「门禁读数是相对量时红灯不指向你的改动」）。
+2. `agents/mcp_bridge/tests/test_merchant_base.py::test_operation_hold_cancels_owner_when_lease_is_lost`
+   ——**单跑通过**（1 passed）、该文件并行跑通过（87 passed）、整个 `agents/mcp_bridge/` 并行跑通过（591 passed），
+   只在全仓并行时红。相关文件最近一次改动还是 MiniMax 第 3 批（`f018906`），与两条线都无关。
+   ⚠ **我不把它记成 flaky**：按纪律「两趟全量不一致必须定性到根因」，这一条**欠一次根因定性**，
+   只是不在本批改动面内 ⇒ **原样出账，交给 `agents/mcp_bridge/` 的负责人**。
+
+#### ⬜ 步骤 12 Maestro——**USB 安装放行后仍装不上**，拦截层已定位到 MIUI 侧
+
+泓舟 2026-09-03 打开了开发者选项的「USB 安装」之后复跑 `maestro test 09-state-gallery.yaml`，
+**仍然** `AndroidOperationFailedException: Failure [INSTALL_FAILED_USER_RESTRICTED: Install canceled by user]`
+（栈顶 `AndroidDriver.installMaestroDriverApp`）。设备侧只有 `dev.mobile.maestro.test`，主包仍缺。
+
+诊断（都是回读，不是推断）：
+
+| 查的层 | 读数 | 结论 |
+|---|---|---|
+| AOSP 用户限制 `dumpsys user` | **`Effective restrictions:` 全空**（`no_install_apps` 只出现在 `mDefaultRestrictions`，那是受限用户类型的默认值） | **不是 AOSP 这一层拦的** |
+| 未知来源 `settings get global install_non_market_apps` | **1** | 已允许 |
+| 包管理器侧 | `com.miui.packageinstaller_setting_key_show_security_warning=0`、`packageinstaller_forbidden_app_list` 非空 | 拦截在 **MIUI 自己的安装管控** |
+
+⇒ **下一轮的候选**（都要泓舟在设备上做、我验不了）：① MIUI 的「USB 安装」要求**登录小米账号**，
+且**会在约 10 分钟后或重启后自动关回去**——本轮很可能是打开后隔了一会儿才跑，已经被关回去了，
+**下次请开完立刻告诉我，我当场跑**；② 另有一个「USB 调试（安全设置）」开关；
+③ 实在不行改用 `adb install -r` 手动装 driver 的两个 APK 并抓 `logcat -s PackageInstaller` 看 MIUI 给的真实理由。
+**在此之前 Maestro 06/07/08/09 四格保持 ⬜。**
+
 #### 未推送清单（**只列构成，不写死条数——推前当场重列**）
 
 ⛔ **这份清单在 §6.3 期间变了三次**（开工 5 条 → 我的四条被别人推走 → 混进别的会话一条），
