@@ -2240,6 +2240,21 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
     报 Access denied）**——它当时没占 5037，但可能仍握着 USB 设备句柄，要管理员权限才结束得掉；
     ② USB 线/口本身。**把没验证的解释当根因写下去，比没有解释更难被推翻**（坑账里已有同形态多例）。
 
+74. ⛔ **Metro 会因 JS 堆耗尽自己死掉，症状是 App 落到 `DevLauncherErrorActivity`**（B4 第 4 批真机轮，2026-09-03）：
+    本轮实测一个 `npx expo start --dev-client` 实例跑约 **61 分钟**后
+    `FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory`
+    （最后两次 GC：4050→4038MB / 4054→4042MB，node 默认 4GB 上限），**退出码却是 0**
+    ——所以后台任务只报「completed」，不报错。
+    症状链：Metro 死 → 下一次 App 冷启动拿不到 bundle → 前台变成
+    `com.xiaozhou.companion/expo.modules.devlauncher.launcher.errors.DevLauncherErrorActivity`
+    （而那一屏在本机 `screencap` 出来是 **16643 字节纯黑**，很容易被当成「息屏」误诊）。
+    本轮前半程那次「Metro 不通」几乎可以肯定是同一原因。
+    ⇒ 纪律：**长真机轮里把 Metro 的存活当成一个要定期回读的量**
+    （`curl -s http://127.0.0.1:8081/status` 应回 `packager-status:running`）；
+    真机轮开始前先 `Get-CimInstance Win32_Process -Filter "Name='node.exe'"` 看 8081 上那个是谁起的、起了多久
+    ——**别把别人刚起的 Metro 当成自己的**（本轮 8081 上那个是别人 22:26 起的，我那个已经死了）。
+    要更耐久可以 `NODE_OPTIONS=--max-old-space-size=8192`，但那是下一轮的实验，本轮没验。
+
 ## 10. 与既有体系的关系（改动禁区重申）
 
 - `hmi/`：只读。共享模块要改（真发现 bug）→ 在 hmi 侧改 + 跑 `hmi` node:test + 本计划
