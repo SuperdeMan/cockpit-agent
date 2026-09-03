@@ -3,7 +3,7 @@
 > 状态：**v2 已生产；v2.1 真栈落域修复已完成本地验证，待受控发布**（2026-09-03）
 > 基线：`origin/main=3ae1622ab8d25118d288e231a0b2ef0a40ab669d`；生产 release
 > `f2dcb46fe6764f4087982e1216d7c1da98ab88f5`；修复候选
-> `b3a2aedd3c360c230709551502e5568e8bba8286`  
+> `b3a2aedd3c360c230709551502e5568e8bba8286`
 > 工作分支：`feat/manual-rag-v2-grounded-visuals`  
 > 输入：`D:\Personal\AI\Claude Code\产品\2024-小米SU7-Pro-Max-用户手册.pdf`
 
