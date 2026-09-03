@@ -106,8 +106,9 @@ python -X utf8 scripts/eval_manual_rag.py `
   --output .artifacts/manual-rag/xiaomi-su7-2024-retrieval.json
 ```
 
-真实评测必须同时核对 top 页和关键正文；“页号碰对”不算通过。实现与证据边界见
-`docs/design/2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md`。
+真实评测必须同时核对 top 页和关键正文；“页号碰对”不算通过。当前实现与证据边界见
+`docs/design/2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md`；v1 历史见同目录
+`2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md`。
 
 里程碑 `e2e_strict_stack` 会直接加载完整 36 题 corpus，而不是再维护一份三题子集；每题须
 同时满足 `manual` 单域卡、approved real provenance、预期页/正文/图片或正确零命中、零 action。

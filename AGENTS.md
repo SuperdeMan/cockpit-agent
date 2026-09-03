@@ -32,7 +32,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | MiniMax 原始 QA 问题 | `docs/reviews/2026-08-26-minimax-cloud-qa-findings.md` |
 | MiniMax 根因与修复批 | `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` |
 | 安全确认写闸 | `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md` |
-| Android App 当前计划 | `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md`（**B4 计划已拆 2026-09-02，草案待批**；§0 第 3 条两个待裁项先裁；B3 收口读数与遗留出账仍在 `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md` §6.1–§6.4） |
+| Android App 当前入口 | `mobile/README.md` + `docs/design/README.md` 中最新的 mobile implementation plan；mobile 独立工作树可能领先当前 checkout，先核对状态 |
 | 历史流水 | `docs/agents-history.md`（只追加） |
 
 服务子目录各有 README；改某个服务前先读该目录 README。
@@ -80,16 +80,16 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `a406e222b3fe08ea462c06ccf676d0698f1f443a` |
-| 回滚点 | `423ed23996a141616e78019589c70f4e0c85259b` |
+| 生产 release | `434a0461d07e7652de6605954f6df3fddb846553` |
+| 回滚点 | `b3a2aedd3c360c230709551502e5568e8bba8286` |
 | status | 5/5 endpoint healthy，零 warning |
-| verify | `verified`；artifact `20260903T053150Z-a406e22.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
-| a406 clean-clone 全量 | `7796 passed / 34 skipped / 11 warnings`；`TZ=UTC0`，未设置 `PYTHONIOENCODING` |
-| manual-rag | Xiaomi SU7 真手册：source `ef16d20…e4705d`，index `b290fde…406cfa`，retrieval main 23/23 + holdout 8/8；生产 WS 正例 3/3、CarPlay 负例 1/1，零动作 |
-| a406 专项边界 | 未单独重跑 Cloud Planner / Planner+Info 历史口径；统一 remote-safe verify 已通过，不转借 a729 的 1278/289 数字 |
+| verify | `verified`；artifact `20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| exact-code 全量 | `7833 passed / 34 skipped / 4 warnings`；内存约 1.5GB 时串行 `-n 1`，1308.46s |
+| manual-rag | SU7 v2 `.mrag`=`648cdf3…400ed`；retrieval 36/36；生产完整 36/36 + 14 个高风险问法各 3/3，合计 64/64，图文证据、零 action、车态 diff={} |
+| 证据边界 | 本地全量、部署、verify 与手册真栈均绑定 `434a046`；旧 release 的专项数字不转借 |
 
-`423ed23` 是同日首发后被真实 WS 问法掀开召回缺口的中间 release，已由 `a406e22` 替代；
-不要把 `423ed23` 的单次成功或 `a729b98` 的旧专项数字转借给当前 release。
+`b3a2aed` 是 v2 首次生产 release，现作为回滚点；`a406e22` / `423ed23` 是 v1 发布历史。
+当前 release 不借用 `a729b98` 的 Cloud Planner、Planner+Info 或新闻专项数字。
 
 ### 4.1 QA 状态
 
@@ -97,7 +97,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 安全专项在 `e9fa602` 上 5 例、15/15 PASS；
 - 完整 information persona 在 `e9fa602` 上 57/59，提醒/导航清理、零挂起与 release 连续均证明；
 - `limit:null → "None" → ValueError` 已由 `a729b98` 修复，新闻 3 个干净会话零 internal error；
-- manual-rag 已在 `a406e22` 使用 Xiaomi SU7 真实手册索引，真实问法与 CarPlay 负例已闭合；
+- manual-rag 已在 `434a046` 用 Xiaomi SU7 v2 图文包闭合 36/36 全量语料与 14×3 高风险复验；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
 当前主要活项：
@@ -113,7 +113,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App B4 | **B3 四批已收口（2026-09-02）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-01-mobile-ux-v2-b3-implementation-plan.md` §6.1–§6.4；**B4 计划已拆：`docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md`（草案待批；§0 第 3 条两个待裁项——唤醒率调阈值批、播报卡顿对照构建——先裁；§0 第 9 条把下面每条「带进 B4 的活项」指到了任务）**。接手先看 `git status` / `git log --oneline origin/main..HEAD`（mobile 线有未推提交）。⛔ **语音读数口径已换**：AEC 补丁 `96a6830` 于 B3 第 2 批**首次进包**（包锚 `2026-09-01 19:21:55`；B3′ 验完装回主线包后为 `2026-09-02 16:45:36`，APK 同源）⇒ **此前所有唤醒率/回声/端点读数作废**，且**没记 `adb shell dumpsys package com.xiaozhou.companion | grep lastUpdateTime` 的语音读数视为无效**。带进 B4 的活项：① **唤醒率 5–6/10 不达标**（判据 N≥8，未触 N<5 红线；引擎直灌对照已证「引擎能认」⇒ 问题在声学链路。按计划 §5 第 11 条**未自行调阈值**，交泓舟裁）；② **新缺陷·播报卡顿**（本应用麦流 HAL 阻塞 71–104ms，播报时 2.2 次/分 vs 无播报 0.7 次/分；**不能归因给 AEC**——没有同条件的无 AEC 对照包，要坐实需一趟不带 `96a6830` 的对照构建）；③ **blur 材质裁决：过**，B4 可换真模糊，接法要 `<BlurTargetView>` + `blurTarget`（首帧 ref 为 null 会静默回落成 none）；④ **B3′ 默认助理角色：第一问过、第二问不过**——角色能选能生效（五条断言），但 HyperOS 三个触发手势全拿不到，成因是 MIUI 用显式 ComponentName 绕过 `ROLE_ASSISTANT`（spike 分支 `spike/b3p-assistant-role` 保留、**永不合并**）；⑤ 5 人外部小样本仍是**裁定算过、无分布读数**，§11.4 状态可读性无外部基线；⑥ 归 B4 的既有条目：发送按钮图标 / `charging_list` 卡型 / `EdgeGlow` 零 jest / 壳底与浅色对比度 / `shutter`≡`wake` / `Reanimated: synchronouslyUpdateUIProps failed` / B2 表#6 与「换一批」chip 两格未取 |
+| Android App | 先读 `mobile/README.md` 与 `docs/design/README.md` 中最新 mobile 计划；mobile 线可在独立工作树领先本分支，先核对 `git status` / `git log --oneline origin/main..HEAD`，不从本入口复制批次长读数 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
@@ -143,7 +143,7 @@ git log -5 --oneline --decorate
 - QA：`docs/reviews/2026-08-30-qa-closeout-handoff.md`；
 - 云端迁移/发布：`docs/dev-guide.md` + `docs/reviews/2026-08-17-cloud-data-migration-handoff.md`；
 - Planner/安全：架构 §5.2.13、约定 §9.40、安全专题设计；
-- mobile：当前 B2 实施计划和 `mobile/README.md`。
+- mobile：`mobile/README.md` + `docs/design/README.md` 中最新 mobile implementation plan。
 
 引用任何 release、测试数或长会话结果前，先核对 SHA 与 artifact；不得从旧段落抄数字。
 

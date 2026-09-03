@@ -8,27 +8,25 @@
 ## 1. 一句话结论
 
 探索式 QA 的编号卡、MiniMax 修复批、QA 余项批和安全确认写闸都已完成开发与发布；
-当前生产 release 为 `a406e222b3fe08ea462c06ccf676d0698f1f443a`，`status` 5/5 healthy、
-统一 `verify` 为 `verified`。但仍有安全问句错域、安全 focus 恢复时机和 TTS/barge-in
-三个独立活项，因此不得写“QA 全绿”。
+当前生产 release 为 `434a0461d07e7652de6605954f6df3fddb846553`，`status` 5/5 healthy、
+统一 `verify` 为 `verified`。manual-rag 真手册 v2 已闭合；安全问句错域、安全 focus 恢复、
+TTS/barge-in 与测试 warning 仍是独立活项，因此不得写“QA 全绿”。
 
 ## 2. 当前发布与证据边界
 
 | 项目 | 当前事实 |
 |---|---|
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
-| 生产 release | `a406e222b3fe08ea462c06ccf676d0698f1f443a` |
-| 回滚点 | `423ed23996a141616e78019589c70f4e0c85259b` |
+| 生产 release | `434a0461d07e7652de6605954f6df3fddb846553` |
+| 回滚点 | `b3a2aedd3c360c230709551502e5568e8bba8286` |
 | 部署状态 | 5/5 endpoint healthy，零 warning |
-| 统一验证 | `verified`；artifact：`.artifacts/dev-stack-verifications/20260903T053150Z-a406e22.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
-| a406 clean-clone 全量 | `7796 passed / 34 skipped / 11 warnings`，`TZ=UTC0`，`PYTHONIOENCODING` 未设置 |
-| manual-rag | source `ef16d20…e4705d`，index `b290fde…406cfa`；main 23/23 + holdout 8/8；生产 WS 正例 3/3、CarPlay 负例 1/1，零动作 |
-| a406 专项边界 | 未单独重跑 Cloud Planner / Planner+Info；a729 的 1278/289 与新闻专项仍只属于旧 release |
+| 统一验证 | `verified`；artifact：`.artifacts/dev-stack-verifications/20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| exact-code 全量 | `7833 passed / 34 skipped / 4 warnings`；内存约 1.5GB 时串行 `-n 1`，1308.46s |
+| manual-rag | source `ef16d20…e4705d`，v2 包 `648cdf3…400ed`；retrieval 36/36；生产完整 36/36 + 14×3 高风险复验，合计 64/64，图文证据、零动作、车态 diff={} |
+| 证据边界 | 上述全量、部署、verify 与手册真栈都绑定 `434a046`；a729 的 1278/289 与新闻专项仍只属于旧 release |
 
-`423ed23` 是同日首发中间 release：容器内直接问法正确，但生产 WS 带“请查…用户手册、
-冷态…”前缀时只召回 PDF 256，缺 2.9 bar 参数页。`a406e22` 加问法壳与冷态胎压映射，
-真实 retrieval 31/31 后重新全量、发布、verify，并以生产 WS repeat 3 闭合。不得把中间
-release 的单次结果写成最终证据。
+`423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release，现为回滚点；
+`434a046` 再闭合完整 36 题与生产方差。旧 release 的单次结果和专项数字不得写成当前证据。
 
 本页所有 `.artifacts/` 路径都是**根仓本地 ignored 证据**，不随 git clone 移植；路径缺失时
 必须按本页命令和精确 release 重跑，不能把“文档记过”当成 artifact 仍在。
@@ -121,8 +119,9 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
   合计 64/64；
 - 64 轮均为单一 `manual` 卡、approved real provenance、零 action/need_confirm/probe error；逐轮
   读取完整车态，最终 diff={}；雨刮与安全带俗称继续返回正确手册图片；
-- 统一 verify、5/5 endpoint healthy、零 warning。生产 artifact
-  `20260903T130655Z-final-434a046.json`，SHA=`3fed8c94…d63a`；
+- 统一 verify、5/5 endpoint healthy、零 warning；verify artifact
+  `.artifacts/dev-stack-verifications/20260903T130534Z-434a046.json`。手册真栈 artifact
+  `.artifacts/manual-rag-live-validation/20260903T130655Z-final-434a046.json`，SHA=`3fed8c94…d63a`；
 - exact 代码本地全量 7833/34/4，确定性 retrieval 36/36。手册 RAG 项已关闭，但不反推下列
   safety focus、TTS、barge-in 等独立活项全绿。
 
@@ -134,7 +133,7 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
-| 全量 warning | a406 clean clone 11 条：8 Starlette、1 gRPC test fixture、1 audioop、1 regex；因 ignored NLU 模型未复制未出现 2 条 WordPiece | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
+| 全量 warning | `434a046` exact-code 全量 4 条：1 Starlette、1 gRPC test fixture、1 audioop、1 regex | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 
 以上活项是独立问题，不反推安全确认写闸未上线；同样也不能因为安全闸已上线就把它们写成已关闭。
 
