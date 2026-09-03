@@ -113,23 +113,23 @@ Artifact：`.artifacts/dev-stack-verifications/qa-long-information-e9fa602.json`
 3 个干净会话、每个 5 个新闻业务轮：15/15 无 internal error，零中止、零 cleanup failure、
 release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-a729b98.json`。
 
-### 4.4 真实车型手册（生产 `b3a2aed`；修复候选 `434a046` 待发布）
+### 4.4 真实车型手册（生产 `434a046`，36 题已闭合）
 
 - 278 页 `SU7用户手册` 生成 269 个文本 chunk、350 个图片放置 / 299 个 blob；v2 包
   `648cdf3d…400ed` 经 shared-model bootstrap 只读挂载，启动决议仍为 approved real provider；
-- release `b3a2aed` 已关闭原 10 个错域：13 个高风险问法全部 3/3；三次空调滤网问句均零
-  action。生产 62 轮逐轮车态 diff={}，进入 manual 后内容 61/61；
-- 完整 36 题首轮仍为 35/36。唯一失败“车辆长期停放时电池怎么保养”落 `chitchat.talk`，给出
-  拆低压电瓶负极/每两周启动的燃油车通用建议；虽零 action，仍无手册 provenance，故生产
-  RAG **未闭合**；
-- 候选 `434a046` 增长期停放电池养护窄 hint、guide/exemplar 与反例；本地全量 7833/34/4，
-  检索 36/36。尚未 push/deploy，不能转借为生产结论。
+- release `434a046` 的完整 36 题精确落域 36/36、内容 36/36；14 个高风险问法全部 3/3，
+  合计 64/64；
+- 64 轮均为单一 `manual` 卡、approved real provenance、零 action/need_confirm/probe error；逐轮
+  读取完整车态，最终 diff={}；雨刮与安全带俗称继续返回正确手册图片；
+- 统一 verify、5/5 endpoint healthy、零 warning。生产 artifact
+  `20260903T130655Z-final-434a046.json`，SHA=`3fed8c94…d63a`；
+- exact 代码本地全量 7833/34/4，确定性 retrieval 36/36。手册 RAG 项已关闭，但不反推下列
+  safety focus、TTS、barge-in 等独立活项全绿。
 
 ## 5. 当前活项
 
 | 活项 | 当前证据 | 下一步 / 启动条件 |
 |---|---|---|
-| 手册 RAG 真栈落域 | `b3a2aed` 首轮 35/36；manual 61/61、原高风险 13 组 3/3、62 轮零 action/diff；长期停放电池养护仍错落闲聊 | 受控发布候选 `434a046`；复验完整 36/36，并将长期停放问法补到 3/3，仍要求零 action 与车态 diff=0 |
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |

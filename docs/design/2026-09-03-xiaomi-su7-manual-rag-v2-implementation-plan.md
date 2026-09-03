@@ -1,9 +1,7 @@
 # Xiaomi SU7 真实手册 RAG v2：问句落域与视觉证据 implementation plan
 
-> 状态：**v2.1 已生产并关闭原错例；新增长期停放漏口的补丁已完成本地验证，待受控发布**（2026-09-03）
-> 基线：`origin/main=91c1828f36d5677902c8e581df1026d19cf9715e`；生产 release
-> `b3a2aedd3c360c230709551502e5568e8bba8286`；修复候选
-> `434a0461d07e7652de6605954f6df3fddb846553`
+> 状态：**v2.1.1 已生产并完成 36 题真栈闭合**（2026-09-03）
+> 生产 release：`434a0461d07e7652de6605954f6df3fddb846553`
 > 工作分支：`feat/manual-rag-v2-grounded-visuals`  
 > 输入：`D:\Personal\AI\Claude Code\产品\2024-小米SU7-Pro-Max-用户手册.pdf`
 
@@ -277,4 +275,24 @@ L0 85/85 + 25/25、capability integrity PASS。guide 与常驻 policy 合计 246
 **7833 passed / 34 skipped / 4 warnings**，1308.46s；日志
 `.artifacts/manual-rag-live-routing-fix/full-434a046-n1.log`，SHA-256=
 `2f43970c945815ddf90a703c4b930abb9c264a3c14ec59df88f2692ceec161ac`。检索包未变，36/36，
-p95 31.327ms。该提交尚未 push/deploy；当前生产仍是 35/36 的 `b3a2aed`。
+p95 31.327ms。本段记录发布前边界；最终生产证据见 §7.3。
+
+### 7.3 434a046 最终生产闭合
+
+`434a046` 的 dry-run 为 `blocking_changes=[]`、`bootstrap=ready`，无需修改 `.mrag`、基础设施锚、
+数据库或 `.env`；发布后独立 status 为 5/5 healthy、零 warning，统一 verify 通过，artifact
+`.artifacts/dev-stack-verifications/20260903T130534Z-434a046.json`。
+
+最终生产 WS 按同一 tracked corpus 运行完整 36 题一次，再将原 13 个高风险问法与长期停放
+电池养护共 14 组各补两遍，总计 **64/64 PASS**：
+
+- 完整 36 题精确落 `manual.query` 36/36，页码/正文/图片或负例零命中 36/36；
+- 14 个高风险问法全部 3/3，长期停放电池养护由 0/1 翻为 3/3；
+- 64 轮全部单一 manual 卡、approved real provenance，action=0、need_confirm=false；
+- 每轮后读取完整车态，最终 state diff={}，无 probe error；
+- p50 6415.149ms、p95 10819.454ms、max 10898.43ms；provider/model 为
+  `minimax:MiniMax-M3`。
+
+Artifact `.artifacts/manual-rag-live-validation/20260903T130655Z-final-434a046.json`，SHA-256=
+`3fed8c9476d5928f502877a962b1f9453e8032e64798dfe0819878483cead63a`。本批据此关闭
+manual-rag mock/文本-only/图片缺失/目标问法误执行/36 题落域五项；这不代表其他 QA 活项全绿。

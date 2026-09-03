@@ -8351,3 +8351,16 @@ exemplars 324 条、L0 与 capability 门禁全过；policy+guide=2461/2600。�
 全量 **7833 passed / 34 skipped / 4 warnings**（1308.46s），日志 SHA=
 `2f43970c945815ddf90a703c4b930abb9c264a3c14ec59df88f2692ceec161ac`。本补丁未 push/deploy，
 生产仍是 `b3a2aed` 的 35/36 状态。
+
+## §94 2026-09-03 434a046 最终生产闭合
+
+获第二次精确授权后推送 `434a046` 与其状态文档并发布代码 SHA；dry-run 无阻断、模型包和基础
+设施不变。独立 status 为 5/5 healthy、零 warning，统一 verify 通过。最终生产验证运行完整
+36 题 + 14 个高风险问法各补两遍，共 64 轮：完整落域/内容 36/36，高风险全部 3/3，所有
+manual 调用 64/64；零 action、零 need_confirm、零 probe error，逐轮完整车态最终 diff={}。
+
+长期停放电池养护从 `b3a2aed` 的闲聊燃油车建议翻为 3/3 `manual.query`；空调滤网、胎压报警、
+三元锂充电建议、防滑链、SOS、Android Auto、机油/排量负例、雨刮与安全带俗称同样保持 3/3。
+Artifact `20260903T130655Z-final-434a046.json`，SHA=
+`3fed8c9476d5928f502877a962b1f9453e8032e64798dfe0819878483cead63a`。manual-rag 项据此关闭，
+但 QA 仍有独立 safety focus、MiniMax TTS RPM、barge-in 残帧和 test-only warning 活项。
