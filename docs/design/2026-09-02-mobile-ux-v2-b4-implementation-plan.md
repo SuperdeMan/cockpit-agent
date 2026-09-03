@@ -3713,6 +3713,45 @@ driving: true（manual=false edge.trueAt=1788422403524 edge.falseAt=0）
 chips 渲在气泡里而不是层内；chip 的**内容**来自 `assistant.followUp`，与层开不开无关，
 但「追问窗内层仍开」那半条件本轮不成立，**要不要按 §6.3 的原条件复取，交泓舟**。
 
+##### ✅ 步骤 8「分屏不崩不遮」——三条判据全过（2026-09-03 21:48，内屏 MIUI 分屏）
+
+泓舟把「小舟随行」拖成内屏分屏（左半 App / 右半 Edge），`b4-14-w1.png`：
+
+| 方案 §7.5 的判据 | 读数 |
+|---|---|
+| **不崩** | `pidof` = **23365**，与分屏前**完全相同** ⇒ 没重启、没崩 |
+| **输入框不被遮** | 底部「和小舟说点什么…」+ 发送键完整可见，chips 行也在（右缘被分屏边界截断是窗口宽度所致，不是遮挡） |
+| **落单栏** | **舞台面板整块消失**——分屏前同一块内屏是「舞台 · 双栏」+ 车况三格（`b4-14-v4.png`），分屏后只剩单栏内容 |
+
+机器读数（`dumpsys activity`，把两半分开认）：
+
+```
+App 半 : mBounds=Rect(0,    0 - 1100, 2488)  = 366.7 × 829.3 dp   ← 左半
+Edge 半: mBounds=Rect(1124, 0 - 2224, 2488)                       ← 右半
+config : sw366dp w367dp h829dp   mWindowingMode=multi-window   mInSplitScreen=true
+```
+
+按 `sizeClass.ts` 算：`widthClass(366.7)=compact`（<600）、`heightClass(829.3)=medium`
+⇒ 不进 `driving-landscape`（h 非 compact）、367 < `TWO_PANE_MIN_WIDTH`(720) 不双栏、
+`wc` 非 `medium` 不抽屉 ⇒ **`single`**。**判据算出来的和屏上看到的一致。**
+
+##### ⚠ 一条排查纪律的更正：判「哪块屏是活的」不能信 `cmd device_state`
+
+重启 App 之后连着三张截图都是 **16643 字节纯黑**，而 `mWakefulness=Awake`、`mDreamingLockscreen=false`、
+App 也在前台——三项都排除了「息屏/锁屏」。真因是**我截的是关着的那块屏**：
+`cmd device_state print-state` 报 **0**（外屏），但 `dumpsys display` 里
+**内屏 `4630946481727302019` 是 `state ON`、外屏 `4630947090644569220` 是 `state OFF`**
+（泓舟中途把手机展开了，`device_state` 滞后没跟上）。
+⇒ **`device_state` 是「框架以为的姿态」，`dumpsys display` 的 `state ON/OFF` 才是「哪块屏真的亮着」**；
+§0 第 5 条那张排查表要把第三项提到第一位。（§6.2 坑① 的镜像：那次是强制值与物理姿态不一致，
+这次是 `device_state` 与显示状态不一致。）
+
+##### 另一条：App 重启是缺陷 C 的唯一出路，已实测
+
+21:4x App 被杀后重启（新 pid 23365），起来就是欢迎态 + **输入框在** ⇒ **行车档已清零**
+（`drivingEdge` 住在内存 `SessionState`，重启即清）。云栈的 `gear=P` 还在（舞台车况显示 P）。
+⇒ 缺陷 C 的用户侧出路只有这一条，而它需要用户知道「划掉重开」——**这不是一个可发现的操作**。
+
 ##### 设备与云栈还原表（本轮）
 
 | 项 | 改成 | 还原为 | 回读方式与结果 |
