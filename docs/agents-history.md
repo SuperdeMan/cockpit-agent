@@ -8253,3 +8253,58 @@ main 23/23 + holdout 8/8，p95 21.613ms，专项 124 passed。
 非 remote-safe/real signed profile，没有用 `--allow-mutating` 绕过；改用无持久化容器探针和
 单轮生产 WS。原工作区全过程有并发 mobile 提交/文档改动，本批只推精确 SHA，不 reset、
 rebase、stash 或夹带；最终 production 的直接回滚点为 `423ed23`。
+
+## §91 2026-09-03 真实手册 RAG v2：安全落域、skill 泛化与视觉证据
+
+### §91.1 由真实用户问法重新定义完成标准
+
+生产 `a406e22` 已是真实 PDF 文本源，但补测暴露“检索器对，不等于用户链路对”：
+`雨刮器怎么打开` 直调检索器 top-1 为 PDF 95，无标点入口却会被端侧当 `wiper.on`；加问号
+后生产又落 `chitchat.talk`，回答了与手册图片不符的右侧拨杆通用常识。`小人背着把宝剑`
+直调索引零命中，生产闲聊将它错判成安全气囊；PDF 193 原图实际是安全带未系提醒。旧
+31/31 只证明文本 retrieval corpus，不证明这两类端到端泛化，也不包含图片。
+
+本批据此把验收改成五项同时成立：无标点问句零动作、落 `manual.query`、命中正式页与正文、
+返回对应原图、两端真实渲染；任何一项失败都不能用“真实 Provider 已接”洗绿。
+
+### §91.2 三层落域：runtime 安全、skill 泛化、hint 保险
+
+共享 `runtime.question_shape` 新增零领域词序判据：`对象 + 怎么/如何 + 打开/使用` 与
+`怎么 + 打开 + 对象` 是方法问句；`怎么把…打开`、`帮我打开…`、`温度如何调高` 保留既有
+指令合同。端侧与云侧继续消费同一实现。
+
+用户追问是否能用 skill 优化后，方案从“只加 hint”调整为三层：新增
+`manual-help-boundary` PlanningGuide 讲清方法咨询/立即车控/文字图标描述/真实照片四分边界，
+manual exemplar 只追加与生产原句不同的改写；manifest hint 仅兜两条已复现高风险 canonical，
+并保留明确车控、手机 App 与照片 vision 反例。skills 23/23、exemplars 316 条，域错配仍
+2.4%；route hints 85/85。hint 未来仍须按双臂重复证据退役，不能因它顺带保护 catalog 就常驻。
+
+### §91.3 deterministic `.mrag` 与图片真实性链
+
+v1 文本 schema 保持兼容，新增 `.mrag` ZIP：canonical `index.json`、
+`visual-assets.json` 与按 SHA 去重的 JPEG/PNG blob。包 entry 顺序、时间与权限固定；文本、视觉
+manifest、逐 blob、运行资产清单四层 hash 均校验。警告灯 191–193 页按视觉位置从上到下与
+35 个正式名称一一绑定，数量漂移即构建失败；“背宝剑小人”等高歧义俗称及说明由人工对照
+原页审定，未知视觉描述不做模糊猜测。
+
+真实包 64,886,876 bytes，SHA=`648cdf3…400ed`；visual SHA=`be59412…76511`；269 文本
+chunks、350 可展示图片放置、299 去重 blobs，17 skipped（7 LZW、10 超大 Flate）。独立重建
+SHA 逐字相同。运行时最多返回 2 张，单图 ≤640KiB、总计 ≤768KiB，只允许 PNG/JPEG；图片不进
+LLM prompt。雨刮与受控图标说明走确定性回答，两个目标问法均 LLM 0 次。
+
+HMI 从“manual 卡直接 render null”补成图文证据卡；Android 同步实现并共用
+`manualCard.mjs` 协议/体积守卫。HMI 298/298 + Vite build，Android 49 suites / 488 tests +
+typecheck。浏览器实例不可用，故未产完整卡截图；SSR 已反验 PNG/JPEG 可见、SVG/HTTP 拒绝，
+实际雨刮 JPEG 与安全带 PNG 另做原图视觉核对。
+
+### §91.4 验证与发布边界
+
+实现 SHA `f2dcb46fe6764f4087982e1216d7c1da98ab88f5`：retrieval 36/36（27 main + 9
+holdout）；专项 180 passed；发布接线 349 passed / 1 skipped；五道 blocking 门禁全过。
+固定 `-n8` 在约 4GB 可用内存下两次只剩资源压力失败，相关 3 项串行全过；完整 `-n4` 为
+**7824 passed / 34 skipped / 7 warnings**。必须如实称为低并发完整批，不能改写成固定口径全绿。
+
+代码库的 runtime-models/bootstrap/Compose 已指向 v2 包和精确 SHA，但本批没有改根 `.env`，
+没有远端 bootstrap、push 或 deploy。生产仍是 `a406e22` 文本版；严格栈探针已升级为三条手册
+问法都必须 `manual + real + 预期页 + 预期图片 + 0 action`。在新 release 真栈通过前，本节只
+代表本地候选闭合，不代表生产闭合。

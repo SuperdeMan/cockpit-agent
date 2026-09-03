@@ -21,7 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
-| [2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md) | 真实手册 RAG v2：无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称、deterministic `.mrag` 图文包、HMI/Android manual 证据卡 | 🚧 本地实施中；未 push、未 deploy，生产仍是 `a406e22` 文本版 |
+| [2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md) | 真实手册 RAG v2：无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称、deterministic `.mrag` 图文包、HMI/Android manual 证据卡 | ✅ 本地实现/验证完成，候选 `f2dcb46`；retrieval 36/36、低并发全量 7824 passed；未 push、未 deploy，生产仍是 `a406e22` 文本版 |
 | [2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md) | Xiaomi SU7 真实车型手册 RAG：PDF 哈希绑定、deterministic 私有索引、中文 n-gram BM25/重排、页码章节引用、错车型/低相关/数值 fail-closed 与 mock 豁免退出 | ✅ 已归档并发布 `a406e22`：main 23/23 + holdout 8/8、exact 全量 7796 passed、5/5 healthy、verify verified、生产 WS 正例 3/3 + CarPlay 负例 1/1、零动作 |
 | [2026-06-13-vehicle-control-command-architecture.md](2026-06-13-vehicle-control-command-architecture.md) | 车控域升级到「公版语音指令表」统一 schema | P1 已落地：知识库三件套（62对象/150意图）+ VAL + fast_intent + 飞书全量导入脚本；P2/P3 待做，P2 缺口已量化见下方 2026-07-03 意图覆盖分析 |
 | [2026-06-13-multi-intent-and-context.md](2026-06-13-multi-intent-and-context.md) | 多意图拆分 + 对话上下文/指代消解 | 已全部落地：上下文 + M1云侧DAG + M2端侧切分 + M3黄金用例 |

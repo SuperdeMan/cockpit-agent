@@ -1,6 +1,6 @@
 # Xiaomi SU7 真实手册 RAG v2：问句落域与视觉证据 implementation plan
 
-> 状态：实施中（2026-09-03）  
+> 状态：**已实现并完成本地验证，待受控发布**（2026-09-03）
 > 基线：`origin/main=9774932384c23cc27d39759891b39fbe9fe1235d`；生产 release
 > `a406e222b3fe08ea462c06ccf676d0698f1f443a`  
 > 工作分支：`feat/manual-rag-v2-grounded-visuals`  
@@ -65,7 +65,8 @@ assets/<sha256>.jpg|png            # 去重后的原始 JPEG / 确定性 PNG
 - 警告灯表按物理页与从上到下的图标顺序声明正式名称；构建时数量不一致直接失败。
 - 高歧义俗称由人工声明，例如“背宝剑的小人”→“安全带未系提醒指示灯”；不在线调用 VLM
   猜图标，也不把模型猜测写回目录。
-- 构建器从同页正文截取该正式名称到下一名称之间的手册说明，作为受控 `description`。
+- 高歧义项的 `description` 由人工对照同页手册正文审定并进入同一视觉 manifest hash；
+  不让构建器用表格文本顺序猜说明边界。
 - 普通页面图片使用章节路径作为保守 caption；没有目录匹配时只能按已命中文本页返回，
   不能仅凭图片猜答案。
 
@@ -135,3 +136,54 @@ mobile Jest+TypeScript、四道 blocking 门禁，最后按内存余量跑固定
 v1，代码库内受控的 `runtime-models.json`、bootstrap hash 与 Compose 默认路径会同步到 v2 包；
 但不会修改根 `.env`、数据库 schema、CI/CD，不会在远端安装该资产，也不会 merge、push 或
 deploy。生产 E2E 需在代码提交后另行展示精确提交清单，并按项目红线单独取得 push/deploy 授权。
+
+## 5. 实施结果与证据
+
+### 5.1 精确实现 SHA 与私有资产
+
+- 实现提交：`f2dcb46fe6764f4087982e1216d7c1da98ab88f5`；分支
+  `feat/manual-rag-v2-grounded-visuals`，未 push、未 deploy。
+- `.mrag` 大小 64,886,876 bytes；包 SHA-256=
+  `648cdf3d1d5001f199fce12e3983f3d016d929f772d0eb8aa058512dcd4400ed`。
+- 文本 content SHA 保持 `530b8538…233b5`；视觉 manifest SHA=
+  `be594128e827afb207dc611f389a14a1d626d542df0ae17b77dc0da4c8676511`。
+- 269 个文本 chunk；350 个可展示图片放置、299 个去重 blob；17 个 skipped 明细为
+  7 个 LZW 与 10 个超像素上限 Flate。两个独立输出的包 SHA 完全相同。
+
+### 5.2 目标问法闭环
+
+| 问法 | 结果 |
+|---|---|
+| `雨刮器怎么打开` | 端侧分类返回 None；route hint 可把 chitchat 计划改为 `manual.query`；检索 PDF 95；确定性回答“轻按雨刮拨杆开关…车辆控制 > 雨刮调节”；返回该页 JPEG；LLM 0 次 |
+| `我的仪表上有个小人背着把宝剑的灯亮了是怎么回事` | route hint → `manual.query`；受控视觉别名 → PDF 193“安全带未系提醒指示灯”；返回对应 PNG 和手册说明；LLM 0 次 |
+| `帮我打开雨刮器` | 仍为 `wiper.on`，没有被 manual 抢域 |
+| 手机 App 方法 / 真实照片识别 | route hint 反例保持 chitchat/vision，不扩大手册与摄像头边界 |
+
+真实 retrieval 扩展为 **36/36**：main 27/27、holdout 9/9，p95 23.104ms；包含雨刮、
+安全带/气囊混淆对照、未知“小人拿雨伞”零命中和图片 caption/page 断言。
+
+### 5.3 工程验证
+
+- manual/runtime/edge/cloud route 专项：**180 passed**；发布资产接线：
+  **349 passed / 1 skipped**。
+- 五道门禁：edge smoke 13/13；skills 23/23；exemplars 316 条、域错配率 2.4%；
+  L0 discovery 85/85、gate 25/25；capability integrity PASS。
+- HMI：node **298/298**，Vite production build PASS；SSR 断言真实 manual 图、caption、页码，
+  并反验 SVG/HTTP 不渲染。仓库既有 `tsc --noEmit` 在原根工作树同样有 `.mjs` 声明缺失、
+  `audio.ts` BlobPart 与 `cardMath` 导出等错误，本批没有把它冒充通过。
+- Android：Jest **49 suites / 488 tests PASS**，`npm run typecheck` PASS；共享模块台账、
+  card registry 与画廊样本均已更新。
+- 固定 `-n 8` 在本机可用内存约 4GB 时两次分别为 7823 pass + 1 MemoryError、
+  7822 pass + 2 资源压力失败；3 个失败用例串行全部 PASS。按实际资源降为 `-n 4` 的完整批：
+  **7824 passed / 34 skipped / 7 warnings**（437.23s）。这不是 `-n 8` 全绿读数，不能换名。
+
+实际 PDF 中导出的雨刮 JPEG 与安全带 PNG 已视觉核对正确。尝试使用会话内浏览器做完整卡片
+截图时没有可用浏览器实例，因此本轮 UI 证据为 SSR、两端测试、Vite build 与原图核对；生产
+HMI 截图留给发布后的真实 WS 验收。
+
+### 5.4 尚未完成的发布边界
+
+生产仍为 `a406e22` 文本版。v2 包尚未安装到远端 shared models，代码尚未 push/deploy，三条
+生产 WS 探针（冷态胎压、无标点雨刮、背宝剑图标）也尚未在新 release 上执行。对应
+`e2e_strict_stack.py` 已升级为必须同时断言 `manual + real + 预期页 + 预期图片 + 0 action`；
+发布前不得把本地结果写成生产闭合。
