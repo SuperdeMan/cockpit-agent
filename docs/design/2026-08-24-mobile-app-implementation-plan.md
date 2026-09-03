@@ -2224,6 +2224,22 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
     **(b) 切屏会重启进程 ⇒ 展开手机可能停在单栏**。定性要加原生日志或给模块补「查当前值」——都要重建，
     泓舟已裁**并进 B5 那一趟**。⇒ 一般形式：**别人代码注释里写的前提也是待证命题。**
 
+73. ⛔ **本机有两份 adb，版本不同，而 PATH 第一个不是 `ANDROID_HOME` 指的那个**（B4 第 4 批真机轮，2026-09-03）：
+    `D:\platform-tools\adb.exe` = **36.0.0**（PATH 靠前，`$env:PATH += ";D:\Android\Sdk\platform-tools"`
+    是**追加**，所以脚本里写 `adb` 实际跑的是它）；`D:\Android\Sdk\platform-tools\adb.exe` = **37.0.1**
+    （`ANDROID_HOME=D:\Android\Sdk`，Metro/Expo 用它）。**adb 客户端遇到版本不同的 server 会先杀掉再起自己的**
+    ⇒ 与 Metro 互相杀 server；本轮实测出现了 4 次 `* daemon not running; starting now`，
+    每次都会掉 `adb reverse` 并打断在飞的命令。
+    ⚠ **`check_android_env.ps1` 的 `adb shadow` 那条判的是协议号（两份都是 `1.0.41`）不是 Version 行**
+    （36 vs 37）⇒ 它一直报 PASS，而隐患就在它没看的那一列。**门禁读的是形式不是内容**的又一例。
+    ⇒ 纪律：**adb 一律用绝对路径 `%ANDROID_HOME%\platform-tools\adb.exe` 调**，与 Metro 共用同一个 server。
+    ⚠⚠ **但要说准：本轮把 server 统一成 v37 之后，`adb shell` 照样反复卡死**
+    （`echo PING` 通而 `am start`/`screencap`/`dumpsys` 超时，几十秒到几分钟后必死）
+    ⇒ **版本错配是实测存在的隐患，却没通过「改了就好」这一验，不能算本轮卡死的根因。**
+    仍未排除的两个嫌疑：① 一个 **2026-08-27 留下的孤儿 `adb.exe`（父进程已不存在，普通权限 `Stop-Process`
+    报 Access denied）**——它当时没占 5037，但可能仍握着 USB 设备句柄，要管理员权限才结束得掉；
+    ② USB 线/口本身。**把没验证的解释当根因写下去，比没有解释更难被推翻**（坑账里已有同形态多例）。
+
 ## 10. 与既有体系的关系（改动禁区重申）
 
 - `hmi/`：只读。共享模块要改（真发现 bug）→ 在 hmi 侧改 + 跑 `hmi` node:test + 本计划

@@ -3672,6 +3672,32 @@ driving: true（manual=false edge.trueAt=1788422403524 edge.falseAt=0）
 「客户端不用 `vehicle_state` 的 speed/gear 再算一份——那是第二份判据」），要么让后端在非复杂轮也带标
 （后端改动，命中 §0 第 2 条硬边界③）。**两条都越界 ⇒ 停下来出账，交泓舟裁。**
 
+##### ⛔ 本轮后半程被 adb 通道拖垮——**根因没查到，两个嫌疑没排除**
+
+15:10–17:30 的后半程，`adb` 反复卡死：`adb devices` / `adb shell echo PING` 通，而
+`am start` / `screencap` / `dumpsys` 全部超时；每次干预（拔插 USB、重开 USB 调试、
+强杀 adb server）之后能用几十秒到几分钟，然后必死。**因此 T13 余下的六格一格没做成。**
+
+查到的**实测事实**（都不是推断）：
+
+| 事实 | 读数 |
+|---|---|
+| 本机两份 adb | `D:\platform-tools\adb.exe` **36.0.0**（PATH 靠前，`+=` 追加时它赢）/ `D:\Android\Sdk\platform-tools\adb.exe` **37.0.1**（`ANDROID_HOME` 指的，Metro 用它） |
+| 当时监听 5037 的 | **v36** 那份（`netstat -ano` + `Get-Process` 对 pid） |
+| daemon 自发重启 | 本轮 **4 次** `* daemon not running; starting now`，每次掉 `adb reverse` |
+| 一个动不了的 adb | pid 14604，`CreationDate = 2026-08-27 14:19:51`，**父进程已不存在**，普通权限 `Stop-Process` 报 `Access is denied`，`Win32_Process` 读不到 `ExecutablePath`/`CommandLine` |
+| `check_android_env.ps1` 的 `adb shadow` | **判的是协议号 `1.0.41`（两份相同）不是 Version 行（36 vs 37）** ⇒ 一直 PASS |
+
+⚠ **但「版本错配是根因」这个解释没通过验证**：把 server 统一成 v37（结束 v36 那个 server 进程 +
+`start-server`）之后，**`adb shell` 照样反复卡死**。所以它是一个**实测存在的隐患**
+（能解释那 4 次 daemon 重启），**不能算本轮卡死的根因**。
+仍未排除：① 那个孤儿 `adb.exe`（要管理员权限才结束得掉，可能仍握着 USB 句柄）；② USB 线/口。
+⇒ **不把没通过验证的解释写成根因**——「一个自洽的错误解释比没有解释更难被推翻」在坑账里已有多例。
+
+**给下一轮的操作纪律**：`adb` 一律用绝对路径 `%ANDROID_HOME%\platform-tools\adb.exe` 调
+（与 Metro 共用同一个 server）；每条 adb 命令套超时 + 重试，别用裸 `adb`；
+开工先 `netstat -ano | findstr :5037` 核 server 是哪一份、`Get-Process adb` 核有没有孤儿。
+
 ##### 本轮的坑
 
 1. ⛔ **等待期间别的应用切到前台，取证抓到了泓舟的私人聊天。**
