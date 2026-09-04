@@ -515,18 +515,54 @@ def test_downlink_prefers_the_set_the_user_named_over_the_fallback_one():
 # 「「生椰拿铁」16 元」。**商品名与价格都真实存在**，没有任何一处对不上，
 # 所以它比编造更难被发现。⇒ 本节的用例先钉这一半。
 
-def _labelled(intent, label, items, *, ts_offset=0.0, fallback=False):
+def _labelled(
+    intent,
+    label,
+    items,
+    *,
+    ts_offset=0.0,
+    fallback=False,
+    now=None,
+):
     return {"source_intent": intent, "agent_id": "x", "purpose": "list",
-            "ts": time.time() + ts_offset, "is_fallback": fallback,
+            "ts": (time.time() if now is None else now) + ts_offset,
+            "is_fallback": fallback,
             "label": label, "items": items}
 
 
-_MCD = _labelled("mcd.menu", "麦当劳",
-                 [{"name": "巨无霸", "price": 26.5},
-                  {"name": "麦辣鸡腿堡", "price": 19.5}], ts_offset=-60)
-_LUCKIN = _labelled("luckin.menu", "瑞幸",
-                    [{"name": "美式", "price": 15.0},
-                     {"name": "生椰拿铁", "price": 16.0}])
+def _merchant_sets():
+    """Build TTL-bound fixtures at test execution time, not module import."""
+    now = time.time()
+    return (
+        _labelled(
+            "mcd.menu",
+            "麦当劳",
+            [
+                {"name": "巨无霸", "price": 26.5},
+                {"name": "麦辣鸡腿堡", "price": 19.5},
+            ],
+            ts_offset=-60,
+            now=now,
+        ),
+        _labelled(
+            "luckin.menu",
+            "瑞幸",
+            [
+                {"name": "美式", "price": 15.0},
+                {"name": "生椰拿铁", "price": 16.0},
+            ],
+            now=now,
+        ),
+    )
+
+
+def test_merchant_sets_are_timestamped_when_each_test_requests_them(monkeypatch):
+    monkeypatch.setattr(time, "time", lambda: 10_000.0)
+
+    mcd, luckin = _merchant_sets()
+
+    assert mcd["ts"] == 9_940.0
+    assert luckin["ts"] == 10_000.0
 
 
 def test_set_records_the_label_its_producer_declared():
@@ -556,7 +592,8 @@ def test_a_one_character_label_is_treated_as_undeclared():
 
 def test_naming_a_group_binds_to_it_instead_of_the_newest_one():
     """**I-030 的核心断言**：点名了麦当劳，就不许拿瑞幸那组的事实回答。"""
-    focus = Focus(candidate_sets=[_MCD, _LUCKIN])
+    mcd, luckin = _merchant_sets()
+    focus = Focus(candidate_sets=[mcd, luckin])
     primary, named = resolve_candidate_scope("麦当劳的第二个多少钱", focus)
     assert primary["source_intent"] == "mcd.menu"
     assert [g["label"] for g in named] == ["麦当劳"]
@@ -571,7 +608,8 @@ def test_a_named_scope_never_escapes_the_named_set():
     无论取哪份都不会拿瑞幸的事实作答。"""
     stores = _labelled("nearby.search", "麦当劳",
                        [{"name": "麦当劳碧海君庭餐厅"}], ts_offset=-120)
-    focus = Focus(candidate_sets=[stores, _MCD, _LUCKIN])
+    mcd, luckin = _merchant_sets()
+    focus = Focus(candidate_sets=[stores, mcd, luckin])
     primary, named = resolve_candidate_scope("麦当劳的第二个多少钱", focus)
     assert primary["source_intent"] == "mcd.menu"
     assert {g["source_intent"] for g in named} == {"nearby.search", "mcd.menu"}
@@ -599,7 +637,8 @@ def test_an_expired_group_cannot_be_named():
     """限龄先于点名——过期那组连被点名的资格都没有。"""
     stale = _labelled("mcd.menu", "麦当劳", [{"name": "巨无霸"}],
                       ts_offset=-_CANDIDATE_TTL_S - 1)
-    focus = Focus(candidate_sets=[stale, _LUCKIN])
+    _, luckin = _merchant_sets()
+    focus = Focus(candidate_sets=[stale, luckin])
     primary, named = resolve_candidate_scope("麦当劳的第二个多少钱", focus)
     assert named == [] and primary["source_intent"] == "luckin.menu"
 
@@ -619,7 +658,8 @@ def test_downlink_prefers_the_step_s_own_domain():
         Step(id="s2", agent_id="mcp-bridge", intent="luckin.order",
              context_scopes=["candidates"]),
     ])
-    PlannerEngine._apply_focus_meta(plan, Focus(candidate_sets=[_MCD, _LUCKIN]))
+    mcd, luckin = _merchant_sets()
+    PlannerEngine._apply_focus_meta(plan, Focus(candidate_sets=[mcd, luckin]))
     assert json.loads(plan.steps[0].meta["focus_candidate_set"])[
         "source_intent"] == "mcd.menu"
     assert json.loads(plan.steps[1].meta["focus_candidate_set"])[
@@ -631,7 +671,8 @@ def test_downlink_falls_back_to_the_newest_when_the_domain_has_none():
     改成「什么都不发」是一处未经证据的收窄。"""
     plan = Plan(steps=[Step(id="s1", agent_id="mcp-bridge", intent="mcd.order",
                             context_scopes=["candidates"])])
-    PlannerEngine._apply_focus_meta(plan, Focus(candidate_sets=[_LUCKIN]))
+    _, luckin = _merchant_sets()
+    PlannerEngine._apply_focus_meta(plan, Focus(candidate_sets=[luckin]))
     assert json.loads(plan.steps[0].meta["focus_candidate_set"])[
         "source_intent"] == "luckin.menu"
 
