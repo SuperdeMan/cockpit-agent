@@ -8423,3 +8423,15 @@ question-shape与FastIntent预检。7条旧表述被零请求拦下，其中充�
 “小人背着把宝剑”均通过预检并各跑3次：分别稳定命中PDF第95/193页及对应图片，6/6、零
 action/确认/probe error、车态diff={}。第一次雨刮响应后，记录器因自然case缺`split`崩溃；
 立即回读26项车态diff={}，该轮不计数。随后补`split=natural`与回归锁，使用新artifact重跑。
+
+自然探针提交后的首次全量`05e78fb`在34%出现5红，全部来自`test_candidate_sets.py`：模块级
+`_MCD/_LUCKIN`在pytest收集时调用`time.time()`，长套件跑到该文件时已超过900秒TTL，导致五条
+候选组测试自行过期；日志SHA=`dcb378ba655962e323ec9aa0366c0d6e9b5700fc01f2593b07d427956e9bd851`，
+该趟7851 passed/5 failed不算有效全量。修复只改测试夹具：每条测试执行时通过`_merchant_sets()`
+创建同一时刻的候选，并用注入时钟反向锁住，不改生产选择逻辑。
+
+最终代码SHA`805711cff74b79b23324180ed22f7e026f95e481`纯串行跑了7944.53秒；长耗时本身越过TTL，
+结果仍为**7857 passed / 34 skipped / 4 warnings / 0 failed**。日志SHA=
+`72bf34aaac387a61b9f61440082a98999b2c07df5b77b4e269a9ece9a8a1e0a6`。此SHA包含完整手册
+候选、可复跑自然问法探针、架构产物目录排除与TTL测试夹具修复；后续文档提交不得冒充该
+exact-code SHA。

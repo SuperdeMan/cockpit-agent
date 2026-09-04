@@ -23,9 +23,9 @@
 | 部署状态 | 5/5 endpoint healthy，零 warning |
 | 统一验证 | 最近成功 artifact `.artifacts/dev-stack-verifications/20260903T130534Z-434a046.json` 只属于旧 release `434a046`；`7b594f37` 的 verify 为 `unknown/failed` |
 | 最近生产 exact-code 全量 | `434a046`：`7833 passed / 34 skipped / 4 warnings`；不得转借给 `7b594f37` |
-| manual-rag 候选全量 | 代码SHA `62533dd9`：`7855 passed / 34 skipped / 4 warnings`，0 failed；不属于生产release |
+| manual-rag 候选全量 | 代码SHA `805711cf`：`7857 passed / 34 skipped / 4 warnings`，0 failed；不属于生产release |
 | manual-rag | source `ef16d20…e4705d`，v2 包 `648cdf3…400ed`；`7b594f37`整本章节首轮181/187、6项复验均2/3；视觉30/35，5项0/3；所有轮零动作、车态diff={} |
-| 证据边界 | `7b594f37`只有status与本轮manual真栈证据；成功verify/生产全量只属于`434a046`；候选全量只属于`62533dd9` |
+| 证据边界 | `7b594f37`只有status与本轮manual真栈证据；成功verify/生产全量只属于`434a046`；候选全量只属于`805711cf` |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
 完整36题并保留最近成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
@@ -152,7 +152,7 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
-| 全量 warning | 候选代码`62533dd9`全量4条：1 Starlette、1 gRPC test fixture、1 audioop、1 regex；`7b594f37`无本轮exact-code全量 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
+| 全量 warning | 候选代码`805711cf`全量4条：1 Starlette、1 gRPC test fixture、1 audioop、1 regex；`7b594f37`无本轮exact-code全量 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 
 以上活项是独立问题，不反推安全确认写闸未上线；同样也不能因为安全闸已上线就把它们写成已关闭。
 

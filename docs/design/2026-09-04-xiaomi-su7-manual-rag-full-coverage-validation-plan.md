@@ -130,10 +130,11 @@
 - manifest 0.3.2 新增“SU7/小米SU7 + 手册 + 具体主题 + 问号”的窄显式来源 hint；明确
   “帮我打开/关闭/设置”由 guard 保留原车控计划。`eval_route_hints` 110/110，187章节+35视觉
   的显式手册问法离线222/222。
-- 候选代码SHA `62533dd9dca2e193e6f64c33ec6462cd974e69c4` 的纯串行全仓结果为
-  **7855 passed / 34 skipped / 4 warnings / 0 failed**，日志SHA-256=
-  `72f1d16843e30c6bf9df971e53296531cf896020aeefb64246d642cb1ed6fe42`；架构扫描器同时排除了
-  `.artifacts`验证环境，并以反向用例锁住，避免第三方site-packages污染门禁。
+- 最终候选代码SHA `805711cff74b79b23324180ed22f7e026f95e481` 的纯串行全仓结果为
+  **7857 passed / 34 skipped / 4 warnings / 0 failed**（7944.53s），日志SHA-256=
+  `72bf34aaac387a61b9f61440082a98999b2c07df5b77b4e269a9ece9a8a1e0a6`。架构扫描器排除了
+  `.artifacts`验证环境；候选集测试夹具也改为执行时创建TTL时间戳，2小时全量在导入超过15分钟
+  后仍通过，分别以反向用例锁住第三方site-packages污染与模块级时间冻结。
 - 当前生产是 `7b594f37`、5/5 endpoint healthy；候选尚未push/deploy，故生产结论仍是章节首轮
   96.79%、视觉85.71%、5个视觉caption稳定失败，**不是整本全绿**。当前release没有成功的
   统一verify artifact，不得沿用2026-09-03 `434a046`的verified字样冒充本轮证据。
