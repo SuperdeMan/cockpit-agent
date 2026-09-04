@@ -17,19 +17,22 @@
 //     `KeyboardFeature::Vibrator: performHapticFeedback: not support vibrator effect: 17`
 //     （REJECT）与 `: 4`（CLOCK_TICK）⇒ 这两个常量设备不支持、静默回落成默认效果，
 //     换过去之后三者签名依旧一样。`VIRTUAL_KEY` 是支持的，但它只解决不了 dead 那一档。
-//  4. ⚠ **`shutter` 与 `wake` 是同一下，这是已知且被接受的**：expo-haptics 的
-//     `selectionAsync()`（`HapticsSelectionType.kt`）与 `impactAsync(Light)`
-//     （`HapticsImpactType.kt` 的 "light"）**逐字节相同**——都是 `timings=[0,50]` /
-//     `amplitudes=[0,30]`。§8 里这两者本来就都是「轻」，且 §11.2 B3 的验收判据是
-//     「分出 wake/confirm/dead 三档」，shutter 不在判据里。要真的分开只能自己写波形
-//     （expo-haptics 不暴露 createWaveform），归 B4/B5。
+//  4. ⚠ **`shutter` 曾与 `wake` 逐字节相同**：expo-haptics 的 `selectionAsync()`
+//     （`HapticsSelectionType.kt`）与 `impactAsync(Light)`（`HapticsImpactType.kt` 的 "light"）
+//     都是 `timings=[0,50]` / `amplitudes=[0,30]`。B3 把它记为「已知且被接受」，
+//     因为 §11.2 B3 的验收判据只要求分出 wake/confirm/dead 三档。
+//     **B4-13 步骤 10 改掉它**：`shutter` 换成 `performAndroidHapticsAsync(Virtual_Key)`
+//     ——走 `View.performHapticFeedback(VIRTUAL_KEY)` 这条**另一条原生路径**，
+//     不再经 `Vibrator.vibrate(timings, amplitudes)`。上面第 3 条里实测「本机支持 VIRTUAL_KEY」
+//     （不支持的是 REJECT=17 与 CLOCK_TICK=4），所以它不会静默回落。
+//     ⚠ 这一条的去留由**真机盲测**定（≥5/6 保留，否则还原并出账 B5），读数见计划 §6.4。
 import * as Haptics from 'expo-haptics'
 
 import type { HapticKind } from './presence/hapticCue'
 
 export const HAPTIC_KINDS: readonly HapticKind[] = ['wake', 'confirm', 'dead', 'shutter'] as const
 
-/** 方案 §8 的四张脸：唤醒轻（1 段）/ 确认双（2 段）/ 判死一记（3 段）/ 快门轻（同 wake，见头注 4） */
+/** 方案 §8 的四张脸：唤醒轻（1 段）/ 确认双（2 段）/ 判死一记（3 段）/ 快门（VIRTUAL_KEY，见头注 4） */
 export function performHaptic(kind: HapticKind): void {
   const p =
     kind === 'wake'
@@ -38,6 +41,6 @@ export function performHaptic(kind: HapticKind): void {
         ? Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
         : kind === 'dead'
           ? Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error)
-          : Haptics.selectionAsync()
+          : Haptics.performAndroidHapticsAsync(Haptics.AndroidHaptics.Virtual_Key)
   p.catch(() => {})
 }
