@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""对当前真栈运行整本手册目录/受控视觉覆盖探针。
+"""对当前真栈运行整本手册目录/受控视觉/自然问法覆盖探针。
 
 本脚本只发送问句，不确认、不调用 debug 写接口。每轮都要求单一 manual 卡、approved real
 provenance、预期页/section/image、零 action、零 need_confirm，并在 collector 回读完整车态。
@@ -85,6 +85,42 @@ def build_live_cases(
         ))
     if "visual" in kinds:
         result.extend(build_visual_semantic_cases(visual_catalog, config))
+    if "natural" in kinds:
+        corpus_path = REPO_ROOT / str(config["natural_corpus"])
+        result.extend(build_natural_cases(_load_yaml(corpus_path)))
+    return result
+
+
+def build_natural_cases(corpus: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the existing controlled retrieval corpus for live probing."""
+
+    raw_cases = corpus.get("cases")
+    if corpus.get("version") != 1 or not isinstance(raw_cases, list):
+        raise ValueError("manual natural corpus is invalid")
+    result: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    seen_queries: set[str] = set()
+    for raw in raw_cases:
+        if not isinstance(raw, dict):
+            raise ValueError("manual natural case must be object")
+        raw_id = str(raw.get("id") or "").strip()
+        query = str(raw.get("query") or "").strip()
+        if not raw_id or not query:
+            raise ValueError("manual natural case requires id and query")
+        case_id = f"natural-{raw_id}"
+        if case_id in seen_ids or query in seen_queries:
+            raise ValueError("manual natural case id/query must be unique")
+        seen_ids.add(case_id)
+        seen_queries.add(query)
+        case = dict(raw)
+        case.update({
+            "id": case_id,
+            "kind": "natural",
+            "split": "natural",
+            "corpus_split": str(raw.get("split") or "main"),
+            "query": query,
+        })
+        result.append(case)
     return result
 
 
@@ -469,7 +505,11 @@ def _parser() -> argparse.ArgumentParser:
         default=REPO_ROOT / "test/eval_corpus/manual_rag_full_coverage.yaml",
     )
     parser.add_argument(
-        "--kind", action="append", choices=("section", "visual"), default=[])
+        "--kind",
+        action="append",
+        choices=("section", "visual", "natural"),
+        default=[],
+    )
     parser.add_argument("--start", type=int, default=0)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--resume", action="store_true")

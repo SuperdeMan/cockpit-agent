@@ -30,3 +30,4 @@ visual_query_overrides:
   "warning:胎压监测报警指示灯": "SU7 用户手册：胎压监测报警指示灯亮了怎么处理？"
 natural_corpus: test/eval_corpus/manual_rag_retrieval.yaml
 visual_catalog: agents/manual_rag/resources/visual_assets.yaml
+natural_corpus: test/eval_corpus/manual_rag_retrieval.yaml

@@ -1,12 +1,52 @@
 import json
 
 from scripts.probe_manual_rag_full_coverage import (
+    build_natural_cases,
     failure_ids_from_artifact,
     merge_finals,
     sanitize_message,
     summarize,
     validate_live_query_safety,
 )
+
+
+def test_build_natural_cases_preserves_positive_and_negative_contracts():
+    cases = build_natural_cases({
+        "version": 1,
+        "cases": [
+            {
+                "id": "wiper",
+                "query": "雨刮器怎么打开",
+                "expect_top_page": 95,
+                "expect_image_caption_all": ["前风挡雨刮拨杆开关操作示意"],
+            },
+            {
+                "id": "unknown",
+                "query": "仪表上有个小人拿雨伞的图标是什么意思",
+                "expect_empty": True,
+            },
+        ],
+    })
+
+    assert cases == [
+        {
+            "id": "natural-wiper",
+            "kind": "natural",
+            "split": "natural",
+            "corpus_split": "main",
+            "query": "雨刮器怎么打开",
+            "expect_top_page": 95,
+            "expect_image_caption_all": ["前风挡雨刮拨杆开关操作示意"],
+        },
+        {
+            "id": "natural-unknown",
+            "kind": "natural",
+            "split": "natural",
+            "corpus_split": "main",
+            "query": "仪表上有个小人拿雨伞的图标是什么意思",
+            "expect_empty": True,
+        },
+    ]
 
 
 def test_merge_finals_preserves_all_actions_cards_and_confirmation():
