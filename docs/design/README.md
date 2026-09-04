@@ -21,6 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
+| [2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md](2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md) | Xiaomi SU7整本手册验证：278页源重建、269页锚、160索引路径、187 outline叶子、35受控视觉、原36自然问法，以及安全checkpoint真栈探针 | ✅ 范围与生产基线已测完：离线候选全绿；生产`434a046`章节首轮177/187，10条失败复验无0/3；视觉28/35，5个三字caption 0/3。0.3.2本地候选已修、待push/deploy后重跑187+35 |
 | [2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md) | 真实手册 RAG v2：无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称、deterministic `.mrag` 图文包、HMI/Android manual 证据卡 | ✅ 已发布生产 `434a046`：retrieval 36/36；完整语料落域/内容 36/36；14 个高风险问法各 3/3，合计 64/64；exact 全量 7833/34/4；5/5 healthy、verify verified、图文证据与车态 diff={} |
 | [2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-implementation-plan.md) | Xiaomi SU7 真实车型手册 RAG：PDF 哈希绑定、deterministic 私有索引、中文 n-gram BM25/重排、页码章节引用、错车型/低相关/数值 fail-closed 与 mock 豁免退出 | ✅ v1 已归档并发布 `a406e22`：main 23/23 + holdout 8/8、exact 全量 7796 passed、5/5 healthy、生产 WS 正例 3/3 + CarPlay 负例 1/1、零动作；当前生产已由上方 v2 `434a046` 取代 |
 | [2026-06-13-vehicle-control-command-architecture.md](2026-06-13-vehicle-control-command-architecture.md) | 车控域升级到「公版语音指令表」统一 schema | P1 已落地：知识库三件套（62对象/150意图）+ VAL + fast_intent + 飞书全量导入脚本；P2/P3 待做，P2 缺口已量化见下方 2026-07-03 意图覆盖分析 |

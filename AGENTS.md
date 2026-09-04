@@ -72,7 +72,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 7. `Capability.response_only` 是只响应能力的权威；D0/T2/Executor 都必须 fail closed。
 8. 安全问句的权威文本是服务端 `safety_origin_text`；LLM goal/reason 和补槽短句无授权权威。
 
-## 4. 当前真实状态（2026-09-03）
+## 4. 当前真实状态（2026-09-04）
 
 ### 4.0 发布快照
 
@@ -82,10 +82,10 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
 | 生产 release | `434a0461d07e7652de6605954f6df3fddb846553` |
 | 回滚点 | `b3a2aedd3c360c230709551502e5568e8bba8286` |
-| status | 5/5 endpoint healthy，零 warning |
-| verify | `verified`；artifact `20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| status | 2026-09-04 末端复核：5/5 endpoint healthy，零 warning |
+| 最近成功 verify | `verified`；artifact `20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3`。本轮刷新因无当前 E2E lock 返回 `unknown/failed`，不得写成本轮 verified |
 | exact-code 全量 | `7833 passed / 34 skipped / 4 warnings`；内存约 1.5GB 时串行 `-n 1`，1308.46s |
-| manual-rag | SU7 v2 `.mrag`=`648cdf3…400ed`；retrieval 36/36；生产完整 36/36 + 14 个高风险问法各 3/3，合计 64/64，图文证据、零 action、车态 diff={} |
+| manual-rag | 原36题仍闭合；整本扩面：离线候选269页/160索引路径/187 outline叶子/35视觉/原36题全绿；生产`434a046`章节首轮177/187、视觉28/35，5个三字caption 0/3，候选0.3.2尚未发布 |
 | 证据边界 | 本地全量、部署、verify 与手册真栈均绑定 `434a046`；旧 release 的专项数字不转借 |
 
 `b3a2aed` 是 v2 首次生产 release，现作为回滚点；`a406e22` / `423ed23` 是 v1 发布历史。
@@ -97,7 +97,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 安全专项在 `e9fa602` 上 5 例、15/15 PASS；
 - 完整 information persona 在 `e9fa602` 上 57/59，提醒/导航清理、零挂起与 release 连续均证明；
 - `limit:null → "None" → ValueError` 已由 `a729b98` 修复，新闻 3 个干净会话零 internal error；
-- manual-rag 已在 `434a046` 用 Xiaomi SU7 v2 图文包闭合 36/36 全量语料与 14×3 高风险复验；
+- manual-rag 的原36题已闭合；2026-09-04整本复核证明生产仍有章节方差和5个稳定视觉缺口；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
 当前主要活项：
@@ -105,6 +105,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 活项 | 性质 | 入口 |
 |---|---|---|
 | 安全问句偶尔落 `info.search` | 回答安全但错域、无 manual provenance | QA 交接页 §5 |
+| 手册整本范围未全绿 | 生产章节177/187、视觉28/35；本地0.3.2候选已绿但未发布 | `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5 |
 | safety focus 持续阻断后续 charging plan | 安全状态解除时机的产品裁决 | QA 交接页 §5 |
 | MiniMax TTS RPM / barge-in 残帧 | 外部配额与协议/客户端边界 | QA 交接页 §5 |
 | gRPC RuntimeWarning | test-only fixture 债务 | QA 交接页 §5 |
