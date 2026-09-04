@@ -1,6 +1,6 @@
 # Android 陪伴端交互设计升级方案（UX v2.2：以光球为锚的三层在场）
 
-> 状态：**v2.2；B1「在场与锚」四批已收口；2026-08-30 落地评审完成（✅29 / ⚠8 / ❌1 / ⏭5 / 🔁5），五条 🔁 已回写；下一步 = 新会话拆 B2「语音层」，第一件事 D1**
+> 状态：**v2.2；B1「在场与锚」四批已收口；2026-08-30 落地评审完成（✅29 / ⚠8 / ❌1 / ⏭5 / 🔁5），五条 🔁 已回写；B2「语音层」/ B3「原生一次重建」/ B4「形态与行车档」均已收口；下一步 = B5 计划已拆并已批准（泓舟 2026-09-04，[`2026-09-04-mobile-ux-v2-b5-implementation-plan.md`](2026-09-04-mobile-ux-v2-b5-implementation-plan.md)），逐批新会话推进，第 1 批「缺陷 C」进行中**
 > 版本：v2（2026-08-29 上午草案）→ **v2.1**（同日，采纳外部评审：多轴 Presence、Composer 手势契约、ConfirmPolicy 只投影 VAL、隐私在场、产品身份、材质制度、降级矩阵、增量沉淀、追溯矩阵）→ **v2.2**（2026-08-30，B1 落地评审 [`docs/reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md`](../reviews/2026-08-30-review-ux-v2-b1-vs-proposal.md) 的五条 🔁 回写：§4.2 `looking` 不缩球体、§5.3 确认摘要取上一条用户原话、§5.7 离线暂停看门狗、§11.3 流 06 不等到期、§11.5 在场轨迹页归 B2；评审读数 ✅29 / ⚠8 / ❌1 / ⏭5 / 🔁5，❌ 与 D1–D9 进 B2 入口）
 > 交付对象：`mobile/` 后续执行者（人或 Agent）；评审对象：泓舟
 > 关联：`2026-08-23-hmi-android-app-plan.md`（选型与形态判断）、
@@ -585,7 +585,7 @@ large / extra-large（WindowSizeClass v2 新增）今天没有设备命中，但
 | **B2 语音层** | U2 | Voice Sheet（PTT / 唤醒 / S2S 三入口）；S2S 轮沉淀（`appendS2sTurn` + 角标）；边缘极光；主卡/折叠卡；follow-up chips；视觉抓帧反馈 + 先落气泡；回声提示；播报三档 | 否 | 4–5d | B1 |
 | **B3 原生一次重建** | （U4/U5 的原生前提） | `expo-haptics`；折叠姿态模块；（若需）`react-native-keyboard-controller`；`expo-blur` 材质 spike（§5.11，不通过就不进主线）。**默认助理角色不再捆在这一趟**——它改 manifest 与 Service，未验证就不该进正式构建，改成独立的兼容性 spike 分支构建（B3′，不发版） | **是（一次）** | 2d + 一趟构建 | B1；坑账 §9.43 验 `PackageList.java` |
 | **B4 形态与行车档** | U4 | 尺寸类 × 姿态布局；舞台抽屉 / 双栏 / tabletop；行车档全套（触发、布局、门禁、动效降级）；无障碍与 reduce-motion；提示音合成 | 否（依赖 B3 的姿态模块，缺席时按 flat 降级） | 4–5d | B1–B3 |
-| **B5 出 App 在场** | U5 | Live Updates / QS Tile / Shortcuts / 小组件 / 角色启用 | 是 | 随 M5 | **M5 前台服务 + 推送** |
+| **B5 出 App 在场** | U5 | Live Updates / QS Tile / Shortcuts / 小组件 / 角色启用。**（2026-09-04 泓舟裁决回写）**B5 实际范围按 [`2026-09-04-mobile-ux-v2-b5-implementation-plan.md`](2026-09-04-mobile-ux-v2-b5-implementation-plan.md) §0 第 2 条：缺陷 C（后端 final 标 `driving`）+ 一趟重建（foldstate / expo-battery / Shortcuts / 无 AEC 对照）+ B4 开项；U5 只带 Shortcuts，Live Updates / 小组件 / QS Tile 仍随 M5；默认助理角色不启用（B3′ 实证） | 是 | 随 M5 | **M5 前台服务 + 推送** |
 
 **顺序理由**：B1 是所有后续消费面的唯一真相，必须先；B2 用到 B1 的 orb/capsule；B3 把新原生依赖压成一次 22–38 分钟的构建（实施计划 M3-B 的教训：分两次不值当）；B4 的姿态在 B3 缺席时按 flat 降级，所以 B4 不被 B3 阻塞，只是少一种形态。
 
