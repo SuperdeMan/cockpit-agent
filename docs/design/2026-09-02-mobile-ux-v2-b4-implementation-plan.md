@@ -3752,7 +3752,51 @@ App 也在前台——三项都排除了「息屏/锁屏」。真因是**我截�
 （`drivingEdge` 住在内存 `SessionState`，重启即清）。云栈的 `gear=P` 还在（舞台车况显示 P）。
 ⇒ 缺陷 C 的用户侧出路只有这一条，而它需要用户知道「划掉重开」——**这不是一个可发现的操作**。
 
-##### 设备与云栈还原表（本轮）
+##### ✅ 步骤 12 Maestro——**四条全过**（2026-09-04，泓舟开「USB 安装」后）
+
+退出码由 **Python 直读**（`subprocess.run(...).returncode`），证据链上不出现 shell 管道
+——`maestro.bat` 经 PowerShell `Start-Process` 拿到的 `ExitCode` 是空的，正是 B2
+「`cmd | tail; echo $?` 把 exit 2 报成 exit 0」那条要根治的形态。
+
+| 流 | rc | 步骤 | FAILED |
+|---|---|---|---|
+| `06-confirm-dock` | **0** | 13 | 0 |
+| `07-tablet-two-pane` | **0** | 6 | 0 |
+| `08-keyboard-no-hide` | **0** | 9 | 0 |
+| `09-state-gallery` | **0** | 13 | 0 |
+
+**07 这次没有强制 `device_state`**：请泓舟把手机**物理展开**，`device_state` 自己变成 3
+（`wm size 2224x2488`、内屏 `state ON` / 外屏 `state OFF`）⇒ **不用 set、也就不需要 reset**，
+把 §6.2 坑⑫「忘了 reset 把设备留在强制态」整个绕开。**这比 yaml 注释里写的那套外部 set/reset 更安全，
+建议以后默认走物理姿态。**
+
+##### 这一格解开的过程里推翻了两条既有结论
+
+1. ⭐⭐ **坑 60「`input text` 送中文这条路在本机不存在」只对 `adb shell input text` 成立，
+   对 Maestro 不成立。** 06 的 `Input text 打开后备箱... COMPLETED`，失败截图里用户气泡就是那四个字
+   ——**Maestro 走自己的 driver IME，不经 KeyCharacterMap**。
+   ⇒ **中文输入不再需要人手输**：§6.3 里因此卡住的四格（步骤 1 后半 / 5 / 6 / 11②）
+   与 T14 的材料，原则上都可以用 Maestro 脚本化了。这是本轮最有复用价值的一条。
+2. **§6.2 坑⑩「driver 装不上」的成因确认是 MIUI 的「USB 安装」开关**，与锁屏无关（09-03 已证）。
+   ⚠ 但要说准两件事：① **driver 会在会话结束后被卸掉**（跑完一轮 `pm path dev.mobile.maestro`
+   与 `.test` 都空，`pm list packages` 总数 521 作通道自检）⇒ **每一轮都要重装**，
+   「USB 安装」必须在**整个跑批期间**一直开着，不是开一次管一天；
+   ② MIUI 这个开关**会自动关回去**，所以开完要**立刻跑**。
+
+##### ⛔ 一次差点被记成回归的环境故障
+
+第一次跑 06 时 `dock-confirm is visible` 红。**没有直接记红，先看 Maestro 自己存的失败截图**
+（`~/.maestro/tests/<ts>/<flow>/screenshots/step-012-*.png`）——图上是
+**「1 条消息排队中，连上后自动补发」+ 红色「已断开 · 消息会排队」**，顶栏圆点红：
+消息压根没到后端。查下去是**手机的 Tailscale 掉线**（`tailscale status` 里那台
+`superdemanxiaomi-mix-fold-4` 是 `offline, last seen 3h ago`，而云栈 `8443/healthz` 从宿主侧是 200）。
+对照截图也印证：15:15 / 18:59 两张状态栏有 **VPN** 角标，10:11 这张没有。
+泓舟重连 Tailscale 后 06 一次全绿；**09 之前那条 `.*条消息排队中.*` 的红也是同一个成因**（现在过了）。
+⇒ 两条纪律：**(a) Maestro 红了先看它自己存的截图与 `device-logcat.txt`，那是现成的现场**；
+**(b) 真机轮把「手机的 Tailscale 在线」当成一个要回读的前提**——它掉了以后 App 表现成"功能红"，
+而不是"网络错误"，极容易被记成回归。
+
+#### 设备与云栈还原表（本轮）
 
 | 项 | 改成 | 还原为 | 回读方式与结果 |
 |---|---|---|---|
