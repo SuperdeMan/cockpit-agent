@@ -137,6 +137,8 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 - 章节主批+失败复验199轮、视觉主批+失败复验45轮均action=0、need_confirm=0、完整26项
   车态diff={}；章节主批有上述1次transport probe error，视觉为零。初版不安全名词短语探针曾发
   一次幂等`hvac.on`，已中止并由双安全预检取代，不能藏掉；
+- 原36题当前整批有7条旧表述在联网前被安全预检拒绝，故不报当前36/36；用户点名的雨刮与
+  “小人背宝剑”安全问法已各3/3，均返回预期PDF页和图片，零动作、车态不变；
 - 本地候选只扩三字caption的视觉语境匹配，并在manifest增加明确SU7手册来源的窄hint；离线
   视觉35/35、显式来源222/222。尚未push/deploy，生产仍非整本全绿。证据与hash见
   `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5。

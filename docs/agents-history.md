@@ -8416,3 +8416,10 @@ site-packages并递归溢出，1个发布文档断言仍锁旧release；另一�
 发布断言改跟当前快照；合入当时最新主干后，代码SHA`62533dd9dca2e193e6f64c33ec6462cd974e69c4`
 纯串行全量为**7855 passed / 34 skipped / 4 warnings / 0 failed**（1930.34s），日志SHA=
 `72f1d16843e30c6bf9df971e53296531cf896020aeefb64246d642cb1ed6fe42`。0.3.2候选仍未push/deploy。
+
+补自然问法时没有沿用会直接联网的旧严格栈：新探针增加`--kind natural`，先把原36题全部交给
+question-shape与FastIntent预检。7条旧表述被零请求拦下，其中充电口/后备箱手动打开与两条
+仪表描述会被端侧识别成控制；不能为补齐当前36题而放宽。用户点名的`雨刮器怎么打开`和
+“小人背着把宝剑”均通过预检并各跑3次：分别稳定命中PDF第95/193页及对应图片，6/6、零
+action/确认/probe error、车态diff={}。第一次雨刮响应后，记录器因自然case缺`split`崩溃；
+立即回读26项车态diff={}，该轮不计数。随后补`split=natural`与回归锁，使用新artifact重跑。

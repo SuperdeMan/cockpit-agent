@@ -86,7 +86,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 最近成功 verify | `verified`；artifact `20260903T130534Z-434a046.json`，只属于旧 release `434a046`。`7b594f37` 的 verify 返回 `unknown/failed`，不得写成本轮 verified |
 | 最近生产 exact-code 全量 | `434a046`：`7833 passed / 34 skipped / 4 warnings`；不得转借给 `7b594f37` |
 | manual-rag 候选全量 | 代码SHA `62533dd9`：`7855 passed / 34 skipped / 4 warnings`；纯串行1930.34s，0 failed |
-| manual-rag | 原36题只在`434a046`闭合；整本离线候选269页/160索引路径/187 outline叶子/35视觉/原36题全绿；生产`7b594f37`章节首轮181/187、6项复验均2/3、视觉30/35，5个三字caption 0/3，候选0.3.2尚未发布 |
+| manual-rag | 原36题只在`434a046`闭合；整本离线候选全绿；生产`7b594f37`章节首轮181/187、6项均2/3，视觉30/35、5项0/3；雨刮/背宝剑各3/3带图。原36题当前整批有7条被安全预检拒绝，未冒充36/36；候选0.3.2尚未发布 |
 | 证据边界 | `7b594f37`只有status与本轮manual真栈证据；成功verify/生产全量仍只属于`434a046`；候选全量只属于`62533dd9` |
 
 `b3a2aed` 是 v2 首次生产 release；`434a046` 是上一个生产与最近成功统一verify；
