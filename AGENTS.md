@@ -113,7 +113,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 先读 `mobile/README.md` 与 `docs/design/README.md` 中最新 mobile 计划；mobile 线可在独立工作树领先本分支，先核对 `git status` / `git log --oneline origin/main..HEAD`，不从本入口复制批次长读数。**UX v2 B4 四批已收口（2026-09-03）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md` §6.1–§6.4（**§6.4 是收口节**：交裁清单 / 出账去向核销 / §1.1 逐行核销；三个待裁项、B4 抓到的三个缺陷、仍开的真机格子与 B5 的账全在那一节）。下一步 **B5 = 一趟重建**（`foldstate` 定性 / B3′ 角色启用 / `expo-battery`） |
+| Android App | 先读 `mobile/README.md` 与 `docs/design/README.md` 中最新 mobile 计划；mobile 线可在独立工作树领先本分支，先核对 `git status` / `git log --oneline origin/main..HEAD`，不从本入口复制批次长读数。**UX v2 B4 四批已收口（2026-09-03）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md` §6.1–§6.4（**§6.4 是收口节**：交裁清单 / 出账去向核销 / §1.1 逐行核销；三个待裁项、B4 抓到的三个缺陷、仍开的真机格子与 B5 的账全在那一节）。下一步 **B5**：计划已拆 `docs/design/2026-09-04-mobile-ux-v2-b5-implementation-plan.md`（**泓舟 2026-09-04 已批准，逐批新会话推进；第 1 批「缺陷 C」T1–T4 已收口并推送（`263ff9a`），读数/反向验证/坑/遗留在该计划 §6.1——⛔ **T5 的云栈真机读数一条都没取**：`dev_stack deploy --apply` 失败在 SSH（`Connection closed`，等约 4 分钟自行恢复，与连接频率保护一致），云上仍是 `434a0461`，**后端 final 标 driving 只有单测证据、从未在云栈跑过**；第 2 批开工前先补这一趟，需泓舟当轮再授权 apply**；§0 第 2 条是 B4 归到 B5 的 19 项开项逐条裁决表——第一件 = 缺陷 C 走后端在 `final` 帧也标 `driving` + UI 手动退出口；四批 = 缺陷 C / 重建趟（foldstate `current()` + expo-battery + Shortcuts + 无 AEC 对照包）/ 界面优化两条 + Scanner 三条 + 缺陷 A 横屏半 / 五态小样本 + 收口；B3′ 角色不启用，KWS 阈值 A/B 批排 B5 后另拆） |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

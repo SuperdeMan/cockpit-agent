@@ -142,7 +142,7 @@ debug 构建不读 `src/` 与 `hmi/`（JS 不打包），镜像自洽；**-Relea
 | `speech_delta` | `delta` 追加到目标气泡；**仅最新轮**喂 TTS | :347-368 |
 | `process` | `{phase,label,summary,status,step_id,driving}` 过程区步骤；execute 步按 `step_id` 合并 running→done | :369-410 |
 | `action` | `action` 追加到气泡 actions | :411-427 |
-| `final` | `speech / actions / need_confirm / operation_id / closed_operation_ids[] / follow_up / ui_card / emotion / request_id`。**挂起台账服务端权威**：`closed_operation_ids` 出账、`need_confirm&&operation_id` 进账；`ui_card.type==='rejected'` 是拒识特例（气泡标灰不播报）；`emotion` 存起来供**下一轮** TTS start | :428-536 |
+| `final` | `speech / actions / need_confirm / operation_id / closed_operation_ids[] / follow_up / ui_card / emotion / driving / request_id`。**挂起台账服务端权威**：`closed_operation_ids` 出账、`need_confirm&&operation_id` 进账；`ui_card.type==='rejected'` 是拒识特例（气泡标灰不播报）；`emotion` 存起来供**下一轮** TTS start；`driving`（B5 缺陷 C）：Edge 在出口按 VAL 标的行车态，**恒带键**；客户端只在键为布尔时登记（旧网关兼容） | :428-536 |
 | `vehicle_state` | `state` 对象整体替换车况镜像，不进消息流 | :538-542 |
 | `proactive` | `speech / card / advisory / priority / delivery_ids`（经 `proactiveSpeech.mjs::deliveryIdsOf` 抽取）；幂等呈现 + `proactive_ack` 回执 + 按 priority 决定播报（SPEAK/DEFER/INTERRUPT，`decideSpeech`） | :543-583 |
 | `error` | `message`；硬终止：清**所有**在飞轮，**不清挂起台账**（传输错误≠挂起作废） | :585-594 |

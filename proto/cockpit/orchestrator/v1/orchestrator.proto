@@ -72,4 +72,9 @@ message FinalResult {
   // 由服务端权威给出：HMI 自己猜「这一轮是不是把某条挂起消费掉了」必然猜错，
   // 而猜错的后果是一条已经作废的确认条继续挂在屏幕上等人点（I-017 同族）。
   repeated string closed_operation_ids = 8;
+  // B5 缺陷 C：终态也标行车态（与 ProcessUpdate.driving 同一裁决点 server.py::_is_driving）。
+  // process 帧只有复杂轮才有，简单轮从不带标 ⇒ 客户端「Edge 标 false 起 30s 退出」那条 false
+  // 可能永远不到（B4 真机实测行车档 3h12m 退不出）。final 每轮都有，所以也标；Edge 在
+  // Handle 出口盖，云端填的值无权威。缺省 false = 泊车。
+  bool driving = 9;
 }

@@ -53,7 +53,7 @@ export interface UsePresenceOpts {
 const TICK_MS = 1000
 
 export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: UsePresenceOpts): PresenceSnapshot {
-  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge } =
+  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt } =
     useStore(core.store)
   const { settings } = useStore(settingsStore)
 
@@ -128,7 +128,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
   const now = Date.now()
   // B4-2 行车档：手动 ∨ Edge 标 true ∨ 标 false 后 30s 内（判据在 drivingMode.ts）。
   // 不再读 active?.driving——那只在在飞轮上有值，轮一结束就掉回 false
-  const drivingNow = drivingActive({ manual: settings.drivingManual, edge: drivingEdge, now })
+  const drivingNow = drivingActive({ manual: settings.drivingManual, edge: drivingEdge, now, dismissedAt: drivingDismissedAt })
   const [, bumpTick] = useState(0)
   const needsTick =
     pendingOps.length > 0 || // 确认卡倒计时（每秒要变）

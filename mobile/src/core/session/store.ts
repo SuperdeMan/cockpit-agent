@@ -70,6 +70,9 @@ export interface SessionState {
   /** 行车档事实（B4-2）：Edge 在 process 帧上的 driving 标注。判据在 core/presence/drivingMode.ts，
    *  这里只登记「最近一次 true / 由 true 转 false 的时刻」——不靠在飞轮，轮结束后仍在 */
   drivingEdge: DrivingEdgeFact
+  /** 用户在设置页退出**自动进入**的行车档的时刻（B5-3 缺陷 C）：只压住当前行车段，判据在 drivingMode.ts；
+   *  与 drivingEdge 同命——只在内存，重启即清 */
+  drivingDismissedAt: number
   connStatus: GatewayStatus
   /** 位置授权征询（纯前端确认，无 operation_id、不上行）待重发的原句 */
   pendingLocationText: string | null
@@ -178,6 +181,7 @@ export class SessionCore {
       pendingOps: [],
       vehState: {},
       drivingEdge: NO_EDGE_DRIVING,
+      drivingDismissedAt: 0,
       connStatus: 'closed',
       pendingLocationText: null,
       lastEmotion: '',
@@ -305,6 +309,11 @@ export class SessionCore {
   }
 
   /** U2 真打断（App.tsx:664-678）：发网关取消 + 本地把当前在飞轮（FIFO 头）标「已打断」 */
+  /** 行车档手动退出（B5-3 缺陷 C 的 UI 出口）：只压住**本段**，不改判据；下一段照常自动进入 */
+  dismissDriving(): void {
+    this.store.setState({ drivingDismissedAt: Date.now() })
+  }
+
   cancelCurrentTurn(): void {
     this.deps.transport.send({ type: 'cancel', session_id: this.deps.sessionId })
     this.justCancelled = true
@@ -541,6 +550,14 @@ export class SessionCore {
       return
     }
     if (data.type === 'final') {
+      // B5-3 缺陷 C：final 帧也带 driving（网关 eventToMap final 分支透传；产出方 server.py::_stamp_driving）。
+      // **只认布尔**——旧网关的 final 没有这个键，`!!undefined` 会把每个简单轮都当成「Edge 标 false」，
+      // 行车中 30s 后就退出：那是比缺陷 C 反向的缺陷。process 那一路（上面）不动。放在 rejected 之前：
+      // 拒识轮也是一轮，行车事实与拒识无关。
+      if (typeof data.driving === 'boolean') {
+        const drivingNow = data.driving
+        this.store.setState((s) => ({ drivingEdge: recordEdgeDriving(s.drivingEdge, drivingNow, Date.now()) }))
+      }
       // 本轮情绪只影响**下一轮**语气（M2 P2）——先记再走归属
       if (typeof data.emotion === 'string') this.store.setState({ lastEmotion: data.emotion })
       // R4.4 云端拒识：不渲染回复，把本轮气泡标灰留痕

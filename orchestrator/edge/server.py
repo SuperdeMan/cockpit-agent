@@ -532,6 +532,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         error = ""
         try:
             async for event in self._handle_impl(request, context, turn):
+                event = self._stamp_driving(event)  # B5 缺陷 C：过程区 + 终态在唯一出口标行车态
                 which = event.WhichOneof("event")
                 if which == "final":
                     f = event.final
@@ -807,7 +808,6 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         got = True
                         self.cloud_connected = True
                         event = self._dispatch_cloud_actions(event, answer_length)
-                        event = self._stamp_progress(event)  # 过程区事件标注行车态
                         yield event
                     if not got:
                         yield orchestrator_pb2.HandleEvent(
@@ -944,7 +944,6 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 self.cloud_connected = True
                 # 云端回流 action 分发：车控类走 VAL
                 event = self._dispatch_cloud_actions(event, answer_length)
-                event = self._stamp_progress(event)  # 过程区事件标注行车态
                 which = event.WhichOneof("event")
                 if which == "final":
                     if event.final.speech or len(event.final.actions) > 0:
@@ -1018,10 +1017,18 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         gear = str(st.get("gear", "") or "").upper()
         return speed > 0 or gear in ("D", "R", "S")
 
-    def _stamp_progress(self, event):
-        """给过程区事件标注行车态（Edge 是车辆状态真相源）。非 progress 事件原样返回。"""
-        if event.WhichOneof("event") == "progress":
+    def _stamp_driving(self, event):
+        """给过程区与终态事件标注行车态（Edge 是车辆状态真相源；裁决点只有 _is_driving 一处）。
+
+        B5 缺陷 C：process 帧只有复杂轮才有，简单轮从不带标 ⇒ 客户端「Edge 标 false 起 30s
+        退出」的那条 false 可能永远不到（B4 真机实测 3h12m 退不出）。final 每轮都有，所以也标；
+        在 Handle 出口盖一次——本地快路径 / 混合 / 降级兜底的 final 都不经云端路径。
+        其它事件原样返回。"""
+        which = event.WhichOneof("event")
+        if which == "progress":
             event.progress.driving = self._is_driving()
+        elif which == "final":
+            event.final.driving = self._is_driving()
         return event
 
     def _dispatch_cloud_actions(self, event, answer_length="short"):

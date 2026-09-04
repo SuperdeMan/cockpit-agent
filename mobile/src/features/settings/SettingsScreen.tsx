@@ -11,6 +11,8 @@ import { AGENT_CATALOG } from '@shared/types.ts'
 
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
+import { drivingActive, NO_EDGE_DRIVING } from '../../core/presence/drivingMode'
+import { getWired } from '../../core/session/wiring'
 import { needsS2sConsent, settingsStore, type AppSettings } from '../../core/settings/store'
 import {
   fetchAsrProviders,
@@ -110,6 +112,23 @@ function SwitchRow({
 export function SettingsScreen() {
   const { settings, update, toggleAgent } = useStore(settingsStore)
   const p = usePalette(settings)
+  // B5-4 缺陷 C：自动进入的行车档要有可发现的退出口（B4 真机：开关灰着、App 在行车档里、3h12m 退不出）。
+  // 只搬事实不复制判据（drivingActive 是唯一一份）；订阅法照 native-spike。无 ticker：30s 宽限到点
+  // 这一行不会自己消失，下一次 store 变化才重渲（与取证屏同一取舍）。
+  const core = getWired()?.core ?? null
+  const readDriving = () => {
+    const st = core?.store.getState()
+    return { edge: st?.drivingEdge ?? NO_EDGE_DRIVING, dismissedAt: st?.drivingDismissedAt ?? 0 }
+  }
+  const [drivingFact, setDrivingFact] = useState(readDriving)
+  useEffect(() => {
+    if (!core) return
+    setDrivingFact(readDriving()) // 挂载与订阅之间的缝
+    return core.store.subscribe(() => setDrivingFact(readDriving()))
+  }, [core])
+  const autoDriving =
+    !settings.drivingManual &&
+    drivingActive({ manual: false, edge: drivingFact.edge, now: Date.now(), dismissedAt: drivingFact.dismissedAt })
   const [server, setServer] = useState<ServerConfig | null>(null)
   const [nameDraft, setNameDraft] = useState(settings.assistantName)
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
@@ -183,10 +202,30 @@ export function SettingsScreen() {
         <SwitchRow
           p={p}
           label="行车档"
-          desc="目标放大、过程区单行、文本输入按角色收起。座舱判定行车时自动进入，停车 30 秒后自动退出"
+          desc="目标放大、过程区单行、文本输入按角色收起。座舱判定行车时自动进入（每轮回答后判定），停车 30 秒后自动退出"
           value={settings.drivingManual}
           onChange={(drivingManual) => set({ drivingManual })}
         />
+        {autoDriving ? (
+          <Pressable
+            testID="driving-auto-exit"
+            accessibilityRole="button"
+            accessibilityLabel="自动行车中，退出行车档"
+            onPress={() => core?.dismissDriving()}
+            style={{
+              minHeight: 48,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 12,
+              borderRadius: 10,
+              backgroundColor: p.accentSoft,
+            }}
+          >
+            <Text style={{ color: p.fg2, fontSize: p.font(13) }}>自动行车中 · 座舱判定为行驶</Text>
+            <Text style={{ color: p.accent, fontSize: p.font(13), fontWeight: '600' }}>退出</Text>
+          </Pressable>
+        ) : null}
       </Section>
 
       <Section p={p} title="显示">

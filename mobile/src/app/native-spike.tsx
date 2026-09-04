@@ -28,15 +28,21 @@ export default function NativeSpikeScreen() {
   //    于是行车档下它必然显示错的 mode（实测行车 + expanded×compact 显示 single，真实应是 driving-landscape）。
   //    改成读**真实**行车事实：判据仍是 drivingMode.drivingActive（唯一一份），本屏只搬事实。
   const [edge, setEdge] = useState<DrivingEdgeFact>(() => getWired()?.core.store.getState().drivingEdge ?? NO_EDGE_DRIVING)
+  // B5-3 缺陷 C：用户退出只压本段，取证屏也要看得见它（写死 0 就是 B4 缺陷 B 的同款说谎）
+  const [dismissedAt, setDismissedAt] = useState<number>(() => getWired()?.core.store.getState().drivingDismissedAt ?? 0)
   useEffect(() => {
     const core = getWired()?.core
     if (!core) return
     setEdge(core.store.getState().drivingEdge) // 挂载与订阅之间的缝
-    return core.store.subscribe((st) => setEdge(st.drivingEdge))
+    setDismissedAt(core.store.getState().drivingDismissedAt)
+    return core.store.subscribe((st) => {
+      setEdge(st.drivingEdge)
+      setDismissedAt(st.drivingDismissedAt)
+    })
   }, [])
   // ⚠ 事件驱动，**不加 1s ticker**：取证屏加轮询会让 `uiautomator dump` 拿不到 idle（§6.2 补取轮坑⑨）。
   //    代价是 30s 退出宽限的那一跳不会自己刷新——所以下面把 edge 的两个时刻一起打出来，读的人看得见。
-  const driving = drivingActive({ manual: settings.drivingManual, edge, now: Date.now() })
+  const driving = drivingActive({ manual: settings.drivingManual, edge, now: Date.now(), dismissedAt })
   const layout = useLayout(driving)
   const { width, height } = useWindowDimensions()
   const [events, setEvents] = useState(0)
@@ -54,7 +60,7 @@ export default function NativeSpikeScreen() {
     ['isSeparating', String(fold?.isSeparating ?? '—')],
     ['bounds', fold?.bounds ? JSON.stringify(fold.bounds) : '—'],
     ['events', String(events)],
-    ['driving', `${driving}（manual=${settings.drivingManual} edge.trueAt=${edge.trueAt} edge.falseAt=${edge.falseAt}）`],
+    ['driving', `${driving}（manual=${settings.drivingManual} edge.trueAt=${edge.trueAt} edge.falseAt=${edge.falseAt} dismissedAt=${dismissedAt}）`],
     ['layout', `${layout.mode} · ${layout.widthClass}×${layout.heightClass}`],
     ['dp', `${Math.round(width)}×${Math.round(height)} @${PixelRatio.get()}x`],
     ['hinge(dp)', layout.hinge ? JSON.stringify(layout.hinge) : '—'],

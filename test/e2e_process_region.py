@@ -116,6 +116,9 @@ async def _run(recorder: CaseRecorder) -> int:
                        "普通车控（端侧秒回，应无过程区）")
     _assert(not any(e.get("type") == "process" for e in ev),
             "车控无 process 事件")
+    final_simple = next((e for e in ev if e.get("type") == "final"), None)
+    _assert(final_simple is not None and final_simple.get("driving") is False,
+            "简单轮 final 带 driving=false（B5 缺陷 C：final 也标，键在场）")
 
     # 3) 复杂多日行程（trip.plan + 天气 + 充电）→ 应出过程区 + 最终答案
     ev = await collect(
@@ -138,6 +141,8 @@ async def _run(recorder: CaseRecorder) -> int:
     # 行车态默认泊车（可展开）
     _assert(all(p.get("driving") in (False, None) for p in procs),
             "默认泊车态 driving=false（可展开）")
+    _assert(final is not None and final.get("driving") is False,
+            "复杂轮 final 带 driving=false（默认泊车态）")
 
     print("\n=== 结果 ===")
     if _assert.failed:
