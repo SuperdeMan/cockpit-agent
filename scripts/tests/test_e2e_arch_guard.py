@@ -1867,5 +1867,17 @@ def test_architecture_guard_ignores_dependency_node_modules(tmp_path: Path):
     assert guard_architecture(root) == ()
 
 
+def test_architecture_guard_ignores_generated_artifact_venvs(tmp_path: Path):
+    """验证产物中的隔离环境不是仓库源码，不能污染架构调用图。"""
+    root = _repo(tmp_path)
+    _write(
+        root,
+        ".artifacts/venvs/manual-rag/Lib/site-packages/vendor/generated.py",
+        "callable = callable\ncallable()\n",
+    )
+
+    assert guard_architecture(root) == ()
+
+
 def test_repository_architecture_guard_passes():
     assert_architecture_guard(REPO_ROOT)
