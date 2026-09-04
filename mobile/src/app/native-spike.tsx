@@ -52,6 +52,9 @@ export default function NativeSpikeScreen() {
     return () => sub.remove()
   }, [])
 
+  // B5-6：原生缓存的最近一次投影。新挂载实例的初值来自它（不是新事件）——所以「posture 有值 + events: 0」才是对的读数。
+  const currentNative = FoldNative?.current?.() ?? null
+
   const rows: Array<[string, string]> = [
     ['native', FOLD_NATIVE_AVAILABLE ? 'available' : 'MISSING（旧 APK？重建没带上？）'],
     ['posture', foldPosture(fold)],
@@ -60,6 +63,7 @@ export default function NativeSpikeScreen() {
     ['isSeparating', String(fold?.isSeparating ?? '—')],
     ['bounds', fold?.bounds ? JSON.stringify(fold.bounds) : '—'],
     ['events', String(events)],
+    ['current', currentNative ? JSON.stringify(currentNative) : '—（旧 APK 无 current / 从未收到事件）'],
     ['driving', `${driving}（manual=${settings.drivingManual} edge.trueAt=${edge.trueAt} edge.falseAt=${edge.falseAt} dismissedAt=${dismissedAt}）`],
     ['layout', `${layout.mode} · ${layout.widthClass}×${layout.heightClass}`],
     ['dp', `${Math.round(width)}×${Math.round(height)} @${PixelRatio.get()}x`],
