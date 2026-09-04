@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 状态：**草案（2026-09-04 拆），待泓舟批准；批准前 `mobile/` / `orchestrator/` / `gateway/` / `proto/` 一行不动**。§0 第 2 条是本计划的核心产出——B4 收口时归到 B5 的 19 项开项逐条给了默认裁决与落点，泓舟一句话可改任一条。
+> 状态：**已批准（泓舟 2026-09-04，拆完当轮批准，裁决表未改）；逐批新会话推进，第 1 批「缺陷 C」待开工**。§0 第 2 条是本计划的核心产出——B4 收口时归到 B5 的 19 项开项逐条给了默认裁决与落点，泓舟一句话可改任一条。
 > 交付对象：`mobile/` 执行者（人或 Agent）；第 1 批同时是 `orchestrator/edge` + `gateway/edge` + `proto/` 的执行者（本计划是 B 系列里**第一次**允许后端改动的批）
 > 上游真相源：[`2026-08-29-mobile-ux-v2-presence-redesign.md`](2026-08-29-mobile-ux-v2-presence-redesign.md)（方案 **v2.2**；本计划读 §6 退出条款 / §7.3 / §5.11 末句 / §8 / §9 全表 / §11.1 B5 行 / §11.4 / §12.2 / §13 Q5；**不读 §2**）；
 > B4 计划 [`2026-09-02-mobile-ux-v2-b4-implementation-plan.md`](2026-09-02-mobile-ux-v2-b4-implementation-plan.md)（**§6.4 是本计划的输入**：「泓舟裁决」「对账一 / 二 / 三」「缺陷 C 两轮取证」「泓舟当轮提的两条界面优化」「Scanner 三条出账」「T14 材料」；§6.1–§6.3 各批「遗留」小节逐条核过，去向在本计划 §0 第 2 条；Task 正文不读）；
