@@ -3796,6 +3796,62 @@ App 也在前台——三项都排除了「息屏/锁屏」。真因是**我截�
 **(b) 真机轮把「手机的 Tailscale 在线」当成一个要回读的前提**——它掉了以后 App 表现成"功能红"，
 而不是"网络错误"，极容易被记成回归。
 
+#### ✅ §6.2 T7「PTT 松手」——过，且机制被读出来了（2026-09-04 10:37）
+
+方案 §7.4「正在录音的 PTT 在外→内切换瞬间按松手处理」。泓舟在外屏按住光球说话，
+**保持按住**把手机展开。`logcat -v time` 的时间线（同一条缓冲里逐条对时刻）：
+
+```
+10:37:37.463  MIUIInput publisher action=0x0  DOWN     ← 按住光球
+              （此后到录音停止之间，打到 ba5c44 窗口的事件里**没有任何 action=0x1 UP**）
+10:37:41.181  BarFollowAnimation onFoldChange false     ← 展开
+10:37:41.229  MIUIInput publisher action=0x3  CANCEL    ← +48ms
+10:37:41.489  AudioRecord stop(194) mActive:0           ← +308ms（距 CANCEL +260ms）
+10:37:41.491  AAudioStream_close(s#8) returned 0
+10:37:51.075  AAudioStreamBuilder_openStream（输出流）  ← 约 10s 后播报答案
+```
+
+⇒ **手指全程按着，松手是展开触发的**。判据成立，且**分得开「展开触发」与「人自己松手」**
+——这一对本来只看「消息发出去了」是分不开的（结果一样）。
+
+**机制**（比计划里写的更准）：切屏时**平台派发的是 `ACTION_CANCEL` 而不是 `ACTION_UP`**，
+手势层收到 CANCEL 后按结束处理。⇒ 这条行为**依赖平台在窗口重配时发 CANCEL**，
+不是我们自己的 fold 监听在做——**换设备/换 ROM 要重验**。
+
+顺带两个读数：**pid 25021 与 window id `ba5c44` 全程不变**（同一个窗口实例，不只是同一个进程）
+——比 §6.3 只对 pid 的那次更强；`10:37:35.601` 有一次 `onHostPause` → `10:37:35.663` `onHostResume`
+的短暂配置变更，与本判据无关但记下来。
+
+#### ⛔⛔ B3 §6.3 遗留⑤ `Reanimated: synchronouslyUpdateUIProps failed`——**T13 步骤 9 的「0 命中」被推翻，且根因读出来了**
+
+T13 步骤 9（09-03）在「行车档 + C 身份 + 层常驻 + 12 次滚动 + 减少动效正反各一段」这个场景下
+做了通道自检后记 **0 命中**，结论写的是「没复现 ≠ 不存在，出账带场景」。**09-04 本轮它大量出现**：
+
+| 量 | 读数 |
+|---|---|
+| 当前 logcat 缓冲总行 | 307,594（通道自检；App pid `25021` 占 50,557 行） |
+| `synchronouslyUpdateUIProps failed` **首行**计数 | **434 条**（10:36 有 391、10:37 有 43） |
+| `Reanimated` 标签在该 pid 下的总行数（含栈） | **48,750 条** |
+
+**根因就在告警自己的 `Caused by` 里**（B3 与 T13 都没读到这一层）：
+
+```
+W/Reanimated: synchronouslyUpdateUIProps failed for tag 1358
+java.lang.reflect.InvocationTargetException
+Caused by: com.facebook.react.bridge.RetryableMountingLayerException:
+           Unable to find SurfaceMountingManager for tag: [1358]
+```
+
+⇒ 是 **Reanimated 的同步 prop 更新去改一个 surface 已被拆掉的视图**，
+栈里带 `ReactRootView.onInterceptTouchEvent`（走的是**触摸分发**那条路）。
+**这直接回答了步骤 9 四段分法要判的那个问题——「跟不跟动球走」：不跟。**
+它跟的是 **surface 的拆建**（本轮密集出现在 Maestro 反复 force-stop/重启、切屏、导航之后）。
+
+⚠ **仍未做的**：把「哪一个组件的哪一次卸载」钉死，需要一次带 `tag → view` 映射的专门 pass
+（步骤 9 的 90 分钟预算已用掉）。⇒ **出账带根因串与场景**，比 B3 那版「一直在发生」和
+T13 那版「0 命中」都更可用。**教训：一条「本轮 0 命中」的读数，它的有效范围只到那个场景为止；
+写出账时要把场景写进结论里（步骤 9 做到了这一点，所以这次才能被干净地推翻而不是互相矛盾）。**
+
 #### 设备与云栈还原表（本轮）
 
 | 项 | 改成 | 还原为 | 回读方式与结果 |
