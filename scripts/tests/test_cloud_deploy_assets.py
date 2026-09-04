@@ -2173,7 +2173,7 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
     )
 
     for required in (
-        "a406e222b3fe08ea462c06ccf676d0698f1f443a",
+        "434a0461d07e7652de6605954f6df3fddb846553",
         "5/5 endpoint healthy",
         "QA 仍非全绿",
         "docs/reviews/2026-08-30-qa-closeout-handoff.md",
@@ -2188,7 +2188,7 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
         assert stale not in agents
 
     for required in (
-        "7796 passed / 34 skipped / 11 warnings",
+        "7833 passed / 34 skipped / 4 warnings",
         "57/59 PASS",
         "安全问句偶尔落 `info.search`",
         "safety focus 持续阻断后续 charging plan",
