@@ -1,5 +1,5 @@
 agent_id: manual-rag
-version: 0.3.2
+version: 0.3.3
 display_name: 车书助手
 category: ecosystem
 trust_level: first_party
