@@ -2173,7 +2173,7 @@ def test_release_status_docs_record_deployed_non_green_checkpoint():
     )
 
     for required in (
-        "434a0461d07e7652de6605954f6df3fddb846553",
+        "7b594f379c1fbfb5156c55c4e0dc573957b49d28",
         "5/5 endpoint healthy",
         "QA 仍非全绿",
         "docs/reviews/2026-08-30-qa-closeout-handoff.md",

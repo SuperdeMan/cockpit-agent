@@ -80,15 +80,17 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `434a0461d07e7652de6605954f6df3fddb846553` |
-| 回滚点 | `b3a2aedd3c360c230709551502e5568e8bba8286` |
+| 生产 release | `7b594f379c1fbfb5156c55c4e0dc573957b49d28` |
+| 回滚点 | 本轮未重新验证；上次已验证为 `b3a2aedd3c360c230709551502e5568e8bba8286` |
 | status | 2026-09-04 末端复核：5/5 endpoint healthy，零 warning |
-| 最近成功 verify | `verified`；artifact `20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3`。本轮刷新因无当前 E2E lock 返回 `unknown/failed`，不得写成本轮 verified |
-| exact-code 全量 | `7833 passed / 34 skipped / 4 warnings`；内存约 1.5GB 时串行 `-n 1`，1308.46s |
-| manual-rag | 原36题仍闭合；整本扩面：离线候选269页/160索引路径/187 outline叶子/35视觉/原36题全绿；生产`434a046`章节首轮177/187、视觉28/35，5个三字caption 0/3，候选0.3.2尚未发布 |
-| 证据边界 | 本地全量、部署、verify 与手册真栈均绑定 `434a046`；旧 release 的专项数字不转借 |
+| 最近成功 verify | `verified`；artifact `20260903T130534Z-434a046.json`，只属于旧 release `434a046`。`7b594f37` 的 verify 返回 `unknown/failed`，不得写成本轮 verified |
+| 最近生产 exact-code 全量 | `434a046`：`7833 passed / 34 skipped / 4 warnings`；不得转借给 `7b594f37` |
+| manual-rag 候选全量 | 代码SHA `62533dd9`：`7855 passed / 34 skipped / 4 warnings`；纯串行1930.34s，0 failed |
+| manual-rag | 原36题只在`434a046`闭合；整本离线候选269页/160索引路径/187 outline叶子/35视觉/原36题全绿；生产`7b594f37`章节首轮181/187、6项复验均2/3、视觉30/35，5个三字caption 0/3，候选0.3.2尚未发布 |
+| 证据边界 | `7b594f37`只有status与本轮manual真栈证据；成功verify/生产全量仍只属于`434a046`；候选全量只属于`62533dd9` |
 
-`b3a2aed` 是 v2 首次生产 release，现作为回滚点；`a406e22` / `423ed23` 是 v1 发布历史。
+`b3a2aed` 是 v2 首次生产 release；`434a046` 是上一个生产与最近成功统一verify；
+`a406e22` / `423ed23` 是 v1 发布历史。
 当前 release 不借用 `a729b98` 的 Cloud Planner、Planner+Info 或新闻专项数字。
 
 ### 4.1 QA 状态
@@ -97,7 +99,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 安全专项在 `e9fa602` 上 5 例、15/15 PASS；
 - 完整 information persona 在 `e9fa602` 上 57/59，提醒/导航清理、零挂起与 release 连续均证明；
 - `limit:null → "None" → ValueError` 已由 `a729b98` 修复，新闻 3 个干净会话零 internal error；
-- manual-rag 的原36题已闭合；2026-09-04整本复核证明生产仍有章节方差和5个稳定视觉缺口；
+- manual-rag 原36题已在`434a046`闭合；`7b594f37`整本复核仍有章节方差和5个稳定视觉缺口；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
 当前主要活项：
@@ -105,7 +107,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 活项 | 性质 | 入口 |
 |---|---|---|
 | 安全问句偶尔落 `info.search` | 回答安全但错域、无 manual provenance | QA 交接页 §5 |
-| 手册整本范围未全绿 | 生产章节177/187、视觉28/35；本地0.3.2候选已绿但未发布 | `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5 |
+| 手册整本范围未全绿 | `7b594f37`章节首轮181/187（6项均2/3）、视觉30/35（5项0/3）；本地0.3.2候选已绿但未发布 | `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5 |
 | safety focus 持续阻断后续 charging plan | 安全状态解除时机的产品裁决 | QA 交接页 §5 |
 | MiniMax TTS RPM / barge-in 残帧 | 外部配额与协议/客户端边界 | QA 交接页 §5 |
 | gRPC RuntimeWarning | test-only fixture 债务 | QA 交接页 §5 |

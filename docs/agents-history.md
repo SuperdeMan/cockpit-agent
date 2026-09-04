@@ -8390,3 +8390,29 @@ diff={}。这证明所有187叶子至少一次走通，但不能写187/187稳定
 “后雾灯怎么打开”仍去操作页；manifest新增“SU7/小米SU7+手册+主题+问号”的显式来源hint，
 明确车控与非车辆手册为反例。现有`.mrag`不变；视觉35/35、显式来源222/222、route hints
 110/110、受影响全族307 passed、五道门禁均通过。候选未push/deploy；生产重跑187+35前不得关闭。
+
+## §96 2026-09-04 当前生产7b594f37整本复跑与候选全量
+
+manual验证期间，mobile线把生产推进到`7b594f379c1fbfb5156c55c4e0dc573957b49d28`。只读status
+确认5/5 endpoint healthy、零warning；旧`434a046`证据不转借，按同一自然化口径重新跑完整
+187个outline叶子与35个受控视觉，并只对首轮失败补两次。所有查询先通过question-shape与
+FastIntent None；所有正式轮均零action、零need_confirm、完整26项车态diff={}。
+
+章节首轮181/187（96.79%，p50 8167.950ms、p95 14633.654ms、max 22570.331ms）；6个失败
+后两轮均6/6，因此全部为2/3、无0/3稳定章节失败。其中`哨兵模式`首轮为一次opening-handshake
+timeout，其余是澄清/非manual出口方差。章节正式轮187+6+6=199；主artifact SHA=
+`4381283cbec65de900ec0a1c95dc2e10fca1de042a04a6e242da9513307eb4f5`，复验SHA=
+`f0f77c53…aeac9`、`5143338e…cd3f`。
+
+视觉首轮30/35（85.71%，p50 7149.769ms、p95 11311.487ms、max 12530.943ms）；位置灯、
+左右转向、后雾灯、近光灯后两轮仍全失败，五项均0/3，三轮都缺PDF页、图片页与caption。
+视觉正式轮35+5+5=45，零transport error；主artifact SHA=
+`b6ff52faac9f4e22996b7bc63e360351b363ec2f058f6f9fe94a0e1fe8659cb6`，复验SHA=
+`0e457caa…d7da1`、`32b6059f…f3def`。当前生产因此仍非整本全绿。
+
+候选第一次纯串行全量在`8fc5ab9`发现5红：4个架构门禁误扫`.artifacts/venvs`中的第三方
+site-packages并递归溢出，1个发布文档断言仍锁旧release；另一次`-n1`在9%被Windows事件2004
+确认资源耗尽杀死，两趟都不算有效全量。最小修复让架构glob排除`.artifacts`并补反向用例，
+发布断言改跟当前快照；合入当时最新主干后，代码SHA`62533dd9dca2e193e6f64c33ec6462cd974e69c4`
+纯串行全量为**7855 passed / 34 skipped / 4 warnings / 0 failed**（1930.34s），日志SHA=
+`72f1d16843e30c6bf9df971e53296531cf896020aeefb64246d642cb1ed6fe42`。0.3.2候选仍未push/deploy。

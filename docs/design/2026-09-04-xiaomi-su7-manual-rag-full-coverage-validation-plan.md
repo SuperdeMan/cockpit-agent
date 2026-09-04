@@ -1,8 +1,8 @@
 # Xiaomi SU7 整本手册 RAG 全覆盖验证计划
 
 > 状态：**全范围验证已完成；本地修复候选待发布验证**（2026-09-04）
-> 初始基线：`origin/main@aa9f73a`；实现提交 `55414e0`；随后合入并行主线 `7b594f3`
-> 生产 release：`434a0461d07e7652de6605954f6df3fddb846553`
+> 初始基线：`origin/main@aa9f73a`；实现提交 `55414e0`；全量前合入主线 `54a7afe`
+> 当前生产 release：`7b594f379c1fbfb5156c55c4e0dc573957b49d28`；`434a046` 结果保留作历史对照
 > 私有输入：`2024-小米SU7-Pro-Max-用户手册.pdf`，SHA-256=`ef16d204…e4705d`
 
 ## 1. 验证结论的边界
@@ -32,8 +32,9 @@
 3. 扩展通用 retrieval evaluator，使其能断言精确 `section_path`，并补反向单测；
 4. 先运行当前实现形成 RED；若是产品缺口，只做最窄修复并保留反例；若是题目不成立，修改
    评价口径并写清理由，不为追求全绿降低阈值；
-5. 离线全绿后，以当前生产 `434a046` 跑目录路径和视觉语义 WS 探针，逐轮检查单一 manual 卡、
-   approved real provenance、预期页/路径/图片、零 action、零 need_confirm 和完整车态 diff={}；
+5. 离线全绿后，先以生产 `434a046` 跑目录路径和视觉语义 WS 探针；并行 mobile 发布把生产推进
+   到 `7b594f37` 后，再按同一口径完整重跑，逐轮检查单一 manual 卡、approved real provenance、
+   预期页/路径/图片、零 action、零 need_confirm 和完整车态 diff={}；
 6. 代码、生产 release 与 artifact 分栏。任何新修复的 push/deploy 仍需单独授权。
 
 ## 4. 验收线
@@ -70,7 +71,7 @@
 - Artifact：`.artifacts/manual-rag-full-coverage/offline-full-candidate.json`，SHA-256=
   `01ebb3c34bff7a6273176c268bfa7ff5440ff7d6a4ef9947475bb92439fa80d8`。
 
-### 5.3 当前生产 `434a046`：章节范围已测完但非全绿
+### 5.3 历史生产 `434a046`：章节范围已测完但非全绿
 
 - 187 个 outline 叶子首轮 **177/187（94.65%）**；p50=11259.685ms、p95=21429.625ms、
   max=38864.255ms。
@@ -81,7 +82,7 @@
   SHA-256=`af0c100f332e312b5f9f710dfb36caca9a570eb9e3d76635253274f490aa47d5`；两次复验 SHA 为
   `b66f3c36…077ff`、`606c6354…2e83`。
 
-### 5.4 当前生产 `434a046`：视觉存在5个稳定缺口
+### 5.4 历史生产 `434a046`：视觉存在5个稳定缺口
 
 - 受控视觉首轮 **28/35（80.00%）**；p50=11006.899ms、p95=22202.695ms、
   max=29050.506ms。
@@ -93,7 +94,27 @@
   `5b5a2e40776fde5da3c2714672c88d880028f974ef80b209bfeca117cc62d17f`；两次复验 SHA 为
   `c8a8a2bb…2896`、`2587a63c…ab92`。
 
-### 5.5 本地修复候选与发布边界
+### 5.5 当前生产 `7b594f37`：整本复跑结果
+
+- 2026-09-04 状态回读为5/5 endpoint healthy、零 warning；本轮真栈严格绑定完整 release
+  `7b594f379c1fbfb5156c55c4e0dc573957b49d28`、`minimax:MiniMax-M3`。
+- 187个 outline 叶子首轮 **181/187（96.79%）**；p50=8167.950ms、p95=14633.654ms、
+  max=22570.331ms。6个首轮失败后两轮均6/6，故6项都是2/3、没有0/3稳定章节失败；其中
+  `哨兵模式`首轮是一次 opening-handshake timeout，其余是模型落到澄清/非manual出口的方差。
+- 章节主批与失败复验共199轮，action=0、need_confirm=0、完整26项车态diff={}；主批有上述
+  1次transport probe error，不能写成零transport error。主artifact
+  `.artifacts/manual-rag-full-coverage/live-outline-naturalized-187-7b594f37.json`，SHA-256=
+  `4381283cbec65de900ec0a1c95dc2e10fca1de042a04a6e242da9513307eb4f5`；两次复验SHA为
+  `f0f77c53…aeac9`、`5143338e…cd3f`。
+- 35个受控视觉首轮 **30/35（85.71%）**；p50=7149.769ms、p95=11311.487ms、
+  max=12530.943ms。`位置灯 / 左转向 / 右转向 / 后雾灯 / 近光灯`仍为0/3稳定失败，三轮均
+  缺PDF页、图片页与caption；其余30项首轮即返回预期图片。
+- 视觉主批与失败复验共45轮，action=0、need_confirm=0、probe error=0、车态diff={}。主artifact
+  `.artifacts/manual-rag-full-coverage/live-visual-35-7b594f37.json`，SHA-256=
+  `b6ff52faac9f4e22996b7bc63e360351b363ec2f058f6f9fe94a0e1fe8659cb6`；两次复验SHA为
+  `0e457caa…d7da1`、`32b6059f…f3def`。
+
+### 5.6 本地修复候选与发布边界
 
 - `local_index.py` 只让三字正式 caption 在“图标/指示灯/仪表/亮灯”等视觉语境下匹配；
   “后雾灯怎么打开”反例仍命中操作页。现有 `.mrag` 已包含这些 caption，包体与基础设施 hash
@@ -101,6 +122,10 @@
 - manifest 0.3.2 新增“SU7/小米SU7 + 手册 + 具体主题 + 问号”的窄显式来源 hint；明确
   “帮我打开/关闭/设置”由 guard 保留原车控计划。`eval_route_hints` 110/110，187章节+35视觉
   的显式手册问法离线222/222。
-- 当前生产仍是 `434a046`，5/5 endpoint healthy。候选尚未 push/deploy，故生产结论仍是
-  章节首轮94.65%、视觉80%，**不是整本全绿**。本轮尝试刷新统一 verify 时因没有当前 E2E lock
-  得到 `unknown/failed`，不得沿用2026-09-03的 verified 字样冒充本轮证据。
+- 候选代码SHA `62533dd9dca2e193e6f64c33ec6462cd974e69c4` 的纯串行全仓结果为
+  **7855 passed / 34 skipped / 4 warnings / 0 failed**，日志SHA-256=
+  `72f1d16843e30c6bf9df971e53296531cf896020aeefb64246d642cb1ed6fe42`；架构扫描器同时排除了
+  `.artifacts`验证环境，并以反向用例锁住，避免第三方site-packages污染门禁。
+- 当前生产是 `7b594f37`、5/5 endpoint healthy；候选尚未push/deploy，故生产结论仍是章节首轮
+  96.79%、视觉85.71%、5个视觉caption稳定失败，**不是整本全绿**。当前release没有成功的
+  统一verify artifact，不得沿用2026-09-03 `434a046`的verified字样冒充本轮证据。
