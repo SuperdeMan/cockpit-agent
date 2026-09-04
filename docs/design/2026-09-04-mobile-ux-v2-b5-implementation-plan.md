@@ -1764,30 +1764,63 @@ T2 反向验证（副本 `main.go.orig`）：
 | M1 | 删 `"driving": f.Driving,` | 恰红 final 那条 | **恰红 final 那条** ✅ |
 | M2 | 改成 `if f.Driving { result["driving"] = true }`（omitempty 形态） | 红在 `want false` 那半 | **`final frame lacks driving key (want false)`** ✅——**这一红就是「恒带键」的理由**，一字不差 |
 
-**T5（真机读数）——卡在 deploy，读数 ⬜**
+**T5（真机读数）——两道闸都过了，核心读数全部取到**
 
-- **步骤 0-1（前提 + dry-run）✅**：`git status` 干净；`target=cloud`；设备在线、`lastUpdateTime` 仍是 `2026-09-02 16:45:36`；云栈基线 `speed_kmh=0 / gear=P`（`GET /api/vehicle/state` 回读）、`release_sha=434a0461`。
+- **步骤 0–1（前提 + dry-run）**：`git status` 干净；`target=cloud`；设备在线、`lastUpdateTime` 仍 `2026-09-02 16:45:36`；云栈基线 `speed_kmh=0 / gear=P`（`GET /api/vehicle/state` 回读）、`release_sha=434a0461`。
   `python scripts/dev_stack.py deploy --sha HEAD` ⇒ **`status: dry_run`，`blocking_changes: []`，exit 0**。
-  ⚠ **计划这一步的预期是错的**：计划写「dry-run 若报 SHA 不可达 / 未推送 ⇒ 停下要推送授权」——**工具根本不校验「main 可达」**，5 条未推送的提交照样 dry-run 通过。CLAUDE.md §6.1 那条「只接受 main 可达的 SHA」是**给人的纪律，不是工具里的闸**。⇒ 我按纪律停下、列了完整 `origin/main..HEAD`（5 条全是本轮我的，`HEAD..origin/main` 空、无别人在途）并**单独取得泓舟推送授权**后才推。
-- **推送**：`git push origin main` ⇒ `ab9680e..3a70029`，推后 `origin/main = HEAD = 3a70029`，`origin/main..HEAD` 空。
-- **步骤 2（`--apply`，泓舟单独授权）❌ 失败**：`{"action":"deploy","error_category":"runtime","status":"failed"}`，exit 1。
-  ⚠ **CLI 把失败原因整个丢掉**（`cloud_release.py:220` `_emit({"status":"error","error_category": exc.category})` 只发类别、不发 message，stderr 只有一句 `cloud-release: operation failed`）⇒ 光看输出**无法定位**。用 scratchpad 里的诊断包装（import `cloud_release_lib` 跑同一条 `execute_deploy`，catch `ReleaseError` 打全文；**不改任何仓库文件**）拿到真话：
-  **`command failed (255): ssh: Connection closed by 111.230.132.85 port 22`**
-- **定性（做了对照实验，没有停在第一个自洽解释上）**：
-  | # | 命令 | 结果 |
+  ⚠ **计划这一步的预期是错的**：计划写「dry-run 若报 SHA 不可达 / 未推送 ⇒ 停下要推送授权」——**工具根本不校验「main 可达」**，5 条未推送的提交照样 dry-run 通过。CLAUDE.md §6.1 那条「只接受 main 可达的 SHA」是**给人的纪律，不是工具里的闸**。⇒ 按纪律停下、列完整 `origin/main..HEAD`（5 条全是本轮我的，`HEAD..origin/main` 空、无别人在途）、**单独取得泓舟推送授权**后才推：`ab9680e..3a70029`。
+
+- **步骤 2（`--apply`，泓舟单独授权）——第一次失败、第二次成功**
+  - **第一次 ❌**：`{"error_category":"runtime","status":"failed"}`，exit 1。⚠ **CLI 把失败原因整个丢掉**（`cloud_release.py:220` 只 `_emit({"status":"error","error_category": exc.category})`，stderr 只有一句 `cloud-release: operation failed`）⇒ 光看输出无法定位。用 scratchpad 诊断包装（import `cloud_release_lib` 跑同一条 `execute_deploy`、catch `ReleaseError` 打全文；**不改任何仓库文件**）拿到真话：**`command failed (255): ssh: Connection closed by <host> port 22`**。
+  - **定性（做了对照实验，没停在第一个自洽解释上）**：
+
+    | # | 命令 | 结果 |
+    |---|---|---|
+    | a | `ssh -v ... "echo PING"` | **成功**，`Authenticated ... using "publickey"` |
+    | b | `ssh ... "sudo -n true && echo SUDO-OK"` | Connection closed |
+    | c | `ssh ... "ls -l /opt/car-agent/shared/bin/remote-release.sh"` | **成功**（还打了登录 banner） |
+    | d | `ssh ... "sudo -n true"` | 空输出（未见 closed） |
+    | e | `ssh ... "true && echo AND-OK"` | **成功**（`AND-OK`） |
+    | f | `ssh ... "sudo /opt/.../remote-release.sh"` | Connection closed |
+    | g | `ssh ... "id -un"`（**不带 sudo、不带 `&&`**） | **Connection closed** |
+
+    第一个自洽解释是「带 `sudo` 就被拒」（b/f 支持）——**被 g 推翻**：一条最普通的 `id -un` 同样被关。真正的模式是**「短时间内连接数超阈值后开始拒绝」**（几分钟里开了 dry-run×2、apply×2、诊断×2、探测×4 共 10+ 条 SSH/SCP），典型是服务端 fail2ban / sshd 连接频率保护；`--apply` 自己就要连开 4 条（prepare-upload → scp 51MB → chmod → deploy），落在阈值之后。
+    **两条支持它的证据**：① 停手后挂每分钟探测，**第 4 分钟 `ssh "echo SSH-BACK"` 自行恢复**（1/2/3 分钟仍被拒）；② **冷却后原样重跑 `--apply` 一次就过**，中间没改任何配置或代码。
+    ⚠ **仍未验证到底**：没有登上服务器看 `fail2ban-client status sshd` / `journalctl -u ssh` 拿封禁记录，所以它是**有两条正向证据的最合理解释，仍不是已证的根因**（TCP 22 全程可达，`Test-NetConnection` TcpTestSucceeded=True）。**不把没验证的解释当根因写死**（坑账 73 同一形态）。
+  - **第二次 ✅**：`STATUS: submitted`，exit 0。**云上 `release_sha = 7b594f379c1fbfb5156c55c4e0dc573957b49d28` = 当时的 HEAD**，`dev_stack status` 5/5 endpoint healthy。
+    ⚠ **`dev_stack verify` 自己失败了**（`{"status":"failed"}`，产物 `.artifacts/dev-stack-verifications/20260904T091630Z-unknown.json` 里 `release_sha: null`、`case_ids: []`），但**部署是成功的**——判据用 `status` 的 `release_sha`，不是 `verify` 的退出码。没重跑 verify（控 SSH 节奏）。**verify 失败 ≠ 部署失败，这两件事本轮第一次被分开。**
+
+- **设备跑的是不是本轮的 JS——先证明仪器**：取证屏 `/native-spike` 的 driving 行出现 `dismissedAt=0`（**T3 新加的字段**）⇒ dev-client 从 Metro 拿到的是本轮的 bundle，不是 09-02 内嵌的那份。**没有这一步，后面所有读数都可能是在验旧代码**（B4 缺陷 B 的教训）。
+
+- **步骤 3 核心读数：一句简单轮进入 / 一句简单轮 + 30s 退出**（chip「打开空调26度」＝ `hvac.set`，端侧快路径、**无 process 帧**——正是缺陷 C 的形态）
+
+  | 时刻 | 动作 | 取证屏读数 |
   |---|---|---|
-  | a | `ssh -v ... "echo PING"` | **成功**，`Authenticated ... using "publickey"` |
-  | b | `ssh ... "sudo -n true && echo SUDO-OK"` | Connection closed |
-  | c | `ssh ... "ls -l /opt/car-agent/shared/bin/remote-release.sh"` | **成功**（还打了登录 banner） |
-  | d | `ssh ... "sudo -n true"` | 空输出（未见 closed） |
-  | e | `ssh ... "true && echo AND-OK"` | **成功**（`AND-OK`） |
-  | f | `ssh ... "sudo /opt/.../remote-release.sh"` | Connection closed |
-  | g | `ssh ... "id -un"`（**不带 sudo、不带 `&&`**） | **Connection closed** |
-  第一个自洽解释是「带 `sudo` 就被拒」（b/f 支持）——**被 g 推翻**：一条最普通的 `id -un` 同样被关。真正的模式是**「短时间内连接数超过某个阈值后开始拒绝」**（本轮在几分钟里开了 dry-run×2、apply×2、诊断×2、探测×4 共 10+ 条 SSH/SCP），典型是服务端 fail2ban / sshd 连接频率保护。`--apply` 恰恰要连开 4 条（prepare-upload → scp 51MB → chmod → deploy），落在阈值之后。
-  **一条支持它的新证据**：停手之后挂了个每分钟一次的探测，**第 4 分钟 `ssh ... "echo SSH-BACK"` 自行恢复**（1/2/3 分钟仍 `Connection closed`）——「停一会儿就放行」的形状与短期封禁窗口一致，与「sudo 被禁」「key 失效」「服务挂了」都不相符。
-  ⚠ **仍未验证到底**：没有登上服务器看 `fail2ban-client status sshd` / `journalctl -u ssh` 拿到那条封禁记录，所以**「频率限制」是目前最合理且有一条正向证据的解释，仍不是已证的根因**——TCP 22 全程可达（`Test-NetConnection` TcpTestSucceeded=True）。**不把没验证的解释当根因写死**（坑账 73 同一形态）。
-- **云栈没有被破坏**：失败后 `dev_stack status` 仍 5/5 healthy、`release_sha` 仍是 `434a0461`（旧版本原子保留）。**云上跑的还是老代码，本批的后端改动尚未上云。**
-- ⇒ **步骤 3–8 全部 ⬜**：核心读数（注入 30 → 简单轮进入 → 注入 0/P → 简单轮退出 → 30s）、手动退出口、`Msg.driving` 单独验、HMI 真栈回归、还原表——**一条都没取**。
+  | 17:23 | 注入 `speed_kmh=30 / gear=D`（回读确认）→ 一句简单轮 | `driving: **true**（manual=false **edge.trueAt=1788513798008** edge.falseAt=0 dismissedAt=0）` |
+  | — | 注入 `0 / P`（回读确认），墙钟 `1788513881766` | — |
+  | 17:25 | 泊车后一句简单轮 | `driving: true（… **edge.falseAt=1788513915533** …）`——**这就是 B4 那 3h12m 里从没发生过的那件事**；距注入 33.8s，距截图 14.7s **< 30s 宽限 ⇒ 仍 true 是对的** |
+  | 17:27 | 过宽限后再一轮触发重渲 | `driving: **false**（… edge.falseAt=**1788513915533** …）`——**falseAt 没被第三轮刷新**（「已在 false 段不刷新起点」真机成立），距 falseAt **130.6s > 30s** |
+
+  ⇒ **缺陷 C 的完整闭环在云栈上跑通了**：简单轮既能带 `driving=true` 进入，也能带 `driving=false` 触发退出。截图 `b5-5-simple-enter.png` / `b5-5-false-logged.png` / `b5-5-simple-exit.png`。
+
+- **步骤 4 手动退出口 + 「段」语义**（截图 `b5-5-exit-row.png` / `b5-5-after-exit.png` / `b5-5-dismissed.png` / `b5-5-same-segment.png` / `b5-5-new-segment.png`）
+
+  | # | 动作 | 读数 |
+  |---|---|---|
+  | 1 | 注入 30/D → 简单轮 → 进设置页 | 行车档开关**关着**（灰），其下出现 **「自动行车中 · 座舱判定为行驶 ┊ 退出」**——**这正是 B4 `b4-14-t3.png` 那个「开关灰着、App 却在行车档里、找不到出口」的缺口**；desc 也已是新的「（每轮回答后判定）」 |
+  | 2 | 点「退出」（墙钟 1788514241089） | 那一行**立刻消失**（**不等 30s**）；取证屏 `driving: false（… edge.trueAt=1788514128758 **edge.falseAt=0** **dismissedAt=1788514244165**）`——**Edge 仍在标 true（falseAt=0，车还在"行驶"），`driving` 却已是 false**：退出压住了本段而**没有改判据**，Edge 事实原样保留。点击→写入 3.1s |
+  | 3 | 同段内（车仍 30/D）再一句简单轮 | `edge.trueAt` **仍是 1788514128758**（**没刷新**）、`driving` 仍 **false** ⇒ **「段内连续 true 不刷新起点」在真机成立**。没有这条收紧，退出按钮下一轮就失效 |
+  | 4 | 注入 0/P → 一轮 → 注入 30/D → 一轮（开新段） | `edge.trueAt=**1788514525751**`（新段起点，比旧的晚 397s）、`dismissedAt` **仍 1788514244165 未被清**、`driving: **true**` ⇒ **新段照常自动进入** |
+
+  ⇒ **「退出只压本次、不改判据」四格全部成立**（泓舟裁决的原话）。
+
+- **步骤 5 手动开关不受影响**：行车档手动**开** ⇒ 退出行**不出现**（判据 `autoDriving = !drivingManual && drivingActive(...)`，手动的出口就是开关本身）。截图 `b5-5-manual-on.png`。
+
+- **步骤 6 `Msg.driving` 单独验 ⬜ 未做**（B4 §6.3 遗留⑤ 仍开）：它要一句会出过程区的复杂轮 + 退出后回看老气泡，本轮时间用在缺陷 C 主链上了。
+
+- **步骤 7 HMI 回归**：`cd hmi && npm test` **298 pass / 0 fail**（网关加键前后各跑一次，都是 298）。**现读**核过 `hmi/src/App.tsx`：只有 `:383`（process 分支）读 `data.driving`，`:420` 起的 final 分支**不读它** ⇒ 多出来的键 HMI 收到即忽略。真栈 Vite + 浏览器那半 **⬜ 未做**。
+
+- **步骤 8 还原表**：见下方还原表。收尾时又发了一轮让 App 自己退出行车档（`edge.falseAt=1788514870426` → `driving: false`），设备与云栈都回到泊车基线，截图 `b5-5-final-parked.png`。
 
 **本批踩的坑（主计划 §9 从 75 起）**
 
@@ -1811,6 +1844,12 @@ T2 反向验证（副本 `main.go.orig`）：
 ⑧ **短时间内密集 SSH 会把自己锁在外面**：本轮几分钟内开了 10+ 条 SSH/SCP（dry-run×2、apply×2、诊断×2、探测×4），之后连最普通的 `ssh ... "id -un"` 都 `Connection closed by ... port 22`，而 TCP 22 仍可达。⇒ **真栈调试要控连接节奏**（每条命令都是一次新 SSH，`--apply` 自己就要 4 条）；撞上之后**先等，别继续重试**——重试只会把窗口继续推后。本轮实测**停手后第 4 分钟自行恢复**（1/2/3 分钟仍被拒）。
    ⚠ 这条**没有验证到底**（登不上去看 `fail2ban-client status sshd` / `journalctl -u ssh`），它是**目前最合理的解释而非已证根因**。
 
+⑨ ⛔ **判「哪块屏是活的」不能只 `grep mState=`**：本轮第一张截图 27641 字节**纯黑**——不是坑 74 那个 `DevLauncherErrorActivity`（前台明明是 `MainActivity`），而是**截了物理关着的那块屏**。`dumpsys display | grep mState=` 吐出的两行**没有标明各属于哪个 display**，按出现顺序猜会猜反。正确读法是**三行对齐读**：`grep -E 'Display Id|mUniqueId|mState='`，实测本机 `local:4630946481727302019`（内屏 2224×2488）= OFF、`local:4630947090644569220`（外屏 1080×2520）= ON（机身折叠态）。⇒ **纯黑截图有三种成因**（Metro 死 / 截了关着的屏 / 真息屏），字节数相近，**必须先定位是哪一种**。
+
+⑩ **`dev_stack verify` 失败 ≠ 部署失败**：本轮 `--apply` 返回 `STATUS: submitted`、`dev_stack status` 的 `release_sha` 已是新 SHA 且 5/5 healthy，但紧接着的 `dev_stack verify` 返回 `{"status":"failed"}`（产物里 `release_sha: null` / `case_ids: []`）。⇒ **判部署成没成，看 `status` 的 `release_sha`**；`verify` 是另一件事（它自己还要开 SSH，本轮大概率又撞了连接节奏），它红不构成回滚理由。
+
+⑪ **真机验「修好了」之前，先证明设备跑的是本轮的代码**：本轮先在 `/native-spike` 上看到 T3 新加的 `dismissedAt=0` 字段，才开始取缺陷 C 的读数。设备上的 APK 是 09-02 的包，**如果它用的是内嵌 bundle 而不是 Metro 的，后面每一条读数都是在验旧代码而看不出来**（B4 缺陷 B 同族）。⇒ **仪器先自证，再用仪器测被测物。**
+
 **收口读数（本会话自己跑出来的）**
 
 | 项 | 开工基线 | 收口 | Δ |
@@ -1821,7 +1860,7 @@ T2 反向验证（副本 `main.go.orig`）：
 | `pytest test/test_remaining_e2e_protocol.py` | — | **187 passed** | 不受影响 |
 | `go test ./gateway/...`（快速回路） | ⬜（本机无 Go / Docker 停） | **4 包全 ok**（cloud / deployprofile / edge / tlscfg），其中 edge **+2** | +2 |
 | `cd hmi && npm test` | 298 pass / 0 fail | **298 pass / 0 fail** | 0（网关多一个键，HMI final 分支现读确认不读它——`hmi/src/App.tsx:383` 只有 process 分支读 `data.driving`，`:420` 起的 final 分支没有） |
-| `dev_stack status` | 5/5 healthy, `release_sha=434a0461` | 5/5 healthy, **`release_sha` 仍 `434a0461`** | **未变——deploy 失败，本批后端未上云** |
+| `dev_stack status` | 5/5 healthy, `release_sha=434a0461` | 5/5 healthy, **`release_sha=7b594f37`** | **已上云**（第二次 `--apply` 成功；`verify` 子命令自己失败但部署是成的） |
 
 **提交（6 个，均已推送；`origin/main = HEAD = 3a70029`）**
 
@@ -1837,18 +1876,22 @@ T2 反向验证（副本 `main.go.orig`）：
 
 | 项 | 动过？ | 回读 |
 |---|---|---|
-| 云栈 `speed_kmh` / `gear` | **没动**（T5 步骤 3 没跑到） | 仍 `0` / `P`（`GET /api/vehicle/state`） |
-| App 角色 / 行车档 / 免唤醒 / 播报 | **没动**（没做真机取证） | — |
-| 设备端 App | **没装新包**（`lastUpdateTime` 仍 `2026-09-02 16:45:36`） | — |
+| 云栈 `speed_kmh` / `gear` | **动过**（30/D ↔ 0/P 共 4 轮注入） | **已还原 `0` / `P`**，`GET /api/vehicle/state` 回读确认 |
+| App 行车档开关 | **动过**（手动开 → 关，验步骤 5） | **已关回**，截图 `b5-5-restored.png` 回读 |
+| App 行车档状态 | 取证期间进过 3 段行车档 | **已退出**（收尾一轮登记 `falseAt=1788514870426` → `driving: false`，`b5-5-final-parked.png`） |
+| App 角色 / 免唤醒 / 播报 | **没动**（角色仍「手持」，截图可见） | — |
+| 设备端 App | **没装新包**（`lastUpdateTime` 仍 `2026-09-02 16:45:36`），只是重连 Metro 取了本轮 bundle | — |
+| `adb reverse tcp:8081` | **本轮建的**（开工时 `adb reverse --list` 为空） | 留着（第 2 批还要用） |
+| 云栈 release | **动过**：`434a0461` → **`7b594f37`** | 这是本批的交付，不还原 |
 | 本机 Docker daemon | **启动了**（此前 Stopped；泓舟已批） | 仍在运行；两个卷 `b5-gowork` / `b5-gomodcache` 是本轮建的临时卷 |
 | speaker 音量 | 不在表里（§0 第 2 条 #5） | — |
 
 **遗留 / 给下一批的话**
 
-① ⛔ **T5 的真机读数一条都没取**（步骤 3–8 全 ⬜），因为 `--apply` 失败在 SSH 层。**本批的后端改动（proto 字段 9 / Edge 出口标注 / 网关透传）在宿主侧被 pytest + go test 钉住了，但从未在云栈上跑过一次**。缺陷 C 是否真的修好了，**目前只有单测层面的证据**。
-   ⇒ **下一批开工前必须先补这一趟**：SSH 冷却后重跑 `dev_stack deploy --sha <当时的 HEAD> --apply`（要泓舟当轮再授权一次），然后按 T5 步骤 3–8 取读数。**别把 T2 的 Go 绿当成「云上 final 带 driving」的证据**——那是两件事（坑账「记录不等于修复」的同族）。
+① **缺陷 C 已在云栈上闭环**（T5 步骤 3–5 全部取到，云上 `release_sha=7b594f37`）。仍开的两格：**步骤 6 `Msg.driving` 单独验 ⬜**（B4 §6.3 遗留⑤，要一句复杂轮 + 退出后回看老气泡）、**步骤 7 的真栈 HMI（Vite + 浏览器）那半 ⬜**（单测 298 已绿、`App.tsx` final 分支不读该键已现读核过）。两条都便宜，随第 2 批真机轮顺手做。
+   ⚠ 一条**没验的**：本轮所有轮次都用 chip「打开空调26度」（`hvac.set`，端侧快路径）。**「上云路径的 final 也带标」在真机上没单独验过**——它在 pytest 里有 `test_cloud_path_stamps_both_progress_and_final`，但那是单测。要在真机上确认，得发一句会上云的复杂轮再看 final。
 
-② **T4 步骤 3 的 Metro 热载冒烟 ⬜**：8081 上的 Metro 是别人 2026-09-03 22:26 起的，按纪律不动它。设置页退出行的**正例**本来就要 Edge 标（挂在 T5 一起补）；阴性（手动开 ⇒ 不出退出行）也没做。
+② **T4 步骤 3 的 Metro 热载冒烟——正例与阴性都在 T5 里做掉了**：正例＝设置页出现「自动行车中 · 退出」并点得动（T5 步骤 4），阴性＝手动开 ⇒ 退出行不出现（T5 步骤 5）。**没有动别人的 Metro**（8081 上那个是 2026-09-03 22:26 起的），只是让设备重连它取新 bundle；`adb reverse tcp:8081` 是本轮建的。
 
 ③ **`go vet ./gateway/edge` ⬜**：`run_go_tests.ps1` 不接受 `-` 开头参数、快速回路也只跑 `go test`。`go test` 已含 vet 默认子集，缺的是完整 vet。要补的话得再写一条 docker 命令。
 
