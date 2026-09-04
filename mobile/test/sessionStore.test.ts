@@ -137,6 +137,45 @@ describe('正常路径（App.tsx:330-607/680-720 对照）', () => {
     core.dispose()
   })
 
+  test('B5-3 final 带 driving:true ⇒ 登记 trueAt（简单轮也能进行车档）', () => {
+    const { transport, core } = newCore()
+    core.send('打开空调')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid, speech: '好的', driving: true })
+    expect(core.store.getState().drivingEdge.trueAt).toBeGreaterThan(0)
+    expect(core.store.getState().drivingEdge.falseAt).toBe(0)
+    core.dispose()
+  })
+
+  test('B5-3 true 段后 final 带 driving:false ⇒ 登记 falseAt（缺陷 C 的退出事件从此每轮都有）', () => {
+    const { transport, core } = newCore()
+    core.send('打开空调')
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, speech: '好的', driving: true })
+    core.send('关闭空调')
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, speech: '好的', driving: false })
+    const e = core.store.getState().drivingEdge
+    expect(e.falseAt).toBeGreaterThan(0)
+    expect(e.falseAt).toBeGreaterThanOrEqual(e.trueAt)
+    core.dispose()
+  })
+
+  test('B5-3 final 无 driving 键（旧网关）⇒ drivingEdge 一字不动', () => {
+    const { transport, core } = newCore()
+    core.store.setState({ drivingEdge: { trueAt: 5, falseAt: 0 } })
+    core.send('打开空调')
+    core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id, speech: '好的' })
+    expect(core.store.getState().drivingEdge).toEqual({ trueAt: 5, falseAt: 0 })
+    core.dispose()
+  })
+
+  test('B5-3 dismissDriving 写 drivingDismissedAt（内存态，初值 0）', () => {
+    const { core } = newCore()
+    expect(core.store.getState().drivingDismissedAt).toBe(0)
+    core.dismissDriving()
+    expect(core.store.getState().drivingDismissedAt).toBeGreaterThan(0)
+    core.dispose()
+  })
+
   test('action 帧追加到当前气泡', () => {
     const { transport, core } = newCore()
     core.send('打开空调')

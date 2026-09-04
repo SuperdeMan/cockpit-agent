@@ -85,3 +85,29 @@ describe('建议开行车档（§6 触发③）：三条件缺一不出，已在
     expect(drivingSuggested({ ...ok, ...over })).toBe(false)
   })
 })
+
+describe('B5-3 「本次」= 本段：trueAt 是段起点', () => {
+  test('段内再来 true 不刷新起点（final 每轮都标之后尤其重要）', () => {
+    expect(recordEdgeDriving({ trueAt: 10, falseAt: 0 }, true, 20)).toEqual({ trueAt: 10, falseAt: 0 })
+  })
+  test('false 段之后再来 true 开新段（起点刷新、falseAt 清零）', () => {
+    expect(recordEdgeDriving({ trueAt: 10, falseAt: 20 }, true, 25)).toEqual({ trueAt: 25, falseAt: 0 })
+  })
+})
+
+describe('B5-3 用户退出只压本段（dismissedAt），不改判据', () => {
+  const edge = { trueAt: NOW - 60_000, falseAt: 0 }
+  test('退出时刻 ≥ 段起点 ⇒ 本段不算行车，哪怕 Edge 仍标 true', () => {
+    expect(drivingActive({ manual: false, edge, now: NOW, dismissedAt: NOW - 30_000 })).toBe(false)
+  })
+  test('新段起点晚于退出时刻 ⇒ 自动进入照常', () => {
+    const fresh = { trueAt: NOW - 10_000, falseAt: 0 }
+    expect(drivingActive({ manual: false, edge: fresh, now: NOW, dismissedAt: NOW - 30_000 })).toBe(true)
+  })
+  test('手动开压过退出（退出只针对自动进入）', () => {
+    expect(drivingActive({ manual: true, edge, now: NOW, dismissedAt: NOW })).toBe(true)
+  })
+  test('同一毫秒退出算退出（dismissedAt === trueAt 的边界）', () => {
+    expect(drivingActive({ manual: false, edge, now: NOW, dismissedAt: edge.trueAt })).toBe(false)
+  })
+})
