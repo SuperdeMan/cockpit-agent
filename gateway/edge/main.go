@@ -417,6 +417,9 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		result := map[string]any{
 			"type": "final", "speech": f.Speech, "follow_up": f.FollowUp,
 			"need_confirm": f.NeedConfirm, "actions": actions,
+			// B5 缺陷 C：终态也透传行车态（与 process 分支同款、恒带键不 omitempty——
+			// 客户端要能分辨「false」与「旧网关没有这个键」；HMI 不读它）
+			"driving": f.Driving,
 		}
 		// M2 P2：会话级情绪信号（空=中性不发键，HMI 按缺省处理）
 		if f.Emotion != "" {
