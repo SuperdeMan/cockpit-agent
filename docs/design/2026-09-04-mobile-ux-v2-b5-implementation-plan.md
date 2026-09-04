@@ -1784,7 +1784,8 @@ T2 反向验证（副本 `main.go.orig`）：
   | f | `ssh ... "sudo /opt/.../remote-release.sh"` | Connection closed |
   | g | `ssh ... "id -un"`（**不带 sudo、不带 `&&`**） | **Connection closed** |
   第一个自洽解释是「带 `sudo` 就被拒」（b/f 支持）——**被 g 推翻**：一条最普通的 `id -un` 同样被关。真正的模式是**「短时间内连接数超过某个阈值后开始拒绝」**（本轮在几分钟里开了 dry-run×2、apply×2、诊断×2、探测×4 共 10+ 条 SSH/SCP），典型是服务端 fail2ban / sshd 连接频率保护。`--apply` 恰恰要连开 4 条（prepare-upload → scp 51MB → chmod → deploy），落在阈值之后。
-  ⚠ **未验证到底**：没有登上服务器看 `fail2ban-client status sshd` / `journalctl -u ssh`（登不上去），所以**「频率限制」目前仍是最合理的解释，不是已证的根因**——TCP 22 本身可达（`Test-NetConnection` TcpTestSucceeded=True）。**不把没验证的解释当根因写死**（坑账 73 同一形态）。
+  **一条支持它的新证据**：停手之后挂了个每分钟一次的探测，**第 4 分钟 `ssh ... "echo SSH-BACK"` 自行恢复**（1/2/3 分钟仍 `Connection closed`）——「停一会儿就放行」的形状与短期封禁窗口一致，与「sudo 被禁」「key 失效」「服务挂了」都不相符。
+  ⚠ **仍未验证到底**：没有登上服务器看 `fail2ban-client status sshd` / `journalctl -u ssh` 拿到那条封禁记录，所以**「频率限制」是目前最合理且有一条正向证据的解释，仍不是已证的根因**——TCP 22 全程可达（`Test-NetConnection` TcpTestSucceeded=True）。**不把没验证的解释当根因写死**（坑账 73 同一形态）。
 - **云栈没有被破坏**：失败后 `dev_stack status` 仍 5/5 healthy、`release_sha` 仍是 `434a0461`（旧版本原子保留）。**云上跑的还是老代码，本批的后端改动尚未上云。**
 - ⇒ **步骤 3–8 全部 ⬜**：核心读数（注入 30 → 简单轮进入 → 注入 0/P → 简单轮退出 → 30s）、手动退出口、`Msg.driving` 单独验、HMI 真栈回归、还原表——**一条都没取**。
 
@@ -1807,7 +1808,7 @@ T2 反向验证（副本 `main.go.orig`）：
 
 ⑦ ⛔ **`cloud_release.py` 把失败原因整个丢掉**（`:220` 只 `_emit({"status":"error","error_category": exc.category})`，stderr 只有一句 `cloud-release: operation failed`）⇒ 部署失败时**本地拿不到任何可行动的信息**。本轮靠一个 scratchpad 诊断包装（import `cloud_release_lib`、跑同一条 `execute_deploy`、catch `ReleaseError` 打全文，不改仓库文件）才拿到 `command failed (255): ssh: Connection closed by <host> port 22`。⇒ **部署脚本的「信息最小化」会把可诊断性一起最小化掉**；下次直接上诊断包装，别在 `error_category` 上猜。
 
-⑧ **短时间内密集 SSH 会把自己锁在外面**：本轮几分钟内开了 10+ 条 SSH/SCP（dry-run×2、apply×2、诊断×2、探测×4），之后连最普通的 `ssh ... "id -un"` 都 `Connection closed by ... port 22`，而 TCP 22 仍可达。⇒ **真栈调试要控连接节奏**（每条命令都是一次新 SSH，`--apply` 自己就要 4 条）；撞上之后**先等，别继续重试**——重试只会把窗口继续推后。
+⑧ **短时间内密集 SSH 会把自己锁在外面**：本轮几分钟内开了 10+ 条 SSH/SCP（dry-run×2、apply×2、诊断×2、探测×4），之后连最普通的 `ssh ... "id -un"` 都 `Connection closed by ... port 22`，而 TCP 22 仍可达。⇒ **真栈调试要控连接节奏**（每条命令都是一次新 SSH，`--apply` 自己就要 4 条）；撞上之后**先等，别继续重试**——重试只会把窗口继续推后。本轮实测**停手后第 4 分钟自行恢复**（1/2/3 分钟仍被拒）。
    ⚠ 这条**没有验证到底**（登不上去看 `fail2ban-client status sshd` / `journalctl -u ssh`），它是**目前最合理的解释而非已证根因**。
 
 **收口读数（本会话自己跑出来的）**
