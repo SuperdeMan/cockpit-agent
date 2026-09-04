@@ -8,6 +8,8 @@ import { PixelRatio, Pressable, ScrollView, Text, useWindowDimensions } from 're
 import { useStore } from 'zustand'
 
 import { HAPTIC_KINDS, performHaptic } from '@/core/haptics'
+import { lowPower } from '@/core/power/lowPower'
+import { BATTERY_NATIVE_AVAILABLE, usePowerFacts } from '@/core/power/usePowerFacts'
 import { drivingActive, NO_EDGE_DRIVING, type DrivingEdgeFact } from '@/core/presence/drivingMode'
 import { getWired } from '@/core/session/wiring'
 import { settingsStore } from '@/core/settings/store'
@@ -54,6 +56,8 @@ export default function NativeSpikeScreen() {
 
   // B5-6：原生缓存的最近一次投影。新挂载实例的初值来自它（不是新事件）——所以「posture 有值 + events: 0」才是对的读数。
   const currentNative = FoldNative?.current?.() ?? null
+  // B5-7：低电量回落的事实与判据（旧 APK 上 native=false、两项 null ⇒ lowPower=false，材质照旧）
+  const power = usePowerFacts()
 
   const rows: Array<[string, string]> = [
     ['native', FOLD_NATIVE_AVAILABLE ? 'available' : 'MISSING（旧 APK？重建没带上？）'],
@@ -64,6 +68,7 @@ export default function NativeSpikeScreen() {
     ['bounds', fold?.bounds ? JSON.stringify(fold.bounds) : '—'],
     ['events', String(events)],
     ['current', currentNative ? JSON.stringify(currentNative) : '—（旧 APK 无 current / 从未收到事件）'],
+    ['power', `native=${BATTERY_NATIVE_AVAILABLE} level=${power.level} saver=${power.saver} lowPower=${lowPower(power)}`],
     ['driving', `${driving}（manual=${settings.drivingManual} edge.trueAt=${edge.trueAt} edge.falseAt=${edge.falseAt} dismissedAt=${dismissedAt}）`],
     ['layout', `${layout.mode} · ${layout.widthClass}×${layout.heightClass}`],
     ['dp', `${Math.round(width)}×${Math.round(height)} @${PixelRatio.get()}x`],

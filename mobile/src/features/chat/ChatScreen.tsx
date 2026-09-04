@@ -27,6 +27,8 @@ import { useReduceMotion } from '../../core/a11y/reduceMotion'
 import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
 import { composerInputMode, sheetResident } from '../../core/presence/drivingMode'
 import { MIC_LABEL } from '../../core/presence/presence'
+import { lowPower } from '../../core/power/lowPower'
+import { usePowerFacts } from '../../core/power/usePowerFacts'
 import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { PANE_GAP, screenSwitch, tabletopSplit } from '../../ui/layout/sizeClass'
@@ -425,12 +427,16 @@ function ChatBody({
 
   // §5.11 真模糊（B3 T9 裁决过）：被糊的背景 = 对话列表，BlurTargetView 包住它；ref 要先挂上再给 VoiceSheet
   // 渲 BlurView（首帧 null 会被 expo-blur 当成「没配」静默回落成 none——blur-spike.tsx 的 ready 模板）。
-  // 回落 G1-tint 的三种情形（§5.11 末句）：减少透明度 / 行车档 / ref 还没挂上；低电量不做（无 expo-battery）
+  // 回落 G1-tint 的情形（§5.11 末句）：减少透明度 / 行车档 / ref 还没挂上 /
+  // 低电量 = lowPower(power)（B5-7，expo-battery：省电模式 ∨ 电量 <20%；原生缺席按 null 降级 ⇒ 不回落）
+  const power = usePowerFacts()
   const blurTargetRef = useRef<View | null>(null)
   const [blurReady, setBlurReady] = useState(false)
   useEffect(() => setBlurReady(true), [])
   const blurTarget =
-    blurReady && blurTargetRef.current && !settings.reduceTransparency && !snapshot.driving ? blurTargetRef : null
+    blurReady && blurTargetRef.current && !settings.reduceTransparency && !snapshot.driving && !lowPower(power)
+      ? blurTargetRef
+      : null
 
   // §7.5 返回顺序：隐私栏 > 语音层（行车档 B/C 的常驻层除外——它不是「可收」的层）> 页面默认
   // （根屏返回 = 退 Activity，M3-W 定案不变；predictiveBackGestureEnabled 是原生配置，本批不碰）。
