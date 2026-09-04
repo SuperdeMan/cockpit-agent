@@ -113,7 +113,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 先读 `mobile/README.md` 与 `docs/design/README.md` 中最新 mobile 计划；mobile 线可在独立工作树领先本分支，先核对 `git status` / `git log --oneline origin/main..HEAD`，不从本入口复制批次长读数。**UX v2 B4 四批已收口（2026-09-03）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md` §6.1–§6.4（**§6.4 是收口节**：交裁清单 / 出账去向核销 / §1.1 逐行核销；三个待裁项、B4 抓到的三个缺陷、仍开的真机格子与 B5 的账全在那一节）。下一步 **B5 = 一趟重建**（`foldstate` 定性 / B3′ 角色启用 / `expo-battery`） |
+| Android App | 先读 `mobile/README.md` 与 `docs/design/README.md` 中最新 mobile 计划；mobile 线可在独立工作树领先本分支，先核对 `git status` / `git log --oneline origin/main..HEAD`，不从本入口复制批次长读数。**UX v2 B4 四批已收口（2026-09-03）**，逐批读数/坑/遗留出账在 `docs/design/2026-09-02-mobile-ux-v2-b4-implementation-plan.md` §6.1–§6.4（**§6.4 是收口节**：交裁清单 / 出账去向核销 / §1.1 逐行核销；三个待裁项、B4 抓到的三个缺陷、仍开的真机格子与 B5 的账全在那一节）。下一步 **B5**（计划待拆，新会话；泓舟 2026-09-04 裁决）：**第一件 = 缺陷 C「车停了行车档退不出来」走后端在 `final` 帧也标 `driving`**（Edge 单一裁决点不变、网关透传、客户端 `recordEdgeDriving` 同吃 final）+ UI 手动退出口；再一趟重建（`foldstate` 查当前值 / B3′ 角色启用 / `expo-battery` / 缺陷 A 横屏半）；其余 B4 开项（播报卡顿对照构建、T14 小样本、KWS 阈值 A/B 批、音量、Scanner 三条、界面优化两条）在 B5 计划 §0 逐条裁 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
