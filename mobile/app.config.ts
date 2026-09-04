@@ -60,6 +60,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-secure-store',
     // Windows subst 构建的盘符根统一（非 win32 原样通过），坑账见插件头注
     './plugins/with-unified-drive-root',
+    // 静态 App Shortcuts（B5-8，方案 §9）：长按图标 →「说话」「车况」。
+    // 写 res/xml/shortcuts.xml + strings.xml + MainActivity 的 android.app.shortcuts meta-data，
+    // 三样都在 prebuild 重生成的 android/ 里 ⇒ 只能做成插件。
+    './plugins/with-shortcuts',
     [
       'expo-build-properties',
       {

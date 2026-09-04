@@ -6,7 +6,7 @@
 // 改服务器配置 → 回本屏时按 edgeUrl+token 判变 → 断开重连（M1-5 服务器分区语义）。
 import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
-import { Link, Redirect, useFocusEffect } from 'expo-router'
+import { Link, Redirect, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BackHandler, KeyboardAvoidingView, Pressable, Text, useWindowDimensions, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -273,6 +273,17 @@ function ChatBody({
   const turn = useMemo(() => currentTurn(messages), [messages])
   const latestTurnId = turn.assistant?.id ?? ''
   const [listHeight, setListHeight] = useState(0)
+
+  // B5-8 深链 xiaozhou://voice（Shortcuts「说话」）：升层**不开麦**（§12.2：进入后仍需一次手势才录音）。
+  // 一次性消费：同一次进入只升一次，用户收起后不再被参数顶回去。
+  // 无消息时 latestTurnId 与 usePresence:98 的判等两边都是 ''，override 照样生效（现读核过）。
+  const { voice: voiceParam } = useLocalSearchParams<{ voice?: string }>()
+  const voiceParamConsumed = useRef(false)
+  useEffect(() => {
+    if (voiceParam !== '1' || voiceParamConsumed.current) return
+    voiceParamConsumed.current = true
+    setSheetOverride({ turnId: latestTurnId, mode: 'open' })
+  }, [voiceParam, latestTurnId])
 
   // 免唤醒离开 LISTENING 而没有定稿（退出词 / 语气词 / 误唤醒回收 / 回声）：草稿不留气泡。
   // 定稿路径里 commit 先于 FSM 换态（onSend 同步发生在 _finalizeSend 内），到这里已是 no-op

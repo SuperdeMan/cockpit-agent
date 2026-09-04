@@ -47,6 +47,8 @@ export default function RootLayout() {
       <Stack.Screen name="onboarding" options={{ title: '连接服务器' }} />
       <Stack.Screen name="settings" options={{ title: '设置' }} />
       <Stack.Screen name="vehicle" options={{ title: '车辆' }} />
+      {/* B5-8：xiaozhou://voice 的落点，只做一次 Redirect 回对话页（不显示自己） */}
+      <Stack.Screen name="voice" options={{ headerShown: false }} />
       <Stack.Screen name="debug" options={{ title: '调试 · 主链帧' }} />
       <Stack.Screen name="voice-spike" options={{ title: '调试 · 语音 spike' }} />
       <Stack.Screen name="card-gallery" options={{ title: '调试 · 卡片画廊' }} />
