@@ -3983,6 +3983,49 @@ Scanner 抓到的三类里，**「文本对比度」与「重复说明」是 `ta
 - 结果清单用 `uiautomator dump` + 逐屏滚动**按文本去重聚合**抓下来（脚本在 scratchpad，不入库），
   比逐屏截图省得多；停止条件是「本轮无新增文本」。
 
+#### ⚠ T14 材料——**8 张拿到 6 张**，缺 armed 与 speaking（2026-09-04 13:00–14:10）
+
+材料在 `mobile/e2e/artifacts/b4-sample/`（gitignore）。**编号（`s1..s8`）与打乱留到集齐再做**
+——现在按态名存，因为还差两张；提前编号会让缺口被藏起来。
+
+| 态 | 文件 | 同步判据（怎么保证截到的是那一态） |
+|---|---|---|
+| idle | `raw-idle.png` | 静置 |
+| listening | `raw-listening.png` | **同一条 `adb shell` 里** `DOWN → sleep → screencap → UP`（拆开会各带自己的 downTime，B3 坑） |
+| thinking | `t14-thinking2.png` | Maestro `extendedWaitUntil: visible: presence-capsule` |
+| attention | `t14-attention.png` | Maestro `extendedWaitUntil: visible: dock-confirm` |
+| **armed** | **⬜ 没拿到** | 见下 |
+| **speaking** | **⬜ 没拿到**（`t14-answering/answered` 只是候选，**没验证过是播报中**） | — |
+| 行车 C 常驻层 | `t14-driving.png` | 角色 C + 行车档开，图上可见常驻层 + 120dp 球 + 18pt 大字 + **无输入框** |
+| 泊车 同一轮 | `t14-parked.png` | 同一记录、行车档关 |
+
+##### ⚠ armed 拿不到本身是一个发现
+
+「免唤醒对话」开关**回读 `checked=true`、没弹权限框**，但两轮快拍（0.4s / 0.3s 间隔，共 18 帧）里
+`presence-capsule` **一次都没出现** ⇒ **FSM 没进 ARMED**。armed 胶囊只在进入后 `ARMED_CAPSULE_MS`(3s)
+内显示，但 18 帧覆盖了 ~12 秒、且包含「切走再切回」重新进入的一次——**不是错过时间窗，是压根没进**。
+⇒ 指向 **KWS 引擎没载起来**，与 §0 第 3 条①「唤醒率 5–6/10 不达标，问题在麦→AEC/NS/AGC→KWS 声学链路」
+是同一条线索。**这一格出账给那个待裁的 KWS 阈值 A/B 批**，不在 T14 里硬凑。
+
+##### 这一格里最有复用价值的三条
+
+1. ⭐ **抓瞬态要用 Maestro 的 `takeScreenshot` + `extendedWaitUntil`，不要 adb 连拍。**
+   本轮先试了「发出去然后 adb 连拍」，连续三次都落空：① 键盘挡住整屏；
+   ② `chip` 发的是**端侧车控**（「打开空调26度」几乎瞬时完成）⇒ 根本没有 thinking 可截；
+   ③ Maestro 起 session 要 ~30s，等它跑完再拍时慢轮已经答完。
+   改成**在流里按状态自己的 testID 同步再截图**，一次就中。
+2. ⛔ **`pressKey: Back` 不是「收键盘」，是「返回一级」——键盘不在时它把 App 退到了桌面。**
+   本轮 `_states.yaml` 第二段就是这么废的（失败截图是桌面）。
+   ⇒ 收键盘改用 `tapOn: point: "50%,30%"` 点记录区空白处。（B3 坑⑤「`hideKeyboard` 发的是 BACK」同族，
+   我换了个写法又踩了一次。）
+3. **`adb shell input tap` 打在没预期的地方会触发系统语音助手**：一次误点之后前台变成
+   `voice_assist_root`（App 没死，pid 不变）。⇒ 误点的代价不只是「没生效」，还可能**把别的东西唤起来**。
+
+⇒ **T14 做不做仍交泓舟**：现有 6 张只够覆盖「六态」里的四态，
+**按 §11.4 的原判据（每人看 6 张状态截图）跑不完整**。两条路：
+① 等 armed/speaking 补齐再跑；② 降级成「四态 + 行车/泊车」跑一版并**在记录里写明只有四态**。
+⚠ 无论哪条，**都不许写「裁定算过」**——§11.4 状态可读性至今仍无外部分布读数。
+
 #### 设备与云栈还原表（本轮）
 
 | 项 | 改成 | 还原为 | 回读方式与结果 |
