@@ -1691,7 +1691,173 @@ git diff --stat -- AGENTS.md && git commit -m "docs(agents): Android 行指向 B
 
 ### 6.1 第 1 批「缺陷 C」（T1–T5）
 
-（待回填）
+**开工基线（2026-09-04，本会话自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `check_android_env.ps1` | 退出码 0（18 pass / 0 warn / 0 fail） |
+| `dev_stack target show` | `{"source":"file","status":"target","target":"cloud"}` |
+| adb server（`netstat -ano \| findstr :5037`） | LISTENING PID 60816 = `D:\Android\Sdk\platform-tools\adb.exe`（= `ANDROID_HOME` 那份 ✅，坑 73 的纪律成立）。`Get-Process adb` 另有 PID 14604 **取不到 Path / StartTime**——就是坑 73 里那个 2026-08-27 的孤儿 adb（普通权限查不到属性），本轮没碰它 |
+| `mobile: npm test` | **50 suites / 499 tests 全绿**（58.6s） |
+| `mobile: npm run typecheck` | 0 error |
+| `python -m pytest orchestrator/edge/tests -q` | **843 passed**（206.97s） |
+| `go test ./gateway/edge` | ⬜ 见「本批踩的坑」①——本机**没有 Go 工具链**，唯一途径是 `scripts/run_go_tests.ps1`（Docker 容器），而 Docker daemon 当时是停的 |
+| `cd hmi && npm test` | 298 pass / 0 fail（12.8s；开工期跑的，作网关加键前的对照） |
+| 设备 `lastUpdateTime` | **`2026-09-02 16:45:36`** ✅ 与 §0 第 1 条的锚一致（`versionName=0.1.0`，`firstInstallTime=2026-08-25 23:43:56`） |
+| `git log --oneline origin/main..HEAD` | **空** |
+| `git log --oneline HEAD..origin/main` | **空** |
+| `git status --short` | 干净 |
+| 起点 SHA | `ab9680e`（= `origin/main` = HEAD，无分叉、无别人的在途提交） |
+| 云栈 `dev_stack status` | 5/5 endpoint healthy；**`release_sha=434a0461`**（云上跑的比 main 老，本批 deploy 前的基线） |
+| Metro | 8081 `packager-status:running`，但**是别人 2026-09-03 22:26 起的**（PID 41312/75696），按纪律不停、不重启；本批未用它做热载 |
+| worktree | 未分树（泓舟未授权），在主工作树做 |
+
+**逐任务**
+
+**T1 步骤 0（方案 §11.1 B5 行回写）** — 提交 `54b5763`。落点说明：计划原话是「B5 行**末尾**追加一句」，但 §11.1 是 markdown 表格，追到最后一格（「依赖」列）语义不对——那句讲的是**范围**，所以追加进「范围」列末尾，表格列数不变。状态行按事实写「已批准（泓舟 2026-09-04）… 第 1 批进行中」，不是计划里那句「草案待批」（计划是拆计划当轮写的，批准发生在其后）。
+
+**T1（proto 字段 9 + `_stamp_driving` + pytest）** — 提交 `05efce6`（3 files，+126/−5）
+- 跑红：5 条全红，**红法对**——4 条 `AttributeError: driving`、1 条 `ValueError: Protocol message FinalResult has no "driving" field`，没有一条是 assertion。第一条报的是 `AttributeError` 而不是 `assert finals`，**顺带证明了「打开空调」确实走本地快路径**（`_finals` 非空）。
+- `gen-proto.ps1` 退出 0；`git status --short -- gen/` 空（gen/ 仍 gitignore，未 force-add）。
+- 跑绿：新文件 5 passed；`orchestrator/edge/tests` **843 → 848（+5）**；`test/test_remaining_e2e_protocol.py` 187 passed 不受影响。
+
+**T3（客户端半）** — 提交 `0455e38`（5 files，+113/−11）
+- 跑红 6 条：drivingMode 3（段内不刷新 / 压住本段 / 同一毫秒边界）+ sessionStore 3（final true 登记 / final false 登记 / `dismissDriving` 不存在）。「false 段后开新段」「手动压过退出」「旧网关不动」三条在实现前就是绿的——它们钉的是不变量，红只在反向验证里看得见（与计划步骤 2 的预告一致）。
+- 比计划多一条用例：计划步骤 5 的 M4 要求「补一条 `dismissedAt === trueAt` 的边界用例」，我在步骤 1 就补了 ⇒ drivingMode 是 **+6** 不是 +5，全量 **499 → 509**（计划估 ≈508）。
+- `tsc` 0。
+
+**T4（设置页退出口 + `usePresence` 接线）** — 提交 `4d4c15d`（2 files，+42/−3）
+- `tsc` 0；`npm test` **509 条不变**（`.tsx` 无 jest 面，判据在 T3 已钉）。
+- 步骤 3 的 Metro 热载冒烟 **⬜ 未做**：8081 上的 Metro 是别人 2026-09-03 22:26 起的（PID 41312/75696），纪律是「不停别人的 Metro」；用它热载会把别人的会话状态搅进来。这条冒烟的正例本来也要 Edge 标（T5 步骤 4），一并挂 T5。
+
+**反向验证（每条先 `grep` 证明变异落盘；副本还原，未用 `git checkout --`）**
+
+T1（副本 `server.py.orig`）：
+
+| # | 变异 | 计划预期红 | **实红** | 差在哪 |
+|---|---|---|---|---|
+| M1 | 删 `_stamp_driving` 的 `elif which == "final"` | 4 条 | **4 条** | 条数对，**但红的不是计划说的那四条**：计划说「cloud 那条 progress 半仍绿」，实际 cloud 那条**红了**（它同时断言 final），绿的是**泊车 false 那条** |
+| M2 | 删出口调用、把两处旧调用搬回云端路径 | 3 条（本地两条 + 覆盖那条） | **2 条**（本地 moving + 挡位 D） | ① 泊车那条同上假绿；② 「覆盖」那条走的是 `_CLOUD_ROUTED`，搬回云端路径后覆盖**仍然成立**，本就该绿——计划这条预期是错的。**「本地快路径的 final 不带标」仍被抓到（2 条红），盖在出口的理由成立** |
+| M3 | `_is_driving` 只看 `speed > 0` | 恰 1 条 | **恰 1 条** ✅ | — |
+
+⚠ **本批最值钱的一条**：`test_local_fast_path_final_is_stamped_false_when_parked`（泊车 ⇒ final `driving is False`）**对「final 到底有没有被标」零敏感**——proto 的 bool 缺省就是 `False`，把整个 final 分支删掉它照样绿。这正是坑 69 的形态（判据对被改的那一项零敏感），而且是**用例自身的形状**造成的，不是变异没落盘。它仍留着（键在场 / 值正确的正向断言有意义），但**不能拿它当「final 被标了」的证据**——那个证据是 M1/M2 里红的那几条。
+
+T3（副本 `drivingMode.ts.orig` / `store.ts.orig`）：
+
+| # | 变异 | 计划预期红 | **实红** | 差在哪 |
+|---|---|---|---|---|
+| M1 | `inSegment` 恒 false（退回旧语义） | 恰 1 条 | **恰 1 条**（段内不刷新）✅ | — |
+| M2 | 删 `drivingActive` 的 `dismissedAt` 判据行 | 1 条 | **2 条**（压住本段 + 同一毫秒边界） | 我按 M4 补的边界用例依赖同一行 ⇒ 覆盖更严，不是缺陷 |
+| M3 | `typeof === 'boolean'` 改成 `!!data.driving` | 恰 1 条 | **恰 1 条**（旧网关不动）✅ | 这一红就是「只认布尔」那条兼容的理由 |
+| M4 | `dismissedAt >= trueAt` 改成 `>` | 计划预测**零红**，要求补边界用例 | **恰 1 条**（同一毫秒边界） | 用例已在步骤 1 补上 ⇒ 计划那句「预期零红」在补了之后不再成立，**这正是计划自己要的结果** |
+
+**T2（网关半）** — 提交 `3a70029`（4 files，+41/-1）
+- 跑红：**只有** `TestEventToMapFinalCarriesDriving` FAIL——`frames_test.go:18: final frame lacks driving key (want true): map[actions:[] follow_up: need_confirm:false speech:好的 type:final]`；`TestEventToMapProcessStillCarriesDriving` PASS（回归面在）。与计划预期一字不差。
+- 跑绿：`./gateway/...` 四个包全 `ok`（cloud / deployprofile / edge / tlscfg）。
+- `go vet` **⬜ 未单独跑**：`run_go_tests.ps1` 只接受包名、不接受 `-` 开头参数；`go test` 本身已跑 vet 的默认子集（printf / atomic / bool / ifaceassert 等）。
+- 契约文档：主计划 §2 `final` 行键表加 `driving` + 一句说明。`test/e2e_process_region.py` 简单轮 / 复杂轮各加一条 `final.get("driving") is False`；**本地栈未复跑**（`target=cloud` 禁本地 Compose），云上的证据是 T5。
+
+T2 反向验证（副本 `main.go.orig`）：
+
+| # | 变异 | 计划预期红 | **实红** |
+|---|---|---|---|
+| M1 | 删 `"driving": f.Driving,` | 恰红 final 那条 | **恰红 final 那条** ✅ |
+| M2 | 改成 `if f.Driving { result["driving"] = true }`（omitempty 形态） | 红在 `want false` 那半 | **`final frame lacks driving key (want false)`** ✅——**这一红就是「恒带键」的理由**，一字不差 |
+
+**T5（真机读数）——卡在 deploy，读数 ⬜**
+
+- **步骤 0-1（前提 + dry-run）✅**：`git status` 干净；`target=cloud`；设备在线、`lastUpdateTime` 仍是 `2026-09-02 16:45:36`；云栈基线 `speed_kmh=0 / gear=P`（`GET /api/vehicle/state` 回读）、`release_sha=434a0461`。
+  `python scripts/dev_stack.py deploy --sha HEAD` ⇒ **`status: dry_run`，`blocking_changes: []`，exit 0**。
+  ⚠ **计划这一步的预期是错的**：计划写「dry-run 若报 SHA 不可达 / 未推送 ⇒ 停下要推送授权」——**工具根本不校验「main 可达」**，5 条未推送的提交照样 dry-run 通过。CLAUDE.md §6.1 那条「只接受 main 可达的 SHA」是**给人的纪律，不是工具里的闸**。⇒ 我按纪律停下、列了完整 `origin/main..HEAD`（5 条全是本轮我的，`HEAD..origin/main` 空、无别人在途）并**单独取得泓舟推送授权**后才推。
+- **推送**：`git push origin main` ⇒ `ab9680e..3a70029`，推后 `origin/main = HEAD = 3a70029`，`origin/main..HEAD` 空。
+- **步骤 2（`--apply`，泓舟单独授权）❌ 失败**：`{"action":"deploy","error_category":"runtime","status":"failed"}`，exit 1。
+  ⚠ **CLI 把失败原因整个丢掉**（`cloud_release.py:220` `_emit({"status":"error","error_category": exc.category})` 只发类别、不发 message，stderr 只有一句 `cloud-release: operation failed`）⇒ 光看输出**无法定位**。用 scratchpad 里的诊断包装（import `cloud_release_lib` 跑同一条 `execute_deploy`，catch `ReleaseError` 打全文；**不改任何仓库文件**）拿到真话：
+  **`command failed (255): ssh: Connection closed by 111.230.132.85 port 22`**
+- **定性（做了对照实验，没有停在第一个自洽解释上）**：
+  | # | 命令 | 结果 |
+  |---|---|---|
+  | a | `ssh -v ... "echo PING"` | **成功**，`Authenticated ... using "publickey"` |
+  | b | `ssh ... "sudo -n true && echo SUDO-OK"` | Connection closed |
+  | c | `ssh ... "ls -l /opt/car-agent/shared/bin/remote-release.sh"` | **成功**（还打了登录 banner） |
+  | d | `ssh ... "sudo -n true"` | 空输出（未见 closed） |
+  | e | `ssh ... "true && echo AND-OK"` | **成功**（`AND-OK`） |
+  | f | `ssh ... "sudo /opt/.../remote-release.sh"` | Connection closed |
+  | g | `ssh ... "id -un"`（**不带 sudo、不带 `&&`**） | **Connection closed** |
+  第一个自洽解释是「带 `sudo` 就被拒」（b/f 支持）——**被 g 推翻**：一条最普通的 `id -un` 同样被关。真正的模式是**「短时间内连接数超过某个阈值后开始拒绝」**（本轮在几分钟里开了 dry-run×2、apply×2、诊断×2、探测×4 共 10+ 条 SSH/SCP），典型是服务端 fail2ban / sshd 连接频率保护。`--apply` 恰恰要连开 4 条（prepare-upload → scp 51MB → chmod → deploy），落在阈值之后。
+  ⚠ **未验证到底**：没有登上服务器看 `fail2ban-client status sshd` / `journalctl -u ssh`（登不上去），所以**「频率限制」目前仍是最合理的解释，不是已证的根因**——TCP 22 本身可达（`Test-NetConnection` TcpTestSucceeded=True）。**不把没验证的解释当根因写死**（坑账 73 同一形态）。
+- **云栈没有被破坏**：失败后 `dev_stack status` 仍 5/5 healthy、`release_sha` 仍是 `434a0461`（旧版本原子保留）。**云上跑的还是老代码，本批的后端改动尚未上云。**
+- ⇒ **步骤 3–8 全部 ⬜**：核心读数（注入 30 → 简单轮进入 → 注入 0/P → 简单轮退出 → 30s）、手动退出口、`Msg.driving` 单独验、HMI 真栈回归、还原表——**一条都没取**。
+
+**本批踩的坑（主计划 §9 从 75 起）**
+
+① ⛔ **本机没有 Go 工具链**，`go test` 的唯一途径是 `scripts/run_go_tests.ps1`（Docker 容器），而**开工时 Docker daemon 是停的**（`Get-Service com.docker.service` = Stopped）。`where go` 空、`C:\Program Files\Go` 不存在、`GOROOT`/`GOPATH` 未设、全盘 `go.exe` 搜索无果。⇒ **计划里所有 `go test ./gateway/edge/ ...` 的命令在本机都不能直接跑**。本轮启动了 Docker Desktop（`D:\Program\Docker Desktop.exe`，daemon 5s 起来，server 29.6.1）——**这一步已向泓舟报备，不是本批边界里的东西**。
+
+② ⛔ **`run_go_tests.ps1` 一趟 ≈35 分钟以上，成本全在 `cp -a /src/. /work/`**：它把**整个仓库**拷进容器（本机实测 **8.03 GB / 84,602 文件**），且没有挂载 module cache（每趟重跑 `go mod tidy`）。实测拷贝速度约 **0.2 GB/分钟**（Docker Desktop 的 npipe + 只读 bind mount）。
+   **8GB 里 5.83 GB / 11,530 文件是 `.artifacts/`**（`.gitignore:108` 忽略它，但 docker bind mount 照拷），其中 `.artifacts/release-clones/` 是**若干份完整仓库克隆**（每份自带 `go.mod`，所以是独立模块、主模块 tidy 会跳过——只是白拷）。⇒ 这个 wrapper 的成本与 Go 代码量无关，**与本机攒了多少 artifacts 有关**。计划把 `go test` 当成便宜动作（跑红 / 跑绿 / 全包 / M1 / M2 五趟）⇒ 按原样执行是 **3 小时**。
+   ⚠ 另一面：**这个 wrapper 拒绝任何以 `-` 开头的参数**（`Test-GoPackagePattern` + `if ($item.StartsWith("-"))` throw）⇒ 计划步骤 2 的 `go test ./gateway/edge/ -run 'TestEventToMap' -v` **在本机语法上就跑不了**；而且包名**结尾不能带 `/`**（`./gateway/edge/` 会被 `suffix.Split("/")` 判出空段而 throw），要写 `./gateway/edge`。
+   ⇒ 本轮做法：**权威读数仍走 `scripts/run_go_tests.ps1`**；反向验证与迭代用一个 scratchpad 里的快速回路（同样只读挂载源、同样跑完校验 `go.mod`/`go.sum` 哈希、同样校验包名，区别只是 `/work` 用 named volume 复用，每趟只重拷 `gateway/` + `gen/`）。**这个脚本不入库**。
+
+③ **新版 protobuf 生成的 `*_pb2.py` 里没有明文字段名**（描述符是二进制 `serialized_pb`）⇒ 计划步骤 3 的判据 `Select-String -Path gen\python\...\orchestrator_pb2.py -Pattern 'driving' | Measure-Object` **计数是 0，不是 ≥2**——它不是「生成失败」的信号。**行为判据才作数**：`FinalResult(driving=True).driving is True`、`FinalResult.DESCRIPTOR.fields_by_name['driving'].number == 9`、`ProcessUpdate` 仍是 6。Go 侧那条（`func (x *FinalResult) GetDriving`，恰 1 条）照计划成立。**又一例「门禁读的是形式不是内容」。**
+
+④ **scratchpad 里临时 `.ps1` 连撞两次编码坑**（记忆里那条「带中文注释的 .ps1 必须 UTF-8 with BOM」的两个面）：第一次注释里的中文让 PowerShell 5.1 按 ANSI 读、`param()` 块直接 `Unexpected token ')'`；改成纯英文注释后第二次仍炸——**脚本里写死的仓库路径含中文「产品」，被读成 `浜у搧`**，`Resolve-Path` 找不到 `go.mod`。⇒ 临时 PowerShell 脚本一律**全 ASCII**，仓库路径用 `(Get-Location).Path` 由调用方给，不写死。
+
+⑤ **`git` 对本仓的行尾**：工作区与索引里 `server.py` / `*.ts` 都是 **LF**，但 `core.autocrlf=true` ⇒ 每次 `git add`/`diff` 都刷一片 `LF will be replaced by CRLF` 警告。用 Python `io.open(..., newline="")` 回写保持 LF 是对的（实测 diff 只有真正改动的行，没有整文件行尾漂移）。
+
+⑥ ⛔ **`dev_stack deploy` 的 dry-run 不校验「SHA 是否 main 可达」**（本轮实测：5 条未推送的本地提交，dry-run 照样 `status: dry_run` / `blocking_changes: []` / exit 0）。CLAUDE.md §6.1 与 AGENTS §3.2 那句「cloud deploy 只接受 clean、已提交、**main 可达**的 SHA」**是给人的纪律，不是工具里的闸**。⇒ 计划 §0 第 4 条写的「dry-run 若报 SHA 不可达 / 未推送 ⇒ 停下要授权」**永远不会触发**；这道闸只能靠人在 dry-run **通过之后**自己停下来核 `origin/main..HEAD`。**门禁不存在的时候，纪律得自己长出判据。**
+
+⑦ ⛔ **`cloud_release.py` 把失败原因整个丢掉**（`:220` 只 `_emit({"status":"error","error_category": exc.category})`，stderr 只有一句 `cloud-release: operation failed`）⇒ 部署失败时**本地拿不到任何可行动的信息**。本轮靠一个 scratchpad 诊断包装（import `cloud_release_lib`、跑同一条 `execute_deploy`、catch `ReleaseError` 打全文，不改仓库文件）才拿到 `command failed (255): ssh: Connection closed by <host> port 22`。⇒ **部署脚本的「信息最小化」会把可诊断性一起最小化掉**；下次直接上诊断包装，别在 `error_category` 上猜。
+
+⑧ **短时间内密集 SSH 会把自己锁在外面**：本轮几分钟内开了 10+ 条 SSH/SCP（dry-run×2、apply×2、诊断×2、探测×4），之后连最普通的 `ssh ... "id -un"` 都 `Connection closed by ... port 22`，而 TCP 22 仍可达。⇒ **真栈调试要控连接节奏**（每条命令都是一次新 SSH，`--apply` 自己就要 4 条）；撞上之后**先等，别继续重试**——重试只会把窗口继续推后。
+   ⚠ 这条**没有验证到底**（登不上去看 `fail2ban-client status sshd` / `journalctl -u ssh`），它是**目前最合理的解释而非已证根因**。
+
+**收口读数（本会话自己跑出来的）**
+
+| 项 | 开工基线 | 收口 | Δ |
+|---|---|---|---|
+| `mobile: npm test` | 50 suites / **499** | 50 suites / **509** | **+10**（drivingMode +6、sessionStore +4；计划估 ≈508，多的那条是 M4 要求补的边界用例） |
+| `mobile: npm run typecheck` | 0 error | **0 error** | — |
+| `pytest orchestrator/edge/tests` | **843** | **848** | **+5** |
+| `pytest test/test_remaining_e2e_protocol.py` | — | **187 passed** | 不受影响 |
+| `go test ./gateway/...`（快速回路） | ⬜（本机无 Go / Docker 停） | **4 包全 ok**（cloud / deployprofile / edge / tlscfg），其中 edge **+2** | +2 |
+| `cd hmi && npm test` | 298 pass / 0 fail | **298 pass / 0 fail** | 0（网关多一个键，HMI final 分支现读确认不读它——`hmi/src/App.tsx:383` 只有 process 分支读 `data.driving`，`:420` 起的 final 分支没有） |
+| `dev_stack status` | 5/5 healthy, `release_sha=434a0461` | 5/5 healthy, **`release_sha` 仍 `434a0461`** | **未变——deploy 失败，本批后端未上云** |
+
+**提交（6 个，均已推送；`origin/main = HEAD = 3a70029`）**
+
+| SHA | 任务 | 面 |
+|---|---|---|
+| `54b5763` | T1 步骤 0 | 方案 §11.1 B5 行回写（1 file，+2/−2） |
+| `05efce6` | T1 | proto 字段 9 + `_stamp_driving` + pytest（3 files，+126/−5） |
+| `0455e38` | T3 | 客户端半（5 files，+113/−11） |
+| `4d4c15d` | T4 | 设置页退出口 + 接线（2 files，+42/−3） |
+| `3a70029` | T2 | 网关半 + 契约文档 + e2e 断言（4 files，+41/−1） |
+
+**还原表**
+
+| 项 | 动过？ | 回读 |
+|---|---|---|
+| 云栈 `speed_kmh` / `gear` | **没动**（T5 步骤 3 没跑到） | 仍 `0` / `P`（`GET /api/vehicle/state`） |
+| App 角色 / 行车档 / 免唤醒 / 播报 | **没动**（没做真机取证） | — |
+| 设备端 App | **没装新包**（`lastUpdateTime` 仍 `2026-09-02 16:45:36`） | — |
+| 本机 Docker daemon | **启动了**（此前 Stopped；泓舟已批） | 仍在运行；两个卷 `b5-gowork` / `b5-gomodcache` 是本轮建的临时卷 |
+| speaker 音量 | 不在表里（§0 第 2 条 #5） | — |
+
+**遗留 / 给下一批的话**
+
+① ⛔ **T5 的真机读数一条都没取**（步骤 3–8 全 ⬜），因为 `--apply` 失败在 SSH 层。**本批的后端改动（proto 字段 9 / Edge 出口标注 / 网关透传）在宿主侧被 pytest + go test 钉住了，但从未在云栈上跑过一次**。缺陷 C 是否真的修好了，**目前只有单测层面的证据**。
+   ⇒ **下一批开工前必须先补这一趟**：SSH 冷却后重跑 `dev_stack deploy --sha <当时的 HEAD> --apply`（要泓舟当轮再授权一次），然后按 T5 步骤 3–8 取读数。**别把 T2 的 Go 绿当成「云上 final 带 driving」的证据**——那是两件事（坑账「记录不等于修复」的同族）。
+
+② **T4 步骤 3 的 Metro 热载冒烟 ⬜**：8081 上的 Metro 是别人 2026-09-03 22:26 起的，按纪律不动它。设置页退出行的**正例**本来就要 Edge 标（挂在 T5 一起补）；阴性（手动开 ⇒ 不出退出行）也没做。
+
+③ **`go vet ./gateway/edge` ⬜**：`run_go_tests.ps1` 不接受 `-` 开头参数、快速回路也只跑 `go test`。`go test` 已含 vet 默认子集，缺的是完整 vet。要补的话得再写一条 docker 命令。
+
+④ **官方 `scripts/run_go_tests.ps1` 本轮没有跑出过一次读数**：起了一趟（本轮全程在跑），**35+ 分钟只完成了 8GB 里的 6.8GB 拷贝**，且它用默认 `GOPROXY=https://proxy.golang.org` ——快速回路第一次跑正是因为这个默认值在 `go test` 阶段拿 `.zip` 时 **TLS handshake timeout**（`go mod tidy` 只取 `.mod` 所以看不出来）。⇒ **官方脚本在本机大概率也会撞同一堵墙**，但**这一条本轮没有实证到底**（拷贝阶段还没结束）。要么给它加 `-e GOPROXY`（改仓库文件，本批边界外），要么把 `.artifacts/` 从挂载里排除——**两条都该交泓舟裁**，不要下一批自己动手改。
+
+⑤ **本批的两个 Docker 卷 `b5-gowork` / `b5-gomodcache` 留着没删**（删除是红线）：下一批要复用就直接 `gotest_fast.ps1 run`，不用再 init；不要了就交泓舟裁 `docker volume rm`。快速回路脚本在 scratchpad，**不入库**。
+
+⑥ **`test/e2e_process_region.py` 的两条新断言只改了没跑**（`target=cloud` 禁本地 Compose）。它不在 cloud 缺省集里，所以云上也不会自动跑到。⇒ 下一次有人开本地栈时顺手验一趟，或者在 T5 补做时手工核 final 帧里逐字有 `"driving":false`。
+
+⑦ **`b5-gowork` 卷里的 `/work` 是 T2 那一刻的源码快照**：下一批跑 `gotest_fast.ps1 run` 会自动重拷 `gateway/` + `gen/` + `test/fixtures/`，但**不会重拷别的目录**——如果下一批改了 gateway 以外的 Go 代码，记得扩 `run` 分支的拷贝清单，否则会拿着旧文件跑出假绿。
 
 ### 6.2 第 2 批「重建趟」（T6–T11）
 
