@@ -99,6 +99,8 @@ python test/e2e_mtls.py                    # 断言型：服务间 mTLS（需 GR
 python test/e2e_journeys.py                # 旅程级（L3）：跨 Agent 自主执行 × 全场景连续对话（见下节）；--provider <pid> 锁定 active LLM（评测中途漂移=报告作废、退出码 1）
 python -m pytest test/e2e_real_providers.py -q -s   # 无需 docker：真实三方 provider 冒烟（按 key 自动 skip）
 python test/e2e_strict_stack.py            # 断言型：数据真实性——严格栈冒烟 + mock 泄漏探针（五问外源卡 _prov 全 real；SU7 手册直载完整 36 题 corpus，逐题校验落域/车型/PDF 页/正文/图片/零动作；active=mock 自动 SKIP，属 live 车道）（2026-09-03 校准）
+python scripts/eval_manual_rag_full_coverage.py --pdf <SU7手册PDF> --output <artifact.json>  # 整本离线：278页源重建 + 269页锚 + 160索引路径 + 187 outline叶子 + 35视觉语义 + 原36题；各层分栏，不产一个伪“总准确率”
+python scripts/probe_manual_rag_full_coverage.py --env-root <根仓> --pdf <SU7手册PDF> --expected-release <40位SHA> --provider <id> --model <id> --output <artifact.json>  # 手工真栈：187叶子+35视觉；先过问句/FastIntent双安全闸，每轮验manual/real/page/section/image/零动作/完整车态，支持checkpoint与release绑定失败复验
 python test/e2e_planner_toolcall.py        # 协议探针：各 provider tool-calling 真实行为矩阵（M1a submit_plan；named tool_choice/arguments 合法性/finish_reason，--providers 指定逐家 pin）（2026-07-24）
 python test/e2e_voiceprint_probe.py        # 模型探针：M4 P4 声纹可分性——同人/异人余弦分布、混淆对、端到端识别率与**阈值扫描**、最短有效语音、分布外音频。**产出是三个阈值的实测值**（改阈值前必重跑）；需宿主 pip install sherpa-onnx（2026-07-26）
 python test/e2e_s2s_probe.py               # 协议探针：M4 S2S provider（omni realtime）行为矩阵——tools 支持度/escalate 分流/cancel 残包/回注不双播/多轮上下文/首音频时延；--case 单跑、--model 换厂商验证「锁协议不锁厂商」（2026-07-25）

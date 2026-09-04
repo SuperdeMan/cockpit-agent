@@ -51,6 +51,31 @@
   source: "manual warning guardrail: user supplied image belongs to vision"
   tags: [manual, guardrail, vision]
 
+# ── manual-rag v2.2：整本 outline 明确来源请求的确定性兜底 ────────────
+- text: 我想知道 SU7 用户手册里车辆解闭锁 P挡自动解锁？
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "2026-09-04 full-manual production run: explicit source still varied"
+  tags: [manual, full_coverage, explicit_source, replace]
+
+- text: 我想知道小米SU7说明书里规格与参数 动力性参数？
+  initial_intents: [info.search]
+  expect_final_intents: [manual.query]
+  source: "2026-09-04 full-manual production run: power specification 1/3"
+  tags: [manual, full_coverage, explicit_source, specification, replace]
+
+- text: 根据 SU7 用户手册帮我打开空调？
+  initial_intents: [hvac.on]
+  expect_final_intents: [hvac.on]
+  source: "explicit manual-source guardrail: directive remains vehicle control"
+  tags: [manual, guardrail, directive]
+
+- text: 我想知道 iPhone 用户手册里怎么设置热点？
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "explicit manual-source guardrail: non-vehicle device"
+  tags: [manual, guardrail, device]
+
 # ── manual-rag v2.1：f2dcb46 生产 36 题真栈错域闭环 ────────────────────
 - text: 胎压报警怎么办
   initial_intents: [tire_pressure.query]

@@ -122,14 +122,30 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 - 统一 verify、5/5 endpoint healthy、零 warning；verify artifact
   `.artifacts/dev-stack-verifications/20260903T130534Z-434a046.json`。手册真栈 artifact
   `.artifacts/manual-rag-live-validation/20260903T130655Z-final-434a046.json`，SHA=`3fed8c94…d63a`；
-- exact 代码本地全量 7833/34/4，确定性 retrieval 36/36。手册 RAG 项已关闭，但不反推下列
-  safety focus、TTS、barge-in 等独立活项全绿。
+- exact 代码本地全量 7833/34/4，确定性 retrieval 36/36。这里关闭的是原36题基准项，不代表
+  整本手册范围全绿；2026-09-04 扩面结果见下节。
+
+### 4.5 整本手册范围复核（生产 `434a046`，候选修复未发布）
+
+- 原 PDF 重建与 `.mrag` 逐字一致；离线候选的269页、160索引路径、187 outline叶子、35视觉
+  语义、原36题均全绿，证明当前失败不支持“应改向量库”的结论；
+- 当前生产自然化187叶子首轮177/187（94.65%）；10条失败复验后9条2/3、动力性参数1/3，
+  无0/3稳定失败，但不能写187/187稳定通过；
+- 当前生产视觉28/35；位置灯、左右转向、后雾灯、近光灯为0/3稳定零命中，另两条首轮
+  RuntimeError后2/3；
+- 章节主批+失败复验207轮、视觉主批+失败复验49轮均action=0、need_confirm=0、transport
+  probe error=0、完整26项车态diff={}；初版不安全名词短语探针曾发一次幂等`hvac.on`，已中止并
+  由双安全预检取代，不能藏掉；
+- 本地候选只扩三字caption的视觉语境匹配，并在manifest增加明确SU7手册来源的窄hint；离线
+  视觉35/35、显式来源222/222。尚未push/deploy，生产仍非整本全绿。证据与hash见
+  `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5。
 
 ## 5. 当前活项
 
 | 活项 | 当前证据 | 下一步 / 启动条件 |
 |---|---|---|
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
+| 手册整本范围未全绿 | 生产章节首轮177/187且10条有方差；35个受控视觉中5个三字caption 0/3稳定失败 | 本地0.3.2候选已绿；单独授权后push/deploy，并在新release重跑187+35，不能借本地结果关闭 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |

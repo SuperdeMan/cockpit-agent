@@ -103,10 +103,20 @@ _ONE_PIXEL_PNG = base64.b64decode(
 def _visual_package_path(tmp_path: Path, *, oversized: bool = False) -> Path:
     pages = [
         ExtractedPage(
+            page_number=89,
+            section_path=("驾驶和操作", "灯光", "后雾灯"),
+            content="后雾灯。进入车辆控制的灯光设置可以打开或关闭后雾灯。",
+        ),
+        ExtractedPage(
             page_number=95,
             section_path=("驾驶和操作", "雨刮器和后视镜", "前风挡雨刮"),
             content=("前风挡雨刮。轻按雨刮拨杆开关后松开，前雨刮往复刮刷一次。"
                      "也可进入车辆控制>雨刮调节进行设置。"),
+        ),
+        ExtractedPage(
+            page_number=192,
+            section_path=("信息显示和娱乐", "中控显示屏", "警告灯和指示灯"),
+            content="后雾灯图标点亮表示车辆后雾灯已经开启。",
         ),
         ExtractedPage(
             page_number=193,
@@ -143,6 +153,20 @@ def _visual_package_path(tmp_path: Path, *, oversized: bool = False) -> Path:
                          "雨刮调节选择挡位。"),
             role="illustration",
             data=large,
+        ),
+        ExtractedVisualAsset(
+            asset_id="xiaomi-su7-2024-user-manual:p0192:i04",
+            page_number=192,
+            xobject_name="/I4",
+            media_type="image/png",
+            width=167,
+            height=168,
+            bbox=(85.72, 131.0, 109.58, 155.0),
+            caption="后雾灯",
+            aliases=(),
+            description="",
+            role="warning_icon",
+            data=_ONE_PIXEL_PNG,
         ),
         ExtractedVisualAsset(
             asset_id="xiaomi-su7-2024-user-manual:p0193:i12",
@@ -368,6 +392,29 @@ def test_visual_alias_retrieves_official_icon_page_and_image(tmp_path):
     assert image.match_kind == "visual_alias"
     assert image.data_uri.startswith("data:image/png;base64,")
     assert "安全带" in image.description
+
+
+def test_short_official_caption_requires_visual_context_and_returns_exact_icon(
+        tmp_path):
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+
+    chunks = _retrieve(provider, "仪表上的后雾灯图标是什么意思")
+
+    assert chunks and chunks[0].page_start == 192
+    assert [image.caption for image in chunks[0].images] == ["后雾灯"]
+    assert chunks[0].images[0].match_kind == "visual_caption"
+
+
+def test_short_caption_does_not_hijack_non_visual_operation_question(tmp_path):
+    path = _visual_package_path(tmp_path)
+    provider = ManualIndexRetriever(path, catalog_path=_catalog_path(tmp_path, path))
+
+    chunks = _retrieve(provider, "后雾灯怎么打开")
+
+    assert chunks and chunks[0].page_start == 89
+    assert all(image.caption != "后雾灯"
+               for chunk in chunks for image in chunk.images)
 
 
 def test_top_text_page_returns_same_page_illustration_without_putting_it_in_text(tmp_path):

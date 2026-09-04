@@ -103,3 +103,20 @@ def test_evaluator_fails_when_expected_visual_evidence_is_missing():
     assert report["summary"]["failed"] == 1
     assert "missing expected image page" in report["cases"][0]["reason"]
     assert "missing image caption" in report["cases"][0]["reason"]
+
+
+def test_evaluator_requires_the_exact_section_path_not_only_the_page():
+    cases = [{
+        "id": "wrong-section",
+        "query": "胎压多少",
+        "expect_pages_any": [245],
+        "expect_section_path": ["车辆规格", "规格与参数", "电机参数"],
+    }]
+
+    report = asyncio.run(evaluate_cases(_Retriever(), cases, top_k=4))
+
+    assert report["summary"]["failed"] == 1
+    assert "missing expected section" in report["cases"][0]["reason"]
+    assert report["cases"][0]["hits"][0]["section_path"] == [
+        "车辆规格", "车轮与轮胎参数",
+    ]
