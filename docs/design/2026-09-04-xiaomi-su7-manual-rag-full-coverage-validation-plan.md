@@ -1,8 +1,8 @@
 # Xiaomi SU7 整本手册 RAG 全覆盖验证计划
 
-> 状态：**全范围验证已完成；本地修复候选待发布验证**（2026-09-04）
+> 状态：**全范围验证与生产发布已闭合**（2026-09-05）
 > 初始基线：`origin/main@aa9f73a`；实现提交 `55414e0`；全量前合入主线 `54a7afe`
-> 当前生产 release：`7b594f379c1fbfb5156c55c4e0dc573957b49d28`；`434a046` 结果保留作历史对照
+> 当前生产 release：`9a3b6f2f08657464c5049a5abf8f6e989e398bce`；旧release结果保留作历史对照
 > 私有输入：`2024-小米SU7-Pro-Max-用户手册.pdf`，SHA-256=`ef16d204…e4705d`
 
 ## 1. 验证结论的边界
@@ -94,7 +94,7 @@
   `5b5a2e40776fde5da3c2714672c88d880028f974ef80b209bfeca117cc62d17f`；两次复验 SHA 为
   `c8a8a2bb…2896`、`2587a63c…ab92`。
 
-### 5.5 当前生产 `7b594f37`：整本复跑结果
+### 5.5 历史生产 `7b594f37`：整本复跑结果
 
 - 2026-09-04 状态回读为5/5 endpoint healthy、零 warning；本轮真栈严格绑定完整 release
   `7b594f379c1fbfb5156c55c4e0dc573957b49d28`、`minimax:MiniMax-M3`。
@@ -122,7 +122,7 @@
   六个artifact SHA依次为`66e72148…908cb`、`fe73d9bc…515c`、`3aefd6a5…775d`、
   `3022151d…b572`、`44f113b1…c5be`、`2e97a64a…abb9`。
 
-### 5.6 本地修复候选与发布边界
+### 5.6 0.3.2候选与中间生产`805711cf`
 
 - `local_index.py` 只让三字正式 caption 在“图标/指示灯/仪表/亮灯”等视觉语境下匹配；
   “后雾灯怎么打开”反例仍命中操作页。现有 `.mrag` 已包含这些 caption，包体与基础设施 hash
@@ -135,6 +135,32 @@
   `72bf34aaac387a61b9f61440082a98999b2c07df5b77b4e269a9ece9a8a1e0a6`。架构扫描器排除了
   `.artifacts`验证环境；候选集测试夹具也改为执行时创建TTL时间戳，2小时全量在导入超过15分钟
   后仍通过，分别以反向用例锁住第三方site-packages污染与模块级时间冻结。
-- 当前生产是 `7b594f37`、5/5 endpoint healthy；候选尚未push/deploy，故生产结论仍是章节首轮
-  96.79%、视觉85.71%、5个视觉caption稳定失败，**不是整本全绿**。当前release没有成功的
-  统一verify artifact，不得沿用2026-09-03 `434a046`的verified字样冒充本轮证据。
+- 0.3.2发布到`805711cf`后，五个三字caption稳定缺口均转绿；但章节主批184/187、视觉34/35
+  中共出现4次`Agent 内部错误：RuntimeError`。Trace显示均已正确落`manual.query`，失败发生在
+  Agent执行阶段；相同用例后续通过，证明不是路由或BM25缺口，而是LLM调用没有降级出口。
+- `805711cf`的5/5 status与统一verify均通过，但上述Agent内部错误使它不能作为最终手册闭合点。
+
+### 5.7 0.3.3生产闭合`9a3b6f2f`
+
+- 0.3.3只在manual Agent的生成出口增加故障边界：非配额/参数/鉴权类RuntimeError最多重试1次；
+  仍失败时保留已检索的真实PDF卡并诚实说明摘要暂不可用；ValueError等编程异常继续显式失败。
+- 精确代码SHA`9a3b6f2f08657464c5049a5abf8f6e989e398bce`全量为
+  **7861 passed / 34 skipped / 5 warnings / 0 failed**（`-n2 --dist worksteal`，656.57s），
+  日志SHA=`ab40f81e5b1ed9b40b674e75197a1e55e25838a030f488e2fbfbb542d68d91df`；5条warning
+  对应4类既有项，Starlette按两个worker重复。
+- 生产5/5 endpoint healthy、零warning；统一verify为`verified`，artifact
+  `.artifacts/dev-stack-verifications/20260904T163045Z-9a3b6f2.json`，SHA=
+  `7a521902fdfb18582d225a73d88ac5c6adb655ea0a255b16135d1094316dad44`，provider/model为
+  `minimax:MiniMax-M3`。
+- 最终独立章节批 **187/187**，p50=9365.659ms、p95=14446.685ms、max=34710.202ms；artifact
+  `.artifacts/manual-rag-full-coverage/live-outline-naturalized-187-clean-9a3b6f2.json`，SHA=
+  `508756d663bd8d6fcb818da9a2e8f73f1abdf76a3d2e634e409d9391497baf80`。
+- 最终视觉批 **35/35**，p50=7886.125ms、p95=13456.285ms、max=21204.482ms；artifact
+  `.artifacts/manual-rag-full-coverage/live-visual-35-9a3b6f2.json`，SHA=
+  `7c05d04a1568590e24d4704ed4592df6c360f8c8712a2a72210255db56be0762`。
+- `雨刮器怎么打开`与“小人背宝剑”各3/3，分别稳定返回PDF第95/193页和对应图片；最终验收批
+  所有轮次action=0、need_confirm=0、probe error=0、完整26项车态diff={}。
+- 第一趟章节批在工具环境跨时挂起约32299秒，造成`设置警示牌`一次TimeoutError；该项随后2/2，
+  且独立全量187/187。挂起工件保留，但不混入最终延迟或冒充产品失败。
+- 至此，在本计划定义的有限整本范围内，生产章节与视觉均全绿；原36条自然问法的当前整批仍有
+  7条旧表述被安全预检零请求拒绝，故只保留`434a046`的36/36历史证据，不转借给当前release。

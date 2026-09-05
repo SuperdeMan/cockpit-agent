@@ -1,31 +1,30 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-04（manual-rag 整本范围复核）
+> 更新时间：2026-09-05（manual-rag 整本范围生产闭合）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
 探索式 QA 的编号卡、MiniMax 修复批、QA 余项批和安全确认写闸都已完成开发与发布；
-当前生产 release 为 `7b594f379c1fbfb5156c55c4e0dc573957b49d28`，`status` 5/5 healthy、
-零 warning，但当前 release 没有成功的统一 `verify`。manual-rag 原36题基线已闭合，整本范围仍有
-章节单轮方差与5个稳定视觉缺口；安全问句错域、安全 focus 恢复、TTS/barge-in 与测试 warning
-也仍是独立活项，因此不得写“QA 全绿”。
+当前生产 release 为 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`，`status` 5/5 healthy、
+零 warning，统一 `verify` 为 `verified`。manual-rag 已完成整本章节187/187与视觉35/35生产
+闭合；安全问句错域、安全 focus 恢复、TTS/barge-in 与测试 warning 仍是独立活项，因此整个
+项目仍不得写“QA 全绿”。
 
 ## 2. 当前发布与证据边界
 
 | 项目 | 当前事实 |
 |---|---|
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
-| 生产 release | `7b594f379c1fbfb5156c55c4e0dc573957b49d28` |
-| 回滚点 | 本轮未重新验证；上次已验证为 `b3a2aedd3c360c230709551502e5568e8bba8286` |
+| 生产 release | `9a3b6f2f08657464c5049a5abf8f6e989e398bce` |
+| 上一生产基线 | `805711cff74b79b23324180ed22f7e026f95e481`；rollback命令未在本轮实际执行 |
 | 部署状态 | 5/5 endpoint healthy，零 warning |
-| 统一验证 | 最近成功 artifact `.artifacts/dev-stack-verifications/20260903T130534Z-434a046.json` 只属于旧 release `434a046`；`7b594f37` 的 verify 为 `unknown/failed` |
-| 最近生产 exact-code 全量 | `434a046`：`7833 passed / 34 skipped / 4 warnings`；不得转借给 `7b594f37` |
-| manual-rag 候选全量 | 代码SHA `805711cf`：`7857 passed / 34 skipped / 4 warnings`，0 failed；不属于生产release |
-| manual-rag | source `ef16d20…e4705d`，v2 包 `648cdf3…400ed`；`7b594f37`整本章节首轮181/187、6项复验均2/3；视觉30/35，5项0/3；所有轮零动作、车态diff={} |
-| 证据边界 | `7b594f37`只有status与本轮manual真栈证据；成功verify/生产全量只属于`434a046`；候选全量只属于`805711cf` |
+| 统一验证 | `verified`；artifact `.artifacts/dev-stack-verifications/20260904T163045Z-9a3b6f2.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| exact-code 全量 | `7861 passed / 34 skipped / 5 warnings`，0 failed；5条warning对应4类已知项，Starlette按2个worker重复 |
+| manual-rag | source `ef16d20…e4705d`、v2包`648cdf3…400ed`不变；生产独立章节187/187、视觉35/35、雨刮/背宝剑各3/3，零动作/确认/probe error，车态diff={} |
+| 证据边界 | 全量、部署、status、verify与最终手册真栈都绑定`9a3b6f2f`；后续纯docs/test提交不得冒充release |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
 完整36题并保留最近成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
@@ -127,7 +126,7 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 - exact 代码本地全量 7833/34/4，确定性 retrieval 36/36。这里关闭的是原36题基准项，不代表
   整本手册范围全绿；2026-09-04 扩面结果见下节。
 
-### 4.5 整本手册范围复核（当前生产 `7b594f37`，候选修复未发布）
+### 4.5 整本手册范围复核（历史生产 `7b594f37`）
 
 - 原 PDF 重建与 `.mrag` 逐字一致；离线候选的269页、160索引路径、187 outline叶子、35视觉
   语义、原36题均全绿，证明当前失败不支持“应改向量库”的结论；
@@ -140,19 +139,32 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 - 原36题当前整批有7条旧表述在联网前被安全预检拒绝，故不报当前36/36；用户点名的雨刮与
   “小人背宝剑”安全问法已各3/3，均返回预期PDF页和图片，零动作、车态不变；
 - 本地候选只扩三字caption的视觉语境匹配，并在manifest增加明确SU7手册来源的窄hint；离线
-  视觉35/35、显式来源222/222。尚未push/deploy，生产仍非整本全绿。证据与hash见
+  视觉35/35、显式来源222/222；该候选随后发布并继续修复LLM故障降级，终态见下节。证据与hash见
   `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5。
+
+### 4.6 整本手册生产闭合（当前生产 `9a3b6f2f`）
+
+- 0.3.2首次发布到`805711cf`后，五个三字caption稳定缺口消失；但章节主批184/187、视觉
+  34/35仍出现4次`Agent 内部错误：RuntimeError`。Trace证明均已落`manual.query`且Agent执行
+  失败，不是路由或BM25问题；
+- 0.3.3对LLM RuntimeError做一次有界重试，配额/参数/鉴权类不重试；仍失败时返回已检索的真实
+  PDF卡与诚实降级话术，ValueError等编程异常继续显式失败。精确代码全量7861/34/5，0 failed；
+- 发布后独立章节批 **187/187**，p50=9365.659ms、p95=14446.685ms、max=34710.202ms；视觉
+  **35/35**，p50=7886.125ms、p95=13456.285ms、max=21204.482ms；
+- `雨刮器怎么打开`与“小人背宝剑”各3/3，分别稳定返回PDF第95/193页与对应图片；所有正式轮
+  action=0、need_confirm=0、probe error=0、完整26项车态diff={}；
+- 统一verify、5/5 status均通过。章节主artifact SHA=`508756d6…baf80`，视觉SHA=
+  `7c05d04a…e0762`，全量日志SHA=`ab40f81e…d91df`，verify SHA=`7a521902…ad44`。
 
 ## 5. 当前活项
 
 | 活项 | 当前证据 | 下一步 / 启动条件 |
 |---|---|---|
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
-| 手册整本范围未全绿 | `7b594f37`章节首轮181/187且6条均2/3；35个受控视觉中5个三字caption 0/3稳定失败 | 本地0.3.2候选已绿；单独授权后push/deploy，并在新release重跑187+35，不能借本地结果关闭 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
 | MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
-| 全量 warning | 候选代码`805711cf`全量4条：1 Starlette、1 gRPC test fixture、1 audioop、1 regex；`7b594f37`无本轮exact-code全量 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
+| 全量 warning | `9a3b6f2f`全量5条、4类：Starlette按2个worker重复，另有gRPC fixture、audioop、regex各1 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 
 以上活项是独立问题，不反推安全确认写闸未上线；同样也不能因为安全闸已上线就把它们写成已关闭。
 

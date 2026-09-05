@@ -8435,3 +8435,37 @@ action/确认/probe error、车态diff={}。第一次雨刮响应后，记录器
 `72bf34aaac387a61b9f61440082a98999b2c07df5b77b4e269a9ece9a8a1e0a6`。此SHA包含完整手册
 候选、可复跑自然问法探针、架构产物目录排除与TTL测试夹具修复；后续文档提交不得冒充该
 exact-code SHA。
+
+## §97 2026-09-05 0.3.2/0.3.3发布与整本生产闭合
+
+用户授权push与生产部署后，先把12个候选提交快进到`origin/main`。根main同时存在mobile线
+ahead 3/behind 12与未提交文档，未触碰；发布改用独立release clone，只复制无密钥的
+`dev-stack.local`。0.3.2精确代码`805711cf`的dry-run blocking=[]、模型/脚本/资源与release lock
+均ready；apply submitted后status为5/5 healthy、零warning，统一verify通过，artifact
+`20260904T153105Z-805711c.json`。
+
+0.3.2生产章节首轮184/187，三个失败复验后为2/3、2/3、1/3；视觉首轮34/35，失败项后两轮
+通过。五个原0/3三字caption全部转绿，但四个红轮都返回`Agent 内部错误：RuntimeError`。
+Collector trace确认Planner已稳定产出`manual.query`，错误位于`step.agent:manual-rag`；检索器与
+路由不是根因。manual Agent此前直接await LLM，任何SDK RuntimeError都会穿透到通用Agent错误。
+
+0.3.3提交`9a3b6f2f08657464c5049a5abf8f6e989e398bce`只修生成出口：非配额/参数/鉴权类RuntimeError
+有界重试一次；仍失败保留真实PDF卡并诚实说明摘要暂不可用；ValueError等编程异常仍抛出。
+四条反向测试分别锁住重试恢复、重试失败降级、不可重试错误只调用一次、编程错误不被吞。
+manual专项64/64、route110/110、edge13/13、skills24/24、exemplars/L0/capability门禁全过；
+`-n2`精确全量**7861 passed / 34 skipped / 5 warnings / 0 failed**（656.57s），日志SHA=
+`ab40f81e5b1ed9b40b674e75197a1e55e25838a030f488e2fbfbb542d68d91df`。
+
+0.3.3再次dry-run/apply无阻断；生产release变为`9a3b6f2f`，5/5 healthy、零warning，统一verify
+artifact`20260904T163045Z-9a3b6f2.json`为verified，SHA=
+`7a521902fdfb18582d225a73d88ac5c6adb655ea0a255b16135d1094316dad44`。最终独立章节批187/187
+（p50 9365.659ms、p95 14446.685ms、max 34710.202ms），artifact SHA=
+`508756d663bd8d6fcb818da9a2e8f73f1abdf76a3d2e634e409d9391497baf80`；视觉35/35
+（p50 7886.125ms、p95 13456.285ms、max 21204.482ms），artifact SHA=
+`7c05d04a1568590e24d4704ed4592df6c360f8c8712a2a72210255db56be0762`。雨刮与“背宝剑”各3/3，
+所有最终验收轮零action/确认/probe error、26项车态diff={}。
+
+章节第一趟曾因工具环境跨时挂起约32299秒使`设置警示牌`TimeoutError；该项随即2/2，独立完整
+批又187/187，故保留污染工件但不计产品失败或最终延迟。`.mrag`、source/content/visual hash、
+BM25链路均未改变；本轮没有向量库迁移依据。原36题当前精确整批仍有7条旧表述被安全预检
+零请求拒绝，只保留`434a046`的36/36历史证据，不转借到当前release。
