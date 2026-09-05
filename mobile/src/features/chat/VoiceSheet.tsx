@@ -55,10 +55,8 @@ export interface VoiceSheetProps {
   /** 被糊的背景（B4-8 / §5.11）：非 null ⇒ 真模糊路径（BlurView + 更薄的 tint）；
    *  null ⇒ 回落 G1-tint（减少透明度 / 行车档 / ref 还没挂上）。判据全在 ChatScreen，本组件只消费 */
   blurTarget: RefObject<View | null> | null
-  /** 下拉 / 点「收起」/ 点暗区 */
+  /** 从顶缘把手带下拖 / 轻点把手带 / 点暗区 / 返回键（B5-12 之后底栏没有了） */
   onCollapse(): void
-  /** ■ 打断：T3 只停播报与取消在飞轮；T6 接上「打断后再听」 */
-  onInterrupt(): void
   onSend(text: string): void
 }
 
@@ -103,11 +101,13 @@ export function VoiceSheet(props: VoiceSheetProps) {
     return () => clearTimeout(t)
   }, [open, target, h])
   const sheetStyle = useAnimatedStyle(() => ({ height: h.value }))
-  // 只认「向下拖」。不加方向约束时这条 Pan 会把层内 chips 的横滑一并吃掉——T9 真机实测：
+  // 只认「向下拖」（`activeOffsetY(10)`），**且 B5-12 起只挂在顶缘把手带上**——横滑与层内滚动
+  // 都够不到它。方向约束的来历：不加时这条 Pan 会把层内 chips 的横滑一并吃掉——T9 真机实测
   // 400ms / 900ms 两次横滑，chips 带逐字节 **0.00%** 变化，而同两帧的层内大球框差 **99.98%**
-  // （屏是活的，观测通道开着）⇒ 第二个 chip 永远够不到。只在向下超过 10dp 才激活：横滑
-  // 永远够不到这个阈值，手势留给 FollowUpChips 的 ScrollView；收起只需要向下，所以这条
-  // 约束不影响 T3 已验的收起路径（500px 下拖远超 10dp）。⚠ 真机复验见 §6.3。
+  // （屏是活的，观测通道开着）⇒ 第二个 chip 永远够不到。
+  // 挂位约束的来历：B4 §6.4 实测**向上拖走的是层内 ScrollView**（`driving-card-title` −11.0 → +24.3dp，
+  // 层高纹丝不动）；ScrollView 滚到顶之后再向下拖会与整层 Pan 打架 ⇒ 限定在把手带就不打架。
+  // 收起只需要向下，两条约束都不影响已验的收起路径（500px 下拖远超 10dp）。⚠ 真机复验见 §6.3。
   const pan = Gesture.Pan()
     .runOnJS(true)
     .activeOffsetY(10)
@@ -118,10 +118,10 @@ export function VoiceSheet(props: VoiceSheetProps) {
 
   const user = turn.user
   const assistant = turn.assistant
-  const busy = snapshot.agent !== 'idle'
   const body = scale(TYPE.body, 'text', fontScale)
   const driving = props.driving
-  // B4-11 §6「目标 ≥56dp」：层内按钮 / chips 行车 56、泊车 48
+  // B4-11 §6「目标 ≥56dp」：层内按钮 / chips 行车 56、泊车 48。
+  // B5-12 之后层内唯一的目标演员是顶缘把手带（底栏撤了），它照旧用这个值。
   const targetBtn = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
   const capturing = snapshot.capture === 'listening' || snapshot.capture === 'recognizing'
   // 行车档答后回落（§5.2 规则 3 行车条款）：detent 已回 0.4 且此刻不忙 ⇒ 层里只剩球 + 胶囊。
@@ -146,184 +146,168 @@ export function VoiceSheet(props: VoiceSheetProps) {
         onPress={props.onCollapse}
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }}
       />
-      <GestureDetector gesture={pan}>
-        <Animated.View testID="voice-sheet" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, sheetStyle]}>
-          <Glass
-            p={p}
-            r={RADIUS['2xl']}
-            style={{ flex: 1, overflow: 'hidden', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}
-          >
-            {/* 壳底（§5.11 G1 frosted）：真模糊在场 = BlurView + 更薄的 tint；否则 = B2 附加①的 tint（.58）。
-                同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」）——顶栏与舞台压在静态深空底上，糊了没收益 */}
-            {props.blurTarget ? (
-              <>
-                <BlurView
-                  pointerEvents="none"
-                  blurMethod="dimezisBlurView"
-                  blurTarget={props.blurTarget}
-                  intensity={60}
-                  tint={p.dark ? 'dark' : 'light'}
-                  style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
-                />
-                <View
-                  pointerEvents="none"
-                  testID="voice-sheet-shell"
-                  style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tintOverBlur) }}
-                />
-              </>
-            ) : (
+      <Animated.View testID="voice-sheet" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, sheetStyle]}>
+        <Glass
+          p={p}
+          r={RADIUS['2xl']}
+          style={{ flex: 1, overflow: 'hidden', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}
+        >
+          {/* 壳底（§5.11 G1 frosted）：真模糊在场 = BlurView + 更薄的 tint；否则 = B2 附加①的 tint（.58）。
+              同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」）——顶栏与舞台压在静态深空底上，糊了没收益 */}
+          {props.blurTarget ? (
+            <>
+              <BlurView
+                pointerEvents="none"
+                blurMethod="dimezisBlurView"
+                blurTarget={props.blurTarget}
+                intensity={60}
+                tint={p.dark ? 'dark' : 'light'}
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
+              />
               <View
                 pointerEvents="none"
                 testID="voice-sheet-shell"
-                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tintOverBlur) }}
               />
-            )}
-            {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
-            <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} />
-            {/* 把手（G2 只给光球与把手，§5.11） */}
-            <View style={{ alignSelf: 'center', width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2, marginTop: 8 }} />
-            {props.s2sNotice ? (
-              <View
-                testID="s2s-notice"
-                accessibilityLiveRegion="polite"
-                style={{ backgroundColor: p.dark ? '#3B2A0A' : '#FFF4DB', paddingVertical: 6, paddingHorizontal: 12, marginTop: 8 }}
-              >
-                <Text style={{ color: p.amber, fontSize: scale(TYPE.caption, 'text', fontScale), textAlign: 'center' }}>
-                  端到端语音 · 原始音频将在本轮上传
-                </Text>
-              </View>
-            ) : null}
-            <ScrollView
-              contentContainerStyle={
-                props.split
-                  ? { padding: 16, gap: 16, flexDirection: 'row', alignItems: 'flex-start' }
-                  : { padding: 16, gap: 12, alignItems: 'center' }
-              }
-              keyboardShouldPersistTaps="handled"
+            </>
+          ) : (
+            <View
+              pointerEvents="none"
+              testID="voice-sheet-shell"
+              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
+            />
+          )}
+          {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
+          <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} />
+          {/* 顶缘把手带（B5-12，泓舟 B4 真机轮原话①）：底栏「收起 / 打断」撤掉——收起 = 从这条带向下拖
+              （或轻点它 / 点暗区 / 返回键），打断 = Composer 的 ⬆/■ 合一键（B5-13）。Pan **只挂在这条带上**：
+              B4 实测层内 ScrollView 向上拖能滚，滚到顶后向下拖会与整层 Pan 打架；限定在把手带就不打架。
+              它接替 voice-sheet-collapse 的 §6「目标 ≥56dp」演员身份（testID 沿用，探针脚本不改）。
+              把手本身仍是 G2 的那条 36×4（§5.11），只是外面套了一条 ≥56dp 的可点可拖带。 */}
+          <GestureDetector gesture={pan}>
+            <Pressable
+              testID="voice-sheet-collapse"
+              accessibilityRole="button"
+              accessibilityLabel="收起语音层"
+              accessibilityHint="向下拖或轻点收起"
+              onPress={props.onCollapse}
+              style={{ minHeight: targetBtn, alignItems: 'center', justifyContent: 'center' }}
             >
-              {/* 横屏车载 split（§6「横屏 40:60」）：左 40% 球 + 转写 + 胶囊 / 右 60% 回答 + chips + 卡。
-                  **非 split 时这两个容器只是透明分组**（同样 gap 12 + 居中 + 撑满宽），逐项排版不变。 */}
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2 }} />
+            </Pressable>
+          </GestureDetector>
+          {props.s2sNotice ? (
+            <View
+              testID="s2s-notice"
+              accessibilityLiveRegion="polite"
+              style={{ backgroundColor: p.dark ? '#3B2A0A' : '#FFF4DB', paddingVertical: 6, paddingHorizontal: 12, marginTop: 8 }}
+            >
+              <Text style={{ color: p.amber, fontSize: scale(TYPE.caption, 'text', fontScale), textAlign: 'center' }}>
+                端到端语音 · 原始音频将在本轮上传
+              </Text>
+            </View>
+          ) : null}
+          <ScrollView
+            contentContainerStyle={
+              props.split
+                ? { padding: 16, gap: 16, flexDirection: 'row', alignItems: 'flex-start' }
+                : { padding: 16, gap: 12, alignItems: 'center' }
+            }
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* 横屏车载 split（§6「横屏 40:60」）：左 40% 球 + 转写 + 胶囊 / 右 60% 回答 + chips + 卡。
+                **非 split 时这两个容器只是透明分组**（同样 gap 12 + 居中 + 撑满宽），逐项排版不变。 */}
+            <View
+              style={
+                props.split
+                  ? { width: '40%', gap: 12, alignItems: 'center' }
+                  : { alignSelf: 'stretch', gap: 12, alignItems: 'center' }
+              }
+            >
+              {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条。
+                  行车档回落后（terse）只剩球 + 胶囊，转写也收掉 */}
+              {!terse && user ? (
+                <Text
+                  testID="voice-sheet-transcript"
+                  accessibilityLiveRegion="polite"
+                  style={{
+                    color: p.fg1,
+                    fontSize: scale(20, 'text', fontScale),
+                    lineHeight: scale(28, 'line', fontScale),
+                    textAlign: 'center',
+                  }}
+                >
+                  {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
+                  {user.text}
+                  {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
+                </Text>
+              ) : null}
+              {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。
+                  行车档 120dp（§6），泊车 88 */}
+              <AuroraOrb size={driving ? SHEET_ORB.driving : SHEET_ORB.parked} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+              {/* 胶囊文案（同 §4.3，此处放大） */}
+              {snapshot.capsule ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  {snapshot.capsule.live ? (
+                    <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
+                  ) : null}
+                  <Text style={{ color: capsuleColor, fontSize: body }}>{snapshot.capsule.text}</Text>
+                </View>
+              ) : null}
+            </View>
+            {terse ? null : (
               <View
                 style={
-                  props.split
-                    ? { width: '40%', gap: 12, alignItems: 'center' }
-                    : { alignSelf: 'stretch', gap: 12, alignItems: 'center' }
+                  props.split ? { flex: 1, gap: 12 } : { alignSelf: 'stretch', gap: 12, alignItems: 'center' }
                 }
               >
-                {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条。
-                    行车档回落后（terse）只剩球 + 胶囊，转写也收掉 */}
-                {!terse && user ? (
+                {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots。行车档 18pt（§6） */}
+                {assistant?.pending ? <ThinkDots color={p.accent} animated={props.motion.loops} /> : null}
+                {assistant?.text ? (
                   <Text
-                    testID="voice-sheet-transcript"
+                    testID="voice-sheet-answer"
                     accessibilityLiveRegion="polite"
                     style={{
-                      color: p.fg1,
-                      fontSize: scale(20, 'text', fontScale),
-                      lineHeight: scale(28, 'line', fontScale),
-                      textAlign: 'center',
+                      color: assistant.error ? p.red : p.fg1,
+                      fontSize: scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale),
+                      lineHeight: scale(driving ? 28 : 24, 'line', fontScale),
+                      alignSelf: 'stretch',
                     }}
                   >
-                    {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
-                    {user.text}
-                    {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
+                    {assistant.text}
+                    {assistant.streaming ? <StreamCursor h={scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale)} animated={props.motion.loops} /> : null}
                   </Text>
                 ) : null}
-                {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。
-                    行车档 120dp（§6），泊车 88 */}
-                <AuroraOrb size={driving ? SHEET_ORB.driving : SHEET_ORB.parked} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
-                {/* 胶囊文案（同 §4.3，此处放大） */}
-                {snapshot.capsule ? (
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    {snapshot.capsule.live ? (
-                      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: p.accent, boxShadow: `0 0 10px ${p.accent}` }} />
-                    ) : null}
-                    <Text style={{ color: capsuleColor, fontSize: body }}>{snapshot.capsule.text}</Text>
+                {assistant && props.interruptedIds.includes(assistant.id) ? (
+                  <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
+                ) : null}
+                {/* follow-up chips（方案 §5.2 图）：答完了才给——流式/思考中给等于催人打断自己。
+                    行车档 ≤3 条、行高 56（§6） */}
+                {assistant && !assistant.streaming && !assistant.pending ? (
+                  <FollowUpChips
+                    p={p}
+                    fontScale={fontScale}
+                    target={driving ? TARGET.driving : TARGET.parked}
+                    chips={followUpChips(assistant.followUp, props.candidates, driving ? 3 : MAX_CHIPS)}
+                    onSend={props.onSend}
+                  />
+                ) : null}
+                {/* 卡片：泊车走注册表全量渲（card_group 的主卡/折叠由 CardRenderer 判，这里不判）；
+                    行车档走压缩卡「标题 + ≤2 字段 + 1 主按钮」（§6 一屏一卡）——**不改 34 个渲染器** */}
+                {assistant?.uiCard ? (
+                  <View style={{ alignSelf: 'stretch' }}>
+                    {driving ? (
+                      <DrivingCardSummary p={p} fontScale={fontScale} card={assistant.uiCard} onSend={props.onSend} />
+                    ) : (
+                      <CardRenderer p={p} card={assistant.uiCard} onSend={props.onSend} />
+                    )}
                   </View>
                 ) : null}
               </View>
-              {terse ? null : (
-                <View
-                  style={
-                    props.split ? { flex: 1, gap: 12 } : { alignSelf: 'stretch', gap: 12, alignItems: 'center' }
-                  }
-                >
-                  {/* 回答区：speech_delta 逐字 + StreamCursor；pending 时 ThinkDots。行车档 18pt（§6） */}
-                  {assistant?.pending ? <ThinkDots color={p.accent} animated={props.motion.loops} /> : null}
-                  {assistant?.text ? (
-                    <Text
-                      testID="voice-sheet-answer"
-                      accessibilityLiveRegion="polite"
-                      style={{
-                        color: assistant.error ? p.red : p.fg1,
-                        fontSize: scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale),
-                        lineHeight: scale(driving ? 28 : 24, 'line', fontScale),
-                        alignSelf: 'stretch',
-                      }}
-                    >
-                      {assistant.text}
-                      {assistant.streaming ? <StreamCursor h={scale(driving ? TYPE.h2 : TYPE.body + 1, 'text', fontScale)} animated={props.motion.loops} /> : null}
-                    </Text>
-                  ) : null}
-                  {assistant && props.interruptedIds.includes(assistant.id) ? (
-                    <Text style={{ color: p.fg3, fontSize: scale(TYPE.caption, 'text', fontScale) }}>已打断</Text>
-                  ) : null}
-                  {/* follow-up chips（方案 §5.2 图）：答完了才给——流式/思考中给等于催人打断自己。
-                      行车档 ≤3 条、行高 56（§6） */}
-                  {assistant && !assistant.streaming && !assistant.pending ? (
-                    <FollowUpChips
-                      p={p}
-                      fontScale={fontScale}
-                      target={driving ? TARGET.driving : TARGET.parked}
-                      chips={followUpChips(assistant.followUp, props.candidates, driving ? 3 : MAX_CHIPS)}
-                      onSend={props.onSend}
-                    />
-                  ) : null}
-                  {/* 卡片：泊车走注册表全量渲（card_group 的主卡/折叠由 CardRenderer 判，这里不判）；
-                      行车档走压缩卡「标题 + ≤2 字段 + 1 主按钮」（§6 一屏一卡）——**不改 34 个渲染器** */}
-                  {assistant?.uiCard ? (
-                    <View style={{ alignSelf: 'stretch' }}>
-                      {driving ? (
-                        <DrivingCardSummary p={p} fontScale={fontScale} card={assistant.uiCard} onSend={props.onSend} />
-                      ) : (
-                        <CardRenderer p={p} card={assistant.uiCard} onSend={props.onSend} />
-                      )}
-                    </View>
-                  ) : null}
-                </View>
-              )}
-            </ScrollView>
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'center',
-                gap: 24,
-                paddingVertical: 8,
-                borderTopWidth: 1,
-                borderColor: p.line,
-              }}
-            >
-              <Pressable
-                testID="voice-sheet-collapse"
-                accessibilityRole="button"
-                onPress={props.onCollapse}
-                style={{ minHeight: targetBtn, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
-              >
-                <Text style={{ color: p.fg2, fontSize: body }}>⌄ 收起</Text>
-              </Pressable>
-              {busy ? (
-                <Pressable
-                  testID="voice-sheet-interrupt"
-                  accessibilityRole="button"
-                  onPress={props.onInterrupt}
-                  style={{ minHeight: targetBtn, minWidth: 96, justifyContent: 'center', alignItems: 'center' }}
-                >
-                  <Text style={{ color: p.amber, fontSize: body }}>■ 打断</Text>
-                </Pressable>
-              ) : null}
-            </View>
-          </Glass>
-        </Animated.View>
-      </GestureDetector>
+            )}
+          </ScrollView>
+        </Glass>
+      </Animated.View>
     </View>
   )
 }

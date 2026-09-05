@@ -533,7 +533,6 @@ function ChatBody({
           split={layout.mode === 'driving-landscape'}
           blurTarget={blurTarget}
           onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
-          onInterrupt={interruptAndListen}
           onSend={(t) => onSend(t)}
         />
       ) : null}

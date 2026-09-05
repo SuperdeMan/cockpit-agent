@@ -15,14 +15,15 @@ import type { SheetDetent } from '@/core/presence/presence'
 import { drivingSheetMinDp, sheetHeightDp } from '@/ui/layout/sheetHeight'
 
 // ── 内容清单（独立于实现，逐条注明出处）──
-const HANDLE = 12 // VoiceSheet 把手：marginTop 8 + height 4
+// ⚠ B5-12（泓舟 B4 真机轮原话①）：底栏「收起 / 打断」整段撤掉，收起改为**顶缘把手带**下拖/轻点。
+//   把手带接替 `voice-sheet-collapse` 的 §6「目标 ≥56dp」演员身份（testID 沿用）⇒ 清单里
+//   原来的「把手 12 + 底栏 17 + 键 56」三项合并成一项「把手带 = 目标高」，chrome 117 → 88。
 const SCROLL_PAD = 32 // ScrollView contentContainerStyle padding 16（上 + 下）
-const FOOTER_PAD = 17 // 底栏 paddingVertical 8×2 + borderTopWidth 1
-const BTN = 56 // §6「目标 ≥56dp」：底栏那枚 voice-sheet-collapse（TARGET.driving）
-/** 一枚 56dp 键 + 把手 + 底栏内边距：**层高低于它，RN 的 flex 收缩就会把按钮压小**
- *  （真机实测 77dp 的层 ⇒ voice-sheet-collapse 53.0dp < 56） */
-const CHROME_HARD = HANDLE + FOOTER_PAD + BTN
-const CHROME = CHROME_HARD + SCROLL_PAD
+const BTN = 56 // §6「目标 ≥56dp」：顶缘把手带 voice-sheet-collapse 的 minHeight（TARGET.driving）
+/** 把手带（56，`minHeight` 不跟着 flex 缩）+ 内容区上下 padding（32）。
+ *  **层高低于它，收起演员与内容就一起装不下**——B4 实测 77dp 的层里 voice-sheet-collapse 被
+ *  flex 压成 53.0dp < 56；底栏撤掉后压不着把手带了，但 88 以下内容区仍只剩负空间。 */
+const CHROME = BTN + SCROLL_PAD
 const ORB = 120 // §6 行车档层内大球（泊车 88）
 const CAPSULE = 20 // 胶囊一行（body 15pt）
 const GAP = 12 // 组内 / 组间 gap
@@ -38,7 +39,7 @@ const T = (n: number) => Math.round(n * 1.1)
  *  固定 dp（把手 / padding / gap / CardShell 的边框与内边距 / 球直径）不跟字号走，文字与目标跟。 */
 const need = (detent: SheetDetent, split: boolean, large = false): number => {
   const btn = large ? T(BTN) : BTN
-  const chrome = HANDLE + SCROLL_PAD + FOOTER_PAD + btn
+  const chrome = btn + SCROLL_PAD // B5-12：把手带（= 目标高）+ 内容区 padding
   const orbCol = ORB + GAP + (large ? L(CAPSULE) : CAPSULE)
   const card = CARD_SHELL + (large ? L(16) : 16) + (large ? L(25) : 25) + 2 * (large ? L(20) : 20) + btn
   const body = detent === 0.78 ? card : detent === 0.62 ? 2 * (large ? L(28) : 28) : 0
@@ -53,11 +54,11 @@ const OUTER_PORTRAIT = 578.67 // 实测（见头注）
 const OUTER_LANDSCAPE = 192
 const INNER = 573
 
-// ── 症状一：外屏横，56dp 键被压到 53 ──────────────────────────────────
-test('缺陷 A 症状一：外屏横 192dp / 0.4 ⇒ 层高够一枚 56dp 键 + 把手 + 底栏', () => {
-  // 纯比例给的是 77dp，连 85dp 的硬 chrome 都装不下 ⇒ 按钮被 flex 压成 53
-  expect(ratio(OUTER_LANDSCAPE, 0.4)).toBeLessThan(CHROME_HARD)
-  expect(call(OUTER_LANDSCAPE, 0.4, { split: true })).toBeGreaterThanOrEqual(CHROME_HARD)
+// ── 症状一：外屏横，收起演员装不下 ────────────────────────────────────
+test('缺陷 A 症状一：外屏横 192dp / 0.4 ⇒ 层高够一条 56dp 把手带 + padding', () => {
+  // 纯比例给的是 77dp，连 88dp 的 chrome（把手带 56 + 内容区 padding 32）都装不下
+  expect(ratio(OUTER_LANDSCAPE, 0.4)).toBeLessThan(CHROME)
+  expect(call(OUTER_LANDSCAPE, 0.4, { split: true })).toBeGreaterThanOrEqual(CHROME)
 })
 
 test('缺陷 A 症状一：内容需求超过记录区时，层占满记录区（不是超出去）', () => {
@@ -68,8 +69,13 @@ test('缺陷 A 症状一：内容需求超过记录区时，层占满记录区�
 
 // ── 症状二：内屏，一屏一卡被裁出可视区 ────────────────────────────────
 test('缺陷 A 症状二：内屏 573dp / 0.78 ⇒ 压缩卡装得下', () => {
-  expect(ratio(INNER, 0.78)).toBeLessThan(need(0.78, false)) // 447 < 476：今天装不下
+  // ⚠ B5-12 之后这一格的事实变了，照实记：B4 时纯比例 447 < 下限 476 ⇒ 卡被裁出可视区，缺 **29dp**；
+  // 撤掉的底栏 chrome（把手 12 + 底栏 17）**恰好就是那 29dp** ⇒ 下限降到 447，与纯比例**逐 dp 相等**。
+  // 这一档因此从「靠下限撑」变成「纯比例刚好够、余量 0」——所以下面第二条在这个容器上已经**不具判别力**，
+  // 判别力靠第三、四条：换一个更矮的容器，下限仍然是真的在兜底。
   expect(call(INNER, 0.78)).toBeGreaterThanOrEqual(need(0.78, false))
+  expect(call(500, 0.78)).toBe(need(0.78, false)) // round(500×0.78)=390 < 447 ⇒ 绑下限
+  expect(call(500, 0.78)).toBeGreaterThan(ratio(500, 0.78))
 })
 
 test('缺陷 A 症状二：0.78 的最小高比 0.62 恰好多一张压缩卡、少两行回答', () => {
@@ -81,14 +87,18 @@ test('缺陷 A 症状二：0.78 的最小高比 0.62 恰好多一张压缩卡、
 })
 
 // ── 回归护栏：主形态与泊车路径一字不动 ────────────────────────────────
-test('外屏竖（实测 578.67dp）：0.4 与 0.78 受下限、0.62 仍走比例', () => {
+test('外屏竖（实测 578.67dp）：0.4 受下限、0.62 与 0.78 走比例（B5-12 之后）', () => {
   // 真机 A/B（2026-09-03，角色 C）：行车档 ON 时容器 578.67 与 544.67 两种情况下层高**都是 269.0dp**
   // ——容器差 34dp 而层高不动，纯比例做不到这件事 ⇒ 绑的是下限；行车档 OFF 时容器 568.33 ⇒ 层高
-  // 227.0dp = round(568.33×0.4) 逐 dp 等于纯比例。下面三条把这两侧都钉住。
-  expect(call(OUTER_PORTRAIT, 0.4)).toBe(need(0.4, false)) // 269 > round(231)
+  // 227.0dp = round(568.33×0.4) 逐 dp 等于纯比例。
+  // ⚠ 那组真机读数是 B4 的 chrome 117 下取的。B5-12 撤底栏后 chrome 88 ⇒ 0.4 档下限 269 → **240**
+  // （仍压过比例 231，这一档不变）；0.78 档下限 476 → **447 < 比例 451** ⇒ **改走比例**（只差 4dp）。
+  // 下一轮真机量到的 0.4 档层高应是 240 不是 269——**读数换锚了，别拿 B4 的 269 对**。
+  expect(call(OUTER_PORTRAIT, 0.4)).toBe(need(0.4, false)) // 240 > round(231)
   expect(call(OUTER_PORTRAIT, 0.4)).toBeGreaterThan(ratio(OUTER_PORTRAIT, 0.4))
-  expect(call(OUTER_PORTRAIT, 0.62)).toBe(ratio(OUTER_PORTRAIT, 0.62)) // 359 > 下限 337
-  expect(call(OUTER_PORTRAIT, 0.78)).toBe(need(0.78, false)) // 476 > round(451)
+  expect(call(OUTER_PORTRAIT, 0.62)).toBe(ratio(OUTER_PORTRAIT, 0.62)) // 359 > 下限 308
+  expect(call(OUTER_PORTRAIT, 0.78)).toBe(ratio(OUTER_PORTRAIT, 0.78)) // 451 > 下限 447
+  expect(call(OUTER_PORTRAIT, 0.78)).toBeGreaterThanOrEqual(need(0.78, false)) // 走比例也仍装得下卡
 })
 
 test('容器变了而下限没变时，层高不跟着容器动——真机 A/B 的判据形式', () => {

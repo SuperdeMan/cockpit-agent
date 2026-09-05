@@ -10,8 +10,14 @@
 // 判据盲区在于 `presence.test.ts` 只验 detent 的**数值**，验不出「那个高度装不装得下内容」——
 // 只有真机能露（§6.3 缺陷 A）。这里把「最小高」写成判据补上这一面。
 //
+// **B5-12（泓舟 B4 真机轮原话①）**：底栏「收起 / 打断」整段撤掉——收起改为顶缘**把手带**下拖 /
+// 轻点（打断并进 Composer 的合一键）。把手带接替 `voice-sheet-collapse` 的 §6「目标 ≥56dp」演员身份
+// （testID 沿用，`target_probe` 与 B4 的读数表都不用改）⇒ 原来的三项 chrome「把手 12 + 底栏 17 +
+// 键 56」合并成一项「把手带 = 目标高」，**chrome 从 117 降到 88（行车、标准字号）**。
+// 这是缺陷 A 横屏半的第一个 lever（B4 §6.4：横屏底栏占 73dp，撤掉是净收益）。
+//
 // 「最小高」的定义（**只给行车档**；泊车路径一字不动，返回值与原来逐字节相同）：
-//   固定 chrome（把手 + ScrollView 上下 padding + 底栏含一枚 56dp 键）
+//   固定 chrome（把手带含一枚 56dp 目标 + ScrollView 上下 padding）
 //   + 球 + 胶囊（行车档任何一档都要一眼看得见）
 //   + **该档的主体**（0.62 = 回答两行；0.78 = 压缩卡「标题 + ≤2 字段 + 主按钮」）。
 // 转写、chips、更长的回答是**可滚的附属**，不进最小高——它们本来就在 ScrollView 里。
@@ -30,9 +36,7 @@ import { TARGET, scale } from '../tokens'
 export const SHEET_ORB = { driving: 120, parked: 88 } as const
 
 /** VoiceSheet 的固定排版（逐条对应 `VoiceSheet.tsx` 的样式；改那边要同步改这里） */
-const HANDLE_DP = 12 // 把手：marginTop 8 + height 4
 const SCROLL_PAD_DP = 32 // ScrollView contentContainerStyle padding 16（上 + 下）
-const FOOTER_PAD_DP = 17 // 底栏 paddingVertical 8×2 + borderTopWidth 1
 const GAP_DP = 12 // 组内 / 组间 gap（非 split 时 ScrollView 的 gap 也是 12）
 
 /** 压缩卡（`DrivingCardSummary` + `CardShell`）的最小高 */
@@ -46,8 +50,8 @@ function cardMinDp(fontScale: FontScalePref): number {
 
 /** 行车档下该档「必须一眼看得见」的内容之和（dp）。逐项累加，不是拍的数 */
 export function drivingSheetMinDp(detent: SheetDetent, split: boolean, fontScale: FontScalePref): number {
-  const chrome =
-    HANDLE_DP + SCROLL_PAD_DP + FOOTER_PAD_DP + scale(TARGET.driving, 'target', fontScale)
+  // B5-12：把手带（`minHeight` = 目标高，它就是层内那枚 ≥56dp 演员）+ 内容区上下 padding
+  const chrome = scale(TARGET.driving, 'target', fontScale) + SCROLL_PAD_DP
   // 球列：球 + gap + 胶囊一行（body 15pt）
   const orbCol = SHEET_ORB.driving + GAP_DP + scale(20, 'line', fontScale)
   // 该档主体：0.78 = 压缩卡；0.62 = 回答两行（行车 18pt / lineHeight 28）；0.4 = 只有球列
