@@ -9,10 +9,11 @@
 
 ## 0. 接手须知（先读）
 
-**本计划推翻了 B5 留下的下一个嫌疑方向。** B5 §6.2 遗留② 写「别再沿 Xruns 找、首要嫌疑 16kHz
-VOIP 通路」。本会话（2026-09-05）真机取证后**改判**：播报卡顿不是 HAL deadline miss（B5 已证），
-也没有证据指向 16kHz VOIP 的音质/延迟；真机上唯一被坐实的机制是**输出 AudioContext 空闲期从不挂起、
-被 MIUI 以「长时间零数据」静音**。详见 §1。
+**本计划推翻了 B5 留下的下一个嫌疑方向，Phase 1 又推翻了本计划自己的首选。** B5 §6.2 遗留② 写
+「别再沿 Xruns 找、首要嫌疑 16kHz VOIP 通路」。2026-09-05 白天的取证先改判为「AudioContext 空闲不挂起
+被 MIUI 静音」（C1）；**当晚 Phase 1（T1/T2）把 C1 排除、C2 未复现，成因定在 C3——收尾形态处理**：
+divergent final 走批处理补段留下 2.5s 空白、mixed 形态把云端段整段丢掉。四组真机读数见 §1.5，
+管线反证见 §1.6，修法改为把 HMI 段链搬到 mobile（§3 T4′）。§1.1–§1.4 保留为过程记录。
 
 **证据绑定的精确坐标（后续复现必须同锚，否则读数不可比）：**
 
@@ -34,15 +35,12 @@ VOIP 通路」。本会话（2026-09-05）真机取证后**改判**：播报卡�
 
 ## 1. 根因调查（本会话证据）
 
-### 1.1 输出路径在播报期是健康的（复核 B5，方向一致）
+### 1.1 输出路径配置（22:55 那轮的读数已作废，原因见 §1.6）
 
-真机驱动一轮长回答（`am start` 到前台 → 注入问句 → 发送），期间每 4s 采 `dumpsys media.audio_flinger`：
-
-- 本应用输出 track 全程 `F3`（FAST）/ 48000Hz / `fmt 5`（PCM_FLOAT）/ 播放音量 −19dB（不是 −inf），确在出声；
-- **FastMixer `underruns` 75s 内 192 → 193**（1 次），`writeErrors=0`；
-- logcat 本轮**零** `Choreographer: Skipped N frames`、**零** `Reanimated ... synchronouslyUpdateUIProps failed`（对比 B3 那轮 150–376 条）。
-
-⇒ 播报**进行中**没有原生 deadline miss，也没有 JS/UI 线程卡死信号。B5 的 Xrun 结论在本设备复现。
+真机驱动一轮文字问答，期间每 4s 采 `dumpsys media.audio_flinger`：本应用输出 track 全程 `F3`（FAST）/ 48000Hz /
+`fmt 5`（PCM_FLOAT）。⚠ 当时写的「FastMixer 192→193、播报期健康」**不算播报期证据**：事后核 `AudioTrackImpl`
+的 `f:` 计数全程恒 7643——那一轮**根本没出声**（`speakPolicy=auto` 下文字提问不播报，`speakAllowed('auto', voice=false)`
+为 false）。真播报期的 FastMixer 读数改见 §1.6。logcat 零 `Skipped frames` / 零 Reanimated 告警仍成立。
 
 ### 1.2 空闲期：AudioContext 从不挂起 → MIUI 静音（新发现，直接实证）
 
@@ -104,17 +102,56 @@ ctrl {"type":"error","message":"{'status_code': 1002, 'status_msg': 'rate limit 
 两侧都有可改处（网关：段级退避/合段降请求数；客户端：出错后按已播文本的余量走 `synthesizeBatch` 补尾），
 **另立卡片交泓舟裁**，不混进 C1/C2 的读数。
 
+### 1.5 决定性读数：收尾形态在 mobile 上的段间空白 / 丢段（C3；2026-09-06 00:01–00:02 真机，包锚 `23:41:40`，minimax）
+
+T1 探针加了两种收尾形态、走真实 `SpeechController`（`begin` → 逐字 `delta` → `finish`），读 `speaking` 轨迹：
+
+| 形态 | 次 | 段数 | 第一段落 → 第二段起 | 结论 |
+|---|---|---|---|---|
+| divergent（final 与已流内容是两段话） | d1 | 2 | **2507ms** | 段间空白 = 批处理整段合成时间（另加首片 200ms jitter） |
+| divergent | d2 | 2 | **2623ms** | 可复现 |
+| mixed（本地回执 final(A) → 云端 delta(B) → 云端 final(B)） | d1 | **1** | — | **B 整段无声** |
+| mixed | d2 | **1** | — | 可复现 |
+
+机制（源码逐行核过）：
+
+- **divergent**：`speech.ts::finish()` 判 `!sameSegment` 后 `session.completion.then(() => speakBatch(text))`——等 A 播完，
+  再走 **HTTP 批处理**整段合成 B（`/api/tts`，minimax 批处理 ≈2.5s），中间就是那段空白。HMI 同一处走段链轮转成
+  **新流式会话**（首音 ~0.6s）。
+- **mixed**：`finish(A)` 之后 B 的 `delta()` 仍 `append` 进已收尾会话——网关 `text_queue` 已收 None 哨兵、后到的 text 无人
+  消费（静默丢）；但客户端 `accum` 照样累加成 A+B；再 `finish(B)` 时 `speechCovered(A+B, B)` 因 `na.includes(nf)` 判
+  「已覆盖」⇒ 不补尾、不 divergent ⇒ **B 一个字都不播**。若 A 恰已播完（`session` 已 null）则改走批处理补段 ⇒ 退化为
+  divergent 的空白。
+- 后端确有这种形态：`orchestrator/edge/server.py:776` 对混合意图的慢意图先发 `speech_delta="正在为您处理其他请求…"`，
+  云端答案随后另一段到 ⇒ **混合意图轮天然是 mixed/divergent**。HMI 2026-07-18 批次（`71a5bb9`，
+  `docs/design/2026-07-18-voice-interrupt-context-tts-batch.md` §3c）正是为泓舟当时报的「长内容断播」修了同一组断口；
+  `tts.ts` 头注写明 mobile 显式没做段链（M4 观察项）。
+
+⇒ **播报卡顿的成因定在 C3**：不是音频管线，是收尾形态处理。听感「播到一半停一下」= divergent 的 2.5s 空白；
+「说了一半没了」= mixed 丢段。
+
+### 1.6 管线读数（同锚；C1/C2 的反证）
+
+| 读数 | 值 | 出处 |
+|---|---|---|
+| pcmPlayer 起点重排（`TtsSession.stats.underruns`） | **0 / 9 段**（5 段无负载 + 4 段免唤醒负载仿真：VoiceCommunication 麦 + VAD 推理 + KWS 每帧 + 逐 delta 重渲染） | 探针 stutter3 / stutter4 |
+| 首音（排定） | 572–604ms 无负载；773–887ms 负载下；均 <1.5s | 同上 |
+| MIUI `isLongTimeZeroData` | 空闲 ~62s 必触发；但下一句音频按排定时刻进入 `[fine]`（`m:0`、maxAmplitude 1.2e9），**不闸门、不延迟** ⇒ C1 排除 | logcat-stutter3 23:41:11 → 23:41:22 |
+| 声学起播滞后（无 AEC 第二路麦） | 暖态 527–773ms、静置后 556/1358ms——仪器噪声大于效应，不作判据 | stutter3 |
+| FastMixer `underruns`（真播报期） | 每段 0–2（设备级计数器、4ms 周期），与 2.5s 空白不是一个量级 | stutter5 |
+| 探针取法坑 | ① `uiautomator dump` 在有常驻动画的屏上不写文件，pull 到旧树；改深链 `?auto=…&n=k` 自动触发；② 深链里的 `&` 要带引号透传到设备 shell；③ `screencap -p` 走 stdout 时 MIUI 会先打一行多显示器警告污染 PNG，写文件再 pull；④ Git Bash 会把 `/sdcard` 改写成本机路径 | 本轮 |
+
 ---
 
-## 2. 两个候选（按证据强弱排序）
+## 2. 候选裁决（Phase 1 后）
 
-| # | 候选 | 机制 | 证据 | 该不该改 |
-|---|---|---|---|---|
-| **C1** | **空闲静音起播毛刺** | AudioContext 不挂起 → 持续写零 → MIUI 60s 后静音 → 下句起播被吞/毛刺 | **前置条件已实证**（§1.2 logcat）；与泓舟「第 1、2 步」时序吻合 | **该改**（同时是电量账：LowLatency 独占流 24h 常开） |
-| **C2** | **JS 线程碎片调度负载** | minimax 707 碎片 × 每片同步重采样 + 5 JSI，与渲染/动画抢 JS 线程 → pcmPlayer 起点重排 → 可闻空白 | 架构可推（§1.3）；本轮**无正向实证**（FastMixer 平、无 Skipped frames） | 待 Phase 1 定；确认才改 |
+| # | 候选 | 机制 | Phase 1 结论 |
+|---|---|---|---|
+| C1 | 空闲静音起播毛刺 | AudioContext 不挂起 → 写零 → MIUI 60s 静音 → 下句起播被吞 | **排除**：静音必触发但不闸门下一句（§1.6） |
+| C2 | JS 线程碎片调度负载 | minimax 碎片 × 每片重采样 + JSI，与渲染抢 JS 线程 → pcmPlayer 起点重排 | **未复现**：9 段 0 underrun，含负载仿真（§1.6）。真实对话页负载下可用 `TtsSession.stats` 再核，非闸门 |
+| **C3** | **收尾形态：divergent 走批处理补段 / mixed 丢云端段** | §1.5 机制三条 | **确认**：两形态各两次复现（2507/2623ms 空白；段数 1） |
 
-「pcmPlayer 起点重排」= 可闻空白但 FastMixer 不计 underrun 的第二条隐形通道：JS 迟推一片 → 上一片播完
-到下一片 `start(now)` 之间 destination 渲零 → 混音器按时拿到零 → 听感是空白、指标是 0。与 C1 同一类「指标盲区」。
+「pcmPlayer 起点重排」仍是值得留着的观测口（C2 的隐形通道，FastMixer 不计），T1 已把它接进 `TtsSession.stats`。
 
 ---
 
@@ -142,9 +179,20 @@ ctrl {"type":"error","message":"{'status_code': 1002, 'status_msg': 'rate limit 
 - 对 C2：A=minimax、B=cosyvoice（碎片数 3.7× 差异）或 B=加大 jitter/合片。
 盲听分组结果 + T1/T2 客观读数一起，定 Phase 2 改哪条。**不许把「客观读数好」写成「泓舟不卡了」。**
 
-### Phase 2 — 修复（按 Phase 1 定的因，逐条独立提交、各配肯定式验收）
+### Phase 2 — 修复（按 Phase 1 定的因 = C3，逐条独立提交、各配肯定式验收；**改法换了，需泓舟再批一次**）
 
-**T4 修 C1：空闲挂起 AudioContext（首选，JS-only）**
+**T4′ 修 C3：把 HMI 段链语义搬到 mobile（首选，JS-only，不改共享件）**
+- `tts.ts::TtsSession`：`finish()` 之后的 `append` 不再灌进已收尾会话（spent 守卫，返回 false 交控制器排队）；
+  `accum` 只记本会话真正送出的文本——这一条直接修 mixed 的「已覆盖」误判。
+- `speech.ts::SpeechController`：待播段队列（divergent 的 final、spent 后到的 delta/final），当前会话 `completion`
+  后**轮转成新的流式 `TtsSession`**（同引擎同音色）接着播；轮转段失败才回批处理。`speaking` / `onSpeechEnded`
+  在段间不落（250ms 复判，同 HMI `markTtsMaybeEnd`），免唤醒 FSM 不在多段中途掉出 SPEAKING 去开麦。`stop()` 清链。
+- 判据复用 `@shared/ttsQueue.mjs::speechCovered`（不改）；参考实现 `hmi/src/audio.ts:474-560`。
+- 验收（真机同锚，用 T1 探针）：divergent 段间空白从 2.5s 降到首音量级（<1s）；mixed 段数 = 2 且 B 有声；
+  jest：spent 会话不吞 delta、覆盖误判用例、轮转顺序、stop 清链、段间 speaking 不落；全量 jest 绿 + tsc 0；
+  泓舟真人一轮混合意图（车控 + 查询）盲听「不再停一下 / 不再少半句」。
+
+**T5 保留为可选电量项（不再是卡顿修法）：空闲挂起 AudioContext**
 - `audioCtx.ts` 加 `suspendSharedAudioContextWhenIdle()` / 或由 `SpeechController` 在 `speaking` 落 false
   且 DEFER 队列空后 grace（建议 2–3s，避开连播/提示音）挂起，下一次 `newPcmPlayer`/`cueTone` 前 `resume()`；
 - 顾到 `cueTone` 也用同一 ctx（挂起判据要问「有没有任何消费方在用」，不能只看 TTS）；
@@ -152,12 +200,10 @@ ctrl {"type":"error","message":"{'status_code': 1002, 'status_msg': 'rate limit 
   但 resume 独占 LowLatency 流可能加 warm-up）；若 resume 太贵，退一步用「keep-alive 到 idle N 秒再 suspend」两级。
 - 附带收益：Oboe 独占低延迟流不再 24h 常开（电量）。
 
-**T5 修 C2（仅当 Phase 1 确认）：降 JS 线程碎片压力（JS-only）**
-候选（择一或组合，Phase 1 读数定）：① 抬高 `pcmPlayer` 首片 jitter 下限 / 按引擎分档（minimax 碎片多，
-给更大缓冲）；② 在 `audioCtx.ts` shim 层**合片**（攒到 ≥N ms 再 createBuffer/start，减少 JSI 与 source 数）；
-③ 把重采样从每片同步路径挪开。**不改 `pcmPlayer.mjs` 本身**（共享）——参数经构造入参、合并逻辑在 mobile shim。
+**T6 C2 的真实负载复核（非闸门）**：把 `TtsSession.stats` 接进对话页一轮真实混合意图播报的日志，读 underruns；
+Phase 1 的负载仿真为 0，若真实对话页也为 0 则 C2 关账。
 
-**T6 记录收口** 回填本计划 §6；更新 AGENTS.md 开项指针（改后端 16kHz 嫌疑那句）与 design/README 行。
+**T7 记录收口** 回填本计划 §6；更新 AGENTS.md 开项指针与 design/README 行。
 
 ---
 
@@ -182,4 +228,21 @@ ctrl {"type":"error","message":"{'status_code': 1002, 'status_msg': 'rate limit 
 
 ## 6. 实施记录（分批回填，每批一个会话，写完即停）
 
-（待开工）
+### 6.1 Phase 1「定因」（2026-09-05 晚 → 09-06 00:02；泓舟「批计划」后同会话执行）
+
+**T1 已落**（本节提交）：`TtsSession.stats`（chunks/bytes/underruns/gaps）+ `hooks.onUnderrun(gapMs, atSec)`，
+空白按「上一片排定结束 → 迟到片到达」在 pcmPlayer 更新 `nextStart` 之前算；`audioCtx.ts::peekSharedAudioContext()`
+只看不建；voice-spike 三个探针：`卡顿探针`（真实 `TtsSession` + 无 AEC 第二路麦包络 + `load=hf` 免唤醒负载仿真）、
+`段间 divergent` / `段间 mixed`（真实 `SpeechController`，读 `speaking` 轨迹），深链 `xiaozhou:///voice-spike?auto=stutter|divergent&n=k[&load=hf][&variant=mixed]`
+自动触发，读数打 `stutter-json` / `divergent-json` 行进 logcat。jest 先红后绿（voiceTts +2，19/19），tsc 0。
+
+**T2 读数**：§1.5（C3 四组）与 §1.6（管线五项）。**结论按计划只许的两种写法之一**：
+「静音后起播滞后与暖态相当 ⇒ C1 不是主因」成立（AudioTrackImpl `[fine]` 行）；C2 未复现；C3 确认。
+
+**T3（泓舟盲听）未做**：Phase 1 已用客观读数定因，盲听改到 T4′ 验收（改后混合意图轮）。
+
+**改判与坑**：① 22:55 那轮零音频（`speakPolicy=auto` 文字提问不播），当时的 FastMixer 读数作废——**先证「演员在场」再读指标**
+（§1.1）；② `uiautomator dump` 在常驻动画屏不写文件、pull 到旧树，判据要看它有没有说 `dumped to`（§1.6）；
+③ 声学起播滞后仪器噪声大于效应，弃用；④ 探针的 minimax 音色是 `female-shaonv`（设备当前设置），不是默认 `female-tianmei`。
+
+**未推送**：本会话提交均在本地，push 需泓舟单独授权。
