@@ -99,7 +99,7 @@ def test_wrapper_fails_nonzero_when_docker_is_unavailable():
     assert completed.returncode != 0
 
 
-def _run_with_fake_docker(tmp_path, packages):
+def _run_with_fake_docker(tmp_path, packages, extra_env=None):
     capture = tmp_path / "docker-argv.json"
     fake = tmp_path / "fake_docker.py"
     fake.write_text(
@@ -130,6 +130,10 @@ def _run_with_fake_docker(tmp_path, packages):
     env = dict(os.environ)
     env["PATH"] = str(tmp_path) + os.pathsep + env.get("PATH", "")
     env["FAKE_DOCKER_CAPTURE"] = str(capture)
+    # 开发者自己的 GOPROXY 不能漏进用例：wrapper 的缺省值是被测物，覆盖路径另有用例显式设它。
+    env.pop("GOPROXY", None)
+    if extra_env:
+        env.update(extra_env)
     completed = subprocess.run(
         [
             str(powershell),
@@ -197,6 +201,49 @@ def test_wrapper_passes_legal_multiple_packages_as_separate_shell_positionals(
         "./gateway/edge",
         "./gateway/cloud/...",
     ]
+
+
+def test_wrapper_hides_artifacts_and_defaults_goproxy_before_shell(tmp_path):
+    """两条本机成本项都要出现在 `sh` 之前的 docker 参数里，而 `sh` 之后的命令串不变。
+
+    `.artifacts/` 在本机是 6.4GB 的 gitignore 产物，`cp -a /src/.` 会全拷（B5 §9.75）；
+    只读 bind mount 排不掉子目录，wrapper 用空 tmpfs 盖住它——但只在目录存在时加，
+    否则往只读挂载里造挂载点会失败，所以这条断言按仓库里有没有 `.artifacts/` 分支。
+    GOPROXY 缺省走 goproxy.cn（proxy.golang.org 在本机 `go test` 阶段 TLS 超时）。
+    """
+    completed, argv = _run_with_fake_docker(tmp_path, ["./gateway/edge"])
+    assert completed.returncode == 0, completed.stderr.decode(
+        "utf-8",
+        errors="replace",
+    )
+    assert argv is not None
+    shell_index = argv.index("sh")
+    before_shell = argv[:shell_index]
+    assert "-e" in before_shell
+    assert before_shell[before_shell.index("-e") + 1] == "GOPROXY=https://goproxy.cn,direct"
+    if (ROOT / ".artifacts").is_dir():
+        assert before_shell[before_shell.index("--tmpfs") + 1] == "/src/.artifacts"
+    else:
+        assert "--tmpfs" not in before_shell
+    assert before_shell.index("-e") < shell_index
+    assert argv[shell_index + 2] == (
+        'cp -a /src/. /work/ && cd /work && go mod tidy && go test "$@"'
+    )
+
+
+def test_wrapper_lets_caller_override_goproxy(tmp_path):
+    completed, argv = _run_with_fake_docker(
+        tmp_path,
+        ["./gateway/edge"],
+        extra_env={"GOPROXY": "direct"},
+    )
+    assert completed.returncode == 0, completed.stderr.decode(
+        "utf-8",
+        errors="replace",
+    )
+    assert argv is not None
+    assert argv[argv.index("-e") + 1] == "GOPROXY=direct"
+    assert "GOPROXY=https://goproxy.cn,direct" not in argv
 
 
 def test_wrapper_default_package_is_separate_dot_slash_ellipsis(tmp_path):

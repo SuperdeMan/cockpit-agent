@@ -96,10 +96,29 @@ $quote = if ($null -ne $argumentPassing -and "$argumentPassing" -ne 'Legacy') {
     '\"'
 }
 $containerCommand = "cp -a /src/. /work/ && cd /work && go mod tidy && go test $quote`$@$quote"
+
+# 两条本机实测出来的成本项（B5 计划 §6.1 坑②④ / 主计划 §9.75）：
+# 1. `cp -a /src/. /work/` 会把 gitignore 的 `.artifacts/`（本机 6.4GB，release 克隆与验证产物）
+#    一并拷进容器——只读 bind mount 排不掉子目录，所以用一个空 tmpfs 盖在 `/src/.artifacts` 上。
+#    目录不存在（干净 checkout）时不加：往只读挂载里造挂载点会失败。
+# 2. 默认的 proxy.golang.org 在本机 `go test` 拉 .zip 阶段 TLS handshake timeout
+#    （`go mod tidy` 只取 .mod，看不出来）。默认走 goproxy.cn，调用方可用 $env:GOPROXY 覆盖；
+#    CI 不经本 wrapper（ci.yml 直接 `go test ./...`）。
+$excludeArtifacts = @()
+if (Test-Path -LiteralPath (Join-Path $repoRoot ".artifacts")) {
+    $excludeArtifacts = @("--tmpfs", "/src/.artifacts")
+}
+$goProxy = if ([string]::IsNullOrWhiteSpace($env:GOPROXY)) {
+    "https://goproxy.cn,direct"
+} else {
+    $env:GOPROXY
+}
 $dockerExit = 1
 try {
     & docker run --rm `
         -v "${repoRoot}:/src:ro" `
+        @excludeArtifacts `
+        -e "GOPROXY=$goProxy" `
         -w /work `
         golang:1.24-bookworm `
         sh -c $containerCommand sh @packages
