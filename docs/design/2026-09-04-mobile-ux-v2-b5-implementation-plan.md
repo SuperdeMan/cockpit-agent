@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-> 状态：**已批准（泓舟 2026-09-04，拆完当轮批准，裁决表未改）；逐批新会话推进，第 1 批「缺陷 C」待开工**。§0 第 2 条是本计划的核心产出——B4 收口时归到 B5 的 19 项开项逐条给了默认裁决与落点，泓舟一句话可改任一条。
+> 状态：**四批收口（2026-09-05）**。第 1 批缺陷 C 在云栈闭环（`release_sha=7b594f37`：一句简单轮带 `driving=true` 进入、泊车后一句简单轮登记 `falseAt` + 30s 退出，「退出只压本段」四格成立）；第 2 批重建趟两包两锚（对照 `2026-09-04 19:51:26` / **主线 `2026-09-04 23:41:40`**）+ 注册七件全过 + Xruns 2×2（无 AEC 5616–5624/分 vs 有 AEC 0，方向与 B3 猜想相反，下一嫌疑 16kHz VOIP 通路）+ foldstate `current()` / 低电量回落 / Shortcuts 真机闭合；第 3 批把手带 / 合一键 / Scanner 三条（两通道证）/ 缺陷 A 横屏半三条逐 dp 闭合 + Maestro 六条 rc=0（02/06 分两趟）；第 4 批 **T17 泓舟未裁、未做——§11.4 状态可读性仍无外部基线**，T18 收口。§0 第 2 条 19 项逐条核销、§1.1 逐行核销、交裁清单、仍开格子全在 **§6.4**。（原状态：已批准（泓舟 2026-09-04，拆完当轮批准，裁决表未改）；§0 第 2 条是本计划的核心产出——B4 归到 B5 的 19 项开项逐条给了默认裁决与落点。）
 > 交付对象：`mobile/` 执行者（人或 Agent）；第 1 批同时是 `orchestrator/edge` + `gateway/edge` + `proto/` 的执行者（本计划是 B 系列里**第一次**允许后端改动的批）
 > 上游真相源：[`2026-08-29-mobile-ux-v2-presence-redesign.md`](2026-08-29-mobile-ux-v2-presence-redesign.md)（方案 **v2.2**；本计划读 §6 退出条款 / §7.3 / §5.11 末句 / §8 / §9 全表 / §11.1 B5 行 / §11.4 / §12.2 / §13 Q5；**不读 §2**）；
 > B4 计划 [`2026-09-02-mobile-ux-v2-b4-implementation-plan.md`](2026-09-02-mobile-ux-v2-b4-implementation-plan.md)（**§6.4 是本计划的输入**：「泓舟裁决」「对账一 / 二 / 三」「缺陷 C 两轮取证」「泓舟当轮提的两条界面优化」「Scanner 三条出账」「T14 材料」；§6.1–§6.3 各批「遗留」小节逐条核过，去向在本计划 §0 第 2 条；Task 正文不读）；
@@ -2551,6 +2551,32 @@ android.settings.action.MANAGE_OVERLAY_PERMISSION 页里没有这个条目（泓
 ① `target_probe`（顶栏两钮 48/56、`health-dot` 48/56，附三条阴性）；
 ② jest WCAG（四条对比度 + M2′ 反证）；③ hierarchy（chips 前缀、说明去重）。
 
+**本批踩的坑（承 §6.2 的 ⑫–⑳，本批从 ㉑ 起）**
+（⚠ 下面六条在 `4e43e12` 改写本节「泓舟在场轮」时被整块删掉、只留下「承 ㉑–㉖」一句；第 4 批收口从 `a6f3a12` 原样找回，见 §6.4。）
+
+㉑ ⛔ **Metro 的 fast-refresh 不一定推到设备**：改完 `VoiceSheet.tsx` 热载后再 dump，XML 与改动前
+**逐字节相同**（同为 58239 B）。`force-stop` + dev-client 深链重取 bundle 之后才变。
+**判别式：比两份 dump 的字节数/hash**，相同 = 没推到，**不是「改动没生效」**。
+
+㉒ ⛔ **`force-stop` 会清掉 dev-client 的已连服务器**，重启只落到 `DevLauncherActivity`——症状与坑 74
+（Metro OOM 自死）**一模一样**，但 `/status` 仍 running、node 进程活着。⇒ 先核 Metro，再发
+`xiaozhou://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` 接回去。
+
+㉓ ⛔ **Maestro 主包会自己消失**（见上方阻塞②），`--no-reinstall-driver` 拦不住 `hierarchy` 先装。
+⇒ 开工固定五步里加一条 `pm list packages | grep maestro` **数两条**。
+⚠ **这句在同日下午被泓舟在场轮推翻**：放行后 `pm list packages` 搜不到 maestro 而 hierarchy 正常，**真判据是 `maestro hierarchy --no-reinstall-driver` 的退出码**（见下方「Maestro 全线恢复」）。
+
+㉔ ⛔ **PowerShell 的 `Select-String` 没有 `-Recurse`**（计划 T13 步骤 1 直接写了这条命令，会
+`ParameterBindingException`）。目录递归搜用 `Get-ChildItem -Recurse | Select-String`，或直接走 `grep -rn`。
+
+㉕ ⛔ **点开关前必须按当前树取坐标**：选「可信车载平板」后角色描述多一行，行车档开关整体下移
+~53px，照上一屏坐标点会**静默落空**（开关没变、也不报错）。⇒ 要么每次先 `uiautomator dump` 读
+`Switch` 的 `bounds` 与 `checked`，要么改完立刻回读（§9.55）。本轮两次落空都是这么发现的。
+
+㉖ ⚠ **取证窗口里会混进设备主人的私人通知**：还原设置那张截图顶部弹出了泓舟的微信消息。
+⇒ 截图前后核 `mCurrentFocus` 只能挡住「焦点是别人的窗口」，**挡不住通知横幅**；抓到就停手、
+不记录内容、不外传。本轮就此收手，没有继续在设备上取证。
+
 **本轮另外撞到的坑（承 ㉑–㉖，从 ㉗ 起）**
 
 ㉗ ⛔ **`maestro.bat` 的 stdout 是 GBK 不是 UTF-8**：ASCII 行正常、中文全乱。
@@ -2657,4 +2683,198 @@ App 起不来落到 `DevLauncherActivity` / `DevLauncherErrorActivity` 时，**�
 
 ### 6.4 第 4 批「小样本 + 收口」（T17–T18）
 
-（待回填）
+**开工基线（2026-09-05 晚，本会话自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `check_android_env.ps1` | 退出码 **0**（**17 pass / 1 warn / 0 fail**；warn = E3 `no device attached`） |
+| `dev_stack target show` | `{"source":"file","status":"target","target":"cloud"}` |
+| adb server（`:5037`） | LISTENING **PID 23900** = `D:\Android\Sdk\platform-tools\adb.exe`（= `ANDROID_HOME` ✅，与第 2 / 3 批同一 PID，未自发重启）。孤儿 PID 14604 仍在，未碰 |
+| `adb devices -l` | **空——设备本批全程未接 USB**（tailnet peer `superdemanxiaomi-mix-fold-4` online，但 adb 未走 tailnet；本批零设备操作） |
+| 设备 `lastUpdateTime` | ⬜ **取不到**（设备未接）。§6.3 收口记的是 `2026-09-04 23:41:40` 且第 3 批零重建，**按理仍是它，但本批没核过，不写 ✅** |
+| `mobile: npm test` | **52 suites / 524 全绿**（19.1s）——与 §6.3 收口的 524 对得上 |
+| `mobile: npm run typecheck` | **0 error** |
+| `git fetch` 后 `origin/main..HEAD` / `HEAD..origin/main` | **空 / 空**；起点 **`4e43e12` = `origin/main` = HEAD**。⚠ §6.3 写「7 个提交均未推送」，本批开工时它们**已全在 `origin/main` 上**（§6.3 写完到本批开工之间被推了，不是本会话推的） |
+| `git status --short` | 只有一个**别人的** untracked 文件 `docs/design/2026-09-05-mobile-simulation-validation-proposal.md`（文件头写「已取消，未实施」，非本会话产物，**不动、不 add**） |
+| 云栈 `dev_stack status` | 5/5 endpoint healthy，`release_sha=9a3b6f2f08657464c5049a5abf8f6e989e398bce`（与 §6.3 同） |
+| Docker | `com.docker.service` **Stopped**（本批为 go test 起过一次，收尾停回，见还原表） |
+| Metro | 本批不用设备，**未核、未用** |
+| worktree | 未分树（泓舟未授权），主工作树 |
+
+**T17 五态小样本——⬜ 未做：泓舟未裁（本批会话内没有裁决）；§11.4「状态可读性」仍无外部基线**
+
+- 开工提示词写的是「T17 做不做由我裁」，会话内没有收到裁决；设备也未接 USB，**一张材料都没截**（`mobile/e2e/artifacts/b5-sample/` 本批之前不存在）。不写「裁定不做」，也不写「裁定算过」——两者都不是事实。
+- 做了不依赖裁决的那一半：T17 步骤 1 的取法落成三条 Maestro 流 + 取法表，预备在 gitignore 的 `mobile/e2e/artifacts/b5-sample/_capture/`（`README.md` / `_thinking.yaml` / `_attention.yaml` / `_speaking.yaml`）。**全部未在设备上跑过**；testID 与文案在源码里现读核过：`presence-capsule`（`PresenceCapsule.tsx:28`）、`dock-confirm` / `dock-cancel`（`FocusDock.tsx:88/132`）、「播报中 · 说话可打断」（`presence.ts:260`）。armed 按 §0 第 2 条 #3 **不补**，记「缺 armed（KWS 链路）」；均值判据分母 5、≥4/5，口径变了要明标。
+- 泓舟裁「做」时的前提清单在那份 README 里：主线包锚 `23:41:40`、深色 / 外屏竖 / 手持 / 免唤醒关 / 播报「总是」（用完改回）、`maestro hierarchy --no-reinstall-driver` rc=0、speaker 路由不是 `bt_a2dp`。
+
+**T18 记录收口——逐项**
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `docs/design/README.md` 本计划行 | ✅（本条提交） | 状态列改成收口读数：四批各自的闭合物、缺陷 C 云上读数、Xruns 结论（方向相反 + 卡顿成因未定）、新包锚、T17 未裁、仍开与交裁指针 |
+| 主计划 §9 坑账 75 起 | ✅（单独提交） | **75–89 共 15 条**，从 §6.1 ①–⑪、§6.2 ⑫–⑳、§6.3 ㉑–㉜ + 泓舟在场轮未编号的坑 + 本批 ㉝–㊱ 里筛：同族合并（Metro 三种别因 / Maestro 三条 / 取证四纪律 / 音频三条 / MIUI 五条）。**没搬的**：§6.1 ⑤（autocrlf 警告无害）、§6.2 ⑬（记错为系统设置，已被 §6.3 纠正且坑 70 已覆盖）、§6.2 那次不可复现的 Console Error（只在 §6.2 记「未定性」，不进坑账） |
+| `mobile/e2e/README.md` B5 节 | ✅（单独提交） | 修掉 **提交进仓库的 BEL 字节**（第 188 行 `platform-tools<0x07>db.exe`，`grep -c $'\x07'` 1 → 0）；坑 3 的「`pm list packages` 数两条」判据改成 `maestro hierarchy` 退出码（与 §6.3 在场轮一致）；新增 02/06 前提互斥（§6.3 遗留⑨）、`composer-send` 两态取证、`xiaozhou://voice` 冒烟三步、`_capture/` 指针 |
+| `AGENTS.md` §4.2 Android 行 | ✅（**紧随本条之后单独一个 commit**；动前 `git diff --stat -- AGENTS.md` 为空） | 只改指针：B5 四批已收口 → §6.4 是收口节 → 仍开项 → 交裁项 → 下一步 KWS 阈值 A/B 批另拆；坑账已到 89。不写批次长读数 |
+| §0 第 2 条 19 项核销 | ✅ 见下表 | 已落 / 出账 / ⬜ 带原因 |
+| §1.1 逐行核销 | ✅ 见下表 | 拿 §1.1 那 28 行对，不拿上一节的表对 |
+| 交泓舟裁的清单 | ✅ 见下 | 8 条 |
+| 未推送清单 | ✅ 只列构成 | 推前当场重列 `origin/main..HEAD` 逐条念归属；本批**不推**（推送要单独授权） |
+
+**本批发现并已修的三条记录缺陷（都在上一批的记录 / 文档里）**
+
+1. ⛔ **`4e43e12` 改写 §6.3「泓舟在场轮」时把坑 ㉑–㉖ 整块删掉了**，只留下「承 ㉑–㉖，从 ㉗ 起」一句——当前文件里 `grep ㉑` 零命中，引用指向不存在的东西。已从 `a6f3a12` 原样找回插在 ㉗ 之前，并给 ㉓ 补一句「已被在场轮推翻」。⇒ §9.89。
+2. ⛔ **`mobile/e2e/README.md` 第 188 行带一个 BEL（0x07）字节**：`$env:ANDROID_HOME\platform-tools\adb.exe` 里的 `\a` 被 Bash heredoc 当转义吃掉，写成 `platform-tools<BEL>db.exe` 并随 `dd7c6ef` **进了仓库**（照抄会跑不了）。用 Python `write_bytes` 修，`grep -c $'\x07'` 1 → 0。⇒ §9.77②。
+3. ⚠ 同一文件坑 3 写的「每轮开工先 `pm list packages | grep maestro` 数两条」与 §6.3 在场轮的实测结论矛盾（放行后搜不到 maestro 而 hierarchy 正常）——上午的记录没跟着下午的纠正改。已改成退出码判据。
+
+**§0 第 2 条 19 项逐条核销（拿 §0 那张表对，不拿 §6.1–§6.3 的表对）**
+
+| # | 事项 | 状态 | 依据 |
+|---|---|---|---|
+| 1 | 缺陷 C | **已落** | T1–T5 五个提交 + 云上 `release_sha=7b594f37` 三时刻读数（进入 / `falseAt` 登记 / 30s 后退出）+ 退出口四格 + 手动开关不受影响（§6.1）。仍开三小格：`Msg.driving` 单独验 ⬜、真栈 HMI（Vite + 浏览器）半 ⬜、**上云路径 final 真机半 ⬜**（第 2 批真机轮没顺手做，§6.2 无记录） |
+| 2 | 无 AEC 对照构建归重建趟 | **已落** | T9 对照包（锚 `19:51:26`）→ T10 主线包（锚 `23:41:40`），Xruns 2×2（§6.2）。结论按实测说准：**不是 AEC 造成 Xruns**（方向相反：无 AEC 5616–5624/分、有 AEC 0）；**播报卡顿成因未定**，AEC 换的是整条 HAL 通路（FAST/48k → VOIP_TX/16k）⇒ 出账语音批，首要嫌疑 16kHz VOIP |
+| 3 | T14 五态版小样本 | **⬜ 泓舟未裁、未做** | 见上方 T17。§11.4 状态可读性仍无外部基线 |
+| 4 | KWS 阈值 A/B 批排 B5 后 | **出账（待泓舟定开拆时间）** | 前提已齐：主线包锚 `23:41:40`、AEC 在包内（`effects` 行实证）、armed 缺失定性指向 KWS 链路（B4 T14）。见交裁 #4 |
+| 5 | speaker 音量不还原 | **已落（口径）** | 三批都没把它写进还原表；实况：泓舟在第 2 批自调 0 → 60，第 3 批末又是 0 且路由一度 `bt_a2dp`（§6.3）。本批设备未接，未读 |
+| 6a | `foldstate` 查当前值 | **已落** | T6 `facb7dc` + T11 真机 `tabletop / events: 0`（值来自 `current()`）；坑 72 销账、B4 §6.2 遗留② 对照补齐（§6.2） |
+| 6b | B3′ 角色不启用 | **已落（不做）** | 不进任务；spike 分支保留不合并（§5 第 1 条） |
+| 6c | `expo-battery` 低电量回落 | **已落** | T7 `d60cbcc` + T11 低电量支 A/B/A′ 逐位一致（`diff_ratio 1.0`、A′ 与 A 逐位同）。**`saver=true` 半 ⬜**（充电时省电开不起来，只有单测两条正反例） |
+| 6d | 缺陷 A 横屏半 | **已落** | T15 `a7b01e7` + T16 在场轮三条逐 dp：整列 234 < 240 ⇒ 球降级 88 ⇒ 层高 208，transcript +28.0 / answer +56.0（§6.3） |
+| 6e | Shortcuts / QS Tile / Live Updates / 小组件 | **Shortcuts 已落；其余出账 M5** | T8 `34a9f61` + T11 桌面长按两条入口 + 「和小舟说话」冷启动零采集（§12.2 红线在真实入口成立）；方案 §11.1 B5 行回写 `54b5763`。QS Tile 泓舟未要、Live Updates / 小组件随 M5 |
+| 7 | Scanner 三条 | **已落（两通道证）；Scanner 复扫 ⬜** | T14 `4de8f69`：`target_probe` 48/56 两组 PASS + 三条阴性、WCAG 四条进 jest（dark fg3 4.971 / light fg2 5.210 / light fg3 4.867）+ M2′ 反证、chips 前缀三条在 hierarchy。**Scanner 与 TalkBack 听觉半在本机取不到**（MIUI 权限管控，§6.3） |
+| 8 | 两条界面优化 | **已落** | T12 `aef13d3`（把手带手势正反四格）+ T13 `61cb59c`（⬆·■ 两态 + 点忙时 ■ 定格「已打断」不改红）；本批自造的两处 a11y 重复说明已修（`dd7c6ef` / `c6b97f2`） |
+| 9 | Reanimated tag → view | **⬜ 未开** | 非闸门；第 3 批设备时间用在别处（§6.3 遗留⑦） |
+| 10 | B2 表#6「气泡先于相机」 | **⬜ 未开** | 同上 |
+| 11 | `Msg.driving` 单独验 | **⬜ 未做** | T5 步骤 6 未做，第 2 批真机轮也没顺手做 |
+| 12 | 系统动画缩放那一路 | **⬜ 未开（可选）** | 需泓舟授权改系统设置 |
+| 13 | Dock `safety_blocked` 显示 VAL 原话（Q16） | **出账** | 后端另立，AGENTS §4.2 保留 |
+| 14 | `charging_list` hmi 型名 + `_prov` 半 | **出账** | `hmi/` 不碰；本批四次 `git diff --stat -- hmi/` 均空 |
+| 15 | `poi_list` follow_up「换一批」 | **出账** | 归 `agents/nearby` |
+| 16 | v1 回滚代码删除 | **出账（B5 不删）** | B5 又动了语音层底栏与发送键，「收口 + 一轮真机使用没回滚」从 B5 之后重新计；`uxV2.voiceSheet` / `uxV2.presence` 仍是回滚路径 |
+| 17 | `_b3-mainline-apk-backup/` | **交裁** | 见交裁 #1；`_b5-contrast-apk/` 一并交裁（#2） |
+| 18 | 本地与远端分叉 | **已落** | 每批开工重核：四批开工都是 HEAD = `origin/main`（`ab9680e` / `54a7afe` / `5e4b79b` / `4e43e12`），无分叉。本批收口后本地领先 4 条 docs 提交（见未推送清单） |
+| 19 | `test_operation_hold_cancels_owner_when_lease_is_lost` 并行红 | **出账（`agents/mcp_bridge/`）** | 本批两趟全量（`-n auto` 与固定口径 `-n 8`）**都没红**（8128 passed / 0 failed）——一个数据点，不构成定性 |
+
+**§1.1 追溯表逐行核销（28 行；拿 §1.1 对）**
+
+| §1.1 的行 | 状态 |
+|---|---|
+| 泓舟裁决：Edge final 标 driving（裁决点只 VAL 一处） | ✅ T1 `05efce6`；pytest +5；M1–M3 反证；⚠ 泊车 false 那条对「final 有没有被标」零敏感（§6.1 记） |
+| 网关 `eventToMap` final 透传 | ✅ T2 `3a70029`；go +2；M2 反证坐实「恒带键」 |
+| 客户端 `recordEdgeDriving` 同吃 final、process 不动 | ✅ T3 `0455e38`；只认布尔（M3 反证） |
+| UI 手动退出口「自动行车中 · 退出」、只压本次 | ✅ T3 判据 + T4 `4d4c15d`；真机四格（§6.1 T5 步骤 4） |
+| 后端单测 + 云栈注入 `speed_kmh=0` 一句简单轮即退出 | ✅ T5 步骤 3 三时刻读数（云上 `7b594f37`） |
+| 对账一 #2 对照构建归哪一趟 | ✅ §0 #2 → T9/T10/T11（结论见核销表 #2） |
+| 对账一 #6 音量 | ✅ 口径执行（不还原） |
+| 对账一 #8 / T14 材料 | ⬜ T17 未裁未做 |
+| 对账一 #1 KWS 排期 | 出账（B5 后另拆，交裁 #4） |
+| 对账一 #3 / §6.2 遗留① / §6.3 遗留③ / 坑 72：`foldstate` 查当前值 | ✅ T6 + T11 |
+| 对账二 / B3 §6.4 遗留①② / AGENTS ④：B3′ 角色 | ✅ 不启用（§5 第 1 条） |
+| 对账二 / §5.11 末句 / B4 §5 第 9 条：`expo-battery` | ✅ T7 + T11（`saver=true` 半 ⬜） |
+| 对账一 #4 / 对账二 / §6.4 缺陷 A ③：横屏半 | ✅ T15 + T16 三条逐 dp |
+| 方案 §9 表 / §11.1 B5 行 / §12.2：Shortcuts 等 + 深链红线 | ✅ T8 + T11（真实入口零采集）；§11.1 回写 `54b5763`；QS/Live/小组件出账 M5 |
+| §6.4 步骤 13 Scanner 三条 | ✅ T14（两通道证）；Scanner 复扫 ⬜ 本机不可用 |
+| §6.4 泓舟原话①（去底栏、顶缘收起、打断合并） | ✅ T12 |
+| §6.4 泓舟原话②（发送与打断合并、⬆） | ✅ T13 |
+| §6.4「带过去的实测约束」三条 | ✅ Pan 只挂把手带（反例 `b5-12-neg`）/ 把手带接替 ≥56 演员（358×56 PASS）/ 横屏底栏 73dp 那条以「整列 234」替代（撤底栏后重量） |
+| §6.4 Reanimated 根因串 → tag → view | ⬜ 未开（非闸门） |
+| §6.4 T13 余格「表#6」 | ⬜ 未开 |
+| §6.3 遗留⑤ `Msg.driving` | ⬜ 未做 |
+| §11.2 B4 ④ 系统动画缩放 | ⬜ 可选未开 |
+| 对账二 Q16 / `charging_list` hmi 半 / 「换一批」/ v1 删除 / APK 备份 / 全量并行红 | 出账（#13–#16、#19）；APK 备份交裁（#17） |
+| B4 §6.1 遗留③ 判据要两个消费方 | ✅ `sheetHeight` 现在 VoiceSheet + ChatScreen 两个消费方（T12 / T15） |
+| B4 §6.2 遗留② `device_state 3→2` 摊平对照 | ✅ T11：物理摊平 + `state 2` ⇒ `events` 2 → 3，但报 book（会撒谎）⇒ 姿态只信 WindowManager |
+| B4 §6.2 遗留⑤ / §6.3 遗留⑥ 临时取证流不入库 | ✅ 把手带正反结构写进 `e2e/README.md`；流不入库；本批 `_capture/` 同样 gitignore |
+| 方案 §11.4 八条取数点（§4） | 状态可读性 ⬜（T17）；无障碍：Scanner 复扫 ⬜、静态判据 ✅ 两通道、WCAG 进 jest ✅；回归 ✅ 499 → 524 只增不减 + edge +5 + go +2 + `hmi/` 零改动；性能 ✅ Xruns 2×2；承诺不丢 ✅ Maestro 06 rc=0 + Dock 两钮 56；键盘 ✅ Maestro 08 rc=0；首反馈时延 / 记录完整性不复取 |
+| 方案 §11.5 开关 / 回滚 | ✅ v1 不删、`uxV2.*` 开关保留（§5 第 9 条） |
+
+**交泓舟裁的清单（8 条；删除类都是红线，本批一件没删）**
+
+| # | 事项 | 现状 | 建议 |
+|---|---|---|---|
+| 1 | `D:/Android/builds/_b3-mainline-apk-backup/mainline-app-debug.apk`（289317943 B，2026-09-02 15:19） | 已过时：设备上是 09-04 23:41 主线包，同源备份在 `_b5-mainline-apk-backup/`（289320342 B） | **删**（红线，要泓舟一句话） |
+| 2 | `D:/Android/builds/_b5-contrast-apk/contrast-app-debug.apk`（289320346 B，无 AEC 对照包） | Xruns 读数已取；语音批若要复现 FAST/48k 通路对照仍可能用到 | **留到语音批定因后再删** |
+| 3 | 本地与远端分叉怎么合 | 开工无分叉；收口后本地领先 **4 条 docs 提交**（构成见下），远端零新提交（收口时重核） | 推前当场重列 `origin/main..HEAD` 逐条念归属，**推送要单独授权**；`git push` 的粒度是分支不是提交 |
+| 4 | KWS 阈值 A/B 批何时开拆 | 前提齐：主线包锚 `23:41:40`、AEC 在包内、armed 缺失定性、协议需泓舟 10 句 × 档位 | **B5 收口后立即另拆新计划**（新会话）；T17 armed 单图追问与播报卡顿 16kHz VOIP 嫌疑排它后面 |
+| 5 | T17 做不做 | 未裁；材料流已备（`_capture/`，未跑）；要 5 个外部人 + 设备在场 | 裁「做」则下一次设备在场先截七张再找人；裁「不做」则 §11.4 继续记「无外部基线」 |
+| 6 | Docker 卷 `b5-gowork` / `b5-gomodcache` 删不删 | 本批复用它们 go test 45s（官方 wrapper 35min+ 且至今没在本机跑出过一次读数） | **留**（红线） |
+| 7 | TalkBack 的 `READ_PHONE_STATE` 撤不撤 / Accessibility Scanner 服务关不关 | §6.3 还原表两行；本批设备未接、没动 | 撤则 TalkBack 又会反复弹权限框；Scanner 在本机拿不到悬浮窗、留着无用 |
+| 8 | `scripts/run_go_tests.ps1` 要不要加 `GOPROXY` / 排除 `.artifacts` | §6.1 遗留④；改仓库脚本 | 加 `-e GOPROXY=https://goproxy.cn,direct` + 排除 `.artifacts/`，否则它在本机永远跑不完 |
+
+**仍开的格子（从 §6.1–§6.3 遗留合订；下一批 / KWS 批开工先看这里）**
+
+| 格子 | 来源 | 需要什么 |
+|---|---|---|
+| `Msg.driving` 单独验 | §6.1 ①（T5 步骤 6） | 一句复杂轮 + 退出后回看老气泡；设备 + 云栈 |
+| 真栈 HMI（Vite + 浏览器）final 多一个键 | §6.1 ① | 浏览器一轮；单测 298 与 `App.tsx:420` 现读已证不读它 |
+| 上云路径 final 真机带标 | §6.1 ① | 一句会上云的复杂轮看 final；只有 pytest |
+| 完整 `go vet ./gateway/edge` | §6.1 ③ | 一条 docker 命令 |
+| `test/e2e_process_region.py` 两条新断言 | §6.1 ⑥ | 谁开本地栈时跑一趟 |
+| `saver=true` 半 | §6.2 ① | 不充电的机器或 adb 走 tailnet |
+| 播报卡顿成因 | §6.2 ② | 语音批，沿 16kHz VOIP 找 |
+| B3 §6.2 遗留② `/blur-spike` ④ 格 | §6.2 ⑦ | Maestro 滚屏 |
+| TalkBack 听觉半 / Scanner 复扫 | §6.3 ⑤ | 换机型或 ROM |
+| `driving-card-title` 0.78 档 | §6.3 ⑥ | 文字轮（Maestro `inputText`）造车控句 |
+| 表#6 / Reanimated 定位 / 系统动画缩放 | §6.3 ⑦ | 设备时间；后两条非闸门 / 可选 |
+| 助手气泡「已打断」两次 | §6.3 ④ | 只记录未定性 |
+| 0.78 档内屏余量 0 | §6.3 ③ | 改压缩卡内容时重看 |
+| T17 五态小样本 | 本节 | 泓舟裁 + 5 人 + 设备 |
+
+**收口读数（本会话自己跑出来的；设备未接，Maestro 与真机格子本批无新读数）**
+
+| 项 | 开工基线 | 收口 | 说明 |
+|---|---|---|---|
+| `mobile: npm test` | 52 suites / **524** | **52 / 524** | 本批零代码改动；四批账 499 → 524（**+25**，只增不减） |
+| `mobile: npm run typecheck` | 0 error | **0 error** | — |
+| `python -m pytest -q -n auto --dist worksteal`（泓舟给的命令） | — | **8128 passed / 31 skipped / 24 warnings**，326.06s，exit 0 | 未设 `TZ=UTC0` / `-X utf8`；24 条里含一条 `PytestUnhandledThreadExceptionWarning`（子进程输出 GBK 字节 `0xb4` 触发 `UnicodeDecodeError`，是 `-X utf8` 缺席的产物） |
+| 同上，AGENTS §6.1 固定口径（`TZ=UTC0`、`-X utf8`、`-n 8`） | — | **8128 passed / 31 skipped / 13 warnings**，386.60s，exit 0 | **两趟 passed / skipped 逐字一致**；warnings 差 11 条 = 上面那条线程警告 + Starlette 按 worker 数重复。31 skipped 比 AGENTS 记的 32 少 1：两趟时 Docker 都在跑（为 go test 起的），最可能是那条 Docker 依赖用例跑了——**未逐条核** |
+| `go test ./gateway/...` | ⬜ 本机无 Go | **4 包全 ok**（cloud / deployprofile / edge / tlscfg），45s | Docker 容器 `golang:1.24-bookworm`（go1.24.13），named volume `b5-gowork` + `b5-gomodcache`，`GOPROXY=https://goproxy.cn,direct`，源只读挂载；跑完 `git diff --stat -- go.mod go.sum` **空**。官方 `run_go_tests.ps1` 本批没跑（§9.75） |
+| `cd hmi && npm test` | — | **298 pass / 0 fail**（7.45s） | — |
+| `python scripts/run_e2e.py --target cloud` | — | **exit 0**，68s：`e2e_protocol_smoke` PASS（1/1）、`e2e_remote_safe` PASS（8/8） | 非 canonical，廉价保险：`warnings: runtime_unverified, stale_warning(canonical_metadata_missing)`、`target_release_sha: null`；远端 e2e 锁取放各一次；`run_id e2e-20260905103711-7b2eea688648`。⚠ Git Bash 下 `timeout 120 … --dry-run` 无输出 exit 124，PowerShell 下正式趟 68s（§9.77④） |
+| `git diff --stat -- hmi/` | 空 | **空** | 四批四次都空 |
+| 云栈 `dev_stack status` | 5/5，`9a3b6f2f` | **5/5，`9a3b6f2f`** | 本批零后端、零 deploy |
+| Maestro 01/02/03/06/08/09 | §6.3 六条 rc=0 | **⬜ 本批未跑**（设备未接） | 最新读数仍是 §6.3 的六条 |
+
+**提交（本批 4 个，全是 docs；均未推送）**
+
+| 序 | 任务 | 面 |
+|---|---|---|
+| 1 | T18 | `mobile/e2e/README.md` B5 节：BEL 修复 + Maestro 判据纠正 + 02/06 互斥 + 合一键两态 + 深链冒烟 + `_capture/` 指针（1 file，+32/−3） |
+| 2 | T18 | 主计划 §9 坑账 75–89（1 file，+100） |
+| 3 | T18 | 本计划：§6.3 找回 ㉑–㉖ + 状态行 + **§6.4（本条）**；`docs/design/README.md` 本计划行 |
+| 4 | T18 | `AGENTS.md` §4.2 Android 行只改指针（**单独 commit，紧随本条**） |
+
+**未推送清单（只列构成；推前当场重列 `origin/main..HEAD` 逐条念归属）**：`origin/main..HEAD` = 上面 4 条，全部是本会话（第 4 批）的 docs 提交，零代码、零 proto、零 `hmi/`；`HEAD..origin/main` 开工时空，推前重核。工作树另有一个别人的 untracked 文件（见开工基线），**不在任何提交里**。
+
+**还原表**
+
+| 项 | 动过？ | 回读 |
+|---|---|---|
+| Docker Desktop | **启动了**（开工 `com.docker.service` Stopped；为 `go test` 起，daemon 5s 起来，server 29.6.1） | **已停回**：`Stop-Process 'Docker Desktop'` 后服务 **Stopped**、`docker version` 连不上、`wsl -t docker-desktop` 后 `wsl -l --running` 无运行中的发行版 |
+| Docker 卷 `b5-gowork` / `b5-gomodcache` | **复用**，未新建、未删（`/work` 里 `gateway/` + `gen/` + `test/fixtures/` + `go.mod/go.sum` 被本批重拷成当前 HEAD 的） | 交裁 #6 |
+| 云栈 | **只读**：`status` ×1、`run_e2e --target cloud` ×1（remote-safe 集，含远端 e2e 锁取放） | 5/5 healthy，`release_sha=9a3b6f2f` 不变 |
+| 设备 | **未接 USB，零操作** | — |
+| 工作树 | 4 个 docs 文件（已提交）+ gitignore 的 `mobile/e2e/artifacts/b5-sample/_capture/` 4 个文件 | 零代码改动；`git status` 只剩别人的 untracked 文件 |
+| 别人的 untracked 文件 | **没动、没 add** | — |
+| speaker 音量 | 不在表里（§0 第 2 条 #5） | — |
+
+**本批踩的坑（承 §6.3 的 ㉗–㉜，本批从 ㉝ 起）**
+
+㉝ ⛔ **回填记录用整段替换会把上半轮的坑吞掉**：`4e43e12` 改写 §6.3 时 ㉑–㉖ 六条整块没了，只剩「承 ㉑–㉖」一句。本批从 `a6f3a12` 找回。⇒ 回填前 `git diff` 只看删除行一遍；编号引用要能在当前文件 grep 到。（§9.89）
+
+㉞ ⛔ **Bash heredoc 把 `\a` 写成了 BEL 字节并进了仓库**：`e2e/README.md:188` 的 `platform-tools\adb.exe` 变成 `platform-tools<0x07>db.exe`，`dd7c6ef` 提交进去、隔一批才发现。判别式 `grep -c $'\x07' <file>`；含 Windows 路径的内容用 Write 工具 / Python `write_bytes`。（§9.77②）
+
+㉟ ⛔ **Git Bash 里 `timeout 120 python scripts/run_e2e.py --target cloud --dry-run` 无任何输出、exit 124**，同一脚本正式趟在 PowerShell 下 68s 跑完。没深究是 MSYS 还是缓冲——CLAUDE.md §6.1「真栈 / SSH 一律 PowerShell」就是为这个。（§9.77④）
+
+㊱ ⚠ **`check_android_env.ps1` 退出码 0 不等于设备可用**：设备缺席只是 E3 一条 WARN（17 pass / 1 warn / 0 fail，exit 0）。开工固定五步里「退出码 0」这一格盖不住「设备在不在」，要把 `adb devices -l` 非空单列成一格（本批就是 exit 0 而零设备）。
+
+㊲ ⚠ **同一条全量 pytest 两种口径 passed / skipped 一致、warnings 不一致**（24 vs 13）：差的是 `-X utf8` 缺席时子进程 GBK 输出触发的 `UnicodeDecodeError` 线程警告 + Starlette 按 worker 数重复。读数要写清口径；拿 warnings 数当回归信号前先对口径。
+
+**遗留 / 给下一批（KWS 阈值 A/B 批）的话**
+
+① **T17 未裁**：材料流在 `_capture/`（未跑）；armed 那张等 KWS 批产出后追加单图追问；不许把「未裁」写成「裁定算过」或「裁定不做」。
+② **设备锚本批没核**（未接 USB）。下一批开工 `lastUpdateTime` 应为 `2026-09-04 23:41:40`（第 3 批零重建、本批零设备），不是就先问为什么。
+③ **官方 `scripts/run_go_tests.ps1` 至今没在本机产出过一次读数**（第 1 批 35+ 分钟没拷完、本批没跑）。可用的快速回路命令写在 §9.75；要么改脚本（交裁 #8），要么继续用快速回路——两者都要说清「权威读数」是哪个。
+④ KWS 批开工前提清单（都在本计划里有出处）：主线包锚 `23:41:40` + `effects` 行证 AEC 在包内（§6.2 T11）；speaker 音量 > 0 **且** `Devices:` 不是 `bt_a2dp`（§6.3）；免唤醒开关与 armed 胶囊 3s 窗（B4 T14）；`maestro hierarchy --no-reinstall-driver` rc=0（不数包）；TalkBack / Scanner 服务状态（交裁 #7）；`haptic_feedback_enabled` 当场核。
+⑤ **语音批别再沿 Xruns 找播报卡顿**：主线包四项客观指标全 0，换掉的是 16kHz VOIP 通路（§6.2 遗留②）。
+⑥ `test/e2e_process_region.py` 两条 `driving is False` 断言仍一次没跑过（需本地栈）；本地栈开着的人顺手跑。
+⑦ 本批开工时 §6.3 的「均未推送」已不成立（都在 `origin/main`），**别照抄上一节的推送状态，每批 fetch 后重读**。
