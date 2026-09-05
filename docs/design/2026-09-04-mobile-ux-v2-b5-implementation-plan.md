@@ -2878,3 +2878,73 @@ App 起不来落到 `DevLauncherActivity` / `DevLauncherErrorActivity` 时，**�
 ⑤ **语音批别再沿 Xruns 找播报卡顿**：主线包四项客观指标全 0，换掉的是 16kHz VOIP 通路（§6.2 遗留②）。
 ⑥ `test/e2e_process_region.py` 两条 `driving is False` 断言仍一次没跑过（需本地栈）；本地栈开着的人顺手跑。
 ⑦ 本批开工时 §6.3 的「均未推送」已不成立（都在 `origin/main`），**别照抄上一节的推送状态，每批 fetch 后重读**。
+
+**⸻ 泓舟裁决执行轮（2026-09-05 晚；泓舟原话「设备接上了，待裁的事按你建议的来，可以推送」）⸻**
+
+**推送**：`git fetch` 后 `HEAD..origin/main` 空、`origin/main..HEAD` 4 条全是本会话 docs 提交（逐条念过归属）⇒ `git push origin main`：`4e43e12..322a8f1`，推后 `origin/main = HEAD = 322a8f1`。
+
+**交裁 8 条的执行结果**
+
+| # | 事项 | 裁决（按建议） | 执行 / 读数 |
+|---|---|---|---|
+| 1 | `_b3-mainline-apk-backup/` | 删 | 删前核：目录里只有 `mainline-app-debug.apk` 289317943 B（2026-09-02 15:19），且 `_b5-mainline-apk-backup/mainline-app-debug.apk` 在 ⇒ `Remove-Item -Recurse`；回读 `Test-Path` = False，`D:/Android/builds/` 下只剩 `_b5-contrast-apk` / `_b5-mainline-apk-backup` |
+| 2 | `_b5-contrast-apk/` | 留到语音批定因后 | 未动 |
+| 3 | 分叉 | 推 | 见上；推后本轮又有 4 条新提交（见下「本轮提交」） |
+| 4 | KWS 阈值 A/B 批 | B5 收口后立即另拆（新会话） | 本会话不拆；前提清单在上方遗留④ |
+| 5 | T17 | 做（设备在场先截七张再找人） | **七张材料已截齐**（见下）；五个外部人、协议、计分仍未做——§11.4 状态可读性**仍无外部基线** |
+| 6 | Docker 两卷 | 留 | 未动；官方 wrapper 走的是自己的容器层，不用这两卷 |
+| 7 | TalkBack `READ_PHONE_STATE` / Scanner 服务 | 不撤 / 关 | `READ_PHONE_STATE` 未撤；Scanner **开工时已不在** `enabled_accessibility_services`（读到空串——泓舟或重启已关），零操作 |
+| 8 | `run_go_tests.ps1` | 加 `GOPROXY` + 排除 `.artifacts/` | 已改 + 测试 +2 + **官方 wrapper 在本机第一次跑出读数**（见下） |
+
+**T17 步骤 1 材料——七张齐（主线包锚 `2026-09-04 23:41:40` 回读 ✅；深色主题；外屏竖 `mRotation=0` 1080×2520；角色手持；免唤醒关；焦点 `MainActivity`）**
+
+| 态 | 原图 | 取法 | 同步判据 / 证据 |
+|---|---|---|---|
+| idle | `raw-idle.png` | 静置 `screencap -p -d 4630947090644569220` | 无胶囊、⬆ 发送键、顶栏完整 |
+| listening | `raw-listening.png` | **同一条 `adb shell`**：`motionevent DOWN (114,2358)` → `sleep 1.6` → screencap → `UP` | 层升起 + 「正在听…」+ 电平条 + 状态栏麦克风；UP 后 `active? true` = 0 |
+| thinking | `raw-thinking.png` | Maestro `_thinking.yaml`：`extendedWaitUntil presence-capsule` 在 send 后 **1.6s** 命中 | 胶囊「正在思考…」+ ■ 琥珀键；无键盘 |
+| attention | `raw-attention.png` | `_attention.yaml`：`dock-confirm` 在 send 后 **1.5s** 命中，截完 `dock-cancel` | Dock「打开后备箱 · 危险动作 · 需二次确认 · 4:58 后过期」+ 胶囊「等你确认」+ 球琥珀环 |
+| speaking | `raw-speaking.png` | `_speaking2.yaml`：点追问卡片「闲聊口述简史」→ 胶囊文案命中后 0.8s 截 | 胶囊「播报中 · 说话可打断」+ ■；**logcat `AudioTrackImpl [audioTrackData][fine]`（pid = 本应用）从 21:23:10 连续 ≥40s**——真在放，不是演员缺席 |
+| 行车 C 常驻层 | `raw-driving-settled.png` | 角色 C + 行车档开（Switch `checked=true` 回读）→ chip「打开空调26度」→ 3s 回落后截 | `voice-sheet [0,1329][1080,2049]` = 240dp、球 360px = 120dp、chips 56dp、`composer-input` 不在、顶栏钮 56dp |
+| 泊车 同一轮 | `raw-parked.png` | 行车档关（`checked=false` 回读）+ 角色回手持，同一记录 | 「打开空调26度 / 26度 · 已执行」仍在、`composer-input` 在、`voice-sheet` 不在、`health-dot` 回 48dp |
+
+集齐后裁状态栏（顶 130px，`System.Drawing`；1080×2390）、`SystemRandom` 打乱编号 **`s1..s7`**，映射**只**在 `_capture/mapping.private.txt`（本节不写）。armed 按 §0 第 2 条 #3 **不补**。另存 `raw-driving.png`（播报中那一帧，未编号）。
+⚠ speaking 第一版作废：直接问「广州历史」被追问成三选一卡片，TTS 只 1.6s（`[fine]` 仅 21:12:54 一秒），Maestro 断言「胶囊可见」COMPLETED 而 0.8s 后的截图已是 ⬆ 闲态——**演员在场 0.8s 也算缺席**。
+
+**`run_go_tests.ps1` 改动与首次读数**
+
+- 改动：仓库里有 `.artifacts/` 时加 `--tmpfs /src/.artifacts` 盖住（只读 bind mount 排不掉子目录；目录不存在时不加，否则往只读挂载造挂载点会失败）；`GOPROXY` 缺省 `https://goproxy.cn,direct`、`$env:GOPROXY` 可覆盖；`sh` 之后的命令串一字不动。`scripts/tests/test_run_go_tests_wrapper.py` +2（默认 GOPROXY + tmpfs 按仓库有无 `.artifacts/` 分支 / 覆盖路径），`_run_with_fake_docker` 先 `pop("GOPROXY")` 免得开发者自己的环境漏进用例；**11 → 13 passed**。CI 不经它（`ci.yml:305` 直接 `go test ./...`）。
+- **官方 wrapper 第一次在本机跑完**（改后的脚本）：`WRAPPER_EXIT=0`，**2558s（42.6 min）**，`gateway/cloud / deployprofile / edge / tlscfg` 四包 `ok`；`/work` 拷了 2.3GB（无 `.artifacts`；含 `mobile/node_modules` 682MB + `hmi/node_modules` 210MB + `.git` 117MB）；`go.mod / go.sum` diff 空。⚠ `./...` 把 `mobile/node_modules/flatted/golang/pkg/flatted` 也扫成 Go 包（9 条 `no test files`）——node_modules 里有 Go 代码；要么也盖住 `node_modules`，要么默认包改 `./gateway/...`，本轮没改（超出裁决范围），记给下一次。快速回路 45s vs 官方 42.6 min，权威读数现在两条路都能出。
+
+**本轮踩的坑（承 ㊲，从 ㊳ 起）**
+
+㊳ ⛔ **来电横幅**：探针截图撞到设备主人的来电横幅 ⇒ 停手、当场删掉两张探针图、只读轮询 `dumpsys telephony.registry` 的 `mCallState` 到 0 才继续；来电期间不向设备发任何输入事件（点到接听 / 挂断就是事故）。㉖ 的第二形态。
+㊴ ⛔ **别人的 8081 Metro 让 dev-client 停在「Refreshing…」蓝条**（bundle 已加载、App 可用，但顶栏被盖，截图不能用；`force-stop` + 深链重连也不清）⇒ 不停它，另起 `--port 8082`（`CI=1`）指过去即清；收尾停自己的。§9.82 的第四种别因。
+㊵ ⛔ **Maestro 的 tap 缺省要等屏幕 settle，极光永不 settle ⇒ 一个 tap 等 20–40s**（实测 tap 输入框 33s、tap 发送 37s）；每个 `tapOn` 压 `waitToSettleTimeoutMs: 200`。第一趟 thinking 就是等完才断言才红的。
+㊶ ⛔ **`tapOn 50%,30%` 收不掉键盘**（B4 T14 那条写法在当前构建失效，`mInputShown` 仍 true）⇒ 点 IME 自己的「收起 ˅」(91%,65%)；先收键盘再点发送，材料里才没有键盘。
+㊷ Maestro 2.9 的 `takeScreenshot` 落在 `~/.maestro/tests/<ts>/<流名>/takeScreenshot/<name>.png`，不在 cwd。
+㊸ ⛔ **「胶囊出现过」≠「截到了」**：speaking 第一版断言 COMPLETED 而 0.8s 后的截图已是闲态。判据要连截图内容一起看，且要先制造足够长的态（长回答）。
+㊹ ⛔ **`scrollUntilVisible` 以标签为目标会停在 chip 行还在屏外的位置**，点下去点的是标签而设置没变——回读截图才发现（§9.55 又一次）；目标改成行里最后一个 chip。
+㊺ Git Bash 的 MSYS 把 `adb pull /sdcard/…` 的 `/sdcard` 改写成 `D:/Program Files/Git/sdcard`（`failed to stat remote object`）⇒ `MSYS_NO_PATHCONV=1` 或 PowerShell。
+㊻ ⚠ **行车档层内 speaking 帧**（`raw-driving.png`）：answer「26度」落到层左下、状态行「播报中 · 说话可打断」居中盖在球下，两者位置重叠 / 错位；只记录未定性（可能是 3s 回落动画中的一帧），交界面批看。
+
+**还原表（本轮）**
+
+| 项 | 动过？ | 回读 |
+|---|---|---|
+| App 播报档 | **动过**（自动 → 总是 取 speaking → 自动） | `_settings_broadcast_restored.png`「自动」高亮 ✅（第一次还原点在标签上没生效，回读截图才发现，见 ㊹） |
+| App 设备角色 | **动过**（手持 → 可信车载平板 → 手持） | 头行「手持陪伴端 · 不控车」✅ |
+| App 行车档 | **动过**（关 → 开 → 关） | Switch `checked=false` ✅；对话页 `composer-input` 在、`voice-sheet` 不在 ✅ |
+| 承诺面 Dock | **动过**（「打开后备箱」两次进 Dock，均 `dock-cancel`） | 记录里「好的，已为您取消」；无挂起 |
+| App 其它设置 | 没动 | 主题深色 / 字号标准 / 常亮关 / 昵称「小舟」/ 免唤醒关（`active? true` 0）/ Dock true |
+| 对话记录 | 多了 6 轮（天气 ×2 / 后备箱取消 ×2 / 广州历史追问 + 简史 / 空调 26 度） | 会话状态，不在还原表 |
+| 云栈 | 车控一句（`hvac.set` 端侧快路径） | 本批零后端；车态未查 |
+| Metro | **自起 8082（PID 71972）→ 已停**；8081（别人的，PID 75696）未动 | `netstat` 只剩 8081 ✅ |
+| `adb reverse` | 建 8081 + 8082 → 已 `--remove tcp:8082` | 只剩 `tcp:8081` ✅ |
+| Docker Desktop | 为官方 wrapper 又起一次 → **已停回**（服务 Stopped、`docker-desktop` 发行版已终止） | ✅ |
+| 设备系统设置 | 一字未动 | Scanner 服务开工时已为空 |
+| APK 备份 | **删了 `_b3-mainline-apk-backup/`**（泓舟裁） | `Test-Path` False ✅ |
+| 探针截图（含来电横幅） | 已删 | `_probe*.png` 0 个 ✅ |
+| speaker 音量 | 不在表里（§0 第 2 条 #5） | 仍 0 / `Muted: true`；speaking 判据靠 `AudioTrackImpl [fine]` 不靠听 |
+
+**本轮提交（推送 `322a8f1` 之后新增，均为本会话）**：① `scripts/run_go_tests.ps1` + 测试 +2；② `mobile/e2e/README.md` 抓瞬态五条 + 8082 + MSYS；③ 本节「裁决执行轮」；④ `AGENTS.md` 行（T17 材料已齐、交裁已裁）。泓舟本轮原话「可以推送」——推前当场重列 `origin/main..HEAD` 逐条念归属再推。
