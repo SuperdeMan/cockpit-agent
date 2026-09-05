@@ -52,14 +52,14 @@ export interface Palette {
 }
 
 // 深色：aurora.css :root 逐值
-const DARK = {
+export const DARK = {
   bg: '#06080F',
   panel: '#0A0E1A',
   card: 'rgba(255,255,255,0.05)',
   line: 'rgba(255,255,255,0.09)',
   fg1: 'rgba(255,255,255,0.92)',
   fg2: 'rgba(255,255,255,0.58)',
-  fg3: 'rgba(255,255,255,0.34)',
+  fg3: 'rgba(255,255,255,0.48)',
   accentSoft: 'rgba(70,214,224,0.12)',
   amberSoft: 'rgba(245,158,11,0.14)',
   hi: 'rgba(255,255,255,0.16)',
@@ -75,14 +75,14 @@ const DARK = {
   sceneGradient: 'linear-gradient(155deg, #06080f 0%, #0a0e1a 55%, #080d18 100%)',
 }
 // 浅色：aurora.css [data-theme='light'] 逐值（磨砂白）
-const LIGHT = {
+export const LIGHT = {
   bg: '#EDF1FA',
   panel: '#E4EBF7',
   card: 'rgba(255,255,255,0.80)',
   line: 'rgba(10,14,26,0.09)',
   fg1: 'rgba(10,14,26,0.92)',
-  fg2: 'rgba(10,14,26,0.55)',
-  fg3: 'rgba(10,14,26,0.32)',
+  fg2: 'rgba(10,14,26,0.62)',
+  fg3: 'rgba(10,14,26,0.60)',
   accentSoft: 'rgba(10,143,204,0.10)',
   amberSoft: 'rgba(180,83,9,0.12)',
   // 浅色「顶缘高光」刻意不是白：RN 无 backdrop 磨砂，fill 灰底上压 1px 白边会渲成一条孤立白线

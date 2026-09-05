@@ -132,9 +132,14 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
     >
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
         {/* 行车档快捷指令 ≤3（§6「chips ≤3」）、行高 56 */}
+        {/* B5-14（B4 Scanner 出账③「多个项目具有相同的说明」）：chip 的说明加「快捷指令：」前缀。
+            没有它时 chip 与同文案的用户气泡都以纯文本作说明，读屏把「打开空调26度」念两遍、
+            用户分不出哪个是可点的。前缀只进 accessibilityLabel，视觉文案不变。 */}
         {quickCommands.slice(0, driving ? 3 : quickCommands.length).map((c) => (
           <Pressable
             key={c}
+            accessibilityRole="button"
+            accessibilityLabel={`快捷指令：${c}`}
             onPress={() => onSend(c)}
             style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, minHeight: driving ? target : undefined, justifyContent: 'center' }}
           >

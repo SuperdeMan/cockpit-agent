@@ -21,7 +21,7 @@ import { buildReceipt } from '../../core/session/receipt'
 import { ensureWired, type Wired } from '../../core/session/wiring'
 import type { SendOpts } from '../../core/session/store'
 import { currentTurn } from '../../core/session/turnView'
-import { settingsStore } from '../../core/settings/store'
+import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { activityLog } from '../../core/presence/activityLog'
 import { useReduceMotion } from '../../core/a11y/reduceMotion'
 import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
@@ -34,6 +34,7 @@ import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { PANE_GAP, screenSwitch, tabletopSplit } from '../../ui/layout/sizeClass'
 import { useLayout } from '../../ui/layout/useLayout'
 import { usePalette } from '../../ui/theme'
+import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { speechController } from '../../core/voice/speech'
@@ -103,18 +104,25 @@ export function ChatScreen() {
   return <ChatBody p={p} wired={wired} cfg={cfgState} />
 }
 
-/** 顶栏图标入口（hmi .au-icon-btn 同款：fill 底/圆角 12/40dp 热区）；svg 原生缺席回退文字 */
+/** 顶栏图标入口（hmi .au-icon-btn 同款：fill 底/圆角 12）；svg 原生缺席回退文字。
+ *  B5-14（B4 Scanner 出账①）：热区从写死的 40dp 改成 §6 的目标——泊车 48 / 行车 56，跟字号 scale。
+ *  40 是 hmi 的桌面尺寸，搬到手上两态都不达 48；行车档只管了层内与 Composer，**没管顶栏**。 */
 function TopIconLink({
   p,
   href,
   icon,
   label,
+  driving,
+  fontScale,
 }: {
   p: ReturnType<typeof usePalette>
   href: '/vehicle' | '/settings'
   icon: IconName
   label: string
+  driving: boolean
+  fontScale: FontScalePref
 }) {
+  const target = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
   if (!iconRuntimeAvailable()) {
     return (
       <Link href={href} style={{ color: p.accent, fontSize: p.font(14), padding: 6 }}>
@@ -127,8 +135,8 @@ function TopIconLink({
       <Pressable
         accessibilityLabel={label}
         style={{
-          width: 40,
-          height: 40,
+          width: target,
+          height: target,
           borderRadius: 12,
           alignItems: 'center',
           justifyContent: 'center',
@@ -672,8 +680,9 @@ function ChatBody({
                 accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}${captureDot ? '，' + captureDot.label : ''}；打开隐私栏`}
                 onPress={() => setPrivacyOpen(true)}
                 style={{
-                  minWidth: 40,
-                  height: 40,
+                  // B5-14（B4 Scanner 出账①）：与顶栏两枚钮同一表达式——泊车 48 / 行车 56
+                  minWidth: scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale),
+                  height: scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale),
                   flexDirection: 'row',
                   alignItems: 'center',
                   justifyContent: 'center',
@@ -731,9 +740,9 @@ function ChatBody({
             <View style={{ flex: 1 }} />
             {/* 舞台常驻的两种形态（双栏 / 桌面）里车况已在屏上，不重复给入口；抽屉与单栏保留 */}
             {layout.mode !== 'two-pane' && layout.mode !== 'tabletop' ? (
-              <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" />
+              <TopIconLink p={p} href="/vehicle" icon="vehicle" label="车辆" driving={snapshot.driving} fontScale={settings.fontScale} />
             ) : null}
-            <TopIconLink p={p} href="/settings" icon="settings" label="设置" />
+            <TopIconLink p={p} href="/settings" icon="settings" label="设置" driving={snapshot.driving} fontScale={settings.fontScale} />
           </View>
           {!v2 && linkWarn ? (
             <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
