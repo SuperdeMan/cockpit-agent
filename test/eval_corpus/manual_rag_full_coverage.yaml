@@ -1,0 +1,33 @@
+version: 1
+document_id: xiaomi-su7-2024-user-manual
+vehicle_model: xiaomi-su7-2024
+source_sha256: ef16d204c2ad711b2aa6c2a5f2a6607cfc2d47ed3f5d5a4e1db4085f75e4705d
+package_sha256: 648cdf3d1d5001f199fce12e3983f3d016d929f772d0eb8aa058512dcd4400ed
+content_sha256: 530b8538484d076cccb3739bde80fec3927b15514a65c7abfd3ad56fdad233b5
+visual_assets_sha256: be594128e827afb207dc611f389a14a1d626d542df0ae17b77dc0da4c8676511
+top_k: 4
+expected:
+  source_pages: 278
+  indexed_pages: 269
+  excluded_text_pages: [1, 2, 8, 28, 56, 180, 210, 222, 278]
+  indexed_pages_sha256: c13dae76cd5e0d60f75037d29b181d5edc898b3d57edf1df81b241337bc97770
+  chunk_ids_sha256: f6db5363e38eb9fdf3bb3dcd661d4e166c15e1deabbdd4c8542930bff2af5780
+  index_section_paths: 160
+  index_section_paths_sha256: f69610a019f20a53ec00eaaa2093f9159a8850b24ce2019c71344a21b74a1864
+  outline_leaf_sections: 187
+  outline_leaf_sections_sha256: 0e1df920db282d3013178056c17e162414ede56b5f22777c3d57492e9caa4d65
+  visual_assets: 350
+  visual_blobs: 299
+  visual_skipped_assets: 17
+  visual_semantic_topics: 35
+  natural_cases: 36
+section_query_template: "我想知道 SU7 用户手册里{parent} {leaf}？"
+section_query_overrides:
+  "应急和救援 > 车主应急 > 低压电池电量耗尽": "我想知道 SU7 用户手册里道路救援时车辆无法启动，为什么不能自行跨接启动？"
+visual_warning_query_template: "SU7 用户手册：仪表上的{caption}图标是什么意思？"
+visual_illustration_query_template: "SU7 用户手册：{caption}怎么使用？"
+visual_query_overrides:
+  "warning:胎压监测报警指示灯": "SU7 用户手册：胎压监测报警指示灯亮了怎么处理？"
+natural_corpus: test/eval_corpus/manual_rag_retrieval.yaml
+visual_catalog: agents/manual_rag/resources/visual_assets.yaml
+natural_corpus: test/eval_corpus/manual_rag_retrieval.yaml

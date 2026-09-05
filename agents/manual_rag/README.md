@@ -4,9 +4,18 @@
 简短回答。v2 同时处理无标点操作方法问句、受控图标俗称和同页原图；mock 只保留给 CI
 和无私有手册资产的离线开发。
 
-生产状态（2026-09-03）：release `434a0461d07e7652de6605954f6df3fddb846553` 已使用 v2
-shared-model 只读图文包。完整 36 题生产链路 36/36；14 个高风险问法全部 repeat 3，合计
-64/64 为 `manual.query`、内容正确、零 action、车态 diff={}。统一 verify 与 5/5 endpoint 通过。
+生产状态（2026-09-05）：release `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 使用v2
+shared-model只读图文包，5/5 endpoint healthy、统一verify通过。精确代码全量为
+7861 passed / 34 skipped / 5 warnings / 0 failed。
+
+整本范围已在当前生产闭合：独立自然化章节批187/187，受控视觉35/35；此前
+`位置灯/左转向/右转向/后雾灯/近光灯`五个三字caption稳定缺口均已修复。0.3.3另将LLM
+RuntimeError收口为一次有界重试；配额/参数/鉴权类不重试，仍失败则保留已检索的真实PDF卡并
+给出诚实降级话术，编程异常继续显式失败。
+
+当前release补跑用户点名问法：`雨刮器怎么打开`与“小人背宝剑”各3/3，均返回预期PDF页和
+图片，零action/确认、车态diff={}。原36题整批不能直接复跑：其中7条旧表述未通过联网前的
+question-shape/FastIntent安全预检；这7条未发送，也不得把其余结果拼成当前36/36。
 
 | intent | 说明 |
 |---|---|
@@ -104,6 +113,11 @@ python -X utf8 scripts/eval_manual_rag.py `
   --index models/manual_rag/xiaomi-su7-2024.v2.mrag `
   --cases test/eval_corpus/manual_rag_retrieval.yaml `
   --output .artifacts/manual-rag/xiaomi-su7-2024-retrieval.json
+
+# 需要项目运行依赖 + requirements-ingest.txt 中的 pypdf
+python -X utf8 scripts/eval_manual_rag_full_coverage.py `
+  --pdf 'D:\path\to\2024-小米SU7-Pro-Max-用户手册.pdf' `
+  --output .artifacts/manual-rag-full-coverage/offline-full.json
 ```
 
 真实评测必须同时核对 top 页和关键正文；“页号碰对”不算通过。当前实现与证据边界见
@@ -112,3 +126,7 @@ python -X utf8 scripts/eval_manual_rag.py `
 
 里程碑 `e2e_strict_stack` 会直接加载完整 36 题 corpus，而不是再维护一份三题子集；每题须
 同时满足 `manual` 单域卡、approved real provenance、预期页/正文/图片或正确零命中、零 action。
+整本 evaluator 另行报告 278页源重建、269页锚、160个索引路径、187个outline叶子、35个受控
+视觉语义和原36题；生产探针是 `scripts/probe_manual_rag_full_coverage.py`，不进入自动CI车道。
+完整口径与当前证据见
+`docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md`。

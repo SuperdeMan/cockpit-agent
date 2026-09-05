@@ -13,15 +13,18 @@ mock 栈上跑无意义：检测到 active=mock 写结构化 whole-skip（退出
 import asyncio
 import json
 from pathlib import Path
-import re
 import sys
-import unicodedata
 import urllib.error
 import urllib.request
 
 import yaml
 
 from support.e2e import CaseRecorder, is_network_timeout
+from support.manual_rag_contract import (
+    cards as _shared_cards,
+    manual_card_errors as _shared_manual_card_errors,
+    manual_response_errors as _shared_manual_response_errors,
+)
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -102,111 +105,17 @@ async def _ask(
 
 
 def _cards(msg: dict) -> list[dict]:
-    card = msg.get("ui_card") or {}
-    if card.get("type") == "card_group":
-        return [c for c in (card.get("items") or []) if isinstance(c, dict)]
-    return [card] if card else []
-
-
-def _comparable(value: object) -> str:
-    return re.sub(
-        r"\s+", "", unicodedata.normalize("NFKC", str(value or "")).casefold(),
-    )
+    return _shared_cards(msg)
 
 
 def _manual_card_errors(card: dict, expected: dict) -> list[str]:
     """按离线 retrieval evaluator 的同一字段口径审核真栈 manual 卡。"""
-    errors: list[str] = []
-    prov = card.get("_prov") or {}
-    document = card.get("document") or {}
-    chunks = [item for item in (card.get("chunks") or []) if isinstance(item, dict)]
-    images = [item for item in (card.get("images") or []) if isinstance(item, dict)]
-    pages = [int(item["page_start"]) for item in chunks if item.get("page_start")]
-    page_set = set(pages)
-
-    if prov.get("mode") != "real" or prov.get("vendor") != "xiaomi-su7-2024-user-manual":
-        errors.append("manual provenance is not the approved real provider")
-    for key in (
-        "vehicle_model", "revision", "source_sha256", "content_sha256",
-        "visual_assets_sha256",
-    ):
-        if document.get(key) != MANUAL_DOCUMENT.get(key):
-            errors.append(f"document {key} mismatch")
-
-    if expected.get("expect_empty"):
-        if chunks:
-            errors.append(f"expected empty chunks, got pages {pages}")
-        if images:
-            errors.append("expected empty images")
-        return errors
-
-    sources = card.get("sources") or []
-    if not any("PDF第" in str(source) for source in sources):
-        errors.append("manual card has no PDF page citation")
-    expected_top = expected.get("expect_top_page")
-    if expected_top is not None and (not pages or pages[0] != int(expected_top)):
-        errors.append(f"wrong top page: want {expected_top}, got {pages[:1]}")
-    expected_any = {int(page) for page in expected.get("expect_pages_any") or []}
-    if expected_any and not expected_any.intersection(page_set):
-        errors.append(f"missing expected page: want any {sorted(expected_any)}, got {pages}")
-    expected_all = {int(page) for page in expected.get("expect_pages_all") or []}
-    if not expected_all.issubset(page_set):
-        errors.append(f"missing required pages: {sorted(expected_all - page_set)}")
-
-    combined = _comparable("\n".join(str(item.get("content") or "") for item in chunks))
-    missing_text = [
-        str(term) for term in expected.get("expect_text_all") or []
-        if _comparable(term) not in combined
-    ]
-    if missing_text:
-        errors.append(f"missing text: {missing_text}")
-    alternatives = [str(term) for term in expected.get("expect_text_any") or []]
-    if alternatives and not any(_comparable(term) in combined for term in alternatives):
-        errors.append(f"missing any text: {alternatives}")
-
-    image_pages = {int(item["page_start"]) for item in images if item.get("page_start")}
-    expected_image_pages = {
-        int(page) for page in expected.get("expect_image_pages_any") or []
-    }
-    if expected_image_pages and not expected_image_pages.intersection(image_pages):
-        errors.append(
-            f"missing expected image page: want any {sorted(expected_image_pages)}, "
-            f"got {sorted(image_pages)}"
-        )
-    captions = _comparable("\n".join(str(item.get("caption") or "") for item in images))
-    missing_captions = [
-        str(caption) for caption in expected.get("expect_image_caption_all") or []
-        if _comparable(caption) not in captions
-    ]
-    if missing_captions:
-        errors.append(f"missing image captions: {missing_captions}")
-    for image in images:
-        data_uri = str(image.get("data_uri") or "")
-        if not data_uri.startswith(("data:image/png;base64,", "data:image/jpeg;base64,")):
-            errors.append("manual image is not a trusted inline PNG/JPEG")
-            break
-        if re.fullmatch(r"[0-9a-f]{64}", str(image.get("sha256") or "")) is None:
-            errors.append("manual image SHA-256 is invalid")
-            break
-    return errors
+    return _shared_manual_card_errors(card, expected, MANUAL_DOCUMENT)
 
 
 def _manual_response_errors(msg: dict, expected: dict) -> list[str]:
     """一轮只能有一张 manual 卡且零 action；其它域卡不能被正确 manual 卡遮住。"""
-    errors: list[str] = []
-    if msg.get("actions"):
-        errors.append("manual probe returned actions")
-    cards = _cards(msg)
-    manual_cards = [card for card in cards if card.get("type") == "manual"]
-    other_types = [str(card.get("type") or "") for card in cards
-                   if card.get("type") != "manual"]
-    if len(manual_cards) != 1:
-        errors.append(f"expected exactly one manual card, got {len(manual_cards)}")
-    if other_types:
-        errors.append(f"manual response included other card types: {other_types}")
-    if len(manual_cards) == 1:
-        errors.extend(_manual_card_errors(manual_cards[0], expected))
-    return errors
+    return _shared_manual_response_errors(msg, expected, MANUAL_DOCUMENT)
 
 
 async def main() -> int:

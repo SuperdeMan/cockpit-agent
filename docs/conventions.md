@@ -2602,11 +2602,11 @@ registry round-trip → `Step` → Executor/D0/T2 全链保真；缺声明或 le
 | 内容 | 每个 chunk 与全量 chunks 都带 SHA-256；视觉 manifest、每个图片 blob 也分别带 SHA-256；并须命中 tracked `resources/manual_catalog.yaml` 的文本+视觉批准指纹；schema/hash/page/model 任一非法则启动失败 |
 | 车型 | 一份索引一个 `vehicle_model`；显式配置不一致启动失败，请求车型不一致零命中 |
 | 引用 | `Chunk.source_type=manual`；source 和卡片必须带手册标题、章节路径、PDF 物理页码 |
-| 召回 | 显著 Latin token 或多词产品名在手册不存在时零命中；低覆盖/低分零命中，不凑 top-k；视觉俗称只认 `visual_assets.yaml` 人审映射，未知外观不近似猜图标 |
-| 生成 | 每段 prompt 资料带稳定来源；图片二进制不进 prompt；视觉目录命中且有手册说明时确定性转述，避免相邻图标被 LLM 改判；零命中不调 LLM；真实手册答案中带单位/小数的数值必须能在本轮引用片段核对，否则整段弃权 |
+| 召回 | 显著 Latin token 或多词产品名在手册不存在时零命中；低覆盖/低分零命中，不凑 top-k；视觉俗称只认 `visual_assets.yaml` 人审映射，未知外观不近似猜图标；三字正式 caption 只在“图标/指示灯/仪表/亮灯”等视觉语境下匹配，不能劫持同名功能操作问法 |
+| 生成 | 每段 prompt 资料带稳定来源；图片二进制不进 prompt；视觉目录命中且有手册说明时确定性转述，避免相邻图标被 LLM 改判；零命中不调 LLM；真实手册答案中带单位/小数的数值必须能在本轮引用片段核对，否则整段弃权；LLM RuntimeError仅对非配额/参数/鉴权类做一次有界重试，仍失败必须保留真实PDF卡并诚实说明摘要暂不可用，禁止冒出裸“Agent内部错误”；ValueError等编程异常不得吞掉 |
 | 真实性 | 完整性校验通过后才 `provider[knowledge]=<document_id>(real)`；`manual` 卡 `_prov.mode=real` 且 `data_time_label=手册版本` |
 | 图片消费 | `manual` 卡最多 2 张，单图原始数据 ≤640 KiB、总计 ≤768 KiB，只允许 hash 已校验的 PNG/JPEG data URI；HMI 与 Android 复用 `manualCard.mjs` 再做协议、大小与去重校验；SVG/HTTP/任意 URI 拒绝 |
-| 落域 | `runtime.question_shape` 以零领域句形保证“对象怎么打开”无标点也不执行；`manual-help-boundary` guide + manual exemplars 教泛化；manifest hint 只兜生产复现的窄 canonical，并须保留明确车控/非车辆/真实拍照反例 |
+| 落域 | `runtime.question_shape` 以零领域句形保证“对象怎么打开”无标点也不执行；`manual-help-boundary` guide + manual exemplars 教泛化；manifest hint 只兜生产复现的窄 canonical。显式“SU7/小米SU7 + 手册 + 具体主题 + 问号”属于用户指定来源，确定性落 `manual.query`；明确车控、非车辆手册和真实拍照反例必须保留 |
 | 资产 | 源 PDF、索引正文与图片不进 Git；`models/manual_rag/` 只跟踪 README/`.gitkeep`，生产构建工作区单独注入已核验 `.mrag`。无法解码/超像素上限的图片计入 `skipped_assets`，不得声称全图覆盖 |
 
 默认 `KNOWLEDGE_VENDOR=mock` 只为了无私有资产的 CI/离线开发可运行，不构成真栈豁免。
@@ -2614,3 +2614,9 @@ registry round-trip → `Step` → Executor/D0/T2 全链保真；缺声明或 le
 接受 `manual` mock 为 WARN。生产验收必须同时看到启动 real 决议、卡片 real 章、预期页/正文/
 图片、无标点问句 0 action；任何一项不能用相邻 SHA 或本地 ignored artifact 转借。用户上传
 真实照片仍归 `vision.describe`，本契约只处理手册内图片与人审文字俗称，不扩张摄像头采集面。
+
+整本验证的分母必须分层：278个源页、269个文本页/chunk、160个合并索引路径、187个PDF
+outline原子叶子、350个视觉放置/299个blob/17个skipped、35个受控视觉语义，以及独立的36题
+自然问法集。正文原句页锚只能证明可达，目录标题只能证明范围，不得与自然问法混算“准确率”。
+真栈问法必须先过 question-shape + FastIntent None；action、need_confirm、任一完整车态差异都
+立即停批，不得因为动作恰好幂等而算安全。

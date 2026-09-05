@@ -3655,6 +3655,7 @@ def atomic_write_report_pair(
 # ---------------------------------------------------------------------------
 
 _ARCH_EXCLUDED_DIRS = frozenset({
+    ".artifacts",
     ".git",
     ".worktrees",
     "__pycache__",

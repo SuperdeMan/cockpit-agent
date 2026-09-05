@@ -39,6 +39,9 @@ _ASCII_GATE_EXEMPT = frozenset({
 _MAX_IMAGE_BYTES = 640 * 1024
 _MAX_IMAGE_TOTAL_BYTES = 768 * 1024
 _MAX_IMAGES = 2
+_VISUAL_CONTEXT_MARKERS = (
+    "图标", "指示灯", "仪表", "灯亮", "亮了", "常亮", "闪烁",
+)
 
 
 class ManualIndexError(ValueError):
@@ -206,7 +209,9 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 if len(needle) >= 3:
                     self._visual_needles.append((needle, "visual_alias", asset))
             caption = _compact(asset.get("caption", ""))
-            if len(caption) >= 4:
+            # 三字正式名称（后雾灯/近光灯/位置灯/左转向/右转向）也属于受控目录，
+            # 但只能在查询同时具备视觉上下文时消费，避免“后雾灯怎么打开”被图标页劫持。
+            if len(caption) >= 3:
                 self._visual_needles.append((caption, "visual_caption", asset))
         self._visual_needles.sort(key=lambda value: (-len(value[0]), value[2]["asset_id"]))
         for page_assets in self._assets_by_page.values():
@@ -402,10 +407,14 @@ class ManualIndexRetriever(KnowledgeRetriever):
 
     def _matched_visual_assets(self, query: str) -> list[tuple[dict[str, Any], str]]:
         compact = _compact(query)
+        has_visual_context = any(
+            _compact(marker) in compact for marker in _VISUAL_CONTEXT_MARKERS)
         matched: list[tuple[dict[str, Any], str]] = []
         seen: set[str] = set()
         for needle, kind, asset in self._visual_needles:
             if needle not in compact or asset["asset_id"] in seen:
+                continue
+            if kind == "visual_caption" and len(needle) < 4 and not has_visual_context:
                 continue
             matched.append((asset, kind))
             seen.add(asset["asset_id"])

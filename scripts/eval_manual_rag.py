@@ -90,6 +90,30 @@ async def evaluate_cases(retriever, cases: list[dict[str, Any]], *, top_k: int =
             if expected_any and not any(
                     _comparable(item) in comparable for item in expected_any):
                 reasons.append(f"missing any text: {expected_any}")
+            expected_section = tuple(
+                str(item) for item in case.get("expect_section_path") or [])
+            if expected_section and not any(
+                    tuple(getattr(chunk, "section_path", ())) == expected_section
+                    for chunk in chunks):
+                actual_sections = sorted({
+                    " > ".join(getattr(chunk, "section_path", ()))
+                    for chunk in chunks
+                })
+                reasons.append(
+                    f"missing expected section {' > '.join(expected_section)!r}, "
+                    f"got {actual_sections}")
+            expected_section_terms = [
+                _comparable(item)
+                for item in case.get("expect_section_terms_all") or []
+            ]
+            if expected_section_terms and not any(
+                    all(term in _comparable(" > ".join(
+                        getattr(chunk, "section_path", ())))
+                        for term in expected_section_terms)
+                    for chunk in chunks):
+                reasons.append(
+                    "missing expected section terms: "
+                    f"{case.get('expect_section_terms_all')}")
             expected_image_pages = {
                 int(page) for page in case.get("expect_image_pages_any") or []}
             if expected_image_pages and not expected_image_pages.intersection(image_pages):
@@ -118,6 +142,7 @@ async def evaluate_cases(retriever, cases: list[dict[str, Any]], *, top_k: int =
                 "score": round(float(chunk.score), 6),
                 "page_start": chunk.page_start,
                 "page_end": chunk.page_end,
+                "section_path": list(getattr(chunk, "section_path", ())),
                 "excerpt": " ".join(chunk.content.split())[:180],
             } for chunk in chunks],
             "images": [{

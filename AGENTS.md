@@ -72,7 +72,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 7. `Capability.response_only` 是只响应能力的权威；D0/T2/Executor 都必须 fail closed。
 8. 安全问句的权威文本是服务端 `safety_origin_text`；LLM goal/reason 和补槽短句无授权权威。
 
-## 4. 当前真实状态（2026-09-03）
+## 4. 当前真实状态（2026-09-05）
 
 ### 4.0 发布快照
 
@@ -80,15 +80,17 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `434a0461d07e7652de6605954f6df3fddb846553` |
-| 回滚点 | `b3a2aedd3c360c230709551502e5568e8bba8286` |
-| status | 5/5 endpoint healthy，零 warning |
-| verify | `verified`；artifact `20260903T130534Z-434a046.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
-| exact-code 全量 | `7833 passed / 34 skipped / 4 warnings`；内存约 1.5GB 时串行 `-n 1`，1308.46s |
-| manual-rag | SU7 v2 `.mrag`=`648cdf3…400ed`；retrieval 36/36；生产完整 36/36 + 14 个高风险问法各 3/3，合计 64/64，图文证据、零 action、车态 diff={} |
-| 证据边界 | 本地全量、部署、verify 与手册真栈均绑定 `434a046`；旧 release 的专项数字不转借 |
+| 生产 release | `9a3b6f2f08657464c5049a5abf8f6e989e398bce` |
+| 上一生产基线 | `805711cff74b79b23324180ed22f7e026f95e481`；rollback命令未在本轮实际执行 |
+| status | 2026-09-05 末端复核：5/5 endpoint healthy，零 warning |
+| verify | `verified`；artifact `20260904T163045Z-9a3b6f2.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| exact-code 全量 | `7861 passed / 34 skipped / 5 warnings`；`-n2 --dist worksteal`，656.57s，0 failed；5条warning是4类已知项（Starlette按worker重复） |
+| manual-rag | 0.3.3生产闭合：离线269页/160索引路径/187 outline叶子/35视觉/原36题全绿；生产独立章节批187/187、视觉35/35；雨刮/背宝剑各3/3带图；所有正式轮零action/确认/probe error、车态diff={} |
+| 自然问法边界 | 原36题完整真栈仍只在`434a046`闭合；当前精确整批有7条旧表述被联网前安全预检拒绝，未冒充当前36/36 |
+| 证据边界 | 全量、部署、status、verify与最终手册真栈都绑定`9a3b6f2f`；后续纯docs/test提交不得冒充release |
 
-`b3a2aed` 是 v2 首次生产 release，现作为回滚点；`a406e22` / `423ed23` 是 v1 发布历史。
+`b3a2aed` 是 v2 首次生产 release；`434a046`、`7b594f37`、`805711cf` 是后续生产历史；
+`a406e22` / `423ed23` 是 v1 发布历史。
 当前 release 不借用 `a729b98` 的 Cloud Planner、Planner+Info 或新闻专项数字。
 
 ### 4.1 QA 状态
@@ -97,7 +99,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 安全专项在 `e9fa602` 上 5 例、15/15 PASS；
 - 完整 information persona 在 `e9fa602` 上 57/59，提醒/导航清理、零挂起与 release 连续均证明；
 - `limit:null → "None" → ValueError` 已由 `a729b98` 修复，新闻 3 个干净会话零 internal error；
-- manual-rag 已在 `434a046` 用 Xiaomi SU7 v2 图文包闭合 36/36 全量语料与 14×3 高风险复验；
+- manual-rag 已在`9a3b6f2f`闭合整本范围：独立章节187/187、视觉35/35、点名泛化问法各3/3；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
 当前主要活项：

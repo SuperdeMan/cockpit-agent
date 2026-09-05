@@ -119,6 +119,60 @@ def test_mixed_manual_and_web_sources_use_non_authoritative_wording():
     assert "车型手册问答助手" not in system
 
 
+def test_transient_llm_runtime_error_retries_once_and_recovers():
+    agent = _agent()
+    agent.llm.complete = AsyncMock(side_effect=[
+        RuntimeError("LLM Gateway error: INTERNAL: transient"),
+        "手册中的直接答案。",
+    ])
+
+    result = asyncio.run(run_handle(
+        agent, "manual.query", raw_text="胎压多少正常"))
+
+    assert result.speech == "手册中的直接答案。"
+    assert (result.data or {}).get("generation_retry") == "recovered"
+    assert agent.llm.complete.await_count == 2
+    assert (result.ui_card or {}).get("chunks")
+
+
+def test_repeated_llm_runtime_error_degrades_to_cited_card():
+    agent = _agent()
+    agent.llm.complete = AsyncMock(side_effect=RuntimeError(
+        "LLM Gateway error: INTERNAL: still unavailable"))
+
+    result = asyncio.run(run_handle(
+        agent, "manual.query", raw_text="胎压多少正常"))
+
+    assert result.status == "ok"
+    assert "摘要生成暂时不可用" in result.speech
+    assert "Agent 内部错误" not in result.speech
+    assert (result.data or {}).get("generation_degraded") == "llm_runtime_error"
+    assert agent.llm.complete.await_count == 2
+    assert (result.ui_card or {}).get("chunks")
+
+
+def test_nonretryable_llm_runtime_error_degrades_without_retry():
+    agent = _agent()
+    agent.llm.complete = AsyncMock(side_effect=RuntimeError(
+        "LLM Gateway error: RESOURCE_EXHAUSTED: rate limit"))
+
+    result = asyncio.run(run_handle(
+        agent, "manual.query", raw_text="胎压多少正常"))
+
+    assert "摘要生成暂时不可用" in result.speech
+    assert agent.llm.complete.await_count == 1
+    assert (result.ui_card or {}).get("chunks")
+
+
+def test_programming_error_is_not_hidden_as_generation_degrade():
+    agent = _agent()
+    agent.llm.complete = AsyncMock(side_effect=ValueError("bad implementation"))
+
+    with pytest.raises(ValueError, match="bad implementation"):
+        asyncio.run(run_handle(
+            agent, "manual.query", raw_text="胎压多少正常"))
+
+
 # ── ③ 安全信号词 → 分级安全建议 ──────────────────────────────────────────
 
 def test_safety_signal_gets_graded_advice_not_just_a_number():

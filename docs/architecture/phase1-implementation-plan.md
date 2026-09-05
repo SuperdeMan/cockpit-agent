@@ -80,10 +80,12 @@ proto 契约、Agent SDK、Registry/LLM-Gateway/Planner/Memory/Gateway/Edge 骨�
 - media：接媒体内容源播放控制。
 - info：天气/新闻/日程/提醒真实数据源。
 - food-ordering / parking-payment：接到店/停车平台 + **统一支付网关**（Agent 不持凭证）。
-- manual-rag：✅ 2026-09-03 已在生产 `434a046` 接入 Xiaomi SU7 v2 真实手册只读图文包
+- manual-rag：✅ 已在生产接入 Xiaomi SU7 v2 真实手册只读图文包；当前release为`9a3b6f2f`
   （source/content/visual hash、车型隔离、PDF 页/章节出处、中文 n-gram BM25 + 重排、数值接地闸）；
   无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称与 HMI/Android 图文卡
-  均已验证。多车型规模或真实召回 badcase 达触发条件后再迁移
+  均已验证。2026-09-05生产独立章节187/187、视觉35/35、雨刮/“背宝剑”各3/3完成整本闭合；
+  0.3.3对LLM RuntimeError做一次有界重试，仍失败保留真实PDF卡并诚实降级。确定性BM25的
+  269页/187叶子继续全可达；多车型规模或真实召回badcase达触发条件后再迁移
   pgvector/Milvus，不提前做 schema 迁移。
 - trip-planner：升级为**跨 Agent 协作**（调 navigation/info 等），作为子规划者。
 - 交付物：各 Agent v0.2（真实能力）+ 各自外部适配层 + 契约测试。

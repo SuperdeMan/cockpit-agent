@@ -8364,3 +8364,108 @@ manual 调用 64/64；零 action、零 need_confirm、零 probe error，逐轮�
 Artifact `20260903T130655Z-final-434a046.json`，SHA=
 `3fed8c9476d5928f502877a962b1f9453e8032e64798dfe0819878483cead63a`。manual-rag 项据此关闭，
 但 QA 仍有独立 safety focus、MiniMax TTS RPM、barge-in 残帧和 test-only warning 活项。
+
+## §95 2026-09-04 Xiaomi SU7整本手册范围验证与0.3.2候选
+
+用户追问36题是否代表整本手册后，原口径被明确推翻：36/36只是测试corpus全量，不是278页
+手册全量。新尺子按原PDF机械枚举六个分母：278源页、269文本页/chunk、160个合并后的在线
+`section_path`、187个PDF outline三级叶子、35个受控视觉语义，以及独立保留的36题自然问法。
+同一页开始多个outline叶子时必须拆题；页锚和目录标题只证明可达，不混算自然问法准确率。
+
+源PDF重提文本、视觉manifest和全部blob与生产`.mrag`逐字一致。候选离线：页Top-4 269/269
+（Top-1 267）、索引路径160/160（Top-1 152）、outline叶子187/187（Top-1 158）、视觉35/35、
+自然问法36/36；因此没有证据支持为这批缺口迁移向量库。
+
+探针自身先踩出一条必须保留的红灯：初版“请查+章节名”不是问句，13轮内把空调滤芯章节
+执行成`hvac.on`；当时空调已开所以diff={}，但幂等不等于安全。批次立即中止、不发反向车控，
+探针改为“我想知道…？”并在联网前要求question-shape与FastIntent None全过；运行中action、
+need_confirm、任一26项车态差异均硬停止。
+
+当前生产`434a046`的最终自然化章节首轮177/187（94.65%）；10个失败补两次后9个为2/3、
+动力性参数1/3，无0/3稳定失败。视觉首轮28/35；位置灯、左右转向、后雾灯、近光灯均0/3，
+另两项首轮RuntimeError后2/3。正式章节207轮+视觉49轮均零action/确认/transport error、车态
+diff={}。这证明所有187叶子至少一次走通，但不能写187/187稳定通过；生产仍非整本全绿。
+
+本地0.3.2候选做两处最窄修复：三字官方caption只有在图标/仪表/亮灯语境下参与匹配，普通
+“后雾灯怎么打开”仍去操作页；manifest新增“SU7/小米SU7+手册+主题+问号”的显式来源hint，
+明确车控与非车辆手册为反例。现有`.mrag`不变；视觉35/35、显式来源222/222、route hints
+110/110、受影响全族307 passed、五道门禁均通过。候选未push/deploy；生产重跑187+35前不得关闭。
+
+## §96 2026-09-04 当前生产7b594f37整本复跑与候选全量
+
+manual验证期间，mobile线把生产推进到`7b594f379c1fbfb5156c55c4e0dc573957b49d28`。只读status
+确认5/5 endpoint healthy、零warning；旧`434a046`证据不转借，按同一自然化口径重新跑完整
+187个outline叶子与35个受控视觉，并只对首轮失败补两次。所有查询先通过question-shape与
+FastIntent None；所有正式轮均零action、零need_confirm、完整26项车态diff={}。
+
+章节首轮181/187（96.79%，p50 8167.950ms、p95 14633.654ms、max 22570.331ms）；6个失败
+后两轮均6/6，因此全部为2/3、无0/3稳定章节失败。其中`哨兵模式`首轮为一次opening-handshake
+timeout，其余是澄清/非manual出口方差。章节正式轮187+6+6=199；主artifact SHA=
+`4381283cbec65de900ec0a1c95dc2e10fca1de042a04a6e242da9513307eb4f5`，复验SHA=
+`f0f77c53…aeac9`、`5143338e…cd3f`。
+
+视觉首轮30/35（85.71%，p50 7149.769ms、p95 11311.487ms、max 12530.943ms）；位置灯、
+左右转向、后雾灯、近光灯后两轮仍全失败，五项均0/3，三轮都缺PDF页、图片页与caption。
+视觉正式轮35+5+5=45，零transport error；主artifact SHA=
+`b6ff52faac9f4e22996b7bc63e360351b363ec2f058f6f9fe94a0e1fe8659cb6`，复验SHA=
+`0e457caa…d7da1`、`32b6059f…f3def`。当前生产因此仍非整本全绿。
+
+候选第一次纯串行全量在`8fc5ab9`发现5红：4个架构门禁误扫`.artifacts/venvs`中的第三方
+site-packages并递归溢出，1个发布文档断言仍锁旧release；另一次`-n1`在9%被Windows事件2004
+确认资源耗尽杀死，两趟都不算有效全量。最小修复让架构glob排除`.artifacts`并补反向用例，
+发布断言改跟当前快照；合入当时最新主干后，代码SHA`62533dd9dca2e193e6f64c33ec6462cd974e69c4`
+纯串行全量为**7855 passed / 34 skipped / 4 warnings / 0 failed**（1930.34s），日志SHA=
+`72f1d16843e30c6bf9df971e53296531cf896020aeefb64246d642cb1ed6fe42`。0.3.2候选仍未push/deploy。
+
+补自然问法时没有沿用会直接联网的旧严格栈：新探针增加`--kind natural`，先把原36题全部交给
+question-shape与FastIntent预检。7条旧表述被零请求拦下，其中充电口/后备箱手动打开与两条
+仪表描述会被端侧识别成控制；不能为补齐当前36题而放宽。用户点名的`雨刮器怎么打开`和
+“小人背着把宝剑”均通过预检并各跑3次：分别稳定命中PDF第95/193页及对应图片，6/6、零
+action/确认/probe error、车态diff={}。第一次雨刮响应后，记录器因自然case缺`split`崩溃；
+立即回读26项车态diff={}，该轮不计数。随后补`split=natural`与回归锁，使用新artifact重跑。
+
+自然探针提交后的首次全量`05e78fb`在34%出现5红，全部来自`test_candidate_sets.py`：模块级
+`_MCD/_LUCKIN`在pytest收集时调用`time.time()`，长套件跑到该文件时已超过900秒TTL，导致五条
+候选组测试自行过期；日志SHA=`dcb378ba655962e323ec9aa0366c0d6e9b5700fc01f2593b07d427956e9bd851`，
+该趟7851 passed/5 failed不算有效全量。修复只改测试夹具：每条测试执行时通过`_merchant_sets()`
+创建同一时刻的候选，并用注入时钟反向锁住，不改生产选择逻辑。
+
+最终代码SHA`805711cff74b79b23324180ed22f7e026f95e481`纯串行跑了7944.53秒；长耗时本身越过TTL，
+结果仍为**7857 passed / 34 skipped / 4 warnings / 0 failed**。日志SHA=
+`72bf34aaac387a61b9f61440082a98999b2c07df5b77b4e269a9ece9a8a1e0a6`。此SHA包含完整手册
+候选、可复跑自然问法探针、架构产物目录排除与TTL测试夹具修复；后续文档提交不得冒充该
+exact-code SHA。
+
+## §97 2026-09-05 0.3.2/0.3.3发布与整本生产闭合
+
+用户授权push与生产部署后，先把12个候选提交快进到`origin/main`。根main同时存在mobile线
+ahead 3/behind 12与未提交文档，未触碰；发布改用独立release clone，只复制无密钥的
+`dev-stack.local`。0.3.2精确代码`805711cf`的dry-run blocking=[]、模型/脚本/资源与release lock
+均ready；apply submitted后status为5/5 healthy、零warning，统一verify通过，artifact
+`20260904T153105Z-805711c.json`。
+
+0.3.2生产章节首轮184/187，三个失败复验后为2/3、2/3、1/3；视觉首轮34/35，失败项后两轮
+通过。五个原0/3三字caption全部转绿，但四个红轮都返回`Agent 内部错误：RuntimeError`。
+Collector trace确认Planner已稳定产出`manual.query`，错误位于`step.agent:manual-rag`；检索器与
+路由不是根因。manual Agent此前直接await LLM，任何SDK RuntimeError都会穿透到通用Agent错误。
+
+0.3.3提交`9a3b6f2f08657464c5049a5abf8f6e989e398bce`只修生成出口：非配额/参数/鉴权类RuntimeError
+有界重试一次；仍失败保留真实PDF卡并诚实说明摘要暂不可用；ValueError等编程异常仍抛出。
+四条反向测试分别锁住重试恢复、重试失败降级、不可重试错误只调用一次、编程错误不被吞。
+manual专项64/64、route110/110、edge13/13、skills24/24、exemplars/L0/capability门禁全过；
+`-n2`精确全量**7861 passed / 34 skipped / 5 warnings / 0 failed**（656.57s），日志SHA=
+`ab40f81e5b1ed9b40b674e75197a1e55e25838a030f488e2fbfbb542d68d91df`。
+
+0.3.3再次dry-run/apply无阻断；生产release变为`9a3b6f2f`，5/5 healthy、零warning，统一verify
+artifact`20260904T163045Z-9a3b6f2.json`为verified，SHA=
+`7a521902fdfb18582d225a73d88ac5c6adb655ea0a255b16135d1094316dad44`。最终独立章节批187/187
+（p50 9365.659ms、p95 14446.685ms、max 34710.202ms），artifact SHA=
+`508756d663bd8d6fcb818da9a2e8f73f1abdf76a3d2e634e409d9391497baf80`；视觉35/35
+（p50 7886.125ms、p95 13456.285ms、max 21204.482ms），artifact SHA=
+`7c05d04a1568590e24d4704ed4592df6c360f8c8712a2a72210255db56be0762`。雨刮与“背宝剑”各3/3，
+所有最终验收轮零action/确认/probe error、26项车态diff={}。
+
+章节第一趟曾因工具环境跨时挂起约32299秒使`设置警示牌`TimeoutError；该项随即2/2，独立完整
+批又187/187，故保留污染工件但不计产品失败或最终延迟。`.mrag`、source/content/visual hash、
+BM25链路均未改变；本轮没有向量库迁移依据。原36题当前精确整批仍有7条旧表述被安全预检
+零请求拒绝，只保留`434a046`的36/36历史证据，不转借到当前release。

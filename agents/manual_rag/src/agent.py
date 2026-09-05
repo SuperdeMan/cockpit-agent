@@ -13,6 +13,7 @@ Phase 1：使用 Provider 适配层（mock/真实只读手册索引可切换）�
 """
 from __future__ import annotations
 from decimal import Decimal, InvalidOperation
+import logging
 import os
 import re
 
@@ -44,6 +45,20 @@ _UNGROUNDED_NUMBER = (
     "检索到了相关手册内容，但生成答案中的数值无法从引用片段核对。"
     "请查看屏幕中的手册原文，或联系小米汽车服务中心确认。"
 )
+_GENERATION_UNAVAILABLE_MANUAL = (
+    "已找到相关手册原文，但摘要生成暂时不可用，请查看屏幕中的手册内容，或稍后再试。"
+)
+_GENERATION_UNAVAILABLE_GENERIC = (
+    "已找到相关参考资料，但摘要生成暂时不可用，请查看屏幕中的资料内容，或稍后再试。"
+)
+_NON_RETRYABLE_GENERATION_ERRORS = (
+    "RESOURCE_EXHAUSTED",
+    "INVALID_ARGUMENT",
+    "PERMISSION_DENIED",
+    "UNAUTHENTICATED",
+    "FAILED_PRECONDITION",
+)
+logger = logging.getLogger(__name__)
 _safety_level = alert_level
 
 _NUMBER_RE = re.compile(
@@ -190,6 +205,31 @@ class ManualRagAgent(BaseAgent):
             data_time_label="手册版本" if revision else "",
         )
 
+    async def _generate_answer(self, messages) -> tuple[str | None, str]:
+        """Retry one transient LLM RuntimeError, then keep the cited card.
+
+        LLMClient normalizes provider and transport failures to RuntimeError.
+        Configuration, quota, and authentication errors are not useful to
+        retry; other RuntimeErrors get one bounded retry. Programming errors
+        stay visible instead of being mislabeled as provider degradation.
+        """
+
+        try:
+            return await self.llm.complete(
+                messages, temperature=0.2, max_tokens=200), ""
+        except RuntimeError as exc:
+            logger.warning("manual answer generation failed: %s", exc)
+            if any(marker in str(exc).upper()
+                   for marker in _NON_RETRYABLE_GENERATION_ERRORS):
+                return None, "degraded"
+        try:
+            answer = await self.llm.complete(
+                messages, temperature=0.2, max_tokens=200)
+            return answer, "recovered"
+        except RuntimeError as exc:
+            logger.warning("manual answer generation retry failed: %s", exc)
+            return None, "degraded"
+
     async def handle(self, intent, ctx, meta) -> AgentResult:
         question = intent.raw_text or intent.slots.get("question", "")
         if not question:
@@ -262,11 +302,30 @@ class ManualRagAgent(BaseAgent):
             f"\n{c.content}"
             for i, c in enumerate(chunks, start=1)
         )
-        answer = await self.llm.complete([                  # 2) generate
+        messages = [                                        # 2) generate
             {"role": "system",
              "content": _SYSTEM_MANUAL if authoritative else _SYSTEM_GENERIC},
             {"role": "user", "content": f"【参考资料】\n{context_block}\n\n【问题】{question}"},
-        ], temperature=0.2, max_tokens=200)
+        ]
+        answer, generation_state = await self._generate_answer(messages)
+        if answer is None:
+            fallback = (_GENERATION_UNAVAILABLE_MANUAL if authoritative
+                        else _GENERATION_UNAVAILABLE_GENERIC)
+            speech = f"{alert_advice(level)}{fallback}" if level else fallback
+            return AgentResult(
+                speech=speech,
+                data=self._safety_data(
+                    level,
+                    question,
+                    source_type=source_type,
+                    generation_degraded="llm_runtime_error",
+                ),
+                ui_card=self._card(chunks, source_type),
+            )
+        generation_data = (
+            {"generation_retry": "recovered"}
+            if generation_state == "recovered" else {}
+        )
 
         # 「只依据资料」不能只停在 prompt。真实手册最危险的是模型把 2.9 改成另一个
         # 看起来同样精确的数：带单位/小数的数值若无法在本轮引用片段内核对，整段弃权。
@@ -278,7 +337,7 @@ class ManualRagAgent(BaseAgent):
                 speech=speech,
                 data=self._safety_data(
                     level, question, source_type=source_type,
-                    grounding_rejected="numeric"),
+                    grounding_rejected="numeric", **generation_data),
                 ui_card=self._card(chunks, source_type),
             )
 
@@ -287,6 +346,7 @@ class ManualRagAgent(BaseAgent):
             if level else answer
         return AgentResult(
             speech=speech,
-            data=self._safety_data(level, question, source_type=source_type),
+            data=self._safety_data(
+                level, question, source_type=source_type, **generation_data),
             ui_card=self._card(chunks, source_type),
         )

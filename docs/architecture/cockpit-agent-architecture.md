@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.48（当前架构基线；版本规则见文末「附录 C：版本记录」）
-> 日期：2026-09-03（v1.48 增加真实手册安全落域与视觉证据包）
+> 版本：v1.50（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 日期：2026-09-05（v1.50 闭合真实手册生成故障降级与整本生产验证）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -1398,7 +1398,9 @@ sequenceDiagram
 - **上下文按引用传递**：Execute 请求只带 `context_ref`，Agent 按需向记忆服务拉取所需片段（最小权限）；敏感片段（精确位置等）按 Agent manifest 声明的 `context_scopes` 最小化下发，未声明不发。
 - **车书 Agent 的 RAG 知识库**属于"领域知识"而非用户记忆，单独建库。当前单车型
   静态手册用 hash 绑定的只读文件索引 + 中文 n-gram BM25/确定性重排；多车型规模或真实
-  badcase 证明词法上限后，再沿同一 `KnowledgeRetriever` 契约迁移 pgvector/Milvus。
+  badcase 证明词法上限后，再沿同一 `KnowledgeRetriever` 契约迁移 pgvector/Milvus。检索成功
+  后的LLM RuntimeError只允许一次受控重试；仍失败必须保留已核验PDF卡并诚实降级，不能把
+  生成服务瞬断伪装成“未检索到”或裸`Agent内部错误`。
 - **可遗忘**：用户可一键清除画像（合规要求），记忆服务提供删除/导出接口。
 
 ### 7.1 记忆图谱：带权偏好与关系边（2026-07-25 定稿归档）
@@ -2023,6 +2025,8 @@ agents/<name>/
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.50 | 2026-09-05 | 内容性合入（真实手册整本生产闭合）：0.3.2发布后，三字caption稳定缺口归零，但真栈扩大面抓到4次`manual.query`已正确落域后由LLM RuntimeError冒出裸“Agent内部错误”。0.3.3在manual Agent内只对非配额/参数/鉴权类RuntimeError做一次有界重试；仍失败不丢已核验检索结果，返回真实PDF卡与诚实降级话术，ValueError等编程异常继续显式失败。精确release`9a3b6f2f`通过5/5 status、统一verify、代码全量7861/34/5；独立章节187/187、视觉35/35，雨刮/“背宝剑”各3/3，所有正式轮零action/确认/probe error、车态diff={}。检索包与BM25不变，无向量库迁移依据。契约`conventions.md` §9.41，证据见整本验证计划。 |
+| v1.49 | 2026-09-04 | 内容性合入（真实手册整本覆盖验证候选）：把“全量”从36题测试集校准为六个独立分母——278源页、269文本页、160合并索引路径、187 PDF outline原子叶子、35受控视觉语义、原36自然问法；源PDF重建必须与`.mrag`文本/视觉/blob逐字一致，页锚/目录题不与自然问法混算准确率。真栈探针先过question-shape+FastIntent None，action/确认/任一完整车态差异均停批；生产`434a046`实测章节首轮177/187、视觉28/35，5个三字caption 0/3，证明36/36不等于整本全绿且问题在落域/视觉选择而非BM25。候选只增加显式“SU7手册+主题+问号”Agent自声明hint，以及三字caption仅在视觉语境消费的窄规则；不改编排核心、不换向量库、不改`.mrag`。契约`conventions.md` §9.41，证据见2026-09-04全覆盖计划。 |
 | v1.48 | 2026-09-03 | 内容性合入（真实手册 RAG v2）：把验收面从“检索器命中文本”扩到用户端完整链路。共享 `question_shape` 以零领域句形阻止无标点“对象怎么打开”误执行，`manual-help-boundary` PlanningGuide 与 manual exemplars 负责模型原生泛化，Agent manifest 只对生产复现的操作方法/仪表灯两族保留窄 route hint；三层分别承担安全、泛化和 canonical 保险。索引仍兼容 v1 文本 bundle，新增 deterministic `.mrag` 私有 ZIP，绑定视觉 manifest 与逐图片 blob SHA；警告灯按物理页和视觉顺序匹配人审 caption/俗称，未知描述零近似，命中说明可确定性转述。卡片最多返回两张、仅 PNG/JPEG、单图/总量有硬帽，图片不进 LLM prompt；HMI 与 Android 共用 URI 守卫并新增 manual 图文证据卡。源 PDF/图不入 Git，不支持的 LZW/超大 Flate 显式记 skipped；真实照片仍走 vision，不扩大采集面。契约 `conventions.md` §9.41。 |
 | v1.47 | 2026-09-03 | 内容性合入（Xiaomi SU7 真实车型手册 RAG）：`manual-rag` 从 5 条演示语料增加真实 `ManualIndexRetriever`，输入 PDF 经离线构建器按物理页与 outline 形成 deterministic gzip JSON，绑定 source/content/chunk SHA、车型与手册版本，并与 tracked `manual_catalog.yaml` 的批准指纹对账；在线采用中文双字 n-gram BM25 + 受控同义词 + 章节/短语/IDF 覆盖率重排，显著 Latin/多词产品名缺失、低覆盖和错车型均零命中。每个 chunk/card 带章节与 PDF 页码，`_prov=real` 只在完整性与信任锚校验后盖章，带单位/小数的生成数值必须能在本轮引用片段核对。源 PDF/索引正文作为 ignored 私有资产不进 Git；`knowledge` 退出严格栈默认豁免，`manual` mock 退出 QA WARN 白名单。单车型静态语料暂不引入数据库迁移；多车型/真实 badcase 达阈值后以同一 Provider 契约和 retrieval corpus A/B 迁移向量库。契约 `conventions.md` §9.41。 |
 | v1.46 | 2026-08-30 | 内容性校准（QA 安全确认写闸最终本地闭合）：将 §5.2.13 从 build-only 扩展为所有 dispatch-bound 计划出口——focused/normal build、adaptive replan receiver、Agent escalate mini-plan 与 fallback 均复用同一过滤原语；新增服务端权威 `safety_origin_text`，从最初请求跨 replan、suspend/restore 保真，明确 `ctx.raw_text` 仍是当前补槽答案，LLM goal/reason 无授权权威，legacy 来源未知时副作用 fail closed；新增 capability 级 `response_only` 权威链（manifest → registry round-trip → Step → Executor/D0/T2），回答能力出现确认、补槽或 action 一律在 dispatch/yield 前转为零动作契约失败。契约 `conventions.md` §9.40。 |
