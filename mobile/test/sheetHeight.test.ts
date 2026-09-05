@@ -10,9 +10,12 @@
 //     ⛔ 本文件第一版写的 728dp 是**估值冒充实测**（840 屏高减估算 chrome），据它断言「外屏竖三档
 //     不受下限影响」——实测下来 0.4 与 0.78 两档都受下限影响。估算不能进判据。
 //   外屏横 192dp / 内屏 573dp —— **推导值不是实测**：由 §6.3 记的层高 77dp@0.4 与 447dp@0.78 反推
-//     （假设了当时的 detent 档位）。真机直接量这两个要转屏/展开，归 T13 余格。
+//     （假设了当时的 detent 档位）。
+//     ⚠ 外屏横那个后来被 B4 §6.4 **直接量到了：98.67dp**（不是 192，差一倍）。下面的 `OUTER_LANDSCAPE`
+//     仍留 192 是因为几条老用例的读数绑在它上面（换数就不是同一条读数了）；**B5-15 的新用例一律用
+//     98.67**。要用外屏横的真实空间做判断时看 98.67，别看 192。
 import type { SheetDetent } from '@/core/presence/presence'
-import { drivingSheetMinDp, sheetHeightDp } from '@/ui/layout/sheetHeight'
+import { drivingSheetMinDp, sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
 
 // ── 内容清单（独立于实现，逐条注明出处）──
 // ⚠ B5-12（泓舟 B4 真机轮原话①）：底栏「收起 / 打断」整段撤掉，收起改为**顶缘把手带**下拖/轻点。
@@ -24,7 +27,8 @@ const BTN = 56 // §6「目标 ≥56dp」：顶缘把手带 voice-sheet-collapse
  *  **层高低于它，收起演员与内容就一起装不下**——B4 实测 77dp 的层里 voice-sheet-collapse 被
  *  flex 压成 53.0dp < 56；底栏撤掉后压不着把手带了，但 88 以下内容区仍只剩负空间。 */
 const CHROME = BTN + SCROLL_PAD
-const ORB = 120 // §6 行车档层内大球（泊车 88）
+const ORB = 120 // §6 行车档层内大球
+const ORB_PARKED = 88 // §6 泊车层内大球（B5-15 的球降级落到它）
 const CAPSULE = 20 // 胶囊一行（body 15pt）
 const GAP = 12 // 组内 / 组间 gap
 const ANSWER_2L = 56 // 回答区两行（行车 18pt / lineHeight 28）
@@ -160,4 +164,47 @@ test('最小高的构成：三档 × split × 两个字号档，逐项与内容�
       expect(drivingSheetMinDp(d, split, 'large')).toBe(need(d, split, true))
     }
   }
+})
+
+// ── B5-15 缺陷 A 横屏半：球降级判据 ────────────────────────────────────
+// lever 顺序（做完一条量一次，装得下就不做下一条）：
+//   ① 底栏撤掉（B5-12）：0.4 档最小高 269 → **240**；外屏横记录区实测 **98.67dp**（B4 §6.4 直接量的，
+//      不是 192 那个推导值）⇒ 仍装不下 ⇒ 要 lever ②；
+//   ② driving-landscape 隐藏 chips + 语音层覆盖**整列**（记录区 + Composer）⇒ 容器从记录区高换成整列高；
+//   ③ 仍装不下 ⇒ `sheetOrbDp` 把球降到泊车的 88。**判据兜底，不是主修法**。
+// ⚠ 整列高本轮**没有实测**：B4 读的「chips + 输入区 157」在 B5-13（撤 ■ 打断 pill）与 B5-14（顶栏钮
+//   40 → 48/56）之后已经不成立，拿它拼期望值就是本文件头注禁的「估值冒充实测」。所以下面**不写整列高的
+//   具体数**，只钉阈值本身 = 0.4 档最小高；真机落在阈值哪一侧归 T16 真机轮实测回填。
+describe('B5-15 球降级：只在「全部 lever 之后仍装不下」时起作用', () => {
+  test('容器装得下 0.4 档最小高 ⇒ 120（外屏竖实测 578.67）', () => {
+    expect(sheetOrbDp({ containerH: OUTER_PORTRAIT, driving: true, split: false, fontScale: 'normal' })).toBe(ORB)
+  })
+
+  test('外屏横实测记录区 98.67 ⇒ 装不下 ⇒ 88；泊车永远 88', () => {
+    expect(sheetOrbDp({ containerH: 98.67, driving: true, split: true, fontScale: 'normal' })).toBe(ORB_PARKED)
+    expect(sheetOrbDp({ containerH: 98.67, driving: false, split: true, fontScale: 'normal' })).toBe(ORB_PARKED)
+  })
+
+  test('阈值就是 0.4 档最小高本身：恰好装得下 ⇒ 120，差 1dp ⇒ 88（两个字号档各验一次）', () => {
+    for (const fs of ['normal', 'large'] as const) {
+      const floor = need(0.4, true, fs === 'large')
+      expect(sheetOrbDp({ containerH: floor, driving: true, split: true, fontScale: fs })).toBe(ORB)
+      expect(sheetOrbDp({ containerH: floor - 1, driving: true, split: true, fontScale: fs })).toBe(ORB_PARKED)
+    }
+  })
+
+  test('球降了最小高也跟着降——差额恰是两个球径之差，不是别的东西', () => {
+    expect(drivingSheetMinDp(0.4, true, 'normal', ORB) - drivingSheetMinDp(0.4, true, 'normal', ORB_PARKED)).toBe(
+      ORB - ORB_PARKED,
+    )
+  })
+
+  test('sheetHeightDp 把降级后的球传下去：装不下的容器上层高按 88 的最小高算', () => {
+    // 98.67 的容器：120 球要 240、88 球要 208，两者都 > 98.67 ⇒ 层高仍被 clamp 到容器；
+    // 但**判据链要通**——换一个夹在两者之间的容器（220）就能看出球降级真的改变了返回值。
+    expect(sheetHeightDp({ containerH: 220, detent: 0.4, driving: true, split: true, fontScale: 'normal' })).toBe(
+      need(0.4, true) - (ORB - ORB_PARKED),
+    )
+    expect(sheetHeightDp({ containerH: 220, detent: 0.4, driving: true, split: true, fontScale: 'normal' })).toBeLessThanOrEqual(220)
+  })
 })

@@ -47,6 +47,9 @@ export interface ComposerProps {
   driving?: boolean
   /** 文本输入形态（判据 drivingMode.ts::composerInputMode）：A 常驻 / B 折叠成键盘键 / C 隐藏 */
   inputMode?: ComposerInputMode
+  /** driving-landscape 下藏掉 chips 行（B5-15 缺陷 A 横屏半的 lever ②）：§6 是「chips ≤3」
+   *  不是「必须显示」，而横屏那 360dp 里 App 自己的 chrome 已经吃掉 261——语音能到达一切 */
+  hideChips?: boolean
   fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
@@ -54,7 +57,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
+export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
   const [input, setInput] = useState('')
   // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
   // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
@@ -130,6 +133,7 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
         backgroundColor: p.dark ? 'rgba(6,8,15,0.55)' : 'rgba(237,241,250,0.72)',
       }}
     >
+      {hideChips ? null : (
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
         {/* 行车档快捷指令 ≤3（§6「chips ≤3」）、行高 56 */}
         {/* B5-14（B4 Scanner 出账③「多个项目具有相同的说明」）：chip 的说明加「快捷指令：」前缀。
@@ -147,6 +151,7 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
           </Pressable>
         ))}
       </ScrollView>
+      )}
       <View style={{ flexDirection: 'row', gap: 10, padding: 10, alignItems: 'flex-end' }}>
         {ptt ? (
           <GestureDetector gesture={orbGesture}>

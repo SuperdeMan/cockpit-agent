@@ -48,17 +48,39 @@ function cardMinDp(fontScale: FontScalePref): number {
   return shell + typeRow + title + fields + scale(TARGET.driving, 'target', fontScale)
 }
 
-/** 行车档下该档「必须一眼看得见」的内容之和（dp）。逐项累加，不是拍的数 */
-export function drivingSheetMinDp(detent: SheetDetent, split: boolean, fontScale: FontScalePref): number {
+/** 行车档下该档「必须一眼看得见」的内容之和（dp）。逐项累加，不是拍的数。
+ *  `orb` 是层内大球直径：默认行车的 120，B5-15 的球降级会把 88 传进来（最小高跟着降）。 */
+export function drivingSheetMinDp(
+  detent: SheetDetent,
+  split: boolean,
+  fontScale: FontScalePref,
+  orb: number = SHEET_ORB.driving,
+): number {
   // B5-12：把手带（`minHeight` = 目标高，它就是层内那枚 ≥56dp 演员）+ 内容区上下 padding
   const chrome = scale(TARGET.driving, 'target', fontScale) + SCROLL_PAD_DP
   // 球列：球 + gap + 胶囊一行（body 15pt）
-  const orbCol = SHEET_ORB.driving + GAP_DP + scale(20, 'line', fontScale)
+  const orbCol = orb + GAP_DP + scale(20, 'line', fontScale)
   // 该档主体：0.78 = 压缩卡；0.62 = 回答两行（行车 18pt / lineHeight 28）；0.4 = 只有球列
   const body =
     detent === 0.78 ? cardMinDp(fontScale) : detent === 0.62 ? 2 * scale(28, 'line', fontScale) : 0
   if (split) return chrome + Math.max(orbCol, body) // 横屏 40:60：两列并排，不相加
   return chrome + (body ? orbCol + GAP_DP + body : orbCol)
+}
+
+/** 层内大球直径（dp）：行车 120，但容器连 0.4 档最小高都装不下时降到泊车的 88
+ *  （缺陷 A 横屏半的**最后一道保险**）。在它之前的 lever：底栏撤掉（B5-12）、driving-landscape
+ *  隐藏 chips 且语音层覆盖整列（B5-15）——都做完仍装不下才降球。
+ *  ⚠ 阈值取 **0.4 档**（最小的那一档）：0.4 都装不下才谈降级，别的档只会更装不下。 */
+export function sheetOrbDp(i: {
+  containerH: number
+  driving: boolean
+  split: boolean
+  fontScale: FontScalePref
+}): number {
+  if (!i.driving) return SHEET_ORB.parked
+  return drivingSheetMinDp(0.4, i.split, i.fontScale, SHEET_ORB.driving) <= i.containerH
+    ? SHEET_ORB.driving
+    : SHEET_ORB.parked
 }
 
 /**
@@ -76,5 +98,7 @@ export function sheetHeightDp(i: {
 }): number {
   const byRatio = Math.round(i.containerH * i.detent)
   if (!i.driving) return byRatio
-  return Math.min(i.containerH, Math.max(byRatio, drivingSheetMinDp(i.detent, i.split, i.fontScale)))
+  // B5-15：球降了最小高也跟着降——否则「降球」只改了渲染、判据仍按 120 要空间，两边对不上
+  const orb = sheetOrbDp(i)
+  return Math.min(i.containerH, Math.max(byRatio, drivingSheetMinDp(i.detent, i.split, i.fontScale, orb)))
 }

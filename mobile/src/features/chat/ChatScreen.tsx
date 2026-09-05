@@ -281,6 +281,9 @@ function ChatBody({
   const turn = useMemo(() => currentTurn(messages), [messages])
   const latestTurnId = turn.assistant?.id ?? ''
   const [listHeight, setListHeight] = useState(0)
+  // B5-15 lever ②：driving-landscape 下语音层脱离记录区容器、覆盖**整列**（记录区 + Composer）。
+  // 记录区在外屏横只有实测 98.67dp，装不下 0.4 档最小高 240——整列才是层能用的真实空间。
+  const [columnHeight, setColumnHeight] = useState(0)
 
   // B5-8 深链 xiaozhou://voice（Shortcuts「说话」）：升层**不开麦**（§12.2：进入后仍需一次手势才录音）。
   // 一次性消费：同一次进入只升一次，用户收起后不再被参数顶回去。
@@ -476,8 +479,34 @@ function ChatBody({
     return () => sub.remove()
   }, [privacyOpen, snapshot.input, snapshot.identity, snapshot.driving, latestTurnId])
 
+  const splitLandscape = layout.mode === 'driving-landscape'
+  const voiceSheetEl = v2 ? (
+    <VoiceSheet
+      p={p}
+      fontScale={settings.fontScale}
+      snapshot={snapshot}
+      turn={turn}
+      containerHeight={splitLandscape ? columnHeight : listHeight}
+      draftUserId={draftUserId}
+      interruptedIds={interruptedIds}
+      visionIds={visionIds}
+      s2sNotice={s2sNotice}
+      candidates={core.candidates}
+      motion={{ orb: orbTempo(snapshot, motionEnv), loops: loopsAnimated(motionEnv) }}
+      driving={snapshot.driving}
+      split={splitLandscape}
+      blurTarget={blurTarget}
+      onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
+      onOrbTap={splitLandscape ? onOrbTap : undefined}
+      onSend={(t) => onSend(t)}
+    />
+  ) : null
+
   const chatColumn = (
-    <View style={{ flex: 1 }}>
+    <View
+      style={{ flex: 1 }}
+      onLayout={splitLandscape ? (e) => setColumnHeight(Math.round(e.nativeEvent.layout.height)) : undefined}
+    >
       <View style={{ flex: 1 }} onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}>
       <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
       {messages.length === 0 ? (
@@ -524,26 +553,8 @@ function ChatBody({
         />
       )}
       </BlurTargetView>
-      {v2 ? (
-        <VoiceSheet
-          p={p}
-          fontScale={settings.fontScale}
-          snapshot={snapshot}
-          turn={turn}
-          containerHeight={listHeight}
-          draftUserId={draftUserId}
-          interruptedIds={interruptedIds}
-          visionIds={visionIds}
-          s2sNotice={s2sNotice}
-          candidates={core.candidates}
-          motion={{ orb: orbTempo(snapshot, motionEnv), loops: loopsAnimated(motionEnv) }}
-          driving={snapshot.driving}
-          split={layout.mode === 'driving-landscape'}
-          blurTarget={blurTarget}
-          onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
-          onSend={(t) => onSend(t)}
-        />
-      ) : null}
+      {/* 非 driving-landscape：层住在记录区容器里（B4 及以前的形态，逐字节不变） */}
+      {splitLandscape ? null : voiceSheetEl}
       </View>
       {/* 免唤醒状态条（M4-4）。**只在真开着的时候占高度**——一个常驻的空条会让
           「现在到底在不在听」这件事变得看不出来，而这正是常开麦最该让用户看见的事。
@@ -639,8 +650,12 @@ function ChatBody({
         orbDriving={orbTempo(snapshot, motionEnv) === 'slow'}
         driving={snapshot.driving}
         inputMode={composerInputMode(snapshot.identity, snapshot.driving)}
+        hideChips={splitLandscape}
         onTap={onOrbTap}
       />
+      {/* driving-landscape：层挂在整列容器上，absolute 盖住记录区 + Composer（B5-15 lever ②）。
+          被盖住的 Composer 光球不再是唯一麦——层内大球接了 onOrbTap（§5.1.1「轻点始终能说」）。 */}
+      {splitLandscape ? voiceSheetEl : null}
     </View>
   )
 

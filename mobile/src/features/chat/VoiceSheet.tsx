@@ -24,7 +24,8 @@ import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 
 import { FollowUpChips } from './FollowUpChips'
 import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
-import { SHEET_ORB, sheetHeightDp } from '@/ui/layout/sheetHeight'
+import { ORB_A11Y } from '@/ui/aurora/AuroraOrb'
+import { sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
 import { GLASS, RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
@@ -57,6 +58,9 @@ export interface VoiceSheetProps {
   blurTarget: RefObject<View | null> | null
   /** 从顶缘把手带下拖 / 轻点把手带 / 点暗区 / 返回键（B5-12 之后底栏没有了） */
   onCollapse(): void
+  /** 轻点层内大球 = 开始说话（B5-15，只在 split 时给）：driving-landscape 下层覆盖整列，
+   *  Composer 的光球被盖住 ⇒ 层内大球接替它，否则「轻点始终能说」（§5.1.1）在横屏断掉 */
+  onOrbTap?: () => void
   onSend(text: string): void
 }
 
@@ -123,6 +127,9 @@ export function VoiceSheet(props: VoiceSheetProps) {
   // B4-11 §6「目标 ≥56dp」：层内按钮 / chips 行车 56、泊车 48。
   // B5-12 之后层内唯一的目标演员是顶缘把手带（底栏撤了），它照旧用这个值。
   const targetBtn = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
+  // B5-15 缺陷 A 横屏半的最后一道保险：全部 lever 之后容器仍装不下 0.4 档最小高 ⇒ 球降到泊车的 88。
+  // **判据只有 sheetHeight.ts 一份**，这里只读结果；`sheetHeightDp` 里用的是同一个函数，两边不会打架。
+  const orbDp = sheetOrbDp({ containerH: containerHeight, driving, split: props.split, fontScale })
   const capturing = snapshot.capture === 'listening' || snapshot.capture === 'recognizing'
   // 行车档答后回落（§5.2 规则 3 行车条款）：detent 已回 0.4 且此刻不忙 ⇒ 层里只剩球 + 胶囊。
   // **层不消失**（常驻，§6），消失的是内容。判据在 derivePresence 的 sheetDetent，这里只读结果。
@@ -244,7 +251,21 @@ export function VoiceSheet(props: VoiceSheetProps) {
               ) : null}
               {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。
                   行车档 120dp（§6），泊车 88 */}
-              <AuroraOrb size={driving ? SHEET_ORB.driving : SHEET_ORB.parked} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+              {/* B5-15：split 时层覆盖整列 ⇒ Composer 的光球被盖住，大球接替「轻点即说」
+                  （§5.1.1「轻点始终能说」；行车条款：只轻点，无长按上滑）。非 split 逐字节不变。 */}
+              {props.split && props.onOrbTap ? (
+                <Pressable
+                  testID="voice-sheet-orb"
+                  accessibilityRole="button"
+                  accessibilityLabel={`${ORB_A11Y[snapshot.primary]}，开始说话`}
+                  onPress={props.onOrbTap}
+                  style={{ width: orbDp, height: orbDp, borderRadius: orbDp / 2, alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <AuroraOrb size={orbDp} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+                </Pressable>
+              ) : (
+                <AuroraOrb size={orbDp} state={snapshot.primary} dim={snapshot.dim} animated={props.motion.orb !== 'static'} driving={props.motion.orb === 'slow'} />
+              )}
               {/* 胶囊文案（同 §4.3，此处放大） */}
               {snapshot.capsule ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
