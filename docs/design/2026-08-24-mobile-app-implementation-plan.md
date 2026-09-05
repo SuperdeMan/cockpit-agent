@@ -2255,6 +2255,106 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
     ——**别把别人刚起的 Metro 当成自己的**（本轮 8081 上那个是别人 22:26 起的，我那个已经死了）。
     要更耐久可以 `NODE_OPTIONS=--max-old-space-size=8192`，但那是下一轮的实验，本轮没验。
 
+75. ⛔ **本机没有 Go 工具链，`go test` 的唯一通路是 Docker，而官方 wrapper 一趟 35 分钟起**（B5 第 1 / 4 批）：
+    `where go` 空、`GOROOT` 未设。`scripts/run_go_tests.ps1` 把**整个仓库**拷进容器（本机 8GB / 84k 文件，
+    其中 5.8GB 是 gitignore 的 `.artifacts/`，bind mount 照拷），实测 35+ 分钟没跑完一趟；它拒绝 `-` 开头参数
+    （`-run` / `-v` 都传不进）、包名不能带尾 `/`；默认 `GOPROXY=proxy.golang.org` 在本机 `go test` 阶段
+    TLS handshake timeout（`go mod tidy` 只取 `.mod` 看不出来）。⇒ 可用的做法：named volume 复用 `/work` 与
+    `/go/pkg/mod`（B5 建的 `b5-gowork` / `b5-gomodcache`），只重拷 `gateway/` + `gen/` + `test/fixtures/` +
+    `go.mod` / `go.sum`，`-e GOPROXY=https://goproxy.cn,direct`，四包 **45s**；源仍只读挂载，跑完核
+    `git diff --stat -- go.mod go.sum` 为空。Docker Desktop 平时是停的（`Get-Service com.docker.service`），
+    用完停回去。改官方脚本（加 `GOPROXY` / 排除 `.artifacts`）待泓舟裁。
+
+76. **新版 protobuf 生成的 `*_pb2.py` 没有明文字段名**（B5 T1）：描述符是二进制 `serialized_pb`，
+    `Select-String 'driving'` 计数 0 **不是**生成失败。行为判据才作数：`FinalResult(driving=True).driving is True`、
+    `DESCRIPTOR.fields_by_name['driving'].number == 9`；Go 侧 `GetDriving` 恰 1 条。「门禁读的是形式不是内容」又一例。
+
+77. ⛔ **Windows 侧写文件 / 脚本的四条**（B5 各批）：① 临时 `.ps1` 一律全 ASCII、仓库路径由调用方
+    `(Get-Location).Path` 给（含中文注释按 ANSI 读会 `Unexpected token ')'`，写死的「产品」会读成乱码）；
+    ② **Bash 工具的 heredoc 会把 `\a` 变成 BEL（0x07）、把 `\\` 收成 `\`**——B5 第 3 批的 `mobile/e2e/README.md`
+    就这样把 `platform-tools\adb.exe` 写成 `platform-tools<BEL>db.exe` **提交进了仓库**，第 4 批才发现；判别式
+    `grep -c $'\x07' <file>`；含 Windows 路径的内容用 Write 工具或 Python `write_bytes`，不经 heredoc；
+    ③ PowerShell 5.1 的 `Select-String` 没有 `-Recurse`，递归搜用 `grep -rn` 或 `Get-ChildItem -Recurse | Select-String`；
+    ④ Git Bash 下 `timeout 120 python scripts/run_e2e.py --target cloud --dry-run` 无任何输出、exit 124，
+    同一脚本的正式趟在 PowerShell 下 68s 跑完——真栈 / SSH 类脚本一律 PowerShell（CLAUDE.md §6.1 那条不是空话）。
+
+78. ⛔ **cloud deploy 的三件事要分开看**（B5 T5）：① `dev_stack deploy` 的 dry-run **不校验 SHA 是否 main 可达**——
+    5 条未推送的本地提交照样 `status: dry_run` / `blocking_changes: []` / exit 0；「只接受 main 可达 SHA」是给人的
+    纪律不是工具里的闸，dry-run 通过后要**自己停下**核 `origin/main..HEAD` 再要推送授权；② `cloud_release.py:220`
+    把失败原因整个丢掉（stderr 只有 `cloud-release: operation failed`），定位要用 scratchpad 包装 import
+    `cloud_release_lib` 跑同一条 `execute_deploy` 并 catch `ReleaseError` 打全文（不改仓库文件）；
+    ③ **`dev_stack verify` 失败 ≠ 部署失败**——判部署成没成看 `status` 的 `release_sha`，verify 自己还要开 SSH。
+
+79. ⛔ **短时间密集 SSH 会把自己锁在外面**（B5 T5）：几分钟内 10+ 条 SSH / SCP 之后连 `ssh … "id -un"` 都
+    `Connection closed by … port 22`，而 TCP 22 可达；停手后**第 4 分钟自愈**（1/2/3 分钟仍被拒）。`--apply` 自己
+    要连开 4 条。⇒ 撞上先等、别重试。这是**有两条正向证据的最合理解释**（停手自愈 + 冷却后原样重跑即过），
+    没登服务器看 `fail2ban` / `journalctl`，**不当已证根因**。
+
+80. ⛔ **判「哪块屏是活的」要三行对齐读**（B5 T5）：`dumpsys display | grep mState=` 吐出的两行**不标属于哪个 display**，
+    按顺序猜会猜反；正确读法 `grep -E 'Display Id|mUniqueId|mState='` 三行对齐（本机 `local:4630946481727302019` =
+    内屏、`local:4630947090644569220` = 外屏）。**纯黑截图有三种成因**（Metro 死 / 截了物理关着的屏 / 真息屏），
+    字节数相近，先定位是哪一种。
+
+81. ⛔ **真机验「修好了」之前先证明设备跑的是本轮代码**（B5 三批同款）：dev-client 可能用的是内嵌 bundle 而不是
+    Metro 的，那后面每条读数都是在验旧代码而看不出来。判据是先在取证屏看到**本轮新加的字段 / 行**（T3 的
+    `dismissedAt=0`、T6/T7 的 `current` / `power` 行），再取被测读数。⚠ 反面：Metro 的 fast-refresh **不一定推到设备**
+    ——改完热载后 dump 与改前逐字节相同（同 58239 B）；`force-stop` + dev-client 深链
+    `xiaozhou://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` 重取 bundle 才变。判别式：比两份 dump 的字节数 / hash。
+
+82. ⛔ **「看起来 Metro 死了」的三种别的成因**（B5 第 2 / 3 批；坑 74 的姐妹条）：① `force-stop` 会清掉 dev-client 的
+    已连服务器，重启只落 `DevLauncherActivity`，而 `/status` 仍 `packager-status:running`、node 进程活着；
+    ② `adb reverse` 在本机极不稳定（一轮掉 4 次：开工、手机重启后、Scanner 前置各一次），症状与坑 74 一模一样；
+    ③ adb server 自发重启（`:5037` 的 PID 变了）会把 reverse 一起带掉，刚重启那几秒 `adb devices` 还会瞬时报
+    `no devices`（几秒后自愈，别当设备掉线）。⇒ 落到 DevLauncher 时先 `adb reverse --list`、再 `curl :8081/status`，最后才怀疑 Metro。
+
+83. ⛔ **Maestro 三条**（B5 第 3 批）：① 主包 `dev.mobile.maestro` 会自己消失（隔一天只剩 `.test`），`hierarchy` / `test`
+    一律 `INSTALL_FAILED_USER_RESTRICTED`，`--no-reinstall-driver` 拦不住 `hierarchy` 先装；**但「`pm list packages` 数两条」
+    不是判据**（放行后 522 条里搜不到 maestro、`pm path` 空，而 hierarchy 正常）——真判据是
+    `maestro hierarchy --no-reinstall-driver` 的退出码；MIUI「USB 安装」放行约 10 分钟 / 重启后关回，放行后立刻跑。
+    ② `maestro.bat` 的 stdout 是 **GBK**：判据取 rc 与 `COMPLETED` / `FAILED`，看中文读 `~/.maestro/tests/<时间戳>/maestro.log`
+    （UTF-8）；用 Python 接字节 `decode('gbk')`，PowerShell 文本管道会再损一次（「一半对」最容易被当全对）。
+    ③ **回归清单里 02 与 06 的前提互斥**（承诺面 Dock 开关关 / 开），一趟不可能全绿，分两趟各设开关；照抄
+    「六条各 rc=0」会把配置态互斥读成回归。Maestro 跑完 App 会停在它最后导航到的屏，`am start` 只是带到前台。
+
+84. ⛔ **真机取证四条纪律**（B5 第 2 / 3 批）：① `adb shell input text` 送不了中文（`NullPointerException`，
+    KeyCharacterMap 映射不了非 ASCII），中文一律 Maestro `inputText`；② 裸 `input swipe` 在设置页会误触输入框且
+    `onEndEditing` **落盘**（昵称变成「小舟8888」，重启仍在），长列表用 Maestro 按元素滚，改完设置必回读；Maestro
+    `tapOn: text:` 是**正则**，文案里的中文括号会让它找不到元素；③ **点开关前按当前树取坐标**（角色描述多一行，
+    开关就下移 53px，照旧坐标点会静默落空）；④ 取数流与手工取证**不能并行**（主线 A 段的 6 轮流在段后 5 分钟报
+    `composer-input` 不可见，真因是我把 App 导航走了），读 artifacts 先对时间戳。取证窗口里会混进设备主人的私人
+    通知，抓到就停手、不记录、不外传。
+
+85. ⛔ **音频取数三条**（B5 T9 / T10）：① `PerfSense` 的 Xruns 计数器周期性重置（7994 → 31275 → 10827，流没变），
+    差值法不成立；这些行 ~5600 行/分、logcat 缓冲只存 4.6 分钟，事后读一定丢——唯一可用的是**段内持续抓 + 数行数**；
+    ② 认流不能认 `tid`（`AudioIn` 线程的 `Tgid` 是 audioserver），判据是 track 行的 `Client(pid/uid)` 对上 `pidof`；
+    ③ **AEC 补丁换的是整条 HAL 通路**：无 AEC = `AUDIO_SOURCE_VOICE_RECOGNITION` + `FAST` + 48kHz / 2ms，有 AEC =
+    `VOICE_COMMUNICATION` + `VOIP_TX` + 16kHz / 20ms，两个包的「Xruns」**不是同一件事的两个值**（对照包 5616/分、
+    主线包 0，`HAL write blocked` 四段全 0）。播报卡顿的下一个嫌疑是 16kHz VOIP 通路（音质 / 延迟），不再沿 Xruns 找；
+    本轮读数与 B3 的表不合并（量级差三个数量级，数的不是同一个东西）。
+
+86. ⛔ **「零采集」判据要先立阴性基线**（B5 T11）：免唤醒开着时 `dumpsys audio` 的 `active? true` 被常开麦流占住，
+    「深链 / 桌面入口不开麦」这类红线要先关免唤醒取到 **0 条**，再发深链看仍是 0。同一处
+    `effects client='Acoustic Echo Canceler' 'Noise Suppression'` 是 AEC 在场最直接的证据，比从 `Audio source: 7` 推断硬。
+
+87. ⛔ **深链要三斜杠**（B5 T8，纠 B2 §6 坑⑨）：`xiaozhou://native-spike` 不跳（`am start` 只报 delivered to
+    top-most instance），`xiaozhou:///native-spike` 跳——双斜杠时路由名被当 URI host 吃掉；`xiaozhou://voice` 例外
+    （落点是 `Redirect`，两种都到）。「dev-client 里深链不跳」那条旧账的真因是斜杠数，不是 dev-client
+    （§9.58「发太早被吞」作为第二解释没被排除，对结论无影响）。
+
+88. ⛔ **本机（MIUI）设备侧的五条限制**（B5 第 2 / 3 批）：① 省电模式在充电时开不起来（`mIsPowered=true` ⇒
+    `low_power=0`、`mIsPowerSaveModeEnabled: false`），adb 走 USB 就永远开不了，验低电量支改用
+    `dumpsys battery set level 15` + `reset`（`saver=true` 那半只有单测）；② TalkBack 探索式触摸不响应、每次 App 得焦点
+    弹「电话使用权限」（弹窗污染所有 hierarchy，nodes 只剩 60）、injected `input tap` 直接激活不走「聚焦再双击」；
+    Accessibility Scanner 拿不到悬浮窗权限（`appops set allow` 被忽略、系统页无条目）——**无障碍的听觉 / 扫描读数在这台
+    机上取不到**，静态 `content-desc` 由 hierarchy 全覆盖；③ 「听不见」除音量 0 外还有**路由到 `bt_a2dp`** 这一形态
+    （`STREAM_ACCESSIBILITY` `Devices: bt_a2dp(80)`），判据要连 `Devices:` 一起看；④ 手机 Tailscale 重启后不自动重连
+    （设备 `unknown host` 而宿主侧 5/5 healthy），断线态多出的两处「已断开」文案会改变无障碍读数的分母；
+    ⑤ `haptic_feedback_enabled` 会自己在 0 / 1 间变（两次观测），验触感前先核这一位。
+
+89. **回填批记录时用整段替换会把上半轮的坑吞掉**（B5 第 3 批 → 第 4 批收口发现）：`4e43e12` 改写 B5 计划 §6.3 时把
+    ㉑–㉖ 六条整块删了，只留下一句「承 ㉑–㉖，从 ㉗ 起」，第 4 批对账才从 `a6f3a12` 找回。⇒ 回填前 `git diff` 只看
+    **删除行**一遍；编号引用（「承 X–Y」）要能在当前文件里 grep 到才算存在。
+
 ## 10. 与既有体系的关系（改动禁区重申）
 
 - `hmi/`：只读。共享模块要改（真发现 bug）→ 在 hmi 侧改 + 跑 `hmi` node:test + 本计划
