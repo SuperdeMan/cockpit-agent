@@ -185,7 +185,7 @@ Pan 也从整层挪到把手带上。**这条改动的判据是一对正反手�
 （B4 §6.4 实测）。反例绿才说明「限定在把手带」真的生效了。
 
 ```powershell
-$adb = "$env:ANDROID_HOME\platform-toolsdb.exe"
+$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 # 升层：走深链，**不开麦**（§12.2 红线，B5 §6.2 T11 已验），单人可做、零采集
 & $adb shell 'am start -a android.intent.action.VIEW -d "xiaozhou://voice"'
 # 手势：**单进程慢速** input swipe（分进程发 motionevent 各带 downTime，RNGH 认不出是一次拖）
@@ -205,13 +205,42 @@ $adb = "$env:ANDROID_HOME\platform-toolsdb.exe"
    （看起来像坑 74 的 Metro OOM，但 `/status` 仍是 `packager-status:running`）。
    ⇒ 先核 Metro 活着，再用上面那条 dev-client 深链把它接回去。
 3. ⛔ **Maestro 主包会自己消失**：2026-09-04 记的是 `dev.mobile.maestro` + `.test` 两个都在，
-   2026-09-05 复核只剩 `.test`，`hierarchy` / `test` 一律
+   2026-09-05 上午复核只剩 `.test`，`hierarchy` / `test` 一律
    `INSTALL_FAILED_USER_RESTRICTED`（`--no-reinstall-driver` 也拦不住 `hierarchy`，它照样先装）。
-   ⇒ **每轮开工先 `pm list packages | grep maestro` 数两条**，只有一条就先找设备主人放行 USB 安装。
+   ⚠ **但「`pm list packages | grep maestro` 数两条」不是判据**（B5 §6.3 泓舟在场轮纠正）：同日下午
+   USB 安装放行后 `pm list packages` 522 条里**搜不到** maestro、`pm path` 两个都空，而
+   `maestro hierarchy` 正常工作。**真判据是 `maestro hierarchy --no-reinstall-driver` 的退出码**，
+   rc≠0 才找设备主人放行 USB 安装（MIUI 放行约 10 分钟 / 重启后自动关回，放行后立刻跑）。
 
 **`uiautomator` 这条路在本轮是通的**（Maestro 不通时的替代）：设置 → 实验室 → 开
 「减少动效（强制）」**（App 内设置，不是系统设置）**，同一屏立刻从「拿不到 idle」变成
 56–60KB 完整树。用完记得关回去并回读。B5 §6.2 坑 ⑬ 把它记成了系统设置，是错的。
+
+**02 与 06 的前提互斥——回归清单必须带前提**（B5 §6.3 泓舟在场轮实测）：02 验的是**气泡内**确认
+（v1 路径，实验室「承诺面 Focus Dock」= **关**才有效），06 验的是**承诺面**（同一开关 = **开**）。
+一趟里两条不可能同时绿：照抄「01/02/03/06/08/09 各 rc=0」时 02 先红（`confirm-cancel` 45s 未出现、
+前面 tapOn 全 COMPLETED），关掉开关复跑才 rc=0——**这是配置态互斥，不是回归**。⇒ 分两趟、各自设好
+开关、跑完回读开关并还原。B5 六条读数（主线包锚 `2026-09-04 23:41:40`）：01 132.0s / 02 158.1s（Dock 关）/
+03 191.4s / 06 165.2s（Dock 开）/ 08 110.5s / 09 250.2s，全部 rc=0。
+
+**`composer-send` 两态（B5-13 发送与打断合一）**：testID 不变，五条 online 流仍在闲时点它。
+闲时 ⬆ 极光渐变、`content-desc="发送"`；忙时 ■ 琥珀底 + 琥珀边框、`content-desc="打断"`，点它 ⇒
+气泡定格「已打断」（灰字，不改红）、键回 ⬆。单人取证：发一句**英文**长问题（`adb shell input text`
+送不了中文，B5 坑 ⑫；中文用 Maestro `inputText`），流式回答期间 `maestro hierarchy` 读
+`composer-send` 的 `content-desc`，`input tap` 它，再 dump 一次看「已打断」。阴性：旧 pill
+`voice-sheet-interrupt` 必须 **NOT FOUND**（`target_probe` rc=2）。C 身份闲时仍 disabled、忙时可点。
+
+**深链 `xiaozhou://voice` 冒烟（B5-8 Shortcuts 落点；§12.2 只升层不开麦）**：
+1. 免唤醒**关**，`dumpsys audio | grep "active? true"` 先立阴性基线 = **0 条**（免唤醒开着时常开麦流会占住
+   这条判据、零分辨力，B5 坑 ⑰）；
+2. `am start -a android.intent.action.VIEW -d "xiaozhou://voice"` ⇒ 回对话页 + 语音层升起；
+3. 再读 `active? true` 仍 **0 条** = 红线成立；收起后再发同一条深链应**再升一次**（「新一次进入」语义）。
+   ⚠ 别的路由要**三斜杠**（`xiaozhou:///native-spike`；双斜杠时路由名被当 URI host 吃掉，B5 坑 ⑭），
+   `voice` 例外（落点是 `Redirect`，两种都到）。真实入口：桌面长按图标 → 「和小舟说话」（MIUI 取
+   `longLabel`）→ 冷启动到对话页 + 层升起 + `active? true` 0 条（B5 §6.2 T11 泓舟在场实测）。
+
+T17 五态小样本的材料截取流（thinking / attention / speaking 三条 Maestro + 取法表）预备在
+`e2e/artifacts/b5-sample/_capture/`（gitignore），**未在设备上跑过**，泓舟裁「做」时按其 README 先核前提再跑。
 
 ### B4「行车档」真机验收（T13）：三条取证通道 + 两处卡点
 
