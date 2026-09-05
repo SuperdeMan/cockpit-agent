@@ -239,8 +239,28 @@ $adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
    `voice` 例外（落点是 `Redirect`，两种都到）。真实入口：桌面长按图标 → 「和小舟说话」（MIUI 取
    `longLabel`）→ 冷启动到对话页 + 层升起 + `active? true` 0 条（B5 §6.2 T11 泓舟在场实测）。
 
-T17 五态小样本的材料截取流（thinking / attention / speaking 三条 Maestro + 取法表）预备在
-`e2e/artifacts/b5-sample/_capture/`（gitignore），**未在设备上跑过**，泓舟裁「做」时按其 README 先核前提再跑。
+T17 五态小样本的材料截取流（thinking / attention / speaking 三条 Maestro + 取法表）在
+`e2e/artifacts/b5-sample/_capture/`（gitignore），**2026-09-05 晚已在主线包上跑通、七张材料截齐**（`s1..s7`，
+状态栏已裁、编号已打乱，映射只在 `_capture/mapping.private.txt`）。跑这类「抓瞬态」流的五条经验：
+
+1. ⛔ **每个 `tapOn` 压 `waitToSettleTimeoutMs: 200`**：极光常驻动画永不 settle，缺省一个 tap 等 20–40s
+   （实测 tap 输入框 33s、tap 发送 37s），等完 thinking 早过了。
+2. ⛔ **收键盘点 IME 自己的「收起 ˅」钮**（本机输入法工具栏右端 ≈ `91%,65%`）：`tapOn: point: "50%,30%"`
+   在当前构建**收不掉**（上面 B4 那条写法已失效，`mInputShown` 仍 true）；`pressKey: Back` 仍不能用。
+   先收键盘再点发送，材料里才没有键盘。
+3. **Maestro 2.9 的 `takeScreenshot` 不落在 cwd**，在 `~/.maestro/tests/<时间戳>/<流名>/takeScreenshot/<name>.png`。
+4. 要长播报别直接问「广州历史」——会被追问成三选一卡片，TTS 只有 1.6s；点卡片里的「闲聊口述简史」
+   拿长回答（播报「总是」下 `AudioTrackImpl [fine]` 30s+）。
+5. 设置页 `scrollUntilVisible` 以「播报」**标签**为目标会停在 chip 行还在屏外的位置（点下去点的是标签，
+   什么都没改——回读截图才发现）；以行里最后一个 chip「静音」为目标才整行在屏内。
+
+⚠ **别人的 8081 Metro 会让 dev-client 停在「Refreshing…」蓝条**（bundle 已加载、App 可用，但顶栏被盖住，
+截图不能用；force-stop + 重连也不清）。**不停它**——另起 `npx expo start --dev-client --port 8082`
+（`CI=1` 关 watch 也无妨），`adb reverse tcp:8082 tcp:8082`，dev-client 深链改指 `127.0.0.1%3A8082`，蓝条即消失。
+收尾停掉自己那个、`adb reverse --remove tcp:8082`。
+
+⚠ Git Bash 里 `adb pull /sdcard/x.png` 会被 MSYS 把 `/sdcard` 改写成 `D:/Program Files/Git/sdcard`
+（`failed to stat remote object`），前面加 `MSYS_NO_PATHCONV=1` 或改用 PowerShell。
 
 ### B4「行车档」真机验收（T13）：三条取证通道 + 两处卡点
 
