@@ -2122,13 +2122,56 @@ T7（副本 `lowPower.ts.orig`）：
 
 - **⚠ 一次自己造成的假红（记下来防止下一个人误读 artifacts）**：主线 A 段的 Maestro 6 轮流在 **00:06:51** 报 `Assert that id: composer-input is visible FAILED` ⇒ 看起来像 T13 的回归。**真因是我自己**：A 段窗口 23:56:27–00:01:47 结束后，我在 00:03+ 就开始做 T11 的触感/blur 检查、把 App 导航去了 `/native-spike` 与 `/blur-spike`，而 Maestro 循环还在跑，后续迭代自然找不到 `composer-input`。**A 段窗口本身干净**（那 5m20s 内屏上是对话页、三条播报证据齐）。⇒ **并行跑取数流与手工取证会互相污染，下次要么串行、要么给取数流独占窗口。**
 
-- **需要泓舟在场的三格 ⬜（本会话取不到）**
+- **需泓舟在场的三格——2026-09-05 上午泓舟到场，三格全部取到**
 
-  | # | 格 | 要泓舟做什么 | 判据（写死，免得到时候现想） |
+**步骤 3 · Shortcuts 桌面入口（泓舟长按图标）——两条都过**
+
+  | # | 动作 | 读数 |
+  |---|---|---|
+  | 1 | 桌面长按图标 | 菜单出现 **「和小舟说话」「查看车况」**（截图 `b5-11-shortcuts.png`）。⚠ 显示的是 **`longLabel`** 不是 `shortLabel`——MIUI 桌面取长标签，plugin 里两个都写了才有这个结果 |
+  | 2 | 点「和小舟说话」 | **冷启动**到对话页 + **语音层升起** + `dumpsys audio` **`active? true` = 0 条** ⇒ §12.2 红线在**真实入口路径**上成立（比昨天 `am start` 发深链更硬）。截图 `b5-11-shortcut-voice-tapped.png` |
+  | 3 | 点「查看车况」 | 落到车辆页，云栈仍是 `speed_kmh 0 / 挡位 P`（第 1 批还原仍在）。截图 `b5-11-shortcut-vehicle.png` |
+  | 4 | 锁屏态 | **不适用**（launcher 到不了 shortcuts），按计划不记 ✅ |
+
+**步骤 1 · foldstate 新挂载实例（泓舟手折）——坑 72 销账**
+
+  | 时刻 | 机身 | 读数 |
+  |---|---|---|
+  | 半开保持（对话页已挂着）→ 进 `/native-spike` | **book/tabletop** | `posture: **tabletop**`（**不是 flat**）／`state: halfOpened`／`orientation: horizontal`／`isSeparating: true`／**`events: 0`**／`current: {"present":true,"state":"halfOpened",…,"bounds":{…1112…}}`（与上面逐字同源）／`layout: **tabletop · medium×medium**`／`hinge(dp) topDp:370.7`。截图 `b5-11-fold-halfopen.png` |
+  | 摊平 | flat | `posture: flat`／`orientation: **vertical**`（铰链转竖）／`isSeparating: false`／**`events: 2`**（两条真实 WindowManager 事件）／`current` 与实时值逐字一致 ⇒ **consumer 每次都在刷缓存，不是只存了第一次**／`layout: **two-pane**`。截图 `b5-11-fold-flat.png` |
+
+  ⇒ **T6 的修复在真机成立**：同一场景、同一操作，B4 两轮读的是 `flat / events: 0`，本轮读的是 `tabletop / events: 0`。**`events` 两边都是 0** ⇒ 顺带排除了「是不是因为多收到一个事件才对的」这个替代解释——值来自 `current()`。
+
+  **顺带补 B4 §6.2 遗留②（仪器对照）——销账**：机身**物理摊平**时 `cmd device_state state 2` ⇒ `events` **2 → 3**，`state` 变 `halfOpened`、`posture` 变 `book`（截图 `b5-11-forced-state2.png`）。
+  ⇒ **强制值摊平时也能造出 WindowManager 事件**（B4 只在半开时验过，另一半补上了）；代价是**它会撒谎**（物理摊平却报 book）⇒ **判姿态仍只信 WindowManager，不信 `device_state`**。做完 `state reset`，回读 `Committed = OPENED` 与物理一致。
+  ⚠ 另见：过程中 `cmd device_state state` 一度仍报 `HALF_OPENED` 而机身已摊平，几十秒后才跟上 ⇒ **`device_state` 滞后**（B4 §6.4 那条判据再次成立）。
+
+**步骤 2 · 低电量材质回落——⚠ 换了取法（省电模式那一支取不到，泓舟裁决改验低电量支）**
+
+  ⛔ **省电模式在本机开不起来**：泓舟按了开关后三处设备侧事实都说没开——`settings get global low_power` = **0**、`dumpsys power` 的 `mIsPowerSaveModeEnabled: **false**`、`mSettingBatterySaverEnabled=**false**`。原因是 **`mIsPowered=true`（手机在充电）**，而 adb 走 USB 线 ⇒ 想开省电就得拔线，拔线就没有 adb。
+  **停下来交泓舟裁**（「观察对象缺席时零事件=零证据」：照读会读到「没回落」，而那是因为省电根本没开）。**泓舟裁：改验低电量那一支**（`lowPower` 的两个输入是「省电 ∨ 电量<20%」，验后者同样能打通整条链）。
+
+  取法：`dumpsys battery set level 15`（瞬态，`dumpsys battery reset` 完全还原）。判据用 `png_probe`（先 `selftest`：五种 filter + 部分解码 **全 PASS**），量语音层壳底左上一块（原图 `[40,1470)×[320,1680)`，避开光球与文字）。
+
+  | 环 | 判据 | 读数 |
+  |---|---|---|
+  | 1 事实到达 | 设备侧 | `dumpsys battery` `level: 15` |
+  | 2 事实进 hook | `/native-spike` | **`power: native=true level=0.15000000596046448 saver=false lowPower=true`**（截图 `b5-11-lowbattery-spike.png`）⇒ 原生事实 → `usePowerFacts` → `lowPower()` 判据整链在真机成立 |
+  | 3 材质真回落 | `png_probe region` A/B/A | 见下表 |
+
+  | 点 | 电量 | 壳底 `avg_rgb` | 图 |
   |---|---|---|---|
-  | 1 | **T11 步骤 1 foldstate 新挂载实例** | 机身**半开**（book/tabletop）并保持，且对话页已挂着 → 进 `/native-spike` | `posture` **立刻**是 `book`/`tabletop`（不是 flat）、`current` 行 = 同一投影、**`events: 0`**（0 才对：初值来自 `current()` 不是新事件）。**阴性引 B4 §6.3 遗留③ 的旧读数，不复取**。顺带补 B4 §6.2 遗留②：机身**摊平**时 `cmd device_state state 2` ⇒ `events` 涨不涨；做完 `state reset` 回读 |
-  | 2 | **T11 步骤 2 省电回落** | 打开系统省电模式 | `/native-spike` `power: saver=true lowPower=true`；对话页语音层升起 ⇒ **无 BlurView**（`uiautomator dump` 无 `BlurView` 节点）。关省电 ⇒ 回真模糊。回读省电开关 |
-  | 3 | **T11 步骤 3 Shortcuts 桌面入口** | 桌面**长按图标** | 菜单里出现「说话」「车况」两条（`dumpsys shortcut` 已证登记，缺的是**桌面真能长按出来**这一格）；点「说话」⇒ 对话页 + 层升起 + 零采集（深链那半已在上面单独证过）。**锁屏态记「不适用」不记 ✅**（launcher 本来就到不了 shortcuts） |
+  | **A 正常** | 95% | `[27.4, 28.3, 31.5]` | `b5-11-blur-normal.png` |
+  | **B 低电量** | **15%** | **`[11.2, 13.2, 19.2]`** | `b5-11-blur-lowpower.png` |
+  | **A′ 还原** | 97% | **`[27.4, 28.3, 31.5]`** | `b5-11-blur-restored.png` |
+
+  A→B 的 `diff`：**`diff_ratio 1.0`（58800/58800 像素全变）、`max_channel_dev 28`**。
+  ⚠ **A′ 与 A 逐位一致**——这一点才是判据：它**排除了「极光背景动画漂移」这个替代解释**，差异只由电量→`lowPower`→`blurTarget` 这条链造成。**只有 A/B 两点时，这个结论是不成立的。**
+  **肉眼判据同向**：B 那张里语音层**背后的 chips「打开空调26度」「打开主驾座椅加热」「播放音乐」透过层清晰可读**（层只剩半透明 tint）；A 那张同一区域糊成一片。
+  ⚠ **`uiautomator dump` 那条判据没用上**（拿不到 idle，坑 ⑬），改用 `png_probe` + 肉眼双判据。
+  ⚠ **`saver=true` 那一半在真机上仍 ⬜**（单测已盖两条正反例）：要取得拔掉 USB，本机做不到；换台不用充电的机器、或 adb 走 tailnet 时再补。
+
+**⚠ 一件我没动但变了的设备状态**：`settings get system haptic_feedback_enabled` 现在是 **0**，而昨天（2026-09-04 23:5x）我验触感四种时它是 **1**（B3 §6.2 遗留① 泓舟打开的那个）。昨天那组「4 条 `FINISHED` / 0 条 `IGNORED_FOR_SETTINGS`」的读数**是在 1 的状态下取的、成立**；但**它又关回去了** ⇒ **下一轮验触感前必须先核这一位**，否则会量到「四种都没感觉」的假读数（B3 §6.2 就是这么被坑过一次）。本轮**没有动它**（改系统设置是红线）。
 
 **本批踩的坑（承 §6.1 的 ①–⑪，本批从 ⑫ 起；主计划 §9 的搬运仍归 T18）**
 
@@ -2185,14 +2228,17 @@ T7（副本 `lowPower.ts.orig`）：
 | 设备 APK | **换了两次**：主线(09-02) → 对照(09-04 19:51) → **主线(09-04 23:41)** | 收尾时设备上是**带 AEC 的主线包** ✅（计划要求） |
 | `mobile/patches/` | **卸载又打回**（只动 `node_modules`） | `git status --short -- patches/` **空**；`:85` 那行在，`grep -c` = 2 |
 | speaker 音量 | **泓舟手动调**（0 → 60），不在还原表（§0 第 2 条 #5） | `streamVolume:60`、`2 (speaker): 60`、`Muted: false` |
-| 设备系统设置 | **一字未动**（`haptic_feedback_enabled` 仍是 1，是 B3 泓舟开的） | — |
+| 设备系统设置 | **一字未动**（含省电模式：泓舟按过但没开起来，见步骤 2） | ⚠ `haptic_feedback_enabled` **自己从 1 变回了 0**（不是本轮改的），见上方注 |
+| `cmd device_state` | **动过**（步骤 1 顺带补 B4 遗留②：强制 `state 2`） | **已 `state reset`**，回读 `Committed = OPENED` 与机身物理摊平一致 |
+| `dumpsys battery` | **动过**（步骤 2 伪造 `level 15`） | **已 `reset`**，回读 `level: 98`、`status: 2`（在充电、数值在涨）⇒ override 已清 |
 | `adb reverse tcp:8081` | **本轮建过 3 次**（adb server 与隔夜各断一次） | 收尾时在（`UsbFfs tcp:8081 tcp:8081`） |
 | 云栈 | **一字未动**（本批零后端） | 5/5 endpoint healthy |
 | APK 备份目录 | **新增 `_b5-contrast-apk/` 与 `_b5-mainline-apk-backup/`** | `_b3-mainline-apk-backup/` 未删未动（T18 交裁） |
 
 **遗留 / 给下一批的话**
 
-① **需泓舟在场的三格 ⬜**（判据已写死在上面 T11 那张表）：foldstate 手折半开 / 系统省电模式回落 / 桌面长按图标出 Shortcuts。前两格是本批两个原生件**唯一还没验到的那一半**；第三格的「已登记」部分已由 `dumpsys shortcut` 证过，缺的只是桌面菜单这一格。
+① ✅ **已解决（2026-09-05 上午泓舟到场同轮回填）**：三格全部取到，读数在上方 T11 段。**本批两个原生件（foldstate `current()` / expo-battery 低电量回落）的真机验收至此闭合**，坑 72 与 B4 §6.2 遗留② 一并销账。
+   仍开的**一小格**：**`saver=true` 那一半**（省电模式在充电时开不起来，而 adb 走 USB）——单测已盖两条正反例，真机换台机器或 adb 走 tailnet 时再补。
 
 ② ⚠ **播报卡顿的定因只走了一半**：本轮证到「**不是 AEC 造成 Xruns**」（方向甚至相反：无 AEC 的对照包 5616–5624 次/分，有 AEC 的主线包 0），但**没有证到卡顿的成因**——主线包（用户实际在用的那个）在本轮四项客观指标上**全是 0**（Xruns / HAL write blocked 都是 0）。**新的首要嫌疑是 AEC 换来的那条通路本身**：`VOIP_TX` + **16kHz**（对照包是 FAST + 48kHz），影响的是音质与延迟、不是 deadline miss。B3 猜的「TTS 与麦流同 AudioContext 的 HAL 写阻塞」**本轮零证据支持**（四段 HAL blocked 全 0）。⇒ 归 KWS A/B 批之后的语音批，**别再沿 Xruns 找**。
 
