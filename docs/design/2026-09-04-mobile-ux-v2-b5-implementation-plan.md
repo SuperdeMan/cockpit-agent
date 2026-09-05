@@ -1913,7 +1913,300 @@ T2 反向验证（副本 `main.go.orig`）：
 
 ### 6.2 第 2 批「重建趟」（T6–T11）
 
-（待回填）
+**开工基线（2026-09-04，本会话自己跑出来的数）**
+
+| 项 | 读数 |
+|---|---|
+| `check_android_env.ps1` | 退出码 **0**（18 pass / 0 warn / 0 fail） |
+| `dev_stack target show` | `{"source":"file","status":"target","target":"cloud"}` |
+| adb server（`netstat -ano \| findstr :5037`） | LISTENING **PID 23900** = `D:\Android\Sdk\platform-tools\adb.exe`（= `ANDROID_HOME` 那份 ✅）。**PID 与第 1 批记的 60816 不同** ⇒ §6.1 遗留⑨ 说的「server 中途自发重启」得到确认。孤儿 PID 14604（取不到 Path，坑 73 那个 2026-08-27 的）仍在，本轮未碰 |
+| `mobile: npm test` | **50 suites / 509 tests 全绿**（69.4s）——与 §6.1 收口的 509 对得上 |
+| `mobile: npm run typecheck` | **0 error** |
+| 设备 `lastUpdateTime` | **`2026-09-02 16:45:36`** ✅ 与 §0 第 1 条一致（第 1 批确实没重建） |
+| `git log --oneline origin/main..HEAD` | **空** |
+| `git log --oneline HEAD..origin/main` | **空** |
+| `git status --short` | 干净 |
+| 起点 SHA | `54a7afe`（= `origin/main` = HEAD，无分叉、无别人的在途提交） |
+| 云栈 `dev_stack status` | **5/5 endpoint healthy**；`release_sha` **⬜ 取不到**（见坑 ①） |
+| Metro | 8081 `packager-status:running`，PID **75696** = `"node" ".../mobile/node_modules/.bin/../expo/bin/cli" start`（**本仓的**，但 `CreationDate 2026/9/3 22:26:56` 不是本会话起的）⇒ 按纪律**不停、不重启**，只让设备重连它取本轮 bundle |
+| `adb reverse` | 开工时 `--list` **空**（§6.1 遗留⑨ 预告的失效属实），本轮重建 `UsbFfs tcp:8081 tcp:8081` |
+| worktree | 未分树（泓舟未授权），在主工作树做 |
+
+**逐任务**
+
+**T6（`foldstate` 查当前值）** — 提交 `facb7dc`（4 files，+62/−29）
+- 写 Kotlin 前先核 API（计划步骤 1 的判据，**三件全在**）：`ObjectDefinitionBuilder.kt:115` 有无参重载 `inline fun <reified R> Function(name, crossinline body: () -> R)`；`OnStartObserving(body)` 在**同一个文件** `:483`（**不在计划写的 `ModuleDefinitionBuilder.kt` 里**——那个文件里 `grep 'fun OnStartObserving'` 零命中）；`OnActivityEntersForeground` 在 `ModuleDefinitionBuilder.kt:129` ✅ 与计划一致。
+- `tsc` 0；`npm test` **509 条不变**（与计划预期一致——hook 无 jest 面，判据 `foldPosture` 没动）。
+
+**T7（`expo-battery` 低电量回落）** — 提交 `d60cbcc`（7 files，+84/−2）
+- 装出来的版本：**`expo-battery ~57.0.2`**，`git diff -- package.json` **恰一行新增** ✅；原生名 `BatteryModule.kt:30` = **`Name("ExpoBattery")`** ✅ 与探针名一致。
+- ⚠ 计划步骤 1 的第二条判据路径不存在：`node_modules/expo-battery/build/index.d.ts` **没有这个文件**（`package.json` 的 `types` 是 **`build/Battery.d.ts`**）。现读该文件：`useBatteryLevel(): number` `:124`、`useLowPowerMode(): boolean` `:146` 两个 hook 都在 ✅。**顺带坐实了 §9.27 铁则的必要性**：`build/ExpoBattery.js` 整个文件就是 `export default requireNativeModule('ExpoBattery')`——顶层直接 import 在旧 APK 上就是「崩在 import」。
+- 跑红：`Cannot find module '@/core/power/lowPower'`（模块不存在，**不是 assertion**）；跑绿 5 passed；全量 **509 → 514（+5）**；`tsc` 0。
+
+**T8（静态 Shortcuts + `xiaozhou://voice`）** — 提交 `34a9f61`（5 files，+88/−1）
+- 插件不等构建才验：`npx expo config --type introspect` 当场跑出 4 条 `@string`（`shortcut_voice_short/long`、`shortcut_vehicle_short/long`）+ `android.app.shortcuts` → `@xml/shortcuts` 的 meta-data，且它落在**带 `android:scheme="xiaozhou"` intent-filter 的那个 activity**（= `.MainActivity`）上 ✅。`withDangerousMod` 写 `res/xml/shortcuts.xml` 那半在 introspect 下被跳过（正常，T10 prebuild 才跑）。
+  ⚠ `--json` 输出**读不到这些**：mods 结果不可序列化，`c.mods.android` 是空对象 ⇒ 判据只能读文本 introspect。
+- 比计划多一条守卫：`withDangerousMod` 里 `config.android.package` 缺席即 `throw`。理由：写成 `targetPackage="undefined"` 的 shortcut 会**静默失效**（长按图标点了没反应），那种失败比构建失败难查得多。
+- `tsc` 0；`npm test` **514 条不变**。
+
+**T6/T7 的旧 APK 热载实证（§9.27 铁则当场成立，截图 `b5-67-oldapk-degrade.png`）**
+
+设备上仍是 09-02 的主线包（无 `current`、无 expo-battery），dev-client 从 Metro 取本轮 bundle 后 `/native-spike` 读到：
+
+| 行 | 读数 | 判据 |
+|---|---|---|
+| `native` | `available` | 旧 foldstate 原生在 |
+| `current` | `—（旧 APK 无 current / 从未收到事件）` | **T6 步骤 3 的判据成立**：`FoldNative?.current?.()` 可选链回落 null，App 不崩 |
+| `power` | `native=false level=null saver=null lowPower=false` | **T7 步骤 5 的判据成立**：旧包上零行为变化 |
+| `posture` / `events` | `flat` / `0` | 机身折叠态 |
+| `driving` | `false（manual=false edge.trueAt=0 edge.falseAt=0 dismissedAt=0）` | 第 1 批的云栈/设备状态已还原 |
+| `layout` / `dp` | `single · compact×medium` / `360×840 @3x` | 外屏 |
+
+⚠ **这两行的存在本身就是「设备跑的是本轮 JS」的自证**（§6.1 坑⑪ 同款）：`current` / `power` 是 T6/T7 新加的行，旧 bundle 里根本没有。**先证仪器，再用仪器测被测物。**
+
+**T8 深链四格（旧 APK 也能验——路由是 JS）**
+
+| # | 动作 | 读数 |
+|---|---|---|
+| 1 | `am start -a …VIEW -d "xiaozhou://voice"` | 从 `/native-spike` **跳回对话页**且**语音层升起**（截图 `b5-8-voice-2slash.png`） |
+| 2 | `dumpsys audio` | 全机 **0 条 `active? true`** ⇒ **§12.2 红线成立：只升层、不开麦**；Composer 占位符仍是「和小舟说点什么…」，胶囊不是「在听…」 |
+| 3 | 点「收起」 | 层消失（`b5-8-collapsed.png`） |
+| 4 | 再发同一条深链 | **层再升一次**（`b5-8-voice-reentry.png`）⇒ 计划要的「新一次进入」语义成立 |
+
+⚠ **顺带纠一条旧账（B2 §6 坑⑨）**：那条记的是「`xiaozhou://state-gallery` 深链在 dev-client 里**没跳转**，改从设置页入口进」。本轮实测真因**不是 dev-client 的限制，是斜杠数**——`xiaozhou://native-spike` 不跳（`am start` 只报 delivered to top-most instance）、`xiaozhou:///native-spike` **跳**（`native-spike` 在双斜杠形式下被当成 URI 的 host 吃掉了）。`voice` 两种写法都到得了，因为它的落点是 `Redirect`。⇒ **shortcut 里写的 `xiaozhou://voice` 可用，插件不用改**；但将来给别的路由加深链入口，一律用三斜杠。
+⚠ 这一条**仍有第二种解释没被排除**：第一次发 `xiaozhou://native-spike` 时 bundle 刚加载完，可能是 §9.58 那条「发太早被吞」。两种解释我没做进一步对照实验；**对 T8 结论无影响**（`xiaozhou://voice` 是直接证据）。
+
+**反向验证（每条先 `grep` 证明变异落盘；副本回写还原，未用 `git checkout --`）**
+
+T7（副本 `lowPower.ts.orig`）：
+
+| # | 变异 | 计划预期红 | **实红** | 差在哪 |
+|---|---|---|---|---|
+| M1 | 删 `p.level >= 0` | 恰 1 条（未知 -1） | **恰 1 条**（电量未知 -1）✅ | — |
+| M2 | `if (p.saver)` → `if (p.saver === false)` | 红「省电模式」1 条 + 「原生缺席」仍绿 | **3 条红**（省电模式 / 电量阈值两断言 / 电量未知），「**原生缺席」仍绿 ✅** | 计划只数了「省电模式」那条。`=== false` 不是「省电时不回落」这一件事——它把**所有 `saver: false` 的用例**都翻成 true，而三条 `saver:false` 的用例里有两条断言 false。**阴性那条（null ≠ false）是这条变异真正要证的，它成立** |
+
+⚠ T6/T8 **没有做变异测试**：T6 的改动面是 Kotlin + hook 初值（无 jest 面），T8 是 config plugin + 路由（判据是 introspect 与真机深链）。**它们的判据不在 jest 里，所以「零红」不适用**——对应的取证是上面两张实测表。
+
+**T9（对照构建 + Xruns 对照读数）——零代码提交**
+
+- **步骤 0 前提**（全过）：`git status` 干净；设备锚仍 `2026-09-02 16:45:36`；`_b3-mainline-apk-backup/mainline-app-debug.apk` **289317943 B 仍在**；`dumpsys audio` 的 `STREAM_MUSIC` → `Devices: speaker(2)`（不是蓝牙）。
+  ⚠ **但 `2 (speaker): 0`——扬声器音量是 0**（B2「音量 0 是不触发惯犯」的第四次）。这会让 A/B 两段在 HAL 上没有区别、整张表变成量一件不存在的事。音量归泓舟自管（§0 第 2 条 #5）⇒ **停下来报给泓舟**，泓舟手动调到 `streamVolume:60`（回读确认 `2 (speaker): 60`、`Muted: false`）后才开始取数。
+  ⚠ 期间另发现**设备正在通话中**（状态栏 01:58）——通话占音频焦点、改 HAL 路由。**通话期间不取任何 Xruns、不对设备发输入事件**，等泓舟挂断后才开始。
+
+- **步骤 1 卸补丁**（三条判据全过）：`npx patch-package --reverse` exit 0；`AndroidAudioRecorder.cpp` 里 `VoiceCommunication` **0 命中**；`git status --short -- patches/` **空**（patch 文件 1643B 原样在）；全树干净。
+
+- **步骤 2 对照构建**：`fetch_mobile_voice_assets.ps1` exit 0（kws 原生件 + silero_vad 都在）；`build_mobile.ps1 -Clean` ⇒ **`BUILD SUCCESSFUL in 22m 14s`**，897 tasks（518 executed / 379 from cache）。**APK 289320346 B ≈ 275.9MB**——与 B3 读数持平，涨幅 ~0（远低于 >20MB 停查线；battery / shortcuts 确实极小）。构建侧核证补丁不在：镜像区 `VoiceCommunication` **0 命中** ✅。另存 `D:/Android/builds/_b5-contrast-apk/contrast-app-debug.apk`。
+  ⚠ B3 §6.2 那条 Dimezis 镜像坑（`HEAD` 404 / `GET` 200）**本轮没有复现**——`gradle_cn_mirrors.init.gradle` 的 `excludeGroup` 还在，两趟都一次过。
+
+- **步骤 3 装对照包 + 锚**：`adb install -r` **Success**；**对照包锚 `lastUpdateTime = 2026-09-04 19:51:26`**（`versionName=0.1.0`）；`adb reverse` 重建 `UsbFfs tcp:8081 tcp:8081`；Metro `packager-status:running`。
+  探针（老能力一件没丢）：`/voice-spike` **`avail: vad=true kws=true usable=true`** + `focus: installed=true` ✅；`/native-spike` `native: available` ✅。
+
+- **⚠ 装机后三条「装了才验得到」的读数（本该在 T10/T11，对照包上已经成立，提前记）**
+
+  | # | 判据 | 读数 |
+  |---|---|---|
+  | 1 | **T6 修复在真机成立** | `/native-spike`：`current: {"present":false,"state":"none","orientation":"none","isSeparating":false,"bounds":null}` **有值**、`events: 0` ⇒ **初值来自 `current()` 而不是新事件**（旧包同两行是 `—` / `0`）。截图 `b5-9-contrast-native-spike.png` |
+  | 2 | **T7 原生在场** | `power: native=true level=1 saver=false lowPower=false`（旧包是 `native=false level=null`） |
+  | 3 | **T8 静态 shortcuts 已被系统登记** | `dumpsys shortcut`：两条 `ShortcutInfo`——`id=vehicle` `shortLabel=车况 resId=…[shortcut_vehicle_short]` / `id=voice` `shortLabel=说话 …[shortcut_voice_short]`，`activity=…/.MainActivity`，`intents=[… dat=xiaozhou://voice/… cmp=…/.MainActivity]` ⇒ **标签真从 `@string` 解析、intent 真指向 MainActivity**。这是 T10 步骤 3 的判据，对照包上已拿到（对照包也带 plugin） |
+
+- **⚠ 无 AEC 在 HAL 层被坐实（不是靠 grep 源码）**：`dumpsys media.audio_flinger` 的活跃输入线程 `AudioIn_186` ⇒ **`Audio source: 6 (AUDIO_SOURCE_VOICE_RECOGNITION)`**。补丁设的是 `oboe::InputPreset::VoiceCommunication`（=7），Oboe 不设时的默认正是 6 ⇒ **装在设备上的这个包确实没有 AEC**。同一段还给出「哪条流是我们的」的硬判据：`1 Tracks of which 1 are active` → `Client(pid/uid) = 28636/10423`，而 `28636` = `pidof com.xiaozhou.companion`。
+  ⚠ **`tid` 不是判据**：dump 里 `tid 27092` 的 `Tgid` 是 **2051 = audioserver**，不是本应用——B3 记的「tid ∈ 本应用 pid」这条**在本机不成立**，认流要认 `Client(pid/uid)`。
+
+- **⚠⚠ 步骤 4 的取数仪器换了两次，前两次都作废（本批最值钱的一段）**
+
+  | 尝试 | 取法 | 为什么废掉 |
+  |---|---|---|
+  | ① | `dumpsys media.audio_flinger` 里找 `Xruns` | **整份 dump 里没有这个字符串**（`grep -i xrun` 零命中）。B3 记的「本应用麦流 Xruns」不在这里 |
+  | ② | `PerfSense` 的累计计数器差值（`[AudioIn_186] NT Xruns counter increased to N`） | **计数器非单调**：7994(20:33) → 31275(20:44) → **10827(20:51)**。流没变（同 `AudioIn_186`/tid 27092，`AT::add` 仍是 20:27:22）⇒ 不是流重建，是 PerfSense 自己周期性重置。**差值法直接不成立**（「仪器自相矛盾」的第三形态） |
+  | ③ **采用** | **段内持续抓 logcat，数本应用流的行数** | 这些行 **~5600 行/分**、logcat 缓冲区只存得下 **4.6 分钟**（实测首末行 20:48:44→20:53:22 共 26083 行）⇒ **事后读一定丢数据，必须段内抓** |
+
+  ⚠ **本轮读数与 B3 的绝对值不可比**：B3 记的是 0.7–2.2 次/分，本轮同一现象是 ~5600 次/分，差三个数量级 ⇒ **两边数的不是同一个东西**（B3 大概率数的是被限流后的日志行，或当时那条流不在 FAST 路径上）。**结论只在本轮自己的两个包之间成立**，不与 B3 的表合并。
+
+- **步骤 4 对照包 Xruns 读数**（锚 `2026-09-04 19:51:26`；免唤醒**开**、播报**总是**、角色手持、行车档关、`speaker=60`、App「保持屏幕常亮」**开**）
+
+  | 段 | 窗口 | 时长 | 本应用流 `AudioIn_186` 行数 | **次/分** | HAL write blocked | Reanimated |
+  |---|---|---|---|---|---|---|
+  | **A 麦常开 + 播报** | 21:10:59–21:16:19 | 320s | **29951** | **5616** | **0** | **0** |
+  | **B 麦常开、无播报** | 20:54:48–21:00:08 | 320s | **29996** | **5624** | **0** | **0** |
+
+  两段流名分布都是 **100% `AudioIn_186`**（无混入系统热词流）。
+  **A 段确实在播报——三条独立证据**（「观察对象缺席时零事件=零证据」）：① 屏上「播报中 · 说话可打断」+ 长回答正文（截图 `b5-9-segA-state.png`）；② `dumpsys media.audio_flinger` 的 `AudioOut_D` `Standby: no`，本应用 track `Client 28636/10423` **active=yes**、音量 `-22 dB` 不是 `-inf`，`AT::add` 21:05:13 覆盖整个 A 段；③ Maestro 6 轮 exit 0。
+  ⚠ **A 段的触发办法**：`adb shell input text` **送不了中文**（`java.lang.NullPointerException: Attempt to get length of null array`，KeyCharacterMap 映射不了非 ASCII）⇒ 改用 Maestro 的 `inputText`（它自己走 UTF-8）。临时流在 scratchpad，**不入库**。第一版流里写了「断言用户气泡可见」，**实跑假红**——长回答把用户气泡顶出了可视区，第二版去掉该断言。
+
+- **步骤 5 打回补丁**：`npx patch-package` exit 0；`AndroidAudioRecorder.cpp:85` 的 `->setInputPreset(oboe::InputPreset::VoiceCommunication)` **回来了**，`grep -c` = **2**（1 条注释 + 1 条代码；`miniaudio.h` 里那 4 条同名符号路径不同、不算）。
+
+**⚠ 装机后观测到一次 Console Error，A/B 未复现，成因未定（不写成已修、不赖给任何一处）**
+
+装对照包后某次启动，LogBox 弹出红条 `Console Error: Can't perform a React state update on a component that hasn't mounted yet.`（Sources 只给到 `LogBoxData.js` 与 `expo-router/build/ExpoRoot.js:135`，没有业务组件帧）。
+**先怀疑 T7**（理由不弱：旧包上 `usePowerFacts` 的 `api` 是 null ⇒ expo-battery 两个 hook 从没被调用过，而旧包 + 新 JS 的四张截图都没有红条；新包是它们第一次真正跑）。做了 A/B：
+
+| 侧 | 做法 | 结果 |
+|---|---|---|
+| A | 副本回写把 `const power = usePowerFacts()` 换成常量，force-stop 重启 | **红条消失** |
+| B | 还原 `usePowerFacts()`，force-stop 重启 | **红条也没有回来** |
+
+⇒ **B 侧推翻了 A 侧**：红条不可复现，与 `usePowerFacts` 无关；A 侧那一格是巧合不是因果。
+现读过 `expo-battery/build/Battery.js`：`useBatteryLevel` / `useLowPowerMode` 的 `setState` 都在 `useEffect` 里，本来也不该触发这条警告。
+⇒ 记为**「观测到一次、A/B 未复现、成因未定」**；副本已删、`ChatScreen.tsx` 与提交一致。**一个自洽的解释不等于根因——B 侧才是判据**（§6.1 坑⑧ 同一形态）。
+
+**T10（主线一趟 `-Clean` 重建 + 注册验证 + 装机重核 + 冒烟）——零代码提交**
+
+- **步骤 0–1**：`_b3-mainline-apk-backup/` **不动、不删**（289317943 B 仍在，T18 交裁）；补丁打回后 `fetch_mobile_voice_assets.ps1` exit 0；`build_mobile.ps1 -Clean` ⇒ **`BUILD SUCCESSFUL in 11m 28s`**，897 tasks（498 executed / 399 cached）。**APK 289320342 B**——比对照包（289320346 B）**少 4 字节**，两包只差 AEC 那一行。另存 `D:/Android/builds/_b5-mainline-apk-backup/mainline-app-debug.apk`。
+
+- **步骤 2 注册验证——七件全过，没有一件缺席（不需要先修注册）**
+
+  | # | 通道 | 判据 | 读数 |
+  |---|---|---|---|
+  | 1 | Expo | `ExpoModulesPackageList.kt` | `expo.modules.battery.BatteryModule:27`（**T7 新**）/ `blur.BlurModule:28` / `haptics.HapticsModule:39` / `com.xiaozhou.foldstate.FoldStateModule:49` / `com.xiaozhou.kws.KwsModule:50` ✅ |
+  | 2 | RN 社区 | `PackageList.java` | Onnxruntime `:65` / RNGH `:73` / Reanimated `:75` ✅ |
+  | 3 | plugin | merged manifest | `android:name="android.app.shortcuts"` @ `:120` ✅ |
+  | 4 | plugin | `res/xml/shortcuts.xml` | 2 条 `<shortcut>` ✅ |
+  | 5 | plugin | `res/values/strings.xml` | `shortcut_voice_short=说话:4` / `shortcut_vehicle_short=车况:6` ✅ |
+  | 6 | patch | `AndroidAudioRecorder.cpp` | `:85 ->setInputPreset(oboe::InputPreset::VoiceCommunication)` ✅ |
+  | 7 | T6 | `FoldStateModule.kt` | `Function("current")` 恰 1 ✅ |
+
+- **步骤 3 装机 + 全套重核**：`adb install -r` **Success**；**新主线包锚 `lastUpdateTime = 2026-09-04 23:41:40`（`versionName=0.1.0`）——第 3 批起所有读数用它**；`adb reverse` 重建 ✅；Metro `packager-status:running` ✅；Maestro driver `dev.mobile.maestro` + `.test` **重装后仍在** ✅；`dumpsys shortcut` 本应用两条：`shortLabel=说话 resId=…[shortcut_voice_short]` / `车况 …[shortcut_vehicle_short]`，`intents=[… dat=xiaozhou://voice/… cmp=…/.MainActivity]` ✅。
+  ⚠ `dumpsys shortcut` 里**先出现的是别的 App 的 shortcut**（猎聘的「看机会/找牛人」、系统的「语音搜索」等），按 `Package: com.xiaozhou.companion` 分段读才作数。
+
+- **步骤 4 冒烟**：`/native-spike` `native: available` / `current: {"present":false,…}` **有值**（不再是「—」）/ **`power: native=true level=0.8399999737739563 saver=false lowPower=false`**（电量是真实小数、随时间变，不是写死的）；`/voice-spike` **`avail: vad=true kws=true usable=true`** + **`mic={"active":1,"running":true}`** + `focus: installed=true` ✅；一轮文字问答走通（多轮长回答落地）。触感四种 / `/blur-spike` / Maestro 09 ⬜ 归 T11。
+
+- **⚠⚠ 步骤 5 的对照读到了比「Xruns 多少」重要得多的东西：AEC 补丁把麦流换了整条 HAL 通路**
+
+  | 包 | 锚 | `Audio source` | HAL 通路 flags | 采样率 | HAL frame count | 周期 |
+  |---|---|---|---|---|---|---|
+  | **对照（无 AEC）** | `2026-09-04 19:51:26` | **6 `AUDIO_SOURCE_VOICE_RECOGNITION`**（Oboe 不设 inputPreset 时的默认） | `0x1 AUDIO_INPUT_FLAG_FAST` | 48000 | 96 | **2.00 ms** |
+  | **主线（有 AEC）** | `2026-09-04 23:41:40` | **7 `AUDIO_SOURCE_VOICE_COMMUNICATION`**（补丁那一行） | **`0x20 AUDIO_INPUT_FLAG_VOIP_TX`** | **16000** | 320 | **20 ms** |
+
+  两行都来自装机后的 `dumpsys media.audio_flinger`（不是读源码），且都用 `Client(pid/uid)` 认流。
+  ⇒ **`PerfSense` 的 "Xruns" 本质是「2ms 周期的 fast 线程实际跑了 10ms」**（日志原文 `cycle: 10.67ms, expected=2.00ms`）。20ms 的 VOIP 通路上根本不会有这个抱怨。**两个包的 Xruns 数不是同一件事的两个值**（「一个达标读数可能是另一个缺陷的度量」）。
+
+- **步骤 5 Xruns 2×2 表**（同一天、同设置、同段法、同 5m20s 窗口；免唤醒开 / 播报「总是」/ 角色手持 / 行车档关 / `speaker=60` / App 保持屏幕常亮开）
+
+  | 包（锚） | 段 | 窗口 | 本应用麦流行数 | 次/分 | HAL write blocked | Reanimated |
+  |---|---|---|---|---|---|---|
+  | **对照 无 AEC**（`19:51:26`） | A 麦常开 + 播报 | 21:10:59–21:16:19 | **29951**（100% `AudioIn_186`） | **5616** | **0** | **0** |
+  | **对照 无 AEC**（`19:51:26`） | B 麦常开、无播报 | 20:54:48–21:00:08 | **29996**（100% `AudioIn_186`） | **5624** | **0** | **0** |
+  | **主线 有 AEC**（`23:41:40`） | A 麦常开 + 播报 | 23:56:27–00:01:47 | **0** | **0** | **0** | **0** |
+  | **主线 有 AEC**（`23:41:40`） | B 麦常开、无播报 | 23:50:02–23:55:22 | **0** | **0** | **0** | **0** |
+
+  **两个 A 段都确证在播报**（不是演员缺席）：对照 A 见上；主线 A —— 屏上多轮长回答落地（截图 `b5-10-mainline-segA.png`）+ `AudioOut_D` `Standby: no`、本应用 track `Client 10263/10423` **active=yes**、音量 **-19 dB**（不是 `-inf`）、`AT::add 09-05 00:00:13`。主线 B 段前另跑过 60s 探针，同样 0 行。
+
+- **步骤 5 结论（T11 步骤 5 的裁决，按计划只许两种写法之一）**
+
+  ⇒ **「对照包同条件 Xruns 相当 ⇒ 不是 AEC」——但要按实测把这句话说准**：Xruns 在**无 AEC 的对照包上是 5616–5624 次/分，在有 AEC 的主线包上是 0**。方向与「AEC 造成 Xruns」**相反**。
+  **B3 定性的那条链在本轮被推翻了两处**：① B3 说「本应用麦流在播报时 HAL 阻塞明显增多」——本轮**四个段的 `HAL write blocked` 全是 0**，两个包都没复现；② B3 的 2.2 次/分 vs 0.7 次/分（播报 vs 无播报）在本轮**两个包上都不成立**（对照包 5616 vs 5624 无差别，主线包 0 vs 0）。
+  ⚠ **但「播报卡顿不是 AEC」这句话本轮只证到「不是 AEC 造成 Xruns」**，没有证到「播报卡顿的成因是什么」——泓舟报的是**主观卡顿**，而主线包（用户实际用的那个）在本轮四项客观指标上全是 0。**下一个嫌疑不该继续沿着 Xruns 找**：真正被换掉的是采样率（48k → 16k）与 VOIP 通路，这两者影响的是**音质与延迟**，不是 deadline miss。归 KWS A/B 批之后的语音批，**并把「16kHz VOIP 通路」作为新的首要嫌疑写进出账**（B3 猜的「TTS 与麦流同 AudioContext 的 HAL 写阻塞」本轮零证据支持）。
+  ⚠ **本轮读数与 B3 的表不合并**：取法不同（本轮=段内持续抓行数，B3=未知且量级差三个数量级）、通路不同（本轮首次分清 FAST 与 VOIP_TX 两条）。
+
+**T11（第 2 批真机验收）——单人可做的四格已取，需泓舟在场的三格 ⬜**
+
+- **步骤 3 §12.2 红线（深链只升层不开麦）——主线包上成立，且阴性基线先立住了**
+
+  | # | 状态 | 全机 `dumpsys audio` 的 `active? true` | 判据 |
+  |---|---|---|---|
+  | 1 | 免唤醒**开**、发深链前 | **1 条** | ⚠ 这条是**免唤醒的常开麦流**（`session:2761`、`uid:10423`、`source client=VOICE_COMMUNICATION`），**不是深链开的**。**免唤醒开着时这条判据没有分辨力**——必须先关掉它 |
+  | 2 | 免唤醒**关**（阴性基线） | **0 条** | 基线立住 |
+  | 3 | 免唤醒关 + 发 `xiaozhou://voice` | **0 条** | ✅ **红线成立**：语音层升起（层内渲出本轮问答，截图 `b5-11-deeplink-nomic.png`）、**零采集** |
+
+  ⚠ 顺带拿到 **AEC 最直接的证据**（比从 `Audio source: 7` 推断更硬）：第 1 行那条采集的属性里写着 **`effects client='Acoustic Echo Canceler' 'Noise Suppression', dev='Acoustic Echo Canceler' 'Noise Suppression'`** ⇒ 平台 AEC + NS 真的挂在本应用的流上。同时可见 `dev=2ch 16000Hz` —— **16kHz 也在这里第二次被确认**。
+
+- **步骤 4 回归（主线包，锚 `2026-09-04 23:41:40`）**
+
+  | # | 项 | 读数 |
+  |---|---|---|
+  | 1 | 触感四种 | `settings get system haptic_feedback_enabled` = **1**（B3 遗留① 泓舟开的仍在）。四个按钮各点一次 ⇒ logcat **4 条 `Starting vibrate` + 4 条 `ended with status FINISHED`**、`uid=10423`、**0 条 `IGNORED_FOR_SETTINGS`** ⇒ 重建没弄丢 expo-haptics ✅。`mUsage` 仍是 TOUCH×1 + UNKNOWN×3（手感可辨性不在本格，见 B3 §6.2 遗留①） |
+  | 2 | `/blur-spike` | `blurTarget: attached`；**③ 真模糊（小字完全不可读）**、①② 清晰可读；**0 条 FATAL/AndroidRuntime**（截图 `b5-11-blur-spike.png`）✅。⚠ ④ 号自检格在折叠线以下**没滚到**，所以 `blurTarget prop` 告警计数是 0——**这不是回归，是没渲染**（B3 §6.2 遗留② 同一格仍开） |
+  | 3 | KWS/VAD 探针 | `avail: vad=true kws=true usable=true`、`mic={"active":1,"running":true}`、`focus: installed=true` ✅ |
+  | 4 | Maestro 09 离线 | **rc=0**，全部断言 COMPLETED（`--no-reinstall-driver`）✅。⚠ 控制台中文全是 GBK 乱码（记忆里「GBK 字节回环让日志双向说谎」），**判据取退出码与 COMPLETED，不取控制台文字** |
+  | 5 | Maestro 06/07/08 | ⬜ 未跑（06 要危险动作确认、07 要 `cmd device_state`、08 要键盘态；都归 T16 一起做更省设备轮次） |
+
+- **⚠ 一次自己造成的假红（记下来防止下一个人误读 artifacts）**：主线 A 段的 Maestro 6 轮流在 **00:06:51** 报 `Assert that id: composer-input is visible FAILED` ⇒ 看起来像 T13 的回归。**真因是我自己**：A 段窗口 23:56:27–00:01:47 结束后，我在 00:03+ 就开始做 T11 的触感/blur 检查、把 App 导航去了 `/native-spike` 与 `/blur-spike`，而 Maestro 循环还在跑，后续迭代自然找不到 `composer-input`。**A 段窗口本身干净**（那 5m20s 内屏上是对话页、三条播报证据齐）。⇒ **并行跑取数流与手工取证会互相污染，下次要么串行、要么给取数流独占窗口。**
+
+- **需要泓舟在场的三格 ⬜（本会话取不到）**
+
+  | # | 格 | 要泓舟做什么 | 判据（写死，免得到时候现想） |
+  |---|---|---|---|
+  | 1 | **T11 步骤 1 foldstate 新挂载实例** | 机身**半开**（book/tabletop）并保持，且对话页已挂着 → 进 `/native-spike` | `posture` **立刻**是 `book`/`tabletop`（不是 flat）、`current` 行 = 同一投影、**`events: 0`**（0 才对：初值来自 `current()` 不是新事件）。**阴性引 B4 §6.3 遗留③ 的旧读数，不复取**。顺带补 B4 §6.2 遗留②：机身**摊平**时 `cmd device_state state 2` ⇒ `events` 涨不涨；做完 `state reset` 回读 |
+  | 2 | **T11 步骤 2 省电回落** | 打开系统省电模式 | `/native-spike` `power: saver=true lowPower=true`；对话页语音层升起 ⇒ **无 BlurView**（`uiautomator dump` 无 `BlurView` 节点）。关省电 ⇒ 回真模糊。回读省电开关 |
+  | 3 | **T11 步骤 3 Shortcuts 桌面入口** | 桌面**长按图标** | 菜单里出现「说话」「车况」两条（`dumpsys shortcut` 已证登记，缺的是**桌面真能长按出来**这一格）；点「说话」⇒ 对话页 + 层升起 + 零采集（深链那半已在上面单独证过）。**锁屏态记「不适用」不记 ✅**（launcher 本来就到不了 shortcuts） |
+
+**本批踩的坑（承 §6.1 的 ①–⑪，本批从 ⑫ 起；主计划 §9 的搬运仍归 T18）**
+
+⑫ ⛔ **`adb shell input text` 送不了中文**：`java.lang.NullPointerException: Attempt to get length of null array`（KeyCharacterMap 映射不了非 ASCII）。英文可以。⇒ 需要中文输入的取数流一律借 **Maestro `inputText`**（它自己走 UTF-8）。
+
+⑬ ⛔ **`uiautomator dump` 在本 App 主屏拿不到 idle**（`ERROR: could not get idle state`）——极光背景是常驻动画。B4 §6.3 记的「开『减少动效（强制）』才吐完整树」是对的，但那是**系统设置**（红线）⇒ 本轮不动它，取证一律走 `screencap` + 看图。
+
+⑭ ⛔ **B2 §6 坑⑨「深链在 dev-client 里不跳转」的真因是斜杠数，不是 dev-client**：`xiaozhou://native-spike` 不跳（`am start` 只报 delivered to top-most instance）、**`xiaozhou:///native-spike` 跳**。双斜杠形式下路由名被当成 URI 的 host 吃掉了。⇒ 给路由发深链一律**三斜杠**；`xiaozhou://voice` 是例外（落点是 `Redirect`，两种都到）。
+   ⚠ 第二种解释（§9.58「bundle 没加载完被吞」）**没有被排除**，因为第一次发的时机确实早。对 T8 结论无影响。
+
+⑮ ⛔ **`PerfSense` 的 Xruns 计数器会被周期性重置**（7994 → 31275 → 10827，流没变）⇒ **差值法不成立**；而这些行 ~5600 行/分、logcat 缓冲区只存 4.6 分钟 ⇒ **事后读也不成立**。唯一可用的是**段内持续抓 + 数行数**。**「仪器自相矛盾」要先证仪器再用仪器。**
+
+⑯ ⛔ **认音频流不能认 `tid`**：`dumpsys media.audio_flinger` 里 `Input thread … tid 27092` 的 `Tgid` 是 **2051 = audioserver**，不是本应用。B3 记的「tid ∈ 本应用 pid」在本机不成立。**判据是 track 行的 `Client(pid/uid)`**，对上 `pidof`。
+
+⑰ ⛔ **免唤醒开着时「零采集」判据没有分辨力**：`dumpsys audio` 的 `active? true` 会被常开麦流占住。验「深链不开麦」这类红线**必须先关免唤醒立阴性基线**（0 条），再发深链看是否仍是 0。
+
+⑱ ⛔ **并行跑取数流与手工取证会互相污染**：本轮主线 A 段的 Maestro 6 轮流在段结束 5 分钟后报 `composer-input is visible FAILED`，看着像 T13 回归，**真因是我自己把 App 导航去了别的屏**。⇒ 取数流要么串行、要么给它独占窗口；**读 artifacts 前先对时间戳**。
+
+⑲ ⛔ **裸 `adb input swipe` 在设置页会误触输入框**：本轮连续滑动时点进了「昵称」输入框、后续按键落成了 **`小舟8888`**，且因为 `SettingsScreen.tsx:268` 是 `onEndEditing` 写入、**失焦后真落了盘**（重启仍在）。⇒ ① 长列表滚动用 Maestro 按元素滚，不用裸 swipe；② **改完设置一定回读**——这条是靠回读顶栏「我是小舟8888」才发现的（§9.55）。修复也走 Maestro（`tapOn` → `eraseText` → `inputText` → **点非输入元素失焦**，不用 BACK），回读顶栏「我是小舟」确认落盘。
+   ⚠ Maestro 的 `tapOn: text:` **是正则**：文案里的中文括号（`昵称（下一轮起生效）`）会当正则解析而找不到元素，改用坐标点失焦。
+
+⑳ **Maestro 控制台在本机是 GBK 乱码**（中文断言与错误信息都不可读）⇒ **判据取退出码与 `COMPLETED`/`FAILED` 关键字，不取控制台文字**；要看具体哪条断言，读 `C:\Users\Super\.maestro\tests\<时间戳>\maestro.log`（那份是 UTF-8）。
+
+**收口读数（本会话自己跑出来的）**
+
+| 项 | 开工基线 | 收口 | Δ |
+|---|---|---|---|
+| `mobile: npm test` | 50 suites / **509** | **51 suites / 514** | **+5**（`lowPower.test.ts` 新增 5 条；T6/T8 无 jest 面） |
+| `mobile: npm run typecheck` | 0 error | **0 error** | — |
+| 设备 `lastUpdateTime` | `2026-09-02 16:45:36` | **`2026-09-04 23:41:40`** | **换锚**（中间经过对照包 `2026-09-04 19:51:26`） |
+| APK 体积 | 275.9MB（B3） | **289320342 B**（主线）/ 289320346 B（对照） | 涨幅 ~0 |
+| 构建 | — | 对照 **22m14s** / 主线 **11m28s**，均 BUILD SUCCESSFUL | 两趟 |
+| 注册验证 | — | **七件全过** | 无缺席 |
+| Maestro 09 | — | **rc=0** | 回归绿 |
+
+**提交（3 个代码 + 1 个记录；均未推送）**
+
+| SHA | 任务 | 面 |
+|---|---|---|
+| `facb7dc` | T6 | foldstate `current()` + 延后订阅（4 files，+62/−29） |
+| `d60cbcc` | T7 | expo-battery + `lowPower` + `blurTarget` 第三条件（7 files，+84/−2） |
+| `34a9f61` | T8 | Shortcuts plugin + `xiaozhou://voice` 落点（5 files，+88/−1） |
+| （本条） | T9–T11 | §6.2 记录 |
+
+**还原表**
+
+| 项 | 动过？ | 回读 |
+|---|---|---|
+| App 免唤醒对话 | **动过**（关 → 开取 Xruns → 关验红线） | **已关回**（默认关）；`dumpsys audio` `active? true` = **0** 回读确认 |
+| App 播报档 | **动过**（自动 → 总是 取 Xruns） | **已回「自动」**（泓舟手动改，截图回读确认） |
+| App 保持屏幕常亮 | **动过**（关 → 开，防 5 分钟段熄屏） | **已关回**（截图回读确认） |
+| App 助手昵称 | **动过——不是有意的**（裸 swipe 误触，见坑 ⑲ 变成「小舟8888」且落了盘） | **已改回「小舟」**，顶栏「我是小舟」回读确认 |
+| App 角色 / 行车档 / 主题 / 字号 | **没动** | 手持 / 关 / 深色 / 标准，截图可见 |
+| 设备 APK | **换了两次**：主线(09-02) → 对照(09-04 19:51) → **主线(09-04 23:41)** | 收尾时设备上是**带 AEC 的主线包** ✅（计划要求） |
+| `mobile/patches/` | **卸载又打回**（只动 `node_modules`） | `git status --short -- patches/` **空**；`:85` 那行在，`grep -c` = 2 |
+| speaker 音量 | **泓舟手动调**（0 → 60），不在还原表（§0 第 2 条 #5） | `streamVolume:60`、`2 (speaker): 60`、`Muted: false` |
+| 设备系统设置 | **一字未动**（`haptic_feedback_enabled` 仍是 1，是 B3 泓舟开的） | — |
+| `adb reverse tcp:8081` | **本轮建过 3 次**（adb server 与隔夜各断一次） | 收尾时在（`UsbFfs tcp:8081 tcp:8081`） |
+| 云栈 | **一字未动**（本批零后端） | 5/5 endpoint healthy |
+| APK 备份目录 | **新增 `_b5-contrast-apk/` 与 `_b5-mainline-apk-backup/`** | `_b3-mainline-apk-backup/` 未删未动（T18 交裁） |
+
+**遗留 / 给下一批的话**
+
+① **需泓舟在场的三格 ⬜**（判据已写死在上面 T11 那张表）：foldstate 手折半开 / 系统省电模式回落 / 桌面长按图标出 Shortcuts。前两格是本批两个原生件**唯一还没验到的那一半**；第三格的「已登记」部分已由 `dumpsys shortcut` 证过，缺的只是桌面菜单这一格。
+
+② ⚠ **播报卡顿的定因只走了一半**：本轮证到「**不是 AEC 造成 Xruns**」（方向甚至相反：无 AEC 的对照包 5616–5624 次/分，有 AEC 的主线包 0），但**没有证到卡顿的成因**——主线包（用户实际在用的那个）在本轮四项客观指标上**全是 0**（Xruns / HAL write blocked 都是 0）。**新的首要嫌疑是 AEC 换来的那条通路本身**：`VOIP_TX` + **16kHz**（对照包是 FAST + 48kHz），影响的是音质与延迟、不是 deadline miss。B3 猜的「TTS 与麦流同 AudioContext 的 HAL 写阻塞」**本轮零证据支持**（四段 HAL blocked 全 0）。⇒ 归 KWS A/B 批之后的语音批，**别再沿 Xruns 找**。
+
+③ ⚠ **`dev_stack status` 的 `release_sha` 本轮取不到**（`remote cloud status is unavailable`，PowerShell 下同样 exit 1，Git Bash 下还多一条 MSYS 警告）。本批零后端、5 个 HTTPS endpoint 全 healthy，所以没有深究，**按 §6.1 坑⑧ 的纪律没有反复重试**。下一批要用云栈读数时先解决这一条。
+
+④ **两条计划里的判据被实测推翻，已就地改**（下次写计划别照抄）：`OnStartObserving` 在 `ObjectDefinitionBuilder.kt:483` 不在 `ModuleDefinitionBuilder.kt`；`expo-battery` 的 d.ts 是 `build/Battery.d.ts` 不是 `build/index.d.ts`。
+
+⑤ **一次不可复现的 Console Error**（见上）：不写成已修，也不赖给 T7。**如果第 3 批装机后再见到它，直接从「装机首启」这个条件入手**（本轮两次出现都在装完包的首次启动附近），别再从组件层猜。
+
+⑥ **临时 Maestro 流三条在 scratchpad，不入库**：`b5-broadcast-turn.yaml`（单轮播报）、`b5-broadcast-seg.yaml`（6 轮 × 45s 取数段）、`b5-fix-nickname.yaml`（还原昵称）。取数段那条如果第 3 批还要用，注意坑 ⑱：**给它独占窗口**。
+
+⑦ **B3 §6.2 遗留② 仍开**：`/blur-spike` 的 ④ 号自检格（故意不给 `blurTarget`）在折叠线以下，本轮**没滚到** ⇒ 「唯一一条 `blurTarget prop` 告警」这个判据本轮没取到（计数 0 不代表回归）。要取得滚屏，而裸 swipe 滚不动本 App 的 ScrollView（§6.1 坑⑦）⇒ 用 Maestro。
+
+⑧ **Maestro 06/07/08 本轮没跑**（06 要危险动作确认、07 要 `cmd device_state`、08 要键盘态）。归 T16 一起做，省设备轮次。
 
 ### 6.3 第 3 批「界面优化 + Scanner + 缺陷 A 横屏半」（T12–T16）
 
