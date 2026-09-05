@@ -480,6 +480,9 @@ function ChatBody({
   }, [privacyOpen, snapshot.input, snapshot.identity, snapshot.driving, latestTurnId])
 
   const splitLandscape = layout.mode === 'driving-landscape'
+  // B5-15：层覆盖整列时 Composer 整个被盖住 ⇒ 从无障碍树拿掉（真机抓到它与层内大球说明重复）。
+  // 触摸侧本来就被层的暗区拦住了，这里补的是读屏那一半。
+  const sheetCoversColumn = splitLandscape && snapshot.input === 'voice-sheet'
   const voiceSheetEl = v2 ? (
     <VoiceSheet
       p={p}
@@ -651,6 +654,7 @@ function ChatBody({
         driving={snapshot.driving}
         inputMode={composerInputMode(snapshot.identity, snapshot.driving)}
         hideChips={splitLandscape}
+        covered={sheetCoversColumn}
         onTap={onOrbTap}
       />
       {/* driving-landscape：层挂在整列容器上，absolute 盖住记录区 + Composer（B5-15 lever ②）。

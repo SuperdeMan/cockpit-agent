@@ -50,6 +50,11 @@ export interface ComposerProps {
   /** driving-landscape 下藏掉 chips 行（B5-15 缺陷 A 横屏半的 lever ②）：§6 是「chips ≤3」
    *  不是「必须显示」，而横屏那 360dp 里 App 自己的 chrome 已经吃掉 261——语音能到达一切 */
   hideChips?: boolean
+  /** 语音层正盖在整列上（driving-landscape，B5-15 lever ②）⇒ 本组件从无障碍树里拿掉。
+   *  真机 hierarchy 抓到：被盖住的 `composer-orb` 与层内 `voice-sheet-orb` **说明完全相同**
+   *  （都是「小舟，开始说话」），读屏念两遍、其中一个还够不到（暗区把触摸拦住了）。
+   *  与 B5-12 暗区那条同形态，也同样是本批 lever ② 自己造的。 */
+  covered?: boolean
   fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
@@ -57,7 +62,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
+export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
   const [input, setInput] = useState('')
   // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
   // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
@@ -127,6 +132,8 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
 
   return (
     <View
+      importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}
+      accessibilityElementsHidden={covered}
       style={{
         borderTopWidth: 1,
         borderColor: p.line,
