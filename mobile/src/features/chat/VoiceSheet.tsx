@@ -148,8 +148,13 @@ export function VoiceSheet(props: VoiceSheetProps) {
           40% → 60% 是第 3 批附加项①授权的升级档：58% 的壳底之后记录仍以未压暗的 ~45% 强度
           透过来（真机同帧两条同类文字带：层外幅度 41.9 / 层内 18.8），层内答案与记录里的
           同一段话叠在一起两边都难读。60% 之后透出降到 ~30%。「仍可见」保留 */}
+      {/* ⚠ B5-12 真机抓到：暗区原来也叫「收起语音层」，与新的把手带**说明重复**——读屏念两遍
+          （B4 Scanner 出账③「多个项目具有相同的说明」的同一形态，只是这次是本批自己造的）。
+          暗区从无障碍树里拿掉：同一个动作读屏侧已由把手带提供（role=button + hint），
+          可达性不减；点暗区收起对视力用户逐字节不变。 */}
       <Pressable
-        accessibilityLabel="收起语音层"
+        importantForAccessibility="no-hide-descendants"
+        accessibilityElementsHidden
         onPress={props.onCollapse}
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }}
       />

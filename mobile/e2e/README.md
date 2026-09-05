@@ -163,6 +163,50 @@ adb shell cmd device_state state reset ; adb shell cmd device_state print-state 
 `state reset` 回的是**物理**姿态，不是你上一次设的值——`print-state` 回读才知道现在是哪种。
 另：`input keyevent 82` 在应用前台时会**打开 RN dev menu**（拿它解锁屏幕的话记得再按一次 BACK 关掉）。
 
+### B5「语音层去底栏」把手带手势：正反两条的取证写法（2026-09-05 真机）
+
+B5-12 把「收起」从底栏那枚 `voice-sheet-collapse` 键改成**顶缘把手带**（testID 沿用），
+Pan 也从整层挪到把手带上。**这条改动的判据是一对正反手势，缺任何一条都证不完**：
+
+| # | 手势 | 期望 | 本轮实测 |
+|---|---|---|---|
+| 正 | 从**把手带**向下拖 > 80dp | 收起 | ✅ 层消失（`b5-12-pos.png`） |
+| **反** | 从**层内内容区**（大球那一带）向下拖同样距离 | **不收起**，层高纹丝不动 | ✅ 层顶逐像素未动（`b5-12-neg.png`） |
+| 正 | 轻点把手带 | 收起 | ✅（`b5-12-tap.png`，另存 tap 前的 `b5-12-t0.png` 证明层原本升着） |
+| 正 | 点暗区 | 收起 | ✅（`b5-12-scrim.png`） |
+
+反例是这条改动的**全部意义**：Pan 挂在整层时，层内 ScrollView 滚到顶后再下拖会和整层 Pan 打架
+（B4 §6.4 实测）。反例绿才说明「限定在把手带」真的生效了。
+
+```powershell
+$adb = "$env:ANDROID_HOME\platform-toolsdb.exe"
+# 升层：走深链，**不开麦**（§12.2 红线，B5 §6.2 T11 已验），单人可做、零采集
+& $adb shell 'am start -a android.intent.action.VIEW -d "xiaozhou://voice"'
+# 手势：**单进程慢速** input swipe（分进程发 motionevent 各带 downTime，RNGH 认不出是一次拖）
+& $adb shell "input swipe 540 1474 540 1874 600"    # 把手带 → 收起
+& $adb shell "input swipe 540 1739 540 2139 600"    # 层内   → 不收起
+```
+
+⚠ **每条手势前后各截一张**：只截「后」那张会把「本来就没升起」读成「收起了」（演员没上场的第一形态）。
+
+**三条本轮撞到的仪器坑**（都会让人把「读数没变」误读成「改动没生效」）：
+
+1. ⛔ **Metro 的 fast-refresh 不一定推到设备**：改完 `VoiceSheet.tsx` 热载后再 dump，
+   拿到的 XML 与改动前**逐字节相同**（同为 58239 B）。`am force-stop` + 重发
+   `xiaozhou://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` 重取 bundle 之后才变。
+   **判别式：比两份 dump 的字节数/hash**，相同就是没推到，不是改动没生效。
+2. ⛔ **force-stop 会把 dev-client 的已连服务器清掉**，重启只落到 `DevLauncherActivity`
+   （看起来像坑 74 的 Metro OOM，但 `/status` 仍是 `packager-status:running`）。
+   ⇒ 先核 Metro 活着，再用上面那条 dev-client 深链把它接回去。
+3. ⛔ **Maestro 主包会自己消失**：2026-09-04 记的是 `dev.mobile.maestro` + `.test` 两个都在，
+   2026-09-05 复核只剩 `.test`，`hierarchy` / `test` 一律
+   `INSTALL_FAILED_USER_RESTRICTED`（`--no-reinstall-driver` 也拦不住 `hierarchy`，它照样先装）。
+   ⇒ **每轮开工先 `pm list packages | grep maestro` 数两条**，只有一条就先找设备主人放行 USB 安装。
+
+**`uiautomator` 这条路在本轮是通的**（Maestro 不通时的替代）：设置 → 实验室 → 开
+「减少动效（强制）」**（App 内设置，不是系统设置）**，同一屏立刻从「拿不到 idle」变成
+56–60KB 完整树。用完记得关回去并回读。B5 §6.2 坑 ⑬ 把它记成了系统设置，是错的。
+
 ### B4「行车档」真机验收（T13）：三条取证通道 + 两处卡点
 
 **⛔ 卡点①：Maestro 的 driver 在本机装不上，Maestro 类读数全部取不到。**
