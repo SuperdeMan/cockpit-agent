@@ -2423,103 +2423,237 @@ Composer 的 `onInterrupt` 回调逐字节未变（原 pill 与新合一键同�
 同一动作读屏侧已由把手带提供（`role=button` + hint），可达性不减，视力用户点暗区收起逐字节不变。
 **修完真机复核：`收起语音层` 从 2 条降到 1 条** ✅。
 
-**⬜ 需泓舟在场、本轮未取的格子**
+**⸻ 泓舟在场轮（2026-09-05 下午，USB 安装已放行）⸻**
 
-| # | 格子 | 缺什么 |
+**Maestro 全线恢复**：`hierarchy` rc=0、88KB 真树 ⇒ 放行生效。
+⚠ **纠一条我自己上午写错的判据**：`pm list packages` 522 条里**搜不到 maestro**、`pm path` 两个都空，
+但 `maestro hierarchy` 正常工作 ⇒ **「数两条包」这个判据在本机不成立**，别照抄进固定五步。
+**真判据是 `maestro hierarchy --no-reinstall-driver` 的退出码。**
+
+**T16 步骤 4 Maestro 回归——六条全绿，但清单本身有矛盾**
+
+| flow | rc | 墙钟 | 前提 |
+|---|---|---|---|
+| 01 天气 | **0** | 132.0s | — |
+| 02 气泡内确认 | **0** | 158.1s | **`uxV2Dock=false`** |
+| 03 断网补达 | **0** | 191.4s | — |
+| 06 承诺面 Dock | **0** | 165.2s | **`uxV2Dock=true`** |
+| 08 键盘不遮发送键 | **0** | 110.5s | — |
+| 09 状态画廊 | **0** | 250.2s | — |
+
+⚠⚠ **计划 T16 步骤 4 写的「01/02/03/06/08/09 各 rc=0」在一趟里不可能全绿**：02 验的是**气泡内**确认
+（v1 路径，`uxV2Dock` 关掉才有效），06 验的是**承诺面**——**两条的前提互斥**，`e2e/README.md` 早写明了
+这一点，计划抄清单时没带上前提。**02 第一次确实红了**（`confirm-cancel` 45s 未出现，前面 tapOn 全 COMPLETED），
+我关掉 `uxV2Dock` 复跑 ⇒ **rc=0** ⇒ **定性为配置态互斥，不是本批回归**。
+⇒ **收口把这条前提写进 `e2e/README.md` 与下一版计划**：跑 02 与 06 必须分两趟、各自设好开关。
+
+**云栈**：5/5 endpoint healthy，且 **`release_sha` 这次取到了 = `9a3b6f2`**
+（`9a3b6f2f08657464c5049a5abf8f6e989e398bce`）⇒ **§6.2 遗留③ 销账**。本批零后端，但真机读数所处的
+云栈 SHA 要记清：**不是 HEAD**（本地有 7 个未推送提交），也不是第 1 批那个 `7b594f37`。
+
+**竖屏行车档基线（T15 的阴性对照）——顺带验证了 T12 的一条预测**
+
+| 判据物 | 读数 |
+|---|---|
+| `voice-sheet` | `[0,1329][1080,2049]` ⇒ **层高 720px/3 = 240.0dp** |
+| `voice-sheet-collapse` | 358.0×56.0dp |
+| chips ×3 | **在**（`快捷指令：…` 三条） |
+| `voice-sheet-orb` | **不在**（非 split 时大球不包 Pressable，「逐字节不变」那条成立） |
+
+⇒ **判据预测 240，真机量到 240**（B4 同一格是 269）。§6.3 上午写的「下一轮量到的应是 240 不是 269」当场兑现。
+
+**T15 步骤 1/6 + T16 步骤 5 驾车横屏（`driving-landscape`）——全部判据闭合**
+
+`mRotation=3`、`cur=2520x1080`（840×360dp）、角色 C、行车档开。
+
+| 判据 | B4 | **本轮实测** |
 |---|---|---|
-| 1 | T14 步骤 5 **Scanner 复扫两态** | 需泓舟启用 Scanner；结果页约 10s 后才成前台 |
-| 2 | T16 步骤 3 **TalkBack 三条** | 需泓舟开 TalkBack |
-| 3 | T15 步骤 1/6 + T16 步骤 5 **横屏行车档（角色 C）** | 横屏是物理动作。**lever ②③ 的期望值仍是待测**：整列高落在阈值 240 哪一侧只有实测能定 |
-| 4 | T16 步骤 7 **B2 表#6「气泡先于相机」** | 需说「这是什么」+ 相机权限 |
-| 5 | T16 步骤 4 **Maestro 01/02/03/06/08/09** | **主包不在，需放行 USB 安装**（见上方阻塞②） |
-| 6 | T16 步骤 8 **Reanimated tag→view** | 90 分钟预算，非闸门；本轮设备时间用在①–④上，未开 |
-| 7 | T16 步骤 9 **系统动画缩放**（可选） | 改 `animator_duration_scale` 是系统设置，需泓舟授权 |
+| `voice-sheet` | — | `[0,408][2520,1032]` = **840.0×208.0dp** |
+| `voice-sheet-collapse`（把手带） | — | **838.0×56.0dp** ✅ ≥56 |
+| **`voice-sheet-orb`** | 不存在 | **在场 88.0×88.0dp** ⇒ **球降级触发** |
+| chips | 在 | **ABSENT** ⇒ lever ② 成立 |
+| `composer-input` | — | ABSENT（C 身份隐藏） |
+| **`voice-sheet-transcript`** | **−6.0dp（负高，裁出可视区）** | **69.3 × +28.0dp**（左列 x 143→213dp） |
+| **`voice-sheet-answer`** | 同源负高 | **467.7 × +56.0dp**（右列 x 355→823dp） |
+| `presence-capsule` | — | 137.7×26.0dp 在场 |
+| 轻点层内大球 | — | `dumpsys audio` `active? true` **0 → 1**（阴性基线 0，判据有分辨力） |
 
-**本批踩的坑（承 §6.2 的 ⑫–⑳，本批从 ㉑ 起）**
+**三条逐 dp 闭合，不是「看起来对」**：
 
-㉑ ⛔ **Metro 的 fast-refresh 不一定推到设备**：改完 `VoiceSheet.tsx` 热载后再 dump，XML 与改动前
-**逐字节相同**（同为 58239 B）。`force-stop` + dev-client 深链重取 bundle 之后才变。
-**判别式：比两份 dump 的字节数/hash**，相同 = 没推到，**不是「改动没生效」**。
+1. **整列容器高 ≈ 234dp**（顶栏底 109.3dp → 层底 344.0dp 反推）
+   ⇒ `drivingSheetMinDp(0.4, split, normal, orb=120)` = 88+(120+12+20) = **240 > 234** ⇒ **判定降级到 88** ✅
+2. **层高 208dp** = `drivingSheetMinDp(0.4, split, normal, orb=88)` = 88+(88+12+20) = **208** ✅
+   ⇒ 球降了、最小高跟着降、`sheetHeightDp` 把 orb 传下去了，**整条链在真机闭合**（M2 变异要红的正是这一环）
+3. **lever ② 把可用空间从 B4 实测的记录区 98.67dp 抬到整列 234dp（+135dp），离 240 门槛只差 6dp**
+   ⇒ lever ③ 正是为这 6dp 准备的，**真的用上了**。三级 lever 的设计在真机得到验证。
 
-㉒ ⛔ **`force-stop` 会清掉 dev-client 的已连服务器**，重启只落到 `DevLauncherActivity`——症状与坑 74
-（Metro OOM 自死）**一模一样**，但 `/status` 仍 running、node 进程活着。⇒ 先核 Metro，再发
-`xiaozhou://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8081` 接回去。
+⚠ **`driving-card-title`（§6「一屏一卡」0.78 档）没取到**：连试三轮语音，ASR 都没识别成车控句
+（识别成「你们我们其实是到三级的你们对吧?」之类）⇒ 没进 0.78 档。**非布局问题**，记 ⬜。
+⚠ **一条取证纪律再次成立**：15:49:39 的 hierarchy 有 transcript/answer，15:50:56 的截图已回 terse，
+两者完全不同 ⇒ **读数以 hierarchy 为准，截图只作定性**；行车档 0.4 档 idle 是 terse 态，
+transcript/answer **本来就不渲染**，必须在轮进行中抓（这也是我一开始轮询 3 分钟全 ABSENT 的真因，
+不是缺陷）。
 
-㉓ ⛔ **Maestro 主包会自己消失**（见上方阻塞②），`--no-reinstall-driver` 拦不住 `hierarchy` 先装。
-⇒ 开工固定五步里加一条 `pm list packages | grep maestro` **数两条**。
+**⚠⚠ 本批第二处自造的 a11y 重复说明，已修（提交 `c6b97f2`）**
 
-㉔ ⛔ **PowerShell 的 `Select-String` 没有 `-Recurse`**（计划 T13 步骤 1 直接写了这条命令，会
-`ParameterBindingException`）。目录递归搜用 `Get-ChildItem -Recurse | Select-String`，或直接走 `grep -rn`。
+横屏 hierarchy 抓到：层覆盖整列后，被盖住的 **`composer-orb`** 与层内 **`voice-sheet-orb`** 的
+`content-desc` **完全相同**（都是「小舟，开始说话」），读屏念两遍、其中一个还够不到
+（触摸被层的暗区拦住了）。**这是 lever ② 直接造成的**，与 B5-12 暗区那条同形态。
+⇒ `sheetCoversColumn = splitLandscape && snapshot.input === 'voice-sheet'` 时，Composer 整个加
+`importantForAccessibility="no-hide-descendants"` + `accessibilityElementsHidden`。
+竖屏路径不受影响（层住在记录区容器内，不盖 Composer）。全量 524 不变、`tsc` 0。
 
-㉕ ⛔ **点开关前必须按当前树取坐标**：选「可信车载平板」后角色描述多一行，行车档开关整体下移
-~53px，照上一屏坐标点会**静默落空**（开关没变、也不报错）。⇒ 要么每次先 `uiautomator dump` 读
-`Switch` 的 `bounds` 与 `checked`，要么改完立刻回读（§9.55）。本轮两次落空都是这么发现的。
+**⬜ TalkBack 三条——静态全证，听觉确认未取（设备侧异常）**
 
-㉖ ⚠ **取证窗口里会混进设备主人的私人通知**：还原设置那张截图顶部弹出了泓舟的微信消息。
-⇒ 截图前后核 `mCurrentFocus` 只能挡住「焦点是别人的窗口」，**挡不住通知横幅**；抓到就停手、
-不记录内容、不外传。本轮就此收手，没有继续在设备上取证。
+**静态判据（`content-desc` 就是 TalkBack 朗读的内容）全部成立**：
+
+| 元素 | `content-desc` | 状态 |
+|---|---|---|
+| 把手带 | `收起语音层` | ✅ **全屏只剩 1 条**（暗区去重生效，修前是 2 条） |
+| 合一键 | `发送`（闲）/ `打断`（忙） | ✅ 忙态另有截图证 ■ 琥珀 |
+| chips ×3 | `快捷指令：打开空调26度` 等 | ✅ |
+| 层内大球（横屏） | `小舟，开始说话` | ✅ `composer-orb` 已从树里拿掉去重 |
+
+⛔ **听觉/双击那半取不到**：TalkBack 在本机**探索式触摸不响应**（泓舟报「点击都无效」），
+重启手机后**症状照旧**。排查中另外三件事值得记：
+
+- ⛔ **音频路由跑到蓝牙**：`STREAM_ACCESSIBILITY` 的 `Devices: bt_a2dp(80)`，而 `2 (speaker): 0`
+  ⇒ TalkBack 一直在念，声音去了蓝牙设备。**这不是「音量 0」，是「路由到了别的设备」**——
+  §6.2 那条「音量 0 是不触发惯犯」的**变体**，判据要连 `Devices:` 一起看，不能只看 `streamVolume`。
+  **同一条路由也意味着前面几轮的播报泓舟可能都没听到。**
+- ⛔ **TalkBack 会反复弹「要授予电话使用权限吗？」**（每次 App 获得焦点弹一次），
+  **会污染所有 hierarchy 取证**（连抓三次都抓到弹窗的树，nodes 只有 60）。泓舟裁「给权限」，
+  `pm grant ... READ_PHONE_STATE` 后不再弹。**这条权限是本轮加的，交泓舟裁要不要撤**（见还原表）。
+- ⛔ **TalkBack 开着时 injected `input tap` 直接激活按钮**，不走「先聚焦再双击」
+  ⇒ **不能用「tap 后动作有没有发生」区分聚焦与激活**，injected 事件和真实手指不是一回事。
+- ⚠ 重启后 `enabled_accessibility_services` 里多了一个 **`com.miui.accessibility/MiuiEnhanceTBService`**
+  （重启前只有 Google 那个），大概率与异常同源。
+
+⚠ **一个被我自己推翻的结论**：轮询到「层收起了」时我一度写「双击生效」，随即泓舟报「听到『TalkBack 已关闭』」
+且焦点回了桌面 ⇒ **真因是 TalkBack 被关 + App 退到后台，不是双击把手带**。作废，没写进记录。
+**（「一个自洽的解释不等于根因」——这是本轮第二次。）**
+
+**⬜ Scanner 复扫两态——本机不可用，根因已定位**
+
+```
+服务已启用 ✅（enabled_accessibility_services = auditor/ScannerService）
+进程活着 ✅（pidof = 27367）
+SYSTEM_ALERT_WINDOW: default; rejectTime=1天5小时前     ← 请求过、被拒
+adb appops set ... allow → 回读仍是 default             ← MIUI 忽略标准 appops
+android.settings.action.MANAGE_OVERLAY_PERMISSION 页里没有这个条目（泓舟确认）
+```
+
+⇒ **拿不到悬浮窗权限就没有悬浮按钮，触发不了新扫描**。Scanner 主界面里只有 B4 那两次的历史记录
+（「11 条建议」「16 条建议」，右侧详情是 12:10 的旧截图）——**不是本轮读数，别拿它冒充复扫**。
+与 TalkBack 异常同源：MIUI 对无障碍类 App 的权限管控。**不是本批改动的问题。**
+
+⚠ **T14 三条出账不因此悬空**——已由**两个独立通道**证实，Scanner 只是第三通道：
+① `target_probe`（顶栏两钮 48/56、`health-dot` 48/56，附三条阴性）；
+② jest WCAG（四条对比度 + M2′ 反证）；③ hierarchy（chips 前缀、说明去重）。
+
+**本轮另外撞到的坑（承 ㉑–㉖，从 ㉗ 起）**
+
+㉗ ⛔ **`maestro.bat` 的 stdout 是 GBK 不是 UTF-8**：ASCII 行正常、中文全乱。
+必须用 Python 直接接字节再 `decode('gbk')`；**PowerShell 的文本管道会再损一次**（双重回环）。
+⚠ 我第一版写成 `decode('utf-8')`，坐标是对的、中文全是问号——**「一半对」最容易被当成全对**。
+
+㉘ ⛔ **`adb reverse` 在本机极不稳定**：本轮掉了 **4 次**（开工、重启后、Scanner 前置期间各一次）。
+App 起不来落到 `DevLauncherActivity` / `DevLauncherErrorActivity` 时，**先核 `adb reverse --list` 再怀疑 Metro**：
+本轮有一次症状与坑 74（Metro OOM）**一模一样**，但 `/status` 是 `packager-status:running`、node 进程
+522MB 活着 ⇒ **真因是 reverse 掉了**。
+
+㉙ ⛔ **Maestro 跑完会把 App 留在它导航到的那一屏**：09 跑完 App 停在 state-gallery，
+我随后 `am start` 只是「delivered to top-most instance」把它带到前台，**屏还是画廊**，
+差点据那份树去点设置页坐标。⇒ **每次 tap 前先核当前是哪一屏**（坑 ⑱ 的第二次，这次是我自己造的）。
+
+㉚ ⛔ **点开关前必须按当前树取坐标（㉕ 的加强版）**：本轮又落空两次——选「可信车载平板」后角色
+描述多一行，行车档开关下移 53px。⇒ 已改成**每次 tap 前先 `maestro hierarchy` 读 `Switch` 的
+`bounds` + `checked`**，比截图目测可靠得多，也不需要开「减少动效（强制）」。
+
+㉛ ⛔ **手机 Tailscale 重启后不自动重连**：设备 `ping car-agent-dev...` 报 `unknown host`，
+而宿主侧云栈 5/5 healthy ⇒ App 显示「已断开 · 消息会排队」。**这是 B4 §6.4「Tailscale 掉线 3h
+表现成功能红」的重演**。⇒ 重启后先核**设备侧**能不能解析云栈域名，别只看宿主侧 `dev_stack status`。
+
+㉜ ⚠ **断线态会改变 Scanner/无障碍读数的分母**：断开时多出两处「已断开 · 消息会排队」
+（层内 + 胶囊，还是一对同文案）⇒ 与 B4 的 16/11 不是同条件。**扫之前先确认连上**。
 
 **收口读数（本会话自己跑出来的）**
 
 | 项 | 开工基线 | 收口 | Δ |
 |---|---|---|---|
-| `mobile: npm test` | 51 suites / **514** | **52 suites / 524** | **+10**（`theme.test.ts` 新增 5 + `sheetHeight` 新增 5） |
+| `mobile: npm test` | 51 suites / **514** | **52 suites / 524** | **+10** |
 | `mobile: npm run typecheck` | 0 error | **0 error** | — |
-| 设备 `lastUpdateTime` | `2026-09-04 23:41:40` | **同**（本批零重建 ✅） | — |
+| 设备 `lastUpdateTime` | `2026-09-04 23:41:40` | **同**（本批零重建，重启也不换包） | — |
 | `target_probe` 新演员 | — | **泊车 48 / 行车 56 两组全 PASS + 三条阴性** | 新 |
-| Maestro 01/02/03/06/08/09 | — | **⬜ 取不到**（主包不在） | 阻塞 |
+| Maestro 01/02/03/06/08/09 | — | **六条 rc=0**（02 与 06 分两趟，前提互斥） | 新 |
+| 云栈 `release_sha` | §6.2 取不到 | **`9a3b6f2`** | 遗留③ 销账 |
+| driving-landscape | B4 transcript −6.0dp | **transcript +28.0 / answer +56.0 / 球 88 / 整列 234** | 缺陷 A 横屏半闭合 |
 
-**提交（5 个；均未推送）**
+**提交（7 个；均未推送）**
 
 | SHA | 任务 | 面 |
 |---|---|---|
-| `aef13d3` | T12 | 语音层去底栏 + 顶缘把手带 + chrome 117→88（4 files，+188/−191） |
-| `61cb59c` | T13 | 发送与打断合一 ⬆·■（2 files，+23/−23） |
-| `4de8f69` | T14 | Scanner 三条 + WCAG 判据进 jest（4 files，+80/−13） |
-| `a7b01e7` | T15 | `sheetOrbDp` 球降级 + driving-landscape 覆盖整列（5 files，+143/−31） |
-| `dd7c6ef` | T16 | 暗区 a11y 去重 + `e2e/README.md` B5 一节（2 files，+50/−1） |
-| （本条） | T16 | §6.3 记录 |
+| `aef13d3` | T12 | 语音层去底栏 + 顶缘把手带 + chrome 117→88 |
+| `61cb59c` | T13 | 发送与打断合一 ⬆·■ |
+| `4de8f69` | T14 | Scanner 三条 + WCAG 判据进 jest |
+| `a7b01e7` | T15 | `sheetOrbDp` 球降级 + driving-landscape 覆盖整列 |
+| `dd7c6ef` | T16 | 暗区 a11y 去重 + `e2e/README.md` B5 一节 |
+| `a6f3a12` | T16 | §6.3 记录（上半轮） |
+| `c6b97f2` | T16 | 层覆盖整列时 Composer 从无障碍树拿掉（第二处自造重复说明） |
+| （本条） | T16 | §6.3 泓舟在场轮记录 |
 
 **还原表**
 
 | 项 | 动过？ | 回读 |
 |---|---|---|
-| App「减少动效（强制）」 | **动过**（关 → 开取 uiautomator 完整树 → 关） | **已关回**，dump 读 `checked=false` ✅ |
-| App 设备角色 | **动过**（手持 → 可信车载平板 → 手持） | **已回「手持」**，截图回读 ✅ |
-| App 行车档 | **动过**（关 → 开取 56 组读数 → 关） | **已关回**，截图回读 ✅ |
-| App 减少透明度 / uxV2 两开关 | **没动** | dump 读 `false / true / true` ✅ |
-| App 主题 / 字号 / 常亮 / 昵称 / 免唤醒 | **没动** | 深色 / 标准 / 关 / 「小舟」/ 关（`active? true` = 0）✅ |
-| 对话记录 | **多了一轮**（英文 `introduce guangzhou history in detail` + 「已打断」） | 会话状态，不在还原表（B4/B5 各批同） |
+| App 设备角色 | **动过 ×2**（手持 ⇄ 可信车载平板） | **已回「手持」**，`手持陪伴端 · 不控车` ✅ |
+| App 行车档 | **动过 ×2**（关 ⇄ 开） | **已关回**，Switch `checked=false` ✅ |
+| App「承诺面 Focus Dock」 | **动过**（true → false 跑 02 → true） | **已回 true** ✅ |
+| App「减少动效（强制）」 | **动过**（关 → 开取 uiautomator → 关） | **已关回** `checked=false` ✅ |
+| App 光球状态锚 / 减少透明度 | **没动** | true / false ✅ |
+| App 主题 / 字号 / 常亮 / 昵称 / 免唤醒 | **没动** | 深色 / 标准 / 关 / 「小舟」/ 关 ✅ |
+| 对话记录 | **多了若干轮**（英文一轮 + 语音三轮 + Maestro 各流留下的） | 会话状态，不在还原表 |
 | 设备 APK | **没动**（本批零重建） | 锚仍 `2026-09-04 23:41:40` ✅ |
-| 设备系统设置 | **一字未动** | `haptic_feedback_enabled` 开工读到 **1**（§6.2 记的是 0，它自己变的），本轮没碰 |
-| `adb reverse tcp:8081` | **本轮建过 1 次**（开工时是空的） | 收尾时在（`UsbFfs tcp:8081 tcp:8081`） |
-| 云栈 | **一字未动**（本批零后端） | 未查 status（§6.2 遗留③ 的 `release_sha` 取不到仍未解决） |
+| **TalkBack** | **泓舟开了又关** | `enabled_accessibility_services` 里已无 TalkBack ✅ |
+| ⛔ **TalkBack 的 `READ_PHONE_STATE`** | **本轮 `pm grant` 授予（泓舟裁「用 A」）** | **`granted=true`，未撤——交泓舟裁**：撤则 TalkBack 下次又会反复弹 |
+| ⛔ **Accessibility Scanner 服务** | **泓舟本轮启用** | 仍启用（`auditor/ScannerService`）——**交泓舟裁要不要关** |
+| Scanner 悬浮窗权限 | **试过 `appops set allow`，MIUI 忽略** | 仍是 `default`，**等于没动** |
+| 手机 Tailscale | **泓舟重连** | 设备能解析云栈域名 ✅ |
+| `adb reverse tcp:8081` | **本轮建过 4 次** | 收尾时在（`UsbFfs tcp:8081 tcp:8081`） |
+| 手机重启 | **泓舟重启过一次**（TalkBack 异常时） | 包锚、App 设置、Scanner/TalkBack 启用状态都跨重启保留 |
+| speaker 音量 | **没动**（归泓舟自管，§0 第 2 条 #5） | ⚠ 仍是 **0**，且路由一度在 `bt_a2dp` |
+| 云栈 | **一字未动**（本批零后端） | 5/5 healthy，`release_sha=9a3b6f2` |
 | Metro | **没停、没重启**（别人起的 PID 75696） | `packager-status:running` |
 
 **遗留 / 给下一批（第 4 批）的话**
 
-① ⛔ **Maestro 主包不在**是第 4 批的第一件事：`pm list packages | grep maestro` 只有一条。
-   T17 的五人小样本要 Maestro `extendedWaitUntil` 同步截 speaking 那一态（§0 第 2 条 #3 的裁决），
-   **拿不到 Maestro 就取不到 speaking**。⇒ 开工先找泓舟放行 USB 安装并当场装回主包。
+① ✅ **Maestro 已恢复**（USB 安装放行后）。但 ⚠ **放行是会自己关回的**（MIUI 约 10 分钟 / 重启后），
+   下一批要跑 Maestro 先确认 `maestro hierarchy --no-reinstall-driver` rc=0，**不要去数 `pm list packages`**。
 
-② ⬜ **T15 的 lever ②③ 仍是「写了但没量」**：判据与布局都落了、jest 全绿，但**整列高落在阈值 240
-   哪一侧没有实测**。真机横屏一轮就能定，五个判据物：`voice-sheet-transcript`/`voice-sheet-answer`
-   的 y2>y1（不再负高）、球径 = 120 还是 88 **并记下 `sheetOrbDp` 的输入值**、`voice-sheet-collapse` ≥56、
-   chips 缺席、轻点层内大球进 listening。阴性：竖屏同角色 ⇒ 层仍在记录区容器内、chips 在、球 120。
+② ✅ **T15 lever ②③ 已实测闭合**（上一版遗留② 销账）：整列 234dp < 阈值 240 ⇒ 球降级 88 ⇒ 层高 208，
+   transcript +28.0 / answer +56.0 全部正高。**缺陷 A 横屏半到此闭合。**
 
-③ ⚠ **0.78 档在两个容器上都不再受下限**（撤底栏省的 29dp 恰是 B4 的缺口）。这不是问题，但
-   **内屏那一档现在余量是 0**：压缩卡内容再长一点点就会重新装不下，而这次不会有下限兜底
-   （下限 = 447 = 比例）。压缩卡改内容时要重看这条。
+③ ⚠ **0.78 档在两个容器上都不再受下限**（撤底栏省的 29dp 恰是 B4 的缺口），**内屏那一档余量是 0**：
+   压缩卡内容再长一点点就会重新装不下，而这次不会有下限兜底。改压缩卡内容时要重看这条。
 
-④ ⚠ **助手气泡「已打断」显示两次**（正文 + 灰字标记），本批只记录未定性，非本批引入。
+④ ⚠ **助手气泡「已打断」显示两次**（正文 + 灰字标记），非本批引入（Composer 的 `onInterrupt` 回调
+   逐字节未变），只记录未定性。
 
-⑤ **`b5-12-*` / `b5-16-*` 截图与三份 `ui*.xml` 都在 scratchpad**（临时目录），未入库。
-   §6「一屏一卡」在 0.78 档、Scanner 复扫、TalkBack 三条仍缺，见上方 ⬜ 表。
+⑤ ⬜ **本机无障碍工具链整体不可用**（TalkBack 探索式触摸无响应 + Scanner 拿不到悬浮窗权限，
+   同源于 MIUI 权限管控）。⇒ **§8 的 TalkBack / Scanner 类验收在这台设备上取不到听觉与扫描读数**，
+   静态判据（`content-desc`）仍可由 hierarchy 全覆盖。要真做这类验收得换机型或换 ROM。
 
-⑥ **§6.2 遗留③（`dev_stack status` 的 `release_sha` 取不到）本轮没碰**——本批零后端、没用云栈读数。
-   第 1 批的云栈证据仍绑在 `release_sha=7b594f37`，要再用云栈读数时先解决这一条。
+⑥ ⬜ **`driving-card-title`（0.78 档一屏一卡）**：三轮语音 ASR 都没进车控句。下次用文字轮造
+   （泊车态 `composer-input` 在，`input text` 送不了中文 ⇒ 借 Maestro `inputText`）。
 
-⑦ **§6.2 遗留⑦（`/blur-spike` ④ 号自检格没滚到）仍开**，本轮同样没滚到（滚屏要 Maestro，见①）。
+⑦ ⬜ **B2 表#6「气泡先于相机」/ Reanimated tag→view / 系统动画缩放**：本轮设备时间用在 ①–⑥，未开。
+   前两条非闸门、第三条可选。
+
+⑧ ✅ **§6.2 遗留③（`release_sha` 取不到）已销账** = `9a3b6f2`。
+   ⚠ 但注意云上不是 HEAD：本地 7 个提交未推送，云栈跑的是 manual-rag 那条线的 SHA。
+
+⑨ ⚠ **`e2e/README.md` 与下一版计划要补一条**：**02 与 06 的前提互斥**（`uxV2Dock` false/true），
+   跑回归必须分两趟设好开关，不能照抄成一句「六条各 rc=0」。
 
 ### 6.4 第 4 批「小样本 + 收口」（T17–T18）
 
