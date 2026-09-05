@@ -9,7 +9,8 @@
 //
 // 读数出口刻意留两条：屏上一行一条摘要（uiautomator dump 拿得到**文本**，不用从截图
 // 里认数字），console 打同一条（Metro 终端）。
-import { useCallback, useRef, useState } from 'react'
+import { useLocalSearchParams } from 'expo-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
@@ -18,7 +19,8 @@ import { loadServerConfig } from '@/core/config/storage'
 import { settingsStore } from '@/core/settings/store'
 import { AsrSession, recognizeBatch } from '@/core/voice/asr'
 import { TtsSession, synthesizeBatch } from '@/core/voice/tts'
-import { newPcmPlayer, playerCtxOf, sharedAudioContext } from '@/core/voice/audioCtx'
+import { newPcmPlayer, peekSharedAudioContext, playerCtxOf, sharedAudioContext } from '@/core/voice/audioCtx'
+import { base64ToBytes } from '@/core/voice/base64'
 import { audioFocusInstalled, audioFocusLog } from '@/core/voice/audioFocus'
 import { handsFreeAvailability } from '@/core/voice/handsFree'
 import { DEFAULT_KEYWORDS, KwsEngine, kwsBusy, kwsNativeAvailable } from '@/core/voice/kws'
@@ -33,6 +35,9 @@ import { usePalette } from '@/ui/theme'
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
 
 const RECORD_MS = 5000
+/** 上一次探针播报结束的墙钟（跨次运行留存，量「这次开口前 ctx 空闲了多久」——C1 的自变量） */
+let lastTtsEndAt = 0
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 // ── 统计小工具（帧间隔分布是采集定案的主判据：计划要求帧间隔 ≤128ms 稳定）──
 function quantile(sorted: number[], q: number): number {
@@ -68,6 +73,14 @@ export default function VoiceSpikeScreen() {
   const p = usePalette(settings)
   const [lines, setLines] = useState<string[]>([])
   const [busy, setBusy] = useState('')
+  const busyRef = useRef('')
+  busyRef.current = busy
+  /** 深链自动跑探针：`xiaozhou:///voice-spike?auto=stutter&n=<k>`，宿主侧脚本改 n 就再跑一次。
+   *  不依赖 uiautomator 找按钮——有常驻动画的屏上 `uiautomator dump` 会 "could not get idle state"
+   *  而不写文件，pull 到的是上一次的旧树（2026-09-05 T2 首跑就这么被骗了 60s）。 */
+  const params = useLocalSearchParams<{ auto?: string; n?: string; load?: string; variant?: string }>()
+  /** `load=hf` 负载仿真时逐字增长的转写（模拟对话页流式气泡的逐 delta 重渲染） */
+  const [transcript, setTranscript] = useState('')
   const ctxRef = useRef<any>(null)
 
   const log = useCallback((s: string) => {
@@ -565,6 +578,262 @@ export default function VoiceSpikeScreen() {
     }
   }, [ensurePermission, log])
 
+  // ── 语音批 T1：真实播报 + 隐形通道读数（docs/design/2026-09-05-mobile-voice-broadcast-stutter-plan.md §3）──
+  //  两条 HAL/混音器指标看不见的通道在这里显式打出来：
+  //   ① pcmPlayer 起点重排——迟到片从 now 重排留下的空白（TtsSession.stats / hooks.onUnderrun）；
+  //   ② 起播包络——用**不带 AEC 的第二路麦**（react-native-audio-record，VOICE_RECOGNITION）录扬声器，
+  //      按 100ms 分箱取 RMS，看首片排定后声音何时真的出来、头几百毫秒有没有被吞（C1：MIUI 静音后起播）。
+  //  为什么不用 recorder()：那一路是 VoiceCommunication，平台 AEC 会把自己的播报消掉，
+  //  量出来的是 AEC 的效果不是扬声器的声音（B2 出账⑤「AEC 在场回声不可自然触发」正是这条的反面证据）。
+  //  没有第二路麦时回落到 recorder() 并在读数里标明「包络不可信」，别把回落读数当正常读数。
+  //  `load='hf'`：**免唤醒负载仿真**——B3 报卡顿时免唤醒是开着的，而 T2 首轮全在 active inputs=0 下跑。
+  //  这一档按 HandsFreeController.onFrame 同款开 VoiceCommunication 麦 + VAD 推理 + KWS 原生 + 逐字重渲染，
+  //  不量包络（C1 已由 AudioTrackImpl [fine] 行排除），只看 pcmPlayer 起点重排在真实负载下出不出现（C2）。
+  const probeStutter = useCallback(async (load?: string) => {
+    setBusy('stutter')
+    const hf = load === 'hf'
+    let vad: VadEngine | null = null
+    let kws: KwsEngine | null = null
+    let hfMic: ReturnType<typeof micLease> | null = null
+    let hfFrames = 0
+    try {
+      const cfg = await loadServerConfig()
+      if (!cfg?.audioUrl) {
+        log('stutter: 未配置服务器')
+        return
+      }
+      if (!(await ensurePermission())) return
+      const s = settingsStore.getState().settings
+      const SAY =
+        '播报探针开始。今天深圳多云转阴，气温二十四到三十度，东南风三级，午后有阵雨的可能，出门建议带伞，开车注意路面湿滑。'
+      const ctxBefore = peekSharedAudioContext()
+      const stateBefore: string = ctxBefore ? String(ctxBefore.state) : 'none'
+      const idleMs = lastTtsEndAt ? Date.now() - lastTtsEndAt : -1
+      const frames: { t: number; rms: number }[] = []
+      const rmsOf = (i16: ArrayLike<number>): number => {
+        let e = 0
+        for (let i = 0; i < i16.length; i += 1) {
+          const v = i16[i] / 32768
+          e += v * v
+        }
+        return i16.length ? Math.sqrt(e / i16.length) : 0
+      }
+      let micKind = 'audio-record/VOICE_RECOGNITION（无 AEC）'
+      let stopMic: () => Promise<void> = async () => {}
+      let AudioRecord: any = null
+      if (!hf) {
+        try {
+          const { NativeModules } = require('react-native')
+          if (NativeModules.RNAudioRecord) AudioRecord = require('react-native-audio-record').default
+        } catch {
+          AudioRecord = null
+        }
+      }
+      if (hf) {
+        micKind = 'hf-load（VoiceCommunication 麦 + VAD + KWS + 逐字重渲染；不量包络）'
+        vad = new VadEngine(800)
+        await vad.load()
+        await vad.start({ onSpeechStart: () => {}, onSpeechEnd: () => {} })
+        if (kwsNativeAvailable() && !kwsBusy()) {
+          kws = new KwsEngine()
+          await kws.start({ onKeyword: () => {} }, DEFAULT_KEYWORDS)
+        }
+        hfMic = micLease()
+        const v = vad
+        const k = kws
+        await hfMic.start((f) => {
+          hfFrames += 1
+          v.accept(f)
+          k?.accept(f)
+        })
+        setTranscript('')
+      } else if (AudioRecord) {
+        AudioRecord.init({ sampleRate: 16000, channels: 1, bitsPerSample: 16, audioSource: 6, wavFile: 'stutter-probe.wav' })
+        AudioRecord.on('data', (b64: string) => {
+          const bytes = base64ToBytes(b64)
+          const n = Math.floor(bytes.byteLength / 2)
+          const i16 = new Int16Array(bytes.buffer, bytes.byteOffset, n)
+          frames.push({ t: Date.now(), rms: rmsOf(i16) })
+        })
+        AudioRecord.start()
+        stopMic = async () => {
+          try {
+            await AudioRecord.stop()
+          } catch {
+            /* ignore */
+          }
+        }
+      } else {
+        micKind = 'audio-api/VoiceCommunication（有 AEC，包络不可信）'
+        const rec = recorder()
+        await rec.start((frame) => frames.push({ t: Date.now(), rms: rmsOf(frame) }))
+        stopMic = () => rec.stop()
+      }
+      await new Promise((r) => setTimeout(r, 600)) // 先录 600ms 底噪
+      const t0 = Date.now()
+      let tFirst = 0
+      const gapNotes: string[] = []
+      const sess = new TtsSession(
+        { audioUrl: cfg.audioUrl, provider: s.ttsProvider, voice: s.voiceId },
+        {
+          onFirstAudio: () => {
+            tFirst = Date.now()
+          },
+          onUnderrun: (gapMs, atSec) => gapNotes.push(atSec.toFixed(2) + 's+' + gapMs + 'ms'),
+        },
+      )
+      sess.start()
+      for (const chp of SAY) {
+        sess.append(chp)
+        if (hf) setTranscript((prev) => prev + chp) // 每个 delta 一次 setState ⇒ 一次重渲染，同对话页气泡
+        await new Promise((r) => setTimeout(r, 40))
+      }
+      sess.finish(SAY)
+      await Promise.race([sess.completion, new Promise<void>((r) => setTimeout(r, 40000))])
+      const tEnd = Date.now()
+      lastTtsEndAt = tEnd
+      await new Promise((r) => setTimeout(r, 300))
+      await stopMic()
+      const kwsStats = kws?.stats() ?? null
+      if (hfMic) await hfMic.stop()
+      vad?.stop()
+      if (kws) await kws.stop()
+      const ctxAfter = peekSharedAudioContext()
+      // 底噪 = 首片排定之前各帧 RMS 的中位数；声学起播 = 首个 RMS 高于 3×底噪（且 >0.01）的帧
+      const pre = frames.filter((f) => f.t < (tFirst || t0)).map((f) => f.rms).sort((a, b) => a - b)
+      const floor = pre.length ? pre[Math.floor(pre.length / 2)] : 0
+      const thr = Math.max(0.01, floor * 3)
+      const onset = tFirst ? frames.find((f) => f.t >= tFirst && f.rms > thr) : undefined
+      const env: number[] = []
+      if (tFirst && !hf) {
+        for (let b = -2; b < 20; b += 1) {
+          const lo = tFirst + b * 100
+          let m = 0
+          for (const f of frames) if (f.t >= lo && f.t < lo + 100 && f.rms > m) m = f.rms
+          env.push(Number(m.toFixed(3)))
+        }
+      }
+      const st = sess.stats
+      const onsetLagMs = onset && tFirst ? onset.t - tFirst : -1
+      log('stutter: 引擎=' + s.ttsProvider + '/' + s.voiceId + ' mic=' + micKind +
+        ' ctx=' + stateBefore + '→' + (ctxAfter ? String(ctxAfter.state) : 'none') + ' idleBefore=' + idleMs + 'ms')
+      log('stutter: 首音(排定)=' + (tFirst ? tFirst - t0 : -1) + 'ms 整段=' + (tEnd - t0) + 'ms chunks=' + st.chunks +
+        ' bytes=' + st.bytes + ' underruns=' + st.underruns + (gapNotes.length ? ' gaps=' + gapNotes.join(',') : ''))
+      log('stutter: 底噪=' + floor.toFixed(4) + ' 阈=' + thr.toFixed(3) + ' 声学起播滞后=' + onsetLagMs +
+        'ms（自首片排定起，含 200ms jitter + 片头静音；同文本暖态 vs 静置后可比）')
+      log('stutter: env100ms[-200..+1800]=' + env.join(' '))
+      log('stutter-json ' + JSON.stringify({
+        provider: s.ttsProvider, voice: s.voiceId, load: hf ? 'hf' : 'none',
+        mic: hf ? 'hf-load' : AudioRecord ? 'noaec' : 'aec', ctxBefore: stateBefore,
+        ctxAfter: ctxAfter ? String(ctxAfter.state) : 'none', idleBeforeMs: idleMs, firstAudioMs: tFirst ? tFirst - t0 : -1,
+        totalMs: tEnd - t0, chunks: st.chunks, bytes: st.bytes, underruns: st.underruns, gaps: st.gaps,
+        floor: Number(floor.toFixed(4)), onsetLagMs, env, micFrames: frames.length, hfFrames, kws: kwsStats,
+      }))
+    } catch (e: any) {
+      log('stutter: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      // 负载仿真的三件外设幂等收尾：上面正常路径已停过，这里只兜异常路径
+      try {
+        if (hfMic) await hfMic.stop()
+      } catch {
+        /* ignore */
+      }
+      try {
+        if (kws) await kws.stop()
+      } catch {
+        /* ignore */
+      }
+      try {
+        vad?.stop()
+        await vad?.dispose()
+      } catch {
+        /* ignore */
+      }
+      setBusy('')
+    }
+  }, [ensurePermission, log])
+
+  // ── 语音批 C3：收尾形态在 mobile 上的段间空白 / 丢段（HMI 2026-07-18「长内容断播」修的三处断口，mobile 显式未做段链）──
+  //  走真实 SpeechController：begin → 逐字 delta(A) → finish。两种形态：
+  //   · divergent：final 与已流内容是两段话（现实现＝等 A 播完再**批处理**补 B ⇒ 段间空白 = 批处理整段合成时间）；
+  //   · mixed：本地回执 final(A) 先到 → 云端 delta(B) 继续灌 → 云端 final(B)（现实现＝B 的 delta 灌进已收尾会话被网关丢弃，
+  //     再次 finish 时 accum(A+B) 覆盖 full(B) 判「已覆盖」⇒ **B 整段无声**；若 A 已播完则走批处理补段 ⇒ 空白）。
+  //  读数：speaking 轨迹（▲起 ▽落 + 相对毫秒）、段数、第一次 ▽ 到第二次 ▲ 的间隔。
+  const probeDivergent = useCallback(async (variant?: string) => {
+    setBusy('divergent')
+    const v = variant === 'mixed' ? 'mixed' : 'divergent'
+    try {
+      const cfg = await loadServerConfig()
+      if (!cfg?.audioUrl) {
+        log('divergent: 未配置服务器')
+        return
+      }
+      const sc = speechController(cfg.audioUrl)
+      const t0 = Date.now()
+      const trans: { t: number; v: boolean }[] = []
+      const unsub = sc.subscribeSpeaking((on) => trans.push({ t: Date.now() - t0, v: on }))
+      const A = '好的，已为你打开空调，温度设为二十六度。'
+      const B = '另外提醒你，深圳今天多云转阴，午后有阵雨的可能，出门建议带伞，开车注意路面湿滑。'
+      const id = 'probe-div-' + Date.now()
+      const marks: string[] = []
+      sc.begin(id, '', true)
+      for (const chp of A) {
+        sc.delta(id, chp)
+        await sleep(40)
+      }
+      if (v === 'mixed') {
+        sc.finish(id, A)
+        marks.push('finalA@' + (Date.now() - t0))
+        await sleep(300)
+        for (const chp of B) {
+          sc.delta(id, chp)
+          await sleep(40)
+        }
+        sc.finish(id, B)
+        marks.push('finalB@' + (Date.now() - t0))
+      } else {
+        sc.finish(id, B)
+        marks.push('finalB(divergent)@' + (Date.now() - t0))
+      }
+      // 等两段都播完（speaking 至少落两次且当前不在播）或 45s 超时
+      const deadline = Date.now() + 45000
+      while (Date.now() < deadline) {
+        await sleep(200)
+        const falls = trans.filter((x) => !x.v).length
+        if (falls >= 2 && !sc.speaking) break
+        // 只有一段且已落下超过 8s ⇒ 第二段不会再来了（丢段），别等满 45s
+        const lastFall = [...trans].reverse().find((x) => !x.v)
+        if (falls === 1 && lastFall && Date.now() - t0 - lastFall.t > 8000 && !sc.speaking) break
+      }
+      unsub()
+      const firstFall = trans.find((x) => !x.v)
+      const secondRise = firstFall ? trans.find((x) => x.v && x.t > firstFall.t) : undefined
+      const gapMs = firstFall && secondRise ? secondRise.t - firstFall.t : -1
+      const segments = trans.filter((x) => x.v).length
+      const seq = trans.map((x) => (x.v ? '▲' : '▽') + x.t).join(' ')
+      log('divergent: variant=' + v + ' 段数=' + segments + ' 段间空白=' + gapMs + 'ms（▽→▲，另加批处理首片 200ms jitter）' +
+        ' 轨迹=' + seq + ' marks=' + marks.join(','))
+      log(v === 'mixed' && segments < 2
+        ? 'divergent: ✗ mixed 形态只播了一段 ⇒ 云端段 B 整段无声（HMI 断口 1 在 mobile 复现）'
+        : gapMs > 800
+          ? 'divergent: ✗ 段间空白 ' + gapMs + 'ms ⇒ 听感就是「播到一半停一下」'
+          : 'divergent: ✓ 两段接得上')
+      log('divergent-json ' + JSON.stringify({
+        variant: v, segments, gapMs, trans, marks, provider: settingsStore.getState().settings.ttsProvider,
+      }))
+    } catch (e: any) {
+      log('divergent: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      setBusy('')
+    }
+  }, [log])
+
+  useEffect(() => {
+    if (busyRef.current) return
+    if (params.auto === 'stutter') void probeStutter(params.load)
+    else if (params.auto === 'divergent') void probeDivergent(params.variant)
+  }, [params.auto, params.n, params.load, params.variant, probeStutter, probeDivergent])
+
   // ── barge-in 物理面（M2-3 验收「播报中按 PTT 即停」的机器版）──
   //  播报中 stop() → 麦克风能量应当回到底噪。判据不是「代码调了 stop」而是
   //  **声音真的没了**：调了 stop 但排定的 source 继续播完，是 pcmPlayer 那类调度器的
@@ -835,8 +1104,9 @@ export default function VoiceSpikeScreen() {
     }
   }, [log])
 
-  const Btn = ({ label, onPress }: { label: string; onPress: () => void }) => (
+  const Btn = ({ label, onPress, testID }: { label: string; onPress: () => void; testID?: string }) => (
     <Pressable
+      testID={testID}
       onPress={onPress}
       disabled={!!busy}
       style={{
@@ -862,6 +1132,9 @@ export default function VoiceSpikeScreen() {
         <Btn label="e2e 回环" onPress={() => void probeLoopback()} />
         <Btn label="asr 直灌" onPress={() => void probeAsrInject()} />
         <Btn label="tts 流式" onPress={() => void probeTtsStream()} />
+        <Btn label="卡顿探针" testID="probe-stutter" onPress={() => void probeStutter()} />
+        <Btn label="段间 divergent" testID="probe-divergent" onPress={() => void probeDivergent()} />
+        <Btn label="段间 mixed" testID="probe-mixed" onPress={() => void probeDivergent('mixed')} />
         <Btn label="barge-in" onPress={() => void probeBargeIn()} />
         <Btn label="M4 vad" onPress={() => void probeVad()} />
         <Btn label="M4 kws" onPress={() => void probeKws()} />
@@ -873,6 +1146,11 @@ export default function VoiceSpikeScreen() {
       <Text style={{ color: p.fg3, fontSize: p.font(12), paddingHorizontal: 12 }}>
         {busy ? 'running: ' + busy : 'idle'}
       </Text>
+      {transcript ? (
+        <Text numberOfLines={3} style={{ color: p.fg3, fontSize: p.font(11), paddingHorizontal: 12 }}>
+          {transcript}
+        </Text>
+      ) : null}
       <ScrollView style={{ flex: 1, padding: 12 }}>
         {lines.map((l, i) => (
           <Text

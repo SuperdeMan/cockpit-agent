@@ -40,6 +40,19 @@ export interface TtsHooks {
   /** 整段结束却**一个字节音频都没出过**（引擎无 key / 上游全失败）。
    *  与 onEnd 分开是因为调用方要说的话不一样：onEnd 是「播完了」，这条是「压根没响」。 */
   onSilent?(): void
+  /** pcmPlayer 起点重排：一片到得比上一片排定结束还晚，只能从 now 重排 ⇒ 听众听到 gapMs 的空白。
+   *  混音器/HAL 指标看不见它（那段时间 destination 按时渲的是零，不算 underrun），所以只能在这里数
+   *  （语音批计划 §2 C2 的观测口）。gapMs=空白时长，atSec=空白起点（ctx.currentTime 域）。 */
+  onUnderrun?(gapMs: number, atSec: number): void
+}
+
+/** 一段播报的隐形通道读数：二进制片数/字节数 + pcmPlayer 起点重排次数与每次空白。
+ *  诊断屏与验收读它；生产路径只计数不判断。 */
+export interface TtsStats {
+  chunks: number
+  bytes: number
+  underruns: number
+  gaps: { atSec: number; gapMs: number }[]
 }
 
 export function ttsStreamUrl(audioUrl: string): string {
@@ -83,6 +96,7 @@ export async function synthesizeBatch(
 export class TtsSession {
   /** 整段收尾（播完/回退完/被停）后 resolve；调用方用它串下一段 */
   readonly completion: Promise<void>
+  readonly stats: TtsStats = { chunks: 0, bytes: 0, underruns: 0, gaps: [] }
 
   private ws: WebSocket | null = null
   private player: any = null
@@ -140,7 +154,10 @@ export class TtsSession {
   private onMessage(ev: WebSocketMessageEvent): void {
     if (this.disposed) return
     if (typeof ev.data !== 'string') {
-      if (this.player) this.player.push(new Int16Array(ev.data as ArrayBuffer))
+      const buf = ev.data as ArrayBuffer
+      this.stats.chunks += 1
+      this.stats.bytes += buf.byteLength
+      if (this.player) this.player.push(new Int16Array(buf))
       return
     }
     let m: { type?: string; sample_rate?: number }
@@ -156,6 +173,7 @@ export class TtsSession {
           this.audioStarted = true
           this.hooks.onFirstAudio?.()
         },
+        onUnderrun: () => this.noteUnderrun(),
       })
     } else if (m.type === 'done') {
       this.done = true
@@ -163,6 +181,18 @@ export class TtsSession {
     } else if (m.type === 'unsupported' || m.type === 'error') {
       if (!this.done && !this.disposed) void this.fallback()
     }
+  }
+
+  /** pcmPlayer 在更新 nextStart **之前**回调：此刻 `nextStart` 仍是上一片的排定结束时刻、
+   *  `ctx.currentTime` 是迟到片的到达时刻，两者之差就是听众听到的那段空白。 */
+  private noteUnderrun(): void {
+    const p = this.player
+    const atSec: number = p?.nextStart ?? 0
+    const nowSec: number = p?.ctx?.currentTime ?? atSec
+    const gapMs = Math.max(0, Math.round((nowSec - atSec) * 1000))
+    this.stats.underruns += 1
+    this.stats.gaps.push({ atSec, gapMs })
+    this.hooks.onUnderrun?.(gapMs, atSec)
   }
 
   private sendText(t: string): void {

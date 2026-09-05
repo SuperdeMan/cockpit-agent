@@ -111,6 +111,12 @@ export function sharedAudioContext(): AudioContext {
   return shared
 }
 
+/** 只看不建：诊断屏读「ctx 有没有、处于什么状态」用。`sharedAudioContext()` 会顺手建一个，
+ *  拿它当「有没有」的判据会把答案改掉。 */
+export function peekSharedAudioContext(): AudioContext | null {
+  return shared
+}
+
 export function closeSharedAudioContext(): void {
   const ctx = shared
   shared = null

@@ -7,13 +7,23 @@ import { int16ToWav } from '@shared/pcmRing.mjs'
 
 const pushed: Int16Array[] = []
 const stopped: number[] = []
+/** 每次 newPcmPlayer 造出的假播放器：带 pcmPlayer 真实对象上 TtsSession 会读的两个字段
+ *  （`nextStart` / `ctx.currentTime`）与它传进来的构造选项，供 underrun 回调的读数用例驱动 */
+const mockPlayers: Array<{ opts: any; nextStart: number; ctx: { currentTime: number } }> = []
 
 jest.mock('@/core/voice/audioCtx', () => ({
-  newPcmPlayer: jest.fn(() => ({
-    push: (a: Int16Array) => pushed.push(a),
-    remainingSec: () => 0,
-    stop: () => stopped.push(1),
-  })),
+  newPcmPlayer: jest.fn((opts: any) => {
+    const fake = {
+      opts,
+      nextStart: 0,
+      ctx: { currentTime: 0 },
+      push: (a: Int16Array) => pushed.push(a),
+      remainingSec: () => 0,
+      stop: () => stopped.push(1),
+    }
+    mockPlayers.push(fake)
+    return fake
+  }),
 }))
 
 class FakeWs {
@@ -84,6 +94,7 @@ beforeEach(() => {
   FakeWs.count = 0
   pushed.length = 0
   stopped.length = 0
+  mockPlayers.length = 0
   ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeWs
   fetchMock = jest.fn(async () => ({ json: async () => wavBody() }))
   ;(globalThis as { fetch?: unknown }).fetch = fetchMock
@@ -189,6 +200,46 @@ describe('下行与收尾', () => {
     expect(FakeWs.last!.frames.map((f) => f.type)).toContain('cancel')
     expect(stopped.length).toBe(1)
     await expect(s.completion).resolves.toBeUndefined()
+  })
+})
+
+describe('隐形通道读数（语音批 T1：pcmPlayer 起点重排在 HAL/混音器指标上是盲区，只能在这里数）', () => {
+  test('二进制片计 chunks/bytes；underrun 回调按「上一片排定结束 → 迟到片到达」算空白并透给 hooks', () => {
+    const seen: Array<[number, number]> = []
+    const s = new TtsSession(CFG, { onUnderrun: (gapMs, atSec) => seen.push([gapMs, atSec]) })
+    s.start()
+    FakeWs.last!.open()
+    FakeWs.last!.emit({ type: 'meta', sample_rate: 24000 })
+    FakeWs.last!.emitBinary(new Int16Array(1024))
+    FakeWs.last!.emitBinary(new Int16Array(512))
+    expect(s.stats.chunks).toBe(2)
+    expect(s.stats.bytes).toBe(3072)
+    expect(s.stats.underruns).toBe(0)
+    // pcmPlayer.push 在更新 nextStart **之前**回调 onUnderrun：此刻 nextStart 仍是上一片的
+    // 排定结束时刻、ctx.currentTime 是迟到片到达时刻，两者之差就是听众听到的那段空白
+    const fake = mockPlayers[mockPlayers.length - 1]
+    fake.nextStart = 1.0
+    fake.ctx.currentTime = 1.35
+    fake.opts.onUnderrun()
+    expect(s.stats.underruns).toBe(1)
+    expect(s.stats.gaps).toEqual([{ atSec: 1.0, gapMs: 350 }])
+    expect(seen).toEqual([[350, 1.0]])
+  })
+
+  test('没接 hooks.onUnderrun 也照常计数（读数面不依赖有没有人订阅）', () => {
+    const s = new TtsSession(CFG)
+    s.start()
+    FakeWs.last!.open()
+    FakeWs.last!.emit({ type: 'meta', sample_rate: 24000 })
+    const fake = mockPlayers[mockPlayers.length - 1]
+    fake.nextStart = 2.0
+    fake.ctx.currentTime = 2.08
+    fake.opts.onUnderrun()
+    fake.nextStart = 3.0
+    fake.ctx.currentTime = 3.5
+    fake.opts.onUnderrun()
+    expect(s.stats.underruns).toBe(2)
+    expect(s.stats.gaps.map((g) => g.gapMs)).toEqual([80, 500])
   })
 })
 
