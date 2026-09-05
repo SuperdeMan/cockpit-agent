@@ -233,41 +233,37 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
             )}
           </View>
         )}
-        {busy ? (
-          <Pressable
-            onPress={onInterrupt}
-            style={{ backgroundColor: p.amberSoft, borderWidth: 1, borderColor: 'rgba(245,158,11,0.3)', borderRadius: 14, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' }}
-          >
-            <Text style={{ color: p.amber, fontSize: p.font(14) }}>■ 打断</Text>
-          </Pressable>
-        ) : null}
-        {/* 发送键改圆形极光图标（B2 出账④，对标小艺 / 小爱）。虹彩纪律三处之一不变，只是从矩形「发送」
-            变成圆形图标；Maestro 流都按 id 驱动（`grep '"发送"' e2e/*.yaml` 为空，核过）。
+        {/* 发送 / 打断合一（B5-13，泓舟 B4 真机轮原话②）：忙时 ■ 停（onInterrupt = cancelCurrentTurn，与原
+            「■ 打断」pill 同一回调），闲时 ⬆ 发。原 pill 已整段删除——忙时要发新话先停再发（市面惯例）。
+            testID 仍 composer-send（Maestro 01/02/03/06/08 都在闲时按它点）；§6「目标 ≥56dp」的演员不变。
+            颜色沿用既有语义：发 = 极光渐变（虹彩纪律三处之一），停 = 琥珀（与原 pill 同色）。
+            ⚠ C 身份行车档没有输入框 ⇒ **闲时**仍 disabled + 降透明度（无字可发），但**忙时可点**
+            ——B4 §6.3「一枚永远点不动的键」这条设计代价从此只剩一半。
             svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
-        {/* ⚠ C 身份行车档没有输入框 ⇒ 这枚键恒无字可发：显式 disabled + 降透明度，
-            但**仍然在场**——§6「目标 ≥56dp」的读数（T13 步骤 3 的 composer-send）要有演员。
-            「一枚永远点不动的键」是这条设计的代价，记在 §6.3 交泓舟看。 */}
         <Pressable
           testID="composer-send"
           accessibilityRole="button"
-          accessibilityLabel="发送"
-          disabled={inputMode === 'hidden'}
-          onPress={submit}
+          accessibilityLabel={busy ? '打断' : '发送'}
+          disabled={!busy && inputMode === 'hidden'}
+          onPress={busy ? onInterrupt : submit}
           style={{
-            experimental_backgroundImage: AURORA.gradient,
-            opacity: inputMode === 'hidden' ? 0.45 : 1,
+            experimental_backgroundImage: busy ? undefined : AURORA.gradient,
+            backgroundColor: busy ? p.amberSoft : undefined,
+            borderWidth: busy ? 1 : 0,
+            borderColor: busy ? 'rgba(245,158,11,0.3)' : 'transparent',
+            opacity: !busy && inputMode === 'hidden' ? 0.45 : 1,
             width: driving ? target : scale(44, 'target', fontScale),
             height: driving ? target : scale(44, 'target', fontScale),
             borderRadius: RADIUS.full,
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 22px rgba(91,140,255,0.45)',
+            boxShadow: busy ? undefined : '0 4px 22px rgba(91,140,255,0.45)',
           }}
         >
           {iconRuntimeAvailable() ? (
-            <Icon name="send" size={22} color="#fff" />
+            <Icon name={busy ? 'stop' : 'arrowUp'} size={22} color={busy ? p.amber : '#fff'} />
           ) : (
-            <Text style={{ color: '#fff', fontSize: p.font(15), fontWeight: '600' }}>发</Text>
+            <Text style={{ color: busy ? p.amber : '#fff', fontSize: p.font(15), fontWeight: '600' }}>{busy ? '停' : '发'}</Text>
           )}
         </Pressable>
       </View>
