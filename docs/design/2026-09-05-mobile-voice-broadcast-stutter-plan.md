@@ -349,6 +349,12 @@ MiniMax 单次可到 1 万字）；泵空等 1s 且余量 <5s 先把攒着的发
 `status` 5/5 healthy `release_sha=cf7091c…`、独立 `verify` 通过（artifact `20260906T075039Z-cf7091c.json`）。30 容器全在 `:cf7091c` 镜像，
 docker 日志无非手动退出，tailscaled 本次切栈零 proxy error，`https_ready_s=0`（这次没等到就绪就已 200——等待是保险，不是每次都用上）。
 
+**部署后长文本探针（打 `cf7091c` 网关，931 字 22 句，30 字/秒喂，jitter 200ms）**：首片 0.86s、`done` 到、4848 片、**204.6s 音频完整**，
+下发 36.9s 即 5.54× 实时；模拟播放 **`sim_underruns=0`、总空白 0ms、最小余量 243ms**（a05cb5f 时同类长文本在 ~55s 处有一次 3.5s 空白、
+`needed_initial_buffer 3706ms`；现在 `needed_initial_buffer=0`）⇒ 第二层「余量驱动合并」把请求数压进 RPM 预算、不再等窗口。
+片内静音 94 处 48.3s 是音色自身的标点停顿（与 §6.3 同文对照结论一致，不是我们的请求粒度）。**截断 + 3.5s 空白两条在网关侧闭合**；
+剩「嗡嗡」待真机对话页 `[speech-turn]` 读数（泓舟手机当时未连 adb，只连着别人的 919fd6f9，不碰）。
+
 **坑**：⑨ **验收闸自己也是被测系统**——「verify 失败」先问是被验的东西坏了还是闸在赛跑：容器全部存活 + 端点单起即 200 + tailscaled 的
 `refused/reset` 时间戳，三样凑齐才敢说「闸误判」；⑩ dev_stack 把远端 stderr 直接透传到控制台、不落盘，后台跑 apply 时 `2>$null`
 就把唯一的失败原因丢了——真栈动作的 stderr 必须落文件；⑪ 同一 SHA 失败后不能原地重试（builds/releases/镜像三道 already-exists 守卫），
