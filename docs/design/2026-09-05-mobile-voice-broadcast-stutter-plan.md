@@ -359,3 +359,51 @@ docker 日志无非手动退出，tailscaled 本次切栈零 proxy error，`http
 `refused/reset` 时间戳，三样凑齐才敢说「闸误判」；⑩ dev_stack 把远端 stderr 直接透传到控制台、不落盘，后台跑 apply 时 `2>$null`
 就把唯一的失败原因丢了——真栈动作的 stderr 必须落文件；⑪ 同一 SHA 失败后不能原地重试（builds/releases/镜像三道 already-exists 守卫），
 重试=新提交。
+
+### 6.4 「嗡嗡/喷麦」定因与修法（2026-09-06 下午，OPPO PEUM00 / ColorOS 14 / Android 14，泓舟新接入的测试机 `919fd6f9`）
+
+**泓舟原话**（对话页重放「介绍深圳历史，尽量详细」，App 从本机 Metro 热载、含 T4′/T6/tts 修）：「有混叠的嗡嗡声，基本从开始播 2 秒后
+就开始了，一直持续，像是喷麦的声音」。
+
+**取证（全部 read-only）**：logcat 整段录制 + `dumpsys media.audio_flinger` 前后 + `top -H`：
+
+| 读数 | 值 | 含义 |
+|---|---|---|
+| 我们输出轨（F2/FAST）`Underruns` 帧 | **6,587,136 ≈ 137s** | 两轮长回答 ≈ 3.5min 里**约六成的帧被混音器填零** |
+| FastMixer 该轨 Full/Partial/Empty | 683 / **766** / **240**（10 位环绕计数） | 大部分 4ms 拍只交了部分帧 |
+| 音频回调线程 `AudioTrack` CPU（探针播放中） | 62–68% | 单路 48k 流本不该这么贵 |
+| JS 层 `TtsSession.stats.underruns` | **0** | 排定没错——空白不在 JS 调度层 |
+| 播放路径 | `AAudioService: aaudio denied with imcompatible policy` → Oboe 退到 legacy `AudioStreamTrack`，`AUDIO_OUTPUT_FLAG_FAST` 成功，192 帧/4ms 一拍，`framesPerCallback=128` | 系统白名单外的 App 拿不到 AAudio/MMAP |
+| 麦克风/模式 | 播报期间麦已关（PTT 松手 16:07:03 stop）、`Audio mode = MODE_NORMAL`、无 SCO/A2DP 路由 | **不是**通话链路 / 蓝牙 / AEC |
+| 系统通知震动 | 本 App 自己的 PTT 震动 4 次，无系统通知 | 排除 |
+
+**对照实验（voice-spike 深链，同一段 13s 文本，同一台机）**——变量只有「节点数」：
+
+| 播放方式 | 该轨 Underruns 帧增量 | 声学证真（探针无 AEC 麦包络 / 起播滞后） |
+|---|---|---|
+| 逐片一个节点（旧，4 次） | **48,192 / 11,712 / 2,880 / 2,304**（0.05–1.0s，随会话状态波动） | 0.033 / 651ms |
+| 整段一个 buffer（`auto=batch`） | **0** | — |
+| **队列节点（新，2 次）** | **0 / 0** | 0.030 / 624ms（确实出声） |
+
+⇒ **机制**：react-native-audio-api 的渲染回调每拍要过一遍图里所有 `AudioBufferSourceNode`；每 42ms 一片、每片一个节点、网关
+5.5× 实时下发 ⇒ 待播节点数百上千，回调 4ms 内交不齐 192 帧，FastMixer 记 partial/empty、缺帧填零 ⇒ 人声底下持续嗡嗡。
+对话页比探针页重得多（长回答待播节点上千 + UI：RenderThread 59% / 主线程 53% 常驻动画、Reanimated
+`synchronouslyUpdateUIProps failed … Unable to find SurfaceMountingManager` 4 分钟 386 次带完整栈 36,730 行）⇒ 六成 vs 几个百分点。
+边界错帧（§6.3 ③）与 MiniMax 音频本身都不是主因；C1/C2 的结论不变。
+
+**修 `5eb71b5`**：`mobile/src/core/voice/queuePlayer.ts`——**一个** `AudioBufferQueueSourceNode`（库 0.13.3 自带，09-05 装机 APK 已含，
+纯 JS 不重建）顺序 `enqueueBuffer`，片与片在音频线程逐样本拼接，队空填零、新片一到即续播；时间线记账沿用 pcmPlayer.mjs 规则，
+`TtsSession.noteUnderrun` 读的 `nextStart`/`ctx.currentTime` 形状不变；重采样仍在 JS 侧。`audioCtx.ts::selectPcmPlayer` 纯函数选实现
+（ctx 没有队列节点 ⇒ 回退旧逐片排定），`setPcmPlayerImpl('queue'|'nodes')` 缺省 queue；voice-spike 深链 `player=` 切实现做 A/B，
+stutter-json 带 `player`。tests +6，jest 550/550、tsc 0。
+
+**坑**：⑫ **库的 JS 包装 `start(when=0, offset=-1)` 缺省值过不了它自己的 `offset<0` 校验**（RangeError）——首轮 A/B 队列节点静默无声：
+underrun 帧 0 看着像修好了，是探针的**麦克风包络全 0、声学起播 -1ms** 揭穿的（「先证演员在场」再一次）；显式传 `offset=0`，
+start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `console.log` 不进 logcat**（本机 OPPO 零条 `ReactNativeJS`，
+`[speech-turn]` / `stutter-json` 都只剩屏上一行）⇒ 读数改走 `uiautomator dump`（要 `MSYS_NO_PATHCONV=1`，否则 Git Bash 把
+`/sdcard` 改写成本机路径）+ 慢速 `input swipe` 翻页；T6 的日志出口另立卡片；⑭ 重载 App 后 AudioContext 重建 ⇒ 旧音轨还挂在
+`dumpsys` 里（active=no、计数不动），取 **active=yes** 那条而不是最大值——首轮 A/B 三次「0 增量」就是读了旧轨；
+⑮ 全量重载后紧跟的深链会被吞（首个 `auto=` 没跑，ctx 仍 none），先确认页面到了再发探针。
+
+**仍开**：① 泓舟在对话页重放长回答做最终人耳验收（后台每 5s 采该轨 underrun 帧，期望 ≈0）；② 对话页常驻 UI 负载与 Reanimated
+对已卸载视图持续更新（386 次/4min）另立卡片；③ dev 期 JS 日志出口（console 不进 logcat）另立卡片；④ 混合意图轮盲听。
