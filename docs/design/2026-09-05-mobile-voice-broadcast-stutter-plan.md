@@ -353,7 +353,7 @@ docker 日志无非手动退出，tailscaled 本次切栈零 proxy error，`http
 下发 36.9s 即 5.54× 实时；模拟播放 **`sim_underruns=0`、总空白 0ms、最小余量 243ms**（a05cb5f 时同类长文本在 ~55s 处有一次 3.5s 空白、
 `needed_initial_buffer 3706ms`；现在 `needed_initial_buffer=0`）⇒ 第二层「余量驱动合并」把请求数压进 RPM 预算、不再等窗口。
 片内静音 94 处 48.3s 是音色自身的标点停顿（与 §6.3 同文对照结论一致，不是我们的请求粒度）。**截断 + 3.5s 空白两条在网关侧闭合**；
-剩「嗡嗡」待真机对话页 `[speech-turn]` 读数（泓舟手机当时未连 adb，只连着别人的 919fd6f9，不碰）。
+剩「嗡嗡」待真机对话页 `[speech-turn]` 读数（adb 上的 919fd6f9 是泓舟新接入的 OPPO PEUM00 测试机，ColorOS 14 / Android 14，已入 tailscale、装了 apk，泓舟 09-06 授权直接用；我一开始误记成「别人的设备」）。
 
 **坑**：⑨ **验收闸自己也是被测系统**——「verify 失败」先问是被验的东西坏了还是闸在赛跑：容器全部存活 + 端点单起即 200 + tailscaled 的
 `refused/reset` 时间戳，三样凑齐才敢说「闸误判」；⑩ dev_stack 把远端 stderr 直接透传到控制台、不落盘，后台跑 apply 时 `2>$null`
