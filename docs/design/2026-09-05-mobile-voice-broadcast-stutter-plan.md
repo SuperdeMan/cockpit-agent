@@ -452,5 +452,7 @@ start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `co
 
 **部署 #4 受阻（19:0x）**：泓舟授权后 `deploy --sha a09c73a --apply` 在远端 `prepare-upload` 之后中断（`error_category=runtime`、stderr 空；云栈仍 cf7091c 5/5）。sshd 日志：两个 IP 持续 root 暴力试登，触发 `MaxStartups` 限流（一轮 13min 丢 28 连接），我们已认证的密钥会话也被随机切断；8 分钟探测 24 次丢 8 次（33%），dev_stack 多段 SSH 管线成功率 ≈ 0.67^5。安全组收窄 22 / 封 IP / fail2ban 属泓舟红线，已交裁。a09c73a 远端只留一个未完成的 incoming 上传目录，无 builds/releases/镜像残留，可原 SHA 重试。
 
-**仍开**：① 部署（等泓舟处理 22 端口后重跑 apply）；② 部署后 Xiaomi 对话页重放同一问题验收（T6 gaps ≈ 空、轨级 underrun 持平）；
+**部署 #4 重试成功（泓舟「直接重试」，20:52–20:56）**：`--apply` 219s `status=submitted` → 远端 `state-20260906T125617Z-VERIFIED.json`、`current → a09c73a`、`status` 5/5、独立 `verify` 通过（artifact `20260906T125947Z-a09c73a.json`）。攻击仍在，这次 5 段连接都没被丢。
+
+**仍开**：① Xiaomi 对话页重放「介绍广州的历史，详细一点」验收（T6 gaps ≈ 空）；
 ③ 规划 14s + 合成 9.5s 的首音 29s 是 LLM 侧时延（MiniMax-M3 推理模型），另立卡片。
