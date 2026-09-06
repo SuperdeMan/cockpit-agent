@@ -257,7 +257,13 @@ def test_rpm_bucket_zero_means_unlimited():
 def test_tts_send_now_policy():
     # 客户端快断粮：立刻发，哪怕预算用光（由 acquire 去等）
     assert _tts_send_now(2.0, 5, 0)
-    assert _tts_send_now(9.9, 5, 3)
+    # 预算见底（0 < tokens ≤ reserve 3）且余量还有 9.9s：攒到 merge_chars 再发，最后几发别花在 5 个字上
+    assert not _tts_send_now(9.9, 5, 3)
+    assert _tts_send_now(9.9, 150, 3)
+    assert _tts_send_now(1.9, 5, 3)  # 断粮在即（< critical 2s）：预算再紧也发
+    # 首片音频没回来：余量读数是假的 0，攒着不发；攒到 hold_cap 兜底发
+    assert not _tts_send_now(0.0, 299, 18, awaiting_first_audio=True)
+    assert _tts_send_now(0.0, 1200, 18, awaiting_first_audio=True)
     # 余量充足 + 预算用光：攒着，等窗口滚过再一次发大段
     assert not _tts_send_now(30.0, 149, 0)
     # 余量充足 + 有预算：攒到 merge_chars 才发
@@ -298,15 +304,15 @@ async def test_minimax_ws_merges_sentences_when_client_has_lead(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_minimax_ws_paces_sends_by_rpm(monkeypatch):
+    """rpm=2：首段发出后预算只剩 1，后面三段攒成一个请求——2 个请求在预算内，**不用等窗口**
+    （旧策略逐段发第 3 个要等 60s；2026-09-06 广州史就是这样每 60s 才放一批）"""
     clk = _FakeClock()
-    # 三句 → 首段「第一句，」+ 两个句末段，共 3 次 task_continue；rpm=2 ⇒ 第 3 次要等窗口
     ws = _FakeWS(_ok_script([("aa", True), ("bb", True), ("cc", True)]), min_sent=1)
     _wire(monkeypatch, [ws])
     prov = MiniMaxWsStreamingTTSProvider("k", rpm=2, clock=clk.now, sleep=clk.sleep)
     out = [x async for x in prov.stream(_aiter(["第一句，", "后半。", "第二句。", "第三句。"]))]
-    assert ws.continues == ["第一句，", "后半。", "第二句。第三句。"] or ws.continues == ["第一句，", "后半。", "第二句。", "第三句。"]
-    # 第 3 次发送前等过窗口（不真等，假钟推进）
-    assert clk.slept and max(clk.slept) >= 59.0
+    assert ws.continues == ["第一句，", "后半。第二句。第三句。"]
+    assert max(clk.slept, default=0.0) < 59.0
     audio = b"".join(x for x in out if isinstance(x, (bytes, bytearray)))
     assert audio == bytes.fromhex("aabbcc")
     assert ws.events[-1] == "task_finish"
@@ -322,10 +328,11 @@ async def test_minimax_ws_rpm_failure_reconnects_and_resends_unfinished(monkeypa
     prov = MiniMaxWsStreamingTTSProvider("k", rpm=100, clock=clk.now, sleep=clk.sleep)
     out = [x async for x in prov.stream(_aiter(["第一句。", "第二句。", "第三句。"]))]
     assert sess.connects == 2
-    assert ws1.continues == ["第一句。", "第二句。", "第三句。"]
-    # 重连后只续传没收到 is_final 的两段，且先 task_start
+    # 首段单发；首片回来前后两句攒成一个请求（整段到达不爆发）
+    assert ws1.continues == ["第一句。", "第二句。第三句。"]
+    # 重连后只续传没收到 is_final 的那个请求，且先 task_start
     assert ws2.events[0] == "task_start"
-    assert ws2.continues == ["第二句。", "第三句。"]
+    assert ws2.continues == ["第二句。第三句。"]
     assert ws2.events[-1] == "task_finish"
     audio = b"".join(x for x in out if isinstance(x, (bytes, bytearray)))
     assert audio == bytes.fromhex("aabbccdd")  # 第 2 段前半 bb 已播，续传会带一点复读，比整段丢好
@@ -378,3 +385,73 @@ def test_minimax_ws_rpm_default_from_env(monkeypatch):
     assert MiniMaxWsStreamingTTSProvider("k").rpm == 7
     monkeypatch.delenv("MINIMAX_TTS_RPM", raising=False)
     assert MiniMaxWsStreamingTTSProvider("k").rpm == 18
+
+
+# ── 整段到达不爆发 / 首片门控 / 账号级共享桶（2026-09-06 广州史 20s 周期空白）────────
+
+@pytest.mark.asyncio
+async def test_minimax_ws_batch_text_holds_until_first_audio_then_merges(monkeypatch):
+    """整段文本一次到达（final 整篇 / 批处理）：首段在第一个软断点发出保首音；首片音频回来前其余只攒不发；
+    收尾时把剩余合并成一个请求。旧策略：40 个逗号段在首片回来前全部立刻发出 ⇒ 18 配额瞬间用光、之后每 60s 放一批
+    ⇒ 272s 的流里 4 个 17–26s 空白（T6 gaps 21.8/20.5/17.4/26.1s；collector 证明文本 29s 时已整篇到齐）。"""
+    clk = _FakeClock()
+    clauses = "".join(f"第{i}句话，" for i in range(1, 41)) + "结束。"
+    ws = _FakeWS(_ok_script([("aa", True), ("bb", True)]), min_sent=1)
+    _wire(monkeypatch, [ws])
+    prov = MiniMaxWsStreamingTTSProvider("k", rpm=18, clock=clk.now, sleep=clk.sleep)
+    out = [x async for x in prov.stream(_aiter([clauses]))]
+    assert ws.continues[0] == "第1句话，"
+    assert len(ws.continues) <= 3
+    assert "".join(ws.continues) == clauses
+    assert max(clk.slept, default=0.0) < 59.0
+    assert ws.events[-1] == "task_finish"
+    assert b"".join(x for x in out if isinstance(x, (bytes, bytearray))) == bytes.fromhex("aabb")
+
+
+@pytest.mark.asyncio
+async def test_minimax_ws_first_audio_gate_times_out_instead_of_stalling(monkeypatch):
+    """首片迟迟不回（服务端慢）：门控最多等 first_audio_wait_s，之后按余量规则照常发，不把整条流卡死"""
+    clk = _FakeClock()
+    ws = _FakeWS(_ok_script([("aa", True), ("bb", True)]), min_sent=2)  # 音频要等泵发出 2 个请求才回放
+    _wire(monkeypatch, [ws])
+    prov = MiniMaxWsStreamingTTSProvider("k", rpm=100, clock=clk.now, sleep=clk.sleep)
+    prov.idle_flush_s = 0.02
+
+    async def deltas():
+        yield "第一句，"
+        await asyncio.sleep(0.05)
+        yield "第二句。"          # 首片未回 ⇒ 被门控攒住
+        clk.t += 3.0              # 超过 first_audio_wait_s(2.5)
+        await asyncio.sleep(0.15)  # 泵空等一拍：门控过期 + 余量 0 < soft ⇒ 发出去
+        yield "第三句。"
+
+    _ = [x async for x in prov.stream(deltas())]
+    assert ws.continues[0] == "第一句，"
+    assert ws.continues[1].startswith("第二句。")
+    assert "".join(ws.continues) == "第一句，第二句。第三句。"
+
+
+@pytest.mark.asyncio
+async def test_minimax_ws_rpm_bucket_shared_across_streams_of_same_key(monkeypatch):
+    """RPM 是账号级：第二条流要认第一条流刚花掉的配额。此前每条流各自新桶，前后脚的两段回答互不知情 ⇒
+    第二段一开就撞 1002、重连等窗口。"""
+    clk = _FakeClock()
+    ws1 = _FakeWS(_ok_script([("aa", True), ("bb", True)]), min_sent=1)
+    ws2 = _FakeWS(_ok_script([("cc", True)]), min_sent=1)
+    _wire(monkeypatch, [ws1, ws2])
+    prov = MiniMaxWsStreamingTTSProvider("k", rpm=2, clock=clk.now, sleep=clk.sleep)
+    _ = [x async for x in prov.stream(_aiter(["第一句，", "后半。"]))]
+    assert ws1.continues == ["第一句，", "后半。"]
+    assert not clk.slept
+    _ = [x async for x in prov.stream(_aiter(["第二段。"]))]
+    assert ws2.continues == ["第二段。"]
+    assert clk.slept and max(clk.slept) >= 59.0  # 第二条流的第一发等窗口滚过，而不是撞 1002
+
+
+def test_shared_rpm_bucket_registry_isolates_clocks_and_keys():
+    a = P._shared_rpm_bucket("k1", 18, None)
+    assert P._shared_rpm_bucket("k1", 18, None) is a          # 生产：同 key 同 rpm 共用
+    assert P._shared_rpm_bucket("k2", 18, None) is not a      # 不同 key 不串
+    clk = _FakeClock()
+    b = P._shared_rpm_bucket("k1", 18, clk.now)
+    assert b is not a                                         # 注入假钟的按钟分桶

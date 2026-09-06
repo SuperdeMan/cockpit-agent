@@ -1374,16 +1374,43 @@ class _RpmBucket:
             await sleep(self.wait_time() + 0.05)
 
 
+_RPM_BUCKETS: dict[tuple, "_RpmBucket"] = {}
+
+
+def _shared_rpm_bucket(api_key: str, rpm: int, clock=None) -> "_RpmBucket":
+    """同一把 key 的所有流共用一个滑窗。MiniMax 的 RPM 是**账号级**的：每条流各自新开一个桶（2026-09-06 上午的写法）
+    等于前后脚的两段回答互不知情——第二段一开就撞 1002、重连等窗口。工厂每个请求都 new 一个 provider，所以桶不能挂在
+    实例上，按 (key, rpm) 进程级共享；注入了假钟（单测）的按钟对象分桶，互不串扰。"""
+    key = (api_key, int(rpm or 0), id(clock) if clock is not None else None)
+    bucket = _RPM_BUCKETS.get(key)
+    if bucket is None:
+        bucket = _RpmBucket(rpm, clock)
+        _RPM_BUCKETS[key] = bucket
+    return bucket
+
+
 def _tts_send_now(lead_s: float, pending_chars: int, tokens_left: int, *,
-                  max_chars: int = 300, low_lead_s: float = 10.0, merge_chars: int = 150) -> bool:
+                  max_chars: int = 300, low_lead_s: float = 10.0, merge_chars: int = 150,
+                  awaiting_first_audio: bool = False, critical_lead_s: float = 2.0,
+                  reserve_tokens: int = 3, hold_cap_chars: int = 1200) -> bool:
     """句末到了，攒着的文本要不要**现在**发（MiniMax 单次 task_continue 可到 1 万字，合并不受限）：
+    · **首片音频还没回来**（awaiting_first_audio）⇒ 攒着不发（hold_cap_chars 以上才兜底发）。此时 lead 恒为 0、
+      「余量不足」是假象：整段文本一次到达（final 整篇 / 批处理）时按逗号切出的几十段会在首片回来前全部立刻发出，
+      18 个配额瞬间用光，之后每 60s 窗口滚一次才放一批——2026-09-06 广州史 272s 的流里 4 个 17–26s 空白就是这个周期；
     · 攒到 max_chars 无论如何发；
-    · 客户端音频余量 lead 不足 low_lead_s ⇒ 立刻发（哪怕预算用光也发，由 bucket.acquire 去等——不能让客户端断粮）；
-    · 余量充足 ⇒ 攒到 merge_chars 再发：请求数降到预算内，长回答不会在第 18 个请求后等窗口
+    · 余量不足 critical_lead_s ⇒ 立刻发（断粮在即，哪怕预算用光也发，由 bucket.acquire 去等）；
+    · 预算见底（0 < tokens_left ≤ reserve_tokens）⇒ 攒到 merge_chars 再发：最后几发别花在小段上；
+    · 余量不足 low_lead_s ⇒ 立刻发；余量充足 ⇒ 攒到 merge_chars 再发：请求数降到预算内，长回答不会在第 18 个请求后等窗口
       （2026-09-06 实测 1218 字 26 句：逐句发在第 55s 出现一次 3.5s 空白）。
     纯函数，单测钉住边界。"""
+    if awaiting_first_audio and pending_chars < hold_cap_chars:
+        return False
     if pending_chars >= max_chars:
         return True
+    if lead_s < critical_lead_s:
+        return True
+    if 0 < tokens_left <= reserve_tokens:
+        return pending_chars >= merge_chars
     if lead_s < low_lead_s:
         return True
     if tokens_left <= 0:
@@ -1770,6 +1797,9 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
         self.soft_lead_s = 5.0
         self.merge_lead_s = 10.0
         self.idle_flush_s = 1.0
+        # 首段发出后、首片音频回来前，后续文本只攒不发（余量未知，发了就是白烧配额）；MiniMax 首片正常 0.4–1.1s，
+        # 超过 first_audio_wait_s 还没回来就不再等（别让一次服务端慢响应把整条流卡死）
+        self.first_audio_wait_s = 2.5
 
     async def stream(self, text_deltas, *, voice="", sample_rate=0, instruct="", speed=0.0):
         del instruct
@@ -1779,7 +1809,7 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
         vs = {"voice_id": voice, "speed": float(speed) if speed and speed > 0 else 1.0,
               "vol": 1.0, "pitch": 0}
         meta = {"type": "meta", "sample_rate": sr, "format": "pcm"}
-        bucket = _RpmBucket(self.rpm, self.clock)
+        bucket = _shared_rpm_bucket(self.api_key, self.rpm, self.clock)
         # 分段生产者只有一个、不随连接重建（重连时不能把上游 text_deltas 迭代器弄丢）；各连接的泵从队列取
         seg_q: asyncio.Queue = asyncio.Queue()
 
@@ -1804,6 +1834,12 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
         completed = 0             # 收到 is_final 的请求数（续传从这里开始）
         pending = ""              # 攒着尚未发出的文本（断连/取消不丢；余量充足时合并多句再发）
         source_done = False
+        first_sent_at = None      # 本流第一个请求发出的时刻（首片门控用）
+
+        def awaiting_first_audio() -> bool:
+            if first_sent_at is None or audio["first_at"] is not None:
+                return False
+            return (bucket.clock() - first_sent_at) < self.first_audio_wait_s
         meta_sent = False
         attempt = 0
         try:
@@ -1816,12 +1852,14 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
                         started = asyncio.Event()
 
                         async def send_pending():
-                            nonlocal pending
+                            nonlocal pending, first_sent_at
                             text = pending
                             await bucket.acquire(self.sleep)
                             await ws.send_json({"event": "task_continue", "text": text})
                             sent.append(text)
                             pending = pending[len(text):]  # 等待期间可能又攒进了新句子
+                            if first_sent_at is None:
+                                first_sent_at = bucket.clock()
 
                         async def pump():
                             nonlocal pending, source_done
@@ -1836,7 +1874,8 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
                                     seg = await asyncio.wait_for(seg_q.get(), timeout=self.idle_flush_s)
                                 except asyncio.TimeoutError:
                                     # 暂时没新句子：攒着的若还没发而客户端余量已不足，先发出去，别等到断粮
-                                    if pending and lead_s() < self.soft_lead_s:
+                                    # （首片没回来前除外——那时余量读数是假的 0）
+                                    if pending and lead_s() < self.soft_lead_s and not awaiting_first_audio():
                                         await send_pending()
                                     continue
                                 if seg is None:
@@ -1844,7 +1883,8 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
                                     break
                                 pending += seg
                                 if _tts_send_now(lead_s(), len(pending), bucket.tokens_left(),
-                                                 low_lead_s=self.merge_lead_s):
+                                                 low_lead_s=self.merge_lead_s,
+                                                 awaiting_first_audio=awaiting_first_audio()):
                                     await send_pending()
                             if pending:
                                 await send_pending()
