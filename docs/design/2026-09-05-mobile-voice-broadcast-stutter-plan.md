@@ -454,5 +454,7 @@ start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `co
 
 **部署 #4 重试成功（泓舟「直接重试」，20:52–20:56）**：`--apply` 219s `status=submitted` → 远端 `state-20260906T125617Z-VERIFIED.json`、`current → a09c73a`、`status` 5/5、独立 `verify` 通过（artifact `20260906T125947Z-a09c73a.json`）。攻击仍在，这次 5 段连接都没被丢。
 
+**部署后探针（Node，打 a09c73a 网关，931 字整段一次送 `--mode burst`）**：首片 **0.63s**、204.6s 音频 8.4s 送完（24.5× 实时）、`sim_underruns 0`、片间到达 p95 2ms / max 130ms——没有 60s 周期。
+
 **仍开**：① Xiaomi 对话页重放「介绍广州的历史，详细一点」验收（T6 gaps ≈ 空）；
 ③ 规划 14s + 合成 9.5s 的首音 29s 是 LLM 侧时延（MiniMax-M3 推理模型），另立卡片。
