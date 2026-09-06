@@ -303,9 +303,15 @@ export class TtsSession {
     // 闸门未开（段链里排在后面的段）：等前一段播完再决定怎么补，否则批处理音频会叠在前一段上
     if (!this.gateOpen && this.gate) await this.gate
     if (this.disposed) return
-    // 已经出过声：不整段重合成（复读比少一句尾巴更糟），当正常收尾
+    // 已经出过声：不整段重合成（复读比少一句尾巴更糟），**等已排定的音频放完**再当正常收尾。
+    // 2026-09-06 真机：MiniMax 撞 RPM 时网关回 error，此刻播放器里还压着几十秒音频——
+    // 立刻 settle 会让段链的下一段闸门提前开（两段叠放）、免唤醒 FSM 在余音里进 FOLLOWUP 开麦。
     if (this.audioStarted) {
-      this.settle()
+      const remainMs = (this.player?.remainingSec() ?? 0) * 1000
+      this.endTimer = setTimeout(() => {
+        this.endTimer = null
+        this.settle()
+      }, remainMs + 120)
       return
     }
     this.player?.stop()

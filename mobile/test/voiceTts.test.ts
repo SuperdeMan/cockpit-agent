@@ -10,6 +10,8 @@ const stopped: number[] = []
 /** 每次 newPcmPlayer 造出的假播放器：带 pcmPlayer 真实对象上 TtsSession 会读的两个字段
  *  （`nextStart` / `ctx.currentTime`）与它传进来的构造选项，供 underrun 回调的读数用例驱动 */
 const mockPlayers: Array<{ opts: any; nextStart: number; ctx: { currentTime: number } }> = []
+/** 假播放器报告的「还剩多少秒没播完」——出错后收尾要等它放完（用例按需改） */
+let mockRemainingSec = 0
 
 jest.mock('@/core/voice/audioCtx', () => ({
   newPcmPlayer: jest.fn((opts: any) => {
@@ -18,7 +20,7 @@ jest.mock('@/core/voice/audioCtx', () => ({
       nextStart: 0,
       ctx: { currentTime: 0 },
       push: (a: Int16Array) => pushed.push(a),
-      remainingSec: () => 0,
+      remainingSec: () => mockRemainingSec,
       stop: () => stopped.push(1),
     }
     mockPlayers.push(fake)
@@ -95,6 +97,7 @@ beforeEach(() => {
   pushed.length = 0
   stopped.length = 0
   mockPlayers.length = 0
+  mockRemainingSec = 0
   ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeWs
   fetchMock = jest.fn(async () => ({ json: async () => wavBody() }))
   ;(globalThis as { fetch?: unknown }).fetch = fetchMock
@@ -350,6 +353,28 @@ describe('批处理回退', () => {
     await flush()
     expect(fetchMock).not.toHaveBeenCalled()
     await expect(s.completion).resolves.toBeUndefined()
+  })
+
+  test('出过声之后上游报错（如 MiniMax RPM）：等已排定的音频放完再收尾，不立刻 settle（否则下一段闸门提前开、两段叠放；FSM 也会在余音里开麦）', async () => {
+    const s = new TtsSession(CFG)
+    s.start()
+    FakeWs.last!.open()
+    FakeWs.last!.emit({ type: 'meta', sample_rate: 24000 })
+    FakeWs.last!.emitBinary(new Int16Array(1024))
+    mockPlayers[mockPlayers.length - 1].opts.onFirstAudio()
+    mockRemainingSec = 0.3 // 播放器里还压着 300ms
+    let settled = false
+    void s.completion.then(() => {
+      settled = true
+    })
+    FakeWs.last!.emit({ type: 'error', message: "{'status_code': 1002, 'status_msg': 'rate limit exceeded(RPM)'}" })
+    await flush()
+    await new Promise((r) => setTimeout(r, 100))
+    expect(settled).toBe(false) // 余音未尽，不许收尾
+    await new Promise((r) => setTimeout(r, 450))
+    expect(settled).toBe(true) // 300ms + 120ms 之后收尾
+    expect(fetchMock).not.toHaveBeenCalled() // 出过声就不重合成（原语义不变）
+    expect(stopped.length).toBe(0) // 也不许把余音掐掉
   })
 
   test('批处理也失败 → 静默收尾，不把这一轮对话弄坏', async () => {
