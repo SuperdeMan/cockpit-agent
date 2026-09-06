@@ -124,13 +124,33 @@ container_env_value() {
     "${container_id}" | sed -n "s/^${key}=//p" | head -n 1 || return $?
 }
 
+# 五个 HTTPS 端点的就绪等待。activate 在 `compose up -d` 返回后立刻验收，而 27 个容器同时
+# 冷启时 hmi(5173)/edge(8090) 要 6–10 s 才开始监听（2026-09-06 60a72a2：切栈后第 6 s hmi 仍
+# 未监听，tailscaled 记 connection reset，curl --fail 当场判红 → 误判回滚）。这里对每个端点按
+# HTTPS_READY_INTERVAL_S 重试、五个端点共享一个 HTTPS_READY_TIMEOUT_S 截止点，到点仍非 200 才
+# 判失败——等待只放宽「何时判」，不放宽「判什么」：结果仍必须是 200，超时 fail closed。
+HTTPS_READY_TIMEOUT_S="${HTTPS_READY_TIMEOUT_S:-120}"
+HTTPS_READY_INTERVAL_S="${HTTPS_READY_INTERVAL_S:-1}"
+
 verify_https_endpoints() {
-  local fqdn="$1" name url code
+  local fqdn="$1" name url code started waited
   HTTPS_RESULTS=""
+  HTTPS_READY_S=0
+  [[ "${HTTPS_READY_TIMEOUT_S}" =~ ^[0-9]+$ && "${HTTPS_READY_INTERVAL_S}" =~ ^[0-9]+$ ]] \
+    || { verify_error "HTTPS readiness budget is invalid"; return 1; }
+  started="${SECONDS}"
   while IFS=$'\t' read -r name url; do
-    code="$(curl --fail --silent --show-error --output /dev/null \
-      --write-out '%{http_code}' --max-time 20 "${url}")" || return $?
-    [[ "${code}" == "200" ]] || { verify_error "HTTPS endpoint ${name} failed"; return 1; }
+    while :; do
+      code="$(curl --silent --output /dev/null \
+        --write-out '%{http_code}' --max-time 20 "${url}")" || code="000"
+      [[ "${code}" == "200" ]] && break
+      waited=$(( SECONDS - started ))
+      if (( waited >= HTTPS_READY_TIMEOUT_S )); then
+        verify_error "HTTPS endpoint ${name} failed (http_code ${code} after ${waited}s)"
+        return 1
+      fi
+      sleep "${HTTPS_READY_INTERVAL_S}"
+    done
     HTTPS_RESULTS+="${name}=${code}"$'\n'
   done < <(
     printf 'hmi\thttps://%s/\n' "${fqdn}"
@@ -139,6 +159,7 @@ verify_https_endpoints() {
     printf 'dashboard\thttps://%s:8445/\n' "${fqdn}"
     printf 'collector\thttps://%s:8446/healthz\n' "${fqdn}"
   )
+  HTTPS_READY_S=$(( SECONDS - started ))
 }
 
 run_wss_probes() {
@@ -198,6 +219,7 @@ write_verification_evidence() {
   PROJECT_COUNTS="${PROJECT_COUNTS}" \
   TAILNET_ENTRY_COUNT="${TAILNET_ENTRY_COUNT}" \
   HTTPS_RESULTS="${HTTPS_RESULTS}" \
+  HTTPS_READY_S="${HTTPS_READY_S}" \
   EDGE_PROBE_OUTPUT="${EDGE_PROBE_OUTPUT}" \
   COLLECTOR_PROBE_OUTPUT="${COLLECTOR_PROBE_OUTPUT}" \
   python3 - "${target}" "${sha}" "${timestamp}" <<'PY' || return $?
@@ -227,6 +249,7 @@ payload = {
     "loopback_business_ports": 5,
     "tailnet_entries": int(os.environ["TAILNET_ENTRY_COUNT"]),
     "https_codes": https_codes,
+    "https_ready_s": int(os.environ["HTTPS_READY_S"]),
     "edge_probe": edge_probe,
     "collector_probe": collector_probe,
     "postgres_ready": True,

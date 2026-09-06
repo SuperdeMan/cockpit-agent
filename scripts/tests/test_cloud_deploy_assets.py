@@ -1710,6 +1710,95 @@ def test_https_verifier_sends_five_individual_urls(tmp_path: Path):
     ]
 
 
+def test_https_verifier_waits_for_late_readiness_then_records_200(tmp_path: Path):
+    calls = tmp_path / "curl-calls"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        CALLS="$1"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$2"
+        HTTPS_READY_TIMEOUT_S=30
+        sleep() { printf 'slept\n' >>"$CALLS"; }
+        curl() {
+          local url="${@: -1}" seen
+          printf '%s\n' "$url" >>"$CALLS"
+          seen="$(grep -c -F -x -- "$url" "$CALLS")"
+          case "$url" in
+            *'.ts.net/') [[ "$seen" -ge 3 ]] && printf '200' || { printf '000'; return 7; } ;;
+            *':8443/healthz') [[ "$seen" -ge 2 ]] && printf '200' || printf '502' ;;
+            *) printf '200' ;;
+          esac
+        }
+        verify_https_endpoints "car-agent-dev.example.ts.net"
+        printf '%s' "$HTTPS_RESULTS"
+        printf 'ready_s=%s\n' "$HTTPS_READY_S"
+        """,
+        calls,
+        VERIFY_RELEASE_PATH,
+    )
+
+    assert result.returncode == 0, result.stderr
+    # hmi 前两次 transport 失败（000/rc=7）、edge 第一次 502：都只是「还没就绪」，重试后 200；
+    # 后三个端点一次即过，不多打一发。
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "https://car-agent-dev.example.ts.net/",
+        "slept",
+        "https://car-agent-dev.example.ts.net/",
+        "slept",
+        "https://car-agent-dev.example.ts.net/",
+        "https://car-agent-dev.example.ts.net:8443/healthz",
+        "slept",
+        "https://car-agent-dev.example.ts.net:8443/healthz",
+        "https://car-agent-dev.example.ts.net:8444/api/llm/providers",
+        "https://car-agent-dev.example.ts.net:8445/",
+        "https://car-agent-dev.example.ts.net:8446/healthz",
+    ]
+    lines = result.stdout.splitlines()
+    # ready_s 是真实墙钟秒数（Windows 上每次 spawn 都慢，可能跨过 1 s 边界），只验形状不验值。
+    assert re.fullmatch(r"ready_s=\d+", lines.pop()) is not None
+    assert lines == ["hmi=200", "edge=200", "llm=200", "dashboard=200", "collector=200"]
+
+
+def test_https_verifier_fails_closed_when_an_endpoint_never_becomes_ready(tmp_path: Path):
+    calls = tmp_path / "curl-calls"
+
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        CALLS="$1"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$2"
+        HTTPS_READY_TIMEOUT_S=0
+        sleep() { printf 'slept\n' >>"$CALLS"; }
+        curl() { printf '%s\n' "${@: -1}" >>"$CALLS"; printf '502'; }
+        set +e
+        verify_https_endpoints "car-agent-dev.example.ts.net"
+        rc=$?
+        set -e
+        printf 'rc=%s\n' "$rc"
+        printf '%s' "${HTTPS_RESULTS}"
+        """,
+        calls,
+        VERIFY_RELEASE_PATH,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ["rc=1"]
+    assert "cloud verification: HTTPS endpoint hmi failed (http_code 502 after 0s)" in result.stderr
+    # 截止即失败：不再 sleep、不再往后打下一个端点，也不留下任何 200 记录。
+    assert calls.read_text(encoding="utf-8").splitlines() == [
+        "https://car-agent-dev.example.ts.net/",
+    ]
+
+    text = _required_text(VERIFY_RELEASE_PATH)
+    assert 'HTTPS_READY_TIMEOUT_S="${HTTPS_READY_TIMEOUT_S:-120}"' in text
+    https_body = text.split("verify_https_endpoints()")[1].split("run_wss_probes()")[0]
+    assert "--fail" not in https_body
+    assert '"https_ready_s": int(os.environ["HTTPS_READY_S"])' in text
+
+
 def test_release_probes_have_no_dangerous_utterances():
     payload = _required_text(EDGE_WS_PROBE_PATH).lower()
     for forbidden in ("支付", "下单", "购买", "开门", "解锁", "启动发动机", "退款"):

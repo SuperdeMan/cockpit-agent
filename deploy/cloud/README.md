@@ -261,6 +261,7 @@ SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 
 - 上传中断、构建失败和验收失败的目录都保留为诊断/清理候选，不自动清理。
 - merge、git push、首次真实 `deploy --apply` 和每次 `rollback --apply` 分别取得授权。
 - 普通发布不修改 `.env`、Tailscale Serve、安全组、systemd、数据库 schema 或数据。
+- 切换后的验收对五个 Tailnet HTTPS 端点先做就绪等待：每秒重试、五个端点共享 120 s 截止（`HTTPS_READY_TIMEOUT_S`），到点仍非 200 才判失败并回滚；等待只放宽「何时判」，不放宽「判什么」，等待秒数写入 verification 证据的 `https_ready_s`。来历：2026-09-06 `60a72a2` 切栈后 27 个容器同时冷启，hmi 在第 6 s 仍未监听、curl `--fail` 当场判红，被误判回滚。
 
 ## 备份与清理候选
 
