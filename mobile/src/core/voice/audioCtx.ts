@@ -19,20 +19,36 @@ import type { AudioBuffer, AudioBufferSourceNode, AudioContext } from 'react-nat
 
 import { Resampler } from './resample'
 
+/** 原生把时刻换算成帧用的是**截断**（`dsp::timeToSampleFrame = static_cast<size_t>(time * sr)`）。
+ *  pcmPlayer 的起点是浮点累加，落在 n−ε 就被截成 n−1：这一片早一帧起播、与上一片末样本叠在同一帧。
+ *  吸附到目标帧再加 1/4 帧：截断落在 n，库将来改成四舍五入也仍落在 n。 */
+export function snapToFrame(when: number, sampleRate: number): number {
+  return (Math.round(when * sampleRate) + 0.25) / sampleRate
+}
+
 /** pcmPlayer 消费的 buffer 面（它只用 getChannelData 与 duration） */
 class ShimBuffer {
-  /** 真实时长：按**源**采样率算，与重采样后的长度/ctx 率算出来的一致 */
-  readonly duration: number
   private readonly scratch: Float32Array
+  /** 真正落进原生 buffer 的帧数；-1 = 还没 commit */
+  private committedFrames = -1
 
   constructor(
     private readonly ctx: AudioContext,
-    length: number,
+    private readonly length: number,
     private readonly srcRate: number,
     private readonly resampler: Resampler | null,
   ) {
     this.scratch = new Float32Array(length)
-    this.duration = length / srcRate
+  }
+
+  /** 时长：commit 前按源率算名义值；commit 后用实际提交的目标帧数除以目标率。
+   *  pcmPlayer 拿它排下一片的起点，必须和真实长度一致——重采样器把尾巴留给下一片，首片比名义短 2 帧；
+   *  非整数倍源率（cosyvoice 22050）每片 ±1 帧。按名义排会在边界空/叠一帧（语音批 2026-09-06 单测：22050 下 63/191 个边界不接）。 */
+  get duration(): number {
+    if (this.committedFrames >= 0) {
+      return this.committedFrames / (this.resampler ? this.resampler.dstRate : this.srcRate)
+    }
+    return this.length / this.srcRate
   }
 
   getChannelData(_channel: number): Float32Array {
@@ -42,6 +58,7 @@ class ShimBuffer {
   /** 赋给 source 之前：重采样到 ctx 率 → 建原生 buffer → 拷进去。空片返回 null */
   commit(): AudioBuffer | null {
     const data = this.resampler ? this.resampler.process(this.scratch) : this.scratch
+    this.committedFrames = data.length
     if (!data.length) return null
     const rate = this.resampler ? this.resampler.dstRate : this.srcRate
     const buf = this.ctx.createBuffer(1, data.length, rate)
@@ -54,7 +71,10 @@ class ShimBuffer {
 class ShimSource {
   private empty = false
 
-  constructor(private readonly real: AudioBufferSourceNode) {}
+  constructor(
+    private readonly real: AudioBufferSourceNode,
+    private readonly sampleRate: number,
+  ) {}
 
   set buffer(b: ShimBuffer) {
     const committed = b.commit()
@@ -72,12 +92,14 @@ class ShimSource {
 
   start(when?: number): void {
     if (this.empty) return
-    this.real.start(when)
+    if (when === undefined) this.real.start()
+    else this.real.start(snapToFrame(when, this.sampleRate))
   }
 
   stop(when?: number): void {
     if (this.empty) return
-    this.real.stop(when)
+    if (when === undefined) this.real.stop()
+    else this.real.stop(snapToFrame(when, this.sampleRate))
   }
 
   set onended(cb: (() => void) | null) {
@@ -139,7 +161,7 @@ export function playerCtxOf(ctx: AudioContext): PlayerCtx {
   return {
     createBuffer: (_channels, length, sampleRate) =>
       new ShimBuffer(ctx, length, sampleRate, resamplerFor(sampleRate)),
-    createBufferSource: () => new ShimSource(ctx.createBufferSource()),
+    createBufferSource: () => new ShimSource(ctx.createBufferSource(), ctx.sampleRate),
     get currentTime() {
       return ctx.currentTime
     },
