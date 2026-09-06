@@ -456,5 +456,7 @@ start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `co
 
 **部署后探针（Node，打 a09c73a 网关，931 字整段一次送 `--mode burst`）**：首片 **0.63s**、204.6s 音频 8.4s 送完（24.5× 实时）、`sim_underruns 0`、片间到达 p95 2ms / max 130ms——没有 60s 周期。
 
-**仍开**：① Xiaomi 对话页重放「介绍广州的历史，详细一点」验收（T6 gaps ≈ 空）；
+**Xiaomi 对话页复验（23:19–23:22，同一问题）**：T6 `bubble=paxqp1092l firstAudioMs=12721 totalMs=189522 segments=1`，**4161 片 / 176.2s 音频、underruns 0、gaps []**（修前同页同问：4 个 17–26s 空白），HAL underrun 0。泓舟：「这次是真修好了」。
+
+**仍开**：
 ③ 规划 14s + 合成 9.5s 的首音 29s 是 LLM 侧时延（MiniMax-M3 推理模型），另立卡片。
