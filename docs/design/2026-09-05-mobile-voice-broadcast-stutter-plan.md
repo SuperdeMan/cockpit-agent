@@ -246,3 +246,37 @@ Phase 1 的负载仿真为 0，若真实对话页也为 0 则 C2 关账。
 ③ 声学起播滞后仪器噪声大于效应，弃用；④ 探针的 minimax 音色是 `female-shaonv`（设备当前设置），不是默认 `female-tianmei`。
 
 **未推送**：本会话提交均在本地，push 需泓舟单独授权。
+
+### 6.2 Phase 2「T4′ 段链」（2026-09-06 上午；泓舟「批准，要按照能解决问题的目标推进」）
+
+**已落**：`5cec2ac`（`d237b7d` 探针之上）。改动面：`tts.ts`（`spent` 守卫、`gateUntil` 音频闸门）、`speech.ts`（会话队列 +
+250ms 宽限 + `turnStats`）、探针判据改读 `turnStats`；共享件 `hmi/src/*` 零改动。
+
+**设计要点（与计划 §3 T4′ 的一处刻意加强）**：HMI 段链等前一段 completion 之后才开始轮转（新会话从建连起算，
+首音 ~0.6s）；这里**合成提前、只闸播放**——收尾之后再到的文本立刻另起流式会话建连送文本，音频到了先扣着
+（`held`），前一段 `completion` resolve 开闸按序推进播放器；`done` / 回退在闸门未开时延后。段间 `speaking` 不落，
+`onSpeechEnded` / `onSilent` 只在队列排空 + 宽限后一次（FSM 的 `ttsEnd` 会把 SPEAKING 打到 FOLLOWUP 开麦）。
+`stop()` 保留旧语义：停掉活着的轮同样算收尾（免唤醒靠 `onSilent`/`onSpeechEnded` 收 THINKING）。
+mixed 的「已覆盖」误判由 `spent` 守卫修：finish 之后的 delta 不再进已收尾会话、不累积 `accum`。
+
+**真机读数（同锚 `23:41:40`，minimax `female-shaonv`，真实 `SpeechController` 路径）**：
+
+| 形态 | 修前（§1.5） | 修后 `5cec2ac` |
+|---|---|---|
+| divergent d1 / d2 | 段间空白 **2507 / 2623ms** | 段数 2，前段收尾→后段首片 **7 / 5ms** |
+| mixed d1 / d2 | 段数 **1**（云端段无声） | 段数 **2**，收尾→首片 **1 / 5ms** |
+
+可闻空白 = 读数 + 前段 settle 120ms + 首片 jitter 200ms ≈ **0.3s**（正常句间停顿量级）。同轮 `underruns` 0；
+FastMixer 每段 +1（设备级计数器）。**验收①②③ 的机器半已过**：divergent 空白从 2.5s 降到首音量级以下、mixed 段数 = 2、
+`speaking` 全程一次起落。
+
+**反向验证**：speechChain 9 条 + voiceTts 4 条**先红后绿**（红因分别是 `turnStats`/队列不存在、`spent`/`gateUntil` 不存在）；
+邻近套件 ttsSilent / presenceSignals / handsFree 绿；全量 jest **539/539**（526 → +13）、tsc 0。
+
+**坑**：⑤ `adb reverse` 隔夜掉（坑 82 同形态），dev-client 落 `DevLauncherErrorActivity`，「bundle never ran」的真因不是 Metro
+——脚本前置加了幂等 `adb reverse tcp:8081 tcp:8081`；⑥ 上午的声学底噪比夜里高 6×（0.0153 vs 0.0026），无 AEC 麦包络这条
+读数在白天更不可用。
+
+**仍开**：① **泓舟真人一轮混合意图（车控 + 查询）盲听**「不再停一下 / 不再少半句」——机器读数不替代人耳；
+② T6 C2 真实对话页负载复核（非闸门）；③ T5 空闲挂起 ctx 改为可选电量项；④ §1.4 MiniMax RPM 限流截断另立卡片；
+⑤ 未推送（本地领先 origin/main 5 个提交）。
