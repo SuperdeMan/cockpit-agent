@@ -21,7 +21,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import providers as P  # noqa: E402
-from providers import MiniMaxWsStreamingTTSProvider, _RpmBucket, _minimax_segments  # noqa: E402
+from providers import MiniMaxWsStreamingTTSProvider, _RpmBucket, _minimax_segments, _tts_send_now  # noqa: E402
 
 
 async def _aiter(items):
@@ -48,6 +48,7 @@ class _FakeWS:
         self.sent = []
         self.closed = False
         self._min_sent = min_sent
+        self.delivered_audio = 0  # 已回放给 provider 的音频事件数（用例据此控制 delta 节奏）
 
     async def send_json(self, obj):
         self.sent.append(obj)
@@ -64,6 +65,14 @@ class _FakeWS:
                     if self._continues() >= self._min_sent:
                         break
                     await asyncio.sleep(0)
+            if '"task_finished"' in (m.data or ""):
+                # 真实服务端只在客户端 task_finish 之后才 finished：等泵把最后一段和 task_finish 发完（允许真等最多 2s）
+                for _ in range(400):
+                    if any(isinstance(f, dict) and f.get("event") == "task_finish" for f in self.sent):
+                        break
+                    await asyncio.sleep(0.005)
+            if '"audio"' in (m.data or ""):
+                self.delivered_audio += 1
             return m
         import aiohttp
         return _msg(aiohttp.WSMsgType.CLOSED, None)
@@ -172,6 +181,47 @@ async def test_minimax_segments_long_run_hard_cut_at_soft_break():
 
 
 @pytest.mark.asyncio
+async def test_minimax_segments_soft_while_keeps_comma_splits_until_lead_is_enough():
+    """余量不足时继续按逗号切（别断粮）；余量够了改按句末——控制变量是余量，不是第几段"""
+    lead = {"s": 0.0}
+    deltas = ["深圳今天多云，", "气温二十四度，", "东南风三级，", "午后有阵雨。", "出门带伞，", "注意湿滑。"]
+
+    async def gen():
+        for i, d in enumerate(deltas):
+            if i == 3:
+                lead["s"] = 12.0  # 第四片到之前客户端已有 12s 余量
+            yield d
+
+    out = [s async for s in _minimax_segments(gen(), soft_while=lambda: lead["s"] < 5.0)]
+    assert out == ["深圳今天多云，", "气温二十四度，", "东南风三级，", "午后有阵雨。", "出门带伞，注意湿滑。"]
+
+
+@pytest.mark.asyncio
+async def test_minimax_ws_idle_flush_sends_pending_when_lead_low(monkeypatch):
+    """余量充足时攒着的句子，若上游停了一拍且余量掉到阈值下，泵要自己把攒着的发出去"""
+    clk = _FakeClock()
+    big = "00" * (24000 * 2 * 30)  # 首段之后客户端手里有 30s 音频 ⇒ 第二句会被攒住
+    ws = _FakeWS(_ok_script([(big, True), ("aa", True), ("bb", True)]), min_sent=1)
+    _wire(monkeypatch, [ws])
+    prov = MiniMaxWsStreamingTTSProvider("k", rpm=100, clock=clk.now, sleep=clk.sleep)
+    prov.idle_flush_s = 0.02
+
+    async def deltas():
+        yield "第一句，"
+        for _ in range(500):
+            await asyncio.sleep(0)
+            if ws.delivered_audio >= 1:
+                break
+        yield "第二句。"          # lead≈30s ⇒ 攒住不发
+        clk.t += 40.0             # 播了 40s：余量转负
+        await asyncio.sleep(0.2)  # 上游停一拍 > idle_flush ⇒ 泵应把「第二句。」发出去
+        yield "第三句。"
+
+    _ = [x async for x in prov.stream(deltas())]
+    assert ws.continues == ["第一句，", "第二句。", "第三句。"]
+
+
+@pytest.mark.asyncio
 async def test_minimax_segments_no_soft_break_first_when_disabled():
     deltas = ["深圳，", "今天多云。"]
     out = [s async for s in _minimax_segments(_aiter(deltas), first_soft_break=False)]
@@ -200,6 +250,48 @@ def test_rpm_bucket_zero_means_unlimited():
     b = _RpmBucket(0, clk.now)
     assert all(b.try_take() for _ in range(100))
     assert b.wait_time() == 0
+
+
+# ── 发/攒策略（纯函数）────────────────────────────────────────────────────────
+
+def test_tts_send_now_policy():
+    # 客户端快断粮：立刻发，哪怕预算用光（由 acquire 去等）
+    assert _tts_send_now(2.0, 5, 0)
+    assert _tts_send_now(9.9, 5, 3)
+    # 余量充足 + 预算用光：攒着，等窗口滚过再一次发大段
+    assert not _tts_send_now(30.0, 149, 0)
+    # 余量充足 + 有预算：攒到 merge_chars 才发
+    assert not _tts_send_now(30.0, 149, 10)
+    assert _tts_send_now(30.0, 150, 10)
+    # 攒到 max_chars 无论如何发
+    assert _tts_send_now(30.0, 300, 0)
+
+
+@pytest.mark.asyncio
+async def test_minimax_ws_merges_sentences_when_client_has_lead(monkeypatch):
+    """首段发出后客户端手里有 30s 音频 ⇒ 后面四句攒成一个请求（1218 字 26 句实测：逐句发到第 18 个请求撞预算等 60s、
+    模拟播放出一次 3.5s 空白；合并后请求数远低于预算）"""
+    clk = _FakeClock()
+    big = "00" * (24000 * 2 * 30)  # 30s@24k 的 hex
+    ws = _FakeWS(_ok_script([(big, True), ("aa", True)]), min_sent=1)
+    _wire(monkeypatch, [ws])
+    prov = MiniMaxWsStreamingTTSProvider("k", rpm=100, clock=clk.now, sleep=clk.sleep)
+
+    async def deltas():
+        yield "第一句，"
+        # 等第一段的大块音频送达（lead 变大）再给后面的句子
+        for _ in range(500):
+            await asyncio.sleep(0)
+            if any(isinstance(f, dict) and f.get("event") == "task_continue" for f in ws.sent) and ws.delivered_audio >= 1:
+                break
+        for s in ["后半。", "第二句。", "第三句。", "第四句。"]:
+            yield s
+
+    out = [x async for x in prov.stream(deltas())]
+    assert ws.continues[0] == "第一句，"
+    assert ws.continues[1:] == ["后半。第二句。第三句。第四句。"]  # 四句合成一个请求
+    assert ws.events[-1] == "task_finish"
+    assert len(b"".join(x for x in out if isinstance(x, (bytes, bytearray)))) == 24000 * 2 * 30 + 1
 
 
 # ── 全循环：限速 + 重连续传 ─────────────────────────────────────────────────

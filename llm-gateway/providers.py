@@ -1296,11 +1296,13 @@ async def _sentence_segments(text_deltas, *, max_chars: int = 60, soft_break: bo
         yield tail
 
 
-async def _minimax_segments(text_deltas, *, first_soft_break: bool = True, max_chars: int = 120):
+async def _minimax_segments(text_deltas, *, first_soft_break: bool = True, max_chars: int = 120,
+                            soft_while=None):
     """MiniMax WS 专用分段（语音批 2026-09-06）。每个 `task_continue` 各算一次请求，本账号约 20/分：
     按逗号切一段详细回答 = 几十个请求，一分钟内撞 RPM（真机「播到 1980 年就停」）。
-    所以只让**首段**在第一个软断点（逗号/顿号/冒号）发出去保首音，其后只按句末（。！？；换行）断；
-    超过 max_chars 仍无句末时在最近的软断点硬切。分段只改送出时机，不改朗读文本（单测钉住拼接一字不差）。
+    所以：首段在第一个软断点（逗号/顿号/冒号）发出去保首音；`soft_while()` 为真（客户端音频余量还不足）时
+    继续按软断点切、别让它断粮；余量够了就只按句末（。！？；换行）断；超过 max_chars 仍无句末时在最近的软断点硬切。
+    分段只改送出时机，不改朗读文本（单测钉住拼接一字不差）。
     ⚠ 这不改变听感：同文同音色实测，14 个请求与 4 个请求的内部静音都是 13–14 处 / ~4.8s——那些 300–660ms 停顿
     是 MiniMax 自己在标点处的停顿（并行分段合成），与我们的请求粒度无关。"""
     buf = ""
@@ -1310,7 +1312,8 @@ async def _minimax_segments(text_deltas, *, first_soft_break: bool = True, max_c
             continue
         buf += delta
         while True:
-            idx = _find_sentence_end(buf, soft=first and first_soft_break)
+            soft = (first and first_soft_break) or (bool(soft_while()) if soft_while is not None else False)
+            idx = _find_sentence_end(buf, soft=soft)
             if idx == -1:
                 if len(buf) < max_chars:
                     break
@@ -1359,9 +1362,33 @@ class _RpmBucket:
             return 0.0
         return max(0.0, 60.0 - (now - self._sent[0]))
 
+    def tokens_left(self) -> int:
+        if self.rpm <= 0:
+            return 10 ** 9
+        now = self.clock()
+        self._prune(now)
+        return max(0, self.rpm - len(self._sent))
+
     async def acquire(self, sleep) -> None:
         while not self.try_take():
             await sleep(self.wait_time() + 0.05)
+
+
+def _tts_send_now(lead_s: float, pending_chars: int, tokens_left: int, *,
+                  max_chars: int = 300, low_lead_s: float = 10.0, merge_chars: int = 150) -> bool:
+    """句末到了，攒着的文本要不要**现在**发（MiniMax 单次 task_continue 可到 1 万字，合并不受限）：
+    · 攒到 max_chars 无论如何发；
+    · 客户端音频余量 lead 不足 low_lead_s ⇒ 立刻发（哪怕预算用光也发，由 bucket.acquire 去等——不能让客户端断粮）；
+    · 余量充足 ⇒ 攒到 merge_chars 再发：请求数降到预算内，长回答不会在第 18 个请求后等窗口
+      （2026-09-06 实测 1218 字 26 句：逐句发在第 55s 出现一次 3.5s 空白）。
+    纯函数，单测钉住边界。"""
+    if pending_chars >= max_chars:
+        return True
+    if lead_s < low_lead_s:
+        return True
+    if tokens_left <= 0:
+        return False
+    return pending_chars >= merge_chars
 
 
 class BaseStreamingTTSProvider:
@@ -1739,6 +1766,10 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
         # 首片却慢 250ms（1360 vs 1109ms）——那些 300–600ms 停顿是这个音色的韵律，不是分段造成的。
         # 默认关（与改动前字节级一致），`MINIMAX_TTS_CONTINUOUS_SOUND=1` 可开给人耳 A/B。
         self.continuous_sound = os.getenv("MINIMAX_TTS_CONTINUOUS_SOUND", "0") == "1"
+        # 余量阈值（秒）：<soft_lead 继续按逗号切别断粮；≥merge_lead 攒多句再发省请求；泵空等超过 idle_flush 且余量 <soft_lead 先发攒着的
+        self.soft_lead_s = 5.0
+        self.merge_lead_s = 10.0
+        self.idle_flush_s = 1.0
 
     async def stream(self, text_deltas, *, voice="", sample_rate=0, instruct="", speed=0.0):
         del instruct
@@ -1752,17 +1783,26 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
         # 分段生产者只有一个、不随连接重建（重连时不能把上游 text_deltas 迭代器弄丢）；各连接的泵从队列取
         seg_q: asyncio.Queue = asyncio.Queue()
 
+        # 客户端音频余量估计：已下发音频秒数 − 首片以来的墙钟 ⇒ 决定「按逗号切 / 按句末切 / 攒多句」
+        audio = {"secs": 0.0, "first_at": None}
+
+        def lead_s() -> float:
+            if audio["first_at"] is None:
+                return 0.0
+            return audio["secs"] - (bucket.clock() - audio["first_at"])
+
         async def produce():
             try:
-                async for seg in _minimax_segments(text_deltas, first_soft_break=self.first_soft_break):
+                async for seg in _minimax_segments(text_deltas, first_soft_break=self.first_soft_break,
+                                                   soft_while=lambda: lead_s() < self.soft_lead_s):
                     await seg_q.put(seg)
             finally:
                 await seg_q.put(None)
 
         producer = asyncio.create_task(produce())
-        sent: list[str] = []      # 已成功发出的段（按序）
-        completed = 0             # 收到 is_final 的段数（续传从这里开始）
-        carry: str | None = None  # 取出但尚未发成功的段（断连/取消不丢）
+        sent: list[str] = []      # 已成功发出的请求文本（按序；一个请求可能合并了多句）
+        completed = 0             # 收到 is_final 的请求数（续传从这里开始）
+        pending = ""              # 攒着尚未发出的文本（断连/取消不丢；余量充足时合并多句再发）
         source_done = False
         meta_sent = False
         attempt = 0
@@ -1775,24 +1815,39 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
                     ) as ws:
                         started = asyncio.Event()
 
+                        async def send_pending():
+                            nonlocal pending
+                            text = pending
+                            await bucket.acquire(self.sleep)
+                            await ws.send_json({"event": "task_continue", "text": text})
+                            sent.append(text)
+                            pending = pending[len(text):]  # 等待期间可能又攒进了新句子
+
                         async def pump():
-                            nonlocal carry, source_done
+                            nonlocal pending, source_done
                             await started.wait()
-                            # 续传：上一条连接已发出、但没收到 is_final 的段。它的前半音频可能已经播了，
+                            # 续传：上一条连接已发出、但没收到 is_final 的请求。它的前半音频可能已经播了，
                             # 会带一点复读——比整段丢好（2026-09-06 真机丢的是后半篇）
                             for text in sent[completed:]:
                                 await bucket.acquire(self.sleep)
                                 await ws.send_json({"event": "task_continue", "text": text})
                             while not source_done:
-                                seg = carry if carry is not None else await seg_q.get()
+                                try:
+                                    seg = await asyncio.wait_for(seg_q.get(), timeout=self.idle_flush_s)
+                                except asyncio.TimeoutError:
+                                    # 暂时没新句子：攒着的若还没发而客户端余量已不足，先发出去，别等到断粮
+                                    if pending and lead_s() < self.soft_lead_s:
+                                        await send_pending()
+                                    continue
                                 if seg is None:
                                     source_done = True
                                     break
-                                carry = seg
-                                await bucket.acquire(self.sleep)
-                                await ws.send_json({"event": "task_continue", "text": seg})
-                                sent.append(seg)
-                                carry = None
+                                pending += seg
+                                if _tts_send_now(lead_s(), len(pending), bucket.tokens_left(),
+                                                 low_lead_s=self.merge_lead_s):
+                                    await send_pending()
+                            if pending:
+                                await send_pending()
                             await ws.send_json({"event": "task_finish"})
 
                         pump_task = asyncio.create_task(pump())
@@ -1835,9 +1890,14 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
                                         meta_sent = True
                                         yield meta
                                     try:
-                                        yield bytes.fromhex(audio_hex)
+                                        pcm = bytes.fromhex(audio_hex)
                                     except ValueError:
-                                        pass
+                                        pcm = b""
+                                    if pcm:
+                                        if audio["first_at"] is None:
+                                            audio["first_at"] = bucket.clock()
+                                        audio["secs"] += len(pcm) / 2 / sr
+                                        yield pcm
                                 # is_final 只标一段结束（续传的起点），**不能**据此收尾——任务终点是 task_finished
                                 if bool(m.get("is_final")) or bool(data.get("is_final")):
                                     completed += 1
