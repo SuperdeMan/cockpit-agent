@@ -243,6 +243,81 @@ describe('隐形通道读数（语音批 T1：pcmPlayer 起点重排在 HAL/混�
   })
 })
 
+describe('段链前置（语音批 T4′）：spent 守卫 + 音频闸门', () => {
+  test('finish 之后 append 返回 false、不再发帧、不累积 accum；spent 为真（修 mixed 的「已覆盖」误判）', () => {
+    const s = new TtsSession(CFG)
+    s.start()
+    FakeWs.last!.open()
+    expect(s.spent).toBe(false)
+    expect(s.append('好的，已打开空调。')).toBe(true)
+    expect(s.finish('好的，已打开空调。')).toBe(true)
+    expect(s.spent).toBe(true)
+    expect(s.append('另外明天有雨')).toBe(false)
+    expect(FakeWs.last!.texts).toEqual(['好的，已打开空调。'])
+    // 第二次 finish 不再重新判定（已收尾的会话只会返回 true，由控制器另起一段）
+    expect(s.finish('另外明天有雨')).toBe(true)
+    expect(FakeWs.last!.texts).toEqual(['好的，已打开空调。'])
+  })
+
+  test('stop 之后 spent 为真', () => {
+    const s = new TtsSession(CFG)
+    s.start()
+    s.stop()
+    expect(s.spent).toBe(true)
+  })
+
+  test('gateUntil：闸门未开时二进制片先扣着（计数照常），开闸后按序全部推进播放器；done 延后到开闸后才收尾', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const s = new TtsSession(CFG)
+    s.gateUntil(gate)
+    s.start()
+    FakeWs.last!.open()
+    FakeWs.last!.emit({ type: 'meta', sample_rate: 24000 })
+    FakeWs.last!.emitBinary(new Int16Array([1, 2]))
+    FakeWs.last!.emitBinary(new Int16Array([3, 4]))
+    expect(pushed.length).toBe(0)
+    expect(s.stats.chunks).toBe(2)
+    FakeWs.last!.emit({ type: 'done' })
+    await flush()
+    let settled = false
+    void s.completion.then(() => {
+      settled = true
+    })
+    await flush()
+    expect(settled).toBe(false) // 闸门没开：不许提前收尾，否则控制器会以为这段播完了
+    release()
+    await flush()
+    expect(pushed.map((a) => Array.from(a))).toEqual([[1, 2], [3, 4]])
+    // 播放器真起播（mock 由用例手动触发 onFirstAudio）→ done 已在手 → 收尾
+    const fake = mockPlayers[mockPlayers.length - 1]
+    fake.opts.onFirstAudio()
+    await new Promise((r) => setTimeout(r, 200))
+    expect(settled).toBe(true)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test('闸门未开时 stop：扣着的片全部丢弃、不进播放器，completion 照常 resolve', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const s = new TtsSession(CFG)
+    s.gateUntil(gate)
+    s.start()
+    FakeWs.last!.open()
+    FakeWs.last!.emit({ type: 'meta', sample_rate: 24000 })
+    FakeWs.last!.emitBinary(new Int16Array([1, 2]))
+    s.stop()
+    release()
+    await flush()
+    expect(pushed.length).toBe(0)
+    await expect(s.completion).resolves.toBeUndefined()
+  })
+})
+
 describe('批处理回退', () => {
   test('一个字都没出声就失败 → 整段批处理合成', async () => {
     const s = new TtsSession(CFG)

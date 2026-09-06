@@ -3,6 +3,15 @@
 // 职责分界刻意画在这：**「开没开播报」「用哪个引擎/音色」这类读设置的判定住在这里**，
 // SessionCore 只管「哪一轮该出声」。这样会话状态机继续是零副作用、jest 可回放的纯逻辑，
 // 而设置一改（关掉播报）立刻能停当前这段——两件事各自有唯一的落点。
+//
+// 段链（语音批 T4′，2026-09-06，修 C3「播报卡顿」）：一轮播报不再是「一个 TtsSession」而是**会话队列**。
+// 收尾之后还有话——divergent final（final 与已流内容是两段话）、mixed 形态（本地回执 final 先到、云端段随后）——
+// 就另起一个流式会话，**立刻**建连送文本合成，音频闸在前一段的 completion 上（`TtsSession.gateUntil`），
+// 前一段播完开闸接着播。真机读数（计划 §1.5，包锚 2026-09-04 23:41:40）：旧实现 divergent 走批处理补段
+// 留下 2507/2623ms 空白，mixed 把云端段整段丢掉；HMI 2026-07-18 段链修的正是这组断口。
+// 与 HMI 的差别：HMI 等前一段 completion 之后才开始轮转（新会话从建连起算），这里合成提前、只闸播放。
+// 段间 `speaking` 不落，`onSpeechEnded` / `onSilent` 只在队列排空 + 宽限后触发一次——免唤醒 FSM 的
+// ttsEnd 会把 SPEAKING 打到 FOLLOWUP 开麦，多段中途落一次就是一次误开麦。
 import { PendingSpeech } from '@shared/proactiveSpeech.mjs'
 
 import type { SpeechSink } from '../session/store'
@@ -13,7 +22,11 @@ import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/** 一次性播一段 PCM（divergent 补播、设置页试听）；返回播完的 promise */
+/** 队列排空后到宣布「这轮播完」的宽限：给 mixed 形态里紧跟第一段之后才到的云端段一个接上的机会
+ *  （同 HMI `markTtsMaybeEnd` 的 250ms 复判）。 */
+export const SEGMENT_GRACE_MS = 250
+
+/** 一次性播一段 PCM（设置页试听回退、主动消息批处理）；返回播完的 promise */
 function playPcm(pcm: Int16Array, sampleRate: number): { player: any; done: Promise<void> } {
   const player = newPcmPlayer({ sampleRate })
   player.push(pcm)
@@ -42,9 +55,11 @@ export class SpeechController implements SpeechSink {
    *  不再要求消费方链式覆盖 onSpeechBegan/Ended（那套写法第二个消费方就会把第一个顶掉）。 */
   speaking = false
   private readonly speakingSubs = new Set<(v: boolean) => void>()
-  private session: TtsSession | null = null
+  /** 本轮会话队列：[0] 在播（或即将播），其后各段闸在前一段的 completion 上 */
+  private queue: TtsSession[] = []
   private extra: { player: any } | null = null
   private bubble = ''
+  private emotion = ''
   private beganAt = 0
   /** 本轮已流式出去的文本（FSM 用它判「助手是不是念到了唤醒词」抑制自触发） */
   private spokenText = ''
@@ -52,6 +67,12 @@ export class SpeechController implements SpeechSink {
   lastFirstAudioMs = 0
   /** begin 时按三档裁决的结果；finish 尊重它（同一轮不许 begin 说播、finish 又不播） */
   private allowed = false
+  /** 本轮出过声没有（宽限收尾时决定报不报 onSilent） */
+  private turnSounded = false
+  private graceTimer: ReturnType<typeof setTimeout> | null = null
+  private lastSegEndAt = 0
+  /** 本轮读数（探针 / 验收读它）：segments = 出过声的段数；gapsMs = 前一段收尾 → 后一段首片起播 */
+  turnStats: { segments: number; gapsMs: number[] } = { segments: 0, gapsMs: [] }
   /** 主动消息仲裁要的两个事实（ChatScreen 用 setter 喂，同 setAudioUrl 形态）：
    *  控制器本来就读设置，但它不认识行车档与 S2S 在不在忙 */
   private proactiveCtx = { driving: false, s2sBusy: false }
@@ -133,38 +154,100 @@ export class SpeechController implements SpeechSink {
       this.stop()
       return
     }
-    this.stop() // 上一轮没播完就发了新的：先停，两轮同时出声比少听一句更糟
+    this.resetTurn(bubbleId, emotion)
+    this.openSession(null)
+  }
+
+  /** 上一轮没播完就发了新的：先停，两轮同时出声比少听一句更糟；再把本轮读数归零 */
+  private resetTurn(bubbleId: string, emotion: string): void {
+    this.stop()
     this.bubble = bubbleId
+    this.emotion = emotion
     this.beganAt = Date.now()
     this.lastFirstAudioMs = 0
     this.spokenText = ''
-    const session = new TtsSession(this.cfg(emotion), {
+    this.turnSounded = false
+    this.lastSegEndAt = 0
+    this.turnStats = { segments: 0, gapsMs: [] }
+  }
+
+  private tail(): TtsSession | null {
+    return this.queue.length ? this.queue[this.queue.length - 1] : null
+  }
+
+  /** 起一段流式会话并入队。gate 非空 = 闸在前一段的 completion 上（合成不等、播放等） */
+  private openSession(gate: Promise<void> | null): TtsSession {
+    this.cancelGrace()
+    const session = new TtsSession(this.cfg(this.emotion), {
       onFirstAudio: () => {
-        this.lastFirstAudioMs = Date.now() - this.beganAt
+        if (!this.turnSounded) this.lastFirstAudioMs = Date.now() - this.beganAt
+        this.turnSounded = true
+        this.turnStats.segments += 1
+        if (this.lastSegEndAt) this.turnStats.gapsMs.push(Date.now() - this.lastSegEndAt)
+        const wasSpeaking = this.speaking
         this.setSpeaking(true)
-        this.onSpeechBegan?.(this.spokenText)
+        // 段间不落 ⇒ 多段一轮只报一次「开始」（FSM 的 ttsStart 只认 THINKING 态，重复调是空转）
+        if (!wasSpeaking) this.onSpeechBegan?.(this.spokenText)
       },
-      onEnd: () => {
-        if (this.session === session) this.session = null
-        this.setSpeaking(false)
-        this.onSpeechEnded?.()
-        // 播报自然收尾 ⇒ 攒着的主动消息可以补播了（`stop()` 那条路刻意不挂，见 flushDeferred 头注）
-        void this.flushDeferred()
-      },
-      onSilent: () => {
-        const s = settingsStore.getState().settings
-        this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`)
-      },
+      onEnd: () => this.onSegmentEnd(session),
     })
-    this.session = session
+    if (gate) session.gateUntil(gate)
+    this.queue.push(session)
     session.start()
+    return session
+  }
+
+  private stopping = false
+
+  private onSegmentEnd(session: TtsSession): void {
+    const i = this.queue.indexOf(session)
+    if (i >= 0) this.queue.splice(i, 1)
+    this.lastSegEndAt = Date.now()
+    if (this.stopping) return // stop() 统一收尾，不在这里再挂宽限
+    if (this.queue.length) return // 下一段已闸在本段 completion 上，开闸自动接着播；speaking 不落
+    this.armGrace()
+  }
+
+  private armGrace(): void {
+    this.cancelGrace()
+    this.graceTimer = setTimeout(() => {
+      this.graceTimer = null
+      if (this.queue.length) return
+      this.finishTurn()
+    }, SEGMENT_GRACE_MS)
+  }
+
+  private cancelGrace(): void {
+    if (this.graceTimer !== null) {
+      clearTimeout(this.graceTimer)
+      this.graceTimer = null
+    }
+  }
+
+  /** 这轮播报的唯一收尾出口：speaking 落、没出过声报 onSilent、报 onSpeechEnded、补播 DEFER */
+  private finishTurn(): void {
+    const sounded = this.turnSounded
+    this.setSpeaking(false)
+    if (!sounded) {
+      const s = settingsStore.getState().settings
+      this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`)
+    }
+    this.onSpeechEnded?.()
+    // 播报自然收尾 ⇒ 攒着的主动消息可以补播了
+    void this.flushDeferred()
   }
 
   delta(bubbleId: string, text: string): void {
-    if (!this.session || bubbleId !== this.bubble) return
+    if (!this.allowed || bubbleId !== this.bubble) return
     this.spokenText += text
     this.onSpeechText?.(this.spokenText) // 让 FSM 手里那份参照文本跟着变长（见 onSpeechText 头注）
-    this.session.append(text)
+    const tail = this.tail()
+    if (tail && !tail.spent) {
+      tail.append(text)
+      return
+    }
+    // 收尾之后还有话（mixed：本地回执 final 已到，这是云端段）→ 另起一段，闸在前一段上；前一段已播完则不闸
+    this.openSession(tail ? tail.completion : null).append(text)
   }
 
   finish(bubbleId: string, text: string): void {
@@ -176,28 +259,44 @@ export class SpeechController implements SpeechSink {
     // `spokenText` 更是从头到尾空着 ⇒ FSM 的回声参照仍是空串，防线照旧空转。
     // `text` 就是本轮要播的整句，正是回声判据要比对的那一份。
     this.onSpeechText?.(text)
-    // 会话对不上（begin 时还没开播报 / 已被停）：整段走批处理，不静默丢掉这次播报
-    if (!this.session || bubbleId !== this.bubble) {
+    // 会话对不上（begin 时还没开播报 / 已被停）：整段走批处理，不静默丢掉这次播报（旧行为原样保留）
+    if (bubbleId !== this.bubble) {
       void this.speakBatch(text)
       return
     }
-    const session = this.session
-    const sameSegment = session.finish(text)
-    if (!sameSegment) {
-      // divergent：本会话按已流内容收尾，final 另起一段——**等它播完再播**，
-      // 否则两段音频在同一个 ctx 上叠着放（段链轮转显式不做，见 tts.ts 头注）
-      void session.completion.then(() => this.speakBatch(text))
+    const tail = this.tail()
+    if (!tail) {
+      // 首段已播完、宽限内外云端 final 才到（mixed 慢到）→ 另起流式段，不再走批处理
+      this.openSession(null).finish(text)
+      return
     }
+    if (!tail.spent) {
+      const sameSegment = tail.finish(text)
+      // divergent：本段按已流内容收尾，final 另起一段**立刻合成**、闸在本段上——等本段播完开闸接着播
+      if (!sameSegment) this.openSession(tail.completion).finish(text)
+      return
+    }
+    // tail 已收尾（mixed：本地回执 final 已到，这是云端 final）→ 新段
+    this.openSession(tail.completion).finish(text)
   }
 
   stop(): void {
-    this.setSpeaking(false)
-    const s = this.session
-    this.session = null
+    this.cancelGrace()
+    const hadTurn = this.queue.length > 0
+    const q = this.queue
+    this.queue = []
     this.bubble = ''
-    s?.stop()
+    this.stopping = true
+    try {
+      for (const s of q) s.stop()
+    } finally {
+      this.stopping = false
+    }
     this.extra?.player?.stop()
     this.extra = null
+    // 旧语义原样保留：停掉一个活着的轮也算这轮收尾（没出过声 ⇒ onSilent；免唤醒靠这两条收 THINKING）
+    if (hadTurn) this.finishTurn()
+    else this.setSpeaking(false)
   }
 
   /** 设置页试听：走**流式**这条真实路径。
@@ -205,25 +304,14 @@ export class SpeechController implements SpeechSink {
    *  出声」是个假前提（tts.ts 头注查实了四段链，没有一段会换引擎），设置页据此把
    *  「没响」显式说出来，而不是让用户对着一个安静的手机猜。 */
   async preview(text: string): Promise<boolean> {
-    this.stop()
-    let sounded = false
-    const session = new TtsSession(this.cfg(''), {
-      onFirstAudio: () => {
-        sounded = true
-        this.setSpeaking(true)
-      },
-    })
-    this.session = session
-    this.bubble = '__preview__'
-    session.start()
+    this.resetTurn('__preview__', '')
+    const session = this.openSession(null)
     session.finish(text)
     await session.completion
-    this.setSpeaking(false)
-    if (this.session === session) this.session = null
-    return sounded
+    return this.turnSounded
   }
 
-  /** 批处理播一段（divergent 补播 / 兜底共用） */
+  /** 批处理播一段（主动消息 / 会话对不上时的兜底共用） */
   async speakBatch(text: string): Promise<boolean> {
     // 批处理这条腿不走 `delta()`，整句一次给 ⇒ 参照文本要在这里补一次，
     // 否则「流式不可用 → 回落批处理」的那些轮回声防线又是空转的（同 onSpeechText 头注）

@@ -109,6 +109,15 @@ export class TtsSession {
   private fellBack = false
   private endTimer: ReturnType<typeof setTimeout> | null = null
   private resolve!: () => void
+  /** finish() 已调用：此后 append 一律拒收（返回 false），由控制器另起一段。
+   *  修的是 mixed 形态的「已覆盖」误判：旧实现让收尾后的 delta 继续累进 accum、再 finish 时
+   *  `speechCovered(A+B, B)` 判「已覆盖」⇒ 云端段整段无声（语音批计划 §1.5）。 */
+  private finished = false
+  /** 音频闸门（段链）：未开闸时二进制片先扣着，不进播放器；开闸后按序全推。合成照常进行，只闸播放。 */
+  private gateOpen = true
+  private gate: Promise<void> | null = null
+  private held: Int16Array[] = []
+  private doneWhileGated = false
 
   constructor(
     private readonly cfg: TtsConfig,
@@ -117,6 +126,34 @@ export class TtsSession {
     this.completion = new Promise<void>((res) => {
       this.resolve = res
     })
+  }
+
+  /** 已收尾 / 已停 / 已回退：不再接受文本，控制器据此另起一段 */
+  get spent(): boolean {
+    return this.finished || this.done || this.fellBack || this.disposed
+  }
+
+  /** 段链：把**播放**闸在前一段的 completion 上。合成不等（WS 立刻建连、文本立刻送），音频到了先扣着，
+   *  前一段播完（promise resolve）再按序推进播放器 ⇒ 段间空白只剩前一段收尾 120ms + 首片 jitter。
+   *  要在 start() 之前调。 */
+  gateUntil(p: Promise<void>): void {
+    this.gateOpen = false
+    this.gate = p
+    void p.then(() => this.releaseGate())
+  }
+
+  private releaseGate(): void {
+    if (this.gateOpen) return
+    this.gateOpen = true
+    this.gate = null
+    const held = this.held
+    this.held = []
+    if (this.disposed) return
+    if (this.player) for (const c of held) this.player.push(c)
+    if (this.doneWhileGated) {
+      this.doneWhileGated = false
+      this.finishPlayback()
+    }
   }
 
   start(): void {
@@ -157,7 +194,8 @@ export class TtsSession {
       const buf = ev.data as ArrayBuffer
       this.stats.chunks += 1
       this.stats.bytes += buf.byteLength
-      if (this.player) this.player.push(new Int16Array(buf))
+      if (!this.gateOpen) this.held.push(new Int16Array(buf))
+      else if (this.player) this.player.push(new Int16Array(buf))
       return
     }
     let m: { type?: string; sample_rate?: number }
@@ -177,6 +215,10 @@ export class TtsSession {
       })
     } else if (m.type === 'done') {
       this.done = true
+      if (!this.gateOpen) {
+        this.doneWhileGated = true // 开闸后再收尾，否则控制器会以为这段已经播完
+        return
+      }
       this.finishPlayback()
     } else if (m.type === 'unsupported' || m.type === 'error') {
       if (!this.done && !this.disposed) void this.fallback()
@@ -210,15 +252,18 @@ export class TtsSession {
     }
   }
 
-  /** speech_delta 逐字喂入 */
-  append(delta: string): void {
-    if (this.disposed) return
+  /** speech_delta 逐字喂入。返回 false = 本会话已收尾/已停，这段文本没进去（控制器另起一段） */
+  append(delta: string): boolean {
+    if (this.disposed || this.finished) return false
     this.sendText(delta)
+    return true
   }
 
-  /** 收尾。返回 false = divergent（final 与已流式内容是两段话，调用方另起一段） */
+  /** 收尾。返回 false = divergent（final 与已流式内容是两段话，调用方另起一段）。
+   *  已收尾的会话再 finish 一律返回 true 且不做事——是否另起一段由控制器看 `spent` 决定。 */
   finish(finalText: string): boolean {
-    if (this.disposed) return true
+    if (this.disposed || this.finished) return true
+    this.finished = true
     const full = finalText || ''
     let tail = ''
     let divergent = false
@@ -255,6 +300,9 @@ export class TtsSession {
     if (this.disposed || this.fellBack) return
     this.fellBack = true
     this.closeWs()
+    // 闸门未开（段链里排在后面的段）：等前一段播完再决定怎么补，否则批处理音频会叠在前一段上
+    if (!this.gateOpen && this.gate) await this.gate
+    if (this.disposed) return
     // 已经出过声：不整段重合成（复读比少一句尾巴更糟），当正常收尾
     if (this.audioStarted) {
       this.settle()
@@ -295,6 +343,10 @@ export class TtsSession {
   /** barge-in / 发新消息：立刻停播 */
   stop(): void {
     this.disposed = true
+    this.held = [] // 闸门里扣着的片一并丢弃；gate 的 then 回调看到 disposed 会直接返回
+    this.gateOpen = true
+    this.gate = null
+    this.doneWhileGated = false
     if (this.endTimer !== null) {
       clearTimeout(this.endTimer)
       this.endTimer = null

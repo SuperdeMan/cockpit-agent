@@ -795,31 +795,29 @@ export default function VoiceSpikeScreen() {
         sc.finish(id, B)
         marks.push('finalB(divergent)@' + (Date.now() - t0))
       }
-      // 等两段都播完（speaking 至少落两次且当前不在播）或 45s 超时
+      // 等这轮播完：段链语义下 speaking **段间不落**，只在最后一段之后落一次 ⇒ 判据是「落过一次且当前不在播」；45s 超时
       const deadline = Date.now() + 45000
       while (Date.now() < deadline) {
         await sleep(200)
-        const falls = trans.filter((x) => !x.v).length
-        if (falls >= 2 && !sc.speaking) break
-        // 只有一段且已落下超过 8s ⇒ 第二段不会再来了（丢段），别等满 45s
-        const lastFall = [...trans].reverse().find((x) => !x.v)
-        if (falls === 1 && lastFall && Date.now() - t0 - lastFall.t > 8000 && !sc.speaking) break
+        if (trans.some((x) => !x.v) && !sc.speaking) break
       }
       unsub()
-      const firstFall = trans.find((x) => !x.v)
-      const secondRise = firstFall ? trans.find((x) => x.v && x.t > firstFall.t) : undefined
-      const gapMs = firstFall && secondRise ? secondRise.t - firstFall.t : -1
-      const segments = trans.filter((x) => x.v).length
+      // 段数与段间从控制器的 turnStats 读（segments=出过声的段数；gapsMs=前段收尾 → 后段首片起播）
+      const st = sc.turnStats
+      const segments = st.segments
+      const gaps = st.gapsMs
+      const maxGapMs = gaps.length ? Math.max(...gaps) : -1
       const seq = trans.map((x) => (x.v ? '▲' : '▽') + x.t).join(' ')
-      log('divergent: variant=' + v + ' 段数=' + segments + ' 段间空白=' + gapMs + 'ms（▽→▲，另加批处理首片 200ms jitter）' +
-        ' 轨迹=' + seq + ' marks=' + marks.join(','))
-      log(v === 'mixed' && segments < 2
-        ? 'divergent: ✗ mixed 形态只播了一段 ⇒ 云端段 B 整段无声（HMI 断口 1 在 mobile 复现）'
-        : gapMs > 800
-          ? 'divergent: ✗ 段间空白 ' + gapMs + 'ms ⇒ 听感就是「播到一半停一下」'
-          : 'divergent: ✓ 两段接得上')
+      log('divergent: variant=' + v + ' 段数=' + segments + ' 段间(前段收尾→后段首片)=' +
+        (gaps.length ? gaps.join('/') + 'ms' : '无') + '（可闻空白≈再加 320ms：前段 settle 120 + 首片 jitter 200）' +
+        ' speaking 轨迹=' + seq + ' marks=' + marks.join(','))
+      log(segments < 2
+        ? 'divergent: ✗ 只播了一段 ⇒ ' + (v === 'mixed' ? '云端段 B 整段无声（HMI 断口 1）' : 'divergent 的 B 没播')
+        : maxGapMs > 700
+          ? 'divergent: ✗ 段间 ' + maxGapMs + 'ms ⇒ 仍是「播到一半停一下」'
+          : 'divergent: ✓ 两段接上，段间 ' + maxGapMs + 'ms')
       log('divergent-json ' + JSON.stringify({
-        variant: v, segments, gapMs, trans, marks, provider: settingsStore.getState().settings.ttsProvider,
+        variant: v, segments, gapsMs: gaps, maxGapMs, trans, marks, provider: settingsStore.getState().settings.ttsProvider,
       }))
     } catch (e: any) {
       log('divergent: 抛错 = ' + (e?.message ?? e))
