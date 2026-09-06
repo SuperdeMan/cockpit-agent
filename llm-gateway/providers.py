@@ -1296,6 +1296,74 @@ async def _sentence_segments(text_deltas, *, max_chars: int = 60, soft_break: bo
         yield tail
 
 
+async def _minimax_segments(text_deltas, *, first_soft_break: bool = True, max_chars: int = 120):
+    """MiniMax WS 专用分段（语音批 2026-09-06）。每个 `task_continue` 各算一次请求，本账号约 20/分：
+    按逗号切一段详细回答 = 几十个请求，一分钟内撞 RPM（真机「播到 1980 年就停」）。
+    所以只让**首段**在第一个软断点（逗号/顿号/冒号）发出去保首音，其后只按句末（。！？；换行）断；
+    超过 max_chars 仍无句末时在最近的软断点硬切。分段只改送出时机，不改朗读文本（单测钉住拼接一字不差）。
+    ⚠ 这不改变听感：同文同音色实测，14 个请求与 4 个请求的内部静音都是 13–14 处 / ~4.8s——那些 300–660ms 停顿
+    是 MiniMax 自己在标点处的停顿（并行分段合成），与我们的请求粒度无关。"""
+    buf = ""
+    first = True
+    async for delta in text_deltas:
+        if not delta:
+            continue
+        buf += delta
+        while True:
+            idx = _find_sentence_end(buf, soft=first and first_soft_break)
+            if idx == -1:
+                if len(buf) < max_chars:
+                    break
+                cut = max((buf.rfind(ch, 0, max_chars) for ch in _SOFT_BREAK), default=-1)
+                idx = cut if cut >= max_chars // 2 else max_chars - 1
+            seg, buf = _strip_md_tts(buf[:idx + 1].strip()), buf[idx + 1:]
+            if seg:
+                yield seg
+                first = False
+    tail = _strip_md_tts(buf.strip())
+    if tail:
+        yield tail
+
+
+class _RpmBucket:
+    """60s 滑窗请求预算。MiniMax T2A 每个 task_continue 各算一次请求，本账号档位实测约 20/分
+    （两趟各 9 段贴着发即 1002）。rpm<=0 = 不限。clock 可注入（单测用假钟）。"""
+
+    def __init__(self, rpm: int, clock=None):
+        if clock is None:
+            import time
+            clock = time.monotonic
+        self.rpm = int(rpm or 0)
+        self.clock = clock
+        self._sent: list[float] = []
+
+    def _prune(self, now: float) -> None:
+        self._sent = [t for t in self._sent if now - t < 60.0]
+
+    def try_take(self) -> bool:
+        if self.rpm <= 0:
+            return True
+        now = self.clock()
+        self._prune(now)
+        if len(self._sent) < self.rpm:
+            self._sent.append(now)
+            return True
+        return False
+
+    def wait_time(self) -> float:
+        if self.rpm <= 0:
+            return 0.0
+        now = self.clock()
+        self._prune(now)
+        if len(self._sent) < self.rpm:
+            return 0.0
+        return max(0.0, 60.0 - (now - self._sent[0]))
+
+    async def acquire(self, sleep) -> None:
+        while not self.try_take():
+            await sleep(self.wait_time() + 0.05)
+
+
 class BaseStreamingTTSProvider:
     async def stream(
         self,
@@ -1636,21 +1704,41 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
       · ⚠ `is_final` 是**段级**标志不是任务级：实测首段 406ms 就 IS_FINAL，其后还有
         200+ 条音频帧。拿它当收尾判据会把话截断一大半（首轮探针就这么读错过一次）
       · ⚠ **逐字发 task_continue 是错误用法**：音频总长翻倍（重复合成 7.57s vs 3.98s）
-        且撞 `rate limit exceeded(RPM)`。所以这里仍走 `_sentence_segments`，
-        只是开 soft_break——长连接下细分段不额外建连，首音因此能贴着第一个逗号
+        且撞 `rate limit exceeded(RPM)`。
+      · ⚠ **逐分句发也是错的**（语音批 2026-09-06 真机）：每个 task_continue 各算一次请求——
+        几十个分句一分钟内撞 RPM，网关回 error、客户端把缓冲放完就停（「播到 1980 年设立深圳经济特区就停了」）。
+        （请求粒度**不**影响听感：内部标点停顿是 MiniMax 自己的，同文 4 请求与 14 请求静音量相同。）
+        所以：分段走 `_minimax_segments`（首段贴第一个软断点保首音，其后按句末）；
+        发送经 `_RpmBucket` 60s 滑窗限速（`MINIMAX_TTS_RPM`，默认 18）；
+        `task_failed` 1002/1039 时等窗口滚过再**重连续传**未收到 is_final 的段（文档：限流后须新建连接），
+        最多 `MINIMAX_TTS_RECONNECT_MAX`（默认 3）次；其他失败照旧抛出。
 
     与 MiniMax LLM 同一把 MINIMAX_API_KEY（Bearer）。
     docs: https://platform.minimaxi.com/docs/api-reference/speech-t2a-websocket.md
     """
 
     def __init__(self, api_key: str, ws_url: str = "", model: str = "speech-2.8-turbo",
-                 voice: str = "female-tianmei", sample_rate: int = 24000):
+                 voice: str = "female-tianmei", sample_rate: int = 24000,
+                 rpm: int | None = None, clock=None, sleep=None,
+                 reconnect_max: int | None = None, first_soft_break: bool | None = None):
         self.api_key = api_key
         self.ws_url = ws_url or os.getenv(
             "MINIMAX_T2A_WS_URL", "wss://api.minimaxi.com/ws/v1/t2a_v2")
         self.model = model
         self.voice = voice
         self.sample_rate = sample_rate
+        self.rpm = int(os.getenv("MINIMAX_TTS_RPM", "18") or 18) if rpm is None else int(rpm)
+        self.clock = clock
+        self.sleep = sleep or asyncio.sleep
+        self.reconnect_max = (int(os.getenv("MINIMAX_TTS_RECONNECT_MAX", "3") or 3)
+                              if reconnect_max is None else int(reconnect_max))
+        self.first_soft_break = ((os.getenv("MINIMAX_TTS_FIRST_SOFT_BREAK", "1") != "0")
+                                 if first_soft_break is None else bool(first_soft_break))
+        # task_start 顶层布尔（仅 speech-2.8-hd/turbo）：true = 模型侧不切分文本、连续推理；false（MiniMax 默认）=
+        # 按标点切分并发推理。2026-09-06 同文实测：开了之后标点处静音 13 处 4.16s vs 关 4.88s（只少 15%），
+        # 首片却慢 250ms（1360 vs 1109ms）——那些 300–600ms 停顿是这个音色的韵律，不是分段造成的。
+        # 默认关（与改动前字节级一致），`MINIMAX_TTS_CONTINUOUS_SOUND=1` 可开给人耳 A/B。
+        self.continuous_sound = os.getenv("MINIMAX_TTS_CONTINUOUS_SOUND", "0") == "1"
 
     async def stream(self, text_deltas, *, voice="", sample_rate=0, instruct="", speed=0.0):
         del instruct
@@ -1659,66 +1747,120 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
         sr = sample_rate or self.sample_rate
         vs = {"voice_id": voice, "speed": float(speed) if speed and speed > 0 else 1.0,
               "vol": 1.0, "pitch": 0}
-        async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(
-                self.ws_url, headers={"Authorization": f"Bearer {self.api_key}"}, heartbeat=20.0,
-            ) as ws:
-                started = asyncio.Event()
+        meta = {"type": "meta", "sample_rate": sr, "format": "pcm"}
+        bucket = _RpmBucket(self.rpm, self.clock)
+        # 分段生产者只有一个、不随连接重建（重连时不能把上游 text_deltas 迭代器弄丢）；各连接的泵从队列取
+        seg_q: asyncio.Queue = asyncio.Queue()
 
-                async def pump():
-                    try:
-                        await started.wait()
-                        # soft_break：长连接下按逗号/顿号也断，首音贴着第一个断点
-                        async for seg in _sentence_segments(text_deltas, soft_break=True):
-                            await ws.send_json({"event": "task_continue", "text": seg})
-                        await ws.send_json({"event": "task_finish"})
-                    except Exception:
-                        pass  # 取消/断连时静默；WS 关闭即终止上游任务
+        async def produce():
+            try:
+                async for seg in _minimax_segments(text_deltas, first_soft_break=self.first_soft_break):
+                    await seg_q.put(seg)
+            finally:
+                await seg_q.put(None)
 
-                pump_task = asyncio.create_task(pump())
-                meta_sent = False
-                try:
-                    while True:
+        producer = asyncio.create_task(produce())
+        sent: list[str] = []      # 已成功发出的段（按序）
+        completed = 0             # 收到 is_final 的段数（续传从这里开始）
+        carry: str | None = None  # 取出但尚未发成功的段（断连/取消不丢）
+        source_done = False
+        meta_sent = False
+        attempt = 0
+        try:
+            while True:
+                need_reconnect = False
+                async with aiohttp.ClientSession() as session:
+                    async with session.ws_connect(
+                        self.ws_url, headers={"Authorization": f"Bearer {self.api_key}"}, heartbeat=20.0,
+                    ) as ws:
+                        started = asyncio.Event()
+
+                        async def pump():
+                            nonlocal carry, source_done
+                            await started.wait()
+                            # 续传：上一条连接已发出、但没收到 is_final 的段。它的前半音频可能已经播了，
+                            # 会带一点复读——比整段丢好（2026-09-06 真机丢的是后半篇）
+                            for text in sent[completed:]:
+                                await bucket.acquire(self.sleep)
+                                await ws.send_json({"event": "task_continue", "text": text})
+                            while not source_done:
+                                seg = carry if carry is not None else await seg_q.get()
+                                if seg is None:
+                                    source_done = True
+                                    break
+                                carry = seg
+                                await bucket.acquire(self.sleep)
+                                await ws.send_json({"event": "task_continue", "text": seg})
+                                sent.append(seg)
+                                carry = None
+                            await ws.send_json({"event": "task_finish"})
+
+                        pump_task = asyncio.create_task(pump())
                         try:
-                            msg = await ws.receive(timeout=30.0)
-                        except asyncio.TimeoutError:
-                            break
-                        if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR,
-                                        aiohttp.WSMsgType.CLOSING):
-                            break
-                        if msg.type != aiohttp.WSMsgType.TEXT:
-                            continue
-                        m = json.loads(msg.data)
-                        evt = m.get("event") or ""
-                        if evt == "connected_success":
-                            await ws.send_json({
-                                "event": "task_start", "model": self.model,
-                                "voice_setting": vs,
-                                "audio_setting": {"format": "pcm", "sample_rate": sr, "channel": 1},
-                            })
-                            continue
-                        if evt == "task_started":
-                            started.set()
-                            continue
-                        if evt == "task_failed":
-                            raise RuntimeError(
-                                str(m.get("base_resp") or "minimax task_failed")[:200])
-                        audio_hex = (m.get("data") or {}).get("audio") or ""
-                        if audio_hex:
-                            if not meta_sent:
-                                meta_sent = True
-                                yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+                            while True:
+                                try:
+                                    msg = await ws.receive(timeout=30.0)
+                                except asyncio.TimeoutError:
+                                    break
+                                if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR,
+                                                aiohttp.WSMsgType.CLOSING):
+                                    break
+                                if msg.type != aiohttp.WSMsgType.TEXT:
+                                    continue
+                                m = json.loads(msg.data)
+                                evt = m.get("event") or ""
+                                if evt == "connected_success":
+                                    await ws.send_json({
+                                        "event": "task_start", "model": self.model,
+                                        "voice_setting": vs,
+                                        "audio_setting": {"format": "pcm", "sample_rate": sr, "channel": 1},
+                                        **({"continuous_sound": True} if self.continuous_sound else {}),
+                                    })
+                                    continue
+                                if evt == "task_started":
+                                    started.set()
+                                    continue
+                                if evt == "task_failed":
+                                    resp = m.get("base_resp") or {}
+                                    code = int(resp.get("status_code") or 0) if isinstance(resp, dict) else 0
+                                    # 1002 = RPM 限流、1039 = TPM 限流：等窗口滚过重连续传，不把整条流报错
+                                    if code in (1002, 1039) and attempt < self.reconnect_max:
+                                        need_reconnect = True
+                                        break
+                                    raise RuntimeError(str(resp or "minimax task_failed")[:200])
+                                data = m.get("data") or {}
+                                audio_hex = data.get("audio") or ""
+                                if audio_hex:
+                                    if not meta_sent:
+                                        meta_sent = True
+                                        yield meta
+                                    try:
+                                        yield bytes.fromhex(audio_hex)
+                                    except ValueError:
+                                        pass
+                                # is_final 只标一段结束（续传的起点），**不能**据此收尾——任务终点是 task_finished
+                                if bool(m.get("is_final")) or bool(data.get("is_final")):
+                                    completed += 1
+                                if evt == "task_finished":
+                                    break
+                        finally:
+                            pump_task.cancel()
                             try:
-                                yield bytes.fromhex(audio_hex)
-                            except ValueError:
+                                await pump_task
+                            except (asyncio.CancelledError, Exception):
                                 pass
-                        # is_final 只标一段结束，**不能**据此收尾——整个任务的终点是 task_finished
-                        if evt == "task_finished":
-                            break
-                finally:
-                    pump_task.cancel()
+                if not need_reconnect:
+                    break
+                attempt += 1
+                await self.sleep(bucket.wait_time() + 1.0)
+        finally:
+            producer.cancel()
+            try:
+                await producer
+            except (asyncio.CancelledError, Exception):
+                pass
         if not meta_sent:
-            yield {"type": "meta", "sample_rate": sr, "format": "pcm"}
+            yield meta
 
 
 class MiniMaxStreamingTTSProvider(BaseStreamingTTSProvider):
