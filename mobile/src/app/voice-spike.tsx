@@ -306,6 +306,7 @@ export default function VoiceSpikeScreen() {
       await new Promise((r) => setTimeout(r, 1200))
       player.stop()
       log('player: stop() 完成（听到 15 段上行音阶 = 共享 pcmPlayer 零改动可用）')
+      log('player-json ' + JSON.stringify({ underruns: player.underruns }))
     } catch (e: any) {
       log('player: 抛错 = ' + (e?.message ?? e))
     } finally {
@@ -826,11 +827,39 @@ export default function VoiceSpikeScreen() {
     }
   }, [log])
 
+  // ── 「嗡嗡」定位对照（2026-09-06；泓舟：WAV 在电脑上干净、手机上有嗡嗡 ⇒ 设备侧引入）──
+  //  同一段文本走**批处理**：/api/tts 整段 WAV → 一个 buffer 一次 push ⇒ 没有分片边界、没有流式调度；
+  //  与 `stutter`（分片流式）对照：若 batch 也嗡嗡 ⇒ 在重采样/输出路径；若只有 stutter 嗡嗡 ⇒ 在分片调度。
+  //  再与 `player`（纯正弦、同路径）对照：正弦底下若有嗡嗡 ⇒ 输出路径本身。
+  const probeBatch = useCallback(async () => {
+    setBusy('batch')
+    try {
+      const cfg = await loadServerConfig()
+      if (!cfg?.audioUrl) {
+        log('batch: 未配置服务器')
+        return
+      }
+      const SAY =
+        '播报探针开始。今天深圳多云转阴，气温二十四到三十度，东南风三级，午后有阵雨的可能，出门建议带伞，开车注意路面湿滑。'
+      const sc = speechController(cfg.audioUrl)
+      const t0 = Date.now()
+      const ok = await sc.speakBatch(SAY)
+      log('batch: ' + (ok ? '播完' : '失败/无音频') + ' ' + (Date.now() - t0) + 'ms（整段一个 buffer，无分片边界）')
+      log('batch-json ' + JSON.stringify({ ok, ms: Date.now() - t0 }))
+    } catch (e: any) {
+      log('batch: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      setBusy('')
+    }
+  }, [log])
+
   useEffect(() => {
     if (busyRef.current) return
     if (params.auto === 'stutter') void probeStutter(params.load)
     else if (params.auto === 'divergent') void probeDivergent(params.variant)
-  }, [params.auto, params.n, params.load, params.variant, probeStutter, probeDivergent])
+    else if (params.auto === 'batch') void probeBatch()
+    else if (params.auto === 'player') void probePlayer()
+  }, [params.auto, params.n, params.load, params.variant, probeStutter, probeDivergent, probeBatch, probePlayer])
 
   // ── barge-in 物理面（M2-3 验收「播报中按 PTT 即停」的机器版）──
   //  播报中 stop() → 麦克风能量应当回到底噪。判据不是「代码调了 stop」而是
