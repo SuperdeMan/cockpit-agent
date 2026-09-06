@@ -275,6 +275,39 @@ describe('边界', () => {
     expect(sc.turnStats.segments).toBe(0)
   })
 
+  test('每轮收尾产出一条读数（T6 观测口）：段数 / 段间 / 各段 chunks·underruns / 首音 / 总时长，订阅方与有界日志都拿得到', async () => {
+    const sc = new SpeechController('https://h.ts.net:8444')
+    const reports: any[] = []
+    const off = sc.subscribeTurnReports((r) => reports.push(r))
+    sc.begin('b1', '', true)
+    for (const ch of A) sc.delta('b1', ch)
+    sc.finish('b1', B) // divergent → 两段
+    const [s1, s2] = mockSessions
+    s1.stats.chunks = 120
+    s1.stats.underruns = 1
+    s1.stats.gaps = [{ atSec: 3.2, gapMs: 410 }]
+    s1.firstAudio()
+    s1.end()
+    await flush()
+    s2.stats.chunks = 300
+    s2.firstAudio()
+    s2.end()
+    await flush()
+    jest.advanceTimersByTime(SEGMENT_GRACE_MS + 10)
+    expect(reports.length).toBe(1)
+    const r = reports[0]
+    expect(r.bubbleId).toBe('b1')
+    expect(r.segments).toBe(2)
+    expect(r.sounded).toBe(true)
+    expect(r.sessions.map((s: any) => s.chunks)).toEqual([120, 300])
+    expect(r.sessions[0].underruns).toBe(1)
+    expect(r.sessions[0].gaps).toEqual([{ atSec: 3.2, gapMs: 410 }])
+    expect(r.sessions[1].divergent).toBe(true) // 第二段是 divergent 另起的
+    expect(typeof r.totalMs).toBe('number')
+    expect(sc.turnReports().length).toBe(1)
+    off()
+  })
+
   test('preview 仍是单会话：出过声返回 true', async () => {
     const sc = new SpeechController('https://h.ts.net:8444')
     const p = sc.preview('试听一句')

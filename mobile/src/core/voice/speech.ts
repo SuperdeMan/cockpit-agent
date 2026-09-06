@@ -26,6 +26,32 @@ import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
  *  （同 HMI `markTtsMaybeEnd` 的 250ms 复判）。 */
 export const SEGMENT_GRACE_MS = 250
 
+/** 一轮播报的读数（T6 观测口）：探针/取证读它；生产路径只记录不判断。__DEV__ 下另打一行 `[speech-turn]` 到 console（logcat 可抓） */
+export interface TurnReport {
+  at: number
+  bubbleId: string
+  provider: string
+  sounded: boolean
+  /** 出过声的段数 */
+  segments: number
+  /** 前一段收尾 → 后一段首片起播（ms） */
+  gapsMs: number[]
+  firstAudioMs: number
+  totalMs: number
+  sessions: Array<{
+    divergent: boolean
+    startedAtMs: number
+    firstAudioAtMs: number
+    endedAtMs: number
+    chunks: number
+    bytes: number
+    underruns: number
+    gaps: { atSec: number; gapMs: number }[]
+  }>
+}
+
+const TURN_LOG_CAP = 20
+
 /** 一次性播一段 PCM（设置页试听回退、主动消息批处理）；返回播完的 promise */
 function playPcm(pcm: Int16Array, sampleRate: number): { player: any; done: Promise<void> } {
   const player = newPcmPlayer({ sampleRate })
@@ -73,6 +99,16 @@ export class SpeechController implements SpeechSink {
   private lastSegEndAt = 0
   /** 本轮读数（探针 / 验收读它）：segments = 出过声的段数；gapsMs = 前一段收尾 → 后一段首片起播 */
   turnStats: { segments: number; gapsMs: number[] } = { segments: 0, gapsMs: [] }
+  /** 本轮各段会话的元数据（收尾时汇成 TurnReport） */
+  private turnSessions: Array<{
+    session: TtsSession
+    divergent: boolean
+    startedAt: number
+    firstAudioAt: number
+    endedAt: number
+  }> = []
+  private readonly turnLog: TurnReport[] = []
+  private readonly turnSubs = new Set<(r: TurnReport) => void>()
   /** 主动消息仲裁要的两个事实（ChatScreen 用 setter 喂，同 setAudioUrl 形态）：
    *  控制器本来就读设置，但它不认识行车档与 S2S 在不在忙 */
   private proactiveCtx = { driving: false, s2sBusy: false }
@@ -132,6 +168,56 @@ export class SpeechController implements SpeechSink {
     }
   }
 
+  /** 订阅每轮收尾的读数；返回退订函数 */
+  subscribeTurnReports(fn: (r: TurnReport) => void): () => void {
+    this.turnSubs.add(fn)
+    return () => {
+      this.turnSubs.delete(fn)
+    }
+  }
+
+  /** 最近 TURN_LOG_CAP 轮的读数（最新在后） */
+  turnReports(): readonly TurnReport[] {
+    return this.turnLog
+  }
+
+  private emitTurnReport(): void {
+    const now = Date.now()
+    const report: TurnReport = {
+      at: now,
+      bubbleId: this.bubble,
+      provider: settingsStore.getState().settings.ttsProvider,
+      sounded: this.turnSounded,
+      segments: this.turnStats.segments,
+      gapsMs: [...this.turnStats.gapsMs],
+      firstAudioMs: this.lastFirstAudioMs,
+      totalMs: this.beganAt ? now - this.beganAt : 0,
+      sessions: this.turnSessions.map((m) => ({
+        divergent: m.divergent,
+        startedAtMs: m.startedAt - this.beganAt,
+        firstAudioAtMs: m.firstAudioAt ? m.firstAudioAt - this.beganAt : -1,
+        endedAtMs: m.endedAt ? m.endedAt - this.beganAt : -1,
+        chunks: m.session.stats.chunks,
+        bytes: m.session.stats.bytes,
+        underruns: m.session.stats.underruns,
+        gaps: [...m.session.stats.gaps],
+      })),
+    }
+    this.turnLog.push(report)
+    if (this.turnLog.length > TURN_LOG_CAP) this.turnLog.shift()
+    for (const fn of this.turnSubs) {
+      try {
+        fn(report)
+      } catch {
+        /* 一个观察者抛异常不该影响别人，更不该影响收尾 */
+      }
+    }
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      // eslint-disable-next-line no-console
+      console.log('[speech-turn]', JSON.stringify(report))
+    }
+  }
+
   private setSpeaking(v: boolean): void {
     if (this.speaking === v) return
     this.speaking = v
@@ -169,17 +255,20 @@ export class SpeechController implements SpeechSink {
     this.turnSounded = false
     this.lastSegEndAt = 0
     this.turnStats = { segments: 0, gapsMs: [] }
+    this.turnSessions = []
   }
 
   private tail(): TtsSession | null {
     return this.queue.length ? this.queue[this.queue.length - 1] : null
   }
 
-  /** 起一段流式会话并入队。gate 非空 = 闸在前一段的 completion 上（合成不等、播放等） */
-  private openSession(gate: Promise<void> | null): TtsSession {
+  /** 起一段流式会话并入队。gate 非空 = 闸在前一段的 completion 上（合成不等、播放等）；divergent = 因 final 与已流内容是两段话而另起 */
+  private openSession(gate: Promise<void> | null, divergent = false): TtsSession {
     this.cancelGrace()
+    const rec = { session: null as unknown as TtsSession, divergent, startedAt: Date.now(), firstAudioAt: 0, endedAt: 0 }
     const session = new TtsSession(this.cfg(this.emotion), {
       onFirstAudio: () => {
+        rec.firstAudioAt = Date.now()
         if (!this.turnSounded) this.lastFirstAudioMs = Date.now() - this.beganAt
         this.turnSounded = true
         this.turnStats.segments += 1
@@ -189,8 +278,13 @@ export class SpeechController implements SpeechSink {
         // 段间不落 ⇒ 多段一轮只报一次「开始」（FSM 的 ttsStart 只认 THINKING 态，重复调是空转）
         if (!wasSpeaking) this.onSpeechBegan?.(this.spokenText)
       },
-      onEnd: () => this.onSegmentEnd(session),
+      onEnd: () => {
+        rec.endedAt = Date.now()
+        this.onSegmentEnd(session)
+      },
     })
+    rec.session = session
+    this.turnSessions.push(rec)
     if (gate) session.gateUntil(gate)
     this.queue.push(session)
     session.start()
@@ -224,8 +318,9 @@ export class SpeechController implements SpeechSink {
     }
   }
 
-  /** 这轮播报的唯一收尾出口：speaking 落、没出过声报 onSilent、报 onSpeechEnded、补播 DEFER */
+  /** 这轮播报的唯一收尾出口：先出读数，再 speaking 落、没出过声报 onSilent、报 onSpeechEnded、补播 DEFER */
   private finishTurn(): void {
+    if (this.turnSessions.length) this.emitTurnReport()
     const sounded = this.turnSounded
     this.setSpeaking(false)
     if (!sounded) {
@@ -273,7 +368,7 @@ export class SpeechController implements SpeechSink {
     if (!tail.spent) {
       const sameSegment = tail.finish(text)
       // divergent：本段按已流内容收尾，final 另起一段**立刻合成**、闸在本段上——等本段播完开闸接着播
-      if (!sameSegment) this.openSession(tail.completion).finish(text)
+      if (!sameSegment) this.openSession(tail.completion, true).finish(text)
       return
     }
     // tail 已收尾（mixed：本地回执 final 已到，这是云端 final）→ 新段
