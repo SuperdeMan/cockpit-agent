@@ -413,3 +413,40 @@ start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `co
 
 **仍开**：① §6.5 上游 20s 停顿（LLM/agent 时延，出语音批账）；② 对话页常驻 UI 负载与 Reanimated
 对已卸载视图持续更新（386 次/4min）另立卡片；③ dev 期 JS 日志出口（console 不进 logcat）另立卡片；④ 混合意图轮盲听。
+
+### 6.5 「播到二、四各停十几二十秒」定因与修法（2026-09-06 傍晚，Xiaomi 对话页「介绍广州的历史，详细一点」）
+
+**先排除「上游出字停滞」**：collector `/api/turns/91e50833562fd6f1`——turn 起 18:25:23.0，规划 LLM 两跳 18:25:37 / 18:25:41
+（MiniMax-M3，14s + 4s），exa 搜索 1.45s，info 合成 LLM 18:25:52，`step.agent:info` 11.07s，`aggregate` 18:25:52.3 ⇒
+**整篇文本 29.3s 时一次到齐**（path=mixed，final 整篇 speech）。T6 `firstAudioMs 29967` 正好接在后面：TTS 首片本身不慢。
+网关 `TTS stream done: first=29532ms total=272261ms chunks=4370`（186s 音频）—— **4 个空白全在 TTS 流内部**，T6 gaps
+21.8 / 20.5 / 17.4 / 26.1s，间隔 ≈ 60s 一个周期。
+
+**机制**：`finish(text)` 整篇到达 ⇒ `_minimax_segments` 在首片回来前把全文按逗号切成几十段（此时 lead 恒 0 ⇒ `soft_while` 一直为真），
+泵对每段问 `_tts_send_now(lead=0 <10 ⇒ 立刻发)` ⇒ 首片回来前把 18 个配额一口气发光；MiniMax 并行合成这 18 段（约 40s 音频），
+之后 `bucket.acquire` 卡到 60s 窗口滚过才放下一批 ⇒ 每 60s：放 18 段（≈40s 音频）+ 空 ≈20s。四个空白 = 四个窗口。
+另一处：`_RpmBucket` **每条流一个**，而 MiniMax 的 RPM 是账号级——前后脚两段回答互不知情，第二段一开就撞 1002 重连等窗口
+（下午 OPPO 两段各 first=8.7–9.4s 里含这一部分；工厂每请求 new 一个 provider，桶挂实例上也无用）。
+
+**修（`llm-gateway/providers.py`）**：
+- `_tts_send_now(..., awaiting_first_audio, critical_lead_s=2, reserve_tokens=3, hold_cap_chars=1200)`：首段发出后、首片音频回来前
+  **只攒不发**（余量读数是假 0；攒到 1200 字兜底发）；余量 <2s 断粮在即才不计预算立刻发；预算见底（0<tokens≤3）攒到 150 字再发；
+  其余规则不变。泵：`first_sent_at` + `first_audio_wait_s=2.5`（首片超时不再等，别把整条流卡死）；收尾 flush 不受门控（整篇到达 ⇒ 首段 + 一个大请求）。
+- `_shared_rpm_bucket(api_key, rpm, clock)`：进程级按 (key, rpm) 共享滑窗；注入假钟的按钟分桶（单测互不串扰）。
+- tests：+4（整段到达 ≤3 请求且不等窗口 / 首片门控超时照常发 / 两条流共用配额第二条等窗口而非撞 1002 / 注册表隔离），
+  改 3（`(9.9,5,3)` 预算见底改攒、rpm=2 四段合并成 2 请求不再等 60s、重连续传的是合并后的那个请求）；模块 20/20，llm-gateway 全量 299/299。
+
+**本机真 MiniMax 对照（931 字 22 句整段一次到达，`minimax_batch_e2e.py`）**：
+
+| | 请求数 | 首片 | 206s 音频送达用时 | RPM 等待 | 模拟播放空白 |
+|---|---|---|---|---|---|
+| 修后（工作树） | **2** | 1.16s | 10.5s（≈20× 实时） | 0 | **0** |
+| 修前（HEAD） | 见下 | | | | |
+
+**坑**：⑯ **同一个「20 秒停顿」两种病**：早上 §6.3 候选 ④ 是 LLM/planner 时延，这次 collector 证明文本 29s 已到齐、空白在 TTS 流里——
+先用 trace 把「文本何时到」钉死，再看播放；⑰ **余量驱动的策略在「余量未知」时会失效**：首片回来前 lead=0 与「客户端断粮」长得一样，
+策略必须区分「没读数」和「读数为 0」；⑱ 限流桶的作用域要和服务商的限流作用域一致（账号级 vs 每流）；
+⑲ 探针的 paced 喂法（30 字/秒）测不出整段到达的形态——形态本身是变量，两种都要喂。
+
+**仍开**：① 部署（dry-run → 泓舟授权 apply）；② 部署后 Xiaomi 对话页重放同一问题验收（T6 gaps ≈ 空、轨级 underrun 持平）；
+③ 规划 14s + 合成 9.5s 的首音 29s 是 LLM 侧时延（MiniMax-M3 推理模型），另立卡片。
