@@ -409,5 +409,7 @@ start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `co
 
 **泓舟人耳半（09-06 17:3x）**：「可以了，没有卡顿和嗡嗡声了，也能完整播报了」⇒ 验收①②③ 在 OPPO 上全过；泓舟提出换 Xiaomi（MIUI，早上听到嗡嗡的那台）再验一轮作对比。
 
-**仍开**：① Xiaomi 对比复验（同一问题，机器半采轨级 underrun 帧 + 人耳）；② 对话页常驻 UI 负载与 Reanimated
+**Xiaomi 复验（24072PX77C / HyperOS V816 / Android 16，18:15–18:38）**：HyperOS 同样不给我们 MMAP 低延迟轨（`MiAudioPolicyManager … forbidding ull track`）、走 legacy FAST 轨；探针页 13s 新旧播放器轨级 underrun 帧都只 960（20ms，机器算力更强，探针份量不够拉开）；对话页「介绍广州的历史，详细一点」（单段 4.5 分钟、4370 片 ≈ 186s 音频）**轨级 underrun 帧全程持平（960 → 960）**，泓舟：「卡顿的嗡嗡声解决了」⇒ 嗡嗡在两台机上都闭合。**新症状**：播到「二、史前与先秦时期」「四、南越国时期」各停十几二十秒。T6：`firstAudioMs 29967`、`underruns 4`、gaps **21.8 / 20.5 / 17.4 / 26.1s**；网关 `TTS stream done: first=29532ms total=272261ms`；planner：memory recall 10:25:23 → LLM plan 10:25:37（14s）→ `Plan ready: simple, info.search` 10:25:41；活跃 LLM = **MiniMax-M3（推理模型）**。⇒ 空白发生在**文本上游**（info.search 合成/LLM 出字停滞），不是播放；网关在文本停时 1s 内已把攒着的都冲刷了。见 §6.5。
+
+**仍开**：① §6.5 上游 20s 停顿（LLM/agent 时延，出语音批账）；② 对话页常驻 UI 负载与 Reanimated
 对已卸载视图持续更新（386 次/4min）另立卡片；③ dev 期 JS 日志出口（console 不进 logcat）另立卡片；④ 混合意图轮盲听。
