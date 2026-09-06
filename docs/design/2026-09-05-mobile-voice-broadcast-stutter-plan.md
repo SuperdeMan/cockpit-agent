@@ -343,6 +343,12 @@ MiniMax 单次可到 1 万字）；泵空等 1s 且余量 <5s 先把攒着的发
   这是改生产主机配置，**待泓舟授权**；材料已生成在 `.artifacts/infrastructure-approval/cf7091c…/`（只读审阅，未执行）。
 - 60a72a2 的残留（builds 151M、releases 目录、52 个镜像 tag）按 README「保留为诊断/清理候选，不自动清理」口径留着，不阻碍新 SHA 部署。
 
+**部署 #3（`cf7091c` = 第二层网关修正 + T6 + verify 就绪等待）已落（09-06 15:4x）**：泓舟「授权」→ 基础设施批准按材料执行
+（`infrastructure_approved`，锚 `d84a1f8a… → 499fc97c…`，备份 `…/infrastructure-approvals/cf7091c…-499fc97c`）→ dry-run `status=dry_run`、
+`blocking_changes=[]` → `--apply` 184s `status=submitted`（stderr 落盘、无报错）→ 远端 `state-20260906T074853Z-VERIFIED.json`、
+`status` 5/5 healthy `release_sha=cf7091c…`、独立 `verify` 通过（artifact `20260906T075039Z-cf7091c.json`）。30 容器全在 `:cf7091c` 镜像，
+docker 日志无非手动退出，tailscaled 本次切栈零 proxy error，`https_ready_s=0`（这次没等到就绪就已 200——等待是保险，不是每次都用上）。
+
 **坑**：⑨ **验收闸自己也是被测系统**——「verify 失败」先问是被验的东西坏了还是闸在赛跑：容器全部存活 + 端点单起即 200 + tailscaled 的
 `refused/reset` 时间戳，三样凑齐才敢说「闸误判」；⑩ dev_stack 把远端 stderr 直接透传到控制台、不落盘，后台跑 apply 时 `2>$null`
 就把唯一的失败原因丢了——真栈动作的 stderr 必须落文件；⑪ 同一 SHA 失败后不能原地重试（builds/releases/镜像三道 already-exists 守卫），
