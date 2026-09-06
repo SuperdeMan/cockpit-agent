@@ -19,7 +19,14 @@ import { loadServerConfig } from '@/core/config/storage'
 import { settingsStore } from '@/core/settings/store'
 import { AsrSession, recognizeBatch } from '@/core/voice/asr'
 import { TtsSession, synthesizeBatch } from '@/core/voice/tts'
-import { newPcmPlayer, peekSharedAudioContext, playerCtxOf, sharedAudioContext } from '@/core/voice/audioCtx'
+import {
+  getPcmPlayerImpl,
+  newPcmPlayer,
+  peekSharedAudioContext,
+  playerCtxOf,
+  setPcmPlayerImpl,
+  sharedAudioContext,
+} from '@/core/voice/audioCtx'
 import { base64ToBytes } from '@/core/voice/base64'
 import { audioFocusInstalled, audioFocusLog } from '@/core/voice/audioFocus'
 import { handsFreeAvailability } from '@/core/voice/handsFree'
@@ -78,7 +85,7 @@ export default function VoiceSpikeScreen() {
   /** 深链自动跑探针：`xiaozhou:///voice-spike?auto=stutter&n=<k>`，宿主侧脚本改 n 就再跑一次。
    *  不依赖 uiautomator 找按钮——有常驻动画的屏上 `uiautomator dump` 会 "could not get idle state"
    *  而不写文件，pull 到的是上一次的旧树（2026-09-05 T2 首跑就这么被骗了 60s）。 */
-  const params = useLocalSearchParams<{ auto?: string; n?: string; load?: string; variant?: string }>()
+  const params = useLocalSearchParams<{ auto?: string; n?: string; load?: string; variant?: string; player?: string }>()
   /** `load=hf` 负载仿真时逐字增长的转写（模拟对话页流式气泡的逐 delta 重渲染） */
   const [transcript, setTranscript] = useState('')
   const ctxRef = useRef<any>(null)
@@ -716,7 +723,7 @@ export default function VoiceSpikeScreen() {
       }
       const st = sess.stats
       const onsetLagMs = onset && tFirst ? onset.t - tFirst : -1
-      log('stutter: 引擎=' + s.ttsProvider + '/' + s.voiceId + ' mic=' + micKind +
+      log('stutter: player=' + getPcmPlayerImpl() + ' 引擎=' + s.ttsProvider + '/' + s.voiceId + ' mic=' + micKind +
         ' ctx=' + stateBefore + '→' + (ctxAfter ? String(ctxAfter.state) : 'none') + ' idleBefore=' + idleMs + 'ms')
       log('stutter: 首音(排定)=' + (tFirst ? tFirst - t0 : -1) + 'ms 整段=' + (tEnd - t0) + 'ms chunks=' + st.chunks +
         ' bytes=' + st.bytes + ' underruns=' + st.underruns + (gapNotes.length ? ' gaps=' + gapNotes.join(',') : ''))
@@ -724,6 +731,7 @@ export default function VoiceSpikeScreen() {
         'ms（自首片排定起，含 200ms jitter + 片头静音；同文本暖态 vs 静置后可比）')
       log('stutter: env100ms[-200..+1800]=' + env.join(' '))
       log('stutter-json ' + JSON.stringify({
+        player: getPcmPlayerImpl(),
         provider: s.ttsProvider, voice: s.voiceId, load: hf ? 'hf' : 'none',
         mic: hf ? 'hf-load' : AudioRecord ? 'noaec' : 'aec', ctxBefore: stateBefore,
         ctxAfter: ctxAfter ? String(ctxAfter.state) : 'none', idleBeforeMs: idleMs, firstAudioMs: tFirst ? tFirst - t0 : -1,
@@ -855,11 +863,13 @@ export default function VoiceSpikeScreen() {
 
   useEffect(() => {
     if (busyRef.current) return
+    // `player=queue|nodes`：播放器实现 A/B（2026-09-06「嗡嗡」= 每片一个节点把 FAST 轨渲染回调压垮）
+    if (params.player === 'queue' || params.player === 'nodes') setPcmPlayerImpl(params.player)
     if (params.auto === 'stutter') void probeStutter(params.load)
     else if (params.auto === 'divergent') void probeDivergent(params.variant)
     else if (params.auto === 'batch') void probeBatch()
     else if (params.auto === 'player') void probePlayer()
-  }, [params.auto, params.n, params.load, params.variant, probeStutter, probeDivergent, probeBatch, probePlayer])
+  }, [params.auto, params.n, params.load, params.variant, params.player, probeStutter, probeDivergent, probeBatch, probePlayer])
 
   // ── barge-in 物理面（M2-3 验收「播报中按 PTT 即停」的机器版）──
   //  播报中 stop() → 麦克风能量应当回到底噪。判据不是「代码调了 stop」而是

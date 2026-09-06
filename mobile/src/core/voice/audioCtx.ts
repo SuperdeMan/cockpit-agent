@@ -14,9 +14,13 @@
 //     ctx 的率播源样本，22050 的 TTS 在 48k 上下文就是 2.18 倍速 + 音调升高。
 //     ⇒ 适配层把每片重采样到 ctx.sampleRate 再建 buffer。**不赌库将来会修**：
 //     送进去的已经同率，它哪天补上重采样这条路也不变。
+//
+// 2026-09-06「嗡嗡」定因后，正式路径改走 `queuePlayer.ts`（一个 AudioBufferQueueSourceNode 顺序吃片）；
+// 下面的逐片排定适配层保留为 A/B 对照与「库没有队列节点」时的回退（`setPcmPlayerImpl('nodes')`）。
 import { PcmPlayer } from '@shared/pcmPlayer.mjs'
 import type { AudioBuffer, AudioBufferSourceNode, AudioContext } from 'react-native-audio-api'
 
+import { QueuePcmPlayer, type PcmPlayerLike, type QueueCtxLike } from './queuePlayer'
 import { Resampler } from './resample'
 
 /** 原生把时刻换算成帧用的是**截断**（`dsp::timeToSampleFrame = static_cast<size_t>(time * sr)`）。
@@ -179,8 +183,33 @@ export interface PcmPlayerOptions {
   onUnderrun?(): void
 }
 
-/** 建一个播放调度器。**类型断言只在这一处**——把「共享模块的 JSDoc 声明的是 DOM
- *  AudioContext」这件事收在一个函数里，调用方不用各自 as any。 */
-export function newPcmPlayer(opts: PcmPlayerOptions): PcmPlayer {
-  return new PcmPlayer({ ...opts, ctx: playerCtxOf(sharedAudioContext()) } as never)
+export type PcmPlayerImpl = 'queue' | 'nodes'
+
+/** 播放器实现开关。缺省 `queue`；`nodes` = 旧的每片一个节点排定，留给真机 A/B（voice-spike 深链 `player=nodes`）。 */
+let pcmPlayerImpl: PcmPlayerImpl = 'queue'
+export function setPcmPlayerImpl(impl: PcmPlayerImpl): void {
+  pcmPlayerImpl = impl
+}
+export function getPcmPlayerImpl(): PcmPlayerImpl {
+  return pcmPlayerImpl
+}
+
+/** 按实现开关与 ctx 能力选播放器：队列节点缺席（老版库）时无感回退到逐片排定。纯函数，单测直接注入假 ctx。 */
+export function selectPcmPlayer(
+  ctx: AudioContext,
+  opts: PcmPlayerOptions,
+  impl: PcmPlayerImpl = pcmPlayerImpl,
+): PcmPlayerLike {
+  const queueCapable =
+    typeof (ctx as unknown as { createBufferQueueSource?: unknown }).createBufferQueueSource === 'function'
+  if (impl === 'queue' && queueCapable) {
+    return new QueuePcmPlayer({ ...opts, ctx: ctx as unknown as QueueCtxLike })
+  }
+  // **类型断言只在这一处**——把「共享模块的 JSDoc 声明的是 DOM AudioContext」这件事收在一个函数里
+  return new PcmPlayer({ ...opts, ctx: playerCtxOf(ctx) } as never) as unknown as PcmPlayerLike
+}
+
+/** 建一个播放器（正式路径）。 */
+export function newPcmPlayer(opts: PcmPlayerOptions): PcmPlayerLike {
+  return selectPcmPlayer(sharedAudioContext(), opts)
 }
