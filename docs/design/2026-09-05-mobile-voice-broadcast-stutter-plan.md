@@ -324,3 +324,26 @@ MiniMax 单次可到 1 万字）；泵空等 1s 且余量 <5s 先把攒着的发
 **「嗡嗡」设备侧定位对照（voice-spike 深链，`ab.ps1 <n>`）**：1 分片流式（对话页同款）/ 2 分片流式 + VoiceCommunication 麦开
 （AEC 通路 + VAD/KWS 负载）/ 3 批处理整段一个 buffer（无分片边界）/ 4 纯正弦经同一播放路径。判读：只 1、2 有 ⇒ 分片调度；
 1、2、3 有、4 无 ⇒ 重采样或 TTS 音频本身在设备路径的处理；4 也有 ⇒ 输出路径；只 2 有 ⇒ AEC/VoIP 通路。
+
+**部署 #2（`60a72a2`，第二层「余量驱动合并」）verify 失败定因（09-06 12:12 → 13:xx）**：泓舟授权 `--apply` 后
+`status=submitted`，12:12:37 切栈、12:12:47 新容器被回滚脚本停掉、`current` 回 `a05cb5f`（远端状态证据
+`state-20260906T041318Z-VERIFY_FAILED_ROLLED_BACK.json`）；再试两次因远端 `builds/releases/<sha>`、镜像「already exists」守卫 10s 内失败。
+**不是代码**：新镜像 `import providers` 正常（py3.11.15、`_RpmBucket`/`_tts_send_now` 在），单独起 `hmi 1.24s / edge 1.39s / llm 2.89s` 即 200
+（`/api/llm/providers` 200）；docker 日志 27 个新容器**无一自行退出**，全部 running 10.9s 后被手动停。**是验收闸与启动风暴赛跑**：
+`verify_https_endpoints` 在 `compose up -d` 返回后立刻 `curl --fail` 五个端点、零就绪等待，而 27 容器同时冷启时 tailscaled 记
+12:12:41 `dial 127.0.0.1:8090 refused`（edge）、**12:12:43 `->127.0.0.1:5173 reset by peer`（hmi）** —— 容器起来第 6s 打 hmi 即判红。
+同一脚本 11:48（a05cb5f 首发）与 12:13（回滚验收）都恰好赶上 ⇒ 抛硬币。
+
+- **修 `cf7091c`（`deploy/cloud/verify-release.sh`）**：非 200 每秒重试、五端点共享 120s 截止（`HTTPS_READY_TIMEOUT_S`），到点仍非 200 才
+  `verify_error`（带最后 http_code 与已等秒数）；证据新增 `https_ready_s`。等待只放宽「何时判」，不放宽「判什么」。tests +2（晚就绪逐次序对 /
+  永不就绪 timeout=0 立刻 rc=1 且不打下一端点），模块 185 passed / 1 skipped；README 发布事务边界补一条。
+- **代价**：`deploy/cloud/**` 变更 ⇒ 基础设施聚合摘要 `d84a1f8a… → 499fc97c…`，dry-run `status=bootstrap_required`、
+  `blocking_changes=[{infrastructure, deploy/cloud/verify-release.sh}]`。要按 2026-08-26 的批准锚流程（root 快照 + 备份 + 改写
+  `/opt/car-agent/shared/release-infrastructure.json` + 失败自动还原）重新批准并安装 verify-release.sh，普通 deploy 才放行——
+  这是改生产主机配置，**待泓舟授权**；材料已生成在 `.artifacts/infrastructure-approval/cf7091c…/`（只读审阅，未执行）。
+- 60a72a2 的残留（builds 151M、releases 目录、52 个镜像 tag）按 README「保留为诊断/清理候选，不自动清理」口径留着，不阻碍新 SHA 部署。
+
+**坑**：⑨ **验收闸自己也是被测系统**——「verify 失败」先问是被验的东西坏了还是闸在赛跑：容器全部存活 + 端点单起即 200 + tailscaled 的
+`refused/reset` 时间戳，三样凑齐才敢说「闸误判」；⑩ dev_stack 把远端 stderr 直接透传到控制台、不落盘，后台跑 apply 时 `2>$null`
+就把唯一的失败原因丢了——真栈动作的 stderr 必须落文件；⑪ 同一 SHA 失败后不能原地重试（builds/releases/镜像三道 already-exists 守卫），
+重试=新提交。
