@@ -450,5 +450,7 @@ start 失败改 `console.warn` 不再吞；⑬ **dev-client 连着 Metro 时 `co
 策略必须区分「没读数」和「读数为 0」；⑱ 限流桶的作用域要和服务商的限流作用域一致（账号级 vs 每流）；
 ⑲ 探针的 paced 喂法（30 字/秒）测不出整段到达的形态——形态本身是变量，两种都要喂。
 
-**仍开**：① 部署（dry-run → 泓舟授权 apply）；② 部署后 Xiaomi 对话页重放同一问题验收（T6 gaps ≈ 空、轨级 underrun 持平）；
+**部署 #4 受阻（19:0x）**：泓舟授权后 `deploy --sha a09c73a --apply` 在远端 `prepare-upload` 之后中断（`error_category=runtime`、stderr 空；云栈仍 cf7091c 5/5）。sshd 日志：两个 IP 持续 root 暴力试登，触发 `MaxStartups` 限流（一轮 13min 丢 28 连接），我们已认证的密钥会话也被随机切断；8 分钟探测 24 次丢 8 次（33%），dev_stack 多段 SSH 管线成功率 ≈ 0.67^5。安全组收窄 22 / 封 IP / fail2ban 属泓舟红线，已交裁。a09c73a 远端只留一个未完成的 incoming 上传目录，无 builds/releases/镜像残留，可原 SHA 重试。
+
+**仍开**：① 部署（等泓舟处理 22 端口后重跑 apply）；② 部署后 Xiaomi 对话页重放同一问题验收（T6 gaps ≈ 空、轨级 underrun 持平）；
 ③ 规划 14s + 合成 9.5s 的首音 29s 是 LLM 侧时延（MiniMax-M3 推理模型），另立卡片。
