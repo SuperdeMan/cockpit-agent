@@ -71,15 +71,53 @@ export class ResilientWebSocket {
 
   // 发送：连接就绪直接发；否则入有界队列（满则丢最旧、保最新），重连后 flush。
   // 返回 true=已即时发出，false=已入队。
-  send(obj) {
+  send(obj, hooks = {}) {
     const raw = typeof obj === 'string' ? obj : JSON.stringify(obj)
+    let requestId = ''
+    try { requestId = JSON.parse(raw)?.request_id || '' } catch { /* 非 JSON 的旧调用仍可发送 */ }
+    const entry = { raw, requestId, hooks }
+    if (!this._allowed(entry)) return false
     if (this.isOpen) {
       this._ws.send(raw)
+      this._notify(hooks.onSent)
       return true
     }
-    this._queue.push(raw)
-    while (this._queue.length > this._maxQueue) this._queue.shift()
+    this._queue.push(entry)
+    while (this._queue.length > this._maxQueue) {
+      this._notify(this._queue.shift().hooks.onDropped, 'overflow')
+    }
     return false
+  }
+
+  // AR01：只撤回尚未发送的指定请求，不向服务端发送会话级 cancel。
+  discardQueued(requestId) {
+    if (!requestId) return false
+    const removed = this._queue.filter((entry) => entry.requestId === requestId)
+    this._queue = this._queue.filter((entry) => entry.requestId !== requestId)
+    for (const entry of removed) this._notify(entry.hooks.onDropped, 'cancelled')
+    return removed.length > 0
+  }
+
+  // cancel 等控制帧没有离线重放语义：恢复连接后它可能命中另一轮。
+  sendIfOpen(obj) {
+    if (!this.isOpen) return false
+    try {
+      this._ws.send(typeof obj === 'string' ? obj : JSON.stringify(obj))
+      return true
+    } catch { return false }
+  }
+
+  _allowed(entry) {
+    let allowed = true
+    try { if (entry.hooks.canSend) allowed = entry.hooks.canSend() === true }
+    catch { allowed = false }
+    if (!allowed) this._notify(entry.hooks.onDropped, 'invalidated')
+    return allowed
+  }
+
+  _notify(fn, reason) {
+    // 观察回调出错不能把已经写出的帧重新入队（否则会重复执行）。
+    try { fn?.(reason) } catch { /* 传输结果不因观察者错误改变 */ }
   }
 
   close() {
@@ -151,11 +189,16 @@ export class ResilientWebSocket {
   }
 
   _flush() {
-    if (!this.isOpen) return
-    const pending = this._queue
-    this._queue = []
-    for (const raw of pending) {
-      try { this._ws.send(raw) } catch { this._queue.push(raw) }
+    // 每次取一项：onSent 触发的撤回能在下一项发送前作用到真实队列。
+    while (this.isOpen && this._queue.length) {
+      const entry = this._queue.shift()
+      if (!this._allowed(entry)) continue
+      try { this._ws.send(entry.raw) }
+      catch {
+        this._queue.unshift(entry)
+        break // 保序；失败项不能被后面的请求越过
+      }
+      this._notify(entry.hooks.onSent)
     }
   }
 }

@@ -10,12 +10,12 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import { RequestRegistry } from '@shared/requestRouting.mjs'
-import { PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
+import { PENDING_CAPACITY, PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
 import { deliveryIdsOf } from '@shared/proactiveSpeech.mjs'
 import type { Msg, ProcessStep } from '@shared/types.ts'
 
 import { buildUserFrame } from '../api/gateway'
-import type { GatewayStatus } from '../api/gateway'
+import type { GatewayStatus, SendHooks, UserFrame } from '../api/gateway'
 import { uid } from '../obs/trace'
 import { NO_EDGE_DRIVING, recordEdgeDriving, type DrivingEdgeFact } from '../presence/drivingMode'
 import { actionSummary } from './actionSummary'
@@ -56,6 +56,8 @@ export interface SendOpts {
   source?: TurnSource
   /** 这条用户气泡已经在记录里（草稿转正 / 视觉先落气泡 / S2S 逃逸）：把文本对齐成定稿，不追加第二条 */
   bubbleId?: string
+  /** 发送前异步准备（如视觉帧）；只产本轮 meta，取消后结果不得再次发出请求。 */
+  prepareMeta?(userBubbleId: string): Promise<Record<string, string>>
 }
 
 export interface PendingOp {
@@ -102,7 +104,9 @@ export interface SessionState {
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
 export interface Transport {
-  send(frame: object): boolean
+  send(frame: object, hooks?: SendHooks): boolean
+  discardQueued?(requestId: string): boolean
+  sendIfOpen?(frame: object): boolean
 }
 
 /** 定位桥（expo-location 实现在 core/location；测试注入 fake）。
@@ -148,6 +152,20 @@ export interface SessionDeps {
   speech?: SpeechSink
 }
 
+interface OutboundRequest {
+  frame: UserFrame
+  bubbleId: string
+  phase: 'preparing' | 'queued' | 'sent' | 'unknown'
+  operation?: PendingOp
+}
+
+interface Preparation {
+  userBubbleId: string
+  meta?: SendOpts['prepareMeta']
+  location?(): Promise<Record<string, string> | null>
+  requireLocation?: boolean
+}
+
 export class SessionCore {
   readonly store: StoreApi<SessionState>
   /** 候选上下文（final 记录 / sendRouter 消费）。公开只为测试与调试读取。 */
@@ -161,7 +179,12 @@ export class SessionCore {
   /** 链路是否已知断开：只由 setStatus 驱动，初始 false＝「还没人告诉过我链路状态」 */
   private linkDown = false
   private readonly presented = new Set<string>()
-  private justCancelled = false
+  private readonly localCancelRequests = new Set<string>()
+  private readonly requests = new Map<string, OutboundRequest>()
+  private readonly serverClosedOps = new Set<string>()
+  private lastSentRequestId = ''
+  private disposed = false
+  private locationConsent: { opts: SendOpts; metaExtra?: Record<string, string> } | null = null
   private pruneTimer: ReturnType<typeof setTimeout> | null = null
   /** 在飞轮气泡 id（RequestRegistry 是共享模块不加方法，这份账住在 SessionCore） */
   private readonly inFlight = new Set<string>()
@@ -197,6 +220,7 @@ export class SessionCore {
   }
 
   setStatus(status: GatewayStatus): void {
+    if (this.disposed) return
     const prev = this.store.getState().connStatus
     // 看门狗的表跟着**链路**走，与 connStatus 的值变没变无关：退避重连期间
     // closed↔connecting 反复摆动，同值早退不该让表漏摘/漏起。
@@ -205,21 +229,25 @@ export class SessionCore {
     if (status === prev) return
     if (status === 'closed' && prev === 'open') {
       // 探活判死 / onclose：此刻在飞的轮可能写进了死 socket（M3-W 残留窗）——标未知，不重发
-      const inFlight = [...this.inFlight]
+      const inFlight = [...this.requests.values()].filter((r) => r.phase === 'sent').map((r) => r.bubbleId)
       this.store.setState({ connStatus: status, uncertainIds: inFlight })
       return
     }
-    if (status === 'open') {
-      // onopen 时 ws.mjs 已 flush 队列
-      this.queuedIds.clear()
-      this.store.setState({ connStatus: status, queued: 0 })
-      return
-    }
+    // open 回调先于真实 flush；计数由每条请求的 onSent/onDropped 更新。
     this.store.setState({ connStatus: status })
   }
 
   /** 组件卸载/换服务器：停掉全部定时器（消息留在 store 里由调用方决定去留） */
   dispose(): void {
+    if (this.disposed) return
+    this.disposed = true
+    for (const request of this.requests.values()) this.deps.transport.discardQueued?.(request.frame.request_id)
+    this.requests.clear()
+    this.registry.drainAll()
+    this.inFlight.clear()
+    this.queuedIds.clear()
+    this.locationConsent = null
+    this.localCancelRequests.clear()
     for (const t of this.watchdogs.values()) clearTimeout(t)
     this.watchdogs.clear()
     this.pausedWatchdogs.clear()
@@ -233,9 +261,11 @@ export class SessionCore {
 
   /** 用户消息入口（Composer/卡片按钮 send_text 共用）：加用户气泡 → 前置路由 → 派发 */
   send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
+    if (this.disposed) return
     const reuse = opts.bubbleId && this.store.getState().messages.some((m) => m.id === opts.bubbleId) ? opts.bubbleId : null
+    const userBubbleId = reuse || uid()
     if (reuse) this.setText(reuse, text)
-    else this.appendMessage({ id: uid(), role: 'user', text })
+    else this.appendMessage({ id: userBubbleId, role: 'user', text })
     const decision = routeSend(
       text,
       { candidates: this.candidates, locationEnabled: this.deps.location.isEnabled() },
@@ -244,6 +274,7 @@ export class SessionCore {
     if (decision.kind === 'consent') {
       // 位置授权征询：纯前端确认条（无 operation_id 不上行），文案与 HMI 同（App.tsx:830-835）
       this.store.setState({ pendingLocationText: decision.text })
+      this.locationConsent = { opts: { ...opts, bubbleId: userBubbleId }, metaExtra }
       this.appendMessage({
         id: uid(),
         role: 'assistant',
@@ -264,38 +295,42 @@ export class SessionCore {
     if (decision.categoryPage !== undefined && this.candidates.category) {
       this.candidates.category = { ...this.candidates.category, page: decision.categoryPage }
     }
-    if (decision.withLocation) {
-      // 发送前刷新一次实时定位（App.tsx:838-843）：用最新坐标而非陈旧缓存；拿不到照发不带
-      void this.deps.location
-        .refreshMeta()
-        .catch(() => ({}) as Record<string, string>)
-        .then((loc) => this.dispatch(decision.text, false, loc, decision.metaExtra, undefined, opts.source ?? 'text'))
-      return
-    }
-    this.dispatch(decision.text, false, undefined, decision.metaExtra, undefined, opts.source ?? 'text')
+    const preparation: Preparation | undefined = decision.withLocation || opts.prepareMeta
+      ? {
+          userBubbleId,
+          meta: opts.prepareMeta,
+          ...(decision.withLocation ? { location: () => this.deps.location.refreshMeta().catch(() => ({})) } : {}),
+        }
+      : undefined
+    this.dispatch(decision.text, false, undefined, decision.metaExtra, undefined, opts.source ?? 'text', preparation)
   }
 
   /** 确认条按钮（App.tsx:850-876 对照）：哪一条由 operationId 决定 */
   confirmReply(reply: '确认' | '取消', operationId?: string, opts: SendOpts = {}): void {
-    this.appendMessage({ id: uid(), role: 'user', text: reply })
+    if (this.disposed) return
+    // 指定 operation 的点击绝不能被同时存在的位置征询消费；过期/重复/已关闭点击不上行。
+    let operation: PendingOp | undefined
+    if (operationId) {
+      this.pruneExpiredOperations()
+      operation = this.store.getState().pendingOps.find((o) => o.id === operationId)
+      if (!operation) return
+    }
     const pendingText = this.store.getState().pendingLocationText
-    if (pendingText !== null) {
+    if (!operationId && pendingText === null) return
+    this.appendMessage({ id: uid(), role: 'user', text: reply })
+    if (!operationId && pendingText !== null) {
+      const consent = this.locationConsent
+      this.locationConsent = null
       this.store.setState({ pendingLocationText: null })
-      if (reply === '确认') {
-        void this.deps.location.enable().then((loc) => {
-          if (loc) this.dispatch(pendingText, false, loc, undefined, undefined, opts.source ?? 'text')
-          else
-            this.appendMessage({
-              id: uid(),
-              role: 'assistant',
-              text: '没有获取到当前位置。您可以在系统设置中开启定位权限，或直接告诉我城市或地点。',
-              error: true,
-            })
-        })
-      } else {
-        // 与 HMI 的差异（实施计划 M1-2 明写）：拒绝 → 照发不带坐标，由后端诚实降级
-        this.dispatch(pendingText, false, undefined, undefined, undefined, opts.source ?? 'text')
-      }
+      const prep: Preparation | undefined = reply === '确认' || consent?.opts.prepareMeta
+        ? {
+            userBubbleId: consent?.opts.bubbleId ?? '',
+            meta: consent?.opts.prepareMeta,
+            ...(reply === '确认' ? { location: () => this.deps.location.enable(), requireLocation: true } : {}),
+          }
+        : undefined
+      // 拒绝位置仍按既有规则发原句、不带坐标；同意后的等待已经属于一个可取消请求。
+      this.dispatch(pendingText, false, undefined, consent?.metaExtra, undefined, opts.source ?? consent?.opts.source ?? 'text', prep)
       return
     }
     // 台账即时出账（App.tsx:871-875）：服务端仍是权威，closed 到达时幂等
@@ -305,7 +340,7 @@ export class SessionCore {
       this.store.setState((s) => ({ confirmLog: { ...s.confirmLog, [operationId]: { reply, at: Date.now() } } }))
       this.syncPruneTimer()
     }
-    this.dispatch(reply, true, undefined, undefined, operationId, opts.source ?? 'text')
+    this.dispatch(reply, true, undefined, undefined, operationId, opts.source ?? 'text', undefined, operation)
   }
 
   /** U2 真打断（App.tsx:664-678）：发网关取消 + 本地把当前在飞轮（FIFO 头）标「已打断」 */
@@ -314,15 +349,24 @@ export class SessionCore {
     this.store.setState({ drivingDismissedAt: Date.now() })
   }
 
-  cancelCurrentTurn(): void {
-    this.deps.transport.send({ type: 'cancel', session_id: this.deps.sessionId })
-    this.justCancelled = true
-    this.speech.stop()
-    const id = this.registry.settle({})
-    if (id) {
-      this.clearWatchdog(id)
-      this.markInterrupted(id)
+  cancelCurrentTurn(bubbleId?: string): void {
+    if (this.disposed) return
+    const request = bubbleId ? this.requests.get(bubbleId) : [...this.requests.values()].at(-1)
+    if (!bubbleId || this.registry.isLatest(bubbleId)) this.speech.stop()
+    if (!request) return
+    const id = request.bubbleId
+    // 网关只取消连接上的最新请求。旧轮/未发轮不能发会话级 cancel，更不能离线重放它。
+    if (request.phase === 'sent' && request.frame.request_id === this.lastSentRequestId) {
+      const frame = { type: 'cancel', session_id: this.deps.sessionId }
+      this.localCancelRequests.add(request.frame.request_id)
+      const sent = this.deps.transport.sendIfOpen
+        ? this.deps.transport.sendIfOpen(frame)
+        : !this.linkDown && this.deps.transport.send(frame)
+      if (!sent) this.localCancelRequests.delete(request.frame.request_id)
     }
+    this.registry.dropBubble(id)
+    this.clearWatchdog(id) // 先失效回调，再撤回真实队列
+    this.markInterrupted(id)
   }
 
   // ── 转写草稿（方案 §5.2.1）：语音层不持有转写状态，草稿就是记录里的一条用户气泡 ──
@@ -437,22 +481,21 @@ export class SessionCore {
     metaExtra?: Record<string, string>,
     operationId?: string,
     source: TurnSource = 'text',
+    preparation?: Preparation,
+    operation?: PendingOp,
   ): void {
+    if (this.disposed) return
     const frame = buildUserFrame(text, this.deps.sessionId, {
       isConfirmation,
       ...(operationId ? { operationId } : {}),
       metaBase: { ...this.deps.getMeta(), ...(locationMeta ?? {}) },
       ...(metaExtra ? { metaExtra } : {}),
     })
-    const sentNow = this.deps.transport.send(frame)
     const pendingId = uid()
-    if (!sentNow) this.queuedIds.add(pendingId) // 按轮计数：取消 / 终态都能把它摘掉（评审 D9）
-    this.syncQueued()
+    const request: OutboundRequest = { frame, bubbleId: pendingId, phase: 'preparing', operation }
+    this.requests.set(pendingId, request)
     this.registry.open(frame.request_id, pendingId)
     this.inFlight.add(pendingId)
-    // 播报会话提前建（App.tsx:677-679 同位）：等第一个 delta 再握手会把首音推后一个 RTT。
-    // 上一轮的 emotion 决定本轮语气（M2 P2 契约）
-    this.speech.begin(pendingId, this.store.getState().lastEmotion, source !== 'text')
     this.appendMessage({
       id: pendingId,
       role: 'assistant',
@@ -472,12 +515,139 @@ export class SessionCore {
       },
     }))
     this.armWatchdog(pendingId)
+    // 普通文本保持同步发送；异步准备也先登记身份和占位，停止按钮才能撤回它。
+    if (preparation) void this.prepareRequest(request, preparation, locationMeta, metaExtra)
+    else this.transmitRequest(request, locationMeta, metaExtra)
+  }
+
+  private requestLive(request: OutboundRequest): boolean {
+    return !this.disposed && this.requests.get(request.bubbleId) === request
+  }
+
+  private operationLive(request: OutboundRequest): boolean {
+    return !request.operation || (
+      !this.serverClosedOps.has(request.operation.id) && prunePendings([request.operation]).length > 0
+    )
+  }
+
+  private async prepareRequest(
+    request: OutboundRequest,
+    preparation: Preparation,
+    locationMeta?: Record<string, string>,
+    metaExtra?: Record<string, string>,
+  ): Promise<void> {
+    if (!this.requestLive(request)) return
+    try {
+      let extra = metaExtra
+      if (preparation.meta) {
+        const prepared = await preparation.meta(preparation.userBubbleId)
+        if (!this.requestLive(request)) return
+        extra = { ...extra, ...prepared }
+      }
+      let location = locationMeta
+      if (preparation.location) {
+        const found = await preparation.location()
+        if (!this.requestLive(request)) return
+        if (found === null && preparation.requireLocation) {
+          this.failRequest(request, '没有获取到当前位置。您可以在系统设置中开启定位权限，或直接告诉我城市或地点。')
+          return
+        }
+        location = found ?? undefined
+      }
+      if (this.requestLive(request)) this.transmitRequest(request, location, extra)
+    } catch {
+      if (this.requestLive(request)) this.failRequest(request, '请求准备失败，请重试。')
+    }
+  }
+
+  private transmitRequest(request: OutboundRequest, locationMeta?: Record<string, string>, metaExtra?: Record<string, string>): void {
+    if (!this.requestLive(request)) return
+    if (!this.operationLive(request)) {
+      this.failRequest(request, '确认已过期或已处理，需要的话请重新发起。')
+      return
+    }
+    // 沿用 buildUserFrame 的 meta 过滤：准备回调中的内部键/空值也不得漏上行。
+    const prepared = buildUserFrame(request.frame.text, this.deps.sessionId, {
+      metaBase: { ...request.frame.meta, ...locationMeta },
+      metaExtra,
+    })
+    request.frame.meta = { ...prepared.meta, trace_id: request.frame.meta.trace_id }
+    request.phase = 'queued'
+    this.queuedIds.add(request.bubbleId)
+    this.syncQueued()
+    if (locationMeta && Object.keys(locationMeta).length) {
+      this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [request.bubbleId]: { ...s.turnMeta[request.bubbleId], withLocation: true } } }))
+    }
+    try {
+      const sent = this.deps.transport.send(request.frame, {
+        canSend: () => this.requestLive(request) && this.operationLive(request),
+        onSent: () => this.requestSent(request),
+        onDropped: (reason) => {
+          if (!this.requestLive(request)) return
+          this.failRequest(request, reason === 'overflow'
+            ? '排队已满，这条请求没有发送，请稍后重试。'
+            : '请求已失效，没有发送；需要的话请重新发起。')
+        },
+      })
+      // 兼容原有同步 Transport；生产 Gateway 的回调已执行时本方法幂等。
+      if (sent) this.requestSent(request)
+    } catch {
+      // 写入异常不能证明服务端未收到；不能把业务操作恢复成可再次确认。
+      request.phase = 'unknown'
+      this.failRequest(request, '发送状态未知，请核实结果后再决定是否重试。')
+    }
+  }
+
+  private requestSent(request: OutboundRequest): void {
+    if (!this.requestLive(request) || request.phase === 'sent') return
+    request.phase = 'sent'
+    this.lastSentRequestId = request.frame.request_id
+    this.queuedIds.delete(request.bubbleId)
+    this.syncQueued()
+    const timer = this.watchdogs.get(request.bubbleId)
+    if (timer) clearTimeout(timer)
+    this.pausedWatchdogs.delete(request.bubbleId)
+    this.armWatchdog(request.bubbleId)
+    this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [request.bubbleId]: { ...s.turnMeta[request.bubbleId], sentAt: Date.now() } } }))
+    if (this.registry.isLatest(request.bubbleId)) {
+      const source = this.store.getState().turnMeta[request.bubbleId].source
+      this.speech.begin(request.bubbleId, this.store.getState().lastEmotion, source !== 'text')
+    }
+  }
+
+  private failRequest(request: OutboundRequest, text: string): void {
+    if (!this.requestLive(request)) return
+    if (this.registry.isLatest(request.bubbleId)) this.speech.stop()
+    this.registry.dropBubble(request.bubbleId)
+    this.clearWatchdog(request.bubbleId)
+    this.store.setState((s) => ({ messages: s.messages.map((m) => m.id === request.bubbleId
+      ? { ...m, pending: false, streaming: false, processActive: false, error: true, text }
+      : m) }))
+  }
+
+  private restoreUnsentOperation(request: OutboundRequest): void {
+    const op = request.operation
+    if (!op || (request.phase !== 'preparing' && request.phase !== 'queued') || !this.operationLive(request)) return
+    const current = this.store.getState().pendingOps
+    if (current.some((o) => o.id === op.id)) return
+    const restored = [...prunePendings(current), op].sort((a, b) => a.ts - b.ts).slice(-PENDING_CAPACITY)
+    this.store.setState({ pendingOps: restored })
+    this.syncPruneTimer()
+  }
+
+  private pruneExpiredOperations(): void {
+    const before = this.store.getState().pendingOps
+    const after: PendingOp[] = prunePendings(before)
+    if (after.length === before.length) return
+    this.store.setState({ pendingOps: after })
+    for (const op of before) if (!after.some((a) => a.id === op.id)) this.noteExpired(op.id)
+    this.syncPruneTimer()
   }
 
   // ── 下行帧分发（App.tsx:330-607 逐帧对照）───────────────────────
 
   handleFrame(data: any): void {
-    if (!data || typeof data !== 'object') return
+    if (this.disposed || !data || typeof data !== 'object') return
     if (data.type === 'speech_delta') {
       const delta = data.delta || ''
       const targetId = this.streamTargetId(data)
@@ -550,6 +720,15 @@ export class SessionCore {
       return
     }
     if (data.type === 'final') {
+      // 服务端的关闭台账独立于回答显示；已停止等待的轮仍可能带来权威关闭结果。
+      const closed: string[] = Array.isArray(data.closed_operation_ids)
+        ? data.closed_operation_ids.filter((id: unknown) => typeof id === 'string')
+        : []
+      if (closed.length) {
+        closed.forEach((id) => this.serverClosedOps.add(id))
+        this.store.setState((s) => ({ pendingOps: closePendings(s.pendingOps, closed) }))
+        this.syncPruneTimer()
+      }
       // B5-3 缺陷 C：final 帧也带 driving（网关 eventToMap final 分支透传；产出方 server.py::_stamp_driving）。
       // **只认布尔**——旧网关的 final 没有这个键，`!!undefined` 会把每个简单轮都当成「Edge 标 false」，
       // 行车中 30s 后就退出：那是比缺陷 C 反向的缺陷。process 那一路（上面）不动。放在 rejected 之前：
@@ -586,15 +765,13 @@ export class SessionCore {
         )
       }
       // Q1-C：待确认台账**服务端权威**——closed 列表出账、need_confirm&&operation_id 进账
-      const closed: string[] = Array.isArray(data.closed_operation_ids)
-        ? data.closed_operation_ids
-        : []
       if (data.operation_id || closed.length) {
+        if (data.need_confirm && data.operation_id && !closed.includes(data.operation_id)) this.serverClosedOps.delete(data.operation_id)
         this.store.setState((s) => {
           const afterClose = closePendings(prunePendings(s.pendingOps), closed)
           return {
             pendingOps:
-              data.need_confirm && data.operation_id
+              data.need_confirm && data.operation_id && !closed.includes(data.operation_id)
                 ? openPending(afterClose, data.operation_id)
                 : afterClose,
           }
@@ -669,6 +846,13 @@ export class SessionCore {
       return
     }
     if (data.type === 'error') {
+      if (data.request_id) {
+        const id = this.registry.bubbleFor(data)
+        if (!id) return
+        const request = this.requests.get(id)
+        if (request) this.failRequest(request, '出错了：' + data.message)
+        return
+      }
       // 硬终止：清**所有**在飞轮。⚠ 不清挂起台账——传输出错与「还等着确认」无关（Q1-C）
       for (const bubble of this.registry.drainAll()) this.clearWatchdog(bubble)
       this.store.setState((s) => ({
@@ -679,9 +863,10 @@ export class SessionCore {
       }))
     }
     if (data.type === 'cancelled') {
-      // 本地刚主动 cancel → 幂等忽略；网关侧主动取消 → 按 request_id 点名标「已打断」
-      if (this.justCancelled) {
-        this.justCancelled = false
+      // 点名 ACK 由 registry 幂等；一个全局 justCancelled 会误吞另一轮的抢占通知。
+      if (data.request_id) this.localCancelRequests.delete(data.request_id)
+      else if (this.localCancelRequests.size) {
+        this.localCancelRequests.delete(this.localCancelRequests.values().next().value!)
         return
       }
       const id = this.registry.settle(data)
@@ -710,13 +895,9 @@ export class SessionCore {
       return
     }
     const timer = setTimeout(() => {
-      this.watchdogs.delete(id)
       this.registry.dropBubble(id)
-      this.inFlight.delete(id)
-      this.dropUncertain(id)
-      this.queuedIds.delete(id)
-      this.syncQueued()
-      this.speech.stop() // 超时轮不会再有 final，播报会话留着就是个永不收尾的空会话
+      this.clearWatchdog(id)
+      if (this.registry.isLatest(id)) this.speech.stop()
       this.store.setState((s) => ({
         messages: s.messages.map((msg) =>
           msg.id === id && (msg.pending || msg.streaming || msg.processActive)
@@ -737,6 +918,12 @@ export class SessionCore {
 
   private clearWatchdog(bubbleId: string | null): void {
     if (!bubbleId) return
+    const request = this.requests.get(bubbleId)
+    this.requests.delete(bubbleId)
+    if (request) {
+      this.deps.transport.discardQueued?.(request.frame.request_id)
+      this.restoreUnsentOperation(request)
+    }
     const t = this.watchdogs.get(bubbleId)
     if (t) {
       clearTimeout(t)

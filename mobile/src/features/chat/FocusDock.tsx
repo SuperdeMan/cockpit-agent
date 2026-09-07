@@ -2,7 +2,9 @@
 // 承诺面（方案 §5.3）：读 `commitment[]`（钉一项 + 其余个数）与 `degradation[]`（有出口的降级）。
 // 材质 **G0 实色**（§5.11：确认/错误/隐私说明不许半透明；坑账 §9.36 同判据）。
 // 确认按钮比例照 A-6.4：取消 flex1 / 确认 flex2；剩余时间**只读共享 TTL**（commitment.ts）。
-import { Linking, Pressable, Text, useWindowDimensions, View } from 'react-native'
+import { useState } from 'react'
+import { Linking, Modal, Pressable, ScrollView, Text, useWindowDimensions, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
@@ -20,8 +22,6 @@ export interface FocusDockProps {
   snapshot: PresenceSnapshot
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onCancelTurn(): void
-  /** 「另有 N 个待处理 ›」点开 → 调用方决定怎么展示（B1：滚到列表底部即可） */
-  onOthers?(): void
   onReenableBargeIn?(): void
 }
 
@@ -38,7 +38,7 @@ export function FocusDock(props: FocusDockProps) {
   const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
   return (
     <View testID="focus-dock" style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}>
-      {pinned ? <CommitmentCard {...props} item={pinned.item} others={pinned.others} solid={solid} /> : null}
+      {pinned ? <Commitments {...props} pinned={pinned} solid={solid} /> : null}
       {degradations.map((d) => (
         // key 带上区分维：同一种 kind 上游今天最多 push 一次，但 mic + camera 两个
         // permission_denied 是随时会出现的形态，那时 `key={d.kind}` 就是 React key 冲突
@@ -56,6 +56,43 @@ export function FocusDock(props: FocusDockProps) {
   )
 }
 
+/** 所有承诺清空时本组件卸载，下一组承诺不会继承上一次打开的列表。 */
+function Commitments(props: FocusDockProps & {
+  pinned: NonNullable<ReturnType<typeof pinCommitment>>
+  solid: string
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const { p, fontScale, snapshot, pinned, solid } = props
+  const target = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
+  return (
+    <>
+      <CommitmentCard {...props} item={pinned.item} others={pinned.others} onOthers={() => setExpanded(true)} />
+      {expanded ? (
+        <Modal transparent animationType="fade" onRequestClose={() => setExpanded(false)}>
+          <SafeAreaView style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' }}>
+            <View accessibilityViewIsModal style={{ maxHeight: '85%', backgroundColor: solid, padding: 12, borderRadius: RADIUS.xl, gap: 12 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                <Text accessibilityRole="header" style={{ flex: 1, color: p.fg1, fontSize: scale(TYPE.h2, 'text', fontScale) }}>
+                  待处理事项（{snapshot.commitment.length}）
+                </Text>
+                <Pressable testID="dock-list-close" accessibilityRole="button" accessibilityLabel="关闭待处理列表"
+                  onPress={() => setExpanded(false)} style={{ minWidth: target, minHeight: target, justifyContent: 'center', alignItems: 'center' }}>
+                  <Text style={{ color: p.accent, fontSize: scale(TYPE.body, 'text', fontScale) }}>关闭</Text>
+                </Pressable>
+              </View>
+              <ScrollView testID="dock-list" contentContainerStyle={{ gap: 10 }}>
+                {snapshot.commitment.map((item) => (
+                  <CommitmentCard {...props} key={`${item.kind}:${item.id}`} item={item} others={0} testIdPrefix={`dock-list-${item.id}`} />
+                ))}
+              </ScrollView>
+            </View>
+          </SafeAreaView>
+        </Modal>
+      ) : null}
+    </>
+  )
+}
+
 function CommitmentCard({
   p,
   fontScale,
@@ -66,7 +103,8 @@ function CommitmentCard({
   onConfirm,
   onCancelTurn,
   onOthers,
-}: FocusDockProps & { item: DockItem; others: number; solid: string }) {
+  testIdPrefix = 'dock',
+}: FocusDockProps & { item: DockItem; others: number; solid: string; onOthers?(): void; testIdPrefix?: string }) {
   // **时钟只有一个**：`usePresence` 已经在每秒 tick，`snapshot.now` 是那一份的读数。
   // 这里曾经自己起过一份 `setInterval`，而它在生产路径上是冻的——`derivePresence` 每秒现造
   // 新的 `DockItem`，`useEffect(…, [item])` 依赖的是对象引用 ⇒ 每秒 cleanup + 重建，本地
@@ -85,7 +123,7 @@ function CommitmentCard({
     // ⚠ `accessibilityLiveRegion` **不在这一层**：这个子树里有每秒变的倒计时，挂在根上会让
     // TalkBack 每秒重播整张卡。live region 只挂在下面那些「内容变了才该播一次」的摘要行上。
     <View
-      testID={item.kind === 'confirm' ? 'dock-confirm' : `dock-${item.kind}`}
+      testID={`${testIdPrefix}-${item.kind}`}
       style={{
         backgroundColor: solid,
         borderRadius: RADIUS.lg,
@@ -122,14 +160,14 @@ function CommitmentCard({
                   }}
                 />
               </View>
-              <Text testID="dock-countdown" style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
+              <Text testID={`${testIdPrefix}-countdown`} style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
                 {fmt(confirmRemainingMs(item, now))} 后过期
               </Text>
             </View>
           ) : null}
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Pressable
-              testID="dock-cancel"
+              testID={`${testIdPrefix}-cancel`}
               accessibilityRole="button"
               onPress={() => onConfirm('取消', item.subkind === 'location' ? undefined : item.id)}
               style={{ flex: 1, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill, alignItems: 'center', justifyContent: 'center' }}
@@ -137,7 +175,7 @@ function CommitmentCard({
               <Text style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>{item.subkind === 'location' ? '拒绝' : '取消'}</Text>
             </Pressable>
             <Pressable
-              testID="dock-accept"
+              testID={`${testIdPrefix}-accept`}
               accessibilityRole="button"
               onPress={() => onConfirm('确认', item.subkind === 'location' ? undefined : item.id)}
               style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)', backgroundColor: p.amberSoft, alignItems: 'center', justifyContent: 'center' }}
@@ -164,7 +202,7 @@ function CommitmentCard({
         </Text>
       )}
       {others > 0 ? (
-        <Pressable onPress={onOthers} accessibilityRole="button">
+        <Pressable testID="dock-others" onPress={onOthers} accessibilityRole="button" style={{ minHeight: h, justifyContent: 'center' }}>
           <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>另有 {others} 个待处理 ›</Text>
         </Pressable>
       ) : null}

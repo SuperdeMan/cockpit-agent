@@ -9,6 +9,13 @@ import { httpProbe, startLiveness, type LivenessOpts } from './liveness'
 
 export type GatewayStatus = 'connecting' | 'open' | 'closed'
 
+/** 可选的本地发送生命周期；不进入 JSON 帧。返回 true 只代表写入 socket，不代表业务已执行。 */
+export interface SendHooks {
+  canSend?(): boolean
+  onSent?(): void
+  onDropped?(reason: string): void
+}
+
 export interface UserFrameOpts {
   isConfirmation?: boolean
   /** Q1-B：确认/取消指向哪一条挂起；空=普通请求（不发键） */
@@ -130,13 +137,22 @@ export class GatewaySession {
   /** 打断（§2.2）：{type:'cancel', session_id} */
   cancel(): boolean {
     const frame = { type: 'cancel', session_id: this.sessionId }
-    this.onFrame?.('up', frame)
-    return Boolean(this.ws.send(frame))
+    return this.sendIfOpen(frame)
   }
 
   /** 通用上行（M1 会话状态机自建帧：用户请求/cancel/proactive_ack 都走这里） */
-  sendRaw(frame: object): boolean {
+  sendRaw(frame: object, hooks?: SendHooks): boolean {
     this.onFrame?.('up', frame)
-    return Boolean(this.ws.send(frame))
+    return Boolean(this.ws.send(frame, hooks))
+  }
+
+  discardQueued(requestId: string): boolean {
+    return Boolean(this.ws.discardQueued(requestId))
+  }
+
+  sendIfOpen(frame: object): boolean {
+    const sent = Boolean(this.ws.sendIfOpen(frame))
+    if (sent) this.onFrame?.('up', frame)
+    return sent
   }
 }

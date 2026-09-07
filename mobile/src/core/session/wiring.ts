@@ -32,7 +32,11 @@ export function ensureWired(cfg: ServerConfig): Wired {
     },
   )
   core = new SessionCore({
-    transport: { send: (frame) => session.sendRaw(frame) },
+    transport: {
+      send: (frame, hooks) => session.sendRaw(frame, hooks),
+      discardQueued: (requestId) => session.discardQueued(requestId),
+      sendIfOpen: (frame) => session.sendIfOpen(frame),
+    },
     sessionId: session.sessionId,
     getMeta: currentMeta,
     location: appLocationBridge,

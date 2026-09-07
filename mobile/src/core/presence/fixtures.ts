@@ -68,6 +68,12 @@ export function presenceFixtures(): PresenceFixture[] {
     mk('driving-suggest', { drivingSuggest: true, identity: 'trusted-tablet' }),
     mk('looking', { visionCapturing: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
+    // AR01：只展示列表交互，不发业务确认（state-gallery 的 onConfirm 是 no-op）。
+    mk('attention-multiple', { pendingOps: [
+      { id: 'sample-a', ts: NOW - 30_000, summary: '样本 A · 第一项待确认' },
+      { id: 'sample-b', ts: NOW - 20_000, summary: '样本 B · 第二项待确认' },
+      { id: 'sample-c', ts: NOW - 10_000, summary: '样本 C · 第三项待确认' },
+    ], pendingLocation: true }, false),
     mk('offline-with-confirm', { connStatus: 'closed', connChangedAt: NOW - 30_000, pendingOps: [{ id: 'op1', ts: NOW - 20_000, summary: '要打开后备箱吗？' }], queued: 2 }),
     // 断网但没有待确认——这是 queue 项**唯一**会被 pin 住的形态。上面两条带 queued 的样本
     // 都同时带 pendingOps，confirm 排 rank 0、queue 排 rank 4 ⇒ queue 只进「另有 N 个」计数，

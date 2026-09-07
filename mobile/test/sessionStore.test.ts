@@ -8,6 +8,7 @@ import {
   type SpeechSink,
 } from '@/core/session/store'
 import type { Msg } from '@shared/types.ts'
+import type { SendHooks } from '@/core/api/gateway'
 
 class FakeTransport {
   sent: any[] = []
@@ -527,10 +528,12 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
     core.dispose()
   })
 
-  test('离线入队计数：transport.send 返回 false 累加，连上归零', () => {
+  test('离线入队计数：连接打开仍保留计数，实际发送回调逐项归零', () => {
     const transport = new FakeTransport()
-    transport.send = (frame: object) => {
+    const hooks: SendHooks[] = []
+    transport.send = (frame: object, lifecycle?: SendHooks) => {
       transport.sent.push(frame)
+      hooks.push(lifecycle!)
       return false // 断线：入队
     }
     const core = new SessionCore({
@@ -543,7 +546,11 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
     core.send('现在几点')
     core.send('讲个笑话')
     expect(core.store.getState().queued).toBe(2)
-    core.setStatus('open') // ws.mjs onopen 时 flush 队列 → 计数归零
+    core.setStatus('open') // AR01：onopen 先于 flush，不是发送证据
+    expect(core.store.getState().queued).toBe(2)
+    hooks[0].onSent?.()
+    expect(core.store.getState().queued).toBe(1)
+    hooks[1].onSent?.()
     expect(core.store.getState().queued).toBe(0)
     core.dispose()
   })
@@ -657,6 +664,7 @@ describe('UX v2 B2-3：轮来源（语音层开合的事实住在记录里）', 
     expect(meta[a1.id].source).toBe('text')
     expect(meta[a2.id].source).toBe('ptt')
     expect(meta[a2.id].sentAt).toBeGreaterThan(0)
+    core.store.setState({ pendingOps: [{ id: 'op1', ts: Date.now() }] })
     core.confirmReply('确认', 'op1', { source: 'handsfree' })
     expect(meta[assistants(core)[2].id]).toBeUndefined() // 上面的 meta 是旧快照
     expect(core.store.getState().turnMeta[assistants(core)[2].id].source).toBe('handsfree')
@@ -731,17 +739,21 @@ describe('UX v2 B2-4：增量沉淀（方案 §5.2.1）、打断留痕（§5.2 �
 
   test('D9：断线期间取消一轮，「N 条消息排队中」跟着减（承诺型文案不许报错数）', () => {
     const { transport, core } = newCore()
-    transport.send = (frame: object) => {
+    const hooks: SendHooks[] = []
+    transport.send = (frame: object, lifecycle?: SendHooks) => {
       transport.sent.push(frame)
+      hooks.push(lifecycle!)
       return false // 断线：帧入 ws.mjs 队列
     }
     core.setStatus('closed')
     core.send('讲个笑话')
     core.send('再讲一个')
     expect(core.store.getState().queued).toBe(2)
-    core.cancelCurrentTurn() // 结算 FIFO 头
+    core.cancelCurrentTurn() // AR01：取消最新请求；实际队列撤回由 sessionLifecycle 的组合测试守
     expect(core.store.getState().queued).toBe(1)
     core.setStatus('open')
+    expect(core.store.getState().queued).toBe(1)
+    for (const h of hooks) if (h.canSend?.()) h.onSent?.()
     expect(core.store.getState().queued).toBe(0)
     core.dispose()
   })

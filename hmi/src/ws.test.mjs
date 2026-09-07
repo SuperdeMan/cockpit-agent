@@ -179,3 +179,70 @@ test('reconnectNow: close() 之后是 no-op（用户主动关了就别自己爬�
   timers.fireAll()
   assert.equal(instances.length, 1)
 })
+
+test('AR01: 撤回指定队列项，保留其余顺序，不发送 cancel', () => {
+  const { rws, instances } = harness()
+  const dropped = []
+  rws.start()
+  for (const id of ['a', 'b', 'c']) rws.send({ request_id: id }, { onDropped: (reason) => dropped.push([id, reason]) })
+  assert.equal(rws.discardQueued('b'), true)
+  assert.equal(rws.discardQueued('unknown'), false)
+  instances[0]._open()
+  assert.deepEqual(instances[0].sent.map(JSON.parse), [{ request_id: 'a' }, { request_id: 'c' }])
+  assert.deepEqual(dropped, [['b', 'cancelled']])
+})
+
+test('AR01: 重连时重新检查失效/到期；onSent 只在实际发送后调用', () => {
+  const { rws, instances } = harness()
+  const sent = []; const dropped = []
+  let alive = true
+  rws.start()
+  rws.send({ request_id: 'a' }, { canSend: () => alive, onSent: () => sent.push('a'), onDropped: (r) => dropped.push(r) })
+  rws.send({ request_id: 'b' }, { onSent: () => sent.push('b') })
+  assert.deepEqual(sent, [])
+  alive = false
+  instances[0]._open()
+  assert.deepEqual(sent, ['b'])
+  assert.deepEqual(dropped, ['invalidated'])
+  assert.deepEqual(instances[0].sent.map(JSON.parse), [{ request_id: 'b' }])
+})
+
+test('AR01: flush 回调撤回下一项，不能因已取出快照仍发送它', () => {
+  const { rws, instances } = harness()
+  rws.start()
+  rws.send({ request_id: 'a' }, { onSent: () => rws.discardQueued('b') })
+  rws.send({ request_id: 'b' })
+  instances[0]._open()
+  assert.deepEqual(instances[0].sent.map(JSON.parse), [{ request_id: 'a' }])
+})
+
+test('AR01: 观察回调抛错不能重发已发帧；守卫抛错则拒绝发送', () => {
+  const { rws, instances } = harness()
+  rws.start()
+  rws.send({ request_id: 'a' }, { onSent: () => { throw new Error('observer') } })
+  rws.send({ request_id: 'b' }, { canSend: () => { throw new Error('guard') } })
+  instances[0]._open()
+  instances[0]._open()
+  assert.deepEqual(instances[0].sent.map(JSON.parse), [{ request_id: 'a' }])
+})
+
+test('AR01: 控制帧只在线发送，离线调用不留在队列', () => {
+  const { rws, instances } = harness()
+  rws.start()
+  assert.equal(rws.sendIfOpen({ type: 'cancel' }), false)
+  instances[0]._open()
+  assert.deepEqual(instances[0].sent, [])
+  assert.equal(rws.sendIfOpen({ type: 'cancel' }), true)
+  assert.deepEqual(instances[0].sent.map(JSON.parse), [{ type: 'cancel' }])
+})
+
+test('AR01: 队列溢出通知被丢项，不把未发送项伪装成已发', () => {
+  const { rws, instances } = harness({ maxQueue: 1 })
+  const events = []
+  rws.start()
+  rws.send({ request_id: 'a' }, { onDropped: (r) => events.push(r), onSent: () => events.push('a-sent') })
+  rws.send({ request_id: 'b' })
+  instances[0]._open()
+  assert.deepEqual(events, ['overflow'])
+  assert.deepEqual(instances[0].sent.map(JSON.parse), [{ request_id: 'b' }])
+})

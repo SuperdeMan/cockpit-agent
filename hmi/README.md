@@ -68,6 +68,11 @@ src/
 本地预览参数：`?aurora`（设计系统沙盒）、`?demo` / `?demo=map` / `?demo=cards`（场景与卡片夹具）。
 
 ## 自检
+
+`src/ws.mjs` 也是 Android 的共享传输层。`send(frame, hooks?)` 的可选本地 hooks
+（`canSend/onSent/onDropped`）、`discardQueued(requestId)` 与 `sendIfOpen(frame)`
+用于 Android 的请求撤回；hooks 不进线上 JSON，HMI 现有单参数 send 保持兼容。
+`onSent` 只证明写入 socket，不证明业务执行；详细边界见 `docs/conventions.md` §9.33。
 ```bash
 npx tsc --noEmit -p tsconfig.json   # 类型检查
 npx vite build                      # 生产构建

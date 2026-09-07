@@ -1928,6 +1928,15 @@ edge-gateway WS / llm-gateway HTTP·WS 接入。两个网关本来不关心客�
   （final/error/cancelled）归属并注销该轮。`final.closed_operation_ids` 出账、
   `need_confirm && operation_id` 进账，挂起台账**服务端权威**。任何新客户端
   **移植这两份共享模块而不是重写**（QA Q1/Q3 硬化出来的语义，正是为多端并发场景）。
+- **Android 请求撤回（AR01，2026-09-07）**：本地请求身份先于定位/视觉异步准备建立，
+  取消或销毁会话后，其迟到结果不得重新派发。共享 `ws.mjs` 的可选
+  `send(frame, {canSend,onSent,onDropped})` 在 flush 前复查有效性；
+  `discardQueued(requestId)` 撤回真实未发送项，计数以实际发送/丢弃回调更新，
+  不能在连接 open 时直接归零。`sendIfOpen(frame)` 不入离线队列，供 cancel 控制帧使用。
+  网关每连接只保留最新的在飞请求，取消目标不得借用响应兼容路径的 FIFO 头；
+  已发送请求的本地打断不表示业务回滚。指定 operation 的确认先验台账/TTL，
+  不被本地位置征询消费；未发送的确认被撤回时，只恢复仍有效且未被服务端关闭的原条目。
+  以上 hooks 为进程内接口，不新增上行字段，也不改变 VAL 的确认权威。
 - **会话前缀 `app-`**：App 每次启动新会话（同 HMI 每次刷新语义），
   id = `app-` + 随机 6 位。不在记忆抽取跳过名单（`memory/server.py:42-48`）——
   App 会话正常进记忆抽取；观测面按前缀分端。跳过名单前缀（eval-/e2e-/…）

@@ -225,14 +225,16 @@ function ChatBody({
     (text: string, metaExtra?: Record<string, string>, opts?: SendOpts) => {
       const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
       if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
-        activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
-        // 先落气泡（方案 §5.5）：用户那句话**立刻**上屏带 📷，vision_frame_id 迟到再补进 meta——
-        // 相机冷启动几百毫秒，这段时间用户自己的话不该还没出现。草稿 / S2S 转正的气泡直接复用
-        const bubbleId = opts?.bubbleId ?? core.beginUserBubble(text)
-        core.markVision(bubbleId)
-        void captureVisionFrame(cfg.audioUrl).then((fid) =>
-          core.send(text, { ...(metaExtra || {}), vision_frame_id: fid }, { ...(opts || {}), bubbleId }),
-        )
+        // SessionCore 先登记用户气泡与请求身份，再准备帧。取消后到达的 frame_id 不得再派发。
+        // 摄像头/上传自身的物理取消与零落盘另归 AR02。
+        core.send(text, metaExtra, {
+          ...opts,
+          prepareMeta: async (bubbleId) => {
+            activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
+            core.markVision(bubbleId)
+            return { vision_frame_id: await captureVisionFrame(cfg.audioUrl) }
+          },
+        })
         return
       }
       core.send(text, metaExtra, opts)

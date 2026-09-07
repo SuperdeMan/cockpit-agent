@@ -7,7 +7,8 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - 需求/选型/架构判断：[`docs/design/2026-08-23-hmi-android-app-plan.md`](../docs/design/2026-08-23-hmi-android-app-plan.md)
 - **逐任务执行真相源**（协议契约指认 + 坑账）：[`docs/design/2026-08-24-mobile-app-implementation-plan.md`](../docs/design/2026-08-24-mobile-app-implementation-plan.md)
 - **完整评审**（2026-09-07；R01–R15 原始发现）：[2026-09-07-android-ux-full-review.md](../docs/reviews/2026-09-07-android-ux-full-review.md)
-- **后续分批处理入口**（AR01–AR11，均未启动）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
+- **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
+- AR01 确认与取消的实施/验证：[2026-09-07-ar01-confirmation-cancellation-implementation.md](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。本地、APK 和真实业务验证分开登记。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）
@@ -213,7 +214,7 @@ maestro test --no-reinstall-driver --include-tags online mobile/e2e/ # 只跑要
 `@shared/*` = `hmi/src/*`，**只许引白名单模块**：台账 [`shared-allowlist.json`](shared-allowlist.json)
 （含 phase 分阶段准入），守卫测试 `test/sharedAllowlist.test.ts`。共享模块要改
 （真发现 bug）→ 在 hmi 侧改 + 跑 `hmi` node:test + 本守卫，两边都绿才算完。
-`hmi/` 本身一行不改。
+HMI 的 UI 与应用装配不随 mobile 批次重构；共享模块修复遵循上述双端验证流程。
 
 ## 目录
 
