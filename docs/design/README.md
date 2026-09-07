@@ -21,6 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
+| [2026-09-08-ar03-stop-playback-landscape-implementation.md](2026-09-08-ar03-stop-playback-landscape-implementation.md) | AR03：播放事实唯一声明源、停播/取消/停后开麦三条命令分开、横屏语音层覆盖域收边 | 客户端与共享 FSM 修复、本地回归与 10 条变异验证完成；mobile 682 tests、HMI 308/308；**设备验证一格未做**，未整批签收 |
 | [2026-09-07-ar02-capture-privacy-implementation.md](2026-09-07-ar02-capture-privacy-implementation.md) | AR02：prod 诊断门控、原生内存单帧、采集事实与全链取消 | 客户端修复与定向验证完成、已推送 main；OPPO 包 70365389e，656 tests/tsc 通过；旧缓存已于 2026-09-08 授权清除；完整设备矩阵未完成，未整批签收 |
 | [2026-09-07-ar01-confirmation-cancellation-implementation.md](2026-09-07-ar01-confirmation-cancellation-implementation.md) | AR01：指定确认归属、真实队列撤回、异步准备失效与多待办列表 | 已合入并推送 main；客户端修复、本地回归与 OPPO release 样本验证完成；云端未部署，真实业务 E2E 未跑 |
 | [2026-09-07-android-review-remediation-batches.md](2026-09-07-android-review-remediation-batches.md) | Android 完整评审后的 AR01–AR11 分批建议：范围、依赖、验收与 R01–R15 对应关系 | AR01 已完成客户端修复与样本验证；AR02 已修且定向验证，仍待完整设备矩阵；其余未启动 |

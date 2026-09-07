@@ -8567,3 +8567,17 @@ Tailscale 客户端后 Connected，手机 ping 云栈 0% 丢包，App 自行重�
 用户明确授权清理 OPPO 小舟 App 缓存。CLI cache-only 请求未取得成功终态，adb 断开后 exit 1；随后在系统应用存储页仅执行“清除缓存”，系统缓存 8.6MB → 0B，应用数据保持 19.9MB。冷启动后 Camera 缓存从 2 个/4,408,670 bytes 变为 0 个/0 bytes，服务器地址和掩码凭证与清理前一致，包仍为 `70365389e`、安装时间和相机/麦权限不变。缓存清理完成，不代表 AR02 完整设备矩阵完成；证据在 `%LOCALAPPDATA%\car-agent\artifacts\AR02-cache-20260908`。
 
 期间前台发生切换，collector trace `16500021e5d4f77b` 记录 00:27:10 座椅加热 false → true。第一次坐标点击存在未即时校验前台的疏漏，之后又发现并行 AR03 工作；操作归属及是否恢复已向用户请求确认，本会话未擅自发车态恢复指令。详细过程保留在 [AR02 实施记录](design/2026-09-07-ar02-capture-privacy-implementation.md)。仅提交本次文档回填，保留并行代码改动。
+
+## 2026-09-08 AR03 停播与横屏操作（客户端与共享 FSM）
+
+用户启动 AR03 并授权本批所需提交/推送。从 clean main `005e5951fd76af3887030ec2eceac5312134b412` 接手，只处理 R06 与 R09 的横屏部分；R09 跨页部分属 AR04，未启动。实现、证据与未验格统一看 [AR03 实施记录](design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。没有云端部署、APK 构建、装机、模型/阈值/声学路径、环境/CI/数据库变更或真实车控/商户操作。
+
+四条根因各自有落点。① 停止键跟错了对象：`busy` 只看 `pending/streaming/processActive`，而 `final` 一到三个忙态同帧清零，那一刻 TTS 常常刚起播——新立 `core/voice/playbackFacts.ts` 作播放事实的唯一声明源（与 AR02 `captureFacts` 同形态），产出方是真实播放器：主链挂既有的 `setSpeaking` 翻转，S2S 那一路包一层 `playerFactory`（起点＝首片真的推进去，终点＝`stop()`，`S2SClient` 每条收尾都经 `_stopPlayback`），一个包装盖全而不是在六七个调用点各记一次。② 三条命令此前只有一条：合一键改 audio-first 三态（出声＝停止播报 / 忙而未出声＝打断 / 闲＝发送，`testID` 与 Maestro 用例不变），语音层内补一枚**只在出声时挂载**的停止键（放在把手带那一行，`sheetHeight.ts` 的 chrome 一个数没动）。③ 停播会隐式开采集：共享 `hmi/src/voiceLoop.mjs` 追加 `stopSpeaking()`（SPEAKING/THINKING → ARMED），刻意不复用 `recycle()` 那条 `handsFreeOff→On`——它会顺带复位会话级 `_bargeInDisabled` 与自触发计数；`finishTurn(natural)` 让 DEFER 只跟自然收尾走，用户按停不再把攒着的主动消息倒出来。④ 横屏 Dock 被自己的层盖住：给语音层一个有边界的覆盖域（`voice-sheet-scope`），Dock 落在覆盖域之外，非 split 路径逐字节不变。
+
+顺带修掉两处「说了假话」：`derivePresence` 的 `speaking` 改喂新事实之后，S2S 自答从此在播报事实面内（此前 `agent` 整轮恒 `idle`，没有播报态、没有胶囊、没有停止入口）；`FocusDock` 回声降级行原来指着一个 B5 撤掉后**不存在**的「停止播报」控件，现在控件真的有了，后半句也跟着改成「重新唤醒再问」——停播回 ARMED，不是接着说就行。
+
+mobile 70 suites / 682 tests、exit 0（基线 65 / 656），TypeScript exit 0；HMI 308 / 308、exit 0（基线 304），Vite build 8.28s。10 条变异注入逐条判红、无漏网。其中一条要单记：第一版「不复位会话级插话护栏」的用例对着 `_vadBargeInDisabled` 断言，而 `_gotoIdle` 复位的是 `_bargeInDisabled` ⇒ 注入时**没红**，改走 D6 那条自触发路径把 `bargeInDisabled` 真置起来才抓得到——**判据自己也要被变异验一遍**。
+
+取证环境两处限制单列：reanimated 4 的官方 `mock.js` 自己 import 真包、在 jest 里照样走 worklets 原生初始化（改用手写 `test/support/reanimatedMock.ts`，缺符号立刻炸不静默过）；`react-test-renderer` 不跑布局 ⇒ 语音层 `containerHeight>0` 永不成立、层根本不挂载，横屏用例先手动放一次 `onLayout` 再断言，并显式先证「层真的升起来了」——层没升起来时「Dock 不被盖」是句空话。
+
+**AR03 未整批签收**：一格设备证据都没有。长回答（final 已到仍在播）、多段段链、S2S 自答、主动消息播报、播放器缓冲阶段、横屏确认与停止可达、200% 字号全部未验；混合意图盲听需泓舟参与。AR01/AR02 的 APK 读数不转借给本批代码；AR02 的完整设备矩阵仍归 AR02。
