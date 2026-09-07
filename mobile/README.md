@@ -10,7 +10,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
 - **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
 - AR01 确认与取消：客户端修复、本地回归与 OPPO 样本验证完成，历史证据见[AR01 实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
-- **AR02 当前交接**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当前常驻包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，完整设备矩阵、旧缓存清理尚未完成，AR02 未整批签收。
+- **AR02 当前交接**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当前常驻包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，旧缓存已于 2026-09-08 授权清除；完整设备矩阵尚未完成，AR02 未整批签收。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）

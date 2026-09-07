@@ -116,7 +116,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：`mobile/README.md` + [AR02 采集与隐私交接](docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。**AR02 客户端修复、本地回归与 OPPO 定向验证完成（2026-09-07），代码已推送；当前 test 包 `70365389e`。完整设备矩阵及旧缓存清理未完成，AR02 未整批签收。** 先补实施记录末节未验项；其他 AR 批次未启动。AR01 证据保留在[实施记录](docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)，后续范围看[分批建议](docs/design/2026-09-07-android-review-remediation-batches.md)。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)保留 R01–R15 原发现；UX B1–B5 只作历史。 |
+| Android App | 当前入口：`mobile/README.md` + [AR02 采集与隐私交接](docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。**AR02 客户端修复、本地回归与 OPPO 定向验证完成（2026-09-07），代码已推送；当前 test 包 `70365389e`。旧缓存已于 2026-09-08 授权清除；完整设备矩阵未完成，AR02 未整批签收。** 先补实施记录末节未验项；其他 AR 批次未启动。AR01 证据保留在[实施记录](docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)，后续范围看[分批建议](docs/design/2026-09-07-android-review-remediation-batches.md)。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)保留 R01–R15 原发现；UX B1–B5 只作历史。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
