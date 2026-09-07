@@ -1933,7 +1933,8 @@ edge-gateway WS / llm-gateway HTTP·WS 接入。两个网关本来不关心客�
   `send(frame, {canSend,onSent,onDropped})` 在 flush 前复查有效性；
   `discardQueued(requestId)` 撤回真实未发送项，计数以实际发送/丢弃回调更新，
   不能在连接 open 时直接归零。`sendIfOpen(frame)` 不入离线队列，供 cancel 控制帧使用。
-  网关每连接只保留最新的在飞请求，取消目标不得借用响应兼容路径的 FIFO 头；
+  网关每连接只保留最新的在飞请求；默认选择最新创建请求，若它已发送则按实际发送顺序定位，
+  不得借用响应兼容路径的 FIFO 头，也不得把异步准备的创建顺序当作发送顺序；
   已发送请求的本地打断不表示业务回滚。指定 operation 的确认先验台账/TTL，
   不被本地位置征询消费；未发送的确认被撤回时，只恢复仍有效且未被服务端关闭的原条目。
   以上 hooks 为进程内接口，不新增上行字段，也不改变 VAL 的确认权威。

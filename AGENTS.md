@@ -115,7 +115,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前运行与常驻包入口：`mobile/README.md`。**完整评审已归档（2026-09-07）**：[`docs/reviews/2026-09-07-android-ux-full-review.md`](docs/reviews/2026-09-07-android-ux-full-review.md)；R01–R15 尚未修复。**后续处理建议**：[`docs/design/2026-09-07-android-review-remediation-batches.md`](docs/design/2026-09-07-android-review-remediation-batches.md)，按 AR01–AR11 逐批启动、验证和回填，不从已结束的 UX B1–B5 计划推断下一步。B5 收口及语音修复的历史仍查各计划；归档前 Android 入口原文保存在 `docs/agents-history.md` §99。 |
+| Android App | 当前运行与常驻包入口：`mobile/README.md`。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)保留原始 R01–R15。**AR01 客户端修复、本地回归与 OPPO release 样本验证完成（2026-09-07）**：R03/R04/R05 的版本、证据和真实业务未验边界看[实施记录](docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。后续从[分批建议](docs/design/2026-09-07-android-review-remediation-batches.md)选择，建议下一批 AR02；其他批次未启动。已结束的 UX B1–B5 不作下一步入口，历史只查 `docs/agents-history.md` 与各旧计划。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

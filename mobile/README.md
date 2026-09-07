@@ -8,7 +8,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **逐任务执行真相源**（协议契约指认 + 坑账）：[`docs/design/2026-08-24-mobile-app-implementation-plan.md`](../docs/design/2026-08-24-mobile-app-implementation-plan.md)
 - **完整评审**（2026-09-07；R01–R15 原始发现）：[2026-09-07-android-ux-full-review.md](../docs/reviews/2026-09-07-android-ux-full-review.md)
 - **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
-- AR01 确认与取消的实施/验证：[2026-09-07-ar01-confirmation-cancellation-implementation.md](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。本地、APK 和真实业务验证分开登记。
+- AR01 确认与取消：客户端修复、本地回归与 OPPO release 样本验证完成；当前 test 候选包及真实业务未验边界看[实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。下一批建议 AR02。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）
@@ -31,8 +31,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1   # 退�
 
 - 角色由 `scripts\mobile_device.ps1` 按厂商解析（`-List` 看在线设备；`-Role test` 打印序列号供
   `adb -s`）；序列号是机器状态，文档里不维护第二份。两台同时插着时 **adb 命令一律带 `-s`**。
-- 两台都装同一份 prod release **常驻包**（见下文）；dev-client 只在测试机上、只在需要 Metro
-  热重载的时段临时装。
+- 对照验收时两台装同一份 prod release **常驻包**（见下文）；开发候选先落 test，本轮候选身份看 AR01 实施记录，compare 本批未更新。dev-client 只在测试机上、只在需要 Metro 热重载的时段临时装。
 - 一台机器上的读数不代表另一台（B3′ 助理角色、Xruns、AEC 通路都是单机读数）：结论要标机型；
   「Xiaomi 复验」是对照，不是第二个验收分母。
 - **两台手机的 Tailscale 都会静默掉线**（坑账 §9.88 ④；OPPO 2026-09-07 实测 offline 1h、App 网关卡
