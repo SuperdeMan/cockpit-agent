@@ -113,6 +113,47 @@ test('R04: an explicit older queued request can be removed without cancelling th
   } finally { h.dispose() }
 })
 
+test('R04: cancel follows actual transmission order when location completion overtakes a later request', async () => {
+  const loc = deferred<Record<string, string>>()
+  const h = setup({ isEnabled: () => true, refreshMeta: () => loc.promise })
+  try {
+    h.sockets[0].open()
+    h.core.send('附近的充电站')
+    const locationBubble = h.core.store.getState().messages.at(-1)!.id
+    h.core.send('讲个笑话')
+    const jokeId = usersSent(h.sockets[0])[0].request_id
+    loc.resolve({ current_lat: '1' })
+    await flush()
+    expect(usersSent(h.sockets[0]).map((f) => f.text)).toEqual(['讲个笑话', '附近的充电站'])
+    const locationId = usersSent(h.sockets[0])[1].request_id
+    h.core.cancelCurrentTurn()
+    expect(h.sockets[0].sent.at(-1)).toMatchObject({ type: 'cancel' })
+    expect(h.core.store.getState().interruptedIds).toEqual([locationBubble])
+    h.core.handleFrame({ type: 'cancelled', request_id: jokeId })
+    h.core.handleFrame({ type: 'cancelled', request_id: locationId })
+    expect(h.core.store.getState().messages.some((m) => m.pending)).toBe(false)
+  } finally { h.dispose() }
+})
+
+test('R04: the newest preparation is withdrawn without cancelling an already transmitted request', async () => {
+  const loc = deferred<Record<string, string>>()
+  const h = setup({ isEnabled: () => true, refreshMeta: () => loc.promise })
+  try {
+    h.sockets[0].open()
+    h.core.send('讲个笑话')
+    const jokeId = usersSent(h.sockets[0])[0].request_id
+    h.core.send('附近的充电站')
+    const locationBubble = h.core.store.getState().messages.at(-1)!.id
+    h.core.cancelCurrentTurn()
+    loc.resolve({ current_lat: '1' })
+    await flush()
+    expect(h.sockets[0].sent).toHaveLength(1)
+    expect(h.core.store.getState().interruptedIds).toEqual([locationBubble])
+    h.core.handleFrame({ type: 'final', request_id: jokeId, speech: '正常回答' })
+    expect(h.core.store.getState().messages.some((m) => m.text === '正常回答')).toBe(true)
+  } finally { h.dispose() }
+})
+
 test.each(['cancel', 'dispose'] as const)('R04: %s while location is pending invalidates its completion', async (action) => {
   const loc = deferred<Record<string, string>>()
   const h = setup({ isEnabled: () => true, refreshMeta: () => loc.promise })

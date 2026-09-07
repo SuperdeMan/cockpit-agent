@@ -343,15 +343,19 @@ export class SessionCore {
     this.dispatch(reply, true, undefined, undefined, operationId, opts.source ?? 'text', undefined, operation)
   }
 
-  /** U2 真打断（App.tsx:664-678）：发网关取消 + 本地把当前在飞轮（FIFO 头）标「已打断」 */
   /** 行车档手动退出（B5-3 缺陷 C 的 UI 出口）：只压住**本段**，不改判据；下一段照常自动进入 */
   dismissDriving(): void {
     this.store.setState({ drivingDismissedAt: Date.now() })
   }
 
+  /** 撤回指定请求；默认优先最新未发请求，已发送时按网关收到的顺序取消。 */
   cancelCurrentTurn(bubbleId?: string): void {
     if (this.disposed) return
-    const request = bubbleId ? this.requests.get(bubbleId) : [...this.requests.values()].at(-1)
+    let request = bubbleId ? this.requests.get(bubbleId) : [...this.requests.values()].at(-1)
+    // 异步定位/视觉可能让先创建的请求后发送；创建顺序不能代表网关当前在飞轮。
+    if (!bubbleId && request?.phase === 'sent') {
+      request = [...this.requests.values()].find((r) => r.frame.request_id === this.lastSentRequestId) ?? request
+    }
     if (!bubbleId || this.registry.isLatest(bubbleId)) this.speech.stop()
     if (!request) return
     const id = request.bubbleId
