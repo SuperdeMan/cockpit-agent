@@ -17,6 +17,7 @@ import { PendingSpeech } from '@shared/proactiveSpeech.mjs'
 import type { SpeechSink } from '../session/store'
 import { settingsStore, speakAllowed } from '../settings/store'
 import { newPcmPlayer } from './audioCtx'
+import { setAudioPlaybackFact } from './playbackFacts'
 import { proactiveSpeechDecision } from './proactivePolicy'
 import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
 
@@ -221,6 +222,9 @@ export class SpeechController implements SpeechSink {
   private setSpeaking(v: boolean): void {
     if (this.speaking === v) return
     this.speaking = v
+    // AR03：主链这一路的播放事实。挂在既有的 speaking 翻转上——它本来就是「首片音频起播 → 播完/停」，
+    // 与 `playbackFacts` 要的语义逐字相同，不另立第二个时刻
+    setAudioPlaybackFact(this, v)
     for (const fn of this.speakingSubs) fn(v)
   }
 
@@ -307,7 +311,7 @@ export class SpeechController implements SpeechSink {
     this.graceTimer = setTimeout(() => {
       this.graceTimer = null
       if (this.queue.length) return
-      this.finishTurn()
+      this.finishTurn(true)
     }, SEGMENT_GRACE_MS)
   }
 
@@ -318,8 +322,12 @@ export class SpeechController implements SpeechSink {
     }
   }
 
-  /** 这轮播报的唯一收尾出口：先出读数，再 speaking 落、没出过声报 onSilent、报 onSpeechEnded、补播 DEFER */
-  private finishTurn(): void {
+  /** 这轮播报的唯一收尾出口：先出读数，再 speaking 落、没出过声报 onSilent、报 onSpeechEnded、（自然收尾才）补播 DEFER。
+   *  `natural` = 队列自己放空后过了宽限；`false` = 被 `stop()` 打断（换轮 / barge-in / 用户按停）。
+   *  **DEFER 只跟自然收尾走**（AR03 修 R06）：此前无条件补播 ⇒ 用户按下「停止播报」的同一瞬间，
+   *  攒着的主动消息立刻开口，「一步只停播、队列清空」当场不成立。攒着的话不会丢——
+   *  另一条既有触发点（`setProactiveCtx` 的 s2s 转空闲）与下一次自然收尾照旧补播，队列本来就有界去重。 */
+  private finishTurn(natural: boolean): void {
     if (this.turnSessions.length) this.emitTurnReport()
     const sounded = this.turnSounded
     this.setSpeaking(false)
@@ -328,8 +336,7 @@ export class SpeechController implements SpeechSink {
       this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`)
     }
     this.onSpeechEnded?.()
-    // 播报自然收尾 ⇒ 攒着的主动消息可以补播了
-    void this.flushDeferred()
+    if (natural) void this.flushDeferred()
   }
 
   delta(bubbleId: string, text: string): void {
@@ -390,7 +397,7 @@ export class SpeechController implements SpeechSink {
     this.extra?.player?.stop()
     this.extra = null
     // 旧语义原样保留：停掉一个活着的轮也算这轮收尾（没出过声 ⇒ onSilent；免唤醒靠这两条收 THINKING）
-    if (hadTurn) this.finishTurn()
+    if (hadTurn) this.finishTurn(false)
     else this.setSpeaking(false)
   }
 

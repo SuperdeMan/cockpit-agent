@@ -57,6 +57,10 @@ export interface VoiceSheetProps {
    *  null ⇒ 回落 G1-tint（减少透明度 / 行车档 / ref 还没挂上）。判据全在 ChatScreen，本组件只消费 */
   blurTarget: RefObject<View | null> | null
   /** 从顶缘把手带下拖 / 轻点把手带 / 点暗区 / 返回键（B5-12 之后底栏没有了） */
+  /** 真的有声音在放（判据 playbackFacts，AR03）：层内停止键**只在这时挂载** */
+  playing?: boolean
+  /** 只停播（AR03 / 评审 R06）：停当前出声，不取消在飞请求、不开麦 */
+  onStopPlayback?(): void
   onCollapse(): void
   /** 轻点层内大球 = 开始说话（B5-15，只在 split 时给）：driving-landscape 下层覆盖整列，
    *  Composer 的光球被盖住 ⇒ 层内大球接替它，否则「轻点始终能说」（§5.1.1）在横屏断掉 */
@@ -196,18 +200,48 @@ export function VoiceSheet(props: VoiceSheetProps) {
               B4 实测层内 ScrollView 向上拖能滚，滚到顶后向下拖会与整层 Pan 打架；限定在把手带就不打架。
               它接替 voice-sheet-collapse 的 §6「目标 ≥56dp」演员身份（testID 沿用，探针脚本不改）。
               把手本身仍是 G2 的那条 36×4（§5.11），只是外面套了一条 ≥56dp 的可点可拖带。 */}
-          <GestureDetector gesture={pan}>
-            <Pressable
-              testID="voice-sheet-collapse"
-              accessibilityRole="button"
-              accessibilityLabel="收起语音层"
-              accessibilityHint="向下拖或轻点收起"
-              onPress={props.onCollapse}
-              style={{ minHeight: targetBtn, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2 }} />
-            </Pressable>
-          </GestureDetector>
+          <View>
+            <GestureDetector gesture={pan}>
+              <Pressable
+                testID="voice-sheet-collapse"
+                accessibilityRole="button"
+                accessibilityLabel="收起语音层"
+                accessibilityHint="向下拖或轻点收起"
+                onPress={props.onCollapse}
+                style={{ minHeight: targetBtn, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2 }} />
+              </Pressable>
+            </GestureDetector>
+            {/* 层内停止键（AR03 / 评审 R06 + R09 横屏）：**只在真的有声音时挂载**。
+                driving-landscape 下层覆盖整个记录区 + Composer，合一键够不到 ⇒ 不给这一枚就只能
+                「先收层再停」，正是 R09 那条。绝对定位在把手带那一行右侧：那行 `minHeight` 已经是
+                目标高，**不改行高 ⇒ `ui/layout/sheetHeight.ts` 的 chrome 与三个真机容器读数一个不动**。
+                与 B5-12「撤掉底栏收起/打断两枚常驻键」不冲突——撤的是常驻键，这是条件出现的单一停播键。 */}
+            {props.playing && props.onStopPlayback ? (
+              <Pressable
+                testID="voice-sheet-stop"
+                accessibilityRole="button"
+                accessibilityLabel="停止播报"
+                accessibilityHint="只停止声音，不会开始录音"
+                onPress={props.onStopPlayback}
+                style={{
+                  position: 'absolute',
+                  right: 8,
+                  top: 0,
+                  bottom: 0,
+                  minWidth: targetBtn,
+                  paddingHorizontal: 10,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale), fontWeight: '600' }}>
+                  停止播报
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
           {props.s2sNotice ? (
             <View
               testID="s2s-notice"

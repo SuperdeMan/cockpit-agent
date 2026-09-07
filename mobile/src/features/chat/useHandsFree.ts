@@ -53,6 +53,8 @@ export interface HandsFreeUi {
   wake(): void
   /** 录音中轻点 = 结束并提交 */
   endUtterance(): void
+  /** 只停播（AR03 / 评审 R06）：停当前出声，不发 cancel 帧、不开麦、不开续问窗。免唤醒关着时是 no-op */
+  stopSpeaking(): void
   /** 结束本轮收音 / 重新开启插话（评审 D7） */
   recycle(): void
   /** 上一次回声被丢弃的时刻；0=没有 */
@@ -217,5 +219,6 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const wake = useCallback(() => ctlRef.current?.wakeManually(), [])
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
   const recycle = useCallback(() => ctlRef.current?.recycle(), [])
-  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, echoAt }
+  const stopSpeaking = useCallback(() => ctlRef.current?.stopSpeaking(), [])
+  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, echoAt }
 }

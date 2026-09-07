@@ -383,6 +383,16 @@ function ChatBody({
     else if (snapshot.agent === 'thinking' || snapshot.agent === 'processing') setSheetOverride({ turnId: latestTurnId, mode: 'open' })
     else startListening()
   }, [snapshot.agent, interruptAndListen, latestTurnId, startListening])
+  // ■ 只停播（AR03 / 评审 R06）：**三条命令里的第二条**。
+  //  · 停止播报 = 这里：停当前所有出声，不发 cancel 帧、不开麦、不开续问窗、不放攒着的主动消息；
+  //  · 取消在飞请求 = onInterrupt（cancelCurrentTurn，含停播）；
+  //  · 停止后开始说话 = interruptAndListen（光球轻点）。
+  // 两条腿都要：主链 TTS 在 SpeechController，S2S 自答在 HandsFreeController 手里的 S2SClient。
+  // 免唤醒关着时 hf.stopSpeaking() 是 no-op；stop() 幂等，重复调只是把 speaking 落一次。
+  const stopPlayback = useCallback(() => {
+    speechController().stop()
+    hf.stopSpeaking()
+  }, [hf])
   // 「关闭本轮麦克风」（隐私栏）与「重新开启插话」（Dock）：评审 D7——不再翻持久化开关
   const stopMic = useCallback(() => {
     ptt.cancel()
@@ -395,6 +405,10 @@ function ChatBody({
   }, [snapshot.privacy.micActive])
 
   const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
+  // 真实音频生命周期（AR03 / 评审 R06）：`busy` 只是「云端这一轮还没落地」，而 `final` 一到
+  // 三个忙态同帧清零——那一刻 TTS 常常刚起播。停止键必须跟着**声音**，不是跟着轮态。
+  // 事实源是 playbackFacts（主链 TTS + 批处理兜底 + S2S 自答三路），`agent==='speaking'` ⟺ 真的在出声。
+  const playing = snapshot.agent === 'speaking'
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
   const lastConsentId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -500,18 +514,44 @@ function ChatBody({
       driving={snapshot.driving}
       split={splitLandscape}
       blurTarget={blurTarget}
+      playing={playing}
+      onStopPlayback={stopPlayback}
       onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
       onOrbTap={splitLandscape ? onOrbTap : undefined}
       onSend={(t) => onSend(t)}
     />
   ) : null
 
+  // 承诺面（AR03 / 评审 R09 横屏部分）：driving-landscape 下语音层原来挂在**整列**上，
+  // 它的 60% 暗区 `absolute inset 0` 连 Dock 一起盖住 ⇒ 确认按钮必须先收层才够得到，
+  // 与「Dock 永远不被别的轴覆盖」（presence.ts 头注 / 外部评审 P0-1）直接冲突。
+  // 修法是给层一个**有边界的覆盖域**（记录区 + 胶囊 + Composer），Dock 落在覆盖域之外。
+  // 非 split 路径逐字节不变：层仍住在记录区容器里、Dock 仍在原位置。
+  const focusDockEl = v2 && dock ? (
+    <FocusDock
+      p={p}
+      fontScale={settings.fontScale}
+      snapshot={snapshot}
+      onConfirm={onConfirm}
+      onCancelTurn={onInterrupt}
+      onReenableBargeIn={hf.recycle}
+    />
+  ) : null
+
   const chatColumn = (
+    <View style={{ flex: 1 }}>
+    {/* 语音层的**覆盖域**：层的暗区 `absolute inset 0` 只到这一层为止（testID 是这条不变量的取证锚，
+        两种形态各有一个演员——横屏是本容器，竖屏是里面的记录区容器） */}
     <View
+      testID={splitLandscape ? 'voice-sheet-scope' : undefined}
       style={{ flex: 1 }}
       onLayout={splitLandscape ? (e) => setColumnHeight(Math.round(e.nativeEvent.layout.height)) : undefined}
     >
-      <View style={{ flex: 1 }} onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}>
+      <View
+        testID={splitLandscape ? undefined : 'voice-sheet-scope'}
+        style={{ flex: 1 }}
+        onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}
+      >
       <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
       {messages.length === 0 ? (
         <Welcome
@@ -613,17 +653,9 @@ function ChatBody({
           {legacyHint}
         </Text>
       ) : null}
-      {/* 承诺面：**永远不被别的轴覆盖**（评审 P0-1——待确认时断网，那条确认照样钉着） */}
-      {v2 && dock ? (
-        <FocusDock
-          p={p}
-          fontScale={settings.fontScale}
-          snapshot={snapshot}
-          onConfirm={onConfirm}
-          onCancelTurn={onInterrupt}
-          onReenableBargeIn={hf.recycle}
-        />
-      ) : null}
+      {/* 承诺面：**永远不被别的轴覆盖**（评审 P0-1——待确认时断网，那条确认照样钉着）。
+          driving-landscape 下它挪到层的覆盖域之外（见本列末尾），这里不渲染 */}
+      {splitLandscape ? null : focusDockEl}
       {/* 状态胶囊：一次只说一件「此刻」的事。点按默认打开语音层；建议胶囊（§6 触发③）
           点按 = 开行车档——**做什么由 derivePresence 给的 capsule.action 决定，判据不在这里**。 */}
       {v2 ? (
@@ -642,12 +674,14 @@ function ChatBody({
         p={p}
         quickCommands={settings.quickCommands}
         busy={busy}
+        playing={playing}
         ptt={cfg.audioUrl ? ptt : null}
         orbState={v2 ? snapshot.primary : legacyOrb}
         orbDim={v2 && snapshot.dim}
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
+        onStopPlayback={stopPlayback}
         // tabletop 下舞台已有一颗 120dp 大球在跑循环 ⇒ Composer 球让位（§11.4「同屏常态 1 个」）。
         // 判据仍是 orbPolicy，这一条例外太小不值得进纯函数（B4 §6.2 记一句）
         orbAnimated={composerOrbAnimated(snapshot, motionEnv) && layout.mode !== 'tabletop'}
@@ -658,9 +692,14 @@ function ChatBody({
         covered={sheetCoversColumn}
         onTap={onOrbTap}
       />
-      {/* driving-landscape：层挂在整列容器上，absolute 盖住记录区 + Composer（B5-15 lever ②）。
+      {/* driving-landscape：层挂在**覆盖域**容器上，absolute 盖住记录区 + 胶囊 + Composer（B5-15 lever ②）。
           被盖住的 Composer 光球不再是唯一麦——层内大球接了 onOrbTap（§5.1.1「轻点始终能说」）。 */}
       {splitLandscape ? voiceSheetEl : null}
+    </View>
+    {/* AR03：Dock 在覆盖域之外 ⇒ 横屏下确认/取消不被暗区压暗、无需先收层。
+        代价一条：横竖旋转时它换了挂载位置会重挂载，AR01 的「另有 N 个待处理」展开态随之收起；
+        按稳定 ID 操作那条判据不受影响。 */}
+    {splitLandscape ? focusDockEl : null}
     </View>
   )
 

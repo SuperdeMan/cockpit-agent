@@ -25,7 +25,9 @@ import { stripLeadingWakeWord } from '@shared/utteranceHeuristics.mjs'
 
 import { AsrSession, type AsrConfig } from './asr'
 import { newPcmPlayer } from './audioCtx'
+import type { PcmPlayerLike } from './queuePlayer'
 import { setAudioCaptureFact } from './captureFacts'
+import { setAudioPlaybackFact } from './playbackFacts'
 import { DEFAULT_KEYWORDS, KwsEngine, kwsNativeAvailable } from './kws'
 import { micLease } from './micBus'
 import { FRAME_SAMPLES, type FrameSink, type Recorder } from './recorder'
@@ -144,6 +146,8 @@ export class HandsFreeController {
   private requested = false
   private lifecycle: Promise<void> = Promise.resolve()
   private ttsSpeaking = false
+  /** 「本次收尾是用户按的停播」——只在 stopSpeaking() 的同步调用栈内为真 */
+  private userStopping = false
 
   constructor(private deps: HandsFreeDeps) {
     const cfg = deps.config ?? {}
@@ -300,13 +304,32 @@ export class HandsFreeController {
 
   ttsEnd(): void {
     this.ttsSpeaking = false
+    // 用户停播那一次由 stopSpeaking() 自己把 FSM 收到 ARMED；这里短路，避免同一次停播
+    // 先进 FOLLOWUP（开 8s 续问窗 + 起一只定时器）再被改写
+    if (this.userStopping) return
     this.vl.ttsEnd()
+  }
+
+  /** 「只停播」（AR03 / 评审 R06）：停当前所有出声，**不发 cancel 帧、不开麦、不开续问窗**。
+   *  与另外两条命令的分界：`wakeManually()` 是「停止后开始说话」，`onCancelTurn` 那条是「取消在飞请求」。 */
+  stopSpeaking(): void {
+    if (!this.on) return
+    this.userStopping = true
+    try {
+      // S2S 自答：本地立刻停播 + 上行让网关 cancel provider（同 barge-in 的既有出口）
+      this.s2s?.bargeIn()
+      // 主链 TTS：与 barge-in 走同一个停播出口
+      this.deps.onStopTts()
+      this.vl.stopSpeaking()
+    } finally {
+      this.userStopping = false
+    }
   }
 
   /** 本轮云端处理终结但没有播报（TTS 关 / 纯卡片 / 出错）——必须补调，
    *  否则 FSM 停在 THINKING 直到 100s 兜底，那段时间整个回路是聋的 */
   turnEnded(): void {
-    if (this.ttsSpeaking) return
+    if (this.ttsSpeaking || this.userStopping) return
     this.vl.ttsEnd()
   }
 
@@ -365,7 +388,7 @@ export class HandsFreeController {
       // 注入传输适配器：真实 send 才报上行；撤回后屏蔽旧 WS 的消息与发送。
       // 共享 S2SClient 的模型/聚包/播放实现保持原样。
       wsFactory: (url: string) => this.s2sSocket(url, alive, client),
-      playerFactory: (sampleRate: number) => newPcmPlayer({ sampleRate }),
+      playerFactory: (sampleRate: number) => this.playbackReporting(newPcmPlayer({ sampleRate })),
       onTranscript: (text: string, final: boolean) => {
         if (!alive() || !this.on) return
         if (final) setAudioCaptureFact('s2sUploading', client, false)
@@ -511,6 +534,33 @@ export class HandsFreeController {
     this.vad.stop()
     this.ring.clear()
     await Promise.all([this.mic.stop(), this.kws.stop()])
+  }
+
+  /** AR03 播放事实：S2S 自答走的是这一路播放器，**不经 `SpeechController`**——评审前它在整个播报事实面之外
+   *  （`derivePresence` 只读 `speaking`），端到端挡位自答时屏上没有播报态、也就没有任何停止入口。
+   *  起点取「首片真的推进去」（`started` 翻真），终点取 `stop()`：`S2SClient` 的每条收尾路径
+   *  （turn end 等排定音频播完 / bargeIn / cancelTurn / close）都经 `_stopPlayback` ⇒ 一个包装盖全，
+   *  不在六七个调用点各记一次（漏一处就是一个永远亮着的停止键）。 */
+  private playbackReporting(player: PcmPlayerLike | null): PcmPlayerLike | null {
+    // 无音频上下文时 S2SClient 的约定是「工厂给 null ⇒ 静默降级」；包装不许把它变成一个会抛的壳
+    if (!player) return null
+    return {
+      get started() { return player.started },
+      get nextStart() { return player.nextStart },
+      get underruns() { return player.underruns },
+      get ctx() { return player.ctx },
+      push(int16: Int16Array) {
+        const written = player.push(int16)
+        if (player.started) setAudioPlaybackFact(player, true)
+        return written
+      },
+      drainedAt: () => player.drainedAt(),
+      remainingSec: () => player.remainingSec(),
+      stop() {
+        setAudioPlaybackFact(player, false)
+        player.stop()
+      },
+    }
   }
 
   private commitS2sAudio(): void {

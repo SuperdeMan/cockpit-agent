@@ -214,7 +214,10 @@ const DEGRADATION_TEXT: Record<Exclude<Degradation['kind'], 'transport_unknown' 
   permission_denied: (d) => (d.kind === 'permission_denied' ? d.text : ''),
   service_degraded: (d) => (d.kind === 'service_degraded' ? d.text : ''),
   safety_blocked: (d) => (d.kind === 'safety_blocked' ? d.text : ''),
-  audio_echo_degraded: () => '环境回声较强，本轮已关闭插话；点「停止播报」后再说',
+  // AR03：这句原来指着一个**不存在**的控件（B5 撤掉层内停止键之后）。现在「停止播报」真的有了，
+  // 但停播会把免唤醒收回待机（不开续问窗，见 voiceLoop.stopSpeaking）⇒ 后半句也要跟着说实话：
+  // 停完要重新唤醒，不是接着说就行。
+  audio_echo_degraded: () => '环境回声较强，本轮已关闭插话；点「停止播报」后重新唤醒再问',
   fatal: (d) => (d.kind === 'fatal' ? d.text : ''),
 }
 

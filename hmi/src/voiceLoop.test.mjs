@@ -748,3 +748,57 @@ test('缺口A 归一：SPEAKING 期 partial 带标点也判得出回声（旧判
   assert.equal(h.count('stopTts'), 0, '回声不许触发打断')
   assert.equal(h.vl.state, VoiceState.SPEAKING)
 })
+
+// ─── AR03（mobile 评审 R06）：用户主动停播 → ARMED，不是 FOLLOWUP ───
+//
+// 差别只有一处，但那一处正是「停止不得隐式开启采集」：FOLLOWUP 的 8s 窗口意味着**下一句不用
+// 唤醒词就直接上行**。用户按「停止播报」时没有「接着说」的意思。会话级护栏（自触发计数 /
+// _bargeInDisabled）**不**在这一下复位——那是 recycle 的语义，不该被一次停播顺带做掉。
+test('AR03 stopSpeaking：SPEAKING → ARMED（不开续问窗，续说要重新唤醒）', () => {
+  const h = makeHarness()
+  driveToSpeaking(h)
+  h.vl.stopSpeaking()
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  h.vl.vadSpeechStart()
+  assert.equal(h.vl.state, VoiceState.ARMED, 'ARMED 下开口不进聆听')
+  h.vl.wake()
+  assert.equal(h.vl.state, VoiceState.LISTENING, '显式唤醒照常')
+})
+
+test('AR03 stopSpeaking：THINKING 期同样收到 ARMED（还没出声就按停）', () => {
+  const h = makeHarness()
+  h.vl.handsFreeOn()
+  h.vl.wake()
+  h.vl.vadSpeechStart()
+  h.vl.vadSpeechEnd()
+  h.vl.asrFinal('讲个笑话')
+  assert.equal(h.vl.state, VoiceState.THINKING)
+  h.vl.stopSpeaking()
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})
+
+test('AR03 stopSpeaking：不复位会话级插话护栏（那是 recycle 的事，走 IDLE 才复位）', () => {
+  const h = makeHarness()
+  driveToSpeaking(h, { tts: '正在为您导航到首都机场' })
+  // 连续两次疑似回声自触发 ⇒ 本会话关闭 VAD barge-in（与 D6 那条同一路径）
+  h.vl.vadSpeechStart()
+  h.vl.asrPartial('正在为您导航')
+  h.advance(300)
+  h.vl.vadSpeechStart()
+  h.vl.asrPartial('到首都机场')
+  h.advance(300)
+  assert.equal(h.vl.bargeInDisabled, true)
+
+  h.vl.stopSpeaking()
+  assert.equal(h.vl.state, VoiceState.ARMED)
+  assert.equal(h.vl.bargeInDisabled, true, '停播不是「重新开启插话」')
+})
+
+test('AR03 stopSpeaking：ARMED / IDLE 下是空操作，不把待机踢成别的态', () => {
+  const h = makeHarness()
+  h.vl.stopSpeaking()
+  assert.equal(h.vl.state, VoiceState.IDLE)
+  h.vl.handsFreeOn()
+  h.vl.stopSpeaking()
+  assert.equal(h.vl.state, VoiceState.ARMED)
+})

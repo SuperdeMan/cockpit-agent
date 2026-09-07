@@ -8,9 +8,9 @@ import { actionSummary } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
-import { speechController } from '@/core/voice/speech'
 import { getVisionCaptureSnapshot, subscribeVisionCapture } from '@/core/vision/frame'
 import { getAudioCaptureSnapshot, subscribeAudioCapture } from '@/core/voice/captureFacts'
+import { getAudioPlaybackSnapshot, subscribeAudioPlayback } from '@/core/voice/playbackFacts'
 import {
   ARMED_CAPSULE_MS,
   derivePresence,
@@ -58,12 +58,15 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
     useStore(core.store)
   const { settings } = useStore(settingsStore)
 
-  // 播报中 / 抓帧中：订阅式信号（Task 5）
-  const [speaking, setSpeaking] = useState(() => speechController().speaking)
+  // 播报中 / 抓帧中：订阅式信号（Task 5）。
+  // **播报事实取 `playbackFacts` 而不是 `SpeechController.speaking`**（AR03）：S2S 自答走的是
+  // `S2SClient` 自己的播放器，不经 SpeechController ⇒ 旧的那一份在端到端挡位上恒 false，
+  // `agent` 于是整轮停在 idle（没有播报态、没有胶囊、没有停止入口）。
   const vision = useSyncExternalStore(subscribeVisionCapture, getVisionCaptureSnapshot)
   const audioCapture = useSyncExternalStore(subscribeAudioCapture, getAudioCaptureSnapshot)
+  const playback = useSyncExternalStore(subscribeAudioPlayback, getAudioPlaybackSnapshot)
+  const speaking = playback.playing
   const visionCapturing = vision.preparing || vision.cameraActive || vision.uploading
-  useEffect(() => speechController().subscribeSpeaking(setSpeaking), [])
 
   // connStatus 变化时刻（reconnecting 3s 延迟的基准）
   const connChangedAt = useRef(Date.now())

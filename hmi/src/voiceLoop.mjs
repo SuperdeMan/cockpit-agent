@@ -467,6 +467,15 @@ export class VoiceLoop {
       this._gotoFollowup()
     }
   }
+  // 用户主动停播（AR03 / 评审 R06）：SPEAKING/THINKING → **ARMED**，与 ttsEnd 的唯一差别是不开续问窗。
+  // 「停止」这个动作里没有「接着说」的意思——FOLLOWUP 的 8s 窗口意味着下一句不用唤醒词就上行 ASR，
+  // 把它当成停播的副产品就是隐式开采集。刻意不复用 handsFreeOff→On（recycle 那条路会顺带复位
+  // 会话级 _bargeInDisabled 与自触发计数，那是「重新开启插话」的语义，不该被一次停播做掉）。
+  stopSpeaking() {
+    if (this.state === VoiceState.SPEAKING || this.state === VoiceState.THINKING) {
+      this._gotoArmed()
+    }
+  }
 
   // ─── 内部判定 ───
   _bargeInFire() {

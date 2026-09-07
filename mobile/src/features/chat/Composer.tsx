@@ -32,6 +32,8 @@ export interface ComposerProps {
   quickCommands: string[]
   /** 有在飞轮（pending/streaming/process 任一）→ 显示打断 */
   busy: boolean
+  /** 真的有声音在放（判据 playbackFacts，AR03）：**压过 busy**，见下面合一键三态那段注释 */
+  playing?: boolean
   /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
   ptt: PttHandle | null
   /** 光球主态由调用方给（v2=snapshot.primary，v1=ChatScreen 里的旧推导）——
@@ -58,11 +60,13 @@ export interface ComposerProps {
   fontScale: FontScalePref
   onSend(text: string): void
   onInterrupt(): void
+  /** 只停播（AR03）：停当前出声，不取消在飞请求、不开麦 */
+  onStopPlayback(): void
   /** 轻点光球（判据在 ChatScreen） */
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, fontScale, onSend, onInterrupt, onTap }: ComposerProps) {
+export function Composer({ p, quickCommands, busy, playing = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
   const [input, setInput] = useState('')
   // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
   // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
@@ -129,6 +133,12 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
   const plateOverlayOn = !!ptt && !finalizing && input.length === 0
 
   const a11yLabel = recording ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`
+  // 合一键三态（AR03 / 评审 R06）。原来只有「busy ? 打断 : 发送」两态，而 `busy` 不含音频：
+  // 整段答案一次 final 返回时三个忙态同帧清零，键当场变回「发送」——播了几分钟也没有一步可达的停播入口。
+  // **audio-first**：声音已经在放的时候，用户按这枚键的意图压倒性是「别说了」；那一刻取消在飞请求
+  // 换不来任何东西（答案已在交付）。取消在飞请求退到 `busy && !playing` 与 Dock 的长任务行。
+  const keyMode: 'stop-playback' | 'interrupt' | 'send' = playing ? 'stop-playback' : busy ? 'interrupt' : 'send'
+  const keyActive = keyMode !== 'send'
 
   return (
     <View
@@ -250,37 +260,39 @@ export function Composer({ p, quickCommands, busy, ptt, orbState, orbDim, orbAni
             )}
           </View>
         )}
-        {/* 发送 / 打断合一（B5-13，泓舟 B4 真机轮原话②）：忙时 ■ 停（onInterrupt = cancelCurrentTurn，与原
-            「■ 打断」pill 同一回调），闲时 ⬆ 发。原 pill 已整段删除——忙时要发新话先停再发（市面惯例）。
+        {/* 发送 / 打断 / 停播合一（B5-13，泓舟 B4 真机轮原话②；AR03 补第三态）：出声时 ▣ 停止播报
+            （onStopPlayback，只停声音），忙而未出声时 ■ 停（onInterrupt = cancelCurrentTurn），闲时 ⬆ 发。
+            原 pill 已整段删除——忙时要发新话先停再发（市面惯例）。
             testID 仍 composer-send（Maestro 01/02/03/06/08 都在闲时按它点）；§6「目标 ≥56dp」的演员不变。
             颜色沿用既有语义：发 = 极光渐变（虹彩纪律三处之一），停 = 琥珀（与原 pill 同色）。
-            ⚠ C 身份行车档没有输入框 ⇒ **闲时**仍 disabled + 降透明度（无字可发），但**忙时可点**
+            ⚠ C 身份行车档没有输入框 ⇒ **闲时**仍 disabled + 降透明度（无字可发），但**忙时 / 出声时可点**
             ——B4 §6.3「一枚永远点不动的键」这条设计代价从此只剩一半。
             svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
         <Pressable
           testID="composer-send"
           accessibilityRole="button"
-          accessibilityLabel={busy ? '打断' : '发送'}
-          disabled={!busy && inputMode === 'hidden'}
-          onPress={busy ? onInterrupt : submit}
+          accessibilityLabel={keyMode === 'stop-playback' ? '停止播报' : keyMode === 'interrupt' ? '打断' : '发送'}
+          accessibilityHint={keyMode === 'stop-playback' ? '只停止声音，不会开始录音' : undefined}
+          disabled={!keyActive && inputMode === 'hidden'}
+          onPress={keyMode === 'stop-playback' ? onStopPlayback : keyMode === 'interrupt' ? onInterrupt : submit}
           style={{
-            experimental_backgroundImage: busy ? undefined : AURORA.gradient,
-            backgroundColor: busy ? p.amberSoft : undefined,
-            borderWidth: busy ? 1 : 0,
-            borderColor: busy ? 'rgba(245,158,11,0.3)' : 'transparent',
-            opacity: !busy && inputMode === 'hidden' ? 0.45 : 1,
+            experimental_backgroundImage: keyActive ? undefined : AURORA.gradient,
+            backgroundColor: keyActive ? p.amberSoft : undefined,
+            borderWidth: keyActive ? 1 : 0,
+            borderColor: keyActive ? 'rgba(245,158,11,0.3)' : 'transparent',
+            opacity: !keyActive && inputMode === 'hidden' ? 0.45 : 1,
             width: driving ? target : scale(44, 'target', fontScale),
             height: driving ? target : scale(44, 'target', fontScale),
             borderRadius: RADIUS.full,
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: busy ? undefined : '0 4px 22px rgba(91,140,255,0.45)',
+            boxShadow: keyActive ? undefined : '0 4px 22px rgba(91,140,255,0.45)',
           }}
         >
           {iconRuntimeAvailable() ? (
-            <Icon name={busy ? 'stop' : 'arrowUp'} size={22} color={busy ? p.amber : '#fff'} />
+            <Icon name={keyActive ? 'stop' : 'arrowUp'} size={22} color={keyActive ? p.amber : '#fff'} />
           ) : (
-            <Text style={{ color: busy ? p.amber : '#fff', fontSize: p.font(15), fontWeight: '600' }}>{busy ? '停' : '发'}</Text>
+            <Text style={{ color: keyActive ? p.amber : '#fff', fontSize: p.font(15), fontWeight: '600' }}>{keyActive ? '停' : '发'}</Text>
           )}
         </Pressable>
       </View>
