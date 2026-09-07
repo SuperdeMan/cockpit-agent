@@ -38,6 +38,7 @@ import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { speechController } from '../../core/voice/speech'
+import { stopPlayback } from '../../core/voice/stopPlayback'
 import { captureVisionFrame, needsVisionFrame, visionCapabilitySignal } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
@@ -387,12 +388,11 @@ function ChatBody({
   //  · 停止播报 = 这里：停当前所有出声，不发 cancel 帧、不开麦、不开续问窗、不放攒着的主动消息；
   //  · 取消在飞请求 = onInterrupt（cancelCurrentTurn，含停播）；
   //  · 停止后开始说话 = interruptAndListen（光球轻点）。
-  // 两条腿都要：主链 TTS 在 SpeechController，S2S 自答在 HandsFreeController 手里的 S2SClient。
-  // 免唤醒关着时 hf.stopSpeaking() 是 no-op；stop() 幂等，重复调只是把 speaking 落一次。
-  const stopPlayback = useCallback(() => {
-    speechController().stop()
-    hf.stopSpeaking()
-  }, [hf])
+  // 两条腿都要，**且顺序是判据**：判据与理由在 core/voice/stopPlayback.ts，这里只接上。
+  const onStopPlayback = useCallback(
+    () => stopPlayback({ handsFree: hf, speech: speechController() }),
+    [hf],
+  )
   // 「关闭本轮麦克风」（隐私栏）与「重新开启插话」（Dock）：评审 D7——不再翻持久化开关
   const stopMic = useCallback(() => {
     ptt.cancel()
@@ -515,7 +515,7 @@ function ChatBody({
       split={splitLandscape}
       blurTarget={blurTarget}
       playing={playing}
-      onStopPlayback={stopPlayback}
+      onStopPlayback={onStopPlayback}
       onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
       onOrbTap={splitLandscape ? onOrbTap : undefined}
       onSend={(t) => onSend(t)}
@@ -681,7 +681,7 @@ function ChatBody({
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
-        onStopPlayback={stopPlayback}
+        onStopPlayback={onStopPlayback}
         // tabletop 下舞台已有一颗 120dp 大球在跑循环 ⇒ Composer 球让位（§11.4「同屏常态 1 个」）。
         // 判据仍是 orbPolicy，这一条例外太小不值得进纯函数（B4 §6.2 记一句）
         orbAnimated={composerOrbAnimated(snapshot, motionEnv) && layout.mode !== 'tabletop'}

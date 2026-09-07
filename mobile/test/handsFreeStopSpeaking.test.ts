@@ -11,6 +11,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { stopPlayback } from '@/core/voice/stopPlayback'
+
 const recStarts = { n: 0, stops: 0 }
 
 class FakeVad {
@@ -223,4 +225,41 @@ test('S2S 自答起播即置播放事实；停止播报同时停本地播放并�
   expect(players.some((player) => player.stopped)).toBe(true)
   expect(ws.sent.length).toBeGreaterThan(beforeStop) // barge_in 上行，让网关别再送音频
   expect(ctl.state).toBe('ARMED')
+})
+
+// ── 合成出口的顺序（AR03）──────────────────────────────────────
+//
+// 上面的用例都直接调 `ctl.stopSpeaking()`，那等于**替被测系统注入了正确顺序**。
+// 生产路径是 ChatScreen 把两路声音接起来，而先停 SpeechController 会让它的收尾同步回调
+// `onSpeechEnded → ttsEnd()`，把 FSM 推进 FOLLOWUP；随后的 stopSpeaking() 已不在
+// SPEAKING/THINKING ⇒ 空操作，续问窗照样开着。下面用真实控制器 + 模拟那条回调链来钉顺序。
+test('合成出口：先免唤醒后主链 ⇒ FSM 收到 ARMED（顺序对）', async () => {
+  const ctl = makeCtl()
+  // useHandsFree 把 SpeechController.onSpeechEnded 接到 ctl.ttsEnd()；停播出口同步触发它
+  const speech = { stop: jest.fn(() => ctl.ttsEnd()) }
+  ;(ctl as { deps: { onStopTts: () => void } }).deps.onStopTts = () => speech.stop()
+  await toSpeaking(ctl)
+
+  stopPlayback({ handsFree: ctl, speech })
+
+  expect(ctl.state).toBe('ARMED')
+  expect(speech.stop).toHaveBeenCalled()
+})
+
+test('合成出口反例：先主链后免唤醒 ⇒ 续问窗被打开（这正是要避免的顺序）', async () => {
+  const ctl = makeCtl()
+  const speech = { stop: jest.fn(() => ctl.ttsEnd()) }
+  ;(ctl as { deps: { onStopTts: () => void } }).deps.onStopTts = () => speech.stop()
+  await toSpeaking(ctl)
+
+  speech.stop()
+  ctl.stopSpeaking()
+
+  expect(ctl.state).toBe('FOLLOWUP')
+})
+
+test('合成出口：免唤醒缺席时主链照停（stopSpeaking 是 no-op）', () => {
+  const stop = jest.fn()
+  stopPlayback({ handsFree: { stopSpeaking: () => {} }, speech: { stop } })
+  expect(stop).toHaveBeenCalledTimes(1)
 })
