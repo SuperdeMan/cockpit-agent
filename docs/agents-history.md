@@ -8469,3 +8469,36 @@ artifact`20260904T163045Z-9a3b6f2.json`为verified，SHA=
 批又187/187，故保留污染工件但不计产品失败或最终延迟。`.mrag`、source/content/visual hash、
 BM25链路均未改变；本轮没有向量库迁移依据。原36题当前精确整批仍有7条旧表述被安全预检
 零请求拒绝，只保留`434a046`的36/36历史证据，不转借到当前release。
+
+## §98 2026-09-07 常驻包流程与两台真机角色（mobile，`ce12395`）
+
+泓舟两条要求：① 两台验证真机固定角色——OPPO PEUM00（ColorOS 14 / Android 14）做测试机、
+Xiaomi MIX Fold 4（HyperOS 3 / Android 16，主用机）做对照机；② 两台都要装一份**不开 USB 调试
+也随时能用**的包。第二条的成因是 debug dev-client 不带 JS bundle：没有 Metro（= 没有 USB
+`adb reverse`）它就是打不开的壳。落地：prod 变体的 release 包（内嵌 Hermes bundle、禁 cleartext、
+只留云栈 FQDN 预设），签名刻意仍用模板 debug.keystore（高德 key 绑指纹；同签名才能 `install -r`
+原地升级、保住 SecureStore 里的 token；正式 keystore 归 M5）。`scripts/mobile_device.ps1` 按厂商
+解析角色并装机回读；`build_mobile.ps1` 加 `-Variant`、镜像 `hmi/src`、注入构建身份、验包
+（KWS/ORT .so、release 必有 bundle、包内 app.config 的 variant/SHA 与本次一致、打印签名）、落点
+`D:\Android\builds\apk\`；设置页底部一行 `v0.1.0 · prod · <sha> · <时刻>` 是「设备跑的是哪份代码」
+的唯一读数。文档：`mobile/README.md`「验证设备」「常驻包」两节、实施计划 E3 定案 + 坑账 §9.90–92。
+
+首次 `-Release` 暴露两件事。其一，路径预算：AGP 的 `.cxx/RelWithDebInfo/…` 比 `.cxx/Debug/…`
+长 9 字符，audio-api 编译源码树外的 `../common/cpp` ⇒ CMake 把绝对路径整段镜像进对象目录、250 字符
+上限缩不下去的 4 个对象按原样落盘（configure 只打一条 warning），ninja 1.10.2 `mkdir` 266 字符目录
+报 `No such file or directory`；修 `scripts/gradle_cxx_staging.init.gradle`（`buildStagingDirectory`
+把各模块 `.cxx` 挪到镜像外 `D:\Android\builds\cxx\<模块>`，顺带跨构建复用）。其二，共用机器内存：
+31.6GB 只剩 1.8GB 可用，大头是别的会话留下的 Metro（pid 75696，2026-09-03 起，commit 11GB，
+规则不停别人的 Metro，未动），宿主按「系统内存不足」杀掉两次 gradle 趟；加
+`scripts/gradle_low_memory.init.gradle`（CMake job pool / gradle `--max-workers 2` / Metro
+`--max-workers 2`，`-CompileJobs 3`），全量 release **22m05s**（816 executed / 365 cached），
+提交后干净 SHA 增量重出 **12m57s**（708 / 473），APK 210MB（debug 289MB），签名 SHA-1 与 README
+登记的高德指纹一致。
+
+装机证据：Xiaomi `install -r` Success，`lastUpdateTime 2026-09-04 23:41:40 → 2026-09-07 10:28:41`，
+flags 无 `DEBUGGABLE`；不接 Metro `am start` MainActivity 659ms 冷启、栈里无 DevLauncher、
+`ReactNativeJS: Running "main"`（Hermes 从 base.apk 加载）、`KwsModule: KWS loaded`、
+`netstat` 两条到云栈 `:8443` 的 ESTABLISHED（沿用已存配置，未走引导页）、app 进程零 FATAL；
+验完 force-stop + 熄屏还原。OPPO 当时未接 USB，同一份 APK 接上后
+`scripts/mobile_device.ps1 -Role test -Install` 即可。仍开：正式签名（M5）、OPPO 装机、
+`-CompileJobs` 只在内存紧时用。
