@@ -1,0 +1,40 @@
+// 低内存构建档（仅本机；build_mobile.ps1 -CompileJobs N 经 -I 传入 + -PxiaozhouCompileJobs=N）。
+// 没传这个属性时本文件什么都不做。
+//
+// 背景（2026-09-07）：这台机器是多个会话共用的，可用物理内存常年只剩 1–2GB。AGP 直接起
+// `ninja -C <dir> <target>` 不带 -j，ninja 1.10.2 取 CPU 数（18 核 ⇒ 20 个并发 clang++，
+// RN/folly/JSI 头文件重的翻译单元每个 0.4–0.8GB）；gradle 再并行起多个模块的原生构建；
+// export:embed 的 Metro 又按核数开 transform worker。三层并行叠起来峰值十几 GB，
+// 内存紧张时整趟构建会被宿主按「系统内存不足」杀掉。
+// 三处各钉一个上限，让构建在慢但稳的档位走完：
+//   ① ninja：CMake job pool——compile 池 N、link 池 1（经 cmake 参数 CMAKE_JOB_POOLS /
+//      CMAKE_JOB_POOL_COMPILE / CMAKE_JOB_POOL_LINK，Ninja 生成器认）；
+//   ② gradle 任务并行：由 build_mobile.ps1 传 --max-workers；
+//   ③ Metro：app 的 react { extraPackagerArgs } 追加 --max-workers 2。
+// ⚠ cmake 参数进了配置哈希：.cxx/<hash> 会换一个目录，之前那份中间产物不复用（一次性代价）。
+// ⚠ 本文件是 .gradle：必须无 BOM。
+
+allprojects { p ->
+    p.afterEvaluate {
+        if (!p.hasProperty('xiaozhouCompileJobs')) return
+        def jobs = (p.property('xiaozhouCompileJobs') as String).toInteger()
+        if (jobs <= 0) return
+        def android = p.extensions.findByName('android')
+        if (android != null) {
+            def cmake = android.defaultConfig?.externalNativeBuild?.cmake
+            if (cmake != null) {
+                cmake.arguments += [
+                    "-DCMAKE_JOB_POOLS=compile=${jobs};link=1".toString(),
+                    '-DCMAKE_JOB_POOL_COMPILE=compile',
+                    '-DCMAKE_JOB_POOL_LINK=link',
+                ]
+                p.logger.lifecycle("[low-memory] ${p.path} cmake compile pool = ${jobs}")
+            }
+        }
+        def react = p.extensions.findByName('react')
+        if (react != null) {
+            react.extraPackagerArgs.addAll(['--max-workers', '2'])
+            p.logger.lifecycle("[low-memory] ${p.path} metro --max-workers 2")
+        }
+    }
+}

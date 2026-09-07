@@ -1,0 +1,37 @@
+// CMake 中间产物（.cxx）挪到短路径（仅本机构建；build_mobile.ps1 经 -I 传入 +
+// -PxiaozhouCxxRoot=D:/Android/builds/cxx。没传这个属性时本文件什么都不做——CI 的 Linux
+// runner 没这个病）。
+//
+// 背景（2026-09-07 首次 -Release 实测，坑账 §9.90）：AGP 把 release 变体的 CMake 构建目录命名为
+// `.cxx/RelWithDebInfo/<hash>/<abi>/`（debug 是 `.cxx/Debug/…`，短 9 个字符）。而
+// react-native-audio-api 的 CMake 目标直接编译 `../common/cpp/audioapi`——**源码树之外**的文件，
+// CMake 会把它们的绝对路径整段镜像进对象目录：
+//   <module>/android/.cxx/RelWithDebInfo/<hash>/arm64-v8a/src/main/cpp/audioapi/CMakeFiles/
+//   react-native-audio-api.dir/D_/Android/builds/xiaozhou-mobile/node_modules/react-native-audio-api/common/cpp/audioapi/…
+// 镜像根在一条路径里出现两次，目录 266 字符。SDK 自带的 ninja 1.10.2 不认长路径
+// （硬编码「Filename longer than 260 characters」；mkdir 超 MAX_PATH 报 No such file or directory）。
+// debug 的 257 字符刚好没撞上，release 撞上了——不是 release 配置本身的问题，是路径预算。
+// （reanimated / worklets / screens 用 add_subdirectory 给外部源码一个相对的二进制目录，
+//   没有这段镜像路径，所以只有 audio-api 倒下。）
+//
+// ⇒ 用 AGP 的 buildStagingDirectory 把每个模块的 .cxx 挪到 `<xiaozhouCxxRoot>/<模块名去 react-native- 前缀>`：
+//   · 构建目录前缀 116 → 65 字符；audio-api 最深的对象目录（…/audioapi/HostObjects/sources，
+//     老路径 286）落到 235，低于 CreateDirectory 不带 \\?\ 时的 248 上限还有余量；
+//   · 这个目录在 robocopy /MIR 的镜像之外——原生中间产物跨构建保留。此前每次镜像同步都把
+//     node_modules/*/android/.cxx 清掉，全部原生库每趟从头重编（B5 记的 11–38 分钟里大头是它）。
+// ⚠ 本文件是 .gradle：必须无 BOM（Groovy 解析器见 BOM 即报 Unexpected character）。
+
+allprojects { p ->
+    p.afterEvaluate {
+        if (!p.hasProperty('xiaozhouCxxRoot')) return
+        def android = p.extensions.findByName('android')
+        if (android == null) return
+        def cmake = android.externalNativeBuild?.cmake
+        if (cmake == null) return
+        // 项目路径去冒号、去 react-native- 前缀当目录名：`:react-native-audio-api` → audio-api，`:app` → app
+        def dirName = p.path.replace(':', '_').replaceFirst(/^_/, '').replaceFirst(/^react-native-/, '')
+        def staging = new File("${p.property('xiaozhouCxxRoot')}/${dirName}")
+        cmake.buildStagingDirectory = staging
+        p.logger.lifecycle("[cxx-staging] ${p.path} -> ${staging}")
+    }
+}

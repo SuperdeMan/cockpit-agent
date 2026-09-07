@@ -19,6 +19,21 @@ E1–E6 环境（JDK 17 / Android SDK 命令行工具链 / 环境变量 / Node �
 powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1   # 退出码 0 才动手
 ```
 
+## 验证设备（两台真机，角色固定；2026-09-07 泓舟定）
+
+| 角色 | 机器 | 系统 | 用途 |
+|---|---|---|---|
+| **test 测试机** | OPPO PEUM00 | ColorOS 14 / Android 14 | 日常验证默认落点：adb 驱动的探针、Maestro / e2e、装新包、改设备状态的取证（`device_state` / `battery set` / 设置开关）都在这台 |
+| **compare 对照机** | Xiaomi MIX Fold 4（24072PX77C） | HyperOS 3 / Android 16 | 泓舟主用手机。只做对比验证（同一包、同一语料在第二台上再跑一遍）与折叠形态覆盖；**不跑改设备状态的探针、不装 dev-client、不 force-stop 他正在用的会话** |
+
+- 角色由 `scripts\mobile_device.ps1` 按厂商解析（`-List` 看在线设备；`-Role test` 打印序列号供
+  `adb -s`）；序列号是机器状态，文档里不维护第二份。两台同时插着时 **adb 命令一律带 `-s`**。
+- 两台都装同一份 prod release **常驻包**（见下文）；dev-client 只在测试机上、只在需要 Metro
+  热重载的时段临时装。
+- 一台机器上的读数不代表另一台（B3′ 助理角色、Xruns、AEC 通路都是单机读数）：结论要标机型；
+  「Xiaomi 复验」是对照，不是第二个验收分母。
+- tailnet 节点名不进仓库（同实施计划 §1 E4 卫生约定）。
+
 ## 日常开发（JS/Metro，可在原路径跑）
 
 ```bash
@@ -36,18 +51,56 @@ npm test             # jest：白名单守卫 + 端点/gateway 契约 + 会话�
 ## 原生构建（在 ASCII 镜像工作区进行——仓库路径含中文，subst/中文单根两形态均实测不可用，实施计划 §1.1 偏差 ④ + 坑账 §9.11-12）
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1            # debug APK
-powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release   # release（M5 前 debug keystore）
-powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Clean     # 重生成 android/
+powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1                          # debug dev-client APK（JS 靠 Metro）
+powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release -Variant prod   # 常驻包（内嵌 bundle，见下节）
+powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Clean                   # 重生成 android/
 ```
 
 脚本内置：robocopy 增量镜像 `mobile/` → `D:\Android\builds\xiaozhou-mobile`（全 ASCII
-单根）→ 镜像里 `expo prebuild` → gradle wrapper 换腾讯镜像 + jvmargs 强制 UTF-8 →
-缺失 SDK 包用 android CLI 预装 → CN maven 镜像 init script → `gradlew assembleDebug`
-→ 验 APK 产物。装机：`adb install -r <APK 路径>`（脚本末尾打印，路径在镜像区）。
+单根）+ `hmi/src` → `D:\Android\builds\hmi\src`（`@shared/*` 按 `../hmi` 相对解析，release
+打 bundle 才用到）→ 镜像里 `expo prebuild` → gradle wrapper 换腾讯镜像 + jvmargs 强制 UTF-8 →
+缺失 SDK 包用 android CLI 预装 → CN maven 镜像 init script → `gradlew assembleDebug|Release`
+→ **验包**（KWS/ORT 两个 `.so` 在、release 有 `assets/index.android.bundle`、包内 `app.config`
+的 variant 与构建 SHA 与本次一致、打印签名指纹）→ 复制到落点 `D:\Android\builds\apk\`。
+装机：`scripts\mobile_device.ps1 -Role test|compare -Install <apk>`（脚本末尾打印整条命令）。
 
-构建变体：`APP_VARIANT=dev|staging|prod`（缺省 dev）。dev 允许 cleartext + 任意服务器
-入口；prod 两者皆禁（只留云栈 FQDN 预设）。包名三档同为 `com.xiaozhou.companion`。
+构建变体：`-Variant dev|staging|prod`（缺省 dev；脚本据此设 `APP_VARIANT`）。dev 允许
+cleartext + 任意服务器入口；prod 两者皆禁（只留云栈 FQDN 预设）。包名三档同为
+`com.xiaozhou.companion`。
+
+两条只有 release 才露出来的构建事实（坑账 §9.90–91）：原生中间产物（各模块的 `.cxx`）由
+`scripts/gradle_cxx_staging.init.gradle` 挪到镜像外的 `D:\Android\builds\cxx\<模块>`——release
+的 `.cxx/RelWithDebInfo/…` 比 debug 长 9 字符，audio-api 的对象路径撞 Windows 260 上限，
+debug 从来没撞过；顺带原生中间产物跨构建复用（不再被 robocopy /MIR 每趟清掉）。这台机器
+多会话共用、可用内存只剩 1–2GB 时加 **`-CompileJobs 3`**（ninja 编译池 / gradle / Metro 三层限并发，
+慢但能跑完；被杀的趟不丢已编译对象，重试是增量的）。
+
+## 常驻包（脱离 USB / Metro，随时可用；2026-09-07 起两台真机的常态）
+
+debug dev-client **不带 JS bundle**：没有 Metro（= 没有 USB `adb reverse` 或同网 Metro）
+它就是一个打不开的壳。要「随时随地用、发现更多问题」，装的必须是 **prod 变体的 release 包**：
+bundle 内嵌（Hermes）、禁 cleartext、只留云栈 FQDN 预设、`__DEV__=false`（dev-only 日志与
+dev launcher 都不在）。
+
+| 项 | 值 |
+|---|---|
+| 构建 | `scripts\build_mobile.ps1 -Release -Variant prod` |
+| 落点 | `D:\Android\builds\apk\xiaozhou-companion-prod-release-<sha>-<时刻>.apk`（文件名即身份，不靠目录名记） |
+| 装机 | `scripts\mobile_device.ps1 -Role test -Install <apk>`（对照机 `-Role compare`）；脚本回读 `lastUpdateTime` 必须变、release 不得 `DEBUGGABLE` |
+| 无 adb 装机权限时 | `adb -s <序列号> push <apk> /sdcard/Download/`，手机文件管理器里点装（同签名 ⇒ 原地升级） |
+| 签名 | 与 debug 同一把模板 `debug.keystore`（指纹见「地图」节）——**刻意不换**：高德 key 绑指纹；同签名才能 `install -r` 原地升级、保住 AsyncStorage / SecureStore 里的服务器配置与 token |
+| 版本 | `versionCode` 固定 1；同版本覆盖装合法（只有降级要 `-d`）；谁新谁旧看设置页底部的构建行 |
+| 哪份包 | 设置页最底一行 `v0.1.0 · prod · <sha> · <时刻>`（Metro 开发态显示 `Metro`）——**报问题先抄它**，它是「设备跑的是哪份代码」的唯一读数 |
+| 依赖 | 手机 Tailscale 登录同一 tailnet 且连着；已存的服务器配置沿用（全新安装要走引导页填 FQDN + token） |
+
+三条边界：
+
+- **同一包名两种包不能共存**。要热重载时把 dev-client `install -r` 盖上去、收工再把常驻包盖回来
+  （同签名，配置不丢）；只在测试机上这么做，对照机永远是常驻包。
+- **release 上 `console.log` 全部剥掉**（`__DEV__` 分支被 tree-shake）：取证走设置页 → 在场轨迹 /
+  主链帧调试屏 / voice-spike（深链 `xiaozhou:///…` 仍可用），别指望 logcat 里的 `ReactNativeJS`。
+- 正式签名（M5）落地那天：高德控制台补新 SHA1、两台手机**卸载重装**（签名变了 `install -r`
+  会拒、本地配置随之清空）、本 README 指纹更新。
 
 ## 连接后端
 

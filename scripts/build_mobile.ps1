@@ -10,16 +10,26 @@
 #   6. JVM 默认字符集 GBK 会把 node 的 UTF-8 输出解成乱码路径 → jvmargs 强制 file.encoding=UTF-8
 #
 # 用法：
-#   powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1            # debug APK
-#   powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release   # release（M5 前用 debug keystore）
-#   powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Clean     # prebuild --clean（重生成 android/）
+#   powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1                        # debug dev-client APK（JS 靠 Metro）
+#   powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release -Variant prod # 常驻包：内嵌 bundle，不要 Metro/USB
+#   powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Clean                 # prebuild --clean（重生成 android/）
+#   签名：-Release 与 debug 同用模板 debug.keystore（M5 正式签名前刻意不换——高德 key 绑指纹，
+#   且同签名才能 install -r 原地升级保住已存的服务器配置/token）。产物落 D:\Android\builds\apk\。
 #
 # ⚠ 本文件带中文注释，必须保持 UTF-8 with BOM（坑账 §9.2：无 BOM 会被 PS 5.1 按 GBK
 #   有状态解码吞行，代码静默不执行）。而下方写 gradle-wrapper.properties 时反过来必须无 BOM。
 
 param(
     [switch]$Release,
-    [switch]$Clean
+    [switch]$Clean,
+    # 构建变体（app.config.ts 读 APP_VARIANT）：dev 允许 cleartext + 任意服务器入口；
+    # prod 两者皆禁、只留云栈 FQDN 预设；staging 居中。常驻包 = -Release -Variant prod。
+    [ValidateSet('dev', 'staging', 'prod')]
+    [string]$Variant = 'dev',
+    # 低内存档（scripts/gradle_low_memory.init.gradle 头注）：N>0 时 ninja 编译池 = N、gradle --max-workers 2、
+    # Metro --max-workers 2。这台机器多会话共用、常年只剩 1–2GB 可用内存时用它换「慢但能跑完」；
+    # 0 = 工具默认（18 核全开，峰值十几 GB）。
+    [int]$CompileJobs = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -90,6 +100,31 @@ Info "镜像 mobile/ -> $BuildRoot（robocopy /MIR，首次分钟级、增量秒
 robocopy $MobileReal $BuildRoot /MIR /XD "$MobileReal\android" "$MobileReal\.expo" "$BuildRoot\android" "$BuildRoot\.expo" /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { Fail "robocopy 镜像失败（exit $LASTEXITCODE）" }
 $MobileX = $BuildRoot
+
+# ---- 1b. 镜像 hmi/src（@shared/* 的唯一来源；2026-09-07 常驻包流程补的）----
+# metro.config.js 与 tsconfig paths 都按 `../hmi` 相对 mobile 根解析。debug 构建不打 JS，
+# 所以镜像里一直没有 hmi/ 也没露馅；-Release 的 export:embed 在镜像里跑，`../hmi` 就是
+# D:\Android\builds\hmi——不镜像，@shared/* 一个都解析不到。只镜像 src/ + package.json：
+# metro 的 nodeModulesPaths 已钉死只认 mobile/node_modules，hmi 自己的依赖不参与打包。
+$HmiReal = Join-Path $RepoRoot 'hmi'
+$HmiMirror = Join-Path (Split-Path -Parent $BuildRoot) 'hmi'
+New-Item -ItemType Directory -Force -Path (Join-Path $HmiMirror 'src') | Out-Null
+robocopy (Join-Path $HmiReal 'src') (Join-Path $HmiMirror 'src') /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) { Fail "robocopy 镜像 hmi/src 失败（exit $LASTEXITCODE）" }
+Copy-Item (Join-Path $HmiReal 'package.json') (Join-Path $HmiMirror 'package.json') -Force
+
+# ---- 1c. 变体与构建身份（app.config.ts 读这三个 env → extra.variant / extra.build）----
+# 必须在 prebuild 与 gradle 之前设：expo-constants 的 app.config 资产由 gradle 期再跑一次
+# `expo config` 生成，读的是 gradle 进程的环境。下方第 2 步会先 `gradlew --stop`，
+# 保证 daemon 不是带着上一次的环境活过来的；第 6 步再从 APK 里回读核对。
+$env:APP_VARIANT = $Variant
+$gitSha = "$(& git -C $RepoRoot rev-parse --short=9 HEAD)".Trim()
+if (-not $gitSha) { Fail 'git rev-parse HEAD 失败（仓库根不对？）' }
+$dirty = @(& git -C $RepoRoot status --porcelain -- mobile hmi/src scripts/build_mobile.ps1)
+if ($dirty.Count -gt 0) { $gitSha = "$gitSha-dirty" }
+$env:XIAOZHOU_BUILD_SHA = $gitSha
+$env:XIAOZHOU_BUILD_AT = (Get-Date).ToString('yyyy-MM-dd HH:mm')
+Info "variant=$Variant  build=$gitSha @ $($env:XIAOZHOU_BUILD_AT)"
 
 # ---- 2. expo prebuild（CNG：android/ 是生成物，真相源是 app.config.ts + plugins）----
 Push-Location $MobileX
@@ -238,7 +273,17 @@ try {
         # 本机 Git 在 D 盘 ⇒ downloadPrebuiltBinaries 起不了进程，整构建停在 preBuild）。
         # 真实路径在这里探测、经 -P 传给 init script 覆盖；探不到就不传，
         # 让库自己的默认值决定成败（不静默造一个假路径出来）。
-        $gradleArgs = @($task, '--console=plain', '-I', $initScript)
+        # CMake 中间产物挪到镜像外的短路径（scripts/gradle_cxx_staging.init.gradle 头注：release 的
+        # `.cxx/RelWithDebInfo/…` 比 debug 长 9 字符，audio-api 的镜像式对象路径 266 字符撞上
+        # ninja 1.10.2 的 260 上限；顺带让原生中间产物躲过 robocopy /MIR 的清扫、跨构建保留）
+        $cxxInit = Join-Path $PSScriptRoot 'gradle_cxx_staging.init.gradle'
+        $cxxRoot = (Join-Path (Split-Path -Parent $BuildRoot) 'cxx') -replace '\\', '/'
+        $gradleArgs = @($task, '--console=plain', '-I', $initScript, '-I', $cxxInit, "-PxiaozhouCxxRoot=$cxxRoot")
+        if ($CompileJobs -gt 0) {
+            $lowMemInit = Join-Path $PSScriptRoot 'gradle_low_memory.init.gradle'
+            $gradleArgs += @('-I', $lowMemInit, "-PxiaozhouCompileJobs=$CompileJobs", '--max-workers=2')
+            Info "低内存档：ninja 编译池 $CompileJobs / gradle --max-workers 2 / Metro --max-workers 2"
+        }
         $bashExe = Resolve-GitBash
         if ($bashExe) {
             Info "audio-api bash: $bashExe"
@@ -262,12 +307,48 @@ try {
         Pop-Location
     }
 
-    # ---- 6. 验产物 ----
+    # ---- 6. 验产物：不只验文件在，还验包里装的是不是这次要的 ----
     $apkDir = Join-Path $MobileX "android\app\build\outputs\apk\$variantDir"
     $apk = Get-ChildItem $apkDir -Filter '*.apk' -ErrorAction SilentlyContinue | Select-Object -First 1
     if (-not $apk) { Fail "构建报成功但 $apkDir 下无 APK——按坑账验产物原则判失败" }
-    Info "APK：$($apk.FullName)"
-    Info "安装：adb install -r `"$($apk.FullName)`""
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($apk.FullName)
+    try {
+        $names = @($zip.Entries | ForEach-Object { $_.FullName })
+        # ① 原生件：KWS / ORT 两个 .so 必须在——「构建成功、装上去却没唤醒词」是要消灭的形态
+        foreach ($so in @('lib/arm64-v8a/libsherpa-onnx-jni.so', 'lib/arm64-v8a/libonnxruntime.so')) {
+            if ($names -notcontains $so) { Fail "APK 缺 $so" }
+        }
+        # ② release 必须内嵌 JS bundle（debug 刻意不带，靠 Metro）
+        if ($Release -and ($names -notcontains 'assets/index.android.bundle')) {
+            Fail 'release APK 里没有 assets/index.android.bundle——JS bundle 没打进去'
+        }
+        # ③ expo-constants 的 app.config 资产：variant 与构建身份必须与本次一致
+        #    （gradle 侧另跑 expo config；环境陈旧会把 prod 包做成 extra.variant=dev）
+        $entry = $zip.GetEntry('assets/app.config')
+        if (-not $entry) { Fail 'APK 缺 assets/app.config（expo-constants 资产）' }
+        $sr = New-Object System.IO.StreamReader($entry.Open())
+        try { $cfg = $sr.ReadToEnd() | ConvertFrom-Json } finally { $sr.Close() }
+        if ($cfg.extra.variant -ne $Variant) { Fail "APK 内 extra.variant=$($cfg.extra.variant)，本次要的是 $Variant" }
+        if ($cfg.extra.build.sha -ne $gitSha) { Fail "APK 内 extra.build.sha=$($cfg.extra.build.sha)，本次是 $gitSha" }
+        Info "APK 内 app.config：name=$($cfg.name) variant=$($cfg.extra.variant) build=$($cfg.extra.build.sha) mapEnabled=$($cfg.extra.mapEnabled)"
+    } finally {
+        $zip.Dispose()
+    }
+    # ④ 签名指纹：高德 key 绑「包名 + SHA1」，指纹变了地图只会灰屏（对照 mobile/README.md 登记值）
+    $apksigner = Join-Path $sdk "build-tools\$bt\apksigner.bat"
+    if ($bt -and (Test-Path $apksigner)) {
+        $certLine = @(& $apksigner verify --print-certs $apk.FullName | Select-String 'SHA-1')
+        if ($certLine.Count -gt 0) { Info "签名 $("$($certLine[0])".Trim())" }
+    }
+    # ⑤ 安装包落点：两台真机都从这里装；文件名自带 变体/类型/构建身份/时刻，不靠目录名记
+    $dropDir = Join-Path (Split-Path -Parent $BuildRoot) 'apk'
+    New-Item -ItemType Directory -Force -Path $dropDir | Out-Null
+    $dropPath = Join-Path $dropDir ("xiaozhou-companion-{0}-{1}-{2}-{3}.apk" -f $Variant, $variantDir, $gitSha, (Get-Date).ToString('yyyyMMdd-HHmm'))
+    Copy-Item $apk.FullName $dropPath -Force
+    Info "APK：$($apk.FullName)（$([math]::Round($apk.Length / 1MB)) MB）"
+    Info "落点：$dropPath"
+    Info "装机：powershell -File scripts\mobile_device.ps1 -Role test -Install `"$dropPath`"   # -Role compare 装对照机"
 } finally {
     Pop-Location
 }

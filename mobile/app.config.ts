@@ -23,6 +23,12 @@ const NAME_SUFFIX: Record<Variant, string> = { dev: ' (Dev)', staging: ' (Stagin
 // 是这个能力压根没被装进 APK。⚠ key 绑「包名 + 签名 SHA1」，换签名要在高德控制台另加一条。
 const AMAP_KEY = (process.env.AMAP_ANDROID_KEY || '').trim()
 
+// 构建身份（常驻包流程，2026-09-07）：scripts/build_mobile.ps1 注入 git 短 SHA（脏树带 -dirty）
+// 与构建时刻；Metro 开发态两者为空。进 extra 给设置页底部显示（src/core/buildInfo.ts）——
+// 真机读数登记「设备跑的是哪份代码」以它为准（实施计划坑账 §9.81）。
+const BUILD_SHA = (process.env.XIAOZHOU_BUILD_SHA || '').trim()
+const BUILD_AT = (process.env.XIAOZHOU_BUILD_AT || '').trim()
+
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: `小舟随行${NAME_SUFFIX[VARIANT]}`,
@@ -131,5 +137,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     // APK 的 AndroidManifest 里，解包即可读**，JS 侧多一份不增加任何暴露面；
     // 真正的防线是它绑「包名 + 签名 SHA1」，以及它不进 git（来自 .env.local）。
     amapKey: AMAP_KEY,
+    build: { sha: BUILD_SHA, at: BUILD_AT },
   },
 })

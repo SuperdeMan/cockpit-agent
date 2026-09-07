@@ -9,6 +9,7 @@ import { useStore } from 'zustand'
 
 import { AGENT_CATALOG } from '@shared/types.ts'
 
+import { formatBuildLabel, readBuildInfo } from '../../core/buildInfo'
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { drivingActive, NO_EDGE_DRIVING } from '../../core/presence/drivingMode'
@@ -137,6 +138,8 @@ export function SettingsScreen() {
   // 免唤醒的原生可用性：**在渲染前问一次**。原生缺席时连开关都不渲染——
   // 这不是 UI 洁癖，是坑账 §9.27：原生缺席时崩在原生线程，ErrorBoundary 兜不住整屏红屏。
   const hfAvail = useMemo(() => handsFreeAvailability(), [])
+  // 构建身份一行（常驻包流程）：报问题先抄它——设备跑的是哪份代码只认这一处读数
+  const buildLabel = useMemo(() => formatBuildLabel(readBuildInfo()), [])
   // 试听没出声时的那句话（M3 遗留 R1）。空串=没试过或出声了。
   // **必须有这个出口**：无 key 引擎在全链四段里没有任何一段会换引擎，结果就是完全安静，
   // 而屏上此前一个字都不说——用户只能对着一台安静的手机猜是不是自己音量关了。
@@ -600,6 +603,14 @@ export function SettingsScreen() {
           材质 spike（B3：真模糊 vs G1-tint 对照）
         </Link>
       </Section>
+
+      <Text
+        selectable
+        testID="build-label"
+        style={{ color: p.fg3, fontSize: p.font(11), textAlign: 'center', paddingBottom: 8 }}
+      >
+        {buildLabel}
+      </Text>
     </ScrollView>
       <S2sConsentSheet
         p={p}

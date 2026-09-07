@@ -36,7 +36,7 @@
 |---|---|---|---|
 | E1 | ~~装 Android Studio~~ → **只装命令行工具链**（cmdline-tools + platform-tools + SDK Platform + Build-Tools）+ JDK 17 | ⚠ 泓舟（全局安装是红线） | **✅ 2026-08-25 完成**（授权换成不装 IDE，理由见 §1.1）。装完 `adb --version`、`java -version` 可用即可 |
 | E2 | 环境变量 `ANDROID_HOME`、`JAVA_HOME` 并入 PATH | ⚠ 泓舟 | **✅ 2026-08-25 完成**，用户级（同 [[windows-env-path-and-utf8]] 那次的形态），只加不删，改前原值备份 |
-| E3 | 真机两台开 USB 调试：手机（Android 10+）、平板（Android 10+） | 泓舟 | **⏳ 待办**：`adb devices` 当前为空。平板没有可先只用手机，平板形态验收顺延 |
+| E3 | 真机两台开 USB 调试：手机（Android 10+）、平板（Android 10+） | 泓舟 | **✅ 2026-09-07 定案：两台手机、无平板**——test 测试机 = OPPO PEUM00（ColorOS 14 / Android 14，2026-09-06 接入）、compare 对照机 = Xiaomi MIX Fold 4（HyperOS 3 / Android 16，2026-08-25 起唯一真机，泓舟主用机只做对比）。角色与边界见 `mobile/README.md`「验证设备」，解析用 `scripts/mobile_device.ps1`（按厂商，不认序列号）。平板形态用折叠屏展开态覆盖，真平板顺延。两台常态装 prod release **常驻包**（README「常驻包」节；`build_mobile.ps1 -Release -Variant prod`），dev-client 只在测试机上临时装 |
 | E4 | 两台设备装 Tailscale 官方 App、登录同一 tailnet | 泓舟 | **⏳ 部分**：PC→云栈已实测通（`:8443/healthz`=200、`:8444` 有响应）；tailnet 里已有 android 折叠屏节点（节点名见本机 `tailscale status`——公开仓库不留节点名，同本文档 §卫生约定；手机态+展开态可覆盖两形态），但当前离线 |
 | E5 | Node ≥ 20（已有）、npm 可用（已有） | — | **✅** node v22.15.0 / npm 10.9.2 |
 | E6 | ⚠ 路径风险预案：仓库路径含中文+空格（`D:\Personal\AI\Claude Code\产品\car-agent`） | 执行者 | **✅ 已实测，定案经两次迭代**：AGP 对中文路径硬拒绝（§1.1 ③）→ subst 在真实 RN/Expo 构建里**也不可用**（双根 relativize 必炸，§1.1 偏差 ④）→ **最终形态：原生构建在 ASCII 镜像工作区 `D:\Android\builds\xiaozhou-mobile` 进行**（M0-2 构建脚本内置 robocopy 增量镜像）。JS/Metro 开发不受影响（中文路径无碍） |
@@ -2354,6 +2354,33 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
 89. **回填批记录时用整段替换会把上半轮的坑吞掉**（B5 第 3 批 → 第 4 批收口发现）：`4e43e12` 改写 B5 计划 §6.3 时把
     ㉑–㉖ 六条整块删了，只留下一句「承 ㉑–㉖，从 ㉗ 起」，第 4 批对账才从 `a6f3a12` 找回。⇒ 回填前 `git diff` 只看
     **删除行**一遍；编号引用（「承 X–Y」）要能在当前文件里 grep 到才算存在。
+
+90. ⛔ **`-Release` 撞 Windows 路径预算**（2026-09-07 常驻包批，首次 release 构建）：AGP 把非 debuggable 变体的
+    CMake 目录叫 `.cxx/RelWithDebInfo/<hash>/<abi>/`，比 `.cxx/Debug/…` 长 9 字符。`react-native-audio-api` 直接
+    编译 `../common/cpp/audioapi`（源码树之外），CMake 给这类源文件的对象名是「绝对路径整段镜像进
+    `CMakeFiles/<target>.dir/D_/…`」，镜像根在一条路径里出现两次；CMake 有 250 字符的对象路径上限
+    （`CMAKE_OBJECT_PATH_MAX`），超了会尝试缩短，缩不下去的 4 个（`HostObjects/sources|events/*.cpp.o`，329 字符）
+    按原样写进 build.ninja、只打一条 warning（`The maximum full path to an object file is 250 characters`），
+    随后 ninja 1.10.2（SDK `cmake;3.22.1` 自带，不认长路径）`mkdir` 266 字符的目录报 `No such file or directory`。
+    debug 少的那 9 个字符刚好让 CMake 缩短成功，所以 13 次 debug 构建从没露过。修：
+    `scripts/gradle_cxx_staging.init.gradle` 用 AGP `buildStagingDirectory` 把每个模块的 `.cxx` 挪到
+    `D:\Android\builds\cxx\<模块名去 react-native- 前缀>`（构建目录前缀 116 → 65 字符），顺带让原生中间产物躲过
+    robocopy /MIR（此前每趟都被清、全部原生库重编）。判据：**「debug 能过」证明不了 release 的路径预算**——变体名
+    本身就是路径的一部分；ninja 的报错位置（mkdir）与真正的裁决点（CMake 250 上限）隔着一层，看 configure
+    阶段的 warning 才找得到。
+
+91. ⛔ **共用机器的内存是构建的前置条件，不是背景噪声**（同批，2026-09-07 上午）：物理 31.6GB 只剩 1.8GB 可用、
+    commit 68.5GB 只剩 2.4GB；大头是别的会话留下的 Metro（`expo start`，pid 75696，2026-09-03 22:26 起、
+    35 CPU 小时、commit 11GB，父进程是一个 cmd）与另一只父进程已死的 Metro（port 8083）。宿主把我的 gradle 趟按
+    「系统内存不足」杀掉（configure 趟 + 一条 find）。规则是不停别人的 Metro ⇒ 只能把构建做小：
+    `build_mobile.ps1 -CompileJobs N`（`scripts/gradle_low_memory.init.gradle`：CMake job pool 限 ninja 编译并发、
+    gradle `--max-workers 2`、Metro `--max-workers 2`）；`.cxx` 已在镜像外 ⇒ 被杀的趟不丢已编译对象，重试是增量的。
+    实测 `-CompileJobs 3` 的全量 release **22m05s**（1181 tasks：816 executed / 365 from cache）没再被杀，APK 210MB
+    （debug 289MB）。判据：**起重活前先看 free 内存和最大的 commit 持有者**，18 核全开的原生编译在 2GB 可用内存上必死。
+
+92. **PowerShell 变量名不分大小写**（`scripts/mobile_device.ps1` 首版）：循环里的 `$role = …` 把参数 `$Role` 覆盖成
+    最后一台设备的角色 ⇒ 只有 Xiaomi 在线时 `-Role test` 也返回它的序列号、退出码 0。反向验证（角色不在线必须
+    exit 1）当场抓到。判据同 §9.2 的 BOM：**PS 脚本写完先跑一遍「应当失败」的用例**。
 
 ## 10. 与既有体系的关系（改动禁区重申）
 
