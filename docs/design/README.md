@@ -21,8 +21,9 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
+| [2026-09-07-ar02-capture-privacy-implementation.md](2026-09-07-ar02-capture-privacy-implementation.md) | AR02：prod 诊断门控、原生内存单帧、采集事实与全链取消 | 客户端修复与定向验证完成、已推送 main；OPPO 包 70365389e，656 tests/tsc 通过；完整设备矩阵与旧缓存清理未完成，未整批签收 |
 | [2026-09-07-ar01-confirmation-cancellation-implementation.md](2026-09-07-ar01-confirmation-cancellation-implementation.md) | AR01：指定确认归属、真实队列撤回、异步准备失效与多待办列表 | 已合入并推送 main；客户端修复、本地回归与 OPPO release 样本验证完成；云端未部署，真实业务 E2E 未跑 |
-| [2026-09-07-android-review-remediation-batches.md](2026-09-07-android-review-remediation-batches.md) | Android 完整评审后的 AR01–AR11 分批建议：范围、依赖、验收与 R01–R15 对应关系 | AR01 客户端修复与样本验证完成；其他批次未启动，后续从本页选择 |
+| [2026-09-07-android-review-remediation-batches.md](2026-09-07-android-review-remediation-batches.md) | Android 完整评审后的 AR01–AR11 分批建议：范围、依赖、验收与 R01–R15 对应关系 | AR01 已完成客户端修复与样本验证；AR02 已修且定向验证，仍待完整设备矩阵；其余未启动 |
 | [2026-09-07-android-ux-full-review.md](../reviews/2026-09-07-android-ux-full-review.md) | Android 规划、UX v2、实现与证据完整评审，基线 `f140f979` | 已归档；15 项发现未因文档提交而修复；原始检查不转借后续 SHA |
 | [2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md](2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md) | Xiaomi SU7整本手册验证：278页源重建、269页锚、160索引路径、187 outline叶子、35受控视觉、原36自然问法，以及安全checkpoint真栈探针 | ✅ 范围与生产基线已测完：离线候选全绿；生产`434a046`章节首轮177/187，10条失败复验无0/3；视觉28/35，5个三字caption 0/3。0.3.2本地候选已修、待push/deploy后重跑187+35 |
 | [2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md](2026-09-03-xiaomi-su7-manual-rag-v2-implementation-plan.md) | 真实手册 RAG v2：无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称、deterministic `.mrag` 图文包、HMI/Android manual 证据卡 | ✅ 已发布生产 `434a046`：retrieval 36/36；完整语料落域/内容 36/36；14 个高风险问法各 3/3，合计 64/64；exact 全量 7833/34/4；5/5 healthy、verify verified、图文证据与车态 diff={} |

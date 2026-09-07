@@ -9,7 +9,8 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **完整评审**（2026-09-07；R01–R15 原始发现）：[2026-09-07-android-ux-full-review.md](../docs/reviews/2026-09-07-android-ux-full-review.md)
 - **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
 - **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
-- AR01 确认与取消：客户端修复、本地回归与 OPPO release 样本验证完成；当前 test 候选包及真实业务未验边界看[实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。下一批建议 AR02。
+- AR01 确认与取消：客户端修复、本地回归与 OPPO 样本验证完成，历史证据见[AR01 实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
+- **AR02 当前交接**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当前常驻包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，完整设备矩阵、旧缓存清理尚未完成，AR02 未整批签收。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）
@@ -32,7 +33,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1   # 退�
 
 - 角色由 `scripts\mobile_device.ps1` 按厂商解析（`-List` 看在线设备；`-Role test` 打印序列号供
   `adb -s`）；序列号是机器状态，文档里不维护第二份。两台同时插着时 **adb 命令一律带 `-s`**。
-- 对照验收时两台装同一份 prod release **常驻包**（见下文）；开发候选先落 test，本轮候选身份看 AR01 实施记录，compare 本批未更新。dev-client 只在测试机上、只在需要 Metro 热重载的时段临时装。
+- 对照验收时两台装同一份 prod release **常驻包**（见下文）；开发候选先落 test，本轮候选身份看 AR02 实施记录，compare 本批未更新。dev-client 只在测试机上、只在需要 Metro 热重载的时段临时装。
 - 一台机器上的读数不代表另一台（B3′ 助理角色、Xruns、AEC 通路都是单机读数）：结论要标机型；
   「Xiaomi 复验」是对照，不是第二个验收分母。
 - Tailscale 连接、折叠屏截图、UIAutomator 与 PowerShell 取证排查统一看[操作指南 §6](../docs/guides/android-build-and-device-validation.md#6-设备取证的几个实测边界)。
@@ -89,7 +90,8 @@ dev launcher 都不在）。
 - **同一包名两种包不能共存**。要热重载时把 dev-client `install -r` 盖上去、收工再把常驻包盖回来
   （同签名，配置不丢）；只在测试机上这么做，对照机永远是常驻包。
 - **release 上 `console.log` 全部剥掉**（`__DEV__` 分支被 tree-shake）：取证走设置页 → 在场轨迹 /
-  主链帧调试屏 / voice-spike（深链 `xiaozhou:///…` 仍可用），别指望 logcat 里的 `ReactNativeJS`。
+  采集状态（只读）。主链操作调试与 voice-spike 仅明确 dev 变体开放，prod/staging 深链不能调用；
+  dev 的链接也只预填，采集/播放/切播放器必须按键发起。
 - 正式签名（M5）落地那天：高德控制台补新 SHA1、两台手机**卸载重装**（签名变了 `install -r`
   会拒、本地配置随之清空）、本 README 指纹更新。
 
@@ -207,7 +209,7 @@ react-native.config.js RN 社区 autolinking 的显式补登（M4：onnxruntime-
 modules/kws/           Expo 本地原生模块：sherpa-onnx KeywordSpotter 的极窄桥（M4-2）
                        android/libs + android/src/main/jniLibs + assets/kws 均 gitignore
 src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / map
-                       / debug / voice-spike（M2 语音取证屏）/ card-gallery（M3 卡片画廊，
+                       / debug / voice-spike（仅 dev 操作诊断）/ capture-status（只读采集事实）/ card-gallery（M3 卡片画廊，
                        支持 ?only=<type> 直达某一族；后三个不进主导航，深链接进）
 src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts

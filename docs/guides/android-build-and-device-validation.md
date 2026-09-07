@@ -60,6 +60,10 @@ Get-Process |
 
 [低内存 init script](../../scripts/gradle_low_memory.init.gradle) 不会设置 JVM 堆。AR01 的 1455 出现在编译开始前，最终采用 `-Xms128m -Xmx1024m -XX:MaxMetaspaceSize=512m -XX:ActiveProcessorCount=2` 与 Kotlin in-process 才走完。此配置是本项目验证过的退让档，不是对所有内存占用都有效的保证；不要把它写入全局环境、系统配置或仓库的环境文件。
 
+AR02 在相同 1GB 堆下完成原生/JS 后，D8 `mergeExtDexRelease` 报 `Java heap space`。该失败需要增加本次 Gradle 子进程的堆；降低 Ninja 并发不能解决 DEX 堆不足。本轮 `-Xmx2048m`、其他参数不变后通过，详细结果见 [AR02](../design/2026-09-07-ar02-capture-privacy-implementation.md)。先确认物理内存与 commit 余量，只停止本轮已结束构建的自有 daemon，不修改系统虚拟内存。
+
+如果失败已停在后段，可以在确认源码、原生补丁、生成工程及镜像哈希都未变化后，保留镜像产物，沿 `build_mobile.ps1` §5 的实际 Gradle 参数接续，再完整执行 §6 同等验包。不要重新执行 `/MIR` 或 prebuild 后仍假定原生中间产物全部保留。AR02 核对了 337 个文件，接续保留原 build SHA/时间；随后仅两行 JS 文案更新时，单独同步该文件并重新注入身份。这个实证不允许跳过源码一致性检查，也不允许将旧 APK 归给新 SHA。
+
 ## 4. 长构建要留下可接续的结果
 
 交互工具的 session/cell ID 可能随会话中断失效。建议把包装脚本、stdout、stderr、结果 JSON 放在同一个仓库外目录，后台进程结束后仍可读取。目录可统一使用 `%LOCALAPPDATA%\car-agent\artifacts\<批次>-<时间>`，Claude Code 与 Codex 共用；也可以沿用本批已经登记的仓库外位置。
@@ -134,6 +138,8 @@ AR01 留下过 SDK XML、NODE_ENV、NO_COLOR/FORCE_COLOR、Gradle 废弃项、�
 | PowerShell 5 重定向 PNG 后文件损坏 | 用 Python `subprocess` 捕获 `adb exec-out screencap` 的二进制 stdout，再 `Path.write_bytes`；不要用文本重定向保存 PNG |
 | 需要 XML，又不想在手机落临时文件 | 本轮 OPPO 实测 `adb -s <设备> exec-out uiautomator dump /dev/tty` 可读 XML；`/proc/self/fd/1` 只返回成功提示，不能当作取得 XML |
 | 动态画廊报 `could not get idle state` | 记录限制。AR01 按实读截图定位打开 Modal 后，静态列表 XML 可读；不要用猜测坐标点击，也不要把关闭动效后的读数当默认配置结果 |
+| Maestro 后运行 uiautomator 报 `UiAutomationService already registered` | CLI 退出后设备 instrumentation 可能仍占用连接。确认本轮 Maestro 已终结，再关闭本轮 `dev.mobile.maestro` / `dev.mobile.maestro.test` 驱动后读 XML；不能一边跑流程一边切页或另接 UiAutomation。辅助进程 FATAL 不能算 App 崩溃 |
+| adb 零时长 tap 未触发 RNGH 光球 | 先核当前页面和坐标；AR02 用同点 120ms 的触摸序列触发轻点收音。不能把注入未触发直接判为产品缺陷，也不能在 Modal/导航动画尚未结束时点击被遮挡的控件 |
 | Git Bash 改写 Android 文件路径 | adb 操作用 PowerShell；避免 MSYS 把 `/sdcard/...` 改成宿主路径 |
 | App 卡 connecting、宿主云服务却正常 | 先检查手机 Tailscale 是否在线、手机侧 DNS/连接是否正常。两台设备都曾静默掉线；广播不一定能拉起客户端，前台打开后才恢复。此现象不等于 APK 构建失败 |
 
