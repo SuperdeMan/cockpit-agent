@@ -488,8 +488,8 @@ export function SettingsScreen() {
             />
             <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
               三段式：收音时上传音频到语音识别服务，识别完成后将文字交给助手。
-              端到端：延迟更低，但会把你说话的原始音频上传到服务器（仅在唤醒后的对话窗内采集，
-              未唤醒不采）。默认三段式。
+              端到端：仅在唤醒后的对话窗内上传原始音频；免唤醒待机时麦克风仍在本机监听，
+              不上传音频。默认三段式。
             </Text>
             {settings.voicePipeline === 's2s' ? (
               <Text style={{ color: p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
