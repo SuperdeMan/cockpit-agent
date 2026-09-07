@@ -1,0 +1,522 @@
+diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/CameraViewModule.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/CameraViewModule.kt
+index 21382f8..8aaa6ec 100644
+--- a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/CameraViewModule.kt
++++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/CameraViewModule.kt
+@@ -4,8 +4,13 @@ import android.Manifest
+ import android.graphics.Bitmap
+ import android.net.Uri
+ import android.os.Bundle
++import android.os.Handler
++import android.os.Looper
+ import android.util.Base64
+ import android.util.Log
++import androidx.camera.core.CameraInfo
++import androidx.camera.core.CameraState
++import androidx.lifecycle.Observer
+ import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+ import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+ import expo.modules.camera.analyzers.BarCodeScannerResultSerializer
+@@ -20,6 +25,7 @@ import expo.modules.camera.records.FocusMode
+ import expo.modules.camera.records.VideoQuality
+ import expo.modules.camera.records.VideoStabilizationMode
+ import expo.modules.camera.tasks.ResolveTakenPicture
++import expo.modules.camera.tasks.MemoryOnlyCapture
+ import expo.modules.camera.tasks.writeStreamToFile
+ import expo.modules.camera.utils.CameraUtils
+ import expo.modules.camera.utils.CameraViewHelper
+@@ -62,11 +68,62 @@ val cameraPermissions = if (VRUtilities.isQuest()) {
+ 
+ class CameraViewModule : Module() {
+   private val moduleScope = CoroutineScope(Dispatchers.Main)
++  private val cameraObservers = mutableMapOf<CameraInfo, Observer<CameraState>>()
++  private val activeCameras = mutableSetOf<CameraInfo>()
++  @Volatile private var cameraActive = false
++  @Volatile private var destroyed = false
++
++  // Observe independently of the React view/Activity lifecycle so teardown still reports CLOSED.
++  fun observeCameraActivity(cameraInfo: CameraInfo) {
++    if (destroyed || cameraObservers.containsKey(cameraInfo)) {
++      return
++    }
++    val observer = Observer<CameraState> { state ->
++      if (destroyed) {
++        return@Observer
++      }
++      when (state.type) {
++        CameraState.Type.OPEN -> activeCameras.add(cameraInfo)
++        CameraState.Type.CLOSED -> activeCameras.remove(cameraInfo)
++        else -> Unit // CLOSING remains active until CameraX confirms CLOSED.
++      }
++      val active = activeCameras.isNotEmpty()
++      if (active != cameraActive) {
++        cameraActive = active
++        sendEvent("cameraActiveChanged", mapOf("active" to active))
++      }
++    }
++    cameraObservers[cameraInfo] = observer
++    cameraInfo.cameraState.observeForever(observer)
++  }
+ 
+   override fun definition() = ModuleDefinition {
+     Name("ExpoCamera")
+ 
+-    Events("onModernBarcodeScanned")
++    Events("onModernBarcodeScanned", "cameraActiveChanged")
++
++    Property("supportsMemoryOnly") { true }
++    Property("cameraActive") { cameraActive }
++
++    // Read-only process counters + cache totals; never expose paths, image bytes or identifiers.
++    AsyncFunction("getMemoryCaptureStatsAsync") {
++      val cameraDirectory = File(cacheDirectory, "Camera")
++      var count = 0L
++      var bytes = 0L
++      if (cameraDirectory.exists()) {
++        cameraDirectory.walkTopDown().onFail { _, exception -> throw exception }.forEach { file ->
++          if (file.isFile) {
++            count += 1
++            bytes += file.length()
++          }
++        }
++      }
++      MemoryOnlyCapture.snapshot() + mapOf(
++        "cameraActive" to cameraActive,
++        "cacheFileCount" to count,
++        "cacheBytes" to bytes
++      )
++    }
+ 
+     // Aligned with iOS which has the same property. True when ML Kit is available.
+     // False on Horizon OS (Quest devices) and devices without Google Play Services.
+@@ -200,6 +257,12 @@ class CameraViewModule : Module() {
+     }
+ 
+     OnDestroy {
++      destroyed = true
++      Handler(Looper.getMainLooper()).post {
++        cameraObservers.forEach { (info, observer) -> info.cameraState.removeObserver(observer) }
++        cameraObservers.clear()
++        activeCameras.clear()
++      }
+       try {
+         moduleScope.cancel(ModuleDestroyedException())
+       } catch (_: IllegalStateException) {
+@@ -439,10 +502,19 @@ class CameraViewModule : Module() {
+           view.takePicture(options, promise, cacheDirectory, runtimeContext)
+         } else {
+           val image = CameraViewHelper.generateSimulatorPhoto(view.width, view.height)
++          val memoryCapture = if (options.memoryOnly) view.newMemoryCapture(promise) else null
+           moduleScope.launch {
+-            ResolveTakenPicture(image, promise, options, false, runtimeContext, cacheDirectory) { response ->
++            ResolveTakenPicture(image, promise, options, false, runtimeContext, cacheDirectory, memoryCapture) { response ->
+               view.onPictureSaved(response)
+             }.resolve()
++          }.invokeOnCompletion { cause ->
++            if (memoryCapture != null) {
++              if (cause != null) {
++                memoryCapture.cancel()
++              }
++              image.fill(0)
++              view.finishMemoryCapture(memoryCapture)
++            }
+           }
+         }
+       }.runOnQueue(Queues.MAIN)
+diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+index 999a22c..c51daf2 100644
+--- a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
++++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/ExpoCameraView.kt
+@@ -64,6 +64,7 @@ import expo.modules.camera.records.FocusMode
+ import expo.modules.camera.records.VideoQuality
+ import expo.modules.camera.records.VideoStabilizationMode
+ import expo.modules.camera.tasks.ResolveTakenPicture
++import expo.modules.camera.tasks.MemoryOnlyCapture
+ import expo.modules.camera.utils.BarCodeScannerResult
+ import expo.modules.camera.utils.BarCodeScannerResult.BoundingBox
+ import expo.modules.camera.utils.CameraUtils
+@@ -82,9 +83,12 @@ import kotlinx.coroutines.CoroutineExceptionHandler
+ import kotlinx.coroutines.CoroutineScope
+ import kotlinx.coroutines.Dispatchers
+ import kotlinx.coroutines.SupervisorJob
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.cancel
++import kotlinx.coroutines.isActive
+ import kotlinx.coroutines.launch
+ import java.io.File
++import java.util.Collections
+ import java.lang.Float.max
+ import java.lang.Float.min
+ import kotlin.math.roundToInt
+@@ -132,6 +136,7 @@ class ExpoCameraView(
+   private var barcodeFormats: List<BarcodeType> = emptyList()
+   private var glSurfaceTexture: SurfaceTexture? = null
+   private var isRecording = false
++  private val memoryCaptures = Collections.synchronizedSet(mutableSetOf<MemoryOnlyCapture>())
+ 
+   private var previewView = PreviewView(context).apply {
+     elevation = 0f
+@@ -279,6 +284,12 @@ class ExpoCameraView(
+   }
+ 
+   fun takePicture(options: PictureOptions, promise: Promise, cacheDirectory: File, runtimeContext: RuntimeContext) {
++    val memoryCapture = if (options.memoryOnly) newMemoryCapture(promise) else null
++    if (options.memoryOnly && (imageCaptureUseCase == null || !scope.isActive)) {
++      memoryCapture?.fail()
++      memoryCaptures.remove(memoryCapture)
++      return
++    }
+     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+     val volume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
+     val hasShutterSound = options.shutterSound
+@@ -303,32 +314,87 @@ class ExpoCameraView(
+         }
+ 
+         override fun onCaptureSuccess(image: ImageProxy) {
+-          val data = image.planes.toByteArray()
++          try {
++            if (memoryCapture != null) {
++              if (!scope.isActive) {
++                memoryCapture.cancel()
++              }
++              memoryCapture.ensureActive()
++            }
++            val data = image.planes.toByteArray()
++            val rotationDegrees = image.imageInfo.rotationDegrees
+ 
+-          if (options.fastMode) {
+-            promise.resolve(null)
+-          }
++            if (options.fastMode && !options.memoryOnly) {
++              promise.resolve(null)
++            }
+ 
+-          cacheDirectory.let {
+-            scope.launch {
+-              val shouldMirror = mirror && lensFacing == CameraType.FRONT
+-              ResolveTakenPicture(data, promise, options, shouldMirror, runtimeContext, it) { response: Bundle ->
+-                if (!options.pictureRef) {
+-                  onPictureSaved(response)
++            cacheDirectory.let {
++              scope.launch {
++                val shouldMirror = mirror && lensFacing == CameraType.FRONT
++                ResolveTakenPicture(data, promise, options, shouldMirror, runtimeContext, it, memoryCapture, rotationDegrees) { response: Bundle ->
++                  if (!options.pictureRef) {
++                    onPictureSaved(response)
++                  }
++                }.resolve()
++              }.invokeOnCompletion { cause ->
++                if (memoryCapture != null) {
++                  if (cause is CancellationException) {
++                    memoryCapture.cancel()
++                  } else if (cause != null) {
++                    memoryCapture.fail()
++                  }
++                  // Includes cancellation before the coroutine body starts.
++                  data.fill(0)
++                  memoryCaptures.remove(memoryCapture)
+                 }
+-              }.resolve()
++              }
++            }
++          } catch (e: CancellationException) {
++            memoryCapture?.cancel()
++            memoryCaptures.remove(memoryCapture)
++            if (memoryCapture == null) {
++              throw e
++            }
++          } catch (e: OutOfMemoryError) {
++            if (memoryCapture == null) {
++              throw e
+             }
++            memoryCapture.fail("ERR_CAMERA_OUT_OF_MEMORY", "Could not allocate the memory-only picture")
++            memoryCaptures.remove(memoryCapture)
++          } catch (e: Exception) {
++            if (memoryCapture == null) {
++              throw e
++            }
++            memoryCapture.fail()
++            memoryCaptures.remove(memoryCapture)
++          } finally {
++            image.close()
+           }
+-          image.close()
+         }
+ 
+         override fun onError(exception: ImageCaptureException) {
+-          promise.reject(CameraExceptions.ImageCaptureFailed())
++          if (memoryCapture != null) {
++            memoryCapture.fail()
++            memoryCaptures.remove(memoryCapture)
++          } else {
++            promise.reject(CameraExceptions.ImageCaptureFailed())
++          }
+         }
+       }
+     )
+   }
+ 
++  fun newMemoryCapture(promise: Promise): MemoryOnlyCapture = MemoryOnlyCapture(promise).also {
++    memoryCaptures.add(it)
++    if (!scope.isActive) {
++      it.cancel()
++    }
++  }
++
++  fun finishMemoryCapture(capture: MemoryOnlyCapture) {
++    memoryCaptures.remove(capture)
++  }
++
+   fun setCameraFlashMode(mode: FlashMode) {
+     val currentMode = if (mode == FlashMode.SCREEN && lensFacing != CameraType.FRONT) {
+       FlashMode.ON
+@@ -652,6 +718,7 @@ class ExpoCameraView(
+   }
+ 
+   private fun observeCameraState(cameraInfo: CameraInfo) {
++    appContext.registry.getModule<CameraViewModule>()?.observeCameraActivity(cameraInfo)
+     cameraInfo.cameraState.observe(currentActivity) {
+       when (it.type) {
+         CameraState.Type.OPEN -> {
+@@ -861,6 +928,10 @@ class ExpoCameraView(
+   }
+ 
+   fun cleanupCamera() {
++    synchronized(memoryCaptures) {
++      memoryCaptures.forEach { it.cancel() }
++      memoryCaptures.clear()
++    }
+     orientationEventListener.disable()
+     cancelCoroutineScope()
+     cameraProvider?.unbindAll()
+diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/Options.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/Options.kt
+index 21ade07..c1ef6ab 100644
+--- a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/Options.kt
++++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/Options.kt
+@@ -18,7 +18,9 @@ data class PictureOptions(
+   @Field val id: Int? = null,
+   @Field val maxDownsampling: Int = 1,
+   @Field val shutterSound: Boolean = true,
+-  @Field val pictureRef: Boolean = false
++  @Field val pictureRef: Boolean = false,
++  // car-agent: single-frame JPEG response without creating a cache file.
++  @Field val memoryOnly: Boolean = false
+ ) : Record
+ 
+ @OptimizedRecord
+diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/MemoryOnlyCapture.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/MemoryOnlyCapture.kt
+new file mode 100644
+index 0000000..ebbc150
+--- /dev/null
++++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/MemoryOnlyCapture.kt
+@@ -0,0 +1,66 @@
++package expo.modules.camera.tasks
++
++import android.os.Bundle
++import expo.modules.kotlin.Promise
++import kotlinx.coroutines.CancellationException
++import java.util.concurrent.atomic.AtomicInteger
++import java.util.concurrent.atomic.AtomicLong
++
++/** A view-owned request. Disposal invalidates callbacks even before CameraX returns a frame. */
++class MemoryOnlyCapture(private val promise: Promise) {
++  private val state = AtomicInteger(PENDING)
++
++  init {
++    started.incrementAndGet()
++  }
++
++  fun ensureActive() {
++    if (state.get() != PENDING) {
++      throw CancellationException("Memory-only capture is no longer active")
++    }
++  }
++
++  fun complete(response: Bundle) {
++    if (finish(COMPLETED, completed)) {
++      promise.resolve(response)
++    }
++  }
++
++  fun cancel() {
++    if (finish(CANCELLED, cancelled)) {
++      promise.reject("ERR_CAMERA_CAPTURE_CANCELLED", "Memory-only capture was cancelled", null)
++    }
++  }
++
++  fun fail(code: String = "E_TAKING_PICTURE_FAILED", message: String = "Could not capture the memory-only picture") {
++    if (finish(FAILED, failed)) {
++      promise.reject(code, message, null)
++    }
++  }
++
++  private fun finish(next: Int, counter: AtomicLong): Boolean {
++    if (!state.compareAndSet(PENDING, next)) {
++      return false
++    }
++    counter.incrementAndGet()
++    return true
++  }
++
++  companion object {
++    private const val PENDING = 0
++    private const val COMPLETED = 1
++    private const val CANCELLED = 2
++    private const val FAILED = 3
++    private val started = AtomicLong()
++    private val completed = AtomicLong()
++    private val cancelled = AtomicLong()
++    private val failed = AtomicLong()
++
++    fun snapshot(): Map<String, Long> = mapOf(
++      "started" to started.get(),
++      "completed" to completed.get(),
++      "cancelled" to cancelled.get(),
++      "failed" to failed.get()
++    )
++  }
++}
+diff --git a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/ResolveTakenPicture.kt b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/ResolveTakenPicture.kt
+index 212b0ef..11c8175 100644
+--- a/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/ResolveTakenPicture.kt
++++ b/node_modules/expo-camera/android/src/main/java/expo/modules/camera/tasks/ResolveTakenPicture.kt
+@@ -18,7 +18,10 @@ import expo.modules.camera.utils.CameraViewHelper.setExifData
+ import expo.modules.camera.utils.FileSystemUtils
+ import expo.modules.kotlin.Promise
+ import expo.modules.kotlin.RuntimeContext
++import kotlinx.coroutines.CancellationException
+ import kotlinx.coroutines.Dispatchers
++import kotlinx.coroutines.currentCoroutineContext
++import kotlinx.coroutines.ensureActive
+ import kotlinx.coroutines.withContext
+ import java.io.ByteArrayInputStream
+ import java.io.ByteArrayOutputStream
+@@ -42,6 +45,7 @@ private const val DATA_KEY = "data"
+ private const val URI_KEY = "uri"
+ private const val FORMAT_KEY = "format"
+ private const val ID_KEY = "id"
++private const val MEMORY_ONLY_MAX_DIMENSION = 1280
+ 
+ fun getMirroredOrientation(orientation: Int): Int {
+   return when (orientation) {
+@@ -64,18 +68,121 @@ class ResolveTakenPicture(
+   private var mirror: Boolean,
+   private val runtimeContext: RuntimeContext,
+   private val directory: File,
++  private val memoryCapture: MemoryOnlyCapture? = null,
++  private val memoryRotationDegrees: Int = 0,
+   private var pictureSavedDelegate: PictureSavedDelegate
+ ) {
+   private val quality: Int
+     get() = (options.quality * 100).toInt()
+ 
+   suspend fun resolve() = withContext(Dispatchers.IO) {
++    // This branch precedes every legacy mode, including skipProcessing/pictureRef/fastMode.
++    if (options.memoryOnly) {
++      try {
++        val capture = requireNotNull(memoryCapture)
++        val response = processMemoryOnlyImage(capture)
++        checkMemoryCaptureActive(capture)
++        capture.complete(response)
++      } catch (e: CancellationException) {
++        memoryCapture?.cancel()
++        throw e
++      } catch (e: OutOfMemoryError) {
++        memoryCapture?.fail(OUT_OF_MEMORY_TAG, OUT_OF_MEMORY_EXCEPTION_MSG)
++      } catch (e: Exception) {
++        if (memoryCapture != null) {
++          memoryCapture.fail()
++        } else {
++          promise.reject(ERROR_TAG, "Memory-only capture context is missing", null)
++        }
++      } finally {
++        imageData.fill(0)
++      }
++      return@withContext
++    }
++
+     val bundle = processImage()
+     if (!options.pictureRef) {
+       onComplete(bundle)
+     }
+   }
+ 
++  private suspend fun checkMemoryCaptureActive(capture: MemoryOnlyCapture) {
++    currentCoroutineContext().ensureActive()
++    capture.ensureActive()
++  }
++
++  /** Decode, orient, downscale and re-encode in RAM; metadata and file APIs never enter this path. */
++  private suspend fun processMemoryOnlyImage(capture: MemoryOnlyCapture): Bundle {
++    checkMemoryCaptureActive(capture)
++    // CameraX's in-memory callback provides unrotated pixels; use ImageInfo, not JPEG metadata.
++    require(memoryRotationDegrees in listOf(0, 90, 180, 270)) { "Invalid image rotation" }
++    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
++    BitmapFactory.decodeByteArray(imageData, 0, imageData.size, bounds)
++    require(bounds.outWidth > 0 && bounds.outHeight > 0) { "Invalid image dimensions" }
++    val longestEdge = maxOf(bounds.outWidth, bounds.outHeight)
++    var sampleSize = 1
++    while (longestEdge / (sampleSize * 2) > MEMORY_ONLY_MAX_DIMENSION) {
++      sampleSize *= 2
++    }
++
++    checkMemoryCaptureActive(capture)
++    val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
++    var bitmap = requireNotNull(BitmapFactory.decodeByteArray(imageData, 0, imageData.size, decodeOptions))
++    try {
++      checkMemoryCaptureActive(capture)
++      val edge = maxOf(bitmap.width, bitmap.height)
++      if (edge > MEMORY_ONLY_MAX_DIMENSION) {
++        val scale = MEMORY_ONLY_MAX_DIMENSION.toDouble() / edge
++        val resized = Bitmap.createScaledBitmap(
++          bitmap,
++          maxOf(1, (bitmap.width * scale).toInt()),
++          maxOf(1, (bitmap.height * scale).toInt()),
++          true
++        )
++        if (resized !== bitmap) {
++          bitmap.recycle()
++          bitmap = resized
++        }
++      }
++
++      checkMemoryCaptureActive(capture)
++      val matrix = Matrix().apply {
++        postRotate(memoryRotationDegrees.toFloat())
++        if (mirror) {
++          postScale(-1f, 1f)
++        }
++      }
++      if (!matrix.isIdentity) {
++        val oriented = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
++        if (oriented !== bitmap) {
++          bitmap.recycle()
++          bitmap = oriented
++        }
++      }
++
++      checkMemoryCaptureActive(capture)
++      return ByteArrayOutputStream().use { stream ->
++        check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(0, 100), stream))
++        checkMemoryCaptureActive(capture)
++        val jpeg = stream.toByteArray()
++        try {
++          val encoded = Base64.encodeToString(jpeg, Base64.NO_WRAP)
++          checkMemoryCaptureActive(capture)
++          Bundle().apply {
++            putString(BASE64_KEY, encoded)
++            putInt(WIDTH_KEY, bitmap.width)
++            putInt(HEIGHT_KEY, bitmap.height)
++            putString(FORMAT_KEY, ".jpg")
++          }
++        } finally {
++          jpeg.fill(0)
++        }
++      }
++    } finally {
++      bitmap.recycle()
++    }
++  }
++
+   private fun processImage(): Bundle? {
+     // handle SkipProcessing
+     if (options.skipProcessing) {

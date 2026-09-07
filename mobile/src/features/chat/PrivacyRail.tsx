@@ -82,8 +82,10 @@ export function PrivacyRail({
         <ScrollView>
           {/* 四档文案与颜色都取 MIC_LABEL（B2 T2）：颜色与文字不许说两件事——
               B1 那条 `mic==='cloudAudio' || capture!=='armed'` 让默认空闲态的「关」也涂成琥珀（评审 D5） */}
-          {row('麦克风', MIC_LABEL[snapshot.privacy.mic].long, MIC_LABEL[snapshot.privacy.mic].tone === 'amber' ? p.amber : p.fg1)}
+          {row('麦克风', snapshot.privacy.micActive ? '开启' : '关')}
+          {row('音频处理', MIC_LABEL[snapshot.privacy.mic].long, MIC_LABEL[snapshot.privacy.mic].tone === 'amber' ? p.amber : p.fg1)}
           {row('摄像头', snapshot.privacy.camera === 'singleFrame' ? '正在抓一帧（触发词命中）' : '关')}
+          {row('画面上传', snapshot.privacy.visionUploading ? '单帧上传中' : '无')}
           {row('最近一次', `麦 ${when(activityLog.lastOf('mic'))}`)}
           {row('', `摄像头 ${when(activityLog.lastOf('camera'))}`)}
           {row('当前用户', `token ····${snapshot.privacy.user}（App 端身份 = token，不做声纹）`)}
@@ -96,12 +98,12 @@ export function PrivacyRail({
             }}
           >
             唤醒词监听在本机，不上传。按住说话与唤醒后的收音，音频会传到你自己的服务器做识别，
-            识别完只留文字；端到端挡位则把原始音频交给语音大模型，仅在唤醒后的对话窗内采集。
+            识别完只留文字；端到端挡位仅在唤醒后的对话窗内把原始音频上传给语音大模型。
             拍到的画面只用于回答当前这一句，服务器最多保留两分钟，不落盘、不进记忆。
           </Text>
         </ScrollView>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-          {btn('关闭本轮麦克风', () => {
+          {btn('结束本轮收音', () => {
             onStopMic()
             onClose()
           })}

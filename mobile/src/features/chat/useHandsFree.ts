@@ -82,7 +82,9 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const wantOn = opts.enabled && availability.usable
 
   useEffect(() => {
-    if (!wantOn) return
+    if (!wantOn || !settingsStore.getState().settings.handsFree) return
+    let live = true
+    const allowed = () => live && ctlRef.current === ctl && settingsStore.getState().settings.handsFree
     const deps: HandsFreeDeps = {
       audioUrl: cbRef.current.audioUrl,
       getSessionId: () => cbRef.current.sessionId,
@@ -96,6 +98,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         }
       },
       onSend: (text) => {
+        if (!allowed()) return
         setPartial('')
         // **与文本、与 PTT 完全同一条 send 路径**：前置路由/位置闸/候选拦截一条都不能
         // 因为「这句是免唤醒说出来的」而绕过（同 M2 那条判据）
@@ -103,6 +106,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       },
       onStopTts: () => speechController().stop(),
       onOrbState: (o, f) => {
+        if (!live) return
         // §11.4「首反馈时延」的取数源：这里是 FSM 换态的**回调时刻**（≈KWS 命中），
         // 与随后第一条 primary=listening 的轨迹快照之差 = 屏上多久才有反应（B2 T14）
         presenceTrail.mark('fsm:' + f)
@@ -113,6 +117,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         if (f === 'LISTENING') setPipelineDegraded('')
       },
       onPartialText: (t) => {
+        if (!allowed()) return
         setPartial(t)
         cbRef.current.onPartial?.(t)
       },
@@ -131,10 +136,13 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       // 与 HMI 同（HMI 给的 voice 是它自己的 `s2sVoice` 设置项，App 没有这一项）。
       getS2sConfig: () => ({}),
       getSessionMeta: () => ({ sessionId: cbRef.current.sessionId }),
-      onS2sUserUtterance: (t) => cbRef.current.onS2sUserUtterance?.(t),
-      onS2sAnswerDelta: (t) => cbRef.current.onS2sAnswerDelta?.(t),
-      onS2sEscalated: (utterance) => (cbRef.current.onS2sEscalated ?? cbRef.current.onSend)(utterance),
+      onS2sUserUtterance: (t) => { if (allowed()) cbRef.current.onS2sUserUtterance?.(t) },
+      onS2sAnswerDelta: (t) => { if (allowed()) cbRef.current.onS2sAnswerDelta?.(t) },
+      onS2sEscalated: (utterance) => {
+        if (allowed()) (cbRef.current.onS2sEscalated ?? cbRef.current.onSend)(utterance)
+      },
       onS2sTurnEnd: (r) => {
+        if (!allowed()) return
         setPartial('')
         cbRef.current.onS2sTurnEnd?.(r)
       },
@@ -142,11 +150,19 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     const ctl = new HandsFreeController(deps)
     ctlRef.current = ctl
     setError('')
-    ctl.enable().catch((e: unknown) => {
+    const onEnableError = (e: unknown) => {
+      if (!allowed()) return
       const msg = e instanceof Error ? e.message : String(e)
       setError(msg)
       cbRef.current.onNotice?.('免唤醒启动失败：' + msg)
+    }
+    // Zustand 通知同步发生：设置关掉的同一调用栈就撤回采集，不能等 React effect。
+    const unsubscribeSettings = settingsStore.subscribe((state, previous) => {
+      if (state.settings.handsFree === previous.settings.handsFree || !live) return
+      if (!state.settings.handsFree) void ctl.disable().catch(() => {})
+      else if (cbRef.current.enabled) void ctl.enable().catch(onEnableError)
     })
+    void ctl.enable().catch(onEnableError)
 
     // TTS 三条腿接到 FSM：出声 → SPEAKING；播完 → FOLLOWUP；**没出声也要收尾**
     // （引擎无 key / 纯卡片回复时一个字节都不出，不补这一脚 FSM 会卡在 THINKING
@@ -175,12 +191,14 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       ctl.turnEnded()
     }
     return () => {
+      live = false
+      unsubscribeSettings()
       sc.onSpeechBegan = prevBegan
       sc.onSpeechText = prevText
       sc.onSpeechEnded = prevEnded
       sc.onSilent = prevSilent
       ctlRef.current = null
-      void ctl.dispose()
+      void ctl.dispose().catch(() => {})
       setOrb(null)
       setFsm('IDLE')
       setPartial('')
@@ -188,7 +206,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setPipelineDegraded('')
       setEchoAt(0)
     }
-  }, [wantOn])
+  }, [wantOn, opts.audioUrl, opts.sessionId])
 
   // 挂起确认镜像：单独一个 effect，跟着 needConfirm 变（不进控制器重建的依赖）
   const needConfirm = !!opts.needConfirm

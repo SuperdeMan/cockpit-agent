@@ -195,7 +195,7 @@ test('R04: prepare metadata and location preserve one user bubble, source, and m
     await flush()
     const user = h.core.store.getState().messages.filter((m) => m.role === 'user')
     expect(user).toHaveLength(1)
-    expect(prepare).toHaveBeenCalledWith(user[0].id)
+    expect(prepare).toHaveBeenCalledWith(user[0].id, expect.objectContaining({ aborted: false }))
     expect(usersSent(h.sockets[0])[0].meta).toMatchObject({ vision_frame_id: 'frame-1', current_lat: '1', test_marker: 'yes' })
     const assistant = h.core.store.getState().messages.find((m) => m.role === 'assistant')!
     expect(h.core.store.getState().turnMeta[assistant.id]).toMatchObject({ source: 'ptt', withLocation: true })
@@ -328,5 +328,63 @@ test('R04: overflow stays aligned with the actual bounded queue', () => {
     h.sockets[0].open()
     expect(usersSent(h.sockets[0]).map((f) => f.text)).toEqual(Array.from({ length: 32 }, (_, i) => '故事' + (i + 1)))
     expect(h.core.store.getState().queued).toBe(0)
+  } finally { h.dispose() }
+})
+
+test('R02: cancellation/disposal propagates to the active preparation, with no late send', async () => {
+  const h = setup()
+  let signal!: AbortSignal
+  let resolve!: (meta: Record<string, string>) => void
+  try {
+    h.sockets[0].open()
+    h.core.send('看看这是什么', undefined, { prepareMeta: async (_id, current) => {
+      signal = current
+      return new Promise((r) => { resolve = r })
+    } })
+    h.core.cancelCurrentTurn()
+    expect(signal.aborted).toBe(true)
+    resolve({ vision_frame_id: 'late' })
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(usersSent(h.sockets[0])).toEqual([])
+    h.core.send('看看下一张', undefined, { prepareMeta: async (_id, current) => {
+      signal = current
+      return new Promise((r) => { resolve = r })
+    } })
+    h.core.dispose()
+    expect(signal.aborted).toBe(true)
+    resolve({ vision_frame_id: 'disposed' })
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(usersSent(h.sockets[0])).toEqual([])
+  } finally { h.dispose() }
+})
+
+test('R02: turning vision off after upload withdraws the real queued dependent request, even if enabled again', async () => {
+  const h = setup()
+  const capability = new AbortController()
+  try {
+    h.core.send('看看这是什么', undefined, {
+      preparationSignal: capability.signal,
+      prepareMeta: async () => ({ vision_frame_id: 'uploaded' }),
+    })
+    for (let i = 0; i < 8; i++) await Promise.resolve()
+    expect(h.core.store.getState().queued).toBe(1)
+    capability.abort()
+    expect(h.core.store.getState().queued).toBe(0)
+    h.core.send('普通下一问')
+    h.sockets[0].open()
+    expect(usersSent(h.sockets[0]).map((f) => f.text)).toEqual(['普通下一问'])
+  } finally { h.dispose() }
+})
+
+test('R02: a previously revoked capability never starts preparation', () => {
+  const h = setup()
+  const capability = new AbortController()
+  capability.abort()
+  const prepareMeta = jest.fn(async () => ({ vision_frame_id: 'not-captured' }))
+  try {
+    h.sockets[0].open()
+    h.core.send('看看这是什么', undefined, { preparationSignal: capability.signal, prepareMeta })
+    expect(prepareMeta).not.toHaveBeenCalled()
+    expect(usersSent(h.sockets[0])).toEqual([])
   } finally { h.dispose() }
 })

@@ -15,6 +15,7 @@
 import { int16ToWav } from '@shared/pcmRing.mjs'
 
 import { bytesToBase64 } from './base64'
+import { setAudioCaptureFact } from './captureFacts'
 import { FRAME_SAMPLES, TARGET_SAMPLE_RATE, recorder, type Recorder } from './recorder'
 
 /** 无定稿兜底窗（同 HMI audio.ts:995 的 7000） */
@@ -68,24 +69,37 @@ export async function recognizeBatch(
   audioUrl: string,
   pcm: Int16Array,
   language: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const wav = int16ToWav(pcm, TARGET_SAMPLE_RATE)
   const ctl = new AbortController()
+  const abort = () => ctl.abort()
+  signal?.addEventListener('abort', abort)
+  if (signal?.aborted) ctl.abort()
+  const checkAborted = () => {
+    if (ctl.signal.aborted) throw new Error('语音识别已取消或超时')
+  }
   const timer = setTimeout(() => ctl.abort(), BATCH_TIMEOUT_MS)
-  let resp: Response
   try {
-    resp = await fetch(audioUrl + '/api/asr', {
+    checkAborted()
+    const wav = int16ToWav(pcm, TARGET_SAMPLE_RATE)
+    const request = fetch(audioUrl + '/api/asr', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ audio: bytesToBase64(wav), format: 'wav', language }),
       signal: ctl.signal,
     })
+    setAudioCaptureFact('asrUploading', ctl, true)
+    const resp = await request
+    checkAborted()
+    const data = (await resp.json()) as { text?: string; error?: string }
+    checkAborted()
+    if (data.error) throw new Error(data.error)
+    return (data.text || '').trim()
   } finally {
     clearTimeout(timer)
+    signal?.removeEventListener('abort', abort)
+    setAudioCaptureFact('asrUploading', ctl, false)
   }
-  const data = (await resp.json()) as { text?: string; error?: string }
-  if (data.error) throw new Error(data.error)
-  return (data.text || '').trim()
 }
 
 export class AsrSession {
@@ -94,6 +108,8 @@ export class AsrSession {
   private opened = false
   private stopped = false
   private cancelled = false
+  private started = false
+  private batchAbort: AbortController | null = null
   private sendBuf: Int16Array[] = []
   private allChunks: Int16Array[] = []
   private fallbackTimer: ReturnType<typeof setTimeout> | null = null
@@ -113,21 +129,24 @@ export class AsrSession {
 
   /** 按下 PTT：开录音（先行）+ 建流式会话（provider='off' 时不建） */
   async start(): Promise<void> {
+    if (this.started || this.cancelled) return
+    this.started = true
     this.finished = false
     this.opened = false
     this.stopped = false
-    this.cancelled = false
     this.sendBuf = []
     this.allChunks = []
     this.modelRetried = false
     this.activeModel = this.cfg.model
     // recorder 先行：抛出的权限错误交给调用方（Composer 提示去设置里开）
     await this.rec.start((frame) => this.onFrame(frame))
+    if (this.cancelled || this.finished) return
     if (this.cfg.provider === 'off') return
     this.openSocket()
   }
 
   private openSocket(): void {
+    if (this.finished || this.cancelled) return
     let ws: WebSocket
     try {
       ws = new WebSocket(asrStreamUrl(this.cfg.audioUrl))
@@ -138,6 +157,7 @@ export class AsrSession {
     ws.binaryType = 'arraybuffer'
     this.ws = ws
     ws.onopen = () => {
+      if (this.ws !== ws || this.finished || this.cancelled) return
       this.opened = true
       ws.send(
         JSON.stringify({
@@ -157,11 +177,14 @@ export class AsrSession {
         this.armFallbackTimer()
       }
     }
-    ws.onmessage = (ev) => this.onMessage(ev)
+    ws.onmessage = (ev) => { if (this.ws === ws && !this.cancelled) this.onMessage(ev) }
     ws.onerror = () => {
+      if (this.ws !== ws || this.cancelled) return
       if (!this.opened) void this.batchFallback('语音流连接失败')
     }
     ws.onclose = () => {
+      if (this.ws !== ws || this.cancelled) return
+      setAudioCaptureFact('asrUploading', this, false)
       if (!this.opened && !this.finished) void this.batchFallback('语音流已断开')
     }
   }
@@ -182,6 +205,7 @@ export class AsrSession {
       if (this.finished) return
       this.finished = true
       this.clearFallbackTimer()
+      setAudioCaptureFact('asrUploading', this, false)
       this.cb.onFinal(m.text || '')
     } else if (m.type === 'done') {
       this.cleanup()
@@ -191,7 +215,7 @@ export class AsrSession {
   }
 
   private onFrame(frame: Int16Array): void {
-    if (this.finished || this.cancelled) return
+    if (this.finished || this.cancelled || this.stopped) return
     this.allChunks.push(frame) // 全量留存供批处理兜底
     this.sendBuf.push(frame)
     this.flush(false)
@@ -199,6 +223,7 @@ export class AsrSession {
 
   /** 攒够 ~100ms 或 force 时合并上行（同 HMI 的聚包粒度：1600 samples = 3200 字节） */
   private flush(force: boolean): void {
+    if (this.finished || this.cancelled) return
     const ws = this.ws
     if (!ws || ws.readyState !== 1 /* OPEN */) return
     let total = 0
@@ -208,16 +233,19 @@ export class AsrSession {
     this.sendBuf = []
     try {
       ws.send(merged.buffer as ArrayBuffer)
+      setAudioCaptureFact('asrUploading', this, true)
     } catch {
       /* 帧丢弃静默——兜底还有全量 allChunks */
     }
   }
 
   private sendStop(): void {
+    if (this.cancelled || this.finished) return
     const ws = this.ws
     if (!ws || ws.readyState !== 1) return
     try {
       ws.send(JSON.stringify({ type: 'stop' }))
+      setAudioCaptureFact('asrUploading', this, false)
     } catch {
       /* ignore */
     }
@@ -242,12 +270,14 @@ export class AsrSession {
   async cancel(): Promise<void> {
     this.cancelled = true
     this.finished = true
-    await this.rec.stop().catch(() => {})
+    this.batchAbort?.abort()
     this.cleanup()
+    await this.rec.stop().catch(() => {})
   }
 
   private armFallbackTimer(): void {
     this.clearFallbackTimer()
+    if (this.finished || this.cancelled) return
     this.fallbackTimer = setTimeout(() => {
       this.fallbackTimer = null
       if (!this.finished) void this.batchFallback('识别超时')
@@ -267,12 +297,7 @@ export class AsrSession {
     this.modelRetried = true
     this.activeModel = this.cfg.fallbackModel as string
     this.clearFallbackTimer()
-    try {
-      this.ws?.close()
-    } catch {
-      /* ignore */
-    }
-    this.ws = null
+    this.closeSocket()
     this.opened = false
     this.sendBuf = this.allChunks.slice() // 全量重放（allChunks 不清，批处理兜底还要用）
     this.openSocket()
@@ -293,6 +318,7 @@ export class AsrSession {
     }
     this.finished = true
     this.clearFallbackTimer()
+    this.closeSocket()
     const chunks = this.allChunks
     this.allChunks = []
     const merged = mergeChunks(chunks)
@@ -303,13 +329,18 @@ export class AsrSession {
       this.cleanup()
       return
     }
+    const ctl = new AbortController()
+    this.batchAbort = ctl
     try {
-      const text = await recognizeBatch(this.cfg.audioUrl, merged, this.cfg.language)
+      const text = await recognizeBatch(this.cfg.audioUrl, merged, this.cfg.language, ctl.signal)
+      if (this.cancelled) return
       if (text) this.cb.onFinal(text)
       else this.cb.onError(msg || '没听清，再说一次？')
     } catch (e) {
+      if (this.cancelled) return
       this.cb.onError(msg || (e instanceof Error ? e.message : '识别失败'))
     } finally {
+      if (this.batchAbort === ctl) this.batchAbort = null
       this.cleanup()
     }
   }
@@ -317,13 +348,20 @@ export class AsrSession {
   private cleanup(): void {
     this.finished = true
     this.clearFallbackTimer()
+    this.closeSocket()
+    this.sendBuf = []
+    this.allChunks = []
+  }
+
+  private closeSocket(): void {
+    const ws = this.ws
+    this.ws = null
+    if (ws) ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null
     try {
-      this.ws?.close()
+      ws?.close()
     } catch {
       /* ignore */
     }
-    this.ws = null
-    this.sendBuf = []
-    this.allChunks = []
+    setAudioCaptureFact('asrUploading', this, false)
   }
 }

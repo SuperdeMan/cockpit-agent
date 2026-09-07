@@ -25,6 +25,7 @@ import { stripLeadingWakeWord } from '@shared/utteranceHeuristics.mjs'
 
 import { AsrSession, type AsrConfig } from './asr'
 import { newPcmPlayer } from './audioCtx'
+import { setAudioCaptureFact } from './captureFacts'
 import { DEFAULT_KEYWORDS, KwsEngine, kwsNativeAvailable } from './kws'
 import { micLease } from './micBus'
 import { FRAME_SAMPLES, type FrameSink, type Recorder } from './recorder'
@@ -140,6 +141,8 @@ export class HandsFreeController {
   /** 代际护栏：`enable()` 是不可中止的 async，其 await 间隙里的 `disable()` 必须让在途的
    *  enable 作废并回滚——否则诞生一个没人持有的孤儿控制器（HMI 侧 R4.3b P0 的原账 U1）。 */
   private epoch = 0
+  private requested = false
+  private lifecycle: Promise<void> = Promise.resolve()
   private ttsSpeaking = false
 
   constructor(private deps: HandsFreeDeps) {
@@ -158,10 +161,12 @@ export class HandsFreeController {
       onEndpoint: () => {
         // 无 server VAD 的引擎靠这一步请定稿。**S2S 下这一步同样不能省**：停推流后
         // provider 的 server VAD 永远等不到静音，turn 永不收束（HMI 真机首验的死锁）。
-        if (this.s2s) this.s2s.commitAudio()
+        if (!this.on) return
+        if (this.s2s) this.commitS2sAudio()
         else void this.asr?.stop()
       },
       onSend: (text: string, voice: { source: string; utteranceMs: number }) => {
+        if (!this.on) return
         if (this.s2s) {
           // S2S 下 provider 已经在答了；这句只是「过了本地治理」，归属（自答/逃逸）
           // 要等下行帧才知道 => 先挂起，别现在就发给主链（发了就是双份）
@@ -203,26 +208,40 @@ export class HandsFreeController {
 
   /** 开机：载模型 → 开麦 → 起 VAD（+ KWS，若开且在场）→ FSM 进 ARMED */
   async enable(): Promise<void> {
-    if (this.disposed || this.on) return
+    if (this.disposed) return
+    if (this.requested) return this.lifecycle
+    this.requested = true
     const myEpoch = ++this.epoch
+    const pending = this.lifecycle.then(() => this.enableNow(myEpoch))
+    this.lifecycle = pending.catch(() => {})
+    return pending
+  }
+
+  private async enableNow(myEpoch: number): Promise<void> {
     const alive = () => !this.disposed && this.epoch === myEpoch
+    if (!alive()) return
     try {
       await this.vad.load()
       if (!alive()) return
       const wantKws = this.deps.wakeWord?.() !== false && kwsNativeAvailable()
       if (wantKws) {
-        await this.kws.start({ onKeyword: () => this.onWake() }, DEFAULT_KEYWORDS)
+        await this.kws.start({ onKeyword: () => { if (alive()) this.onWake() } }, DEFAULT_KEYWORDS)
         if (!alive()) {
           await this.kws.stop()
           return
         }
       }
       await this.vad.start({
-        onSpeechStart: () => this.vl.vadSpeechStart(),
-        onSpeechEnd: () => this.vl.vadSpeechEnd(),
-        onError: (m: string) => this.deps.onNotice?.('语音检测异常：' + m),
+        onSpeechStart: () => { if (alive() && this.on) this.vl.vadSpeechStart() },
+        onSpeechEnd: () => { if (alive() && this.on) this.vl.vadSpeechEnd() },
+        onError: (m: string) => { if (alive() && this.on) this.deps.onNotice?.('语音检测异常：' + m) },
       })
+      if (!alive()) {
+        await this.teardown()
+        return
+      }
       this.vad.onWindow = (w) => {
+        if (!alive() || !this.on) return
         this.ring.push(w)
         this.s2s?.pushFrame(w) // LISTENING 门控在 s2sClient 内部（非 collecting 期静默丢）
       }
@@ -236,19 +255,22 @@ export class HandsFreeController {
       this.vl.handsFreeOn()
     } catch (e) {
       await this.teardown()
+      if (!alive()) return
+      this.requested = false
       throw e
     }
   }
 
   async disable(): Promise<void> {
     this.epoch++ // 作废在途的 enable
-    if (!this.on) {
-      await this.teardown()
-      return
-    }
+    this.requested = false
     this.on = false
     this.vl.handsFreeOff()
-    await this.teardown()
+    // 立即关闭传输/麦 lease，不把撤回排到模型加载或权限弹窗之后。
+    const stopping = this.teardown()
+    const pending = this.lifecycle.then(() => stopping)
+    this.lifecycle = pending.catch(() => {})
+    await pending
   }
 
   async dispose(): Promise<void> {
@@ -291,14 +313,15 @@ export class HandsFreeController {
   /** 轻点光球（方案 §5.1.1）= 一次「手动唤醒」：FSM 的公开入口 wake()——ARMED/FOLLOWUP 进聆听、
    *  SPEAKING 先停播再听、THINKING 取消在飞轮再听。FSM 一字不改，KWS 与命中时同样 reset */
   wakeManually(): void {
+    if (!this.on) return
     void this.kws.reset()
     this.vl.wake()
   }
 
   /** 录音中轻点 = 结束并提交：与 FSM 的 onEndpoint 效果逐字同构（S2S 请收尾 / classic 请定稿） */
   endUtterance(): void {
-    if (this.vl.state !== 'LISTENING') return
-    if (this.s2s) this.s2s.commitAudio()
+    if (!this.on || this.vl.state !== 'LISTENING') return
+    if (this.s2s) this.commitS2sAudio()
     else void this.asr?.stop()
   }
 
@@ -319,6 +342,7 @@ export class HandsFreeController {
 
   // ─── 内部 ───
   private onFrame(frame: Int16Array): void {
+    if (!this.on || this.disposed) return
     this.push.setDeviceRate(this.mic.deviceRate)
     this.vad.accept(frame) // 内部会把 512 窗回灌 ring（onWindow）
     this.kws.accept(frame)
@@ -326,28 +350,39 @@ export class HandsFreeController {
   }
 
   private onWake(): void {
+    if (!this.on) return
     void this.kws.reset()
     this.vl.wake()
   }
 
   /** 建 S2S 会话。**会话级常驻**（唤醒后零建连延迟），收音门控靠 setCollecting。 */
   private startS2s(): void {
+    const epoch = this.epoch
     const meta = this.deps.getSessionMeta?.() ?? { sessionId: this.deps.getSessionId() }
     const s2sCfg = this.deps.getS2sConfig?.() ?? {}
+    const alive = () => this.epoch === epoch && !this.disposed && this.s2s === client
     const client = new S2SClient({
+      // 注入传输适配器：真实 send 才报上行；撤回后屏蔽旧 WS 的消息与发送。
+      // 共享 S2SClient 的模型/聚包/播放实现保持原样。
+      wsFactory: (url: string) => this.s2sSocket(url, alive, client),
       playerFactory: (sampleRate: number) => newPcmPlayer({ sampleRate }),
       onTranscript: (text: string, final: boolean) => {
+        if (!alive() || !this.on) return
+        if (final) setAudioCaptureFact('s2sUploading', client, false)
         if (!final) this.deps.onPartialText?.(text)
         else this.vl.asrFinal(stripLeadingWakeWord(text, WAKE_WORDS))
       },
-      onAnswerDelta: (t: string) => this.deps.onS2sAnswerDelta?.(t),
-      onFirstAudio: () => this.vl.ttsStart(),
+      onAnswerDelta: (t: string) => { if (alive()) this.deps.onS2sAnswerDelta?.(t) },
+      onFirstAudio: () => { if (alive()) this.vl.ttsStart() },
       onTurnEnd: (r: { turnId: string; reason: string; detail: string }) => {
+        if (!alive()) return
+        setAudioCaptureFact('s2sUploading', client, false)
         this.s2sPendingUser = ''
         this.vl.ttsEnd()
         this.deps.onS2sTurnEnd?.(r)
       },
       onEscalated: (r: { turnId: string; utterance: string }) => {
+        if (!alive()) return
         // 红线：S2S 会话内没有执行通道，逃逸就是把原话交回文本主链，
         // 此后 planner 校验 / 权限 / VAL / require_confirm 全量生效
         const utt = r.utterance || this.s2sPendingUser
@@ -355,15 +390,20 @@ export class HandsFreeController {
         if (utt) this.deps.onS2sEscalated?.(utt, r.turnId)
       },
       onSessionState: (st: string) => {
+        if (!alive()) return
         if (st === 'degraded') {
+          setAudioCaptureFact('s2sUploading', client, false)
           this.deps.onNotice?.('语音链路降级，本轮回落三段式')
           this.deps.onPipelineDegraded?.('degraded', '语音链路降级，本轮回落三段式')
         }
       },
       onUnsupported: (msg: string) => {
+        if (!alive()) return
         this.deps.onNotice?.(msg + '（已回落三段式）')
         this.deps.onPipelineDegraded?.('unsupported', msg)
         this.s2s = null // 之后 openAsr 会走 classic 分支
+        client.close()
+        setAudioCaptureFact('s2sUploading', client, false)
       },
     })
     this.s2s = client
@@ -377,6 +417,7 @@ export class HandsFreeController {
   }
 
   private openAsr(opts: { resume: boolean; sinceSpeechStartMs: number }): void {
+    if (!this.on) return
     if (this.s2s) {
       // S2S：不建 ASR，只开收音门控 + 注入 pre-roll
       this.s2s.setCollecting(true)
@@ -440,6 +481,7 @@ export class HandsFreeController {
   private closeAsr(): void {
     if (this.s2s) {
       this.s2s.setCollecting(false)
+      setAudioCaptureFact('s2sUploading', this.s2s, false)
       return
     }
     const s = this.asr
@@ -455,18 +497,54 @@ export class HandsFreeController {
   }
 
   private async teardown(): Promise<void> {
+    const client = this.s2s
+    this.s2s = null
     try {
-      this.s2s?.close()
+      client?.close()
     } catch {
       /* ignore */
     }
-    this.s2s = null
+    if (client) setAudioCaptureFact('s2sUploading', client, false)
     this.s2sPendingUser = ''
     this.closeAsr()
     this.vad.onWindow = null
     this.vad.stop()
     this.ring.clear()
-    await this.kws.stop()
-    await this.mic.stop()
+    await Promise.all([this.mic.stop(), this.kws.stop()])
+  }
+
+  private commitS2sAudio(): void {
+    this.s2s?.setCollecting(false)
+    this.s2s?.commitAudio()
+    if (this.s2s) setAudioCaptureFact('s2sUploading', this.s2s, false)
+  }
+
+  private s2sSocket(url: string, alive: () => boolean, owner: object): any {
+    const socket = new WebSocket(url)
+    let closed = false
+    const proxy: any = {
+      onopen: null, onmessage: null, onerror: null, onclose: null,
+      get readyState() { return socket.readyState },
+      get binaryType() { return socket.binaryType },
+      set binaryType(value: BinaryType) { socket.binaryType = value },
+      send(data: string | ArrayBuffer) {
+        if (closed || !alive()) return
+        socket.send(data)
+        if (typeof data !== 'string') setAudioCaptureFact('s2sUploading', owner, true)
+      },
+      close() {
+        closed = true
+        socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null
+        try { socket.close() } finally { setAudioCaptureFact('s2sUploading', owner, false) }
+      },
+    }
+    socket.onopen = (e) => { if (!closed && alive()) proxy.onopen?.(e) }
+    socket.onmessage = (e) => { if (!closed && alive()) proxy.onmessage?.(e) }
+    socket.onerror = (e) => { if (!closed && alive()) proxy.onerror?.(e) }
+    socket.onclose = (e) => {
+      setAudioCaptureFact('s2sUploading', owner, false)
+      if (!closed && alive()) proxy.onclose?.(e)
+    }
+    return proxy
   }
 }

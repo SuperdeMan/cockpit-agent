@@ -25,7 +25,7 @@ test('只在轴变化时记；同快照每秒 tick 不刷屏；记下变化的�
   const tick = base({ now: NOW + 1000 })
   trail.record(tick, derivePresence(tick)) // 只有 now 变了：不记
   expect(trail.list()).toHaveLength(1)
-  const i2 = base({ now: NOW + 2000, ptt: 'recording' })
+  const i2 = base({ now: NOW + 2000, ptt: 'recording', audioCapture: { micActive: true, asrUploading: true, s2sUploading: false } })
   trail.record(i2, derivePresence(i2))
   const top = trail.list()[0]
   expect(top.kind).toBe('snapshot')
@@ -33,7 +33,7 @@ test('只在轴变化时记；同快照每秒 tick 不刷屏；记下变化的�
     expect(top.primary).toBe('listening')
     expect(top.input).toBe('voice-sheet')
     expect(top.changedAxes).toEqual(expect.arrayContaining(['capture', 'primary', 'input', 'capsule', 'privacy.mic']))
-    expect(top.changedInputs).toEqual(['ptt'])
+    expect(top.changedInputs).toEqual(['ptt', 'audioCapture'])
   }
 })
 

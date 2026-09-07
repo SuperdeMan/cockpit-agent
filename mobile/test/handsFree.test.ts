@@ -85,6 +85,8 @@ class FakeAsr {
 
 let vad: FakeVad
 let kws: FakeKws
+const controllers: any[] = []
+const originalWebSocket = globalThis.WebSocket
 
 beforeEach(() => {
   jest.resetModules()
@@ -127,6 +129,11 @@ beforeEach(() => {
   jest.doMock('@/core/voice/audioCtx', () => ({ newPcmPlayer: () => null }))
 })
 
+afterEach(async () => {
+  for (const ctl of controllers.splice(0)) await ctl.dispose()
+  globalThis.WebSocket = originalWebSocket
+})
+
 function makeCtl(over: Record<string, unknown> = {}) {
   const { HandsFreeController } = require('@/core/voice/handsFree')
   const sent: string[] = []
@@ -139,6 +146,7 @@ function makeCtl(over: Record<string, unknown> = {}) {
     onOrbState: () => {},
     ...over,
   })
+  controllers.push(ctl)
   return { ctl, sent }
 }
 
@@ -360,9 +368,113 @@ test('B2-11 附加：S2S 挡位下 FSM 判回声丢弃 → 显式 cancelTurn（p
   const { ctl } = makeCtl()
   await ctl.enable()
   // 假 S2S 客户端：只看 cancelTurn 有没有被叫到（真的 S2SClient 要 WebSocket，jest 里没有）
-  ctl.s2s = { cancelTurn: () => cancelled.push(1) }
+  ctl.s2s = { cancelTurn: () => cancelled.push(1), setCollecting() {}, close() {} }
   ctl.vl.onMetric('echo_dismissed')
   expect(cancelled).toEqual([1])
   ctl.vl.onMetric('endpoint_merge') // 对照：不在名单里的事件不取消
   expect(cancelled).toEqual([1])
+})
+
+test('AR02 VAD 初始化期间关闭：迟到 start 不开麦；随后三轮开关无旧回调复活', async () => {
+  let finish!: () => void
+  const originalStart = vad.start.bind(vad)
+  vad.start = async (cb) => {
+    await new Promise<void>((resolve) => { finish = resolve })
+    await originalStart(cb)
+  }
+  const { ctl, sent } = makeCtl()
+  const enabling = ctl.enable()
+  for (let i = 0; i < 8; i++) await Promise.resolve()
+  expect(finish).toBeDefined()
+  const disabling = ctl.disable()
+  finish()
+  await Promise.all([enabling, disabling])
+  expect(recStarts.n).toBe(0)
+  expect(vad.running).toBe(false)
+  expect(ctl.state).toBe('IDLE')
+  vad.start = originalStart
+  const oldEvents: Array<() => void> = []
+  for (let round = 0; round < 3; round++) {
+    await ctl.enable()
+    const oldKws = kws.cb.onKeyword
+    const oldVad = vad.cb.onSpeechStart
+    oldEvents.forEach((event) => event())
+    expect(ctl.state).toBe('ARMED')
+    ctl.wakeManually()
+    const oldFinal = FakeAsr.last!.cb.onFinal
+    oldFinal('今天天气怎么样')
+    expect(sent).toHaveLength(round + 1)
+    await ctl.disable()
+    const events = () => { oldKws('小舟'); oldVad(); oldFinal('旧轮不得发送') }
+    oldEvents.push(events)
+    events()
+    expect(ctl.state).toBe('IDLE')
+    expect(sent).toHaveLength(round + 1)
+  }
+})
+
+class CaptureWs {
+  static all: CaptureWs[] = []
+  readyState = 0
+  binaryType = ''
+  sent: unknown[] = []
+  onopen: (() => void) | null = null
+  onmessage: ((e: { data: unknown }) => void) | null = null
+  onerror: (() => void) | null = null
+  onclose: (() => void) | null = null
+  constructor() { CaptureWs.all.push(this) }
+  send(data: unknown) { this.sent.push(data) }
+  close() { this.readyState = 3 }
+  open() { this.readyState = 1; this.onopen?.() }
+  emit(data: unknown) { this.onmessage?.({ data: JSON.stringify(data) }) }
+}
+
+test('AR02 S2S 事实来自真实发送：常驻连接不算上行；结束后余帧与关闭后旧转写不能复活，三轮独立', async () => {
+  ;(globalThis as { WebSocket: unknown }).WebSocket = CaptureWs
+  CaptureWs.all = []
+  const { getAudioCaptureSnapshot } = require('@/core/voice/captureFacts')
+  const utterances = jest.fn()
+  const escalated = jest.fn()
+  const { ctl } = makeCtl({
+    getVoicePipeline: () => 's2s',
+    onS2sUserUtterance: utterances,
+    onS2sEscalated: escalated,
+  })
+  const stale: Array<() => void> = []
+  for (let round = 0; round < 3; round++) {
+    await ctl.enable()
+    const ws = CaptureWs.all.at(-1)!
+    ws.open()
+    stale.forEach((callback) => callback())
+    expect(ctl.state).toBe('ARMED')
+    expect(getAudioCaptureSnapshot().s2sUploading).toBe(false)
+    ctl.wakeManually()
+    const window = vad.onWindow!
+    for (let n = 0; n < 4; n++) window(new Float32Array(512))
+    expect(ws.sent.some((data) => typeof data !== 'string')).toBe(true)
+    expect(getAudioCaptureSnapshot().s2sUploading).toBe(true)
+    ctl.endUtterance()
+    const afterEndpoint = ws.sent.length
+    for (let n = 0; n < 4; n++) window(new Float32Array(512))
+    expect(ws.sent).toHaveLength(afterEndpoint)
+    expect(getAudioCaptureSnapshot().s2sUploading).toBe(false)
+    ws.emit({ type: 'turn.transcript', final: true, text: '今天天气怎么样' })
+    expect(utterances).toHaveBeenCalledTimes(round + 1)
+    const queued = ws.onmessage!
+    const queuedOpen = ws.onopen!
+    await ctl.disable()
+    const afterDisable = ws.sent.length
+    const callback = () => {
+      queuedOpen()
+      queued({ data: JSON.stringify({ type: 'turn.transcript', final: true, text: '不得发送' }) })
+      queued({ data: JSON.stringify({ type: 'turn.escalated', utterance: '不得发送', turn_id: 'old' }) })
+      for (let n = 0; n < 4; n++) window(new Float32Array(512))
+      expect(ws.sent).toHaveLength(afterDisable)
+      expect(escalated).not.toHaveBeenCalled()
+    }
+    stale.push(callback)
+    callback()
+    expect(ctl.state).toBe('IDLE')
+    expect(getAudioCaptureSnapshot().s2sUploading).toBe(false)
+  }
 })

@@ -24,6 +24,8 @@ const AXES: Array<[string, (s: PresenceSnapshot) => string]> = [
   ['agent', (s) => s.agent],
   ['commitment', (s) => s.commitment.map((c) => `${c.kind}:${c.id}`).join(',')],
   ['privacy.mic', (s) => s.privacy.mic],
+  ['privacy.micActive', (s) => String(s.privacy.micActive)],
+  ['privacy.visionUploading', (s) => String(s.privacy.visionUploading)],
   ['privacy.camera', (s) => s.privacy.camera],
   ['degradation', (s) => s.degradation.map((d) => d.kind).join(',')],
   ['primary', (s) => s.primary],
@@ -44,6 +46,9 @@ const INPUTS: Array<[string, (i: PresenceInput) => string]> = [
   ['pendingLocation', (i) => String(i.pendingLocation)],
   ['queued', (i) => String(i.queued)],
   ['visionCapturing', (i) => String(i.visionCapturing)],
+  ['audioCapture', (i) => JSON.stringify(i.audioCapture)],
+  ['visionCameraActive', (i) => String(i.visionCameraActive)],
+  ['visionUploading', (i) => String(i.visionUploading)],
   ['lastError', (i) => (i.lastError ? String(i.lastError.at) : '')],
   ['degradations', (i) => i.degradations.map((d) => d.kind).join(',')],
   [

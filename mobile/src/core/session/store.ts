@@ -57,7 +57,9 @@ export interface SendOpts {
   /** 这条用户气泡已经在记录里（草稿转正 / 视觉先落气泡 / S2S 逃逸）：把文本对齐成定稿，不追加第二条 */
   bubbleId?: string
   /** 发送前异步准备（如视觉帧）；只产本轮 meta，取消后结果不得再次发出请求。 */
-  prepareMeta?(userBubbleId: string): Promise<Record<string, string>>
+  prepareMeta?(userBubbleId: string, signal: AbortSignal): Promise<Record<string, string>>
+  /** Capability revocation remains effective while preparing or queued, even after upload ends. */
+  preparationSignal?: AbortSignal
 }
 
 export interface PendingOp {
@@ -153,6 +155,8 @@ export interface SessionDeps {
 }
 
 interface OutboundRequest {
+  preparationAbort: AbortController
+  unsubscribePreparation?: () => void
   frame: UserFrame
   bubbleId: string
   phase: 'preparing' | 'queued' | 'sent' | 'unknown'
@@ -162,6 +166,7 @@ interface OutboundRequest {
 interface Preparation {
   userBubbleId: string
   meta?: SendOpts['prepareMeta']
+  signal?: AbortSignal
   location?(): Promise<Record<string, string> | null>
   requireLocation?: boolean
 }
@@ -241,7 +246,11 @@ export class SessionCore {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    for (const request of this.requests.values()) this.deps.transport.discardQueued?.(request.frame.request_id)
+    for (const request of this.requests.values()) {
+      request.unsubscribePreparation?.()
+      request.preparationAbort.abort()
+      this.deps.transport.discardQueued?.(request.frame.request_id)
+    }
     this.requests.clear()
     this.registry.drainAll()
     this.inFlight.clear()
@@ -299,6 +308,7 @@ export class SessionCore {
       ? {
           userBubbleId,
           meta: opts.prepareMeta,
+          signal: opts.preparationSignal,
           ...(decision.withLocation ? { location: () => this.deps.location.refreshMeta().catch(() => ({})) } : {}),
         }
       : undefined
@@ -326,6 +336,7 @@ export class SessionCore {
         ? {
             userBubbleId: consent?.opts.bubbleId ?? '',
             meta: consent?.opts.prepareMeta,
+            signal: consent?.opts.preparationSignal,
             ...(reply === '确认' ? { location: () => this.deps.location.enable(), requireLocation: true } : {}),
           }
         : undefined
@@ -496,7 +507,7 @@ export class SessionCore {
       ...(metaExtra ? { metaExtra } : {}),
     })
     const pendingId = uid()
-    const request: OutboundRequest = { frame, bubbleId: pendingId, phase: 'preparing', operation }
+    const request: OutboundRequest = { frame, bubbleId: pendingId, phase: 'preparing', operation, preparationAbort: new AbortController() }
     this.requests.set(pendingId, request)
     this.registry.open(frame.request_id, pendingId)
     this.inFlight.add(pendingId)
@@ -519,6 +530,15 @@ export class SessionCore {
       },
     }))
     this.armWatchdog(pendingId)
+    if (preparation?.signal) {
+      const signal = preparation.signal
+      const revoke = () => {
+        if (this.requestLive(request) && request.phase !== 'sent') this.failRequest(request, '画面采集已停止，本轮没有发送。')
+      }
+      signal.addEventListener('abort', revoke, { once: true })
+      request.unsubscribePreparation = () => signal.removeEventListener('abort', revoke)
+      if (signal.aborted) { revoke(); return }
+    }
     // 普通文本保持同步发送；异步准备也先登记身份和占位，停止按钮才能撤回它。
     if (preparation) void this.prepareRequest(request, preparation, locationMeta, metaExtra)
     else this.transmitRequest(request, locationMeta, metaExtra)
@@ -544,7 +564,7 @@ export class SessionCore {
     try {
       let extra = metaExtra
       if (preparation.meta) {
-        const prepared = await preparation.meta(preparation.userBubbleId)
+        const prepared = await preparation.meta(preparation.userBubbleId, request.preparationAbort.signal)
         if (!this.requestLive(request)) return
         extra = { ...extra, ...prepared }
       }
@@ -559,8 +579,8 @@ export class SessionCore {
         location = found ?? undefined
       }
       if (this.requestLive(request)) this.transmitRequest(request, location, extra)
-    } catch {
-      if (this.requestLive(request)) this.failRequest(request, '请求准备失败，请重试。')
+    } catch (error) {
+      if (this.requestLive(request)) this.failRequest(request, error instanceof Error && error.name === 'AbortError' ? '画面采集已停止，本轮没有发送。' : '请求准备失败，请重试。')
     }
   }
 
@@ -925,6 +945,8 @@ export class SessionCore {
     const request = this.requests.get(bubbleId)
     this.requests.delete(bubbleId)
     if (request) {
+      request.unsubscribePreparation?.()
+      request.preparationAbort.abort()
       this.deps.transport.discardQueued?.(request.frame.request_id)
       this.restoreUnsentOperation(request)
     }

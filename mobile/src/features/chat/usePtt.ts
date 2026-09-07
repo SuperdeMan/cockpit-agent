@@ -66,14 +66,12 @@ export function usePtt(opts: {
   const sessionRef = useRef<VoiceSession | null>(null)
   const startingRef = useRef(false)
   const pendingStopRef = useRef(false)
-  const pendingCancelRef = useRef(false)
   const startedAtRef = useRef(0)
 
   const reset = useCallback(() => {
     sessionRef.current = null
     startingRef.current = false
     pendingStopRef.current = false
-    pendingCancelRef.current = false
     setPartial('')
     setState('idle')
     setMode('')
@@ -93,13 +91,17 @@ export function usePtt(opts: {
   }, [opts.audioUrl, opts.sessionId])
 
   const callbacks = useCallback(
-    (): AsrCallbacks => ({
+    (current: () => VoiceSession | null): AsrCallbacks => ({
       onPartial: (t) => {
+        if (!current()) return
         setPartial(t)
         opts.onPartial?.(t)
       },
       onFinal: (t) => {
+        const session = current()
+        if (!session) return
         reset()
+        void session.cancel().catch(() => {}) // 服务端先定稿时也必须释放本轮麦与 VAD
         const text = t.trim()
         if (text) opts.onFinal(text)
         else {
@@ -109,7 +111,10 @@ export function usePtt(opts: {
         }
       },
       onError: (msg) => {
+        const session = current()
+        if (!session) return
         reset()
+        void session.cancel().catch(() => {})
         setError(msg)
         setErrorKind('asr')
         opts.onDiscard?.()
@@ -137,7 +142,6 @@ export function usePtt(opts: {
       if (startingRef.current || sessionRef.current) return // ③ 并发按下忽略
       startingRef.current = true
       pendingStopRef.current = false
-      pendingCancelRef.current = false
       setError('')
       setErrorKind('')
       setPartial('')
@@ -145,20 +149,17 @@ export function usePtt(opts: {
       setMode(kind)
       startedAtRef.current = Date.now()
       speechController().stop() // barge-in：先停播报，再开麦
+      const cb = callbacks(() => sessionRef.current === session ? session : null)
       const session: VoiceSession =
         kind === 'tap'
-          ? new TapTalkSession(asrConfig(), callbacks(), { endpoint: vadEndpoint() })
-          : new AsrSession(asrConfig(), callbacks(), micLease())
+          ? new TapTalkSession(asrConfig(), cb, { endpoint: vadEndpoint() })
+          : new AsrSession(asrConfig(), cb, micLease())
       sessionRef.current = session
       void session
         .start()
         .then(() => {
+          if (sessionRef.current !== session) return
           startingRef.current = false
-          if (pendingCancelRef.current) {
-            pendingCancelRef.current = false
-            void session.cancel()
-            return
-          }
           if (pendingStopRef.current) {
             // ① 会话就绪前就松手了：这时才真正停
             pendingStopRef.current = false
@@ -166,7 +167,9 @@ export function usePtt(opts: {
           }
         })
         .catch((e: unknown) => {
+          if (sessionRef.current !== session) return
           reset()
+          void session.cancel().catch(() => {})
           const denied = e instanceof PermissionDeniedError
           setError(denied ? '需要麦克风权限，请在系统设置里允许' : '录音启动失败')
           setErrorKind(denied ? 'permission' : 'start')
@@ -175,6 +178,17 @@ export function usePtt(opts: {
     },
     [asrConfig, callbacks, finishSession, opts, reset],
   )
+
+  useEffect(() => {
+    reset()
+    return () => {
+      const session = sessionRef.current
+      sessionRef.current = null
+      startingRef.current = false
+      pendingStopRef.current = false
+      void session?.cancel().catch(() => {})
+    }
+  }, [opts.audioUrl, opts.sessionId, reset])
 
   useEffect(() => {
     if (state !== 'finalizing') {
@@ -206,16 +220,10 @@ export function usePtt(opts: {
 
   const cancel = useCallback(() => {
     if (!sessionRef.current && !startingRef.current) return
-    if (startingRef.current) {
-      pendingCancelRef.current = true // 会话还没建起来：就绪后立刻 cancel，别留一个开着的麦
-      setState('idle')
-      setMode('')
-      setPartial('')
-    } else {
-      const session = sessionRef.current
-      reset()
-      void session?.cancel()
-    }
+    const session = sessionRef.current
+    reset()
+    // 必须现在作废底层权限等待；等 start.then 再 cancel 已经晚了一次开麦。
+    void session?.cancel().catch(() => {})
     setCancelledAt(Date.now())
     opts.onDiscard?.()
   }, [opts, reset])

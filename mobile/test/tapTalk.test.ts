@@ -136,3 +136,38 @@ test('cancel：不定稿不回调；端点与 recorder 都放开', async () => {
   expect(rec.stops).toBe(1)
   expect(ep.stopped).toBe(1)
 })
+
+test('AR02 取消等待开麦的 TapTalk：迟到 ASR start 不得继续开 VAD，也不设硬上限', async () => {
+  let resolve!: () => void
+  const rec = new FakeRecorder()
+  rec.start = async () => { await new Promise<void>((done) => { resolve = done }) }
+  const endpoint = new FakeEndpoint()
+  const session = new TapTalkSession(CFG, CB, { endpoint, rec })
+  const starting = session.start()
+  await session.cancel()
+  resolve()
+  await starting
+  expect(endpoint.started).toBe(0)
+  expect(jest.getTimerCount()).toBe(0)
+})
+
+test('AR02 stop 后等待定稿仍可取消；三轮只允许当前存活轮的结果', async () => {
+  const onFinal = jest.fn()
+  for (let round = 0; round < 3; round++) {
+    const session = new TapTalkSession(CFG, { onFinal, onError() {} }, { endpoint: null, rec: new FakeRecorder() })
+    await session.start()
+    const ws = FakeWs.last!
+    ws.open()
+    const late = ws.onmessage!
+    await session.stop()
+    await session.cancel()
+    late({ data: JSON.stringify({ type: 'final', text: '已取消的结果' }) })
+    expect(onFinal).not.toHaveBeenCalled()
+  }
+  const next = new TapTalkSession(CFG, { onFinal, onError() {} }, { endpoint: null, rec: new FakeRecorder() })
+  await next.start()
+  FakeWs.last!.open()
+  FakeWs.last!.onmessage!({ data: JSON.stringify({ type: 'final', text: '下一轮的结果' }) })
+  expect(onFinal).toHaveBeenCalledWith('下一轮的结果')
+  await next.cancel()
+})

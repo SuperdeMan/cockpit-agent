@@ -156,17 +156,28 @@ describe('B. 轴独立', () => {
   // B2 T2：`privacy.mic` 从三档改四档。B1 的 `edge` 并了「唤醒词待机（端侧 KWS，一个字节不出机）」
   // 与「正在录音（音频上传给服务端 ASR）」两件事，隐私栏因此说过假话（第 3 批坑②）。
   // 现在四档各说各的：off / edge / cloudAsr / cloudAudio。
-  test('privacy 轴四档：待机=edge；PTT 与免唤醒三段式收音=cloudAsr；端到端收音=cloudAudio；空闲=off', () => {
-    const hfOn = { hfEnabled: true, hfUsable: true }
-    expect(derivePresence(base({ ...hfOn, hfFsm: 'ARMED' })).privacy.mic).toBe('edge')
-    expect(derivePresence(base({ ptt: 'recording' })).privacy.mic).toBe('cloudAsr')
-    expect(derivePresence(base({ ptt: 'finalizing' })).privacy.mic).toBe('cloudAsr') // 识别中也在传
-    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING' })).privacy.mic).toBe('cloudAsr')
-    expect(derivePresence(base({ ...hfOn, hfFsm: 'LISTENING', voicePipeline: 's2s' })).privacy.mic).toBe('cloudAudio')
-    // 挡位选了 s2s 但用户按住光球：走的是服务端 ASR，不是原始音频上传——档要说真话
-    expect(derivePresence(base({ ptt: 'recording', voicePipeline: 's2s' })).privacy.mic).toBe('cloudAsr')
-    expect(derivePresence(base()).privacy.mic).toBe('off')
-    expect(derivePresence(base({ visionCapturing: true })).privacy.camera).toBe('singleFrame')
+  test.each(['IDLE', 'ARMED', 'LISTENING', 'THINKING', 'SPEAKING', 'FOLLOWUP'])('R07 privacy consumes physical facts in %s, independently of camera and selected pipeline', (hfFsm) => {
+    for (const voicePipeline of ['classic', 's2s'] as const) {
+      for (const cameraActive of [false, true]) {
+        for (const [asrUploading, s2sUploading, expected] of [[false, false, 'edge'], [true, false, 'cloudAsr'], [false, true, 'cloudAudio']] as const) {
+          const privacy = derivePresence(base({ hfEnabled: true, hfUsable: true, hfFsm, voicePipeline,
+            visionCapturing: cameraActive, visionCameraActive: cameraActive,
+            audioCapture: { micActive: true, asrUploading, s2sUploading },
+          })).privacy
+          expect(privacy.mic).toBe(expected)
+          expect(privacy.micActive).toBe(true)
+          expect(privacy.camera).toBe(cameraActive ? 'singleFrame' : 'off')
+        }
+      }
+    }
+  })
+
+  test('R07 finalizing/pipeline/capture UI never invent physical collection; buffered upload can outlive mic', () => {
+    expect(derivePresence(base({ ptt: 'recording', voicePipeline: 's2s', visionCapturing: true })).privacy)
+      .toMatchObject({ mic: 'off', micActive: false, camera: 'off' })
+    expect(derivePresence(base({ ptt: 'finalizing', visionUploading: true,
+      audioCapture: { micActive: false, asrUploading: true, s2sUploading: false },
+    })).privacy).toMatchObject({ mic: 'cloudAsr', micActive: false, camera: 'off', visionUploading: true })
   })
 
   test('MIC_LABEL：四档齐全；只有两个「上传」档是琥珀（评审 D5：「关」不许再涂琥珀）；读屏不许再说「本机处理」（评审 D4）', () => {
@@ -175,7 +186,7 @@ describe('B. 轴独立', () => {
     expect(MIC_LABEL.edge.tone).toBe('plain')
     expect(MIC_LABEL.cloudAsr.tone).toBe('amber')
     expect(MIC_LABEL.cloudAudio.tone).toBe('amber')
-    for (const v of Object.values(MIC_LABEL)) {
+    for (const v of [MIC_LABEL.cloudAsr, MIC_LABEL.cloudAudio]) {
       expect(v.short).not.toContain('本机处理')
       expect(v.long).not.toContain('本机处理')
     }

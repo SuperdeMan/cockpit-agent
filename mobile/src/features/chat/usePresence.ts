@@ -1,6 +1,6 @@
 // 在场收集器：把既有状态机的事实收齐 → derivePresence（纯函数）。
 // 这里**不做任何判断**——所有「谁压过谁」都在 presence.ts 里且有测试；这里只负责订阅与计时。
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useStore } from 'zustand'
 
 import { performHaptic } from '@/core/haptics'
@@ -9,7 +9,8 @@ import type { SessionCore } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
 import { speechController } from '@/core/voice/speech'
-import { isVisionCapturing, subscribeVisionCapturing } from '@/core/vision/frame'
+import { getVisionCaptureSnapshot, subscribeVisionCapture } from '@/core/vision/frame'
+import { getAudioCaptureSnapshot, subscribeAudioCapture } from '@/core/voice/captureFacts'
 import {
   ARMED_CAPSULE_MS,
   derivePresence,
@@ -59,9 +60,10 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
 
   // 播报中 / 抓帧中：订阅式信号（Task 5）
   const [speaking, setSpeaking] = useState(() => speechController().speaking)
-  const [visionCapturing, setVisionCapturing] = useState(isVisionCapturing)
+  const vision = useSyncExternalStore(subscribeVisionCapture, getVisionCaptureSnapshot)
+  const audioCapture = useSyncExternalStore(subscribeAudioCapture, getAudioCaptureSnapshot)
+  const visionCapturing = vision.preparing || vision.cameraActive || vision.uploading
   useEffect(() => speechController().subscribeSpeaking(setSpeaking), [])
-  useEffect(() => subscribeVisionCapturing(setVisionCapturing), [])
 
   // connStatus 变化时刻（reconnecting 3s 延迟的基准）
   const connChangedAt = useRef(Date.now())
@@ -175,6 +177,9 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
     pendingLocation: pendingLocationText !== null,
     voicePipeline: settings.voicePipeline,
     visionCapturing,
+    audioCapture,
+    visionCameraActive: vision.cameraActive,
+    visionUploading: vision.uploading,
     queued,
     lastError,
     degradations,

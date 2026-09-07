@@ -38,7 +38,7 @@ import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { speechController } from '../../core/voice/speech'
-import { captureVisionFrame, needsVisionFrame } from '../../core/vision/frame'
+import { captureVisionFrame, needsVisionFrame, visionCapabilitySignal } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
@@ -226,13 +226,14 @@ function ChatBody({
       const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
       if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
         // SessionCore 先登记用户气泡与请求身份，再准备帧。取消后到达的 frame_id 不得再派发。
-        // 摄像头/上传自身的物理取消与零落盘另归 AR02。
+        // AR02 将相同取消信号传给摄像头/上传；能力关闭同样使准备失败。
         core.send(text, metaExtra, {
           ...opts,
-          prepareMeta: async (bubbleId) => {
-            activityLog.push('camera', `触发词「${text.slice(0, 12)}」`)
-            core.markVision(bubbleId)
-            return { vision_frame_id: await captureVisionFrame(cfg.audioUrl) }
+          preparationSignal: visionCapabilitySignal(),
+          prepareMeta: async (bubbleId, signal) => {
+            const frameId = await captureVisionFrame(cfg.audioUrl, signal)
+            if (frameId) core.markVision(bubbleId)
+            return { vision_frame_id: frameId }
           },
         })
         return
@@ -390,12 +391,8 @@ function ChatBody({
 
   // ── 采集激活日志（隐私栏「最近一次」读它）：**在麦克风/摄像头真的开起来的那一处写** ──
   useEffect(() => {
-    if (ptt.state === 'recording') activityLog.push('mic', '按住说话')
-  }, [ptt.state])
-  useEffect(() => {
-    if (hf.fsm === 'LISTENING')
-      activityLog.push('mic', settings.voicePipeline === 's2s' ? '唤醒词命中 · 端到端（原始音频上传）' : '唤醒词命中')
-  }, [hf.fsm, settings.voicePipeline])
+    if (snapshot.privacy.micActive) activityLog.push('mic', '麦克风已开启（设备采集）')
+  }, [snapshot.privacy.micActive])
 
   const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
@@ -436,17 +433,19 @@ function ChatBody({
   // v2 采集点（隐私栏入口旁的第二颗点）：**没在采集就不渲染**——一个常驻的灰点会让
   // 「现在到底在不在采」这件事看不出来，而这正是常开麦最该让用户一眼看见的事（方案 §5.10）。
   // 文案与颜色只取 MIC_LABEL（评审 D4：读屏 label 里那句「本机处理」在 PTT 那一刻是假话）。
-  // 顺序即优先级：音频离机（两档琥珀）> 正在抓一帧 > 唤醒词待机——待机是常态、抓帧是事件，
-  // 事件排在常态前面（B1 第 4 批坑⑥：待机排前面时，免唤醒开着抓帧那档永远显示不出来）。
+  // 并发采集逐项告知；视觉不覆盖麦克风事实，上传与设备开启分开。
   const mic = snapshot.privacy.mic
-  const captureDot =
-    mic !== 'off' && MIC_LABEL[mic].tone === 'amber'
-      ? { color: p.amber, label: MIC_LABEL[mic].short }
-      : snapshot.privacy.camera === 'singleFrame'
-        ? { color: p.fg1, label: '正在抓一帧画面' }
-        : mic !== 'off'
-          ? { color: p.teal, label: MIC_LABEL[mic].short }
-          : null
+  const cameraActive = snapshot.privacy.camera === 'singleFrame'
+  const captureLabel = [
+    snapshot.privacy.micActive ? '麦克风开启' : '',
+    mic !== 'off' ? MIC_LABEL[mic].short : '',
+    cameraActive ? '摄像头开启 · 单帧采集' : '',
+    snapshot.privacy.visionUploading ? '单帧画面上传中' : '',
+  ].filter(Boolean).join('；')
+  const captureDot = captureLabel ? {
+    color: MIC_LABEL[mic].tone === 'amber' || snapshot.privacy.visionUploading ? p.amber : cameraActive ? p.fg1 : p.teal,
+    label: captureLabel,
+  } : null
   const [privacyOpen, setPrivacyOpen] = useState(false)
 
   // §5.11 真模糊（B3 T9 裁决过）：被糊的背景 = 对话列表，BlurTargetView 包住它；ref 要先挂上再给 VoiceSheet

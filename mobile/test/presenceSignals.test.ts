@@ -26,7 +26,7 @@ describe('vision.subscribeVisionCapturing', () => {
     const seen: boolean[] = []
     const off = subscribeVisionCapturing((v) => seen.push(v))
     let release: () => void = () => {}
-    registerVisionCapturer(() => new Promise<string>((r) => (release = () => r(''))))
+    registerVisionCapturer(() => new Promise<Uint8Array | null>((r) => (release = () => r(null))))
     const p = captureVisionFrame('https://audio')
     await Promise.resolve()
     expect(seen).toEqual([true])

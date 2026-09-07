@@ -9,6 +9,7 @@
 import { float32ToInt16 } from '@shared/pcmRing.mjs'
 
 import { Resampler } from './resample'
+import { setAudioCaptureFact } from './captureFacts'
 
 export const TARGET_SAMPLE_RATE = 16000
 /** 每帧目标样本数 ≈100ms@16k（同 HMI 的 PCM 聚包粒度，audio.ts:941-954 注释） */
@@ -37,9 +38,14 @@ class AudioApiRecorder implements Recorder {
   private rec: any = null
   private resampler: Resampler | null = null
   private _deviceRate = 0
+  private epoch = 0
+  private wanted = false
+  private starting: Promise<void> | null = null
+  private stopping: Promise<void> | null = null
+  private nativeActive = false
 
   get recording(): boolean {
-    return !!this.rec
+    return this.nativeActive
   }
 
   get deviceRate(): number {
@@ -47,10 +53,36 @@ class AudioApiRecorder implements Recorder {
   }
 
   async start(onFrame: FrameSink): Promise<void> {
-    if (this.rec) return
+    if (this.wanted) return this.starting ?? Promise.resolve()
+    this.wanted = true
+    const epoch = ++this.epoch
+    // 原生 stop 尚未完成时新一轮必须等它；权限等待可作废，但不并发打开设备。
+    const previous = this.starting
+    const start = async () => {
+      await previous?.catch(() => {})
+      await this.stopping
+      if (epoch !== this.epoch || !this.wanted) return
+      await this.stopNative(this.rec) // 上次 stop 失败时不能覆盖仍占设备的实例
+      if (epoch !== this.epoch || !this.wanted) return
+      await this.startNative(onFrame, epoch)
+    }
+    const pending = start()
+    this.starting = pending
+    try {
+      await pending
+    } catch (e) {
+      if (epoch === this.epoch) this.wanted = false
+      throw e
+    } finally {
+      if (this.starting === pending) this.starting = null
+    }
+  }
+
+  private async startNative(onFrame: FrameSink, epoch: number): Promise<void> {
     const { AudioManager, AudioRecorder } = require('react-native-audio-api')
     // 权限未授时按下先走申请（计划 M2-2）；已授时这一步是本地查询，不弹窗
     const status = await AudioManager.requestRecordingPermissions()
+    if (epoch !== this.epoch || !this.wanted) return
     if (status !== 'Granted') throw new PermissionDeniedError()
 
     const rec = new AudioRecorder()
@@ -59,8 +91,12 @@ class AudioApiRecorder implements Recorder {
     rec.onAudioReady(
       { sampleRate: TARGET_SAMPLE_RATE, bufferLength: FRAME_SAMPLES, channelCount: 1 },
       (ev: any) => {
+        if (this.rec !== rec) return
         const buf = ev?.buffer
         if (!buf) return
+        this.nativeActive = true
+        setAudioCaptureFact('micActive', this, true)
+        if (epoch !== this.epoch || !this.wanted) return
         const rate = buf.sampleRate || TARGET_SAMPLE_RATE
         // numFrames 可能小于 buffer 长度（尾帧），照 numFrames 截断，别把补零也发上去
         const raw: Float32Array = buf.getChannelData(0)
@@ -79,23 +115,59 @@ class AudioApiRecorder implements Recorder {
       },
     )
     rec.onError?.((e: any) => {
+      if (this.rec === rec && typeof rec.isRecording === 'function') {
+        this.nativeActive = rec.isRecording()
+        setAudioCaptureFact('micActive', this, this.nativeActive)
+      }
       // 采集侧错误只记录不吞流程：定稿与兜底由上层 ASR 会话按超时判定
       // eslint-disable-next-line no-console
       console.warn('[recorder] error', e?.message ?? e)
     })
-    await rec.start()
+    try {
+      const result = await rec.start()
+      if (result?.status === 'error') throw new Error(result.message || '录音启动失败')
+      this.nativeActive = true
+      setAudioCaptureFact('micActive', this, true)
+      if (epoch !== this.epoch || !this.wanted) await this.stopNative(rec)
+    } catch (e) {
+      await this.stopNative(rec)
+      throw e
+    }
   }
 
   async stop(): Promise<void> {
-    const rec = this.rec
-    if (!rec) return
-    this.rec = null
+    this.wanted = false
+    const epoch = ++this.epoch // 立刻作废权限等待和所有迟到帧；不等待 micBus 排队
+    // start 已进入原生时，等其结果再关，避免 stop 先结束、start 随后迟到开麦。
+    // 等待期间 micActive 保留真实设备事实，由 stop 成功确认关闭。
+    if (this.starting) {
+      await this.starting.catch(() => {})
+    }
+    if (epoch !== this.epoch) return // 新一轮已排队；旧 start 负责自己的原生回滚
+    await this.stopNative(this.rec)
+  }
+
+  private async stopNative(rec: any): Promise<void> {
+    if (this.stopping) return this.stopping
+    if (!rec || this.rec !== rec) return
     this.resampler?.reset()
+    const pending = (async () => {
+      try {
+        const result = await rec.stop()
+        if (result?.status === 'error') throw new Error(result.message || '录音关闭失败')
+        this.nativeActive = false
+        setAudioCaptureFact('micActive', this, false)
+        this.rec = null
+      } finally {
+        rec.clearOnAudioReady?.()
+        rec.clearOnError?.()
+      }
+    })()
+    this.stopping = pending
     try {
-      await rec.stop()
+      await pending
     } finally {
-      rec.clearOnAudioReady?.()
-      rec.clearOnError?.()
+      if (this.stopping === pending) this.stopping = null
     }
   }
 }

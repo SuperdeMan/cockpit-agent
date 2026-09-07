@@ -69,10 +69,10 @@ export type MicState = 'off' | 'edge' | 'cloudAsr' | 'cloudAudio'
  *  tone=amber 只给两个「音频离机」的档（评审 D5：「关」与「待机」不许涂琥珀，警示色贬值）。 */
 export const MIC_LABEL: Record<MicState, { short: string; long: string; tone: 'plain' | 'amber' }> = {
   off: { short: '关', long: '关', tone: 'plain' },
-  edge: { short: '唤醒词监听在本机，不上传', long: '唤醒词待机（端侧监听，不上传）', tone: 'plain' },
+  edge: { short: '麦克风开启，仅在本机处理', long: '本机采集处理中，音频未上传', tone: 'plain' },
   cloudAsr: {
-    short: '正在录音，音频上传做识别',
-    long: '正在录音 · 音频上传到语音识别服务（识别完只留文字）',
+    short: '音频上传做识别',
+    long: '音频上传到语音识别服务（识别完只留文字）',
     tone: 'amber',
   },
   cloudAudio: { short: '正在上传原始音频', long: '原始音频上传中（端到端对话）', tone: 'amber' },
@@ -104,6 +104,10 @@ export interface PresenceInput {
   pendingLocation: boolean
   voicePipeline: 'classic' | 's2s'
   visionCapturing: boolean
+  /** Physical and transport facts, never inferred from FSM/pipeline selection. */
+  audioCapture?: { micActive: boolean; asrUploading: boolean; s2sUploading: boolean }
+  visionCameraActive?: boolean
+  visionUploading?: boolean
   queued: number
   lastError: { text: string; at: number } | null
   degradations: Degradation[]
@@ -127,7 +131,7 @@ export interface PresenceSnapshot {
   capture: 'off' | 'armed' | 'listening' | 'recognizing' | 'looking'
   agent: 'idle' | 'thinking' | 'processing' | 'speaking' | 'followup'
   commitment: DockItem[]
-  privacy: { mic: MicState; camera: 'off' | 'singleFrame'; user: string }
+  privacy: { mic: MicState; micActive: boolean; camera: 'off' | 'singleFrame'; visionUploading: boolean; user: string }
   degradation: Degradation[]
   identity: Identity
   driving: boolean
@@ -222,14 +226,13 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   const hasAttention = commitment.some((c) => c.kind === 'confirm' || c.kind === 'slot')
 
   // ── privacy ──
-  const micActive = capture === 'listening' || capture === 'recognizing'
-  // 端到端只在免唤醒的 LISTENING 期推流（s2sClient 的 collecting 门控）；PTT 即便挡位选了 s2s
-  // 也走服务端 ASR——档位说的必须是此刻真发生的事
-  const s2sCollecting = hfOn && i.hfFsm === 'LISTENING' && i.voicePipeline === 's2s'
-  const mic: MicState = s2sCollecting ? 'cloudAudio' : micActive ? 'cloudAsr' : capture === 'armed' ? 'edge' : 'off'
+  const audio = i.audioCapture
+  const mic: MicState = audio?.s2sUploading ? 'cloudAudio' : audio?.asrUploading ? 'cloudAsr' : audio?.micActive ? 'edge' : 'off'
   const privacy: PresenceSnapshot['privacy'] = {
     mic,
-    camera: i.visionCapturing ? 'singleFrame' : 'off',
+    micActive: audio?.micActive === true,
+    camera: i.visionCameraActive ? 'singleFrame' : 'off',
+    visionUploading: i.visionUploading === true,
     user: i.user,
   }
 

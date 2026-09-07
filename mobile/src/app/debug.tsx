@@ -17,6 +17,7 @@ import {
 import type { GatewayStatus } from '@/core/api/gateway'
 import { GatewaySession } from '@/core/api/gateway'
 import { loadServerConfig } from '@/core/config/storage'
+import { developmentDiagnosticsEnabled } from '@/core/diagnostics'
 import { getWired } from '@/core/session/wiring'
 
 interface FrameRow {
@@ -39,6 +40,13 @@ function frameType(frame: unknown): string {
 }
 
 export default function DebugScreen() {
+  if (!developmentDiagnosticsEnabled()) {
+    return <Text style={{ color: "#F1F5F9", backgroundColor: "#0A0E1A", padding: 20, minHeight: 80 }} testID="diagnostics-unavailable">此构建不开放主链发送和回放探针。</Text>
+  }
+  return <DebugTools />
+}
+
+function DebugTools() {
   const [missing, setMissing] = useState(false)
   const [status, setStatus] = useState<GatewayStatus>('closed')
   const [rows, setRows] = useState<FrameRow[]>([])
@@ -49,6 +57,7 @@ export default function DebugScreen() {
 
   // 主动消息本地回放（B4-12）：帧形状照 `store.ts` 的 proactive 分支读的键
   const replayProactive = (priority: string) => {
+    if (!developmentDiagnosticsEnabled()) return
     getWired()?.core.handleFrame({
       type: 'proactive',
       priority,
@@ -60,9 +69,10 @@ export default function DebugScreen() {
   }
 
   useEffect(() => {
+    if (!developmentDiagnosticsEnabled()) return
     let closed = false
     loadServerConfig().then((cfg) => {
-      if (closed) return
+      if (closed || !developmentDiagnosticsEnabled()) return
       if (!cfg) {
         setMissing(true)
         return
@@ -99,6 +109,7 @@ export default function DebugScreen() {
   if (missing) return <Redirect href="/onboarding" />
 
   function onSend() {
+    if (!developmentDiagnosticsEnabled()) return
     const text = input.trim()
     if (!text || !sessionRef.current) return
     sessionRef.current.sendText(text)
@@ -111,6 +122,7 @@ export default function DebugScreen() {
   // 同 ChatScreen / onboarding：Android 上 `behavior=undefined` 等于什么都不做。
   return (
     <KeyboardAvoidingView style={styles.flex} behavior="padding">
+      <Text>开发诊断：发送会访问真实服务，回放按钮可能触发语音播报。</Text>
       <View style={styles.header}>
         <View
           style={[
@@ -142,12 +154,13 @@ export default function DebugScreen() {
           `delivery_ids` 每次唯一，否则幂等呈现会把第二次吞掉。 */}
       <View style={styles.composer}>
         <Pressable
+          testID="debug-replay-critical"
           onPress={() => replayProactive('critical')}
           style={[styles.sendBtn, { backgroundColor: '#C2410C' }]}
         >
           <Text style={styles.sendText}>回放 critical</Text>
         </Pressable>
-        <Pressable onPress={() => replayProactive('')} style={[styles.sendBtn, { backgroundColor: '#475569' }]}>
+        <Pressable testID="debug-replay-normal" onPress={() => replayProactive('')} style={[styles.sendBtn, { backgroundColor: '#475569' }]}>
           <Text style={styles.sendText}>回放 普通（阴性）</Text>
         </Pressable>
       </View>
@@ -160,7 +173,7 @@ export default function DebugScreen() {
           onSubmitEditing={onSend}
           returnKeyType="send"
         />
-        <Pressable onPress={onSend} style={styles.sendBtn}>
+        <Pressable testID="debug-send" onPress={onSend} style={styles.sendBtn}>
           <Text style={styles.sendText}>发送</Text>
         </Pressable>
       </View>

@@ -41,16 +41,16 @@ function fanout(frame: Int16Array): void {
 }
 
 async function ensureRunning(): Promise<void> {
-  if (running) return
+  if (running || activeCount() === 0) return
   await recorder().start(fanout)
-  running = true
+  running = recorder().recording
 }
 
 async function ensureStopped(): Promise<void> {
   if (!running) return
   if (activeCount() > 0) return
-  running = false
   await recorder().stop()
+  running = recorder().recording
 }
 
 function activeCount(): number {
@@ -84,7 +84,7 @@ class Lease implements Recorder {
       // 开麦失败（权限拒绝等）：把自己摘掉再抛，别留一个永远收不到帧的幽灵 sink
       sink.active = false
       sinks.delete(sink)
-      this.sink = null
+      if (this.sink === sink) this.sink = null
       throw e
     }
   }
@@ -95,7 +95,14 @@ class Lease implements Recorder {
     this.sink = null
     sink.active = false
     sinks.delete(sink)
-    const p = chain.then(ensureStopped)
+    // 最后一路释放必须现在作废 recorder 的权限/初始化等待，不能排在 start 后面。
+    const stopping = activeCount() === 0 ? recorder().stop() : null
+    const p = chain.then(async () => {
+      if (stopping) {
+        await stopping
+        running = recorder().recording
+      } else await ensureStopped()
+    })
     chain = p.catch(() => {})
     await p
   }

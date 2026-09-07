@@ -32,15 +32,30 @@ export function vadEndpoint(): TapEndpoint | null {
   if (!vadNativeAvailable()) return null
   const vad = new VadEngine(TAP_SILENCE_MS)
   const lease = micLease()
+  let cancelled = false
+  let starting: Promise<void> | null = null
   return {
     async start(onSpeechEnd) {
-      await vad.load()
-      await vad.start({ onSpeechStart: () => {}, onSpeechEnd, onError: () => {} })
-      await lease.start((f) => vad.accept(f))
+      if (cancelled || starting) return
+      starting = (async () => {
+        await vad.load()
+        if (cancelled) return
+        await vad.start({
+          onSpeechStart: () => {},
+          onSpeechEnd: () => { if (!cancelled) onSpeechEnd() },
+          onError: () => {},
+        })
+        if (cancelled) return
+        await lease.start((f) => { if (!cancelled) vad.accept(f) })
+      })()
+      await starting
     },
     async stop() {
-      await lease.stop()
+      cancelled = true
+      const stopping = lease.stop() // 立刻作废权限等待，不排在 VAD 初始化后
       vad.stop()
+      await stopping
+      await starting?.catch(() => {})
       await vad.dispose()
     },
   }
@@ -56,6 +71,7 @@ export class TapTalkSession {
   private readonly asr: AsrSession
   private cap: ReturnType<typeof setTimeout> | null = null
   private ended = false
+  private cancelled = false
 
   constructor(
     cfg: AsrConfig,
@@ -70,7 +86,9 @@ export class TapTalkSession {
   }
 
   async start(): Promise<void> {
+    if (this.ended) return
     await this.asr.start()
+    if (this.ended) return
     if (this.deps.endpoint) {
       try {
         await this.deps.endpoint.start(() => void this.stop())
@@ -78,6 +96,7 @@ export class TapTalkSession {
         // 端点起不来（模型载入失败等）：不阻塞录音，硬上限兜底
       }
     }
+    if (this.ended) return
     this.cap = setTimeout(() => void this.stop(), TAP_MAX_MS)
   }
 
@@ -87,16 +106,17 @@ export class TapTalkSession {
     this.ended = true
     this.clearCap()
     await this.deps.endpoint?.stop()
+    if (this.cancelled) return
     await this.asr.stop()
   }
 
   /** 取消：不定稿、不回调 */
   async cancel(): Promise<void> {
-    if (this.ended) return
+    if (this.cancelled) return
+    this.cancelled = true
     this.ended = true
     this.clearCap()
-    await this.deps.endpoint?.stop()
-    await this.asr.cancel()
+    await Promise.all([this.asr.cancel(), this.deps.endpoint?.stop()])
   }
 
   private clearCap(): void {

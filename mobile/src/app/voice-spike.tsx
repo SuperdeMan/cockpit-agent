@@ -10,12 +10,13 @@
 // 读数出口刻意留两条：屏上一行一条摘要（uiautomator dump 拿得到**文本**，不用从截图
 // 里认数字），console 打同一条（Metro 终端）。
 import { useLocalSearchParams } from 'expo-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
 import { loadServerConfig } from '@/core/config/storage'
+import { developmentDiagnosticsEnabled } from '@/core/diagnostics'
 import { settingsStore } from '@/core/settings/store'
 import { AsrSession, recognizeBatch } from '@/core/voice/asr'
 import { TtsSession, synthesizeBatch } from '@/core/voice/tts'
@@ -76,15 +77,20 @@ function b64Bytes(s: string): number {
 }
 
 export default function VoiceSpikeScreen() {
+  if (!developmentDiagnosticsEnabled()) {
+    return <Text style={{ color: "#F1F5F9", backgroundColor: "#0A0E1A", padding: 20, minHeight: 80 }} testID="diagnostics-unavailable">此构建不开放语音采集和播放探针。</Text>
+  }
+  return <VoiceSpikeTools />
+}
+
+function VoiceSpikeTools() {
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
   const [lines, setLines] = useState<string[]>([])
   const [busy, setBusy] = useState('')
   const busyRef = useRef('')
   busyRef.current = busy
-  /** 深链自动跑探针：`xiaozhou:///voice-spike?auto=stutter&n=<k>`，宿主侧脚本改 n 就再跑一次。
-   *  不依赖 uiautomator 找按钮——有常驻动画的屏上 `uiautomator dump` 会 "could not get idle state"
-   *  而不写文件，pull 到的是上一次的旧树（2026-09-05 T2 首跑就这么被骗了 60s）。 */
+  /** 兼容旧链接的参数形状，但参数只预填；每次执行必须在本页点按钮。 */
   const params = useLocalSearchParams<{ auto?: string; n?: string; load?: string; variant?: string; player?: string }>()
   /** `load=hf` 负载仿真时逐字增长的转写（模拟对话页流式气泡的逐 delta 重渲染） */
   const [transcript, setTranscript] = useState('')
@@ -105,6 +111,7 @@ export default function VoiceSpikeScreen() {
   }, [])
 
   const ensurePermission = useCallback(async (): Promise<boolean> => {
+    if (!developmentDiagnosticsEnabled()) return false
     try {
       const { AudioManager } = require('react-native-audio-api')
       const status = await AudioManager.requestRecordingPermissions()
@@ -118,6 +125,7 @@ export default function VoiceSpikeScreen() {
 
   // ── 候选 A：react-native-audio-record（legacy bridge 模块，2022-05 停更）─────
   const probeA = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('A')
     try {
       if (!(await ensurePermission())) return
@@ -168,6 +176,7 @@ export default function VoiceSpikeScreen() {
   //  ms 参数给长测用：计划判据里的「30 分钟无爆音/漂移」，爆音只有人耳能判，
   //  **漂移可以机器判**——采集到的样本数换算成秒 vs 墙钟经过的秒，偏差就是漂移。
   const probeB = useCallback(async (ms: number = RECORD_MS) => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('B')
     try {
       if (!(await ensurePermission())) return
@@ -212,6 +221,7 @@ export default function VoiceSpikeScreen() {
 
   // ── 注入契约（M2-3 前置）：pcmPlayer.mjs 对 ctx 的全部要求逐条验 ────────────
   const probeInject = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('inject')
     try {
       const ctx = audioCtx()
@@ -287,6 +297,7 @@ export default function VoiceSpikeScreen() {
 
   // ── 真实 pcmPlayer + 适配层：合成分片喂进去，验「共享模块零改动可用」────────
   const probePlayer = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('player')
     try {
       const ctx = audioCtx()
@@ -323,6 +334,7 @@ export default function VoiceSpikeScreen() {
 
   // ── 并存：录音与播放同时开（计划判据「与播放并存不互踢」）────────────────
   const probeCoexist = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('coexist')
     try {
       if (!(await ensurePermission())) return
@@ -364,6 +376,7 @@ export default function VoiceSpikeScreen() {
   //  ⚠ 若识别不到而播放正常，那**不是失败读数**——多半是设备 AEC 把扬声器的声音消掉了，
   //  而那正是「播报中按 PTT 不会自听」想要的物理隔离。两种结果都要记进实施记录。
   const probeLoopback = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('loopback')
     try {
       const cfg = await loadServerConfig()
@@ -445,6 +458,7 @@ export default function VoiceSpikeScreen() {
   //  声学回环一次失败会同时怀疑这两件事，而它们的修法毫不相干——所以要有一条
   //  「不经过麦克风」的路。这条通过 = M2-2 的上行链路在真栈上成立。
   const probeAsrInject = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('asr-inject')
     try {
       const cfg = await loadServerConfig()
@@ -540,6 +554,7 @@ export default function VoiceSpikeScreen() {
   //  量首音时延（验收判据「体感 <1.5s」的机器版）+ 同时录音测能量证明**真出声**。
   //  「我听不到」不是不能验证的理由——麦克风的能量读数就是客观证据。
   const probeTtsStream = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('tts')
     try {
       const cfg = await loadServerConfig()
@@ -598,6 +613,7 @@ export default function VoiceSpikeScreen() {
   //  这一档按 HandsFreeController.onFrame 同款开 VoiceCommunication 麦 + VAD 推理 + KWS 原生 + 逐字重渲染，
   //  不量包络（C1 已由 AudioTrackImpl [fine] 行排除），只看 pcmPlayer 起点重排在真实负载下出不出现（C2）。
   const probeStutter = useCallback(async (load?: string) => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('stutter')
     const hf = load === 'hf'
     let vad: VadEngine | null = null
@@ -769,6 +785,7 @@ export default function VoiceSpikeScreen() {
   //     再次 finish 时 accum(A+B) 覆盖 full(B) 判「已覆盖」⇒ **B 整段无声**；若 A 已播完则走批处理补段 ⇒ 空白）。
   //  读数：speaking 轨迹（▲起 ▽落 + 相对毫秒）、段数、第一次 ▽ 到第二次 ▲ 的间隔。
   const probeDivergent = useCallback(async (variant?: string) => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('divergent')
     const v = variant === 'mixed' ? 'mixed' : 'divergent'
     try {
@@ -840,6 +857,7 @@ export default function VoiceSpikeScreen() {
   //  与 `stutter`（分片流式）对照：若 batch 也嗡嗡 ⇒ 在重采样/输出路径；若只有 stutter 嗡嗡 ⇒ 在分片调度。
   //  再与 `player`（纯正弦、同路径）对照：正弦底下若有嗡嗡 ⇒ 输出路径本身。
   const probeBatch = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('batch')
     try {
       const cfg = await loadServerConfig()
@@ -861,21 +879,25 @@ export default function VoiceSpikeScreen() {
     }
   }, [log])
 
-  useEffect(() => {
+  const runLinkPreset = () => {
+    if (!developmentDiagnosticsEnabled()) return
     if (busyRef.current) return
-    // `player=queue|nodes`：播放器实现 A/B（2026-09-06「嗡嗡」= 每片一个节点把 FAST 轨渲染回调压垮）
+    // player 参数也必须等本次点击后才生效，外部打开链接没有修改播放器的权力。
     if (params.player === 'queue' || params.player === 'nodes') setPcmPlayerImpl(params.player)
     if (params.auto === 'stutter') void probeStutter(params.load)
     else if (params.auto === 'divergent') void probeDivergent(params.variant)
     else if (params.auto === 'batch') void probeBatch()
     else if (params.auto === 'player') void probePlayer()
-  }, [params.auto, params.n, params.load, params.variant, params.player, probeStutter, probeDivergent, probeBatch, probePlayer])
+  }
+  const hasLinkPreset = ['stutter', 'divergent', 'batch', 'player'].includes(params.auto ?? '') ||
+    params.player === 'queue' || params.player === 'nodes'
 
   // ── barge-in 物理面（M2-3 验收「播报中按 PTT 即停」的机器版）──
   //  播报中 stop() → 麦克风能量应当回到底噪。判据不是「代码调了 stop」而是
   //  **声音真的没了**：调了 stop 但排定的 source 继续播完，是 pcmPlayer 那类调度器的
   //  典型失败形态（stop 只清了队列没停已排定的）。
   const probeBargeIn = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('barge-in')
     try {
       const cfg = await loadServerConfig()
@@ -922,6 +944,7 @@ export default function VoiceSpikeScreen() {
    *  没人在的时候就不能跑，跑出来的读数也不可复现。 */
   const speakForProbe = useCallback(
     async (text: string): Promise<boolean> => {
+      if (!developmentDiagnosticsEnabled()) return false
       const cfg = await loadServerConfig()
       if (!cfg?.audioUrl) {
         log('（无服务器配置，改成请你对着手机说话）')
@@ -937,6 +960,7 @@ export default function VoiceSpikeScreen() {
   //  取证要的是**概率分布**不只是事件：模型没跑起来（prob 恒 0）与「跑了但没人说话」
   //  在只看事件时长得一模一样。所以下面同时打 p50/p95/max 与 start/end 时刻。
   const probeVad = useCallback(async (ms = 12000) => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('vad')
     try {
       log('vad: native=' + vadNativeAvailable())
@@ -989,6 +1013,7 @@ export default function VoiceSpikeScreen() {
 
   // ── M4-2 ⛔ KWS spike：说「小舟小舟」看有没有命中 ──
   const probeKws = useCallback(async (ms = 25000) => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('kws')
     try {
       log('kws: native=' + kwsNativeAvailable())
@@ -1040,6 +1065,7 @@ export default function VoiceSpikeScreen() {
   //  长得一模一样，而处置完全相反（改阈值/换模型 vs 调音量/靠近说）。
   //  用的是模型自己的 keywords（不是「小舟小舟」）：这一条验的是**引擎**，不是我们的词。
   const probeKwsInject = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('kws-inject')
     try {
       if (!kwsNativeAvailable()) {
@@ -1118,6 +1144,7 @@ export default function VoiceSpikeScreen() {
   //  （2026-08-28 起抢占本身已被 kws.ts 的所有权守卫当场拦下并报错，不再静默串台；
   //   但「不该建」的理由与那道守卫无关，所以这段注释留着。）
   const probeSpeakWake = useCallback(async () => {
+    if (!developmentDiagnosticsEnabled()) return
     setBusy('speak-wake')
     try {
       const ok = await speakForProbe('小舟小舟。今天深圳天气怎么样？')
@@ -1131,6 +1158,7 @@ export default function VoiceSpikeScreen() {
 
   // ── M4 可用性与音频焦点日志（M3 遗留 R2 的取证出口）──
   const probeStatus = useCallback(() => {
+    if (!developmentDiagnosticsEnabled()) return
     const a = handsFreeAvailability()
     log('avail: vad=' + a.vad + ' kws=' + a.kws + ' usable=' + a.usable + ' mic=' + JSON.stringify(micBusStats()))
     log('focus: installed=' + audioFocusInstalled() + '（false ⇒ 四场景一个都不会到，先查这一位）')
@@ -1159,7 +1187,11 @@ export default function VoiceSpikeScreen() {
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['top', 'bottom']}>
+      <Text style={{ color: p.fg2, fontSize: p.font(12), padding: 12 }}>
+        开发诊断：点下方按钮将执行对应的录音、音频上传或播放测试。链接参数只预填，不自动执行。
+      </Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 10 }}>
+        {hasLinkPreset ? <Btn label="执行链接预设（采集/播放/切播放器）" testID="probe-link-preset" onPress={runLinkPreset} /> : null}
         <Btn label="A rec5s" onPress={() => void probeA()} />
         <Btn label="B rec5s" onPress={() => void probeB()} />
         <Btn label="B 3min" onPress={() => void probeB(180_000)} />

@@ -10,6 +10,7 @@ import { useStore } from 'zustand'
 import { AGENT_CATALOG } from '@shared/types.ts'
 
 import { formatBuildLabel, readBuildInfo } from '../../core/buildInfo'
+import { developmentDiagnosticsEnabled } from '../../core/diagnostics'
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { drivingActive, NO_EDGE_DRIVING } from '../../core/presence/drivingMode'
@@ -486,7 +487,7 @@ export function SettingsScreen() {
               }}
             />
             <Text style={{ color: p.fg3, fontSize: p.font(11), lineHeight: p.font(17) }}>
-              三段式：语音在本机转成文字后，只上传文字。
+              三段式：收音时上传音频到语音识别服务，识别完成后将文字交给助手。
               端到端：延迟更低，但会把你说话的原始音频上传到服务器（仅在唤醒后的对话窗内采集，
               未唤醒不采）。默认三段式。
             </Text>
@@ -583,12 +584,20 @@ export function SettingsScreen() {
         </Link>
       </Section>
 
-      <Section p={p} title="调试">
-        <Link href="/debug" style={{ color: p.accent, fontSize: p.font(14) }}>
-          主链帧调试屏（M0）
-        </Link>
-        <Link href="/voice-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
-          语音采集/播放 spike（M2 取证）
+      {developmentDiagnosticsEnabled() ? (
+        <Section p={p} title="开发诊断（可采集、播放或发送）">
+          <Link href="/debug" style={{ color: p.accent, fontSize: p.font(14) }}>
+            主链发送与回放探针
+          </Link>
+          <Link href="/voice-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
+            语音采集与播放探针
+          </Link>
+        </Section>
+      ) : null}
+
+      <Section p={p} title="诊断与样本">
+        <Link href="/capture-status" style={{ color: p.accent, fontSize: p.font(14) }}>
+          采集状态（只读）
         </Link>
         <Link href="/card-gallery" style={{ color: p.accent, fontSize: p.font(14) }}>
           卡片画廊（M3 全卡族 / 主题过检）
@@ -597,7 +606,7 @@ export function SettingsScreen() {
           在场轨迹（B2：光球为什么变了 / 麦为什么开了）
         </Link>
         <Link href="/native-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
-          B3 原生件取证（折叠姿态 / 触感四种）
+          {developmentDiagnosticsEnabled() ? '原生状态与触感测试' : '原生状态（折叠姿态 / 电量 / 布局）'}
         </Link>
         <Link href="/blur-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
           材质 spike（B3：真模糊 vs G1-tint 对照）

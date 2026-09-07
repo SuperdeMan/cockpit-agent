@@ -68,7 +68,10 @@
   "private": true,
   "expo": {
     "autolinking": {
-      "nativeModulesDir": "./modules"
+      "nativeModulesDir": "./modules",
+      "android": {
+        "buildFromSource": ["expo-camera"]
+      }
     }
   }
 }

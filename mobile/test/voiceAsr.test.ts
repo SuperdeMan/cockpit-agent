@@ -3,6 +3,7 @@
 // 注入 fake recorder + fake WebSocket + mock fetch，不碰真机也不碰网。
 import { AsrSession, ASR_FALLBACK_MS, asrStreamUrl } from '@/core/voice/asr'
 import type { FrameSink, Recorder } from '@/core/voice/recorder'
+import { getAudioCaptureSnapshot } from '@/core/voice/captureFacts'
 
 class FakeRecorder implements Recorder {
   sink: FrameSink | null = null
@@ -434,4 +435,96 @@ test('B2-6：hold 模式（不传 vadSilenceMs）start 帧不带 vad_silence_ms�
   await s2.start()
   FakeWs.last!.open()
   expect(FakeWs.last!.jsonSent.find((m) => m.type === 'start')?.vad_silence_ms).toBe(800)
+})
+
+describe('AR02 撤回与音频事实', () => {
+  test('取消等待 recorder.start：迟到完成不建 WS、不上行、不定稿', async () => {
+    const { session, rec, calls } = newSession()
+    let ready!: () => void
+    rec.start = async (sink) => {
+      rec.sink = sink
+      await new Promise<void>((resolve) => { ready = resolve })
+    }
+    const starting = session.start()
+    await session.cancel()
+    ready()
+    await starting
+    rec.feed(16000)
+    expect(FakeWs.count).toBe(0)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(calls).toEqual({ partial: [], final: [], error: [] })
+  })
+
+  test('已排队的旧 WS open/message 在取消后无效，连续三轮只收到各自定稿', async () => {
+    const previous: Array<() => void> = []
+    for (let round = 0; round < 3; round++) {
+      const { session, rec, calls } = newSession()
+      await session.start()
+      const ws = FakeWs.last!
+      const lateOpen = ws.onopen!
+      const lateMessage = ws.onmessage!
+      previous.forEach((late) => late())
+      rec.feed(16000)
+      ws.open()
+      expect(getAudioCaptureSnapshot().asrUploading).toBe(true)
+      ws.emit({ type: 'final', text: '本轮' + round })
+      expect(calls.final).toEqual(['本轮' + round])
+      await session.cancel()
+      const sent = ws.sent.length
+      const late = () => {
+        lateOpen()
+        lateMessage({ data: JSON.stringify({ type: 'final', text: '旧轮不得发送' }) })
+        expect(ws.sent).toHaveLength(sent)
+        expect(calls.final).toEqual(['本轮' + round])
+      }
+      previous.push(late)
+      late()
+    }
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(false)
+  })
+
+  test.each(['headers', 'body'])('批处理等待 %s 时取消：AbortSignal 传至 fetch，迟到结果不能触发 onFinal', async (stage) => {
+    let finish!: (data: unknown) => void
+    const delayed = new Promise((resolve) => { finish = resolve })
+    fetchMock.mockImplementationOnce(() => stage === 'headers'
+      ? delayed
+      : Promise.resolve({ json: () => delayed }))
+    const { session, rec, calls } = newSession({ provider: 'off' })
+    await session.start()
+    rec.feed(16000)
+    const stopping = session.stop()
+    await flush()
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(true)
+    const signal = fetchMock.mock.calls[0][1].signal as AbortSignal
+    await session.cancel()
+    expect(signal.aborted).toBe(true)
+    finish(stage === 'headers' ? { json: async () => ({ text: '不得发出的旧结果' }) } : { text: '不得发出的旧结果' })
+    await stopping
+    expect(calls).toEqual({ partial: [], final: [], error: [] })
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(false)
+
+    const next = newSession({ provider: 'off' })
+    await next.session.start()
+    next.rec.feed(16000)
+    await next.session.stop()
+    expect(next.calls.final).toEqual(['批处理结果'])
+  })
+
+  test('ASR 首个真实音频 send 才点亮；一个旧会话关闭不清掉其他会话事实', async () => {
+    const a = newSession()
+    await a.session.start()
+    const wsA = FakeWs.last!
+    wsA.open()
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(false)
+    a.rec.feed(1600)
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(true)
+    const b = newSession()
+    await b.session.start()
+    FakeWs.last!.open()
+    b.rec.feed(1600)
+    await a.session.cancel()
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(true)
+    await b.session.stop()
+    expect(getAudioCaptureSnapshot().asrUploading).toBe(false)
+  })
 })

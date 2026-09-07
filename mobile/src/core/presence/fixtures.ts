@@ -30,7 +30,7 @@ export function presenceFixtures(): PresenceFixture[] {
   const mk = (label: string, over: Partial<PresenceInput>, producible = true): PresenceFixture => ({
     label, producible, snapshot: derivePresence({ ...base, ...over }),
   })
-  const hf = (fsm: PresenceInput['hfFsm'], extra: Partial<PresenceInput> = {}) => ({ hfEnabled: true, hfUsable: true, hfFsm: fsm, ...extra })
+  const hf = (fsm: PresenceInput['hfFsm'], extra: Partial<PresenceInput> = {}) => ({ hfEnabled: true, hfUsable: true, hfFsm: fsm, audioCapture: { micActive: true, asrUploading: fsm === 'LISTENING' && extra.voicePipeline !== 's2s', s2sUploading: fsm === 'LISTENING' && extra.voicePipeline === 's2s' }, ...extra })
   return [
     mk('idle', {}),
     mk('armed', hf('ARMED')),
@@ -38,8 +38,8 @@ export function presenceFixtures(): PresenceFixture[] {
     mk('armed-quiet', hf('ARMED', { hfFsmChangedAt: NOW - 10_000 })),
     // 评审 D3：免唤醒开着时 error 也要出得来（此前被 armed 遮蔽）
     mk('error-hf-on', hf('ARMED', { hfFsmChangedAt: NOW - 10_000, lastError: { text: '出错了', at: NOW - 500 } })),
-    mk('listening-ptt', { ptt: 'recording' }),
-    mk('recognizing-partial', { ptt: 'recording', partial: '附近有什么好吃的' }),
+    mk('listening-ptt', { ptt: 'recording', audioCapture: { micActive: true, asrUploading: true, s2sUploading: false } }),
+    mk('recognizing-partial', { audioCapture: { micActive: true, asrUploading: true, s2sUploading: false }, ptt: 'recording', partial: '附近有什么好吃的' }),
     mk('listening-s2s', hf('LISTENING', { voicePipeline: 's2s' })),
     mk('thinking', { turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 } }),
     mk('processing-long', { turn: { pending: false, streaming: false, processActive: true, processLabel: '规划路线', processSince: NOW - 12_000 } }),
@@ -66,7 +66,7 @@ export function presenceFixtures(): PresenceFixture[] {
       voice: { turnSource: 'handsfree', override: null, answer: true, card: false },
     }),
     mk('driving-suggest', { drivingSuggest: true, identity: 'trusted-tablet' }),
-    mk('looking', { visionCapturing: true }),
+    mk('looking', { visionCapturing: true, visionCameraActive: true }),
     mk('reconnecting', { connStatus: 'connecting', connChangedAt: NOW - 5_000 }),
     // AR01：只展示列表交互，不发业务确认（state-gallery 的 onConfirm 是 no-op）。
     mk('attention-multiple', { pendingOps: [
