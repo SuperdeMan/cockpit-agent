@@ -2348,7 +2348,9 @@ mobile jest 234/234、tsc 0；共享白名单守卫 6/6。
     Accessibility Scanner 拿不到悬浮窗权限（`appops set allow` 被忽略、系统页无条目）——**无障碍的听觉 / 扫描读数在这台
     机上取不到**，静态 `content-desc` 由 hierarchy 全覆盖；③ 「听不见」除音量 0 外还有**路由到 `bt_a2dp`** 这一形态
     （`STREAM_ACCESSIBILITY` `Devices: bt_a2dp(80)`），判据要连 `Devices:` 一起看；④ 手机 Tailscale 重启后不自动重连
-    （设备 `unknown host` 而宿主侧 5/5 healthy），断线态多出的两处「已断开」文案会改变无障碍读数的分母；
+    （设备 `unknown host` 而宿主侧 5/5 healthy），断线态多出的两处「已断开」文案会改变无障碍读数的分母
+    ——**OPPO 同款（2026-09-07 常驻包批）**：装完网关卡 `connecting`，电脑侧 `tailscale status` 该节点
+    `offline, last seen 1h ago`，前台打开 Tailscale 客户端才回 Connected（`CONNECT_VPN` 广播 22s 内没拉起来）；
     ⑤ `haptic_feedback_enabled` 会自己在 0 / 1 间变（两次观测），验触感前先核这一位。
 
 89. **回填批记录时用整段替换会把上半轮的坑吞掉**（B5 第 3 批 → 第 4 批收口发现）：`4e43e12` 改写 B5 计划 §6.3 时把

@@ -32,6 +32,12 @@ powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1   # 退�
   热重载的时段临时装。
 - 一台机器上的读数不代表另一台（B3′ 助理角色、Xruns、AEC 通路都是单机读数）：结论要标机型；
   「Xiaomi 复验」是对照，不是第二个验收分母。
+- **两台手机的 Tailscale 都会静默掉线**（坑账 §9.88 ④；OPPO 2026-09-07 实测 offline 1h、App 网关卡
+  `connecting`）：App「连不上」先在电脑跑 `tailscale status` 看该节点是不是 offline，再前台打开手机上的
+  Tailscale 客户端等它回到 Connected（`CONNECT_VPN` 广播不一定拉得起来）；App 会自己重连到 `open`。
+- 取证两坑：Git Bash 里 `adb shell uiautomator dump /sdcard/x.xml` 的设备路径会被 MSYS 改写成
+  `/Files/Git/sdcard/…`（用 PowerShell 跑）；OPPO 折叠屏 `screencap` 必须带 `-d <display-id>`
+  （`dumpsys SurfaceFlinger --display-id` 查）。
 - tailnet 节点名不进仓库（同实施计划 §1 E4 卫生约定）。
 
 ## 日常开发（JS/Metro，可在原路径跑）

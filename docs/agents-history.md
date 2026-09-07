@@ -8499,6 +8499,13 @@ Xiaomi MIX Fold 4（HyperOS 3 / Android 16，主用机）做对照机；② 两�
 flags 无 `DEBUGGABLE`；不接 Metro `am start` MainActivity 659ms 冷启、栈里无 DevLauncher、
 `ReactNativeJS: Running "main"`（Hermes 从 base.apk 加载）、`KwsModule: KWS loaded`、
 `netstat` 两条到云栈 `:8443` 的 ESTABLISHED（沿用已存配置，未走引导页）、app 进程零 FATAL；
-验完 force-stop + 熄屏还原。OPPO 当时未接 USB，同一份 APK 接上后
-`scripts/mobile_device.ps1 -Role test -Install` 即可。仍开：正式签名（M5）、OPPO 装机、
-`-CompileJobs` 只在内存紧时用。
+验完 force-stop + 熄屏还原。OPPO 随后接上 USB，同一份 APK `-Role test -Install` Success
+（`lastUpdateTime 2026-09-05 22:31:28 → 2026-09-07 10:45:38`，无 `DEBUGGABLE`），不接 Metro 起
+MainActivity 714ms、`Running "main"`、零 FATAL，设置页底行在真机 uiautomator 里读到
+`v0.1.0 · prod · ce1239578 · 2026-09-07 10:14`。但网关一直 `connecting`、无 :8443 socket——不是包：
+电脑侧 `tailscale status` 看 OPPO `offline, last seen 1h ago`，手机侧 MagicDNS 不通、FQDN unknown host
+（坑账 §9.88 ④「手机 Tailscale 静默掉线」的 OPPO 版）；`CONNECT_VPN` 广播 22s 内没拉起来，前台打开
+Tailscale 客户端后 Connected，手机 ping 云栈 0% 丢包，App 自行重连到 `open`、:8443 三条连接。
+两条取证坑：Git Bash 里 `uiautomator dump /sdcard/x.xml` 的设备路径会被 MSYS 改写成
+`/Files/Git/sdcard/…`（要走 PowerShell）；OPPO 折叠屏 `screencap` 必须带 `-d <display-id>`。
+两个提交 `ce12395` / `10aceb2` 经泓舟授权推送。仍开：正式签名（M5）、`-CompileJobs` 只在内存紧时用。
