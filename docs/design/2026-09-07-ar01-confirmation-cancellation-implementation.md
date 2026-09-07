@@ -1,6 +1,6 @@
 **AR01 确认与取消实施记录｜2026-09-07**
 
-> 状态：客户端修复、本地回归与 OPPO release 样本验证完成，代码已合入 main；云端未部署，未执行真实业务多操作 E2E。
+> 状态：客户端修复、本地回归与 OPPO release 样本验证完成；代码和共享经验文档已于 2026-09-07 合入并推送 main；云端未部署，未执行真实业务多操作 E2E。
 > 用户于 2026-09-07 启动 AR01，随后明确授权本批合入推送；基线 `dbd1540db841da562ca7edb0925ecb58e79d502d`，实施分支 `fix/ar01-confirmation-cancellation`，后续从 main 接续。
 > 范围：[分批建议 AR01](2026-09-07-android-review-remediation-batches.md#ar01)，仅 R03/R04/R05。原发现保留在[完整评审](../reviews/2026-09-07-android-ux-full-review.md)。
 > 本页记录实现、精确版本和验收边界；截图、日志、JSON 与临时复现脚本全部在仓库外。

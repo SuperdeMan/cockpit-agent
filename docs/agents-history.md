@@ -8549,3 +8549,5 @@ Tailscale 客户端后 Connected，手机 ping 云栈 0% 丢包，App 自行重�
 新增 [Android 构建、取证与跨工具交接](guides/android-build-and-device-validation.md) 作为共享操作指南，集中记录：不同 worktree 共用镜像/Gradle/设备时的串行边界、CompileJobs 与 JVM 小堆分别解决的内存问题、后台包装与独立终态文件、缓存失效、APK/装机哈希与设置页身份回读、PowerShell 二进制截图与动态 UIAutomator 限制，以及跨会话交接字段。mobile README 收敛为入口；AGENTS、CLAUDE、根 README、dev-guide 均可到达同一份指南。原始日志、截图、JSON 和临时脚本仍在仓库外，没有写入某个工具专属的私人记忆。
 
 本轮只整理文档、集成和推送；没有改产品实现、构建脚本、依赖或环境，没有重复构建 APK/运行全量。AR01 的 mobile 574/574 与 APK 仍绑定 `f4647d0fb87bf2928fa26e12151cd8ace0b14e25`，共享 HMI 304/304 仍绑定 `ead802e21a29c5fc08d8db22b372dc86d653b374`。后续从 main 按分批建议选择 AR02，真实业务 E2E 与云端部署边界保持独立。
+
+远端回读：本批代码及共享指南首次完整推送后的 `origin/main` 为 `dcc2ab5f08dab118d53b9a4a2865f11ec1e671b9`，`git ls-remote` 与本地 HEAD 一致。随后仅回填已推送状态；不改变上述代码、测试或 APK 的证据锚。

@@ -1,6 +1,6 @@
 # Android 构建、取证与跨工具交接
 
-适用于本项目 Windows + PowerShell 的 Android 工作流，供 Claude Code、Codex 和人工开发共同使用。核对日期：2026-09-07。可执行行为以 [build_mobile.ps1](../../scripts/build_mobile.ps1)、[mobile_device.ps1](../../scripts/mobile_device.ps1) 为准；设备角色和日常使用见 [mobile/README.md](../../mobile/README.md)。本页保存可复用步骤，逐批 SHA、耗时、失败样本和验收结果保留在各实施记录中，最近的依据是 [AR01](../design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
+适用于本项目 Windows + PowerShell 的 Android 工作流，供 Claude Code、Codex 和人工开发共同使用。核对日期：2026-09-07。可执行行为以 [build_mobile.ps1](../../scripts/build_mobile.ps1)、[mobile_device.ps1](../../scripts/mobile_device.ps1) 为准；设备角色和日常使用见 [mobile/README.md](../../mobile/README.md)。本页保存可复用步骤，逐批 SHA、耗时、失败样本和验收结果保留在各实施记录中，本页主要实证依据是 [AR01](../design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
 
 ## 1. 先确认版本与资源归属
 
@@ -108,7 +108,7 @@ $mobileProcess | Select-Object Id, StartTime
 
 接续时先查看该目录 `result.json` 是否存在，再结合已登记的 PID/开始时间、日志尾部判断进程状态。没有结果文件只能说明“尚未取得终态”，也可能是包装进程被终止；不要只盯工具的旧 session ID。长任务每次等待控制在 60 秒内并更新进展，避免把会话长期锁在一次等待中。
 
-含中文的 `.ps1` 按项目约定保存为 UTF-8 with BOM，`.gradle` / `.properties` 保持无 BOM；用 `Get-Content -Encoding UTF8` 读 UTF-8 日志。向子进程 stdin 传中文/JSON 时显式设置 `$OutputEncoding`，不要把终端显示正常当作编码未损坏的证明；PNG 另按下一节的二进制方式保存。
+含中文的 `.ps1` 按项目约定保存为 UTF-8 with BOM，`.gradle` / `.properties` 保持无 BOM；用 `Get-Content -Encoding UTF8` 读 UTF-8 日志。向子进程 stdin 传中文/JSON 时显式设置 `$OutputEncoding`，不要把终端显示正常当作编码未损坏的证明；PNG 另按 [§6](#6-设备取证的几个实测边界) 的二进制方式保存。
 
 成功要求同时满足：子进程退出码 0、Gradle `BUILD SUCCESSFUL`、脚本验包通过、带本次 SHA 的最终 APK 存在。`$LASTEXITCODE` 应在被测命令后立即保存；PowerShell 把 stderr 显示为 `NativeCommandError` 不一定意味着命令失败。反过来，测试汇总 PASS 但进程尚未退出，也不能先填 exit 0。
 
