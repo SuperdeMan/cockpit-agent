@@ -1,7 +1,7 @@
 **AR01 确认与取消实施记录｜2026-09-07**
 
-> 状态：客户端修复、本地回归与 OPPO release 样本验证完成；本批未推送或部署，未执行真实业务多操作 E2E。
-> 用户于 2026-09-07 启动 AR01；基线 `dbd1540db841da562ca7edb0925ecb58e79d502d`，分支 `fix/ar01-confirmation-cancellation`。
+> 状态：客户端修复、本地回归与 OPPO release 样本验证完成，代码已合入 main；云端未部署，未执行真实业务多操作 E2E。
+> 用户于 2026-09-07 启动 AR01，随后明确授权本批合入推送；基线 `dbd1540db841da562ca7edb0925ecb58e79d502d`，实施分支 `fix/ar01-confirmation-cancellation`，后续从 main 接续。
 > 范围：[分批建议 AR01](2026-09-07-android-review-remediation-batches.md#ar01)，仅 R03/R04/R05。原发现保留在[完整评审](../reviews/2026-09-07-android-ux-full-review.md)。
 > 本页记录实现、精确版本和验收边界；截图、日志、JSON 与临时复现脚本全部在仓库外。
 
@@ -57,7 +57,7 @@
 | 关闭与恢复 | 关闭按钮收起；再次展开后 Android 系统返回收起；截图复核；本轮没有改动连接、语音、动效或系统设置 |
 | 稳定性与结束状态 | 本次 App 进程 crash buffer 的 FATAL 计数为 0；结束本批样本进程并返回 Launcher |
 
-构建仍走 `scripts/build_mobile.ps1 -Release -Variant prod -CompileJobs 1`，保持 arm64-v8a、armeabi-v7a 和现有签名。最初一次构建在会话继续前中断，未取得成功终态，不计通过；普通重试又因 Windows error 1455（commit 内存不足）在 JVM 启动时失败。随后仅对构建进程设置 `-Xms128m -Xmx1024m -XX:MaxMetaspaceSize=512m -XX:ActiveProcessorCount=2` 和 Kotlin in-process。没有改系统内存配置或停掉其他会话的 Metro。第一版小堆构建成功用时 33m59s，其 APK 不用于最终代码验收。
+本批仍走 `scripts/build_mobile.ps1 -Release -Variant prod -CompileJobs 1`。最初一次构建在会话继续前中断，未取得成功终态，不计通过；普通重试因 Windows error 1455 在 JVM 启动时失败。随后使用进程内 `-Xms128m/-Xmx1024m`、MaxMetaspaceSize 512m、ActiveProcessorCount 2 与 Kotlin in-process；第一版构建成功用时 33m59s，其 APK 不用于最终代码验收。没有修改系统内存配置或停止其他会话的 Metro。参数用法、长任务接续和缓存边界已迁到[共享操作指南](../guides/android-build-and-device-validation.md)，供 Claude Code/Codex 复用。
 
 最终构建保留 SDK XML 版本、NODE_ENV、Gradle 废弃项、NO_COLOR/FORCE_COLOR 与高德库无法 strip 等提示；没有调阈值或抹去日志。动态画廊的 UIAutomator dump 曾报 `could not get idle state`：按实读截图坐标打开列表后，Modal 内 XML 可正常读取，后续按 testID 定位按钮、滚动并以截图复核关闭。未通过关闭动效来隐藏该限制，它不代表 AR09 的观测/负载问题已经关闭。
 
@@ -69,4 +69,4 @@
 
 - 本批关闭 R03/R04/R05 已证明的客户端缺陷；没有执行真实车控/商户业务，也没有把样本页当作生产多操作 E2E。
 - AR02 接续摄像头/上传物理中止、零落盘及能力关闭后的采集边界；AR03 处理 final 后纯停播与横屏出口；整体真机/外部用户验收在 AR10。
-- 其他 AR 批次未启动。本批代码在本地分支提交，push/生产部署仍按项目规则另行授权；原评审文档的推送授权不扩展为代码发布。
+- 其他 AR 批次未启动。用户于 2026-09-07 明确授权本批代码及复用经验文档合入 main 并推送；该授权不扩展为其他批次或云端生产部署。接手时用 git 核对本地与 origin/main，精确测试/APK 仍绑定上表代码 SHA。

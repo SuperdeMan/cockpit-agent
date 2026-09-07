@@ -1,6 +1,6 @@
 **Android 评审问题分批处理建议｜2026-09-07**
 
-> 状态：AR01 于 2026-09-07 完成客户端修复、本地回归与 OPPO release 样本验证；真实业务 E2E 未跑，其他批次未启动。评审归档的推送授权不扩展为后续代码发布；各批按用户选定范围处理。
+> 状态：AR01 于 2026-09-07 完成客户端修复、本地回归与 OPPO release 样本验证，已合入 main 并获本批推送授权；真实业务 E2E 未跑，其他批次未启动。后续各批继续按用户选定范围处理。
 > 原始评审：[Android 规划与 UX 完整评审](../reviews/2026-09-07-android-ux-full-review.md)。
 > 评审代码基线：f140f979654d1727406c0da4c9d72d42ada970b7。550 条 Jest、TypeScript 与云端 status 是该次评审的分项证据，不转借给后续修复 SHA。
 > 本页负责批次范围、依赖和当前状态；每批实施前另建具体实施计划，实施后在本页回填计划链接、代码 SHA、验收证据与剩余项。
@@ -43,7 +43,7 @@ AR01 本轮已处理，下一批建议 AR02。AR06 中验证入口和 lint 配�
 
 本批结束只关闭 R03/R04/R05 已证明的部分；视觉底层中止和文件生命周期在 AR02 继续验证。
 
-2026-09-07 回填：最终代码 `f4647d0fb87bf2928fa26e12151cd8ace0b14e25`，mobile 57 suites / 574 tests 与 TypeScript 通过；prod release 已装 OPPO test，列表样本展开/滚动/按钮/关闭验证完成。HMI 304/304 的证据锚为共享修复提交 `ead802e`，其后 HMI 源码无差异。客户端缺陷已修，真实业务多操作 E2E 未执行；APK 身份、构建提示、取证限制及未推送/部署边界见[AR01 实施记录](2026-09-07-ar01-confirmation-cancellation-implementation.md)。
+2026-09-07 回填：最终代码 `f4647d0fb87bf2928fa26e12151cd8ace0b14e25`，mobile 57 suites / 574 tests 与 TypeScript 通过；prod release 已装 OPPO test，列表样本展开/滚动/按钮/关闭验证完成。HMI 304/304 的证据锚为共享修复提交 `ead802e`，其后 HMI 源码无差异。客户端缺陷已修并合入 main，真实业务多操作 E2E 未执行；APK 身份、构建提示、取证限制及集成/部署边界见[AR01 实施记录](2026-09-07-ar01-confirmation-cancellation-implementation.md)。
 
 <a id="ar02"></a>
 

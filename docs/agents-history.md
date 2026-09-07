@@ -8540,3 +8540,12 @@ Tailscale 客户端后 Connected，手机 ping 云栈 0% 丢包，App 自行重�
 最终 prod release 包内构建 `f4647d0fb`，Gradle 23m03s、exit 0，原双 ABI 与签名保持；OPPO test 于 17:24:37 install -r，非 DEBUGGABLE，设备 APK 与本地 SHA-256 相同，设置页读到 `v0.1.0 · prod · f4647d0fb · 2026-09-07 17:00`。四项待办样本的展开、滚动、第三项取消、第二项确认、位置允许、关闭与系统返回检查通过；按钮回调为 no-op，仅证明原生呈现/触达。当前 App 进程 crash buffer 无 FATAL，结束样本进程并返回 Launcher；Xiaomi 未操作。构建曾有内存不足失败，动态画廊曾阻止 UIAutomator 取得 idle，过程与处置如实留在实施记录。
 
 本批已修复 R03/R04/R05 已证明的客户端缺陷，未执行真实车控/商户业务或生产多操作 E2E；未推送、未部署。下一批建议 AR02，继续摄像头/上传物理中止与零落盘，不把请求回调失效当作采集已停止；其他 AR 批次未启动。
+
+
+## §101 2026-09-07 AR01 合入与 Android 构建经验共享
+
+用户明确要求“合入推送”，并要求把可复用构建经验放到 Claude Code 也能读取的位置。AR01 的 `ead802e`、`f4647d0`、`e1f460b` 已通过 fast-forward 合入本地 main，无额外 merge commit；本轮推送范围包含这三个提交和本次纯文档整理，不包含云端部署。
+
+新增 [Android 构建、取证与跨工具交接](guides/android-build-and-device-validation.md) 作为共享操作指南，集中记录：不同 worktree 共用镜像/Gradle/设备时的串行边界、CompileJobs 与 JVM 小堆分别解决的内存问题、后台包装与独立终态文件、缓存失效、APK/装机哈希与设置页身份回读、PowerShell 二进制截图与动态 UIAutomator 限制，以及跨会话交接字段。mobile README 收敛为入口；AGENTS、CLAUDE、根 README、dev-guide 均可到达同一份指南。原始日志、截图、JSON 和临时脚本仍在仓库外，没有写入某个工具专属的私人记忆。
+
+本轮只整理文档、集成和推送；没有改产品实现、构建脚本、依赖或环境，没有重复构建 APK/运行全量。AR01 的 mobile 574/574 与 APK 仍绑定 `f4647d0fb87bf2928fa26e12151cd8ace0b14e25`，共享 HMI 304/304 仍绑定 `ead802e21a29c5fc08d8db22b372dc86d653b374`。后续从 main 按分批建议选择 AR02，真实业务 E2E 与云端部署边界保持独立。

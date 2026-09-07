@@ -164,7 +164,7 @@ python scripts/dev_stack.py dashboard
 
 - 改完主动验证；不靠注释报错、skip 或宽松断言“让它绿”；
 - 大改先设计后实现；模型输出当不可信输入，一直校验到 hash/split/int/执行的值；
-- Mobile 语音构建前运行 `scripts/fetch_mobile_voice_assets.ps1`；缺模型/原生件必须显式失败；
+- Mobile 构建/取证按[共享操作指南](docs/guides/android-build-and-device-validation.md)执行；不同 worktree 仍共用原生构建目录，先确认资源归属；语音构建前运行 `scripts/fetch_mobile_voice_assets.ps1`，缺件必须显式失败；
 - 新增原生 npm 库后检查生成的 `PackageList.java`，构建成功或 APK 含 `.so` 不证明模块已注册；
 - happy path 与干净会话证明不了多轮状态，验证失败后下一轮和至少三轮；
 - 测试替被测系统注入的前提不再被验证；真实权限/上下文/清理必须另有用例；

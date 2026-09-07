@@ -8,6 +8,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **逐任务执行真相源**（协议契约指认 + 坑账）：[`docs/design/2026-08-24-mobile-app-implementation-plan.md`](../docs/design/2026-08-24-mobile-app-implementation-plan.md)
 - **完整评审**（2026-09-07；R01–R15 原始发现）：[2026-09-07-android-ux-full-review.md](../docs/reviews/2026-09-07-android-ux-full-review.md)
 - **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
+- **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
 - AR01 确认与取消：客户端修复、本地回归与 OPPO release 样本验证完成；当前 test 候选包及真实业务未验边界看[实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。下一批建议 AR02。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
@@ -34,12 +35,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1   # 退�
 - 对照验收时两台装同一份 prod release **常驻包**（见下文）；开发候选先落 test，本轮候选身份看 AR01 实施记录，compare 本批未更新。dev-client 只在测试机上、只在需要 Metro 热重载的时段临时装。
 - 一台机器上的读数不代表另一台（B3′ 助理角色、Xruns、AEC 通路都是单机读数）：结论要标机型；
   「Xiaomi 复验」是对照，不是第二个验收分母。
-- **两台手机的 Tailscale 都会静默掉线**（坑账 §9.88 ④；OPPO 2026-09-07 实测 offline 1h、App 网关卡
-  `connecting`）：App「连不上」先在电脑跑 `tailscale status` 看该节点是不是 offline，再前台打开手机上的
-  Tailscale 客户端等它回到 Connected（`CONNECT_VPN` 广播不一定拉得起来）；App 会自己重连到 `open`。
-- 取证两坑：Git Bash 里 `adb shell uiautomator dump /sdcard/x.xml` 的设备路径会被 MSYS 改写成
-  `/Files/Git/sdcard/…`（用 PowerShell 跑）；OPPO 折叠屏 `screencap` 必须带 `-d <display-id>`
-  （`dumpsys SurfaceFlinger --display-id` 查）。
+- Tailscale 连接、折叠屏截图、UIAutomator 与 PowerShell 取证排查统一看[操作指南 §6](../docs/guides/android-build-and-device-validation.md#6-设备取证的几个实测边界)。
 - tailnet 节点名不进仓库（同实施计划 §1 E4 卫生约定）。
 
 ## 日常开发（JS/Metro，可在原路径跑）
@@ -56,32 +52,19 @@ npm test             # jest：白名单守卫 + 端点/gateway 契约 + 会话�
 **改了 app.config.ts / config plugins / 新增原生依赖必须重 prebuild + 重装 APK**
 （「改了不生效」十有八九是这个）。
 
-## 原生构建（在 ASCII 镜像工作区进行——仓库路径含中文，subst/中文单根两形态均实测不可用，实施计划 §1.1 偏差 ④ + 坑账 §9.11-12）
+## 原生构建
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1                          # debug dev-client APK（JS 靠 Metro）
 powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Release -Variant prod   # 常驻包（内嵌 bundle，见下节）
-powershell -ExecutionPolicy Bypass -File scripts\build_mobile.ps1 -Clean                   # 重生成 android/
 ```
 
-脚本内置：robocopy 增量镜像 `mobile/` → `D:\Android\builds\xiaozhou-mobile`（全 ASCII
-单根）+ `hmi/src` → `D:\Android\builds\hmi\src`（`@shared/*` 按 `../hmi` 相对解析，release
-打 bundle 才用到）→ 镜像里 `expo prebuild` → gradle wrapper 换腾讯镜像 + jvmargs 强制 UTF-8 →
-缺失 SDK 包用 android CLI 预装 → CN maven 镜像 init script → `gradlew assembleDebug|Release`
-→ **验包**（KWS/ORT 两个 `.so` 在、release 有 `assets/index.android.bundle`、包内 `app.config`
-的 variant 与构建 SHA 与本次一致、打印签名指纹）→ 复制到落点 `D:\Android\builds\apk\`。
-装机：`scripts\mobile_device.ps1 -Role test|compare -Install <apk>`（脚本末尾打印整条命令）。
+脚本使用 ASCII 镜像工作区，最终 APK 落在 `D:\Android\builds\apk\`，并打印装机命令。
+**不同 worktree 仍共享构建目录，原生构建必须串行**。低内存参数、JVM 1455、缓存边界、后台构建与验包步骤统一看[操作指南](../docs/guides/android-build-and-device-validation.md)。
 
 构建变体：`-Variant dev|staging|prod`（缺省 dev；脚本据此设 `APP_VARIANT`）。dev 允许
 cleartext + 任意服务器入口；prod 两者皆禁（只留云栈 FQDN 预设）。包名三档同为
 `com.xiaozhou.companion`。
-
-两条只有 release 才露出来的构建事实（坑账 §9.90–91）：原生中间产物（各模块的 `.cxx`）由
-`scripts/gradle_cxx_staging.init.gradle` 挪到镜像外的 `D:\Android\builds\cxx\<模块>`——release
-的 `.cxx/RelWithDebInfo/…` 比 debug 长 9 字符，audio-api 的对象路径撞 Windows 260 上限，
-debug 从来没撞过；顺带原生中间产物跨构建复用（不再被 robocopy /MIR 每趟清掉）。这台机器
-多会话共用、可用内存只剩 1–2GB 时加 **`-CompileJobs 3`**（ninja 编译池 / gradle / Metro 三层限并发，
-慢但能跑完；被杀的趟不丢已编译对象，重试是增量的）。
 
 ## 常驻包（脱离 USB / Metro，随时可用；2026-09-07 起两台真机的常态）
 

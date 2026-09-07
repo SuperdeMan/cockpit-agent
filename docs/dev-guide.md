@@ -274,7 +274,7 @@ bash scripts/fetch-voice-models.sh && bash scripts/fetch_mobile_voice_assets.sh 
 
 Android 的其余环境（JDK/SDK/ASCII 镜像工作区/真机）自检入口是
 `powershell -File scripts\check_android_env.ps1`（退出码 0 才动手）；
-日常命令见 [`mobile/README.md`](../mobile/README.md)。
+日常命令见 [`mobile/README.md`](../mobile/README.md)；低内存、共享构建目录、长任务接续与验包/取证统一看 [Android 操作指南](guides/android-build-and-device-validation.md)。
 
 ## 3. 整栈运行
 

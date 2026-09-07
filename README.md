@@ -273,6 +273,7 @@ docs/             架构（真相源）、设计记录、指南
 | 各主题设计与落地记录 | [`docs/design/README.md`](docs/design/README.md) |
 | 怎么接真实 Provider（高德/和风样板） | [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md) |
 | 怎么跑意图落域对抗测试、怎么修落域 badcase | [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) |
+| Android 构建、低内存排查、设备取证与跨工具交接 | [`docs/guides/android-build-and-device-validation.md`](docs/guides/android-build-and-device-validation.md) |
 | 环境 / 端口 / 命名 / 错误码速查 | [`docs/dev-guide.md`](docs/dev-guide.md)、[`docs/conventions.md`](docs/conventions.md) |
 | 测试分层与运行说明 | [`test/README.md`](test/README.md) |
 

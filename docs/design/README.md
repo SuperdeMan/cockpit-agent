@@ -21,7 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
-| [2026-09-07-ar01-confirmation-cancellation-implementation.md](2026-09-07-ar01-confirmation-cancellation-implementation.md) | AR01：指定确认归属、真实队列撤回、异步准备失效与多待办列表 | 客户端修复、本地回归与 OPPO release 样本验证完成；未推送/部署，真实业务 E2E 未跑 |
+| [2026-09-07-ar01-confirmation-cancellation-implementation.md](2026-09-07-ar01-confirmation-cancellation-implementation.md) | AR01：指定确认归属、真实队列撤回、异步准备失效与多待办列表 | 已合入 main；客户端修复、本地回归与 OPPO release 样本验证完成；云端未部署，真实业务 E2E 未跑 |
 | [2026-09-07-android-review-remediation-batches.md](2026-09-07-android-review-remediation-batches.md) | Android 完整评审后的 AR01–AR11 分批建议：范围、依赖、验收与 R01–R15 对应关系 | AR01 客户端修复与样本验证完成；其他批次未启动，后续从本页选择 |
 | [2026-09-07-android-ux-full-review.md](../reviews/2026-09-07-android-ux-full-review.md) | Android 规划、UX v2、实现与证据完整评审，基线 `f140f979` | 已归档；15 项发现未因文档提交而修复；原始检查不转借后续 SHA |
 | [2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md](2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md) | Xiaomi SU7整本手册验证：278页源重建、269页锚、160索引路径、187 outline叶子、35受控视觉、原36自然问法，以及安全checkpoint真栈探针 | ✅ 范围与生产基线已测完：离线候选全绿；生产`434a046`章节首轮177/187，10条失败复验无0/3；视觉28/35，5个三字caption 0/3。0.3.2本地候选已修、待push/deploy后重跑187+35 |

@@ -33,6 +33,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | MiniMax 根因与修复批 | `docs/design/2026-08-27-minimax-qa-root-cause-fix-plan.md` |
 | 安全确认写闸 | `docs/design/2026-08-30-qa-safety-confirmed-write-guard.md` |
 | Android App 当前入口 | `mobile/README.md` + [`完整评审`](docs/reviews/2026-09-07-android-ux-full-review.md) + [`分批处理建议`](docs/design/2026-09-07-android-review-remediation-batches.md)；启动前核对工作树与代码/设备版本 |
+| Android 构建与跨工具交接 | [`操作指南`](docs/guides/android-build-and-device-validation.md)：共享镜像/设备串行占用、低内存参数、长任务接续与精确验包 |
 | 历史流水 | `docs/agents-history.md`（只追加） |
 
 服务子目录各有 README；改某个服务前先读该目录 README。
