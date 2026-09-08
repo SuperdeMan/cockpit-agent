@@ -44,7 +44,7 @@ const HF_LABEL: Record<string, string> = {
   ARMED: '待唤醒 · 说「小舟小舟」',
   LISTENING: '在听…',
   THINKING: '思考中…',
-  SPEAKING: '播报中 · 说话可打断',
+  SPEAKING: '播报中',
   FOLLOWUP: '可以直接接着说',
   IDLE: '免唤醒未启动',
 }

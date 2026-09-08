@@ -260,7 +260,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   } else if (capture === 'looking') capsule = { text: '看一眼…', tone: 'accent' }
   else if (capture === 'recognizing') capsule = { text: i.partial || '识别中…', tone: 'accent', live: true }
   else if (capture === 'listening') capsule = { text: '在听…', tone: 'accent', live: true }
-  else if (agent === 'speaking') capsule = { text: '播报中 · 说话可打断', tone: 'accent' }
+  else if (agent === 'speaking') capsule = { text: '播报中', tone: 'accent' }
   else if (agent === 'processing') capsule = { text: `${i.turn.processLabel || '处理中'}…`, tone: 'neutral' }
   else if (agent === 'thinking') capsule = { text: '正在思考…', tone: 'neutral' }
   // 2s 短提示（取消 / 回声）：压过 followup 与 armed 这两个「常态提示」，但让位给收音 / 播报 / 思考

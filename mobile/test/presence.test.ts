@@ -224,7 +224,7 @@ describe('capsule 文案', () => {
     [{ hfEnabled: true, hfUsable: true, hfFsm: 'ARMED' } as Partial<PresenceInput>, '说「小舟小舟」'],
     [{ ptt: 'recording' } as Partial<PresenceInput>, '在听…'],
     [{ ptt: 'finalizing' } as Partial<PresenceInput>, '识别中…'],
-    [{ speaking: true } as Partial<PresenceInput>, '播报中 · 说话可打断'],
+    [{ speaking: true } as Partial<PresenceInput>, '播报中'],
     [{ hfEnabled: true, hfUsable: true, hfFsm: 'FOLLOWUP' } as Partial<PresenceInput>, '可以接着说'],
     [{ visionCapturing: true } as Partial<PresenceInput>, '看一眼…'],
     [{ pendingOps: [{ id: 'op1', ts: NOW, summary: 'x' }] } as Partial<PresenceInput>, '等你确认'],
@@ -264,7 +264,7 @@ describe('capsule 文案', () => {
     expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'FOLLOWUP' })).capsule?.text).toBe(n.text)
     expect(derivePresence(base({ notice: n, hfEnabled: true, hfUsable: true, hfFsm: 'ARMED', hfFsmChangedAt: NOW - 100 })).capsule?.text).toBe(n.text)
     expect(derivePresence(base({ notice: n, ptt: 'recording' })).capsule?.text).toBe('在听…')
-    expect(derivePresence(base({ notice: n, speaking: true })).capsule?.text).toBe('播报中 · 说话可打断')
+    expect(derivePresence(base({ notice: n, speaking: true })).capsule?.text).toBe('播报中')
   })
 })
 
@@ -346,7 +346,7 @@ describe('B4-10 行车档建议胶囊（§6 触发③：只建议不自动切）
   })
   test('播报在场时建议让位，且那条胶囊没有 action', () => {
     const s = derivePresence(base({ drivingSuggest: true, speaking: true }))
-    expect(s.capsule?.text).toBe('播报中 · 说话可打断')
+    expect(s.capsule?.text).toBe('播报中')
     expect(s.capsule?.action).toBeUndefined()
   })
   test('错误在场时建议让位', () => {
