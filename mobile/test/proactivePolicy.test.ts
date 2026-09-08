@@ -38,3 +38,11 @@ test('非行车 + 总是 + S2S 忙：critical 抢话 / user_contract 排队 / �
     proactiveSpeechDecision(tip, busy),
   ]).toEqual(['interrupt', 'defer', 'bubble'])
 })
+
+test.each([
+  ['critical', 'interrupt'], ['user_contract', 'defer'], ['', 'bubble'],
+])('AR04 主链 TTS/批处理占用也交给共享仲裁：%s → %s', (priority, expected) => {
+  expect(proactiveSpeechDecision({ priority, hasText: true, hasCard: true }, {
+    policy: 'always', driving: false, s2sBusy: false, ttsBusy: true,
+  })).toBe(expected)
+})

@@ -44,7 +44,9 @@ const batch = () => (jest.requireMock('@/core/voice/tts') as { synthesizeBatch: 
 
 beforeEach(() => {
   mockSessions.length = 0
-  batch().mockClear()
+  batch().mockReset().mockResolvedValue(null)
+  ;(jest.requireMock('@/core/voice/audioCtx').newPcmPlayer as jest.Mock).mockReset()
+    .mockImplementation(() => ({ push() {}, remainingSec: () => 0, stop() {} }))
   jest.useFakeTimers()
   settingsStore.getState().update({ speakPolicy: 'auto' })
 })
@@ -148,6 +150,74 @@ test('AR04 后台所有播报入口都静默，DEFER 不因回前台或 S2S 变�
   expect(batch()).not.toHaveBeenCalled()
   expect(mockSessions).toHaveLength(1)
   sc.stop()
+})
+
+test('AR04 并发提醒先排队；按停时所有已启动播放器收到 stop，等待项不补播', async () => {
+  const sc = new SpeechController(url)
+  const made: Array<{ stop: jest.Mock }> = []
+  ;(jest.requireMock('@/core/voice/audioCtx').newPcmPlayer as jest.Mock).mockImplementation(() => {
+    const player = { stop: jest.fn(), push() {}, remainingSec: () => 0 }
+    made.push(player); return player
+  })
+  batch().mockResolvedValue({ pcm: new Int16Array(160), sampleRate: 16000 })
+  settingsStore.getState().update({ speakPolicy: 'always' })
+  try {
+    sc.proactive('第一条', { priority: 'user_contract', hasCard: true, deliveryId: 'one' })
+    sc.proactive('第二条', { priority: 'user_contract', hasCard: true, deliveryId: 'two' })
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(batch()).toHaveBeenCalledTimes(1)
+    expect(made).toHaveLength(1)
+    sc.stop()
+    for (const player of made) expect(player.stop).toHaveBeenCalledTimes(1)
+    jest.advanceTimersByTime(1000)
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(batch()).toHaveBeenCalledTimes(1)
+    expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+  } finally { sc.stop() }
+})
+
+test('AR04 多条提醒自然收尾：上一条 completion 之后才开始下一条', async () => {
+  const sc = new SpeechController(url)
+  batch().mockResolvedValue({ pcm: new Int16Array(160), sampleRate: 16000 })
+  settingsStore.getState().update({ speakPolicy: 'always' })
+  try {
+    sc.proactive('第一条', { priority: 'user_contract', hasCard: true, deliveryId: 'one' })
+    sc.proactive('第二条', { priority: 'user_contract', hasCard: true, deliveryId: 'two' })
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(batch()).toHaveBeenCalledTimes(1)
+    jest.advanceTimersByTime(121)
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(batch()).toHaveBeenCalledTimes(2)
+    jest.advanceTimersByTime(121)
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+  } finally { sc.stop() }
+})
+
+test('AR04 批处理完成不能清除仍在播放的主链事实', async () => {
+  const sc = new SpeechController(url)
+  batch().mockResolvedValue({ pcm: new Int16Array(160), sampleRate: 16000 })
+  try {
+    sc.begin('main', '', true); mockSessions[0].firstAudio()
+    const completed = sc.speakBatch('独立批处理')
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+    jest.advanceTimersByTime(121)
+    await completed
+    expect(sc.speaking).toBe(true)
+    expect(getAudioPlaybackSnapshot().playing).toBe(true)
+  } finally { sc.stop() }
+})
+
+test('AR04 critical 在主链占用时仍抢话，不能被普通提醒排队逻辑降级', async () => {
+  const sc = new SpeechController(url)
+  settingsStore.getState().update({ speakPolicy: 'always' })
+  try {
+    sc.begin('main', '', true); mockSessions[0].firstAudio()
+    sc.proactive('安全告警', { priority: 'critical', hasCard: true, deliveryId: 'critical' })
+    await Promise.resolve()
+    expect(mockSessions[0].disposed).toBe(true)
+    expect(batch()).toHaveBeenCalledTimes(1)
+  } finally { sc.stop() }
 })
 
 test('R06 缓冲段：final 已到、首片还没起播时 live 仍为真（此刻 busy 已落，停播键靠它）', () => {

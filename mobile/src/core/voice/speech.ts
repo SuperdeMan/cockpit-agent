@@ -80,7 +80,12 @@ export class SpeechController implements SpeechSink {
   onSpeechEnded: (() => void) | null = null
   /** 播报中（首片音频起播 → 播完/停）。Presence 的 agent 轴读它；**可多订阅**，
    *  不再要求消费方链式覆盖 onSpeechBegan/Ended（那套写法第二个消费方就会把第一个顶掉）。 */
-  speaking = false
+  private streamSpeaking = false
+  // 批处理拥有自己的播放事实；它结束时不能清掉同一控制器仍在播放的主链段。
+  private batchPlaying = false
+  private batchActive = false
+  private readonly batchOwner = {}
+  get speaking(): boolean { return this.streamSpeaking || this.batchPlaying }
   private readonly speakingSubs = new Set<(v: boolean) => void>()
   /** 本轮会话队列：[0] 在播（或即将播），其后各段闸在前一段的 completion 上 */
   private queue: TtsSession[] = []
@@ -146,7 +151,8 @@ export class SpeechController implements SpeechSink {
     const policy = settingsStore.getState().settings.speakPolicy
     const d = proactiveSpeechDecision(
       { priority: msg.priority, hasText: !!text.trim(), hasCard: msg.hasCard },
-      { policy, driving: this.proactiveCtx.driving, s2sBusy: this.proactiveCtx.s2sBusy },
+      { policy, driving: this.proactiveCtx.driving, s2sBusy: this.proactiveCtx.s2sBusy,
+        ttsBusy: this.batchActive || this.queue.length > 0 || this.speaking },
     )
     if (d === 'bubble') return
     if (d === 'defer') {
@@ -158,11 +164,11 @@ export class SpeechController implements SpeechSink {
   }
 
   /** 补播 DEFER 队列。
-   *  ⚠ **两个触发点都不是 `stop()`**：`begin()` 第一件事就是 `stop()`，把补播挂在那里会让
+   *  ⚠ 补播跟占用解除走：`begin()` 第一件事就是 `stop()`，把补播挂在那里会让
    *  攒下的旧话在**新一轮开口的瞬间**倒出来，两段音频叠着放——正是 M-C 头注要避免的那件事。
    *  真正的阻塞条件是 ① S2S 在忙、② 自己的播报在跑，所以挂在这两条各自解除的那一刻。 */
   private async flushDeferred(): Promise<void> {
-    if (!this.foreground || this.flushing || this.speaking || this.proactiveCtx.s2sBusy) return
+    if (!this.foreground || this.flushing || this.batchActive || this.speaking || this.proactiveCtx.s2sBusy) return
     this.flushing = true
     const epoch = this.stopEpoch
     try {
@@ -234,12 +240,21 @@ export class SpeechController implements SpeechSink {
   }
 
   private setSpeaking(v: boolean): void {
-    if (this.speaking === v) return
-    this.speaking = v
+    if (this.streamSpeaking === v) return
+    const before = this.speaking
+    this.streamSpeaking = v
     // AR03：主链这一路的播放事实。挂在既有的 speaking 翻转上——它本来就是「首片音频起播 → 播完/停」，
     // 与 `playbackFacts` 要的语义逐字相同，不另立第二个时刻
     setAudioPlaybackFact(this, v)
-    for (const fn of this.speakingSubs) fn(v)
+    if (before !== this.speaking) for (const fn of this.speakingSubs) fn(this.speaking)
+  }
+
+  private setBatchPlaying(v: boolean): void {
+    if (this.batchPlaying === v) return
+    const before = this.speaking
+    this.batchPlaying = v
+    setAudioPlaybackFact(this.batchOwner, v)
+    if (before !== this.speaking) for (const fn of this.speakingSubs) fn(this.speaking)
   }
 
   private cfg(emotion: string): TtsConfig {
@@ -419,6 +434,9 @@ export class SpeechController implements SpeechSink {
     }
     this.extra?.player?.stop()
     this.extra = null
+    this.batchActive = false
+    this.setBatchPlaying(false)
+    setAudioPlaybackFact(this.batchOwner, false, 'live')
     // 旧语义原样保留：停掉一个活着的轮也算这轮收尾（没出过声 ⇒ onSilent；免唤醒靠这两条收 THINKING）
     if (hadTurn) this.finishTurn(false)
     else {
@@ -443,9 +461,10 @@ export class SpeechController implements SpeechSink {
 
   /** 批处理播一段（主动消息 / 会话对不上时的兜底共用） */
   async speakBatch(text: string): Promise<boolean> {
-    if (!this.foreground) return false
+    if (!this.foreground || this.batchActive) return false
+    this.batchActive = true
     const epoch = this.stopEpoch
-    setAudioPlaybackFact(this, true, 'live') // 合成等待也必须有停止出口。
+    setAudioPlaybackFact(this.batchOwner, true, 'live') // 合成等待也必须有停止出口。
     // 批处理这条腿不走 `delta()`，整句一次给 ⇒ 参照文本要在这里补一次，
     // 否则「流式不可用 → 回落批处理」的那些轮回声防线又是空转的（同 onSpeechText 头注）
     this.onSpeechText?.(text)
@@ -454,18 +473,21 @@ export class SpeechController implements SpeechSink {
       if (!this.foreground || epoch !== this.stopEpoch || !out) return false
       const { player, done } = playPcm(out.pcm, out.sampleRate)
       this.extra = { player }
-      setAudioPlaybackFact(this, true, 'live')
-      this.setSpeaking(true)
+      this.setBatchPlaying(true)
       await done
       if (epoch !== this.stopEpoch) return false
-      this.setSpeaking(false)
-      setAudioPlaybackFact(this, false, 'live')
+      this.setBatchPlaying(false)
+      setAudioPlaybackFact(this.batchOwner, false, 'live')
       if (this.extra?.player === player) this.extra = null
       return true
     } catch {
       return false
     } finally {
-      if (epoch === this.stopEpoch && !this.queue.length && !this.extra) setAudioPlaybackFact(this, false, 'live')
+      if (epoch === this.stopEpoch) {
+        this.batchActive = false
+        if (!this.extra) setAudioPlaybackFact(this.batchOwner, false, 'live')
+        void this.flushDeferred()
+      }
     }
   }
 }

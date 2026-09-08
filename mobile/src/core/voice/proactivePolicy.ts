@@ -2,7 +2,7 @@
 // 主动消息播报仲裁（B4-12 / 方案 §6 播报收紧、§5.6、Q18）——纯函数。
 //
 // 判据是共享的 `@shared/proactiveSpeech.mjs::decideSpeech`（critical 抢话 / user_contract 排队 /
-// 其余只气泡；朗读判据 `text && card` 是验收更正过的口径）。**这里不发明第二套仲裁**，只做两件事：
+// 其余只气泡；朗读判据 `text && card` 是验收更正过的口径）。这里只适配事实与偏好：
 //  ① 把 mobile 的播报三档映射成它要的 `ttsEnabled` / `autoplay`——「自动」档主动消息**不**出声
 //     （§5.2 规则 8「自动 = 语音提问才播报」，主动消息不是你问的）；
 //  ② 之上叠**唯一**一条 mobile 规则：行车档 + `critical` ⇒ 不看三档（Q18：行车档只强制安全告警）。
@@ -28,14 +28,18 @@ export interface ProactiveCtx {
   /** S2S 交互进行中（免唤醒 FSM 在 LISTENING/THINKING/SPEAKING 且挡位 s2s）：
    *  主动 TTS 与模型音频是两个互不知情的播放器，同放 = 混音 */
   s2sBusy: boolean
+  /** 主链 TTS 或主动消息正在合成/播放，共用同一优先级仲裁。 */
+  ttsBusy?: boolean
 }
 
 export function proactiveSpeechDecision(msg: ProactiveMsg, ctx: ProactiveCtx): ProactiveDecision {
+  // 共享接口沿用 s2sBusy 这个名字；手机将其他音频的真实占用一起交给同一判据。
+  const busy = ctx.s2sBusy || ctx.ttsBusy === true
   // 唯一一条 mobile 规则（Q18）。`hasText` 是前提：没有文字就没东西可播，再紧急也只出气泡
-  if (ctx.driving && msg.priority === 'critical' && msg.hasText) return ctx.s2sBusy ? INTERRUPT : SPEAK
+  if (ctx.driving && msg.priority === 'critical' && msg.hasText) return busy ? INTERRUPT : SPEAK
   const d = decideSpeech(
     { priority: msg.priority, hasText: msg.hasText, hasCard: msg.hasCard },
-    { ttsEnabled: ctx.policy !== 'silent', autoplay: ctx.policy === 'always', s2sBusy: ctx.s2sBusy },
+    { ttsEnabled: ctx.policy !== 'silent', autoplay: ctx.policy === 'always', s2sBusy: busy },
   )
   return d === SPEAK || d === INTERRUPT || d === DEFER ? d : BUBBLE
 }
