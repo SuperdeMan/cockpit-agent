@@ -32,6 +32,11 @@ _GEOFENCE_RADIUS_M = 300      # 默认围栏半径（米）——够近，又不
 _TODO_RE = re.compile(r"记一下|记个|待办|备忘")
 _CMD_STRIP_RE = re.compile(
     r"^(麻烦|请|帮我|给我)?(再)?(提醒我|叫我|别忘了|记得|记一下|记个待办|记个|设个提醒|建个提醒|待办[:：]?)+")
+# 显式创建表单的包装只在句首且有分隔符时剥离，不吞掉“创建提醒功能的测试用例”等任务内容。
+_CREATE_WRAPPER_RE = re.compile(
+    r"^(?:(?:麻烦|请|帮我|给我)\s*)*(?:创建|新建|设置|添加)"
+    r"(?:一条|一个|条|个)?(?:定时)?提醒[，,：:\s]+")
+_TITLE_FIELD_RE = re.compile(r"^(?:提醒)?(?:内容|标题)(?:是|为|[:：])\s*")
 _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项场]?")   # 场：跨域「第N场」
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
@@ -679,7 +684,12 @@ class ReminderAgent(BaseAgent):
     @staticmethod
     def _extract_title(raw: str) -> str:
         t = strip_time_expressions(raw or "")
-        t = _CMD_STRIP_RE.sub("", t).strip()
+        wrapper = _CREATE_WRAPPER_RE.match(t)
+        if wrapper:
+            t = t[wrapper.end():]
+        t = _CMD_STRIP_RE.sub("", t).lstrip(" ，,：:\t")
+        if wrapper:
+            t = _TITLE_FIELD_RE.sub("", t)
         t = re.sub(r"^(我?要|去|该)", "", t)
         return t.strip(" ，。,、！!？?的哦啊呀吧")
 
@@ -706,6 +716,8 @@ class ReminderAgent(BaseAgent):
         **一个字都不动**——同 `slot_fidelity` 那条「认不出的一律让路，
         宁可不回填也不要回填错」。
         """
+        if _CREATE_WRAPPER_RE.match(slot_title):
+            slot_title = cls._extract_title(slot_title)
         fuller = cls._extract_title(raw)
         if not fuller or fuller == slot_title:
             return slot_title

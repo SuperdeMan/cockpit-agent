@@ -56,6 +56,32 @@ async def test_create_relative_time():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("slot_title", [
+    "", "AR04-0908-对话验收",
+    "创建一条定时提醒，提醒我，提醒内容是AR04-0908-对话验收",
+])
+async def test_create_explicit_title_excludes_request_wrapper(slot_title):
+    a = await _agent()
+    raw = "创建一条定时提醒，2分钟后提醒我，提醒内容是AR04-0908-对话验收。"
+    res = await run_handle(a, "reminder.create", raw_text=raw,
+                          slots={"title": slot_title, "time_text": "2分钟后"})
+    assert res.status == "ok"
+    times, _ = await a.store.list_split("u1")
+    assert len(times) == 1
+    assert times[0].title == "AR04-0908-对话验收"
+    assert times[0].fire_at == int(_NOW.timestamp()) + 120
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("设置一个提醒：明天八点提醒我带充电线", "带充电线"),
+    ("明天八点提醒我创建定时提醒功能的测试用例", "创建定时提醒功能的测试用例"),
+    ("明天八点提醒我写通知，内容是项目验收", "写通知，内容是项目验收"),
+])
+def test_title_wrapper_keeps_task_content(raw, expected):
+    assert ReminderAgent._extract_title(raw) == expected
+
+
+@pytest.mark.asyncio
 async def test_create_without_time_asks_and_saves_pending():
     a = await _agent()
     a._llm_time_fallback = AsyncMock(
