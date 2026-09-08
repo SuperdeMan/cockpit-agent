@@ -238,7 +238,7 @@ SHA-256：`117746efb1139e963d21a3bf40adc8322653c36faf78c90d278b4ad160201243`。
 [高德官方规避说明](https://lbs.amap.com/faq/android/navi-sdk/1000108216/1061016771)提供 App Manifest 的
 `android:allowNativeHeapPointerTagging="false"` 方案。[Android 官方说明](https://source.android.com/docs/security/test/tagged-pointers)
 明确它会关闭该 App 的指针标签检查，未修复底层库的问题，也不是面向未来 MTE 的长期解决方案。
-因此本轮**没有直接关闭检查**。已有可审查草案：在 `with-amap-key.js` 中仅对启用地图的 App 增加以下配置，保持 targetSdk 36；需用户决定是否采用临时兼容方案，或单独评估 SDK 升级。
+2026-09-08 用户对两项具体请求回复“授权”：采用 App 级临时兼容配置，并执行下述最多五条真实提醒。`with-amap-key.js` 仅对启用地图的 App 增加以下配置，保持 targetSdk 36；后续升级 SDK 时须重新验证并评估移除此项。
 
 ```javascript
 app.$ = app.$ || {}
@@ -247,7 +247,7 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 
 采用后必须经过 CNG 生成、重新构建/验 Manifest，再在同一候选上验证地图正常返回、快速返回、前后台及重复进出；不能只靠属性存在销账。
 
-**真实提醒未验。** 已向用户列明待授权范围：OPPO 当前 App 账号下最多 5 条一次性提醒，分别用于对话、设置、地图、后台、锁屏，每条约两分钟到期；只取消本轮尚未触发的残留，不删除记录、不操作其他提醒。授权到达后再创建，逐条核对服务端与客户端时点。
+**真实提醒已授权、尚未执行。** 范围是 OPPO 当前 App 账号下最多 5 条一次性提醒，分别用于对话、设置、地图、后台、锁屏，每条约两分钟到期；只取消本轮尚未触发的残留，不删除记录、不操作其他提醒。标题为 `AR04-0908-对话/设置/地图/后台/锁屏验收`（每条取对应场景），逐条核对服务端与客户端时点。
 
 **设备范围未补齐。** OPPO 的 `driving-landscape` 不可达性仍按 AR03 记录留给支持范围/对照机验证；没有操作 Xiaomi，也没有做物理折叠、系统 200% 字号、真实 S2S 发声或盲听。AR02/AR03 的旧剩余格仍归原批次。
 

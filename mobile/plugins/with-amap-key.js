@@ -21,6 +21,11 @@ module.exports = function withAmapKey(config, { apiKey } = {}) {
   return withAndroidManifest(config, (c) => {
     const app = c.modResults.manifest.application?.[0]
     if (!app) throw new Error('with-amap-key: AndroidManifest 里没有 <application>')
+    // AR04：AMap 3dmap 9.6.0 在 Android 14 释放地图时截断 heap pointer tag。
+    // 2026-09-08 用户授权的 App 级临时兼容项，保持 targetSdk 36；仅启用地图时写入。
+    // 关闭检查不修复 SDK 本身；升级库时必须重新验证并评估移除此项（实施记录 §10）。
+    app.$ = app.$ || {}
+    app.$['android:allowNativeHeapPointerTagging'] = 'false'
     app['meta-data'] = (app['meta-data'] || []).filter(
       (m) => m?.$?.['android:name'] !== META_NAME,
     )
