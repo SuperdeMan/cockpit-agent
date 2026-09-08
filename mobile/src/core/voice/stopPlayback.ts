@@ -21,3 +21,13 @@ export function stopPlayback(deps: StopPlaybackDeps): void {
   deps.handsFree.stopSpeaking()
   deps.speech.stop()
 }
+
+/** 停播键此刻该不该给（AR03 / 评审 R06「播放器缓冲阶段」）。
+ *
+ *  `busy`（pending/streaming/processActive）只说「云端这一轮还没落地」，那时该给的是「打断」。
+ *  真的在出声当然要给停播。剩下的那一格才是坑：**全文一次 `final` 到达之后、首片音频起播之前**
+ *  ——三个忙态同帧清零、声音又还没出来，只看这两个量的话屏上一个停播入口都没有，而播放器
+ *  已经在合成、马上就要出声。`live` 补的正是这一格。 */
+export function canStopPlayback(i: { playing: boolean; live: boolean; busy: boolean }): boolean {
+  return i.playing || (i.live && !i.busy)
+}

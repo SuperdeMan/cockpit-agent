@@ -32,8 +32,9 @@ export interface ComposerProps {
   quickCommands: string[]
   /** 有在飞轮（pending/streaming/process 任一）→ 显示打断 */
   busy: boolean
-  /** 真的有声音在放（判据 playbackFacts，AR03）：**压过 busy**，见下面合一键三态那段注释 */
-  playing?: boolean
+  /** 此刻该给停播键吗（判据 `core/voice/stopPlayback.ts::canStopPlayback`，AR03）：
+   *  真的在出声、或者本轮已经没有在飞请求而播放器还压着待放的音频。**压过 busy**，见下面三态那段 */
+  stoppable?: boolean
   /** 语音输入把手；null=服务器未配置（没有 audioUrl 就没有语音） */
   ptt: PttHandle | null
   /** 光球主态由调用方给（v2=snapshot.primary，v1=ChatScreen 里的旧推导）——
@@ -66,7 +67,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, playing = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
+export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
   const [input, setInput] = useState('')
   // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
   // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
@@ -135,9 +136,9 @@ export function Composer({ p, quickCommands, busy, playing = false, ptt, orbStat
   const a11yLabel = recording ? '小舟，结束并发送' : `${ORB_A11Y[orbState]}，开始说话`
   // 合一键三态（AR03 / 评审 R06）。原来只有「busy ? 打断 : 发送」两态，而 `busy` 不含音频：
   // 整段答案一次 final 返回时三个忙态同帧清零，键当场变回「发送」——播了几分钟也没有一步可达的停播入口。
-  // **audio-first**：声音已经在放的时候，用户按这枚键的意图压倒性是「别说了」；那一刻取消在飞请求
-  // 换不来任何东西（答案已在交付）。取消在飞请求退到 `busy && !playing` 与 Dock 的长任务行。
-  const keyMode: 'stop-playback' | 'interrupt' | 'send' = playing ? 'stop-playback' : busy ? 'interrupt' : 'send'
+  // **audio-first**：声音已经在放（或马上要出声）的时候，用户按这枚键的意图压倒性是「别说了」；
+  // 那一刻取消在飞请求换不来任何东西（答案已在交付）。取消在飞请求退到「忙而无音频」与 Dock 的长任务行。
+  const keyMode: 'stop-playback' | 'interrupt' | 'send' = stoppable ? 'stop-playback' : busy ? 'interrupt' : 'send'
   const keyActive = keyMode !== 'send'
 
   return (

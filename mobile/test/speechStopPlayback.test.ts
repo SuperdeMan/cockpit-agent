@@ -102,3 +102,31 @@ test('自然收尾：攒着的主动消息照常补播（停播不是把它丢�
   for (let i = 0; i < 6; i += 1) await Promise.resolve()
   expect(batch()).toHaveBeenCalledWith(expect.anything(), '到点了，该出发去机场了')
 })
+
+test('R06 缓冲段：final 已到、首片还没起播时 live 仍为真（此刻 busy 已落，停播键靠它）', () => {
+  const sc = new SpeechController(url)
+  sc.begin('b1', '', true)
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: true })
+  sc.finish('b1', '一段很长的答案。') // 云端这一轮结束；一个字节音频都还没出来
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: true })
+  sc.stop()
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+})
+
+test('不播报的轮不留 live（三档裁下来就没开会话，停播键不该亮）', () => {
+  settingsStore.getState().update({ speakPolicy: 'silent' })
+  const sc = new SpeechController(url)
+  sc.begin('b1', '', true)
+  expect(getAudioPlaybackSnapshot().live).toBe(false)
+})
+
+test('自然收尾之后 live 落（宽限到点，队列真的空了）', () => {
+  const sc = new SpeechController(url)
+  sc.begin('b1', '', true)
+  mockSessions[0].firstAudio()
+  sc.finish('b1', '好的。')
+  mockSessions[0].end()
+  expect(getAudioPlaybackSnapshot().live).toBe(true) // 宽限内还可能接段
+  jest.advanceTimersByTime(SEGMENT_GRACE_MS + 50)
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+})

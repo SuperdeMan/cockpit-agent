@@ -544,6 +544,8 @@ export class HandsFreeController {
   private playbackReporting(player: PcmPlayerLike | null): PcmPlayerLike | null {
     // 无音频上下文时 S2SClient 的约定是「工厂给 null ⇒ 静默降级」；包装不许把它变成一个会抛的壳
     if (!player) return null
+    // 建好播放器就算「这一路还可能出声」（S2S 的 audio_meta 先到、首片随后）
+    setAudioPlaybackFact(player, true, 'live')
     return {
       get started() { return player.started },
       get nextStart() { return player.nextStart },
@@ -558,6 +560,7 @@ export class HandsFreeController {
       remainingSec: () => player.remainingSec(),
       stop() {
         setAudioPlaybackFact(player, false)
+        setAudioPlaybackFact(player, false, 'live')
         player.stop()
       },
     }

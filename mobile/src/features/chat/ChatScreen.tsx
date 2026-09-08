@@ -7,7 +7,7 @@
 import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, useFocusEffect, useLocalSearchParams } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { BackHandler, KeyboardAvoidingView, Pressable, Text, useWindowDimensions, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
@@ -38,7 +38,8 @@ import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { speechController } from '../../core/voice/speech'
-import { stopPlayback } from '../../core/voice/stopPlayback'
+import { canStopPlayback, stopPlayback } from '../../core/voice/stopPlayback'
+import { getAudioPlaybackSnapshot, subscribeAudioPlayback } from '../../core/voice/playbackFacts'
 import { captureVisionFrame, needsVisionFrame, visionCapabilitySignal } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
@@ -406,9 +407,10 @@ function ChatBody({
 
   const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
   // 真实音频生命周期（AR03 / 评审 R06）：`busy` 只是「云端这一轮还没落地」，而 `final` 一到
-  // 三个忙态同帧清零——那一刻 TTS 常常刚起播。停止键必须跟着**声音**，不是跟着轮态。
-  // 事实源是 playbackFacts（主链 TTS + 批处理兜底 + S2S 自答三路），`agent==='speaking'` ⟺ 真的在出声。
-  const playing = snapshot.agent === 'speaking'
+  // 三个忙态同帧清零——那一刻 TTS 常常刚起播、甚至还在合成。停止键必须跟着**声音**，不是跟着轮态。
+  // 事实源是 playbackFacts（主链 TTS + 批处理兜底 + S2S 自答三路）；判据在 stopPlayback.ts，这里只取事实。
+  const playback = useSyncExternalStore(subscribeAudioPlayback, getAudioPlaybackSnapshot)
+  const stoppable = canStopPlayback({ playing: playback.playing, live: playback.live, busy })
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
   const lastConsentId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -514,7 +516,7 @@ function ChatBody({
       driving={snapshot.driving}
       split={splitLandscape}
       blurTarget={blurTarget}
-      playing={playing}
+      stoppable={stoppable}
       onStopPlayback={onStopPlayback}
       onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
       onOrbTap={splitLandscape ? onOrbTap : undefined}
@@ -674,7 +676,7 @@ function ChatBody({
         p={p}
         quickCommands={settings.quickCommands}
         busy={busy}
-        playing={playing}
+        stoppable={stoppable}
         ptt={cfg.audioUrl ? ptt : null}
         orbState={v2 ? snapshot.primary : legacyOrb}
         orbDim={v2 && snapshot.dim}

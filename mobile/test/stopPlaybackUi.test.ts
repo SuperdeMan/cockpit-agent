@@ -15,6 +15,7 @@ import { Modal, ScrollView } from 'react-native'
 import { Composer } from '@/features/chat/Composer'
 import { VoiceSheet } from '@/features/chat/VoiceSheet'
 import { derivePresence, type PresenceInput, type PresenceSnapshot } from '@/core/presence/presence'
+import { canStopPlayback } from '@/core/voice/stopPlayback'
 import { paletteOf } from '@/ui/theme'
 
 // RN 的 lazy getters 首次加载会触发 Jest 转译；放在 collect 阶段，避免把冷加载计入交互用例的限时。
@@ -47,7 +48,7 @@ async function mount(el: React.ReactElement) {
 
 function composer(over: Record<string, unknown>) {
   return createElement(Composer, {
-    p, quickCommands: [], busy: false, playing: false, ptt: null, orbState: 'idle',
+    p, quickCommands: [], busy: false, stoppable: false, ptt: null, orbState: 'idle',
     fontScale: 'normal', onSend: jest.fn(), onInterrupt: jest.fn(), onStopPlayback: jest.fn(), onTap: jest.fn(),
     ...over,
   } as never)
@@ -76,7 +77,7 @@ test('在飞轮未出声：合一键是「打断」，按下走取消在飞请�
 test('R06：final 已到、音频还在放（busy=false, playing=true）⇒ 键是「停止播报」而不是「发送」', async () => {
   const onStopPlayback = jest.fn()
   const onSend = jest.fn()
-  const view = await mount(composer({ busy: false, playing: true, onStopPlayback, onSend }))
+  const view = await mount(composer({ busy: false, stoppable: true, onStopPlayback, onSend }))
   try {
     const key = find(view, 'composer-send')!
     expect(key.props.accessibilityLabel).toBe('停止播报')
@@ -90,7 +91,7 @@ test('R06：final 已到、音频还在放（busy=false, playing=true）⇒ 键�
 test('边流边播（busy ∧ playing）：audio-first——键给停播，不顺手把在飞请求也取消掉', async () => {
   const onInterrupt = jest.fn()
   const onStopPlayback = jest.fn()
-  const view = await mount(composer({ busy: true, playing: true, onInterrupt, onStopPlayback }))
+  const view = await mount(composer({ busy: true, stoppable: true, onInterrupt, onStopPlayback }))
   try {
     const key = find(view, 'composer-send')!
     expect(key.props.accessibilityLabel).toBe('停止播报')
@@ -105,7 +106,7 @@ test('C 身份行车档（没有输入框）：闲时仍不可点，出声时可
   try {
     expect(find(view, 'composer-send')!.props.disabled).toBe(true)
   } finally { await act(async () => { view.unmount() }) }
-  const playingView = await mount(composer({ inputMode: 'hidden', playing: true }))
+  const playingView = await mount(composer({ inputMode: 'hidden', stoppable: true }))
   try {
     expect(find(playingView, 'composer-send')!.props.disabled).toBe(false)
   } finally { await act(async () => { playingView.unmount() }) }
@@ -121,7 +122,7 @@ function sheet(over: Record<string, unknown>) {
     containerHeight: 600, draftUserId: null, interruptedIds: [], visionIds: [], s2sNotice: false,
     candidates: { groups: [], lastGroupId: '' },
     motion: { orb: 'normal', loops: false }, driving: false, split: false, blurTarget: null,
-    playing: true, onStopPlayback: jest.fn(), onCollapse: jest.fn(), onSend: jest.fn(),
+    stoppable: true, onStopPlayback: jest.fn(), onCollapse: jest.fn(), onSend: jest.fn(),
     ...over,
   } as never)
 }
@@ -142,7 +143,7 @@ test('层内停止键：出声时在场，按下只走停播', async () => {
 
 test('没在出声时层内不留一枚常驻停止键（B5-12 撤底栏那条纪律不回退）', async () => {
   const view = await mount(sheet({
-    playing: false,
+    stoppable: false,
     snapshot: snap({ voice: { turnSource: 'ptt', override: 'open', answer: true, card: false } }),
   }))
   try {
@@ -165,4 +166,29 @@ test('R09 横屏：层覆盖整列时，层内停止键仍是一步可达的停�
     await act(async () => { stop.props.onPress() })
     expect(onStopPlayback).toHaveBeenCalledTimes(1)
   } finally { await act(async () => { view.unmount() }) }
+})
+
+// ── 停播键的可用面（判据 core/voice/stopPlayback.ts::canStopPlayback）──
+//
+// R06 点名的五个场景里，「播放器缓冲阶段」是唯一一个两个显而易见的量都不成立的：
+// 全文一次 final 到达之后三个忙态同帧清零、首片音频还没出来。只看 playing 的话，
+// 这段时间屏上一个停播入口都没有，而播放器已经在合成、马上就要出声。
+test('可用面：真的在出声 ⇒ 给', () => {
+  expect(canStopPlayback({ playing: true, live: true, busy: false })).toBe(true)
+})
+
+test('可用面：R06 缓冲段（final 已到、首片未起播）⇒ 给', () => {
+  expect(canStopPlayback({ playing: false, live: true, busy: false })).toBe(true)
+})
+
+test('可用面：在飞轮还没落地且没有音频 ⇒ 不给（那一格该给「打断」）', () => {
+  expect(canStopPlayback({ playing: false, live: true, busy: true })).toBe(false)
+})
+
+test('可用面：边流边播 ⇒ 给（audio-first 压过 busy）', () => {
+  expect(canStopPlayback({ playing: true, live: true, busy: true })).toBe(true)
+})
+
+test('可用面：闲态没有任何播放通道 ⇒ 不给', () => {
+  expect(canStopPlayback({ playing: false, live: false, busy: false })).toBe(false)
 })

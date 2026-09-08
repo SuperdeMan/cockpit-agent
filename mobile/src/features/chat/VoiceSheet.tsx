@@ -57,8 +57,8 @@ export interface VoiceSheetProps {
    *  null ⇒ 回落 G1-tint（减少透明度 / 行车档 / ref 还没挂上）。判据全在 ChatScreen，本组件只消费 */
   blurTarget: RefObject<View | null> | null
   /** 从顶缘把手带下拖 / 轻点把手带 / 点暗区 / 返回键（B5-12 之后底栏没有了） */
-  /** 真的有声音在放（判据 playbackFacts，AR03）：层内停止键**只在这时挂载** */
-  playing?: boolean
+  /** 此刻该给停播键吗（判据 `core/voice/stopPlayback.ts::canStopPlayback`，AR03）：层内停止键**只在这时挂载** */
+  stoppable?: boolean
   /** 只停播（AR03 / 评审 R06）：停当前出声，不取消在飞请求、不开麦 */
   onStopPlayback?(): void
   onCollapse(): void
@@ -218,7 +218,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
                 「先收层再停」，正是 R09 那条。绝对定位在把手带那一行右侧：那行 `minHeight` 已经是
                 目标高，**不改行高 ⇒ `ui/layout/sheetHeight.ts` 的 chrome 与三个真机容器读数一个不动**。
                 与 B5-12「撤掉底栏收起/打断两枚常驻键」不冲突——撤的是常驻键，这是条件出现的单一停播键。 */}
-            {props.playing && props.onStopPlayback ? (
+            {props.stoppable && props.onStopPlayback ? (
               <Pressable
                 testID="voice-sheet-stop"
                 accessibilityRole="button"

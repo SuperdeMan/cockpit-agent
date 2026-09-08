@@ -288,6 +288,8 @@ export class SpeechController implements SpeechSink {
       },
     })
     rec.session = session
+    // AR03：这一路「还可能出声」从建会话起算——停播键的可用面读它（首片未起播的缓冲段也要能停）
+    setAudioPlaybackFact(this, true, 'live')
     this.turnSessions.push(rec)
     if (gate) session.gateUntil(gate)
     this.queue.push(session)
@@ -331,6 +333,7 @@ export class SpeechController implements SpeechSink {
     if (this.turnSessions.length) this.emitTurnReport()
     const sounded = this.turnSounded
     this.setSpeaking(false)
+    setAudioPlaybackFact(this, false, 'live')
     if (!sounded) {
       const s = settingsStore.getState().settings
       this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`)
@@ -398,7 +401,10 @@ export class SpeechController implements SpeechSink {
     this.extra = null
     // 旧语义原样保留：停掉一个活着的轮也算这轮收尾（没出过声 ⇒ onSilent；免唤醒靠这两条收 THINKING）
     if (hadTurn) this.finishTurn(false)
-    else this.setSpeaking(false)
+    else {
+      this.setSpeaking(false)
+      setAudioPlaybackFact(this, false, 'live')
+    }
   }
 
   /** 设置页试听：走**流式**这条真实路径。
@@ -423,9 +429,11 @@ export class SpeechController implements SpeechSink {
       if (!out) return false
       const { player, done } = playPcm(out.pcm, out.sampleRate)
       this.extra = { player }
+      setAudioPlaybackFact(this, true, 'live')
       this.setSpeaking(true)
       await done
       this.setSpeaking(false)
+      setAudioPlaybackFact(this, false, 'live')
       if (this.extra?.player === player) this.extra = null
       return true
     } catch {

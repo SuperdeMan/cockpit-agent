@@ -15,7 +15,10 @@ const own = () => {
 }
 
 afterEach(() => {
-  for (const o of owners) setAudioPlaybackFact(o, false)
+  for (const o of owners) {
+    setAudioPlaybackFact(o, false)
+    setAudioPlaybackFact(o, false, 'live')
+  }
   owners.length = 0
 })
 
@@ -59,5 +62,25 @@ test('重复置同值是空操作：不发订阅通知、不记计数', () => {
 test('从未置真的 owner 置假不记 stop 计数（迟到回调不许伪造一次收尾）', () => {
   const before = { ...getAudioPlaybackCounters() }
   setAudioPlaybackFact(own(), false)
+  expect(getAudioPlaybackCounters()).toEqual(before)
+})
+
+test('两个轴互不干扰：live 先起、playing 后起，收尾各自落', () => {
+  const a = own()
+  setAudioPlaybackFact(a, true, 'live')
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: true }) // 建好了但还没出声
+  setAudioPlaybackFact(a, true)
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: true, live: true })
+  setAudioPlaybackFact(a, false)
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: true })
+  setAudioPlaybackFact(a, false, 'live')
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+})
+
+test('起停计数只记 playing 轴（live 是「可能出声」，不是一次播报）', () => {
+  const before = { ...getAudioPlaybackCounters() }
+  const a = own()
+  setAudioPlaybackFact(a, true, 'live')
+  setAudioPlaybackFact(a, false, 'live')
   expect(getAudioPlaybackCounters()).toEqual(before)
 })
