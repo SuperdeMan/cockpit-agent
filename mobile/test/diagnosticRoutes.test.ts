@@ -50,7 +50,7 @@ jest.mock('@/ui/layout/useFoldState', () => ({ useFoldState: () => null }))
 jest.mock('@/ui/layout/useLayout', () => ({ useLayout: () => ({ mode: 'single', widthClass: 'compact', heightClass: 'medium' }) }))
 jest.mock('../modules/foldstate', () => ({ __esModule: true, default: null, FOLD_NATIVE_AVAILABLE: false }))
 jest.mock('react-native-audio-api', () => ({
-  AudioManager: { requestRecordingPermissions: jest.fn(async () => 'Granted') },
+  AudioManager: { checkRecordingPermissions: jest.fn(async () => 'Undetermined'), requestRecordingPermissions: jest.fn(async () => 'Granted') },
   AudioRecorder: jest.fn(),
 }))
 

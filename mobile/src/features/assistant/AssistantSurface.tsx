@@ -28,7 +28,7 @@ export function CrossPageVoiceLayer({ children }: { children: React.ReactNode })
       interruptedIds={runtime.state.interruptedIds} visionIds={runtime.state.visionIds}
       s2sNotice={runtime.snapshot.privacy.mic === 'cloudAudio' || runtime.snapshot.turnSource === 's2s'}
       candidates={runtime.core.candidates} motion={{ orb: orbTempo(runtime.snapshot, runtime.motionEnv), loops: loopsAnimated(runtime.motionEnv) }}
-      driving={runtime.snapshot.driving} split={runtime.layout.mode === 'driving-landscape'} blurTarget={null}
+      driving={runtime.snapshot.driving} split={runtime.layout.mode === 'driving-landscape'} blurTarget={null} solid
       stoppable={runtime.stoppable} onStopPlayback={runtime.onStopPlayback} onOrbTap={runtime.onOrbTap}
       onCollapse={() => runtime.setSheetOverride({ turnId: runtime.latestTurnId, mode: 'dismissed' })} onSend={runtime.onSend} /> : null}
   </View>
@@ -59,7 +59,7 @@ export function AssistantSurface() {
       <Pressable testID="assistant-capture-status" accessibilityRole="button" onPress={() => runtime.setPrivacyOpen(true)}
         style={{ minHeight: target, justifyContent: 'center' }}>
         <Text style={{ color: captureText ? p.amber : p.fg2, fontSize: p.font(12) }}>
-          {captureText || snapshot.capsule?.text || `${settings.assistantName}在这里 · 麦克风关闭`}
+          {captureText || `${settings.assistantName}在这里 · 麦克风关闭`}
         </Text>
       </Pressable>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>

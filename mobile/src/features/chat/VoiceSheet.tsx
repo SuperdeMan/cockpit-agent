@@ -56,6 +56,8 @@ export interface VoiceSheetProps {
   /** 被糊的背景（B4-8 / §5.11）：非 null ⇒ 真模糊路径（BlurView + 更薄的 tint）；
    *  null ⇒ 回落 G1-tint（减少透明度 / 行车档 / ref 还没挂上）。判据全在 ChatScreen，本组件只消费 */
   blurTarget: RefObject<View | null> | null
+  /** 跨页时底层可能是地图或设置文字，用实色底保证回答可读。 */
+  solid?: boolean
   /** 从顶缘把手带下拖 / 轻点把手带 / 点暗区 / 返回键（B5-12 之后底栏没有了） */
   /** 此刻该给停播键吗（判据 `core/voice/stopPlayback.ts::canStopPlayback`，AR03）：层内停止键**只在这时挂载** */
   stoppable?: boolean
@@ -170,7 +172,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
         >
           {/* 壳底（§5.11 G1 frosted）：真模糊在场 = BlurView + 更薄的 tint；否则 = B2 附加①的 tint（.58）。
               同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」）——顶栏与舞台压在静态深空底上，糊了没收益 */}
-          {props.blurTarget ? (
+          {props.blurTarget && !props.solid ? (
             <>
               <BlurView
                 pointerEvents="none"
@@ -190,7 +192,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
             <View
               pointerEvents="none"
               testID="voice-sheet-shell"
-              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tint) }}
+              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: props.solid ? p.bg : shellTint(p.bg, GLASS.frosted.tint) }}
             />
           )}
           {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}

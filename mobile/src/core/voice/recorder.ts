@@ -80,8 +80,12 @@ class AudioApiRecorder implements Recorder {
 
   private async startNative(onFrame: FrameSink, epoch: number): Promise<void> {
     const { AudioManager, AudioRecorder } = require('react-native-audio-api')
-    // 权限未授时按下先走申请（计划 M2-2）；已授时这一步是本地查询，不弹窗
-    const status = await AudioManager.requestRecordingPermissions()
+    // requestRecordingPermissions 在 Android 上即使已授权也启动权限 Activity。
+    // AR04 的前后台闸会因此撤回这次启动，免唤醒恢复时又申请，形成循环。
+    // 先读 OS 的权限事实；真正需要申请时仍沿原来的代际取消边界。
+    const current = await AudioManager.checkRecordingPermissions()
+    if (epoch !== this.epoch || !this.wanted) return
+    const status = current === 'Granted' ? current : await AudioManager.requestRecordingPermissions()
     if (epoch !== this.epoch || !this.wanted) return
     if (status !== 'Granted') throw new PermissionDeniedError()
 

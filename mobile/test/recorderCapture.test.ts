@@ -9,11 +9,12 @@ function deferred<T>() {
 }
 const drain = async () => { for (let i = 0; i < 20; i++) await Promise.resolve() }
 const mockPermissions = jest.fn()
+const mockCheckPermissions = jest.fn()
 const mockStart = jest.fn()
 const mockStop = jest.fn()
 const mockNatives: Array<{ ready: ((e: unknown) => void) | null }> = []
 jest.mock('react-native-audio-api', () => ({
-  AudioManager: { requestRecordingPermissions: () => mockPermissions() },
+  AudioManager: { checkRecordingPermissions: () => mockCheckPermissions(), requestRecordingPermissions: () => mockPermissions() },
   AudioRecorder: class {
     ready: ((e: unknown) => void) | null = null
     constructor() { mockNatives.push(this) }
@@ -35,10 +36,34 @@ beforeEach(() => {
   setRecorderForTest(null)
   mockNatives.length = 0
   mockPermissions.mockReset().mockResolvedValue('Granted')
+  mockCheckPermissions.mockReset().mockResolvedValue('Undetermined')
   mockStart.mockReset().mockResolvedValue({ status: 'success' })
   mockStop.mockReset().mockResolvedValue({ status: 'success' })
 })
 afterEach(async () => { await recorder().stop(); setRecorderForTest(null) })
+
+test('AR04 已授权时只查询权限，不重新启动会令 Activity 暂停的权限申请', async () => {
+  mockCheckPermissions.mockResolvedValue('Granted')
+  const lease = micLease()
+  await lease.start(() => {})
+  expect(mockCheckPermissions).toHaveBeenCalledTimes(1)
+  expect(mockPermissions).not.toHaveBeenCalled()
+  expect(mockStart).toHaveBeenCalledTimes(1)
+  await lease.stop()
+})
+
+test('AR04 权限查询在途被撤回，迟到的未授权结果不能再弹申请或开麦', async () => {
+  const permission = deferred<string>()
+  mockCheckPermissions.mockReturnValue(permission.promise)
+  const lease = micLease()
+  const starting = lease.start(() => {})
+  await drain()
+  const stopping = lease.stop()
+  permission.resolve('Undetermined')
+  await Promise.all([starting, stopping])
+  expect(mockPermissions).not.toHaveBeenCalled()
+  expect(mockStart).not.toHaveBeenCalled()
+})
 
 test('最后一路在权限弹窗期间关闭：迟到授权不创建原生录音；随后三轮能正常开关', async () => {
   const before = getAudioCaptureCounters()

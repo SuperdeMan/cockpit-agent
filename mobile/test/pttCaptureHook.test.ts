@@ -10,7 +10,7 @@ const mockPermissions = jest.fn()
 const mockNativeStart = jest.fn()
 const mockNativeStop = jest.fn()
 jest.mock('react-native-audio-api', () => ({
-  AudioManager: { requestRecordingPermissions: () => mockPermissions() },
+  AudioManager: { checkRecordingPermissions: async () => 'Undetermined', requestRecordingPermissions: () => mockPermissions() },
   AudioRecorder: class {
     onAudioReady() {}
     onError() {}
