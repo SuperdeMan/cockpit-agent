@@ -33,6 +33,11 @@
 ### 1.3 Phase 0 已就绪（前提资产）
 proto 契约、Agent SDK、Registry/LLM-Gateway/Planner/Memory/Gateway/Edge 骨架、10 个 Agent（4 core + 6 eco，mock 能力）、docker-compose、smoke/e2e 框架。
 
+> （2026-09-08 校准）Android 陪伴端 `mobile/` 于 2026-08-23 立项，是 Phase 1 期间在上述
+> 10 个工作流之外增加的第二个用户端（同一后端大脑，`hmi/` 零改动）；其范围、分阶段与验收见
+> `docs/design/2026-08-23-hmi-android-app-plan.md`，架构约束见架构文档 §2.4。它不改变本计划的
+> 退出标准；App 自身的生产化（推送 / 正式鉴权 / 正式签名与 OTA）单列为该计划的 M5，未启动。
+
 ---
 
 ## 2. 工作流分解（WS）

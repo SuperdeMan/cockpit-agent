@@ -41,7 +41,9 @@ python -m pytest -q                             # 串行对照档（~25min，排
 | Agent SDK | `test/sdk/` | 跨 Agent 协作、周期重注册（registry 重启后自愈补注册）|
 | ASR E2E | `test/test_asr_e2e.py` (4) | wav/webm/空音频/voices（需 API key，无 key 跳过） |
 
-## 3. HMI 单测与构建
+## 3. 客户端单测：HMI 与 Android 陪伴端
+
+### 3.1 HMI 单测与构建
 
 ```bash
 cd hmi
@@ -51,6 +53,35 @@ npm run build
 
 `npm test` 覆盖语音回路、流式 TTS、卡片交互、设置与协议护栏；测试与 Vite 构建是否通过，
 以本次命令输出为准，不在运行手册维护易腐计数。
+
+### 3.2 Android 陪伴端（`mobile/`）类型检查、单测与 Maestro e2e
+
+```bash
+cd mobile
+npm run typecheck      # tsc --noEmit strict，含 @shared 引用
+npm test               # jest（jest-expo）：共享白名单守卫 + 会话/语音/在场/卡片契约单测
+```
+
+- **共享白名单守卫**（`mobile/test/sharedAllowlist.test.ts`）是这一层最重要的一条：mobile 只许引
+  `hmi/src` 台账内的纯逻辑模块（台账 `mobile/shared-allowlist.json`），引台账外模块、引未到阶段
+  模块、共享模块长出 DOM 依赖，三种漂移即红。共享模块的行为改动要在 hmi 侧改并两端都跑绿。
+- 单测里有一批「变异反向验证」用例（见各 AR 实施记录）：临时注入目标缺陷证明用例真的会红，
+  再恢复实现；新增判据类纯函数（`presence` / `playbackFacts` / `captureFacts` / `drivingMode`…）
+  照此补用例。
+- **Maestro e2e**（`mobile/e2e/`，9 条 flow，tag 分 `offline` / `online` / `manual`）：
+
+  ```bash
+  maestro test --no-reinstall-driver --include-tags offline mobile/e2e/   # 零后端依赖，CI 的 mobile-apk.yml 跑这档
+  maestro test --no-reinstall-driver --include-tags online  mobile/e2e/   # 需 target=cloud + 真机在 tailnet
+  ```
+
+  运行前提（Metro / `adb reverse` / dev-client 深链 / `uxV2Dock` 前提互斥的两条流）、判据取舍与
+  实跑坑账**只写在** [`mobile/e2e/README.md`](../mobile/e2e/README.md)，这里不复制第二份。
+- 真机取证（prod 常驻包、两台真机角色、设备边界）看 [`mobile/README.md`](../mobile/README.md)
+  与 [Android 操作指南](../docs/guides/android-build-and-device-validation.md)；设备读数必须标机型并
+  绑定设置页底行的构建身份，一台机器的读数不代表另一台。
+- CI（`.github/workflows/ci.yml` 的 `mobile` job）每 push 跑 tsc + jest；APK 与离线 e2e 走手动档
+  `mobile-apk.yml`。计数以本次命令输出为准，不在运行手册维护。
 
 ## 4. Dashboard 单测与构建
 

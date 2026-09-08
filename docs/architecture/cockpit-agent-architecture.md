@@ -57,6 +57,7 @@ flowchart TB
         Voice["语音: 唤醒/ASR/TTS"]
         Touch["触控 HMI (React)"]
         Sensor["多模态感知: 摄像头/车内传感"]
+        App["Android 陪伴端 App (RN+Expo)<br/>手机 / 平板 / 折叠屏, 见 §2.4"]
     end
 
     subgraph EDGE["② 端侧 (车机 In-Vehicle, e.g. 高通8295)"]
@@ -95,6 +96,7 @@ flowchart TB
     end
 
     Voice & Touch & Sensor --> EdgeGW
+    App -->|"同一 WS/HTTP 契约, 同 user_id, 独立会话"| EdgeGW
     EdgeGW --> EdgeOrch --> FastIntent
     FastIntent -->|"快意图: 本地秒回"| EdgeAgents --> VAL --> ECU
     FastIntent -->|"慢意图: 上云"| CloudGW
@@ -111,6 +113,9 @@ flowchart TB
     Planner -.->|"车控指令下发 (校验后)"| CloudGW
     Bus -.广播.-> Planner & EdgeGW
 ```
+
+> （2026-09-08 校准）图中补入第二个用户端节点 `App`；两端一脑的三条架构约束见 §2.4，
+> 多端必须一致的最小契约面登记在 `docs/conventions.md` §9.33。此前图里只有车机屏一个用户端。
 
 ### 2.2 核心组件职责清单
 
@@ -160,6 +165,15 @@ llm-gateway HTTP·WS 接入同一个后端大脑。补记于此，免得接手�
 
 > 手机形态特有的两条产品约束：**不做后台保活**（PoC 承诺前台交互档，离线投递属
 > §10 挂账的厂商推送）；**常开麦是采集面**，必须用户在设置里显式打开、默认关。
+
+> （2026-09-08 校准）App 侧的交互模型与修复批次不在本文展开，入口：
+> [UX v2.2「以光球为锚的三层在场」](../design/2026-08-29-mobile-ux-v2-presence-redesign.md)
+> （在场派生态 + 语音层 + 承诺面 + 尺寸类 × 折叠姿态 × 行车档；确认策略只投影 VAL，
+> UI 不另设车速门禁）、[2026-09-07 完整评审](../reviews/2026-09-07-android-ux-full-review.md)
+> 与 [AR01–AR11 分批处理](../design/2026-09-07-android-review-remediation-batches.md)。
+> 上面第 2 条「判据只许一份」在 App 内部同样成立：采集事实（`captureFacts`）与播放事实
+> （`playbackFacts`）各自只有一份声明源，来自设备与真实播放器，而不是由轮态或 FSM 反推——
+> AR02 / AR03 修的正是「UI 的『已停止』未必阻止传输、派生的采集态未必等于真实麦克风状态」。
 
 ---
 

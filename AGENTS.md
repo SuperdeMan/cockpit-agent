@@ -10,7 +10,9 @@
 
 云边协同的智能座舱 multi-agent 系统。端侧快系统处理高频、安全敏感和离线能力；云侧
 Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + Manifest，经 Registry 发现；
-车控只经 VAL，LLM 只产意图/计划。
+车控只经 VAL，LLM 只产意图/计划。用户端有两个：座舱 HMI（`hmi/`）与 Android 陪伴端
+「小舟随行」（`mobile/`，React Native + Expo），同一后端大脑、同 `user_id` 共享记忆、各自
+独立会话，两端共享的是判据不是 UI（架构 §2.4、约定 §9.33）。
 
 当前阶段是 **Phase 1 工程化 PoC**。工程主干、云端中枢、真实 Provider、语音回路、记忆、
 可观测、旅程验证、M0a→M4、M5 数据飞轮与探索式 QA 的编号开发批均已落地。PoC 已可运行，

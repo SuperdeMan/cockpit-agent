@@ -181,14 +181,18 @@ powershell -File scripts\fetch_mobile_voice_assets.ps1       # 再拆成 mobile 
 NS/AGC，改变了送进 VAD/KWS 的音频，而唤醒阈值（0.2/2.0）是在旧路径上定的。
 换预设之后**必须重新量**（2026-08-29 已重量一次：仍能唤醒）。
 
-## e2e（Maestro，M3-5）
+## e2e（Maestro，M3-5 立、UX v2 扩到 9 条）
 
-**状态：4/4 全部跑通**（2026-08-28 真机，`4/4 Flows Passed in 7m 43s`）。
+9 条 flow，tag 三档：`offline`（04 离线冒烟、09 状态画廊；零后端依赖，CI 的 `mobile-apk.yml` 跑这档）/
+`online`（01 天气、02 气泡内确认、03 断网补达、06 承诺面确认、08 键盘不遮发送；需真栈）/
+`manual`（05 语音层 PTT、07 平板双栏；要人手或特定形态）。
 
 ```bash
-maestro test --no-reinstall-driver mobile/e2e/                       # 全部四条
-maestro test --no-reinstall-driver --include-tags online mobile/e2e/ # 只跑要真栈的三条
+maestro test --no-reinstall-driver --include-tags offline mobile/e2e/   # 零后端依赖
+maestro test --no-reinstall-driver --include-tags online  mobile/e2e/   # 需 target=cloud + 真机在 tailnet
 ```
+
+⚠ 02（气泡内确认，v1 路径）与 06（承诺面）的前提 `uxV2Dock` 互斥，一趟跑不可能都绿——回归清单必须带前提。
 
 ⚠ **`--no-reinstall-driver` 不是可选项**：Maestro 每个 session 都会重装它自己的 driver APK，
 而 MIUI 每次都弹安装确认（只给 5 秒、默认「拒绝」）。前置、判据取舍、以及实跑当场抓到的
@@ -204,41 +208,63 @@ HMI 的 UI 与应用装配不随 mobile 批次重构；共享模块修复遵循�
 ## 目录
 
 ```
-app.config.ts          原生配置真相源（名称/包名/变体/插件/高德 key 注入）
+app.config.ts          原生配置真相源（名称/包名/变体/插件/高德 key 注入/构建身份注入）
 shared-allowlist.json  共享模块台账（机器守；currentPhase 当前 M4）
 react-native.config.js RN 社区 autolinking 的显式补登（M4：onnxruntime-react-native）
+patches/               patch-package 补丁——改 node_modules 的唯一通道（react-native-audio-api 输入预设
+                       VoiceCommunication = 平台 AEC；expo-camera 视觉单帧内存路径，AR02）；生成时 --include 限定到真正改的文件
+plugins/               config plugins：with-native-voice（abiFilters/noCompress，必须排在 expo-build-properties 之后）
+                       / with-amap-key（有 key 才挂）/ with-shortcuts（长按图标「说话」「车况」）
+                       / with-unified-drive-root（Windows subst 构建的盘符根统一）
 modules/kws/           Expo 本地原生模块：sherpa-onnx KeywordSpotter 的极窄桥（M4-2）
                        android/libs + android/src/main/jniLibs + assets/kws 均 gitignore
-src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / map
-                       / debug / voice-spike（仅 dev 操作诊断）/ capture-status（只读采集事实）/ card-gallery（M3 卡片画廊，
-                       支持 ?only=<type> 直达某一族；后三个不进主导航，深链接进）
+modules/foldstate/     Expo 本地原生模块：折叠姿态事实**只透传**（B3）；tabletop/book 的派生在 src/ui/layout/foldPosture.ts
+src/app/               expo-router 屏：index=对话主屏 / settings / vehicle / onboarding / map / voice（深链落点：只升层不开麦）
+                       dev 取证屏（不进主导航，深链接进）：debug（下行 8 型帧落屏）/ card-gallery（?only=<type> 直达某族）
+                       / state-gallery（在场态画廊）/ presence-trail（在场轨迹 + 采集激活日志）/ capture-status（只读采集事实）
+                       / voice-spike（语音探针，仅 dev 变体可操作）/ native-spike（折叠姿态 + 四种触感）/ blur-spike（材质）
 src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts
                        + liveness.ts（前台探活：RN 的 WS 在飞行模式下 onclose 不来，
                        send 会把帧写进死 socket——判据取「HTTP 探不通」不取「应用层静默」）
 src/core/session/      M1 会话状态机：store.ts（8 型帧分发+看门狗+确认台账）/ sendRouter.ts
                        （候选拦截+位置闸）/ candidates.ts / wiring.ts（跨路由单例）
+                       UX v2 追加：turnView（「当前这一轮」判定）/ actionSummary（承诺卡与到期留痕的动作摘要）
+                       / receipt（执行回执，字段全部来自已有数据）/ followUps（follow-up chip = 合成一句话走普通 send）
+src/core/presence/     在场模型（UX v2.2）：presence.ts 纯函数 derivePresence()（六轴事实 + 唯一视觉主态）
+                       / commitment（Focus Dock 承诺项）/ drivingMode（行车档判据：Edge 标注 + 手动，不用车速再算一份）
+                       / orbPolicy（动效三档唯一判据）/ hapticCue、soundCue（触感与提示音的转移判据）
+                       / presenceTrail、activityLog（20 条内存环形日志，不上传不持久化）
 src/core/settings/     设置仓库（AsyncStorage 持久化；buildMeta 与 HMI settings.tsx 键集一致）
 src/core/location/     定位桥（expo-location 取坐标；meta 键共享纯函数拼、source='app'）
 src/core/obs/          trace_id（HMI 同构）+ 会话前缀 app-
 src/core/voice/        M2 语音面：recorder（16k 归一）/ resample / asr（流式+模型回退+批处理兜底）
-                       / tts（流式+收尾三分支）/ audioCtx（pcmPlayer 注入适配）/ speech
-                       （SpeechSink 实现）/ audioFocus（+ M4 有界事件日志，四场景取证出口）
-                       / catalog / wav / base64
+                       / tts（流式+收尾三分支）/ audioCtx（pcmPlayer 注入适配）/ queuePlayer（单个队列节点顺序吃片）
+                       / speech（SpeechSink 实现）/ audioFocus（+ M4 有界事件日志）/ cueTone / catalog / wav / base64
                        M4 追加：micBus（一路麦多路消费，免唤醒的地基）/ vad（ORT+silero，
                        端点判据共用 @shared/sileroEndpoint.mjs）/ kws（sherpa 原生桥的 JS 面）
-                       / handsFree（voiceLoop.mjs FSM 接 RN 引擎 + S2S）
+                       / handsFree（voiceLoop.mjs FSM 接 RN 引擎 + S2S）/ tapTalk（轻点即说，说完自动收尾）
+                       事实与命令（AR02/AR03）：captureFacts（采集事实：读设备与上行出口）/ playbackFacts（播放事实：
+                       读真实播放器起止）/ stopPlayback（「只停播」合成出口，顺序即判据）/ proactivePolicy（主动播报仲裁）
 src/core/vision/       M4-6 视觉单帧：触发判据共用 @shared/visionFrame.mjs::needsFrame
                        （采集面即隐私面，判据只许一份）；采集端在 features/vision/
-src/features/chat/     对话 UI：ChatScreen（双形态外壳）/ MessageBubble / Composer
+src/core/cards/        卡片判据：cardGroup（display_priority 取主卡）/ cardFields（兜底卡与行车压缩卡的字段探取）
 src/core/map/          地图能力判据：MAP_AVAILABLE（有 key ∧ 原生在场）+ 坐标校验（0,0 判空）
-src/features/cards/    CardRenderer（**全量 34 型** + 兜底卡铁则 + ErrorBoundary + _prov 徽章）；
-                       infoCards / navCards / miscCards / merchantCards（商户支付族，复用
-                       @shared/merchantUi.mjs）/ parts（含 relativeTime）/ fixtures（画廊语料）
-src/features/settings/ 设置页；src/features/vehicle/ 车况面板（三格指标复用 vehicleStage.mjs）
-                       + ReminderSection（平板右面板提醒段，复用 reminderStage.mjs）
+src/core/stage/        舞台场景选择（最近一张助手卡决定右舞台放什么；与 HMI deriveScene 同一张表，测试逐字对账）
+src/core/power/        低电量材质回落判据 + 事实收集；src/core/a11y/ 「减少动效」事实源
+src/features/chat/     对话 UI：ChatScreen（外壳）/ MessageBubble / Composer / VoiceSheet（语音层）/ FocusDock（承诺面）
+                       / PresenceCapsule（状态胶囊）/ PrivacyRail（隐私栏）/ ExecutionReceipt / FollowUpChips
+                       / usePresence / useHandsFree / usePtt
+src/features/cards/    CardRenderer（全量卡型从 types.ts 派生、双向守卫 + 兜底卡铁则 + ErrorBoundary + _prov 徽章）；
+                       CardGroup（主卡全展 + 「还有 N 张」）/ DrivingCardSummary（行车压缩卡）/ infoCards / navCards
+                       / miscCards / merchantCards（商户支付族，复用 @shared/merchantUi.mjs）/ parts / fixtures（画廊语料）
+src/features/stage/    StagePane（平板/横屏右舞台，会话已有事实的第二视图）/ StageDrawer（medium 宽度的抽屉舞台）
+src/features/settings/ 设置页 + S2sConsentSheet（S2S 挡位隐私同意）；src/features/vehicle/ 车况面板
+                       （三格指标复用 vehicleStage.mjs）+ ReminderSection（复用 reminderStage.mjs）
+src/features/vision/   VisionCapture（命中才挂 CameraView、拍完立刻卸载；内存上传零落盘，AR02）
+src/ui/                主题（深浅/跟随系统 + 字号两档）/ tokens / aurora（AuroraOrb 光球、AuroraBackground、EdgeGlow、
+                       Glass、StreamCursor、ThinkDots）/ layout（sizeClass 尺寸类、foldPosture 折叠姿态、sheetHeight 语音层高度）
 types/                 第三方类型补丁：RN 内部 URL 实现 / react-native-amap3d（见文件头注）
-src/ui/                主题（深浅/跟随系统 + 字号两档）
-test/                  jest（jest-expo）：守卫 + 契约单测（209 条）
-e2e/                   Maestro flow（M3-5）：三条真栈流 + 一条离线冒烟（CI 用）
+test/                  jest（jest-expo）：守卫 + 契约单测 + 变异反向验证；计数以 `npm test` 本次输出为准
+e2e/                   Maestro flow：9 条（tag offline / online / manual），前提与坑账只在 e2e/README.md
 ```
