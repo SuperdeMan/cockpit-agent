@@ -36,9 +36,9 @@
 
 | 问题 | 行为与责任边界 |
 |---|---|
-| 播放事实 | 新增 `core/voice/playbackFacts.ts`（与 AR02 `captureFacts.ts` 同形态：owner 集合 + `useSyncExternalStore`）。产出方是**真实播放器**：`SpeechController.setSpeaking` 覆盖主链流式段链与批处理兜底；S2S 那一路把 `playerFactory` 包一层（起点＝首片真的推进去、终点＝`stop()`），`S2SClient` 的每条收尾路径都经 `_stopPlayback` ⇒ 一个包装盖全，不在六七个调用点各记一次。`PresenceInput.speaking` 改喂这份事实 ⇒ `snapshot.agent === 'speaking'` ⟺ 真的在出声（S2S 自答从此在事实面内） |
+| 播放事实 | 新增 `core/voice/playbackFacts.ts`（与 AR02 `captureFacts.ts` 同形态：owner 集合 + `useSyncExternalStore`），**两个轴**：`playing`=已经出过声（在场模型的播报轴，光球/胶囊读它），`live`=还可能出声（会话开着/播放器建好，首片可能没到）。产出方是**真实播放器**：`SpeechController.setSpeaking` 覆盖主链流式段链与批处理兜底；S2S 那一路把 `playerFactory` 包一层（起点＝首片真的推进去、终点＝`stop()`），`S2SClient` 的每条收尾路径都经 `_stopPlayback` ⇒ 一个包装盖全，不在六七个调用点各记一次。`PresenceInput.speaking` 改喂这份事实 ⇒ `snapshot.agent === 'speaking'` ⟺ 真的在出声（S2S 自答从此在事实面内） |
 | 三条命令分开 | **停止播报**＝停当前所有出声，不发 cancel 帧、不开麦、不开续问窗、不放 DEFER；**取消在飞请求**＝既有 `cancelCurrentTurn()`（一字未改）；**停止后开始说话**＝既有 `interruptAndListen()`（一字未改） |
-| 合一键三态 | `playing → ▣停止播报`；`busy && !playing → ■打断`；否则 `⬆发送`。**audio-first**：声音已经在放时按这枚键的意图压倒性是「别说了」，那一刻取消在飞请求换不来任何东西。`testID="composer-send"` 保留（Maestro 01/02/03/06/08 依赖），三态各有独立 `accessibilityLabel`，停播态另给 hint「只停止声音，不会开始录音」 |
+| 合一键三态 | `canStopPlayback → ▣停止播报`；`busy 且无音频 → ■打断`；否则 `⬆发送`。可用面的判据在 `core/voice/stopPlayback.ts::canStopPlayback` = `playing ∨ (live ∧ ¬busy)`。**audio-first**：声音已经在放时按这枚键的意图压倒性是「别说了」，那一刻取消在飞请求换不来任何东西。`testID="composer-send"` 保留（Maestro 01/02/03/06/08 依赖），三态各有独立 `accessibilityLabel`，停播态另给 hint「只停止声音，不会开始录音」 |
 | 停播不开续问窗 | 共享 `hmi/src/voiceLoop.mjs` 追加 `stopSpeaking()`：SPEAKING/THINKING → **ARMED**。不复用 `recycle()`（那条走 `handsFreeOff→On`，会顺带复位会话级 `_bargeInDisabled` 与自触发计数，是「重新开启插话」的语义）；也不在 mobile 侧另写一份迁移——FSM 的迁移表只许有一份。`HandsFreeController.stopSpeaking()` 置「本次是用户停播」标志、`bargeIn()` 停 S2S 本地播放并上行、调既有停播出口，标志期内 `ttsEnd()/turnEnded()` 短路 |
 | DEFER | `finishTurn(natural)`：**只有自然收尾（宽限到点）才补播**。攒着的话不丢——`setProactiveCtx` 的 s2s 转空闲与下一次自然收尾照旧补播，队列本来就有界去重 |
 | 层内停止键 | `voice-sheet-stop` 绝对定位在把手带那一行右侧，**只在 `playing` 时挂载**。该行 `minHeight` 已是目标高 ⇒ `ui/layout/sheetHeight.ts` 的 chrome 与三个真机容器读数一个不动。与 B5-12「撤掉底栏两枚常驻键」不冲突：撤的是常驻键，这是条件出现的单一停播键 |
@@ -53,8 +53,8 @@
 | 项 | 读数 |
 |---|---|
 | 启动基线 | `005e5951fd76af3887030ec2eceac5312134b412` |
-| 本批代码 | `fe798ccb2de476e6a933b6ab06f0b79e27ef60f2`（首版 `8bb13ab…`，见 §五末「停播顺序」一节） |
-| mobile 全量 | 70 suites / 685 tests，exit 0（基线 65 / 656，本批 +6 文件 / +29 tests） |
+| 本批代码 | `b5c471832061e4744dc42128e346462be6f41bc8`（前两版见 §五末「两个被自己的用例放过的缺陷」） |
+| mobile 全量 | 70 suites / 695 tests，exit 0（基线 65 / 656，本批 +6 文件 / +39 tests） |
 | mobile TypeScript | `tsc --noEmit` exit 0 |
 | HMI node:test | 308 / 308，exit 0（基线 304；本批 +4，全部针对 `voiceLoop.stopSpeaking`） |
 | HMI 构建 | Vite build 成功，8.28s；保留既有 >500kB chunk 提示，未改阈值 |
@@ -66,7 +66,7 @@
 
 **五、反向验证（AGENTS §4.3）**
 
-逐条注入目标缺陷、跑对应用例、再恢复实现；11 条全部被抓到，无漏网：
+逐条注入目标缺陷、跑对应用例、再恢复实现；15 条全部被抓到，无漏网：
 
 | 注入 | 结果 |
 |---|---|
@@ -81,16 +81,32 @@
 | `voiceLoop.stopSpeaking` 改成走 `_gotoIdle`（复位会话级护栏） | RED（1 条） |
 | `voiceLoop.stopSpeaking` 连 ARMED/IDLE 也改态 | RED（4 条） |
 | 停播两条腿的顺序颠倒（先主链后免唤醒） | RED（1 条） |
+| 停播键退回只看 `playing`（丢掉缓冲段） | RED（1 条） |
+| 停播键不看 `busy`（在飞轮也给停播） | RED（1 条） |
+| `live` 不随收尾落（停播键永远亮） | RED（3 条） |
+| 不播报的轮也留下 `live` | RED（2 条） |
 
 第一版的「不复位会话级护栏」用例曾对着 `_vadBargeInDisabled` 断言，而 `_gotoIdle` 复位的是 `_bargeInDisabled` ⇒ 变异注入时**没红**。改成走 D6 那条自触发路径把 `bargeInDisabled` 真置起来之后才抓得到。**判据自己也要被变异验一遍**，写得像那么回事不算数。
 
-**停播顺序：一个被自己的用例放过的缺陷（首版 `8bb13ab` → `fe798cc`）**
+**两个被自己的用例放过的缺陷（`8bb13ab` → `fe798cc` → `b5c4718`）**
+
+两条都是在**构建出包之前**发现的，都不是评审提的，是这一批自己造/自己漏的。两轮构建因此主动中止，没有产物，不计任何 SHA 的构建尝试；日志留在证据目录的 `aborted-1-*`、`aborted-2-*`。
+
+**① 停播两条腿的顺序（`8bb13ab` → `fe798cc`）**
 
 首版把两条腿写在组件里：`speechController().stop()` 然后 `hf.stopSpeaking()`。这个顺序**是错的，而且错得很安静**——`SpeechController.stop()` 同步收尾，回调链 `onSpeechEnded → HandsFreeController.ttsEnd() → voiceLoop.ttsEnd()` 先把 FSM 从 SPEAKING 推进 **FOLLOWUP**；随后的 `stopSpeaking()` 看到的既不是 SPEAKING 也不是 THINKING，于是变成空操作。净效果：声音停了，续问窗照样开着——正是 R06 要修的那件事，被这一批自己又造了一遍。
 
 上面那八条 `handsFreeStopSpeaking` 用例**全是绿的**，因为它们直接调 `ctl.stopSpeaking()`——那等于替被测系统注入了正确顺序（CLAUDE.md「测试替被测系统注入的前提不再被验证」）。
 
-修法不是把两行换个位置就算完：顺序本身是判据，所以它有名字、有理由、有测试——`core/voice/stopPlayback.ts`。新增两条回归用真实控制器 + 模拟真实回调链，一条钉正确顺序落 ARMED，一条钉颠倒顺序落 FOLLOWUP（反例也进库，否则下次改回去没人拦）。这次是在构建出包**之前**发现的：首轮构建（`4544058f1`，07:53 起）在 prebuild 阶段被作者主动中止，没有产物，不计任何 SHA 的构建尝试；日志留在证据目录的 `aborted-1-*`。
+修法不是把两行换个位置就算完：顺序本身是判据，所以它有名字、有理由、有测试——`core/voice/stopPlayback.ts`。新增两条回归用真实控制器 + 模拟真实回调链，一条钉正确顺序落 ARMED，一条钉颠倒顺序落 FOLLOWUP（反例也进库，否则下次改回去没人拦）。
+
+**② 合成缓冲段没有停播入口（`fe798cc` → `b5c4718`）**
+
+R06 点名要验的五个场景里，「播放器缓冲阶段」是唯一一个**两个显而易见的量都不成立**的：全文一次 `final` 到达时三个忙态同帧清零，而 TtsSession 还在合成、一个字节音频都没出来。那几百毫秒里 `busy=false ∧ playing=false` ⇒ 合一键显示的是「发送」，用户对着马上就要出声的播报**没有任何停止入口**。
+
+首版把这一格漏了，因为判据只有「已经出声」这一个量。修法是把播放事实拆成两个轴：`playing` 仍然只表示「已经出过声」（它是在场模型的播报轴，没出声就说「播报中」是假话），新增 `live` 表示「这条通道还可能出声」；停播键读 `canStopPlayback = playing ∨ (live ∧ ¬busy)`——在飞轮且无音频时那一格仍然归「打断」。
+
+两条的共同形态值得单记：**用例把被测系统的前提替它注入了，就再也验不到那个前提**（CLAUDE.md 那条）。①的八条用例直接调 `ctl.stopSpeaking()`，等于替生产路径注入了正确顺序；②的用例全都手工给定 `playing`，等于替生产路径注入了「此刻该不该给停播键」这个判断本身。两次都是把判据搬进一个有名字的纯函数、再让用例对着**那个函数**说话，才把前提暴露到能被变异打红的位置。
 
 **六、取证环境的两处限制（记录，不当作产品结论）**
 
@@ -115,16 +131,18 @@
 |---|---|
 | `8bb13ab80a1479e5e90c56f51228e20590717778` | 首版代码 + 测试（mobile 5 个新文件 + 共享 voiceLoop 追加）。**该版本的停播顺序有缺陷**，不作为验收锚 |
 | `4544058f10bd380870601268e2585e1bb6d2234f` | 首版文档 |
-| `fe798ccb2de476e6a933b6ab06f0b79e27ef60f2` | 停播顺序修复 + `core/voice/stopPlayback.ts` + 两条顺序回归。**上表全部本地读数与后续 APK 绑定这个 SHA** |
+| `fe798ccb2de476e6a933b6ab06f0b79e27ef60f2` | 停播顺序修复 + `core/voice/stopPlayback.ts` + 两条顺序回归。**该版本的缓冲段仍无停播入口**，不作为验收锚 |
+| `4014a572a21286ec841a9d9197fa77d21e5cd25b` | 顺序缺陷的记录 |
+| `b5c471832061e4744dc42128e346462be6f41bc8` | 播放事实拆两轴 + `canStopPlayback` + 十条相关用例。**上表全部本地读数与后续 APK 绑定这个 SHA** |
 | 后续文档提交 | 只回填入口与状态，不转称上述测试是新版本的读数 |
 
 ~~~text
 批次：AR03
 对应 R 编号与关闭/剩余项：R06 客户端修复完成、设备验证未做；R09 横屏部分客户端修复完成、设备验证未做；R09 跨页部分属 AR04 未启动
-代码 SHA：fe798ccb2de476e6a933b6ab06f0b79e27ef60f2（首版 8bb13ab 的停播顺序缺陷已在同批修掉）
+代码 SHA：b5c471832061e4744dc42128e346462be6f41bc8（8bb13ab 的停播顺序、fe798cc 的缓冲段两处缺陷均在同批修掉）
 APK 构建行与设备：本批未构建、未装机
 云端 release SHA、provider/model：本批未涉及真栈
-本轮执行的检查与原始证据：mobile 70 suites / 685 tests + tsc exit 0；hmi 308/308 + Vite build；11 条变异注入全部判红
+本轮执行的检查与原始证据：mobile 70 suites / 695 tests + tsc exit 0；hmi 308/308 + Vite build；15 条变异注入全部判红
 失败/阻塞/污染样本：reanimated 官方 mock 在本环境不可用（已手写替代）；测试渲染器不跑布局（横屏用例手动放 onLayout 并先证层在场）
 后续批次受到的影响：AR04 接手跨页宿主与 ACK 时，语音层的「覆盖域」边界（voice-sheet-scope）是既有锚点；AR07/AR08 的声学与时延基线不受本批影响
 ~~~
