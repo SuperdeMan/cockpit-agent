@@ -116,6 +116,8 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 ### 4.2 当前活项与其他可接工作
 
+**Android 当前接手批次：AR04。** 2026-09-08 已完成源码核查和改前基线，见[跨页语音宿主与提醒呈现 ACK 方案](docs/design/2026-09-08-ar04-presentation-ack-implementation.md)；跨页产品范围待确认，产品代码尚未修改。下表保留 AR03 等批次的既有证据与剩余项。
+
 | 主题 | 启动条件 / 入口 |
 |---|---|
 | Android App | 当前入口：`mobile/README.md` + [AR03 停播与横屏交接](docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。**AR03 客户端与共享 FSM 修复、本地回归（695 tests）与 15 条变异验证完成；两台真机常驻包都是 `b5c471832`。R06 主证据与层内停止键在 OPPO（同题 A/B：停播窗口 ≥15.7s → 单个采样；两条升层路径各证升层后播报继续；8 次播报零麦克风），R09 横屏结构与功能证据在 Xiaomi 对照机（层与 Dock bounds 零重叠、层盖着时 Dock 可点）。多段段链 / S2S 自答 / 主动消息 / 系统 200% 字号 / 横屏×层内停止键 / 盲听未验，AR03 未整批签收。** 剩下每一格都卡在缺一条输入通道，下一步看实施记录第十节。⚠ `driving-landscape` 在 OPPO 两块屏上都不可达（外屏 717×359dp、内屏 698×652dp），只有对照机外屏命中——AR10 的支持范围要处理这条；对照机是泓舟主用机、其免唤醒默认开着（启动 App 即开麦），动它前取当轮授权。AR02 客户端修复与 OPPO 定向验证完成、旧缓存已授权清除，完整设备矩阵仍缺，证据在[AR02 实施记录](docs/design/2026-09-07-ar02-capture-privacy-implementation.md)——其设备读数绑的是旧包 `70365389e`。AR01 证据保留在[实施记录](docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)，后续范围看[分批建议](docs/design/2026-09-07-android-review-remediation-batches.md)。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)保留 R01–R15 原发现；UX B1–B5 只作历史。 |

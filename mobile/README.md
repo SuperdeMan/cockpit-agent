@@ -9,6 +9,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **完整评审**（2026-09-07；R01–R15 原始发现）：[2026-09-07-android-ux-full-review.md](../docs/reviews/2026-09-07-android-ux-full-review.md)
 - **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
 - **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
+- **AR04 当前接手**：[跨页语音宿主与提醒呈现 ACK 方案](../docs/design/2026-09-08-ar04-presentation-ack-implementation.md)。2026-09-08 已核查代码链路并重跑改前基线（`cd5c19b5`：695 tests + tsc 通过）；跨页产品范围待确认，产品代码尚未修改。
 - AR01 确认与取消：客户端修复、本地回归与 OPPO 样本验证完成，历史证据见[AR01 实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
 - **AR02 当前交接**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当前常驻包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，旧缓存已于 2026-09-08 授权清除；完整设备矩阵尚未完成，AR02 未整批签收。
 - **AR03 当前交接**：[停播与横屏操作实施记录](../docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。播放事实（`core/voice/playbackFacts.ts`，两轴 `playing`/`live`）是停止键的唯一判据；停播回 ARMED 不开续问窗；横屏 Dock 落在语音层覆盖域（`voice-sheet-scope`）之外。**两台真机常驻包都已换成 `b5c471832`（2026-09-08 08:10）**，R06 主证据与层内停止键在 OPPO、R09 横屏结构与功能证据在 Xiaomi（`driving-landscape` 只有对照机外屏够得到）；多段 / S2S / 主动消息 / 系统 200% 字号 / 盲听未验。
