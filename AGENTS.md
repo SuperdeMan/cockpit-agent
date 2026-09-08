@@ -118,7 +118,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：`mobile/README.md` + [AR04 实施与设备交接](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) 第十二节。**代码 / OPPO 包 `065efd85e` 已推送并安装（2026-09-08 17:12:17），726 tests / tsc 通过；地图兼容配置经用户授权，5 个正常返回场景无新增崩溃；5 条真实提醒均呈现并由服务端 ACK 销账，后台 / 熄屏恢复各只播放一次，零新采集、零待触发残留。** 完整矩阵未签收：本机无安全 Keyguard，物理折叠/旋转组合未验；提醒创建错域、标题污染及对话播报胶囊文案仅记录，见同页。AR02 / AR03 的原剩余格仍见[AR02](docs/design/2026-09-07-ar02-capture-privacy-implementation.md) / [AR03](docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)；OPPO driving-landscape 不可达仍归 AR10。Xiaomi 为用户主用对照机，本轮未操作，使用需当轮授权。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)与[后续批次](docs/design/2026-09-07-android-review-remediation-batches.md)保持独立。 |
+| Android App | 当前入口：[AR04 第十三节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。**代码 / OPPO 包 `573ad46d9` 已推送并安装；mobile 726 tests、reminder 220 tests 与 CI 全部通过。播放提示已在真机修复；标题提取已修、未部署。已证默认兼容模式的物理展开/半折/合拢横屏，以及经授权全屏 `drawer→tabletop` 的草稿/本地征询保留。** 19:26 设备断开，**临时全屏显示、App 定位关闭/减少动效尚待恢复**；书本式/全屏合拢、真实 Keyguard 提醒与发布授权仍待接续，未整批签收。前轮五条提醒证据绑 `065efd85e`；本轮没有新增提醒或发布后端。原错路由已定位为 MiniMax 非法/空计划后降级搜索，仍未修。AR02/AR03 原矩阵、AR10 尺寸/对照范围保持独立；Xiaomi 本轮未操作。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

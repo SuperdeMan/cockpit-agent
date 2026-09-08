@@ -140,6 +140,8 @@ AR01 留下过 SDK XML、NODE_ENV、NO_COLOR/FORCE_COLOR、Gradle 废弃项、�
 | 动态画廊报 `could not get idle state` | 记录限制。AR01 按实读截图定位打开 Modal 后，静态列表 XML 可读；不要用猜测坐标点击，也不要把关闭动效后的读数当默认配置结果 |
 | Maestro 后运行 uiautomator 报 `UiAutomationService already registered` | CLI 退出后设备 instrumentation 可能仍占用连接。确认本轮 Maestro 已终结，再关闭本轮 `dev.mobile.maestro` / `dev.mobile.maestro.test` 驱动后读 XML；不能一边跑流程一边切页或另接 UiAutomation。辅助进程 FATAL 不能算 App 崩溃 |
 | adb 零时长 tap 未触发 RNGH 光球 | 先核当前页面和坐标；AR02 用同点 120ms 的触摸序列触发轻点收音。不能把注入未触发直接判为产品缺陷，也不能在 Modal/导航动画尚未结束时点击被遮挡的控件 |
+| ColorOS 内屏仍是窄竖屏 / 平行窗口 | 同时读 active input viewport、App window bounds 和 `native-spike` 的 dp/layout；物理屏变大不等于 App 得到宽窗口。AR04 实测默认兼容窗约 392dp，经授权切全屏才得到 652dp 与 drawer/tabletop。切换可能要求应用重启，需重建样本；恢复入口为系统通知“恢复”或设置→大屏专区→兼容模式 |
+| 物理旋转和折叠接得很快 | 每个姿态保持后取证，并比较采样前后 base/committed state 与 active viewport。变化期间的 XML/截图可能来自相邻姿态；AR04 曾取到两张相同截图，不能按不同前置状态重复签收 |
 | Git Bash 改写 Android 文件路径 | adb 操作用 PowerShell；避免 MSYS 把 `/sdcard/...` 改成宿主路径 |
 | App 卡 connecting、宿主云服务却正常 | 先检查手机 Tailscale 是否在线、手机侧 DNS/连接是否正常。两台设备都曾静默掉线；广播不一定能拉起客户端，前台打开后才恢复。此现象不等于 APK 构建失败 |
 

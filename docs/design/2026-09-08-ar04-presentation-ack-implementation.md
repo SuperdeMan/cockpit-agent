@@ -1,6 +1,6 @@
 # AR04：跨页语音宿主与提醒呈现 ACK
 
-日期：2026-09-08。状态：**核心修复与获授权的地图兼容配置已推送；当前代码 / OPPO 包 `065efd85e`，726 tests 与 tsc 通过。地图正常退出 5 个场景、5 条真实提醒的可视呈现和服务端回执完成；后台 / 熄屏恢复各只新增一次播放。安全 Keyguard、物理折叠/旋转组合未验，AR04 未整批签收。当前产物、逐条证据及新增发现见第十二节。**
+日期：2026-09-08。状态：**当前代码 / OPPO 包 `573ad46d9`，726 条移动端测试、220 条提醒服务测试和 GitHub CI 通过。播放提示已在真机修复；提醒标题修复已推送、未部署。已补默认兼容模式的展开/半折/合拢横屏保留，以及全屏 `drawer→tabletop` 保留证据。设备于 19:26 复核为断开，临时全屏、App 定位关闭/减少动效尚待恢复；书本式与全屏合拢、真实 Keyguard 提醒仍未完成。当前接续见第十三节，AR04 未整批签收。**
 
 输入：[分批建议 AR04](2026-09-07-android-review-remediation-batches.md#ar04)、
 [完整评审 R08/R09](../reviews/2026-09-07-android-ux-full-review.md)、
@@ -162,7 +162,7 @@ AR02 的完整采集矩阵、AR03 的多段/S2S/盲听、AR07 唤醒率及 AR08 
 
 ## 8. 实现与本地验证（2026-09-08）
 
-当前 Android 代码锚：`065efd85ee6365160862b009dcaffc50e8b57473`。后续文档提交不改变这个 APK / 测试锚。
+当前 Android 代码锚：`573ad46d939bf655f5a0f4ef16579e2a9b80b087`。后续文档提交不改变这个 APK / 测试锚。
 
 | 代码面 | 实际落点 |
 |---|---|
@@ -262,16 +262,16 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 - `final-hf-settings-results.json`、`hf-settings-background-native.txt`、`final-story-results.json`、`final-draft-results.json`、`final-map-opaque.png`、`preferences-restored.json`：`433fb3cf` 的定向设备证据；当前包使用第十二节 `real-*` 文件。
 - `permission-activity-evidence.log`、`crash-buffer-current.log`、`amap-compat-proposal.patch`：权限循环原始证据、地图崩溃与当时的兼容草案；配置已在 `065efd85e` 实施。
 
-上述两项授权已执行完毕。接续先看第十二节剩余矩阵和新增发现，再核 SHA / APK / 设备。若要补真实 Keyguard 或物理折叠，先取得相应输入条件；新增提醒超出本轮最多五条的授权。不要把本页已取到的定向证据写成整批通过。
+上述两项授权已执行完毕。接续先看第十三节剩余矩阵和资源状态，再核 SHA / APK / 设备。若要补真实 Keyguard 或物理折叠，先取得相应输入条件；新增提醒超出本轮最多五条的授权。不要把本页已取到的定向证据写成整批通过。
 
 
-## 12. 获授权的地图兼容与真实提醒验收（2026-09-08）
+## 12. 前轮地图兼容与真实提醒验收（065efd85e，2026-09-08）
 
-### 12.1 当前包与资源
+### 12.1 当轮包与资源
 
 - 代码 / 测试锚：`065efd85ee6365160862b009dcaffc50e8b57473`；后续纯文档提交不改变 APK。
 - 构建：16:47:07–17:11:20，Gradle **22m30s**、1222 tasks（736 executed / 486 from cache）、exit 0。沿原脚本 CNG 重新生成，没有手改生成 Manifest；`CompileJobs=1`、堆 128m/2048m、Kotlin in-process。
-- 当前 APK：`D:\Android\builds\apk\xiaozhou-companion-prod-release-065efd85e-20260908-1711.apk`，210,703,754 bytes；SHA-256 `7c8915b45430b32dd1a77b1f15028aa99873cd8f274da0e194b3900fb4afde7f`。
+- 当轮 APK：`D:\Android\builds\apk\xiaozhou-companion-prod-release-065efd85e-20260908-1711.apk`，210,703,754 bytes；SHA-256 `7c8915b45430b32dd1a77b1f15028aa99873cd8f274da0e194b3900fb4afde7f`。
 - 包内身份：`v0.1.0 · prod · 065efd85e · 2026-09-08 16:48`；OPPO PEUM00 / Android 14 于 **17:12:17** 安装。非 DEBUGGABLE，设备安装文件哈希相同；两种 ABI、内嵌 bundle、KWS / ORT、原签名均保留。
 - 最终 APK Manifest：`allowNativeHeapPointerTagging=false`、`targetSdkVersion=36`；只在启用地图时由插件生成。无 key 不变、原属性保留、重复执行不重复 meta-data，均已检查。
 - 地图瓦片正常显示；正常返回 3 次、快速返回 1 次、前后台后返回 1 次，均返回对话页，PID 7373 保持。安装后至末端复核无新增 App / pointer-tag 崩溃；这 5 个返回场景未用 force-stop 代替退出。
@@ -302,7 +302,7 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 
 证据：`real-reminder-summary.json`、各场景 `real-*-receipts.json`、`real-*-presented.png`、`real-background-before-resume.json`、`real-lock-before-wake.json`、两场景 baseline/reentry、`real-final-after-restore-server.json`。原始 JSON 保留精确时间戳和服务端 payload；仓库内只保留必要摘要。
 
-### 12.3 未签收项与本轮新增发现
+### 12.3 当时未签收项与新增发现（后续处置见第十三节）
 
 | 项目 | 当前判断 / 下一步 |
 |---|---|
@@ -315,3 +315,57 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 本轮额外的 SSH 连接诊断曾触发腾讯云扫码认证并终止，未绕过；常规具名提醒台账查询随后正常完成，不再依赖该额外诊断。所有台账查询使用只读事务；没有执行 schema / 环境 / 系统配置 / 生产部署变更。
 
 结论为 **AR04 开发修复及本轮授权的定向验证完成，完整验收矩阵未签收**。本页的新发现保持“仅记录”，AR02/AR03 的原剩余格、AR05–AR11 的范围不因此关闭或自动启动。
+
+
+## 13. 未签收项续接（2026-09-08，当前入口）
+
+用户要求继续未签收项，并提供 OPPO 物理折叠配合；对“临时把小舟随行系统显示方式改为全屏并恢复”的具体请求回复“允许”。该回复用于显示模式切换；云端 apply 与新增一条提醒的请求仍待单独明确批准。
+
+### 13.1 修复、检查与当前 APK
+
+| 项目 | 当前证据 |
+|---|---|
+| 播放提示 | `a731973` 将新胶囊与旧版回滚栏统一为“播报中”，不凭播放事实承诺可直接语音打断。OPPO 第二次定向采样已抓到新文案；播放器 starts/stops=2/2、mic/ASR/S2S/视觉计数为 0。首个样本采样时已播完，未计通过；实际播的是故事请求的回复，未把它称为故事内容验收 |
+| 提醒标题 | `573ad46` 在既有标题提取路径剥离句首、有分隔符的显式创建包装及随后的标题字段；保留真实任务内容与 QA 标记。未修实现先出现 4 failed / 2 passed；独立内存重放也证实三种槽位输入都会污染。修后提醒服务 **220 passed**；未改库中五条旧标题 |
+| 本地 / CI | 当前完整 SHA `573ad46d939bf655f5a0f4ef16579e2a9b80b087`：mobile **71 suites / 726 tests，86.726s**、tsc、两处源文件定向 lint 全部 exit 0；四门禁 exit 0（范例检索仍有门禁允许的 3 条错配，不冒称逐条全绿）。[CI 34214476735](https://github.com/SuperdeMan/cockpit-agent/actions/runs/34214476735) 八个任务全部 success，含 Python 3.11/3.12 |
+| 构建 | 核对 345 个 mobile/HMI 文件与 19 个原生资产，4 个差异仅为 mobile README、两处提示源文件与现有测试。原生配置不变，按共享指南从 Gradle §5–§6 接续，单次 daemon；18:15:26–18:24:30，Gradle **8m57s**，52 executed / 1170 up-to-date，exit 0 |
+| 当前 APK | `D:\Android\builds\apk\xiaozhou-companion-prod-release-573ad46d9-20260908-1824.apk`，210,703,738 bytes；SHA-256 `2e14feb02f23dc58dc291e1899fa64a26fd25d0956c3ed52c5fd0dab93148573`；包内 `prod · 573ad46d9 · 2026-09-08 18:15` |
+| 安装 | OPPO PEUM00 / Android 14 于 **18:26:17** 原地安装，设备 APK 哈希相同、非 DEBUGGABLE；原签名、双 ABI、KWS/ORT、内嵌 bundle、targetSdk 36 与地图 pointer-tag 兼容项均保留 |
+
+本节证据目录：`%LOCALAPPDATA%\car-agent\artifacts\AR04-followup-20260908`。主要文件：`mobile-checks.json`、`backend-checks.json`、`title-before.json`、`ci-573ad46.json`、`build-followup-result.json` / `.log`、`mirror-followup-manifest.json`、`apk-573ad46.json`、`caption-native-results.json`、`caption-verified.png`、`caption-verified-counters.json`。
+
+### 13.2 物理折叠与窗口范围
+
+测试内容是**未发送草稿＋本地“使用当前位置”征询卡**；没有点击允许/拒绝，没有把本地 `__location__` 说成服务端 operationId。多项服务端确认保留的合同仍由当前本地集成测试覆盖，本次物理样本不补造那条业务证据。
+
+| 稳定保持点 | 实测与保留结果 |
+|---|---|
+| 默认兼容模式，完全展开 | 真实 base/committed=3，未使用 override；ColorOS `always-compat / oplus-magic-windows`，应用 bounds `[357,0][1436,1920]`，约 392dp 宽。PID 22627、原草稿与定位征询保持 |
+| 默认兼容模式，半折 | base/committed=2，姿态前后复核一致；相同 PID、草稿与征询保持；默认窄窗不代表进入宽屏 UI |
+| 默认兼容模式，合拢横屏 | base/committed=0、orientation=3、active viewport 1972×988，App bounds `[0,0][1972,988]`；草稿和征询/按钮都可见，PID 不变 |
+| 经授权切换全屏 | 左上系统入口明确提示“切换为全屏显示需要重启”；执行应用重启，PID 22627→1200。这是系统显示设置引起的重启，旧测试内容已保存，重新建立新草稿/征询后才取下一组样本 |
+| 全屏，完全展开 | App bounds `[0,0][1792,1920]`、652×698dp；原生 `flat / horizontal / isSeparating=false`，实际布局 `drawer · medium×medium`；新草稿与征询保持 |
+| 全屏，半折 | base/committed=2，原生 `halfOpened / horizontal / isSeparating=true`，实际进入 **`tabletop · medium×medium`**；草稿与征询/按钮保持，PID 1200 不变 |
+
+稳定样本使用硬件状态和 active input viewport 的**采样前后相等**检查，并保存 XML/截图。早期自动观察中旋转和展开接得很快，两张截图相同，不能按各自前置状态分别签收；正式结果取 `fold-inner-stable-0.json`、`fold-half-stable-0.json`、`fold-closed-stable-0.json`、`full-open-stable-0.json`、`full-half-stable-0.json`。原生模块证明见 `fullscreen-open-native.xml` / `fullscreen-half-native.xml`；新挂载诊断页 `events=0`，同时 `current` 缓存有有效姿态，不把零新事件计数判为模块缺失。
+
+**尚缺**：全屏书本式方向、全屏合拢返回，以及同包所需的其余组合。OPPO 的物理设备能力已确认；默认系统兼容窄窗与 App 的真实宽屏布局必须分开。`driving-landscape` 的尺寸门槛及 Xiaomi 对照仍按 AR03/AR10 范围，不能用本轮 tabletop 代替。
+
+### 13.3 锁屏、后端定位与发布边界
+
+- 本轮 18:28 实际看到了 OPPO Keyguard：`showing=true / secure=false`，有锁屏界面，可正常上滑解锁。AR04 的目标是锁屏遮挡时不提前呈现/ACK，**不要求为了测试新设 PIN**。前轮 `showing=false` 的熄屏证据仍不代替本次真正锁屏；新增一条 `AR04-0908-锁屏复验`、两分钟到期的请求已列明，尚未获准创建。Xiaomi 尚未接入/操作。
+- 原错路由已取到原始 trace **`21798d30258aa5bf`**：实际 `minimax:MiniMax-M3` 首次 submit_plan 为 `steps=["[]</steps>"]`，结构校验失败；重试返回 `{"addressed":true,"steps":[]}`，随后 `toolcall_degraded → chitchat.talk → needs_realtime → info.search`。当前只完成准确归因，尚未修复 Planner 技术失败降级策略。
+- 成功创建 trace **`458440c431c99c8f`** 的 Planner 原本就给了干净 title `AR04-0908-对话验收`；污染发生在 Agent `_fuller_title` 回填原话时。本次标题修复针对这个已证实的本地路径。
+- 云端仍为 **`a09c73a5da3181708279bc1f3e90acb1519606a0`**，本轮**未 apply**。目标 `573ad46d939bf655f5a0f4ef16579e2a9b80b087` 的 dry-run 为 ready / blocking_changes=[]，结果在 `deploy-dry-run.json`，源包在仓库 `.artifacts/releases/<完整SHA>/`。
+- 发布该目标还会包含当前 release 之后的 HMI `ws.mjs` 队列撤回/发送回执、`voiceLoop.stopSpeaking` 方法以及 MiniMax 已到齐文本合并修复。相关 **HMI 75 tests / TTS pacing 21 tests** 通过，且上述完整 CI 已绿。已向用户说明具体范围并请求单独发布及一条提醒授权；不能把显示设置的“允许”转借给生产发布。
+
+### 13.4 设备断开时的接续与恢复（19:26 复核）
+
+`adb devices -l` 为空，后续物理取证和设置恢复暂缺设备连接。已请求用户重连，**没有把未完成恢复写成完成**。
+
+- 当前测试设备仍为临时**全屏显示**，尚未恢复原兼容模式。系统提示给出的恢复入口：系统服务“已切换为全屏显示”通知里的“恢复”，或 **设置 → 大屏专区 → 兼容模式 → 小舟随行**；原始窗口为 16:9 兼容窄窗。只恢复该 App，系统若重启 App 则重新核包与界面。
+- App 暂存偏好：`locationEnabled=false`、`reduceMotionForce=true`、`speakPolicy=auto`、`handsFree=false`。结束后将前两项恢复为 **true / false**；后两项维持原值。不点本地征询的允许/拒绝，不发送测试草稿。
+- 当前全屏样本 PID 是 1200，断线后的存活状态未知；新样本草稿为 `AR04 fullscreen draft 573ad46 - retain across folding`。设备回连先核实际状态，不能沿用 PID 或假定还在原页面。
+- 自有 Gradle、Maestro 均已结束；10 分钟只读折叠观察器已到期结束，无后台采集进程留占。当前进展和脚本入口同时保存在 `followup-progress.json`。
+
+恢复连接后先完成必要稳定姿态与采集终态读取，再恢复授权的显示设置及 App 偏好；云端发布/新增提醒继续等待对应授权。当前结论是**已补签收证据并修复两项具体缺陷，AR04 仍未整批签收**。

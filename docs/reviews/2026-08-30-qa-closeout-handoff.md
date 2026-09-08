@@ -166,12 +166,13 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
 | 全量 warning | `9a3b6f2f`全量5条、4类：Starlette按2个worker重复，另有gRPC fixture、audioop、regex各1 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 
-2026-09-08 Android AR04 真实提醒期间新增两类记录（仅记录，未修；不改变上方历史 release 证据）：
+2026-09-08 Android AR04 的发现与处置（客户端包、源码修复与生产分别记录）：
 
-- 后端 `a09c73a5da3181708279bc1f3e90acb1519606a0`：自然句“`两分钟后提醒我AR04-0908-对话验收`”一次落联网搜索，数据库零创建；明确创建指令后才有五条提醒，但五条 title 都保留创建指令前缀。provider/model 未独立提取；先分别查路由与标题提取，不据单例宣称稳定复现。
-- Android `065efd85ee6365160862b009dcaffc50e8b57473`：对话页播放胶囊仍显示“说话可打断”，同轮真实麦克风计数为 0；实际可打断条件与文案尚未对齐。
+- 后端 `a09c73a5da3181708279bc1f3e90acb1519606a0` 的提醒错域仍未修。原 trace `21798d30258aa5bf` 已查明实际 `minimax:MiniMax-M3` 首次生成非法 steps，重试给空计划，随后 `toolcall_degraded → chitchat.talk → info.search`；数据库零创建。问题在格式化规划失败及后续降级，不能从这一个样本推导稳定错域率。
+- 提醒标题污染已由 `573ad46` 源码修复，220 条服务测试与 CI 通过，**尚未部署**。成功创建 trace `458440c431c99c8f` 的 Planner 原 title 已是干净标记，污染发生在 Agent 回填原话；五条旧记录没有被改库清洗。
+- 对话页“说话可打断”提示已由 `a731973` 修复为“播报中”；OPPO 当前包 `573ad46d9` 已在实际播放时取证，麦克风计数为 0，不再承诺直接语音打断。此项客户端缺陷已修，不能据此关闭更广的音频矩阵。
 
-逐条 ID、截图、回执与未验设备范围见 [AR04 实施记录第十二节](../design/2026-09-08-ar04-presentation-ack-implementation.md)。地图临时兼容与五条投递已通过定向验证，不代表这些新发现已修或 QA 全绿。
+当前逐条证据、物理折叠已测范围与设备断开后的恢复事项见 [AR04 实施记录第十三节](../design/2026-09-08-ar04-presentation-ack-implementation.md)。原五条真实提醒回执绑定 `065efd85e`；新包、新后端发布和新锁屏提醒仍分别验收，QA 非全绿。
 
 以上活项是独立问题，不反推安全确认写闸未上线；同样也不能因为安全闸已上线就把它们写成已关闭。
 

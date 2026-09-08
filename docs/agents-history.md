@@ -8721,3 +8721,14 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - App 账号 u1/primary 的五条真实提醒均在创建后 120 秒触发，5 个 delivery 均由真实呈现出口 ACK，后台 / 熄屏先保持 dispatched，恢复后才呈现并各播报一次。最终 mic/ASR/S2S/视觉计数均为 0；五条 fired、零 pending，没有删除/完成/延后或操作其他提醒。
 - 已恢复自动播报、关闭免唤醒、关闭强制减少动效；测试 App / 自有 Gradle / Maestro 已退出。服务端仍为 `a09c73a5`、status 5/5 healthy，无生产部署或系统配置变更。
 - 完整矩阵仍未签收：本机无安全 Keyguard，第五条只证熄屏/唤醒；物理折叠/旋转组合未验。首句提醒错域、标题污染、对话页“说话可打断”文案均仅记录未修，已同步 QA 活项。当前事实与完整凭据集中在 [AR04 实施记录](design/2026-09-08-ar04-presentation-ack-implementation.md) 第十二节，旧 SHA 证据不转借。
+
+
+## 2026-09-08 — AR04 未签收项续接、物理折叠与断线交接
+
+- 用户要求继续未签收项并配合 OPPO 物理操作；已推送 `a731973` 播放提示修复及 `573ad46d939bf655f5a0f4ef16579e2a9b80b087` 提醒标题提取修复。当前 mobile 726 tests / tsc / 定向 lint、reminder 220 tests、四门禁通过，CI 34214476735 全部 success；HMI / TTS 发布依赖另有 75 / 21 tests 通过。
+- 当前 OPPO 包 `573ad46d9`：18:26:17 安装，构建 Gradle 8m57s、52 executed / 1170 up-to-date，双 ABI / 签名 / 地图兼容项保持，安装哈希与 APK 相同。实际播放已抓到“播报中”，mic/ASR/S2S/视觉计数为 0。
+- 默认 ColorOS 16:9 兼容模式下，真实 OPENED、HALF_OPENED、CLOSED 横屏的稳定采样均保留未发送草稿与本地定位征询，PID 22627 不变，未用 device_state override。经用户“允许”临时切全屏，系统要求应用重启，PID 变为 1200；重新建样本后证实 652×698dp 的 drawer→tabletop 重排仍保留草稿/征询。未把本地征询冒称服务端多 operationId。
+- 18:28 已见 OPPO 真实 Keyguard（showing=true、secure=false）；前轮仅熄屏的读数不冒充它。新的 1 条锁屏提醒尚待授权，没有新增真实提醒。
+- 原提醒错域 trace 21798d30258aa5bf 已证实 MiniMax-M3 非法工具 steps→重试空计划→闲聊兜底→搜索；降级策略未修。干净 Planner 标题被 Agent `_fuller_title` 污染则已在本地修复，未改库。目标 573ad46 的 cloud dry-run 无 blocking changes，**未 apply**，部署及新增提醒授权仍待答复。
+- 19:26 复核 ADB 设备列表为空；已请求用户重连。**临时全屏系统显示、App locationEnabled=false / reduceMotionForce=true 尚未恢复**；原值是兼容模式、true / false，speakPolicy=auto 与 handsFree=false 维持。书本式/全屏返回及终态读取待回连，自有构建/观察器均已结束。
+- 当前恢复路径、精确 SHA/哈希、稳定姿态文件与审批边界集中在 [AR04 第十三节](design/2026-09-08-ar04-presentation-ack-implementation.md)。本轮证据目录 `%LOCALAPPDATA%\car-agent\artifacts\AR04-followup-20260908`，入口 `followup-progress.json`。
