@@ -9,10 +9,10 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **完整评审**（2026-09-07；R01–R15 原始发现）：[2026-09-07-android-ux-full-review.md](../docs/reviews/2026-09-07-android-ux-full-review.md)
 - **后续分批处理入口**（AR01–AR11，按页内状态选择批次）：[2026-09-07-android-review-remediation-batches.md](../docs/design/2026-09-07-android-review-remediation-batches.md)
 - **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
-- **AR04 当前接手**：[跨页语音宿主与提醒呈现 ACK 方案](../docs/design/2026-09-08-ar04-presentation-ack-implementation.md)。2026-09-08 已核查代码链路并重跑改前基线（`cd5c19b5`：695 tests + tsc 通过）；用户已确认应用内跨页语音方案，客户端实施与验证进行中。
+- **AR04 当前交接**：[跨页语音宿主与提醒呈现 ACK 实施记录](../docs/design/2026-09-08-ar04-presentation-ack-implementation.md)。代码 `433fb3cf`，726 tests / tsc / 定向 lint 通过；OPPO 当前常驻候选 `433fb3cf0`（2026-09-08 15:41:31 安装）。草稿、跨页层、停播及麦克风前后台撤回已取证；地图退出 native 崩溃的兼容策略、五场景真实提醒授权未闭合，**未整批签收**。
 - AR01 确认与取消：客户端修复、本地回归与 OPPO 样本验证完成，历史证据见[AR01 实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
-- **AR02 当前交接**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当前常驻包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，旧缓存已于 2026-09-08 授权清除；完整设备矩阵尚未完成，AR02 未整批签收。
-- **AR03 当前交接**：[停播与横屏操作实施记录](../docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。播放事实（`core/voice/playbackFacts.ts`，两轴 `playing`/`live`）是停止键的唯一判据；停播回 ARMED 不开续问窗；横屏 Dock 落在语音层覆盖域（`voice-sheet-scope`）之外。**两台真机常驻包都已换成 `b5c471832`（2026-09-08 08:10）**，R06 主证据与层内停止键在 OPPO、R09 横屏结构与功能证据在 Xiaomi（`driving-landscape` 只有对照机外屏够得到）；多段 / S2S / 主动消息 / 系统 200% 字号 / 盲听未验。
+- **AR02 历史证据**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当批验证包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，旧缓存已于 2026-09-08 授权清除；完整设备矩阵尚未完成，AR02 未整批签收。
+- **AR03 历史证据与剩余项**：[停播与横屏操作实施记录](../docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。播放事实（`core/voice/playbackFacts.ts`，两轴 `playing`/`live`）是停止键的唯一判据；停播回 ARMED 不开续问窗；横屏 Dock 落在语音层覆盖域（`voice-sheet-scope`）之外。**当批两台真机验证包均为 `b5c471832`（2026-09-08 08:10）**，R06 主证据与层内停止键在 OPPO、R09 横屏结构与功能证据在 Xiaomi（`driving-landscape` 只有对照机外屏够得到）；多段 / S2S / 主动消息 / 系统 200% 字号 / 盲听未验。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）
@@ -35,7 +35,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check_android_env.ps1   # 退�
 
 - 角色由 `scripts\mobile_device.ps1` 按厂商解析（`-List` 看在线设备；`-Role test` 打印序列号供
   `adb -s`）；序列号是机器状态，文档里不维护第二份。两台同时插着时 **adb 命令一律带 `-s`**。
-- 对照验收时两台装同一份 prod release **常驻包**（见下文）；开发候选先落 test，本轮候选身份看 AR02 实施记录，compare 本批未更新。dev-client 只在测试机上、只在需要 Metro 热重载的时段临时装。
+- 对照验收时两台装同一份 prod release **常驻包**（见下文）；开发候选先落 test，本轮 OPPO 候选身份看 AR04 实施记录，compare 本批未操作。dev-client 只在测试机上、只在需要 Metro 热重载的时段临时装。
 - 一台机器上的读数不代表另一台（B3′ 助理角色、Xruns、AEC 通路都是单机读数）：结论要标机型；
   「Xiaomi 复验」是对照，不是第二个验收分母。
 - Tailscale 连接、折叠屏截图、UIAutomator 与 PowerShell 取证排查统一看[操作指南 §6](../docs/guides/android-build-and-device-validation.md#6-设备取证的几个实测边界)。

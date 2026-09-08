@@ -1,13 +1,13 @@
 # AR04：跨页语音宿主与提醒呈现 ACK
 
-日期：2026-09-08。状态：**用户已确认推荐方案；客户端实现与本地验证进行中，尚未构建或安装本批候选包。**
+日期：2026-09-08。状态：**客户端核心修复已合入并推送；`433fb3cf` 上 726 条本地测试通过，OPPO 当前候选包为 `433fb3cf0`。真机已验证草稿、跨页层、停播和前后台麦克风撤回；地图退出发生 native 崩溃、真实提醒投递尚待授权，AR04 未整批签收。**
 
 输入：[分批建议 AR04](2026-09-07-android-review-remediation-batches.md#ar04)、
 [完整评审 R08/R09](../reviews/2026-09-07-android-ux-full-review.md)、
 [AR03 第八、十节](2026-09-08-ar03-stop-playback-landscape-implementation.md)。
 本页是 AR04 的具体实施方案；AR01–AR03 原有设备证据仍绑定各自代码和 APK。
 
-## 1. 本轮接手基线
+## 1. 改前接手基线
 
 | 项目 | 本轮实际核查 |
 |---|---|
@@ -17,7 +17,7 @@
 | Android 环境 | `scripts/check_android_env.ps1`：18 pass / 0 warn / 0 fail，exit 0 |
 | Mobile 改前测试 | `npm test`：70 suites / 695 tests，32.839s，exit 0；实际为 Jest 默认 worker 模式 |
 | Mobile 改前类型 | `npm run typecheck`：exit 0 |
-| APK / 云端 | 本轮尚未构建、安装或部署；不把文档中的历史设备包写成本轮设备实测 |
+| APK / 云端 | 改前阶段尚未构建或装机；本批后续构建见第九节，后台未由本批部署 |
 
 已读根 AGENTS/CLAUDE、架构总体结构与 §2.4、多端契约 §9.33、主动投递契约 §9.8、
 mobile README、Android 构建指南、完整评审、分批建议与 AR03 交接；源码沿
@@ -159,3 +159,106 @@ AR02 的完整采集矩阵、AR03 的多段/S2S/盲听、AR07 唤醒率及 AR08 
 [React Native AppState](https://reactnative.dev/docs/appstate)、
 [FlashList viewability](https://shopify.github.io/flash-list/docs/usage/)。
 依赖版本维持仓库 lockfile；不因文档推荐的小版本变化升级 SDK。
+
+## 8. 实现与本地验证（2026-09-08）
+
+当前 Android 代码锚：`433fb3cf0c62e51493dcc2b05e9eb87f92921beb`。后续文档提交不改变这个 APK / 测试锚。
+
+| 代码面 | 实际落点 |
+|---|---|
+| 单一宿主 | `features/assistant/AssistantProvider.tsx` 持有原有会话、PTT/HF、presence、草稿、隐私栏和稳定 ID 的待办展开态；ChatBody 只消费它。没有新增语音 FSM，HMI 共享源码未修改 |
+| 跨页呈现 | `AssistantSurface` / `CrossPageVoiceLayer` / `AssistantFrame`；操作栏占真实布局空间，语音层有边界，非对话页避让键盘。跨页语音层用实色底，采集栏只显示真实采集状态 |
+| 回执 | SessionCore 分开 `receivedAt`、`presentedAt`、`handledAt`；`handledAt` 是用户收起提醒的本地事实，不是业务完成。`ProactivePresenter` 复查前台、窗口、遮挡与原生窗口测量；列表消费 viewability，测量 render 不算呈现 |
+| 去重与补偿 | 凭据从本会话消息取；重复收到不重复气泡，已呈现补投只补 ACK；`sendIfOpen` 失败留待发回执，重连再试，不计入用户 queued。`ackSentAt` 仅表示写入 socket，不能冒充服务端收妥 |
+| 生命周期 | `InteractionScope` 同步撤回 PTT、HF、S2S、视觉与播报；旧权限/合成/识别回调不能复活；已发主链请求仍按原 requestId 落文字终态。键盘、窗口失焦和 Modal 阻断提前呈现 |
+| 播报所有权 | 主链与批处理分别持有 playbackFacts；批处理自然结束不能清主链事实。主链/批处理占用与 S2S 一起交给现有共享优先级判据，critical 抢话、user_contract 排队，显式停止清等待项 |
+| 录音权限 | 先 `checkRecordingPermissions()`，仅未授权时申请；两次 await 都检查代际有效性。已授予权限时不会反复启动权限 Activity |
+| 只读取证 | `capture-status` 增加最近 20 条投递时间/凭据，不输出提醒内容或 token。进入诊断路由会暂停主会话；dev 显式播报探针使用同实现的独立实例并守页面/前台门控 |
+
+| 提交 | 验证与边界 |
+|---|---|
+| `5d1379e31e2de51f51a7289fe57c1f510b54b250` | 首版宿主/ACK；71 suites / 717 tests、tsc、新文件定向 lint。随后独立并发探针发现两个播放器只停了最后一个，本版本不作为最终验收锚 |
+| `61801bfe75334ebbacdbf3bf488a221bc6eb4ff1` | 播报排队与所有权修复；71 suites / 724 tests、tsc、定向 lint。OPPO 取到中文草稿与跨页结构/停播证据，又发现录音权限 Activity 循环 |
+| `433fb3cf0c62e51493dcc2b05e9eb87f92921beb` | 权限查询与跨页呈现修正；**71 suites / 726 tests，70.116s，exit 0**；tsc exit 0；显式 Expo flat 配置下选定文件 lint exit 0 |
+
+固定命令为 `node node_modules/jest/bin/jest.js --runInBand --silent` 与 `node node_modules/typescript/bin/tsc --noEmit`。
+仓库尚无生效的 `eslint.config.*`，本轮通过的是显式 `--config node_modules/eslint-config-expo/flat.js` 的选定文件检查，**不是全仓 lint 门禁**；配置治理仍归 AR06。
+
+反向证据：恢复条件式列高测量，旋转用例即红；恢复入库即 presented，回执用例即红；两条源码均按原字节恢复。
+并发播报的 4 条永久回归、权限查询的 2 条永久回归，都先在未修实现上取得红灯，再修到通过。
+本轮没有用 skip、宽松断言或延长超时掩盖失败。测试渲染器没有真实布局：原生测量在测试中明确注入，屏幕外测量也必须拒绝 ACK。
+
+中途并行合入的 `5d3fd50` 是另一批 llm-gateway CI 修复；本页只报告 Android 的检查，不替它报告后端 CI 或生产发布结果。
+
+## 9. 构建、安装与真机结果
+
+三次构建均为 prod release、单编译任务、Gradle 堆 `128m/2048m`、Kotlin in-process；签名 SHA-1 保持
+`5e8f16062ea3cd2c4a0d547876baa6f38cabf625`。
+
+| 包 | 构建与使用 |
+|---|---|
+| `5d1379e31` / 13:36 | 首次完整构建：Gradle 23m28s，1222 tasks（737 executed / 485 from cache），验包成功；只保留为诊断候选，未装机 |
+| `61801bfe7` / 14:14 | 核对 345 个 mobile/HMI 文件与 19 个原生资产，匹配后只同步 4 个差异文件，沿原构建脚本 §5–§6 接续；7m33s，52 executed / 1170 up-to-date；OPPO 14:23:44 安装 |
+| **`433fb3cf0` / 15:30** | 同口径核对并同步 6 个差异文件；5m47s，52 executed / 1170 up-to-date，exit 0、验包成功；**OPPO 15:41:31 安装，当前常驻候选** |
+
+接续未重新 MIR / prebuild，使用新单次 daemon 注入本次身份；原生工程、依赖、模型和签名均未改变。
+APK 内 `assets/app.config`、内嵌 bundle 与必需原生库经过验证，安装文件与本地产物 SHA-256 相同，非 DEBUGGABLE。
+
+当前产物：`D:\Android\builds\apk\xiaozhou-companion-prod-release-433fb3cf0-20260908-1536.apk`，210,703,730 bytes。
+SHA-256：`117746efb1139e963d21a3bf40adc8322653c36faf78c90d278b4ad160201243`。
+构建行：`v0.1.0 · prod · 433fb3cf0 · 2026-09-08 15:30`。
+构建日志保留 SDK XML 版本、NODE_ENV、颜色环境变量与 Gradle 弃用提示；这些提示未替代退出码和验包检查。
+
+**OPPO PEUM00 / Android 14 的本轮读数：**
+
+| 验证项 | 结果与证据边界 |
+|---|---|
+| 草稿跨页 | `61801bf` 上真实 Maestro 中文输入“AR04 待发送草稿”，设置→地图→车辆→对话后完整保留；`433fb3cf` 上另用 `AR04 final draft` 复验设置→车辆→对话，全部通过。测试草稿已清除 |
+| 跨页层与操作栏 | 旧候选上地图/设置层均能展开、收起，层底 `[0,974][988,1623]`、栏 `[0,1623][988,1972]` 零重叠；最终包另取实色地图语音层截图，地图文字不再透入回答区。地图正常退出另见下节，不能因进入/呈现通过就关闭该项 |
+| 跨页停播 | `433fb3cf` 用普通故事请求，点击 App 内设置入口；第 5 个采样取到跨页停止键，采集栏明确“麦克风关闭”；按停后两次采样均无停止键复现。证据是播放事实与操作结果，未做人耳盲听 |
+| 前后台采集 | `433fb3cf` 设置页启动 HF→Home→回设置→停止收音→关闭 HF。最终计数 **micStarts=2 / micStops=2，ASR=0 / S2S=0**；原生录音记录前台 active、VOICE_COMMUNICATION、AEC/NS 在场，后台当前录音配置清空 |
+| 权限循环 | 未修包已有权限仍反复启动 `GrantPermissionsActivity`，Native 录音未开始；系统日志留有 144 条相关 Activity 行。修复后的上述 2/2 采集流程成立，原循环已关闭 |
+| 提醒呈现合同 | 假投递/组件/遮挡/断线/补投边界已通过本地回归；**五场景真实提醒未创建，等待本轮明确授权**。不能用空投递台账当作真实投递成功 |
+
+真机取证条件与失败样本：
+
+- 默认动画使首页 `uiautomator dump` 无法 idle；取证期间临时开 App 的“减少动效（强制）”。它不代表默认动画或性能验收。
+- Maestro 2.9.0 与两个设备驱动均实存；中文输入首次成功。第二条 flow 的 `eraseText:80` 遇设备服务 DEADLINE_EXCEEDED 与宿主 heartbeat 文件锁，未发送；改用 ADB ASCII 输入并逐次回读。零时长 tap 对空输入框的 RNGH 背板不可靠，改用 120ms 手势且先验 focused。清空仅针对本轮文本，用 Ctrl+A/DEL。
+- 外部 `am start` 切页的第一条故事只有文字、未取到播放窗口，未作成功样本或据此断定宿主故障；App 内设置 Link 的复验通过。
+- `61801bf` 和 `433fb3cf` 分别在 15:02:50、15:42:49 发生地图退出 native 崩溃，原始栈保留，**没有归零或忽略**。
+- 最后已恢复 **handsFree=false、speakPolicy=auto、reduceMotionForce=false**；没有修改系统密度、旋转、字号、音量或其他系统设置。测试 App 已 force-stop、回到 Launcher；该清理动作不是地图正常退出通过的证据。
+
+本轮只读云栈 status 为 5/5 healthy、warnings=[]，release 为 `a09c73a5da3181708279bc1f3e90acb1519606a0`；没有部署后台、执行车控/商户写或付款。
+
+## 10. 剩余项与需要的决定
+
+**地图退出未通过。** 两次 SIGABRT 的错误均为 pointer tag 被截断，栈落在高德 `GLMapEngine.destroyAMapEngine / destroySurface`；依赖实际固定为 `com.amap.api:3dmap:9.6.0`。
+地图页、地图插件和 npm 依赖相对 AR03 没有源码变化；这里记录的是本轮发现的 SDK 兼容性故障，不冒称已证明旧 APK 的同一复现。
+
+[高德官方规避说明](https://lbs.amap.com/faq/android/navi-sdk/1000108216/1061016771)提供 App Manifest 的
+`android:allowNativeHeapPointerTagging="false"` 方案。[Android 官方说明](https://source.android.com/docs/security/test/tagged-pointers)
+明确它会关闭该 App 的指针标签检查，未修复底层库的问题，也不是面向未来 MTE 的长期解决方案。
+因此本轮**没有直接关闭检查**。已有可审查草案：在 `with-amap-key.js` 中仅对启用地图的 App 增加以下配置，保持 targetSdk 36；需用户决定是否采用临时兼容方案，或单独评估 SDK 升级。
+
+```javascript
+app.$ = app.$ || {}
+app.$['android:allowNativeHeapPointerTagging'] = 'false'
+```
+
+采用后必须经过 CNG 生成、重新构建/验 Manifest，再在同一候选上验证地图正常返回、快速返回、前后台及重复进出；不能只靠属性存在销账。
+
+**真实提醒未验。** 已向用户列明待授权范围：OPPO 当前 App 账号下最多 5 条一次性提醒，分别用于对话、设置、地图、后台、锁屏，每条约两分钟到期；只取消本轮尚未触发的残留，不删除记录、不操作其他提醒。授权到达后再创建，逐条核对服务端与客户端时点。
+
+**设备范围未补齐。** OPPO 的 `driving-landscape` 不可达性仍按 AR03 记录留给支持范围/对照机验证；没有操作 Xiaomi，也没有做物理折叠、系统 200% 字号、真实 S2S 发声或盲听。AR02/AR03 的旧剩余格仍归原批次。
+
+## 11. 原始证据与接续
+
+证据目录：`%LOCALAPPDATA%\car-agent\artifacts\AR04-20260908`。
+
+- `jest-433fb3c.json`、`jest-device-fix-result.json`、`static-device-fix-result.json`：最终代码检查；旧 SHA 各有独立文件。
+- `mutations.json`、`batch-overlap-isolated.json`、`batch-regression-before.log`、`permission-regression-before.log`：反向与修复前证据。
+- `build-device-fix.log` / `.err.log` / `build-device-fix-result.json`、`mirror-device-fix-manifest.json`、`apk-433fb3c.json`：当前构建与验包；原两包证据分别保留。
+- `final-hf-settings-results.json`、`hf-settings-background-native.txt`、`final-story-results.json`、`final-draft-results.json`、`final-map-opaque.png`、`preferences-restored.json`：当前包的定向设备证据。
+- `permission-activity-evidence.log`、`crash-buffer-current.log`、`amap-compat-proposal.patch`：权限循环原始证据、地图崩溃与未应用的兼容草案。
+
+接续时先确认这两项授权/取舍，再核当前 SHA、设备包和资源。当前没有本轮构建、Metro 或 Maestro 流占用资源；不要从旧 session ID 猜仍在运行，也不要把本页“已修的部分”写成 AR04 整批通过。
