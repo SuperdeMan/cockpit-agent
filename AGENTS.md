@@ -116,7 +116,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：`mobile/README.md` + [AR03 停播与横屏交接](docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。**AR03 客户端与共享 FSM 修复、本地回归与 10 条变异验证完成（2026-09-08）；一格设备证据都没有，未构建 APK、未装机，AR03 未整批签收。** 下一步是按实施记录末节逐格取设备读数（长回答/多段/S2S 自答/主动消息/缓冲阶段/横屏可达/200% 字号；盲听需泓舟）。AR02 客户端修复与 OPPO 定向验证完成、旧缓存已授权清除，完整设备矩阵仍缺，证据在[AR02 实施记录](docs/design/2026-09-07-ar02-capture-privacy-implementation.md)；当前 test 包仍是 `70365389e`（不含 AR03 代码）。AR01 证据保留在[实施记录](docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)，后续范围看[分批建议](docs/design/2026-09-07-android-review-remediation-batches.md)。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)保留 R01–R15 原发现；UX B1–B5 只作历史。 |
+| Android App | 当前入口：`mobile/README.md` + [AR03 停播与横屏交接](docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。**AR03 客户端与共享 FSM 修复、本地回归（695 tests）与 15 条变异验证完成；OPPO 常驻包已换成 `b5c471832`，R06 主证据（同题 A/B：停播窗口 ≥15.7s → 单个采样）与「8 次播报零麦克风」已取；R09 横屏形态在两台真机上原生不可达，层内停止键 / 多段 / S2S 自答 / 主动消息 / 盲听未验，AR03 未整批签收。** 下一步看实施记录第八节，并请用户裁决横屏支持范围（缩小 or 动对照机）。AR02 客户端修复与 OPPO 定向验证完成、旧缓存已授权清除，完整设备矩阵仍缺，证据在[AR02 实施记录](docs/design/2026-09-07-ar02-capture-privacy-implementation.md)——注意其设备读数绑的是旧包 `70365389e`。AR01 证据保留在[实施记录](docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)，后续范围看[分批建议](docs/design/2026-09-07-android-review-remediation-batches.md)。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)保留 R01–R15 原发现；UX B1–B5 只作历史。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

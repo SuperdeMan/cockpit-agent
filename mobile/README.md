@@ -11,7 +11,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
 - AR01 确认与取消：客户端修复、本地回归与 OPPO 样本验证完成，历史证据见[AR01 实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
 - **AR02 当前交接**：[采集与隐私实施记录](../docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。代码已推送；OPPO 当前常驻包 `70365389e`（2026-09-07 20:44）。客户端修复与定向验证完成，旧缓存已于 2026-09-08 授权清除；完整设备矩阵尚未完成，AR02 未整批签收。
-- **AR03 当前交接**：[停播与横屏操作实施记录](../docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。播放事实（`core/voice/playbackFacts.ts`）是停止键的唯一判据；停播回 ARMED 不开续问窗；横屏 Dock 落在语音层覆盖域（`voice-sheet-scope`）之外。**本批未构建 APK、未装机**，设备格全部未验。
+- **AR03 当前交接**：[停播与横屏操作实施记录](../docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)。播放事实（`core/voice/playbackFacts.ts`，两轴 `playing`/`live`）是停止键的唯一判据；停播回 ARMED 不开续问窗；横屏 Dock 落在语音层覆盖域（`voice-sheet-scope`）之外。**OPPO 常驻包已换成 `b5c471832`（2026-09-08 08:10）**，R06 主证据已取；R09 横屏形态在两台真机上原生不可达，层内停止键 / 多段 / S2S / 主动消息未验。
 - 多端网关契约：`docs/conventions.md` §9.33
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）
