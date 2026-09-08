@@ -8,8 +8,9 @@ import { base64ToBytes } from '@/core/voice/base64'
 import { cancelVisionCapture, registerVisionCapturer, reportVisionCameraActive } from '@/core/vision/frame'
 import { checkCaptureSignal, withCaptureSignal } from '@/core/vision/cancellation'
 import { memoryCamera } from '@/core/vision/nativeCamera'
+import type { InteractionScope } from '@/core/session/interactionScope'
 
-export function VisionCapture({ enabled }: { enabled: boolean }): React.ReactElement | null {
+export function VisionCapture({ enabled, scope }: { enabled: boolean; scope?: InteractionScope }): React.ReactElement | null {
   const [armed, setArmed] = useState<number | null>(null)
   const [perm, requestPerm] = useCameraPermissions()
   const camRef = useRef<CameraView | null>(null)
@@ -75,21 +76,23 @@ export function VisionCapture({ enabled }: { enabled: boolean }): React.ReactEle
   useEffect(() => {
     let foreground = AppState.currentState === 'active'
     const sync = () => {
-      allowed.current = enabled && foreground && settingsStore.getState().settings.visionEnabled && memoryCamera() !== null
+      allowed.current = enabled && foreground && (!scope || scope.canCapture()) && settingsStore.getState().settings.visionEnabled && memoryCamera() !== null
       registerVisionCapturer(allowed.current ? capture : null)
       if (!allowed.current) { cancelVisionCapture(); setArmed(null) }
     }
     // Zustand 通知同步撤回能力，不能等 React 下一次 effect 才作废已在等待的权限回调。
     const off = settingsStore.subscribe(sync)
+    const offScope = scope?.subscribe(sync)
     const sub = AppState.addEventListener('change', (state) => { foreground = state === 'active'; sync() })
     sync()
     return () => {
       allowed.current = false
       off()
+      offScope?.()
       sub.remove()
       registerVisionCapturer(null)
     }
-  }, [enabled, capture])
+  }, [enabled, capture, scope])
 
   if (!enabled || armed === null) return null
   return (

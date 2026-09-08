@@ -58,8 +58,11 @@ export interface ComposerProps {
    *  （都是「小舟，开始说话」），读屏念两遍、其中一个还够不到（暗区把触摸拦住了）。
    *  与 B5-12 暗区那条同形态，也同样是本批 lever ② 自己造的。 */
   covered?: boolean
+  /** 宿主保留文本草稿；画廊/独立消费方仍可用本地 state。 */
+  draft?: string
+  onDraftChange?(text: string): void
   fontScale: FontScalePref
-  onSend(text: string): void
+  onSend(text: string): void | boolean
   onInterrupt(): void
   /** 只停播（AR03）：停当前出声，不取消在飞请求、不开麦 */
   onStopPlayback(): void
@@ -67,8 +70,10 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
-  const [input, setInput] = useState('')
+export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
+  const [localInput, setLocalInput] = useState('')
+  const input = draft ?? localInput
+  const setInput = onDraftChange ?? setLocalInput
   // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
   // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
   const [inputOpen, setInputOpen] = useState(false)
@@ -78,7 +83,7 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
   const submit = () => {
     const text = input.trim()
     if (!text) return
-    onSend(text)
+    if (onSend(text) === false) return
     setInput('')
   }
   const recording = ptt?.state === 'recording'

@@ -61,6 +61,15 @@ test('闲态：合一键是「发送」', async () => {
   } finally { await act(async () => { view.unmount() }) }
 })
 
+test('AR04 宿主拒绝失效页面的发送手势时，输入草稿保留', async () => {
+  const onDraftChange = jest.fn()
+  const view = await mount(composer({ draft: '还没有发出去', onSend: () => false, onDraftChange }))
+  try {
+    await act(async () => { find(view, 'composer-send')!.props.onPress() })
+    expect(onDraftChange).not.toHaveBeenCalled()
+  } finally { await act(async () => view.unmount()) }
+})
+
 test('在飞轮未出声：合一键是「打断」，按下走取消在飞请求', async () => {
   const onInterrupt = jest.fn()
   const onStopPlayback = jest.fn()

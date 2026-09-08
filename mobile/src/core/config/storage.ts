@@ -6,6 +6,11 @@ import type { ServerConfig } from './types'
 
 const CONFIG_KEY = 'xiaozhou.server-config.v1'
 const TOKEN_KEY = 'xiaozhou.server-token.v1'
+const subscribers = new Set<() => void>()
+export function subscribeServerConfig(fn: () => void): () => void {
+  subscribers.add(fn)
+  return () => { subscribers.delete(fn) }
+}
 
 export async function loadServerConfig(): Promise<ServerConfig | null> {
   try {
@@ -25,9 +30,11 @@ export async function saveServerConfig(cfg: ServerConfig): Promise<void> {
   const { token, ...base } = cfg
   await SecureStore.setItemAsync(TOKEN_KEY, token)
   await AsyncStorage.setItem(CONFIG_KEY, JSON.stringify(base))
+  for (const fn of subscribers) fn()
 }
 
 export async function clearServerConfig(): Promise<void> {
   await AsyncStorage.removeItem(CONFIG_KEY)
   await SecureStore.deleteItemAsync(TOKEN_KEY)
+  for (const fn of subscribers) fn()
 }

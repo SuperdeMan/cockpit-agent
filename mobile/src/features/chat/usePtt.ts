@@ -15,6 +15,7 @@ import { PermissionDeniedError } from '@/core/voice/recorder'
 import { speechController } from '@/core/voice/speech'
 import { TapTalkSession, vadEndpoint } from '@/core/voice/tapTalk'
 import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
+import type { InteractionScope } from '@/core/session/interactionScope'
 
 const MIN_DURATION_MS = 320
 // 定稿超过它仍无结果 → UI 给中间反馈（兜底链最长 ≈24s，一直只写「识别中…」会让人以为卡死）
@@ -48,6 +49,7 @@ interface VoiceSession {
 }
 
 export function usePtt(opts: {
+  scope?: InteractionScope
   audioUrl: string
   sessionId: string
   onFinal(text: string): void
@@ -139,6 +141,7 @@ export function usePtt(opts: {
 
   const begin = useCallback(
     (kind: 'hold' | 'tap') => {
+      if (opts.scope && !opts.scope.canCapture()) return
       if (startingRef.current || sessionRef.current) return // ③ 并发按下忽略
       startingRef.current = true
       pendingStopRef.current = false
@@ -227,6 +230,12 @@ export function usePtt(opts: {
     setCancelledAt(Date.now())
     opts.onDiscard?.()
   }, [opts, reset])
+
+  useEffect(() => {
+    const sync = () => { if (opts.scope && !opts.scope.canCapture()) cancel() }
+    sync()
+    return opts.scope?.subscribe(sync)
+  }, [opts.scope, cancel])
 
   return { state, mode, partial, error, errorKind, slow, cancelledAt, pressDown, pressUp, tap, cancel }
 }

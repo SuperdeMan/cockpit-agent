@@ -11,6 +11,7 @@ const mockHandleFrame = jest.fn()
 
 jest.mock('@/core/buildInfo', () => ({ readBuildInfo: () => ({ variant: mockVariant }), formatBuildLabel: () => 'test-build' }))
 jest.mock('expo-router', () => ({
+  useFocusEffect: (cb: () => void | (() => void)) => require('react').useEffect(cb, []),
   useLocalSearchParams: () => mockParams,
   Redirect: () => null,
   Link: 'Link',
@@ -40,7 +41,7 @@ jest.mock('@/core/voice/kws', () => ({ KwsEngine: jest.fn(), kwsNativeAvailable:
 jest.mock('@/core/voice/vad', () => ({ VadEngine: jest.fn(), vadNativeAvailable: jest.fn() }))
 jest.mock('@/core/voice/micBus', () => ({ micLease: jest.fn(), micBusStats: jest.fn(() => ({})) }))
 jest.mock('@/core/voice/recorder', () => ({ recorder: jest.fn() }))
-jest.mock('@/core/voice/speech', () => ({ speechController: jest.fn() }))
+jest.mock('@/core/voice/speech', () => ({ speechController: jest.fn(), SpeechController: jest.fn() }))
 jest.mock('@/core/voice/catalog', () => ({ fetchAsrProviders: jest.fn(async () => []), fetchTtsProviders: jest.fn(async () => []) }))
 jest.mock('@/core/haptics', () => ({ HAPTIC_KINDS: ['wake'], performHaptic: jest.fn() }))
 jest.mock('@/core/voice/cueTone', () => ({ playCueTone: jest.fn() }))

@@ -103,6 +103,53 @@ test('自然收尾：攒着的主动消息照常补播（停播不是把它丢�
   expect(batch()).toHaveBeenCalledWith(expect.anything(), '到点了，该出发去机场了')
 })
 
+test('AR04 退后台再回前台：旧轮 delta/final 和首音回调均失效，新轮可以出声', () => {
+  const sc = new SpeechController(url)
+  sc.begin('old', '', true)
+  sc.setForeground(false)
+  sc.setForeground(true)
+  sc.delta('old', '迟到增量'); sc.finish('old', '迟到定稿'); mockSessions[0].firstAudio()
+  expect(mockSessions).toHaveLength(1)
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+  sc.begin('new', '', true)
+  mockSessions[1].firstAudio()
+  expect(getAudioPlaybackSnapshot().playing).toBe(true)
+  sc.stop()
+})
+
+test.each(['stop', 'background'])('AR04 批处理合成等待时 %s，恢复后迟到结果不能开播放器', async (reason) => {
+  const sc = new SpeechController(url)
+  const players = jest.requireMock('@/core/voice/audioCtx').newPcmPlayer as jest.Mock
+  players.mockClear()
+  let resolve!: (v: unknown) => void
+  batch().mockImplementationOnce(() => new Promise((r) => { resolve = r }))
+  const pending = sc.speakBatch('一条提醒')
+  expect(getAudioPlaybackSnapshot().live).toBe(true)
+  if (reason === 'stop') sc.stop()
+  else { sc.setForeground(false); sc.setForeground(true) }
+  resolve({ pcm: new Int16Array(16), sampleRate: 16000 })
+  await expect(pending).resolves.toBe(false)
+  expect(players).not.toHaveBeenCalled()
+  expect(getAudioPlaybackSnapshot()).toEqual({ playing: false, live: false })
+})
+
+test('AR04 后台所有播报入口都静默，DEFER 不因回前台或 S2S 变空闲重新放出', async () => {
+  const sc = new SpeechController(url)
+  armDeferred(sc)
+  sc.setForeground(false)
+  sc.begin('b2', '', true); sc.finish('b2', '不应播出')
+  sc.proactive('后台紧急消息', { priority: 'critical', hasCard: true, deliveryId: 'd2' })
+  await expect(sc.preview('试听')).resolves.toBe(false)
+  await expect(sc.speakBatch('后台消息')).resolves.toBe(false)
+  sc.setForeground(true)
+  sc.setProactiveCtx({ driving: false, s2sBusy: false })
+  jest.advanceTimersByTime(SEGMENT_GRACE_MS + 50)
+  await Promise.resolve()
+  expect(batch()).not.toHaveBeenCalled()
+  expect(mockSessions).toHaveLength(1)
+  sc.stop()
+})
+
 test('R06 缓冲段：final 已到、首片还没起播时 live 仍为真（此刻 busy 已落，停播键靠它）', () => {
   const sc = new SpeechController(url)
   sc.begin('b1', '', true)

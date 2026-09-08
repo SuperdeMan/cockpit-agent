@@ -116,11 +116,20 @@ export class SpeechController implements SpeechSink {
   /** DEFER 队列（共享 `PendingSpeech`：有界 3 条、按 deliveryId 去重、溢出丢最旧） */
   private readonly deferred = new PendingSpeech()
   private flushing = false
+  private foreground = true
+  private stopEpoch = 0
 
   constructor(private audioUrl: string) {}
 
   setAudioUrl(url: string): void {
     this.audioUrl = url
+  }
+
+  /** 宿主同步撤回；回前台只开闸，旧轮的 allowed/异步结果不会恢复。 */
+  setForeground(active: boolean): void {
+    if (this.foreground === active) return
+    this.foreground = active
+    if (!active) this.stop()
   }
 
   setProactiveCtx(ctx: { driving: boolean; s2sBusy: boolean }): void {
@@ -133,6 +142,7 @@ export class SpeechController implements SpeechSink {
 
   /** 主动消息到达：三档 + 行车事实 → 说 / 抢话 / 排队 / 只气泡（判据 proactivePolicy.ts） */
   proactive(text: string, msg: { priority?: string; hasCard: boolean; deliveryId?: string }): void {
+    if (!this.foreground) return
     const policy = settingsStore.getState().settings.speakPolicy
     const d = proactiveSpeechDecision(
       { priority: msg.priority, hasText: !!text.trim(), hasCard: msg.hasCard },
@@ -152,11 +162,15 @@ export class SpeechController implements SpeechSink {
    *  攒下的旧话在**新一轮开口的瞬间**倒出来，两段音频叠着放——正是 M-C 头注要避免的那件事。
    *  真正的阻塞条件是 ① S2S 在忙、② 自己的播报在跑，所以挂在这两条各自解除的那一刻。 */
   private async flushDeferred(): Promise<void> {
-    if (this.flushing || this.speaking || this.proactiveCtx.s2sBusy) return
+    if (!this.foreground || this.flushing || this.speaking || this.proactiveCtx.s2sBusy) return
     this.flushing = true
+    const epoch = this.stopEpoch
     try {
       // 串行：drain() 一次给全部，同时喂给 speakBatch 就是几段音频叠着放
-      for (const it of this.deferred.drain()) await this.speakBatch(it.text)
+      for (const it of this.deferred.drain()) {
+        if (!this.foreground || epoch !== this.stopEpoch) break
+        await this.speakBatch(it.text)
+      }
     } finally {
       this.flushing = false
     }
@@ -239,18 +253,18 @@ export class SpeechController implements SpeechSink {
   }
 
   begin(bubbleId: string, emotion: string, voice = false): void {
-    this.allowed = speakAllowed(settingsStore.getState().settings.speakPolicy, voice)
-    if (!this.allowed) {
+    if (!this.foreground || !speakAllowed(settingsStore.getState().settings.speakPolicy, voice)) {
       this.stop()
       return
     }
     this.resetTurn(bubbleId, emotion)
+    this.allowed = true
     this.openSession(null)
   }
 
   /** 上一轮没播完就发了新的：先停，两轮同时出声比少听一句更糟；再把本轮读数归零 */
   private resetTurn(bubbleId: string, emotion: string): void {
-    this.stop()
+    this.stop(false) // 新轮仍允许自然结束后补播；显式停播/后台撤回才清空 DEFER。
     this.bubble = bubbleId
     this.emotion = emotion
     this.beganAt = Date.now()
@@ -269,9 +283,11 @@ export class SpeechController implements SpeechSink {
   /** 起一段流式会话并入队。gate 非空 = 闸在前一段的 completion 上（合成不等、播放等）；divergent = 因 final 与已流内容是两段话而另起 */
   private openSession(gate: Promise<void> | null, divergent = false): TtsSession {
     this.cancelGrace()
+    const epoch = this.stopEpoch
     const rec = { session: null as unknown as TtsSession, divergent, startedAt: Date.now(), firstAudioAt: 0, endedAt: 0 }
     const session = new TtsSession(this.cfg(this.emotion), {
       onFirstAudio: () => {
+        if (!this.foreground || epoch !== this.stopEpoch) return
         rec.firstAudioAt = Date.now()
         if (!this.turnSounded) this.lastFirstAudioMs = Date.now() - this.beganAt
         this.turnSounded = true
@@ -283,6 +299,7 @@ export class SpeechController implements SpeechSink {
         if (!wasSpeaking) this.onSpeechBegan?.(this.spokenText)
       },
       onEnd: () => {
+        if (epoch !== this.stopEpoch) return
         rec.endedAt = Date.now()
         this.onSegmentEnd(session)
       },
@@ -327,8 +344,8 @@ export class SpeechController implements SpeechSink {
   /** 这轮播报的唯一收尾出口：先出读数，再 speaking 落、没出过声报 onSilent、报 onSpeechEnded、（自然收尾才）补播 DEFER。
    *  `natural` = 队列自己放空后过了宽限；`false` = 被 `stop()` 打断（换轮 / barge-in / 用户按停）。
    *  **DEFER 只跟自然收尾走**（AR03 修 R06）：此前无条件补播 ⇒ 用户按下「停止播报」的同一瞬间，
-   *  攒着的主动消息立刻开口，「一步只停播、队列清空」当场不成立。攒着的话不会丢——
-   *  另一条既有触发点（`setProactiveCtx` 的 s2s 转空闲）与下一次自然收尾照旧补播，队列本来就有界去重。 */
+   *  攒着的主动消息立刻开口，「一步只停播、队列清空」当场不成立。AR04：显式停止清 DEFER，
+   *  文字记录保留；普通新轮的 resetTurn 不清队列，自然收尾仍可补播。 */
   private finishTurn(natural: boolean): void {
     if (this.turnSessions.length) this.emitTurnReport()
     const sounded = this.turnSounded
@@ -343,7 +360,7 @@ export class SpeechController implements SpeechSink {
   }
 
   delta(bubbleId: string, text: string): void {
-    if (!this.allowed || bubbleId !== this.bubble) return
+    if (!this.foreground || !this.allowed || bubbleId !== this.bubble) return
     this.spokenText += text
     this.onSpeechText?.(this.spokenText) // 让 FSM 手里那份参照文本跟着变长（见 onSpeechText 头注）
     const tail = this.tail()
@@ -357,7 +374,7 @@ export class SpeechController implements SpeechSink {
 
   finish(bubbleId: string, text: string): void {
     // 三档在 begin 裁过；这里再看一眼「静音」——用户可能在这一轮中途把它关了
-    if (!this.allowed || settingsStore.getState().settings.speakPolicy === 'silent' || !text) return
+    if (!this.foreground || !this.allowed || settingsStore.getState().settings.speakPolicy === 'silent' || !text) return
     // **整句定稿在这里，三条分支都要报**（2026-08-29 第二次真机复跑才补上）：
     // 上一版只在 `delta()` 与 `speakBatch()` 报，而 `sameSegment=true`（流式正常收尾）
     // 这条**最常走的路径**两个都不经过；答案若是一次性 final 送达（一次 delta 都没有），
@@ -385,7 +402,10 @@ export class SpeechController implements SpeechSink {
     this.openSession(tail.completion).finish(text)
   }
 
-  stop(): void {
+  stop(clearDeferred = true): void {
+    this.stopEpoch++
+    this.allowed = false
+    if (clearDeferred) this.deferred.drain()
     this.cancelGrace()
     const hadTurn = this.queue.length > 0
     const q = this.queue
@@ -412,32 +432,40 @@ export class SpeechController implements SpeechSink {
    *  出声」是个假前提（tts.ts 头注查实了四段链，没有一段会换引擎），设置页据此把
    *  「没响」显式说出来，而不是让用户对着一个安静的手机猜。 */
   async preview(text: string): Promise<boolean> {
+    if (!this.foreground) return false
     this.resetTurn('__preview__', '')
+    const epoch = this.stopEpoch
     const session = this.openSession(null)
     session.finish(text)
     await session.completion
-    return this.turnSounded
+    return epoch === this.stopEpoch && this.turnSounded
   }
 
   /** 批处理播一段（主动消息 / 会话对不上时的兜底共用） */
   async speakBatch(text: string): Promise<boolean> {
+    if (!this.foreground) return false
+    const epoch = this.stopEpoch
+    setAudioPlaybackFact(this, true, 'live') // 合成等待也必须有停止出口。
     // 批处理这条腿不走 `delta()`，整句一次给 ⇒ 参照文本要在这里补一次，
     // 否则「流式不可用 → 回落批处理」的那些轮回声防线又是空转的（同 onSpeechText 头注）
     this.onSpeechText?.(text)
     try {
       const out = await synthesizeBatch(this.cfg(''), text)
-      if (!out) return false
+      if (!this.foreground || epoch !== this.stopEpoch || !out) return false
       const { player, done } = playPcm(out.pcm, out.sampleRate)
       this.extra = { player }
       setAudioPlaybackFact(this, true, 'live')
       this.setSpeaking(true)
       await done
+      if (epoch !== this.stopEpoch) return false
       this.setSpeaking(false)
       setAudioPlaybackFact(this, false, 'live')
       if (this.extra?.player === player) this.extra = null
       return true
     } catch {
       return false
+    } finally {
+      if (epoch === this.stopEpoch && !this.queue.length && !this.extra) setAudioPlaybackFact(this, false, 'live')
     }
   }
 }

@@ -3,53 +3,38 @@
 //  - 双形态外壳：窗口短边 ≥600dp 平板双栏（右=玻璃舞台：车况+提醒+焦点卡），旋转即时切
 //  - 确认条按台账渲染（isPendingLive），位置征询条只激活最新一条
 //  - 视觉照 hmi shell.css：深空渐变+极光 blob 打底，顶栏=品牌光球+连接 pill，空对话=欢迎态大光球
-// 改服务器配置 → 回本屏时按 edgeUrl+token 判变 → 断开重连（M1-5 服务器分区语义）。
+// AR04：配置、会话和语音控制器由 AssistantProvider 持有；本屏只呈现记录与布局。
 import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
-import { Link, Redirect, useFocusEffect, useLocalSearchParams } from 'expo-router'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { BackHandler, KeyboardAvoidingView, Pressable, Text, useWindowDimensions, View } from 'react-native'
+import { Link, Redirect, useLocalSearchParams } from 'expo-router'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useStore } from 'zustand'
 
 import { isPendingLive } from '@shared/pendingOps.mjs'
 import type { Msg } from '@shared/types.ts'
 
-import { loadServerConfig } from '../../core/config/storage'
-import type { ServerConfig } from '../../core/config/types'
 import { buildReceipt } from '../../core/session/receipt'
-import { ensureWired, type Wired } from '../../core/session/wiring'
-import type { SendOpts } from '../../core/session/store'
-import { currentTurn } from '../../core/session/turnView'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
-import { activityLog } from '../../core/presence/activityLog'
-import { useReduceMotion } from '../../core/a11y/reduceMotion'
-import { composerOrbAnimated, edgeGlowActive, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
-import { composerInputMode, sheetResident } from '../../core/presence/drivingMode'
+import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
+import { composerInputMode } from '../../core/presence/drivingMode'
 import { MIC_LABEL } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
 import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
-import { PANE_GAP, screenSwitch, tabletopSplit } from '../../ui/layout/sizeClass'
-import { useLayout } from '../../ui/layout/useLayout'
+import { PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
 import { usePalette } from '../../ui/theme'
 import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
-import { speechController } from '../../core/voice/speech'
-import { canStopPlayback, stopPlayback } from '../../core/voice/stopPlayback'
-import { getAudioPlaybackSnapshot, subscribeAudioPlayback } from '../../core/voice/playbackFacts'
-import { captureVisionFrame, needsVisionFrame, visionCapabilitySignal } from '../../core/vision/frame'
 import { Composer } from './Composer'
 import { FocusDock } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
 import { PresenceCapsule } from './PresenceCapsule'
-import { PrivacyRail } from './PrivacyRail'
 import { VoiceSheet } from './VoiceSheet'
-import { useHandsFree } from './useHandsFree'
-import { usePresence, type SheetOverride } from './usePresence'
-import { usePtt } from './usePtt'
+import { useAssistant, type AssistantRuntime } from '../assistant/AssistantProvider'
+import { useProactiveViewability } from '../assistant/ProactivePresenter'
 
 // 免唤醒 FSM 态 → 用户看得懂的一行字与一个点的颜色。
 // **不直接显示 FSM 名字**：ARMED/FOLLOWUP 对用户没有意义，而「在不在听」有。
@@ -73,37 +58,9 @@ const HF_DOT: Record<string, string> = {
 }
 
 export function ChatScreen() {
-  const [cfgState, setCfgState] = useState<'loading' | 'missing' | ServerConfig>('loading')
-  const [wired, setWired] = useState<Wired | null>(null)
-
-  const { settings } = useStore(settingsStore)
-  const p = usePalette(settings)
-
-  // 配置装载与变更检测（回本屏即重查：设置页改完服务器返回时生效）
-  useFocusEffect(
-    useCallback(() => {
-      let alive = true
-      void loadServerConfig().then((cfg) => {
-        if (!alive) return
-        setCfgState(cfg ?? 'missing')
-      })
-      return () => {
-        alive = false
-      }
-    }, []),
-  )
-
-  // 按配置建立/复用会话单例（wiring.ts：仅 edgeUrl+token 变化才断开重建）
-  useEffect(() => {
-    if (cfgState === 'loading' || cfgState === 'missing') return
-    setWired(ensureWired(cfgState))
-  }, [cfgState])
-
-  if (cfgState === 'missing') return <Redirect href="/onboarding" />
-  if (cfgState === 'loading' || !wired) {
-    return <View style={{ flex: 1, backgroundColor: p.bg }} />
-  }
-  return <ChatBody p={p} wired={wired} cfg={cfgState} />
+  const runtime = useAssistant()
+  if (!runtime) return <Redirect href="/onboarding" />
+  return <ChatBody runtime={runtime} />
 }
 
 /** 顶栏图标入口（hmi .au-icon-btn 同款：fill 底/圆角 12）；svg 原生缺席回退文字。
@@ -201,93 +158,14 @@ function Welcome({
   )
 }
 
-function ChatBody({
-  p,
-  wired,
-  cfg,
-}: {
-  p: ReturnType<typeof usePalette>
-  wired: Wired
-  cfg: ServerConfig
-}) {
-  const { core } = wired
-  const {
-    messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds,
-    turnMeta, confirmLog,
-  } = useStore(core.store)
-  const { settings } = useStore(settingsStore)
-
-  const [notice, setNotice] = useState('')
-  // 发送入口（文本 / PTT / 免唤醒三条路共用这一个）。M4-6 视觉抓帧挂在这里，
-  // 分支与 hmi/src/App.tsx:718-723 逐条对照：
-  //  · 已带 vision_frame_id 的重发不再抓（`visionDone`）
-  //  · **判据用共享的 needsVisionFrame**——采集面就是隐私面，判据分叉等于两个端的
-  //    隐私边界不一样，而没有任何东西会红
-  const onSend = useCallback(
-    (text: string, metaExtra?: Record<string, string>, opts?: SendOpts) => {
-      const visionDone = metaExtra ? 'vision_frame_id' in metaExtra : false
-      if (settings.visionEnabled && !visionDone && needsVisionFrame(text)) {
-        // SessionCore 先登记用户气泡与请求身份，再准备帧。取消后到达的 frame_id 不得再派发。
-        // AR02 将相同取消信号传给摄像头/上传；能力关闭同样使准备失败。
-        core.send(text, metaExtra, {
-          ...opts,
-          preparationSignal: visionCapabilitySignal(),
-          prepareMeta: async (bubbleId, signal) => {
-            const frameId = await captureVisionFrame(cfg.audioUrl, signal)
-            if (frameId) core.markVision(bubbleId)
-            return { vision_frame_id: frameId }
-          },
-        })
-        return
-      }
-      core.send(text, metaExtra, opts)
-    },
-    [core, settings.visionEnabled, cfg.audioUrl],
-  )
-  const onConfirm = useCallback(
-    (reply: '确认' | '取消', operationId?: string) => {
-      // 位置授权同意 = 定位这一档「开了」：激活日志有了第三个产出方（评审 D8 那条 location）
-      if (!operationId && pendingLocationText !== null && reply === '确认') activityLog.push('location', '位置授权 · 同意')
-      core.confirmReply(reply, operationId)
-    },
-    [core, pendingLocationText],
-  )
-  const onInterrupt = useCallback(() => core.cancelCurrentTurn(), [core])
-  // 语音输入（M2-2）：定稿走与文本完全相同的 send 路径——前置路由/位置闸/候选拦截
-  // 一条都不能因为「这句是说出来的」而绕过
-  const ptt = usePtt({
-    audioUrl: cfg.audioUrl,
-    sessionId: wired.session.sessionId,
-    onPartial: (t) => core.draftUser(t),
-    onDiscard: () => core.discardDraftUser(),
-    onFinal: (text) => onSend(text, undefined, { source: 'ptt', bubbleId: core.commitDraftUser() ?? undefined }),
-  })
-  // 免唤醒（M4-4）。**定稿走的是同一个 onSend**——前置路由/位置闸/候选拦截/视觉抓帧
-  // 一条都不能因为「这句是免唤醒说出来的」而绕过。
-  const hf = useHandsFree({
-    audioUrl: cfg.audioUrl,
-    sessionId: wired.session.sessionId,
-    enabled: settings.handsFree,
-    needConfirm: pendingOps.length > 0,
-    onPartial: (t) => core.draftUser(t),
-    onSend: (text) => onSend(text, undefined, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),
-    // S2S 自答轮沉淀（方案 §5.2.2）：这一轮此前在对话里零痕迹
-    onS2sUserUtterance: (t) => core.s2sUserUtterance(t),
-    onS2sAnswerDelta: (t) => core.s2sAnswerDelta(t),
-    onS2sTurnEnd: (r) => core.s2sTurnEnd(r.reason),
-    // 逃逸走的是同一个 onSend（视觉抓帧 / 前置路由 / 位置闸一条不少）；用户气泡复用 S2S 那条
-    onS2sEscalated: (utt) => onSend(utt, undefined, { source: 's2s', bubbleId: core.takeS2sUserBubble() ?? undefined }),
-    onNotice: setNotice,
-    onCancelTurn: () => core.cancelCurrentTurn(),
-  })
-
-  // 语音层的显式操作（点胶囊打开 / 下拉收起），钉在当前轮上；换轮自动失效（判据在 derivePresence）
-  const [sheetOverride, setSheetOverride] = useState<SheetOverride | null>(null)
-  const turn = useMemo(() => currentTurn(messages), [messages])
-  const latestTurnId = turn.assistant?.id ?? ''
+function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
+  const { p, cfg, core, state, settings, ptt, hf, snapshot, layout, motionEnv, reduceMotion,
+    notice, turn, latestTurnId, busy, stoppable, onSend, onConfirm, onInterrupt, onOrbTap,
+    onStopPlayback, setSheetOverride, privacyOpen, setPrivacyOpen, draft, setDraft,
+    dockExpanded, setDockExpanded } = runtime
+  const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId,
+    interruptedIds, s2sIds, visionIds, turnMeta, confirmLog } = state
   const [listHeight, setListHeight] = useState(0)
-  // B5-15 lever ②：driving-landscape 下语音层脱离记录区容器、覆盖**整列**（记录区 + Composer）。
-  // 记录区在外屏横只有实测 98.67dp，装不下 0.4 档最小高 240——整列才是层能用的真实空间。
   const [columnHeight, setColumnHeight] = useState(0)
 
   // B5-8 深链 xiaozhou://voice（Shortcuts「说话」）：升层**不开麦**（§12.2：进入后仍需一次手势才录音）。
@@ -301,38 +179,6 @@ function ChatBody({
     setSheetOverride({ turnId: latestTurnId, mode: 'open' })
   }, [voiceParam, latestTurnId])
 
-  // 免唤醒离开 LISTENING 而没有定稿（退出词 / 语气词 / 误唤醒回收 / 回声）：草稿不留气泡。
-  // 定稿路径里 commit 先于 FSM 换态（onSend 同步发生在 _finalizeSend 内），到这里已是 no-op
-  useEffect(() => {
-    if (hf.fsm !== 'LISTENING') core.discardDraftUser()
-  }, [hf.fsm, core])
-
-  // ── UX v2.1 在场收集器（B1-8/B1-10）。**判断全在 derivePresence 里**，这里只是把它接上屏 ──
-  // B4-10：横屏是 §6 触发③ 的一个条件，直接从窗口算——**不能经 layout**（useLayout 读
-  // snapshot.driving，排在 usePresence 之后；拿它当入参就成环了）
-  const win = useWindowDimensions()
-  const snapshot = usePresence({
-    core,
-    hf,
-    ptt: cfg.audioUrl ? ptt : null,
-    user: cfg.token.slice(-4),
-    sheetOverride,
-    landscape: win.width > win.height,
-  })
-  // B4-6 布局：`tablet = min(w,h) >= 600` 那个单布尔换成 useLayout 五模式（判据全在 sizeClass.ts，本文件零判断）。
-  // 放在 usePresence 之后——它读 snapshot.driving（行车档改布局，§7.2 第四行）。
-  const layout = useLayout(snapshot.driving)
-  // B4-12 主动消息仲裁要的两个事实喂给播报控制器（它读设置，但不认识行车档与 S2S 在不在忙）。
-  // 判据全在 proactivePolicy.ts，这里只搬事实
-  useEffect(() => {
-    const s2sBusy =
-      settings.voicePipeline === 's2s' && (hf.fsm === 'LISTENING' || hf.fsm === 'THINKING' || hf.fsm === 'SPEAKING')
-    speechController().setProactiveCtx({ driving: snapshot.driving, s2sBusy })
-  }, [snapshot.driving, hf.fsm, settings.voicePipeline])
-  // B4-3 动效环境：事实在 core/a11y/reduceMotion.ts，判据在 orbPolicy.ts，这里只把布尔发下去
-  const reduceMotion = useReduceMotion()
-  const motionEnv = { reduceMotion }
-
   // B4-7 tabletop（§7.3）：分界 = 铰链上缘（窗口坐标）− 内容区在窗口里的 y。onLayout 给的是相对父级的 y，
   // 这里要的是窗口坐标 ⇒ measureInWindow；量一次不够（旋转 / 展开会变），随 layout 重量
   const contentRef = useRef<View | null>(null)
@@ -342,16 +188,6 @@ function ChatBody({
     contentRef.current?.measureInWindow((_x, y, _w, h) => setContentBox({ y, h }))
   }, [layout.mode, layout.width, layout.height])
 
-  // §7.4：外屏↔内屏切换瞬间，正在按住的 PTT 按松手处理（手指物理上一定离开了那块屏）；轻点会话按「结束并提交」。
-  // 切屏判定在 effect 里（渲染期用 ref 记 prev 会被 StrictMode 双渲吞掉事件）
-  const prevFoldRef = useRef(layout.fold)
-  useEffect(() => {
-    const sw = screenSwitch(prevFoldRef.current, layout.fold)
-    prevFoldRef.current = layout.fold
-    if (!sw || ptt.state !== 'recording') return
-    if (ptt.mode === 'hold') ptt.pressUp()
-    else if (ptt.mode === 'tap') ptt.tap()
-  }, [layout.fold, ptt])
   // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
   const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
   const v2 = settings.uxV2Presence
@@ -363,54 +199,6 @@ function ChatBody({
   // 回滚分支要拿回来，否则「关了开关」只退回三条
   const legacyHint = ptt.partial || (ptt.state === 'finalizing' ? (ptt.slow ? '网络似乎不太顺，正在重试…' : '识别中…') : '') || ptt.error || ''
   const legacyHintIsError = !ptt.partial && ptt.state !== 'finalizing' && !!ptt.error
-  // 轻点光球：哪个引擎持有麦，就由谁开始听——免唤醒开着 = 手动唤醒（FSM 自带 VAD 收尾）；
-  // 否则 = PTT 的 tap 会话（端侧 VAD / 服务端尾 / 15s 三层收尾）。这是「谁持有麦」的事实，不是判据
-  const hfOn = settings.handsFree && hf.availability.usable
-  const startListening = useCallback(() => {
-    if (!hfOn) {
-      ptt.tap()
-      return
-    }
-    if (hf.fsm === 'LISTENING') hf.endUtterance()
-    else hf.wake()
-  }, [hfOn, hf, ptt])
-  // ■ 打断 / 播报中轻点：先停（cancel 帧 + stop TTS），再听（方案 §5.2 规则 4：层不收、speaking→listening）
-  const interruptAndListen = useCallback(() => {
-    core.cancelCurrentTurn()
-    startListening()
-  }, [core, startListening])
-  // 光球轻点契约（方案 §5.1.1 表）：播报中 = 停播再录；思考 / 执行中 = 展开语音层；其余 = 开始 / 结束录音
-  const onOrbTap = useCallback(() => {
-    if (snapshot.agent === 'speaking') interruptAndListen()
-    else if (snapshot.agent === 'thinking' || snapshot.agent === 'processing') setSheetOverride({ turnId: latestTurnId, mode: 'open' })
-    else startListening()
-  }, [snapshot.agent, interruptAndListen, latestTurnId, startListening])
-  // ■ 只停播（AR03 / 评审 R06）：**三条命令里的第二条**。
-  //  · 停止播报 = 这里：停当前所有出声，不发 cancel 帧、不开麦、不开续问窗、不放攒着的主动消息；
-  //  · 取消在飞请求 = onInterrupt（cancelCurrentTurn，含停播）；
-  //  · 停止后开始说话 = interruptAndListen（光球轻点）。
-  // 两条腿都要，**且顺序是判据**：判据与理由在 core/voice/stopPlayback.ts，这里只接上。
-  const onStopPlayback = useCallback(
-    () => stopPlayback({ handsFree: hf, speech: speechController() }),
-    [hf],
-  )
-  // 「关闭本轮麦克风」（隐私栏）与「重新开启插话」（Dock）：评审 D7——不再翻持久化开关
-  const stopMic = useCallback(() => {
-    ptt.cancel()
-    if (hfOn) hf.recycle()
-  }, [ptt, hfOn, hf])
-
-  // ── 采集激活日志（隐私栏「最近一次」读它）：**在麦克风/摄像头真的开起来的那一处写** ──
-  useEffect(() => {
-    if (snapshot.privacy.micActive) activityLog.push('mic', '麦克风已开启（设备采集）')
-  }, [snapshot.privacy.micActive])
-
-  const busy = messages.some((m) => m.pending || m.streaming || m.processActive)
-  // 真实音频生命周期（AR03 / 评审 R06）：`busy` 只是「云端这一轮还没落地」，而 `final` 一到
-  // 三个忙态同帧清零——那一刻 TTS 常常刚起播、甚至还在合成。停止键必须跟着**声音**，不是跟着轮态。
-  // 事实源是 playbackFacts（主链 TTS + 批处理兜底 + S2S 自答三路）；判据在 stopPlayback.ts，这里只取事实。
-  const playback = useSyncExternalStore(subscribeAudioPlayback, getAudioPlaybackSnapshot)
-  const stoppable = canStopPlayback({ playing: playback.playing, live: playback.live, busy })
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
   const lastConsentId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -462,7 +250,6 @@ function ChatBody({
     color: MIC_LABEL[mic].tone === 'amber' || snapshot.privacy.visionUploading ? p.amber : cameraActive ? p.fg1 : p.teal,
     label: captureLabel,
   } : null
-  const [privacyOpen, setPrivacyOpen] = useState(false)
 
   // §5.11 真模糊（B3 T9 裁决过）：被糊的背景 = 对话列表，BlurTargetView 包住它；ref 要先挂上再给 VoiceSheet
   // 渲 BlurView（首帧 null 会被 expo-blur 当成「没配」静默回落成 none——blur-spike.tsx 的 ready 模板）。
@@ -477,30 +264,14 @@ function ChatBody({
       ? blurTargetRef
       : null
 
-  // §7.5 返回顺序：隐私栏 > 语音层（行车档 B/C 的常驻层除外——它不是「可收」的层）> 页面默认
-  // （根屏返回 = 退 Activity，M3-W 定案不变；predictiveBackGestureEnabled 是原生配置，本批不碰）。
-  // 收音中按返回：derivePresence 的 capturing 分支让层保持——返回不等于取消录音，
-  // 取消只有上滑与「关闭本轮麦克风」两条路，刻意不加第三条。
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (privacyOpen) {
-        setPrivacyOpen(false)
-        return true
-      }
-      if (snapshot.input === 'voice-sheet' && !sheetResident(snapshot.identity, snapshot.driving)) {
-        setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })
-        return true
-      }
-      return false
-    })
-    return () => sub.remove()
-  }, [privacyOpen, snapshot.input, snapshot.identity, snapshot.driving, latestTurnId])
-
   const splitLandscape = layout.mode === 'driving-landscape'
+  const proactiveViewability = useProactiveViewability(core, runtime.scope,
+    runtime.facts.route === '/' && !privacyOpen && !dockExpanded && !(v2 && snapshot.input === 'voice-sheet'))
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50, minimumViewTime: 300 }).current
   // B5-15：层覆盖整列时 Composer 整个被盖住 ⇒ 从无障碍树拿掉（真机抓到它与层内大球说明重复）。
   // 触摸侧本来就被层的暗区拦住了，这里补的是读屏那一半。
   const sheetCoversColumn = splitLandscape && snapshot.input === 'voice-sheet'
-  const voiceSheetEl = v2 ? (
+  const voiceSheetEl = v2 && runtime.facts.route === '/' && runtime.scope.canPresent() ? (
     <VoiceSheet
       p={p}
       fontScale={settings.fontScale}
@@ -529,7 +300,7 @@ function ChatBody({
   // 与「Dock 永远不被别的轴覆盖」（presence.ts 头注 / 外部评审 P0-1）直接冲突。
   // 修法是给层一个**有边界的覆盖域**（记录区 + 胶囊 + Composer），Dock 落在覆盖域之外。
   // 非 split 路径逐字节不变：层仍住在记录区容器里、Dock 仍在原位置。
-  const focusDockEl = v2 && dock ? (
+  const focusDockEl = v2 && dock && runtime.facts.route === '/' && runtime.scope.canCapture() ? (
     <FocusDock
       p={p}
       fontScale={settings.fontScale}
@@ -537,6 +308,8 @@ function ChatBody({
       onConfirm={onConfirm}
       onCancelTurn={onInterrupt}
       onReenableBargeIn={hf.recycle}
+      expanded={dockExpanded}
+      onExpandedChange={setDockExpanded}
     />
   ) : null
 
@@ -547,7 +320,7 @@ function ChatBody({
     <View
       testID={splitLandscape ? 'voice-sheet-scope' : undefined}
       style={{ flex: 1 }}
-      onLayout={splitLandscape ? (e) => setColumnHeight(Math.round(e.nativeEvent.layout.height)) : undefined}
+      onLayout={(e) => setColumnHeight(Math.round(e.nativeEvent.layout.height))}
     >
       <View
         testID={splitLandscape ? undefined : 'voice-sheet-scope'}
@@ -567,6 +340,8 @@ function ChatBody({
       ) : (
         <FlashList
           data={messages}
+          onViewableItemsChanged={proactiveViewability}
+          viewabilityConfig={viewabilityConfig}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
           extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving]}
@@ -675,6 +450,8 @@ function ChatBody({
       <Composer
         p={p}
         quickCommands={settings.quickCommands}
+        draft={draft}
+        onDraftChange={setDraft}
         busy={busy}
         stoppable={stoppable}
         ptt={cfg.audioUrl ? ptt : null}
@@ -860,16 +637,6 @@ function ChatBody({
             // single / driving-landscape（T11 填）
             chatColumn
           )}
-          {v2 ? (
-            <PrivacyRail
-              p={p}
-              fontScale={settings.fontScale}
-              snapshot={snapshot}
-              visible={privacyOpen}
-              onClose={() => setPrivacyOpen(false)}
-              onStopMic={stopMic}
-            />
-          ) : null}
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>

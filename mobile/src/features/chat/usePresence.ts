@@ -39,6 +39,7 @@ export interface SheetOverride {
 }
 
 export interface UsePresenceOpts {
+  interactive?: boolean
   core: SessionCore
   hf: HandsFreeUi
   ptt: PttHandle | null
@@ -53,7 +54,7 @@ export interface UsePresenceOpts {
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
 const TICK_MS = 1000
 
-export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: UsePresenceOpts): PresenceSnapshot {
+export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true }: UsePresenceOpts): PresenceSnapshot {
   const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt } =
     useStore(core.store)
   const { settings } = useStore(settingsStore)
@@ -211,7 +212,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
   useEffect(() => {
     const prev = hapticPrev.current
     hapticPrev.current = snapshot
-    if (!prev || !settings.hapticsEnabled) return
+    if (!interactive || !prev || !settings.hapticsEnabled) return
     const kind = hapticCueForTransition(prev, snapshot)
     if (kind) performHaptic(kind)
   })
@@ -223,7 +224,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape }: U
     const prev = cuePrev.current
     const cur: CueSlice = { primary: snapshot.primary, hfFsm: input.hfFsm }
     cuePrev.current = cur
-    if (!prev || !cueToneAllowed(settings.cueToneEnabled, snapshot.driving)) return
+    if (!interactive || !prev || !cueToneAllowed(settings.cueToneEnabled, snapshot.driving)) return
     const kind = soundCueForTransition(prev, cur)
     if (kind) playCueTone(kind)
   })

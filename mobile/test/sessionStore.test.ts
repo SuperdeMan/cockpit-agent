@@ -16,6 +16,7 @@ class FakeTransport {
     this.sent.push(frame)
     return true
   }
+  sendIfOpen(frame: object): boolean { return this.send(frame) }
   /** 最近一条用户请求帧（带 text 的） */
   lastUserFrame(): any {
     return [...this.sent].reverse().find((f) => typeof f.text === 'string')
@@ -218,12 +219,14 @@ describe('正常路径（App.tsx:330-607/680-720 对照）', () => {
     core.handleFrame(frame)
     expect(assistants(core)).toHaveLength(1)
     expect(assistants(core)[0]).toMatchObject({ text: '💡 该喝水了', proactiveKind: 'reminder_fired' })
+    expect(transport.sent.filter((f) => f.type === 'proactive_ack')).toHaveLength(0)
+    core.presentProactive(assistants(core)[0].id)
     const ack = transport.sent.find((f) => f.type === 'proactive_ack')
     expect(ack).toEqual({ type: 'proactive_ack', session_id: 'app-test01', delivery_ids: ['d1'] })
-    // 断线补投重发同一条：凭据相同=已呈现过，不重复、不再回执
+    // 断线补投重发同一条：不重复呈现，重回 ACK 补偿前一次链路丢失。
     core.handleFrame(frame)
     expect(assistants(core)).toHaveLength(1)
-    expect(transport.sent.filter((f) => f.type === 'proactive_ack')).toHaveLength(1)
+    expect(transport.sent.filter((f) => f.type === 'proactive_ack')).toHaveLength(2)
     core.dispose()
   })
 

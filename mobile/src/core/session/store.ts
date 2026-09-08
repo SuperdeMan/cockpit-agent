@@ -67,8 +67,21 @@ export interface PendingOp {
   ts: number
 }
 
+/** 本端投递元数据；Msg 的跨端合同不因 Android 的呈现生命周期变化。 */
+export interface ProactiveDelivery {
+  deliveryIds: string[]
+  speech: string
+  priority?: string
+  receivedAt: number
+  presentedAt?: number
+  handledAt?: number
+  /** 仅证明确已写入 socket，不冒充服务端已收到 ACK。 */
+  ackSentAt?: number
+}
+
 export interface SessionState {
   messages: Msg[]
+  proactiveDeliveries: Record<string, ProactiveDelivery>
   pendingOps: PendingOp[]
   vehState: Record<string, unknown>
   /** 行车档事实（B4-2）：Edge 在 process 帧上的 driving 标注。判据在 core/presence/drivingMode.ts，
@@ -184,6 +197,8 @@ export class SessionCore {
   /** 链路是否已知断开：只由 setStatus 驱动，初始 false＝「还没人告诉过我链路状态」 */
   private linkDown = false
   private readonly presented = new Set<string>()
+  private readonly receivedDeliveries = new Set<string>()
+  private readonly pendingAcks = new Set<string>()
   private readonly localCancelRequests = new Set<string>()
   private readonly requests = new Map<string, OutboundRequest>()
   private readonly serverClosedOps = new Set<string>()
@@ -206,6 +221,7 @@ export class SessionCore {
     this.speech = deps.speech ?? NOOP_SPEECH
     this.store = createStore<SessionState>(() => ({
       messages: [],
+      proactiveDeliveries: {},
       pendingOps: [],
       vehState: {},
       drivingEdge: NO_EDGE_DRIVING,
@@ -229,7 +245,7 @@ export class SessionCore {
     const prev = this.store.getState().connStatus
     // 看门狗的表跟着**链路**走，与 connStatus 的值变没变无关：退避重连期间
     // closed↔connecting 反复摆动，同值早退不该让表漏摘/漏起。
-    if (status === 'open') this.resumeWatchdogs()
+    if (status === 'open') { this.resumeWatchdogs(); this.flushProactiveAcks() }
     else this.pauseWatchdogs()
     if (status === prev) return
     if (status === 'closed' && prev === 'open') {
@@ -246,6 +262,7 @@ export class SessionCore {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.pendingAcks.clear()
     for (const request of this.requests.values()) {
       request.unsubscribePreparation?.()
       request.preparationAbort.abort()
@@ -267,6 +284,52 @@ export class SessionCore {
   }
 
   // ── 发送侧（App.tsx:680-876 对照）───────────────────────────────
+
+  /** 只能由有效可见出口报告；凭据从本会话台账取，调用者不能任意指定 delivery_ids。 */
+  presentProactive(messageId: string): boolean {
+    if (this.disposed) return false
+    const delivery = this.store.getState().proactiveDeliveries[messageId]
+    if (!delivery || delivery.presentedAt !== undefined) return false
+    for (const id of delivery.deliveryIds) { this.presented.add(id); this.pendingAcks.add(id) }
+    this.store.setState((s) => ({ proactiveDeliveries: {
+      ...s.proactiveDeliveries, [messageId]: { ...delivery, presentedAt: Date.now() },
+    } }))
+    this.flushProactiveAcks()
+    const msg = this.store.getState().messages.find((m) => m.id === messageId)
+    this.speech.proactive?.(delivery.speech, {
+      priority: delivery.priority, hasCard: !!msg?.uiCard, deliveryId: delivery.deliveryIds[0],
+    })
+    return true
+  }
+
+  /** 明确用户手势的本地事实；不虚构服务端 handled 状态或自动触发卡片动作。 */
+  handleProactive(messageId: string): void {
+    if (this.disposed) return
+    const delivery = this.store.getState().proactiveDeliveries[messageId]
+    if (!delivery || delivery.presentedAt === undefined || delivery.handledAt !== undefined) return
+    this.store.setState((s) => ({ proactiveDeliveries: {
+      ...s.proactiveDeliveries, [messageId]: { ...delivery, handledAt: Date.now() },
+    } }))
+  }
+
+  private flushProactiveAcks(): void {
+    if (this.disposed || !this.pendingAcks.size) return
+    const ids = [...this.pendingAcks]
+    try {
+      // ACK 不入用户请求队列；失败留账，open 或服务端补投时再试。
+      if (this.deps.transport.sendIfOpen?.({
+        type: 'proactive_ack', session_id: this.deps.sessionId, delivery_ids: ids,
+      })) {
+        for (const id of ids) this.pendingAcks.delete(id)
+        const sent = new Set(ids)
+        const at = Date.now()
+        this.store.setState((s) => ({ proactiveDeliveries: Object.fromEntries(
+          Object.entries(s.proactiveDeliveries).map(([id, delivery]) => [id,
+            delivery.deliveryIds.some((key) => sent.has(key)) ? { ...delivery, ackSentAt: at } : delivery]),
+        ) }))
+      }
+    } catch { /* 同步传输失败也不丢回执 */ }
+  }
 
   /** 用户消息入口（Composer/卡片按钮 send_text 共用）：加用户气泡 → 前置路由 → 派发 */
   send(text: string, metaExtra?: Record<string, string>, opts: SendOpts = {}): void {
@@ -839,34 +902,28 @@ export class SessionCore {
     if (data.type === 'proactive') {
       const text = (data.speech || '').toString().trim()
       const card = data.card || undefined
+      if (!text && !card) return // 空投递不消费凭据，之后的有效补投仍可接收。
       const deliveryIds: string[] = deliveryIdsOf(data)
-      // 幂等呈现（M-C）：断线补投与重启恢复会重发同一条，凭据相同即已呈现过
-      if (deliveryIds.length && deliveryIds.every((d) => this.presented.has(d))) return
-      deliveryIds.forEach((d) => this.presented.add(d))
-      if (text || card) {
-        this.appendMessage({
-          id: uid(),
+      // 已呈现的补投只重 ACK（上一次可能在链路上丢失），绝不重复出卡/播报。
+      for (const id of deliveryIds) if (this.presented.has(id)) this.pendingAcks.add(id)
+      this.flushProactiveAcks()
+      const freshIds = [...new Set(deliveryIds)].filter((id) => !this.receivedDeliveries.has(id))
+      if (deliveryIds.length && !freshIds.length) return
+      freshIds.forEach((id) => this.receivedDeliveries.add(id))
+      const messageId = uid()
+      this.store.setState((s) => ({
+        messages: [...s.messages, {
+          id: messageId,
           role: 'assistant',
           text: text ? '💡 ' + text : '',
           uiCard: card,
           proactiveKind: typeof data.advisory === 'string' ? data.advisory : undefined,
-        })
-        // B4-12 播报收紧：SessionCore **只报事实**（这一条是什么优先级、有没有字/卡），
-        // 「该不该出声」的仲裁在 SpeechController 里——它读设置，本类的头注约定是不读设置
-        this.speech.proactive?.(text, {
+        } as Msg],
+        proactiveDeliveries: { ...s.proactiveDeliveries, [messageId]: {
+          deliveryIds: freshIds, speech: text, receivedAt: Date.now(),
           priority: typeof data.priority === 'string' ? data.priority : undefined,
-          hasCard: !!card,
-          deliveryId: deliveryIds[0],
-        })
-        // 呈现即回执——通知合同唯一完成条件；不回执下次连上还会补投
-        if (deliveryIds.length) {
-          this.deps.transport.send({
-            type: 'proactive_ack',
-            session_id: this.deps.sessionId,
-            delivery_ids: deliveryIds,
-          })
-        }
-      }
+        } },
+      }))
       return
     }
     if (data.type === 'error') {

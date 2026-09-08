@@ -17,10 +17,13 @@ export interface Wired {
 let wired: Wired | null = null
 
 export function ensureWired(cfg: ServerConfig): Wired {
-  const cfgKey = `${cfg.edgeUrl}|${cfg.token}`
+  const cfgKey = `${cfg.edgeUrl}|${cfg.audioUrl}|${cfg.token}`
   if (wired?.cfgKey === cfgKey) return wired
   wired?.core.dispose()
   wired?.session.close()
+  const speech = speechController(cfg.audioUrl)
+  speech.setForeground(false) // 根宿主就绪后开闸，连接期间的早到帧不能启动音频。
+  speech.stop()
   let core: SessionCore | null = null
   const session = new GatewaySession(
     { edgeUrl: cfg.edgeUrl, token: cfg.token },
@@ -41,7 +44,7 @@ export function ensureWired(cfg: ServerConfig): Wired {
     getMeta: currentMeta,
     location: appLocationBridge,
     // 播报端口（M2-3）：audioUrl 跟着服务器配置走，换服务器时同一个控制器改地址即可
-    speech: speechController(cfg.audioUrl),
+    speech,
   })
   session.start()
   wired = { session, core, cfgKey }
@@ -50,4 +53,11 @@ export function ensureWired(cfg: ServerConfig): Wired {
 
 export function getWired(): Wired | null {
   return wired
+}
+
+export function disposeWired(): void {
+  wired?.core.dispose()
+  wired?.session.close()
+  wired = null
+  speechController().setForeground(false)
 }

@@ -23,6 +23,8 @@ export interface FocusDockProps {
   onConfirm(reply: '确认' | '取消', operationId?: string): void
   onCancelTurn(): void
   onReenableBargeIn?(): void
+  expanded?: boolean
+  onExpandedChange?(expanded: boolean): void
 }
 
 function fmt(ms: number): string {
@@ -61,7 +63,9 @@ function Commitments(props: FocusDockProps & {
   pinned: NonNullable<ReturnType<typeof pinCommitment>>
   solid: string
 }) {
-  const [expanded, setExpanded] = useState(false)
+  const [localExpanded, setLocalExpanded] = useState(false)
+  const expanded = props.expanded ?? localExpanded
+  const setExpanded = props.onExpandedChange ?? setLocalExpanded
   const { p, fontScale, snapshot, pinned, solid } = props
   const target = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
   return (

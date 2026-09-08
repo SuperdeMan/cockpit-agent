@@ -9,9 +9,9 @@
 //
 // 读数出口刻意留两条：屏上一行一条摘要（uiautomator dump 拿得到**文本**，不用从截图
 // 里认数字），console 打同一条（Metro 终端）。
-import { useLocalSearchParams } from 'expo-router'
+import { useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { useCallback, useRef, useState } from 'react'
-import { Pressable, ScrollView, Text, View } from 'react-native'
+import { AppState, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
@@ -35,7 +35,7 @@ import { DEFAULT_KEYWORDS, KwsEngine, kwsBusy, kwsNativeAvailable } from '@/core
 import { micBusStats, micLease } from '@/core/voice/micBus'
 import { recorder } from '@/core/voice/recorder'
 import { VadEngine, vadNativeAvailable } from '@/core/voice/vad'
-import { speechController } from '@/core/voice/speech'
+import { SpeechController } from '@/core/voice/speech'
 import { Resampler } from '@/core/voice/resample'
 import { parseWav, toMono } from '@/core/voice/wav'
 import { usePalette } from '@/ui/theme'
@@ -84,6 +84,22 @@ export default function VoiceSpikeScreen() {
 }
 
 function VoiceSpikeTools() {
+  // 主会话在诊断路由暂停。显式探针使用同一实现的独立实例，不借主会话的前台授权。
+  const diagnosticSpeechRef = useRef<SpeechController | null>(null)
+  const focusedRef = useRef(false)
+  useFocusEffect(useCallback(() => {
+    focusedRef.current = true
+    const sync = () => diagnosticSpeechRef.current?.setForeground(focusedRef.current && AppState.currentState === 'active')
+    const subscription = AppState.addEventListener('change', sync)
+    sync()
+    return () => { focusedRef.current = false; subscription.remove(); diagnosticSpeechRef.current?.setForeground(false) }
+  }, []))
+  const diagnosticSpeech = useCallback((audioUrl: string) => {
+    if (!diagnosticSpeechRef.current) diagnosticSpeechRef.current = new SpeechController(audioUrl)
+    diagnosticSpeechRef.current.setAudioUrl(audioUrl)
+    diagnosticSpeechRef.current.setForeground(focusedRef.current && AppState.currentState === 'active')
+    return diagnosticSpeechRef.current
+  }, [])
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
   const [lines, setLines] = useState<string[]>([])
@@ -794,7 +810,7 @@ function VoiceSpikeTools() {
         log('divergent: 未配置服务器')
         return
       }
-      const sc = speechController(cfg.audioUrl)
+      const sc = diagnosticSpeech(cfg.audioUrl)
       const t0 = Date.now()
       const trans: { t: number; v: boolean }[] = []
       const unsub = sc.subscribeSpeaking((on) => trans.push({ t: Date.now() - t0, v: on }))
@@ -867,7 +883,7 @@ function VoiceSpikeTools() {
       }
       const SAY =
         '播报探针开始。今天深圳多云转阴，气温二十四到三十度，东南风三级，午后有阵雨的可能，出门建议带伞，开车注意路面湿滑。'
-      const sc = speechController(cfg.audioUrl)
+      const sc = diagnosticSpeech(cfg.audioUrl)
       const t0 = Date.now()
       const ok = await sc.speakBatch(SAY)
       log('batch: ' + (ok ? '播完' : '失败/无音频') + ' ' + (Date.now() - t0) + 'ms（整段一个 buffer，无分片边界）')
@@ -906,7 +922,7 @@ function VoiceSpikeTools() {
         return
       }
       if (!(await ensurePermission())) return
-      const sc = speechController(cfg.audioUrl)
+      const sc = diagnosticSpeech(cfg.audioUrl)
       const peaks = [0, 0, 0] // 0=播报中 1=stop 后 200ms 内（余音窗）2=stop 后稳态
       let phase = 0
       const rec = recorder()
@@ -950,7 +966,7 @@ function VoiceSpikeTools() {
         log('（无服务器配置，改成请你对着手机说话）')
         return false
       }
-      void speechController(cfg.audioUrl).preview(text)
+      void diagnosticSpeech(cfg.audioUrl).preview(text)
       return true
     },
     [log],

@@ -22,6 +22,7 @@ jest.mock('expo-camera', () => {
 
 import { VisionCapture } from '@/features/vision/VisionCapture'
 import { DEFAULT_APP_SETTINGS, settingsStore } from '@/core/settings/store'
+import { InteractionScope } from '@/core/session/interactionScope'
 import {
   captureVisionFrame, getVisionCaptureSnapshot, registerVisionCapturer, reportVisionCameraActive, visionCaptureReady,
 } from '@/core/vision/frame'
@@ -36,9 +37,9 @@ const originalFetch = global.fetch
 const originalAppState = AppState.currentState
 const appListeners = new Set<(state: AppStateStatus) => void>()
 const views = new Set<ReactTestRenderer>()
-async function mount(enabled = true) {
+async function mount(enabled = true, scope?: InteractionScope) {
   let view!: ReactTestRenderer
-  await act(async () => { view = create(createElement(VisionCapture, { enabled })) })
+  await act(async () => { view = create(createElement(VisionCapture, { enabled, scope })) })
   views.add(view)
   return view
 }
@@ -122,6 +123,27 @@ test.each([false, undefined, null])('R02: missing memory-only native capability 
   expect(mockRequestPermission).not.toHaveBeenCalled()
   expect(mockTakePicture).not.toHaveBeenCalled()
   expect(fetch).not.toHaveBeenCalled()
+})
+
+test('AR04 路由进入诊断页同步撤回权限等待；同栈回支持页也不能复活旧抓帧', async () => {
+  const scope = new InteractionScope({ route: '/map', foreground: true, focused: true })
+  mockPermission = { granted: false }
+  const permission = deferred<{ granted: boolean }>()
+  mockRequestPermission.mockReturnValue(permission.promise)
+  const view = await mount(true, scope)
+  const operation = await start()
+  await act(async () => {
+    scope.update({ route: '/debug' })
+    expect(visionCaptureReady()).toBe(false)
+    scope.update({ route: '/map' })
+    permission.resolve({ granted: true })
+    await tick()
+  })
+  expect((await operation.outcome).error?.name).toBe('AbortError')
+  expect(cameras(view)).toHaveLength(0)
+  expect(mockTakePicture).not.toHaveBeenCalled()
+  expect(fetch).not.toHaveBeenCalled()
+  expect(visionCaptureReady()).toBe(true)
 })
 
 test.each(['disable', 'background', 'unmount'])('R02: %s during a permission prompt prevents camera creation even after permission is granted', async (reason) => {

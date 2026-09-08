@@ -2,6 +2,8 @@
 // 端到端挡位的一次性显式同意（方案 §5.2.2「设置里把挡位从三段式切到端到端时弹一次性显式同意（不是只有开关）」）。
 // G0 实色（§5.11：隐私说明不许半透明）。文案逐条对应 CLAUDE.md §5「唯一的受控例外」三条件。
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { useLayoutEffect } from 'react'
+import { useAssistant } from '@/features/assistant/AssistantProvider'
 
 import type { FontScalePref } from '@/core/settings/store'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
@@ -27,6 +29,8 @@ export function S2sConsentSheet({
   onAccept(): void
   onDecline(): void
 }) {
+  const scope = useAssistant()?.scope
+  useLayoutEffect(() => visible ? scope?.blockPresentation() : undefined, [scope, visible])
   const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
   const h = scale(TARGET.parked, 'target', fontScale)
   return (

@@ -14,8 +14,10 @@ import {
 } from '@/core/voice/handsFree'
 import { speechController } from '@/core/voice/speech'
 import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
+import type { InteractionScope } from '@/core/session/interactionScope'
 
 export interface UseHandsFreeOpts {
+  scope?: InteractionScope
   audioUrl: string
   sessionId: string
   /** 设置里开没开（用户显式打开才常开麦——那是采集面） */
@@ -57,6 +59,8 @@ export interface HandsFreeUi {
   stopSpeaking(): void
   /** 结束本轮收音 / 重新开启插话（评审 D7） */
   recycle(): void
+  /** 暂停设备采集；设置不变，下次明确点光球可恢复。 */
+  pause(): void
   /** 上一次回声被丢弃的时刻；0=没有 */
   echoAt: number
 }
@@ -71,6 +75,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const [pipelineDegraded, setPipelineDegraded] = useState('')
   const [echoAt, setEchoAt] = useState(0)
   const ctlRef = useRef<HandsFreeController | null>(null)
+  const pausedRef = useRef(false)
   // 回调用 ref 存：它们每次渲染都是新函数，进依赖会让控制器反复重建（=反复开关麦）。
   // **在 effect 里更新而不是渲染期直接赋值**：渲染期写 ref 违反 React 的纯度约束
   // （react-hooks/refs），且并发渲染下会写到被丢弃的那次渲染上。
@@ -85,8 +90,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
 
   useEffect(() => {
     if (!wantOn || !settingsStore.getState().settings.handsFree) return
+    pausedRef.current = false
     let live = true
-    const allowed = () => live && ctlRef.current === ctl && settingsStore.getState().settings.handsFree
+    const allowed = () => live && ctlRef.current === ctl && !pausedRef.current &&
+      (!opts.scope || opts.scope.canCapture()) && settingsStore.getState().settings.handsFree
     const deps: HandsFreeDeps = {
       audioUrl: cbRef.current.audioUrl,
       getSessionId: () => cbRef.current.sessionId,
@@ -123,7 +130,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         setPartial(t)
         cbRef.current.onPartial?.(t)
       },
-      onCancelTurn: () => cbRef.current.onCancelTurn?.(),
+      onCancelTurn: () => { if (allowed()) cbRef.current.onCancelTurn?.() },
       onNotice: (m) => cbRef.current.onNotice?.(m),
       onBargeInDisabled: (r) => setBargeInDisabled(r),
       onEchoDismissed: () => setEchoAt(Date.now()),
@@ -162,9 +169,17 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     const unsubscribeSettings = settingsStore.subscribe((state, previous) => {
       if (state.settings.handsFree === previous.settings.handsFree || !live) return
       if (!state.settings.handsFree) void ctl.disable().catch(() => {})
-      else if (cbRef.current.enabled) void ctl.enable().catch(onEnableError)
+      else if (cbRef.current.enabled && (!opts.scope || opts.scope.canCapture())) {
+        pausedRef.current = false
+        void ctl.enable().catch(onEnableError)
+      }
     })
-    void ctl.enable().catch(onEnableError)
+    const syncScope = () => {
+      if (opts.scope && !opts.scope.canCapture()) void ctl.disable().catch(() => {})
+      else if (!pausedRef.current && settingsStore.getState().settings.handsFree) void ctl.enable().catch(onEnableError)
+    }
+    const unsubscribeScope = opts.scope?.subscribe(syncScope)
+    syncScope()
 
     // TTS 三条腿接到 FSM：出声 → SPEAKING；播完 → FOLLOWUP；**没出声也要收尾**
     // （引擎无 key / 纯卡片回复时一个字节都不出，不补这一脚 FSM 会卡在 THINKING
@@ -195,6 +210,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     return () => {
       live = false
       unsubscribeSettings()
+      unsubscribeScope?.()
       sc.onSpeechBegan = prevBegan
       sc.onSpeechText = prevText
       sc.onSpeechEnded = prevEnded
@@ -208,7 +224,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setPipelineDegraded('')
       setEchoAt(0)
     }
-  }, [wantOn, opts.audioUrl, opts.sessionId])
+  }, [wantOn, opts.audioUrl, opts.sessionId, opts.scope])
 
   // 挂起确认镜像：单独一个 effect，跟着 needConfirm 变（不进控制器重建的依赖）
   const needConfirm = !!opts.needConfirm
@@ -216,9 +232,23 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     ctlRef.current?.setNeedConfirm(needConfirm)
   }, [needConfirm, wantOn])
 
-  const wake = useCallback(() => ctlRef.current?.wakeManually(), [])
+  const wake = useCallback(() => {
+    if (cbRef.current.scope && !cbRef.current.scope.canCapture()) return
+    const ctl = ctlRef.current
+    if (!ctl) return
+    if (pausedRef.current) {
+      pausedRef.current = false
+      void ctl.enable().then(() => {
+        if (ctlRef.current === ctl && !pausedRef.current && (!cbRef.current.scope || cbRef.current.scope.canCapture())) ctl.wakeManually()
+      }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+    } else ctl.wakeManually()
+  }, [])
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
   const recycle = useCallback(() => ctlRef.current?.recycle(), [])
   const stopSpeaking = useCallback(() => ctlRef.current?.stopSpeaking(), [])
-  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, echoAt }
+  const pause = useCallback(() => {
+    pausedRef.current = true
+    void ctlRef.current?.disable().catch(() => {})
+  }, [])
+  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, pause, echoAt }
 }
