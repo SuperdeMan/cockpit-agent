@@ -53,8 +53,8 @@
 | 项 | 读数 |
 |---|---|
 | 启动基线 | `005e5951fd76af3887030ec2eceac5312134b412` |
-| 本批代码 | `8bb13ab80a1479e5e90c56f51228e20590717778` |
-| mobile 全量 | 70 suites / 682 tests，exit 0（基线 65 / 656，本批 +5 suites / +26 tests） |
+| 本批代码 | `fe798ccb2de476e6a933b6ab06f0b79e27ef60f2`（首版 `8bb13ab…`，见 §五末「停播顺序」一节） |
+| mobile 全量 | 70 suites / 685 tests，exit 0（基线 65 / 656，本批 +6 文件 / +29 tests） |
 | mobile TypeScript | `tsc --noEmit` exit 0 |
 | HMI node:test | 308 / 308，exit 0（基线 304；本批 +4，全部针对 `voiceLoop.stopSpeaking`） |
 | HMI 构建 | Vite build 成功，8.28s；保留既有 >500kB chunk 提示，未改阈值 |
@@ -66,7 +66,7 @@
 
 **五、反向验证（AGENTS §4.3）**
 
-逐条注入目标缺陷、跑对应用例、再恢复实现；10 条全部被抓到，无漏网：
+逐条注入目标缺陷、跑对应用例、再恢复实现；11 条全部被抓到，无漏网：
 
 | 注入 | 结果 |
 |---|---|
@@ -80,8 +80,17 @@
 | `voiceLoop.stopSpeaking` 改成 `_gotoFollowup` | RED（3 条） |
 | `voiceLoop.stopSpeaking` 改成走 `_gotoIdle`（复位会话级护栏） | RED（1 条） |
 | `voiceLoop.stopSpeaking` 连 ARMED/IDLE 也改态 | RED（4 条） |
+| 停播两条腿的顺序颠倒（先主链后免唤醒） | RED（1 条） |
 
 第一版的「不复位会话级护栏」用例曾对着 `_vadBargeInDisabled` 断言，而 `_gotoIdle` 复位的是 `_bargeInDisabled` ⇒ 变异注入时**没红**。改成走 D6 那条自触发路径把 `bargeInDisabled` 真置起来之后才抓得到。**判据自己也要被变异验一遍**，写得像那么回事不算数。
+
+**停播顺序：一个被自己的用例放过的缺陷（首版 `8bb13ab` → `fe798cc`）**
+
+首版把两条腿写在组件里：`speechController().stop()` 然后 `hf.stopSpeaking()`。这个顺序**是错的，而且错得很安静**——`SpeechController.stop()` 同步收尾，回调链 `onSpeechEnded → HandsFreeController.ttsEnd() → voiceLoop.ttsEnd()` 先把 FSM 从 SPEAKING 推进 **FOLLOWUP**；随后的 `stopSpeaking()` 看到的既不是 SPEAKING 也不是 THINKING，于是变成空操作。净效果：声音停了，续问窗照样开着——正是 R06 要修的那件事，被这一批自己又造了一遍。
+
+上面那八条 `handsFreeStopSpeaking` 用例**全是绿的**，因为它们直接调 `ctl.stopSpeaking()`——那等于替被测系统注入了正确顺序（CLAUDE.md「测试替被测系统注入的前提不再被验证」）。
+
+修法不是把两行换个位置就算完：顺序本身是判据，所以它有名字、有理由、有测试——`core/voice/stopPlayback.ts`。新增两条回归用真实控制器 + 模拟真实回调链，一条钉正确顺序落 ARMED，一条钉颠倒顺序落 FOLLOWUP（反例也进库，否则下次改回去没人拦）。这次是在构建出包**之前**发现的：首轮构建（`4544058f1`，07:53 起）在 prebuild 阶段被作者主动中止，没有产物，不计任何 SHA 的构建尝试；日志留在证据目录的 `aborted-1-*`。
 
 **六、取证环境的两处限制（记录，不当作产品结论）**
 
@@ -104,16 +113,18 @@
 
 | SHA | 内容 |
 |---|---|
-| `8bb13ab80a1479e5e90c56f51228e20590717778` | 代码 + 测试（mobile 5 个新文件 + 共享 voiceLoop 追加）。上表全部本地读数绑定这个 SHA |
+| `8bb13ab80a1479e5e90c56f51228e20590717778` | 首版代码 + 测试（mobile 5 个新文件 + 共享 voiceLoop 追加）。**该版本的停播顺序有缺陷**，不作为验收锚 |
+| `4544058f10bd380870601268e2585e1bb6d2234f` | 首版文档 |
+| `fe798ccb2de476e6a933b6ab06f0b79e27ef60f2` | 停播顺序修复 + `core/voice/stopPlayback.ts` + 两条顺序回归。**上表全部本地读数与后续 APK 绑定这个 SHA** |
 | 后续文档提交 | 只回填入口与状态，不转称上述测试是新版本的读数 |
 
 ~~~text
 批次：AR03
 对应 R 编号与关闭/剩余项：R06 客户端修复完成、设备验证未做；R09 横屏部分客户端修复完成、设备验证未做；R09 跨页部分属 AR04 未启动
-代码 SHA：8bb13ab80a1479e5e90c56f51228e20590717778
+代码 SHA：fe798ccb2de476e6a933b6ab06f0b79e27ef60f2（首版 8bb13ab 的停播顺序缺陷已在同批修掉）
 APK 构建行与设备：本批未构建、未装机
 云端 release SHA、provider/model：本批未涉及真栈
-本轮执行的检查与原始证据：mobile 70 suites / 682 tests + tsc exit 0；hmi 308/308 + Vite build；10 条变异注入全部判红
+本轮执行的检查与原始证据：mobile 70 suites / 685 tests + tsc exit 0；hmi 308/308 + Vite build；11 条变异注入全部判红
 失败/阻塞/污染样本：reanimated 官方 mock 在本环境不可用（已手写替代）；测试渲染器不跑布局（横屏用例手动放 onLayout 并先证层在场）
 后续批次受到的影响：AR04 接手跨页宿主与 ACK 时，语音层的「覆盖域」边界（voice-sheet-scope）是既有锚点；AR07/AR08 的声学与时延基线不受本批影响
 ~~~
