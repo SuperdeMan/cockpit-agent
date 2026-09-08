@@ -1389,10 +1389,14 @@ def _shared_rpm_bucket(api_key: str, rpm: int, clock=None) -> "_RpmBucket":
     return bucket
 
 
+# 首片没回来时攒着的上限，同时也是「同一拍到齐的段」合并上限（唯一声明源，泵与策略共用）
+_TTS_HOLD_CAP_CHARS = 1200
+
+
 def _tts_send_now(lead_s: float, pending_chars: int, tokens_left: int, *,
                   max_chars: int = 300, low_lead_s: float = 10.0, merge_chars: int = 150,
                   awaiting_first_audio: bool = False, critical_lead_s: float = 2.0,
-                  reserve_tokens: int = 3, hold_cap_chars: int = 1200) -> bool:
+                  reserve_tokens: int = 3, hold_cap_chars: int = _TTS_HOLD_CAP_CHARS) -> bool:
     """句末到了，攒着的文本要不要**现在**发（MiniMax 单次 task_continue 可到 1 万字，合并不受限）：
     · **首片音频还没回来**（awaiting_first_audio）⇒ 攒着不发（hold_cap_chars 以上才兜底发）。此时 lead 恒为 0、
       「余量不足」是假象：整段文本一次到达（final 整篇 / 批处理）时按逗号切出的几十段会在首片回来前全部立刻发出，
@@ -1416,6 +1420,29 @@ def _tts_send_now(lead_s: float, pending_chars: int, tokens_left: int, *,
     if tokens_left <= 0:
         return False
     return pending_chars >= merge_chars
+
+
+def _drain_ready(seg_q, pending: str, *, cap: int = _TTS_HOLD_CAP_CHARS) -> tuple[str, bool]:
+    """把队列里**已经到达**的段一起并进 pending，返回 (pending, 源是否已结束)。
+
+    整段文本一次到达（final 整篇 / 批处理）时，几十段在同一拍就全进了队列——请求数不该取决于泵和收包
+    循环谁先被调度。首片门控（`awaiting_first_audio`）只在首片音频回来之前有效，于是「谁先跑到」决定了
+    是 2 个请求还是 41 个：py3.11 的 `asyncio.wait_for` 把 `get()` 包成 Task、多绕两圈事件循环，首片音频
+    就抢在泵取完队列之前到达，门控提前打开 ⇒ 又变回逐段爆发（同一份代码 CI py3.11 上 41 段发 41 个请求、
+    本机 py3.12 上发 2 个，2026-09-06→09-08 CI 连红 19 次）。所以判据改成「同一拍到齐的属于同一批」，
+    与调度顺序无关。上限 `cap` 沿用 `_TTS_HOLD_CAP_CHARS`，别攒出一个超长请求；逐字流式到达时队列本来
+    就是空的，这里是空转，不改变逐段送出的时机。纯函数，单测钉住边界。"""
+    done = False
+    while len(pending) < cap:
+        try:
+            seg = seg_q.get_nowait()
+        except asyncio.QueueEmpty:
+            break
+        if seg is None:      # 生产者结束哨兵
+            done = True
+            break
+        pending += seg
+    return pending, done
 
 
 class BaseStreamingTTSProvider:
@@ -1840,6 +1867,7 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
             if first_sent_at is None or audio["first_at"] is not None:
                 return False
             return (bucket.clock() - first_sent_at) < self.first_audio_wait_s
+
         meta_sent = False
         attempt = 0
         try:
@@ -1882,6 +1910,9 @@ class MiniMaxWsStreamingTTSProvider(BaseStreamingTTSProvider):
                                     source_done = True
                                     break
                                 pending += seg
+                                # 首段之外，把同一拍里已经到齐的段一并攒上（首段要单发保首音）
+                                if first_sent_at is not None:
+                                    pending, source_done = _drain_ready(seg_q, pending)
                                 if _tts_send_now(lead_s(), len(pending), bucket.tokens_left(),
                                                  low_lead_s=self.merge_lead_s,
                                                  awaiting_first_audio=awaiting_first_audio()):

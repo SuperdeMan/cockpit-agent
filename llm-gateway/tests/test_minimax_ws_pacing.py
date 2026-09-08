@@ -21,7 +21,13 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import providers as P  # noqa: E402
-from providers import MiniMaxWsStreamingTTSProvider, _RpmBucket, _minimax_segments, _tts_send_now  # noqa: E402
+from providers import (  # noqa: E402
+    MiniMaxWsStreamingTTSProvider,
+    _RpmBucket,
+    _drain_ready,
+    _minimax_segments,
+    _tts_send_now,
+)
 
 
 async def _aiter(items):
@@ -271,6 +277,30 @@ def test_tts_send_now_policy():
     assert _tts_send_now(30.0, 150, 10)
     # 攒到 max_chars 无论如何发
     assert _tts_send_now(30.0, 300, 0)
+
+
+@pytest.mark.asyncio
+async def test_drain_ready_merges_only_what_already_arrived():
+    """请求数由「文本到齐的批次」决定，不由事件循环谁先被调度决定：泵每取一段，就把同一拍里
+    已经在队列里的段一并攒上。这条判据必须在任何解释器上都成立——py3.11 的 wait_for 多绕两圈
+    事件循环，靠「泵跑得比首片音频快」的写法在那里会退化成逐段爆发（CI 连红 19 次的根因）。"""
+    q = asyncio.Queue()
+    # 队列空 = 逐字流式到达：空转，不改 pending、不误报结束
+    assert _drain_ready(q, "第一句。") == ("第一句。", False)
+    for seg in ("第二句。", "第三句。"):
+        q.put_nowait(seg)
+    assert _drain_ready(q, "第一句。") == ("第一句。第二句。第三句。", False)
+    # 结束哨兵：并到它为止并报告源已结束；哨兵本身不进文本，其后的东西也不动
+    for seg in ("第四句。", None, "不该被吃掉"):
+        q.put_nowait(seg)
+    assert _drain_ready(q, "") == ("第四句。", True)
+    assert q.get_nowait() == "不该被吃掉"
+    # cap：攒够上限就停，剩下的留给下一批（别合成一个超长请求）
+    q2 = asyncio.Queue()
+    for _ in range(5):
+        q2.put_nowait("一二三四五")
+    assert _drain_ready(q2, "", cap=12) == ("一二三四五" * 3, False)
+    assert q2.qsize() == 2
 
 
 @pytest.mark.asyncio
