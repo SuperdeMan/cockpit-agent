@@ -118,7 +118,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：[AR04 第十三节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。**代码 / OPPO 包 `573ad46d9` 已推送并安装；mobile 726 tests、reminder 220 tests 与 CI 全部通过。播放提示已在真机修复；标题提取已修、未部署。已证默认兼容模式的物理展开/半折/合拢横屏，以及经授权全屏 `drawer→tabletop` 的草稿/本地征询保留。** 19:26 设备断开，**临时全屏显示、App 定位关闭/减少动效尚待恢复**；书本式/全屏合拢、真实 Keyguard 提醒与发布授权仍待接续，未整批签收。前轮五条提醒证据绑 `065efd85e`；本轮没有新增提醒或发布后端。原错路由已定位为 MiniMax 非法/空计划后降级搜索，仍未修。AR02/AR03 原矩阵、AR10 尺寸/对照范围保持独立；Xiaomi 本轮未操作。 |
+| Android App | 当前入口：[AR04 第十三节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。**代码 / OPPO 包 `573ad46d9` 已推送并安装；mobile 726、reminder 220 tests 与 CI 通过。播放提示已在真机修复；标题已修未部署。OPPO 默认兼容模式与全屏 drawer/tabletop/book/合拢返回已证草稿/本地征询保留，显示比例和 App 偏好均已恢复，测试 App 已退出。** 真正 Keyguard 提醒、服务端多 operationId 实机组合与发布授权仍待接续，未整批签收；原错路由已定位 MiniMax 非法/空计划后降级搜索，未修。前轮五条提醒证据绑 `065efd85e`，本轮未新增提醒或发布后端；AR02/AR03/AR10 及 Xiaomi 对照范围保持独立。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

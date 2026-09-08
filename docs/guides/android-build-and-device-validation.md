@@ -142,6 +142,7 @@ AR01 留下过 SDK XML、NODE_ENV、NO_COLOR/FORCE_COLOR、Gradle 废弃项、�
 | adb 零时长 tap 未触发 RNGH 光球 | 先核当前页面和坐标；AR02 用同点 120ms 的触摸序列触发轻点收音。不能把注入未触发直接判为产品缺陷，也不能在 Modal/导航动画尚未结束时点击被遮挡的控件 |
 | ColorOS 内屏仍是窄竖屏 / 平行窗口 | 同时读 active input viewport、App window bounds 和 `native-spike` 的 dp/layout；物理屏变大不等于 App 得到宽窗口。AR04 实测默认兼容窗约 392dp，经授权切全屏才得到 652dp 与 drawer/tabletop。切换可能要求应用重启，需重建样本；恢复入口为系统通知“恢复”或设置→大屏专区→兼容模式 |
 | 物理旋转和折叠接得很快 | 每个姿态保持后取证，并比较采样前后 base/committed state 与 active viewport。变化期间的 XML/截图可能来自相邻姿态；AR04 曾取到两张相同截图，不能按不同前置状态重复签收 |
+| USB 用途弹窗或大屏系统设置分栏 | 先核顶层 package，USB 弹窗遮挡时不能把“读不到草稿”判为 App 丢数据；仅关闭弹窗即可继续，不必更改 USB 模式。ColorOS 设置分栏时 UIAutomator 可能只返回右侧活动窗口，左侧目录按当前截图定位，或在收拢后的单栏中导航 |
 | Git Bash 改写 Android 文件路径 | adb 操作用 PowerShell；避免 MSYS 把 `/sdcard/...` 改成宿主路径 |
 | App 卡 connecting、宿主云服务却正常 | 先检查手机 Tailscale 是否在线、手机侧 DNS/连接是否正常。两台设备都曾静默掉线；广播不一定能拉起客户端，前台打开后才恢复。此现象不等于 APK 构建失败 |
 

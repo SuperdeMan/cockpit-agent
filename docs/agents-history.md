@@ -8732,3 +8732,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 原提醒错域 trace 21798d30258aa5bf 已证实 MiniMax-M3 非法工具 steps→重试空计划→闲聊兜底→搜索；降级策略未修。干净 Planner 标题被 Agent `_fuller_title` 污染则已在本地修复，未改库。目标 573ad46 的 cloud dry-run 无 blocking changes，**未 apply**，部署及新增提醒授权仍待答复。
 - 19:26 复核 ADB 设备列表为空；已请求用户重连。**临时全屏系统显示、App locationEnabled=false / reduceMotionForce=true 尚未恢复**；原值是兼容模式、true / false，speakPolicy=auto 与 handsFree=false 维持。书本式/全屏返回及终态读取待回连，自有构建/观察器均已结束。
 - 当前恢复路径、精确 SHA/哈希、稳定姿态文件与审批边界集中在 [AR04 第十三节](design/2026-09-08-ar04-presentation-ack-implementation.md)。本轮证据目录 `%LOCALAPPDATA%\car-agent\artifacts\AR04-followup-20260908`，入口 `followup-progress.json`。
+
+
+## 2026-09-08 — AR04 回连补验与临时设置恢复完成
+
+- 用户重连 OPPO 并完成书本式摆放；回读仍为 573ad46d9 包、原全屏样本 PID 1200，断线期间未发送草稿和本地定位征询保留。补到 CLOSED 外屏返回，以及 HALF_OPENED/vertical/book 的真实 two-pane（698×652dp），均前后状态一致、零 override。USB 用途弹窗遮挡的首个采样未计通过。
+- 全屏样本结束的 mic/ASR/S2S/视觉上传与播放计数均为 0；没有点击允许、拒绝或发送，没有新增真实提醒。
+- 已恢复 App locationEnabled=true、reduceMotionForce=false，handsFree=false 与 speakPolicy=auto 维持原值。系统通知恢复入口已不在列表，实际经设置→大屏专区→兼容模式→小舟随行，将“全屏使用”切回原 16:9；系统确认后于 **22:15:57** 列表回读成功，未改其他 App 比例、未勾选“不再提醒”。
+- 系统按提示关闭 App 后，只读诊断再次核包和零活动；最后退出至 Launcher、确认 App 进程不存在。本轮显示及 App 偏好恢复待办已清，原测试草稿和本地征询随该授权重启结束，没有业务上行。
+- cloud status 仍为 a09c73a5、5/5 healthy、warnings=[]；未 apply。真实 Keyguard 新提醒、服务端多 operationId 实机组合及后端发布仍待对应授权/证据，Planner 非法/空计划降级策略仍未修，不宣称 AR04 整批或 QA 全绿。
+- 当前入口为 [AR04 第十三节末](design/2026-09-08-ar04-presentation-ack-implementation.md)。新增证据 `full-book-stable-0.json`、`fullscreen-book-native.json`、`full-closed-after-usb-dismiss-0.json`、`final-fold-counters.json`、`app-preferences-restored-final.json`、`system-display-restored-final.json`、`after-restore-counters.json`、`reconnect-closeout.json`，均在 AR04-followup-20260908 仓库外目录。

@@ -1,6 +1,6 @@
 # AR04：跨页语音宿主与提醒呈现 ACK
 
-日期：2026-09-08。状态：**当前代码 / OPPO 包 `573ad46d9`，726 条移动端测试、220 条提醒服务测试和 GitHub CI 通过。播放提示已在真机修复；提醒标题修复已推送、未部署。已补默认兼容模式的展开/半折/合拢横屏保留，以及全屏 `drawer→tabletop` 保留证据。设备于 19:26 复核为断开，临时全屏、App 定位关闭/减少动效尚待恢复；书本式与全屏合拢、真实 Keyguard 提醒仍未完成。当前接续见第十三节，AR04 未整批签收。**
+日期：2026-09-08。状态：**当前代码 / OPPO 包 `573ad46d9`，726 条移动端测试、220 条提醒服务测试和 GitHub CI 通过。播放提示已在真机修复；提醒标题已修、未部署。OPPO 默认兼容模式及全屏 drawer/tabletop/book/合拢返回的未发送草稿与本地征询保留已取证，22:15 已恢复原显示比例与 App 偏好，测试 App 已退出。真实 Keyguard 提醒、服务端多 operationId 实机组合及后端发布仍未闭合，Planner 技术失败降级策略未修，AR04 未整批签收。恢复完成记录见第十三节末。**
 
 输入：[分批建议 AR04](2026-09-07-android-review-remediation-batches.md#ar04)、
 [完整评审 R08/R09](../reviews/2026-09-07-android-ux-full-review.md)、
@@ -346,10 +346,12 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 | 经授权切换全屏 | 左上系统入口明确提示“切换为全屏显示需要重启”；执行应用重启，PID 22627→1200。这是系统显示设置引起的重启，旧测试内容已保存，重新建立新草稿/征询后才取下一组样本 |
 | 全屏，完全展开 | App bounds `[0,0][1792,1920]`、652×698dp；原生 `flat / horizontal / isSeparating=false`，实际布局 `drawer · medium×medium`；新草稿与征询保持 |
 | 全屏，半折 | base/committed=2，原生 `halfOpened / horizontal / isSeparating=true`，实际进入 **`tabletop · medium×medium`**；草稿与征询/按钮保持，PID 1200 不变 |
+| 全屏，合拢返回（回连后补验） | 真实 CLOSED、外屏 988×1972；回连后确认仍为 PID 1200，原全屏测试草稿和定位征询保留。首个采样被 USB 用途弹窗遮挡，剔除后重新取稳定样本 |
+| 全屏，书本式 | base/committed=2、orientation=0、窗口 1920×1792；原生 `book / halfOpened / vertical / isSeparating=true`，实际进入 **`two-pane · medium×medium`**，698×652dp；左右双栏中草稿与征询/按钮保持，PID 1200 不变 |
 
 稳定样本使用硬件状态和 active input viewport 的**采样前后相等**检查，并保存 XML/截图。早期自动观察中旋转和展开接得很快，两张截图相同，不能按各自前置状态分别签收；正式结果取 `fold-inner-stable-0.json`、`fold-half-stable-0.json`、`fold-closed-stable-0.json`、`full-open-stable-0.json`、`full-half-stable-0.json`。原生模块证明见 `fullscreen-open-native.xml` / `fullscreen-half-native.xml`；新挂载诊断页 `events=0`，同时 `current` 缓存有有效姿态，不把零新事件计数判为模块缺失。
 
-**尚缺**：全屏书本式方向、全屏合拢返回，以及同包所需的其余组合。OPPO 的物理设备能力已确认；默认系统兼容窄窗与 App 的真实宽屏布局必须分开。`driving-landscape` 的尺寸门槛及 Xiaomi 对照仍按 AR03/AR10 范围，不能用本轮 tabletop 代替。
+全屏书本式和合拢返回已在回连后补齐，证据为 `full-book-stable-0.json`、`fullscreen-book-native.json`、`full-closed-after-usb-dismiss-0.json`。本轮关闭的是上述固定包、机型与本地征询/草稿的保留格；服务端多 operationId 的实机组合仍未补造。默认系统兼容窄窗与真实宽屏布局分开记录；`driving-landscape` 尺寸门槛、Xiaomi 对照及 AR02/AR03/AR10 其余矩阵不由本轮 two-pane/tabletop 代替。
 
 ### 13.3 锁屏、后端定位与发布边界
 
@@ -359,13 +361,26 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 - 云端仍为 **`a09c73a5da3181708279bc1f3e90acb1519606a0`**，本轮**未 apply**。目标 `573ad46d939bf655f5a0f4ef16579e2a9b80b087` 的 dry-run 为 ready / blocking_changes=[]，结果在 `deploy-dry-run.json`，源包在仓库 `.artifacts/releases/<完整SHA>/`。
 - 发布该目标还会包含当前 release 之后的 HMI `ws.mjs` 队列撤回/发送回执、`voiceLoop.stopSpeaking` 方法以及 MiniMax 已到齐文本合并修复。相关 **HMI 75 tests / TTS pacing 21 tests** 通过，且上述完整 CI 已绿。已向用户说明具体范围并请求单独发布及一条提醒授权；不能把显示设置的“允许”转借给生产发布。
 
-### 13.4 设备断开时的接续与恢复（19:26 复核）
+### 13.4 当时断线交接（19:26；已恢复，见 13.5）
 
-`adb devices -l` 为空，后续物理取证和设置恢复暂缺设备连接。已请求用户重连，**没有把未完成恢复写成完成**。
+19:26 当时 `adb devices -l` 为空，故停止设备操作并保留恢复事项；用户后续重连后已按 13.5 完成。以下保留断线时交接原貌。
 
-- 当前测试设备仍为临时**全屏显示**，尚未恢复原兼容模式。系统提示给出的恢复入口：系统服务“已切换为全屏显示”通知里的“恢复”，或 **设置 → 大屏专区 → 兼容模式 → 小舟随行**；原始窗口为 16:9 兼容窄窗。只恢复该 App，系统若重启 App 则重新核包与界面。
-- App 暂存偏好：`locationEnabled=false`、`reduceMotionForce=true`、`speakPolicy=auto`、`handsFree=false`。结束后将前两项恢复为 **true / false**；后两项维持原值。不点本地征询的允许/拒绝，不发送测试草稿。
-- 当前全屏样本 PID 是 1200，断线后的存活状态未知；新样本草稿为 `AR04 fullscreen draft 573ad46 - retain across folding`。设备回连先核实际状态，不能沿用 PID 或假定还在原页面。
+- 断线时设备仍为临时**全屏显示**，当时尚未恢复原兼容模式。系统提示给出的恢复入口：系统服务“已切换为全屏显示”通知里的“恢复”，或 **设置 → 大屏专区 → 兼容模式 → 小舟随行**；原始窗口为 16:9 兼容窄窗。只恢复该 App，系统若重启 App 则重新核包与界面。
+- 断线时 App 暂存偏好：`locationEnabled=false`、`reduceMotionForce=true`、`speakPolicy=auto`、`handsFree=false`。结束后将前两项恢复为 **true / false**；后两项维持原值。不点本地征询的允许/拒绝，不发送测试草稿。
+- 当时全屏样本 PID 是 1200，断线时后续存活状态未知（回连后已确认仍为 1200）；新样本草稿为 `AR04 fullscreen draft 573ad46 - retain across folding`。设备回连先核实际状态，不能沿用 PID 或假定还在原页面。
 - 自有 Gradle、Maestro 均已结束；10 分钟只读折叠观察器已到期结束，无后台采集进程留占。当前进展和脚本入口同时保存在 `followup-progress.json`。
 
-恢复连接后先完成必要稳定姿态与采集终态读取，再恢复授权的显示设置及 App 偏好；云端发布/新增提醒继续等待对应授权。当前结论是**已补签收证据并修复两项具体缺陷，AR04 仍未整批签收**。
+当时约定：回连后补稳定姿态与采集终态，再恢复显示及 App 偏好；该部分现已按 13.5 完成。云端发布/新增提醒仍等待对应授权，AR04 未整批签收。
+
+
+### 13.5 回连补验与恢复完成（2026-09-08）
+
+- 回连核包：设备仍安装 `573ad46d9`，安装文件哈希与当前 APK 一致。Keyguard 为 showing=true / secure=false，正常上滑解锁；出现的 USB 用途弹窗仅关闭，没有切换 USB 模式。
+- 合拢返回与书本式稳定样本均复核采样前后硬件状态/active viewport 一致、无 override；原未发送草稿和本地定位征询保留，PID 1200 不变。书本式实际为 two-pane，已目视检查草稿、征询与按钮在左侧，舞台在右侧。首个被 USB 弹窗遮挡的样本不计通过。
+- 全屏折叠结束时 `final-fold-counters.json`：mic/ASR/S2S/视觉上传全部为 0，播放 starts/stops=0/0；这是应用因授权的显示切换重启后新进程的本组读数，不与前一个进程的 2/2 混算。
+- App 偏好已恢复并回读：locationEnabled=true、reduceMotionForce=false、handsFree=false；speakPolicy=auto 保持原值。证据 `app-preferences-restored-final.json` 及对应 XML。
+- 系统通知中的显示恢复入口已不在列表，实际通过 **系统设置→大屏专区→兼容模式→小舟随行** 操作。先确认只有小舟随行显示“全屏使用”，选择原 **16:9**，系统提示“切换显示比例，此应用会被关闭”，确认后列表回读为 16:9。没有勾选“不再提醒”，未更改其他 App 比例。
+- **显示比例于 22:15:57 恢复并回读成功**，证据 `system-display-restored-final.json`、`compat-restored-list.xml/.png`。恢复后只读诊断确认包仍为 573ad46d9，采集/播放/视觉均无活动、投递列表为空；最后退出 App 至 Launcher，确认无 App 进程。系统关闭应用使本次未发送草稿和本地征询结束，没有点击发送、允许或拒绝。
+- 末端 cloud status 仍为 `a09c73a5da3181708279bc1f3e90acb1519606a0`、5/5 healthy、warnings=[]。本轮未 apply、未新增真实提醒。生产发布/一条真正锁屏提醒的授权仍待答复，不能以物理操作回复替代批准。
+
+恢复总记录：`reconnect-closeout.json`；当前机器可正常使用，**不再有本轮显示或 App 偏好待恢复项**。下一步只按仍未闭合的业务/锁屏矩阵及发布权限继续，不重做已通过的普通折叠保留。
