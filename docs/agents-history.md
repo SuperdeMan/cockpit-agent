@@ -8712,3 +8712,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 
 当前入口与后续决定见 [AR04 实施记录](design/2026-09-08-ar04-presentation-ack-implementation.md) 第八至十一节。
 完整本地、构建、设备、失败与补丁草案证据在 `%LOCALAPPDATA%\car-agent\artifacts\AR04-20260908`。
+
+
+## 2026-09-08 — AR04 地图兼容与真实提醒定向验收
+
+- 用户明确授权 App 级地图 pointer-tag 兼容配置及最多五条测试提醒；代码 `065efd85ee6365160862b009dcaffc50e8b57473` 已提交推送。地图插件仅在启用地图时写 `allowNativeHeapPointerTagging=false`，保持 targetSdk 36，底层 SDK 升级评估仍留项。
+- 当前代码 71 suites / 726 tests（111.162s）、tsc、插件定向 lint 通过；CNG prod release Gradle 22m30s、exit 0。OPPO 于 17:12:17 安装 `065efd85e`，APK 与设备 SHA-256 相同；地图正常 / 快速 / 前后台后返回共 5 场景，PID 保持、零新 App 崩溃。
+- App 账号 u1/primary 的五条真实提醒均在创建后 120 秒触发，5 个 delivery 均由真实呈现出口 ACK，后台 / 熄屏先保持 dispatched，恢复后才呈现并各播报一次。最终 mic/ASR/S2S/视觉计数均为 0；五条 fired、零 pending，没有删除/完成/延后或操作其他提醒。
+- 已恢复自动播报、关闭免唤醒、关闭强制减少动效；测试 App / 自有 Gradle / Maestro 已退出。服务端仍为 `a09c73a5`、status 5/5 healthy，无生产部署或系统配置变更。
+- 完整矩阵仍未签收：本机无安全 Keyguard，第五条只证熄屏/唤醒；物理折叠/旋转组合未验。首句提醒错域、标题污染、对话页“说话可打断”文案均仅记录未修，已同步 QA 活项。当前事实与完整凭据集中在 [AR04 实施记录](design/2026-09-08-ar04-presentation-ack-implementation.md) 第十二节，旧 SHA 证据不转借。

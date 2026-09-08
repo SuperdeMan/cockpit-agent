@@ -1,6 +1,6 @@
 # AR04：跨页语音宿主与提醒呈现 ACK
 
-日期：2026-09-08。状态：**客户端核心修复已合入并推送；`433fb3cf` 上 726 条本地测试通过，OPPO 当前候选包为 `433fb3cf0`。真机已验证草稿、跨页层、停播和前后台麦克风撤回；地图退出发生 native 崩溃、真实提醒投递尚待授权，AR04 未整批签收。**
+日期：2026-09-08。状态：**核心修复与获授权的地图兼容配置已推送；当前代码 / OPPO 包 `065efd85e`，726 tests 与 tsc 通过。地图正常退出 5 个场景、5 条真实提醒的可视呈现和服务端回执完成；后台 / 熄屏恢复各只新增一次播放。安全 Keyguard、物理折叠/旋转组合未验，AR04 未整批签收。当前产物、逐条证据及新增发现见第十二节。**
 
 输入：[分批建议 AR04](2026-09-07-android-review-remediation-batches.md#ar04)、
 [完整评审 R08/R09](../reviews/2026-09-07-android-ux-full-review.md)、
@@ -162,7 +162,7 @@ AR02 的完整采集矩阵、AR03 的多段/S2S/盲听、AR07 唤醒率及 AR08 
 
 ## 8. 实现与本地验证（2026-09-08）
 
-当前 Android 代码锚：`433fb3cf0c62e51493dcc2b05e9eb87f92921beb`。后续文档提交不改变这个 APK / 测试锚。
+当前 Android 代码锚：`065efd85ee6365160862b009dcaffc50e8b57473`。后续文档提交不改变这个 APK / 测试锚。
 
 | 代码面 | 实际落点 |
 |---|---|
@@ -180,6 +180,7 @@ AR02 的完整采集矩阵、AR03 的多段/S2S/盲听、AR07 唤醒率及 AR08 
 | `5d1379e31e2de51f51a7289fe57c1f510b54b250` | 首版宿主/ACK；71 suites / 717 tests、tsc、新文件定向 lint。随后独立并发探针发现两个播放器只停了最后一个，本版本不作为最终验收锚 |
 | `61801bfe75334ebbacdbf3bf488a221bc6eb4ff1` | 播报排队与所有权修复；71 suites / 724 tests、tsc、定向 lint。OPPO 取到中文草稿与跨页结构/停播证据，又发现录音权限 Activity 循环 |
 | `433fb3cf0c62e51493dcc2b05e9eb87f92921beb` | 权限查询与跨页呈现修正；**71 suites / 726 tests，70.116s，exit 0**；tsc exit 0；显式 Expo flat 配置下选定文件 lint exit 0 |
+| `065efd85ee6365160862b009dcaffc50e8b57473` | 获授权的地图 App 级兼容配置；**71 suites / 726 tests，111.162s，exit 0**；tsc exit 0；地图插件定向 lint exit 0；配置插件无 key / 属性保留 / 幂等检查通过 |
 
 固定命令为 `node node_modules/jest/bin/jest.js --runInBand --silent` 与 `node node_modules/typescript/bin/tsc --noEmit`。
 仓库尚无生效的 `eslint.config.*`，本轮通过的是显式 `--config node_modules/eslint-config-expo/flat.js` 的选定文件检查，**不是全仓 lint 门禁**；配置治理仍归 AR06。
@@ -190,7 +191,7 @@ AR02 的完整采集矩阵、AR03 的多段/S2S/盲听、AR07 唤醒率及 AR08 
 
 中途并行合入的 `5d3fd50` 是另一批 llm-gateway CI 修复；本页只报告 Android 的检查，不替它报告后端 CI 或生产发布结果。
 
-## 9. 构建、安装与真机结果
+## 9. 前三次构建与设备历史（当前候选见第十二节）
 
 三次构建均为 prod release、单编译任务、Gradle 堆 `128m/2048m`、Kotlin in-process；签名 SHA-1 保持
 `5e8f16062ea3cd2c4a0d547876baa6f38cabf625`。
@@ -199,12 +200,12 @@ AR02 的完整采集矩阵、AR03 的多段/S2S/盲听、AR07 唤醒率及 AR08 
 |---|---|
 | `5d1379e31` / 13:36 | 首次完整构建：Gradle 23m28s，1222 tasks（737 executed / 485 from cache），验包成功；只保留为诊断候选，未装机 |
 | `61801bfe7` / 14:14 | 核对 345 个 mobile/HMI 文件与 19 个原生资产，匹配后只同步 4 个差异文件，沿原构建脚本 §5–§6 接续；7m33s，52 executed / 1170 up-to-date；OPPO 14:23:44 安装 |
-| **`433fb3cf0` / 15:30** | 同口径核对并同步 6 个差异文件；5m47s，52 executed / 1170 up-to-date，exit 0、验包成功；**OPPO 15:41:31 安装，当前常驻候选** |
+| **`433fb3cf0` / 15:30** | 同口径核对并同步 6 个差异文件；5m47s，52 executed / 1170 up-to-date，exit 0、验包成功；**OPPO 15:41:31 安装，前一常驻候选** |
 
 接续未重新 MIR / prebuild，使用新单次 daemon 注入本次身份；原生工程、依赖、模型和签名均未改变。
 APK 内 `assets/app.config`、内嵌 bundle 与必需原生库经过验证，安装文件与本地产物 SHA-256 相同，非 DEBUGGABLE。
 
-当前产物：`D:\Android\builds\apk\xiaozhou-companion-prod-release-433fb3cf0-20260908-1536.apk`，210,703,730 bytes。
+前一产物：`D:\Android\builds\apk\xiaozhou-companion-prod-release-433fb3cf0-20260908-1536.apk`，210,703,730 bytes。
 SHA-256：`117746efb1139e963d21a3bf40adc8322653c36faf78c90d278b4ad160201243`。
 构建行：`v0.1.0 · prod · 433fb3cf0 · 2026-09-08 15:30`。
 构建日志保留 SDK XML 版本、NODE_ENV、颜色环境变量与 Gradle 弃用提示；这些提示未替代退出码和验包检查。
@@ -214,11 +215,11 @@ SHA-256：`117746efb1139e963d21a3bf40adc8322653c36faf78c90d278b4ad160201243`。
 | 验证项 | 结果与证据边界 |
 |---|---|
 | 草稿跨页 | `61801bf` 上真实 Maestro 中文输入“AR04 待发送草稿”，设置→地图→车辆→对话后完整保留；`433fb3cf` 上另用 `AR04 final draft` 复验设置→车辆→对话，全部通过。测试草稿已清除 |
-| 跨页层与操作栏 | 旧候选上地图/设置层均能展开、收起，层底 `[0,974][988,1623]`、栏 `[0,1623][988,1972]` 零重叠；最终包另取实色地图语音层截图，地图文字不再透入回答区。地图正常退出另见下节，不能因进入/呈现通过就关闭该项 |
+| 跨页层与操作栏 | 旧候选上地图/设置层均能展开、收起，层底 `[0,974][988,1623]`、栏 `[0,1623][988,1972]` 零重叠；`433fb3cf` 候选另取实色地图语音层截图，地图文字不再透入回答区。地图正常退出另见下节，不能因进入/呈现通过就关闭该项 |
 | 跨页停播 | `433fb3cf` 用普通故事请求，点击 App 内设置入口；第 5 个采样取到跨页停止键，采集栏明确“麦克风关闭”；按停后两次采样均无停止键复现。证据是播放事实与操作结果，未做人耳盲听 |
 | 前后台采集 | `433fb3cf` 设置页启动 HF→Home→回设置→停止收音→关闭 HF。最终计数 **micStarts=2 / micStops=2，ASR=0 / S2S=0**；原生录音记录前台 active、VOICE_COMMUNICATION、AEC/NS 在场，后台当前录音配置清空 |
 | 权限循环 | 未修包已有权限仍反复启动 `GrantPermissionsActivity`，Native 录音未开始；系统日志留有 144 条相关 Activity 行。修复后的上述 2/2 采集流程成立，原循环已关闭 |
-| 提醒呈现合同 | 假投递/组件/遮挡/断线/补投边界已通过本地回归；**五场景真实提醒未创建，等待本轮明确授权**。不能用空投递台账当作真实投递成功 |
+| 提醒呈现合同 | 假投递/组件/遮挡/断线/补投边界已通过本地回归；`433fb3cf` 阶段尚未创建真实提醒；授权后的 `065efd85e` 实测见第十二节。不能用空投递台账当作真实投递成功 |
 
 真机取证条件与失败样本：
 
@@ -230,9 +231,9 @@ SHA-256：`117746efb1139e963d21a3bf40adc8322653c36faf78c90d278b4ad160201243`。
 
 本轮只读云栈 status 为 5/5 healthy、warnings=[]，release 为 `a09c73a5da3181708279bc1f3e90acb1519606a0`；没有部署后台、执行车控/商户写或付款。
 
-## 10. 剩余项与需要的决定
+## 10. 兼容决策与仍未验证的范围
 
-**地图退出未通过。** 两次 SIGABRT 的错误均为 pointer tag 被截断，栈落在高德 `GLMapEngine.destroyAMapEngine / destroySurface`；依赖实际固定为 `com.amap.api:3dmap:9.6.0`。
+**地图退出历史故障已用获授权的临时兼容配置处理。** 修复前两次 SIGABRT 的错误均为 pointer tag 被截断，栈落在高德 `GLMapEngine.destroyAMapEngine / destroySurface`；依赖实际固定为 `com.amap.api:3dmap:9.6.0`。
 地图页、地图插件和 npm 依赖相对 AR03 没有源码变化；这里记录的是本轮发现的 SDK 兼容性故障，不冒称已证明旧 APK 的同一复现。
 
 [高德官方规避说明](https://lbs.amap.com/faq/android/navi-sdk/1000108216/1061016771)提供 App Manifest 的
@@ -245,9 +246,9 @@ app.$ = app.$ || {}
 app.$['android:allowNativeHeapPointerTagging'] = 'false'
 ```
 
-采用后必须经过 CNG 生成、重新构建/验 Manifest，再在同一候选上验证地图正常返回、快速返回、前后台及重复进出；不能只靠属性存在销账。
+`065efd85e` 已经过 CNG、重新构建和最终 APK Manifest 检查；同一候选完成正常返回 3 次、快速返回 1 次、前后台后返回 1 次，PID 保持、无新增 App 崩溃。底层 SDK 的指针问题仍未修复，未来升级时须重新评估兼容项。
 
-**真实提醒已授权、尚未执行。** 范围是 OPPO 当前 App 账号下最多 5 条一次性提醒，分别用于对话、设置、地图、后台、锁屏，每条约两分钟到期；只取消本轮尚未触发的残留，不删除记录、不操作其他提醒。标题为 `AR04-0908-对话/设置/地图/后台/锁屏验收`（每条取对应场景），逐条核对服务端与客户端时点。
+**真实提醒授权已执行完毕。** OPPO 当前账号共创建 5 条一次性提醒，每条创建后 120 秒到期；标识为 `AR04-0908-对话/设置/地图/后台/锁屏验收`。五条均已触发并完成呈现回执，零待触发残留；没有取消、删除、完成或延后业务记录，也没有操作其他提醒。第五条实测是无安全锁屏的熄屏/唤醒，不能替代 Keyguard 验收。实际标题解析偏差和逐条凭据见第十二节。
 
 **设备范围未补齐。** OPPO 的 `driving-landscape` 不可达性仍按 AR03 记录留给支持范围/对照机验证；没有操作 Xiaomi，也没有做物理折叠、系统 200% 字号、真实 S2S 发声或盲听。AR02/AR03 的旧剩余格仍归原批次。
 
@@ -255,10 +256,62 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 
 证据目录：`%LOCALAPPDATA%\car-agent\artifacts\AR04-20260908`。
 
-- `jest-433fb3c.json`、`jest-device-fix-result.json`、`static-device-fix-result.json`：最终代码检查；旧 SHA 各有独立文件。
+- `jest-065efd8.json`、`checks-065efd8.json`：当前代码检查；`433fb3cf` 及之前的 SHA 各有独立历史文件。
 - `mutations.json`、`batch-overlap-isolated.json`、`batch-regression-before.log`、`permission-regression-before.log`：反向与修复前证据。
-- `build-device-fix.log` / `.err.log` / `build-device-fix-result.json`、`mirror-device-fix-manifest.json`、`apk-433fb3c.json`：当前构建与验包；原两包证据分别保留。
-- `final-hf-settings-results.json`、`hf-settings-background-native.txt`、`final-story-results.json`、`final-draft-results.json`、`final-map-opaque.png`、`preferences-restored.json`：当前包的定向设备证据。
-- `permission-activity-evidence.log`、`crash-buffer-current.log`、`amap-compat-proposal.patch`：权限循环原始证据、地图崩溃与未应用的兼容草案。
+- `build-device-fix.log` / `.err.log` / `build-device-fix-result.json`、`mirror-device-fix-manifest.json`、`apk-433fb3c.json`：`433fb3cf` 历史构建与验包；当前包见第十二节。
+- `final-hf-settings-results.json`、`hf-settings-background-native.txt`、`final-story-results.json`、`final-draft-results.json`、`final-map-opaque.png`、`preferences-restored.json`：`433fb3cf` 的定向设备证据；当前包使用第十二节 `real-*` 文件。
+- `permission-activity-evidence.log`、`crash-buffer-current.log`、`amap-compat-proposal.patch`：权限循环原始证据、地图崩溃与当时的兼容草案；配置已在 `065efd85e` 实施。
 
-接续时先确认这两项授权/取舍，再核当前 SHA、设备包和资源。当前没有本轮构建、Metro 或 Maestro 流占用资源；不要从旧 session ID 猜仍在运行，也不要把本页“已修的部分”写成 AR04 整批通过。
+上述两项授权已执行完毕。接续先看第十二节剩余矩阵和新增发现，再核 SHA / APK / 设备。若要补真实 Keyguard 或物理折叠，先取得相应输入条件；新增提醒超出本轮最多五条的授权。不要把本页已取到的定向证据写成整批通过。
+
+
+## 12. 获授权的地图兼容与真实提醒验收（2026-09-08）
+
+### 12.1 当前包与资源
+
+- 代码 / 测试锚：`065efd85ee6365160862b009dcaffc50e8b57473`；后续纯文档提交不改变 APK。
+- 构建：16:47:07–17:11:20，Gradle **22m30s**、1222 tasks（736 executed / 486 from cache）、exit 0。沿原脚本 CNG 重新生成，没有手改生成 Manifest；`CompileJobs=1`、堆 128m/2048m、Kotlin in-process。
+- 当前 APK：`D:\Android\builds\apk\xiaozhou-companion-prod-release-065efd85e-20260908-1711.apk`，210,703,754 bytes；SHA-256 `7c8915b45430b32dd1a77b1f15028aa99873cd8f274da0e194b3900fb4afde7f`。
+- 包内身份：`v0.1.0 · prod · 065efd85e · 2026-09-08 16:48`；OPPO PEUM00 / Android 14 于 **17:12:17** 安装。非 DEBUGGABLE，设备安装文件哈希相同；两种 ABI、内嵌 bundle、KWS / ORT、原签名均保留。
+- 最终 APK Manifest：`allowNativeHeapPointerTagging=false`、`targetSdkVersion=36`；只在启用地图时由插件生成。无 key 不变、原属性保留、重复执行不重复 meta-data，均已检查。
+- 地图瓦片正常显示；正常返回 3 次、快速返回 1 次、前后台后返回 1 次，均返回对话页，PID 7373 保持。安装后至末端复核无新增 App / pointer-tag 崩溃；这 5 个返回场景未用 force-stop 代替退出。
+- 日志另有 FileSystemFileProvider replace 无原声明、高德库无法 strip、SDK XML、NODE_ENV、Gradle 弃用提示；构建成功和验包分别核实。
+- 测试后已恢复 `handsFree=false`、`speakPolicy=auto`、`reduceMotionForce=false`；未修改系统锁屏、音量、密度、字号或旋转。App 已退出至 Launcher，自有 Gradle daemon 与 Maestro 流已结束，无 Metro 占用。
+
+构建证据：`build-amap.log` / `.err.log` / `build-amap-result.json`、`generated-amap-manifest.json`、`apk-065efd8.json`、`amap-native-results.json`、`amap-final-crash.log`、`real-preferences-restored.json`、`real-resources-released.json`。
+
+### 12.2 五条真实提醒与回执
+
+均从 OPPO App 正常输入发送，账号 `u1 / primary`。后端实测 release 始终为 `a09c73a5da3181708279bc1f3e90acb1519606a0`；本轮未部署后端。每条在创建后 120 秒到期，经实际 Reminder 调度、proactive 投递、Android 呈现及 ACK。
+
+| 场景 | reminder ID | delivery ID | 客户端收到→呈现 | 服务端末态 |
+|---|---|---|---|---|
+| 对话 | `a699423759ec46728350344f90905fa1` | `68e89ac66e9d4954aef2fafd61b9192b` | 97 ms | presented / 1 次投递 |
+| 设置 | `5d1a2b5afe5142738c515a96afab189f` | `9dd0e552cbc6407b837c72447bc20ab3` | 114 ms | presented / 1 次投递 |
+| 地图 | `e3cffc8406a64a95b80bd04a33f5f8c6` | `e0e30a2c89004c9bbbd3a38e336eff67` | 126 ms | presented / 1 次投递 |
+| 后台 | `f9938841401e445d9366e412b5f9a98b` | `ec2b650e812e4a5bb9ce7032b4b4610b` | 54571 ms | presented / 1 次投递 |
+| 熄屏（原计划锁屏） | `3e7142f118154dcfbf4eca72f798b06b` | `215aa59185764b85bd179f42f837077d` | 46780 ms | presented / 1 次投递 |
+
+- 三个前台页都读到了实际提醒文字 / 卡片并留有截图。前三条保持自动播报，播放计数为 0；这是可视呈现验收，不冒称播报通过。
+- 后台条在桌面隐藏期间、熄屏条在 `mWakefulness=Asleep` 期间均已收到；恢复之前服务端各两次查询保持 `dispatched / presented_at=0`。恢复后才呈现并 ACK，客户端等待分别 **54.571s / 46.780s**。
+- 后两条临时设为“总是播报”。创建确认的播放先独立记录基线；恢复后提醒各增加 **1 starts / 1 stops**。再次后台/熄屏再恢复后，消息凭据、呈现/ACK 时刻和播放计数完全不变。最终总计 4 starts / 4 stops（2 次创建确认 + 2 次提醒），无 live / playing 残留。
+- 全程 micStarts / micStops / ASR / S2S / 视觉上传均为 0。播放计数来自播放器事实；系统媒体音量未改，未做人耳盲听，也不借此关闭 AR03 的完整音频矩阵。
+- 每个 delivery ID 只对应一条本地 message，列表记录与提醒出口可以同时显示同一内容，不是新增第二条投递。收起只更新本地 handledAt，没有点击业务“完成”或“稍后10分钟”。
+- 末端数据库：**5 条 fired、0 条 pending、5 条 presented delivery，attempts 均为 1**。fired 是已触发，不能称作业务 done；保留原记录，没有删除或额外创建。
+- 时间差只在同一客户端时钟内相减；服务端与手机时钟未做精密校准，不据跨机时间戳计算延迟。既有 ACK 帧不保存客户端来源，本轮报告设备 ACK 与对应服务端状态，不宣称额外的客户端来源审计。
+
+证据：`real-reminder-summary.json`、各场景 `real-*-receipts.json`、`real-*-presented.png`、`real-background-before-resume.json`、`real-lock-before-wake.json`、两场景 baseline/reentry、`real-final-after-restore-server.json`。原始 JSON 保留精确时间戳和服务端 payload；仓库内只保留必要摘要。
+
+### 12.3 未签收项与本轮新增发现
+
+| 项目 | 当前判断 / 下一步 |
+|---|---|
+| 安全 Keyguard | **未验**。OPPO `secure=false / showing=false / inputRestricted=false`；第五条只能证明熄屏/唤醒。需要有实际锁屏界面的设备条件，不自动更改系统配置；不能再复用这五条已触发提醒冒充新试验 |
+| 物理折叠 / 旋转与草稿、指定操作组合 | **未验**；已有本地布局/旋转回归和变异证据、前批跨页草稿证据，不替代该设备组合。OPPO driving-landscape 不可达及 Xiaomi 主用机边界仍归原记录 / AR10 |
+| 创建提醒错域 | **仅记录、未修**。原句“`两分钟后提醒我AR04-0908-对话验收`”落联网搜索，返回 quick-reminders 等建议；只读数据库为零条。不是创建成功。改为明确“创建一条定时提醒…”后才创建上述五条；首句只有一次样本，不推导稳定复现率，provider/model 未独立提取 |
+| 提醒标题污染 | **仅记录、未修**。五条实际 title 都保留“创建一条定时提醒，提醒我，提醒内容是”前缀；本轮没有通过改库或重命名掩盖。按 reminder ID 核对本次五条范围 |
+| 对话页播报胶囊文案 | **仅记录、未修**。`real-lock-presented.png` 仍显示“播报中 · 说话可打断”，同轮麦克风计数为 0；跨页采集栏已准确，但对话页这段提示仍需按真实可打断条件收敛。归入后续交互文案 / 整体验证，不把无采集写成已能语音打断 |
+
+本轮额外的 SSH 连接诊断曾触发腾讯云扫码认证并终止，未绕过；常规具名提醒台账查询随后正常完成，不再依赖该额外诊断。所有台账查询使用只读事务；没有执行 schema / 环境 / 系统配置 / 生产部署变更。
+
+结论为 **AR04 开发修复及本轮授权的定向验证完成，完整验收矩阵未签收**。本页的新发现保持“仅记录”，AR02/AR03 的原剩余格、AR05–AR11 的范围不因此关闭或自动启动。

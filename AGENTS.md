@@ -118,7 +118,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：`mobile/README.md` + [AR04 实施与设备交接](docs/design/2026-09-08-ar04-presentation-ack-implementation.md)。**代码 `433fb3cf` 已推送，726 tests / tsc / 定向 lint 通过；OPPO 当前候选包 `433fb3cf0`（2026-09-08 15:41:31 安装），设备哈希已核对。** 已证草稿跨页、实色语音层、跨页停播、麦克风前后台撤回（2/2 配平、ASR/S2S=0）。**AR04 未整批签收**：地图正常退出发生高德 pointer-tag native 崩溃，App 兼容配置/SDK 升级待决定；五场景真实提醒投递待授权。AR03 的既有证据与剩余格见[原实施记录](docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)，AR02 设备矩阵仍见[原记录](docs/design/2026-09-07-ar02-capture-privacy-implementation.md)。OPPO 不能进入 driving-landscape 的支持范围问题仍归 AR10；Xiaomi 是用户主用对照机，本轮未操作，动它需当轮授权。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)与[后续批次](docs/design/2026-09-07-android-review-remediation-batches.md)保持独立。 |
+| Android App | 当前入口：`mobile/README.md` + [AR04 实施与设备交接](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) 第十二节。**代码 / OPPO 包 `065efd85e` 已推送并安装（2026-09-08 17:12:17），726 tests / tsc 通过；地图兼容配置经用户授权，5 个正常返回场景无新增崩溃；5 条真实提醒均呈现并由服务端 ACK 销账，后台 / 熄屏恢复各只播放一次，零新采集、零待触发残留。** 完整矩阵未签收：本机无安全 Keyguard，物理折叠/旋转组合未验；提醒创建错域、标题污染及对话播报胶囊文案仅记录，见同页。AR02 / AR03 的原剩余格仍见[AR02](docs/design/2026-09-07-ar02-capture-privacy-implementation.md) / [AR03](docs/design/2026-09-08-ar03-stop-playback-landscape-implementation.md)；OPPO driving-landscape 不可达仍归 AR10。Xiaomi 为用户主用对照机，本轮未操作，使用需当轮授权。[完整评审](docs/reviews/2026-09-07-android-ux-full-review.md)与[后续批次](docs/design/2026-09-07-android-review-remediation-batches.md)保持独立。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

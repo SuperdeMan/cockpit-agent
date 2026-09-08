@@ -166,6 +166,13 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
 | 全量 warning | `9a3b6f2f`全量5条、4类：Starlette按2个worker重复，另有gRPC fixture、audioop、regex各1 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 
+2026-09-08 Android AR04 真实提醒期间新增两类记录（仅记录，未修；不改变上方历史 release 证据）：
+
+- 后端 `a09c73a5da3181708279bc1f3e90acb1519606a0`：自然句“`两分钟后提醒我AR04-0908-对话验收`”一次落联网搜索，数据库零创建；明确创建指令后才有五条提醒，但五条 title 都保留创建指令前缀。provider/model 未独立提取；先分别查路由与标题提取，不据单例宣称稳定复现。
+- Android `065efd85ee6365160862b009dcaffc50e8b57473`：对话页播放胶囊仍显示“说话可打断”，同轮真实麦克风计数为 0；实际可打断条件与文案尚未对齐。
+
+逐条 ID、截图、回执与未验设备范围见 [AR04 实施记录第十二节](../design/2026-09-08-ar04-presentation-ack-implementation.md)。地图临时兼容与五条投递已通过定向验证，不代表这些新发现已修或 QA 全绿。
+
 以上活项是独立问题，不反推安全确认写闸未上线；同样也不能因为安全闸已上线就把它们写成已关闭。
 
 ## 6. 证据纪律
