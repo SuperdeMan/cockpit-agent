@@ -75,7 +75,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 7. `Capability.response_only` 是只响应能力的权威；D0/T2/Executor 都必须 fail closed。
 8. 安全问句的权威文本是服务端 `safety_origin_text`；LLM goal/reason 和补槽短句无授权权威。
 
-## 4. 当前真实状态（2026-09-05）
+## 4. 当前真实状态（2026-09-09）
 
 ### 4.0 发布快照
 
@@ -83,14 +83,14 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `9a3b6f2f08657464c5049a5abf8f6e989e398bce` |
-| 上一生产基线 | `805711cff74b79b23324180ed22f7e026f95e481`；rollback命令未在本轮实际执行 |
-| status | 2026-09-05 末端复核：5/5 endpoint healthy，零 warning |
-| verify | `verified`；artifact `20260904T163045Z-9a3b6f2.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
-| exact-code 全量 | `7861 passed / 34 skipped / 5 warnings`；`-n2 --dist worksteal`，656.57s，0 failed；5条warning是4类已知项（Starlette按worker重复） |
-| manual-rag | 0.3.3生产闭合：离线269页/160索引路径/187 outline叶子/35视觉/原36题全绿；生产独立章节批187/187、视觉35/35；雨刮/背宝剑各3/3带图；所有正式轮零action/确认/probe error、车态diff={} |
-| 自然问法边界 | 原36题完整真栈仍只在`434a046`闭合；当前精确整批有7条旧表述被联网前安全预检拒绝，未冒充当前36/36 |
-| 证据边界 | 全量、部署、status、verify与最终手册真栈都绑定`9a3b6f2f`；后续纯docs/test提交不得冒充release |
+| 生产 release | `573ad46d939bf655f5a0f4ef16579e2a9b80b087` |
+| 上一生产基线 | `a09c73a5da3181708279bc1f3e90acb1519606a0`；本轮未执行回滚 |
+| status | 2026-09-09 发布后独立复核：5/5 endpoint healthy，零 warning |
+| verify | `verified`；artifact `20260909T015134Z-573ad46.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| 代码验证 | `573ad46` 的 CI 八任务全部 success（含 Python 3.11/3.12）；本批 mobile 726 / reminder 220 / HMI 75 / TTS pacing 21。本轮未在本机重跑全量，旧 `9a3b6f2f` 的 7861/34/5 不转借 |
+| manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
+| 自然问法边界 | 原36题完整真栈只在 `434a046` 闭合；`9a3b6f2f` 当轮有7条旧表述被安全预检拒绝。本次未宣称新 release 36/36 |
+| 证据边界 | 当前部署/status/verify/锁屏提醒绑定 `573ad46`；手册整本和旧全量保持各自 SHA；后续 docs/test 不冒充 release |
 
 `b3a2aed` 是 v2 首次生产 release；`434a046`、`7b594f37`、`805711cf` 是后续生产历史；
 `a406e22` / `423ed23` 是 v1 发布历史。
@@ -118,7 +118,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：[AR04 第十三节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。**代码 / OPPO 包 `573ad46d9` 已推送并安装；mobile 726、reminder 220 tests 与 CI 通过。播放提示已在真机修复；标题已修未部署。OPPO 默认兼容模式与全屏 drawer/tabletop/book/合拢返回已证草稿/本地征询保留，显示比例和 App 偏好均已恢复，测试 App 已退出。** 真正 Keyguard 提醒、服务端多 operationId 实机组合与发布授权仍待接续，未整批签收；原错路由已定位 MiniMax 非法/空计划后降级搜索，未修。前轮五条提醒证据绑 `065efd85e`，本轮未新增提醒或发布后端；AR02/AR03/AR10 及 Xiaomi 对照范围保持独立。 |
+| Android App | 当前入口：[AR04 第十四节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。**生产 / OPPO 代码 `573ad46`，发布及 status/verify 通过；标题污染已用真实提醒在生产验证，真正 Keyguard 下不提前 ACK，解锁只播一次、本地收起后重入不重播。既有默认/全屏折叠保留证据已取，临时偏好均恢复，App 已退出。** 服务端多 operationId 实机组合仍缺，Planner 非法/空计划降级策略未修，AR04 未整批签收；AR02/AR03/AR10 与 Xiaomi 对照范围独立。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

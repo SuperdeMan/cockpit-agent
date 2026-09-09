@@ -1,6 +1,6 @@
 # AR04：跨页语音宿主与提醒呈现 ACK
 
-日期：2026-09-08。状态：**当前代码 / OPPO 包 `573ad46d9`，726 条移动端测试、220 条提醒服务测试和 GitHub CI 通过。播放提示已在真机修复；提醒标题已修、未部署。OPPO 默认兼容模式及全屏 drawer/tabletop/book/合拢返回的未发送草稿与本地征询保留已取证，22:15 已恢复原显示比例与 App 偏好，测试 App 已退出。真实 Keyguard 提醒、服务端多 operationId 实机组合及后端发布仍未闭合，Planner 技术失败降级策略未修，AR04 未整批签收。恢复完成记录见第十三节末。**
+日期：2026-09-09。状态：**生产 release 与 OPPO 包代码均为 `573ad46`，本轮发布及独立 status/verify 通过；标题修复已用真实提醒验证。真实 Keyguard 下不提前 ACK，解锁后呈现并只播放一次，本地收起后再次进入不重播。既有默认/全屏折叠保留证据及设置恢复仍有效。本轮授权已完成；服务端多 operationId 实机组合及 Planner 技术失败降级策略仍未闭合，AR04 未整批签收。当前交接见第十四节。**
 
 输入：[分批建议 AR04](2026-09-07-android-review-remediation-batches.md#ar04)、
 [完整评审 R08/R09](../reviews/2026-09-07-android-ux-full-review.md)、
@@ -231,7 +231,7 @@ SHA-256：`117746efb1139e963d21a3bf40adc8322653c36faf78c90d278b4ad160201243`。
 
 本轮只读云栈 status 为 5/5 healthy、warnings=[]，release 为 `a09c73a5da3181708279bc1f3e90acb1519606a0`；没有部署后台、执行车控/商户写或付款。
 
-## 10. 兼容决策与仍未验证的范围
+## 10. 前轮兼容决策与验证边界（最新状态见第十四节）
 
 **地图退出历史故障已用获授权的临时兼容配置处理。** 修复前两次 SIGABRT 的错误均为 pointer tag 被截断，栈落在高德 `GLMapEngine.destroyAMapEngine / destroySurface`；依赖实际固定为 `com.amap.api:3dmap:9.6.0`。
 地图页、地图插件和 npm 依赖相对 AR03 没有源码变化；这里记录的是本轮发现的 SDK 兼容性故障，不冒称已证明旧 APK 的同一复现。
@@ -262,7 +262,7 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 - `final-hf-settings-results.json`、`hf-settings-background-native.txt`、`final-story-results.json`、`final-draft-results.json`、`final-map-opaque.png`、`preferences-restored.json`：`433fb3cf` 的定向设备证据；当前包使用第十二节 `real-*` 文件。
 - `permission-activity-evidence.log`、`crash-buffer-current.log`、`amap-compat-proposal.patch`：权限循环原始证据、地图崩溃与当时的兼容草案；配置已在 `065efd85e` 实施。
 
-上述两项授权已执行完毕。接续先看第十三节剩余矩阵和资源状态，再核 SHA / APK / 设备。若要补真实 Keyguard 或物理折叠，先取得相应输入条件；新增提醒超出本轮最多五条的授权。不要把本页已取到的定向证据写成整批通过。
+上述两项授权已执行完毕。接续先看第十四节当前状态，再核 SHA / APK / 设备。若要补真实 Keyguard 或物理折叠，先取得相应输入条件；新增提醒超出本轮最多五条的授权。不要把本页已取到的定向证据写成整批通过。
 
 
 ## 12. 前轮地图兼容与真实提醒验收（065efd85e，2026-09-08）
@@ -317,7 +317,7 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 结论为 **AR04 开发修复及本轮授权的定向验证完成，完整验收矩阵未签收**。本页的新发现保持“仅记录”，AR02/AR03 的原剩余格、AR05–AR11 的范围不因此关闭或自动启动。
 
 
-## 13. 未签收项续接（2026-09-08，当前入口）
+## 13. 前期未签收项续接（2026-09-08；发布结果见第十四节）
 
 用户要求继续未签收项，并提供 OPPO 物理折叠配合；对“临时把小舟随行系统显示方式改为全屏并恢复”的具体请求回复“允许”。该回复用于显示模式切换；云端 apply 与新增一条提醒的请求仍待单独明确批准。
 
@@ -384,3 +384,51 @@ app.$['android:allowNativeHeapPointerTagging'] = 'false'
 - 末端 cloud status 仍为 `a09c73a5da3181708279bc1f3e90acb1519606a0`、5/5 healthy、warnings=[]。本轮未 apply、未新增真实提醒。生产发布/一条真正锁屏提醒的授权仍待答复，不能以物理操作回复替代批准。
 
 恢复总记录：`reconnect-closeout.json`；当前机器可正常使用，**不再有本轮显示或 App 偏好待恢复项**。下一步只按仍未闭合的业务/锁屏矩阵及发布权限继续，不重做已通过的普通折叠保留。
+
+
+## 14. 已授权发布与真实 Keyguard 复验（2026-09-09，当前入口）
+
+用户对发布 `573ad46`（提醒标题修复及此前 HMI/语音合并修复）和新增一条两分钟锁屏提醒明确回复“授权”。本轮只创建下述一条，没有复用前轮五条提醒的额度。
+
+### 14.1 生产发布与独立验证
+
+| 项目 | 精确证据 |
+|---|---|
+| 目标 / 发布前 | 目标 `573ad46d939bf655f5a0f4ef16579e2a9b80b087`；发布前 `a09c73a5da3181708279bc1f3e90acb1519606a0`，工作树 clean，目标 main 可达 |
+| 代码验证 | [CI 34214476735](https://github.com/SuperdeMan/cockpit-agent/actions/runs/34214476735) 对同一完整 SHA 八任务 success，含 Python 3.11/3.12；上轮 mobile 726、reminder 220、HMI 75、TTS pacing 21 与四门禁的精确 SHA 不变。本轮未另跑本机全量，不借用旧 release 的 7861 条结果 |
+| dry-run / apply | 重新 dry-run：原 release 与已审阅差异一致，blocking_changes=[]、release lock available；随后执行已授权 `--apply`，命令 exit 0 / submitted。submitted 仅表示提交，最终状态以下两项独立核实 |
+| status | 独立读回新 release；验证前后均 5/5 endpoint healthy，warnings=[] |
+| verify | `verified`，exit 0；`.artifacts/dev-stack-verifications/20260909T015134Z-573ad46.json`，release SHA 完整一致、case `e2e_remote_safe`、`minimax:MiniMax-M3` |
+| 范围 | 发布包含提醒标题修复、HMI 指定队列撤回/发送回执与 stopSpeaking 接口、MiniMax 已到齐文本合并修复；未额外编辑环境/密钥/基础设施/schema，也未执行数据清理或回滚 |
+
+本轮证据目录：`%LOCALAPPDATA%\car-agent\artifacts\AR04-release-20260909`。部署为 `dry-run.json`、`apply.json`、`apply-command-result.json`、`status-deploy-progress.json`、`status-final.json`、`verify.json`、`verify-command-result.json`；原 source/transport 包仍在仓库 `.artifacts/releases/<目标完整SHA>/`。部分 PowerShell 重定向 JSON 是 UTF-16，以 BOM 判断读取，不能把空解析结果当成功。
+
+### 14.2 唯一真实提醒与锁屏合同
+
+| 字段 | 当前值 |
+|---|---|
+| 账号 / 创建 | OPPO 当前 App 账号 `u1 / primary`；正常 App 输入发送一次 |
+| 原话 / 标题 | “创建一条定时提醒，2分钟后提醒我，提醒内容是AR04-0909-锁屏复验。”；数据库 title 精确为 **`AR04-0909-锁屏复验`**，没有创建指令前缀 |
+| reminder ID | `82c09ae84f36456bb42a972b3f85f263` |
+| delivery ID | `3cf096f8d48f42d895feb0f2ca3d317f` |
+| 创建 trace | `510339013295c9a7`，`reminder.create`、`toolcall`，实际 `minimax:MiniMax-M3` |
+| 计划 / 实际触发 | created_at=1788919223、fire_at=1788919343（相差 120 秒）；fired_at=1788919346，实际调度比计划晚 3 秒；不是时延统计样本 |
+| 客户端时间 | receivedAt=1788919347259；presentedAt=1788919541603；ackSentAt=1788919541604 |
+| 服务端结果 | presented_at=1788919542903；state=presented，attempts=1；收起后业务记录仍是 fired，不称作 done |
+
+步骤与结论：
+
+1. **先预检，再消耗唯一提醒样本**。准备中文草稿并结束输入工具后，使用正常电源键事件 `POWER(26)` 锁屏、`WAKEUP(224)` 亮屏，读回 Keyguard `showing=true / enabled=true / secure=false`，解锁后草稿仍在；这一步尚未发送创建请求。
+2. 创建结果核对 title 和 120 秒计划时间后，记录创建确认的播放基线 1 starts / 1 stops，再进入真实 Keyguard 锁屏。到期后第一次查账为 `dispatched / presented_at=0`。
+3. **亮屏后仍不解锁**：XML 与截图证实前台是 Keyguard，App 不可见，查账仍是 dispatched；解锁前第三次查账也没有提前销账。使用的是实际锁屏界面，不再把前轮 `showing=false` 的熄屏当锁屏。
+4. 正常上滑解锁后，真实提醒文字/卡片进入可见出口，客户端发 ACK，服务端才变为 presented。客户端收到→呈现 **194344 ms** 是人为保持锁屏的等待，不是 App 性能延迟；没有用手机与服务端的不同钟源相减计算时延。
+5. 解锁后只新增 **1 starts / 1 stops**；本地收起后再次后台→前台，message/delivery、呈现和 ACK 时间及播放计数全部不变。最终总播放 2/2（一次创建确认、一次到期提醒）；mic、ASR、S2S、视觉上传均为 0。截图也已抓到“播报中”。播放器事实不替代扬声器盲听。
+6. 只点击本地“收起”记录 handledAt，没有点业务“完成”或“稍后10分钟”。末端本轮 **1 条 fired、0 条 pending、1 条 presented delivery**，无待触发残留，无需取消；未删除记录，也未触碰前轮五条或其他提醒。
+
+主要证据：`keyguard-preflight.json/.txt/.png`、`locked-before-due-system.txt`、`locked-audit-1.json`、`awake-keyguard-ui.xml/.png`、`awake-keyguard-audit.json`、`before-unlock.json`、`reminder-presented.png`、`before-lock-counters.json`、`after-presentation-counters.json`、`after-reentry-counters.json`、`creation-trace.json`、`lockscreen-summary.json`、`final-reminder-audit.json`。ACK 帧本身不记录客户端来源，本轮报告设备发送事实和对应服务端账本结果，不宣称新增了来源审计能力。
+
+### 14.3 恢复与剩余范围
+
+本轮仅临时改 App 的 speakPolicy=always 和 reduceMotionForce=true，用于验证播放/取证；已经恢复 **auto / false**，handsFree 始终 false。App 已退出至 Launcher、进程不存在；没有本轮构建或输入驱动留占。恢复文件 `real-preferences-restored.json`、`real-speak-auto-restored.png`、`device-released.json`；前轮已恢复的 16:9 系统显示比例未被本轮修改。
+
+**本轮授权的发布与一条锁屏复验已完成；标题污染和真实 Keyguard 提醒格已关闭。** 剩余 AR04 签收缺口是服务端多 operationId 的实机组合，不能用本地定位征询替代；Planner 非法/空计划后的技术失败降级策略仍未修。AR02/AR03/AR10 的既有矩阵、长文本配额/盲听与设备支持范围保持独立，不能把本轮短提醒通过写成 QA 全绿。

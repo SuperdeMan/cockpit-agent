@@ -1,33 +1,29 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-05（manual-rag 整本范围生产闭合）
+> 更新时间：2026-09-09（573ad46 发布及 AR04 真锁屏复验）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-探索式 QA 的编号卡、MiniMax 修复批、QA 余项批和安全确认写闸都已完成开发与发布；
-当前生产 release 为 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`，`status` 5/5 healthy、
-零 warning，统一 `verify` 为 `verified`。manual-rag 已完成整本章节187/187与视觉35/35生产
-闭合；安全问句错域、安全 focus 恢复、TTS/barge-in 与测试 warning 仍是独立活项，因此整个
-项目仍不得写“QA 全绿”。
+当前生产 release 为 `573ad46d939bf655f5a0f4ef16579e2a9b80b087`，独立 status 为 5/5 healthy、零 warning，verify 为 verified。2026-09-09 已完成提醒标题修复的真实创建及 OPPO Keyguard 呈现/ACK 验证；服务端多 operationId 实机组合、Planner 技术失败降级与既有 QA 活项仍未闭合，不能写“QA 全绿”。手册整本章节187/187和视觉35/35等证据保留在历史 `9a3b6f2f`，本轮未重跑整本。
 
 ## 2. 当前发布与证据边界
 
 | 项目 | 当前事实 |
 |---|---|
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
-| 生产 release | `9a3b6f2f08657464c5049a5abf8f6e989e398bce` |
-| 上一生产基线 | `805711cff74b79b23324180ed22f7e026f95e481`；rollback命令未在本轮实际执行 |
+| 生产 release | `573ad46d939bf655f5a0f4ef16579e2a9b80b087` |
+| 上一生产基线 | `a09c73a5da3181708279bc1f3e90acb1519606a0`；本轮未执行回滚 |
 | 部署状态 | 5/5 endpoint healthy，零 warning |
-| 统一验证 | `verified`；artifact `.artifacts/dev-stack-verifications/20260904T163045Z-9a3b6f2.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
-| exact-code 全量 | `7861 passed / 34 skipped / 5 warnings`，0 failed；5条warning对应4类已知项，Starlette按2个worker重复 |
-| manual-rag | source `ef16d20…e4705d`、v2包`648cdf3…400ed`不变；生产独立章节187/187、视觉35/35、雨刮/背宝剑各3/3，零动作/确认/probe error，车态diff={} |
-| 证据边界 | 全量、部署、status、verify与最终手册真栈都绑定`9a3b6f2f`；后续纯docs/test提交不得冒充release |
+| 统一验证 | `verified`；artifact `.artifacts/dev-stack-verifications/20260909T015134Z-573ad46.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
+| 代码验证 | `573ad46` 的 CI 八任务 success，含 Python 3.11/3.12；本批 mobile 726 / reminder 220 / HMI 75 / TTS pacing 21；本轮未在本机重跑全量 |
+| manual-rag | 历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3；本轮未重跑这些整批，不作为新 release 的数字 |
+| 证据边界 | 当前部署/status/verify/真锁屏提醒绑定 `573ad46`；历史 `9a3b6f2f` 全量7861/34/5与手册整批保持原锚，后续 docs/test 不冒充 release |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
-完整36题并保留最近成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
+完整36题并保留当轮成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
 
 本页所有 `.artifacts/` 路径都是**根仓本地 ignored 证据**，不随 git clone 移植；路径缺失时
 必须按本页命令和精确 release 重跑，不能把“文档记过”当成 artifact 仍在。
@@ -142,7 +138,7 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
   视觉35/35、显式来源222/222；该候选随后发布并继续修复LLM故障降级，终态见下节。证据与hash见
   `docs/design/2026-09-04-xiaomi-su7-manual-rag-full-coverage-validation-plan.md` §5。
 
-### 4.6 整本手册生产闭合（当前生产 `9a3b6f2f`）
+### 4.6 整本手册生产闭合（历史验收锚 `9a3b6f2f`）
 
 - 0.3.2首次发布到`805711cf`后，五个三字caption稳定缺口消失；但章节主批184/187、视觉
   34/35仍出现4次`Agent 内部错误：RuntimeError`。Trace证明均已落`manual.query`且Agent执行
@@ -162,17 +158,17 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 |---|---|---|
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
-| MiniMax TTS 长文本 RPM | 同一 887 字真实回复两次产出可播放 PCM，但末尾均报 `rate limit exceeded (RPM)` | 供应商配额/节流策略；不要继续无界重试 |
+| MiniMax TTS 长文本 / RPM 边界 | 首片门控/预算合并与同拍文本合并分别已在 `a09c73a5` / `573ad46` 发布；原 887 字 RPM 样本是历史证据，本轮只验证短提醒一次播放 | 原长文本、并发配额和盲听仍需独立复验，不因短提醒通过关闭整项 |
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
 | 全量 warning | `9a3b6f2f`全量5条、4类：Starlette按2个worker重复，另有gRPC fixture、audioop、regex各1 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 
 2026-09-08 Android AR04 的发现与处置（客户端包、源码修复与生产分别记录）：
 
 - 后端 `a09c73a5da3181708279bc1f3e90acb1519606a0` 的提醒错域仍未修。原 trace `21798d30258aa5bf` 已查明实际 `minimax:MiniMax-M3` 首次生成非法 steps，重试给空计划，随后 `toolcall_degraded → chitchat.talk → info.search`；数据库零创建。问题在格式化规划失败及后续降级，不能从这一个样本推导稳定错域率。
-- 提醒标题污染已由 `573ad46` 源码修复，220 条服务测试与 CI 通过，**尚未部署**。成功创建 trace `458440c431c99c8f` 的 Planner 原 title 已是干净标记，污染发生在 Agent 回填原话；五条旧记录没有被改库清洗。
+- 提醒标题污染已由 `573ad46` 修复并于 2026-09-09 发布；220 条服务测试与 CI 通过，真实创建 trace `510339013295c9a7` 已证数据库 title 不再带创建指令前缀。成功创建 trace `458440c431c99c8f` 的 Planner 原 title 已是干净标记，污染发生在 Agent 回填原话；五条旧记录没有被改库清洗。
 - 对话页“说话可打断”提示已由 `a731973` 修复为“播报中”；OPPO 当前包 `573ad46d9` 已在实际播放时取证，麦克风计数为 0，不再承诺直接语音打断。此项客户端缺陷已修，不能据此关闭更广的音频矩阵。
 
-OPPO 默认/全屏折叠、书本式与返回的保留证据已补齐，临时显示/App 设置已恢复。逐条凭据和仍未验的业务/锁屏范围见 [AR04 实施记录第十三节](../design/2026-09-08-ar04-presentation-ack-implementation.md)。原五条真实提醒回执绑定 `065efd85e`；新包、新后端发布和新锁屏提醒仍分别验收，QA 非全绿。
+OPPO 默认/全屏折叠与本地征询/草稿保留证据已取；2026-09-09 新增一条真实 Keyguard 提醒也已完成：锁屏/亮屏未解锁均不提前 ACK，解锁呈现后只播一次，本地收起后重入无重播。临时偏好均恢复。当前证据见 [AR04 第十四节](../design/2026-09-08-ar04-presentation-ack-implementation.md)；原五条回执保持 `065efd85e` 锚，新提醒/发布绑定 `573ad46`。服务端多 operationId 实机组合等仍缺，QA 非全绿。
 
 以上活项是独立问题，不反推安全确认写闸未上线；同样也不能因为安全闸已上线就把它们写成已关闭。
 
