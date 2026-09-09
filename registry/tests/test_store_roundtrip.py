@@ -125,3 +125,125 @@ def test_non_proto_manifest_roundtrip_preserves_response_only():
 
     restored = _dict_to_manifest(serialized)
     assert restored.capabilities[0].response_only is True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AR05 F08（2026-09-09）：逐字段对账，而不是每发现一个丢字段就补一条断言。
+#
+# 复现记录：`slot_shapes` / `whole_utterance` / `RouteHint.scope` 三个字段在
+# `_manifest_to_dict` 里存进了 JSON，`_dict_to_manifest` 却**根本没读**——
+# registry 重启恢复后，wait_slot 的槽值形状判据、「同一份计划最多一步」的整句约束、
+# 接送 hint 的分句锚定同时静默失效。这已经是这个适配器第三次丢字段
+# （route_hints → verification → 本批），说明缺的不是断言而是**判据**。
+#
+# 下面两条把「新加的 proto 字段有没有过 round-trip」变成机器判据：
+# ① 夹具必须把每个字段都填成非默认值（新字段不填 → 夹具那条先红）；
+# ② round-trip 后整条 proto 必须逐字节等价（适配器漏读 → 这条红）。
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _fully_populated_manifest():
+    """每个字段都取非默认值的 manifest。新增 proto 字段时**必须**在这里补一笔。"""
+    return agent_pb2.AgentManifest(
+        agent_id="full-fixture",
+        version="9.9.9",
+        display_name="全字段夹具",
+        category="ecosystem",
+        trust_level="third_party",
+        deployment="edge",
+        latency_budget_ms=1234,
+        fallback="chitchat",
+        requires_permissions=["merchant.read"],
+        edge_intents=["window.open"],
+        kind="edge_fast",
+        context_scopes=["location"],
+        capabilities=[
+            agent_pb2.Capability(
+                intent="fixture.do",
+                description="夹具能力",
+                slots=["when"],
+                examples=["例句"],
+                require_confirm=True,
+                heavy=True,
+                slot_shapes={"when": "time_phrase"},
+                whole_utterance=True,
+                response_only=True,
+                verification=agent_pb2.Verification(
+                    mode="schema", timeout_ms=1500, on_fail="retry", max_attempts=2,
+                    expect=_expect({"data_keys": ["items"]})),
+            ),
+        ],
+        route_hints=[
+            agent_pb2.RouteHint(
+                pattern="接.+", intent="fixture.do", policy="append", priority=7,
+                guard="不接", slots={"raw": "$text"}, scope="clause"),
+        ],
+    )
+
+
+def _unset_fields(msg, path=""):
+    """返回夹具里仍是默认值的字段路径（递归子 message，Struct 只看非空）。"""
+    from google.protobuf.struct_pb2 import Struct
+
+    missing = []
+    for field in msg.DESCRIPTOR.fields:
+        name = f"{path}{field.name}"
+        value = getattr(msg, field.name)
+        if field.is_repeated:
+            if not value:
+                missing.append(name)
+                continue
+            # map<> 与 repeated message 都在这里；逐元素递归只对 message 元素有意义
+            if field.message_type is not None and not field.message_type.GetOptions().map_entry:
+                for i, item in enumerate(value):
+                    missing.extend(_unset_fields(item, f"{name}[{i}]."))
+            continue
+        if field.message_type is not None:
+            if not msg.HasField(field.name):
+                missing.append(name)
+                continue
+            if isinstance(value, Struct):
+                if not value.fields:
+                    missing.append(name)
+                continue
+            missing.extend(_unset_fields(value, f"{name}."))
+            continue
+        if value in ("", 0, False):
+            missing.append(name)
+    return missing
+
+
+def test_roundtrip_fixture_covers_every_declared_field():
+    """夹具本身必须是满的——否则下一条的「等价」是拿空字段换来的假绿。"""
+    missing = _unset_fields(_fully_populated_manifest())
+    assert missing == [], (
+        f"这些字段在 round-trip 夹具里还是默认值，新增 proto 字段后请补齐：{missing}")
+
+
+def test_manifest_roundtrip_is_lossless_for_every_field():
+    """PgStore 真栈路径 proto→dict→JSON→dict→proto 必须逐字段无损。"""
+    import json
+
+    original = _fully_populated_manifest()
+    stored = json.loads(json.dumps(_manifest_to_dict(original), ensure_ascii=False))
+    restored = _dict_to_manifest(stored)
+
+    assert restored == original, (
+        "registry 重启恢复丢字段——声明式机制会在重启后静默失效。\n"
+        f"stored={stored}")
+
+
+def test_non_proto_manifest_roundtrip_is_lossless_for_declared_fields():
+    """内存/测试形态（dataclass、SimpleNamespace）走的是手写序列化那一支。"""
+    original = _fully_populated_manifest()
+    ns = SimpleNamespace(
+        **{f.name: getattr(original, f.name)
+           for f in original.DESCRIPTOR.fields})
+
+    restored = _dict_to_manifest(_manifest_to_dict(ns))
+
+    assert restored.capabilities[0].slot_shapes == original.capabilities[0].slot_shapes
+    assert restored.capabilities[0].whole_utterance is True
+    assert list(restored.context_scopes) == ["location"]
+    assert list(restored.edge_intents) == ["window.open"]
+    assert restored.kind == "edge_fast"
+    assert restored.route_hints[0].scope == "clause"

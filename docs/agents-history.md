@@ -8761,3 +8761,16 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - OPPO 首轮包 `de2a5564c`（Gradle 27m19s，哈希两端一致）：闲置三页只剩光球；打字故事请求后进设置页取到「正在思考… / 打断」（+3.2s）与「播报中 / 停止播报」（+9.7s、+18.3s）；点停止后 1.2s 只剩闲置光球，playback starts=1 / stops=1，mic / ASR / S2S / 视觉 0。临时 always / 减少动效已恢复 auto / off。恢复减少动效时一次误配对（标签不在屏上仍取了第一枚开关）把「车辆控制」能力开关切关，6 分钟后按标签定位切回，已如实记录。
 - 首轮暴露两条修在 `1c67807`：设置 / 车辆滚动内容 paddingBottom 加 72dp 余量；闲置光球静帧（`orbPolicy.presenceOrbTempo`），支持页 uiautomator 重新可 idle。mobile 72 / 739、tsc 通过。复验包 `1c6780744`（21m9s，哈希两端一致）：构建行 y=1671–1735 与光球 [823,1763][955,1895] 零重叠、车辆页页脚在光球上方、闲置 dump 直接成功。
 - 生产未动（仍 `573ad46`）；App 已退出、无进程；证据目录 `%LOCALAPPDATA%\car-agent\artifacts\AR04-presence-20260909` 与 `…-b2`。AGENTS / mobile README / 分批页 / 设计索引入口改为 [AR04 第十五节](design/2026-09-08-ar04-presentation-ack-implementation.md)；Xiaomi 对照、服务端多 operationId、Planner 降级仍未做，不宣称 AR04 整批签收。
+## 2026-09-09 — AR05 结构化契约与能力摘要方案落盘
+
+- 用户要求先读项目并输出下一批 AR05 方案后停下，随后授权将方案落到文件；本轮只做文档交接。评审源码 `4278a52febfdecb5188e79c25a674a8c8fe21418`，落文档前工作树干净、target=cloud。
+- 新增 [AR05 实施方案](design/2026-09-09-ar05-structured-contracts-implementation-plan.md)：四份契约、确认/补槽/恢复/身份闭环、修改位置、步骤 0–6、V01–V12 验收及实施记录模板；T0 权限与 Registry 声明恢复是静态发现，仍待离线反例定性。
+- AGENTS Android 下一批入口、mobile README、设计索引和分批页已连到方案；AR04 实现/设备证据仍保留原入口与 SHA。
+
+## 2026-09-09 — AR05 步骤 0–1：T0 授权闸、Registry 逐字段往返、合同冻结
+
+- **F07 已复现已修**：`granted_scopes="location.read"` 的 token 说「打开车窗」，端侧快路径 B 直接进 VAL——车窗真开了，还回了一条 `vehicle.control` 动作。端侧四个本地执行出口加云端回流分发**都没读过这个键**，而云侧 dispatch 一直在按它硬拒。修法：`security/session_scopes.py` 收敛 granted_scopes 解析 + `PERMISSIONS_FAIL_OPEN` 兜底 + PoC 默认集（原先在 `orchestrator/cloud/context.py`，现全仓一份），`orchestrator/edge/scope_gate.py` 按端侧 manifest 的 `edge_intents × requires_permissions` 判需要哪个 scope、判定仍走 `check_permission`，闸落在 `_execute_val_observed` 这个既有唯一收口 + legacy 分支 + 云端回流各一处。被拒零 VAL 调用、零状态变化、不下发动作、留审计与 span，话术只说业务授权不足、不指系统权限页。
+- **F08 已复现已修**：`slot_shapes` / `whole_utterance` / `RouteHint.scope` 存进了 JSON 却没被还原，registry 重启后三条声明式机制同时静默失效。这是该适配器第三次丢字段（route_hints → verification → 本批），所以补的不是断言而是判据：走 proto descriptor 逐字段断言夹具非默认 + round-trip 整条等价，新增 proto 字段漏接必红。
+- 反向验证两处都做了：禁用闸 → 8 条负例转红/7 条正例仍绿；删一个还原字段 → 2 条对账转红；两次都按字节恢复（`RESTORE OK`）。
+- 本地：新增 15 + 9 条测试；`orchestrator/edge` + `orchestrator/cloud` + `security` + `registry` 共 2244 passed / 1 skipped；四道门禁与 smoke edge 全 PASS。先红的 `test_voiceprint_not_auth` 是源码锚点随 granted 段搬家失效，红线已跟到 `session_scopes.py` 与 `scope_gate.py` 并补两条断言。
+- 合同冻结见方案 §11（ConfirmPolicy / SlotRequest / Issue / session_info 的字段、权威来源与缺省语义）。**步骤 2–6 未做**：proto 增量与 codegen、生产端、网关与共享逻辑、Android 消费、全量固定口径、构建装机、部署与真栈验收均未执行，AR05 未签收。

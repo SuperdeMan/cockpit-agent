@@ -29,28 +29,16 @@ from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
 from runtime.session_constraints import constraints_in, merge_constraints
 from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
+from security.session_scopes import (
+    POC_DEFAULT_SCOPES, SOURCE_POC_DEFAULT, SOURCE_TOKEN, resolve_granted_scopes,
+)
 
 logger = logging.getLogger("planner.context")
 _audit = AuditLogger()
 
-# PoC 默认权限：未注入 granted_scopes 时使用（fail-open for PoC）。
-# 量产必须从会话 token/设备身份解析 scope，不得使用此默认值。
-_POC_DEFAULT_SCOPES = [
-    "vehicle.control", "media.control", "navigation",
-    "food.ordering",
-    "location.read", "navigation.control",
-    "network.external", "payment.invoke",
-    "profile.read", "profile.write",
-    # 真实商户 MCP（麦当劳/瑞幸，§9.9/§9.17）：桥对 workflow 与查单工具校验这两个
-    # scope。PoC 里没有任何"商户授权"发放入口，漏在这里 = 能力永远不可达——
-    # 2026-08-12 实测每一句真实下单都回「当前账号缺少商户授权」，而 e2e 自己往 meta
-    # 塞 granted_scopes 所以一直是绿的。写操作的安全边界不在这里：require_confirm
-    # 中央闸 + 只创建未支付订单 + 支付独立走 payment-gateway，三道都不受本行影响。
-    "merchant.read", "merchant.write",
-    # M4 P4 视觉：**单帧**（用户显式问「那是什么」时抓一张），不是 camera.read 连续流——
-    # 后者在 conventions §3 维持 ❌ 禁。采集门控在端侧（默认不采），这里只是让能力可路由。
-    "camera.frame",
-]
+# PoC 默认权限与 granted_scopes 解析已收敛到 `security/session_scopes.py`——端侧 T0
+# 也要按同一份判据决定「这个账号能不能控车」（AR05 F07）。此处保留别名只为兼容既有引用。
+_POC_DEFAULT_SCOPES = POC_DEFAULT_SCOPES
 # 敏感上下文键：默认按值广播，Phase 4 起按 manifest context_scopes 最小化下发。
 _SENSITIVE_CONTEXT_KEYS = (
     "current_lat", "current_lng", "current_accuracy_m",
@@ -1644,26 +1632,23 @@ def build_context(request) -> PlanContext:
     量产换成 token scope。精确位置只在本轮请求携带，需同时满足浏览器已授权 + location.read。
     无状态纯函数（不依赖 ContextManager 实例），故同时供 engine staticmethod 委托。"""
     meta = dict(getattr(request, "meta", {}) or {})
-    raw_scopes = meta.get("granted_scopes", "")
-    granted = [s.strip() for s in raw_scopes.split(",") if s.strip()] if raw_scopes else []
 
     # ws8 P0: 有 granted_scopes 用真实权限；无时按 PERMISSIONS_FAIL_OPEN 决定——
     # 默认 true = PoC 全开 fallback（保持现状）；量产翻 false = fail-closed（granted 留空，
     # 仅无权限 Agent 如 chitchat 可达，与 planning._filter_by_permission 语义一致）。
-    if not granted:
-        vehicle_id = (getattr(request.context, "vehicle_id", "")
-                      if hasattr(request, "context") and request.context else "")
-        if os.getenv("PERMISSIONS_FAIL_OPEN", "true").lower() != "false":
-            granted = list(_POC_DEFAULT_SCOPES)
-            _audit.fail_open_scopes(vehicle_id=vehicle_id,
-                                    trace_id=meta.get("trace_id", ""), scopes=granted)
-            logger.warning(
-                "No granted_scopes in request; PERMISSIONS_FAIL_OPEN=on → using PoC defaults. "
-                "Production MUST inject from session token/device identity.")
-        else:
-            logger.warning(
-                "No granted_scopes in request; PERMISSIONS_FAIL_OPEN=off → fail-closed "
-                "(only no-permission agents reachable).")
+    # 判据本体在 security.session_scopes：端侧 T0 同源消费（AR05 F07）。
+    vehicle_id = (getattr(request.context, "vehicle_id", "")
+                  if hasattr(request, "context") and request.context else "")
+    granted, scope_source = resolve_granted_scopes(
+        meta, vehicle_id=vehicle_id, trace_id=meta.get("trace_id", ""), audit=_audit)
+    if scope_source == SOURCE_POC_DEFAULT:
+        logger.warning(
+            "No granted_scopes in request; PERMISSIONS_FAIL_OPEN=on → using PoC defaults. "
+            "Production MUST inject from session token/device identity.")
+    elif scope_source != SOURCE_TOKEN:
+        logger.warning(
+            "No granted_scopes in request; PERMISSIONS_FAIL_OPEN=off → fail-closed "
+            "(only no-permission agents reachable).")
 
     # HMI 会话级偏好（透传给 Agent，见 hmi/src/settings.tsx buildMeta）
     # M4 P4：本轮说话人（声纹识别结果，HMI 在唤醒窗内锁定后随每轮 meta 上来）。

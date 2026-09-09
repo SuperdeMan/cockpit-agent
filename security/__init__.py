@@ -2,3 +2,7 @@
 from .scopes import ALL_SCOPES, TRUST_LEVEL_CAPS, is_scope_covered
 from .permission import PermissionEngine, AuthContext, Decision, check_permission
 from .audit import AuditLogger, AuditEvent
+from .session_scopes import (
+    POC_DEFAULT_SCOPES, SOURCE_FAIL_CLOSED, SOURCE_POC_DEFAULT, SOURCE_TOKEN,
+    fail_open_enabled, parse_granted_scopes, resolve_granted_scopes,
+)

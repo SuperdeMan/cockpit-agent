@@ -118,7 +118,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 当前入口：[AR04 第十五节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。**生产仍为 `573ad46`（发布、status/verify、真实 Keyguard 提醒 ACK 与标题修复证据见第十四节，不变）。Android 代码 `1c67807`：2026-09-09 用户判定支持页底部常驻两栏破坏页面设计，已改为浮动在场（闲置只剩右下角光球、有事才长出胶囊 / 停播·打断键 / 采集点；光球闲置静帧、滚动内容留余量）。OPPO 首轮包 `de2a556` 已取到闲置 / 思考 / 播报 / 一步停播证据，临时设置均恢复、App 已退出；`1c67807` 复验读数在第十五节。** 服务端多 operationId 实机组合仍缺，Planner 非法/空计划降级策略未修，AR04 未整批签收；AR02/AR03/AR10 与 Xiaomi 对照范围独立。 |
+| Android App | 进行中：[AR05 实施方案](docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md)（步骤 0–1 已实施：T0 授权闸 + Registry 声明往返 + §11 合同冻结；步骤 2–6 未做，未签收）。实现与设备基线：[AR04 第十五节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。生产记录仍为 `573ad46`，Android 代码 `1c67807`：支持页浮动在场、闲置光球静帧、滚动内容留余量；OPPO 两轮证据与资源恢复见 AR04。AR04 服务端多 operationId 实机组合仍未签收，Planner 技术失败降级纳入 AR05 方案但尚未修复；AR02/AR03/AR10 与 Xiaomi 对照范围独立。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

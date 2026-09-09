@@ -24,6 +24,9 @@ from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
 from edge_call import EdgeCallExecutor, action_to_structured, action_type_for
+import scope_gate                  # AR05 F07：本地执行出口的授权闸（复用云侧同一判据）
+from security.audit import AuditLogger
+from security.session_scopes import resolve_granted_scopes
 from observability.events import EventEmitter, change_source
 from observability.tracing import (get_trace_id, new_trace_id, set_session_id,
                                    set_trace_id)
@@ -187,6 +190,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 pass
 
         self.val = VAL(on_change=_on_change)
+        self._audit = AuditLogger()     # 权限拒绝/fail-open 兜底留痕（与云侧同一事件族）
         self.cloud = CloudClient(edge_call_executor=EdgeCallExecutor(self.val))
         self.cloud_connected = False  # 连接状态追踪
         self.memory = _MemoryClient()
@@ -371,13 +375,35 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         intent: str = "",
         multi: bool = False,
         confirmed: bool = False,
+        granted=None,
     ):
         """本地经 VAL 执行并出 span。
 
         confirmed 默认 False：本函数的全部调用点（快路径 A/A2/B、云端降级兜底）都是
         **没走过确认闭环**的本地路径，本就不该执行危险动作——VAL 侧 fail-closed 之后
         它们即使被绕进来也执行不了（B1）。真正带凭据的路径是 `edge_call.py`。
+
+        `granted` 是本轮会话授权（`security.session_scopes.resolve_granted_scopes` 的产物）。
+        本函数是全部本地执行出口的**唯一收口**（B1/B2 同一形态），授权闸放在这里：
+        缺 scope 时零 VAL 调用、零状态变化，只回 `(False, 原因话术)`——四个调用点早就
+        按「ok=False 只播报、不下发 action」处理（`test_only_actually_executed_actions_are_reported`）。
+        `granted=None` 表示调用方没有请求上下文（非请求路径/直接单测），不加闸；
+        真实请求链上 `_handle_impl` 恒传一个列表（fail-closed 时是空列表）。
         """
+        if granted is not None:
+            decision = scope_gate.check_local_execution(
+                granted=granted, intent_name=intent, structured=command)
+            if not decision.allowed:
+                self._audit.permission_denied(
+                    agent_id="edge-fast", missing=decision.missing, trace_id=trace_id)
+                await self._emit_span(
+                    trace_id, "val.execute", status="err", duration_ms=0.0,
+                    attrs={**({"intent": intent} if intent else {}),
+                           "denied": "scope", "missing": list(decision.missing)},
+                )
+                logger.warning("T0 SCOPE-DENIED %s missing=%s", intent or command,
+                               decision.missing)
+                return False, scope_gate.denial_speech(list(decision.missing))
         started = time.perf_counter()
         before = dict(self.val.state)
         ok, speech = self.val.execute(
@@ -605,6 +631,12 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # 从 request.meta 读取 HMI 设置
         meta = dict(request.meta) if request.meta else {}
         answer_length = meta.get("answer_length", "short")
+        # 本轮会话授权。解析与 fail-open 兜底跟云侧 `context.build_context` 同一份
+        # （`security.session_scopes`）——端云两侧对「这个账号能不能控车」必须同答（AR05 F07）。
+        granted, _scope_source = resolve_granted_scopes(
+            meta,
+            vehicle_id=getattr(getattr(request, "context", None), "vehicle_id", "") or "",
+            trace_id=trace_id, audit=self._audit)
 
         # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
         if request.is_confirmation:
@@ -647,6 +679,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         answer_length=answer_length,
                         intent=legacy["name"],
                         multi=len(multi) > 1,
+                        granted=granted,
                     )
                     if not ok:
                         speech = speech or "操作失败"
@@ -721,6 +754,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                             answer_length=answer_length,
                             intent=legacy["name"],
                             multi=len(mixed_intents) > 1,
+                            granted=granted,
                         )
                         if not ok:
                             speech = speech or "操作失败"
@@ -807,7 +841,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     async for event in self.cloud.handle(cloud_req):
                         got = True
                         self.cloud_connected = True
-                        event = self._dispatch_cloud_actions(event, answer_length)
+                        event = self._dispatch_cloud_actions(
+                            event, answer_length, granted=granted)
                         yield event
                     if not got:
                         yield orchestrator_pb2.HandleEvent(
@@ -864,6 +899,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         structured,
                         answer_length=answer_length,
                         intent=intent["name"],
+                        granted=granted,
                     )
                     action_type = action_type_for(structured.get("data", {}).get("object", ""))
                     action = {
@@ -872,20 +908,37 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         "require_confirm": False,
                     } if ok else None
                 else:
-                    # 回退旧路径
-                    started = time.perf_counter()
-                    before = dict(self.val.state)
-                    speech, action = edge_execute(intent, self.val)
-                    await self._emit_span(
-                        trace_id,
-                        "val.execute",
-                        status="ok" if action else "err",
-                        duration_ms=(time.perf_counter() - started) * 1000,
-                        attrs={
-                            "intent": intent["name"],
-                            "changes": _state_changes(before, self.val.state),
-                        },
-                    )
+                    # 回退旧路径。它不经 `_execute_val_observed`，授权闸要在这里单独盖一次
+                    # ——**四个出口里唯一一个不共用收口的**，漏掉这条就等于没有闸（AR05 F07）。
+                    decision = scope_gate.check_local_execution(
+                        granted=granted, intent_name=intent["name"])
+                    if not decision.allowed:
+                        self._audit.permission_denied(
+                            agent_id="edge-fast", missing=list(decision.missing),
+                            trace_id=trace_id)
+                        await self._emit_span(
+                            trace_id, "val.execute", status="err", duration_ms=0.0,
+                            attrs={"intent": intent["name"], "denied": "scope",
+                                   "missing": list(decision.missing)},
+                        )
+                        logger.warning("T0 SCOPE-DENIED %s missing=%s",
+                                       intent["name"], decision.missing)
+                        speech, action = scope_gate.denial_speech(
+                            list(decision.missing)), None
+                    else:
+                        started = time.perf_counter()
+                        before = dict(self.val.state)
+                        speech, action = edge_execute(intent, self.val)
+                        await self._emit_span(
+                            trace_id,
+                            "val.execute",
+                            status="ok" if action else "err",
+                            duration_ms=(time.perf_counter() - started) * 1000,
+                            attrs={
+                                "intent": intent["name"],
+                                "changes": _state_changes(before, self.val.state),
+                            },
+                        )
                 final = orchestrator_pb2.FinalResult(speech=speech)
                 if action:
                     final.actions.append(common_pb2.AgentAction(
@@ -943,7 +996,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 got = True
                 self.cloud_connected = True
                 # 云端回流 action 分发：车控类走 VAL
-                event = self._dispatch_cloud_actions(event, answer_length)
+                event = self._dispatch_cloud_actions(
+                    event, answer_length, granted=granted)
                 which = event.WhichOneof("event")
                 if which == "final":
                     if event.final.speech or len(event.final.actions) > 0:
@@ -992,6 +1046,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     local_structured,
                     answer_length=answer_length,
                     intent=local_structured.get("intent", ""),
+                    granted=granted,
                 )
                 if ok and speech:
                     obj = local_structured.get("data", {}).get("object", "")
@@ -1031,13 +1086,19 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             event.final.driving = self._is_driving()
         return event
 
-    def _dispatch_cloud_actions(self, event, answer_length="short"):
+    def _dispatch_cloud_actions(self, event, answer_length="short", granted=None):
         """云端回流 action 分发：车控类交 VAL 执行，落实规划/执行分离。
 
         LLM/Planner 只产出 vehicle.control 意图，真正下发由端侧 VAL 做：
         1. 权限校验
         2. 安全态门控（行驶中禁某些操作）
         3. 状态变更
+
+        `granted` 非 None 时按会话 scope 再判一次（AR05 F07 的纵深）：云侧 dispatch 判的是
+        **该 Agent 声明的** requires_permissions，而这里判的是**这条动作真正要动的东西**——
+        某个没声明 vehicle.control 的 Agent 吐出一条车控动作时，只有这一层拦得住。
+        缺 scope 的动作按 VAL 拒绝同款处理：不执行、话术如实说明。
+        `granted=None`（直接单测/非请求路径）不加这层，权威回到云侧 dispatch。
         """
         which = event.WhichOneof("event")
         if which != "final":
@@ -1073,6 +1134,19 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             # 场景编排的危险动作在编译/激活层就按 require_confirm 处理过
             # （scene_orchestrator `catalog._DANGER_OBJECTS`）。于是这里的危险 action
             # 只可能来自异常路径，VAL fail-closed 会把它从「静默执行」变成「拒绝并播报」。
+            if granted is not None:
+                decision = scope_gate.check_local_execution(
+                    granted=granted, intent_name=cmd, structured=structured)
+                if not decision.allowed:
+                    self._audit.permission_denied(
+                        agent_id="edge-fast", missing=list(decision.missing),
+                        trace_id=self._get_trace_id())
+                    logger.warning("T0 SCOPE-DENIED cloud action %s missing=%s",
+                                   cmd, decision.missing)
+                    dispatched += 1
+                    last_msg = scope_gate.denial_speech(list(decision.missing))
+                    rejected.append(last_msg)
+                    continue
             if structured is not None:
                 ok, msg = self.val.execute(structured, answer_length=answer_length)
             else:

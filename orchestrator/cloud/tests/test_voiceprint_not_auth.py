@@ -65,15 +65,19 @@ def test_payment_gateway_never_mentions_occupant():
 def test_build_context_keeps_occupant_out_of_permission_branch():
     """`build_context` 里 occupant 的赋值必须与 granted 的计算完全无关。
 
-    做法：取出 granted 计算段（从 raw_scopes 到 fail-open 分支结束）的源码切片，
-    断言其中不含 occupant。
+    做法：取出 granted 计算段（从 resolve_granted_scopes 调用到 occupant 赋值之前）
+    的源码切片，断言其中不含 occupant。
+
+    AR05 起解析与 fail-open 兜底本体搬到 `security/session_scopes.py`（端侧 T0 同源
+    消费），红线随之跟到那份唯一判据上——只盯 context.py 会漏掉搬走的那一半。
     """
     src = _src("orchestrator", "cloud", "context.py")
     # 验收修正：裸切片在锚点顺序被改后会得到空串 → 断言恒真且静默空转（守红线的
     # 测试自己被一次无害重排改废）。先钉两锚点存在与顺序，再断内容非空。
-    assert "raw_scopes = meta.get" in src, "granted 计算锚点丢失——重构后请更新本测试"
+    assert "granted, scope_source = resolve_granted_scopes" in src, (
+        "granted 计算锚点丢失——重构后请更新本测试")
     assert "# M4 P4：本轮说话人" in src, "occupant 赋值锚点丢失——重构后请更新本测试"
-    start = src.index("raw_scopes = meta.get")
+    start = src.index("granted, scope_source = resolve_granted_scopes")
     end = src.index("# M4 P4：本轮说话人")
     assert start < end, ("occupant 赋值被移到 granted 计算之前——顺序是本红线测试的"
                          "前提，移动后请人工确认 granted 段不读 occupant 再更新锚点")
@@ -81,6 +85,17 @@ def test_build_context_keeps_occupant_out_of_permission_branch():
     assert granted_block.strip(), "切片为空——锚点漂移，测试已不覆盖任何代码"
     assert "occupant" not in granted_block, (
         "granted_scopes 计算段出现 occupant——权限不得随说话人变化")
+
+
+def test_shared_scope_resolution_never_mentions_occupant():
+    """granted_scopes 的唯一解析（端云共用）整份不得出现 occupant。"""
+    assert "occupant" not in _src("security", "session_scopes.py"), (
+        "session_scopes 出现 occupant——权限不得随说话人变化")
+
+
+def test_edge_scope_gate_never_mentions_occupant():
+    """端侧 T0 授权闸同理：声纹只做个性化，不参与权限（CLAUDE.md 安全红线 9）。"""
+    assert "occupant" not in _src("orchestrator", "edge", "scope_gate.py")
 
 
 def test_planning_permission_filter_never_mentions_occupant():

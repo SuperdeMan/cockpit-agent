@@ -594,9 +594,13 @@ def _manifest_to_dict(manifest) -> dict:
     for c in getattr(manifest, "capabilities", []):
         cap = {}
         for ck in ("intent", "description", "examples", "require_confirm", "heavy",
-                   "response_only"):
+                   "response_only", "whole_utterance"):
             cap[ck] = getattr(c, ck, None if ck != "examples" else [])
         cap["slots"] = list(getattr(c, "slots", []))
+        # C3 槽位形状：与 verification/route_hints 同族——丢了它 registry 重启后
+        # wait_slot 的「这句话像不像这个槽的值」判据静默消失（AR05 F08）。
+        cap["slot_shapes"] = {str(k): str(v)
+                              for k, v in (getattr(c, "slot_shapes", None) or {}).items()}
         # M2 Verifier：非 proto manifest（测试/内存 Store 的 dataclass 形态）也要带上声明，
         # 否则 round-trip 后对账静默失效（R2.1 route_hints 丢字段的同一类坑）
         ver = getattr(c, "verification", None)
@@ -608,6 +612,25 @@ def _manifest_to_dict(manifest) -> dict:
         caps.append(cap)
     d["capabilities"] = caps
     d["requires_permissions"] = list(getattr(manifest, "requires_permissions", []))
+    # manifest 级声明：proto 形态走 MessageToDict 自然带上，dataclass/SimpleNamespace
+    # 形态此前**整段漏掉**——内存 Store 的 round-trip 于是证明不了 proto 那条路的保真。
+    for mk in ("kind", "edge_intents", "context_scopes"):
+        value = getattr(manifest, mk, None)
+        if value:
+            d[mk] = value if isinstance(value, str) else list(value)
+    hints = []
+    for h in getattr(manifest, "route_hints", []) or []:
+        hints.append({
+            "pattern": getattr(h, "pattern", ""),
+            "intent": getattr(h, "intent", ""),
+            "policy": getattr(h, "policy", ""),
+            "priority": int(getattr(h, "priority", 0) or 0),
+            "guard": getattr(h, "guard", ""),
+            "slots": {str(k): str(v) for k, v in (getattr(h, "slots", None) or {}).items()},
+            "scope": getattr(h, "scope", ""),
+        })
+    if hints:
+        d["route_hints"] = hints
     return d
 
 
@@ -654,6 +677,12 @@ def _dict_to_manifest(d: dict):
             require_confirm=bool(c.get("require_confirm", False)),
             heavy=bool(c.get("heavy", False)),
             response_only=bool(c.get("response_only", False)),
+            # C3 槽位形状 + 整句型声明（AR05 F08，2026-09-09 离线复现）：JSON 里明明存着
+            # `slot_shapes` / `whole_utterance`，还原时这两个键**根本没被读**——registry
+            # 重启后 wait_slot 的槽值形状判据和「同一份计划最多一步」的约束一起静默失效。
+            slot_shapes={str(k): str(v)
+                         for k, v in (c.get("slot_shapes") or {}).items()},
+            whole_utterance=bool(c.get("whole_utterance", False)),
             # M2 Verifier：**必须随 round-trip 还原**——R2.1 当年 route_hints 正是在这里丢过，
             # registry 重启恢复后声明静默失效、执行后对账形同虚设（契约测试 test_store_roundtrip）。
             verification=_dict_to_verification(c.get("verification")),
@@ -671,6 +700,9 @@ def _dict_to_manifest(d: dict):
             priority=int(h.get("priority") or 0),
             guard=h.get("guard", ""),
             slots={k: str(v) for k, v in (h.get("slots") or {}).items()},
+            # C6-A 匹配范围：丢了它 `clause` 档退回整句匹配——接送类 hint 的分句锚定
+            # 在 registry 重启后静默消失（AR05 F08 同批）。
+            scope=str(h.get("scope", "") or ""),
         )
         for h in d.get("route_hints", [])
     ]

@@ -7,6 +7,9 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked pip install -r req
 
 COPY gen/python /app/gen/python
 COPY orchestrator/edge /app/orchestrator/edge
+# AR05 F07：端侧 T0 的授权闸复用 security.permission / security.session_scopes
+# （与云侧同一份判据；纯标准库，无额外依赖）。缺这一行端侧启动即 ImportError。
+COPY security /app/security
 COPY observability /app/observability
 COPY runtime /app/runtime
 
