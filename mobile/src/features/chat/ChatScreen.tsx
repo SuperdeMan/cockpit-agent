@@ -29,6 +29,8 @@ import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
 import { StagePane } from '../stage/StagePane'
 import { Composer } from './Composer'
+import { visibleQuickCommands } from '@/core/session/quickCommands'
+
 import { FocusDock } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
 import { PresenceCapsule } from './PresenceCapsule'
@@ -160,11 +162,19 @@ function Welcome({
 
 function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   const { p, cfg, core, state, settings, ptt, hf, snapshot, layout, motionEnv, reduceMotion,
-    notice, turn, latestTurnId, busy, stoppable, onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap,
+    notice, turn, latestTurnId, busy, stoppable, sessionSummary,
+    onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap,
     onStopPlayback, setSheetOverride, privacyOpen, setPrivacyOpen, draft, setDraft,
     dockExpanded, setDockExpanded } = runtime
   const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId,
     interruptedIds, s2sIds, visionIds, turnMeta, confirmLog } = state
+  // 首页推荐按**服务端能力摘要 + 用户开关**筛（AR05 §6.2）：没授权/没在线/用户关掉的
+  // 能力不再摆推荐——点了必然被婉拒而用户不知道为什么。摘要不完整或还没查到时不筛，
+  // 「此刻查不到」不许显示成「你没有这个功能」。判据在共享 quickCommands.mjs。
+  const visibleCommands = useMemo(
+    () => visibleQuickCommands(settings.quickCommands, sessionSummary, settings.agents),
+    [settings.quickCommands, sessionSummary, settings.agents],
+  )
   const [listHeight, setListHeight] = useState(0)
   const [columnHeight, setColumnHeight] = useState(0)
 
@@ -329,7 +339,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           p={p}
           name={settings.assistantName}
           hasVoice={!!cfg.audioUrl}
-          quickCommands={settings.quickCommands}
+          quickCommands={visibleCommands}
           animated={loopsAnimated(motionEnv)}
           onSend={onSend}
         />
@@ -445,7 +455,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       ) : null}
       <Composer
         p={p}
-        quickCommands={settings.quickCommands}
+        quickCommands={visibleCommands}
         draft={draft}
         onDraftChange={setDraft}
         busy={busy}

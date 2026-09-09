@@ -824,11 +824,14 @@ export type Settings = {
 }
 
 // 用户可见的能力开关（对应 agents/ 与端侧快/慢系统）
-export type AgentMeta = { id: string; label: string; desc: string; icon: string; core?: boolean }
+export type AgentMeta = { id: string; serverId?: string; label: string; desc: string; icon: string; core?: boolean }
 
 export const AGENT_CATALOG: AgentMeta[] = [
-  { id: 'vehicle', label: '车辆控制', desc: '空调、车窗、座椅、灯光等车身控制（端侧秒回）', icon: '🚘', core: true },
-  { id: 'media', label: '媒体音乐', desc: '播放、暂停、切歌（端侧秒回）', icon: '🎵', core: true },
+  // `serverId`：这一项对应服务端 Registry 里的哪个 agent_id（AR05 能力摘要按它对账）。
+  // 只有端侧两项名字不同（UI 叫 vehicle / media，注册名是 edge-vehicle / edge-media）——
+  // **写出来而不是让消费方猜**：猜错的症状是「摘要说不可用」被安在了另一个能力头上。
+  { id: 'vehicle', serverId: 'edge-vehicle', label: '车辆控制', desc: '空调、车窗、座椅、灯光等车身控制（端侧秒回）', icon: '🚘', core: true },
+  { id: 'media', serverId: 'edge-media', label: '媒体音乐', desc: '播放、暂停、切歌（端侧秒回）', icon: '🎵', core: true },
   { id: 'navigation', label: '导航出行', desc: '搜索 POI、导航、充电站、逆地理编码', icon: '🧭' },
   { id: 'info', label: '信息助手', desc: '天气、预报、预警、空气质量、联网搜索、新闻、股票', icon: 'ℹ️' },
   { id: 'trip-planner', label: '行程规划', desc: '多日自驾行程编排', icon: '🗺️' },
@@ -942,6 +945,23 @@ export const LLM_PROVIDER_FALLBACK: LlmProviderInfo[] = [
   { id: 'qwen', label: '阿里百炼·通义千问', available: false, primary: 'qwen3.7-max',
     models: [{ id: 'qwen3.7-max', label: '通义千问 3.7 Max' }, { id: 'qwen3.7-plus', label: '通义千问 3.7 Plus' }] },
 ]
+
+/** 系统默认示例各自需要哪个能力（AGENT_CATALOG 的 id）。
+ *
+ *  用来回答「这条推荐现在还成立吗」：能力没授权 / 服务不在线 / 用户自己关了，就不该
+ *  继续摆在首页当推荐——点了必然被婉拒，而用户不知道为什么（AR05 §6.2）。
+ *  **只标系统这几条**；用户自定义短语不在表里，一律原样保留（那是用户的输入，
+ *  系统无权替他判定「你这句现在用不了」）。 */
+export const SYSTEM_QUICK_COMMAND_AGENTS: Record<string, string> = {
+  '打开空调26度': 'vehicle',
+  '打开主驾座椅加热': 'vehicle',
+  '播放音乐': 'media',
+  '附近的充电站': 'navigation',
+  '导航去首都机场': 'navigation',
+  '今天天气怎么样': 'info',
+  '讲个笑话': 'chitchat',
+  '我今天有点不开心': 'chitchat',
+}
 
 export const DEFAULT_QUICK_COMMANDS = [
   '打开空调26度',

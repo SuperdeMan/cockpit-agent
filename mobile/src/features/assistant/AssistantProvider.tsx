@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { AppState, BackHandler, Keyboard, View, useWindowDimensions } from 'react-native'
 import { useStore } from 'zustand'
 
-import { fetchSessionInfo } from '@/core/api/sessionInfo'
+import { fetchSessionInfo, type SessionSummary } from '@/core/api/sessionInfo'
 import { loadServerConfig, subscribeServerConfig } from '@/core/config/storage'
 import type { ServerConfig } from '@/core/config/types'
 import { InteractionScope } from '@/core/session/interactionScope'
@@ -150,16 +150,17 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   // 隐私栏的「当前：xx」取**服务端身份**（AR05 R14）。取不到才回落 token 尾 4 位——
   // 那从来不是用户是谁，只是一段凭证的尾巴。配置一变先清空：旧账号的摘要绝不能
   // 留在新会话上（同 ensureWired/disposeWired 的销毁边界）。
-  const [serverUserId, setServerUserId] = useState('')
+  const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
   useEffect(() => {
-    setServerUserId('')
+    setSessionSummary(null)
     if (!cfg.edgeUrl || !cfg.token) return
     let alive = true
     void fetchSessionInfo(cfg.edgeUrl, cfg.token).then((r) => {
-      if (alive && r.kind === 'ok' && r.summary.userId) setServerUserId(r.summary.userId)
+      if (alive && r.kind === 'ok') setSessionSummary(r.summary)
     })
     return () => { alive = false }
   }, [cfg.edgeUrl, cfg.token])
+  const serverUserId = sessionSummary?.userId ?? ''
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: serverUserId || cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent() })
   const layout = useLayout(snapshot.driving)
   const reduceMotion = useReduceMotion()
@@ -229,6 +230,7 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     wired, cfg, core, state, settings, p, scope, facts, snapshot, layout, motionEnv, reduceMotion,
     ptt, hf, notice, turn, latestTurnId, busy, stoppable,
     sheetOverride, setSheetOverride, privacyOpen, setPrivacyOpen, dockExpanded, setDockExpanded, draft, setDraft,
+    sessionSummary,
     onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap, onStopPlayback, stopMic,
   }
 }

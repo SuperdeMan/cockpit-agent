@@ -10,6 +10,9 @@ import { pinCommitment, sortCommitments, type DockItem } from '@/core/presence/c
 import { dismissIssue, mergeIssues, readFinalContracts, type IssueView } from '@/core/session/contracts'
 import { commitmentTitle } from '@/core/session/actionSummary'
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
+import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS, SYSTEM_QUICK_COMMAND_AGENTS } from '@shared/types.ts'
+import { serverAgentId, visibleQuickCommands } from '@/core/session/quickCommands'
+import { parseSessionSummary } from '@/core/api/sessionInfo'
 
 class FakeTransport {
   sent: any[] = []
@@ -348,5 +351,46 @@ describe('显式补槽回复', () => {
     // 位置征询原样还在，没被这一下吃掉
     expect(core.store.getState().pendingLocationText).not.toBeNull()
     core.dispose()
+  })
+})
+
+// ── 首页推荐的能力绑定（方案 §6.2）─────────────────────────────────────
+
+describe('系统推荐与能力摘要对账', () => {
+  test('每条系统默认示例都要有能力绑定——漏一条就会永远绕过筛选', () => {
+    const missing = DEFAULT_QUICK_COMMANDS.filter((c) => !SYSTEM_QUICK_COMMAND_AGENTS[c])
+    expect(missing).toEqual([])
+  })
+
+  test('绑定指向的能力必须真的在能力目录里', () => {
+    const ids = new Set(AGENT_CATALOG.map((a) => a.id))
+    const bad = Object.entries(SYSTEM_QUICK_COMMAND_AGENTS).filter(([, id]) => !ids.has(id))
+    expect(bad).toEqual([])
+  })
+
+  test('端侧两项的服务端 agent_id 与 Registry 注册名一致', () => {
+    expect(serverAgentId('vehicle')).toBe('edge-vehicle')
+    expect(serverAgentId('media')).toBe('edge-media')
+    // 其余项 UI id 与注册名同名，不需要额外映射
+    expect(serverAgentId('reminder')).toBe('reminder')
+  })
+
+  test('没有车控授权时车控推荐不再出现，用户自定义短语原样保留', () => {
+    const summary = parseSessionSummary({
+      summary_status: 'complete',
+      capabilities: [{ id: 'chitchat', status: 'available' }],
+    })
+    const out = visibleQuickCommands(
+      [...DEFAULT_QUICK_COMMANDS, '帮我把车开到月球'], summary, {})
+
+    expect(out).not.toContain('打开空调26度')
+    expect(out).toContain('讲个笑话')
+    expect(out).toContain('帮我把车开到月球')
+  })
+
+  test('摘要只取到一半时不筛（此刻查不到 ≠ 你没有这个功能）', () => {
+    const partial = parseSessionSummary({ summary_status: 'partial', capabilities: [] })
+    expect(visibleQuickCommands(DEFAULT_QUICK_COMMANDS, partial, {}))
+      .toEqual([...DEFAULT_QUICK_COMMANDS])
   })
 })
