@@ -13,11 +13,14 @@ export function PresenceCapsule({
   fontScale,
   snapshot,
   onPress,
+  solid = false,
 }: {
   p: Palette
   fontScale: FontScalePref
   snapshot: PresenceSnapshot
   onPress?(): void
+  /** 支持页浮动在场（AR04 第十五节）：压在地图瓦片 / 设置文字上 ⇒ 实色底（map.tsx「压在不可控内容上的浮层一律不透明」） */
+  solid?: boolean
 }) {
   const c = snapshot.capsule
   if (!c) return null
@@ -48,7 +51,7 @@ export function PresenceCapsule({
           paddingHorizontal: 12,
           borderRadius: RADIUS.full,
           // §8「浅色主题下胶囊 / Dock 用不透明底」——Dock 已 G0，胶囊补上（B4-8）；深色仍 G1-tint
-          backgroundColor: p.dark ? p.glassBg : '#FFFFFF',
+          backgroundColor: solid ? p.panel : p.dark ? p.glassBg : '#FFFFFF',
           borderWidth: 1,
           borderColor: p.glassBdRight,
           borderTopColor: p.glassBdTop,

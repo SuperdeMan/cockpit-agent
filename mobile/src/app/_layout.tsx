@@ -7,7 +7,6 @@ import { useStore } from 'zustand'
 import { hydrateSettings, settingsStore } from '@/core/settings/store'
 import { AssistantProvider } from '@/features/assistant/AssistantProvider'
 import { AssistantFrame, AssistantSurface, CrossPageVoiceLayer } from '@/features/assistant/AssistantSurface'
-import { ProactivePresenter } from '@/features/assistant/ProactivePresenter'
 import { installAudioFocusHandlers } from '@/core/voice/audioFocus'
 import { usePalette } from '@/ui/theme'
 
@@ -61,7 +60,7 @@ export default function RootLayout() {
       <Stack.Screen name="map" options={{ title: '地图' }} />
       </Stack>
       </CrossPageVoiceLayer>
-      <ProactivePresenter />
+      {/* AR04 第十五节：提醒出口与支持页承诺面同住这一个占布局空间的宿主；浮动在场住在上面的覆盖域里 */}
       <AssistantSurface />
       </AssistantFrame>
       </AssistantProvider>

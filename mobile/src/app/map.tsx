@@ -6,7 +6,7 @@
 // 参数经路由传 JSON（`points` = MapPoint[]，`title` 可选）。刻意不从会话 store 取：
 // 地图页是「把这张卡上的点画出来」，不是「显示当前会话状态」——从 store 取会让同一个
 // 页面在会话推进后显示另一批点。
-import { useLocalSearchParams } from 'expo-router'
+import { useLocalSearchParams, usePathname } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Dimensions, Pressable, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -15,6 +15,7 @@ import { useStore } from 'zustand'
 import { AMAP_KEY, MAP_AVAILABLE, MAP_DIAG, type MapPoint } from '@/core/map/available'
 import { fitCamera, type Camera, type Viewport } from '@/core/map/fit'
 import { settingsStore } from '@/core/settings/store'
+import { reportBottomChrome } from '@/ui/layout/bottomChrome'
 import { usePalette } from '@/ui/theme'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -49,6 +50,10 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets()
   const pts = useMemo(() => parsePoints(points), [points])
   const mapRef = useRef<MapViewHandle | null>(null)
+  // AR04 第十五节：把底部信息条的占位上报给浮动助手（按本路由），它浮在信息条上方而不压「全览 / 收起详情」。
+  // 离开本页即清零，设置页不该被地图的信息条顶高。
+  const pathname = usePathname()
+  useEffect(() => () => reportBottomChrome(pathname, 0), [pathname])
 
   // 隐私合规：高德 9.x 不调 updatePrivacyAgree/Show 就白屏（**且不报任何错**）。
   // 库把这四个调用包在 initSDK 里，但外面套着 `apiKey?.let`——**必须把 key 传进去**，
@@ -183,6 +188,7 @@ export default function MapScreen() {
           「白字压在浅色路网上」。2026-08-27 真机实证：换 Glass 后这条信息条几乎读不出来。
           ⇒ 压在不可控内容上的浮层一律用不透明底，玻璃质感只保留边框与投影。 */}
       <View
+        onLayout={(e) => reportBottomChrome(pathname, e.nativeEvent.layout.height + 12)}
         style={{
           position: 'absolute',
           left: 12,

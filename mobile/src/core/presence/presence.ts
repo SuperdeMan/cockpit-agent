@@ -78,6 +78,25 @@ export const MIC_LABEL: Record<MicState, { short: string; long: string; tone: 'p
   cloudAudio: { short: '正在上传原始音频', long: '原始音频上传中（端到端对话）', tone: 'amber' },
 }
 
+/** 采集事实的一行文案与色调——**唯一的一份**：对话页顶栏采集点与支持页浮动采集点共用
+ *  （AR04 形态修正前支持页另抄过一份，分隔符与摄像头文案都不同）。null = 此刻什么都没在采，
+ *  出口不渲染（方案 §5.10「没在采集就不渲染」）。并发采集逐项告知；视觉不覆盖麦克风事实，
+ *  上传与设备开启分开。 */
+export function captureSummary(
+  privacy: PresenceSnapshot['privacy'],
+): { text: string; tone: 'amber' | 'camera' | 'mic' } | null {
+  const parts = [
+    privacy.micActive ? '麦克风开启' : '',
+    privacy.mic !== 'off' ? MIC_LABEL[privacy.mic].short : '',
+    privacy.camera === 'singleFrame' ? '摄像头开启 · 单帧采集' : '',
+    privacy.visionUploading ? '单帧画面上传中' : '',
+  ].filter(Boolean)
+  if (!parts.length) return null
+  const tone =
+    MIC_LABEL[privacy.mic].tone === 'amber' || privacy.visionUploading ? 'amber' : privacy.camera === 'singleFrame' ? 'camera' : 'mic'
+  return { text: parts.join('；'), tone }
+}
+
 export interface PresenceInput {
   now: number
   connStatus: 'connecting' | 'open' | 'closed'

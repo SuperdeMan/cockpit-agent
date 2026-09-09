@@ -4,7 +4,8 @@ import type { Msg } from '@shared/types.ts'
 import type { SessionCore } from '@/core/session/store'
 import type { InteractionScope } from '@/core/session/interactionScope'
 import { CardRenderer } from '@/features/cards/CardRenderer'
-import { useAssistant } from './AssistantProvider'
+import { RADIUS } from '@/ui/tokens'
+import { useAssistant, type AssistantRuntime } from './AssistantProvider'
 
 /** 不把 FlashList 的 render/测量当呈现；只消费当前活跃记录区的 viewability 事件。 */
 export function useProactiveViewability(core: SessionCore, scope: InteractionScope, exposed: boolean) {
@@ -16,15 +17,21 @@ export function useProactiveViewability(core: SessionCore, scope: InteractionSco
   }, [core, scope])
 }
 
-/** 一条真实提醒的前台出口。待办 Modal/隐私栏/窗口失焦时不渲染，也不提前回执。 */
-export function ProactivePresenter() {
-  const runtime = useAssistant()
+/** 此刻该走前台出口的那条提醒——**唯一的一份**：出口组件与根宿主（决定要不要留布局空间）都读它。
+ *  待办 Modal / 隐私栏 / 窗口失焦时为 null，不渲染也不提前回执。 */
+export function pickProactiveMessage(runtime: AssistantRuntime | null): Msg | null {
   if (!runtime || !runtime.scope.canPresent() || runtime.privacyOpen || runtime.dockExpanded) return null
-  const message = runtime.state.messages.find((m) => {
+  return runtime.state.messages.find((m) => {
     const delivery = runtime.state.proactiveDeliveries[m.id]
     return delivery && delivery.handledAt === undefined
-  })
-  if (!message) return null
+  }) ?? null
+}
+
+/** 一条真实提醒的前台出口。 */
+export function ProactivePresenter() {
+  const runtime = useAssistant()
+  const message = pickProactiveMessage(runtime)
+  if (!runtime || !message) return null
   return <PresentedMessage key={`${message.id}:${runtime.facts.route}`} message={message} />
 }
 
@@ -53,11 +60,17 @@ function PresentedMessage({ message }: { message: Msg }) {
     })
     return () => { live = false; cancelAnimationFrame(frame) }
   }, [core, message.id, layout, available, runtime.layout.width, runtime.layout.height])
-  return <View testID="proactive-presenter" style={{ maxHeight: 190, backgroundColor: p.bg, borderTopWidth: 1, borderColor: p.line, padding: 10 }}>
+  // G0 实色卡（§5.11：压在任何内容上的提示不许半透明），与承诺面同一材质；不再是通栏。
+  const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
+  return <View testID="proactive-presenter" style={{
+    maxHeight: 190, marginHorizontal: 12, marginVertical: 6, padding: 10, gap: 4,
+    backgroundColor: solid, borderRadius: RADIUS.lg, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)',
+    boxShadow: '0 0 16px rgba(245,158,11,0.12), 0 8px 24px rgba(0,0,0,0.3)',
+  }}>
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
       <Text accessibilityRole="header" style={{ color: p.amber, fontSize: p.font(13), flex: 1 }}>提醒</Text>
       <Pressable testID="proactive-dismiss" accessibilityRole="button" accessibilityLabel="收起这条提醒"
-        style={{ minHeight: 48, minWidth: 48, justifyContent: 'center' }} onPress={() => {
+        style={{ minHeight: 48, minWidth: 48, justifyContent: 'center', alignItems: 'flex-end' }} onPress={() => {
           if (!available()) return
           core.presentProactive(message.id)
           core.handleProactive(message.id)

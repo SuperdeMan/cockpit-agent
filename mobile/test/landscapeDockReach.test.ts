@@ -12,6 +12,8 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { AppState, View } from 'react-native'
 
 jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
+// 支持页的浮动在场读安全区（AR04 第十五节）；测试渲染器没有 SafeAreaProvider，接库自带的 jest mock（inset 全 0）
+jest.mock('react-native-safe-area-context', () => require('react-native-safe-area-context/jest/mock').default)
 
 // 布局模式本身由 sizeClass.layoutMode() 决定，已有 sizeClass.test.ts 锁；这里只要「处在这个模式下」。
 let mockLayoutMode = 'driving-landscape'
@@ -75,15 +77,15 @@ import { SessionCore } from '@/core/session/store'
 import { settingsStore } from '@/core/settings/store'
 import { AssistantProvider, useAssistant, type AssistantRuntime } from '@/features/assistant/AssistantProvider'
 import { AssistantSurface, CrossPageVoiceLayer } from '@/features/assistant/AssistantSurface'
-import { ProactivePresenter } from '@/features/assistant/ProactivePresenter'
 
 let runtime: AssistantRuntime | null
 function Observe() { runtime = useAssistant(); return null }
+/** 与 app/_layout.tsx 同一棵树：提醒出口住在 AssistantSurface 里（AR04 第十五节），不再单独挂 */
 function tree() {
   return createElement(AssistantProvider, null,
     createElement(Observe),
     createElement(CrossPageVoiceLayer, null, mockRoute === '/' ? createElement(ChatScreen) : createElement(View, { testID: 'other-page' })),
-    createElement(ProactivePresenter), createElement(AssistantSurface))
+    createElement(AssistantSurface))
 }
 
 /** 一个真实产出的待确认台账项：走 SessionCore 的 final 分支，不手摆快照 */

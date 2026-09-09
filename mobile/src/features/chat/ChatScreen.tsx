@@ -18,7 +18,7 @@ import { buildReceipt } from '../../core/session/receipt'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
 import { composerInputMode } from '../../core/presence/drivingMode'
-import { MIC_LABEL } from '../../core/presence/presence'
+import { captureSummary } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
 import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
@@ -237,18 +237,11 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // v2 采集点（隐私栏入口旁的第二颗点）：**没在采集就不渲染**——一个常驻的灰点会让
   // 「现在到底在不在采」这件事看不出来，而这正是常开麦最该让用户一眼看见的事（方案 §5.10）。
   // 文案与颜色只取 MIC_LABEL（评审 D4：读屏 label 里那句「本机处理」在 PTT 那一刻是假话）。
-  // 并发采集逐项告知；视觉不覆盖麦克风事实，上传与设备开启分开。
-  const mic = snapshot.privacy.mic
-  const cameraActive = snapshot.privacy.camera === 'singleFrame'
-  const captureLabel = [
-    snapshot.privacy.micActive ? '麦克风开启' : '',
-    mic !== 'off' ? MIC_LABEL[mic].short : '',
-    cameraActive ? '摄像头开启 · 单帧采集' : '',
-    snapshot.privacy.visionUploading ? '单帧画面上传中' : '',
-  ].filter(Boolean).join('；')
-  const captureDot = captureLabel ? {
-    color: MIC_LABEL[mic].tone === 'amber' || snapshot.privacy.visionUploading ? p.amber : cameraActive ? p.fg1 : p.teal,
-    label: captureLabel,
+  // 文案、色调与支持页浮动采集点同出一份判据（presence.ts::captureSummary，AR04 第十五节）。
+  const capture = captureSummary(snapshot.privacy)
+  const captureDot = capture ? {
+    color: capture.tone === 'amber' ? p.amber : capture.tone === 'camera' ? p.fg1 : p.teal,
+    label: capture.text,
   } : null
 
   // §5.11 真模糊（B3 T9 裁决过）：被糊的背景 = 对话列表，BlurTargetView 包住它；ref 要先挂上再给 VoiceSheet

@@ -32,10 +32,21 @@ function fmt(ms: number): string {
   return s >= 60 ? `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}` : `${s}s`
 }
 
+/** 有出口的降级才进 Dock；transport_unknown / recoverable_error 由气泡与胶囊表达 */
+function dockDegradations(snapshot: PresenceSnapshot): Degradation[] {
+  return snapshot.degradation.filter((d) => d.kind !== 'transport_unknown' && d.kind !== 'recoverable_error')
+}
+
+/** 承诺面此刻有没有东西可画——**唯一的一份**：组件自己与根宿主（AR04 第十五节，支持页占布局空间的
+ *  容器）都读它；宿主没有内容时连底部安全区都不留，不然又是一条常驻空条。 */
+export function focusDockVisible(snapshot: PresenceSnapshot): boolean {
+  return !!pinCommitment(snapshot.commitment) || dockDegradations(snapshot).length > 0
+}
+
 export function FocusDock(props: FocusDockProps) {
   const { p, fontScale, snapshot } = props
   const pinned = pinCommitment(snapshot.commitment)
-  const degradations = snapshot.degradation.filter((d) => d.kind !== 'transport_unknown' && d.kind !== 'recoverable_error')
+  const degradations = dockDegradations(snapshot)
   if (!pinned && !degradations.length) return null
   const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
   return (
