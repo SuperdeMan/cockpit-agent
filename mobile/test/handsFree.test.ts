@@ -11,7 +11,7 @@
 //     （这就是 PushRecorder 存在的全部理由）
 //  ④ 定稿 → 走的是调用方的 onSend：绕过它就等于绕过前置路由/位置闸/候选拦截
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -393,7 +393,7 @@ test('AR02 VAD 初始化期间关闭：迟到 start 不开麦；随后三轮开�
   expect(vad.running).toBe(false)
   expect(ctl.state).toBe('IDLE')
   vad.start = originalStart
-  const oldEvents: Array<() => void> = []
+  const oldEvents: (() => void)[] = []
   for (let round = 0; round < 3; round++) {
     await ctl.enable()
     const oldKws = kws.cb.onKeyword
@@ -440,7 +440,7 @@ test('AR02 S2S 事实来自真实发送：常驻连接不算上行；结束后�
     onS2sUserUtterance: utterances,
     onS2sEscalated: escalated,
   })
-  const stale: Array<() => void> = []
+  const stale: (() => void)[] = []
   for (let round = 0; round < 3; round++) {
     await ctl.enable()
     const ws = CaptureWs.all.at(-1)!

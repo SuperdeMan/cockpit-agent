@@ -121,7 +121,7 @@ export interface PresenceInput {
   speaking: boolean
   /** 承诺台账的投影。`risk`/`expiresAt`/`slot` 来自服务端 AR05 契约；
    *  缺省 = 旧服务端，逐字回落「一律 high + 本地 TTL」的既有行为 */
-  pendingOps: Array<{
+  pendingOps: {
     id: string
     ts: number
     summary: string
@@ -130,7 +130,7 @@ export interface PresenceInput {
     windowMs?: number
     policyBroken?: boolean
     slot?: { missing: string; state: 'active' | 'held'; expiresAt: number; suggestions: string[] }
-  }>
+  }[]
   pendingLocation: boolean
   voicePipeline: 'classic' | 's2s'
   visionCapturing: boolean

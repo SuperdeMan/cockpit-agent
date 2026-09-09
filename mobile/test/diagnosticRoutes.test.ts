@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { Pressable, TextInput } from 'react-native'
+import { Pressable, Switch, TextInput } from 'react-native'
 
 let mockVariant: unknown = 'prod'
 let mockParams: Record<string, string> = {}
@@ -23,9 +23,14 @@ jest.mock('@/core/api/gateway', () => ({
   })),
 }))
 jest.mock('@/core/session/wiring', () => {
+  // ⚠ `getState()` 必须返回**引用稳定**的同一个对象（zustand 就是这个语义）。
+  // 每次返回新对象会让 useSyncExternalStore 判定「快照每次都变」而无限重渲：
+  // React 报 "The result of getSnapshot should be cached to avoid an infinite loop"。
+  // 那是 mock 在替被测系统注入一个真实 store 不存在的前提，不是实现的毛病。
+  const state = { drivingEdge: { trueAt: 0, falseAt: 0 }, drivingDismissedAt: 0 }
   const wired = { core: {
     handleFrame: (...args: unknown[]) => mockHandleFrame(...args),
-    store: { getState: () => ({ drivingEdge: { trueAt: 0, falseAt: 0 }, drivingDismissedAt: 0 }), subscribe: () => () => {} },
+    store: { getState: () => state, subscribe: () => () => {} },
   } }
   return { getWired: () => wired }
 })
@@ -196,6 +201,26 @@ test.each(['prod', 'staging', 'dev'])('R01: settings separate development operat
     expect(hrefs.includes('/voice-spike')).toBe(variant === 'dev')
     expect(hrefs).toEqual(expect.arrayContaining(['/presence-trail', '/native-spike', '/card-gallery', '/state-gallery', '/blur-spike']))
     expectNoAudioWork()
+  } finally { await unmount(view) }
+})
+
+test('A06-2: 每个设置开关都有与它所改的键绑定的、唯一的 testID', async () => {
+  mockVariant = 'prod'
+  const view = await mount(SettingsScreen)
+  try {
+    // 按组件类型取，不按 testID 取：RN 的 Switch 会把 testID 传给内部若干宿主节点，
+    // 用 testID 过滤会把同一枚开关数成三份（本轮先写错过一次：69 个节点 / 23 个 id）
+    const switches = view.root.findAllByType(Switch)
+    // 屏上真的有一批开关（这条先立住，否则下面两条在空集合上都成立）
+    expect(switches.length).toBeGreaterThanOrEqual(10)
+    const ids = switches.map((n) => n.props.testID as string)
+    for (const id of ids) expect(id).toMatch(/^settings-switch-.+/)
+    // 唯一：自动化「建立前提 → 回读」必须落在同一个对象上；两枚同 id 时回读的是哪一枚不确定
+    expect(new Set(ids).size).toBe(ids.length)
+    // 每枚都拿得到当前值 —— 回读判据就是它
+    for (const n of switches) expect(typeof n.props.value).toBe('boolean')
+    // 承诺面 Focus Dock：02 / 06 两条 flow 的前提就靠这一枚（两条流的前提互斥）
+    expect(ids).toContain('settings-switch-uxV2Dock')
   } finally { await unmount(view) }
 })
 

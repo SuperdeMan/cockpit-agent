@@ -7,7 +7,7 @@ import { startLiveness, type LivenessTimers } from '@/core/api/liveness'
 
 /** 手动驱动的定时器（不碰真实时钟） */
 function fakeTimers() {
-  const q: Array<(() => void) | null> = []
+  const q: ((() => void) | null)[] = []
   const timers: LivenessTimers = {
     set: (fn) => {
       q.push(fn)
@@ -38,7 +38,7 @@ function fakeTimers() {
 }
 
 function fakeAppState(initial: 'active' | 'background' = 'active') {
-  const handlers: Array<(s: string) => void> = []
+  const handlers: ((s: string) => void)[] = []
   return {
     currentState: initial as never,
     addEventListener(_t: 'change', h: (s: never) => void) {

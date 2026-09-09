@@ -63,7 +63,7 @@ class FakeWs {
     this.onmessage?.({ data: JSON.stringify(obj) })
   }
 
-  get jsonSent(): Array<Record<string, unknown>> {
+  get jsonSent(): Record<string, unknown>[] {
     return this.sent
       .filter((s): s is string => typeof s === 'string')
       .map((s) => JSON.parse(s) as Record<string, unknown>)
@@ -456,7 +456,7 @@ describe('AR02 撤回与音频事实', () => {
   })
 
   test('已排队的旧 WS open/message 在取消后无效，连续三轮只收到各自定稿', async () => {
-    const previous: Array<() => void> = []
+    const previous: (() => void)[] = []
     for (let round = 0; round < 3; round++) {
       const { session, rec, calls } = newSession()
       await session.start()

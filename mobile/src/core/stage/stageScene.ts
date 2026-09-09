@@ -14,7 +14,7 @@ export const STAGE_AGENDA_TYPES = ['reminder_list', 'reminder_card'] as const
 
 export type StageScene = { kind: 'idle' } | { kind: 'weather' | 'map' | 'agenda' | 'focus'; card: UiCard }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 function mainCard(card: any): UiCard | null {
   if (!card || typeof card !== 'object') return null
   if (card.type === 'card_group') return (splitCardGroup(card.items || []).main as UiCard | null) ?? null

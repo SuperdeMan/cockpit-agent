@@ -12,7 +12,7 @@ import type { Msg, ReminderItem, ReminderListCard, UiCard } from '@shared/types.
 
 import type { Palette } from '../../ui/theme'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /** 消息流里最近一张 reminder_list 卡（含 card_group 内嵌的那张） */
 export function latestReminderCard(messages: Msg[]): ReminderListCard | null {
@@ -66,6 +66,9 @@ export function ReminderSection({ p, messages }: { p: Palette; messages: Msg[] }
   const items: ReminderItem[] = [...(card?.items || []), ...(card?.todos || [])]
   // 只算未完成的：右面板是「还要做什么」，不是历史台账
   const live = items.filter((it) => !STATUS_DIM.has(it.status))
+  // 「今天/明天」的分组要按**这一帧**的墙钟算：跨过午夜后下一次重渲就该换组。
+  // 存进 state 或 useMemo 都会把日界冻在挂载那一刻。
+  // eslint-disable-next-line react-hooks/purity -- 见上
   const { groups, more } = groupByDay(live, Date.now(), 6)
 
   return (

@@ -99,10 +99,16 @@ export function VoiceSheet(props: VoiceSheetProps) {
   })
   // 挂载态比 open 晚 COLLAPSE_MS 关掉：让收起动画播完再卸载
   const [mounted, setMounted] = useState(open)
+  // 「要展开了」在渲染期就挂上（React 官方 adjusting state）：effect 要等 commit 完才跑，
+  // 层会晚一帧才进树，展开动画的第一帧因此丢掉。收起仍走 effect 里的定时器（真要等动画播完）。
+  const [openSeen, setOpenSeen] = useState(open)
+  if (openSeen !== open) {
+    setOpenSeen(open)
+    if (open) setMounted(true)
+  }
   const h = useSharedValue(0)
   useEffect(() => {
     if (open) {
-      setMounted(true)
       h.value = withSpring(target, { damping: 18, stiffness: 160 })
       return
     }

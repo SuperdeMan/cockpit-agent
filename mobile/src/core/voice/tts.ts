@@ -91,7 +91,7 @@ export async function synthesizeBatch(
   return { pcm: toMono(wav), sampleRate: wav.sampleRate }
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 export class TtsSession {
   /** 整段收尾（播完/回退完/被停）后 resolve；调用方用它串下一段 */

@@ -48,7 +48,7 @@ jest.mock('@/core/config/storage', () => ({
 jest.mock('@/features/vision/VisionCapture', () => ({ VisionCapture: () => null }))
 
 class FakeTransport {
-  sent: Array<Record<string, unknown>> = []
+  sent: Record<string, unknown>[] = []
   send(frame: object): boolean { this.sent.push(frame as Record<string, unknown>); return true }
   sendIfOpen(frame: object): boolean { return this.send(frame) }
 }

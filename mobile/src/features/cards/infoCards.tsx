@@ -21,7 +21,7 @@ import type {
 } from '@shared/types.ts'
 
 import type { Palette } from '../../ui/theme'
-import { CardShell, Chip, FreshChip, KV, ProvBadge, relativeTime, type SendFn } from './parts'
+import { CardShell, Chip, FreshChip, ProvBadge, relativeTime, type SendFn } from './parts'
 
 export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: SendFn }) {
   const focus = card.focus
@@ -109,7 +109,7 @@ export function StockQuote({ p, card }: { p: Palette; card: StockCard; onSend: S
   )
 }
 
-function NewsRows({ p, items }: { p: Palette; items: Array<{ title: string; source: string; publish_time?: string; summary?: string }> }) {
+function NewsRows({ p, items }: { p: Palette; items: { title: string; source: string; publish_time?: string; summary?: string }[] }) {
   return (
     <View style={{ gap: 8 }}>
       {items.slice(0, 5).map((it, i) => (

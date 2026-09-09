@@ -13,7 +13,7 @@
 // 原生模块在 jest 里是 null，所以这里 mock 掉 `modules/kws`——**验的是所有权账，
 // 不是原生行为**（那只有真机能验，是 spike 屏的事）。
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 const nativeCalls: string[] = []
 

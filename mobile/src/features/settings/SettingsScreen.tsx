@@ -3,7 +3,7 @@
 // disabled_agents 生效）/ 记忆 / 定位 / 调试入口。
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
 import { useStore } from 'zustand'
 
@@ -19,6 +19,7 @@ import {
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { drivingActive, NO_EDGE_DRIVING } from '../../core/presence/drivingMode'
+import { subscribeWiredSession, wiredSessionSnapshot } from '../../core/session/wiredStore'
 import { getWired } from '../../core/session/wiring'
 import { needsS2sConsent, settingsStore, type AppSettings } from '../../core/settings/store'
 import {
@@ -156,7 +157,7 @@ function ChoiceRow<T extends string>({
   p: Palette
   label: string
   value: T
-  options: Array<{ v: T; label: string }>
+  options: { v: T; label: string }[]
   onPick(v: T): void
 }) {
   return (
@@ -188,12 +189,15 @@ function ChoiceRow<T extends string>({
 
 function SwitchRow({
   p,
+  settingKey,
   label,
   desc,
   value,
   onChange,
 }: {
   p: Palette
+  /** 开关自己的稳定句柄：`settings-switch-<settingKey>`。**必填**——见下方注释 */
+  settingKey: string
   label: string
   desc?: string
   value: boolean
@@ -205,7 +209,16 @@ function SwitchRow({
         <Text style={{ color: p.fg1, fontSize: p.font(14) }}>{label}</Text>
         {desc ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>{desc}</Text> : null}
       </View>
-      <Switch value={value} onValueChange={onChange} />
+      {/* testID 必填的理由（AR06 / A06-2，坑账 AR03 那条）：自动化此前按「标签之后第一枚开关」
+          配对，而多行 desc 会把开关挤出文字带 ⇒ 点中的是**下一行**那枚；更糟的是回读时读到的
+          也是那枚错开关的新值，看起来完全像「设置生效了」。把开关和它改的那个键绑死，
+          「建立前提 → 回读」才是同一个对象。accessibilityLabel 让 TalkBack 与截图取证也认得出它。 */}
+      <Switch
+        testID={'settings-switch-' + settingKey}
+        accessibilityLabel={label}
+        value={value}
+        onValueChange={onChange}
+      />
     </View>
   )
 }
@@ -217,19 +230,18 @@ export function SettingsScreen() {
   // 只搬事实不复制判据（drivingActive 是唯一一份）；订阅法照 native-spike。无 ticker：30s 宽限到点
   // 这一行不会自己消失，下一次 store 变化才重渲（与取证屏同一取舍）。
   const core = getWired()?.core ?? null
-  const readDriving = () => {
-    const st = core?.store.getState()
-    return { edge: st?.drivingEdge ?? NO_EDGE_DRIVING, dismissedAt: st?.drivingDismissedAt ?? 0 }
+  // 会话事实经 useSyncExternalStore 读（wiredStore.ts）：订阅与快照同一份，没有「挂载与订阅
+  // 之间的缝」，也不用在 effect 里同步 setState。
+  const wiredSession = useSyncExternalStore(subscribeWiredSession, wiredSessionSnapshot)
+  const drivingFact = {
+    edge: wiredSession?.drivingEdge ?? NO_EDGE_DRIVING,
+    dismissedAt: wiredSession?.drivingDismissedAt ?? 0,
   }
-  const [drivingFact, setDrivingFact] = useState(readDriving)
-  useEffect(() => {
-    if (!core) return
-    setDrivingFact(readDriving()) // 挂载与订阅之间的缝
-    return core.store.subscribe(() => setDrivingFact(readDriving()))
-  }, [core])
-  const autoDriving =
-    !settings.drivingManual &&
-    drivingActive({ manual: false, edge: drivingFact.edge, now: Date.now(), dismissedAt: drivingFact.dismissedAt })
+  // `Date.now()` 留在渲染期：这里显示的是「此刻自动行车档成不成立」，30s 退出宽限本来就要用
+  // 本帧墙钟判；存进 state 会在停表期间留下陈旧读数。设置页没有 ticker，事实随 store 事件重算。
+  // eslint-disable-next-line react-hooks/purity -- 见上
+  const autoDrivingNow = drivingActive({ manual: false, edge: drivingFact.edge, now: Date.now(), dismissedAt: drivingFact.dismissedAt })
+  const autoDriving = !settings.drivingManual && autoDrivingNow
   const [server, setServer] = useState<ServerConfig | null>(null)
   const [nameDraft, setNameDraft] = useState(settings.assistantName)
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
@@ -254,7 +266,13 @@ export function SettingsScreen() {
   useEffect(() => {
     void loadServerConfig().then(setServer)
   }, [])
-  useEffect(() => setNameDraft(settings.assistantName), [settings.assistantName])
+  // 渲染期调整派生状态而不是 effect：设置在别处被改时，草稿要在**同一帧**跟上，
+  // 否则会闪一帧旧名字（React 官方 "adjusting state when a prop changes"）。
+  const [nameSeen, setNameSeen] = useState(settings.assistantName)
+  if (nameSeen !== settings.assistantName) {
+    setNameSeen(settings.assistantName)
+    setNameDraft(settings.assistantName)
+  }
   // 目录探测：两个端点都可能失败，catalog.ts 里各自回落静态表（不留空白设置页）
   useEffect(() => {
     if (!server?.audioUrl) return
@@ -274,9 +292,27 @@ export function SettingsScreen() {
     },
     [],
   )
+  // 换服务器时「正在查」要在**同一帧**亮起来（渲染期调整派生状态），否则会闪一帧
+  // 「已经换了服务器、却还显示上一个账号的能力摘要」——AR05 明写旧身份不得留在新会话上。
+  const [serverSeen, setServerSeen] = useState(server)
+  if (serverSeen !== server) {
+    setServerSeen(server)
+    setSession(null)
+    setSessionLoading(!!server)
+  }
   useEffect(() => {
-    void refreshSession(server)
-  }, [server, refreshSession])
+    if (!server) return
+    let alive = true
+    void (async () => {
+      const r = await fetchSessionInfo(server.edgeUrl, server.token)
+      if (!alive) return
+      setSession(r)
+      setSessionLoading(false)
+    })()
+    return () => {
+      alive = false
+    }
+  }, [server])
 
   const ttsEngine = ttsCatalog.find((e) => e.id === settings.ttsProvider) ?? ttsCatalog[0]
   const asrEngine = asrCatalog.find((e) => e.id === settings.asrProvider)
@@ -334,6 +370,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="drivingManual"
           label="行车档"
           desc="目标放大、过程区单行、文本输入按角色收起。座舱判定行车时自动进入（每轮回答后判定），停车 30 秒后自动退出"
           value={settings.drivingManual}
@@ -385,6 +422,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="keepAwake"
           label="保持屏幕常亮"
           desc="车载支架上看行程/路线卡时不熄屏（耗电，默认关）"
           value={settings.keepAwake}
@@ -497,6 +535,7 @@ export function SettingsScreen() {
         </Text>
         <SwitchRow
           p={p}
+          settingKey="hapticsEnabled"
           label="触感"
           desc="唤醒、需要确认、出错、拍一张时轻微振动。默认开"
           value={settings.hapticsEnabled}
@@ -504,6 +543,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="cueToneEnabled"
           label="提示音"
           desc="唤醒命中、需要你确认时的两音提示（合成，不用音频文件）。默认开；行车档强制开"
           value={settings.cueToneEnabled}
@@ -583,6 +623,7 @@ export function SettingsScreen() {
           <>
             <SwitchRow
               p={p}
+              settingKey="handsFree"
               label="免唤醒对话"
               desc="开启后麦克风常开：说唤醒词即可开始，答完 8 秒内可直接接着说。耗电，默认关"
               value={settings.handsFree}
@@ -591,6 +632,7 @@ export function SettingsScreen() {
             {settings.handsFree ? (
               <SwitchRow
                 p={p}
+                settingKey="wakeWordEnabled"
                 label="唤醒词「小舟小舟」"
                 desc={
                   hfAvail.kws
@@ -634,6 +676,7 @@ export function SettingsScreen() {
         )}
         <SwitchRow
           p={p}
+          settingKey="visionEnabled"
           label="看图问答"
           desc="只有当你说「这是什么」这类看图的话时才拍一张，其余时候一帧都不拍。默认关"
           value={settings.visionEnabled}
@@ -663,6 +706,7 @@ export function SettingsScreen() {
           <SwitchRow
             key={a.id}
             p={p}
+            settingKey={'agent-' + a.id}
             label={`${a.icon} ${a.label}`}
             desc={a.desc}
             value={settings.agents[a.id] !== false}
@@ -674,6 +718,7 @@ export function SettingsScreen() {
       <Section p={p} title="记忆与隐私">
         <SwitchRow
           p={p}
+          settingKey="memoryEnabled"
           label="记忆"
           desc="关闭后本会话不再抽取/使用长期记忆"
           value={settings.memoryEnabled}
@@ -681,6 +726,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="locationEnabled"
           label="使用定位"
           desc="仅在位置相关请求时取当前坐标，坐标不持久化"
           value={settings.locationEnabled}
@@ -693,6 +739,7 @@ export function SettingsScreen() {
       <Section p={p} title="实验室（UX v2.1）">
         <SwitchRow
           p={p}
+          settingKey="uxV2Presence"
           label="光球状态锚 + 状态胶囊"
           desc="关闭后回到 v1：免唤醒状态条、弱网横幅、通知条分开显示"
           value={settings.uxV2Presence}
@@ -700,6 +747,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="uxV2Dock"
           label="承诺面 Focus Dock"
           desc="确认 / 长任务 / 离线队列钉在输入区上方；关闭后回到气泡内确认按钮"
           value={settings.uxV2Dock}
@@ -707,6 +755,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="reduceMotionForce"
           label="减少动效（强制）"
           desc="光球、光标、思考点全部静止（系统「移除动画」开着时自动生效，这里是强制开）"
           value={settings.reduceMotionForce}
@@ -714,6 +763,7 @@ export function SettingsScreen() {
         />
         <SwitchRow
           p={p}
+          settingKey="reduceTransparency"
           label="减少透明度"
           desc="语音层不再对背景做模糊，回到染色玻璃"
           value={settings.reduceTransparency}

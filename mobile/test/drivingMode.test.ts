@@ -75,7 +75,7 @@ describe('建议开行车档（§6 触发③）：三条件缺一不出，已在
     active: false,
   }
   test('三条件齐 ⇒ 建议', () => expect(drivingSuggested(ok)).toBe(true))
-  const cases: Array<[string, Partial<typeof ok>]> = [
+  const cases: [string, Partial<typeof ok>][] = [
     ['identity', { identity: 'mount' }],
     ['landscape', { landscape: false }],
     ['keepAwake', { keepAwake: false }],

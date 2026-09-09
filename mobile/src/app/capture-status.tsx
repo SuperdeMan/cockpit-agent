@@ -21,7 +21,16 @@ export default function CaptureStatus() {
   const vision = useSyncExternalStore(subscribeVisionCapture, getVisionCaptureSnapshot)
   const [native, setNative] = useState<Record<string, number | boolean> | null>(null)
   const refresh = async () => { setNative(await memoryCamera()?.getMemoryCaptureStatsAsync().catch(() => null) ?? null) }
-  useEffect(() => { void refresh() }, [])
+  // 首次读取内联展开而不是调 refresh()：规则看不穿 async 函数边界，会把它当成 effect 体里的
+  // 同步 setState。顺带补上 alive 闸——离屏之后的迟到读数不该再往已卸载的组件上写。
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const stats = (await memoryCamera()?.getMemoryCaptureStatsAsync().catch(() => null)) ?? null
+      if (alive) setNative(stats)
+    })()
+    return () => { alive = false }
+  }, [])
   return <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ padding: 20, gap: 16 }}>
     <Text style={textStyle}>采集状态（只读）</Text>
     <Text style={textStyle}>进入诊断页会暂停主会话采集与播报；此页只读取状态与计数。</Text>

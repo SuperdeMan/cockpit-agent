@@ -6,12 +6,12 @@ import { PcmPlayer } from '@shared/pcmPlayer.mjs'
 import { selectPcmPlayer } from '@/core/voice/audioCtx'
 import { QueuePcmPlayer } from '@/core/voice/queuePlayer'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 function fakeQueueCtx(sampleRate: number, opts: { withQueue?: boolean } = {}) {
   const calls: string[] = []
   const nodes: any[] = []
-  const buffers: Array<{ length: number; sampleRate: number }> = []
+  const buffers: { length: number; sampleRate: number }[] = []
   const ctx: any = {
     sampleRate,
     currentTime: 0,
@@ -94,7 +94,7 @@ test('同率：首片建一个节点、连 destination、入队、start(now+jitt
 test('队列被追平：这一片从 now 记账、underruns+1、onUnderrun 在更新 nextStart 之前回调（空白 = now − 旧 nextStart）', () => {
   const { ctx, nodes } = fakeQueueCtx(48000)
   ctx.currentTime = 1
-  const seen: Array<{ nextStart: number; now: number }> = []
+  const seen: { nextStart: number; now: number }[] = []
   const p = new QueuePcmPlayer({
     ctx,
     sampleRate: 48000,

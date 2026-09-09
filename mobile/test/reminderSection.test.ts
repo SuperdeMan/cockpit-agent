@@ -7,7 +7,7 @@
 // ——而**过期的提醒清单看起来和正确的一模一样**，是那种不会有人报障的缺陷。
 import { latestReminderCard } from '@/features/vehicle/ReminderSection'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 const msg = (uiCard: any): any => ({ id: 'm', role: 'assistant', uiCard })
 const list = (tag: string): any => ({ type: 'reminder_list', date_label: tag, items: [] })

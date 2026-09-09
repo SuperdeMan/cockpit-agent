@@ -1,7 +1,7 @@
 // mobile/test/tokens.test.ts
 // token 层（UX v2.1 §5.9）：数值逐值照 Figma A-1 设计系统；`scale()` 是「大字」档同时放大
 // 文字 / 目标 / 行高的唯一入口——此前 Palette.font() 只放大文字，容器与热区不跟着长（P13）。
-import { GLASS, MOTION, RADIUS, SPACE, TARGET, TYPE, scale } from '@/ui/tokens'
+import { GLASS, MOTION, RADIUS, SPACE, TARGET, scale } from '@/ui/tokens'
 
 describe('tokens 数值照 A-1 设计系统', () => {
   test('4px 栅格与圆角阶', () => {

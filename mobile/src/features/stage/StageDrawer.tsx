@@ -32,7 +32,9 @@ export function StageDrawer({
   const toggle = () => {
     const next = !open
     setOpen(next)
-    w.value = withTiming(next ? DRAWER_WIDTH : 0, { duration: MOTION.base })
+    // `.set()` 而不是 `.value =`：赋值在渲染期定义的闭包里会被 react-hooks/immutability 判红
+    // （规则不知道 SharedValue 是可变外部状态）。Reanimated 4.5.1 的 get()/set() 是同一语义的官方入口。
+    w.set(withTiming(next ? DRAWER_WIDTH : 0, { duration: MOTION.base }))
   }
   return (
     <View testID="stage-drawer" style={{ flexDirection: 'row', alignSelf: 'stretch' }}>

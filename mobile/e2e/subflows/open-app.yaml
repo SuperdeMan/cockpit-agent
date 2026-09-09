@@ -1,21 +1,37 @@
-# 把 App 打开到**对话主屏**（所有 flow 的前置）。
+# 把 App 打开到**对话主屏**（所有 flow 的前置）——**分发器**。
 #
-# ⚠ 这一步不是仪式，是判据：当前 APK 是 **dev-client**（含 expo-dev-client），
-# `launchApp` 打开的是 **DevLauncherActivity**（一个「选择开发服务器」的界面），
-# 不是应用本身。此时所有 `tapOn` 都会找不到元素，而失败信息看起来像
-# 「App 里没有这个按钮」——真相是**被测对象根本没在跑**。
-# （同坑账 §9.20 那条「观察对象缺席时零事件=零证据」。）
+# AR06 / A06-2：dev-client 与 prod release 是两条**不同的启动路径**，判据也不同。
+# 以前只有 dev 一条，于是「在常驻包上验过」这句话没有任何东西能证明。
 #
-# ⇒ 必须经 dev-client 深链把 Metro 地址交给它。Metro 要先起：
-#   cd mobile && npx expo start --dev-client
-#   adb reverse tcp:8081 tcp:8081     # 真机走 USB 时必须
+#   maestro test -e APP_LAUNCH_MODE=release  mobile/e2e/xx.yaml   → open-app-release.yaml
+#   maestro test                             mobile/e2e/xx.yaml   → open-app-dev.yaml（默认，兼容既有六条流）
+#
+# ⚠⚠ **不要在本文件里写 `env: APP_LAUNCH_MODE: dev-client`**（第一版就是这么写的，当场被自证推翻）：
+#    Maestro 2.9 实测 —— **flow 自身的 `env:` 默认值会压过 CLI `--env`**，
+#    子流只有在**自己不声明**这个键时才收得到 `-e` 传进来的值。三条对照（2026-09-10，本机 2.9.0）：
+#      · 顶层 flow 声明 env:X=hello，`-e X=override` ⇒ `${X === 'override'}` **假**（rc=1）
+#      · 子流不声明 X，                `-e X=override` ⇒ **真**（rc=0）
+#      · 子流声明 env:X=hello，        `-e X=override` ⇒ **假**（rc=1）
+#    写了默认值的那一版，`-e APP_LAUNCH_MODE=release` 被静默吞掉、照旧走 dev 分支，
+#    而 flow 全绿——「通过」什么也证明不了。默认值改由 evalScript 在**没传**时才补。
+#
+# ⚠ 未知值**当场判前提失败**，不猜、不回落：回落成 dev 的话，在常驻包上跑会稳定红在
+#   「找不到元素」，而真相是它打开的是 DevLauncherActivity（被测对象根本没在跑）。
 appId: com.xiaozhou.companion
 ---
-- stopApp
-- openLink: "xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081"
-# JS bundle 首次加载在真机上 15~25s（dev 模式不压缩、走 Metro 现编）。
-# 判据取「输入框出现」而不是固定 sleep——设备快慢差一倍，写死秒数不是等待是赌博。
-- extendedWaitUntil:
-    visible:
-      id: "composer-input"
-    timeout: 60000
+# ⚠ 必须加双引号：表达式里的 `? :` 三元在 YAML 普通标量里会被当成键值分隔符（Parsing Failed）
+- evalScript: "${output.launch = (typeof APP_LAUNCH_MODE === 'undefined' || APP_LAUNCH_MODE === '') ? 'dev-client' : APP_LAUNCH_MODE}"
+
+- assertTrue:
+    condition: "${output.launch === 'dev-client' || output.launch === 'release'}"
+    label: "前提失败：APP_LAUNCH_MODE 只能是 dev-client 或 release"
+
+- runFlow:
+    when:
+      true: "${output.launch === 'dev-client'}"
+    file: open-app-dev.yaml
+
+- runFlow:
+    when:
+      true: "${output.launch === 'release'}"
+    file: open-app-release.yaml

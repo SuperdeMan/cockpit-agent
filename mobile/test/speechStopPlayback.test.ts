@@ -6,7 +6,7 @@ import { SEGMENT_GRACE_MS, SpeechController } from '@/core/voice/speech'
 import { getAudioPlaybackSnapshot } from '@/core/voice/playbackFacts'
 import { settingsStore } from '@/core/settings/store'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 type Hooks = { onFirstAudio?: () => void; onEnd?: () => void; onSilent?: () => void }
 const mockSessions: any[] = []
@@ -154,7 +154,7 @@ test('AR04 后台所有播报入口都静默，DEFER 不因回前台或 S2S 变�
 
 test('AR04 并发提醒先排队；按停时所有已启动播放器收到 stop，等待项不补播', async () => {
   const sc = new SpeechController(url)
-  const made: Array<{ stop: jest.Mock }> = []
+  const made: { stop: jest.Mock }[] = []
   ;(jest.requireMock('@/core/voice/audioCtx').newPcmPlayer as jest.Mock).mockImplementation(() => {
     const player = { stop: jest.fn(), push() {}, remainingSec: () => 0 }
     made.push(player); return player

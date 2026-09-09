@@ -9,7 +9,7 @@ const pushed: Int16Array[] = []
 const stopped: number[] = []
 /** 每次 newPcmPlayer 造出的假播放器：带 pcmPlayer 真实对象上 TtsSession 会读的两个字段
  *  （`nextStart` / `ctx.currentTime`）与它传进来的构造选项，供 underrun 回调的读数用例驱动 */
-const mockPlayers: Array<{ opts: any; nextStart: number; ctx: { currentTime: number } }> = []
+const mockPlayers: { opts: any; nextStart: number; ctx: { currentTime: number } }[] = []
 /** 假播放器报告的「还剩多少秒没播完」——出错后收尾要等它放完（用例按需改） */
 let mockRemainingSec = 0
 
@@ -65,7 +65,7 @@ class FakeWs {
     this.onmessage?.({ data: pcm.buffer })
   }
 
-  get frames(): Array<Record<string, unknown>> {
+  get frames(): Record<string, unknown>[] {
     return this.sent
       .filter((s): s is string => typeof s === 'string')
       .map((s) => JSON.parse(s) as Record<string, unknown>)
@@ -208,7 +208,7 @@ describe('下行与收尾', () => {
 
 describe('隐形通道读数（语音批 T1：pcmPlayer 起点重排在 HAL/混音器指标上是盲区，只能在这里数）', () => {
   test('二进制片计 chunks/bytes；underrun 回调按「上一片排定结束 → 迟到片到达」算空白并透给 hooks', () => {
-    const seen: Array<[number, number]> = []
+    const seen: [number, number][] = []
     const s = new TtsSession(CFG, { onUnderrun: (gapMs, atSec) => seen.push([gapMs, atSec]) })
     s.start()
     FakeWs.last!.open()

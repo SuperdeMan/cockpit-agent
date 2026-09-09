@@ -1,8 +1,8 @@
 // 单帧仅在内存存活。捕获、上传与请求共用取消边界，不读取任何 file URI。
-export { needsFrame as needsVisionFrame, VISION_GUARD, VISION_TRIGGER } from '@shared/visionFrame.mjs'
-
 import { checkCaptureSignal, withCaptureSignal } from './cancellation'
 import { activityLog } from '../presence/activityLog'
+
+export { needsFrame as needsVisionFrame, VISION_GUARD, VISION_TRIGGER } from '@shared/visionFrame.mjs'
 
 type Capturer = (signal: AbortSignal) => Promise<Uint8Array | null>
 let capturer: Capturer | null = null
@@ -85,7 +85,7 @@ export async function captureVisionFrame(audioUrl: string, requestSignal?: Abort
     checkCaptureSignal(ctl.signal)
     publish({ uploadsCompleted: snapshot.uploadsCompleted + 1 })
     return typeof data.frame_id === 'string' ? data.frame_id : ''
-  } catch (error) {
+  } catch {
     checkCaptureSignal(ctl.signal)
     return ''
   } finally {

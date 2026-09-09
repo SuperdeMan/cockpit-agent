@@ -12,7 +12,7 @@
 // 不证明后端会发这样的数据。哪些卡是真栈验的、哪些是样本验的，实施记录里逐条标注。
 // 字段一律照 `hmi/src/types.ts` 填，不臆造字段名（猜字段名正是 Q2 那个洞的成因）。
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 export interface Fixture {
   label: string

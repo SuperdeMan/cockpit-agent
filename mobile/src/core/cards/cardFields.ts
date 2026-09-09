@@ -1,15 +1,15 @@
 // mobile/src/core/cards/cardFields.ts
 // 兜底卡与行车压缩卡共用的字段探取（B4-5）：从任意卡里拿「人能认出这是什么」的主字段、列表行、主按钮。
 // 纯函数、零 RN import。PRIMARY_KEYS 从 CardRenderer.tsx 的 FALLBACK_PRIMARY_KEYS 搬来（那里只剩渲染）+ soc。
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 export const PRIMARY_KEYS = [
   'title', 'name', 'question', 'query', 'topic', 'destination', 'answer', 'merchant',
   'brand', 'store_name', 'order_id', 'amount', 'status', 'city', 'soc',
 ] as const
 
-export function cardPrimaryFields(card: any, max = 4): Array<[string, string]> {
+export function cardPrimaryFields(card: any, max = 4): [string, string][] {
   if (!card || typeof card !== 'object') return []
-  const out: Array<[string, string]> = []
+  const out: [string, string][] = []
   for (const k of PRIMARY_KEYS) {
     const v = card[k]
     if (typeof v === 'string' || typeof v === 'number') out.push([k, String(v)])

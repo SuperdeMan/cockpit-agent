@@ -104,7 +104,7 @@ export class QueuePcmPlayer implements PcmPlayerLike {
         node.start(when, 0)
       } catch (e) {
         // 不再静默：起播失败 = 这一段整段无声，必须能在日志里看见
-        // eslint-disable-next-line no-console
+         
         console.warn('[queuePlayer] start failed', e)
       }
       this.node = node

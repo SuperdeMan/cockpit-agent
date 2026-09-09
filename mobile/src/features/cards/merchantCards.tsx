@@ -29,7 +29,7 @@ import { base64ToBytes } from '../../core/voice/base64'
 import type { Palette } from '../../ui/theme'
 import { CardButtons, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /**
  * react-native-svg 的**原生**侧是否在场（M3-1，2026-08-27 真机实测逼出来的）。
@@ -85,7 +85,7 @@ function MerchantHead({
 }
 
 /** 行项（名称 · 规格 ×数量），mcp_order 与 merchant_checkout 共用 */
-function LineItems({ p, items }: { p: Palette; items: Array<{ name: string; quantity: number; specs: string }> }) {
+function LineItems({ p, items }: { p: Palette; items: { name: string; quantity: number; specs: string }[] }) {
   return (
     <>
       {items.map((it, i) => (
@@ -482,7 +482,7 @@ export function MerchantCheckout({ p, card, onSend }: { p: Palette; card: any; o
       : isChoices && Array.isArray(card.items)
         ? card.items
         : []
-  const optionButtons: Array<{ label: string; send_text: string }> =
+  const optionButtons: { label: string; send_text: string }[] =
     Array.isArray(card.buttons) && card.buttons.length
       ? merchantActionButtons({ buttons: card.buttons })
       : merchantActionButtons({ options: card.options || [] })

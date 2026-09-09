@@ -174,8 +174,16 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   // 那从来不是用户是谁，只是一段凭证的尾巴。配置一变先清空：旧账号的摘要绝不能
   // 留在新会话上（同 ensureWired/disposeWired 的销毁边界）。
   const [sessionSummary, setSessionSummary] = useState<SessionSummary | null>(null)
-  useEffect(() => {
+  // 清空必须发生在**渲染期**（React 官方 adjusting state），不能等 effect：
+  // 放 effect 里的话，换账号后有整整一帧屏上还挂着上一个账号的身份/能力摘要，
+  // 而这正是 AR05 明写不许发生的事（旧账号的摘要不得留在新会话上）。
+  const cfgKey = cfg.edgeUrl + '|' + cfg.token
+  const [cfgKeySeen, setCfgKeySeen] = useState(cfgKey)
+  if (cfgKeySeen !== cfgKey) {
+    setCfgKeySeen(cfgKey)
     setSessionSummary(null)
+  }
+  useEffect(() => {
     if (!cfg.edgeUrl || !cfg.token) return
     let alive = true
     void fetchSessionInfo(cfg.edgeUrl, cfg.token).then((r) => {

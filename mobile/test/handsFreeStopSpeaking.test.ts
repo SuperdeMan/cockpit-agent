@@ -9,7 +9,7 @@
 // 意味着**下一句不用唤醒词就直接上行 ASR**。用户按「停止播报」时没有「接着说」的意思，
 // 把续问窗当成停播的副产品就是隐式开采集。
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 import { stopPlayback } from '@/core/voice/stopPlayback'
 

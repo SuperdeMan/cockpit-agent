@@ -16,7 +16,7 @@
 // （「声明存在≠能用」，M-B/M-C/M-D 验收那批的老账。）
 import { speechController } from './speech'
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 let installed = false
 

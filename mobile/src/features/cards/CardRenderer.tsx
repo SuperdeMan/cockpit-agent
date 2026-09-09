@@ -50,7 +50,7 @@ import {
 import { CardGroup } from './CardGroup'
 import { CardButtons, CardShell, ProvBadge, type SendFn } from './parts'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 interface CardProps {
   p: Palette

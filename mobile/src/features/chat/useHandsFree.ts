@@ -158,7 +158,6 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     }
     const ctl = new HandsFreeController(deps)
     ctlRef.current = ctl
-    setError('')
     const onEnableError = (e: unknown) => {
       if (!allowed()) return
       const msg = e instanceof Error ? e.message : String(e)
@@ -224,6 +223,9 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setBargeInDisabled('')
       setPipelineDegraded('')
       setEchoAt(0)
+      // 上一条启动失败的话不能留给下一个控制器：清理与其它五个状态同一处（放这里而不是
+      // 新 effect 体里同步 setState —— 那是 react-hooks/set-state-in-effect 的级联渲染）
+      setError('')
     }
   }, [wantOn, opts.audioUrl, opts.sessionId, opts.scope])
 

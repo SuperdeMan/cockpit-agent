@@ -9,7 +9,7 @@
 // 表现是 undefined 立刻炸，不会静默过。
 import { View, Text, ScrollView } from 'react-native'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 const identity = (v: any) => v
 const value = (v: any) => (v && typeof v === 'object' && 'value' in v ? v.value : v)

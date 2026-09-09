@@ -15,7 +15,7 @@
 //     （坑账 §9.27），`available` 返回 false、调用方干净降级成「没有免唤醒」。
 import { SileroEndpoint } from '@shared/sileroEndpoint.mjs'
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 /** silero v4（sherpa 打包的这份）的窗口长度，与 hmi/src/vadEngine.ts 逐字相同 */
 export const VAD_WINDOW = 512
@@ -37,7 +37,7 @@ export interface VadCallbacks {
  *  同坑账 §9.27——原生缺席不许崩到渲染树上。 */
 function ortNativePresent(): boolean {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
+     
     const rn = require('react-native')
     return !!(rn?.NativeModules?.Onnxruntime || rn?.TurboModuleRegistry?.get?.('Onnxruntime'))
   } catch {

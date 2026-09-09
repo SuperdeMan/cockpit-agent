@@ -14,7 +14,7 @@ const EDGE = 'https://vehicle.example.ts.net:8443'
 const TOKEN = 'tok-secret'
 
 function fakeFetch(res: Partial<Response> & { json?: () => Promise<unknown> }) {
-  const calls: Array<{ url: string; init?: RequestInit }> = []
+  const calls: { url: string; init?: RequestInit }[] = []
   const impl = (async (url: string, init?: RequestInit) => {
     calls.push({ url, init })
     return { ok: true, status: 200, json: async () => ({}), ...res } as Response

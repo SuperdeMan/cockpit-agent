@@ -39,7 +39,7 @@ function base(over: Partial<PresenceInput> = {}): PresenceInput {
 }
 
 describe('A. primary 优先级', () => {
-  const cases: Array<[string, Partial<PresenceInput>, string]> = [
+  const cases: [string, Partial<PresenceInput>, string][] = [
     ['idle', {}, 'idle'],
     ['armed', { hfEnabled: true, hfUsable: true, hfFsm: 'ARMED' }, 'armed'],
     ['followup', { hfEnabled: true, hfUsable: true, hfFsm: 'FOLLOWUP' }, 'listening'],

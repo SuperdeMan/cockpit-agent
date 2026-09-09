@@ -54,7 +54,7 @@ class FakeWs {
     this.readyState = 1
     this.onopen?.()
   }
-  get jsonSent(): Array<Record<string, unknown>> {
+  get jsonSent(): Record<string, unknown>[] {
     return this.sent.filter((s): s is string => typeof s === 'string').map((s) => JSON.parse(s) as Record<string, unknown>)
   }
 }

@@ -38,9 +38,9 @@ import { VadEngine, vadNativeAvailable } from '@/core/voice/vad'
 import { SpeechController } from '@/core/voice/speech'
 import { Resampler } from '@/core/voice/resample'
 import { parseWav, toMono } from '@/core/voice/wav'
-import { usePalette } from '@/ui/theme'
+import { usePalette, type Palette } from '@/ui/theme'
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 const RECORD_MS = 5000
 /** 上一次探针播报结束的墙钟（跨次运行留存，量「这次开口前 ctx 空闲了多久」——C1 的自变量） */
@@ -75,6 +75,40 @@ function b64Bytes(s: string): number {
   const pad = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0
   return Math.floor((s.length * 3) / 4) - pad
 }
+
+/**
+ * 探针按钮。**必须定义在组件外**：写在 `VoiceSpikeTools` 体内时它每次渲染都是一个**新的组件类型**，
+ * React 于是把 20 枚 Pressable 全部卸载重挂（按压态、无障碍焦点一起丢），
+ * 而 `busy` 每次探针起停都会变 ⇒ 每跑一次探针整排键重挂一次。
+ * eslint `react-hooks/static-components` 抓的就是这一条。
+ */
+const Btn = ({
+  p,
+  busy,
+  label,
+  onPress,
+  testID,
+}: {
+  p: Palette
+  busy: string
+  label: string
+  onPress: () => void
+  testID?: string
+}) => (
+  <Pressable
+    testID={testID}
+    onPress={onPress}
+    disabled={!!busy}
+    style={{
+      backgroundColor: busy ? p.line : p.accent,
+      borderRadius: 10,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+    }}
+  >
+    <Text style={{ color: '#fff', fontSize: p.font(13) }}>{label}</Text>
+  </Pressable>
+)
 
 export default function VoiceSpikeScreen() {
   if (!developmentDiagnosticsEnabled()) {
@@ -113,7 +147,7 @@ function VoiceSpikeTools() {
   const ctxRef = useRef<any>(null)
 
   const log = useCallback((s: string) => {
-    // eslint-disable-next-line no-console
+     
     console.log('[voice-spike]', s)
     setLines((prev) => [...prev, s])
   }, [])
@@ -355,7 +389,6 @@ function VoiceSpikeTools() {
     try {
       if (!(await ensurePermission())) return
       const { AudioRecorder } = require('react-native-audio-api')
-      const ctx = audioCtx()
       const sr = 22050
       const player = newPcmPlayer({ sampleRate: sr })
       const rec = new AudioRecorder()
@@ -384,7 +417,7 @@ function VoiceSpikeTools() {
     } finally {
       setBusy('')
     }
-  }, [audioCtx, ensurePermission, log])
+  }, [ensurePermission, log])
 
   // ── e2e 声学回环：**系统说给自己听**（M2-2/M2-3 联合验收的自动化版）──
   //  合成一句话 → 扬声器放 → 麦克风收 → 流式 ASR → 比对定稿文本。
@@ -866,7 +899,7 @@ function VoiceSpikeTools() {
     } finally {
       setBusy('')
     }
-  }, [log])
+  }, [diagnosticSpeech, log])
 
   // ── 「嗡嗡」定位对照（2026-09-06；泓舟：WAV 在电脑上干净、手机上有嗡嗡 ⇒ 设备侧引入）──
   //  同一段文本走**批处理**：/api/tts 整段 WAV → 一个 buffer 一次 push ⇒ 没有分片边界、没有流式调度；
@@ -893,7 +926,7 @@ function VoiceSpikeTools() {
     } finally {
       setBusy('')
     }
-  }, [log])
+  }, [diagnosticSpeech, log])
 
   const runLinkPreset = () => {
     if (!developmentDiagnosticsEnabled()) return
@@ -952,7 +985,7 @@ function VoiceSpikeTools() {
     } finally {
       setBusy('')
     }
-  }, [ensurePermission, log])
+  }, [diagnosticSpeech, ensurePermission, log])
 
   /** 让手机自己放一句话当声源（扬声器 → 空气 → 麦克风）。
    *  这不是偷懒：M2 的 barge-in 探针已经实证这条声学回路成立（播报中 mic peak 0.145、
@@ -969,7 +1002,7 @@ function VoiceSpikeTools() {
       void diagnosticSpeech(cfg.audioUrl).preview(text)
       return true
     },
-    [log],
+    [diagnosticSpeech, log],
   )
 
   // ── M4-1 ⛔ VAD spike：ORT 在真机上能不能跑 silero，端点判据能不能出事件 ──
@@ -1185,21 +1218,8 @@ function VoiceSpikeTools() {
     }
   }, [log])
 
-  const Btn = ({ label, onPress, testID }: { label: string; onPress: () => void; testID?: string }) => (
-    <Pressable
-      testID={testID}
-      onPress={onPress}
-      disabled={!!busy}
-      style={{
-        backgroundColor: busy ? p.line : p.accent,
-        borderRadius: 10,
-        paddingHorizontal: 12,
-        paddingVertical: 9,
-      }}
-    >
-      <Text style={{ color: '#fff', fontSize: p.font(13) }}>{label}</Text>
-    </Pressable>
-  )
+  // 上面那枚模块级 Btn 的公共入参（调色板与忙态），一处给全 20 枚
+  const btn = { p, busy }
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: p.bg }} edges={['top', 'bottom']}>
@@ -1207,26 +1227,26 @@ function VoiceSpikeTools() {
         开发诊断：点下方按钮将执行对应的录音、音频上传或播放测试。链接参数只预填，不自动执行。
       </Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, padding: 10 }}>
-        {hasLinkPreset ? <Btn label="执行链接预设（采集/播放/切播放器）" testID="probe-link-preset" onPress={runLinkPreset} /> : null}
-        <Btn label="A rec5s" onPress={() => void probeA()} />
-        <Btn label="B rec5s" onPress={() => void probeB()} />
-        <Btn label="B 3min" onPress={() => void probeB(180_000)} />
-        <Btn label="inject" onPress={() => void probeInject()} />
-        <Btn label="pcmPlayer" onPress={() => void probePlayer()} />
-        <Btn label="coexist" onPress={() => void probeCoexist()} />
-        <Btn label="e2e 回环" onPress={() => void probeLoopback()} />
-        <Btn label="asr 直灌" onPress={() => void probeAsrInject()} />
-        <Btn label="tts 流式" onPress={() => void probeTtsStream()} />
-        <Btn label="卡顿探针" testID="probe-stutter" onPress={() => void probeStutter()} />
-        <Btn label="段间 divergent" testID="probe-divergent" onPress={() => void probeDivergent()} />
-        <Btn label="段间 mixed" testID="probe-mixed" onPress={() => void probeDivergent('mixed')} />
-        <Btn label="barge-in" onPress={() => void probeBargeIn()} />
-        <Btn label="M4 vad" onPress={() => void probeVad()} />
-        <Btn label="M4 kws" onPress={() => void probeKws()} />
-        <Btn label="M4 kws 直灌" onPress={() => void probeKwsInject()} />
-        <Btn label="M4 播唤醒句" onPress={() => void probeSpeakWake()} />
-        <Btn label="M4 状态/焦点" onPress={() => probeStatus()} />
-        <Btn label="clear" onPress={() => setLines([])} />
+        {hasLinkPreset ? <Btn {...btn} label="执行链接预设（采集/播放/切播放器）" testID="probe-link-preset" onPress={runLinkPreset} /> : null}
+        <Btn {...btn} label="A rec5s" onPress={() => void probeA()} />
+        <Btn {...btn} label="B rec5s" onPress={() => void probeB()} />
+        <Btn {...btn} label="B 3min" onPress={() => void probeB(180_000)} />
+        <Btn {...btn} label="inject" onPress={() => void probeInject()} />
+        <Btn {...btn} label="pcmPlayer" onPress={() => void probePlayer()} />
+        <Btn {...btn} label="coexist" onPress={() => void probeCoexist()} />
+        <Btn {...btn} label="e2e 回环" onPress={() => void probeLoopback()} />
+        <Btn {...btn} label="asr 直灌" onPress={() => void probeAsrInject()} />
+        <Btn {...btn} label="tts 流式" onPress={() => void probeTtsStream()} />
+        <Btn {...btn} label="卡顿探针" testID="probe-stutter" onPress={() => void probeStutter()} />
+        <Btn {...btn} label="段间 divergent" testID="probe-divergent" onPress={() => void probeDivergent()} />
+        <Btn {...btn} label="段间 mixed" testID="probe-mixed" onPress={() => void probeDivergent('mixed')} />
+        <Btn {...btn} label="barge-in" onPress={() => void probeBargeIn()} />
+        <Btn {...btn} label="M4 vad" onPress={() => void probeVad()} />
+        <Btn {...btn} label="M4 kws" onPress={() => void probeKws()} />
+        <Btn {...btn} label="M4 kws 直灌" onPress={() => void probeKwsInject()} />
+        <Btn {...btn} label="M4 播唤醒句" onPress={() => void probeSpeakWake()} />
+        <Btn {...btn} label="M4 状态/焦点" onPress={() => probeStatus()} />
+        <Btn {...btn} label="clear" onPress={() => setLines([])} />
       </View>
       <Text style={{ color: p.fg3, fontSize: p.font(12), paddingHorizontal: 12 }}>
         {busy ? 'running: ' + busy : 'idle'}

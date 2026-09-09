@@ -47,7 +47,7 @@ const MAGENTA = '#FF6BD6'
 function AuroraDisk({ reversed = false }: { reversed?: boolean }) {
   const colors = reversed ? [VIOLET, BLUE, CYAN, MAGENTA] : [CYAN, BLUE, VIOLET, MAGENTA]
   // 中心在半径 26% 的圆周上（0/90/180/270° + 45° 相位错开正反两层），瓣径 132% ⇒ 位置 = 50%+26cos-66
-  const spots: Array<Partial<ViewStyle>> = reversed
+  const spots: Partial<ViewStyle>[] = reversed
     ? [
         { top: '-34.4%', left: '2.4%' },
         { top: '2.4%', left: '20.8%' },

@@ -18,12 +18,12 @@ import { decodeSvgDataUri } from '@/features/cards/merchantCards'
 /** 在 RN 的 URL 实现下执行——测的是设备行为，不是 Node 行为 */
 function underRNUrl<T>(fn: () => T): T {
   const saved = globalThis.URL
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   ;(globalThis as any).URL = RNURL
   try {
     return fn()
   } finally {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     ;(globalThis as any).URL = saved
   }
 }

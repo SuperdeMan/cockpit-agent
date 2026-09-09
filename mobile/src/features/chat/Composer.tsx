@@ -7,7 +7,7 @@
 // 手势用 react-native-gesture-handler（PackageList.java:73 已注册，零新依赖）。
 // 「轻点到底做什么」的判据不在这里——Composer 只报告手势，ChatScreen 的 onTap 决定走免唤醒的
 // 手动唤醒还是 PTT 的 tap 会话（哪个引擎持有麦是 ChatScreen 知道的事实）。
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { ScrollView, Text, TextInput, View, Pressable } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 
@@ -77,7 +77,13 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
   // B 身份行车档：输入框折叠成键盘键，点开才出来。**形态一变就收回去**——换角色 / 退出行车档
   // 时留着一个「刚才点开的输入框」，下一次的形态读数就不是形态决定的了
   const [inputOpen, setInputOpen] = useState(false)
-  useEffect(() => setInputOpen(false), [inputMode])
+  // 渲染期调整派生状态（React 官方的 "adjusting state when a prop changes"），不是 effect：
+  // effect 要等这一帧 commit 完才跑，用户会看见一帧「换了形态但输入框还开着」。
+  const [inputModeSeen, setInputModeSeen] = useState(inputMode)
+  if (inputModeSeen !== inputMode) {
+    setInputModeSeen(inputMode)
+    setInputOpen(false)
+  }
   const heldRef = useRef(false)
   const cancelledRef = useRef(false)
   const submit = () => {
@@ -120,6 +126,9 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
     .runOnJS(true)
     .maxDuration(HOLD_MS - 20)
     .onEnd(() => onTap())
+  // makeHold 造的是 RNGH 手势，回调只在触摸时触发；规则无法证明「传进去的闭包不会在渲染期被
+  // 调用」所以保守判红。下面 plateTap / plateGesture 同理。
+  // eslint-disable-next-line react-hooks/refs -- 见上
   const orbGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), tap)
   // 空输入框的「背板即录音键」（B3-3 / B2 出账 plateGesture）：不再把手势挂在包 TextInput 的
   // 父 View 上——Android 的 TextInput 自己消费触摸（长按=光标/选择），RNGH 抢不到（B2 真机
@@ -134,7 +143,9 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
   const plateTap = Gesture.Tap()
     .runOnJS(true)
     .maxDuration(HOLD_MS - 20)
+    // eslint-disable-next-line react-hooks/refs -- 同上：onEnd 是触摸回调，不在渲染期跑
     .onEnd(() => inputRef.current?.focus())
+  // eslint-disable-next-line react-hooks/refs -- 同上
   const plateGesture = Gesture.Exclusive(makeHold(!!ptt && !finalizing), plateTap)
   const plateOverlayOn = !!ptt && !finalizing && input.length === 0
 

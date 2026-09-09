@@ -18,7 +18,7 @@ export type TrailEntry =
   | { kind: 'mark'; at: number; label: string }
 
 /** 轴的投影：投影相同即「没变」（每秒 tick 只改 now，不在这里） */
-const AXES: Array<[string, (s: PresenceSnapshot) => string]> = [
+const AXES: [string, (s: PresenceSnapshot) => string][] = [
   ['transport', (s) => s.transport],
   ['capture', (s) => s.capture],
   ['agent', (s) => s.agent],
@@ -35,7 +35,7 @@ const AXES: Array<[string, (s: PresenceSnapshot) => string]> = [
 ]
 
 /** 输入的投影：答「是哪个输入变了」 */
-const INPUTS: Array<[string, (i: PresenceInput) => string]> = [
+const INPUTS: [string, (i: PresenceInput) => string][] = [
   ['connStatus', (i) => i.connStatus],
   ['hfFsm', (i) => i.hfFsm],
   ['ptt', (i) => i.ptt],

@@ -10,7 +10,7 @@ export interface CandidateState {
   /** 上一条 poi_list（普通）候选名：「第N个」→「导航去{名称}」（App.tsx lastPoiNamesRef） */
   poiNames: string[] | null
   /** 周边发现 place_list 候选（含高德 POI id）：「看第N个详情」透传 id 精确取详情 */
-  placeItems: Array<{ id: string; name: string }> | null
+  placeItems: { id: string; name: string }[] | null
   /** 充电目的地候选（dest_choice）：「第N个」回填目的地槽位，不改写为导航 */
   destChoice: string[] | null
   /** 顺路停靠候选（waypoint_choice）：「第N个」→「导航去{目的地}途经{名称}」 */
@@ -35,7 +35,7 @@ export function emptyCandidates(): CandidateState {
   }
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /** final 到达（最新轮）时按卡片重记候选。对照 App.tsx:483-517：六个槽全部互斥清空
  *  再按卡型回填；category 只在 poi_list（普通）/place_list 分支被触碰，其余卡型保留。 */

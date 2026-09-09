@@ -31,7 +31,7 @@ import { actionSummary } from './actionSummary'
 import { emptyCandidates, recordCandidates, type CandidateState } from './candidates'
 import { routeSend } from './sendRouter'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 // App.tsx:52 同值：略高于两网关 90s 端到端窗口
 export const REQUEST_TIMEOUT_MS = 95000

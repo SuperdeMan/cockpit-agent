@@ -86,7 +86,7 @@ export function CardButtons({
   onSend,
 }: {
   p: Palette
-  buttons?: Array<CardButton | { label?: string; send_text?: string }>
+  buttons?: (CardButton | { label?: string; send_text?: string })[]
   onSend: SendFn
 }) {
   const usable = (buttons || []).filter((b) => b?.label && b?.send_text)

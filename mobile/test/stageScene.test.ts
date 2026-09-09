@@ -6,7 +6,7 @@ import * as path from 'path'
 import { STAGE_MAP_TYPES, stageScene } from '@/core/stage/stageScene'
 import type { Msg } from '@shared/types.ts'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 const msg = (uiCard?: any, role: 'user' | 'assistant' = 'assistant'): Msg =>
   ({ id: Math.random().toString(36).slice(2), role, text: '', uiCard }) as Msg
 

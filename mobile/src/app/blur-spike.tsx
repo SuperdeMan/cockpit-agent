@@ -19,7 +19,7 @@
 // 裁决三判据（计划 T9）：③ 糊层下文字边缘不可读（视觉）；framestats 60fps（性能，B2 G5 口径
 // ——先读 24 列表头再解析）；③ 挂载/卸载 20 次不崩（稳定）。
 import { BlurTargetView, BlurView } from 'expo-blur'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 import { useStore } from 'zustand'
 
@@ -54,7 +54,9 @@ export default function BlurSpikeScreen() {
   // blurTarget.current 变化时读它，首帧 ref 还是 null 就会当成「没配」按 'none' 走。
   const targetRef = useRef<View | null>(null)
   const [ready, setReady] = useState(false)
-  useEffect(() => setReady(true), [])
+  // onLayout 置位（同 ChatScreen 的 onBlurTargetLayout）：布局必定晚于 ref 挂载，
+  // 于是「挂上了没有」是一条真状态，渲染期不再读 ref.current
+  const onTargetLayout = useCallback(() => setReady(true), [])
 
   const label = (t: string) => (
     <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{t}</Text>
@@ -66,7 +68,7 @@ export default function BlurSpikeScreen() {
         ① G1-tint 现状 / ② BlurView 默认（回退=对照组）/ ③ blurMethod+blurTarget（真模糊）/ ④ blurMethod 无 target（自检）
       </Text>
       <Text testID="blur-target-state" style={{ color: p.fg3, fontSize: p.font(12) }}>
-        blurTarget: {ready && targetRef.current ? 'attached' : 'null（③ 会静默回落成 none）'}
+        blurTarget: {ready ? 'attached' : 'null（③ 会静默回落成 none）'}
       </Text>
 
       {label('① G1-tint 现状（tint ' + GLASS.frosted.tint + ' / border ' + GLASS.frosted.border + '）')}
@@ -83,7 +85,7 @@ export default function BlurSpikeScreen() {
 
       {label('③ BlurView + blurMethod=dimezisBlurView + blurTarget（真模糊路径）')}
       <View style={BOX} testID="blur-real">
-        <BlurTargetView ref={targetRef} style={FILL}>
+        <BlurTargetView ref={targetRef} onLayout={onTargetLayout} style={FILL}>
           <Stripes fg="#fff" />
         </BlurTargetView>
         {ready && blurOn ? (

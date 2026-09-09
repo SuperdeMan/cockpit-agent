@@ -4,7 +4,7 @@
 //  1. **有结构化字段就以它为准**，没有（旧网关连键都不带）逐字走既有路径；
 //  2. 截止时刻是服务端权威，客户端只读不续期；
 //  3. 未知枚举不落到「按最宽松处理」——策略不可信时按高风险，未知恢复动作不给入口。
-import { SessionCore, type PendingOp } from '@/core/session/store'
+import { SessionCore } from '@/core/session/store'
 import { derivePresence, type PresenceInput } from '@/core/presence/presence'
 import { pinCommitment, sortCommitments, type DockItem } from '@/core/presence/commitment'
 import { dismissIssue, mergeIssues, readFinalContracts, type IssueView } from '@/core/session/contracts'

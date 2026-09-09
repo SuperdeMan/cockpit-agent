@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useStore } from 'zustand'
 
 import { performHaptic } from '@/core/haptics'
-import { actionSummary, commitmentTitle } from '@/core/session/actionSummary'
+import { commitmentTitle } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
@@ -54,6 +54,30 @@ export interface UsePresenceOpts {
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
 const TICK_MS = 1000
 
+/* eslint-disable react-hooks/refs, react-hooks/purity --
+ * 「`value` 最后一次变成现在这个值，是什么时刻」。connStatus 的 3s 重连宽限与 hf.fsm 的 3s
+ * armed 胶囊都要这个基准，原来在 hook 体里各写了一遍（AR06 合成到这一处）。
+ *
+ * 为什么**必须**是渲染期写 ref，而不是 React 文档推荐的「渲染期调 setState 调整派生状态」：
+ * 本 hook 在同一次渲染的末尾会调 `presenceTrail.record(input, snapshot)`（取证轨迹，见文件末）。
+ * 用 setState 调整派生状态时，当前这一趟渲染仍然读到**旧**的时刻，React 丢弃输出再渲一趟——
+ * 被丢弃的那一趟已经把一条用旧时刻算出来的轨迹记进去了。ref 写在同一趟里立即可见，没有这个缝。
+ * 换句话说这条偏离是**为了取证正确性**，不是图省事；要改得先把 record 挪出渲染期（AR09 的活）。
+ *
+ * `Date.now()` 同理：这一层是**时钟驱动**的状态机，把 now 存进 state 会在停表期间留下陈旧读数，
+ * 重新起表的那一帧倒计时就是错的（下方 `const now` 处有完整论证）。AR09 复核这两条时一并测。
+ */
+function useChangedAt<T>(value: T): number {
+  const at = useRef(Date.now())
+  const prev = useRef(value)
+  if (prev.current !== value) {
+    prev.current = value
+    at.current = Date.now()
+  }
+  return at.current
+}
+/* eslint-enable react-hooks/refs, react-hooks/purity */
+
 export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true }: UsePresenceOpts): PresenceSnapshot {
   const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt } =
     useStore(core.store)
@@ -70,28 +94,18 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
   const visionCapturing = vision.preparing || vision.cameraActive || vision.uploading
 
   // connStatus 变化时刻（reconnecting 3s 延迟的基准）
-  const connChangedAt = useRef(Date.now())
-  const prevConn = useRef(connStatus)
-  if (prevConn.current !== connStatus) {
-    prevConn.current = connStatus
-    connChangedAt.current = Date.now()
-  }
-
+  const connChangedAt = useChangedAt(connStatus)
   // hf.fsm 变化时刻（armed 胶囊 3s 的基准，评审 D2）：登记的是事实，判据在 presence.ts
-  const hfFsmChangedAt = useRef(Date.now())
-  const prevFsm = useRef(hf.fsm)
-  if (prevFsm.current !== hf.fsm) {
-    prevFsm.current = hf.fsm
-    hfFsmChangedAt.current = Date.now()
-  }
+  const hfFsmChangedAt = useChangedAt(hf.fsm)
 
   // 挂载那一刻列表里就已经有的 error 气泡**不算刚发生**（第 2 批遗留③）：登记成 0 =
   // 永远过期，红胶囊只留给挂载之后新出现的那条。
-  const seeded = useRef(false)
-  if (!seeded.current) {
-    seeded.current = true
+  // 写成 useState 的惰性初始化器 = 每个组件实例只跑一次，且不在渲染期改 ref；
+  // seed(k, 0) 幂等，StrictMode 重跑初始化器也不改变结果。
+  useState(() => {
     for (const m of messages) if (m.role === 'assistant' && m.error) seen.seed('err:' + m.id, 0)
-  }
+    return true
+  })
 
   // 最近一条错误（4s 短显）
   const lastError = useMemo(() => pickLastError(messages, (k) => seen.firstSeen(k)), [messages])
@@ -131,6 +145,10 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
   const cancelNotice = ptt?.cancelledAt ? { text: '已取消，这段话不会发给小舟', at: ptt.cancelledAt } : null
   const echoNotice = hf.echoAt ? { text: '像是我自己的声音，没算数', at: hf.echoAt } : null
   const notice = !cancelNotice ? echoNotice : !echoNotice ? cancelNotice : echoNotice.at > cancelNotice.at ? echoNotice : cancelNotice
+  // 上面那段就是这条偏离的论证：这一层是时钟驱动的状态机，`now` 必须是**这一帧**的墙钟。
+  // 存进 state 会在停表期留下陈旧读数，重新起表那一帧的倒计时就是错的；useMemo 也不行
+  // （依赖不变就冻住）。AR09 复核在场层负载时连同 useChangedAt 一起测。
+  // eslint-disable-next-line react-hooks/purity -- 见上
   const now = Date.now()
   // B4-2 行车档：手动 ∨ Edge 标 true ∨ 标 false 后 30s 内（判据在 drivingMode.ts）。
   // 不再读 active?.driving——那只在在飞轮上有值，轮一结束就掉回 false
@@ -141,9 +159,9 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     (drivingEdge.falseAt > drivingEdge.trueAt && now - drivingEdge.falseAt < DRIVING_EXIT_GRACE_MS) || // 行车档 30s 退出宽限（到点要重渲一次才退得出）
     (drivingNow && !!voice.answeredAt && now - voice.answeredAt < DRIVING_SHEET_SETTLE_MS) || // 行车档答后 3s 内容回落（到点要重渲一次才落得下去）
     !!active?.processActive || // 长任务 8s 门槛
-    (connStatus === 'connecting' && now - connChangedAt.current < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
+    (connStatus === 'connecting' && now - connChangedAt < RECONNECTING_GRACE_MS) || // 「正在重连…」3s 门槛
     (!!lastError && now - lastError.at < ERROR_SHOW_MS) || // error 胶囊 4s 短显
-    (hf.fsm === 'ARMED' && now - hfFsmChangedAt.current < ARMED_CAPSULE_MS) || // armed 胶囊 3s 隐藏
+    (hf.fsm === 'ARMED' && now - hfFsmChangedAt < ARMED_CAPSULE_MS) || // armed 胶囊 3s 隐藏
     (!!notice && now - notice.at < NOTICE_SHOW_MS) // 取消 / 回声提示 2s 短显
   useEffect(() => {
     if (!needsTick) return
@@ -187,11 +205,11 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
   const input: PresenceInput = {
     now,
     connStatus,
-    connChangedAt: connChangedAt.current,
+    connChangedAt,
     hfEnabled: settings.handsFree,
     hfUsable: hf.availability.usable,
     hfFsm: hf.fsm,
-    hfFsmChangedAt: hfFsmChangedAt.current,
+    hfFsmChangedAt,
     ptt: ptt?.state ?? 'idle',
     partial: ptt?.partial || hf.partial || '',
     turn: {

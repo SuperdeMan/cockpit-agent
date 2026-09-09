@@ -4,11 +4,11 @@ import { useHandsFree } from '@/features/chat/useHandsFree'
 import { DEFAULT_APP_SETTINGS, settingsStore } from '@/core/settings/store'
 import { InteractionScope } from '@/core/session/interactionScope'
 
-const mockControllers: Array<{
+const mockControllers: {
   deps: Record<string, (...args: any[]) => void>
   disable: jest.Mock
   enable: jest.Mock
-}> = []
+}[] = []
 jest.mock('@/core/voice/handsFree', () => ({
   handsFreeAvailability: () => ({ vad: true, kws: true, usable: true }),
   HandsFreeController: class {

@@ -1,0 +1,32 @@
+# 流 ⑩：**中文输入通道探针**（AR06 / A06-3）。零副作用：只填不发，跑完清空。
+#
+# 为什么需要它：Maestro 官方 Known issues 至今仍列 Android `inputText` 只支持 ASCII，
+# 而本仓 01/02/06 三条流都靠中文 `inputText` 驱动。「以前成功过」不是当前工具版本 +
+# 当前 IME + 当前包上的能力证明——AR05 就因为拿不到中文通道，确认卡/补槽卡的真机
+# 渲染格只能记 BLOCKED。⇒ 每次换 Maestro / 换 IME / 换包，先跑这一条再跑长流程。
+#
+# 判据是**逐字一致**（`.*` 包含匹配会被别处的中文满足）。红在这里 ⇒ 工具层 BLOCKED，
+# 不是产品缺陷；**不许改成英文语料然后宣称中文流程通过**。
+appId: com.xiaozhou.companion
+name: 10 中文输入通道探针
+tags:
+  - offline
+---
+- runFlow: subflows/open-app.yaml
+
+- tapOn:
+    id: "composer-input"
+- inputText: "介绍广州的历史"
+# 收起键盘再断言：MIUI/ColorOS 的输入法是独立窗口且顶到最上层，
+# Maestro 此刻抓到的 hierarchy 里可能只有键盘（坑账，02 文件头同一条）
+- hideKeyboard
+
+# 逐字一致：整串锚定，不是包含匹配
+- assertVisible: "^介绍广州的历史$"
+
+# 零副作用收尾：清空输入框，**不点发送**
+- tapOn:
+    id: "composer-input"
+- eraseText: 20
+- hideKeyboard
+- assertNotVisible: "^介绍广州的历史$"

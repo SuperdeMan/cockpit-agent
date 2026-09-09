@@ -13,9 +13,9 @@ const api: BatteryApi | null = BATTERY_NATIVE_AVAILABLE ? (require('expo-battery
 
 export function usePowerFacts(): PowerFacts {
   if (!api) return { level: null, saver: null }
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+   
   const level = api.useBatteryLevel()
-  // eslint-disable-next-line react-hooks/rules-of-hooks
+   
   const saver = api.useLowPowerMode()
   return { level, saver }
 }

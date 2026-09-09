@@ -13,7 +13,7 @@ import type { Palette } from '@/ui/theme'
 
 import { CardShell, ProvBadge, type SendFn } from './parts'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 export function DrivingCardSummary({
   p,
   fontScale,

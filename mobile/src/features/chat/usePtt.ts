@@ -182,22 +182,25 @@ export function usePtt(opts: {
     [asrConfig, callbacks, finishSession, opts, reset],
   )
 
+  // 换服务器/换会话时把上一轮采集连同 UI 状态一起归零。**放在清理里**而不是 effect 体里：
+  // 后者是同步 setState（级联渲染，react-hooks/set-state-in-effect），而首次挂载时
+  // reset() 本来就等价于初值（idle / '' / ''），少跑一次没有行为差别。
   useEffect(() => {
-    reset()
     return () => {
       const session = sessionRef.current
-      sessionRef.current = null
-      startingRef.current = false
-      pendingStopRef.current = false
+      reset()
       void session?.cancel().catch(() => {})
     }
   }, [opts.audioUrl, opts.sessionId, reset])
 
+  // 离开 finalizing 时立刻收掉「慢」提示：渲染期调整派生状态，同一帧生效（effect 会晚一帧）
+  const [stateSeen, setStateSeen] = useState(state)
+  if (stateSeen !== state) {
+    setStateSeen(state)
+    if (state !== 'finalizing') setSlow(false)
+  }
   useEffect(() => {
-    if (state !== 'finalizing') {
-      setSlow(false)
-      return
-    }
+    if (state !== 'finalizing') return
     const t = setTimeout(() => setSlow(true), SLOW_HINT_MS)
     return () => clearTimeout(t)
   }, [state])

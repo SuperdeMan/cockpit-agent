@@ -32,7 +32,7 @@ export class PermissionDeniedError extends Error {
   }
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-require-imports */
+/* eslint-disable @typescript-eslint/no-require-imports */
 
 class AudioApiRecorder implements Recorder {
   private rec: any = null
@@ -124,7 +124,7 @@ class AudioApiRecorder implements Recorder {
         setAudioCaptureFact('micActive', this, this.nativeActive)
       }
       // 采集侧错误只记录不吞流程：定稿与兜底由上层 ASR 会话按超时判定
-      // eslint-disable-next-line no-console
+       
       console.warn('[recorder] error', e?.message ?? e)
     })
     try {

@@ -10,7 +10,7 @@
 // 这里合成提前、只把**播放**闸住 ⇒ 段间空白只剩收尾 120ms + 首片 jitter 200ms 量级。
 import { SEGMENT_GRACE_MS, SpeechController } from '@/core/voice/speech'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 type Hooks = {
   onFirstAudio?: () => void

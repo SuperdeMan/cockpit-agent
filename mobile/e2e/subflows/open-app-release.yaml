@@ -1,0 +1,34 @@
+# 常驻 prod release 的启动路径（AR06 / A06-2）。
+#
+# 与 dev-client 那条的**全部**区别都在这里，一条都不能混：
+#  · 按包名启动主 Activity，**不发任何开发深链**——prod 包里没有 DevLauncher，
+#    发 `xiaozhou://expo-development-client/...` 只会被当成一条认不出的路由；
+#  · 不预检 Metro、不要求 `adb reverse`：这条流的全部意义就是「离开 Metro 也能跑」；
+#  · 断言里带一条**阴性**：屏上不能出现 dev-client 的开发服务器文案。
+#    没有这条阴性时，装错包（dev-client）也能绿——因为 dev launcher 之后的主屏长得一样。
+#
+# 包身份（SHA-256 / 签名 / variant / 内嵌 bundle）不在这里验：那是 `scripts/verify_apk.ps1`
+# 与设置页 build-label 的活（A06-V07），flow 只负责「这个包能不能独立跑起来」。
+appId: com.xiaozhou.companion
+---
+- stopApp
+# ⚠ `permissions: all: unchanged` 是必填的：`launchApp` 默认会把 manifest 里每一项权限都
+#   `pm grant` 一遍（本轮日志里真的逐条试了 —— 定位/相机/存储/悬浮窗…）。
+#   本机 OPPO 上每一条都被 SecurityException 拒掉（driver 没有 GRANT_RUNTIME_PERMISSIONS），
+#   所以“没出事”是设备拦的，不是流程对。换一台能授的机器，默认行为会把
+#   权限矩阵静默地全打开 ⇒ AR02 的拒绝/撤销用例当场失去意义。权限态只能由专门场景设、回读、还原。
+- launchApp:
+    appId: com.xiaozhou.companion
+    stopApp: false
+    permissions:
+      all: unchanged
+
+# JS bundle 从包内读，比 dev 的现编快得多；仍取「输入框出现」而不是写死秒数
+- extendedWaitUntil:
+    visible:
+      id: "composer-input"
+    timeout: 60000
+
+# 阴性：dev-client 的选择开发服务器界面绝不能出现在常驻包上
+- assertNotVisible: ".*[Dd]evelopment server.*"
+- assertNotVisible: ".*Fetching development servers.*"

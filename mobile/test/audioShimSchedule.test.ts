@@ -10,10 +10,10 @@
 import { PcmPlayer } from '@shared/pcmPlayer.mjs'
 import { playerCtxOf } from '@/core/voice/audioCtx'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 function fakeCtx(sampleRate: number) {
-  const starts: Array<{ when: number; frames: number }> = []
+  const starts: { when: number; frames: number }[] = []
   const ctx = {
     sampleRate,
     currentTime: 0,
@@ -45,7 +45,7 @@ function fakeCtx(sampleRate: number) {
 /** 原生的换算：截断 */
 const toFrame = (when: number, sr: number) => Math.trunc(when * sr)
 
-function misalignedBoundaries(starts: Array<{ when: number; frames: number }>, sr: number): number {
+function misalignedBoundaries(starts: { when: number; frames: number }[], sr: number): number {
   let bad = 0
   for (let k = 1; k < starts.length; k += 1) {
     const prev = starts[k - 1]

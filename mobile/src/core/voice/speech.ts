@@ -21,7 +21,7 @@ import { setAudioPlaybackFact } from './playbackFacts'
 import { proactiveSpeechDecision } from './proactivePolicy'
 import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /** 队列排空后到宣布「这轮播完」的宽限：给 mixed 形态里紧跟第一段之后才到的云端段一个接上的机会
  *  （同 HMI `markTtsMaybeEnd` 的 250ms 复判）。 */
@@ -39,7 +39,7 @@ export interface TurnReport {
   gapsMs: number[]
   firstAudioMs: number
   totalMs: number
-  sessions: Array<{
+  sessions: {
     divergent: boolean
     startedAtMs: number
     firstAudioAtMs: number
@@ -48,7 +48,7 @@ export interface TurnReport {
     bytes: number
     underruns: number
     gaps: { atSec: number; gapMs: number }[]
-  }>
+  }[]
 }
 
 const TURN_LOG_CAP = 20
@@ -115,13 +115,13 @@ export class SpeechController implements SpeechSink {
   /** 本轮读数（探针 / 验收读它）：segments = 出过声的段数；gapsMs = 前一段收尾 → 后一段首片起播 */
   turnStats: { segments: number; gapsMs: number[] } = { segments: 0, gapsMs: [] }
   /** 本轮各段会话的元数据（收尾时汇成 TurnReport） */
-  private turnSessions: Array<{
+  private turnSessions: {
     session: TtsSession
     divergent: boolean
     startedAt: number
     firstAudioAt: number
     endedAt: number
-  }> = []
+  }[] = []
   private readonly turnLog: TurnReport[] = []
   private readonly turnSubs = new Set<(r: TurnReport) => void>()
   /** 主动消息仲裁要的两个事实（ChatScreen 用 setter 喂，同 setAudioUrl 形态）：
@@ -243,7 +243,7 @@ export class SpeechController implements SpeechSink {
       }
     }
     if (typeof __DEV__ !== 'undefined' && __DEV__) {
-      // eslint-disable-next-line no-console
+       
       console.log('[speech-turn]', JSON.stringify(report))
     }
   }

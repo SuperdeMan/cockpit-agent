@@ -18,11 +18,35 @@ import { settingsStore } from '@/core/settings/store'
 import { reportBottomChrome } from '@/ui/layout/bottomChrome'
 import { usePalette } from '@/ui/theme'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 // ⚠ 静态 import 是安全的：amap3d 的 JS 侧在原生缺席时也能加载，只有**渲染**才会炸
 //（同 react-native-svg 那次的形态）。所以守卫放在渲染分支上，不放在 import 上。
 import { AMapSdk, MapView, type MapViewHandle, Marker } from 'react-native-amap3d'
+
+/**
+ * 高德 SDK 初始化：**进程级一次**，所以守卫也放进程级（模块作用域），不是组件的 ref。
+ *
+ * 隐私合规：高德 9.x 不调 updatePrivacyAgree/Show 就白屏（**且不报任何错**）。
+ * 库把这四个调用包在 initSDK 里，但外面套着 `apiKey?.let`——**必须把 key 传进去**，
+ * 传空等于整块不执行（2026-08-27 实测：地图灰屏、logcat 零输出，查了三轮才定位到）。
+ * ⚠ 它是**硬编码同意**（updatePrivacyShow(context, true, true)）——PoC 可以，
+ * 发布前必须有真实的隐私声明呈现（AM5-04 合规项，已挂账）。
+ *
+ * 为什么从组件里的 `useRef` 搬出来：初始化的**作用域是进程**，而 ref 的作用域是组件实例。
+ * 写在渲染期改 ref 既违反 Rules of React（`react-hooks/refs`；React Compiler 开着），
+ * 也在语义上说了假话——第二个 MapScreen 实例的 ref 是新的，判据却应当是「这个进程初始化过没」。
+ */
+let amapInited = false
+function ensureAmapInit(): void {
+  if (!MAP_AVAILABLE || amapInited) return
+  amapInited = true
+  try {
+    AMapSdk.init(AMAP_KEY)
+  } catch {
+    /* 初始化失败下面照样渲染，白屏由用户可见地反馈，不静默 */
+  }
+}
 
 /** 零点位时的兜底中心（深圳）。**只在没有任何可画的点时用**，且屏上会明说没有坐标 */
 const FALLBACK_CENTER = { latitude: 22.5429, longitude: 113.9089 }
@@ -55,20 +79,11 @@ export default function MapScreen() {
   const pathname = usePathname()
   useEffect(() => () => reportBottomChrome(pathname, 0), [pathname])
 
-  // 隐私合规：高德 9.x 不调 updatePrivacyAgree/Show 就白屏（**且不报任何错**）。
-  // 库把这四个调用包在 initSDK 里，但外面套着 `apiKey?.let`——**必须把 key 传进去**，
-  // 传空等于整块不执行（2026-08-27 实测：地图灰屏、logcat 零输出，查了三轮才定位到）。
-  // ⚠ 它是**硬编码同意**（updatePrivacyShow(context, true, true)）——PoC 可以，
-  // 发布前必须有真实的隐私声明呈现（M5 合规项，已挂账）。
-  const inited = useRef(false)
-  if (MAP_AVAILABLE && !inited.current) {
-    inited.current = true
-    try {
-      AMapSdk.init(AMAP_KEY)
-    } catch {
-      /* 初始化失败下面照样渲染，白屏由用户可见地反馈，不静默 */
-    }
-  }
+  // 高德 SDK 初始化（判据与理由见文件头的 ensureAmapInit）。
+  // ⚠ **不能挪进 effect**：effect 在首帧 commit 之后才跑，那时 MapView 的原生视图已经建好了，
+  // 而高德要求 init 早于原生视图创建——挪过去的症状正是文件头写的那种「白屏且零日志」。
+  // 幂等由模块级 `amapInited` 保证，所以「渲染期跑」在这里不会带来重复副作用。
+  ensureAmapInit()
 
   // 视口：首帧还没 layout，先用窗口尺寸估一个（地图是 flex:1 全屏，误差只有 header 那点），
   // onLayout 拿到真值后再 fit 一次。**两步都要有**：只靠 onLayout 首帧会闪一下世界地图，

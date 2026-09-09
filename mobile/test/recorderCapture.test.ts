@@ -12,7 +12,7 @@ const mockPermissions = jest.fn()
 const mockCheckPermissions = jest.fn()
 const mockStart = jest.fn()
 const mockStop = jest.fn()
-const mockNatives: Array<{ ready: ((e: unknown) => void) | null }> = []
+const mockNatives: { ready: ((e: unknown) => void) | null }[] = []
 jest.mock('react-native-audio-api', () => ({
   AudioManager: { checkRecordingPermissions: () => mockCheckPermissions(), requestRecordingPermissions: () => mockPermissions() },
   AudioRecorder: class {

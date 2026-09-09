@@ -3,7 +3,7 @@
 //     cmd device_state 模拟不了半开（B2 §6.4 的 device_state 口径只有 0/1/2/3 档），要人手。
 //  ② 触感四种：四个按钮各触发一次（§8：唤醒轻/确认双/判死一/快门轻）；
 //     自然挂点的代表性验证另有两条（计划 T9——按钮验的是「振感对不对」，挂点验的是「时机对不对」）。
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import { PixelRatio, Pressable, ScrollView, Text, useWindowDimensions } from 'react-native'
 import { useStore } from 'zustand'
 
@@ -12,7 +12,7 @@ import { developmentDiagnosticsEnabled } from '@/core/diagnostics'
 import { lowPower } from '@/core/power/lowPower'
 import { BATTERY_NATIVE_AVAILABLE, usePowerFacts } from '@/core/power/usePowerFacts'
 import { drivingActive, NO_EDGE_DRIVING, type DrivingEdgeFact } from '@/core/presence/drivingMode'
-import { getWired } from '@/core/session/wiring'
+import { subscribeWiredSession, wiredSessionSnapshot } from '@/core/session/wiredStore'
 import { settingsStore } from '@/core/settings/store'
 import { playCueTone } from '@/core/voice/cueTone'
 import { foldPosture } from '@/ui/layout/foldPosture'
@@ -30,21 +30,16 @@ export default function NativeSpikeScreen() {
   // ⛔ B4-13 缺陷 B：这一行原来写死 `useLayout(false)`（T6 加它时 T11 的行车档还没接上），
   //    于是行车档下它必然显示错的 mode（实测行车 + expanded×compact 显示 single，真实应是 driving-landscape）。
   //    改成读**真实**行车事实：判据仍是 drivingMode.drivingActive（唯一一份），本屏只搬事实。
-  const [edge, setEdge] = useState<DrivingEdgeFact>(() => getWired()?.core.store.getState().drivingEdge ?? NO_EDGE_DRIVING)
+  // 会话事实经 useSyncExternalStore 读（wiredStore.ts）：订阅与快照同一份，
+  // 没有「挂载与订阅之间的缝」，也不用在 effect 里同步 setState
+  const session = useSyncExternalStore(subscribeWiredSession, wiredSessionSnapshot)
+  const edge: DrivingEdgeFact = session?.drivingEdge ?? NO_EDGE_DRIVING
   // B5-3 缺陷 C：用户退出只压本段，取证屏也要看得见它（写死 0 就是 B4 缺陷 B 的同款说谎）
-  const [dismissedAt, setDismissedAt] = useState<number>(() => getWired()?.core.store.getState().drivingDismissedAt ?? 0)
-  useEffect(() => {
-    const core = getWired()?.core
-    if (!core) return
-    setEdge(core.store.getState().drivingEdge) // 挂载与订阅之间的缝
-    setDismissedAt(core.store.getState().drivingDismissedAt)
-    return core.store.subscribe((st) => {
-      setEdge(st.drivingEdge)
-      setDismissedAt(st.drivingDismissedAt)
-    })
-  }, [])
+  const dismissedAt = session?.drivingDismissedAt ?? 0
   // ⚠ 事件驱动，**不加 1s ticker**：取证屏加轮询会让 `uiautomator dump` 拿不到 idle（§6.2 补取轮坑⑨）。
   //    代价是 30s 退出宽限的那一跳不会自己刷新——所以下面把 edge 的两个时刻一起打出来，读的人看得见。
+  //    `Date.now()` 也因此留在渲染期：这一屏刻意只在事件到来时重渲，读数就该是那一帧的墙钟。
+  // eslint-disable-next-line react-hooks/purity -- 见上：取证屏刻意不加 ticker，now 必须是本帧墙钟
   const driving = drivingActive({ manual: settings.drivingManual, edge, now: Date.now(), dismissedAt })
   const layout = useLayout(driving)
   const { width, height } = useWindowDimensions()
@@ -60,7 +55,7 @@ export default function NativeSpikeScreen() {
   // B5-7：低电量回落的事实与判据（旧 APK 上 native=false、两项 null ⇒ lowPower=false，材质照旧）
   const power = usePowerFacts()
 
-  const rows: Array<[string, string]> = [
+  const rows: [string, string][] = [
     ['native', FOLD_NATIVE_AVAILABLE ? 'available' : 'MISSING（旧 APK？重建没带上？）'],
     ['posture', foldPosture(fold)],
     ['state', fold?.state ?? '—'],

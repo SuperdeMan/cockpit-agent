@@ -33,7 +33,7 @@ import { micLease } from './micBus'
 import { FRAME_SAMPLES, type FrameSink, type Recorder } from './recorder'
 import { VadEngine, vadNativeAvailable } from './vad'
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
+ 
 
 /** 续说/打断开 ASR 时注入的前滚（同 HMI 的 RESUME_PRE_ROLL_MS） */
 const RESUME_PRE_ROLL_MS = 200

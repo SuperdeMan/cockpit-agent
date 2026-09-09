@@ -7,7 +7,7 @@
 import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, useLocalSearchParams } from 'expo-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
@@ -42,6 +42,9 @@ import { useProactiveViewability } from '../assistant/ProactivePresenter'
 // **不直接显示 FSM 名字**：ARMED/FOLLOWUP 对用户没有意义，而「在不在听」有。
 // ⚠ B1 之后这两张表只在 **`uxV2Presence=false` 的回滚分支**里用（v2 下这些话由状态胶囊说）。
 // 它们**刻意留着**——回滚路径不是一句话，是一段真的要能跑起来的代码（§11.5）；B4 稳定后再删。
+/** FlashList 可见性判据：常量，模块级一份就够（原来是 useRef(...).current，那是渲染期读 ref） */
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50, minimumViewTime: 300 }
+
 const HF_LABEL: Record<string, string> = {
   ARMED: '待唤醒 · 说「小舟小舟」',
   LISTENING: '在听…',
@@ -187,7 +190,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
     if (voiceParam !== '1' || voiceParamConsumed.current) return
     voiceParamConsumed.current = true
     setSheetOverride({ turnId: latestTurnId, mode: 'open' })
-  }, [voiceParam, latestTurnId])
+  }, [voiceParam, latestTurnId, setSheetOverride])
 
   // B4-7 tabletop（§7.3）：分界 = 铰链上缘（窗口坐标）− 内容区在窗口里的 y。onLayout 给的是相对父级的 y，
   // 这里要的是窗口坐标 ⇒ measureInWindow；量一次不够（旋转 / 展开会变），随 layout 重量
@@ -226,11 +229,15 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // 弱网提示条（M3-4）：**延迟 3 秒**再显示——重连本来就是常态（切基站/锁屏回来都会闪一下），
   // 每次都弹一条会把「正常自愈」渲染成「出事了」，用户学会忽略它之后真断网也就没人看了。
   const [linkWarn, setLinkWarn] = useState(false)
+  // 「连上了就立刻收掉提示条」用渲染期调整派生状态，不用 effect：effect 要等这一帧 commit
+  // 完才跑，用户会看见一帧「已经在线但还挂着断线条」。延迟 3s 才亮那一半仍然是 effect（真定时器）。
+  const [connSeen, setConnSeen] = useState(connStatus)
+  if (connSeen !== connStatus) {
+    setConnSeen(connStatus)
+    if (connStatus === 'open') setLinkWarn(false)
+  }
   useEffect(() => {
-    if (connStatus === 'open') {
-      setLinkWarn(false)
-      return
-    }
+    if (connStatus === 'open') return
     const t = setTimeout(() => setLinkWarn(true), 3000)
     return () => clearTimeout(t)
   }, [connStatus])
@@ -259,18 +266,21 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // 回落 G1-tint 的情形（§5.11 末句）：减少透明度 / 行车档 / ref 还没挂上 /
   // 低电量 = lowPower(power)（B5-7，expo-battery：省电模式 ∨ 电量 <20%；原生缺席按 null 降级 ⇒ 不回落）
   const power = usePowerFacts()
+  // 「ref 挂上了没有」变成一条**真状态**，由 onLayout 置位——渲染期就不必再读 ref.current
+  // （react-hooks/refs：并发渲染下渲染期读 ref 可能读到不属于这一帧的值）。
+  // 为什么不是 ref 回调：`BlurTargetView` 的 props 把 ref 声明成 `RefObject<View|null>`，
+  // 回调形式过不了 tsc；而 onLayout 必定晚于 ref 挂载，语义同样成立。
   const blurTargetRef = useRef<View | null>(null)
-  const [blurReady, setBlurReady] = useState(false)
-  useEffect(() => setBlurReady(true), [])
+  const [blurAttached, setBlurAttached] = useState(false)
+  const onBlurTargetLayout = useCallback(() => setBlurAttached(true), [])
   const blurTarget =
-    blurReady && blurTargetRef.current && !settings.reduceTransparency && !snapshot.driving && !lowPower(power)
+    blurAttached && !settings.reduceTransparency && !snapshot.driving && !lowPower(power)
       ? blurTargetRef
       : null
 
   const splitLandscape = layout.mode === 'driving-landscape'
   const proactiveViewability = useProactiveViewability(core, runtime.scope,
     runtime.facts.route === '/' && !privacyOpen && !dockExpanded && !(v2 && snapshot.input === 'voice-sheet'))
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50, minimumViewTime: 300 }).current
   // B5-15：层覆盖整列时 Composer 整个被盖住 ⇒ 从无障碍树拿掉（真机抓到它与层内大球说明重复）。
   // 触摸侧本来就被层的暗区拦住了，这里补的是读屏那一半。
   const sheetCoversColumn = splitLandscape && snapshot.input === 'voice-sheet'
@@ -333,7 +343,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         style={{ flex: 1 }}
         onLayout={(e) => setListHeight(Math.round(e.nativeEvent.layout.height))}
       >
-      <BlurTargetView ref={blurTargetRef} style={{ flex: 1 }}>
+      <BlurTargetView ref={blurTargetRef} onLayout={onBlurTargetLayout} style={{ flex: 1 }}>
       {messages.length === 0 ? (
         <Welcome
           p={p}
@@ -347,7 +357,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         <FlashList
           data={messages}
           onViewableItemsChanged={proactiveViewability}
-          viewabilityConfig={viewabilityConfig}
+          viewabilityConfig={VIEWABILITY_CONFIG}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
           extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving]}
