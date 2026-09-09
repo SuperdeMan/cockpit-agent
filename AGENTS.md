@@ -119,6 +119,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 主题 | 启动条件 / 入口 |
 |---|---|
 | Android App | 进行中：[AR05 实施方案](docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md)（步骤 0–6 已实施并发布 `d425b9c`：T0 授权闸、Registry 声明往返、四份契约端云贯通、F09 窄修复、会话摘要、Android 消费面、网关编译与测试、真栈契约证据与 OPPO 固定包 `d425b9c2d`。**未签收，逐条见方案 [§9.4 签收条件](docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md) 与 §9.5 V01–V12 逐格表**：真栈闭合 3 格、部分 6 格、仅离线 5 格。三个阻塞项——① V05 负例要一个**无 `vehicle.control` 的受限 token**（改 `.env` 是红线，需单独授权）；② 对话页确认卡/补槽卡真机渲染缺中文输入通道（Maestro CLI 未装、IME broadcast 无效）；③ 旧服务端兼容与 Redis 重启挂起恢复的真栈反例）。实现与设备基线：[AR04 第十五节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。生产记录仍为 `573ad46`，Android 代码 `1c67807`：支持页浮动在场、闲置光球静帧、滚动内容留余量；OPPO 两轮证据与资源恢复见 AR04。AR04 服务端多 operationId 实机组合仍未签收，Planner 技术失败降级纳入 AR05 方案但尚未修复；AR02/AR03/AR10 与 Xiaomi 对照范围独立。 |
+| Android App AR06～AR11 方案 | [接续路线与六份独立方案](docs/design/2026-09-09-android-ar06-ar11-execution-roadmap.md)：AR06 release/lint、AR07 KWS A/B、AR08 首音、AR09 UI 性能/观测、AR10 固定包 UX 验收、AR11 Android M5 交付规划。2026-09-09 已落盘，均为草案、未实施；附逐批 Goal 文本、前序未签收项与完成边界。2026-09-10 补[工程交付优先与集中验收安排](docs/design/2026-09-10-android-goal-delivery-and-acceptance-plan.md)，默认不让人工签收阻塞独立工程任务。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |
