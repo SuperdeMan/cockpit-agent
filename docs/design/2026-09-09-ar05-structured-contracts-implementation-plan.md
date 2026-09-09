@@ -522,3 +522,68 @@ F05 播报无声按成因分档（合成失败 / 被打断 / 纯卡片轮），�
    ASR/S2S 回退与 TTS 真机盲听均未做。
 4. 补槽的中文名 `display_name` 目前恒空（manifest 还没有这个声明面），客户端回落显示槽机器名。
 5. `replay_audio` 恢复动作契约里有、客户端未实现，故不渲染该入口。
+
+### 12.3 步骤 6（2026-09-09）：发布、真栈契约证据与 OPPO 固定包
+
+| 字段 | 记录 |
+|---|---|
+| 实施范围 | 步骤 6 的后端发布与真栈业务证据；OPPO 固定包与设置页取证。对话页确认卡/补槽卡的真机渲染**未取证**（见下） |
+| 生产 release | `d425b9c2d6209adbb5ec317d90f862796bde44e7`（前一跳 `00d1925c8e389d1fd3d0435f0240600edc3a1756`；基线 `573ad46`） |
+| APK | `xiaozhou-companion-prod-release-d425b9c2d-20260909-1725.apk`，SHA-256 `8e7cc213ed268db8897d9385d3e416cb616fab3baa2c133a0775281a8d67e8b8` |
+| 设备 | OPPO PEUM00（`919fd6f9`，test 角色）；安装文件哈希与本地一致；非 DEBUGGABLE；`lastUpdateTime=2026-09-09 17:25:55`；设置页底行 `v0.1.0 · prod · d425b9c2d · 2026-09-09 17:09` |
+
+**发布前被安全闸挡了一次。** `dev_stack deploy --sha <HEAD>` 回 `safety_rejected`(rc=2)，
+而接手起点 `4278a52` 的同一命令是干净 `dry_run` ⇒ 是本批引入的。定位方式：拿
+`cloud_release_lib.validate_text_payload` 对本批 changed_paths 逐个跑（deploy 的错误输出
+**刻意不带路径**，防泄露疑似凭证内容）。命中的是我自己写的
+`token = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))`——不是凭证，是解析代码，
+但逐字命中 `CREDENTIAL_ASSIGNMENT_RE`。闸是 fail-closed 的规格，**改代码不改闸**：抽成
+`bearerToken(r)`，并新增 `scripts/tests/test_release_source_safety.py` 让同一个函数在 CI
+就扫全仓源码——否则这条判据只在发布日才说话。
+
+**发布**（两次，`00d1925` → `d425b9c`）：dry-run `blocking_changes: []`、
+`target_infrastructure_sha256` 与批准锚一致；apply 后 `submitted` 与 dry-run 的
+基线/artifact 全等；独立 `status` 5/5 healthy 零 warning、`release_sha` 与目标一致；
+独立 `verify` = `verified`（artifact `20260909T090415Z-d425b9c.json`，`e2e_remote_safe`
+PASS，`minimax:MiniMax-M3`）。
+
+**真栈契约证据**（会话 `ar05-probe-*`，全程零车控动作、零挂起残留）
+
+| 探针 | 读数 |
+|---|---|
+| `GET /api/session`（有效 token） | HTTP 200、`contract_version=ar05.1`、`authenticated=true`、`authorization_source=token`、14 个真实 scope、17 条能力全 `available`（含 `edge-vehicle`/`edge-media`——端侧覆盖了云侧的 `unknown`）、`summary_status=complete`、TTL 60s、**响应不含 token** |
+| `GET /api/session`（不匹配的 token） | HTTP 401、`{authenticated:false, authorization_source:"unauthenticated"}`、不泄露 token |
+| T1「打开后备箱」 | `need_confirm=true` + 完整 `confirm_policy`（operation_id 归属、三渠道、300s 窗口、`target_intent=trunk.open`、`summary_source=capability`）、`actions=[]` |
+| T2 换题「讲个笑话」 | `held_operation_ids=[T1 的 op]` + follow_up 软提醒同时在 |
+| T3「提醒我开会」 | `slot_request`：`slot=time_text`、`state=active`、`remaining_slots`、`prompt`、300s 窗口；**未创建任何提醒** |
+| T4/T5 取消 | 各自回 `closed_operation_ids`，零动作、零残留 |
+
+**真栈当场抓到并修掉的缺陷。** T1 第一次（`00d1925`）回的是 `risk=medium` /
+`reason_code=agent_requested`，而 `trunk` 在 VAL 的 `commands.yaml` 里 `require_confirm=true`
+——**契约报了比实际低的一档**。成因：B1 之后危险与否的唯一权威是 VAL，端侧 capability
+不再声明 ⇒ 云侧 `Step.require_confirm` 恒 False。修法即方案 §4.1 早就指定的那条（端侧用
+`capability_meta.risk_of` 在出口纠正，只提升不降低；`voice_forbidden` 去掉 voice 渠道），
+`target_intent` 字段本来就是为它加的，之前只加了通道没接消费方。修后同一条语料在
+`d425b9c` 上回 `risk=high` / `reason_code=require_confirm`——**只换 release 的干净 A/B**。
+
+**OPPO 取证**（截图与 XML 在 `%LOCALAPPDATA%\car-agent\artifacts\AR05-device-20260909`）
+
+- 设置页服务器区：`账号 u1 · 关联车辆 v1`（不再是 `token ····xxxx`）；
+- 「账号与能力（服务端）」区：`账号 u1 · 服务端关联车辆 v1`、`按 token 授权`、17 条能力
+  逐条「可用」、有「刷新」；
+- 身份与行车：`手持陪伴端 · 只决定布局` + `选哪个角色都不会多出任何权限`（不再推断「不控车」）；
+- 首页推荐三条车控/媒体短语都在（当前 token 全授权 ⇒ 筛选不误伤）；
+- 点推荐 chip「打开空调26度」→ 真实往返「26度 · 已执行」，T0 授权闸对有授权的车控放行。
+
+**未取证与其原因（不写成已验）**
+
+1. **对话页的确认卡与补槽卡真机渲染未取证**：缺可用的中文输入注入通道——Maestro CLI 本机
+   未安装，设备上 Maestro IME 的 `INPUT_TEXT` broadcast `result=0` 但文本没进输入框。
+2. 取证中出现过三次「顶栏元素塌到屏幕顶部、内容区全空」。**先后两个自洽解释都被实验推翻**
+   （先归因 Maestro IME，被单变量 A/B 推翻；再归因 broadcast，被「broadcast 之前就已塌」的
+   截图推翻）。最终边界：**所有塌顶实例都有 Maestro IME 参与，产品默认输入法下 4 次尝试
+   均未复现**；确切触发组合未钉死。按此判为取证装置产物，不计为产品缺陷，也不宣称已排除。
+3. 取证时发现设置页说明行写「看**上面**「账号与能力」」而该区在其下方，已改为不带方位词；
+   **该修复在 APK 之后**，本次验包不含它。
+4. 滚动经过右下角浮动光球时，能力行最右侧的状态字会被短暂遮住。属 AR04 浮动在场的既有
+   取舍（用户已裁决接受浮动形态），本批未改。

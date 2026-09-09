@@ -8811,3 +8811,33 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - **未做**：步骤 6 的固定 prod release、OPPO 取证、后端发布与真栈业务证据全部未做；
   V01–V12 只在离线单测层面覆盖；补槽的中文名声明面（manifest）尚未加，客户端回落显示槽机器名；
   `replay_audio` 恢复动作契约里有、客户端未实现故不渲染入口。AR05 未签收。
+
+## 2026-09-09 — AR05 步骤 6：发布 `d425b9c`、真栈契约证据与 OPPO 固定包
+
+- **发布前先被自己的安全闸挡住**。`deploy --sha HEAD` 回 `safety_rejected`，而接手起点
+  `4278a52` 是干净 dry_run ⇒ 本批引入。deploy 的错误输出**刻意不带路径**（防泄露疑似凭证
+  内容），只能拿 `validate_text_payload` 对 changed_paths 逐个跑才找得到：命中的是我写的
+  `token = strings.TrimSpace(...)`——解析代码逐字撞上 `CREDENTIAL_ASSIGNMENT_RE`。
+  闸是 fail-closed 的规格，**改代码不改闸**；并新增 `test_release_source_safety.py`，
+  让同一个函数在 CI 就扫全仓——否则这条判据只在发布日才说话。
+- **真栈当场抓到一个报低一档的风险**：「打开后备箱」在 `00d1925` 上回
+  `risk=medium / agent_requested`，而 `trunk` 在 VAL 里 `require_confirm=true`。成因是 B1
+  之后危险与否的唯一权威下沉到 VAL，云侧 `Step.require_confirm` 恒 False。修法就是方案
+  §4.1 早写好的那条（端侧出口用 `capability_meta.risk_of` 纠正，只提升不降低），
+  `target_intent` 本来就是为它加的——**之前只加了通道没接消费方**。修后同一条语料在
+  `d425b9c` 上回 `risk=high / require_confirm`，只换 release 的干净 A/B。
+- 真栈五轮全程 `actions=[]`、挂起由 `closed_operation_ids` 关闭、零残留：confirm_policy、
+  slot_request（`time_text`/active/300s）、held_operation_ids、closed_operation_ids 全部
+  真实产出；`/api/session` 200（17 条能力、`authorization_source=token`、TTL 60s、不回传
+  token）与 401（`unauthenticated`）两档都取到。
+- OPPO 固定包 `d425b9c2d`：本地与设备安装文件 SHA-256 一致、非 DEBUGGABLE、设置页底行
+  `v0.1.0 · prod · d425b9c2d · 2026-09-09 17:09`。设置页取到「账号与能力（服务端）」区、
+  `账号 u1 · 关联车辆 v1`、`按 token 授权`、17 条能力逐条可用、角色行不再说「不控车」；
+  点推荐 chip 取到真实往返「26度 · 已执行」。
+- **两个自洽的错误解释被自己的实验推翻**：取证中三次出现「顶栏塌到屏幕顶部」，先归因
+  Maestro IME（被单变量 A/B 推翻）、再归因 broadcast（被「broadcast 之前就已塌」的截图
+  推翻）。最终只敢写到这一步：所有塌顶实例都有 Maestro IME 参与、产品默认输入法 4 次未
+  复现、确切组合未钉死。**判为取证装置产物，但不宣称已排除。**
+- **未取证**：对话页确认卡/补槽卡的真机渲染——缺中文输入注入通道（Maestro CLI 未装、
+  设备上 IME 的 `INPUT_TEXT` broadcast `result=0` 但文本没进输入框）。取证时发现的设置页
+  方位词文案已改，但**该修复在 APK 之后，本次验包不含**。AR05 仍未签收。

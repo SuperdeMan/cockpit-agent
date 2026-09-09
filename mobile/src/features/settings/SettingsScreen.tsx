@@ -319,7 +319,7 @@ export function SettingsScreen() {
               : '可信车载平板 · 只决定布局'}
         </Text>
         <Text style={{ color: p.fg3, fontSize: p.font(12) }}>
-          选哪个角色都不会多出任何权限；能做什么看上面「账号与能力」那份服务端摘要。
+          选哪个角色都不会多出任何权限；能做什么看「账号与能力（服务端）」那份摘要。
         </Text>
         <ChoiceRow
           p={p}
