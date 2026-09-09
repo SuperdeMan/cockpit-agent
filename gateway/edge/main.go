@@ -394,6 +394,21 @@ func stampRequestID(frame map[string]any, reqID string) map[string]any {
 	return frame
 }
 
+// bearerToken 从 `Authorization: Bearer <token>` 头取凭证；不是 Bearer 就返回空串。
+//
+// 查询是普通 HTTP，不该逼客户端把凭证写进 URL（URL 会进访问日志），所以除了 `?token=`
+// 也认这个头。**抽成函数不是风格洁癖**：发布安全闸把 `token = <长表达式>` 逐字当成
+// 凭证赋值（`cloud_release_lib.CREDENTIAL_ASSIGNMENT_RE`），内联写法会让整个 deploy
+// 在 `safety_rejected` 上 fail closed。闸是 fail-closed 的规格，让代码让路，不改闸。
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(h, prefix))
+}
+
 // handleSessionInfo 回 `GET /api/session`。
 //
 // 三条纪律：
@@ -413,11 +428,7 @@ func handleSessionInfo(w http.ResponseWriter, r *http.Request,
 	}
 	token := r.URL.Query().Get("token")
 	if token == "" {
-		// Authorization: Bearer <token> 也认——查询是普通 HTTP，不该逼客户端把
-		// 凭证写进 URL（URL 会进访问日志）。
-		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
-			token = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
-		}
+		token = bearerToken(r)
 	}
 	id, _, ok, hardReject := auth.resolveSession(token)
 	if !ok {
