@@ -466,4 +466,47 @@ AR04 §3/§4 真正要求的是四件事**可达**：采集事实可见、一步
 
 ### 15.3 实现与验证
 
-待实施后回填。
+代码锚 `de2a5564caf6641ed5fc598e5d84ee7fbdeabf26`（已推送 main）。后续纯文档提交不改变这个 APK / 测试锚。
+
+| 代码面 | 实际落点 |
+|---|---|
+| 浮动在场 | `AssistantSurface.tsx::AssistantPresence`，住在 `CrossPageVoiceLayer` 的覆盖域里、排在语音层之前；`position: absolute`、右下角，`bottom = 12 + 安全区 + 本路由上报的底部浮层高度`。光球 / 胶囊 / 动作键 / 采集点分别按 `cfg.audioUrl`、`snapshot.capsule`、`stoppable ?? busy`、`captureSummary` 挂载 |
+| 占布局空间的宿主 | `AssistantSurface` 只在 `pickProactiveMessage` 或 `focusDockVisible` 为真时渲染一个带底部安全区的容器；提醒卡改 G0 实色卡（与承诺卡同材质）。对话页的 Dock 仍在 ChatBody |
+| 唯一判据 | `presence.ts::captureSummary`（对话页顶栏采集点改为消费它）、`FocusDock.tsx::focusDockVisible`、`ProactivePresenter.tsx::pickProactiveMessage` |
+| 地图避让 | `ui/layout/bottomChrome.ts` 按路由登记；`map.tsx` 信息条 `onLayout` 上报「高度 + 12」、离开路由清零 |
+| 实色底 | `PresenceCapsule` 新增 `solid`，浮动态取 `p.panel`；动作键与光球圆底同色，玻璃只保留边框与投影 |
+| 撤掉的东西 | 状态行、「展开回答 / 说话 / 停止收音 / 取消请求」按钮行、顶边线、对话页采集时的全局条、`_layout.tsx` 里单独挂的 `ProactivePresenter` |
+
+本地验证（固定命令 `node node_modules/jest/bin/jest.js --runInBand --silent` 与 `node node_modules/typescript/bin/tsc --noEmit`）：
+
+- mobile **72 suites / 737 tests，77.59s，exit 0**（改前 71 / 726；新增 `test/assistantPresence.test.ts` 11 条，`landscapeDockReach.test.ts` 改为与 `_layout.tsx` 同一棵树后 7/7 仍过）；tsc exit 0。
+- 新用例锁的是「何时渲染什么」：支持页闲置只有光球；对话页 / `/debug` / `/onboarding` 无浮动在场也无宿主；待确认时宿主占空间且可直接确认、台账清空后宿主撤走；播报中动作键「停止播报」按到 `SpeechController.stop` 且不增加麦租约；在飞未出声动作键「打断」发出 cancel 帧并标记已打断；采集中采集点可开隐私栏；层升起时浮动在场让位；思考中轻点光球展开层；键盘弹出时闲置隐藏、有声音保留；地图上报 108dp 后 `bottom` 由 12 变 120 且不带到设置页；提醒出口与宿主同生同灭。
+- 反向证据：三处变异各自只红对应用例——层升起不让位（`if (false)`）、对话页也渲染（`support = !!runtime`）、宿主没内容也渲染（`if (false)`）；每次都从备份按字节恢复（`cmp` 一致）。
+- 显式 Expo flat 配置下的定向 lint：本批新写 / 改动的 8 个源文件 0 error；仅有的 2 个 error 是 `map.tsx` 既有的高德初始化 ref 守卫（HEAD 上第 59 行，本批未触碰），不是本批引入。测试文件沿用既有 `landscapeDockReach.test.ts` 的 `Observe` 写法，同样带 `react-hooks/globals` 提示；仓库仍无生效的 `eslint.config.*`，配置治理归 AR06。
+
+### 15.4 OPPO 设备验证（PEUM00 / Android 14，2026-09-09）
+
+证据目录 `%LOCALAPPDATA%\car-agent\artifacts\AR04-presence-20260909`（首轮包）与 `…-b2`（复验包）。
+
+| 项目 | 精确证据 |
+|---|---|
+| 首轮包 | `de2a5564c` prod release：11:13:33–11:43:22，Gradle **27m19s**、1222 tasks（731 executed / 491 from cache）、exit 0；`CompileJobs=1`、堆 128m/2048m、Kotlin in-process；签名 SHA-1 仍为 `5e8f16062ea3cd2c4a0d547876baa6f38cabf625`；`assets/app.config` variant=prod build=de2a5564c mapEnabled=True。APK `D:\Android\builds\apk\xiaozhou-companion-prod-release-de2a5564c-20260909-1143.apk`，210,705,742 bytes，SHA-256 `fde4c0d324f4fc9fafb196be89c73b762022f27b425702e7f397368e250e949e`；11:44:17 `install -r`，非 DEBUGGABLE，设备 `base.apk` 哈希相同；设置页底行 `v0.1.0 · prod · de2a5564c · 2026-09-09 11:14` |
+| 闲置形态 | `idle-settings.png` / `idle-vehicle.png` / `idle-map.png`：三页底部不再有任何栏，只剩右下角一颗光球；地图页光球落在信息条上方，「全览」按钮不被压（`bottomChrome` 上报生效） |
+| 思考中 | 对话页打字发送「Tell a long story in Chinese.」（11:52:18.3）后点顶栏设置入口：`story-settings-t2.png`（+3.2s）光球 + 胶囊「正在思考…」+ 琥珀「打断」键，浮在设置内容上、零占位 |
+| 播报中 | `story-settings-t8.png` / `-t16.png`（+9.7s / +18.3s）：胶囊「播报中」+「停止播报」键 + 光球 |
+| 一步停播 | 点「停止播报」后 1.2s：`story-settings-stopped.png` 只剩闲置光球，同帧 dump 里「播报中 / 停止播报 / 打断」均消失；`capture-status-after-stop.png`：`playing=false, live=false, starts=1, stops=1`，mic / ASR / S2S / 视觉上传全 0——只停了声音，没有开麦 |
+| 临时设置与恢复 | 为取播报态把「播报」auto→always、为让 uiautomator 能 idle 把「减少动效（强制）」off→on；结束已恢复 **auto / off**（`speak-policy-auto-restored.png`、`reduce-motion-final2.png`）。**一次误操作如实记录**：11:59 恢复减少动效时沿用「标签之后第一枚开关」配对，但标签不在当前屏上、脚本仍取了屏上第一枚开关，把「能力开关 · 车辆控制」从开切成了关（`reduce-motion-final.png`）；12:05 按标签重新定位切回开（`vehicle-control-restored.png`，13 枚能力开关全开）。规则补一条：标签没在屏上就不许配对开关 |
+| 收尾 | HOME + `force-stop`，进程不存在；系统设置未动 |
+
+首轮取证暴露两条形态问题，修在 `1c6780744be22151b04ef606eca961bbad060c26`（本地 72 suites / 739 tests、tsc 通过；`orbPolicy.test.ts` 新增两条）：
+
+1. 设置 / 车辆页滚到底时光球压住最后一行开关 / 链接的右半边（`idle-settings.png` 的「保持屏幕常亮」开关、`settings-scroll-2.png` 的「材质 spike」链接）→ 两页滚动内容 `paddingBottom += PRESENCE_LANE_DP`（72dp），最后一行可以滚到光球上方；中途行仍会被 FAB 短暂遮住，这是 FAB 惯例，不是缺陷。
+2. 闲置光球常驻呼吸动画让支持页 uiautomator 永不 idle（`ERROR: could not get idle state`，只能先开「减少动效（强制）」才能 dump）→ `orbPolicy.presenceOrbTempo`：idle / armed / muted 静帧，听 / 想 / 说 / 等确认 / 看一眼才动。FAB 不是主角，每个支持页常驻一份循环动画既没信息也吃 G5 预算。
+
+**复验包 `1c6780744`（OPPO，2026-09-09）**：12:10:18–12:33:03，Gradle **21m9s**、1222 tasks（731 executed / 491 from cache）、exit 0，参数与签名同首轮；`assets/app.config` build=1c6780744。APK `D:\Android\builds\apk\xiaozhou-companion-prod-release-1c6780744-20260909-1233.apk`，210,706,038 bytes，SHA-256 `0ebcee33d2f1a279278982494c5c8474f58c79d54c379afb73885a2246169cfd`；12:33:45 原地安装，非 DEBUGGABLE，设备 `base.apk` 哈希相同。
+
+- 余量：`b2-vehicle-bottom.png` 最后一行「雨刷」与页脚「车况镜像 · 与座舱实时同步」都在光球上方；`b2-settings-bottom-2.png` 滚到底后构建行 `v0.1.0 · prod · 1c6780744 · 2026-09-09 12:11` 的 bounds y=1671–1735、光球 `[823,1763][955,1895]`，零重叠（同一帧 dump 读数）。
+- 静帧：闲置的设置 / 车辆页 `uiautomator dump` 直接成功，不再需要先开「减少动效（强制）」；地图页 `b2-map.png` 光球仍在信息条上方。
+- 本轮没有改任何 App 设置；HOME + `force-stop`，进程不存在。未在复验包上重做播报 / 停播态——判据未变，那组证据仍绑定首轮包 `de2a556`。
+
+**状态：支持页常驻两栏已撤；浮动在场在 OPPO 两个包上取到闲置 / 思考 / 播报 / 一步停播 / 余量 / 静帧证据。** Xiaomi 对照未做；对话页提醒出口与记录同时呈现同一条内容的形态未改（第十二节既有裁决）；AR04 其余未签收项（服务端多 operationId 实机组合、Planner 技术失败降级）不变。

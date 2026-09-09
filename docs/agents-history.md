@@ -8752,3 +8752,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - delivery `3cf096f8d48f42d895feb0f2ca3d317f`：真正 Keyguard 锁屏以及亮屏仍未解锁时，三次账本查询保持 dispatched/presented_at=0；解锁后实际文字/卡片可见才 ACK。客户端人为锁屏等待 194344ms，解锁后只增加一次播放，本地收起后重入不重播。最终 mic/ASR/S2S/视觉上传=0，记录为 1 fired / 0 pending / 1 presented，未删除、完成或延后，也未碰前轮五条。
 - App 临时 always/减少动效已恢复 auto/false，HF 始终关闭；测试 App/输入工具已退出，未改系统设置。本轮授权动作全部完成，标题污染和真实 Keyguard 提醒格关闭；服务端多 operationId 实机组合及 Planner 技术失败降级策略仍未闭合，不宣称整批或 QA 全绿。
 - 当前证据入口 [AR04 第十四节](design/2026-09-08-ar04-presentation-ack-implementation.md)，原始文件在 `%LOCALAPPDATA%\car-agent\artifacts\AR04-release-20260909`，汇总 `lockscreen-summary.json`，部署/status/verify、锁屏截图、客户端时间与服务端 payload 分开保留。
+
+
+## 2026-09-09 — AR04 支持页形态修正：常驻两栏改为浮动在场
+
+- 用户评审第十四节结果，判定设置 / 车辆 / 地图页底部常驻两栏（状态行 + 按钮行）破坏页面设计，并授权 commit/push。评审结论：它与胶囊「一次只说一件此刻的事」、采集点「没在采集就不渲染」、「助手是层」三条既有判据相悖；AR04 合同要求的四件事（采集事实可见 / 一步停播 / 层入口 / 待办与提醒可达）没有一件需要常驻栏。
+- `de2a556`：`AssistantPresence` 浮动在场（右下角光球 + 条件出现的采集点 / 状态胶囊 / 停播·打断键）；`AssistantSurface` 只在有承诺面或提醒时占布局空间；`captureSummary` / `focusDockVisible` / `pickProactiveMessage` 收敛为唯一判据；`bottomChrome` 按路由上报地图信息条高度；`PresenceCapsule` 加 `solid`。mobile 72 suites / 737 tests、tsc 通过；三处变异各自判红后按字节恢复。
+- OPPO 首轮包 `de2a5564c`（Gradle 27m19s，哈希两端一致）：闲置三页只剩光球；打字故事请求后进设置页取到「正在思考… / 打断」（+3.2s）与「播报中 / 停止播报」（+9.7s、+18.3s）；点停止后 1.2s 只剩闲置光球，playback starts=1 / stops=1，mic / ASR / S2S / 视觉 0。临时 always / 减少动效已恢复 auto / off。恢复减少动效时一次误配对（标签不在屏上仍取了第一枚开关）把「车辆控制」能力开关切关，6 分钟后按标签定位切回，已如实记录。
+- 首轮暴露两条修在 `1c67807`：设置 / 车辆滚动内容 paddingBottom 加 72dp 余量；闲置光球静帧（`orbPolicy.presenceOrbTempo`），支持页 uiautomator 重新可 idle。mobile 72 / 739、tsc 通过。复验包 `1c6780744`（21m9s，哈希两端一致）：构建行 y=1671–1735 与光球 [823,1763][955,1895] 零重叠、车辆页页脚在光球上方、闲置 dump 直接成功。
+- 生产未动（仍 `573ad46`）；App 已退出、无进程；证据目录 `%LOCALAPPDATA%\car-agent\artifacts\AR04-presence-20260909` 与 `…-b2`。AGENTS / mobile README / 分批页 / 设计索引入口改为 [AR04 第十五节](design/2026-09-08-ar04-presentation-ack-implementation.md)；Xiaomi 对照、服务端多 operationId、Planner 降级仍未做，不宣称 AR04 整批签收。
