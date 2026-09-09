@@ -23,7 +23,8 @@ import nlu as edge_nlu          # M5 P3 端侧语义 NLU（默认 shadow：只�
 from val import VAL
 from edge_agents import edge_execute
 from cloud_client import CloudClient
-from edge_call import EdgeCallExecutor, action_to_structured, action_type_for
+from capability_meta import risk_of
+from edge_call import EdgeCallExecutor, action_to_structured, action_type_for, decode_intent
 import scope_gate                  # AR05 F07：本地执行出口的授权闸（复用云侧同一判据）
 from capabilities import build_edge_manifests
 from runtime import issues as issue_contract   # AR05：结构化问题的跨服务唯一声明
@@ -644,6 +645,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             async for event in self._handle_impl(request, context, turn):
                 event = self._stamp_driving(event)  # B5 缺陷 C：过程区 + 终态在唯一出口标行车态
                 event = self._stamp_issues(event, turn, request)  # AR05：结构化问题同一出口
+                event = self._stamp_confirm_policy(event)  # AR05：按 VAL 受控知识纠正风险档
                 which = event.WhichOneof("event")
                 if which == "final":
                     f = event.final
@@ -1159,6 +1161,53 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     final.actions.append(action)
                     logger.info("CLOUD-DEGRADED-LOCAL %s -> %s", obj, speech)
                     yield orchestrator_pb2.HandleEvent(final=final)
+
+    def _stamp_confirm_policy(self, event):
+        """按端侧 **VAL 受控知识**纠正确认策略的风险档与可用渠道（AR05 §4.1）。
+
+        为什么必须在端侧盖：B1 之后「危险与否」的唯一权威是 VAL 的
+        `commands.yaml`（`require_confirm` / `voice_forbidden`），端侧 capability
+        manifest 不再声明它 ⇒ 云侧 `Step.require_confirm` 恒 False，只能诚实地记
+        `agent_requested` + medium。真栈实测（release `00d1925`，trace 会话
+        `ar05-probe-3d3c0928`）：「打开后备箱」拿到 `risk=medium`，而 `trunk` 在
+        VAL 里 `require_confirm: true` ——**契约报了比实际低的一档**，客户端据此
+        会把 CLAUDE.md §5 的危险动作显示成普通确认。
+
+        与 `driving` 同一形态：**端侧在出口盖，云端填的值无权威**。两条纪律：
+
+        1. **只提升不降低**——云侧说 high 时端侧不得改低。VAL 说 low 不代表安全，
+           它只是没在这份知识里被标危险；
+        2. `voice_forbidden` 的对象**去掉 voice 渠道**——那是既有禁令，不能因为
+           用户在 App 上点了按钮就放宽。
+        """
+        if event.WhichOneof("event") != "final":
+            return event
+        final = event.final
+        if not final.HasField("confirm_policy"):
+            return event
+        policy = final.confirm_policy
+        intent = policy.target_intent
+        if not intent:
+            return event
+        objects = (self.val.commands or {}).get("objects") or {}
+        structured = decode_intent(intent, known_objects=set(objects) or None)
+        obj = ((structured or {}).get("data") or {}).get("object", "")
+        obj_def = objects.get(obj) or {}
+        if not obj_def:
+            return event
+        if risk_of(obj_def) == "high" and policy.risk != "high":
+            logger.info("AR05 risk raised by VAL knowledge: %s %s -> high",
+                        intent, policy.risk or "(empty)")
+            policy.risk = "high"
+            # 风险档被受控知识抬高时，原因也要说实话：这是声明出来的危险动作，
+            # 不是 Agent 临时要求确认。
+            if obj_def.get("require_confirm"):
+                policy.reason_code = "require_confirm"
+        if obj_def.get("voice_forbidden"):
+            kept = [c for c in policy.allowed_channels if c != "voice"]
+            del policy.allowed_channels[:]
+            policy.allowed_channels.extend(kept)
+        return event
 
     @staticmethod
     def _stamp_issues(event, turn: dict, request):

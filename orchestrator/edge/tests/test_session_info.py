@@ -143,3 +143,76 @@ def test_contract_version_is_declared_once_for_both_sides():
     from orchestrator.cloud.server import CONTRACT_VERSION
 
     assert CONTRACT_VERSION is AR05_CONTRACT_VERSION
+
+
+# ─── 确认策略的风险档由端侧 VAL 受控知识纠正（AR05 §4.1）────────────────────
+#
+# 真栈实测（release `00d1925`）：「打开后备箱」的 confirm_policy 拿到 risk=medium /
+# reason_code=agent_requested，而 `trunk` 在 VAL 的 commands.yaml 里 require_confirm=true。
+# 云侧看不到那份知识（B1 后确认闸下沉 VAL、capability 不再声明），只能诚实记
+# agent_requested；**端侧在出口盖**才是这条判据该住的地方（同 driving 的先例）。
+
+from cockpit.orchestrator.v1 import orchestrator_pb2 as _pb
+
+
+def _policy_event(intent: str, risk: str = "medium", channels=("touch", "text", "voice")):
+    final = _pb.FinalResult(speech="要打开吗？", need_confirm=True, operation_id="op-1")
+    final.confirm_policy.CopyFrom(_pb.ConfirmPolicy(
+        operation_id="op-1", risk=risk, allowed_channels=list(channels),
+        action_summary=intent, object_summary=intent.split(".")[0],
+        reason_code="agent_requested", target_intent=intent))
+    return _pb.HandleEvent(final=final)
+
+
+def test_val_declared_danger_raises_the_risk_and_names_the_real_reason():
+    srv = EdgeOrchestratorServicer()
+
+    out = srv._stamp_confirm_policy(_policy_event("trunk.open"))
+
+    policy = out.final.confirm_policy
+    assert policy.risk == "high", "VAL 声明 require_confirm 的对象不能报 medium"
+    assert policy.reason_code == "require_confirm", "原因要说实话：这是受控声明的危险动作"
+
+
+def test_edge_never_lowers_a_risk_the_cloud_already_raised():
+    """只提升不降低：VAL 说 low 只意味着「没在这份知识里被标危险」，不等于安全。"""
+    srv = EdgeOrchestratorServicer()
+
+    out = srv._stamp_confirm_policy(_policy_event("window.open", risk="high"))
+
+    assert out.final.confirm_policy.risk == "high"
+
+
+def test_non_dangerous_object_keeps_the_cloud_value():
+    srv = EdgeOrchestratorServicer()
+    out = srv._stamp_confirm_policy(_policy_event("window.open"))
+    assert out.final.confirm_policy.risk == "medium"
+    assert out.final.confirm_policy.reason_code == "agent_requested"
+
+
+def test_unknown_or_missing_target_intent_changes_nothing():
+    srv = EdgeOrchestratorServicer()
+    assert srv._stamp_confirm_policy(
+        _policy_event("nothing.likethis")).final.confirm_policy.risk == "medium"
+    blank = _policy_event("trunk.open")
+    blank.final.confirm_policy.target_intent = ""
+    assert srv._stamp_confirm_policy(blank).final.confirm_policy.risk == "medium"
+
+
+def test_turn_without_a_confirm_policy_is_untouched():
+    srv = EdgeOrchestratorServicer()
+    plain = _pb.HandleEvent(final=_pb.FinalResult(speech="晴。"))
+    out = srv._stamp_confirm_policy(plain)
+    assert out.final.HasField("confirm_policy") is False
+
+
+def test_voice_forbidden_objects_lose_the_voice_channel(monkeypatch):
+    """既有禁令不因用户在 App 上点了按钮而放宽。"""
+    srv = EdgeOrchestratorServicer()
+    objects = (srv.val.commands or {}).get("objects") or {}
+    assert "trunk" in objects
+    monkeypatch.setitem(objects["trunk"], "voice_forbidden", True)
+
+    out = srv._stamp_confirm_policy(_policy_event("trunk.open"))
+
+    assert list(out.final.confirm_policy.allowed_channels) == ["touch", "text"]
