@@ -1,6 +1,6 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.50（当前架构基线；版本规则见文末「附录 C：版本记录」）
+> 版本：v1.51（当前架构基线；版本规则见文末「附录 C：版本记录」）
 > 日期：2026-09-05（v1.50 闭合真实手册生成故障降级与整本生产验证）
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
@@ -2039,6 +2039,7 @@ agents/<name>/
 
 | 版本 | 日期 | 内容 |
 |---|---|---|
+| v1.51 | 2026-09-09 | 内容性合入（AR05 结构化契约与能力摘要）：把「用户能不能知道自己在确认什么、还缺什么、为什么不能继续、这个账号究竟能做什么」从**客户端猜**变成**服务端事实**。四份合同 `ConfirmPolicy` / `SlotRequest` / `Issue` / `session_info`（`GET /api/session`，只读、零业务副作用、不回传凭证）加 `held_operation_ids`，proto 只做可兼容增量，旧客户端行为逐字不变。三条结构性判据：① **端云同一个键，一侧可能从来没读过**——`meta.granted_scopes` 云侧 dispatch 一直在硬拒，端侧 T0 的四个本地执行出口加云端回流分发一个都没读，token 只授 `location.read` 时「打开车窗」照样开了车窗；解析与 fail-open 兜底收敛 `security/session_scopes.py`，判定仍走唯一决策 `check_permission`，需要哪个 scope 由端侧 manifest 声明回答。② **危险与否的权威在 VAL，端侧在出口纠正、只提升不降低**——B1 后 capability 不再声明 `require_confirm` ⇒ 云侧只能记 `agent_requested`/medium，真栈实测「打开后备箱」因此报低一档；端侧按 `capability_meta.risk_of` 抬到 high 并改 `reason_code`，同 `driving` 的「端侧盖、云端填的值无权威」。③ **「此刻查不到」与「你没有这个能力」必须有字段能区分**——`summary_status=partial` 与能力三态（unauthorized / unavailable / unknown）缺一不可，云侧看不见车辆通道在不在故 edge 能力恒 unknown、由端侧覆盖。另：`registry._dict_to_manifest` 第三次丢字段（`slot_shapes`/`whole_utterance`/`RouteHint.scope`）后改为 proto descriptor 逐字段对账；规划技术失败不再伪装成成功闲聊。发布 `d425b9c`，5/5 status + verify verified，真栈四份合同均由真实生产函数产出。契约 `conventions.md` §9.42。 |
 | v1.50 | 2026-09-05 | 内容性合入（真实手册整本生产闭合）：0.3.2发布后，三字caption稳定缺口归零，但真栈扩大面抓到4次`manual.query`已正确落域后由LLM RuntimeError冒出裸“Agent内部错误”。0.3.3在manual Agent内只对非配额/参数/鉴权类RuntimeError做一次有界重试；仍失败不丢已核验检索结果，返回真实PDF卡与诚实降级话术，ValueError等编程异常继续显式失败。精确release`9a3b6f2f`通过5/5 status、统一verify、代码全量7861/34/5；独立章节187/187、视觉35/35，雨刮/“背宝剑”各3/3，所有正式轮零action/确认/probe error、车态diff={}。检索包与BM25不变，无向量库迁移依据。契约`conventions.md` §9.41，证据见整本验证计划。 |
 | v1.49 | 2026-09-04 | 内容性合入（真实手册整本覆盖验证候选）：把“全量”从36题测试集校准为六个独立分母——278源页、269文本页、160合并索引路径、187 PDF outline原子叶子、35受控视觉语义、原36自然问法；源PDF重建必须与`.mrag`文本/视觉/blob逐字一致，页锚/目录题不与自然问法混算准确率。真栈探针先过question-shape+FastIntent None，action/确认/任一完整车态差异均停批；生产`434a046`实测章节首轮177/187、视觉28/35，5个三字caption 0/3，证明36/36不等于整本全绿且问题在落域/视觉选择而非BM25。候选只增加显式“SU7手册+主题+问号”Agent自声明hint，以及三字caption仅在视觉语境消费的窄规则；不改编排核心、不换向量库、不改`.mrag`。契约`conventions.md` §9.41，证据见2026-09-04全覆盖计划。 |
 | v1.48 | 2026-09-03 | 内容性合入（真实手册 RAG v2）：把验收面从“检索器命中文本”扩到用户端完整链路。共享 `question_shape` 以零领域句形阻止无标点“对象怎么打开”误执行，`manual-help-boundary` PlanningGuide 与 manual exemplars 负责模型原生泛化，Agent manifest 只对生产复现的操作方法/仪表灯两族保留窄 route hint；三层分别承担安全、泛化和 canonical 保险。索引仍兼容 v1 文本 bundle，新增 deterministic `.mrag` 私有 ZIP，绑定视觉 manifest 与逐图片 blob SHA；警告灯按物理页和视觉顺序匹配人审 caption/俗称，未知描述零近似，命中说明可确定性转述。卡片最多返回两张、仅 PNG/JPEG、单图/总量有硬帽，图片不进 LLM prompt；HMI 与 Android 共用 URI 守卫并新增 manual 图文证据卡。源 PDF/图不入 Git，不支持的 LZW/超大 Flate 显式记 skipped；真实照片仍走 vision，不扩大采集面。契约 `conventions.md` §9.41。 |

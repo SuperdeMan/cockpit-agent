@@ -2637,3 +2637,68 @@ outline原子叶子、350个视觉放置/299个blob/17个skipped、35个受控�
 自然问法集。正文原句页锚只能证明可达，目录标题只能证明范围，不得与自然问法混算“准确率”。
 真栈问法必须先过 question-shape + FastIntent None；action、need_confirm、任一完整车态差异都
 立即停批，不得因为动作恰好幂等而算安全。
+
+### 9.42 结构化契约：确认策略 / 补槽请求 / 结构化问题 / 会话与能力摘要（AR05，2026-09-09）
+
+**问题**：客户端此前只能从话术里猜。确认条不知道自己在确认什么、什么时候过期（本地
+`PENDING_TTL_MS` 一律 300s，服务端说 60s 也照挂 300s）；补槽在协议里根本没有表达面；
+拒绝与降级只有一句话，没有 code、没有归属、没有恢复出口；身份靠 `token.slice(-4)`，
+「能不能控车」靠设备角色**推断**。四份合同就是把这四件事从猜变成服务端事实。
+
+字段全表见 [AR05 实施方案 §11](design/2026-09-09-ar05-structured-contracts-implementation-plan.md)；
+本节只钉**不变量**。
+
+| 合同 | 载体 | 仅在何时非空 |
+|---|---|---|
+| `ConfirmPolicy` | `FinalResult.confirm_policy` | `need_confirm` 轮 |
+| `SlotRequest` | `FinalResult.slot_request` | 待补槽轮 |
+| `Issue` | `FinalResult.issues`（可多条） | 本轮真的出了问题时 |
+| `session_info` | `GET /api/session`（edge-gateway） | 只读查询，零业务副作用 |
+
+另有 `FinalResult.held_operation_ids`：用户换了话题、**这些挂起仍然有效**。客户端据此把
+对应补槽标「已搁置」——撤下当前追问、不再抢占这一问，但它还在待处理列表里可以被选回来。
+**必须由服务端说**：客户端猜「用户是不是换话题了」猜早了撤掉进行中的追问、猜晚了让旧追问
+一直抢占屏幕，两个方向都很贵。
+
+**十条不变量**
+
+1. **截止时刻是服务端权威，客户端只读不续期。** `expires_at_ms` 取 SessionStore 落盘后的
+   绝对时刻；客户端可以用 `server_now_ms` 算钟差纠正设备表，但**不得加时间**——续期发生在
+   客户端就等于挂起窗口被无声延长。`0 = 未知` → 回落既有 TTL。
+2. **风险档的唯一权威是 VAL 受控知识，端侧在出口纠正，只提升不降低。** B1 之后
+   `require_confirm` 下沉 VAL、端侧 capability 不再声明它 ⇒ 云侧 `Step.require_confirm`
+   恒 False，只能诚实记 `agent_requested`/medium。端侧 `Handle` 出口按
+   `capability_meta.risk_of` 抬到 `high` 并改 `reason_code=require_confirm`
+   （同 `driving` 的形态：**端侧盖，云端填的值无权威**）。VAL 说 low 只意味着「没在这份
+   知识里被标危险」，不等于安全，所以**不许下调**。`voice_forbidden` 的对象去掉 voice 渠道
+   ——既有禁令不因用户在 App 上点了按钮而放宽。
+3. **未知枚举不许落到「按最宽松处理」。** 风险档认不出 ⇒ 客户端停止该确认、只留取消与
+   重新发起；服务端没给风险档 ⇒ 按 high；完整摘要里没出现的能力 ⇒ 按不可用。
+4. **四种「没有值」语义各自独立**：字段缺失＝旧服务端（回落既有流程）；字段在值为空＝服务端
+   说「这一项我没有」；未知枚举＝显示文案不猜语义；空数组＝明确的「一个都没有」。解析判据
+   在共享层 `hmi/src/contracts.mjs` **只留一份**——两端各判一次必然分叉。
+5. **建议值只能来自本次真实 Agent 结果/候选集**，判据复用「用户看得见的选择卡」那一条
+   （`context._is_choice_card`）。没有建议值就给自由输入，**不造可点的假选项**。
+6. **契约里的受控 kind ≠ 客户端已实现的 kind。** 前者回答「服务端可以说哪些」，后者回答
+   「点下去真的会发生事」。只渲染后者；拿前者渲染就长出一批点了没反应的入口。
+   恢复动作**只认受控 kind**，绝不执行服务端下发的任意 URL、脚本或命令。
+7. **业务 scope 不足绝不指向系统权限页。** `permission.scope_missing` 的恢复出口是能力/连接
+   配置；`device.permission_denied` 才去系统设置。导错地方的代价是用户在系统设置里反复开
+   麦克风也修不好。
+8. **一轮可以既有成功动作又有失败问题**，`issues` 保留 `request_id`/`operation_id` 归属，
+   **不得把已执行的部分改写成「未执行」**。
+9. **`session_info` 的三种「不能用」必须分得开**：`unauthorized`（缺 scope）/
+   `unavailable`（不在线）/ `unknown`（依赖不可核实）。云侧看得见 edge Agent 的注册记录却
+   看不见那辆车的通道此刻在不在，故 edge 能力一律 `unknown`，由端侧用自己的事实覆盖。
+   `summary_status=partial` 是必需的一位：**没有它就没法区分「云端此刻查不到」和「你没有
+   这些能力」**，而两者的正确处置完全相反。客户端侧同理——401 明确拒绝 / 404 旧服务端 /
+   超时未知，混成一种时超时会被判成 token 失效，用户在信号差的地方反复重配正确配置。
+10. **摘要不回传凭证**：响应与日志都不含 token（`GET /api/session` 支持
+    `Authorization: Bearer`，凭证不必写进会进访问日志的 URL）。`authorization_source`
+    如实区分 `token` / `poc_default` / `fail_closed`——**PoC 默认放行与明确授权不是一回事**。
+
+**端云授权同源**（本批的前置修复）：`meta.granted_scopes` 的解析与 `PERMISSIONS_FAIL_OPEN`
+兜底收敛到 `security/session_scopes.py`，端侧 T0 的每一个执行出口都过
+`security.permission.check_permission`。此前云侧一直在按这个键硬拒、**端侧四个本地执行出口
+一个都没读**：token 只授 `location.read` 时「打开车窗」照样把车窗打开了。需要哪个 scope 由
+端侧 manifest 的 `edge_intents × requires_permissions` 回答，新增端侧车控能力不必回头改闸。
