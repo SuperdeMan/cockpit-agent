@@ -21,7 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
-| [2026-09-09-ar05-structured-contracts-implementation-plan.md](2026-09-09-ar05-structured-contracts-implementation-plan.md) | AR05：结构化确认/补槽、拒绝与降级恢复、真实身份与能力摘要；含 T0 权限及 Registry 恢复前置反例 | 进行中：步骤 0–5 已实施（T0 授权闸、Registry 逐字段往返、四份契约生产与端云贯通、F09 技术失败窄修复、会话摘要只读查询、Android 消费面；五次反向验证均判红后按字节恢复）；**网关 Go 改动本机无工具链未编译**，步骤 6 真机与部署未做，未签收 |
+| [2026-09-09-ar05-structured-contracts-implementation-plan.md](2026-09-09-ar05-structured-contracts-implementation-plan.md) | AR05：结构化确认/补槽、拒绝与降级恢复、真实身份与能力摘要；含 T0 权限及 Registry 恢复前置反例 | 进行中：步骤 0–5 已实施（T0 授权闸、Registry 逐字段往返、四份契约生产与端云贯通、F09 技术失败窄修复、会话摘要只读查询、Android 消费面；五次反向验证均判红后按字节恢复）；网关 `go build`/`vet`/`go test ./gateway/...` 已跑绿并补了 7 条 `/api/session` 用例（授权权威变异 3 红）；步骤 6 真机与部署未做，未签收 |
 | [2026-09-08-ar04-presentation-ack-implementation.md](2026-09-08-ar04-presentation-ack-implementation.md) | AR04：应用内跨页语音范围、ChatBody/宿主迁移边界、前后台撤回、真实呈现 ACK 与重试 | 代码 `1c67807`：2026-09-09 用户评审后支持页常驻两栏改为浮动在场，OPPO 首轮包 `de2a556` 证据已取、复验见第十五节；生产仍 `573ad46`，发布与真锁屏提醒、标题修复已验证；服务端多操作等仍未签收 |
 | [2026-09-08-ar03-stop-playback-landscape-implementation.md](2026-09-08-ar03-stop-playback-landscape-implementation.md) | AR03：播放事实唯一声明源、停播/取消/停后开麦三条命令分开、横屏语音层覆盖域收边 | 客户端与共享 FSM 修复、本地回归与变异验证完成；OPPO 测试机取得 R06 同题 A/B 与层内停止键证据、Xiaomi 对照机取得 R09 横屏结构与功能证据（当批两机验证包 `b5c471832`）；多段段链 / S2S 自答 / 主动消息 / 系统 200% 字号 / 盲听未验，**未整批签收** |
 | [2026-09-07-ar02-capture-privacy-implementation.md](2026-09-07-ar02-capture-privacy-implementation.md) | AR02：prod 诊断门控、原生内存单帧、采集事实与全链取消 | 客户端修复与定向验证完成、已推送 main；OPPO 包 70365389e，656 tests/tsc 通过；旧缓存已于 2026-09-08 授权清除；完整设备矩阵未完成，未整批签收 |

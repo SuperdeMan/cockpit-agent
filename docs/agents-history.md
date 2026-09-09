@@ -8798,11 +8798,16 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - **本地读数**：全量固定口径 8202 passed / 32 skipped / **1 failed**——那条
   `test_release_status_docs_record_deployed_non_green_checkpoint` 在接手起点 `4278a52` 上同样红
   （AGENTS 的 manual-rag 证据 SHA 被简写成短 SHA、QA 交接页的全量口径与 RPM 原串被缩写），
-  本轮按证据纪律补回全 40 位与完整表述，复跑 185 passed / 1 skipped。之后
-  orchestrator+security+registry+scripts 3701 passed、mobile 792 passed + tsc 0、
+  本轮按证据纪律补回全 40 位与完整表述，**同口径复跑 8205 passed / 32 skipped / 0 failed**。
+  另有 orchestrator+security+registry+scripts 3701 passed、mobile 792 passed + tsc 0、
   hmi 333 passed + build 成功、四道门禁与 smoke edge 全 PASS。
+- **网关补验**（用户授权后装了 Go 1.27.0）：`go build` / `go vet` / `go test ./gateway/...`
+  四包全绿；新增 `gateway/edge/session_info_test.go` 7 条——token 权威覆写客户端伪造 scope、
+  Bearer 头认证（凭证不进 URL）、响应与日志不含 token、`AUTH_REQUIRED` 才 401 而默认仍匿名放行、
+  后端不可达回 503 且**不编造摘要**、契约字段逐个透传、非 GET 405。把 `stampScopes` 换成
+  信客户端查询串 ⇒ 3 条转红，按字节恢复。
 - **五次反向验证**都判红后按字节恢复：停用 T0 闸 8 红 / 删 registry 还原字段 2 红 /
   停用确认策略 3 红 / 停用 F09 分支 2 红 / 无声分档恒判失败 2 红。
-- **未做**：`go build` 与 `go test ./gateway/...` 本机无 Go 工具链未跑（网关三处改动只做了
-  生成物字段名比对，是当前最大的未验证面）；步骤 6 的固定 prod release、OPPO 取证、后端发布
-  与真栈业务证据全部未做；V01–V12 只在离线单测层面覆盖。AR05 未签收。
+- **未做**：步骤 6 的固定 prod release、OPPO 取证、后端发布与真栈业务证据全部未做；
+  V01–V12 只在离线单测层面覆盖；补槽的中文名声明面（manifest）尚未加，客户端回落显示槽机器名；
+  `replay_audio` 恢复动作契约里有、客户端未实现故不渲染入口。AR05 未签收。

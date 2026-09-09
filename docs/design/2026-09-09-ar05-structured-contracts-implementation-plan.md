@@ -497,19 +497,27 @@ F05 播报无声按成因分档（合成失败 / 被打断 / 纯卡片轮），�
 
 | 命令 | 结果 |
 |---|---|
-| `pytest -q -n 8 --dist worksteal`（全量固定口径，TZ=UTC0） | 8202 passed / 32 skipped / **1 failed** → 该条是接手前既有的文档证据漂移（`4278a52` 上同样红），已修 |
-| 修后 `pytest -q scripts/tests/test_cloud_deploy_assets.py` | 185 passed / 1 skipped |
+| `pytest -q -n 8 --dist worksteal`（全量固定口径，TZ=UTC0，修文档证据前） | 8202 passed / 32 skipped / **1 failed** → 该条是接手前既有的文档证据漂移（`4278a52` 上同样红） |
+| 同口径复跑（修后，7:50） | **8205 passed / 32 skipped / 0 failed** |
 | `pytest -q -n 8 orchestrator/ security/ registry/ scripts/tests` | 3701 passed / 12 skipped |
 | mobile `tsc --noEmit` + jest | exit 0；792 passed（75 suites） |
 | hmi `npm test` + `npm run build` | 333 passed；build 成功 |
 | 四道门禁 + `smoke_edge` | 全 PASS |
 | 反向验证 | 停用 T0 闸→8 红；删 registry 还原字段→2 红；停用确认策略→3 红；停用 F09→2 红；无声分档恒判失败→2 红。五次都按字节恢复 |
 
+**网关（2026-09-09 补跑，Go 1.27.0 windows/amd64）**
+
+| 命令 | 结果 |
+|---|---|
+| `go build ./gateway/...` | exit 0 |
+| `go vet ./gateway/...` | exit 0 |
+| `go test ./gateway/...` | cloud / deployprofile / edge / tlscfg 四包全 ok |
+| 新增 `gateway/edge/session_info_test.go` | 7 passed：token 权威覆写客户端伪造 scope、Bearer 头认证（凭证不进 URL）、响应与日志不含 token、`AUTH_REQUIRED` 才 401 而默认仍匿名放行、后端不可达回 503 且不编造摘要、契约字段逐个透传、非 GET 405 |
+| 反向验证 | 把 `stampScopes` 换成信客户端查询串 → 3 条转红，按字节恢复 |
+
 **未做（AR05 仍未签收）**
 
-1. **`go build` / `go test ./gateway/...` 未跑**：本机没有 Go 工具链，Docker 未运行。
-   网关三处改动只做了生成物字段名逐条比对。**这是当前最大的未验证面。**
-2. 步骤 6 全部：固定 prod release 构建、OPPO 取证、后端发布与真栈业务证据。
+1. 步骤 6 全部：固定 prod release 构建、OPPO 取证、后端发布与真栈业务证据。
 3. V01–V12 只在离线单测层面覆盖；真实多 operationId 实机组合、真实权限矩阵、
    ASR/S2S 回退与 TTS 真机盲听均未做。
 4. 补槽的中文名 `display_name` 目前恒空（manifest 还没有这个声明面），客户端回落显示槽机器名。
