@@ -6,6 +6,7 @@ import { ScrollView, Text, View } from 'react-native'
 
 import { stageMetrics } from '@shared/vehicleStage.mjs'
 
+import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
 import type { Palette } from '../../ui/theme'
 
 const KEY_LABEL: Record<string, string> = {
@@ -145,7 +146,7 @@ export function VehicleSection({ p, vehState }: { p: Palette; vehState: Record<s
 export function VehiclePanel({ p, vehState }: { p: Palette; vehState: Record<string, unknown> }) {
   const empty = !Object.keys(vehState).length
   return (
-    <ScrollView contentContainerStyle={{ padding: 14, gap: 10 }}>
+    <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 14 + PRESENCE_LANE_DP, gap: 10 }}>
       <VehicleMetrics p={p} vehState={vehState} />
       {empty ? (
         <Text style={{ color: p.fg3, fontSize: p.font(13) }}>

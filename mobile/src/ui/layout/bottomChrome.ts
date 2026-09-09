@@ -5,6 +5,11 @@
 // 设置页不该被它的信息条顶高。零 RN import，jest 直接跑。
 import { useSyncExternalStore } from 'react'
 
+/** 支持页滚动内容给浮动在场留的底部余量（dp）：光球热区 48 + 上下各 12。设置 / 车辆页的滚动容器把它加进
+ *  `contentContainerStyle.paddingBottom`——FAB 惯例：内容可以滚到光球上方，最后一行不被它永久压住
+ *  （OPPO 首轮截图里光球压住了滚到底时那一行开关的右半边）。 */
+export const PRESENCE_LANE_DP = 72
+
 const heights = new Map<string, number>()
 const listeners = new Set<() => void>()
 

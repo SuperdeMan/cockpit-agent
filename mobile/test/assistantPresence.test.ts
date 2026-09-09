@@ -69,6 +69,7 @@ import { setAudioPlaybackFact } from '@/core/voice/playbackFacts'
 import { speechController } from '@/core/voice/speech'
 import { AssistantProvider, useAssistant, type AssistantRuntime } from '@/features/assistant/AssistantProvider'
 import { AssistantSurface, CrossPageVoiceLayer } from '@/features/assistant/AssistantSurface'
+import { AuroraOrb } from '@/ui/aurora'
 import { reportBottomChrome } from '@/ui/layout/bottomChrome'
 
 let runtime: AssistantRuntime | null
@@ -129,6 +130,8 @@ test('支持页闲置：只有一颗光球，没有栏、胶囊、动作键、�
     expect(has(view, 'other-page')).toBe(true)
     expect(has(view, 'assistant-presence')).toBe(true)
     expect(press(view, 'assistant-orb')!.props.accessibilityLabel).toBe('小舟，开始说话')
+    // 闲置的 FAB 光球静帧（判据 orbPolicy.presenceOrbTempo）：每个支持页常驻一份呼吸动画既没信息也让 uiautomator 永不 idle
+    expect(view.root.findAllByType(AuroraOrb).map((n) => n.props.animated)).toEqual([false])
     for (const id of ['assistant-surface', 'presence-capsule', 'assistant-action', 'assistant-capture-dot', 'focus-dock']) {
       expect({ id, present: has(view, id) }).toEqual({ id, present: false })
     }
@@ -226,6 +229,7 @@ test('思考中轻点光球 = 展开语音层（同 Composer 光球契约）', a
   try {
     await act(async () => { mockCore.send('今天天气') })
     expect(runtime!.snapshot.agent).toBe('thinking')
+    expect(view.root.findAllByType(AuroraOrb).map((n) => n.props.animated)).toEqual([true]) // 思考中才动
     await act(async () => { press(view, 'assistant-orb')!.props.onPress() })
     expect(runtime!.snapshot.input).toBe('voice-sheet')
     expect(has(view, 'voice-sheet')).toBe(true)

@@ -23,6 +23,7 @@ import {
 } from '../../core/voice/catalog'
 import { handsFreeAvailability } from '../../core/voice/handsFree'
 import { speechController } from '../../core/voice/speech'
+import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
 import { usePalette, type Palette } from '../../ui/theme'
 import { S2sConsentSheet } from './S2sConsentSheet'
 import type { TtsProviderInfo } from '@shared/types.ts'
@@ -167,7 +168,7 @@ export function SettingsScreen() {
   return (
     // Modal 与 ScrollView 并列：同意页要盖住整屏，塞进 ScrollView 里会跟着滚
     <View style={{ flex: 1, backgroundColor: p.bg }}>
-    <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ padding: 14, gap: 16 }}>
+    <ScrollView style={{ backgroundColor: p.bg }} contentContainerStyle={{ padding: 14, paddingBottom: 14 + PRESENCE_LANE_DP, gap: 16 }}>
       <Section p={p} title="服务器">
         <Text style={{ color: p.fg2, fontSize: p.font(13) }}>
           {server ? server.edgeUrl : '未配置'}

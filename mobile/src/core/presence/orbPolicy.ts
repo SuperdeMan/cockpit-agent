@@ -21,6 +21,15 @@ export function orbTempo(s: Pick<PresenceSnapshot, 'driving'>, env: MotionEnv): 
   return s.driving ? 'slow' : 'loop'
 }
 
+/** 支持页浮动光球的节律（AR04 第十五节）：它是压在设置文字 / 地图上的 FAB，不是对话页的主角——
+ *  闲置 / 待唤醒 / 断开时静帧（省一份循环动画；也让 uiautomator 在支持页能 idle，OPPO 首轮取证时
+ *  常驻呼吸的光球让设置页 dump 一直 `could not get idle state`），只有听 / 想 / 说 / 等确认 / 看一眼
+ *  这些「动起来才有信息」的态跟 orbTempo 走。 */
+export function presenceOrbTempo(s: Pick<PresenceSnapshot, 'driving' | 'primary'>, env: MotionEnv): OrbTempo {
+  if (s.primary === 'idle' || s.primary === 'armed' || s.primary === 'muted') return 'static'
+  return orbTempo(s, env)
+}
+
 export function composerOrbAnimated(s: Pick<PresenceSnapshot, 'input'>, env: MotionEnv = FULL_MOTION): boolean {
   if (env.reduceMotion) return false
   // 层开着：层内大球（VoiceSheet）接管那「1 个」循环动画

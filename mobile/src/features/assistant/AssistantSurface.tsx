@@ -9,7 +9,7 @@ import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { captureSummary } from '@/core/presence/presence'
-import { loopsAnimated, orbTempo } from '@/core/presence/orbPolicy'
+import { loopsAnimated, orbTempo, presenceOrbTempo } from '@/core/presence/orbPolicy'
 import { settingsStore } from '@/core/settings/store'
 import { FocusDock, focusDockVisible } from '@/features/chat/FocusDock'
 import { PresenceCapsule } from '@/features/chat/PresenceCapsule'
@@ -65,7 +65,8 @@ function AssistantPresence({ runtime }: { runtime: AssistantRuntime }) {
   if (snapshot.input === 'voice-sheet') return null
   if (facts.keyboardVisible && !live) return null
   const target = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale)
-  const tempo = orbTempo(snapshot, motionEnv)
+  // 闲置静帧（judgement 在 orbPolicy）：FAB 不是主角，也别让每个支持页都常驻一份循环动画
+  const tempo = presenceOrbTempo(snapshot, motionEnv)
   const captureColor = capture?.tone === 'amber' ? p.amber : capture?.tone === 'camera' ? p.fg1 : p.teal
   const disc = { backgroundColor: p.panel, borderWidth: 1, borderColor: p.glassBdTop, boxShadow: p.glassShadow } as const
   return <View testID="assistant-presence" pointerEvents="box-none"
