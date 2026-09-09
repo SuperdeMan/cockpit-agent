@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import { useStore } from 'zustand'
 
 import { performHaptic } from '@/core/haptics'
-import { actionSummary } from '@/core/session/actionSummary'
+import { actionSummary, commitmentTitle } from '@/core/session/actionSummary'
 import type { SessionCore } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
@@ -153,10 +153,25 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
 
   // pendingOps 的摘要：**紧邻的上一条用户原话**（评审 D1）。带 operationId 的那条助手气泡
   // 对每个危险动作都是同一句通用话，不是摘要。判据在 actionSummary.ts，留痕行也从它取。
+  // AR05：标题优先用服务端从**已验证的挂起步骤**合成的摘要（两条并存时不再逐字相同），
+  // 服务端没给才回落「紧邻的上一条用户原话」。风险档/截止时刻/补槽同理：有就用真的。
   const ops = pendingOps.map((op) => ({
     id: op.id,
     ts: op.ts,
-    summary: actionSummary(messages, op.id) || '待确认的操作',
+    summary: commitmentTitle(messages, op.id, op.policy?.actionSummary ?? '') || '待确认的操作',
+    // 策略在但不可信（风险档认不出）时按 high 处理，不默认放行到低风险档
+    risk: op.policy?.usable && op.policy.risk === 'low' ? ('low' as const) : ('high' as const),
+    expiresAt: op.expiresAtMs && op.expiresAtMs > 0 ? op.expiresAtMs - (op.clockSkewMs || 0) : 0,
+    slot: op.slot
+      ? {
+          missing: op.slot.displayName || op.slot.slot,
+          state: op.slot.state === 'held' ? ('held' as const) : ('active' as const),
+          expiresAt: op.slot.expiresAtMs && op.slot.expiresAtMs > 0
+            ? op.slot.expiresAtMs - (op.clockSkewMs || 0)
+            : 0,
+          suggestions: op.slot.suggestions,
+        }
+      : undefined,
   }))
 
   const input: PresenceInput = {

@@ -4,13 +4,21 @@ Phase 1：使用 PlannerEngine（DAG 编排 + 多轮 + 聚合）。
 """
 from __future__ import annotations
 
+import logging
+import time
+
 from cockpit.orchestrator.v1 import orchestrator_pb2, orchestrator_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from google.protobuf import struct_pb2
 
+from runtime.contract_version import AR05_CONTRACT_VERSION
 from runtime.issues import issues_to_proto
+from security import capability_status
+from security.session_scopes import resolve_granted_scopes
 
 from .engine import PlannerEngine
+
+logger = logging.getLogger("planner.server")
 
 
 def _fill_contracts(final, event: dict) -> None:
@@ -55,9 +63,62 @@ def _to_struct(d: dict) -> struct_pb2.Struct:
     return s
 
 
+#: 契约版本经 `runtime.contract_version` 单一声明（端侧同源）。别名保留供既有引用。
+CONTRACT_VERSION = AR05_CONTRACT_VERSION
+#: 能力摘要有效期（秒）。过期后客户端标未知/待刷新，不得用缓存授权执行。
+_SESSION_INFO_TTL_S = 60
+
+
 class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
     def __init__(self, engine: PlannerEngine):
         self.engine = engine
+
+    async def DescribeSession(self, request, context):
+        """AR05 §6.1：会话身份与能力摘要的**只读**查询。
+
+        零业务副作用：不调 LLM、不写会话历史、不碰挂起表。能力面取 Registry
+        **完整目录**（`list_agents`），不是 Planner 当轮的语义 top-k 或预算裁剪后的
+        catalog——后者会把「这轮没被选上」说成「你没有这个能力」。
+
+        云侧看得见 edge Agent 的注册记录，但看不见那辆车的通道此刻在不在，
+        故 edge 部署的能力一律给 `unknown`，由端侧用它自己的事实覆盖。
+        """
+        meta = dict(getattr(request, "meta", None) or {})
+        granted, source = resolve_granted_scopes(meta)
+        rows: list[dict] = []
+        summary_status, summary_reason = "complete", ""
+        try:
+            agents = await self.engine.clients.list_agents()
+        except Exception as exc:                     # 查询失败不许说成"没有能力"
+            logger.warning("DescribeSession: registry list failed: %s", exc)
+            agents = None
+            summary_status, summary_reason = "partial", capability_status.REASON_QUERY_FAILED
+        if agents is not None:
+            for a in agents:
+                manifest = getattr(a, "manifest", a)
+                edge = str(getattr(manifest, "deployment", "") or "") == "edge"
+                rows.append(capability_status.capability_row(
+                    manifest, granted, online=None if edge else True))
+        now = int(time.time() * 1000)
+        ctx_ref = getattr(request, "context", None)
+        return orchestrator_pb2.SessionInfoResponse(
+            contract_version=CONTRACT_VERSION,
+            # 认证与否由网关判定并注入；云侧只如实转述它拿到的授权来源。
+            authenticated=bool(meta.get("authenticated") == "true"),
+            user_id=str(getattr(ctx_ref, "user_id", "") or ""),
+            vehicle_id=str(getattr(ctx_ref, "vehicle_id", "") or ""),
+            authorization_source=source,
+            granted_scopes=list(granted),
+            capabilities=[
+                orchestrator_pb2.CapabilityStatus(
+                    id=r["id"], display_name=r["display_name"],
+                    status=r["status"], reason_code=r["reason_code"])
+                for r in capability_status.merge_rows(rows)],
+            generated_at_ms=now,
+            expires_at_ms=now + _SESSION_INFO_TTL_S * 1000,
+            summary_status=summary_status,
+            summary_reason=summary_reason,
+        )
 
     async def Handle(self, request, context):
         async for event in self.engine.run(request):

@@ -153,6 +153,12 @@
       "phase": "M4",
       "purpose": "manual 图文卡 PNG/JPEG data URI 的协议、体积、去重与数量守卫",
       "notes": "零 DOM/BOM；HMI 与 Android 共享同一份图片准入判据"
+    },
+    {
+      "file": "contracts.mjs",
+      "phase": "M4",
+      "purpose": "AR05 结构化契约解析（确认策略/补槽请求/结构化问题/截止时刻与钟差）",
+      "notes": "零 DOM/BOM；四种「没有值」的语义（缺字段/空值/未知枚举/空数组）只许一份实现，两端各写一遍必然分叉。pendingOps.mjs 依赖它做服务端截止时刻限龄"
     }
   ]
 }

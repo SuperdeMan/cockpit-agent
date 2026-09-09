@@ -25,7 +25,10 @@ from edge_agents import edge_execute
 from cloud_client import CloudClient
 from edge_call import EdgeCallExecutor, action_to_structured, action_type_for
 import scope_gate                  # AR05 F07：本地执行出口的授权闸（复用云侧同一判据）
+from capabilities import build_edge_manifests
 from runtime import issues as issue_contract   # AR05：结构化问题的跨服务唯一声明
+from runtime.contract_version import AR05_CONTRACT_VERSION
+from security import capability_status
 from security.audit import AuditLogger
 from security.session_scopes import resolve_granted_scopes
 from observability.events import EventEmitter, change_source
@@ -39,6 +42,8 @@ _LOCAL_EXCHANGE_MAX = 256
 _LOCAL_EXCHANGE_TTL_S = 10 * 60
 _LOCAL_ID_MAX_CHARS = 256
 _LOCAL_EXCHANGE_ID_MAX_CHARS = 128
+#: 能力摘要有效期（秒）。过期后客户端标未知/待刷新，不得用缓存授权执行。
+_SESSION_INFO_TTL_S = 60
 
 
 def _ensure_trace_id(request) -> str:
@@ -566,6 +571,54 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             request.meta["_edge_previous_local_exchange"] = entry[0]
             if entry[2]:
                 request.meta["_edge_previous_local_actions"] = ",".join(entry[2])
+
+    async def DescribeSession(self, request, context):
+        """AR05 §6.1：会话身份与能力摘要的只读查询（网关 `GET /api/session` 的后端）。
+
+        端侧回答自己**确实知道**的那一半：本地车控/媒体执行器就在本进程里，
+        在线与否不需要猜；云侧能力向中枢查一次。云侧取不到时标 `partial` 并说明原因
+        ——**不得把「此刻查不到」说成「你没有这些能力」**，也不得据此判 token 失效。
+        """
+        meta = dict(getattr(request, "meta", None) or {})
+        granted, source = resolve_granted_scopes(meta)
+        local_rows = [capability_status.capability_row(m, granted, online=True)
+                      for m in build_edge_manifests()]
+        cloud_rows: list[dict] = []
+        summary_status, summary_reason = "complete", ""
+        cloud_resp = None
+        try:
+            cloud_resp = await self.cloud.describe_session(
+                meta, getattr(request, "context", None))
+        except Exception as exc:
+            logger.info("DescribeSession: cloud summary unavailable: %s", exc)
+            summary_status, summary_reason = "partial", "cloud_unreachable"
+        if cloud_resp is not None:
+            cloud_rows = [{"id": c.id, "display_name": c.display_name,
+                           "status": c.status, "reason_code": c.reason_code}
+                          for c in cloud_resp.capabilities]
+            if cloud_resp.summary_status == "partial":
+                summary_status = "partial"
+                summary_reason = cloud_resp.summary_reason or "query_failed"
+        now = int(time.time() * 1000)
+        ctx_ref = getattr(request, "context", None)
+        return orchestrator_pb2.SessionInfoResponse(
+            contract_version=AR05_CONTRACT_VERSION,
+            authenticated=bool(meta.get("authenticated") == "true"),
+            user_id=str(getattr(ctx_ref, "user_id", "") or ""),
+            vehicle_id=str(getattr(ctx_ref, "vehicle_id", "") or ""),
+            authorization_source=source,
+            granted_scopes=list(granted),
+            # 端侧的判断覆盖云侧对同一 edge 能力的 unknown——它比云侧更清楚车在不在。
+            capabilities=[
+                orchestrator_pb2.CapabilityStatus(
+                    id=r["id"], display_name=r["display_name"],
+                    status=r["status"], reason_code=r["reason_code"])
+                for r in capability_status.merge_rows(cloud_rows, local_rows)],
+            generated_at_ms=now,
+            expires_at_ms=now + _SESSION_INFO_TTL_S * 1000,
+            summary_status=summary_status,
+            summary_reason=summary_reason,
+        )
 
     async def Handle(self, request, context):
         """观测收口 wrapper：一次 Handle = 一条 obs.turn（badcase 排查的核心数据）。

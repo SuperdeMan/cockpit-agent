@@ -203,6 +203,12 @@ func (s *channelServer) Connect(stream channelpb.EdgeCloudChannel_ConnectServer)
 
 		case *channelpb.UpFrame_EdgeResult:
 			s.deliverEdgeResult(corrID, body.EdgeResult)
+
+		case *channelpb.UpFrame_SessionInfoRequest:
+			// AR05 §6.1：会话/能力摘要的只读查询。**不走 handleRequest**——
+			// 那条路会进 Planner 的业务链（幂等表、90s 超时、聊天历史）；
+			// 查询的全部前提是零业务副作用，绕道普通请求就守不住这一条。
+			go s.handleSessionInfo(sm, corrID, body.SessionInfoRequest, vehicleID)
 		}
 	}
 }
@@ -289,6 +295,38 @@ func (s *channelServer) deliverEdgeResult(
 	default:
 		log.Printf("[cloud-gateway] duplicate edge result corrID=%s", corrID)
 	}
+}
+
+// handleSessionInfo 把只读会话查询转给 Planner，并把响应按 corr_id 送回端侧。
+// 失败不编造摘要：端侧收不到响应会自己标 partial（"此刻查不到"≠"你没有这些能力"）。
+func (s *channelServer) handleSessionInfo(sm *sendMu,
+	corrID string, req *orchpb.SessionInfoRequest, vehicleID string) {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if req == nil {
+		req = &orchpb.SessionInfoRequest{}
+	}
+	if req.Context == nil {
+		req.Context = &commonpb.ContextRef{}
+	}
+	// 车辆身份以流为准，与 bindRequestVehicle 同一条纪律：客户端自报的不算数。
+	req.Context.VehicleId = vehicleID
+
+	resp, err := s.plannerClient().DescribeSession(ctx, req)
+	if err != nil && status.Code(err) == codes.Unavailable {
+		s.reconnectPlanner()
+		resp, err = s.plannerClient().DescribeSession(ctx, req)
+	}
+	if err != nil {
+		log.Printf("[cloud-gateway] session info error for %s: %v", vehicleID, err)
+		return
+	}
+	sm.Send(&channelpb.DownFrame{
+		CorrelationId: corrID,
+		Body:          &channelpb.DownFrame_SessionInfoResponse{SessionInfoResponse: resp},
+	})
 }
 
 func (s *channelServer) handleRequest(sm *sendMu,

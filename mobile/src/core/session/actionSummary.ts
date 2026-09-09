@@ -36,3 +36,20 @@ export function actionSummary(messages: readonly Msg[], operationId: string): st
   const at = messages.findIndex((m) => m.role === 'assistant' && m.operationId === operationId)
   return at < 0 ? '' : precedingUserUtterance(messages, at)
 }
+
+/**
+ * 承诺卡标题：**服务端摘要优先，上一条原话回落**（AR05）。
+ *
+ * 上面那条注释里等的就是这个——`confirm_policy.action_summary` 由服务端从**已验证的
+ * 挂起步骤**合成（对象 + 槽值），比客户端猜的「紧邻上一条用户原话」准，而且两条并存时
+ * 不再逐字相同。服务端没给（旧网关/回退到原话）才走原来那条路，行为逐字不变。
+ */
+export function commitmentTitle(
+  messages: readonly Msg[],
+  operationId: string,
+  serverSummary = '',
+): string {
+  const summary = serverSummary.replace(/\s+/g, ' ').trim()
+  if (summary) return summary.slice(0, SUMMARY_MAX)
+  return actionSummary(messages, operationId)
+}

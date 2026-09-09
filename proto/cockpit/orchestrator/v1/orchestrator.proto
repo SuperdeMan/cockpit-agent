@@ -169,4 +169,10 @@ message SessionInfoResponse {
   repeated CapabilityStatus capabilities = 7;
   int64 generated_at_ms = 8;
   int64 expires_at_ms = 9;             // 摘要有效期；过期后客户端标未知/待刷新，不得用缓存授权执行
+  // 摘要完整性。complete=能力面已覆盖端云全部注册目录；partial=有一段依赖没取到。
+  // **没有这一位就没法区分「云端此刻查不到」和「你没有这些能力」**——两者在客户端
+  // 看来一模一样，而正确处置完全相反（前者该说未知/待刷新，后者该去要授权）。
+  // 空 = 旧服务端，客户端按 complete 处理（逐字回落到本字段诞生前）。
+  string summary_status = 10;          // complete | partial
+  string summary_reason = 11;          // query_failed | cloud_unreachable | ...
 }

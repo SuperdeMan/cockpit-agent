@@ -31,7 +31,7 @@ describe('sortCommitments', () => {
     const items: DockItem[] = [
       { kind: 'queue', id: 'q', count: 2 },
       { kind: 'task', id: 't', label: '规划路线', startedAt: NOW - 9000 },
-      { kind: 'slot', id: 's', missing: '你的位置' },
+      { kind: 'slot', id: 's', missing: '你的位置', state: 'active', expiresAt: 0, suggestions: [] },
       confirm('c-low', NOW, 'low'),
       confirm('c-high', NOW, 'high'),
     ]

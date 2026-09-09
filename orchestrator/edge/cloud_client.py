@@ -194,6 +194,10 @@ class CloudClient:
                     q.put_nowait(down.event)
             elif which == "edge_call":
                 await self._service_edge_call(down)
+            elif which == "session_info_response":
+                q = self._pending.get(down.correlation_id)
+                if q is not None:
+                    q.put_nowait(down.session_info_response)
             elif which == "pong":
                 self._missed_pong = 0
             elif which == "proactive":
@@ -245,6 +249,34 @@ class CloudClient:
             pass
 
     # ─── 请求（多路复用）───
+
+    async def describe_session(self, meta: dict, context=None, *, timeout: float = 3.0):
+        """AR05 §6.1：沿既有端云通道做**只读**会话/能力查询。
+
+        刻意不复用 `handle()`：那条路会进 Planner、写聊天历史、可能调 LLM。
+        查询就是查询——零业务副作用是它的全部前提，绕道普通请求就守不住这一条。
+        超时/断连抛错，由调用方标 partial，**不得把它当成鉴权失败**（§6.3）。
+        """
+        await self._ensure_started()
+        await asyncio.wait_for(self._connected.wait(), timeout=_CONNECT_WAIT_S)
+        corr_id = f"session-info-{uuid.uuid4().hex}"
+        q: asyncio.Queue = asyncio.Queue()
+        self._pending[corr_id] = q
+        try:
+            req = orchestrator_pb2.SessionInfoRequest()
+            for key, value in (meta or {}).items():
+                req.meta[str(key)] = str(value)
+            if context is not None:
+                req.context.CopyFrom(context)
+            async with self._send_lock:
+                await self._stream.write(channel_pb2.UpFrame(
+                    correlation_id=corr_id, session_info_request=req))
+            item = await asyncio.wait_for(q.get(), timeout=timeout)
+            if item is _FAIL:
+                raise RuntimeError("cloud channel disconnected")
+            return item
+        finally:
+            self._pending.pop(corr_id, None)
 
     async def handle(self, request):
         """通过持久 EdgeCloudChannel 转发请求，yield HandleEvent 直到 final；断连则抛错由上层降级。"""

@@ -11,6 +11,14 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import { RequestRegistry } from '@shared/requestRouting.mjs'
 import { PENDING_CAPACITY, PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
+
+import {
+  mergeIssues,
+  readFinalContracts,
+  type ConfirmPolicyView,
+  type IssueView,
+  type SlotRequestView,
+} from './contracts'
 import { deliveryIdsOf } from '@shared/proactiveSpeech.mjs'
 import type { Msg, ProcessStep } from '@shared/types.ts'
 
@@ -65,6 +73,15 @@ export interface SendOpts {
 export interface PendingOp {
   id: string
   ts: number
+  /** 服务端给的绝对截止时刻（AR05 confirm_policy/slot_request）。0/缺省 = 旧服务端，回落本地 TTL。
+   *  **客户端只读不续期**——续期发生在这边就等于挂起窗口被无声延长 */
+  expiresAtMs?: number
+  /** 本次采样的钟差（服务端此刻 - 本机此刻），纠正设备时钟；不改服务端给的那个时刻 */
+  clockSkewMs?: number
+  /** 本条挂起的确认策略（服务端事实）。缺省 = 这条是旧协议来的 */
+  policy?: ConfirmPolicyView
+  /** 本条挂起当前在追问哪个槽。换题后服务端把它标成 held，仍可恢复 */
+  slot?: SlotRequestView
 }
 
 /** 本端投递元数据；Msg 的跨端合同不因 Android 的呈现生命周期变化。 */
@@ -95,6 +112,9 @@ export interface SessionState {
   pendingLocationText: string | null
   /** final.emotion：只影响**下一轮**语气（M2 TTS start 取用；本轮流式已开播） */
   lastEmotion: string
+  /** AR05 结构化问题。轮级问题按轮覆盖、session 级（如 token 被拒）跨轮保留——
+   *  判据在 core/session/contracts.ts::mergeIssues，这里只存 */
+  issues: IssueView[]
   /** 断线期间入队（transport.send 返回 false）的上行帧数；连上即归零（ws.mjs onopen 会 flush） */
   queued: number
   /** 探活判死那一刻仍在飞的助手气泡 id——它们的请求可能写进了死 socket（M3-W 残留窗），
@@ -229,6 +249,7 @@ export class SessionCore {
       connStatus: 'closed',
       pendingLocationText: null,
       lastEmotion: '',
+      issues: [],
       queued: 0,
       uncertainIds: [],
       turnMeta: {},
@@ -851,16 +872,32 @@ export class SessionCore {
           s.turnMeta[id] ? { turnMeta: { ...s.turnMeta, [id]: { ...s.turnMeta[id], finalAt: Date.now() } } } : {},
         )
       }
+      // AR05：结构化契约。**有结构化字段就以它为准**，没有（旧网关连键都不带）就逐字走既有路径
+      // ——绝不用正则去猜「这句话是不是拒绝/补槽/鉴权失败」。
+      const contracts = readFinalContracts(data)
+      if (contracts.issues.length) {
+        this.store.setState((s) => ({ issues: mergeIssues(s.issues, contracts.issues) }))
+      }
       // Q1-C：待确认台账**服务端权威**——closed 列表出账、need_confirm&&operation_id 进账
       if (data.operation_id || closed.length) {
         if (data.need_confirm && data.operation_id && !closed.includes(data.operation_id)) this.serverClosedOps.delete(data.operation_id)
+        const policy = contracts.confirmPolicy
+        const slot = contracts.slotRequest
+        // 补槽轮也进台账：它同样是「系统欠用户一个动作」，而且带自己的 operation_id
+        // 与截止时刻。B1 时协议里没有 missing_slots，客户端只能不管；现在有了。
+        const opens = !!data.operation_id && !closed.includes(data.operation_id)
+          && (!!data.need_confirm || !!slot)
         this.store.setState((s) => {
           const afterClose = closePendings(prunePendings(s.pendingOps), closed)
+          if (!opens) return { pendingOps: afterClose }
+          const contract = policy ?? slot ?? null
+          const opened: PendingOp[] = openPending(afterClose, data.operation_id, Date.now(), contract)
           return {
-            pendingOps:
-              data.need_confirm && data.operation_id && !closed.includes(data.operation_id)
-                ? openPending(afterClose, data.operation_id)
-                : afterClose,
+            pendingOps: opened.map((op) =>
+              op.id === data.operation_id
+                ? { ...op, ...(policy ? { policy } : {}), ...(slot ? { slot } : {}) }
+                : op,
+            ),
           }
         })
         this.syncPruneTimer()
@@ -1096,7 +1133,15 @@ export class SessionCore {
     const ops = this.store.getState().pendingOps
     if (!ops.length) return
     const now = Date.now()
-    const nextExpiry = Math.min(...ops.map((o) => o.ts + PENDING_TTL_MS))
+    // AR05：**服务端截止时刻优先**。旧实现只按本地 TTL 排下一次唤醒，服务端说 60s
+    // 过期时定时器要 300s 后才醒——那条确认条会多活 4 分钟，点下去必被拒。
+    const nextExpiry = Math.min(
+      ...ops.map((o) =>
+        o.expiresAtMs && o.expiresAtMs > 0
+          ? o.expiresAtMs - (o.clockSkewMs || 0)
+          : o.ts + PENDING_TTL_MS,
+      ),
+    )
     const delay = Math.max(0, Math.min(nextExpiry - now, PRUNE_INTERVAL_MS))
     this.pruneTimer = setTimeout(() => {
       this.pruneTimer = null

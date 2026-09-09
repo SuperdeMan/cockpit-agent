@@ -394,6 +394,93 @@ func stampRequestID(frame map[string]any, reqID string) map[string]any {
 	return frame
 }
 
+// handleSessionInfo 回 `GET /api/session`。
+//
+// 三条纪律：
+//  1. 认证复用 `auth.resolveSession`，与 WS 同一条判定；
+//  2. granted_scopes 由网关按 token 注入（同 stampScopes 的唯一权威），
+//     客户端自报的值一律不认；
+//  3. 响应与日志**不含 token**——摘要是拿来看的，不是拿来当凭据传的。
+//
+// 后端不可达时回 503 且**不编造摘要**：客户端据此显示"未知/待刷新"，
+// 而不是把"此刻查不到"当成"你没有这些能力"，更不能当成 token 失效。
+func handleSessionInfo(w http.ResponseWriter, r *http.Request,
+	orch orchpb.EdgeOrchestratorClient, auth authConfig) {
+
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		// Authorization: Bearer <token> 也认——查询是普通 HTTP，不该逼客户端把
+		// 凭证写进 URL（URL 会进访问日志）。
+		if h := r.Header.Get("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			token = strings.TrimSpace(strings.TrimPrefix(h, "Bearer "))
+		}
+	}
+	id, _, ok, hardReject := auth.resolveSession(token)
+	if !ok {
+		if hardReject || auth.required {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			writeJSONBody(w, map[string]any{
+				"authenticated": false, "authorization_source": "unauthenticated",
+			})
+			return
+		}
+		id = auth.anonymous()
+	}
+
+	meta := stampScopes(map[string]string{}, id.scopes)
+	if ok {
+		meta["authenticated"] = "true"
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	resp, err := orch.DescribeSession(ctx, &orchpb.SessionInfoRequest{
+		Meta: meta,
+		Context: &commonpb.ContextRef{
+			UserId: id.userID, VehicleId: id.vehicleID,
+		},
+	})
+	if err != nil {
+		log.Printf("[edge-gateway] session info unavailable: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSONBody(w, map[string]any{
+			"summary_status": "partial", "summary_reason": "orchestrator_unreachable",
+		})
+		return
+	}
+	capabilities := make([]any, 0, len(resp.Capabilities))
+	for _, c := range resp.Capabilities {
+		capabilities = append(capabilities, map[string]any{
+			"id": c.Id, "display_name": c.DisplayName,
+			"status": c.Status, "reason_code": c.ReasonCode,
+		})
+	}
+	w.Header().Set("Content-Type", "application/json")
+	writeJSONBody(w, map[string]any{
+		"contract_version":     resp.ContractVersion,
+		"authenticated":        resp.Authenticated,
+		"user_id":              resp.UserId,
+		"vehicle_id":           resp.VehicleId,
+		"authorization_source": resp.AuthorizationSource,
+		"granted_scopes":       stringsOrEmpty(resp.GrantedScopes),
+		"capabilities":         capabilities,
+		"generated_at_ms":      resp.GeneratedAtMs,
+		"expires_at_ms":        resp.ExpiresAtMs,
+		"summary_status":       resp.SummaryStatus,
+		"summary_reason":       resp.SummaryReason,
+	})
+}
+
+func writeJSONBody(w http.ResponseWriter, v any) {
+	b, _ := json.Marshal(v)
+	_, _ = w.Write(b)
+}
+
 func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 	switch e := ev.Event.(type) {
 	case *orchpb.HandleEvent_SpeechDelta:
@@ -628,6 +715,11 @@ func main() {
 	})
 	http.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		handleWS(w, r, orchStub, auth)
+	})
+	// AR05 §6.1：会话身份与能力摘要的只读查询。与 WS 同一套 token 判定，
+	// 但**响应里不回传凭证**；网关不在 Go 侧重实现 Python 的权限判据，只转述。
+	http.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
+		handleSessionInfo(w, r, orchStub, auth)
 	})
 
 	srv := &http.Server{Addr: ":" + port}

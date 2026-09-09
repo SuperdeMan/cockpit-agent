@@ -119,7 +119,16 @@ export interface PresenceInput {
   }
   /** 播报控制器：首片音频已起播且未结束 */
   speaking: boolean
-  pendingOps: Array<{ id: string; ts: number; summary: string }>
+  /** 承诺台账的投影。`risk`/`expiresAt`/`slot` 来自服务端 AR05 契约；
+   *  缺省 = 旧服务端，逐字回落「一律 high + 本地 TTL」的既有行为 */
+  pendingOps: Array<{
+    id: string
+    ts: number
+    summary: string
+    risk?: 'low' | 'high'
+    expiresAt?: number
+    slot?: { missing: string; state: 'active' | 'held'; expiresAt: number; suggestions: string[] }
+  }>
   pendingLocation: boolean
   voicePipeline: 'classic' | 's2s'
   visionCapturing: boolean
@@ -220,13 +229,27 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
           : 'idle'
 
   // ── commitment ──
-  const items: DockItem[] = i.pendingOps.map((op) => ({
-    kind: 'confirm',
-    id: op.id,
-    summary: op.summary,
-    risk: 'high',
-    expiresAt: op.ts + PENDING_TTL_MS,
-  }))
+  // AR05：风险档与截止时刻取**服务端事实**。缺省仍是 high + 本地 TTL——B1 时协议里
+  // 两样都没有，一律按最高档处理是当时唯一诚实的做法；现在有了就不该继续一刀切，
+  // 但**没给的时候不许猜低**（未知风险按高处理，误伤代价远小于漏挡）。
+  const items: DockItem[] = i.pendingOps.map((op) =>
+    op.slot
+      ? ({
+          kind: 'slot',
+          id: op.id,
+          missing: op.slot.missing,
+          state: op.slot.state,
+          expiresAt: op.slot.expiresAt,
+          suggestions: op.slot.suggestions,
+        } as DockItem)
+      : ({
+          kind: 'confirm',
+          id: op.id,
+          summary: op.summary,
+          risk: op.risk ?? 'high',
+          expiresAt: op.expiresAt && op.expiresAt > 0 ? op.expiresAt : op.ts + PENDING_TTL_MS,
+        } as DockItem),
+  )
   if (i.pendingLocation) {
     items.push({
       kind: 'confirm',
