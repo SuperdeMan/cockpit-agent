@@ -1576,11 +1576,16 @@ class PlanBuilder:
             plan = salvage_kept
             plan_mode = "toolcall_salvage_kept"
 
+        technical_failure = False
         if plan is None:
             logger.warning("Plan parse failed twice, falling back to chitchat/routing")
             # 降级：chitchat 全局兜底 / Registry 语义路由 top-1
             plan = await self._fallback(text, agents)
             plan_mode = "toolcall_degraded" if toolcall else "json"
+            # AR05 F09：这条兜底产物**代表的是失败**。单标一位、不动 plan_mode 口径；
+            # 兜底若给的是空计划（低分诚实降级），engine 仍走既有「没听清」那条，
+            # 本位只在"兜出了一条能说话的步"时才改变终态。
+            technical_failure = True
         # QA I-031（2026-08-19）：**系统自己给的选项被点了之后，不许回答「我没听清
         # 你要做什么」。** 澄清卡的 send_text 由 LLM 写，写出来的短语不一定规划得出
         # steps（真栈：点「解释定位原理」→ 回发 → 空计划 → engine 出「没听清」）；
@@ -1604,12 +1609,16 @@ class PlanBuilder:
                 logger.info("clarify_resume 轮空计划 → 兜底 Agent 应答: %s", text[:40])
                 plan = talk
                 plan_mode = f"{plan_mode or ''}_clarify_resume_talk"
+                # 这是既定的产品裁决（用户点了系统自己给的选项，必须有人答一句），
+                # 不是技术失败终态该劫持的场景。
+                technical_failure = False
 
         # 观测：保留 LLM 最后一次原始输出（fallback 路径保留失败现场），供 planning span 门控采集
         plan.raw_llm = last_raw
         plan.skills = sk_names
         plan.exemplars = ex_names
         plan.plan_mode = plan_mode
+        plan.technical_failure = technical_failure
         # B6 §2 shadow：可执行性形态判定。**只写观测、不参与上面任何一步决策**
         # ——这一行放在计划已经定稿之后，就是为了让「它不可能影响计划」是结构性的
         # 而不是靠人记得（同 P3a 影子「它的全部价值就是不生效」的口径）。

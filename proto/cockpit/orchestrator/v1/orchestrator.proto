@@ -8,12 +8,17 @@ import "cockpit/common/v1/common.proto";
 // 云端 Planner 对 Cloud Gateway 暴露的入口。流式返回话术/动作/终态。
 service CloudPlanner {
   rpc Handle (HandleRequest) returns (stream HandleEvent);
+  // AR05 §6.1：云侧能力目录与授权事实的只读查询（端侧经 EdgeCloudChannel 转发）。
+  rpc DescribeSession (SessionInfoRequest) returns (SessionInfoResponse);
 }
 
 // 端侧编排器对 Edge Gateway 暴露的入口。快意图本地秒回，慢意图转发云端。
 // 复用 HandleRequest/HandleEvent，保证端云链路同构。
 service EdgeOrchestrator {
   rpc Handle (HandleRequest) returns (stream HandleEvent);
+  // AR05 §6.1：会话身份与能力摘要的**只读**查询。零业务副作用、不调 LLM、
+  // 不写会话历史；网关据此回 `GET /api/session`，不在 Go 侧重实现权限判据。
+  rpc DescribeSession (SessionInfoRequest) returns (SessionInfoResponse);
 }
 
 message HandleRequest {
@@ -77,4 +82,91 @@ message FinalResult {
   // 可能永远不到（B4 真机实测行车档 3h12m 退不出）。final 每轮都有，所以也标；Edge 在
   // Handle 出口盖，云端填的值无权威。缺省 false = 泊车。
   bool driving = 9;
+  // ── AR05 结构化契约（字段表：docs/design/2026-09-09-ar05-…-plan.md §11）──
+  // 三者都是**增量**：旧客户端读不到它们时行为逐字不变（仍按 speech/need_confirm/
+  // operation_id/closed_operation_ids 走既有确认流程）。新客户端不得反过来用正则去
+  // 猜「这是拒绝还是补槽」——结构化字段在，就以结构化字段为准。
+  ConfirmPolicy confirm_policy = 10;   // 仅 need_confirm 轮非空
+  SlotRequest slot_request = 11;       // 仅待补槽轮非空
+  repeated Issue issues = 12;          // 本轮发生的问题（可与已执行动作并存）
+}
+
+// 确认策略（AR05 R10）。用户必须能明确知道**正在确认什么、到什么时候、用什么方式答**。
+// 权威全部来自服务端：受控 capability 声明、VAL 受控知识、已保存的挂起记录。
+// LLM goal / 用户 meta / 补槽短句**无权**产生或放宽这里的任何一项。
+message ConfirmPolicy {
+  string operation_id = 1;             // 恒等于 FinalResult.operation_id
+  string risk = 2;                     // low | medium | high；空或未知枚举=客户端停止该确认并提示，不默认允许
+  repeated string allowed_channels = 3; // touch | text | voice；只说明"怎么回"，不代表设备可信或账号有权限
+  string action_summary = 4;           // 「打开后备箱」——取已验证的挂起步骤对象/槽值
+  string object_summary = 5;           // 「后备箱」
+  string reason_code = 6;              // require_confirm | safety_gate | payment | destructive
+  int64 expires_at_ms = 7;             // SessionStore 落盘后的绝对截止时刻（epoch ms, UTC）。0=未知→客户端回落既有 TTL，且**不得自行续期**
+  int64 server_now_ms = 8;             // 服务端此刻，供客户端算钟差
+  string summary_source = 9;           // capability（缺省）| user_utterance：摘要出处，缺结构化摘要时诚实说明
+  // 挂起步骤的 intent（服务端事实）。端侧出口据此用 VAL 受控知识收窄 allowed_channels
+  // （如对象声明 voice_forbidden 时去掉 voice）——那份危险知识只住在端侧 commands.yaml，
+  // 云侧不许抄第二份。客户端不解释它，只显示 action_summary/object_summary。
+  string target_intent = 10;
+}
+
+// 补槽请求（AR05 R10）。保留 Agent 既有 missing_slots，这里补的是"够不够显示与回复"。
+message SlotRequest {
+  string operation_id = 1;
+  string slot = 2;                     // 槽位机器名
+  string display_name = 3;             // 中文名（能力声明提供）；空=显示 slot
+  string shape = 4;                    // slot_shapes 声明的形状名；空=自由文本
+  repeated string suggestions = 5;     // **只能来自本次真实 Agent 结果/候选集**；空=只给文字/语音输入，不造假选项
+  string state = 6;                    // active（缺省）| held：换题后原任务仍有效但不再抢占当前问题
+  repeated string remaining_slots = 7; // 本操作还缺哪些（含本条）
+  string prompt = 8;                   // 服务端追问话术；空=沿用 follow_up
+  int64 expires_at_ms = 9;
+  int64 server_now_ms = 10;
+}
+
+// 结构化问题（AR05 R10）。一轮里可以既有成功动作又有失败问题——issue 必须保留
+// 步骤/操作归属，**不得把已执行的部分改写成"未执行"**。
+message Issue {
+  string code = 1;                     // 受控枚举，见 §11.3。未知 code：客户端显示 message、不猜语义
+  string message = 2;                  // 用户可读文案。服务端问题由服务端产，设备问题由客户端按实际设备结果产
+  string severity = 3;                 // info | warning | error（缺省 warning）
+  string scope = 4;                    // request（缺省）| operation | session | capability
+  string request_id = 5;
+  string operation_id = 6;
+  repeated string affected_capabilities = 7;
+  repeated RecoveryAction recovery = 8;
+}
+
+// 恢复动作。**只用受控 kind**：客户端只实现自己已支持的固定动作，
+// 绝不执行服务端下发的任意 URL、脚本或命令。
+message RecoveryAction {
+  string kind = 1;   // open_voice_settings | open_capability_settings | reconfigure_connection | retry_request | replay_audio | dismiss
+  string label = 2;
+}
+
+// 会话身份与能力摘要的只读查询（AR05 §6.1）。**不含也不回传 token**。
+message SessionInfoRequest {
+  map<string, string> meta = 1;        // trace_id / granted_scopes 等，由网关按已认证会话注入
+  cockpit.common.v1.ContextRef context = 2;
+}
+
+message CapabilityStatus {
+  string id = 1;
+  string display_name = 2;
+  // available：已授权且服务端认为可用；unauthorized：当前账号缺 scope；
+  // unavailable：已注册但通道/服务不在线；unknown：依赖不可核实——**不宣称可用**。
+  string status = 3;
+  string reason_code = 4;              // scope_missing | offline | query_failed | ...
+}
+
+message SessionInfoResponse {
+  string contract_version = 1;         // 客户端据此判断服务端支持到哪一版契约
+  bool authenticated = 2;
+  string user_id = 3;
+  string vehicle_id = 4;               // 服务端**关联**车辆，不等同于所有权或硬件绑定完成
+  string authorization_source = 5;     // token | poc_default | fail_closed（PoC 默认放行与明确授权不是一回事）
+  repeated string granted_scopes = 6;
+  repeated CapabilityStatus capabilities = 7;
+  int64 generated_at_ms = 8;
+  int64 expires_at_ms = 9;             // 摘要有效期；过期后客户端标未知/待刷新，不得用缓存授权执行
 }

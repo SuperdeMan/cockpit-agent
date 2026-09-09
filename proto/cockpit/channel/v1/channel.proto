@@ -20,6 +20,8 @@ message UpFrame {
     Ack ack = 4;                        // 对 down 帧的确认（幂等/可靠性）
     Ping ping = 5;
     EdgeResult edge_result = 6;         // 端→云：中枢调度的车端步骤执行结果
+    // AR05 §6.1：会话/能力摘要的只读查询。零业务副作用，不进聊天历史、不调 LLM。
+    cockpit.orchestrator.v1.SessionInfoRequest session_info_request = 7;
   }
 }
 
@@ -32,6 +34,7 @@ message DownFrame {
     Proactive proactive = 4;            // 主动下发（如低电量提醒）
     Pong pong = 5;
     EdgeCall edge_call = 6;             // 云→端：中枢调度的车端步骤（车控/媒体/状态查询）
+    cockpit.orchestrator.v1.SessionInfoResponse session_info_response = 7;  // AR05 §6.1
   }
 }
 

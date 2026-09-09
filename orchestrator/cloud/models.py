@@ -90,6 +90,14 @@ class Plan:
     raw_text: str = ""
     complexity: str = "simple"    # simple | adaptive：复杂度分诊（simple→T1 直执行, adaptive→T2 循环）
     goal: str = ""                # T2 再规划的锚点（一句话用户目标）；simple 时可空
+    # AR05 F09：**这一份计划是规划技术失败之后兜出来的**（模型两轮都没给出合法计划）。
+    # 与 `plan_mode` **分列**，不混写既有观测口径：plan_mode 记的是"走的哪条通道"，
+    # 这一位记的是"这条计划代表的是失败"。真栈实录 trace 21798d30258aa5bf——非法工具
+    # steps → 重试空计划 → toolcall_degraded → chitchat.talk → info.search：技术失败被
+    # 伪装成一次成功闲聊，再转成一次搜索，用户既不知道出了什么事，也没有恢复入口。
+    # ⚠ **只标这一种**：合法空动作（完整否定句）、addressed=false 拒识、正常澄清、
+    # 重试后拿到有效计划、既有有效 salvage 都不是技术失败，一律不标。
+    technical_failure: bool = False
     # R4.4 受话判定：False=LLM 判「非对助手说的」（仅 hands-free 语音源 + REJECT 开时被 engine 消费）。
     # 缺省 True = fail-open（弱 LLM/旧 prompt/mock 不输出该字段时行为与今天逐字一致）。
     addressed: bool = True

@@ -25,6 +25,7 @@ from edge_agents import edge_execute
 from cloud_client import CloudClient
 from edge_call import EdgeCallExecutor, action_to_structured, action_type_for
 import scope_gate                  # AR05 F07：本地执行出口的授权闸（复用云侧同一判据）
+from runtime import issues as issue_contract   # AR05：结构化问题的跨服务唯一声明
 from security.audit import AuditLogger
 from security.session_scopes import resolve_granted_scopes
 from observability.events import EventEmitter, change_source
@@ -73,6 +74,21 @@ def _join_speeches(speeches: list[str]) -> str:
         if s and (not out or out[-1] != s):
             out.append(s)
     return "，".join(out)
+
+
+def _scope_issue(decision, message: str, intent: str = "") -> dict:
+    """业务 scope 不足的结构化问题。
+
+    恢复出口指向**能力/连接配置**，绝不指系统权限页——业务授权不足与设备权限
+    被拒是两件事，导错地方的代价是用户在系统设置里反复开麦克风也修不好（V07）。
+    """
+    return issue_contract.build_issue(
+        issue_contract.ISSUE_PERMISSION_SCOPE_MISSING,
+        message,
+        severity=issue_contract.SEVERITY_ERROR,
+        scope=issue_contract.SCOPE_CAPABILITY,
+        affected_capabilities=list(getattr(decision, "missing", []) or []),
+        recovery=[(issue_contract.RECOVERY_OPEN_CAPABILITY_SETTINGS, "查看能力与连接")])
 
 
 def _ui_card_type(final) -> str:
@@ -376,6 +392,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         multi: bool = False,
         confirmed: bool = False,
         granted=None,
+        issues=None,
     ):
         """本地经 VAL 执行并出 span。
 
@@ -389,6 +406,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         按「ok=False 只播报、不下发 action」处理（`test_only_actually_executed_actions_are_reported`）。
         `granted=None` 表示调用方没有请求上下文（非请求路径/直接单测），不加闸；
         真实请求链上 `_handle_impl` 恒传一个列表（fail-closed 时是空列表）。
+
+        `issues` 是本轮的结构化问题收集器（AR05）。被拒时除了话术还留一条带
+        code/归属/恢复出口的记录——客户端据此分流，不再从话术里用正则猜。
         """
         if granted is not None:
             decision = scope_gate.check_local_execution(
@@ -403,7 +423,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 )
                 logger.warning("T0 SCOPE-DENIED %s missing=%s", intent or command,
                                decision.missing)
-                return False, scope_gate.denial_speech(list(decision.missing))
+                speech = scope_gate.denial_speech(list(decision.missing))
+                if issues is not None:
+                    issues.append(_scope_issue(decision, speech, intent))
+                return False, speech
         started = time.perf_counter()
         before = dict(self.val.state)
         ok, speech = self.val.execute(
@@ -424,6 +447,14 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 "changes": changes,
             },
         )
+        if not ok and issues is not None:
+            # VAL 拒绝（行车安全门控、电量、未确认危险动作…）。恢复出口只给
+            # 「知道了」——条件变了由用户重新发起，收起提示不代表已执行（§5.1）。
+            issues.append(issue_contract.build_issue(
+                issue_contract.ISSUE_SAFETY_VAL_REJECTED,
+                speech or "这个操作没有执行。",
+                severity=issue_contract.SEVERITY_WARNING,
+                recovery=[(issue_contract.RECOVERY_DISMISS, "知道了")]))
         return ok, speech
 
     def _confirm_required(self, structured: dict | None) -> bool:
@@ -559,6 +590,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         try:
             async for event in self._handle_impl(request, context, turn):
                 event = self._stamp_driving(event)  # B5 缺陷 C：过程区 + 终态在唯一出口标行车态
+                event = self._stamp_issues(event, turn, request)  # AR05：结构化问题同一出口
                 which = event.WhichOneof("event")
                 if which == "final":
                     f = event.final
@@ -637,6 +669,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             meta,
             vehicle_id=getattr(getattr(request, "context", None), "vehicle_id", "") or "",
             trace_id=trace_id, audit=self._audit)
+        # AR05：本轮结构化问题。四条本地路径共用一个收集器，出口处一次性盖到 final 上
+        # ——**一轮里可以既有成功动作又有失败问题**，两者必须同时出得去（§11.5-4）。
+        turn_issues: list[dict] = []
+        turn["issues"] = turn_issues
 
         # 确认/补槽续接必须回到挂起会话所在的云端，不走本地快路径
         if request.is_confirmation:
@@ -680,6 +716,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         intent=legacy["name"],
                         multi=len(multi) > 1,
                         granted=granted,
+                        issues=turn_issues,
                     )
                     if not ok:
                         speech = speech or "操作失败"
@@ -755,6 +792,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                             intent=legacy["name"],
                             multi=len(mixed_intents) > 1,
                             granted=granted,
+                            issues=turn_issues,
                         )
                         if not ok:
                             speech = speech or "操作失败"
@@ -900,6 +938,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         answer_length=answer_length,
                         intent=intent["name"],
                         granted=granted,
+                        issues=turn_issues,
                     )
                     action_type = action_type_for(structured.get("data", {}).get("object", ""))
                     action = {
@@ -1000,7 +1039,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     event, answer_length, granted=granted)
                 which = event.WhichOneof("event")
                 if which == "final":
-                    if event.final.speech or len(event.final.actions) > 0:
+                    # AR05 §5.2 审计：**带结构化终态的失败也算已结算**。只看
+                    # speech/actions 会把「云端明确说了出问题、给了恢复入口」误判成
+                    # 「云端零输出」，于是本地再执行一次——那正是 B1 修过的双执行形态。
+                    if (event.final.speech or len(event.final.actions) > 0
+                            or len(event.final.issues) > 0
+                            or event.final.HasField("confirm_policy")
+                            or event.final.HasField("slot_request")):
                         cloud_had_output = True
                 elif which == "speech_delta":
                     cloud_had_output = cloud_had_output or bool(event.speech_delta)
@@ -1047,6 +1092,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     answer_length=answer_length,
                     intent=local_structured.get("intent", ""),
                     granted=granted,
+                    issues=turn_issues,
                 )
                 if ok and speech:
                     obj = local_structured.get("data", {}).get("object", "")
@@ -1060,6 +1106,26 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     final.actions.append(action)
                     logger.info("CLOUD-DEGRADED-LOCAL %s -> %s", obj, speech)
                     yield orchestrator_pb2.HandleEvent(final=final)
+
+    @staticmethod
+    def _stamp_issues(event, turn: dict, request):
+        """把本轮攒下的结构化问题盖到**第一个能承载它的 final** 上，然后清空。
+
+        同 `_stamp_driving` 的形态——出口只有一个，四条本地路径不各写一遍。
+        清空是必需的：混合路径先出本地 final 再出云端 final，不清就会重复播报
+        同一条问题；云端 final 自带的 issues 原样保留，两边并存不互相覆盖。
+        """
+        pending = turn.get("issues") or []
+        if not pending or event.WhichOneof("event") != "final":
+            return event
+        request_id = getattr(request, "request_id", "") or ""
+        for item in pending:
+            if isinstance(item, dict) and not item.get("request_id"):
+                item["request_id"] = request_id
+        event.final.issues.extend(
+            issue_contract.issues_to_proto(pending, orchestrator_pb2))
+        pending.clear()
+        return event
 
     def _is_driving(self) -> bool:
         """按端侧 VAL 真实车速/档位判定是否行驶中——供过程区行车/泊车双态门控。
@@ -1146,6 +1212,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     dispatched += 1
                     last_msg = scope_gate.denial_speech(list(decision.missing))
                     rejected.append(last_msg)
+                    final.issues.extend(issue_contract.issues_to_proto(
+                        [_scope_issue(decision, last_msg, cmd)], orchestrator_pb2))
                     continue
             if structured is not None:
                 ok, msg = self.val.execute(structured, answer_length=answer_length)

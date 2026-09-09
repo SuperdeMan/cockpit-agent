@@ -36,6 +36,7 @@ from .context import (ContextManager, build_context, candidate_downlink,
                       safety_alert_active,
                       WEATHER_CONTEXT_INTENTS, normalize_weather_city_slot,
                       _POC_DEFAULT_SCOPES)
+from . import contracts
 from .progress import (is_complex, phase_label, result_summary, step_summary,
                        task_summary, plan_steps_summary)
 from observability import events as obs_events
@@ -638,6 +639,27 @@ class PlannerEngine:
                 yield {"kind": "final", "speech": "",
                        "ui_card": {"type": "rejected", "reason": "not_addressed"},
                        "_rejected": True}
+                return
+
+            # AR05 F09：规划技术失败**不许伪装成一次成功的闲聊**。
+            # 真栈 trace 21798d30258aa5bf：非法工具 steps → 重试空计划 → toolcall_degraded
+            # → chitchat.talk → info.search，用户拿到的是一段跑题回答，既不知道出了什么事，
+            # 也没有恢复入口。这里给它一个诚实终态 + 可重试的恢复动作。
+            # ⚠ 判据窄到只剩一种形态：**技术失败标记 ∧ 兜底真给出了步**。
+            # 空计划仍走下面既有的澄清/取消未命中/「没听清」三条路，一个字不变。
+            if plan.steps and getattr(plan, "technical_failure", False):
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.planner_technical_failure", "system.planner_failure")
+                yield {
+                    "kind": "final",
+                    "speech": "这次我没能把您的请求拆成可以执行的步骤，换个说法再说一次就行。",
+                    "issues": [contracts.build_issue(
+                        contracts.ISSUE_PLANNER_TECHNICAL_FAILURE,
+                        "规划没有产出可执行的步骤，本轮没有执行任何操作。",
+                        severity=contracts.SEVERITY_ERROR,
+                        request_id=ctx.request_id,
+                        recovery=[(contracts.RECOVERY_RETRY_REQUEST, "换个说法再试")])],
+                }
                 return
 
             if not plan.steps:
@@ -1452,20 +1474,21 @@ class PlannerEngine:
             step_result.status == StepStatus.NEED_SLOT
             and probe.get("step_id") == step_result.step_id
             and probe.get("missing") == sorted(step_result.missing_slots or []))
+        pending_state = SessionState(
+            phase=("wait_confirm"
+                   if step_result.status == StepStatus.NEED_CONFIRM
+                   else "wait_slot"),
+            owner_user_id=ctx.user_id,
+            operation_id=operation_id,
+            pending_step_id=step_result.step_id,
+            missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
+            slot_shapes=slot_shapes,
+            slot_retry=(int(probe.get("retry") or 0) + 1) if repeated else 0,
+            completed_results=completed,
+            pending_plan=self._serialize_plan(plan),
+        )
         saved, evicted = await self.session.save_pending(
-            ctx.session_id, SessionState(
-                phase=("wait_confirm"
-                       if step_result.status == StepStatus.NEED_CONFIRM
-                       else "wait_slot"),
-                owner_user_id=ctx.user_id,
-                operation_id=operation_id,
-                pending_step_id=step_result.step_id,
-                missing_slots=list(step_result.missing_slots),  # F12：保存缺失槽位名
-                slot_shapes=slot_shapes,
-                slot_retry=(int(probe.get("retry") or 0) + 1) if repeated else 0,
-                completed_results=completed,
-                pending_plan=self._serialize_plan(plan),
-            ))
+            ctx.session_id, pending_state)
         if saved is False:
             # A concurrent privacy deletion owns the write fence.  Do not show
             # a confirmation UI for state that cannot be resumed safely.
@@ -1497,7 +1520,10 @@ class PlannerEngine:
         # 充电途经点注入），不在这里写第二份合并语义。
         actions = self.aggregator.compose_actions(
             [r for r in (prior or []) if r.status == StepStatus.OK] + [step_result])
-        return {
+        # AR05：把「正在确认什么 / 还缺什么 / 到什么时候」摆成结构化契约，
+        # 让客户端不必再从话术里用正则猜。截止时刻取 SessionStore 落盘后的绝对时刻
+        # （`pending_state.expires_at`），客户端只读不续期。
+        final_event = {
             "kind": "final",
             "speech": (brief + (step_result.speech or "")) if brief else step_result.speech,
             "follow_up": follow_up,
@@ -1506,6 +1532,18 @@ class PlannerEngine:
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
             "operation_id": operation_id,
         }
+        if step_result.status == StepStatus.NEED_CONFIRM:
+            final_event["confirm_policy"] = contracts.build_confirm_policy(
+                operation_id=operation_id, step=pending_step, state=pending_state,
+                # 回退原话取**任务起点**（`plan.safety_origin_text`，跨挂起不变），
+                # 不是本轮的「确认」二字；两者都没有才退到本轮原话。
+                user_text=(getattr(plan, "safety_origin_text", "")
+                           or ctx.safety_origin_text or ctx.raw_text))
+        elif step_result.missing_slots:
+            final_event["slot_request"] = contracts.build_slot_request(
+                operation_id=operation_id, step=pending_step,
+                step_result=step_result, state=pending_state)
+        return final_event
 
     @staticmethod
     def _pending_label(state) -> str:

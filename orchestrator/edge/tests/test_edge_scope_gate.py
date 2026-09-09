@@ -250,3 +250,71 @@ def test_denial_speech_does_not_point_at_device_permissions():
     assert "车辆控制" in speech
     for wrong in ("系统设置", "麦克风", "定位", "摄像头"):
         assert wrong not in speech
+
+
+# ─── 结构化问题（AR05 §11.3）：被拒不能只剩一句话术 ───
+
+def _issues(events):
+    return [i for f in _finals(events) for i in f.issues]
+
+
+def test_scope_denial_emits_structured_issue_with_capability_recovery():
+    srv = _servicer()
+
+    events = _drive(srv, "打开车窗", scopes="location.read")
+
+    issues = _issues(events)
+    assert [i.code for i in issues] == ["permission.scope_missing"]
+    issue = issues[0]
+    assert issue.severity == "error"
+    assert issue.scope == "capability"
+    assert list(issue.affected_capabilities) == ["vehicle.control"]
+    # 恢复出口指能力/连接配置，**不是**系统权限页
+    assert [r.kind for r in issue.recovery] == ["open_capability_settings"]
+
+
+def test_val_safety_rejection_emits_its_own_issue_code():
+    """VAL 安全门控拒绝与权限不足是两种病，code 必须分得开。"""
+    srv = _servicer()
+    srv.val.state["speed_kmh"] = 120        # 高速行驶：开窗被安全门控挡下
+
+    events = _drive(srv, "打开车窗", scopes="vehicle.control")
+
+    codes = [i.code for i in _issues(events)]
+    assert codes == ["safety.val_rejected"], codes
+    assert srv.val.state["window"] != "open"
+
+
+def test_successful_local_turn_carries_no_issues():
+    """正例：没出问题就一条 issue 都不该有（恒空字段会让客户端天天判空）。"""
+    srv = _servicer()
+    events = _drive(srv, "打开车窗", scopes="vehicle.control")
+    assert _issues(events) == []
+
+
+def test_issue_is_stamped_once_across_mixed_local_and_cloud_finals():
+    """混合路径两个 final：问题只盖第一个，不重复播报。"""
+    srv = _servicer()
+
+    async def fake_cloud_handle(req):
+        yield orchestrator_pb2.HandleEvent(
+            final=orchestrator_pb2.FinalResult(speech="今天晴。"))
+
+    srv.cloud.handle = fake_cloud_handle
+    events = _drive(srv, "打开车窗，然后帮我查一下天气", scopes="location.read")
+
+    assert [i.code for i in _issues(events)] == ["permission.scope_missing"]
+
+
+def test_issue_carries_request_id_for_attribution():
+    """归属：客户端要能把问题挂到具体这一次请求上（§11.5-1）。"""
+    srv = _servicer()
+    req = orchestrator_pb2.HandleRequest(
+        text="打开车窗", session_id="s-scope", request_id="req-42",
+        meta={"memory_enabled": "false", "granted_scopes": "location.read"})
+
+    async def run():
+        return [ev async for ev in srv.Handle(req, None)]
+
+    events = asyncio.run(run())
+    assert [i.request_id for i in _issues(events)] == ["req-42"]

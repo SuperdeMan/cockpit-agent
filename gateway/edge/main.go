@@ -436,9 +436,58 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		if f.UiCard != nil {
 			result["ui_card"] = f.UiCard.AsMap()
 		}
+		// AR05 结构化契约：有才带键。客户端要能分辨「旧网关没有这个键」与
+		// 「有这个键但内容为空」——前者回落既有确认流程，后者是服务端说「没有」。
+		if p := f.ConfirmPolicy; p != nil {
+			result["confirm_policy"] = map[string]any{
+				"operation_id": p.OperationId, "risk": p.Risk,
+				"allowed_channels": stringsOrEmpty(p.AllowedChannels),
+				"action_summary":   p.ActionSummary, "object_summary": p.ObjectSummary,
+				"reason_code":      p.ReasonCode,
+				"expires_at_ms":    p.ExpiresAtMs, "server_now_ms": p.ServerNowMs,
+				"summary_source":   p.SummarySource, "target_intent": p.TargetIntent,
+			}
+		}
+		if sr := f.SlotRequest; sr != nil {
+			result["slot_request"] = map[string]any{
+				"operation_id": sr.OperationId, "slot": sr.Slot,
+				"display_name": sr.DisplayName, "shape": sr.Shape,
+				"suggestions":  stringsOrEmpty(sr.Suggestions),
+				"state":        sr.State,
+				"remaining_slots": stringsOrEmpty(sr.RemainingSlots),
+				"prompt":       sr.Prompt,
+				"expires_at_ms": sr.ExpiresAtMs, "server_now_ms": sr.ServerNowMs,
+			}
+		}
+		if len(f.Issues) > 0 {
+			issues := make([]any, 0, len(f.Issues))
+			for _, is := range f.Issues {
+				recovery := make([]any, 0, len(is.Recovery))
+				for _, r := range is.Recovery {
+					recovery = append(recovery, map[string]any{"kind": r.Kind, "label": r.Label})
+				}
+				issues = append(issues, map[string]any{
+					"code": is.Code, "message": is.Message,
+					"severity": is.Severity, "scope": is.Scope,
+					"request_id": is.RequestId, "operation_id": is.OperationId,
+					"affected_capabilities": stringsOrEmpty(is.AffectedCapabilities),
+					"recovery":              recovery,
+				})
+			}
+			result["issues"] = issues
+		}
 		return result
 	}
 	return map[string]any{"type": "unknown"}
+}
+
+// stringsOrEmpty 保证 JSON 里是 [] 而不是 null：客户端的「空数组」与「字段缺失」
+// 是两种语义（§11.5-6），nil slice 编码成 null 会把前者变成后者。
+func stringsOrEmpty(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
 }
 
 func actionToMap(a *commonpb.AgentAction) map[string]any {
