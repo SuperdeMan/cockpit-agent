@@ -162,6 +162,16 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     // 策略在但不可信（风险档认不出）时按 high 处理，不默认放行到低风险档
     risk: op.policy?.usable && op.policy.risk === 'low' ? ('low' as const) : ('high' as const),
     expiresAt: op.expiresAtMs && op.expiresAtMs > 0 ? op.expiresAtMs - (op.clockSkewMs || 0) : 0,
+    // 进度条分母取**服务端窗口**（截止时刻 - 服务端此刻），不是本地 TTL：
+    // 服务端说 60s 而分母写死 300s，进度条一开始就只剩 1/5，看着像马上要过期
+    windowMs:
+      op.policy?.expiresAtMs && op.policy.serverNowMs
+        ? op.policy.expiresAtMs - op.policy.serverNowMs
+        : op.slot?.expiresAtMs && op.slot.serverNowMs
+          ? op.slot.expiresAtMs - op.slot.serverNowMs
+          : 0,
+    // 策略在、但风险档认不出 ⇒ 这条确认不可信，UI 停手
+    policyBroken: !!op.policy && !op.policy.usable,
     slot: op.slot
       ? {
           missing: op.slot.displayName || op.slot.slot,

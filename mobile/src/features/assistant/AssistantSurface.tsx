@@ -105,11 +105,13 @@ export function AssistantSurface() {
   if (!runtime) return null
   const { p, snapshot, settings, facts } = runtime
   const reminder = !!pickProactiveMessage(runtime)
-  const dock = facts.route !== '/' && runtime.scope.canCapture() && focusDockVisible(snapshot)
+  const dock = facts.route !== '/' && runtime.scope.canCapture()
+    && focusDockVisible(snapshot, runtime.state.issues)
   if (!reminder && !dock) return null
   return <SafeAreaView testID="assistant-surface" edges={['bottom']} style={{ backgroundColor: p.bg, paddingTop: 6 }}>
     <ProactivePresenter />
     {dock ? <FocusDock p={p} fontScale={settings.fontScale} snapshot={snapshot} onConfirm={runtime.onConfirm}
+      onSlotReply={runtime.onSlotReply} issues={runtime.state.issues} onIssueAction={runtime.onIssueAction}
       onCancelTurn={runtime.onInterrupt} onReenableBargeIn={runtime.hf.recycle}
       expanded={runtime.dockExpanded} onExpandedChange={runtime.setDockExpanded} /> : null}
   </SafeAreaView>

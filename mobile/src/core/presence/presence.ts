@@ -127,6 +127,8 @@ export interface PresenceInput {
     summary: string
     risk?: 'low' | 'high'
     expiresAt?: number
+    windowMs?: number
+    policyBroken?: boolean
     slot?: { missing: string; state: 'active' | 'held'; expiresAt: number; suggestions: string[] }
   }>
   pendingLocation: boolean
@@ -248,6 +250,8 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
           summary: op.summary,
           risk: op.risk ?? 'high',
           expiresAt: op.expiresAt && op.expiresAt > 0 ? op.expiresAt : op.ts + PENDING_TTL_MS,
+          ...(op.windowMs && op.windowMs > 0 ? { windowMs: op.windowMs } : {}),
+          ...(op.policyBroken ? { policyBroken: true } : {}),
         } as DockItem),
   )
   if (i.pendingLocation) {

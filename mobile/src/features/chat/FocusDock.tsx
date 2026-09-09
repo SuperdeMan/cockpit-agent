@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
 import { confirmRemainingMs, pinCommitment, type DockItem } from '@/core/presence/commitment'
+import { isRecoveryImplemented, type IssueView, type RecoveryKind } from '@/core/session/contracts'
 import type { Degradation, PresenceSnapshot } from '@/core/presence/presence'
 import type { FontScalePref } from '@/core/settings/store'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
@@ -21,8 +22,17 @@ export interface FocusDockProps {
   fontScale: FontScalePref
   snapshot: PresenceSnapshot
   onConfirm(reply: '确认' | '取消', operationId?: string): void
+  /** 显式补槽回复（AR05 §4.2）：指定 operationId + 这一次回答的值，走正常请求链。
+   *  没接这个回调时补槽卡只显示、不给可点的建议值——**不造点了没反应的按钮**。 */
+  onSlotReply?(operationId: string, value: string): void
   onCancelTurn(): void
   onReenableBargeIn?(): void
+  /** 服务端下发的结构化问题（AR05 §5.1）。与 `degradation`（客户端设备事实）**分开渲染**：
+   *  一个是「服务端说这轮出了什么事」，一个是「这台设备此刻什么状态」，混成一行就分不清
+   *  该去要授权还是该去开权限。 */
+  issues?: readonly IssueView[]
+  /** 恢复动作出口。只有客户端真的实现了的 kind 才会被调用（见 isRecoveryImplemented）。 */
+  onIssueAction?(kind: RecoveryKind, issue: IssueView): void
   expanded?: boolean
   onExpandedChange?(expanded: boolean): void
 }
@@ -39,19 +49,31 @@ function dockDegradations(snapshot: PresenceSnapshot): Degradation[] {
 
 /** 承诺面此刻有没有东西可画——**唯一的一份**：组件自己与根宿主（AR04 第十五节，支持页占布局空间的
  *  容器）都读它；宿主没有内容时连底部安全区都不留，不然又是一条常驻空条。 */
-export function focusDockVisible(snapshot: PresenceSnapshot): boolean {
-  return !!pinCommitment(snapshot.commitment) || dockDegradations(snapshot).length > 0
+export function focusDockVisible(snapshot: PresenceSnapshot, issues: readonly IssueView[] = []): boolean {
+  return !!pinCommitment(snapshot.commitment) || dockDegradations(snapshot).length > 0 || issues.length > 0
 }
 
 export function FocusDock(props: FocusDockProps) {
   const { p, fontScale, snapshot } = props
   const pinned = pinCommitment(snapshot.commitment)
   const degradations = dockDegradations(snapshot)
-  if (!pinned && !degradations.length) return null
+  const issues = props.issues ?? []
+  if (!pinned && !degradations.length && !issues.length) return null
   const solid = p.dark ? '#0A0E1A' : '#FFFFFF'
   return (
     <View testID="focus-dock" style={{ paddingHorizontal: 12, paddingBottom: 6, gap: 6 }}>
       {pinned ? <Commitments {...props} pinned={pinned} solid={solid} /> : null}
+      {issues.map((issue) => (
+        <IssueRow
+          key={`${issue.code}:${issue.operationId}:${issue.requestId}`}
+          p={p}
+          fontScale={fontScale}
+          driving={snapshot.driving}
+          issue={issue}
+          solid={solid}
+          onAction={props.onIssueAction}
+        />
+      ))}
       {degradations.map((d) => (
         // key 带上区分维：同一种 kind 上游今天最多 push 一次，但 mic + camera 两个
         // permission_denied 是随时会出现的形态，那时 `key={d.kind}` 就是 React key 冲突
@@ -116,6 +138,7 @@ function CommitmentCard({
   others,
   solid,
   onConfirm,
+  onSlotReply,
   onCancelTurn,
   onOthers,
   testIdPrefix = 'dock',
@@ -133,7 +156,21 @@ function CommitmentCard({
   // 隐藏时把分类并进标题的读屏 label，信息不丢，只是不再抢那一行。
   const { fontScale: sysScale } = useWindowDimensions()
   const labelMode = dockLabelMode(fontScale, sysScale)
-  const kindLabel = item.kind === 'confirm' ? (item.subkind === 'location' ? '位置授权' : '危险动作 · 需二次确认') : ''
+  // 风险档取服务端事实：high 才说「危险动作」。策略不可信时先说清楚这一条不能确认。
+  const kindLabel =
+    item.kind === 'confirm'
+      ? item.subkind === 'location'
+        ? '位置授权'
+        : item.policyBroken
+          ? '策略未取到 · 暂不能确认'
+          : item.risk === 'low'
+            ? '需要你确认'
+            : '危险动作 · 需二次确认'
+      : item.kind === 'slot'
+        ? item.state === 'held'
+          ? '待补充 · 已搁置'
+          : '待补充'
+        : ''
   return (
     // ⚠ `accessibilityLiveRegion` **不在这一层**：这个子树里有每秒变的倒计时，挂在根上会让
     // TalkBack 每秒重播整张卡。live region 只挂在下面那些「内容变了才该播一次」的摘要行上。
@@ -170,7 +207,9 @@ function CommitmentCard({
                 <View
                   style={{
                     height: 2,
-                    width: `${Math.round((confirmRemainingMs(item, now) / PENDING_TTL_MS) * 100)}%`,
+                    // 分母取**服务端窗口**，没有才回落本地 TTL：服务端说 60s 而分母写死
+                    // 300s 时，进度条一上来就只剩 1/5，看着像马上要过期
+                    width: `${Math.min(100, Math.round((confirmRemainingMs(item, now) / (item.windowMs && item.windowMs > 0 ? item.windowMs : PENDING_TTL_MS)) * 100))}%`,
                     backgroundColor: p.amber,
                   }}
                 />
@@ -189,14 +228,27 @@ function CommitmentCard({
             >
               <Text style={{ color: p.fg2, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>{item.subkind === 'location' ? '拒绝' : '取消'}</Text>
             </Pressable>
-            <Pressable
-              testID={`${testIdPrefix}-accept`}
-              accessibilityRole="button"
-              onPress={() => onConfirm('确认', item.subkind === 'location' ? undefined : item.id)}
-              style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)', backgroundColor: p.amberSoft, alignItems: 'center', justifyContent: 'center' }}
-            >
-              <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale), fontWeight: '600' }}>{item.subkind === 'location' ? '允许' : '确认'}</Text>
-            </Pressable>
+            {item.policyBroken ? (
+              // 策略缺失/畸形 ⇒ **不给确认入口**（方案 §7.1：不能默认为允许）。
+              // 取消与重新发起仍可达——停手不等于把用户困住。
+              <View
+                testID={`${testIdPrefix}-policy-broken`}
+                style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.line, backgroundColor: p.fill, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 }}
+              >
+                <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), textAlign: 'center' }}>
+                  确认策略没取到，请重新发起
+                </Text>
+              </View>
+            ) : (
+              <Pressable
+                testID={`${testIdPrefix}-accept`}
+                accessibilityRole="button"
+                onPress={() => onConfirm('确认', item.subkind === 'location' ? undefined : item.id)}
+                style={{ flex: 2, minHeight: h, borderRadius: RADIUS.md, borderWidth: 1, borderColor: 'rgba(245,158,11,0.38)', backgroundColor: p.amberSoft, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale), fontWeight: '600' }}>{item.subkind === 'location' ? '允许' : '确认'}</Text>
+              </Pressable>
+            )}
           </View>
         </>
       ) : item.kind === 'task' ? (
@@ -212,14 +264,130 @@ function CommitmentCard({
           {item.count} 条消息排队中，连上后自动补发
         </Text>
       ) : (
-        <Text accessibilityLiveRegion="assertive" style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>
-          还差一个信息：{item.missing}
-        </Text>
+        <View style={{ gap: 8 }}>
+          <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Text
+              numberOfLines={2}
+              accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：还差一个信息：${item.missing}` : undefined}
+              style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale), flex: 1 }}
+            >
+              还差一个信息：{item.missing}
+            </Text>
+            {labelMode === 'full' ? (
+              <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), flexShrink: 0 }}>{kindLabel}</Text>
+            ) : null}
+          </View>
+          {item.expiresAt > 0 ? (
+            <Text testID={`${testIdPrefix}-slot-countdown`} style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
+              {fmt(Math.max(0, item.expiresAt - now))} 后过期
+            </Text>
+          ) : null}
+          {item.suggestions.length > 0 && onSlotReply ? (
+            // 建议值**只来自本次真实 Agent 结果/候选集**（服务端保证）。没有建议值时
+            // 这一段整个不渲染：给自由输入，不造可点的假选项（方案 §4.2）。
+            <View testID={`${testIdPrefix}-slot-suggestions`} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {item.suggestions.map((value) => (
+                <Pressable
+                  key={value}
+                  testID={`${testIdPrefix}-slot-suggestion-${value}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`用「${value}」回答${item.missing}`}
+                  onPress={() => onSlotReply(item.id, value)}
+                  style={{ minHeight: h, paddingHorizontal: 12, justifyContent: 'center', borderRadius: RADIUS.md, borderWidth: 1, borderColor: p.line, backgroundColor: p.fill }}
+                >
+                  <Text style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>{value}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>
+              直接说或输入都可以
+            </Text>
+          )}
+        </View>
       )}
       {others > 0 ? (
         <Pressable testID="dock-others" onPress={onOthers} accessibilityRole="button" style={{ minHeight: h, justifyContent: 'center' }}>
           <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale) }}>另有 {others} 个待处理 ›</Text>
         </Pressable>
+      ) : null}
+    </View>
+  )
+}
+
+/** 恢复动作的按钮文案兜底：服务端给了 label 就用它（它更贴本次场景）。 */
+const RECOVERY_FALLBACK_LABEL: Record<RecoveryKind, string> = {
+  open_capability_settings: '查看能力与连接',
+  open_voice_settings: '语音设置',
+  reconfigure_connection: '重新配置连接',
+  retry_request: '换个说法再试',
+  replay_audio: '重播',
+  dismiss: '知道了',
+}
+
+function IssueRow({
+  p,
+  fontScale,
+  driving,
+  issue,
+  solid,
+  onAction,
+}: {
+  p: Palette
+  fontScale: FontScalePref
+  driving: boolean
+  issue: IssueView
+  solid: string
+  onAction?(kind: RecoveryKind, issue: IssueView): void
+}) {
+  // **只渲染客户端真的实现了的 kind**：契约里定义了六个，App 现在能兑现五个；
+  // 把没实现的画成按钮就是承诺了做不到的事（比不给入口更糟）。
+  const actions = onAction
+    ? issue.recovery.filter((r) => isRecoveryImplemented(r.kind))
+    : []
+  const danger = issue.severity === 'error'
+  return (
+    <View
+      testID={`dock-issue-${issue.code}`}
+      style={{
+        backgroundColor: solid,
+        borderRadius: RADIUS.md,
+        borderWidth: 1,
+        borderColor: danger ? 'rgba(239,68,68,0.35)' : p.line,
+        padding: 10,
+        gap: 8,
+      }}
+    >
+      <Text
+        accessibilityLiveRegion="polite"
+        style={{ color: p.fg1, fontSize: scale(TYPE.caption, 'text', fontScale) }}
+      >
+        {issue.message}
+      </Text>
+      {actions.length ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {actions.map((r) => (
+            <Pressable
+              key={r.kind}
+              testID={`dock-issue-${issue.code}-${r.kind}`}
+              accessibilityRole="button"
+              onPress={() => onAction?.(r.kind, issue)}
+              style={{
+                minHeight: scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale),
+                paddingHorizontal: 12,
+                justifyContent: 'center',
+                borderRadius: RADIUS.md,
+                borderWidth: 1,
+                borderColor: p.line,
+                backgroundColor: p.fill,
+              }}
+            >
+              <Text style={{ color: p.accent, fontSize: scale(TYPE.caption, 'text', fontScale) }}>
+                {r.label || RECOVERY_FALLBACK_LABEL[r.kind]}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
       ) : null}
     </View>
   )

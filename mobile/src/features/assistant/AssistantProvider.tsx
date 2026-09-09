@@ -1,13 +1,15 @@
 // AR04：应用内唯一语音宿主；页面只消费同一份控制器与会话事实。
-import { usePathname } from 'expo-router'
+import { router, usePathname } from 'expo-router'
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { AppState, BackHandler, Keyboard, View, useWindowDimensions } from 'react-native'
 import { useStore } from 'zustand'
 
+import { fetchSessionInfo } from '@/core/api/sessionInfo'
 import { loadServerConfig, subscribeServerConfig } from '@/core/config/storage'
 import type { ServerConfig } from '@/core/config/types'
 import { InteractionScope } from '@/core/session/interactionScope'
 import { disposeWired, ensureWired, type Wired } from '@/core/session/wiring'
+import type { IssueView, RecoveryKind } from '@/core/session/contracts'
 import type { SendOpts } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
@@ -101,6 +103,28 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     if (!operationId && pendingLocationText !== null && reply === '确认') activityLog.push('location', '位置授权 · 同意')
     core.confirmReply(reply, operationId)
   }, [core, pendingLocationText, scope])
+  // 显式补槽回复（AR05 §4.2）：与 onConfirm 同一条采集域闸；不经普通发送路由，
+  // 免得点了建议值却被上一轮候选或定位征询截走。
+  const onSlotReply = useCallback((operationId: string, value: string) => {
+    if (!scope.canCapture()) return
+    core.slotReply(operationId, value)
+  }, [core, scope])
+  // 结构化问题的恢复出口（AR05 §5.1）。**只做客户端真能兑现的事**：
+  //  · 三个"去某处配置"跳设置页——业务授权不足绝不指向系统权限页（V07）；
+  //  · retry_request **只把原话放回输入框，不自动重发**——本轮可能已经执行了一部分，
+  //    或者结果未知，自动整轮重发会把一件事做两次（§5.1）。
+  const onIssueAction = useCallback((kind: RecoveryKind, issue: IssueView) => {
+    if (kind === 'dismiss') {
+      core.dismissIssue(issue.code, issue.operationId)
+      return
+    }
+    if (kind === 'retry_request') {
+      if (issue.retryText) setDraft(issue.retryText)
+      core.dismissIssue(issue.code, issue.operationId)
+      return
+    }
+    router.push('/settings')
+  }, [core, setDraft])
   const onInterrupt = useCallback(() => { if (scope.canCapture()) core.cancelCurrentTurn() }, [core, scope])
   const ptt = usePtt({
     audioUrl: cfg.audioUrl, sessionId: wired.session.sessionId, scope,
@@ -123,7 +147,20 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     if (hf.fsm !== 'LISTENING' && ptt.state === 'idle') core.discardDraftUser()
   }, [hf.fsm, ptt.state, core])
   const win = useWindowDimensions()
-  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent() })
+  // 隐私栏的「当前：xx」取**服务端身份**（AR05 R14）。取不到才回落 token 尾 4 位——
+  // 那从来不是用户是谁，只是一段凭证的尾巴。配置一变先清空：旧账号的摘要绝不能
+  // 留在新会话上（同 ensureWired/disposeWired 的销毁边界）。
+  const [serverUserId, setServerUserId] = useState('')
+  useEffect(() => {
+    setServerUserId('')
+    if (!cfg.edgeUrl || !cfg.token) return
+    let alive = true
+    void fetchSessionInfo(cfg.edgeUrl, cfg.token).then((r) => {
+      if (alive && r.kind === 'ok' && r.summary.userId) setServerUserId(r.summary.userId)
+    })
+    return () => { alive = false }
+  }, [cfg.edgeUrl, cfg.token])
+  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: serverUserId || cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent() })
   const layout = useLayout(snapshot.driving)
   const reduceMotion = useReduceMotion()
   const motionEnv = { reduceMotion }
@@ -192,7 +229,7 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     wired, cfg, core, state, settings, p, scope, facts, snapshot, layout, motionEnv, reduceMotion,
     ptt, hf, notice, turn, latestTurnId, busy, stoppable,
     sheetOverride, setSheetOverride, privacyOpen, setPrivacyOpen, dockExpanded, setDockExpanded, draft, setDraft,
-    onSend, onConfirm, onInterrupt, onOrbTap, onStopPlayback, stopMic,
+    onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap, onStopPlayback, stopMic,
   }
 }
 

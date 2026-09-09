@@ -160,7 +160,7 @@ function Welcome({
 
 function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   const { p, cfg, core, state, settings, ptt, hf, snapshot, layout, motionEnv, reduceMotion,
-    notice, turn, latestTurnId, busy, stoppable, onSend, onConfirm, onInterrupt, onOrbTap,
+    notice, turn, latestTurnId, busy, stoppable, onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap,
     onStopPlayback, setSheetOverride, privacyOpen, setPrivacyOpen, draft, setDraft,
     dockExpanded, setDockExpanded } = runtime
   const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId,
@@ -299,6 +299,9 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       fontScale={settings.fontScale}
       snapshot={snapshot}
       onConfirm={onConfirm}
+      onSlotReply={onSlotReply}
+      issues={state.issues}
+      onIssueAction={onIssueAction}
       onCancelTurn={onInterrupt}
       onReenableBargeIn={hf.recycle}
       expanded={dockExpanded}

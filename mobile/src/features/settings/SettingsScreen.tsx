@@ -11,6 +11,11 @@ import { AGENT_CATALOG } from '@shared/types.ts'
 
 import { formatBuildLabel, readBuildInfo } from '../../core/buildInfo'
 import { developmentDiagnosticsEnabled } from '../../core/diagnostics'
+import {
+  fetchSessionInfo,
+  summaryStale,
+  type SessionInfoResult,
+} from '../../core/api/sessionInfo'
 import { loadServerConfig } from '../../core/config/storage'
 import type { ServerConfig } from '../../core/config/types'
 import { drivingActive, NO_EDGE_DRIVING } from '../../core/presence/drivingMode'
@@ -45,6 +50,99 @@ function Section({ p, title, children }: { p: Palette; title: string; children: 
         {children}
       </View>
     </View>
+  )
+}
+
+/** 能力状态的用户可读说明——**唯一的一份**。未知状态原样标未知，不猜。 */
+const CAPABILITY_STATUS_LABEL: Record<string, string> = {
+  available: '可用',
+  unauthorized: '当前账号未授权',
+  unavailable: '服务未在线',
+  unknown: '状态未知',
+}
+
+const AUTHORIZATION_SOURCE_LABEL: Record<string, string> = {
+  token: '按 token 授权',
+  poc_default: 'PoC 默认放行（不是真实授权）',
+  fail_closed: '无授权（fail-closed）',
+}
+
+function SessionSummarySection({
+  p,
+  result,
+  loading,
+  onRefresh,
+}: {
+  p: Palette
+  result: SessionInfoResult | null
+  loading: boolean
+  onRefresh(): void
+}) {
+  const line = (text: string, testID?: string) => (
+    <Text testID={testID} style={{ color: p.fg2, fontSize: p.font(13) }}>{text}</Text>
+  )
+  const refresh = (
+    <Pressable accessibilityRole="button" onPress={onRefresh} testID="settings-session-refresh">
+      <Text style={{ color: p.accent, fontSize: p.font(13) }}>{loading ? '刷新中…' : '刷新'}</Text>
+    </Pressable>
+  )
+  if (!result) {
+    return <>{line(loading ? '正在读取…' : '尚未读取', 'settings-session-idle')}{refresh}</>
+  }
+  if (result.kind === 'unauthorized') {
+    // 服务端**明确**拒绝：这一条才该引导重新配置。
+    return (
+      <>
+        {line('服务端拒绝了当前 token，重新配置后才能继续。', 'settings-session-unauthorized')}
+        <Link href="/onboarding" style={{ color: p.accent, fontSize: p.font(14) }}>重新配置</Link>
+      </>
+    )
+  }
+  if (result.kind === 'legacy') {
+    return <>{line('当前服务端还不支持能力摘要（旧版本）。', 'settings-session-legacy')}{refresh}</>
+  }
+  if (result.kind === 'unknown') {
+    // 网络/超时：**不说 token 有问题**，只说没取到。
+    return (
+      <>
+        {line(`暂时取不到能力摘要（${result.reason}）。这不代表 token 有问题。`, 'settings-session-unknown')}
+        {refresh}
+      </>
+    )
+  }
+  const s = result.summary
+  const stale = summaryStale(s)
+  return (
+    <>
+      {line(
+        `账号 ${s.userId || '未知'}${s.vehicleId ? ` · 服务端关联车辆 ${s.vehicleId}` : ''}`,
+        'settings-session-identity',
+      )}
+      {line(AUTHORIZATION_SOURCE_LABEL[s.authorizationSource] ?? `授权来源 ${s.authorizationSource || '未知'}`)}
+      {s.summaryStatus === 'partial' ? (
+        <Text testID="settings-session-partial" style={{ color: p.fg3, fontSize: p.font(12) }}>
+          这份摘要只取到一部分（{s.summaryReason || '原因未知'}），没列出的能力状态未知。
+        </Text>
+      ) : null}
+      {stale ? (
+        <Text testID="settings-session-stale" style={{ color: p.fg3, fontSize: p.font(12) }}>
+          摘要已过期，点刷新重新读取。
+        </Text>
+      ) : null}
+      <View style={{ gap: 6 }}>
+        {s.capabilities.length === 0
+          ? line('服务端没有返回任何能力。', 'settings-session-empty')
+          : s.capabilities.map((c) => (
+            <View key={c.id} testID={`settings-capability-${c.id}`} style={{ flexDirection: 'row', gap: 8 }}>
+              <Text style={{ color: p.fg1, fontSize: p.font(13), flex: 1 }}>{c.displayName}</Text>
+              <Text style={{ color: c.status === 'available' ? p.fg2 : p.fg3, fontSize: p.font(12) }}>
+                {CAPABILITY_STATUS_LABEL[c.status] ?? `未知状态（${c.status}）`}
+              </Text>
+            </View>
+          ))}
+      </View>
+      {refresh}
+    </>
   )
 }
 
@@ -137,6 +235,10 @@ export function SettingsScreen() {
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
   const [asrCatalog, setAsrCatalog] = useState<AsrProviderInfo[]>([])
   const [previewing, setPreviewing] = useState(false)
+  // AR05 R14：会话身份与能力摘要。null = 还没查过；查询失败/旧服务端各有各的展示，
+  // **不把「此刻查不到」显示成「你没有这些能力」**。
+  const [session, setSession] = useState<SessionInfoResult | null>(null)
+  const [sessionLoading, setSessionLoading] = useState(false)
   // 免唤醒的原生可用性：**在渲染前问一次**。原生缺席时连开关都不渲染——
   // 这不是 UI 洁癖，是坑账 §9.27：原生缺席时崩在原生线程，ErrorBoundary 兜不住整屏红屏。
   const hfAvail = useMemo(() => handsFreeAvailability(), [])
@@ -160,6 +262,22 @@ export function SettingsScreen() {
     void fetchAsrProviders(server.audioUrl).then(setAsrCatalog)
   }, [server?.audioUrl])
 
+  const refreshSession = useMemo(
+    () => async (cfg: ServerConfig | null) => {
+      if (!cfg) return
+      setSessionLoading(true)
+      try {
+        setSession(await fetchSessionInfo(cfg.edgeUrl, cfg.token))
+      } finally {
+        setSessionLoading(false)
+      }
+    },
+    [],
+  )
+  useEffect(() => {
+    void refreshSession(server)
+  }, [server, refreshSession])
+
   const ttsEngine = ttsCatalog.find((e) => e.id === settings.ttsProvider) ?? ttsCatalog[0]
   const asrEngine = asrCatalog.find((e) => e.id === settings.asrProvider)
 
@@ -174,24 +292,34 @@ export function SettingsScreen() {
           {server ? server.edgeUrl : '未配置'}
         </Text>
         {server ? (
-          <Text style={{ color: p.fg3, fontSize: p.font(12) }}>token ····{server.token.slice(-4)}</Text>
+          // 身份取**服务端事实**；查不到才回落 token 尾 4 位，并说清这是回落
+          // ——「token ····ab12」从来不是用户是谁，它只是一段凭证的尾巴（AR05 F06）。
+          <Text testID="settings-identity" style={{ color: p.fg3, fontSize: p.font(12) }}>
+            {session?.kind === 'ok' && session.summary.userId
+              ? `账号 ${session.summary.userId}${session.summary.vehicleId ? ` · 关联车辆 ${session.summary.vehicleId}` : ''}`
+              : `账号未知（token ····${server.token.slice(-4)}）`}
+          </Text>
         ) : null}
         <Link href="/onboarding" style={{ color: p.accent, fontSize: p.font(14) }}>
           重新配置（保存后回对话页自动重连）
         </Link>
       </Section>
 
-      {/* 身份与行车（B4-10 / 方案 §6.0）：身份由 token scope + 设备角色决定——**窗口尺寸不决定权限、
-          横屏不决定你是驾驶员、平板不自动获得车控**。App 端判不了 token 的 scope（不透明串、无查询
-          端点），所以说明行只说布局、**不承诺「可控车」**：选了「可信车载平板」也不会多出任何权限，
-          车控可用与否始终在服务端按 token 裁（§5 第 6 条；Q15 的绑定另议）。 */}
+      {/* 身份与行车（B4-10 / 方案 §6.0 / AR05 R14）：**设备角色只决定布局**，
+          窗口尺寸不决定权限、横屏不决定你是驾驶员、平板不自动获得车控。
+          AR05 之前 App 判不了 token 的 scope（不透明串、无查询端点），只好拿角色推
+          「不控车」——那是**客户端编的权限结论**。现在有 `GET /api/session` 了：
+          能不能控车由上面那份摘要如实说，这里只说布局。 */}
       <Section p={p} title="身份与行车">
-        <Text style={{ color: p.fg2, fontSize: p.font(13) }}>
+        <Text testID="settings-device-role-note" style={{ color: p.fg2, fontSize: p.font(13) }}>
           {settings.deviceRole === 'handheld'
-            ? '手持陪伴端 · 不控车'
+            ? '手持陪伴端 · 只决定布局'
             : settings.deviceRole === 'mount'
-              ? '支架 · 副驾协同 · 不控车'
-              : '可信车载平板 · 车控由服务端 token 决定，这里只决定布局'}
+              ? '支架 · 副驾协同 · 只决定布局'
+              : '可信车载平板 · 只决定布局'}
+        </Text>
+        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>
+          选哪个角色都不会多出任何权限；能做什么看上面「账号与能力」那份服务端摘要。
         </Text>
         <ChoiceRow
           p={p}
@@ -517,6 +645,17 @@ export function SettingsScreen() {
             手机上用的是后置摄像头（PoC 阶段代替车外摄像头，卡片上会标「模拟」）。
           </Text>
         ) : null}
+      </Section>
+
+      {/* 账号与能力（AR05 R14）：**服务端摘要**，不是客户端推断。三种「不能用」分开说——
+          没授权 / 服务不在线 / 取不到；取不到就说取不到，不冒充「可用」也不冒充「没有」。 */}
+      <Section p={p} title="账号与能力（服务端）">
+        <SessionSummarySection
+          p={p}
+          result={session}
+          loading={sessionLoading}
+          onRefresh={() => void refreshSession(server)}
+        />
       </Section>
 
       <Section p={p} title="能力开关（关掉的指令会被婉拒）">

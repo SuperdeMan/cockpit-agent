@@ -20,8 +20,13 @@ export type DockItem =
       /** 用户看得懂的动作摘要（气泡原话截断） */
       summary: string
       risk: 'low' | 'high'
-      /** = 台账 ts + PENDING_TTL_MS；**只读共享 TTL**，UI 不另存时间 */
+      /** 绝对截止时刻：服务端 confirm_policy 优先，没有才是台账 ts + PENDING_TTL_MS */
       expiresAt: number
+      /** 服务端给的确认窗口总长（ms），进度条分母。0 = 未知，按本地 TTL 画 */
+      windowMs?: number
+      /** 策略在、但不可信（风险档缺失或认不出）⇒ **停止这条确认**，只留取消与重新发起。
+       *  未知枚举不许落到「按最宽松处理」——那是安全侧的默认放行（方案 §7.1） */
+      policyBroken?: boolean
       /** 位置授权征询：按钮文案换成「允许 / 拒绝」，不上行 operation_id */
       subkind?: 'location'
     }

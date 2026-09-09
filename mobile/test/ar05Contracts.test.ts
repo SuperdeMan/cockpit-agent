@@ -280,3 +280,73 @@ describe('承诺卡标题', () => {
     expect(commitmentTitle(messages, 'op-1', '   ')).toBe('打开后备箱')
   })
 })
+
+// ── 显式补槽回复入口（方案 §4.2）────────────────────────────────────────
+
+describe('显式补槽回复', () => {
+  function withSlot() {
+    const { transport, core } = newCore()
+    core.send('帮我点一杯')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({
+      type: 'final', request_id: rid, speech: '要在哪家店？', operation_id: 'op-slot',
+      slot_request: {
+        operation_id: 'op-slot', slot: 'store', display_name: '门店',
+        suggestions: ['望京店'], state: 'active', remaining_slots: ['store'],
+        expires_at_ms: NOW + 90_000, server_now_ms: NOW,
+      },
+    })
+    return { transport, core }
+  }
+
+  test('按 operationId 走挂起续接通道，并即时出账', () => {
+    const { transport, core } = withSlot()
+    core.slotReply('op-slot', '望京店')
+
+    const frame = transport.lastUserFrame()
+    expect(frame.text).toBe('望京店')
+    expect(frame.is_confirmation).toBe(true)
+    expect(frame.operation_id).toBe('op-slot')
+    expect(core.store.getState().pendingOps).toEqual([])
+    core.dispose()
+  })
+
+  test('挂起不存在 / 不是补槽 / 空值 一律不上行', () => {
+    const { transport, core } = withSlot()
+    const before = transport.sent.length
+
+    core.slotReply('op-nope', '望京店')
+    core.slotReply('op-slot', '   ')
+    core.slotReply('', '望京店')
+
+    expect(transport.sent.length).toBe(before)
+    core.dispose()
+  })
+
+  test('过期的补槽点下去不上行（点了没反应好过打错人）', () => {
+    const { transport, core } = withSlot()
+    const before = transport.sent.length
+    jest.setSystemTime(NOW + 91_000)
+
+    core.slotReply('op-slot', '望京店')
+
+    expect(transport.sent.length).toBe(before)
+    core.dispose()
+  })
+
+  test('同时挂着位置征询时，补槽回复不会被它消费', () => {
+    const { transport, core } = withSlot()
+    // 造一条位置征询：位置依赖句 + 定位未开启 ⇒ 走征询闸
+    core.send('附近的充电站')
+    expect(core.store.getState().pendingLocationText).not.toBeNull()
+
+    core.slotReply('op-slot', '望京店')
+
+    const frame = transport.lastUserFrame()
+    expect(frame.operation_id).toBe('op-slot')
+    expect(frame.text).toBe('望京店')
+    // 位置征询原样还在，没被这一下吃掉
+    expect(core.store.getState().pendingLocationText).not.toBeNull()
+    core.dispose()
+  })
+})

@@ -13,6 +13,7 @@ import { RequestRegistry } from '@shared/requestRouting.mjs'
 import { PENDING_CAPACITY, PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
 
 import {
+  dismissIssue,
   mergeIssues,
   readFinalContracts,
   type ConfirmPolicyView,
@@ -436,6 +437,47 @@ export class SessionCore {
       this.syncPruneTimer()
     }
     this.dispatch(reply, true, undefined, undefined, operationId, opts.source ?? 'text', undefined, operation)
+  }
+
+  /**
+   * 显式补槽回复（AR05 §4.2）：**指定这一条挂起、回答它正在问的那个槽**。
+   *
+   * 为什么要单独一个入口而不是走 `send()`：普通发送会先过位置征询闸、候选序数解析
+   * 与话题判定，一次「望京店」很可能被上一轮的候选列表或定位征询截走——那时用户点的
+   * 是补槽建议值，落地的却是另一件事。这里只做三件事：核对这条挂起还活着且确实在
+   * 补槽、出账、按 operation_id 走既有的挂起续接通道。
+   *
+   * 过期/已关闭/不是补槽 ⇒ **不上行**（同 confirmReply 的纪律：点了没反应好过打错人）。
+   */
+  slotReply(operationId: string, value: string, opts: SendOpts = {}): void {
+    if (this.disposed) return
+    const text = String(value || '').trim()
+    if (!operationId || !text) return
+    this.pruneExpiredOperations()
+    const operation = this.store.getState().pendingOps.find((o) => o.id === operationId)
+    if (!operation || !operation.slot) return
+    this.appendMessage({ id: uid(), role: 'user', text })
+    // 即时出账；服务端 closed_operation_ids 到达时幂等（同 confirmReply）
+    this.store.setState((s) => ({ pendingOps: closePendings(s.pendingOps, [operationId]) }))
+    this.syncPruneTimer()
+    this.dispatch(text, true, undefined, undefined, operationId, opts.source ?? 'text', undefined, operation)
+  }
+
+  /** 用户收起一条结构化问题。按 code + 归属定位，不按下标（同一 code 可能同时有两条）。 */
+  dismissIssue(code: string, operationId = ''): void {
+    if (this.disposed) return
+    this.store.setState((s) => ({ issues: dismissIssue(s.issues, code, operationId) }))
+  }
+
+  /** 某个气泡之前最近一条用户原话（同 actionSummary 的判据面）。空串=没有。 */
+  private userTextBefore(bubbleId: string | null): string {
+    const { messages } = this.store.getState()
+    const at = bubbleId ? messages.findIndex((m) => m.id === bubbleId) : -1
+    for (let i = (at < 0 ? messages.length : at) - 1; i >= 0; i -= 1) {
+      const m = messages[i]
+      if (m.role === 'user' && m.text.trim()) return m.text
+    }
+    return ''
   }
 
   /** 行车档手动退出（B5-3 缺陷 C 的 UI 出口）：只压住**本段**，不改判据；下一段照常自动进入 */
@@ -876,7 +918,13 @@ export class SessionCore {
       // ——绝不用正则去猜「这句话是不是拒绝/补槽/鉴权失败」。
       const contracts = readFinalContracts(data)
       if (contracts.issues.length) {
-        this.store.setState((s) => ({ issues: mergeIssues(s.issues, contracts.issues) }))
+        // 本轮用户原话在这一刻记下来：RequestRegistry 已经在 settle 时注销了 request_id，
+        // 事后再查查不到，而 retry_request 的入口要拿它回填输入框。
+        const retryText = this.userTextBefore(id)
+        const withRetry = contracts.issues.map((issue) =>
+          retryText ? { ...issue, retryText } : issue,
+        )
+        this.store.setState((s) => ({ issues: mergeIssues(s.issues, withRetry) }))
       }
       // Q1-C：待确认台账**服务端权威**——closed 列表出账、need_confirm&&operation_id 进账
       if (data.operation_id || closed.length) {

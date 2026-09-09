@@ -19,6 +19,10 @@ export interface RecoveryActionView {
 }
 
 export interface IssueView {
+  /** 本端投影，**不是契约字段**：这条问题对应那一轮的用户原话。
+   *  `retry_request` 把它放回输入框用——服务端不回传原话，而 RequestRegistry 在 final
+   *  结算时就把 request_id 注销了，事后再查是查不到的，所以在收到那一帧时就记下来。 */
+  retryText?: string
   code: string
   message: string
   severity: 'info' | 'warning' | 'error' | string
@@ -89,6 +93,25 @@ export function mergeIssues(previous: readonly IssueView[], incoming: readonly I
     (old) => !incoming.some((n) => n.code === old.code && n.scope === 'session'),
   )
   return [...kept, ...incoming]
+}
+
+/**
+ * 客户端**真的实现了**的恢复动作——比契约里的受控集合更小。
+ *
+ * 这两个集合必须分开：契约集合回答「服务端可以说哪些」，这个集合回答
+ * 「我点下去真的会发生事」。拿契约集合去渲染按钮，就会长出一批点了没反应的入口，
+ * 而那正是 AR05 要消灭的东西（承诺了却做不到，比不承诺更糟）。
+ */
+export const IMPLEMENTED_RECOVERY_KINDS: readonly RecoveryKind[] = [
+  'open_capability_settings',
+  'open_voice_settings',
+  'reconfigure_connection',
+  'retry_request',
+  'dismiss',
+]
+
+export function isRecoveryImplemented(kind: string): kind is RecoveryKind {
+  return (IMPLEMENTED_RECOVERY_KINDS as readonly string[]).includes(kind)
 }
 
 /** 收起一条问题（用户点「知道了」）。按 code + 归属定位，不按下标。 */
