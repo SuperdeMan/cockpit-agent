@@ -159,6 +159,9 @@ class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
                     # Q1-C 本轮关掉的挂起（HMI 据此撤确认条）
                     closed_operation_ids=list(
                         event.get("closed_operation_ids") or []),
+                    # AR05 §4.3：换题后仍有效的挂起（客户端据此撤下当前追问但保留任务）
+                    held_operation_ids=list(
+                        event.get("held_operation_ids") or []),
                 )
                 # 透传 ui_card（Agent 返回的结构化卡片数据给 HMI）
                 ui_card = event.get("ui_card")

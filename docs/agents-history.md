@@ -8774,3 +8774,35 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 反向验证两处都做了：禁用闸 → 8 条负例转红/7 条正例仍绿；删一个还原字段 → 2 条对账转红；两次都按字节恢复（`RESTORE OK`）。
 - 本地：新增 15 + 9 条测试；`orchestrator/edge` + `orchestrator/cloud` + `security` + `registry` 共 2244 passed / 1 skipped；四道门禁与 smoke edge 全 PASS。先红的 `test_voiceprint_not_auth` 是源码锚点随 granted 段搬家失效，红线已跟到 `session_scopes.py` 与 `scope_gate.py` 并补两条断言。
 - 合同冻结见方案 §11（ConfirmPolicy / SlotRequest / Issue / session_info 的字段、权威来源与缺省语义）。**步骤 2–6 未做**：proto 增量与 codegen、生产端、网关与共享逻辑、Android 消费、全量固定口径、构建装机、部署与真栈验收均未执行，AR05 未签收。
+
+## 2026-09-09 — AR05 步骤 2–5：契约生产、端云贯通、Android 消费与本地收口
+
+- **四份契约端云贯通**。proto 只加不改：`FinalResult` 增 `confirm_policy`/`slot_request`/
+  `issues`/`held_operation_ids`，另加 `DescribeSession`（端云各一）与 channel 的只读查询帧。
+  冻结后补的三个字段各自有理由，最要紧的是 `summary_status`——**没有这一位就没法区分
+  「云端此刻查不到」和「你没有这些能力」**，而两者的正确处置完全相反。
+- **确认策略与补槽由真实挂起状态合成**：截止时刻取 SessionStore 落盘后的绝对时刻（客户端
+  只读不续期）；摘要取已验证的步骤对象/槽值，取不到才回退**任务起点**原话并标 `summary_source`；
+  建议值只取用户真的看见了的那份选择卡（判据复用既有 `_is_choice_card`）。
+- **F09 窄修复**：非法计划且重试仍无有效计划时不再伪装成一次成功闲聊（真栈 trace
+  `21798d30258aa5bf` 是 toolcall_degraded → chitchat.talk → info.search）。标记与 `plan_mode`
+  分列不混口径；合法空动作、拒识、澄清、重试成功、salvage、空计划诚实降级六条路径逐条留回归。
+- **会话与能力摘要**（R14）：`GET /api/session` 复用 WS 的 token 判定、响应不含凭证；
+  三种"不能用"分得开（没授权 / 不在线 / 取不到）；云侧看不见车辆通道在不在，edge 能力一律
+  unknown 由端侧覆盖。客户端四种失败分开处置——**网络超时绝不判成 token 失效**。
+- **Android**：风险档与截止时刻取服务端事实、没给的时候不许猜低；策略不可信时不给确认入口；
+  补槽有显式回复入口（不经普通发送路由，免得被上一轮候选或定位征询截走）；结构化问题与设备
+  事实分开渲染、恢复出口只画客户端真兑现得了的 kind；设置页与隐私栏身份改服务端 `user_id`，
+  设备角色不再推断「不控车」；首页推荐按能力状态筛、摘要不完整时不筛；播报无声按成因分档
+  （合成失败 / 被打断 / 纯卡片轮），只有第一种提示用户。
+- **本地读数**：全量固定口径 8202 passed / 32 skipped / **1 failed**——那条
+  `test_release_status_docs_record_deployed_non_green_checkpoint` 在接手起点 `4278a52` 上同样红
+  （AGENTS 的 manual-rag 证据 SHA 被简写成短 SHA、QA 交接页的全量口径与 RPM 原串被缩写），
+  本轮按证据纪律补回全 40 位与完整表述，复跑 185 passed / 1 skipped。之后
+  orchestrator+security+registry+scripts 3701 passed、mobile 792 passed + tsc 0、
+  hmi 333 passed + build 成功、四道门禁与 smoke edge 全 PASS。
+- **五次反向验证**都判红后按字节恢复：停用 T0 闸 8 红 / 删 registry 还原字段 2 红 /
+  停用确认策略 3 红 / 停用 F09 分支 2 红 / 无声分档恒判失败 2 红。
+- **未做**：`go build` 与 `go test ./gateway/...` 本机无 Go 工具链未跑（网关三处改动只做了
+  生成物字段名比对，是当前最大的未验证面）；步骤 6 的固定 prod release、OPPO 取证、后端发布
+  与真栈业务证据全部未做；V01–V12 只在离线单测层面覆盖。AR05 未签收。

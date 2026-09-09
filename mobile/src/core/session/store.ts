@@ -463,6 +463,18 @@ export class SessionCore {
     this.dispatch(text, true, undefined, undefined, operationId, opts.source ?? 'text', undefined, operation)
   }
 
+  /**
+   * 登记一条**客户端侧**的结构化问题（AR05 §5.1）。
+   *
+   * 服务端问题走 final.issues；设备与音频这类事实只有 App 知道（麦克风被拒、
+   * 该出声却没出声…），它们用**同一套 code 与恢复动作**——客户端另起一套表示法，
+   * UI 就要写两条分流逻辑，而两条分流早晚会不一致。
+   */
+  noteClientIssue(issue: IssueView): void {
+    if (this.disposed || !issue?.code) return
+    this.store.setState((s) => ({ issues: mergeIssues(s.issues, [issue]) }))
+  }
+
   /** 用户收起一条结构化问题。按 code + 归属定位，不按下标（同一 code 可能同时有两条）。 */
   dismissIssue(code: string, operationId = ''): void {
     if (this.disposed) return
@@ -917,6 +929,19 @@ export class SessionCore {
       // AR05：结构化契约。**有结构化字段就以它为准**，没有（旧网关连键都不带）就逐字走既有路径
       // ——绝不用正则去猜「这句话是不是拒绝/补槽/鉴权失败」。
       const contracts = readFinalContracts(data)
+      // AR05 §4.3：服务端说这些挂起被搁置了（用户换了话题、任务仍有效）。
+      // 撤下当前追问、不再抢占这一问，但它还在台账里可以被选回来——
+      // **客户端不猜话题**，只照服务端说的做。
+      if (contracts.heldOperationIds.length) {
+        const held = new Set(contracts.heldOperationIds)
+        this.store.setState((s) => ({
+          pendingOps: s.pendingOps.map((op) =>
+            held.has(op.id) && op.slot && op.slot.state !== 'held'
+              ? { ...op, slot: { ...op.slot, state: 'held' } }
+              : op,
+          ),
+        }))
+      }
       if (contracts.issues.length) {
         // 本轮用户原话在这一刻记下来：RequestRegistry 已经在 settle 时注销了 request_id，
         // 事后再查查不到，而 retry_request 的入口要拿它回填输入框。

@@ -440,3 +440,77 @@ descriptor 断言夹具每个字段都是非默认值，`test_manifest_roundtrip
 
 **尚未执行**：proto 增量与 codegen、确认/补槽/issues/会话查询的生产端、网关与共享逻辑、
 Android 消费、全量固定口径、构建装机、部署与真栈验收。AR05 未签收。
+
+### 12.2 步骤 2–4（2026-09-09）：契约生产、端云贯通与 Android 消费
+
+| 字段 | 记录 |
+|---|---|
+| 实施范围 | 步骤 2 全部（除下方"未做"列出的）、步骤 3 全部、步骤 4 全部；步骤 5 本地验证已跑，文档回填即本节 |
+| 源码 | 分支 `main`，起点 `4278a52`；本节对应 `17bec2f` / `0556d42` / `0b278a5` / `eb34f7e` / `5421726` 及其后续提交 |
+| target | `cloud`；本轮零真栈动作、零部署、零设备 |
+
+**契约（proto 增量，只加不改）**：`FinalResult` 增 `confirm_policy` / `slot_request` /
+`issues` / `held_operation_ids`；新增 `ConfirmPolicy`、`SlotRequest`、`Issue`、
+`RecoveryAction`、`SessionInfoRequest/Response`、`CapabilityStatus`；
+`EdgeOrchestrator` 与 `CloudPlanner` 各增 `DescribeSession`；channel 增
+`session_info_request/response` 帧。冻结后按需补了三个字段，各自写明理由：
+`ConfirmPolicy.target_intent`（端侧据此用 VAL 受控知识收窄渠道，危险知识不在云侧抄第二份）、
+`SessionInfoResponse.summary_status/summary_reason`（**没有这一位就没法区分「云端此刻查不到」
+和「你没有这些能力」**）、`FinalResult.held_operation_ids`（换题后仍有效的挂起，客户端撤哪一条
+得有 id）。§11 字段表已同步。
+
+**服务端**
+
+- `orchestrator/cloud/contracts.py`：确认策略与补槽请求的唯一装配点。确认要求的权威是
+  capability 声明与真实挂起状态；截止时刻取 SessionStore 落盘后的绝对时刻；摘要取已验证的
+  挂起步骤对象/槽值，取不到才回退**任务起点**原话并在 `summary_source` 说明。
+- 补槽建议值只取用户**真的看见了**的那份选择卡（复用 `context._is_choice_card` /
+  `_candidate_items`），槽形状走 `slot_shape.shape_of`。
+- `runtime/issues.py`：Issue 受控枚举、装配与 dict→proto 转换的跨服务唯一声明。
+- 端侧四条本地路径共用一个 issue 收集器，在 `Handle` 唯一出口盖到 final 上；
+  scope 不足产 `permission.scope_missing`（恢复出口指能力/连接配置，**不指系统权限页**），
+  VAL 拒绝产 `safety.val_rejected`。
+- F09 窄修复：非法计划且重试仍无有效计划时不再伪装成成功闲聊；`Plan.technical_failure`
+  与 `plan_mode` 分列。合法空动作、`addressed=false` 拒识、澄清、重试成功、salvage、
+  空计划诚实降级**六条路径逐条留了回归**。端侧 `cloud_had_output` 同时认结构化终态。
+- 会话摘要：`security/capability_status.py` 把「注册目录 + 本次授权」算成能力状态，
+  三种"不能用"分得开；云侧看不见车辆通道在不在，edge 能力一律 `unknown`，端侧用自己的
+  事实覆盖；只读查询**不复用 `handle()`**（那条路会进 Planner、写聊天历史、可能调 LLM）。
+
+**网关**：`eventToMap` 透传四个契约（空数组编码成 `[]` 不是 `null`）；
+`GET /api/session` 与 WS 同一套 token 判定，响应与日志不含凭证，后端不可达回 503
+且不编造摘要；云网关把 `session_info_request` 转给 Planner 的 `DescribeSession`。
+
+**共享客户端**：`hmi/src/contracts.mjs`（已登记 allowlist）是四种"没有值"的唯一判据；
+`pendingOps` 限龄改为服务端截止时刻优先——此前服务端说 60s 而本地按 300s，确认条会多活
+4 分钟、点下去必被拒。`hmi/src/quickCommands.mjs` 是首页推荐的可用性筛选。
+
+**Android**：承诺卡标题改服务端摘要优先；风险档/截止时刻取真实值，**没给的时候不许猜低**；
+策略不可信时不给确认入口；补槽卡渲染真实建议值并有显式回复入口 `core.slotReply()`
+（不经普通发送路由，免得被上一轮候选或定位征询截走）；结构化问题与设备事实分开渲染，
+恢复出口只渲染客户端真的实现了的 kind；`retry_request` 只回填输入框不自动重发；
+设置页新增「账号与能力（服务端）」，身份与隐私栏改用服务端 `user_id`；设备角色说明行
+不再推断「不控车」；首页推荐按能力状态与用户开关筛，摘要不完整时不筛；
+F05 播报无声按成因分档（合成失败 / 被打断 / 纯卡片轮），只有第一种提示用户。
+
+**本地验证（同一工作树）**
+
+| 命令 | 结果 |
+|---|---|
+| `pytest -q -n 8 --dist worksteal`（全量固定口径，TZ=UTC0） | 8202 passed / 32 skipped / **1 failed** → 该条是接手前既有的文档证据漂移（`4278a52` 上同样红），已修 |
+| 修后 `pytest -q scripts/tests/test_cloud_deploy_assets.py` | 185 passed / 1 skipped |
+| `pytest -q -n 8 orchestrator/ security/ registry/ scripts/tests` | 3701 passed / 12 skipped |
+| mobile `tsc --noEmit` + jest | exit 0；792 passed（75 suites） |
+| hmi `npm test` + `npm run build` | 333 passed；build 成功 |
+| 四道门禁 + `smoke_edge` | 全 PASS |
+| 反向验证 | 停用 T0 闸→8 红；删 registry 还原字段→2 红；停用确认策略→3 红；停用 F09→2 红；无声分档恒判失败→2 红。五次都按字节恢复 |
+
+**未做（AR05 仍未签收）**
+
+1. **`go build` / `go test ./gateway/...` 未跑**：本机没有 Go 工具链，Docker 未运行。
+   网关三处改动只做了生成物字段名逐条比对。**这是当前最大的未验证面。**
+2. 步骤 6 全部：固定 prod release 构建、OPPO 取证、后端发布与真栈业务证据。
+3. V01–V12 只在离线单测层面覆盖；真实多 operationId 实机组合、真实权限矩阵、
+   ASR/S2S 回退与 TTS 真机盲听均未做。
+4. 补槽的中文名 `display_name` 目前恒空（manifest 还没有这个声明面），客户端回落显示槽机器名。
+5. `replay_audio` 恢复动作契约里有、客户端未实现，故不渲染该入口。

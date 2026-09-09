@@ -125,6 +125,29 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     }
     router.push('/settings')
   }, [core, setDraft])
+  // AR05 F05：**该出声却没出声要让用户知道**。此前 `onSilent` 只喂了免唤醒 FSM，
+  // 屏幕上一个字都没有——系统知道自己没出声却不说，与「让用户去扫一个不存在的二维码」
+  // 是同一类不诚实。取消 / 打断 / 纯卡片轮不报（成因判据在 SpeechController）。
+  useEffect(() => {
+    const sc = speechController()
+    const prev = sc.onSilent
+    sc.onSilent = (reason, kind) => {
+      prev?.(reason, kind)
+      if (kind !== 'synthesis_failed') return
+      core.noteClientIssue({
+        code: 'tts.silent',
+        message: `这条回答没有播出声音：${reason}。文字已经在上面。`,
+        severity: 'warning',
+        scope: 'request',
+        requestId: '',
+        operationId: '',
+        affectedCapabilities: [],
+        recovery: [{ kind: 'open_voice_settings', label: '语音设置' },
+          { kind: 'dismiss', label: '知道了' }],
+      })
+    }
+    return () => { sc.onSilent = prev }
+  }, [core])
   const onInterrupt = useCallback(() => { if (scope.canCapture()) core.cancelCurrentTurn() }, [core, scope])
   const ptt = usePtt({
     audioUrl: cfg.audioUrl, sessionId: wired.session.sessionId, scope,

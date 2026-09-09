@@ -1618,9 +1618,18 @@ class PlannerEngine:
     @staticmethod
     def _append_pending_hint(final: dict, held_pending) -> None:
         """插话轮的 final 补软提醒：告知挂起还在（Q1 决策的配套——插话后 HMI 确认条
-        已被新消息顶掉，不提示的话用户忘了挂起、说「确认」会显得凭空执行）。原地改 final。"""
+        已被新消息顶掉，不提示的话用户忘了挂起、说「确认」会显得凭空执行）。原地改 final。
+
+        AR05 §4.3：软提醒之外**再给一个结构化事实** `held_operation_ids`——话术是给人听的，
+        客户端要撤哪一条追问得有个 id。两者同一处产出，不会一个说了一个忘了。"""
         if held_pending is None or not isinstance(final, dict):
             return
+        held_id = str(getattr(held_pending, "operation_id", "") or "")
+        if held_id:
+            existing = list(final.get("held_operation_ids") or [])
+            if held_id not in existing:
+                existing.append(held_id)
+            final["held_operation_ids"] = existing
         goal = ""
         try:
             goal = (held_pending.pending_plan or {}).get("goal") or ""

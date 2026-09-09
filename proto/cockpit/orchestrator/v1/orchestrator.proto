@@ -89,6 +89,11 @@ message FinalResult {
   ConfirmPolicy confirm_policy = 10;   // 仅 need_confirm 轮非空
   SlotRequest slot_request = 11;       // 仅待补槽轮非空
   repeated Issue issues = 12;          // 本轮发生的问题（可与已执行动作并存）
+  // 用户换了话题、但**这些挂起仍然有效**（服务端保留了它们）。客户端据此把对应条目
+  // 标成"已搁置"：撤下当前追问、不再抢占这一问，但它还在待处理列表里可以被选回来。
+  // **必须由服务端说**——客户端猜"用户是不是换话题了"必然猜错，而猜错的两个方向都很贵：
+  // 猜早了把还在进行的追问撤了，猜晚了让一条旧追问一直抢占屏幕（方案 §4.3）。
+  repeated string held_operation_ids = 13;
 }
 
 // 确认策略（AR05 R10）。用户必须能明确知道**正在确认什么、到什么时候、用什么方式答**。

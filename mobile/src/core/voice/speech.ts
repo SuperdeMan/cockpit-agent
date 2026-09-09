@@ -62,9 +62,18 @@ function playPcm(pcm: Int16Array, sampleRate: number): { player: any; done: Prom
   return { player, done }
 }
 
+/** 「整段没出声」的三种成因（AR05 F05）：只有第一种是服务失败。 */
+export type SilentKind = 'synthesis_failed' | 'interrupted' | 'no_text'
+
 export class SpeechController implements SpeechSink {
-  /** 播报整段没出声时的出口（wiring 注入 → 屏上一句提示）。不设即静默，同旧行为。 */
-  onSilent: ((reason: string) => void) | null = null
+  /** 播报整段没出声时的出口（wiring 注入 → 屏上一句提示）。不设即静默，同旧行为。
+   *
+   *  第二参是**为什么没出声**（AR05 F05）。三者必须分开：
+   *   · `synthesis_failed` —— 本轮有话要说、自然收尾、却一个字节都没出 ⇒ 真的该报；
+   *   · `interrupted` —— 用户按停 / 换轮 / barge-in 打断 ⇒ **不是服务失败**，报了就是冤枉；
+   *   · `no_text` —— 纯卡片回复，本来就没有要播的话 ⇒ 同样不该报。
+   *  旧消费方只读第一参，行为逐字不变。 */
+  onSilent: ((reason: string, kind: SilentKind) => void) | null = null
   /** M4 免唤醒回路的两条腿：真出声了 → FSM 进 SPEAKING；播完 → FSM 进 FOLLOWUP。
    *  **必须挂在「首片音频真起播」而不是「begin 被调用」上**——begin 之后可能一个字节
    *  都不出（引擎无 key / 纯卡片回复），那种情况下 FSM 不该进 SPEAKING 再等一个永远
@@ -368,7 +377,14 @@ export class SpeechController implements SpeechSink {
     setAudioPlaybackFact(this, false, 'live')
     if (!sounded) {
       const s = settingsStore.getState().settings
-      this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`)
+      // 取消 / 主动停播不是服务失败；纯卡片轮本来就没词可播。判据在这里定一次，
+      // 消费方不再各自猜「这次该不该提示」（AR05 §5.1「取消、主动静音不能被当成服务失败」）。
+      const kind: SilentKind = !natural
+        ? 'interrupted'
+        : this.spokenText.trim()
+          ? 'synthesis_failed'
+          : 'no_text'
+      this.onSilent?.(`当前播报引擎（${s.ttsProvider}）没有返回音频，可在设置里换一个`, kind)
     }
     this.onSpeechEnded?.()
     if (natural) void this.flushDeferred()

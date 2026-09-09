@@ -13,6 +13,7 @@ import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS, SYSTEM_QUICK_COMMAND_AGENTS } from '@shared/types.ts'
 import { serverAgentId, visibleQuickCommands } from '@/core/session/quickCommands'
 import { parseSessionSummary } from '@/core/api/sessionInfo'
+import { speechController } from '@/core/voice/speech'
 
 class FakeTransport {
   sent: any[] = []
@@ -392,5 +393,127 @@ describe('系统推荐与能力摘要对账', () => {
     const partial = parseSessionSummary({ summary_status: 'partial', capabilities: [] })
     expect(visibleQuickCommands(DEFAULT_QUICK_COMMANDS, partial, {}))
       .toEqual([...DEFAULT_QUICK_COMMANDS])
+  })
+})
+
+// ── 播报无声（F05 / §5.1）：只有真正的合成失败才该报 ──────────────────
+
+describe('播报无声的成因分档', () => {
+  // 驱动**生产实现**（SpeechController.finishTurn），不在测试里重算一遍判据——
+  // 重算的那种写法把判据也一起抄了过来，改坏了生产代码它照样绿。
+  function silentKindOf(natural: boolean, spokenText: string): string {
+    const sc = speechController() as unknown as {
+      turnSounded: boolean
+      spokenText: string
+      turnSessions: unknown[]
+      finishTurn(natural: boolean): void
+      onSilent: ((reason: string, kind: string) => void) | null
+    }
+    const prev = sc.onSilent
+    let seen = 'not-called'
+    sc.onSilent = (_reason, kind) => { seen = kind }
+    sc.turnSounded = false
+    sc.spokenText = spokenText
+    sc.turnSessions = []
+    try {
+      sc.finishTurn(natural)
+    } finally {
+      sc.onSilent = prev
+    }
+    return seen
+  }
+
+  test('自然收尾 + 本轮有话要说 → 合成失败', () => {
+    expect(silentKindOf(true, '你好呀')).toBe('synthesis_failed')
+  })
+
+  test('被打断（用户按停 / 换轮）→ 不是服务失败', () => {
+    expect(silentKindOf(false, '你好呀')).toBe('interrupted')
+  })
+
+  test('纯卡片轮本来就没词可播 → 不该报', () => {
+    expect(silentKindOf(true, '')).toBe('no_text')
+  })
+
+  test('客户端问题与服务端问题共用同一套 code 与恢复动作', () => {
+    const { transport, core } = newCore()
+    core.noteClientIssue({
+      code: 'tts.silent', message: '这条回答没有播出声音', severity: 'warning',
+      scope: 'request', requestId: '', operationId: '', affectedCapabilities: [],
+      recovery: [{ kind: 'open_voice_settings', label: '语音设置' }],
+    })
+
+    const [issue] = core.store.getState().issues
+    expect(issue.code).toBe('tts.silent')
+    expect(issue.recovery[0].kind).toBe('open_voice_settings')
+    void transport
+    core.dispose()
+  })
+
+  test('收起后不再出现', () => {
+    const { core } = newCore()
+    core.noteClientIssue({
+      code: 'tts.silent', message: 'x', severity: 'warning', scope: 'request',
+      requestId: '', operationId: '', affectedCapabilities: [], recovery: [],
+    })
+    core.dismissIssue('tts.silent')
+    expect(core.store.getState().issues).toEqual([])
+    core.dispose()
+  })
+})
+
+// ── 换题后的 held（方案 §4.3 / V04）─────────────────────────────────────
+
+describe('换题后原任务被服务端标为已搁置', () => {
+  function withSlot() {
+    const { transport, core } = newCore()
+    core.send('帮我点一杯')
+    const rid = transport.lastUserFrame().request_id
+    core.handleFrame({
+      type: 'final', request_id: rid, speech: '要在哪家店？', operation_id: 'op-slot',
+      slot_request: {
+        operation_id: 'op-slot', slot: 'store', display_name: '门店',
+        suggestions: [], state: 'active', remaining_slots: ['store'],
+        expires_at_ms: NOW + 90_000, server_now_ms: NOW,
+      },
+    })
+    return { transport, core }
+  }
+
+  test('服务端说搁置就搁置，任务仍在台账里', () => {
+    const { transport, core } = withSlot()
+    core.send('讲个笑话')
+    const rid2 = transport.lastUserFrame().request_id
+    core.handleFrame({
+      type: 'final', request_id: rid2, speech: '好的。',
+      held_operation_ids: ['op-slot'],
+    })
+
+    const [op] = core.store.getState().pendingOps
+    expect(op.id).toBe('op-slot')
+    expect(op.slot?.state).toBe('held')
+    core.dispose()
+  })
+
+  test('没有 held_operation_ids 的普通轮不动任何挂起状态', () => {
+    const { transport, core } = withSlot()
+    core.send('讲个笑话')
+    const rid2 = transport.lastUserFrame().request_id
+    core.handleFrame({ type: 'final', request_id: rid2, speech: '好的。' })
+
+    expect(core.store.getState().pendingOps[0].slot?.state).toBe('active')
+    core.dispose()
+  })
+
+  test('held 的补槽不再抢占当前问题，但仍在待处理列表里', () => {
+    const snapshot = derivePresence(presenceInput([
+      {
+        id: 'op-slot', ts: NOW, summary: '',
+        slot: { missing: '门店', state: 'held', expiresAt: NOW + 60_000, suggestions: [] },
+      },
+    ]))
+    const [item] = snapshot.commitment
+    expect(item.kind === 'slot' && item.state).toBe('held')
+    expect(snapshot.commitment).toHaveLength(1)
   })
 })

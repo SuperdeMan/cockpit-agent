@@ -203,8 +203,9 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       prevEnded?.()
       ctl.ttsEnd()
     }
-    sc.onSilent = (reason) => {
-      prevSilent?.(reason)
+    sc.onSilent = (reason, kind) => {
+      prevSilent?.(reason, kind)
+      // FSM 这条腿与「该不该提示用户」无关：不管哪种成因，这一轮的播报都结束了。
       ctl.turnEnded()
     }
     return () => {

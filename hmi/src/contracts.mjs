@@ -113,11 +113,15 @@ export function parseIssues(raw) {
 export function parseFinalContracts(frame) {
   const f = frame && typeof frame === 'object' ? frame : {}
   const hasContracts = 'confirm_policy' in f || 'slot_request' in f || 'issues' in f
+    || 'held_operation_ids' in f
   return {
     hasContracts,
     confirmPolicy: parseConfirmPolicy(f.confirm_policy),
     slotRequest: parseSlotRequest(f.slot_request),
     issues: parseIssues(f.issues),
+    // 换题后仍有效、但已搁置的挂起（服务端权威）。空数组 = 服务端说"没有搁置的"，
+    // 缺这个键 = 旧服务端不会说这句话——两者都不该让客户端自己去猜话题。
+    heldOperationIds: arr(f.held_operation_ids),
   }
 }
 

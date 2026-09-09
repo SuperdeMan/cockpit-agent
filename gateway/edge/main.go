@@ -520,6 +520,10 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		if len(f.ClosedOperationIds) > 0 {
 			result["closed_operation_ids"] = f.ClosedOperationIds
 		}
+		// AR05 §4.3：换题后仍有效但已搁置的挂起
+		if len(f.HeldOperationIds) > 0 {
+			result["held_operation_ids"] = f.HeldOperationIds
+		}
 		if f.UiCard != nil {
 			result["ui_card"] = f.UiCard.AsMap()
 		}

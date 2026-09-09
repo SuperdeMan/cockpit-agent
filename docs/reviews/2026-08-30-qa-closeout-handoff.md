@@ -144,7 +144,7 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
   34/35仍出现4次`Agent 内部错误：RuntimeError`。Trace证明均已落`manual.query`且Agent执行
   失败，不是路由或BM25问题；
 - 0.3.3对LLM RuntimeError做一次有界重试，配额/参数/鉴权类不重试；仍失败时返回已检索的真实
-  PDF卡与诚实降级话术，ValueError等编程异常继续显式失败。精确代码全量7861/34/5，0 failed；
+  PDF卡与诚实降级话术，ValueError等编程异常继续显式失败。精确代码全量 7861 passed / 34 skipped / 5 warnings，0 failed；
 - 发布后独立章节批 **187/187**，p50=9365.659ms、p95=14446.685ms、max=34710.202ms；视觉
   **35/35**，p50=7886.125ms、p95=13456.285ms、max=21204.482ms；
 - `雨刮器怎么打开`与“小人背宝剑”各3/3，分别稳定返回PDF第95/193页与对应图片；所有正式轮
@@ -158,7 +158,7 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 |---|---|---|
 | 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
 | safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
-| MiniMax TTS 长文本 / RPM 边界 | 首片门控/预算合并与同拍文本合并分别已在 `a09c73a5` / `573ad46` 发布；原 887 字 RPM 样本是历史证据，本轮只验证短提醒一次播放 | 原长文本、并发配额和盲听仍需独立复验，不因短提醒通过关闭整项 |
+| MiniMax TTS 长文本 / RPM 边界 | 首片门控/预算合并与同拍文本合并分别已在 `a09c73a5` / `573ad46` 发布；原 887 字样本的服务商回包是 `rate limit exceeded (RPM)`，属历史证据，本轮只验证短提醒一次播放 | 原长文本、并发配额和盲听仍需独立复验，不因短提醒通过关闭整项 |
 | barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
 | 全量 warning | `9a3b6f2f`全量5条、4类：Starlette按2个worker重复，另有gRPC fixture、audioop、regex各1 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
 

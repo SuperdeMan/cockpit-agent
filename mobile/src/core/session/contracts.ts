@@ -68,6 +68,8 @@ export interface FinalContracts {
   confirmPolicy: ConfirmPolicyView | null
   slotRequest: SlotRequestView | null
   issues: IssueView[]
+  /** 换题后仍有效但已搁置的挂起（服务端权威，方案 §4.3） */
+  heldOperationIds: string[]
 }
 
 /** 从一帧 final（WS JSON）读出契约。判据全在共享层。 */

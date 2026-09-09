@@ -88,7 +88,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | status | 2026-09-09 发布后独立复核：5/5 endpoint healthy，零 warning |
 | verify | `verified`；artifact `20260909T015134Z-573ad46.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
 | 代码验证 | `573ad46` 的 CI 八任务全部 success（含 Python 3.11/3.12）；本批 mobile 726 / reminder 220 / HMI 75 / TTS pacing 21。本轮未在本机重跑全量，旧 `9a3b6f2f` 的 7861/34/5 不转借 |
-| manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
+| manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
 | 自然问法边界 | 原36题完整真栈只在 `434a046` 闭合；`9a3b6f2f` 当轮有7条旧表述被安全预检拒绝。本次未宣称新 release 36/36 |
 | 证据边界 | 当前部署/status/verify/锁屏提醒绑定 `573ad46`；手册整本和旧全量保持各自 SHA；后续 docs/test 不冒充 release |
 
@@ -118,7 +118,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 主题 | 启动条件 / 入口 |
 |---|---|
-| Android App | 进行中：[AR05 实施方案](docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md)（步骤 0–1 已实施：T0 授权闸 + Registry 声明往返 + §11 合同冻结；步骤 2–6 未做，未签收）。实现与设备基线：[AR04 第十五节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。生产记录仍为 `573ad46`，Android 代码 `1c67807`：支持页浮动在场、闲置光球静帧、滚动内容留余量；OPPO 两轮证据与资源恢复见 AR04。AR04 服务端多 operationId 实机组合仍未签收，Planner 技术失败降级纳入 AR05 方案但尚未修复；AR02/AR03/AR10 与 Xiaomi 对照范围独立。 |
+| Android App | 进行中：[AR05 实施方案](docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md)（步骤 0–5 已实施：T0 授权闸、Registry 声明往返、四份契约生产与端云贯通、F09 窄修复、会话摘要、Android 消费面；**`go build`/`go test ./gateway/...` 本机无 Go 未跑**，步骤 6 真机与部署未做，未签收）。实现与设备基线：[AR04 第十五节](docs/design/2026-09-08-ar04-presentation-ack-implementation.md) + `mobile/README.md`。生产记录仍为 `573ad46`，Android 代码 `1c67807`：支持页浮动在场、闲置光球静帧、滚动内容留余量；OPPO 两轮证据与资源恢复见 AR04。AR04 服务端多 operationId 实机组合仍未签收，Planner 技术失败降级纳入 AR05 方案但尚未修复；AR02/AR03/AR10 与 Xiaomi 对照范围独立。 |
 | 支付余项 | 等支付宝沙箱恢复、微信商户号到位；不做最终付款 |
 | 端侧能力台账 | `orchestrator/edge/knowledge/capability_exemptions.yaml` 与 reachability 测试 |
 | `memory_item` 信息衰减 | 出现第二个可复现实例后再立项，不凭单例改 supersede |

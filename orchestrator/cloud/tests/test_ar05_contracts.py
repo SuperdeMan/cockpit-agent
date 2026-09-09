@@ -303,3 +303,46 @@ def test_empty_fallback_still_uses_the_existing_honest_degrade_speech():
 
     assert final["speech"].startswith("抱歉，我没听清")
     assert not final.get("issues"), "空计划的诚实降级不是技术失败终态"
+
+
+# ─── 换题后的 held（§4.3 / V04）────────────────────────────────────────────
+
+_TALK_PLAN = json.dumps({"steps": [
+    {"id": "s1", "capability_ref": _ref("chitchat", "chitchat.talk"),
+     "slots": {"text": "讲个笑话"}, "depends_on": [], "slot_refs": {}}]})
+
+
+def _slot_then_topic_change_spy():
+    return _Spy([_PICK_PLAN, _TALK_PLAN], {
+        "merchant.pick_store": lambda meta: _Resp(
+            status=2, speech="要在哪家店？", missing_slots=["store"]),
+        "chitchat.talk": lambda meta: _Resp(speech="有个笑话是这样的。"),
+    })
+
+
+def test_topic_change_reports_the_held_operation_id():
+    """用户换题、原任务仍有效 ⇒ final 必须**结构化**说出是哪一条被搁置了。
+
+    话术里那句「对了，X 还在等你」是给人听的；客户端要撤下哪一条追问得有个 id。
+    """
+    spy = _slot_then_topic_change_spy()
+    engine = _engine(spy)
+
+    first = _final(_run(engine, _req("帮我点一杯")))
+    held_id = first["operation_id"]
+    assert first["slot_request"]["state"] == contracts.STATE_ACTIVE
+
+    second = _final(_run(engine, _req("讲个笑话")))
+
+    assert second.get("held_operation_ids") == [held_id], second
+    # 软提醒仍在：两者同一处产出，不会一个说了一个忘了
+    assert "还在等你" in (second.get("follow_up") or "")
+
+
+def test_plain_turn_reports_no_held_operations():
+    """没有挂起被搁置时不发这个键——恒空数组会让客户端每轮都判一次空。"""
+    spy = _Spy([_ORDER_PLAN], {
+        "merchant.order": lambda meta: _Resp(speech="已下单。")})
+    final = _final(_run(_engine(spy), _req("在望京店点一杯拿铁")))
+
+    assert "held_operation_ids" not in final
