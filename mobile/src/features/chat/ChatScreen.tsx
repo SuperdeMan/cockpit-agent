@@ -16,7 +16,7 @@ import type { Msg } from '@shared/types.ts'
 
 import { precedingUserUtterance } from '../../core/session/actionSummary'
 import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
-import { showJumpToLatest, timeDividers } from '../../core/session/history'
+import { showJumpToLatest, stickToBottom, STICK_TO_BOTTOM_THRESHOLD, timeDividers } from '../../core/session/history'
 import { buildReceipt } from '../../core/session/receipt'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
@@ -179,6 +179,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   const dividers = useMemo(() => timeDividers(messages, messageAt, snapshot.now), [messages, messageAt, snapshot.now])
   const listRef = useRef<FlashListRef<Msg>>(null)
   const [offsetFromBottom, setOffsetFromBottom] = useState(0)
+  // 同一个离底读数的即时副本：onContentSizeChange 在同一帧里要用「增高之前」的离底距离判贴底，不能等 state
+  const offsetRef = useRef(0)
   // 「有新内容」：离底期间记录变长了才出胶囊；回到底部即清
   const [awayCount, setAwayCount] = useState<number | null>(null)
   const jumpVisible = showJumpToLatest(offsetFromBottom, listHeight) && awayCount !== null && messages.length > awayCount
@@ -368,11 +370,17 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           data={messages}
           onViewableItemsChanged={proactiveViewability}
           viewabilityConfig={VIEWABILITY_CONFIG}
-          // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
-          maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
+          // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底（阈值与 stickToBottom 共用一个数）
+          maintainVisibleContentPosition={{ autoscrollToBottomThreshold: STICK_TO_BOTTOM_THRESHOLD, startRenderingFromBottom: true }}
           onScroll={(e) => {
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
-            setOffsetFromBottom(Math.max(0, Math.round(contentSize.height - layoutMeasurement.height - contentOffset.y)))
+            const off = Math.max(0, Math.round(contentSize.height - layoutMeasurement.height - contentOffset.y))
+            offsetRef.current = off
+            setOffsetFromBottom(off)
+          }}
+          // 晚到的布局增高（卡片在文字之后才量出高度）FlashList 不跟：此前贴底的就再贴一次；判据 history.ts::stickToBottom
+          onContentSizeChange={() => {
+            if (stickToBottom(offsetRef.current, listHeight)) listRef.current?.scrollToEnd({ animated: false })
           }}
           scrollEventThrottle={100}
           extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds]}

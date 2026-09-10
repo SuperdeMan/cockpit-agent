@@ -20,6 +20,8 @@ import {
   restoreHistory,
   snapshotHistory,
   showJumpToLatest,
+  stickToBottom,
+  STICK_TO_BOTTOM_THRESHOLD,
   timeDividers,
 } from '@/core/session/history'
 import { SessionCore } from '@/core/session/store'
@@ -187,6 +189,24 @@ test('showJumpToLatest：离底超过一屏才出', () => {
   expect(showJumpToLatest(599, 600)).toBe(false)
   expect(showJumpToLatest(601, 600)).toBe(true)
   expect(showJumpToLatest(601, 0)).toBe(false) // 还没量到视口
+})
+
+// 最终包 Maestro 01 红：历史恢复后列表很长，回答的卡片在文字之后才量出高度，FlashList 只在 data 变化时跟底，
+// 晚到的布局增高不跟 ⇒ 卡片压在 Composer 下面。判据：内容变高时，只要此前离底不超过阈值就贴底；离底更远的人不被拽回。
+test('stickToBottom：离底不超过阈值 × 视口才贴底；视口未量到不贴', () => {
+  const limit = STICK_TO_BOTTOM_THRESHOLD * 1000
+  expect(STICK_TO_BOTTOM_THRESHOLD).toBeGreaterThan(0)
+  expect(STICK_TO_BOTTOM_THRESHOLD).toBeLessThan(1)
+  expect(stickToBottom(0, 1000)).toBe(true)
+  expect(stickToBottom(limit, 1000)).toBe(true)
+  expect(stickToBottom(limit + 1, 1000)).toBe(false)
+  expect(stickToBottom(0, 0)).toBe(false)
+})
+
+test('stickToBottom 与 showJumpToLatest 互斥：贴底的人不会同时看到「最新」胶囊', () => {
+  for (const off of [0, 100, 199, 200, 201, 999, 1000, 1001]) {
+    expect(stickToBottom(off, 1000) && showJumpToLatest(off, 1000)).toBe(false)
+  }
 })
 
 // ── messageAt 由 store 记 ─────────────────────────────────────

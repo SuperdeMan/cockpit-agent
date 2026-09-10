@@ -172,3 +172,18 @@ export function timeDividers(messages: readonly Msg[], messageAt: Record<string,
 export function showJumpToLatest(offsetFromBottom: number, viewportH: number): boolean {
   return viewportH > 0 && offsetFromBottom > viewportH
 }
+
+/**
+ * 「贴底」阈值（视口高的比例）：既给 FlashList 的 `autoscrollToBottomThreshold`，也给 `stickToBottom`——
+ * 同一个数只写一处。
+ *
+ * 为什么还要自己判一次（最终包 7fc8d9894 上 Maestro 01 红）：FlashList v2 只在 `data` 变化那一刻检查
+ * 「此前是否贴底」再 scrollToEnd；回答的卡片是在文字之后才量出高度的**布局增高**，`data` 没变，
+ * 它不跟 ⇒ 历史恢复后列表很长时，天气卡稳定压在 Composer 下面（空列表时一屏装得下，看不出来）。
+ * 补法是在 `onContentSizeChange` 上按同一阈值再贴一次；离底更远的人不被拽回。
+ */
+export const STICK_TO_BOTTOM_THRESHOLD = 0.2
+
+export function stickToBottom(offsetFromBottom: number, viewportH: number): boolean {
+  return viewportH > 0 && offsetFromBottom <= STICK_TO_BOTTOM_THRESHOLD * viewportH
+}
