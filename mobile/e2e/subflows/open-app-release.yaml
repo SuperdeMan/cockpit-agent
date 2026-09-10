@@ -12,16 +12,15 @@
 appId: com.xiaozhou.companion
 ---
 - stopApp
-# ⚠ `permissions: all: unchanged` 是必填的：`launchApp` 默认会把 manifest 里每一项权限都
-#   `pm grant` 一遍（本轮日志里真的逐条试了 —— 定位/相机/存储/悬浮窗…）。
-#   本机 OPPO 上每一条都被 SecurityException 拒掉（driver 没有 GRANT_RUNTIME_PERMISSIONS），
-#   所以“没出事”是设备拦的，不是流程对。换一台能授的机器，默认行为会把
-#   权限矩阵静默地全打开 ⇒ AR02 的拒绝/撤销用例当场失去意义。权限态只能由专门场景设、回读、还原。
-- launchApp:
-    appId: com.xiaozhou.companion
-    stopApp: false
-    permissions:
-      all: unchanged
+# ⚠⚠ **不用 `launchApp`**（2026-09-10 实测逆推出来的）：
+#   Maestro 2.9 的 `launchApp` 会动整个**权限矩阵**——不写 `permissions` 时逐条 `pm grant`（定位/
+#   相机/录音/悬浮窗…）；写 `permissions: all: unchanged` 反而逐条 `pm revoke`（`unchanged`
+#   不是它认的值）。本机 OPPO 两边都被 SecurityException 拓掉（driver 没有
+#   GRANT_/REVOKE_RUNTIME_PERMISSIONS），所以“没出事”是**设备拦的，不是流程对**。
+#   换一台能授的机器，这一步会静默地把 AR02 的拒绝/撤销用例前提改掉，而流照样全绿。
+# ⇒ 改用 App 自己的 scheme 冷启动：同样是起 MainActivity，但 Maestro 不碰权限。
+#   这**不是开发深链**（不是 expo-development-client），只是路由入口。权限态只能由专门场景设、回读、还原。
+- openLink: "xiaozhou:///"
 
 # JS bundle 从包内读，比 dev 的现编快得多；仍取「输入框出现」而不是写死秒数
 - extendedWaitUntil:

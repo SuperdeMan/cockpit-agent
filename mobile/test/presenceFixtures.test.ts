@@ -24,6 +24,24 @@ test('每种 degradation 至少一条样本', () => {
   expect(DEGRADATIONS.filter((k) => !covered.has(k))).toEqual([])
 })
 
+test('AR06：Maestro 09 那三条「另有 N 个待处理」的判据，先在纯逻辑层锁住', () => {
+  // 2026-09-10 真机上 flow 09 红在 `另有 1 个待处理`，而**判据本身是对的**——
+  // 那一行只是落在了首屏之外（Maestro 的 hierarchy 只含屏上节点）。
+  // 一条永远要靠滚动位置才成立的断言，红了也说明不了任何事；把「others 该是几」
+  // 这件事挪到这里，flow 只负责证明它在真机上**渲得出来**。
+  const others = (label: string): number | null => {
+    const f = presenceFixtures().find((x) => x.label === label)
+    if (!f) throw new Error('样本不存在：' + label)
+    return pinCommitment(f.snapshot.commitment)?.others ?? null
+  }
+  // 两条确认 + 一条队列 ⇒ 钉住最早到期的确认，另有 2
+  expect(others('attention-two')).toBe(2)
+  // 一条确认 + 队列 ⇒ 钉住确认，另有 1（断网不许把这条确认盖掉，评审 P0-1）
+  expect(others('offline-with-confirm')).toBe(1)
+  // 只有队列 ⇒ 队列自己被钉住，没有「另有」
+  expect(others('offline-queue-only')).toBe(0)
+})
+
 test('privacy.mic 四档各有样本（B2 T2 加档：画廊要能看见每一档的文案与颜色）', () => {
   const covered = new Set(presenceFixtures().map((f) => f.snapshot.privacy.mic))
   const MICS: MicState[] = ['off', 'edge', 'cloudAsr', 'cloudAudio']

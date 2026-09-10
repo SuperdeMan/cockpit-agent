@@ -26,6 +26,14 @@ import type { Msg, ProcessStep } from '@shared/types.ts'
 import { buildUserFrame } from '../api/gateway'
 import type { GatewayStatus, SendHooks, UserFrame } from '../api/gateway'
 import { uid } from '../obs/trace'
+import {
+  beginInteraction,
+
+  findByBubble,
+  linkInteraction,
+  markInteraction,
+  takePendingInteraction,
+} from '../obs/turnTimeline'
 import { NO_EDGE_DRIVING, recordEdgeDriving, type DrivingEdgeFact } from '../presence/drivingMode'
 import { actionSummary } from './actionSummary'
 import { emptyCandidates, recordCandidates, type CandidateState } from './candidates'
@@ -497,6 +505,19 @@ export class SessionCore {
     this.store.setState({ drivingDismissedAt: Date.now() })
   }
 
+  /** 只在这一轮**第一次**收到有内容的文本时打点。重复调是空转（后面每片 delta 都会进来）。 */
+  private markFirstUsefulText(bubbleId: string): void {
+    const t = findByBubble(bubbleId)
+    if (!t || t.marks.some((m) => m.event === 'first_useful_text')) return
+    markInteraction(t.interactionId, 'first_useful_text')
+  }
+
+  /** 给某个气泡对应的时间线打点（AR08）。找不到轮就什么也不做——诊断缺席不影响业务。 */
+  private markTurn(bubbleId: string, event: Parameters<typeof markInteraction>[1], detail?: string): void {
+    const id = findByBubble(bubbleId)?.interactionId
+    if (id) markInteraction(id, event, detail ? { detail } : undefined)
+  }
+
   /** 撤回指定请求；默认优先最新未发请求，已发送时按网关收到的顺序取消。 */
   cancelCurrentTurn(bubbleId?: string): void {
     if (this.disposed) return
@@ -508,6 +529,7 @@ export class SessionCore {
     if (!bubbleId || this.registry.isLatest(bubbleId)) this.speech.stop()
     if (!request) return
     const id = request.bubbleId
+    this.markTurn(id, 'cancelled', request.phase)
     // 网关只取消连接上的最新请求。旧轮/未发轮不能发会话级 cancel，更不能离线重放它。
     if (request.phase === 'sent' && request.frame.request_id === this.lastSentRequestId) {
       const frame = { type: 'cancel', session_id: this.deps.sessionId }
@@ -667,6 +689,16 @@ export class SessionCore {
         },
       },
     }))
+    // AR08 时间线：语音侧已经开好的那一轮在这里被认领（ASR 阶段还没有 request_id）；
+    // 文字轮没人认领就现开一轮。身份**在这里就挂全**——等到 requestSent 再挂的话，
+    // 「排队中被取消」的轮子在时间线上永远查不到自己的 request_id。
+    const interactionId = takePendingInteraction() ?? beginInteraction(source === 'text' ? 'text' : source)
+    linkInteraction(interactionId, {
+      bubbleId: pendingId,
+      requestId: frame.request_id,
+      traceId: frame.meta.trace_id,
+      ...(operationId ? { operationId } : {}),
+    })
     this.armWatchdog(pendingId)
     if (preparation?.signal) {
       const signal = preparation.signal
@@ -771,6 +803,7 @@ export class SessionCore {
     this.pausedWatchdogs.delete(request.bubbleId)
     this.armWatchdog(request.bubbleId)
     this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [request.bubbleId]: { ...s.turnMeta[request.bubbleId], sentAt: Date.now() } } }))
+    this.markTurn(request.bubbleId, 'request_sent')
     if (this.registry.isLatest(request.bubbleId)) {
       const source = this.store.getState().turnMeta[request.bubbleId].source
       this.speech.begin(request.bubbleId, this.store.getState().lastEmotion, source !== 'text')
@@ -779,6 +812,7 @@ export class SessionCore {
 
   private failRequest(request: OutboundRequest, text: string): void {
     if (!this.requestLive(request)) return
+    this.markTurn(request.bubbleId, 'failed', text.slice(0, 40))
     if (this.registry.isLatest(request.bubbleId)) this.speech.stop()
     this.registry.dropBubble(request.bubbleId)
     this.clearWatchdog(request.bubbleId)
@@ -816,6 +850,8 @@ export class SessionCore {
       if (targetId === null) return
       // 只有最新轮喂播报（App.tsx:347）：旧轮的字还在流是因为它没结算完，
       // 但用户已经在等新一轮的答案了，两轮同时出声是灾难
+      // 首段**有内容**的文本才算 first_useful_text（空 delta、loading 占位不算，AR08 §3）
+      if (delta.trim()) this.markFirstUsefulText(targetId)
       if (delta && this.registry.isLatest(targetId)) this.speech.delta(targetId, delta)
       this.upsertBubble(targetId, (msg) =>
         msg

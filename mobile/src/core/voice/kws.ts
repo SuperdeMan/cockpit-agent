@@ -8,12 +8,14 @@
 // **唤醒前音频不出设备**（架构 §9.3）：整条检测在原生进程内，命中之前一个字节都不上行。
 // 这也是为什么不能用「一直开着 ASR 流、在云端匹配唤醒词」那种省事做法。
 import KwsNative, { KWS_NATIVE_AVAILABLE, type KwsStats } from '../../../modules/kws'
+import { PRODUCTION_PROFILE, validateKwsProfile, type KwsProfile } from './kwsProfile'
 
 /** 与 HMI `kwsEngine.ts::DEFAULT_KEYWORDS` 逐字相同（ǎ=U+01CE ō=U+014D） */
 export const DEFAULT_KEYWORDS = 'x iǎo zh ōu x iǎo zh ōu @小舟小舟'
-/** 同 HMI `kwsConfig()` 的 keywordsThreshold / keywordsScore */
-export const DEFAULT_THRESHOLD = 0.2
-export const DEFAULT_SCORE = 2.0
+/** 同 HMI `kwsConfig()` 的 keywordsThreshold / keywordsScore。
+ *  **声明在 kwsProfile.ts**（那边是参数档的家，且反过来 import 会形成循环）；这里只再导出，
+ *  既有调用方（handsFree / voice-spike / 测试）的 import 路径不变。 */
+export { DEFAULT_SCORE, DEFAULT_THRESHOLD } from './kwsProfile'
 
 export interface KwsCallbacks {
   onKeyword(keyword: string): void
@@ -45,15 +47,25 @@ export function kwsBusy(): boolean {
 export class KwsEngine {
   private sub: { remove(): void } | null = null
   private loaded = false
+  /** **实际传给原生**的那一组值（AR07 回读口）。没载入时是 null，不是「默认值」——
+   *  「以为传了 0.15」和「原生收到 0.15」是两件事，只有这一份能回答后者。 */
+  private applied: (KwsProfile & { keywords: string }) | null = null
 
   get active(): boolean {
     return this.loaded
   }
 
-  async start(cb: KwsCallbacks, keywords = DEFAULT_KEYWORDS): Promise<void> {
+  /** 回读：这台设备上现在跑的到底是哪一组参数。实验报告的分栏依据只能是它 */
+  appliedProfile(): (KwsProfile & { keywords: string }) | null {
+    return this.applied
+  }
+
+  async start(cb: KwsCallbacks, keywords = DEFAULT_KEYWORDS, profile: KwsProfile = PRODUCTION_PROFILE): Promise<void> {
     if (this.loaded) return
     const native = KwsNative
     if (!native) throw new Error('KWS 原生模块不在本 APK 里')
+    // 越界当场抛：夹过的值会让 A/B 两臂悄悄变成同一个档，而报告上写着两个数字
+    const eff = validateKwsProfile(profile)
     if (owner && owner !== this) {
       throw new Error('KWS 已被另一处占用（原生 KeywordSpotter 是单例）——先停掉它再启动')
     }
@@ -65,8 +77,9 @@ export class KwsEngine {
       if (k) cb.onKeyword(k)
     })
     try {
-      await native.load(keywords, DEFAULT_THRESHOLD, DEFAULT_SCORE)
+      await native.load(keywords, eff.threshold, eff.score)
       this.loaded = true
+      this.applied = { ...eff, keywords }
     } catch (e) {
       this.sub?.remove()
       this.sub = null
@@ -111,6 +124,7 @@ export class KwsEngine {
     this.sub = null
     if (!this.loaded) return
     this.loaded = false
+    this.applied = null
     // **不是自己占着就不许 release**：否则一个已经被顶掉的旧引擎在收尾时会把
     // 现任占用方的引擎一起关了（这正是单例串台里最难查的那一半）。
     if (owner !== this) return

@@ -328,6 +328,13 @@ jobs:
       - name: Typecheck (tsc --noEmit, strict, 含 @shared 引用)
         run: npm run typecheck
 
+      # AR06 / A06-5：lint 口径钉在仓库里的 mobile/eslint.config.js 上（此前 `expo lint`
+      # 在缺配置时会**自己生成**一份 ⇒ 本地与 CI 可能落在不同规则集上，数字不可比）。
+      # 零网络：eslint 与 eslint-config-expo 都在 devDependencies 里，`npm ci` 已装。
+      # 门槛 `--max-warnings 0` 写在 npm script 里，本地跑的是同一条命令。
+      - name: Lint (eslint, 0 error / 0 warning)
+        run: npm run lint
+
       - name: Unit tests + shared allowlist guard (jest)
         run: npx jest --ci
 

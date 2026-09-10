@@ -74,6 +74,7 @@ import VoiceSpikeScreen from '@/app/voice-spike'
 import DebugScreen from '@/app/debug'
 import NativeSpikeScreen from '@/app/native-spike'
 import { SettingsScreen } from '@/features/settings/SettingsScreen'
+import TurnTimelineScreen from '@/app/turn-timeline'
 
 // 先冷加载 RN 元素，避免把首次 Jest 转译算进行为用例时限。
 void [Pressable, TextInput]
@@ -199,7 +200,7 @@ test.each(['prod', 'staging', 'dev'])('R01: settings separate development operat
     const hrefs = view.root.findAll((n) => typeof n.props.href === 'string').map((n) => n.props.href)
     expect(hrefs.includes('/debug')).toBe(variant === 'dev')
     expect(hrefs.includes('/voice-spike')).toBe(variant === 'dev')
-    expect(hrefs).toEqual(expect.arrayContaining(['/presence-trail', '/native-spike', '/card-gallery', '/state-gallery', '/blur-spike']))
+    expect(hrefs).toEqual(expect.arrayContaining(['/presence-trail', '/native-spike', '/card-gallery', '/state-gallery', '/blur-spike', '/turn-timeline']))
     expectNoAudioWork()
   } finally { await unmount(view) }
 })
@@ -221,6 +222,18 @@ test('A06-2: 每个设置开关都有与它所改的键绑定的、唯一的 tes
     for (const n of switches) expect(typeof n.props.value).toBe('boolean')
     // 承诺面 Focus Dock：02 / 06 两条 flow 的前提就靠这一枚（两条流的前提互斥）
     expect(ids).toContain('settings-switch-uxV2Dock')
+  } finally { await unmount(view) }
+})
+
+test('A08-1: 轮次时间线在 prod 也是只读入口——挂载不碰音频、不发业务', async () => {
+  mockVariant = 'prod'
+  const view = await mount(TurnTimelineScreen)
+  try {
+    // 屏在（有丢弃计数那一行），且**一次音频/采集/发送都没发生**
+    expect(view.root.findAllByProps({ testID: 'timeline-dropped' }).length).toBeGreaterThan(0)
+    expect(mockSessionStart).not.toHaveBeenCalled()
+    expect(mockSessionSend).not.toHaveBeenCalled()
+    expectNoAudioWork()
   } finally { await unmount(view) }
 })
 

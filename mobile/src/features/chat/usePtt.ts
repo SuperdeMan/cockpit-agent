@@ -10,6 +10,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { AsrSession, type AsrCallbacks, type AsrConfig } from '@/core/voice/asr'
+import {
+  beginInteraction,
+  dropPendingInteraction,
+  markInteraction,
+  offerPendingInteraction,
+} from '@/core/obs/turnTimeline'
 import { micLease } from '@/core/voice/micBus'
 import { PermissionDeniedError } from '@/core/voice/recorder'
 import { speechController } from '@/core/voice/speech'
@@ -65,6 +71,9 @@ export function usePtt(opts: {
   const [errorKind, setErrorKind] = useState<PttHandle['errorKind']>('')
   const [slow, setSlow] = useState(false)
   const [cancelledAt, setCancelledAt] = useState(0)
+  /** 本轮时间线 id（AR08）。PTT 这一轮从**按下**就开始计时——主链要到发送才有 request_id，
+   *  而 ASR 定稿那一整段恰恰是首音时延里最容易被漏掉的一段。 */
+  const timelineRef = useRef<string | null>(null)
   const sessionRef = useRef<VoiceSession | null>(null)
   const startingRef = useRef(false)
   const pendingStopRef = useRef(false)
@@ -102,11 +111,15 @@ export function usePtt(opts: {
       onFinal: (t) => {
         const session = current()
         if (!session) return
+        const timeline = timelineRef.current
+        if (timeline) markInteraction(timeline, 'asr_final', { detail: t.trim() ? 'text' : 'empty' })
         reset()
         void session.cancel().catch(() => {}) // 服务端先定稿时也必须释放本轮麦与 VAD
         const text = t.trim()
         if (text) opts.onFinal(text)
         else {
+          // 没定出内容 ⇒ 这一轮不会有主链请求，交接口要收回来，否则下一条文字会认领到它
+          if (timeline) dropPendingInteraction(timeline)
           setError('没听清，再说一次？')
           setErrorKind('asr')
           opts.onDiscard?.()
@@ -115,6 +128,10 @@ export function usePtt(opts: {
       onError: (msg) => {
         const session = current()
         if (!session) return
+        if (timelineRef.current) {
+          markInteraction(timelineRef.current, 'failed', { detail: 'asr' })
+          dropPendingInteraction(timelineRef.current)
+        }
         reset()
         void session.cancel().catch(() => {})
         setError(msg)
@@ -151,6 +168,11 @@ export function usePtt(opts: {
       setState('recording')
       setMode(kind)
       startedAtRef.current = Date.now()
+      const timeline = beginInteraction('ptt')
+      timelineRef.current = timeline
+      markInteraction(timeline, 'input_gesture', { detail: kind })
+      // 主链 send() 认领它；30s 内没人认领就作废（见 turnTimeline 的 PENDING_TTL_MS）
+      offerPendingInteraction(timeline)
       speechController().stop() // barge-in：先停播报，再开麦
       const cb = callbacks(() => sessionRef.current === session ? session : null)
       const session: VoiceSession =
@@ -162,6 +184,8 @@ export function usePtt(opts: {
         .start()
         .then(() => {
           if (sessionRef.current !== session) return
+          // 采集**真的**开始（麦租约到手）才打点；`begin()` 只是用户按下
+          markInteraction(timeline, 'capture_started')
           startingRef.current = false
           if (pendingStopRef.current) {
             // ① 会话就绪前就松手了：这时才真正停
@@ -171,6 +195,8 @@ export function usePtt(opts: {
         })
         .catch((e: unknown) => {
           if (sessionRef.current !== session) return
+          markInteraction(timeline, 'failed', { detail: 'capture_start' })
+          dropPendingInteraction(timeline)
           reset()
           void session.cancel().catch(() => {})
           const denied = e instanceof PermissionDeniedError

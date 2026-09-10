@@ -29,6 +29,8 @@ import type { PcmPlayerLike } from './queuePlayer'
 import { setAudioCaptureFact } from './captureFacts'
 import { setAudioPlaybackFact } from './playbackFacts'
 import { DEFAULT_KEYWORDS, KwsEngine, kwsNativeAvailable } from './kws'
+import { noteKeywordHit } from './kwsExperiment'
+import { PRODUCTION_PROFILE, type KwsProfile } from './kwsProfile'
 import { micLease } from './micBus'
 import { FRAME_SAMPLES, type FrameSink, type Recorder } from './recorder'
 import { VadEngine, vadNativeAvailable } from './vad'
@@ -99,7 +101,14 @@ export interface HandsFreeDeps {
   onPipelineDegraded?(kind: 'degraded' | 'unsupported', message: string): void
   /** 是否开唤醒词（关掉则只有「答完续问」，没有常开唤醒） */
   wakeWord?(): boolean
-  config?: { followupWindowMs?: number; silenceTailMs?: number; endpointGraceMs?: number }
+  config?: {
+    followupWindowMs?: number
+    silenceTailMs?: number
+    endpointGraceMs?: number
+    /** AR07 实验档。**不传就是生产默认**——实验取值只活在本次会话里，
+     *  不写进用户设置、不改生产默认（否则下一次的「A 组」已经不是 A 了）。 */
+    kwsProfile?: KwsProfile
+  }
   // -- M4-5 S2S（不传/返回 classic 即完全走三段式原路径）--
   /** 红线：`s2s` 挡位会**上行原始音频**。默认必须是 classic，且只能由用户在设置里
    *  显式选择（CLAUDE.md §5「唯一的受控例外」条件①）。这里只读设置，不做默认值。 */
@@ -229,7 +238,11 @@ export class HandsFreeController {
       if (!alive()) return
       const wantKws = this.deps.wakeWord?.() !== false && kwsNativeAvailable()
       if (wantKws) {
-        await this.kws.start({ onKeyword: () => { if (alive()) this.onWake() } }, DEFAULT_KEYWORDS)
+        await this.kws.start(
+          { onKeyword: () => { if (alive()) this.onWake() } },
+          DEFAULT_KEYWORDS,
+          this.deps.config?.kwsProfile ?? PRODUCTION_PROFILE,
+        )
         if (!alive()) {
           await this.kws.stop()
           return
@@ -374,6 +387,9 @@ export class HandsFreeController {
 
   private onWake(): void {
     if (!this.on) return
+    // AR07 计数：记的是**原生命中**，不是「唤醒成功」——FSM 接不接得看下一步。
+    // 没在实验会话里时这一句是空转（生产路径零开销、零常态日志）。
+    noteKeywordHit()
     void this.kws.reset()
     this.vl.wake()
   }

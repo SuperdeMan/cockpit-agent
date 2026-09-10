@@ -14,6 +14,7 @@
 // ttsEnd 会把 SPEAKING 打到 FOLLOWUP 开麦，多段中途落一次就是一次误开麦。
 import { PendingSpeech } from '@shared/proactiveSpeech.mjs'
 
+import { findByBubble, markInteraction, type TimelineEvent } from '../obs/turnTimeline'
 import type { SpeechSink } from '../session/store'
 import { settingsStore, speakAllowed } from '../settings/store'
 import { newPcmPlayer } from './audioCtx'
@@ -286,6 +287,14 @@ export class SpeechController implements SpeechSink {
     this.openSession(null)
   }
 
+  /** 本轮气泡对应的时间线（AR08）。没开轮就返回 null——诊断缺席不影响播报，
+   *  但也**绝不**在这里补开一轮：补出来的轮没有发送/ASR 那半段，会污染分母。 */
+  private markTurn(event: TimelineEvent, detail?: string, bubbleId = this.bubble): void {
+    if (!bubbleId) return
+    const id = findByBubble(bubbleId)?.interactionId
+    if (id) markInteraction(id, event, detail ? { detail } : undefined)
+  }
+
   /** 上一轮没播完就发了新的：先停，两轮同时出声比少听一句更糟；再把本轮读数归零 */
   private resetTurn(bubbleId: string, emotion: string): void {
     this.stop(false) // 新轮仍允许自然结束后补播；显式停播/后台撤回才清空 DEFER。
@@ -310,9 +319,15 @@ export class SpeechController implements SpeechSink {
     const epoch = this.stopEpoch
     const rec = { session: null as unknown as TtsSession, divergent, startedAt: Date.now(), firstAudioAt: 0, endedAt: 0 }
     const session = new TtsSession(this.cfg(this.emotion), {
+      onFirstChunk: () => {
+        if (!this.foreground || epoch !== this.stopEpoch) return
+        this.markTurn('first_pcm_received', divergent ? 'divergent-segment' : 'segment')
+      },
       onFirstAudio: () => {
         if (!this.foreground || epoch !== this.stopEpoch) return
         rec.firstAudioAt = Date.now()
+        // ⚠ play_scheduled，**不是** audible_onset：这一刻只是 node.start() 已经调过
+        this.markTurn('play_scheduled', divergent ? 'divergent-segment' : 'segment')
         if (!this.turnSounded) this.lastFirstAudioMs = Date.now() - this.beganAt
         this.turnSounded = true
         this.turnStats.segments += 1
@@ -335,6 +350,9 @@ export class SpeechController implements SpeechSink {
     if (gate) session.gateUntil(gate)
     this.queue.push(session)
     session.start()
+    // 本段文本送去合成的时刻（AR08）。挂在这里而不是 delta()：mixed / divergent 各自另起一段，
+    // 每段都该有自己的「送出 → 首片 → 排定」三点，合成一条会把段间空白算进首片时延。
+    this.markTurn('tts_text_sent', divergent ? 'divergent-segment' : 'segment')
     return session
   }
 
@@ -370,7 +388,10 @@ export class SpeechController implements SpeechSink {
    *  **DEFER 只跟自然收尾走**（AR03 修 R06）：此前无条件补播 ⇒ 用户按下「停止播报」的同一瞬间，
    *  攒着的主动消息立刻开口，「一步只停播、队列清空」当场不成立。AR04：显式停止清 DEFER，
    *  文字记录保留；普通新轮的 resetTurn 不清队列，自然收尾仍可补播。 */
-  private finishTurn(natural: boolean): void {
+  private finishTurn(natural: boolean, bubbleId = this.bubble): void {
+    // ⚠ bubbleId 得显式传：`stop()` 会先把 `this.bubble` 清掉再叫进来，
+    // 拿字段当归属的话「用户按了停」这一下永远落不到任何一轮上（本轮实测）。
+    this.markTurn(natural ? 'play_ended' : 'stopped', this.turnSounded ? 'sounded' : 'silent', bubbleId)
     if (this.turnSessions.length) this.emitTurnReport()
     const sounded = this.turnSounded
     this.setSpeaking(false)
@@ -439,6 +460,7 @@ export class SpeechController implements SpeechSink {
     if (clearDeferred) this.deferred.drain()
     this.cancelGrace()
     const hadTurn = this.queue.length > 0
+    const endedBubble = this.bubble
     const q = this.queue
     this.queue = []
     this.bubble = ''
@@ -454,7 +476,7 @@ export class SpeechController implements SpeechSink {
     this.setBatchPlaying(false)
     setAudioPlaybackFact(this.batchOwner, false, 'live')
     // 旧语义原样保留：停掉一个活着的轮也算这轮收尾（没出过声 ⇒ onSilent；免唤醒靠这两条收 THINKING）
-    if (hadTurn) this.finishTurn(false)
+    if (hadTurn) this.finishTurn(false, endedBubble)
     else {
       this.setSpeaking(false)
       setAudioPlaybackFact(this, false, 'live')

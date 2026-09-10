@@ -25,8 +25,18 @@ tags:
 # 承诺面：两条待确认 → 钉住最早到期的那条 + 倒计时 + 「另有 N 个」计数
 - assertVisible: "另有 2 个待处理.*"
 - assertVisible: ".*后过期"
-# 评审 P0-1 的取证样本：断网（primary=muted）不许盖掉那条确认
-- assertVisible: "另有 1 个待处理.*"
+# 评审 P0-1 的取证样本：断网（primary=muted）不许盖掉那条确认。
+# ⚠ 必须 `scrollUntilVisible`：这一行属于第三条样本，在本机屏上落在**首屏之外**，
+#   而 Maestro 的 hierarchy 只含屏上节点 ⇒ 直接 assertVisible 会红，看着像「确认被断网盖掉了」。
+#   2026-09-10 实测：同一份包上 `pinCommitment(offline-with-confirm).others === 1`（单测），
+#   屏上也只有一个 `dock-others` 在屏内——**判据对、位置不对**。
+#   「该是几」那一半已搬到 test/presenceFixtures.test.ts，这里只负责「真机上渲得出来」。
+- scrollUntilVisible:
+    element:
+      text: "另有 1 个待处理.*"
+    direction: DOWN
+    visibilityPercentage: 50
+    timeout: 30000
 
 # 滚到底：离线队列项 + 降级行
 - repeat:

@@ -1,0 +1,40 @@
+# 流 ⑪：**包身份**（AR06 / A06-V07 的屏上那一半）。
+#
+# 设备侧 APK 的 SHA-256、签名与 DEBUGGABLE 位由 adb 侧核（`sha256sum /data/app/...`、
+# `dumpsys package` 的 flags），那三条不在 flow 里——flow 看不见文件。
+# 这条流补的是**「跑起来的那份 JS 是不是这个包里的」**：
+#   · variant 必须是 prod（gradle 侧另跑一次 `expo config`，环境陈旧会把 prod 包做成 dev）；
+#   · 构建行里**不能出现 Metro**——出现就说明 JS 来自开发服务器，包里那份 bundle 根本没被用上，
+#     而这正是「dev 读数冒充常驻包验证」的入口。
+#
+# ⚠ 只在 release 轨有意义：dev-client 连着 Metro 时这一行**本来就该**写着 Metro。
+appId: com.xiaozhou.companion
+name: 11 包身份（prod / 内嵌 bundle）
+tags:
+  - offline
+---
+# 只在 release 轨有意义：跑 dev-client 时构建身份**本来就该**写着 metro=true，断言会变成假阳性
+- assertTrue:
+    condition: "${typeof APP_LAUNCH_MODE !== 'undefined' && APP_LAUNCH_MODE === 'release'}"
+    label: "前提失败：本流只能带 -e APP_LAUNCH_MODE=release 跑"
+
+# 判据面取 `capture-status` 而不是设置页底部的构建行，两个理由（都是 2026-09-10 实测）：
+#  ① 这一行在页面**顶部**，不用滚 ⇒ 不依赖 scrollUntilVisible；
+#  ② 设置页上的 `scrollUntilVisible` 会把 Maestro 卡在 `viewHierarchy` 的 gRPC 上直到
+#     DEADLINE_EXCEEDED（实测两轮各 ~120s），而它报出来的样子像「构建行不见了」。
+# 两边读的是**同一份** `readBuildInfo()`（core/buildInfo.ts），判据没有变弱。
+- stopApp
+- openLink: "xiaozhou:///capture-status"
+- extendedWaitUntil:
+    visible:
+      id: "capture-build"
+    timeout: 40000
+
+# variant 必须是 prod（gradle 侧另跑一次 `expo config`，环境陈旧会把 prod 包做成 dev）
+- assertVisible: '.*"variant":"prod".*'
+# 阴性：JS 来自 Metro 就说明包内那份 bundle 根本没被用上——
+# 「dev 读数冒充常驻包验证」就是从这里进来的
+- assertVisible: '.*"metro":false.*'
+- assertNotVisible: '.*"metro":true.*'
+# 构建身份非空：没有 sha 的包事后无法绑证据
+- assertNotVisible: '.*"sha":"".*'

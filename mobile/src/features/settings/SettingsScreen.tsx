@@ -795,6 +795,9 @@ export function SettingsScreen() {
         <Link href="/presence-trail" style={{ color: p.accent, fontSize: p.font(14) }}>
           在场轨迹（B2：光球为什么变了 / 麦为什么开了）
         </Link>
+        <Link href="/turn-timeline" style={{ color: p.accent, fontSize: p.font(14) }}>
+          轮次时间线（AR08：这一轮的时间花在哪一段）
+        </Link>
         <Link href="/native-spike" style={{ color: p.accent, fontSize: p.font(14) }}>
           {developmentDiagnosticsEnabled() ? '原生状态与触感测试' : '原生状态（折叠姿态 / 电量 / 布局）'}
         </Link>

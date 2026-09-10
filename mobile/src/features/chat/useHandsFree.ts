@@ -6,6 +6,13 @@
 // 就是靠分开报一次命中的。
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import {
+  beginInteraction,
+  dropPendingInteraction,
+  markInteraction,
+  offerPendingInteraction,
+} from '@/core/obs/turnTimeline'
+import { noteListeningEntered } from '@/core/voice/kwsExperiment'
 import { presenceTrail } from '@/core/presence/presenceTrail'
 import {
   HandsFreeController,
@@ -74,6 +81,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const [bargeInDisabled, setBargeInDisabled] = useState('')
   const [pipelineDegraded, setPipelineDegraded] = useState('')
   const [echoAt, setEchoAt] = useState(0)
+  /** 免唤醒这一轮的时间线 id 与上一次 FSM 态（AR08）。
+   *  用 ref 不用 state：`onOrbState` 是原生回调，读 state 会读到上一次渲染的那份。 */
+  const hfTimelineRef = useRef<string | null>(null)
+  const prevFsmRef = useRef('')
   const ctlRef = useRef<HandsFreeController | null>(null)
   const pausedRef = useRef(false)
   // 回调用 ref 存：它们每次渲染都是新函数，进依赖会让控制器反复重建（=反复开关麦）。
@@ -108,6 +119,11 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       },
       onSend: (text) => {
         if (!allowed()) return
+        // 走到这里 = ASR 已定稿并交给主链；下一步 SessionCore.send 会认领这一轮
+        if (hfTimelineRef.current) {
+          markInteraction(hfTimelineRef.current, 'asr_final', { detail: text.trim() ? 'text' : 'empty' })
+          offerPendingInteraction(hfTimelineRef.current)
+        }
         setPartial('')
         // **与文本、与 PTT 完全同一条 send 路径**：前置路由/位置闸/候选拦截一条都不能
         // 因为「这句是免唤醒说出来的」而绕过（同 M2 那条判据）
@@ -116,6 +132,22 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       onStopTts: () => speechController().stop(),
       onOrbState: (o, f) => {
         if (!live) return
+        // 进入 LISTENING = 唤醒命中且开始收音：这一轮的计时从这里起（AR08）。
+        // 离开 LISTENING 而没发出去（噪声句 / 用户放弃）⇒ 把交接口收回来，
+        // 否则下一条**文字**请求会认领到一个语音轮，凭空多出一段「说话」。
+        if (f !== prevFsmRef.current) {
+          if (f === 'LISTENING') {
+            noteListeningEntered() // AR07：“真的进了可交互态”那一半（与原生命中分开计）
+            const t = beginInteraction('handsfree')
+            hfTimelineRef.current = t
+            markInteraction(t, 'input_gesture', { detail: 'wake' })
+            markInteraction(t, 'capture_started')
+            offerPendingInteraction(t)
+          } else if (prevFsmRef.current === 'LISTENING' && hfTimelineRef.current) {
+            dropPendingInteraction(hfTimelineRef.current)
+          }
+          prevFsmRef.current = f
+        }
         // §11.4「首反馈时延」的取数源：这里是 FSM 换态的**回调时刻**（≈KWS 命中），
         // 与随后第一条 primary=listening 的轨迹快照之差 = 屏上多久才有反应（B2 T14）
         presenceTrail.mark('fsm:' + f)

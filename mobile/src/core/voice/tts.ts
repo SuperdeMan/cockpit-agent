@@ -33,7 +33,12 @@ export interface TtsConfig {
 }
 
 export interface TtsHooks {
-  /** 首片音频真正排定起播（上层量首音时延：验收判据「体感 <1.5s」） */
+  /** 本段**首个 PCM 分片到达客户端**（AR08：`tts_text_sent → first_pcm_received` 那一段的终点）。
+   *  与 onFirstAudio 分开是因为两者之间还隔着排定与缓冲——合在一起就分不清「网关慢」和「排队慢」。
+   *  批处理回退路径也报一次（整段音频到手那一刻），否则回退轮在时间线上会缺这一段。 */
+  onFirstChunk?(): void
+  /** 首片音频真正**排定**起播。⚠ 不是声学首音——`node.start()` 调用之后立刻触发，
+   *  真的出声还要过缓冲与 HAL。量「说完到听见」必须另配声学取证（AR08 §3.1）。 */
   onFirstAudio?(): void
   /** 整段播完或放弃（无论成败都会调一次） */
   onEnd?(): void
@@ -194,6 +199,7 @@ export class TtsSession {
       const buf = ev.data as ArrayBuffer
       this.stats.chunks += 1
       this.stats.bytes += buf.byteLength
+      if (this.stats.chunks === 1) this.hooks.onFirstChunk?.()
       if (!this.gateOpen) this.held.push(new Int16Array(buf))
       else if (this.player) this.player.push(new Int16Array(buf))
       return
@@ -320,6 +326,9 @@ export class TtsSession {
     try {
       const out = await synthesizeBatch(this.cfg, text)
       if (out && !this.disposed) {
+        // 回退路径的「首片到达」= 整段音频到手（AR08：这一档的 ttsSentToFirstPcm 天然更长，
+        // 报告里靠 detail 分栏，不把它混进流式的分母）
+        this.hooks.onFirstChunk?.()
         const player = newPcmPlayer({
           sampleRate: out.sampleRate,
           // ⚠ `audioStarted` 必须在这里也置真。它原来只在流式分支置位，因为当时唯一的
