@@ -22,7 +22,7 @@ AR07/08/09 各自补了**可回读、可复算、有界只读**的观测装置�
 | 设备侧回读 | `/data/app/~~ei5tZ5aX…/base.apk` 的 `sha256sum` **与本地逐字节相同** |
 | 包身份 | `variant=prod`、`build=7481cb5ee-dirty`、签名 SHA-1 `5e8f1606…`（模板 debug.keystore）、`flags` 不含 `DEBUGGABLE` |
 | 设备 | test / OPPO PEUM00 / Android 14 / `919fd6f9`，`lastUpdateTime=2026-09-10 07:53:34` |
-| 本地门禁 | `tsc` 0 / `eslint . --max-warnings 0` 0 / `jest` **854 passed, 80 suites**（批前 795 / 76）|
+| 本地门禁 | `tsc` 0 / `eslint . --max-warnings 0` 0 / `jest` **855 passed, 80 suites**（批前 795 / 76）|
 | 云端 | 本轮**未 deploy、未 status/verify**；任何真栈读数都不在本记录里 |
 
 ⚠ `-dirty` 的唯一来源是工作树里**另一个会话**未提交的 `mobile/README.md`（文档，不进 APK）。
@@ -113,7 +113,11 @@ release 轨的判据与 dev 完全不同：按 App 自己的 scheme 冷启动、
 
 `.github/workflows/ci.yml` 的 mobile job 在 typecheck 与 jest 之间加一步 `npm run lint`。
 零网络（eslint 与 config 都在 devDependencies，`npm ci` 已装）。
-**本记录落盘时该 workflow 尚未在 CI 上实际跑过**，不得写成「CI lint 门禁已闭合」。
+
+**已在 CI 上实跑并通过**（run `34429460752`，head `49db9cc`）：mobile job 的步骤序列为
+`Install → Typecheck → Lint (eslint, 0 error / 0 warning) → Unit tests`，四步全 success。
+这一条是在**干净 checkout**（没有本地那份 gitignore 的 `.expo/types/router.d.ts`、全新 `npm ci`）
+上跑出来的，所以它同时证明了「lint 口径不依赖本地生成物」。⇒ A06-V10 闭合。
 
 ## 3. AR07：单变量实验装置（无任何唤醒数据）
 
@@ -176,12 +180,12 @@ selector/订阅面（`wiredStore`）、渲染期 ref 读写、动画共享值写
 
 | item_id | 卡在哪 | 需要什么 | 已备好的产物 | 直接执行步骤 | 成功判据 |
 |---|---|---|---|---|---|
-| E-01 | CI lint 未实跑 | push 到 main（已授权）| workflow diff 已就绪 | push 后看 mobile job | lint 步骤绿；红了先看是不是 Linux 路径差异 |
+| ~~E-01~~ | ~~CI lint 未实跑~~ | — | — | — | **已闭合**：run `34429460752` 的 mobile job lint 步骤 success |
 | E-02 | 02/06 Dock 前提未真栈验 | `target=cloud` 可达 + 设备在 tailnet | `subflows/set-dock.yaml` | 分两趟：`-e APP_LAUNCH_MODE=release` 跑 02（DOCK=false）与 06（DOCK=true）| 各自 RC=0，且流末开关回读为设定值 |
 | E-03 | AR07 无唤醒数据 | **真人说话** + 安静环境 | 参数入口、回读、四分栏计数器、协议 | 开实验会话 → A/B/C 各 10 次近场 → 读 `formatKwsTrial` | 每臂原始四栏齐；分母是「说了几次」由人记 |
 | E-04 | AR08 无声学首音 | 外部时基取证装置 | `attachMeasuredOnset` 入口、分桶统计 | 同一时基录「说完」与「扬声器首音」→ 回填 | `firstAudioSource=acoustic` 的样本 ≥ 每桶每臂 |
 | E-05 | AR09 无性能读数 | 设备时段 | 只读诊断页、指标定义 | P0–P5 按协议跑，prod 计分 | 逐场景有固定包证据；两档（诊断开/关）分列 |
-| E-06 | 受限 token 负例 | 已获授权，未执行 | AUTH_TOKENS 四段格式已核 | 追加一条只带 `location.read` 的条目 → 重启云端 → 跑越权负例 | 服务端拒绝；端侧 T0 也拒绝 |
+| E-06 | 受限 token 负例 | **服务端半边已闭合**（见附录 A）；端到端那半仍缺 | 一台装了候选包、配上受限 token 的测试机 | 在设备上把服务器 token 换成受限那条 → 发一句车控 → 断言被拒且零动作 → 换回原 token | 端侧 T0 拒绝、云侧 dispatch 拒绝、零 VAL 调用、零挂起残留 |
 | E-07 | 旧服务端 / Redis 恢复 | 一个旧 release 环境 + 一次重启 | — | 见 AR05 §9.5 V06/V10 | 挂起恢复保真；新客户端对旧服务端不误报 |
 | E-08 | 五人 UX | 参与者与授权 | [AR10 准备材料](2026-09-10-ar10-acceptance-preparation.md) | 按 §4 脚本执行 | 逐格原始记录，Agent 不代填 |
 
@@ -193,3 +197,62 @@ selector/订阅面（`wiredStore`）、渲染期 ref 读写、动画共享值写
 - 没有招募参与者、没有向任何人发送邀请；
 - 没有正式签名、没有上架、没有 OTA；
 - 没有把 AR02～AR05 的任何未签收项标成已签收。
+
+---
+
+## 附录 A：受限 token 负例（E-06，已闭合服务端半边）与一次由我造成的生产回退
+
+> 本节记录的是**真栈动作**，与上文的工程交付分开读。用户在本轮单独授权了「在 `AUTH_TOKENS`
+> 追加一条只带 `location.read` 的测试身份」。
+
+### A.1 结果
+
+云端 `AUTH_TOKENS` 追加第二条：`<64 位 token>:uar10r:v1:location.read`（原条目一字未动）。
+edge-gateway 重启后日志 `auth_required=true, tokens=2`。用该 token 查 `GET /api/session`：
+
+| 字段 | 值 |
+|---|---|
+| `user_id` / `vehicle_id` | `uar10r` / `v1` |
+| `authorization_source` | **`token`**（不是 `poc_default`——scope 确实来自这条 token）|
+| `granted_scopes` | **`location.read`**（仅此一项）|
+| `summary_status` | `complete` |
+| 能力摘要 | **3 available**（`builtin-tools` / `chitchat` / `manual-rag`）/ **14 `unauthorized`，`reason_code=scope_missing`**，其中包含 **`edge-vehicle`（车端快控·车控）** |
+
+阴性对照：不带 token 请求 `/api/session` → **401**（不是 404，路由在且鉴权生效）。
+
+这一格闭合的是 AR05 §9.5 的 **V07 `permission.scope_missing`** 与 V02 的「新身份不继承」前提
+（`uar10r` 是一个全新的 user_id）。**V05 的端到端负例仍未做**——那需要用这条 token 在真机上
+发一句车控并证明它被拒，属于设备侧的活。
+
+凭据落点：`%LOCALAPPDATA%\car-agent\artifacts\ar10-restricted-token\token.txt`（仓库外、未进 git、未打印）。
+云端 `.env` 备份：`/opt/car-agent/shared/.env.bak-ar10-20260910T023653Z`（0600 root:root，**未删除**，含凭据）。
+
+### A.2 我造成的生产回退：`RELEASE_SHA` 没设，compose 从 `.env` 取到了一个月前的值
+
+**发生了什么**（时间为服务器本地时间）：
+
+| 时刻 | 动作 | 后果 |
+|---|---|---|
+| 10:37:25 | 按 `deploy/cloud/README.md`「唯一运维命令形态」那段跑 `docker compose -f /opt/car-agent/current/compose.yaml … up -d edge-gateway` | 命令里**没有 `--project-name`**，compose 从符号链接推导出项目名 `current`（真实项目名是 `4c1f479`）⇒ 起了一套**并行栈**，10 个容器，撞 `127.0.0.1:50059` 端口失败 |
+| 10:38 | 发现并逐个核对 project label 与创建时间后删除那 10 个容器与 `current_default` 网络 | 生产 30 个容器全程未受影响；无遗留卷 |
+| 10:40:28 | 补上 `--project-name 4c1f479 --no-deps` 重跑 | edge-gateway 被**重建成 `car-agent-release/edge-gateway:4c1f479`——2026-08-11 构建的镜像**。原因：镜像 tag 是 `${RELEASE_SHA:?}`，我没在 shell 里设它，compose 于是从 `--env-file` 里读到了 `.env` 中陈旧的 `RELEASE_SHA=4c1f479` |
+| 10:40–10:5x | 该窗口内 `/api/session` 返回 **404**（那份 8 月镜像里根本没有这个路由）| 生产能力回退约一个月 |
+| 10:5x | 按 `activate-release.sh::compose_up_release` 的真实形态重跑：`env RELEASE_SHA=$(basename $(readlink -f /opt/car-agent/current)) docker compose --project-name 4c1f479 --project-directory /opt/car-agent/current … up -d --no-build --pull never --no-deps edge-gateway` | 镜像回到 `…:d425b9c2d…`；`/api/session` 恢复 401/200；`status` 5/5 |
+
+**三条要记住的判据**：
+
+1. **`dev_stack.py status` 没有发现这件事。** 整个回退窗口里它一直是 `5/5 healthy` +
+   `release_sha=d425b9c2d…`——因为 release_sha 读的是**符号链接**，健康检查读的是 `/healthz`，
+   而 `/healthz` 在 8 月那份镜像里也在。⇒ **「5/5 healthy」不能证明跑的是哪一份代码**。
+   验证面里缺一条「运行中容器的镜像 tag == current 指向的 SHA」的对账，值得单独补。
+2. **`deploy/cloud/README.md` §「唯一运维命令形态」的命令块会复现这个坑**：它 `cd /opt/car-agent/current`
+   之后直接 `docker compose -f /opt/car-agent/current/compose.yaml …`，既没有 `--project-name`
+   也没有 `RELEASE_SHA`。compose 自己会警告 “project has been loaded without an explicit name
+   from a symlink”，但那行警告混在正常输出里。⇒ 该文档段应当补上这两项，或者干脆改成指向
+   `activate-release.sh::compose_up_release` 的同一形态。
+3. **`.env` 里的 `RELEASE_SHA=4c1f479` 是一颗留着的地雷**：它比当前 release 落后一个月，
+   任何不显式设 `RELEASE_SHA` 的手动 compose 命令都会把服务换成旧镜像。本轮**没有改它**
+   （授权范围只有追加 token 条目），但下一个人应当处理。
+
+**没有发生的事**（逐条核过）：生产 30 个容器数未变、无卷被删除、`.env` 原有条目未改、
+权限位仍是 `600 root:root`、其余四个端点全程 200。
