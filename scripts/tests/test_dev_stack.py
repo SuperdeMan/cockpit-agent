@@ -673,6 +673,7 @@ def test_inspect_cloud_status_is_read_only_and_serializes_no_sensitive_transport
             "current_release": "1" * 40,
             "current_path": f"/opt/car-agent/releases/{'1' * 40}",
             "runtime_project_name": "caragent",
+            "running_release_tags": ["1" * 40],
             "approved_infrastructure_digest": None,
             "disk_available_bytes": 9,
             "memory_available_bytes": 8,
@@ -710,6 +711,87 @@ def test_inspect_cloud_status_is_read_only_and_serializes_no_sensitive_transport
     assert "super-secret-token" not in serialized
     assert "postgresql://" not in serialized
     assert "PRIVATE KEY" not in serialized
+
+
+def _cloud_status_with_tags(tmp_path: Path, tags: list[str], *, release: str = "1" * 40):
+    """只换「运行中的镜像 tag」这一个变量，其余一切保持健康（五端点全 200）。"""
+    identity = tmp_path / "agent.pem"
+    identity.write_text("not-a-real-key\n", encoding="utf-8")
+    request = ReleaseRequest(
+        repo=tmp_path,
+        revision="1" * 40,
+        artifact_root=tmp_path / "artifacts",
+        ssh=SshConfig(host="server.example.invalid", user="ubuntu", identity=identity),
+    )
+    remote_state = json.dumps(
+        {
+            "current_release": release,
+            "current_path": f"/opt/car-agent/releases/{release}",
+            "runtime_project_name": "caragent",
+            "running_release_tags": tags,
+            "approved_infrastructure_digest": None,
+            "disk_available_bytes": 9,
+            "memory_available_bytes": 8,
+            "release_lock_available": True,
+            "runtime_project_ready": True,
+            "shared_scripts_ready": True,
+            "shared_models_ready": True,
+        }
+    )
+    endpoints = dev.cloud_endpoints("demo.ts.net")
+    urls = {
+        "https://demo.ts.net/": dev.HttpResponse(200),
+        "https://demo.ts.net:8443/healthz": dev.HttpResponse(200),
+        "https://demo.ts.net:8444/api/llm/providers": dev.HttpResponse(200),
+        "https://demo.ts.net:8445/": dev.HttpResponse(200),
+        "https://demo.ts.net:8446/healthz": dev.HttpResponse(200),
+    }
+    runner = FakeStatusRunner(
+        [command_result("ssh", "remote-preflight", stdout=remote_state)], urls
+    )
+    return dev.inspect_cloud_status(request, endpoints, runner)
+
+
+def test_cloud_status_reports_the_image_that_is_actually_running(tmp_path: Path):
+    """一致时才算一致：五端点全绿 + tag 与记录相符 ⇒ 零 warning。"""
+    status = _cloud_status_with_tags(tmp_path, ["1" * 40])
+
+    assert status.healthy_endpoints == 5
+    assert status.release_sha == "1" * 40
+    assert status.running_release_sha == "1" * 40
+    assert not status.warnings
+
+
+def test_cloud_status_catches_a_release_that_did_not_take_effect(tmp_path: Path):
+    """记录说新版、跑的是旧镜像 ⇒ 必须报出来，且两个 SHA 都点名。
+
+    这正是 2026-09-10 那次生产回退的形态：五个健康端点全绿、`current` 软链没动，
+    只有「跑的是哪一份代码」不对，而当时的 status 一个字都说不出来。
+    """
+    status = _cloud_status_with_tags(tmp_path, ["a" * 40])
+
+    assert status.healthy_endpoints == 5, "端点健康不代表跑的是对的代码"
+    assert status.running_release_sha == "a" * 40
+    assert any("a" * 40 in w and "1" * 40 in w for w in status.warnings)
+    assert cli._status_code(status)[1] == "degraded"
+
+
+def test_cloud_status_does_not_call_an_unknown_image_a_match(tmp_path: Path):
+    """读不到 tag 时既不报一致、也不静默——「没读到」和「读到了但不对」分开报。"""
+    status = _cloud_status_with_tags(tmp_path, [])
+
+    assert status.running_release_sha is None
+    assert any("unknown" in w for w in status.warnings)
+    assert cli._status_code(status)[1] == "degraded"
+
+
+def test_cloud_status_flags_containers_running_different_releases(tmp_path: Path):
+    """一半新一半旧是最难发现的一种——半量替换后剩下的那半仍在跑旧代码。"""
+    status = _cloud_status_with_tags(tmp_path, ["1" * 40, "a" * 40])
+
+    assert status.running_release_sha is None
+    assert any("disagree" in w for w in status.warnings)
+    assert cli._status_code(status)[1] == "degraded"
 
 
 def test_inspect_status_does_not_store_sensitive_probe_exception_text(tmp_path: Path):
@@ -1790,14 +1872,14 @@ def test_cli_status_uses_health_consistent_status_for_local_and_cloud(tmp_path: 
         dev.EndpointStatus(str(index), "https://example.invalid", "healthy", 200)
         for index in range(5)
     )
-    healthy = dev.StackStatus("local", None, 7, 7, 5, endpoints, ())
+    healthy = dev.StackStatus("local", None, None, 7, 7, 5, endpoints, ())
     monkeypatch.setattr(cli, "inspect_local_status", lambda *args: healthy)
     local_events: list[dict[str, object]] = []
     assert cli.main(["status"], repo=tmp_path, status_runner=object(), emit=local_events.append) == 0
     assert local_events[-1]["status"] == "ok"
 
     dev.set_target(tmp_path, "cloud")
-    degraded = dev.StackStatus("cloud", "a" * 40, None, None, 4, (), ("remote status unavailable",))
+    degraded = dev.StackStatus("cloud", "a" * 40, "a" * 40, None, None, 4, (), ("remote status unavailable",))
     monkeypatch.setattr(cli, "read_root_env", lambda *args: {"TAILNET_FQDN": "dev.ts.net"})
     monkeypatch.setattr(cli, "inspect_cloud_status", lambda *args: degraded)
     cloud_events: list[dict[str, object]] = []
@@ -1821,6 +1903,7 @@ def _actual_cloud_release_payload(status: str) -> dict[str, object]:
         current_release="a" * 40,
         current_path="/opt/car-agent/releases/" + "a" * 40,
         runtime_project_name="car_agent",
+        running_release_tags=("a" * 40,),
         approved_infrastructure_digest="d" * 64,
         disk_available_bytes=1,
         memory_available_bytes=1,
@@ -2011,14 +2094,14 @@ def test_cli_status_marks_local_degraded_and_cloud_healthy(
         dev.EndpointStatus(str(index), "https://example.invalid", "healthy", 200)
         for index in range(5)
     )
-    local_degraded = dev.StackStatus("local", None, None, None, 4, endpoints, ())
+    local_degraded = dev.StackStatus("local", None, None, None, None, 4, endpoints, ())
     monkeypatch.setattr(cli, "inspect_local_status", lambda *args: local_degraded)
     local_events: list[dict[str, object]] = []
     assert cli.main(["status"], repo=tmp_path, status_runner=object(), emit=local_events.append) == 1
     assert local_events[-1]["status"] == "degraded"
 
     dev.set_target(tmp_path, "cloud")
-    cloud_healthy = dev.StackStatus("cloud", "a" * 40, None, None, 5, endpoints, ())
+    cloud_healthy = dev.StackStatus("cloud", "a" * 40, "a" * 40, None, None, 5, endpoints, ())
     monkeypatch.setattr(cli, "read_root_env", lambda *args: {"TAILNET_FQDN": "dev.ts.net"})
     monkeypatch.setattr(cli, "inspect_cloud_status", lambda *args: cloud_healthy)
     cloud_events: list[dict[str, object]] = []

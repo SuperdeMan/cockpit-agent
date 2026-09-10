@@ -121,6 +121,9 @@ class RemoteState:
     current_release: str
     current_path: str
     runtime_project_name: str
+    #: 运行中的 `car-agent-release/*` 容器实际使用的镜像 tag（去重、有序）。
+    #: 与 `current_release` **不是同一件事**：软链记录的是「该跑哪个」，这里是「真在跑哪个」。
+    running_release_tags: tuple[str, ...]
     approved_infrastructure_digest: str | None
     disk_available_bytes: int
     memory_available_bytes: int
@@ -1253,6 +1256,7 @@ REMOTE_STATE_FIELDS = {
     "current_release",
     "current_path",
     "runtime_project_name",
+    "running_release_tags",
     "approved_infrastructure_digest",
     "disk_available_bytes",
     "memory_available_bytes",
@@ -1462,7 +1466,15 @@ def digest(path):
     return value.hexdigest()
 
 
-def current_project():
+def running_state():
+    """运行中的容器：compose project 标签 + `car-agent-release/*` 镜像用的 tag 集合。
+
+    tag 必须单独报出来，因为「记录的 release」和「真正在跑的镜像」是两件事：
+    2026-09-10 一次手工 compose 漏设 RELEASE_SHA，compose 从 `.env` 取到一个月前的值，
+    edge-gateway 被换成八月的镜像跑了几分钟——而 `current` 软链、五个健康端点全程
+    没有任何异常，`status` 报的是 5/5 healthy、零 warning。
+    **只查「记录的是什么」的验证面，查不出「跑的是什么」。**
+    """
     ids = [item for item in run(["docker", "ps", "--format", "{{.ID}}"]).splitlines() if item]
     if not ids:
         raise RuntimeError("no running containers")
@@ -1477,7 +1489,13 @@ def current_project():
     project, _ = projects.most_common(1)[0]
     if not PROJECT.fullmatch(project):
         raise RuntimeError("invalid compose project label")
-    return project
+    tags = set()
+    for item in containers:
+        image = str(item.get("Config", {}).get("Image", ""))
+        if not image.startswith("car-agent-release/") or ":" not in image:
+            continue
+        tags.add(image.rsplit(":", 1)[1])
+    return project, sorted(tags)
 
 
 def lock_available():
@@ -1592,7 +1610,7 @@ current_path = run(["readlink", "-f", "/opt/car-agent/current"])
 current_release = Path(current_path).name
 if current_path != f"/opt/car-agent/releases/{current_release}":
     raise RuntimeError("invalid current release path")
-project = current_project()
+project, running_release_tags = running_state()
 disk_lines = run(["df", "--output=avail", "-B1", "/opt/car-agent"]).splitlines()
 disk_available = int(disk_lines[-1].strip())
 memory_available = 0
@@ -1607,6 +1625,7 @@ result = {
     "current_release": current_release,
     "current_path": current_path,
     "runtime_project_name": project,
+    "running_release_tags": running_release_tags,
     "approved_infrastructure_digest": approved_infrastructure_digest(),
     "disk_available_bytes": disk_available,
     "memory_available_bytes": memory_available,
@@ -1654,6 +1673,13 @@ def parse_remote_state(payload: str) -> RemoteState:
             "remote preflight returned an invalid infrastructure digest"
         )
 
+    running_tags = raw["running_release_tags"]
+    if not isinstance(running_tags, list) or any(
+        not isinstance(tag, str) or not RELEASE_SELECTOR_RE.fullmatch(tag)
+        for tag in running_tags
+    ):
+        raise ReleaseError("remote preflight returned invalid running release tags")
+
     integer_fields = ("disk_available_bytes", "memory_available_bytes")
     for field in integer_fields:
         value = raw[field]
@@ -1674,6 +1700,7 @@ def parse_remote_state(payload: str) -> RemoteState:
         current_release=selector,
         current_path=current_path,
         runtime_project_name=runtime_project,
+        running_release_tags=tuple(running_tags),
         approved_infrastructure_digest=approved_digest,
         disk_available_bytes=raw["disk_available_bytes"],
         memory_available_bytes=raw["memory_available_bytes"],

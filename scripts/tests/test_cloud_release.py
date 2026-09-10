@@ -1506,6 +1506,7 @@ def test_cloud_release_result_payload_audits_ci_cd_digests():
             current_release="a" * 40,
             current_path=f"/opt/car-agent/releases/{'a' * 40}",
             runtime_project_name="4c1f479",
+            running_release_tags=("a" * 40,),
             approved_infrastructure_digest=None,
             disk_available_bytes=100 * 1024**3,
             memory_available_bytes=5 * 1024**3,
@@ -1811,6 +1812,7 @@ def remote_state_payload(
             "current_release": current_release,
             "current_path": f"/opt/car-agent/releases/{current_release}",
             "runtime_project_name": "4c1f479",
+            "running_release_tags": [current_release],
             "approved_infrastructure_digest": approved_digest,
             "disk_available_bytes": 100 * 1024**3,
             "memory_available_bytes": 5 * 1024**3,
@@ -1862,6 +1864,7 @@ def test_parse_remote_state_accepts_strict_valid_json():
         current_release="4c1f479",
         current_path="/opt/car-agent/releases/4c1f479",
         runtime_project_name="4c1f479",
+        running_release_tags=("4c1f479",),
         approved_infrastructure_digest=digest,
         disk_available_bytes=100 * 1024**3,
         memory_available_bytes=5 * 1024**3,
@@ -1876,6 +1879,7 @@ def test_preflight_reports_exact_bootstrap_candidates():
     state = RemoteState(
         current_release="4c1f479",
         current_path="/opt/car-agent/releases/4c1f479",
+        running_release_tags=("4c1f479",),
         disk_available_bytes=109_521_666_048,
         memory_available_bytes=5_798_205_849,
         release_lock_available=True,
@@ -2126,6 +2130,19 @@ def test_inline_remote_preflight_is_read_only_and_does_not_read_runtime_env():
             }
         ),
         remote_state_payload("../outside", approved_digest="a" * 64),
+        # 运行中的镜像 tag 是要拿去和 release 对账的，形状不对就不能进来当读数
+        json.dumps(
+            {
+                **json.loads(remote_state_payload("4c1f479", approved_digest="a" * 64)),
+                "running_release_tags": "4c1f479",
+            }
+        ),
+        json.dumps(
+            {
+                **json.loads(remote_state_payload("4c1f479", approved_digest="a" * 64)),
+                "running_release_tags": ["latest"],
+            }
+        ),
     ],
 )
 def test_parse_remote_state_rejects_invalid_or_extra_data(payload: str):

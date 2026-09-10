@@ -96,6 +96,11 @@ class EndpointStatus:
 class StackStatus:
     target: Literal["local", "cloud"]
     release_sha: str | None
+    #: 运行中的 `car-agent-release/*` 容器**实际**使用的镜像 tag。
+    #: 与 `release_sha` 分列：那一列是「记录里该跑哪个」，这一列是「真在跑哪个」。
+    #: 两者不一致 = 发布没有真正生效；只有一列时这种事查不出来（见 `_running_release`）。
+    #: None = 读不到（本地档、或远端状态不可用）——**不是** "一致"。
+    running_release_sha: str | None
     container_total: int | None
     container_running: int | None
     healthy_endpoints: int
@@ -699,6 +704,7 @@ def inspect_local_status(
     return StackStatus(
         target="local",
         release_sha=None,
+        running_release_sha=None,
         container_total=total,
         container_running=running,
         healthy_endpoints=sum(item.status == "healthy" for item in endpoint_results),
@@ -713,6 +719,7 @@ def inspect_cloud_status(
     """Read the deployed release and five cloud endpoints without deploying anything."""
     warnings: list[str] = []
     release_sha: str | None = None
+    running_release: str | None = None
     try:
         state = discover_remote_state(cloud_request, runner=runner)
     except (ReleaseError, OSError):
@@ -730,6 +737,7 @@ def inspect_cloud_status(
                "**真栈命令请改用 PowerShell**）" if os.environ.get("MSYSTEM") else ""))
     else:
         release_sha = state.current_release
+        running_release = _running_release(state, warnings)
         if not state.release_lock_available:
             warnings.append("remote release lock is unavailable")
         if not state.runtime_project_ready:
@@ -744,6 +752,7 @@ def inspect_cloud_status(
     return StackStatus(
         target="cloud",
         release_sha=release_sha,
+        running_release_sha=running_release,
         container_total=None,
         container_running=None,
         healthy_endpoints=sum(item.status == "healthy" for item in endpoint_results),
@@ -752,11 +761,38 @@ def inspect_cloud_status(
     )
 
 
+def _running_release(state, warnings: list[str]) -> str | None:
+    """「记录的 release」与「真在跑的镜像」对账。不一致就出 warning（⇒ status 判 degraded）。
+
+    2026-09-10 的生产回退就死在这条缝里：手工 compose 漏设 `RELEASE_SHA`，compose 从
+    `.env` 取到一个月前的值，edge-gateway 换成了八月的镜像，而 `current` 软链没动、
+    五个健康端点全绿 ⇒ `status` 报 5/5 healthy、零 warning，几分钟里没有任何一处说出真相。
+    健康检查回答的是「它活着吗」，回答不了「活着的是哪一份代码」。
+
+    读不到 tag 时返回 None 并出 warning——**「没读到」不许显示成「一致」**。
+    """
+    tags = tuple(getattr(state, "running_release_tags", ()) or ())
+    if not tags:
+        warnings.append("running release images are unknown")
+        return None
+    if len(tags) > 1:
+        warnings.append(
+            "running release images disagree: " + ", ".join(tags))
+        return None
+    running = tags[0]
+    if running != state.current_release:
+        warnings.append(
+            f"running release image {running} does not match "
+            f"the recorded release {state.current_release}")
+    return running
+
+
 def stack_status_to_dict(status: StackStatus) -> dict[str, object]:
     """Serialize only allow-listed, already-redacted status fields for the CLI."""
     return {
         "target": status.target,
         "release_sha": status.release_sha,
+        "running_release_sha": status.running_release_sha,
         "container_total": status.container_total,
         "container_running": status.container_running,
         "healthy_endpoints": status.healthy_endpoints,
