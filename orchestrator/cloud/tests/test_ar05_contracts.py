@@ -159,15 +159,68 @@ def test_need_confirm_final_carries_confirm_policy():
 
 
 def test_confirm_policy_summary_comes_from_the_verified_step_not_the_model():
-    """摘要要说清「正在确认什么」，而且出处是已验证的步骤而非模型话术。"""
+    """摘要要说清「正在确认什么」，而且出处是已验证的步骤而非模型话术。
+
+    打磨批 G（裁决 J4 / 评审 P10）：摘要**永远是人话**。本夹具的能力描述就是 intent 本身
+    （`_agent` 里 `description=intent`，模拟旧 Agent），人话取不到 ⇒ 回退用户原话并标出处，
+    机器意图名 `merchant.order` 只能出现在 `target_intent` 里，不许进 action_summary。
+    """
     spy = _confirm_spy()
     policy = _final(_run(_engine(spy), _req("在望京店点一杯拿铁")))["confirm_policy"]
 
-    assert policy["summary_source"] == contracts.SUMMARY_FROM_CAPABILITY
-    assert "merchant.order" in policy["action_summary"]
+    assert policy["summary_source"] == contracts.SUMMARY_FROM_UTTERANCE
+    assert policy["action_summary"] == "在望京店点一杯拿铁"
+    assert not contracts.MACHINE_INTENT_RE.match(policy["action_summary"])
     assert "望京店" in policy["action_summary"] and "拿铁" in policy["action_summary"]
     assert policy["object_summary"] == "merchant"
     assert policy["target_intent"] == "merchant.order"
+
+
+def test_confirm_policy_summary_is_the_capability_description_plus_slot_values():
+    """能力描述是人话时：摘要 = 描述（槽值）；出处 capability。描述来自 Registry 目录，云侧不抄词表。"""
+    human = _agent("merchant", [
+        _cap("merchant.order", ["store", "item"], require_confirm=True),
+        _cap("merchant.pick_store", ["store"], slot_shapes={"store": "item_name"}),
+    ])
+    for cap in human.manifest.capabilities:
+        if cap.intent == "merchant.order":
+            cap.description = "在商户下单"
+    spy = _confirm_spy()
+    spy.list_agents = lambda: _coro([human, _CHITCHAT])  # type: ignore[method-assign]
+    policy = _final(_run(_engine(spy), _req("在望京店点一杯拿铁")))["confirm_policy"]
+
+    assert policy["summary_source"] == contracts.SUMMARY_FROM_CAPABILITY
+    assert policy["action_summary"] == "在商户下单（拿铁，望京店）"
+    assert not contracts.MACHINE_INTENT_RE.match(policy["action_summary"])
+
+
+async def _coro(value):
+    return value
+
+
+def test_action_summary_never_emits_a_machine_intent_name():
+    """离线契约用例：trunk.open → 「打开后备箱」；描述缺席 / 描述本身是机器名 / 未知 intent ⇒ 空串（回退原话）。"""
+    step = SimpleNamespace(intent="trunk.open", slots={})
+    assert contracts.action_summary(step, {"trunk.open": "打开后备箱"}.get) == "打开后备箱"
+    assert contracts.action_summary(step, None) == ""
+    assert contracts.action_summary(step, {"trunk.open": "trunk.open"}.get) == ""
+    assert contracts.action_summary(SimpleNamespace(intent="nobody.knows", slots={}), {"trunk.open": "打开后备箱"}.get) == ""
+    with_slots = SimpleNamespace(intent="hvac.set", slots={"temperature": "26"})
+    assert contracts.action_summary(with_slots, {"hvac.set": "设置空调温度"}.get) == "设置空调温度（26）"
+
+    def boom(_intent):
+        raise RuntimeError("registry down")
+    assert contracts.action_summary(step, boom) == ""
+
+    policy = contracts.build_confirm_policy(
+        operation_id="op-1", step=SimpleNamespace(intent="trunk.open", slots={}, require_confirm=True),
+        state=SimpleNamespace(expires_at=0), user_text="open the trunk", describe=None)
+    assert policy["action_summary"] == "open the trunk"
+    assert policy["summary_source"] == contracts.SUMMARY_FROM_UTTERANCE
+    for text in ("trunk.open", "fuel_tank_cover.open", "charging_port.open（k=v）"):
+        assert contracts.is_machine_intent_name(text)
+    for text in ("打开后备箱", "open the trunk", "在商户下单（拿铁，望京店）"):
+        assert not contracts.is_machine_intent_name(text)
 
 
 def test_confirm_policy_deadline_is_the_persisted_absolute_time():

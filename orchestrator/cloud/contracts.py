@@ -16,7 +16,9 @@
 """
 from __future__ import annotations
 
+import re
 import time
+from typing import Callable
 
 from runtime.issues import (  # noqa: F401 —— 受控枚举经本模块对云侧统一出口
     ISSUE_AUTH_REJECTED, ISSUE_PERMISSION_SCOPE_MISSING,
@@ -65,8 +67,26 @@ def _slot_values(step) -> dict:
             if isinstance(v, (str, int, float)) and str(v).strip()}
 
 
-def action_summary(step) -> str:
-    """「这次要确认的到底是什么」——由**已验证的**步骤 intent + 槽值合成。
+# 机器意图名 `<object>.<operate>`（可带更多段）。摘要**永远不许**长这样——评审 P10 / V5 在 OPPO 固定包上
+# 抓到确认卡标题是 `trunk.open` / `fuel_tank_cover.open` / `charging_port.open`，右边还标着「危险动作」。
+# 同一条判据在客户端也有一份兜底（mobile actionSummary.ts::isMachineIntentName），那是第二道防线。
+MACHINE_INTENT_RE = re.compile(r"^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+")
+
+
+def is_machine_intent_name(text: str) -> bool:
+    return bool(MACHINE_INTENT_RE.match(str(text or "").strip()))
+
+
+def action_summary(step, describe: Callable[[str], str] | None = None) -> str:
+    """「这次要确认的到底是什么」——**人话**：能力的中文描述 + 槽值。
+
+    人话从哪来（打磨批 G，裁决 J4）：`describe(intent)` 由调用方注入，取的是 Registry 目录里
+    这条能力的 `description`——端侧能力的描述由 `orchestrator/edge/capabilities.py::_describe`
+    从 `commands.yaml` 的 `display_name` + 动词表机械生成（`trunk.open` → 「打开后备箱」），
+    云侧不另抄一份对象名或动词表（云侧镜像里根本没有 commands.yaml）。
+
+    描述取不到、或描述本身就是机器名（旧 Agent 把 intent 当描述）⇒ 返回空串，由调用方回退
+    用户原话并标 `summary_source=user_utterance`。**任何情况下不再把 intent 直出**。
 
     刻意不读 `plan.goal`：那是模型写的一句话，不是执行事实（AR05 §4.1）。
     """
@@ -75,11 +95,19 @@ def action_summary(step) -> str:
     intent = str(getattr(step, "intent", "") or "").strip()
     if not intent:
         return ""
+    label = ""
+    if describe is not None:
+        try:
+            label = str(describe(intent) or "").strip()
+        except Exception:  # noqa: BLE001 —— 描述是 best-effort，取不到就回退原话
+            label = ""
+    if not label or is_machine_intent_name(label):
+        return ""
     values = _slot_values(step)
     if not values:
-        return intent
-    detail = "，".join(f"{k}={v}" for k, v in sorted(values.items()))
-    return f"{intent}（{detail}）"
+        return label
+    detail = "，".join(str(v) for _, v in sorted(values.items()))
+    return f"{label}（{detail}）"
 
 
 def object_summary(step) -> str:
@@ -89,13 +117,18 @@ def object_summary(step) -> str:
 
 
 def build_confirm_policy(*, operation_id: str, step, state,
-                         user_text: str = "") -> dict:
-    """NEED_CONFIRM 轮的确认策略。返回 dict（cloud 事件面统一用 dict，server 再转 proto）。"""
+                         user_text: str = "",
+                         describe: Callable[[str], str] | None = None) -> dict:
+    """NEED_CONFIRM 轮的确认策略。返回 dict（cloud 事件面统一用 dict，server 再转 proto）。
+
+    `describe`：intent → 能力的中文描述（engine 从 Registry 目录取）；见 `action_summary`。
+    """
     declared = bool(getattr(step, "require_confirm", False))
-    summary = action_summary(step)
+    summary = action_summary(step, describe)
     source = SUMMARY_FROM_CAPABILITY
     if not summary:
-        # 没有结构化摘要时**明确回退用户原话**，并说清出处——不把模型 goal 当执行事实。
+        # 没有人话摘要时**明确回退用户原话**，并说清出处——不把模型 goal 当执行事实，
+        # 也不把机器意图名当标题（打磨批 G）。
         summary = (user_text or "").strip()
         source = SUMMARY_FROM_UTTERANCE
     return {

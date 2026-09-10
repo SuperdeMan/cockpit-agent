@@ -1565,12 +1565,37 @@ class PlannerEngine:
                 # 回退原话取**任务起点**（`plan.safety_origin_text`，跨挂起不变），
                 # 不是本轮的「确认」二字；两者都没有才退到本轮原话。
                 user_text=(getattr(plan, "safety_origin_text", "")
-                           or ctx.safety_origin_text or ctx.raw_text))
+                           or ctx.safety_origin_text or ctx.raw_text),
+                # 打磨批 G（裁决 J4）：人话摘要取 Registry 目录里这条能力的描述
+                # （端侧由 commands.yaml 机械生成，云侧不抄词表）；取不到就回退原话
+                describe=await self._capability_describer())
         elif step_result.missing_slots:
             final_event["slot_request"] = contracts.build_slot_request(
                 operation_id=operation_id, step=pending_step,
                 step_result=step_result, state=pending_state)
         return final_event
+
+    async def _capability_describer(self):
+        """intent → Registry 目录里这条能力的 `description`（打磨批 G）。
+
+        目录是端侧 / 各 Agent 注册时带上来的——端侧车控的描述由 `capabilities.py::_describe`
+        从 `commands.yaml` 机械生成（「打开后备箱」），所以云侧**不需要也不许**另抄一份对象名。
+        Registry 取不到时返回 None：摘要回退用户原话，挂起本身不受影响（best-effort）。
+        """
+        try:
+            agents = await self.clients.list_agents()
+        except Exception as exc:  # noqa: BLE001 —— 目录只影响摘要人话，绝不拖垮挂起
+            logger.debug("capability describer unavailable, falling back to utterance: %s", exc)
+            return None
+        table: dict[str, str] = {}
+        for agent in agents or []:
+            manifest = getattr(agent, "manifest", None)
+            for cap in (getattr(manifest, "capabilities", None) or []):
+                intent = str(getattr(cap, "intent", "") or "")
+                desc = str(getattr(cap, "description", "") or "").strip()
+                if intent and desc and intent not in table:
+                    table[intent] = desc
+        return table.get
 
     @staticmethod
     def _pending_label(state) -> str:
