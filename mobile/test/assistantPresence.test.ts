@@ -113,7 +113,7 @@ beforeEach(() => {
   })
   // 没有 GatewaySession 时 connStatus 缺省 closed ⇒ 胶囊恒「已断开」、光球恒 muted；这里验的是在线形态
   mockCore.setStatus('open')
-  settingsStore.getState().update({ uxV2Presence: true, uxV2Dock: true, handsFree: false, drivingManual: false, deviceRole: 'handheld' })
+  settingsStore.getState().update({ handsFree: false, drivingManual: false, deviceRole: 'handheld' })
 })
 
 afterEach(() => {

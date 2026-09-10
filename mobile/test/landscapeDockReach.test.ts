@@ -141,7 +141,7 @@ beforeEach(() => {
     speech: { begin() {}, delta() {}, finish() {}, stop() {} },
   })
   settingsStore.getState().update({
-    uxV2Presence: true, uxV2Dock: true, drivingManual: true, deviceRole: 'trusted-tablet', handsFree: false,
+    drivingManual: true, deviceRole: 'trusted-tablet', handsFree: false,
   })
 })
 

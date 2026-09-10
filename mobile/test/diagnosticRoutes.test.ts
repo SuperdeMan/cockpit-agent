@@ -220,8 +220,9 @@ test('A06-2: 每个设置开关都有与它所改的键绑定的、唯一的 tes
     expect(new Set(ids).size).toBe(ids.length)
     // 每枚都拿得到当前值 —— 回读判据就是它
     for (const n of switches) expect(typeof n.props.value).toBe('boolean')
-    // 承诺面 Focus Dock：02 / 06 两条 flow 的前提就靠这一枚（两条流的前提互斥）
-    expect(ids).toContain('settings-switch-uxV2Dock')
+    // 打磨批 E（裁决 J1）：v1 回滚开关已删——两枚都不许再出现在设置页
+    expect(ids).not.toContain('settings-switch-uxV2Dock')
+    expect(ids).not.toContain('settings-switch-uxV2Presence')
   } finally { await unmount(view) }
 })
 

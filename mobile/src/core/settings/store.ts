@@ -60,10 +60,8 @@ export interface AppSettings {
    *  判据在 core/presence/hapticCue.ts，执行在 core/haptics.ts，接线在 usePresence 的 effect。 */
   hapticsEnabled: boolean
   // ── UX v2.1（B1）──
-  /** 在场模型 + 光球主态 + 状态胶囊。关掉即回 v1 的四条状态条（回滚路径，§11.5） */
-  uxV2Presence: boolean
-  /** Focus Dock 承诺面。关掉即回气泡内确认按钮 */
-  uxV2Dock: boolean
+  // `uxV2Presence` / `uxV2Dock` 两个 v1 回滚开关已删（打磨批 E，裁决 J1）：B4 起所有验证只跑 v2
+  // 路径，v1 分支是没人验证的代码。旧存量里读到这两个键一律丢弃（mergeStoredSettings）。
   /** 产品身份（方案 §6.0）。B1 只占位，B4 才有 UI 与行为差异；**窗口尺寸不决定它** */
   deviceRole: 'handheld' | 'mount' | 'trusted-tablet'
   // ── UX v2（B4）──
@@ -108,8 +106,6 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   s2sConsentAt: 0,
   visionEnabled: false,
   hapticsEnabled: true,
-  uxV2Presence: true,
-  uxV2Dock: true,
   deviceRole: 'handheld',
   drivingManual: false,
   reduceMotionForce: false,
@@ -131,8 +127,14 @@ export function speakAllowed(policy: SpeakPolicy, voice: boolean): boolean {
 export function mergeStoredSettings(raw: string | null): AppSettings {
   if (!raw) return DEFAULT_APP_SETTINGS
   try {
-    const parsed = JSON.parse(raw) as Partial<AppSettings> & { ttsEnabled?: boolean; autoplay?: boolean }
-    const { ttsEnabled, autoplay, ...rest } = parsed
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+      ttsEnabled?: boolean
+      autoplay?: boolean
+      /** 已删的 v1 回滚开关（打磨批 E）：旧存量里可能还有，读到就丢，不进 settings */
+      uxV2Presence?: boolean
+      uxV2Dock?: boolean
+    }
+    const { ttsEnabled, autoplay, uxV2Presence: _legacyPresence, uxV2Dock: _legacyDock, ...rest } = parsed
     const speakPolicy: SpeakPolicy =
       rest.speakPolicy ?? (ttsEnabled === false || autoplay === false ? 'silent' : DEFAULT_APP_SETTINGS.speakPolicy)
     // 裁决 J2：存量列表与**旧默认**逐项相同 ⇒ 换成新顺序；用户自定义过的（多一条 / 少一条 /

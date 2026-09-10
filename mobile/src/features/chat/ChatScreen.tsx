@@ -22,7 +22,7 @@ import { composerInputMode } from '../../core/presence/drivingMode'
 import { captureSummary, capsuleVisible } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
-import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
+import { AuroraBackground, AuroraOrb } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
 import { usePalette } from '../../ui/theme'
@@ -39,29 +39,10 @@ import { VoiceSheet } from './VoiceSheet'
 import { useAssistant, type AssistantRuntime } from '../assistant/AssistantProvider'
 import { useProactiveViewability } from '../assistant/ProactivePresenter'
 
-// 免唤醒 FSM 态 → 用户看得懂的一行字与一个点的颜色。
-// **不直接显示 FSM 名字**：ARMED/FOLLOWUP 对用户没有意义，而「在不在听」有。
-// ⚠ B1 之后这两张表只在 **`uxV2Presence=false` 的回滚分支**里用（v2 下这些话由状态胶囊说）。
-// 它们**刻意留着**——回滚路径不是一句话，是一段真的要能跑起来的代码（§11.5）；B4 稳定后再删。
+// v1 的回滚分支（免唤醒状态条 / 通知条 / PTT 提示行 / 连接 pill / 弱网横幅 / 气泡内确认）已整段删除
+// ——打磨批 E，裁决 J1：B4 起所有验证只跑 v2 路径，回滚分支是没人验证的代码。
 /** FlashList 可见性判据：常量，模块级一份就够（原来是 useRef(...).current，那是渲染期读 ref） */
 const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 50, minimumViewTime: 300 }
-
-const HF_LABEL: Record<string, string> = {
-  ARMED: '待唤醒 · 说「小舟小舟」',
-  LISTENING: '在听…',
-  THINKING: '思考中…',
-  SPEAKING: '播报中',
-  FOLLOWUP: '可以直接接着说',
-  IDLE: '免唤醒未启动',
-}
-const HF_DOT: Record<string, string> = {
-  ARMED: '#64748B',
-  LISTENING: '#22D3EE',
-  THINKING: '#A78BFA',
-  SPEAKING: '#34D399',
-  FOLLOWUP: '#22D3EE',
-  IDLE: '#475569',
-}
 
 export function ChatScreen() {
   const runtime = useAssistant()
@@ -181,11 +162,11 @@ function Welcome({
 
 function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   const { p, cfg, core, state, settings, ptt, hf, snapshot, layout, motionEnv, reduceMotion,
-    notice, turn, latestTurnId, busy, stoppable, sessionSummary,
+    turn, latestTurnId, busy, stoppable, sessionSummary,
     onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap,
     onStopPlayback, setSheetOverride, privacyOpen, setPrivacyOpen, draft, setDraft,
     dockExpanded, setDockExpanded } = runtime
-  const { messages, pendingOps, vehState, connStatus, pendingLocationText, uncertainIds, draftUserId,
+  const { messages, pendingOps, vehState, pendingLocationText, uncertainIds, draftUserId,
     interruptedIds, s2sIds, visionIds, turnMeta, confirmLog } = state
   // 首页推荐按**服务端能力摘要 + 用户开关**筛（AR05 §6.2）：没授权/没在线/用户关掉的
   // 能力不再摆推荐——点了必然被婉拒而用户不知道为什么。摘要不完整或还没查到时不筛，
@@ -223,15 +204,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
 
   // 开录即告知（红线三条件③在交互时刻的落实）：正在上传原始音频、或这一轮就是端到端发起的
   const s2sNotice = snapshot.privacy.mic === 'cloudAudio' || snapshot.turnSource === 's2s'
-  const v2 = settings.uxV2Presence
-  const dock = settings.uxV2Dock
-  // 回滚分支的光球态（v1 推导，逐字照搬 B1 之前 Composer 里的那一行）：
-  // 关掉开关时光球要真的退回 v1 的三态，而不是停在 v2 的某个态上
-  const legacyOrb: OrbState = ptt.state === 'recording' ? 'speaking' : ptt.state === 'finalizing' ? 'thinking' : 'idle'
-  // v1 的第四条窄条（PTT 提示行）：B1 把它从 Composer 里删了，v2 下由状态胶囊表达；
-  // 回滚分支要拿回来，否则「关了开关」只退回三条
-  const legacyHint = ptt.partial || (ptt.state === 'finalizing' ? (ptt.slow ? '网络似乎不太顺，正在重试…' : '识别中…') : '') || ptt.error || ''
-  const legacyHintIsError = !ptt.partial && ptt.state !== 'finalizing' && !!ptt.error
   // 位置征询条只激活最新一条（无 operation_id 的 needConfirm 气泡）
   const lastConsentId = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -246,28 +218,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
     return pendingLocationText !== null && m.id === lastConsentId
   }
 
-  // 弱网提示条（M3-4）：**延迟 3 秒**再显示——重连本来就是常态（切基站/锁屏回来都会闪一下），
-  // 每次都弹一条会把「正常自愈」渲染成「出事了」，用户学会忽略它之后真断网也就没人看了。
-  const [linkWarn, setLinkWarn] = useState(false)
-  // 「连上了就立刻收掉提示条」用渲染期调整派生状态，不用 effect：effect 要等这一帧 commit
-  // 完才跑，用户会看见一帧「已经在线但还挂着断线条」。延迟 3s 才亮那一半仍然是 effect（真定时器）。
-  const [connSeen, setConnSeen] = useState(connStatus)
-  if (connSeen !== connStatus) {
-    setConnSeen(connStatus)
-    if (connStatus === 'open') setLinkWarn(false)
-  }
-  useEffect(() => {
-    if (connStatus === 'open') return
-    const t = setTimeout(() => setLinkWarn(true), 3000)
-    return () => clearTimeout(t)
-  }, [connStatus])
-
-  const conn =
-    connStatus === 'open'
-      ? { color: p.green, label: '在线' }
-      : connStatus === 'connecting'
-        ? { color: p.amber, label: '连接中' }
-        : { color: p.red, label: '已断开' }
   // v2 健康点：**在线是灰的**——一个持续亮着的绿点会一直占用注意力，而它什么也没说
   const healthColor =
     snapshot.transport === 'online' ? p.fg3 : snapshot.transport === 'reconnecting' ? p.amber : p.red
@@ -300,11 +250,11 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
 
   const splitLandscape = layout.mode === 'driving-landscape'
   const proactiveViewability = useProactiveViewability(core, runtime.scope,
-    runtime.facts.route === '/' && !privacyOpen && !dockExpanded && !(v2 && snapshot.input === 'voice-sheet'))
+    runtime.facts.route === '/' && !privacyOpen && !dockExpanded && snapshot.input !== 'voice-sheet')
   // B5-15：层覆盖整列时 Composer 整个被盖住 ⇒ 从无障碍树拿掉（真机抓到它与层内大球说明重复）。
   // 触摸侧本来就被层的暗区拦住了，这里补的是读屏那一半。
   const sheetCoversColumn = splitLandscape && snapshot.input === 'voice-sheet'
-  const voiceSheetEl = v2 && runtime.facts.route === '/' && runtime.scope.canPresent() ? (
+  const voiceSheetEl = runtime.facts.route === '/' && runtime.scope.canPresent() ? (
     <VoiceSheet
       p={p}
       fontScale={settings.fontScale}
@@ -337,7 +287,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // 修法是给层一个**有边界的覆盖域**（记录区 + 胶囊 + Composer），Dock 落在覆盖域之外。
   // 非 split 路径逐字节不变：层仍住在记录区容器里、Dock 仍在原位置。
   // 承诺面此刻有没有真的画出来（宿主事实）：胶囊「一屏只出现一份」的判据 capsuleVisible 读它（打磨批 A / P28）
-  const dockMounted = v2 && dock && runtime.facts.route === '/' && runtime.scope.canCapture()
+  const dockMounted = runtime.facts.route === '/' && runtime.scope.canCapture()
   const dockShown = dockMounted && focusDockVisible(snapshot, state.issues)
   // Composer 的 chips 行（打磨批 A / P01 / P02）：无消息 ⇒ 空（欢迎态自己有三条推荐）；有消息 ⇒ 最近一条
   // 助手回答的 follow-up + 候选集（判据 followUps.ts，与语音层同一份）；在飞时不给——催人打断自己。
@@ -393,7 +343,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           viewabilityConfig={VIEWABILITY_CONFIG}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, v2, dock, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving]}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
@@ -403,7 +353,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                 loops={loopsAnimated(motionEnv)}
                 driving={snapshot.driving}
                 confirmActive={confirmActiveOf(item)}
-                inlineConfirm={!(v2 && dock)}
                 uncertain={uncertainIds.includes(item.id)}
                 draft={item.id === draftUserId}
                 interrupted={interruptedIds.includes(item.id)}
@@ -414,7 +363,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                     ? buildReceipt({ messages, assistant: item, turnMeta, confirmLog, vehicleId: String(vehState.vehicle_id ?? '') })
                     : null
                 }
-                onConfirm={onConfirm}
                 onSend={onSend}
               />
             </View>
@@ -426,66 +374,13 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       {/* 非 driving-landscape：层住在记录区容器里（B4 及以前的形态，逐字节不变） */}
       {splitLandscape ? null : voiceSheetEl}
       </View>
-      {/* 免唤醒状态条（M4-4）。**只在真开着的时候占高度**——一个常驻的空条会让
-          「现在到底在不在听」这件事变得看不出来，而这正是常开麦最该让用户看见的事。
-          文案给的是 FSM 态的人话版，不是 FSM 名字：用户不需要知道 ARMED 是什么。 */}
-      {!v2 && settings.handsFree && hf.availability.usable ? (
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingHorizontal: 14,
-            paddingVertical: 6,
-            backgroundColor: hf.fsm === 'LISTENING' ? p.accentSoft : 'transparent',
-          }}
-        >
-          <View
-            style={{
-              width: 7,
-              height: 7,
-              borderRadius: 999,
-              backgroundColor: HF_DOT[hf.fsm] ?? p.fg3,
-            }}
-          />
-          <Text style={{ color: p.fg2, fontSize: p.font(12), flexShrink: 0 }}>
-            {HF_LABEL[hf.fsm] ?? '免唤醒'}
-          </Text>
-          {hf.partial ? (
-            <Text numberOfLines={1} style={{ color: p.fg1, fontSize: p.font(12), flex: 1 }}>
-              {hf.partial}
-            </Text>
-          ) : null}
-        </View>
-      ) : null}
-      {!v2 && (hf.error || notice) ? (
-        <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
-          <Text style={{ color: p.amber, fontSize: p.font(12) }}>{hf.error || notice}</Text>
-        </View>
-      ) : null}
-      {/* v1 的第四条窄条：PTT 提示行。B1 把它从 Composer 里删了（v2 下由状态胶囊表达），
-          回滚分支要把它拿回来——否则「关掉开关」只退回三条，不叫回到 v1 */}
-      {!v2 && legacyHint ? (
-        <Text
-          numberOfLines={2}
-          style={{
-            color: legacyHintIsError ? p.amber : p.fg2,
-            fontSize: p.font(13),
-            paddingHorizontal: 14,
-            paddingTop: 6,
-          }}
-        >
-          {ptt.state === 'recording' ? '🎙 ' : ''}
-          {legacyHint}
-        </Text>
-      ) : null}
       {/* 承诺面：**永远不被别的轴覆盖**（评审 P0-1——待确认时断网，那条确认照样钉着）。
           driving-landscape 下它挪到层的覆盖域之外（见本列末尾），这里不渲染 */}
       {splitLandscape ? null : focusDockEl}
       {/* 状态胶囊：一次只说一件「此刻」的事。点按默认打开语音层；建议胶囊（§6 触发③）
           点按 = 开行车档——**做什么由 derivePresence 给的 capsule.action 决定，判据不在这里**。
           画不画读 presence.ts::capsuleVisible（打磨批 A / P05 / P28）：层升起时层内已有一份、承诺面钉着时 Dock 已在说 */}
-      {v2 && capsuleVisible(snapshot, dockShown) ? (
+      {capsuleVisible(snapshot, dockShown) ? (
         <PresenceCapsule
           p={p}
           fontScale={settings.fontScale}
@@ -505,8 +400,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         busy={busy}
         stoppable={stoppable}
         ptt={cfg.audioUrl ? ptt : null}
-        orbState={v2 ? snapshot.primary : legacyOrb}
-        orbDim={v2 && snapshot.dim}
+        orbState={snapshot.primary}
+        orbDim={snapshot.dim}
         fontScale={settings.fontScale}
         onSend={onSend}
         onInterrupt={onInterrupt}
@@ -559,10 +454,9 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             <Text style={{ color: p.fg1, fontSize: p.font(16), fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
               {settings.assistantName}随行
             </Text>
-            {/* 连接：v2 只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时
-                才是信息，而那时状态胶囊已经在说这件事了（方案 §5.1）。v1 保留原来的 pill */}
-            {v2 ? (
-              <Pressable
+            {/* 连接：只留一个 7dp 健康点——「在线」这两个字在线时是噪声，它只在**不**在线时
+                才是信息，而那时状态胶囊已经在说这件事了（方案 §5.1）。 */}
+            <Pressable
                 testID="health-dot"
                 accessibilityRole="button"
                 accessibilityLabel={`连接${snapshot.transport === 'online' ? '正常' : snapshot.transport === 'reconnecting' ? '重连中' : '已断开'}${captureDot ? '，' + captureDot.label : ''}；打开隐私栏`}
@@ -599,32 +493,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                   />
                 ) : null}
               </Pressable>
-            ) : (
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 6,
-                  backgroundColor: p.fill,
-                  borderWidth: 1,
-                  borderColor: p.fill2,
-                  borderRadius: 999,
-                  paddingHorizontal: 10,
-                  paddingVertical: 3,
-                }}
-              >
-                <View
-                  style={{
-                    width: 7,
-                    height: 7,
-                    borderRadius: 4,
-                    backgroundColor: conn.color,
-                    boxShadow: `0 0 8px ${conn.color}`,
-                  }}
-                />
-                <Text style={{ color: p.fg2, fontSize: p.font(11) }}>{conn.label}</Text>
-              </View>
-            )}
             <View style={{ flex: 1 }} />
             {/* 舞台常驻的两种形态（双栏 / 桌面）里车况已在屏上，不重复给入口；抽屉与单栏保留 */}
             {layout.mode !== 'two-pane' && layout.mode !== 'tabletop' ? (
@@ -632,14 +500,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             ) : null}
             <TopIconLink p={p} href="/settings" icon="settings" label="设置" driving={snapshot.driving} fontScale={settings.fontScale} />
           </View>
-          {!v2 && linkWarn ? (
-            <View style={{ backgroundColor: p.amberSoft, paddingHorizontal: 14, paddingVertical: 6 }}>
-              <Text style={{ color: p.amber, fontSize: p.font(12) }}>
-                {connStatus === 'connecting' ? '正在重连服务器…' : '连接已断开，正在重试'}
-                ——这期间发出的消息会排队，连上后自动补发
-              </Text>
-            </View>
-          ) : null}
           {layout.mode === 'two-pane' ? (
             <View style={{ flex: 1, flexDirection: 'row' }}>
               {/* book：左栏宽 = 铰链左缘 − gap/2，铰链落在 gap 正中（§7.3）；flat 双栏：对话 flex、舞台 stageWidth */}

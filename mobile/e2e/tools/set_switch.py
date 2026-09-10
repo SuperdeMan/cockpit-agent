@@ -12,7 +12,7 @@
 
 用法：
     python mobile/e2e/tools/set_switch.py reduceMotionForce true
-    python mobile/e2e/tools/set_switch.py uxV2Dock false
+    python mobile/e2e/tools/set_switch.py reduceTransparency false
 """
 from __future__ import annotations
 

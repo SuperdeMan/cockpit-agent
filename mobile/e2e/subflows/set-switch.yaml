@@ -1,6 +1,6 @@
 # 设置页上任意一枚开关：建立 → **回读** → 由调用方在流末还原（AR06 / A06-2，AR09 复用）。
 #
-# 入参：SWITCH_KEY = SwitchRow 的 settingKey（如 uxV2Dock / reduceMotionForce）
+# 入参：SWITCH_KEY = SwitchRow 的 settingKey（如 reduceMotionForce / reduceTransparency）
 #       SWITCH_ON  = "true" | "false"
 #
 # ⚠ 开关必须按 **testID** 点，不能按「标签之后第一枚开关」：多行说明会把开关挤出文字带，

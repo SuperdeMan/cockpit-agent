@@ -45,14 +45,11 @@ release 会短很多），不是 Maestro 自己报的 flow 时间。09 那 5 分
 
 ⚠ **跑之前先关 dev-client 的 Tools button**（见下节），否则 `scrollUntilVisible` 会点开 Expo dev 菜单。
 
-⚠ 06 与 02 验的不是同一件事：**02 = 气泡内确认**（v1 路径，实验室开关 `uxV2Dock` 关掉时仍有效），
-**06 = 承诺面**。两条都要留着——回滚路径没有测试守着就只是一句话。
-
-⛔⛔ **两条的前提互斥，一趟跑不可能都绿——回归清单必须带前提**（2026-09-05 实证）：
-`uxV2Dock=true` 时跑 02 会**稳定红在 `extendedWaitUntil: confirm-cancel` 45s 超时**
-（前面 `tapOn: composer-input` / `inputText` / `hideKeyboard` / `tapOn: composer-send` **全部 COMPLETED**，
-所以看着很像回归）；关掉开关复跑立刻 rc=0。⇒ **跑 02 与 06 要分两趟、各自先设好 `uxV2Dock`**。
-B5 计划 T16 步骤 4 把清单抄成了一句「01/02/03/06/08/09 各 rc=0」而没带前提，据它判红会误判成回归。
+⚠ **02（气泡内确认，v1 路径）与 `subflows/set-dock.yaml` 已于打磨批 E（2026-09-10，裁决 J1）删除**：
+`uxV2Presence` / `uxV2Dock` 两个回滚开关连同 v1 的状态条、通知条、PTT 提示行、连接 pill、弱网横幅、
+气泡内确认按钮一起删掉，代码里只剩 v2 一条呈现路径，06（承诺面）是唯一的确认流。
+此前「02 与 06 前提互斥、要分两趟」的纪律随之作废；回归清单为 **04 / 09 / 10 / 11 + 01 / 03 / 06 / 08**。
+下面历史段落里提到 02 的读数与互斥说明按当时的包理解，不再适用。
 
 ⚠ 「到期留痕」（300s）**刻意不在 06 里等**：那条由 `mobile/test/sessionStore.test.ts` 用假时钟守。
 共享 TTL `pendingOps.mjs::PENDING_TTL_MS` **不许为了缩短 e2e 去改**——hmi 也在读它。

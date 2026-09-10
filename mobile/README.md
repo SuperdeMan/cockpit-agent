@@ -187,8 +187,8 @@ NS/AGC，改变了送进 VAD/KWS 的音频，而唤醒阈值（0.2/2.0）是在�
 
 ## e2e（Maestro，M3-5 立、UX v2 扩到 9 条）
 
-9 条 flow，tag 三档：`offline`（04 离线冒烟、09 状态画廊；零后端依赖，CI 的 `mobile-apk.yml` 跑这档）/
-`online`（01 天气、02 气泡内确认、03 断网补达、06 承诺面确认、08 键盘不遮发送；需真栈）/
+8 条 flow，tag 三档：`offline`（04 离线冒烟、09 状态画廊；零后端依赖，CI 的 `mobile-apk.yml` 跑这档）/
+`online`（01 天气、03 断网补达、06 承诺面确认、08 键盘不遮发送；需真栈）/
 `manual`（05 语音层 PTT、07 平板双栏；要人手或特定形态）。
 
 ```bash
@@ -196,7 +196,7 @@ maestro test --no-reinstall-driver --include-tags offline mobile/e2e/   # 零后
 maestro test --no-reinstall-driver --include-tags online  mobile/e2e/   # 需 target=cloud + 真机在 tailnet
 ```
 
-⚠ 02（气泡内确认，v1 路径）与 06（承诺面）的前提 `uxV2Dock` 互斥，一趟跑不可能都绿——回归清单必须带前提。
+02（气泡内确认，v1 路径）与 set-dock 子流已于打磨批 E 删除（裁决 J1）：承诺面是唯一确认入口，回归清单 04 / 09 / 10 / 11 + 01 / 03 / 06 / 08。
 
 ⚠ **`--no-reinstall-driver` 不是可选项**：Maestro 每个 session 都会重装它自己的 driver APK，
 而 MIUI 每次都弹安装确认（只给 5 秒、默认「拒绝」）。前置、判据取舍、以及实跑当场抓到的

@@ -72,18 +72,23 @@ describe('默认值与存量合并', () => {
   })
 })
 
-describe('UX v2.1 开关与身份（B1-7）', () => {
-  test('缺省：两个 v2 开关开、身份=手持', () => {
-    expect(DEFAULT_APP_SETTINGS.uxV2Presence).toBe(true)
-    expect(DEFAULT_APP_SETTINGS.uxV2Dock).toBe(true)
+describe('UX v2.1 身份（B1-7）与 v1 回滚开关的删除（打磨批 E，裁决 J1）', () => {
+  test('缺省：身份=手持', () => {
     expect(DEFAULT_APP_SETTINGS.deviceRole).toBe('handheld')
   })
-  test('存量设置没有这三个键 → 合并后取缺省（向前兼容）', () => {
+  test('存量设置没有 deviceRole → 合并后取缺省（向前兼容）', () => {
     const merged = mergeStoredSettings(JSON.stringify({ theme: 'dark' }))
-    expect(merged.uxV2Presence).toBe(true)
     expect(merged.deviceRole).toBe('handheld')
   })
-  test('三个键**不上行**（buildMeta 键集不变）', () => {
+  test('E：uxV2Presence / uxV2Dock 不再是设置项——缺省里没有，旧存量里读到也丢弃', () => {
+    expect('uxV2Presence' in DEFAULT_APP_SETTINGS).toBe(false)
+    expect('uxV2Dock' in DEFAULT_APP_SETTINGS).toBe(false)
+    const merged = mergeStoredSettings(JSON.stringify({ theme: 'dark', uxV2Presence: false, uxV2Dock: false }))
+    expect('uxV2Presence' in merged).toBe(false)
+    expect('uxV2Dock' in merged).toBe(false)
+    expect(merged.theme).toBe('dark') // 旁边的键照常合并
+  })
+  test('身份键**不上行**（buildMeta 键集不变）', () => {
     expect(Object.keys(buildMeta(DEFAULT_APP_SETTINGS)).sort()).toEqual([...HMI_META_KEYS].sort())
   })
 })

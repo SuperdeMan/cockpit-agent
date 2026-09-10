@@ -1,5 +1,6 @@
 // 消息气泡（M1-3 建立，Aurora Glass 复刻轮重皮）：气泡态全集 user/assistant/pending/streaming/
-// error/rejected/超时 + 过程区折叠条 + 确认条（按台账渲染、可多条并存）+ followUp + 长按复制正文。
+// error/rejected/超时 + 过程区折叠条 + 待确认的琥珀边（按台账渲染、可多条并存）+ followUp + 长按复制正文。
+// 气泡内确认按钮已删（打磨批 E，裁决 J1）：承诺面 Focus Dock 是唯一的确认入口——同一个待确认不许有两个入口。
 // 视觉照 hmi ChatView A-6：user=交互蓝玻璃右对齐（18/18/4/18），assistant=玻璃左对齐（4/18/18/18），
 // confirm/error 换语义 tone 边框。
 // 打磨批 A（评审 P04 / P12 / P14）：助手气泡**去头像**——同屏可操作的光球只剩顶栏与 Composer 两颗，
@@ -75,11 +76,8 @@ function ProcessFold({ p, msg, driving }: { p: Palette; msg: Msg; driving: boole
 export interface BubbleProps {
   p: Palette
   msg: Msg
-  /** 该气泡的确认条此刻是否可点（台账 live / 位置征询挂起） */
+  /** 该气泡的待确认此刻是否仍活着（台账 live / 位置征询挂起）：只决定琥珀边，按钮在 Dock */
   confirmActive: boolean
-  /** 气泡内还渲不渲确认按钮：Focus Dock 开着时为 false——**同一个待确认不许有两个入口**，
-   *  两处都能点会让「点了哪一个」变成猜（承诺面开关关掉时它就回来） */
-  inlineConfirm: boolean
   /** 发送状态未知（断线瞬间发出的那条，`SessionState.uncertainIds`） */
   uncertain?: boolean
   /** 转写草稿（方案 §5.2.1）：虚线边 + 光标，定稿后由同一条气泡接管（HMI PartialUserBubble 同款形态） */
@@ -96,11 +94,10 @@ export interface BubbleProps {
   loops: boolean
   /** 此刻行车档（§6「过程区单行」）：与气泡自带的 `Msg.driving` 取或 */
   driving: boolean
-  onConfirm(reply: '确认' | '取消', operationId?: string): void
   onSend: SendFn
 }
 
-export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onConfirm, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   // 长按 = 复制正文（打磨批 A / P12）：用户与助手两种气泡同一条路。端到端轮顺带给「转写由语音模型生成」的说明
@@ -221,42 +218,6 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
         {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
         {receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}
-        {msg.needConfirm && confirmActive && inlineConfirm ? (
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 2 }}>
-            <Pressable
-              testID="confirm-cancel"
-              onPress={() => onConfirm('取消', msg.operationId)}
-              style={{
-                flex: 1,
-                minHeight: 44,
-                borderRadius: 14,
-                borderWidth: 1,
-                borderColor: p.fill2,
-                backgroundColor: p.fill,
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Text style={{ color: p.fg2, fontSize: p.font(14) }}>取消</Text>
-            </Pressable>
-            <Pressable
-              testID="confirm-accept"
-              onPress={() => onConfirm('确认', msg.operationId)}
-              style={{
-                flex: 2,
-                minHeight: 44,
-                borderRadius: 14,
-                backgroundColor: p.amberSoft,
-                borderWidth: 1,
-                borderColor: 'rgba(245,158,11,0.35)',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Text style={{ color: p.amber, fontSize: p.font(14), fontWeight: '600' }}>确认</Text>
-            </Pressable>
-          </View>
-        ) : null}
         {msg.followUp ? (
           // 打磨批 A（评审 P14）：可点文字的触控高度 44
           <Pressable testID="followup-link" hitSlop={2} onPress={() => onSend(msg.followUp!)} style={{ minHeight: 44, justifyContent: 'center' }}>

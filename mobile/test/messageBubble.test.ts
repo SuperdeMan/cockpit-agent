@@ -21,8 +21,8 @@ const p = paletteOf('dark', true, 'normal')
 
 function bubble(msg: Msg, over: Record<string, unknown> = {}) {
   return createElement(MessageBubble, {
-    p, msg, confirmActive: false, inlineConfirm: false, loops: false, driving: false,
-    onConfirm: jest.fn(), onSend: jest.fn(), ...over,
+    p, msg, confirmActive: false, loops: false, driving: false,
+    onSend: jest.fn(), ...over,
   } as never)
 }
 async function mount(el: React.ReactElement) {
@@ -94,4 +94,14 @@ test('P14：过程区折叠条、follow-up 链接、回执切换的触控高度 
     const toggle = receipt.root.findAllByProps({ testID: 'receipt-toggle' }).find((n) => typeof n.props.onPress === 'function')!
     expect(minHeightOf(toggle)).toBeGreaterThanOrEqual(44)
   } finally { await act(async () => { receipt.unmount() }) }
+})
+
+// 打磨批 E（裁决 J1）：气泡内确认按钮删除——承诺面是唯一的确认入口（同一个待确认不许有两个入口）。
+test('E：待确认的助手气泡不再渲染气泡内确认 / 取消按钮（哪怕调用方硬塞 inlineConfirm）', async () => {
+  const msg = { id: 'a', role: 'assistant', text: '要打开后备箱吗？', needConfirm: true, operationId: 'op-1' } as Msg
+  const view = await mount(bubble(msg, { confirmActive: true, inlineConfirm: true, onConfirm: jest.fn() }))
+  try {
+    expect(view.root.findAllByProps({ testID: 'confirm-accept' })).toHaveLength(0)
+    expect(view.root.findAllByProps({ testID: 'confirm-cancel' })).toHaveLength(0)
+  } finally { await act(async () => { view.unmount() }) }
 })
