@@ -224,3 +224,198 @@ jest / tsc / lint / Maestro 读数：
 未达项与归属：
 ```
 
+## 回填（2026-09-10 执行轮，Goal 0 一次性推进）
+
+证据目录（仓库外）：`%LOCALAPPDATA%\car-agent\artifacts\POLISH-A-20260910\`（批 A 固定包 12 态 + 同帧 dump + 每态 JSON 说明 + 构建日志 / result.json / apk 哈希）与 `POLISH-F-20260910\`（最终包）。设备均为 OPPO PEUM00（`919fd6f9`，test）。变异反向验证由 `mutate.py` 逐条施加 → 跑对应用例 → 按字节恢复并核 sha256（`mutation_report.json`）。
+
+### 批 A（含批 D 与 J2）
+
+```text
+批次：A（+D app.config 两处颜色、J2 首页示例顺序）
+代码 SHA / APK 构建行 / 设备：7525784b6（追加修正 4720429 见下）/ xiaozhou-companion-prod-release-7525784b6-20260910-2104.apk，
+  SHA-256 b52e2801…0c7b（本地 Get-FileHash 与设备 sha256sum 逐字相同）、签名 5e8f1606…、包内 variant=prod build=7525784b6、
+  设置页底行「v0.1.0 · prod · 7525784b6 · 2026-09-10 20:46」/ OPPO lastUpdateTime 2026-09-10 21:07:06、flags 无 DEBUGGABLE；
+  构建 -CompileJobs 1 + 128m/2048m，17m25s，1222 tasks（737 executed / 485 from cache）
+截图清单完成度（12 张 / Xiaomi 4 格）：12/12 张（命名 <状态>-7525784b6.png）+ 补充 chat-3turns-card / exp-dock-*；Xiaomi 0/4（未接，见集中处理表）。
+  逐态：welcome ✅（新文案、三条跨能力推荐、Composer 无 chips 行）/ welcome-keyboard ⚠（球缩 56、可滚动，但第三条推荐仍被 Composer 切半
+  ⇒ 追加修正 4720429：键盘下去掉次要说明、收窄留白；在最终包复核）/ chat-3turns ✅（天气卡 + 笑话 + 「what day of the week」被服务端答成
+  「unsupported datetime format」，属后端 info 域英文日期解析问题，记录不处理）/ chat-confirm-dock ⚠（Dock 钉 1 条 + 「open the charging port」
+  用原话作标题（P10 客户端兜底生效，机器名未出现）+ 无「等你确认」胶囊（P28 ✅）；**三条并存未复现**：连发三条时前两条在第三条到达前已被
+  服务端关闭或过期，Dock 只钉一条，`dock-others` 未出现）/ sheet-listening-empty ⚠（第一次 0.8s 已有 ASR partial「假」，0.35s 复取到
+  「在听…」胶囊 + 上一轮转写；「草稿为空 ⇒ 在听… 占位」这一格在 adb 下不可复现——partial 与草稿同帧到达；dump 因收音动画失败）/
+  sheet-speaking-long ✅（播报「总是」+ 长英文问题，点「播报中」胶囊升层：层内停止键、底缘渐隐、层外无胶囊；⚠ 用 am start 深链升层会经一次
+  前后台切换把播报停掉，两次误取已改名 sheet-open-not-speaking-*）/ sheet-driving-resident ✅（可信车载平板 + 手动行车档：层常驻、实色壳、
+  无发送键无输入框）/ settings-top ✅（V8：深链进入有返回箭头）/ settings-bottom ✅（本包仍是批 B 之前的分区；构建行与包一致）/
+  vehicle-mirror ✅（真栈车态；本包仍直出英文键，批 C 后在最终包复核）/ map-two-points ✅（深链两点；高德 logo 在信息条下方完整可见 ⇒ P22 不改）/
+  onboarding-dark ✅ 截图、dump 失败（引导页光球动画不受减少动效约束，uiautomator 拿不到 idle）。
+  设置指纹：取证期间 App 内「减少动效」开（对话页 dump 必需）、uxV2Dock 原本即开、播报/角色/行车档按态切换，结束时全部回读恢复
+  （drivingManual 第一次回读不符 after=True，重试一次 OK）。
+jest / tsc / lint / Maestro 读数：批 A 提交时 jest 84 suites / 907 tests、tsc 0、lint 0；Maestro release 轨**未在本包跑**（合并到最终包一趟，见批 F）。
+反向验证：12 条变异（capsuleVisible 两分支 / 无消息给 chips / 头像回来 / driving solid 关 / Dock 机器名兜底关 / 隐藏键渲染 / J2 迁移关 /
+  层内占位关 / commitmentTitle 机器名判定关 / 键盘缩球关 / chip minHeight 回退）各自只红对应用例，全部按字节恢复；追加修正另一条变异（P03）。
+未达项与归属：① 三条待办并存的截图（服务端窗口内并存条件未复现，归 AR05 真栈复验）；② 「草稿为空」占位格（adb 不可造，归 AR10 真人轮）；
+  ③ 键盘弹起期间两次取证 Dock 缺席、胶囊顶替，键盘收起后 Dock 在场——机制未钉死（对照实验里 adb 点输入框未能稳定拉起 IME），最终包复核。
+```
+
+### 批 E
+
+```text
+批次：E（裁决 J1，删除 v1 回滚路径）
+代码 SHA / APK 构建行 / 设备：3d04c77（纯 JS，随最终包进包）
+截图清单完成度：不适用（无新界面）；Maestro 06 / 09 在最终包跑
+jest / tsc / lint / Maestro 读数：jest 84 / 909、tsc 0、lint 0；`rg uxV2Presence|uxV2Dock|inlineConfirm|HF_LABEL|linkWarn|set-dock|confirm-accept`
+  只剩 store.ts 的旧存量容忍（读到即丢）、其注释与三条容忍用例
+反向验证：3 条（容忍不丢键 / 气泡内确认回来 / Dock 开关回来）各自只红对应用例，按字节恢复
+未达项与归属：无；02 与 set-dock 已删，e2e/README、mobile/README、06 头注同步，06 加了「Dock 在场时无胶囊」阴性断言（P28）
+```
+
+### 批 B
+
+```text
+批次：B（设置页分级 + 开发者选项）
+代码 SHA / APK 构建行 / 设备：0cb136c（纯 JS，随最终包进包）
+截图清单完成度：settings-top / settings-bottom（未解锁）与解锁后两张在最终包取；本包（7525784b6）上的两张只证明批 A 状态
+jest / tsc / lint / Maestro 读数：jest 85 / 918、tsc 0、lint 0；Maestro 06 / 11 在最终包跑
+反向验证：4 条（解锁位失效 / 一律显示 / 解锁点数改 6 / 「（强制）」文案回来）各自只红对应用例，按字节恢复
+未达项与归属：`set-switch` 子流**没有**加解锁步骤——批 E 之后实验开关只剩「减少动效」「减少透明度」两枚，按文档它们住在「通用 · 无障碍」，
+  不在开发者区，自动化不需要解锁；开发者区七条链接（含 JSON 版采集状态）prod 默认隐藏、构建行连点 7 次解锁、可再隐藏。
+  「首页示例」以移除 / 添加 / 恢复默认的小编辑器实现（此前 mobile 侧没有编辑入口）。
+```
+
+### 批 C
+
+```text
+批次：C（车辆页 + 视觉系统）
+代码 SHA / APK 构建行 / 设备：10e93ca（纯 JS，随最终包进包）
+截图清单完成度：vehicle-mirror（真栈车态）、卡片画廊深 / 浅、chat-confirm-dock 在最终包取
+jest / tsc / lint / Maestro 读数：jest 87 / 934、tsc 0、lint 0
+反向验证：7 条（删一条 KEY_LABEL / 删一个值枚举 / null 行渲染 / 浅色 fg3 回 0.60 / 浅色 accent 回旧值 / micro 回 11 / 本地图标撞共享名）各自只红，按字节恢复
+未达项与归属：① P22 地图信息条**不改**——7525784b6 截图里高德 logo 在信息条下方完整可见；② 评审点名的八枚图标里 warning / chat / clock / pin
+  共享台账已有，本地只补 refresh / camera / bolt / check / square（本地同名会被合并顺序覆盖，已有用例守）；③ 对比度判据把浅色 accent / amber
+  一并压深（#0369A1 / #92400E）：旧值压在各自 soft 底上只有 2.9:1 / 3.7:1，这是文档三对判据实测出来的、超出「只改 fg3」的范围。
+```
+
+### 批 F
+
+```text
+批次：F（聊天基线，裁决 J3）
+代码 SHA / APK 构建行 / 设备：7fc8d98 / 最终包 xiaozhou-companion-prod-release-7fc8d9894-20260910-2345.apk（A+D+E+B+C+F 全部进包），
+  SHA-256 ce72d484…70bec（本地 Get-FileHash 与设备 pm path + sha256sum 逐字相同）、包内 variant=prod build=7fc8d9894、
+  设置页底行「v0.1.0 · prod · 7fc8d9894 · 2026-09-10 23:20」/ OPPO lastUpdateTime 2026-09-10 23:49:19、flags 无 DEBUGGABLE；
+  构建 -CompileJobs 1 + 128m/2048m，result.json 起止 25m50s（23:19:40 → 23:45:30）、exitCode 0
+截图清单完成度（12 张 / Xiaomi 4 格）：F 自己的四件——冷启动前后 chat-3turns-before-cold / chat-3turns-after-cold（force-stop 后冷启动，列表底部：
+  三条危险动作的确认与过期提示原样回来）+ chat-3turns-after-cold-top（同一进程滚到顶：分隔线「昨天 23:50」+ 首轮天气卡 + 笑话；跨过零点后
+  分隔线由「今天」变「昨天」）✅；时间分隔 chat-3turns「今天 23:50」✅；「↓ 最新」胶囊 chat-confirm-dock（离底一屏且有新消息到达时出现、
+  与 Dock 不重叠；手动滚到顶而没有新消息时不出现，这是 awayCount 判据的本意）✅；「清除对话记录」入口在设置页「隐私」组 dump 里在场，
+  动作没在真机按（会抹掉冷启动证据）；「重发」按钮真机未截——要一次失败请求（msg.error / uncertainIds），本轮没有自然发生，
+  人为制造要开飞行模式（系统级网络设置，集中处理表 #5），jest 覆盖。Xiaomi 0/4。
+jest / tsc / lint / Maestro 读数：jest 89 suites / 949 tests、tsc 0、lint 0（7fc8d98；批 G 不碰 mobile）；Maestro release 轨见下一节
+反向验证：9 条（键忽略 token / 保留 pending 占位 / 不截 50 条 / restore 覆盖非空 / 分隔阈值改 1 分钟 / 半屏就出「最新」/ 重发键不渲染 /
+  messageAt 不打戳 / 清除入口缺失）各自只红 history.test / messageBubble.test / diagnosticRoutes.test，按字节恢复（mutation_report.json 9 条 restored=true）
+未达项与归属：① 「重发」真机截图（集中处理表 #5，或 AR10 真人轮）；② 第三轮「recommend a song for a rainy evening」被服务端答成
+  「规划没有产出可执行的步骤，本轮没有执行任何操作。」+「换个说法再试」（后端 Planner 对英文点歌没有可执行步骤；UI 按 AR05 issue 行渲染正确，记录不处理）。
+```
+
+### 最终包（7fc8d9894）12 态复核 + Maestro
+
+```text
+批次：最终包复核（A+D+E+B+C+F 全部进包；G 在服务端，未 deploy）
+代码 SHA / APK 构建行 / 设备：同批 F；OPPO PEUM00 919fd6f9（test）；证据 POLISH-F-20260910\<状态>-7fc8d9894.png + 同帧 dump + JSON 说明
+截图清单完成度（12 张 / Xiaomi 4 格）：12/12 张 + 补充（chat-3turns-card / chat-confirm-dock-keyboard / settings-dev-unlocked(-bottom) /
+  card-gallery 深浅各 4 张 / welcome-or-chat-light / settings-role-readback / settings-theme-readback）；Xiaomi 0/4。
+  逐态：welcome ✅ / welcome-keyboard ✅（4720429 修正生效：三条推荐全在键盘上方、无次要说明）/ chat-3turns ✅（分隔线、天气卡、笑话；第三轮见批 F ②）/
+  chat-confirm-dock ✅（Dock 钉「open the trunk」原话 + 「另有 1 个待处理 ›」——dock-others 首次在真机出现、两条并存；「↓ 最新」胶囊在场；无「等你确认」胶囊）
+  + chat-confirm-dock-keyboard ✅（键盘弹起 Dock 仍在场 ⇒ 批 A 未达项 ③ 在本包不复现；机制仍未钉死，只记录本包读数）/
+  sheet-listening-empty ⚠（同批 A：0.35s 层已开、转写区仍是上一轮原话「open the fuel tank cover」+ 状态字「在听…」，partial 先于占位窗口到达，
+  adb 造不出「转写为空」）/ sheet-speaking-long ✅（「停止播报」键、底缘渐隐、层外无胶囊、Composer 停止方键）/
+  sheet-driving-resident ✅（可信车载平板 + 手动行车档：实色常驻层、无输入框无发送键）/
+  settings-top ✅（冷启动直落 /settings：**无返回箭头**——deepLink.ts 冷启动分支交回 router、栈里只有设置页；温深链 settings-role-readback /
+  settings-theme-readback 有「←」，V8 结论不变，批 A 那张也是温深链）/ settings-bottom ✅（prod 锁定：无开发者区，底行 v0.1.0 · prod · 7fc8d9894 · 2026-09-10 23:20）
+  + settings-dev-unlocked ✅（构建行连点 7 次 ⇒ 开发者选项 7 条链接 + 「隐藏开发者选项」；再点隐藏 ⇒ 回读消失）/
+  vehicle-mirror ✅（真栈车态，键与值枚举全部中文，仅单位 km 为拉丁字母）/ map-two-points ✅ / onboarding-dark ✅（dump 失败：引导页光球不受减少动效约束，同批 A）/
+  card-gallery-dark / -light ✅（浅色下 accent #0369A1 与 amber #92400E 压 soft 底可辨）/ welcome-or-chat-light ✅。
+  设置指纹：取证期间「减少动效」开、播报「总是」→「自动」、角色「可信车载平板」→「手持」、行车档开→关、主题「浅色」→「跟随系统」，
+  结束时全部回读恢复（行车档第一次点击未生效、第二次回读 checked=false；角色 ChoiceRow 不暴露 selected，靠截图回读）。
+jest / tsc / lint / Maestro 读数：Maestro release 轨（-e APP_LAUNCH_MODE=release --no-reinstall-driver）在 7fc8d9894 上两趟：
+  第一趟 04 ✅ 65.7s / 09 ✅ 270s / 10 ✅ 190.8s / 11 ✅ 15.7s / **01 ❌** 230s（用户气泡在、「天气 · .*」45s 内不可见——截图里回答文字已到、
+  气泡下沿被 Composer 切掉、卡片在折叠线下）/ **03 ⛔ 挂起** 464.7s（开飞行模式后 inputText 打到第 4 个字停住，driver 的 hierarchy 取数不回；
+  flow 没走到「关飞行模式」那一步 ⇒ 手机留在飞行模式）/ 06 ❌ 338s、08 ❌ 361s（都是在 03 留下的飞行模式里跑的，tap 挂起，不算读数）。
+  关飞行模式后 tailnet **20 分钟没恢复**（VPN 显示 CONNECTED、MagicDNS 与对端全不通，App 停在「正在重连…」），
+  `am force-stop com.tailscale.ipn` + 重启 Tailscale 才通；第二趟（网络恢复后）06 ✅ 286s（含「Dock 在场时无胶囊」阴性断言）/
+  **08 ❌** 230.6s（键盘弹着点发送后，用户气泡「现在几点」不可见——同 01 一族：长列表 + 视口变小，新内容落在折叠线下）。
+  根因与修正见「批 F 追加」；03 在追加包上再跑一次。
+反向验证：不适用（本节只复核最终包）
+未达项与归属：① 行车档 + 可信车载平板下冷启动直落 /settings，常驻语音层压住设置页下 40%（dump：voice-sheet [0,1183][988,1972]），
+  set_switch.py 的滑动起点落在层里滚不动、行车档开关够不到；稍后从对话页温深链进设置页时层不在——机制未钉死，归 AR04「支持页在场（行车档）」复验；
+  ② 角色 ChoiceRow 没有 accessibilityState.selected，自动化只能截图回读（无障碍缺口，归下一轮打磨）；③ 三条并存仍未复现（本包两条并存，dock-others 已在场）。
+```
+
+### 批 F 追加（e95d077：晚到的布局增高也贴底）
+
+```text
+批次：F 追加（Maestro 01 / 08 在最终包上红出来的同一族缺陷）
+代码 SHA / APK 构建行 / 设备：e95d077（history.ts / ChatScreen.tsx / history.test.ts）/ 追加包 xiaozhou-companion-prod-release-e95d07725-20260911-0159.apk，
+  SHA-256 069a45a4…052c（本地 Get-FileHash 与设备 pm path + sha256sum 逐字相同）、包内 variant=prod build=e95d07725、签名 5e8f1606…（同前两包）、
+  OPPO lastUpdateTime 2026-09-11 02:00:14（前值 23:49:19）、flags 无 DEBUGGABLE；构建 -CompileJobs 1 + 128m/2048m，result.json 起止 15m35s
+  （01:44:01 → 01:59:36，Gradle 报 14m47s，缓存热）、exitCode 0；证据目录 POLISH-F2-20260911\
+根因：FlashList v2 的 `maintainVisibleContentPosition.autoscrollToBottomThreshold` 只在 `data` 变化那一刻检查「此前是否贴底」再 scrollToEnd
+  （useBoundDetection.js：checkBounds 在 scroll 事件里记 pendingAutoscrollToBottom，effect 依赖 [data]）。回答的卡片是在文字之后才量出高度的
+  **布局增高**、键盘弹起是**视口变小**——两者 `data` 都没变，它不跟。批 F 之前 force-stop 后列表是空的、一屏装得下所以看不出；
+  批 F 恢复了 50 条历史，列表一长就稳定露出（01：天气卡压在 Composer 下；08：新用户气泡在折叠线下）。
+修正：`history.ts` 新增 `STICK_TO_BOTTOM_THRESHOLD = 0.2` 与 `stickToBottom(offsetFromBottom, viewportH)`（视口未量到不贴）；
+  ChatScreen 把同一个阈值给 FlashList，并在 `onContentSizeChange` 上按增高**之前**的离底距离（ref，不等 state）再贴一次；离底更远的人不被拽回。
+  与 `showJumpToLatest`（离底超过一屏才出「最新」）互斥，用例钉了这条。
+截图清单完成度：追加包上 F 证据重取（POLISH-F2-20260911\<状态>-e95d07725.png + 同帧 dump）：chat-long-reply-card ✅（50 条历史之上发天气问题、
+  不滚动：整条回答含卡片与「数据来源 · 展开回执」行都在 Composer 之上——回执行下沿 y=1603 < Composer 上沿 1717，正是 01 红的那个形状）/
+  chat-keyboard-send ⚠（adb `input text` 不拉 IME，键盘形状留给 Maestro 08 判）/ chat-before-cold → chat-after-cold ✅（force-stop 后冷启动直接落在列表底部，
+  最后一轮原样在；issue 行与「播报中」胶囊按设计不持久化）+ chat-after-cold-top ✅（分隔线「昨天 23:50」+ 首轮）/ settings-bottom ✅（底行
+  v0.1.0 · prod · e95d07725 · 2026-09-11 01:44）。A–E 的 12 态不重取（代码在两包一致，7fc8d9894 的证据继续有效）。
+jest / tsc / lint / Maestro 读数：jest 89 suites / 951 tests、tsc 0、lint 0（e95d077）；Maestro 8 条在追加包 e95d07725 上整跑一趟（03 放最后）：
+  04 ✅ 52s / **09 ❌** 111s（`scrollUntilVisible "另有 1 个待处理.*"` 30s 超时——Maestro 自己的失败截图里那一行已完整在屏上，是 driver 在带光球动画的画廊页上
+  没检出，不是渲染回归；同一条在 7fc8d9894 上 ✅ 270s；复跑读数见下）/ 10 ✅ 232.3s / 11 ✅ 16.6s / **01 ✅ 189.9s**（7fc8d9894 上 ❌ ⇒ 修正生效）/
+  06 ✅ 230.6s / **08 ✅ 192.7s**（7fc8d9894 上 ❌ ⇒ 修正生效）/ **03 ⛔ 挂起** 355.9s（这次走到「Tap on composer-send」停住，仍在「关飞行模式」之前
+  ⇒ 手机再次留在飞行模式；关掉后 Tailscale 又是「CONNECTED 但 MagicDNS / 对端不通」，重启 Tailscale 才通）。
+  09 复跑：**❌** 111.9s，同一步同一形状（失败截图里「另有 1 个待处理 ›」完整在屏、y≈1452），2/2 红；e95d077 相对 7fc8d98 只改了
+  ChatScreen / history（画廊页不经过它们），判为 driver 在动画页上的检出问题、不动 flow；**09 在追加包上没有绿读数**，写成未达。
+  汇总：追加包 8 条 = 6 ✅（04 / 10 / 11 / 01 / 06 / 08）+ 09 ❌（工具检出）+ 03 ⛔（飞行模式段挂起）。
+反向验证：2 条（阈值放宽到整屏 / 不看视口是否量到）各自只红 stickToBottom 用例，按字节恢复
+未达项与归属：① 取证第一趟全军覆没的原因是上一趟 Maestro 的 driver（dev.mobile.maestro）还活着 ⇒ uiautomator「could not get idle state」，
+  `am force-stop dev.mobile.maestro` 后恢复（AR 余项那条判据再次命中）；② 追加包上没有重取 A–E 的 12 态（见上）；
+  ③ **Maestro 03（断网入队恢复补达）两包三趟全部在飞行模式段挂起**（inputText 第 4 字 / tap composer-send），driver 的 hierarchy 取数不回、
+  flow 走不到自己的「关飞行模式」。机制**未钉死**，最像的一条：`usePresence.needsTick` 在 `connStatus==='connecting'` 后 3s 内每秒 tick，
+  断网后重连循环每次尝试都把 connChangedAt 归零 ⇒ 对话页几乎一直在每秒重渲，driver 永远等不到静止（在线时同一页 01/06/08/10 都能点）。
+  批 E 删掉 v1 之后离线态只剩 v2 Dock + 胶囊这一条路，回不去了；要钉死得在飞行模式下用 uiautomator（开减少动效）看树是否每秒变——
+  飞行模式是系统级网络设置，本轮自己的探针没碰（集中处理表 #5/#6）。**补达语义本身**本轮有一次真机旁证：01 趟留下的飞行模式期间发的
+  「现在几点what is the weather in Shenzhen today」在 Tailscale 恢复后自动补发并出了天气卡（POLISH-F-20260910\probe-after-tailscale-restart-7fc8d9894.png），
+  但那不是 flow 03 的读数，不算通过。
+```
+
+### 批 G
+
+```text
+批次：G（承诺卡人话摘要，服务端为主 + 客户端兜底）
+代码 SHA / APK 构建行 / 设备：d532c6d（orchestrator/cloud：contracts.py / engine.py / tests/test_ar05_contracts.py；客户端兜底在批 A 7525784b6）；
+  **未 push、未 deploy**——见集中处理表
+截图清单完成度：不适用；发布后真栈复验「open the trunk」确认卡标题绑 release SHA（待 deploy 后做）
+jest / tsc / lint / Maestro 读数：四道门禁 eval_skills / eval_exemplars / check_intent_gate（85+25 units）/ eval_capability_integrity 全 PASS，
+  smoke_edge 13/13；orchestrator/cloud 目录 1311 passed / 1 skipped；全量固定口径（TZ=UTC0，-n 8 --dist worksteal）**8233 passed / 32 skipped / 0 failed**
+  （8m14s，绑 d532c6d；上一基线 8231 / 32，新增两条为本批契约用例）——POLISH-F-20260910\pytest-full-d532c6d.log
+反向验证：2 条（允许机器名当描述 / 直出 intent）各自红在 test_confirm_policy_summary… 与 test_action_summary_never_emits_a_machine_intent_name，按字节恢复
+未达项与归属：① 文档写的「对象名来自 commands.yaml 的 display_name、用现有 loader 读」在云侧**不可行**——云侧镜像只 COPY cloud/security/observability/
+  runtime/skills，没有 commands.yaml（runtime/intent_effect.py 头注同一事实）。改走 Registry 目录：端侧注册能力时的 description 就是
+  capabilities.py::_describe 从 commands.yaml + 动词表机械生成的「打开后备箱」，engine 挂起时 list_agents() 现查（best-effort，取不到回退原话）
+  ⇒ 云侧零新词表；② 旧 Agent 把 intent 当 description（本仓 test 夹具即如此）时回退原话并标 summary_source=user_utterance，
+  客户端再用 isMachineIntentName 兜第二道。
+```
+
+### 集中处理表（交用户单独授权）
+
+| # | 事项 | 现状 | 需要的动作 |
+|---|---|---|---|
+| 1 | `git push`（`origin/main..HEAD` 共 9 个提交：0aee251 docs / 7525784 A / 3d04c77 E / 0cb136c B / 4720429 A 追加 / 10e93ca C / 7fc8d98 F / d532c6d G / e95d077 F 追加，另有本文档回填的 docs 提交） | 本地 main 领先，工作树只剩本文档回填 | 授权后 push；push 前再列一次完整清单 |
+| 2 | cloud deploy（批 G 服务端） | 只做了本地门禁与全量；deploy 只接受 main 可达的已提交 SHA ⇒ 必须先 push。当前生产 `status`：5/5 healthy，`release_sha` = `running_release_sha` = `74852a737a53e2bd75f72087ee94834cccc63874`（2026-09-10 23:2x 读数） | 授权后先 dry-run：`python scripts/dev_stack.py deploy --sha d532c6d<完整40位>`（不带 `--apply` 即 dry-run），再单独授权 `--apply`（若 CI/CD 摘要变化需 `--approve-ci-cd-sha256`），发布后 `status`/`verify` 核 `running_release_sha`，并真栈复验「open the trunk」确认卡标题绑 release SHA |
+| 3 | Xiaomi 对照四格（landscape-driving-sheet / landscape-driving-dock / chat-3turns / settings-top） | 未接：Xiaomi 是用户主用机，装包与操作需单独授权 | 授权后装最终 prod 包，只截四格、不改设备状态 |
+| 4 | 系统级设置（字号 / 网络 / 权限 / 省电）与 `.env` | 本轮自己的探针没碰；Maestro 03 按 Goal 点名的回归清单跑，它自带「飞行模式 10s → 恢复」 | 无需动作（记录用） |
+| 5 | 「重发」按钮真机截图（批 F） | 需要一次失败请求：飞行模式下发一句 → 助手气泡带 error → 「重发」出现 → 关飞行模式；本轮没有自然失败 | 授权飞行模式开关后补一张 `chat-resend-<包短SHA>.png`；或归 AR10 真人轮 |
+| 6 | Maestro 03 在飞行模式段挂起（两包三趟）+ 关飞行模式后 Tailscale 不自愈 | 见「批 F 追加」未达项 ③；每次都靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale 才把测试机拉回来 | 授权一次「飞行模式下开减少动效 + uiautomator 逐秒 dump」的探针，钉死是不是 needsTick 的重连宽限；若是，把 3s 宽限的 tick 换成一次性定时器（判据仍在 presence.ts 一处） |
+
