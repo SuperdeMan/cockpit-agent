@@ -1,6 +1,6 @@
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { Pressable, Switch, TextInput } from 'react-native'
+import { Pressable, Switch, Text, TextInput } from 'react-native'
 
 let mockVariant: unknown = 'prod'
 let mockParams: Record<string, string> = {}
@@ -60,6 +60,7 @@ jest.mock('react-native-audio-api', () => ({
 }))
 
 import { developmentDiagnosticsEnabled } from '@/core/diagnostics'
+import { settingsStore } from '@/core/settings/store'
 import { loadServerConfig } from '@/core/config/storage'
 import { GatewaySession } from '@/core/api/gateway'
 import { setPcmPlayerImpl, sharedAudioContext } from '@/core/voice/audioCtx'
@@ -193,15 +194,78 @@ test('R01: debug send and proactive playback callbacks recheck the build gate', 
   } finally { await unmount(view) }
 })
 
-test.each(['prod', 'staging', 'dev'])('R01: settings separate development operations from retained diagnostic reads in %s', async (variant) => {
-  mockVariant = variant
+// 打磨批 B（评审 P17 / D1 / D2）：工程入口一个不少，只是搬进「开发者选项」。显隐判据只在
+// core/diagnostics.ts::developerOptionsVisible；操作诊断（/debug、/voice-spike）仍只认 dev 变体，解锁打不开。
+const DEV_LINKS = ['/presence-trail', '/native-spike', '/card-gallery', '/state-gallery', '/blur-spike', '/turn-timeline', '/capture-status']
+const hrefsOf = (view: ReactTestRenderer) => view.root.findAll((n) => typeof n.props.href === 'string').map((n) => n.props.href as string)
+
+test('B: prod 未解锁 ⇒ 七条工程链接一条都不在树里，操作诊断也不在', async () => {
+  mockVariant = 'prod'
+  settingsStore.getState().update({ developerUnlocked: false })
   const view = await mount(SettingsScreen)
   try {
-    const hrefs = view.root.findAll((n) => typeof n.props.href === 'string').map((n) => n.props.href)
+    const hrefs = hrefsOf(view)
+    for (const link of [...DEV_LINKS, '/debug', '/voice-spike']) expect({ link, present: hrefs.includes(link) }).toEqual({ link, present: false })
+    expect(hrefs).toContain('/onboarding') // 重新配置连接是用户入口，照常在
+    expectNoAudioWork()
+  } finally { await unmount(view) }
+})
+
+test('B: prod 解锁 ⇒ 七条工程链接全在；操作诊断仍不在（解锁 ≠ dev 变体）', async () => {
+  mockVariant = 'prod'
+  settingsStore.getState().update({ developerUnlocked: true })
+  const view = await mount(SettingsScreen)
+  try {
+    const hrefs = hrefsOf(view)
+    expect(hrefs).toEqual(expect.arrayContaining(DEV_LINKS))
+    expect(hrefs.includes('/debug')).toBe(false)
+    expect(hrefs.includes('/voice-spike')).toBe(false)
+    expectNoAudioWork()
+  } finally { await unmount(view); settingsStore.getState().update({ developerUnlocked: false }) }
+})
+
+test.each(['dev', 'staging'])('B: %s 变体不需要解锁就有开发者选项；操作诊断只在 dev', async (variant) => {
+  mockVariant = variant
+  settingsStore.getState().update({ developerUnlocked: false })
+  const view = await mount(SettingsScreen)
+  try {
+    const hrefs = hrefsOf(view)
+    expect(hrefs).toEqual(expect.arrayContaining(DEV_LINKS))
     expect(hrefs.includes('/debug')).toBe(variant === 'dev')
     expect(hrefs.includes('/voice-spike')).toBe(variant === 'dev')
-    expect(hrefs).toEqual(expect.arrayContaining(['/presence-trail', '/native-spike', '/card-gallery', '/state-gallery', '/blur-spike', '/turn-timeline']))
     expectNoAudioWork()
+  } finally { await unmount(view) }
+})
+
+test('B: 解锁 = 构建行连点 7 次（第 6 次仍锁着）；解锁后「隐藏开发者选项」能锁回去', async () => {
+  mockVariant = 'prod'
+  settingsStore.getState().update({ developerUnlocked: false })
+  const view = await mount(SettingsScreen)
+  try {
+    const tap = handler(view, 'build-label-tap')
+    for (let i = 0; i < 6; i += 1) await act(async () => { tap() })
+    expect(settingsStore.getState().settings.developerUnlocked).toBe(false)
+    expect(hrefsOf(view)).not.toContain('/state-gallery')
+    await act(async () => { tap() })
+    expect(settingsStore.getState().settings.developerUnlocked).toBe(true)
+    expect(hrefsOf(view)).toEqual(expect.arrayContaining(DEV_LINKS))
+    await act(async () => { handler(view, 'developer-hide')() })
+    expect(settingsStore.getState().settings.developerUnlocked).toBe(false)
+    expect(hrefsOf(view)).not.toContain('/state-gallery')
+  } finally { await unmount(view); settingsStore.getState().update({ developerUnlocked: false }) }
+})
+
+test('B: prod 未解锁的设置页上没有内部代号与运维语言（P17 文案表）', async () => {
+  mockVariant = 'prod'
+  settingsStore.getState().update({ developerUnlocked: false })
+  const view = await mount(SettingsScreen)
+  try {
+    const texts = view.root.findAllByType(Text).flatMap((n) => {
+      const c = n.props.children
+      return (Array.isArray(c) ? c : [c]).filter((x) => typeof x === 'string') as string[]
+    })
+    const banned = /M4|UX v2|spike|PoC|fail-closed|旧版本|Focus Dock|（强制）|vehicle_state/
+    expect(texts.filter((t) => banned.test(t))).toEqual([])
   } finally { await unmount(view) }
 })
 

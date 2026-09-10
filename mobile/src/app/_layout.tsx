@@ -51,12 +51,13 @@ export default function RootLayout() {
       <Stack.Screen name="voice" options={{ headerShown: false }} />
       <Stack.Screen name="debug" options={{ title: '调试 · 主链帧' }} />
       <Stack.Screen name="voice-spike" options={{ title: '调试 · 语音 spike' }} />
-      <Stack.Screen name="card-gallery" options={{ title: '调试 · 卡片画廊' }} />
-      <Stack.Screen name="state-gallery" options={{ title: '调试 · 状态画廊' }} />
-      <Stack.Screen name="presence-trail" options={{ title: '调试 · 在场轨迹' }} />
-      <Stack.Screen name="capture-status" options={{ title: '采集状态（只读）' }} />
-      <Stack.Screen name="native-spike" options={{ title: '调试 · B3 原生件' }} />
-      <Stack.Screen name="blur-spike" options={{ title: '调试 · 材质 spike' }} />
+      {/* 打磨批 B（评审 D1 / D2）：这些页只从「开发者选项」进；标题去掉内部代号 */}
+      <Stack.Screen name="card-gallery" options={{ title: '卡片画廊' }} />
+      <Stack.Screen name="state-gallery" options={{ title: '状态画廊' }} />
+      <Stack.Screen name="presence-trail" options={{ title: '在场轨迹' }} />
+      <Stack.Screen name="capture-status" options={{ title: '采集状态（JSON）' }} />
+      <Stack.Screen name="native-spike" options={{ title: '原生状态' }} />
+      <Stack.Screen name="blur-spike" options={{ title: '材质对照' }} />
       <Stack.Screen name="map" options={{ title: '地图' }} />
       </Stack>
       </CrossPageVoiceLayer>

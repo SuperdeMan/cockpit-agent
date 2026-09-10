@@ -162,3 +162,14 @@ describe('打磨批 A（裁决 J2）：首页示例改跨能力顺序，只动 m
     expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).quickCommands).toEqual([...MOBILE_QUICK_COMMAND_ORDER])
   })
 })
+
+describe('打磨批 B：开发者选项解锁位', () => {
+  test('缺省锁着；旧库没有这个键 → false；存量 true 保持', () => {
+    expect(DEFAULT_APP_SETTINGS.developerUnlocked).toBe(false)
+    expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).developerUnlocked).toBe(false)
+    expect(mergeStoredSettings(JSON.stringify({ developerUnlocked: true })).developerUnlocked).toBe(true)
+  })
+  test('developerUnlocked 不上行（buildMeta 键集不变）', () => {
+    expect(Object.keys(buildMeta({ ...DEFAULT_APP_SETTINGS, developerUnlocked: true })).sort()).toEqual([...HMI_META_KEYS].sort())
+  })
+})

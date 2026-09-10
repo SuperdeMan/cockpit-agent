@@ -75,6 +75,10 @@ export interface AppSettings {
   /** 实验室：减少透明度（§8.1）——Android 无系统开关，App 内给一个；
    *  开 ⇒ 全部材质回落 G1-tint（语音层不糊），与行车档回落同一条路 */
   reduceTransparency: boolean
+  // ── 打磨批 B ──
+  /** 开发者选项已解锁（prod 包上构建行连点 7 次）。判据在 core/diagnostics.ts::developerOptionsVisible；
+   *  只打开只读取证屏与画廊，不上行（buildMeta 键集不变） */
+  developerUnlocked: boolean
 }
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
@@ -111,6 +115,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   reduceMotionForce: false,
   cueToneEnabled: true,
   reduceTransparency: false,
+  developerUnlocked: false,
 }
 
 /** ASR 主模型失败时的备用模型（同一 provider 内换模型；见 AsrConfig.fallbackModel）。

@@ -136,7 +136,7 @@ export function VehicleSection({ p, vehState }: { p: Palette; vehState: Record<s
       <Text style={{ color: p.fg3, fontSize: p.font(12) }}>车况</Text>
       <VehicleMetrics p={p} vehState={vehState} compact />
       {!Object.keys(vehState).length ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>等待车况镜像…</Text>
+        <Text style={{ color: p.fg3, fontSize: p.font(11) }}>还没收到车况</Text>
       ) : null}
     </View>
   )
@@ -148,13 +148,14 @@ export function VehiclePanel({ p, vehState }: { p: Palette; vehState: Record<str
   return (
     <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 14 + PRESENCE_LANE_DP, gap: 10 }}>
       <VehicleMetrics p={p} vehState={vehState} />
+      {/* 打磨批 B（评审 P21）：页脚与空态是用户话术，不再是开发者话术 */}
       {empty ? (
         <Text style={{ color: p.fg3, fontSize: p.font(13) }}>
-          等待车况镜像…（连上网关后 vehicle_state 帧会推全量）
+          还没收到车况，连上座舱后会自动显示
         </Text>
       ) : null}
       <VehicleDetails p={p} vehState={vehState} />
-      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>车况镜像 · 与座舱实时同步（只读）</Text>
+      <Text style={{ color: p.fg3, fontSize: p.font(11) }}>与座舱实时同步</Text>
     </ScrollView>
   )
 }
