@@ -120,22 +120,24 @@ function Welcome({
   onSend: (text: string) => void
 }) {
   return (
+    // 键盘下的紧凑档（真机 7525784b6 复核：只缩球不够，第三条推荐仍被 Composer 切半——
+    // 键盘上方只剩约 276dp，球 56 + 两行说明 + 两行推荐要 320dp）：去掉次要说明、收窄留白，三条推荐整行可见
     <ScrollView
       testID="welcome-scroll"
       keyboardShouldPersistTaps="handled"
-      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 }}
+      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: keyboardVisible ? 6 : 10, padding: keyboardVisible ? 12 : 24 }}
     >
       <AuroraOrb size={keyboardVisible ? 56 : 88} state="idle" animated={animated} />
-      <Text style={{ color: p.fg1, fontSize: p.font(26), fontWeight: '600', marginTop: 14 }}>
+      <Text style={{ color: p.fg1, fontSize: p.font(keyboardVisible ? 22 : 26), fontWeight: '600', marginTop: keyboardVisible ? 6 : 14 }}>
         我是{name}
       </Text>
       <Text style={{ color: p.fg2, fontSize: p.font(14) }}>
         {hasVoice ? '点一下光球说话，或点指令试试' : '点下方指令试试，或直接输入'}
       </Text>
-      {hasVoice ? (
-        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>也可以按住光球边说边放</Text>
+      {hasVoice && !keyboardVisible ? (
+        <Text testID="welcome-secondary" style={{ color: p.fg3, fontSize: p.font(12) }}>也可以按住光球边说边放</Text>
       ) : null}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginTop: 12 }}>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: keyboardVisible ? 8 : 10, justifyContent: 'center', marginTop: keyboardVisible ? 4 : 12 }}>
         {quickCommands.slice(0, 3).map((q) => (
           <Pressable
             key={q}

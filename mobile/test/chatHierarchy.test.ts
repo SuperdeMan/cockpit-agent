@@ -232,8 +232,11 @@ test('P03：键盘弹起时欢迎态大球缩小、三条推荐仍在、外层�
   try {
     const welcomeOrb = () => view.root.findAllByType(AuroraOrb).map((n) => n.props.size).filter((s) => s === 88 || s === 56)
     expect(welcomeOrb()).toEqual([88])
+    expect(has(view, 'welcome-secondary')).toBe(true)
     await act(async () => { runtime!.scope.update({ keyboardVisible: true }) })
     expect(welcomeOrb()).toEqual([56])
+    // 真机 7525784b6 复核后补的紧凑档：键盘下次要说明让位，三条推荐整行可见
+    expect(has(view, 'welcome-secondary')).toBe(false)
     expect(view.root.findAllByProps({ testID: 'welcome-command' }).filter((n) => typeof n.props.onPress === 'function')).toHaveLength(3)
     const scroll = view.root.findAllByType(ScrollView).find((n) => n.props.testID === 'welcome-scroll')
     expect(scroll?.props.keyboardShouldPersistTaps).toBe('handled')
