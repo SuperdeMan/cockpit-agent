@@ -172,7 +172,14 @@ def read_pss_kb(dev: Device) -> int | None:
 
 
 def read_mem(dev: Device) -> dict:
-    """PSS 与它的分档。只报 TOTAL 说不出「涨的是哪一块」——Graphics 涨和 Dalvik 涨是两种病。"""
+    """PSS 与它的分档。只报 TOTAL 说不出「涨的是哪一块」——Graphics 涨和 Dalvik 涨是两种病。
+
+    ⚠ 对象计数（Views/Activities/AppContexts）**必须和内存一起报**。2026-09-10 首批读数
+    只报了 PSS 分档，于是「30 次路由循环 PSS 涨 5 倍」被读成了内存泄漏，而真相是探针自己
+    把 120 个屏留在了导航栈里——`Views` 那一列一眼就能看出来（151 → 7651，每轮 +500，
+    完全线性；而 `Activities` 恒为 1）。**一个说不出「涨的是不是活着的屏」的内存读数，
+    会把度量方式的产物读成被测系统的缺陷。**
+    """
     text = dev.sh(f"dumpsys meminfo {PKG}")
     return {
         "total_pss_kb": _int(re.search(r"TOTAL PSS:\s*(\d+)", text)),
@@ -181,11 +188,19 @@ def read_mem(dev: Device) -> dict:
         "graphics_kb": _int(re.search(r"Graphics:\s*(\d+)", text)),
         "code_kb": _int(re.search(r"Code:\s*(\d+)", text)),
         "unknown_kb": _int(re.search(r"Unknown\s+(\d+)", text)),
+        "views": _int(re.search(r"Views:\s*(\d+)", text)),
+        "view_roots": _int(re.search(r"ViewRootImpl:\s*(\d+)", text)),
+        "activities": _int(re.search(r"Activities:\s*(\d+)", text)),
+        "app_contexts": _int(re.search(r"AppContexts:\s*(\d+)", text)),
     }
 
 
 def open_route(dev: Device, name: str) -> None:
     dev.sh(f'am start -a android.intent.action.VIEW -d "{ROUTES[name]}"')
+
+
+def press_back(dev: Device) -> None:
+    dev.sh("input keyevent KEYCODE_BACK")
 
 
 def scenario_p0(dev: Device, args: argparse.Namespace) -> dict:
@@ -206,7 +221,19 @@ def scenario_p0(dev: Device, args: argparse.Namespace) -> dict:
 
 
 def scenario_p3(dev: Device, args: argparse.Namespace) -> dict:
-    """路由循环：对话→设置→车辆→地图→对话，重复 N 次，看订阅释放与内存增长。"""
+    """路由循环：在页面间来回走 N 次，看订阅释放与内存增长。
+
+    `--nav` 决定**怎么走**，这一格不是细节而是判据本身：
+
+    · `back`（默认，= 用户真实路径）：深链进一个页面，按返回键回对话页。App 里
+      跨页入口全是 `Link`（push）+ 返回键（pop），没有「回对话页」的链接。
+    · `deeplink`（旧行为）：一路深链、**从不返回**。它量的是**外部深链反复到达**
+      （桌面 Shortcut / 通知），不是「用户在页面间来回走」。
+
+    2026-09-10 单变量实测（OPPO / 15 轮）：`deeplink` 臂 Views 151→7651、PSS 207→507MB；
+    `back` 臂 Views 151→420→**静置后回到 151**、PSS 回到 256MB。同一个 App、同一个包，
+    差别全在这一格。**用错的走法量出来的「泄漏」是走法的产物。**
+    """
     order = [r.strip() for r in args.routes.split(",") if r.strip()]
     for name in order:
         if name not in ROUTES:
@@ -222,8 +249,13 @@ def scenario_p3(dev: Device, args: argparse.Namespace) -> dict:
     pss_warm = mem_warm.get("total_pss_kb")
     for _ in range(args.cycles):
         for name in order:
+            if args.nav == "back" and name == "chat":
+                continue          # 返回键就是回对话页，再深链一次等于又推一屏
             open_route(dev, name)
             time.sleep(args.dwell)
+            if args.nav == "back":
+                press_back(dev)
+                time.sleep(args.dwell)
     open_route(dev, "chat")
     time.sleep(2)
     gfx = read_gfx(dev)
@@ -231,6 +263,7 @@ def scenario_p3(dev: Device, args: argparse.Namespace) -> dict:
     time.sleep(args.settle)
     return {
         "routes": order,
+        "nav": args.nav,
         "cold_baseline": bool(args.cold_baseline),
         "cycles": args.cycles,
         "dwell_s": args.dwell,
@@ -282,6 +315,8 @@ def main() -> int:
     parser.add_argument("--settle", type=int, default=120)
     parser.add_argument("--repeats", type=int, default=10)
     parser.add_argument("--routes", default="chat,settings,vehicle,map")
+    parser.add_argument("--nav", default="back", choices=("back", "deeplink"),
+                        help="back=用户真实路径（进页面后按返回）；deeplink=外部深链反复到达")
     parser.add_argument("--cold-baseline", action="store_true")
     parser.add_argument("--out", default="")
     args = parser.parse_args()
