@@ -1397,6 +1397,8 @@ ROOT = Path("/opt/car-agent")
 SHARED = ROOT / "shared"
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 PROJECT = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+#: release 选择子的形状，与客户端 `RELEASE_SELECTOR_RE` 同一口径（两侧都得认才算数）
+RELEASE_TAG = re.compile(r"^[0-9a-f]{7,40}$")
 SCRIPTS = (
     SHARED / "bin/transaction-lock.sh",
     SHARED / "bin/remote-e2e-lock.sh",
@@ -1494,7 +1496,12 @@ def running_state():
         image = str(item.get("Config", {}).get("Image", ""))
         if not image.startswith("car-agent-release/") or ":" not in image:
             continue
-        tags.add(image.rsplit(":", 1)[1])
+        tag = image.rsplit(":", 1)[1]
+        # 只收**认得出**的 release 选择子。认不出的（例如按摘要 `…@sha256:` 引用）一律跳过，
+        # 于是最坏情况是这一列变空、客户端报「读不到」——而不是让整个 preflight 的严格校验
+        # 判非法、把一次正常部署报成「远端不可用」。**一条读不出的镜像不该淹掉其余九条读数。**
+        if RELEASE_TAG.fullmatch(tag):
+            tags.add(tag)
     return project, sorted(tags)
 
 
