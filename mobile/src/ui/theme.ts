@@ -82,7 +82,8 @@ export const LIGHT = {
   line: 'rgba(10,14,26,0.09)',
   fg1: 'rgba(10,14,26,0.92)',
   fg2: 'rgba(10,14,26,0.62)',
-  fg3: 'rgba(10,14,26,0.60)',
+  // 打磨批 C（评审 P16）：0.60 → 0.66，小字压在 bg 上离 AA 下限太近（theme.test 三对判据）
+  fg3: 'rgba(10,14,26,0.66)',
   accentSoft: 'rgba(10,143,204,0.10)',
   amberSoft: 'rgba(180,83,9,0.12)',
   // 浅色「顶缘高光」刻意不是白：RN 无 backdrop 磨砂，fill 灰底上压 1px 白边会渲成一条孤立白线
@@ -107,9 +108,12 @@ export function paletteOf(theme: AppSettings['theme'], systemDark: boolean, font
   return {
     dark,
     ...base,
-    // 交互蓝：非 AI 时刻唯一高亮色（§5 铁律）；浅色加深保对比
-    accent: dark ? '#46D6E0' : '#0A8FCC',
-    amber: dark ? '#F59E0B' : '#B45309',
+    // 交互蓝：非 AI 时刻唯一高亮色（§5 铁律）；浅色加深保对比。
+    // 打磨批 C（评审 P16）：浅色 accent / amber 再压深一档——它们做 chips / 确认键的小字时压在各自的 soft 底上，
+    // #0A8FCC 压在 accentSoft 上只有 2.9:1、#B45309 压在 amberSoft 上 3.7:1（theme.test 三对判据实测），
+    // 换成 #0369A1（4.7:1）/ #92400E（5.6:1）。深色两色本来就 ≥7:1，不动。
+    accent: dark ? '#46D6E0' : '#0369A1',
+    amber: dark ? '#F59E0B' : '#92400E',
     red: dark ? '#EF4444' : '#C62828',
     green: dark ? '#34D399' : '#1A7F37',
     teal: dark ? '#2DD4BF' : '#0F766E',

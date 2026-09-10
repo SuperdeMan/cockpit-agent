@@ -5,6 +5,7 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { CardButton, Provenance } from '@shared/types.ts'
 
+import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 
 export type SendFn = (text: string, metaExtra?: Record<string, string>) => void
@@ -143,6 +144,14 @@ export function relativeTime(iso?: string): string {
   return new Date(t).toLocaleDateString('zh-CN')
 }
 
+/** 卡片族的线性图标（打磨批 C，评审 P15）：emoji 不再当图标。svg 原生缺席时回退一枚同色圆点——
+ *  iconRuntimeAvailable 是既有判据（Icon.tsx / 坑账 §9.27），这里只消费。 */
+export function CardIcon({ p, name, size = 16, color }: { p: Palette; name: IconName; size?: number; color?: string }) {
+  const c = color ?? p.fg2
+  if (iconRuntimeAvailable()) return <Icon name={name} size={size} color={c} />
+  return <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}><View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: c }} /></View>
+}
+
 /** 时效角标：相对化后为空（缺失/无法解析/mock）就整个不渲染，不留一个空 chip */
 export function FreshChip({ p, iso }: { p: Palette; iso?: string }) {
   const label = relativeTime(iso)
@@ -153,7 +162,7 @@ export function FreshChip({ p, iso }: { p: Palette; iso?: string }) {
 export function ProvBadge({ p, prov }: { p: Palette; prov?: Provenance }) {
   if (!prov?.mode) return null
   if (prov.mode === 'mock') {
-    return <Chip p={p} tone="amber" text="⚠ 模拟数据" />
+    return <Chip p={p} tone="amber" text="模拟数据" />
   }
   if (prov.mode === 'degraded') {
     return <Chip p={p} tone="amber" text={`降级${prov.note ? ` · ${prov.note}` : ''}`} />

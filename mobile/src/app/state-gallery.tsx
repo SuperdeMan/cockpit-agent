@@ -51,7 +51,7 @@ export default function StateGallery() {
               onCancelTurn={() => {}}
               onReenableBargeIn={() => {}}
             />
-            <Text style={{ color: p.fg3, fontSize: p.font(10) }}>
+            <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
               transport={f.snapshot.transport} capture={f.snapshot.capture} agent={f.snapshot.agent} mic={f.snapshot.privacy.mic} camera={f.snapshot.privacy.camera}
             </Text>
           </View>

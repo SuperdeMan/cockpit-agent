@@ -25,6 +25,7 @@ import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 import { FollowUpChips } from './FollowUpChips'
 import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
 import { ORB_A11Y } from '@/ui/aurora/AuroraOrb'
+import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import { sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
 import { GLASS, RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
@@ -306,7 +307,8 @@ export function VoiceSheet(props: VoiceSheetProps) {
                     textAlign: 'center',
                   }}
                 >
-                  {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
+                  {user && props.visionIds.includes(user.id) ? (iconRuntimeAvailable() ? <Icon name="camera" size={18} color={p.fg3} /> : '看图 ') : null}
+                  {user && props.visionIds.includes(user.id) ? ' ' : ''}
                   {user.text}
                   {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
                 </Text>

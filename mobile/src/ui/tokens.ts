@@ -13,8 +13,9 @@ export const SPACE = [4, 8, 12, 16, 24, 32, 48] as const
 
 export const RADIUS = { sm: 8, md: 12, lg: 16, xl: 20, '2xl': 24, '3xl': 28, full: 999 } as const
 
-/** 字阶（pt）。mono 用系统等宽——JetBrains Mono 未随 App 打包（M3-V 刻意不做） */
-export const TYPE = { display: 32, h1: 24, h2: 18, body: 15, caption: 12, micro: 11, mono: 'monospace' } as const
+/** 字阶（pt）。mono 用系统等宽——JetBrains Mono 未随 App 打包（M3-V 刻意不做）。
+ *  打磨批 C（评审 P16）：最小字号 11、`micro` 提到 12——10pt 在 360dp 屏上灰字读不清 */
+export const TYPE = { display: 32, h1: 24, h2: 18, body: 15, caption: 12, micro: 12, mono: 'monospace' } as const
 
 /** 过渡与光球基准节律（ms）。光球各态的旋转/呼吸时长仍在 AuroraOrb.tsx（照 A-1 §10），
  *  这里只登记 idle 呼吸基准，供状态画廊与减少动效判断引用 */

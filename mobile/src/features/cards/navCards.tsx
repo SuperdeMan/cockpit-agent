@@ -20,7 +20,8 @@ import type {
 
 import { MAP_AVAILABLE, mapPointsOf, toMapPoint, type MapPoint } from '../../core/map/available'
 import type { Palette } from '../../ui/theme'
-import { CardButtons, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
+import type { IconName } from '../../ui/Icon'
+import { CardButtons, CardIcon, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
 
 function ItemRow({
   p,
@@ -309,7 +310,7 @@ export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard
                   borderColor: p.amberSoft,
                 }}
               >
-                <Text style={{ fontSize: p.font(15) }}>⚡</Text>
+                <CardIcon p={p} name="bolt" size={18} color={p.amber} />
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600' }} numberOfLines={1}>
                     {s.name}
@@ -333,7 +334,7 @@ export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard
         </View>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-          <Text style={{ fontSize: p.font(22) }}>✅</Text>
+          <CardIcon p={p} name="check" size={24} color={p.green} />
           <View>
             <Text style={{ color: p.green, fontSize: p.font(14), fontWeight: '600' }}>全程无需补电</Text>
             <Text style={{ color: p.fg3, fontSize: p.font(11), marginTop: 2 }}>当前电量足以完成全程</Text>
@@ -346,12 +347,13 @@ export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard
 
 // 天色板与 HMI 同源（Cards.tsx:1131），同一份行程在两端不该是两套配色
 const DAY_COLORS = ['#46D6E0', '#5B8CFF', '#9A6BFF', '#FF6BD6', '#34D399']
-const TRIP_STOP_GLYPH: Record<string, string> = {
-  attraction: '🏛',
-  meal: '🍽',
-  hotel: '🏨',
-  charging: '⚡',
-  custom: '📍',
+// 打磨批 C（评审 P15）：停靠点类型 → 线性图标名（共享台账的 landmark / dining / hotel / pin + 本地 bolt），不再用 emoji
+const TRIP_STOP_ICON: Record<string, IconName> = {
+  attraction: 'landmark',
+  meal: 'dining',
+  hotel: 'hotel',
+  charging: 'bolt',
+  custom: 'pin',
 }
 
 /** 行程卡：结构化多日行程——按天列停靠点 + 段间补电。
@@ -393,7 +395,7 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
                   backgroundColor: p.amberSoft,
                 }}
               >
-                <Text style={{ fontSize: p.font(12) }}>⚡</Text>
+                <CardIcon p={p} name="bolt" size={14} color={p.amber} />
                 <Text style={{ color: p.amber, fontSize: p.font(11), flex: 1 }} numberOfLines={2}>
                   途中补电 {charges.length} 次：{charges.map((c) => c.name).join('、')}
                 </Text>
@@ -415,7 +417,7 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
                   borderColor: `${color}40`,
                 }}
               >
-                <Text style={{ color, fontSize: p.font(10), fontWeight: '700' }}>D{day.day_index}</Text>
+                <Text style={{ color, fontSize: p.font(11), fontWeight: '700' }}>D{day.day_index}</Text>
               </View>
               <Text style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600', flex: 1 }} numberOfLines={1}>
                 {day.city ? `${day.city} · ` : ''}
@@ -437,7 +439,7 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
                     key={i}
                     style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 38, paddingVertical: 3 }}
                   >
-                    <Text style={{ fontSize: p.font(13) }}>{TRIP_STOP_GLYPH[s.type] || '📍'}</Text>
+                    <CardIcon p={p} name={TRIP_STOP_ICON[s.type] || 'pin'} size={16} color={p.fg2} />
                     <View style={{ flex: 1 }}>
                       <Text
                         style={{ color: s.grounded ? p.fg1 : p.fg2, fontSize: p.font(12) }}
@@ -445,7 +447,7 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
                       >
                         {s.name}
                       </Text>
-                      <Text style={{ color: p.fg3, fontSize: p.font(10) }} numberOfLines={1}>
+                      <Text style={{ color: p.fg3, fontSize: p.font(11) }} numberOfLines={1}>
                         {s.grounded ? s.poi?.address || '' : '待确认地点'}
                       </Text>
                     </View>

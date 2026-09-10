@@ -52,7 +52,7 @@ export function StageDrawer({
         }}
       >
         <View style={{ width: 4, height: 36, borderRadius: 2, backgroundColor: p.fill2 }} />
-        <Text style={{ color: p.fg3, fontSize: p.font(10), marginTop: 6 }}>{open ? '›' : '‹'}</Text>
+        <Text style={{ color: p.fg3, fontSize: p.font(11), marginTop: 6 }}>{open ? '›' : '‹'}</Text>
       </Pressable>
       <Animated.View style={[{ overflow: 'hidden', marginVertical: 10 }, paneStyle]}>
         {open ? (

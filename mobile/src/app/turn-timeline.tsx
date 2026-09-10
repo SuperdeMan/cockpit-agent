@@ -168,12 +168,12 @@ export default function TurnTimelineScreen() {
                 key={i}
                 testID="timeline-metric"
                 selectable
-                style={{ color: p.fg2, fontSize: p.font(10), fontFamily: 'monospace' }}
+                style={{ color: p.fg2, fontSize: p.font(11), fontFamily: 'monospace' }}
               >
                 {l}
               </Text>
             ))}
-            <Text selectable style={{ color: p.fg3, fontSize: p.font(10), fontFamily: 'monospace' }}>
+            <Text selectable style={{ color: p.fg3, fontSize: p.font(11), fontFamily: 'monospace' }}>
               {t.marks
                 .map((k) => `+${Math.round(k.at - t.startedAtMono)} ${k.event}${k.detail ? '(' + k.detail + ')' : ''}`)
                 .join('  ')}

@@ -18,7 +18,7 @@ import type {
 import { manualImages } from '@shared/manualCard.mjs'
 
 import type { Palette } from '../../ui/theme'
-import { CardButtons, CardShell, Chip, ProvBadge, type SendFn } from './parts'
+import { CardButtons, CardIcon, CardShell, Chip, ProvBadge, type SendFn } from './parts'
 
 export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }) {
   const images = manualImages(card)
@@ -44,7 +44,7 @@ export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }
             <Text style={{ color: p.fg2, fontSize: p.font(11), flex: 1 }} numberOfLines={2}>
               {String(image.caption || '手册配图')}
             </Text>
-            <Text style={{ color: p.fg3, fontSize: p.font(10) }}>
+            <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
               PDF 第 {Number(image.page_start || 0)} 页
             </Text>
           </View>
@@ -105,7 +105,7 @@ function ReminderRow({ p, item }: { p: Palette; item: ReminderItem }) {
   const dim = item.status === 'done' || item.status === 'cancelled'
   return (
     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: 2 }}>
-      <Text style={{ fontSize: p.font(13) }}>{item.kind === 'todo' ? '☐' : '⏰'}</Text>
+      <CardIcon p={p} name={item.kind === 'todo' ? 'square' : 'clock'} size={16} color={dim ? p.fg3 : p.fg2} />
       <View style={{ flex: 1 }}>
         <Text
           style={{
@@ -199,7 +199,7 @@ export function SceneSingle({ p, card, onSend }: { p: Palette; card: SceneCard; 
                 backgroundColor: p.line,
               }}
             >
-              <Text style={{ color: p.fg3, fontSize: p.font(10), fontWeight: '700' }}>{i + 1}</Text>
+              <Text style={{ color: p.fg3, fontSize: p.font(11), fontWeight: '700' }}>{i + 1}</Text>
             </View>
             <Text style={{ color: p.fg1, fontSize: p.font(13), flex: 1 }} numberOfLines={2}>
               {s.label}

@@ -21,7 +21,7 @@ import type {
 } from '@shared/types.ts'
 
 import type { Palette } from '../../ui/theme'
-import { CardShell, Chip, FreshChip, ProvBadge, relativeTime, type SendFn } from './parts'
+import { CardIcon, CardShell, Chip, FreshChip, ProvBadge, relativeTime, type SendFn } from './parts'
 
 export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: SendFn }) {
   const focus = card.focus
@@ -51,9 +51,10 @@ export function Weather({ p, card }: { p: Palette; card: WeatherCard; onSend: Se
         ) : null}
       </View>
       {(card.alerts || []).slice(0, 2).map((a, i) => (
-        <Text key={i} style={{ color: p.amber, fontSize: p.font(12) }}>
-          ⚠ {a.title}
-        </Text>
+        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <CardIcon p={p} name="warning" size={14} color={p.amber} />
+          <Text style={{ color: p.amber, fontSize: p.font(12), flexShrink: 1 }}>{a.title}</Text>
+        </View>
       ))}
       {card.forecast?.length ? (
         <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -419,7 +420,7 @@ export function SportsScores({ p, card }: { p: Palette; card: SportsScoresCard; 
           </View>
         ))
       )}
-      {card.source ? <Text style={{ color: p.fg3, fontSize: p.font(10) }}>数据来源 {card.source}</Text> : null}
+      {card.source ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>数据来源 {card.source}</Text> : null}
     </CardShell>
   )
 }
@@ -444,7 +445,7 @@ export function SportsScorers({ p, card }: { p: Palette; card: SportsScorersCard
           </View>
         ))
       )}
-      {card.source ? <Text style={{ color: p.fg3, fontSize: p.font(10) }}>数据来源 {card.source}</Text> : null}
+      {card.source ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>数据来源 {card.source}</Text> : null}
     </CardShell>
   )
 }

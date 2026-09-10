@@ -13,6 +13,7 @@ import { isMachineIntentName } from '@/core/session/actionSummary'
 import { isRecoveryImplemented, type IssueView, type RecoveryKind } from '@/core/session/contracts'
 import type { Degradation, PresenceSnapshot } from '@/core/presence/presence'
 import type { FontScalePref } from '@/core/settings/store'
+import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 import type { Palette } from '@/ui/theme'
 
@@ -195,7 +196,8 @@ function CommitmentCard({
       {item.kind === 'confirm' ? (
         <>
           <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>⚠</Text>
+            {/* 打磨批 C（评审 P15）：线性图标替 emoji；svg 原生缺席回退文字（Icon.tsx 既有判据） */}
+            {iconRuntimeAvailable() ? <Icon name="warning" size={18} color={p.amber} /> : <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>!</Text>}
             <Text
               testID="dock-title"
               numberOfLines={2}
@@ -265,7 +267,7 @@ function CommitmentCard({
         </>
       ) : item.kind === 'task' ? (
         <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ color: p.teal, fontSize: scale(TYPE.body, 'text', fontScale) }}>⟳</Text>
+          {iconRuntimeAvailable() ? <Icon name="refresh" size={18} color={p.teal} /> : <Text style={{ color: p.teal, fontSize: scale(TYPE.body, 'text', fontScale) }}>…</Text>}
           <Text numberOfLines={1} style={{ color: p.fg1, fontSize: scale(TYPE.body - 1, 'text', fontScale), flex: 1 }}>{item.label}…</Text>
           <Pressable accessibilityRole="button" onPress={onCancelTurn} style={{ minHeight: h, paddingHorizontal: 12, justifyContent: 'center' }}>
             <Text style={{ color: p.amber, fontSize: scale(TYPE.body - 1, 'text', fontScale) }}>取消</Text>

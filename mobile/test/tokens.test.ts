@@ -1,7 +1,7 @@
 // mobile/test/tokens.test.ts
 // token 层（UX v2.1 §5.9）：数值逐值照 Figma A-1 设计系统；`scale()` 是「大字」档同时放大
 // 文字 / 目标 / 行高的唯一入口——此前 Palette.font() 只放大文字，容器与热区不跟着长（P13）。
-import { GLASS, MOTION, RADIUS, SPACE, TARGET, scale } from '@/ui/tokens'
+import { GLASS, MOTION, RADIUS, SPACE, TARGET, TYPE, scale } from '@/ui/tokens'
 
 describe('tokens 数值照 A-1 设计系统', () => {
   test('4px 栅格与圆角阶', () => {
@@ -38,5 +38,13 @@ describe('scale()：大字档同时放大文字、目标与行高', () => {
   })
   test('缺省档参数 = normal', () => {
     expect(scale(20, 'text')).toBe(20)
+  })
+})
+
+// 打磨批 C（评审 P16）：最小字号 11，`micro` 提到 12
+describe('字阶：最小可读字号', () => {
+  test('micro = 12（原 11；10pt 六处提到 11 由 rg 守，见批 C 记录）', () => {
+    expect(TYPE.micro).toBe(12)
+    expect(TYPE.caption).toBeGreaterThanOrEqual(TYPE.micro)
   })
 })

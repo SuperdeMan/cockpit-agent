@@ -10,6 +10,7 @@ import { Text, View } from 'react-native'
 import { groupByDay } from '@shared/reminderStage.mjs'
 import type { Msg, ReminderItem, ReminderListCard, UiCard } from '@shared/types.ts'
 
+import { CardIcon } from '../cards/parts'
 import type { Palette } from '../../ui/theme'
 
  
@@ -42,7 +43,7 @@ function Row({ p, item }: { p: Palette; item: ReminderItem }) {
   const dim = STATUS_DIM.has(item.status)
   return (
     <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', paddingVertical: 2 }}>
-      <Text style={{ fontSize: p.font(12) }}>{item.kind === 'todo' ? '☐' : '⏰'}</Text>
+      <CardIcon p={p} name={item.kind === 'todo' ? 'square' : 'clock'} size={14} color={dim ? p.fg3 : p.fg2} />
       <Text
         style={{
           color: dim ? p.fg3 : p.fg1,

@@ -816,7 +816,7 @@ export function SettingsScreen() {
             key={a.id}
             p={p}
             settingKey={'agent-' + a.id}
-            label={`${a.icon} ${a.label}`}
+            label={a.label}
             desc={a.desc}
             value={settings.agents[a.id] !== false}
             onChange={() => toggleAgent(a.id)}

@@ -6,7 +6,7 @@
 //
 // ⚠ 「alpha 先按 bg 合成」是这条判据的真正一半：`fg3` 是 `rgba(...,0.34)` 这种半透明色，
 // 直接拿它的 RGB 去算相对亮度会把「不达标的色」判成达标（反向验证 M2 就是证这一半）。
-import { DARK, LIGHT } from '@/ui/theme'
+import { DARK, LIGHT, paletteOf } from '@/ui/theme'
 
 function channel(c: number): number {
   const s = c / 255
@@ -49,5 +49,27 @@ describe('WCAG 小字对比度 ≥4.5:1（fg2 / fg3 压在 bg 上，深浅两主
   test('公式自检：黑白 21:1、同色 1:1', () => {
     expect(contrast('#000000', '#ffffff')).toBeCloseTo(21, 0)
     expect(contrast('#06080F', '#06080F')).toBeCloseTo(1, 3)
+  })
+})
+
+// 打磨批 C（评审 P16）：三对新增——fg3 压在 bg 上（浅色 0.60 → 0.66 后仍 ≥4.5）、琥珀与交互蓝压在各自的 soft 底上
+// （soft 底先按 bg 合成，再当作文字的底）。深浅各一。
+function softOn(soft: string, bg: string): string {
+  const c = composite(soft, bg)
+  return `rgb(${Math.round(c.r)},${Math.round(c.g)},${Math.round(c.b)})`
+}
+describe('P16：fg3 / amber / accent 三对（深浅各一）', () => {
+  test('浅色 fg3 提到 0.66（评审 P16）', () => {
+    expect(LIGHT.fg3).toBe('rgba(10,14,26,0.66)')
+  })
+  test.each([
+    ['dark fg3/bg', DARK.fg3, DARK.bg, 4.5],
+    ['light fg3/bg', LIGHT.fg3, LIGHT.bg, 4.5],
+    ['dark amber/amberSoft', paletteOf('dark', true, 'normal').amber, softOn(DARK.amberSoft, DARK.bg), 4.5],
+    ['light amber/amberSoft', paletteOf('light', false, 'normal').amber, softOn(LIGHT.amberSoft, LIGHT.bg), 4.5],
+    ['dark accent/accentSoft', paletteOf('dark', true, 'normal').accent, softOn(DARK.accentSoft, DARK.bg), 4.5],
+    ['light accent/accentSoft', paletteOf('light', false, 'normal').accent, softOn(LIGHT.accentSoft, LIGHT.bg), 4.5],
+  ])('%s ≥ %s', (_name, fg, bg, min) => {
+    expect(contrast(fg, bg)).toBeGreaterThanOrEqual(min as number)
   })
 })

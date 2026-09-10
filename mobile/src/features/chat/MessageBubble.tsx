@@ -16,6 +16,7 @@ import type { Receipt } from '../../core/session/receipt'
 import { isProactive } from '../../core/session/turnView'
 
 import { StreamCursor, ThinkDots } from '../../ui/aurora'
+import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
@@ -47,15 +48,18 @@ function ProcessFold({ p, msg, driving }: { p: Palette; msg: Msg; driving: boole
         disabled={terse || !!msg.processActive}
         style={{ minHeight: 44, justifyContent: 'center' }}
       >
-        <Text testID="process-fold" numberOfLines={1} style={{ color: p.teal, fontSize: p.font(11) }}>
-          {msg.processActive
-            ? terse
-              ? `⟳ ${steps[steps.length - 1]?.label || '处理中'}…`
-              : '⟳ 处理中…'
-            : terse
-              ? `过程 ${steps.length} 步`
-              : `${open ? '▾' : '▸'} 过程 ${steps.length} 步`}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          {msg.processActive && iconRuntimeAvailable() ? <Icon name="refresh" size={12} color={p.teal} /> : null}
+          <Text testID="process-fold" numberOfLines={1} style={{ color: p.teal, fontSize: p.font(11) }}>
+            {msg.processActive
+              ? terse
+                ? `${steps[steps.length - 1]?.label || '处理中'}…`
+                : '处理中…'
+              : terse
+                ? `过程 ${steps.length} 步`
+                : `${open ? '▾' : '▸'} 过程 ${steps.length} 步`}
+          </Text>
+        </View>
       </Pressable>
       {expanded &&
         steps.map((s, i) => (
@@ -132,8 +136,13 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
             boxShadow: p.dark ? '0 4px 16px rgba(0,0,0,0.22)' : '0 2px 10px rgba(10,14,26,0.06)',
           }}
         >
-          {s2s ? <Text style={{ color: p.teal, fontSize: p.font(10), marginBottom: 2 }}>端到端</Text> : null}
-          {vision ? <Text style={{ color: p.fg3, fontSize: p.font(10), marginBottom: 2 }}>📷 看图</Text> : null}
+          {s2s ? <Text style={{ color: p.teal, fontSize: p.font(11), marginBottom: 2 }}>端到端</Text> : null}
+          {vision ? (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+              {iconRuntimeAvailable() ? <Icon name="camera" size={12} color={p.fg3} /> : null}
+              <Text style={{ color: p.fg3, fontSize: p.font(11) }}>看图</Text>
+            </View>
+          ) : null}
           <Text style={{ color: p.fg1, fontSize: p.font(15), lineHeight: p.font(23) }}>
             {msg.text}
             {draft ? <StreamCursor h={p.font(15)} animated={loops} /> : null}
@@ -220,8 +229,9 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
         {receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}
         {msg.followUp ? (
           // 打磨批 A（评审 P14）：可点文字的触控高度 44
-          <Pressable testID="followup-link" hitSlop={2} onPress={() => onSend(msg.followUp!)} style={{ minHeight: 44, justifyContent: 'center' }}>
-            <Text style={{ color: p.accent, fontSize: p.font(12) }}>💬 {msg.followUp}</Text>
+          <Pressable testID="followup-link" hitSlop={2} onPress={() => onSend(msg.followUp!)} style={{ minHeight: 44, justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {iconRuntimeAvailable() ? <Icon name="chat" size={14} color={p.accent} /> : null}
+            <Text style={{ color: p.accent, fontSize: p.font(12), flexShrink: 1 }}>{msg.followUp}</Text>
           </Pressable>
         ) : null}
         {copied ? <Text style={{ color: p.green, fontSize: p.font(11) }}>已复制</Text> : null}
