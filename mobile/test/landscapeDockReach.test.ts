@@ -251,7 +251,9 @@ test('R09 横屏：Composer 仍在覆盖域内（层接管整块交互面这条�
   const view = await mount()
   try {
     await act(async () => { openPendingOp() })
-    expect(scope(view).findAllByProps({ testID: 'composer-send' }).length).toBeGreaterThan(0)
+    // 演员换成 Composer 的根（打磨批 A / P09 之后 C 身份闲时不再渲染发送键，`composer-send` 在这一格本来就不该在）
+    expect(scope(view).findAllByProps({ testID: 'composer' }).length).toBeGreaterThan(0)
+    expect(scope(view).findAllByProps({ testID: 'composer-send' })).toHaveLength(0)
   } finally { await act(async () => { view.unmount() }) }
 })
 

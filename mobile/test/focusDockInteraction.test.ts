@@ -73,3 +73,22 @@ test('R05: after all commitments end, the next operation does not reopen an old 
     expect(view.root.findAllByProps({ testID: 'dock-list' })).toHaveLength(0)
   } finally { await act(async () => { view.unmount() }) }
 })
+
+// 打磨批 A（评审 P10 / V5）：标题命中机器意图名 ⇒ 标题「待确认的车辆操作」，原文降为说明行。
+// 只是第二道防线：正路是 commitmentTitle 回落原话（ar05Contracts）与服务端出中文摘要（批 G）。
+test('P10: a machine intent name never becomes the card title; it drops to a description line', async () => {
+  const machine: DockItem[] = [{ kind: 'confirm', id: 'op-m', summary: 'trunk.open', risk: 'high', expiresAt: Date.now() + 100000 }]
+  const { view } = await mount(machine)
+  try {
+    const title = view.root.findAllByProps({ testID: 'dock-title' }).find((n) => n.props.children === '待确认的车辆操作')
+    expect(title).toBeDefined()
+    const detail = view.root.findAllByProps({ testID: 'dock-title-detail' }).find((n) => n.props.children === 'trunk.open')
+    expect(detail).toBeDefined()
+  } finally { await act(async () => { view.unmount() }) }
+  const human = await mount([{ kind: 'confirm', id: 'op-h', summary: '打开后备箱', risk: 'high', expiresAt: Date.now() + 100000 }])
+  try {
+    const title = human.view.root.findAllByProps({ testID: 'dock-title' }).find((n) => n.props.children === '打开后备箱')
+    expect(title).toBeDefined()
+    expect(human.view.root.findAllByProps({ testID: 'dock-title-detail' })).toHaveLength(0)
+  } finally { await act(async () => { human.view.unmount() }) }
+})

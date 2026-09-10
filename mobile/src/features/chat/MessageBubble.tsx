@@ -1,8 +1,10 @@
 // 消息气泡（M1-3 建立，Aurora Glass 复刻轮重皮）：气泡态全集 user/assistant/pending/streaming/
-// error/rejected/超时 + 过程区折叠条 + 确认条（按台账渲染、可多条并存）+ followUp + trace 长按复制。
-// 视觉照 hmi ChatView A-6：user=交互蓝玻璃右对齐（18/18/4/18），assistant=光球头像+玻璃（4/18/18/18），
-// confirm/error 换语义 tone 边框。光球头像只在气泡活跃（pending/streaming/process）时跑动画——
-// 判据取「这条消息此刻在动」而非「是不是最后一条」，列表里历史气泡全部静态（§10 性能纪律）。
+// error/rejected/超时 + 过程区折叠条 + 确认条（按台账渲染、可多条并存）+ followUp + 长按复制正文。
+// 视觉照 hmi ChatView A-6：user=交互蓝玻璃右对齐（18/18/4/18），assistant=玻璃左对齐（4/18/18/18），
+// confirm/error 换语义 tone 边框。
+// 打磨批 A（评审 P04 / P12 / P14）：助手气泡**去头像**——同屏可操作的光球只剩顶栏与 Composer 两颗，
+// 活跃态（思考 / 流式）由气泡内的 ThinkDots / StreamCursor 表达；长按 = 复制正文（两种气泡都支持），
+// trace 的排障通道搬到 /turn-timeline。
 import * as Clipboard from 'expo-clipboard'
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
@@ -12,7 +14,7 @@ import type { Msg } from '@shared/types.ts'
 import type { Receipt } from '../../core/session/receipt'
 import { isProactive } from '../../core/session/turnView'
 
-import { AuroraOrb, StreamCursor, ThinkDots, type OrbState } from '../../ui/aurora'
+import { StreamCursor, ThinkDots } from '../../ui/aurora'
 import type { Palette } from '../../ui/theme'
 import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
@@ -36,7 +38,14 @@ function ProcessFold({ p, msg, driving }: { p: Palette; msg: Msg; driving: boole
   const expanded = !terse && (msg.processActive || open)
   return (
     <View style={{ gap: 4 }}>
-      <Pressable onPress={() => setOpen(!open)} disabled={terse || !!msg.processActive}>
+      {/* 打磨批 A（评审 P14）：可点文字的触控高度 44（原来只有一行字高） */}
+      <Pressable
+        testID="process-fold-toggle"
+        hitSlop={2}
+        onPress={() => setOpen(!open)}
+        disabled={terse || !!msg.processActive}
+        style={{ minHeight: 44, justifyContent: 'center' }}
+      >
         <Text testID="process-fold" numberOfLines={1} style={{ color: p.teal, fontSize: p.font(11) }}>
           {msg.processActive
             ? terse
@@ -94,18 +103,25 @@ export interface BubbleProps {
 export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onConfirm, onSend }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
+  // 长按 = 复制正文（打磨批 A / P12）：用户与助手两种气泡同一条路。端到端轮顺带给「转写由语音模型生成」的说明
+  const copyText = () => {
+    if (msg.text) {
+      void Clipboard.setStringAsync(msg.text).then(() => {
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1500)
+      })
+    }
+    if (s2s) {
+      setHint(true)
+      setTimeout(() => setHint(false), 2500)
+    }
+  }
   if (msg.role === 'user') {
     return (
       <View style={{ alignItems: 'flex-end', marginVertical: 5 }}>
         <Pressable
-          onLongPress={
-            s2s
-              ? () => {
-                  setHint(true)
-                  setTimeout(() => setHint(false), 2500)
-                }
-              : undefined
-          }
+          onLongPress={copyText}
+          accessibilityHint="长按复制这句话"
           style={{
             backgroundColor: `${p.accent}1F`,
             borderWidth: 1,
@@ -126,25 +142,15 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
             {draft ? <StreamCursor h={p.font(15)} animated={loops} /> : null}
           </Text>
           {hint ? (
-            <Text style={{ color: p.fg3, fontSize: p.font(10), marginTop: 4 }}>转写由语音模型生成，可能与原话有出入</Text>
+            <Text style={{ color: p.fg3, fontSize: p.font(11), marginTop: 4 }}>转写由语音模型生成，可能与原话有出入</Text>
           ) : null}
+          {copied ? <Text style={{ color: p.green, fontSize: p.font(11), marginTop: 4 }}>已复制</Text> : null}
         </Pressable>
       </View>
     )
   }
 
-  const longPressTrace = () => {
-    if (!msg.traceId) return
-    void Clipboard.setStringAsync(msg.traceId).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-
   const proactive = isProactive(msg)
-  // 光球态与动画开关：活跃中（思考/流式/过程区推进）才动，历史气泡静态
-  const active = !!(msg.pending || msg.streaming || msg.processActive)
-  const orbState: OrbState = msg.pending || msg.processActive ? 'thinking' : msg.streaming ? 'speaking' : 'idle'
   // 语义 tone：待确认=琥珀 / 错误=红 / 常态=玻璃（hmi AIBubbleBase toneStyle 同款）
   const tone =
     msg.needConfirm && confirmActive
@@ -154,17 +160,15 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
         : { borderColor: p.fill2, borderTopColor: p.hi }
 
   return (
-    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'flex-start', marginVertical: 5 }}>
-      <View style={{ marginTop: 2 }}>
-        <AuroraOrb size={28} state={orbState} animated={active && loops} />
-      </View>
+    // 去头像后气泡左对齐、宽度用满记录区（原来 28dp 球 + 8 间距 + 92% 上限，360dp 屏正文损失约 36dp）
+    <View style={{ alignItems: 'stretch', marginVertical: 5 }}>
       <Pressable
         // e2e 判据（M3-5 flow ③）：**「消息补达」只能断言挂起态消失**——
         // 断言回答文本会被用户自己那条气泡满足（同一句话），那是假绿。
         testID={msg.pending ? 'msg-pending' : undefined}
-        onLongPress={longPressTrace}
+        onLongPress={copyText}
+        accessibilityHint={msg.text ? '长按复制回答' : undefined}
         style={{
-          flex: 1,
           backgroundColor: p.fill,
           borderWidth: 1,
           ...tone,
@@ -172,7 +176,7 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
           borderTopLeftRadius: 4,
           paddingHorizontal: 14,
           paddingVertical: 11,
-          maxWidth: '92%',
+          maxWidth: '100%',
           gap: 8,
           boxShadow: p.dark
             ? '0 4px 20px rgba(0,0,0,0.30), inset 0 1px 0 rgba(255,255,255,0.06)'
@@ -254,11 +258,12 @@ export function MessageBubble({ p, msg, confirmActive, inlineConfirm, uncertain,
           </View>
         ) : null}
         {msg.followUp ? (
-          <Pressable onPress={() => onSend(msg.followUp!)}>
+          // 打磨批 A（评审 P14）：可点文字的触控高度 44
+          <Pressable testID="followup-link" hitSlop={2} onPress={() => onSend(msg.followUp!)} style={{ minHeight: 44, justifyContent: 'center' }}>
             <Text style={{ color: p.accent, fontSize: p.font(12) }}>💬 {msg.followUp}</Text>
           </Pressable>
         ) : null}
-        {copied ? <Text style={{ color: p.green, fontSize: p.font(10) }}>trace 已复制</Text> : null}
+        {copied ? <Text style={{ color: p.green, fontSize: p.font(11) }}>已复制</Text> : null}
       </Pressable>
     </View>
   )

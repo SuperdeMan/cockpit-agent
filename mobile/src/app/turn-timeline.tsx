@@ -144,10 +144,25 @@ export default function TurnTimelineScreen() {
               {hms(t.startedAtWall)} · {t.kind} · {t.interactionId}
               {t.dropped ? ` · 丢弃事件 ${t.dropped}` : ''}
             </Text>
-            <Text selectable style={{ color: p.fg3, fontSize: p.font(10), fontFamily: 'monospace' }}>
+            <Text selectable style={{ color: p.fg3, fontSize: p.font(11), fontFamily: 'monospace' }}>
               req={t.ids.requestId ?? '—'} trace={t.ids.traceId ?? '—'} bubble={t.ids.bubbleId ?? '—'}
               {t.ids.operationId ? ` op=${t.ids.operationId}` : ''}
             </Text>
+            {/* 打磨批 A（评审 P12 / D3）：长按气泡不再复制 trace_id（那里改成复制正文），
+                可观测台的排障通道搬到这里——一键复制这一轮的 trace，粘进观测台搜索框直达全链路 */}
+            {t.ids.traceId ? (
+              <Pressable
+                accessibilityRole="button"
+                testID="timeline-copy-trace"
+                onPress={() => {
+                  void Clipboard.setStringAsync(t.ids.traceId!)
+                  setCopied(`已复制 trace ${t.ids.traceId}`)
+                }}
+                style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start', paddingHorizontal: 8 }}
+              >
+                <Text style={{ color: p.accent, fontSize: p.font(12) }}>复制 trace</Text>
+              </Pressable>
+            ) : null}
             {metricLines(t).map((l, i) => (
               <Text
                 key={i}

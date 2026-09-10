@@ -9,6 +9,8 @@ import { createStore } from 'zustand/vanilla'
 
 import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS, DEFAULT_SETTINGS } from '@shared/types.ts'
 
+import { MOBILE_QUICK_COMMAND_ORDER } from '../session/quickCommands'
+
 export type ThemePref = 'system' | 'dark' | 'light'
 export type FontScalePref = 'normal' | 'large'
 export type AnswerLength = 'short' | 'standard' | 'detailed'
@@ -87,7 +89,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   agents: Object.fromEntries(AGENT_CATALOG.map((a) => [a.id, true])),
   memoryEnabled: true,
   locationEnabled: false,
-  quickCommands: DEFAULT_QUICK_COMMANDS,
+  // 集合同共享 DEFAULT_QUICK_COMMANDS、顺序是 mobile 侧的跨能力顺序（裁决 J2，声明在 quickCommands.ts）
+  quickCommands: [...MOBILE_QUICK_COMMAND_ORDER],
   // 开关类默认值取自共享契约（hmi/src/types.ts::DEFAULT_SETTINGS），不抄第二份字面量
   asrProvider: DEFAULT_SETTINGS.asrProvider,
   asrLanguage: DEFAULT_SETTINGS.asrLanguage,
@@ -132,9 +135,15 @@ export function mergeStoredSettings(raw: string | null): AppSettings {
     const { ttsEnabled, autoplay, ...rest } = parsed
     const speakPolicy: SpeakPolicy =
       rest.speakPolicy ?? (ttsEnabled === false || autoplay === false ? 'silent' : DEFAULT_APP_SETTINGS.speakPolicy)
+    // 裁决 J2：存量列表与**旧默认**逐项相同 ⇒ 换成新顺序；用户自定义过的（多一条 / 少一条 /
+    // 换过序）一律原样保留——那是他自己的输入，系统无权替他改。
+    const stored = Array.isArray(rest.quickCommands) ? rest.quickCommands : null
+    const legacyDefault =
+      !!stored && stored.length === DEFAULT_QUICK_COMMANDS.length && stored.every((c, i) => c === DEFAULT_QUICK_COMMANDS[i])
     return {
       ...DEFAULT_APP_SETTINGS,
       ...rest,
+      quickCommands: !stored || legacyDefault ? [...MOBILE_QUICK_COMMAND_ORDER] : stored,
       speakPolicy,
       agents: { ...DEFAULT_APP_SETTINGS.agents, ...(parsed.agents || {}) },
     }

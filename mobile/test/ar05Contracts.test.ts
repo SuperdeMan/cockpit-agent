@@ -8,7 +8,7 @@ import { SessionCore } from '@/core/session/store'
 import { derivePresence, type PresenceInput } from '@/core/presence/presence'
 import { pinCommitment, sortCommitments, type DockItem } from '@/core/presence/commitment'
 import { dismissIssue, mergeIssues, readFinalContracts, type IssueView } from '@/core/session/contracts'
-import { commitmentTitle } from '@/core/session/actionSummary'
+import { commitmentTitle, isMachineIntentName } from '@/core/session/actionSummary'
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS, SYSTEM_QUICK_COMMAND_AGENTS } from '@shared/types.ts'
 import { serverAgentId, visibleQuickCommands } from '@/core/session/quickCommands'
@@ -275,8 +275,25 @@ describe('承诺卡标题', () => {
     { id: 'm2', role: 'assistant', text: '这项操作可能影响车辆安全，请确认是否继续。', operationId: 'op-1' },
   ] as any
 
-  test('服务端摘要优先', () => {
-    expect(commitmentTitle(messages, 'op-1', 'trunk.open（后备箱）')).toBe('trunk.open（后备箱）')
+  test('服务端摘要优先（人话）', () => {
+    expect(commitmentTitle(messages, 'op-1', '打开后备箱（后备箱）')).toBe('打开后备箱（后备箱）')
+  })
+
+  // 打磨批 A / G（评审 P10）：服务端摘要是机器意图名时**不许当标题**——回落紧邻的用户原话；
+  // 没有原话才原样带下去，由 Dock 按机器名兜底显示（标题「待确认的车辆操作」+ 说明行）。
+  test('P10：服务端给的是机器意图名 ⇒ 回落上一条用户原话', () => {
+    for (const machine of ['trunk.open', 'fuel_tank_cover.open', 'trunk.open（后备箱）', 'hvac.set（temp=26）']) {
+      expect(isMachineIntentName(machine)).toBe(true)
+      expect(commitmentTitle(messages, 'op-1', machine)).toBe('打开后备箱')
+    }
+  })
+  test('P10：机器意图名且没有原话 ⇒ 原样带下去（Dock 兜底），不造空标题', () => {
+    expect(commitmentTitle([], 'op-1', 'trunk.open')).toBe('trunk.open')
+  })
+  test('P10：人话不会被误判成机器名', () => {
+    for (const human of ['打开后备箱', 'open the trunk', 'Open Trunk', '后备箱.打开', 'a.b c']) {
+      expect(isMachineIntentName(human)).toBe(false)
+    }
   })
 
   test('服务端没给才回落上一条用户原话', () => {

@@ -16,6 +16,7 @@ import { Composer } from '@/features/chat/Composer'
 import { VoiceSheet } from '@/features/chat/VoiceSheet'
 import { derivePresence, type PresenceInput, type PresenceSnapshot } from '@/core/presence/presence'
 import { canStopPlayback } from '@/core/voice/stopPlayback'
+import { StreamCursor } from '@/ui/aurora'
 import { paletteOf } from '@/ui/theme'
 
 // RN 的 lazy getters 首次加载会触发 Jest 转译；放在 collect 阶段，避免把冷加载计入交互用例的限时。
@@ -48,7 +49,7 @@ async function mount(el: React.ReactElement) {
 
 function composer(over: Record<string, unknown>) {
   return createElement(Composer, {
-    p, quickCommands: [], busy: false, stoppable: false, ptt: null, orbState: 'idle',
+    p, chips: [], busy: false, stoppable: false, ptt: null, orbState: 'idle',
     fontScale: 'normal', onSend: jest.fn(), onInterrupt: jest.fn(), onStopPlayback: jest.fn(), onTap: jest.fn(),
     ...over,
   } as never)
@@ -110,10 +111,10 @@ test('边流边播（busy ∧ playing）：audio-first——键给停播，不�
   } finally { await act(async () => { view.unmount() }) }
 })
 
-test('C 身份行车档（没有输入框）：闲时仍不可点，出声时可点——「永远点不动的键」这条代价不回来', async () => {
+test('C 身份行车档（没有输入框）：闲时不渲染这枚键（打磨批 A / P09），出声时渲染且可点', async () => {
   const view = await mount(composer({ inputMode: 'hidden' }))
   try {
-    expect(find(view, 'composer-send')!.props.disabled).toBe(true)
+    expect(view.root.findAllByProps({ testID: 'composer-send' })).toHaveLength(0)
   } finally { await act(async () => { view.unmount() }) }
   const playingView = await mount(composer({ inputMode: 'hidden', stoppable: true }))
   try {
@@ -200,4 +201,27 @@ test('可用面：边流边播 ⇒ 给（audio-first 压过 busy）', () => {
 
 test('可用面：闲态没有任何播放通道 ⇒ 不给', () => {
   expect(canStopPlayback({ playing: false, live: false, busy: false })).toBe(false)
+})
+
+// ── 空转写占位（打磨批 A / P07）────────────────────────────────
+// 刚升层、还没识别出字时转写区原来只剩一根光标条，像残影。
+
+test('P07：收音中且转写为空 ⇒ 灰字「在听…」占位，不渲染光标；有字后照常渲染转写与光标', async () => {
+  const draft = { id: 'u-draft', role: 'user' as const, text: '' }
+  const view = await mount(sheet({
+    stoppable: false, snapshot: snap({ ptt: 'recording' }), draftUserId: 'u-draft',
+    turn: { user: draft, assistant: null },
+  }))
+  try {
+    const transcript = view.root.findAllByProps({ testID: 'voice-sheet-transcript' }).find((n) => n.props.children === '在听…')
+    expect(transcript).toBeDefined()
+    expect(view.root.findAllByType(StreamCursor)).toHaveLength(0)
+  } finally { await act(async () => { view.unmount() }) }
+  const typed = await mount(sheet({
+    stoppable: false, snapshot: snap({ ptt: 'recording', partial: '附近' }), draftUserId: 'u-draft',
+    turn: { user: { ...draft, text: '附近' }, assistant: null },
+  }))
+  try {
+    expect(typed.root.findAllByType(StreamCursor)).toHaveLength(1)
+  } finally { await act(async () => { typed.unmount() }) }
 })

@@ -8,17 +8,18 @@ import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
+import { KeyboardAvoidingView, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { isPendingLive } from '@shared/pendingOps.mjs'
 import type { Msg } from '@shared/types.ts'
 
+import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
 import { buildReceipt } from '../../core/session/receipt'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
 import { composerInputMode } from '../../core/presence/drivingMode'
-import { captureSummary } from '../../core/presence/presence'
+import { captureSummary, capsuleVisible } from '../../core/presence/presence'
 import { lowPower } from '../../core/power/lowPower'
 import { usePowerFacts } from '../../core/power/usePowerFacts'
 import { AuroraBackground, AuroraOrb, type OrbState } from '../../ui/aurora'
@@ -31,7 +32,7 @@ import { StagePane } from '../stage/StagePane'
 import { Composer } from './Composer'
 import { visibleQuickCommands } from '@/core/session/quickCommands'
 
-import { FocusDock } from './FocusDock'
+import { FocusDock, focusDockVisible } from './FocusDock'
 import { MessageBubble } from './MessageBubble'
 import { PresenceCapsule } from './PresenceCapsule'
 import { VoiceSheet } from './VoiceSheet'
@@ -115,13 +116,16 @@ function TopIconLink({
   )
 }
 
-/** 欢迎态（hmi ChatView Welcome 同款）：大光球 + 问候 + 快捷指令，替代此前的空白列表 */
+/** 欢迎态（hmi ChatView Welcome 同款）：大光球 + 问候 + 快捷指令，替代此前的空白列表。
+ *  打磨批 A（评审 P03 / V1）：外层可滚动、键盘弹起时大球 88→56、推荐块保留——原来第三条推荐被 Composer 遮半截。
+ *  文案（P29）：主手势是轻点即说（B2 起），长按作次要说明。 */
 function Welcome({
   p,
   name,
   hasVoice,
   quickCommands,
   animated = true,
+  keyboardVisible = false,
   onSend,
 }: {
   p: ReturnType<typeof usePalette>
@@ -130,21 +134,33 @@ function Welcome({
   quickCommands: string[]
   /** reduce-motion（B4-3）：欢迎球也是循环动画的一份 */
   animated?: boolean
+  /** 事实来自 InteractionScope.keyboardVisible（已有），不加新监听 */
+  keyboardVisible?: boolean
   onSend: (text: string) => void
 }) {
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 }}>
-      <AuroraOrb size={88} state="idle" animated={animated} />
+    <ScrollView
+      testID="welcome-scroll"
+      keyboardShouldPersistTaps="handled"
+      contentContainerStyle={{ flexGrow: 1, alignItems: 'center', justifyContent: 'center', gap: 10, padding: 24 }}
+    >
+      <AuroraOrb size={keyboardVisible ? 56 : 88} state="idle" animated={animated} />
       <Text style={{ color: p.fg1, fontSize: p.font(26), fontWeight: '600', marginTop: 14 }}>
         我是{name}
       </Text>
       <Text style={{ color: p.fg2, fontSize: p.font(14) }}>
-        {hasVoice ? '按住下方光球说话，或点指令试试' : '点下方指令试试，或直接输入'}
+        {hasVoice ? '点一下光球说话，或点指令试试' : '点下方指令试试，或直接输入'}
       </Text>
+      {hasVoice ? (
+        <Text style={{ color: p.fg3, fontSize: p.font(12) }}>也可以按住光球边说边放</Text>
+      ) : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center', marginTop: 12 }}>
         {quickCommands.slice(0, 3).map((q) => (
           <Pressable
             key={q}
+            testID="welcome-command"
+            accessibilityRole="button"
+            accessibilityLabel={`试试：${q}`}
             onPress={() => onSend(q)}
             style={{
               backgroundColor: p.fill,
@@ -159,7 +175,7 @@ function Welcome({
           </Pressable>
         ))}
       </View>
-    </View>
+    </ScrollView>
   )
 }
 
@@ -304,6 +320,9 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       driving={snapshot.driving}
       split={splitLandscape}
       blurTarget={blurTarget}
+      // 行车档层壳 G0 实色（打磨批 A / P08 / V3，与「安全面 G0」一致）：记录不再透过层与层内文字叠字。
+      // 泊车 solid=false，真模糊路径逐字节不变（支持页早已是 solid）
+      solid={snapshot.driving}
       stoppable={stoppable}
       onStopPlayback={onStopPlayback}
       onCollapse={() => setSheetOverride({ turnId: latestTurnId, mode: 'dismissed' })}
@@ -317,7 +336,16 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // 与「Dock 永远不被别的轴覆盖」（presence.ts 头注 / 外部评审 P0-1）直接冲突。
   // 修法是给层一个**有边界的覆盖域**（记录区 + 胶囊 + Composer），Dock 落在覆盖域之外。
   // 非 split 路径逐字节不变：层仍住在记录区容器里、Dock 仍在原位置。
-  const focusDockEl = v2 && dock && runtime.facts.route === '/' && runtime.scope.canCapture() ? (
+  // 承诺面此刻有没有真的画出来（宿主事实）：胶囊「一屏只出现一份」的判据 capsuleVisible 读它（打磨批 A / P28）
+  const dockMounted = v2 && dock && runtime.facts.route === '/' && runtime.scope.canCapture()
+  const dockShown = dockMounted && focusDockVisible(snapshot, state.issues)
+  // Composer 的 chips 行（打磨批 A / P01 / P02）：无消息 ⇒ 空（欢迎态自己有三条推荐）；有消息 ⇒ 最近一条
+  // 助手回答的 follow-up + 候选集（判据 followUps.ts，与语音层同一份）；在飞时不给——催人打断自己。
+  const composerChips =
+    messages.length === 0 || !turn.assistant || turn.assistant.pending || turn.assistant.streaming
+      ? []
+      : followUpChips(turn.assistant.followUp, core.candidates, snapshot.driving ? 3 : MAX_CHIPS)
+  const focusDockEl = dockMounted ? (
     <FocusDock
       p={p}
       fontScale={settings.fontScale}
@@ -355,6 +383,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           hasVoice={!!cfg.audioUrl}
           quickCommands={visibleCommands}
           animated={loopsAnimated(motionEnv)}
+          keyboardVisible={!!runtime.facts.keyboardVisible}
           onSend={onSend}
         />
       ) : (
@@ -454,8 +483,9 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           driving-landscape 下它挪到层的覆盖域之外（见本列末尾），这里不渲染 */}
       {splitLandscape ? null : focusDockEl}
       {/* 状态胶囊：一次只说一件「此刻」的事。点按默认打开语音层；建议胶囊（§6 触发③）
-          点按 = 开行车档——**做什么由 derivePresence 给的 capsule.action 决定，判据不在这里**。 */}
-      {v2 ? (
+          点按 = 开行车档——**做什么由 derivePresence 给的 capsule.action 决定，判据不在这里**。
+          画不画读 presence.ts::capsuleVisible（打磨批 A / P05 / P28）：层升起时层内已有一份、承诺面钉着时 Dock 已在说 */}
+      {v2 && capsuleVisible(snapshot, dockShown) ? (
         <PresenceCapsule
           p={p}
           fontScale={settings.fontScale}
@@ -469,7 +499,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       ) : null}
       <Composer
         p={p}
-        quickCommands={visibleCommands}
+        chips={composerChips}
         draft={draft}
         onDraftChange={setDraft}
         busy={busy}

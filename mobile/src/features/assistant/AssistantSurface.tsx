@@ -8,7 +8,7 @@ import { useState } from 'react'
 import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { captureSummary } from '@/core/presence/presence'
+import { captureSummary, capsuleVisible } from '@/core/presence/presence'
 import { loopsAnimated, orbTempo, presenceOrbTempo } from '@/core/presence/orbPolicy'
 import { settingsStore } from '@/core/settings/store'
 import { FocusDock, focusDockVisible } from '@/features/chat/FocusDock'
@@ -60,8 +60,13 @@ function AssistantPresence({ runtime }: { runtime: AssistantRuntime }) {
   const { p, snapshot, settings, facts, cfg, stoppable, busy, motionEnv } = runtime
   const capture = captureSummary(snapshot.privacy)
   const action = stoppable ? 'stop-playback' : busy ? 'interrupt' : null
-  const live = !!capture || !!action || !!snapshot.capsule
-  // 层升起时层内大球 / 胶囊 / 停止键接管；键盘弹出时闲置的光球让位给输入，有事（声音 / 采集 / 在飞）仍留出口。
+  // 胶囊画不画只读 presence.ts::capsuleVisible（打磨批 A，与对话页同一份）：承诺面在场时它不再重复「等你确认」。
+  // 承诺面此刻有没有真的画出来是 AssistantSurface 的事实，判据同它那一行（focusDockVisible）。
+  const dockShown = runtime.scope.canCapture() && focusDockVisible(snapshot, runtime.state.issues)
+  const capsule = capsuleVisible(snapshot, dockShown)
+  const live = !!capture || !!action || capsule
+  // 整组浮动在场在层升起时让位——层内大球 / 胶囊 / 停止键接管全部三样，不只是胶囊（assistantPresence.test 锁）；
+  // 键盘弹出时闲置的光球让位给输入，有事（声音 / 采集 / 在飞）仍留出口。
   if (snapshot.input === 'voice-sheet') return null
   if (facts.keyboardVisible && !live) return null
   const target = scale(snapshot.driving ? TARGET.driving : TARGET.parked, 'target', settings.fontScale)
@@ -75,7 +80,7 @@ function AssistantPresence({ runtime }: { runtime: AssistantRuntime }) {
       onPress={() => runtime.setPrivacyOpen(true)} style={{ width: target, height: target, alignItems: 'center', justifyContent: 'center' }}>
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: captureColor, boxShadow: `0 0 8px ${captureColor}` }} />
     </Pressable> : null}
-    {snapshot.capsule ? <View style={{ flexShrink: 1 }}>
+    {capsule ? <View style={{ flexShrink: 1 }}>
       <PresenceCapsule p={p} fontScale={settings.fontScale} snapshot={snapshot} solid
         onPress={() => snapshot.capsule?.action === 'enable-driving'
           ? settingsStore.getState().update({ drivingManual: true })

@@ -148,7 +148,7 @@ test('对话页与不支持的路由：既无浮动在场，也无占布局空�
   }
 })
 
-test('待确认：承诺面占布局空间、可直接操作，光球与「等你确认」胶囊仍在；台账清空后宿主整个撤走', async () => {
+test('待确认：承诺面占布局空间、可直接操作，光球仍在；「等你确认」由 Dock 说、胶囊不再重复；台账清空后宿主整个撤走', async () => {
   const view = await mount('/vehicle')
   try {
     await act(async () => {
@@ -159,7 +159,8 @@ test('待确认：承诺面占布局空间、可直接操作，光球与「等�
     expect(has(view, 'dock-confirm')).toBe(true)
     expect(has(view, 'assistant-orb')).toBe(true)
     expect(runtime!.snapshot.capsule?.text).toBe('等你确认')
-    expect(has(view, 'presence-capsule')).toBe(true)
+    // 打磨批 A（评审 P28）：判据 presence.ts::capsuleVisible——承诺面在场时同一句话不画第二份
+    expect(has(view, 'presence-capsule')).toBe(false)
     await act(async () => { press(view, 'dock-accept')!.props.onPress() })
     expect(runtime!.state.confirmLog['op-1'].reply).toBe('确认')
     expect(runtime!.state.pendingOps).toHaveLength(0)

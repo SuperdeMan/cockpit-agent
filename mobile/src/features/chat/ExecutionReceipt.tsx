@@ -24,7 +24,9 @@ export function ExecutionReceipt({ p, receipt }: { p: Palette; receipt: Receipt 
         testID="receipt-toggle"
         accessibilityRole="button"
         onPress={() => setOpen((o) => !o)}
-        style={{ minHeight: 32, justifyContent: 'center' }}
+        // 打磨批 A（评审 P14）：可点文字的触控高度 44，不再是 32
+        hitSlop={2}
+        style={{ minHeight: 44, justifyContent: 'center' }}
       >
         <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
           {head} · {open ? '收起回执' : '展开回执'}

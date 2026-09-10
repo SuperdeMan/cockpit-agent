@@ -2,7 +2,10 @@
 // 键名**硬拷贝**进测试（不 import HMI settings.tsx——它带 React/localStorage），漂移即红。
 import {
   AGENT_CATALOG,
+  DEFAULT_QUICK_COMMANDS,
 } from '@shared/types.ts'
+
+import { MOBILE_QUICK_COMMAND_ORDER } from '@/core/session/quickCommands'
 
 import {
   DEFAULT_APP_SETTINGS,
@@ -128,5 +131,29 @@ describe('UX v2 B4：行车档 / 提示音 / 减少动效 / 减少透明度四�
   test('B4-4：旧库没有 cueToneEnabled → 水合补默认 true（提示音默认开，§8 / Q6）', () => {
     expect(DEFAULT_APP_SETTINGS.cueToneEnabled).toBe(true)
     expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).cueToneEnabled).toBe(true)
+  })
+})
+
+describe('打磨批 A（裁决 J2）：首页示例改跨能力顺序，只动 mobile 侧', () => {
+  test('同一集合、只换顺序：与共享 DEFAULT_QUICK_COMMANDS 互为排列，前三条跨三种能力', () => {
+    expect([...MOBILE_QUICK_COMMAND_ORDER].sort()).toEqual([...DEFAULT_QUICK_COMMANDS].sort())
+    expect(MOBILE_QUICK_COMMAND_ORDER).not.toEqual(DEFAULT_QUICK_COMMANDS)
+    expect(MOBILE_QUICK_COMMAND_ORDER.slice(0, 3)).toEqual(['今天天气怎么样', '附近的充电站', '讲个笑话'])
+    expect(DEFAULT_APP_SETTINGS.quickCommands).toEqual([...MOBILE_QUICK_COMMAND_ORDER])
+  })
+  test('存量列表与旧默认逐项相同 ⇒ 换成新顺序', () => {
+    expect(mergeStoredSettings(JSON.stringify({ quickCommands: [...DEFAULT_QUICK_COMMANDS] })).quickCommands)
+      .toEqual([...MOBILE_QUICK_COMMAND_ORDER])
+  })
+  test('用户自定义过的列表原样保留（多一条 / 少一条 / 换过序都算自定义）', () => {
+    const custom = [...DEFAULT_QUICK_COMMANDS, '帮我把车开到月球']
+    expect(mergeStoredSettings(JSON.stringify({ quickCommands: custom })).quickCommands).toEqual(custom)
+    const fewer = DEFAULT_QUICK_COMMANDS.slice(1)
+    expect(mergeStoredSettings(JSON.stringify({ quickCommands: fewer })).quickCommands).toEqual(fewer)
+    const reordered = [...DEFAULT_QUICK_COMMANDS].reverse()
+    expect(mergeStoredSettings(JSON.stringify({ quickCommands: reordered })).quickCommands).toEqual(reordered)
+  })
+  test('旧库没有 quickCommands ⇒ 新顺序', () => {
+    expect(mergeStoredSettings(JSON.stringify({ theme: 'dark' })).quickCommands).toEqual([...MOBILE_QUICK_COMMAND_ORDER])
   })
 })

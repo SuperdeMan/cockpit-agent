@@ -12,6 +12,7 @@ import { ScrollView, Text, TextInput, View, Pressable } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 
 import type { ComposerInputMode } from '../../core/presence/drivingMode'
+import type { FollowUpChip } from '../../core/session/followUps'
 import type { FontScalePref } from '../../core/settings/store'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
@@ -29,7 +30,10 @@ export const CANCEL_DY = 60
 
 export interface ComposerProps {
   p: Palette
-  quickCommands: string[]
+  /** chips 行的内容——**由宿主算**（打磨批 A，评审 P01 / P02）：无消息时空（欢迎态自己有三条推荐），
+   *  有消息时是最近一条助手回答的 follow-up + 候选集（判据 core/session/followUps.ts，与语音层同一份）。
+   *  空数组 ⇒ 整行不渲染。组件自己不再持有常驻的 8 条示例。 */
+  chips: FollowUpChip[]
   /** 有在飞轮（pending/streaming/process 任一）→ 显示打断 */
   busy: boolean
   /** 此刻该给停播键吗（判据 `core/voice/stopPlayback.ts::canStopPlayback`，AR03）：
@@ -70,7 +74,7 @@ export interface ComposerProps {
   onTap(): void
 }
 
-export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
+export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orbDim, orbAnimated, orbDriving, driving = false, inputMode = 'always', hideChips = false, covered = false, draft, onDraftChange, fontScale, onSend, onInterrupt, onStopPlayback, onTap }: ComposerProps) {
   const [localInput, setLocalInput] = useState('')
   const input = draft ?? localInput
   const setInput = onDraftChange ?? setLocalInput
@@ -159,6 +163,7 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
 
   return (
     <View
+      testID="composer"
       importantForAccessibility={covered ? 'no-hide-descendants' : 'auto'}
       accessibilityElementsHidden={covered}
       style={{
@@ -167,21 +172,23 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
         backgroundColor: p.dark ? 'rgba(6,8,15,0.55)' : 'rgba(237,241,250,0.72)',
       }}
     >
-      {hideChips ? null : (
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
-        {/* 行车档快捷指令 ≤3（§6「chips ≤3」）、行高 56 */}
-        {/* B5-14（B4 Scanner 出账③「多个项目具有相同的说明」）：chip 的说明加「快捷指令：」前缀。
-            没有它时 chip 与同文案的用户气泡都以纯文本作说明，读屏把「打开空调26度」念两遍、
-            用户分不出哪个是可点的。前缀只进 accessibilityLabel，视觉文案不变。 */}
-        {quickCommands.slice(0, driving ? 3 : quickCommands.length).map((c) => (
+      {hideChips || !chips.length ? null : (
+      <ScrollView testID="composer-chips" horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 12, paddingTop: 8 }}>
+        {/* 行车档 ≤3 条由宿主截（§6「chips ≤3」）；行高与 FollowUpChips 同一表达式——泊车 48 / 行车 56
+            （打磨批 A / P02：原来泊车只有 ~31dp，低于触控目标） */}
+        {/* B5-14（B4 Scanner 出账③「多个项目具有相同的说明」）：chip 的说明加前缀。
+            没有它时 chip 与同文案的用户气泡都以纯文本作说明，读屏念两遍、用户分不出哪个是可点的。
+            前缀只进 accessibilityLabel，视觉文案不变。 */}
+        {chips.map((c) => (
           <Pressable
-            key={c}
+            key={c.text}
+            testID="composer-chip"
             accessibilityRole="button"
-            accessibilityLabel={`快捷指令：${c}`}
-            onPress={() => onSend(c)}
-            style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, minHeight: driving ? target : undefined, justifyContent: 'center' }}
+            accessibilityLabel={`追问：${c.label}`}
+            onPress={() => onSend(c.text)}
+            style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, minHeight: target, justifyContent: 'center' }}
           >
-            <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{c}</Text>
+            <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{c.label}</Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -282,22 +289,22 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
             原 pill 已整段删除——忙时要发新话先停再发（市面惯例）。
             testID 仍 composer-send（Maestro 01/02/03/06/08 都在闲时按它点）；§6「目标 ≥56dp」的演员不变。
             颜色沿用既有语义：发 = 极光渐变（虹彩纪律三处之一），停 = 琥珀（与原 pill 同色）。
-            ⚠ C 身份行车档没有输入框 ⇒ **闲时**仍 disabled + 降透明度（无字可发），但**忙时 / 出声时可点**
-            ——B4 §6.3「一枚永远点不动的键」这条设计代价从此只剩一半。
+            ⚠ C 身份行车档没有输入框 ⇒ **闲时不渲染这枚键**（打磨批 A / P09：B4 §6.3 那枚「永远点不动的键」
+            从此不出现），**忙时 / 出声时照旧挂载、可点**。
             svg 原生缺席仍回退文字——iconRuntimeAvailable() 是既有判据（坑账 §9.27） */}
+        {inputMode === 'hidden' && !keyActive ? null : (
         <Pressable
           testID="composer-send"
           accessibilityRole="button"
           accessibilityLabel={keyMode === 'stop-playback' ? '停止播报' : keyMode === 'interrupt' ? '打断' : '发送'}
           accessibilityHint={keyMode === 'stop-playback' ? '只停止声音，不会开始录音' : undefined}
-          disabled={!keyActive && inputMode === 'hidden'}
+          disabled={false}
           onPress={keyMode === 'stop-playback' ? onStopPlayback : keyMode === 'interrupt' ? onInterrupt : submit}
           style={{
             experimental_backgroundImage: keyActive ? undefined : AURORA.gradient,
             backgroundColor: keyActive ? p.amberSoft : undefined,
             borderWidth: keyActive ? 1 : 0,
             borderColor: keyActive ? 'rgba(245,158,11,0.3)' : 'transparent',
-            opacity: !keyActive && inputMode === 'hidden' ? 0.45 : 1,
             width: driving ? target : scale(44, 'target', fontScale),
             height: driving ? target : scale(44, 'target', fontScale),
             borderRadius: RADIUS.full,
@@ -312,6 +319,7 @@ export function Composer({ p, quickCommands, busy, stoppable = false, ptt, orbSt
             <Text style={{ color: keyActive ? p.amber : '#fff', fontSize: p.font(15), fontWeight: '600' }}>{keyActive ? '停' : '发'}</Text>
           )}
         </Pressable>
+        )}
       </View>
     </View>
   )

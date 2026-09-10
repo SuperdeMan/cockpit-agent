@@ -175,6 +175,9 @@ export interface PresenceSnapshot {
     tone: 'neutral' | 'accent' | 'amber' | 'red'
     live?: boolean
     action?: 'open-sheet' | 'enable-driving'
+    /** 这条胶囊说的是「承诺面上那件事」（等你确认 / 还差一个信息）：Dock 在场时它就是重复，
+     *  `capsuleVisible` 据此收掉。其余胶囊说的都是「此刻」，不带这个标记 */
+    about?: 'commitment'
   }
   input: 'voice-sheet' | 'composer' | 'none'
   /** 语音层高度档（input==='voice-sheet' 时有意义） */
@@ -198,6 +201,19 @@ export const NOTICE_SHOW_MS = 2000
 /** 行车档答完多久内容回落（§5.2 规则 3 行车条款「TTS 结束后 +3s 自动收起」）。
  *  「收起」= 内容回落到只球 + 胶囊（detent 0.4）；**层本身常驻不消失**（§5 第 15 条的合并写法）。 */
 export const DRIVING_SHEET_SETTLE_MS = 3000
+
+/** 层外的状态胶囊此刻画不画——**唯一的一份**（打磨批 A，评审 P05 / P28）：对话页与支持页的
+ *  浮动在场都读它。「一屏只出现一份状态」：
+ *   · 语音层升起 ⇒ 不画（层内已经有同一条）；
+ *   · 承诺面在场且胶囊说的就是承诺面上那件事（等你确认 / 还差一个信息）⇒ 不画（Dock 已在说）。
+ *  `dockVisible` 是宿主的事实（承诺面此刻有没有真的画出来，判据 FocusDock::focusDockVisible），
+ *  不在这里重算。 */
+export function capsuleVisible(snapshot: PresenceSnapshot, dockVisible: boolean): boolean {
+  if (!snapshot.capsule) return false
+  if (snapshot.input === 'voice-sheet') return false
+  if (dockVisible && snapshot.capsule.about === 'commitment') return false
+  return true
+}
 
 export function derivePresence(i: PresenceInput): PresenceSnapshot {
   // ── transport ──
@@ -302,7 +318,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   else if (reconnectingShown) capsule = { text: '正在重连…', tone: 'amber' }
   else if (hasAttention) {
     const first = commitment.find((c) => c.kind === 'confirm' || c.kind === 'slot')
-    capsule = { text: first?.kind === 'slot' ? '还差一个信息' : '等你确认', tone: 'amber' }
+    capsule = { text: first?.kind === 'slot' ? '还差一个信息' : '等你确认', tone: 'amber', about: 'commitment' }
   } else if (capture === 'looking') capsule = { text: '看一眼…', tone: 'accent' }
   else if (capture === 'recognizing') capsule = { text: i.partial || '识别中…', tone: 'accent', live: true }
   else if (capture === 'listening') capsule = { text: '在听…', tone: 'accent', live: true }

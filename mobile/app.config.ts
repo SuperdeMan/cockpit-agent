@@ -42,7 +42,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   android: {
     package: 'com.xiaozhou.companion',
     adaptiveIcon: {
-      backgroundColor: '#E6F4FE',
+      // 打磨批 D（评审 P26）：不支持 backgroundImage 的场景（应用信息页 / 部分系统对话框）露的是这个底，
+      // 与 App 的深空底同色，不再是模板淡蓝
+      backgroundColor: '#06080F',
       foregroundImage: './assets/images/android-icon-foreground.png',
       backgroundImage: './assets/images/android-icon-background.png',
       monochromeImage: './assets/images/android-icon-monochrome.png',
@@ -58,9 +60,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     [
       'expo-splash-screen',
       {
-        backgroundColor: '#208AEF',
+        // 打磨批 D（评审 P25）：启动页底色与 App 深空底同色（theme.ts 深色 bg），冷启动不再蓝→黑闪变；
+        // 深浅两档同值——启动页只有一帧，不值得跟主题
+        backgroundColor: '#06080F',
         image: './assets/images/splash-icon.png',
-        imageWidth: 76,
+        imageWidth: 120,
+        dark: { backgroundColor: '#06080F' },
       },
     ],
     'expo-secure-store',

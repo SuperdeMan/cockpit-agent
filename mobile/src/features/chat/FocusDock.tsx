@@ -9,6 +9,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
 import { confirmRemainingMs, pinCommitment, type DockItem } from '@/core/presence/commitment'
+import { isMachineIntentName } from '@/core/session/actionSummary'
 import { isRecoveryImplemented, type IssueView, type RecoveryKind } from '@/core/session/contracts'
 import type { Degradation, PresenceSnapshot } from '@/core/presence/presence'
 import type { FontScalePref } from '@/core/settings/store'
@@ -171,6 +172,11 @@ function CommitmentCard({
           ? '待补充 · 已搁置'
           : '待补充'
         : ''
+  // 打磨批 A（评审 P10 / V5）第二道防线：标题**不许是机器意图名**（`trunk.open`）。正路是
+  // commitmentTitle 回落原话与服务端出中文摘要（批 G）；两条都没兜住时这里给人话标题、原文降为说明行。
+  // 判据只有 actionSummary.ts 那一份正则。
+  const machineName = item.kind === 'confirm' && isMachineIntentName(item.summary)
+  const title = item.kind === 'confirm' ? (machineName ? '待确认的车辆操作' : item.summary) : ''
   return (
     // ⚠ `accessibilityLiveRegion` **不在这一层**：这个子树里有每秒变的倒计时，挂在根上会让
     // TalkBack 每秒重播整张卡。live region 只挂在下面那些「内容变了才该播一次」的摘要行上。
@@ -191,16 +197,22 @@ function CommitmentCard({
           <View accessibilityLiveRegion="assertive" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <Text style={{ color: p.amber, fontSize: scale(TYPE.body, 'text', fontScale) }}>⚠</Text>
             <Text
+              testID="dock-title"
               numberOfLines={2}
-              accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：${item.summary}` : undefined}
+              accessibilityLabel={labelMode === 'hidden' ? `${kindLabel}：${title}` : undefined}
               style={{ color: p.fg1, fontSize: scale(TYPE.body, 'text', fontScale), fontWeight: '600', flex: 1, flexShrink: 1 }}
             >
-              {item.summary}
+              {title}
             </Text>
             {labelMode === 'full' ? (
               <Text style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), flexShrink: 0 }}>{kindLabel}</Text>
             ) : null}
           </View>
+          {machineName ? (
+            <Text testID="dock-title-detail" numberOfLines={1} style={{ color: p.fg3, fontSize: scale(TYPE.micro, 'text', fontScale), fontFamily: TYPE.mono }}>
+              {item.summary}
+            </Text>
+          ) : null}
           {item.subkind !== 'location' ? (
             <View style={{ gap: 4 }}>
               <View style={{ height: 2, borderRadius: 1, backgroundColor: p.fill2, overflow: 'hidden' }}>

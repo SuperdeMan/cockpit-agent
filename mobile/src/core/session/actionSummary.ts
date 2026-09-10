@@ -37,12 +37,25 @@ export function actionSummary(messages: readonly Msg[], operationId: string): st
   return at < 0 ? '' : precedingUserUtterance(messages, at)
 }
 
+/** 机器意图名（`trunk.open` / `fuel_tank_cover.open`，可带服务端拼的槽值尾巴 `（k=v）`，
+ *  也可能已被 SUMMARY_MAX 截掉右括号）。**唯一的一份**（打磨批 A / G，评审 P10）：
+ *  `commitmentTitle` 用它决定回落原话，Dock 用它决定「标题不许是机器名」的兜底显示。 */
+export const MACHINE_INTENT_RE = /^[a-z_][a-z0-9_]*(\.[a-z_][a-z0-9_]*)+(（.*)?$/
+
+export function isMachineIntentName(summary: string): boolean {
+  return MACHINE_INTENT_RE.test(summary.trim())
+}
+
 /**
  * 承诺卡标题：**服务端摘要优先，上一条原话回落**（AR05）。
  *
  * 上面那条注释里等的就是这个——`confirm_policy.action_summary` 由服务端从**已验证的
  * 挂起步骤**合成（对象 + 槽值），比客户端猜的「紧邻上一条用户原话」准，而且两条并存时
  * 不再逐字相同。服务端没给（旧网关/回退到原话）才走原来那条路，行为逐字不变。
+ *
+ * 打磨批 A / G（评审 P10）：服务端摘要是**机器意图名**时不许当标题——回落紧邻的用户原话；
+ * 连原话都没有才原样带下去，由 Dock 按机器名兜底（标题「待确认的车辆操作」+ 说明行），
+ * 不造一个空标题。正路是服务端出中文摘要（批 G），这里是第二道防线。
  */
 export function commitmentTitle(
   messages: readonly Msg[],
@@ -50,6 +63,8 @@ export function commitmentTitle(
   serverSummary = '',
 ): string {
   const summary = serverSummary.replace(/\s+/g, ' ').trim()
-  if (summary) return summary.slice(0, SUMMARY_MAX)
-  return actionSummary(messages, operationId)
+  if (summary && !isMachineIntentName(summary)) return summary.slice(0, SUMMARY_MAX)
+  const utterance = actionSummary(messages, operationId)
+  if (utterance) return utterance
+  return summary.slice(0, SUMMARY_MAX)
 }

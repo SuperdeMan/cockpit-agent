@@ -84,6 +84,10 @@ function shellTint(bg: string, alpha: number): string {
 }
 /** 收起动画时长（ms） */
 const COLLAPSE_MS = 180
+/** 层底缘的渐隐遮罩高度（dp）与滚动区多留的底部空白（打磨批 A / 评审 P06 / V2）：
+ *  答案在层底缘原来被硬切成半行字、无渐隐，读起来像裁切故障而不是「还能往下滚」。
+ *  零依赖：`experimental_backgroundImage` 的 linear-gradient（Composer 发送键同一机制）。 */
+export const SHEET_BOTTOM_FADE_DP = 24
 
 export function VoiceSheet(props: VoiceSheetProps) {
   const { p, fontScale, snapshot, turn, containerHeight } = props
@@ -154,6 +158,12 @@ export function VoiceSheet(props: VoiceSheetProps) {
         : snapshot.capsule?.tone === 'accent'
           ? p.accent
           : p.fg2
+  // 壳底色只算一次：壳本身与底缘渐隐遮罩同源（solid=实色 p.bg；真模糊=更薄的 tint；否则 G1 tint）。
+  // 行车档由 ChatScreen 传 `solid`（打磨批 A / P08 / V3）：G0 实色，记录不再透过层与层内文字叠字。
+  const blurred = !!props.blurTarget && !props.solid
+  const shellColor = props.solid ? p.bg : shellTint(p.bg, blurred ? GLASS.frosted.tintOverBlur : GLASS.frosted.tint)
+  // 渐隐的起点用同一 rgb、alpha 0——用 `transparent`（黑色 alpha 0）在浅色壳上会先经过一段灰
+  const fadeFrom = shellTint(p.bg, 0)
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
       {/* 记录变暗、仍可见（§5.2）：点暗区 = 收起。
@@ -178,12 +188,12 @@ export function VoiceSheet(props: VoiceSheetProps) {
         >
           {/* 壳底（§5.11 G1 frosted）：真模糊在场 = BlurView + 更薄的 tint；否则 = B2 附加①的 tint（.58）。
               同屏只有这一个 BlurView（§5.11 禁「同屏多个动态 Blur」）——顶栏与舞台压在静态深空底上，糊了没收益 */}
-          {props.blurTarget && !props.solid ? (
+          {blurred ? (
             <>
               <BlurView
                 pointerEvents="none"
                 blurMethod="dimezisBlurView"
-                blurTarget={props.blurTarget}
+                blurTarget={props.blurTarget ?? undefined}
                 intensity={60}
                 tint={p.dark ? 'dark' : 'light'}
                 style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
@@ -191,14 +201,14 @@ export function VoiceSheet(props: VoiceSheetProps) {
               <View
                 pointerEvents="none"
                 testID="voice-sheet-shell"
-                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellTint(p.bg, GLASS.frosted.tintOverBlur) }}
+                style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellColor }}
               />
             </>
           ) : (
             <View
               pointerEvents="none"
               testID="voice-sheet-shell"
-              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: props.solid ? p.bg : shellTint(p.bg, GLASS.frosted.tint) }}
+              style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: shellColor }}
             />
           )}
           {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
@@ -261,11 +271,14 @@ export function VoiceSheet(props: VoiceSheetProps) {
               </Text>
             </View>
           ) : null}
+          {/* 滚动区 + 底缘渐隐（P06）：内容底部多留 24dp，遮罩压在滚动区最下 24dp、不拦触摸。
+              外层 View 只是给遮罩一个定位参照，不改层高（sheetHeight.ts 的 chrome 读数一个不动）。 */}
+          <View style={{ flex: 1 }}>
           <ScrollView
             contentContainerStyle={
               props.split
-                ? { padding: 16, gap: 16, flexDirection: 'row', alignItems: 'flex-start' }
-                : { padding: 16, gap: 12, alignItems: 'center' }
+                ? { padding: 16, paddingBottom: 16 + SHEET_BOTTOM_FADE_DP, gap: 16, flexDirection: 'row', alignItems: 'flex-start' }
+                : { padding: 16, paddingBottom: 16 + SHEET_BOTTOM_FADE_DP, gap: 12, alignItems: 'center' }
             }
             keyboardShouldPersistTaps="handled"
           >
@@ -279,8 +292,10 @@ export function VoiceSheet(props: VoiceSheetProps) {
               }
             >
               {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条。
-                  行车档回落后（terse）只剩球 + 胶囊，转写也收掉 */}
-              {!terse && user ? (
+                  行车档回落后（terse）只剩球 + 胶囊，转写也收掉。
+                  打磨批 A（P07）：收音中还没识别出字 ⇒ 灰字「在听…」占位、**不渲染光标**——
+                  一根孤零零的光标条像残影。 */}
+              {!terse && user && user.text ? (
                 <Text
                   testID="voice-sheet-transcript"
                   accessibilityLiveRegion="polite"
@@ -294,6 +309,18 @@ export function VoiceSheet(props: VoiceSheetProps) {
                   {user && props.visionIds.includes(user.id) ? '📷 ' : ''}
                   {user.text}
                   {user.id === props.draftUserId ? <StreamCursor h={scale(20, 'text', fontScale)} animated={props.motion.loops} /> : null}
+                </Text>
+              ) : !terse && user && capturing ? (
+                <Text
+                  testID="voice-sheet-transcript"
+                  style={{
+                    color: p.fg3,
+                    fontSize: scale(20, 'text', fontScale),
+                    lineHeight: scale(28, 'line', fontScale),
+                    textAlign: 'center',
+                  }}
+                >
+                  在听…
                 </Text>
               ) : null}
               {/* 大光球：snapshot.primary 驱动（listening→thinking→speaking→followup）；十条不变量内。
@@ -374,6 +401,19 @@ export function VoiceSheet(props: VoiceSheetProps) {
               </View>
             )}
           </ScrollView>
+          <View
+            pointerEvents="none"
+            testID="voice-sheet-fade"
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              height: SHEET_BOTTOM_FADE_DP,
+              experimental_backgroundImage: `linear-gradient(to bottom, ${fadeFrom}, ${shellColor})`,
+            }}
+          />
+          </View>
         </Glass>
       </Animated.View>
     </View>

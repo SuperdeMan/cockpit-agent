@@ -7,7 +7,7 @@
 //     评审那个案例（待确认时断网，确认被盖掉）在这里有一条专门的断言
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
-import { MIC_LABEL, derivePresence, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
+import { MIC_LABEL, capsuleVisible, derivePresence, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
 
 const NOW = 5_000_000
 
@@ -401,5 +401,39 @@ describe('B4-11 行车档下的语音层（§6 常驻 + §5.2 规则 3 行车条
       turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
     })
     expect(derivePresence(parked).sheetDetent).toBe(0.62)
+  })
+})
+
+describe('打磨批 A：胶囊「一屏只出现一份」（capsuleVisible，评审 P05 / P28）', () => {
+  // 判据只此一处：对话页与支持页都读它。输入是快照 + 「承诺面此刻画没画」这个宿主事实。
+  const att = { pendingOps: [{ id: 'op1', ts: NOW, summary: '打开后备箱' }] }
+  test('语音层升起 ⇒ 层外不画（层内已有一份）', () => {
+    const s = derivePresence(base({ ptt: 'recording' }))
+    expect(s.input).toBe('voice-sheet')
+    expect(s.capsule?.text).toBe('在听…')
+    expect(capsuleVisible(s, false)).toBe(false)
+  })
+  test('承诺面在场 + attention 类胶囊（等你确认 / 还差一个信息）⇒ 不画（Dock 已在说）', () => {
+    const confirm = derivePresence(base(att))
+    expect(confirm.capsule?.text).toBe('等你确认')
+    expect(capsuleVisible(confirm, true)).toBe(false)
+    const slot = derivePresence(base({ pendingOps: [{ id: 'op2', ts: NOW, summary: '', slot: { missing: '门店', state: 'active', expiresAt: NOW + 60_000, suggestions: [] } }] }))
+    expect(slot.capsule?.text).toBe('还差一个信息')
+    expect(capsuleVisible(slot, true)).toBe(false)
+  })
+  test('承诺面不在场时 attention 胶囊照常画（没人在说这件事）', () => {
+    expect(capsuleVisible(derivePresence(base(att)), false)).toBe(true)
+  })
+  test('承诺面在场但胶囊说的是别的事（断开 / 重连——胶囊链里只有这两档压过 attention）⇒ 照常画', () => {
+    const offline = derivePresence(base({ ...att, connStatus: 'closed', connChangedAt: NOW - 5000 }))
+    expect(offline.capsule?.text).toBe('已断开 · 消息会排队')
+    expect(capsuleVisible(offline, true)).toBe(true)
+    const reconnecting = derivePresence(base({ ...att, connStatus: 'connecting', connChangedAt: NOW - 5000 }))
+    expect(reconnecting.capsule?.text).toBe('正在重连…')
+    expect(capsuleVisible(reconnecting, true)).toBe(true)
+  })
+  test('没有胶囊 ⇒ false', () => {
+    expect(derivePresence(base()).capsule).toBeUndefined()
+    expect(capsuleVisible(derivePresence(base()), false)).toBe(false)
   })
 })
