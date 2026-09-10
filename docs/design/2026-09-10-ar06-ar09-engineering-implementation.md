@@ -261,9 +261,11 @@ edge-gateway 重启后日志 `auth_required=true, tokens=2`。用该 token 查 `
 
 ## 附录 B：受限身份的**端到端** scope 负例——安全面成立，解释面不成立
 
-> 装置：`websockets` 直连 `wss://<fqdn>:8443/ws?token=<受限>`，发一条普通用户帧，收全下行到 `final`。
-> 语料**刻意避开车控**（本轮授权只覆盖追加 token 条目），全部是只读/查询类；
-> 脚本在仓库外的 scratchpad，不入库。
+> 装置：[`scripts/probe_session_scope.py`](../../scripts/probe_session_scope.py) —— `websockets` 直连
+> `wss://<fqdn>:8443/ws?token=<受限>`，发一条普通用户帧，收全下行到 `final`，把
+> 「执行了几个动作 / 播报了多少字 / 有没有卡片 / issue code」**分开**报。
+> token 只从文件读（命令行会进 shell 历史与 `ps`）。
+> 语料**刻意避开车控**（本轮授权只覆盖追加 token 条目），全部是只读/查询类。
 
 ### B.1 单变量 A/B：同一句话、同一分钟、只换 token
 
