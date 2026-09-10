@@ -1,7 +1,8 @@
 # AR01～AR11 余项收口（2026-09-10 晚）
 
-> 状态：**四件工程正题已实施并本机验证**；真机执行结果见 §8（绑本轮固定包），
-> 真栈状态见 §3.4（**本轮未 deploy**）。
+> 状态：**五件全部闭合**——四件工程正题 + E-02。真机证据见 §8（绑固定包 `1f241c8c5`），
+> 真栈证据见 §3.4 / §3.5 / §4（绑生产 release `74852a7`，已 deploy、status ok、verify verified）。
+> 用户在本轮单独授权了 push、deploy（含 CI/CD digest）与 E-06 的车控负例用例。
 > 前序：[AR06～AR09 工程交付实施记录](2026-09-10-ar06-ar09-engineering-implementation.md)、
 > [AR05 实施方案](2026-09-09-ar05-structured-contracts-implementation-plan.md)、
 > [工程交付与集中验收安排](2026-09-10-android-goal-delivery-and-acceptance-plan.md)。
@@ -18,10 +19,11 @@
 | # | 事情 | 归属 | 提交 | 真机/真栈 |
 |---|---|---|---|---|
 | 1 | 深链只推不弹 ⇒ 桌面 Shortcut 反复进入堆屏 | AR09（正题）| `ea509ff` `046fb5c` `fa6e87d` | ✅ §8.1 |
-| 2 | 受限身份 6 次 6 种说法、其中一条谎称已执行 | AR05（附录 B 归的账）| `f260103` `1f241c8` | ⏸ 待 deploy |
-| 3 | `status` 查不出「跑的是哪一份代码」 | AR06/发布验证面 | `d564bb0` `a06e9f0` | ⏸ 待 deploy |
+| 2 | 受限身份 6 次 6 种说法、其中一条谎称已执行 | AR05（附录 B 归的账）| `f260103` `1f241c8` | ✅ §3.4（6/6 逐字相同）|
+| 3 | `status` 查不出「跑的是哪一份代码」 | AR06/发布验证面 | `d564bb0` `a06e9f0` | ✅ §4（首批读数当场派上用场）|
 | 4 | p3 探针量的不是它声称的东西 | AR09（装置）| `83c1288` | ✅ §8.2 |
 | 5 | E-02：02/06 的 Dock 前提未真栈验 | AR06 后置清单 | —（无需改代码）| ✅ §8.3 |
+| 6 | E-06：受限身份车控端到端负例 | AR05 V05 | —（②的副产品）| ✅ §3.5（两条闸各验一遍、车态零变化）|
 
 ---
 
@@ -159,10 +161,49 @@ LLM 只剩凭空解释一条路。而理由服务端一直有：同一 token 查
 `location.read` 的受限身份则放行 2、挡下 12。让它变坏的方式是「某个 Agent 新增了一条
 PoC 默认没给的 scope」——那种改动不碰这批文件里的任何一个，只有对着真声明才拦得住。
 
-### 3.4 还没做的
+### 3.4 真栈复验（deploy 后，绑 `74852a7`）
 
-真栈复验要 deploy（红线，需单独授权 dry-run→apply）。本轮**未 deploy、未 status/verify**，
-本节没有任何真栈读数。附录 B 那张 6 次表是**修复前**的证据，不得当作修复后的读数。
+用户在本轮单独授权了 push 与 deploy（含 CI/CD digest）。发布落地后用**同一个受限 token**
+复跑附录 B 的同题六次：
+
+| | 修复前（`d425b9c`，附录 B）| 修复后（`74852a7`）|
+|---|---|---|
+| `actions` | 6/6 为空 | 6/6 为空（安全面不变）|
+| 话术 | **6 次 6 种**，含一条「已为你规划路线」（说了没做）与一条内部错误串 | **6/6 逐字相同**|
+| 提到真实原因 | **0/6** | **6/6** |
+| `issues[].code` | 无 / `planner.technical_failure` | 6/6 `permission.scope_missing` |
+
+真栈实际下行（原样）：
+
+```json
+{"actions": [], "need_confirm": false,
+ "speech": "当前账号没有「导航助手」这项能力的授权，所以这件事我没有去做。可以在能力设置里看看这个账号现在有哪些能力。",
+ "issues": [{"code": "permission.scope_missing", "severity": "warning", "scope": "request",
+             "affected_capabilities": ["navigation"],
+             "message": "当前账号缺少「导航助手」所需的授权，本轮没有执行任何操作。",
+             "recovery": [{"kind": "open_capability_settings", "label": "查看账号能力"}]}]}
+```
+
+`display_name` 落到「导航助手」而不是机器名 `navigation`，恢复出口是客户端**真的实现了**的
+`open_capability_settings`（`AssistantProvider.onIssueAction` → 设置页，那里就是能力逐条状态）。
+
+⚠ 取证纠错：第一版探针读 final 的 `text` 字段，于是六次都报「话术为空」。
+下行里字段名是 `speech`。**差点把探针的读法写成产品的读数**——这一轮第三次遇到同一类事。
+
+### 3.5 E-06：受限身份的车控端到端负例（真栈，用户单独授权）
+
+两种形态分开发，因为它们证明的不是同一件事——只看到「没执行」可能只是**确认闸**拦的：
+
+| 语料 | `actions` | `confirm_policy`/`operation_id` | `issues[].code` | `affected` | 走的是哪条闸 |
+|---|---|---|---|---|---|
+| 「打开后备箱」（`require_confirm=true`）| `[]` | **都没有生成** | `permission.scope_missing` | `edge-vehicle`（agent id）| **云侧本次新增的判据**——scope 闸**先于**确认闸 |
+| 「打开空调26度」（无需确认；闸失效即当场执行）| `[]` | 无 | `permission.scope_missing` | `vehicle.control`（scope 名）| **端侧 T0 闸**（AR05 步骤 0 既有），压根没到云端 |
+
+**车态两次读数逐字段相同**（`hvac_on=false`、`hvac_temp=24`、`trunk=closed`、`door_lock=locked` …），
+零执行、零挂起残留、无需还原。
+
+两条入口落在两条不同的闸上，但客户端拿到的是**同一个 code、同一种恢复出口**——
+契约面一致而实现分层，这正是 AR05 想要的形状。
 
 ## 4. `status` 的运行镜像对账
 
@@ -184,6 +225,17 @@ edge-gateway 换成八月的镜像、`/api/session` 404 数分钟。而 `status`
 
 反向验证：把「不一致就报」那一行关掉，`test_cloud_status_catches_a_release_that_did_not_take_effect`
 当场判红。
+
+**真栈首批读数**（本轮 deploy 前后各一次）：
+
+| 时刻 | `release_sha` | `running_release_sha` | status |
+|---|---|---|---|
+| apply 失败之后（用来判断生产有没有被动过）| `d425b9c…` | `d425b9c…` | ok / 5 healthy / 零 warning |
+| deploy 落地之后 | `74852a7…` | `74852a7…` | ok / 5 healthy / 零 warning |
+
+第一次读数当场派上了用场：一次 apply 报 `runtime` 失败，**这一列直接回答了「生产有没有被动过」**
+——两列一致且仍是旧 SHA ⇒ 没动过，于是重试是在一个已核实的干净状态上，不是盲目原地重试。
+在这条列存在之前，同样的问题只能靠猜。
 
 ## 5. 装置修正：p3 走用户走的路
 
@@ -219,11 +271,11 @@ edge-gateway 换成八月的镜像、`/api/session` 404 数分钟。而 `status`
 | E-03 | 不变 | **真人说话** | KWS 参数入口、回读、四分栏计数器 | 开实验会话 → A/B/C 各 10 次近场 | 每臂四栏齐；分母由人记 |
 | E-04 | 不变 | **外部时基 + 真人** | `attachMeasuredOnset` 入口、分桶统计 | 同一时基录「说完」与「扬声器首音」→ 回填 | `firstAudioSource=acoustic` 样本 ≥ 每桶每臂 |
 | E-05 | **P3 协议已修正并复测**（§8.2）、**动效归因已闭合**（§8.4）；P0/P5 仍是上一轮读数 | P1 缺离线灌数 harness；P2 需真人；P4 需真实低电量；系统级动画缩放那一臂被 ColorOS 的 `WRITE_SECURE_SETTINGS` 锁死 | 修正后的 `probe_ui_perf.py`（`--nav`＋对象计数）| P1 的做法已定：仿 `card-gallery` 加一条**只读调试路由**，用**真的** chat 列表组件渲染 N 条合成消息（不向生产发请求）；其余按协议 | 逐场景有固定包证据；两档分列 |
-| E-06 | 服务端半边闭合照旧 | 端到端**车控**负例仍要精确到用例的单独授权 | 受限 token 文件已在本机 `%LOCALAPPDATA%\car-agent\artifacts\ar10-restricted-token\token.txt`；`probe_session_scope.py` 只读 | 见 AR05 §9.5 V05 | 端侧 T0 拒绝、云侧 dispatch 拒绝、零 VAL、零挂起残留 |
+| ~~E-06~~ | **本轮闭合**，见 §3.5（用户单独授权该用例）| — | 受限 token 文件已在本机 `%LOCALAPPDATA%\car-agent\artifacts\ar10-restricted-token\token.txt`；`probe_session_scope.py` 只读 | 见 AR05 §9.5 V05 | 端侧 T0 拒绝、云侧 dispatch 拒绝、零 VAL、零挂起残留 |
 | E-07 | 不变 | 旧 release 环境 + 一次 Redis 重启 | — | AR05 §9.5 V06/V10 | 挂起恢复保真；新客户端不误报 |
 | E-08 | 不变 | 参与者与授权 | AR10 准备材料 | 按 §4 脚本 | 逐格原始记录 |
-| **新** AR05 请求面真栈复验 | 代码与离线判据已完成（§3）| **deploy**（红线：先 push，再 dry-run，再单独授权 apply）| 完整 `origin/main..HEAD`、受限 token、`probe_session_scope.py` | deploy 后用受限 token 复跑附录 B 的 6 次同题 | 6/6 `actions=[]` **且** 6/6 出 `permission.scope_missing`、零「已为你…」类话术 |
-| **新** `status` 对账真栈复验 | 代码与离线判据已完成（§4）| 同上，需 deploy 后跑一次 `status` | — | `python scripts/dev_stack.py status` | 输出含 `running_release_sha` 且等于 release，零 warning |
+| ~~AR05 请求面真栈复验~~ | **本轮闭合**，见 §3.4 | — | 完整 `origin/main..HEAD`、受限 token、`probe_session_scope.py` | deploy 后用受限 token 复跑附录 B 的 6 次同题 | 6/6 `actions=[]` **且** 6/6 出 `permission.scope_missing`、零「已为你…」类话术 |
+| ~~`status` 对账真栈复验~~ | **本轮闭合**，见 §4 | — | — | `python scripts/dev_stack.py status` | 输出含 `running_release_sha` 且等于 release，零 warning |
 
 ## 8. 真机执行结果
 
@@ -316,8 +368,12 @@ C 臂的 views **逐字相同（16911）**——这一格才是这张表的分�
 
 ## 9. 明确没做的事
 
-- 没有 deploy、没有 status/verify，本文没有任何真栈读数；
-- 没有推送任何提交；
-- 没有取得唤醒率、首音时延读数（E-03/E-04 仍缺真人）；
-- 没有招募 AR10 参与者（E-08）；
-- 没有把 AR02～AR05 的任何未签收项标成已签收。
+- 没有取得 KWS 唤醒率读数（E-03，本轮用户未安排）；
+- 没有做首音声学校准（E-04）——需要外部时基装置与真人；
+- 没有招募 AR10 参与者、没有向任何人发送邀请（E-08）；
+- 没有跑 P1（500 条本地消息，缺离线灌数 harness）、P2（需真人）、P4（需真实低电量）；
+- 系统级动画缩放那一臂仍被 ColorOS 的 `WRITE_SECURE_SETTINGS` 锁死，只做了 App 内开关；
+- 没有验旧服务端 / Redis 重启后的挂起恢复（E-07，缺旧 release 环境）；
+- 没有改任何系统设置、`.env`、安全组、Tailscale、systemd 或数据库 schema；
+- 没有把 AR02～AR05 的其余未签收项标成已签收——本轮闭合的是 V05/V07 的两条缺口与 E-02/E-06，
+  V06（Redis 恢复）、V08（真人听音）、V09（技术失败不可稳定复现）、V10（旧服务端）照旧未闭合。
