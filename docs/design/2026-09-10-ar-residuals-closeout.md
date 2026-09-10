@@ -1,6 +1,7 @@
 # AR01～AR11 余项收口（2026-09-10 晚）
 
-> 状态：**四件工程正题已实施并本机验证**；真机证据见 §2.4（绑固定包），真栈证据见 §3.4。
+> 状态：**四件工程正题已实施并本机验证**；真机执行结果见 §8（绑本轮固定包），
+> 真栈状态见 §3.4（**本轮未 deploy**）。
 > 前序：[AR06～AR09 工程交付实施记录](2026-09-10-ar06-ar09-engineering-implementation.md)、
 > [AR05 实施方案](2026-09-09-ar05-structured-contracts-implementation-plan.md)、
 > [工程交付与集中验收安排](2026-09-10-android-goal-delivery-and-acceptance-plan.md)。
@@ -14,12 +15,13 @@
 
 ## 1. 这一轮动了什么
 
-| # | 事情 | 归属 | 提交 |
-|---|---|---|---|
-| 1 | 深链只推不弹 ⇒ 桌面 Shortcut 反复进入堆屏 | AR09（正题）| `ea509ff` + `046fb5c` |
-| 2 | 受限身份 6 次 6 种说法、其中一条谎称已执行 | AR05（附录 B 归的账）| `f260103` |
-| 3 | `status` 查不出「跑的是哪一份代码」 | AR06/发布验证面 | `d564bb0` |
-| 4 | p3 探针量的不是它声称的东西 | AR09（装置）| `83c1288` |
+| # | 事情 | 归属 | 提交 | 真机/真栈 |
+|---|---|---|---|---|
+| 1 | 深链只推不弹 ⇒ 桌面 Shortcut 反复进入堆屏 | AR09（正题）| `ea509ff` `046fb5c` `fa6e87d` | ✅ §8.1 |
+| 2 | 受限身份 6 次 6 种说法、其中一条谎称已执行 | AR05（附录 B 归的账）| `f260103` `1f241c8` | ⏸ 待 deploy |
+| 3 | `status` 查不出「跑的是哪一份代码」 | AR06/发布验证面 | `d564bb0` `a06e9f0` | ⏸ 待 deploy |
+| 4 | p3 探针量的不是它声称的东西 | AR09（装置）| `83c1288` | ✅ §8.2 |
+| 5 | E-02：02/06 的 Dock 前提未真栈验 | AR06 后置清单 | —（无需改代码）| ✅ §8.3 |
 
 ---
 
@@ -65,17 +67,23 @@ expo-router 对**运行中**收到的 URL 发 `NAVIGATE` 且不带 `pop`，而 S
 先推一个 voice 屏，再被 `Redirect` 的 replace 换成**第二个对话页**。
 
 **用户可达**：`plugins/with-shortcuts.js` 声明了两个桌面 Shortcut——「说话」→`xiaozhou://voice`、
-「车况」→`xiaozhou://vehicle`。从桌面长按图标点「说话」：
+「车况」→`xiaozhou://vehicle`。
 
-| 点击次数 | Views | PSS | Native heap |
+修复前三臂（固定包 `d425b9c2d`，OPPO PEUM00，每臂各自从冷进程起算）：
+
+| 到达次数 | A：voice | B：voice/vehicle 交替 | C：未接管的调试路由交替 |
 |---|---|---|---|
-| 冷启动 | 151 | 207 MB | 49 MB |
-| 5 | 1008 | 261 MB | 104 MB |
-| 10 | 1833 | 333 MB | 137 MB |
-| 20 | **3483** | **407 MB（+97%）** | 189 MB |
+| 冷启动 | 151 views / 207 MB | 151 / 208 MB | 151 / 208 MB |
+| 5 | 1008 / 263 MB | 874 / 246 MB | 4170 / 445 MB |
+| 10 | 1833 / 322 MB | 1335 / 282 MB | 8531 / 629 MB |
+| 20 | **3483 / 415 MB** | **2490 / 342 MB** | **16911 / 983 MB** |
 
-每点一次多约 165 个 View（一整个对话页），线性、无上限，**用户没有任何办法清掉**
-（除非连按 20 次返回或杀进程）。
+每到达一次多约 165 个 View（一整个对话页），线性、无上限，**用户没有任何办法清掉**
+（除非连按 N 次返回或杀进程）。
+
+> **为什么对照臂要「交替」而不是连点同一条**：StackRouter 在「目标恰好是栈顶」时会复用，
+> 所以连点同一条路由本来就不涨——用它当对照会测不出任何东西。会涨的形态是**目标与栈顶不同**：
+> A 臂之所以连点也涨，是因为 voice 屏被 `Redirect` 换成了对话页，栈顶每次都变。
 
 ### 2.4 修法与判据
 
@@ -99,10 +107,11 @@ expo-router 对**运行中**收到的 URL 发 `NAVIGATE` 且不带 `pop`，而 S
 **同一个**对话页之后，实例级 ref 会让第二次点「说话」永远不再升层。改为消费**参数本身**
 （升层后 `router.setParams({voice: undefined})`），下一次到达重新写入才是一次真实变化。
 
-判据侧 20 条单测（`mobile/test/deepLinkIntent.test.ts`），含：
+判据侧 21 条单测（`mobile/test/deepLinkIntent.test.ts`），含：
 连点同一 Shortcut 50 次栈深恒定、两个 Shortcut 交替 50 次不堆积、
 **反向验证**（不做规范化就会线性堆积到 21 层）、五个入口点逐个被接管、
-非入口点逐个交回、语音参数每次到达都重新出现。
+非入口点逐个交回、语音参数每次到达都重新出现，以及**桌面 Shortcut 声明源与入口点不许漂移**
+（读 `plugins/with-shortcuts.js` 本身，不另抄名单；从 `ENTRY_POINTS` 拿掉 `/vehicle` 后这条当场判红）。
 
 ## 3. AR05 解释面：没权限就说没权限
 
@@ -138,12 +147,17 @@ LLM 只剩凭空解释一条路。而理由服务端一直有：同一 token 查
 
 ### 3.3 判据与反向验证
 
-10 条单测（`orchestrator/cloud/tests/test_scope_blocked_explanation.py`），双向反向验证：
+11 条单测（`orchestrator/cloud/tests/test_scope_blocked_explanation.py`），双向反向验证：
 
 | 变异 | 判红的用例 |
 |---|---|
 | 关掉判据（`_scope_blocked_target` 恒返回 None）| 4 条正例全红（点名、话术、零 LLM、恢复出口）|
 | 去掉分数门槛（低分也判「没权限」）| 「不冤枉」那条红 |
+
+另有一条守卫挂在**真实 manifest** 上：正常身份（PoC 默认 scope）一条能力都不该被挡下，
+否则每一轮都会多发一次语义路由。实测 14 个 Agent 全放行、被挡下 0 个；换成只有
+`location.read` 的受限身份则放行 2、挡下 12。让它变坏的方式是「某个 Agent 新增了一条
+PoC 默认没给的 scope」——那种改动不碰这批文件里的任何一个，只有对着真声明才拦得住。
 
 ### 3.4 还没做的
 
@@ -180,13 +194,106 @@ edge-gateway 换成八月的镜像、`/api/session` 404 数分钟。而 `status`
 
 ## 6. 本机验证
 
+全量固定口径（`$env:TZ='UTC0'`；`python -X utf8 -m pytest -q -n 8 --dist worksteal`）：
+
 | 面 | 结果 |
 |---|---|
-| mobile | `tsc` 0 / `eslint . --max-warnings 0` 0 / `jest` **875 passed, 81 suites**（批前 855/80）|
-| orchestrator + security + registry | **2294 passed, 1 skipped**（`-p no:randomly`）|
-| scripts（dev_stack + cloud_release + release_source_safety）| **315 passed, 3 skipped** |
+| **全量 pytest** | **8231 passed / 32 skipped / 0 failed**，309s（上一基线 8205/32，绑 `00d1925`）|
+| mobile | `tsc` 0 / `eslint . --max-warnings 0` 0 / `jest` **876 passed, 81 suites**（批前 855/80）|
+| hmi | `npm test` **333 pass / 0 fail** |
+| gateway | `go build` / `go vet` / `go test ./gateway/...` 全绿 |
+| 四道门禁 + 端侧 smoke | skills ✅ / exemplars ✅（hit 64 miss 3，域错配 1.8%）/ L0 strict 2/2 / capability integrity ✅ / `smoke_edge` 13 passed |
 
-## 7. 明确没做的事
+⚠ 全量第一趟红了 3 条（`test_probe_qa_long_sessions.py`）：`StackStatus` 加一列之后
+**还有一个我没找到的构造点**——那份测试自己搭了一个「健康云端快照」。
+分目录跑的三个套件都覆盖不到它，只有全量能露。已修（`fa6e87d`）。
+> 判据：**加一个必填字段就要把构造点找全，而"我 grep 过了"不是找全**——
+> 漏掉的那个恰好在一个名字里没有 `dev_stack` 的文件里。
+
+## 7. 余项去向（承接 [AR06～AR09 §6](2026-09-10-ar06-ar09-engineering-implementation.md) 的 E 清单）
+
+| item_id | 本轮变化 | 现在卡在哪 | 已备好的产物 | 直接执行步骤 | 成功判据 |
+|---|---|---|---|---|---|
+| ~~E-01~~ | — | — | — | — | 上一轮已闭合 |
+| ~~E-02~~ | **本轮闭合**，见 §8.3 | — | — | — | 两趟 RC=0、开关两次回读均为设定值 |
+| E-03 | 不变 | **真人说话** | KWS 参数入口、回读、四分栏计数器 | 开实验会话 → A/B/C 各 10 次近场 | 每臂四栏齐；分母由人记 |
+| E-04 | 不变 | **外部时基 + 真人** | `attachMeasuredOnset` 入口、分桶统计 | 同一时基录「说完」与「扬声器首音」→ 回填 | `firstAudioSource=acoustic` 样本 ≥ 每桶每臂 |
+| E-05 | **P3 协议已修正并复测**（§8）；P0/P5 仍是上一轮读数 | P1 缺离线灌数 harness；P2 需真人；P4 需真实低电量；`reduceMotionForce` 对照需 App 内设置（`set_switch.py` 已可用，本轮未跑）| 修正后的 `probe_ui_perf.py`（`--nav`＋对象计数）| P1 的做法已定：仿 `card-gallery` 加一条**只读调试路由**，用**真的** chat 列表组件渲染 N 条合成消息（不向生产发请求）；其余按协议 | 逐场景有固定包证据；两档分列 |
+| E-06 | 服务端半边闭合照旧 | 端到端**车控**负例仍要精确到用例的单独授权 | 受限 token 文件已在本机 `%LOCALAPPDATA%\car-agent\artifacts\ar10-restricted-token\token.txt`；`probe_session_scope.py` 只读 | 见 AR05 §9.5 V05 | 端侧 T0 拒绝、云侧 dispatch 拒绝、零 VAL、零挂起残留 |
+| E-07 | 不变 | 旧 release 环境 + 一次 Redis 重启 | — | AR05 §9.5 V06/V10 | 挂起恢复保真；新客户端不误报 |
+| E-08 | 不变 | 参与者与授权 | AR10 准备材料 | 按 §4 脚本 | 逐格原始记录 |
+| **新** AR05 请求面真栈复验 | 代码与离线判据已完成（§3）| **deploy**（红线：先 push，再 dry-run，再单独授权 apply）| 完整 `origin/main..HEAD`、受限 token、`probe_session_scope.py` | deploy 后用受限 token 复跑附录 B 的 6 次同题 | 6/6 `actions=[]` **且** 6/6 出 `permission.scope_missing`、零「已为你…」类话术 |
+| **新** `status` 对账真栈复验 | 代码与离线判据已完成（§4）| 同上，需 deploy 后跑一次 `status` | — | `python scripts/dev_stack.py status` | 输出含 `running_release_sha` 且等于 release，零 warning |
+
+## 8. 真机执行结果
+
+### 8.0 包身份与冻结条件
+
+| 项 | 值 |
+|---|---|
+| APK | `D:\Android\builds\apk\xiaozhou-companion-prod-release-1f241c8c5-20260910-1335.apk`（210,755,666 B）|
+| APK SHA-256 | `4c2c16bd837fa3ca30ea3ecb70ff2aa642fd6cd4421ed1a289b791818fba6985` |
+| 设备侧回读 | `/data/app/~~ggks37MpwzQXfL1Y7Qlrtg==/…/base.apk` 的 `sha256sum` **与本地逐字节相同** |
+| 包身份 | `variant=prod`、`build=1f241c8c5`、签名 SHA-1 `5e8f1606…`、`flags` 不含 `DEBUGGABLE`、`lastUpdateTime=2026-09-10 13:36:24` |
+| 代码边界 | `git diff --name-only 1f241c8..<本轮末> -- mobile hmi/src` 只含 `mobile/test/`（不进 bundle）⇒ 包内容即该 SHA 的 mobile 树 |
+| 设备 | test / OPPO PEUM00 / Android 14 / `919fd6f9`；活跃屏外屏 60Hz ⇒ 帧预算 16.667ms |
+| 真栈 | `target=cloud`，设备在 tailnet（`ping 100.64.0.1` 通）；运行中的是既有 release `d425b9c`，**本轮未 deploy** |
+
+### 8.1 F1′ 三臂对照（修复前后同设备、同装置、同协议）
+
+| 到达 20 次 | 修复前 `d425b9c2d` | 修复后 `1f241c8c5` |
+|---|---|---|
+| A：`xiaozhou://voice`（Shortcut「说话」）| 3483 views / 415 MB | **183 views / 248 MB** |
+| B：voice/vehicle 交替 | 2490 / 342 MB | **278 / 253 MB** |
+| C：**故意不接管**的调试路由交替 | 16911 / 983 MB | **16911 / 979 MB** |
+
+A 臂在 x5 就到 183 并**从此不再增长**（x10、x20 同为 183）。
+C 臂的 views **逐字相同（16911）**——这一格才是这张表的分量所在：
+装置照旧测得出「涨」，所以 A/B 的「不涨」不是仪器失灵；而且它证明本次改动
+**确实没碰**入口点之外的任何一条路由。
+
+### 8.2 AR09 P3：修正协议下的路由循环（E-05 的 P3 格）
+
+30 次 `chat→settings→vehicle→map`，`--nav back`（进页面后按返回键 = 用户真实路径）：
+
+| 轮次 | 起点 PSS | 静置 2min 后 | 增长 | Views | Native heap | Graphics |
+|---|---|---|---|---|---|---|
+| 第 1 趟（冷进程起算）| 224.0 MB | 312.7 MB | **+88.7 MB（+39.6%）** | 151 → **151** | 48.8 → 112.4 MB | 32.8 → 36.8 MB |
+| 第 2 趟（接着上一趟的暖进程）| 314.8 MB | 315.8 MB | **+1.0 MB（+0.3%）** | 151 → **151** | 112.3 → **106.2 MB** | 36.75 → 36.89 MB |
+
+**第二趟是决定性的那一趟。** 同样 30 轮、同样协议，只差「从冷进程还是暖进程起算」：
+泄漏会再加一个 +89MB，实测只加了 1MB，Native heap 还降了 6MB。
+⇒ 第一趟那 +88.7MB 是**首次触达成本**（代码段换页 +20MB、原生分配器与地图 GL 面首用），
+不是累积。AR09 §4.1 的门槛要**在预热之后**量才有意义——从冷进程量会把首用成本
+算成累积，这正是上一轮把 F1 读错的同一类错误的温和版本。
+
+帧（第 1 趟 / 第 2 趟）：10446 帧 4.10% janky、p50 17ms、p95 28ms、missed vsync 32 ／
+10453 帧 3.71% janky、p50 16ms、p95 27ms、missed vsync 22。60Hz 预算 16.667ms。
+对照上一轮那个被撑大的进程（99.4% janky、p50 69ms），**健康进程在预算之内**。
+
+### 8.3 E-02：02/06 的 Dock 前提真栈闭合
+
+| 趟 | 前提（`set_switch.py` 回读）| 流 | 结果 |
+|---|---|---|---|
+| A | `uxV2Dock` before=True → **after=False, OK** | `02-danger-confirm-cancel.yaml` `-e APP_LAUNCH_MODE=release` | **RC=0**：release 启动路径（阴性断言「开发服务器」不可见通过）→「打开后备箱」→ 确认条出现且**两个按钮都在** → 取消 → 两个都消失 |
+| B | `uxV2Dock` before=False → **after=True, OK** | `06-confirm-dock.yaml` `-e APP_LAUNCH_MODE=release` | **RC=0**：`dock-confirm` + `dock-countdown` + `presence-capsule` 三者同时在场 → 取消 → Dock 消失 |
+
+两条流**都走取消**，全程零车控执行。开关最终值 `true` 与开工前一致，无需还原。
+
+> **顺带定死一条操作判据**：`set_switch.py` 第一次跑报 `NOT_FOUND`，manual `uiautomator dump`
+> 也被 SIGKILL——**整机**都 dump 不出来，连桌面都不行。logcat 给出真因：
+> `UiAutomationService … already registered!`——**上一次 Maestro 留下的 driver 还占着
+> UiAutomation 连接**。`am force-stop dev.mobile.maestro{,.test}` 之后立刻恢复。
+> ⇒ Maestro 与任何走 `uiautomator` 的工具**互斥**；两者交替使用时，切换前必须先停 driver。
+> 这也是「取证装置互相污染」的又一实例：报出来的症状（找不到某个开关）指向被测对象，
+> 真因却在另一件工具上。
+
+### 8.4 本轮没有做的设备动作
+
+未改任何系统设置、未动权限矩阵、未采集音视频、未操作 Xiaomi 对照机；
+临时文件（`/sdcard/*.xml`）已删除；Maestro driver 已停，`uiautomator` 复检可用。
+
+## 9. 明确没做的事
 
 - 没有 deploy、没有 status/verify，本文没有任何真栈读数；
 - 没有推送任何提交；
