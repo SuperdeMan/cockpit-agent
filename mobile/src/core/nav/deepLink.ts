@@ -23,6 +23,19 @@ const APP_SCHEME = 'xiaozhou://'
 /** 语音层深链：`xiaozhou://voice`（桌面 Shortcut「说话」）。它是指令不是目的地。 */
 const VOICE_PATH = '/voice'
 
+/**
+ * 我们**接管**的外部入口点。刻意窄：只有真的会被反复进入的那几个。
+ *
+ * · `/` 与 `/voice`、`/vehicle`：桌面 Shortcut「说话」「车况」与回对话页；
+ * · `/settings`、`/map`：脚本与用户都会从外部进的两个页面。
+ *
+ * 其余一律**原样交回 router**，行为与今天逐字一致——包括 e2e 用深链进的调试页
+ * （`/card-gallery`、`/state-gallery`、`/capture-status`）和 dev client 自己的
+ * `xiaozhou://expo-development-client/...`。它们不是用户会反复点的入口，
+ * 而**为了修一个不存在的问题去改一条正在工作的路径，代价永远大于收益**。
+ */
+const ENTRY_POINTS = new Set(['/', VOICE_PATH, '/vehicle', '/settings', '/map'])
+
 /** 对话页收到的「请升起语音层」参数。ChatScreen 消费后**自己清掉**，所以下一次到达能再触发。 */
 export const VOICE_PARAM = 'voice'
 
@@ -100,6 +113,9 @@ export function planIntent(url: string, opts: { initial: boolean }): IntentPlan 
   if (!parsed) return { kind: 'handoff', href: url }
   const href = normalizeIntentHref(url)
   if (opts.initial) return { kind: 'handoff', href }
+  // 不是我们接管的入口点 ⇒ 交回 router。`voice` 已在 normalize 里变成对话页，
+  // 所以这里判的是**规范化之后**的落点。
+  if (!ENTRY_POINTS.has(href.split('?')[0] || '/')) return { kind: 'handoff', href }
   return { kind: 'enter', href, home: isHome(href) }
 }
 

@@ -93,6 +93,30 @@ describe('planIntent', () => {
     expect(planIntent(dev, { initial: false })).toEqual({ kind: 'handoff', href: dev })
     expect(planIntent(dev, { initial: true })).toEqual({ kind: 'handoff', href: dev })
   })
+
+  it('不是入口点的路由交回 router——正在工作的路径一条都不改', () => {
+    // e2e 用深链进的调试页，以及 dev client 自己的启动链接
+    for (const url of [
+      'xiaozhou://card-gallery?only=weather,payment_qr',
+      'xiaozhou://state-gallery?only=looking',
+      'xiaozhou:///capture-status',
+      'xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081',
+    ]) {
+      expect(planIntent(url, { initial: false }).kind).toBe('handoff')
+    }
+  })
+
+  it('五个入口点都被接管（少一个就等于那条入口没修）', () => {
+    for (const url of [
+      'xiaozhou:///',
+      'xiaozhou://voice',
+      'xiaozhou://vehicle',
+      'xiaozhou:///settings',
+      'xiaozhou:///map?points=%5B%5D',
+    ]) {
+      expect(planIntent(url, { initial: false }).kind).toBe('enter')
+    }
+  })
 })
 
 describe('isHome', () => {
