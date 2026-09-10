@@ -1355,9 +1355,24 @@ class PlanBuilder:
         LLM 看不到用户无权调用的 Agent/意图（越权能力不暴露给 LLM）。
         """
         agents = list(working_set.catalog)
-        # 权限过滤：只保留用户有权调用的 Agent
+        # 权限过滤：只保留用户有权调用的 Agent；被挡下的那半留在手里当**理由**
+        scope_blocked_agents: list = []
         if granted_permissions is not None:
-            agents = self._filter_by_permission(agents, granted_permissions)
+            agents, scope_blocked_agents = self._partition_by_permission(
+                agents, granted_permissions)
+        # 这一轮想要的恰好是被 scope 挡下的那条能力 ⇒ **一次 LLM 都不调**，直接给确定性终态。
+        # 判据见 `_scope_blocked_target`；理由与 `/api/session` 摘要面的 `scope_missing`
+        # 是同一条事实，只是此前只有摘要面说得出来。
+        blocked = await self._scope_blocked_target(text, scope_blocked_agents)
+        if blocked is not None:
+            agent_id = str(blocked.manifest.agent_id or "")
+            logger.info("Scope-blocked capability requested: %s", agent_id)
+            return Plan(
+                steps=[], raw_text=str(text or ""), goal=str(text or ""),
+                scope_blocked=agent_id,
+                scope_blocked_name=str(
+                    getattr(blocked.manifest, "display_name", "") or "") or agent_id,
+            )
         catalog = _assemble_capability_catalog(agents)
         agents = list(catalog.visible_agents)
         agent_map = catalog.agent_map
@@ -2610,18 +2625,22 @@ class PlanBuilder:
         return intents
 
     @staticmethod
-    def _filter_by_permission(agents: list, granted: list[str]) -> list:
-        """过滤掉用户无权调用的 Agent（越权能力不暴露给 LLM）。
+    def _partition_by_permission(agents: list, granted: list[str]) -> tuple[list, list]:
+        """按权限把 catalog 拆成（可用, 因 scope 被挡下）两半。
 
         判定委托运行时唯一决策 `security.permission.check_permission`（与 dispatch 执行期同源）：
-        - granted 为 None → 不过滤（权限系统未启用，PoC 兼容）
+        - granted 为 None → 不过滤（权限系统未启用，PoC 兼容），挡下的那半为空
         - granted 为空列表 → 只放行无权限要求的 Agent（零授权 = 最小权限）
         - Agent 的 requires_permissions 被 granted（父子覆盖）全覆盖 → 保留
         - third_party Agent 的 vehicle.control 无论 granted 都被拒绝
+
+        **为什么要把挡下的那半留在手里**：过滤本身是对的（越权能力不暴露给 LLM），
+        但过滤完就把「为什么少了这条能力」一起丢了，于是 LLM 只能凭空解释。
+        丢掉的是理由，不是能力——理由得带出去。
         """
         if granted is None:
-            return agents
-        filtered = []
+            return agents, []
+        allowed, blocked = [], []
         for a in agents:
             m = a.manifest
             d = check_permission(
@@ -2629,6 +2648,38 @@ class PlanBuilder:
                 required=list(m.requires_permissions), granted=granted, kind="agent")
             if not d.allowed:
                 logger.debug("Filtered %s: %s", m.agent_id, d.reason)
+                blocked.append(a)
                 continue
-            filtered.append(a)
-        return filtered
+            allowed.append(a)
+        return allowed, blocked
+
+    @staticmethod
+    def _filter_by_permission(agents: list, granted: list[str]) -> list:
+        """`_partition_by_permission` 的只要前半（再规划路径用，那里不需要理由）。"""
+        return PlanBuilder._partition_by_permission(agents, granted)[0]
+
+    async def _scope_blocked_target(self, text: str, blocked: list):
+        """本轮请求是不是落在一个**因 scope 被挡下**的能力上？是就返回那个 agent。
+
+        判据复用**已有的**那一套：Registry 语义路由 top-1 + `CLARIFY_FALLBACK_MIN`
+        （与 `_fallback` 低分不硬执行同一个门槛、同一个声明）。这里刻意不写新词表、
+        不加新阈值——「这句话想要哪条能力」在本仓只有一个答案源。
+
+        分不清就返回 None：**宁可退回今天的行为，也不冤枉一次「你没权限」**。
+        没有被挡下的能力时（绝大多数身份）一次调用都不发生。
+        """
+        if not blocked:
+            return None
+        blocked_by_id = {a.manifest.agent_id: a for a in blocked}
+        try:
+            resolved = await self._resolve(text, top_k=1)
+        except Exception as e:                                  # 路由不可用 = 不知道，不猜
+            logger.debug("scope-blocked routing failed: %s", e)
+            return None
+        if not resolved:
+            return None
+        top = resolved[0]
+        if (float(getattr(top, "score", 0.0) or 0.0)
+                < float(os.getenv("CLARIFY_FALLBACK_MIN", "0.5"))):
+            return None
+        return blocked_by_id.get(top.manifest.agent_id)

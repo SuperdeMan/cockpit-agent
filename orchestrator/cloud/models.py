@@ -108,6 +108,16 @@ class Plan:
     # 值是用户说的那个宾语。engine 据此出**诚实追问**而不是让兜底编一句
     # 「已经取消啦」。空串 = 本轮与它无关。
     cancel_unresolved: str = ""
+    # AR05 解释面（2026-09-10 真栈实录）：这一轮请求落在一个**因当前身份缺 scope 而被
+    # 过滤掉**的能力上。值是那条能力的 agent_id，`scope_blocked_name` 是给用户看的名字。
+    # 为什么必须单独立位而不是让它掉进既有降级：越权能力对 LLM 不可见（这是对的），
+    # 于是 LLM 只能凭空解释——受限身份连问 6 次「导航去广州塔」得到 6 种说法，其中一次是
+    # 「已为你规划路线」而 `actions` 为空（说了没做），一次把内部错误串原样吐给用户，
+    # 6 次没有一次提到真实原因。而真实原因**服务端自己知道**：同一 token 查 `/api/session`
+    # 就写着 `navigation → unauthorized / scope_missing`。
+    # ⇒ 系统持有的事实不交给 LLM 答。空串 = 本轮与它无关。
+    scope_blocked: str = ""
+    scope_blocked_name: str = ""
     # 观测（badcase 排查）：Planner LLM 最后一次原始输出。仅供 cloud.planning span
     # 门控采集（engine），不参与任何编排逻辑；解析失败走 fallback 时它保留失败现场。
     raw_llm: str = ""

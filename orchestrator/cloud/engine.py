@@ -663,6 +663,33 @@ class PlannerEngine:
                 return
 
             if not plan.steps:
+                # AR05 解释面：这一轮要的能力**这个账号没有授权**。理由是服务端自己持有的
+                # 事实（`/api/session` 摘要面同一条 `scope_missing`），所以话术也由服务端出，
+                # 不交给 LLM——真栈实录：受限身份连问 6 次同一句得到 6 种说法，其中一次
+                # 「已为你规划路线」而 actions 为空、一次把内部错误串吐给用户、0/6 提到
+                # 真实原因。**说了没做**是本仓最不能接受的那一类。
+                # 恢复出口指能力设置而**不是系统权限页**（conventions §9 第 7 条：
+                # 业务 scope 与设备权限是两件事，指错地方等于让用户去关一个不存在的开关）。
+                if getattr(plan, "scope_blocked", ""):
+                    name = (getattr(plan, "scope_blocked_name", "")
+                            or plan.scope_blocked)
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.scope_blocked", "system.scope_blocked")
+                    yield {
+                        "kind": "final",
+                        "speech": f"当前账号没有「{name}」这项能力的授权，"
+                                  f"所以这件事我没有去做。可以在能力设置里看看"
+                                  f"这个账号现在有哪些能力。",
+                        "issues": [contracts.build_issue(
+                            contracts.ISSUE_PERMISSION_SCOPE_MISSING,
+                            f"当前账号缺少「{name}」所需的授权，本轮没有执行任何操作。",
+                            severity=contracts.SEVERITY_WARNING,
+                            request_id=ctx.request_id,
+                            affected_capabilities=[plan.scope_blocked],
+                            recovery=[(contracts.RECOVERY_OPEN_CAPABILITY_SETTINGS,
+                                       "查看账号能力")])],
+                    }
+                    return
                 # R4.4 D6-3：路由歧义澄清（CLARIFY 开 + 本轮非 clarify_resume 深度=1 才生效）。
                 # P0 时 CLARIFY_ENABLED 默认 off → 恒 None，行为=今天；P1 翻 on 后短路出卡。
                 clarify = (plan.clarify if (_clarify_enabled()
