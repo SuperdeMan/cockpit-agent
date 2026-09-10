@@ -21,6 +21,7 @@
 
 | 文档 | 主题 | 状态 |
 |---|---|---|
+| [2026-09-10-ar-residuals-closeout.md](2026-09-10-ar-residuals-closeout.md) | AR01～AR11 余项收口：推翻上一轮的 F1「内存泄漏」并定出真缺陷（外部深链只推不弹 ⇒ 桌面 Shortcut 反复进入堆屏）、受限身份的解释面（`permission.scope_missing` 落到请求路径）、`status` 的运行镜像对账、p3 探针走法修正 | **已实施**（`ea509ff`→`046fb5c`）：mobile tsc/lint/jest 875 全绿、orchestrator+security+registry 2294 passed、scripts 315 passed；三处判据均双向反向验证判红。真机证据绑本轮固定包（§2.4）。**未 deploy、未 status/verify、未推送**；E-03/E-04/E-08 仍缺真人 |
 | [2026-09-10-android-goal-delivery-and-acceptance-plan.md](2026-09-10-android-goal-delivery-and-acceptance-plan.md) | AR06～AR11 工程交付优先、授权时点、声学取样与集中人工验收、连续 Goal 模板 | 2026-09-10 执行方案更新；未启动工程 Goal |
 | [2026-09-10-ar06-ar09-engineering-implementation.md](2026-09-10-ar06-ar09-engineering-implementation.md) | AR06～AR09 工程交付实施记录：lint 固定口径与 CI 接入、e2e dev/release 分轨、中文输入闭合、验包；AR07/08/09 的仪器与判据；附录 A/B 受限 token 真栈负例，附录 C 的 AR09 首批性能读数 | **已实施**（`7481cb5`→`c5b2c9b`）：本地 tsc/lint/jest 855 全绿、CI mobile job 含 lint 实跑通过、release 轨 04/09/10/11 在固定 prod 包上通过。**唤醒率与首音两个数字仍然没有**；UI 性能已取到 P0/P3/P5 首批读数并抓到两个真缺陷（路由循环内存不回落、以及由它导致的空闲卡顿），三批均未签收。附录记受限 token 已可用与「安全面成立、解释面不成立」的端到端负例，以及一次由该轮造成并已恢复的生产回退 |
 | [2026-09-10-ar10-acceptance-preparation.md](2026-09-10-ar10-acceptance-preparation.md) | AR10 验收准备：入场条件现状、候选冻结表、五人任务脚本与计分、组合矩阵 case_id、报告骨架 | 准备材料已落盘；**零参与者、零验收结论**；入场五条无一全绿 |

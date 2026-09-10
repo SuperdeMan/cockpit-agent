@@ -235,3 +235,30 @@ def test_scope_blocked_target_needs_a_blocked_set():
 
     assert asyncio.run(builder._scope_blocked_target("导航去广州塔", [])) is None
     assert spy.resolve_calls == []
+
+
+def test_default_identity_has_nothing_blocked_so_pays_nothing_per_turn():
+    """正常身份**一条能力都不该被挡下**——否则每一轮都会多一次语义路由。
+
+    这条判据挂在真实 manifest 上而不是构造的替身：受影响的是热路径的每一轮，
+    而让它变坏的方式是「某个 Agent 新增了一条 PoC 默认没给的 scope」——
+    那种改动不会碰这里任何一个文件，只有对着真声明才拦得住。
+    """
+    import glob
+
+    import yaml
+
+    from security.session_scopes import POC_DEFAULT_SCOPES
+
+    agents = []
+    for path in glob.glob("agents/*/manifest.yaml"):
+        m = yaml.safe_load(open(path, encoding="utf-8"))
+        agents.append(SimpleNamespace(manifest=SimpleNamespace(
+            agent_id=m.get("agent_id", ""),
+            trust_level=m.get("trust_level", "first_party"),
+            requires_permissions=m.get("requires_permissions") or [],
+            kind=m.get("kind", "agent"))))
+    assert agents, "没读到 manifest，这条守卫就退化成永远绿"
+
+    _, blocked = PlanBuilder._partition_by_permission(agents, list(POC_DEFAULT_SCOPES))
+    assert [a.manifest.agent_id for a in blocked] == []
