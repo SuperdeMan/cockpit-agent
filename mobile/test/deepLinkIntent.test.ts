@@ -6,6 +6,9 @@
 // ⚠ 本文件末尾的栈模拟是**我对 StackRouter 的模型**，不是 StackRouter 本身。它能证明
 // 判据的意图（栈深有界），证明不了真机行为——真机证据靠 `scripts/probe_ui_perf.py`
 // 的 Views/PSS 读数，两者不可互相顶替。
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+
 import {
   intentSteps,
   isHome,
@@ -103,6 +106,20 @@ describe('planIntent', () => {
       'xiaozhou://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081',
     ]) {
       expect(planIntent(url, { initial: false }).kind).toBe('handoff')
+    }
+  })
+
+  it('桌面 Shortcut 声明的每一条都必须是被接管的入口点', () => {
+    // 这条守卫防的是「以后有人加了第三个 Shortcut，却没加进 ENTRY_POINTS」——
+    // 那条新入口会**原样复活**本次修的缺陷（每点一次多一屏），而所有现有用例照样全绿。
+    // 判据读的是 Shortcut 的**声明源本身**（`plugins/with-shortcuts.js`），不另抄一份名单。
+    const plugin = readFileSync(
+      join(__dirname, '..', 'plugins', 'with-shortcuts.js'), 'utf8')
+    const declared = [...plugin.matchAll(/data:\s*'(xiaozhou:\/\/[^']+)'/g)].map((m) => m[1])
+    expect(declared.length).toBeGreaterThan(0)   // 读不到就等于这条守卫恒绿
+
+    for (const url of declared) {
+      expect(planIntent(url, { initial: false }).kind).toBe('enter')
     }
   })
 

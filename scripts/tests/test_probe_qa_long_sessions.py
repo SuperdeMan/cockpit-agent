@@ -29,6 +29,8 @@ def _real_cloud_status_payload(sha: str, *, healthy: int = 5) -> dict:
         **stack_status_to_dict(StackStatus(
             target="cloud",
             release_sha=sha,
+            # 健康快照里「记录的 release」与「真在跑的镜像」一致才是健康
+            running_release_sha=sha,
             container_total=None,
             container_running=None,
             healthy_endpoints=healthy,
