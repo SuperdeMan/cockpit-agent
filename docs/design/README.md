@@ -22,6 +22,9 @@
 | 文档 | 主题 | 状态 |
 |---|---|---|
 | [2026-09-10-android-goal-delivery-and-acceptance-plan.md](2026-09-10-android-goal-delivery-and-acceptance-plan.md) | AR06～AR11 工程交付优先、授权时点、声学取样与集中人工验收、连续 Goal 模板 | 2026-09-10 执行方案更新；未启动工程 Goal |
+| [2026-09-10-ar06-ar09-engineering-implementation.md](2026-09-10-ar06-ar09-engineering-implementation.md) | AR06～AR09 工程交付实施记录：lint 固定口径与 CI 接入、e2e dev/release 分轨、中文输入闭合、验包；AR07/08/09 的仪器与判据 | **已实施**（`7481cb5`→`c5b2c9b`）：本地 tsc/lint/jest 855 全绿、CI mobile job 含 lint 实跑通过、release 轨 04/09/10/11 在固定 prod 包上通过。**唤醒率/首音/UI 性能三个数字一个都没有**，三批均未签收。附录记受限 token 已可用与「安全面成立、解释面不成立」的端到端负例，以及一次由该轮造成并已恢复的生产回退 |
+| [2026-09-10-ar10-acceptance-preparation.md](2026-09-10-ar10-acceptance-preparation.md) | AR10 验收准备：入场条件现状、候选冻结表、五人任务脚本与计分、组合矩阵 case_id、报告骨架 | 准备材料已落盘；**零参与者、零验收结论**；入场五条无一全绿 |
+| [2026-09-10-android-m5-delivery-plan.md](2026-09-10-android-m5-delivery-plan.md) | AM5-01～05 可派工任务（输入/输出/前置/代码面/DoD/测试/授权边界/工作量依据）、接口草案、发布迁移回退、决策清单 | 规划主体已落盘；**零生产能力实现、未选供应商、未授权上线**；定稿待回填 AR10 实际结论 |
 | [2026-09-09-android-ar06-ar11-execution-roadmap.md](2026-09-09-android-ar06-ar11-execution-roadmap.md) | Android AR06～AR11 接续路线、前序余项与 Goal 边界 | 草案：六份方案已落盘，未实施；工程连续推进，实验冻结变量，人工/发布集中处理 |
 | [2026-09-09-ar06-release-validation-lint-plan.md](2026-09-09-ar06-release-validation-lint-plan.md) | AR06：ESLint 固定口径、dev/release 自动化、中文输入、Dock 前提与验包 | 草案，未实施；CI 接入单列授权与证据 |
 | [2026-09-09-ar07-kws-ab-validation-plan.md](2026-09-09-ar07-kws-ab-validation-plan.md) | AR07：同包单变量 KWS A/B、误唤醒/泛化、声学 profile 与 prod 复验 | 草案，未实施；需真人和固定声学路径 |
