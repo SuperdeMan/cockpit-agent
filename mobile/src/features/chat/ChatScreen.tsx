@@ -6,7 +6,7 @@
 // AR04：配置、会话和语音控制器由 AssistantProvider 持有；本屏只呈现记录与布局。
 import { FlashList } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
-import { Link, Redirect, useLocalSearchParams } from 'expo-router'
+import { Link, Redirect, router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -184,12 +184,16 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   // B5-8 深链 xiaozhou://voice（Shortcuts「说话」）：升层**不开麦**（§12.2：进入后仍需一次手势才录音）。
   // 一次性消费：同一次进入只升一次，用户收起后不再被参数顶回去。
   // 无消息时 latestTurnId 与 usePresence:98 的判等两边都是 ''，override 照样生效（现读核过）。
+  //
+  // ⚠ 消费的是**参数本身**，不是在组件实例上记一个「已消费」的 ref。`+native-intent` 现在把
+  // 「说话」深链送回**同一个**对话页（不再每点一次新建一个，见 core/nav/deepLink），
+  // 实例级 ref 会让第二次点桌面「说话」永远不再升层。清掉参数后，下一次到达重新写入
+  // `voice=1` 就又是一次真实的变化，两种进入方式的行为也就一致了。
   const { voice: voiceParam } = useLocalSearchParams<{ voice?: string }>()
-  const voiceParamConsumed = useRef(false)
   useEffect(() => {
-    if (voiceParam !== '1' || voiceParamConsumed.current) return
-    voiceParamConsumed.current = true
+    if (voiceParam !== '1') return
     setSheetOverride({ turnId: latestTurnId, mode: 'open' })
+    router.setParams({ voice: undefined })
   }, [voiceParam, latestTurnId, setSheetOverride])
 
   // B4-7 tabletop（§7.3）：分界 = 铰链上缘（窗口坐标）− 内容区在窗口里的 y。onLayout 给的是相对父级的 y，
