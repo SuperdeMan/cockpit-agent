@@ -1,0 +1,74 @@
+# 设置页上任意一枚开关：建立 → **回读** → 由调用方在流末还原（AR06 / A06-2，AR09 复用）。
+#
+# 入参：SWITCH_KEY = SwitchRow 的 settingKey（如 uxV2Dock / reduceMotionForce）
+#       SWITCH_ON  = "true" | "false"
+#
+# ⚠ 开关必须按 **testID** 点，不能按「标签之后第一枚开关」：多行说明会把开关挤出文字带，
+#   那种配对点中的是下一行那枚，而且回读读到的也是那枚错开关的新值，看起来完全像生效了。
+#   testID 由 SettingsScreen 的 SwitchRow 必填 settingKey 生成，diagnosticRoutes 有唯一性单测。
+#
+# ⚠ `checked:` **只接字面量布尔**（写 `checked: ${...}` 会被解析器拒掉：`Incorrect Format: checked`），
+#   所以两个目标值各写一段，不共用。
+#
+# ⚠ 本文件**不写 env 默认值**——Maestro 2.9 里 flow 自身的 env 会压过外部传入，
+#   写了默认值就等于把调用方传的值静默吞掉（见 subflows/open-app.yaml 头注那三条对照）。
+appId: com.xiaozhou.companion
+---
+- assertTrue:
+    condition: "${SWITCH_ON === 'true' || SWITCH_ON === 'false'}"
+    label: "前提失败：SWITCH_ON 只能是 true 或 false"
+- assertTrue:
+    condition: "${typeof SWITCH_KEY === 'string' && SWITCH_KEY.length > 0}"
+    label: "前提失败：SWITCH_KEY 必须是 SwitchRow 的 settingKey"
+
+# 冷启动直接落到设置页：App 已在前台时再发一条深链会让 Maestro 卡在 viewHierarchy 的 gRPC 上
+# 直到 DEADLINE_EXCEEDED（120s，实测两轮）。
+- stopApp
+- openLink: "xiaozhou:///settings"
+
+# 实验室/显示这些段在设置页偏下，不滚就不在屏上（Maestro 的 hierarchy 只含屏上节点）
+- scrollUntilVisible:
+    element:
+      id: "settings-switch-${SWITCH_KEY}"
+    direction: DOWN
+    visibilityPercentage: 50
+    centerElement: true
+    timeout: 40000
+
+# 只在**当前值与目标不一致**时才点：幂等，重复跑不会来回翻
+- runFlow:
+    when:
+      true: "${SWITCH_ON === 'true'}"
+      visible:
+        id: "settings-switch-${SWITCH_KEY}"
+        checked: false
+    commands:
+      - tapOn:
+          id: "settings-switch-${SWITCH_KEY}"
+          waitToSettleTimeoutMs: 400
+- runFlow:
+    when:
+      true: "${SWITCH_ON === 'false'}"
+      visible:
+        id: "settings-switch-${SWITCH_KEY}"
+        checked: true
+    commands:
+      - tapOn:
+          id: "settings-switch-${SWITCH_KEY}"
+          waitToSettleTimeoutMs: 400
+
+# 回读：设置生效的判据是**开关自己的新值**，不是「点过了」
+- runFlow:
+    when:
+      true: "${SWITCH_ON === 'true'}"
+    commands:
+      - assertVisible:
+          id: "settings-switch-${SWITCH_KEY}"
+          checked: true
+- runFlow:
+    when:
+      true: "${SWITCH_ON === 'false'}"
+    commands:
+      - assertVisible:
+          id: "settings-switch-${SWITCH_KEY}"
+          checked: false

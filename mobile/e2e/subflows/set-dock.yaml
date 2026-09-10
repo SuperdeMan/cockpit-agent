@@ -1,77 +1,16 @@
-# 「承诺面 Focus Dock」前提：建立 → **回读** → 调用方在流末还原（AR06 / A06-2）。
+# 「承诺面 Focus Dock」前提：建立 → 回读（AR06 / A06-2）。
 #
-# 为什么要有这个子流：02 验的是**气泡内**确认（v1 路径，Dock 关），06 验的是**承诺面**（Dock 开）
+# 为什么要有它：02 验的是**气泡内**确认（v1 路径，Dock 关），06 验的是**承诺面**（Dock 开）
 # ——两条前提互斥，一趟里不可能同时绿。以前两条流都不建立自己的前提、靠上一次测试的残留，
 # 于是「02 红」既可能是回归、也可能只是上一趟把开关留成了开（2026-09-05 实证过一次误判）。
 #
-# ⚠ 开关必须按 **testID** 点，不能按「标签之后第一枚开关」：多行说明会把开关挤出文字带，
-#   那种配对点中的是下一行那枚，而且回读读到的也是那枚错开关的新值，看着完全像生效了。
-#   testID 由 SettingsScreen 的 SwitchRow 必填 settingKey 生成（AR06 加的，diagnosticRoutes 有单测守）。
+# 判据本体在 subflows/set-switch.yaml —— **这里只做参数绑定，不复制一份点开关的逻辑**。
 #
-# ⚠ `checked:` **只接字面量布尔**，写 `checked: ${DOCK === 'true'}` 会被解析器拒掉
-#   （`Incorrect Format: checked`，2026-09-10 实测）⇒ 两个目标值各写一段，不共用。
-#
-# 入参：DOCK = "true" | "false"（本文件**不写 env 默认值**——Maestro 2.9 里 flow 自身的
-#       env 会压过外部传入，见 subflows/open-app.yaml 头注那三条对照）
+# 入参：DOCK = "true" | "false"
 appId: com.xiaozhou.companion
 ---
-- assertTrue:
-    condition: "${DOCK === 'true' || DOCK === 'false'}"
-    label: "前提失败：DOCK 只能是 true 或 false"
-
-# 进设置页用**点顶栏图标**，不用第二条深链（2026-09-10 实测）：
-# App 已在前台时再发 `openLink`，`am start` 只返回“intent has been delivered to
-# currently running top-most instance”，而 Maestro 随后的 waitForAppToSettle 会卡在
-# `viewHierarchy` 的 gRPC 上直到 **DEADLINE_EXCEEDED 120s**（waiting_for_connection）。
-# 点图标是真实用户路径，也没有这个问题。
-# 选择器取**无障碍标签**（TopIconLink 的 accessibilityLabel）：它已经是稳定的语义句柄，
-# 顺带把「这枚图标对读屏可达」一并验了（图标只有 svg，没有可读文本）。
-# ⚠ `waitToSettleTimeoutMs` 必填：对话屏的极光光球是**常驻动画**，永远不会 idle，
-#   缺省的 tap 会在“等屏幕安静”上碾到超时，看着像“点不到设置”。
-- tapOn:
-    text: "设置"
-    waitToSettleTimeoutMs: 200
-# 实验室那一段在设置页偏下，不滚就不在屏上（Maestro 的 hierarchy 只含屏上节点）
-- scrollUntilVisible:
-    element:
-      id: "settings-switch-uxV2Dock"
-    direction: DOWN
-    timeout: 40000
-
-# 只在**当前值与目标不一致**时才点：幂等，重复跑不会来回翻
 - runFlow:
-    when:
-      true: "${DOCK === 'true'}"
-      visible:
-        id: "settings-switch-uxV2Dock"
-        checked: false
-    commands:
-      - tapOn:
-          id: "settings-switch-uxV2Dock"
-- runFlow:
-    when:
-      true: "${DOCK === 'false'}"
-      visible:
-        id: "settings-switch-uxV2Dock"
-        checked: true
-    commands:
-      - tapOn:
-          id: "settings-switch-uxV2Dock"
-
-# 回读：设置生效的判据是**开关自己的新值**，不是「点过了」
-- runFlow:
-    when:
-      true: "${DOCK === 'true'}"
-    commands:
-      - assertVisible:
-          id: "settings-switch-uxV2Dock"
-          checked: true
-- runFlow:
-    when:
-      true: "${DOCK === 'false'}"
-    commands:
-      - assertVisible:
-          id: "settings-switch-uxV2Dock"
-          checked: false
-
-- back
+    file: set-switch.yaml
+    env:
+      SWITCH_KEY: "uxV2Dock"
+      SWITCH_ON: "${DOCK}"
