@@ -399,7 +399,7 @@ AR09 §4.1 的建议门槛是「静置 2min 后 PSS 相对预热基线增长 ≤
 
 | 项 | 卡在哪 |
 |---|---|
-| `reduceMotionForce` 开/关对照（把 F3 归到动画层）| 两条路都断：① Maestro 在**设置页**的 hierarchy 抓取不可靠——`scrollUntilVisible` 两次都撞 gRPC `DEADLINE_EXCEEDED`（237s），同一形态在 `capture-status` 上不复现；② ColorOS 锁 `WRITE_SECURE_SETTINGS`，adb 改不了系统动画缩放。而 `reduceMotionForce` 是 App 内设置，只能走 UI |
+| ~~`reduceMotionForce` 开/关对照（把 F3 归到动画层）~~ **2026-09-10 晚已闭合**，见[余项收口 §8.4](2026-09-10-ar-residuals-closeout.md)（10792 帧 → **0 帧**）。当时判的「两条路都断」有一半是误判：`set_switch.py` 那条路本身是通的，挡住它的是上一次 Maestro 留下的 driver 占着 UiAutomation | 原记录：① Maestro 在**设置页**的 hierarchy 抓取不可靠——`scrollUntilVisible` 两次都撞 gRPC `DEADLINE_EXCEEDED`（237s），同一形态在 `capture-status` 上不复现；② ColorOS 锁 `WRITE_SECURE_SETTINGS`，adb 改不了系统动画缩放。而 `reduceMotionForce` 是 App 内设置，只能走 UI |
 | 免唤醒 ARMED 那一臂 | 要开麦，属 AR07 的取样窗口 |
 | P1 长内容（500 条本地消息）| prod 上没有离线灌 500 条的 harness；**不许**为造数据向生产连发 500 个请求 |
 | P2 语音并发 | 需要真人说话 |
