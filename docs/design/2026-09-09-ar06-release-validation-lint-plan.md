@@ -58,6 +58,18 @@
 - 先验证已安装工具的 UI 文本设置或系统剪贴板粘贴通道；仅使用批准的专用 driver/测试输入工具。`pasteText` 的内部剪贴板与系统剪贴板不同，不能假定互通，见[官方说明](https://docs.maestro.dev/reference/commands-available/pastetext)。
 - 若需新全局 CLI、IME 或系统输入设置，先把候选版本、安装路径、具体用途和恢复方式准备好，再按红线请求授权。也可由用户手动输入，后续断言继续自动；该格标人工辅助，不冒充全自动。
 - 输入失败发生在工具层时保留 `BLOCKED`。不能改成英文语料后声称中文流程通过，也不能在 prod 加“URL 自动发业务”的后门。
+- **两条已经走死的路，不要重走**（2026-09-10 在 OPPO `919fd6f9` 上实测，见 AR05 §12.4）：
+  ① 设备上已装的 `dev.mobile.maestro` **没有任何 BroadcastReceiver**（`dumpsys package` 只有
+  `android.view.InputMethod` 这一个 service filter），它的文本输入靠 `dev.mobile.maestro.test`
+  这个 instrumentation + CLI 的私有通道 —— 没有 CLI 就没有入口，`am broadcast` 回
+  `result=0` 只是「没人收」，不是「收了没生效」；② `adb shell input keyevent` **不进百度
+  输入法的拼音候选缓冲**：切到中文九宫格后逐键发 `tixingwokaihui`，字面量原样落进
+  EditText，候选栏不出中文。所以「用系统输入法打拼音再选词」这条在 adb 注入下不成立，
+  真要中文通道就得走 CLI/专用 IME 那条并按红线请求授权。
+- 同一轮已确认的**边界**：`adb shell input text` 打 ASCII 是通的（文本逐字进 Composer、
+  正常发送、真栈回真实契约），所以**「服务端契约字段 → 客户端布局」这类不按语种分支的被测
+  对象可以用 ASCII 取证**；但语料语种会改变 **Planner 路由**（`navigate to Hangzhou` 绕过了
+  模糊目的地澄清，中文同义语料判定正确），A06-V04 这格仍必须用真中文，不能拿 ASCII 顶替。
 
 ### 4.3 Dock 与配置升级
 
