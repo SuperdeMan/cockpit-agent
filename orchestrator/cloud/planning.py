@@ -1360,9 +1360,15 @@ class PlanBuilder:
         if granted_permissions is not None:
             agents, scope_blocked_agents = self._partition_by_permission(
                 agents, granted_permissions)
+        catalog = _assemble_capability_catalog(agents)
+        agents = list(catalog.visible_agents)
+        agent_map = catalog.agent_map
+        working_set.catalog_stats = dict(catalog.catalog_stats)
         # 这一轮想要的恰好是被 scope 挡下的那条能力 ⇒ **一次 LLM 都不调**，直接给确定性终态。
         # 判据见 `_scope_blocked_target`；理由与 `/api/session` 摘要面的 `scope_missing`
         # 是同一条事实，只是此前只有摘要面说得出来。
+        # ⚠ 挂在 catalog 装配**之后**：装配是纯计算不花钱，而 `catalog_stats` 是观测面读的东西
+        # ——早退时不赋值，这一轮在观测里就长得像「catalog 是空的」，那是另一件事的症状。
         blocked = await self._scope_blocked_target(text, scope_blocked_agents)
         if blocked is not None:
             agent_id = str(blocked.manifest.agent_id or "")
@@ -1373,10 +1379,6 @@ class PlanBuilder:
                 scope_blocked_name=str(
                     getattr(blocked.manifest, "display_name", "") or "") or agent_id,
             )
-        catalog = _assemble_capability_catalog(agents)
-        agents = list(catalog.visible_agents)
-        agent_map = catalog.agent_map
-        working_set.catalog_stats = dict(catalog.catalog_stats)
         # C6-B 焦点让路：本轮命中了某条 `scope: clause` 的 route_hint ⇒ 这一轮有一个
         # 自带完整语义的确定性诉求，粘性地点/候选焦点该让路（判据在 hint 的声明里，
         # 这里零领域词）。置位必须在两条 prompt 路径**之前**——json 与 toolcall 两档
