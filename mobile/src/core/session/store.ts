@@ -144,6 +144,11 @@ export interface SessionState {
   s2sIds: string[]
   /** 带过视觉抓帧的用户气泡（📷 角标）；帧本身不落端、不进记录 */
   visionIds: string[]
+  /** 每条消息的落地时刻（键=消息 id；打磨批 F）。`Msg` 是共享类型不能加字段，所以并列存。
+   *  时间分隔（history.ts::timeDividers）与持久化快照读它 */
+  messageAt: Record<string, number>
+  /** 用户手动重发过的失败 / 未知气泡（打磨批 F）：标「已重发」，不再给第二个重发键。只在内存 */
+  resentIds: string[]
 }
 
 /** 上行通道（GatewaySession 实现；测试注入 fake） */
@@ -267,7 +272,53 @@ export class SessionCore {
       interruptedIds: [],
       s2sIds: [],
       visionIds: [],
+      messageAt: {},
+      resentIds: [],
     }))
+  }
+
+  // ── 记录的持久化出入口（打磨批 F；判据在 history.ts，这里只写 store）──
+
+  /** 恢复只读快照：**只写记录与关联表**，不经发送、不经播报、不产 ACK。调用方保证此刻记录为空 */
+  restoreSnapshot(snap: Pick<SessionState, 'messages' | 'turnMeta' | 'confirmLog' | 'interruptedIds' | 's2sIds' | 'visionIds' | 'messageAt'>): void {
+    if (this.disposed) return
+    this.store.setState({
+      messages: snap.messages.map((m) => ({ ...m, pending: false, streaming: false, processActive: false })),
+      turnMeta: { ...snap.turnMeta },
+      confirmLog: { ...snap.confirmLog },
+      interruptedIds: [...snap.interruptedIds],
+      s2sIds: [...snap.s2sIds],
+      visionIds: [...snap.visionIds],
+      messageAt: { ...snap.messageAt },
+    })
+  }
+
+  /** 清除对话记录（设置页「隐私 · 清除对话记录」）：记录与关联表清空；**挂起台账不动**——那是服务端的账 */
+  clearMessages(): void {
+    if (this.disposed) return
+    for (const bubble of this.registry.drainAll()) this.clearWatchdog(bubble)
+    this.store.setState({
+      messages: [],
+      turnMeta: {},
+      confirmLog: {},
+      interruptedIds: [],
+      s2sIds: [],
+      visionIds: [],
+      messageAt: {},
+      resentIds: [],
+      uncertainIds: [],
+      draftUserId: null,
+    })
+  }
+
+  /** 用户手动重发过这条失败 / 未知气泡（真正的重发走 send()，新 request_id；这里只留痕） */
+  markResent(bubbleId: string): void {
+    this.store.setState((s) => ({ resentIds: s.resentIds.includes(bubbleId) ? s.resentIds : [...s.resentIds, bubbleId] }))
+  }
+
+  /** 消息落地时刻：每一条新消息都经这里登记（appendMessage / upsertBubble 新建 / 各处内联追加） */
+  private stampAt(s: SessionState, id: string): Record<string, number> {
+    return s.messageAt[id] ? s.messageAt : { ...s.messageAt, [id]: Date.now() }
   }
 
   setStatus(status: GatewayStatus): void {
@@ -554,7 +605,7 @@ export class SessionCore {
       return
     }
     const id = uid()
-    this.store.setState((st) => ({ messages: [...st.messages, { id, role: 'user', text }], draftUserId: id }))
+    this.store.setState((st) => ({ messages: [...st.messages, { id, role: 'user', text }], draftUserId: id, messageAt: this.stampAt(st, id) }))
   }
 
   /** 取消 / 误唤醒回收 / 空定稿：草稿删除，不留气泡 */
@@ -614,6 +665,7 @@ export class SessionCore {
     this.store.setState((s) => ({
       messages: [...s.messages, { id, role: 'assistant', text: delta, streaming: true }],
       s2sIds: [...s.s2sIds, id],
+      messageAt: this.stampAt(s, id),
     }))
   }
 
@@ -1023,12 +1075,13 @@ export class SessionCore {
         followUp: data.follow_up,
         uiCard: data.ui_card,
       }
-      this.store.setState((s) => ({
-        messages:
-          id && s.messages.some((x) => x.id === id)
-            ? s.messages.map((msg) => (msg.id === id ? { ...msg, ...final } : msg))
-            : [...s.messages, { id: uid(), role: 'assistant', ...final } as Msg],
-      }))
+      this.store.setState((s) => {
+        if (id && s.messages.some((x) => x.id === id)) {
+          return { messages: s.messages.map((msg) => (msg.id === id ? { ...msg, ...final } : msg)) }
+        }
+        const fresh = uid()
+        return { messages: [...s.messages, { id: fresh, role: 'assistant', ...final } as Msg], messageAt: this.stampAt(s, fresh) }
+      })
       // 最新轮（或无在飞轮的续流 final）才驱动候选记录；旧轮只更新气泡文本（A2）
       if (isLatest) {
         this.candidates = recordCandidates(this.candidates, data.ui_card)
@@ -1069,6 +1122,7 @@ export class SessionCore {
           deliveryIds: freshIds, speech: text, receivedAt: Date.now(),
           priority: typeof data.priority === 'string' ? data.priority : undefined,
         } },
+        messageAt: this.stampAt(s, messageId),
       }))
       return
     }
@@ -1082,12 +1136,16 @@ export class SessionCore {
       }
       // 硬终止：清**所有**在飞轮。⚠ 不清挂起台账——传输出错与「还等着确认」无关（Q1-C）
       for (const bubble of this.registry.drainAll()) this.clearWatchdog(bubble)
-      this.store.setState((s) => ({
-        messages: [
-          ...s.messages.filter((x) => !x.pending),
-          { id: uid(), role: 'assistant', text: '出错了：' + data.message, error: true } as Msg,
-        ],
-      }))
+      this.store.setState((s) => {
+        const fresh = uid()
+        return {
+          messages: [
+            ...s.messages.filter((x) => !x.pending),
+            { id: fresh, role: 'assistant', text: '出错了：' + data.message, error: true } as Msg,
+          ],
+          messageAt: this.stampAt(s, fresh),
+        }
+      })
     }
     if (data.type === 'cancelled') {
       // 点名 ACK 由 registry 幂等；一个全局 justCancelled 会误吞另一轮的抢占通知。
@@ -1217,17 +1275,15 @@ export class SessionCore {
   }
 
   private appendMessage(msg: Msg): void {
-    this.store.setState((s) => ({ messages: [...s.messages, msg] }))
+    this.store.setState((s) => ({ messages: [...s.messages, msg], messageAt: this.stampAt(s, msg.id) }))
   }
 
   private upsertBubble(targetId: string, build: (msg: Msg | undefined) => Msg): void {
     this.store.setState((s) => {
       const exists = s.messages.some((x) => x.id === targetId)
-      return {
-        messages: exists
-          ? s.messages.map((msg) => (msg.id === targetId ? build(msg) : msg))
-          : [...s.messages, build(undefined)],
-      }
+      return exists
+        ? { messages: s.messages.map((msg) => (msg.id === targetId ? build(msg) : msg)) }
+        : { messages: [...s.messages, build(undefined)], messageAt: this.stampAt(s, targetId) }
     })
   }
 

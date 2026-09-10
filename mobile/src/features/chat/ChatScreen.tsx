@@ -4,7 +4,7 @@
 //  - 确认条按台账渲染（isPendingLive），位置征询条只激活最新一条
 //  - 视觉照 hmi shell.css：深空渐变+极光 blob 打底，顶栏=品牌光球+连接 pill，空对话=欢迎态大光球
 // AR04：配置、会话和语音控制器由 AssistantProvider 持有；本屏只呈现记录与布局。
-import { FlashList } from '@shopify/flash-list'
+import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { BlurTargetView } from 'expo-blur'
 import { Link, Redirect, router, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -14,7 +14,9 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { isPendingLive } from '@shared/pendingOps.mjs'
 import type { Msg } from '@shared/types.ts'
 
+import { precedingUserUtterance } from '../../core/session/actionSummary'
 import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
+import { showJumpToLatest, timeDividers } from '../../core/session/history'
 import { buildReceipt } from '../../core/session/receipt'
 import { settingsStore, type FontScalePref } from '../../core/settings/store'
 import { composerOrbAnimated, loopsAnimated, orbTempo } from '../../core/presence/orbPolicy'
@@ -169,7 +171,31 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
     onStopPlayback, setSheetOverride, privacyOpen, setPrivacyOpen, draft, setDraft,
     dockExpanded, setDockExpanded } = runtime
   const { messages, pendingOps, vehState, pendingLocationText, uncertainIds, draftUserId,
-    interruptedIds, s2sIds, visionIds, turnMeta, confirmLog } = state
+    interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, messageAt, resentIds } = state
+  const [listHeight, setListHeight] = useState(0)
+  const [columnHeight, setColumnHeight] = useState(0)
+  // 打磨批 F（评审 P13）：时间分隔（判据 history.ts::timeDividers，5 分钟）与「回到最新」（history.ts::showJumpToLatest）。
+  // now 取 snapshot.now：分隔标签只在跨天时变化，不需要自己的秒表
+  const dividers = useMemo(() => timeDividers(messages, messageAt, snapshot.now), [messages, messageAt, snapshot.now])
+  const listRef = useRef<FlashListRef<Msg>>(null)
+  const [offsetFromBottom, setOffsetFromBottom] = useState(0)
+  // 「有新内容」：离底期间记录变长了才出胶囊；回到底部即清
+  const [awayCount, setAwayCount] = useState<number | null>(null)
+  const jumpVisible = showJumpToLatest(offsetFromBottom, listHeight) && awayCount !== null && messages.length > awayCount
+  if (showJumpToLatest(offsetFromBottom, listHeight)) {
+    if (awayCount === null) setAwayCount(messages.length)
+  } else if (awayCount !== null) setAwayCount(null)
+  // 重发（评审 P13 ③）：取紧邻的上一条用户原话，走 onSend（core.send ⇒ 新 request_id），旧气泡留痕「已重发」
+  const resendOf = (item: Msg): (() => void) | undefined => {
+    if (item.role !== 'user' && !(item.error || uncertainIds.includes(item.id))) return undefined
+    if (item.role === 'user') return undefined
+    const at = messages.findIndex((m) => m.id === item.id)
+    const text = precedingUserUtterance(messages, at)
+    if (!text) return undefined
+    return () => {
+      if (onSend(text) !== false) core.markResent(item.id)
+    }
+  }
   // 首页推荐按**服务端能力摘要 + 用户开关**筛（AR05 §6.2）：没授权/没在线/用户关掉的
   // 能力不再摆推荐——点了必然被婉拒而用户不知道为什么。摘要不完整或还没查到时不筛，
   // 「此刻查不到」不许显示成「你没有这个功能」。判据在共享 quickCommands.mjs。
@@ -177,8 +203,6 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
     () => visibleQuickCommands(settings.quickCommands, sessionSummary, settings.agents),
     [settings.quickCommands, sessionSummary, settings.agents],
   )
-  const [listHeight, setListHeight] = useState(0)
-  const [columnHeight, setColumnHeight] = useState(0)
 
   // B5-8 深链 xiaozhou://voice（Shortcuts「说话」）：升层**不开麦**（§12.2：进入后仍需一次手势才录音）。
   // 一次性消费：同一次进入只升一次，用户收起后不再被参数顶回去。
@@ -340,15 +364,26 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         />
       ) : (
         <FlashList
+          ref={listRef}
           data={messages}
           onViewableItemsChanged={proactiveViewability}
           viewabilityConfig={VIEWABILITY_CONFIG}
           // FlashList v2 聊天范式：自然序 + 从底部起渲 + 新消息自动跟底
           maintainVisibleContentPosition={{ autoscrollToBottomThreshold: 0.2, startRenderingFromBottom: true }}
-          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving]}
+          onScroll={(e) => {
+            const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
+            setOffsetFromBottom(Math.max(0, Math.round(contentSize.height - layoutMeasurement.height - contentOffset.y)))
+          }}
+          scrollEventThrottle={100}
+          extraData={[pendingOps, pendingLocationText, p.dark, settings.fontScale, uncertainIds, draftUserId, interruptedIds, s2sIds, visionIds, turnMeta, confirmLog, reduceMotion, snapshot.driving, dividers, resentIds]}
           keyExtractor={(m) => m.id}
           renderItem={({ item }) => (
             <View style={{ paddingHorizontal: 12 }}>
+              {dividers[item.id] ? (
+                <Text testID="time-divider" style={{ color: p.fg3, fontSize: p.font(11), textAlign: 'center', paddingVertical: 8 }}>
+                  {dividers[item.id]}
+                </Text>
+              ) : null}
               <MessageBubble
                 p={p}
                 msg={item}
@@ -366,6 +401,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                     : null
                 }
                 onSend={onSend}
+                onResend={resendOf(item)}
+                resent={resentIds.includes(item.id)}
               />
             </View>
           )}
@@ -373,6 +410,31 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
         />
       )}
       </BlurTargetView>
+      {/* 回到最新（打磨批 F / 评审 P13 ②）：离底超一屏且有新内容才出；住在记录区容器里 ⇒ 落在 Composer 上方、
+          与 Dock 不重叠（Dock 在容器之外）。实色底（压在记录上）。 */}
+      {jumpVisible ? (
+        <Pressable
+          testID="jump-latest"
+          accessibilityRole="button"
+          accessibilityLabel="回到最新消息"
+          onPress={() => listRef.current?.scrollToEnd({ animated: true })}
+          style={{
+            position: 'absolute',
+            bottom: 10,
+            alignSelf: 'center',
+            minHeight: scale(36, 'target', settings.fontScale),
+            paddingHorizontal: 14,
+            borderRadius: 999,
+            backgroundColor: p.panel,
+            borderWidth: 1,
+            borderColor: p.glassBdTop,
+            boxShadow: p.glassShadow,
+            justifyContent: 'center',
+          }}
+        >
+          <Text style={{ color: p.accent, fontSize: p.font(12) }}>↓ 最新</Text>
+        </Pressable>
+      ) : null}
       {/* 非 driving-landscape：层住在记录区容器里（B4 及以前的形态，逐字节不变） */}
       {splitLandscape ? null : voiceSheetEl}
       </View>

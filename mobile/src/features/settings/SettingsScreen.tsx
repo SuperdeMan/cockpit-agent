@@ -4,7 +4,7 @@
 // 持久化 AsyncStorage（settings store）；buildMeta 键集由 settingsMeta.test.ts 钉住。
 import { Link } from 'expo-router'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
-import { Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
+import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
 import { useStore } from 'zustand'
 
 import { AGENT_CATALOG } from '@shared/types.ts'
@@ -21,6 +21,7 @@ import type { ServerConfig } from '../../core/config/types'
 import { activityLog, type ActivitySource } from '../../core/presence/activityLog'
 import { drivingActive, NO_EDGE_DRIVING } from '../../core/presence/drivingMode'
 import { MIC_LABEL } from '../../core/presence/presence'
+import { clearHistory } from '../../core/session/history'
 import { MOBILE_QUICK_COMMAND_ORDER } from '../../core/session/quickCommands'
 import { subscribeWiredSession, wiredSessionSnapshot } from '../../core/session/wiredStore'
 import { getWired } from '../../core/session/wiring'
@@ -785,6 +786,28 @@ export function SettingsScreen() {
           : null}
         <SubHead p={p} title="隐私记录" />
         <PrivacyRecord p={p} />
+        {/* 打磨批 F（裁决 J3）：记录本机持久化后要有清除口；二次确认，清当前会话与存量。挂起台账是服务端的账，不动 */}
+        <Pressable
+          testID="settings-clear-history"
+          accessibilityRole="button"
+          onPress={() =>
+            Alert.alert('清除对话记录', '会同时清空当前会话与本机保存的记录，不可恢复。', [
+              { text: '取消', style: 'cancel' },
+              {
+                text: '清除',
+                style: 'destructive',
+                onPress: () => {
+                  const w = getWired()
+                  w?.core.clearMessages()
+                  if (w) void clearHistory(w.historyKey)
+                },
+              },
+            ])
+          }
+          style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+        >
+          <Text style={{ color: p.red, fontSize: p.font(13) }}>清除对话记录</Text>
+        </Pressable>
       </Section>
 
       {/* ── 账号与连接 ── */}

@@ -207,6 +207,8 @@ test('B: prod 未解锁 ⇒ 七条工程链接一条都不在树里，操作诊�
     const hrefs = hrefsOf(view)
     for (const link of [...DEV_LINKS, '/debug', '/voice-spike']) expect({ link, present: hrefs.includes(link) }).toEqual({ link, present: false })
     expect(hrefs).toContain('/onboarding') // 重新配置连接是用户入口，照常在
+    // 打磨批 F：清除对话记录是隐私组里的用户入口
+    expect(view.root.findAllByProps({ testID: 'settings-clear-history' }).some((n) => typeof n.props.onPress === 'function')).toBe(true)
     expectNoAudioWork()
   } finally { await unmount(view) }
 })

@@ -96,6 +96,31 @@ test('P14：过程区折叠条、follow-up 链接、回执切换的触控高度 
   } finally { await act(async () => { receipt.unmount() }) }
 })
 
+// 打磨批 F（评审 P13 ③）：失败 / 未知气泡给「重发」；重发过标「已重发」；正常气泡没有这个键。
+test('F：error 与 uncertain 气泡给「重发」，按下回调宿主；resent 后只剩「已重发」；正常气泡没有', async () => {
+  const onResend = jest.fn()
+  const err = await mount(bubble({ id: 'e', role: 'assistant', text: '响应超时了，请稍后重试。', error: true } as Msg, { onResend }))
+  try {
+    const key = err.root.findAllByProps({ testID: 'bubble-resend' }).find((n) => typeof n.props.onPress === 'function')!
+    expect(key).toBeDefined()
+    await act(async () => { key.props.onPress() })
+    expect(onResend).toHaveBeenCalledTimes(1)
+  } finally { await act(async () => { err.unmount() }) }
+  const unknown = await mount(bubble({ id: 'u', role: 'assistant', text: '' } as Msg, { uncertain: true, onResend }))
+  try {
+    expect(unknown.root.findAllByProps({ testID: 'bubble-resend' }).length).toBeGreaterThan(0)
+  } finally { await act(async () => { unknown.unmount() }) }
+  const done = await mount(bubble({ id: 'e', role: 'assistant', text: '响应超时了', error: true } as Msg, { onResend, resent: true }))
+  try {
+    expect(done.root.findAllByProps({ testID: 'bubble-resend' })).toHaveLength(0)
+    expect(done.root.findAllByProps({ testID: 'bubble-resent' }).length).toBeGreaterThan(0)
+  } finally { await act(async () => { done.unmount() }) }
+  const ok = await mount(bubble({ id: 'a', role: 'assistant', text: '晴' } as Msg, { onResend }))
+  try {
+    expect(ok.root.findAllByProps({ testID: 'bubble-resend' })).toHaveLength(0)
+  } finally { await act(async () => { ok.unmount() }) }
+})
+
 // 打磨批 E（裁决 J1）：气泡内确认按钮删除——承诺面是唯一的确认入口（同一个待确认不许有两个入口）。
 test('E：待确认的助手气泡不再渲染气泡内确认 / 取消按钮（哪怕调用方硬塞 inlineConfirm）', async () => {
   const msg = { id: 'a', role: 'assistant', text: '要打开后备箱吗？', needConfirm: true, operationId: 'op-1' } as Msg

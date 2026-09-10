@@ -99,9 +99,14 @@ export interface BubbleProps {
   /** 此刻行车档（§6「过程区单行」）：与气泡自带的 `Msg.driving` 取或 */
   driving: boolean
   onSend: SendFn
+  /** 重发（打磨批 F / 评审 P13 ③）：只给 error 与「发送状态未知」两类助手气泡。宿主取紧邻的上一条用户原话、
+   *  走 core.send（**新 request_id**，M3-W「不自动重发」不变——这是用户手动发起） */
+  onResend?(): void
+  /** 已经重发过：标一句「已重发」，不再给第二个重发键 */
+  resent?: boolean
 }
 
-export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onSend }: BubbleProps) {
+export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onSend, onResend, resent }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
   // 长按 = 复制正文（打磨批 A / P12）：用户与助手两种气泡同一条路。端到端轮顺带给「转写由语音模型生成」的说明
@@ -225,6 +230,22 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
           </Text>
         ) : null}
         {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}
+        {(msg.error || uncertain) && !msg.pending ? (
+          resent ? (
+            <Text testID="bubble-resent" style={{ color: p.fg3, fontSize: p.font(11) }}>已重发</Text>
+          ) : onResend ? (
+            <Pressable
+              testID="bubble-resend"
+              accessibilityRole="button"
+              accessibilityLabel="重发这一句"
+              hitSlop={2}
+              onPress={onResend}
+              style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill }}
+            >
+              <Text style={{ color: p.accent, fontSize: p.font(13) }}>重发</Text>
+            </Pressable>
+          ) : null
+        ) : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
         {receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}
         {msg.followUp ? (
