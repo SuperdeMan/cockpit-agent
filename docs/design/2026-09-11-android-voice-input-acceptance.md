@@ -2,7 +2,7 @@
 
 日期：2026-09-11。用户反馈：同一噪声、同一句话，按住与轻点均会收入环境/旁人讲话；与系统助手的主要差异发生在最终采纳阶段。用户已授权按核实建议实施。
 
-状态：代码与本地回归完成，待新包/云端发布及声学验收；交付对象：Android 与 Cloud Planner。关联：`mobile/src/features/chat/usePtt.ts`、`useHandsFree.ts`、`orchestrator/cloud/engine.py`、`docs/conventions.md` 输入拒识契约。
+状态：代码、本地全量与 OPPO 验包完成，待云端发布及声学验收；交付对象：Android 与 Cloud Planner。关联：`mobile/src/features/chat/usePtt.ts`、`useHandsFree.ts`、`orchestrator/cloud/engine.py`、`docs/conventions.md` 输入拒识契约。
 
 本批基于 `738ee9936847efcb642f2b917174ca35f635e5fc`，修改客户端接线与既有云端拒识入口。生产发布、设备包和声学效果分别取证，不以本地测试替代。
 
@@ -48,7 +48,7 @@
 
 两次中间 Android 全量虽然断言均通过，进程没有退出，不能计作完成。`--detectOpenHandles` 指向既有 `history.test.ts` 三处 SessionCore 定时器；该 fixture 未销毁故意保留的在飞/挂起会话。补 `afterEach` 释放后，最终普通命令正常退出；未用 `--forceExit`、skip 或更改产品超时绕过。
 
-本轮没有跑 Python 仓库全量、没有真 ASR/Planner 噪声样本成绩，也没有把结果记为生产验收。
+后续固定 SHA 的 Python 仓库全量及 APK 结果见 §5；仍没有真 ASR/Planner 噪声样本成绩，不记为生产验收。
 
 本批仍不是完整声学受话检测：
 
@@ -72,3 +72,16 @@
 | 静音/有声设置各连续三次拒识 | 无多余 TTS，无等待卡死，下一轮正常 |
 
 分别报告误采纳与误拒绝；代码回归通过不能转写成识别准确率或系统助手同等效果。
+
+## 5. 固定提交、验包与发布准备
+
+代码提交：`f8fd15152d78592e4e5625bab22d4bd5e654738d`。以下读数绑该提交，后续文档提交不改变代码/APK 身份。
+
+- Python 固定口径 `TZ=UTC0 python -X utf8 -m pytest -q -n 8 --dist worksteal`：**8234 passed / 32 skipped / 13 warnings**，300.95s，退出码 0。警告包括 Starlette/httpx 弃用、WordPiece 弃用、一个 gRPC 未 await、audioop 弃用、已有正则 FutureWarning；未以升级全局依赖或 skip 隐藏。
+- APK：**prod / f8fd15152 / 2026-09-11 21:24**。Gradle `BUILD SUCCESSFUL`，8m56s，1222 tasks（60 executed / 1162 up-to-date），退出码 0；SDK XML 及 Gradle 弃用提示保留。
+- 本批纯 JS/TS/共享源码六文件。构建前核对原生配置、依赖、模型、`.env.local` 与既有 prod 镜像一致，运行语音资产检查；只增量复制六文件，沿构建脚本同等 Gradle 参数接续，`--no-daemon`，未运行 `/MIR`、prebuild/clean，未删除镜像缓存或修改环境文件。
+- 验包：ZIP CRC、内嵌 JS bundle、variant/build、arm64-v8a + armeabi-v7a 的 KWS/ORT、签名均通过；非 DEBUGGABLE。APK **210982558 bytes**，SHA-256 **`6fc093a9cbcca2c9f051328c79089413649953f397ff1c7e69a18dd7b7666103`**。
+- OPPO PEUM00：`install -r` 成功，安装时间 **2026-09-11 21:34:54**；设备侧安装文件 SHA-256 与上述包一致。启动 MainActivity 返回 ok，目标进程 AndroidRuntime/ReactNativeJS 错误 0 条。设备处于 Keyguard，未读到设置页正文，不把启动成功记为页面视觉或声学验收；未操作 Xiaomi。
+- 云端只读 status：生产仍 **`d532c6d816e662fa60740565d6230774c02ff200`**，running SHA 相同，5/5 healthy、无 warning。本批目标 `f8fd151...` 的 deploy dry-run 通过，`blocking_changes=[]`，CI/CD 摘要未变；**未 push、未 apply**。
+
+持久化证据位于 `%LOCALAPPDATA%\car-agent\artifacts\voice-acceptance-20260911-212413`：`verification.json`、构建脚本及 stdout/stderr、`build-result.json`、`apk-verification.json`、`device-verification.json`、`xiaozhou-prod-f8fd15152.apk`。发布预检查：仓库 `.artifacts/releases/f8fd15152d78592e4e5625bab22d4bd5e654738d/`。

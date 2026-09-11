@@ -8934,3 +8934,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 拒识终态释放播报等待；静音设置下没有 TTS 会话也能让真实 FSM 连续三轮恢复。迟到旧轮不停止新轮。
 - 本地：Android 962（89 suites，普通命令退出码 0）+ tsc/lint 0；HMI 333；Cloud Planner 1312/1；smoke_edge 13 + 四门禁通过。历史测试 fixture 的三个未释放计时器已补 teardown，未改产品超时或强制退出。
 - 代码从 `738ee99` 起；未借用其他 release 的测试，未做生产发布/声学验收。端侧直接命中、挂起续接、外部播报参照、声学说话人分离和 RejectPolicy 自适应仍按实施记录边界保留。
+
+### 同批追加 — 固定提交全量、OPPO 新包与发布预检查
+
+- 固定代码 `f8fd15152d78592e4e5625bab22d4bd5e654738d`：Python 全量 8234 passed / 32 skipped / 13 warnings，300.95s，rc=0；不把警告写成零。
+- 六个 JS/TS/共享源码与已有原生镜像核对后增量接续；未清镜像缓存。prod APK `f8fd15152`（21:24），8m56s 构建成功，双 ABI/KWS/ORT/CRC/bundle/签名/非 DEBUGGABLE 核验通过。APK SHA-256 `6fc093a9cbcca2c9f051328c79089413649953f397ff1c7e69a18dd7b7666103`。
+- OPPO 21:34:54 安装成功，设备文件哈希一致；启动 ok、目标进程错误 0，Keyguard 挡住页面正文，未记为视觉/声学通过。
+- 生产 status 仍 d532c6d、running SHA 对齐、5/5 healthy；目标 f8fd151 的 dry-run 无阻断，未 push/apply。外部持久化证据与余项见实施记录 §5。
