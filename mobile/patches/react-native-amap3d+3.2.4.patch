@@ -1,0 +1,15 @@
+diff --git a/node_modules/react-native-amap3d/lib/src/component.ts b/node_modules/react-native-amap3d/lib/src/component.ts
+index 95e6081..7c0190c 100644
+--- a/node_modules/react-native-amap3d/lib/src/component.ts
++++ b/node_modules/react-native-amap3d/lib/src/component.ts
+@@ -25,7 +25,9 @@ export default class Component<P, S = {}> extends PureComponent<P, S> {
+     const handle = findNodeHandle(this);
+     if (handle) {
+       const command = UIManager.getViewManagerConfig(this.name).Commands[name];
+-      UIManager.dispatchViewManagerCommand(handle, command, params);
++      // Fabric interop: a missing args array reaches the legacy ViewManager as null and throws
++      // UnexpectedNativeTypeException ("expected Array, got a null") on Marker.update(); always send an array.
++      UIManager.dispatchViewManagerCommand(handle, command, params ?? []);
+     }
+   }
+ }
