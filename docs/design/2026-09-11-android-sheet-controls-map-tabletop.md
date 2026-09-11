@@ -1,6 +1,6 @@
 # Android 四项体验修正：语音层手势与高度、控件高度统一、地图路线、桌面姿态
 
-> 状态：落地中（2026-09-11，用户口述四条问题 → 本文定判据与代码位置 → 同批实施）
+> 状态：已实施并发布（2026-09-11 用户口述四条问题 → 本文定判据与代码位置 → 同批实施；代码 `979854a` + `e38cd75`，生产 release `e38cd75`，OPPO 正式包同 SHA；真机与真栈证据见 §7.3，未验项也在那里）
 > 交付对象：mobile（React Native）、navigation / charging_planner Agent（路线几何）、`hmi/src/types.ts`（卡契约）
 > 关联：[打磨批 A–G](2026-09-10-android-ui-polish-batches.md)、[AR03 横屏与停播](2026-09-08-ar03-stop-playback-landscape-implementation.md)、
 > [AR04 浮动在场](2026-09-08-ar04-presentation-ack-implementation.md)、`mobile/README.md`、方案 §5.2 / §6 / §7.3
@@ -111,7 +111,24 @@ ChargingRouteCard: origin_loc?, destination_loc?; stops[].lat?/lng?; path?
 
 反向验证（各改一处、只跑该文件、看红、再按字节恢复——五处恢复后 `==` 原文均为 True）：`sheetDragOutcome` 去掉 `atTop` 判定 ⇒ `sheetGesture` 1/6 红；`parkedSheetMinDp` 的 0.62 主体改成 1 行 ⇒ `sheetHeight` 2/20 红；`Pill` 外框 `minHeight` 改 44 ⇒ `pill` + `composerChips` 3/11 红；`cardGeometry` 的 route_plan 分支不读 `destination_loc` ⇒ `mapGeometry` + `stagePane` 2/18 红；`route_path_from_amap` 不翻转 lng/lat ⇒ `test_route_geometry` 3/7 红。
 
-### 7.3 真机与云端（回填）
+### 7.3 真机与云端（2026-09-11 23:30 → 09-12）
 
-- prod 包：见下方回填。
-- 云端：**未 push、未 deploy**。真实 `route_plan` / `charging_route` 卡的几何要等含 navigation / charging_planner 改动的 release 上生产；之前客户端对真实卡的行为与今天逐字一致（无入口、无地图）。
+**提交与发布**（用户授权装机 / 部署 / 推送）：`979854a`（本批代码 + 测试 + 文档）→ 真机抓到崩溃 → `e38cd75`（amap3d 补丁 + 守卫测试）；两个提交连同上一会话未推的 `d03c9e6` 一起 push（`origin/main..HEAD` 逐条列过）。云端：`deploy --sha e38cd75` dry-run 36s 零阻断零 warning（第一次 dry-run 卡在 `buf generate proto` 走本机代理 13 分钟无进展，杀掉后单跑 buf 31s 完成，重跑即过）→ `--apply` 138s `submitted` → `status` 首次读数即 `ok`、5/5 healthy、`release_sha == running_release_sha == e38cd75`、零 warning → `verify` `verified`，artifact `20260911T161103Z-e38cd75.json`。
+
+**真栈同题对照**（`scripts/e2e_target` 解析端点、`navigation.estimate` 零动作）：`从深圳湾公园到深圳北站多远`
+| release | 卡片键 | 几何 |
+|---|---|---|
+| `f8fd151`（发布前） | `_prov destination distance_km duration_min estimate eta_ts origin type waypoints` | 无 |
+| `e38cd75`（发布后） | 上述 + `origin_loc destination_loc path` | `origin_loc (22.518968, 113.972602)`、`destination_loc (22.609878, 114.029506)`、`path` **240 点**（头 `[22.51869, 113.97285]`、尾 `[22.61009, 114.02975]`）|
+两次话术同为「全程约22.4公里，开车约32分钟」，`actions=[]`。
+
+**OPPO 候选包 #1**（`d03c9e675-dirty`，23:44，APK SHA-256 `4143ea2f…8d718`，装机回读 lastUpdateTime 23:46:44、非 DEBUGGABLE）：
+- 语音层：`xiaozhou://voice` 升层（`02-voice-sheet.png`）→ 在**内容区**（屏高 72% → 95%）下滑一次 → 层收起、记录完整可见（`03-after-whole-sheet-swipe.png`）。对话页与层都是常驻动画屏，uiautomator 拿不到树（既有边界），高度只有截图。
+- 控件两档制：设置页三枚主题单选 `choice-system/dark/light` 外框 **48.0dp**（`target_probe` 3/3 PASS）；卡片画廊 `route_plan（带路线几何·途经 1）` 的「查看路线」外框 **73.8×48.0dp** PASS（`05-gallery-route.png`：与「开始导航」按钮、chips 三种高度各归其位）。
+- 地图：点「查看路线」**App 退到桌面**，`logcat -b crash`：`UnexpectedNativeTypeException: expected Array, got a null`（线程 `mqt_v_native`）。用 `poi_detail` 样本（单点、无折线）复现同一异常 ⇒ 不是 Polyline，是 Marker 自定义标注：库在标注 `onLayout` 里 `invoke("update")` → `dispatchViewManagerCommand(handle, command, undefined)`，Fabric 互操作层把缺席 args 交给 legacy ViewManager 成 null。修法 `patches/react-native-amap3d+3.2.4.patch`（`params ?? []`，Android 侧 Marker.kt 本就靠 layout 监听刷新图标，命令冗余）+ `test/amapPatch.test.ts`。
+
+**OPPO 正式包 #2**（`e38cd75c8`，clean tree，2026-09-12 00:20，APK SHA-256 `d31f680e…5b99`，设备 `pm path` 文件 sha256sum 逐字相同；lastUpdateTime 00:20:36、非 DEBUGGABLE；21m03s）：
+- 地图（样本，`card-gallery?only=…`）：`poi_detail` 单点 → 地图页正常（`b2-03-map-poi.png`：序号「1」实色标注、信息条「杭州东站 · 1 个点」、「回中」胶囊）；`route_plan（带路线几何·途经 1）` → 地图页正常（`b2-05-map-route.png`：高德瓦片上主色折线、起（绿）/ 经（琥珀）/ 终（主色）三枚标注、信息条「当前位置 → 深圳宝安国际机场 · 24.6km · 约38分钟 · 途经 1」）；`map-fit` 56.4×48.0dp、`map-info-bar` 335×66dp（`target_probe` PASS）；`logcat -b crash` 两次都为空。
+- 语音层整层下滑：`xiaozhou://voice` 升层 → 内容区下滑 → 收起（`b2-07/b2-08`），零崩溃。
+- **真栈端到端**（Maestro 2.9.0 `--no-reinstall-driver`，流 `20-route-map`：冷启 → 输入框中文 `inputText` → 发送 → 等卡）：在 prod 包的真实 Composer 里发出「从深圳湾公园到深圳北站多远」，云端 `e38cd75` 回 `route_plan`（estimate）卡——「路线测算（未开始导航）」「深圳湾公园 → 深圳北站」「22.4km · 约30.2分钟 · 预计 00:59 到」，卡上出现**「查看路线」**（Maestro 截图 `m20-01-route-card.png`）；`tapOn card-map-entry` COMPLETED（21.7s）→ `map-info-bar` 可见断言 COMPLETED ⇒ 地图页在真实几何上打开。⚠ 随后 Maestro 在地图页取层级时把 driver 挂死（`map-fit` 等待一直 RUNNING、`adb shell` 20s 超时），杀掉 Maestro 与 `dev.mobile.maestro` 后设备恢复；地图页仍在前台，截图 `b2-09-after-maestro.png`：**高德瓦片上沿真实道路（滨海大道 → 福龙路 → 深圳北站）的主色折线 + 起 / 终两枚标注，信息条「深圳湾公园 → 深圳北站 · 22.4km · 约30分钟」**，`logcat -b crash` 为空。这一趟同时是「Maestro 与地图原生视图」的一条新边界：地图页上不要再用 Maestro 取层级，截图 / adb 取证即可。
+- 未在本批真机验证：桌面姿态横排（OPPO 是书本折叠、tabletop 要 Xiaomi）、行车档下的 Pill（44/56）、舞台内嵌地图（要双栏 / 抽屉宽度）。

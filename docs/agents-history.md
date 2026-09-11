@@ -8957,3 +8957,7 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 地图：navigation / charging_planner 出卡带 `origin_loc` / `destination_loc` / 途经点坐标 / 抽样折线（`route_geometry.py`，≤240 点、[lat, lng]）；客户端 `core/map/geometry.ts` 一份判据，地图页（高德 SDK）画折线与角色标注，舞台（双栏 / 抽屉 / 桌面）内嵌地图；`hmi/src/types.ts` 只加可选字段。
 - 桌面姿态：上半横排（`tabletopStage`：≥200dp 用 120 球，否则 88），车况三格进右列可滚区。
 - 本地：mobile jest 999 / tsc 0 / lint 0；Python 全量 8243 passed / 32 skipped / 14 warnings（618s）；hmi 333。未 commit / push / deploy；真机取证与云端几何见记录 §7.3。
+- 用户授权装机 / 部署 / 推送后：`979854a`（代码）+ `e38cd75`（amap3d 补丁）随 `d03c9e6` 一起推送；`e38cd75` dry-run 零阻断 → apply → status 5/5 healthy、running SHA 对齐 → verify verified（`20260911T161103Z-e38cd75.json`）。第一次 dry-run 在 `buf generate proto` 经本机代理卡 13 分钟，杀掉重跑即过。
+- 真栈同题对照（`navigation.estimate` 零动作）：`f8fd151` 的 route_plan 卡零几何，`e38cd75` 带 origin_loc / destination_loc / 240 点 path。
+- OPPO 候选包 #1（`d03c9e675-dirty`）：整层下滑收起有截图证据；设置页单选 / 卡内「查看路线」外框 48.0dp；**点「查看路线」App 退到桌面**——Marker 自定义标注触发 amap3d `update` 命令、Fabric 互操作层把缺席 args 当 null（`poi_detail` 单点同样复现）⇒ patch-package 让命令永远带数组（`e38cd75`）。
+- OPPO 正式包 #2（`e38cd75c8`，clean，APK SHA-256 `d31f680e…5b99` 端本一致）：单点 / 路线两种地图页正常、`map-fit` 48dp、零崩溃；整层下滑收起复验；真栈端到端——prod 包 Composer 中文输入「从深圳湾公园到深圳北站多远」→ 真实 route_plan 卡出「查看路线」→ 地图页沿真实道路画出 240 点折线 + 起 / 终标注（`b2-09-after-maestro.png`）。新边界：Maestro 在地图原生视图上取层级会把 driver 挂死，地图页只用截图 / adb 取证。
