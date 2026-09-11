@@ -8941,3 +8941,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 六个 JS/TS/共享源码与已有原生镜像核对后增量接续；未清镜像缓存。prod APK `f8fd15152`（21:24），8m56s 构建成功，双 ABI/KWS/ORT/CRC/bundle/签名/非 DEBUGGABLE 核验通过。APK SHA-256 `6fc093a9cbcca2c9f051328c79089413649953f397ff1c7e69a18dd7b7666103`。
 - OPPO 21:34:54 安装成功，设备文件哈希一致；启动 ok、目标进程错误 0，Keyguard 挡住页面正文，未记为视觉/声学通过。
 - 生产 status 仍 d532c6d、running SHA 对齐、5/5 healthy；目标 f8fd151 的 dry-run 无阻断，未 push/apply。外部持久化证据与余项见实施记录 §5。
+
+## 2026-09-11 — 语音采纳授权发布与真实拒识复核
+
+- 用户授权的 f8fd151 + 34de6dd 已推送；固定 f8fd151 dry-run→apply，独立 status 为 5/5 healthy、running SHA 对齐、零 warning；verify artifact `20260911T134859Z-f8fd151.json`。
+- 真实 `minimax:MiniMax-M3` 的 ASR 后文字探针发现未闭合边界：首轮播报句被端侧新闻规则判 media.play，探针已停止；模拟 media playing→stopped，其他车态一致，但采前状态未留证，不称完整还原。
+- 单列云端分支续测：18轮12符合预期；正常6/6，背景静默拒识6/12。后者分别为 ptt 乘客1/3、播报1/3，voice_followup 乘客1/3、播报3/3。续测0动作0挂起、前后车态与release/provider/model一致。没有用换语料后的分母抹掉首轮失败。
+- 四条漏拒 trace 经过 no_action_unconfirmed 两次后落 chitchat，两条落 system.planner_failure；旧单测绿不能替代这组真实输出通道结果。当前活项、边界及下一批范围见 `docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md`。此轮不追加产品代码或发布另一个 SHA。

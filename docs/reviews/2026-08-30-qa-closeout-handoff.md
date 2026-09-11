@@ -1,26 +1,26 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-09（573ad46 发布及 AR04 真锁屏复验）
+> 更新时间：2026-09-11（f8fd151 发布及语音采纳真栈复核）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-当前生产 release 为 `573ad46d939bf655f5a0f4ef16579e2a9b80b087`，独立 status 为 5/5 healthy、零 warning，verify 为 verified。2026-09-09 已完成提醒标题修复的真实创建及 OPPO Keyguard 呈现/ACK 验证；服务端多 operationId 实机组合、Planner 技术失败降级与既有 QA 活项仍未闭合，不能写“QA 全绿”。手册整本章节187/187和视觉35/35等证据保留在历史 `9a3b6f2f`，本轮未重跑整本。
+当前生产 release 为 `f8fd15152d78592e4e5625bab22d4bd5e654738d`，独立 status 5/5 healthy、零 warning，运行 SHA 对齐，verify verified。Android 来源/拒识终态接线已修，但 MiniMax-M3 文字注入续测背景仅6/12静默拒识、正常6/6，另有端侧新闻规则误触发媒体播放；**语音拒识仍未闭合，声学未验**。当前逐条结果见 [语音采纳发布核实](2026-09-11-voice-input-acceptance-live-findings.md)。历史手册/锁屏/其他 Android 批次保持原 SHA，不能写 QA 全绿。
 
 ## 2. 当前发布与证据边界
 
 | 项目 | 当前事实 |
 |---|---|
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
-| 生产 release | `573ad46d939bf655f5a0f4ef16579e2a9b80b087` |
-| 上一生产基线 | `a09c73a5da3181708279bc1f3e90acb1519606a0`；本轮未执行回滚 |
+| 生产 release | `f8fd15152d78592e4e5625bab22d4bd5e654738d` |
+| 上一生产基线 | `d532c6d816e662fa60740565d6230774c02ff200`；本轮未回滚 |
 | 部署状态 | 5/5 endpoint healthy，零 warning |
-| 统一验证 | `verified`；artifact `.artifacts/dev-stack-verifications/20260909T015134Z-573ad46.json`；`e2e_remote_safe`，`minimax:MiniMax-M3` |
-| 代码验证 | `573ad46` 的 CI 八任务 success，含 Python 3.11/3.12；本批 mobile 726 / reminder 220 / HMI 75 / TTS pacing 21；本轮未在本机重跑全量 |
+| 统一验证 | `verified`；artifact `.artifacts/dev-stack-verifications/20260911T134859Z-f8fd151.json` |
+| 代码验证 | 固定 `f8fd151`：Python 8234 passed / 32 skipped / 13 warnings（0 failed），mobile962 + tsc/lint0，HMI333，smoke_edge13 + 四门禁通过；不转借其他提交的数字 |
 | manual-rag | 历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3；本轮未重跑这些整批，不作为新 release 的数字 |
-| 证据边界 | 当前部署/status/verify/真锁屏提醒绑定 `573ad46`；历史 `9a3b6f2f` 全量7861/34/5与手册整批保持原锚，后续 docs/test 不冒充 release |
+| 证据边界 | 部署/status/verify 与本批后端文字探针绑 `f8fd151`；OPPO 包 `f8fd15152`。本轮没有真实噪声录音结论，未重跑手册整本/旧锁屏验收 |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
 完整36题并保留当轮成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
@@ -153,6 +153,8 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
   `7c05d04a…e0762`，全量日志SHA=`ab40f81e…d91df`，verify SHA=`7a521902…ad44`。
 
 ## 5. 当前活项
+
+- **2026-09-11 新增，仅记录未修**：端侧新闻规则将播报腔误判 `media.play`；Planner `no_action_unconfirmed` 之后的闲聊兜底/规划失败提示仍会回应背景话。见 [逐条核实](2026-09-11-voice-input-acceptance-live-findings.md)，不纳入旧批已闭合结论。
 
 | 活项 | 当前证据 | 下一步 / 启动条件 |
 |---|---|---|

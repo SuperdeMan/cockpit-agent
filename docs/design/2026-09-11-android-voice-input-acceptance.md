@@ -2,9 +2,9 @@
 
 日期：2026-09-11。用户反馈：同一噪声、同一句话，按住与轻点均会收入环境/旁人讲话；与系统助手的主要差异发生在最终采纳阶段。用户已授权按核实建议实施。
 
-状态：代码、本地全量与 OPPO 验包完成，待云端发布及声学验收；交付对象：Android 与 Cloud Planner。关联：`mobile/src/features/chat/usePtt.ts`、`useHandsFree.ts`、`orchestrator/cloud/engine.py`、`docs/conventions.md` 输入拒识契约。
+状态：已发布 `f8fd151`，OPPO 同 SHA 包已安装；真栈文字拒识存在漏拒，声学未验收。交付对象：Android 与 Cloud Planner。发布后结果见 [真栈核实](../reviews/2026-09-11-voice-input-acceptance-live-findings.md)。关联：`mobile/src/features/chat/usePtt.ts`、`useHandsFree.ts`、`orchestrator/cloud/engine.py`、`docs/conventions.md` 输入拒识契约。
 
-本批基于 `738ee9936847efcb642f2b917174ca35f635e5fc`，修改客户端接线与既有云端拒识入口。生产发布、设备包和声学效果分别取证，不以本地测试替代。
+本批基于 `738ee9936847efcb642f2b917174ca35f635e5fc`，修改客户端接线与既有云端拒识入口。生产发布、设备包和声学效果分别取证，不以本地测试替代；§5 保留发布前快照，当前线上结论以文首真栈核实为准。
 
 ## 1. 已确认的问题
 
