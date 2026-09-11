@@ -385,7 +385,11 @@ jest / tsc / lint / Maestro 读数：jest 89 suites / 951 tests、tsc 0、lint 0
   flow 走不到自己的「关飞行模式」。机制**未钉死**，最像的一条：`usePresence.needsTick` 在 `connStatus==='connecting'` 后 3s 内每秒 tick，
   断网后重连循环每次尝试都把 connChangedAt 归零 ⇒ 对话页几乎一直在每秒重渲，driver 永远等不到静止（在线时同一页 01/06/08/10 都能点）。
   批 E 删掉 v1 之后离线态只剩 v2 Dock + 胶囊这一条路，回不去了；要钉死得在飞行模式下用 uiautomator（开减少动效）看树是否每秒变——
-  飞行模式是系统级网络设置，本轮自己的探针没碰（集中处理表 #5/#6）。**补达语义本身**本轮有一次真机旁证：01 趟留下的飞行模式期间发的
+  **2026-09-11 用户授权飞行模式探针后两条 App 侧假设都被推翻**：① 减少动效开着、飞行模式下对话页 uiautomator 30/30 次 idle、树签名只在
+  胶囊切换时变一次（airplane-probe-2.log）——不是树每秒在跳；② 减少动效开着再跑一次 03（光球静止）仍在「Tap on composer-input」挂 322s
+  （maestro03-reducemotion.log）——不是光球动画。剩下的变量在 Maestro driver 自己：飞行模式下它的 hierarchy 取数不回（同一时刻 uiautomator 能取）。
+  下一步不在 App：拿 driver 的 logcat / `--debug-output` 看 gRPC 超时，或把 flow 的 `setAirplaneMode` 换成不经 driver 的断网方式。
+  每趟都把手机留在飞行模式，靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale 拉回（本轮三次）。**补达语义本身**本轮有一次真机旁证：01 趟留下的飞行模式期间发的
   「现在几点what is the weather in Shenzhen today」在 Tailscale 恢复后自动补发并出了天气卡（POLISH-F-20260910\probe-after-tailscale-restart-7fc8d9894.png），
   但那不是 flow 03 的读数，不算通过。
 ```
@@ -395,8 +399,12 @@ jest / tsc / lint / Maestro 读数：jest 89 suites / 951 tests、tsc 0、lint 0
 ```text
 批次：G（承诺卡人话摘要，服务端为主 + 客户端兜底）
 代码 SHA / APK 构建行 / 设备：d532c6d（orchestrator/cloud：contracts.py / engine.py / tests/test_ar05_contracts.py；客户端兜底在批 A 7525784b6）；
-  **未 push、未 deploy**——见集中处理表
-截图清单完成度：不适用；发布后真栈复验「open the trunk」确认卡标题绑 release SHA（待 deploy 后做）
+  **已 push（2026-09-11，b7d24cf..bd71f89）、已 deploy**：dry-run 无 blocking_changes、基础设施摘要 499fc97c… 已批准、CI/CD 摘要未变；
+  `deploy --apply` submitted 后 `status` 读到 release_sha = running_release_sha = d532c6d816e662fa60740565d6230774c02ff200、5/5 healthy、无 warnings；
+  `verify` = verified（.artifacts/dev-stack-verifications/20260911T111910Z-d532c6d.json）；日志在 POLISH-F2-20260911\deploy-apply-d532c6d.log / verify-d532c6d.log。
+  服务端代码相对 main 顶 bd71f89 无差异（e95d077 / bd71f89 只动 mobile 与 docs）。
+截图清单完成度：真栈复验 ✅ confirm-title-after-deploy-e95d07725.png（OPPO 上 e95d07725 包对新发布发「open the trunk」：Dock 标题「打开后备箱」+
+  「危险动作 · 需二次确认」+ 倒计时，不再是原话兜底、更不是 trunk.open；dump 因 Dock 倒计时拿不到，截图为准）
 jest / tsc / lint / Maestro 读数：四道门禁 eval_skills / eval_exemplars / check_intent_gate（85+25 units）/ eval_capability_integrity 全 PASS，
   smoke_edge 13/13；orchestrator/cloud 目录 1311 passed / 1 skipped；全量固定口径（TZ=UTC0，-n 8 --dist worksteal）**8233 passed / 32 skipped / 0 failed**
   （8m14s，绑 d532c6d；上一基线 8231 / 32，新增两条为本批契约用例）——POLISH-F-20260910\pytest-full-d532c6d.log
@@ -412,10 +420,10 @@ jest / tsc / lint / Maestro 读数：四道门禁 eval_skills / eval_exemplars /
 
 | # | 事项 | 现状 | 需要的动作 |
 |---|---|---|---|
-| 1 | `git push`（`origin/main..HEAD` 共 9 个提交：0aee251 docs / 7525784 A / 3d04c77 E / 0cb136c B / 4720429 A 追加 / 10e93ca C / 7fc8d98 F / d532c6d G / e95d077 F 追加，另有本文档回填的 docs 提交） | 本地 main 领先，工作树只剩本文档回填 | 授权后 push；push 前再列一次完整清单 |
-| 2 | cloud deploy（批 G 服务端） | 只做了本地门禁与全量；deploy 只接受 main 可达的已提交 SHA ⇒ 必须先 push。当前生产 `status`：5/5 healthy，`release_sha` = `running_release_sha` = `74852a737a53e2bd75f72087ee94834cccc63874`（2026-09-10 23:2x 读数） | 授权后先 dry-run：`python scripts/dev_stack.py deploy --sha d532c6d<完整40位>`（不带 `--apply` 即 dry-run），再单独授权 `--apply`（若 CI/CD 摘要变化需 `--approve-ci-cd-sha256`），发布后 `status`/`verify` 核 `running_release_sha`，并真栈复验「open the trunk」确认卡标题绑 release SHA |
+| 1 | `git push` | **已做**（用户 2026-09-11 授权）：b7d24cf..bd71f89 共 10 个提交推到 origin/main | 无 |
+| 2 | cloud deploy（批 G 服务端） | **已做**（同上授权）：dry-run 干净 → `--apply` → status 5/5 healthy、running_release_sha = d532c6d → verify = verified → 真栈复验 Dock 标题「打开后备箱」 | 无 |
 | 3 | Xiaomi 对照四格（landscape-driving-sheet / landscape-driving-dock / chat-3turns / settings-top） | 未接：Xiaomi 是用户主用机，装包与操作需单独授权 | 授权后装最终 prod 包，只截四格、不改设备状态 |
 | 4 | 系统级设置（字号 / 网络 / 权限 / 省电）与 `.env` | 本轮自己的探针没碰；Maestro 03 按 Goal 点名的回归清单跑，它自带「飞行模式 10s → 恢复」 | 无需动作（记录用） |
-| 5 | 「重发」按钮真机截图（批 F） | 需要一次失败请求：飞行模式下发一句 → 助手气泡带 error → 「重发」出现 → 关飞行模式；本轮没有自然失败 | 授权飞行模式开关后补一张 `chat-resend-<包短SHA>.png`；或归 AR10 真人轮 |
-| 6 | Maestro 03 在飞行模式段挂起（两包三趟）+ 关飞行模式后 Tailscale 不自愈 | 见「批 F 追加」未达项 ③；每次都靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale 才把测试机拉回来 | 授权一次「飞行模式下开减少动效 + uiautomator 逐秒 dump」的探针，钉死是不是 needsTick 的重连宽限；若是，把 3s 宽限的 tick 换成一次性定时器（判据仍在 presence.ts 一处） |
+| 5 | 「重发」按钮真机截图（批 F） | **探针做了（2026-09-11 授权），截不到，且发现前提不可达**：在线发一句、1.7s 后开飞行模式让它在飞 ⇒ 34s 后胶囊「已断开 · 消息会排队」、气泡保持 pending；关飞行模式重连后气泡标「发送状态未知（网络刚断过；连上后若无回音请再说一次）」但仍是「正在思考…」——`MessageBubble` 只在 `(error ∨ uncertain) ∧ !pending` 时渲染「重发」，而队列语义让在飞的那条**永远不离开 pending**（要么补达出回答、要么一直思考），所以断网这条路到不了「重发」；能到的只有服务端 error 事件那条路（`出错了：…` 气泡）。证据 POLISH-F2-20260911\chat-after-reconnect-e95d07725.png + airplane-probe-2.log | 这是批 F「失败的请求能重发」的一个设计缺口：uncertain ∧ pending 超过 N 秒没有回音时应转成可重发的终态（判据一处，配 jest）。本轮不改，归下一批裁决 |
+| 6 | Maestro 03 在飞行模式段挂起（两包三趟）+ 关飞行模式后 Tailscale 不自愈 | **探针做了**：减少动效开着时，飞行模式下对话页 uiautomator **每次都能 idle**（60s 内 30 次 dump 全 ok、树签名只在胶囊切换那一刻变一次）、离线闲置 ≈2.3 帧/s（在线闲置 0 帧/s）⇒ 「树每秒在变」这条假设**被推翻**；driver 挂起不是树在跳。再把减少动效开着跑一次 03：仍在「Tap on composer-input」挂 322s ⇒ 光球动画也**不是**变量。两条 App 侧假设都排除，剩 driver 自身在飞行模式下的 hierarchy 取数（同一时刻 uiautomator 能取） | 归 Maestro 工具侧：看 driver logcat / `--debug-output` 的 gRPC 超时，或把 flow 的 `setAirplaneMode` 换成不经 driver 的断网方式；Tailscale 不自愈是手机侧现象，每次都靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale |
 
