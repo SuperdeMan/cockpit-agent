@@ -625,11 +625,13 @@ class PlannerEngine:
             plan.safety_origin_text = text
             ctx.safety_origin_text = text
 
-            # R4.4 D6-1：hands-free 语音源 + LLM 判非受话 → 静默拒识（route_hints 兜底的 steps
-            # 一并作废）。显式输入（push-to-talk/文本/候选选择）无 input_source，永不拒识。必须在
+            # 语音来源 + LLM 判非受话 → 静默拒识（route_hints 兜底的 steps 一并作废）。
+            # Android 手动录音显式带 ptt；按下按钮只授权采集，不代表背景话就是给助手的请求。
+            # 文字/按钮和旧客户端没有来源，保留原行为；确认/补槽仍走前面的续接分支。必须在
             # `if not plan.steps` 之前——addressed=false 时 steps 恰为空，否则先走空计划话术+TTS
             # 令拒识失效（母卡实施计划 §0-4）。
-            if (ctx.prefs.get("input_source", "").startswith("voice_")
+            input_source = ctx.prefs.get("input_source", "")
+            if ((input_source.startswith("voice_") or input_source == "ptt")
                     and not plan.addressed and _reject_enabled()):
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id, "rejected",

@@ -6,8 +6,9 @@
 //
 // 麦：AsrSession 领一路 micLease（§0 第 5 条：全局单例的那只录音机在免唤醒开着时让 PTT 收不到帧、
 // 且它的 stop 会把免唤醒的真麦停掉——pttLease.test.ts 钉住）。
-// barge-in 的 App 版：按下先停播报再开麦，物理上不会自听（计划 M2-3 的 stopTTS 硬停）。
+// 按下先停播报再开麦；若定稿仍与当时的播报重合，留到输入框核对（停止不证明声学余音已消失）。
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isTtsEcho } from '@shared/voiceLoop.mjs'
 
 import { AsrSession, type AsrCallbacks, type AsrConfig } from '@/core/voice/asr'
 import {
@@ -58,7 +59,11 @@ export function usePtt(opts: {
   scope?: InteractionScope
   audioUrl: string
   sessionId: string
-  onFinal(text: string): void
+  onFinal(text: string, metaExtra: Record<string, string>): void
+  /** 疑似自身播报的手动输入不自动发送，也不删除，交给宿主放入输入框。 */
+  onEchoReview(text: string): void
+  /** 确认/补槽/位置征询的回答仍交给原有续接路径，不能因复述提示中的词被截走。 */
+  hasPendingReply?: boolean
   /** 稳定 partial（全文）→ 记录里的草稿气泡（方案 §5.2.1） */
   onPartial?(text: string): void
   /** 太短 / 出错 / 空定稿 / 取消 → 草稿不留气泡 */
@@ -78,6 +83,8 @@ export function usePtt(opts: {
   const startingRef = useRef(false)
   const pendingStopRef = useRef(false)
   const startedAtRef = useRef(0)
+  const optionsRef = useRef(opts)
+  useEffect(() => { optionsRef.current = opts })
 
   const reset = useCallback(() => {
     sessionRef.current = null
@@ -102,7 +109,7 @@ export function usePtt(opts: {
   }, [opts.audioUrl, opts.sessionId])
 
   const callbacks = useCallback(
-    (current: () => VoiceSession | null): AsrCallbacks => ({
+    (current: () => VoiceSession | null, echoReference: string): AsrCallbacks => ({
       onPartial: (t) => {
         if (!current()) return
         setPartial(t)
@@ -116,7 +123,12 @@ export function usePtt(opts: {
         reset()
         void session.cancel().catch(() => {}) // 服务端先定稿时也必须释放本轮麦与 VAD
         const text = t.trim()
-        if (text) opts.onFinal(text)
+        const latest = optionsRef.current
+        if (text && !latest.hasPendingReply && isTtsEcho(text, echoReference)) {
+          if (timeline) dropPendingInteraction(timeline)
+          latest.onDiscard?.()
+          latest.onEchoReview(text)
+        } else if (text) latest.onFinal(text, { input_source: 'ptt' })
         else {
           // 没定出内容 ⇒ 这一轮不会有主链请求，交接口要收回来，否则下一条文字会认领到它
           if (timeline) dropPendingInteraction(timeline)
@@ -173,8 +185,10 @@ export function usePtt(opts: {
       markInteraction(timeline, 'input_gesture', { detail: kind })
       // 主链 send() 认领它；30s 内没人认领就作废（见 turnTimeline 的 PENDING_TTL_MS）
       offerPendingInteraction(timeline)
-      speechController().stop() // barge-in：先停播报，再开麦
-      const cb = callbacks(() => sessionRef.current === session ? session : null)
+      const speech = speechController()
+      const echoReference = speech.echoReference // 必须在 stop 前保存，只属于本次手势
+      speech.stop()
+      const cb = callbacks(() => sessionRef.current === session ? session : null, echoReference)
       const session: VoiceSession =
         kind === 'tap'
           ? new TapTalkSession(asrConfig(), cb, { endpoint: vadEndpoint() })

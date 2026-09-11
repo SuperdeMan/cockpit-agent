@@ -20,7 +20,8 @@ jest.mock('react-native-audio-api', () => ({
     stop() { return mockNativeStop() }
   },
 }))
-jest.mock('@/core/voice/speech', () => ({ speechController: () => ({ stop() {} }) }))
+const mockSpeech = { echoReference: '', stop: jest.fn() }
+jest.mock('@/core/voice/speech', () => ({ speechController: () => mockSpeech }))
 jest.mock('@/core/voice/tapTalk', () => ({
   ...jest.requireActual('@/core/voice/tapTalk'), vadEndpoint: () => null,
 }))
@@ -38,17 +39,19 @@ class Ws {
 const originalWebSocket = globalThis.WebSocket
 const tick = async () => { for (let i = 0; i < 30; i++) await Promise.resolve() }
 const views = new Set<ReactTestRenderer>()
-async function mount(scope?: InteractionScope) {
+async function mount(scope?: InteractionScope, hasPendingReply = false) {
   let handle!: PttHandle
   const onFinal = jest.fn()
+  const onEchoReview = jest.fn()
+  const onDiscard = jest.fn()
   function Probe() {
-    handle = usePtt({ audioUrl: 'https://audio', sessionId: 'hook-session', onFinal, scope })
+    handle = usePtt({ audioUrl: 'https://audio', sessionId: 'hook-session', onFinal, scope, onEchoReview, onDiscard, hasPendingReply })
     return null
   }
   let view!: ReactTestRenderer
   await act(async () => { view = create(createElement(Probe)) })
   views.add(view)
-  return { get handle() { return handle }, onFinal, view }
+  return { get handle() { return handle }, onFinal, onEchoReview, onDiscard, view }
 }
 beforeEach(() => {
   resetMicBusForTest()
@@ -57,7 +60,57 @@ beforeEach(() => {
   mockNativeStart.mockReset().mockResolvedValue({ status: 'success' })
   mockNativeStop.mockReset().mockResolvedValue({ status: 'success' })
   Ws.all = []
+  mockSpeech.echoReference = ''
+  mockSpeech.stop.mockReset().mockImplementation(() => { mockSpeech.echoReference = '' })
   ;(globalThis as { WebSocket: unknown }).WebSocket = Ws
+})
+
+test.each(['hold', 'tap'])('%s 的非空结果带 ptt 来源；只有撞上当时播报的文本才留待核对', async (mode) => {
+  const probe = await mount()
+  const cases = [
+    { reference: '', text: '明天天气怎么样', review: false },
+    { reference: '深圳市当前阴，气温28度', text: '深圳市的。', review: true },
+    { reference: '深圳市当前阴，气温28度', text: '那明天呢', review: false },
+    { reference: '', text: '深圳市的。', review: false }, // 播报已停后有意复述，不用旧文本拒绝
+  ]
+  for (const c of cases) {
+    probe.onFinal.mockClear(); probe.onEchoReview.mockClear(); probe.onDiscard.mockClear()
+    mockSpeech.echoReference = c.reference
+    await act(async () => {
+      if (mode === 'hold') probe.handle.pressDown()
+      else probe.handle.tap()
+      await tick()
+    })
+    const ws = Ws.all.at(-1)!
+    await act(async () => {
+      ws.readyState = 1; ws.onopen?.()
+      ws.onmessage?.({ data: JSON.stringify({ type: 'final', text: c.text }) })
+      await tick()
+    })
+    if (c.review) {
+      expect(probe.onFinal).not.toHaveBeenCalled()
+      expect(probe.onEchoReview).toHaveBeenCalledWith(c.text)
+      expect(probe.onDiscard).toHaveBeenCalledTimes(1)
+    } else {
+      expect(probe.onFinal).toHaveBeenCalledWith(c.text, { input_source: 'ptt' })
+      expect(probe.onEchoReview).not.toHaveBeenCalled()
+    }
+    expect(probe.handle.state).toBe('idle')
+    expect(getAudioCaptureSnapshot().micActive).toBe(false)
+  }
+})
+
+test.each(['确认', '取消', '西湖'])('等待确认或补槽时，手动回答 %s 不被播报文案相似度截走', async (text) => {
+  const probe = await mount(undefined, true)
+  mockSpeech.echoReference = '请说确认或取消，目的地是西湖'
+  await act(async () => { probe.handle.pressDown(); await tick() })
+  const ws = Ws.all.at(-1)!
+  await act(async () => {
+    ws.readyState = 1; ws.onopen?.()
+    ws.onmessage?.({ data: JSON.stringify({ type: 'final', text }) }); await tick()
+  })
+  expect(probe.onFinal).toHaveBeenCalledWith(text, { input_source: 'ptt' })
+  expect(probe.onEchoReview).not.toHaveBeenCalled()
 })
 afterEach(async () => {
   await act(async () => { for (const view of views) view.unmount(); await tick() })

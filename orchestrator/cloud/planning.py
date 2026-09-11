@@ -1184,7 +1184,7 @@ def _trigger_directive_not_addressed(state: PlanAttemptState) -> bool:
 
 
 def _trigger_explicit_input_not_addressed(state: PlanAttemptState) -> bool:
-    """只有 hands-free 语音源会消费拒识结果；显式输入的一次 not-addressed 先重试。"""
+    """显式输入（包括 Android ptt）的一次 not-addressed 先重试；免唤醒保持原策略。"""
     parsed = state.parsed
     if not (parsed is not None and not parsed.addressed and not parsed.steps):
         return False

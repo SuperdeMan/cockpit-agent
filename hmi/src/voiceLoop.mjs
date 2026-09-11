@@ -46,6 +46,15 @@ function longestCommonRun(a, b) {
   return prev[b.length]
 }
 
+/** 文本重合只证明「疑似回声」。调用方负责用当前播报/采集状态限定适用范围。 */
+export function isTtsEcho(text, reference) {
+  const tts = normSpeech(reference || '')
+  const heard = normSpeech(text || '')
+  if (!tts || !heard) return false
+  if (tts.includes(heard) || heard.includes(tts)) return true
+  return longestCommonRun(heard, tts) / heard.length >= ECHO_OVERLAP_RATIO
+}
+
 export const VoiceState = {
   IDLE: 'IDLE',
   ARMED: 'ARMED',
@@ -499,17 +508,7 @@ export class VoiceLoop {
   }
 
   _overlapsTts(t) {
-    // 归一复用 ttsQueue 的 normSpeech（去标点/空白只留字与数字）——**不写第二份**。
-    // 2026-08-29 真机实证：不归一时这条判据在标点面前直接失效——播报文本是
-    // 「深圳市当前阴，气温28℃…」，ASR 给回来的是「深圳市。」，`includes` 不成立。
-    const tts = normSpeech(this._ttsText)
-    const heard = normSpeech(t)
-    if (!tts || !heard) return false
-    if (tts.includes(heard) || heard.includes(tts)) return true
-    // 归一还不够：ASR 会**听错字**（同一轮实测「深圳市当前阴」被听成「深圳市的」）。
-    // 判据改成「听到的这句里，最长有多少**连续**字符出现在刚播的那句里」。
-    // 用连续子串不用子序列——子序列太宽松，任意一句话和一长段播报几乎总能凑出高比例。
-    return longestCommonRun(heard, tts) / heard.length >= ECHO_OVERLAP_RATIO
+    return isTtsEcho(t, this._ttsText)
   }
 
   // ─── 供 UI / 测试读取 ───

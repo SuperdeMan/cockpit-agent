@@ -8925,3 +8925,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真机改动的两项设置（输入法中英、使用定位）均已回读确认还原；探针自造的空调状态用
   `hvac.off` 同轮还原。探针脚本与截图按共享指南放仓库外
   （`%LOCALAPPDATA%\car-agent\artifacts\AR05-realstack-20260909`、`…\AR05-device-20260909-b2`）。
+
+## 2026-09-11 — Android 语音输入采纳与拒识
+
+- 用户同条件对照将问题定位到最终采纳；实施记录：`docs/design/2026-09-11-android-voice-input-acceptance.md`。
+- 免唤醒来源/时长与 S2S 逃逸来源传到请求帧；候选改写保留本轮 meta，下一文字轮不继承。
+- Android 按住/轻点带 `input_source=ptt`，云端明确非受话时可拒识；保留显式输入重试及确认/补槽续接。当前出声参照与手动定稿高度重合时保留到输入框核对，复用共享回声判据。
+- 拒识终态释放播报等待；静音设置下没有 TTS 会话也能让真实 FSM 连续三轮恢复。迟到旧轮不停止新轮。
+- 本地：Android 962（89 suites，普通命令退出码 0）+ tsc/lint 0；HMI 333；Cloud Planner 1312/1；smoke_edge 13 + 四门禁通过。历史测试 fixture 的三个未释放计时器已补 teardown，未改产品超时或强制退出。
+- 代码从 `738ee99` 起；未借用其他 release 的测试，未做生产发布/声学验收。端侧直接命中、挂起续接、外部播报参照、声学说话人分离和 RejectPolicy 自适应仍按实施记录边界保留。

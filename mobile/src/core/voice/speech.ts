@@ -105,6 +105,15 @@ export class SpeechController implements SpeechSink {
   private beganAt = 0
   /** 本轮已流式出去的文本（FSM 用它判「助手是不是念到了唤醒词」抑制自触发） */
   private spokenText = ''
+  private streamEchoText = ''
+  private batchEchoText = ''
+  /** 当前已起播通路的参照文本，供手动录音保存快照。
+   *  文本与音频未逐字对齐，只能用于「待核对」，不能据此断言说话人或自动删除真复述。
+   *  合成等待、停止、播完后均返回空，旧轮文本不能影响下一次录音。 */
+  get echoReference(): string {
+    return [this.streamSpeaking ? this.streamEchoText : '', this.batchPlaying ? this.batchEchoText : '']
+      .filter(Boolean).join(' ')
+  }
   /** 首音时延（ms，验收判据「体感 <1.5s」的机器读数）；未出声为 0 */
   lastFirstAudioMs = 0
   /** begin 时按三档裁决的结果；finish 尊重它（同一轮不许 begin 说播、finish 又不播） */
@@ -303,6 +312,7 @@ export class SpeechController implements SpeechSink {
     this.beganAt = Date.now()
     this.lastFirstAudioMs = 0
     this.spokenText = ''
+    this.streamEchoText = ''
     this.turnSounded = false
     this.lastSegEndAt = 0
     this.turnStats = { segments: 0, gapsMs: [] }
@@ -414,6 +424,7 @@ export class SpeechController implements SpeechSink {
   delta(bubbleId: string, text: string): void {
     if (!this.foreground || !this.allowed || bubbleId !== this.bubble) return
     this.spokenText += text
+    this.streamEchoText = this.spokenText
     this.onSpeechText?.(this.spokenText) // 让 FSM 手里那份参照文本跟着变长（见 onSpeechText 头注）
     const tail = this.tail()
     if (tail && !tail.spent) {
@@ -433,6 +444,7 @@ export class SpeechController implements SpeechSink {
     // `spokenText` 更是从头到尾空着 ⇒ FSM 的回声参照仍是空串，防线照旧空转。
     // `text` 就是本轮要播的整句，正是回声判据要比对的那一份。
     this.onSpeechText?.(text)
+    this.streamEchoText = text
     // 会话对不上（begin 时还没开播报 / 已被停）：整段走批处理，不静默丢掉这次播报（旧行为原样保留）
     if (bubbleId !== this.bubble) {
       void this.speakBatch(text)
@@ -452,6 +464,13 @@ export class SpeechController implements SpeechSink {
     }
     // tail 已收尾（mixed：本地回执 final 已到，这是云端 final）→ 新段
     this.openSession(tail.completion).finish(text)
+  }
+
+  /** 服务端拒识是无声终态。即使设置为静音、从未建 TTS 会话，也须结束 FSM 的等待。 */
+  endSilentTurn(): void {
+    const hadTurn = this.queue.length > 0
+    this.stop()
+    if (!hadTurn) this.onSpeechEnded?.()
   }
 
   stop(clearDeferred = true): void {
@@ -501,6 +520,7 @@ export class SpeechController implements SpeechSink {
   async speakBatch(text: string): Promise<boolean> {
     if (!this.foreground || this.batchActive) return false
     this.batchActive = true
+    this.batchEchoText = text
     const epoch = this.stopEpoch
     setAudioPlaybackFact(this.batchOwner, true, 'live') // 合成等待也必须有停止出口。
     // 批处理这条腿不走 `delta()`，整句一次给 ⇒ 参照文本要在这里补一次，

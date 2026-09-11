@@ -179,6 +179,8 @@ export interface SpeechSink {
   finish(bubbleId: string, text: string): void
   /** 打断 / 超时 / 关掉播报：硬停 */
   stop(): void
+  /** 无声终态也要通知语音回路；静音设置下可能根本没有可 stop 的播放会话。 */
+  endSilentTurn?(): void
   /** 主动消息到达（B4-12）：**仲裁在实现里**（它读设置 + 行车事实），SessionCore 只报事实。
    *  可选——M2 起的四方法实现（含测试里的 FakeSpeech）不实现也照跑 */
   proactive?(text: string, msg: { priority?: string; hasCard: boolean; deliveryId?: string }): void
@@ -456,7 +458,9 @@ export class SessionCore {
           ...(decision.withLocation ? { location: () => this.deps.location.refreshMeta().catch(() => ({})) } : {}),
         }
       : undefined
-    this.dispatch(decision.text, false, undefined, decision.metaExtra, undefined, opts.source ?? 'text', preparation)
+    // 候选/翻页会改写 text 并附加路由字段，但不得丢掉本轮的语音来源等请求上下文。
+    const requestMeta = metaExtra || decision.metaExtra ? { ...metaExtra, ...decision.metaExtra } : undefined
+    this.dispatch(decision.text, false, undefined, requestMeta, undefined, opts.source ?? 'text', preparation)
   }
 
   /** 确认条按钮（App.tsx:850-876 对照）：哪一条由 operationId 决定 */
@@ -992,16 +996,23 @@ export class SessionCore {
       // R4.4 云端拒识：不渲染回复，把本轮气泡标灰留痕
       const rc: any = data.ui_card
       if (rc?.type === 'rejected') {
+        const isLatest = this.registry.isLatest(this.registry.bubbleFor(data))
         const rid = this.registry.settle(data)
         if (rid === null && data.request_id) return // Q3：孤儿帧丢弃
         this.clearWatchdog(rid)
         this.store.setState((s) => ({
           messages: s.messages.map((msg) =>
             msg.id === rid
-              ? { ...msg, pending: false, streaming: false, text: '', rejected: true }
+              ? { ...msg, pending: false, streaming: false, processActive: false, text: '', rejected: true }
               : msg,
           ),
         }))
+        // begin 已开播报会话；拒识也是终态，必须释放等待并让免唤醒离开 THINKING。
+        // 迟到旧轮只更新自己的气泡，不能打断正在处理的新轮。
+        if (isLatest) {
+          if (this.speech.endSilentTurn) this.speech.endSilentTurn()
+          else this.speech.stop()
+        }
         return
       }
       const isLatestTurn = this.registry.isLatest(this.registry.bubbleFor(data))

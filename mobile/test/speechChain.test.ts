@@ -9,6 +9,9 @@
 // 与 HMI `audio.ts` 段链的刻意差别：HMI 等当前段 completion 之后才**开始**轮转（新会话从建连起算，首音 ~0.6s），
 // 这里合成提前、只把**播放**闸住 ⇒ 段间空白只剩收尾 120ms + 首片 jitter 200ms 量级。
 import { SEGMENT_GRACE_MS, SpeechController } from '@/core/voice/speech'
+import { SessionCore } from '@/core/session/store'
+import { settingsStore } from '@/core/settings/store'
+import { VoiceLoop, VoiceState } from '@shared/voiceLoop.mjs'
 
  
 
@@ -112,6 +115,59 @@ afterEach(() => {
 // speakPolicy 默认 auto：语音发起（voice=true）才播——用例都按语音轮开
 const A = '好的，已为你打开空调。'
 const B = '另外提醒你，深圳今天多云转阴，出门建议带伞。'
+
+test('静音设置下没有 TTS 会话，拒识仍立即放开真实语音 FSM，连续三轮不等 100 秒兜底', () => {
+  const previous = settingsStore.getState().settings
+  settingsStore.setState({ settings: { ...previous, speakPolicy: 'silent' } })
+  const sc = new SpeechController('https://audio')
+  const sent: any[] = []
+  const core = new SessionCore({
+    sessionId: 'rejection-loop', getMeta: () => ({}), speech: sc,
+    location: { isEnabled: () => false, refreshMeta: async () => ({}), enable: async () => null },
+    transport: { send: (frame) => { sent.push(frame); return true } },
+  })
+  const loop = new VoiceLoop({
+    config: { endpointGraceMs: 0 },
+    onSend: (text: string) => core.send(text, { input_source: 'voice_wake' }, { source: 'handsfree' }),
+  })
+  sc.onSpeechEnded = () => loop.ttsEnd()
+  try {
+    loop.handsFreeOn()
+    for (let i = 0; i < 3; i++) {
+      loop.wake(); loop.vadSpeechStart(); loop.vadSpeechEnd(); loop.asrFinal('本台记者报道')
+      expect(loop.state).toBe(VoiceState.THINKING)
+      core.handleFrame({ type: 'final', request_id: sent.at(-1).request_id, ui_card: { type: 'rejected' } })
+      expect(loop.state).toBe(VoiceState.FOLLOWUP)
+    }
+    expect(mockSessions).toHaveLength(0)
+  } finally {
+    loop.handsFreeOff(); core.dispose(); sc.stop()
+    settingsStore.setState({ settings: previous })
+  }
+})
+
+test('回声参照只在起播后存在；final-only 也有文本，停止/播完/下一轮均不遗留', async () => {
+  const sc = new SpeechController('https://audio')
+  try {
+    sc.begin('b1', '', true)
+    sc.finish('b1', A)
+    expect(sc.echoReference).toBe('') // 合成等待不能冒充已经出声
+    mockSessions[0].firstAudio()
+    expect(sc.echoReference).toBe(A)
+    sc.stop()
+    expect(sc.echoReference).toBe('')
+    sc.begin('b2', '', true)
+    expect(sc.echoReference).toBe('')
+    sc.delta('b2', B)
+    mockSessions[1].firstAudio()
+    expect(sc.echoReference).toBe(B)
+    sc.finish('b2', B)
+    mockSessions[1].end()
+    await flush()
+    jest.advanceTimersByTime(SEGMENT_GRACE_MS + 1)
+    expect(sc.echoReference).toBe('')
+  } finally { sc.stop() }
+})
 
 describe('divergent：final 与已流内容是两段话', () => {
   test('第二段立刻另起流式会话合成（不走批处理），闸在第一段的 completion 上', () => {

@@ -133,6 +133,18 @@ def test_no_input_source_never_rejects():
     assert len(spy.append_turns) == 2
 
 
+def test_android_ptt_rejects_non_addressed_but_keeps_real_request():
+    for response, rejected in [(_REJECT_PLAN, True), (_WEATHER_PLAN, False)]:
+        engine, spy, _ = _make_engine(response)
+        final = _run(engine, _req("他昨天跟我说那个项目黄了" if rejected else "今天天气怎么样",
+                                 meta={"input_source": "ptt"}))[-1]
+        assert ((final.get("ui_card") or {}).get("type") == "rejected") == rejected
+        assert len(spy.append_turns) == (0 if rejected else 2)
+        if rejected:
+            assert final["speech"] == ""
+            assert spy.agent_calls == 0
+
+
 def test_addressed_voice_executes_normally():
     """voice 源 + addressed=true + 正常 steps → 行为与今天一致（执行 + 落库）。"""
     engine, spy, _ = _make_engine(_WEATHER_PLAN)

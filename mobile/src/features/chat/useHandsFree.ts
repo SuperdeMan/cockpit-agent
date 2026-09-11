@@ -117,7 +117,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
           fallbackModel: ASR_FALLBACK_MODEL,
         }
       },
-      onSend: (text) => {
+      onSend: (text, voice) => {
         if (!allowed()) return
         // 走到这里 = ASR 已定稿并交给主链；下一步 SessionCore.send 会认领这一轮
         if (hfTimelineRef.current) {
@@ -127,7 +127,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         setPartial('')
         // **与文本、与 PTT 完全同一条 send 路径**：前置路由/位置闸/候选拦截一条都不能
         // 因为「这句是免唤醒说出来的」而绕过（同 M2 那条判据）
-        cbRef.current.onSend(text)
+        cbRef.current.onSend(text, {
+          input_source: 'voice_' + (voice?.source || 'followup'),
+          voice_utterance_ms: String(voice?.utteranceMs || 0),
+        })
       },
       onStopTts: () => speechController().stop(),
       onOrbState: (o, f) => {

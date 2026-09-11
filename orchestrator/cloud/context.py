@@ -1659,7 +1659,7 @@ def build_context(request) -> PlanContext:
              ("model_pref", "answer_length", "assistant_name", "memory_enabled",
               "poi_page",          # "换一批"翻页页码，透传给 navigation
               "vehicle_battery",   # 端侧真实电量，透传给 charging
-              "input_source",      # R4.4：hands-free 语音来源（voice_wake|voice_followup|voice_bargein）
+              "input_source",      # 本轮来源：voice_* 免唤醒/S2S；ptt 为 Android 手动录音
               "voice_utterance_ms",  # R4.4：本轮 speech 累计时长（数字字符串）
               "clarify_resume",    # R4.4：澄清续接标记（"1"）——engine 据此深度=1 抑制再澄清
               "occupant_name",     # M4 P4：说话人称呼（声纹识别出的显示名）——「你知道我是谁」

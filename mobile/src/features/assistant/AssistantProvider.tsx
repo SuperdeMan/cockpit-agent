@@ -152,17 +152,22 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   const ptt = usePtt({
     audioUrl: cfg.audioUrl, sessionId: wired.session.sessionId, scope,
     onPartial: (t) => core.draftUser(t), onDiscard: () => core.discardDraftUser(),
-    onFinal: (text) => onSend(text, undefined, { source: 'ptt', bubbleId: core.commitDraftUser() ?? undefined }),
+    onFinal: (text, meta) => onSend(text, meta, { source: 'ptt', bubbleId: core.commitDraftUser() ?? undefined }),
+    hasPendingReply: pendingOps.length > 0 || pendingLocationText !== null,
+    onEchoReview: (text) => {
+      setDraft((previous) => previous ? previous + '\n' + text : text)
+      setNotice('这段像是刚才的播报，已放入输入框，核对后可发送')
+    },
   })
   const hf = useHandsFree({
     audioUrl: cfg.audioUrl, sessionId: wired.session.sessionId, scope,
     enabled: settings.handsFree, needConfirm: pendingOps.length > 0,
     onPartial: (t) => core.draftUser(t),
-    onSend: (text) => onSend(text, undefined, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),
+    onSend: (text, meta) => onSend(text, meta, { source: 'handsfree', bubbleId: core.commitDraftUser() ?? undefined }),
     onS2sUserUtterance: (t) => core.s2sUserUtterance(t),
     onS2sAnswerDelta: (t) => core.s2sAnswerDelta(t),
     onS2sTurnEnd: (r) => core.s2sTurnEnd(r.reason),
-    onS2sEscalated: (text) => onSend(text, undefined, { source: 's2s', bubbleId: core.takeS2sUserBubble() ?? undefined }),
+    onS2sEscalated: (text) => onSend(text, { input_source: 'voice_s2s' }, { source: 's2s', bubbleId: core.takeS2sUserBubble() ?? undefined }),
     onNotice: setNotice, onCancelTurn: () => core.cancelCurrentTurn(),
   })
   useEffect(() => {

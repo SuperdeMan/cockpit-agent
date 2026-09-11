@@ -23,6 +23,29 @@ jest.mock('@/core/voice/handsFree', () => ({
 const mockSpeech = { stop() {} }
 jest.mock('@/core/voice/speech', () => ({ speechController: () => mockSpeech }))
 
+test('免唤醒三种来源和语音时长必须交给宿主，不能只转发文本', async () => {
+  settingsStore.setState({ settings: { ...DEFAULT_APP_SETTINGS, handsFree: true } })
+  mockControllers.length = 0
+  const onSend = jest.fn()
+  function Probe() {
+    useHandsFree({ audioUrl: 'https://audio', sessionId: 's', enabled: true, onSend })
+    return null
+  }
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(createElement(Probe)) })
+  try {
+    for (const source of ['wake', 'followup', 'bargein']) {
+      await act(async () => { mockControllers[0].deps.onSend('明天天气怎么样', { source, utteranceMs: 1234 }) })
+      expect(onSend).toHaveBeenLastCalledWith('明天天气怎么样', {
+        input_source: 'voice_' + source, voice_utterance_ms: '1234',
+      })
+    }
+  } finally {
+    await act(async () => view.unmount())
+    settingsStore.setState({ settings: DEFAULT_APP_SETTINGS })
+  }
+})
+
 test('AR04 主控制器跨页不重建；后台同步撤回，迟到 ASR/S2S 无发送，回前台只恢复已开启的免唤醒', async () => {
   const scope = new InteractionScope({ route: '/', foreground: true, focused: true })
   settingsStore.setState({ settings: { ...DEFAULT_APP_SETTINGS, handsFree: true } })

@@ -32,6 +32,7 @@ class FakeTransport {
   sendIfOpen(frame: object): boolean { return this.send(frame) }
   lastRequestId(): string { return String([...this.sent].reverse().find((f) => f.type === 'user')?.request_id ?? '') }
 }
+const createdCores = new Set<SessionCore>()
 function newCore() {
   const transport = new FakeTransport()
   const speech = { begin: jest.fn(), delta: jest.fn(), finish: jest.fn(), stop: jest.fn(), proactive: jest.fn() }
@@ -41,6 +42,7 @@ function newCore() {
     speech,
   })
   core.setStatus('open')
+  createdCores.add(core)
   return { core, transport, speech }
 }
 /** 一轮真实问答 */
@@ -50,6 +52,11 @@ function turn(core: SessionCore, transport: FakeTransport, q: string, a: string,
 }
 
 beforeEach(async () => { await AsyncStorage.clear() })
+afterEach(() => {
+  // 用例故意留下在飞/挂起状态以检查快照排除项；结束后仍须释放它们的真实定时器。
+  for (const core of createdCores) core.dispose()
+  createdCores.clear()
+})
 
 // ── 键 ────────────────────────────────────────────────────────
 

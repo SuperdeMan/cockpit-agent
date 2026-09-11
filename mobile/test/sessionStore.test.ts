@@ -68,6 +68,34 @@ const flush = async (hops = 5) => {
   for (let i = 0; i < hops; i += 1) await Promise.resolve()
 }
 
+test('候选改写保留本轮语音来源；后续文字轮不继承', () => {
+  const { core, transport } = newCore()
+  core.candidates.intentChoice = { options: [{ label: '查天气', send_text: '明天天气怎么样' }] }
+  core.send('第一个', { input_source: 'voice_followup', voice_utterance_ms: '900' }, { source: 'handsfree' })
+  expect(transport.lastUserFrame()).toMatchObject({ text: '明天天气怎么样', meta: {
+    input_source: 'voice_followup', voice_utterance_ms: '900', clarify_resume: '1',
+  } })
+  core.send('你好')
+  expect(transport.lastUserFrame().meta).not.toHaveProperty('input_source')
+  core.dispose()
+})
+
+test('拒识结束最新轮的播报等待并收起过程区；迟到旧轮拒识不停止新轮', () => {
+  const speech = new FakeSpeech()
+  const { core, transport } = newCore({ speech })
+  core.send('背景人声', { input_source: 'voice_followup' }, { source: 'handsfree' })
+  const old = transport.lastUserFrame().request_id
+  core.send('讲个笑话')
+  const latest = transport.lastUserFrame().request_id
+  const before = speech.calls.length
+  core.handleFrame({ type: 'final', request_id: old, ui_card: { type: 'rejected', reason: 'not_addressed' } })
+  expect(speech.calls).toHaveLength(before)
+  core.handleFrame({ type: 'final', request_id: latest, ui_card: { type: 'rejected', reason: 'not_addressed' } })
+  expect(speech.calls.at(-1)).toBe('stop')
+  expect(assistants(core).at(-1)).toMatchObject({ rejected: true, pending: false, processActive: false })
+  core.dispose()
+})
+
 beforeEach(() => {
   jest.useFakeTimers()
 })

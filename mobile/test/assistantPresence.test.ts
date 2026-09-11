@@ -67,6 +67,8 @@ import { settingsStore } from '@/core/settings/store'
 import { setAudioCaptureFact } from '@/core/voice/captureFacts'
 import { setAudioPlaybackFact } from '@/core/voice/playbackFacts'
 import { speechController } from '@/core/voice/speech'
+import * as pttHooks from '@/features/chat/usePtt'
+import * as handsFreeHooks from '@/features/chat/useHandsFree'
 import { AssistantProvider, useAssistant, type AssistantRuntime } from '@/features/assistant/AssistantProvider'
 import { AssistantSurface, CrossPageVoiceLayer } from '@/features/assistant/AssistantSurface'
 import { AuroraOrb } from '@/ui/aurora'
@@ -100,6 +102,38 @@ async function mount(route: string) {
 async function unmount(view: ReactTestRenderer) { await act(async () => { view.unmount() }) }
 
 const owner = {}
+
+test('真实宿主将 PTT/免唤醒来源带进最终请求帧；疑似回声留草稿而不发送', async () => {
+  let pttOpts!: Parameters<typeof pttHooks.usePtt>[0]
+  let hfOpts!: Parameters<typeof handsFreeHooks.useHandsFree>[0]
+  const realPtt = pttHooks.usePtt
+  const realHf = handsFreeHooks.useHandsFree
+  // 只旁观参数，两个 hook 仍执行真实实现；不替宿主补 meta。
+  const pttSpy = jest.spyOn(pttHooks, 'usePtt').mockImplementation((opts) => { pttOpts = opts; return realPtt(opts) })
+  const hfSpy = jest.spyOn(handsFreeHooks, 'useHandsFree').mockImplementation((opts) => { hfOpts = opts; return realHf(opts) })
+  const view = await mount('/')
+  try {
+    for (const source of ['ptt', 'voice_wake', 'voice_followup', 'voice_bargein']) {
+      const meta = { input_source: source, ...(source === 'ptt' ? {} : { voice_utterance_ms: '1200' }) }
+      await act(async () => {
+        if (source === 'ptt') pttOpts.onFinal('讲个笑话', meta)
+        else hfOpts.onSend('讲个笑话', meta)
+      })
+      expect(transport.sent.at(-1)).toMatchObject({ text: '讲个笑话', meta })
+    }
+    const sent = transport.sent.length
+    await act(async () => { runtime!.setDraft('原来的草稿') })
+    await act(async () => { pttOpts.onEchoReview('深圳市的。') })
+    expect(transport.sent).toHaveLength(sent)
+    expect(runtime!.draft).toBe('原来的草稿\n深圳市的。')
+    expect(runtime!.notice).toContain('核对后可发送')
+    await act(async () => { runtime!.onSend('用户核对过的复述') })
+    expect((transport.sent.at(-1)!.meta as Record<string, string>)).not.toHaveProperty('input_source')
+  } finally {
+    await unmount(view)
+    pttSpy.mockRestore(); hfSpy.mockRestore()
+  }
+})
 
 beforeEach(() => {
   Object.defineProperty(AppState, 'currentState', { value: 'active', writable: true, configurable: true })
