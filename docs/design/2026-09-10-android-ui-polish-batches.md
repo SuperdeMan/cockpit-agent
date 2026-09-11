@@ -416,13 +416,34 @@ jest / tsc / lint / Maestro 读数：四道门禁 eval_skills / eval_exemplars /
   客户端再用 isMachineIntentName 兜第二道。
 ```
 
+### Xiaomi 对照四格（2026-09-11，用户接机后授权）
+
+```text
+批次：Xiaomi 对照（评审 §7 收口四格）
+代码 SHA / APK 构建行 / 设备：追加包 e95d07725（同 OPPO 那份 APK，SHA-256 069a45a4…052c 端本逐字相同）/ Xiaomi MIX Fold 4 24072PX77C（5d432b6d，compare，
+  HyperOS 3 / Android 16，折叠态外屏 1080×2520@480dpi = 360×840dp，横屏 840×360dp）；lastUpdateTime 2026-09-08 10:13:00 → 2026-09-11 20:02:57、
+  flags 无 DEBUGGABLE、设置页底行「v0.1.0 · prod · e95d07725 · 2026-09-11 01:44」；证据 POLISH-XIAOMI-20260911\<状态>-e95d07725.png + 同帧 dump
+截图清单完成度（Xiaomi 4 格）：4/4。settings-top ✅（冷启动直落 /settings，用户自己的主题「深色」未动）/ chat-3turns ✅（欢迎态起三轮：天气卡、笑话、
+  点歌——这台上第三轮有正常回答，OPPO 上是 Planner 无可执行步骤，两机同一服务端 ⇒ 是模型侧方差不是客户端）+ chat-3turns-card /
+  landscape-driving-sheet ✅（可信车载平板 + 手动行车档，`user_rotation=1` 横屏冷启动：实色常驻层、光球居左、无输入框无发送键）/
+  landscape-driving-dock ✅（C 身份没有文本入口，这一格用「手持 + 手动行车档」发「open the trunk」：Dock「打开后备箱」+「危险动作 · 需二次确认」+ 倒计时，
+  横屏行车档下 Dock 落在 Composer **之下**——与竖屏相反，属 B4 横屏可达性布局，记录不改）。
+jest / tsc / lint / Maestro 读数：不适用（对照机只截图）
+反向验证：不适用
+未达项与归属：① HyperOS 上 `input tap` 在对话页对 Pressable 时灵时不灵（横屏发送键两次点不动，Enter 才发出；竖屏 Dock「取消」input tap 不动、
+  150ms swipe-tap 才动；设置页 ChoiceRow / 开关 input tap 都正常）——取证判据照旧是回读，不是「点过了」；② 这台上「免唤醒」开关根本不渲染
+  （handsFreeAvailability 判原生缺席），所以没有开麦风险也没有要还原的；③ 行车档下冷启动进设置页，常驻语音层同样压住下半段（与 OPPO 同形），
+  改设置只能在层上方滚——已写进 xiaomi_cells.py。设备状态：user_rotation 0→1→0、accelerometer_rotation 0 未动、drivingManual 开→关、角色 可信车载平板→手持、
+  减少动效 开→关（原值关），结束时 App force-stop（接机时它就不在前台）。
+```
+
 ### 集中处理表（交用户单独授权）
 
 | # | 事项 | 现状 | 需要的动作 |
 |---|---|---|---|
 | 1 | `git push` | **已做**（用户 2026-09-11 授权）：b7d24cf..bd71f89 共 10 个提交推到 origin/main | 无 |
 | 2 | cloud deploy（批 G 服务端） | **已做**（同上授权）：dry-run 干净 → `--apply` → status 5/5 healthy、running_release_sha = d532c6d → verify = verified → 真栈复验 Dock 标题「打开后备箱」 | 无 |
-| 3 | Xiaomi 对照四格（landscape-driving-sheet / landscape-driving-dock / chat-3turns / settings-top） | 未接：Xiaomi 是用户主用机，装包与操作需单独授权 | 授权后装最终 prod 包，只截四格、不改设备状态 |
+| 3 | Xiaomi 对照四格（landscape-driving-sheet / landscape-driving-dock / chat-3turns / settings-top） | **已做**（用户 2026-09-11 接机授权）：装 e95d07725、4/4 截到，见上一节；改过的系统旋转与 App 内设置逐项回读还原 | 无 |
 | 4 | 系统级设置（字号 / 网络 / 权限 / 省电）与 `.env` | 本轮自己的探针没碰；Maestro 03 按 Goal 点名的回归清单跑，它自带「飞行模式 10s → 恢复」 | 无需动作（记录用） |
 | 5 | 「重发」按钮真机截图（批 F） | **探针做了（2026-09-11 授权），截不到，且发现前提不可达**：在线发一句、1.7s 后开飞行模式让它在飞 ⇒ 34s 后胶囊「已断开 · 消息会排队」、气泡保持 pending；关飞行模式重连后气泡标「发送状态未知（网络刚断过；连上后若无回音请再说一次）」但仍是「正在思考…」——`MessageBubble` 只在 `(error ∨ uncertain) ∧ !pending` 时渲染「重发」，而队列语义让在飞的那条**永远不离开 pending**（要么补达出回答、要么一直思考），所以断网这条路到不了「重发」；能到的只有服务端 error 事件那条路（`出错了：…` 气泡）。证据 POLISH-F2-20260911\chat-after-reconnect-e95d07725.png + airplane-probe-2.log | 这是批 F「失败的请求能重发」的一个设计缺口：uncertain ∧ pending 超过 N 秒没有回音时应转成可重发的终态（判据一处，配 jest）。本轮不改，归下一批裁决 |
 | 6 | Maestro 03 在飞行模式段挂起（两包三趟）+ 关飞行模式后 Tailscale 不自愈 | **探针做了**：减少动效开着时，飞行模式下对话页 uiautomator **每次都能 idle**（60s 内 30 次 dump 全 ok、树签名只在胶囊切换那一刻变一次）、离线闲置 ≈2.3 帧/s（在线闲置 0 帧/s）⇒ 「树每秒在变」这条假设**被推翻**；driver 挂起不是树在跳。再把减少动效开着跑一次 03：仍在「Tap on composer-input」挂 322s ⇒ 光球动画也**不是**变量。两条 App 侧假设都排除，剩 driver 自身在飞行模式下的 hierarchy 取数（同一时刻 uiautomator 能取） | 归 Maestro 工具侧：看 driver logcat / `--debug-output` 的 gRPC 超时，或把 flow 的 `setAirplaneMode` 换成不经 driver 的断网方式；Tailscale 不自愈是手机侧现象，每次都靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale |
