@@ -1,7 +1,7 @@
 // mobile/test/tokens.test.ts
 // token 层（UX v2.1 §5.9）：数值逐值照 Figma A-1 设计系统；`scale()` 是「大字」档同时放大
 // 文字 / 目标 / 行高的唯一入口——此前 Palette.font() 只放大文字，容器与热区不跟着长（P13）。
-import { GLASS, MOTION, RADIUS, SPACE, TARGET, TYPE, scale } from '@/ui/tokens'
+import { GLASS, MOTION, PILL, RADIUS, SPACE, TARGET, TYPE, scale } from '@/ui/tokens'
 
 describe('tokens 数值照 A-1 设计系统', () => {
   test('4px 栅格与圆角阶', () => {
@@ -10,6 +10,11 @@ describe('tokens 数值照 A-1 设计系统', () => {
   })
   test('触控目标：泊车 48 / 行车 56（Guidelines :325-327）', () => {
     expect(TARGET).toEqual({ parked: 48, driving: 56 })
+  })
+  test('胶囊视觉高（2026-09-11 两档制）：泊车 36 / 行车 44，都矮于同档触控目标（外框撑到目标）', () => {
+    expect(PILL).toEqual({ parked: 36, driving: 44 })
+    expect(PILL.parked).toBeLessThan(TARGET.parked)
+    expect(PILL.driving).toBeLessThan(TARGET.driving)
   })
   test('材质三档：G0 不透明不模糊；G2 只给光球与把手（§5.11）', () => {
     expect(GLASS.solid.blur).toBe(0)

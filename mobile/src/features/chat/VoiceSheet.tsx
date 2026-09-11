@@ -13,6 +13,8 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 
+import { SHEET_PAN_ACTIVATE_DY, SHEET_PAN_FAIL_DX, sheetDragOffset, sheetDragOutcome } from '@/ui/layout/sheetGesture'
+
 import { edgeGlowActive, type OrbTempo } from '@/core/presence/orbPolicy'
 import type { PresenceSnapshot } from '@/core/presence/presence'
 import type { CandidateState } from '@/core/session/candidates'
@@ -71,9 +73,6 @@ export interface VoiceSheetProps {
   onSend(text: string): void
 }
 
-/** 下拉多少算「收起」（dp） */
-export const SHEET_DISMISS_DY = 80
-
 /** 层壳底（第 3 批附加项①，**§5.11 G1 的 tint 落地，不是新裁决**）：`Glass` 的 `glassBg` 在暗色下
  *  只有 5.6%（那是**卡壳**用的），语音层套上它之后记录里的气泡会透过层与层内文字重叠、两边都难读
  *  （第 2 批真机 `b2-03-capsule-attention.png`）。这里在 Glass 内垫一层 `p.bg` 同色系实色，
@@ -112,28 +111,50 @@ export function VoiceSheet(props: VoiceSheetProps) {
     if (open) setMounted(true)
   }
   const h = useSharedValue(0)
+  // 跟手位移（2026-09-11 整层下滑收起）：拖动中层随手指下移，松手收起或回弹；每次展开归零
+  const dragY = useSharedValue(0)
   useEffect(() => {
     if (open) {
+      dragY.value = 0
       h.value = withSpring(target, { damping: 18, stiffness: 160 })
       return
     }
     h.value = withTiming(0, { duration: COLLAPSE_MS })
     const t = setTimeout(() => setMounted(false), COLLAPSE_MS)
     return () => clearTimeout(t)
-  }, [open, target, h])
-  const sheetStyle = useAnimatedStyle(() => ({ height: h.value }))
-  // 只认「向下拖」（`activeOffsetY(10)`），**且 B5-12 起只挂在顶缘把手带上**——横滑与层内滚动
-  // 都够不到它。方向约束的来历：不加时这条 Pan 会把层内 chips 的横滑一并吃掉——T9 真机实测
-  // 400ms / 900ms 两次横滑，chips 带逐字节 **0.00%** 变化，而同两帧的层内大球框差 **99.98%**
-  // （屏是活的，观测通道开着）⇒ 第二个 chip 永远够不到。
-  // 挂位约束的来历：B4 §6.4 实测**向上拖走的是层内 ScrollView**（`driving-card-title` −11.0 → +24.3dp，
-  // 层高纹丝不动）；ScrollView 滚到顶之后再向下拖会与整层 Pan 打架 ⇒ 限定在把手带就不打架。
-  // 收起只需要向下，两条约束都不影响已验的收起路径（500px 下拖远超 10dp）。⚠ 真机复验见 §6.3。
+  }, [open, target, h, dragY])
+  const sheetStyle = useAnimatedStyle(() => ({ height: h.value, transform: [{ translateY: dragY.value }] }))
+  // 整层下滑收起（2026-09-11，用户：「整页任意位置下滑即可收起，市面 App 都这么做」）。
+  // B5-12 把 Pan 限定在把手带是为了避开两个冲突，这里各用正解而不是回避：
+  //  · 与层内 ScrollView 抢位移 ⇒ `Gesture.Native()` 包住 ScrollView 并声明 simultaneous，
+  //    **只在手势开始时滚动区处于顶部**才接管下拉（`atTop`）；不在顶部的拖动整段属于滚动区；
+  //  · 吃掉 chips 横滑 ⇒ `failOffsetX`：横向先动 16dp 即失败，`activeOffsetY(12)` 之前也不激活，
+  //    轻点（chips / 卡内按钮 / 停止键 / 把手带）照旧落到 Pressable。
+  // 松手判定在 `ui/layout/sheetGesture.ts`（距离 80 或快甩），这里只转发。
+  // 滚动偏移与「手势开始时在不在顶部」用 shared value 存（不用 ref）：手势回调在渲染期定义、触摸时才跑，
+  // `react-hooks/refs` 无法证明这一点会判红；shared value 的 get/set 是它认可的可变外部状态入口（StageDrawer 同款）。
+  const scrollY = useSharedValue(0)
+  const atTop = useSharedValue(true)
+  const scrollGesture = Gesture.Native()
   const pan = Gesture.Pan()
     .runOnJS(true)
-    .activeOffsetY(10)
+    .activeOffsetY(SHEET_PAN_ACTIVATE_DY)
+    .failOffsetX([-SHEET_PAN_FAIL_DX, SHEET_PAN_FAIL_DX])
+    .simultaneousWithExternalGesture(scrollGesture)
+    .onBegin(() => {
+      atTop.set(scrollY.get() <= 1)
+    })
+    .onUpdate((e) => {
+      dragY.set(sheetDragOffset(atTop.get(), e.translationY))
+    })
     .onEnd((e) => {
-      if (e.translationY > SHEET_DISMISS_DY) props.onCollapse()
+      const outcome = sheetDragOutcome({ atTop: atTop.get(), translationY: e.translationY, velocityY: e.velocityY })
+      if (outcome === 'dismiss') props.onCollapse()
+      else dragY.set(withSpring(0, { damping: 20, stiffness: 220 }))
+    })
+    .onFinalize((_e, success) => {
+      // 被系统手势 / 取消打断（没走到 onEnd）时别把层留在半路
+      if (!success) dragY.set(withSpring(0, { damping: 20, stiffness: 220 }))
     })
   if (!mounted) return null
 
@@ -182,6 +203,9 @@ export function VoiceSheet(props: VoiceSheetProps) {
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.6)' }}
       />
       <Animated.View testID="voice-sheet" style={[{ position: 'absolute', left: 0, right: 0, bottom: 0 }, sheetStyle]}>
+        {/* 整层 Pan 挂在这一层：把手带、通知条、滚动区、chips、卡都在它之内（2026-09-11） */}
+        <GestureDetector gesture={pan}>
+        <View testID="voice-sheet-drag" style={{ flex: 1 }}>
         <Glass
           p={p}
           r={RADIUS['2xl']}
@@ -214,24 +238,22 @@ export function VoiceSheet(props: VoiceSheetProps) {
           )}
           {/* 顶缘极光（方案 §5.2 规则 6）：只在 listening / thinking */}
           <EdgeGlow active={edgeGlowActive(snapshot)} animated={props.motion.loops} />
-          {/* 顶缘把手带（B5-12，泓舟 B4 真机轮原话①）：底栏「收起 / 打断」撤掉——收起 = 从这条带向下拖
-              （或轻点它 / 点暗区 / 返回键），打断 = Composer 的 ⬆/■ 合一键（B5-13）。Pan **只挂在这条带上**：
-              B4 实测层内 ScrollView 向上拖能滚，滚到顶后向下拖会与整层 Pan 打架；限定在把手带就不打架。
+          {/* 顶缘把手带（B5-12，泓舟 B4 真机轮原话①）：底栏「收起 / 打断」撤掉——收起 = 向下拖
+              （2026-09-11 起整层任意位置都行，Pan 挂在外层）/ 轻点把手带 / 点暗区 / 返回键，
+              打断 = Composer 的 ⬆/■ 合一键（B5-13）。
               它接替 voice-sheet-collapse 的 §6「目标 ≥56dp」演员身份（testID 沿用，探针脚本不改）。
-              把手本身仍是 G2 的那条 36×4（§5.11），只是外面套了一条 ≥56dp 的可点可拖带。 */}
+              把手本身仍是 G2 的那条 36×4（§5.11），只是外面套了一条 ≥56dp 的可点带。 */}
           <View>
-            <GestureDetector gesture={pan}>
-              <Pressable
-                testID="voice-sheet-collapse"
-                accessibilityRole="button"
-                accessibilityLabel="收起语音层"
-                accessibilityHint="向下拖或轻点收起"
-                onPress={props.onCollapse}
-                style={{ minHeight: targetBtn, alignItems: 'center', justifyContent: 'center' }}
-              >
-                <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2 }} />
-              </Pressable>
-            </GestureDetector>
+            <Pressable
+              testID="voice-sheet-collapse"
+              accessibilityRole="button"
+              accessibilityLabel="收起语音层"
+              accessibilityHint="向下拖或轻点收起"
+              onPress={props.onCollapse}
+              style={{ minHeight: targetBtn, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: p.fill2 }} />
+            </Pressable>
             {/* 层内停止键（AR03 / 评审 R06 + R09 横屏）：**只在真的有声音时挂载**。
                 driving-landscape 下层覆盖整个记录区 + Composer，合一键够不到 ⇒ 不给这一枚就只能
                 「先收层再停」，正是 R09 那条。绝对定位在把手带那一行右侧：那行 `minHeight` 已经是
@@ -275,13 +297,22 @@ export function VoiceSheet(props: VoiceSheetProps) {
           {/* 滚动区 + 底缘渐隐（P06）：内容底部多留 24dp，遮罩压在滚动区最下 24dp、不拦触摸。
               外层 View 只是给遮罩一个定位参照，不改层高（sheetHeight.ts 的 chrome 读数一个不动）。 */}
           <View style={{ flex: 1 }}>
+          {/* 滚动区包在 Native 手势里与整层 Pan simultaneous；`onScroll` 记偏移供 Pan 判「在不在顶部」。
+              `overScrollMode="never"`：顶部下拉时层在跟手，Android 的边缘辉光叠上去像两个东西在动 */}
+          <GestureDetector gesture={scrollGesture}>
           <ScrollView
+            testID="voice-sheet-scroll"
             contentContainerStyle={
               props.split
                 ? { padding: 16, paddingBottom: 16 + SHEET_BOTTOM_FADE_DP, gap: 16, flexDirection: 'row', alignItems: 'flex-start' }
                 : { padding: 16, paddingBottom: 16 + SHEET_BOTTOM_FADE_DP, gap: 12, alignItems: 'center' }
             }
             keyboardShouldPersistTaps="handled"
+            onScroll={(e) => {
+              scrollY.set(e.nativeEvent.contentOffset.y)
+            }}
+            scrollEventThrottle={16}
+            overScrollMode="never"
           >
             {/* 横屏车载 split（§6「横屏 40:60」）：左 40% 球 + 转写 + 胶囊 / 右 60% 回答 + chips + 卡。
                 **非 split 时这两个容器只是透明分组**（同样 gap 12 + 居中 + 撑满宽），逐项排版不变。 */}
@@ -403,6 +434,7 @@ export function VoiceSheet(props: VoiceSheetProps) {
               </View>
             )}
           </ScrollView>
+          </GestureDetector>
           <View
             pointerEvents="none"
             testID="voice-sheet-fade"
@@ -417,6 +449,8 @@ export function VoiceSheet(props: VoiceSheetProps) {
           />
           </View>
         </Glass>
+        </View>
+        </GestureDetector>
       </Animated.View>
     </View>
   )

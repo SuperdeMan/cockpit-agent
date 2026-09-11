@@ -8,6 +8,7 @@ import { Modal, ScrollView } from 'react-native'
 jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
 
 import { Composer } from '@/features/chat/Composer'
+import { Pill } from '@/ui/Pill'
 import { TARGET } from '@/ui/tokens'
 import { paletteOf } from '@/ui/theme'
 
@@ -26,7 +27,8 @@ async function mount(el: React.ReactElement) {
   await act(async () => { view = create(el) })
   return view
 }
-const chips = (view: ReactTestRenderer) => view.root.findAllByProps({ testID: 'composer-chip' }).filter((n) => typeof n.props.onPress === 'function')
+// 2026-09-11 起 chip 是 `ui/Pill`：testID 与 onPress 同时落在 Pill 组件与它的外框 Pressable 上，按类型只取外框（触控目标量的就是它）
+const chips = (view: ReactTestRenderer) => view.root.findAllByProps({ testID: 'composer-chip' }).filter((n) => n.type !== Pill && typeof n.props.onPress === 'function')
 const minHeightOf = (n: { props: Record<string, unknown> }) => {
   const s = n.props.style as { minHeight?: number } | { minHeight?: number }[] | undefined
   return Array.isArray(s) ? s.map((x) => x?.minHeight).find((v) => typeof v === 'number') : s?.minHeight

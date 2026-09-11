@@ -176,6 +176,22 @@ export function cardFixtures(): Fixture[] {
     card: { type: 'route_plan', cancelled: true, destination: '杭州东站', waypoints: [] },
   },
   {
+    // 2026-09-11：后端带路线几何的形态（origin_loc / destination_loc / waypoints 坐标 / path，全部可选）——
+    // 卡上出现「查看路线」，地图页画折线 + 起 / 经 / 终标注。路径点是深圳湾→机场方向的示意采样，**样本不是读数**。
+    label: 'route_plan（带路线几何·途经 1）',
+    card: {
+      type: 'route_plan', origin: '当前位置', destination: '深圳宝安国际机场', distance_km: 24.6, duration_min: 38,
+      origin_loc: { lat: 22.5314, lng: 113.9503 },
+      destination_loc: { lat: 22.6394, lng: 113.8105 },
+      waypoints: [{ name: '瑞幸咖啡(富通城三期店)', address: '兴业路富通城三期一层103室', lat: 22.5781, lng: 113.8563 }],
+      path: [
+        [22.5314, 113.9503], [22.5402, 113.9361], [22.5488, 113.9210], [22.5553, 113.9052], [22.5640, 113.8890],
+        [22.5722, 113.8712], [22.5781, 113.8563], [22.5862, 113.8451], [22.5975, 113.8362], [22.6103, 113.8280],
+        [22.6231, 113.8198], [22.6394, 113.8105],
+      ],
+    },
+  },
+  {
     label: 'poi_list（dest_choice·真栈已验）',
     realStack: true,
     card: {

@@ -8948,3 +8948,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真实 `minimax:MiniMax-M3` 的 ASR 后文字探针发现未闭合边界：首轮播报句被端侧新闻规则判 media.play，探针已停止；模拟 media playing→stopped，其他车态一致，但采前状态未留证，不称完整还原。
 - 单列云端分支续测：18轮12符合预期；正常6/6，背景静默拒识6/12。后者分别为 ptt 乘客1/3、播报1/3，voice_followup 乘客1/3、播报3/3。续测0动作0挂起、前后车态与release/provider/model一致。没有用换语料后的分母抹掉首轮失败。
 - 四条漏拒 trace 经过 no_action_unconfirmed 两次后落 chitchat，两条落 system.planner_failure；旧单测绿不能替代这组真实输出通道结果。当前活项、边界及下一批范围见 `docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md`。此轮不追加产品代码或发布另一个 SHA。
+
+## 2026-09-11 — Android 四项体验修正（语音层手势与高度 / 控件两档制 / 地图路线 / 桌面姿态）
+
+- 用户口述四条：语音层要整页任意位置下滑收起且升起幅度按尺寸适配；可点胶囊 / 按钮高度不一致；「导航去 xxx」没有进地图画路线的入口、平板 / 展开态要用好舞台；折叠 90° 桌面姿态上半三个状态数值被截断。设计与实施记录 `docs/design/2026-09-11-android-sheet-controls-map-tabletop.md`。
+- 语音层：整层 Pan 与 `Gesture.Native()` 滚动区 simultaneous，滚动区在顶部才接管、横滑先动即失败、跟手 + 80dp / 快甩两条收起路径（`ui/layout/sheetGesture.ts`）；泊车路径补内容下限（0.4 = 200 / 0.62 = 260 / 0.78 = 314），主力机三档比例都高于下限 ⇒ 读数逐 dp 不变。
+- 控件：`PILL`（36 / 44）+ `ui/Pill`，外框仍撑到 `TARGET`；六种胶囊高收成一种，按钮类 44 一律改目标高。
+- 地图：navigation / charging_planner 出卡带 `origin_loc` / `destination_loc` / 途经点坐标 / 抽样折线（`route_geometry.py`，≤240 点、[lat, lng]）；客户端 `core/map/geometry.ts` 一份判据，地图页（高德 SDK）画折线与角色标注，舞台（双栏 / 抽屉 / 桌面）内嵌地图；`hmi/src/types.ts` 只加可选字段。
+- 桌面姿态：上半横排（`tabletopStage`：≥200dp 用 120 球，否则 88），车况三格进右列可滚区。
+- 本地：mobile jest 999 / tsc 0 / lint 0；Python 全量 8243 passed / 32 skipped / 14 warnings（618s）；hmi 333。未 commit / push / deploy；真机取证与云端几何见记录 §7.3。

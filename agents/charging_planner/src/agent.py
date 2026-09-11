@@ -222,9 +222,11 @@ class ChargingPlannerAgent(BaseAgent):
         speech = (f"已为前往{resolved}的路线加入途经充电站：{top.name}"
                   f"（{dist}{extra}）。")
         # 复用 charging_route 卡：出发地 → ⚡该站 → 目的地
+        # stops 带坐标（2026-09-11）：Android 地图页据此标出补电站；HMI 只读 name/address
         card = attach({"type": "charging_route", "display_priority": 0,
                        "destination": resolved,
-                       "stops": [{"name": top.name, "address": top.address}],
+                       "stops": [{"name": top.name, "address": top.address,
+                                  "lat": top.lat, "lng": top.lng}],
                        "soc": soc}, self.charging)
         items = [
             {"id": s.id, "name": s.name, "available": s.available,
@@ -356,6 +358,7 @@ class ChargingPlannerAgent(BaseAgent):
         # 信息建议（advisory）：充能路线卡 = 出发地→沿途途经充电点→目的地，不二次确认、
         # 不发导航动作（导航由「导航」步处理）。专属 type 让聚合器在多意图下优先展示它
         # （否则只取首个卡=导航候选，充电途经点不可见）。
+        # 几何（2026-09-11）：stops 坐标 / 起点 / 折线只在 provider 给了时写，Android 地图页据此画「查看路线」
         card = attach({
             "type": "charging_route",
             "display_priority": 0,
@@ -363,8 +366,13 @@ class ChargingPlannerAgent(BaseAgent):
             "distance_km": plan.distance_km,
             "duration_min": plan.total_duration_min,
             "stops": [{"name": s.get("name", ""), "address": s.get("address", ""),
-                       "at_km": s.get("at_km")} for s in plan.stops],
+                       "at_km": s.get("at_km"),
+                       **({"lat": s["lat"], "lng": s["lng"]}
+                          if s.get("lat") is not None and s.get("lng") is not None else {})}
+                      for s in plan.stops],
             "soc": soc,
+            **({"origin_loc": plan.origin_loc} if plan.origin_loc else {}),
+            **({"path": plan.path} if plan.path else {}),
         } if plan.distance_km > 0 else None,  # 无路线（需定位/取路失败）→ 纯语音
             self.charging)
         return AgentResult(

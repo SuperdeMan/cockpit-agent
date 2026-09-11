@@ -37,17 +37,22 @@ export const MAP_AVAILABLE: boolean = KEY_PRESENT && NATIVE_PRESENT
 /** 诊断用：两个条件分别是什么（调试屏展示，避免「不可用」查不出是哪一半） */
 export const MAP_DIAG = { keyPresent: KEY_PRESENT, nativePresent: NATIVE_PRESENT }
 
+/** 点在路线里的角色（2026-09-11 地图路线）：决定标注颜色与字样；缺省 poi（普通地点） */
+export type MapRole = 'origin' | 'waypoint' | 'dest' | 'stop' | 'poi'
+export const MAP_ROLES: readonly MapRole[] = ['origin', 'waypoint', 'dest', 'stop', 'poi']
+
 export interface MapPoint {
   name: string
   lat: number
   lng: number
   address?: string
+  role?: MapRole
 }
 
 /** 卡片字段 → 地图点。坐标缺一不可、且必须是有限数——
  *  `0,0` 是几内亚湾，把缺失坐标当成一个点画上去比不画更糟。 */
-export function toMapPoint(raw: unknown): MapPoint | null {
-  const o = raw as { name?: unknown; lat?: unknown; lng?: unknown; address?: unknown } | null
+export function toMapPoint(raw: unknown, role?: MapRole): MapPoint | null {
+  const o = raw as { name?: unknown; lat?: unknown; lng?: unknown; address?: unknown; role?: unknown } | null
   if (!o || typeof o !== 'object') return null
   const lat = Number(o.lat)
   const lng = Number(o.lng)
@@ -55,11 +60,13 @@ export function toMapPoint(raw: unknown): MapPoint | null {
   if (lat === 0 && lng === 0) return null
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null
   const name = typeof o.name === 'string' && o.name ? o.name : '未命名地点'
-  return { name, lat, lng, address: typeof o.address === 'string' ? o.address : undefined }
+  // 角色：调用方显式给的优先；否则只收契约里认得的那几个字符串（路由参数回环时用）
+  const r = role ?? (MAP_ROLES.includes(o.role as MapRole) ? (o.role as MapRole) : undefined)
+  return { name, lat, lng, address: typeof o.address === 'string' ? o.address : undefined, ...(r ? { role: r } : {}) }
 }
 
 /** 一组卡片行 → 可画的点集（挑得出坐标的才进；一个都没有就别给地图入口） */
 export function mapPointsOf(rows: unknown): MapPoint[] {
   if (!Array.isArray(rows)) return []
-  return rows.map(toMapPoint).filter((p): p is MapPoint => p !== null)
+  return rows.map((r) => toMapPoint(r)).filter((p): p is MapPoint => p !== null)
 }

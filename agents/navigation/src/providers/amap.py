@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
+from agents.navigation.src.route_geometry import route_path_from_amap
 from .base import POIProvider, POI, GeoPoint
 
 logger = logging.getLogger("agent.navigation.amap")
@@ -182,6 +183,9 @@ class AmapPOIProvider(POIProvider):
                     except ValueError:
                         pass
             result["points"] = points
+            # 2026-09-11：整条折线（各 step polyline 串接、抽样 ≤ 240 点、[lat, lng]）——
+            # route_plan / charging_route 卡带上它，Android 地图页画路线。判据在 route_geometry.py 一处。
+            result["path"] = route_path_from_amap(path)
         return result
 
     async def reverse_geocode(self, lng: float, lat: float,

@@ -5,7 +5,7 @@
 import { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { Link } from 'expo-router'
+import { router } from 'expo-router'
 
 import { placeMenuAction } from '@shared/merchantUi.mjs'
 import type {
@@ -18,7 +18,9 @@ import type {
   TripItineraryCard,
 } from '@shared/types.ts'
 
-import { MAP_AVAILABLE, mapPointsOf, toMapPoint, type MapPoint } from '../../core/map/available'
+import { MAP_AVAILABLE } from '../../core/map/available'
+import { cardGeometry, geometryParams } from '../../core/map/geometry'
+import { Pill } from '../../ui/Pill'
 import type { Palette } from '../../ui/theme'
 import type { IconName } from '../../ui/Icon'
 import { CardButtons, CardIcon, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
@@ -54,20 +56,9 @@ function ItemRow({
           <Text style={{ color: p.fg1, fontSize: p.font(14), fontWeight: '600', flex: 1 }} numberOfLines={1}>
             {title}
           </Text>
+          {/* 2026-09-11 两档制：行内直达键走 Pill（外框 48、视觉 36；原 paddingVertical 3 ≈ 22dp） */}
           {action ? (
-            <Pressable
-              onPress={action.onPress}
-              hitSlop={6}
-              style={{
-                paddingHorizontal: 9,
-                paddingVertical: 3,
-                borderRadius: 999,
-                borderWidth: 1,
-                borderColor: p.accent,
-              }}
-            >
-              <Text style={{ color: p.accent, fontSize: p.font(11), fontWeight: '600' }}>{action.label}</Text>
-            </Pressable>
+            <Pill p={p} tone="accent" fontSize={12} fontWeight="600" paddingHorizontal={10} label={action.label} onPress={action.onPress} />
           ) : null}
         </View>
         {sub ? (
@@ -87,24 +78,24 @@ function ItemRow({
   )
 }
 
-/** 「地图」入口（M3-3）。三个条件缺一不出现：地图能力可用 / 这张卡真的带坐标 /
- *  至少有一个点。**不可用时入口根本不渲染**——卡片信息面零损失，
- *  用户看不到一个按了会失望的按钮，这就是计划说的「可降级」。 */
-function MapEntry({ p, points, title }: { p: Palette; points: MapPoint[]; title: string }) {
-  if (!MAP_AVAILABLE || !points.length) return null
+/** 「地图」入口（M3-3；2026-09-11 改读几何判据）。两个条件缺一不出现：地图能力可用 /
+ *  这张卡真的画得出来（`cardGeometry` 非 null：带坐标的点或折线）。**不可用时入口根本不渲染**——
+ *  卡片信息面零损失，用户看不到一个按了会失望的按钮，这就是计划说的「可降级」。
+ *  路线卡的标签写「查看路线」：它进去看到的是折线 + 起终点，不只是几个点。 */
+export function MapEntry({ p, card }: { p: Palette; card: unknown }) {
+  const g = MAP_AVAILABLE ? cardGeometry(card) : null
+  if (!g) return null
   return (
-    <Link
-      href={{ pathname: '/map', params: { points: JSON.stringify(points), title } }}
-      style={{
-        alignSelf: 'flex-start',
-        color: p.accent,
-        fontSize: p.font(12),
-        paddingHorizontal: 10,
-        paddingVertical: 5,
-      }}
-    >
-      地图
-    </Link>
+    <Pill
+      p={p}
+      testID="card-map-entry"
+      tone="accent"
+      fontSize={12}
+      paddingHorizontal={12}
+      accessibilityLabel={g.path.length ? '在地图上查看路线' : '在地图上查看'}
+      label={g.path.length ? '查看路线' : '地图'}
+      onPress={() => router.push({ pathname: '/map', params: geometryParams(g) })}
+    />
   )
 }
 
@@ -157,7 +148,7 @@ export function PoiDetail({ p, card, onSend }: { p: Palette; card: PoiDetailCard
       <KV p={p} k="地址" v={card.address} />
       <KV p={p} k="类型" v={card.category} />
       <KV p={p} k="评分" v={card.rating ? `★${card.rating}` : ''} />
-      <MapEntry p={p} points={[toMapPoint(card)].filter((x) => x !== null)} title={card.name} />
+      <MapEntry p={p} card={card} />
       <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: `导航去${card.name}` }]} />
     </CardShell>
   )
@@ -193,11 +184,7 @@ export function PlaceList({ p, card, onSend }: { p: Palette; card: PlaceListCard
           onPress={() => onSend(`看${it.name}的详情`, it.id ? { nearby_poi_id: it.id } : undefined)}
         />
       ))}
-      <MapEntry
-        p={p}
-        points={mapPointsOf(card.items)}
-        title={`周边 · ${card.category || card.keyword || '发现'}`}
-      />
+      <MapEntry p={p} card={card} />
       <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
         点选看详情；说「导航去第N个」直接导航；「换一批」看更多
       </Text>
@@ -224,7 +211,7 @@ export function PlaceDetail({ p, card, onSend }: { p: Palette; card: PlaceDetail
       <KV p={p} k="电话" v={card.tel} />
       <KV p={p} k="今日营业" v={card.open_today} />
       <KV p={p} k="每周" v={card.open_week} />
-      <MapEntry p={p} points={[toMapPoint(card)].filter((x) => x !== null)} title={card.name} />
+      <MapEntry p={p} card={card} />
       <CardButtons p={p} onSend={onSend} buttons={[{ label: '导航去这里', send_text: `导航去${card.name}` }]} />
     </CardShell>
   )
@@ -253,6 +240,9 @@ export function RoutePlan({ p, card, onSend }: { p: Palette; card: RoutePlanCard
           <Chip p={p} text={`预计 ${new Date(card.eta_ts * (card.eta_ts > 1e11 ? 1 : 1000)).toTimeString().slice(0, 5)} 到`} />
         ) : null}
       </View>
+      {/* 2026-09-11：后端带几何（origin_loc / destination_loc / waypoints 坐标 / path）时给「查看路线」——
+          用户原话「导航去 xxx 应该能有入口进入地图并把途经路线渲染出来」。没几何就没入口（同 M3-3 可降级） */}
+      {card.cancelled ? null : <MapEntry p={p} card={card} />}
       {card.estimate && !card.cancelled ? (
         <CardButtons p={p} onSend={onSend} buttons={[{ label: '开始导航', send_text: `导航去${card.destination}` }]} />
       ) : null}
@@ -331,6 +321,7 @@ export function ChargingRoute({ p, card }: { p: Palette; card: ChargingRouteCard
             <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: p.green }} />
             <Text style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600' }}>{card.destination}</Text>
           </View>
+          <MapEntry p={p} card={card} />
         </View>
       ) : (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -451,18 +442,17 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
                         {s.grounded ? s.poi?.address || '' : '待确认地点'}
                       </Text>
                     </View>
+                    {/* 2026-09-11 两档制：行内「导航」走 Pill（原 paddingVertical 3 ≈ 22dp） */}
                     {s.grounded ? (
-                      <Pressable
+                      <Pill
+                        p={p}
+                        tone="accent"
+                        fontSize={12}
+                        paddingHorizontal={10}
+                        accessibilityLabel={`导航去第${day.day_index}天的${s.name}`}
+                        label="导航"
                         onPress={() => onSend(`导航去第${day.day_index}天的${s.name}`)}
-                        style={{
-                          paddingHorizontal: 10,
-                          paddingVertical: 3,
-                          borderRadius: 8,
-                          backgroundColor: p.accentSoft,
-                        }}
-                      >
-                        <Text style={{ color: p.accent, fontSize: p.font(11) }}>导航</Text>
-                      </Pressable>
+                      />
                     ) : null}
                   </View>
                 ))
@@ -470,6 +460,7 @@ export function TripItinerary({ p, card, onSend }: { p: Palette; card: TripItine
           </View>
         )
       })}
+      <MapEntry p={p} card={card} />
       <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
         说「下一站」或「导航去第 2 天的XX」
       </Text>

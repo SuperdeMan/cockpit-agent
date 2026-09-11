@@ -18,6 +18,7 @@ import type {
 import { manualImages } from '@shared/manualCard.mjs'
 
 import type { Palette } from '../../ui/theme'
+import { RADIUS, TARGET } from '../../ui/tokens'
 import { CardButtons, CardIcon, CardShell, Chip, ProvBadge, type SendFn } from './parts'
 
 export function ManualEvidence({ p, card }: { p: Palette; card: ManualCardType }) {
@@ -76,12 +77,15 @@ export function IntentChoice({ p, card, onSend }: { p: Palette; card: IntentChoi
         {(card.options || []).map((o, i) => (
           <Pressable
             key={i}
+            accessibilityRole="button"
             onPress={() => onSend(o.send_text)}
+            // 2026-09-11 两档制：按钮类 = 目标高 48（原 paddingVertical 10 ≈ 40）
             style={{
               backgroundColor: p.accentSoft,
-              borderRadius: 10,
+              borderRadius: RADIUS.md,
               paddingHorizontal: 12,
-              paddingVertical: 10,
+              minHeight: p.target(TARGET.parked),
+              justifyContent: 'center',
             }}
           >
             <Text style={{ color: p.accent, fontSize: p.font(14) }}>
@@ -224,14 +228,15 @@ export function SceneList({ p, card, onSend }: { p: Palette; card: SceneListCard
         {items.map((s) => (
           <Pressable
             key={s.id}
+            accessibilityRole="button"
             onPress={() => onSend(`开启${s.name}`)}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               gap: 10,
               paddingHorizontal: 12,
-              paddingVertical: 9,
-              borderRadius: 12,
+              minHeight: p.target(TARGET.parked),
+              borderRadius: RADIUS.md,
               borderWidth: 1,
               borderColor: p.line,
               backgroundColor: p.panel,

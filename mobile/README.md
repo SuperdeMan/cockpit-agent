@@ -12,6 +12,7 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - **AR06～AR11 方案入口**：[接续路线与六份独立方案](../docs/design/2026-09-09-android-ar06-ar11-execution-roadmap.md)（2026-09-09 草案，未实施）：每批含代码定位、依赖、实施步骤、验收和 Goal 文本；AR02～AR05 的未签收项继续保留。 执行时先读[工程交付与集中验收安排](../docs/design/2026-09-10-android-goal-delivery-and-acceptance-plan.md)，默认 Goal 尽量完成全部可独立工程项。
 - **AR05 进行中**：[2026-09-09-ar05-structured-contracts-implementation-plan.md](../docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md)。覆盖结构化确认/补槽、拒绝与降级恢复、真实身份和能力摘要。**步骤 0–5 已实施**：端侧 T0 授权闸（缺 `vehicle.control` 的 token 再也执行不了本地车控）、Registry 声明逐字段往返、四份契约端云贯通、F09 规划技术失败窄修复、`GET /api/session` 会话与能力摘要、Android 消费面（真实风险档与截止时刻、显式补槽回复、结构化问题与恢复出口、服务端身份与能力摘要、按能力筛的首页推荐、播报无声按成因分档）。网关 `go build`/`vet`/`go test ./gateway/...` 已跑绿。**步骤 6 已完成**：生产发布 `d425b9c`（5/5 healthy、verify verified）、真栈契约证据（`/api/session` 200 与 401 两档、confirm_policy / slot_request / held / closed 全部真实产出、零车控动作零挂起残留）、OPPO 固定包 `d425b9c2d`（哈希两端一致、非 DEBUGGABLE、设置页底行 `v0.1.0 · prod · d425b9c2d · 2026-09-09 17:09`）与设置页取证。**步骤 7（2026-09-10）只补验证、零代码改动**（方案 §12.4）：逐格表推到 **全格闭合 3（V01/V04/V11）/ 部分 8 / 仅离线 1（V08）**。**仍未签收**，剩余阻塞收敛成三个前提：① 一个**无 `vehicle.control` 的受限 token**（卡 V05 负例、V07 的 `permission.scope_missing`、V02 的「新身份不继承」；改根 `.env` 属红线，要单独授权）；② 一个**旧 release 的部署环境 + 一次 Redis 重启**（卡 V06 挂起恢复保真、V10 的新客户端+旧服务端）；③ **真人听音**（卡 V08）。原「缺中文输入通道」这条**对卡片渲染取证不再成立**：纯 ASCII 英文语料在真栈上走同一条确认/补槽闭环（`open the trunk` → `risk=high` / `target_intent=trunk.open`，与中文逐字同构），`adb shell input text` 即可注入，确认卡、补槽卡与 issue 卡三种渲染都已在 `d425b9c2d` 上取到。⚠ 不等于中文输入不再需要：卡片渲染不经过按语种分支的代码，ASR/NLU/IME 及任何把中文文本当被测对象的流程仍要真正的中文通道（AR06 A06-3/V04），且英文语料会改变路由；AR04 的服务端多 operationId 实机组合也已闭合（「待处理事项（3）」三条真实 operationId 并存、取消末项不串账）。另：设置页文案修复在 APK 之后，本次验包不含它。
 - **构建与协作操作指南**（Claude Code / Codex 共用）：[Android 构建、取证与跨工具交接](../docs/guides/android-build-and-device-validation.md)
+- **四项体验修正（2026-09-11，用户口述）**：[设计与实施记录](../docs/design/2026-09-11-android-sheet-controls-map-tabletop.md)——语音层整层任意位置下滑收起（`ui/layout/sheetGesture.ts` 判据）+ 泊车路径也有内容下限（`sheetHeight.ts`，矮容器不再裁球）；可点控件两档制：按钮 = `TARGET`、胶囊/chip = `PILL` 走 `ui/Pill.tsx`（状态胶囊、追问 chips、欢迎推荐、卡内小动作、设置页单选项……一种高）；地图路线：后端 `route_plan` / `charging_route` 带 `origin_loc` / `destination_loc` / `waypoints[].lat,lng` / `path`，客户端 `core/map/geometry.ts` 一份判据、地图页（高德 SDK）画折线 + 起/经/终/电标注、舞台（双栏 / 抽屉 / 桌面）内嵌地图；桌面姿态上半横排（`sizeClass.tabletopStage`）。⚠ 真实路线卡要等云端部署含该 Agent 改动的 release 才带几何；之前客户端行为与今天一致（无入口）。
 - **语音输入采纳（2026-09-11）**：[实施](../docs/design/2026-09-11-android-voice-input-acceptance.md) 与 [发布后核实](../docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md)：云端已发布 `f8fd151`，OPPO 已装同 SHA prod 包。来源和拒识出口已接通，但端侧新闻规则与 Planner no-action 兜底仍有误采纳，声学未验收。
 - **AR04 实现与设备基线**：[实施记录第十五节](../docs/design/2026-09-08-ar04-presentation-ack-implementation.md)（支持页形态修正）+ 第十四节（发布与真锁屏）。生产仍 `573ad46`；Android 代码 `1c67807`——2026-09-09 用户判定设置 / 车辆 / 地图页底部常驻两栏破坏页面设计，已改为浮动在场：闲置只剩右下角光球（静帧），有事才长出状态胶囊 / 停播·打断键 / 采集点，承诺面与提醒出口只在有内容时占布局空间；地图信息条按路由上报高度、光球浮在其上。OPPO 首轮包 `de2a556` 取到闲置 / 思考 / 播报 / 一步停播证据，`1c67807` 复验读数见第十五节；临时偏好均恢复、App 已退出。第十四节的发布、真实 Keyguard ACK 与标题修复证据不变。**服务端多 operationId 实机组合及 Planner 技术失败降级策略仍未闭合，未整批签收。**
 - AR01 确认与取消：客户端修复、本地回归与 OPPO 样本验证完成，历史证据见[AR01 实施记录](../docs/design/2026-09-07-ar01-confirmation-cancellation-implementation.md)。
@@ -255,6 +256,8 @@ src/core/vision/       M4-6 视觉单帧：触发判据共用 @shared/visionFram
                        （采集面即隐私面，判据只许一份）；采集端在 features/vision/
 src/core/cards/        卡片判据：cardGroup（display_priority 取主卡）/ cardFields（兜底卡与行车压缩卡的字段探取）
 src/core/map/          地图能力判据：MAP_AVAILABLE（有 key ∧ 原生在场）+ 坐标校验（0,0 判空）
+                       + geometry（「这张卡能不能画、画什么」的唯一判据：route_plan / charging_route / trip_itinerary /
+                       周边族 → 带角色的点 + 折线；地图入口、地图页、舞台内嵌地图三处只读它）
 src/core/stage/        舞台场景选择（最近一张助手卡决定右舞台放什么；与 HMI deriveScene 同一张表，测试逐字对账）
 src/core/power/        低电量材质回落判据 + 事实收集；src/core/a11y/ 「减少动效」事实源
 src/features/chat/     对话 UI：ChatScreen（外壳）/ MessageBubble / Composer / VoiceSheet（语音层）/ FocusDock（承诺面）
@@ -263,12 +266,17 @@ src/features/chat/     对话 UI：ChatScreen（外壳）/ MessageBubble / Compo
 src/features/cards/    CardRenderer（全量卡型从 types.ts 派生、双向守卫 + 兜底卡铁则 + ErrorBoundary + _prov 徽章）；
                        CardGroup（主卡全展 + 「还有 N 张」）/ DrivingCardSummary（行车压缩卡）/ infoCards / navCards
                        / miscCards / merchantCards（商户支付族，复用 @shared/merchantUi.mjs）/ parts / fixtures（画廊语料）
-src/features/stage/    StagePane（平板/横屏右舞台，会话已有事实的第二视图）/ StageDrawer（medium 宽度的抽屉舞台）
+src/features/stage/    StagePane（平板/横屏右舞台，会话已有事实的第二视图；map 场景先渲内嵌地图；桌面姿态横排）
+                       / StageDrawer（medium 宽度的抽屉舞台）
+src/features/map/      高德 SDK 覆盖物：MapLayers（折线 + 起/经/终/电/序号标注，地图页与舞台共用）/ StageMap（舞台内嵌地图）
+                       / amapInit（SDK 进程级一次初始化，原 map.tsx 抽出）
 src/features/settings/ 设置页 + S2sConsentSheet（S2S 挡位隐私同意）；src/features/vehicle/ 车况面板
                        （三格指标复用 vehicleStage.mjs）+ ReminderSection（复用 reminderStage.mjs）
 src/features/vision/   VisionCapture（命中才挂 CameraView、拍完立刻卸载；内存上传零落盘，AR02）
-src/ui/                主题（深浅/跟随系统 + 字号两档）/ tokens / aurora（AuroraOrb 光球、AuroraBackground、EdgeGlow、
-                       Glass、StreamCursor、ThinkDots）/ layout（sizeClass 尺寸类、foldPosture 折叠姿态、sheetHeight 语音层高度）
+src/ui/                主题（深浅/跟随系统 + 字号两档；Palette.target() 给卡片渲染器的目标高缩放）/ tokens（TARGET 按钮档、
+                       PILL 胶囊档）/ Pill（胶囊类可点控件：外框 = 触控目标、视觉 = PILL）/ aurora（AuroraOrb 光球、
+                       AuroraBackground、EdgeGlow、Glass、StreamCursor、ThinkDots）/ layout（sizeClass 尺寸类 + 桌面姿态球径 +
+                       舞台地图高、foldPosture 折叠姿态、sheetHeight 语音层高度（行车 / 泊车都有内容下限）、sheetGesture 整层下滑收起判据）
 types/                 第三方类型补丁：RN 内部 URL 实现 / react-native-amap3d（见文件头注）
 test/                  jest（jest-expo）：守卫 + 契约单测 + 变异反向验证；计数以 `npm test` 本次输出为准
 e2e/                   Maestro flow：9 条（tag offline / online / manual），前提与坑账只在 e2e/README.md

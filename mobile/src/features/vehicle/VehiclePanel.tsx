@@ -14,6 +14,7 @@ import { stageMetrics } from '@shared/vehicleStage.mjs'
 
 import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
 import type { Palette } from '../../ui/theme'
+import { TARGET } from '../../ui/tokens'
 
 /** 对象 id → 中文（与 commands.yaml 的 display_name 逐 id 一致，测试对账） */
 export const KEY_LABEL: Record<string, string> = {
@@ -235,7 +236,7 @@ export function VehicleDetails({ p, vehState }: { p: Palette; vehState: Record<s
             accessibilityRole="button"
             accessibilityState={{ expanded: othersOpen }}
             onPress={() => setOthersOpen((o) => !o)}
-            style={{ minHeight: 44, justifyContent: 'center' }}
+            style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}
           >
             <Text style={{ color: p.fg3, fontSize: p.font(12) }}>
               其他 {others.length} 项 {othersOpen ? '▾' : '▸'}

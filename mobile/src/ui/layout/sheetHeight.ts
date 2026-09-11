@@ -1,5 +1,5 @@
 // mobile/src/ui/layout/sheetHeight.ts
-// 语音层高度判据（B4-13 缺陷 A / 方案 §6「一屏一卡」「目标 ≥56dp」）。
+// 语音层高度判据（B4-13 缺陷 A / 方案 §6「一屏一卡」「目标 ≥56dp」；2026-09-11 下限扩到泊车）。
 //
 // `sheetDetent`（0.4 / 0.62 / 0.78）是**比例**——它表达不了「内容有固有最小高」。
 // 2026-09-03 真机上两个同源症状：
@@ -16,10 +16,16 @@
 // 键 56」合并成一项「把手带 = 目标高」，**chrome 从 117 降到 88（行车、标准字号）**。
 // 这是缺陷 A 横屏半的第一个 lever（B4 §6.4：横屏底栏占 73dp，撤掉是净收益）。
 //
-// 「最小高」的定义（**只给行车档**；泊车路径一字不动，返回值与原来逐字节相同）：
-//   固定 chrome（把手带含一枚 56dp 目标 + ScrollView 上下 padding）
-//   + 球 + 胶囊（行车档任何一档都要一眼看得见）
-//   + **该档的主体**（0.62 = 回答两行；0.78 = 压缩卡「标题 + ≤2 字段 + 主按钮」）。
+// **2026-09-11（用户：「上升幅度要按手机尺寸适配，光球可能被遮」）**：下限原来**只给行车档**，泊车
+// 一直是纯比例。矮容器上 0.4 × 容器装不下「把手带 48 + padding 32 + 球 88 + 胶囊」，球被层底裁掉——
+// 同一个 detent 在不同尺寸的手机上「完成程度」不一样，正是用户看到的那件事。泊车路径现在走同一条
+// `min(容器, max(比例, 下限))`，只是常量取泊车的（目标 48 / 球 88 / 回答 16pt）。主力机（外屏竖
+// 578.67dp）三档比例都高于下限 ⇒ **读数逐 dp 不变**；矮容器才由下限托住。
+//
+// 「最小高」的定义：
+//   固定 chrome（把手带含一枚目标高 + ScrollView 上下 padding）
+//   + 球 + 胶囊（任何一档都要一眼看得见）
+//   + **该档的主体**（0.62 = 回答两行；0.78 = 行车压缩卡「标题 + ≤2 字段 + 主按钮」/ 泊车「回答两行 + 卡头」）。
 // 转写、chips、更长的回答是**可滚的附属**，不进最小高——它们本来就在 ScrollView 里。
 // 横屏车载（split，§6「40:60」）两列并排 ⇒ 取 max 不是相加。
 //
@@ -48,6 +54,12 @@ function cardMinDp(fontScale: FontScalePref): number {
   return shell + typeRow + title + fields + scale(TARGET.driving, 'target', fontScale)
 }
 
+/** 泊车 0.78 档的卡头：CardShell 边框 1×2 + padding 12×2 + 类型行（caption 12pt / 16）。
+ *  泊车走注册表全量渲，卡高不可知；「看得见卡头」是能保证的最小承诺——它告诉用户下面还有一张卡。 */
+function parkedCardHeadDp(fontScale: FontScalePref): number {
+  return 2 + 24 + scale(16, 'line', fontScale)
+}
+
 /** 行车档下该档「必须一眼看得见」的内容之和（dp）。逐项累加，不是拍的数。
  *  `orb` 是层内大球直径：默认行车的 120，B5-15 的球降级会把 88 传进来（最小高跟着降）。 */
 export function drivingSheetMinDp(
@@ -64,6 +76,18 @@ export function drivingSheetMinDp(
   const body =
     detent === 0.78 ? cardMinDp(fontScale) : detent === 0.62 ? 2 * scale(28, 'line', fontScale) : 0
   if (split) return chrome + Math.max(orbCol, body) // 横屏 40:60：两列并排，不相加
+  return chrome + (body ? orbCol + GAP_DP + body : orbCol)
+}
+
+/** 泊车档「必须一眼看得见」的内容之和（dp）。结构与行车档同一条，常量取泊车的：
+ *  把手带 48、球 88、回答 16pt / lineHeight 24；0.78 档的主体 = 回答两行 + 卡头。 */
+export function parkedSheetMinDp(detent: SheetDetent, split: boolean, fontScale: FontScalePref): number {
+  const chrome = scale(TARGET.parked, 'target', fontScale) + SCROLL_PAD_DP
+  const orbCol = SHEET_ORB.parked + GAP_DP + scale(20, 'line', fontScale)
+  const answer2 = 2 * scale(24, 'line', fontScale)
+  const body =
+    detent === 0.78 ? answer2 + GAP_DP + parkedCardHeadDp(fontScale) : detent === 0.62 ? answer2 : 0
+  if (split) return chrome + Math.max(orbCol, body)
   return chrome + (body ? orbCol + GAP_DP + body : orbCol)
 }
 
@@ -84,7 +108,8 @@ export function sheetOrbDp(i: {
 }
 
 /**
- * 语音层目标高度（dp）。泊车 = 原来的纯比例；行车 = 比例与最小高取大，再 clamp 回记录区。
+ * 语音层目标高度（dp）：比例与该档最小高取大，再 clamp 回记录区。行车 / 泊车走同一条式子，
+ * 只是最小高的常量不同（`drivingSheetMinDp` / `parkedSheetMinDp`）。
  * clamp 是硬的：宁可占满记录区，也不许返回大于容器的值（会顶出屏外）。
  */
 export function sheetHeightDp(i: {
@@ -97,8 +122,9 @@ export function sheetHeightDp(i: {
   fontScale: FontScalePref
 }): number {
   const byRatio = Math.round(i.containerH * i.detent)
-  if (!i.driving) return byRatio
   // B5-15：球降了最小高也跟着降——否则「降球」只改了渲染、判据仍按 120 要空间，两边对不上
-  const orb = sheetOrbDp(i)
-  return Math.min(i.containerH, Math.max(byRatio, drivingSheetMinDp(i.detent, i.split, i.fontScale, orb)))
+  const floor = i.driving
+    ? drivingSheetMinDp(i.detent, i.split, i.fontScale, sheetOrbDp(i))
+    : parkedSheetMinDp(i.detent, i.split, i.fontScale)
+  return Math.min(i.containerH, Math.max(byRatio, floor))
 }

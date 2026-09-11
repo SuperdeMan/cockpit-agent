@@ -88,6 +88,20 @@ export function tabletopSplit(contentHeight: number, hingeTopDp: number, content
   return Math.round(top)
 }
 
+/** 桌面姿态上半的舞台排版（2026-09-11，用户：「90° 折叠上半三个状态数值被截断」）。
+ *  上半在两台真机上都是**宽而矮**（OPPO 内屏约 698×246dp、Xiaomi 约 847×330dp）：竖着堆「模式行 + 120 球 +
+ *  车况三格 + 提醒 + 场景卡」，球之后就没空间了，三格被舞台的 overflow:hidden 裁掉。
+ *  ⇒ 一律**横排**：左列光球、右列可滚的车况 / 提醒 / 场景。球径按上半高选：留得下「模式行 14 + gap 10 + 120 +
+ *  舞台 margin/padding 38」（≈182）才用 120，否则 88。 */
+export const TABLETOP_ORB_MIN_TOP_DP = 200
+export const TABLETOP_ORB = { large: 120, small: 88 } as const
+export function tabletopStage(topDp: number): { orb: number } {
+  return { orb: topDp >= TABLETOP_ORB_MIN_TOP_DP ? TABLETOP_ORB.large : TABLETOP_ORB.small }
+}
+
+/** 舞台内嵌地图的高度（dp）：双栏的舞台是整列高 ⇒ 260；抽屉与桌面上半更紧 ⇒ 160 */
+export const STAGE_MAP_HEIGHT = { twoPane: 260, compact: 160 } as const
+
 /** 外屏 ↔ 内屏（§7.4）：外屏没有 FoldingFeature（B3 实测 state=none），内屏是 flat / halfOpened */
 export type ScreenSwitch = 'outer-to-inner' | 'inner-to-outer'
 

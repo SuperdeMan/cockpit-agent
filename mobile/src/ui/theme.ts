@@ -6,6 +6,7 @@
 import { useColorScheme } from 'react-native'
 
 import { settingsStore, type AppSettings } from '../core/settings/store'
+import { scale as scaleToken } from './tokens'
 
 /** 极光四色（AI 签名渐变，深浅同值） */
 export const AURORA = {
@@ -49,6 +50,9 @@ export interface Palette {
   sceneGradient: string
   /** 字号缩放（设置「大字」档 ×1.15） */
   font(size: number): number
+  /** 触控目标 / 控件高的缩放（「大字」档 ×1.1）：与 `tokens.scale(_, 'target')` 同一判据，
+   *  给拿不到 `fontScale` 的卡片渲染器用（它们只有 Palette）。 */
+  target(size: number): number
 }
 
 // 深色：aurora.css :root 逐值
@@ -118,6 +122,7 @@ export function paletteOf(theme: AppSettings['theme'], systemDark: boolean, font
     green: dark ? '#34D399' : '#1A7F37',
     teal: dark ? '#2DD4BF' : '#0F766E',
     font: (size: number) => Math.round(size * scale),
+    target: (size: number) => scaleToken(size, 'target', fontScale),
   }
 }
 

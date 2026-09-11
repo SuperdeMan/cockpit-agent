@@ -67,6 +67,7 @@ jest.mock('@/core/session/wiring', () => ({
 }))
 
 import { ChatScreen } from '@/features/chat/ChatScreen'
+import { Pill } from '@/ui/Pill'
 import { Composer } from '@/features/chat/Composer'
 import { VoiceSheet } from '@/features/chat/VoiceSheet'
 import { SessionCore } from '@/core/session/store'
@@ -237,7 +238,8 @@ test('P03：键盘弹起时欢迎态大球缩小、三条推荐仍在、外层�
     expect(welcomeOrb()).toEqual([56])
     // 真机 7525784b6 复核后补的紧凑档：键盘下次要说明让位，三条推荐整行可见
     expect(has(view, 'welcome-secondary')).toBe(false)
-    expect(view.root.findAllByProps({ testID: 'welcome-command' }).filter((n) => typeof n.props.onPress === 'function')).toHaveLength(3)
+    // 推荐 chips 是 `ui/Pill`：testID 落在 Pill 组件与外框 Pressable 两个实例上，按「不是 Pill 本身」取外框
+    expect(view.root.findAllByProps({ testID: 'welcome-command' }).filter((n) => n.type !== Pill && typeof n.props.onPress === 'function')).toHaveLength(3)
     const scroll = view.root.findAllByType(ScrollView).find((n) => n.props.testID === 'welcome-scroll')
     expect(scroll?.props.keyboardShouldPersistTaps).toBe('handled')
     await act(async () => { runtime!.scope.update({ keyboardVisible: false }) })

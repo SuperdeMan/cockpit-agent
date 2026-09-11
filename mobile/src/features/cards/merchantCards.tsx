@@ -26,7 +26,9 @@ import {
 } from '@shared/merchantUi.mjs'
 
 import { base64ToBytes } from '../../core/voice/base64'
+import { Pill } from '../../ui/Pill'
 import type { Palette } from '../../ui/theme'
+import { TARGET } from '../../ui/tokens'
 import { CardButtons, CardShell, Chip, KV, ProvBadge, type SendFn } from './parts'
 
  
@@ -233,7 +235,7 @@ export function PaymentQr({ p, card, onSend }: { p: Palette; card: any; onSend: 
             onPress={() => void Linking.openURL(presentation.safeUrl)}
             style={{
               flex: 1,
-              minHeight: 44,
+              minHeight: p.target(TARGET.parked),
               borderRadius: 10,
               backgroundColor: p.accentSoft,
               alignItems: 'center',
@@ -245,7 +247,7 @@ export function PaymentQr({ p, card, onSend }: { p: Palette; card: any; onSend: 
           <Pressable
             onPress={() => void copyLink()}
             style={{
-              minHeight: 44,
+              minHeight: p.target(TARGET.parked),
               paddingHorizontal: 13,
               borderRadius: 10,
               borderWidth: 1,
@@ -503,21 +505,19 @@ export function MerchantCheckout({ p, card, onSend }: { p: Palette; card: any; o
           ) : null}
           {Array.isArray(card.categories) && card.categories.length ? (
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+              {/* 2026-09-11 两档制：分类 chips 走 Pill（外框 48、视觉 36；原 paddingVertical 3 ≈ 22dp） */}
               {card.categories.map((cat: any) =>
                 cat?.label && cat?.send_text ? (
-                  <Pressable
+                  <Pill
                     key={cat.label}
+                    p={p}
+                    tone="accent"
+                    fontSize={12}
+                    fontWeight="600"
+                    paddingHorizontal={12}
+                    label={cat.label}
                     onPress={() => onSend(cat.send_text)}
-                    style={{
-                      paddingHorizontal: 10,
-                      paddingVertical: 3,
-                      borderRadius: 999,
-                      borderWidth: 1,
-                      borderColor: p.accent,
-                    }}
-                  >
-                    <Text style={{ color: p.accent, fontSize: p.font(11), fontWeight: '600' }}>{cat.label}</Text>
-                  </Pressable>
+                  />
                 ) : null,
               )}
             </View>
@@ -563,30 +563,19 @@ export function MerchantCheckout({ p, card, onSend }: { p: Palette; card: any; o
                         ? ` +${(opt.price_delta_cents / 100).toFixed(opt.price_delta_cents % 100 ? 1 : 0)}元`
                         : ''
                     return (
-                      <Pressable
+                      // 2026-09-11 两档制：规格 chips 走 Pill；选中态 = Pill 的 selected（accent 描边 + 底）
+                      <Pill
                         key={opt.label}
+                        p={p}
+                        selected={active}
                         disabled={!clickable}
+                        fontSize={12}
+                        fontWeight="600"
+                        paddingHorizontal={12}
+                        accessibilityState={active ? { selected: true } : undefined}
+                        label={`${opt.label}${delta}`}
                         onPress={clickable ? () => onSend(action!.send_text) : undefined}
-                        style={{
-                          paddingHorizontal: 10,
-                          paddingVertical: 3,
-                          borderRadius: 999,
-                          borderWidth: 1,
-                          borderColor: active ? p.accent : p.line,
-                          backgroundColor: active ? p.accent : 'transparent',
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: active ? '#FFFFFF' : p.fg2,
-                            fontSize: p.font(11),
-                            fontWeight: '600',
-                          }}
-                        >
-                          {opt.label}
-                          {delta}
-                        </Text>
-                      </Pressable>
+                      />
                     )
                   })}
                 </View>

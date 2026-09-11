@@ -22,6 +22,7 @@ from agents._sdk.landmark import (
 from agents._sdk.timewindow import fmt_clock, parse_clock_time
 from .providers import build_poi_provider
 from .providers.base import GeoPoint, POI
+from .route_geometry import card_geometry
 
 logger = logging.getLogger("agent.navigation")
 
@@ -427,8 +428,9 @@ class NavigationAgent(BaseAgent):
         strategy, strategy_note = _route_strategy(
             f"{intent.slots.get('route_pref') or ''} {raw_text}")
         try:
+            # with_polyline：卡上带折线，Android 地图页画「查看路线」（2026-09-11）
             route = await self.poi.get_route(origin_pt, dest_pt, meta=meta,
-                                             strategy=strategy)
+                                             strategy=strategy, with_polyline=True)
         except ProviderError as e:
             logger.warning("estimate route failed（诚实降级，不猜数）: %s", e)
             return AgentResult(speech="地图服务暂时不可用，这段路程算不出来，稍后再试。")
@@ -447,7 +449,9 @@ class NavigationAgent(BaseAgent):
         card = attach({"type": "route_plan", "estimate": True,
                        "origin": origin_name, "destination": dest_name,
                        "waypoints": [], "distance_km": distance_km,
-                       "duration_min": duration_min, "eta_ts": eta}, self.poi)
+                       "duration_min": duration_min, "eta_ts": eta,
+                       **card_geometry(origin=origin_pt, destination=dest_pt,
+                                       path=route.get("path"))}, self.poi)
         return AgentResult(speech=speech, ui_card=card,
                            data={"origin": origin_name, "destination": dest_name,
                                  "distance_km": distance_km,
@@ -1338,16 +1342,19 @@ class NavigationAgent(BaseAgent):
         distance_km = duration_min = 0
         detour_min = None
         direct_dur = None
+        route_path = None
         current = current_location_from_meta(meta)
+        cur_pt = GeoPoint(lat=current.lat, lng=current.lng) if current else None
         if current:
-            cur_pt = GeoPoint(lat=current.lat, lng=current.lng)
             try:
+                # with_polyline：卡上带折线，Android 地图页画「查看路线」（2026-09-11）
                 route = await self.poi.get_route(
                     cur_pt, GeoPoint(lat=dest_poi.lat, lng=dest_poi.lng),
-                    meta=meta, strategy=strategy,
+                    meta=meta, strategy=strategy, with_polyline=True,
                     waypoints=[GeoPoint(lat=w.lat, lng=w.lng) for w in resolved])
                 distance_km = route.get("distance_km") or 0
                 duration_min = route.get("duration_min") or 0
+                route_path = route.get("path")
             except Exception as e:                       # best-effort：算不出就只给时间线
                 logger.debug("route plan distance unavailable: %s", e)
             if duration_min:
@@ -1380,12 +1387,14 @@ class NavigationAgent(BaseAgent):
                 # 会在保留目的地与时限的前提下改直达，比引导用户发起全新导航干净。
                 tail += (f"若不带途经点直达，预计{self._fmt_clock(direct_eta)}可准时到；"
                          "要改直达就说「途经点不去了」。")
+        # 几何字段（起终点坐标 / 途经点坐标 / 折线）与 waypoints 一起由 card_geometry 出：
+        # 途经点仍是 name/address，多带 lat/lng（HMI 只读前两个键，向后兼容）
         card = attach({"type": "route_plan", "origin": "当前位置",
                        "destination": dest_poi.name,
-                       "waypoints": [{"name": w.name, "address": w.address}
-                                     for w in resolved],
                        "distance_km": distance_km, "duration_min": duration_min,
-                       **extra}, self.poi)
+                       **extra,
+                       **card_geometry(origin=cur_pt, destination=dest_poi,
+                                       waypoints=resolved, path=route_path)}, self.poi)
         return self._stamp_route_session(AgentResult(
             speech=head + "。" + tail, ui_card=card,
             data={"waypoints": payload["waypoints"], **extra},
@@ -1413,14 +1422,18 @@ class NavigationAgent(BaseAgent):
         payload = self._navigate_payload(name, lat, lng, meta,
                                          origin[1] if origin else None)
         distance_km = duration_min = 0
+        route_path = None
         current = origin[1] if origin else current_location_from_meta(meta)
         if current:
             try:
+                # with_polyline：卡上带折线，Android 地图页画「查看路线」（2026-09-11）
                 route = await self.poi.get_route(
                     GeoPoint(lat=current.lat, lng=current.lng),
-                    GeoPoint(lat=lat, lng=lng), meta=meta, strategy=strategy)
+                    GeoPoint(lat=lat, lng=lng), meta=meta, strategy=strategy,
+                    with_polyline=True)
                 distance_km = route.get("distance_km") or 0
                 duration_min = route.get("duration_min") or 0
+                route_path = route.get("path")
             except Exception as e:                       # best-effort：算不出就只给起终点
                 logger.debug("route plan distance unavailable: %s", e)
         origin_note = f"从{origin_label}" if origin else ""
@@ -1463,7 +1476,9 @@ class NavigationAgent(BaseAgent):
         await self._remember_visited(ctx, name, lat, lng)
         card = attach({"type": "route_plan", "origin": origin_label, "destination": name,
                        "waypoints": [], "distance_km": distance_km,
-                       "duration_min": duration_min, **deadline_extra}, self.poi)
+                       "duration_min": duration_min, **deadline_extra,
+                       **card_geometry(origin=current, destination={"lat": lat, "lng": lng},
+                                       path=route_path)}, self.poi)
         return self._stamp_route_session(AgentResult(
             speech=speech, ui_card=card,
             data={"destination": name, "lat": lat, "lng": lng, **deadline_extra},

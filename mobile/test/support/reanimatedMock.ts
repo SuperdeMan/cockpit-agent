@@ -14,7 +14,14 @@ import { View, Text, ScrollView } from 'react-native'
 const identity = (v: any) => v
 const value = (v: any) => (v && typeof v === 'object' && 'value' in v ? v.value : v)
 
-export const useSharedValue = (initial: any) => ({ value: initial })
+// `get()` / `set()` 与 `.value` 同义（Reanimated 4 的官方入口；VoiceSheet 的手势回调用它们避开
+// react-hooks/immutability）。用例不触发手势，但句柄形状要与真包一致，免得哪天有人在 act 里调它们时炸在 mock 上。
+export const useSharedValue = (initial: any) => {
+  const sv: any = { value: initial }
+  sv.get = () => sv.value
+  sv.set = (v: any) => { sv.value = value(v) }
+  return sv
+}
 export const useAnimatedStyle = (fn: () => any) => fn()
 export const withTiming = (to: any) => value(to)
 export const withSpring = (to: any) => value(to)

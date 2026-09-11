@@ -19,6 +19,7 @@ import { loadServerConfig, saveServerConfig } from '@/core/config/storage'
 import type { ServerConfig, ServerPreset } from '@/core/config/types'
 import { settingsStore } from '@/core/settings/store'
 import { AuroraBackground, AuroraOrb, Glass } from '@/ui/aurora'
+import { Pill } from '@/ui/Pill'
 import { AURORA, usePalette } from '@/ui/theme'
 import { RADIUS, TARGET, TYPE, scale } from '@/ui/tokens'
 
@@ -167,32 +168,20 @@ export default function Onboarding() {
             <Glass p={p} r={RADIUS['2xl']} style={{ padding: 14, gap: 6 }}>
               <Text style={{ color: p.fg1, fontSize: scale(TYPE.h2, 'text', fs), fontWeight: '600' }}>服务器</Text>
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+                {/* 2026-09-11 两档制：预设单选走 Pill（外框 48、视觉 36），选中态进无障碍 selected */}
                 {presets.map((it) => (
-                  <Pressable
+                  <Pill
                     key={it.key}
+                    p={p}
+                    selected={preset === it.key}
+                    fontScale={fs}
+                    fontSize={TYPE.caption}
+                    label={it.label}
                     onPress={() => {
                       setPreset(it.key)
                       setTest({ kind: 'idle' })
                     }}
-                    accessibilityRole="button"
-                    style={{
-                      paddingVertical: 8,
-                      paddingHorizontal: 14,
-                      borderRadius: RADIUS.full,
-                      backgroundColor: preset === it.key ? p.accentSoft : p.fill,
-                      borderWidth: 1,
-                      borderColor: preset === it.key ? p.accent : p.fill2,
-                    }}
-                  >
-                    <Text
-                      style={{
-                        color: preset === it.key ? p.accent : p.fg2,
-                        fontSize: scale(TYPE.caption, 'text', fs),
-                      }}
-                    >
-                      {it.label}
-                    </Text>
-                  </Pressable>
+                  />
                 ))}
               </View>
               {preset === 'cloud' ? (

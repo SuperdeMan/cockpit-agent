@@ -33,9 +33,13 @@ class ChargingStation:
 class ChargingPlan:
     """长途充能方案。"""
     summary: str = ""
-    stops: list[dict] = field(default_factory=list)  # [{name, address, at_km, charge_to}]
+    stops: list[dict] = field(default_factory=list)  # [{name, address, at_km, charge_to, lat?, lng?}]
     total_duration_min: int = 0
     distance_km: float = 0.0          # 全程里程（供卡片展示出发地→途经点→目的地）
+    # 2026-09-11：路线折线 [[lat, lng], …]（amap 沿途取点面的坐标，粗但足够画一条线）与起点坐标；
+    # 没有路线时都是空——卡片据此决定带不带几何，Android 地图页据此决定给不给「查看路线」
+    path: list[list[float]] = field(default_factory=list)
+    origin_loc: dict | None = None
 
 
 class ChargingProvider(ABC):

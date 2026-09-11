@@ -18,6 +18,7 @@ import { isProactive } from '../../core/session/turnView'
 import { StreamCursor, ThinkDots } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
+import { TARGET } from '../../ui/tokens'
 import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
 import { ExecutionReceipt } from './ExecutionReceipt'
@@ -46,7 +47,7 @@ function ProcessFold({ p, msg, driving }: { p: Palette; msg: Msg; driving: boole
         hitSlop={2}
         onPress={() => setOpen(!open)}
         disabled={terse || !!msg.processActive}
-        style={{ minHeight: 44, justifyContent: 'center' }}
+        style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           {msg.processActive && iconRuntimeAvailable() ? <Icon name="refresh" size={12} color={p.teal} /> : null}
@@ -240,7 +241,7 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
               accessibilityLabel="重发这一句"
               hitSlop={2}
               onPress={onResend}
-              style={{ alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill }}
+              style={{ alignSelf: 'flex-start', minHeight: p.target(TARGET.parked), justifyContent: 'center', paddingHorizontal: 12, borderRadius: 12, borderWidth: 1, borderColor: p.fill2, backgroundColor: p.fill }}
             >
               <Text style={{ color: p.accent, fontSize: p.font(13) }}>重发</Text>
             </Pressable>
@@ -250,7 +251,7 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
         {receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}
         {msg.followUp ? (
           // 打磨批 A（评审 P14）：可点文字的触控高度 44
-          <Pressable testID="followup-link" hitSlop={2} onPress={() => onSend(msg.followUp!)} style={{ minHeight: 44, justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <Pressable testID="followup-link" hitSlop={2} onPress={() => onSend(msg.followUp!)} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             {iconRuntimeAvailable() ? <Icon name="chat" size={14} color={p.accent} /> : null}
             <Text style={{ color: p.accent, fontSize: p.font(12), flexShrink: 1 }}>{msg.followUp}</Text>
           </Pressable>

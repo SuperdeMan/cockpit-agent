@@ -127,6 +127,12 @@ class AmapChargingProvider(ChargingProvider):
         distance_km = float(route.get("distance_km") or 0)
         duration_min = float(route.get("duration_min") or 0)
         points = route.get("points") or []
+        # 2026-09-11：几何随方案一起出——provider 给了整条折线就用它，否则退回沿途取点面（每步终点，粗但成线）
+        geo = {
+            "path": route.get("path") or [[p["lat"], p["lng"]] for p in points
+                                          if "lat" in p and "lng" in p],
+            "origin_loc": {"lat": origin.lat, "lng": origin.lng},
+        }
         usable = soc_pct / 100.0 * self._full_range
         dur = self._fmt_dur(duration_min)
         head = f"前往{destination}，全程约{distance_km}公里" + (f"、约{dur}" if dur else "")
@@ -136,7 +142,7 @@ class AmapChargingProvider(ChargingProvider):
         if distance_km <= usable * 0.85 or not points:
             return ChargingPlan(
                 summary=f"{head}。当前电量{soc_pct}%（约{round(usable)}公里续航）足够直达，无需途中补电。",
-                stops=[], total_duration_min=int(duration_min), distance_km=distance_km)
+                stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
 
         # 续航不够 → 沿途按里程放补电途经点：首段用到 ~85% 续航，之后每段约 65% 满电续航
         targets, d = [], usable * 0.85
@@ -159,16 +165,17 @@ class AmapChargingProvider(ChargingProvider):
             if near:
                 st = near[0]
                 stops.append({"name": st.name, "address": st.address,
-                              "at_km": round(t), "charge_to": "80%"})
+                              "at_km": round(t), "charge_to": "80%",
+                              "lat": st.lat, "lng": st.lng})
 
         if not stops:
             return ChargingPlan(
                 summary=f"{head}。当前电量{soc_pct}%约{round(usable)}公里续航，长途需中途补电；"
                         f"沿途充电站暂未取到，到达附近时我再为你推荐。",
-                stops=[], total_duration_min=int(duration_min), distance_km=distance_km)
+                stops=[], total_duration_min=int(duration_min), distance_km=distance_km, **geo)
 
         plan_line = "；".join(f"约{s['at_km']}公里处·{s['name']}" for s in stops)
         summary = (f"{head}。当前电量{soc_pct}%约可行驶{round(usable)}公里，"
                    f"建议途中补电 {len(stops)} 次：{plan_line}；补电后抵达{destination}。")
         return ChargingPlan(summary=summary, stops=stops,
-                            total_duration_min=int(duration_min), distance_km=distance_km)
+                            total_duration_min=int(duration_min), distance_km=distance_km, **geo)

@@ -27,6 +27,7 @@ import { usePowerFacts } from '../../core/power/usePowerFacts'
 import { AuroraBackground, AuroraOrb } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import { PANE_GAP, tabletopSplit } from '../../ui/layout/sizeClass'
+import { Pill } from '../../ui/Pill'
 import { usePalette } from '../../ui/theme'
 import { TARGET, scale } from '../../ui/tokens'
 import { StageDrawer } from '../stage/StageDrawer'
@@ -109,6 +110,7 @@ function Welcome({
   quickCommands,
   animated = true,
   keyboardVisible = false,
+  fontScale,
   onSend,
 }: {
   p: ReturnType<typeof usePalette>
@@ -119,6 +121,7 @@ function Welcome({
   animated?: boolean
   /** 事实来自 InteractionScope.keyboardVisible（已有），不加新监听 */
   keyboardVisible?: boolean
+  fontScale: FontScalePref
   onSend: (text: string) => void
 }) {
   return (
@@ -139,25 +142,20 @@ function Welcome({
       {hasVoice && !keyboardVisible ? (
         <Text testID="welcome-secondary" style={{ color: p.fg3, fontSize: p.font(12) }}>也可以按住光球边说边放</Text>
       ) : null}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: keyboardVisible ? 8 : 10, justifyContent: 'center', marginTop: keyboardVisible ? 4 : 12 }}>
+      {/* 2026-09-11 两档制：推荐 chips 与 Composer / 层内 chips 同一个 Pill（外框 48、视觉 36）；原来 ~38dp 是第三种高 */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: keyboardVisible ? 4 : 8, justifyContent: 'center', marginTop: keyboardVisible ? 0 : 8 }}>
         {quickCommands.slice(0, 3).map((q) => (
-          <Pressable
+          <Pill
             key={q}
+            p={p}
             testID="welcome-command"
-            accessibilityRole="button"
             accessibilityLabel={`试试：${q}`}
+            fontScale={fontScale}
+            textColor={p.fg1}
+            paddingHorizontal={18}
+            label={q}
             onPress={() => onSend(q)}
-            style={{
-              backgroundColor: p.fill,
-              borderWidth: 1,
-              borderColor: p.fill2,
-              borderRadius: 999,
-              paddingHorizontal: 18,
-              paddingVertical: 10,
-            }}
-          >
-            <Text style={{ color: p.fg1, fontSize: p.font(13) }}>{q}</Text>
-          </Pressable>
+          />
         ))}
       </View>
     </ScrollView>
@@ -362,6 +360,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           quickCommands={visibleCommands}
           animated={loopsAnimated(motionEnv)}
           keyboardVisible={!!runtime.facts.keyboardVisible}
+          fontScale={settings.fontScale}
           onSend={onSend}
         />
       ) : (
@@ -421,27 +420,21 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
       {/* 回到最新（打磨批 F / 评审 P13 ②）：离底超一屏且有新内容才出；住在记录区容器里 ⇒ 落在 Composer 上方、
           与 Dock 不重叠（Dock 在容器之外）。实色底（压在记录上）。 */}
       {jumpVisible ? (
-        <Pressable
+        <Pill
+          p={p}
           testID="jump-latest"
-          accessibilityRole="button"
           accessibilityLabel="回到最新消息"
+          tone="glass"
+          solid
+          elevated
+          driving={snapshot.driving}
+          fontScale={settings.fontScale}
+          textColor={p.accent}
+          fontSize={12}
+          label="↓ 最新"
           onPress={() => listRef.current?.scrollToEnd({ animated: true })}
-          style={{
-            position: 'absolute',
-            bottom: 10,
-            alignSelf: 'center',
-            minHeight: scale(36, 'target', settings.fontScale),
-            paddingHorizontal: 14,
-            borderRadius: 999,
-            backgroundColor: p.panel,
-            borderWidth: 1,
-            borderColor: p.glassBdTop,
-            boxShadow: p.glassShadow,
-            justifyContent: 'center',
-          }}
-        >
-          <Text style={{ color: p.accent, fontSize: p.font(12) }}>↓ 最新</Text>
-        </Pressable>
+          style={{ position: 'absolute', bottom: 4, alignSelf: 'center' }}
+        />
       ) : null}
       {/* 非 driving-landscape：层住在记录区容器里（B4 及以前的形态，逐字节不变） */}
       {splitLandscape ? null : voiceSheetEl}
@@ -596,7 +589,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
             </View>
           ) : layout.mode === 'tabletop' ? (
             <View ref={contentRef} style={{ flex: 1 }}>
-              {/* 上半：舞台 + 大光球（铰链上方）；下半：转写 / 记录 + Composer。分界 = 铰链上缘（§7.3） */}
+              {/* 上半：舞台 + 大光球（铰链上方）；下半：转写 / 记录 + Composer。分界 = 铰链上缘（§7.3）。
+                  上半高传给舞台：它据此横排并选球径（2026-09-11，sizeClass.tabletopStage） */}
               <View style={{ height: tabletopSplit(contentBox.h, layout.hinge?.topDp ?? 0, contentBox.y) }}>
                 <StagePane
                   p={p}
@@ -609,6 +603,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                     animated: loopsAnimated(motionEnv),
                     driving: orbTempo(snapshot, motionEnv) === 'slow',
                   }}
+                  topHeight={tabletopSplit(contentBox.h, layout.hinge?.topDp ?? 0, contentBox.y)}
                   style={{ flex: 1, marginHorizontal: 10, marginTop: 10 }}
                 />
               </View>

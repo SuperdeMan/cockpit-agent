@@ -1,52 +1,30 @@
-// 地图页（M3-3）。入口只出现在**真的带坐标**的卡上（place_list / place_detail /
-// poi_detail）——`route_plan` / `poi_list` / `charging_route` 的契约里根本没有 lat/lng
-// （2026-08-27 逐类型核过 hmi/src/types.ts），给它们挂地图入口只能靠客户端地理编码，
-// 那是另一件事，已挂账。
+// 地图页（M3-3；2026-09-11 补路线）。入口只出现在**真的能画**的卡上——判据只有一份
+// `core/map/geometry.ts::cardGeometry`：poi_detail / place_list / place_detail 的点，
+// route_plan / charging_route 的起终点、途经点 / 补电站与折线（后端 2026-09-11 起带几何），
+// trip_itinerary 接地停靠点。契约里没坐标的卡照旧没有入口（M3-3「可降级 = 入口根本不出现」）。
 //
-// 参数经路由传 JSON（`points` = MapPoint[]，`title` 可选）。刻意不从会话 store 取：
-// 地图页是「把这张卡上的点画出来」，不是「显示当前会话状态」——从 store 取会让同一个
-// 页面在会话推进后显示另一批点。
+// 参数经路由传 JSON（`points` = MapPoint[]（带 role）、`path` = [[lat,lng]…]、`title` / `subtitle`）。
+// 刻意不从会话 store 取：地图页是「把这张卡上的东西画出来」，不是「显示当前会话状态」——
+// 从 store 取会让同一个页面在会话推进后显示另一批点。
 import { useLocalSearchParams, usePathname } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Dimensions, Pressable, Text, View } from 'react-native'
+import { Dimensions, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useStore } from 'zustand'
 
-import { AMAP_KEY, MAP_AVAILABLE, MAP_DIAG, type MapPoint } from '@/core/map/available'
+import { AMAP_KEY, MAP_AVAILABLE, MAP_DIAG } from '@/core/map/available'
 import { fitCamera, type Camera, type Viewport } from '@/core/map/fit'
+import { fitPointsOf, parseGeometryParams } from '@/core/map/geometry'
 import { settingsStore } from '@/core/settings/store'
+import { ensureAmapInit } from '@/features/map/amapInit'
+import { MapLayers, roleGlyph } from '@/features/map/MapLayers'
 import { reportBottomChrome } from '@/ui/layout/bottomChrome'
+import { Pill } from '@/ui/Pill'
 import { usePalette } from '@/ui/theme'
-
- 
 
 // ⚠ 静态 import 是安全的：amap3d 的 JS 侧在原生缺席时也能加载，只有**渲染**才会炸
 //（同 react-native-svg 那次的形态）。所以守卫放在渲染分支上，不放在 import 上。
-import { AMapSdk, MapView, type MapViewHandle, Marker } from 'react-native-amap3d'
-
-/**
- * 高德 SDK 初始化：**进程级一次**，所以守卫也放进程级（模块作用域），不是组件的 ref。
- *
- * 隐私合规：高德 9.x 不调 updatePrivacyAgree/Show 就白屏（**且不报任何错**）。
- * 库把这四个调用包在 initSDK 里，但外面套着 `apiKey?.let`——**必须把 key 传进去**，
- * 传空等于整块不执行（2026-08-27 实测：地图灰屏、logcat 零输出，查了三轮才定位到）。
- * ⚠ 它是**硬编码同意**（updatePrivacyShow(context, true, true)）——PoC 可以，
- * 发布前必须有真实的隐私声明呈现（AM5-04 合规项，已挂账）。
- *
- * 为什么从组件里的 `useRef` 搬出来：初始化的**作用域是进程**，而 ref 的作用域是组件实例。
- * 写在渲染期改 ref 既违反 Rules of React（`react-hooks/refs`；React Compiler 开着），
- * 也在语义上说了假话——第二个 MapScreen 实例的 ref 是新的，判据却应当是「这个进程初始化过没」。
- */
-let amapInited = false
-function ensureAmapInit(): void {
-  if (!MAP_AVAILABLE || amapInited) return
-  amapInited = true
-  try {
-    AMapSdk.init(AMAP_KEY)
-  } catch {
-    /* 初始化失败下面照样渲染，白屏由用户可见地反馈，不静默 */
-  }
-}
+import { MapView, type MapViewHandle } from 'react-native-amap3d'
 
 /** 零点位时的兜底中心（深圳）。**只在没有任何可画的点时用**，且屏上会明说没有坐标 */
 const FALLBACK_CENTER = { latitude: 22.5429, longitude: 113.9089 }
@@ -57,33 +35,23 @@ const FALLBACK_ZOOM = 11
 const FIT_PADDING = { top: 64, right: 56, bottom: 168, left: 56 }
 const SINGLE_ZOOM = 16
 
-function parsePoints(raw: unknown): MapPoint[] {
-  if (typeof raw !== 'string' || !raw) return []
-  try {
-    const arr = JSON.parse(raw)
-    return Array.isArray(arr) ? arr.filter((p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng)) : []
-  } catch {
-    return []
-  }
-}
-
 export default function MapScreen() {
-  const { points, title } = useLocalSearchParams<{ points?: string; title?: string }>()
+  const params = useLocalSearchParams<{ points?: string; path?: string; title?: string; subtitle?: string }>()
   const { settings } = useStore(settingsStore)
   const p = usePalette(settings)
   const insets = useSafeAreaInsets()
-  const pts = useMemo(() => parsePoints(points), [points])
+  const geometry = useMemo(() => parseGeometryParams(params), [params])
+  const pts = geometry.points
+  // 相机要装进画面的是标注 + 折线（折线可能比两端标注伸得更远）
+  const fitPts = useMemo(() => fitPointsOf(geometry), [geometry])
   const mapRef = useRef<MapViewHandle | null>(null)
   // AR04 第十五节：把底部信息条的占位上报给浮动助手（按本路由），它浮在信息条上方而不压「全览 / 收起详情」。
   // 离开本页即清零，设置页不该被地图的信息条顶高。
   const pathname = usePathname()
   useEffect(() => () => reportBottomChrome(pathname, 0), [pathname])
 
-  // 高德 SDK 初始化（判据与理由见文件头的 ensureAmapInit）。
-  // ⚠ **不能挪进 effect**：effect 在首帧 commit 之后才跑，那时 MapView 的原生视图已经建好了，
-  // 而高德要求 init 早于原生视图创建——挪过去的症状正是文件头写的那种「白屏且零日志」。
-  // 幂等由模块级 `amapInited` 保证，所以「渲染期跑」在这里不会带来重复副作用。
-  ensureAmapInit()
+  // 高德 SDK 初始化（判据与理由见 features/map/amapInit.ts；必须在渲染期、早于原生视图创建）
+  ensureAmapInit(AMAP_KEY)
 
   // 视口：首帧还没 layout，先用窗口尺寸估一个（地图是 flex:1 全屏，误差只有 header 那点），
   // onLayout 拿到真值后再 fit 一次。**两步都要有**：只靠 onLayout 首帧会闪一下世界地图，
@@ -92,23 +60,23 @@ export default function MapScreen() {
   const [viewport, setViewport] = useState<Viewport>({ width: win.width, height: win.height })
   const initialCamera: Camera = useMemo(
     () =>
-      fitCamera(pts, { width: win.width, height: win.height }, {
+      fitCamera(fitPts, { width: win.width, height: win.height }, {
         padding: FIT_PADDING,
         singleZoom: SINGLE_ZOOM,
       }) ?? { target: FALLBACK_CENTER, zoom: FALLBACK_ZOOM },
     // 估算相机只在点集变化时重算——把 win 放进依赖会让它随每次旋转重建，没有意义
     // （真正的重算走下面的 fitToPoints）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [pts],
+    [fitPts],
   )
 
   const fitCam = useMemo(
     () =>
-      fitCamera(pts, viewport, { padding: FIT_PADDING, singleZoom: SINGLE_ZOOM }) ?? {
+      fitCamera(fitPts, viewport, { padding: FIT_PADDING, singleZoom: SINGLE_ZOOM }) ?? {
         target: FALLBACK_CENTER,
         zoom: FALLBACK_ZOOM,
       },
-    [pts, viewport],
+    [fitPts, viewport],
   )
 
   const [selected, setSelected] = useState<number | null>(null)
@@ -129,12 +97,25 @@ export default function MapScreen() {
   // 情况之外都保留。
   const lastFitKey = useRef<string>('')
   useEffect(() => {
-    if (!MAP_AVAILABLE || !pts.length) return
-    const key = `${pts.length}:${Math.round(viewport.width / 40)}x${Math.round(viewport.height / 40)}`
+    if (!MAP_AVAILABLE || !fitPts.length) return
+    const key = `${fitPts.length}:${Math.round(viewport.width / 40)}x${Math.round(viewport.height / 40)}`
     if (key === lastFitKey.current) return
     lastFitKey.current = key
     fitToPoints(0)
-  }, [pts, viewport, fitToPoints])
+  }, [fitPts, viewport, fitToPoints])
+
+  const selectPoint = useCallback(
+    (i: number) => {
+      const pt = pts[i]
+      if (!pt) return
+      setSelected(i)
+      mapRef.current?.moveCamera(
+        { target: { latitude: pt.lat, longitude: pt.lng }, zoom: Math.max(zoomRef.current, SINGLE_ZOOM) },
+        300,
+      )
+    },
+    [pts],
+  )
 
   if (!MAP_AVAILABLE) {
     // 正常路径下走不到这里（入口在不可用时就不渲染）；直接深链进来时给个诚实说明，
@@ -153,6 +134,8 @@ export default function MapScreen() {
   }
 
   const sel = selected != null ? pts[selected] : undefined
+  const selGlyph = sel ? roleGlyph(p, sel.role, selected ?? 0) : null
+  const hasRoute = geometry.path.length >= 2
 
   return (
     <View style={{ flex: 1, backgroundColor: p.bg }}>
@@ -177,24 +160,7 @@ export default function MapScreen() {
         // 换三个真空处才关掉。⇒ 详情条上必须有显式的关闭按钮，这里只是顺手的加速路径。
         onPress={() => setSelected(null)}
       >
-        {pts.map((pt, i) => (
-          <Marker
-            key={`${pt.name}:${i}`}
-            position={{ latitude: pt.lat, longitude: pt.lng }}
-            title={pt.name}
-            subtitle={pt.address}
-            onPress={() => {
-              setSelected(i)
-              mapRef.current?.moveCamera(
-                {
-                  target: { latitude: pt.lat, longitude: pt.lng },
-                  zoom: Math.max(zoomRef.current, SINGLE_ZOOM),
-                },
-                300,
-              )
-            }}
-          />
-        ))}
+        <MapLayers p={p} points={pts} path={geometry.path} onPressPoint={selectPoint} />
       </MapView>
 
       {/* ⚠ 这条**不用** `Glass`：Aurora 的玻璃底是半透明的，靠叠在 AuroraBackground 的
@@ -203,6 +169,7 @@ export default function MapScreen() {
           「白字压在浅色路网上」。2026-08-27 真机实证：换 Glass 后这条信息条几乎读不出来。
           ⇒ 压在不可控内容上的浮层一律用不透明底，玻璃质感只保留边框与投影。 */}
       <View
+        testID="map-info-bar"
         onLayout={(e) => reportBottomChrome(pathname, e.nativeEvent.layout.height + 12)}
         style={{
           position: 'absolute',
@@ -210,7 +177,7 @@ export default function MapScreen() {
           right: 12,
           bottom: 12 + insets.bottom,
           paddingHorizontal: 14,
-          paddingVertical: 11,
+          paddingVertical: 8,
           gap: 8,
           backgroundColor: p.panel,
           borderRadius: 16,
@@ -227,7 +194,7 @@ export default function MapScreen() {
                   style={{ color: p.fg1, fontSize: p.font(14), fontWeight: '700' }}
                   numberOfLines={1}
                 >
-                  {selected != null ? `${selected + 1}. ` : ''}
+                  {selGlyph ? `${selGlyph.text} · ` : ''}
                   {sel.name}
                 </Text>
                 <Text style={{ color: p.fg2, fontSize: p.font(12) }} numberOfLines={2}>
@@ -240,49 +207,36 @@ export default function MapScreen() {
                   style={{ color: p.fg1, fontSize: p.font(13), fontWeight: '600' }}
                   numberOfLines={1}
                 >
-                  {title || '地图'}
+                  {geometry.title || '地图'}
                 </Text>
-                <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
-                  {pts.length ? `${pts.length} 个点 · 点按查看详情` : '没有可显示的坐标'}
+                <Text style={{ color: p.fg3, fontSize: p.font(11) }} numberOfLines={1}>
+                  {geometry.subtitle
+                    ? `${geometry.subtitle}${pts.length ? ' · 点标注看详情' : ''}`
+                    : pts.length
+                      ? `${pts.length} 个点 · 点按查看详情`
+                      : hasRoute
+                        ? '路线'
+                        : '没有可显示的坐标'}
                 </Text>
               </>
             )}
           </View>
+          {/* 2026-09-11 两档制：信息条上的两枚都是胶囊类（Pill，实色底） */}
           {sel ? (
-            <Pressable
-              onPress={() => setSelected(null)}
-              hitSlop={10}
-              accessibilityLabel="收起详情"
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: 15,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: p.fill,
-              }}
-            >
-              <Text style={{ color: p.fg2, fontSize: p.font(15), lineHeight: p.font(17) }}>×</Text>
-            </Pressable>
+            <Pill p={p} testID="map-close-detail" solid accessibilityLabel="收起详情" label="收起" onPress={() => setSelected(null)} />
           ) : null}
-          {pts.length ? (
-            <Pressable
+          {pts.length || hasRoute ? (
+            <Pill
+              p={p}
+              testID="map-fit"
+              tone="accent"
+              solid
+              label={fitPts.length > 1 ? '全览' : '回中'}
               onPress={() => {
                 setSelected(null)
                 fitToPoints(300)
               }}
-              hitSlop={8}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 7,
-                borderRadius: 10,
-                backgroundColor: p.accentSoft,
-              }}
-            >
-              <Text style={{ color: p.accent, fontSize: p.font(12) }}>
-                {pts.length > 1 ? '全览' : '回中'}
-              </Text>
-            </Pressable>
+            />
           ) : null}
         </View>
       </View>

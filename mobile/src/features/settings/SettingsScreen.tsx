@@ -34,7 +34,9 @@ import {
 import { handsFreeAvailability } from '../../core/voice/handsFree'
 import { speechController } from '../../core/voice/speech'
 import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
+import { Pill } from '../../ui/Pill'
 import { usePalette, type Palette } from '../../ui/theme'
+import { TARGET } from '../../ui/tokens'
 import { useAssistant } from '../assistant/AssistantProvider'
 import { S2sConsentSheet } from './S2sConsentSheet'
 import type { TtsProviderInfo } from '@shared/types.ts'
@@ -96,7 +98,7 @@ function SessionSummarySection({
     <Text testID={testID} style={{ color: p.fg2, fontSize: p.font(13) }}>{text}</Text>
   )
   const refresh = (
-    <Pressable accessibilityRole="button" onPress={onRefresh} testID="settings-session-refresh" style={{ minHeight: 44, justifyContent: 'center' }}>
+    <Pressable accessibilityRole="button" onPress={onRefresh} testID="settings-session-refresh" style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}>
       <Text style={{ color: p.accent, fontSize: p.font(13) }}>{loading ? '刷新中…' : '刷新'}</Text>
     </Pressable>
   )
@@ -176,24 +178,20 @@ function ChoiceRow<T extends string>({
   return (
     <View style={{ gap: 6 }}>
       <Text style={{ color: p.fg2, fontSize: p.font(13) }}>{label}</Text>
+      {/* 2026-09-11 两档制：单选项走 Pill（外框 48、视觉 36），选中态进无障碍 selected——此前 ChoiceRow 不暴露 selected，
+          角色回读只能截图（打磨批坑账） */}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {options.map((o) => (
-          <Pressable
+          <Pill
             key={o.v}
+            p={p}
+            testID={`choice-${String(o.v)}`}
+            selected={value === o.v}
+            accessibilityLabel={`${label}：${o.label}`}
+            paddingHorizontal={12}
+            label={o.label}
             onPress={() => onPick(o.v)}
-            style={{
-              backgroundColor: value === o.v ? p.accentSoft : 'transparent',
-              borderWidth: 1,
-              borderColor: value === o.v ? p.accent : p.line,
-              borderRadius: 999,
-              paddingHorizontal: 12,
-              paddingVertical: 6,
-            }}
-          >
-            <Text style={{ color: value === o.v ? p.accent : p.fg2, fontSize: p.font(13) }}>
-              {o.label}
-            </Text>
-          </Pressable>
+          />
         ))}
       </View>
     </View>
@@ -250,16 +248,15 @@ function QuickCommandsEditor({ p, commands, onChange }: { p: Palette; commands: 
     <View style={{ gap: 8 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
         {commands.map((c) => (
-          <Pressable
+          <Pill
             key={c}
-            accessibilityRole="button"
+            p={p}
             accessibilityLabel={`移除示例：${c}`}
+            textColor={p.fg1}
+            paddingHorizontal={12}
+            label={`${c}  ×`}
             onPress={() => onChange(commands.filter((x) => x !== c))}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 4, minHeight: 36, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1, borderColor: p.line, backgroundColor: p.fill }}
-          >
-            <Text style={{ color: p.fg1, fontSize: p.font(13) }}>{c}</Text>
-            <Text style={{ color: p.fg3, fontSize: p.font(13) }}>×</Text>
-          </Pressable>
+          />
         ))}
       </View>
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -271,11 +268,11 @@ function QuickCommandsEditor({ p, commands, onChange }: { p: Palette; commands: 
           placeholderTextColor={p.fg3}
           style={{ flex: 1, borderWidth: 1, borderColor: p.line, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, color: p.fg1, fontSize: p.font(14) }}
         />
-        <Pressable accessibilityRole="button" onPress={add} style={{ minHeight: 44, justifyContent: 'center', paddingHorizontal: 12 }}>
+        <Pressable accessibilityRole="button" onPress={add} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', paddingHorizontal: 12 }}>
           <Text style={{ color: p.accent, fontSize: p.font(13) }}>添加</Text>
         </Pressable>
       </View>
-      <Pressable accessibilityRole="button" onPress={() => onChange([...MOBILE_QUICK_COMMAND_ORDER])} style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}>
+      <Pressable accessibilityRole="button" onPress={() => onChange([...MOBILE_QUICK_COMMAND_ORDER])} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}>
         <Text style={{ color: p.accent, fontSize: p.font(13) }}>恢复默认示例</Text>
       </Pressable>
     </View>
@@ -663,8 +660,12 @@ export function SettingsScreen() {
             onPick={(voiceId) => set({ voiceId })}
           />
         ) : null}
-        <Pressable
+        <Pill
+          p={p}
+          tone="accent"
+          testID="voice-preview"
           disabled={previewing || !server?.audioUrl}
+          label={previewing ? '播放中…' : '试听'}
           onPress={() => {
             setPreviewing(true)
             setPreviewMsg('')
@@ -676,21 +677,7 @@ export function SettingsScreen() {
               })
               .finally(() => setPreviewing(false))
           }}
-          style={{
-            alignSelf: 'flex-start',
-            minHeight: 44,
-            justifyContent: 'center',
-            borderWidth: 1,
-            borderColor: p.accent,
-            borderRadius: 999,
-            paddingHorizontal: 14,
-            opacity: previewing ? 0.5 : 1,
-          }}
-        >
-          <Text style={{ color: p.accent, fontSize: p.font(13) }}>
-            {previewing ? '播放中…' : '试听'}
-          </Text>
-        </Pressable>
+        />
         {previewMsg ? (
           <Text style={{ color: p.amber, fontSize: p.font(12), lineHeight: p.font(18) }}>
             {previewMsg}
@@ -804,7 +791,7 @@ export function SettingsScreen() {
               },
             ])
           }
-          style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+          style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}
         >
           <Text style={{ color: p.red, fontSize: p.font(13) }}>清除对话记录</Text>
         </Pressable>
@@ -883,7 +870,7 @@ export function SettingsScreen() {
             accessibilityLabel="自动行车中，退出行车档"
             onPress={() => core?.dismissDriving()}
             style={{
-              minHeight: 48,
+              minHeight: p.target(TARGET.parked),
               flexDirection: 'row',
               alignItems: 'center',
               justifyContent: 'space-between',
@@ -924,7 +911,7 @@ export function SettingsScreen() {
               testID="developer-hide"
               accessibilityRole="button"
               onPress={() => set({ developerUnlocked: false })}
-              style={{ minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' }}
+              style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center', alignSelf: 'flex-start' }}
             >
               <Text style={{ color: p.fg2, fontSize: p.font(13) }}>隐藏开发者选项</Text>
             </Pressable>
@@ -933,7 +920,7 @@ export function SettingsScreen() {
       ) : null}
 
       {/* 构建行：报问题先抄它。连点 DEVELOPER_UNLOCK_TAPS 次解锁开发者选项 */}
-      <Pressable testID="build-label-tap" onPress={onBuildTap} style={{ minHeight: 44, justifyContent: 'center' }}>
+      <Pressable testID="build-label-tap" onPress={onBuildTap} style={{ minHeight: p.target(TARGET.parked), justifyContent: 'center' }}>
         <Text
           selectable
           testID="build-label"

@@ -452,3 +452,63 @@ def test_dest_ordinal_resolved_from_choices():
     assert res.status == "ok"
     assert seen.get("near_addr") == "惠州站"            # 序号真回填成候选名（不许蒙混）
     assert kv.get(CHARGING_DEST_CHOICES) == {}          # 消费即清
+
+
+def test_amap_charging_plan_carries_stop_coordinates_and_path():
+    """2026-09-11 地图路线：沿途补电站带坐标、方案带起点与折线（provider 给整条折线就用它）。"""
+    from agents.charging_planner.src.providers.amap import AmapChargingProvider
+    from agents.navigation.src.providers.base import POI
+
+    p = AmapChargingProvider(key="test-key")
+
+    async def fake_route(o, d, meta=None, with_polyline=False):
+        return {"distance_km": 870.0, "duration_min": 600.0, "steps": [],
+                "points": [{"lng": 114.0, "lat": 23.0, "cum_km": 250.0},
+                           {"lng": 116.0, "lat": 24.0, "cum_km": 600.0},
+                           {"lng": 118.1, "lat": 24.46, "cum_km": 870.0}],
+                "path": [[22.5, 113.8], [23.0, 114.0], [24.46, 118.1]]}
+
+    async def fake_search(keyword, near=None, **kw):
+        return [POI(id="s", name="沿途充电站", address="高速服务区", rating=4.5,
+                    lat=near.lat, lng=near.lng)]
+
+    p._poi.get_route = fake_route
+    p._poi.search = fake_search
+    plan = asyncio.run(p.plan_route(
+        "厦门火车站", soc="50%", meta={"current_lat": "22.5", "current_lng": "113.8"}))
+    assert plan.stops[0]["lat"] == 23.0 and plan.stops[0]["lng"] == 114.0
+    assert plan.origin_loc == {"lat": 22.5, "lng": 113.8}
+    assert plan.path == [[22.5, 113.8], [23.0, 114.0], [24.46, 118.1]]
+
+
+def test_plan_card_writes_geometry_only_when_present():
+    """charging_route 卡：有坐标 / 折线才写键；老 provider（没有这些字段）出的卡与以前逐键相同。"""
+    from agents.charging_planner.src.providers.base import ChargingPlan
+    agent = ChargingPlannerAgent()
+
+    async def fake_plan(destination, soc="", meta=None):
+        return ChargingPlan(
+            summary="x", distance_km=613.1, total_duration_min=382,
+            stops=[{"name": "南网充电站", "address": "服务区", "at_km": 212, "charge_to": "80%",
+                    "lat": 23.1, "lng": 114.2}],
+            path=[[22.5, 113.8], [23.1, 114.2]], origin_loc={"lat": 22.5, "lng": 113.8})
+
+    agent.charging.plan_route = fake_plan
+    ctx = make_context(context_values={"vehicle.battery": "50%"})
+    res = asyncio.run(run_handle(
+        agent, "charging.plan", slots={"destination": "X"}, raw_text="规划充电", ctx=ctx))
+    card = res.ui_card
+    assert card["stops"][0] == {"name": "南网充电站", "address": "服务区", "at_km": 212,
+                                "lat": 23.1, "lng": 114.2}
+    assert card["path"] == [[22.5, 113.8], [23.1, 114.2]]
+    assert card["origin_loc"] == {"lat": 22.5, "lng": 113.8}
+
+    async def bare_plan(destination, soc="", meta=None):
+        return ChargingPlan(summary="x", distance_km=613.1, total_duration_min=382,
+                            stops=[{"name": "南网充电站", "address": "服务区", "at_km": 212}])
+
+    agent.charging.plan_route = bare_plan
+    res = asyncio.run(run_handle(
+        agent, "charging.plan", slots={"destination": "X"}, raw_text="规划充电", ctx=ctx))
+    assert "path" not in res.ui_card and "origin_loc" not in res.ui_card
+    assert res.ui_card["stops"][0] == {"name": "南网充电站", "address": "服务区", "at_km": 212}

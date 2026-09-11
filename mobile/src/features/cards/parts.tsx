@@ -7,6 +7,7 @@ import type { CardButton, Provenance } from '@shared/types.ts'
 
 import { Icon, iconRuntimeAvailable, type IconName } from '../../ui/Icon'
 import type { Palette } from '../../ui/theme'
+import { RADIUS, TARGET } from '../../ui/tokens'
 
 export type SendFn = (text: string, metaExtra?: Record<string, string>) => void
 
@@ -97,17 +98,16 @@ export function CardButtons({
       {usable.map((b, i) => (
         <Pressable
           key={i}
-          // B4-9：TalkBack 读「按钮 + 标签」（§8「卡片按钮补 role/label」）；
-          // 44 + 2×2 hitSlop = 48 目标（§5.4 候选列表行高 ≥48）
+          // B4-9：TalkBack 读「按钮 + 标签」（§8「卡片按钮补 role/label」）。
+          // 2026-09-11 两档制：按钮类视觉 = 外框 = 目标高 48（原 44 + hitSlop 2 是第三种高）
           accessibilityRole="button"
           accessibilityLabel={b.label}
-          hitSlop={2}
           onPress={() => onSend(b.send_text!)}
           style={{
             backgroundColor: p.accentSoft,
-            borderRadius: 10,
+            borderRadius: RADIUS.md,
             paddingHorizontal: 12,
-            minHeight: 44,
+            minHeight: p.target(TARGET.parked),
             justifyContent: 'center',
           }}
         >

@@ -15,7 +15,7 @@
 //     仍留 192 是因为几条老用例的读数绑在它上面（换数就不是同一条读数了）；**B5-15 的新用例一律用
 //     98.67**。要用外屏横的真实空间做判断时看 98.67，别看 192。
 import type { SheetDetent } from '@/core/presence/presence'
-import { drivingSheetMinDp, sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
+import { drivingSheetMinDp, parkedSheetMinDp, sheetHeightDp, sheetOrbDp } from '@/ui/layout/sheetHeight'
 
 // ── 内容清单（独立于实现，逐条注明出处）──
 // ⚠ B5-12（泓舟 B4 真机轮原话①）：底栏「收起 / 打断」整段撤掉，收起改为**顶缘把手带**下拖/轻点。
@@ -117,12 +117,56 @@ test('泊车阴性：同一屏行车档关 ⇒ 逐 dp 退回纯比例（真机 5
   expect(ratio(568.33, 0.4)).toBe(227)
 })
 
-test('泊车档：三个容器 × 三档一律等于纯比例（下限只给行车档）', () => {
+// ── 泊车档下限（2026-09-11，用户：「上升幅度要按手机尺寸适配，光球可能被遮」）────────────
+// 泊车原来是纯比例：矮容器上 0.4 × 容器装不下「把手带 48 + padding 32 + 球 88 + 胶囊」，球被层底裁掉。
+// 现在与行车档同一条式子 `min(容器, max(比例, 下限))`，常量取泊车的。下面的清单同样独立于实现列一遍。
+const BTN_PARKED = 48 // TARGET.parked：把手带 minHeight
+const ANSWER_2L_PARKED = 48 // 回答两行（泊车 16pt / lineHeight 24）
+const CARD_HEAD = 2 + 24 + 16 // 0.78 档：CardShell 边框 + padding + 类型行（看得见卡头 = 知道下面还有卡）
+const needParked = (detent: SheetDetent, split: boolean, large = false): number => {
+  const chrome = (large ? T(BTN_PARKED) : BTN_PARKED) + SCROLL_PAD
+  const orbCol = ORB_PARKED + GAP + (large ? L(CAPSULE) : CAPSULE)
+  const answer2 = 2 * (large ? L(24) : 24)
+  const head = 2 + 24 + (large ? L(16) : 16)
+  const body = detent === 0.78 ? answer2 + GAP + head : detent === 0.62 ? answer2 : 0
+  return chrome + (split ? Math.max(orbCol, body) : body ? orbCol + GAP + body : orbCol)
+}
+
+test('泊车档下限的数：0.4 = 200 / 0.62 = 260 / 0.78 = 314（normal 字号，竖排）', () => {
+  expect(parkedSheetMinDp(0.4, false, 'normal')).toBe(200)
+  expect(parkedSheetMinDp(0.62, false, 'normal')).toBe(200 + GAP + ANSWER_2L_PARKED)
+  expect(parkedSheetMinDp(0.78, false, 'normal')).toBe(200 + GAP + ANSWER_2L_PARKED + GAP + CARD_HEAD)
+})
+
+test('泊车档：主力机（外屏竖实测 578.67）三档比例都高于下限 ⇒ 读数逐 dp 不变', () => {
   const detents: SheetDetent[] = [0.4, 0.62, 0.78]
-  for (const h of [OUTER_PORTRAIT, OUTER_LANDSCAPE, INNER]) {
-    for (const d of detents) {
-      expect(call(h, d, { driving: false, split: false })).toBe(ratio(h, d))
-      expect(call(h, d, { driving: false, split: true })).toBe(ratio(h, d))
+  for (const d of detents) {
+    expect(ratio(OUTER_PORTRAIT, d)).toBeGreaterThan(needParked(d, false))
+    expect(call(OUTER_PORTRAIT, d, { driving: false })).toBe(ratio(OUTER_PORTRAIT, d))
+  }
+})
+
+test('泊车档：矮容器由下限托住——400dp 记录区 0.4 档给 200 不是 160；再矮就 clamp 到容器', () => {
+  expect(ratio(400, 0.4)).toBe(160)
+  expect(call(400, 0.4, { driving: false })).toBe(needParked(0.4, false))
+  expect(call(400, 0.4, { driving: false })).toBeGreaterThan(ratio(400, 0.4))
+  // 外屏横实测记录区 98.67：连下限都装不下 ⇒ 占满记录区，不许超出
+  expect(call(98.67, 0.4, { driving: false, split: true })).toBe(98.67)
+  // 老的推导容器 192 上 0.62 档：比例 119 < 下限 260 ⇒ 占满 192
+  expect(call(OUTER_LANDSCAPE, 0.62, { driving: false })).toBe(OUTER_LANDSCAPE)
+})
+
+test('泊车档：容器变了而下限没变 ⇒ 层高不跟着容器动（与行车档同一判别式）', () => {
+  expect(call(400, 0.4, { driving: false })).toBe(call(450, 0.4, { driving: false }))
+  expect(ratio(400, 0.4)).not.toBe(ratio(450, 0.4))
+})
+
+test('泊车档最小高的构成：三档 × split × 两个字号档，逐项与清单对齐', () => {
+  const detents: SheetDetent[] = [0.4, 0.62, 0.78]
+  for (const d of detents) {
+    for (const split of [false, true]) {
+      expect(parkedSheetMinDp(d, split, 'normal')).toBe(needParked(d, split))
+      expect(parkedSheetMinDp(d, split, 'large')).toBe(needParked(d, split, true))
     }
   }
 })

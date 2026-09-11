@@ -17,6 +17,7 @@ import type { FontScalePref } from '../../core/settings/store'
 import { AuroraOrb, type OrbState } from '../../ui/aurora'
 import { Icon, iconRuntimeAvailable } from '../../ui/Icon'
 import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
+import { Pill } from '../../ui/Pill'
 import { AURORA, type Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
 import type { PttHandle } from './usePtt'
@@ -179,17 +180,19 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
         {/* B5-14（B4 Scanner 出账③「多个项目具有相同的说明」）：chip 的说明加前缀。
             没有它时 chip 与同文案的用户气泡都以纯文本作说明，读屏念两遍、用户分不出哪个是可点的。
             前缀只进 accessibilityLabel，视觉文案不变。 */}
+        {/* 2026-09-11 两档制：外框 = 目标高（48 / 56）、视觉药丸 36 / 44，与层内 FollowUpChips 同一个 Pill */}
         {chips.map((c) => (
-          <Pressable
+          <Pill
             key={c.text}
+            p={p}
             testID="composer-chip"
-            accessibilityRole="button"
             accessibilityLabel={`追问：${c.label}`}
+            driving={driving}
+            fontScale={fontScale}
+            fontSize={12}
+            label={c.label}
             onPress={() => onSend(c.text)}
-            style={{ backgroundColor: p.fill, borderWidth: 1, borderColor: p.fill2, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, minHeight: target, justifyContent: 'center' }}
-          >
-            <Text style={{ color: p.fg2, fontSize: p.font(12) }}>{c.label}</Text>
-          </Pressable>
+          />
         ))}
       </ScrollView>
       )}

@@ -41,6 +41,10 @@ declare module 'react-native-amap3d' {
     style?: ViewStyle
     initialCameraPosition?: CameraPosition
     myLocationEnabled?: boolean
+    /** 三枚系统控件（`map-view.tsx:50-62`）——舞台内嵌地图关掉它们：160dp 的小图放不下罗盘 / 比例尺 / 缩放钮 */
+    compassEnabled?: boolean
+    scaleControlsEnabled?: boolean
+    zoomControlsEnabled?: boolean
     children?: ReactNode
     /** 点空白处（`map-view.tsx:123`）——本项目用它收起 marker 详情 */
     onPress?: (event: NativeSyntheticEvent<LatLng>) => void
@@ -62,7 +66,12 @@ declare module 'react-native-amap3d' {
     position: LatLng
     title?: string
     subtitle?: string
+    /** 自定义标注 view（`marker.tsx:67`）：Android 在 onLayout 时把子树画成位图（Marker.kt::updateIcon）
+     *  ——2026-09-11 路线标注用它画「起 / 经 / 终 / 电 / 序号」的实色圆点 */
     children?: ReactNode
+    /** 锚点比例（`marker.tsx:54`，Android）：圆点标注用 0.5/0.5 让圆心落在坐标上；缺省 0.5/1（针尖） */
+    anchor?: { x: number; y: number }
+    zIndex?: number
     /** ⚠ 无参数（`marker.tsx:72`）——是哪个 marker 被点，只能靠调用方闭包捕获 */
     onPress?: () => void
   }
@@ -73,6 +82,9 @@ declare module 'react-native-amap3d' {
     points: LatLng[]
     color?: string
     width?: number
+    zIndex?: number
+    /** 虚线（`polyline.tsx:45`） */
+    dotted?: boolean
   }
 
   export const Polyline: ComponentType<PolylineProps>

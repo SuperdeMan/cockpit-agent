@@ -349,7 +349,13 @@ export type RoutePlanCard = {
   cancelled?: boolean
   origin?: string
   destination: string
-  waypoints: Array<{ name: string; address?: string }>
+  // 2026-09-11 路线几何（Android 地图页画路线用；HMI 舞台仍画示意图）：全部**可选**——
+  // provider 没给几何时字段不出现，客户端据此决定给不给「查看路线」入口。
+  origin_loc?: { lat: number; lng: number }
+  destination_loc?: { lat: number; lng: number }
+  waypoints: Array<{ name: string; address?: string; lat?: number; lng?: number }>
+  // 抽样后的折线（≤ 240 点），每项 [lat, lng]
+  path?: Array<[number, number]>
   distance_km?: number
   duration_min?: number
   eta_ts?: number
@@ -361,7 +367,11 @@ export type ChargingRouteCard = {
   destination: string
   distance_km?: number
   duration_min?: number
-  stops: Array<{ name: string; address?: string; at_km?: number }>
+  // 2026-09-11：stops 可带坐标、卡可带折线（同 RoutePlanCard，全部可选）
+  stops: Array<{ name: string; address?: string; at_km?: number; lat?: number; lng?: number }>
+  origin_loc?: { lat: number; lng: number }
+  destination_loc?: { lat: number; lng: number }
+  path?: Array<[number, number]>
   soc?: string
 }
 

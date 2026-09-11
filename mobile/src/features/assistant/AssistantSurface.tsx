@@ -5,7 +5,7 @@
 // 「支持页底部常驻两栏」（状态行 + 按钮行）已撤：闲置时它没有任何「此刻」的事实，与胶囊
 // 「一次只说一件事」、采集点「没在采集就不渲染」两条既有判据相悖；助手的身份锚是光球，不是文字方块。
 import { useState } from 'react'
-import { KeyboardAvoidingView, Pressable, Text, View } from 'react-native'
+import { KeyboardAvoidingView, Pressable, View } from 'react-native'
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { captureSummary, capsuleVisible } from '@/core/presence/presence'
@@ -18,6 +18,7 @@ import { AuroraOrb } from '@/ui/aurora'
 import { ORB_A11Y } from '@/ui/aurora/AuroraOrb'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
 import { useBottomChrome } from '@/ui/layout/bottomChrome'
+import { Pill } from '@/ui/Pill'
 import { RADIUS, TARGET, scale } from '@/ui/tokens'
 import { useAssistant, type AssistantRuntime } from './AssistantProvider'
 import { ProactivePresenter, pickProactiveMessage } from './ProactivePresenter'
@@ -86,14 +87,15 @@ function AssistantPresence({ runtime }: { runtime: AssistantRuntime }) {
           ? settingsStore.getState().update({ drivingManual: true })
           : runtime.setSheetOverride({ turnId: runtime.latestTurnId, mode: 'open' })} />
     </View> : null}
-    {action ? <Pressable testID="assistant-action" accessibilityRole="button"
+    {/* 2026-09-11 两档制：动作键与胶囊同一个 Pill（外框 = 目标高、视觉 36 / 44），一行里不再一高一矮 */}
+    {action ? <Pill p={p} testID="assistant-action" tone="amber" solid elevated fontWeight="600"
+      driving={snapshot.driving} fontScale={settings.fontScale}
       accessibilityLabel={action === 'stop-playback' ? '停止播报' : '打断'}
       accessibilityHint={action === 'stop-playback' ? '只停止声音，不会开始录音' : undefined}
       onPress={action === 'stop-playback' ? runtime.onStopPlayback : runtime.onInterrupt}
-      style={{ ...disc, borderColor: 'rgba(245,158,11,0.38)', minHeight: target, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, borderRadius: RADIUS.full }}>
+      label={action === 'stop-playback' ? '停止播报' : '打断'}>
       {iconRuntimeAvailable() ? <Icon name="stop" size={16} color={p.amber} /> : null}
-      <Text style={{ color: p.amber, fontSize: p.font(13), fontWeight: '600' }}>{action === 'stop-playback' ? '停止播报' : '打断'}</Text>
-    </Pressable> : null}
+    </Pill> : null}
     {cfg.audioUrl ? <Pressable testID="assistant-orb" accessibilityRole="button"
       accessibilityLabel={`${ORB_A11Y[snapshot.primary]}，开始说话`} accessibilityHint="轻点开始说话，说完自动发送"
       onPress={runtime.onOrbTap}

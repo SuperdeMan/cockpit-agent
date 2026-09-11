@@ -39,6 +39,8 @@ class MockPOIProvider(POIProvider):
             route["points"] = [
                 {"lng": 121.48 + 0.01 * i, "lat": 31.24 + 0.01 * i,
                  "cum_km": round(12.5 * i / 4, 1)} for i in range(1, 5)]
+            # 与 amap 同构的折线面（[lat, lng]）：route_plan 卡带它，Android 地图页画路线（2026-09-11）
+            route["path"] = [[31.24 + 0.01 * i, 121.48 + 0.01 * i] for i in range(0, 5)]
         return route
 
     async def reverse_geocode(self, lng: float, lat: float,

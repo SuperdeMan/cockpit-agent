@@ -24,6 +24,12 @@ export const MOTION = { fast: 120, base: 180, slow: 260, orbIdle: 4000 } as cons
 /** 触控目标（dp）：泊车 48 / 行车 56（Guidelines :325-327） */
 export const TARGET = { parked: 48, driving: 56 } as const
 
+/** 胶囊类控件的**视觉**高（dp；2026-09-11 控件高度两档制）：泊车 36 / 行车 44。
+ *  可点控件只有两档：**按钮 = `TARGET`**（视觉即外框：Dock 确认/取消、卡内按钮排、设置页按钮、发送键），
+ *  **胶囊 / chip = `PILL`**（状态胶囊、追问 chips、欢迎推荐、卡内「地图」「看菜单」、设置页单选项……）。
+ *  胶囊的外框（`Pressable`）仍撑到 `TARGET`——热区与探针读数不降，视觉药丸更矮。承载组件：`ui/Pill.tsx`。 */
+export const PILL = { parked: 36, driving: 44 } as const
+
 /** 材质三档（方案 §5.11）。frosted/reactive 的 blur 在 B3 spike 前**不真的用**——
  *  RN 无 backdrop-filter，B1 的 G1 就是 theme.ts 的 glass（tint 版）。 */
 export const GLASS = {

@@ -5,6 +5,7 @@
 // ⚠ 内屏实测宽 741 离双栏阈值 720 只有 **21dp** 余量，且 widthClass 是 medium（不是 expanded）——
 //   阈值若按 M3 的 840 卡，这台设备的内屏就双不了栏。这正是 §7.1「不能卡 840」那句的实测支撑。
 import {
+  STAGE_MAP_HEIGHT,
   TWO_PANE_MIN_WIDTH,
   bookSplit,
   heightClass,
@@ -12,6 +13,7 @@ import {
   screenSwitch,
   stageWidth,
   tabletopSplit,
+  tabletopStage,
   widthClass,
 } from '@/ui/layout/sizeClass'
 
@@ -83,6 +85,15 @@ describe('舞台几何', () => {
     expect(tabletopSplit(800, 500, 100)).toBe(400)
     expect(tabletopSplit(800, 50, 100)).toBe(400)
     expect(tabletopSplit(800, 950, 100)).toBe(400)
+  })
+  test('tabletop 上半的球径（2026-09-11）：≥200dp 用 120，否则 88；OPPO 内屏上半约 246 ⇒ 120', () => {
+    expect(tabletopStage(246)).toEqual({ orb: 120 })
+    expect(tabletopStage(200)).toEqual({ orb: 120 })
+    expect(tabletopStage(199)).toEqual({ orb: 88 })
+    expect(tabletopStage(0)).toEqual({ orb: 88 })
+  })
+  test('舞台内嵌地图高：双栏 260、抽屉 / 桌面 160（桌面上半只有 ~246，地图不能吃掉整列）', () => {
+    expect(STAGE_MAP_HEIGHT).toEqual({ twoPane: 260, compact: 160 })
   })
 })
 
