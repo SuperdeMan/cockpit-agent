@@ -30,6 +30,8 @@ export function PresenceCapsule({
   const fg = c.tone === 'amber' ? p.amber : c.tone === 'red' ? p.red : c.tone === 'accent' ? p.accent : p.fg2
   return (
     <View style={{ alignItems: 'center' }}>
+      {/* ⚠ Pill 的外框缺省 `alignSelf: 'flex-start'`（列容器里保持自然宽），会压过父级的 `alignItems: 'center'`——
+          2026-09-12 用户在真机上看到胶囊贴左，就是这一条。胶囊要居中，显式传回来。 */}
       <Pill
         p={p}
         testID="presence-capsule"
@@ -38,6 +40,7 @@ export function PresenceCapsule({
         elevated
         driving={snapshot.driving}
         fontScale={fontScale}
+        style={{ alignSelf: 'center' }}
         onPress={onPress}
         // 接了 onPress 就是按钮：role 随之改（评审「别踩」①）
         accessibilityRole={onPress ? 'button' : 'text'}
