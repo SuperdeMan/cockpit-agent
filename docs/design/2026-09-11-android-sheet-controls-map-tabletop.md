@@ -132,3 +132,8 @@ ChargingRouteCard: origin_loc?, destination_loc?; stops[].lat?/lng?; path?
 - 语音层整层下滑：`xiaozhou://voice` 升层 → 内容区下滑 → 收起（`b2-07/b2-08`），零崩溃。
 - **真栈端到端**（Maestro 2.9.0 `--no-reinstall-driver`，流 `20-route-map`：冷启 → 输入框中文 `inputText` → 发送 → 等卡）：在 prod 包的真实 Composer 里发出「从深圳湾公园到深圳北站多远」，云端 `e38cd75` 回 `route_plan`（estimate）卡——「路线测算（未开始导航）」「深圳湾公园 → 深圳北站」「22.4km · 约30.2分钟 · 预计 00:59 到」，卡上出现**「查看路线」**（Maestro 截图 `m20-01-route-card.png`）；`tapOn card-map-entry` COMPLETED（21.7s）→ `map-info-bar` 可见断言 COMPLETED ⇒ 地图页在真实几何上打开。⚠ 随后 Maestro 在地图页取层级时把 driver 挂死（`map-fit` 等待一直 RUNNING、`adb shell` 20s 超时），杀掉 Maestro 与 `dev.mobile.maestro` 后设备恢复；地图页仍在前台，截图 `b2-09-after-maestro.png`：**高德瓦片上沿真实道路（滨海大道 → 福龙路 → 深圳北站）的主色折线 + 起 / 终两枚标注，信息条「深圳湾公园 → 深圳北站 · 22.4km · 约30分钟」**，`logcat -b crash` 为空。这一趟同时是「Maestro 与地图原生视图」的一条新边界：地图页上不要再用 Maestro 取层级，截图 / adb 取证即可。
 - 未在本批真机验证：桌面姿态横排（OPPO 是书本折叠、tabletop 要 Xiaomi）、行车档下的 Pill（44/56）、舞台内嵌地图（要双栏 / 抽屉宽度）。
+
+### 7.4 用户回报「状态胶囊偏左」（2026-09-13）与复扫
+
+- 根因：`Pill` 外框缺省 `alignSelf: 'flex-start'`（列容器里保持自然宽），压过了胶囊容器的 `alignItems: 'center'`——两档制迁移时只顾了外框高，没顾对齐。第一份候选包 `01-home.png` 里「正在重连…」贴左就是它。修法 `PresenceCapsule` 显式传 `alignSelf: 'center'`（`71d33dc3`）。其余 Pill 站点都在行 / 换行行里（chips、单选、卡内动作、地图信息条），缺省对齐就是原来的样子。
+- 复扫（OPPO prod 包 `71d33dc3f`，2026-09-13 13:55，APK SHA-256 `6aaec612…182a` 端本一致）：对话页用 4s 飞行模式逼出「正在重连…」——**居中**（`b3-capsule-airplane-1.png`）；状态画廊 33 条里「说「小舟小舟」」「出错了」「在听…」三枚胶囊都居中（`b3-02-state-gallery.png`）；卡片画廊 merchant_checkout 三枚按钮同高、place_list「看菜单」「地图」、trip_itinerary「导航」同一档、设置页主题 / 字号 / 回答长度单选同一档；`logcat -b crash` 为空。飞行模式只用于取证，已关闭。
