@@ -21,7 +21,9 @@ import { speechCovered } from '@shared/ttsQueue.mjs'
 
 import { base64ToBytes } from './base64'
 import { newPcmPlayer } from './audioCtx'
+import { takeWarmSocket } from './warmSocket'
 import { parseWav, toMono } from './wav'
+import { ttsStreamUrl } from './audioUrls'
 
 export interface TtsConfig {
   /** 音频面入口，如 https://{fqdn}:8444 */
@@ -60,9 +62,7 @@ export interface TtsStats {
   gaps: { atSec: number; gapMs: number }[]
 }
 
-export function ttsStreamUrl(audioUrl: string): string {
-  return audioUrl.replace(/^http/, 'ws') + '/api/tts/stream'
-}
+export { ttsStreamUrl }
 
 /** 批处理合成（回退路径）：返回 base64 WAV 解出来的 PCM，失败返回 null */
 export async function synthesizeBatch(
@@ -162,16 +162,23 @@ export class TtsSession {
   }
 
   start(): void {
+    const url = ttsStreamUrl(this.cfg.audioUrl)
+    // 预热池里有一条 OPEN 的就用它（warmSocket.ts 头注）：端侧本地快路径 0.5s 就有 final，
+    // 那时首音 = 握手 + 首片，握手藏不进规划里；没有预热的就像今天一样现连
+    const warm = takeWarmSocket(url)
     let ws: WebSocket
-    try {
-      ws = new WebSocket(ttsStreamUrl(this.cfg.audioUrl))
-    } catch {
-      void this.fallback()
-      return
+    if (warm) ws = warm
+    else {
+      try {
+        ws = new WebSocket(url)
+      } catch {
+        void this.fallback()
+        return
+      }
     }
     ws.binaryType = 'arraybuffer'
     this.ws = ws
-    ws.onopen = () => {
+    const onOpen = () => {
       ws.send(
         JSON.stringify({
           type: 'start',
@@ -184,6 +191,7 @@ export class TtsSession {
       this.preOpen = []
       if (this.finishPending !== null) ws.send(JSON.stringify({ type: 'finish' }))
     }
+    ws.onopen = onOpen
     ws.onmessage = (ev) => this.onMessage(ev)
     ws.onerror = () => {
       if (!this.done && !this.disposed) void this.fallback()
@@ -191,6 +199,8 @@ export class TtsSession {
     ws.onclose = () => {
       if (!this.done && !this.disposed) void this.fallback()
     }
+    // 预热连接早就 OPEN 了，onopen 不会再来：现在就发 start
+    if (warm) onOpen()
   }
 
   private onMessage(ev: WebSocketMessageEvent): void {

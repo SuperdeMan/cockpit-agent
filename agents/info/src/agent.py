@@ -93,6 +93,17 @@ class InfoAgent(WeatherMixin, SearchMixin, SportsMixin, NewsMixin, StockMixin,
             return await handler(intent, ctx, meta)
         return AgentResult(status=FAILED, speech="抱歉，这个信息查询我还不会处理。")
 
+    async def handle_stream(self, intent, ctx, meta):
+        """流式执行（2026-09-13，性能评审 §3.4）：`info.search` 的接地合成边出边流——真栈读数里
+        它是首段有效文本最慢的一族（5.7–17.5s，合成 2.7–6.1s 一次到齐）。其余意图沿用 SDK 缺省
+        （`handle` 包成单个 final），行为逐字不变。"""
+        if intent.name == "info.search":
+            async for ev in self._search_stream(intent, ctx, meta):
+                yield ev
+            return
+        async for ev in super().handle_stream(intent, ctx, meta):
+            yield ev
+
     # ── 公共件：城市解析 / 定位标注（weather、search 等域经 self 调用）──────────
 
     async def _resolve_city(self, intent, ctx, meta: dict | None = None) -> str:

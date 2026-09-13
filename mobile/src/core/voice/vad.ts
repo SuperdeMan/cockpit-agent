@@ -110,7 +110,15 @@ export class VadEngine {
     const ort = loadOrt()
     if (!ort?.InferenceSession) throw new Error('onnxruntime-react-native 不在本 APK 里')
     this.ort = ort
-    this.session = await ort.InferenceSession.create(await modelPath())
+    // 线程数**必须显式给 1**（2026-09-12 真机读数，OPPO PEUM00 / prod 包 / 免唤醒 ARMED 空闲）：
+    // 缺省 session 会按核数起一池 intra-op 线程，推理间隙自旋等待——`top -H` 里三条继承了
+    // `mqt_v_js` 名字的线程各占 ~25% CPU 常驻，整机 ARMED 空闲 219–239%，比同屏只有光球动画时
+    // 高出 ~75%。silero 一窗 512 样本、每 32ms 一次、单线程不到 1ms，多线程只多出自旋的账。
+    // HMI 侧同一模型也是单线程（hmi/src/vadEngine.ts `ort.env.wasm.numThreads = 1`），两端一致。
+    this.session = await ort.InferenceSession.create(await modelPath(), {
+      intraOpNumThreads: 1,
+      interOpNumThreads: 1,
+    })
   }
 
   private zeroState(): any {

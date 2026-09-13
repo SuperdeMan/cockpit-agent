@@ -2,7 +2,7 @@
 // 提示音执行层（B4-4 / 方案 §8）：OscillatorNode + GainNode 合成——零资源、零解码（FFmpeg 关着，mp3 不可用，
 // handsFree.ts 头注的 M4 挂账就是这条）。走 sharedAudioContext()：与 pcmPlayer 同一个上下文，不另占音频设备。
 // 判据不在这里（core/presence/soundCue.ts）；fire-and-forget + 静默失败：提示音缺席不值得打断任何主流程。
-import { sharedAudioContext } from './audioCtx'
+import { scheduleAudioIdle, sharedAudioContext } from './audioCtx'
 
 import type { SoundCue } from '../presence/soundCue'
 
@@ -35,6 +35,8 @@ export function playCueTone(kind: SoundCue): void {
       osc.stop(end)
       at = end
     }
+    // 提示音只有 120ms；之后若没有别的声音，空闲期照样挂起（有播报在跑时挂起会自己再等一轮）
+    scheduleAudioIdle()
   } catch {
     /* 音频上下文不可用（设备占用 / 原生缺席）：不响就不响 */
   }

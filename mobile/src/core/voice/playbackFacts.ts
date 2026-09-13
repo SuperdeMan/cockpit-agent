@@ -36,6 +36,11 @@ export function getAudioPlaybackSnapshot(): AudioPlaybackSnapshot {
   return snapshot
 }
 
+/** 任一路还在出声或还可能出声。`audioCtx` 的空闲挂起读它——有声音的时候绝不挂起输出上下文。 */
+export function audioPlaybackLive(): boolean {
+  return snapshot.playing || snapshot.live
+}
+
 export function subscribeAudioPlayback(listener: () => void): () => void {
   listeners.add(listener)
   return () => { listeners.delete(listener) }

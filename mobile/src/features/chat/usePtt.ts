@@ -11,6 +11,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { isTtsEcho } from '@shared/voiceLoop.mjs'
 
 import { AsrSession, type AsrCallbacks, type AsrConfig } from '@/core/voice/asr'
+import { asrStreamUrl } from '@/core/voice/audioUrls'
+import { warmSocket } from '@/core/voice/warmSocket'
 import {
   beginInteraction,
   dropPendingInteraction,
@@ -93,7 +95,10 @@ export function usePtt(opts: {
     setPartial('')
     setState('idle')
     setMode('')
-  }, [])
+    // 这一轮的识别连接用掉了：为下一次按下预热一条（warmSocket.ts；provider=off 走批处理不用 WS）
+    const s = settingsStore.getState().settings
+    if (opts.audioUrl && s.asrProvider !== 'off' && (!opts.scope || opts.scope.canCapture())) warmSocket(asrStreamUrl(opts.audioUrl))
+  }, [opts.audioUrl, opts.scope])
 
   const asrConfig = useCallback((): AsrConfig => {
     const s = settingsStore.getState().settings

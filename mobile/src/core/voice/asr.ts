@@ -17,6 +17,8 @@ import { int16ToWav } from '@shared/pcmRing.mjs'
 import { bytesToBase64 } from './base64'
 import { setAudioCaptureFact } from './captureFacts'
 import { FRAME_SAMPLES, TARGET_SAMPLE_RATE, recorder, type Recorder } from './recorder'
+import { takeWarmSocket } from './warmSocket'
+import { asrStreamUrl } from './audioUrls'
 
 /** 无定稿兜底窗（同 HMI audio.ts:995 的 7000） */
 export const ASR_FALLBACK_MS = 7000
@@ -44,9 +46,7 @@ export interface AsrCallbacks {
   onError(msg: string): void
 }
 
-export function asrStreamUrl(audioUrl: string): string {
-  return audioUrl.replace(/^http/, 'ws') + '/api/asr/stream'
-}
+export { asrStreamUrl }
 
 function mergeChunks(chunks: Int16Array[]): Int16Array {
   let total = 0
@@ -147,16 +147,23 @@ export class AsrSession {
 
   private openSocket(): void {
     if (this.finished || this.cancelled) return
+    const url = asrStreamUrl(this.cfg.audioUrl)
+    // 预热池里有一条 OPEN 的就用它（warmSocket.ts 头注：中继路径上一次握手 ≈1.4s，定稿至少晚这么多）；
+    // 没有就像今天一样现连
+    const warm = takeWarmSocket(url)
     let ws: WebSocket
-    try {
-      ws = new WebSocket(asrStreamUrl(this.cfg.audioUrl))
-    } catch {
-      void this.batchFallback('语音流连接失败')
-      return
+    if (warm) ws = warm
+    else {
+      try {
+        ws = new WebSocket(url)
+      } catch {
+        void this.batchFallback('语音流连接失败')
+        return
+      }
     }
     ws.binaryType = 'arraybuffer'
     this.ws = ws
-    ws.onopen = () => {
+    const onOpen = () => {
       if (this.ws !== ws || this.finished || this.cancelled) return
       this.opened = true
       ws.send(
@@ -177,6 +184,7 @@ export class AsrSession {
         this.armFallbackTimer()
       }
     }
+    ws.onopen = onOpen
     ws.onmessage = (ev) => { if (this.ws === ws && !this.cancelled) this.onMessage(ev) }
     ws.onerror = () => {
       if (this.ws !== ws || this.cancelled) return
@@ -187,6 +195,8 @@ export class AsrSession {
       setAudioCaptureFact('asrUploading', this, false)
       if (!this.opened && !this.finished) void this.batchFallback('语音流已断开')
     }
+    // 预热连接早就 OPEN 了，onopen 不会再来：现在就走开流那一步
+    if (warm) onOpen()
   }
 
   private onMessage(ev: WebSocketMessageEvent): void {

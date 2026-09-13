@@ -358,7 +358,8 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
           name={settings.assistantName}
           hasVoice={!!cfg.audioUrl}
           quickCommands={visibleCommands}
-          animated={loopsAnimated(motionEnv)}
+          // 欢迎态大球也是空闲光球：跟 orbTempo（空闲静置 / reduce-motion 都在里面），不只看 loops
+          animated={orbTempo(snapshot, motionEnv) !== 'static'}
           keyboardVisible={!!runtime.facts.keyboardVisible}
           fontScale={settings.fontScale}
           onSend={onSend}
@@ -600,7 +601,7 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
                   onSend={onSend}
                   orb={{
                     state: snapshot.primary,
-                    animated: loopsAnimated(motionEnv),
+                    animated: orbTempo(snapshot, motionEnv) !== 'static',
                     driving: orbTempo(snapshot, motionEnv) === 'slow',
                   }}
                   topHeight={tabletopSplit(contentBox.h, layout.hinge?.topDp ?? 0, contentBox.y)}

@@ -8961,3 +8961,25 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真栈同题对照（`navigation.estimate` 零动作）：`f8fd151` 的 route_plan 卡零几何，`e38cd75` 带 origin_loc / destination_loc / 240 点 path。
 - OPPO 候选包 #1（`d03c9e675-dirty`）：整层下滑收起有截图证据；设置页单选 / 卡内「查看路线」外框 48.0dp；**点「查看路线」App 退到桌面**——Marker 自定义标注触发 amap3d `update` 命令、Fabric 互操作层把缺席 args 当 null（`poi_detail` 单点同样复现）⇒ patch-package 让命令永远带数组（`e38cd75`）。
 - OPPO 正式包 #2（`e38cd75c8`，clean，APK SHA-256 `d31f680e…5b99` 端本一致）：单点 / 路线两种地图页正常、`map-fit` 48dp、零崩溃；整层下滑收起复验；真栈端到端——prod 包 Composer 中文输入「从深圳湾公园到深圳北站多远」→ 真实 route_plan 卡出「查看路线」→ 地图页沿真实道路画出 240 点折线 + 起 / 终标注（`b2-09-after-maestro.png`）。新边界：Maestro 在地图原生视图上取层级会把 driver 挂死，地图页只用截图 / adb 取证。
+
+## 2026-09-12 — Android 性能与链路时延评审（CPU / 内存 / 崩溃 + 首响与分段耗时）
+
+- 用户要求：评审并优化 Android App 的性能占用、稳定性与链路响应耗时。文档 `docs/reviews/2026-09-12-android-performance-latency-review.md`（读数、归因、优先级、已落地改动）。
+- 真机（OPPO PEUM00 / prod 包 09-12 00:20 装机）：崩溃只有装机前的两条 amap3d Marker 记录，之后 0 条、无 ANR；对话页空闲、已连接、光球在动时进程 CPU 155–160%（RenderThread + hwuiTask 两条 + 主线程），断连光球静止时 7–10% ⇒ 空闲成本几乎全在光球的 blur 旋转层与 boxShadow；免唤醒 ARMED 空闲 219–239%，多出的 ~75% 是 ORT VAD 缺省线程池自旋；播报后 AudioTrack 常驻 5–7%；内存无泄漏形状（冷启 213MB、6 小时进程 264–302MB、ARMED 331MB）。
+- 云侧（collector 47 App 轮 + 18 只读探针轮）：cloud 路径单轮 p50 4.3–4.5s / p95 7.9s = 装配 0.63s + 规划 LLM 2.0s/次 × 1.66 次 + 执行 1.3s；29/44 轮两次规划（`salvage_wire_accepted` 强制重试第 2 次给同一份计划 +2.4–5.6s、`no_action` 二次抽样多为 ASR 噪声句）；prompt 10.5k token 里 catalog 13,631 字符每轮相同、`cache_hit` 0/73；info 深调研合成不流式。TTS 网关侧首片 0.75–1.56s、ASR `stop`→`final` 0.67–1.81s 正常。
+- 路径：PC 与手机到云主机都只有美西 DERP 中继（RTT 0.5–3s，新 WSS 握手 1.4s+，TTS 音频欠速到达）；手机隧道静默失联，拉 Tailscale 到前台恢复；App `/presence-trail` 记到每 ~40s 一轮「已断开 → 正在重连」。
+- 落地（未 commit / push / deploy / 换常驻包）：`vad.ts` ORT 单线程；`audioCtx.ts` 空闲 15s 挂起共享输出上下文（`playbackFacts.audioPlaybackLive` 守卫、`speech.ts`/`cueTone.ts` 接线、`openSession` 提前取上下文）；`liveness.ts` 探活超时 4s→8s；`orchestrator/cloud/context.py` 装配四子项 `asyncio.gather`。本地：mobile jest 1004 / tsc 0 / lint 0；`orchestrator/cloud/tests` 1312 passed / 1 skipped。
+- 建议未做（要用户裁决或授权）：光球动效降本（去内层 blur / 阴影静态化 / 空闲静置）、`PLANNER_RETRY_DISABLE=salvage_wire_accepted` A/B、info 合成流式化、ASR 预连 / TTS 热连接、云主机直连路径。
+- 换包 A/B（候选包 `482bf4d6b-dirty`，APK SHA-256 `b5fec3c2…fa35`，OPPO 19:52 装机，同协议）：免唤醒 ARMED 空闲 219–239% → **158–168%**，三条各 25% 的 ORT 线程消失，剩余全是光球动效；空闲挂起没拿到真机证据（文字轮与提示音三次尝试都卡在手机隧道断连），只有 `audioIdle.test.ts` 单测。复测后常驻包已换回 `e38cd75c8`，免唤醒 / 播报三档回读为改前值；隧道抖动期间 App 每 ~40s 一轮「已断开 → 正在重连」（`/presence-trail`）。
+
+## 2026-09-13 — Android 性能评审第二轮：用户裁决落地（光球空闲静置 / 合成流式 / 连接预热 / 直连诊断）
+
+- 用户裁决五项：光球动效取「空闲 N 秒静置」（视觉一帧不改），其余四项按评审推荐推进。记录在 `docs/reviews/2026-09-12-android-performance-latency-review.md` §9。
+- 光球：`core/presence/orbIdle.ts::IdleClock`（30s 无触摸 / 键盘 / 主态变化 / 换页 / 回前台 ⇒ still，任何一次 touch 同步恢复）+ `orbPolicy.ts::orbStill`（只静置 idle / armed，听 / 想 / 说永不静置）；`AssistantProvider` 根容器 `onTouchStart` 旁听、欢迎态大球与桌面姿态舞台球改读 `orbTempo`。单测 `orbIdle.test.ts` 7 条。
+- 规划强制重试（`salvage_wire_accepted`）：collector 最近 98 轮离线 A/B（只读）——14 轮重试里 8 轮纯代价、3 轮补上要紧槽；manifest 没有「必填槽」声明，表达不出更细的规则 ⇒ **不改策略**，云端 A/B 用已接线的 `PLANNER_TOOLCALL_SALVAGE_RETRY=off`（改 `.env` + 重建 cloud-planner 要授权）。
+- 深调研合成流式：`agents/_sdk/grounding.py` prompt 抽成唯一源 `synthesis_messages()`、`AnswerFieldStreamer`（增量抽 `answer`，JSON 转义与裸引号判据与 `extract_json_str_field` 同源）、`grounded_synthesis_stream()`（首 token 前拒收 → top-2 重试；中途失败按已到文本收口）；`agents/info` 的 `_search` 拆 prepare / finish 两段与流式版共用，`handle_stream` 只对 `info.search` 流式；`orchestrator/cloud/engine.py` D0 直通不再排除单步重任务，过程区 `execute running → done` 同发。单测 13 + 3 + 1。
+- ASR / TTS 连接预热：`core/voice/warmSocket.ts`（一 URL 一条、OPEN 才取、握手中留池、4 分钟超龄、取走即接管、换服务器 / 退后台清池），URL 规则抽到 `audioUrls.ts`；`AsrSession.openSocket` / `TtsSession.start` 先取预热；前台各预热一条，PTT 轮末 / 免唤醒 ARMED / `closeAsr` 补 ASR，播报收尾补 TTS；S2S 挡位不预热。单测 4 条，既有语音套件不变。
+- 直连路径（SSH 只读）：云主机 `tailscaled` UDP 41641、`ts-input` 放行、ufw 关；`netcheck` 对外映射端口 33039 ≠ 41641 ⇒ 卡在腾讯云安全组未放行入站 UDP 41641，要用户在控制台加规则；验收 `tailscale ping car-agent-dev` 从 `via DERP(lax)` 变 `direct`。
+- 本地验证：mobile jest 1015 / tsc 0 / lint 0；`agents/info` + `agents/_sdk` 331 passed；`orchestrator/cloud/tests` 1313 passed / 1 skipped；smoke_edge 13；四道门禁全过（exemplars 域错配率 1.8%）。装置：`IdleClock` / `scheduleAudioIdle` 真定时器在 node 下 `unref()`；jest「worker 未能退出」经 `--detectOpenHandles` 钉到 speech 套件收尾 `warmSocket` 真开 WebSocket（TCPWRAP），三套件补 mock 后消失；无 BOM 的 `.ps1` 让 PowerShell 5.1 把中文仓库路径解成乱码、脚本静默走错分支（重存 UTF-8 with BOM）。
+- 真机「空闲静置」复测（候选包 `482bf4d6b-dirty` 08:16，同协议）：光球在动 150% / 933 帧 per 15s → 30s 无人理后 **9.5% / 0 帧**（RenderThread、hwuiTask 全部消失）→ 轻点一下恢复 146.5% / 631 帧 per 10s，形态与改前逐字相同。第一趟全 0 帧无效：PC 休眠后 USB 重枚举弹出系统「USB 用于」窗盖住 App，只有截图看得出。复测后常驻包换回 `e38cd75c8`。
+- 仍未 commit / push / deploy / 换常驻包；云端两项（合成流式、D0 重任务直通）要过 dry-run → apply 发布流程后再用同一探针复测首段文本时延。

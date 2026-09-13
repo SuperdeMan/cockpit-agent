@@ -29,17 +29,18 @@ _TWO_STEP_PLAN = json.dumps({"steps": [
 
 
 class _Cap:
-    def __init__(self, intent, slots, *, response_only=False):
+    def __init__(self, intent, slots, *, response_only=False, heavy=False):
         self.intent, self.slots, self.description = intent, slots, intent
         self.response_only = response_only
         self.require_confirm = False
+        self.heavy = heavy
 
 
-def _agent(intent="test.stream", *, response_only=False):
+def _agent(intent="test.stream", *, response_only=False, heavy=False):
     manifest = SimpleNamespace(
         agent_id="chitchat", trust_level="first_party", latency_budget_ms=2000,
         requires_permissions=[],
-        capabilities=[_Cap(intent, [], response_only=response_only)],
+        capabilities=[_Cap(intent, [], response_only=response_only, heavy=heavy)],
     )
     return SimpleNamespace(manifest=manifest, endpoint="stub:50062")
 
@@ -128,6 +129,34 @@ def test_single_step_streams_deltas_then_final():
     assert final["speech"] == "为什么天空是蓝的，因为……"
     assert not final.get("need_confirm")
     assert spy.stream_calls and not spy.unary_calls       # 走了流式、没走 unary
+
+
+def test_single_heavy_step_streams_with_process_events():
+    """2026-09-13：单步**重**任务（info.search 这种 heavy 能力）也走流式直通——合成边出边流，
+    过程区照发：understand / plan 在前，execute running → done 夹着增量，final 收尾。
+    此前它被 `not complex_task` 挡在 executor 路径外，700 字一次到齐。"""
+    spy = _StreamSpy(
+        agent=_agent("info.search", heavy=True),
+        script=[("speech", "深圳湾"), ("speech", "公园位于"), ("speech", "西南部。"),
+                ("final", _Resp(speech="深圳湾公园位于西南部。"))])
+    engine, _ = _make_engine(spy)
+    events = _run(engine, _req("介绍一下深圳湾公园"))
+
+    kinds = [e["kind"] for e in events]
+    assert kinds.count("final") == 1 and kinds[-1] == "final"
+    deltas = [e["delta"] for e in events if e["kind"] == "speech"]
+    assert deltas == ["深圳湾", "公园位于", "西南部。"]
+    progress = [(e["phase"], e["status"]) for e in events if e["kind"] == "progress"]
+    assert progress[:2] == [("understand", "done"), ("plan", "done")]
+    assert ("execute", "running") in progress and ("execute", "done") in progress
+    # 增量必须落在 execute running 之后、execute done 之前（过程区与话术的顺序对用户是可见的）
+    i_run = kinds.index("progress", 2)
+    first_delta = kinds.index("speech")
+    last_done = max(i for i, e in enumerate(events) if e["kind"] == "progress")
+    assert i_run < first_delta < last_done
+    assert spy.stream_calls and not spy.unary_calls
+    assert spy.stream_calls[0][1].get("thinking") == "on"   # 重任务的 thinking=on 仍随 meta 下发
+    assert events[-1]["speech"] == "深圳湾公园位于西南部。"
 
 
 def test_d0_stream_result_is_stamped_with_executed_intent():

@@ -848,15 +848,21 @@ class PlannerEngine:
 
         # D0. 单步新规划走流式直通（task 4：开放域"边想边说"，秒级反馈）。
         # 仅对全新单步计划开启；确认续接/多步计划保持 executor 路径，不动 F1 闭环。
-        # 复杂单步（如独立的 trip.plan / info.search）排除在外——走 executor 才能发过程区。
+        # 单步**重**任务（独立的 info.search / trip.plan：`complex_task` 只因 heavy 而真）也走这里
+        # （2026-09-13，性能评审 §3.4）：过程区的 execute 段在本路径里同样发（下方 show_process），
+        # 而合成本身可以边出边流——真栈读数里深调研 700 字一次到齐、首段有效文本 5.7–17.5s，
+        # 全花在等一次 2.7–6.1s 的合成上。多步 / adaptive 仍走 executor 与 T2。
         if (new_plan and plan.complexity == "simple" and len(plan.steps) == 1
-                and not ctx.is_confirmation and not complex_task
+                and not ctx.is_confirmation
                 and plan.steps[0].kind == "agent"
                 and plan.steps[0].deployment == "cloud"
                 # M0a-3：capability 声明 require_confirm 的步不走流式直通——D0 会把
                 # 流中 action 直接放行，绕开 executor 的确认兜底闸；走 executor 路径。
                 and not plan.steps[0].require_confirm):
             step = plan.steps[0]
+            if show_process:
+                yield self._progress("execute", phase_label(step.intent),
+                                     status="running", step_id=step.id)
             # 流式直通**绕过 executor**，所以 executor 里挂的槽位解析在这条路上不生效。
             # 2026-08-13 实证：跨轮门店锚定挂在 `_resolve_slot_refs` 上，而 `luckin.menu`
             # （require_confirm=false）恰好走这条路 —— 诊断日志一行都没打出来，
@@ -924,6 +930,16 @@ class PlannerEngine:
                     duration_ms=(time.monotonic() - _d0_start) * 1000,
                     attrs={"intent": step.intent, "agent_id": step.agent_id,
                            "kind": "agent", "deployment": "cloud", "via": "stream"})
+                # 过程区的「完成」事件与 executor 路径同款（同一 step_id 合并 running→done）
+                if show_process and final_sr.status in (
+                        StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                    summary = step_summary(step, final_sr)
+                    if final_sr.status == StepStatus.NEED_CONFIRM:
+                        summary = (summary or "已生成方案") + "（待确认）"
+                    elif final_sr.status == StepStatus.NEED_SLOT:
+                        summary = summary or "需要补充信息"
+                    yield self._progress("execute", phase_label(step.intent),
+                                         summary=summary, status="done", step_id=step.id)
                 results = [final_sr]
                 focus_plan = plan
                 # 通用 escalate（一跳）：Agent 声明「这题我不该答，改派给 X」。仅当未播报过任何

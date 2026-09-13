@@ -9,15 +9,29 @@ import type { PresenceSnapshot } from './presence'
 export interface MotionEnv {
   /** 系统「减少动效」（AccessibilityInfo.isReduceMotionEnabled）∨ 实验室强制开关（settings.reduceMotionForce） */
   reduceMotion: boolean
+  /** 空闲静置（core/presence/orbIdle.ts 的表）：ORB_IDLE_STILL_MS 内没有触摸 / 键盘 / 状态变化 / 换页。
+   *  缺省 false = 旧行为。它只压住 idle / armed 两个态（见 orbStill），听 / 想 / 说永远照动。 */
+  idleStill?: boolean
 }
 
 export const FULL_MOTION: MotionEnv = { reduceMotion: false }
 
 export type OrbTempo = 'loop' | 'slow' | 'static'
 
-/** 光球节律：reduce-motion ⇒ 静帧；行车 ⇒ ×0.5 频率（HMI AuroraOrb.tsx:30 的 dm=2）；其余全速 */
-export function orbTempo(s: Pick<PresenceSnapshot, 'driving'>, env: MotionEnv): OrbTempo {
+/** 空闲静置命中：表翻了 ∧ 光球本来就没在表达什么（idle 呼吸 / armed 等唤醒）。
+ *  2026-09-13 性能评审：对话页空闲光球 = 1.5 核常驻（RenderThread + hwuiTask + 主线程），断连静止只剩 7–10%。
+ *  用户裁决取「空闲 N 秒静置」——视觉一帧不改，只改多久没人理它之后停。muted 本来就静止。 */
+export function orbStill(s: Partial<Pick<PresenceSnapshot, 'primary'>>, env: MotionEnv): boolean {
+  return !!env.idleStill && (s.primary === 'idle' || s.primary === 'armed')
+}
+
+/** 光球节律：reduce-motion ⇒ 静帧；空闲静置 ⇒ 静帧；行车 ⇒ ×0.5 频率（HMI AuroraOrb.tsx:30 的 dm=2）；其余全速 */
+export function orbTempo(
+  s: Pick<PresenceSnapshot, 'driving'> & Partial<Pick<PresenceSnapshot, 'primary'>>,
+  env: MotionEnv,
+): OrbTempo {
   if (env.reduceMotion) return 'static'
+  if (orbStill(s, env)) return 'static'
   return s.driving ? 'slow' : 'loop'
 }
 
@@ -30,8 +44,12 @@ export function presenceOrbTempo(s: Pick<PresenceSnapshot, 'driving' | 'primary'
   return orbTempo(s, env)
 }
 
-export function composerOrbAnimated(s: Pick<PresenceSnapshot, 'input'>, env: MotionEnv = FULL_MOTION): boolean {
+export function composerOrbAnimated(
+  s: Pick<PresenceSnapshot, 'input'> & Partial<Pick<PresenceSnapshot, 'primary'>>,
+  env: MotionEnv = FULL_MOTION,
+): boolean {
   if (env.reduceMotion) return false
+  if (orbStill(s, env)) return false
   // 层开着：层内大球（VoiceSheet）接管那「1 个」循环动画
   return s.input !== 'voice-sheet'
 }

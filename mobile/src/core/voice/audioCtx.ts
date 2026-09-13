@@ -20,6 +20,7 @@
 import { PcmPlayer } from '@shared/pcmPlayer.mjs'
 import type { AudioBuffer, AudioBufferSourceNode, AudioContext } from 'react-native-audio-api'
 
+import { audioPlaybackLive } from './playbackFacts'
 import { QueuePcmPlayer, type PcmPlayerLike, type QueueCtxLike } from './queuePlayer'
 import { Resampler } from './resample'
 
@@ -123,15 +124,57 @@ export interface PlayerCtx {
 
 let shared: AudioContext | null = null
 
+/** 空闲多久后挂起输出上下文（ms）。
+ *  为什么要挂起（2026-09-12 真机读数，OPPO PEUM00 / prod 包）：上下文一旦 running 就一直 running——
+ *  一轮播报之后 `AudioTrack` 线程仍常驻 4.6–6.8% CPU，输出流不停、音频 HAL 不睡；一次挂起把它归零。
+ *  15s 而不是立刻：段链 / mixed 的下一段、续问窗后的下一轮都在几秒内到，来回起停输出流比常驻更糟。
+ *  重新出声的成本落在 `sharedAudioContext()` 里的 resume——它在 `begin()`（请求刚发出、离首片音频还有
+ *  规划那 2s+）就被叫到，不在首片到达那一刻。 */
+export const AUDIO_IDLE_SUSPEND_MS = 15_000
+let idleTimer: ReturnType<typeof setTimeout> | null = null
+
+export function cancelAudioIdle(): void {
+  if (idleTimer !== null) {
+    clearTimeout(idleTimer)
+    idleTimer = null
+  }
+}
+
+/** 一轮播报收尾后调：空闲 `ms` 后挂起共享上下文。期间任何一路（主链 / 批处理 / S2S / 提示音）
+ *  重新取 `sharedAudioContext()` 都会先取消这只表；到点时若播放事实仍是「活着」就再等一轮，
+ *  绝不在有声音的时候挂起。 */
+export function scheduleAudioIdle(ms: number = AUDIO_IDLE_SUSPEND_MS): void {
+  cancelAudioIdle()
+  if (!shared) return
+  idleTimer = setTimeout(() => {
+    idleTimer = null
+    const ctx = shared
+    if (!ctx) return
+    if (audioPlaybackLive()) {
+      scheduleAudioIdle(ms)
+      return
+    }
+    if (ctx.state === 'running') void ctx.suspend().catch(() => {})
+  }, ms)
+  // node（jest）里的定时器对象会把 worker 钉住不退出；RN 的是数字，没有 unref，可选链跳过
+  ;(idleTimer as unknown as { unref?: () => void }).unref?.()
+}
+
 /** 全局唯一的输出上下文：每建一个 AudioContext 都要占一份设备音频资源，
- *  而我们同一时刻只播一路 TTS。懒建——没开播报的会话不该碰音频设备。 */
+ *  而我们同一时刻只播一路 TTS。懒建——没开播报的会话不该碰音频设备。
+ *  取用即「要出声了」：取消空闲挂起、被挂起过的上下文原地 resume。 */
 export function sharedAudioContext(): AudioContext {
+  cancelAudioIdle()
   if (!shared) {
     const { AudioContext: Ctor } = require('react-native-audio-api')
     shared = new Ctor() as AudioContext
     // 新建的 ctx 是 **suspended**（M2-1 真机读数）：不 resume 就不出声，而且
     // **一声不吭**——排定的 source 静静地不播，没有异常也没有回调。
     // 同 HMI「用户手势期先解锁音频上下文」那句（audio.ts:339）。
+    void shared.resume().catch(() => {})
+  } else if (shared.state === 'suspended') {
+    // 空闲挂起过：同一句解锁。resume 是异步的，但排定的 start(when) 用的是挂起期不走的 currentTime，
+    // 上下文一转 running 就按序播，不丢片也不用重排。
     void shared.resume().catch(() => {})
   }
   return shared

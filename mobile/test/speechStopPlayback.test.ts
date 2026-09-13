@@ -36,8 +36,18 @@ jest.mock('@/core/voice/tts', () => {
   return { TtsSession: FakeTts, synthesizeBatch: jest.fn(async () => null) }
 })
 
+// 连接预热（2026-09-13）：收尾会为下一轮预热一条 TTS 连接；jest 里没有网关，真 WebSocket 会留下 TCP 句柄把 worker 钉住
+jest.mock('@/core/voice/warmSocket', () => ({
+  warmSocket: jest.fn(),
+  takeWarmSocket: jest.fn(() => null),
+  dropWarmSockets: jest.fn(),
+}))
 jest.mock('@/core/voice/audioCtx', () => ({
   newPcmPlayer: jest.fn(() => ({ push() {}, remainingSec: () => 0, stop() {} })),
+  // 空闲挂起（2026-09-12）：控制器在开段时取上下文、收尾时排空闲表；jest 里没有真上下文，两者都是空操作
+  sharedAudioContext: jest.fn(() => ({ state: 'running' })),
+  scheduleAudioIdle: jest.fn(),
+  cancelAudioIdle: jest.fn(),
 }))
 
 const batch = () => (jest.requireMock('@/core/voice/tts') as { synthesizeBatch: jest.Mock }).synthesizeBatch

@@ -25,6 +25,8 @@ import { stripLeadingWakeWord } from '@shared/utteranceHeuristics.mjs'
 
 import { AsrSession, type AsrConfig } from './asr'
 import { newPcmPlayer } from './audioCtx'
+import { asrStreamUrl } from './audioUrls'
+import { warmSocket } from './warmSocket'
 import type { PcmPlayerLike } from './queuePlayer'
 import { setAudioCaptureFact } from './captureFacts'
 import { setAudioPlaybackFact } from './playbackFacts'
@@ -270,6 +272,9 @@ export class HandsFreeController {
       }
       this.on = true
       this.vl.handsFreeOn()
+      // ARMED 期就把识别连接握好：唤醒进 LISTENING 时直接发 start，定稿不再欠一个握手（warmSocket.ts）。
+      // S2S 挡位不建 ASR 流（收音走 s2s 常驻连接），不预热
+      if (!this.s2s && this.deps.getAsrConfig().provider !== 'off') warmSocket(asrStreamUrl(this.deps.audioUrl))
     } catch (e) {
       await this.teardown()
       if (!alive()) return
@@ -528,6 +533,8 @@ export class HandsFreeController {
     this.asrGen++
     this.asr = null
     void s.cancel()
+    // 这一轮的连接用掉了：回路还开着就为下一次唤醒再预热一条
+    if (this.on && this.deps.getAsrConfig().provider !== 'off') warmSocket(asrStreamUrl(this.deps.audioUrl))
   }
 
   /** 逃逸轮的主链回答回传给 provider（只为上下文连续，不为播报；RFC §3.2） */

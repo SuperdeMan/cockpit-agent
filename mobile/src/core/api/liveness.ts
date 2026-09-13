@@ -43,7 +43,11 @@ export interface LivenessOpts {
 
 const DEFAULT_INTERVAL_MS = 15000
 const DEFAULT_FAIL_THRESHOLD = 2
-const PROBE_TIMEOUT_MS = 4000
+/** 单次探活超时。它必须**明显大于**一次完整 HTTPS 握手在坏路径上的耗时，否则探活自己就是
+ *  断连的制造者：判死 → `reconnectNow` 踢掉一条其实活着的 WS → 新握手再来一遍。
+ *  2026-09-12 真机读数（OPPO，Tailscale 走 DERP 中继）：`/healthz` 一次 1.44s，其中 TLS 0.91s，
+ *  同时段 ICMP RTT 1.6–3.0s；4s 只留了不到一个 RTT 的余量。8s 仍远小于看门狗 95s。 */
+export const PROBE_TIMEOUT_MS = 8000
 
 /** 默认探针：HEAD/GET `{edgeUrl}/healthz`，4s 超时。
  *  ⚠ 超时必须自己写——裸 fetch 在断网时会一直挂着（M2 那次断网挂死的同一条老账）。 */

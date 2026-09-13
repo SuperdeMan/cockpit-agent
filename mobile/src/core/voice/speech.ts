@@ -17,10 +17,12 @@ import { PendingSpeech } from '@shared/proactiveSpeech.mjs'
 import { findByBubble, markInteraction, type TimelineEvent } from '../obs/turnTimeline'
 import type { SpeechSink } from '../session/store'
 import { settingsStore, speakAllowed } from '../settings/store'
-import { newPcmPlayer } from './audioCtx'
+import { newPcmPlayer, scheduleAudioIdle, sharedAudioContext } from './audioCtx'
 import { setAudioPlaybackFact } from './playbackFacts'
 import { proactiveSpeechDecision } from './proactivePolicy'
+import { ttsStreamUrl } from './audioUrls'
 import { TtsSession, synthesizeBatch, type TtsConfig } from './tts'
+import { warmSocket } from './warmSocket'
 
  
 
@@ -326,6 +328,9 @@ export class SpeechController implements SpeechSink {
   /** 起一段流式会话并入队。gate 非空 = 闸在前一段的 completion 上（合成不等、播放等）；divergent = 因 final 与已流内容是两段话而另起 */
   private openSession(gate: Promise<void> | null, divergent = false): TtsSession {
     this.cancelGrace()
+    // 要出声了：现在就把输出上下文拿到手（空闲挂起过的原地 resume）。这一刻离首片音频还隔着
+    // 规划 + 合成那 2s+，resume 的成本全藏在里面；等首片到了再 resume 就落在首音时延上。
+    sharedAudioContext()
     const epoch = this.stopEpoch
     const rec = { session: null as unknown as TtsSession, divergent, startedAt: Date.now(), firstAudioAt: 0, endedAt: 0 }
     const session = new TtsSession(this.cfg(this.emotion), {
@@ -419,6 +424,10 @@ export class SpeechController implements SpeechSink {
     }
     this.onSpeechEnded?.()
     if (natural) void this.flushDeferred()
+    // 这一轮没声音了：空闲一段时间后挂起输出上下文（补播 / 下一轮 / 提示音再取用时自动 resume）
+    scheduleAudioIdle()
+    // 给下一轮预热一条合成连接（warmSocket.ts）：下一轮 begin 时握手已经做完
+    if (this.foreground && this.audioUrl) warmSocket(ttsStreamUrl(this.audioUrl))
   }
 
   delta(bubbleId: string, text: string): void {
@@ -545,6 +554,7 @@ export class SpeechController implements SpeechSink {
         this.batchActive = false
         if (!this.extra) setAudioPlaybackFact(this.batchOwner, false, 'live')
         void this.flushDeferred()
+        scheduleAudioIdle()
       }
     }
   }

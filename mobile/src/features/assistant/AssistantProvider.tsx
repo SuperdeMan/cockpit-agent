@@ -15,9 +15,12 @@ import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
 import { activityLog } from '@/core/presence/activityLog'
 import { sheetResident } from '@/core/presence/drivingMode'
+import { IdleClock } from '@/core/presence/orbIdle'
 import { useReduceMotion } from '@/core/a11y/reduceMotion'
+import { asrStreamUrl, ttsStreamUrl } from '@/core/voice/audioUrls'
 import { speechController } from '@/core/voice/speech'
 import { canStopPlayback, stopPlayback } from '@/core/voice/stopPlayback'
+import { dropWarmSockets, warmSocket } from '@/core/voice/warmSocket'
 import { getAudioPlaybackSnapshot, subscribeAudioPlayback } from '@/core/voice/playbackFacts'
 import { cancelVisionCapture, captureVisionFrame, needsVisionFrame, visionCapabilitySignal } from '@/core/vision/frame'
 import { useHandsFree } from '@/features/chat/useHandsFree'
@@ -200,7 +203,14 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: serverUserId || cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent() })
   const layout = useLayout(snapshot.driving)
   const reduceMotion = useReduceMotion()
-  const motionEnv = { reduceMotion }
+  // 光球空闲静置（2026-09-13，性能评审 §2.1 用户裁决）：ORB_IDLE_STILL_MS 内没人理它就停下来。
+  // 「理它」= 触摸（ReadyAssistant 根容器的 onTouchStart）/ 键盘 / 光球主态变化 / 换页 / 回到前台；
+  // 哪些态会停是 orbPolicy.orbStill 的判据（只有 idle / armed），这里只负责起表与喂事件。
+  const [idleClock] = useState(() => new IdleClock())
+  const idleStill = useSyncExternalStore(idleClock.subscribe, idleClock.snapshot)
+  useEffect(() => { idleClock.touch() }, [idleClock, snapshot.primary, facts.keyboardVisible, facts.route, facts.foreground])
+  useEffect(() => () => idleClock.dispose(), [idleClock])
+  const motionEnv = { reduceMotion, idleStill }
   useEffect(() => {
     const sc = speechController()
     const sync = () => {
@@ -217,6 +227,14 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     const s2sBusy = settings.voicePipeline === 's2s' && ['LISTENING', 'THINKING', 'SPEAKING'].includes(hf.fsm)
     speechController().setProactiveCtx({ driving: snapshot.driving, s2sBusy })
   }, [snapshot.driving, hf.fsm, settings.voicePipeline])
+  // 音频面连接预热（warmSocket.ts）：前台且配了音频入口就各握好一条 ASR / TTS 连接；
+  // 退到后台关掉（后台本就不保证连接，留着只是占网关一个空闲 handler）
+  useEffect(() => {
+    if (!cfg.audioUrl) return
+    if (!facts.foreground) { dropWarmSockets(); return }
+    if (settings.asrProvider !== 'off') warmSocket(asrStreamUrl(cfg.audioUrl))
+    warmSocket(ttsStreamUrl(cfg.audioUrl))
+  }, [cfg.audioUrl, facts.foreground, settings.asrProvider])
   const prevFoldRef = useRef(layout.fold)
   useEffect(() => {
     const sw = screenSwitch(prevFoldRef.current, layout.fold)
@@ -268,6 +286,8 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     sheetOverride, setSheetOverride, privacyOpen, setPrivacyOpen, dockExpanded, setDockExpanded, draft, setDraft,
     sessionSummary,
     onSend, onConfirm, onSlotReply, onIssueAction, onInterrupt, onOrbTap, onStopPlayback, stopMic,
+    /** 有人理它了（触摸）：喂给空闲静置的表。根容器的 onTouchStart 调它，不抢任何手势 */
+    noteActivity: idleClock.touch,
   }
 }
 
@@ -279,7 +299,10 @@ function ReadyAssistant({ children, ...opts }: Connection & { scope: Interaction
   useLayoutEffect(() => modalOpen ? opts.scope.blockPresentation() : undefined, [modalOpen, opts.scope])
   return <AssistantContext.Provider value={runtime}>
     <VisionCapture enabled={runtime.settings.visionEnabled} scope={runtime.scope} />
-    {children}
+    {/* onTouchStart 只是触摸事件的旁听（冒泡而来，不成为 responder）：任何一下触摸都让光球从静置恢复 */}
+    <View style={{ flex: 1 }} onTouchStart={runtime.noteActivity}>
+      {children}
+    </View>
     <PrivacyRail p={runtime.p} fontScale={runtime.settings.fontScale} snapshot={runtime.snapshot}
       visible={runtime.privacyOpen && runtime.scope.canCapture()} onClose={() => runtime.setPrivacyOpen(false)} onStopMic={runtime.stopMic} />
   </AssistantContext.Provider>

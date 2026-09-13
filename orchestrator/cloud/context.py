@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
 import logging
@@ -1385,11 +1386,26 @@ class ContextManager:
 
     async def assemble(self, text: str, ctx, *, mem_on: bool = True,
                        granted_permissions: list[str] | None = None) -> WorkingSet:
-        """装配一次规划轮的工作上下文。失败的子项各自降级为空/全量，绝不阻塞规划。"""
-        history = await self._history(ctx) if mem_on else []
-        memories = await self._recall(text, ctx) if mem_on else []
-        focus = await self._load_focus(
-            ctx.session_id, ctx.user_id) if (mem_on and self.session) else None
+        """装配一次规划轮的工作上下文。失败的子项各自降级为空/全量，绝不阻塞规划。
+
+        四个子项（历史 / 记忆召回 / 焦点 / catalog）互不依赖，并发取——各自是一次跨服务
+        往返（memory 两次、session 存储一次、registry + embed 一次），串行时规划前的装配段
+        真栈读数 p50 632ms / p95 813ms（2026-09-12，App 轮次 memory_enabled=true），
+        并发后墙钟按最慢的一项算。降级语义不变：每一项仍在自己函数里吞异常回空。
+        """
+        async def _none():
+            return None
+
+        async def _empty():
+            return []
+
+        history, memories, focus, catalog = await asyncio.gather(
+            self._history(ctx) if mem_on else _empty(),
+            self._recall(text, ctx) if mem_on else _empty(),
+            self._load_focus(ctx.session_id, ctx.user_id)
+            if (mem_on and self.session) else _none(),
+            self._catalog(text),
+        )
         # Q7-EL1/OR2：用**最近执行事实**刷新车控焦点（跨轮取会话轮次的
         # `actions`，同轮取端侧刚执行掉的那批）。端侧本地快路径根本不写云侧焦点，
         # 「打开天窗」→「不用了，关掉」此前只能让 planner 猜对象。
@@ -1400,7 +1416,6 @@ class ContextManager:
                 ctx, "previous_local_exchange", ""),
             previous_local_actions=getattr(
                 ctx, "previous_local_actions", None))
-        catalog = await self._catalog(text)
         return WorkingSet(catalog=catalog, history=history, memories=memories,
                           focus=focus)
 

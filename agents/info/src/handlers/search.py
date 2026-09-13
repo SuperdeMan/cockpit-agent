@@ -9,7 +9,8 @@ import re
 
 from agents._sdk import AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
-from agents._sdk.grounding import fallback_brief, grounded_synthesis, latest_published
+from agents._sdk.grounding import (fallback_brief, grounded_synthesis,
+                                   grounded_synthesis_stream, latest_published)
 from agents._sdk.provenance import attach
 from agents._sdk.retrieval import retrieve
 
@@ -123,6 +124,37 @@ class SearchMixin:
     async def _search(self, intent, ctx, meta, skip_sports: bool = False) -> AgentResult:
         """skip_sports：sports provider 故障回落本方法时置 True——防再进结构化源二次吃超时
         （R9；`_maybe_sports` 自身故障返回 None 会自然落到通用检索，无回环）。"""
+        prepared = await self._search_prepare(intent, ctx, meta, skip_sports)
+        if isinstance(prepared, AgentResult):
+            return prepared
+        query, sources, recency_days = prepared
+        # 接地合成走 _sdk 共享内核（强制引用 + 无依据弃权）；失败诚实兜底。
+        # recency_days 透传：时效敏感查询在合成前用「窗口内优先 + 权威」双序重排。
+        synth = await grounded_synthesis(self.llm, query, sources,
+                                         recency_days=recency_days)
+        return self._search_finish(query, sources, synth)
+
+    async def _search_stream(self, intent, ctx, meta, skip_sports: bool = False):
+        """`_search` 的流式版（2026-09-13，性能评审 §3.4）：检索照旧，合成边出边 yield
+        ("speech", 增量)，最后 yield ("final", AgentResult)。结论文本、卡片、来源、follow_up
+        与一次性版逐字同源（`_search_finish`），流出去的只是 answer 字段本身。"""
+        prepared = await self._search_prepare(intent, ctx, meta, skip_sports)
+        if isinstance(prepared, AgentResult):
+            yield ("final", prepared)
+            return
+        query, sources, recency_days = prepared
+        synth = None
+        async for kind, payload in grounded_synthesis_stream(
+                self.llm, query, sources, recency_days=recency_days):
+            if kind == "delta":
+                yield ("speech", payload)
+            else:
+                synth = payload
+        yield ("final", self._search_finish(query, sources, synth))
+
+    async def _search_prepare(self, intent, ctx, meta, skip_sports: bool = False):
+        """检索段（`_search` / `_search_stream` 共用）：返回 AgentResult = 提前收尾（缺槽 / 赛事改派 /
+        检索失败 / 零结果），否则返回 (query, sources, recency_days) 交给合成段。"""
         query = (intent.slots.get("query") or "").strip()
         if not query:
             return AgentResult(status=NEED_SLOT, speech="您想搜什么？",
@@ -176,11 +208,10 @@ class SearchMixin:
 
         if not sources:
             return AgentResult(speech=f"没有找到关于「{query}」的搜索结果。")
+        return query, sources, recency_days
 
-        # 接地合成走 _sdk 共享内核（强制引用 + 无依据弃权）；失败诚实兜底。
-        # recency_days 透传：时效敏感查询在合成前用「窗口内优先 + 权威」双序重排。
-        synth = await grounded_synthesis(self.llm, query, sources,
-                                         recency_days=recency_days)
+    def _search_finish(self, query: str, sources: list[dict], synth: dict | None) -> AgentResult:
+        """合成结果 → AgentResult（气泡结论 + 证据卡 + 来源 + follow_up）。两条路只有这一份。"""
         if synth:
             speech, confidence = synth["answer"], synth["confidence"]
         else:

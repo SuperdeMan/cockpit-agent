@@ -249,6 +249,249 @@ def build_materials(sources: list[dict], *, first_cap: int = 2400,
     return "\n\n".join(blocks)
 
 
+_SYNTHESIS_SYSTEM = "你是严谨的车载信息编辑，只能依据提供的资料作答，宁可说没有也绝不编造。"
+
+
+def synthesis_messages(subject: str, subset: list[dict]) -> list[dict]:
+    """接地合成的 prompt——**唯一声明源**：一次性合成（grounded_synthesis）与流式合成
+    （grounded_synthesis_stream）共用，两条路的输出分布因此相同。"""
+    materials = build_materials(subset, rest_cap=800, limit=6)
+    user = (
+        f"用户问题：{subject}\n"
+        f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n\n"
+        f"以下是检索到的资料（共{len(subset)}条，方括号内为编号）：\n"
+        f"{materials}\n\n"
+        "请只依据上述资料用中文作答，并严格遵守：\n"
+        "1. 先给核心结论，再按需展开；不要说「根据搜索结果/资料显示」这类废话。\n"
+        "2. 资料未覆盖的内容，明确说明「未能从检索到的资料中确认」，"
+        "禁止编造对阵、比分、时间、数字、人名或因果关系。\n"
+        "3. **排行榜/榜单/数据类**：以**最权威且最新**的那一条资料为准、照它的数据呈现，"
+        "不要用你自己的记忆补全或改写名次/数字；不同资料数字冲突或时效不同时，取最新权威者"
+        "并给出**前后一致**的结论、注明依据时间，**绝不**把互相矛盾的数字混进同一答案"
+        "（例如说榜首16球却又称另一人也16球并列，自相矛盾）。\n"
+        "4. 只输出一个 JSON 对象，不要额外文字，格式：\n"
+        '{"answer": "给用户的结论文本", "key_points": ["要点1", "要点2"], '
+        '"confidence": "high|medium|low", "used_sources": [1, 2]}\n'
+        "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
+        "（用真实换行符 \\n 分隔，可带序号），不要把多条挤在一行；"
+        "解释类问题用连贯段落、先结论后展开。"
+        "key_points 是卡片用精简要点（每条≤30字，可为空）；"
+        "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
+        "JSON 字符串值内不要使用英文双引号，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
+    )
+    return [{"role": "system", "content": _SYNTHESIS_SYSTEM},
+            {"role": "user", "content": user}]
+
+
+_ANSWER_KEY_RE = re.compile(r'"answer"\s*:\s*"')
+_ANSWER_NEXT_FIELDS = ("key_points", "confidence", "used_sources")
+_ANSWER_BOUNDARY_RE = re.compile(
+    r'^\s*(?:[}\]]|,\s*"(?:%s)"\s*:)' % "|".join(map(re.escape, _ANSWER_NEXT_FIELDS)))
+# 一个候选闭合引号之后最多再看这么多字符才裁决它是不是真边界（`, "used_sources":` 是最长的那种）
+_ANSWER_LOOKAHEAD = 24
+_ANSWER_ESCAPES = {'"': '"', "\\": "\\", "/": "/", "n": "\n", "t": " ", "r": "", "b": "", "f": ""}
+
+
+class AnswerFieldStreamer:
+    """从**逐片到达**的合成输出里增量抽出 `answer` 字段的文本（2026-09-13，性能评审 §3.4）。
+
+    合成输出是一个 JSON 对象，answer 在最前面；用户能听到 / 看到的只有 answer，所以流式只流它。
+    判据与 `extract_json_str_field` 同一份：字符串里的**裸英文双引号**不算结尾，只有
+    「引号 + 下一个已知字段 / 收尾括号」才是真边界——所以遇到候选闭合引号先扣住，最多再看
+    `_ANSWER_LOOKAHEAD` 个字符再裁决。反斜杠转义按 JSON 语义解码（`\\n` 换行、`\\uXXXX`），
+    片尾不完整的转义序列留到下一片。`feed()` 返回这一片新解出的答案文本（可能为空串）；
+    `close()` 把流末仍扣着的候选引号按「不是边界」放行。
+    """
+
+    def __init__(self) -> None:
+        self._before = ""        # 还没找到 "answer": " 之前攒的文本
+        self._in_value = False
+        self._done = False
+        self._pending = ""       # 字符串值里尚未裁决的尾巴（半个转义 / 候选闭合引号之后的字符）
+
+    @property
+    def done(self) -> bool:
+        return self._done
+
+    def feed(self, chunk: str) -> str:
+        if self._done or not chunk:
+            return ""
+        if not self._in_value:
+            self._before += chunk
+            m = _ANSWER_KEY_RE.search(self._before)
+            if not m:
+                return ""
+            self._in_value = True
+            rest = self._before[m.end():]
+            self._before = ""
+            return self._consume(rest)
+        return self._consume(chunk)
+
+    def close(self) -> str:
+        """流结束：扣着的候选引号之后再也不会有边界字段了，按裸引号放行；半个转义原样丢弃。"""
+        if self._done or not self._in_value:
+            return ""
+        text = self._pending
+        self._pending = ""
+        self._done = True
+        out = []
+        i = 0
+        while i < len(text):
+            ch = text[i]
+            if ch == "\\":
+                break  # 半个转义：丢
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    def _consume(self, chunk: str) -> str:
+        text = self._pending + chunk
+        self._pending = ""
+        out: list[str] = []
+        i = 0
+        n = len(text)
+        while i < n:
+            ch = text[i]
+            if ch == "\\":
+                if i + 1 >= n:
+                    self._pending = text[i:]
+                    break
+                esc = text[i + 1]
+                if esc == "u":
+                    if i + 6 > n:
+                        self._pending = text[i:]
+                        break
+                    try:
+                        out.append(chr(int(text[i + 2:i + 6], 16)))
+                    except ValueError:
+                        out.append(text[i:i + 6])
+                    i += 6
+                    continue
+                out.append(_ANSWER_ESCAPES.get(esc, esc))
+                i += 2
+                continue
+            if ch == '"':
+                tail = text[i + 1:]
+                if _ANSWER_BOUNDARY_RE.match(tail):
+                    self._done = True
+                    break
+                # 还看不出是不是边界：扣住引号和它后面的字符，等下一片
+                if len(tail) < _ANSWER_LOOKAHEAD and not _looks_decided(tail):
+                    self._pending = text[i:]
+                    break
+                out.append('"')  # 裸引号：正文的一部分
+                i += 1
+                continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+
+def _looks_decided(tail: str) -> bool:
+    """候选闭合引号后的文本已经足以判定「不是边界」：出现了非空白、且不是 `,`/`}`/`]` 开头，
+    或者是 `,` 开头但后面已经能看出不是已知字段名。"""
+    stripped = tail.lstrip()
+    if not stripped:
+        return False
+    if stripped[0] in "}]":
+        return False  # 会被 boundary 正则接住，走不到这
+    if stripped[0] != ",":
+        return True
+    after = stripped[1:].lstrip()
+    if not after:
+        return False
+    if after[0] != '"':
+        return True
+    # `, "xxx` —— 字段名写了一部分就能判：不是任何已知字段的前缀就不是边界
+    name = after[1:]
+    return not any(f.startswith(name) or name.startswith(f) for f in _ANSWER_NEXT_FIELDS)
+
+
+async def grounded_synthesis_stream(llm, subject: str, sources: list[dict], *,
+                                    timeout: float = 25, max_tokens: int = 600,
+                                    thinking: bool = False,
+                                    recency_days: int = 0):
+    """`grounded_synthesis` 的流式版：同一份 prompt（synthesis_messages），边合成边把 `answer`
+    字段的文本 yield 出去，最后一项是 ("result", dict | None)——与一次性版的返回值同构。
+
+    为什么可以流式而不违反「无依据即弃权」：弃权是 prompt 内的约束（模型在 answer 里写
+    「未能从检索到的资料中确认」），不是事后按 confidence 丢弃答案（confidence 只影响 follow_up）。
+    用户听到的就是 answer，流出去的也只有 answer。
+
+    真栈读数（2026-09-12 探针）：深调研合成 2.7–6.1s（574 token）一次到齐，首段有效文本
+    5.7–17.5s；流式后首字在合成首 token（~1s）就到。
+
+    事件：("delta", str) × N，然后恰好一次 ("result", dict | None)。内容风控拒收发生在首 token
+    之前就收窄到权威 top-2 重试一次（同一次性版）；发生在中途则按已到文本收口（parse_synth 会
+    边界式抢救 answer，与 max_tokens 截断同一条路）。
+    """
+    if recency_days > 0:
+        used = rerank_fresh_authority(sources, recency_days,
+                                      key=lambda s: s.get("url", ""))[:6]
+    else:
+        used = rerank_by_authority(sources, key=lambda s: s.get("url", ""))[:6]
+
+    async def _run(subset: list[dict]):
+        """跑一趟流：yield ("delta", str)…，最后 yield ("raw", 全文, 出过增量没)。异常原样抛。"""
+        streamer = AnswerFieldStreamer()
+        raw_parts: list[str] = []
+        emitted = False
+        try:
+            async for piece in llm.stream(
+                    synthesis_messages(subject, subset),
+                    temperature=0.2, max_tokens=max_tokens, timeout=timeout,
+                    thinking=thinking):
+                if not piece:
+                    continue
+                raw_parts.append(piece)
+                text = streamer.feed(piece)
+                if text:
+                    emitted = True
+                    yield ("delta", text)
+        except Exception:
+            # 中途出错：把已经到的文本交给收口，别让调用方两手空空
+            yield ("raw", "".join(raw_parts), emitted, True)
+            raise
+        tail = streamer.close()
+        if tail:
+            emitted = True
+            yield ("delta", tail)
+        yield ("raw", "".join(raw_parts), emitted, False)
+
+    raw = ""
+    emitted = False
+    try:
+        async for ev in _run(used):
+            if ev[0] == "delta":
+                yield ev
+            else:
+                raw, emitted = ev[1], ev[2]
+    except Exception as e:
+        if _is_content_rejection(e) and len(used) > 2 and not emitted:
+            logger.warning("synthesis content-rejected, retrying with top-2 authority: %s", e)
+            try:
+                async for ev in _run(used[:2]):
+                    if ev[0] == "delta":
+                        yield ev
+                    else:
+                        raw, emitted = ev[1], ev[2]
+            except Exception as e2:
+                logger.warning("grounded synthesis failed after narrowed retry: %s", e2)
+                yield ("result", None)
+                return
+        elif not raw:
+            logger.warning("grounded synthesis (stream) failed: %s", e)
+            yield ("result", None)
+            return
+        else:
+            logger.warning("grounded synthesis (stream) failed mid-way, keeping what arrived: %s", e)
+    raw = (raw or "").strip()
+    if not raw or raw.startswith("[mock]"):
+        yield ("result", None)
+        return
+    yield ("result", parse_synth(raw))
+
+
 async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
                              timeout: float = 25, max_tokens: int = 600,
                              thinking: bool = False,
@@ -273,38 +516,10 @@ async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
     else:
         used = rerank_by_authority(sources, key=lambda s: s.get("url", ""))[:6]
 
-    def _prompt_for(subset: list[dict]) -> str:
-        materials = build_materials(subset, rest_cap=800, limit=6)
-        return (
-            f"用户问题：{subject}\n"
-            f"当前时间：{shanghai_now():%Y年%m月%d日 %H:%M}（Asia/Shanghai）\n\n"
-            f"以下是检索到的资料（共{len(subset)}条，方括号内为编号）：\n"
-            f"{materials}\n\n"
-            "请只依据上述资料用中文作答，并严格遵守：\n"
-            "1. 先给核心结论，再按需展开；不要说「根据搜索结果/资料显示」这类废话。\n"
-            "2. 资料未覆盖的内容，明确说明「未能从检索到的资料中确认」，"
-            "禁止编造对阵、比分、时间、数字、人名或因果关系。\n"
-            "3. **排行榜/榜单/数据类**：以**最权威且最新**的那一条资料为准、照它的数据呈现，"
-            "不要用你自己的记忆补全或改写名次/数字；不同资料数字冲突或时效不同时，取最新权威者"
-            "并给出**前后一致**的结论、注明依据时间，**绝不**把互相矛盾的数字混进同一答案"
-            "（例如说榜首16球却又称另一人也16球并列，自相矛盾）。\n"
-            "4. 只输出一个 JSON 对象，不要额外文字，格式：\n"
-            '{"answer": "给用户的结论文本", "key_points": ["要点1", "要点2"], '
-            '"confidence": "high|medium|low", "used_sources": [1, 2]}\n'
-            "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
-            "（用真实换行符 \\n 分隔，可带序号），不要把多条挤在一行；"
-            "解释类问题用连贯段落、先结论后展开。"
-            "key_points 是卡片用精简要点（每条≤30字，可为空）；"
-            "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
-            "JSON 字符串值内不要使用英文双引号，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
-        )
-
     async def _ask(subset: list[dict]) -> str:
-        return await llm.complete([
-            {"role": "system", "content":
-             "你是严谨的车载信息编辑，只能依据提供的资料作答，宁可说没有也绝不编造。"},
-            {"role": "user", "content": _prompt_for(subset)},
-        ], temperature=0.2, max_tokens=max_tokens, timeout=timeout, thinking=thinking)
+        return await llm.complete(
+            synthesis_messages(subject, subset),
+            temperature=0.2, max_tokens=max_tokens, timeout=timeout, thinking=thinking)
 
     try:
         raw = await _ask(used)

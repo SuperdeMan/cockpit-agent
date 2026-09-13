@@ -6,6 +6,7 @@ import type { ServerConfig } from '../config/types'
 import { appLocationBridge } from '../location/appLocation'
 import { currentMeta } from '../settings/store'
 import { speechController } from '../voice/speech'
+import { dropWarmSockets } from '../voice/warmSocket'
 import { attachHistoryPersistence, historyKey, loadHistory, restoreHistory } from './history'
 import { SessionCore } from './store'
 
@@ -27,6 +28,7 @@ export function ensureWired(cfg: ServerConfig): Wired {
   wired?.detachHistory()
   wired?.core.dispose()
   wired?.session.close()
+  dropWarmSockets() // 地址可能变了：旧的预热连接不能被新配置取走
   const speech = speechController(cfg.audioUrl)
   speech.setForeground(false) // 根宿主就绪后开闸，连接期间的早到帧不能启动音频。
   speech.stop()
@@ -75,4 +77,5 @@ export function disposeWired(): void {
   wired?.session.close()
   wired = null
   speechController().setForeground(false)
+  dropWarmSockets() // 换服务器 / 拆装配：旧地址的预热连接一并关掉
 }
