@@ -83,14 +83,14 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `e38cd75c88a01f46ea23ad94ce667db61ea2d0a3`（2026-09-12 00:00 apply；Android 四项体验修正 + 路线几何） |
-| 上一生产基线 | `f8fd15152d78592e4e5625bab22d4bd5e654738d`；本轮未回滚 |
-| status | 2026-09-12 00:01 发布后独立复核：5/5 endpoint healthy，零 warning，`release_sha` 与 `running_release_sha` 均为 `e38cd75` |
-| verify | `verified`；artifact `20260911T161103Z-e38cd75.json` |
-| 代码验证 | `979854a`（本批代码，`e38cd75` 只多一个 mobile 补丁 + 守卫测试）本机全量 **8243 passed / 32 skipped / 14 warnings**，0 failed（`TZ=UTC0 -n 8 --dist worksteal`，618s）；mobile **1001**（999 + 补丁守卫 2）+ tsc/lint 0，HMI **333**。smoke_edge / 四道门禁 / gateway 本批未改未重跑。详情见 [四项体验修正记录](docs/design/2026-09-11-android-sheet-controls-map-tabletop.md) §7 |
+| 生产 release | `43436398631f13c93237ebcb88f453ba12e2ade2`（2026-09-13 08:50 apply；Android 性能与链路时延评审两轮：光球空闲静置 / VAD 单线程 / 音频空闲挂起 / ASR·TTS 连接预热 / 深调研合成流式 / 装配并行） |
+| 上一生产基线 | `e38cd75c88a01f46ea23ad94ce667db61ea2d0a3`；本轮未回滚 |
+| status | 2026-09-13 08:52 发布后独立复核：5/5 endpoint healthy，零 warning，`release_sha` 与 `running_release_sha` 均为 `43436398` |
+| verify | `verified`；artifact `20260913T005437Z-4343639.json` |
+| 代码验证 | `43436398`（本批代码）本机全量固定口径 **8260 passed / 32 skipped / 13 warnings**，1 条并行计时红（`test_cloud_deploy_assets.py::test_https_verifier_fails_closed_when_an_endpoint_never_becomes_ready`，`after 0s` 被 8 worker + Gradle 挤成 `after 1s`），串行复跑 1 passed（`TZ=UTC0 -n 8 --dist worksteal`，575s）；mobile **1015** + tsc/lint 0；`agents/info` + `agents/_sdk` 331；`orchestrator/cloud` 1313 / 1 skipped；smoke_edge 13；四道门禁全过。HMI / gateway 本批未改未重跑。详情见 [性能与时延评审](docs/reviews/2026-09-12-android-performance-latency-review.md) §7.1 / §9.6 |
 | manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
 | 自然问法边界 | 原36题完整真栈只在 `434a046` 闭合；`9a3b6f2f` 当轮有7条旧表述被安全预检拒绝。本次未宣称新 release 36/36 |
-| 证据边界 | 当前部署/status/verify 绑定 **`e38cd75`**；真栈同题对照：`从深圳湾公园到深圳北站多远` 在 `f8fd151` 上的 `route_plan` 卡零几何，在 `e38cd75` 上带 `origin_loc` / `destination_loc` / 240 点 `path`（零动作）。OPPO 包见四项体验修正记录 §7.3。语音采纳的证据仍绑 `f8fd151` / OPPO 包 `f8fd15152`（APK SHA-256 `6fc093a9…66103`）。来源与拒识出口已贯通，但真实 MiniMax-M3 文字注入续测：正常请求6/6、背景静默拒识6/12；另有首轮播报句误命中端侧 `media.play`，已停止探针造成的模拟播放。**拒识仍未验收，声学未验**；[逐条结果](docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md)。手册整本与旧 Android 验收继续保留各自历史 SHA |
+| 证据边界 | 当前部署/status/verify 绑定 **`43436398`**；直连 + 新 release 的 PC 探针与真机读数见评审 §9.6/§9.7（握手 1.4–3s → 0.6–0.8s、TTS 音频不再欠速、深调研首段文本 13s → 5.9s、对话页空闲 30s 后 150% → 9.5%）；OPPO 常驻包见 §9.7。路线几何的真栈对照仍绑 `e38cd75`；语音采纳的证据仍绑 `f8fd151` / OPPO 包 `f8fd15152`（APK SHA-256 `6fc093a9…66103`）。来源与拒识出口已贯通，但真实 MiniMax-M3 文字注入续测：正常请求6/6、背景静默拒识6/12；另有首轮播报句误命中端侧 `media.play`，已停止探针造成的模拟播放。**拒识仍未验收，声学未验**；[逐条结果](docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md)。手册整本与旧 Android 验收继续保留各自历史 SHA |
 
 `b3a2aed` 是 v2 首次生产 release；`434a046`、`7b594f37`、`805711cf` 是后续生产历史；
 `a406e22` / `423ed23` 是 v1 发布历史。

@@ -209,6 +209,8 @@ route.cloud ──0.63s（p50，memory on；memory off 0.20s）──▶ 规划 
 
 14 轮里 8 轮纯代价、3 轮有益；第 2 次调用 p50 2.4s / p95 3.1s / 合计 32.8s。manifest 的 slots 只是名字列表（`slots: [query, limit]`），没有「必填」声明，所以「只在必填槽缺失时才重试」这条更好的规则**表达不出来**（加一份必填声明要过 SDK loader → Registry round-trip → Step 装配整条链，是另一件事）。结论：**不改策略**——本项目的规则是门禁先 A/B 证伪（`retry_policy.py` 头注：这条有 +34.2pp 的已知读数）。可用的 A/B 开关早已接线：`PLANNER_TOOLCALL_SALVAGE_RETRY=off`（`deploy/docker-compose.yaml:350`，cloud-planner 环境）+ `test/eval_intent_adversarial.py --suite gate --layer all --live` 两臂对比，改云端 `.env` 与重建 cloud-planner 都要单独授权。
 
+**09-13 用户授权后的处置：没有跑。** 复核 `test/eval_intent_adversarial.py --live` 的接线后发现这条 A/B 的前提写错了：门禁轨 L1/L2 是**本进程内**装配 `PlanBuilder`（`test/eval_live.py::make_builder`，静态 manifests + 本机 `LLM_GATEWAY_ADDR` gRPC），`PLANNER_TOOLCALL_SALVAGE_RETRY` 由跑批进程自己的环境变量决定，云端 `.env` 与 cloud-planner 容器根本不在这条路上（只有 L3 那 1 条 journey 走真栈）。要跑就得 `target=local` 起本地栈（cloud 档禁止），或者往生产 docker 网络里打一条 gRPC 隧道，再对生产 LLM 网关打 ~1,400 次规划（两臂 × 117 条 × 3 次重复 × 2 个独立进程），且这条开关在门禁轨上的读数本来就是已知的（`retry_policy.py` 头注 +34.2pp）。结论不变：保留重试；「只在必填槽缺失时才重试」要先给 manifest 加必填声明。云端 `.env` 一个字没动。
+
 ### 9.3 深调研合成流式化（§6-5）
 
 - `agents/_sdk/grounding.py`：prompt 抽成唯一声明源 `synthesis_messages()`；新增 `AnswerFieldStreamer`（从逐片到达的合成 JSON 里增量抽出 `answer` 字段，转义按 JSON 解码，裸英文引号与 `extract_json_str_field` 同判据：只有「引号 + 下一个已知字段 / 收尾括号」才是边界）与 `grounded_synthesis_stream()`（("delta", str)… + ("result", dict|None)，内容风控拒收在首 token 前 → 收窄 top-2 重试；中途出错 → 按已到文本收口）。为什么可以流：弃权是 prompt 内的约束，`confidence` 只影响 follow_up，不存在事后丢弃答案的闸。
@@ -254,6 +256,23 @@ route.cloud ──0.63s（p50，memory on；memory off 0.20s）──▶ 规划 
 | C：轻点空白处后 15s | 144 / 144 / 149 → **146.5%** | 631 帧 / 10s，jank 0.16% | 与 A 同形 |
 
 ⇒ 手机放在支架上停在对话页时，30s 后从 1.5 核降到 0.1 核（**−140 个点**），一次触摸即恢复；恢复后的形态与改前逐字相同（这就是「视觉一帧不改」的含义）。第一趟同协议全 0 帧被判无效——PC 休眠后重新枚举 USB，系统「USB 用于」弹窗盖住了 App（`mCurrentFocus=null` 在这台机上不足以判别，截图才看得出）；按 BACK 收掉后重跑得到上表。复测结束常驻包已换回 `e38cd75c8`（配置保留）。
+
+### 9.7 发布与部署后复测（2026-09-13）
+
+- 提交：`43436398`（两轮全部改动，main）。deploy dry-run `blocking_changes: []` → apply 08:48–08:50 `submitted` → 独立 `status`：5/5 endpoint healthy、零 warning、`release_sha` = `running_release_sha` = `43436398` → verify `verified`（artifact `20260913T005437Z-4343639.json`）。
+- 直连路径：用户加了安全组入站 UDP 41641 后，PC `tailscale ping car-agent-dev` 从 `via DERP(lax)` 160ms 变成 **direct 33ms**；手机到云主机 ICMP RTT 从 1.6–3.0s 变成 **32–59ms（avg 44ms）**，4/4 无丢包。
+- PC 探针（同 §1/§4 协议，`link_probe.py`，直连后、新 release 上，`memory_enabled=false`）：
+
+| 读数 | 改前（09-12，DERP 中继 + `e38cd75`） | 改后（09-13，直连 + `43436398`） |
+|---|---|---|
+| 每条新 WSS 握手（8443 / 8444） | 1.4–3.0s | **0.59–0.78s** |
+| MiniMax TTS：文本送完 → 首片 PCM | 0.75–1.56s | **0.39–0.48s**；6.9s 音频 1.4–1.7s 到齐（此前 6.5s 音频要 15–34s，欠速） |
+| fun-asr `stop` → `final` | 0.67–1.81s | **0.14–0.17s**；首个 partial 0.42–0.55s（此前 1.0–1.6s） |
+| cloud 路径单轮总时长 | p50 4.3–4.5s（app 轮，memory on） | 探针 10 轮 p50 3.56s（规划 LLM p50 2.29s 未变；13 次规划里 3 轮仍是两次调用） |
+| 深调研「帮我介绍一下深圳湾公园」 | 首段有效文本 = 终态，一次到齐 10–13s | **首段文本 5.9s**（规划 3.4s + Exa 1.6s + 合成首 token 0.9s），28 个增量片，终态 13.4s；过程区 `execute running` 3.6s 先到 |
+
+规划本身没变快（prompt 仍 10.4k token、`cache_hit` 仍 0），少下来的全是路径与握手；同题第二遍被规划器路由到 navigation（POI 查询），不可比。
+- 手机：清洁包 `434363986`（`xiaozhou-companion-prod-release-434363986-20260913-0909.apk`，APK SHA-256 `4541ad7b…1115c`，09:09 装为 OPPO 常驻包，`/turn-timeline` 底行回读 `prod · 434363986 · 2026-09-13 08:47`）。**手机侧文字轮的分段时延没取到**：adb 在这台 OPPO 上没有中文输入通道——英文句与拼音字母都被规划器判成「没有可执行的步骤」（受话判定把它们当噪声），把 IME 切到中文后是九宫格布局、`input text` 仍按原字母落字；只拿到错误话术那几轮的 `首片PCM→排定 1–2ms`（说明播放排定本身不慢）。要补这一格得靠真人说一轮或对话页加中文输入通道，评审 §4 的预热收益目前只有单测 + PC 侧握手读数。
 
 ## 8. 明确没做的事
 
