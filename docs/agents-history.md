@@ -8987,3 +8987,4 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真机：清洁包 `434363986`（APK SHA-256 `4541ad7b…1115c`）装为 OPPO 常驻包，`/turn-timeline` 底行回读一致；手机到云主机 RTT 1.6–3.0s → 32–59ms。手机侧文字轮分段时延没取到：adb 无中文输入通道（英文 / 拼音注入都被判「没有可执行的步骤」，九宫格 IME 原字母落字），预热收益仍只有单测 + PC 侧握手读数。装置：`am start` 深链后不要再按 BACK（冷启动直落页面 BACK 即退出 App，后续点击会落进桌面上别的应用）；从 Git Bash 起 powershell 跑 adb 脚本会把设备 UTF-8 输出解成 GBK（中文正则全部失配），设备脚本一律经 PowerShell 起。
 - 2026-09-13 用户回报状态胶囊偏左：`Pill` 外框缺省 `alignSelf: 'flex-start'` 压过胶囊容器的居中 ⇒ `PresenceCapsule` 显式 `alignSelf: 'center'`（`71d33dc3`，已推）。OPPO 新包 `71d33dc3f` 复扫：对话页（飞行模式逼出「正在重连…」）与状态画廊三枚胶囊均居中，卡片画廊 / 设置页无其他走样，零崩溃。飞行模式后 App 停在「正在重连…」，重启 Tailscale 才回连（已知边界，非本批回归）。
 - Xiaomi MIX Fold 4 装同一份 `71d33dc3f`，90° 桌面姿态：`舞台 · 桌面`、左列 120 球（上半 252dp）、右列可滚，电量 72% / 续航 396km / 挡位 P 三格完整（`xm-02-inner-second.png`）——用户回报的「上半三个状态数值被截断」闭合；HyperOS 上 `input swipe` 推不动右列 ScrollView，手指滚动留给用户自验。
+- 2026-09-14 用户在 Xiaomi 桌面姿态下确认舞台内嵌地图「会出地图」（口述）；四项修正只剩行车档下的 Pill 尺寸未真机验。

@@ -131,7 +131,7 @@ ChargingRouteCard: origin_loc?, destination_loc?; stops[].lat?/lng?; path?
 - 地图（样本，`card-gallery?only=…`）：`poi_detail` 单点 → 地图页正常（`b2-03-map-poi.png`：序号「1」实色标注、信息条「杭州东站 · 1 个点」、「回中」胶囊）；`route_plan（带路线几何·途经 1）` → 地图页正常（`b2-05-map-route.png`：高德瓦片上主色折线、起（绿）/ 经（琥珀）/ 终（主色）三枚标注、信息条「当前位置 → 深圳宝安国际机场 · 24.6km · 约38分钟 · 途经 1」）；`map-fit` 56.4×48.0dp、`map-info-bar` 335×66dp（`target_probe` PASS）；`logcat -b crash` 两次都为空。
 - 语音层整层下滑：`xiaozhou://voice` 升层 → 内容区下滑 → 收起（`b2-07/b2-08`），零崩溃。
 - **真栈端到端**（Maestro 2.9.0 `--no-reinstall-driver`，流 `20-route-map`：冷启 → 输入框中文 `inputText` → 发送 → 等卡）：在 prod 包的真实 Composer 里发出「从深圳湾公园到深圳北站多远」，云端 `e38cd75` 回 `route_plan`（estimate）卡——「路线测算（未开始导航）」「深圳湾公园 → 深圳北站」「22.4km · 约30.2分钟 · 预计 00:59 到」，卡上出现**「查看路线」**（Maestro 截图 `m20-01-route-card.png`）；`tapOn card-map-entry` COMPLETED（21.7s）→ `map-info-bar` 可见断言 COMPLETED ⇒ 地图页在真实几何上打开。⚠ 随后 Maestro 在地图页取层级时把 driver 挂死（`map-fit` 等待一直 RUNNING、`adb shell` 20s 超时），杀掉 Maestro 与 `dev.mobile.maestro` 后设备恢复；地图页仍在前台，截图 `b2-09-after-maestro.png`：**高德瓦片上沿真实道路（滨海大道 → 福龙路 → 深圳北站）的主色折线 + 起 / 终两枚标注，信息条「深圳湾公园 → 深圳北站 · 22.4km · 约30分钟」**，`logcat -b crash` 为空。这一趟同时是「Maestro 与地图原生视图」的一条新边界：地图页上不要再用 Maestro 取层级，截图 / adb 取证即可。
-- 未在本批真机验证：行车档下的 Pill（44/56）、舞台内嵌地图（要双栏 / 抽屉宽度，或桌面姿态下一张带几何的路线卡）。桌面姿态横排已于 2026-09-13 在 Xiaomi 上验到（§7.4）。
+- 未在本批真机验证：行车档下的 Pill（44/56）。桌面姿态横排已于 2026-09-13 在 Xiaomi 上验到（§7.4）；舞台内嵌地图由用户 2026-09-14 在 Xiaomi 桌面姿态下问一句路程后确认「会出地图」（用户口述，无截图）。
 
 ### 7.4 用户回报「状态胶囊偏左」（2026-09-13）与复扫
 
