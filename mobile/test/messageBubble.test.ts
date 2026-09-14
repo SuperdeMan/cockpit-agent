@@ -4,7 +4,7 @@
 //  · 过程区折叠条 / 回执切换 / follow-up 链接三处的触控高度 44。
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { Modal, ScrollView } from 'react-native'
+import { Modal, ScrollView, Text } from 'react-native'
 
 jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
 const mockSetStringAsync = jest.fn(async (_text: string) => true)
@@ -106,9 +106,14 @@ test('F：error 与 uncertain 气泡给「重发」，按下回调宿主；resen
     await act(async () => { key.props.onPress() })
     expect(onResend).toHaveBeenCalledTimes(1)
   } finally { await act(async () => { err.unmount() }) }
-  const unknown = await mount(bubble({ id: 'u', role: 'assistant', text: '' } as Msg, { uncertain: true, onResend }))
+  // uncertain = 链路断开时回答只到了一部分（settleLinkLost）：文字原样、不染红、标「网络断开」+ 重发
+  const unknown = await mount(bubble({ id: 'u', role: 'assistant', text: '从前有座山，' } as Msg, { uncertain: true, onResend }))
   try {
     expect(unknown.root.findAllByProps({ testID: 'bubble-resend' }).length).toBeGreaterThan(0)
+    expect(unknown.root.findAllByProps({ testID: 'bubble-link-lost' }).length).toBeGreaterThan(0)
+    const body = unknown.root.findAll((n) => n.type === Text && [n.props.children].flat().includes('从前有座山，'))[0]
+    expect(body).toBeDefined()
+    expect(body.props.style.color).not.toBe(p.red)
   } finally { await act(async () => { unknown.unmount() }) }
   const done = await mount(bubble({ id: 'e', role: 'assistant', text: '响应超时了', error: true } as Msg, { onResend, resent: true }))
   try {

@@ -200,7 +200,9 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     return () => { alive = false }
   }, [cfg.edgeUrl, cfg.token])
   const serverUserId = sessionSummary?.userId ?? ''
-  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: serverUserId || cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent() })
+  const snapshot = usePresence({ core, hf, ptt: cfg.audioUrl ? ptt : null, user: serverUserId || cfg.token.slice(-4), sheetOverride, landscape: win.width > win.height, interactive: scope.canPresent(),
+    // 行车档的层常驻只在对话页：支持页上它会盖住用户来这一页要用的东西（判据 derivePresence::supportRoute）
+    supportRoute: facts.route !== '/' })
   const layout = useLayout(snapshot.driving)
   const reduceMotion = useReduceMotion()
   // 光球空闲静置（2026-09-13，性能评审 §2.1 用户裁决）：ORB_IDLE_STILL_MS 内没人理它就停下来。

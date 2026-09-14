@@ -49,6 +49,9 @@ export interface UsePresenceOpts {
   /** 窗口横屏（§6 触发③的一个条件）。**不经 layout**——useLayout 读 snapshot.driving，
    *  排在 usePresence 之后；这里要的是 useWindowDimensions 直接算的那一份 */
   landscape: boolean
+  /** 此刻在支持页（宿主事实 `facts.route !== '/'`）：只影响行车档的层常驻（判据 derivePresence::supportRoute）。
+   *  缺省 false = 对话页 */
+  supportRoute?: boolean
 }
 
 /** 只在这些秒级量变化时才需要重算：倒计时 / 3s 延迟 / 4s error / 8s 长任务 */
@@ -78,7 +81,7 @@ function useChangedAt<T>(value: T): number {
 }
 /* eslint-enable react-hooks/refs, react-hooks/purity */
 
-export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true }: UsePresenceOpts): PresenceSnapshot {
+export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true, supportRoute = false }: UsePresenceOpts): PresenceSnapshot {
   const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt } =
     useStore(core.store)
   const { settings } = useStore(settingsStore)
@@ -242,6 +245,7 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     user,
     voice,
     notice,
+    supportRoute,
   }
   const snapshot = derivePresence(input)
   // 在场轨迹（B2 T14，§11.5）：轴没变就不记 ⇒ 渲染期调用是幂等的（每秒 tick / StrictMode 双渲都不留痕）

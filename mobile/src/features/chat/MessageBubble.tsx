@@ -83,7 +83,8 @@ export interface BubbleProps {
   msg: Msg
   /** 该气泡的待确认此刻是否仍活着（台账 live / 位置征询挂起）：只决定琥珀边，按钮在 Dock */
   confirmActive: boolean
-  /** 发送状态未知（断线瞬间发出的那条，`SessionState.uncertainIds`） */
+  /** 链路断开时回答只到了一部分的那条（`SessionState.uncertainIds`，判据 settleLinkLost）：文字原样留、
+   *  标「网络断开」+ 重发键。一个字没到的那种走 error 气泡，不经这个标 */
   uncertain?: boolean
   /** 转写草稿（方案 §5.2.1）：虚线边 + 光标，定稿后由同一条气泡接管（HMI PartialUserBubble 同款形态） */
   draft?: boolean
@@ -208,8 +209,8 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
           </View>
         ) : null}
         {uncertain ? (
-          <Text style={{ color: p.fg3, fontSize: p.font(11) }}>
-            发送状态未知（网络刚断过；连上后若无回音请再说一次）
+          <Text testID="bubble-link-lost" style={{ color: p.fg3, fontSize: p.font(11) }}>
+            网络断开，回答没有收完
           </Text>
         ) : null}
         <ProcessFold p={p} msg={msg} driving={driving} />

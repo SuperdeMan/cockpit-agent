@@ -2,6 +2,7 @@
 // 「必测边界」八条每条对应一次真实事故（App.tsx/QA 卡注释里点名的那些），缺一不收；
 // 另补正常路径八条 + 位置征询两条（M1-2 的 store 半边）。
 import {
+  LINK_LOST_TEXT,
   REQUEST_TIMEOUT_MS,
   SessionCore,
   type LocationBridge,
@@ -586,18 +587,66 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
     core.dispose()
   })
 
-  test('探活判死时在飞轮标「发送状态未知」，收到终态帧即清', () => {
-    const { transport, core } = newCore()
-    core.setStatus('open')
-    core.send('现在几点')
-    const rid = transport.lastUserFrame().request_id
-    const pendingId = assistants(core)[0].id
-    core.setStatus('closed') // liveness.onDead → reconnectNow → onStatus('closed')
-    expect(core.store.getState().uncertainIds).toEqual([pendingId])
-    core.setStatus('open')
-    core.handleFrame({ type: 'final', request_id: rid, speech: '八点' })
-    expect(core.store.getState().uncertainIds).toEqual([])
-    core.dispose()
+  // 打磨批 F 集中处理表 #5：旧行为让断开那一刻在飞的轮保持「正在思考…」，重连后再跑整 95s 才收成
+  // 「响应超时」——那条路到不了「重发」，且原因是错的（不是超时，是回音不可能再来：reconnectNow /
+  // onclose 都摘掉了旧 socket 的 onmessage，网关不按 request 重放）。判据一处：settleLinkLost。
+  describe('链路断开时已写进 socket 的轮当场结算成可重发的终态（settleLinkLost）', () => {
+    test('一个字没到：断开即 error 气泡 + LINK_LOST_TEXT，不再 pending；迟到的同 request_id 终态帧按孤儿丢弃', () => {
+      const speech = new FakeSpeech()
+      const { transport, core } = newCore({ speech })
+      core.setStatus('open')
+      core.send('现在几点')
+      const rid = transport.lastUserFrame().request_id
+      const id = assistants(core)[0].id
+      core.setStatus('closed') // liveness.onDead → reconnectNow → onStatus('closed')
+      expect(assistants(core)[0]).toMatchObject({ id, pending: false, error: true, text: LINK_LOST_TEXT })
+      expect(core.store.getState().uncertainIds).toEqual([]) // 没有部分回答 ⇒ 不进「回答没有收完」那个标
+      expect(speech.calls.at(-1)).toBe('stop')
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS + 5_000) // 不再有 95s 那只表：文案不会再被改成「响应超时」
+      expect(assistants(core)[0].text).toBe(LINK_LOST_TEXT)
+      core.setStatus('open')
+      core.handleFrame({ type: 'final', request_id: rid, speech: '八点' })
+      expect(assistants(core)).toHaveLength(1)
+      expect(assistants(core)[0].text).toBe(LINK_LOST_TEXT) // 这一轮已注销：迟到帧不复活它
+      core.dispose()
+    })
+
+    test('已到一部分回答：文字原样保留、不染红，进 uncertainIds（「网络断开，回答没有收完」+ 重发）', () => {
+      const { transport, core } = newCore()
+      core.setStatus('open')
+      core.send('讲个长故事')
+      const rid = transport.lastUserFrame().request_id
+      core.handleFrame({ type: 'speech_delta', request_id: rid, delta: '从前有座山，' })
+      const id = assistants(core)[0].id
+      expect(assistants(core)[0]).toMatchObject({ streaming: true })
+      core.setStatus('closed')
+      expect(assistants(core)[0]).toMatchObject({ id, pending: false, streaming: false, text: '从前有座山，' })
+      expect(assistants(core)[0].error).toBeFalsy()
+      expect(core.store.getState().uncertainIds).toEqual([id])
+      core.setStatus('open')
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS + 5_000)
+      expect(assistants(core)[0].text).toBe('从前有座山，') // 没有第二次结算
+      core.dispose()
+    })
+
+    test('断开期间**入队**的轮不经这里：仍 pending、重连 flush 后照常收到答复（B1-16 的保护面不变）', () => {
+      const transport = new FakeTransport()
+      transport.send = (frame: object) => { transport.sent.push(frame); return false } // 断线：入队
+      const core = new SessionCore({ transport, sessionId: 'app-test01', getMeta: () => ({}), location: fakeLocation(false) })
+      core.setStatus('open')
+      core.setStatus('closed')
+      core.send('断网时问的问题')
+      const rid = transport.lastUserFrame().request_id
+      expect(assistants(core)[0]).toMatchObject({ pending: true })
+      expect(core.store.getState().uncertainIds).toEqual([])
+      core.setStatus('connecting')
+      core.setStatus('closed') // 退避重连期间的摆动不结算任何东西
+      expect(assistants(core)[0]).toMatchObject({ pending: true })
+      core.setStatus('open')
+      core.handleFrame({ type: 'final', request_id: rid, speech: '补发的答案' })
+      expect(assistants(core)[0]).toMatchObject({ text: '补发的答案', pending: false })
+      core.dispose()
+    })
   })
 
   test('到期留痕的摘要是用户原话，不是那句通用确认句（评审 D1 的第二个出口）', () => {
@@ -625,15 +674,19 @@ describe('UX v2.1 B1-4：承诺面的账本侧', () => {
 // 确实补发了，回来的 final 却带着一个已注销的 request_id、按「对不上=丢帧」被丢——用户永远
 // 拿不到答案。修法只在 SessionCore：离线期间不计时，重连后整 95s 重新起表。
 describe('UX v2.1 B1-16 前置：离线期间暂停看门狗（第 3 批遗留③）', () => {
-  test('在飞轮：断开期间不计时（150s 仍 pending），重连后重新整 95s', () => {
-    const { core } = newCore()
+  // 保护面是「还没写进 socket 的轮」（入队 / 准备中）：断开那一刻已经写进 socket 的轮由 settleLinkLost
+  // 当场结算（见上一组用例），不再在这里等 95s。
+  test('入队的轮：断开期间不计时（150s 仍 pending），重连后重新整 95s', () => {
+    const transport = new FakeTransport()
+    transport.send = (frame: object) => { transport.sent.push(frame); return false } // 断线：入队
+    const core = new SessionCore({ transport, sessionId: 'app-test01', getMeta: () => ({}), location: fakeLocation(false) })
     core.setStatus('open')
-    core.send('永远不回的问题')
     core.setStatus('closed') // 探活判死 → reconnectNow
+    core.send('永远不回的问题')
     jest.advanceTimersByTime(150_000) // 断网期间远超 95s
     expect(assistants(core)[0]).toMatchObject({ pending: true })
     expect(assistants(core)[0].text).not.toContain('响应超时')
-    core.setStatus('open') // 重连
+    core.setStatus('open') // 重连（ws.mjs onopen 先 flush 队列）
     jest.advanceTimersByTime(REQUEST_TIMEOUT_MS - 1_000) // 94s：整 95s 重新起表 ⇒ 还没到
     expect(assistants(core)[0]).toMatchObject({ pending: true })
     jest.advanceTimersByTime(2_000) // 96s
@@ -641,12 +694,14 @@ describe('UX v2.1 B1-16 前置：离线期间暂停看门狗（第 3 批遗留�
     core.dispose()
   })
 
-  test('重连后补发的答复能上屏：closed 150s → open → 30s 收到 final → 正常收尾、无「响应超时」', () => {
-    const { transport, core } = newCore()
+  test('重连后补发的答复能上屏：closed 时入队 → 150s → open → 30s 收到 final → 正常收尾、无「响应超时」', () => {
+    const transport = new FakeTransport()
+    transport.send = (frame: object) => { transport.sent.push(frame); return false }
+    const core = new SessionCore({ transport, sessionId: 'app-test01', getMeta: () => ({}), location: fakeLocation(false) })
     core.setStatus('open')
+    core.setStatus('closed')
     core.send('现在几点')
     const rid = transport.lastUserFrame().request_id
-    core.setStatus('closed')
     jest.advanceTimersByTime(150_000)
     core.setStatus('open')
     jest.advanceTimersByTime(30_000)

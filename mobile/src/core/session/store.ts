@@ -43,6 +43,8 @@ import { routeSend } from './sendRouter'
 
 // App.tsx:52 同值：略高于两网关 90s 端到端窗口
 export const REQUEST_TIMEOUT_MS = 95000
+/** 链路断开时一个字都没到的在飞轮，结算成这句（红字 + 重发键）；已到一部分的轮文字原样留、只标「网络断开」 */
+export const LINK_LOST_TEXT = '发送状态未知：网络断开前没有收到回音，可以重发。'
 // 剪枝调度上界：按项到期精确调度，min(下一条到期, 30s)。30s 是没有任何挂起时的兜底轮询上界，
 // 不再是「最坏晚 30s 才出账」——那正是 P5「按钮无解释消失」的一半成因
 const PRUNE_INTERVAL_MS = 30_000
@@ -126,9 +128,11 @@ export interface SessionState {
   issues: IssueView[]
   /** 断线期间入队（transport.send 返回 false）的上行帧数；连上即归零（ws.mjs onopen 会 flush） */
   queued: number
-  /** 探活判死那一刻仍在飞的助手气泡 id——它们的请求可能写进了死 socket（M3-W 残留窗），
-   *  UI 标「发送状态未知」；终态帧到达或超时即清。**不自动重发**（重发同一 request_id
-   *  意味着车控可能执行两次，M3-W 定案） */
+  /** 链路断开那一刻仍在飞、且**已收到一部分回答**的助手气泡 id（M3-W 残留窗）：文字原样留、
+   *  标「网络断开，回答没有收完」+ 重发键。一个字没到的那种不进这里——它直接结算成 error 气泡
+   *  （`LINK_LOST_TEXT`）。两种都是**终态**（判据 settleLinkLost）：断开的判定（探活 reconnectNow /
+   *  onclose）都会摘掉旧 socket 的 onmessage、网关也不按 request 重放，这条轮不可能再有回音。
+   *  **不自动重发**（重发同一 request_id 意味着车控可能执行两次，M3-W 定案）——重发键是用户按的 */
   uncertainIds: string[]
   /** 轮元数据（键=助手气泡 id）：这一轮谁发起的。语音层的开合判据读它（方案 §5.2 规则 1） */
   turnMeta: Record<string, TurnMeta>
@@ -332,9 +336,11 @@ export class SessionCore {
     else this.pauseWatchdogs()
     if (status === prev) return
     if (status === 'closed' && prev === 'open') {
-      // 探活判死 / onclose：此刻在飞的轮可能写进了死 socket（M3-W 残留窗）——标未知，不重发
+      // 探活判死 / onclose：此刻在飞的轮可能写进了死 socket（M3-W 残留窗）——当场结算成可重发的终态，
+      // 不再「思考」到重连后再跑一遍 95s 看门狗（打磨批 F 集中处理表 #5：那条路到不了「重发」）
       const inFlight = [...this.requests.values()].filter((r) => r.phase === 'sent').map((r) => r.bubbleId)
-      this.store.setState({ connStatus: status, uncertainIds: inFlight })
+      this.store.setState({ connStatus: status })
+      for (const id of inFlight) this.settleLinkLost(id)
       return
     }
     // open 回调先于真实 flush；计数由每条请求的 onSent/onDropped 更新。
@@ -1245,7 +1251,9 @@ export class SessionCore {
    * `reconnectNow()` 判死，退避重连实测约 2 分钟。旧行为里那一轮的 95s 表在断网期间就跑完了
    * ——气泡被收成「响应超时」且该轮已从 registry 注销 ⇒ 重连 flush 后回来的 final 带着一个
    * 已注销的 request_id、按「对不上＝丢帧」被丢，**用户永远拿不到答案**。
-   * 摘表不动 registry / inFlight / uncertainIds：气泡保持 pending，「已断开·消息会排队」由胶囊与 Dock 说。
+   * 摘表不动 registry / inFlight：气泡保持 pending，「已断开·消息会排队」由胶囊与 Dock 说。
+   * 这条只保护**还没写进 socket**（入队 / 准备中）的轮；断开那一刻已经写进 socket 的轮由
+   * settleLinkLost 当场结算——它们等不到任何回音，摘表对它们没有意义。
    */
   private pauseWatchdogs(): void {
     this.linkDown = true
@@ -1262,6 +1270,37 @@ export class SessionCore {
     const paused = [...this.pausedWatchdogs]
     this.pausedWatchdogs.clear()
     for (const id of paused) this.armWatchdog(id)
+  }
+
+  /**
+   * 链路断开时仍在飞（已写进 socket）的轮：结算成可重发的终态——**唯一的一处判据**（打磨批 F #5）。
+   *
+   * 为什么是终态而不是「等重连看有没有回音」：断开的两种判定（探活 → `reconnectNow`、`onclose`）
+   * 都会关掉旧 socket 并摘掉它的 onmessage，网关对轮的回复只写当前连接、不按 request_id 重放
+   * （连上只重放主动消息）——这条轮**不可能**再收到回音。旧行为让它保持「正在思考…」，重连后再跑
+   * 整 95s 看门狗才收成「响应超时」：用户等了一次断网 + 95s 才拿到重发键，还被告知一个错的原因。
+   *
+   * 留痕分两种：一个字没到 ⇒ error 气泡（`LINK_LOST_TEXT`，红字 + 重发）；已到一部分 ⇒ 文字原样
+   * 保留（那些字不是错误，不染红）、进 `uncertainIds` 标「网络断开，回答没有收完」+ 重发。
+   * 两种都注销这一轮（迟到的同 request_id 帧按孤儿丢弃）；**不自动重发**（M3-W）。
+   * 断开期间**入队**的轮（还没写进 socket）不经这里——它们会在重连时被 flush，看门狗照旧暂停/重起。
+   */
+  private settleLinkLost(id: string): void {
+    const msg = this.store.getState().messages.find((m) => m.id === id)
+    if (!msg || !(msg.pending || msg.streaming || msg.processActive)) return
+    this.markTurn(id, 'failed', 'link_lost')
+    if (this.registry.isLatest(id)) this.speech.stop()
+    this.registry.dropBubble(id)
+    this.clearWatchdog(id)
+    const partial = !!msg.text
+    this.store.setState((s) => ({
+      messages: s.messages.map((m) =>
+        m.id === id
+          ? { ...m, pending: false, streaming: false, processActive: false, ...(partial ? {} : { error: true, text: LINK_LOST_TEXT }) }
+          : m,
+      ),
+      uncertainIds: partial && !s.uncertainIds.includes(id) ? [...s.uncertainIds, id] : s.uncertainIds,
+    }))
   }
 
   /** 终态到达 → 「发送状态未知」的标撤掉（所有终态路径都经 clearWatchdog / 看门狗超时） */

@@ -150,6 +150,11 @@ export interface PresenceInput {
   drivingSuggest?: boolean
   /** 2s 短提示（取消 / 回声）；判据 NOTICE_SHOW_MS 在这里 */
   notice?: { text: string; at: number } | null
+  /** 此刻在支持页（设置 / 车辆 / 地图）而不是对话页。**只影响常驻**：行车档 B/C 的「语音层常驻」是对话页
+   *  的形态——在支持页上它会压住用户来这一页要用的东西（打磨批 A 未达项①：设置页下 40% 被层盖住、
+   *  行车档开关够不到）；支持页闲置只有浮动光球（AR04 形态修正），层只在收音 / 语音轮在飞 / 点开时升。
+   *  缺省 false = 对话页（旧调用方与 fixtures 逐字不变） */
+  supportRoute?: boolean
 }
 
 export interface PresenceSnapshot {
@@ -344,7 +349,8 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   const voiceTurnLive = !!voice && voice.turnSource !== 'text' && (agent !== 'idle' || hasAttention)
   // 行车档 B/C：层**常驻**（§6「语音层常驻」）——没有在飞轮也开着。A（手持）不常驻：
   // 可能是乘客在打字。常驻**不是不可收**：用户下拉过这一轮（override='dismissed'）仍然收得起来。
-  const resident = sheetResident(i.identity, i.driving)
+  // 常驻只在对话页：支持页（设置 / 车辆 / 地图）上闲置的层只会盖住用户来这一页要用的东西（见 supportRoute）。
+  const resident = sheetResident(i.identity, i.driving) && !i.supportRoute
   const sheetOpen =
     capturing || voice?.override === 'open' || (voice?.override !== 'dismissed' && (voiceTurnLive || resident))
   const input: PresenceSnapshot['input'] = sheetOpen ? 'voice-sheet' : 'composer'

@@ -372,6 +372,24 @@ describe('B4-11 行车档下的语音层（§6 常驻 + §5.2 规则 3 行车条
   test('反例：A（手持）行车不常驻——可能是乘客在打字', () => {
     expect(derivePresence(base({ driving: true, identity: 'handheld' })).input).toBe('composer')
   })
+  // 打磨批 A 未达项①：行车档 + 可信平板下进设置页，常驻层压住设置页下 40%、行车档开关够不到。
+  // 常驻是对话页的形态；支持页闲置只有浮动光球，层只在收音 / 语音轮在飞 / 点开时升。
+  test('支持页（supportRoute）上 B/C 行车不常驻：闲置 input=composer', () => {
+    expect(derivePresence(base({ ...drivingB, supportRoute: true })).input).toBe('composer')
+    expect(derivePresence(base({ driving: true, identity: 'trusted-tablet', supportRoute: true })).input).toBe('composer')
+  })
+  test('支持页上仍会升：收音中 / 语音轮在飞 / 用户点开（只撤常驻，不撤三条升层路径）', () => {
+    const support = { ...drivingB, supportRoute: true }
+    expect(derivePresence(base({ ...support, ptt: 'recording' })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...support, turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 },
+      voice: { turnSource: 'handsfree', override: null, answer: false, card: false } })).input).toBe('voice-sheet')
+    expect(derivePresence(base({ ...support, voice: { turnSource: 'text', override: 'open', answer: true, card: false } })).input).toBe('voice-sheet')
+  })
+  test('反例：supportRoute 对非行车 / 手持没有任何影响（缺省 false 与对话页逐字相同）', () => {
+    expect(derivePresence(base({ supportRoute: true }))).toEqual(derivePresence(base({})))
+    expect(derivePresence(base({ driving: true, identity: 'handheld', supportRoute: true })))
+      .toEqual(derivePresence(base({ driving: true, identity: 'handheld' })))
+  })
   test('答完 3s 内 detent 仍 0.62（还没到点）', () => {
     expect(derivePresence(answered(1_000)).sheetDetent).toBe(0.62)
   })
