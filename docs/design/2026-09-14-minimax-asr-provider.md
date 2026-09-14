@@ -1,6 +1,6 @@
 # MiniMax ASR（`speech_to_text`）接入：整句引擎进流式插槽 + 批处理面
 
-- **状态**：已实施并发布（release `40ccb9b6`，§6 首批 + §7 合并选择）；真栈验证 §8（网关 / 云端 HMI / OPPO 真机三面取到，`verify` verified）；真人按住说话待泓舟
+- **状态**：已实施并发布（release `40ccb9b6`，§6 首批 + §7 合并选择）；真栈验证 §8（网关 / 云端 HMI / OPPO 真机三面取到，`verify` verified）；真人按住说话泓舟 2026-09-14 验收通过
 - **交付对象**：llm-gateway / HMI / mobile 的后续开发者
 - **关联代码**：`llm-gateway/providers.py`（`MiniMaxASRProvider` / `WholeUtteranceASRProvider` / 两个工厂）、
   `llm-gateway/http_server.py`（`/api/asr/stream/info`）、`hmi/src/types.ts` + `components/SettingsPanel.tsx`、
@@ -233,7 +233,7 @@ APK SHA-256 本地 = 设备 `pm path` 回读 `4aed0592e23cbb5003858ca8089d4817fc
   占着（早于本轮任何真栈动作、本会话零残留进程），第一次 verify 拿不到锁 ⇒ `failed`（artifact `20260914T133608Z-unknown.json`
   全空、不说原因）。泓舟授权后按 run-id 核对再 kill（236919/236920），`flock` 探测 AVAILABLE，重跑 **`verified`**
   （`20260914T144801Z-40ccb9b.json`，`minimax:MiniMax-M3`），status 回到 `ok` 零 warning。
-- 真人按住说话（HMI 麦克风 / Android PTT）：泓舟自己验，步骤与观察点见 §8.5。
+- 真人按住说话（HMI 麦克风 / Android PTT）：泓舟 2026-09-14 按 §8.5 自验，**通过**（口头签收，无逐条读数）。
 
 ### 8.5 真人验收步骤（泓舟）
 
