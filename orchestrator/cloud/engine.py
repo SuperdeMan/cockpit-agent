@@ -14,7 +14,7 @@ import uuid
 from typing import AsyncIterator
 
 from .models import Plan, Step, StepResult, StepStatus, PlanContext, SessionState
-from .planning import PlanBuilder
+from .planning import PlanBuilder, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import SessionStore
@@ -631,7 +631,7 @@ class PlannerEngine:
             # `if not plan.steps` 之前——addressed=false 时 steps 恰为空，否则先走空计划话术+TTS
             # 令拒识失效（母卡实施计划 §0-4）。
             input_source = ctx.prefs.get("input_source", "")
-            if ((input_source.startswith("voice_") or input_source == "ptt")
+            if (is_voice_input_source(input_source)
                     and not plan.addressed and _reject_enabled()):
                 await obs_events.get_emitter("cloud").emit_span(
                     ctx.trace_id, "rejected",

@@ -35,6 +35,7 @@ from . import skills as _skills
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import is_non_directive_question
+from runtime.reported_speech import is_reported_speech
 
 logger = logging.getLogger("planner.planning")
 
@@ -1183,6 +1184,16 @@ def _trigger_directive_not_addressed(state: PlanAttemptState) -> bool:
                 and _is_directive_to_assistant(state.text))
 
 
+def is_voice_input_source(source) -> bool:
+    """这一轮的输入来自语音（免唤醒 `voice_*` / Android 按住说话 `ptt`）——拒识面的作用域。
+
+    engine 的静默拒识与 planner 的语域判据都只盖语音来源：文字 / 按钮 / 旧客户端没有来源，
+    保留原行为。两处读同一条，不各写一份前缀表。
+    """
+    src = str(source or "")
+    return src.startswith("voice_") or src == "ptt"
+
+
 def _trigger_explicit_input_not_addressed(state: PlanAttemptState) -> bool:
     """显式输入（包括 Android ptt）的一次 not-addressed 先重试；免唤醒保持原策略。"""
     parsed = state.parsed
@@ -1566,6 +1577,23 @@ class PlanBuilder:
                     # 输入自身已提供确定性证据；不让第二次抽样把正确的空动作翻成执行。
                     no_action = 2
                     break
+
+        # 受话边界的确定性一维（2026-09-11 语音采纳真栈探针：背景播报句 12 次里 6 次漏拒——
+        # 模型把「本台记者报道，项目建设已经进入第二阶段。」判成 addressed=true、steps=[]，
+        # 二次抽样后落 chitchat 安慰一句；另两次两轮都没交出合法计划、落成技术失败，让用户
+        # 「换个说法再试」一句他根本没说过的话）。语域是文本自己带的证据：说话人在对**听众**
+        # 播报 / 转述（runtime/reported_speech.py，零领域词，端侧快路径同一份）。语音来源 +
+        # 播报语域 + 模型两轮都没拆出任何一步 ⇒ 这一轮是「不应回应」，不是「该回应但计划失败」。
+        # ⚠ 三条边界：只盖语音来源（文字是用户刻意打的，行为不变）；模型真拆出了步
+        # （「据报道明天暴雨，帮我看看天气」）不动；掉档轮抢救出的计划（salvage_kept）也不动
+        # ——判据只在**空手**时生效，拿不准仍归模型。
+        if (plan is None and salvage_kept is None
+                and is_voice_input_source((ctx.prefs or {}).get("input_source", ""))
+                and is_reported_speech(text)):
+            logger.info("voice input in broadcast register, no plan twice → not addressed: %s",
+                        text[:40])
+            plan = Plan(steps=[], addressed=False)
+            plan_mode = f"{last_mode}_register_not_addressed"
 
         # **第三种合法的空 steps：受话了，而且不该做任何动作。**
         # 上面那条 R4.4 的放行只白名单了两种（不受话 / 澄清）。可是「空调先别关」这类

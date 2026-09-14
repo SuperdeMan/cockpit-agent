@@ -9,6 +9,7 @@ import re
 
 from runtime.clause_split import SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
 from runtime.polarity import is_negated_directive
+from runtime.reported_speech import is_reported_speech
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
 from runtime.question_shape import is_non_directive_question
 
@@ -348,6 +349,11 @@ def classify_structured(text: str) -> dict | None:
     # 映射成「关」只是换了一个**有副作用**的错误动作（判据全在 polarity.py）。
     if _is_write_action(result) and is_negated_directive(text):
         return None                       # 整句上云：宁可慢一点，不要按反
+    # 受话边界的第三维（2026-09-11 语音采纳真栈探针）：「欢迎收听今天的节目，本台记者为您报道新闻。」
+    # 命中 `新闻` + `听` → media.play，0.97s 内把媒体置成 playing——说话的是收音机 / 乘客，不是用户。
+    # 判据是**语域**（说话人在对听众播报 / 转述），零领域词；同样只盖写操作（判据全在 reported_speech.py）
+    if _is_write_action(result) and is_reported_speech(text):
+        return None                       # 整句上云：由云侧受话判定决定要不要回应
     if result is not None:
         # Q13：原话随意图走。**不是为了让下游再分类一次**——是因为结构化意图里
         # 有信息拿不回来：`下一首` 与 `上一首` 解出的 data 逐字相同（都是
@@ -1787,6 +1793,8 @@ def split_and_classify(text: str) -> list[dict] | None:
         None: Single intent (no split needed) OR any sub-intent needs cloud.
     """
     t = text.strip()
+    # （播报语域不在这里单独判：本函数全有全无，带语域标记的那一段本身就过不了
+    #  classify_structured 出口 ⇒ 整句必然回落 None。混合拆分那条才需要整句判，见 split_and_classify_any）
 
     # 按连词/逗号拆分 + “和”的安全二次拆分
     parts = _split_parts(t)
@@ -1845,6 +1853,11 @@ def split_and_classify_any(text: str) -> list[dict] | None:
         None: single intent only.
     """
     t = text.strip()
+    # 语域是**整句**的属性：「本台记者提醒您，请打开车窗」拆成两段后第二段就是一条干净的本地指令，
+    # 混合拆分会当场执行它。分段前先判整句：命中则回落 None ⇒ 服务层走 classify(整句) ⇒ 出口否决 ⇒ 整句上云
+    # （判据与 classify_structured 出口同一份，见 runtime/reported_speech.py）
+    if is_reported_speech(t):
+        return None
     parts = _split_parts_with_sep(t)
     if len(parts) < 2:
         return None

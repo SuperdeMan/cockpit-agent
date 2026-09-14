@@ -329,3 +329,72 @@ def test_directive_guard_does_not_hijack_non_directives():
     for t in ("我不记得了", "他记住了我的名字", "这事你还记不记得都行",
               "我女儿叫小满", "今天天气不错", ""):
         assert not P._is_directive_to_assistant(t), t
+
+
+# ── 受话边界的确定性一维：播报语域 + 语音来源 + 两轮空手 ⇒ 不受话（2026-09-11 真栈漏拒的四种形态）──
+
+def _chitchat_agent():
+    a = MockAgent("chitchat", ["chitchat.talk"])
+    a.manifest.capabilities[0].response_only = True
+    a.manifest.capabilities[0].require_confirm = False
+    return a
+
+
+_BROADCAST = "本台记者报道，项目建设已经进入第二阶段。"   # 续测漏拒原话（trace 5d068f03162c462d 同族）
+_NO_ACTION = '{"addressed":true,"steps":[]}'
+
+
+def test_voice_broadcast_register_with_no_action_twice_is_not_addressed():
+    """真栈形态 ①：模型两次 addressed=true、steps=[] → 旧行为落 chitchat 安慰一句；现在判不受话。"""
+    b, calls = _builder(_NO_ACTION)
+    ctx = PlanContext(session_id="t", prefs={"input_source": "ptt"})
+    plan = _build(b, _BROADCAST, [_chitchat_agent()], ctx=ctx)
+    assert plan.addressed is False
+    assert plan.steps == []
+    assert plan.plan_mode.endswith("_register_not_addressed")
+    assert plan.technical_failure is False
+    assert calls["n"] == 2          # 判据在两轮抽样**之后**才生效：模型拿得准就不该由规则替它说
+
+
+def test_voice_broadcast_register_with_parse_failure_twice_is_not_addressed_not_technical_failure():
+    """真栈形态 ②：两轮都没交出合法计划 → 旧行为兜底 + technical_failure（「换个说法再试」一句用户没说过的话）。"""
+    b, _ = _builder(["nope", "still nope"])
+    ctx = PlanContext(session_id="t", prefs={"input_source": "voice_followup"})
+    plan = _build(b, _BROADCAST, [_chitchat_agent()], ctx=ctx)
+    assert plan.addressed is False
+    assert plan.steps == []
+    assert plan.technical_failure is False
+
+
+def test_text_input_in_broadcast_register_keeps_todays_behaviour():
+    """反例 ①：文字输入是用户刻意打进来的——同一句、同样两轮空手，仍是今天的 chitchat 应答。"""
+    b, _ = _builder(_NO_ACTION)
+    plan = _build(b, _BROADCAST, [_chitchat_agent()])
+    assert plan.addressed is True
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_voice_broadcast_register_with_real_steps_is_honoured():
+    """反例 ②：「据报道明天暴雨，帮我看看天气」——模型拆出了步，判据不动它。"""
+    raw = json.dumps({"addressed": True, "steps": [
+        {"id": "s1", "capability_ref": "cap_0001", "slots": {"city": "深圳"}, "depends_on": [], "slot_refs": {}}]})
+    agents = [MockAgent("info", ["info.weather"])]
+    b, _ = _builder(raw)
+    ctx = PlanContext(session_id="t", prefs={"input_source": "ptt"})
+    plan = _build(b, "据报道明天暴雨，帮我看看深圳的天气", agents, ctx=ctx)
+    assert plan.addressed is True
+    assert [s.intent for s in plan.steps] == ["info.weather"]
+
+
+def test_voice_passenger_talk_without_register_is_untouched():
+    """反例 ③：乘客句「他昨天跟我说那个项目黄了」没有播报语域——这条仍归模型（拿不准归模型，不归规则）。"""
+    b, _ = _builder(_NO_ACTION)
+    ctx = PlanContext(session_id="t", prefs={"input_source": "ptt"})
+    plan = _build(b, "他昨天跟我说那个项目黄了", [_chitchat_agent()], ctx=ctx)
+    assert plan.addressed is True
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+def test_is_voice_input_source_is_the_single_prefix_table():
+    assert P.is_voice_input_source("ptt") and P.is_voice_input_source("voice_followup")
+    assert not P.is_voice_input_source("") and not P.is_voice_input_source("text") and not P.is_voice_input_source(None)
