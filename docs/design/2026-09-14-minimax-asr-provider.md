@@ -1,6 +1,6 @@
 # MiniMax ASR（`speech_to_text`）接入：整句引擎进流式插槽 + 批处理面
 
-- **状态**：已实施并发布（release `40ccb9b6`，§6 首批 + §7 合并选择）；真栈验证 §8（网关 / 云端 HMI / OPPO 真机三面取到，`verify` 因远端锁未取得）
+- **状态**：已实施并发布（release `40ccb9b6`，§6 首批 + §7 合并选择）；真栈验证 §8（网关 / 云端 HMI / OPPO 真机三面取到，`verify` verified）；真人按住说话待泓舟
 - **交付对象**：llm-gateway / HMI / mobile 的后续开发者
 - **关联代码**：`llm-gateway/providers.py`（`MiniMaxASRProvider` / `WholeUtteranceASRProvider` / 两个工厂）、
   `llm-gateway/http_server.py`（`/api/asr/stream/info`）、`hmi/src/types.ts` + `components/SettingsPanel.tsx`、
@@ -229,8 +229,18 @@ APK SHA-256 本地 = 设备 `pm path` 回读 `4aed0592e23cbb5003858ca8089d4817fc
 
 ### 8.4 未闭合
 
-- `dev_stack.py verify`：远端 e2e 事务锁被一个 **12:41Z 起、`sshd: ubuntu@notty` 下的 `remote-e2e-lock.sh hold --run-id e2e-d374ba04…`**
-  占着（早于本轮任何真栈动作，不是本会话的进程；本会话零残留 ssh/run_e2e），verify 拿不到锁 ⇒ `failed`（artifact
-  `20260914T133608Z-unknown.json` 全空）。按「不停别人的进程」红线未处理；锁释放后重跑 `verify` 即可。
-- 真人按住说话（HMI 麦克风 / Android PTT）本轮没有真人，网关级同协议探针（pcm16le 直传 → partial/final/done）代替；
-  声学未验。
+- ~~`dev_stack.py verify`~~：远端 e2e 事务锁曾被一个 **12:41Z 起、`sshd: ubuntu@notty` 下的 `remote-e2e-lock.sh hold --run-id e2e-d374ba04…`**
+  占着（早于本轮任何真栈动作、本会话零残留进程），第一次 verify 拿不到锁 ⇒ `failed`（artifact `20260914T133608Z-unknown.json`
+  全空、不说原因）。泓舟授权后按 run-id 核对再 kill（236919/236920），`flock` 探测 AVAILABLE，重跑 **`verified`**
+  （`20260914T144801Z-40ccb9b.json`，`minimax:MiniMax-M3`），status 回到 `ok` 零 warning。
+- 真人按住说话（HMI 麦克风 / Android PTT）：泓舟自己验，步骤与观察点见 §8.5。
+
+### 8.5 真人验收步骤（泓舟）
+
+- HMI：设置 › 语音输入 › 识别方式「整句」› 整句引擎「MiniMax asr-1.0」，关掉设置面板，按住光球说一句 → 松手。
+  预期：说话期间输入框**不出字**；松手后 ~1–2s 出字并自动发送。切回「实时 / Fun-ASR」对照：边说边出字。
+  若出现「实时识别暂不可用，已切换经典模式」说明 WS 路径失败回退了批处理（批处理引擎是服务端 `ASR_PROVIDER=auto` 的
+  dashscope 桥接，不是 MiniMax）。
+- Android（OPPO 上已是 `40ccb9b6e` prod 包）：设置 › 语音 › 识别方式「整句」› 整句引擎「MiniMax asr-1.0」，回对话页
+  PTT 说一句 → 松手，预期同上；再开免唤醒说一句，端侧 VAD 判定说完后出定稿。超过 7s 没定稿会走批处理兜底（同上）。
+- 事后可在可观测台看 `asr.stream` span：`provider=minimax`、`model=asr-1.0`、时延与定稿长度。
