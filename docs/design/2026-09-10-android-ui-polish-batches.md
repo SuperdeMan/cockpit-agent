@@ -346,8 +346,11 @@ jest / tsc / lint / Maestro 读数：Maestro release 轨（-e APP_LAUNCH_MODE=re
   根因与修正见「批 F 追加」；03 在追加包上再跑一次。
 反向验证：不适用（本节只复核最终包）
 未达项与归属：① 行车档 + 可信车载平板下冷启动直落 /settings，常驻语音层压住设置页下 40%（dump：voice-sheet [0,1183][988,1972]），
-  set_switch.py 的滑动起点落在层里滚不动、行车档开关够不到；稍后从对话页温深链进设置页时层不在——机制未钉死，归 AR04「支持页在场（行车档）」复验；
-  ② 角色 ChoiceRow 没有 accessibilityState.selected，自动化只能截图回读（无障碍缺口，归下一轮打磨）；③ 三条并存仍未复现（本包两条并存，dock-others 已在场）。
+  set_switch.py 的滑动起点落在层里滚不动、行车档开关够不到；稍后从对话页温深链进设置页时层不在——机制未钉死，归 AR04「支持页在场（行车档）」复验
+  → **已修（2026-09-14，`c036fd14`）**：常驻是对话页的形态，`derivePresence` 加 `supportRoute`，支持页只撤常驻那一条升层路径；「温深链时层不在」
+  是因为上一轮留下的 dismissed override，改后两条路一致。复验见[剩余待办总表](2026-09-14-android-remaining-todos.md) §5；
+  ② 角色 ChoiceRow 没有 accessibilityState.selected，自动化只能截图回读（无障碍缺口，归下一轮打磨）→ **已由 2026-09-11 两档制迁移闭合**（`979854a`：单选项走 `ui/Pill`，`selected` 进无障碍）；
+  ③ 三条并存仍未复现（本包两条并存，dock-others 已在场）→ AR05 V01 已在真机取到「待处理事项（3）」（`d425b9c2d`）。
 ```
 
 ### 批 F 追加（e95d077：晚到的布局增高也贴底）
@@ -445,6 +448,6 @@ jest / tsc / lint / Maestro 读数：不适用（对照机只截图）
 | 2 | cloud deploy（批 G 服务端） | **已做**（同上授权）：dry-run 干净 → `--apply` → status 5/5 healthy、running_release_sha = d532c6d → verify = verified → 真栈复验 Dock 标题「打开后备箱」 | 无 |
 | 3 | Xiaomi 对照四格（landscape-driving-sheet / landscape-driving-dock / chat-3turns / settings-top） | **已做**（用户 2026-09-11 接机授权）：装 e95d07725、4/4 截到，见上一节；改过的系统旋转与 App 内设置逐项回读还原 | 无 |
 | 4 | 系统级设置（字号 / 网络 / 权限 / 省电）与 `.env` | 本轮自己的探针没碰；Maestro 03 按 Goal 点名的回归清单跑，它自带「飞行模式 10s → 恢复」 | 无需动作（记录用） |
-| 5 | 「重发」按钮真机截图（批 F） | **探针做了（2026-09-11 授权），截不到，且发现前提不可达**：在线发一句、1.7s 后开飞行模式让它在飞 ⇒ 34s 后胶囊「已断开 · 消息会排队」、气泡保持 pending；关飞行模式重连后气泡标「发送状态未知（网络刚断过；连上后若无回音请再说一次）」但仍是「正在思考…」——`MessageBubble` 只在 `(error ∨ uncertain) ∧ !pending` 时渲染「重发」，而队列语义让在飞的那条**永远不离开 pending**（要么补达出回答、要么一直思考），所以断网这条路到不了「重发」；能到的只有服务端 error 事件那条路（`出错了：…` 气泡）。证据 POLISH-F2-20260911\chat-after-reconnect-e95d07725.png + airplane-probe-2.log | 这是批 F「失败的请求能重发」的一个设计缺口：uncertain ∧ pending 超过 N 秒没有回音时应转成可重发的终态（判据一处，配 jest）。本轮不改，归下一批裁决 |
-| 6 | Maestro 03 在飞行模式段挂起（两包三趟）+ 关飞行模式后 Tailscale 不自愈 | **探针做了**：减少动效开着时，飞行模式下对话页 uiautomator **每次都能 idle**（60s 内 30 次 dump 全 ok、树签名只在胶囊切换那一刻变一次）、离线闲置 ≈2.3 帧/s（在线闲置 0 帧/s）⇒ 「树每秒在变」这条假设**被推翻**；driver 挂起不是树在跳。再把减少动效开着跑一次 03：仍在「Tap on composer-input」挂 322s ⇒ 光球动画也**不是**变量。两条 App 侧假设都排除，剩 driver 自身在飞行模式下的 hierarchy 取数（同一时刻 uiautomator 能取） | 归 Maestro 工具侧：看 driver logcat / `--debug-output` 的 gRPC 超时，或把 flow 的 `setAirplaneMode` 换成不经 driver 的断网方式；Tailscale 不自愈是手机侧现象，每次都靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale |
+| 5 | 「重发」按钮真机截图（批 F） | **探针做了（2026-09-11 授权），截不到，且发现前提不可达**：在线发一句、1.7s 后开飞行模式让它在飞 ⇒ 34s 后胶囊「已断开 · 消息会排队」、气泡保持 pending；关飞行模式重连后气泡标「发送状态未知（网络刚断过；连上后若无回音请再说一次）」但仍是「正在思考…」——`MessageBubble` 只在 `(error ∨ uncertain) ∧ !pending` 时渲染「重发」，而队列语义让在飞的那条**永远不离开 pending**（要么补达出回答、要么一直思考），所以断网这条路到不了「重发」；能到的只有服务端 error 事件那条路（`出错了：…` 气泡）。证据 POLISH-F2-20260911\chat-after-reconnect-e95d07725.png + airplane-probe-2.log | **已修（2026-09-14，`c036fd14`）**：不是「超过 N 秒」——断开判定（探活 `reconnectNow` / `onclose`）都摘掉旧 socket 的 onmessage、网关只重放主动消息，这条轮**不可能**再有回音，所以在断开那一刻当场结算（`store.ts::settleLinkLost`，唯一一处）：一个字没到 ⇒ error 气泡「发送状态未知：网络断开前没有收到回音，可以重发。」+ 重发；已到一部分 ⇒ 文字原样、标「网络断开，回答没有收完」+ 重发。断开期间入队的轮不经它。真机复验与总表见 [2026-09-14 剩余待办总表](2026-09-14-android-remaining-todos.md) §1/§5 |
+| 6 | Maestro 03 在飞行模式段挂起（两包三趟）+ 关飞行模式后 Tailscale 不自愈 | **探针做了**：减少动效开着时，飞行模式下对话页 uiautomator **每次都能 idle**（60s 内 30 次 dump 全 ok、树签名只在胶囊切换那一刻变一次）、离线闲置 ≈2.3 帧/s（在线闲置 0 帧/s）⇒ 「树每秒在变」这条假设**被推翻**；driver 挂起不是树在跳。再把减少动效开着跑一次 03：仍在「Tap on composer-input」挂 322s ⇒ 光球动画也**不是**变量。两条 App 侧假设都排除，剩 driver 自身在飞行模式下的 hierarchy 取数（同一时刻 uiautomator 能取） | 归 Maestro 工具侧：看 driver logcat / `--debug-output` 的 gRPC 超时，或把 flow 的 `setAirplaneMode` 换成不经 driver 的断网方式；Tailscale 不自愈是手机侧现象，每次都靠 `cmd connectivity airplane-mode disable` + 重启 Tailscale。2026-09-14 起登记为 [剩余待办总表](2026-09-14-android-remaining-todos.md) E-02 |
 

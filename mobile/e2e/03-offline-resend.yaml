@@ -26,17 +26,21 @@ tags:
 - runFlow: subflows/open-app.yaml
 
 - setAirplaneMode: enabled
-# ⚠ **这里必须等够 ~35 秒，不是 10 秒。** RN 的 WebSocket 在飞行模式下 onclose 不来，
-# 连接要靠 App 的探活判死（`core/api/liveness.ts`：15s 一轮、连续 2 次失败）——
-# 2026-08-27 真机实测 **25.7s** 才判死。在那之前 `send()` 仍认为连接是开的、
-# 会把帧直接写进死 socket（**已知残留窗口，见 M3-W**）⇒ 早发的那条根本不入队，
-# 这条 flow 会稳定红，而红的原因是那个已知窗口、不是回归。
+# ⚠ **这里必须等够 ~45 秒，不是 10 秒。** RN 的 WebSocket 在飞行模式下 onclose 不来，
+# 连接要靠 App 的探活判死（`core/api/liveness.ts`：15s 一轮、单次超时 8s（2026-09-12 由 4s 抬高）、
+# 连续 2 次失败）——2026-08-27 真机实测 4s 超时档 **25.7s** 才判死，8s 档要再晚一截。
+# 在那之前 `send()` 仍认为连接是开的、会把帧直接写进死 socket（**已知残留窗口，见 M3-W**）
+# ⇒ 早发的那条根本不入队；2026-09-14 起它会在判死那一刻被结算成「发送状态未知」+ 重发
+# （`store.ts::settleLinkLost`），**不是**补达——所以文末多了一条 `bubble-resend` 不可见的断言，
+# 等得不够长这条 flow 会诚实地红，红的原因是那个已知窗口、不是回归。
 #
-# ⚠ `waitForAnimationToEnd` 严格讲是「等画面静止」不是 sleep，画面静了会提前返回。
-# 这里能当计时器用，是因为**本页常驻 Aurora 光球动画**、画面永远不静止。
-# 若哪天光球改成静止的，这里要换成 `extendedWaitUntil` 等一个永不出现的元素 + `optional: true`。
-- waitForAnimationToEnd:
-    timeout: "35000"
+# ⚠ 这里不能再用 `waitForAnimationToEnd` 当计时器：光球 2026-09-13 起空闲 30s 就静置
+# （`orbIdle.ts`），画面静了它会提前返回。按它自己头注的预案换成「等一个永不出现的元素 + optional」。
+- extendedWaitUntil:
+    visible:
+      id: "never-appears-timer"
+    timeout: 45000
+    optional: true
 
 - tapOn:
     id: "composer-input"
@@ -58,3 +62,8 @@ tags:
     notVisible:
       id: "msg-pending"
     timeout: 90000
+# ⚠ 「挂起态消失」还有第二种到法：帧写进了死 socket、判死时被结算成「发送状态未知」+ 重发
+# （settleLinkLost），或 95s 看门狗收成「响应超时」+ 重发——两者都不是补达。
+# 重发键在场 = 这一轮没有拿到回答，flow 必须红。
+- assertNotVisible:
+    id: "bubble-resend"

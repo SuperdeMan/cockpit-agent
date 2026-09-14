@@ -55,4 +55,10 @@
 
 先立上述失败样本的回归，再改判据；不直接靠提高 VAD 阈值或加入播报关键词黑名单宣称解决。真正识别说话对象仍需要同条件声学证据，不能从文字注入样本推导。
 
+**2026-09-14 处置（`696899b5`，本地 commit、未 push、未 deploy）**：
+
+1. 端侧：新增 `runtime/reported_speech.py::is_reported_speech`——判据是**语域**（说话人在对听众播报 / 转述：本台 / 记者报道 / 欢迎收听 / 各位听众 / 为您播报 / 以上是 / 据报道…），零领域词（源码级断言），与 `question_shape` / `polarity` 同一族、同一落点：`classify_structured` 出口只盖写操作；`split_and_classify_any` 拆句前先判整句（「本台记者提醒您，请打开车窗」第二段单独看是干净指令）。首轮失败原话作为回归第一条（`orchestrator/edge/tests/test_reported_speech_gate.py`）；「播放新闻 / 我要听体育新闻 / 来段新闻」逐字不变。
+2. 云侧：语音来源（`ptt` / `voice_*`）+ 播报语域 + 模型两轮都没拆出步 ⇒ `Plan(addressed=False)` 走既有静默拒识（`planning.py`，`plan_mode` 后缀 `_register_not_addressed`），不再落 chitchat 安慰或 `planner.technical_failure`。文字输入、模型真拆出步、掉档轮抢救出的计划三种都不动。§4 矩阵里播报句两格（ptt 1/3、voice_followup 3/3）部署后期望 3/3、3/3。
+3. **没修的那一半**：乘客句「他昨天跟我说那个项目黄了」没有播报语域，文本上与「用户在向助手转述」不可区分，仍归模型（ptt 1/3、voice_followup 1/3 不变）——那是声学问题，按 §4 协议要真人 + 背景源。部署与真栈复跑要单独授权，见[剩余待办总表](../design/2026-09-14-android-remaining-todos.md) H-01 / H-06。
+
 证据目录：`%LOCALAPPDATA%\car-agent\artifacts\voice-acceptance-20260911-212413`。首轮 `live-probe-result.json`，续测 `live-probe-guarded-result.json`，模拟媒体补偿 `probe-media-compensation.json`，失败 trace 摘要 `live-trace-diagnostics.json`，对应探针脚本同目录。
