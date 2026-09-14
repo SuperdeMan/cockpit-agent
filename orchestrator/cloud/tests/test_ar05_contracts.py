@@ -6,13 +6,18 @@
 - 截止时刻是 SessionStore 落盘后的绝对时刻，客户端只读不续期；
 - 摘要来自**已验证的挂起步骤**，不是 LLM 的 goal；
 - F09 只改「非法计划且重试没有有效计划」这一支——合法空动作、拒识、澄清、
-  重试成功、既有 salvage 五条路径必须逐条仍在（只验负例时缺陷会躲在没验的那半）。
+  重试成功、既有 salvage 五条路径必须逐条仍在（只验负例时缺陷会躲在没验的那半）；
+- F09 的两条例外（方案 §5.2，2026-09-14）：网关在用 MockProvider 时兜底是设计路径、
+  route_hints 命中时计划是规则裁决——两者都不是技术失败，且例外的判据各自是
+  「网关自报的 provider 身份」与「hint 命中」，不是话术前缀。
 """
 from __future__ import annotations
 
 import asyncio
 import json
 from types import SimpleNamespace
+
+from cockpit.agent.v1 import agent_pb2
 
 from orchestrator.cloud import contracts
 from orchestrator.cloud.aggregator import Aggregator
@@ -89,10 +94,10 @@ class _Spy:
         return [_MERCHANT, _CHITCHAT]
 
 
-def _engine(spy):
+def _engine(spy, **planner_kw):
     return PlannerEngine(
         clients=spy,
-        planner=PlanBuilder(llm_fn=spy.llm, registry_fn=spy.resolve),
+        planner=PlanBuilder(llm_fn=spy.llm, registry_fn=spy.resolve, **planner_kw),
         executor=DagExecutor(call_agent_fn=spy.call_agent),
         aggregator=Aggregator(llm_fn=spy.llm),
         session=SessionStore(redis_url=""),
@@ -356,6 +361,136 @@ def test_empty_fallback_still_uses_the_existing_honest_degrade_speech():
 
     assert final["speech"].startswith("抱歉，我没听清")
     assert not final.get("issues"), "空计划的诚实降级不是技术失败终态"
+
+
+# ─── F09 例外①：网关在用 MockProvider ─────────────────────────────────────
+#
+# 栈里没配任何 chat key 时模型从来就不会产计划，兜底 Agent 是这个栈设计上的云侧路径
+# （test/e2e_manifest.yaml 的 mock-safe 判据、e2e_degrade.case_agent_down）。nightly mock
+# 车道 2026-09-09 起连续五夜红（run 73–77）就是 F09 把这条路报成了技术失败。
+
+def _mock_echo(text):
+    return f"[mock] 我听到你说「{text}」。配置 LLM_API_KEY 后即可接入真实模型。"
+
+
+def test_mock_served_stack_routes_fallback_to_chitchat_without_failure():
+    echo = _mock_echo("给我讲个笑话")
+    spy = _Spy([echo, echo], {
+        "chitchat.talk": lambda meta: _Resp(speech=echo)})
+    final = _final(_run(_engine(spy, llm_mock_fn=lambda: True),
+                        _req("给我讲个笑话")))
+
+    assert spy.calls == ["chitchat.talk"], "mock 栈下兜底 Agent 必须真的被调用"
+    assert not final.get("issues"), final.get("issues")
+    assert final["speech"] == echo
+
+
+def test_mock_predicate_is_consulted_not_the_echo_prefix():
+    """同一段 `[mock]` 话术、预言器说「真模型」⇒ 仍是技术失败：判据是 provider 身份，
+    不是话术前缀（真模型偶然吐出 `[mock]` 不该改变终态）。"""
+    echo = _mock_echo("给我讲个笑话")
+    spy = _Spy([echo, echo], {
+        "chitchat.talk": lambda meta: _Resp(speech=echo)})
+    final = _final(_run(_engine(spy, llm_mock_fn=lambda: False),
+                        _req("给我讲个笑话")))
+
+    assert spy.calls == []
+    codes = [i["code"] for i in final.get("issues", [])]
+    assert codes == [contracts.ISSUE_PLANNER_TECHNICAL_FAILURE], codes
+
+
+def test_mock_served_stack_keeps_empty_fallback_on_the_honest_degrade_path():
+    """例外①只影响「兜出了步」的那一格；mock 栈下兜底给不出步仍走「没听清」。"""
+    class _NoFallback(_Spy):
+        async def resolve(self, query="", intent="", top_k=1):
+            return []
+
+        async def list_agents(self):
+            return [_MERCHANT]
+
+    echo = _mock_echo("把那个东西弄一下")
+    spy = _NoFallback([echo, echo], {})
+    final = _final(_run(_engine(spy, llm_mock_fn=lambda: True),
+                        _req("把那个东西弄一下")))
+
+    assert spy.calls == []
+    assert final["speech"].startswith("抱歉，我没听清")
+    assert not final.get("issues")
+
+
+# ─── F09 例外②：route_hints 命中 ──────────────────────────────────────────
+#
+# hint 是「弱 LLM 漏/误判时的确定性兜底」；命中之后计划是规则裁决，不是失败产物。
+# 真模型两轮垃圾 + 「深入调研 X」这一句，F09 若出终态就是把 research.run 丢掉。
+
+def _hint(pattern, intent, priority=100, slots=None):
+    return agent_pb2.RouteHint(
+        pattern=pattern, intent=intent, policy="replace",
+        priority=priority, slots=slots or {})
+
+
+def _hinted_agent(agent_id, caps, hints):
+    agent = _agent(agent_id, caps)
+    agent.manifest.route_hints = list(hints)
+    return agent
+
+
+_RESEARCH = _hinted_agent(
+    "deep-research", [_cap("research.run", ["query"])],
+    [_hint(r"深入(调研|研究)", "research.run", slots={"query": "$text"})])
+
+
+class _HintSpy(_Spy):
+    async def resolve(self, query="", intent="", top_k=1):
+        return [_MERCHANT, _CHITCHAT, _RESEARCH]
+
+    async def list_agents(self):
+        return [_MERCHANT, _CHITCHAT, _RESEARCH]
+
+
+def test_route_hint_replace_over_fallback_is_not_a_technical_failure():
+    spy = _HintSpy([_GARBAGE, _GARBAGE], {
+        "research.run": lambda meta: _Resp(speech="调研已开始。"),
+        "chitchat.talk": lambda meta: _Resp(speech="不该到这里")})
+    final = _final(_run(_engine(spy), _req("深入调研一下固态电池")))
+
+    assert spy.calls == ["research.run"], spy.calls
+    assert not final.get("issues"), final.get("issues")
+    assert final["speech"] == "调研已开始。"
+
+
+def test_route_hint_miss_keeps_the_technical_failure_terminal_state():
+    """例外②的判据是「hint 命中」：同一批 Agent、hint 不命中的句子仍是技术失败。"""
+    spy = _HintSpy([_GARBAGE, _GARBAGE], {
+        "research.run": lambda meta: _Resp(speech="不该到这里"),
+        "chitchat.talk": lambda meta: _Resp(speech="不该到这里")})
+    final = _final(_run(_engine(spy), _req("把那个东西弄一下")))
+
+    assert spy.calls == []
+    codes = [i["code"] for i in final.get("issues", [])]
+    assert codes == [contracts.ISSUE_PLANNER_TECHNICAL_FAILURE], codes
+
+
+def test_route_hint_noop_confirms_the_fallback_step():
+    """hint 命中但 intent 已在计划里（noop）= 规则认可了兜底产物，同样不是失败。"""
+    clock = _hinted_agent(
+        "chitchat", [_cap("chitchat.talk", ["text"], response_only=True)],
+        [_hint(r"^现在几点", "chitchat.talk", priority=61)])
+
+    class _ClockSpy(_Spy):
+        async def resolve(self, query="", intent="", top_k=1):
+            return [_MERCHANT, clock]
+
+        async def list_agents(self):
+            return [_MERCHANT, clock]
+
+    spy = _ClockSpy([_GARBAGE, _GARBAGE], {
+        "chitchat.talk": lambda meta: _Resp(speech="现在是十点整。")})
+    final = _final(_run(_engine(spy), _req("现在几点了")))
+
+    assert spy.calls == ["chitchat.talk"]
+    assert not final.get("issues")
+    assert final["speech"] == "现在是十点整。"
 
 
 # ─── 换题后的 held（§4.3 / V04）────────────────────────────────────────────

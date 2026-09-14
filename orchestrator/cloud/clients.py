@@ -31,6 +31,13 @@ from cockpit.common.v1 import common_pb2
 
 _DEFAULT_TIMEOUT = 10
 
+#: llm-gateway 无任何 chat 厂商 key 时的回显兜底（`llm-gateway/providers.py::MockProvider`）
+#: 在 `CompleteResponse.model_used` 里自报的名字。planner 据此知道「这个栈里没有规划模型」
+#: ——那时规划必然走 `_fallback`，兜底 Agent 是设计路径而不是技术失败（AR05 F09 的例外，
+#: 见 docs/design/2026-09-09-ar05-structured-contracts-implementation-plan.md §5.2）。
+#: 跨进程消费一个字面量：不嗅探 `[mock]` 话术前缀，认网关自报的 provider 身份。
+_MOCK_MODEL_USED = "mock"
+
 #: 数据源章（C4-A）的写侧构造。**逐键取而不是 `TurnSource(**s)`**：上游给的是
 #: 从 `ui_card._prov` 收来的自由 dict，多一个键就在落库路径上抛 ValueError。
 _TURN_SOURCE_FIELDS = ("card", "vendor", "mode", "fetched_at", "note",
@@ -53,6 +60,8 @@ class Clients:
         self._ch_memory: grpc.aio.Channel | None = None
         self._ch_edge: grpc.aio.Channel | None = None
         self._ch_agents: dict[str, grpc.aio.Channel] = {}  # F15：按 endpoint 复用 channel
+        # 最近一次 Complete 网关自报的 model_used（见 llm_served_by_mock）。
+        self._llm_model_used: str = ""
 
     def _registry_stub(self):
         if self._ch_registry is None:
@@ -198,7 +207,17 @@ class Clients:
             temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
         self._stamp_llm_meta(req, thinking=thinking)
         resp = await self._llm_stub().Complete(req, timeout=60 if thinking else 30)
+        self._llm_model_used = str(resp.model_used or "")
         return resp.content
+
+    def llm_served_by_mock(self) -> bool:
+        """LLM 网关是不是在用 MockProvider 服务（栈里没配任何 chat key）。
+
+        mock 只在**零厂商 key** 时注册、且不可热切（llm_runtime._build：注册表为空才落
+        mock），所以第一次响应之后这个读数就是栈级常量，不存在并发请求互相串味的窗口。
+        没打过网关时返回 False——拿不准就当真模型（fail-closed：宁可多报一次技术失败，
+        也不把真模型的失败伪装成兜底）。"""
+        return self._llm_model_used == _MOCK_MODEL_USED
 
     @classmethod
     def _destruct_nums(cls, v):
@@ -225,6 +244,7 @@ class Clients:
         req.tools.update(tools or {})
         self._stamp_llm_meta(req)
         resp = await self._llm_stub().Complete(req, timeout=30)
+        self._llm_model_used = str(resp.model_used or "")
         calls: list[dict] = []
         if resp.HasField("tool_calls"):
             from google.protobuf.json_format import MessageToDict

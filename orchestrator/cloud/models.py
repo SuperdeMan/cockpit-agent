@@ -97,6 +97,8 @@ class Plan:
     # 伪装成一次成功闲聊，再转成一次搜索，用户既不知道出了什么事，也没有恢复入口。
     # ⚠ **只标这一种**：合法空动作（完整否定句）、addressed=false 拒识、正常澄清、
     # 重试后拿到有效计划、既有有效 salvage 都不是技术失败，一律不标。
+    # 两条例外（2026-09-14，方案 §5.2）：网关在用 MockProvider（栈里没有规划模型，兜底
+    # 是设计路径）、route_hints 命中（计划是规则裁决）——planning.py 落位处各有说明。
     technical_failure: bool = False
     # R4.4 受话判定：False=LLM 判「非对助手说的」（仅 hands-free 语音源 + REJECT 开时被 engine 消费）。
     # 缺省 True = fail-open（弱 LLM/旧 prompt/mock 不输出该字段时行为与今天逐字一致）。

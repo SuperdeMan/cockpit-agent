@@ -83,6 +83,8 @@ async def serve():
         registry_fn=clients.resolve,
         # M1a submit_plan 结构化输出通道（PLANNER_TOOLCALL=on 时启用，默认 off）
         llm_tool_fn=clients.llm_complete_tools,
+        # F09 例外①：网关在用 MockProvider 时兜底不是技术失败（离线 PoC / nightly mock 车道）
+        llm_mock_fn=clients.llm_served_by_mock,
     )
     tools = ToolRegistry()
     dispatcher = UnifiedDispatcher(

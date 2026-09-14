@@ -801,6 +801,11 @@ cases:
   # 判据（随本次收窄入册）：**mock-safe 的条件是「这条路径不经过模型判断」**
   # ——端侧快路径 / 兜底 Agent / 确定性时间解析 / 协议层——**不是「有没有 hint」**。
   # 覆盖去向：milestone 车道（真 provider）仍跑全量；不恢复 hint（那是把规则工厂请回来）。
+  # 2026-09-14：AR05 F09（规划技术失败终态）落地后 nightly 连续五夜红（run 73–77）——
+  # mock 下规划必走 `_fallback`，F09 把它报成技术失败，整条云侧链路只剩一句失败话术。
+  # 裁决是 planner 认网关自报的 provider 身份（`Clients.llm_served_by_mock`）：MockProvider
+  # 服务时兜底 Agent 是设计路径、不标技术失败（F09 例外①，方案 §5.2）。**这一行只在
+  # 「兜底 Agent」这一格生效**，上面那条 mock-safe 判据一个字不变。
   - id: e2e_trip
     path: test/e2e_trip.py
     command: [python, test/e2e_trip.py]

@@ -138,6 +138,11 @@ TTS 接入 `onSilent` 时必须区分用户静音、取消、前后台撤回与�
 
 审计 Edge `cloud_had_output`：带结构化终态但无 speech/actions 的失败也应被识别为已结算，不能落入“云端零输出 → 本地再执行”的兜底。混合意图已有的成功动作和 `closed_operation_ids` 必须保留。
 
+**技术失败只对真实规划模型成立**（2026-09-14 补，F09 落地后 nightly mock 车道连续五夜红，run 73–77）。下面两种形态里兜底产物不代表失败，不标 `technical_failure`：
+
+1. llm-gateway 在用 `MockProvider`（栈里没配任何 chat key，`CompleteResponse.model_used == "mock"`）：模型从来就不会产计划，兜底 Agent 是这个栈**设计上**的云侧路径——`test/e2e_manifest.yaml` 的 mock-safe 判据与 `e2e_degrade.case_agent_down` 白纸黑字写的都是「mock 下 chitchat 是唯一由结构保证被路由到的云侧 Agent」。把它报成技术失败，离线 PoC 的云侧就只剩一句失败话术，nightly 车道再也验不到任何云侧链路。判据取网关自报的 provider 身份（`Clients.llm_served_by_mock`），不嗅探 `[mock]` 话术前缀；mock 只在零厂商 key 时注册且不可热切，所以第一次响应之后它是栈级常量，没打过网关时 fail-closed 当真模型。
+2. `route_hints` 命中：规则引擎对这句话有确定性裁决（replace/fill 改写了兜底产物，noop 是规则认可了它）。hint 存在的意义正是弱模型漏/误判时的确定性兜底，命中之后这份计划已经不是失败产物；F09 若在这里出终态，等于把系统自己有把握的计划丢掉（「深入调研 X」→ `research.run` 这一条在 mock 与真模型下都会被丢）。
+
 ## 6. 会话身份、能力摘要与连接恢复
 
 ### 6.1 只读查询面

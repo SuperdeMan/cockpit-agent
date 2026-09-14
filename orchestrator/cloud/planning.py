@@ -1266,17 +1266,22 @@ def _hint_effect(hit: bool, before: list, after: list, had_clarify: bool) -> str
 
 
 class PlanBuilder:
-    def __init__(self, llm_fn, registry_fn, llm_tool_fn=None):
+    def __init__(self, llm_fn, registry_fn, llm_tool_fn=None, llm_mock_fn=None):
         """
         llm_fn: async (messages: list[dict]) -> str
         registry_fn: async (query: str, top_k: int) -> list[ResolvedAgent]
         llm_tool_fn: async (messages, tools: dict) -> (content: str, tool_calls: list[dict])
             —— M1a submit_plan 结构化输出通道，可选：None 时 PLANNER_TOOLCALL 即使 on 也
             走 JSON 路径（存量测试/spy 零波及，RFC §4）。
+        llm_mock_fn: () -> bool，可选：LLM 网关是不是在用 MockProvider 服务（栈里没配任何
+            chat key，`Clients.llm_served_by_mock`）。那种栈里模型从来就不会产计划，
+            `_fallback` 是设计路径而不是技术失败（F09 例外①）。None = 恒当真模型
+            （存量测试/spy 零波及；fail-closed）。
         """
         self._llm = llm_fn
         self._resolve = registry_fn
         self._llm_tools = llm_tool_fn
+        self._llm_served_by_mock = llm_mock_fn or (lambda: False)
         # R2.1：确定性路由兜底降为通用引擎——领域正则由各 Agent manifest.route_hints 声明，
         # 编排核心不再硬编码特定 Agent/意图（恢复「新增 Agent 不改编排核心」铁律）。
         self._route_hints = RouteHintEngine(self._validated_steps)
@@ -1602,7 +1607,18 @@ class PlanBuilder:
             # AR05 F09：这条兜底产物**代表的是失败**。单标一位、不动 plan_mode 口径；
             # 兜底若给的是空计划（低分诚实降级），engine 仍走既有「没听清」那条，
             # 本位只在"兜出了一条能说话的步"时才改变终态。
-            technical_failure = True
+            #
+            # F09 例外①：网关在用 MockProvider（栈里没配任何 chat key）。模型从来就不会
+            # 产计划，兜底 Agent 是这个栈**设计上**的云侧路径——`test/e2e_manifest.yaml`
+            # 的 mock-safe 判据与 `e2e_degrade.case_agent_down` 写的都是「mock 下 chitchat
+            # 是唯一由结构保证被路由到的云侧 Agent」。把它报成技术失败，离线 PoC 的云侧
+            # 就只剩一句失败话术（nightly mock 车道 2026-09-09 起连续五夜红，run 73–77）。
+            # 判据是网关自报的 provider 身份，不嗅探 `[mock]` 话术前缀；例外②（route_hints
+            # 命中）在 hint 施加之后处理。
+            technical_failure = not self._llm_served_by_mock()
+            if not technical_failure:
+                logger.info("LLM served by MockProvider; fallback is the designed path, "
+                            "not a technical failure")
         # QA I-031（2026-08-19）：**系统自己给的选项被点了之后，不许回答「我没听清
         # 你要做什么」。** 澄清卡的 send_text 由 LLM 写，写出来的短语不一定规划得出
         # steps（真栈：点「解释定位原理」→ 回发 → 空计划 → engine 出「没听清」）；
@@ -1661,6 +1677,14 @@ class PlanBuilder:
         hit = self._route_hints.apply(plan, text, agent_map)
         plan.hint_effect = _hint_effect(
             hit, before, [(s.agent_id, s.intent) for s in plan.steps], had_clarify)
+        # F09 例外②：hint 命中 = 规则引擎对这句话有确定性裁决（replace/fill 改写了兜底
+        # 产物，noop 是规则认可了它）。hint 存在的意义正是「弱 LLM 漏/误判时的确定性兜底」，
+        # 命中之后这份计划已经不是失败产物；再出技术失败终态等于把系统自己有把握的计划
+        # 丢掉（「深入调研 X」→ research.run 这一条在 mock 与真模型下都会被丢）。
+        if hit and plan.technical_failure:
+            logger.info("route_hint hit (%s) overrides planner technical failure",
+                        plan.hint_effect)
+            plan.technical_failure = False
         plan.catalog_stats = dict(working_set.catalog_stats)
         # ── 安全闸：问句不许执行端侧写或需确认步骤（C1-A）────────────────────
         # 所有 build 出口共用同一终结器：LLM 计划、降级语义路由、route_hints 补步
