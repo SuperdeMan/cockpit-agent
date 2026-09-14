@@ -18,17 +18,25 @@ export const SUMMARY_MAX = 24
 /** 台账回复的字面值——`store.confirmReply` 追加的用户气泡就是这两个字，它们不是原话 */
 const CONFIRM_REPLIES = new Set(['确认', '取消'])
 
-/** 从 messages[before] 往前找最近一条用户原话（跳过台账回复「确认/取消」）；空串=没有。
- *  回执的「已理解」行（B2-13）与 Dock 标题共用它——同一个值有几个出口就在入口处判一次。 */
-export function precedingUserUtterance(messages: readonly Msg[], before: number): string {
+/** 从 messages[before] 往前找最近一条用户原话的**全文**（空白归一、跳过台账回复「确认/取消」）；空串=没有。
+ *  「重发」读它：重发的是用户说过的那句话本身，不是它的摘要——2026-09-14 真机（`cbf17b96e`）：重发走的是下面的
+ *  摘要函数，「what is the weather in Shenzhen today」被 SUMMARY_MAX 截成「what is the weather in S」，服务端回
+ *  「没查到「S」的天气」。摘要（截 24）只给 Dock 标题 / 留痕 / 回执一行。 */
+export function precedingUserText(messages: readonly Msg[], before: number): string {
   for (let i = Math.min(before, messages.length) - 1; i >= 0; i -= 1) {
     const m = messages[i]
     if (m.role !== 'user') continue
     const text = m.text.replace(/\s+/g, ' ').trim()
     if (!text || CONFIRM_REPLIES.has(text)) continue
-    return text.slice(0, SUMMARY_MAX)
+    return text
   }
   return ''
+}
+
+/** 从 messages[before] 往前找最近一条用户原话（跳过台账回复「确认/取消」）并截到 SUMMARY_MAX；空串=没有。
+ *  回执的「已理解」行（B2-13）与 Dock 标题共用它——同一个值有几个出口就在入口处判一次。 */
+export function precedingUserUtterance(messages: readonly Msg[], before: number): string {
+  return precedingUserText(messages, before).slice(0, SUMMARY_MAX)
 }
 
 /** 紧邻的上一条用户原话；找不到返回空串（兜底文案由调用方决定） */

@@ -14,7 +14,7 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { isPendingLive } from '@shared/pendingOps.mjs'
 import type { Msg } from '@shared/types.ts'
 
-import { precedingUserUtterance } from '../../core/session/actionSummary'
+import { precedingUserText } from '../../core/session/actionSummary'
 import { followUpChips, MAX_CHIPS } from '../../core/session/followUps'
 import { followOnContentChange, lastUserMessageId, showJumpToLatest, STICK_TO_BOTTOM_THRESHOLD, timeDividers } from '../../core/session/history'
 import { buildReceipt } from '../../core/session/receipt'
@@ -197,12 +197,13 @@ function ChatBody({ runtime }: { runtime: AssistantRuntime }) {
   if (showJumpToLatest(offsetFromBottom, listHeight)) {
     if (awayCount === null) setAwayCount(messages.length)
   } else if (awayCount !== null) setAwayCount(null)
-  // 重发（评审 P13 ③）：取紧邻的上一条用户原话，走 onSend（core.send ⇒ 新 request_id），旧气泡留痕「已重发」
+  // 重发（评审 P13 ③）：取紧邻的上一条用户原话**全文**（不是 Dock 用的 24 字摘要——2026-09-14 真机上重发出去的是
+  // 「what is the weather in S」），走 onSend（core.send ⇒ 新 request_id），旧气泡留痕「已重发」
   const resendOf = (item: Msg): (() => void) | undefined => {
     if (item.role !== 'user' && !(item.error || uncertainIds.includes(item.id))) return undefined
     if (item.role === 'user') return undefined
     const at = messages.findIndex((m) => m.id === item.id)
-    const text = precedingUserUtterance(messages, at)
+    const text = precedingUserText(messages, at)
     if (!text) return undefined
     return () => {
       if (onSend(text) !== false) core.markResent(item.id)

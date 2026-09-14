@@ -2,7 +2,7 @@
 // 承诺卡 / 到期留痕的摘要源（评审 D1 / 🔁-4）：紧邻的上一条用户原话，不是助手那句通用确认句。
 import type { Msg } from '@shared/types.ts'
 
-import { SUMMARY_MAX, actionSummary } from '@/core/session/actionSummary'
+import { SUMMARY_MAX, actionSummary, precedingUserText, precedingUserUtterance } from '@/core/session/actionSummary'
 
 const u = (id: string, text: string): Msg => ({ id, role: 'user', text })
 const a = (id: string, text: string, operationId?: string): Msg => ({
@@ -43,4 +43,16 @@ test('空白归一 + 截到 SUMMARY_MAX（Dock 一行 / 留痕一句）', () => 
   expect(s).not.toMatch(/\s{2,}|\n/)
   expect([...s].length).toBeLessThanOrEqual(SUMMARY_MAX)
   expect(s.startsWith('帮我把 后备箱 打开')).toBe(true)
+})
+
+// 2026-09-14 真机（`cbf17b96e`）：「重发」走了摘要函数，「what is the weather in Shenzhen today」被截成
+// 「what is the weather in S」、服务端答「没查到「S」的天气」。重发要的是原话全文；摘要只给 Dock / 留痕 / 回执。
+test('precedingUserText：原话全文（空白归一、跳过确认/取消），不截 SUMMARY_MAX；precedingUserUtterance 是它的截断', () => {
+  const long = 'what is the weather in Shenzhen today'
+  const msgs = [u('u0', '打开后备箱'), u('u1', '确认'), u('u2', `  ${long}\n`), a('a1', '', undefined)]
+  expect(long.length).toBeGreaterThan(SUMMARY_MAX)
+  expect(precedingUserText(msgs, 3)).toBe(long)
+  expect(precedingUserUtterance(msgs, 3)).toBe(long.slice(0, SUMMARY_MAX))
+  expect(precedingUserText(msgs, 2)).toBe('打开后备箱') // 「确认」是台账回复，跳过
+  expect(precedingUserText([a('a0', 'x')], 1)).toBe('')
 })
