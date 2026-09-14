@@ -19,6 +19,8 @@ import {
   persistHistory,
   restoreHistory,
   snapshotHistory,
+  followOnContentChange,
+  lastUserMessageId,
   showJumpToLatest,
   stickToBottom,
   STICK_TO_BOTTOM_THRESHOLD,
@@ -235,4 +237,22 @@ test('store.clearMessages：清空记录与关联表，不动挂起台账', () =
   expect(s.turnMeta).toEqual({})
   expect(s.messageAt).toEqual({})
   expect(s.pendingOps.map((o) => o.id)).toEqual(['op-1'])
+})
+
+// 2026-09-14 真机（`696899b59`）：从设置页进对话页后列表停在历史中段，发出的问题与它的回答落在折叠线下，
+// 屏上只剩「↓ 最新」。stickToBottom 保护的是「在读历史的人不被拽走」；发送是用户自己的动作，必须跟到底。
+test('lastUserMessageId：最后一条用户消息（草稿也算）；没有用户消息为空串', () => {
+  const m = (id: string, role: 'user' | 'assistant') => ({ id, role, text: id } as Msg)
+  expect(lastUserMessageId([])).toBe('')
+  expect(lastUserMessageId([m('a1', 'assistant')])).toBe('')
+  expect(lastUserMessageId([m('u1', 'user'), m('a1', 'assistant')])).toBe('u1')
+  expect(lastUserMessageId([m('u1', 'user'), m('a1', 'assistant'), m('u2', 'user'), m('a2', 'assistant')])).toBe('u2')
+})
+
+test('followOnContentChange：用户刚发过 ⇒ 离底再远也贴；否则退回 stickToBottom 的阈值判据', () => {
+  expect(followOnContentChange(5000, 1000, true)).toBe(true)
+  expect(followOnContentChange(5000, 0, true)).toBe(true)
+  expect(followOnContentChange(5000, 1000, false)).toBe(false)
+  expect(followOnContentChange(100, 1000, false)).toBe(true)
+  expect(followOnContentChange(0, 0, false)).toBe(false)
 })

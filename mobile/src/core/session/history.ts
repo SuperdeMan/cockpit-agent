@@ -187,3 +187,21 @@ export const STICK_TO_BOTTOM_THRESHOLD = 0.2
 export function stickToBottom(offsetFromBottom: number, viewportH: number): boolean {
   return viewportH > 0 && offsetFromBottom <= STICK_TO_BOTTOM_THRESHOLD * viewportH
 }
+
+/**
+ * 记录里最后一条**用户**消息的 id（草稿也算——它就是用户正在说的那句）；没有用户消息返回 ''。
+ *
+ * 用途只有一个：**用户自己刚发出的那句必须跟到底**（2026-09-14 真机：从设置页进对话页后列表停在
+ * 历史中段，发出的问题和它的回答都落在折叠线下，屏上只剩「↓ 最新」——用户按了发送却什么都没看见）。
+ * `stickToBottom` 保护的是「在读历史的人不被新内容拽走」，而发送是用户自己的动作，两条判据不冲突：
+ * 最后一条用户消息的 id 变了 ⇒ 下一次内容变化无条件贴底；之后回到「离底不超过阈值才贴」。
+ */
+export function lastUserMessageId(messages: Msg[]): string {
+  for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === 'user') return messages[i].id
+  return ''
+}
+
+/** `onContentSizeChange` 上要不要贴底：用户自己刚发过 ⇒ 无条件；否则按 stickToBottom */
+export function followOnContentChange(offsetFromBottom: number, viewportH: number, ownSendPending: boolean): boolean {
+  return ownSendPending || stickToBottom(offsetFromBottom, viewportH)
+}
