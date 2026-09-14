@@ -234,9 +234,9 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   useEffect(() => {
     if (!cfg.audioUrl) return
     if (!facts.foreground) { dropWarmSockets(); return }
-    if (settings.asrProvider !== 'off') warmSocket(asrStreamUrl(cfg.audioUrl))
+    warmSocket(asrStreamUrl(cfg.audioUrl))
     warmSocket(ttsStreamUrl(cfg.audioUrl))
-  }, [cfg.audioUrl, facts.foreground, settings.asrProvider])
+  }, [cfg.audioUrl, facts.foreground])
   const prevFoldRef = useRef(layout.fold)
   useEffect(() => {
     const sw = screenSwitch(prevFoldRef.current, layout.fold)

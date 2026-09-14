@@ -114,7 +114,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
           language: s.asrLanguage,
           provider: s.asrProvider,
           model: s.asrModel,
-          fallbackModel: ASR_FALLBACK_MODEL,
+          // 备用模型只对百炼实时引擎有意义（同 usePtt）
+          ...(s.asrProvider === 'dashscope' && s.asrModel !== ASR_FALLBACK_MODEL ? { fallbackModel: ASR_FALLBACK_MODEL } : {}),
         }
       },
       onSend: (text, voice) => {

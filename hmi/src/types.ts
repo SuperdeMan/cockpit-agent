@@ -749,6 +749,85 @@ export type Voice = {
   tags?: string[]
 }
 
+// ─── 流式 ASR 引擎目录：设置页两级选择「方式 → 引擎」的数据结构（HMI 与 mobile 共用同一份）───
+// 声明源是网关 `/api/asr/stream/info`（llm-gateway/http_server.py）；下面的 ASR_PROVIDER_FALLBACK 是离线兜底，
+// mobile/test/asrCatalog.test.ts 读网关源码对账两份不漂。一级「方式」按用户能感知的形态分：
+//   realtime  = 边说边上屏（DashScope qwen3 / fun-asr，WS 实时推 PCM）
+//   utterance = 松手后出字（MiniMax speech_to_text / MiMo，整段到齐才能识别；网关 WholeUtteranceASRProvider）
+// 以前的「分块 MiMo」和「关闭」都并进 utterance：分块只是给 MiMo 伪造 partial 的适配器名字，关闭=录完再识别，
+// 和整句体验一致（泓舟 2026-09-14 裁决：关闭不留）。设计 docs/design/2026-09-14-minimax-asr-provider.md §7。
+export type AsrMode = 'realtime' | 'utterance'
+export type AsrProviderInfo = {
+  id: string                             // dashscope | minimax | mimo
+  label: string                          // DashScope 实时 / MiniMax 整句 / MiMo 整句
+  available: boolean                     // 网关凭据是否就绪（只判 key 非空，判不出 key 已失效）
+  mode: AsrMode
+  models: string[]                       // 全小写 id——start 帧只认小写（CamelCase 会 1011 断连）
+  model_labels?: Record<string, string>  // 展示名；缺省用 id
+}
+export const ASR_MODES: { id: AsrMode; label: string; hint: string }[] = [
+  { id: 'realtime', label: '实时', hint: '边说边上屏' },
+  { id: 'utterance', label: '整句', hint: '松手后出字' },
+]
+export const ASR_PROVIDER_FALLBACK: AsrProviderInfo[] = [
+  { id: 'dashscope', label: 'DashScope 实时', available: true, mode: 'realtime',
+    models: ['qwen3-asr-flash-realtime-2026-02-10', 'fun-asr-realtime'],
+    model_labels: { 'qwen3-asr-flash-realtime-2026-02-10': 'Qwen3-ASR', 'fun-asr-realtime': 'Fun-ASR' } },
+  { id: 'minimax', label: 'MiniMax 整句', available: true, mode: 'utterance',
+    models: ['asr-1.0'], model_labels: { 'asr-1.0': 'MiniMax asr-1.0' } },
+  { id: 'mimo', label: 'MiMo 整句', available: true, mode: 'utterance',
+    models: ['mimo-v2.5-asr'], model_labels: { 'mimo-v2.5-asr': 'MiMo v2.5' } },
+]
+/** 二级「引擎」= (provider, model) 对：实时方式下是百炼的两个模型，整句方式下是两家厂商 */
+export type AsrEngineOption = { provider: string; model: string; label: string; available: boolean }
+export function asrEngineOptions(providers: AsrProviderInfo[], mode: AsrMode): AsrEngineOption[] {
+  const out: AsrEngineOption[] = []
+  for (const p of providers) {
+    if (p.mode !== mode) continue
+    for (const m of p.models) {
+      out.push({ provider: p.id, model: m, label: p.model_labels?.[m] ?? m, available: p.available })
+    }
+  }
+  return out
+}
+/** 当前设置落在哪个方式；provider 不在目录里（老存量 'off' / 未知）按 utterance 处理 */
+export function asrModeOf(providers: AsrProviderInfo[], provider: string): AsrMode {
+  return providers.find((p) => p.id === provider)?.mode ?? 'utterance'
+}
+/** 网关目录归一：模型 id 一律小写（目录曾返回展示用 CamelCase）；缺 mode 的旧网关按 id 补齐；
+ *  返回 null 表示形状不对（调用方落回兜底表） */
+export function normalizeAsrProviders(raw: unknown): AsrProviderInfo[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null
+  const out: AsrProviderInfo[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const p = item as Partial<AsrProviderInfo> & { id?: unknown; models?: unknown }
+    if (typeof p.id !== 'string' || !p.id) continue
+    const fallback = ASR_PROVIDER_FALLBACK.find((f) => f.id === p.id)
+    const models = (Array.isArray(p.models) ? p.models : fallback?.models ?? []).map((m) => String(m).toLowerCase())
+    const labels: Record<string, string> = { ...(fallback?.model_labels ?? {}) }
+    for (const [k, v] of Object.entries(p.model_labels ?? {})) labels[k.toLowerCase()] = String(v)
+    out.push({
+      id: p.id,
+      label: typeof p.label === 'string' && p.label ? p.label : fallback?.label ?? p.id,
+      available: p.available !== false,
+      mode: p.mode === 'realtime' || p.mode === 'utterance' ? p.mode : fallback?.mode ?? 'utterance',
+      models,
+      model_labels: labels,
+    })
+  }
+  return out.length ? out : null
+}
+/** 切换方式 / 修复失配（存量 (provider, model) 对不在目录里）时选引擎：优先偏好的那一对，其次同厂商的首个模型
+ *  （存量 model 是别家 id 时不换厂商），再次该方式下首个可用，最后首个；方式下一个引擎都没有返回 null */
+export function pickAsrEngine(
+  options: AsrEngineOption[], preferred: { provider: string; model: string },
+): AsrEngineOption | null {
+  return options.find((o) => o.provider === preferred.provider && o.model === preferred.model)
+    ?? options.find((o) => o.provider === preferred.provider)
+    ?? options.find((o) => o.available) ?? options[0] ?? null
+}
+
 // 流式 TTS 引擎（provider）——设置页两级选择「引擎→音色」的数据结构。
 // 引擎决定流式能力（cosyvoice/qwen=流式、mimo=经典批处理）与其专属音色集（互不相通）。
 export type TtsProviderInfo = {
@@ -772,7 +851,9 @@ export type TtsProviderInfo = {
 export type Theme = 'dark' | 'light'
 export type FontScale = 'normal' | 'large'
 export type AsrLanguage = 'zh' | 'en' | 'auto'
-export type AsrProvider = 'dashscope' | 'mimo' | 'off' // 流式识别引擎（off=走批处理）
+// 流式识别引擎 id（目录见上面 ASR_PROVIDER_FALLBACK；方式 realtime/utterance 由目录派生，不单独存）。
+// 'off' 已退役（2026-09-14）：存量里读到按整句处理（settings.load 迁移）。
+export type AsrProvider = 'dashscope' | 'mimo' | 'minimax'
 export type TtsProvider = 'cosyvoice' | 'qwen' | 'mimo' // 语音播报引擎（cosyvoice/qwen=流式、mimo=经典批处理）
 export type MicMode = 'hold' | 'toggle'
 export type AnswerLength = 'short' | 'standard' | 'detailed'
@@ -793,8 +874,8 @@ export type Settings = {
   voiceId: string
   // 语音输入 ASR
   asrLanguage: AsrLanguage
-  asrProvider: AsrProvider // 流式识别引擎（dashscope 实时 / mimo 分块 / off 批处理）
-  asrModel: string // 引擎模型（dashscope: Qwen3-…/fun-asr-realtime）
+  asrProvider: AsrProvider // 识别引擎（dashscope 实时 / minimax 整句 / mimo 整句）
+  asrModel: string // 该引擎下的模型 id（全小写；与 asrProvider 成对，见 asrEngineOptions）
   micMode: MicMode
   listenSeconds: ListenSeconds
   // 免唤醒连续对话 / 唤醒词（R4.3；全部 opt-in 默认关，唤醒前音频不离开浏览器）
@@ -1010,7 +1091,7 @@ export const DEFAULT_SETTINGS: Settings = {
   ttsProvider: 'cosyvoice', // 默认流式引擎（首帧 ~530ms，真栈验证）；无 key 时 HMI 无感回退批处理
   voiceId: 'longxiaochun_v3', // cosyvoice 默认音色（龙小淳·女·语音助手）
   asrLanguage: 'zh',
-  asrProvider: 'dashscope', // DashScope 实时 qwen3 真栈验证可用（边说边上屏）；mimo 分块为回退
+  asrProvider: 'dashscope', // DashScope 实时 qwen3 真栈验证可用（边说边上屏）；整句引擎（minimax/mimo）松手后才出字
   asrModel: 'qwen3-asr-flash-realtime-2026-02-10', // 注意全小写 id（CamelCase 会 1011）
   micMode: 'hold',
   listenSeconds: 15,

@@ -32,10 +32,11 @@ export function Composer({
   if (!ctrlRef.current) ctrlRef.current = new MicController()
   const streamRef = useRef<StreamingRecognizer | null>(null)
   if (!streamRef.current) streamRef.current = new StreamingRecognizer()
-  // 流式模式：能力支持 + 设置非 off；一旦流式失败则本会话回退批处理
-  const streamModeRef = useRef(streamingAsrSupported() && settings.asrProvider !== 'off')
+  // 流式模式：能力支持即走 WS（整句引擎也经同一条 WS，网关攒段后出字）；一旦流式失败则本会话回退批处理。
+  // 「关闭=录完再识别」那一档 2026-09-14 退役：它和整句体验一致，批处理只作回退路径。
+  const streamModeRef = useRef(streamingAsrSupported())
   useEffect(() => {
-    streamModeRef.current = streamingAsrSupported() && settings.asrProvider !== 'off'
+    streamModeRef.current = streamingAsrSupported()
   }, [settings.asrProvider])
 
   const supported = micSupported() && secureContextOk()
@@ -72,11 +73,11 @@ export function Composer({
   // 流式：partial 实时写进输入框，final 自动发送；出错回退批处理
   const beginStream = async () => {
     setMic('recording')
-    const model = settings.asrProvider === 'dashscope' ? settings.asrModel : ''
+    // (provider, model) 成对存储（settings.load 自愈过），整句引擎的 model 也照传（minimax asr-1.0 / mimo）
     await streamRef.current!.start(asrStreamUrl(audioApi), {
       language: settings.asrLanguage,
       provider: settings.asrProvider,
-      model,
+      model: settings.asrModel,
       onPartial: (t) => setInput(t),
       onFinal: (t) => {
         setMic('idle')

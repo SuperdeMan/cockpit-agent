@@ -230,10 +230,10 @@
 | `KNOWLEDGE_VENDOR` | 车书知识源：`mock`=CI/离线演示语料；`local`（兼容别名 `manual`/`file`）=经过 source/content SHA 校验的真实手册只读索引；`pgvector` 尚未实现，显式选择 fail-fast | 否（默认 `mock`）|
 | `MANUAL_INDEX_PATH` | `KNOWLEDGE_VENDOR=local` 的索引路径；索引是 ignored 私有运行资产，容器默认 `/app/models/manual_rag/xiaomi-su7-2024.v2.mrag`。v2 包含 hash 绑定的文本与视觉证据；旧 `.json.gz` 可读但无图片。缺失/损坏即启动失败，不回 mock | local 必填（有容器默认）|
 | `KNOWLEDGE_VEHICLE_MODEL` | 可选车型钉死；非空时必须与索引 `document.vehicle_model` 一致，否则启动失败。当前 SU7 索引值 `xiaomi-su7-2024` | 否 |
-| `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |
-| `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）| 否 |
+| `ASR_PROVIDER` | **批处理 ASR 引擎**（/api/asr + gRPC Transcribe）：`auto`(默认：LLM_PROVIDER 为 MiMo 系→MiMo，否则 `ASR_STREAM_PROVIDER=minimax` 且有 key→MiniMax，否则有百炼 key→桥接 dashscope 流式引擎，都没有→mock)/`mimo`(钉住 MiMo)/`dashscope`/`minimax`(MiniMax speech_to_text，复用 `MINIMAX_API_KEY`；2026-09-14)/`mock`——chat 换家后批处理不再哑成 mock（2026-07-13）| 否 |
+| `ASR_MODEL` / `ASR_LANGUAGE` | 批处理 ASR 模型 / 默认语言（zh）；非 MiMo 引擎各用自家默认（MiniMax 只认 `asr-*`）| 否 |
 | `MIMO_AUDIO_BASE_URL` | MiMo 音频端点（批/流式 ASR/TTS 共用，与 chat 的 `LLM_BASE_URL` 独立），空=官方集群 | 否 |
-| `ASR_STREAM_PROVIDER` | 流式识别上屏引擎：`dashscope`(默认·DashScope 实时)/`mimo-chunked`(MiMo 分块回退)/`off`(降级批处理) | 否 |
+| `ASR_STREAM_PROVIDER` | 流式识别上屏引擎：`dashscope`(默认·DashScope 实时)/`minimax`、`mimo`(整句：松手后整段上传再出字，**无边说边上屏**，复用 `MINIMAX_API_KEY` / `LLM_API_KEY`；`docs/design/2026-09-14-minimax-asr-provider.md`)/`mimo-chunked`(旧伪 partial 形态，仅 env)/`off`(降级批处理)；HMI / Android 设置页「方式→引擎」两级按次覆盖，目录声明源 `/api/asr/stream/info` | 否 |
 | `ASR_STREAM_MODEL` | DashScope 流式模型，**须全小写**：`qwen3-asr-flash-realtime-2026-02-10`(默认·realtime 协议)、`fun-asr-realtime`(inference run-task 协议) | 否 |
 | `DASHSCOPE_ASR_KEY` | DashScope(百炼) ASR key；留空复用 `LLM_EMBED_API_KEY`（同一把百炼 key）| 否 |
 | `DASHSCOPE_ASR_WS_URL` / `DASHSCOPE_ASR_INFERENCE_WS_URL` | DashScope 实时 ASR 端点：qwen3→`/api-ws/v1/realtime`、fun/paraformer→`/api-ws/v1/inference` | 否（有默认）|

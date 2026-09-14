@@ -191,13 +191,13 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       audioApi: AUDIO_API,
       getAsrConfig: () => {
         const s = settingsRef.current
-        // off 时回落 dashscope（hands-free 必须走流式 ASR 才有 partial/final）
-        const provider = s.asrProvider === 'off' ? 'dashscope' : s.asrProvider
+        // (provider, model) 成对存储（settings.load 自愈过）；整句引擎（minimax/mimo）走同一条 WS，
+        // 松手 / VAD 收尾后才出 final——hands-free 的端点判定本来就在端侧 VAD，不依赖 partial。
+        // model 为空时回落默认（fix D 原账：空 model 在 dashscope 上触发 1011）。
         return {
           language: s.asrLanguage,
-          provider,
-          // 按「生效」引擎给 model：dashscope 传选定/默认模型（fix D：修 off→dashscope 回退传空 model 触发 1011）
-          model: provider === 'dashscope' ? (s.asrModel || DEFAULT_SETTINGS.asrModel) : '',
+          provider: s.asrProvider,
+          model: s.asrModel || DEFAULT_SETTINGS.asrModel,
         }
       },
       onSend: (t, vm) => sendRef.current(t, vm

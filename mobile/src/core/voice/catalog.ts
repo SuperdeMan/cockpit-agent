@@ -9,22 +9,12 @@
 //    ——试听按钮会明说没出声，播报静默也有出口（speech.ts::onSilent）。
 //    另：`available` 只判 env 里那个 key 字符串**非空**，判不出「key 在但已失效」
 //    （云栈 MiMo 就是这个状态）⇒ 靠「（未配置）」角标是挡不住这类的，只能靠事后反馈。
-//  · ASR：回落一张最小静态表。**不回落成空**，同理。
-import { TTS_PROVIDER_FALLBACK, type TtsProviderInfo } from '@shared/types.ts'
-
-export interface AsrProviderInfo {
-  id: string
-  label: string
-  available: boolean
-  models: string[]
-}
-
-/** ASR 引擎的静态兜底表（与 `llm-gateway/http_server.py:292-306` 的 id/label 同步） */
-export const ASR_PROVIDER_FALLBACK: AsrProviderInfo[] = [
-  // 模型顺序 = 偏好顺序（泓舟 2026-08-26：fun-asr 主、qwen3-asr 次）
-  { id: 'dashscope', label: 'DashScope 实时', available: true, models: ['fun-asr-realtime', 'qwen3-asr-flash-realtime-2026-02-10'] },
-  { id: 'mimo', label: 'MiMo 分块', available: true, models: ['mimo-v2.5-asr'] },
-]
+//  · ASR：回落共享契约里的 `ASR_PROVIDER_FALLBACK`（2026-09-14 起与 HMI 同一份：方式→引擎两级，
+//    `hmi/src/types.ts`；网关 `/api/asr/stream/info` 是声明源，`test/asrCatalog.test.ts` 对账）。**不回落成空**，同理。
+import {
+  ASR_PROVIDER_FALLBACK, TTS_PROVIDER_FALLBACK, normalizeAsrProviders,
+  type AsrProviderInfo, type TtsProviderInfo,
+} from '@shared/types.ts'
 
 async function getJson(url: string, timeoutMs = 6000): Promise<unknown> {
   const ctl = new AbortController()
@@ -52,17 +42,11 @@ export async function fetchTtsProviders(audioUrl: string): Promise<TtsProviderIn
 export async function fetchAsrProviders(audioUrl: string): Promise<AsrProviderInfo[]> {
   try {
     const data = (await getJson(audioUrl + '/api/asr/stream/info')) as { providers?: unknown }
-    if (Array.isArray(data.providers) && data.providers.length) {
-      // ⚠ 这个端点返回的 model id 是**展示用的 CamelCase**
-      // （'Qwen3-ASR-Flash-Realtime-…'），而流式 start 帧只认全小写——大写会 1011
-      // 断连（types.ts:931 的原账）。在**入口**就归一，别指望每个消费方记得。
-      return (data.providers as AsrProviderInfo[]).map((p) => ({
-        ...p,
-        models: (p.models || []).map((m) => String(m).toLowerCase()),
-      }))
-    }
+    // 归一（模型 id 小写——大写会 1011 断连；旧网关缺 mode 按 id 补）在共享契约一处，HMI 用同一个函数
+    const providers = normalizeAsrProviders(data.providers)
+    if (providers) return providers
   } catch {
-    /* 落回下面的静态表 */
+    /* 落回共享兜底表 */
   }
   return ASR_PROVIDER_FALLBACK
 }

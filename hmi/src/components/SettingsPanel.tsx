@@ -6,11 +6,12 @@ import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } 
 import { useSettings } from '../settings'
 import {
   AGENT_CATALOG, VOICE_FALLBACK, WAKE_WORD_PRESETS, TTS_PROVIDER_FALLBACK, LLM_PROVIDER_FALLBACK,
-  S2S_VOICES,
+  S2S_VOICES, ASR_MODES, ASR_PROVIDER_FALLBACK, DEFAULT_SETTINGS, asrEngineOptions, asrModeOf, pickAsrEngine,
   type Voice, type TtsProviderInfo, type TtsProvider, type LlmProviderInfo, type LlmStatus,
+  type AsrMode, type AsrProvider, type AsrProviderInfo,
 } from '../types'
 import {
-  fetchVoices, fetchTtsProviders, fetchLlmProviders, setLlmProvider,
+  fetchVoices, fetchTtsProviders, fetchAsrProviders, fetchLlmProviders, setLlmProvider,
   fetchMemory, fetchMemoryProfile, forgetMemory, deleteMemoryItem, fetchPlaces, playTTS,
   fetchVoiceprints, enrollVoiceprint, deleteVoiceprint, identifySpeaker,
   renameVoiceprint,
@@ -321,21 +322,47 @@ function TtsSection({ audioApi }: { audioApi: string }) {
 }
 
 // ─── 2 · 语音输入 ───
+// 「方式 → 引擎」两级（2026-09-14，与 Android 设置页同一份契约 types.ASR_*）：一级按用户能感知的形态
+// （实时=边说边上屏 / 整句=松手后出字），二级是 (provider, model) 对；目录来自网关 /api/asr/stream/info，
+// 离线落回 ASR_PROVIDER_FALLBACK。以前的「分块 / 关闭」两档并进「整句」。
 function AsrSection({ audioApi }: { audioApi: string }) {
   const { settings, update } = useSettings()
-  const isDash = settings.asrProvider === 'dashscope'
+  const [providers, setProviders] = useState<AsrProviderInfo[]>(ASR_PROVIDER_FALLBACK)
+  useEffect(() => {
+    fetchAsrProviders(audioApi).then(setProviders).catch(() => {/* 离线兜底 */})
+  }, [audioApi])
+
+  const mode = asrModeOf(providers, settings.asrProvider)
+  const engines = asrEngineOptions(providers, mode)
+  const modeMeta = ASR_MODES.find((m) => m.id === mode) ?? ASR_MODES[0]
+  const current = engines.find((e) => e.provider === settings.asrProvider && e.model === settings.asrModel)
+  const engineKey = (e: { provider: string; model: string }) => `${e.provider}/${e.model}`
+
+  const selectMode = (next: AsrMode) => {
+    if (next === mode) return
+    // 换方式：优先本端默认那一对（DEFAULT_SETTINGS），其次该方式下首个可用引擎
+    const picked = pickAsrEngine(asrEngineOptions(providers, next), {
+      provider: DEFAULT_SETTINGS.asrProvider, model: DEFAULT_SETTINGS.asrModel,
+    })
+    if (picked) update({ asrProvider: picked.provider as AsrProvider, asrModel: picked.model })
+  }
+  const selectEngine = (key: string) => {
+    const e = engines.find((x) => engineKey(x) === key)
+    if (e) update({ asrProvider: e.provider as AsrProvider, asrModel: e.model })
+  }
+
   return (
     <div>
-      <SectionHdr icon="voice-input" title="语音输入" sub="配置识别引擎、语言、模式与时长" />
-      <SettingGroup title="实时识别引擎（流式上屏）">
-        <SettingRow label="识别服务商" sub="实时=边说边上屏（DashScope 百炼）；分块=经典 MiMo；关闭=录完再出">
-          <Segmented value={settings.asrProvider} onChange={(v) => update({ asrProvider: v })}
-            options={[{ value: 'dashscope', label: '实时' }, { value: 'mimo', label: '分块' }, { value: 'off', label: '关闭' }]} />
+      <SectionHdr icon="voice-input" title="语音输入" sub="配置识别方式、引擎、语言、模式与时长" />
+      <SettingGroup title="识别引擎">
+        <SettingRow label="识别方式" sub="实时=边说边上屏（百炼实时模型）；整句=松手后整段上传再出字（MiniMax / MiMo 这类转写接口）">
+          <Segmented value={mode} onChange={selectMode}
+            options={ASR_MODES.map((m) => ({ value: m.id, label: m.label }))} />
         </SettingRow>
-        <SettingRow label="识别模型" sub={isDash ? '实时 ASR 模型（同一把百炼 key）' : '分块模式用 MiMo 批 ASR，无需选模型'} noBorder>
-          {isDash ? (
-            <Segmented sm value={settings.asrModel} onChange={(v) => update({ asrModel: v })}
-              options={[{ value: 'qwen3-asr-flash-realtime-2026-02-10', label: 'Qwen3-ASR' }, { value: 'fun-asr-realtime', label: 'Fun-ASR' }]} />
+        <SettingRow label={`${modeMeta.label}引擎`} sub={current && !current.available ? '该引擎的凭据未配置，按住说话会自动回退批处理识别' : `${modeMeta.hint}；未配置凭据的引擎置灰`} noBorder>
+          {engines.length ? (
+            <Segmented sm value={current ? engineKey(current) : ''} onChange={selectEngine}
+              options={engines.map((e) => ({ value: engineKey(e), label: e.label, disabled: !e.available }))} />
           ) : (
             <span style={{ fontSize: 13, color: 'var(--au-text-3)' }}>—</span>
           )}

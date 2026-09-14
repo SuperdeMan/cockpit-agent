@@ -616,6 +616,154 @@ class MiMoASRProvider(BaseASRProvider):
         return text, 0.9, language or "zh", model or "mimo-v2.5-asr", int(duration_sec * 1000)
 
 
+# ── MiniMax ASR（speech_to_text）──
+# 官方文档：https://platform.minimax.cn/docs/api-reference/speech-to-text
+# 形态=文件转写：multipart 整段上传（不收裸 PCM，≤500s / ≤50MB）；`stream=true` 只是输出文本 SSE 流式，
+# 音频仍须先到齐——与 MiMo ASR 同类，**不是** fun-asr / qwen3 那种边说边出字的实时引擎
+# （裁决见 docs/design/2026-09-14-minimax-asr-provider.md §1）。进流式插槽靠 WholeUtteranceASRProvider。
+
+MINIMAX_ASR_URL = "https://api.minimaxi.com/v1/speech_to_text"
+MINIMAX_ASR_MODEL = "asr-1.0"
+_PCM_RAW_FORMATS = frozenset({"pcm", "pcm16", "s16le", "pcm16le"})
+_ASR_UPLOAD_MIME = {"wav": "audio/wav", "mp3": "audio/mpeg", "aac": "audio/aac", "flac": "audio/flac",
+                    "ogg": "audio/ogg", "opus": "audio/ogg", "m4a": "audio/mp4", "aiff": "audio/aiff"}
+
+
+def _wav_fix_sizes(audio: bytes) -> bytes:
+    """回填 ffmpeg pipe 产 WAV 的占位 size（RIFF / data 块的 0 或 0xFFFFFFFF）——按容器解析的服务商
+    不能赌它容忍占位值。两个字段各自只在是占位时才改；标准 WAV / 非 RIFF 输入原样返回。"""
+    if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        return audio
+    i = audio.find(b"data", 12)
+    if i < 0 or i + 8 > len(audio):
+        return audio
+    out = bytearray(audio)
+    if int.from_bytes(audio[4:8], "little") in (0, 0xFFFFFFFF):
+        out[4:8] = (len(audio) - 8).to_bytes(4, "little")
+    if int.from_bytes(audio[i + 4:i + 8], "little") in (0, 0xFFFFFFFF):
+        out[i + 4:i + 8] = (len(audio) - (i + 8)).to_bytes(4, "little")
+    return bytes(out)
+
+
+def _minimax_asr_language(language: str) -> str:
+    """请求头 `language`：BCP-47 主子标签小写（zh-CN→zh）；'auto' / 空 → ''（不发头 = 混合语言识别）。"""
+    lang = (language or "").strip().lower()
+    if lang in ("", "auto", "mixed", "multi"):
+        return ""
+    return lang.split("-", 1)[0].split("_", 1)[0]
+
+
+def _minimax_asr_model(model: str) -> str:
+    """只认 MiniMax 自家 `asr-*` id，其余回落 MINIMAX_ASR_MODEL（asr-1.0，目前唯一的模型）。**必须归一**：
+    批处理面每次都传 ASR_MODEL（默认 mimo-v2.5-asr），mobile 换模型重试会带 dashscope 备用 id——
+    别家 id 原样送出去只会换回一个 400。刻意不开 env 旋钮：`.env.example` 是发布闸的硬阻断类别、
+    compose 不列名的键又注入不进容器，一个只有一种取值的东西不值得那两道手续。"""
+    m = (model or "").strip()
+    if m.lower().startswith("asr-"):
+        return m
+    return MINIMAX_ASR_MODEL
+
+
+def _asr_upload_file(audio: bytes, fmt: str) -> tuple[str, bytes, str]:
+    """把批处理面的 (bytes, fmt) 变成可上传的容器文件：裸 PCM 套 16k mono WAV 头（与流式面同一假设）；
+    WAV 回填占位 size；其它容器按扩展名给 MIME。返回 (filename, data, content_type)。"""
+    f = (fmt or "wav").strip().lower().lstrip(".")
+    if f in _PCM_RAW_FORMATS:
+        return "audio.wav", _wav_header(len(audio)) + audio, "audio/wav"
+    if f in ("wav", "wave"):
+        return "audio.wav", _wav_fix_sizes(audio), "audio/wav"
+    return f"audio.{f}", audio, _ASR_UPLOAD_MIME.get(f, "application/octet-stream")
+
+
+class MiniMaxASRProvider(BaseASRProvider):
+    """MiniMax 语音识别（`POST /v1/speech_to_text`，multipart）。与 MiniMax LLM / TTS 同一把
+    MINIMAX_API_KEY（Bearer）。`transcribe` = `response_format=json` 一次拿 text / duration；
+    `transcribe_stream` = `stream=true` 逐 SSE 事件 yield (delta, finish, duration_s)，供整句适配在松手后按增量上屏。
+    非 2xx → ProviderHTTPError（状态码 + 响应体片段，与 chat 4xx 可诊断同口径）。"""
+    provider = "minimax"
+
+    def __init__(self, api_key: str, url: str = "", model: str = ""):
+        self.api_key = api_key
+        self.url = url or MINIMAX_ASR_URL  # 端点固定（同 MiniMax LLM / TTS 的 minimaxi.com 集群），不开 env 旋钮
+        self.model = _minimax_asr_model(model)
+        self._client: httpx.AsyncClient | None = None
+
+    def _request(self, audio: bytes, fmt: str, language: str, model: str, stream: bool):
+        """表单装配（两条路径共用）：返回 (headers, form, files)。请求级 model 只在是 asr-* 时盖过实例默认。"""
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        lang = _minimax_asr_language(language)
+        if lang:
+            headers["language"] = lang
+        mdl = model.strip() if (model or "").strip().lower().startswith("asr-") else self.model
+        form = {"model": mdl, "response_format": "json", "stream": "true" if stream else "false"}
+        filename, data, mime = _asr_upload_file(audio, fmt)
+        return headers, form, {"file": (filename, data, mime)}
+
+    def _http(self) -> httpx.AsyncClient:
+        if self._client is None:
+            self._client = httpx.AsyncClient(limits=_HTTP_LIMITS)
+        return self._client
+
+    @staticmethod
+    def _timeout() -> httpx.Timeout:
+        return httpx.Timeout(60, connect=_HTTP_CONNECT_S, pool=5.0)
+
+    @staticmethod
+    async def _raise_for_status(resp) -> None:
+        if resp.status_code < 400:
+            return
+        body = await resp.aread()
+        snippet = body.decode("utf-8", "replace")[:200] if isinstance(body, (bytes, bytearray)) else str(body)[:200]
+        raise ProviderHTTPError(resp.status_code, snippet, _retry_after_s(resp))
+
+    async def transcribe(self, audio: bytes, fmt: str, language: str, model: str):
+        headers, form, files = self._request(audio, fmt, language, model, stream=False)
+        resp = await self._http().post(self.url, headers=headers, data=form, files=files,
+                                       timeout=self._timeout())
+        await self._raise_for_status(resp)
+        result = resp.json()
+        if not isinstance(result, dict):
+            raise RuntimeError("minimax asr: 非对象响应")
+        base = result.get("base_resp")
+        if isinstance(base, dict) and int(base.get("status_code") or 0) != 0:
+            raise RuntimeError(f"minimax asr: {base.get('status_code')} {base.get('status_msg', '')}"[:200])
+        if "text" not in result:
+            raise RuntimeError(f"minimax asr: 响应缺 text（{str(result)[:160]}）")
+        try:
+            duration = float(result.get("duration") or 0.0)
+        except (TypeError, ValueError):
+            duration = 0.0
+        return (result.get("text") or "").strip(), 0.9, language or "zh", form["model"], int(duration * 1000)
+
+    async def transcribe_stream(self, audio: bytes, fmt: str, language: str, model: str):
+        """`stream=true`：SSE `data: {"index","delta","finish","duration"}` 按到达顺序 yield
+        (delta, finish, duration_s)；`finish=true` 即结束（该事件 delta 通常为空，非空也交出去）。"""
+        headers, form, files = self._request(audio, fmt, language, model, stream=True)
+        async with self._http().stream("POST", self.url, headers=headers, data=form, files=files,
+                                       timeout=self._timeout()) as resp:
+            await self._raise_for_status(resp)
+            async for line in resp.aiter_lines():
+                if not line.startswith("data:"):
+                    continue
+                payload = line[5:].strip()
+                if not payload or payload == "[DONE]":
+                    continue
+                try:
+                    ev = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(ev, dict):
+                    continue
+                finish = bool(ev.get("finish"))
+                try:
+                    duration = float(ev.get("duration") or 0.0)
+                except (TypeError, ValueError):
+                    duration = 0.0
+                yield (ev.get("delta") or ""), finish, duration
+                if finish:
+                    return
+
+
 def _wav_pcm_data(audio: bytes) -> bytes:
     """提取 WAV 的 data 块裸 PCM；非 RIFF 输入视为已是裸 PCM 原样返回。
     容忍 ffmpeg pipe 产物（RIFF/data 的 size 字段可能是 0 或 0xFFFFFFFF 占位）。"""
@@ -664,12 +812,14 @@ class StreamBridgeASRProvider(BaseASRProvider):
 
 def build_asr_provider() -> BaseASRProvider:
     """批处理 ASR 工厂（/api/asr + gRPC Transcribe 共用，启动时装配）。
-    ASR_PROVIDER：auto（默认）| mimo | dashscope | mock。
-    auto：LLM_PROVIDER 为 MiMo 系且有 LLM_API_KEY → MiMo（历史现状）；否则有
+    ASR_PROVIDER：auto（默认）| mimo | dashscope | minimax | mock。
+    auto：LLM_PROVIDER 为 MiMo 系且有 LLM_API_KEY → MiMo（历史现状）；否则 ASR_STREAM_PROVIDER=minimax
+    且有 MINIMAX_API_KEY → MiniMax（批处理跟随流式引擎选择，同 TTS auto 的惯例）；否则有
     dashscope key → 桥接流式引擎；都不可用 → Mock。显式 mimo 复用 LLM_API_KEY
     （多 LLM 源惯例：该 env 即 MiMo 的 key），chat 切走后批处理仍可钉住 MiMo。"""
     choice = os.getenv("ASR_PROVIDER", "auto").strip().lower()
     api_key = os.getenv("LLM_API_KEY", "")
+    minimax_key = os.getenv("MINIMAX_API_KEY", "")
 
     def _mock(why: str):
         _strict_mock_gate("asr", why)
@@ -679,12 +829,17 @@ def build_asr_provider() -> BaseASRProvider:
         return _mock("ASR_PROVIDER=mock 显式指定")
     if choice in ("mimo", "xiaomimimo"):
         return MiMoASRProvider(api_key) if api_key else _mock("mimo 引擎但无 LLM_API_KEY")
+    if choice == "minimax":
+        return MiniMaxASRProvider(minimax_key) if minimax_key else _mock("minimax 引擎但无 MINIMAX_API_KEY")
     llm_provider = os.getenv("LLM_PROVIDER", "xiaomimimo").lower()
     if choice == "auto" and llm_provider in ("xiaomimimo", "mimo") and api_key:
         return MiMoASRProvider(api_key)
+    if (choice == "auto" and minimax_key
+            and os.getenv("ASR_STREAM_PROVIDER", "").strip().lower() == "minimax"):
+        return MiniMaxASRProvider(minimax_key)
     if choice in ("auto", "dashscope") and build_streaming_asr_provider("dashscope") is not None:
         return StreamBridgeASRProvider("dashscope")
-    return _mock("无可用引擎（MiMo/DashScope key 均缺）")
+    return _mock("无可用引擎（MiMo/DashScope/MiniMax key 均缺）")
 
 
 # ─── 流式 ASR Provider（实时识别上屏）───
@@ -746,6 +901,46 @@ class MiMoChunkedASRProvider(BaseStreamingASRProvider):
         except Exception:
             final = last_text
         yield {"text": (final or last_text), "final": True}
+
+
+class WholeUtteranceASRProvider(BaseStreamingASRProvider):
+    """整句引擎适配：攒完整段 PCM（流末 = 松手 / 端侧 VAD 收尾）才打**一次**批 ASR。
+    说话期间**没有** partial——文件转写 API 音频须整段上传，这是引擎形态不是缺陷
+    （docs/design/2026-09-14-minimax-asr-provider.md §1）；松手后引擎若有 `transcribe_stream`
+    （MiniMax SSE）就按 delta 累积 yield partial 再定稿，没有就一次 `transcribe` 出定稿。
+    刻意不做 MiMo 分块那种「每 1.2s 重传整段产伪 partial」：按时长计费下 6s 话要付 ~18s，还撞 RPM。"""
+
+    def __init__(self, batch: BaseASRProvider, model: str = ""):
+        self.batch = batch
+        self.model = model or getattr(batch, "model", "") or ""
+
+    async def stream(self, pcm_chunks, *, language="zh"):
+        buf = bytearray()
+        async for chunk in pcm_chunks:
+            buf.extend(chunk)
+        if len(buf) < 3200:  # <0.1s @16k s16le：误触 / 极短按，不为它付一次费（同 MiMo 分块阈值）
+            yield {"text": "", "final": True}
+            return
+        wav = _wav_header(len(buf)) + bytes(buf)
+        streamer = getattr(self.batch, "transcribe_stream", None)
+        if streamer is None:
+            text, *_ = await self.batch.transcribe(audio=wav, fmt="wav", language=language, model=self.model)
+            yield {"text": (text or "").strip(), "final": True}
+            return
+        acc = ""
+        finished = False
+        async for delta, finish, _duration in streamer(audio=wav, fmt="wav", language=language, model=self.model):
+            if delta:
+                acc += delta
+                if not finish:
+                    yield {"text": acc, "final": False}
+            if finish:
+                finished = True
+                break
+        if not finished and not acc:
+            # SSE 半途断了又一个字没给：抛错让网关回 error、客户端无感回退批处理（同 DashScope 引擎惯例）
+            raise RuntimeError("minimax asr 流式无转写（SSE 未收到 finish）")
+        yield {"text": acc.strip(), "final": True}
 
 
 class DashScopeRealtimeASRProvider(BaseStreamingASRProvider):
@@ -929,10 +1124,17 @@ def build_streaming_asr_provider(provider: str = "", model: str = "",
                                  vad_silence_ms: int = 0) -> "BaseStreamingASRProvider | None":
     """按请求/env 选流式引擎。provider/model 为请求级覆盖（HMI 设置可切），空则用 env 默认。
     vad_silence_ms：客户端静音尾（R4.3b P2），仅 qwen3 realtime 的 server_vad 消费；0=用 provider 缺省。
-    无可用 key 或 off → None（HMI 探测到则无感回退批处理 /api/asr）。"""
+    无可用 key 或 off → None（HMI 探测到则无感回退批处理 /api/asr）。
+    minimax / mimo：整句引擎（松手后才出字）经 WholeUtteranceASRProvider 进同一插槽（minimax 复用
+    MINIMAX_API_KEY、mimo 复用 LLM_API_KEY）；mimo-chunked 是旧伪 partial 形态的 env 别名。"""
     provider = (provider or os.getenv("ASR_STREAM_PROVIDER", "dashscope")).strip().lower()
     if provider in ("", "off", "none"):
         return None
+    if provider == "minimax":
+        key = os.getenv("MINIMAX_API_KEY", "")
+        if not key:
+            return None
+        return WholeUtteranceASRProvider(MiniMaxASRProvider(key, model=model))
     if provider in ("dashscope", "dashscope-qwen3", "dashscope-fun", "qwen3", "fun"):
         key = os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY", "")
         if not key:
@@ -951,7 +1153,12 @@ def build_streaming_asr_provider(provider: str = "", model: str = "",
         api_key = os.getenv("LLM_API_KEY", "")
         if not api_key:
             return None
-        return MiMoChunkedASRProvider(MiMoASRProvider(api_key), model=model)
+        if provider == "mimo-chunked":
+            # 旧形态（env 别名，目录里不再出现）：每 ~1.2s 重传整段产伪 partial，3× 调用 + partial 跳变
+            return MiMoChunkedASRProvider(MiMoASRProvider(api_key), model=model)
+        # 2026-09-14 起 MiMo 与 MiniMax 同一形态（文件转写 API）走同一整句适配：松手后打一次
+        return WholeUtteranceASRProvider(MiMoASRProvider(api_key),
+                                         model=model or os.getenv("ASR_MODEL", "mimo-v2.5-asr"))
     return None
 
 

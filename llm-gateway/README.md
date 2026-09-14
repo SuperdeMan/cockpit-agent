@@ -53,7 +53,7 @@
 ## HMI HTTP 代理（http_server.py，端口 50059）
 HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 HTTP 代理：
 - `POST /api/asr` 批处理语音识别、`POST /api/tts` 批处理合成、`GET /api/voices`(可带 `?provider=cosyvoice|qwen|mimo`) 音色列表（经 ASR/TTS Provider）。
-- `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎能力探测（见下节）。
+- `GET /api/asr/stream`（**WebSocket**）流式识别上屏 + `GET /api/asr/stream/info` 引擎目录（HMI / Android 设置页「方式 realtime/utterance → 引擎」两级选择的声明源：每引擎 `mode`、全小写 `models`、`model_labels`；共享兜底表 `hmi/src/types.ts::ASR_PROVIDER_FALLBACK`，见下节）。
 - `GET /api/tts/stream`（**WebSocket**）服务端流式 TTS + `GET /api/tts/stream/info` 引擎+音色+可用性探测（见下节）。
 - `GET /api/s2s`（**WebSocket**）端到端语音会话 + `GET /api/s2s/info` 能力探测（见下节）。
 - `POST /api/voiceprint/identify|enroll` / `GET /api/voiceprint/info` /
@@ -72,7 +72,8 @@ HMI 是浏览器、不能直连 gRPC，故同进程内起一个 CORS 放开的 H
 - **DashScope qwen3**（默认，`qwen3-asr-flash-realtime-2026-02-10`，**id 须全小写**）：OpenAI 兼容 Realtime 协议（`/api-ws/v1/realtime`；base64 音频、`session.update`+`input_audio_buffer.append`、server_vad、`conversation.item.input_audio_transcription.text/.completed`）。
 - **DashScope fun-asr / paraformer**（`fun-asr-realtime`）：DashScope **run-task** 协议（`/api-ws/v1/inference`；**二进制音频帧**、`run-task`→`result-generated`→`task-finished`）。与 qwen3 端点/协议不同，工厂自动按 id 路由。
 - 两者复用百炼 `LLM_EMBED_API_KEY`（或独立 `DASHSCOPE_ASR_KEY`）。
-- **MiMo 分块**（`mimo-chunked` 回退）：累积 PCM 每 ~1.2s 封 WAV 打 MiMo 批 ASR 产伪 partial，无百炼 key 时可用。
+- **MiMo 整句**（`mimo`，2026-09-14 起）：与 MiniMax 同一形态（文件转写 API），走同一 `WholeUtteranceASRProvider`；`mimo-chunked` 只作 env 别名保留旧「每 ~1.2s 重传整段产伪 partial」形态，目录里不再出现。
+- **MiniMax 整句**（`minimax`，2026-09-14）：`POST /v1/speech_to_text` 是**文件转写 API**（multipart 整段上传、不收裸 PCM、`stream=true` 只是输出文本 SSE 流式），与 fun-asr / qwen3 实时引擎形态不同——`WholeUtteranceASRProvider` 攒完整段 PCM（松手 / 端侧 VAD 收尾）才打一次，松手后按 SSE delta 出 partial 再 final；**说话期间没有 partial**。复用 `MINIMAX_API_KEY`；模型只有 `asr-1.0`（代码常量，不开 env 旋钮），客户端带来的别家模型 id 一律归一。批处理面 `ASR_PROVIDER=minimax` 同一 provider 走 `response_format=json`。设计 `docs/design/2026-09-14-minimax-asr-provider.md`。
 - 批处理 `/api/asr` 保留作回退；任一环失败 HMI 无感切回批处理。
 
 ## 流式 TTS（服务端 PCM 流式合成 + barge-in）

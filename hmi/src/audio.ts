@@ -2,6 +2,7 @@
 import { OrderedPlaybackQueue, TtsTextBuffer, speechCovered } from './ttsQueue.mjs'
 import { float32ToInt16, int16ToWav } from './pcmRing.mjs'
 import { PcmPlayer } from './pcmPlayer.mjs'
+import { ASR_PROVIDER_FALLBACK, normalizeAsrProviders, type AsrProviderInfo } from './types'
 
 // Destructive memory APIs reuse the HMI session credential.  The backend
 // resolves the owner from this Bearer value and refuses body-only identity.
@@ -1085,6 +1086,17 @@ export async function fetchTtsProviders(apiBase: string): Promise<import('./type
     return Array.isArray(data.providers) ? data.providers : []
   } catch {
     return []
+  }
+}
+
+/** 流式 ASR 引擎目录（设置页「方式→引擎」两级选择的数据源）。失败落回共享兜底表 ASR_PROVIDER_FALLBACK；
+ *  归一（模型 id 小写 / 旧网关缺 mode 按 id 补）在 types.normalizeAsrProviders 一处，与 mobile 同一份。*/
+export async function fetchAsrProviders(apiBase: string): Promise<AsrProviderInfo[]> {
+  try {
+    const data = await fetch(`${apiBase}/api/asr/stream/info`).then((r) => r.json())
+    return normalizeAsrProviders(data?.providers) ?? ASR_PROVIDER_FALLBACK
+  } catch {
+    return ASR_PROVIDER_FALLBACK
   }
 }
 

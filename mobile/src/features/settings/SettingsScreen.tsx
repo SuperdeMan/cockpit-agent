@@ -7,7 +7,10 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactN
 import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native'
 import { useStore } from 'zustand'
 
-import { AGENT_CATALOG } from '@shared/types.ts'
+import {
+  AGENT_CATALOG, ASR_MODES, ASR_PROVIDER_FALLBACK, asrEngineOptions, asrModeOf, pickAsrEngine,
+  type AsrProviderInfo, type TtsProviderInfo,
+} from '@shared/types.ts'
 
 import { formatBuildLabel, readBuildInfo } from '../../core/buildInfo'
 import { DEVELOPER_UNLOCK_TAPS, developerOptionsVisible, developmentDiagnosticsEnabled } from '../../core/diagnostics'
@@ -25,12 +28,8 @@ import { clearHistory } from '../../core/session/history'
 import { MOBILE_QUICK_COMMAND_ORDER } from '../../core/session/quickCommands'
 import { subscribeWiredSession, wiredSessionSnapshot } from '../../core/session/wiredStore'
 import { getWired } from '../../core/session/wiring'
-import { needsS2sConsent, settingsStore, type AppSettings } from '../../core/settings/store'
-import {
-  fetchAsrProviders,
-  fetchTtsProviders,
-  type AsrProviderInfo,
-} from '../../core/voice/catalog'
+import { DEFAULT_APP_SETTINGS, needsS2sConsent, settingsStore, type AppSettings } from '../../core/settings/store'
+import { fetchAsrProviders, fetchTtsProviders } from '../../core/voice/catalog'
 import { handsFreeAvailability } from '../../core/voice/handsFree'
 import { speechController } from '../../core/voice/speech'
 import { PRESENCE_LANE_DP } from '../../ui/layout/bottomChrome'
@@ -39,7 +38,6 @@ import { usePalette, type Palette } from '../../ui/theme'
 import { TARGET } from '../../ui/tokens'
 import { useAssistant } from '../assistant/AssistantProvider'
 import { S2sConsentSheet } from './S2sConsentSheet'
-import type { TtsProviderInfo } from '@shared/types.ts'
 
 function Section({ p, title, children }: { p: Palette; title: string; children: ReactNode }) {
   return (
@@ -355,7 +353,8 @@ export function SettingsScreen() {
   const [server, setServer] = useState<ServerConfig | null>(null)
   const [nameDraft, setNameDraft] = useState(settings.assistantName)
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
-  const [asrCatalog, setAsrCatalog] = useState<AsrProviderInfo[]>([])
+  // ASR 目录先用共享兜底表（离线 / 探测未回也能选），探测回来再换；TTS 保持原样（[] 期间不渲染）
+  const [asrCatalog, setAsrCatalog] = useState<AsrProviderInfo[]>(ASR_PROVIDER_FALLBACK)
   const [previewing, setPreviewing] = useState(false)
   // AR05 R14：会话身份与能力摘要。null = 还没查过；查询失败/旧服务端各有各的展示，
   // **不把「此刻查不到」显示成「你没有这些能力」**。
@@ -431,7 +430,11 @@ export function SettingsScreen() {
   }, [server])
 
   const ttsEngine = ttsCatalog.find((e) => e.id === settings.ttsProvider) ?? ttsCatalog[0]
-  const asrEngine = asrCatalog.find((e) => e.id === settings.asrProvider)
+  // 「方式 → 引擎」两级（2026-09-14，判据与 HMI 同一份：@shared/types.ts 的 asr* 函数）
+  const asrMode = asrModeOf(asrCatalog, settings.asrProvider)
+  const asrEngines = asrEngineOptions(asrCatalog, asrMode)
+  const asrEngineKey = (e: { provider: string; model: string }) => `${e.provider}/${e.model}`
+  const asrCurrent = asrEngines.find((e) => e.provider === settings.asrProvider && e.model === settings.asrModel)
 
   const set = (patch: Partial<AppSettings>) => update(patch)
 
@@ -562,31 +565,32 @@ export function SettingsScreen() {
       {/* ── 语音 ── */}
       <Section p={p} title="语音">
         <SubHead p={p} title="语音输入" />
+        {note('实时=边说边上屏；整句=松手后整段上传再出字（MiniMax / MiMo 这类转写接口）。以前的「不用流式」并进整句')}
         <ChoiceRow
           p={p}
-          label="识别引擎"
-          value={settings.asrProvider}
-          options={[
-            ...asrCatalog.map((e) => ({
-              v: e.id,
-              label: e.available ? e.label : e.label + '（未配置）',
-            })),
-            { v: 'off', label: '不用流式（整段识别）' },
-          ]}
-          onPick={(asrProvider) => {
-            // 换引擎要同时换模型：模型 id 是跟着引擎走的，留着上一个引擎的 model
-            // 会让 start 帧带一个该引擎不认识的名字（这类错误只表现为连不上）
-            const next = asrCatalog.find((e) => e.id === asrProvider)
-            set({ asrProvider, ...(next?.models?.[0] ? { asrModel: next.models[0] } : {}) })
+          label="识别方式"
+          value={asrMode}
+          options={ASR_MODES.map((m) => ({ v: m.id, label: `${m.label}（${m.hint}）` }))}
+          onPick={(mode) => {
+            if (mode === asrMode) return
+            // 换方式：优先本端默认那一对（fun-asr 主），其次该方式下首个可用；(provider, model) 永远成对写入
+            const picked = pickAsrEngine(asrEngineOptions(asrCatalog, mode), {
+              provider: DEFAULT_APP_SETTINGS.asrProvider, model: DEFAULT_APP_SETTINGS.asrModel,
+            })
+            if (picked) set({ asrProvider: picked.provider, asrModel: picked.model })
           }}
         />
-        {asrEngine && asrEngine.models.length > 1 ? (
+        {asrEngines.length ? (
           <ChoiceRow
             p={p}
-            label="识别模型"
-            value={settings.asrModel}
-            options={asrEngine.models.map((m) => ({ v: m, label: m }))}
-            onPick={(asrModel) => set({ asrModel })}
+            label={asrMode === 'realtime' ? '实时引擎' : '整句引擎'}
+            value={asrCurrent ? asrEngineKey(asrCurrent) : ''}
+            options={asrEngines.map((e) => ({ v: asrEngineKey(e), label: e.available ? e.label : e.label + '（未配置）' }))}
+            onPick={(key) => {
+              // 模型 id 跟着引擎走：留着上一个引擎的 model 会让 start 帧带一个该引擎不认识的名字（只表现为连不上）
+              const e = asrEngines.find((x) => asrEngineKey(x) === key)
+              if (e) set({ asrProvider: e.provider, asrModel: e.model })
+            }}
           />
         ) : null}
         <ChoiceRow

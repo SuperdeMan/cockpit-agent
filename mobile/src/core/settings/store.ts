@@ -7,7 +7,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { createStore } from 'zustand/vanilla'
 
-import { AGENT_CATALOG, DEFAULT_QUICK_COMMANDS, DEFAULT_SETTINGS } from '@shared/types.ts'
+import {
+  AGENT_CATALOG, ASR_PROVIDER_FALLBACK, DEFAULT_QUICK_COMMANDS, DEFAULT_SETTINGS,
+  asrEngineOptions, asrModeOf, pickAsrEngine,
+} from '@shared/types.ts'
 
 import { MOBILE_QUICK_COMMAND_ORDER } from '../session/quickCommands'
 
@@ -32,7 +35,8 @@ export interface AppSettings {
   locationEnabled: boolean
   quickCommands: string[]
   // ── 语音输入（M2-2）──
-  /** 流式 ASR 引擎；'off' = 强制走批处理（整段录完一次识别） */
+  /** 识别引擎 id（dashscope 实时 / minimax、mimo 整句）；与 asrModel 成对（@shared/types.ts 的 asrEngineOptions）。
+   *  'off'（强制批处理）2026-09-14 退役：存量读到按整句迁移；AsrSession 仍认它作内部批处理路径 */
   asrProvider: string
   asrModel: string
   asrLanguage: string
@@ -147,16 +151,25 @@ export function mergeStoredSettings(raw: string | null): AppSettings {
     const stored = Array.isArray(rest.quickCommands) ? rest.quickCommands : null
     const legacyDefault =
       !!stored && stored.length === DEFAULT_QUICK_COMMANDS.length && stored.every((c, i) => c === DEFAULT_QUICK_COMMANDS[i])
-    return {
+    const merged: AppSettings = {
       ...DEFAULT_APP_SETTINGS,
       ...rest,
       quickCommands: !stored || legacyDefault ? [...MOBILE_QUICK_COMMAND_ORDER] : stored,
       speakPolicy,
       agents: { ...DEFAULT_APP_SETTINGS.agents, ...(parsed.agents || {}) },
     }
+    return { ...merged, ...migrateAsrEngine(merged.asrProvider, merged.asrModel) }
   } catch {
     return DEFAULT_APP_SETTINGS
   }
+}
+
+/** ASR 存量迁移 / 自愈（同 hmi settings.load，判据同 @shared/types.ts）：退役的 'off'（=录完再识别）落到整句方式；
+ *  (provider, model) 必须是目录里的一对——切过引擎后留着上一家的 model，在 start 帧上只表现为「连不上」。 */
+export function migrateAsrEngine(provider: string, model: string): { asrProvider: string; asrModel: string } {
+  const mode = provider === 'off' ? 'utterance' : asrModeOf(ASR_PROVIDER_FALLBACK, provider)
+  const engine = pickAsrEngine(asrEngineOptions(ASR_PROVIDER_FALLBACK, mode), { provider, model })
+  return engine ? { asrProvider: engine.provider, asrModel: engine.model } : { asrProvider: provider, asrModel: model }
 }
 
 /** 切到端到端前要不要弹一次性同意（判据只此一处：设置页与任何未来入口都问它） */

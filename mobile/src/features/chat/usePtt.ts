@@ -95,9 +95,8 @@ export function usePtt(opts: {
     setPartial('')
     setState('idle')
     setMode('')
-    // 这一轮的识别连接用掉了：为下一次按下预热一条（warmSocket.ts；provider=off 走批处理不用 WS）
-    const s = settingsStore.getState().settings
-    if (opts.audioUrl && s.asrProvider !== 'off' && (!opts.scope || opts.scope.canCapture())) warmSocket(asrStreamUrl(opts.audioUrl))
+    // 这一轮的识别连接用掉了：为下一次按下预热一条（warmSocket.ts；整句引擎也走同一条 WS）
+    if (opts.audioUrl && (!opts.scope || opts.scope.canCapture())) warmSocket(asrStreamUrl(opts.audioUrl))
   }, [opts.audioUrl, opts.scope])
 
   const asrConfig = useCallback((): AsrConfig => {
@@ -107,8 +106,9 @@ export function usePtt(opts: {
       language: s.asrLanguage,
       provider: s.asrProvider,
       model: s.asrModel,
-      // 选中的就是备用模型时不再指自己（否则失败后原地重试一次，白等一个来回）
-      ...(s.asrModel === ASR_FALLBACK_MODEL ? {} : { fallbackModel: ASR_FALLBACK_MODEL }),
+      // 备用模型是百炼（dashscope）内部的第二个模型：整句引擎（minimax/mimo）没有第二个模型，不给；
+      // 选中的就是备用模型时也不再指自己（否则失败后原地重试一次，白等一个来回）
+      ...(s.asrProvider === 'dashscope' && s.asrModel !== ASR_FALLBACK_MODEL ? { fallbackModel: ASR_FALLBACK_MODEL } : {}),
       sessionId: opts.sessionId,
     }
   }, [opts.audioUrl, opts.sessionId])

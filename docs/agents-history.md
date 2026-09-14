@@ -5,7 +5,7 @@
 > （各章节内最新在前），并在 AGENTS.md §4.0 刷新摘要——不要再往 AGENTS.md 里堆流水。
 > 正文中「§4.0 / 上方 / 下方」等相对指代按迁出时原文保留，指的是迁出前 AGENTS.md 的结构。
 >
-> **最新批次在文末**（2026-09-08，CI 连红 19 次收口：MiniMax WS 分段合并不再赌事件循环调度）。编号规则 2026-09-07 起变了：
+> **最新批次在文末**（2026-09-14，MiniMax ASR 接入：先核能力再进插槽，零业务逻辑改动）。编号规则 2026-09-07 起变了：
 > §102「AR01 合入与 Android 构建经验共享」之后的条目改用「`## YYYY-MM-DD 标题`」、不再编 § 号，
 > 按日期从文末往回找。⚠ **本行修过两次历史欠账**：2026-08-28 修第一次时它从 2026-08-10 起一直写着
 > 「最新批次在 §23」，此后 55 个章节没有一次跟着改；2026-09-08 修第二次时它又停在「§80（2026-08-29）」，
@@ -9014,3 +9014,21 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 第三个包 `883452d29`（SHA-256 `7599e9f5…f15a`，现为 OPPO 常驻包）：按最新那枚「重发」后旧气泡「已重发」、新用户气泡是全文（包 #2 上是「what is the weather in S」）；历史里留着前两包的 error 气泡，`bubble-resend` 要取 y 最大的那枚。
 - 顺带发现未处理：英文问时间回 `unsupported datetime format` 原样落到话术（云侧错误文案面）；C 身份常驻层里最后一轮是 error 气泡时红字在层内容区被裁一行。
 - 用户授权「推送部署」后：push `af7a009b..9ced633b`（5 条逐条列过）→ deploy `9ced633b` dry-run 零阻断零 warning（基线 `43436398`）→ apply submitted → 独立 status 5/5 healthy、`release_sha` = `running_release_sha` = `9ced633b`、零 warning → verify verified（`20260914T085337Z-9ced633.json`）。只读复跑语音采纳矩阵 24 轮（`minimax:MiniMax-M3`，零动作零挂起、车态不变）：播报语域一族 11/12 静默拒识（`本台记者报道…` 3/3 + 3/3，首轮失败原话端侧不再执行 media.play、云侧 2/3 + 3/3，唯一一次是模型规划成新闻摘要、有步放行），乘客句 1/6 归模型，正常请求 6/6。`verify --expected-sha` 不接参数（parse_error），裸 `verify` 才对。
+
+## 2026-09-14 — MiniMax ASR（`speech_to_text`）接入：先核能力再进插槽，零业务逻辑改动
+
+- 用户要求：MiniMax 当日开放 ASR 接口，接入为新的识别服务商（key 与 MiniMax LLM / TTS 同一把），先按文档判断它与 fun-asr / qwen-asr 是否同类，要求不改原本业务逻辑，HMI 与 Android 都要能选到。方案 `docs/design/2026-09-14-minimax-asr-provider.md`。
+- 能力裁决（§1 表）：**不是一类**。MiniMax 是文件转写 API——multipart 整段上传、不收裸 PCM、≤500s/≤50MB、`language` 走请求头；`stream=true` 只是输出文本 SSE（`{index,delta,finish,duration}`），音频仍须先到齐，与 `verbose_json/srt/vtt` 说话人分离互斥。同 2026-07-07 §3 对 MiMo `stream:true` 的裁决：「不构成真正的实时 ASR」。对用户可感知的差别只有一条——说话期间不会边说边上屏，松手后才出字。
+- 落地：`MiniMaxASRProvider`（批处理 `transcribe` = json 一次；`transcribe_stream` = SSE 逐 delta）+ `WholeUtteranceASRProvider`（攒完整段才打一次，<0.1s 零调用；有 `transcribe_stream` 就 partial→final；SSE 半途断且零字 → 抛错让客户端回退批处理）。刻意不做 MiMo 分块式「每 1.2s 重传整段产伪 partial」：按时长计费 6s 话付 ~18s，且 MiniMax 侧 RPM 已被 TTS 撞过。三处判据：① 模型只认 `asr-*`、其余归一（批处理面每次都传 `ASR_MODEL=mimo-v2.5-asr`，mobile 换模型重试带 dashscope 备用 id）；② ffmpeg pipe 产 WAV 的占位 size 上传前回填、裸 PCM 套 16k mono 头；③ `language=auto` 不发头（=混合语言识别）、`zh-CN`→`zh`。工厂：`ASR_STREAM_PROVIDER=minimax` / 请求级 `provider=minimax`；`ASR_PROVIDER=minimax` 显式钉住，`auto` 只在 `ASR_STREAM_PROVIDER=minimax` 且有 key 时跟随（放在 MiMo 现状之后，既有 auto 路径逐字不变）。`/api/asr/stream/info` 目录第三行 `minimax / MiniMax 整句 / asr-1.0`，可用性看 `MINIMAX_API_KEY`。
+- 客户端：HMI `AsrProvider` 加 `'minimax'`，设置页第四档「整句」+ 副标题写明「松手后才出字」，模型行显示 `asr-1.0`；mobile `ASR_PROVIDER_FALLBACK` 加一行，新增 `test/asrCatalog.test.ts` 读网关源码那段字面量对账 id 顺序 / label / 模型集合（跨进程消费用测试对账声明源）。WS 协议、两端状态机（单 final 守卫 / 7s 兜底 / 批处理回退 / 换模型重试）零改动；`usePtt` 的 `fallbackModel` 带着 dashscope id 重试时被网关归一 = 同引擎再试一次。
+- 配置与文档：`docs/conventions.md` env 表、`llm-gateway/README.md`、`hmi/README.md`、设计索引同步。`.env.example` / compose 一度加了 `MINIMAX_ASR_MODEL` / `MINIMAX_ASR_URL` 两个旋钮，第二批（下一条）因发布闸撤回改成常量。
+- 验证：llm-gateway `tests/test_minimax_asr.py` 29 例（含真 httpx 编码 multipart 核对线上形状、只桩出站 HTTP 的 WS 全链 e2e：start→PCM→stop→partial/final/done、无 key→unsupported、422→error）+ 目录 515 passed / 1 skipped；mobile tsc 0 / eslint 0 / jest **98 suites / 1026**；HMI tsc 25→25 零新错。八处变异各自判红（占位 size 不回填 / 模型不归一 / 极短按也付费 / auto 不跟随 / 断流不抛错 / 网关目录 label 漂移 / mobile 表 label 漂移 / 适配器不出 partial），按字节恢复。**真栈未验**（需带 `MINIMAX_API_KEY` 的部署 + 真机按住说话；§4 列了核对点：`asr.stream` span `provider=minimax`、`/api/asr` 回 `model=asr-1.0`）。未 commit。
+
+## 2026-09-14 — MiniMax ASR 接入（二）：两端识别选择合并成「方式 → 引擎」、关闭档退役
+
+- 用户追问「MiniMax 和 MiMo 是不是一类，是的话能不能把 HMI 和 Android 的选择合并」，裁决：关闭不留（和整句一致就没必要留）、MiMo key 不可用已知、做完上真栈。判断写在设计 §7.1：两家都是整段到齐才能识别的转写 API，此前的「分块 / 整句」差的是网关适配器不是引擎，用户面在给适配器起名字；「关闭」（不开 WS、录完 POST /api/asr）的体验也是整句。
+- 模型：一级「方式」realtime（边说边上屏）/ utterance（松手后出字），二级 (provider, model) 对；**声明源只留网关一份**（`/api/asr/stream/info` 每引擎带 `mode`、全小写 `models`、`model_labels`，另给 `modes`；旧字段原样保留，已装机常驻包不受影响），**两端同一份契约**放 `hmi/src/types.ts`（`AsrProviderInfo` / `ASR_MODES` / `ASR_PROVIDER_FALLBACK` / `asrEngineOptions` / `asrModeOf` / `pickAsrEngine` / `normalizeAsrProviders`），mobile 删掉自己那份 `AsrProviderInfo` + 兜底表、HMI 从静态四档改读目录（同它的 TTS 一节）。存储仍是 `asrProvider + asrModel`，方式派生不单独存；两端默认不变（HMI qwen3、mobile fun-asr）。
+- `off` 退役：类型去掉；存量按整句迁移并自愈失配的 (provider, model) 对（`settings.load` / `migrateAsrEngine`——老存量切到 mimo 时 model 还留着 qwen3 的 id，在 start 帧上只表现为「连不上」）；mobile `AsrSession` 仍认 `provider='off'` 作内部批处理路径（jest 正向实证兜底链）。MiMo `build_streaming_asr_provider("mimo")` 改走 `WholeUtteranceASRProvider`，`mimo-chunked` 只剩 env 别名；`usePtt` / `useHandsFree` 的 `fallbackModel` 只对 dashscope 带（整句引擎没有第二个模型）。
+- 发布闸：`.env.example`（`runtime_config_contract`，硬阻断）与 `deploy/docker-compose.yaml`（`infrastructure`，要重走摘要批准）上一批的注释 / 旋钮改动**撤回**，`MINIMAX_ASR_MODEL` / `MINIMAX_ASR_URL` 改成代码常量（模型只有一个、端点固定；半接线的旋钮是本仓库踩过的坑）；`ASR_PROVIDER` / `ASR_STREAM_PROVIDER` 本就透传，`minimax` 直接可填。
+- 两处一起抓到的坑：① 守卫 `sharedAllowlist` 扫的是原始文本连注释一起扫——注释里写 `@shared/types 的 asr*` 会被当成引用了不在台账的模块 `types`，改写成 `@shared/types.ts`；② `diagnosticRoutes` 把 `@/core/voice/catalog` 桩成只有两个 fetch，设置页从 catalog 模块拿兜底表就渲染崩——兜底表改从共享契约直引，桩不影响。
+- 验证：llm-gateway `test_minimax_asr.py` 30 例 + 目录 330 passed；mobile tsc 0 / eslint 0 / jest 98 suites / **1029**；HMI tsc 25→25 零新错 / node 333。真栈：见下一条（本轮推进）。

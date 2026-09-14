@@ -291,24 +291,36 @@ def create_http_app() -> web.Application:
 
     @routes.get("/api/asr/stream/info")
     async def handle_asr_stream_info(request: web.Request):
-        """流式 ASR 能力探测（HMI 设置页据此渲染引擎/模型选择 + 可用性）。"""
+        """流式 ASR 能力探测：HMI / Android 设置页「方式 → 引擎」两级选择的**声明源**。
+        `mode`：realtime = 边说边上屏（WS 实时推 PCM）；utterance = 松手后整段上传再出字
+        （providers.WholeUtteranceASRProvider）。模型 id 一律全小写（start 帧只认小写，CamelCase 会 1011），
+        展示名放 model_labels。共享兜底表 `hmi/src/types.ts::ASR_PROVIDER_FALLBACK` 与此处逐项同步
+        （mobile/test/asrCatalog.test.ts 读本函数源码对账）。"""
         has_dashscope = bool(os.getenv("DASHSCOPE_ASR_KEY") or os.getenv("LLM_EMBED_API_KEY"))
         has_mimo = bool(os.getenv("LLM_API_KEY"))
+        has_minimax = bool(os.getenv("MINIMAX_API_KEY"))  # 与 MiniMax LLM / TTS 同一把 key
         return web.json_response({
-            "streaming": has_dashscope or has_mimo,
+            "streaming": has_dashscope or has_mimo or has_minimax,
             "default": os.getenv("ASR_STREAM_PROVIDER", "dashscope"),
+            "modes": [
+                {"id": "realtime", "label": "实时", "hint": "边说边上屏"},
+                {"id": "utterance", "label": "整句", "hint": "松手后出字"},
+            ],
             "providers": [
-                {"id": "dashscope", "label": "DashScope 实时", "available": has_dashscope,
-                 "models": ["Qwen3-ASR-Flash-Realtime-2026-02-10", "fun-asr-realtime"]},
-                {"id": "mimo", "label": "MiMo 分块", "available": has_mimo,
-                 "models": ["mimo-v2.5-asr"]},
+                {"id": "dashscope", "label": "DashScope 实时", "available": has_dashscope, "mode": "realtime",
+                 "models": ["qwen3-asr-flash-realtime-2026-02-10", "fun-asr-realtime"],
+                 "model_labels": {"qwen3-asr-flash-realtime-2026-02-10": "Qwen3-ASR", "fun-asr-realtime": "Fun-ASR"}},
+                {"id": "minimax", "label": "MiniMax 整句", "available": has_minimax, "mode": "utterance",
+                 "models": ["asr-1.0"], "model_labels": {"asr-1.0": "MiniMax asr-1.0"}},
+                {"id": "mimo", "label": "MiMo 整句", "available": has_mimo, "mode": "utterance",
+                 "models": ["mimo-v2.5-asr"], "model_labels": {"mimo-v2.5-asr": "MiMo v2.5"}},
             ],
         })
 
     @routes.get("/api/asr/stream")
     async def handle_asr_stream(request: web.Request):
         """流式 ASR：HMI 经 WebSocket 推音频帧（webm/opus）+ start/stop 控制，
-        网关流式 ffmpeg 转 PCM16→流式引擎（DashScope 实时 / MiMo 分块）→回 partial/final。
+        网关流式 ffmpeg 转 PCM16→流式引擎（DashScope 实时 / MiniMax、MiMo 整句）→回 partial/final。
         见 docs/design/2026-06-30-asr-streaming-design.md。批处理 /api/asr 不受影响（回退路径）。"""
         import time
         import uuid as _uuid

@@ -3,7 +3,10 @@
 //  - 客户端直接生效（主题/字号/音色/ASR 语言/麦克风模式/聆听时长/快捷指令）
 //  - 经 WS meta 透传给后端（model/answerLength/assistantName/agents/memory）——见 buildMeta()
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { DEFAULT_SETTINGS, TTS_PROVIDER_FALLBACK, type Settings } from './types'
+import {
+  ASR_PROVIDER_FALLBACK, DEFAULT_SETTINGS, TTS_PROVIDER_FALLBACK, asrEngineOptions, asrModeOf, pickAsrEngine,
+  type AsrProvider, type Settings,
+} from './types'
 
 const STORAGE_KEY = 'cockpit.settings.v1'
 
@@ -23,6 +26,18 @@ function load(): Settings {
     const prov = TTS_PROVIDER_FALLBACK.find((p) => p.id === merged.ttsProvider)
     if (prov && !prov.voices.some((v) => v.voice_id === merged.voiceId)) {
       merged.voiceId = prov.voices[0]?.voice_id ?? merged.voiceId
+    }
+    // ASR 迁移/自愈（2026-09-14 方式→引擎两级）：退役的 'off'（=录完再识别）落到整句方式；
+    // (provider, model) 必须是目录里的一对——老存量切到 mimo 时 model 还留着 qwen3 的 id，
+    // 这种失配在 start 帧上只表现为「连不上」，在这里修一次。
+    const stored = String(merged.asrProvider ?? '')
+    const mode = stored === 'off' ? 'utterance' : asrModeOf(ASR_PROVIDER_FALLBACK, stored)
+    const engine = pickAsrEngine(asrEngineOptions(ASR_PROVIDER_FALLBACK, mode), {
+      provider: stored, model: String(merged.asrModel ?? ''),
+    })
+    if (engine) {
+      merged.asrProvider = engine.provider as AsrProvider
+      merged.asrModel = engine.model
     }
     return merged
   } catch {
