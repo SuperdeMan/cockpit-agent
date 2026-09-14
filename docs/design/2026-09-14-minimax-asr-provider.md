@@ -1,6 +1,6 @@
 # MiniMax ASR（`speech_to_text`）接入：整句引擎进流式插槽 + 批处理面
 
-- **状态**：已实施（§6 首批 + §7 合并选择），离线验证通过；真栈验证记录见 §8（2026-09-14）
+- **状态**：已实施并发布（release `40ccb9b6`，§6 首批 + §7 合并选择）；真栈验证 §8（网关 / 云端 HMI / OPPO 真机三面取到，`verify` 因远端锁未取得）
 - **交付对象**：llm-gateway / HMI / mobile 的后续开发者
 - **关联代码**：`llm-gateway/providers.py`（`MiniMaxASRProvider` / `WholeUtteranceASRProvider` / 两个工厂）、
   `llm-gateway/http_server.py`（`/api/asr/stream/info`）、`hmi/src/types.ts` + `components/SettingsPanel.tsx`、
@@ -180,3 +180,57 @@ MiMo key 不可用已知不管、做完上真栈。
 - HMI tsc 零新错、node 333；mobile tsc / eslint / jest 全绿；`diagnosticRoutes` 那种把 catalog 桩成空的用例
   也不能把设置页渲染崩掉（兜底表从共享契约直引，不经 catalog 模块）。
 
+## 8. 真栈验证（2026-09-14，release `40ccb9b6`，基线 `9ced633b`）
+
+发布链（逐步单独授权）：push `9ced633b..40ccb9b6`（2 条：上一轮 release 记录 + 本轮）→ `deploy --sha 40ccb9b6`
+dry-run `status=dry_run`、`blocking_changes=[]`、基础设施摘要与已批准一致 → `--apply` submitted → 独立 `status`：
+`release_sha` = `running_release_sha` = `40ccb9b6`、5/5 端点 healthy。
+
+### 8.1 网关：目录 + 同一段音频喂四个引擎（`scratchpad/probe_asr_minimax.py`，pcm16le 直传、100ms/帧实时节奏）
+
+探针音频：真栈 MiniMax TTS 合成「帮我看看明天杭州的天气怎么样」→ 16k mono PCM 2.67s。
+
+| 引擎 | 松手前 partial | 定稿 | 松手→定稿 |
+|---|---|---|---|
+| **minimax / asr-1.0（整句）** | 0（形态使然）；松手后 1 个 partial「帮我」 | 「帮我看看明天杭州的天气怎么样。」（与原句逐字一致） | **1391ms** |
+| dashscope / fun-asr-realtime | 4 个（首个 406ms） | 同上 | 188ms |
+| dashscope / qwen3-asr-flash-realtime | 10 个（首个 719ms） | 同上 | 203ms |
+| mimo / mimo-v2.5-asr（整句） | 0 | — | `error`：MiMo 401（key 已失效，已知） |
+
+`/api/asr/stream/info`：`modes` 两项；三条引擎各带 `mode`、全小写 `models`、`model_labels`；`minimax.available=true`、
+label「MiMo 整句」。对照发布前同一探针（`9ced633b`）：`minimax` → `unsupported`、目录无 `modes`、MiMo 分块把 401
+**吞成空定稿 + done**——新适配器如实报 `error`，客户端据此回退批处理。
+
+### 8.2 HMI（云端 `https://<fqdn>/?settings=asr`，headless Edge + CDP）
+
+「识别方式 [实时 | 整句]」→ 实时引擎「Qwen3-ASR / Fun-ASR」；点「整句」→ 整句引擎「MiniMax asr-1.0 / MiMo v2.5」，
+`localStorage.cockpit.settings.v1` 回读 `{minimax, asr-1.0}` → 点 MiMo `{mimo, mimo-v2.5-asr}` → 回「实时」
+`{dashscope, qwen3-asr-flash-realtime-2026-02-10}`（HMI 默认对）。截图 `hmi-settings-asr.png` / `hmi-settings-asr-utterance.png`
+（scratchpad，未入库）。
+
+### 8.3 Android（OPPO test，prod release 包 `40ccb9b6`）
+
+prod release 包 `xiaozhou-companion-prod-release-40ccb9b6e-20260914-2204.apk`（`build_mobile.ps1 -Release -Variant prod -CompileJobs 3`，
+11m6s，签名 SHA-1 `5e8f1606…f625`）装 OPPO test（`install -r`，`lastUpdateTime` 16:01:41 → 22:05:54，非 DEBUGGABLE），
+APK SHA-256 本地 = 设备 `pm path` 回读 `4aed0592e23cbb5003858ca8089d4817fc2aef75e57422b5d739d76f4174f733`；设置页底行
+`v0.1.0 · prod · 40ccb9b6e · 2026-09-14 21:52`。`scratchpad/device_asr_settings.py`（深链 `/settings`、uiautomator 按
+`choice-<value>` 的 `selected` 回读，判据是回读不是「点过了」）：
+
+| 步骤 | 回读 |
+|---|---|
+| 初始 | 识别方式「实时（边说边上屏）」selected；实时引擎 Qwen3-ASR / **Fun-ASR selected**（mobile 默认对，存量保留） |
+| 点「整句（松手后出字）」 | utterance selected；整句引擎 **MiniMax asr-1.0 selected** / MiMo v2.5 |
+| 点「MiMo v2.5」 | MiMo selected、MiniMax 取消 |
+| 点「实时」 | 回到 Fun-ASR selected（`pickAsrEngine` 优先本端默认对）——设备状态还原到基线 |
+
+行文案：「实时=边说边上屏；整句=松手后整段上传再出字（MiniMax / MiMo 这类转写接口）。以前的「不用流式」并进整句」；
+「不用流式」选项已不在树里。截图 `device-40ccb9b6-realtime.png` / `device-40ccb9b6-utterance.png`（scratchpad，未入库）。
+遇到的杂音：装机后 ColorOS 弹「USB 用于」系统对话框盖住整屏、dump 只剩它的六行文字，`keyevent 4` 关掉再跑。
+
+### 8.4 未闭合
+
+- `dev_stack.py verify`：远端 e2e 事务锁被一个 **12:41Z 起、`sshd: ubuntu@notty` 下的 `remote-e2e-lock.sh hold --run-id e2e-d374ba04…`**
+  占着（早于本轮任何真栈动作，不是本会话的进程；本会话零残留 ssh/run_e2e），verify 拿不到锁 ⇒ `failed`（artifact
+  `20260914T133608Z-unknown.json` 全空）。按「不停别人的进程」红线未处理；锁释放后重跑 `verify` 即可。
+- 真人按住说话（HMI 麦克风 / Android PTT）本轮没有真人，网关级同协议探针（pcm16le 直传 → partial/final/done）代替；
+  声学未验。
