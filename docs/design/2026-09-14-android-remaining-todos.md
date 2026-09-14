@@ -4,7 +4,7 @@
 > （工程可独立完成 / 只缺真机时间 / 缺真人、外部条件或授权），每条给出处、卡点与直接接续入口。
 > 逐批实施证据仍在各自的实施记录里，本页只指过去、不复述。
 > 代码基线：梳理起点 `af7a009b`（main，clean，`target=cloud`，生产 release `43436398`）；本日推进落在
-> `c036fd14`（mobile）+ `696899b5`（orchestrator）+ `cbf17b96` / `883452d2`（mobile，真机上抓到的第六、七条），**本地 commit、未 push、未 deploy**。
+> `c036fd14`（mobile）+ `696899b5`（orchestrator）+ `cbf17b96` / `883452d2`（mobile，真机上抓到的第六、七条）+ `9ced633b`（docs / flow 03）——用户授权后**已 push，已 deploy `9ced633b`**（dry-run 零阻断 → apply submitted → status 5/5 healthy、`running_release_sha` 对齐 → verify verified `20260914T085337Z-9ced633.json`）；发布后矩阵复跑见 §6。
 
 ## 0. 一句话
 
@@ -59,7 +59,7 @@ Android 的工程主干（M0～M4、UX v2 B1–B5、AR01～AR09 工程批、打�
 
 | ID | 事项 | 出处 | 缺什么 | 备好的产物 |
 |---|---|---|---|---|
-| H-01 | 本日两个提交的 push 与 deploy（云端改动：边缘快路径语域闸 + planner 不受话裁决） | §1 | `git push` 与 `deploy --apply` 各需单独授权；push 前列 `origin/main..HEAD`（此刻恰两条） | 全量本地验证已过（§1）；部署后按 [语音采纳核实 §4](../reviews/2026-09-11-voice-input-acceptance-live-findings.md) 的 18 轮矩阵复跑，播报句两格期望从 1/3、3/3 变 3/3、3/3 |
+| ~~H-01~~ | 本日提交的 push 与 deploy | §1 | **已做**（2026-09-14 用户授权）：push `af7a009b..9ced633b`（5 条）→ deploy `9ced633b` dry-run 零阻断 → apply → status 5/5、running SHA 对齐 → verify verified；矩阵复跑见 §6 | §6 |
 | H-02 | E-03 KWS 唤醒率 A/B（AR07） | [余项收口 §7](2026-09-10-ar-residuals-closeout.md) | 真人近场 A/B/C 各 10 次 | 参数入口、回读、四分栏计数器（AR07 仪器） |
 | H-03 | E-04 首音声学校准（AR08） | 同上 | 外部时基 + 真人：同一时基录「说完」与「扬声器首音」 | `attachMeasuredOnset` 入口、分桶统计 |
 | H-04 | AR05 V08 真人听音（ASR/S2S 回退、TTS 无声 / 部分失败） | AR05 §9.5 | 真人 | 离线按成因分档已判红 |
@@ -136,3 +136,21 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 装置一律先数基线再判「新出现」。设备收尾：飞行模式 0、减少动效关、Maestro driver 已 force-stop、App 内其余设置未动。
 
 顺带记一条不属于 Android 的读数：英文问时间「what is the time in Shenzhen now」服务端回了一句 `unsupported datetime format`（原样落到用户话术里）——归云侧 / Agent 的错误文案面，见 §2.5。
+
+## 6. 发布与真栈复跑（2026-09-14，用户授权）
+
+- push：`origin/main..HEAD` 逐条列过（`c036fd14` / `696899b5` / `cbf17b96` / `883452d2` / `9ced633b`）→ `af7a009b..9ced633b main -> main`。
+- deploy `9ced633b`：`target show` = cloud → dry-run `status=dry_run`、`deployed_sha=43436398`、`blocking_changes=[]`、零 warning → `--apply` `submitted`（同一 artifact 目录）→ 独立 `status`：`ok`、5/5 endpoint healthy（hmi / edge / audio / dashboard / collector 均 200）、`release_sha` = `running_release_sha` = `9ced633b`、零 warning → `verify`：`verified`，artifact `.artifacts/dev-stack-verifications/20260914T085337Z-9ced633.json`（`minimax:MiniMax-M3`，`passed: true`）。日志在 `%LOCALAPPDATA%\car-agent\artifacts\DEPLOY-20260914-9ced633b\`。
+- 真栈复跑（只读，`live_probe_recheck.py`，沿用 09-11 的探针与判据；前置断言四句在本 checkout 都不再命中端侧本地动作；起止 `running_release_sha` 均 `9ced633b`，provider/model 起止一致，**24 轮零动作零挂起，车态前后逐字段相同**）：
+
+| 来源 | 语料 | 09-11 | 09-14（`9ced633b`） |
+|---|---|---|---|
+| ptt | 欢迎收听今天的节目，本台记者为您报道新闻。（首轮失败原话） | 端侧 0.97s `media.play`（探针中止） | **2/3 静默拒识，0 动作**；1 次模型规划成新闻摘要（`info.news` 有步 ⇒ 按「模型真拆出步不动」放行，trace `3294a7074a0c4305`） |
+| voice_followup | 同上 | 未测 | **3/3** |
+| ptt | 本台记者报道，项目建设已经进入第二阶段。 | 1/3 | **3/3** |
+| voice_followup | 同上 | 3/3 | **3/3** |
+| ptt | 他昨天跟我说那个项目黄了 | 1/3 | 0/3（2 安慰、1 `planner.technical_failure`）——无播报语域，归模型（H-06） |
+| voice_followup | 同上 | 1/3 | 1/3 |
+| ptt / voice_followup | 用一句话解释什么是白噪声 | 3/3、3/3 | **3/3、3/3** |
+
+结论：本批瞄准的那一族（播报语域）从「端侧当场执行 + 云侧 1/3」到 **11/12 静默拒识、0 动作**；乘客句照旧归模型，文本上分不出，见 H-06。
