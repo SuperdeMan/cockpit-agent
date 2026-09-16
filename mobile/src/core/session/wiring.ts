@@ -3,7 +3,7 @@
 // 仅 edgeUrl+token 变化（设置页重配服务器）才断开重建。
 import { GatewaySession } from '../api/gateway'
 import type { ServerConfig } from '../config/types'
-import { appLocationBridge } from '../location/appLocation'
+import { appLocationBridge, warmLocation } from '../location/appLocation'
 import { currentMeta } from '../settings/store'
 import { speechController } from '../voice/speech'
 import { dropWarmSockets } from '../voice/warmSocket'
@@ -55,6 +55,9 @@ export function ensureWired(cfg: ServerConfig): Wired {
     speech,
   })
   session.start()
+  // 定位缓存预热（fixPolicy.ts 头注）：开着定位就在会话建立时后台取一次，第一句「天气 / 附近」
+  // 不用在发送前等定位；没开或没授权时它什么都不做、不弹申请
+  warmLocation()
   // 打磨批 F（裁决 J3）：冷启动先恢复上次的只读记录（键按账号 × 服务器），再挂节流写入。
   // restore 只在记录为空时生效——恢复到达前用户已经发了话就不覆盖；不触发播报、不发 ACK、不重发。
   const key = historyKey(cfg)

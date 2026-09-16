@@ -7,6 +7,7 @@ import { useStore } from 'zustand'
 import { fetchSessionInfo, type SessionSummary } from '@/core/api/sessionInfo'
 import { loadServerConfig, subscribeServerConfig } from '@/core/config/storage'
 import type { ServerConfig } from '@/core/config/types'
+import { warmLocation } from '@/core/location/appLocation'
 import { InteractionScope } from '@/core/session/interactionScope'
 import { disposeWired, ensureWired, type Wired } from '@/core/session/wiring'
 import type { IssueView, RecoveryKind } from '@/core/session/contracts'
@@ -237,6 +238,11 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     warmSocket(asrStreamUrl(cfg.audioUrl))
     warmSocket(ttsStreamUrl(cfg.audioUrl))
   }, [cfg.audioUrl, facts.foreground])
+  // 定位缓存预热（fixPolicy.ts 头注）：回到前台 / 打开定位开关时后台取一次，
+  // 位置相关的第一句不在发送前等定位。开关关着或未授权时是空操作
+  useEffect(() => {
+    if (facts.foreground && settings.locationEnabled) warmLocation()
+  }, [facts.foreground, settings.locationEnabled])
   const prevFoldRef = useRef(layout.fold)
   useEffect(() => {
     const sw = screenSwitch(prevFoldRef.current, layout.fold)
