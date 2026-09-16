@@ -154,3 +154,14 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 | ptt / voice_followup | 用一句话解释什么是白噪声 | 3/3、3/3 | **3/3、3/3** |
 
 结论：本批瞄准的那一族（播报语域）从「端侧当场执行 + 云侧 1/3」到 **11/12 静默拒识、0 动作**；乘客句照旧归模型，文本上分不出，见 H-06。
+
+## 7. 2026-09-16 追加：端到端时延（同一句话 App 比 HMI 慢 20s）
+
+出处：[2026-09-16 时延复盘](../reviews/2026-09-16-android-e2e-latency-location-wait.md)。用户实测「查天气预计 10s」，拆开是
+**Android 独有的发送前 20s 定位等待** + **端云共有的 3–4.5s 规划 LLM**；前者本日修掉，后者要裁决。
+
+| ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
+|---|---|---|---|---|
+| E-07 | E | 位置相关的问题（天气 / 附近 / 我在哪 / 导航出发地）发送前等新定位 `Accuracy.Highest` 20s 上限，室内 GPS 无天空、GMS 网络定位在大陆等不到 ⇒ **每轮等满 20s**（真机 `/turn-timeline` 两次 `request_sent` +20094 / +20060ms）；带城市名的句子不走这条闸，所以 09-14 D-03 那格没露 | **已修 + 候选包真机验证**（复盘 §6）：缓存即用（fused `lastLocation` ≤5min）→ 最多等 3s → 陈旧回落 → 失败后 10min 退避不再等；会话建立 / 回前台 / 开定位时后台预热。候选 `bcb10eb08-dirty` 四轮 `request_sent` +93 / +90 / +3109 / +3097ms（常驻包 +20094 / +20060），坐标照常带上；OPPO 已换回 `40ccb9b6e`。**未 commit / 未出清洁包** | `mobile/src/core/location/fixPolicy.ts::acquireFix`（唯一判据）、`appLocation.ts`；`locationFix.test` 11、`expoLocationNative.test` 2 |
+| N-03 | E | 规划模型偶发把城市槽写成占位值「当前位置」，`_resolve_city` 优先信槽 ⇒ 和风 400 ⇒ 「没查到「当前位置」的天气」，而 meta 里带着坐标（候选 #1/#2 两轮） | **已修**（复盘 §7）：`runtime/slots.py::normalize_city_slot` 占位词归空 ⇒ 坐标 / 追问接手；`focus.last_city` 同时免污染。**生效要 deploy** | `runtime/slots.py`；`runtime/tests/test_city_slot_placeholder.py`、`agents/info/tests/test_agent.py`、`orchestrator/cloud/tests/test_context.py` |
+| H-10 | H | 端云共有的规划 LLM：每轮 ~10k prompt token、`cache_hit` 0、p50 2.2s / p90 4.0s / max 16s，天气一轮服务端下限 ≈3.3s，同类产品 1–2s | 复盘 §5 三个可选项：A 单步只读意图确定性快车道（不调 LLM，~0.8s）/ B prompt 减负（= E-04）/ C 规划模型换档。A 改变「每句都过规划 LLM」的前置条件，是产品裁决；都要过四道门禁 + 对抗集双臂 | `orchestrator/cloud/planning.py` 出口顺序、`orchestrator/edge/nlu.py`（只有 off / shadow 两档） |

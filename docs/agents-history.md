@@ -9034,3 +9034,34 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 验证：llm-gateway `test_minimax_asr.py` 30 例 + 目录 330 passed；全量固定口径 **8340 passed / 32 skipped / 13 warnings**（302s）；mobile tsc 0 / eslint 0 / jest 98 suites / **1029**；HMI tsc 25→25 零新错 / node 333。提交 `40ccb9b6`。
 - 真栈（用户授权 push + apply）：push `9ced633b..40ccb9b6`（2 条）→ dry-run 零阻断（`.env.example` / compose 已撤回改动，否则 `runtime_config_contract` 硬阻断）→ apply submitted → status `release_sha` = `running_release_sha` = `40ccb9b6`、5/5 healthy → CI 8/8 绿。**同一段合成音频（MiniMax TTS「帮我看看明天杭州的天气怎么样」2.67s）喂四引擎**：minimax 整句定稿逐字一致、松手→定稿 1391ms、松手前零 partial、松手后 1 个 partial；fun-asr 首 partial 406ms / 定稿 188ms；qwen3 首 partial 719ms / 定稿 203ms；mimo 401 如实报 `error`（发布前旧分块适配器把 401 吞成空定稿 + done，发布前 `minimax` 是 `unsupported`）。云端 HMI（headless Edge + CDP，无 token 可开 `?settings=asr`）：整句 → `{minimax, asr-1.0}`、MiMo → `{mimo, mimo-v2.5-asr}`、回实时 → `{dashscope, qwen3}`。OPPO prod 包 `40ccb9b6e`（APK SHA-256 `4aed0592…4733` 本地 = 设备）：设置页两级 `selected` 回读逐步成立、回「实时」落回 Fun-ASR 默认对、底行 `v0.1.0 · prod · 40ccb9b6e`。
 - 第一次 `dev_stack.py verify` 拿不到远端 e2e 事务锁（一个 12:41Z 起、`sshd: ubuntu@notty` 下的 `remote-e2e-lock.sh hold --run-id e2e-d374ba04…`，早于本会话所有真栈动作、本地零残留进程 ⇒ 不是本会话的）⇒ `failed`、artifact 全空。泓舟授权释放：远端脚本按 run-id 核对持有者再 kill（不按旧 PID），`flock` 探测 AVAILABLE，重跑 **`verified`**（`20260914T144801Z-40ccb9b.json`，`minimax:MiniMax-M3`，104s），status 回 `ok` 零 warning。真人按住说话（HMI 麦 / Android PTT）泓舟按设计 §8.5 自验，2026-09-14 口头签收通过（无逐条读数）。装置坑：`verify` 拿不到锁只给全空 artifact 不说原因，要 `ps | grep remote-e2e-lock` 才看得到持有者；Write 写的 .sh 带 BOM+CRLF 经 stdin 喂远端 bash 首行赋值会坏；ColorOS 装机后「USB 用于」对话框盖屏，dump 只剩它。
+
+## 2026-09-16 — 「同一句话 App 比 HMI 慢」复盘：发送前等新定位 20s（已修）+ 端云共有的规划 LLM 3–4.5s（待裁决）
+
+- 用户实测同一指令 HMI 快于 Android，「查天气预计 10s」。复盘 `docs/reviews/2026-09-16-android-e2e-latency-location-wait.md`。
+  拆法：collector 只量服务端（`duration_ms` = edge Handle），客户端发送前的等待要靠 prod 包自带的 `/turn-timeline` 的 `request_sent`
+  偏移对齐——用户自己那轮 `+20094ms request_sent` + 服务端 9.3s（MiniMax-M3 单次 8.3s 尾部）；受控复现 `+20060ms` + 3.8s。
+  服务端两端一样（App 83 次规划 p50 2245ms vs HMI 5 次 2274ms），差的全是 Android 独有的那 20s。
+- 成因链：`sendRouter` 判「今天天气怎么样」位置相关 → `appLocation.currentFix` 用 `Accuracy.Highest` 等新定位、20s 上限；expo-location 57
+  把它翻成 GMS `CurrentLocationRequest{HIGH_ACCURACY, maxUpdateAge=1000ms}`（`interval` 喂 `setMaxUpdateAgeMillis`，Highest 档 1000）
+  ⇒ 系统缓存里不是 1s 内的一律不认；这台 OPPO 室内 GPS 六天没有定位、GMS 网络定位在大陆等不到 ⇒ **每轮等满 20s** 才回落到 fused
+  `lastLocation`——和 0s 就能拿到的是同一个坐标。带城市名的句子不走位置闸，09-14 D-03「发送→排定 3061ms」就是这么漏掉的。
+  HMI 浏览器 `maximumAge:30s`、桌面机秒回。
+- 修（mobile）：`core/location/fixPolicy.ts::acquireFix` 唯一判据——`getLastKnownPositionAsync({maxAge:5min})` 命中即发 → 现取只等
+  `FIX_BUDGET_MS` 3s（`Highest` + `timeInterval:5min` ⇒ GMS maxUpdateAge 5min；原生 promise 不取消，晚到只喂缓存）→ 任意年龄缓存回落 →
+  不带坐标照发；一次现取失败后 `FRESH_FAILURE_BACKOFF_MS` 内 `skipWait`；`warmLocation()` 在会话建立 / 回前台 / 开定位开关时后台预热
+  （同一时刻一条、20s 上限、不弹权限）；征询「同意」预算 8s。`test/locationFix.test.ts` 13 条 + `test/expoLocationNative.test.ts` 2 条
+  （读 node_modules 源码钉住 `timeInterval → maxUpdateAge` 与 fused lastLocation 两条前提）。mobile tsc 0 / eslint 0 / jest 100 套件 **1042**。
+- 真机 A/B（OPPO 室内，候选 `bcb10eb08-dirty`，APK SHA-256 `4999d56a…1fc9` 端本一致）：`request_sent` **+93 / +90ms**（退避内）、
+  **+3109 / +3097ms**（退避外等满预算）；「我现在在哪里」答对南山地址 ⇒ 坐标照常带上；用户体感 24–30s → 2.6–10.5s，剩下全是服务端。
+  GMS 在这台机室内从未在预算内给过定位 ⇒ 退避 2min → 10min（候选包之后只改常量）。A/B 后常驻包换回 `40ccb9b6e`（`4aed0592…4733`）。
+- 顺带抓到并修掉服务端一条：候选两轮规划模型把 city 槽写成占位值「当前位置」（prompt 明令不许，MiniMax-M3 照写），`_resolve_city`
+  优先信槽 ⇒ 和风 GeoAPI 400 ⇒ 「没查到「当前位置」的天气」，而 meta 里带着坐标；collector 7 天只这两条。修在唯一归一入口
+  `runtime/slots.py::normalize_city_slot`：占位词归空 ⇒ 坐标 / NEED_SLOT 接手，`focus.last_city` 免污染。`runtime/tests/test_city_slot_placeholder.py`
+  + info / context 各一条；相关选择 68 passed；全量固定口径 **8369 passed / 32 skipped / 13 warnings**（319s）。**生效要 deploy**。
+- 端云共有的 3–4.5s（装配 0.6 + 规划 LLM 2.2 + Agent 0.5，尾部 8–16s；同类产品 1–2s）三个可选项写在复盘 §5 / 总表 H-10：
+  A 单步只读意图确定性快车道（不调 LLM）/ B prompt 减负（E-04）/ C 换快模型；A 是产品裁决，本轮未动。
+- 装置：Maestro `inputText` 中文落字后 driver 挂死，放弃时**只杀它的进程树**——按「最近 3 分钟启动的 java」一刀切把刚起的 Gradle daemon
+  杀了（`daemon has disappeared`），重跑；`onnxruntime-react-native` 的 `latest.integration@aar` 两天内 1.29.0 → 1.30.0，而
+  `D:\Android\builds\cxx\<模块>` 保留的 CMake 配置里 `file(GLOB onnxruntime-android-*.aar)` 是配置期求值 ⇒ `missing and no known rule`，
+  把该模块 staging 目录改名让它重配置（不 `-Clean`）；adb 点发送用 120ms `input swipe`；`am start` 深链开 `/turn-timeline` 后 BACK 回对话页。
+- 未 commit / 未 push / 未 deploy / 未出清洁包；AGENTS.md §2、mobile/README、总表 §7（E-07 / N-03 / H-10）已指向复盘。
