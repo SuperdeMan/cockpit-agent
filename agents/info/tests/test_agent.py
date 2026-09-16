@@ -1367,6 +1367,25 @@ def test_city_slot_rejects_non_string_or_malformed_object_values():
     assert _city_slot("{oops}") == ""
 
 
+def test_placeholder_city_slot_uses_gps_meta_instead_of_failing():
+    """**真栈实录**（2026-09-16，OPPO 候选包两轮）：规划模型写了 `city: "当前位置"`，
+    `_resolve_city` 优先信槽 ⇒ 拿「当前位置」去查和风 GeoAPI ⇒ 400 No Such Location ⇒
+    用户听到「没查到「当前位置」的天气」——而 meta 里带着正确的坐标。
+    占位值就是「没给城市」：有坐标用坐标，没坐标追问；绝不把占位值当城市名念出去。
+    """
+    with_gps = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={"city": "当前位置"}, raw_text="今天天气怎么样",
+        meta={"current_lat": "22.541", "current_lng": "113.9412"}))
+    assert with_gps.status == "ok", with_gps.speech
+    assert "没查到" not in with_gps.speech
+    assert with_gps.ui_card["city"] == "当前位置"   # 反查不可用时的展示名，同上面那条坐标用例
+
+    without_gps = asyncio.run(run_handle(
+        InfoAgent(), "info.weather", slots={"city": "这里"}, raw_text="这里天气怎么样"))
+    assert without_gps.status == "need_slot"
+    assert "没查到" not in without_gps.speech
+
+
 def test_unknown_intent_failed():
     res = asyncio.run(run_handle(
         InfoAgent(), "info.unknown", slots={}, raw_text="未知"))

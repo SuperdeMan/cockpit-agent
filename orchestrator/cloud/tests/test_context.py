@@ -307,6 +307,14 @@ def test_focus_city_normalizer_rejects_non_string_object_values():
     assert normalize_weather_city_slot("{oops}") == ""
 
 
+def test_focus_city_normalizer_rejects_placeholders_so_last_city_is_never_a_deictic():
+    """`city: "当前位置"` 进了 focus.last_city 的话，下一轮「明天的呢？」会把「当前位置」当继承城市
+    带给 Agent——同一份归一入口把占位值判空（runtime/tests/test_city_slot_placeholder.py 是主用例）。"""
+    assert normalize_weather_city_slot("当前位置") == ""
+    assert normalize_weather_city_slot({"city": "这里"}) == ""
+    assert normalize_weather_city_slot("深圳") == "深圳"
+
+
 def test_stock_focus_keeps_the_last_successful_symbol():
     plan = Plan(steps=[Step(id="s1", agent_id="info",
                             intent="info.stock", slots={"symbol": "宁德时代"})])
