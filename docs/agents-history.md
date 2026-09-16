@@ -9065,3 +9065,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   `D:\Android\builds\cxx\<模块>` 保留的 CMake 配置里 `file(GLOB onnxruntime-android-*.aar)` 是配置期求值 ⇒ `missing and no known rule`，
   把该模块 staging 目录改名让它重配置（不 `-Clean`）；adb 点发送用 120ms `input swipe`；`am start` 深链开 `/turn-timeline` 后 BACK 回对话页。
 - 未 commit / 未 push / 未 deploy / 未出清洁包；AGENTS.md §2、mobile/README、总表 §7（E-07 / N-03 / H-10）已指向复盘。
+- **发布与清洁包（用户授权「2 和 3 都做」）**：提交 `4f00596e`（mobile）/ `8fc7638a`（runtime）/ `97825faa`（docs），push `bcb10eb0..97825faa`
+  （origin/main 与本地 HEAD 一致、无陌生提交）；deploy dry-run `dry_run` 零阻断零 warning（24s）→ apply `submitted`（147s）→ status `ok`、5/5 healthy、
+  `release_sha` = `running_release_sha` = `97825faa` → verify **`verified`**（`20260916T104219Z-97825fa.json`，`minimax:MiniMax-M3`，75s）；CI 8/8 绿。
+  清洁包 `xiaozhou-companion-prod-release-97825faa6-20260916-1849.apk`（clean 树、12m43s、APK SHA-256 `86999608…0cf7` 端本一致）装为 OPPO 常驻包，
+  装机后同题一轮 `request_sent` **+99ms**、服务端 6.4s（两次规划）、发出→听到 6.9s、答案正确。删掉了搁置的旧 CMake 配置目录。
+  生产基线 `40ccb9b6` → `97825faa`。

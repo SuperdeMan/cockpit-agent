@@ -114,13 +114,26 @@ node 进程），单独复跑 15s 内通过、随后整套复跑 1042 全绿；�
 （319s；上一基线 `40ccb9b6` 8340 / 32，新增即本页 §7 的用例）。四道门禁与端侧 smoke 本轮未跑——改动不碰 skills / exemplars /
 FastIntent / capability 声明。
 
-## 8. 明确没做的事
+## 8. 发布与清洁包（2026-09-16，用户授权「2 和 3 都做」）
 
-- 没有 commit / push / deploy，没有出清洁包；OPPO 上留下的是 A/B 之前的常驻包 `40ccb9b6e`；
+- 提交：`4f00596e`（mobile 定位取值策略）、`8fc7638a`（runtime 占位城市归空）、`97825faa`（本页 + 总表 + 指针 + 历史）；
+  push `bcb10eb0..97825faa`（三条，origin/main 之前与本地 HEAD 一致、无陌生提交）。
+- 部署：`dev_stack.py deploy --sha 97825faa` dry-run `status=dry_run`、零阻断、零 warning（24s）→ `--apply` `submitted`（147s）→
+  独立 `status`：`ok`、5/5 healthy、`release_sha` = `running_release_sha` = `97825faa`、零 warning → `verify` **`verified`**
+  （artifact `20260916T104219Z-97825fa.json`，provider/model `minimax:MiniMax-M3`，75s）。生产基线从 `40ccb9b6` 推进到 `97825faa`。
+- 清洁包：`xiaozhou-companion-prod-release-97825faa6-20260916-1849.apk`（clean 树、`-Release -Variant prod -CompileJobs 3`，12m43s；
+  APK SHA-256 `86999608…0cf7`，本地 = 设备 `pm path` 逐字节相同；签名同模板 `5e8f1606…`）已装为 OPPO 常驻包
+  （`lastUpdateTime 2026-09-16 18:51:05`，设置页底行 `prod · 97825faa6 · 2026-09-16 18:36`）。装机后同题一轮（新会话，
+  trace `f9ba1a8716ab8f00`）：`request_sent` **+99ms**、服务端 6426ms（两次规划 2.65s + 2.65s，`no_action` 重试）、
+  首片 PCM +6928ms，答「深圳市南山区当前多云…」✅——发出 → 听到 **6.9s**，其中手机侧 0.1s。
+- 搁置的旧 CMake 配置目录 `D:\Android\builds\cxx\onnxruntime-react-native.stale-1.29-20260916` 已删。
+
+## 9. 明确没做的事
+
 - 没有改 HMI 的定位等待（`timeout: 10_000`）；没有改规划重试 / catalog / 模型（§5 待裁决）；
 - 没有取得真人语音轮的读数（本页全部是文字轮；语音轮的 ASR 段另计，见 09-12 评审）；
-- `D:\Android\builds\cxx\onnxruntime-react-native.stale-1.29-20260916` 是本轮改名搁置的旧 CMake 配置（`latest.integration`
-  把 ORT 从 1.29.0 漂到 1.30.0，保留的配置里 `file(GLOB …)` 是配置期求值 ⇒ ninja 报旧路径缺失），可删；本轮不删。
+- 没有动 Xiaomi 对照机（离线）；候选包与清洁包的 ORT 原生库随 `latest.integration` 漂到 1.30.0（常驻包 `40ccb9b6e` 是 1.29.0），
+  与本页读数无关，但 KWS / VAD 那条路径在新包上没有单独复测。
 
 ## 5. 端云共有的那 3–4.5s：三个可选项（未实施，需要裁决）
 
