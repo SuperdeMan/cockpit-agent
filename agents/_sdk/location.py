@@ -2,16 +2,38 @@
 
 精确坐标只来自已获浏览器授权的请求 ``meta``，不写入记忆或持久化存储。
 调用方负责在入口处完成 ``location.read`` 权限校验；本模块只做格式与范围校验。
+
+2026-09-17 起带**年龄**：客户端把定位产生的时刻放在 ``current_location_at``（ms 墙钟），
+「我在哪 / 起点」这类把坐标当**此刻**位置念出去的能力，要先看它有多旧——
+真机在家问「我在哪」答出公司地址，就是拿几小时前的缓存当此刻（复盘
+docs/reviews/2026-09-16-android-e2e-latency-location-wait.md）。判据只在这里定一次。
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
+
+#: 超过这个年龄的坐标不许被当成「此刻」念出去，只能说成「N 分钟前的位置」
+STALE_LOCATION_S = 10 * 60
+#: 允许的时钟前置（客户端墙钟略快于服务端），超出即当无效
+_FUTURE_TOLERANCE_S = 5 * 60
 
 
 @dataclass(frozen=True)
 class CurrentLocation:
     lat: float
     lng: float
+    #: 定位产生的墙钟时刻（ms）；客户端没给 / 给坏了 ⇒ None（当作不知道多旧）
+    at_ms: int | None = None
+
+
+def _at_ms_from_meta(meta: dict | None) -> int | None:
+    raw = (meta or {}).get("current_location_at", "")
+    try:
+        value = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def current_location_from_meta(meta: dict | None) -> CurrentLocation | None:
@@ -23,4 +45,22 @@ def current_location_from_meta(meta: dict | None) -> CurrentLocation | None:
         return None
     if not (-90 <= lat <= 90 and -180 <= lng <= 180):
         return None
-    return CurrentLocation(lat=lat, lng=lng)
+    return CurrentLocation(lat=lat, lng=lng, at_ms=_at_ms_from_meta(meta))
+
+
+def location_age_s(meta: dict | None, now_ms: int | None = None) -> float | None:
+    """坐标的年龄（秒）。没带时刻 / 时刻坏了 / 明显在未来 ⇒ None（不知道多旧，调用方按「未知」处理）。"""
+    at = _at_ms_from_meta(meta)
+    if at is None:
+        return None
+    now = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    age = (now - at) / 1000.0
+    if age < -_FUTURE_TOLERANCE_S:
+        return None
+    return max(0.0, age)
+
+
+def location_is_stale(meta: dict | None, now_ms: int | None = None) -> bool:
+    """坐标是否旧到不能当「此刻」。年龄未知按**不旧**处理——老客户端不带时刻，行为不变。"""
+    age = location_age_s(meta, now_ms)
+    return age is not None and age > STALE_LOCATION_S

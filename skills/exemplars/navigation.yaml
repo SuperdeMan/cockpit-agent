@@ -400,3 +400,30 @@ exemplars:
   tags:
   - badcase
   note: 同上一条的另一种句形（先…再…）。加它是因为**上一条只治了它示范的那个形**——真栈实测「接爸妈去吃饭」0/3→3/3 的同一批里，这个句形仍稳定 0/3（三次逐字相同地只答川菜那半）。「补上 X」与「补上 X 就能修」是两个命题，第二个得单独证
+# 2026-09-17 真机（OPPO，在家）：坐标是几小时前公司那份缓存，用户纠正「你重新获取一下当前的位置」被规划成
+# info.search（模型答「我不具备实时获取位置的能力」），「我不在这里，你重新获取一下定位」被静默拒识。
+# 这三句都是在要 navigation.locate（重新定位 + 报当前地址）；定位缓存本身的问题在客户端修，这里只管落域。
+- text: 你重新获取一下当前的位置
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: trace
+  added: '2026-09-17'
+  tags:
+  - badcase
+- text: 我不在这里，你重新获取一下定位
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: trace
+  added: '2026-09-17'
+  tags:
+  - badcase
+- text: 重新定位
+  plan:
+  - agent: navigation
+    intent: navigation.locate
+  source: trace
+  added: '2026-09-17'
+  tags:
+  - badcase

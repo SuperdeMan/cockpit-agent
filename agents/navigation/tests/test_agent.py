@@ -516,6 +516,34 @@ def test_locate_with_gps_reverse_geocodes_current_position():
     assert "科技园" in res.speech and "当前" in res.speech
 
 
+def test_locate_with_stale_gps_says_when_it_was_not_where_you_are():
+    """**真机实录**（2026-09-16 23:47，OPPO 在家）：客户端上行的是几小时前公司那份缓存，
+    「我在哪」答「您当前位于…深铁金融科技大厦」。带 `current_location_at` 且超过 STALE_LOCATION_S
+    ⇒ 只能说成「N 分钟前在…」，不许当此刻；不带时刻（老客户端）照旧。"""
+    import time as _t
+    agent = NavigationAgent()
+
+    async def rg(lng, lat, **kwargs):
+        return GeoPoint(address="广东省深圳市南山区深南大道9821号", lat=lat, lng=lng)
+
+    agent.poi.reverse_geocode = rg
+    stale_at = int(_t.time() * 1000) - 5 * 3600 * 1000
+    res = asyncio.run(run_handle(
+        agent, "navigation.locate", slots={}, raw_text="我现在在哪里",
+        meta={"current_lat": "22.54", "current_lng": "113.94", "current_location_at": str(stale_at)}))
+    assert res.status == "ok"
+    assert "您当前位于" not in res.speech
+    assert "分钟前" in res.speech and "深南大道" in res.speech
+    assert res.data["stale"] is True and res.data["location_age_s"] >= 5 * 3600 - 5
+
+    fresh_at = int(_t.time() * 1000) - 20_000
+    res2 = asyncio.run(run_handle(
+        agent, "navigation.locate", slots={}, raw_text="我现在在哪里",
+        meta={"current_lat": "22.54", "current_lng": "113.94", "current_location_at": str(fresh_at)}))
+    assert "您当前位于" in res2.speech and "分钟前" not in res2.speech
+    assert res2.data["location_age_s"] <= 25
+
+
 def test_locate_without_gps_is_honest_not_shanghai_mock():
     """无 GPS 时 locate 诚实提示开启定位，绝不回退编造车机 mock（上海）——与天气一致。"""
     ctx = make_context(context_values={"vehicle.location": '{"city": "上海"}'})

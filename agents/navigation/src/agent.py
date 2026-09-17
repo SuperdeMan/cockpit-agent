@@ -14,7 +14,7 @@ import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
-from agents._sdk.location import current_location_from_meta
+from agents._sdk.location import current_location_from_meta, location_age_s, location_is_stale
 from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
@@ -2138,9 +2138,22 @@ class NavigationAgent(BaseAgent):
                 speech="定位服务暂时不可用，暂时说不准您在哪，请稍后再试。",
                 data={"lat": current.lat, "lng": current.lng})
         addr = pt.address or "当前位置"
+        # 2026-09-17：坐标带年龄（agents/_sdk/location.py）。超过 STALE_LOCATION_S 的坐标不许当「此刻」念——
+        # 真机在家问「我在哪」答出公司地址，就是客户端把几小时前的缓存当成了现在；年龄不明（老客户端）按不旧。
+        age_s = location_age_s(meta)
+        if location_is_stale(meta):
+            mins = max(1, int(age_s // 60))
+            when = fmt_clock(current_location_from_meta(meta).at_ms // 1000)
+            return AgentResult(
+                speech=f"我最近一次拿到您的位置是{mins}分钟前（{when}），当时在{addr}。"
+                       f"现在还没拿到新的定位，可能是室内信号不好；到室外或过一会儿再问我一次。",
+                follow_up="换个位置再问我『我在哪』",
+                data={"address": pt.address, "lat": current.lat, "lng": current.lng,
+                      "location_age_s": round(age_s), "stale": True})
         return AgentResult(
             speech=f"您当前位于{addr}。",
-            data={"address": pt.address, "lat": current.lat, "lng": current.lng})
+            data={"address": pt.address, "lat": current.lat, "lng": current.lng,
+                  **({"location_age_s": round(age_s)} if age_s is not None else {})})
 
     async def _poi_detail(self, intent, ctx, meta) -> AgentResult:
         """查询 POI 详情。"""
