@@ -9071,3 +9071,22 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   清洁包 `xiaozhou-companion-prod-release-97825faa6-20260916-1849.apk`（clean 树、12m43s、APK SHA-256 `86999608…0cf7` 端本一致）装为 OPPO 常驻包，
   装机后同题一轮 `request_sent` **+99ms**、服务端 6.4s（两次规划）、发出→听到 6.9s、答案正确。删掉了搁置的旧 CMake 配置目录。
   生产基线 `40ccb9b6` → `97825faa`。
+
+## 2026-09-17 — 定位来源复盘：GMS fused 缓存三天没动，系统 network provider 每 5 分钟都有新定位（App 在家答出公司地址）
+
+- 用户 09-16 晚在家复测：导航起点 / 天气 / 「我在哪」都落在公司，「重新获取定位」仍是旧坐标。手机连着，`dumpsys location` 钉死机制
+  （复盘 §10）：GMS fused 的 last location `et=+8d18h` 两次 dump 逐字相同（三天前公司那点，expo-location `getLastKnownPositionAsync`
+  读的就是它）；系统 network provider 23:42:52 / 23:47:52 刚拿到家里的定位（系统每 5 分钟一次 BALANCED 请求）；我们的 `Accuracy.Highest`
+  现取在 GMS 里只挂 gps provider，室内空手 ⇒ 回落三天前那份。09-16 前的 20s 版本走同一条 GMS 路，只是把它藏在「慢」后面。
+- 修（mobile）：新原生模块 `modules/platformlocation`（Kotlin Expo 模块，与 foldstate / kws 同形）：`lastKnown()` 读 gps / network / fused /
+  passive 四 provider 的 last-known + 单调时钟年龄；`requestFix(timeoutMs)` 向 network + gps 各要一次（`LocationManager.getCurrentLocation`，
+  API 30+）先到先用；只读已授予的权限。`fixPolicy.pickFreshest` 挑年龄最小的一条；档位 ≤60s 直发 / 预算 2.5s / 退避 30s（10 分钟退避是
+  「重新获取定位」还给旧坐标的原因之一）；原生缺席退回 expo-location。时间线新事件 `location_acquired(来源:provider:年龄:等待)`。
+- 修（服务端）：`agents/_sdk/location.py` 带 `at_ms` / `location_age_s` / `location_is_stale`（`STALE_LOCATION_S` 10 分钟，唯一判据）；
+  `navigation.locate` 对超龄坐标改说「我最近一次拿到您的位置是 N 分钟前（HH:MM），当时在…；现在还没拿到新的定位」；
+  `skills/exemplars/navigation.yaml` 追加「你重新获取一下当前的位置 / 我不在这里，你重新获取一下定位 / 重新定位」→ navigation.locate。
+- 验证：mobile tsc 0 / eslint 0 / jest 102 套件 1068（两套件在 Gradle 并行时超时、单独复跑 27/27）；全量固定口径 8374 / 32 / 13；
+  `eval_exemplars` 1.8% PASS。真机候选 `cc0ccef66-dirty`（OPPO，公司）：「我现在在哪里」`location_acquired(fresh:network:0s:wait78)`、
+  `request_sent` +141ms，地址从 09-16 的「深南大道9821号深铁金融科技大厦」（三天前的 GMS 缓存）变成「科技南一路深投控创智天地大厦」；
+  天气轮 `fresh:network:107s:wait327`、+384ms。在家复测待用户；OPPO 留着候选包。
+- 未 commit / push / deploy / 出清洁包。装置：Kotlin 模块首次编译一次过；候选构建 15m01s。

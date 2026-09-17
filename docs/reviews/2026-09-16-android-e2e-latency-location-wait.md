@@ -182,3 +182,62 @@ MiniMax-M3 照写；同一句在常驻包两轮给的是空槽 + `no_action` 重
 真实地名与坐标串原样通过（「本溪」「无锡」是整词比较不是前缀）。单测：`runtime/tests/test_city_slot_placeholder.py` 4 组、
 `agents/info/tests/test_agent.py::test_placeholder_city_slot_uses_gps_meta_instead_of_failing`（有坐标 → ok、无坐标 → need_slot）、
 `orchestrator/cloud/tests/test_context.py` focus 归一 1 条。**生效要 deploy**（cloud-planner 与 info Agent 都读它）。
+
+## 10. 2026-09-17 追加：坐标来源错了——GMS 那份缓存三天没动，系统 network provider 每 5 分钟都有新定位
+
+用户 2026-09-16 晚在家复测：导航起点、天气、「我在哪」都落在公司；说「你重新获取一下当前的位置」被规划成 info.search
+（模型答「我不具备实时获取位置的能力」），「我不在这里，你重新获取一下定位」被静默拒识。手机连着，记录如下。
+
+### 10.1 证据（OPPO PEUM00，`dumpsys location`，2026-09-17 10:32 读）
+
+| 项 | 读数 | 含义 |
+|---|---|---|
+| collector `app-rmlqcr` 23:45–23:48 | 导航「当前位置 → 南山文体中心游泳馆 → 道通」10.7km；「我当前在哪里」→「深南大道9821号深铁金融科技大厦」×2；23:48 起视觉轮看到的是**家里的走廊和猫** | 人在家，坐标是公司 |
+| `fused provider: last location` | `network 22.54,113.94 et=+8d18h6m14s`——与 09-16 16:48 那次 dump **逐字相同** | GMS fused 的缓存三天没动，一直是公司那一点；expo-location 的 `getLastKnownPositionAsync` 读的正是它 |
+| `network provider: last location` | `et=+11d12h33m51s`（≈10:30，2 分钟前） | 系统 network provider 一直在刷 |
+| 23:42:52 / 23:47:52 | `network provider received location[1]` → 交给 `1000/android`（系统每 5 分钟一次 BALANCED 请求；sceneservice / weather.service 也在要） | **在家的那几分钟系统拿到了家里的定位**，只是不在 GMS fused 那份缓存里 |
+| 23:42:49 / 23:45:33 / 23:47:11 / 23:47:54 | `gps provider +registration com.google.android.gms[fused_location_provider] HIGH_ACCURACY` | 我们每次现取（`Accuracy.Highest`）GMS **只挂 gps provider**，室内没有天空 ⇒ 每次都空手；然后回落到那份三天前的 fused 缓存 |
+
+⇒ 两层错：① **缓存来源**——读 GMS fused（三天前公司），没读系统 LocationManager（5 分钟前家里）；② **现取来源**——GMS HIGH_ACCURACY
+只用 GPS，系统 network provider 在家 0.1–0.3s 就有答案却没人问它。这两层在 09-16 之前的 20s 版本里同样存在（同一条 GMS 路），
+只是 20s 的等待把它藏在「慢」后面；09-16 的改动把回落变快，于是它露成「答错」。第三层是服务端：坐标带了
+`current_location_at`（几小时前），「我在哪」照样念成「您当前位于」。
+
+### 10.2 修法
+
+- **坐标来源换成系统 LocationManager**（`mobile/modules/platformlocation`，Kotlin Expo 模块，与 foldstate / kws 同形）：
+  `lastKnown()` 读 gps / network / fused / passive 四个 provider 的 last-known，带**单调时钟**年龄；`requestFix(timeoutMs)` 向
+  network + gps 各要一次（`LocationManager.getCurrentLocation`，API 30+），先到先用、到点全部取消。只读系统已授予的权限，不弹申请；
+  原生缺席（旧 APK / jest）退回 expo-location 那条 GMS 老路。`fixPolicy.pickFreshest` 在四份 last-known 里挑年龄最小的一条
+  （同龄取精度更好的；空值 / 非法坐标跳过）——GMS fused 那份三天前的永远排不到前面。
+- **档位重调**：缓存 ≤60s 直接发（系统每 5 分钟刷一次，超过 1 分钟就现取，真机 0.1–0.3s）；预算 3s → 2.5s；
+  失败退避 10min → **30s**（只防连珠炮；环境会变，出门上车 GPS 就有了，长退避正是「重新获取定位」还给旧坐标的原因之一）。
+- **时间线标签**：每个带坐标的轮记 `location_acquired(来源:provider:年龄:等待)`（`/turn-timeline` 可见，不含坐标），
+  下次再有「答错位置」当场能说清是哪份缓存。
+- **服务端如实说年龄**（`agents/_sdk/location.py`：`location_age_s` / `location_is_stale`，`STALE_LOCATION_S` 10 分钟，唯一判据）：
+  `navigation.locate` 对超龄坐标改说「我最近一次拿到您的位置是 N 分钟前（HH:MM），当时在…；现在还没拿到新的定位」，
+  不再念「您当前位于」；不带时刻的老客户端行为不变。
+- **落域**：`skills/exemplars/navigation.yaml` 追加「你重新获取一下当前的位置 / 我不在这里，你重新获取一下定位 / 重新定位」
+  → `navigation.locate`（范例，不是硬路由；`eval_exemplars` 域错配率 1.8% 不变）。
+
+### 10.3 验证
+
+本地：mobile tsc 0 / eslint 0 / jest 102 suites **1068**（本轮 +26：`pickFreshest` 3、`locationTimeline` 4、其余为既有套件计数变化；
+`assistantPresence` / `stopPlaybackUi` 在与 Gradle 并行时各超一次 5s 单测上限，单独复跑 27/27 过）；服务端全量固定口径
+**8374 passed / 32 skipped / 13 warnings**（265s；`agents/_sdk/tests/test_location.py` 4 + navigation 陈旧 locate 1）；
+`eval_exemplars` 域错配率 1.8%（hit 65 / miss 3 / silent 99）PASS。
+
+真机（OPPO，公司，候选 `cc0ccef66-dirty`，APK SHA-256 `1c708bdd…65e9` 端本一致；`/turn-timeline` 新标签）：
+
+| 轮 | `location_acquired` | `request_sent` | 服务端 | 答案 |
+|---|---|---|---|---|
+| 11:06:24「今天天气怎么样」 | `fresh:network:107s:wait327` —— 系统 network provider 327ms 内给了它 107s 前算好的那份 | +384 | 3433ms（1 次规划 2.5s） | 南山区多云 28℃，卡片地址**科技南一路** |
+| 11:08:32「我现在在哪里」 | `fresh:network:0s:wait78` —— 78ms 拿到刚算的定位 | +141 | 2638ms | 「您当前位于广东省深圳市南山区粤海街道**科技南一路深投控创智天地大厦**」 |
+
+对照 09-16 同一台机同一位置答的「深南大道9821号深铁金融科技大厦」——那是 GMS fused 三天前那份缓存；换成系统 provider 后地址变了、
+也对了。发出 → 听到：天气 4.3s、「我在哪」3.3s，手机侧 0.1–0.4s。**没有在家复测**（手机在公司），「回家后系统 network provider
+给家里的定位」这一格由 §10.1 的 dumpsys 记录（23:42:52 / 23:47:52 两次 received location）间接支撑，真机回家复测待用户。
+标签里的 `fresh:…:107s` 说明 `getCurrentLocation(network)` 可能直接给 provider 上一次算好的结果——年龄如实上行，判「此刻」的判据在服务端。
+
+OPPO 上**留着候选包** `cc0ccef66-dirty`（设置页底行可见），没有换回 `97825faa6`：用户晚上要在家复测，旧包只会再答一次公司地址；
+要换回时装 `D:\Android\builds\apk\xiaozhou-companion-prod-release-97825faa6-20260916-1849.apk` 即可。未 commit / push / deploy。
