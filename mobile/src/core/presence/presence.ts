@@ -190,10 +190,12 @@ export interface PresenceSnapshot {
   input: 'voice-sheet' | 'composer' | 'none'
   /** 语音层高度档（input==='voice-sheet' 时有意义） */
   sheetDetent: SheetDetent
-  /** 语音层内容区画不画「当前这一轮」（2026-09-17）：`none` = 只剩头区（球 + 胶囊）——
-   *  ① 收音中而本轮草稿还没出现（第一段 partial 之前）：上一轮的回答 / 卡片不该亮在「在听…」下面；
-   *  ② 行车档答后回落（§5.2 规则 3 行车条款：detent 已回 0.4 且此刻不忙）。层高下限的 `terse` 入参读它 */
-  sheetBody: 'turn' | 'none'
+  /** 语音层内容区画不画「当前这一轮」（2026-09-17）：
+   *  `turn` = 画当前轮；
+   *  `empty` = 收音中而本轮草稿还没出现（第一段 partial 之前）：上一轮的回答 / 卡片不该亮在「在听…」下面，
+   *    但层高仍按 0.4 档预留转写两行——字一到就落在那块空白里，层不再二次长高（真机 A1：224 → 318 的弹簧过冲被截到）；
+   *  `settled` = 行车档答后回落（§5.2 规则 3 行车条款：detent 已回 0.4 且此刻不忙）：只剩头区，层高下限主体 0 */
+  sheetBody: 'turn' | 'empty' | 'settled'
   /** 最近一轮的发起方（S2S 告知条读它；没有轮 = text） */
   turnSource: TurnSource
 }
@@ -381,9 +383,13 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   const card = !!voice?.card && !fresh
   const sheetDetent: SheetDetent =
     commitment.some((c) => c.kind === 'task') || card ? 0.78 : answer && !settled ? 0.62 : 0.4
-  // 内容区画不画：收音初始为空；行车档回落（detent 已回 0.4 且此刻不忙）为空——**层不消失**（常驻，§6），消失的是内容
-  const sheetBody: PresenceSnapshot['sheetBody'] =
-    fresh || (i.driving && sheetDetent === 0.4 && agent === 'idle' && !capturing) ? 'none' : 'turn'
+  // 内容区画不画：收音初始 empty（预留转写空间）；行车档回落（detent 已回 0.4 且此刻不忙）settled（只剩头区）——
+  // **层不消失**（常驻，§6），消失的是内容
+  const sheetBody: PresenceSnapshot['sheetBody'] = fresh
+    ? 'empty'
+    : i.driving && sheetDetent === 0.4 && agent === 'idle' && !capturing
+      ? 'settled'
+      : 'turn'
 
   return {
     now: i.now,

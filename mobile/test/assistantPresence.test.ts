@@ -259,7 +259,7 @@ test('语音层升起时浮动在场让位给层内大球与停止键；收起�
   } finally { await unmount(view) }
 })
 
-test('收音初始：草稿未出现 ⇒ 层内容为空（sheetBody=none、0.4）；草稿一出现 ⇒ turn（收集器把 draft 事实喂给 derivePresence）', async () => {
+test('收音初始：草稿未出现 ⇒ 层内容为空（sheetBody=empty、0.4）；草稿一出现 ⇒ turn（收集器把 draft 事实喂给 derivePresence）', async () => {
   // 免唤醒 LISTENING 造收音态：只改 fsm 与 usable 两个事实，其余仍是真实 hook
   const realHf = handsFreeHooks.useHandsFree
   const hfSpy = jest.spyOn(handsFreeHooks, 'useHandsFree').mockImplementation((opts) => {
@@ -272,7 +272,7 @@ test('收音初始：草稿未出现 ⇒ 层内容为空（sheetBody=none、0.4�
     await act(async () => { mockCore.send('导航去公司') }) // 上一轮：用户气泡 + 思考中占位
     expect(runtime!.snapshot.capture).toBe('listening')
     expect(runtime!.snapshot.input).toBe('voice-sheet')
-    expect(runtime!.snapshot.sheetBody).toBe('none')
+    expect(runtime!.snapshot.sheetBody).toBe('empty')
     expect(runtime!.snapshot.sheetDetent).toBe(0.4)
     expect(has(view, 'voice-sheet-transcript')).toBe(false)
     await act(async () => { mockCore.draftUser('附近') }) // 第一段 partial：草稿气泡出现 = 新一轮

@@ -174,7 +174,7 @@
 
 | # | 症状 | 判据 | 落点 |
 |---|---|---|---|
-| ① | 按住说话那一瞬「在听…」下面挂着上一轮的回答 / 卡，层还按上一轮的卡升到 0.78。旧布局这段同样是上一轮内容，只是折在 0.4 档之下看不见；跟底把它滚到了眼前 | **收音中而本轮草稿未出现 ⇒ 上一轮的回答 / 卡不算数：内容区为空、档位 0.4**；草稿（第一段 partial）一出现就是新一轮。`VoiceFacts.draft`（收集器：当前轮用户气泡 id == `draftUserId`）→ `derivePresence` 输出 `sheetBody: 'turn' \| 'none'`（行车档答后回落也并入这个字段，VoiceSheet 不再自己算 terse） | `presence.ts`、`usePresence.ts`、`VoiceSheet.tsx`；`presence.test` +5、`voiceSheetFollow.test` +1、`assistantPresence.test` +1（收集器接线）、fixture `listening-fresh` |
+| ① | 按住说话那一瞬「在听…」下面挂着上一轮的回答 / 卡，层还按上一轮的卡升到 0.78。旧布局这段同样是上一轮内容，只是折在 0.4 档之下看不见；跟底把它滚到了眼前 | **收音中而本轮草稿未出现 ⇒ 上一轮的回答 / 卡不算数：内容区不画、档位 0.4**；草稿（第一段 partial）一出现就是新一轮。`VoiceFacts.draft`（收集器：当前轮用户气泡 id == `draftUserId`）→ `derivePresence` 输出 `sheetBody: 'turn' \| 'empty' \| 'settled'`：`empty` = 收音初始（不画，但层高仍按 0.4 档预留转写两行——第二轮真机 A1 抓到只剩头区时字一到层再从 224 长到 318、弹簧过冲被截到，所以预留）；`settled` = 行车档答后回落（只剩头区，主体 0；VoiceSheet 不再自己算 terse） | `presence.ts`、`usePresence.ts`、`VoiceSheet.tsx`；`presence.test` +5、`voiceSheetFollow.test` +2、`assistantPresence.test` +1（收集器接线）、fixture `listening-fresh` |
 | ② | 跟到末尾后被裁的首行紧贴头区，像裁切故障 | 滚动区离开顶部时顶缘也画一条 24dp 渐隐（与底缘同色同高），回到顶部即撤——贴顶时首行就在 paddingTop 之下，常驻会把它糊掉 | `VoiceSheet.tsx`（`voice-sheet-fade-top`）；`voiceSheetFollow.test` +1 |
 
 ### 9.5 补丁后的验证
@@ -183,4 +183,14 @@
 反向验证（各改一处只跑对应文件，按字节恢复）：G `fresh` 恒 false ⇒ `presence` 1 + `voiceSheetFollow` 1 + `assistantPresence` 1；
 H 收集器不喂 `draft` ⇒ `assistantPresence` 1（恰收集器接线那条）；I 顶缘渐隐常驻 ⇒ `voiceSheetFollow` 1。
 
-真机复验：（出包装机后回填）
+**第二轮真机**（OPPO，清洁包 `8c85e6914`，12:29 出包 / 14:06 装机，APK SHA-256 `a5bc207b…7af4` 端本一致；证据同目录 `*-8c85e6914.*`、`probe2.log`）：
+
+| 格 | 结果 | 证据 |
+|---|---|---|
+| 按住空输入框（上一轮是长回答） | ✅ 「在听…」→「识别中…」下面**只有本轮转写**，上一轮的回答 / 卡不再出现；占位符「松开发送 · 上滑取消」照旧。⚠ 截到层高约 339dp（> 318）：`sheetBody='none'` 那版收音初始只剩头区 224，字一到再长到 318，2.6s 时正撞上弹簧过冲 ⇒ 改成 `empty` 预留转写（本节 ① 的三态） | `A1-hold-input.png` |
+| 真语音轮（PC 喇叭） | ✅ 识别中 / 播报中形态与第一轮一致；承诺面（issue 卡）在场时记录区变矮、层随之上移，头区仍完整 | `B-voice-hold-02.png`、`B-voice-after-04.png` |
+| 文字轮 → 深度调研（长任务 0.78）→ 答完 | ✅ 长任务期间层占满记录区（承诺面 + chips 把记录区压到 363dp，0.78 下限 402 ⇒ clamp）；答完内容贴底，**顶缘渐隐在场**：dump `voice-sheet-fade-top` [715,781] = 24dp 紧贴头区底，橙色「未覆盖」段落首行在渐隐里淡出 | `C1-answered.png`、`C2-scrolled-to-top.png/.xml` |
+| 内容区下拉 | ✅ 只滚动不收起（探针的兜底坐标落在内容区，正好验到这一格） | `C3-header-pull.png` |
+| 头区下拉收起 | ⬜ 本轮没验到：C1 静置 dump 失败（深度调研态光球在动）⇒ 探针用了「层贴底」的兜底坐标，而承诺面把层顶上去了，落点进了内容区。第一轮 `06-header-pull` 已验 | — |
+
+`empty` 预留转写那一改（三态）本地：`presence` / `voiceSheetFollow`（+1 层高断言：empty 与草稿出现后同为 318、settled 264）/ `assistantPresence` / `stopPlaybackUi` / `presenceFixtures` 全绿；真机复验见 §9.6。

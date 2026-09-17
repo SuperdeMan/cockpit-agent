@@ -111,18 +111,18 @@ export function VoiceSheet(props: VoiceSheetProps) {
   const { p, fontScale, snapshot, turn, containerHeight } = props
   const open = snapshot.input === 'voice-sheet' && containerHeight > 0
   const driving = props.driving
-  // 内容区画不画「当前这一轮」：判据在 derivePresence 的 `sheetBody`（收音初始草稿未出现 / 行车档答后回落 ⇒ 只剩头区），
-  // 这里只读结果。**层不消失**（常驻，§6），消失的是内容。
-  const bodyEmpty = snapshot.sheetBody === 'none'
+  // 内容区画不画「当前这一轮」：判据在 derivePresence 的 `sheetBody`（收音初始草稿未出现 = empty，只是不画、层高照旧预留转写；
+  // 行车档答后回落 = settled，只剩头区），这里只读结果。**层不消失**（常驻，§6），消失的是内容。
+  const bodyEmpty = snapshot.sheetBody !== 'turn'
   // B4-13 缺陷 A：detent 是比例，表达不了「内容有固有最小高」——行车 / 泊车都过 sheetHeightDp 的下限
-  // （判据与真机容器读数都在 ui/layout/sheetHeight.ts）。内容区为空时主体 0。
+  // （判据与真机容器读数都在 ui/layout/sheetHeight.ts）。只有 settled 主体 0。
   const target = sheetHeightDp({
     detent: snapshot.sheetDetent,
     containerH: containerHeight,
     driving,
     split: props.split,
     fontScale,
-    terse: bodyEmpty,
+    terse: snapshot.sheetBody === 'settled',
   })
   // 挂载态比 open 晚 COLLAPSE_MS 关掉：让收起动画播完再卸载
   const [mounted, setMounted] = useState(open)

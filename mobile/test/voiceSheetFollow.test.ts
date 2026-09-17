@@ -17,6 +17,7 @@ jest.mock('react-native-reanimated', () => require('./support/reanimatedMock'))
 import { VoiceSheet, type VoiceSheetProps } from '@/features/chat/VoiceSheet'
 import { derivePresence, type PresenceInput, type PresenceSnapshot } from '@/core/presence/presence'
 import { AuroraOrb, StreamCursor } from '@/ui/aurora'
+import * as sheetHeightMod from '@/ui/layout/sheetHeight'
 import { paletteOf } from '@/ui/theme'
 
 void [Modal, ScrollView]
@@ -250,7 +251,7 @@ test('横屏 split：头区（含可点大球）在左、滚动区在右，转�
 // ── ⑤ 收音初始（草稿未出现）与顶缘渐隐（2026-09-17 真机轮之后补）──
 test('收音中、本轮草稿未出现：上一轮的回答与卡不渲染，头区「在听…」仍在', async () => {
   const s = snap({ ptt: 'recording', voice: { turnSource: 'ptt', override: null, answer: true, card: true, draft: false } })
-  expect(s.sheetBody).toBe('none')
+  expect(s.sheetBody).toBe('empty')
   const view = await mount(sheet({
     snapshot: s, draftUserId: null,
     turn: { user: user('u-prev', '导航去公司'), assistant: assistant('a-prev', '已规划', { uiCard: { type: 'route_plan', origin: 'A', destination: 'B' } }) },
@@ -272,4 +273,33 @@ test('顶缘渐隐只在滚动区离开顶部后出现，回到顶部即撤', as
     await scrollTo(view, 0)
     expect(view.root.findAllByProps({ testID: 'voice-sheet-fade-top' })).toHaveLength(0)
   } finally { await act(async () => { view.unmount() }) }
+})
+
+// ── ⑥ 收音初始层高预留转写（真机 A1：empty 时若只剩头区，字一到层再长 224 → 318，弹簧过冲被截到）──
+// reanimated 手写 mock 的 useSharedValue 每次渲染都是新对象，样式里的层高读不到；这里旁观 sheetHeightDp 的入参与返回值
+// （babel 把命名导入编成 `_mod.sheetHeightDp(...)`，spyOn 模块导出即可截到）。
+test('收音初始（empty）：层高按 0.4 档预留转写，与草稿出现后同高；行车回落（settled）才只剩头区', async () => {
+  const spy = jest.spyOn(sheetHeightMod, 'sheetHeightDp')
+  const last = () => ({ terse: spy.mock.calls.at(-1)![0].terse, height: spy.mock.results.at(-1)!.value as number })
+  try {
+    const fresh = snap({ ptt: 'recording', voice: { turnSource: 'ptt', override: null, answer: true, card: true, draft: false } })
+    const a = await mount(sheet({ snapshot: fresh, containerHeight: 600, turn: { user: user('u-prev', '上一轮'), assistant: assistant('a-prev', '答') } }))
+    try {
+      expect(last()).toEqual({ terse: false, height: 318 }) // 泊车 0.4 档下限（600 × 0.4 = 240 < 318）
+    } finally { await act(async () => { a.unmount() }) }
+    const drafted = snap({ ptt: 'recording', partial: '附近', voice: { turnSource: 'ptt', override: null, answer: false, card: false, draft: true } })
+    const b = await mount(sheet({ snapshot: drafted, containerHeight: 600, draftUserId: 'u-d', turn: { user: user('u-d', '附近'), assistant: null } }))
+    try {
+      expect(last()).toEqual({ terse: false, height: 318 })
+    } finally { await act(async () => { b.unmount() }) }
+    const settled = snap({
+      driving: true, identity: 'trusted-tablet',
+      voice: { turnSource: 'handsfree', override: null, answer: true, card: false, answeredAt: NOW - 10_000 },
+    })
+    expect(settled.sheetBody).toBe('settled')
+    const c = await mount(sheet({ snapshot: settled, driving: true, containerHeight: 600, turn: { user: user('u1', '打开车窗'), assistant: assistant('a1', '好的') } }))
+    try {
+      expect(last()).toEqual({ terse: true, height: 264 }) // 行车 chrome 112 + 头区 152，主体 0
+    } finally { await act(async () => { c.unmount() }) }
+  } finally { spy.mockRestore() }
 })

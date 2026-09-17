@@ -487,7 +487,7 @@ describe('2026-09-17：层内胶囊文案（sheetCapsuleText，设计 §5）—�
   })
 })
 
-describe('2026-09-17：收音初始（草稿未出现）层内容为空、档位 0.4（sheetBody，设计 §9.4）', () => {
+describe('2026-09-17：收音初始（草稿未出现）层内容为空但预留转写、档位 0.4；行车回落只剩头区（sheetBody 三态，设计 §9.4）', () => {
   // 真机 02-hold-input：按住说话那一瞬「在听…」下面挂着上一轮的路线卡、层按上一轮的卡升到 0.78——
   // currentTurn 在第一段 partial 之前仍是上一轮。收音中且本轮草稿未出现 ⇒ 上一轮的回答 / 卡片不算数。
   const prev = { turnSource: 'ptt' as const, override: null, answer: true, card: true }
@@ -496,7 +496,7 @@ describe('2026-09-17：收音初始（草稿未出现）层内容为空、档位
       const s = derivePresence(base({ ...over, voice: { ...prev, draft: false } }))
       expect(s.input).toBe('voice-sheet')
       expect(s.sheetDetent).toBe(0.4)
-      expect(s.sheetBody).toBe('none')
+      expect(s.sheetBody).toBe('empty')
     }
   })
   test('草稿一出现就是新一轮：内容区照常，档位按本轮（无回答 ⇒ 0.4）', () => {
@@ -515,13 +515,13 @@ describe('2026-09-17：收音初始（草稿未出现）层内容为空、档位
   test('文字世界（没有 voice）不涉及：收音中 sheetBody 仍是 turn', () => {
     expect(derivePresence(base({ ptt: 'recording' })).sheetBody).toBe('turn')
   })
-  test('行车档答后回落（detent 回 0.4、不忙、不收音）⇒ none；有卡 ⇒ 0.78 且 turn（一屏一卡要看得见）', () => {
+  test('行车档答后回落（detent 回 0.4、不忙、不收音）⇒ settled；有卡 ⇒ 0.78 且 turn（一屏一卡要看得见）', () => {
     const settled = derivePresence(base({
       driving: true, identity: 'trusted-tablet',
       voice: { turnSource: 'handsfree', override: null, answer: true, card: false, answeredAt: NOW - 10_000 },
     }))
     expect(settled.sheetDetent).toBe(0.4)
-    expect(settled.sheetBody).toBe('none')
+    expect(settled.sheetBody).toBe('settled')
     const withCard = derivePresence(base({
       driving: true, identity: 'trusted-tablet',
       voice: { turnSource: 'handsfree', override: null, answer: true, card: true, answeredAt: NOW - 10_000 },
