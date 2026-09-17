@@ -162,13 +162,27 @@ export interface Transport {
   sendIfOpen?(frame: object): boolean
 }
 
-/** 定位桥（expo-location 实现在 core/location；测试注入 fake）。
+/** 最近一次取坐标的读数（AR08 时间线 `location_acquired` 的 detail；不含坐标本身） */
+export interface LocationAcquisition {
+  /** cached / fresh / stale / none（fixPolicy.ts 的 FixSource） */
+  source: string
+  /** gps / network / fused / passive / gms；没有 ⇒ 空串 */
+  provider: string
+  /** 坐标产生到发送的年龄（ms）；不知道 ⇒ -1 */
+  ageMs: number
+  /** 为拿它真的等了多久（ms） */
+  waitedMs: number
+}
+
+/** 定位桥（core/location 实现；测试注入 fake）。
  *  refreshMeta 拿不到坐标时返回 {}（照发不带——闸认不准就放行，Q4 判据）。 */
 export interface LocationBridge {
   isEnabled(): boolean
   refreshMeta(): Promise<Record<string, string>>
   /** 征询同意后启用定位（含系统权限申请）；成功返回位置 meta，失败 null */
   enable(): Promise<Record<string, string> | null>
+  /** 最近一次 refreshMeta / enable 的取值读数；可选——fake 与旧实现不提供 */
+  lastAcquisition?(): LocationAcquisition | null
 }
 
 /** 播报端口（core/voice/speech.ts 实现；测试注入 fake）。
@@ -804,6 +818,13 @@ export class SessionCore {
       if (preparation.location) {
         const found = await preparation.location()
         if (!this.requestLive(request)) return
+        // AR08 时间线：这一轮的坐标是怎么来的（来源 / provider / 年龄 / 等了多久）。
+        // 2026-09-16 在家答出公司地址那种事，只有这条标签能当场说清是哪份缓存
+        const acq = this.deps.location.lastAcquisition?.()
+        if (acq) {
+          const age = acq.ageMs >= 0 ? `${Math.round(acq.ageMs / 1000)}s` : '?'
+          this.markTurn(request.bubbleId, 'location_acquired', `${acq.source}:${acq.provider || '-'}:${age}:wait${Math.round(acq.waitedMs)}`)
+        }
         if (found === null && preparation.requireLocation) {
           this.failRequest(request, '没有获取到当前位置。您可以在系统设置中开启定位权限，或直接告诉我城市或地点。')
           return

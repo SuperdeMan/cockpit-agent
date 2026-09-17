@@ -20,6 +20,7 @@ export type TimelineEvent =
   | 'capture_started'
   | 'endpoint_detected'
   | 'asr_final'
+  | 'location_acquired'
   | 'request_sent'
   | 'first_useful_text'
   | 'tts_text_sent'
@@ -37,6 +38,7 @@ export const EVENT_DOC: Record<TimelineEvent, string> = {
   capture_started: '物理采集真的开始（麦租约拿到）',
   endpoint_detected: 'VAD 判定说完（不等于用户真的说完，声学标注另记）',
   asr_final: '客户端收到有效最终转写',
+  location_acquired: '发送前取到的坐标是怎么来的：来源(cached/fresh/stale/none)·provider·年龄·等了多久；只有这些标签，不含坐标',
   request_sent: '主链帧真的发出（不是入队、不是点了发送）',
   first_useful_text: '首段可作回答/合法澄清的文本到客户端（loading、空白、安慰话术不算）',
   tts_text_sent: '本段有效文本送去合成',

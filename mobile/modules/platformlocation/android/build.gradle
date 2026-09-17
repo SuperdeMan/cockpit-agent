@@ -1,0 +1,22 @@
+// 系统定位缓存 / 单次定位的原生桥（2026-09-17，定位来源复盘）。只做两件事：
+//   ① 读 LocationManager 各 provider（gps / network / fused / passive）的 last-known 位置与单调时钟年龄；
+//   ② 向 network + gps 两个 provider 各要一次新定位（LocationManager.getCurrentLocation，API 30+），谁先到用谁。
+// 为什么不用 expo-location：它只走 GMS FusedLocationProviderClient——这台 OPPO 上 GMS 的 fused 缓存三天没动、
+// HIGH_ACCURACY 请求只挂 gps provider，室内永远拿不到；而系统 network provider 每 5 分钟都有新定位（dumpsys location）。
+// 取值策略在 src/core/location/fixPolicy.ts；这里只透传事实，不判定。
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.xiaozhou.platformlocation'
+version = '0.1.0'
+
+android {
+  namespace "com.xiaozhou.platformlocation"
+  // ⚠ 这两行不是样板（坑账 §9.45②）：缺 versionName 时报错在 :expo 头上。
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}

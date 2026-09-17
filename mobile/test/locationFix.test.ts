@@ -5,6 +5,7 @@ import {
   FRESH_FIX_MAX_AGE_MS,
   REFRESH_AFTER_MS,
   acquireFix,
+  pickFreshest,
   withinBudget,
   type Fix,
   type FixDeps,
@@ -208,4 +209,25 @@ test('skipWait 时缓存够新仍走缓存：跳过的只是等待，不是第�
   const r = await acquireFix(deps, { skipWait: true })
   expect(r.source).toBe('cached')
   expect(calls.current).toBe(0)
+})
+
+// ── 系统各 provider 的 last-known 里挑最新鲜的（2026-09-17 定位来源复盘）──
+const pf = (provider: string, ageMs: number, accuracy: number | null = 30, lat = 22.54, lng = 113.94) =>
+  ({ provider, latitude: lat, longitude: lng, accuracy, ageMs })
+
+test('pickFreshest：年龄最小者胜，与 provider 顺序无关——GMS fused 那份三天前的缓存排不到前面', () => {
+  const fixes = [pf('gps', 6 * 24 * 3600_000), pf('network', 5 * 60_000), pf('fused', 3 * 24 * 3600_000), pf('passive', 5 * 60_000 + 10)]
+  expect(pickFreshest(fixes)?.provider).toBe('network')
+})
+
+test('pickFreshest：maxAge 之外的不要；同龄取精度更好的；非法 / 空值坐标跳过', () => {
+  expect(pickFreshest([pf('network', 90_000)], 60_000)).toBeNull()
+  expect(pickFreshest([pf('network', 1_000, 44), pf('gps', 1_000, 12)], 60_000)?.provider).toBe('gps')
+  expect(pickFreshest([pf('network', 1_000, null), pf('gps', 1_000, 500)], 60_000)?.provider).toBe('gps')
+  expect(pickFreshest([pf('network', 1_000, 30, 0, 0), pf('gps', 5_000, 30, 91, 0), pf('passive', 5_000, 30, Number.NaN, 1)])).toBeNull()
+  expect(pickFreshest([])).toBeNull()
+})
+
+test('pickFreshest：负年龄（时钟抖动）按 0 处理，不会因此被判成未来而丢掉', () => {
+  expect(pickFreshest([pf('network', -50)], 60_000)?.provider).toBe('network')
 })
