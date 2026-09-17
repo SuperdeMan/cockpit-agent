@@ -486,3 +486,50 @@ describe('2026-09-17：层内胶囊文案（sheetCapsuleText，设计 §5）—�
     expect(sheetCapsuleText(derivePresence(base()))).toBeNull()
   })
 })
+
+describe('2026-09-17：收音初始（草稿未出现）层内容为空、档位 0.4（sheetBody，设计 §9.4）', () => {
+  // 真机 02-hold-input：按住说话那一瞬「在听…」下面挂着上一轮的路线卡、层按上一轮的卡升到 0.78——
+  // currentTurn 在第一段 partial 之前仍是上一轮。收音中且本轮草稿未出现 ⇒ 上一轮的回答 / 卡片不算数。
+  const prev = { turnSource: 'ptt' as const, override: null, answer: true, card: true }
+  test('收音中、无草稿：上一轮有卡也回 0.4，内容区为空', () => {
+    for (const over of [{ ptt: 'recording' }, { ptt: 'finalizing' }, { hfEnabled: true, hfUsable: true, hfFsm: 'LISTENING' }] as Partial<PresenceInput>[]) {
+      const s = derivePresence(base({ ...over, voice: { ...prev, draft: false } }))
+      expect(s.input).toBe('voice-sheet')
+      expect(s.sheetDetent).toBe(0.4)
+      expect(s.sheetBody).toBe('none')
+    }
+  })
+  test('草稿一出现就是新一轮：内容区照常，档位按本轮（无回答 ⇒ 0.4）', () => {
+    const s = derivePresence(base({ ptt: 'recording', partial: '附近', voice: { turnSource: 'ptt', override: null, answer: false, card: false, draft: true } }))
+    expect(s.sheetBody).toBe('turn')
+    expect(s.sheetDetent).toBe(0.4)
+  })
+  test('不在收音（思考 / 播报 / 点开）：上一轮的回答与卡照常决定档位，内容区照常', () => {
+    const speaking = derivePresence(base({ speaking: true, voice: { ...prev, draft: false } }))
+    expect(speaking.sheetDetent).toBe(0.78)
+    expect(speaking.sheetBody).toBe('turn')
+    const opened = derivePresence(base({ voice: { turnSource: 'text', override: 'open', answer: true, card: false, draft: false } }))
+    expect(opened.sheetDetent).toBe(0.62)
+    expect(opened.sheetBody).toBe('turn')
+  })
+  test('文字世界（没有 voice）不涉及：收音中 sheetBody 仍是 turn', () => {
+    expect(derivePresence(base({ ptt: 'recording' })).sheetBody).toBe('turn')
+  })
+  test('行车档答后回落（detent 回 0.4、不忙、不收音）⇒ none；有卡 ⇒ 0.78 且 turn（一屏一卡要看得见）', () => {
+    const settled = derivePresence(base({
+      driving: true, identity: 'trusted-tablet',
+      voice: { turnSource: 'handsfree', override: null, answer: true, card: false, answeredAt: NOW - 10_000 },
+    }))
+    expect(settled.sheetDetent).toBe(0.4)
+    expect(settled.sheetBody).toBe('none')
+    const withCard = derivePresence(base({
+      driving: true, identity: 'trusted-tablet',
+      voice: { turnSource: 'handsfree', override: null, answer: true, card: true, answeredAt: NOW - 10_000 },
+    }))
+    expect(withCard.sheetDetent).toBe(0.78)
+    expect(withCard.sheetBody).toBe('turn')
+    // 泊车不回落
+    const parked = derivePresence(base({ voice: { turnSource: 'ptt', override: 'open', answer: true, card: false, answeredAt: NOW - 10_000 } }))
+    expect(parked.sheetBody).toBe('turn')
+  })
+})

@@ -111,19 +111,18 @@ export function VoiceSheet(props: VoiceSheetProps) {
   const { p, fontScale, snapshot, turn, containerHeight } = props
   const open = snapshot.input === 'voice-sheet' && containerHeight > 0
   const driving = props.driving
-  const capturing = snapshot.capture === 'listening' || snapshot.capture === 'recognizing'
-  // 行车档答后回落（§5.2 规则 3 行车条款）：detent 已回 0.4 且此刻不忙 ⇒ 层里只剩头区（球 + 胶囊）。
-  // **层不消失**（常驻，§6），消失的是内容。判据在 derivePresence 的 sheetDetent，这里只读结果。
-  const terse = driving && snapshot.sheetDetent === 0.4 && snapshot.agent === 'idle' && !capturing
+  // 内容区画不画「当前这一轮」：判据在 derivePresence 的 `sheetBody`（收音初始草稿未出现 / 行车档答后回落 ⇒ 只剩头区），
+  // 这里只读结果。**层不消失**（常驻，§6），消失的是内容。
+  const bodyEmpty = snapshot.sheetBody === 'none'
   // B4-13 缺陷 A：detent 是比例，表达不了「内容有固有最小高」——行车 / 泊车都过 sheetHeightDp 的下限
-  // （判据与真机容器读数都在 ui/layout/sheetHeight.ts）。terse 时主体 0。
+  // （判据与真机容器读数都在 ui/layout/sheetHeight.ts）。内容区为空时主体 0。
   const target = sheetHeightDp({
     detent: snapshot.sheetDetent,
     containerH: containerHeight,
     driving,
     split: props.split,
     fontScale,
-    terse,
+    terse: bodyEmpty,
   })
   // 挂载态比 open 晚 COLLAPSE_MS 关掉：让收起动画播完再卸载
   const [mounted, setMounted] = useState(open)
@@ -158,6 +157,11 @@ export function VoiceSheet(props: VoiceSheetProps) {
   const offsetRef = useRef(0)
   const viewportRef = useRef(0)
   const pendingFollowRef = useRef(true)
+  // 滚动区离开了顶部（真机 `05-sheet-open`：跟到末尾后被裁的首行紧贴头区，像裁切故障）⇒ 顶缘也给一条渐隐，
+  // 与底缘同高同色；只在离开顶部时画——贴顶时首行就在 paddingTop 之下，压一层渐隐会把它糊掉。
+  // 只在跨过 0 的那一刻 setState（不是每个 scroll 事件都重渲）。
+  const [scrolledAway, setScrolledAway] = useState(false)
+  const scrolledAwayRef = useRef(false)
   const userId = turn.user?.id ?? ''
   const assistantId = turn.assistant?.id ?? ''
   useEffect(() => {
@@ -279,8 +283,8 @@ export function VoiceSheet(props: VoiceSheetProps) {
     </View>
   )
 
-  // ── 可滚内容区：转写 → 思考 → 回答 → 已打断 → chips → 卡片；terse 时整个不渲染 ──
-  const content = terse ? null : (
+  // ── 可滚内容区：转写 → 思考 → 回答 → 已打断 → chips → 卡片；sheetBody='none' 时整个不渲染 ──
+  const content = bodyEmpty ? null : (
     <>
       {/* 转写区：大字 20pt。T4 起它是草稿气泡（增量沉淀），定稿后仍是同一条。
           打磨批 A（P07）：收音中还没识别出字 ⇒ **不渲染光标**（一根孤零零的光标条像残影）；
@@ -367,6 +371,11 @@ export function VoiceSheet(props: VoiceSheetProps) {
             const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
             scrollY.set(contentOffset.y)
             offsetRef.current = Math.max(0, Math.round(contentSize.height - layoutMeasurement.height - contentOffset.y))
+            const away = contentOffset.y > 1
+            if (away !== scrolledAwayRef.current) {
+              scrolledAwayRef.current = away
+              setScrolledAway(away)
+            }
           }}
           onContentSizeChange={onContentSizeChange}
           scrollEventThrottle={16}
@@ -387,6 +396,20 @@ export function VoiceSheet(props: VoiceSheetProps) {
           experimental_backgroundImage: `linear-gradient(to bottom, ${fadeFrom}, ${shellColor})`,
         }}
       />
+      {scrolledAway ? (
+        <View
+          pointerEvents="none"
+          testID="voice-sheet-fade-top"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            top: 0,
+            height: SHEET_BOTTOM_FADE_DP,
+            experimental_backgroundImage: `linear-gradient(to bottom, ${shellColor}, ${fadeFrom})`,
+          }}
+        />
+      ) : null}
     </View>
   )
 

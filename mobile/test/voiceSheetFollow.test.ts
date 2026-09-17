@@ -246,3 +246,30 @@ test('横屏 split：头区（含可点大球）在左、滚动区在右，转�
     expect(onOrbTap).toHaveBeenCalledTimes(1)
   } finally { await act(async () => { view.unmount() }) }
 })
+
+// ── ⑤ 收音初始（草稿未出现）与顶缘渐隐（2026-09-17 真机轮之后补）──
+test('收音中、本轮草稿未出现：上一轮的回答与卡不渲染，头区「在听…」仍在', async () => {
+  const s = snap({ ptt: 'recording', voice: { turnSource: 'ptt', override: null, answer: true, card: true, draft: false } })
+  expect(s.sheetBody).toBe('none')
+  const view = await mount(sheet({
+    snapshot: s, draftUserId: null,
+    turn: { user: user('u-prev', '导航去公司'), assistant: assistant('a-prev', '已规划', { uiCard: { type: 'route_plan', origin: 'A', destination: 'B' } }) },
+  }))
+  try {
+    expect(one(view, 'voice-sheet-capsule').findAll((n) => n.props.children === '在听…').length).toBeGreaterThan(0)
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-transcript' })).toHaveLength(0)
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-answer' })).toHaveLength(0)
+  } finally { await act(async () => { view.unmount() }) }
+})
+
+test('顶缘渐隐只在滚动区离开顶部后出现，回到顶部即撤', async () => {
+  const view = await mount(sheet())
+  try {
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-fade-top' })).toHaveLength(0)
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-fade' }).length).toBeGreaterThan(0) // 底缘常驻
+    await scrollTo(view, 120)
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-fade-top' }).length).toBeGreaterThan(0)
+    await scrollTo(view, 0)
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-fade-top' })).toHaveLength(0)
+  } finally { await act(async () => { view.unmount() }) }
+})

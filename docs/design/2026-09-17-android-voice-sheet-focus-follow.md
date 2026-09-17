@@ -150,12 +150,37 @@
 | E `sheetCapsuleText` 直出 partial | `presence` 1 + `voiceSheetFollow` 1 |
 | F 按住态不区分行车 | `composerHint` 2/7 |
 
-### 9.3 真机
+### 9.3 真机（OPPO test 机，2026-09-17 11:57–12:00）
 
-**未做。** 原因：同一工作树 / 同一构建镜像此刻被另一条会话占用——它未提交的改动里有新原生模块 `mobile/modules/platformlocation/`，
-且 `D:\Android\builds\xiaozhou-mobile` 镜像 10:48 刚被刷新、同一分钟起了一个 Gradle JVM（原生构建必须串行、别人的 Gradle 不停）。
-从这棵脏树出包会把对方半成品的原生模块一起打进去，包身份也不是本批的 SHA。
+第一轮时另一条会话占着共享树与构建镜像（新原生模块 `platformlocation` + Gradle 在跑），没有出包。它提交在本批之上并从 `f1a99063` 出了清洁包
+（`dbceefda` 是它的祖先、之后本批目录零改动；装机 APK SHA-256 `9a2773aa…92ce` 与本地逐字相同，`lastUpdateTime 11:36:35`）⇒ 直接在它上面取证。
+证据目录 `%LOCALAPPDATA%\car-agent\artifacts\VS-20260917-f1a99063\`（`probe_vs.py` + `probe.log` + `<状态>-f1a990632.png/.xml`）。
+装置：唤醒 / 深链 / `input motionevent DOWN…UP` 按住 / ASCII 文字轮 + `xiaozhou://voice` 升层 / PC 喇叭用 Windows `Microsoft Huihui` 念一句中文
+喂手机麦克风（手机真听到了，识别成「但是，这里面来。哎妈。」——语料不对但链路是真的）。OPPO 外屏记录区 `voice-sheet-scope` [0,289][988,1716] = **519dp**
+（§2 表的 578.67 是 Xiaomi 外屏；OPPO 上三档 = 318 下限 / 348 下限 / 405 比例）。
 
-下一步（等对方构建结束、树干净或用本批 SHA 的 worktree 出清洁包）：`scripts\build_mobile.ps1 -Release -Variant prod`（内存紧加 `-CompileJobs 3`）→
-`scripts\mobile_device.ps1 -Role test -Install <apk>` → §7 的真机清单：`xiaozhou://voice` 升层后按住说一句，截识别中 / 思考中 / 流式中三态
-（球在头区不动、视口停在回答末尾）；从头区下拉收起；输入框闲时与按住时的占位符。真机层高读数对照 §2 表：泊车 0.4 档应为 **318**（09-11 是 231）。
+| 格 | 结果 | 证据 |
+|---|---|---|
+| 输入框闲时占位符 | ✅ dump 文本 `composer-input` = 「输入文字，或按住说话…」 | `01-chat-idle.xml/.png` |
+| 按住空输入框 | ✅ 层升起、头区「在听…」；输入框「松开发送 · 上滑取消」+ accent 描边。⚠ **内容区露出上一轮的路线卡、层按上一轮的卡升到 0.78**——收音初始 `currentTurn` 仍是上一轮（§9.4 ①） | `02-hold-input.png` |
+| 识别中（真语音） | ✅ 头区「● 识别中…」（不复读 partial）、转写在球下、其余为空；层高 (1717−845)/2.75 ≈ **317dp**（0.4 下限 318） | `03-voice-hold-03.png` |
+| 思考中 | ✅ 「正在思考…」+ 转写 + 三点可见；Composer 合一键转「打断」 | `03-voice-after-02.png`、`04-text-02.png` |
+| 播报中 / 流式 | ✅ 「播报中」+ 停止播报键；回答在球下、视口停在末尾（转写滚出）；层高 ≈ **346dp**（0.62 下限 348）。⚠ 被裁的首行紧贴头区像裁切（§9.4 ②） | `03-voice-after-06.png`、`04-text-07.png` |
+| 答完静置 dump | ✅ `voice-sheet` 957px = **348.0dp**；`voice-sheet-header` 286px = 104dp（16 + 88，闲态无胶囊）；`voice-sheet-content` 528px = 192dp；`voice-sheet-answer` 自内容区顶起、底距内容区底 109px = 40dp（16 + 渐隐 24）⇒ 已贴底；transcript 不在 dump（滚出视口） | `05-sheet-open.xml/.png` |
+| 内容区下拉 450px | ✅ 内容上滚（看到更早段落）、层不收 | `06-content-pull.png` |
+| 头区下拉 500px | ✅ 层收起，记录完整可见 | `06-header-pull.png` |
+
+### 9.4 真机轮之后的两处补丁（同日）
+
+| # | 症状 | 判据 | 落点 |
+|---|---|---|---|
+| ① | 按住说话那一瞬「在听…」下面挂着上一轮的回答 / 卡，层还按上一轮的卡升到 0.78。旧布局这段同样是上一轮内容，只是折在 0.4 档之下看不见；跟底把它滚到了眼前 | **收音中而本轮草稿未出现 ⇒ 上一轮的回答 / 卡不算数：内容区为空、档位 0.4**；草稿（第一段 partial）一出现就是新一轮。`VoiceFacts.draft`（收集器：当前轮用户气泡 id == `draftUserId`）→ `derivePresence` 输出 `sheetBody: 'turn' \| 'none'`（行车档答后回落也并入这个字段，VoiceSheet 不再自己算 terse） | `presence.ts`、`usePresence.ts`、`VoiceSheet.tsx`；`presence.test` +5、`voiceSheetFollow.test` +1、`assistantPresence.test` +1（收集器接线）、fixture `listening-fresh` |
+| ② | 跟到末尾后被裁的首行紧贴头区，像裁切故障 | 滚动区离开顶部时顶缘也画一条 24dp 渐隐（与底缘同色同高），回到顶部即撤——贴顶时首行就在 paddingTop 之下，常驻会把它糊掉 | `VoiceSheet.tsx`（`voice-sheet-fade-top`）；`voiceSheetFollow.test` +1 |
+
+### 9.5 补丁后的验证
+
+本地（工作树干净，基线 `1dc8b79d`）：mobile `npx jest` **103 suites / 1084 passed**（补丁前 1076）、`tsc` 0、`eslint` 0。
+反向验证（各改一处只跑对应文件，按字节恢复）：G `fresh` 恒 false ⇒ `presence` 1 + `voiceSheetFollow` 1 + `assistantPresence` 1；
+H 收集器不喂 `draft` ⇒ `assistantPresence` 1（恰收集器接线那条）；I 顶缘渐隐常驻 ⇒ `voiceSheetFollow` 1。
+
+真机复验：（出包装机后回填）

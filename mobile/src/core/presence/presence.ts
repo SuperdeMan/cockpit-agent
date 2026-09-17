@@ -33,6 +33,9 @@ export interface VoiceFacts {
   card: boolean
   /** 本轮 final 到达时刻（`turnMeta[id].finalAt`）；行车档 +3s 回落读它。0 / 缺省 = 还没答完 */
   answeredAt?: number
+  /** 当前轮的用户气泡就是转写草稿（`SessionState.draftUserId`）——收音中它一出现就是新一轮开始了（2026-09-17）。
+   *  缺省 false = 旧调用方 / 文字世界 */
+  draft?: boolean
 }
 
 /** 自适应 detent（方案 §5.2 规则 3）：只录音 / 有回答 / 有主卡或长任务 */
@@ -187,6 +190,10 @@ export interface PresenceSnapshot {
   input: 'voice-sheet' | 'composer' | 'none'
   /** 语音层高度档（input==='voice-sheet' 时有意义） */
   sheetDetent: SheetDetent
+  /** 语音层内容区画不画「当前这一轮」（2026-09-17）：`none` = 只剩头区（球 + 胶囊）——
+   *  ① 收音中而本轮草稿还没出现（第一段 partial 之前）：上一轮的回答 / 卡片不该亮在「在听…」下面；
+   *  ② 行车档答后回落（§5.2 规则 3 行车条款：detent 已回 0.4 且此刻不忙）。层高下限的 `terse` 入参读它 */
+  sheetBody: 'turn' | 'none'
   /** 最近一轮的发起方（S2S 告知条读它；没有轮 = text） */
   turnSource: TurnSource
 }
@@ -366,8 +373,17 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
   // 有卡 / 长任务那一档压过它（一屏一卡要看得见）。非行车不受影响——这是行车条款。
   const settled =
     i.driving && !!voice?.answeredAt && agent !== 'speaking' && i.now - voice.answeredAt >= DRIVING_SHEET_SETTLE_MS
+  // 收音中而本轮草稿还没出现（第一段 partial 之前）：`currentTurn` 此刻仍是**上一轮**，它的回答 / 卡片不该
+  // 亮在「在听…」下面、也不该把层撑到 0.62 / 0.78（2026-09-17 真机：按住说话那一瞬「在听…」下挂着上一轮的路线卡）。
+  // 草稿一出现就是新一轮，照常。文字世界（没有 voice）不涉及。
+  const fresh = capturing && !!voice && !voice.draft
+  const answer = !!voice?.answer && !fresh
+  const card = !!voice?.card && !fresh
   const sheetDetent: SheetDetent =
-    commitment.some((c) => c.kind === 'task') || !!voice?.card ? 0.78 : voice?.answer && !settled ? 0.62 : 0.4
+    commitment.some((c) => c.kind === 'task') || card ? 0.78 : answer && !settled ? 0.62 : 0.4
+  // 内容区画不画：收音初始为空；行车档回落（detent 已回 0.4 且此刻不忙）为空——**层不消失**（常驻，§6），消失的是内容
+  const sheetBody: PresenceSnapshot['sheetBody'] =
+    fresh || (i.driving && sheetDetent === 0.4 && agent === 'idle' && !capturing) ? 'none' : 'turn'
 
   return {
     now: i.now,
@@ -384,6 +400,7 @@ export function derivePresence(i: PresenceInput): PresenceSnapshot {
     ...(capsule ? { capsule } : {}),
     input,
     sheetDetent,
+    sheetBody,
     turnSource: voice?.turnSource ?? 'text',
   }
 }

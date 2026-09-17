@@ -82,7 +82,7 @@ function useChangedAt<T>(value: T): number {
 /* eslint-enable react-hooks/refs, react-hooks/purity */
 
 export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, interactive = true, supportRoute = false }: UsePresenceOpts): PresenceSnapshot {
-  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt } =
+  const { messages, pendingOps, connStatus, pendingLocationText, queued, uncertainIds, turnMeta, drivingEdge, drivingDismissedAt, draftUserId } =
     useStore(core.store)
   const { settings } = useStore(settingsStore)
 
@@ -123,6 +123,8 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
     card: !!turn.assistant?.uiCard,
     // B4-11：本轮 final 到达时刻（行车档 +3s 内容回落读它）。0 = 还没答完
     answeredAt: (latestTurnId && turnMeta[latestTurnId]?.finalAt) || 0,
+    // 2026-09-17：当前轮的用户气泡是不是转写草稿——收音中它出现之前 currentTurn 还是上一轮（判据在 derivePresence）
+    draft: !!turn.user && !!draftUserId && turn.user.id === draftUserId,
   }
 
   // 在飞轮 + 过程区

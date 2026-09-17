@@ -55,6 +55,8 @@ export function presenceFixtures(): PresenceFixture[] {
       voice: { turnSource: 'ptt', override: null, answer: true, card: false },
     }),
     mk('sheet-card', { speaking: true, voice: { turnSource: 'handsfree', override: null, answer: true, card: true } }),
+    // 2026-09-17：上一轮有卡、刚按下说话（草稿未出现）⇒ 层只剩头区、档位 0.4，不把上一轮的卡亮在「在听…」下面
+    mk('listening-fresh', { ptt: 'recording', audioCapture: { micActive: true, asrUploading: true, s2sUploading: false }, voice: { turnSource: 'ptt', override: null, answer: true, card: true, draft: false } }),
     mk('sheet-dismissed', {
       turn: { pending: false, streaming: true, processActive: false, processLabel: '', processSince: 0 },
       voice: { turnSource: 'ptt', override: 'dismissed', answer: true, card: false },
