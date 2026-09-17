@@ -241,3 +241,17 @@ MiniMax-M3 照写；同一句在常驻包两轮给的是空槽 + `no_action` 重
 
 OPPO 上**留着候选包** `cc0ccef66-dirty`（设置页底行可见），没有换回 `97825faa6`：用户晚上要在家复测，旧包只会再答一次公司地址；
 要换回时装 `D:\Android\builds\apk\xiaozhou-companion-prod-release-97825faa6-20260916-1849.apk` 即可。未 commit / push / deploy。
+
+### 10.4 发布（2026-09-17，用户授权「其他你要全做」）
+
+- 提交：`0b66fbbc`（mobile：系统定位模块 + 取值档位 + 时间线标签）、`9fef1bcf`（服务端：坐标年龄判据 + locate 话术 + 范例）、
+  `f1a99063`（本页 §10 + 总表 + 历史）。push `cc0ccef6..f1a99063` 四条——**其中 `dbceefda` 是并行会话的语音层焦点跟随提交**
+  （10:59 落在同一工作树，mobile-only，其记录写明「真机验证待做」）；它在我的提交之下、无法单独推，随本批一起上了 main。
+- 部署：dry-run `dry_run` 零阻断（29s）→ apply `submitted`（138s）→ status `ok`、5/5 healthy、running = `f1a99063` → 首次 verify
+  全空 artifact（`20260917T032726Z-unknown.json`：紧跟 apply 之后远端事务锁未释放）→ `ps` 确认无持有者 → 重跑 **`verified`**
+  （`20260917T033352Z-f1a9906.json`，`minimax:MiniMax-M3`，84s）。CI 8/8 绿。生产基线 `97825faa` → `f1a99063`。
+- 清洁包：`xiaozhou-companion-prod-release-f1a990632-20260917-1135.apk`（clean 树，11m42s；APK SHA-256 `9a2773aa…92ce` 端本一致）
+  已装为 OPPO 常驻包（`lastUpdateTime 2026-09-17 11:36:35`，底行 `prod · f1a990632 · 2026-09-17 11:23`）。装机后「我现在在哪里」
+  （trace `c07024ba81bdc11f`）：`location_acquired(fresh:network:0s:wait58)`、`request_sent` +126ms、服务端 2.1s、
+  答「科技南一路深投控创智天地大厦」；发出 → 听到 2.8s。⚠ 这个包同时带着 `dbceefda` 的语音层 / 输入框改动，本轮只做了文字轮冒烟
+  （输入框占位「输入文字，或按住说话…」渲染正常、无崩溃），语音层本身按该会话的记录验收。

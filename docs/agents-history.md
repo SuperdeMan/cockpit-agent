@@ -9090,3 +9090,8 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   `request_sent` +141ms，地址从 09-16 的「深南大道9821号深铁金融科技大厦」（三天前的 GMS 缓存）变成「科技南一路深投控创智天地大厦」；
   天气轮 `fresh:network:107s:wait327`、+384ms。在家复测待用户；OPPO 留着候选包。
 - 未 commit / push / deploy / 出清洁包。装置：Kotlin 模块首次编译一次过；候选构建 15m01s。
+- **发布（用户「其他你要全做」）**：提交 `0b66fbbc` / `9fef1bcf` / `f1a99063`；push `cc0ccef6..f1a99063` 四条——多出的 `dbceefda` 是并行会话
+  10:59 落在同一工作树的语音层焦点跟随提交（mobile-only、自带测试、记录写「真机验证待做」），在我的提交之下无法单独推，一并上了 main。
+  deploy dry-run 零阻断 → apply submitted → status 5/5、running = `f1a99063` → 首次 verify 全空（紧跟 apply 之后事务锁未释放）→ `ps`
+  无持有者 → 重跑 verified（`20260917T033352Z-f1a9906.json`）；CI 8/8。清洁包 `f1a990632`（SHA-256 `9a2773aa…92ce`）装为 OPPO 常驻包，
+  「我现在在哪里」`fresh:network:0s:wait58`、`request_sent` +126ms、答科技南一路。生产基线 `97825faa` → `f1a99063`。
