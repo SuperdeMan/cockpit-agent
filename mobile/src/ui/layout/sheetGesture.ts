@@ -39,3 +39,30 @@ export function sheetDragOffset(atTop: boolean, translationY: number): number {
   if (!atTop) return 0
   return Math.max(0, translationY)
 }
+
+/** 滚动区偏移多少以内算「在顶部」（dp） */
+export const SHEET_SCROLL_TOP_EPS = 1
+
+export interface SheetRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * 手势开始那一刻整层 Pan 该不该接管下拉（2026-09-17，设计 §4）。
+ * 内容区跟底之后流式期间滚动区常在**底部**，只看 `scrollOffset ≤ 1` 会让整层下拉变成滚动区上滚、收起手势失效。
+ * 所以把「手指落在哪」也算进去：落在滚动区**之外**（把手带 / 固定头区：球 + 胶囊——竖屏在上方、横屏在左列）⇒ 永远接管；
+ * 落在滚动区里 ⇒ 仍遵守 09-11 的「在顶部才接管」（否则和阅读上滚打架）。
+ * 触点与 `scrollRect` 都是相对 Pan 所在那个 View 的坐标（dp）；滚动区还没量到（null）时按「全是滚动区」处理——
+ * 那正是 09-11 的行为，量不到只会退回旧判据，不会多接管。
+ */
+export function sheetPanAtTop(i: { x: number; y: number; scrollRect: SheetRect | null; scrollOffset: number }): boolean {
+  const r = i.scrollRect
+  if (r && r.w > 0 && r.h > 0) {
+    const inside = i.x >= r.x && i.x < r.x + r.w && i.y >= r.y && i.y < r.y + r.h
+    if (!inside) return true
+  }
+  return i.scrollOffset <= SHEET_SCROLL_TOP_EPS
+}

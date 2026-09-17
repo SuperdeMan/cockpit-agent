@@ -1,5 +1,6 @@
 // mobile/src/ui/layout/sheetHeight.ts
-// 语音层高度判据（B4-13 缺陷 A / 方案 §6「一屏一卡」「目标 ≥56dp」；2026-09-11 下限扩到泊车）。
+// 语音层高度判据（B4-13 缺陷 A / 方案 §6「一屏一卡」「目标 ≥56dp」；2026-09-11 下限扩到泊车；
+// 2026-09-17 下限改按「固定头区 + 该档该看见的内容」算）。
 //
 // `sheetDetent`（0.4 / 0.62 / 0.78）是**比例**——它表达不了「内容有固有最小高」。
 // 2026-09-03 真机上两个同源症状：
@@ -13,27 +14,31 @@
 // **B5-12（泓舟 B4 真机轮原话①）**：底栏「收起 / 打断」整段撤掉——收起改为顶缘**把手带**下拖 /
 // 轻点（打断并进 Composer 的合一键）。把手带接替 `voice-sheet-collapse` 的 §6「目标 ≥56dp」演员身份
 // （testID 沿用，`target_probe` 与 B4 的读数表都不用改）⇒ 原来的三项 chrome「把手 12 + 底栏 17 +
-// 键 56」合并成一项「把手带 = 目标高」，**chrome 从 117 降到 88（行车、标准字号）**。
-// 这是缺陷 A 横屏半的第一个 lever（B4 §6.4：横屏底栏占 73dp，撤掉是净收益）。
+// 键 56」合并成一项「把手带 = 目标高」。
 //
 // **2026-09-11（用户：「上升幅度要按手机尺寸适配，光球可能被遮」）**：下限原来**只给行车档**，泊车
 // 一直是纯比例。矮容器上 0.4 × 容器装不下「把手带 48 + padding 32 + 球 88 + 胶囊」，球被层底裁掉——
 // 同一个 detent 在不同尺寸的手机上「完成程度」不一样，正是用户看到的那件事。泊车路径现在走同一条
-// `min(容器, max(比例, 下限))`，只是常量取泊车的（目标 48 / 球 88 / 回答 16pt）。主力机（外屏竖
-// 578.67dp）三档比例都高于下限 ⇒ **读数逐 dp 不变**；矮容器才由下限托住。
+// `min(容器, max(比例, 下限))`，只是常量取泊车的（目标 48 / 球 88 / 回答 16pt）。
 //
-// 「最小高」的定义：
-//   固定 chrome（把手带含一枚目标高 + ScrollView 上下 padding）
-//   + 球 + 胶囊（任何一档都要一眼看得见）
-//   + **该档的主体**（0.62 = 回答两行；0.78 = 行车压缩卡「标题 + ≤2 字段 + 主按钮」/ 泊车「回答两行 + 卡头」）。
-// 转写、chips、更长的回答是**可滚的附属**，不进最小高——它们本来就在 ScrollView 里。
-// 横屏车载（split，§6「40:60」）两列并排 ⇒ 取 max 不是相加。
+// **2026-09-17（用户：「光球有时被上面或下面挡住；识别文字上屏 / 思考中 / 内容生成中都会」）**：
+// 09-11 的下限只算「把手 + 球列」，**一行转写都没预留**——转写在 ScrollView 里排在球前面，多两行就把球推到
+// 层底之下；思考三点更在预留之外。这次 VoiceSheet 把球与胶囊做成**固定头区**（不进滚动区），
+// 转写 / 思考 / 回答进可滚内容区并跟底（设计 2026-09-17 §1–§3）。下限随之改成
+// 「chrome + 头区 + 该档该一眼看见的内容」：
+//   · chrome 现在**含底缘渐隐 24dp**（打磨批 A 加渐隐时刻意没进下限，结果是下限高度下最后一行永远压在渐隐里；
+//     内容区跟底之后那一行就是「最新内容」，必须在渐隐之上）；
+//   · 0.4 档（识别 / 思考）：转写 2 行 + 思考三点行；0.62 档：转写 1 行 + 回答 3 行（跟底后视口里是回答末尾，
+//     3 行是能读的最小窗）；0.78 档：泊车 = 0.62 主体 + 卡头，行车 = 压缩卡；
+//   · 下限随档位**单调不减**（矮容器上「回答到了、层反而缩」是不允许的），有测试钉住；
+//   · 行车回落（terse）内容区整个不渲染 ⇒ 主体 0，只剩 chrome + 头区。
+//
+// 横屏车载（split，§6「40:60」）头区在左列、内容区在右列 ⇒ 取 max 不是相加。
 //
 // 为什么住在 `ui/layout/` 而不是 `core/presence/presence.ts`（**对泓舟「写进 presence.test.ts」
-// 的一处偏离，理由在此**）：这些数是 **VoiceSheet 自己的排版常量**（把手 12 / padding 32 /
-// 底栏 17 / 球 120）加 `ui/tokens` 的 TARGET·TYPE，而全仓 `core/` 没有一处 import `ui/`
-// （`presence.ts` 头注写着「零 RN import」）。写进 core 就得在 core 里复制一份 tokens，
-// 那正是「声明源只留一份」要避免的。判据仍只有这一份，`VoiceSheet` 只读结果。
+// 的一处偏离，理由在此**）：这些数是 **VoiceSheet 自己的排版常量**（把手 / padding / 渐隐 / 球）加
+// `ui/tokens` 的 TARGET·TYPE，而全仓 `core/` 没有一处 import `ui/`（`presence.ts` 头注写着「零 RN import」）。
+// 写进 core 就得在 core 里复制一份 tokens，那正是「声明源只留一份」要避免的。判据仍只有这一份，`VoiceSheet` 只读结果。
 import type { FontScalePref } from '../../core/settings/store'
 import type { SheetDetent } from '../../core/presence/presence'
 import { TARGET, scale } from '../tokens'
@@ -41,9 +46,18 @@ import { TARGET, scale } from '../tokens'
 /** 层内大球直径：行车 120 / 泊车 88（§6）。**VoiceSheet 从这里读**，不再各写一份字面量 */
 export const SHEET_ORB = { driving: 120, parked: 88 } as const
 
+/** 层底缘的渐隐遮罩高度（dp）与滚动区多留的底部空白（打磨批 A / 评审 P06 / V2）：
+ *  答案在层底缘原来被硬切成半行字、无渐隐，读起来像裁切故障而不是「还能往下滚」。
+ *  住在这里而不是 VoiceSheet：它是下限的一项，判据文件不能反过来 import 组件。 */
+export const SHEET_BOTTOM_FADE_DP = 24
+
 /** VoiceSheet 的固定排版（逐条对应 `VoiceSheet.tsx` 的样式；改那边要同步改这里） */
 const SCROLL_PAD_DP = 32 // ScrollView contentContainerStyle padding 16（上 + 下）
-const GAP_DP = 12 // 组内 / 组间 gap（非 split 时 ScrollView 的 gap 也是 12）
+const GAP_DP = 12 // 组内 / 组间 gap（头区与内容区之间、内容区各项之间都是 12）
+/** 思考三点一行：6dp 点 + paddingVertical 4×2（`ThinkDots`），固定 dp 不跟字号 */
+const THINK_ROW_DP = 14
+/** 转写行高（20pt / lineHeight 28，行车泊车同一档） */
+const TRANSCRIPT_LINE_DP = 28
 
 /** 压缩卡（`DrivingCardSummary` + `CardShell`）的最小高 */
 function cardMinDp(fontScale: FontScalePref): number {
@@ -60,35 +74,67 @@ function parkedCardHeadDp(fontScale: FontScalePref): number {
   return 2 + 24 + scale(16, 'line', fontScale)
 }
 
+/** 固定 chrome：把手带（`minHeight` = 目标高，层内那枚 ≥48/56dp 演员）+ 内容区上下 padding + 底缘渐隐 */
+function chromeDp(target: number, fontScale: FontScalePref): number {
+  return scale(target, 'target', fontScale) + SCROLL_PAD_DP + SHEET_BOTTOM_FADE_DP
+}
+
+/** 头区：球 + gap + 胶囊一行（body 15pt） */
+function orbColDp(orb: number, fontScale: FontScalePref): number {
+  return orb + GAP_DP + scale(20, 'line', fontScale)
+}
+
+/** 0.4 档主体（识别 / 思考）：转写 2 行 + 思考三点行 */
+function captureBodyDp(fontScale: FontScalePref): number {
+  return 2 * scale(TRANSCRIPT_LINE_DP, 'line', fontScale) + GAP_DP + THINK_ROW_DP
+}
+
+/** 0.62 档主体（有回答）：转写 1 行 + 回答 3 行（行车 18pt / 28；泊车 16pt / 24） */
+function answerBodyDp(answerLine: number, fontScale: FontScalePref): number {
+  return scale(TRANSCRIPT_LINE_DP, 'line', fontScale) + GAP_DP + 3 * scale(answerLine, 'line', fontScale)
+}
+
+function assemble(chrome: number, orbCol: number, body: number, split: boolean): number {
+  if (split) return chrome + Math.max(orbCol, body) // 横屏 40:60：头区在左、内容在右，不相加
+  return chrome + (body ? orbCol + GAP_DP + body : orbCol)
+}
+
 /** 行车档下该档「必须一眼看得见」的内容之和（dp）。逐项累加，不是拍的数。
- *  `orb` 是层内大球直径：默认行车的 120，B5-15 的球降级会把 88 传进来（最小高跟着降）。 */
+ *  `orb` 是层内大球直径：默认行车的 120，B5-15 的球降级会把 88 传进来（最小高跟着降）。
+ *  `terse`：答后回落，内容区不渲染 ⇒ 主体 0。 */
 export function drivingSheetMinDp(
   detent: SheetDetent,
   split: boolean,
   fontScale: FontScalePref,
   orb: number = SHEET_ORB.driving,
+  terse = false,
 ): number {
-  // B5-12：把手带（`minHeight` = 目标高，它就是层内那枚 ≥56dp 演员）+ 内容区上下 padding
-  const chrome = scale(TARGET.driving, 'target', fontScale) + SCROLL_PAD_DP
-  // 球列：球 + gap + 胶囊一行（body 15pt）
-  const orbCol = orb + GAP_DP + scale(20, 'line', fontScale)
-  // 该档主体：0.78 = 压缩卡；0.62 = 回答两行（行车 18pt / lineHeight 28）；0.4 = 只有球列
-  const body =
-    detent === 0.78 ? cardMinDp(fontScale) : detent === 0.62 ? 2 * scale(28, 'line', fontScale) : 0
-  if (split) return chrome + Math.max(orbCol, body) // 横屏 40:60：两列并排，不相加
-  return chrome + (body ? orbCol + GAP_DP + body : orbCol)
+  const chrome = chromeDp(TARGET.driving, fontScale)
+  const orbCol = orbColDp(orb, fontScale)
+  const body = terse
+    ? 0
+    : detent === 0.78
+      ? cardMinDp(fontScale)
+      : detent === 0.62
+        ? answerBodyDp(28, fontScale)
+        : captureBodyDp(fontScale)
+  return assemble(chrome, orbCol, body, split)
 }
 
 /** 泊车档「必须一眼看得见」的内容之和（dp）。结构与行车档同一条，常量取泊车的：
- *  把手带 48、球 88、回答 16pt / lineHeight 24；0.78 档的主体 = 回答两行 + 卡头。 */
-export function parkedSheetMinDp(detent: SheetDetent, split: boolean, fontScale: FontScalePref): number {
-  const chrome = scale(TARGET.parked, 'target', fontScale) + SCROLL_PAD_DP
-  const orbCol = SHEET_ORB.parked + GAP_DP + scale(20, 'line', fontScale)
-  const answer2 = 2 * scale(24, 'line', fontScale)
-  const body =
-    detent === 0.78 ? answer2 + GAP_DP + parkedCardHeadDp(fontScale) : detent === 0.62 ? answer2 : 0
-  if (split) return chrome + Math.max(orbCol, body)
-  return chrome + (body ? orbCol + GAP_DP + body : orbCol)
+ *  把手带 48、球 88、回答 16pt / lineHeight 24；0.78 档的主体 = 0.62 主体 + 卡头。 */
+export function parkedSheetMinDp(detent: SheetDetent, split: boolean, fontScale: FontScalePref, terse = false): number {
+  const chrome = chromeDp(TARGET.parked, fontScale)
+  const orbCol = orbColDp(SHEET_ORB.parked, fontScale)
+  const answer = answerBodyDp(24, fontScale)
+  const body = terse
+    ? 0
+    : detent === 0.78
+      ? answer + GAP_DP + parkedCardHeadDp(fontScale)
+      : detent === 0.62
+        ? answer
+        : captureBodyDp(fontScale)
+  return assemble(chrome, orbCol, body, split)
 }
 
 /** 层内大球直径（dp）：行车 120，但容器连 0.4 档最小高都装不下时降到泊车的 88
@@ -120,11 +166,13 @@ export function sheetHeightDp(i: {
   /** `layout.mode === 'driving-landscape'`（§6 横屏 40:60） */
   split: boolean
   fontScale: FontScalePref
+  /** 行车档答后回落（内容区不渲染）：主体 0。缺省 false */
+  terse?: boolean
 }): number {
   const byRatio = Math.round(i.containerH * i.detent)
   // B5-15：球降了最小高也跟着降——否则「降球」只改了渲染、判据仍按 120 要空间，两边对不上
   const floor = i.driving
-    ? drivingSheetMinDp(i.detent, i.split, i.fontScale, sheetOrbDp(i))
-    : parkedSheetMinDp(i.detent, i.split, i.fontScale)
+    ? drivingSheetMinDp(i.detent, i.split, i.fontScale, sheetOrbDp(i), i.terse ?? false)
+    : parkedSheetMinDp(i.detent, i.split, i.fontScale, i.terse ?? false)
   return Math.min(i.containerH, Math.max(byRatio, floor))
 }

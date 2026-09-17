@@ -10,6 +10,7 @@ import {
   SHEET_PAN_FAIL_DX,
   sheetDragOffset,
   sheetDragOutcome,
+  sheetPanAtTop,
 } from '@/ui/layout/sheetGesture'
 
 const end = (o: { atTop?: boolean; dy: number; vy?: number }) =>
@@ -50,4 +51,35 @@ test('跟手位移：只在顶部接管、只跟向下', () => {
   expect(sheetDragOffset(true, 50)).toBe(50)
   expect(sheetDragOffset(true, -50)).toBe(0)
   expect(sheetDragOffset(false, 50)).toBe(0)
+})
+
+// ── 2026-09-17：手指落在哪（设计 §4）──
+// 内容区跟底之后流式期间滚动区常在底部，只看偏移会让整层下拉失效。
+// 滚动区矩形（相对 Pan 所在的 View）：竖屏在头区下方、横屏在右列。
+describe('sheetPanAtTop：落在滚动区之外永远接管，落在里面才看偏移', () => {
+  const rect = { x: 0, y: 200, w: 360, h: 300 } // 竖屏：把手带 + 头区占 0–200，滚动区 200–500
+
+  test('落在头区 / 把手带（y < 滚动区顶）⇒ 接管，哪怕滚动区在底部', () => {
+    expect(sheetPanAtTop({ x: 180, y: 120, scrollRect: rect, scrollOffset: 640 })).toBe(true)
+    expect(sheetPanAtTop({ x: 180, y: 199, scrollRect: rect, scrollOffset: 640 })).toBe(true)
+  })
+
+  test('落在滚动区里：在顶部接管、不在顶部让给滚动（09-11 的判据不变）', () => {
+    expect(sheetPanAtTop({ x: 180, y: 300, scrollRect: rect, scrollOffset: 0 })).toBe(true)
+    expect(sheetPanAtTop({ x: 180, y: 300, scrollRect: rect, scrollOffset: 1 })).toBe(true)
+    expect(sheetPanAtTop({ x: 180, y: 300, scrollRect: rect, scrollOffset: 2 })).toBe(false)
+    expect(sheetPanAtTop({ x: 180, y: 300, scrollRect: rect, scrollOffset: 640 })).toBe(false)
+  })
+
+  test('横屏：滚动区在右列，落在左列头区 ⇒ 接管', () => {
+    const right = { x: 160, y: 60, w: 400, h: 240 }
+    expect(sheetPanAtTop({ x: 80, y: 150, scrollRect: right, scrollOffset: 500 })).toBe(true)
+    expect(sheetPanAtTop({ x: 300, y: 150, scrollRect: right, scrollOffset: 500 })).toBe(false)
+  })
+
+  test('滚动区还没量到（null / 零面积）⇒ 退回偏移判据，不多接管', () => {
+    expect(sheetPanAtTop({ x: 180, y: 10, scrollRect: null, scrollOffset: 640 })).toBe(false)
+    expect(sheetPanAtTop({ x: 180, y: 10, scrollRect: null, scrollOffset: 0 })).toBe(true)
+    expect(sheetPanAtTop({ x: 180, y: 10, scrollRect: { x: 0, y: 200, w: 0, h: 0 }, scrollOffset: 640 })).toBe(false)
+  })
 })

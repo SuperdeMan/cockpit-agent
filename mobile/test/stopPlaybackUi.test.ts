@@ -205,17 +205,19 @@ test('可用面：闲态没有任何播放通道 ⇒ 不给', () => {
 
 // ── 空转写占位（打磨批 A / P07）────────────────────────────────
 // 刚升层、还没识别出字时转写区原来只剩一根光标条，像残影。
+// 2026-09-17 起转写区没字就整个不渲染（头区胶囊已在说「在听…」，不再在转写区复读一份灰字）。
 
-test('P07：收音中且转写为空 ⇒ 灰字「在听…」占位，不渲染光标；有字后照常渲染转写与光标', async () => {
+test('P07：收音中且转写为空 ⇒ 不渲染转写与光标，头区胶囊「在听…」在场；有字后照常渲染转写与光标', async () => {
   const draft = { id: 'u-draft', role: 'user' as const, text: '' }
   const view = await mount(sheet({
     stoppable: false, snapshot: snap({ ptt: 'recording' }), draftUserId: 'u-draft',
     turn: { user: draft, assistant: null },
   }))
   try {
-    const transcript = view.root.findAllByProps({ testID: 'voice-sheet-transcript' }).find((n) => n.props.children === '在听…')
-    expect(transcript).toBeDefined()
+    expect(view.root.findAllByProps({ testID: 'voice-sheet-transcript' })).toHaveLength(0)
     expect(view.root.findAllByType(StreamCursor)).toHaveLength(0)
+    const capsule = view.root.findAllByProps({ testID: 'voice-sheet-capsule' })[0]
+    expect(capsule.findAll((n) => n.props.children === '在听…').length).toBeGreaterThan(0)
   } finally { await act(async () => { view.unmount() }) }
   const typed = await mount(sheet({
     stoppable: false, snapshot: snap({ ptt: 'recording', partial: '附近' }), draftUserId: 'u-draft',

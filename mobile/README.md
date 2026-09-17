@@ -263,7 +263,7 @@ src/core/map/          地图能力判据：MAP_AVAILABLE（有 key ∧ 原生�
                        周边族 → 带角色的点 + 折线；地图入口、地图页、舞台内嵌地图三处只读它）
 src/core/stage/        舞台场景选择（最近一张助手卡决定右舞台放什么；与 HMI deriveScene 同一张表，测试逐字对账）
 src/core/power/        低电量材质回落判据 + 事实收集；src/core/a11y/ 「减少动效」事实源
-src/features/chat/     对话 UI：ChatScreen（外壳）/ MessageBubble / Composer / VoiceSheet（语音层）/ FocusDock（承诺面）
+src/features/chat/     对话 UI：ChatScreen（外壳）/ MessageBubble / Composer（占位符判据 composerHint）/ VoiceSheet（语音层：固定头区 = 球 + 胶囊，内容区跟底）/ FocusDock（承诺面）
                        / PresenceCapsule（状态胶囊）/ PrivacyRail（隐私栏）/ ExecutionReceipt / FollowUpChips
                        / usePresence / useHandsFree / usePtt
 src/features/cards/    CardRenderer（全量卡型从 types.ts 派生、双向守卫 + 兜底卡铁则 + ErrorBoundary + _prov 徽章）；
@@ -279,7 +279,7 @@ src/features/vision/   VisionCapture（命中才挂 CameraView、拍完立刻卸
 src/ui/                主题（深浅/跟随系统 + 字号两档；Palette.target() 给卡片渲染器的目标高缩放）/ tokens（TARGET 按钮档、
                        PILL 胶囊档）/ Pill（胶囊类可点控件：外框 = 触控目标、视觉 = PILL）/ aurora（AuroraOrb 光球、
                        AuroraBackground、EdgeGlow、Glass、StreamCursor、ThinkDots）/ layout（sizeClass 尺寸类 + 桌面姿态球径 +
-                       舞台地图高、foldPosture 折叠姿态、sheetHeight 语音层高度（行车 / 泊车都有内容下限）、sheetGesture 整层下滑收起判据）
+                       舞台地图高、foldPosture 折叠姿态、sheetHeight 语音层高度（chrome + 固定头区 + 该档该看见的内容；行车 / 泊车同一条式子）、sheetGesture 整层下滑收起判据 + 落点判据 sheetPanAtTop）
 types/                 第三方类型补丁：RN 内部 URL 实现 / react-native-amap3d（见文件头注）
 test/                  jest（jest-expo）：守卫 + 契约单测 + 变异反向验证；计数以 `npm test` 本次输出为准
 e2e/                   Maestro flow：9 条（tag offline / online / manual），前提与坑账只在 e2e/README.md

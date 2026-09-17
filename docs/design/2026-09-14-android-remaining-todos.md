@@ -165,3 +165,17 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 | E-07 | E | 位置相关的问题（天气 / 附近 / 我在哪 / 导航出发地）发送前等新定位 `Accuracy.Highest` 20s 上限，室内 GPS 无天空、GMS 网络定位在大陆等不到 ⇒ **每轮等满 20s**（真机 `/turn-timeline` 两次 `request_sent` +20094 / +20060ms）；带城市名的句子不走这条闸，所以 09-14 D-03 那格没露 | **已修 + 候选包真机验证**（复盘 §6）：缓存即用（fused `lastLocation` ≤5min）→ 最多等 3s → 陈旧回落 → 失败后 10min 退避不再等；会话建立 / 回前台 / 开定位时后台预热。候选 `bcb10eb08-dirty` 四轮 `request_sent` +93 / +90 / +3109 / +3097ms（常驻包 +20094 / +20060），坐标照常带上。**已提交 `4f00596e`、已 push、已 deploy `97825faa`（status 5/5、verify verified）；清洁包 `97825faa6`（APK SHA-256 `86999608…0cf7`）已装为 OPPO 常驻包，装机后同题 `request_sent` +99ms、发出→听到 6.9s** | `mobile/src/core/location/fixPolicy.ts::acquireFix`（唯一判据）、`appLocation.ts`；`locationFix.test` 11、`expoLocationNative.test` 2 |
 | N-03 | E | 规划模型偶发把城市槽写成占位值「当前位置」，`_resolve_city` 优先信槽 ⇒ 和风 400 ⇒ 「没查到「当前位置」的天气」，而 meta 里带着坐标（候选 #1/#2 两轮） | **已修**（复盘 §7）：`runtime/slots.py::normalize_city_slot` 占位词归空 ⇒ 坐标 / 追问接手；`focus.last_city` 同时免污染。**已 deploy `97825faa`**（复盘 §8）；真栈上尚未撞到模型再写占位值的轮次，生效证据只有单测 | `runtime/slots.py`；`runtime/tests/test_city_slot_placeholder.py`、`agents/info/tests/test_agent.py`、`orchestrator/cloud/tests/test_context.py` |
 | H-10 | H | 端云共有的规划 LLM：每轮 ~10k prompt token、`cache_hit` 0、p50 2.2s / p90 4.0s / max 16s，天气一轮服务端下限 ≈3.3s，同类产品 1–2s | 复盘 §5 三个可选项：A 单步只读意图确定性快车道（不调 LLM，~0.8s）/ B prompt 减负（= E-04）/ C 规划模型换档。A 改变「每句都过规划 LLM」的前置条件，是产品裁决；都要过四道门禁 + 对抗集双臂 | `orchestrator/cloud/planning.py` 出口顺序、`orchestrator/edge/nlu.py`（只有 off / shadow 两档） |
+
+## 8. 2026-09-17 追加：语音层三项体验修正（光球被挡 / 焦点不跟随 / 输入框提示）
+
+出处：[2026-09-17 设计与实施记录](2026-09-17-android-voice-sheet-focus-follow.md)。用户口述三条：层升起后光球被上下挡住（识别 / 思考 / 生成中都会）、内容生成要手动滑才看得到、输入框没体现「按住也能说话」。
+
+| ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
+|---|---|---|---|---|
+| E-08 | E | 语音层大球住在 ScrollView 内容流里：转写多行把球推到层底之下（0.4 档下限没预留一行转写、思考三点也在预留之外），往下滚看回答又把球滚到把手带之下 | **已修**：球 + 胶囊成固定头区 `voice-sheet-header`（竖屏在把手带下、横屏在左列），转写 / 思考 / 回答 / chips / 卡进可滚内容区；下限改按「chrome（含渐隐 24）+ 头区 + 该档该看见的内容」：0.4 = 转写 2 行 + 思考行、0.62 = 转写 1 行 + 回答 3 行、0.78 = 行车压缩卡 / 泊车 0.62 主体 + 卡头、terse 主体 0，三档单调。主力机泊车 0.4 档 231 → 318，0.62 / 0.78 不变；行车三档 358 / 400 / 471 | `ui/layout/sheetHeight.ts`、`features/chat/VoiceSheet.tsx`；`sheetHeight.test` 24、`voiceSheetFollow.test` 8 |
+| E-09 | E | 内容生成时层内不跟底，视口停在流顶，流式回答长在视口之外 | **已修**：内容区复用记录列表那份判据 `history.ts::followOnContentChange`——层升起 / 新一轮 / 回答开始无条件贴底，之后离底 ≤ 0.2×视口才跟，上滚不拽、滚回底部恢复；整层下滑收起改成「落点在滚动区之外永远接管，落在里面才看偏移」（`sheetGesture.ts::sheetPanAtTop`），否则跟底后下拉收起会失效 | `VoiceSheet.tsx`、`ui/layout/sheetGesture.ts`；`voiceSheetFollow.test`、`sheetGesture.test` +4 |
+| E-10 | E | 输入框占位符只有「和小舟说点什么…」，空输入框长按 = PTT 这条路没有可见提示；按住时输入框本身不变 | **已修**：`composerHint.ts` 三态占位符（有语音闲时「输入文字，或按住说话…」/ 按住中「松开发送 · 上滑取消」，行车档「松开发送」/ 收音「正在听…」/ 识别「识别中…」），按住中描边 + 底色转 accent；没有语音配置仍是旧句 | `features/chat/composerHint.ts`、`Composer.tsx`；`composerHint.test` 7 |
+| ~~N-02~~ | — | 常驻语音层里最后一轮是 error 气泡时红字在层内容区底部被裁一行 | **预期由 E-08 / E-09 覆盖**（内容区跟底 + 下限含渐隐 ⇒ 最新一行在渐隐之上），未单独在真机复验该格 | 同上 |
+
+顺带核出的事实：识别中 `derivePresence` 的胶囊文案是 partial 本身，层内转写区又显示同一段字 ⇒ 层内胶囊改固定「识别中…」（`presence.ts::sheetCapsuleText`，层外不动）；收音中还没识别出字时转写区原来的灰字「在听…」与头区胶囊重复，撤掉（P07「不渲染光标」照旧）。
+

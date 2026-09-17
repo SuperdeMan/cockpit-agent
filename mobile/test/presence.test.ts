@@ -7,7 +7,7 @@
 //     评审那个案例（待确认时断网，确认被盖掉）在这里有一条专门的断言
 import { PENDING_TTL_MS } from '@shared/pendingOps.mjs'
 
-import { MIC_LABEL, capsuleVisible, derivePresence, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
+import { MIC_LABEL, capsuleVisible, derivePresence, sheetCapsuleText, type PresenceInput, type VoiceFacts } from '@/core/presence/presence'
 
 const NOW = 5_000_000
 
@@ -453,5 +453,36 @@ describe('打磨批 A：胶囊「一屏只出现一份」（capsuleVisible，评
   test('没有胶囊 ⇒ false', () => {
     expect(derivePresence(base()).capsule).toBeUndefined()
     expect(capsuleVisible(derivePresence(base()), false)).toBe(false)
+  })
+})
+
+describe('2026-09-17：层内胶囊文案（sheetCapsuleText，设计 §5）——识别中不复读转写', () => {
+  // 层外胶囊在识别中要靠 partial 本身告诉用户识别到了什么；层内转写区已经用 20pt 显示同一段字，
+  // 头区胶囊再复读一遍就是两份（partial 长了还会换行把头区撑高）。
+  test('识别中：层外胶囊是 partial 本身，层内固定「识别中…」', () => {
+    const s = derivePresence(base({ ptt: 'recording', partial: '附近有什么好吃的' }))
+    expect(s.capture).toBe('recognizing')
+    expect(s.capsule?.text).toBe('附近有什么好吃的')
+    expect(sheetCapsuleText(s)).toBe('识别中…')
+  })
+  test('识别中但 partial 为空（finalizing 段）：层外「识别中…」，层内同一句', () => {
+    const s = derivePresence(base({ ptt: 'finalizing' }))
+    expect(s.capsule?.text).toBe('识别中…')
+    expect(sheetCapsuleText(s)).toBe('识别中…')
+  })
+  test('其余状态与层外一字不差：在听 / 正在思考 / 播报中 / 等你确认', () => {
+    for (const over of [
+      { ptt: 'recording' },
+      { turn: { pending: true, streaming: false, processActive: false, processLabel: '', processSince: 0 } },
+      { speaking: true },
+      { pendingOps: [{ id: 'op1', ts: NOW, summary: '打开后备箱' }] },
+    ] as Partial<PresenceInput>[]) {
+      const s = derivePresence(base(over))
+      expect(s.capsule).toBeDefined()
+      expect(sheetCapsuleText(s)).toBe(s.capsule!.text)
+    }
+  })
+  test('没有胶囊 ⇒ null', () => {
+    expect(sheetCapsuleText(derivePresence(base()))).toBeNull()
   })
 })

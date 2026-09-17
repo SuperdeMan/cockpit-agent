@@ -220,6 +220,14 @@ export function capsuleVisible(snapshot: PresenceSnapshot, dockVisible: boolean)
   return true
 }
 
+/** 层内胶囊文案——**唯一的一份**（2026-09-17，设计 §5）：识别中层外胶囊要靠 partial 本身告诉用户识别到了什么，
+ *  层内转写区已经用 20pt 显示同一段 partial，头区胶囊再复读一遍就是两份（partial 长了还会换行把头区撑高）。
+ *  识别中 ⇒ 固定「识别中…」；其余与层外一字不差。没有胶囊 ⇒ null。层外 `PresenceCapsule` 不读它。 */
+export function sheetCapsuleText(s: Pick<PresenceSnapshot, 'capsule' | 'capture'>): string | null {
+  if (!s.capsule) return null
+  return s.capture === 'recognizing' ? '识别中…' : s.capsule.text
+}
+
 export function derivePresence(i: PresenceInput): PresenceSnapshot {
   // ── transport ──
   const transport: PresenceSnapshot['transport'] =

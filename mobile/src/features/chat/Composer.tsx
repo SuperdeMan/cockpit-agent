@@ -20,6 +20,7 @@ import { ORB_A11Y } from '../../ui/aurora/AuroraOrb'
 import { Pill } from '../../ui/Pill'
 import { AURORA, type Palette } from '../../ui/theme'
 import { RADIUS, TARGET, scale } from '../../ui/tokens'
+import { composerHolding, composerPlaceholder } from './composerHint'
 import type { PttHandle } from './usePtt'
 
 /** 长按判定（ms）：方案 §5.1.1 的 ≥300；usePtt 的 MIN_DURATION_MS=320 是「录了多久」，是另一件事 */
@@ -99,6 +100,11 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
   }
   const recording = ptt?.state === 'recording'
   const finalizing = ptt?.state === 'finalizing'
+  // 占位符与「按住中」外观（2026-09-17，判据 composerHint.ts）：空输入框长按 = PTT 这条路要说出来，
+  // 按住期间输入框本身也要变（描边 + 底色 accent，与光球同款），不只光球变
+  const hint = { voice: !!ptt, state: ptt?.state ?? ('idle' as const), mode: ptt?.mode ?? ('' as const), driving }
+  const holding = composerHolding(hint)
+  const placeholder = composerPlaceholder(hint)
   // B4-11 §6「目标 ≥56dp」：行车 56 / 泊车 48。光球热区本来就是 TARGET.driving，不受影响
   const target = scale(driving ? TARGET.driving : TARGET.parked, 'target', fontScale)
 
@@ -254,9 +260,9 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
                   ref={inputRef}
                   testID="composer-input"
                   style={{
-                    backgroundColor: p.fill,
+                    backgroundColor: holding ? p.accentSoft : p.fill,
                     borderWidth: 1,
-                    borderColor: p.fill2,
+                    borderColor: holding ? p.accent : p.fill2,
                     borderRadius: 14,
                     paddingHorizontal: 14,
                     paddingVertical: 10,
@@ -266,8 +272,8 @@ export function Composer({ p, chips, busy, stoppable = false, ptt, orbState, orb
                   }}
                   value={input}
                   onChangeText={setInput}
-                  placeholder={recording ? '正在听…' : '和小舟说点什么…'}
-                  placeholderTextColor={p.fg3}
+                  placeholder={placeholder}
+                  placeholderTextColor={holding ? p.accent : p.fg3}
                   multiline
                   onSubmitEditing={submit}
                   submitBehavior="blurAndSubmit"
