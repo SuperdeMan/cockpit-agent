@@ -19,7 +19,7 @@ import { BlurView } from 'expo-blur'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { Pressable, ScrollView, Text, View, type LayoutChangeEvent } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
+import Animated, { Easing, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 
 import {
   SHEET_PAN_ACTIVATE_DY,
@@ -103,6 +103,9 @@ function shellTint(bg: string, alpha: number): string {
 }
 /** 收起动画时长（ms） */
 const COLLAPSE_MS = 180
+/** 升起（整层从记录区底缘滑入）与档位变化（高度短动画）的时长（ms） */
+const OPEN_MS = 220
+const RESIZE_MS = 200
 /** 头区 / 内容区的排版常量——与 `ui/layout/sheetHeight.ts` 的下限逐项对应，改这里要同步改那边 */
 const PAD = 16
 const GAP = 12
@@ -133,20 +136,34 @@ export function VoiceSheet(props: VoiceSheetProps) {
     setOpenSeen(open)
     if (open) setMounted(true)
   }
+  // 层高（布局）与升起 / 收起位移（transform）分开（2026-09-17 真机 G 段）：原来用 withSpring 动 `height`，
+  // 每帧都重排整个层（模糊壳 + 光球），这台机器上只跑到几帧 / 秒，而 reanimated 的弹簧把帧间隔封顶——弹簧按
+  // 几分之一的速度播、2.5s 才落定，球跟着漂。现在升起 = 高度直接落到目标、整层从记录区底缘 translateY 滑入
+  // （transform 不触发重排）；开着时档位 / 容器变化才动高度，短 timing、不过冲；收起 = 滑回底缘再卸载。
   const h = useSharedValue(0)
+  const slideY = useSharedValue(0)
+  const wasOpenRef = useRef(false)
   // 跟手位移（2026-09-11 整层下滑收起）：拖动中层随手指下移，松手收起或回弹；每次展开归零
   const dragY = useSharedValue(0)
   useEffect(() => {
     if (open) {
       dragY.value = 0
-      h.value = withSpring(target, { damping: 18, stiffness: 160 })
+      if (!wasOpenRef.current) {
+        h.value = target
+        slideY.value = target
+        slideY.value = withTiming(0, { duration: OPEN_MS, easing: Easing.out(Easing.cubic) })
+      } else {
+        h.value = withTiming(target, { duration: RESIZE_MS, easing: Easing.inOut(Easing.ease) })
+      }
+      wasOpenRef.current = true
       return
     }
-    h.value = withTiming(0, { duration: COLLAPSE_MS })
+    wasOpenRef.current = false
+    slideY.value = withTiming(h.value, { duration: COLLAPSE_MS, easing: Easing.in(Easing.cubic) })
     const t = setTimeout(() => setMounted(false), COLLAPSE_MS)
     return () => clearTimeout(t)
-  }, [open, target, h, dragY])
-  const sheetStyle = useAnimatedStyle(() => ({ height: h.value, transform: [{ translateY: dragY.value }] }))
+  }, [open, target, h, dragY, slideY])
+  const sheetStyle = useAnimatedStyle(() => ({ height: h.value, transform: [{ translateY: dragY.value + slideY.value }] }))
 
   // ── 内容区跟底（2026-09-17，设计 §3）──
   // 判据不新写：`followOnContentChange(离底, 视口, 旗)`——旗为真无条件贴底，否则离底 ≤ 0.2×视口才贴。
@@ -414,7 +431,8 @@ export function VoiceSheet(props: VoiceSheetProps) {
   )
 
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0, overflow: 'hidden' }}>
+      {/* overflow hidden：升起 / 收起时层从记录区底缘之外滑入滑出，不许画到 Composer 上 */}
       {/* 记录变暗、仍可见（§5.2）：点暗区 = 收起。
           40% → 60% 是第 3 批附加项①授权的升级档：58% 的壳底之后记录仍以未压暗的 ~45% 强度
           透过来（真机同帧两条同类文字带：层外幅度 41.9 / 层内 18.8），层内答案与记录里的
