@@ -51,9 +51,9 @@ PC 探针（同一 WS 契约、同一云栈、`memory_enabled=false`）：
 - `core/session/streamReveal.ts`（纯函数）：`revealAdvance(state, text, dt)`。**每次新内容到达**时按「此刻积压在
   `REVEAL_LAG_MS`=240ms 内摊平」定速（不低于 `REVEAL_MIN_CPS`=40 字/s），到达之间匀速；每拍（`REVEAL_TICK_MS`=33ms）
   至少 1 个字、不越过真实文本；真实文本不是已显示文本的延长（final 剥 markdown、气泡复用）⇒ 直接跳到位。
-- `features/chat/useRevealedText.ts`：挂载直出全文（历史恢复 / 复用 / 层升起时已流出的部分不重放）；只有**流式中**
-  长出来的才追；streaming 落下时没追平的尾巴追完，不一次跳到位；换 id 直出；用户气泡不追；不看 reduce-motion
-  （不是循环动效，它替代的「一段一段蹦」对动效敏感的人更糟）。节拍用 `setInterval`，只在有积压时存在。
+- `features/chat/useRevealedText.ts`：挂载直出全文（历史恢复 / 复用 / 层升起时已流出的部分不重放）；挂载后文本**延长**就追——
+  逐片流式增量、只在 final 里到达的整段（unary Agent）、executor 整步话术、错误文案同一种走法（§7 之后；此前只追流式中长出来的）；
+  换 id 直出；用户气泡不追；不看 reduce-motion（不是循环动效，它替代的「一段一段蹦」对动效敏感的人更糟）。节拍用 `setInterval`，只在有积压时存在。
 - 消费点两处：`MessageBubble` 的助手正文、`VoiceSheet` 的回答区；光标跟着「还在长」走（流式中或显示未追到尾）。
 - `Msg.text`、TTS（`speech.delta`）、历史持久化、`turnView` 一个字不延迟——它们读的仍是记录。
 
@@ -116,3 +116,23 @@ push `4566c0e7..3abd325e`（四条：`29b9f0ab` mobile / `a1b680e9` chitchat+clo
 → status `ok`、`release_sha` = `running_release_sha` = `3abd325e` → verify `verified`（`20260918T041530Z-3abd325.json`，`minimax:MiniMax-M3`，lock `e2e`，83s）。
 部署后 PC 探针：「给我讲一个很长的故事。」standard ×3（51 / 85 / ~100 字，模型自己收短）与 detailed ×1（**流 17.5s、约 1500 字**）全部句尾完整、`final == streamed`；
 「请详细介绍一下深圳的历史，至少五百字。」136 字完整。detailed 那条在旧上限 440 token 下必然被掐。
+
+## 7. 追加（2026-09-18 下午）：联网搜索「一次性全量打印」——改派后的 info.search 走了 unary
+
+用户复测：联网搜索结果整段一次上屏，与聊天回答的逐字流不一致。collector 里 `app-2652cv` 12:59–13:00 三轮（「讲一下深圳的历史」
+「讲一个很长的故事」×2）的 span 是 `chitchat.talk:stream` → `info.search:unary`，speech 783 / 497 / 311 字：chitchat 流式起步、判定要联网、
+`<search>` 改派 → `_run_escalated` 一律经 executor 走 **unary** → 整段只在 final 里到达；而直连的 `info.search` 计划（09-13 `app-tojcn8`
+三轮）走 D0 是逐片流的。同一个 Agent 两条路两种流法，用户看到的就是「有时流、有时蹦」。
+
+修法（服务端，`orchestrator/cloud/engine.py`）：把 D0 的单步流式直通抽成 `_stream_single_step`（过程区 running / 槽位解析 / 流事件 /
+response_only 闸 / Verifier 对账 / 来源 / span / 过程区 done），`_run_escalated` 对**单步云端、不需确认**的改派步走同一份（资格条件与 D0
+逐字相同；edge 步 / 需确认步照旧 executor）；流零输出 ⇒ 回退 executor unary（与 D0 同款）；流了话术没 final ⇒ D0 同一档处置
+（`_STREAM_LOST_FINAL_SPEECH` 一句共用，字不动）。`test_engine_escalate` 契约 h 钉住：改派步经 stream、slots / thinking 照旧带出、
+零输出回退、edge 写步仍 unary。
+
+修法（客户端）：`useRevealedText` 从「只追流式中长出来的」改为「任何延长都追」，`streamReveal.revealCps` 加上限 `REVEAL_MAX_CPS`=400 字/s——
+只在 final 里到达的整段（天气 / 新闻 / 赛事这类 unary Agent、executor 整步话术）也是扫出来的（700 字约 1.8s，远快于读速），
+不再一下蹦出；≤96 字的簇仍在 240ms 内追平。新闻的话术是一次 JSON 归纳后拼出来的清单，服务端无法逐片流，靠这一条与流式观感对齐。
+
+验证：Python `orchestrator/cloud/tests` + `agents/chitchat/tests` 1394 passed；mobile 全量 jest / tsc / lint 见 §7.1。
+真机 A/B 与发布见 §7.1（待）。

@@ -9118,3 +9118,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   取证用的 `reduceMotionForce` 已改回 false；OPPO 常驻包现为 `3abd325ea`。
 - 装置坑：ColorOS `screenrecord` 直接段错误（rc=139）、`settings put global animator_duration_scale` 被 WRITE_SECURE_SETTINGS 挡 ⇒ 用 App 内 `reduceMotionForce` +
   `dumpsys gfxinfo framestats` 轮询去重量视觉节奏；无 Maestro 的中文输入 = 长按历史里的用户气泡复制 + `input keyevent 279` 粘贴；RN 新架构 JS 线程叫 `mqt_v_js` 且同名十来个，只认 TIME+ 非零那条。
+
+## 2026-09-18 — 追加：联网搜索「一次性全量打印」= chitchat 改派后的 info.search 走 unary；改派复用 D0 流式直通，客户端整段到达也按节拍扫出
+
+- 证据：`app-2652cv` 12:59–13:00 三轮 span `chitchat.talk:stream` → `info.search:unary`（783 / 497 / 311 字整段只在 final 到达）；直连 info.search 计划
+  （09-13 `app-tojcn8`）走 D0 逐片流。同一个 Agent 两条路两种流法。
+- 修（服务端）：`engine._stream_single_step` = 原 D0 单步流式直通本体（过程区 / 槽位解析 / 流事件 / response_only / Verifier / 来源 / span），
+  `_run_escalated` 对单步云端不需确认的改派步走同一份；零输出回退 executor、流了话术没 final 走 `_STREAM_LOST_FINAL_SPEECH`（字不动）。
+  `test_engine_escalate` 的 `_EscSpy` 改为「script 只喂第一次流、之后流式调用从响应队列出单个 final」+ 时间序 `calls`；契约 h 新增。
+- 修（客户端）：`useRevealedText` 任何延长都追（去掉 streaming 参数）、`REVEAL_MAX_CPS`=400 封顶 ⇒ 天气 / 新闻这类只在 final 里给的整段也是扫出来的。
+- 验证：Python cloud + chitchat 1394 passed；mobile jest 105 套件 1096、tsc 0、lint 0。未 push / 未 deploy / 未出包（待授权）。
