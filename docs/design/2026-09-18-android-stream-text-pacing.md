@@ -134,5 +134,24 @@ response_only 闸 / Verifier 对账 / 来源 / span / 过程区 done），`_run_
 只在 final 里到达的整段（天气 / 新闻 / 赛事这类 unary Agent、executor 整步话术）也是扫出来的（700 字约 1.8s，远快于读速），
 不再一下蹦出；≤96 字的簇仍在 240ms 内追平。新闻的话术是一次 JSON 归纳后拼出来的清单，服务端无法逐片流，靠这一条与流式观感对齐。
 
-验证：Python `orchestrator/cloud/tests` + `agents/chitchat/tests` 1394 passed；mobile 全量 jest / tsc / lint 见 §7.1。
-真机 A/B 与发布见 §7.1（待）。
+验证：Python `orchestrator/cloud/tests` + `agents/chitchat/tests` 1394 passed；mobile 全量 jest 105 套件 1096、tsc 0、`eslint . --max-warnings 0` 0。
+
+### 7.1 发布与真栈证据
+
+push `0021ff86..a4b47748`（`69f6d986` cloud / `44d88bd2` mobile / `a4b47748` docs）；deploy dry-run 零阻断 → apply submitted（基线 `3abd325e`）→ status ok、
+`running_release_sha` = `a4b47748` → verify verified（`20260918T054145Z-a4b4774.json`）。
+
+部署后 PC 探针（`memory_enabled=false`）：直接规划成 `info.search` 的两轮（「最近有什么好看的电影推荐？」459 字 / 「现在的油价是多少？」496 字）
+都逐片流（6 片 ×76 字、~1s 一片 / 346 片 ×1.4 字——同一条合成路径，片的粗细是 MiniMax SSE 自己的方差，客户端 reveal 两种都抹平）；
+「深圳最近发生了什么大事？」规划成 `info.news`，381 字整段在 final 到达（news 是一次 JSON 归纳，服务端无法逐片），由客户端 400 字/s 扫出。
+探针没有复现 chitchat → `<search>` 改派（没有用户记忆上下文时模型都直接回答），改派路径的真栈证据靠真机（§7.2）。
+
+### 7.2 新包真机（OPPO，清洁包 `a4b477489`，脚本一次构建成功 + 验包，装机 14:50:20，设备端 SHA-256 与本地一致、非 DEBUGGABLE）
+
+同一装置、同一句「给我讲一个很长的故事。」三趟（会话 `app-yr17vm`）：89 / 289 / 283 字，三趟模型都直接回答、**没有触发改派**（今天中午你那三轮
+是 chitchat → `<search>` 改派，模型的判断随记忆上下文与措辞漂），所以改派路径的真机帧读数本轮没拿到；它现在与 D0 走的是同一个函数
+（`_stream_single_step`），单测契约 h 钉住。三趟的显示节奏与上一批一致：流式期间帧间隔 9–60ms 逐字追出、中位 ~20–30ms，服务端停顿（272 / 364ms）后不再蹦；
+JS 线程流式期间 19–59%。取证后 `reduceMotionForce` 已改回 false（回读 `after=False`）。OPPO 常驻包现为 `a4b477489`。
+
+要在真机上亲眼看改派路径：用中午那种措辞（「the. 讲一下深圳的历史。」/「讲一个很长的回事」）多试几次，collector 里该轮 span 出现
+`chitchat.talk:stream` + `info.search:stream`（此前是 `:unary`）即命中；屏上应看到「联网检索」过程条之后文字逐片流出。

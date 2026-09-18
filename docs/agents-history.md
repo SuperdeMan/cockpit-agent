@@ -9127,4 +9127,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   `_run_escalated` 对单步云端不需确认的改派步走同一份；零输出回退 executor、流了话术没 final 走 `_STREAM_LOST_FINAL_SPEECH`（字不动）。
   `test_engine_escalate` 的 `_EscSpy` 改为「script 只喂第一次流、之后流式调用从响应队列出单个 final」+ 时间序 `calls`；契约 h 新增。
 - 修（客户端）：`useRevealedText` 任何延长都追（去掉 streaming 参数）、`REVEAL_MAX_CPS`=400 封顶 ⇒ 天气 / 新闻这类只在 final 里给的整段也是扫出来的。
-- 验证：Python cloud + chitchat 1394 passed；mobile jest 105 套件 1096、tsc 0、lint 0。未 push / 未 deploy / 未出包（待授权）。
+- 验证：Python cloud + chitchat 1394 passed；mobile jest 105 套件 1096、tsc 0、lint 0。
+- 发布（用户授权）：push `0021ff86..a4b47748`；deploy dry-run 零阻断 → apply → status ok（running = `a4b47748`）→ verify verified
+  （`20260918T054145Z-a4b4774.json`）。PC 探针：直接规划的 info.search 两轮逐片流（459 / 496 字）、news 整段 final（由客户端 400 字/s 扫出）；
+  探针没复现改派（无记忆上下文时模型直接答）。
+- 真机：清洁包 `a4b477489`（脚本一次构建成功 13:50、验包过）装 OPPO 常驻；同题三趟都没触发改派（89 / 289 / 283 字，chitchat 直答），显示节奏与上一批一致
+  （帧间隔中位 20–30ms、停顿后不蹦、JS 19–59%）；改派路径的真机帧读数待用户用中午那种措辞复现。`reduceMotionForce` 已改回 false。

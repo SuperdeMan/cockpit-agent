@@ -83,11 +83,11 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `3abd325ea93d90c6be8e03843f52dc76838113c2`（2026-09-18 12:1x apply；chitchat `max_tokens` 改为兜底上限 300/600/900、D0 流式 gRPC 截止 30s→60s（`clients.AGENT_STREAM_TIMEOUT_S`）；同批 mobile 流式文字匀速上屏 `29b9f0ab`（真机 A/B 见 [2026-09-18 设计](docs/design/2026-09-18-android-stream-text-pacing.md) §5）） |
-| 上一生产基线 | `f1a990632d98231e3822390aef6d8ad074ac2fc6`；本轮未回滚 |
-| status | 2026-09-18 12:14 独立复核：`ok`、零 warning，`release_sha` 与 `running_release_sha` 均为 `3abd325e` |
-| verify | `verified`；artifact `20260918T041530Z-3abd325.json`（provider/model `minimax:MiniMax-M3`，lock `e2e`，83s，一次即过） |
-| 代码验证 | `3abd325e` mobile jest 105 套件 **1095**（新增 `streamReveal.test` 5、`revealedText.test` 5）+ tsc/lint 0；Python `agents/chitchat/tests` + cloud 流式相关 140 passed；**全量固定口径 pytest 本轮未跑**（构建机 commit 耗尽，见设计 §5）。真栈：部署后 PC 探针「给我讲一个很长的故事」standard 三次 + detailed 一次（17.5s、约 1500 字）全部句尾完整、`final == streamed`；OPPO 清洁包 `3abd325ea`（APK SHA-256 `4fad2538…5795`，设备端一致、非 DEBUGGABLE）真机 A/B：流式帧间隔中位 ~110ms 簇状 → 稳定 15–20ms 逐字，727 字完整收尾（设计 §5） |
+| 生产 release | `a4b477489f61ec2727059205deb3ee917cbf8d9d`（2026-09-18 13:3x apply；chitchat 改派后的单步云端 Agent 与 D0 共用 `engine._stream_single_step` 流式直通——此前改派 info.search 走 unary、整段只在 final 到达；同批 mobile 整段到达的文字也按 400 字/s 扫出 `44d88bd2`。上一批 `3abd325e`：chitchat `max_tokens` 兜底上限 300/600/900、D0 流式截止 60s、mobile 匀速 reveal `29b9f0ab`；真机 A/B 见 [2026-09-18 设计](docs/design/2026-09-18-android-stream-text-pacing.md) §5 / §7） |
+| 上一生产基线 | `3abd325ea93d90c6be8e03843f52dc76838113c2`；本轮未回滚 |
+| status | 2026-09-18 13:41 独立复核：`ok`、零 warning，`release_sha` 与 `running_release_sha` 均为 `a4b47748` |
+| verify | `verified`；artifact `20260918T054145Z-a4b4774.json`（上一批 `20260918T041530Z-3abd325.json`，`minimax:MiniMax-M3`，lock `e2e`） |
+| 代码验证 | `a4b47748` Python `orchestrator/cloud/tests` + `agents/chitchat/tests` **1394 passed**；mobile jest 105 套件 **1096** + tsc/lint 0；**全量固定口径 pytest 本轮未跑**（构建机 commit 耗尽，见设计 §5.1）。真栈：部署后 PC 探针直接规划的 `info.search` 两轮逐片流（459 / 496 字）、`info.news` 整段 final；OPPO 清洁包 `3abd325ea` A/B（上一批）：流式帧间隔中位 ~110ms 簇状 → 稳定 15–20ms 逐字，727 字完整收尾；新包见设计 §7.2 |
 | manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
 | 自然问法边界 | 原36题完整真栈只在 `434a046` 闭合；`9a3b6f2f` 当轮有7条旧表述被安全预检拒绝。本次未宣称新 release 36/36 |
 | 证据边界 | 当前部署/status/verify 绑定 **`f1a99063`**（09-16 那批的读数绑 `97825faa`）；MiniMax ASR 的三面真栈核对绑 `40ccb9b6`；下面的语音采纳矩阵读数绑 **`9ced633b`**——该 release 发布后只读复跑 §4 矩阵 24 轮（`minimax:MiniMax-M3`，零动作零挂起、车态不变）：播报句 `本台记者报道…` ptt 3/3、voice_followup 3/3（此前 1/3、3/3），首轮失败原话 `欢迎收听今天的节目，本台记者为您报道新闻。` 端侧不再执行 media.play、云侧拒识 5/6（1 次模型规划成新闻摘要，按「模型真拆出步不动」放行），乘客句 1/6 仍归模型（无播报语域）；上一 release 的读数：直连 + 新 release 的 PC 探针与真机读数见评审 §9.6/§9.7（握手 1.4–3s → 0.6–0.8s、TTS 音频不再欠速、深调研首段文本 13s → 5.9s、对话页空闲 30s 后 150% → 9.5%）；OPPO 常驻包见 §9.7。路线几何的真栈对照仍绑 `e38cd75`；语音采纳的证据仍绑 `f8fd151` / OPPO 包 `f8fd15152`（APK SHA-256 `6fc093a9…66103`）。来源与拒识出口已贯通，但真实 MiniMax-M3 文字注入续测：正常请求6/6、背景静默拒识6/12；另有首轮播报句误命中端侧 `media.play`，已停止探针造成的模拟播放。**拒识仍未验收，声学未验**；[逐条结果](docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md)。手册整本与旧 Android 验收继续保留各自历史 SHA |
