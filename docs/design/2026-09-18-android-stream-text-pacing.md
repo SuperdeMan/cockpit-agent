@@ -3,8 +3,8 @@
 > 状态：**代码已实现并通过单测 / tsc / lint；真机 A/B 与清洁包因构建机内存耗尽未完成（§5）；服务端改动未 push / 未 deploy**。
 > 用户口述两条：① 回答文字「一大段突然跳变上屏」；② 长文本「生成展示不全」。
 > 证据绑定：设备 = OPPO PEUM00 / Android 14（test 机）、常驻包 `990466d6d`（2026-09-17 16:12）；云端 `target=cloud`、
-> 生产 release `f1a99063`；服务端读数取自 collector（`/api/sessions` / `/api/turns/{trace}`）；PC 探针与真机取证脚本在会话
-> scratchpad（`ws_stream_probe.py` / `device_probe.py`），本页只留读数。
+> 生产 release `f1a99063`；服务端读数取自 collector（`/api/sessions` / `/api/turns/{trace}`）；PC 探针 `scripts/probe_stream_cadence.py`、真机取证
+> `mobile/e2e/tools/stream_cadence_probe.py`（ui / prep / frames 三个子命令），本页只留读数。
 
 ## 0. 一句话
 
@@ -75,10 +75,9 @@ PC 探针（同一 WS 契约、同一云栈、`memory_enabled=false`）：
 
 ## 4. 验证
 
-- mobile：`streamReveal.test`（5）+ `revealedText.test`（5）新增；`messageBubble` / `voiceSheetFollow` 复跑绿；tsc 0、
-  `eslint . --max-warnings 0` 0；全量 jest 见 §5。
+- mobile：`streamReveal.test`（5）+ `revealedText.test`（5）新增；全量 jest **105 套件 1095 全绿**；tsc 0、`eslint . --max-warnings 0` 0。
 - Python：`agents/chitchat/tests` + `orchestrator/cloud/tests/{test_stream_state,test_loop,test_engine_stream,test_engine_escalate}`
-  140 passed。
+  140 passed。全量固定口径 pytest **未跑**（机器 commit 只剩 ~1GB，见 §5）。
 - 真机 A/B：同一句「给我讲一个很长的故事。」、同一装置（framestats + `top -H`），见 §5。
 
 ## 5. 真机 A/B 读数：**未取得——候选包没能构建出来（机器 commit 耗尽）**
@@ -98,7 +97,7 @@ PC 探针（同一 WS 契约、同一云栈、`memory_enabled=false`）：
 ② 内存不变时，把镜像 `.cxx/app/RelWithDebInfo/<hash>/<abi>/CMakeFiles/rules.ninja` 里 `pool compile` 的 `depth` 从 3 临时改 1（不换配置哈希、不动仓库）再接续——本轮改过一次又改回 3，
 留待有人授权重启构建时用。原生中间产物（arm64 全部、v7a 一部分）留在 `D:\Android\builds\cxx\app\RelWithDebInfo\135z6d2r\`，接续可复用。
 
-A/B 装置已备好（会话 scratchpad `device_probe.py`：`prep` 从历史复制同一句 → `frames <label>` 采 framestats + `top -H`），拿到候选包后
+A/B 装置已进仓（`mobile/e2e/tools/stream_cadence_probe.py`：`prep` 从历史复制同一句 → `frames <label>` 采 framestats + `top -H`），拿到候选包后
 按 §2 同一协议跑一遍即可对照：期望帧间隔从「中位 110ms、簇状」变成「≈33ms 匀速」，JS 线程仍 <60%。
 ⚠ 取证时 App 内「减少动效」强制开关（`reduceMotionForce`）被设为 true 以便 framestats 只反映内容变化；构建失败后设备已从 adb 掉线，
 **这个开关还没改回 false**——下次设备在线先跑 `python mobile/e2e/tools/set_switch.py reduceMotionForce false`。
