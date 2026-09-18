@@ -4,7 +4,7 @@
 // 用法：`const shown = useRevealedText(msg.id, msg.text, msg.role === 'assistant')`，把 `shown` 交给 Text 渲染。规则：
 //  · 挂载时直接显示当前全文（历史恢复、列表复用、层升起时已流出的部分不重放）；
 //  · 挂载后文本**延长**就按节拍追：逐片流式的增量、只在 final 里到达的整段、executor 整步话术、错误文案都一样——
-//    速度由 streamReveal 定（积压 / 240ms，40–400 字/s），整段到达是「扫出来」，与流式观感一致；追平即停，没有常驻定时器；
+//    速度由 streamReveal 定（跟到达速率走、落后不超过 1.2s、40–400 字/s），成批到达的流被摊平、整段到达是「扫出来」；追平即停，没有常驻定时器；
 //  · 文本被整段替换（final 剥 markdown）、换了消息 id（列表复用）⇒ 直接显示真实文本；
 //  · 不看 reduce-motion：这不是循环动效，它替代的那种「一段一段蹦」对动效敏感的人更糟。
 // 节拍用 setInterval：只在「有积压」时存在，跟 delta 到达节奏无关（用 setTimeout 随 text 重排会被
@@ -37,7 +37,7 @@ export function useRevealedText(key: string, text: string, enabled = true): stri
       const now = Date.now()
       const dt = now - last
       last = now
-      setState((prev) => (prev.key === key ? { key, reveal: revealAdvance(prev.reveal, textRef.current, dt) } : prev))
+      setState((prev) => (prev.key === key ? { key, reveal: revealAdvance(prev.reveal, textRef.current, dt, now) } : prev))
     }, REVEAL_TICK_MS)
     return () => clearInterval(id)
   }, [pace, key])

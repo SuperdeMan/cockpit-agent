@@ -110,3 +110,29 @@ test('同一个气泡组件换了消息 id（列表复用）⇒ 直出新消息�
   expect(shownText(view)).toBe('好的' + LONG)
   act(() => { view.unmount() })
 })
+
+test('成批到达（每 600ms 一批）经 hook：批与批之间显示持续在长，不是扫完一批就停', () => {
+  let view!: ReactTestRenderer
+  const batch = '字'.repeat(60)
+  act(() => { view = create(bubble({ id: 'a', role: 'assistant', text: '', pending: true })) })
+  let text = ''
+  const stalls: number[] = []
+  for (let b = 1; b <= 6; b += 1) {
+    text += batch
+    const t = text
+    act(() => { view.update(bubble({ id: 'a', role: 'assistant', text: t, streaming: true })) })
+    // 600ms 内每拍看一眼：第三批起，只要没追平，每拍都得在动
+    let prev = shownText(view).length
+    for (let i = 0; i < Math.floor(600 / REVEAL_TICK_MS); i += 1) {
+      tick()
+      const now = shownText(view).length
+      if (b >= 3 && now < t.length && now === prev) stalls.push(b)
+      prev = now
+    }
+  }
+  expect(stalls).toEqual([])
+  act(() => { view.update(bubble({ id: 'a', role: 'assistant', text, streaming: false })) })
+  tick(60)
+  expect(shownText(view)).toBe(text)
+  act(() => { view.unmount() })
+})
