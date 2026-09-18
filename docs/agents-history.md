@@ -9108,8 +9108,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   成为 D0 `call_agent_stream` 缺省截止（原 30；不放宽则长回答走「只流了话术」档、已流出整段被「抱歉，刚才没说完」替掉——该话术本身不动，`test_d0_speech_then_lost_final_keeps_its_wording` 钉着）。
 - 验证：mobile jest 105 套件 1095 全绿（新增 `streamReveal.test` 5、`revealedText.test` 5）、tsc 0、`eslint . --max-warnings 0` 0；Python `agents/chitchat/tests` + cloud 流式相关 140 passed。
   全量固定口径 pytest **未跑**（机器 commit 只剩 ~1GB）。
-- 未完成：候选包三次构建死在构建机 commit 耗尽（`WindowsTerminal` 一进程 34.4GB、页面文件到托管上限；JVM mmap 失败 → 封堆后 prefab 子 JVM 失败 → 再封后 clang 0x5AF）；
-  镜像目录接续五次每次增量前进（arm64 85/85、v7a ~22/74）后被 Claude Code 以内存不足终止且不得自行重启。真机 A/B 未做、清洁包未出、服务端未 push / deploy；
-  取证用的 `reduceMotionForce=true` 因设备掉线未改回。设计 `docs/design/2026-09-18-android-stream-text-pacing.md`，总表 §9（E-11 / E-12 / H-11）。
+- 构建：候选包三次死在构建机 commit 耗尽（`WindowsTerminal` 一进程 34.4GB、页面文件到托管上限；JVM mmap 失败 → 封堆后 prefab 子 JVM 失败 → 再封后 clang 0x5AF）；
+  用户释放物理内存后 commit 仍只剩 1.5GB，清洁树 `-CompileJobs 3` 死于 clang abort（0xC000001D）；镜像内把生成的 ninja `pool compile depth` 3→1 接续 11m10s 出包
+  （`xiaozhou-companion-prod-release-3abd325ea-20260918-1233.apk`，SHA-256 `4fad2538…5795`，设备端一致、非 DEBUGGABLE），验包后 depth 改回 3。
+- 发布（用户授权）：push `4566c0e7..3abd325e` 四条；deploy dry-run 零阻断 → apply submitted → status ok（running = `3abd325e`）→ verify verified
+  （`20260918T041530Z-3abd325.json`）。部署后 PC 探针 standard ×3 + detailed ×1（17.5s、约 1500 字）全部句尾完整。
+- 真机 A/B（OPPO 清洁包 `3abd325ea`，同一装置）：流式期间帧间隔从中位 ~110ms 簇状变成稳定 15–20ms 逐字追出（每拍文字一帧 + 跟底一帧），
+  391ms 服务端停顿后不再一次蹦出二三十字；第 2 趟 727 字完整收尾（同一问法昨天 357 字被掐）；JS 线程流式期间 36–79%（旧 25–52%）。
+  取证用的 `reduceMotionForce` 已改回 false；OPPO 常驻包现为 `3abd325ea`。
 - 装置坑：ColorOS `screenrecord` 直接段错误（rc=139）、`settings put global animator_duration_scale` 被 WRITE_SECURE_SETTINGS 挡 ⇒ 用 App 内 `reduceMotionForce` +
   `dumpsys gfxinfo framestats` 轮询去重量视觉节奏；无 Maestro 的中文输入 = 长按历史里的用户气泡复制 + `input keyevent 279` 粘贴；RN 新架构 JS 线程叫 `mqt_v_js` 且同名十来个，只认 TIME+ 非零那条。

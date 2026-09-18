@@ -1,6 +1,6 @@
 # Android 流式文字上屏：匀速 reveal + 长回答不再被硬上限掐断（2026-09-18）
 
-> 状态：**代码已实现并通过单测 / tsc / lint；真机 A/B 与清洁包因构建机内存耗尽未完成（§5）；服务端改动未 push / 未 deploy**。
+> 状态：**已实现、已 push、已 deploy `3abd325e`（status ok / verify verified）、OPPO 清洁包 `3abd325ea` 真机 A/B 闭合（§5）**。
 > 用户口述两条：① 回答文字「一大段突然跳变上屏」；② 长文本「生成展示不全」。
 > 证据绑定：设备 = OPPO PEUM00 / Android 14（test 机）、常驻包 `990466d6d`（2026-09-17 16:12）；云端 `target=cloud`、
 > 生产 release `f1a99063`；服务端读数取自 collector（`/api/sessions` / `/api/turns/{trace}`）；PC 探针 `scripts/probe_stream_cadence.py`、真机取证
@@ -80,24 +80,39 @@ PC 探针（同一 WS 契约、同一云栈、`memory_enabled=false`）：
   140 passed。全量固定口径 pytest **未跑**（机器 commit 只剩 ~1GB，见 §5）。
 - 真机 A/B：同一句「给我讲一个很长的故事。」、同一装置（framestats + `top -H`），见 §5。
 
-## 5. 真机 A/B 读数：**未取得——候选包没能构建出来（机器 commit 耗尽）**
+## 5. 真机 A/B 读数（OPPO PEUM00，清洁包 `3abd325ea`）
 
-基线（§2 的真机读数）已在旧包 `990466d6d` 上取到；候选包三次构建都死在内存上，本页 A/B 栏空着，不补写。
+同一句「给我讲一个很长的故事。」、同一装置（App 内减少动效强制开 ⇒ framestats 每帧 = 内容变化；`top -H -d 1` 采主 JS 线程）：
+
+| 包 | 回答 | 流式期间帧间隔 | 停顿后的表现 | 主 JS 线程（流式期间，每秒） |
+|---|---|---|---|---|
+| 旧 `990466d6d`（§2 基线） | 297 字 | ~6s 内 55 帧，**中位 ~110ms**，100–300ms 一步、每步长出十来个字 | 312 / 438ms 停顿后一次长出二三十字 | 25–52% |
+| 新 `3abd325ea` 第 1 趟 | 208 字（trace `ade289641cd9aa24`） | ~3s 内 ~75 帧，**稳定 15–20ms**（少数 30–50ms） | 391ms 停顿后仍按节拍逐字追出 | 27–60% |
+| 新 `3abd325ea` 第 2 趟 | **727 字**（trace `e11074577e7e2e6b`；同一问法昨天被掐在 357 字） | ~9s 内 ~190 帧，**中位 17ms**（9–40ms） | 392ms 停顿后同上 | 36–79% |
+
+⇒ 屏上的节奏从「服务端簇间隔」变成「reveal 节拍」：每拍一帧文字 + 一帧跟底滚动（≈16ms 一帧），一簇二三十字在 240ms 内摊平，
+不再一次蹦出来；代价是流式期间 JS 线程从 25–52% 升到 36–79%（每秒 30 次叶子级 Text 更新 + scrollToEnd），仍有余量。
+第 2 趟 727 字完整收尾（「（待续）你想听下一段吗？」），同一问法昨天在 357 字被硬上限掐断——症状 ② 在真机路径上同样闭合。
+减少动效开关取证后已改回 false（`set_switch.py` 回读 `after=False`）；开着动效再跑一趟只看 JS 线程（帧被光球动画淹没）：短回答 19%。
+
+### 5.1 候选包怎么来的：构建机 commit 耗尽，接续 + 单 clang 才出包
 
 | 尝试 | 参数 | 结果 |
 |---|---|---|
-| #1 | `-Release -Variant prod -CompileJobs 3` | Gradle daemon JVM 在 cxx-staging 阶段崩：`Native memory allocation (mmap) failed to map 177MB, G1 virtual space`（`hs_err_pid20112.log`），5 分钟 |
-| #2 | + `GRADLE_OPTS` 小堆（`-Xms128m -Xmx2048m -XX:MaxMetaspaceSize=512m -XX:ActiveProcessorCount=2`，Kotlin in-process） | daemon 活了，**prefab 子 JVM** 崩（同一形态，532MB），2 分钟 |
-| #3 | + `JAVA_TOOL_OPTIONS=-Xms32m -Xmx640m -XX:MaxMetaspaceSize=256m`（封所有子 JVM） | 过了 prefab，`:app:buildCMakeRelWithDebInfo[arm64-v8a]` 到 64/85 时 clang 起不来：`Couldn't execute program clang++.exe … (0x5AF)` = Windows 1455「页面文件太小」，12 分钟 |
-| 接续 ×5 | 镜像目录内直接 `gradlew assembleRelease`（同 init script / -P 参数、`--max-workers=1`、重用 daemon） | 每次增量前进（arm64 85/85 完成，v7a 到 ~22/74），单次 1–4 分钟后同样 0x5AF；随后被 Claude Code 以「系统内存严重不足」终止，并要求不得自行重启 |
+| #1 | `-Release -Variant prod -CompileJobs 3` | Gradle daemon JVM 在 cxx-staging 阶段崩：`Native memory allocation (mmap) failed to map 177MB`（`hs_err_pid20112.log`） |
+| #2 | + `GRADLE_OPTS` 小堆（`-Xms128m -Xmx2048m -XX:MaxMetaspaceSize=512m -XX:ActiveProcessorCount=2`，Kotlin in-process） | daemon 活了，**prefab 子 JVM** 崩（同一形态，532MB） |
+| #3 | + `JAVA_TOOL_OPTIONS=-Xms32m -Xmx640m -XX:MaxMetaspaceSize=256m` | 过了 prefab，`:app:buildCMakeRelWithDebInfo[arm64-v8a]` 64/85 时 clang 起不来：`(0x5AF)` = Windows 1455「页面文件太小」 |
+| 接续 ×5（dirty 树） | 镜像目录内 `gradlew assembleRelease`（同 init script / -P、`--max-workers=1`、重用 daemon） | 每次增量前进后同样 0x5AF；被 Claude Code 以内存不足终止 |
+| 清洁树 #1（用户释放内存后） | `-CompileJobs 3`，不封堆 | 物理内存 7.7GB 空闲但 **commit 仍只剩 1.5GB**（页面文件到托管上限）：v7a 编译时 clang `0xC000001D`（`ucrtbase!abort`，clang 内部分配失败） |
+| 清洁树接续 | 把生成的 `<abi>/CMakeFiles/rules.ninja` 里 `pool compile` 的 `depth` 3 → **1**（不换配置哈希、不动仓库；完成后改回 3）、`--max-workers=1`、同一构建身份（`XIAOZHOU_BUILD_SHA=3abd325ea` / `_AT=2026-09-18 12:10`） | **BUILD SUCCESSFUL 11m10s**；按脚本 §6 逐项验包：KWS / ORT `.so`、内嵌 bundle、`app.config` variant=prod build=3abd325ea、签名 SHA-1 `5e8f1606…f625` 与 README 一致；落 `D:/Android/builds/apk/xiaozhou-companion-prod-release-3abd325ea-20260918-1233.apk`，SHA-256 `4fad2538…5795` 设备端逐字节相同、非 DEBUGGABLE、`lastUpdateTime 2026-09-18 12:36:42`。它现在是 OPPO 常驻包 |
 
-成因不在构建本身：整机 commit 上限 69.1GB（RAM 31.6 + 系统托管页面文件 38400MB，后者已到卷大小 1/8 的托管上限，C: 剩 38.6GB 也长不动），
-`WindowsTerminal`（PID 26396）一个进程私有 commit **34.4GB**，其余全机只剩 0.9–1.5GB；三个并发 clang（每个 0.4–0.8GB）加 daemon 就撞顶。
-两条可选的续路，都要人做决定：① 释放那 34GB（关掉 / 重启那份 Windows Terminal 或它的大 tab）后照常 `build_mobile.ps1 -Release -Variant prod -CompileJobs 3`；
-② 内存不变时，把镜像 `.cxx/app/RelWithDebInfo/<hash>/<abi>/CMakeFiles/rules.ninja` 里 `pool compile` 的 `depth` 从 3 临时改 1（不换配置哈希、不动仓库）再接续——本轮改过一次又改回 3，
-留待有人授权重启构建时用。原生中间产物（arm64 全部、v7a 一部分）留在 `D:\Android\builds\cxx\app\RelWithDebInfo\135z6d2r\`，接续可复用。
+成因：整机 commit 上限 69.1GB（RAM 31.6 + 页面文件 38400MB，后者已到卷大小 1/8 的托管上限），`WindowsTerminal` 一个进程私有 commit 34GB；
+物理内存释放不等于 commit 释放。三个并发 clang（heavy folly 模板各 0.5–0.8GB）+ daemon 就撞顶，单 clang 就过。
+`mobile_device.ps1 -Install` 本身装机成功但回读阶段挂住（10 分钟未返回，装机时刻 12:36:42 已落），验包改为手工读 `pm path` + `sha256sum`。
 
-A/B 装置已进仓（`mobile/e2e/tools/stream_cadence_probe.py`：`prep` 从历史复制同一句 → `frames <label>` 采 framestats + `top -H`），拿到候选包后
-按 §2 同一协议跑一遍即可对照：期望帧间隔从「中位 110ms、簇状」变成「≈33ms 匀速」，JS 线程仍 <60%。
-⚠ 取证时 App 内「减少动效」强制开关（`reduceMotionForce`）被设为 true 以便 framestats 只反映内容变化；构建失败后设备已从 adb 掉线，
-**这个开关还没改回 false**——下次设备在线先跑 `python mobile/e2e/tools/set_switch.py reduceMotionForce false`。
+## 6. 服务端发布证据
+
+push `4566c0e7..3abd325e`（四条：`29b9f0ab` mobile / `a1b680e9` chitchat+cloud / `9d33f7df` docs / `3abd325e` 探针）；deploy dry-run 零阻断 → apply `submitted`（基线 `f1a99063`）
+→ status `ok`、`release_sha` = `running_release_sha` = `3abd325e` → verify `verified`（`20260918T041530Z-3abd325.json`，`minimax:MiniMax-M3`，lock `e2e`，83s）。
+部署后 PC 探针：「给我讲一个很长的故事。」standard ×3（51 / 85 / ~100 字，模型自己收短）与 detailed ×1（**流 17.5s、约 1500 字**）全部句尾完整、`final == streamed`；
+「请详细介绍一下深圳的历史，至少五百字。」136 字完整。detailed 那条在旧上限 440 token 下必然被掐。
