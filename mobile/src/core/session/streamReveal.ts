@@ -9,7 +9,9 @@
 // 做法：记录里的 `Msg.text` 仍然逐片即时累积（TTS、历史持久化、语音层判据都读它，一个字不延迟）；
 // **只有显示**走这里——每个 tick 从「已显示」向「真实文本」推进。速度在**每次新内容到达时**按
 // 「把此刻的积压在 REVEAL_LAG_MS 内摊平」定下，到达之间保持匀速：一簇再大也在 LAG 内追平，一簇很小就按
-// 最低速度把它匀出来。文本被整段替换（final 剥 markdown、气泡被复用给别的消息）时不追、直接跳到位。
+// 最低速度把它匀出来。速度封顶 REVEAL_MAX_CPS：整段一次到达的文字（unary Agent 只在 final 里给、executor 整步
+// 话术一片给完）也是「扫出来」而不是「蹦出来」，与逐片流式的观感一致（2026-09-18 用户：文字输出应保持一致性）。
+// 文本被整段替换（final 剥 markdown、气泡被复用给别的消息）时不追、直接跳到位。
 //
 // 纯函数，零 RN import；hook 在 features/chat/useRevealedText.ts。参数是待证的：真机 A/B 见设计文档。
 
@@ -19,6 +21,8 @@ export const REVEAL_TICK_MS = 33
 export const REVEAL_LAG_MS = 240
 /** 没有积压压力时的最低速度（字/秒）：让最后几个字也是匀速出来的，不是一次到位 */
 export const REVEAL_MIN_CPS = 40
+/** 速度上限（字/秒）：整段到达的文字按它扫出——700 字约 1.8s，读速远在其上，不是等待；超过 96 字的积压不再保证 LAG 内追平 */
+export const REVEAL_MAX_CPS = 400
 
 export interface RevealState {
   /** 屏上已显示的文本 */
@@ -33,9 +37,9 @@ export function revealInit(text: string): RevealState {
   return { shown: text, cps: 0, target: text.length }
 }
 
-/** 一簇积压该用的速度：把它在 REVEAL_LAG_MS 内摊平，但不低于最低速度 */
+/** 一簇积压该用的速度：把它在 REVEAL_LAG_MS 内摊平，但不低于最低速度、不高于上限 */
 export function revealCps(backlog: number): number {
-  return Math.max(REVEAL_MIN_CPS, (backlog * 1000) / REVEAL_LAG_MS)
+  return Math.min(REVEAL_MAX_CPS, Math.max(REVEAL_MIN_CPS, (backlog * 1000) / REVEAL_LAG_MS))
 }
 
 /**

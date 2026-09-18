@@ -112,9 +112,9 @@ export interface BubbleProps {
 export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onSend, onResend, resent }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
-  // 流式回答匀速上屏（2026-09-18）：记录里的 msg.text 逐片即时累积，**只有显示**按节拍追（判据 streamReveal.ts）。
-  // 只给助手气泡；用户气泡（转写草稿按稳定 segment 整段替换）不追
-  const shownText = useRevealedText(msg.id, msg.text, !!msg.streaming, msg.role === 'assistant')
+  // 回答文字匀速上屏（2026-09-18）：记录里的 msg.text 逐片即时累积，**只有显示**按节拍追（判据 streamReveal.ts）；
+  // 逐片流式与只在 final 里到达的整段同一种走法。只给助手气泡；用户气泡（转写草稿按稳定 segment 整段替换）不追
+  const shownText = useRevealedText(msg.id, msg.text, msg.role === 'assistant')
   // 长按 = 复制正文（打磨批 A / P12）：用户与助手两种气泡同一条路。端到端轮顺带给「转写由语音模型生成」的说明
   const copyText = () => {
     if (msg.text) {

@@ -1,7 +1,8 @@
 // 助手气泡的匀速上屏（2026-09-18，features/chat/useRevealedText.ts 经 MessageBubble）。
 // 钉五件事：① 挂载时全文直出（历史恢复 / 复用不重放）；② 流式中一簇长文到达 ⇒ 屏上先只多出几个字、
 // 按节拍追、REVEAL_LAG_MS 内追平；③ streaming 落下时还没追平 ⇒ 尾巴追完而不是一次跳到位；
-// ④ final 整段替换（剥 markdown）⇒ 直接跳到位；⑤ 一次性 final（从未流式）⇒ 直出；用户气泡不追。
+// ④ final 整段替换（剥 markdown）⇒ 直接跳到位；⑤ 一次性 final（只在 final 里到达的整段）也按节拍扫出、不一次蹦出
+//（2026-09-18 用户：联网搜索等一次性到达的文字要与流式观感一致）；用户气泡不追。
 import { createElement } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { Modal, ScrollView, Text } from 'react-native'
@@ -79,11 +80,19 @@ test('final 整段替换（不是已显示文本的延长）⇒ 直接跳到位'
   act(() => { view.unmount() })
 })
 
-test('一次性 final（从未流式）与用户气泡都直出，不追', () => {
+test('一次性 final（只在 final 里到达的整段）也按节拍扫出：到达那一帧不是全文，LAG 内追平；用户气泡不追', () => {
   let view!: ReactTestRenderer
   act(() => { view = create(bubble({ id: 'a', role: 'assistant', text: '', pending: true })) })
   act(() => { view.update(bubble({ id: 'a', role: 'assistant', text: LONG, pending: false, streaming: false })) })
+  expect(shownText(view)).toBe('')
+  tick()
+  const first = shownText(view)
+  expect(first.length).toBeGreaterThan(0)
+  expect(first.length).toBeLessThan(LONG.length)
+  expect(cursorShown(view)).toBe(true)              // 还在长 ⇒ 光标在
+  tick(Math.ceil(REVEAL_LAG_MS / REVEAL_TICK_MS) + 1)
   expect(shownText(view)).toBe(LONG)
+  expect(cursorShown(view)).toBe(false)
   act(() => { view.unmount() })
 
   let user!: ReactTestRenderer

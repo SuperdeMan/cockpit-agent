@@ -1,7 +1,7 @@
 // 流式回答匀速上屏的判据（2026-09-18，core/session/streamReveal.ts）。
 // 钉四件事：① 每拍至少 1 个字、不越过真实长度；② 一簇到达后在 REVEAL_LAG_MS 内追平（到达之间匀速）；
 // ③ 没有积压压力时按最低速度匀速出、不一次到位；④ 真实文本不是已显示文本的延长 ⇒ 直接跳到位。
-import { REVEAL_LAG_MS, REVEAL_MIN_CPS, REVEAL_TICK_MS, revealAdvance, revealCps, revealInit } from '@/core/session/streamReveal'
+import { REVEAL_LAG_MS, REVEAL_MAX_CPS, REVEAL_MIN_CPS, REVEAL_TICK_MS, revealAdvance, revealCps, revealInit } from '@/core/session/streamReveal'
 
 const run = (from: string, text: string, ticks: number) => {
   let s = revealInit(from)
@@ -56,4 +56,18 @@ test('新内容到达时重新定速：流式中间又来了一大簇，速度�
 test('整段替换（final 剥 markdown）⇒ 不追，直接跳到位', () => {
   const s = revealAdvance({ shown: '**深圳**的历', cps: 80, target: 9 }, '深圳的历史', REVEAL_TICK_MS)
   expect(s).toEqual({ shown: '深圳的历史', cps: 0, target: 5 })
+})
+
+test('整段一次到达（只在 final 里给的 700 字）按上限速度扫出：既不一拍到位，也不慢过上限', () => {
+  const text = '深圳'.repeat(350)
+  expect(revealCps(text.length)).toBe(REVEAL_MAX_CPS)
+  const { s, trail } = run('', text, 2)
+  const perTick = Math.ceil((REVEAL_MAX_CPS * REVEAL_TICK_MS) / 1000)
+  expect(trail[0].length).toBe(perTick)
+  expect(trail[1].length).toBe(perTick * 2)
+  expect(s.shown.length).toBeLessThan(text.length)
+  // 700 字在两秒内扫完（上限 400 字/s ⇒ 1.75s），不是 LAG 的 240ms，也不是永远
+  const ticks = Math.ceil(text.length / perTick)
+  expect(ticks * REVEAL_TICK_MS).toBeLessThan(2000)
+  expect(run('', text, ticks).s.shown).toBe(text)
 })
