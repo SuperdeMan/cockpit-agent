@@ -10,6 +10,8 @@ mini-plan 走 executor（heavy/latency_budget/权限自动带出）。固化的�
   e) escalated NEED_CONFIRM → F1 挂起语义一致
   f) 已流式播报（streamed=True）→ 忽略 escalate，不二次回答
   g) heavy escalated 步发过程区 execute 事件 + meta thinking=on
+  h) 改派后的单步云端 Agent 走**与 D0 同一份流式直通**（2026-09-18）：edge 步 / 需确认步仍走 executor；
+     流零输出（Agent 不支持流式）⇒ 回退 executor unary
 全部进程内 stub（装置风格同 test_engine_stream.py），不依赖 gRPC。
 """
 from __future__ import annotations
@@ -89,24 +91,40 @@ class _Resp:
 
 
 class _EscSpy:
-    """clients stub：D0 流式脚本 + 按 intent/次序可编程的 unary 响应。"""
+    """clients stub：D0 流式脚本 + 按次序可编程的响应队列。
+
+    `script` 只喂**第一次**流式调用（D0 的 chitchat 步）；之后的流式调用（改派后的单步云端 Agent，
+    2026-09-18 起与 D0 同一份流式直通）从 `unary_seq` 出队、作为单个 final 流出——真实 Agent 的 SDK
+    缺省 `handle_stream` 就是「把 handle 包成一个 final」。队列空 ⇒ 流零输出 ⇒ 编排回退 executor unary。
+    `calls` 按时间序记录两条路（("stream"|"unary", intent, slots, meta)），断言「最后派了谁」看它。"""
 
     def __init__(self, plan_json=_SINGLE_PLAN, script=None, unary_seq=None):
         self.plan_json = plan_json
         self.script = script or []
-        self.unary_seq = list(unary_seq or [])   # [(intent_expected_or_None, _Resp)] 顺序出队
-        self.stream_calls: list[str] = []
+        self._script_used = False
+        self.unary_seq = list(unary_seq or [])   # _Resp 顺序出队（流式改派步与 unary 共用）
+        self.stream_calls: list[tuple[str, dict, dict]] = []
+        self.stream_ctx_raw_texts: list[str] = []
         self.unary_calls: list[tuple[str, dict, dict]] = []
         self.unary_ctx_raw_texts: list[str] = []
+        self.calls: list[tuple[str, str, dict, dict]] = []
 
     async def call_agent_stream(self, endpoint, intent, slots, ctx=None, meta=None):
-        self.stream_calls.append(intent)
-        for item in self.script:
-            yield item
+        self.stream_calls.append((intent, dict(slots or {}), dict(meta or {})))
+        self.stream_ctx_raw_texts.append(str(getattr(ctx, "raw_text", "") or ""))
+        self.calls.append(("stream", intent, dict(slots or {}), dict(meta or {})))
+        if self.script and not self._script_used:
+            self._script_used = True
+            for item in self.script:
+                yield item
+            return
+        if self.unary_seq:
+            yield ("final", self.unary_seq.pop(0))
 
     async def call_agent(self, endpoint, intent, slots, ctx=None, meta=None):
         self.unary_calls.append((intent, dict(slots or {}), dict(meta or {})))
         self.unary_ctx_raw_texts.append(str(getattr(ctx, "raw_text", "") or ""))
+        self.calls.append(("unary", intent, dict(slots or {}), dict(meta or {})))
         if self.unary_seq:
             return self.unary_seq.pop(0)
         return _Resp(speech=f"（{intent} 兜底）")
@@ -161,10 +179,11 @@ def test_d0_escalate_redirects_to_search_with_process_region():
     final = events[-1]
     assert final["kind"] == "final"
     assert final["speech"] == "昨晚决赛皇马夺冠。"
-    # 改派步走 unary executor（绝不裸 call_agent 的 10s 默认超时——预算经 _validated_steps 带出）
-    assert [c[0] for c in spy.unary_calls] == ["info.search"]
-    assert spy.unary_calls[0][1].get("query") == "昨晚欧冠决赛结果"
-    assert spy.unary_calls[0][2].get("thinking") == "on"       # heavy → 动态开思考
+    # 改派步走与 D0 同一份流式直通（契约 h；step 仍经 _validated_steps 装配，heavy 预算 / thinking 带出）
+    assert not spy.unary_calls
+    assert [c[0] for c in spy.stream_calls] == ["chitchat.talk", "info.search"]
+    assert spy.stream_calls[1][1].get("query") == "昨晚欧冠决赛结果"
+    assert spy.stream_calls[1][2].get("thinking") == "on"      # heavy → 动态开思考
     progress = [e for e in events if e["kind"] == "progress"]
     assert any(e["phase"] == "execute" and e["status"] == "running" for e in progress)
     assert any(e["phase"] == "execute" and e["status"] == "done" for e in progress)
@@ -179,7 +198,8 @@ def test_escalated_result_cannot_escalate_again():
     engine, _ = _make_engine(spy)
     events = _run(engine, _req("昨晚欧冠谁赢了"))
 
-    assert [c[0] for c in spy.unary_calls] == ["info.search"]  # 只有一跳
+    assert [c[0] for c in spy.stream_calls] == ["chitchat.talk", "info.search"]  # 只有一跳
+    assert not spy.unary_calls
     assert events[-1]["speech"] == "搜到了。"
 
 
@@ -191,6 +211,7 @@ def test_escalate_invalid_intent_ignored_with_honest_fallback():
     events = _run(engine, _req("昨晚欧冠谁赢了"))
 
     assert not spy.unary_calls                                  # 没有乱派
+    assert [c[0] for c in spy.stream_calls] == ["chitchat.talk"]
     assert "联网查询" in events[-1]["speech"]
 
 
@@ -206,8 +227,9 @@ def test_executor_path_replaces_only_escalating_step():
     engine, _ = _make_engine(spy)
     events = _run(engine, _req("先查个东西再聊一句"))
 
-    assert [c[0] for c in spy.unary_calls] == [
-        "chitchat.talk", "chitchat.talk", "info.search"]
+    assert [c[0] for c in spy.unary_calls] == ["chitchat.talk", "chitchat.talk"]
+    assert [c[1] for c in spy.calls] == ["chitchat.talk", "chitchat.talk", "info.search"]
+    assert spy.calls[-1][0] == "stream"                          # 改派步流式（契约 h）
     assert events[-1]["kind"] == "final"
     assert events[-1]["speech"]                                  # 聚合产出非空
 
@@ -236,6 +258,7 @@ def test_streamed_reply_ignores_escalate():
     events = _run(engine, _req("早"))
 
     assert not spy.unary_calls                                   # 未改派
+    assert [c[0] for c in spy.stream_calls] == ["chitchat.talk"]
     assert events[-1]["speech"] == "早上好呀。"
 
 
@@ -264,7 +287,7 @@ def test_question_escalate_replaces_blocked_target_with_safe_response(route, int
 
     events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
 
-    called = [call[0] for call in spy.unary_calls]
+    called = [call[1] for call in spy.calls]
     assert intent not in called
     assert called[-1] == "chitchat.talk"
     assert "请立即安全停车" in events[-1]["speech"]
@@ -303,7 +326,8 @@ def test_d0_question_escalate_to_cloud_read_still_dispatches():
 
     events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
 
-    assert [call[0] for call in spy.unary_calls] == ["manual.query"]
+    assert [c[1] for c in spy.calls] == ["chitchat.talk", "manual.query"]
+    assert spy.calls[-1][0] == "stream"                          # 云端只读改派步流式
     assert events[-1]["speech"] == "请立即安全停车并查阅车辆手册。"
 
 
@@ -319,7 +343,7 @@ def test_executor_question_escalate_to_cloud_read_still_dispatches():
 
     events = _run(engine, _req("红色机油灯亮了还能继续开吗"))
 
-    assert [call[0] for call in spy.unary_calls].count("manual.query") == 1
+    assert [call[1] for call in spy.calls].count("manual.query") == 1
     assert events[-1]["kind"] == "final"
     assert events[-1]["speech"]
 
@@ -341,7 +365,7 @@ def test_blocked_escalate_without_safe_response_has_no_dispatch():
 
     spy, sink, events = asyncio.run(run_case())
 
-    assert "warning_light.close" not in [call[0] for call in spy.unary_calls]
+    assert "warning_light.close" not in [call[1] for call in spy.calls]
     assert sink == {}
     assert events == []
 
@@ -366,11 +390,12 @@ def test_resumed_escalate_uses_origin_but_agent_keeps_current_slot_answer(intent
 
     spy, sink, _events, ctx = asyncio.run(run_case())
 
-    called = [item[0] for item in spy.unary_calls]
+    called = [item[1] for item in spy.calls]
     assert intent not in called
     assert called == ["chitchat.talk"]
-    assert spy.unary_calls[0][1]["text"] == "红色机油灯亮了还能继续开吗"
-    assert spy.unary_ctx_raw_texts == ["拿铁"]
+    assert spy.calls[0][0] == "stream"                           # response-only 云端步同样流式
+    assert spy.stream_calls[0][1]["text"] == "红色机油灯亮了还能继续开吗"
+    assert spy.stream_ctx_raw_texts == ["拿铁"]
     assert ctx.raw_text == "拿铁"
     assert sink["results"][0].speech == "请立即安全停车并联系救援。"
 
@@ -391,6 +416,6 @@ def test_unknown_legacy_origin_blocks_escalated_write_but_allows_read():
     write_spy, _ = asyncio.run(run_target("warning_light.close"))
     read_spy, read_sink = asyncio.run(run_target("manual.query"))
 
-    assert "warning_light.close" not in [item[0] for item in write_spy.unary_calls]
-    assert [item[0] for item in read_spy.unary_calls] == ["manual.query"]
+    assert "warning_light.close" not in [item[1] for item in write_spy.calls]
+    assert [item[1] for item in read_spy.calls] == ["manual.query"]
     assert read_sink["results"][0].speech == "read result"

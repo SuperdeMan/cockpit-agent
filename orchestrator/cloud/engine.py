@@ -52,6 +52,8 @@ logger = logging.getLogger("planner.engine")
 #: 换题判据（含 C3-A 的形状契约）总有漏网的说法，这条是**判据之外**的兜底：
 #: 判据再漏，黑洞也只能吞掉有限轮。
 SLOT_RETRY_LIMIT = int(os.getenv("CLOUD_SLOT_RETRY_LIMIT", "2"))
+#: 流式只流了话术、final 却没到时的收口话术（D0 与 escalate 改派共用一句；自进化的兜底话术模式认它，别改字）
+_STREAM_LOST_FINAL_SPEECH = "抱歉，刚才没说完，请再试一次。"
 
 
 def _executed_action_names(actions) -> list[str]:
@@ -860,88 +862,14 @@ class PlannerEngine:
                 # 流中 action 直接放行，绕开 executor 的确认兜底闸；走 executor 路径。
                 and not plan.steps[0].require_confirm):
             step = plan.steps[0]
-            if show_process:
-                yield self._progress("execute", phase_label(step.intent),
-                                     status="running", step_id=step.id)
-            # 流式直通**绕过 executor**，所以 executor 里挂的槽位解析在这条路上不生效。
-            # 2026-08-13 实证：跨轮门店锚定挂在 `_resolve_slot_refs` 上，而 `luckin.menu`
-            # （require_confirm=false）恰好走这条路 —— 诊断日志一行都没打出来，
-            # 因为那个函数根本没被调用。**新增挂点必须枚举全部执行路径**，
-            # 这是本项目第二次踩（M2 那批的 Verifier 也在这里漏过一次）。
-            self.executor._resolve_slot_refs(step, {}, ctx)
-            _d0_start = time.monotonic()
-            # B5 §4：流出面状态与「能不能回退 / 结果确不确定」的判定与 T2 共用一份
-            # （`stream_state`）。此前 D0 一个 `streamed` 布尔、T2 三个布尔各写各的，
-            # 判定表抄了两份，B1 修的就是其中一份抄错。
-            stream = StreamTracker()
-            softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
-            final_sr: StepResult | None = None
-            response_violation: StepResult | None = None
-            try:
-                # 总截止是 `call_agent_stream` 的缺省（clients.AGENT_STREAM_TIMEOUT_S，60s）：流式 Agent
-                # 边生成边流，长回答会超过旧的 30s，然后走下面「只流了话术」那档、把已流出的整段替掉
-                async for kind, payload in self.clients.call_agent_stream(
-                        step.endpoint, step.intent, step.slots, ctx, step.meta):
-                    if kind == "speech":
-                        payload = softener.feed(payload)
-                        # 记的是**软化之后**的增量：softener 会把悬空的 `*` 扣下一拍，
-                        # 那一拍用户什么都没看到。「流出过输出」必须指用户真的收到了东西，
-                        # 否则一个空串就能把 unary 回退整条关掉（T2 一直是这个口径，
-                        # 有专门的空 delta 对照测试；D0 此前不是——统一到严的这边）。
-                        stream.on_speech(payload)
-                        if payload:
-                            yield {"kind": "speech", "delta": payload}
-                    elif kind == "action":
-                        if bool(getattr(step, "response_only", False)):
-                            response_violation = self.executor._enforce_response_only(
-                                step,
-                                StepResult(
-                                    step_id=step.id,
-                                    status=StepStatus.OK,
-                                    actions=[{"type": "stream_action"}],
-                                ),
-                            )
-                            continue
-                        stream.on_action()
-                        yield {"kind": "action", "action": payload}
-                    elif kind == "final":
-                        final_sr = DagExecutor._to_result(step.id, payload)
-            except Exception as e:
-                logger.warning("Single-step stream failed (%s); falling back to unary", e)
-
-            if response_violation is not None:
-                final_sr = response_violation
-            elif final_sr is not None:
-                final_sr = self.executor._enforce_response_only(step, final_sr)
-
+            # 单步流式直通的本体在 `_stream_single_step`（与 escalate 改派共用一份，2026-09-18）：
+            # 过程区 running / 槽位解析 / 流事件转发 / response_only 闸 / 对账 / 来源 / span / 过程区 done 都在里面
+            ssink: dict = {}
+            async for ev in self._stream_single_step(step, ctx, show_process, ssink):
+                yield ev
+            stream: StreamTracker = ssink["stream"]
+            final_sr: StepResult | None = ssink.get("final_sr")
             if final_sr is not None:
-                stream.on_final()
-                # M2 Verifier：流式直通不经 executor._exec_step，必须在此显式对账，
-                # 否则 capability 声明了 verification 却静默不生效（真栈首验实测：
-                # weather 走 D0 流式，一条 step.verify span 都没有）。
-                # allow_retry=False：话术已经流给用户了，重跑会重复播报。
-                final_sr = await self.executor._verify_outcome(
-                    step, final_sr, ctx, allow_retry=False)
-                final_sr = self.executor._stamp_source(step, final_sr)
-                # 流式直通也补 step.agent span（否则单步云端 agent 链路缺这一跳）
-                _pending = final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
-                await obs_events.get_emitter("cloud").emit_span(
-                    ctx.trace_id, f"step.agent:{step.agent_id}",
-                    status="wait" if _pending else (
-                        "ok" if final_sr.status == StepStatus.OK else "err"),
-                    duration_ms=(time.monotonic() - _d0_start) * 1000,
-                    attrs={"intent": step.intent, "agent_id": step.agent_id,
-                           "kind": "agent", "deployment": "cloud", "via": "stream"})
-                # 过程区的「完成」事件与 executor 路径同款（同一 step_id 合并 running→done）
-                if show_process and final_sr.status in (
-                        StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
-                    summary = step_summary(step, final_sr)
-                    if final_sr.status == StepStatus.NEED_CONFIRM:
-                        summary = (summary or "已生成方案") + "（待确认）"
-                    elif final_sr.status == StepStatus.NEED_SLOT:
-                        summary = summary or "需要补充信息"
-                    yield self._progress("execute", phase_label(step.intent),
-                                         summary=summary, status="done", step_id=step.id)
                 results = [final_sr]
                 focus_plan = plan
                 # 通用 escalate（一跳）：Agent 声明「这题我不该答，改派给 X」。仅当未播报过任何
@@ -1004,7 +932,7 @@ class PlannerEngine:
                     yield {"kind": "final", **final}
                     return
                 # 只流了话术：话已经说了一半，重跑会播两遍。
-                yield {"kind": "final", "speech": "抱歉，刚才没说完，请再试一次。"}
+                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH}
                 return
             # 无任何流式事件（不支持/连接失败）→ 安全回退到下面的 executor 路径
 
@@ -1202,6 +1130,95 @@ class PlannerEngine:
         return {"intent": intent.strip(), "slots": slots,
                 "reason": str(esc.get("reason") or "")}
 
+    async def _stream_single_step(self, step: Step, ctx: PlanContext,
+                                  show_process: bool, sink: dict) -> AsyncIterator[dict]:
+        """单步云端 Agent 的流式直通——D0（新单步计划）与 escalate 改派**共用这一份**（2026-09-18）。
+
+        yield 过程区 running / speech / action / 过程区 done 事件；结果经 sink 回传：
+          sink["stream"]   StreamTracker：流出面状态（能不能回退 unary / 结果确不确定），异常时也一定在
+          sink["final_sr"] 已过 response_only 闸、已对账（Verifier，不重跑）、已标来源的 StepResult；流没给 final 时缺席
+        调用方按 `allow_unary_fallback` / `outcome_uncertain` 决定回退还是收口，两条路径的判定表只有一份。
+
+        流式直通**绕过 executor**，所以 executor 里挂的槽位解析在这条路上不生效。2026-08-13 实证：跨轮门店锚定
+        挂在 `_resolve_slot_refs` 上，而 `luckin.menu`（require_confirm=false）恰好走这条路——诊断日志一行都
+        没打出来，因为那个函数根本没被调用。**新增挂点必须枚举全部执行路径**（本项目第二次踩：M2 的 Verifier
+        也在这里漏过一次）——把两条路收敛成这一个函数，正是为了让「枚举」只剩一处。
+        """
+        if show_process:
+            yield self._progress("execute", phase_label(step.intent),
+                                 status="running", step_id=step.id)
+        self.executor._resolve_slot_refs(step, {}, ctx)
+        started = time.monotonic()
+        # B5 §4：流出面状态与「能不能回退 / 结果确不确定」的判定与 T2 共用一份（`stream_state`）。
+        stream = StreamTracker()
+        sink["stream"] = stream
+        softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
+        final_sr: StepResult | None = None
+        response_violation: StepResult | None = None
+        try:
+            # 总截止是 `call_agent_stream` 的缺省（clients.AGENT_STREAM_TIMEOUT_S，60s）：流式 Agent
+            # 边生成边流，长回答会超过旧的 30s，然后走「只流了话术」那档、把已流出的整段替掉
+            async for kind, payload in self.clients.call_agent_stream(
+                    step.endpoint, step.intent, step.slots, ctx, step.meta):
+                if kind == "speech":
+                    payload = softener.feed(payload)
+                    # 记的是**软化之后**的增量：softener 会把悬空的 `*` 扣下一拍，那一拍用户什么都没看到。
+                    # 「流出过输出」必须指用户真的收到了东西，否则一个空串就能把 unary 回退整条关掉。
+                    stream.on_speech(payload)
+                    if payload:
+                        yield {"kind": "speech", "delta": payload}
+                elif kind == "action":
+                    if bool(getattr(step, "response_only", False)):
+                        response_violation = self.executor._enforce_response_only(
+                            step,
+                            StepResult(
+                                step_id=step.id,
+                                status=StepStatus.OK,
+                                actions=[{"type": "stream_action"}],
+                            ),
+                        )
+                        continue
+                    stream.on_action()
+                    yield {"kind": "action", "action": payload}
+                elif kind == "final":
+                    final_sr = DagExecutor._to_result(step.id, payload)
+        except Exception as e:
+            logger.warning("Single-step stream failed (%s); caller decides fallback", e)
+
+        if response_violation is not None:
+            final_sr = response_violation
+        elif final_sr is not None:
+            final_sr = self.executor._enforce_response_only(step, final_sr)
+        if final_sr is None:
+            return
+        stream.on_final()
+        # M2 Verifier：流式直通不经 executor._exec_step，必须在此显式对账，否则 capability 声明了
+        # verification 却静默不生效（真栈首验实测：weather 走 D0 流式，一条 step.verify span 都没有）。
+        # allow_retry=False：话术已经流给用户了，重跑会重复播报。
+        final_sr = await self.executor._verify_outcome(
+            step, final_sr, ctx, allow_retry=False)
+        final_sr = self.executor._stamp_source(step, final_sr)
+        # 流式直通也补 step.agent span（否则单步云端 agent 链路缺这一跳）
+        _pending = final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT)
+        await obs_events.get_emitter("cloud").emit_span(
+            ctx.trace_id, f"step.agent:{step.agent_id}",
+            status="wait" if _pending else (
+                "ok" if final_sr.status == StepStatus.OK else "err"),
+            duration_ms=(time.monotonic() - started) * 1000,
+            attrs={"intent": step.intent, "agent_id": step.agent_id,
+                   "kind": "agent", "deployment": "cloud", "via": "stream"})
+        # 过程区的「完成」事件与 executor 路径同款（同一 step_id 合并 running→done）
+        if show_process and final_sr.status in (
+                StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+            summary = step_summary(step, final_sr)
+            if final_sr.status == StepStatus.NEED_CONFIRM:
+                summary = (summary or "已生成方案") + "（待确认）"
+            elif final_sr.status == StepStatus.NEED_SLOT:
+                summary = summary or "需要补充信息"
+            yield self._progress("execute", phase_label(step.intent),
+                                 summary=summary, status="done", step_id=step.id)
+        sink["final_sr"] = final_sr
+
     async def _run_escalated(self, esc: dict, ctx: PlanContext, agents: list,
                              sink: dict,
                              prior: list[StepResult] | None = None) -> AsyncIterator[dict]:
@@ -1266,12 +1283,48 @@ class PlannerEngine:
         if show_esc_process:
             for s in mini.steps:
                 s.meta = {**s.meta, "thinking": "on"}
-            yield self._progress("execute", phase_label(steps[0].intent),
-                                 status="running", step_id=steps[0].id)
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id, "escalate",
             attrs={"intent": esc["intent"], "reason": esc.get("reason", "")})
         results: list[StepResult] = []
+        step0 = steps[0]
+        running_sent = False
+        if (len(steps) == 1 and step0.kind == "agent"
+                and step0.deployment == "cloud" and not step0.require_confirm):
+            # 改派后的单步云端 Agent 与 D0 **同一份**流式直通（2026-09-18）。此前一律经 executor 走 unary：
+            # chitchat 流式起步 → `<search>` 改派 → info.search 整段只在 final 里到达，屏上一次性上屏
+            # （真机 `app-2652cv` 三轮 783 / 497 / 311 字），而直连的 info.search 计划走 D0 是逐片流的。
+            # **同一个 Agent 在两条路上必须同一种流法。** 资格条件与 D0 逐字相同（edge 步 / 需确认步照旧走 executor）。
+            ssink: dict = {}
+            async for ev in self._stream_single_step(step0, ctx, show_esc_process, ssink):
+                yield ev
+            running_sent = show_esc_process
+            stream: StreamTracker = ssink["stream"]
+            sr = ssink.get("final_sr")
+            if sr is not None:
+                if isinstance(sr.data, dict):
+                    sr.data.pop("_escalate", None)   # 单跳预算：二跳声明不消费（结构性防环）
+                results.append(sr)
+                if sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
+                    yield await self._suspend(sr, results, mini, ctx, prior=prior)
+                    sink["suspended"] = True
+                    return
+                sink["results"] = results
+                sink["plan"] = mini
+                return
+            if not allow_unary_fallback(stream.state):
+                # 流出过输出却没收到 final：与 D0 同一档处置，不回退重跑（播两遍 / 副作用两遍）
+                if outcome_uncertain(stream.state, stream.got_final):
+                    sink["results"] = [await self.executor.stream_uncertain_result(step0, ctx)]
+                    sink["plan"] = mini
+                    return
+                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH}
+                sink["suspended"] = True   # 终态已给出，调用方直接 return
+                return
+            # 零输出（Agent 不支持流式 / 建连失败）→ 与 D0 同款：安全回退到 executor 路径
+        if show_esc_process and not running_sent:
+            yield self._progress("execute", phase_label(steps[0].intent),
+                                 status="running", step_id=steps[0].id)
         async for sr in self.executor.run(mini, ctx):
             if isinstance(sr.data, dict):
                 sr.data.pop("_escalate", None)   # 单跳预算：二跳声明不消费（结构性防环）
