@@ -195,4 +195,6 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 
 | E-13 | E | 联网搜索结果一次性全量上屏：chitchat `<search>` 改派后的 info.search 经 executor 走 unary、整段只在 final 里到达（`app-2652cv` 三轮 783 / 497 / 311 字）；直连 info.search 计划走 D0 是逐片流的 | **已实现、单测绿（1394）**：D0 单步流式直通抽成 `engine._stream_single_step`，`_run_escalated` 对单步云端不需确认的改派步走同一份；客户端 `useRevealedText` 改为任何延长都追、`REVEAL_MAX_CPS`=400 封顶 ⇒ 只在 final 里到达的整段也是扫出来的。**已 push、已 deploy `a4b47748`（status ok / verify verified）**；PC 探针直接规划的 info.search 逐片流、news 整段由客户端扫出；改派路径真机证据与新包见设计 §7.2 | `orchestrator/cloud/engine.py::_stream_single_step`；`test_engine_escalate` 契约 h；`core/session/streamReveal.ts` |
 
-设备状态：取证用的「减少动效」强制开关已改回 false（`set_switch.py` 回读 `after=False`）；OPPO 常驻包现为 `a4b477489`（2026-09-18 14:50 装机，设备端 SHA-256 与本地一致、非 DEBUGGABLE；上一包 `3abd325ea`）。
+设备状态：取证用的「减少动效」强制开关已改回 false（`set_switch.py` 回读 `after=False`）；| E-14 | D | 搜索轮在真机「吐一批、卡一下」：到手机的到达成批（0.5–1.5s 一批），旧 reveal 按 240ms 追平 ⇒ 扫完一批空等半秒 | **已修 + 真机 A/B 闭合**（`d32f81c2`，包 `d32f81c23`）：reveal 跟最近 2s 到达速率走、落后 ≤1.2s；流式期间不再有 ≥0.5s 无内容段（最长 241 / 399ms）。JS 线程升到 35–88%，撞顶再做 delta 合并 / memo（设计 §8.1） | `core/session/streamReveal.ts`；`streamReveal.test` ⑥ |
+
+OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 与本地一致、非 DEBUGGABLE；上一包 `a4b477489`）。

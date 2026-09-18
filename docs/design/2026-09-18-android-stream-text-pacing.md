@@ -171,10 +171,21 @@ JS 线程流式期间 19–59%。取证后 `reduceMotionForce` 已改回 false�
 但显示落后真实文本不超过 `REVEAL_MAX_LAG_MS`=1.2s，夹在 40–400 字/s。细粒度流按自身速率逐字（不变）；每 600ms 一批 60 字 ⇒ 100 字/s 连续流出、
 批间不空等（单测 ⑥：第三批起没有一拍空转、落后 ≤1.2s）；整段一次到达仍按上限扫出。代价：显示比到达最多晚 1.2s——远快于播报读速。
 
-### 8.1 真机 A/B：包已出，设备掉线，读数待补
+### 8.1 真机 A/B（OPPO，清洁包 `d32f81c23`，18:11:57 装机，设备端 SHA-256 与本地一致、非 DEBUGGABLE）
 
 清洁包 `xiaozhou-companion-prod-release-d32f81c23-20260918-1642.apk`（脚本首跑再次死于 clang abort，同 §5.1 的 depth=1 接续 22m43s 出包，
-验包：KWS / ORT `.so`、内嵌 bundle、`app.config` variant=prod build=d32f81c23、签名 `5e8f1606…f625`）。装机前 OPPO 从 adb 掉线（`adb devices` 空、
-kill-server 也不回来），A/B 未做。设备回来后：`scripts\mobile_device.ps1 -Role test -Install <apk>`（或 `adb install -r`）→ `set_switch.py reduceMotionForce true`
-→ `stream_cadence_probe.py prep "给我讲一下深圳的历史，网上搜索下"` + `frames`，对照 §8 的旧包帧序列：期望流式期间不再出现 0.5–1.5s 的无内容帧段、帧间隔连续
-（到达仍成批时每批摊到批间隔里）；跑完把开关改回 false。
+验包：KWS / ORT `.so`、内嵌 bundle、`app.config` variant=prod build=d32f81c23、签名 `5e8f1606…f625`）。同一句「给我讲一下深圳的历史，网上搜索下」、
+同一装置（减少动效强制开，`set_switch.py` 回读 `after=True`），两趟有效样本（另一趟发送未触发、无服务端轮，不计）：
+
+| 包 | 流式期间的内容帧间隔 | 无内容帧的空档 | 主 JS 线程 |
+|---|---|---|---|
+| `a4b477489`（§8 旧 reveal，search1） | 簇内 15–20ms，簇间 **0.5–1.5s**（`389 502 537 488 489 480 198`、`302 497 503 497 531 487 507 488`… 反复） | 每 0.3–0.5s 一段、共十来段 | 24–62% |
+| `d32f81c23` 第 1 趟（764 字，trace `dc6dc268e49a4320`） | 4–241ms，典型 10–100ms，**16s 内没有一段 ≥0.3s 的空档** | 无 | 60–88% |
+| `d32f81c23` 第 2 趟 | 2–122ms，两次 324 / 399ms | 无 | 35–77% |
+
+⇒ 到达仍是成批的（到达方式没变），但显示已经按到达速率连续流出；「吐一批、卡一下」消失。代价：流式期间 JS 线程比旧版高
+（连续 30 拍/s 的叶子更新 + 跟底滚动叠在到达处理上），峰值 88% 仍未饱和——若后续更长的回答让它撞顶，下一手是把 delta 到达合并成 ≤20 次/s 的 store 更新、
+或给气泡加 memo；本轮不动。取证后 `reduceMotionForce` 已改回 false。OPPO 常驻包现为 `d32f81c23`。
+
+顺带修正一处装置坑：`set_switch.py` 在 App 刚被 force-stop 又深链拉起的瞬间可能 `NOT_FOUND settings-switch-reduceMotionForce`（设置页还没渲出来），
+再跑一次即可；那一趟若不核回读就会把「动效开着」的帧序列当成内容帧（2344 帧全是光球动画）。
