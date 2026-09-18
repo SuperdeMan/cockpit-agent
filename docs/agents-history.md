@@ -9095,3 +9095,21 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   deploy dry-run 零阻断 → apply submitted → status 5/5、running = `f1a99063` → 首次 verify 全空（紧跟 apply 之后事务锁未释放）→ `ps`
   无持有者 → 重跑 verified（`20260917T033352Z-f1a9906.json`）；CI 8/8。清洁包 `f1a990632`（SHA-256 `9a2773aa…92ce`）装为 OPPO 常驻包，
   「我现在在哪里」`fresh:network:0s:wait58`、`request_sent` +126ms、答科技南一路。生产基线 `97825faa` → `f1a99063`。
+
+## 2026-09-18 — Android 流式文字：「一大段跳变上屏」= 服务端簇状 delta 原样上屏（客户端不忙）；「长文本展示不全」= chitchat 把 max_tokens 当长度控制
+
+- 证据：collector `app-wyi61a` 两轮长回答 357 / 426 字在句中被掐（`_LENGTH["standard"]=220`），66 轮 chitchat p90 71 字、≥300 字的 3 轮里 2 轮被掐；
+  PC 探针同一句 `final == streamed` 三次为真，簇内间隔 p50 2ms / 簇间 p90 147ms；真机（OPPO `990466d6d`，App 内减少动效强制开 ⇒ framestats 每帧
+  = 内容变化）流式 6s 内 55 帧、帧间隔中位 ~110ms（300–440ms 停顿后一次长出二三十字），主 JS 线程 `mqt_v_js` 25–52%。
+- 修（mobile）：`core/session/streamReveal.ts`（到达时按积压/240ms 定速、到达间匀速、最低 40 字/s、33ms 一拍；整段替换直出）+ `features/chat/useRevealedText.ts`
+  （挂载直出 / 流式中才追 / final 尾巴追完 / 换 id 直出 / 用户气泡不追 / 不看 reduce-motion），消费点 MessageBubble 正文与 VoiceSheet 回答区；`Msg.text`、TTS、历史一字不延迟。
+  第一版按每拍剩余积压重算速度 ⇒ 几何衰减、34 字尾巴拖到 ~400ms，单测判红后改成到达时定速。
+- 修（服务端）：chitchat `_LENGTH` 140/220/440 → 300/600/900（提示语不变、上限只做兜底），流式 `timeout=55`；`clients.AGENT_STREAM_TIMEOUT_S`=60（env `CLOUD_AGENT_STREAM_TIMEOUT_S`）
+  成为 D0 `call_agent_stream` 缺省截止（原 30；不放宽则长回答走「只流了话术」档、已流出整段被「抱歉，刚才没说完」替掉——该话术本身不动，`test_d0_speech_then_lost_final_keeps_its_wording` 钉着）。
+- 验证：mobile jest 105 套件 1095 全绿（新增 `streamReveal.test` 5、`revealedText.test` 5）、tsc 0、`eslint . --max-warnings 0` 0；Python `agents/chitchat/tests` + cloud 流式相关 140 passed。
+  全量固定口径 pytest **未跑**（机器 commit 只剩 ~1GB）。
+- 未完成：候选包三次构建死在构建机 commit 耗尽（`WindowsTerminal` 一进程 34.4GB、页面文件到托管上限；JVM mmap 失败 → 封堆后 prefab 子 JVM 失败 → 再封后 clang 0x5AF）；
+  镜像目录接续五次每次增量前进（arm64 85/85、v7a ~22/74）后被 Claude Code 以内存不足终止且不得自行重启。真机 A/B 未做、清洁包未出、服务端未 push / deploy；
+  取证用的 `reduceMotionForce=true` 因设备掉线未改回。设计 `docs/design/2026-09-18-android-stream-text-pacing.md`，总表 §9（E-11 / E-12 / H-11）。
+- 装置坑：ColorOS `screenrecord` 直接段错误（rc=139）、`settings put global animator_duration_scale` 被 WRITE_SECURE_SETTINGS 挡 ⇒ 用 App 内 `reduceMotionForce` +
+  `dumpsys gfxinfo framestats` 轮询去重量视觉节奏；无 Maestro 的中文输入 = 长按历史里的用户气泡复制 + `input keyevent 279` 粘贴；RN 新架构 JS 线程叫 `mqt_v_js` 且同名十来个，只认 TIME+ 非零那条。

@@ -182,3 +182,15 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 
 顺带核出的事实：识别中 `derivePresence` 的胶囊文案是 partial 本身，层内转写区又显示同一段字 ⇒ 层内胶囊改固定「识别中…」（`presence.ts::sheetCapsuleText`，层外不动）；收音中还没识别出字时转写区原来的灰字「在听…」与头区胶囊重复，撤掉（P07「不渲染光标」照旧）。
 
+
+## 9. 2026-09-18 追加：流式文字「一大段跳变上屏」+ 长回答「展示不全」
+
+出处：[2026-09-18 设计与实施记录](2026-09-18-android-stream-text-pacing.md)。用户口述两条，最近几轮会话（`app-wyi61a` 等）可复现。
+
+| ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
+|---|---|---|---|---|
+| E-11 | D | 回答文字一段一段蹦：服务端 delta 成簇到达（PC 探针簇内 2ms、簇间 p90 147ms），真机每 ~110ms 长出十来个字、停顿后一次二三十个字；JS 线程流式期间只有 25–52%，不是客户端卡 | **已实现、单测绿，真机 A/B 未做**：显示与记录分开——`Msg.text` 照旧逐片即时累积（TTS / 历史 / 语音层判据不变），显示按「到达时定速（积压 / 240ms）、到达间匀速、最低 40 字/s、33ms 一拍」追；挂载直出、final 尾巴追完、整段替换 / 换 id 直出、用户气泡不追。候选包三次构建死在构建机 commit 耗尽（设计 §5），A/B 装置与协议已备好 | `core/session/streamReveal.ts`（唯一判据）、`features/chat/useRevealedText.ts`；消费点 `MessageBubble` / `VoiceSheet`；`streamReveal.test` 5、`revealedText.test` 5 |
+| E-12 | E | 长回答句中截断（「给我讲一个很长的故事」357 字停在「离开港口」、「history of Shenzhen in detail」426 字停在「如今，深圳是中国」）：chitchat `max_tokens=220` 被当长度控制用；final 与流式逐字一致，客户端没再截 | **已实现、单测绿，未 push / 未 deploy**：`_LENGTH` 上限 140/220/440 → 300/600/900 只做兜底、提示语不变；chitchat 流式 `timeout=55`；`clients.AGENT_STREAM_TIMEOUT_S`（env `CLOUD_AGENT_STREAM_TIMEOUT_S`，缺省 60）成为 D0 `call_agent_stream` 缺省截止（原 30）——不放宽的话长回答换成被「抱歉，刚才没说完」整段替掉 | `agents/chitchat/src/agent.py::_LENGTH`、`orchestrator/cloud/clients.py`；`agents/chitchat/tests/test_agent.py` |
+| H-11 | H | 候选包构建：机器 commit 上限 69.1GB 里 `WindowsTerminal` 一个进程占 34.4GB，页面文件已到托管上限，三个并发 clang 就撞顶；Claude Code 以「系统内存严重不足」终止了接续循环并要求不得自行重启 | 需要人：释放那 34GB 后重跑 `build_mobile.ps1 -Release -Variant prod -CompileJobs 3`，或授权按设计 §5 的 depth=1 接续；原生中间产物已留在镜像 | 设计 §5 |
+
+⚠ 设备状态：取证时把 App 内「减少动效」强制开关设为 true（让 framestats 只反映内容变化），设备随后从 adb 掉线，**开关尚未改回**；下次在线先 `python mobile/e2e/tools/set_switch.py reduceMotionForce false`。OPPO 常驻包仍是 `990466d6d`。
