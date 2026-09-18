@@ -189,3 +189,21 @@ JS 线程流式期间 19–59%。取证后 `reduceMotionForce` 已改回 false�
 
 顺带修正一处装置坑：`set_switch.py` 在 App 刚被 force-stop 又深链拉起的瞬间可能 `NOT_FOUND settings-switch-reduceMotionForce`（设置页还没渲出来），
 再跑一次即可；那一趟若不核回读就会把「动效开着」的帧序列当成内容帧（2344 帧全是光球动画）。
+
+## 9. 追加（2026-09-18 晚）：联网搜索内容有截断——搜索合成的 `max_tokens=600` 是同一形态的第二例
+
+真机最新两轮（`app-s2ad38` 18:22 843 字停在「1953年，宝安」、`app-r2vhmc` 18:45 818 字停在「5. 近现代：1842年7月至」，都是直接规划的
+`info.search` D0 流）：`grounded_synthesis(_stream)` 的合成调用 `max_tokens=600`（≈850 字，含 JSON 外壳）——用户要「详细介绍深圳的历史」时模型按
+prompt 写到 900 字左右就被掐在句中，`parse_synth` 的抢救路径只去掉尾部悬空标点，半句直达用户。上午 chitchat 那条记的「info 合成 600 token 也在此列，
+出现第二例再动」，现在出现了。
+
+修法（`agents/_sdk/grounding.py`）：
+- 上限只做兜底：`max_tokens` 600 → **1200**、`timeout` 25 → **40s**（D0 流式截止 60s 里还要装 2–8s 检索；MiniMax-M3 ~40 token/s ⇒ 1200 token 30s），
+  一次性与流式两条路同一份默认值；
+- 长度由 prompt 约束：`synthesis_messages` 加第 5 条——解释/介绍类默认 300 字内、明确要详细时到 900 字左右、再长就在自然段落收住并说明还有更多、绝不在句中停；
+- 撞上限时收口到句边界：`parse_synth` 抢救路径经 `clip_truncated_answer`——最后一个句末标点在后 40% 里就切到它（半句丢掉），否则只去悬空连接标点；
+  再补确定性说明 `TRUNCATED_SUFFIX`「……（篇幅所限，先讲到这里）」，结果带 `truncated: True`、置信 low（既有 follow_up「深入调研一下」随之出现）。
+  流式路径上半句已经流出去了：不切句时 final 是流出文本的延长（客户端顺着追出说明）；切句时 final 短于流出文本、客户端整段替换（半句消失、结尾干净）。
+
+验证：`agents/_sdk/tests` + `agents/info/tests` 338 passed（`test_parse_synth_rescues_truncated_json_answer` 加两例：早句号不切、晚句号切句；
+`test_stream_midway_failure_keeps_what_arrived` 改为「原文保留 + 说明」）。真栈：待 deploy 后同题探针。

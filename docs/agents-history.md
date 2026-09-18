@@ -9143,3 +9143,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真机：清洁包 `d32f81c23`（脚本再次 clang abort，depth=1 接续 22m43s 出包，验包过）装 OPPO；同题两趟有效样本流式期间最长空档 241 / 399ms、
   不再有 ≥0.5s 无内容段；JS 35–88%（比旧版高，未饱和）。`reduceMotionForce` 已改回 false。装置坑：App 刚拉起时 `set_switch.py` 可能 NOT_FOUND，重跑即可，
   不核回读会把光球动画帧当内容帧。
+
+## 2026-09-18 — 追加（晚）：联网搜索内容截断 = 搜索合成 `max_tokens=600`（chitchat 那条的第二例）；上限抬到 1200 只做兜底、prompt 管长度、撞上限切句
+
+- 证据：真机 843 / 818 字停在「1953年，宝安」「1842年7月至」（直接规划的 info.search D0 流）。
+- 修：`grounded_synthesis(_stream)` 默认 max_tokens 600→1200、timeout 25→40s；`synthesis_messages` 第 5 条长度约束；`parse_synth` 抢救路径 `clip_truncated_answer`
+  （晚句号切句 / 早句号只去悬空标点）+ `TRUNCATED_SUFFIX` + `truncated: True`。`agents/_sdk/tests` + `agents/info/tests` 338 passed。待 push / deploy。
