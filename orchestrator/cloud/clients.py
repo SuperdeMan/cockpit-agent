@@ -30,6 +30,12 @@ from cockpit.channel.v1 import channel_pb2, channel_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
 _DEFAULT_TIMEOUT = 10
+# 流式 Agent 调用（ExecuteStream）的 gRPC 总截止（秒）。此前缺省 30s：流式 Agent 边生成边流，长回答
+# （chitchat 上限 900 token、MiniMax-M3 尾部 ~20 token/s ⇒ 45s）会在句中被掐断，然后 D0 走「只流了话术」
+# 那档——用户屏上已流出的整段被「抱歉，刚才没说完」替掉。客户端看门狗 95s、规划 p90 4s，60s 留得下。
+# 截止的职责是兜住挂死的 Agent（上游卡住由 llm-gateway 的逐片 stall 检测负责），不是限制回答长度。
+# T2 按 step.latency_budget_ms 显式传，不走这个缺省。
+AGENT_STREAM_TIMEOUT_S = float(os.getenv("CLOUD_AGENT_STREAM_TIMEOUT_S", "60"))
 
 #: llm-gateway 无任何 chat 厂商 key 时的回显兜底（`llm-gateway/providers.py::MockProvider`）
 #: 在 `CompleteResponse.model_used` 里自报的名字。planner 据此知道「这个栈里没有规划模型」
@@ -342,11 +348,16 @@ class Clients:
         return await stub.Execute(req, timeout=timeout)
 
     async def call_agent_stream(self, endpoint: str, intent: str, slots: dict,
-                                ctx=None, meta: dict | None = None, timeout: float = 30):
+                                ctx=None, meta: dict | None = None,
+                                timeout: float | None = None):
         """流式调用 Agent.ExecuteStream，归一化为 (kind, payload) 元组：
         ("speech", str) / ("action", AgentAction) / ("final", ExecuteResponse)。
         供 engine 单步开放域流式直通（边想边说）。
+
+        `timeout` 缺省 = AGENT_STREAM_TIMEOUT_S（D0 用缺省；T2 按 step.latency_budget_ms 显式传）。
         """
+        if timeout is None:
+            timeout = AGENT_STREAM_TIMEOUT_S
         stub = self._agent_stub(endpoint)
         req = self._exec_request(intent, slots, ctx, meta)
         async for ev in stub.ExecuteStream(req, timeout=timeout):

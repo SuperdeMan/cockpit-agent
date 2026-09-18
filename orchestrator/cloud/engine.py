@@ -878,6 +878,8 @@ class PlannerEngine:
             final_sr: StepResult | None = None
             response_violation: StepResult | None = None
             try:
+                # 总截止是 `call_agent_stream` 的缺省（clients.AGENT_STREAM_TIMEOUT_S，60s）：流式 Agent
+                # 边生成边流，长回答会超过旧的 30s，然后走下面「只流了话术」那档、把已流出的整段替掉
                 async for kind, payload in self.clients.call_agent_stream(
                         step.endpoint, step.intent, step.slots, ctx, step.meta):
                     if kind == "speech":

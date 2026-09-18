@@ -5,7 +5,7 @@
 
 开放域延迟优化（task 4）：
 - 模型分层：闲聊/情绪等开放域默认走"快"模型（低延迟），meta.model_pref=deep 时才用重模型。
-- 话术长度：meta.answer_length 控制 max_tokens 与提示，行车场景默认简短。
+- 话术长度：meta.answer_length 控制**提示语**的口气；max_tokens 只是防失控的兜底上限（见 _LENGTH），不是长度控制。
 - 助手昵称：meta.assistant_name 注入 system，呼应 HMI 设置。
 这些 meta 由编排器从 HandleRequest.meta 透传（见 orchestrator/cloud/engine.py _build_context）。
 """
@@ -105,12 +105,23 @@ def _escalate_result(query: str) -> AgentResult:
         "intent": "info.search", "slots": {"query": query},
         "reason": "needs_realtime"}})
 
-# 话术长度 → (max_tokens, 提示语)
+# 话术长度 → (max_tokens 硬上限, 提示语)。
+#
+# **长度由提示语约束，max_tokens 只是防失控的兜底**（2026-09-18）。此前 short/standard/detailed =
+# 140/220/440 把上限当长度控制用：用户明确要长内容（「给我讲一个很长的故事」「介绍深圳的历史 in detail」）时
+# 模型会按用户说的写、越过提示语，然后被硬上限在句中掐断——collector 09-17/18 两例 357 / 426 字的回答
+# 分别停在「离开港口」「如今，深圳是中国」，App 上看到的就是「长文本展示不全」；近 200 会话里 66 轮
+# chitchat 的 p90 只有 71 字，被掐的恰好就是这两轮长请求。上限撞上永远只能产出半句，它不该是常态路径。
+# 数值按「在 D0 流式截止（orchestrator.cloud.clients.AGENT_STREAM_TIMEOUT_S）内一定能生成完」定：
+# MiniMax-M3 实测 ~40 token/s、尾部 ~20 token/s，900 token 在尾部也只要 45s。
 _LENGTH = {
-    "short": (140, "用一两句话简短回答。"),
-    "standard": (220, "回答控制在两三句话内。"),
-    "detailed": (440, "可以多说几句，给出更具体的信息，但仍保持口语。"),
+    "short": (300, "用一两句话简短回答。"),
+    "standard": (600, "回答控制在两三句话内。"),
+    "detailed": (900, "可以多说几句，给出更具体的信息，但仍保持口语。"),
 }
+# 流式调用的总截止（秒）：要装得下上面最长档在尾部速度下的生成时间，又必须小于 D0 的 gRPC 截止
+# （clients.AGENT_STREAM_TIMEOUT_S = 60），否则先被编排层掐断、用户看到的是「抱歉，刚才没说完」把已流文本整段替掉。
+_STREAM_TIMEOUT_S = 55
 
 
 def _resolve_model(meta: dict, slots: dict | None = None) -> str:
@@ -344,7 +355,8 @@ class ChitchatAgent(BaseAgent):
         buf = ""
         held = ""
         mode = "probe"          # probe=判定中 | stream=正常放流 | silent=标记确认，静默缓冲
-        async for delta in self.llm.stream(msgs, model=model, temperature=0.8, max_tokens=max_tokens):
+        async for delta in self.llm.stream(msgs, model=model, temperature=0.8, max_tokens=max_tokens,
+                                           timeout=_STREAM_TIMEOUT_S):
             buf += delta
             if mode == "stream":
                 yield ("speech", delta)

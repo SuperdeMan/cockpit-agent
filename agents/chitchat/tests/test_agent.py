@@ -141,9 +141,14 @@ def test_handle_stream_clock_question_skips_llm():
 
 
 def test_length_and_name_honored():
-    assert _length({"answer_length": "short"})[0] == 140
-    assert _length({"answer_length": "detailed"})[0] == 440
-    assert _length({})[0] == 220
+    """三档只改提示语的口气；max_tokens 是兜底上限（2026-09-18 起 300/600/900），
+    要装得下「讲一个很长的故事」这类明确要长内容的请求（collector 里被 220 掐断的是 357 / 426 字）。"""
+    assert _length({"answer_length": "short"})[0] == 300
+    assert _length({"answer_length": "detailed"})[0] == 900
+    assert _length({})[0] == 600
+    assert _length({"answer_length": "short"})[1] != _length({"answer_length": "detailed"})[1]
+    # 上限只能是兜底：standard 档要装得下 collector 里被掐断的两例（357 / 426 字 ≈ 240 / 280 token）再留余量
+    assert _length({})[0] >= 2 * 280
     assert "小航" in _system({"assistant_name": "小航"})
 
 
@@ -161,7 +166,7 @@ def test_handle_passes_fast_model_and_tokens():
                                  meta={"model_pref": "fast", "answer_length": "short"}))
     assert res.speech == "好的"
     assert captured["model"] == "@fast"   # 快模型档位哨兵（网关侧解析成 active provider 的 fast 模型）
-    assert captured["max_tokens"] == 140
+    assert captured["max_tokens"] == 300
 
 
 # ─── P1-2 时效兜底：<search> 标记 → 通用 escalate 改派 ───
