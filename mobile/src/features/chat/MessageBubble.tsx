@@ -22,6 +22,7 @@ import { TARGET } from '../../ui/tokens'
 import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
 import { ExecutionReceipt } from './ExecutionReceipt'
+import { useRevealedText } from './useRevealedText'
 
 // 主动播报标题按**种类**取（hmi ChatView PROACTIVE_LABEL 同款）
 const PROACTIVE_LABEL: Record<string, string> = {
@@ -111,6 +112,9 @@ export interface BubbleProps {
 export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interrupted, s2s, vision, receipt, loops, driving, onSend, onResend, resent }: BubbleProps) {
   const [copied, setCopied] = useState(false)
   const [hint, setHint] = useState(false)
+  // 流式回答匀速上屏（2026-09-18）：记录里的 msg.text 逐片即时累积，**只有显示**按节拍追（判据 streamReveal.ts）。
+  // 只给助手气泡；用户气泡（转写草稿按稳定 segment 整段替换）不追
+  const shownText = useRevealedText(msg.id, msg.text, !!msg.streaming, msg.role === 'assistant')
   // 长按 = 复制正文（打磨批 A / P12）：用户与助手两种气泡同一条路。端到端轮顺带给「转写由语音模型生成」的说明
   const copyText = () => {
     if (msg.text) {
@@ -221,14 +225,16 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
         ) : null}
         {msg.text ? (
           <Text
+            testID="bubble-text"
             style={{
               color: msg.error ? p.red : p.fg1,
               fontSize: p.font(15),
               lineHeight: p.font(23),
             }}
           >
-            {msg.text}
-            {msg.streaming ? <StreamCursor h={p.font(15)} animated={loops} /> : null}
+            {shownText}
+            {/* 光标跟着「还在长」走：流式中，或 final 已到但显示还没追到尾 */}
+            {msg.streaming || shownText.length < msg.text.length ? <StreamCursor h={p.font(15)} animated={loops} /> : null}
           </Text>
         ) : null}
         {interrupted ? <Text style={{ color: p.fg3, fontSize: p.font(11) }}>已打断</Text> : null}

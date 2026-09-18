@@ -41,6 +41,7 @@ import { CardRenderer } from '@/features/cards/CardRenderer'
 import { DrivingCardSummary } from '@/features/cards/DrivingCardSummary'
 
 import { FollowUpChips } from './FollowUpChips'
+import { useRevealedText } from './useRevealedText'
 import { AuroraOrb, EdgeGlow, Glass, StreamCursor, ThinkDots } from '@/ui/aurora'
 import { ORB_A11Y } from '@/ui/aurora/AuroraOrb'
 import { Icon, iconRuntimeAvailable } from '@/ui/Icon'
@@ -239,6 +240,9 @@ export function VoiceSheet(props: VoiceSheetProps) {
       scrollRect.set({ x, y, w, h: hh })
     })
   }
+  // 回答区匀速上屏（2026-09-18，判据 core/session/streamReveal.ts）：与记录列表的助手气泡同一份 hook。
+  // 层升起时已流出的部分直出、之后长出来的按节拍追。hook 必须在下面的早返回之前（rules of hooks）
+  const shownAnswer = useRevealedText(turn.assistant?.id ?? '', turn.assistant?.text ?? '', !!turn.assistant?.streaming)
   if (!mounted) return null
 
   const user = turn.user
@@ -337,8 +341,8 @@ export function VoiceSheet(props: VoiceSheetProps) {
             alignSelf: 'stretch',
           }}
         >
-          {assistant.text}
-          {assistant.streaming ? <StreamCursor h={answerSize} animated={props.motion.loops} /> : null}
+          {shownAnswer}
+          {assistant.streaming || shownAnswer.length < assistant.text.length ? <StreamCursor h={answerSize} animated={props.motion.loops} /> : null}
         </Text>
       ) : null}
       {assistant && props.interruptedIds.includes(assistant.id) ? (
