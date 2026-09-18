@@ -9148,4 +9148,6 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 
 - 证据：真机 843 / 818 字停在「1953年，宝安」「1842年7月至」（直接规划的 info.search D0 流）。
 - 修：`grounded_synthesis(_stream)` 默认 max_tokens 600→1200、timeout 25→40s；`synthesis_messages` 第 5 条长度约束；`parse_synth` 抢救路径 `clip_truncated_answer`
-  （晚句号切句 / 早句号只去悬空标点）+ `TRUNCATED_SUFFIX` + `truncated: True`。`agents/_sdk/tests` + `agents/info/tests` 338 passed。待 push / deploy。
+  （晚句号切句 / 早句号只去悬空标点）+ `TRUNCATED_SUFFIX` + `truncated: True`。`agents/_sdk/tests` + `agents/info/tests` 338 passed。
+- 发布（用户授权）：push `88fc1987..3c389465`；deploy dry-run 零阻断 → apply → status ok（running = `3c389465`）→ verify verified（`20260918T111945Z-3c38946.json`）；
+  同题探针两次 528 / 478 字句尾完整。构建机 PowerShell 起不来（页面文件太小）是接续构建留下的 Gradle daemon 占 2.4GB commit，taskkill 后才跑得动。

@@ -1,6 +1,6 @@
 # Android 流式文字上屏：匀速 reveal + 长回答不再被硬上限掐断（2026-09-18）
 
-> 状态：**已实现、已 push、已 deploy `3abd325e`（status ok / verify verified）、OPPO 清洁包 `3abd325ea` 真机 A/B 闭合（§5）**。
+> 状态：**已实现、已 push、生产 `3c389465`（status ok / verify verified）、OPPO 常驻包 `d32f81c23`；四层（§0 两条 + §7 改派 unary + §8 到达成批 + §9 合成上限）全部闭合**。
 > 用户口述两条：① 回答文字「一大段突然跳变上屏」；② 长文本「生成展示不全」。
 > 证据绑定：设备 = OPPO PEUM00 / Android 14（test 机）、常驻包 `990466d6d`（2026-09-17 16:12）；云端 `target=cloud`、
 > 生产 release `f1a99063`；服务端读数取自 collector（`/api/sessions` / `/api/turns/{trace}`）；PC 探针 `scripts/probe_stream_cadence.py`、真机取证
@@ -206,4 +206,11 @@ prompt 写到 900 字左右就被掐在句中，`parse_synth` 的抢救路径只
   流式路径上半句已经流出去了：不切句时 final 是流出文本的延长（客户端顺着追出说明）；切句时 final 短于流出文本、客户端整段替换（半句消失、结尾干净）。
 
 验证：`agents/_sdk/tests` + `agents/info/tests` 338 passed（`test_parse_synth_rescues_truncated_json_answer` 加两例：早句号不切、晚句号切句；
-`test_stream_midway_failure_keeps_what_arrived` 改为「原文保留 + 说明」）。真栈：待 deploy 后同题探针。
+`test_stream_midway_failure_keeps_what_arrived` 改为「原文保留 + 说明」）。
+
+### 9.1 发布与真栈
+
+push `88fc1987..3c389465`（`cf9d9cb5` sdk / `3c389465` docs）；deploy dry-run 零阻断 → apply submitted（基线 `a4b47748`）→ status ok、
+`running_release_sha` = `3c389465` → verify verified（`20260918T111945Z-3c38946.json`）。部署后同题探针「介绍一下深圳的历史，网上搜索下」两次：
+528 / 478 字、逐片流（357 / 318 片）、句尾完整、`final == streamed`——prompt 第 5 条让模型自己收在 500 字上下，没再撞上限。
+构建机这次连 PowerShell 都起不来（`0x8007000e` / 页面文件太小），是接续构建留下的 Gradle daemon（2.4GB）占着 commit，结束它才跑得动部署。

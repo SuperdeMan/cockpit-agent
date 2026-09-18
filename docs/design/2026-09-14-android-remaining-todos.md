@@ -197,6 +197,6 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 
 设备状态：取证用的「减少动效」强制开关已改回 false（`set_switch.py` 回读 `after=False`）；| E-14 | D | 搜索轮在真机「吐一批、卡一下」：到手机的到达成批（0.5–1.5s 一批），旧 reveal 按 240ms 追平 ⇒ 扫完一批空等半秒 | **已修 + 真机 A/B 闭合**（`d32f81c2`，包 `d32f81c23`）：reveal 跟最近 2s 到达速率走、落后 ≤1.2s；流式期间不再有 ≥0.5s 无内容段（最长 241 / 399ms）。JS 线程升到 35–88%，撞顶再做 delta 合并 / memo（设计 §8.1） | `core/session/streamReveal.ts`；`streamReveal.test` ⑥ |
 
-| E-15 | E | 联网搜索内容截断：搜索合成 `max_tokens=600` 把 843 / 818 字的回答掐在句中（`parse_synth` 抢救只去尾部标点） | **已实现、单测绿，待 push / deploy**：上限 600→1200 token、timeout 25→40s 只做兜底；prompt 第 5 条约束长度；撞上限时切到句边界 + 「篇幅所限」说明 + `truncated` 标记（设计 §9） | `agents/_sdk/grounding.py::clip_truncated_answer` / `synthesis_messages`；`test_grounding_md` / `test_grounding_stream` |
+| E-15 | E | 联网搜索内容截断：搜索合成 `max_tokens=600` 把 843 / 818 字的回答掐在句中（`parse_synth` 抢救只去尾部标点） | **已修、已 push、已 deploy `3c389465`（status ok / verify verified）**；部署后同题探针 528 / 478 字句尾完整：上限 600→1200 token、timeout 25→40s 只做兜底；prompt 第 5 条约束长度；撞上限时切到句边界 + 「篇幅所限」说明 + `truncated` 标记（设计 §9） | `agents/_sdk/grounding.py::clip_truncated_answer` / `synthesis_messages`；`test_grounding_md` / `test_grounding_stream` |
 
 OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 与本地一致、非 DEBUGGABLE；上一包 `a4b477489`）。
