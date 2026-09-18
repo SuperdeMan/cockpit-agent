@@ -44,7 +44,7 @@ def test_plain_text_fast_path_untouched():
 def test_parse_synth_rescues_truncated_json_answer():
     """啰嗦 provider 的长 answer 撑爆 max_tokens → JSON 截断：抢救 answer 已生成部分，
     绝不把 JSON 外壳当话术（真栈 @MiniMax 实测整段 {"answer":... 被念出来）。"""
-    from agents._sdk.grounding import parse_synth
+    from agents._sdk.grounding import TRUNCATED_SUFFIX, parse_synth
     trunc = '{"answer": "固态电池产业化进入密集期。\\n一、时间表清晰\\n据36氪报道，比亚迪计划'
     out = parse_synth(trunc)
     assert out is not None
@@ -52,6 +52,19 @@ def test_parse_synth_rescues_truncated_json_answer():
     assert "一、时间表清晰" in out["answer"]
     assert '{"answer"' not in out["answer"]          # JSON 外壳绝不外泄
     assert out["confidence"] == "low"                 # 截断内容降置信
+    assert out["truncated"] is True
+    # 句末标点太靠前（前 60%）⇒ 不切句、只去悬空连接标点，再补说明，绝不把「比亚迪计划」当结尾
+    assert out["answer"].endswith("比亚迪计划" + TRUNCATED_SUFFIX)
+
+    # 最后一个句末标点在后 40% 里 ⇒ 切到它，半句「1953年，宝安」不再直达用户（2026-09-18 真机）
+    late = ('{"answer": "深圳历史分五段。\\n1. 史前：七千年前有先民。\\n2. 古代：秦设南海郡。\\n'
+            '3. 明清：新安县辖深港。\\n4. 近现代：1953年，宝安')
+    out2 = parse_synth(late)
+    assert out2["truncated"] is True
+    assert out2["answer"] == "深圳历史分五段。\n1. 史前：七千年前有先民。\n2. 古代：秦设南海郡。\n3. 明清：新安县辖深港。" + TRUNCATED_SUFFIX
+
+    # 完整 JSON 不带 truncated 标记
+    assert "truncated" not in parse_synth('{"answer": "结论。", "key_points": [], "confidence": "high", "used_sources": [1]}')
 
     # 完整 JSON 不受影响
     full = '{"answer": "结论。", "key_points": [], "confidence": "high", "used_sources": [1]}'

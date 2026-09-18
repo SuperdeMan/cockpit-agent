@@ -13,7 +13,7 @@ import json
 import pytest
 
 from agents._sdk.grounding import (
-    AnswerFieldStreamer, grounded_synthesis, grounded_synthesis_stream, parse_synth,
+    TRUNCATED_SUFFIX, AnswerFieldStreamer, grounded_synthesis, grounded_synthesis_stream, parse_synth,
     synthesis_messages)
 
 
@@ -139,7 +139,9 @@ def test_stream_midway_failure_keeps_what_arrived():
     llm = _FakeLLM(pieces, fail_after=2)
     deltas, result = _collect(grounded_synthesis_stream(llm, "q", _sources()))
     assert "".join(deltas) == "先到的半句，后半句"
-    assert result and result["answer"] == "先到的半句，后半句" and result["confidence"] == "low"
+    # 已到的文本原样保留（final 是流出文本的延长，客户端不用整段替换），只在句尾补「篇幅所限」说明 + 降置信 + 标 truncated
+    assert result and result["answer"] == "先到的半句，后半句" + TRUNCATED_SUFFIX
+    assert result["confidence"] == "low" and result["truncated"] is True
 
 
 def test_stream_total_failure_yields_none_like_unary():

@@ -108,6 +108,25 @@ def clip_sentence(text: str, limit: int) -> str:
     return cut + "……"
 
 
+#: 回答被硬上限掐断时补在句尾的说明（确定性文本，不进 LLM）
+TRUNCATED_SUFFIX = "……（篇幅所限，先讲到这里）"
+
+
+def clip_truncated_answer(answer: str) -> str:
+    """被截断的 answer 收口：最后一个句末标点在后 40% 里就切到它（丢掉半句），否则只去掉悬空的连接标点；
+    再补一句说明。2026-09-18 真机两轮「介绍深圳的历史」843 / 818 字停在「1953年，宝安」「1842年7月至」——
+    半句直达用户就是「内容有截断」。流式路径上半句已经流出去了，final 用这里的结果替换掉它。"""
+    t = (answer or "").rstrip()
+    if not t:
+        return t
+    cut = max(t.rfind(ch) for ch in _SENT_END)
+    if cut >= len(t) * 0.6:
+        t = t[:cut + 1].rstrip()
+    else:
+        t = t.rstrip("，,、；;：:")
+    return t + TRUNCATED_SUFFIX
+
+
 def _first_prose(text: str) -> str:
     """从正文抽开头一段「人话」：跳过 SEO 标题行（含 | 分隔且无句末标点）、样板词行、
     开头的短碎行（面包屑/栏目名），剩余行顺序拼接（约 160 字后停）。"""
@@ -203,12 +222,13 @@ def parse_synth(raw: str) -> dict | None:
             text, "answer", ("key_points", "confidence", "used_sources"))
         answer = answer.strip()
         if answer:
-            if not closed:                       # 真截断：收口半句 + 降置信
-                answer = answer.rstrip("，,、；;：:")
+            truncated = not closed
+            if truncated:                        # 真截断（撞 max_tokens / 流中断）：收口到句边界 + 降置信
+                answer = clip_truncated_answer(answer)
             conf_m = re.search(r'"confidence"\s*:\s*"(high|medium|low)"', text)
             conf = conf_m.group(1) if (closed and conf_m) else "low"
             return {"answer": answer, "key_points": [],
-                    "confidence": conf, "used_sources": []}
+                    "confidence": conf, "used_sources": [], "truncated": truncated}
         return None            # JSON 外壳但连 answer 都没有：交调用方走诚实兜底
     # 非 JSON：剥离列表编号，合并为连续文本作为答案
     flat = LIST_MARKER.sub("", text)
@@ -275,6 +295,8 @@ def synthesis_messages(subject: str, subset: list[dict]) -> list[dict]:
         "answer 的可读性很重要：若有多个要点/条目/步骤，**每条单独成行**"
         "（用真实换行符 \\n 分隔，可带序号），不要把多条挤在一行；"
         "解释类问题用连贯段落、先结论后展开。"
+        "5. 长度面向车载语音：解释/介绍类默认 300 字内、先给最重要的部分；用户明确要详细、完整、全部时可到 900 字左右，"
+        "再长就在一个自然段落收住并说明还有更多——**绝不在句子中间停下**。\n"
         "key_points 是卡片用精简要点（每条≤30字，可为空）；"
         "confidence 反映资料对问题的覆盖程度；used_sources 是真正支撑结论的资料编号。"
         "JSON 字符串值内不要使用英文双引号，需要引用时用中文引号「」（否则 JSON 会解析失败）。"
@@ -408,7 +430,7 @@ def _looks_decided(tail: str) -> bool:
 
 
 async def grounded_synthesis_stream(llm, subject: str, sources: list[dict], *,
-                                    timeout: float = 25, max_tokens: int = 600,
+                                    timeout: float = 40, max_tokens: int = 1200,
                                     thinking: bool = False,
                                     recency_days: int = 0):
     """`grounded_synthesis` 的流式版：同一份 prompt（synthesis_messages），边合成边把 `answer`
@@ -493,7 +515,7 @@ async def grounded_synthesis_stream(llm, subject: str, sources: list[dict], *,
 
 
 async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
-                             timeout: float = 25, max_tokens: int = 600,
+                             timeout: float = 40, max_tokens: int = 1200,
                              thinking: bool = False,
                              recency_days: int = 0) -> dict | None:
     """基于正文级资料接地合成。返回 {answer,key_points,confidence,used_sources} 或 None
@@ -504,6 +526,10 @@ async def grounded_synthesis(llm, subject: str, sources: list[dict], *,
     开思考(HEAVY_INTENT 经 meta 自动开)会让大正文(如整页 wiki)在 deadline 内推理超时
     DEADLINE_EXCEEDED → 退化兜底堆原文（实测 info.search「什么是固态电池」踩到，与深调研同源）。
     timeout 20→25 给大页面留余量。
+
+    **max_tokens 是兜底不是长度控制**（2026-09-18）：600 token ≈ 850 字，用户要「详细介绍深圳的历史」时模型按 prompt 写到
+    900 字左右就被掐在句中（真机 843 / 818 字）。长度由 synthesis_messages 第 5 条约束，上限抬到 1200、timeout 40s
+    （D0 流式截止 60s 里还要装检索 2–8s；MiniMax-M3 ~40 token/s ⇒ 1200 token 30s）；撞上限时 parse_synth 收口到句边界并说明。
 
     recency_days>0（调用方判定查询时效敏感）时改用时效+权威双序：窗口内的新源优先于
     窗口外的高权威旧源（对症榜单/比分/价格类被旧权威页压排）。
