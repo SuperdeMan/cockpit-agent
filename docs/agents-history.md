@@ -9257,3 +9257,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - push `526c5f56..96b39b26`（5 条），check-runs 8/8。
 - 候选包 `96b39b263`：BUILD SUCCESSFUL 10m56s、验包过、APK SHA-256 `7aef0d87…a5b1`。装机时 `adb devices` 为空，重启 adb server 后 `919fd6f9 offline`、`reconnect` 后消失 ⇒ 设备 USB 掉线 / 调试授权失效，本机无法恢复；
   常驻包仍 `0a6a19e68`。取证脚本 `probe_g.py` 已备（G-04 真清除、G-06 撤麦权限触发权限分支、G-01 手动唤醒读时间线）。
+
+### 同批追加 — 设备回来：`96b39b263` 装机，G-01 / G-04 闭合，G-06 露出权限循环真缺陷（E-23，已修 `33cd199d`）；一次推送事故
+
+- 装机 20:16（端本 SHA-256 一致、非 DEBUGGABLE），常驻包 `0a6a19e68 → 96b39b263`。G-01：`/turn-timeline` 读到 `capture_started(vad b0 d0 2ms)`；G-04：结果行「已清除…删完已回读确认」+ 冷启动 0 条。
+- G-06 权限分支：`pm revoke` 被 ColorOS 拒（`REVOKE_RUNTIME_PERMISSIONS`），改走系统设置页点「不允许」；开免唤醒 → 弹窗「拒绝」→ **开关亮着、无错误行、无录音会话**，
+  logcat 里 `GrantPermissionsActivity` 每 ~0.6s 拉起又关，4 分钟不停。三段成环：弹窗切后台 ⇒ AR04 闸 disable ⇒ recorder 代际检查在状态检查之前把 Denied 吞掉 ⇒ 回前台 syncScope 再 enable ⇒ 再申请。
+  修法 `33cd199d`（Denied 无论代际都抛 / 失败只认控制器身份 / 权限拒绝上闩不自动重试），两条新用例三处变异判红；候选包待 clean 树。
+- 装置：deny 之后设置页 `uiautomator dump` 拿不到 idle（弹窗反复闪导致），改用截图 + `dumpsys audio` 录音事件 + logcat `GrantPermissionsActivity` 计数判定；`APPLICATION_DETAILS_SETTINGS` intent 会直接落到任务栈里残留的权限页，按页面文字分流。
+- **推送事故**：`33cd199d` 的 `git push` 与 `git log origin/main..HEAD` 写在同一条命令里，把另一个会话 21:11 / 21:16 提在本地 main 的 `e6191057`（W01）/ `0a4544e0`（W02）一并推走，没有先给用户看。
+  内容是带测试的 cloud 侧修复、无破坏性，但违反 §3.2 本意。此后列出与推送分两步。工作树里另一会话的未提交改动（`runtime/tests/test_session_constraints.py` + 两份 docs）未动。
