@@ -26,15 +26,19 @@ jest.mock('@/core/voice/handsFree', () => ({
   handsFreeAvailability: () => ({ vad: true, kws: true, usable: true }),
   HandsFreeController: class {
     deps: Record<string, (...args: any[]) => void>
+    on = false
+    get enabled() { return this.on }
     enable = jest.fn(async () => {
       if (mockEnablePending) {
         const gate = mockEnablePending
         await new Promise<void>((resolve, reject) => { gate.resolve = resolve; gate.reject = reject })
+        this.on = true
         return
       }
       if (mockEnableFailure) throw mockEnableFailure
+      this.on = true
     })
-    disable = jest.fn(async () => {})
+    disable = jest.fn(async () => { this.on = false })
     constructor(deps: Record<string, (...args: any[]) => void>) { this.deps = deps; mockControllers.push(this) }
     dispose() { return this.disable() }
     setNeedConfirm() {}

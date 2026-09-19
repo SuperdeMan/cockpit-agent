@@ -416,6 +416,41 @@ test('AR02 VAD 初始化期间关闭：迟到 start 不开麦；随后三轮开�
   }
 })
 
+// 2026-09-19 真机 E-23：权限弹窗把 App 切到后台 ⇒ 前后台闸在 enable 等弹窗时 disable 了它 ⇒ 用户点「拒绝」回来的
+// PermissionDeniedError 被 enableNow 的「作废即静默」吞掉 ⇒ 回前台再 enable 再申请 ⇒ 弹窗每 0.6s 闪一次。
+// 主张：被作废的 enable 遇到权限拒绝仍要以 PermissionDeniedError 拒绝；其它异常作废后照旧静默。
+test('E-23 权限被拒不随代际作废：弹窗期间被 disable 的 enable 仍以 PermissionDeniedError 拒绝', async () => {
+  let rejectStart!: (e: Error) => void
+  jest.doMock('@/core/voice/micBus', () => ({
+    micLease: () => ({
+      recording: false,
+      deviceRate: 16000,
+      start: () => new Promise<void>((_resolve, reject) => { rejectStart = reject }),
+      async stop() {},
+    }),
+  }))
+  const { ctl } = makeCtl()
+  const enabling = ctl.enable()
+  for (let i = 0; i < 12; i++) await Promise.resolve()
+  expect(rejectStart).toBeDefined() // 已经走到开麦 = 在等系统弹窗
+  const disabling = ctl.disable() // 弹窗切后台 ⇒ 闸撤回
+  const denied = new Error('录音权限未授予')
+  denied.name = 'PermissionDeniedError'
+  rejectStart(denied)
+  await expect(enabling).rejects.toMatchObject({ name: 'PermissionDeniedError' })
+  await disabling
+  expect(ctl.enabled).toBe(false)
+  expect(ctl.state).toBe('IDLE')
+
+  // 对照：作废后其它异常照旧静默（AR02 原账）
+  const enabling2 = ctl.enable()
+  for (let i = 0; i < 12; i++) await Promise.resolve()
+  const disabling2 = ctl.disable()
+  rejectStart(new Error('录音启动失败'))
+  await expect(enabling2).resolves.toBeUndefined()
+  await disabling2
+})
+
 class CaptureWs {
   static all: CaptureWs[] = []
   readyState = 0

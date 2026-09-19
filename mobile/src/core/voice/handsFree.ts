@@ -277,7 +277,13 @@ export class HandsFreeController {
       if (!this.s2s && this.deps.getAsrConfig().provider !== 'off') warmSocket(asrStreamUrl(this.deps.audioUrl))
     } catch (e) {
       await this.teardown()
-      if (!alive()) return
+      // 权限被拒是用户的决定，不随代际作废（2026-09-19 真机 E-23）：系统权限弹窗本身会把 App 切到后台，
+      // 前后台闸就在这个 enable 等弹窗的时候 disable 了它——这里再按「作废」静默返回，hook 就永远见不到那个拒绝，
+      // 回前台又申请一次，弹窗每 0.6s 闪一次。作废的 enable 不改 requested（可能已有更新的 enable 在飞）。
+      if (!alive()) {
+        if (e instanceof Error && e.name === 'PermissionDeniedError') throw e
+        return
+      }
       this.requested = false
       throw e
     }

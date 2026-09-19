@@ -222,7 +222,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     }
     // 启动成功才清失败原因（G-06）：失败后控制器还在（开关没弹回），下一次 scope 同步 / 重新开关的 enable 成功即清
     const onEnabled = () => {
-      if (!live || ctlRef.current !== ctl) return
+      // 只有真的开起来了才清（被作废的 enable 也会正常 resolve——那不是成功）
+      if (!live || ctlRef.current !== ctl || !ctl.enabled) return
       setError('')
       setErrorKind('')
     }
@@ -307,7 +308,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       pausedRef.current = false
       deniedRef.current = false
       void ctl.enable().then(() => {
-        if (ctlRef.current !== ctl) return
+        if (ctlRef.current !== ctl || !ctl.enabled) return
         setError('')
         setErrorKind('')
         if (!pausedRef.current && (!cbRef.current.scope || cbRef.current.scope.canCapture())) ctl.wakeManually()
