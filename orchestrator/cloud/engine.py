@@ -653,6 +653,7 @@ class PlannerEngine:
             # ⚠ 判据窄到只剩一种形态：**技术失败标记 ∧ 兜底真给出了步**。
             # 空计划仍走下面既有的澄清/取消未命中/「没听清」三条路，一个字不变。
             if plan.steps and getattr(plan, "technical_failure", False):
+                await self._register_input_facts(ctx, text, mem_on)
                 await _emit_engine_lifecycle(
                     ctx, "cloud.planner_technical_failure", "system.planner_failure")
                 yield {
@@ -668,6 +669,9 @@ class PlannerEngine:
                 return
 
             if not plan.steps:
+                # 规划轮在这里提前结束的四条出口（授权缺失 / 澄清 / 取消未命中 / 没听清）都
+                # 不会走到 `update_focus`——输入侧事实的登记不能跟着出口一起丢（见方法注释）。
+                await self._register_input_facts(ctx, text, mem_on)
                 # AR05 解释面：这一轮要的能力**这个账号没有授权**。理由是服务端自己持有的
                 # 事实（`/api/session` 摘要面同一条 `scope_missing`），所以话术也由服务端出，
                 # 不交给 LLM——真栈实录：受限身份连问 6 次同一句得到 6 种说法，其中一次
@@ -1953,6 +1957,30 @@ class PlannerEngine:
             flags=re.IGNORECASE,
         )
         return labelled.group(1) if labelled else value
+
+    async def _register_input_facts(self, ctx, text: str, mem_on: bool) -> None:
+        """规划轮**提前结束**时，仍把本轮原话里的输入侧事实登记进焦点。
+
+        C1-B 立的判据是「登记挂在输入上，不挂在路由上」，可登记本身住在 `extract_focus`
+        里，而 `extract_focus` 只在 `update_focus` 被调到时才跑——技术失败终态（F09）、
+        授权缺失、澄清、取消未命中、「没听清」这几条出口都在它之前 `return`。
+        真栈（release `0d414816`，T47 收口探针）：「检查过了，机油灯已经灭了，恢复正常了」
+        那一轮 planner 技术失败 ⇒ 解除陈述没跑到焦点 ⇒ 下一句仍答「未解除的机油灯」；
+        反方向同样成立：告警句若恰好落在这几条出口上，会话里就**不知道**灯亮过。
+
+        做法是把「输入那一半」单独跑一遍：一份空步计划只带 `raw_text`，`extract_focus`
+        只会从原话扫出安全告警 / 驾驶员状态 / 解除陈述 / 会话偏好；什么都没扫出时它返回
+        `None`，`update_focus` 原样不动焦点。判据一个字不复制，只是保证它被调到。
+        焦点是 best-effort，绝不拖垮出口话术。
+        """
+        if not mem_on:
+            return
+        try:
+            await self.context.update_focus(
+                ctx.session_id, Plan(steps=[], raw_text=str(text or "")), [],
+                user_id=ctx.user_id, exchange_id=ctx.request_id)
+        except Exception as exc:
+            logger.debug("input-fact registration on an early exit failed: %s", exc)
 
     @staticmethod
     def _apply_focus_meta(plan: Plan, focus) -> None:
