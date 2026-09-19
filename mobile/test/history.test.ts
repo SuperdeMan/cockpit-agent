@@ -158,6 +158,26 @@ test('持久化往返：persist → load 逐字段相等；clear 后 load 为 nu
   expect(await loadHistory(key)).toBeNull()
 })
 
+// G-04：clearHistory 以回读为准——删除抛错、或删完还读得到，都要如实返回 false，不吞
+test('clearHistory 回读为准：删成功 true；removeItem 抛错 false；删完还读得到 false', async () => {
+  const key = historyKey({ edgeUrl: 'https://h.ts.net:8443', token: 'tk-clear' })
+  await persistHistory(key, snapshotHistory(newCore().core.store.getState()))
+  expect(await clearHistory(key)).toBe(true)
+  expect(await loadHistory(key)).toBeNull()
+
+  await persistHistory(key, snapshotHistory(newCore().core.store.getState()))
+  const remove = AsyncStorage.removeItem as jest.Mock
+  const realRemove = remove.getMockImplementation()!
+  remove.mockImplementationOnce(async () => { throw new Error('storage busy') })
+  expect(await clearHistory(key)).toBe(false)
+  expect(await loadHistory(key)).not.toBeNull() // 真的没删掉，返回值没撒谎
+
+  remove.mockImplementationOnce(async () => {}) // 「成功」但什么都没删（存储层未兑现）
+  expect(await clearHistory(key)).toBe(false)
+  remove.mockImplementation(realRemove)
+  expect(await clearHistory(key)).toBe(true)
+})
+
 test('坏存量（损坏 JSON / 版本不对）⇒ null，不抛', async () => {
   await AsyncStorage.setItem('k1', '{oops')
   await AsyncStorage.setItem('k2', JSON.stringify({ version: 99, messages: [] }))

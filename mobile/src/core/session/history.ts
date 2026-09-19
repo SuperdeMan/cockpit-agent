@@ -101,11 +101,14 @@ export async function loadHistory(key: string): Promise<HistorySnapshot | null> 
   }
 }
 
-export async function clearHistory(key: string): Promise<void> {
+/** 删本机记录，**回读为准**（2026-09-19 G-04 / GPT-6 评审 §六-4）：「界面记录清空」和「持久化数据删除成功」是两件事。
+ *  返回 true = 删完读回来是空；false = 删除抛错、或删完还读得到（存储层没兑现）。调用方据此告诉用户，不静默。 */
+export async function clearHistory(key: string): Promise<boolean> {
   try {
     await AsyncStorage.removeItem(key)
+    return (await AsyncStorage.getItem(key)) === null
   } catch {
-    /* 同上 */
+    return false
   }
 }
 
