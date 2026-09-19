@@ -1,26 +1,29 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-11（f8fd151 发布及语音采纳真栈复核）
+> 更新时间：2026-09-19（§5 活项逐条收口：一条本地闭合待 deploy、两条按既有证据销账、一条改判据、一条待裁决）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-当前生产 release 为 `f8fd15152d78592e4e5625bab22d4bd5e654738d`，独立 status 5/5 healthy、零 warning，运行 SHA 对齐，verify verified。Android 来源/拒识终态接线已修，但 MiniMax-M3 文字注入续测背景仅6/12静默拒识、正常6/6，另有端侧新闻规则误触发媒体播放；**语音拒识仍未闭合，声学未验**。当前逐条结果见 [语音采纳发布核实](2026-09-11-voice-input-acceptance-live-findings.md)。历史手册/锁屏/其他 Android 批次保持原 SHA，不能写 QA 全绿。
+生产 release、status、verify 的**当前值以 [`AGENTS.md` §4.0](../../AGENTS.md) 为准**（Android 各批的发布
+都在那里更新；本页 2026-09-11 之后不再复制一份数字）。2026-09-19 时它是 `3c389465`（status ok、
+verify verified、artifact `20260918T111945Z-3c38946.json`）。QA 侧：§5 的五条活项本轮逐条收口——
+安全问句错域（T24）在本地修好、**待 deploy 与真栈复验**；TTS RPM 与 barge-in 残帧按证据/裁决销账；
+gRPC fixture 债务已修；safety focus 解除时机仍待产品裁决。语音拒识那半（乘客句）是声学问题，
+按 [语音采纳发布核实](2026-09-11-voice-input-acceptance-live-findings.md) 09-14 处置段边界保留。
+历史手册/锁屏/其他 Android 批次保持原 SHA，不能写 QA 全绿。
 
 ## 2. 当前发布与证据边界
 
 | 项目 | 当前事实 |
 |---|---|
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
-| 生产 release | `f8fd15152d78592e4e5625bab22d4bd5e654738d` |
-| 上一生产基线 | `d532c6d816e662fa60740565d6230774c02ff200`；本轮未回滚 |
-| 部署状态 | 5/5 endpoint healthy，零 warning |
-| 统一验证 | `verified`；artifact `.artifacts/dev-stack-verifications/20260911T134859Z-f8fd151.json` |
-| 代码验证 | 固定 `f8fd151`：Python 8234 passed / 32 skipped / 13 warnings（0 failed），mobile962 + tsc/lint0，HMI333，smoke_edge13 + 四门禁通过；不转借其他提交的数字 |
-| manual-rag | 历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3；本轮未重跑这些整批，不作为新 release 的数字 |
-| 证据边界 | 部署/status/verify 与本批后端文字探针绑 `f8fd151`；OPPO 包 `f8fd15152`。本轮没有真实噪声录音结论，未重跑手册整本/旧锁屏验收 |
+| 生产 release / status / verify | 见 `AGENTS.md` §4.0（唯一维护处）。2026-09-19 读到：`3c3894657c6e02ed9fcf410dbdcf4f9b3c7d60b0`，5/5 healthy、零 warning，verify `verified` |
+| 本页最后一次 QA 专项绑定 | `f8fd15152d78592e4e5625bab22d4bd5e654738d`（2026-09-11 语音采纳真栈复核；固定该 SHA 全量 8234 passed / 32 skipped / 13 warnings、mobile 962、HMI 333、smoke_edge 13 + 四门禁通过）；之后各 release 的读数不转借 |
+| manual-rag | 历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3；之后未重跑这些整批，不作为新 release 的数字 |
+| 证据边界 | T24 错域的修法（`agents/road_safety`）**尚未部署**：真栈上 T24 仍会落 `info.search`，直到本页 §5 那一行改成绑定某个 release。OPPO 包见 AGENTS.md §4.0 |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
 完整36题并保留当轮成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
@@ -154,15 +157,22 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 
 ## 5. 当前活项
 
-- **2026-09-11 新增，仅记录未修**：端侧新闻规则将播报腔误判 `media.play`；Planner `no_action_unconfirmed` 之后的闲聊兜底/规划失败提示仍会回应背景话。见 [逐条核实](2026-09-11-voice-input-acceptance-live-findings.md)，不纳入旧批已闭合结论。
+2026-09-19 逐条收口，过程与证据见 [QA 轮剩余活项收口](../design/2026-09-19-qa-residual-closeout.md)。
 
-| 活项 | 当前证据 | 下一步 / 启动条件 |
+- **2026-09-11 那条「端侧新闻规则误判 `media.play` / Planner 漏拒」已于 2026-09-14 修掉并发布**
+  （`696899b5`，随 `9ced633b` 上生产）：端侧 `runtime/reported_speech.py::is_reported_speech` 语域闸 +
+  Planner「语音来源 ∧ 播报语域 ∧ 两轮空手 ⇒ 不受话」；发布后只读复跑 24 轮，播报语域 11/12 静默拒识、
+  首轮失败原话端侧不再执行、零动作。**没修的那一半**：乘客句「他昨天跟我说那个项目黄了」没有播报语域，
+  文本上与「用户向助手转述」不可区分，归声学（真人 + 背景源），见
+  [逐条核实](2026-09-11-voice-input-acceptance-live-findings.md) 末段。
+
+| 活项 | 2026-09-19 状态 | 证据 / 下一步 |
 |---|---|---|
-| 安全问句偶尔落 `info.search` | information T24 回答内容安全、零动作，但未走 manual/safety 域，也没有手册 provenance | 单独设计“安全出口 vs 搜索出口”的落域规则；不得只把 `info.search` 加进允许名单洗绿 |
-| safety focus 持续阻断后续 charging plan | T47 在机油灯告警后落 `system.clarify`，没有执行错误动作 | 产品裁决：什么证据可以解除安全 focus；“我会靠边”不是“已排除故障” |
-| MiniMax TTS 长文本 / RPM 边界 | 首片门控/预算合并与同拍文本合并分别已在 `a09c73a5` / `573ad46` 发布；原 887 字样本的服务商回包是 `rate limit exceeded (RPM)`，属历史证据，本轮只验证短提醒一次播放 | 原长文本、并发配额和盲听仍需独立复验，不因短提醒通过关闭整项 |
-| barge-in 在途残帧 | cancel 后仍收到 6144 / 8192 字节，但分别在 16 / 31ms 内关闭 | 明确客户端是否应丢弃 cancel 后缓冲帧；再决定服务端判据是否要求零字节 |
-| 全量 warning | `9a3b6f2f`全量5条、4类：Starlette按2个worker重复，另有gRPC fixture、audioop、regex各1 | 与 QA 安全主链分开治理；gRPC 条目是 test-only fixture 债务 |
+| 安全问句偶尔落 `info.search`（T24） | **本地闭合，待 deploy 复验** | 根因是 manifest 没把 Agent 早就实现的「告警 ⇒ 按等级给续驾结论」说出来（planner 只看 description），既有 hint 只认「高速/路上」开头。修法全在 `agents/road_safety/manifest.yaml`：描述 + 续驾 hint（122 < manual 124，手册地盘不动）+ 话术「出现X时」；`test_route_hints.py` 37 passed、`eval_route_hints` 118/118、范例 +1、四门禁全过、两处变异判红。真栈：deploy 后干净会话「红色机油灯亮了还能继续开吗」×3 期望 `safety.driving_advice` + deterministic 卡；`--group safety --repeat 3` 不回归；「机油灯亮了怎么办」仍 `manual.query` |
+| safety focus 持续阻断后续 charging plan（T47） | **待产品裁决** | 收口页 §3：推荐 A「显式解除陈述（灯灭了 / 处理好了 / 误报…，非问句非否定；『我会靠边』不算）清焦点，`alert_level` 同步极性感知，四个消费方同一份判据」；备选 B 只改焦点提示口径。放宽安全约束作用域，不擅自动 |
+| MiniMax TTS 长文本 / RPM 边界 | **按 2026-09-06 证据销账** | 原 887 字样本的服务商回包 `rate limit exceeded (RPM)` 是 08-30 的历史证据；生产 `a09c73a`：931 字整段 2 请求（修前 79 请求、4×60s 等待、4 个 ~20s 空白）、204.6s 音频完整、`sim_underruns=0`；账号级共享限流桶（并发配额）；泓舟人耳 OPPO / Xiaomi 两机 ✅（Xiaomi 176.2s 音频 underruns 0、gaps []）。**仍开、独立记**：混合意图轮盲听；长会话探针的 TTS 采样车道自 `e9fa602` 后未在新 release 重跑 |
+| barge-in 在途残帧 | **裁决完、判据已改** | 客户端必须丢弃且已在丢弃（HMI / mobile `disposed` 守卫；CDP C14；mobile 新用例钉住 6144 / 8192 字节不进播放器）；服务端「零字节」在全双工上不可判，改为「最后一片残帧 ≤ 1s 在途窗口 ∧ ≤5s 关闭」（`probe_qa_long_sessions.py::_BARGE_IN_FLIGHT_MS`），未计时的残帧仍判红。下次长会话跑批生效 |
+| 全量 warning | **gRPC fixture 债务已修；其余分类留档** | gRPC `UnaryUnaryCall._invoke was never awaited` = trip 测试三次 `asyncio.run` 共用真 `LLMClient`（经系统代理各等一轮超时），改显式「不可达」替身，trip_planner 99 passed 零告警、9.86s → 0.73s。Starlette `httpx2` 弃用（第三方，换依赖是红线）、`audioop`（`test/e2e_voice_loop.py`，3.13 前要换）、regex / WordPiece（第三方）留着不藏。当前全量条目见收口页 §7 |
 
 2026-09-08 Android AR04 的发现与处置（客户端包、源码修复与生产分别记录）：
 

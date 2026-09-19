@@ -85,7 +85,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
 | 生产 release | `3c3894657c6e02ed9fcf410dbdcf4f9b3c7d60b0`（2026-09-18 19:1x apply；搜索合成 `max_tokens` 600→1200 只做兜底、prompt 管长度、撞上限切句并说明。当日前几批：`a4b47748` 改派流式直通、`3abd325e` chitchat 兜底上限 + D0 截止 60s；mobile 侧 `d32f81c2` reveal 跟到达速率走。全程见 [2026-09-18 设计](docs/design/2026-09-18-android-stream-text-pacing.md)） |
 | 上一生产基线 | `a4b477489f61ec2727059205deb3ee917cbf8d9d`；本轮未回滚 |
-| status | 2026-09-18 19:19 独立复核：`ok`、零 warning，`release_sha` 与 `running_release_sha` 均为 `3c389465` |
+| status | 2026-09-18 19:19 独立复核：`ok`、5/5 endpoint healthy、零 warning，`release_sha` 与 `running_release_sha` 均为 `3c389465` |
 | verify | `verified`；artifact `20260918T111945Z-3c38946.json`（`minimax:MiniMax-M3`，lock `e2e`） |
 | 代码验证 | `3c389465` `agents/_sdk/tests` + `agents/info/tests` **338 passed**；`a4b47748` cloud + chitchat 1394；mobile `d32f81c2` jest 105 套件 **1098** + tsc/lint 0；**全量固定口径 pytest 本日未跑**（构建机 commit 耗尽，见设计 §5.1）。真栈：部署后「介绍一下深圳的历史，网上搜索下」两次 528 / 478 字逐片流、句尾完整；OPPO 常驻包 `d32f81c23` A/B：搜索轮流式期间不再有 ≥0.5s 无内容段（设计 §8.1） |
 | manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
@@ -105,14 +105,15 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - manual-rag 已在`9a3b6f2f`闭合整本范围：独立章节187/187、视觉35/35、点名泛化问法各3/3；
 - **QA 仍非全绿**。剩余活项只看 QA 当前交接页 §5，不从历史批次表找。
 
-当前主要活项：
+当前主要活项（2026-09-19 逐条收口，过程见 [QA 轮剩余活项收口](docs/design/2026-09-19-qa-residual-closeout.md)）：
 
-| 活项 | 性质 | 入口 |
+| 活项 | 性质 | 状态 / 入口 |
 |---|---|---|
-| 安全问句偶尔落 `info.search` | 回答安全但错域、无 manual provenance | QA 交接页 §5 |
-| safety focus 持续阻断后续 charging plan | 安全状态解除时机的产品裁决 | QA 交接页 §5 |
-| MiniMax TTS RPM / barge-in 残帧 | 外部配额与协议/客户端边界 | QA 交接页 §5 |
-| gRPC RuntimeWarning | test-only fixture 债务 | QA 交接页 §5 |
+| 安全问句偶尔落 `info.search`（T24） | manifest 没声明 Agent 早已实现的告警续驾能力 ⇒ planner 看不见 | **本地闭合、待 deploy 真栈复验**（`agents/road_safety/manifest.yaml`）；QA 交接页 §5 |
+| safety focus 持续阻断后续 charging plan（T47） | 安全状态解除时机的产品裁决 | **待裁决**：收口页 §3 推荐「显式解除陈述清焦点」 |
+| MiniMax TTS RPM | 外部配额 | **已由 `a09c73a`（09-06）闭合并销账**；混合意图轮盲听独立开 |
+| barge-in 残帧 | 全双工上「零字节」不可判 | **裁决完**：客户端丢弃（已在）、服务端限 1s 在途窗口（探针判据已改） |
+| gRPC RuntimeWarning | test-only fixture 债务 | **已修**（trip 测试用不可达 LLM 替身）；第三方弃用告警留档不藏 |
 
 ### 4.2 当前活项与其他可接工作
 
