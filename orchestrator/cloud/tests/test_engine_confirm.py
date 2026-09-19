@@ -489,6 +489,26 @@ def test_a_bare_confirm_question_without_any_pending_is_not_hijacked():
     assert spy.llm_plan_calls == 1
 
 
+def test_a_slot_answer_that_starts_with_a_yes_word_is_still_a_slot_answer():
+    """「好的，明天早上八点」回答的是补槽追问——没有任何 wait_confirm 时，肯定词开头
+    的长句不进确认寻址（否则会被判成「点名落空」而当插话重规划）。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-slot",
+        pending_step_id="s2", missing_slots=["datetime"],
+        completed_results={}, pending_plan={
+            "goal": "订川菜馆", "raw_text": "找家川菜馆订两位",
+            "steps": [{"id": "s2", "agent_id": "nearby", "intent": "nearby.order",
+                       "slots": {"restaurant_name": "川菜·名店1", "party_size": "2"},
+                       "depends_on": [], "slot_refs": {}, "kind": "agent",
+                       "deployment": "cloud", "endpoint": "stub:50063"}]})))
+    plans_before = spy.llm_plan_calls
+    _run(engine, _req("好的，明天早上八点"))
+    assert spy.llm_plan_calls == plans_before                     # 没有重规划
+    assert spy.metas("nearby.order"), "补槽答案应当续接挂起步"
+
+
 def test_named_confirm_that_names_nothing_pending_is_not_an_authorization():
     """「确认订单」而挂着的是订餐（goal / 原话都不含「订单」）⇒ 点名落空，不执行、不关闭。
 

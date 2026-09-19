@@ -1957,6 +1957,10 @@ class PlannerEngine:
             if not bare and not remainder:
                 return _SpokenConfirm("")
         if remainder:
+            if not confirms:
+                # 「好的，明天早上八点」——没有任何待确认时，肯定词开头的长句是**补槽答案 /
+                # 普通请求**，本函数不表态（否则 wait_slot 的答案会被当成点名落空的确认）。
+                return _SpokenConfirm("")
             hits = [s for s in confirms
                     if PlannerEngine._pending_names(s, remainder)]
             if len(hits) == 1:
