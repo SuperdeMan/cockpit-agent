@@ -168,6 +168,9 @@ export const appLocationBridge: LocationBridge = {
     const r = await acquireFix(deps, { budgetMs: FIX_BUDGET_MS, skipWait: recentlyFailed() })
     record(r)
     if (r.refresh) warmLocation()
+    // 等权限弹窗 / 等坐标（最长 FIX_BUDGET_MS）期间用户把定位关了：开头那次检查只覆盖「开始取值」这个时点，
+    // 拿到的坐标不能再返回（2026-09-19 GPT-6 评审 F04）。SessionCore 拼帧与离线补发前各自还会再看一次开关
+    if (!this.isEnabled()) return {}
     return metaOf(r.fix)
   },
   async enable(): Promise<Record<string, string> | null> {

@@ -28,7 +28,13 @@ function fakeLocation(enabled: boolean, meta: Record<string, string> = {}): Loca
   return {
     isEnabled: () => enabled,
     refreshMeta: async () => meta,
-    enable: async () => (Object.keys(meta).length ? meta : null),
+    // 契约：征询同意成功 = 打开定位开关（真桥 settingsStore.update({ locationEnabled: true })）。
+    // 坐标只在开关开着时上车（评审 F04），fake 不翻开关就是在替被测系统注入一个不成立的前提
+    enable: async () => {
+      if (!Object.keys(meta).length) return null
+      enabled = true
+      return meta
+    },
   }
 }
 

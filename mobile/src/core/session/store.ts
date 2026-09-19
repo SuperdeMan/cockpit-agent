@@ -45,6 +45,9 @@ import { routeSend } from './sendRouter'
 export const REQUEST_TIMEOUT_MS = 95000
 /** 链路断开时一个字都没到的在飞轮，结算成这句（红字 + 重发键）；已到一部分的轮文字原样留、只标「网络断开」 */
 export const LINK_LOST_TEXT = '发送状态未知：网络断开前没有收到回音，可以重发。'
+/** 带坐标的请求在队列里等着补发时用户关掉了定位（2026-09-19 GPT-6 评审 F04）：帧字符串已冻结，
+ *  明确失败优于静默改写；重发会重新走征询。已经发出去的不声称撤回 */
+export const LOCATION_REVOKED_TEXT = '定位已关闭，这条带位置的请求没有发送；需要的话请重新发起。'
 // 剪枝调度上界：按项到期精确调度，min(下一条到期, 30s)。30s 是没有任何挂起时的兜底轮询上界，
 // 不再是「最坏晚 30s 才出账」——那正是 P5「按钮无解释消失」的一半成因
 const PRUNE_INTERVAL_MS = 30_000
@@ -228,6 +231,8 @@ interface OutboundRequest {
   bubbleId: string
   phase: 'preparing' | 'queued' | 'sent' | 'unknown'
   operation?: PendingOp
+  /** 帧里带着坐标（transmitRequest 定）：离线补发前要再看一次定位开关（评审 F04 第四个时点） */
+  carriesLocation?: boolean
 }
 
 interface Preparation {
@@ -800,6 +805,11 @@ export class SessionCore {
     )
   }
 
+  /** 带坐标的帧只在「此刻定位开关仍开着」时才许发出（评审 F04）。取值期间 / 排队期间关掉的都在这里拦 */
+  private locationLive(request: OutboundRequest): boolean {
+    return !request.carriesLocation || this.deps.location.isEnabled()
+  }
+
   private async prepareRequest(
     request: OutboundRequest,
     preparation: Preparation,
@@ -843,27 +853,33 @@ export class SessionCore {
       this.failRequest(request, '确认已过期或已处理，需要的话请重新发起。')
       return
     }
+    // 坐标只在「此刻定位开关仍开着」时才上车（评审 F04 第三个时点）：取值等待期间被关掉的，这里最后一次拦——
+    // 桥自己也会拦（appLocation.refreshMeta 返回前重查），但带不带坐标是 SessionCore 拼帧时的事，判据放在拼帧的地方
+    const location = locationMeta && Object.keys(locationMeta).length && this.deps.location.isEnabled() ? locationMeta : undefined
     // 沿用 buildUserFrame 的 meta 过滤：准备回调中的内部键/空值也不得漏上行。
     const prepared = buildUserFrame(request.frame.text, this.deps.sessionId, {
-      metaBase: { ...request.frame.meta, ...locationMeta },
+      metaBase: { ...request.frame.meta, ...location },
       metaExtra,
     })
     request.frame.meta = { ...prepared.meta, trace_id: request.frame.meta.trace_id }
     request.phase = 'queued'
+    request.carriesLocation = !!location
     this.queuedIds.add(request.bubbleId)
     this.syncQueued()
-    if (locationMeta && Object.keys(locationMeta).length) {
+    if (location) {
       this.store.setState((s) => ({ turnMeta: { ...s.turnMeta, [request.bubbleId]: { ...s.turnMeta[request.bubbleId], withLocation: true } } }))
     }
     try {
       const sent = this.deps.transport.send(request.frame, {
-        canSend: () => this.requestLive(request) && this.operationLive(request),
+        canSend: () => this.requestLive(request) && this.operationLive(request) && this.locationLive(request),
         onSent: () => this.requestSent(request),
         onDropped: (reason) => {
           if (!this.requestLive(request)) return
           this.failRequest(request, reason === 'overflow'
             ? '排队已满，这条请求没有发送，请稍后重试。'
-            : '请求已失效，没有发送；需要的话请重新发起。')
+            : !this.locationLive(request)
+              ? LOCATION_REVOKED_TEXT
+              : '请求已失效，没有发送；需要的话请重新发起。')
         },
       })
       // 兼容原有同步 Transport；生产 Gateway 的回调已执行时本方法幂等。
