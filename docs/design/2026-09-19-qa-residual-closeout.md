@@ -329,6 +329,16 @@ commit 余量 3–4GB、物理余量 2–3GB。四趟全量里三趟死在这上
 等 WindowsTerminal 那 33.5GB commit 释放后再跑一趟 `-n 8` 补进 AGENTS.md。趟 ⑤ 的 8374 + 4 = 8378
 与趟 ② 的 8370 + 9 = 8379 差的正是那 +1 skip，收集面一致。
 
+**⑥ 用户重开终端释放 commit 后（余量 33.8GB），最终发布树 `82c8c7fa`（= `ca4bf370` + docs）固定口径 `-n 8`：
+8397 passed / 1 failed / 31 skipped / 12 warnings，272.31s。** 那 1 红 `test_e2e_stack_lease.py::
+test_parallel_owner_cleanup_failure_overrides_both_passes`（`calls_before_manual_recovery == 0`）：同文件串行
+61 passed / 2 skipped，单独 `-n 8` 连跑三趟各红 2–3 条**不同**用例（`test_parallel_fast_second_finishes_before_slow_first`
+等，`rc == 1`）——parallel-owner 那组用例把**真仓库根**传给 `runner.main(repo_root=…)`，于是各 worker 去抢同一把
+仓库级身份 OS 锁（`e2e_stack_lease.identity_lock_path`），谁没抢到就 `identity_busy`。这正是 AGENTS §6.1 点名的
+「OS lock 污染读数」形态，是那组测试的隔离债（该用 `tmp_path` 当 repo_root 或 patch 锁路径），与本轮改动无关、未修。
+31 skipped 比 32 基线少 1：AGENTS §6.1 的 32 是「本地 Docker 停」口径，此刻 Docker Desktop 在跑。12 warnings：
+Starlette ×8、WordPiece ×2、audioop ×1、一条 stack-lease 子进程读线程 `UnicodeDecodeError`（GBK 字节）告警。
+
 趟 ② 的 9 红逐条：
 
 - `scripts/tests/test_cloud_deploy_assets.py::test_release_status_docs_record_deployed_non_green_checkpoint`

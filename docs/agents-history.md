@@ -9197,3 +9197,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 用户「授权推送部署」：push `b342e3bb..ca4bf370` → dry-run 零阻断 → apply 196s → status ok、5/5、running = `ca4bf370` → verify verified（`20260919T054445Z-ca4bf37.json`）。
 - 带 `dest_choice` 挂起的六轮序列 ×4：解除句 0/4 被吞（chitchat ×3、技术失败终态 ×1）；**第 4 趟解除句正落在技术失败出口——`b342e3bb` 上红的那个形态——这次 T6 答天气建议、无「未解除」**。T6 四趟零「未解除」；T5 落点仍是模型方差（路线 / 候选卡 / clarify 再问站点，零动作）。
 - 当日四个 release：`1eb25a70`（T24）→ `0d414816`（T47 裁决 A）→ `b342e3bb`（挂起吞句）→ `ca4bf370`（出口登记）。全量固定口径读数仍欠一趟（主机 commit 被 WindowsTerminal 占 33.5GB）。
+
+### 同批追加 — 全量固定口径读数补齐（用户重开终端释放 commit 后）
+
+- 主机 commit 余量 3GB → 33.8GB（用户重开 WindowsTerminal）。最终发布树 `82c8c7fa`（= `ca4bf370` + docs）`TZ=UTC0` `-n 8`：**8397 passed / 1 failed / 31 skipped / 12 warnings**，272s。
+- 那 1 红 `test_e2e_stack_lease.py::test_parallel_owner_cleanup_failure_overrides_both_passes`：串行 61/61 绿；单独 `-n 8` 三趟各红 2–3 条不同用例 ⇒ parallel-owner 用例组拿真仓库根抢同一把身份 OS 锁（`identity_lock_path`），多 worker 必撞——§6.1「OS lock 污染读数」原型，测试隔离债（应给 `tmp_path` 或 patch 锁路径），与本轮改动无关、未修。31 skipped = 32 基线 − 1（Docker Desktop 此刻在跑）。
+- 装置：`Start-Process` 分离跑的 pytest 会随宿主终端一起死（旧终端被关时 `-n 2` 那趟死在 13%），「分离」只挡得住工具超时，挡不住终端关闭。
