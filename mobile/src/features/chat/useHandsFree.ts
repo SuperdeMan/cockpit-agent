@@ -52,8 +52,12 @@ export interface HandsFreeUi {
   orb: string | null
   partial: string
   availability: { vad: boolean; kws: boolean; usable: boolean }
-  /** 载模型/开麦失败时的原因（UI 据此把开关自动弹回并解释） */
+  /** 最近一次启动失败的原因；'' = 没有。**开关不弹回**（2026-09-19 G-06）：开关是用户意图，这一行是运行事实——
+   *  设置页把它显示在开关下面、Presence 当降级显示；回前台 / 路由变化的 scope 同步与重新开关都会重试，成功即清。
+   *  此前接口注释写着「UI 据此把开关自动弹回」，但全仓没有任何 UI 消费它：开关亮着、回路是死的、原因没人看得见。 */
   error: string
+  /** 失败成因：permission = 麦克风权限（恢复出口是系统设置）；engine = 引擎 / 设备（关掉再打开重试） */
+  errorKind: 'permission' | 'engine' | ''
   /** 会话级关闭了语音打断（回声连续自触发）；空串=未关。会话级不可恢复（voiceLoop 语义） */
   bargeInDisabled: string
   /** 本轮语音链路降级说明；下一轮 FSM 进 LISTENING 时清 */
@@ -78,6 +82,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const [orb, setOrb] = useState<string | null>(null)
   const [partial, setPartial] = useState('')
   const [error, setError] = useState('')
+  const [errorKind, setErrorKind] = useState<HandsFreeUi['errorKind']>('')
   const [bargeInDisabled, setBargeInDisabled] = useState('')
   const [pipelineDegraded, setPipelineDegraded] = useState('')
   const [echoAt, setEchoAt] = useState(0)
@@ -105,6 +110,12 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     let live = true
     const allowed = () => live && ctlRef.current === ctl && !pausedRef.current &&
       (!opts.scope || opts.scope.canCapture()) && settingsStore.getState().settings.handsFree
+    // G-01：VAD 积压 / 丢窗 / 推理耗时随轮次时间线落盘（进 LISTENING 与定稿两处）。诊断页进入即暂停采集，
+    // 活的读数只有在这里顺手记下来才能事后回读——「说完了判得慢」到底是模型慢还是链攒着，看这一段
+    const vadDetail = () => {
+      const v = ctlRef.current?.stats().vad as { backlog: number; dropped: number; lastInferMs: number } | undefined
+      return v ? `vad b${v.backlog} d${v.dropped} ${v.lastInferMs}ms` : ''
+    }
     const deps: HandsFreeDeps = {
       audioUrl: cbRef.current.audioUrl,
       getSessionId: () => cbRef.current.sessionId,
@@ -122,7 +133,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         if (!allowed()) return
         // 走到这里 = ASR 已定稿并交给主链；下一步 SessionCore.send 会认领这一轮
         if (hfTimelineRef.current) {
-          markInteraction(hfTimelineRef.current, 'asr_final', { detail: text.trim() ? 'text' : 'empty' })
+          markInteraction(hfTimelineRef.current, 'asr_final', { detail: (text.trim() ? 'text' : 'empty') + ' ' + vadDetail() })
           offerPendingInteraction(hfTimelineRef.current)
         }
         setPartial('')
@@ -145,7 +156,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
             const t = beginInteraction('handsfree')
             hfTimelineRef.current = t
             markInteraction(t, 'input_gesture', { detail: 'wake' })
-            markInteraction(t, 'capture_started')
+            markInteraction(t, 'capture_started', { detail: vadDetail() })
             offerPendingInteraction(t)
           } else if (prevFsmRef.current === 'LISTENING' && hfTimelineRef.current) {
             dropPendingInteraction(hfTimelineRef.current)
@@ -198,7 +209,14 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       if (!allowed()) return
       const msg = e instanceof Error ? e.message : String(e)
       setError(msg)
+      setErrorKind(e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine')
       cbRef.current.onNotice?.('免唤醒启动失败：' + msg)
+    }
+    // 启动成功才清失败原因（G-06）：失败后控制器还在（开关没弹回），下一次 scope 同步 / 重新开关的 enable 成功即清
+    const onEnabled = () => {
+      if (!live || ctlRef.current !== ctl) return
+      setError('')
+      setErrorKind('')
     }
     // Zustand 通知同步发生：设置关掉的同一调用栈就撤回采集，不能等 React effect。
     const unsubscribeSettings = settingsStore.subscribe((state, previous) => {
@@ -206,12 +224,12 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       if (!state.settings.handsFree) void ctl.disable().catch(() => {})
       else if (cbRef.current.enabled && (!opts.scope || opts.scope.canCapture())) {
         pausedRef.current = false
-        void ctl.enable().catch(onEnableError)
+        void ctl.enable().then(onEnabled).catch(onEnableError)
       }
     })
     const syncScope = () => {
       if (opts.scope && !opts.scope.canCapture()) void ctl.disable().catch(() => {})
-      else if (!pausedRef.current && settingsStore.getState().settings.handsFree) void ctl.enable().catch(onEnableError)
+      else if (!pausedRef.current && settingsStore.getState().settings.handsFree) void ctl.enable().then(onEnabled).catch(onEnableError)
     }
     const unsubscribeScope = opts.scope?.subscribe(syncScope)
     syncScope()
@@ -262,6 +280,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       // 上一条启动失败的话不能留给下一个控制器：清理与其它五个状态同一处（放这里而不是
       // 新 effect 体里同步 setState —— 那是 react-hooks/set-state-in-effect 的级联渲染）
       setError('')
+      setErrorKind('')
     }
   }, [wantOn, opts.audioUrl, opts.sessionId, opts.scope])
 
@@ -278,8 +297,15 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     if (pausedRef.current) {
       pausedRef.current = false
       void ctl.enable().then(() => {
-        if (ctlRef.current === ctl && !pausedRef.current && (!cbRef.current.scope || cbRef.current.scope.canCapture())) ctl.wakeManually()
-      }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+        if (ctlRef.current !== ctl) return
+        setError('')
+        setErrorKind('')
+        if (!pausedRef.current && (!cbRef.current.scope || cbRef.current.scope.canCapture())) ctl.wakeManually()
+      }).catch((e: unknown) => {
+        if (ctlRef.current !== ctl) return
+        setError(e instanceof Error ? e.message : String(e))
+        setErrorKind(e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine')
+      })
     } else ctl.wakeManually()
   }, [])
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
@@ -289,5 +315,5 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     pausedRef.current = true
     void ctlRef.current?.disable().catch(() => {})
   }, [])
-  return { fsm, orb, partial, availability, error, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, pause, echoAt }
+  return { fsm, orb, partial, availability, error, errorKind, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, pause, echoAt }
 }

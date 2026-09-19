@@ -351,6 +351,8 @@ export function SettingsScreen() {
   const autoDrivingNow = drivingActive({ manual: false, edge: drivingFact.edge, now: Date.now(), dismissedAt: drivingFact.dismissedAt })
   const autoDriving = !settings.drivingManual && autoDrivingNow
   const [server, setServer] = useState<ServerConfig | null>(null)
+  // 清除对话记录的结果（G-04）：本机删除要回读，失败要说出来——「界面清空」不等于「本机记录删掉了」
+  const [clearResult, setClearResult] = useState<{ ok: boolean; at: number } | null>(null)
   const [nameDraft, setNameDraft] = useState(settings.assistantName)
   const [ttsCatalog, setTtsCatalog] = useState<TtsProviderInfo[]>([])
   // ASR 目录先用共享兜底表（离线 / 探测未回也能选），探测回来再换；TTS 保持原样（[] 期间不渲染）
@@ -363,6 +365,8 @@ export function SettingsScreen() {
   // 免唤醒的原生可用性：**在渲染前问一次**。原生缺席时连开关都不渲染——
   // 这不是 UI 洁癖，是坑账 §9.27：原生缺席时崩在原生线程，ErrorBoundary 兜不住整屏红屏。
   const hfAvail = useMemo(() => handsFreeAvailability(), [])
+  // 免唤醒的运行事实（启动失败原因）来自宿主的 hf；Provider 没挂（引导页 / 测试）时是 null
+  const runtime = useAssistant()
   // 构建身份一行（常驻包流程）：报问题先抄它——设备跑的是哪份代码只认这一处读数
   const build = useMemo(() => readBuildInfo(), [])
   const buildLabel = useMemo(() => formatBuildLabel(build), [build])
@@ -707,6 +711,12 @@ export function SettingsScreen() {
               value={settings.handsFree}
               onChange={(handsFree) => set({ handsFree })}
             />
+            {/* G-06：开关是意图、这一行是事实——回路没起来时开关照亮，但原因就在它下面，不让「亮着的开关」替死回路说话 */}
+            {settings.handsFree && runtime?.hf.error ? (
+              <Text testID="handsfree-error" style={{ color: p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
+                {`免唤醒没有启动：${runtime.hf.error}。${runtime.hf.errorKind === 'permission' ? '请在系统设置里允许小舟随行使用麦克风' : '关掉再打开可以重试'}`}
+              </Text>
+            ) : null}
             {settings.handsFree ? (
               <SwitchRow
                 p={p}
@@ -790,7 +800,7 @@ export function SettingsScreen() {
                 onPress: () => {
                   const w = getWired()
                   w?.core.clearMessages()
-                  if (w) void clearHistory(w.historyKey)
+                  if (w) void clearHistory(w.historyKey).then((ok) => setClearResult({ ok, at: Date.now() }))
                 },
               },
             ])
@@ -799,6 +809,13 @@ export function SettingsScreen() {
         >
           <Text style={{ color: p.red, fontSize: p.font(13) }}>清除对话记录</Text>
         </Pressable>
+        {clearResult ? (
+          <Text testID="settings-clear-history-result" style={{ color: clearResult.ok ? p.fg3 : p.amber, fontSize: p.font(11), lineHeight: p.font(17) }}>
+            {clearResult.ok
+              ? `已清除当前会话与本机记录（${new Date(clearResult.at).toLocaleTimeString('zh-CN', { hour12: false })}，删完已回读确认）`
+              : '当前会话已清空，但本机保存的记录没有删掉（存储层未兑现），可稍后再试；报问题时抄上底部构建行'}
+          </Text>
+        ) : null}
       </Section>
 
       {/* ── 账号与连接 ── */}

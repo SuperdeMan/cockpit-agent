@@ -135,6 +135,9 @@ export function usePresence({ core, hf, ptt, user, sheetOverride, landscape, int
   // 降级轴（§12.1）：B1 只接今天就有信号的四种
   const degradations: Degradation[] = []
   if (ptt?.errorKind === 'permission') degradations.push({ kind: 'permission_denied', what: 'mic', text: ptt.error })
+  // 免唤醒开着却没起来（G-06）：权限成因并进 mic 权限那一条（不重复报），其余按服务降级报出原因
+  if (hf.error && hf.errorKind === 'permission' && ptt?.errorKind !== 'permission') degradations.push({ kind: 'permission_denied', what: 'mic', text: hf.error })
+  else if (hf.error && hf.errorKind !== 'permission') degradations.push({ kind: 'service_degraded', text: '免唤醒没有启动：' + hf.error })
   if (hf.bargeInDisabled) degradations.push({ kind: 'audio_echo_degraded', reason: hf.bargeInDisabled })
   if (hf.pipelineDegraded) degradations.push({ kind: 'service_degraded', text: hf.pipelineDegraded })
   if (uncertainIds.length) degradations.push({ kind: 'transport_unknown', messageIds: uncertainIds })
