@@ -304,12 +304,14 @@ def test_an_unreadable_pending_table_says_so_instead_of_saying_none():
     假话——而用户正是靠它决定要不要重说一遍。
     """
     class _Broken(SessionStore):
-        # `load` 走另一条既有路径（engine 开头判挂起），保持可用——本用例要隔离的
-        # 是**读出口那一次取数**失败，不是整轮不可用。
-        async def load(self, session_id, *, owner_user_id="", operation_id=""):
-            return None
+        # engine 开头判挂起的那一次取数（W01 起同样走 `load_all`）保持可用——本用例要
+        # 隔离的是**读出口那一次取数**失败，不是整轮不可用。第一次调用回空表，之后再坏。
+        calls = 0
 
         async def load_all(self, session_id, *, owner_user_id=""):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                return []
             raise RuntimeError("redis down")
 
     spy = _Spy()

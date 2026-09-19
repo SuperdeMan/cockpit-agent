@@ -278,6 +278,11 @@ def test_confirm_reply_rules():
     assert f("第二天行程换一个", False) is None      # 含"行"(行程)，是修改不是确认
     assert f("可以换第二天的安排吗", False) is None   # 含"可以"，是请求不是确认
     assert f("第二天不要去长城了", False) is None     # 含"不要"，是修改不是取消
+    # 评审 F01（2026-09-19）：问句形态**永远不是授权**——判据复用 runtime.question_shape
+    for ask in ("确认吗", "可以吗", "行吗", "行不行", "好吗？"):
+        assert f(ask, False) is None, ask
+    assert f("请确认", False) == "yes"                # 礼貌祈使仍是指令（question_shape 的 marker）
+    assert f("确认", True) == "yes"                  # HMI 按钮仍是显式寻址
 
 
 def test_modify_phrase_with_xing_not_mistaken_for_confirm():
@@ -366,21 +371,116 @@ def test_interjection_cancel_still_cancels():
     assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
 
 
-def test_unaddressed_confirm_resolves_to_the_newest_pending():
-    """无寻址键的「确认」落到**最近一条**挂起（语音兜底语义）。
+def test_unaddressed_confirm_with_two_confirm_pendings_asks_instead_of_guessing():
+    """无寻址键的「确认」撞上**两条** `wait_confirm` ⇒ 问一次，零动作、零关闭（评审 F01 / W01）。
 
-    ⚠ 这条测试原名 `test_new_suspension_overwrites_old_pending`，断言的是
-    「单槽覆盖旧挂起」。Q1-C 之后旧挂起**不再被覆盖**（`test_pending_table`
-    里有它的正面断言），这里只剩「不带 operation_id 时打给谁」这一件事。
+    ⚠ 这条测试的前身 `test_unaddressed_confirm_resolves_to_the_newest_pending`
+    把「静默落最新一条」钉成了契约——而那正是评审点名的缺陷：用户脑子里惦记着
+    两件事，系统替他猜了一件去执行。裸「确认」在两条挂起并存时**没有唯一所指**，
+    唯一诚实的做法是把两条都念出来让他选；点选走 `operation_id`，语音走「确认+点名」。
     """
     engine, spy, session = _make_engine()
-    _run(engine, _req("找家川菜馆订今晚7点两位"))
-    _run(engine, _req("再找一家川菜馆订明晚8点三位"))
-    state = asyncio.run(session.load("sess-1", owner_user_id="u1"))
-    assert state is not None and state.phase == "wait_confirm"
+    op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+    op2 = _run(engine, _req("再找一家川菜馆订明晚8点三位"))[-1]["operation_id"]
+    orders_before = spy.count("nearby.order")
+
     events = _run(engine, _req("确认", is_confirmation=True))
+    final = events[-1]
+    assert spy.count("nearby.order") == orders_before          # 一条都没执行
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
+    assert "还是" in final["speech"] and "确认" in final["speech"]   # 问了一次
+    assert not final.get("actions")
+    assert not final.get("closed_operation_ids")               # 两条都还活着
+    assert set(final.get("held_operation_ids") or []) == {op1, op2}
+    left = {s.operation_id for s in
+            asyncio.run(session.load_all("sess-1", owner_user_id="u1"))}
+    assert left == {op1, op2}
+    assert spy.llm_plan_calls == 2                              # 没拿「确认」去规划
+
+
+def test_unaddressed_confirm_targets_the_only_confirm_pending_even_if_a_slot_ask_is_newer():
+    """恰好一条 `wait_confirm` + 更新的一条 `wait_slot` ⇒ 裸「确认」打给那条 wait_confirm。
+
+    旧实现按「最近一条」寻址 ⇒ 落到 wait_slot 分支，「确认」二字被当槽值填进 `time_text`
+    ——确认与补槽混在一起（评审 W01「确认与补槽不混」）。
+    """
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine()
+    op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-slot",
+        pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建吃药提醒"})))
+
+    final = _run(engine, _req("确认"))[-1]
     assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
-    assert not events[-1].get("need_confirm")
+    assert op1 in (final.get("closed_operation_ids") or [])
+    left = [s.operation_id for s in
+            asyncio.run(session.load_all("sess-1", owner_user_id="u1"))]
+    assert left == ["op-slot"]                                  # 补槽挂起原样活着
+
+
+def test_bare_confirm_word_is_never_a_slot_answer():
+    """只有 `wait_slot` 挂起时说「确认」：不是槽值，也不是授权——走「没有待确认」出口，
+    并提醒那条补槽还在等。"""
+    from orchestrator.cloud.models import SessionState
+    engine, spy, session = _make_engine()
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-slot",
+        pending_step_id="s1", missing_slots=["time_text"],
+        completed_results={}, pending_plan={"goal": "创建吃药提醒"})))
+
+    final = _run(engine, _req("确认"))[-1]
+    assert "没有待确认" in final["speech"]
+    assert spy.llm_plan_calls == 0
+    assert "创建吃药提醒" in (final.get("follow_up") or "")
+    state = asyncio.run(session.load("sess-1", owner_user_id="u1"))
+    assert state is not None and state.phase == "wait_slot"
+
+
+def test_question_shaped_yes_word_does_not_authorize():
+    """「可以吗 / 确认吗 / 行吗」是在**问**，不是在授权（评审 F01 局部复算）。
+
+    每问一条都起一份新引擎：stub planner 对任何非确认句都会再挂一条，三问之后
+    挂起表（容量 3）会把 op1 淘汰——那是容量语义，不是本条要验的东西。
+    """
+    for ask in ("可以吗", "确认吗", "行吗", "确认订单吗"):
+        engine, spy, session = _make_engine()
+        op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+        final = _run(engine, _req(ask))[-1]
+        assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order")), ask
+        assert op1 not in (final.get("closed_operation_ids") or []), ask
+        # 原挂起没被消费掉（问句按插话处理，R2 保留挂起）
+        assert asyncio.run(session.load(
+            "sess-1", owner_user_id="u1", operation_id=op1)) is not None, ask
+
+
+def test_named_confirm_that_names_nothing_pending_is_not_an_authorization():
+    """「确认订单」而挂着的是订餐（goal / 原话都不含「订单」）⇒ 点名落空，不执行、不关闭。
+
+    旧判据「确认」在 4 字句里占据整句 ⇒ yes ⇒ 把挂着的那条执行了。
+    """
+    engine, spy, session = _make_engine()
+    op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+    final = _run(engine, _req("确认订单"))[-1]
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order"))
+    assert op1 not in (final.get("closed_operation_ids") or [])
+    assert asyncio.run(session.load(
+        "sess-1", owner_user_id="u1", operation_id=op1)) is not None
+
+
+def test_spoken_confirm_can_name_one_of_two_pendings():
+    """「确认订明晚那个」——肯定词 + 点名了恰好一条挂起的 goal ⇒ 打给它。"""
+    engine, spy, session = _make_engine()
+    op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+    op2 = _run(engine, _req("再找一家川菜馆订明晚8点三位"))[-1]["operation_id"]
+
+    final = _run(engine, _req("确认明晚8点那个"))[-1]
+    assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
+    assert op2 in (final.get("closed_operation_ids") or [])
+    left = [s.operation_id for s in
+            asyncio.run(session.load_all("sess-1", owner_user_id="u1"))]
+    assert left == [op1]
 
 
 def test_slot_interjection_keeps_pending():

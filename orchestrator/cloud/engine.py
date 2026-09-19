@@ -30,6 +30,7 @@ from runtime import session_facts
 from runtime.execution_claim import execution_claim
 from runtime.clause_split import split_clauses
 from runtime.polarity import is_negated_directive
+from runtime.question_shape import is_non_directive_question
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
 from .context import (ContextManager, build_context, candidate_downlink,
                       candidate_set_for, _is_choice_card,
@@ -120,6 +121,21 @@ def _turn_sources(ui_card) -> list[dict]:
 # 否定侧不在这里——它是 `pending_cancel` 的职责。
 _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
               "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
+#: 「确认+点名」里夹在肯定词与点名之间 / 尾随的填充（W01）：「确认一下那个明晚的吧」
+#: 剥完剩「明晚」。只有虚词与标点，零领域词。
+_CONFIRM_FILLER_RE = re.compile(
+    r"^(?:一下|吧|呀|啊|那个|这个|那条|这条|那笔|这笔|的|[，,、\s])+"
+    r"|(?:那个|这个|那条|这条|那笔|这笔|的|吧|呢|啊|呀|一下|[，,、。！!\s])+$")
+
+
+class _SpokenConfirm:
+    """`_resolve_spoken_confirm` 的返回值（见其 docstring）。"""
+    __slots__ = ("kind", "target", "candidates")
+
+    def __init__(self, kind: str, target=None, candidates=None):
+        self.kind = kind
+        self.target = target
+        self.candidates = list(candidates or [])
 
 # M2 重复副作用防抖的 fingerprint 和可信来源 source_intent 会由
 # ``_resume_result`` 显式保留；其它字段默认不进入挂起种子。
@@ -394,9 +410,9 @@ class PlannerEngine:
         # （确认条 UI 也只有一个，语义一致）。held_pending 贯穿本轮：完成路径经
         # _settle_session 跳过 clear，并在 final 上补一句软提醒。
         held_pending = None
-        pending = await self.session.load(
-            ctx.session_id, owner_user_id=ctx.user_id,
-            operation_id=ctx.operation_id)
+        entries = await self.session.load_all(
+            ctx.session_id, owner_user_id=ctx.user_id)
+        pending = self._address_pending(entries, ctx.operation_id)
 
         # Q1-B：确认帧带了寻址键却对不上任何挂起 → **诚实拒绝**。
         # 不静默打给当前挂起（I-013 全局确认命中旧请求），也不清掉它——
@@ -410,6 +426,46 @@ class PlannerEngine:
                    "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。"}
             return
 
+        # W01（评审 F01，2026-09-19）：**没有寻址键的确认**先问「它在说哪一条」，
+        # 而不是按「最近一条」猜。三种形态各有出口，判据全在 `_resolve_spoken_confirm`：
+        #   · 恰好一条 wait_confirm ⇒ 就是它（哪怕更新的那条是 wait_slot——此前裸「确认」
+        #     会落进 wait_slot 分支被当成槽值，确认与补槽混在一起）；
+        #   · ≥2 条 wait_confirm 且没点名 ⇒ 问一次，零动作、零关闭、两条都留着；
+        #   · 一条 wait_confirm 都没有 ⇒ 「没有待确认的操作」，并提醒还在等补充的那条。
+        confirm_resolved = False   # W01：本轮的确认已在挂起表里寻址完成（点名 / 唯一所指）
+        if entries and not ctx.operation_id:
+            spoken = self._resolve_spoken_confirm(
+                text, ctx.is_confirmation, entries)
+            if spoken.kind == "ambiguous":
+                labels = "，还是".join(
+                    self._pending_label(s) for s in spoken.candidates)
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.pending_ambiguous", "system.pending_ambiguous")
+                yield {"kind": "final",
+                       "speech": f"您要确认{labels}？请点选对应的确认条，或说出要确认哪一条。",
+                       "actions": [],
+                       "held_operation_ids": [
+                           s.operation_id for s in spoken.candidates
+                           if s.operation_id]}
+                return
+            if spoken.kind == "none":
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.no_pending", "system.no_pending")
+                final = {"kind": "final",
+                         "speech": "当前没有待确认的操作。您可以重新告诉我需求。",
+                         "actions": []}
+                self._append_pending_hint(final, entries[-1])
+                yield final
+                return
+            if spoken.kind == "one":
+                pending = spoken.target
+                confirm_resolved = True
+            elif spoken.kind == "named_miss":
+                # 「确认订单」而挂着的是解锁：点名了却没点到——**不是授权**。
+                # 按插话处理（R2 保留挂起），绝不落回「最近一条」去执行。
+                held_pending = pending
+                pending = None
+
         # Q1-A：取消判定对两条分支是**同一件事**，所以在分岔之前判一次。
         # 此前 wait_confirm 走「词占据整句」、wait_slot 走子串+复合余量，
         # 「取消刚才解锁」在前者判不出取消（I-046）。判据全在 pending_cancel。
@@ -422,7 +478,13 @@ class PlannerEngine:
                 if not cancelled.compound:
                     await _emit_engine_lifecycle(
                         ctx, "cloud.pending_cancel", "system.pending_cancel")
-                    yield {"kind": "final", "speech": "好的，已为您取消。"}
+                    # 多条挂起并存时说清取消的是哪一条（W01 的对照面）：裸「取消」
+                    # 仍按最近一条处理——撤销方向是 fail-safe 的，但不能让用户猜。
+                    which = (self._pending_label(pending)
+                             if len(entries) >= 2 else "")
+                    yield {"kind": "final",
+                           "speech": (f"好的，已为您取消{which}。" if which
+                                      else "好的，已为您取消。")}
                     return
                 # 复合句（「算了咖啡不买了，**先去加点油**」）：取消只作用于挂起，
                 # 其余内容按全新请求继续处理——不 return、不进确认/补槽/话题分支。
@@ -432,7 +494,10 @@ class PlannerEngine:
                 pending = None
 
         if pending and pending.phase == "wait_confirm":
-            reply = self._confirm_reply(text, ctx.is_confirmation)
+            # 点名式确认（「确认明晚那个」）整句不是裸肯定词，`_confirm_reply` 会判成插话；
+            # 寻址那一步已经认定它就是对这条挂起说「是」。
+            reply = ("yes" if confirm_resolved
+                     else self._confirm_reply(text, ctx.is_confirmation))
             if reply == "yes":
                 plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
@@ -1680,7 +1745,10 @@ class PlannerEngine:
         """挂起的人话名字：取 pending_plan.goal，没有就退回中性说法。"""
         goal = ""
         try:
-            goal = (state.pending_plan or {}).get("goal") or ""
+            plan = state.pending_plan or {}
+            # goal 是模型的一句话目标；没有时退回**任务起点原话**（W01 的消歧问句要
+            # 念得出每一条是什么，「更早那条」在两条并列时等于没说）。
+            goal = plan.get("goal") or plan.get("raw_text") or ""
         except AttributeError:
             pass
         return f"「{goal[:20]}」" if goal else "更早那条待确认的操作"
@@ -1795,11 +1863,88 @@ class PlannerEngine:
             return "no"
         if flagged:
             return "yes"
+        # 评审 F01（2026-09-19）：**问句形态永远不是授权**。「可以吗 / 确认吗 / 行吗」
+        # 里的肯定词占据了整句，旧判据照样判 yes——它没把「询问」和「授权」分开。
+        # 判据复用 `runtime.question_shape`（唯一实现、零领域词）：礼貌请求
+        # （「请确认」带祈使标记）仍是指令，不在否决面内。
+        if is_non_directive_question(t):
+            return None
         # "词占据整句"判定：肯定词须近似为全句（len(t) ≤ 词长+slack），不做宽松子串包含。
         # 否则"第二天行程换一个"含"行"、"可以换X"含"可以"会被误判。
         if any(k in t and len(t) <= len(k) + 2 for k in _YES_WORDS):
             return "yes"
         return None
+
+    @staticmethod
+    def _address_pending(entries: list, operation_id: str):
+        """寻址键非空 ⇒ 只认精确命中（Q1-B，对不上就是 None，绝不回落）；
+        空 ⇒ 最近一条（语音兜底 / 旧客户端的既有语义）。"""
+        wanted = str(operation_id or "").strip()
+        if wanted:
+            return next((s for s in entries if s.operation_id == wanted), None)
+        return entries[-1] if entries else None
+
+    @staticmethod
+    def _resolve_spoken_confirm(text: str, flagged: bool, entries: list) -> "_SpokenConfirm":
+        """无寻址键的确认在挂起表里**指向谁**（W01）。
+
+        返回 `kind`：
+          · `""`           —— 这句话不是确认，本函数不表态；
+          · `"one"`        —— 唯一所指（`target`）；
+          · `"ambiguous"`  —— ≥2 条 wait_confirm 且没点名（`candidates` 按挂起先后）；
+          · `"none"`       —— 是确认词，但一条 wait_confirm 都没有；
+          · `"named_miss"` —— 「确认+点名」点到了不存在的那条（或点到多条）。
+
+        点名通道刻意窄：肯定词开头、余量 ≥2 字、余量是某条挂起 goal / 原话的**子串**，
+        且恰好命中一条。序数（「第一个」）不接——它在 wait_slot 语境里是选择卡的答案。
+        """
+        confirms = [s for s in entries if getattr(s, "phase", "") == "wait_confirm"]
+        t = (text or "").strip().lower()
+        if flagged and not is_standalone_cancel(t):
+            bare, remainder = True, ""
+        else:
+            bare, remainder = PlannerEngine._split_confirm_prefix(t)
+            if not bare and not remainder:
+                return _SpokenConfirm("")
+        if remainder:
+            hits = [s for s in confirms
+                    if PlannerEngine._pending_names(s, remainder)]
+            if len(hits) == 1:
+                return _SpokenConfirm("one", target=hits[0])
+            return _SpokenConfirm("named_miss")
+        if len(confirms) == 1:
+            return _SpokenConfirm("one", target=confirms[0])
+        if len(confirms) >= 2:
+            return _SpokenConfirm("ambiguous", candidates=confirms)
+        return _SpokenConfirm("none")
+
+    @staticmethod
+    def _split_confirm_prefix(t: str) -> tuple[bool, str]:
+        """`(是不是裸确认, 点名余量)`。问句形态先否决（同 `_confirm_reply`）。
+
+        「确认」→ (True, "")；「确认明晚8点那个」→ (False, "明晚8点")；
+        「确认吧」→ (True, "")（语气尾剥掉）；「第二天行程换一个」→ (False, "")。
+        """
+        if not t or is_standalone_cancel(t) or is_non_directive_question(t):
+            return False, ""
+        # 先看「肯定词 + 余量」：「确认订单」余量 2 字是点名，不是裸确认——
+        # 裸判据的 2 字松弛量（`len(t) <= len(k)+2`）本来是给语气尾留的，不是给宾语留的。
+        for word in sorted(_YES_WORDS, key=len, reverse=True):
+            if t.startswith(word):
+                rest = _CONFIRM_FILLER_RE.sub("", t[len(word):])
+                if len(rest) >= 2:
+                    return False, rest
+                return True, ""
+        if PlannerEngine._confirm_reply(t, False) == "yes":
+            return True, ""
+        return False, ""
+
+    @staticmethod
+    def _pending_names(state, needle: str) -> bool:
+        """余量是否点名了这条挂起：看 goal 与任务起点原话两处（都是这条任务自己的话）。"""
+        plan = getattr(state, "pending_plan", None) or {}
+        haystacks = (str(plan.get("goal") or ""), str(plan.get("raw_text") or ""))
+        return any(needle in h.lower() for h in haystacks if h)
 
     @staticmethod
     def _is_bare_confirm_word(text: str) -> bool:
