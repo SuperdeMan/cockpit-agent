@@ -827,3 +827,11 @@ def test_a_revision_is_visible_to_the_planner():
                          {"items": [{"name": "新·甲"}]}),
     ])
     assert "第2批" in _render_focus(focus)
+
+
+def test_place_hint_matches_on_a_three_char_common_run_not_on_a_city_prefix():
+    """真栈 CD8 第 2 次取样：planner 填 `location=深圳湾万象城`，用户说「万象城」。"""
+    entry = {"label": "餐饮", "place_hint": "深圳湾万象城", "items": [{"name": "甲"}]}
+    assert label_hit("刚才万象城那批第二家评分多少", entry) is not None
+    assert label_hit("深圳今天天气怎么样", entry) is None          # 「深圳」两字不算点名
+    assert label_hit("科技园那批第二家", entry) is None

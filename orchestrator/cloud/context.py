@@ -1077,16 +1077,40 @@ def label_hit(text: str, entry: dict) -> int | None:
     中文品牌/品类词的判别信息几乎都在前缀；放开到「任意公共子串」就等于放弃判据。
     """
     # W08：地点提示是第二条称呼通道——「万象城那批」与「科技园那批」标签都是「餐饮」，
-    # 只有查询里的地点分得开它们。两条通道同一套规则（整词 + 2 字前缀）。
-    for label in (str((entry or {}).get("label") or "").strip(),
-                  str((entry or {}).get("place_hint") or "").strip()):
-        if len(label) < _CANDIDATE_LABEL_MIN:
-            continue
+    # 只有查询里的地点分得开它们。标签走整词 + 2 字前缀；地点提示另加**≥3 字公共子串**：
+    # 真栈 CD8 第 2 次取样 planner 填的是 `location=深圳湾万象城`，用户说的是「万象城」——
+    # 前缀「深圳」既对不上、也不该对上（它会命中任何提到深圳的句子）。3 字下限是为了
+    # 把「万象城 / 科技园 / 欢乐海岸」留在通道里、把「深圳」这类泛地名挡在外面。
+    label = str((entry or {}).get("label") or "").strip()
+    if len(label) >= _CANDIDATE_LABEL_MIN:
         for needle in (label, label[:_CANDIDATE_LABEL_MIN]):
             at = str(text or "").find(needle)
             if at >= 0:
                 return at
+    hint = str((entry or {}).get("place_hint") or "").strip()
+    if len(hint) >= _CANDIDATE_LABEL_MIN:
+        at = str(text or "").find(hint)
+        if at >= 0:
+            return at
+        return _common_run_position(str(text or ""), hint, _PLACE_HINT_MIN_RUN)
     return None
+
+
+#: 地点提示与原话之间要有多长的公共子串才算点名（见 `label_hit`）。
+_PLACE_HINT_MIN_RUN = 3
+
+
+def _common_run_position(text: str, hint: str, min_run: int) -> int | None:
+    """`text` 里第一处与 `hint` 有 ≥min_run 字公共子串的位置；没有 → None。字符串都很短，O(n·m)。"""
+    best_at, best_len = None, 0
+    for i in range(len(text)):
+        for j in range(len(hint)):
+            k = 0
+            while i + k < len(text) and j + k < len(hint) and text[i + k] == hint[j + k]:
+                k += 1
+            if k > best_len:
+                best_at, best_len = i, k
+    return best_at if best_len >= min_run else None
 
 
 def resolve_candidate_scope(text: str, focus) -> tuple[dict | None, list[dict]]:

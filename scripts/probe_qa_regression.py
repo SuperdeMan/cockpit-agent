@@ -325,8 +325,12 @@ CASES = [
      "turns": [
          {"say": "把全车门解锁",
           "expect": {"need_confirm": True, "has_operation_id": True}},
-         {"say": "可以吗", "expect": {"actions_exclude": ["door_lock.open"]}},
-         {"say": "确认吗", "expect": {"actions_exclude": ["door_lock.open"]}},
+         # `227457df` 起这两句走 `system.pending_state` 确定性出口（真栈首跑 1/2 次落 chitchat
+         # 答「可以，已为您执行」——零动作却声称做了）：念出挂着什么、怎么确认，零 LLM。
+         {"say": "可以吗", "expect": {"no_actions": True, "speech_has": ["待确认的操作"]},
+          "audit": {"intent_any": ["system.pending_state"]}},
+         {"say": "确认吗", "expect": {"no_actions": True, "speech_has": ["待确认的操作"]},
+          "audit": {"intent_any": ["system.pending_state"]}},
          {"say": "确认", "confirm": True, "op_from": 1,
           "expect": {"actions_include": ["door_lock.open"],
                      "closes_op_from": 1}},
@@ -749,6 +753,26 @@ CASES = [
          {"say": "第二个多少钱",
           "expect": {"names_item_from": {"turn": 2, "index": 2},
                      "differs_from_turn": 2}},
+     ]},
+
+    # W08（评审 F03，2026-09-19）：同能力不同查询的两批候选**共存**。旧合并键
+    # `(source_intent, purpose, is_fallback)` 让科技园那批顶掉万象城那批，「刚才万象城那批
+    # 第二家」无处可解。判据读卡片 items：T3 点名旧批 ⇒ 答第 1 轮卡的第 2 项（地点提示派生自
+    # 查询槽、经 `resolve_candidate_scope` 的标签通道命中，走 `candidate_query` 确定性出口）；
+    # T4 不点名 ⇒ 仍绑最新那批（行为逐字同旧）。
+    {"id": "CD8", "group": "candidate", "card": "Q2", "issue": "W08",
+     "why": "同能力不同查询两批共存：点名旧批绑旧批、裸序数仍绑最新批",
+     "known": "red",
+     "turns": [
+         {"say": "万象城附近的餐厅", "expect": {"card_type": "place_list",
+                                          "card_items_at_least": 2}},
+         {"say": "科技园附近的餐厅", "expect": {"card_type": "place_list",
+                                          "card_items_at_least": 2}},
+         {"say": "刚才万象城那批第二家评分多少",
+          "expect": {"names_item_from": {"turn": 1, "index": 2},
+                     "not_names_item_from": 2}},
+         {"say": "第二家评分多少",
+          "expect": {"names_item_from": {"turn": 2, "index": 2}}},
      ]},
 
     # ── Q10 双入口收敛（接手第 7 步，2026-08-19）────────────────────
