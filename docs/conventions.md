@@ -343,6 +343,7 @@
 | `VERIFY_MIRROR_STALE_S` | 云侧车况镜像陈旧上限秒：超过此时长没收到 `vehicle.state.changed` 即当作「看不见」（`state_match` 判 UNKNOWN 不定罪），而非拿陈旧值定罪 | 否（默认 180） |
 | `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留有 `route_hints` 的 Agent、`PLANNER_FALLBACK_AGENT` 与 edge 车控）| 否（默认 20） |
 | `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算。**硬约束**（2026-09-19 W02）：历史整对从最旧丢起、最后一对按句收缩、记忆按条裁，绝不超预算 | 否（默认 1400；生产未覆盖 ⇒ 1400） |
+| `PLANNER_ACTS` | W06（2026-09-20）对话行为标注段：`on`/默认 = prompt 里让模型在**修改当前任务的某个参数**时额外输出顶层 `acts:["correct"]`（继续/恢复 = `resume`）；prompt-only、不进 submit_plan schema（同 emotion / clarify：schema 可见性诱发多填）；`off` 一键回今天。词表 `planning.ACTS`，缺省 [] = 今天的行为。唯一决策消费方：engine `_apply_task_patch`——`correct` ∧ 单步 ∧ 与焦点 `active_task` 同 intent ∧ 帧未过期 ⇒ 缺槽从活动任务继承（新值优先）、任务帧记成同一 `task_id` 的下一版（`plan.task_patch`）；没有标签绝不猜（误继承陈旧目的地比漏继承更危险）。span 列 `acts` / `task_patch` / `task_revision` | 否（默认 `on`） |
 | `PLANNER_HISTORY_EXCHANGES` | 历史视窗：最近 N 对完整 exchange（一问一答），不按消息条数计；取回条数 = 2N+2。扩窗是单变量实验档位（评审 W19），改前先量 | 否（默认 2 = 旧的 4 条消息） |
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
 | `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
@@ -598,6 +599,12 @@ owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
 只存名字 ⇒ **卡片是终点**，渲染过的营业时间/评分/价格下一轮一个字都不剩
 （I-018/I-023）；无来源无版本 ⇒ nearby POI / 商户菜单 / 途经点 / 充电候选共用一格
 （I-030）。
+
+> **W07（2026-09-20）活动任务帧 `Focus.active_task`**：`{task_id, intent, agent_id, slots, revision, outcome, kind, ts, goal}`，
+> 本轮**最后一个**任务性步骤（非 `response_only`）落账：OK ⇒ `completed`、可见选择卡的 NEED_SLOT ⇒ `pending_slot`；`kind`=`write`（结果带 actions /
+> 声明 require_confirm / 挂起）或 `read`（纯查询）。接力：**写任务只被写任务顶掉**（「导航去公园 → 查天气 → 改成7点半」改的是导航），
+> 同 `task_id` 的新版本替换旧版本，ts 不续期、`_ACTIVE_TASK_TTL_S`=1800 后不再是改口对象（业务系统里的路线 / 订单照旧）。
+> 渲染进焦点块 `当前任务=<intent>（第N版，outcome）：k=v/…`（≤4 槽、值截 20 字），planner 据此才标得出 `acts=correct`。契约测试 `test_engine_task_frame.py`。
 
 升格后每组 = `{source_intent, agent_id, purpose, ts, is_fallback, items, query_signature, place_hint, revision}`
 （后三项 2026-09-19 W08 加：产生步 `(intent, slots)` 的指纹、查询里的地点槽、同键第几版），五条纪律：

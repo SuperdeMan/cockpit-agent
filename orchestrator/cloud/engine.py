@@ -34,7 +34,7 @@ from runtime.cntime import cn_int
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import is_non_directive_question
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
-from .context import (ContextManager, build_context, candidate_downlink,
+from .context import (ContextManager, active_task_live, build_context, candidate_downlink,
                       candidate_set_for, _is_choice_card,
                       references_a_candidate, resolve_candidate_scope,
                       safety_alert_active,
@@ -879,6 +879,9 @@ class PlannerEngine:
 
             # 用系统持有的会话焦点补全 Planner 省略的结构化上下文，再记录 trace；
             # 这样观测到的是下游真正执行的计划，不是补全前的半成品。
+            # W06 × W07：改口先合并——模型标了 correct 且单步与活动任务同 intent ⇒
+            # 缺的槽从活动任务继承（新值优先），任务帧记成同一 task_id 的下一版。
+            self._apply_task_patch(plan, working_set.focus)
             self._apply_focus_meta(plan, working_set.focus)
             # 跨轮门店锚定的**唯一入口**：把上一轮 nearby.search 的公开 POI 放上
             # PlanContext（服务端对象，LLM 与客户端都写不到）。executor 只在本轮 plan
@@ -953,6 +956,10 @@ class PlannerEngine:
                     # W02 可观测：本轮真正进 prompt 的上下文规模与历史裁剪（评审 W05
                     # 「按实际请求记录渲染规模」）。纯计数，不含内容。
                     **_context_stats_attrs(working_set),
+                    # W06 / W07：对话行为标签与「这一轮是不是改口合并」（枚举值，不过内容门控）
+                    **({"acts": ",".join(plan.acts)} if getattr(plan, "acts", None) else {}),
+                    **({"task_patch": "true", "task_revision": plan.task_patch.get("revision", 0)}
+                       if getattr(plan, "task_patch", None) else {}),
                 },
             )
             await self._resolve_endpoints(plan)
@@ -2324,6 +2331,32 @@ class PlannerEngine:
                 user_id=ctx.user_id, exchange_id=ctx.request_id)
         except Exception as exc:
             logger.debug("input-fact registration on an early exit failed: %s", exc)
+
+    @staticmethod
+    def _apply_task_patch(plan: Plan, focus) -> None:
+        """改口精确修改对象（W06 × W07）。四个前提缺一不合并：模型标了 `correct`；
+        本轮恰好一步；活动任务帧还活着；两者同 intent。合并 = 新值优先、只补缺槽；
+        结果写回 `plan.task_patch` 让 `extract_focus` 记成同一任务的下一版。
+        没有标签就不猜——误继承一个陈旧目的地比漏继承更危险。"""
+        if "correct" not in (getattr(plan, "acts", None) or []):
+            return
+        if len(plan.steps) != 1:
+            return
+        task = getattr(focus, "active_task", None) if focus is not None else None
+        if not active_task_live(task):
+            return
+        step = plan.steps[0]
+        if str(task.get("intent") or "") != str(step.intent or ""):
+            return
+        inherited = {str(k): str(v) for k, v in (task.get("slots") or {}).items()
+                     if isinstance(v, (str, int, float)) and not isinstance(v, bool)}
+        merged = {**inherited, **{k: v for k, v in (step.slots or {}).items()}}
+        added = sorted(set(merged) - set(step.slots or {}))
+        step.slots = merged
+        plan.task_patch = {"task_id": str(task.get("task_id") or ""),
+                           "revision": int(task.get("revision") or 1) + 1}
+        logger.info("Correction patch on task %s (rev %s): inherited %s",
+                    plan.task_patch["task_id"], plan.task_patch["revision"], added)
 
     @staticmethod
     def _apply_focus_meta(plan: Plan, focus) -> None:

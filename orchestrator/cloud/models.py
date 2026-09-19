@@ -211,6 +211,13 @@ class Plan:
     # 而本字段从最初请求起保持不变并随 pending_plan 持久化。LLM goal/reason 无权写它。
     # 放在末尾以保持既有 Plan 位置参数契约不变。
     safety_origin_text: str = ""
+    # W06（2026-09-20）对话行为标签：planner 额外输出的顶层 `acts`（prompt-only、fail-open，
+    # 词表 `planning.ACTS`）。缺省 [] = 今天的行为。唯一决策消费方是 engine 的改口合并
+    # （`correct` ⇒ 从活动任务继承缺槽）；其余标签只进 span 观测。
+    acts: list[str] = field(default_factory=list)
+    # W07：这一份计划**修改的是哪个活动任务**（engine 在改口合并时置 `{"task_id", "revision"}`），
+    # `extract_focus` 据此把任务帧记成同一个 task_id 的下一版而不是新任务。空 = 新任务。
+    task_patch: dict = field(default_factory=dict)
 
 
 @dataclass

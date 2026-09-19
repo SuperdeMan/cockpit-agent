@@ -513,6 +513,26 @@ def _plan_inverts_explicit_open_close(
 EMOTIONS = ("neutral", "happy", "tired", "urgent", "frustrated")
 
 
+# W06（评审 2026-09-19 §3.1）：对话行为标签的封闭词表。同 emotion 一样 **prompt-only、不进
+# submit_plan schema**（schema 可见性会诱发多填；`correct` 被多填的代价是继承一个陈旧的槽）。
+# 模型不输出 = 今天的行为（fail-open）。
+ACTS = ("new_goal", "correct", "resume", "ask_explanation")
+
+
+def _parse_acts(raw) -> list[str]:
+    """LLM 输出的顶层 `acts` → 词表内、去重、有序的标签列表；非法形状 / 缺省 → []。"""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        value = str(item or "").strip().lower()
+        if value in ACTS and value not in out:
+            out.append(value)
+    return out[:3]
+
+
 def _parse_emotion(raw) -> str:
     """LLM 输出的情绪标签 → 封闭词表内的值；非法/缺省 → ""（= neutral，不发信号）。"""
     v = str(raw or "").strip().lower()
@@ -685,6 +705,20 @@ _EMOTION_SECTION = (
     "happy（开心/兴奋）、tired（疲惫/困倦）、urgent（着急/赶时间）、frustrated（烦躁/不满）。\n"
     "- 平静陈述、普通指令、单纯提问一律**不要输出该字段**（默认中性）\n"
     "- 它只影响播报语气，不影响你的规划——绝不为了标情绪改变 steps"
+)
+
+
+# W06：对话行为标注段。prompt-only（同 emotion / clarify 的理由）。判据刻意写成
+# 「修改上一件正在处理的事的某个参数」——它不是路由，也不改变 steps，只告诉系统
+# 「这一步是补丁不是新任务」，于是缺的槽可以从活动任务继承、版本号 +1。
+_ACTS_SECTION = (
+    "\n\n== 对话行为标注（可选）==\n"
+    "如果这句话是在**修改上面『当前任务』的某个参数**、其余不变（「改成7点半到」「不，是副驾」"
+    "「还是后天吧，目的地不变」「换成三个人」），额外输出顶层字段 \"acts\":[\"correct\"]，"
+    "steps 里只写用户改动的那个槽，其余槽由系统从当前任务继承；"
+    "如果是在**继续 / 恢复**刚才中断的那件事（「继续刚才的导航」），输出 \"acts\":[\"resume\"]。\n"
+    "- 普通新请求、查询、闲聊一律**不要输出该字段**\n"
+    "- 没有『当前任务』时绝不输出 correct；它只影响参数合并，不改变你选的能力"
 )
 
 
@@ -926,6 +960,8 @@ def _planner_system(toolcall: bool = False, clarification: bool = False,
     prompt = _PLANNER_BASE + _ADDRESSED_SECTION
     if os.getenv("PLANNER_EMOTION", "on").strip().lower() != "off":
         prompt += _EMOTION_SECTION
+    if os.getenv("PLANNER_ACTS", "on").strip().lower() != "off":
+        prompt += _ACTS_SECTION
     # 缺省 on = 与部署缺省同源。`.env.example` 与 compose 自 2026-07-08 真栈 CDP 验收后
     # 就是 `${CLARIFY_ENABLED:-on}`，只有**代码兜底**还停在 off——于是任何不经 compose
     # 起的进程（评测/单测/CLI）测的都不是生产装配。对抗测试 §4.1 那四条 candidate 正是
@@ -2194,6 +2230,7 @@ class PlanBuilder:
         complexity = declared if complexity_declared else "simple"
         goal = str(wire.get("goal", "") or "")
         emotion = _parse_emotion(wire.get("emotion"))
+        acts = _parse_acts(wire.get("acts"))
 
         # 校验 depends_on 引用
         valid_ids = {s.id for s in steps}
@@ -2215,6 +2252,7 @@ class PlanBuilder:
             complexity_declared=complexity_declared,
             goal=goal,
             emotion=emotion,
+            acts=acts,
         )
 
     @staticmethod

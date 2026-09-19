@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext, step_fingerprint
@@ -315,6 +316,11 @@ class Focus:
     # 同样的理由：`safety_alert` 的粘性接力条件在合并里体现为「本轮为空 ⇒ 取旧」，
     # 而「解除」恰恰让本轮为空——不立旗，上一轮那条 critical 会被原样搬回来。
     safety_alert_cleared: bool = False
+    # W07（2026-09-20）活动任务帧：最近一个**任务性**步骤（非 response_only）执行后的账
+    # `{task_id, intent, agent_id, slots, revision, outcome, ts, goal}`。它是「改口精确修改对象」
+    # 的对象：`acts` 含 correct 且同 intent ⇒ 缺槽从这里继承、revision+1、task_id 不变。
+    # 活动状态（不随短时引用过期），按自己的 `ts` 限龄 `_ACTIVE_TASK_TTL_S`；新任务替换它。
+    active_task: dict = field(default_factory=dict)
     # W09：这份焦点**落盘的时刻**（epoch 秒）。短时引用（对象 / 属性 / 位置 / 上个地点 /
     # 上个目的地 / 上个城市 / 上个标的 / 上一轮意图 / 最新候选视图）只活 `_FOCUS_SHORT_TTL_S`，
     # 读取时按它判；活动状态各按自己的 ts。0 = 旧数据没盖过章，按未过期读（滚动窗口内无害）。
@@ -331,6 +337,7 @@ class Focus:
                     or self.candidate_sets
                     or self.last_places or self.active_route or self.safety_alert
                     or self.session_constraints
+                    or self.active_task
                     or self.route_ended
                     or self.safety_alert_cleared
                     or self.destination_lat is not None
@@ -621,6 +628,44 @@ def _render_history(history: list[dict] | None, budget: int = _CTX_BUDGET) -> st
     return _render_history_with_stats(history, budget=budget)[0]
 
 
+#: 活动任务帧的寿命（W07）：半小时没再碰它就不再是「正在处理的那件事」。缓存超时不是
+#: 事实解除——它只是不再当改口的对象，业务系统里的路线 / 订单照旧。
+_ACTIVE_TASK_TTL_S = 1800.0
+
+
+def active_task_live(task: dict | None, *, now: float | None = None) -> bool:
+    if not isinstance(task, dict) or not task.get("intent"):
+        return False
+    now = time.time() if now is None else now
+    try:
+        ts = float(task.get("ts") or 0)
+    except (TypeError, ValueError):
+        return False
+    return 0 < ts and now - ts <= _ACTIVE_TASK_TTL_S
+
+
+def _task_frame(plan, step, outcome: str, kind: str) -> dict:
+    """一个任务性步骤 → 任务帧。改口（`plan.task_patch`）沿用 task_id、版本 +1。
+
+    `kind`：`write` = 改变了世界或还挂着（结果带 actions / 声明 require_confirm / 挂起中），
+    `read` = 纯查询。接力规则在 `update_focus`：**写任务只被写任务顶掉，读任务顶不掉写任务**
+    ——「导航去公园 → 查个天气 → 改成7点半」里用户改的是导航，不是天气。
+    """
+    patch = getattr(plan, "task_patch", None) or {}
+    return {
+        "task_id": str(patch.get("task_id") or f"task-{uuid.uuid4().hex[:8]}"),
+        "intent": str(step.intent or ""),
+        "agent_id": str(step.agent_id or ""),
+        "slots": {str(k): v for k, v in (step.slots or {}).items()
+                  if isinstance(v, (str, int, float)) and not isinstance(v, bool)},
+        "revision": int(patch.get("revision") or 1),
+        "outcome": outcome,
+        "kind": kind,
+        "ts": time.time(),
+        "goal": str(getattr(plan, "goal", "") or getattr(plan, "raw_text", "") or "")[:40],
+    }
+
+
 #: 短时引用的寿命（W09）。与旧的 `_FOCUS_TTL=300` 同值——「上个对象是空调」五分钟后不再
 #: 当指代锚是原来的语义，变的是它不再拖着活动状态一起消失。
 _FOCUS_SHORT_TTL_S = 300.0
@@ -683,6 +728,19 @@ def _render_focus(focus, drop_sticky_places: bool = False) -> str:
             words.append("不想排队" if constraints["no_queue"] else "可以排队")
         if words:
             parts.append("本次会话约束=" + "/".join(words))
+    # W07：活动任务帧——planner 判「这句是不是在改它」的对象（acts=correct 的前提）。
+    # 只渲染意图、版本与最多四个标量槽（值截 20 字）；坐标之类不在槽里。
+    task = focus.active_task or {}
+    if active_task_live(task):
+        pairs = []
+        for key, value in list((task.get("slots") or {}).items())[:4]:
+            if isinstance(value, (str, int, float)) and str(value).strip():
+                pairs.append(f"{key}={str(value)[:20]}")
+        revision = int(task.get("revision") or 1)
+        seg = f"当前任务={task.get('intent') or ''}（第{revision}版，{task.get('outcome') or ''}）"
+        if pairs:
+            seg += "：" + "/".join(pairs)
+        parts.append(seg)
     if focus.last_intent:
         parts.append(f"上一轮意图={focus.last_intent}")  # 省略式追问（「明天呢」）延续判据
     if focus.obj:
@@ -1520,6 +1578,23 @@ def extract_focus(plan, results) -> "Focus | None":
         if not focus.last_agent_id:
             focus.last_agent_id, focus.last_intent = step.agent_id, step.intent
 
+    # W07 任务帧：本轮**最后一个**任务性步骤（非 response_only；OK ⇒ completed，
+    # 可见选择卡的 NEED_SLOT ⇒ pending_slot）。多步计划里取最后一步是刻意的：
+    # 「查天气 → 建提醒」里用户会改的是提醒。
+    for step in reversed(list(getattr(plan, "steps", []) or [])):
+        if bool(getattr(step, "response_only", False)) or not step.intent:
+            continue
+        result = by_id.get(step.id)
+        wrote = bool(getattr(result, "actions", None)) or bool(
+            getattr(step, "require_confirm", False))
+        if step.id in ok:
+            focus.active_task = _task_frame(
+                plan, step, "completed", "write" if wrote else "read")
+            break
+        if step.id in visible_choice:
+            focus.active_task = _task_frame(plan, step, "pending_slot", "write")
+            break
+
     # 跨轮门店锚定：只认 `nearby.search`，且只留三个标量。
     # **按 results 的 `source_intent` 取，不按传进来的 plan 找步骤**——
     # salvage/replan 轮里调用方给的是重规划后的 plan，`nearby.search` 那一步
@@ -1704,7 +1779,10 @@ class ContextManager:
                 return None
             valid = {f.name for f in fields(Focus)}
             # W09：短时引用按 `focus_ts` 过期，活动状态照旧（各按自己的 ts 判活）
-            return expire_short_term(Focus(**{k: v for k, v in d.items() if k in valid}))
+            focus = expire_short_term(Focus(**{k: v for k, v in d.items() if k in valid}))
+            if focus is not None and not active_task_live(focus.active_task):
+                focus.active_task = {}                      # W07：过期的任务帧不再是改口对象
+            return focus
         except Exception as e:
             logger.debug("load_focus failed: %s", e)
             return None
@@ -1789,6 +1867,16 @@ class ContextManager:
                         and not focus.safety_alert_cleared):
                     focus.safety_alert = merge_safety_alert(
                         dict(previous.safety_alert), focus.safety_alert)
+                # W07：活动任务帧粘性接力——ts 不续期。写任务只被写任务顶掉：本轮只是一次
+                # 查询（read）而上一件写任务还活着时，帧留给写任务（改口的对象是它）。
+                prior_task = getattr(previous, "active_task", None) if previous is not None else None
+                if active_task_live(prior_task):
+                    fresh_task = focus.active_task
+                    same_task = bool(fresh_task) and fresh_task.get("task_id") == prior_task.get("task_id")
+                    if not fresh_task or (
+                            not same_task and fresh_task.get("kind") == "read"
+                            and prior_task.get("kind") == "write"):
+                        focus.active_task = dict(prior_task)
                 # C12-B：会话偏好约束**后说的覆盖先说的、没说的沿用**。
                 # 普通轮（这一句没提口味）必须原样保住——不接力就等于「说过的话
                 # 只算一轮」，那和没有载体是一回事。
