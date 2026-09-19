@@ -297,18 +297,52 @@ CASES = [
     #   T3 不带寻址键的「确认」落最近一条（场景），不得误执行解锁；
     #   T4 带 T1 的 operation_id 回来 → 先来那条**仍在、仍可执行**，
     #      且 final 的 closed_operation_ids 点名关掉的就是它。
-    {"id": "CF5", "group": "confirm", "card": "Q1", "issue": "I-013",
-     "why": "两个任务先后挂起：挂起表 + operation_id 寻址，先来那条不被覆盖",
+    # ⚠ **T3 的考点 2026-09-19 再改一次（评审 F01 / W01）**：两条 wait_confirm 并存时，
+    # 不带寻址键的「确认」**不再落最近一条**——它没有唯一所指，系统要问一次
+    # 「确认 A，还是 B？」，零动作、零关闭、两条都留着。判据从「没误解锁」升级成
+    # 「什么都没执行 + 问了」；T4 仍用寻址键证明先来那条还在、还能执行。
+    {"id": "CF5", "group": "confirm", "card": "Q1", "issue": "I-013 / W01",
+     "why": "两个任务先后挂起：裸「确认」问一次不猜；operation_id 寻址先来那条仍可执行",
      "known": "red",
      "turns": [
          {"say": "把全车门解锁",
           "expect": {"need_confirm": True, "has_operation_id": True}},
-         {"say": "创建一个午休模式，空调调到24度", "expect": {}},
+         {"say": "创建一个午休模式，空调调到24度",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
          {"say": "确认", "confirm": True,
-          "expect": {"actions_exclude": ["door_lock.open"]}},
+          "expect": {"no_actions": True, "speech_has": ["还是"],
+                     "need_confirm": False}},
          {"say": "确认", "confirm": True, "op_from": 1,
           "expect": {"actions_include": ["door_lock.open"],
                      "closes_op_from": 1}},
+     ]},
+    # W01（评审 F01，2026-09-19）：**问句形态不是授权**。「可以吗」在旧判据下与「可以」
+    # 同款判 yes ⇒ 直接解锁。判据：那一轮零车控动作；下一轮带寻址键的确认仍能执行
+    # ——证明问句既没消费也没关掉挂起。
+    {"id": "CF7", "group": "confirm", "card": "Q1", "issue": "W01",
+     "why": "「可以吗 / 确认吗」是在问，不是在授权；挂起要留着等真正的确认",
+     "known": "red",
+     "turns": [
+         {"say": "把全车门解锁",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "可以吗", "expect": {"actions_exclude": ["door_lock.open"]}},
+         {"say": "确认吗", "expect": {"actions_exclude": ["door_lock.open"]}},
+         {"say": "确认", "confirm": True, "op_from": 1,
+          "expect": {"actions_include": ["door_lock.open"],
+                     "closes_op_from": 1}},
+     ]},
+    # W01：只有补槽挂起时说「确认」——不是槽值也不是授权。旧实现按「最近一条」寻址落进
+    # wait_slot 分支，「确认」二字被当成 time_text 填进提醒。判据：出「没有待确认」的
+    # 确定性话术、零动作，且 follow_up 仍提醒那条补槽在等（挂起没被吞也没被关）。
+    {"id": "CF9", "group": "confirm", "card": "Q1", "issue": "W01",
+     "why": "裸「确认」永远不是补槽答案；补槽挂起原样活着",
+     "known": "red",
+     "turns": [
+         {"say": "提醒我拿文件", "expect": {"need_confirm": False}},
+         {"say": "确认",
+          "expect": {"speech_has": ["没有待确认"], "no_actions": True,
+                     "follow_up_any": ["继续补充"]}},
+         {"say": "取消", "expect": {"no_actions": True}},
      ]},
     {"id": "CF6", "group": "confirm", "card": "Q1", "issue": "I-013",
      "why": "寻址键对不上必须诚实拒绝，且**不得清掉**当前还活着的挂起",
@@ -910,6 +944,21 @@ CASES = [
          {"say": "推荐附近适合晚饭的地方",
           "expect": {"speech_not_regex": [
               r"找到\s*\d+\s*家\s*(?:川菜|湘菜|火锅|串串|麻辣烫|冒菜)"]}},
+     ]},
+    # W03（评审 F05，2026-09-19）：约束**改口**要撤得掉。先「不想排队」，nearby 如实说
+    # 「地图没有实时排队数据」；再说「今天可以排队」，下一次推荐**不得**再念那句——
+    # 旧实现 `no_queue` 只有 True 通道，撤销在抽取侧与消费侧都是断的。
+    # 两句推荐用词不同，避免端侧/缓存把第二次当重复。
+    {"id": "RS5", "group": "residual", "card": "余项", "issue": "W03",
+     "why": "「今天可以排队」撤销上一轮的「不想排队」；话术随之改变",
+     "known": "red",
+     "turns": [
+         {"say": "我不想排队", "expect": {}},
+         {"say": "推荐附近适合晚饭的地方",
+          "expect": {"speech_has": ["没有实时排队数据"]}},
+         {"say": "今天可以排队，等一会儿没关系", "expect": {}},
+         {"say": "再帮我找几家附近吃晚饭的餐厅",
+          "expect": {"speech_not": ["没有实时排队数据"]}},
      ]},
     {"id": "SL2", "group": "slot", "card": "Q12", "issue": "I-041",
      "why": "英文时间词必须进日期归一（修前 2/3——扫不到日词就按今天实况答）",
