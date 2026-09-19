@@ -312,8 +312,14 @@ class RoadSafetyAgent(BaseAgent):
         """
         critical = alert.get("level") == "critical"
         sig = alert.get("signal") or "车辆告警"
-        opening = (f"{sig}亮起时不要大意。" if alert.get("spoken_this_turn")
-                   else f"您这次会话里还有未解除的{sig}。")
+        # 「亮起」只对灯成立。`alert_signal` 也会取到现象词（漏气/异响/过热），
+        # 2026-09-19 起续驾问句的 hint 把这些形态都路由到这里——原句式会念成
+        # 「漏气亮起时不要大意」。现象词用「出现…时」。
+        if alert.get("spoken_this_turn"):
+            opening = (f"{sig}亮起时不要大意。" if sig.endswith("灯")
+                       else f"出现{sig}时不要大意。")
+        else:
+            opening = f"您这次会话里还有未解除的{sig}。"
         speech = (opening
                   + ("在它排除之前不建议继续行驶——请尽快在安全位置靠边停车、熄火，"
                      "并联系救援或前往就近服务点检查。"

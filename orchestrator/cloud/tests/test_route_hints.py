@@ -234,6 +234,107 @@ def test_driving_continuation_hint_does_not_hijack_non_vehicle_devices():
     assert [s.intent for s in plan.steps] == ["navigation.navigate_to"]
 
 
+# ── 告警在句首的续驾问句（QA 交接页 §5「安全问句偶尔落 info.search」，2026-09-19）────────
+
+def _safety_and_manual_map():
+    """真实 road-safety + manual-rag 两份 manifest 同场：这一族问句的地盘正是在两者之间划的。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    safety = load_manifest(str(root / "agents" / "road_safety" / "manifest.yaml"))
+    manual = load_manifest(str(root / "agents" / "manual_rag" / "manifest.yaml"))
+    return {"road-safety": SimpleNamespace(manifest=safety, endpoint="x:0"),
+            "manual-rag": SimpleNamespace(manifest=manual, endpoint="x:0")}
+
+
+def test_alert_led_continuation_question_is_a_safety_exit_not_a_search():
+    """information T24（trace 9032bb7ccc064e9399248b5e4db1dd9d）：「红色机油灯亮了还能继续开吗」
+    被 MiniMax-M3 规划成 `info.search`——答案对、路径错（外网 + 模型知识，无安全出口）。
+    上一条 hint 只认「高速/路上/行驶/驾驶」开头，告警在句首时一个字都不命中。
+    """
+    amap = _safety_and_manual_map()
+    for text in (
+        "红色机油灯亮了还能继续开吗",
+        "红色机油灯亮了，还能继续开吗",
+        "机油灯亮了还能开吗",
+        "胎压灯亮了能不能继续开",
+        "水温报警了还可以继续行驶吗",
+        "刹车异响还能开吗",
+        "车有点抖动还能继续开吗",
+        "轮胎漏气了还能开吗",
+        "机油灯亮着我还能继续开车吗",
+        "电池灯亮了还能开回家吗",
+        "刹车失灵了还能开吗",
+        "机油灯亮起来了还能继续开吗？",
+        "水温报警了要不要停车",
+        "机油灯亮了需要靠边停车吗",
+        "刹车异响，该马上停车吗",
+    ):
+        plan = _plan("info.search")
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [s.intent for s in plan.steps] == ["safety.driving_advice"], text
+
+
+def test_alert_continuation_hint_covers_the_runtime_alert_vocabulary():
+    """词表对账：hint 里的现象词是 `runtime.safety_signal` 那张表的**镜像**，不是第二份声明。
+    那边加一个词这边没跟 ⇒ 这里红；反过来 hint 命中的每一句，Agent 侧 `alert_level` 也必须
+    认得（否则路由过去只能答天气）。只装 road-safety 一份 manifest：量的是**这条 hint**
+    的覆盖面；两份同场时的落点见下一条。"""
+    import pathlib
+
+    from agents._sdk.manifest import load_manifest
+    from runtime.safety_signal import ALERT_VERBS, WARNING_LIGHTS, alert_level
+
+    root = pathlib.Path(__file__).resolve().parents[3]
+    safety = load_manifest(str(root / "agents" / "road_safety" / "manifest.yaml"))
+    amap = {"road-safety": SimpleNamespace(manifest=safety, endpoint="x:0")}
+    texts = [f"{light}亮了还能继续开吗" for light in WARNING_LIGHTS]
+    texts += [f"{verb}了还能继续开吗" for verb in ALERT_VERBS]
+    for text in texts:
+        plan = _plan("info.search")
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [s.intent for s in plan.steps] == ["safety.driving_advice"], text
+        assert alert_level(text), text
+
+
+def test_alert_continuation_never_stays_on_a_search_exit_with_manual_present():
+    """两份 manifest 同场：整张词表的续驾问句一句都不许留在 `info.search`。落点允许两个——
+    `safety.driving_advice`，或手册按自己 124 优先级接走的 `manual.query`（它对安全信号同样
+    先给 `alert_advice` 再答手册，是设计内的安全出口；36 题真栈闭合过的地盘不动）。"""
+    from runtime.safety_signal import ALERT_VERBS, WARNING_LIGHTS
+
+    amap = _safety_and_manual_map()
+    texts = [f"{light}亮了还能继续开吗" for light in WARNING_LIGHTS]
+    texts += [f"{verb}了还能继续开吗" for verb in ALERT_VERBS]
+    texts += ["发动机故障灯亮了，还能继续开吗", "胎压报警了还能继续开吗"]
+    for text in texts:
+        plan = _plan("info.search")
+        assert _engine().apply(plan, text, amap) is True, text
+        intents = [s.intent for s in plan.steps]
+        assert intents in (["safety.driving_advice"], ["manual.query"]), (text, intents)
+    # 手册 hint 明确声明的形态确实归手册。
+    for text in ("机油灯亮了怎么办", "胎压报警了还能继续开吗", "故障灯亮了还能继续开吗"):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is True, text
+        assert [s.intent for s in plan.steps] == ["manual.query"], text
+
+
+def test_alert_continuation_hint_leaves_devices_normal_lights_and_compounds_alone():
+    amap = _safety_and_manual_map()
+    # 「开」不是开车 / 正常功能灯 / 路口红绿灯 / 复合句 / 无告警形态：一律不接管。
+    for text in (
+        "空调还能继续开吗", "车窗还能开吗", "大灯还能开吗", "大灯亮了还能继续开吗",
+        "刹车灯亮了还能继续开吗", "路口红灯亮了还能开吗", "视频还能继续开吗",
+        "红色机油灯亮了还能继续开吗，附近有修理厂吗",
+        "机油灯亮了是什么意思", "机油灯亮了", "还能继续开吗", "导航去机场",
+    ):
+        plan = _plan("chitchat.talk")
+        assert _engine().apply(plan, text, amap) is False, text
+        assert [s.intent for s in plan.steps] == ["chitchat.talk"], text
+
+
 def test_current_active_task_query_routes_to_reminder_list():
     """XS1：同一 owner 跨 session 的任务查询不能落入闲聊记忆重构。"""
     import pathlib

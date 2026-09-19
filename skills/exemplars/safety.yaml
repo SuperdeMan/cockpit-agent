@@ -74,3 +74,17 @@ exemplars:
   added: '2026-07-29'
   tags:
   - canonical
+# 2026-09-19 QA 交接页 §5「安全问句偶尔落 info.search」（information T24，trace 9032bb7c…）：
+# 「红色机油灯亮了还能继续开吗」被 MiniMax-M3 规划成搜索——答案对、路径错。原句的教科书
+# 形态由 road-safety 的 route_hint 钉死，这条是实质改写、教 paraphrase 泛化：
+# 告警之后「还能不能继续开 / 这样开下去行不行」是安全判断（结论按告警等级确定），不是搜索题。
+# 手册地盘不动：「什么意思 / 怎么办」仍归 manual.query。
+- text: 仪表上水温警告灯一直亮着，这样开下去行不行
+  plan:
+  - agent: road-safety
+    intent: safety.driving_advice
+  source: trace
+  added: '2026-09-19'
+  tags:
+  - badcase
+  note: 告警后的续驾判断归安全助手，结论按等级确定；原生产问法误落 info.search

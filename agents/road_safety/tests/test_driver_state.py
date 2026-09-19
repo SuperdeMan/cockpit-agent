@@ -141,6 +141,15 @@ def test_spoken_alert_is_declared_into_session_state():
     assert declared.get("signal") == "机油灯"
 
 
+def test_spoken_phenomenon_alert_is_not_said_to_light_up():
+    """2026-09-19 续驾 hint 把「漏气/异响/过热…还能开吗」也路由到这里：现象词不「亮起」。"""
+    res = _advice("轮胎漏气了还能开吗")
+    assert res.speech.startswith("出现漏气时不要大意"), res.speech
+    assert "漏气亮起" not in res.speech
+    lit = _advice("红色机油灯亮了还能继续开吗")
+    assert lit.speech.startswith("机油灯亮起时不要大意"), lit.speech
+
+
 def test_amber_alert_gets_the_amber_conclusion():
     """分级不能塌成一档：黄灯给「降低车速尽快检查」，不是「立刻靠边熄火」。"""
     res = _advice("胎压黄灯亮了还能开吗")

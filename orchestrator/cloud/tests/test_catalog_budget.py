@@ -237,14 +237,20 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 这条判断力：真栈 T48「规划去广州路上的补能，但**先不要启动导航**」落到了
     # chitchat 并编造了一段路线——`charging.plan` 的实现本来就是 advisory、不发导航
     # 动作，但**这个性质只写在代码注释里**，planner 无从知道。条数不变。
-    assert catalog.catalog_stats["chars_full"] == 13759
-    assert catalog.catalog_stats["chars_final"] == 13759
+    # 2026-09-19 +96 → 13855：QA 交接页 §5「安全问句偶尔落 info.search」给
+    # `safety.driving_advice` 的描述补上**告警续驾**语义与和手册的地盘划分（「告警之后
+    # 还能不能继续开 / 要不要停车归本能力，结论按告警等级确定，不联网搜索；灯的含义
+    # 与手册处置步骤归车型手册问答」）。同一个病的第三例：Agent 在 C1-B 就实现了
+    # 「本轮原话带告警 ⇒ 按等级给确定性结论」，但 planner **只看得见描述**，于是
+    # 「红色机油灯亮了还能继续开吗」被规划成 info.search（information T24）。条数不变。
+    assert catalog.catalog_stats["chars_full"] == 13855
+    assert catalog.catalog_stats["chars_final"] == 13855
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13759 → 2241）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13855 → 2145）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2241
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2145
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest

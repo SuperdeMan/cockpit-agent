@@ -173,6 +173,64 @@
   source: "manual boundary: cross-model compatibility list is web search"
   tags: [manual, guardrail, compatibility]
 
+# ── road-safety 2026-09-19：告警在句首的续驾问句是安全出口，不是搜索题（QA 交接页 §5）──
+# information T24 真栈原句：MiniMax-M3 规划成 info.search，答案对、路径错。
+# 地盘：手册接「什么意思 / 怎么办 / 怎么处理」与它自己声明的「胎压报警…还能开」；
+# 安全助手接其余「<告警> 还能不能继续开 / 要不要停车」。
+- text: 红色机油灯亮了还能继续开吗
+  initial_intents: [info.search]
+  expect_final_intents: [safety.driving_advice]
+  source: "2026-08-30 information persona T24 trace 9032bb7ccc064e9399248b5e4db1dd9d"
+  tags: [safety, alert, continuation, seen_regression, replace]
+
+- text: 水温报警了还可以继续行驶吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [safety.driving_advice]
+  source: "alert continuation: phenomenon word (ALERT_VERBS) instead of a named light"
+  tags: [safety, alert, continuation, replace]
+
+- text: 胎压灯亮了能不能继续开
+  initial_intents: []
+  expect_final_intents: [safety.driving_advice]
+  source: "alert continuation: amber light, planner abstained"
+  tags: [safety, alert, continuation, replace]
+
+- text: 水温报警了要不要停车
+  initial_intents: [info.search]
+  expect_final_intents: [safety.driving_advice]
+  source: "alert continuation: the stop-or-not tail (manifest example)"
+  tags: [safety, alert, continuation, replace]
+
+- text: 机油灯亮了怎么办
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "boundary kept: handbook owns meaning/what-to-do (see manual section above)"
+  tags: [safety, manual, boundary]
+
+- text: 胎压报警了还能继续开吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [manual.query]
+  source: "boundary kept: manual-rag declares 胎压报警…还能开 at priority 124 > 122"
+  tags: [safety, manual, boundary]
+
+- text: 大灯亮了还能继续开吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "alert continuation guard: a normal function light is not an alert"
+  tags: [safety, guardrail, normal_light]
+
+- text: 空调还能继续开吗
+  initial_intents: [chitchat.talk]
+  expect_final_intents: [chitchat.talk]
+  source: "alert continuation guard: 开 here means switch on, not drive"
+  tags: [safety, guardrail, device]
+
+- text: 红色机油灯亮了还能继续开吗，附近有修理厂吗
+  initial_intents: [nearby.search]
+  expect_final_intents: [nearby.search]
+  source: "alert continuation guard: compound sentence with a second goal is left to the planner"
+  tags: [safety, guardrail, compound]
+
 - text: 用手机怎么呼叫道路救援
   initial_intents: [chitchat.talk]
   expect_final_intents: [chitchat.talk]
