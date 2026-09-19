@@ -258,6 +258,22 @@ def _edge_nlu_attrs(ctx, plan) -> dict:
             "edge_agree": "1" if (edge_dom and edge_dom in cloud_doms) else "0"}
 
 
+def _context_stats_attrs(working_set) -> dict:
+    """`WorkingSet.context_stats` → span 属性（只取计数与布尔，缺席时空 dict）。"""
+    stats = getattr(working_set, "context_stats", None) if working_set is not None else None
+    if not isinstance(stats, dict) or not stats:
+        return {}
+    out = {}
+    for key in ("ctx_chars", "history_chars", "history_pairs_kept",
+                "history_pairs_dropped"):
+        value = stats.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            out[key] = value
+    if stats.get("history_trimmed"):
+        out["history_trimmed"] = "true"
+    return out
+
+
 def _actionability_attrs(plan) -> dict:
     """可执行性 shadow 的四元组（B6 §2，shadow 记录）。
 
@@ -865,6 +881,9 @@ class PlannerEngine:
                             ",".join(plan.catalog_stats.get("dropped", []))}
                            if plan.catalog_stats.get("dropped") else {})}
                        if getattr(plan, "catalog_stats", None) else {}),
+                    # W02 可观测：本轮真正进 prompt 的上下文规模与历史裁剪（评审 W05
+                    # 「按实际请求记录渲染规模」）。纯计数，不含内容。
+                    **_context_stats_attrs(working_set),
                 },
             )
             await self._resolve_endpoints(plan)

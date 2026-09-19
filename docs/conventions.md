@@ -342,7 +342,8 @@
 | `VERIFY_OUTCOME` | 执行后对账总开关（M2 P1 Outcome Verifier）：`on`/默认=按 `capability.verification` 声明对账；`off`=声明照读但不执行（一键回 M2 前） | 否（默认 `on`） |
 | `VERIFY_MIRROR_STALE_S` | 云侧车况镜像陈旧上限秒：超过此时长没收到 `vehicle.state.changed` 即当作「看不见」（`state_match` 判 UNKNOWN 不定罪），而非拿陈旧值定罪 | 否（默认 180） |
 | `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留有 `route_hints` 的 Agent、`PLANNER_FALLBACK_AGENT` 与 edge 车控）| 否（默认 20） |
-| `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算 | 否（默认 1400） |
+| `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算。**硬约束**（2026-09-19 W02）：历史整对从最旧丢起、最后一对按句收缩、记忆按条裁，绝不超预算 | 否（默认 1400；生产未覆盖 ⇒ 1400） |
+| `PLANNER_HISTORY_EXCHANGES` | 历史视窗：最近 N 对完整 exchange（一问一答），不按消息条数计；取回条数 = 2N+2。扩窗是单变量实验档位（评审 W19），改前先量 | 否（默认 2 = 旧的 4 条消息） |
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
 | `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
 | `SKILLS_MODE` | 规划知识 Skill 层（M0b）：`full`=检索注入（默认）\|`canary`\|`shadow`=只检索记录\|`off`；Full Migration 后中央 base 无领域知识，shadow/off 仅研究/debug 档 | 否（默认 `full`） |

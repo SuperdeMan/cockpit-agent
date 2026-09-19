@@ -140,6 +140,10 @@ async def _call_with_owner(fn, session_id: str, last_n: int, *,
 # 装配预算（字符近似，避免引入 tokenizer 依赖；沿用既有 block[:400] 的 char-proxy 思路）。
 _CTX_BUDGET = int(os.getenv("PLANNER_CTX_BUDGET_CHARS", "1400"))   # 记忆+历史(+焦点)合计
 _MEMORY_BUDGET = 400                                              # 记忆块上限（同旧 _format_memory）
+# 历史视窗按**完整 exchange（一问一答）**计，不按消息条数计（评审 2026-09-19 F02 / W02）：
+# 旧的 `history[-4:]` 会从第二对的回答开始截，把「用户问了什么」丢掉。默认 2 对 = 旧的 4 条；
+# 扩窗是 W19 的单变量实验（2K/4K/8K 档位），不在这里无证据地改。
+_HISTORY_EXCHANGES = int(os.getenv("PLANNER_HISTORY_EXCHANGES", "2"))
 # 数据飞轮 P0 D1 应急：8000 时代的假设「正常情况下根本不触发裁剪」已随 M3/M4 新增
 # mcp-bridge/vision 失效——16 agent 全量渲染约 9.7k 字符，超算后从尾部裁非受保护 agent，
 # 而保护判据（有无 route_hints）与领域重要性无关，navigation 等 4 个无 hint agent 会被
@@ -338,6 +342,10 @@ class WorkingSet:
     focus: "Focus | None" = None                       # 结构化焦点态（指代消解）
     # 落域可观测（数据飞轮 P0）：render_catalog 回填 {chars_full, chars_final, dropped}
     catalog_stats: dict = field(default_factory=dict)
+    # W02 可观测：render_context 回填 {ctx_chars, focus_chars, memory_chars, history_chars,
+    # history_pairs_kept, history_pairs_dropped, history_trimmed}——「按实际请求记录渲染规模」
+    # （评审 W05）从此有数，随 cloud.planning span 发出。
+    context_stats: dict = field(default_factory=dict)
     # C6-B（2026-08-28，QA P1-03）：**本轮**要不要把粘性的地点/候选焦点注进 prompt。
     # 「值得跨轮留住」与「这一轮该不该注入」是两个问题（§9.28 已有同款分离先例：
     # 候选集的跨轮留存表与下发表刻意分开）。置位方是 `planning.build`——它按
@@ -354,8 +362,17 @@ class WorkingSet:
                                     drop_sticky_places=self.suppress_sticky_places)
         mem_block = _render_memory(self.memories)
         budget_left = max(0, _CTX_BUDGET - len(focus_block) - len(mem_block))
-        hist_block = _render_history(self.history, budget=budget_left)
-        return focus_block + mem_block + hist_block
+        hist_block, hist_stats = _render_history_with_stats(
+            self.history, budget=budget_left)
+        out = focus_block + mem_block + hist_block
+        self.context_stats = {
+            "ctx_chars": len(out),
+            "focus_chars": len(focus_block),
+            "memory_chars": len(mem_block),
+            "history_chars": len(hist_block),
+            **hist_stats,
+        }
+        return out
 
     @staticmethod
     def render_catalog(agents: list, stats: dict | None = None) -> str:
@@ -465,39 +482,139 @@ def _render_memory(memory: list[dict] | None) -> str:
             plain.append(f"- [{tag} | {conf:.2f} | {prov}] {txt}")
     if not weighted and not plain:
         return ""
-    parts = []
-    if weighted:
-        weighted.sort(key=lambda x: x[0], reverse=True)
-        parts.append("已知用户偏好（按强度排序，仅在与当前任务相关时参考）：\n"
-                     + "\n".join(f"- {txt}（{_strength_label(w)}）"
-                                 for w, txt in weighted))
-    if plain:
-        head = "相关记忆：" if weighted else "已知用户记忆（仅在与当前任务相关时参考，勿向用户暴露置信度）："
-        parts.append(head + "\n" + "\n".join(plain[:3]))
-    block = "\n".join(parts)
-    return block[:_MEMORY_BUDGET] + "\n\n"
+    weighted.sort(key=lambda x: x[0], reverse=True)
+    weighted_lines = [f"- {txt}（{_strength_label(w)}）" for w, txt in weighted]
+    plain_lines = list(plain[:3])
+
+    def _compose(w_lines: list[str], p_lines: list[str]) -> str:
+        parts = []
+        if w_lines:
+            parts.append("已知用户偏好（按强度排序，仅在与当前任务相关时参考）：\n"
+                         + "\n".join(w_lines))
+        if p_lines:
+            head = ("相关记忆：" if w_lines
+                    else "已知用户记忆（仅在与当前任务相关时参考，勿向用户暴露置信度）：")
+            parts.append(head + "\n" + "\n".join(p_lines))
+        return "\n".join(parts)
+
+    # W02：**按条裁，不按字裁**。旧的 `block[:400]` 会把一条偏好切成半句
+    # （「用户不吃花」）——半条事实比没有更糟。超预算就整条去掉：先去无权重的旧条目，
+    # 再去强度最弱的那条；一条都放不下时输出空。
+    block = _compose(weighted_lines, plain_lines)
+    while block and len(block) > _MEMORY_BUDGET:
+        if plain_lines:
+            plain_lines.pop()
+        elif weighted_lines:
+            weighted_lines.pop()
+        block = _compose(weighted_lines, plain_lines)
+    if not block:
+        return ""
+    return block + "\n\n"
+
+
+_HISTORY_HEAD = "最近对话（用于指代消解）：\n"
+#: 句边界（W02 按句裁）：只认句末标点，零领域词。
+_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?")
+
+
+def _pair_exchanges(history: list[dict] | None) -> list[list[dict]]:
+    """消息流 → 完整 exchange 列表：一条 user 开一对，其后的 assistant 归它；
+    没有前置 user 的 assistant（主动播报）自成一对。空文本的消息跳过。"""
+    pairs: list[list[dict]] = []
+    for msg in history or []:
+        if not isinstance(msg, dict) or not str(msg.get("text") or "").strip():
+            continue
+        if msg.get("role") == "user" or not pairs or any(
+                m.get("role") == "assistant" for m in pairs[-1]):
+            pairs.append([msg])
+        else:
+            pairs[-1].append(msg)
+    return pairs
+
+
+def _history_lines(msgs: list[dict]) -> list[str]:
+    lines = []
+    for m in msgs:
+        txt = str(m.get("text") or "").strip()
+        if txt:
+            who = "用户" if m.get("role") == "user" else "助手"
+            lines.append(f"{who}：{txt}")
+    return lines
+
+
+def _history_block(pairs: list[list[dict]]) -> str:
+    lines = [ln for pair in pairs for ln in _history_lines(pair)]
+    return (_HISTORY_HEAD + "\n".join(lines) + "\n\n") if lines else ""
+
+
+def _fit_last_exchange(msgs: list[dict], budget: int) -> tuple[str, bool]:
+    """最后一对也放不下时的收缩顺序（W02）：先把**最长那条**按句从尾部裁（回答是可再取的，
+    半句不是）；全部裁到只剩一句仍放不下 ⇒ 丢掉较旧那条只留最新一条；最新一条也放不下 ⇒ 空。
+    返回 `(block, 是否发生了裁剪)`。"""
+    work = [dict(m) for m in msgs]
+    shrinkable = {i for i in range(len(work))}
+    trimmed = False
+    while True:
+        block = _history_block([work])
+        if block and len(block) <= budget:
+            return block, trimmed
+        candidates = sorted(
+            shrinkable, key=lambda i: len(str(work[i].get("text") or "")), reverse=True)
+        if not candidates:
+            break
+        idx = candidates[0]
+        sentences = _SENTENCE_RE.findall(str(work[idx].get("text") or ""))
+        if len(sentences) <= 1:
+            shrinkable.discard(idx)
+            continue
+        work[idx]["text"] = "".join(sentences[:-1]).strip()
+        trimmed = True
+    # 只留最新一条（它可能已经按句裁过）
+    newest = work[-1:]
+    block = _history_block([newest])
+    if block and len(block) <= budget:
+        return block, True
+    return "", True
+
+
+def _render_history_with_stats(history: list[dict] | None,
+                               budget: int = _CTX_BUDGET) -> tuple[str, dict]:
+    """最近对话 → prompt 片段 + 裁剪统计（W02）。
+
+    视窗按完整 exchange 计（`_HISTORY_EXCHANGES` 对）；**预算是硬约束**：整对从最旧丢起，
+    最后一对按句收缩，绝不出现「预算 0 仍渲染 2019 字符」。格式逐字沿用旧 `_format_history`。
+    """
+    pairs = _pair_exchanges(history)
+    stats = {"history_pairs_kept": 0, "history_pairs_dropped": len(pairs),
+             "history_trimmed": False}
+    if not pairs or budget <= 0:
+        return "", stats
+
+    def _done(block: str, kept: int, trimmed: bool = False) -> tuple[str, dict]:
+        # dropped = 历史里有的对数 − 渲染出来的对数（只要没进 prompt 就算丢，含视窗外的）
+        stats["history_pairs_kept"] = kept
+        stats["history_pairs_dropped"] = len(pairs) - kept
+        stats["history_trimmed"] = trimmed
+        return block, stats
+
+    window = pairs[-max(1, _HISTORY_EXCHANGES):]
+    while window:
+        block = _history_block(window)
+        if not block:
+            return _done("", 0)
+        if len(block) <= budget:
+            return _done(block, len(window))
+        if len(window) > 1:
+            window.pop(0)
+            continue
+        block, trimmed = _fit_last_exchange(window[0], budget)
+        return _done(block, 1 if block else 0, trimmed)
+    return _done("", 0)
 
 
 def _render_history(history: list[dict] | None, budget: int = _CTX_BUDGET) -> str:
-    """最近对话 → prompt 片段（最多 4 轮，供指代消解）。逐字沿用旧 _format_history；
-    超预算时从最旧一轮起逐条丢弃（focus/记忆优先于陈旧对话轮）。"""
-    if not history:
-        return ""
-    turns = list(history[-4:])
-    while turns:
-        lines = []
-        for t in turns:
-            txt = (t.get("text") or "").strip()
-            if txt:
-                who = "用户" if t.get("role") == "user" else "助手"
-                lines.append(f"{who}：{txt}")
-        if not lines:
-            return ""
-        block = "最近对话（用于指代消解）：\n" + "\n".join(lines) + "\n\n"
-        if len(block) <= budget or len(turns) == 1:
-            return block
-        turns.pop(0)  # 丢最旧一轮再试
-    return ""
+    """最近对话 → prompt 片段（`_render_history_with_stats` 的无统计包装，既有调用方用）。"""
+    return _render_history_with_stats(history, budget=budget)[0]
 
 
 def _render_focus(focus, drop_sticky_places: bool = False) -> str:
@@ -521,6 +638,18 @@ def _render_focus(focus, drop_sticky_places: bool = False) -> str:
         sig = alert.get("signal") or "车辆告警"
         parts.append(f"⚠本会话有未解除的安全告警：{sig}（{grade}）"
                      f"——回答任何问题都必须先满足这条安全约束，不得被普通建议覆盖")
+    # W02 受保护结构区：用户**在这次会话里说过的**约束/改口。此前它只经 meta 下发给 nearby，
+    # planner 的 prompt 里一个字都没有——「不吃辣」说过之后模型规划下一步时并不知道。
+    # 值是投影（`runtime.session_constraints` 的扁平键），话术按当前值渲染，改口后显示改口后的。
+    constraints = focus.session_constraints or {}
+    if constraints:
+        words = []
+        if "no_spicy" in constraints:
+            words.append("不吃辣" if constraints["no_spicy"] else "今天想吃辣")
+        if "no_queue" in constraints:
+            words.append("不想排队" if constraints["no_queue"] else "可以排队")
+        if words:
+            parts.append("本次会话约束=" + "/".join(words))
     if focus.last_intent:
         parts.append(f"上一轮意图={focus.last_intent}")  # 省略式追问（「明天呢」）延续判据
     if focus.obj:
@@ -1391,9 +1520,13 @@ class ContextManager:
     """编排器侧上下文统一读写门面。Phase 1 只做装配（assemble）。"""
 
     def __init__(self, clients, session=None, *, top_k: int | None = None,
-                 history_n: int = 6):
+                 history_n: int | None = None):
         self.clients = clients
         self.session = session   # SessionStore，供焦点态 load/save（None 则不启用焦点）
+        # 取回条数跟着渲染视窗走（W02）：N 对 exchange 要 2N 条，多取一对做裁剪余量。
+        # 默认 N=2 ⇒ 6 条，与此前写死的 6 逐字相同。
+        if history_n is None:
+            history_n = 2 * max(1, _HISTORY_EXCHANGES) + 2
         # 默认给足 headroom：高于当前 agent 规模，预筛只在真正大规模(20+)时触发，
         # 此前是 no-op（避免在小规模误丢需要的 agent，见 dangerous_trunk_confirm 回归）。
         self.top_k = top_k if top_k is not None else int(
