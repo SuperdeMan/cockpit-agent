@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from security.permission import check_permission
-from .models import Plan, Step, PlanContext, ReplanDecision
+from .models import Plan, Step, PlanContext, ReplanDecision, step_fingerprint
 from .context import (
     WorkingSet,
     _FALLBACK_AGENT,
@@ -946,7 +946,8 @@ _REPLAN_SYSTEM = (
     "你是智能座舱有界任务循环的再规划器。根据用户目标、最近观察和可用能力，"
     "一次性判断任务是否完成，并在未完成时给出下一批 JSON DAG。\n"
     "最近观察是已经执行过的步骤结果：status=ok 表示该步骤已经完成，除非观察明确要求"
-    "重试（retry_same_intent=true），否则不得重复 observation.intent 指向的同一查询或动作；"
+    "重试（retry_same_intent=true），否则不得以**相同参数**重复 observation.intent 指向的"
+    "同一查询或动作；参数不同（另一个城市、日期、对象）是新的查询，可以规划；"
     "先用观察中的 data/speech 判断用户目标里的"
     "条件分支，再只规划尚未完成的后续步骤。\n"
     "条件目标必须先拆成条件前件与条件后件：观察满足前件时，steps 只执行后件；"
@@ -1024,7 +1025,13 @@ def _preserve_conditional_replan_contract(plan: Plan | None, text: str) -> bool:
 
 
 def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str]]:
-    """Map completed intents to their step ids unless the result explicitly allows retry."""
+    """Map completed **(intent, slots)** fingerprints to their step ids unless the
+    result explicitly allows retry.
+
+    W04（评审 F08）：键是 `models.step_fingerprint`——与执行侧防抖同一份。此前只按
+    intent 记，「已查深圳天气」会把「广州天气」也判成重复。观察里没有 `slots`
+    （旧观察 / 外部构造）时按空槽位计——与旧行为在无参数能力上逐字一致。
+    """
     completed: dict[str, list[str]] = {}
     for observation in observations or []:
         if not isinstance(observation, dict):
@@ -1034,8 +1041,9 @@ def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str
         if (str(status).lower() != "ok" or not isinstance(intent, str)
                 or not intent.strip() or observation.get("retry_same_intent") is True):
             continue
-        completed.setdefault(intent.strip(), []).append(
-            str(observation.get("step_id") or ""))
+        slots = observation.get("slots")
+        key = step_fingerprint(intent.strip(), slots if isinstance(slots, dict) else {})
+        completed.setdefault(key, []).append(str(observation.get("step_id") or ""))
     return completed
 
 
@@ -1058,14 +1066,17 @@ def _drop_completed_replan_steps(
     depended on the repeated producer may still consume the already completed result:
     the loop passes prior StepResults as ``done`` into the executor.
     """
-    repeated = [step for step in steps if step.intent in completed]
+    def _key(step: Step) -> str:
+        return step_fingerprint(step.intent, step.slots)
+
+    repeated = [step for step in steps if _key(step) in completed]
     if not repeated:
         return steps, [], False
 
     repeated_ids = {step.id for step in repeated}
     replacements: dict[str, str] = {}
     for step in repeated:
-        prior_ids = [step_id for step_id in completed[step.intent] if step_id]
+        prior_ids = [step_id for step_id in completed[_key(step)] if step_id]
         if len(set(prior_ids)) == 1:
             replacements[step.id] = prior_ids[0]
 
@@ -1946,8 +1957,8 @@ class PlanBuilder:
             if attempt == 0:
                 repeated_text = ", ".join(repeated)
                 correction = (
-                    "\n\n校验反馈：上一版重复选择了已经完成的 capability："
-                    f"{repeated_text}。这些 intent 在最近观察中 status=ok，"
+                    "\n\n校验反馈：上一版以相同参数重复选择了已经完成的 capability："
+                    f"{repeated_text}。这些 intent 在最近观察中已 status=ok 且参数相同，"
                     "不得再次查询或执行；请逐项比较目标条件与 observation.data/speech，"
                     "只规划尚未完成的条件分支。只有观察明确证明条件不成立时，"
                     "才返回 done=true、steps=[]。"

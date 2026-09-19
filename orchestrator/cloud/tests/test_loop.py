@@ -1027,3 +1027,14 @@ def test_stream_empty_speech_delta_is_not_output():
     executor, _events = _run_stream_case(stream_fn)
 
     assert executor.runs == [["s1"]]
+
+
+def test_summarize_carries_the_step_slots_for_the_replan_reuse_key():
+    """W04：observation 带上该步的 slots，再规划才分得清「深圳天气」与「广州天气」。"""
+    from orchestrator.cloud.loop import summarize
+    from orchestrator.cloud.models import StepResult, StepStatus
+    result = StepResult(step_id="s1", status=StepStatus.OK, speech="ok",
+                        data={"condition": "小雨"})
+    observation = summarize(result, intent="info.weather", slots={"city": "深圳"})
+    assert observation["slots"] == {"city": "深圳"}
+    assert "slots" not in summarize(result, intent="info.weather")

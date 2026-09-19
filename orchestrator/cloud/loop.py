@@ -61,8 +61,14 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
-def summarize(result: StepResult, *, intent: str = "") -> dict:
-    """Keep only bounded, decision-relevant observation fields."""
+def summarize(result: StepResult, *, intent: str = "",
+              slots: dict | None = None) -> dict:
+    """Keep only bounded, decision-relevant observation fields.
+
+    `slots`（W04）：这一步**执行时**的槽位（slot_refs 已解析）。再规划的判重键是
+    `(intent, slots)`——不带它，「已查深圳天气」会让「广州天气」也被当成重复。
+    只收标量值（槽位本来就是 `dict[str, str]`），不截断：截了就和执行侧的指纹对不上。
+    """
     data = dict(result.data or {})
     if len(data) > 12:
         data = dict(list(data.items())[:12])
@@ -75,6 +81,10 @@ def summarize(result: StepResult, *, intent: str = "") -> dict:
     }
     if intent:
         observation["intent"] = intent
+    if slots is not None:
+        observation["slots"] = {
+            str(k): v for k, v in dict(slots).items()
+            if isinstance(v, (str, int, float, bool))}
     if data.get("retry_same_intent") is True:
         observation["retry_same_intent"] = True
     return observation
@@ -111,11 +121,15 @@ class LoopController:
         results = list(seed_results or [])
         n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
         spoken: set[int] = set()   # 已流式播报过的结果（id()）——挂起前缀不再复读
-        initial_intents = {
-            step.id: step.intent for step in (getattr(initial_plan, "steps", []) or [])
+        initial_steps = {
+            step.id: step for step in (getattr(initial_plan, "steps", []) or [])
         }
         observations = [
-            summarize(r, intent=initial_intents.get(r.step_id, ""))
+            summarize(r,
+                      intent=(initial_steps[r.step_id].intent
+                              if r.step_id in initial_steps else ""),
+                      slots=(initial_steps[r.step_id].slots
+                             if r.step_id in initial_steps else None))
             for r in results
         ][-self.observation_limit:]
         # M2 P2 分档：本轮预算按计划复杂度取（adaptive=Complex 档、其余=Interactive 档）
@@ -300,7 +314,8 @@ class LoopController:
                     results.append(final_sr)
                     if stream.spoke:
                         spoken.add(id(final_sr))   # 话术已流出，前缀不复读
-                    observations.append(summarize(final_sr, intent=step.intent))
+                    observations.append(summarize(
+                        final_sr, intent=step.intent, slots=step.slots))
                     observations = observations[-self.observation_limit:]
                     if show_process and final_sr.status == StepStatus.OK:
                         yield make_progress(
@@ -325,8 +340,8 @@ class LoopController:
                         if hasattr(self.executor, "_stamp_source"):
                             uncertain_sr = self.executor._stamp_source(step, uncertain_sr)
                         results.append(uncertain_sr)
-                        observations.append(
-                            summarize(uncertain_sr, intent=step.intent))
+                        observations.append(summarize(
+                            uncertain_sr, intent=step.intent, slots=step.slots))
                     else:
                         # 仅话术已流出：合成空结果避免重跑与复读（既有语义）。
                         empty_sr = StepResult(
@@ -334,7 +349,8 @@ class LoopController:
                         if hasattr(self.executor, "_stamp_source"):
                             empty_sr = self.executor._stamp_source(step, empty_sr)
                         results.append(empty_sr)
-                        observations.append(summarize(empty_sr, intent=step.intent))
+                        observations.append(summarize(
+                            empty_sr, intent=step.intent, slots=step.slots))
                     observations = observations[-self.observation_limit:]
 
             # 回退到 unary：**零输出且没拿到 final** 才允许（B5 §4 共享判定）。
@@ -347,7 +363,8 @@ class LoopController:
                     step = next((s for s in current.steps
                                  if s.id == step_result.step_id), None)
                     observations.append(summarize(
-                        step_result, intent=step.intent if step is not None else ""))
+                        step_result, intent=step.intent if step is not None else "",
+                        slots=step.slots if step is not None else None))
                     observations = observations[-self.observation_limit:]
                     if show_process and step_result.status == StepStatus.OK:
                         if step is not None:

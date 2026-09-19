@@ -300,7 +300,11 @@ def test_replan_prompt_consumes_completed_observations_instead_of_repeating_them
     for clause in (
         "status=ok",
         "已经完成",
-        "不得重复",
+        # W04（2026-09-19）：判重键是 (capability, 参数)，prompt 的措辞随之——
+        # 「不得以相同参数重复」+「参数不同是新的查询」
+        "相同参数",
+        "重复 observation.intent",
+        "参数不同",
         "条件分支",
         "retry_same_intent=true",
         "observation.intent",

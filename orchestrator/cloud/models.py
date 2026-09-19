@@ -1,7 +1,27 @@
 """Planner 编排引擎数据结构。WS3 核心。"""
 from __future__ import annotations
+import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum
+
+
+def step_fingerprint(intent: str, slots: dict | None) -> str:
+    """`(intent, 归一化 slots)` 指纹——**全仓唯一的一份复用/防抖键**（评审 2026-09-19 W04）。
+
+    两个消费方问的是同一个问题「这一步和那一步是不是同一件事」：
+      · 执行侧 `DagExecutor._fingerprint`：同轮内同一副作用不重发（M2 P2 防抖）；
+      · 规划侧 `planning._completed_observation_steps`：再规划不得重复已完成的**同参**读取。
+    此前规划侧只按 intent 判，于是「已查深圳天气 ⇒ 广州天气也算重复」；执行侧那份
+    早就是 (intent, slots)——同一件事两份键，粗的那份出了错。
+    slots 排序后序列化：槽位顺序不该影响同一性判定；序列化失败退到 sorted items 字符串。
+    """
+    try:
+        payload = json.dumps(slots or {}, sort_keys=True, ensure_ascii=False)
+    except (TypeError, ValueError):
+        payload = str(sorted((slots or {}).items()))
+    raw = f"{intent}|{payload}".encode("utf-8")
+    return hashlib.sha1(raw).hexdigest()[:12]
 
 
 class StepStatus(str, Enum):

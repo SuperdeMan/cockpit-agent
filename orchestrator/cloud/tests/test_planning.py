@@ -1161,3 +1161,72 @@ def test_invalid_complexity_value_counts_as_undeclared():
 
     assert plan.complexity == "simple"
     assert plan.complexity_declared is False
+
+
+# ── 评审 2026-09-19 F08 / W04：T2 判重键 = (capability, 归一化参数) ─────────
+
+def test_replan_allows_the_same_intent_with_different_slots():
+    """评审复算：已成功查深圳天气，再规划广州天气被按 intent 判成重复。
+    读复用键至少要含规范化参数——不同地点不是同一次查询。"""
+    from orchestrator.cloud.models import step_fingerprint
+    agents = [MockAgent("info", ["info.weather"])]
+    calls = 0
+
+    async def mock_llm(_messages):
+        nonlocal calls
+        calls += 1
+        return ('{"done":false,"steps":[{"id":"r1",'
+                '"capability_ref":"cap_0001","slots":{"city":"广州"},'
+                '"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "比较深圳和广州明天的天气",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather",
+          "slots": {"city": "深圳"}, "data": {"condition": "小雨"}}],
+        agents, PlanContext(),
+    ))
+
+    assert calls == 1
+    assert [(s.intent, s.slots) for s in decision.steps] == [("info.weather", {"city": "广州"})]
+    assert step_fingerprint("info.weather", {"city": "深圳"}) != step_fingerprint(
+        "info.weather", {"city": "广州"})
+
+
+def test_replan_still_drops_the_same_intent_with_the_same_slots():
+    """同 capability 同参数仍是重复（读复用），且被依赖的引用改指向已完成那一步。"""
+    agents = [MockAgent("info", ["info.weather"]),
+              MockAgent("reminder", ["reminder.create"])]
+
+    async def mock_llm(_messages):
+        return ('{"done":false,"steps":['
+                '{"id":"r1","capability_ref":"cap_0001","slots":{"city":"深圳"},'
+                '"depends_on":[],"slot_refs":{}},'
+                '{"id":"r2","capability_ref":"cap_0002","slots":{},'
+                '"depends_on":["r1"],'
+                '"slot_refs":{"weather":"r1.data.condition"}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "明天下雨就提醒带伞",
+        [{"step_id": "s1", "status": "ok", "intent": "info.weather",
+          "slots": {"city": "深圳"}}],
+        agents, PlanContext(),
+    ))
+    assert [step.intent for step in decision.steps] == ["reminder.create"]
+    assert decision.steps[0].depends_on == ["s1"]
+
+
+def test_planning_and_executor_share_one_fingerprint():
+    """规划侧判重键与执行侧防抖指纹必须是同一份实现（不许两份键）。"""
+    from orchestrator.cloud.executor import DagExecutor
+    from orchestrator.cloud.models import Step, step_fingerprint
+    step = Step(id="s1", agent_id="info", intent="info.weather",
+                slots={"city": "深圳", "day": "明天"})
+    assert DagExecutor._fingerprint(step) == step_fingerprint(step.intent, step.slots)
+    assert step_fingerprint("info.weather", {"day": "明天", "city": "深圳"}) == \
+        step_fingerprint("info.weather", {"city": "深圳", "day": "明天"})

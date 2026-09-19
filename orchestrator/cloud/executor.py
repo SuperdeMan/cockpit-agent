@@ -4,7 +4,6 @@ WS3 §5。Kahn 拓扑排序分层 → 每层内 asyncio.gather 并行 → 层间
 """
 from __future__ import annotations
 import asyncio
-import hashlib
 import json
 import logging
 import os
@@ -15,7 +14,7 @@ from collections import defaultdict, deque
 from google.protobuf.json_format import MessageToDict
 
 from . import verify as _verify
-from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan
+from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan, step_fingerprint
 from observability import events as obs_events
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
                                    undeclared_slots)
@@ -219,13 +218,8 @@ class DagExecutor:
 
     @staticmethod
     def _fingerprint(step: Step) -> str:
-        """(intent, 归一化 slots) 指纹。slots 排序后序列化——槽位顺序不该影响同一性判定。"""
-        try:
-            slots = json.dumps(step.slots or {}, sort_keys=True, ensure_ascii=False)
-        except (TypeError, ValueError):
-            slots = str(sorted((step.slots or {}).items()))
-        raw = f"{step.intent}|{slots}".encode("utf-8")
-        return hashlib.sha1(raw).hexdigest()[:12]
+        """(intent, 归一化 slots) 指纹——实现在 `models.step_fingerprint`（唯一一份，W04）。"""
+        return step_fingerprint(step.intent, step.slots)
 
     @staticmethod
     def _find_duplicate(fingerprint: str, done: dict) -> StepResult | None:
