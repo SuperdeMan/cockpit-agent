@@ -1,7 +1,7 @@
 # 落域 / 拒识 / 上下文 / 长会话评审：逐条重证与分阶段落地
 
-- 状态：批 1（P0 W01–W04 + W05-lite）与批 2（P1 W08/W09）已实施、已发布（生产 release `e8e6c949`，2026-09-19）；
-  W06/W07/W10 与 P2/P3 待用户裁决（§3.3）
+- 状态：批 1（P0 W01–W04 + W05-lite）、批 2（P1 W08/W09）、批 3（P1 W10 / W06 / W07，2026-09-20 用户批准后实施）已发布
+  （生产 release `88a89456`）；P2（W11–W15）/ P3（W16–W19）按评审原表为后续入口（§5）
 - 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`；HMI / Android 本批零改动
 - 关联：评审原文 [`docs/reviews/2026-09-19-cockpit_conversation_review.md`](../reviews/2026-09-19-cockpit_conversation_review.md)（基线 `2f3c574d`）；
   接手 `AGENTS.md` §4；QA 交接 `docs/reviews/2026-08-30-qa-closeout-handoff.md`；上一批收口 [`2026-09-19-qa-residual-closeout.md`](2026-09-19-qa-residual-closeout.md)
@@ -124,7 +124,7 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 `session_constraints` 按会话 2h、`last_places` 按 900s）各按自己的时效判活。Redis key TTL 抬到 7200s。
 「沉默十分钟再说继续刚才的行程」⇒ 路线 / 约束仍在，短时指代不在；缓存超时不是事实解除。
 
-### W10 / W06 / W07：待裁决
+### W10 / W06 / W07：2026-09-20 用户批准，已实施（落地记录 §4.5；以下是当时的方案）
 
 - W10 澄清续接：`plan.clarify` 现在只有 `{question, options[{label, send_text}]}`，客户端回传 `send_text` 当新话轮、planner 从零猜。
   方案：澄清进挂起表（`phase=wait_clarify`，`clarification_id=operation_id`、`target_field`、`candidate_refs`、`expires_at`），
@@ -207,4 +207,31 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
   规矩：cloud 命令只在 PowerShell 前台跑，不写轮询循环；后台任务超时后要显式 `TaskStop`。
 - 另一会话的 push 顺带推走了本会话的 W01/W02（对方已记「列出与推送分两步」）；本会话之后每次 push 前先 `git fetch` + 列 `origin/main..HEAD`。
 - Bash 工具的多行 heredoc 在本机时有 EOF 解析失败，改用 Write 写 .py 补丁再执行。
+
+### 4.5 批 3（2026-09-20，W10 / W06 / W07 + 真栈驱动的两条 navigation 修复）
+
+| 工作包 | 提交 | 做了什么 | 本地证据 |
+|---|---|---|---|
+| W10 澄清续接 | `05a631b2` | 澄清落 `wait_clarify` 挂起（`SessionState.clarify`，卡带 `index / operation_id / expires_at_ms`）；选择由服务端解：寻址键+序号 / 裸序数 / 纯数字 / label / `send_text` 原文（老客户端）；选项带合法 `capability_ref`+`slots` 时 planner 预解析成 `step`，点选零 LLM 执行，否则 send_text 重新规划（`clarify_probe`）；止损判据 `clarify_is_progress`（同题不问、换题可问）；换题保留挂起、「算了」取消；HMI / mobile 回传 `operation_id` | 新 `test_engine_clarify_pending` 14、planning +3、contracts +1、mobile sendRouter +2；老「零会话状态」断言改写；cloud+runtime 2032、mobile 111 suites / 1143 + tsc/eslint 0、hmi 338 + tsc 零新错；变异「去掉 label/send_text 通道」红、「去掉进展闸」红 |
+| W06 行为标签 | `2449aabb` | prompt-only 顶层 `acts`（`planning.ACTS`，`PLANNER_ACTS` 开关，不进 schema）；`Plan.acts` 进 span | `test_engine_task_frame` 13（含词表 / prompt 开关 / schema 不含）；变异「去掉 correct 闸」红 2 |
+| W07 任务帧 | `2449aabb` | `Focus.active_task`（task_id / intent / slots / revision / outcome / kind / ts）；写任务只被写任务顶掉；1800 s 限龄；焦点块渲染「当前任务=…（第N版）」；engine `_apply_task_patch`：correct ∧ 单步 ∧ 同 intent ∧ 帧活着 ⇒ 缺槽继承、revision+1 | 同上；变异「去掉读写优先」红 1 |
+| navigation 修复 | `fb98150d` / `88a89456` | reroute：改时限算改动（此前答「您想怎么调整」）；「改成7点半前到就行」的捕获是时刻不是地名（此前被搜成「东方之门(地铁站)」——**改时限把导航改去了另一个地方**）；裸时刻就近旧时限取半天（19:00 → 19:30 不是 07:30） | reroute 29、navigation 197；变异「去掉时刻守卫」红 2 |
+
+- 全量固定口径（树 `4bfebdd1`，`TZ=UTC0` `-n 8`）：**8485 passed / 1 failed / 32 skipped**；那 1 红是 `test_e2e_stack_lease` 的 OS-lock 用例（串行 61/61 绿，隔离债未修）。四门禁 + smoke_edge 全过。
+- 发布链：`4bfebdd1`（verify `20260919T165227Z-4bfebdd.json`）→ `fb98150d`（`20260919T170108Z-fb98150.json`）→ **`88a89456`**（status ok 5/5 零 warning、`20260919T170707Z-88a8945.json`，`minimax:MiniMax-M3`）；每次 dry-run 零阻断；CI 8/8。
+- 真栈：
+  - CL1（W10）`4bfebdd1` 2/3、`fb98150d` 2/3：出澄清卡的取样里「第一个」**每次**由服务端解成选择、关掉那条挂起并导航；差的那次是 planner 对裸地名「云岚国际中心」落技术失败出口（没出澄清卡，同 F09 家族），下一句「第一个」诚实答「没有可以引用的列表」。
+    模型两次都没给 `capability_ref`（可选字段被跳过）⇒ 走的是 send_text 重新规划这一路（`cloud.clarify_choice` → `cloud.planning`），零 LLM 直执行的通道在真栈尚未观察到。
+  - TF1（W06/W07）`4bfebdd1` **0/3** → 定因：planner 三次都选 `navigation.reroute`（活动路线在场，这是对的），1/3 标了 `acts=correct`；而 reroute **不把改时限当改动**（2/3 答「您想怎么调整当前路线？」），
+    且 `_REROUTE_DEST_RE` 把「7点半前到就行」当目的地搜成「东方之门(地铁站)」（1/3，**危险**）。修 navigation 后 `fb98150d` 3/3（但 00:5x 跑出「到达时限改为07:30」——裸「7点半」按未来最近一次），
+    再修就近旧时限后 `88a89456` **3/3「到达时限改为19:30」**，目的地深圳湾公园不变。
+  - 结论：这条旅程里「改口精确修改对象」由 navigation 自己持有的路线会话兑现，W06/W07 的继承通道在真栈没有被触发（planner 选的是 reroute 而不是同 intent 的 navigate_to）——
+    通道本身单测钉死，但**真栈证据只有观测列**（`acts=correct` 1/3）。哪类旅程会真正走到「同 intent 改口」（无活动路线的路线规划、提醒改期、行程改日）留给 P2 的 14 类边界矩阵。
+- 记给后续：planner 对可选字段（`capability_ref` / `acts`）的遵循率低（MiniMax-M3：`acts` 1/3、`capability_ref` 0/2）——prompt-only 字段要靠范例；纯名词 / 纯偏好陈述落技术失败出口的 F09 家族在本批探针里又出现两次（CL1 T1、RS5 T1）。
+
+## 5. 后续入口（P2 / P3，未启动）
+
+按评审原表：W11 Capability Contract（manifest / SDK / Registry 声明效果、前提、读写、所需上下文、结果投影）、W12 多目标闭环（每个 goal 有终态）、
+W13 受话与失败分类（PTT / 免唤醒 / 文字分账；本批两次观察到的技术失败出口归它）、W14 AnswerContract（执行性表述要证据；`execution_claim` 从观测转拦截的前提是两周分布）、
+W15 hint 与目录解耦；P3 W16 ContextCapsule、W17 摘要 / Memory 检索、W18 50/100 轮长会话与恢复、W19 模型与检索消融。每包仍按「先红测试、独立开关、旧 schema 读兼容」推进。
 

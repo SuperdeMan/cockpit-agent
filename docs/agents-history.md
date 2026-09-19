@@ -9304,3 +9304,20 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - `96c8361bb`：设置页恰 1 次；点光球仍双弹（`wake()` 的 enable 没登记在途）。修 `cebd5384`（`attemptRef` 两路共用）。
 - `cebd53848`：**弹窗恰 2 次（设置页 1 + 点光球 1）、错误行在、开关保持开、拒绝期间零录音会话、JS 零错误**；还原后冷启动正常开麦。常驻包 `cebd53848`。
 - 每层都是真机读数 → 单测复现 → 变异判红 → 出包复验；四个候选包各 8–11 分钟。每次 push 前单独一步列 `origin/main..HEAD`（本轮三次都只有本会话的一条）。
+
+## 2026-09-20 — 对话评审批 3：用户批准 W10 / W06 / W07 全部推进；真栈逼出两条 navigation reroute 修复；三个 release
+
+- W10 `05a631b2`：澄清落 `wait_clarify` 挂起（`SessionState.clarify`、卡带 `index / operation_id / expires_at_ms`，`contracts.build_clarify_card`）；选择由服务端解
+  （寻址键+序号 / 裸序数 / 纯数字 / label / `send_text` 原文——老客户端回发的正是它）；选项带合法 `capability_ref`+`slots` 时 planner 用本请求 catalog 预解析成 `step`
+  （`models.step_record` 与挂起计划序列化共用一份键集），点选零 LLM 执行，否则 send_text 重新规划（`ctx.clarify_probe`）；止损 `planning.clarify_is_progress`（同题不问、换题可问，
+  老客户端裸回发仍按深度=1 压掉）；换题保留挂起（提醒「还在等你选择」）、「算了」取消；生命周期 `system.clarify_choice`。HMI / mobile 选择回传 `operation_id`。
+- W06 + W07 `2449aabb`：prompt-only 顶层 `acts`（词表 `planning.ACTS`，`PLANNER_ACTS` 开关，刻意不进 submit_plan schema）；`Focus.active_task` 任务帧（task_id / intent / slots / revision /
+  outcome / kind / ts；写任务只被写任务顶掉；1800 s 限龄；焦点块渲染「当前任务=…（第N版）」）；engine `_apply_task_patch`：correct ∧ 单步 ∧ 同 intent ∧ 帧活着 ⇒ 缺槽继承、revision+1。
+- 真栈（`4bfebdd1`）：CL1 澄清续接 2/3（出卡的取样里「第一个」每次由服务端解成选择并导航；差的那次 planner 对裸地名落技术失败出口）；模型没给 `capability_ref` ⇒ 走的是 send_text 重规划。
+  TF1 改口 **0/3** → planner 三次都选 `navigation.reroute`（对的），但 reroute 不把改时限当改动（答「您想怎么调整」）且把「7点半前到就行」当目的地搜成「东方之门(地铁站)」（**改时限把导航改去了别处**）。
+  `fb98150d` 修两处 → 3/3 但 00:5x 解成 07:30；`88a89456` 裸时刻就近旧时限取半天 → **3/3「到达时限改为19:30」**。
+- 读数：全量 `4bfebdd1` 8485 / 1（OS-lock 隔离债）/ 32；navigation 197 / reroute 29；mobile 111 suites / 1143 + tsc/eslint 0；hmi 338 + tsc 零新错；四门禁全过；五处变异判红。
+  三个 release 每次 dry-run 零阻断 → apply → status ok 5/5 → verify verified（`…4bfebdd.json` / `…fb98150.json` / `…88a8945.json`）；CI 8/8。
+- 结论与记账：这条旅程的「改口精确修改对象」由 navigation 自己的路线会话兑现，W06/W07 的继承通道真栈只见观测列（`acts=correct` 1/3）；planner 对 prompt-only 可选字段遵循率低
+  （`acts` 1/3、`capability_ref` 0/2）——要靠范例；纯名词 / 纯偏好陈述落技术失败出口的 F09 家族本批又见两次（归 W13）。下一步 P2 / P3 见设计文档 §5。
+
