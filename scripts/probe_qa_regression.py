@@ -148,7 +148,7 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "latest_closing_from", "sums_from",
                 "follow_up_any", "navigate_within_km", "navigate_named_any",
                 "no_capability_refusal", "city_any", "deadline_sane",
-                "honors_no_spicy", "card_nodes"}
+                "honors_no_spicy", "card_nodes", "card_type_not"}
 # 第 6 批（C16-4 / C16-7＝C9-E / C13-C / C12-D，2026-08-28）新增的四条判据，
 # 共同点是**判形态不判措辞**，逐条的理由写在 `_judge` 各自的分支上：
 #   `no_capability_refusal` —— 本轮不得以**我们自己的确定性拒绝串**收场
@@ -360,6 +360,36 @@ CASES = [
          # 挂起还在：原样回传真 id 仍能执行
          {"say": "确认", "confirm": True, "op_from": 1,
           "expect": {"actions_include": ["door_lock.open"]}},
+     ]},
+
+    # W10（评审 §5.3，2026-09-20）：澄清是挂起不是卡。裸地名（prompt 里的那个例子）出澄清卡
+    # 且 final 带寻址键；「第一个」由服务端解成选择结果 ⇒ 关掉那条挂起（`closes_op_from`）、
+    # 不再出第二张同题澄清卡、不许答「没听清」。执行的是哪一路（预解析 step 零 LLM / 用
+    # send_text 重新规划）取决于模型有没有给 capability_ref，判据不押注这一点。
+    {"id": "CL1", "group": "confirm", "card": "Q1", "issue": "W10",
+     "why": "澄清挂起：「第一个」是选择结果，服务端定位并关闭那条澄清",
+     "known": "red",
+     "turns": [
+         {"say": "云岚国际中心",
+          "expect": {"card_type": "intent_choice", "has_operation_id": True,
+                     "no_actions": True}},
+         {"say": "第一个",
+          "expect": {"closes_op_from": 1, "speech_not": ["没听清"],
+                     "card_type_not": "intent_choice"}},
+     ]},
+    # W06 × W07（评审 §3.2，2026-09-20）：「改成 7 点半」是改口不是新任务。模型标 `acts=correct`
+    # 且只写 arrive_by 时，engine 从活动任务帧继承 destination ⇒ 第二轮的 navigate 动作仍指向
+    # 深圳湾公园（判 payload 里的目的地，不判措辞）。第三轮收尾清活动路线。
+    {"id": "TF1", "group": "confirm", "card": "Q1", "issue": "W06/W07",
+     "why": "改口精确修改对象：只说新时限，目的地从活动任务继承",
+     "known": "red",
+     "turns": [
+         {"say": "导航去深圳湾公园，晚上7点前到",
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"]}},
+         {"say": "改成7点半前到就行",
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
+                     "no_capability_refusal": True}},
+         {"say": "取消导航", "expect": {"speech_not": ["没有待确认"]}},
      ]},
 
     # ── Q7 端侧语义维度：极性 / 顺序 / 省略 ────────────────────────
@@ -1630,6 +1660,8 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
                         f"{act} 没被如实复述（「{obj}」附近找不到 {spec['right']}）")
     if "need_confirm" in expect and obs["need_confirm"] != expect["need_confirm"]:
         fails.append(f"need_confirm={obs['need_confirm']}，期望 {expect['need_confirm']}")
+    if "card_type_not" in expect and obs["card_type"] == expect["card_type_not"]:
+        fails.append(f"card_type={obs['card_type']}，不该是它")
     if "card_type" in expect and obs["card_type"] != expect["card_type"]:
         fails.append(f"card_type={obs['card_type'] or '无'}，期望 {expect['card_type'] or '无'}")
     if "is_question" in expect and obs["is_question"] != expect["is_question"]:
