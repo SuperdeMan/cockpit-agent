@@ -264,6 +264,39 @@ def test_reroute_keeps_arrive_by_deadline():
     assert "预计" in res.speech                  # deadline note 在话术里兑现
 
 
+def test_reroute_changes_only_the_deadline():
+    """真栈 TF1（2026-09-20，评审 W06/W07 落地探针）：「改成7点半前到就行」——planner 选 reroute、
+    只填 arrive_by。旧实现把新时限记下了却不算「改动」，答「您想怎么调整当前路线？」。
+    改时限是改动：重算路线、写回会话、话术报新时限，目的地与途经点原样。"""
+    agent, calls = _agent(route={"distance_km": 10.0, "duration_min": 20})
+    old_deadline = int(time.time()) + 3600
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={"arrive_by": "7点半前"},
+        raw_text="改成7点半前到就行", ctx=make_context(),
+        meta=_session_meta(waypoints=[_KFC], arrive_by_ts=old_deadline)))
+    assert res.actions and res.actions[0]["type"] == "navigate"
+    session = res.data["_route_session"]
+    assert session["destination"] == "万象天地"                 # 目的地没动
+    assert [w["name"] for w in session["waypoints"]] == [_KFC["name"]]
+    assert session["arrive_by_ts"] != old_deadline
+    assert "时限" in res.speech or "7:30" in res.speech or "19:30" in res.speech
+    assert not calls["search"]                                  # 没把时间当地名去搜
+
+
+def test_reroute_never_treats_a_time_expression_as_a_destination():
+    """真栈 TF1 第 2 次取样：`_REROUTE_DEST_RE` 把「改成7点半前到就行」的「7点半前到就行」当目的地
+    去搜，答「目的地已改为东方之门(地铁站)」——用户只改了时限，导航被改到另一个地方。"""
+    agent, calls = _agent(search_results=[POI(id="x", name="东方之门(地铁站)", lat=31.3, lng=120.7,
+                                              address="", category="")],
+                          route={"distance_km": 10.0, "duration_min": 20})
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={}, raw_text="改成7点半前到就行",
+        ctx=make_context(), meta=_session_meta(waypoints=[_KFC])))
+    assert res.data["_route_session"]["destination"] == "万象天地"
+    assert "东方之门" not in res.speech
+    assert not calls["search"]
+
+
 def test_reroute_remove_destination_word_guides():
     agent, _ = _agent()
     res = asyncio.run(run_handle(

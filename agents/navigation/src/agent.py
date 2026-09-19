@@ -220,6 +220,11 @@ _REROUTE_CHANGE_ROUTE_RE = re.compile(r"换条|换一条|换个路线|别走这|
 # 改目的地：「改去COCO Park」「目的地换成宝安机场」。
 _REROUTE_DEST_RE = re.compile(
     r"(?:目的地)?(?:改去|改到|改成|换成)去?\s*([^，。,、]{2,20})")
+#: 「改成 X」的捕获**开头就是时刻**（7点半 / 19:30 / 晚上八点 / 明天早上）⇒ 改的是时限不是地方。
+#: 与 `parse_clock_time` 并用：解析器认不出的形态（「7点半前到就行」带尾巴）由形态兜底。
+_CLOCK_LIKE_RE = re.compile(
+    r"^(?:今天|明天|后天|今晚|明早|明晚|早上|上午|中午|下午|晚上|傍晚|凌晨|夜里)?"
+    r"\s*(?:\d{1,2}|[一二两三四五六七八九十]+)\s*(?:点|时|:|：)")
 # 当前路线已经以接人地点为终点时，「接孩子后去万象城」不是加一个途经点：
 # 用户明确给出了先后关系，原终点应降为途经点，新地点升为终点。
 _REROUTE_AFTER_PICKUP_RE = re.compile(
@@ -1630,10 +1635,15 @@ class NavigationAgent(BaseAgent):
         strategy = str(session.get("strategy") or "")
         arrive_by_ts = session.get("arrive_by_ts")
         new_arrive = self._arrive_by_from(intent, raw_text)
-        if new_arrive:                      # 本轮新说了时限则覆盖；「别迟到」保持原值
-            arrive_by_ts = new_arrive
         notes: list[str] = []
         changed = False
+        if new_arrive and int(new_arrive) != int(arrive_by_ts or 0):
+            # 本轮新说了时限则覆盖；「别迟到」保持原值。**改时限本身就是一次改动**
+            # （真栈 TF1，2026-09-20）：「改成7点半前到就行」此前把新时限记下了却落到
+            # 「您想怎么调整当前路线？」——用户改的那一项恰恰不在「改动」清单里。
+            arrive_by_ts = new_arrive
+            notes.append(f"到达时限改为{self._fmt_clock(new_arrive)}")
+            changed = True
 
         # ① 改目的地（slot 优先，raw 兜底）：新目的地走 _find_destination 全套接地
         #    （R1 强校验/类目锚词/行政级判定全部生效），途经点保留。
@@ -1651,6 +1661,13 @@ class NavigationAgent(BaseAgent):
             if m:
                 new_dest = m.group(1).strip(" 。，,的")
                 if not raw_text.startswith("目的地") and _route_preference_only(new_dest):
+                    new_dest = ""
+                # 「改成7点半前到就行」的捕获是一个**时刻**，不是地名（真栈 TF1 第 2 次取样：
+                # 它被拿去搜 POI，答「目的地已改为东方之门(地铁站)」——用户只改了时限）。
+                # 判据复用 `parse_clock_time`（唯一实现）：能解成时刻的捕获不当目的地。
+                elif not raw_text.startswith("目的地") and (
+                        _parse_arrive_by(new_dest) is not None
+                        or _CLOCK_LIKE_RE.match(new_dest)):
                     new_dest = ""
         if new_dest and not self._dest_matches(new_dest, orig_dest):
             near = await self._current_position(ctx, meta)
