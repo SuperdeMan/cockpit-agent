@@ -58,3 +58,52 @@ def test_merge_keeps_what_was_not_mentioned_and_lets_the_newer_turn_win():
     assert merge_constraints(None, {"no_spicy": True}) == {"no_spicy": True}
     # 不改入参（调用方拿的是 Redis 里那份的副本）
     assert previous == {"no_spicy": True, "no_queue": True}
+
+
+# ── 评审 2026-09-19 F05 / W03：改口、时态、主体、撤销 ─────────────────────
+
+@pytest.mark.parametrize("text", [
+    "今天可以排队，等一会儿没关系",
+    "排队也行",
+    "不介意排队",
+    "不怕排队的",
+    "等位也可以",
+    "排一会儿队没问题",
+])
+def test_queue_acceptance_is_a_reversal_not_an_absence(text):
+    """评审复算：先「不想排队」再「今天可以排队」仍 `no_queue=True`——撤销通道此前不存在。"""
+    assert constraints_in(text) == {"no_queue": False}
+    assert merge_constraints({"no_queue": True}, constraints_in(text)) == {"no_queue": False}
+
+
+def test_past_tense_report_is_not_a_current_constraint():
+    """「之前不吃辣，今天想吃辣」——前半句是转述过去，整句否定优先曾把它压成 `no_spicy=True`。"""
+    assert constraints_in("之前不吃辣，今天想吃辣") == {"no_spicy": False}
+    assert constraints_in("以前不爱排队的") == {}
+    # 当前框架在场时照常算数（「这次还是不吃辣」）
+    assert constraints_in("这次还是不吃辣") == {"no_spicy": True}
+
+
+def test_a_companions_constraint_never_overwrites_the_speakers_own():
+    """「我不吃辣」和「同行的人想吃辣」不能互相覆盖：别人的约束记在 `others` 下。"""
+    assert constraints_in("同行的人想吃辣") == {"others": {"no_spicy": False}}
+    assert constraints_in("我朋友不吃辣") == {"others": {"no_spicy": True}}
+    merged = merge_constraints({"no_spicy": True}, constraints_in("同行的人想吃辣"))
+    assert merged == {"no_spicy": True, "others": {"no_spicy": False}}
+    # 「我们都不吃辣」是说话人也在内
+    assert constraints_in("我们都不吃辣") == {"no_spicy": True}
+
+
+@pytest.mark.parametrize("text", ["辣不辣无所谓", "不用管辣不辣了", "排不排队都行"])
+def test_waiving_a_constraint_deletes_it(text):
+    stated = constraints_in(text)
+    key = "no_spicy" if "辣" in text else "no_queue"
+    assert stated == {key: None}
+    assert merge_constraints({"no_spicy": True, "no_queue": True}, stated) == {
+        k: True for k in ("no_spicy", "no_queue") if k != key}
+
+
+def test_merge_never_writes_a_none_value():
+    assert merge_constraints({}, {"no_spicy": None}) == {}
+    assert merge_constraints({"others": {"no_spicy": True}},
+                             {"others": {"no_spicy": None}}) == {}

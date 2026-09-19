@@ -1451,9 +1451,14 @@ def extract_focus(plan, results) -> "Focus | None":
     # T28「我不吃辣，也不想排长队」落的是 chitchat，如果只在 nearby 那条路上抽，
     # 下一轮的推荐就永远读不到它（那正是真栈发生的事）。
     if raw_text:
-        stated = constraints_in(raw_text)
+        # W03：`constraints_in` 可能带 `None`（撤销）——没有旧值可撤时它什么都不是，
+        # 经一次空合并归一掉，焦点里永远只存「说过且仍有效」的键。
+        stated = merge_constraints({}, constraints_in(raw_text))
         if stated:
             focus.session_constraints = stated
+        elif constraints_in(raw_text):
+            # 只有撤销、没有新约束：本轮仍要把撤销带给 `update_focus` 的跨轮合并去删旧键
+            focus.session_constraints = constraints_in(raw_text)
     if raw_text:
         # QA T47 裁决 A（2026-09-19）：用户明确说「机油灯灭了 / 处理好了 / 是误报」⇒ 会话里那条
         # 告警解除。判据在 `runtime.safety_signal.alert_resolved`（与 chitchat / road-safety /
@@ -1662,6 +1667,9 @@ class ContextManager:
                 if previous is not None and getattr(previous, "session_constraints", None):
                     focus.session_constraints = merge_constraints(
                         dict(previous.session_constraints), focus.session_constraints)
+                # W03：撤销（None）只在合并里有意义，落盘的永远是归一后的「说过且仍有效」
+                focus.session_constraints = merge_constraints(
+                    {}, focus.session_constraints)
                 if previous is not None and not focus.last_city \
                         and focus.last_intent not in WEATHER_CONTEXT_INTENTS \
                         and getattr(previous, "last_city", ""):

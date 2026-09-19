@@ -1469,3 +1469,58 @@ def test_guessed_category_declares_a_fallback_even_without_a_discarded_term():
         slots={"category": "餐饮"}, raw_text="附近有没有卖锟斤拷的店", meta=_LOC))
     assert res.status == "ok"
     assert res.data.get("_fallback") is True
+
+
+def test_session_queue_reversal_beats_the_remembered_dislike():
+    """评审 W03「及消费方」：会话里说了「可以排队」（`no_queue=False`）压过画像里的
+    「老婆不喜欢排队」。此前消费方只接 True，撤销在这一侧也是断的。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    ctx = make_context()
+    ctx.recall = _fake_recall([
+        {"text": "老婆不喜欢排队", "predicate": "taste.no_queue",
+         "scope": "profile.taste", "subject": "老婆"}])
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="甲餐厅", category="餐饮", rating=4.5)]
+
+    agent.place.search = search
+    meta = dict(_LOC, focus_session_constraints=json.dumps({"no_queue": False}))
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="晚上和老婆找地方吃饭", ctx=ctx, meta=meta))
+    assert "没有实时排队数据" not in res.speech
+
+
+def test_a_past_tense_report_in_this_turn_does_not_trigger_the_queue_note():
+    """「之前不想排队，今天排队也行」——当轮原话按分句判据读，转述过去的那半不算。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+
+    async def search(keyword, **kw):
+        return [Place(id="a", name="甲餐厅", category="餐饮", rating=4.5)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"cuisine": "粤菜"},
+                                 raw_text="之前不想排队，今天排队也行，找个粤菜馆",
+                                 ctx=make_context(), meta=_LOC))
+    assert "没有实时排队数据" not in res.speech
+
+
+def test_a_companions_spicy_wish_this_turn_does_not_lift_the_speakers_no_spicy(monkeypatch):
+    """「朋友想吃辣」是别人的约束：会话里说话人自己的忌口（`no_spicy=True`）仍然生效。"""
+    from agents.nearby.src.providers.base import Place
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kw):
+        seen["keyword"] = keyword
+        return [Place(id="a", name="老灶火锅", category="餐饮", rating=4.6),
+                Place(id="b", name="淮扬人家", category="餐饮", rating=4.2)]
+
+    agent.place.search = search
+    meta = dict(_LOC, focus_session_constraints=json.dumps({"no_spicy": True}))
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐饮"},
+                                 raw_text="朋友想吃辣，附近推荐个吃晚饭的地方",
+                                 ctx=make_context(), meta=meta))
+    assert seen["keyword"] != "川菜"
+    assert [i["name"] for i in res.data["items"]][0] == "淮扬人家"

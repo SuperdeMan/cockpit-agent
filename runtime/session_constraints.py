@@ -24,10 +24,29 @@
 忌口会把「今天想吃点辣的」变成系统跟他犟嘴。**否定优先于肯定判**——
 「不想吃辣」里也含「想吃辣」，先判否定这条顺序就是语义本身（同 N9 那条
 「词表分支序就是语义」）。
+
+## 2026-09-19（评审 F05 / W03）：按分句、带时态与主体
+
+评审局部复算抓到三个洞：`no_queue` 只有 True 通道（「今天可以排队」撤不掉）；整句否定
+优先把「之前不吃辣，今天想吃辣」压成 `no_spicy=True`；「同行的人想吃辣」会覆盖说话人
+自己的忌口。修法不是加三条特例，是把抽取单位从**整句**改成**分句**（`runtime.clause_split`
+那一份分隔符表），每个分句各自判：
+
+- **时态框架**：分句里有「之前 / 以前 / 原来 / 上次…」且没有「今天 / 现在 / 这次…」⇒ 转述
+  过去，不写键；
+- **主体框架**：分句里点名了别人（同行的人 / 朋友 / 老婆…）且不含「我们 / 我也…」⇒ 记在
+  `others` 子键下，绝不覆盖说话人自己的键；
+- **撤销**：「辣不辣无所谓 / 排不排队都行」⇒ 写 `None`，`merge_constraints` 遇 None 删键；
+- `no_queue` 增加 False 通道（「可以排队 / 排队也行 / 不介意排队 / 等位也可以」）。
+
+扁平投影 `{"no_spicy": bool, "no_queue": bool}` 的契约不变，消费方（nearby）照旧只读
+自己认识的键；`others` 是新增子键，不认识它的消费方逐字零行为变化。
 """
 from __future__ import annotations
 
 import re
+
+from runtime.clause_split import split_clauses
 
 #: 忌辣说法：**原话、记忆文本、会话约束三处共用**。首版（在 nearby 里）只认
 #: 「不…吃/沾辣」，真栈实测「不要太辣」根本不匹配——用户当轮明说的忌口连识别
@@ -43,33 +62,100 @@ WANT_SPICY_RE = re.compile(r"(?:想|要|来|吃|点)(?:点|些|个|份)?辣|重�
 NO_QUEUE_RE = re.compile(
     r"(?:不喜欢|不爱|讨厌|嫌|怕|不愿意?|不想|别|不用|不)\s*(?:排\s*(?:长|大)?队|等位)"
     r"|排队少")
+#: 可以排队（`no_queue=False` 的通道，W03）。两种形态：「（不介意/可以/能/愿意/不怕）排队」
+#: 与「排队（也行/可以/没关系/没问题/无所谓）」。`(?<!不)` 挡「不能排队」。
+OK_QUEUE_RE = re.compile(
+    r"(?<!不)(?:可以|能|愿意|不介意|不怕|不在乎|接受)\s*"
+    r"(?:排(?:一会儿|会儿|点)?队|等位|等一会儿?|等等)"
+    r"|(?:排(?:一会儿|会儿|点)?队|等位|等一会儿?)\s*(?:也|都)?"
+    r"(?:行|可以|没关系|没问题|无所谓|不要紧|ok|OK)")
+#: 撤销：这一维**不再是约束**（写 None ⇒ 合并时删键）。
+WAIVE_SPICY_RE = re.compile(r"辣不辣(?:都行|都可以|无所谓|没关系|都无所谓|都没关系)|不用管辣不辣")
+WAIVE_QUEUE_RE = re.compile(r"排不排队(?:都行|都可以|无所谓|没关系|都无所谓|都没关系)|不用管排不排队")
+#: 时态框架：分句在**转述过去**（「之前不吃辣」）——不是当前约束。当前框架在场时照常算数。
+PAST_FRAME_RE = re.compile(r"之前|以前|原来|上次|上回|过去|先前|从前")
+NOW_FRAME_RE = re.compile(r"今天|现在|这次|这回|今晚|这顿|目前|今儿|这会儿|还是")
+#: 主体框架：分句说的是**别人**的约束（「同行的人想吃辣」）。含「我们 / 我也 / 我和…」时
+#: 说话人也在内，仍写自己的键。零领域词：全是人称与关系称谓。
+OTHERS_FRAME_RE = re.compile(
+    r"同行|同事|朋友|老婆|老公|媳妇|太太|先生|爸|妈|孩子|家人|他们|她们|别人|其他人|一起的人|家里人")
+SELF_INCLUDED_RE = re.compile(r"我们|我也|我和|我跟|我与|大家都?")
 #: 重辣菜系词：判「这个检索词/这家店辣不辣」，与上面三条正则是**同一件事的两面**，
 #: 所以住在同一个模块里（消费方 nearby 的降权与话术都读它）。
 SPICY_MARKS = ("川菜", "湘菜", "火锅", "串串", "麻辣烫", "冒菜", "麻辣")
 
 
+def _clause_facts(clause: str) -> dict:
+    """一个分句里说出来的键。值 True/False 是事实，None 是撤销；没提的键不出现。"""
+    out: dict = {}
+    if WAIVE_SPICY_RE.search(clause):
+        out["no_spicy"] = None
+    elif NO_SPICY_RE.search(clause):
+        out["no_spicy"] = True
+    elif WANT_SPICY_RE.search(clause):
+        out["no_spicy"] = False
+    if WAIVE_QUEUE_RE.search(clause):
+        out["no_queue"] = None
+    elif OK_QUEUE_RE.search(clause):
+        # 接受式先于否定式：「不怕排队」「不介意排队」里的「怕/不」会命中否定词表
+        out["no_queue"] = False
+    elif NO_QUEUE_RE.search(clause):
+        out["no_queue"] = True
+    return out
+
+
 def constraints_in(text: str | None) -> dict:
-    """一句话里的会话级偏好约束 → `{"no_spicy": bool, "no_queue": True}`（缺省不写键）。
+    """一句话里的会话级偏好约束 → `{"no_spicy": bool|None, "no_queue": bool|None,
+    "others": {...}}`（缺省不写键）。
 
     只写**说出来的那些键**：没提到辣就不写 `no_spicy`，让上层的跨轮合并
     保住上一次的表态。「没说」和「说了不要」必须分得开——合成一个 False
     正是 `day_offset_of` 那条老账（认不出与说的是今天分不开）的同族形态。
+
+    W03 起按分句判（见模块 docstring）：后面的分句覆盖前面的（「不吃辣，算了辣也行」
+    以后者为准），转述过去的分句跳过，别人的约束进 `others`。
     """
     t = (text or "").strip()
     if not t:
         return {}
     out: dict = {}
-    if NO_SPICY_RE.search(t):
-        out["no_spicy"] = True
-    elif WANT_SPICY_RE.search(t):
-        out["no_spicy"] = False
-    if NO_QUEUE_RE.search(t):
-        out["no_queue"] = True
+    for clause in split_clauses(t):
+        if PAST_FRAME_RE.search(clause) and not NOW_FRAME_RE.search(clause):
+            continue
+        facts = _clause_facts(clause)
+        if not facts:
+            continue
+        if OTHERS_FRAME_RE.search(clause) and not SELF_INCLUDED_RE.search(clause):
+            out.setdefault("others", {}).update(facts)
+        else:
+            out.update(facts)
     return out
 
 
 def merge_constraints(previous: dict | None, current: dict | None) -> dict:
-    """跨轮合并：**后说的覆盖先说的**，没说的沿用。返回新 dict，不改入参。"""
-    out = {k: v for k, v in (previous or {}).items() if isinstance(k, str)}
-    out.update({k: v for k, v in (current or {}).items() if isinstance(k, str)})
+    """跨轮合并：**后说的覆盖先说的**，没说的沿用，`None` 删键。返回新 dict，不改入参。
+
+    `others` 子键同规则递归合并；合并后为空的子键整个去掉——消费方读到的永远是
+    「说过且仍有效」的那些键。
+    """
+    out: dict = {}
+    for source in (previous or {}, current or {}):
+        for k, v in source.items():
+            if not isinstance(k, str):
+                continue
+            if k == "others":
+                sub = dict(out.get("others") or {})
+                for sk, sv in (v or {}).items() if isinstance(v, dict) else ():
+                    if sv is None:
+                        sub.pop(sk, None)
+                    else:
+                        sub[sk] = sv
+                if sub:
+                    out["others"] = sub
+                else:
+                    out.pop("others", None)
+            elif v is None:
+                out.pop(k, None)
+            else:
+                out[k] = v
     return out

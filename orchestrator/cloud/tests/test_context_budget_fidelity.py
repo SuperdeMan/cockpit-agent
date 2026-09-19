@@ -133,3 +133,40 @@ def test_reversed_constraints_render_their_current_value():
     out = ws.render_context()
     assert "想吃辣" in out and "可以排队" in out
     assert "不吃辣" not in out
+
+
+# ── W03 撤销经焦点跨轮生效 ──────────────────────────────────────────────
+
+def test_a_waiver_this_turn_deletes_the_constraint_saved_last_turn():
+    import asyncio
+    from types import SimpleNamespace
+    from orchestrator.cloud.context import ContextManager
+    from orchestrator.cloud.models import Plan
+    from orchestrator.cloud.session import SessionStore
+
+    session = SessionStore(redis_url="")
+    cm = ContextManager(SimpleNamespace(), session)
+    asyncio.run(cm.update_focus("sess-w03", Plan(steps=[], raw_text="我不吃辣，也不想排队"),
+                                [], user_id="u1"))
+    saved = asyncio.run(session.load_focus("sess-w03", owner_user_id="u1"))
+    assert saved["session_constraints"] == {"no_spicy": True, "no_queue": True}
+
+    asyncio.run(cm.update_focus("sess-w03", Plan(steps=[], raw_text="辣不辣无所谓了"),
+                                [], user_id="u1"))
+    saved = asyncio.run(session.load_focus("sess-w03", owner_user_id="u1"))
+    assert saved["session_constraints"] == {"no_queue": True}      # 只撤了辣这一维
+
+
+def test_a_waiver_with_nothing_to_waive_saves_no_none_value():
+    import asyncio
+    from types import SimpleNamespace
+    from orchestrator.cloud.context import ContextManager
+    from orchestrator.cloud.models import Plan
+    from orchestrator.cloud.session import SessionStore
+
+    session = SessionStore(redis_url="")
+    cm = ContextManager(SimpleNamespace(), session)
+    asyncio.run(cm.update_focus("sess-w03b", Plan(steps=[], raw_text="辣不辣无所谓"),
+                                [], user_id="u1"))
+    saved = asyncio.run(session.load_focus("sess-w03b", owner_user_id="u1"))
+    assert not (saved or {}).get("session_constraints")

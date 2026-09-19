@@ -17,7 +17,8 @@ from agents._sdk.http import ProviderError
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from runtime.session_constraints import (NO_QUEUE_RE, NO_SPICY_RE,
-                                         SPICY_MARKS)
+                                         SPICY_MARKS, constraints_in,
+                                         merge_constraints)
 from agents._sdk.timewindow import (
     clock_minutes, dining_window, fmt_clock, parse_event_time)
 from .providers import build_place_provider
@@ -503,13 +504,14 @@ class NearbyAgent(BaseAgent):
             # **当轮明说的忌口压过记忆偏好**（真栈实测：「不要太辣」时两个 provider
             # 都推了川菜——记忆说爱吃川菜、当轮说不要辣，系统选了记忆）。
             # 记忆是背景，用户这句话是前景；前景与背景冲突时前景赢，并且要说出来。
-            turn_no_spicy = bool(self._NO_SPICY_RE.search(raw))
+            # 当轮原话按同一份判据抽（W03 起 `constraints_in` 按分句、带时态与主体：
+            # 「之前不吃辣，今天想吃辣」不再整句判成忌口；「朋友不吃辣」不算说话人的）。
+            turn_stated = constraints_in(raw)
+            turn_no_spicy = turn_stated.get("no_spicy") is True
             # C12-B：**会话里说过的**也是前景。它由编排层从任意一轮原话抽出、
             # 经 `focus_session_constraints` 下发（T28 那句落的是 chitchat 轮，
             # 只读当轮原话的话这条约束到不了 T29）。当轮 > 会话 > 记忆。
-            session = _session_constraints_from_meta(meta)
-            if turn_no_spicy:
-                session = dict(session, no_spicy=True)
+            session = merge_constraints(_session_constraints_from_meta(meta), turn_stated)
             if session:
                 # 没有任何口味记忆时也要生效——「不要太辣」本身就是一条约束，
                 # 不该因为画像是空的就被丢掉。
@@ -517,8 +519,10 @@ class NearbyAgent(BaseAgent):
                                        "no_spicy": False, "no_queue": False})
                 if "no_spicy" in session:
                     taste["no_spicy"] = bool(session["no_spicy"])
-                if session.get("no_queue"):
-                    taste["no_queue"] = True
+                # 两个键对称：会话里说了「可以排队」就按会话的（此前只接 True，
+                # 撤销通道在消费方这一侧也是断的——评审 W03「及消费方」）。
+                if "no_queue" in session:
+                    taste["no_queue"] = bool(session["no_queue"])
             # 菜系偏置只限正餐类目（拿粤菜偏好偏置咖啡检索是错的）；
             # 忌口/店铺级降权按 _TASTE_CATS 全集生效（P5）。
             if (category in _FOOD_CATS and taste and taste["like_cuisine"]
@@ -649,7 +653,10 @@ class NearbyAgent(BaseAgent):
             if caution:
                 taste_notes.append(caution)
         # E2：「不排队」原话或记忆在场 → 如实说没有这维数据（不拿评分/人气冒充）。
-        if _NO_QUEUE_RE.search(raw) or (taste and taste.get("no_queue")):  # 会话约束已并入 taste
+        # 原话按同一份分句判据读（「之前不想排队，今天可以排队」不再触发这条话术）；
+        # 会话约束已并入 taste。
+        if (constraints_in(raw).get("no_queue") is True
+                or (taste and taste.get("no_queue"))):
             taste_notes.append("地图没有实时排队数据，这条我按不上")
         pref_note = f"（{'；'.join(taste_notes)}）" if taste_notes else ""
 
