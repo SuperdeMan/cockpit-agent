@@ -235,7 +235,14 @@ status ok、5/5、running = `b342e3bb` → verify verified `20260919T051116Z-b34
 修（`engine.py::_register_input_facts`）：这五条出口 `return` 之前，用一份只带 `raw_text` 的空步计划跑一遍
 `update_focus`——`extract_focus` 只会从原话扫出告警 / 驾驶员状态 / 解除 / 会话偏好，什么都没扫出时返回 `None`、
 焦点原样不动；判据一个字不复制。`test_engine_input_facts.py` +4（技术失败轮解除清掉 / 「没听清」轮告警登记上 /
-澄清轮解除清掉 / 普通「没听清」轮焦点不动），摘掉两处调用 3 红；cloud 1345 passed。**待发布。**
+澄清轮解除清掉 / 普通「没听清」轮焦点不动），摘掉两处调用 3 红；cloud 1345 passed。
+
+**随 `ca4bf370` 发布并真栈复验**（用户「授权推送部署」：push `b342e3bb..ca4bf370` → dry-run 零阻断 → apply 196s →
+status ok、5/5、running = `ca4bf370` → verify verified `20260919T054445Z-ca4bf37.json`）。带 `dest_choice` 挂起的
+六轮序列 ×4：解除陈述 **0/4** 被吞（chitchat ×3 + **技术失败终态 ×1**）；**第 4 趟正是 `b342e3bb` 上红的那个形态
+——解除句落到 planner 技术失败出口——这次 T6「现在还能继续开吗」答的是天气建议，没有「未解除」**（trace 见
+`live_t47_probe_result_hazard_ca4bf370.json`，rep 4）。T6 四趟零「未解除」。T5 的落点仍是模型方差（`charging.plan`
+出路线 / 出候选卡 / `system.clarify` 再问站点各占其一，零动作；目的地本来没答，再问是对的）。
 
 ---
 

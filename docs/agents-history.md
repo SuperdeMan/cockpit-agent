@@ -9191,3 +9191,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 带 `dest_choice` 挂起的六轮序列 ×3：解除陈述 **0/3** 再被当目的地吞（此前 2/3）；T5 的落点是 LLM 方差（search_poi / clarify / charging.plan 各一，零动作；目的地本来没答，再问是对的）；T6 2/3 无「未解除」。
 - 第 3 趟 T4 落了 planner 技术失败终态，T6 仍「未解除」⇒ 第三条漏点：`extract_focus` 里的输入侧登记只在 `update_focus` 跑到时才跑，而技术失败 / 授权缺失 / 澄清 / 取消未命中 / 没听清五条出口都在它之前 return（F09 是 09-14 新加的出口）。修 `engine.py::_register_input_facts`：出口前用只带 `raw_text` 的空步计划跑一遍 `update_focus`，什么都没扫出时焦点原样不动。`test_engine_input_facts.py` +4、摘调用 3 红、cloud 1345。**待发布。**
 - 装置坑：往 `@staticmethod` 装饰器和它的 `def` 之间插方法，装饰器会落到新方法头上——`missing 1 required positional argument` 是它的样子。
+
+### 同批追加 — 发布 `ca4bf370`（五条出口前登记输入侧事实）与真栈复验
+
+- 用户「授权推送部署」：push `b342e3bb..ca4bf370` → dry-run 零阻断 → apply 196s → status ok、5/5、running = `ca4bf370` → verify verified（`20260919T054445Z-ca4bf37.json`）。
+- 带 `dest_choice` 挂起的六轮序列 ×4：解除句 0/4 被吞（chitchat ×3、技术失败终态 ×1）；**第 4 趟解除句正落在技术失败出口——`b342e3bb` 上红的那个形态——这次 T6 答天气建议、无「未解除」**。T6 四趟零「未解除」；T5 落点仍是模型方差（路线 / 候选卡 / clarify 再问站点，零动作）。
+- 当日四个 release：`1eb25a70`（T24）→ `0d414816`（T47 裁决 A）→ `b342e3bb`（挂起吞句）→ `ca4bf370`（出口登记）。全量固定口径读数仍欠一趟（主机 commit 被 WindowsTerminal 占 33.5GB）。
