@@ -749,3 +749,81 @@ def test_a_visible_choice_card_does_not_move_the_control_focus():
 
     assert focus is not None and focus.candidate_sets
     assert not focus.last_destination, "没做成的步不许改写目的地焦点"
+
+
+# ── 评审 2026-09-19 F03 / W08：同能力不同查询共存，同查询是新版本 ───────────
+
+def _turn_with_slots(intent, agent, slots, data):
+    return (Plan(steps=[Step(id="s1", agent_id=agent, intent=intent, slots=dict(slots))]),
+            [StepResult(step_id="s1", status=StepStatus.OK,
+                        source_intent=intent, data=data)])
+
+
+def test_same_capability_with_a_different_query_keeps_both_batches():
+    """评审复算：先搜 A 附近餐厅、再搜 B 附近餐厅，两次都是 `nearby.search`——旧合并键
+    `(source_intent, purpose, is_fallback)` 让第二批顶掉第一批，「刚才 A 那批第二家」无处可解。"""
+    focus = _drive(_mgr(), [
+        _turn_with_slots("nearby.search", "nearby",
+                         {"category": "餐饮", "location": "万象城"},
+                         {"items": [{"name": "万象·甲"}, {"name": "万象·乙"}],
+                          "_candidate_label": "餐饮"}),
+        _turn_with_slots("nearby.search", "nearby",
+                         {"category": "餐饮", "location": "科技园"},
+                         {"items": [{"name": "科技·甲"}, {"name": "科技·乙"}],
+                          "_candidate_label": "餐饮"}),
+    ])
+    assert len(focus.candidate_sets) == 2
+    # 裸序数仍绑最新那批（行为逐字同旧）
+    assert focus.last_choices == ["科技·甲", "科技·乙"]
+    # 点名「万象城那批」⇒ 经既有的标签通道绑到旧批（地点提示派生自查询槽）
+    primary, named = resolve_candidate_scope("刚才万象城那批第二家怎么样", focus)
+    assert [i["name"] for i in primary["items"]] == ["万象·甲", "万象·乙"]
+    assert len(named) == 1
+
+
+def test_the_same_query_again_is_a_new_revision_not_a_second_batch():
+    """「换一批」= 同一查询的下一版：同键替换、revision+1，不占第二格。"""
+    focus = _drive(_mgr(), [
+        _turn_with_slots("nearby.search", "nearby", {"category": "餐饮", "location": "万象城"},
+                         {"items": [{"name": "旧·甲"}]}),
+        _turn_with_slots("nearby.search", "nearby", {"category": "餐饮", "location": "万象城"},
+                         {"items": [{"name": "新·甲"}]}),
+    ])
+    assert len(focus.candidate_sets) == 1
+    assert focus.candidate_sets[0]["revision"] == 2
+    assert focus.last_choices == ["新·甲"]
+
+
+def test_every_set_carries_its_query_signature_and_revision():
+    focus = _extract("nearby.search", "nearby", _PLACES)
+    entry = focus.candidate_sets[-1]
+    assert entry["query_signature"] and entry["revision"] == 1
+    assert entry.get("place_hint", "") == ""          # 没有地点槽就没有地点提示
+
+
+def test_focus_block_names_the_earlier_batch_so_the_planner_can_tell_them_apart():
+    from orchestrator.cloud.context import _render_focus
+    focus = _drive(_mgr(), [
+        _turn_with_slots("nearby.search", "nearby",
+                         {"category": "餐饮", "location": "万象城"},
+                         {"items": [{"name": "万象·甲"}, {"name": "万象·乙"}],
+                          "_candidate_label": "餐饮"}),
+        _turn_with_slots("nearby.search", "nearby",
+                         {"category": "餐饮", "location": "科技园"},
+                         {"items": [{"name": "科技·甲"}, {"name": "科技·乙"}],
+                          "_candidate_label": "餐饮"}),
+    ])
+    block = _render_focus(focus)
+    assert "最新候选=1:科技·甲/2:科技·乙" in block
+    assert "较早候选" in block and "万象城" in block and "万象·甲" in block
+
+
+def test_a_revision_is_visible_to_the_planner():
+    from orchestrator.cloud.context import _render_focus
+    focus = _drive(_mgr(), [
+        _turn_with_slots("nearby.search", "nearby", {"category": "餐饮"},
+                         {"items": [{"name": "旧·甲"}]}),
+        _turn_with_slots("nearby.search", "nearby", {"category": "餐饮"},
+                         {"items": [{"name": "新·甲"}]}),
+    ])
+    assert "第2批" in _render_focus(focus)

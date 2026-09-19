@@ -33,7 +33,11 @@ _DEFAULT_TTL = 300  # 秒（确认/补槽挂起态；行程等慢流程每轮数
 _PENDING_CAPACITY = 3
 # 焦点态：与挂起态分开存（每轮持久、完成不清，供跨轮指代消解）。TTL 比挂起态长。
 _FOCUS_PREFIX = "planner:focus:"
-_FOCUS_TTL = 300  # 秒
+# 评审 2026-09-19 F04 / W09：key TTL 是**活动状态**的寿命上限（活动路线 / 安全告警 /
+# 会话约束 / 候选台账，各自再按 ts 判活）；**短时引用**（对象 / 上个地点 / 上一轮意图…）
+# 的 5 分钟寿命不再靠 key 过期，由 `context.expire_short_term` 按 `focus_ts` 判。
+# 此前一个 300s 的 key 让「沉默五分钟」把活动路线和告警一起抹掉——缓存超时不是事实解除。
+_FOCUS_TTL = 7200  # 秒
 
 PERSONAL_DATA_TARGETS = (
     {

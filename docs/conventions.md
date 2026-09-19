@@ -593,20 +593,25 @@ owner**）。当前已收窄：`REMINDERS_ACTIVE`、`REMINDER_PENDING`。
 （I-018/I-023）；无来源无版本 ⇒ nearby POI / 商户菜单 / 途经点 / 充电候选共用一格
 （I-030）。
 
-升格后每组 = `{source_intent, agent_id, purpose, ts, is_fallback, items}`，四条纪律：
+升格后每组 = `{source_intent, agent_id, purpose, ts, is_fallback, items, query_signature, place_hint, revision}`
+（后三项 2026-09-19 W08 加：产生步 `(intent, slots)` 的指纹、查询里的地点槽、同键第几版），五条纪律：
 
 1. **粘性但不永生**：跨轮接力、**ts 原样携带不续期**、按 `_CANDIDATE_TTL_S` 限龄
    （同 `last_places`/`active_route`/`safety_alert` 三格已验证过的纪律）。
    `ts=0`（旧部署留下的数据）按过期处理。
 2. **新旧共存、不互相覆盖**，容量 `_CANDIDATE_SETS_MAX`=3。合并键是
-   `(source_intent, purpose, is_fallback)`——**少了第三项，兜底那份会把点名那份挤掉**。
+   `(source_intent, purpose, is_fallback, query_signature)`（`context.candidate_merge_key`）——
+   **少了第三项，兜底那份会把点名那份挤掉**；**少了第四项，B 附近的餐厅会把 A 附近的那批挤掉**
+   （评审 2026-09-19 F03 / W08）。同键再来一次（「换一批」）是 `revision+1` 的新版本，不占第二格。
+   点名通道 `label_hit` 认 `label` 与 `place_hint` 两条（整词 + 2 字前缀），「刚才万象城那批」由后者命中。
 3. **items 按白名单裁剪**。`_resume_result` 已经为「整份 provider 负载落 Redis」付过
    一次学费（商户 token/电话/地址进会话态）。加字段要有真实消费方（B4 判据）。
    ⚠ **2026-08-19 修正**：这张白名单原有 7 个键是**猜**的字段名，与产生方一个都
    对不上（详见 **§9.27**「白名单是与产生方的契约」）。改产生方 item 字段要同步
    `test_candidate_sets.py::_PRODUCER_SHAPES`。
 4. **整组不进 prompt**（同 `last_places` 纪律：让模型看见结构化事实只会诱导它自己编）。
-   进 prompt 的只有派生视图 `last_choices`（名字，且是**非兜底那份**的名字）。
+   进 prompt 的只有派生视图 `last_choices`（名字，且是**非兜底那份**的名字）；W08 起再加一行
+   `较早候选[label/place_hint]=名字…`（最多一组、非兜底、只有名字）与「同一查询第 N 批」标记。
 5. **可被指代的候选必须进 `data`**，不能只进 `ui_card`——`extract_focus` 只读 `data`。
    商户菜单此前只进 `ui_card`，于是**从来没进过候选集**（§9.27 末段）。
 
@@ -1618,7 +1623,7 @@ prefs 最小化在这条路上整个不生效）。写在 `step.meta` 上是**�
    列表根本不在 `Focus.candidate_sets` 里。这就是**门店侧双入口（I-024）没做**的原因：
    放宽抽取的影响面远超本卡（每个补槽轮都会开始产生候选），要么另给选项卡一个载体
    ——独立一卡。
-3. **同源候选是「取代」不是「叠加」。** 合并键 `(source_intent, purpose, is_fallback)`
+3. **同源候选是「取代」不是「叠加」。** 合并键 `(source_intent, purpose, is_fallback, query_signature)`
    ⇒ 只读菜单命中单品后产出的那份（只有 1 款）会**取代**上一轮那份 20 款的。
    于是紧跟其后的「那第八个呢」必然取不到——用户脑子里是最初那份，系统手里只剩 1 款。
    那是**候选集的版本语义**（同 I-030「哪一组」那族），不是「序数落到哪一项」。

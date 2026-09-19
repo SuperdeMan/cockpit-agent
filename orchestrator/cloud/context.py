@@ -23,7 +23,7 @@ import re
 import time
 from dataclasses import dataclass, field, fields, asdict
 
-from .models import PlanContext
+from .models import PlanContext, step_fingerprint
 from runtime.clock import hhmm as clock_hhmm
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
                                    alert_resolved, alert_signal, driver_state)
@@ -315,6 +315,10 @@ class Focus:
     # 同样的理由：`safety_alert` 的粘性接力条件在合并里体现为「本轮为空 ⇒ 取旧」，
     # 而「解除」恰恰让本轮为空——不立旗，上一轮那条 critical 会被原样搬回来。
     safety_alert_cleared: bool = False
+    # W09：这份焦点**落盘的时刻**（epoch 秒）。短时引用（对象 / 属性 / 位置 / 上个地点 /
+    # 上个目的地 / 上个城市 / 上个标的 / 上一轮意图 / 最新候选视图）只活 `_FOCUS_SHORT_TTL_S`，
+    # 读取时按它判；活动状态各按自己的 ts。0 = 旧数据没盖过章，按未过期读（滚动窗口内无害）。
+    focus_ts: float = 0.0
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -617,6 +621,35 @@ def _render_history(history: list[dict] | None, budget: int = _CTX_BUDGET) -> st
     return _render_history_with_stats(history, budget=budget)[0]
 
 
+#: 短时引用的寿命（W09）。与旧的 `_FOCUS_TTL=300` 同值——「上个对象是空调」五分钟后不再
+#: 当指代锚是原来的语义，变的是它不再拖着活动状态一起消失。
+_FOCUS_SHORT_TTL_S = 300.0
+#: 短时引用字段：过期即回到缺省值。**不在名单里的就是活动状态**（候选台账 / 门店锚定 /
+#: 活动路线 / 安全告警 / 会话约束 / 坐标随目的地一起走）。
+_SHORT_TERM_FIELDS = (
+    "obj", "attr", "positions", "last_poi", "last_destination", "last_city",
+    "last_stock_symbol", "last_intent", "last_agent_id", "last_choices",
+    "last_choice_purpose", "destination_lat", "destination_lng", "origin_exchange_id",
+)
+
+
+def expire_short_term(focus: "Focus | None", *, now: float | None = None) -> "Focus | None":
+    """按 `focus_ts` 让**短时引用**过期，活动状态原样保留（W09）。原地改、返回同一对象。"""
+    if focus is None:
+        return None
+    stamp = float(getattr(focus, "focus_ts", 0.0) or 0.0)
+    now = time.time() if now is None else now
+    if stamp <= 0 or now - stamp <= _FOCUS_SHORT_TTL_S:
+        return focus
+    defaults = Focus()
+    for name in _SHORT_TERM_FIELDS:
+        value = getattr(defaults, name)
+        setattr(focus, name, list(value) if isinstance(value, list) else value)
+    # 最新候选视图从台账重新派生：台账里仍活着的组（按各自 ts）照旧可被序数指代
+    _derive_choice_view(focus)
+    return focus
+
+
 def _render_focus(focus, drop_sticky_places: bool = False) -> str:
     """结构化焦点 → 紧凑 prompt 块（仅非空字段）。供 LLM 在用户话术含指代时复用。
 
@@ -670,8 +703,23 @@ def _render_focus(focus, drop_sticky_places: bool = False) -> str:
         purpose = ("顺路途经点选择"
                    if focus.last_choice_purpose == "waypoint" else "列表选择")
         parts.append(f"最新候选用途={purpose}")
-        parts.append("最新候选=" + "/".join(
+        newest = newest_candidate_set(focus, allow_fallback=True) or {}
+        # W08：同一查询的第 N 批（「换一批」之后）——模型该知道用户已经看过前几批
+        revision = int(newest.get("revision") or 1)
+        tag = f"（同一查询第{revision}批）" if revision > 1 else ""
+        parts.append("最新候选" + tag + "=" + "/".join(
             f"{idx}:{name}" for idx, name in enumerate(focus.last_choices, 1)))
+        # W08：**较早的另一批**（同能力不同查询）也渲染出来，带它的称呼——「刚才万象城那批
+        # 第二家」的参照系要在 prompt 里。只渲染一组、只渲染非兜底、只渲染名字。
+        earlier = _earlier_candidate_set(focus, newest)
+        if earlier:
+            who = "/".join(x for x in (
+                str(earlier.get("label") or ""), str(earlier.get("place_hint") or "")) if x)
+            names = [str(i.get("name") or "") for i in earlier.get("items", [])][:5]
+            names = [n for n in names if n]
+            if names:
+                parts.append(f"较早候选[{who or '另一批'}]=" + "/".join(
+                    f"{idx}:{name}" for idx, name in enumerate(names, 1)))
     # G8：活动路线只渲染名字与时限，**绝不渲染坐标**（坐标进 prompt 只会诱导模型
     # 自己编——last_places 同款纪律）。这一行是 planner 分开「改当前路线
     # （navigation.reroute）」与「改行程（trip.modify）」的会话状态判据。
@@ -760,7 +808,7 @@ def _valid_route_session(raw) -> dict:
 
 
 #: 安全告警的**总龄**上限（秒）。⚠ 它不是「告警能活多久」——真实生效的是两个约束的
-#: 交集：焦点态本身 `_FOCUS_TTL`（当前 300s）**每成功一轮就续期**，而告警的 `ts`
+#: 交集：焦点态本身 `_FOCUS_TTL`（W09 起 7200s）**每成功一轮就续期**，而告警的 `ts`
 #: **接力时原样携带、不续期**（同 last_places/active_route 纪律）。
 #: 于是语义是：**对话持续活跃（轮间隔 ≤ 焦点 TTL）时告警一直在，但总龄超过本值即失效**。
 #: 取 2h：一次未解除的警告在一次出行内应当一直可见；停一晚再上车不该还挂着上次的灯。
@@ -979,6 +1027,43 @@ def _newest_of(sets: list[dict], *, allow_fallback: bool) -> dict | None:
     return sets[-1] if allow_fallback else None
 
 
+def _earlier_candidate_set(focus, newest: dict) -> dict | None:
+    """台账里比 `newest` 早、且不是同一查询的最近一组非兜底候选（W08 渲染用）。"""
+    sets = _live_candidate_sets(getattr(focus, "candidate_sets", None) or [])
+    newest_key = candidate_merge_key(newest) if newest else None
+    for entry in reversed(sets):
+        if entry is newest or candidate_merge_key(entry) == newest_key:
+            continue
+        if entry.get("is_fallback"):
+            continue
+        return entry
+    return None
+
+
+#: 查询里「在哪一带找」的槽名（W08 地点提示）：产生方的 `_candidate_label` 只说品类/品牌
+#: （「餐饮」），两次不同地点的同类检索靠它才分得开。零领域值，只有槽名。
+_PLACE_HINT_SLOTS = ("location", "destination", "near", "area", "city")
+
+
+def _place_hint(slots: dict | None) -> str:
+    for key in _PLACE_HINT_SLOTS:
+        value = str((slots or {}).get(key) or "").strip()
+        if _CANDIDATE_LABEL_MIN <= len(value):
+            return value[:_CANDIDATE_LABEL_MAX]
+    return ""
+
+
+def candidate_merge_key(entry: dict) -> tuple:
+    """台账合并键（W08）：`(source_intent, purpose, is_fallback, query_signature)`。
+
+    同能力**不同查询**（A 附近 / B 附近）是两批，共存；同查询再来一次（「换一批」）是
+    同键新版本。旧键没有第四维，第二批当场顶掉第一批（评审 F03）。老记录没有
+    `query_signature`（空串）⇒ 与旧键逐字同值。
+    """
+    return (entry.get("source_intent"), entry.get("purpose"),
+            bool(entry.get("is_fallback")), str(entry.get("query_signature") or ""))
+
+
 def label_hit(text: str, entry: dict) -> int | None:
     """这句话在**哪个位置**点名了这一组；没点名 → None（I-030 组指代）。
 
@@ -991,13 +1076,16 @@ def label_hit(text: str, entry: dict) -> int | None:
       · 标签的 **2 字前缀**——产生方声明「川菜馆」而用户说的是「川菜」。
     中文品牌/品类词的判别信息几乎都在前缀；放开到「任意公共子串」就等于放弃判据。
     """
-    label = str((entry or {}).get("label") or "").strip()
-    if len(label) < _CANDIDATE_LABEL_MIN:
-        return None
-    for needle in (label, label[:_CANDIDATE_LABEL_MIN]):
-        at = str(text or "").find(needle)
-        if at >= 0:
-            return at
+    # W08：地点提示是第二条称呼通道——「万象城那批」与「科技园那批」标签都是「餐饮」，
+    # 只有查询里的地点分得开它们。两条通道同一套规则（整词 + 2 字前缀）。
+    for label in (str((entry or {}).get("label") or "").strip(),
+                  str((entry or {}).get("place_hint") or "").strip()):
+        if len(label) < _CANDIDATE_LABEL_MIN:
+            continue
+        for needle in (label, label[:_CANDIDATE_LABEL_MIN]):
+            at = str(text or "").find(needle)
+            if at >= 0:
+                return at
     return None
 
 
@@ -1337,6 +1425,10 @@ def extract_focus(plan, results) -> "Focus | None":
                         "is_fallback": bool(data.get("_fallback")),
                         "label": _candidate_label(data),
                         "items": items,
+                        # W08：这一组是**哪次查询**产的；同能力不同查询靠它共存
+                        "query_signature": step_fingerprint(step.intent or "", step.slots),
+                        "place_hint": _place_hint(step.slots),
+                        "revision": 1,
                     })
             continue
         domain = (step.intent or "").split(".")[0]
@@ -1381,6 +1473,10 @@ def extract_focus(plan, results) -> "Focus | None":
                     # 未声明 = 空串 = 这一组点不了名，行为逐字同旧。
                     "label": _candidate_label(data),
                     "items": items,
+                    # W08：查询签名 / 地点提示 / 版本（见上一处同款注释）
+                    "query_signature": step_fingerprint(step.intent or "", step.slots),
+                    "place_hint": _place_hint(step.slots),
+                    "revision": 1,
                 })
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
         # 搜索结果里的同名字段误当成下一轮“那边”的目的地。
@@ -1581,7 +1677,8 @@ class ContextManager:
             if not d:
                 return None
             valid = {f.name for f in fields(Focus)}
-            return Focus(**{k: v for k, v in d.items() if k in valid})
+            # W09：短时引用按 `focus_ts` 过期，活动状态照旧（各按自己的 ts 判活）
+            return expire_short_term(Focus(**{k: v for k, v in d.items() if k in valid}))
         except Exception as e:
             logger.debug("load_focus failed: %s", e)
             return None
@@ -1620,9 +1717,14 @@ class ContextManager:
                     # 版本，是两种东西**。首版键只有 (intent, purpose)，于是
                     # 「川菜 → 兜底美食」两轮同键，兜底当场把点名那份挤掉——
                     # N5 换了个地方原样复发（测试当场抓到）。
-                    def _key(s):
-                        return (s.get("source_intent"), s.get("purpose"),
-                                bool(s.get("is_fallback")))
+                    # W08 起键带第四维 `query_signature`：A 附近 / B 附近是两批共存，
+                    # 「换一批」是同键新版本（revision+1）。判据在 `candidate_merge_key`。
+                    _key = candidate_merge_key
+                    previous_by_key = {_key(s): s for s in merged}
+                    for entry in fresh:
+                        prior = previous_by_key.get(_key(entry))
+                        if prior is not None:
+                            entry["revision"] = int(prior.get("revision") or 1) + 1
                     fresh_keys = {_key(s) for s in fresh}
                     # 同键的旧组被本轮新组取代；其余原样留着，
                     # **ts 原样携带不续期**（时效从它产生那一刻起算）。
@@ -1678,6 +1780,7 @@ class ContextManager:
                 # 就会永久关掉接力（一个只该响一次的旗子变成了常态）。
                 focus.route_ended = False
                 focus.safety_alert_cleared = False
+                focus.focus_ts = time.time()          # W09：短时引用的寿命从此刻起算
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:
