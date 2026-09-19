@@ -1,4 +1,6 @@
-# G-05 待批改法：`.github/workflows/mobile-apk.yml`（CI/CD 配置，未应用）
+# G-05 改法：`.github/workflows/mobile-apk.yml` 冒烟 job 的 ABI 预检（2026-09-19 用户「都批准授权」后已应用）
+
+> 状态：已应用并提交（见 history）。下一次 cloud deploy 的 dry-run 会给出新的 workflow 树摘要 `target_ci_cd_sha256`，按 dev-guide「CI/CD 一次性摘要批准」流程过；读数仍要 dispatch 一次 `run_e2e=true`。
 
 只动 `e2e-smoke` job，`debug-apk` job 不动。三处：
 
