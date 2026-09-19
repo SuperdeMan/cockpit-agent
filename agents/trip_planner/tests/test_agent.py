@@ -11,6 +11,19 @@ def test_modify_rainy_days_swapped_indoor():
 
     agent = TripPlannerAgent()
 
+    # 被测的是「按 Day.weather 定位雨天并点名室内」这条确定性路径；重排室内安排的
+    # propose 不是被测对象——它在 LLM 不可达时本来就走 `_fallback_skeleton`。
+    # 2026-09-19 前这里用的是真 `LLMClient`：三次 `asyncio.run` 共用一个 agent，第二趟
+    # 两次 UNAVAILABLE（经系统代理各等一轮连接超时，单测 9s）后把 channel 留在已关闭的
+    # loop 上，第三趟在死 loop 上建 `UnaryUnaryCall` ⇒ 全量里那条
+    # `coroutine 'UnaryUnaryCall._invoke' was never awaited`（QA 交接页 §5 的 gRPC
+    # fixture 债务）就是它。显式给一个「不可达」替身：同一条兜底路径、零网络、零跨 loop 复用。
+    class _UnreachableLLM:
+        async def complete(self, *args, **kwargs):
+            raise RuntimeError("LLM Gateway error: UNAVAILABLE (test stub)")
+
+    agent.llm = _UnreachableLLM()
+
     def _trip(rain_day1: bool) -> Trip:
         w1 = {"date": "2026-07-18", "text": "大雨" if rain_day1 else "多云",
               "temp_high": "30", "temp_low": "26"}
