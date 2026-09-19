@@ -1102,3 +1102,25 @@ def test_an_ordinary_suspend_still_writes_nothing():
     """
     assert _suspend_with_card({"type": "merchant_order_preview"}) == []
     assert _suspend_with_card(None) == []
+
+
+def test_a_safety_statement_is_never_a_slot_answer():
+    """真栈（release `0d414816`，T47 收口探针 3 趟里 1 趟）：充电规划出了 `dest_choice` 选择卡之后，
+    「检查过了，机油灯已经灭了，恢复正常了」被**整句填进 `destination`**，答成
+    「暂时无法获取前往…的路线」；解除扫描只在云侧规划轮跑，这一句被挂起吃掉 ⇒ 机油灯永远清不掉。
+    反方向更危险：挂起期间说「机油灯亮了」同样会被当地址吞掉、登记不上。
+    判据：**安全信号是系统持有的事实，定义上就不是某个待补槽的值**（复用 `runtime.safety_signal`）。
+    """
+    from orchestrator.cloud.models import SessionState
+
+    pending = SessionState(
+        phase="wait_slot", pending_step_id="s1", missing_slots=["destination"],
+        completed_results={"s1": {"ui_card": {"type": "poi_list",
+                                              "purpose": "dest_choice"}}})
+    for text in ("检查过了，机油灯已经灭了，恢复正常了", "机油灯灭了",
+                 "红色机油灯亮了", "刹车有异响", "困到睁不开眼了",
+                 "规划去广州路上的补能，但先不要启动导航"):
+        assert PlannerEngine._is_topic_change(text, pending) is True, text
+    # 误伤对照：真正的目的地答案照旧是槽值
+    for text in ("广州南站", "白云机场", "第二个"):
+        assert PlannerEngine._is_topic_change(text, pending) is False, text

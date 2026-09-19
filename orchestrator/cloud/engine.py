@@ -30,6 +30,7 @@ from runtime import session_facts
 from runtime.execution_claim import execution_claim
 from runtime.clause_split import split_clauses
 from runtime.polarity import is_negated_directive
+from runtime.safety_signal import alert_level, alert_resolved, driver_state
 from .context import (ContextManager, build_context, candidate_downlink,
                       candidate_set_for, _is_choice_card,
                       references_a_candidate, resolve_candidate_scope,
@@ -1848,6 +1849,15 @@ class PlannerEngine:
         t = (text or "").strip()
         if not t:
             return False
+        # 安全信号是**系统持有的事实**，定义上就不是某个待补槽的值（2026-09-19 真栈，
+        # QA T47 收口）：充电规划的 `dest_choice` 挂起把「检查过了，机油灯已经灭了，恢复正常了」
+        # **整句填进 `destination`**，答成「暂时无法获取前往…的路线」——而解除扫描只在云侧
+        # 规划轮跑，这一句被挂起吃掉 ⇒ 焦点里的机油灯永远清不掉（3 趟里 1 趟）。反方向同样
+        # 成立且更危险：挂起期间说「机油灯亮了」会被当地址吞掉、**登记不上**——C1-B 那条
+        # 「登记挂在输入上」被一次挂起绕过。判据复用 `runtime.safety_signal`（唯一实现），
+        # 排在形状判据之前：任何槽的形状都不该把一条安全陈述认作自己的值。
+        if alert_level(t) or driver_state(t) or alert_resolved(t):
+            return True
         # C3-A **方向反转**：先问「这句话长得像不像这个槽的值」。形状由 capability
         # 声明（`slot_shapes`），判据本体是 `slot_shape.py` 的唯一实现（零领域词）。
         # 三值：不像=换题、定案=槽值、None=形状没意见，继续走下面的通用判据。
@@ -1925,6 +1935,8 @@ class PlannerEngine:
             "调高", "调低", "搜", "查", "订", "预订", "帮我",
             "导航", "带我去", "回家", "回公司", "回学校",
             "今天", "现在", "最近", "有没有", "怎么样", "多少",
+            # 2026-09-19 真栈：dest_choice 挂起把重复的「规划去广州路上的补能…」整句当地址。
+            "规划",
         )
         return any(t.startswith(v) for v in _verbs)
 
