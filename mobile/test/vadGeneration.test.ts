@@ -11,7 +11,7 @@
 //  ② stop 前已排队的旧窗口在 start 后一个都不跑（run 调用次数不涨）；
 //  ③ dispose 等在途推理落地再 release session；
 //  ④ 载模型期间被 stop：这次 start 作废，之后 accept 不推理。
-import { VAD_WINDOW, VadEngine } from '@/core/voice/vad'
+import { VAD_MAX_BACKLOG, VAD_WINDOW, VadEngine } from '@/core/voice/vad'
 
 interface Deferred<T> { promise: Promise<T>; resolve(v: T): void; reject(e: unknown): void }
 function deferred<T>(): Deferred<T> {
@@ -171,4 +171,31 @@ test('④ 载模型期间被 stop：这次 start 作废，之后 accept 不推�
   vad.accept(window())
   await drain()
   expect(session.runs).toHaveLength(1)
+})
+
+// ── G-01：积压有上限、丢窗要报数、耗时可读 ──
+test('⑤ 推理落后时积压封顶：多出的窗口丢推理不丢前滚，dropped 计数，落地后 backlog 回零', async () => {
+  const session = mockSession
+  const vad = new VadEngine(800)
+  await vad.start(cbs())
+  const ringed: number[] = []
+  vad.onWindow = (w) => ringed.push(w.length)
+  // 第一窗在飞（run 挂起），之后再喂 MAX + 5 窗：链里最多 MAX 个在等
+  vad.accept(window(VAD_MAX_BACKLOG + 6))
+  await drain()
+  expect(session.runs).toHaveLength(1)
+  expect(vad.stats()).toMatchObject({ backlog: VAD_MAX_BACKLOG, dropped: 6, processed: 0, lastInferMs: 0 })
+  expect(ringed).toHaveLength(VAD_MAX_BACKLOG + 6) // 前滚缓冲拿到全部窗口
+  // 逐个放行：每次 run 落地后下一窗才进 run；全部落地后 backlog 归零
+  for (let i = 0; i < VAD_MAX_BACKLOG; i += 1) {
+    session.finish(i, 0.1)
+    await drain()
+  }
+  expect(session.runs).toHaveLength(VAD_MAX_BACKLOG)
+  expect(vad.stats()).toMatchObject({ backlog: 0, dropped: 6, processed: VAD_MAX_BACKLOG })
+  expect(vad.stats().lastInferMs).toBeGreaterThanOrEqual(0)
+  // 新一轮从零计
+  vad.stop()
+  await vad.start(cbs())
+  expect(vad.stats()).toMatchObject({ backlog: 0, dropped: 0, processed: 0 })
 })

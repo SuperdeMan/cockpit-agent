@@ -33,6 +33,9 @@ class FakeVad {
   }
   accept() {}
   setSilenceTail() {}
+  stats() {
+    return { backlog: 0, dropped: 0, processed: 0, lastInferMs: 0, maxBacklog: 30 }
+  }
   stop() {
     this.running = false
   }

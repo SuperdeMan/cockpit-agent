@@ -377,8 +377,9 @@ export class HandsFreeController {
     this.deps.onBargeInDisabled?.('')
   }
 
-  stats(): { fsm: string; ringFrames: number; kws: unknown } {
-    return { fsm: this.vl.state, ringFrames: this.ring.frames, kws: this.kws.stats() }
+  stats(): { fsm: string; ringFrames: number; kws: unknown; vad: unknown } {
+    // vad 一列（G-01）：积压 / 丢窗 / 推理耗时——「说完了」判得慢到底是模型慢还是链攒着，只有它答得出
+    return { fsm: this.vl.state, ringFrames: this.ring.frames, kws: this.kws.stats(), vad: this.vad.stats() }
   }
 
   // ─── 内部 ───

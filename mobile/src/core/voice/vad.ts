@@ -19,6 +19,22 @@ import { SileroEndpoint } from '@shared/sileroEndpoint.mjs'
 
 /** silero v4（sherpa 打包的这份）的窗口长度，与 hmi/src/vadEngine.ts 逐字相同 */
 export const VAD_WINDOW = 512
+/** 推理积压上限（窗口数；32ms/窗 ⇒ 30 ≈ 1s 音频）。2026-09-19 G-01（GPT-6 评审 §五-3）：此前推理链没有上限，
+ *  推理慢于实时时延迟无声增长——「说完了」要等积压跑完才判得出来。取舍同 KWS 原生桥的 MAX_QUEUED_FRAMES：
+ *  宁可丢窗也不攒延迟，但丢了要报数（`stats().dropped`），不静默。丢的只是推理，前滚缓冲（onWindow）照收全部音频。 */
+export const VAD_MAX_BACKLOG = 30
+
+export interface VadStats {
+  /** 已入链、尚未落地的窗口数 */
+  backlog: number
+  /** 因积压满被丢掉的窗口数（本生命周期累计） */
+  dropped: number
+  /** 已落地的推理数（本生命周期累计） */
+  processed: number
+  /** 最近一次 session.run 的耗时（ms）；0 = 还没跑过 */
+  lastInferMs: number
+  maxBacklog: number
+}
 const STATE_DIMS = [2, 1, 64]
 
 export interface VadCallbacks {
@@ -85,6 +101,10 @@ export class VadEngine {
   private gen = 0
   /** 上一代还没落地的链（最多一次在途 `session.run` + 若干会立即返回的旧窗口）；`dispose()` 要等它 */
   private settling: Promise<void> = Promise.resolve()
+  private backlog = 0
+  private dropped = 0
+  private processed = 0
+  private lastInferMs = 0
   /** 512 样本窗旁路：控制器订阅它喂 `PcmRing` 前滚缓冲。
    *  **必须是 512 窗而不是进来的 1600 帧**——`pcmRing.mjs` 的 `takeLast(ms)` 按
    *  `FRAME_MS = 512/16000` 折算帧数，喂 1600 的帧会让「取 200ms」实际取到 700ms，
@@ -110,6 +130,11 @@ export class VadEngine {
 
   setSilenceTail(ms: number): void {
     ;(this.ep as any).cfg.minSilenceMs = ms
+  }
+
+  /** 积压 / 丢窗 / 推理耗时（诊断屏与 HandsFreeController.stats 读）。数字属于当前生命周期，start() 归零 */
+  stats(): VadStats {
+    return { backlog: this.backlog, dropped: this.dropped, processed: this.processed, lastInferMs: this.lastInferMs, maxBacklog: VAD_MAX_BACKLOG }
   }
 
   /** 预载模型（消除首帧 warmup）。原生缺席/模型缺失即抛，调用方据此禁用免唤醒。 */
@@ -145,6 +170,10 @@ export class VadEngine {
     this.c = this.zeroState()
     this.carry = new Float32Array(0)
     this.chain = Promise.resolve()
+    this.backlog = 0
+    this.dropped = 0
+    this.processed = 0
+    this.lastInferMs = 0
     this.running = true
     this.cb = cb
   }
@@ -164,10 +193,17 @@ export class VadEngine {
       const win = merged.slice(off, off + VAD_WINDOW)
       off += VAD_WINDOW
       this.onWindow?.(win) // 入环在推理入队**之前**，保证前滚缓冲的帧序（同 HMI）
+      // 积压满就丢这一窗的推理（不丢前滚音频），并计数——延迟不许无声增长（VAD_MAX_BACKLOG 注释）
+      if (this.backlog >= VAD_MAX_BACKLOG) {
+        this.dropped += 1
+        continue
+      }
+      this.backlog += 1
       // 串行化推理：h/c 是跨帧状态，乱序等于把状态机搅坏（同 HMI 的 chain）
       this.chain = this.chain
         .then(() => this.infer(win, gen))
         .catch((err) => { if (gen === this.gen) this.cb?.onError?.(String(err)) })
+        .then(() => { if (gen === this.gen) this.backlog = Math.max(0, this.backlog - 1) })
     }
     this.carry = merged.slice(off)
   }
@@ -175,9 +211,12 @@ export class VadEngine {
   private async infer(win: Float32Array, gen: number): Promise<void> {
     if (gen !== this.gen || !this.running || !this.session) return
     const x = new this.ort.Tensor('float32', win, [1, VAD_WINDOW])
+    const t0 = Date.now()
     const out = await this.session.run({ x, h: this.h, c: this.c })
     // 推理在飞时 stop()/start() 过：这是上一代的结果，整个丢掉（见 gen 字段注释）
     if (gen !== this.gen) return
+    this.lastInferMs = Date.now() - t0
+    this.processed += 1
     this.h = out.new_h
     this.c = out.new_c
     const prob = (out.prob.data as Float32Array)[0]
@@ -194,6 +233,7 @@ export class VadEngine {
     this.carry = new Float32Array(0)
     this.settling = this.chain
     this.chain = Promise.resolve()
+    this.backlog = 0
     this.ep.reset()
   }
 
