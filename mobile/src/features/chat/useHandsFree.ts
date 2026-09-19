@@ -95,6 +95,9 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   /** 上一次启动被麦克风权限拒绝（2026-09-19 真机）：scope 同步（回前台）**不再自动重试**——用户的决定不会自己改变，
    *  自动重试只会把系统权限弹窗刷成每 0.6s 一次的循环。显式动作（重新开关 = 新控制器、点光球 wake）才重试。 */
   const deniedRef = useRef(false)
+  /** 在途的 enable 尝试（effect 内的 scope 同步与 wake() 共用一份）：弹窗关闭时 AppState 'active' 先于权限结果到 JS，
+   *  前台同步看到它在途就不叠申请，等落地再决定（2026-09-19 真机：不登记 wake 那一路就仍会双弹） */
+  const attemptRef = useRef<Promise<void> | null>(null)
   // 回调用 ref 存：它们每次渲染都是新函数，进依赖会让控制器反复重建（=反复开关麦）。
   // **在 effect 里更新而不是渲染期直接赋值**：渲染期写 ref 违反 React 的纯度约束
   // （react-hooks/refs），且并发渲染下会写到被丢弃的那次渲染上。
@@ -230,11 +233,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     // 一次 enable 尝试从发起到落地（成功 / 作废 / 失败）的句柄。前台同步在它还没落地时**不叠一次新申请**：
     // 系统权限弹窗关闭时 AppState 'active' 会先于权限结果到 JS，那一刻再 enable 就是多弹一次窗（2026-09-19 真机：
     // 每次显式尝试弹两次）。等它落地：拒绝 ⇒ 上闩不再申请；作废（用户真的离开过）⇒ 再同步一次。
-    let attempt: Promise<void> | null = null
     let followUp = false
     const startEnable = () => {
-      const p: Promise<void> = ctl.enable().then(onEnabled).catch(onEnableError).finally(() => { if (attempt === p) attempt = null })
-      attempt = p
+      const p: Promise<void> = ctl.enable().then(onEnabled).catch(onEnableError).finally(() => { if (attemptRef.current === p) attemptRef.current = null })
+      attemptRef.current = p
     }
     // Zustand 通知同步发生：设置关掉的同一调用栈就撤回采集，不能等 React effect。
     const unsubscribeSettings = settingsStore.subscribe((state, previous) => {
@@ -248,6 +250,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     const syncScope = () => {
       if (opts.scope && !opts.scope.canCapture()) { void ctl.disable().catch(() => {}); return }
       if (pausedRef.current || deniedRef.current || !settingsStore.getState().settings.handsFree) return
+      const attempt = attemptRef.current
       if (attempt) {
         if (!followUp) {
           followUp = true
@@ -324,7 +327,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       // 用户显式点了光球：暂停的恢复、权限被拒后的再申请都从这里走
       pausedRef.current = false
       deniedRef.current = false
-      void ctl.enable().then(() => {
+      const p: Promise<void> = ctl.enable().then(() => {
         if (ctlRef.current !== ctl || !ctl.enabled) return
         setError('')
         setErrorKind('')
@@ -335,7 +338,8 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         if (kind === 'permission') deniedRef.current = true
         setError(e instanceof Error ? e.message : String(e))
         setErrorKind(kind)
-      })
+      }).finally(() => { if (attemptRef.current === p) attemptRef.current = null })
+      attemptRef.current = p // 这一路的申请也算在途：弹窗关闭回前台时 syncScope 不叠第二次
     } else ctl.wakeManually()
   }, [])
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])

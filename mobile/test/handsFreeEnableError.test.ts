@@ -247,3 +247,35 @@ test('权限结果还没回来就回到前台：不叠申请；结果是拒绝 �
     await act(async () => view.unmount())
   }
 })
+
+// 真机第三轮（96c8361bb）：设置页路径恰一次弹窗，但点光球（wake）那一路仍双弹——它的 enable 没登记为在途
+test('点光球再申请：弹窗关闭回前台时不叠第二次；结果拒绝 ⇒ 仍上闩', async () => {
+  const scope = new InteractionScope({ route: '/', foreground: true, focused: true })
+  const denied = new Error('录音权限未授予')
+  denied.name = 'PermissionDeniedError'
+  mockEnableFailure = denied
+  const h = mount(scope)
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(createElement(h.Probe)) })
+  try {
+    const ctl = mockControllers[0]
+    expect(ctl.enable).toHaveBeenCalledTimes(1)
+    expect(h.ui().errorKind).toBe('permission')
+    // 用户点光球：再问一次（弹窗在等）
+    const gate = { resolve: () => {}, reject: (_e: Error) => {} }
+    mockEnableFailure = null
+    mockEnablePending = gate
+    await act(async () => { h.ui().wake() })
+    expect(ctl.enable).toHaveBeenCalledTimes(2)
+    await act(async () => { scope.update({ foreground: false }) })
+    await act(async () => { scope.update({ foreground: true }) })
+    expect(ctl.enable).toHaveBeenCalledTimes(2) // wake 的申请在途：前台同步不叠
+    mockEnablePending = null
+    await act(async () => { gate.reject(denied) })
+    expect(h.ui().errorKind).toBe('permission')
+    await act(async () => { scope.update({ foreground: false }); scope.update({ foreground: true }) })
+    expect(ctl.enable).toHaveBeenCalledTimes(2)
+  } finally {
+    await act(async () => view.unmount())
+  }
+})
