@@ -9295,3 +9295,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   bash `until verify` 循环（MSYS 下每 45 s 抢远端锁），`TaskStop` 后立刻绿——cloud 命令只在 PowerShell 前台跑、不写轮询。
 - 未做 / 待裁决：W10 澄清续接（改 HMI / Android 契约）、W06 DialogueDecision（改 Planner 输出契约，要 A/B）、W07 TaskFrame；P2 / P3 按评审原表。
   顺带观察记在设计文档 §4.3：planner 对「X 附近的餐厅」槽位三次三样、纯偏好陈述常落技术失败出口、探针会写进共享 e2e 用户画像。
+
+### 同批追加 — E-23 四层收敛：`49dacc1f2` 仍循环 → `10f29b594` 双弹 → `96c8361bb` 光球路径双弹 → `cebd53848` 闭合
+
+- `49dacc1f2`（三段修法）真机仍 485 次弹窗：第四段在 `HandsFreeController.enableNow` 的 catch——作废尝试的任何异常都静默吞掉，`enable()` 正常 resolve、hook 的 `onEnabled` 顺手清了原因、闩永远上不了。
+  修 `10f29b59`（作废遇 `PermissionDeniedError` 仍抛、不动 `requested`；`onEnabled` 只在 `ctl.enabled` 时清），控制器级用例 + 变异红。
+- `10f29b594`：循环消失（4 次）、错误行出现、开关保持开；但每次显式尝试双弹——弹窗关闭时 AppState 'active' 先于权限结果到 JS。修 `96c8361b`（前台同步看到在途尝试就等落地再决定；拒绝上闩、作废再同步一次）。
+- `96c8361bb`：设置页恰 1 次；点光球仍双弹（`wake()` 的 enable 没登记在途）。修 `cebd5384`（`attemptRef` 两路共用）。
+- `cebd53848`：**弹窗恰 2 次（设置页 1 + 点光球 1）、错误行在、开关保持开、拒绝期间零录音会话、JS 零错误**；还原后冷启动正常开麦。常驻包 `cebd53848`。
+- 每层都是真机读数 → 单测复现 → 变异判红 → 出包复验；四个候选包各 8–11 分钟。每次 push 前单独一步列 `origin/main..HEAD`（本轮三次都只有本会话的一条）。

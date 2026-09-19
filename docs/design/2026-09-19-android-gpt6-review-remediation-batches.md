@@ -196,9 +196,9 @@ FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到�
 | 构建行 | ✅ `v0.1.0 · prod · 96b39b263 · 2026-09-19 19:56` | `probe_g.log` |
 | G-01 读数进时间线 | ✅ 免唤醒开 → 点光球手动唤醒 → `/turn-timeline`：`+0 input_gesture(wake)  +0 capture_started(vad b0 d0 2ms)`（积压 0、丢窗 0、上次推理 2ms） | `g01-timeline-96b39b26.png/.xml` |
 | G-04 清除记录 | ✅ 「清除对话记录」→ 确认 → 结果行 `已清除当前会话与本机记录（21:18:34，删完已回读确认）`；冷启动后记录 0 条 | `g04-result-96b39b26.png`、`g04-report-96b39b26.json` |
-| G-06 权限分支 | ❌ **错误行没出现，反而抓到一个真缺陷**（下一节）：撤麦克风权限（`pm revoke` 被 ColorOS 拒 `REVOKE_RUNTIME_PERMISSIONS`，改走系统设置「麦克风权限 → 不允许」）→ 开免唤醒 → 系统弹窗「拒绝」→ 开关亮着、无错误行、AudioService 无录音会话，logcat 里 `GrantPermissionsActivity` 每 ~0.6s 拉起又关闭，持续 4 分钟直到 force-stop | `g06b-after-deny-96b39b26d.png`、`g06b-after-idle-96b39b26d.png`、logcat 21:07:02–03 |
+| G-06 权限分支 | ❌ 在 `96b39b263` 上错误行没出现，反而抓到真缺陷 E-23（§6.12）；**在 `cebd53848` 上闭合**（§6.14）：错误行「免唤醒没有启动：录音权限未授予。请在系统设置里允许小舟随行使用麦克风」、开关保持开 | `GPT6F-…/e23-error-cebd5384.png/.xml` |
 
-### 6.12 真缺陷：麦克风权限被拒后免唤醒无限重发权限请求（E-23，已修 `33cd199d`，待装机复验）
+### 6.12 真缺陷：麦克风权限被拒后免唤醒无限重发权限请求（E-23，`33cd199d` → `10f29b59` → `96c8361b` → `cebd5384` 四层，真机闭合见 §6.14）
 
 机制（三段各一处，缺一段都不成环）：① 系统权限弹窗本身把 App 切到后台 ⇒ AR04 前后台闸 `syncScope → ctl.disable()`；② `recorder.startNative` 的代际检查在状态检查**之前**，
 用户点「拒绝」回来的 `Denied` 被当作「申请已作废」静默返回，不抛 `PermissionDeniedError`；③ 弹窗关闭回前台 ⇒ `syncScope → ctl.enable()` ⇒ 再申请 ⇒ 再弹窗 ⇒ 回到 ①。
@@ -206,6 +206,19 @@ FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到�
 ② `onEnableError` 只认控制器身份不认 `allowed()`（弹窗那一刻 `foreground=false`，按 allowed 过滤恰好把「用户拒绝了」丢掉）；③ 权限拒绝上闩：scope 同步不再自动 enable，
 用户重新开关（新控制器）或点光球才再申请。用例：`recorderCapture.test` +1（申请期间被撤回：Denied 仍抛 / Granted 迟到仍不开麦）、`handsFreeEnableError.test` +1
 （弹窗切后台、拒绝、回前台不再申请、点光球重试成功即清）；三处变异各自判红。mobile jest 111 suites / 1138、tsc 0、eslint 0。**候选包待出**（工作树有别的会话未提交的改动，clean 树构建要等它提交）。
+
+### 6.14 E-23 三个候选包的收敛读数（同一探针 `probe_e23.py`：撤权 → 开免唤醒 → 拒绝 → 等 30s → 点光球再申请 → 拒绝；数 logcat `REQUEST_PERMISSIONS` 的 START）
+
+| 包 | 修了什么 | 弹窗次数 / KWS 加载 | 错误行 | 判定 |
+|---|---|---|---|---|
+| `96b39b263` | 只有 G-06 显示 | 485 / 486（90s 内） | 无 | 死循环（E-23 露出） |
+| `49dacc1f2`（= `33cd199d` 三段修法） | recorder Denied 不吞 / 失败只认控制器身份 / 权限拒绝上闩 | 485 / 486 | 无 | **仍循环**：第四段——`HandsFreeController.enableNow` 的 catch 把作废尝试里的任何异常静默吞掉，`enable()` 正常 resolve，hook 的 `onEnabled` 还把原因清掉 |
+| `10f29b594`（+ `10f29b59`） | 作废的 enable 遇 `PermissionDeniedError` 仍抛；`onEnabled` 只在 `ctl.enabled` 时清 | 4 / 4 | ✅ | 循环消失；每次显式尝试仍**双弹**：弹窗关闭时 AppState 'active' 先于权限结果到 JS，`syncScope` 在闩上闩前又 enable 一次 |
+| `96c8361bb`（+ `96c8361b`） | 前台同步看到在途尝试就等它落地再决定 | 3 / 3 | ✅ | 设置页路径恰 1 次；点光球（`wake()`）那一路没登记在途仍双弹 |
+| **`cebd53848`**（+ `cebd5384`） | `wake()` 的 enable 也登记为在途（`attemptRef`） | **2 / 2**（设置页 1 + 点光球 1） | ✅ | **闭合**：拒绝期间零录音会话（AudioService），JS 零错误；权限与开关还原后下一次冷启动正常开麦（23:37:01） |
+
+每一层都是「真机读数 → 单测复现 → 变异判红 → 出包复验」；四层的用例都在 `handsFreeEnableError.test`（7 条）与 `handsFree.test`（E-23 一条）、`recorderCapture.test`（+1）。
+**OPPO 常驻包现为 `cebd53848`**（APK SHA-256 `d7ddd330…f982`，`lastUpdateTime 2026-09-19 23:33:46`）。
 
 ### 6.13 过程事故：一次推送带走了别的会话的两条提交
 
@@ -223,5 +236,5 @@ FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到�
 | 第三批固定包验收五维 × 四态 | 总表 D-05 / D-06 + 本页 §3 |
 | G-02 / G-03 | G-02 接真实导航执行前（manifest 链路）；G-03 产品裁决 |
 | G-05 读数 | 已应用；要你 dispatch 一次 `run_e2e=true` 才有 ABI / 安装 / .so 加载三个读数 |
-| G-06 权限分支真机复验 + E-23 循环修复复验 | 等 clean 树出 `33cd199d` 之后的候选包（别的会话的未提交改动在工作树里） |
+| G-06 权限分支 + E-23 | **已闭合**（§6.14，`cebd53848`） |
 | G-06 引擎成因分支真机 | 没有不改代码就能造出的引擎失败；留给候选包 + 慢解码替身（D-08） |

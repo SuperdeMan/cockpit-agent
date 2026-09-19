@@ -223,6 +223,6 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 | G-03 | H | 未知执行结果按副作用分类（只读 / 绝对值 / 相对调整与支付） | 接真车 / 支付前一起裁 | remediation §4 |
 | ~~G-04~~ | E | `clearHistory()` 吞异常、界面清空 ≠ 持久化删除成功 | **已做 `adddfa2a`**：回读为准 + 设置页结果行 | `core/session/history.ts`、`SettingsScreen.tsx` |
 | G-05 | H | CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | **已应用 `96b39b26`**（用户批准的 CI/CD 改动；下次 deploy 过一次性 `ci_cd` 摘要批准）。**读数未取**：要 dispatch `run_e2e=true` | `.github/workflows/mobile-apk.yml` |
-| D-10 | D | 候选包 `96b39b263` 装机 + G-01 / G-04 / G-06 真机取证 | **已装为常驻包**（20:16）；G-01 ✅ 时间线 `capture_started(vad b0 d0 2ms)`、G-04 ✅ 结果行 + 冷启动 0 条；G-06 权限分支 ❌ 露出 E-23。剩：`33cd199d` 之后的候选包复验 G-06 错误行与循环消失 | remediation §6.11 |
-| E-23 | E | **麦克风权限被拒后免唤醒无限重发权限请求**（系统弹窗每 0.6s 闪一次、4 分钟不停；旧包同样有） | **已修 `33cd199d`**：recorder 的 `Denied` 不被代际吞掉、失败只认控制器身份、权限拒绝后 scope 同步不自动重试；待装机复验 | `core/voice/recorder.ts`、`features/chat/useHandsFree.ts`；`recorderCapture.test` +1、`handsFreeEnableError.test` +1 |
+| ~~D-10~~ | D | 候选包装机 + G-01 / G-04 / G-06 真机取证 | **全部闭合**：`96b39b263` 上 G-01 ✅ / G-04 ✅；`cebd53848` 上 G-06 权限分支 ✅ + E-23 ✅。OPPO 常驻包现为 `cebd53848` | remediation §6.11 / §6.14 |
+| ~~E-23~~ | E | **麦克风权限被拒后免唤醒无限重发权限请求**（系统弹窗每 0.6s 闪一次、4 分钟不停；旧包同样有） | **已修并真机闭合**（`33cd199d` → `10f29b59` → `96c8361b` → `cebd5384` 四层：recorder Denied 不吞 / 失败只认控制器身份 / 权限拒绝上闩 / 作废的 enable 遇拒绝仍抛 / 前台同步等在途尝试落地 / wake 也登记在途）；`cebd53848` 上弹窗恰 2 次（设置页 1 + 点光球 1）、错误行在、开关保持开 | remediation §6.12 / §6.14 |
 | R-06 | R | 共享代码脱离 `hmi/` 目录 | 不改：搬目录不解决任何本次发现的问题 | — |
