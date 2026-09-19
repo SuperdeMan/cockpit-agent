@@ -77,6 +77,14 @@ export class VadEngine {
   private carry = new Float32Array(0)
   private running = false
   private chain: Promise<void> = Promise.resolve()
+  /** 生命周期代际（2026-09-19 GPT-6 评审 F01）。`start()` / `stop()` 各推进一代；`accept()` 入队时把当时的代
+   *  写进每个窗口，`infer` 在 `session.run` **前后**都比对——不同代的结果整个丢掉：不写 `h/c`、不喂端点、不调回调。
+   *  为什么只换 `chain` 不够：`stop()` 把 `this.chain` 换成新 Promise，但旧链对象上已经 `.then` 上去的窗口
+   *  会照常逐个执行，`start()` 之后 `running` 又是 true ⇒ 整段旧积压会喂进新一轮的状态与回调，
+   *  而且旧推理读到的 `this.cb` 是**新**回调，外层 `HandsFreeController.epoch` 对此无能为力。 */
+  private gen = 0
+  /** 上一代还没落地的链（最多一次在途 `session.run` + 若干会立即返回的旧窗口）；`dispose()` 要等它 */
+  private settling: Promise<void> = Promise.resolve()
   /** 512 样本窗旁路：控制器订阅它喂 `PcmRing` 前滚缓冲。
    *  **必须是 512 窗而不是进来的 1600 帧**——`pcmRing.mjs` 的 `takeLast(ms)` 按
    *  `FRAME_MS = 512/16000` 折算帧数，喂 1600 的帧会让「取 200ms」实际取到 700ms，
@@ -128,7 +136,10 @@ export class VadEngine {
   /** 开始判定。调用方负责把 micBus 的帧喂进 `accept`。 */
   async start(cb: VadCallbacks): Promise<void> {
     if (this.running) return
+    const gen = ++this.gen
     await this.load()
+    // 载模型期间被 stop() 了（或被更晚的 start() 接管）：这一次 start 作废，不能把 running 再翻回 true
+    if (gen !== this.gen) return
     this.ep.reset()
     this.h = this.zeroState()
     this.c = this.zeroState()
@@ -143,6 +154,7 @@ export class VadEngine {
   /** 喂一帧 16k mono s16le（micBus 的形态）。内部重切成 512 样本窗口。 */
   accept(frame: Int16Array): void {
     if (!this.running) return
+    const gen = this.gen
     // s16 → float，接上上一帧的余数
     const merged = new Float32Array(this.carry.length + frame.length)
     merged.set(this.carry, 0)
@@ -154,16 +166,18 @@ export class VadEngine {
       this.onWindow?.(win) // 入环在推理入队**之前**，保证前滚缓冲的帧序（同 HMI）
       // 串行化推理：h/c 是跨帧状态，乱序等于把状态机搅坏（同 HMI 的 chain）
       this.chain = this.chain
-        .then(() => this.infer(win))
-        .catch((err) => this.cb?.onError?.(String(err)))
+        .then(() => this.infer(win, gen))
+        .catch((err) => { if (gen === this.gen) this.cb?.onError?.(String(err)) })
     }
     this.carry = merged.slice(off)
   }
 
-  private async infer(win: Float32Array): Promise<void> {
-    if (!this.running || !this.session) return
+  private async infer(win: Float32Array, gen: number): Promise<void> {
+    if (gen !== this.gen || !this.running || !this.session) return
     const x = new this.ort.Tensor('float32', win, [1, VAD_WINDOW])
     const out = await this.session.run({ x, h: this.h, c: this.c })
+    // 推理在飞时 stop()/start() 过：这是上一代的结果，整个丢掉（见 gen 字段注释）
+    if (gen !== this.gen) return
     this.h = out.new_h
     this.c = out.new_c
     const prob = (out.prob.data as Float32Array)[0]
@@ -174,16 +188,21 @@ export class VadEngine {
   }
 
   stop(): void {
+    this.gen++
     this.running = false
     this.cb = null
     this.carry = new Float32Array(0)
+    this.settling = this.chain
     this.chain = Promise.resolve()
     this.ep.reset()
   }
 
-  /** 彻底释放（App 卸载）。session 释放后要重新 load 才能再用。 */
+  /** 彻底释放（App 卸载）。session 释放后要重新 load 才能再用。
+   *  **先等在途推理落地再 release**：`session.run` 还在原生里跑时释放 session 是悬空指针，
+   *  旧代的结果本身已由 gen 挡住，这里只是不让释放跑到它前面。 */
   async dispose(): Promise<void> {
     this.stop()
+    await this.settling.catch(() => {})
     try {
       await this.session?.release?.()
     } catch {
