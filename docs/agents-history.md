@@ -9224,3 +9224,18 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 测试遮丑的现成例子：F03 第一版用例只把失败注在第一笔写入上，对旧实现居然绿（旧实现先写 token 后写地址，只有第二笔失败才露馅）⇒ 改成两个注入点各跑一遍、
   终态只许完整 A 或完整 B。
 - 未做：commit / push / deploy / 装机；F02 通话期间采集策略、F07 运行时压力、系统音频五维 × 四态取证都归候选包（D-08 / D-09）。
+
+### 同批追加 — 用户「授权提交推送装机」：提交 8 个、push、候选包 `0a6a19e68` 装机与真机取证
+
+- 提交：七条各一个 commit（`6931968f` F01 → `18b83d5c` F02 → `bc7e07c3` F03 → `4a7bf2ae` F04 → `48cabf14` F05 → `abcc0ab7` F06 → `15fb4c0a` F07）+ docs `0a6a19e6`；
+  `origin/main == 2f3c574d` 无他人提交 → push `2f3c574d..0a6a19e6` → GitHub check-runs 8/8 success（无 gh CLI：公开 API `commits/<sha>/check-runs` 直接可读）。
+- 候选包：clean 树、`-Release -Variant prod -CompileJobs 3`（同上一候选包参数复用 `.cxx`）、runner 落仓库外证据目录；BUILD SUCCESSFUL 11m19s，验包 `variant=prod build=0a6a19e68`；
+  `install -r` OPPO → `lastUpdateTime 2026-09-19 18:21:49`、端本 SHA-256 `4f28e8ea…351b` 一致、非 DEBUGGABLE；常驻包由 `d32f81c23` 换成 `0a6a19e68`。
+- 真机（全 adb）：升级后冷启动落对话页 + 设置页构建行 `v0.1.0 · prod · 0a6a19e68 · 2026-09-19 18:09`（= v1 两键配置迁移成功、未落引导页）；
+  **同一进程 3 轮免唤醒开 / 关：`KWS loaded` ×3（点击后 0.63–0.68s）、AudioService 录音会话 3 开 3 停、零 stale / STUCK / JS 错误**；`hello` 文本轮发出并收到回答（无 link-lost）。
+- 首次探针一格异常留档未定性：三次「开」只有两条 `KWS loaded`，AudioService 第二次「关」是 `silenced + release` 后 3.4s 又开了麦；带时间戳 + 连续 logcat 的专项复跑 3/3 未复现，
+  首跑 dump 与点击交错嫌疑最大。
+- 装置坑：`useHandsFree` 启动失败**不弹回开关**（README 说法不成立，新立 G-06）⇒ 开关回读 true 不是「免唤醒起来了」的证据，要看 `KWS loaded` + `dumpsys audio` 的 recording activity 事件表；
+  折叠屏 `screencap` 必须 `-d <display-id>`；对话页 uiautomator dump 要重试；FlashList 节点数不能当新消息判据；`mobile_device.ps1 -Role test` 无参数调用在这台机会挂住（`-Install` 路径正常），
+  改用 `adb devices -l` 直读。
+- 服务端未 deploy：本批零 Python 改动；`hmi/src/ws.mjs`（F06）在云端 HMI 上要等下一次 deploy。

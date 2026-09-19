@@ -204,7 +204,7 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 ## 10. 2026-09-19 追加：GPT-6 Pro 外部评审七条（F01–F07）
 
 出处：[评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)（基线 `0d414816`）+ [逐条核对与分批待办](2026-09-19-android-gpt6-review-remediation-batches.md)（那一页是这份评审的唯一入口，本节只登记去向）。
-七条核对：五条成立、F01 成立且更糟（旧链上的整段积压都会喂进新一轮）、F07 条件性成立；零不成立。第一批 F01–F04 与第二批 F05–F07 当日全部落地、本地全绿（mobile jest 110 suites / 1129、hmi 338、tsc / eslint 0、`:kws:compileReleaseKotlin` 过），**未提交 / 未 push / 未装机**。
+七条核对：五条成立、F01 成立且更糟（旧链上的整段积压都会喂进新一轮）、F07 条件性成立；零不成立。第一批 F01–F04 与第二批 F05–F07 当日全部落地、本地全绿（mobile jest 110 suites / 1129、hmi 338、tsc / eslint 0、`:kws:compileReleaseKotlin` 过）；用户授权后**已提交（`6931968f`…`0a6a19e6`）、已 push（CI 8/8）、候选包 `0a6a19e68` 已装 OPPO 为常驻包**（APK SHA-256 `4f28e8ea…351b`，真机：同一进程 3 轮免唤醒开关 `KWS loaded` ×3 零 stale、升级后配置保留、文本轮收发正常；remediation §6.8–6.9）。服务端未 deploy。
 
 | ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
 |---|---|---|---|---|
@@ -214,7 +214,8 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 | E-19 | E | F04 定位撤销不贯穿在途请求：等坐标 / 拼帧 / 离线补发三个时点都不看开关 | **已修**：桥返回前重查、拼帧时只在开着才带坐标、队列 `canSend` 带坐标 ∧ 已关 ⇒ 不发 + `LOCATION_REVOKED_TEXT` | `core/location/appLocation.ts`、`core/session/store.ts`；`locationRevocation.test` 6（三处变异各红一条） |
 | E-20 | E | F05 录音重启同一非 16k 采样率不再重建重采样器 ⇒ 48k 原样下传 | **已修**：`startNative` 把 `_deviceRate` 与 resampler 一起归零 | `core/voice/recorder.ts`；`recorderResample.test` 4（HEAD 2/4 红） |
 | E-21 | E | F06 `ws.mjs` flush 抛错后无恢复、`send()` 越过队列 | **已修**（共享传输层，HMI 正常路径逐字不变）：抛错 ⇒ 留队首 + 判死重连；有积压不越过；直发抛错不上抛。同步抛错 = 帧未写出（核实过的语义），AR01 R04「发送状态未知」用例按此改写 | `hmi/src/ws.mjs`；`ws.test.mjs` +5（HEAD 5/5 红）、`sessionLifecycle.test` R04 ×2 |
-| E-22 | E | F07 KWS join 超时后仍 `running=true` 重载 ⇒ 卡在 JNI 的旧线程醒来消费新队列 | **已修（源码 + 单模块编译）**：每条 worker 自带 `alive`；join 超时进 `stale`，确认退出前 load 抛 `KWS_WORKER_STUCK` | `modules/kws/.../KwsModule.kt` |
+| E-22 | E | F07 KWS join 超时后仍 `running=true` 重载 ⇒ 卡在 JNI 的旧线程醒来消费新队列 | **已修 + 真机同进程 3 轮 release→load 闭合**：每条 worker 自带 `alive`；join 超时进 `stale`，确认退出前 load 抛 `KWS_WORKER_STUCK`。慢解码替身压力仍归 D-08 | `modules/kws/.../KwsModule.kt` |
+| G-06 | E | `useHandsFree` 启动失败不弹回开关、`hf.error` 无可读落点（README 说法与代码不符） | 待排：做出来或改文档 + 落到设置页 | `features/chat/useHandsFree.ts`、`SettingsScreen.tsx` |
 | D-08 | D | F07 运行时压力（慢解码替身、加载 / 释放 / 重复启停）+ F02 通话期间 recorder 收到什么 | 候选包 + 真机 | remediation §6.7 / §5 |
 | D-09 | D | 系统音频五维（声音 / 播放器 / FSM / 采集 / 上行）× 四态（主 TTS / S2S / LISTENING / FOLLOWUP）：焦点丢失、耳机断开、系统中断 | 同一候选包；与 D-05 / D-06 合并取证 | `audioFocusLog()` 的 `stoppedVia` 一列 |
 | G-01 | E | VAD 积压无上限、无观测 | 待排（F01 之后积压计数才有意义） | remediation §4 |

@@ -1,6 +1,6 @@
 # GPT-6 Pro Android 评审：逐条核对 + 分批待办（2026-09-19）
 
-> 状态：**2026-09-19 立卡 + 第一批 / 第二批同日实施完毕（本地验证全绿，未提交 / 未 push / 未装机）**。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
+> 状态：**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
 > （外部评审，基线 `0d414816`）。本页是这份评审的唯一待办入口：先按「接手别人的卡先重新证机制」逐条对着代码核，
 > 再分批推进；核不成立的条目写明为什么，不照单全收。与 [Android 剩余待办总表](2026-09-14-android-remaining-todos.md)
 > 的关系：本页只管评审新提出的事项，评审里与总表既有条目重合的建议一律指回总表，不另立卡（§4）。
@@ -22,7 +22,7 @@
 | 评审基线 | `0d414816`（评审自述；未跑 Jest、未构建、未真机） |
 | 评审证据形态 | 5 组「模拟依赖的最小逻辑复现」——**不在本仓库**（沙箱 zip 未交付）；本页每条自己重证 |
 | 本页核对基线 | `2f3c574d`（mobile 与 `0d414816` 逐字相同） |
-| 本页不做 | push、deploy、改 `.env` / CI、装机、真人语音；原生 Kotlin 改动只做源码级修改 + 镜像工作区单模块编译（§6.7），运行时验证归候选包 |
+| 本页不做 | deploy、改 `.env` / CI、真人语音；push 与装机在用户授权后已做（§6.9） |
 
 ## 2. 逐条核对
 
@@ -69,7 +69,7 @@
 - 不 push、不 deploy、不改 `.env` / CI / 安全组；不装机、不取真人语音；
 - 通话期间的采集策略（F02 的「采集」维）留给真机：先看 `react-native-audio-api` 在来电时给 recorder 什么，再决定要不要在 FSM 外加一条「系统占麦」事实。
 
-## 6. 实施记录（2026-09-19，工作树基线 `2f3c574d`，未提交）
+## 6. 实施记录（2026-09-19，工作树基线 `2f3c574d` → 提交 `6931968f`…`0a6a19e6`）
 
 本地验证（工作树 = `2f3c574d` + 本页改动）：mobile jest **110 suites / 1129 passed**（09-14 基线 97 / 1020；+5 新 suite、+2 改写）、
 `tsc --noEmit` 0、`eslint .` 0；hmi `node --test src/*.test.mjs` **338 passed**（ws 25 = 原 20 + F06 5）；
@@ -146,11 +146,40 @@
   ⚠ `--offline` 跑不了（`onnxruntime-react-native` 的 buildscript 依赖没缓存）；`--rerun-tasks` 会把整个依赖图重跑，别用。
 - 未做：运行时压力测试（慢解码替身、加载 / 释放 / 重复启停）——要候选包 + 真机，归第三批。
 
-### 6.8 本批未达与去向
+### 6.8 提交、推送、候选包、真机（用户「授权提交推送装机」）
+
+- 提交：七条各一个 commit + docs 一个（§头注）；`origin/main..HEAD` 逐条列过（无他人提交夹在中间）→ push `2f3c574d..0a6a19e6`；
+  GitHub check-runs **8/8 success**（frontend hmi / dashboard、go-build-test、mobile、intent-eval-baseline、e2e-contract、python-tests 3.11 / 3.12）。
+- 候选包：clean 树 `0a6a19e6`，`build_mobile.ps1 -Release -Variant prod -CompileJobs 3`（与上一候选包同参数复用 `.cxx`；GRADLE_OPTS `-Xmx2048m`），
+  仓库外 runner `%LOCALAPPDATA%\car-agent\artifacts\GPT6-20260919-180825-0a6a19e6\`（`run-build.ps1` / `build.log` / `result.json` exit 0），
+  BUILD SUCCESSFUL 11m19s（1263 任务：766 执行 / 497 缓存），脚本验包 `variant=prod build=0a6a19e68`、签名指纹不变；
+  落点 `D:\Android\builds\apk\xiaozhou-companion-prod-release-0a6a19e68-20260919-1820.apk`，**APK SHA-256 `4f28e8ea…351b`**（212,474,718 B）。
+- 装机：`mobile_device.ps1 -Role test -Install`（`install -r` 保留数据）→ OPPO `919fd6f9` `lastUpdateTime 2026-09-18 18:11:57 → 2026-09-19 18:21:49`，
+  flags 无 DEBUGGABLE；设备 `pm path` + `sha256sum` 与本地逐字相同。**OPPO 常驻包现为 `0a6a19e68`**（上一包 `d32f81c23`）。
+
+### 6.9 真机取证（OPPO，包 `0a6a19e68`，证据目录同上，探针 `probe_gpt6.py` / `probe_hf_cycles.py` / `probe_text_turn.py`，全 adb 无 Maestro）
+
+| 格 | 结果 | 证据 |
+|---|---|---|
+| 身份 | ✅ 端本 SHA-256 一致、非 DEBUGGABLE、`lastUpdateTime 18:21:49` | `report-0a6a19e6.json` |
+| F03 迁移（旧包 v1 两键 → 升级后仍已配置） | ✅ 升级后冷启动落对话页、设置页可达、文本轮能发能收 ⇒ 未落引导页 = 迁移成功（v2 键本身无 root 读不到，观察面是「配置保留」） | `settings-build-0a6a19e6.png`、`text-turn2-display-6531.png` |
+| 构建行 | ✅ `v0.1.0 · prod · 0a6a19e68 · 2026-09-19 18:09` | `settings-build-0a6a19e6.xml` |
+| F07 / F01 运行时（同一进程内 release→load） | ✅ 专项复跑 3 轮开 / 关：`KWS loaded` ×3（点击后 0.63–0.68s）、AudioService 录音会话 ×3 开（加载后 ~0.1s）/ ×3 干净 `rec stop`、零 stale / `KWS_WORKER_STUCK` / decode failed / JS 错误；开关逐次回读一致 | `hf-cycles-summary.json`、`hf-cycles-logcat.txt`、`hf-cycles-audio-events.txt` |
+| 同上，首次探针 | ⚠ 冷启 + 进程内 4 次回读全 OK，但 `KWS loaded` 只有 2 条（三次「开」）；AudioService 显示第二次「关」是 `silenced + release` 而非 `rec stop`，随后 3.4s 有一次没有 KWS 日志的开麦。专项复跑（时间戳 + 连续 logcat）3/3 未复现；首跑 dump 与点击交错、装置嫌疑最大，**未定性、留档** | `logcat-kws-0a6a19e6.txt`、`probe.log`、§6.9 |
+| F06 正常路径（文本收发） | ✅ `hello` 18:34:57 发出，回答与 issue 卡到达并渲染，无 link-lost / pending。（回答本身是生产 release 对单词英文输入的既有 no-step 行为，与本批无关） | `text-turn2-display-6531.png` |
+| 设置还原 | ✅ 免唤醒回到原值 off（探针前后各回读一次） | `probe.log` |
+
+未取：F02 五维 × 四态（要来电 / 耳机事件，D-09）、F04 / F05 真机（要断网排队 + 关定位、非 16k 设备，单测已盖）。
+装置坑：对话页 `uiautomator dump` 常拿不到 idle（冷启动那格 dump 为空，重试才拿到）；折叠屏 `screencap` 必须带 `-d <display-id>`（不带会把警告文本写进 PNG）；
+FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到达」的判据，要读最后一条的文本或截图；`useHandsFree` 启动失败**不会**把开关弹回（README 的说法不成立，只 setError + notice，
+而 notice 也没有落到可读节点）⇒ 「开关回读 true」证明不了免唤醒起来了，要看 `KWS loaded` + AudioService 录音事件。
+
+### 6.10 本批未达与去向
 
 | 项 | 去向 |
 |---|---|
 | F02 通话期间采集策略 | 第三批（真机：来电时 recorder 收到什么） |
+| `useHandsFree` 启动失败不弹回开关、错误没有可读落点 | **新立 G-06（E）**：README 写着「开关自动弹回并解释」而代码没有；要么做出来，要么改文档并把 `hf.error` 落到设置页 |
 | F07 运行时压力 | 第三批（候选包） |
 | 第三批固定包验收五维 × 四态 | 总表 D-05 / D-06 + 本页 §3 |
 | 新立 G-01～G-05 | 待排；G-04（clearHistory 回报）最小，随下一批打磨 |
