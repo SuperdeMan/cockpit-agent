@@ -19,6 +19,7 @@ import { sheetResident } from '@/core/presence/drivingMode'
 import { IdleClock } from '@/core/presence/orbIdle'
 import { useReduceMotion } from '@/core/a11y/reduceMotion'
 import { asrStreamUrl, ttsStreamUrl } from '@/core/voice/audioUrls'
+import { bindSystemStop } from '@/core/voice/audioFocus'
 import { speechController } from '@/core/voice/speech'
 import { canStopPlayback, stopPlayback } from '@/core/voice/stopPlayback'
 import { dropWarmSockets, warmSocket } from '@/core/voice/warmSocket'
@@ -265,6 +266,10 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
     else startListening()
   }, [snapshot.agent, core, startListening, latestTurnId, scope])
   const onStopPlayback = useCallback(() => stopPlayback({ handsFree: hf, speech: speechController() }), [hf])
+  // 系统抢占（来电 / 闹钟 / 拔耳机）与屏上的停止键走**同一份**停播语义（audioFocus.ts 头注第三段）：
+  // 先免唤醒后主链、S2S 一并停、FSM 回 ARMED 不开续问窗。依赖取 hf.stopSpeaking（稳定引用），不取 hf 对象
+  const hfStopSpeaking = hf.stopSpeaking
+  useEffect(() => bindSystemStop(() => stopPlayback({ handsFree: { stopSpeaking: hfStopSpeaking }, speech: speechController() })), [hfStopSpeaking])
   const stopMic = useCallback(() => { ptt.cancel(); hf.pause() }, [ptt, hf])
   useEffect(() => {
     if (snapshot.privacy.micActive) activityLog.push('mic', '麦克风已开启（设备采集）')

@@ -14,16 +14,55 @@
 // 「react-native-audio-api 在这台设备上到底发不发这个事件」——那是原生绑定，
 // 静默不发是完全可能的。⇒ 事件一律记进有界日志，spike 屏直接读。
 // （「声明存在≠能用」，M-B/M-C/M-D 验收那批的老账。）
+//
+// 2026-09-19（GPT-6 评审 F02）：**停播动作不再由本文件自己决定怎么停**。此前两条处置都直接
+// `speechController().stop()`，而 `stopPlayback.ts` 早已写明「必须先 `handsFree.stopSpeaking()` 再停
+// `SpeechController`」——反过来 `onSpeechEnded → ttsEnd()` 会把免唤醒 FSM 从 SPEAKING 推进 FOLLOWUP
+// （8s 免唤醒续问窗：来电挂断后麦却开着），且 S2S 自答走 HandsFreeController 手里的播放器、根本不经
+// SpeechController。屏上的停止键早已走统一出口，系统事件却还在走单一路径。⇒ 本文件只认一个
+// `systemStop` 出口：缺省仍是只停主链（Provider 没装配时没有免唤醒，行为与 M2-4 逐字相同）；
+// AssistantProvider 装配后 `bindSystemStop` 换成 `stopPlayback({ handsFree, speech })` 那一份。
+// 系统抢占按「用户停播」语义收尾：FSM → ARMED、不开续问窗、恢复焦点不续播。
 import { speechController } from './speech'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
 let installed = false
 
+export type SystemStopReason = 'interruption' | 'routeChange'
+
+const defaultStop = (_reason: SystemStopReason): void => speechController().stop()
+let systemStop: (reason: SystemStopReason) => void = defaultStop
+
+/** 装配系统抢占时的停播出口（返回解除函数；解除时回到只停主链的缺省）。传 null 等于解除。 */
+export function bindSystemStop(handler: ((reason: SystemStopReason) => void) | null): () => void {
+  const bound = handler ?? defaultStop
+  systemStop = bound
+  return () => { if (systemStop === bound) systemStop = defaultStop }
+}
+
+/** 当前装配的是不是统一出口——取证时先看这一位：事件到了但只停了主链，是装配缺席不是判据错 */
+export function systemStopBound(): boolean {
+  return systemStop !== defaultStop
+}
+
 export interface AudioFocusEvent {
   kind: 'interruption' | 'routeChange'
   detail: string
   stoppedPlayback: boolean
+  /** 停播走的是哪条出口：unified = Provider 装配的统一语义；speech = 只停主链的缺省 */
+  stoppedVia?: 'unified' | 'speech'
+}
+
+/** 系统抢占 → 停播。handler 抛错不能拦住事件记录（日志是取证的唯一读数） */
+function stopForSystem(reason: SystemStopReason): 'unified' | 'speech' {
+  const via = systemStopBound() ? 'unified' : 'speech'
+  try {
+    systemStop(reason)
+  } catch {
+    /* 停播出口自己的异常留给它的实现记录 */
+  }
+  return via
 }
 
 export interface LoggedAudioFocusEvent extends AudioFocusEvent {
@@ -74,22 +113,24 @@ export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void
     AudioManager.observeAudioInterruptions(true)
     AudioManager.addSystemEventListener('interruption', (e: any) => {
       const began = e?.type === 'began'
-      if (began) speechController().stop()
+      const via = began ? stopForSystem('interruption') : undefined
       const ev: AudioFocusEvent = {
         kind: 'interruption',
         detail: String(e?.type ?? '?') + ' shouldResume=' + String(e?.shouldResume ?? '?'),
         stoppedPlayback: began,
+        ...(via ? { stoppedVia: via } : {}),
       }
       record(ev)
       onEvent?.(ev)
     })
     AudioManager.addSystemEventListener('routeChange', (e: any) => {
       const lost = e?.reason === 'OldDeviceUnavailable'
-      if (lost) speechController().stop()
+      const via = lost ? stopForSystem('routeChange') : undefined
       const ev: AudioFocusEvent = {
         kind: 'routeChange',
         detail: String(e?.reason ?? '?'),
         stoppedPlayback: lost,
+        ...(via ? { stoppedVia: via } : {}),
       }
       record(ev)
       onEvent?.(ev)
@@ -106,4 +147,5 @@ export function resetAudioFocusForTest(): void {
   installed = false
   log.length = 0
   watchers.clear()
+  systemStop = defaultStop
 }
