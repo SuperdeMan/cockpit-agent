@@ -200,3 +200,26 @@ flags 无 DEBUGGABLE，`lastUpdateTime 2026-09-14 16:01:41`；证据目录 `%LOC
 | E-15 | E | 联网搜索内容截断：搜索合成 `max_tokens=600` 把 843 / 818 字的回答掐在句中（`parse_synth` 抢救只去尾部标点） | **已修、已 push、已 deploy `3c389465`（status ok / verify verified）**；部署后同题探针 528 / 478 字句尾完整：上限 600→1200 token、timeout 25→40s 只做兜底；prompt 第 5 条约束长度；撞上限时切到句边界 + 「篇幅所限」说明 + `truncated` 标记（设计 §9） | `agents/_sdk/grounding.py::clip_truncated_answer` / `synthesis_messages`；`test_grounding_md` / `test_grounding_stream` |
 
 OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 与本地一致、非 DEBUGGABLE；上一包 `a4b477489`）。
+
+## 10. 2026-09-19 追加：GPT-6 Pro 外部评审七条（F01–F07）
+
+出处：[评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)（基线 `0d414816`）+ [逐条核对与分批待办](2026-09-19-android-gpt6-review-remediation-batches.md)（那一页是这份评审的唯一入口，本节只登记去向）。
+七条核对：五条成立、F01 成立且更糟（旧链上的整段积压都会喂进新一轮）、F07 条件性成立；零不成立。第一批 F01–F04 与第二批 F05–F07 当日全部落地、本地全绿（mobile jest 110 suites / 1129、hmi 338、tsc / eslint 0、`:kws:compileReleaseKotlin` 过），**未提交 / 未 push / 未装机**。
+
+| ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
+|---|---|---|---|---|
+| E-16 | E | F01 VAD 旧生命周期推理污染新一代（stop→start 后旧结果写新状态、调新回调；旧链积压继续跑） | **已修**：VAD 自带 `gen`，入队捕获、推理前后比对；`dispose` 等在途推理再释放 session | `core/voice/vad.ts`；`vadGeneration.test` 4（HEAD 4/4 红） |
+| E-17 | E | F02 系统音频中断直接 `speechController().stop()`，绕过 `stopPlayback` 的「先免唤醒后主链」⇒ 来电后 FSM 进 FOLLOWUP 开续问窗、S2S 播放器不停 | **已修**：`audioFocus.bindSystemStop`，Provider 装配 `stopPlayback` 那一份；日志记 `stoppedVia` | `core/voice/audioFocus.ts`、`AssistantProvider.tsx`；`audioFocusSystemStop.test` 6 |
+| E-18 | E | F03 服务器配置 token / 地址分两处写、无共同版本 ⇒ 第二笔失败 = 「旧地址 + 新 token」 | **已修**：整份配置单键存 SecureStore；v1 两键首次加载迁移；超上限显式失败 | `core/config/storage.ts`；`serverConfigStorage.test` 9（HEAD 4/9 红） |
+| E-19 | E | F04 定位撤销不贯穿在途请求：等坐标 / 拼帧 / 离线补发三个时点都不看开关 | **已修**：桥返回前重查、拼帧时只在开着才带坐标、队列 `canSend` 带坐标 ∧ 已关 ⇒ 不发 + `LOCATION_REVOKED_TEXT` | `core/location/appLocation.ts`、`core/session/store.ts`；`locationRevocation.test` 6（三处变异各红一条） |
+| E-20 | E | F05 录音重启同一非 16k 采样率不再重建重采样器 ⇒ 48k 原样下传 | **已修**：`startNative` 把 `_deviceRate` 与 resampler 一起归零 | `core/voice/recorder.ts`；`recorderResample.test` 4（HEAD 2/4 红） |
+| E-21 | E | F06 `ws.mjs` flush 抛错后无恢复、`send()` 越过队列 | **已修**（共享传输层，HMI 正常路径逐字不变）：抛错 ⇒ 留队首 + 判死重连；有积压不越过；直发抛错不上抛。同步抛错 = 帧未写出（核实过的语义），AR01 R04「发送状态未知」用例按此改写 | `hmi/src/ws.mjs`；`ws.test.mjs` +5（HEAD 5/5 红）、`sessionLifecycle.test` R04 ×2 |
+| E-22 | E | F07 KWS join 超时后仍 `running=true` 重载 ⇒ 卡在 JNI 的旧线程醒来消费新队列 | **已修（源码 + 单模块编译）**：每条 worker 自带 `alive`；join 超时进 `stale`，确认退出前 load 抛 `KWS_WORKER_STUCK` | `modules/kws/.../KwsModule.kt` |
+| D-08 | D | F07 运行时压力（慢解码替身、加载 / 释放 / 重复启停）+ F02 通话期间 recorder 收到什么 | 候选包 + 真机 | remediation §6.7 / §5 |
+| D-09 | D | 系统音频五维（声音 / 播放器 / FSM / 采集 / 上行）× 四态（主 TTS / S2S / LISTENING / FOLLOWUP）：焦点丢失、耳机断开、系统中断 | 同一候选包；与 D-05 / D-06 合并取证 | `audioFocusLog()` 的 `stoppedVia` 一列 |
+| G-01 | E | VAD 积压无上限、无观测 | 待排（F01 之后积压计数才有意义） | remediation §4 |
+| G-02 | E | 位置新鲜度按任务写成 capability 契约字段 | 接真实导航执行前 | remediation §4 |
+| G-03 | H | 未知执行结果按副作用分类（只读 / 绝对值 / 相对调整与支付） | 接真车 / 支付前一起裁 | remediation §4 |
+| G-04 | E | `clearHistory()` 吞异常、界面清空 ≠ 持久化删除成功 | 随下一批打磨 | `core/session/history.ts` |
+| G-05 | E | CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | 开冒烟前先证明镜像能装 | `.github/workflows/mobile-apk.yml` |
+| R-06 | R | 共享代码脱离 `hmi/` 目录 | 不改：搬目录不解决任何本次发现的问题 | — |

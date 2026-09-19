@@ -9203,3 +9203,24 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 主机 commit 余量 3GB → 33.8GB（用户重开 WindowsTerminal）。最终发布树 `82c8c7fa`（= `ca4bf370` + docs）`TZ=UTC0` `-n 8`：**8397 passed / 1 failed / 31 skipped / 12 warnings**，272s。
 - 那 1 红 `test_e2e_stack_lease.py::test_parallel_owner_cleanup_failure_overrides_both_passes`：串行 61/61 绿；单独 `-n 8` 三趟各红 2–3 条不同用例 ⇒ parallel-owner 用例组拿真仓库根抢同一把身份 OS 锁（`identity_lock_path`），多 worker 必撞——§6.1「OS lock 污染读数」原型，测试隔离债（应给 `tmp_path` 或 patch 锁路径），与本轮改动无关、未修。31 skipped = 32 基线 − 1（Docker Desktop 此刻在跑）。
 - 装置：`Start-Process` 分离跑的 pytest 会随宿主终端一起死（旧终端被关时 `-n 2` 那趟死在 13%），「分离」只挡得住工具超时，挡不住终端关闭。
+
+## 2026-09-19 — GPT-6 Pro Android 外部评审：七条逐条重证、第一 / 二批当日落地（本地全绿，未提交）
+
+- 来源：用户给的 ChatGPT 分享页（JS 渲染，WebFetch 只拿到壳；curl 拿服务端渲染的 react-router 流、解 `streamController.enqueue` 得全文，
+  私有区 U+E200–E202 夹着的引用标记要按区间删）。原文落 `docs/reviews/2026-09-19-android-gpt6-pro-review.md`；核对与待办
+  `docs/design/2026-09-19-android-gpt6-review-remediation-batches.md`；总表 §10 登记 E-16～E-22 / D-08 / D-09 / G-01～G-05 / R-06。
+- 逐条重证（`git log 0d414816..2f3c574d -- mobile hmi/src/ws.mjs` 为空 ⇒ 评审基线与工作树 mobile 逐字相同）：F01 比评审说的更糟——
+  `stop()` 只换 `this.chain`，旧链对象上排队的窗口照常跑、`start()` 后 `running` 又 true ⇒ 整段旧积压喂进新一轮；F02 是「系统事件绕开了
+  已建立的统一出口」不是没监听；F06 的前提要先核清：浏览器 / RN 的 `WebSocket.send` 同步抛错只在 CONNECTING 态或数据类型非法 ⇒ 同步抛错 = 帧确定未写出，
+  评审「有副作用的命令不能盲目重试」在这条路径上不成立，AR01 R04「发送状态未知」用例据此改写。
+- 落地：vad.ts `gen` + `settling`；audioFocus `bindSystemStop` + Provider 装配 `stopPlayback`；storage.ts 单键 v2 + v1 迁移；appLocation / store.ts 三处定位闸 +
+  `LOCATION_REVOKED_TEXT`；recorder `_deviceRate` 归零；ws.mjs `_abandon` / `_detach` + 有积压不越过；KwsModule.kt `Worker.alive` + `stale` + `KWS_WORKER_STUCK`。
+  新 suite 5（vadGeneration 4 / audioFocusSystemStop 6 / serverConfigStorage 9 / locationRevocation 6 / recorderResample 4）、ws.test +5、sessionLifecycle R04 ×2；
+  每条对 HEAD 版本变异判红（4/4 · 4/6 · 4/9 · 各 1/6 · 2/4 · 5/5）。mobile jest 110 suites / 1129 passed、tsc 0、eslint 0；hmi 338；
+  `:kws:compileReleaseKotlin` 在镜像工作区增量编译 BUILD SUCCESSFUL（镜像文件按字节恢复、daemon 已停）。零 Python 改动，全量 pytest 未跑。
+- 装置坑：`jest.mock('react-native')` 整体替换会弄坏 jest-expo 启动（只塞 `NativeModules.Onnxruntime` 键）；`jest.mock` 工厂里 TS 参数属性触发 babel out-of-scope 检查；
+  官方 AsyncStorage mock 的 `mockRejectedValueOnce` 没被消费会漏到下一条用例；ws.test 的 `fireAll` 会重放已触发定时器（别用它数退避档位）；
+  gradle `--offline` 在这台机跑不了（onnxruntime 的 buildscript 依赖没缓存）、`--rerun-tasks` 会重跑整个依赖图；Bash 工具 heredoc 里的 `\\` 仍会被收成 `\`，含 Windows 路径的文档补丁一律 Write 成 .py 再跑。
+- 测试遮丑的现成例子：F03 第一版用例只把失败注在第一笔写入上，对旧实现居然绿（旧实现先写 token 后写地址，只有第二笔失败才露馅）⇒ 改成两个注入点各跑一遍、
+  终态只许完整 A 或完整 B。
+- 未做：commit / push / deploy / 装机；F02 通话期间采集策略、F07 运行时压力、系统音频五维 × 四态取证都归候选包（D-08 / D-09）。
