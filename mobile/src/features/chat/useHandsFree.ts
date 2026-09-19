@@ -92,6 +92,9 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const prevFsmRef = useRef('')
   const ctlRef = useRef<HandsFreeController | null>(null)
   const pausedRef = useRef(false)
+  /** 上一次启动被麦克风权限拒绝（2026-09-19 真机）：scope 同步（回前台）**不再自动重试**——用户的决定不会自己改变，
+   *  自动重试只会把系统权限弹窗刷成每 0.6s 一次的循环。显式动作（重新开关 = 新控制器、点光球 wake）才重试。 */
+  const deniedRef = useRef(false)
   // 回调用 ref 存：它们每次渲染都是新函数，进依赖会让控制器反复重建（=反复开关麦）。
   // **在 effect 里更新而不是渲染期直接赋值**：渲染期写 ref 违反 React 的纯度约束
   // （react-hooks/refs），且并发渲染下会写到被丢弃的那次渲染上。
@@ -107,6 +110,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   useEffect(() => {
     if (!wantOn || !settingsStore.getState().settings.handsFree) return
     pausedRef.current = false
+    deniedRef.current = false // 新控制器 = 用户重新打开了开关：给一次新的申请机会
     let live = true
     const allowed = () => live && ctlRef.current === ctl && !pausedRef.current &&
       (!opts.scope || opts.scope.canCapture()) && settingsStore.getState().settings.handsFree
@@ -206,10 +210,14 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     const ctl = new HandsFreeController(deps)
     ctlRef.current = ctl
     const onEnableError = (e: unknown) => {
-      if (!allowed()) return
+      // 只认控制器身份，不认前后台 / 路由：失败是这个控制器的事实，与此刻在不在前台无关——
+      // 权限弹窗本身就会把 App 切到后台，按 allowed() 过滤会把「用户拒绝了」这条事实恰好丢掉
+      if (!live || ctlRef.current !== ctl) return
       const msg = e instanceof Error ? e.message : String(e)
+      const kind = e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine'
+      if (kind === 'permission') deniedRef.current = true
       setError(msg)
-      setErrorKind(e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine')
+      setErrorKind(kind)
       cbRef.current.onNotice?.('免唤醒启动失败：' + msg)
     }
     // 启动成功才清失败原因（G-06）：失败后控制器还在（开关没弹回），下一次 scope 同步 / 重新开关的 enable 成功即清
@@ -229,7 +237,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     })
     const syncScope = () => {
       if (opts.scope && !opts.scope.canCapture()) void ctl.disable().catch(() => {})
-      else if (!pausedRef.current && settingsStore.getState().settings.handsFree) void ctl.enable().then(onEnabled).catch(onEnableError)
+      else if (!pausedRef.current && !deniedRef.current && settingsStore.getState().settings.handsFree) void ctl.enable().then(onEnabled).catch(onEnableError)
     }
     const unsubscribeScope = opts.scope?.subscribe(syncScope)
     syncScope()
@@ -294,8 +302,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
     if (cbRef.current.scope && !cbRef.current.scope.canCapture()) return
     const ctl = ctlRef.current
     if (!ctl) return
-    if (pausedRef.current) {
+    if (pausedRef.current || deniedRef.current) {
+      // 用户显式点了光球：暂停的恢复、权限被拒后的再申请都从这里走
       pausedRef.current = false
+      deniedRef.current = false
       void ctl.enable().then(() => {
         if (ctlRef.current !== ctl) return
         setError('')
@@ -303,8 +313,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         if (!pausedRef.current && (!cbRef.current.scope || cbRef.current.scope.canCapture())) ctl.wakeManually()
       }).catch((e: unknown) => {
         if (ctlRef.current !== ctl) return
+        const kind = e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine'
+        if (kind === 'permission') deniedRef.current = true
         setError(e instanceof Error ? e.message : String(e))
-        setErrorKind(e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine')
+        setErrorKind(kind)
       })
     } else ctl.wakeManually()
   }, [])

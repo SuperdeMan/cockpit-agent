@@ -86,8 +86,11 @@ class AudioApiRecorder implements Recorder {
     const current = await AudioManager.checkRecordingPermissions()
     if (epoch !== this.epoch || !this.wanted) return
     const status = current === 'Granted' ? current : await AudioManager.requestRecordingPermissions()
-    if (epoch !== this.epoch || !this.wanted) return
+    // 申请的结果是用户的决定：**Denied 不能被代际作废吞掉**（2026-09-19 真机：系统弹窗把 App 切到后台 ⇒ 前后台闸
+    // disable ⇒ 这里按 epoch 静默返回 ⇒ 回前台再 enable 再申请 ⇒ GrantPermissionsActivity 每 0.6s 闪一次、4 分钟不停）。
+    // 抛出去只是报告，不开麦；Granted 迟到仍按代际不开麦（AR04 的原账不变）
     if (status !== 'Granted') throw new PermissionDeniedError()
+    if (epoch !== this.epoch || !this.wanted) return
 
     const rec = new AudioRecorder()
     this.rec = rec

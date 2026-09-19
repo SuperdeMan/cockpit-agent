@@ -148,3 +148,30 @@ test('原生返回 error 不能标记录音已开启，下一轮仍可恢复', a
   expect(getAudioCaptureSnapshot().micActive).toBe(true)
   await lease.stop()
 })
+
+// 2026-09-19 真机（G-06 取证时撞到）：权限弹窗本身把 App 切到后台 ⇒ 前后台闸 stop() 了在途的 start ⇒ 用户点「拒绝」回来的
+// Denied 按代际被静默吞掉 ⇒ 回前台再 start 再申请 ⇒ 系统弹窗每 0.6s 闪一次、4 分钟不停。用户的决定不能被作废吞掉。
+test('申请期间被撤回：Denied 仍抛 PermissionDeniedError（报告不开麦）；Granted 迟到仍不开麦', async () => {
+  const request = deferred<string>()
+  mockCheckPermissions.mockResolvedValue('Denied')
+  mockPermissions.mockReturnValueOnce(request.promise)
+  const lease = micLease()
+  const starting = lease.start(() => {})
+  await drain()
+  expect(mockPermissions).toHaveBeenCalledTimes(1)
+  const stopping = lease.stop() // 弹窗切后台 ⇒ 闸撤回
+  request.resolve('Denied')
+  await expect(starting).rejects.toMatchObject({ name: 'PermissionDeniedError' })
+  await stopping
+  expect(mockStart).not.toHaveBeenCalled()
+
+  // 对照：迟到的 Granted 照旧不开麦（AR04 原账）
+  const request2 = deferred<string>()
+  mockPermissions.mockReturnValueOnce(request2.promise)
+  const starting2 = lease.start(() => {})
+  await drain()
+  const stopping2 = lease.stop()
+  request2.resolve('Granted')
+  await Promise.all([starting2, stopping2])
+  expect(mockStart).not.toHaveBeenCalled()
+})

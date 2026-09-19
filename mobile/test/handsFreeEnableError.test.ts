@@ -20,15 +20,25 @@ import { InteractionScope } from '@/core/session/interactionScope'
 
 const mockControllers: { enable: jest.Mock; disable: jest.Mock; deps: Record<string, (...args: any[]) => void> }[] = []
 let mockEnableFailure: Error | null = null
+/** 非空时 enable 挂起（模拟系统权限弹窗在等用户），由测试决定何时以什么结果落地 */
+let mockEnablePending: { resolve(): void; reject(e: Error): void } | null = null
 jest.mock('@/core/voice/handsFree', () => ({
   handsFreeAvailability: () => ({ vad: true, kws: true, usable: true }),
   HandsFreeController: class {
     deps: Record<string, (...args: any[]) => void>
-    enable = jest.fn(async () => { if (mockEnableFailure) throw mockEnableFailure })
+    enable = jest.fn(async () => {
+      if (mockEnablePending) {
+        const gate = mockEnablePending
+        await new Promise<void>((resolve, reject) => { gate.resolve = resolve; gate.reject = reject })
+        return
+      }
+      if (mockEnableFailure) throw mockEnableFailure
+    })
     disable = jest.fn(async () => {})
     constructor(deps: Record<string, (...args: any[]) => void>) { this.deps = deps; mockControllers.push(this) }
     dispose() { return this.disable() }
     setNeedConfirm() {}
+    wakeManually() {}
     stats() { return { fsm: 'LISTENING', ringFrames: 0, kws: null, vad: { backlog: 7, dropped: 2, processed: 40, lastInferMs: 3, maxBacklog: 30 } } }
   },
 }))
@@ -47,6 +57,7 @@ function mount(scope: InteractionScope) {
 beforeEach(() => {
   mockControllers.length = 0
   mockEnableFailure = null
+  mockEnablePending = null
   settingsStore.setState({ settings: { ...DEFAULT_APP_SETTINGS, handsFree: true } })
 })
 afterEach(() => { settingsStore.setState({ settings: DEFAULT_APP_SETTINGS }) })
@@ -145,6 +156,42 @@ test('G-01 接线：进 LISTENING 与定稿两处 mark 带 vad 积压 / 丢窗 /
     const detail = (ev: string) => t.marks.find((m) => m.event === ev)?.detail
     expect(detail('capture_started')).toBe('vad b7 d2 3ms')
     expect(detail('asr_final')).toBe('text vad b7 d2 3ms')
+  } finally {
+    await act(async () => view.unmount())
+  }
+})
+
+// 2026-09-19 真机撞到的循环：权限弹窗把 App 切到后台 ⇒ syncScope disable ⇒ 拒绝的结果回来 ⇒ 回前台 syncScope 再 enable ⇒ 再弹窗……
+test('权限弹窗期间切后台、用户拒绝：原因照记（不因不在前台而丢）、回前台不再自动申请、显式点光球才重试', async () => {
+  const scope = new InteractionScope({ route: '/settings', foreground: true, focused: true })
+  const gate = { resolve: () => {}, reject: (_e: Error) => {} }
+  mockEnablePending = gate
+  const h = mount(scope)
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(createElement(h.Probe)) })
+  try {
+    const ctl = mockControllers[0]
+    expect(ctl.enable).toHaveBeenCalledTimes(1) // 弹窗在等用户
+    // 弹窗把 App 切到后台：前后台闸撤回
+    await act(async () => { scope.update({ foreground: false }) })
+    expect(ctl.disable).toHaveBeenCalledTimes(1)
+    // 用户点「拒绝」：申请结果回来（此刻还没回到前台）
+    const denied = new Error('录音权限未授予')
+    denied.name = 'PermissionDeniedError'
+    mockEnablePending = null
+    await act(async () => { gate.reject(denied) })
+    expect(h.ui().error).toBe('录音权限未授予')
+    expect(h.ui().errorKind).toBe('permission')
+    // 回前台：不再自动 enable（否则又弹一次）
+    await act(async () => { scope.update({ foreground: true }) })
+    expect(ctl.enable).toHaveBeenCalledTimes(1)
+    await act(async () => { scope.update({ foreground: false }); scope.update({ foreground: true }) })
+    expect(ctl.enable).toHaveBeenCalledTimes(1)
+    expect(h.ui().error).toBe('录音权限未授予') // 原因留着
+    // 显式点光球 = 再申请一次；这次给了权限 ⇒ 清
+    await act(async () => { h.ui().wake() })
+    expect(ctl.enable).toHaveBeenCalledTimes(2)
+    expect(h.ui().error).toBe('')
   } finally {
     await act(async () => view.unmount())
   }
