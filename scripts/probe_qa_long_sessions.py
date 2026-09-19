@@ -364,6 +364,7 @@ _ENGINE_ONLY_TRACE_NODES = frozenset({
     "cloud.candidate_missing",
     "cloud.pending_cancel",
     "cloud.pending_missing",
+    "cloud.pending_ambiguous",    # W01（2026-09-19）：裸确认撞上两条挂起 ⇒ 问一次
     "cloud.pending_expired",
     "cloud.no_pending",
     "cloud.injection_reject",

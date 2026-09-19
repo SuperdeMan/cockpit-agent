@@ -455,6 +455,40 @@ def test_question_shaped_yes_word_does_not_authorize():
             "sess-1", owner_user_id="u1", operation_id=op1)) is not None, ask
 
 
+def test_a_bare_confirm_question_is_answered_deterministically_not_by_the_model():
+    """「可以吗」「确认吗」「行不行」挂着一条待确认时：系统自己念出挂着什么、怎么确认。
+
+    真栈 2026-09-19 CF7 第 1 次取样：这句交给规划落 chitchat，答「可以，已为您执行」——
+    零动作却声称做了。系统持有的事实不交给模型答（同 `system.pending_state` 那条出口）。
+    """
+    for ask in ("可以吗", "确认吗", "行不行", "可不可以？"):
+        engine, spy, session = _make_engine()
+        op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+        plans_before = spy.llm_plan_calls
+        final = _run(engine, _req(ask))[-1]
+        assert spy.llm_plan_calls == plans_before, ask          # 零 LLM
+        assert "待确认的操作" in final["speech"] and "说「确认」" in final["speech"], ask
+        assert not final.get("actions"), ask
+        assert final.get("held_operation_ids") == [op1], ask
+        assert asyncio.run(session.load(
+            "sess-1", owner_user_id="u1", operation_id=op1)) is not None, ask
+
+
+def test_a_confirm_question_with_extra_content_still_goes_to_the_planner():
+    """「可以换第二天的安排吗」不是裸确认询问——照旧交给规划。"""
+    engine, spy, session = _make_engine()
+    _run(engine, _req("找家川菜馆订今晚7点两位"))
+    plans_before = spy.llm_plan_calls
+    _run(engine, _req("可以换第二天的安排吗"))
+    assert spy.llm_plan_calls == plans_before + 1
+
+
+def test_a_bare_confirm_question_without_any_pending_is_not_hijacked():
+    engine, spy, _ = _make_engine()
+    _run(engine, _req("可以吗"))
+    assert spy.llm_plan_calls == 1
+
+
 def test_named_confirm_that_names_nothing_pending_is_not_an_authorization():
     """「确认订单」而挂着的是订餐（goal / 原话都不含「订单」）⇒ 点名落空，不执行、不关闭。
 

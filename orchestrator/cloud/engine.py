@@ -121,6 +121,12 @@ def _turn_sources(ui_card) -> list[dict]:
 # 否定侧不在这里——它是 `pending_cancel` 的职责。
 _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
               "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
+#: 「可以吗 / 确认吗 / 行不行」——**只问能不能、不含任何别的内容**的确认询问（W01）。
+#: 剥掉疑问尾词后剩下的必须就是一个肯定词或一个「X不X」能力问法；「可以换第二天的安排吗」
+#: 剥完还有内容，不在这一档。
+_CONFIRM_ASK_TAIL_RE = re.compile(r"[吗么呢嘛啊呀？?！!。．.\s]+$")
+_CONFIRM_ASK_FORMS = frozenset({
+    "行不行", "可不可以", "好不好", "能不能", "确认不确认", "是不是", "对不对", "确定不确定"})
 #: 「确认+点名」里夹在肯定词与点名之间 / 尾随的填充（W01）：「确认一下那个明晚的吧」
 #: 剥完剩「明晚」。只有虚词与标点，零领域词。
 _CONFIRM_FILLER_RE = re.compile(
@@ -459,6 +465,19 @@ class PlannerEngine:
                     ctx, "cloud.pending_ambiguous", "system.pending_ambiguous")
                 yield {"kind": "final",
                        "speech": f"您要确认{labels}？请点选对应的确认条，或说出要确认哪一条。",
+                       "actions": [],
+                       "held_operation_ids": [
+                           s.operation_id for s in spoken.candidates
+                           if s.operation_id]}
+                return
+            if spoken.kind == "asking":
+                # 确定性读出口（同 `system.pending_state` 族）：念出挂着的是什么、怎么确认。
+                # 话术与「还有待确认的操作吗」共用 `session_facts.pending_answer`。
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.pending_state", "system.pending_state")
+                yield {"kind": "final",
+                       "speech": session_facts.pending_answer(
+                           self._digest_of(spoken.candidates)),
                        "actions": [],
                        "held_operation_ids": [
                            s.operation_id for s in spoken.candidates
@@ -1159,15 +1178,21 @@ class PlannerEngine:
         except Exception as e:
             logger.debug("pending digest unavailable: %s", e)
             return None
+        return self._digest_of(entries or [])
+
+    @staticmethod
+    def _digest_of(entries: list) -> list[dict]:
+        """挂起表 → `[{"what","phase"}]`。目标描述与 `_pending_label` 同源同截断
+        （goal，没有就退到任务起点原话）——同一条挂起在两处出现时必须是同一个称呼，
+        否则用户会以为是两件事。"""
         out: list[dict] = []
-        for state in entries or []:
+        for state in entries:
             goal = ""
             try:
-                goal = str((state.pending_plan or {}).get("goal") or "")
+                plan = state.pending_plan or {}
+                goal = str(plan.get("goal") or plan.get("raw_text") or "")
             except AttributeError:
                 pass
-            # 目标描述与 `_append_pending_hint` 同源同截断——同一条挂起在两处
-            # 出现时必须是同一个称呼，否则用户会以为是两件事。
             out.append({"what": goal[:20], "phase": getattr(state, "phase", "")})
         return out
 
@@ -1912,13 +1937,19 @@ class PlannerEngine:
           · `"one"`        —— 唯一所指（`target`）；
           · `"ambiguous"`  —— ≥2 条 wait_confirm 且没点名（`candidates` 按挂起先后）；
           · `"none"`       —— 是确认词，但一条 wait_confirm 都没有；
-          · `"named_miss"` —— 「确认+点名」点到了不存在的那条（或点到多条）。
+          · `"named_miss"` —— 「确认+点名」点到了不存在的那条（或点到多条）；
+          · `"asking"`     —— 「可以吗 / 确认吗 / 行不行」：在**问**有没有 / 能不能确认
+                              （`candidates` = 全部 wait_confirm）。真栈 2026-09-19 CF7：
+                              这句交给规划会落 chitchat，1/2 次答「可以，已为您执行」——
+                              零动作却声称做了。系统自己知道挂着什么，不该让模型答。
 
         点名通道刻意窄：肯定词开头、余量 ≥2 字、余量是某条挂起 goal / 原话的**子串**，
         且恰好命中一条。序数（「第一个」）不接——它在 wait_slot 语境里是选择卡的答案。
         """
         confirms = [s for s in entries if getattr(s, "phase", "") == "wait_confirm"]
         t = (text or "").strip().lower()
+        if confirms and not flagged and PlannerEngine._is_confirm_ask(t):
+            return _SpokenConfirm("asking", candidates=confirms)
         if flagged and not is_standalone_cancel(t):
             bare, remainder = True, ""
         else:
@@ -1936,6 +1967,14 @@ class PlannerEngine:
         if len(confirms) >= 2:
             return _SpokenConfirm("ambiguous", candidates=confirms)
         return _SpokenConfirm("none")
+
+    @staticmethod
+    def _is_confirm_ask(t: str) -> bool:
+        """「可以吗 / 确认吗 / 行不行」：问句形态且剥掉尾词后只剩一个肯定词 / 「X不X」问法。"""
+        if not t or not is_non_directive_question(t):
+            return False
+        core = _CONFIRM_ASK_TAIL_RE.sub("", t).strip()
+        return bool(core) and (core in _YES_WORDS or core in _CONFIRM_ASK_FORMS)
 
     @staticmethod
     def _split_confirm_prefix(t: str) -> tuple[bool, str]:
