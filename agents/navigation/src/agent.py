@@ -20,6 +20,7 @@ from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
 from agents._sdk.timewindow import fmt_clock, parse_clock_time
+from runtime.cntime import SEG_ALT
 from .providers import build_poi_provider
 from .providers.base import GeoPoint, POI
 from .route_geometry import card_geometry
@@ -218,6 +219,9 @@ _REROUTE_ADD_RE = re.compile(
 # 换路（无明确偏好）：「换条路」「别走这条」。带偏好的（避堵/不走高速）走 _route_strategy。
 _REROUTE_CHANGE_ROUTE_RE = re.compile(r"换条|换一条|换个路线|别走这|重新规划路线|换路")
 # 改目的地：「改去COCO Park」「目的地换成宝安机场」。
+#: 段位词（`runtime.cntime.SEG_ALT` 唯一词表）与 24h 写法：出现即说明时刻不是「裸」的。
+_SEGMENT_WORD_RE = re.compile(SEG_ALT)
+_H24_RE = re.compile(r"(?:1[3-9]|2[0-3])\s*(?:点|时|[:：])")
 _REROUTE_DEST_RE = re.compile(
     r"(?:目的地)?(?:改去|改到|改成|换成)去?\s*([^，。,、]{2,20})")
 #: 「改成 X」的捕获**开头就是时刻**（7点半 / 19:30 / 晚上八点 / 明天早上）⇒ 改的是时限不是地方。
@@ -306,6 +310,15 @@ class NavigationAgent(BaseAgent):
         if current:
             return GeoPoint(lat=current.lat, lng=current.lng)
         return None
+
+    @staticmethod
+    def _anchor_bare_hour(new_ts: int, old_ts: int, text: str) -> int:
+        """无段位的裸时刻就近旧时限：候选 = 新解 ± 12h，取离旧时限最近的那个。带段位词
+        （早上 / 晚上 / 下午…，词表 `runtime.cntime.SEG_ALT`）或 24h 写法的照原样。"""
+        if _SEGMENT_WORD_RE.search(text or "") or _H24_RE.search(text or ""):
+            return new_ts
+        candidates = (new_ts, new_ts - 12 * 3600, new_ts + 12 * 3600)
+        return min(candidates, key=lambda ts: abs(ts - old_ts))
 
     @staticmethod
     def _arrive_by_from(intent, raw_text: str) -> int | None:
@@ -1635,6 +1648,13 @@ class NavigationAgent(BaseAgent):
         strategy = str(session.get("strategy") or "")
         arrive_by_ts = session.get("arrive_by_ts")
         new_arrive = self._arrive_by_from(intent, raw_text)
+        if new_arrive and arrive_by_ts:
+            # 裸时刻（「7点半」没有段位）按「未来最近一次」消歧在凌晨会落到 07:30；
+            # 改口时旧时限就是段位的证据——同一个晚上的 19:00 改成 19:30，不是明早。
+            # 只在原话 / 槽值都没带段位词时就近旧时限取 ±12h 那一侧。
+            new_arrive = self._anchor_bare_hour(
+                new_arrive, int(arrive_by_ts),
+                f"{intent.slots.get('arrive_by') or ''} {raw_text}")
         notes: list[str] = []
         changed = False
         if new_arrive and int(new_arrive) != int(arrive_by_ts or 0):

@@ -283,6 +283,25 @@ def test_reroute_changes_only_the_deadline():
     assert not calls["search"]                                  # 没把时间当地名去搜
 
 
+def test_reroute_bare_hour_follows_the_previous_deadlines_half_day(monkeypatch):
+    """「晚上7点前到」→「改成7点半」：新说的裸「7点半」没有段位，按「未来最近一次」在凌晨会解成
+    07:30；有旧时限在场时应就近旧时限（19:00）取 19:30——用户改的是同一个晚上的时限。"""
+    import agents.navigation.src.agent as nav
+    from runtime.clock import epoch_at
+    now = epoch_at(2026, 9, 20, 0, 56)                        # 00:56，上一条时限是当天 19:00
+    monkeypatch.setattr(nav.time, "time", lambda: float(now))
+    monkeypatch.setattr(nav, "_parse_arrive_by",
+                        lambda text: nav.parse_clock_time(text, now_ts=now))
+    agent, _ = _agent(route={"distance_km": 10.0, "duration_min": 20})
+    old_deadline = epoch_at(2026, 9, 20, 19, 0)
+    res = asyncio.run(run_handle(
+        agent, "navigation.reroute", slots={"arrive_by": "7点半前"},
+        raw_text="改成7点半前到就行", ctx=make_context(),
+        meta=_session_meta(arrive_by_ts=old_deadline)))
+    assert res.data["_route_session"]["arrive_by_ts"] == epoch_at(2026, 9, 20, 19, 30)
+    assert "19:30" in res.speech
+
+
 def test_reroute_never_treats_a_time_expression_as_a_destination():
     """真栈 TF1 第 2 次取样：`_REROUTE_DEST_RE` 把「改成7点半前到就行」的「7点半前到就行」当目的地
     去搜，答「目的地已改为东方之门(地铁站)」——用户只改了时限，导航被改到另一个地方。"""
