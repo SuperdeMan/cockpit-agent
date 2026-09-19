@@ -204,7 +204,7 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 ## 10. 2026-09-19 追加：GPT-6 Pro 外部评审七条（F01–F07）
 
 出处：[评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)（基线 `0d414816`）+ [逐条核对与分批待办](2026-09-19-android-gpt6-review-remediation-batches.md)（那一页是这份评审的唯一入口，本节只登记去向）。
-七条核对：五条成立、F01 成立且更糟（旧链上的整段积压都会喂进新一轮）、F07 条件性成立；零不成立。第一批 F01–F04 与第二批 F05–F07 当日全部落地、本地全绿（mobile jest 110 suites / 1129、hmi 338、tsc / eslint 0、`:kws:compileReleaseKotlin` 过）；用户授权后**已提交（`6931968f`…`0a6a19e6`）、已 push（CI 8/8）、候选包 `0a6a19e68` 已装 OPPO 为常驻包**（APK SHA-256 `4f28e8ea…351b`，真机：同一进程 3 轮免唤醒开关 `KWS loaded` ×3 零 stale、升级后配置保留、文本轮收发正常；remediation §6.8–6.9）。服务端未 deploy。
+七条核对：五条成立、F01 成立且更糟（旧链上的整段积压都会喂进新一轮）、F07 条件性成立；零不成立。第一批 F01–F04 与第二批 F05–F07 当日全部落地、本地全绿（mobile jest 110 suites / 1129、hmi 338、tsc / eslint 0、`:kws:compileReleaseKotlin` 过）；用户授权后**已提交（`6931968f`…`0a6a19e6`）、已 push（CI 8/8）、候选包 `0a6a19e68` 已装 OPPO 为常驻包**（APK SHA-256 `4f28e8ea…351b`，真机：同一进程 3 轮免唤醒开关 `KWS loaded` ×3 零 stale、升级后配置保留、文本轮收发正常；remediation §6.8–6.9）。同日晚衍生 E 项 G-06 / G-04 / G-01 + CI 改动 G-05 已提交并 push（`7ea487c8`…`96b39b26`，CI 8/8）；候选包 `96b39b263` 已出、装机等设备（D-10）。服务端未 deploy。
 
 | ID | 栏 | 事项 | 处置 / 卡点 | 判据落点 |
 |---|---|---|---|---|
@@ -222,5 +222,6 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 | G-02 | E | 位置新鲜度按任务写成 capability 契约字段 | 接真实导航执行前 | remediation §4 |
 | G-03 | H | 未知执行结果按副作用分类（只读 / 绝对值 / 相对调整与支付） | 接真车 / 支付前一起裁 | remediation §4 |
 | ~~G-04~~ | E | `clearHistory()` 吞异常、界面清空 ≠ 持久化删除成功 | **已做 `adddfa2a`**：回读为准 + 设置页结果行 | `core/session/history.ts`、`SettingsScreen.tsx` |
-| G-05 | H | CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | [待批 diff](2026-09-19-g05-mobile-apk-abi-preflight-proposal.md)（CI/CD 红线 + digest 重批）；读数要 dispatch `run_e2e=true` | `.github/workflows/mobile-apk.yml` |
+| G-05 | H | CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | **已应用 `96b39b26`**（用户批准的 CI/CD 改动；下次 deploy 过一次性 `ci_cd` 摘要批准）。**读数未取**：要 dispatch `run_e2e=true` | `.github/workflows/mobile-apk.yml` |
+| D-10 | D | 候选包 `96b39b263`（G-06 / G-04 / G-01 UI 面）装机 + 三格真机取证 | 包已出、验包过（APK `7aef0d87…a5b1`）；OPPO 2026-09-19 20:09 从 adb 掉线，装机与 `probe_g.py` 等设备回来 | `%LOCALAPPDATA%\car-agent\artifacts\GPT6B-20260919-195554-96b39b26\` |
 | R-06 | R | 共享代码脱离 `hmi/` 目录 | 不改：搬目录不解决任何本次发现的问题 | — |

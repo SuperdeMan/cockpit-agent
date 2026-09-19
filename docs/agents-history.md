@@ -9250,3 +9250,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   诊断页进入即暂停采集，活读数只能在跑的时候顺手记进时间线才能事后回读；`HandsFreeController.stats()` 此前全仓没有屏读它。
 - G-05：改的是 `.github/workflows/mobile-apk.yml`（CI/CD 红线、`ci_cd` digest 重批）⇒ 只写 `docs/design/2026-09-19-g05-mobile-apk-abi-preflight-proposal.md`，等授权；读数还要 dispatch `run_e2e=true`。
 - 本地 mobile jest 111 suites / 1136、tsc 0、eslint 0。三个 commit 未 push、未装机。
+
+### 同批追加 — 用户「都批准授权」：G-05 应用、push、候选包 `96b39b263` 出包；装机卡在设备掉线
+
+- G-05 应用（`96b39b26`）：`mobile-apk.yml` 冒烟 job 加 ABI 预检 / 安装失败翻译 / logcat `UnsatisfiedLinkError` 扫描 / 四个工件；摘要批准是 deploy 时的一次性 CLI 参数（dev-guide「CI/CD 一次性摘要批准」），下次 deploy 再过。
+- push `526c5f56..96b39b26`（5 条），check-runs 8/8。
+- 候选包 `96b39b263`：BUILD SUCCESSFUL 10m56s、验包过、APK SHA-256 `7aef0d87…a5b1`。装机时 `adb devices` 为空，重启 adb server 后 `919fd6f9 offline`、`reconnect` 后消失 ⇒ 设备 USB 掉线 / 调试授权失效，本机无法恢复；
+  常驻包仍 `0a6a19e68`。取证脚本 `probe_g.py` 已备（G-04 真清除、G-06 撤麦权限触发权限分支、G-01 手动唤醒读时间线）。

@@ -59,7 +59,7 @@
 | 未知执行结果按副作用分类（只读可重试 / 绝对值先确认幂等 / 相对调整与支付先查状态） | **新立 G-03（H，产品裁决）**：与总表「支付余项」「真实车控」同属接真车前的设计门槛；现在的「发送状态未知 + 手动重发」对只读请求已够，其余两类等接真实执行面时一起裁 |
 | `clearHistory()` 吞异常、「界面清空」≠「持久化删除成功」 | **G-04（E）已做 `adddfa2a`**：删完**回读**为准返回 boolean；设置页在按钮下写结果（`settings-clear-history-result`：已删且回读确认 / 会话已清但本机记录没删掉）。账号切换 / 重启后的表现仍归 AM5 隐私包 DoD |
 | 正式签名 / prod≠可分发 / 最终产物回读验证 | = 总表 H-09（AM5 签名 / 渠道包）；`build_mobile.ps1` 已明说 release 沿用 `debug.keystore` 留给 M5，不另立 |
-| CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | **G-05（E）改法已写、未应用**：[待批 diff](2026-09-19-g05-mobile-apk-abi-preflight-proposal.md)——ABI 预检 + 安装失败翻译 + logcat 找 `UnsatisfiedLinkError` + 四个工件，由 job 自己给读数。改的是 CI/CD 配置（红线 + `ci_cd` digest 要重批），等授权；读数要你 dispatch 一次 `run_e2e=true` |
+| CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | **G-05（E）已应用 `96b39b26`**（用户「都批准授权」）：[改法记录](2026-09-19-g05-mobile-apk-abi-preflight-proposal.md)——ABI 预检 + 安装失败翻译 + logcat 找 `UnsatisfiedLinkError` + 四个工件，由 job 自己给读数。下一次 cloud deploy 的 dry-run 要过一次性 `ci_cd` 摘要批准；**读数仍要 dispatch 一次 `run_e2e=true`**（本机没有 Linux runner + 模拟器） |
 | 共享代码脱离 `hmi/` 目录 | 评审自己也说不是本轮优先级；记为 **R-06（不改）**：`@shared/*` 指向 `../hmi/src/*` 是「判据只留一份」的实现形态，搬目录不解决任何本次发现的问题 |
 | 行车档不只放大按钮、确认不被聊天与语音层重复表达 | 已在 AR10 五人验收脚本范围（总表 H-07），不另立 |
 
@@ -181,8 +181,14 @@ FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到�
 - G-04 `adddfa2a`：`clearHistory` 回读返回 boolean；设置页结果行。`history.test` +1（变异「不回读直接报 true」红）。
 - G-01 `e7ca13a0`：`vad.ts` `VAD_MAX_BACKLOG` / `stats()`、`accept()` 封顶计数、`infer` 计时；`HandsFreeController.stats().vad`；`useHandsFree` 把读数写进 `capture_started` / `asr_final` 的 detail。
   `vadGeneration.test` +1（变异「不封顶」红）、`handsFreeEnableError.test` +1 接线。
-- 本地：mobile jest **111 suites / 1136 passed**、tsc 0、eslint 0。**未 push、未装机**（G-06 / G-04 有 UI 面，下一个候选包一起带）。
-- G-05：只写了待批 diff，没动 workflow（CI/CD 红线）。
+- 本地：mobile jest **111 suites / 1136 passed**、tsc 0、eslint 0。
+- 用户「都批准授权」后：G-05 应用为 `96b39b26`（workflow + 记录页）；push `526c5f56..96b39b26`（5 条：`7ea487c8` / `adddfa2a` / `e7ca13a0` / `462ae946` / `96b39b26`），GitHub check-runs **8/8 success**。
+- 候选包 `96b39b263`：clean 树、同参数（`-CompileJobs 3`、`-Xmx2048m`），BUILD SUCCESSFUL 10m56s（754 执行 / 509 缓存），验包 `variant=prod build=96b39b263`、签名不变，
+  落点 `D:\Android\builds\apk\xiaozhou-companion-prod-release-96b39b263-20260919-2008.apk`，**APK SHA-256 `7aef0d87…a5b1`**（212,477,306 B）。
+  证据目录 `%LOCALAPPDATA%\car-agent\artifacts\GPT6B-20260919-195554-96b39b26\`（runner / build.log / result.json / `probe_g.py`）。
+- **装机未完成**：20:09 `mobile_device.ps1 -Install` 报 `role 'test' not attached (attached: none)`；`adb devices` 为空，重启 adb server 后 `919fd6f9 offline`、`reconnect` 后消失——
+  设备从 USB 掉线或 USB 调试授权失效，本机无法恢复。OPPO 常驻包仍是 `0a6a19e68`。设备回来后：`mobile_device.ps1 -Role test -Install <上面的 APK>` → `probe_g.py`
+  （G-04 真按清除并读 `settings-clear-history-result`；G-06 用 `pm revoke RECORD_AUDIO` + 拒绝系统弹窗真触发权限分支读 `handsfree-error`，之后 `pm grant` 还原；G-01 免唤醒开 → 点光球手动唤醒 → `/turn-timeline` 读 `capture_started(vad …)`）。
 
 ### 6.11 本批未达与去向
 
@@ -193,4 +199,5 @@ FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到�
 | F07 运行时压力 | 第三批（候选包） |
 | 第三批固定包验收五维 × 四态 | 总表 D-05 / D-06 + 本页 §3 |
 | G-02 / G-03 | G-02 接真实导航执行前（manifest 链路）；G-03 产品裁决 |
-| G-05 | 待批 diff（CI/CD 红线）+ 你 dispatch 一次 `run_e2e=true` |
+| G-05 读数 | 已应用；要你 dispatch 一次 `run_e2e=true` 才有 ABI / 安装 / .so 加载三个读数 |
+| 候选包 `96b39b263` 装机 + G-01/G-04/G-06 真机取证 | 等 OPPO 重新接上 USB（20:09 掉线） |
