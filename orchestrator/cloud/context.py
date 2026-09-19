@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, fields, asdict
 from .models import PlanContext
 from runtime.clock import hhmm as clock_hhmm
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
-                                   alert_signal, driver_state)
+                                   alert_resolved, alert_signal, driver_state)
 from runtime.session_constraints import constraints_in, merge_constraints
 from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
@@ -306,6 +306,11 @@ class Focus:
     # 我的两条断言都在同一份 results 里既 stamp 又 end，**替被测系统提供了「同轮」
     # 这个前提**，而真实场景是跨轮）。空 dict 表达不了「我是故意空的」，所以要一个旗子。
     route_ended: bool = False
+    # **本轮 scratch，不跨轮**（同 `route_ended`）：这一轮用户明确说了告警已解除
+    # （`runtime.safety_signal.alert_resolved`，QA T47 裁决 A，2026-09-19）。
+    # 同样的理由：`safety_alert` 的粘性接力条件在合并里体现为「本轮为空 ⇒ 取旧」，
+    # 而「解除」恰恰让本轮为空——不立旗，上一轮那条 critical 会被原样搬回来。
+    safety_alert_cleared: bool = False
 
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
@@ -319,6 +324,7 @@ class Focus:
                     or self.last_places or self.active_route or self.safety_alert
                     or self.session_constraints
                     or self.route_ended
+                    or self.safety_alert_cleared
                     or self.destination_lat is not None
                     or self.destination_lng is not None)
 
@@ -1320,8 +1326,18 @@ def extract_focus(plan, results) -> "Focus | None":
         if stated:
             focus.session_constraints = stated
     if raw_text:
+        # QA T47 裁决 A（2026-09-19）：用户明确说「机油灯灭了 / 处理好了 / 是误报」⇒ 会话里那条
+        # 告警解除。判据在 `runtime.safety_signal.alert_resolved`（与 chitchat / road-safety /
+        # `alert_level` 同一份）：只认点名了告警对象的**完成态陈述**，问句、指令、否定、
+        # 「我会靠边停车检查」这类意图陈述都不算。旗子交给 `update_focus` 的接力分支——
+        # 这里的 `safety_alert` 本来就是每轮重建的空格子，清它没意义，**挡住接力**才是动作。
+        if alert_resolved(raw_text):
+            focus.safety_alert = {}
+            focus.safety_alert_cleared = True
         # ⚠ 2026-08-29 补驾驶员状态（余项 ①）：判据本体在 `input_safety_alert`，
         # 那里记着「首版只扫车辆告警」为什么等于没有兑现这条判据。
+        # 解除之后同一句里若还有新告警（「机油灯灭了但是水温灯亮了」），`alert_level`
+        # 只看解除标记之后那半，新告警照常登记——解除的是旧的那条，不是安全约束本身。
         scanned = _valid_safety_alert(input_safety_alert(raw_text))
         if scanned:
             focus.safety_alert = merge_safety_alert(focus.safety_alert, scanned)
@@ -1500,7 +1516,11 @@ class ContextManager:
                 # 本轮新来一条 amber、上一轮那条 critical 还没解除时，
                 # 「有新的就换掉」等于**用一句无关的话把安全约束降了级**。
                 # 改成同一条严重级比较——本轮为空那种情况仍然逐字同旧（merge 取旧）。
-                if previous is not None and getattr(previous, "safety_alert", None):
+                # ⚠ 2026-09-19 起 `safety_alert_cleared` 时**不接力**（QA T47 裁决 A）：那一轮的空
+                # 是用户明确解除，不是「本轮没产生新告警」。同一句里的新告警仍在 `focus.safety_alert`
+                # 里，不受影响。
+                if (previous is not None and getattr(previous, "safety_alert", None)
+                        and not focus.safety_alert_cleared):
                     focus.safety_alert = merge_safety_alert(
                         dict(previous.safety_alert), focus.safety_alert)
                 # C12-B：会话偏好约束**后说的覆盖先说的、没说的沿用**。
@@ -1516,6 +1536,7 @@ class ContextManager:
                 # `route_ended` 是**本轮事实**，不跨轮——存进去下一轮读回来仍是 True
                 # 就会永久关掉接力（一个只该响一次的旗子变成了常态）。
                 focus.route_ended = False
+                focus.safety_alert_cleared = False
                 await self.session.save_focus(
                     session_id, asdict(focus), owner_user_id=user_id)
         except Exception as e:

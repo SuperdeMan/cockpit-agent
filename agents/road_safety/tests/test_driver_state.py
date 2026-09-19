@@ -162,3 +162,22 @@ def test_ordinary_question_is_not_turned_into_an_alert():
     res = _advice("今天适合出行吗")
     assert "未解除" not in res.speech
     assert not ((res.data or {}).get("_safety_alert") or {})
+
+
+# ── 解除陈述（QA T47 裁决 A，2026-09-19）────────────────────────────────────
+
+def test_resolution_turn_does_not_repeat_the_old_session_alert():
+    """「机油灯灭了，现在还能继续开吗」带着会话里的旧告警进来：不许答
+    「您这次会话里还有未解除的机油灯」，也不许把它当新告警登记回去。"""
+    import json
+    meta = {"focus_safety_alert": json.dumps({"level": "critical", "signal": "机油灯"})}
+    res = asyncio.run(run_handle(
+        _agent(), "safety.driving_advice",
+        raw_text="机油灯灭了，现在还能继续开吗", meta=meta))
+    assert "未解除" not in res.speech, res.speech
+    assert "机油灯亮起" not in res.speech, res.speech
+    assert not ((res.data or {}).get("_safety_alert") or {})
+    # 反向对照：同一份 meta、没有解除陈述 ⇒ 仍按会话告警答
+    res = asyncio.run(run_handle(
+        _agent(), "safety.driving_advice", raw_text="现在还能继续开吗", meta=meta))
+    assert "未解除的机油灯" in res.speech

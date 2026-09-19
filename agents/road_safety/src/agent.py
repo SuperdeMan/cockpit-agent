@@ -20,7 +20,7 @@ from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
-                                   alert_signal, driver_state)
+                                   alert_resolved, alert_signal, driver_state)
 from runtime.clock import hour_of as clock_hour
 from runtime.proactive import P_CRITICAL, publish_proactive
 
@@ -232,7 +232,11 @@ class RoadSafetyAgent(BaseAgent):
         # 「天气状况良好，适合出行」。`_general_advice` 只看天气现象，
         # **它不知道这个会话里刚响过一个红灯**。告警经 `meta.focus_safety_alert`
         # 由编排广播下来（不按 scope 门控——告警是约束不是敏感数据）。
-        alert = _focus_safety_alert(meta)
+        # QA T47 裁决 A（2026-09-19）：用户这一句已经说了「机油灯灭了 / 处理好了」，会话里那条
+        # 旧告警不再是这轮回答的前提——否则「机油灯灭了，现在还能继续开吗」会被答成
+        # 「您这次会话里还有未解除的机油灯」。判据同 `runtime.safety_signal.alert_resolved`
+        # （编排同一轮也据此清焦点；这里只是让**这一轮**不再读到它）。
+        alert = {} if alert_resolved(intent.raw_text or "") else _focus_safety_alert(meta)
         if alert:
             return self._alert_bound_advice(alert)
 

@@ -26,7 +26,8 @@ from runtime.session_facts import (
 )
 from .mem_source import with_provenance
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
-                                       alert_level, alert_signal, driver_state)
+                                       alert_level, alert_resolved, alert_signal,
+                                       driver_state)
 
 logger = logging.getLogger("agent.chitchat")
 
@@ -179,8 +180,12 @@ def _active_alert(meta: dict) -> dict:
     return alert
 
 
-def _system(meta: dict) -> str:
+def _system(meta: dict, text: str = "") -> str:
     name = (meta or {}).get("assistant_name") or "小舟"
+    # QA T47 裁决 A（2026-09-19）：用户这一句已经说了「机油灯灭了 / 处理好了」，会话里那条
+    # 旧告警不再是这轮回答的前提（编排同一轮据同一份判据清焦点；这里只是让**这一轮**的
+    # prompt 不再带着它劝停车）。判据 `runtime.safety_signal.alert_resolved`，与 road-safety 同源。
+    alert = {} if alert_resolved(text or "") else _active_alert(meta)
     # M4 P4：声纹识别出的说话人称呼。**没有它「你知道我是谁」只能靠语义召回碰运气**——
     # 而这类身份问句恰恰是用户验证声纹是否生效的第一句话，必须确定性答得上。
     # 只影响称呼与口吻，不参与任何权限判定（声纹不作鉴权因子，RFC §6.1）。
@@ -226,10 +231,10 @@ def _system(meta: dict) -> str:
         # Q9：会话里有未解除的安全告警时，它是**这一轮回答的前提**，不是背景。
         # QA 轮实测，用户说「别提醒我，继续开就行」时兜底答了「收到，那不提醒也不停车」
         # ——**用户可以拒绝被提醒，系统不可以跟着改口说不用停车**。
-        + (f"⚠本次会话里还有未解除的安全告警：{_active_alert(meta).get('signal')}。"
+        + (f"⚠本次会话里还有未解除的安全告警：{alert.get('signal')}。"
            "无论用户问什么、或明确表示不想被提醒，都不得表示可以继续危险驾驶、"
            "不得撤回或弱化停车/休息建议；可以不再重复啰嗦，但立场不改。"
-           if _active_alert(meta) else "")
+           if alert else "")
     )
 
 
@@ -262,7 +267,7 @@ class ChitchatAgent(BaseAgent):
 
     async def _build_messages(self, intent, ctx, meta):
         """返回 `(msgs, 本轮召回到的记忆)`——后者供确定性出处披露判定。"""
-        sys = _system(meta)
+        sys = _system(meta, intent.raw_text or intent.slots.get("text", ""))
         mem_ctx, mems = await self._memory_context(intent, ctx)
         if mem_ctx:
             sys = f"{sys}\n\n{mem_ctx}"

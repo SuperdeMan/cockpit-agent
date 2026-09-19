@@ -78,3 +78,60 @@ def test_driver_state_returns_empty_when_unrecognised():
     for text in ("慢一点开可以吗", "现在在高速还能继续开吗",
                  "红色机油灯亮了怎么办", "帮我放首歌"):
         assert driver_state(text) == "", f"不该判成驾驶员状态：{text}"
+
+
+# ── 解除陈述（QA T47 裁决 A，2026-09-19）────────────────────────────────────
+# 这是放宽一道安全约束的作用域，所以**反例是这组的主要价值**：问句、指令、否定、
+# 意图陈述、无对象的「好了」、正常功能灯，一个都不许清掉一条 critical。
+
+from runtime.safety_signal import alert_resolved  # noqa: E402
+
+
+def test_resolution_statements_clear_the_alert():
+    for text in ("机油灯灭了", "检查过了，机油灯已经灭了", "水温报警解决了", "故障灯不亮了",
+                 "机油灯没亮", "机油灯是误报", "刹车异响修好了", "胎压报警处理好了",
+                 "机油灯已排除", "警告灯熄灭了", "故障已解决", "机油灯没有报警"):
+        assert alert_resolved(text), f"应判为解除：{text}"
+        assert alert_level(text) == "", f"解除陈述不是一条新告警：{text}"
+
+
+def test_questions_directives_negations_and_intentions_do_not_clear():
+    for text in (
+        "机油灯灭了吗", "机油灯是不是灭了", "如果机油灯灭了还能开吗",     # 问句 / 假设
+        "帮我把故障灯灭了",                                            # 指令
+        "机油灯还没灭", "机油灯没修好", "机油灯还没有排除了",          # 否定
+        "我会靠边停车检查", "马上去修", "先开到服务区再看",              # 意图不是解除
+        "刚才那个提醒处理好了", "没事了", "处理好了", "问题解决了",      # 没点名告警对象
+        "大灯灭了", "雾灯不亮了",                                      # 正常功能灯不是告警对象
+        "机油灯亮了", "红色机油灯亮了还能继续开吗",                    # 本来就是告警
+    ):
+        assert not alert_resolved(text), f"不该判为解除：{text}"
+
+
+def test_resolution_clause_does_not_hide_a_new_alert_in_the_same_utterance():
+    """「机油灯灭了但是水温灯亮了」：前半解除、后半是新告警，两件事都要成立。"""
+    text = "机油灯灭了但是水温灯亮了"
+    assert alert_resolved(text)
+    assert alert_level(text) == "critical"
+    assert alert_signal(text) == "水温灯"
+    mixed = "水温报警解决了，胎压灯还亮着"
+    assert alert_resolved(mixed)
+    assert alert_level(mixed) == "amber"
+    assert alert_signal(mixed) == "胎压灯"
+
+
+def test_resolution_plus_continuation_question_is_not_an_alert():
+    """「机油灯灭了，现在还能继续开吗」：解除 + 续驾问句，不许按告警答「靠边停车」。"""
+    text = "机油灯灭了，现在还能继续开吗"
+    assert alert_resolved(text)
+    assert alert_level(text) == "" and alert_signal(text) == ""
+
+
+def test_alert_recognition_is_byte_for_byte_unchanged_without_a_resolution():
+    """没有解除陈述时 `alert_level` / `alert_signal` 的行为一个字不变——既有全部正反例照旧。"""
+    for text, level, sig in (("红色机油灯亮了怎么办", "critical", "机油灯"),
+                             ("胎压黄灯亮了，还能开吗", "amber", "黄灯"),
+                             ("刹车有异响", "critical", "刹车异响"),
+                             ("大灯亮了", "", ""), ("今天天气怎么样", "", "")):
+        assert alert_level(text) == level, text
+        assert alert_signal(text) == sig, text

@@ -227,3 +227,109 @@ def test_merge_is_a_noop_when_one_side_is_empty():
     live = {"level": "amber", "signal": "胎压灯", "ts": int(time.time())}
     assert merge_safety_alert(live, {}) is live
     assert merge_safety_alert({}, live) is live
+
+
+# ── 解除陈述清焦点（QA T47 裁决 A，2026-09-19）────────────────────────────────
+# T47 现场：机油灯之后 23 轮、约 5 分钟，「规划去广州路上的补能」被 planner 读着焦点里
+# 「未解除的机油灯」反问「你现在想让我做什么」；用户在 T27 说的「我会靠边停车检查」
+# 是意图不是解除，告警按设计一直在场。这里补的是那条缺失的**解除通道**：
+# 用户明确说「灯灭了 / 处理好了 / 误报」⇒ 清焦点，并挡住粘性接力把它搬回来。
+# 判据本体在 `runtime.safety_signal.alert_resolved`，这里只测编排的两个动作。
+
+def _turn(manager, text, intent="chitchat.talk", agent_id="chitchat"):
+    plan = _plan(intent=intent, agent_id=agent_id)
+    plan.raw_text = text
+    return manager.update_focus("sess", plan, [_ok("s0", {})], user_id="u1")
+
+
+def _manager():
+    from types import SimpleNamespace
+
+    from orchestrator.cloud.context import ContextManager
+    from orchestrator.cloud.session import SessionStore
+
+    return ContextManager(clients=SimpleNamespace(), session=SessionStore())
+
+
+def test_resolution_statement_marks_the_turn_as_cleared():
+    plan = _plan(intent="chitchat.talk", agent_id="chitchat")
+    plan.raw_text = "检查过了，机油灯已经灭了"
+    focus = extract_focus(plan, [_ok("s0", {})])
+    assert focus is not None, "解除轮必须产出焦点，否则接力分支根本跑不到"
+    assert not focus.safety_alert
+    assert focus.safety_alert_cleared is True
+
+
+def test_resolution_survives_the_sticky_relay_across_turns():
+    """**跨轮**：解除之后下一轮不许再看到那条告警（`route_ended` 那条同款——接力比清除更强）。"""
+    import asyncio
+
+    manager = _manager()
+
+    async def _run():
+        await _turn(manager, "红色机油灯亮了怎么办", "manual.query", "manual-rag")
+        with_alert = await manager._load_focus("sess", "u1")
+        await _turn(manager, "检查过了，机油灯已经灭了")
+        after_resolution = await manager._load_focus("sess", "u1")
+        await _turn(manager, "规划去广州路上的补能，但先不要启动导航",
+                    "charging.plan", "charging-planner")
+        return with_alert, after_resolution, await manager._load_focus("sess", "u1")
+
+    with_alert, after_resolution, later = asyncio.run(_run())
+    assert with_alert.safety_alert.get("level") == "critical", "前提：告警先要在"
+    assert not after_resolution.safety_alert, "解除之后接力把旧告警搬回来了"
+    assert not getattr(after_resolution, "safety_alert_cleared", False), \
+        "`safety_alert_cleared` 是本轮事实，存进焦点会永久关掉接力"
+    assert not later.safety_alert
+    assert "安全告警" not in _render_focus(later)
+
+
+def test_intention_statement_keeps_the_alert_in_place():
+    """反向对照：「我会靠边停车检查」是意图不是解除，告警照旧接力（T27 那句）。"""
+    import asyncio
+
+    manager = _manager()
+
+    async def _run():
+        await _turn(manager, "红色机油灯亮了怎么办", "manual.query", "manual-rag")
+        await _turn(manager, "好的，我会靠边停车检查")
+        await _turn(manager, "慢一点开可以吗", "safety.driving_advice", "road-safety")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "机油灯"
+
+
+def test_resolution_with_a_new_alert_in_the_same_utterance_keeps_the_new_one():
+    """「机油灯灭了但是水温灯亮了」：解除的是旧的那条，安全约束本身没放松。"""
+    import asyncio
+
+    manager = _manager()
+
+    async def _run():
+        await _turn(manager, "红色机油灯亮了怎么办", "manual.query", "manual-rag")
+        await _turn(manager, "机油灯灭了但是水温灯亮了")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+    assert focus.safety_alert.get("level") == "critical"
+    assert focus.safety_alert.get("signal") == "水温灯"
+
+
+def test_cleared_flag_does_not_block_a_later_new_alert():
+    """反向对照：解除过之后再报一次告警，要能正常登记（一个恒不接力的实现也会过上面那条）。"""
+    import asyncio
+
+    manager = _manager()
+
+    async def _run():
+        await _turn(manager, "红色机油灯亮了怎么办", "manual.query", "manual-rag")
+        await _turn(manager, "机油灯灭了")
+        await _turn(manager, "胎压灯亮了", "manual.query", "manual-rag")
+        await _turn(manager, "今天天气怎么样", "info.weather", "info")
+        return await manager._load_focus("sess", "u1")
+
+    focus = asyncio.run(_run())
+    assert focus.safety_alert.get("level") == "amber"
+    assert focus.safety_alert.get("signal") == "胎压灯"

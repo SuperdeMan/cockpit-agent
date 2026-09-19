@@ -175,6 +175,16 @@ _INFORMATION_CASES = [
          "audit": {"intent_any": ["safety.driving_advice"]}},
         {"say": "你的判断依据来自车主手册还是通用安全建议", "expect": {"no_actions": True}},
         {"say": "好的，我会靠边停车检查", "expect": {"no_actions": True}},
+        # ⚠ 2026-09-19 补（QA T47 裁决 A）：上一句是**意图**，告警按设计继续在场；23 轮后
+        # INF-CHARGING 的「规划去广州路上的补能」因此被 planner 反问「你现在想让我做什么」
+        # （T47 红）。这一轮是用户明确的**解除陈述**——`runtime.safety_signal.alert_resolved`
+        # 认它、编排清焦点并挡住接力，后面的补能规划才有资格期望 `charging.plan`。
+        # 判据只认点名了告警对象的完成态陈述：换成「处理好了」「没事了」这里不会清。
+        # 落域不钉死（陈述句交给模型，闲聊或安全助手都说得通），钉的是**零动作**与
+        # **不再是一条新告警**（`_safety_alert` 那一格由下面 T47 的落域间接验证）。
+        {"say": "检查过了，机油灯已经灭了，恢复正常了", "expect": {"no_actions": True},
+         "audit": {"intent_any": ["chitchat.talk", "safety.driving_advice",
+                                   "manual.query"]}},
     ),
     # ⚠ `honors_no_spicy` 2026-08-28 补（C12-D）：真栈 T29 一轮里确定性地拼出
     # 三句自相矛盾的话（「找到 10 家川菜」+「按您的口味优先川菜」+「记得您说过

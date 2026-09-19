@@ -81,3 +81,29 @@ def test_ordinary_chitchat_untouched():
     assert not ((res.data or {}).get("_safety_alert") or {})
     system = agent.llm.complete.await_args[0][0][0]["content"]
     assert "未解除的安全告警" not in system
+
+
+# ── 解除陈述（QA T47 裁决 A，2026-09-19）────────────────────────────────────
+
+def test_resolution_statement_is_not_answered_as_an_alert():
+    """「机油灯灭了」不是一条新告警：不走确定性直答、不声明 `_safety_alert`。"""
+    agent = _agent("太好了，那就放心开吧。")
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="检查过了，机油灯已经灭了"))
+    assert agent.llm.complete.await_count == 1
+    assert res.speech == "太好了，那就放心开吧。"
+    assert not ((res.data or {}).get("_safety_alert") or {})
+
+
+def test_resolution_turn_drops_the_session_alert_from_the_prompt():
+    """用户这一句已经说了灯灭了，会话里那条旧告警不再是这轮回答的前提。
+    反向对照留在下面：没说解除时 prompt 照旧带着它。"""
+    import json
+    meta = {"focus_safety_alert": json.dumps({"level": "critical", "signal": "机油灯"})}
+    agent = _agent("好的。")
+    asyncio.run(run_handle(agent, "chitchat.talk", raw_text="机油灯灭了，不用管它了", meta=meta))
+    system = agent.llm.complete.await_args[0][0][0]["content"]
+    assert "未解除的安全告警" not in system
+    agent = _agent("好的。")
+    asyncio.run(run_handle(agent, "chitchat.talk", raw_text="好的，我会靠边停车检查", meta=meta))
+    system = agent.llm.complete.await_args[0][0][0]["content"]
+    assert "未解除的安全告警" in system
