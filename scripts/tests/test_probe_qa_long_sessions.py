@@ -871,7 +871,7 @@ def test_tts_samples_are_bound_to_one_real_business_turn_per_persona():
     assert all(sample["trace_id"].startswith("biz-") for sample in samples.values())
 
 
-def test_barge_in_validation_requires_cancel_close_and_no_post_cancel_audio():
+def test_barge_in_validation_requires_cancel_close_and_bounded_in_flight_residue():
     good = {
         "provider": "minimax", "cancel_sent": True,
         "audio_before_cancel_bytes": 2048, "post_cancel_audio_bytes": 0,
@@ -879,11 +879,31 @@ def test_barge_in_validation_requires_cancel_close_and_no_post_cancel_audio():
     }
     assert long_qa.validate_tts_barge_in(good) == []
 
+    # 2026-08-30 真栈原读数（6144 / 8192 字节，16 / 31ms 内关闭）：在途残帧，不判红。
+    in_flight = {**good, "post_cancel_audio_bytes": 8192, "post_cancel_frames": 2,
+                 "post_cancel_last_frame_ms": 31}
+    assert long_qa.validate_tts_barge_in(in_flight) == []
+
+    # 残帧持续到窗口之后 = 网关没停，这才是要抓的形态。
+    still_streaming = {**good, "post_cancel_audio_bytes": 65536,
+                       "post_cancel_frames": 20,
+                       "post_cancel_last_frame_ms": long_qa._BARGE_IN_FLIGHT_MS + 1}
+    assert long_qa.validate_tts_barge_in(still_streaming) == [
+        "MiniMax TTS cancel 后音频残帧超出在途窗口",
+    ]
+
+    # 有残帧却没记时刻（旧探针形态）：「没量」不等于「在窗口内」。
+    unmeasured = {**good, "post_cancel_audio_bytes": 512}
+    assert long_qa.validate_tts_barge_in(unmeasured) == [
+        "MiniMax TTS cancel 后音频残帧超出在途窗口",
+    ]
+
     bad = {**good, "cancel_sent": False, "post_cancel_audio_bytes": 512,
+           "post_cancel_last_frame_ms": 4200,
            "terminal": "timeout", "closed_after_cancel_ms": None}
     assert long_qa.validate_tts_barge_in(bad) == [
         "MiniMax TTS 打断帧未发出",
-        "MiniMax TTS cancel 后仍收到音频残帧",
+        "MiniMax TTS cancel 后音频残帧超出在途窗口",
         "MiniMax TTS cancel 后连接未及时关闭",
     ]
 

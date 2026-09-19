@@ -944,6 +944,18 @@ def validate_minimax_tts(result: dict) -> list[str]:
     return failures
 
 
+#: barge-in 后允许残帧到达的**在途窗口**（毫秒）。QA 交接页 §5 那条「cancel 后仍收到
+#: 6144 / 8192 字节，但分别在 16 / 31ms 内关闭」的裁决（2026-09-19）：
+#: 全双工 WebSocket 上「cancel 之后零字节」在物理上不可判——客户端的 cancel 帧与网关已经
+#: `send_bytes` 出去的那一片在线上交错，没有确认往返就没有任何一方能保证零。真正要守的
+#: 是两件事：① 客户端**丢弃** cancel 之后到达的帧（HMI `audio.ts::onMessage` 与 mobile
+#: `tts.ts::onMessage` 的 `disposed` 守卫；CDP C14 证明本地播放源 stop）；② 网关**及时停**
+#: ——残帧只能是那一两片在途的，之后不能再来。所以服务端判据从「零字节」改成「最后一片
+#: 残帧到达时刻 ≤ 在途窗口」。窗口取 1s：一条没被取消的流每秒会持续吐几十片，
+#: 与「一两片在途」在这条尺子上分得开；实测残帧 16 / 31ms，留了 30× 余量。
+_BARGE_IN_FLIGHT_MS = 1000
+
+
 def validate_tts_barge_in(result: dict) -> list[str]:
     failures: list[str] = []
     if str(result.get("provider") or "").lower() != "minimax":
@@ -953,7 +965,13 @@ def validate_tts_barge_in(result: dict) -> list[str]:
     if int(result.get("audio_before_cancel_bytes") or 0) < 1:
         failures.append("MiniMax TTS 未起播，无法验证打断")
     if int(result.get("post_cancel_audio_bytes") or 0) != 0:
-        failures.append("MiniMax TTS cancel 后仍收到音频残帧")
+        # 残帧本身不判红（见 `_BARGE_IN_FLIGHT_MS`）；判的是它们是不是**在途**那几片：
+        # 最后一片必须落在窗口内。旧探针没记时刻的记录（`None`）按红处理——
+        # 「没量」不能当成「在窗口内」。
+        last_ms = result.get("post_cancel_last_frame_ms")
+        if (not isinstance(last_ms, (int, float))
+                or last_ms > _BARGE_IN_FLIGHT_MS):
+            failures.append("MiniMax TTS cancel 后音频残帧超出在途窗口")
     closed_ms = result.get("closed_after_cancel_ms")
     if (result.get("terminal") != "closed_after_cancel"
             or not isinstance(closed_ms, (int, float)) or closed_ms > 5000):
@@ -1085,7 +1103,8 @@ async def audit_minimax_tts_barge_in(audio_url: str, text: str) -> dict:
     result = {
         "provider": "minimax", "model": "", "voice": "",
         "cancel_sent": False, "audio_before_cancel_bytes": 0,
-        "post_cancel_audio_bytes": 0, "terminal": None,
+        "post_cancel_audio_bytes": 0, "post_cancel_frames": 0,
+        "post_cancel_last_frame_ms": None, "terminal": None,
         "closed_after_cancel_ms": None, "failures": [],
     }
     try:
@@ -1129,6 +1148,9 @@ async def audit_minimax_tts_barge_in(audio_url: str, text: str) -> dict:
                     raw = await asyncio.wait_for(ws.recv(), timeout=5.0)
                     if isinstance(raw, (bytes, bytearray)):
                         result["post_cancel_audio_bytes"] += len(raw)
+                        result["post_cancel_frames"] += 1
+                        result["post_cancel_last_frame_ms"] = round(
+                            (time.monotonic() - cancelled_at) * 1000)
             except asyncio.TimeoutError:
                 result["terminal"] = "timeout"
             except Exception as exc:

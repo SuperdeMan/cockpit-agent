@@ -204,6 +204,26 @@ describe('下行与收尾', () => {
     expect(stopped.length).toBe(1)
     await expect(s.completion).resolves.toBeUndefined()
   })
+
+  test('cancel 之后在途到达的音频片一律丢弃（QA 交接页 §5 barge-in 残帧裁决 2026-09-19）', async () => {
+    // 全双工 socket 上 cancel 帧与网关已发出的那一两片必然交错，「零字节」不是客户端能等到的
+    // 事实；能守的是：到了也不进播放器、不改收尾。
+    const s = new TtsSession(CFG)
+    s.start()
+    FakeWs.last!.open()
+    FakeWs.last!.emit({ type: 'meta', sample_rate: 22050 })
+    FakeWs.last!.emitBinary(new Int16Array([1, 2, 3]))
+    expect(pushed.length).toBe(1)
+    s.stop()
+    const ws = FakeWs.last!
+    ws.emitBinary(new Int16Array(3072)) // 6144 字节：2026-08-30 真栈实测的那一片
+    ws.emitBinary(new Int16Array(4096)) // 8192 字节
+    ws.emit({ type: 'done', chunks: 3 })
+    await flush()
+    expect(pushed.length).toBe(1)
+    expect(stopped.length).toBe(1)
+    await expect(s.completion).resolves.toBeUndefined()
+  })
 })
 
 describe('隐形通道读数（语音批 T1：pcmPlayer 起点重排在 HAL/混音器指标上是盲区，只能在这里数）', () => {
