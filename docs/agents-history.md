@@ -9239,3 +9239,14 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   折叠屏 `screencap` 必须 `-d <display-id>`；对话页 uiautomator dump 要重试；FlashList 节点数不能当新消息判据；`mobile_device.ps1 -Role test` 无参数调用在这台机会挂住（`-Install` 路径正常），
   改用 `adb devices -l` 直读。
 - 服务端未 deploy：本批零 Python 改动；`hmi/src/ws.mjs`（F06）在云端 HMI 上要等下一次 deploy。
+
+### 同批追加 — 评审衍生 E 项：G-06 / G-04 / G-01 落地，G-05 只写待批 diff
+
+- G-06 裁决**不弹回开关**（`7ea487c8`）：开关是用户意图、「没启动」是运行事实——弹回会毁掉意图并断掉回前台的自动重试。事实落三处：设置页开关下 `handsfree-error`
+  （权限成因指系统设置、其余「关掉再打开」）、Presence 降级（权限并进 mic 那条不重复报，其余 `service_degraded`）、`errorKind`；`onEnabled` 成功即清。
+  接口注释里「UI 据此把开关自动弹回」的说法是从没实现过的承诺，删掉。
+- G-04（`adddfa2a`）：`clearHistory` 删完回读、返回 boolean；设置页按钮下写结果。变异「不回读直接报 true」红。
+- G-01（`e7ca13a0`）：`VAD_MAX_BACKLOG=30` 封顶只丢推理不丢前滚、`stats()`、推理计时；消费方选 AR08 轮次时间线（`capture_started` / `asr_final` 的 detail）——
+  诊断页进入即暂停采集，活读数只能在跑的时候顺手记进时间线才能事后回读；`HandsFreeController.stats()` 此前全仓没有屏读它。
+- G-05：改的是 `.github/workflows/mobile-apk.yml`（CI/CD 红线、`ci_cd` digest 重批）⇒ 只写 `docs/design/2026-09-19-g05-mobile-apk-abi-preflight-proposal.md`，等授权；读数还要 dispatch `run_e2e=true`。
+- 本地 mobile jest 111 suites / 1136、tsc 0、eslint 0。三个 commit 未 push、未装机。

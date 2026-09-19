@@ -54,12 +54,12 @@
 | 声学验收五维表（唤醒 / 回灌 / 插话 / ASR / 恢复） | 总表 H-02 / H-03 / H-04 / H-06 已各自有协议与仪器；评审的表是同一件事的另一种切法，作为 AR10 计分表的补充列，不另立 |
 | 首音三种时间（动作→发送 / 发送→首片 PCM / 说完→扬声器首音） | = 总表 H-03（AR08 `attachMeasuredOnset` 入口已备），不另立 |
 | 长会话 50 / 200 / 500 条压测、先测再 memo | = 总表 E-01 + E-03，不另立 |
-| VAD 积压无上限、无观测 | **新立 G-01（E）**：`VadEngine` 暴露 `backlog`（未落地窗口数）与最近推理耗时；落后超阈值时按 KWS 的做法丢窗计数而不是无声涨延迟。本批不做（先有 F01 的代际护栏，积压计数才有意义） |
+| VAD 积压无上限、无观测 | **G-01（E）已做 `e7ca13a0`**：`VAD_MAX_BACKLOG=30`（≈1s）封顶、超出只丢推理不丢前滚并计数；`stats()` 暴露 backlog / dropped / processed / lastInferMs；消费方是 AR08 轮次时间线（进 LISTENING 与定稿两处 mark 带 `vad b… d… …ms`，`/turn-timeline` 事后回读——诊断页进入即暂停采集，活读数只能这样留下） |
 | 位置新鲜度按任务写契约（天气 / 附近 / 导航起点不同年龄） | **新立 G-02（E，云侧）**：`fixPolicy` 现在只有一档 `FRESH_FIX_MAX_AGE_MS`；服务端 `navigation.locate` 已对超龄坐标说「N 分钟前在…」。接真实导航执行前把「可接受年龄」写成 capability 契约字段（走 manifest 链路） |
 | 未知执行结果按副作用分类（只读可重试 / 绝对值先确认幂等 / 相对调整与支付先查状态） | **新立 G-03（H，产品裁决）**：与总表「支付余项」「真实车控」同属接真车前的设计门槛；现在的「发送状态未知 + 手动重发」对只读请求已够，其余两类等接真实执行面时一起裁 |
-| `clearHistory()` 吞异常、「界面清空」≠「持久化删除成功」 | **新立 G-04（E）**：清除失败要回报（issue 卡或设置页文案），账号切换 / 重启后的表现写进 AM5 隐私包 DoD。小改，随下一批打磨走 |
+| `clearHistory()` 吞异常、「界面清空」≠「持久化删除成功」 | **G-04（E）已做 `adddfa2a`**：删完**回读**为准返回 boolean；设置页在按钮下写结果（`settings-clear-history-result`：已删且回读确认 / 会话已清但本机记录没删掉）。账号切换 / 重启后的表现仍归 AM5 隐私包 DoD |
 | 正式签名 / prod≠可分发 / 最终产物回读验证 | = 总表 H-09（AM5 签名 / 渠道包）；`build_mobile.ps1` 已明说 release 沿用 `debug.keystore` 留给 M5，不另立 |
-| CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | **新立 G-05（E）**：`mobile-apk.yml` 冒烟默认关；开之前先证明所选镜像能装上 ARM-only 插件（或加 x86_64 ABI），不预设结论 |
+| CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | **G-05（E）改法已写、未应用**：[待批 diff](2026-09-19-g05-mobile-apk-abi-preflight-proposal.md)——ABI 预检 + 安装失败翻译 + logcat 找 `UnsatisfiedLinkError` + 四个工件，由 job 自己给读数。改的是 CI/CD 配置（红线 + `ci_cd` digest 要重批），等授权；读数要你 dispatch 一次 `run_e2e=true` |
 | 共享代码脱离 `hmi/` 目录 | 评审自己也说不是本轮优先级；记为 **R-06（不改）**：`@shared/*` 指向 `../hmi/src/*` 是「判据只留一份」的实现形态，搬目录不解决任何本次发现的问题 |
 | 行车档不只放大按钮、确认不被聊天与语音层重复表达 | 已在 AR10 五人验收脚本范围（总表 H-07），不另立 |
 
@@ -174,12 +174,23 @@
 FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到达」的判据，要读最后一条的文本或截图；`useHandsFree` 启动失败**不会**把开关弹回（README 的说法不成立，只 setError + notice，
 而 notice 也没有落到可读节点）⇒ 「开关回读 true」证明不了免唤醒起来了，要看 `KWS loaded` + AudioService 录音事件。
 
-### 6.10 本批未达与去向
+### 6.10 G-01 / G-04 / G-06 实施（2026-09-19 晚，用户「开始做」）
+
+- G-06 `7ea487c8`：`useHandsFree` 加 `errorKind`、成功 `onEnabled` 清错、`wake()` 恢复路径同步；`SettingsScreen` 开关下 `handsfree-error`；`usePresence` 映成降级。
+  `handsFreeEnableError.test` 4 条（HEAD 3/4 红）：失败可读且开关不动、权限成因、回前台重试成功清、关掉再打开新控制器 + 新原因；接线源码级断言。
+- G-04 `adddfa2a`：`clearHistory` 回读返回 boolean；设置页结果行。`history.test` +1（变异「不回读直接报 true」红）。
+- G-01 `e7ca13a0`：`vad.ts` `VAD_MAX_BACKLOG` / `stats()`、`accept()` 封顶计数、`infer` 计时；`HandsFreeController.stats().vad`；`useHandsFree` 把读数写进 `capture_started` / `asr_final` 的 detail。
+  `vadGeneration.test` +1（变异「不封顶」红）、`handsFreeEnableError.test` +1 接线。
+- 本地：mobile jest **111 suites / 1136 passed**、tsc 0、eslint 0。**未 push、未装机**（G-06 / G-04 有 UI 面，下一个候选包一起带）。
+- G-05：只写了待批 diff，没动 workflow（CI/CD 红线）。
+
+### 6.11 本批未达与去向
 
 | 项 | 去向 |
 |---|---|
 | F02 通话期间采集策略 | 第三批（真机：来电时 recorder 收到什么） |
-| `useHandsFree` 启动失败不弹回开关、错误没有可读落点 | **新立 G-06（E）**：README 写着「开关自动弹回并解释」而代码没有；要么做出来，要么改文档并把 `hf.error` 落到设置页 |
+| `useHandsFree` 启动失败不弹回开关、错误没有可读落点 | **G-06（E）已做 `7ea487c8`**，裁决**不弹回**：开关是意图、失败是事实——设置页开关下方 `handsfree-error`（权限成因指系统设置、其余「关掉再打开」）+ Presence 降级（权限并进 mic 那条，其余 `service_degraded`）+ `errorKind`；回前台的 scope 同步与重新开关都重试，成功即清。接口注释里「UI 弹回」的说法删掉 |
 | F07 运行时压力 | 第三批（候选包） |
 | 第三批固定包验收五维 × 四态 | 总表 D-05 / D-06 + 本页 §3 |
-| 新立 G-01～G-05 | 待排；G-04（clearHistory 回报）最小，随下一批打磨 |
+| G-02 / G-03 | G-02 接真实导航执行前（manifest 链路）；G-03 产品裁决 |
+| G-05 | 待批 diff（CI/CD 红线）+ 你 dispatch 一次 `run_e2e=true` |

@@ -215,12 +215,12 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 | E-20 | E | F05 录音重启同一非 16k 采样率不再重建重采样器 ⇒ 48k 原样下传 | **已修**：`startNative` 把 `_deviceRate` 与 resampler 一起归零 | `core/voice/recorder.ts`；`recorderResample.test` 4（HEAD 2/4 红） |
 | E-21 | E | F06 `ws.mjs` flush 抛错后无恢复、`send()` 越过队列 | **已修**（共享传输层，HMI 正常路径逐字不变）：抛错 ⇒ 留队首 + 判死重连；有积压不越过；直发抛错不上抛。同步抛错 = 帧未写出（核实过的语义），AR01 R04「发送状态未知」用例按此改写 | `hmi/src/ws.mjs`；`ws.test.mjs` +5（HEAD 5/5 红）、`sessionLifecycle.test` R04 ×2 |
 | E-22 | E | F07 KWS join 超时后仍 `running=true` 重载 ⇒ 卡在 JNI 的旧线程醒来消费新队列 | **已修 + 真机同进程 3 轮 release→load 闭合**：每条 worker 自带 `alive`；join 超时进 `stale`，确认退出前 load 抛 `KWS_WORKER_STUCK`。慢解码替身压力仍归 D-08 | `modules/kws/.../KwsModule.kt` |
-| G-06 | E | `useHandsFree` 启动失败不弹回开关、`hf.error` 无可读落点（README 说法与代码不符） | 待排：做出来或改文档 + 落到设置页 | `features/chat/useHandsFree.ts`、`SettingsScreen.tsx` |
+| ~~G-06~~ | E | `useHandsFree` 启动失败不弹回开关、`hf.error` 无可读落点 | **已做 `7ea487c8`**（裁决不弹回：意图 vs 事实）：开关下 `handsfree-error` + Presence 降级 + `errorKind`，成功即清 | `useHandsFree.ts`、`SettingsScreen.tsx`、`usePresence.ts` |
 | D-08 | D | F07 运行时压力（慢解码替身、加载 / 释放 / 重复启停）+ F02 通话期间 recorder 收到什么 | 候选包 + 真机 | remediation §6.7 / §5 |
 | D-09 | D | 系统音频五维（声音 / 播放器 / FSM / 采集 / 上行）× 四态（主 TTS / S2S / LISTENING / FOLLOWUP）：焦点丢失、耳机断开、系统中断 | 同一候选包；与 D-05 / D-06 合并取证 | `audioFocusLog()` 的 `stoppedVia` 一列 |
-| G-01 | E | VAD 积压无上限、无观测 | 待排（F01 之后积压计数才有意义） | remediation §4 |
+| ~~G-01~~ | E | VAD 积压无上限、无观测 | **已做 `e7ca13a0`**：30 窗封顶、丢窗计数、读数进轮次时间线两处 mark | `core/voice/vad.ts::stats`、`useHandsFree.ts` |
 | G-02 | E | 位置新鲜度按任务写成 capability 契约字段 | 接真实导航执行前 | remediation §4 |
 | G-03 | H | 未知执行结果按副作用分类（只读 / 绝对值 / 相对调整与支付） | 接真车 / 支付前一起裁 | remediation §4 |
-| G-04 | E | `clearHistory()` 吞异常、界面清空 ≠ 持久化删除成功 | 随下一批打磨 | `core/session/history.ts` |
-| G-05 | E | CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | 开冒烟前先证明镜像能装 | `.github/workflows/mobile-apk.yml` |
+| ~~G-04~~ | E | `clearHistory()` 吞异常、界面清空 ≠ 持久化删除成功 | **已做 `adddfa2a`**：回读为准 + 设置页结果行 | `core/session/history.ts`、`SettingsScreen.tsx` |
+| G-05 | H | CI 冒烟 x86_64 模拟器 vs 原生插件只打 ARM ABI | [待批 diff](2026-09-19-g05-mobile-apk-abi-preflight-proposal.md)（CI/CD 红线 + digest 重批）；读数要 dispatch `run_e2e=true` | `.github/workflows/mobile-apk.yml` |
 | R-06 | R | 共享代码脱离 `hmi/` 目录 | 不改：搬目录不解决任何本次发现的问题 | — |
