@@ -91,7 +91,7 @@ dev launcher 都不在）。
 | 落点 | `D:\Android\builds\apk\xiaozhou-companion-prod-release-<sha>-<时刻>.apk`（文件名即身份，不靠目录名记） |
 | 装机 | `scripts\mobile_device.ps1 -Role test -Install <apk>`（对照机 `-Role compare`）；脚本回读 `lastUpdateTime` 必须变、release 不得 `DEBUGGABLE` |
 | 无 adb 装机权限时 | `adb -s <序列号> push <apk> /sdcard/Download/`，手机文件管理器里点装（同签名 ⇒ 原地升级） |
-| 签名 | 与 debug 同一把模板 `debug.keystore`（指纹见「地图」节）——**刻意不换**：高德 key 绑指纹；同签名才能 `install -r` 原地升级、保住 AsyncStorage / SecureStore 里的服务器配置与 token |
+| 签名 | 与 debug 同一把模板 `debug.keystore`（指纹见「地图」节）——**刻意不换**：高德 key 绑指纹；同签名才能 `install -r` 原地升级、保住 SecureStore 里的服务器配置与 token（2026-09-19 起整份配置一个键；旧两键格式首次加载迁移） |
 | 版本 | `versionCode` 固定 1；同版本覆盖装合法（只有降级要 `-d`）；谁新谁旧看设置页底部的构建行 |
 | 哪份包 | 设置页最底一行 `v0.1.0 · prod · <sha> · <时刻>`（Metro 开发态显示 `Metro`）——**报问题先抄它**，它是「设备跑的是哪份代码」的唯一读数 |
 | 依赖 | 手机 Tailscale 登录同一 tailnet 且连着；已存的服务器配置沿用（全新安装要走引导页填 FQDN + token） |
@@ -233,7 +233,7 @@ src/app/               expo-router 屏：index=对话主屏 / settings / vehicle
                        dev 取证屏（不进主导航，深链接进）：debug（下行 8 型帧落屏）/ card-gallery（?only=<type> 直达某族）
                        / state-gallery（在场态画廊）/ presence-trail（在场轨迹 + 采集激活日志）/ capture-status（只读采集事实）
                        / voice-spike（语音探针，仅 dev 变体可操作）/ native-spike（折叠姿态 + 四种触感）/ blur-spike（材质）
-src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ SecureStore/AsyncStorage
+src/core/config/       服务器配置：FQDN 校验派生（dev_stack_lib 同构）+ 整份配置单键存 SecureStore（storage.ts 头注：地址与凭据一次写入）
 src/core/api/          gateway.ts（共享 ws.mjs 的会话客户端）+ connectionTest.ts
                        + liveness.ts（前台探活：RN 的 WS 在飞行模式下 onclose 不来，
                        send 会把帧写进死 socket——判据取「HTTP 探不通」不取「应用层静默」）
