@@ -1,17 +1,17 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-19（§5 活项逐条收口：一条本地闭合待 deploy、两条按既有证据销账、一条改判据、一条待裁决）
+> 更新时间：2026-09-19（§5 活项逐条收口：T24 已发布 `1eb25a70` 并真栈复验、两条按既有证据销账、一条改判据、一条已裁决待实施）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
 生产 release、status、verify 的**当前值以 [`AGENTS.md` §4.0](../../AGENTS.md) 为准**（Android 各批的发布
-都在那里更新；本页 2026-09-11 之后不再复制一份数字）。2026-09-19 时它是 `3c389465`（status ok、
-verify verified、artifact `20260918T111945Z-3c38946.json`）。QA 侧：§5 的五条活项本轮逐条收口——
-安全问句错域（T24）在本地修好、**待 deploy 与真栈复验**；TTS RPM 与 barge-in 残帧按证据/裁决销账；
-gRPC fixture 债务已修；safety focus 解除时机仍待产品裁决。语音拒识那半（乘客句）是声学问题，
+都在那里更新；本页 2026-09-11 之后不再复制一份数字）。2026-09-19 收口批发布后它是 `1eb25a70`（status ok、
+5/5 healthy、verify verified、artifact `20260919T030356Z-1eb25a7.json`）。QA 侧：§5 的五条活项本轮逐条收口——
+安全问句错域（T24）已修并**在 `1eb25a70` 真栈复验 3/3**；TTS RPM 与 barge-in 残帧按证据/裁决销账；
+gRPC fixture 债务已修；safety focus 解除时机已裁决为「显式解除陈述清焦点」、待实施。语音拒识那半（乘客句）是声学问题，
 按 [语音采纳发布核实](2026-09-11-voice-input-acceptance-live-findings.md) 09-14 处置段边界保留。
 历史手册/锁屏/其他 Android 批次保持原 SHA，不能写 QA 全绿。
 
@@ -20,10 +20,10 @@ gRPC fixture 债务已修；safety focus 解除时机仍待产品裁决。语音
 | 项目 | 当前事实 |
 |---|---|
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
-| 生产 release / status / verify | 见 `AGENTS.md` §4.0（唯一维护处）。2026-09-19 读到：`3c3894657c6e02ed9fcf410dbdcf4f9b3c7d60b0`，5/5 healthy、零 warning，verify `verified` |
+| 生产 release / status / verify | 见 `AGENTS.md` §4.0（唯一维护处）。2026-09-19 收口批发布后：`1eb25a70e4af3741d77a7d5eb20b2b378c330d60`，5/5 healthy、零 warning，`running_release_sha` 对齐，verify `verified` |
 | 本页最后一次 QA 专项绑定 | `f8fd15152d78592e4e5625bab22d4bd5e654738d`（2026-09-11 语音采纳真栈复核；固定该 SHA 全量 8234 passed / 32 skipped / 13 warnings、mobile 962、HMI 333、smoke_edge 13 + 四门禁通过）；之后各 release 的读数不转借 |
 | manual-rag | 历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3；之后未重跑这些整批，不作为新 release 的数字 |
-| 证据边界 | T24 错域的修法（`agents/road_safety`）**尚未部署**：真栈上 T24 仍会落 `info.search`，直到本页 §5 那一行改成绑定某个 release。OPPO 包见 AGENTS.md §4.0 |
+| 证据边界 | T24 复验绑 `1eb25a70`（`minimax:MiniMax-M3`）：干净会话 3/3 `safety.driving_advice` + deterministic 卡，safety 组 `--repeat 3` 15/15（artifact `qa-safety-1eb25a70-repeat3.json`）。OPPO 包见 AGENTS.md §4.0 |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
 完整36题并保留当轮成功统一verify。旧 release 的单次结果和专项数字不得写成当前证据。
@@ -168,8 +168,8 @@ release 连续。Artifact：`.artifacts/dev-stack-verifications/qa-news-repeat3-
 
 | 活项 | 2026-09-19 状态 | 证据 / 下一步 |
 |---|---|---|
-| 安全问句偶尔落 `info.search`（T24） | **本地闭合，待 deploy 复验** | 根因是 manifest 没把 Agent 早就实现的「告警 ⇒ 按等级给续驾结论」说出来（planner 只看 description），既有 hint 只认「高速/路上」开头。修法全在 `agents/road_safety/manifest.yaml`：描述 + 续驾 hint（122 < manual 124，手册地盘不动）+ 话术「出现X时」；`test_route_hints.py` 37 passed、`eval_route_hints` 118/118、范例 +1、四门禁全过、两处变异判红。真栈：deploy 后干净会话「红色机油灯亮了还能继续开吗」×3 期望 `safety.driving_advice` + deterministic 卡；`--group safety --repeat 3` 不回归；「机油灯亮了怎么办」仍 `manual.query` |
-| safety focus 持续阻断后续 charging plan（T47） | **待产品裁决** | 收口页 §3：推荐 A「显式解除陈述（灯灭了 / 处理好了 / 误报…，非问句非否定；『我会靠边』不算）清焦点，`alert_level` 同步极性感知，四个消费方同一份判据」；备选 B 只改焦点提示口径。放宽安全约束作用域，不擅自动 |
+| 安全问句偶尔落 `info.search`（T24） | **已修、已发布 `1eb25a70`、真栈复验通过** | 根因是 manifest 没把 Agent 早就实现的「告警 ⇒ 按等级给续驾结论」说出来（planner 只看 description），既有 hint 只认「高速/路上」开头。修法全在 `agents/road_safety/manifest.yaml`：描述 + 续驾 hint（122 < manual 124，手册地盘不动）+ 话术「出现X时」；`test_route_hints.py` 37 passed、`eval_route_hints` 118/118、范例 +1、四门禁全过、两处变异判红。真栈（`1eb25a70`，`minimax:MiniMax-M3`）：干净会话「红色机油灯亮了还能继续开吗」**3/3** `safety.driving_advice`、`safety_advice` 卡 `_prov.mode=deterministic vendor=road-safety`、零动作零挂起（trace `fe64eab2c9da4a17972c02b4f2f04df9` / `206c1e0acad748e8968adb821a577c6e` / `1090381819284b6e8be35f2953884416`）；「水温报警了还可以继续行驶吗」1/1（话术「出现水温报警时不要大意…」）；对照「机油灯亮了怎么办」2/2 仍 `manual.query`；`probe_qa_regression --group safety --repeat 3` **15/15**（SF3 三趟 manual → safety → safety 零动作）。information persona 整场未重跑，T24 那一格只在这里闭合 |
+| safety focus 持续阻断后续 charging plan（T47） | **已裁决（A），待实施** | 用户 2026-09-19 裁：A「显式解除陈述（灯灭了 / 处理好了 / 误报…，非问句非否定；『我会靠边』不算）清焦点，`alert_level` 同步极性感知，四个消费方同一份判据」；方案见收口页 §3。下一批实施 + 单独发布 |
 | MiniMax TTS 长文本 / RPM 边界 | **按 2026-09-06 证据销账** | 原 887 字样本的服务商回包 `rate limit exceeded (RPM)` 是 08-30 的历史证据；生产 `a09c73a`：931 字整段 2 请求（修前 79 请求、4×60s 等待、4 个 ~20s 空白）、204.6s 音频完整、`sim_underruns=0`；账号级共享限流桶（并发配额）；泓舟人耳 OPPO / Xiaomi 两机 ✅（Xiaomi 176.2s 音频 underruns 0、gaps []）。**仍开、独立记**：混合意图轮盲听；长会话探针的 TTS 采样车道自 `e9fa602` 后未在新 release 重跑 |
 | barge-in 在途残帧 | **裁决完、判据已改** | 客户端必须丢弃且已在丢弃（HMI / mobile `disposed` 守卫；CDP C14；mobile 新用例钉住 6144 / 8192 字节不进播放器）；服务端「零字节」在全双工上不可判，改为「最后一片残帧 ≤ 1s 在途窗口 ∧ ≤5s 关闭」（`probe_qa_long_sessions.py::_BARGE_IN_FLIGHT_MS`），未计时的残帧仍判红。下次长会话跑批生效 |
 | 全量 warning | **gRPC fixture 债务已修；其余分类留档** | gRPC `UnaryUnaryCall._invoke was never awaited` = trip 测试三次 `asyncio.run` 共用真 `LLMClient`（经系统代理各等一轮超时），改显式「不可达」替身，trip_planner 99 passed 零告警、9.86s → 0.73s。Starlette `httpx2` 弃用（第三方，换依赖是红线）、`audioop`（`test/e2e_voice_loop.py`，3.13 前要换）、regex / WordPiece（第三方）留着不藏。当前全量条目见收口页 §7 |

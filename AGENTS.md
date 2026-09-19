@@ -75,7 +75,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 7. `Capability.response_only` 是只响应能力的权威；D0/T2/Executor 都必须 fail closed。
 8. 安全问句的权威文本是服务端 `safety_origin_text`；LLM goal/reason 和补槽短句无授权权威。
 
-## 4. 当前真实状态（2026-09-18）
+## 4. 当前真实状态（2026-09-19）
 
 ### 4.0 发布快照
 
@@ -83,14 +83,14 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 |---|---|
 | 真栈目标 | `target=cloud` |
 | 远端 main / QA 文档 HEAD | 运行 `git rev-parse origin/main`；纯 docs/test 可领先 production release |
-| 生产 release | `3c3894657c6e02ed9fcf410dbdcf4f9b3c7d60b0`（2026-09-18 19:1x apply；搜索合成 `max_tokens` 600→1200 只做兜底、prompt 管长度、撞上限切句并说明。当日前几批：`a4b47748` 改派流式直通、`3abd325e` chitchat 兜底上限 + D0 截止 60s；mobile 侧 `d32f81c2` reveal 跟到达速率走。全程见 [2026-09-18 设计](docs/design/2026-09-18-android-stream-text-pacing.md)） |
-| 上一生产基线 | `a4b477489f61ec2727059205deb3ee917cbf8d9d`；本轮未回滚 |
-| status | 2026-09-18 19:19 独立复核：`ok`、5/5 endpoint healthy、零 warning，`release_sha` 与 `running_release_sha` 均为 `3c389465` |
-| verify | `verified`；artifact `20260918T111945Z-3c38946.json`（`minimax:MiniMax-M3`，lock `e2e`） |
-| 代码验证 | `3c389465` `agents/_sdk/tests` + `agents/info/tests` **338 passed**；`a4b47748` cloud + chitchat 1394；mobile `d32f81c2` jest 105 套件 **1098** + tsc/lint 0；**全量固定口径 pytest 本日未跑**（构建机 commit 耗尽，见设计 §5.1）。真栈：部署后「介绍一下深圳的历史，网上搜索下」两次 528 / 478 字逐片流、句尾完整；OPPO 常驻包 `d32f81c23` A/B：搜索轮流式期间不再有 ≥0.5s 无内容段（设计 §8.1） |
+| 生产 release | `1eb25a70e4af3741d77a7d5eb20b2b378c330d60`（2026-09-19 10:5x apply；QA 交接页 §5 收口批：T24 安全问句错域修在 road-safety manifest（描述 + 122 续驾 hint）、barge-in 探针判据、trip fixture、`_canonical_bytes` 读长；全程见 [2026-09-19 收口页](docs/design/2026-09-19-qa-residual-closeout.md)。上一 release `3c389465` 的内容：2026-09-18 19:1x apply；搜索合成 `max_tokens` 600→1200 只做兜底、prompt 管长度、撞上限切句并说明。当日前几批：`a4b47748` 改派流式直通、`3abd325e` chitchat 兜底上限 + D0 截止 60s；mobile 侧 `d32f81c2` reveal 跟到达速率走。全程见 [2026-09-18 设计](docs/design/2026-09-18-android-stream-text-pacing.md)） |
+| 上一生产基线 | `3c3894657c6e02ed9fcf410dbdcf4f9b3c7d60b0`；本轮未回滚 |
+| status | 2026-09-19 11:0x 独立复核：`ok`、5/5 endpoint healthy、零 warning，`release_sha` 与 `running_release_sha` 均为 `1eb25a70` |
+| verify | `verified`；artifact `20260919T030356Z-1eb25a7.json`（`minimax:MiniMax-M3`，lock `e2e`，`e2e_remote_safe`） |
+| 代码验证 | `1eb25a70`（最终树）：`test_route_hints` 37、road-safety/manual-rag/SDK/registry 84、`eval_route_hints` 119/119、范例 328 条契约 OK、四门禁 + smoke_edge 13 全过、mobile `voiceTts` 22 + tsc/eslint 0；本机全量 `-n 6` **4 failed / 8374 passed / 33 skipped / 10 warnings**——4 红全是主机 commit 耗尽（`git init` 撞 `STATUS_COMMITMENT_LIMIT` / `WinError 1455`，WindowsTerminal 占 33.5GB），两文件串行 229 passed / 2 skipped，**零代码红但无一趟完整绿的固定口径读数**（收口页 §7）。真栈（`1eb25a70`，`minimax:MiniMax-M3`）：「红色机油灯亮了还能继续开吗」干净会话 **3/3** `safety.driving_advice` + `safety_advice` deterministic 卡 + 零动作（trace `fe64eab2…` / `206c1e0a…` / `10903818…`）、「水温报警了还可以继续行驶吗」1/1 同、对照「机油灯亮了怎么办」2/2 仍 `manual.query`；`probe_qa_regression --group safety --repeat 3` **15/15**（artifact `qa-safety-1eb25a70-repeat3.json`）。上一 release `3c389465`：`agents/_sdk/tests` + `agents/info/tests` **338 passed**；`a4b47748` cloud + chitchat 1394；mobile `d32f81c2` jest 105 套件 **1098** + tsc/lint 0；**全量固定口径 pytest 本日未跑**（构建机 commit 耗尽，见设计 §5.1）。真栈：部署后「介绍一下深圳的历史，网上搜索下」两次 528 / 478 字逐片流、句尾完整；OPPO 常驻包 `d32f81c23` A/B：搜索轮流式期间不再有 ≥0.5s 无内容段（设计 §8.1） |
 | manual-rag | 整本范围生产证据仍绑定历史 `9a3b6f2f08657464c5049a5abf8f6e989e398bce`：独立章节187/187、视觉35/35、雨刮/背宝剑各3/3。本次未重跑整本，详情见 QA 交接页 §4.6 |
 | 自然问法边界 | 原36题完整真栈只在 `434a046` 闭合；`9a3b6f2f` 当轮有7条旧表述被安全预检拒绝。本次未宣称新 release 36/36 |
-| 证据边界 | 当前部署/status/verify 绑定 **`f1a99063`**（09-16 那批的读数绑 `97825faa`）；MiniMax ASR 的三面真栈核对绑 `40ccb9b6`；下面的语音采纳矩阵读数绑 **`9ced633b`**——该 release 发布后只读复跑 §4 矩阵 24 轮（`minimax:MiniMax-M3`，零动作零挂起、车态不变）：播报句 `本台记者报道…` ptt 3/3、voice_followup 3/3（此前 1/3、3/3），首轮失败原话 `欢迎收听今天的节目，本台记者为您报道新闻。` 端侧不再执行 media.play、云侧拒识 5/6（1 次模型规划成新闻摘要，按「模型真拆出步不动」放行），乘客句 1/6 仍归模型（无播报语域）；上一 release 的读数：直连 + 新 release 的 PC 探针与真机读数见评审 §9.6/§9.7（握手 1.4–3s → 0.6–0.8s、TTS 音频不再欠速、深调研首段文本 13s → 5.9s、对话页空闲 30s 后 150% → 9.5%）；OPPO 常驻包见 §9.7。路线几何的真栈对照仍绑 `e38cd75`；语音采纳的证据仍绑 `f8fd151` / OPPO 包 `f8fd15152`（APK SHA-256 `6fc093a9…66103`）。来源与拒识出口已贯通，但真实 MiniMax-M3 文字注入续测：正常请求6/6、背景静默拒识6/12；另有首轮播报句误命中端侧 `media.play`，已停止探针造成的模拟播放。**拒识仍未验收，声学未验**；[逐条结果](docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md)。手册整本与旧 Android 验收继续保留各自历史 SHA |
+| 证据边界 | 当前部署/status/verify 与 T24 真栈复验绑定 **`1eb25a70`**；之前各批：部署/status/verify 曾绑 **`f1a99063`**（09-16 那批的读数绑 `97825faa`）；MiniMax ASR 的三面真栈核对绑 `40ccb9b6`；下面的语音采纳矩阵读数绑 **`9ced633b`**——该 release 发布后只读复跑 §4 矩阵 24 轮（`minimax:MiniMax-M3`，零动作零挂起、车态不变）：播报句 `本台记者报道…` ptt 3/3、voice_followup 3/3（此前 1/3、3/3），首轮失败原话 `欢迎收听今天的节目，本台记者为您报道新闻。` 端侧不再执行 media.play、云侧拒识 5/6（1 次模型规划成新闻摘要，按「模型真拆出步不动」放行），乘客句 1/6 仍归模型（无播报语域）；上一 release 的读数：直连 + 新 release 的 PC 探针与真机读数见评审 §9.6/§9.7（握手 1.4–3s → 0.6–0.8s、TTS 音频不再欠速、深调研首段文本 13s → 5.9s、对话页空闲 30s 后 150% → 9.5%）；OPPO 常驻包见 §9.7。路线几何的真栈对照仍绑 `e38cd75`；语音采纳的证据仍绑 `f8fd151` / OPPO 包 `f8fd15152`（APK SHA-256 `6fc093a9…66103`）。来源与拒识出口已贯通，但真实 MiniMax-M3 文字注入续测：正常请求6/6、背景静默拒识6/12；另有首轮播报句误命中端侧 `media.play`，已停止探针造成的模拟播放。**拒识仍未验收，声学未验**；[逐条结果](docs/reviews/2026-09-11-voice-input-acceptance-live-findings.md)。手册整本与旧 Android 验收继续保留各自历史 SHA |
 
 `b3a2aed` 是 v2 首次生产 release；`434a046`、`7b594f37`、`805711cf` 是后续生产历史；
 `a406e22` / `423ed23` 是 v1 发布历史。
@@ -109,7 +109,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 
 | 活项 | 性质 | 状态 / 入口 |
 |---|---|---|
-| 安全问句偶尔落 `info.search`（T24） | manifest 没声明 Agent 早已实现的告警续驾能力 ⇒ planner 看不见 | **本地闭合、待 deploy 真栈复验**（`agents/road_safety/manifest.yaml`）；QA 交接页 §5 |
+| 安全问句偶尔落 `info.search`（T24） | manifest 没声明 Agent 早已实现的告警续驾能力 ⇒ planner 看不见 | **已修并发布 `1eb25a70`，真栈复验 3/3 `safety.driving_advice` + deterministic 卡、safety 组 15/15**（`agents/road_safety/manifest.yaml`）；QA 交接页 §5 |
 | safety focus 持续阻断后续 charging plan（T47） | 安全状态解除时机的产品裁决 | **待裁决**：收口页 §3 推荐「显式解除陈述清焦点」 |
 | MiniMax TTS RPM | 外部配额 | **已由 `a09c73a`（09-06）闭合并销账**；混合意图轮盲听独立开 |
 | barge-in 残帧 | 全双工上「零字节」不可判 | **裁决完**：客户端丢弃（已在）、服务端限 1s 在途窗口（探针判据已改） |

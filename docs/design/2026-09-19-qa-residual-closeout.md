@@ -1,7 +1,7 @@
 # QA 轮剩余活项收口（2026-09-19）
 
-> 状态：**五条活项——两条落代码（本地闭合，待 push / deploy / 真栈复验）、两条按既有证据销账、
-> 一条待用户产品裁决**；另有一条 2026-09-11 的「仅记录未修」实际已在 09-14 修掉，本页对账。
+> 状态：**五条活项——两条落代码并发布 `1eb25a70`（T24 真栈复验 3/3 + safety 组 15/15，§2.5）、两条按既有证据销账、
+> 一条用户已裁决（A，待实施）**；另有一条 2026-09-11 的「仅记录未修」实际已在 09-14 修掉，本页对账。
 > 交付对象：QA / Planner / 发布验证。
 > 关联：[QA 交接页](../reviews/2026-08-30-qa-closeout-handoff.md) §5（活项清单）、
 > [安全确认写闸](2026-08-30-qa-safety-confirmed-write-guard.md) §12.2（T24 / T47 原始读数）、
@@ -13,14 +13,14 @@
 交接页 §5 那张表从 2026-08-30 起没再动过，而它上面的五条里有两条其实已经被别的批次顺手修掉
 （TTS RPM、播报腔误判），一条的判据本身写错了（barge-in「零字节」在全双工上不可判），
 真正还欠工程的是**安全问句错域**这一条——根因不在 Planner 分支，在 manifest 没把 Agent 早就
-实现的能力说出来。剩下 safety focus 那条是产品裁决，本页给方案、等拍板。
+实现的能力说出来（已发布 `1eb25a70` 并真栈复验）。剩下 safety focus 那条是产品裁决，本页给方案，用户裁了 A。
 
 ## 1. 逐条处置
 
 | # | 活项 | 处置 | 代码 | 本地验证 | 真栈 |
 |---|---|---|---|---|---|
-| 1 | 安全问句偶尔落 `info.search`（T24） | **修**：manifest 描述 + 续驾 hint + 话术 | `agents/road_safety/*` | §2.4 全绿、两处变异判红 | **待 deploy 复验**（§2.5） |
-| 2 | safety focus 持续阻断后续 charging plan（T47） | **待裁决**：§3 给两条路 + 推荐 | — | — | — |
+| 1 | 安全问句偶尔落 `info.search`（T24） | **修**：manifest 描述 + 续驾 hint + 话术 | `agents/road_safety/*` | §2.4 全绿、两处变异判红 | **已发布 `1eb25a70`，3/3 + 15/15**（§2.5） |
+| 2 | safety focus 持续阻断后续 charging plan（T47） | **已裁决 A（§3.2），待实施** | — | — | — |
 | 3 | MiniMax TTS 长文本 / RPM 边界 | **按 09-06 证据销账**（§4） | 已在 `a09c73a` | — | 已验（§4） |
 | 4 | barge-in 在途残帧 | **裁决 + 改判据**：客户端丢弃、服务端限在途窗口 | 探针 + mobile 用例 | §5.3 全绿、变异判红 | 下次长会话跑批生效 |
 | 5 | 全量 warning（gRPC fixture 债务） | **修 fixture**；其余为第三方弃用告警，分类留档 | `agents/trip_planner/tests` | §6 | — |
@@ -97,18 +97,28 @@ loader → Registry round-trip → Step 装配整条链——为一个消费方�
 | 变异 ② `ALERT_VERBS` 加「漏油」不改 hint | 2 单测红 |
 | 全量固定口径 | 见 §7 |
 
-### 2.5 真栈复验（待授权）
+### 2.5 真栈复验（已完成，绑 `1eb25a70`）
 
-manifest 由 road-safety 容器启动时加载并注册进 Registry，**必须 deploy 才到生产**。步骤：
-push（先列 `origin/main..HEAD`）→ `deploy --sha <40位>` dry-run → 授权 `--apply` → 独立 `status`
-/ `verify` → 只读复验：① 干净会话「红色机油灯亮了还能继续开吗」×3，期望 `safety.driving_advice`
-+ `safety_advice` deterministic 卡 + 零动作；② `probe_qa_regression.py --group safety --repeat 3`
-（SF1–SF4 只读）不回归；③ 对照句「机油灯亮了怎么办」仍落 `manual.query`。**没跑之前 T24 这条
-在交接页上只能写「本地闭合」。**
+manifest 由 road-safety 容器启动时加载并注册进 Registry，必须 deploy 才到生产。用户逐步授权：
+push `a1d3c2f5..1eb25a70`（5 条逐条列过）→ `deploy --sha 1eb25a70…` dry-run（基线 `3c389465`，
+`blocking_changes=[]`、`warnings=[]`）→ 授权 `--apply`（217s `submitted`）→ 独立 `status`：`ok`、5/5 healthy、
+`release_sha` = `running_release_sha` = `1eb25a70`、零 warning → `verify` `verified`（artifact
+`20260919T030356Z-1eb25a7.json`，`minimax:MiniMax-M3`，lock `e2e`）。
+
+只读复验（探针钉 `minimax:MiniMax-M3`，每轮独立会话，collector 逐 trace 对账）：
+
+| 语料 | 期望 | 结果 |
+|---|---|---|
+| 红色机油灯亮了还能继续开吗 ×3 | `safety.driving_advice` | **3/3**：path cloud、`safety_advice` 卡 `_prov.mode=deterministic vendor=road-safety`、话术「机油灯亮起时不要大意。在它排除之前不建议继续行驶——…」+ follow_up「需要我帮您找最近的服务点吗？」、零动作零挂起；trace `fe64eab2c9da4a17972c02b4f2f04df9` / `206c1e0acad748e8968adb821a577c6e` / `1090381819284b6e8be35f2953884416` |
+| 水温报警了还可以继续行驶吗 ×1 | `safety.driving_advice` | 1/1，话术「出现水温报警时不要大意…」（现象词新口径，`alert_signal` 给的是「水温报警」）；trace `500c22a0405e490abba3a4d9166af50d` |
+| 机油灯亮了怎么办 ×2（对照） | `manual.query` | 2/2，`manual` 卡（`xiaomi-su7-2024-user-manual`，real），话术 `alert_advice` 前缀 + 「手册里没有查到…」——手册地盘逐字未动；trace `5307eae631ec4e0f960590208e878afd` / `b1088e886da24c7cae6a3ff2bf973371` |
+| `probe_qa_regression.py --group safety --repeat 3` | 不回归 | **15/15**（SF1–SF5）；SF3 三趟都是 manual → safety → safety、零动作。SF5 第 1 趟落了 `planner.technical_failure` 的诚实话术（既有 F09 形态，与本批无关，用例仍按其判据 PASS）。artifact `.artifacts/dev-stack-verifications/qa-safety-1eb25a70-repeat3.json` |
+
+没重跑的：information persona 整场（59 轮）——T24 那一格只在上面这组闭合；长会话跑批下次一并带上。
 
 ---
 
-## 3. 活项 2：safety focus 阻断后续 charging plan——待裁决
+## 3. 活项 2：safety focus 阻断后续 charging plan——用户已裁 A（2026-09-19），待实施
 
 ### 3.1 现场
 
@@ -144,7 +154,10 @@ T47「规划去广州路上的补能，但先不要启动导航」（T24 机油�
 T47 那种只读规划会被规划出来并带提醒。代价：靠 LLM 遵守软提示，方差不可控；且「规划去广州」
 本身就以继续行驶为前提，产品上未必想让它通过。
 
-**推荐 A**；B 可以作为 A 之后的补充观察项，不单独做。等裁决。
+**推荐 A**；B 可以作为 A 之后的补充观察项，不单独做。
+
+**裁决（2026-09-19，用户）：A。** 实施作为下一批：`runtime/safety_signal.py` 加 `alert_resolved`、`alert_level` 极性感知、
+编排输入侧清焦点 + scratch 旗、四个消费方复用同一份判据、information persona 补解除轮；单独 push / deploy 授权。
 
 ---
 
