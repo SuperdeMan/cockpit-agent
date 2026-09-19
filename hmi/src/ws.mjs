@@ -20,6 +20,14 @@
 // 探活失败＝真实的网络不可达证据，与「应用层静默」是两回事。
 // 浏览器侧不调用它，行为逐字不变。
 //
+// 发送**同步抛错**的语义（2026-09-19 GPT-6 评审 F06）：浏览器 / RN 的 `WebSocket.send` 同步抛错
+// = 这帧没写出去（状态错 / 序列化错；网络层失败是异步的 onerror/onclose）。此前 `_flush` 抛错只把项放回
+// 队首就 `break`，socket 却仍报 OPEN、没有任何恢复动作，之后 `send()` 见 OPEN 直发 ⇒ 旧项永远滞留、新请求
+// 越过它们。现在：① flush 抛错 ⇒ 项留队首 + 这条连接判死（`_abandon`：摘回调、关、按退避重连），onopen 后
+// 从它继续；② `send()` 直发抛错同样入队 + 判死，不再把异常抛给调用方；③ 连接开着但队列非空（flush 中途
+// 失败后、或 onSent 回调里的再入发送）时新请求排到队尾并立即 flush——**不越过**。正常路径（开着且队列空
+// ⇒ 直发；断着 ⇒ 入队）逐字不变。「已写出但结果未知」不在这条路径：那是异步断线，由上层的看门狗 / 判死结算。
+//
 // 纯逻辑 + 注入 WebSocket 工厂/定时器，可用 node:test 无 DOM 单测。
 
 // attempt=0,1,2,... → min*2^attempt 封顶 max，叠加 [0, base/2) 抖动，避免重连风暴同步化。
@@ -69,16 +77,23 @@ export class ResilientWebSocket {
     return !!this._ws && this._ws.readyState === OPEN
   }
 
-  // 发送：连接就绪直接发；否则入有界队列（满则丢最旧、保最新），重连后 flush。
-  // 返回 true=已即时发出，false=已入队。
+  // 发送：连接就绪且没有积压直接发；否则入有界队列（满则丢最旧、保最新），重连 / flush 后按序发。
+  // 返回 true=本次调用内已发出，false=仍在队列（或已被丢弃）。
   send(obj, hooks = {}) {
     const raw = typeof obj === 'string' ? obj : JSON.stringify(obj)
     let requestId = ''
     try { requestId = JSON.parse(raw)?.request_id || '' } catch { /* 非 JSON 的旧调用仍可发送 */ }
-    const entry = { raw, requestId, hooks }
+    const entry = { raw, requestId, hooks, sent: false }
     if (!this._allowed(entry)) return false
-    if (this.isOpen) {
-      this._ws.send(raw)
+    if (this.isOpen && !this._queue.length) {
+      try { this._ws.send(raw) }
+      catch {
+        // 同步抛错 = 没写出去（头注）：入队、判死，重连后补发；不把异常抛给调用方
+        this._queue.push(entry)
+        this._abandon()
+        return false
+      }
+      entry.sent = true
       this._notify(hooks.onSent)
       return true
     }
@@ -86,7 +101,9 @@ export class ResilientWebSocket {
     while (this._queue.length > this._maxQueue) {
       this._notify(this._queue.shift().hooks.onDropped, 'overflow')
     }
-    return false
+    // 连接开着但有积压：按序补发到本项为止，新请求不越过旧请求
+    if (this.isOpen) this._flush()
+    return entry.sent
   }
 
   // AR01：只撤回尚未发送的指定请求，不向服务端发送会话级 cancel。
@@ -134,20 +151,33 @@ export class ResilientWebSocket {
   // 队列刻意保留：断网期入队的帧要在重连后 flush，这正是本类存在的理由。
   reconnectNow() {
     if (this._userClosed) return
-    const old = this._ws
-    this._ws = null
-    if (old) {
-      // 先摘掉回调再关：旧 socket 的 onclose 可能迟到（RN 上实测会），
-      // 那时它会再排一次重连——两条重连链同时跑会把退避算乱。
-      try { old.onopen = null; old.onmessage = null; old.onerror = null; old.onclose = null } catch { /* ignore */ }
-      try { old.close() } catch { /* ignore */ }
-    }
+    this._detach()
     if (this._reconnectTimer) {
       this._timers.clear(this._reconnectTimer)
       this._reconnectTimer = null
     }
     this._onStatus('closed')
     this._attempt = 0 // 探活判死是「确知断了」，不该继承之前的退避档位
+    this._scheduleReconnect()
+  }
+
+  // 摘掉当前 socket：先摘回调再关——旧 socket 的 onclose 可能迟到（RN 上实测会），
+  // 那时它会再排一次重连，两条重连链同时跑会把退避算乱。
+  _detach() {
+    const old = this._ws
+    this._ws = null
+    if (!old) return
+    try { old.onopen = null; old.onmessage = null; old.onerror = null; old.onclose = null } catch { /* ignore */ }
+    try { old.close() } catch { /* ignore */ }
+  }
+
+  // send 同步抛错后的收尾（头注）：这条连接不可信了——摘回调、关旧 socket、按退避重连；队列原样保留
+  // （失败项已在队首）。与 reconnectNow 的两点不同：不清零退避档位（同一条坏连接反复抛错不能变成紧循环），
+  // 已经排了重连表就不再排第二条。
+  _abandon() {
+    this._detach()
+    if (this._userClosed || this._reconnectTimer) return
+    this._onStatus('closed')
     this._scheduleReconnect()
   }
 
@@ -196,8 +226,10 @@ export class ResilientWebSocket {
       try { this._ws.send(entry.raw) }
       catch {
         this._queue.unshift(entry)
-        break // 保序；失败项不能被后面的请求越过
+        this._abandon() // 保序 + 恢复：失败项留在队首、连接判死重连，onopen 后从它继续（头注）
+        break
       }
+      entry.sent = true
       this._notify(entry.hooks.onSent)
     }
   }

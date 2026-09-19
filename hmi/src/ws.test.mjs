@@ -246,3 +246,94 @@ test('AR01: 队列溢出通知被丢项，不把未发送项伪装成已发', ()
   assert.deepEqual(events, ['overflow'])
   assert.deepEqual(instances[0].sent.map(JSON.parse), [{ request_id: 'b' }])
 })
+
+// ── F06（2026-09-19 GPT-6 评审）：发送同步抛错后的恢复与保序 ──
+// 坏法：flush 抛错只把项放回队首就 break，socket 仍报 OPEN、没有任何恢复；之后 send() 见 OPEN 直发 ⇒
+// A、B 永远滞留、C 越过它们。同步抛错 = 这帧没写出去（状态错 / 序列化错），所以补发不是重复执行。
+
+/** 第 n 次 send 抛错、但 readyState 仍是 OPEN 的 socket（RN 上「写进死 socket」的形态） */
+function throwingOn(ws, failAt) {
+  let calls = 0
+  ws.send = (raw) => {
+    calls += 1
+    if (calls === failAt) throw new Error('send failed')
+    ws.sent.push(raw)
+  }
+}
+
+test('F06: 补发失败后连接不再自称 open——失败项留队首、判死重连、重连后从它按序继续', () => {
+  const { rws, instances, timers } = harness()
+  const statuses = []
+  rws._onStatus = (s) => statuses.push(s)
+  rws.start()
+  rws.send({ request_id: 'a' })
+  rws.send({ request_id: 'b' })
+  throwingOn(instances[0], 1) // 补发 A 时抛错
+  instances[0]._open()
+  assert.deepEqual(instances[0].sent, [], 'A 没写出去，B 也不能越过它')
+  assert.equal(rws.isOpen, false, '抛错的连接不可信')
+  assert.equal(statuses.at(-1), 'closed')
+  assert.equal(timers.live(), 1, '排了一条重连')
+  timers.fireAll()
+  instances[1]._open()
+  assert.deepEqual(instances[1].sent.map(JSON.parse), [{ request_id: 'a' }, { request_id: 'b' }])
+})
+
+test('F06: 失败后再次发送：新请求排在滞留项之后，不越过', () => {
+  const { rws, instances, timers } = harness()
+  const order = []
+  rws.start()
+  rws.send({ request_id: 'a' }, { onSent: () => order.push('a') })
+  rws.send({ request_id: 'b' }, { onSent: () => order.push('b') })
+  throwingOn(instances[0], 1)
+  instances[0]._open()
+  assert.equal(rws.send({ request_id: 'c' }, { onSent: () => order.push('c') }), false, 'C 只能入队')
+  assert.deepEqual(order, [])
+  timers.fireAll()
+  instances[1]._open()
+  assert.deepEqual(order, ['a', 'b', 'c'])
+  assert.deepEqual(instances[1].sent.map((r) => JSON.parse(r).request_id), ['a', 'b', 'c'])
+})
+
+test('F06: 失败与取消同时发生：撤回的项不复活，其余按序补发', () => {
+  const { rws, instances, timers } = harness()
+  const dropped = []
+  rws.start()
+  rws.send({ request_id: 'a' }, { onDropped: (r) => dropped.push('a:' + r) })
+  rws.send({ request_id: 'b' })
+  throwingOn(instances[0], 1)
+  instances[0]._open()
+  assert.equal(rws.discardQueued('a'), true, '失败留在队首的项仍可撤回')
+  assert.deepEqual(dropped, ['a:cancelled'])
+  timers.fireAll()
+  instances[1]._open()
+  assert.deepEqual(instances[1].sent.map((r) => JSON.parse(r).request_id), ['b'])
+})
+
+test('F06: 直发抛错同样入队 + 判死，不把异常抛给调用方；重连后只发一次', () => {
+  const { rws, instances, timers } = harness()
+  const sent = []
+  rws.start()
+  instances[0]._open()
+  throwingOn(instances[0], 1)
+  let result
+  assert.doesNotThrow(() => { result = rws.send({ request_id: 'a' }, { onSent: () => sent.push('a') }) })
+  assert.equal(result, false)
+  assert.deepEqual(sent, [])
+  assert.equal(rws.isOpen, false)
+  timers.fireAll()
+  instances[1]._open()
+  assert.deepEqual(sent, ['a'])
+  assert.deepEqual(instances[1].sent.map((r) => JSON.parse(r).request_id), ['a'])
+})
+
+test('F06: 连接开着但有积压（onSent 回调里的再入发送）：新项排到队尾并按序发出，返回值如实', () => {
+  const { rws, instances } = harness()
+  const order = []
+  rws.start()
+  rws.send({ request_id: 'a' }, { onSent: () => { order.push('a'); order.push('c:' + rws.send({ request_id: 'c' }, { onSent: () => order.push('c') })) } })
+  rws.send({ request_id: 'b' }, { onSent: () => order.push('b') })
+  instances[0]._open()
+  assert.deepEqual(instances[0].sent.map((r) => JSON.parse(r).request_id), ['a', 'b', 'c'])
+  assert.deepEqual(order, ['a', 'b', 'c', 'c:true'])
+})

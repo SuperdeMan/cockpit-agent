@@ -296,7 +296,10 @@ test('R03/R04: a server-closed operation is not restored when its queued reply i
   } finally { h.dispose() }
 })
 
-test('R04: a failed send is unknown, not a provably unsent confirmation ready to repeat', () => {
+// 2026-09-19（GPT-6 评审 F06）改写：浏览器 / RN 的 WebSocket.send **同步**抛错只发生在 CONNECTING 态或数据类型非法，
+// OPEN 后走原生异步、失败以 onerror 回来 ⇒ 同步抛错 = 这帧确定没写出去。此前把它当「发送状态未知」是过度保守：
+// 确认帧留在队列、连接判死、重连后发出的是**第一次**，不是隐式重放副作用；flush 前仍重查 operation 是否还活着。
+test('R04: a synchronous send failure means the frame was never written — the confirmation stays queued and goes out once after reconnect', () => {
   const h = setup()
   try {
     h.sockets[0].open()
@@ -304,7 +307,27 @@ test('R04: a failed send is unknown, not a provably unsent confirmation ready to
     pending(h.core, 'op-a')
     h.core.confirmReply('确认', 'op-a')
     expect(h.core.store.getState().pendingOps).toEqual([])
-    expect(h.core.store.getState().messages.at(-1)?.text).toContain('发送状态未知')
+    expect(h.core.store.getState().queued).toBe(1)
+    expect(h.core.store.getState().messages.at(-1)?.pending).toBe(true) // 排队中，不是「发送状态未知」
+    expect(h.core.store.getState().connStatus).toBe('closed') // 抛错的连接被判死
+    jest.advanceTimersByTime(2000)
+    h.sockets[1].open()
+    expect(usersSent(h.sockets[1]).map((f) => [f.text, f.operation_id])).toEqual([['确认', 'op-a']])
+    expect(h.core.store.getState().queued).toBe(0)
+  } finally { h.dispose() }
+})
+
+test('R04: a synchronous send failure on a confirmation whose operation closes before reconnect is never transmitted', () => {
+  const h = setup()
+  try {
+    h.sockets[0].open()
+    h.sockets[0].send = () => { throw new Error('transport failure') }
+    pending(h.core, 'op-a')
+    h.core.confirmReply('确认', 'op-a')
+    expect(h.core.store.getState().queued).toBe(1)
+    jest.advanceTimersByTime(300001) // 重连之前 operation 已过期
+    h.sockets[1].open()
+    expect(usersSent(h.sockets[1])).toEqual([])
     expect(h.core.store.getState().queued).toBe(0)
   } finally { h.dispose() }
 })
