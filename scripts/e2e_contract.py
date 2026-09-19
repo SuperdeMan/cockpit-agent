@@ -2328,8 +2328,15 @@ def _canonical_bytes(path: Path) -> bytes:
         size_before = path.stat().st_size
         if size_before > MAX_CANONICAL_INPUT_BYTES:
             raise ManifestError(f"canonical input exceeds size limit: {path}")
+        # Read one byte past the observed size, not the 64 MiB ceiling: CPython
+        # pre-allocates the requested length, so the old `read(MAX + 1)` charged
+        # 64 MiB of commit per digested file.  Under `-n 8` on a commit-starved
+        # host that surfaced as MemoryError / worker crashes in the canonical
+        # tests (2026-09-19 full runs).  The guarantees are unchanged: a file
+        # that grew reads size_before + 1 bytes and fails the size_after
+        # comparison below; one that shrank reads fewer and fails the same way.
         with path.open("rb") as handle:
-            raw = handle.read(MAX_CANONICAL_INPUT_BYTES + 1)
+            raw = handle.read(size_before + 1)
         size_after = path.stat().st_size
     except OSError as exc:
         raise ManifestError(f"canonical input cannot be read: {path}") from exc

@@ -446,7 +446,9 @@ def test_remote_safe_probe_reads_only_names_the_runner_hands_the_child(
     case cloud verification runs could never survive its own import.
     """
     source = (ROOT / "test/e2e_remote_safe.py").read_text(encoding="utf-8")
-    required = set(re.findall('os[.]environ[[]"([A-Z0-9_]+)"[]]', source))
+    # `[[]` / `[]]` 写法会触发 re 的 FutureWarning「Possible nested set」（全量 13 warnings 里
+    # 那条 regex）；转义写法匹配面逐字相同。
+    required = set(re.findall(r'os\.environ\["([A-Z0-9_]+)"\]', source))
     assert required
 
     target = E2ETarget("cloud", cloud_endpoints("demo.ts.net"), "a" * 40)
