@@ -151,4 +151,20 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 - 效配置：生产 compose 不透传 `PLANNER_CTX_BUDGET_CHARS` / `PLANNER_HISTORY_EXCHANGES` / `PLANNER_CATALOG_TOP_K` ⇒ 1400 / 2 / 20。
 - ⚠ 过程记录：W01 / W02 两个提交被另一会话的 push 顺带推上了 `origin/main`（对方已在其记忆与 history 里记了「列出与推送必须分两步」）；
   本批其余提交按流程列出后再推。
-- 真栈：见 §4.2（部署后回填）。
+- 真栈：见 §4.2。
+
+### 4.2 批 1 真栈（release `744fb655`，2026-09-19 21:3x–21:5x）
+
+- push `33cd199d..744fb655`；deploy：plan 只有 `.github/workflows/mobile-apk.yml`（G-05，上一轮已批）一条 `ci_cd` 阻断 ⇒ 用其摘要
+  `c35301ae…dee9` approved dry-run（零阻断）→ apply `submitted` → `status` ok、5/5 healthy、`release_sha` = `running_release_sha` = `744fb655`、
+  零 warning → `verify` `verified`（artifact `20260919T133955Z-744fb65.json`，`minimax:MiniMax-M3`，lock `e2e`）。
+- `probe_qa_regression --cases CF5,CF7,CF9,CF1,CF3,CF4 --repeat 2`：**12/12 PASS**。
+  CF5 T3 裸「确认」⇒「您要确认「把全车门解锁」，还是「创建一个午休场景：空调设定24度」？」零动作，T4 带寻址键 ⇒ `door_lock.open`；
+  CF7「可以吗 / 确认吗」两轮零车控动作、挂起活到 T4；CF9 补槽挂起下「确认」⇒「当前没有待确认的操作」零动作、`取消` 收口。
+- ⚠ CF7 第 1 次取样露出话术层缺陷：「可以吗」交给规划落 chitchat，答「**可以，已为您执行**」（零动作、声称做了；`execution_claim` 只观测不拦）。
+  当日追加 `227457df`：裸确认询问（「可以吗 / 确认吗 / 行不行」）在有 wait_confirm 时走 `system.pending_state` 确定性出口念出挂着什么、怎么确认，
+  零 LLM；「可以换第二天的安排吗」与无挂起的「可以吗」照旧进规划。待下一次 deploy 后复跑 CF7。
+- `--cases RS5,RS4 --repeat 2`：**4/4 PASS**。RS5 T2 带「地图没有实时排队数据」、T3「今天可以排队，等一会儿没关系」之后 T4 两次都不再念那句 ⇒ 撤销通道端到端成立。
+- 顺带观察（不在本批修，记给 W13 / 范例）：纯偏好陈述「我不想排队」「我不吃辣，也不想排长队」在 MiniMax-M3 下 3/4 次落到
+  「这次我没能把您的请求拆成可以执行的步骤」/「看不到刚才那次下单的记录」这类技术失败 / 执行史出口——约束照样登记成功
+  （`_register_input_facts` 在提前出口上跑），但一句陈述得到一句报错式回复；另有 1/2 次把「今天可以排队」规划成一次搜索。
