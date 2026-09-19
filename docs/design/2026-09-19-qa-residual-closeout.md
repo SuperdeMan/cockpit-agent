@@ -156,8 +156,36 @@ T47 那种只读规划会被规划出来并带提醒。代价：靠 LLM 遵守�
 
 **推荐 A**；B 可以作为 A 之后的补充观察项，不单独做。
 
-**裁决（2026-09-19，用户）：A。** 实施作为下一批：`runtime/safety_signal.py` 加 `alert_resolved`、`alert_level` 极性感知、
-编排输入侧清焦点 + scratch 旗、四个消费方复用同一份判据、information persona 补解除轮；单独 push / deploy 授权。
+**裁决（2026-09-19，用户）：A。** 同日实施，见 §3.3。
+
+### 3.3 实施记录（2026-09-19，本地闭合、待发布）
+
+判据一份、消费方四个，编排核心零领域字面量：
+
+- `runtime/safety_signal.py`：`RESOLVED_MARKERS`（只收完成态「灭了 / 熄灭了 / 不亮了 / 没亮 / 处理好了 /
+  修好了 / 解决了 / 排除了 / 没问题了 / 恢复正常 / 已排除 / 误报 / 误触 / 虚惊…」，裸「修好 / 排除」不收——
+  「帮我排除一下故障」是指令）+ `ALERT_REFERENCES`（具名灯 / 现象词 / 关键系统 / 告警泛称，**刻意不收裸「灯」**：
+  「大灯灭了」不该撤掉一条 critical）。`_split_resolution(clause)` 五道门：含标记 / 标记前点名了告警对象 /
+  标记前 4 字内无否定 / 非问句非指令（复用 `question_shape`）/ 标记之后若又有告警词则**后半照常按新告警识别**
+  （「机油灯灭了但是水温灯亮了」⇒ 解除旧的 + 登记水温灯 critical）。`alert_resolved(text)` 任一分句即可；
+  `alert_level` / `alert_signal` 改读去掉解除分句后的文本——**没有解除陈述时逐字返回原话**，既有全部正反例照旧。
+- `orchestrator/cloud/context.py`：`Focus.safety_alert_cleared` scratch 旗（同 `route_ended`：本轮事实、保存前复位、
+  计入 `is_empty`）；输入扫描命中解除 ⇒ 置旗；`update_focus` 接力分支带 `and not focus.safety_alert_cleared`——
+  接力比清除更强，不立旗上一轮那条 critical 会被原样搬回来（CA5 同款坑）。同一句里的新告警不受影响。
+- `agents/road_safety`：`_driving_advice` 在 `alert_resolved(raw_text)` 时不读 `meta.focus_safety_alert`
+  （「机油灯灭了，现在还能继续开吗」不再答「您这次会话里还有未解除的机油灯」）。
+- `agents/chitchat`：`_system(meta, text)` 在解除轮不再塞「未解除的安全告警」那一行；`_safety_answer("机油灯灭了")`
+  经 `alert_level` 自动不再直答。manual-rag 经 `alert_level` 自动跟随。
+- 探针：information persona INF-MANUAL-SAFETY 补第 6 轮「检查过了，机油灯已经灭了，恢复正常了」
+  （零动作；落域不钉死），INF-CHARGING 的 T47 期望仍是 `charging.plan`——前提从「系统自己想通了」变成「用户说了灯灭了」。
+
+验证：`runtime/tests/test_safety_signal.py` 13（+5：12 句解除 / 20 句反例——问句、指令、否定、意图、无对象、正常灯 /
+同句新告警 / 解除 + 续驾问句 / 无解除时逐字不变）；`test_safety_focus.py` 25（+5：置旗 / 跨轮接力不搬回 + 旗不粘 /
+意图陈述照旧接力 / 同句新告警留下 / 解除后再报能登记）；chitchat + road-safety + manual-rag 139；
+cloud + runtime + edge **2853 passed / 1 skipped**；`test_probe_qa_long_sessions` 85。四处变异各自判红：
+① `_split_resolution` 恒假 ⇒ runtime 3 红 + focus 4 红；② 接力忽略旗 ⇒ focus 2 红；③ road-safety 不看解除 ⇒ 1 红；
+④ chitchat prompt 不看解除 ⇒ 1 红。**边界（写在这里免得下一个人以为是漏了）**：驾驶员状态（「不困了 / 酒醒了」）
+不在本批；PoC 里唯一的解除证据是用户的话，真车接 VAL 遥测后改成遥测优先、话语兜底。
 
 ---
 

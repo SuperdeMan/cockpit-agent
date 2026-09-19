@@ -9170,3 +9170,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - push `a1d3c2f5..1eb25a70`（5 条逐条列过，origin 未动）→ `deploy --sha 1eb25a70…` dry-run：`status=dry_run`、基线 `3c389465`、`blocking_changes=[]`、`warnings=[]` → 用户单独授权 `--apply`：217s `submitted`（stderr 落文件、空）→ 独立 `status`：`ok`、5/5 healthy、零 warning、`release_sha` = `running_release_sha` = `1eb25a70` → `verify` `verified`（`20260919T030356Z-1eb25a7.json`，`minimax:MiniMax-M3`，lock `e2e`）。
 - 只读复验（探针钉 MiniMax-M3、每轮独立会话、collector 逐 trace 对账）：「红色机油灯亮了还能继续开吗」**3/3** `safety.driving_advice` + `safety_advice` deterministic 卡（vendor road-safety）+ 零动作（trace `fe64eab2…` / `206c1e0a…` / `10903818…`）；「水温报警了还可以继续行驶吗」1/1（「出现水温报警时不要大意…」）；对照「机油灯亮了怎么办」2/2 仍 `manual.query`（SU7 手册 real 卡 + `alert_advice` 前缀）；`probe_qa_regression --group safety --repeat 3` **15/15**（SF3 三趟 manual → safety → safety，零动作；SF5 首趟一次既有 F09 诚实话术）。artifact `qa-safety-1eb25a70-repeat3.json`。information persona 整场未重跑。
 - 装置坑：collector `/api/turns/<id>` 的 `turn.intents` 是**字符串**不是列表，`list()` 会拆成单字——一次性探针首版把 6/6 判成 0/6。
+
+### 同批追加 — T47 裁决 A 实施：解除陈述清焦点（本地闭合、待发布）
+
+- 判据一份（`runtime/safety_signal.py::alert_resolved`）、消费方四个：编排输入扫描置 `Focus.safety_alert_cleared` 旗并在 `update_focus` 挡住粘性接力（接力比清除更强，`route_ended` 同款）；road-safety 解除轮不读 `meta.focus_safety_alert`；chitchat `_system(meta, text)` 解除轮不塞「未解除告警」；`alert_level` / `alert_signal` 去掉解除分句后再识别，**无解除陈述时逐字返回原话**。
+- 判据形态：完成态标记（灭了 / 熄灭了 / 不亮了 / 没亮 / 处理好了 / 修好了 / 解决了 / 排除了 / 没问题了 / 恢复正常 / 已排除 / 误报…）∧ 标记前点名告警对象（具名灯 / 现象词 / 关键系统 / 告警泛称，**不收裸「灯」**）∧ 标记前 4 字无否定 ∧ 非问句非指令；标记后若又有告警词，后半照常按新告警登记（「机油灯灭了但是水温灯亮了」⇒ 水温灯 critical）。「我会靠边停车检查」「刚才那个提醒处理好了」「大灯灭了」「灯灭了吗」「还没修好」一个都不清。
+- 验证：runtime 13（+5）、`test_safety_focus` 25（+5）、chitchat + road-safety + manual-rag 139、cloud + runtime + edge 2853 / 1 skipped、探针单测 85；四处变异各自判红（判据恒假 / 接力忽略旗 / road-safety 不看解除 / chitchat 不看解除）。persona INF-MANUAL-SAFETY 补第 6 轮解除陈述，T47 期望仍 `charging.plan`。
+- 边界：驾驶员状态（「不困了 / 酒醒了」）不在本批；PoC 唯一解除证据是用户的话，真车接 VAL 遥测后改遥测优先。**未 push、未 deploy**。

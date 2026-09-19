@@ -110,7 +110,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 | 活项 | 性质 | 状态 / 入口 |
 |---|---|---|
 | 安全问句偶尔落 `info.search`（T24） | manifest 没声明 Agent 早已实现的告警续驾能力 ⇒ planner 看不见 | **已修并发布 `1eb25a70`，真栈复验 3/3 `safety.driving_advice` + deterministic 卡、safety 组 15/15**（`agents/road_safety/manifest.yaml`）；QA 交接页 §5 |
-| safety focus 持续阻断后续 charging plan（T47） | 安全状态解除时机的产品裁决 | **待裁决**：收口页 §3 推荐「显式解除陈述清焦点」 |
+| safety focus 持续阻断后续 charging plan（T47） | 安全状态解除时机的产品裁决 | **已裁 A 并实施（本地闭合、待发布）**：`alert_resolved` 完成态解除陈述清焦点 + 挡接力，四个消费方同一份判据；收口页 §3.3 |
 | MiniMax TTS RPM | 外部配额 | **已由 `a09c73a`（09-06）闭合并销账**；混合意图轮盲听独立开 |
 | barge-in 残帧 | 全双工上「零字节」不可判 | **裁决完**：客户端丢弃（已在）、服务端限 1s 在途窗口（探针判据已改） |
 | gRPC RuntimeWarning | test-only fixture 债务 | **已修**（trip 测试用不可达 LLM 替身）；第三方弃用告警留档不藏 |
