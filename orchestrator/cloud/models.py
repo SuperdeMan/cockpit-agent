@@ -82,6 +82,29 @@ class Step:
     # 不持久化进 SessionState——confirmed 只在确认那一轮由 engine 注入，防止陈旧确认被重放。
 
 
+def step_record(step: "Step") -> dict:
+    """Step → 可落 Redis 的持久化记录（挂起计划 / 澄清选项预解析步共用的**唯一一份**键集）。
+
+    `meta` 故意不持久化：confirmed 标记只在确认那一轮由 `_restore` 注入，防止重放；
+    `declared_slots` / `slot_shapes` 是进程内字段（见字段注释）。`Step(**record)` 可原样还原。
+    """
+    return {
+        "id": step.id, "agent_id": step.agent_id, "endpoint": step.endpoint,
+        "kind": step.kind, "deployment": step.deployment,
+        "intent": step.intent, "slots": dict(step.slots or {}),
+        "depends_on": list(step.depends_on or []),
+        "slot_refs": dict(step.slot_refs or {}), "require_confirm": step.require_confirm,
+        "response_only": bool(getattr(step, "response_only", False)),
+        "latency_budget_ms": step.latency_budget_ms,
+        "required_permissions": list(step.required_permissions or []),
+        "trust_level": step.trust_level,
+        "context_scopes": list(step.context_scopes or []),
+        # M2 Verifier：确认后重跑的正是最该对账的车控步——挂起态不带上它，
+        # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
+        "verification": dict(step.verification or {}),
+    }
+
+
 @dataclass
 class StepResult:
     """单个步骤的执行结果。"""
@@ -276,12 +299,16 @@ class PlanContext:
     # 服务端权威的任务起点原话；不来自 Agent/LLM，不下发替代 raw_text。
     # 放在末尾以保持既有 PlanContext 位置参数契约不变。
     safety_origin_text: str = ""
+    # W10（2026-09-20）**本轮 scratch**：这一轮是在回应哪一次澄清——`{"question": str,
+    # "labels": [str]}`。止损判据 `planning.clarify_is_progress` 拿它判「模型又问的是不是
+    # 同一个问题」：同题不再问、换题可以再问。空 = 本轮不是澄清续接。
+    clarify_probe: dict = field(default_factory=dict)
 
 
 @dataclass
 class SessionState:
-    """多轮挂起态（待确认/待补槽），Redis 持久。"""
-    phase: str                    # "wait_confirm" | "wait_slot"
+    """多轮挂起态（待确认 / 待补槽 / 待选择），Redis 持久。"""
+    phase: str                    # "wait_confirm" | "wait_slot" | "wait_clarify"
     # 本条挂起的寻址键（QA 卡 Q1-B）。随 FinalResult 下发、HMI 原样回传，
     # 挂起表（Q1-C）按它定位。**不是授权凭据**——恢复执行仍以本轮已认证
     # user_id 为准，SessionStore 也仍按 owner 分键。
@@ -305,6 +332,11 @@ class SessionState:
     # 里多条共用一个 Redis key，**TTL 若只挂在 key 上，再存一条就等于给旧条续命**
     # ——「挂起窗口以首次挂起时刻起算、插话不无限续命」那条纪律会被无声架空。
     expires_at: float = 0.0
+    # W10：`phase=wait_clarify` 的问题与选项——`{"question": str, "options": [{"label", "send_text",
+    # "step"?: step_record}]}`。`step` 是 planner 在澄清那一刻用 catalog 预解析好的单步
+    # （`capability_ref` + slots 都经 `_validated_steps`），用户点选后**零 LLM 直接执行**；
+    # 没有 `step` 的选项退回「send_text 重新规划」。老部署读到本字段（未知键）会整条跳过。
+    clarify: dict = field(default_factory=dict)
 
 
 class CyclicPlan(Exception):

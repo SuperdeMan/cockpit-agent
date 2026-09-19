@@ -485,7 +485,7 @@ export class SessionCore {
       : undefined
     // 候选/翻页会改写 text 并附加路由字段，但不得丢掉本轮的语音来源等请求上下文。
     const requestMeta = metaExtra || decision.metaExtra ? { ...metaExtra, ...decision.metaExtra } : undefined
-    this.dispatch(decision.text, false, undefined, requestMeta, undefined, opts.source ?? 'text', preparation)
+    this.dispatch(decision.text, false, undefined, requestMeta, decision.operationId, opts.source ?? 'text', preparation)
   }
 
   /** 确认条按钮（App.tsx:850-876 对照）：哪一条由 operationId 决定 */

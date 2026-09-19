@@ -23,6 +23,8 @@ export type RouteDecision =
       clear?: CandidateClearKey[]
       /** 「换一批」翻页：category 推进到该页（关键词不变） */
       categoryPage?: number
+      /** W10：澄清选择回传服务端挂起的寻址键（服务端据此精确定位这次选择） */
+      operationId?: string
     }
   | {
       /** 未开定位且命中位置依赖 → 本地征询条（纯前端；同意带坐标重发/拒绝照发不带） */
@@ -60,6 +62,7 @@ export function routeSend(
         text: hit.send_text,
         metaExtra: { clarify_resume: '1' },
         clear: ['intent'],
+        ...(ic.operationId ? { operationId: ic.operationId } : {}),
       }
     }
     // 不命中（换话题）→ 继续正常路径；卡片在下一轮 final 到达时互斥清空=自然作废

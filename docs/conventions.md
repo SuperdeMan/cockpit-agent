@@ -430,7 +430,13 @@ HMI `DEFAULT_SETTINGS` 里、运行期 env 无承载，由源码级断言测试�
 | `CLARIFY_FALLBACK_MIN` | LLM 挂/两次解析失败降级到语义 top-1 时的分数门槛：低于此值诚实降级（不硬执行 `capabilities[0]`），与 `SEMANTIC_PROMOTE_SIM` 对齐 | 否（默认 `0.5`） |
 
 > 卡片类型（`ui_card.type`，走 Struct 免改 proto）：`rejected`（拒识标记，`speech` 空、HMI 标灰留痕不 TTS）、
-> `intent_choice`（澄清卡，`{question, options:[{label, send_text}]}`，HMI 沿 `place_list` 先例接语音「第N个」+ 卡片按钮）。
+> `intent_choice`（澄清卡，`{question, options:[{index, label, send_text}], operation_id, expires_at_ms, server_now_ms}`，HMI 沿 `place_list` 先例接语音「第N个」+ 卡片按钮）。
+> **W10（2026-09-20）澄清是挂起，不是一张卡**：澄清轮落一条 `phase=wait_clarify` 挂起（`SessionState.clarify = {question, options[{label, send_text, step?}]}`，
+> `step` 是 planner 用本请求 catalog 预解析的单步——选项带合法 `capability_ref`+`slots` 才有），final 带 `operation_id`。下一轮由服务端解「选了哪一项」：
+> `operation_id` 寻址 + 序号 / 裸「第N个」/ 纯数字 / 选项 label / `send_text` 原文（老客户端回发的就是它）四条通道同一份判据（`engine._resolve_clarify_choice`）；
+> 有 `step` 零 LLM 直接执行，没有则用选项 `send_text` 重新规划（`clarify_resume=1` + `clarify_probe`）。止损判据 `planning.clarify_is_progress`：
+> 同一个问题（问句去标点相同 / 新选项标签 ⊆ 旧标签）不再问，换了问题可以再问；老客户端裸回发（服务端无 probe）仍按深度=1 压掉。
+> 解不出选项 = 换题：挂起保留（R2）、提醒「还在等你选择」；「算了」按最近一条取消。客户端只需回传 `operation_id`（HMI `dispatch(..., opId)` / mobile `routeSend().operationId`）。
 
 ---
 

@@ -147,6 +147,31 @@ def build_confirm_policy(*, operation_id: str, step, state,
     }
 
 
+def build_clarify_card(*, operation_id: str, clarify: dict, state) -> dict:
+    """澄清轮的 `ui_card`（W10）：一句提问 + 带序号的选项 + 寻址键与截止时刻。
+
+    形状向下兼容：老客户端只读 `question` / `options[].label|send_text`；新客户端拿
+    `operation_id` 回传选择。planner 预解析的 `step` 等内部键**不进卡**。
+    """
+    options = []
+    for index, option in enumerate(clarify.get("options") or [], start=1):
+        if not isinstance(option, dict):
+            continue
+        options.append({
+            "index": index,
+            "label": str(option.get("label") or ""),
+            "send_text": str(option.get("send_text") or ""),
+        })
+    return {
+        "type": "intent_choice",
+        "question": str(clarify.get("question") or ""),
+        "options": options,
+        "operation_id": operation_id,
+        "expires_at_ms": _expires_ms(state),
+        "server_now_ms": now_ms(),
+    }
+
+
 def slot_suggestions(step_result) -> list[str]:
     """本轮**用户真的看见了**的候选项名字，作为补槽建议值。
 

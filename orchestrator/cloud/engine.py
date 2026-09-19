@@ -13,8 +13,9 @@ import time
 import uuid
 from typing import AsyncIterator
 
-from .models import Plan, Step, StepResult, StepStatus, PlanContext, SessionState
-from .planning import PlanBuilder, is_voice_input_source
+from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionState,
+                     step_record)
+from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import SessionStore
@@ -29,6 +30,7 @@ from . import slot_shape
 from runtime import session_facts
 from runtime.execution_claim import execution_claim
 from runtime.clause_split import split_clauses
+from runtime.cntime import cn_int
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import is_non_directive_question
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
@@ -528,6 +530,49 @@ class PlannerEngine:
                     "continuing as fresh request", len(cancelled.remainder))
                 pending = None
 
+        # W10：澄清续接——上一轮系统问了「你要哪一种」，这一轮先看是不是在**选**。
+        # 目标挂起：带寻址键就只认它；不带就认最近一条 wait_clarify。解出选项 ⇒ 关掉挂起，
+        # 有预解析 step 的直接当已恢复计划执行（零 LLM），没有的用选项的完整指令重新规划
+        # （带 `clarify_resume=1` 与 `clarify_probe`，止损判据据此判「又问同一个问题」）。
+        # 解不出 ⇒ 换题：挂起保留（R2），新话正常规划。
+        clarify_pending = self._clarify_target(entries, ctx.operation_id, pending)
+        if clarify_pending is not None and pending is not None:
+            option = self._resolve_clarify_choice(text, clarify_pending)
+            if option is not None:
+                await self._close_pending(ctx, clarify_pending)
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.clarify_choice", "system.clarify_choice")
+                ctx.clarify_probe = {
+                    "question": str((clarify_pending.clarify or {}).get("question") or ""),
+                    "labels": [str(o.get("label") or "")
+                               for o in (clarify_pending.clarify or {}).get("options") or []
+                               if isinstance(o, dict)],
+                }
+                chosen_text = str(option.get("send_text") or "").strip() or text
+                logger.info("Clarify choice resolved (%s): %s",
+                            (clarify_pending.operation_id or "")[:16], chosen_text[:40])
+                # 之后的规划 / Agent 看到的是**用户选定的那条完整指令**；本轮原话（「第一个」）
+                # 只留在 run() 的历史落库里。
+                text = chosen_text
+                ctx.raw_text = chosen_text
+                pending = None
+                if isinstance(option.get("step"), dict):
+                    try:
+                        plan = Plan(
+                            steps=[Step(**option["step"])], raw_text=chosen_text,
+                            goal=chosen_text,
+                            # 用户点选了系统展示过的这条指令，它就是这次任务的起点原话
+                            safety_origin_text=chosen_text)
+                        seed_results = []
+                    except TypeError as exc:
+                        logger.warning("Pre-resolved clarify step is unreadable (%s); replanning", exc)
+                        plan = None
+                if plan is None:
+                    ctx.prefs["clarify_resume"] = "1"
+            elif pending is clarify_pending:
+                held_pending = pending
+                pending = None
+
         if pending and pending.phase == "wait_confirm":
             # 点名式确认（「确认明晚那个」）整句不是裸肯定词，`_confirm_reply` 会判成插话；
             # 寻址那一步已经认定它就是对这条挂起说「是」。
@@ -801,13 +846,18 @@ class PlannerEngine:
                     return
                 # R4.4 D6-3：路由歧义澄清（CLARIFY 开 + 本轮非 clarify_resume 深度=1 才生效）。
                 # P0 时 CLARIFY_ENABLED 默认 off → 恒 None，行为=今天；P1 翻 on 后短路出卡。
-                clarify = (plan.clarify if (_clarify_enabled()
-                           and ctx.prefs.get("clarify_resume") != "1") else None)
+                # W10：续接轮（`clarify_resume=1`）原则上不再问；**唯一例外**是服务端知道
+                # 上一问是什么（`clarify_probe`）且这一张换了问题——止损限制的是「同一个问题
+                # 没有进展」，不是全任务只许问一次。
+                resume_turn = ctx.prefs.get("clarify_resume") == "1"
+                clarify = plan.clarify if (_clarify_enabled() and (
+                    not resume_turn
+                    or (ctx.clarify_probe
+                        and clarify_is_progress(ctx.clarify_probe, plan.clarify)))) else None
                 if clarify:
                     await _emit_engine_lifecycle(
                         ctx, "clarify", "system.clarify")
-                    yield {"kind": "final", "speech": clarify["question"],
-                           "ui_card": {"type": "intent_choice", **clarify}}
+                    yield await self._suspend_clarify(ctx, plan, clarify, text)
                     return
                 # 取消闸（余项，2026-08-29）：这句取消话没落到任何可执行的东西上。
                 # **「没听清」在这里是假的**——我们听清了，只是不知道他说的是哪一件事
@@ -1762,6 +1812,90 @@ class PlannerEngine:
                 step_result=step_result, state=pending_state)
         return final_event
 
+    @staticmethod
+    def _clarify_target(entries: list, operation_id: str, pending):
+        """这一轮该对着哪条 `wait_clarify` 判选择：带寻址键只认它；不带认最近一条澄清挂起。"""
+        wanted = str(operation_id or "").strip()
+        if wanted:
+            return pending if (pending is not None
+                               and getattr(pending, "phase", "") == "wait_clarify") else None
+        for state in reversed(entries or []):
+            if getattr(state, "phase", "") == "wait_clarify":
+                return state
+        return None
+
+    @staticmethod
+    def _resolve_clarify_choice(text: str, state) -> dict | None:
+        """这句话选的是哪一项（W10）：裸序数 / 纯数字 / 选项 label / 选项 send_text 原文
+        （老客户端回发的正是它）。解不出、序数越界 ⇒ None（不猜）。"""
+        options = [o for o in (getattr(state, "clarify", None) or {}).get("options") or []
+                   if isinstance(o, dict)]
+        if not options:
+            return None
+        t = str(text or "").strip().rstrip("。！!？?").strip()
+        if not t:
+            return None
+        index = None
+        m = re.fullmatch(
+            r"(?:选|要|就)?\s*第\s*([一二三四五六七八九十\d]+)\s*(?:个|项|条|种|款)?(?:吧|呢)?", t)
+        if m:
+            index = cn_int(m.group(1))
+        elif re.fullmatch(r"\d{1,2}", t):
+            index = int(t)
+        elif re.fullmatch(r"([一二三四五六七八九十\d]+)\s*号(?:方案|选项)?", t):
+            index = cn_int(re.fullmatch(r"([一二三四五六七八九十\d]+)\s*号(?:方案|选项)?", t).group(1))
+        if index is not None:
+            return options[index - 1] if 1 <= index <= len(options) else None
+        for option in options:
+            if t in (str(option.get("label") or "").strip(),
+                     str(option.get("send_text") or "").strip()):
+                return option
+        return None
+
+    async def _suspend_clarify(self, ctx: PlanContext, plan: Plan, clarify: dict,
+                               text: str) -> dict:
+        """澄清轮落一条 `wait_clarify` 挂起并构造 final（W10）。"""
+        if ctx.pending_operation_id:
+            # 续接上来的那条已经消费完，不在表里占两格（同 `_suspend`）
+            await self.session.clear(
+                ctx.session_id, owner_user_id=ctx.user_id,
+                operation_id=ctx.pending_operation_id)
+            if ctx.pending_operation_id not in ctx.closed_operation_ids:
+                ctx.closed_operation_ids.append(ctx.pending_operation_id)
+            ctx.pending_operation_id = ""
+        operation_id = f"op-{uuid.uuid4().hex[:16]}"
+        state = SessionState(
+            phase="wait_clarify",
+            owner_user_id=ctx.user_id,
+            operation_id=operation_id,
+            pending_plan={
+                "steps": [], "raw_text": str(text or ""),
+                "goal": str(getattr(plan, "goal", "") or text or ""),
+                "safety_origin_text": str(ctx.safety_origin_text or text or ""),
+            },
+            clarify={"question": str(clarify.get("question") or ""),
+                     "options": [dict(o) for o in (clarify.get("options") or [])
+                                 if isinstance(o, dict)]},
+        )
+        saved, evicted = await self.session.save_pending(ctx.session_id, state)
+        if saved is False:
+            return {"kind": "final",
+                    "speech": "正在清除你的数据，这次操作没有保存，请稍后重新发起。",
+                    "actions": [], "ui_card": None}
+        final = {
+            "kind": "final",
+            "speech": clarify["question"],
+            "actions": [],
+            "operation_id": operation_id,
+            "ui_card": contracts.build_clarify_card(
+                operation_id=operation_id, clarify=clarify, state=state),
+        }
+        if evicted is not None:
+            ctx.closed_operation_ids.append(evicted.operation_id)
+            final["follow_up"] = self._append_hint(
+                "", f"（{self._pending_label(evicted)}已过期，需要的话再说一次。）")
+        return final
+
     async def _capability_describer(self):
         """intent → Registry 目录里这条能力的 `description`（打磨批 G）。
 
@@ -1878,7 +2012,9 @@ class PlannerEngine:
         except AttributeError:
             pass
         what = f"「{goal[:20]}」" if goal else "刚才的操作"
-        ask = "确认" if held_pending.phase == "wait_confirm" else "继续补充"
+        ask = ("确认" if held_pending.phase == "wait_confirm"
+               else "选择" if held_pending.phase == "wait_clarify"
+               else "继续补充")
         hint = f"对了，{what}还在等你{ask}。"
         follow = str(final.get("follow_up") or "")
         final["follow_up"] = (follow + (" " if follow else "") + hint).strip()
@@ -2461,23 +2597,10 @@ class PlannerEngine:
 
     @staticmethod
     def _serialize_plan(plan: Plan) -> dict:
+        # 步的持久化键集在 `models.step_record`（澄清选项的预解析步共用同一份，W10）。
         # meta 故意不持久化：confirmed 标记只在确认那一轮由 _restore 注入，防止重放
         return {
-            "steps": [
-                {"id": s.id, "agent_id": s.agent_id, "endpoint": s.endpoint,
-                 "kind": s.kind, "deployment": s.deployment,
-                 "intent": s.intent, "slots": s.slots, "depends_on": s.depends_on,
-                 "slot_refs": s.slot_refs, "require_confirm": s.require_confirm,
-                 "response_only": bool(getattr(s, "response_only", False)),
-                 "latency_budget_ms": s.latency_budget_ms,
-                 "required_permissions": s.required_permissions,
-                 "trust_level": s.trust_level,
-                 "context_scopes": s.context_scopes,
-                 # M2 Verifier：确认后重跑的正是最该对账的车控步——挂起态不带上它，
-                 # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
-                 "verification": s.verification}
-                for s in plan.steps
-            ],
+            "steps": [step_record(s) for s in plan.steps],
             "raw_text": plan.raw_text,
             "safety_origin_text": str(
                 getattr(plan, "safety_origin_text", "") or ""

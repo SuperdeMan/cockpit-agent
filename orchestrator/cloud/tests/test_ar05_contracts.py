@@ -534,3 +534,20 @@ def test_plain_turn_reports_no_held_operations():
     final = _final(_run(_engine(spy), _req("在望京店点一杯拿铁")))
 
     assert "held_operation_ids" not in final
+
+
+def test_clarify_card_carries_index_operation_id_and_expiry_but_no_internal_step():
+    """W10：澄清卡是结构化选择契约——序号 / 寻址键 / 截止，内部预解析步不外泄。"""
+    from orchestrator.cloud import contracts
+    from orchestrator.cloud.models import SessionState
+    state = SessionState(phase="wait_clarify", owner_user_id="u1", operation_id="op-c",
+                         expires_at=2_000_000_000.0)
+    card = contracts.build_clarify_card(operation_id="op-c", state=state, clarify={
+        "question": "哪一种？",
+        "options": [{"label": "A", "send_text": "做 A", "step": {"intent": "x.y"}},
+                    {"label": "B", "send_text": "做 B"}]})
+    assert card["type"] == "intent_choice" and card["operation_id"] == "op-c"
+    assert card["options"] == [{"index": 1, "label": "A", "send_text": "做 A"},
+                               {"index": 2, "label": "B", "send_text": "做 B"}]
+    assert card["expires_at_ms"] == 2_000_000_000_000 and card["server_now_ms"] > 0
+

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from security.permission import check_permission
-from .models import Plan, Step, PlanContext, ReplanDecision, step_fingerprint
+from .models import Plan, Step, PlanContext, ReplanDecision, step_fingerprint, step_record
 from .context import (
     WorkingSet,
     _FALLBACK_AGENT,
@@ -646,8 +646,11 @@ _CLARIFY_SECTION = (
     "仅当这句话确实是对你说的、但在能力清单上存在两种以上合理且结果差异明显的落法、"
     "且从『当前对话焦点』『最近对话』都无法确定用户要哪种时，输出澄清代替 steps：\n"
     "{\"addressed\":true,\"steps\":[],\"clarify\":{\"question\":\"口语化一句提问\","
-    "\"options\":[{\"label\":\"不超过10字\",\"send_text\":\"消歧后的完整第一人称指令\"}]}}\n"
+    "\"options\":[{\"label\":\"不超过10字\",\"send_text\":\"消歧后的完整第一人称指令\","
+    "\"capability_ref\":\"该选项对应的 capability_ref\",\"slots\":{}}]}}\n"
     "- options 2~3 个；send_text 必须可直接当用户新指令执行（如『帮我找附近的川菜馆』）\n"
+    "- 每个 option 尽量带 capability_ref（从本请求映射选择，与该选项 send_text 的落法一致）"
+    "与已知的 slots：带了它，用户点选后系统直接执行、不再重新规划；不确定就只给 send_text\n"
     "- **绝大多数请求是明确的，明确请求绝不允许反问**\n"
     "- **整句只有一个名词、动词完全缺失**（如某个城市名、建筑名或歌曲名）是典型歧义："
     "用户给了对象却没说要拿它做什么，导航/查天气/查限行/播放都讲得通且结果差异很大"
@@ -1021,6 +1024,33 @@ def _preserve_conditional_replan_contract(plan: Plan | None, text: str) -> bool:
     plan.complexity = "adaptive"
     if not plan.goal:
         plan.goal = str(text or "")
+    return True
+
+
+def _normalized_question(text: str) -> str:
+    return re.sub(r"[\s，,。？?！!、：:；;「」『』“”\"']+", "", str(text or ""))
+
+
+def clarify_is_progress(probe: dict | None, clarify: dict | None) -> bool:
+    """再次澄清是不是**换了问题**（W10 止损判据的唯一实现，planner 与 engine 共用）。
+
+    `probe` = 上一次澄清 `{"question", "labels"}`（engine 在用户点选那一轮置上）。
+    没有 probe ⇒ 这不是续接轮，交回调用方按各自既有规则处理（planner 视为进展、engine 仍按
+    `clarify_resume` 深度=1 压掉）。同一个问题的两种判法取或：问句去标点后逐字相同；
+    或新选项标签全落在旧标签集里（换个问法、选项没变，还是那件事）。
+    """
+    if not probe or not isinstance(probe, dict) or not isinstance(clarify, dict):
+        return True
+    old_q = _normalized_question(probe.get("question"))
+    new_q = _normalized_question(clarify.get("question"))
+    if old_q and old_q == new_q:
+        return False
+    old_labels = {str(x).strip() for x in (probe.get("labels") or []) if str(x).strip()}
+    new_labels = {str(o.get("label") or "").strip()
+                  for o in (clarify.get("options") or []) if isinstance(o, dict)}
+    new_labels.discard("")
+    if new_labels and old_labels and new_labels <= old_labels:
+        return False
     return True
 
 
@@ -1675,7 +1705,12 @@ class PlanBuilder:
         # 早被上面 `_no_action` 那条接住了。**先证明自己测的那条路径真的被走到**
         # （§4.3「A/B 之前先证明两臂真的不同」的同款）。
         if (not plan.steps
-                and str((ctx.prefs or {}).get("clarify_resume", "")) == "1"):
+                and str((ctx.prefs or {}).get("clarify_resume", "")) == "1"
+                # W10：服务端知道上一问是什么（`clarify_probe` 非空）且这一轮又出了一张
+                # **换了问题**的澄清卡（缺日期→缺门店）⇒ 是进展，留给 engine 再问一次；
+                # 同一个问题、或不知道上一问（老客户端裸回发 send_text）才止损成兜底应答。
+                and not (plan.clarify and getattr(ctx, "clarify_probe", None)
+                         and clarify_is_progress(ctx.clarify_probe, plan.clarify))):
             talk = self._talk_only_plan(text, agents)
             if talk is not None:
                 logger.info("clarify_resume 轮空计划 → 兜底 Agent 应答: %s", text[:40])
@@ -2064,7 +2099,8 @@ class PlanBuilder:
                         "Plan addressed=false contradicts nonempty steps, dropping plan for retry")
                     return None
             return Plan(steps=[], raw_text=fallback_text, addressed=False)
-        clarify = self._parse_clarify(wire.get("clarify"))
+        clarify = self.resolve_clarify_options(
+            self._parse_clarify(wire.get("clarify")), catalog)
         if "steps" not in wire:
             if clarify:
                 return Plan(steps=[], raw_text=fallback_text, clarify=clarify)
@@ -2101,7 +2137,7 @@ class PlanBuilder:
                     logger.info("Salvaged clarify payload misplaced in step slots")
                     return Plan(
                         steps=[], raw_text=fallback_text,
-                        clarify=misplaced_clarify,
+                        clarify=self.resolve_clarify_options(misplaced_clarify, catalog),
                     )
 
         # 位移防御（对抗语料 required-step-fields-displaced-to-top-level）：步骤容器键
@@ -2224,10 +2260,51 @@ class PlanBuilder:
             label, send_text = o.get("label"), o.get("send_text")
             if (isinstance(label, str) and label.strip()
                     and isinstance(send_text, str) and send_text.strip()):
-                options.append({"label": label.strip(), "send_text": send_text.strip()})
+                option = {"label": label.strip(), "send_text": send_text.strip()}
+                # W10：选项可带本请求的 capability_ref 与 slots——只留形状合法的，
+                # 归属与合法性由 `resolve_clarify_options` 对着 catalog 再判一次。
+                ref = o.get("capability_ref")
+                if isinstance(ref, str) and ref.strip():
+                    option["capability_ref"] = ref.strip()
+                slots = o.get("slots")
+                if isinstance(slots, dict):
+                    option["slots"] = {
+                        str(k): v for k, v in slots.items()
+                        if isinstance(k, str) and isinstance(v, (str, int, float))
+                        and not isinstance(v, bool)}
+                options.append(option)
         if len(options) < 2:
             return None
         return {"question": question.strip(), "options": options[:3]}
+
+    @staticmethod
+    def resolve_clarify_options(clarify: dict | None,
+                                catalog: "PlannerCapabilityCatalog") -> dict | None:
+        """把澄清选项里的 `capability_ref`/`slots` 预解析成可直接执行的 `step` 记录（W10）。
+
+        判据与 steps 同一条：ref 必须在**本请求**映射里，(agent, intent, slots) 必须过
+        `_validated_steps`。解析不出来就只留 label / send_text（退回重新规划），绝不猜。
+        `capability_ref` / `slots` 两个原始键解析后即删——它们不该到客户端。
+        """
+        if not isinstance(clarify, dict):
+            return clarify
+        options = []
+        for option in clarify.get("options") or []:
+            option = dict(option)
+            ref = option.pop("capability_ref", None)
+            slots = option.pop("slots", None)
+            pair = catalog.ref_to_pair.get(ref) if isinstance(ref, str) else None
+            if pair is not None:
+                agent_id, intent = pair
+                steps = PlanBuilder._validated_steps(
+                    [{"id": "c1", "agent_id": agent_id, "intent": intent,
+                      "slots": {k: str(v) for k, v in (slots or {}).items()},
+                      "depends_on": [], "slot_refs": {}}],
+                    dict(catalog.agent_map))
+                if len(steps) == 1:
+                    option["step"] = step_record(steps[0])
+            options.append(option)
+        return {**clarify, "options": options}
 
     @staticmethod
     def _unwrap_freeform_object(raw):

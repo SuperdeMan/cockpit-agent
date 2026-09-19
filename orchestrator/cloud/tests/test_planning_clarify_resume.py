@@ -73,3 +73,54 @@ def test_normal_turn_clarify_is_not_swallowed():
     plan = _build({})
     assert not plan.steps and plan.clarify is not None, "普通轮的澄清卡被吃掉了"
     assert not (plan.plan_mode or "").endswith("_clarify_resume_talk")
+
+
+# ── W10（2026-09-20）：选项预解析与「同一个问题」判据 ─────────────────────────
+
+def test_parse_clarify_keeps_a_well_formed_ref_and_slots_only():
+    from orchestrator.cloud.planning import PlanBuilder
+    parsed = PlanBuilder._parse_clarify({
+        "question": "怎么处理？",
+        "options": [
+            {"label": "看天气", "send_text": "查天气", "capability_ref": "cap_0001",
+             "slots": {"city": "深圳", "bad": {"x": 1}, "flag": True}},
+            {"label": "导航", "send_text": "导航过去", "capability_ref": 7},
+        ]})
+    assert parsed["options"][0]["capability_ref"] == "cap_0001"
+    assert parsed["options"][0]["slots"] == {"city": "深圳"}         # 非标量值 / 布尔丢掉
+    assert "capability_ref" not in parsed["options"][1]
+
+
+def test_resolve_clarify_options_attaches_a_validated_step_and_strips_the_raw_keys():
+    from orchestrator.cloud.planning import PlanBuilder, _assemble_capability_catalog
+    catalog = _assemble_capability_catalog(_agents() + [MockAgent("info", ["info.weather"])])
+    ref = next(r for r, pair in catalog.ref_to_pair.items() if pair[1] == "info.weather")
+    clarify = {"question": "怎么处理？", "options": [
+        {"label": "看天气", "send_text": "查天气", "capability_ref": ref, "slots": {"city": "深圳"}},
+        {"label": "别的", "send_text": "别的", "capability_ref": "cap_9999"},
+        {"label": "裸", "send_text": "裸"},
+    ]}
+    out = PlanBuilder.resolve_clarify_options(clarify, catalog)
+    first, unknown, bare = out["options"]
+    assert first["step"]["intent"] == "info.weather" and first["step"]["slots"] == {"city": "深圳"}
+    assert first["step"]["agent_id"] and first["step"]["endpoint"]
+    assert "capability_ref" not in first and "slots" not in first
+    assert "step" not in unknown and "capability_ref" not in unknown   # 不在本请求映射里 ⇒ 不猜
+    assert "step" not in bare
+    assert out["question"] == "怎么处理？"
+
+
+def test_clarify_is_progress_judges_same_question_by_text_or_by_option_labels():
+    from orchestrator.cloud.planning import clarify_is_progress
+    probe = {"question": "你希望我怎么处理华润大厦？", "labels": ["看天气", "导航过去"]}
+    same_text = {"question": "你希望我怎么处理华润大厦", "options": [
+        {"label": "查询", "send_text": "x"}, {"label": "别的", "send_text": "y"}]}
+    same_labels = {"question": "要对华润大厦做什么", "options": [
+        {"label": "导航过去", "send_text": "x"}, {"label": "看天气", "send_text": "y"}]}
+    other = {"question": "要今天的还是明天的？", "options": [
+        {"label": "今天", "send_text": "x"}, {"label": "明天", "send_text": "y"}]}
+    assert clarify_is_progress(probe, same_text) is False
+    assert clarify_is_progress(probe, same_labels) is False
+    assert clarify_is_progress(probe, other) is True
+    assert clarify_is_progress({}, same_text) is True       # 没有上一问 ⇒ 交回调用方
+

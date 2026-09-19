@@ -16,7 +16,8 @@ export interface CandidateState {
   /** 顺路停靠候选（waypoint_choice）：「第N个」→「导航去{目的地}途经{名称}」 */
   waypointChoice: { destination: string; names: string[] } | null
   /** R4.4 澄清卡选项：「第N个」或按钮原文 → 回发 send_text（带 clarify_resume=1） */
-  intentChoice: { options: CandidateOption[] } | null
+  /** W10：`operationId` 是服务端澄清挂起的寻址键（老服务端不带 ⇒ undefined，行为同旧） */
+  intentChoice: { options: CandidateOption[]; operationId?: string } | null
   /** 商户菜单卡（product）选项：「第N个」直达该款下单句（门店选择卡由挂起补槽链自己消费） */
   merchantMenu: { options: CandidateOption[] } | null
   /** 就近类目上下文：「换一批」翻页。同关键词保页码、换类目回第 1 页 */
@@ -61,7 +62,10 @@ export function recordCandidates(prev: CandidateState, card: unknown): Candidate
     }
   }
   if (c.type === 'intent_choice') {
-    next.intentChoice = { options: (c.options || []).filter((o: any) => o?.send_text) }
+    next.intentChoice = {
+      options: (c.options || []).filter((o: any) => o?.send_text),
+      ...(typeof c.operation_id === 'string' && c.operation_id ? { operationId: c.operation_id } : {}),
+    }
   } else if (c.type === 'poi_list' && c.purpose === 'dest_choice') {
     next.destChoice = names
   } else if (c.type === 'poi_list' && c.purpose === 'waypoint_choice') {

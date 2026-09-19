@@ -110,8 +110,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
   const lastDestChoiceRef = useRef<string[] | null>(null)
   // 顺路停靠候选（waypoint_choice）：「第N个」派发「导航去{目的地}途经{名称}」→ 落途经点
   const lastWaypointChoiceRef = useRef<{ destination: string; names: string[] } | null>(null)
-  // R4.4 澄清卡（intent_choice）选项：「第N个」或点按钮 → 回发 option.send_text（带 clarify_resume 深度=1）
-  const lastIntentChoiceRef = useRef<{ options: Array<{ label: string; send_text: string }> } | null>(null)
+  // R4.4 澄清卡（intent_choice）选项：「第N个」或点按钮 → 回发 option.send_text（带 clarify_resume 深度=1）。
+  // W10（2026-09-20）：卡带 operation_id（服务端把澄清落进了挂起表），回发时一并带上——
+  // 服务端按它精确定位这次选择，不再从零猜；老服务端忽略该键，行为不变。
+  const lastIntentChoiceRef = useRef<{ options: Array<{ label: string; send_text: string }>; operationId?: string } | null>(null)
   // 商户菜单卡（merchant_choices·product）选项：「第N个」直达该款的下单句（demo-3ukshz T8：
   // 「第三个」曾被规划成再看一遍菜单）。只登记 product 卡——门店选择卡由挂起补槽链自己消费序数。
   const lastMerchantMenuRef = useRef<{ options: Array<{ label: string; send_text: string }> } | null>(null)
@@ -488,7 +490,10 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
             }
           }
           if (c?.type === 'intent_choice') {
-            lastIntentChoiceRef.current = { options: (c.options || []).filter((o: any) => o?.send_text) }
+            lastIntentChoiceRef.current = {
+              options: (c.options || []).filter((o: any) => o?.send_text),
+              operationId: typeof c.operation_id === 'string' && c.operation_id ? c.operation_id : undefined,
+            }
           } else if (c?.type === 'poi_list' && c.purpose === 'dest_choice') {
             lastDestChoiceRef.current = names
           } else if (c?.type === 'poi_list' && c.purpose === 'waypoint_choice') {
@@ -744,8 +749,9 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       const hit = (idx >= 0 && idx < ic.options.length) ? ic.options[idx]
         : ic.options.find((o) => o.send_text === text || o.label === text)
       if (hit) {
+        const opId = ic.operationId
         lastIntentChoiceRef.current = null
-        dispatch(hit.send_text, false, undefined, { clarify_resume: '1' })
+        dispatch(hit.send_text, false, undefined, { clarify_resume: '1' }, opId)
         return
       }
       // 不命中（用户换了话题）→ 继续正常路径；卡片在下一轮 final 到达时被互斥清空=自然作废

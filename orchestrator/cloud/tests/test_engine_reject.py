@@ -177,8 +177,12 @@ def test_clarify_shows_card_when_enabled(monkeypatch):
     assert final["speech"] == "您是想看详情还是导航过去？"
     assert (final.get("ui_card") or {}).get("type") == "intent_choice"
     assert len((final["ui_card"] or {}).get("options") or []) == 2
-    assert asyncio.run(session.load(
-        "s1", owner_user_id="u1")) is None    # 零会话状态：不挂 session
+    # W10（2026-09-20）：澄清**进挂起表**（phase=wait_clarify，带寻址键），下一轮的
+    # 「第一个」由服务端解成选择结果；此前这里断言「零会话状态」——那正是评审 §5.3
+    # 点名的缺口（系统不知道自己问过什么）。契约细节在 test_engine_clarify_pending.py。
+    state = asyncio.run(session.load("s1", owner_user_id="u1"))
+    assert state is not None and state.phase == "wait_clarify"
+    assert final["operation_id"] == state.operation_id
     assert spy.agent_calls == 0                        # 未执行任何 Agent
 
 

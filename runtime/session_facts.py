@@ -330,7 +330,10 @@ def pending_answer(pendings) -> str:
     parts = []
     for item in live:
         what = str(item.get("what") or "").strip() or "刚才那个操作"
-        ask = "确认" if str(item.get("phase") or "") == "wait_confirm" else "补充信息"
+        phase = str(item.get("phase") or "")
+        ask = ("确认" if phase == "wait_confirm"
+               else "选择" if phase == "wait_clarify"      # W10：澄清也在挂起表里
+               else "补充信息")
         parts.append(f"「{what}」等你{ask}")
     head = f"有 {len(parts)} 条待确认的操作：" if len(parts) > 1 else "有 1 条待确认的操作："
     return head + "、".join(parts) + "。说「确认」就执行，说「取消」就作废。"

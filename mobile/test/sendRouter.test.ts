@@ -48,6 +48,25 @@ describe('澄清卡（intent_choice）选择', () => {
     const both = cand({ ...ic, poiNames: ['充电站A'] })
     expect(route('第一个', both)).toMatchObject({ text: '查一下上海天气' })
   })
+  test('W10：卡带 operation_id 时选择回传它；老服务端不带则不出现该键', () => {
+    const withOp = cand({ intentChoice: { ...ic.intentChoice!, operationId: 'op-clarify' } })
+    expect(route('第二个', withOp)).toMatchObject({ text: '打开空调', operationId: 'op-clarify' })
+    expect(route('第二个', ic)).not.toHaveProperty('operationId')
+  })
+  test('W10：recordCandidates 从 intent_choice 卡上记下 operation_id', () => {
+    const c = recordCandidates(emptyCandidates(), {
+      type: 'intent_choice', question: 'q', operation_id: 'op-clarify',
+      options: [{ index: 1, label: 'A', send_text: 'a' }, { index: 2, label: 'B', send_text: 'b' }],
+    })
+    expect(c.intentChoice).toEqual({
+      options: [{ index: 1, label: 'A', send_text: 'a' }, { index: 2, label: 'B', send_text: 'b' }],
+      operationId: 'op-clarify',
+    })
+    const legacy = recordCandidates(emptyCandidates(), {
+      type: 'intent_choice', question: 'q', options: [{ label: 'A', send_text: 'a' }, { label: 'B', send_text: 'b' }],
+    })
+    expect(legacy.intentChoice).not.toHaveProperty('operationId')
+  })
 })
 
 describe('商户菜单卡「第N个」直达下单句', () => {
