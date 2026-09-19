@@ -835,3 +835,10 @@ def test_place_hint_matches_on_a_three_char_common_run_not_on_a_city_prefix():
     assert label_hit("刚才万象城那批第二家评分多少", entry) is not None
     assert label_hit("深圳今天天气怎么样", entry) is None          # 「深圳」两字不算点名
     assert label_hit("科技园那批第二家", entry) is None
+
+
+def test_place_hint_falls_back_to_the_keyword_slot_when_the_planner_misfiles_the_place():
+    """真栈 CD8 第 3 趟第 1 次取样：planner 填 `keyword=万象城`、没填 `location`。"""
+    from orchestrator.cloud.context import _place_hint
+    assert _place_hint({"category": "餐厅", "keyword": "万象城"}) == "万象城"
+    assert _place_hint({"category": "餐厅", "location": "科技园", "keyword": "火锅"}) == "科技园"

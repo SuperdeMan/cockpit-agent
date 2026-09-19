@@ -1042,7 +1042,9 @@ def _earlier_candidate_set(focus, newest: dict) -> dict | None:
 
 #: 查询里「在哪一带找」的槽名（W08 地点提示）：产生方的 `_candidate_label` 只说品类/品牌
 #: （「餐饮」），两次不同地点的同类检索靠它才分得开。零领域值，只有槽名。
-_PLACE_HINT_SLOTS = ("location", "destination", "near", "area", "city")
+#: `keyword` 垫底：真栈 CD8 三次取样里 planner 有一次把「万象城」填进 `keyword` 而不填
+#: `location`——用户说的还是「万象城那批」，这一组得能被这么叫。
+_PLACE_HINT_SLOTS = ("location", "destination", "near", "area", "city", "keyword")
 
 
 def _place_hint(slots: dict | None) -> str:
