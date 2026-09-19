@@ -91,7 +91,11 @@ class AudioApiRecorder implements Recorder {
 
     const rec = new AudioRecorder()
     this.rec = rec
+    // 重采样器与「上一轮的设备采样率」一起归零（2026-09-19 GPT-6 评审 F05）：只清 resampler 不清 _deviceRate，
+    // 两轮都是 48k 时首帧看到「采样率没变」就不再重建重采样器，48k 原样下传——ASR 听成变速，没有异常只有坏读数。
+    // 诊断读数 deviceRate 在首帧回来时重新赋值
     this.resampler = null
+    this._deviceRate = 0
     rec.onAudioReady(
       { sampleRate: TARGET_SAMPLE_RATE, bufferLength: FRAME_SAMPLES, channelCount: 1 },
       (ev: any) => {
