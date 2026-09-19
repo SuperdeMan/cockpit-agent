@@ -9267,3 +9267,31 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 装置：deny 之后设置页 `uiautomator dump` 拿不到 idle（弹窗反复闪导致），改用截图 + `dumpsys audio` 录音事件 + logcat `GrantPermissionsActivity` 计数判定；`APPLICATION_DETAILS_SETTINGS` intent 会直接落到任务栈里残留的权限页，按页面文字分流。
 - **推送事故**：`33cd199d` 的 `git push` 与 `git log origin/main..HEAD` 写在同一条命令里，把另一个会话 21:11 / 21:16 提在本地 main 的 `e6191057`（W01）/ `0a4544e0`（W02）一并推走，没有先给用户看。
   内容是带测试的 cloud 侧修复、无破坏性，但违反 §3.2 本意。此后列出与推送分两步。工作树里另一会话的未提交改动（`runtime/tests/test_session_constraints.py` + 两份 docs）未动。
+
+## 2026-09-19 — 落域 / 拒识 / 上下文 / 长会话外部评审：逐条重证、批 1（P0）+ 批 2（P1 确定性部分）当日落地并发布四个 release
+
+- 来源：用户交来的评审 `docs/reviews/2026-09-19-cockpit_conversation_review.md`（基线 `2f3c574d`）；落地文档
+  `docs/design/2026-09-19-conversation-review-remediation.md`（F01–F12 逐条重证、批次方案、§4 证据与教训）。基线是 HEAD 祖先且
+  `git log 2f3c574d..HEAD -- orchestrator runtime agents` 为空 ⇒ 评审的代码事实逐字成立，不必重证一遍。
+- 批 1（P0，每条先红测试再改）：W01 `e6191057`（`_confirm_reply` 先过 `runtime.question_shape`——「可以吗 / 确认吗 / 行吗」不是授权；
+  engine 读整张挂起表寻址：恰一条 wait_confirm 就是它、≥2 条问一次零动作零关闭、零条走「没有待确认」并提醒补槽；「确认+点名」只打给唯一命中；
+  多挂起下裸「取消」说清取消了哪条）；W02 `0a4544e0`（历史按完整 exchange 裁、预算硬约束、最后一对按句收缩、记忆按条裁、`本次会话约束=`
+  进焦点块、`context_stats` 进 `cloud.planning` span；`PLANNER_HISTORY_EXCHANGES` 默认 2 = 旧 4 条）；W03 `e35bdb33`（`constraints_in` 按
+  `clause_split` 分句、时态框架跳过转述过去、主体框架进 `others`、撤销写 None 删键、`no_queue` 有 False 通道；nearby 两键对称）；
+  W04 `1f5dfd27`（`models.step_fingerprint` 唯一实现，执行侧防抖与规划侧判重同一份键；observation 带 `slots`）；W05-lite `744fb655`（效配置记录、
+  探针 CF5 改契约 / CF7 / CF9 / RS5）。
+- 批 2（P1）：`0d4d795e` W08（候选组带 `query_signature` / `place_hint` / `revision`，合并键第四维，`较早候选[...]` 与「第 N 批」进 prompt）+
+  W09（`_FOCUS_TTL` 300→7200、`focus_ts`、`expire_short_term` 按 300 s 清短时引用、活动状态各按自己的 ts）；真栈驱动的三个追加：`227457df`
+  （裸确认询问走 `system.pending_state` 出口——CF7 首跑 1/2 次落 chitchat 答「可以，已为您执行」）、`40edaad1` / `e8e6c949`（地点提示 ≥3 字公共子串、
+  `keyword` 垫底——CD8 三趟里 planner 分别填 `location=万象城` / `location=深圳湾万象城` / `keyword=万象城`）、`49dacc1f`（「好的，明天早上八点」
+  不进确认寻址，否则补槽答案被当插话重规划）。
+- 读数：全量固定口径 `1f5dfd27` 8437 / 0 / 31、`0d4d795e` **8453 / 0 / 31**（上一基线那条 OS-lock 红两趟都绿）；四门禁 + smoke_edge 全过；
+  八处变异各自判红。真栈（`minimax:MiniMax-M3`）：CF1/3/4/5/7/9 ×2 12/12（`744fb655`）、CF7 ×2 确定性出口 2/2（`0d4d795e`）、RS4/RS5 ×2 4/4、
+  CD8 ×3 3/3（`e8e6c949`）、W09 沉默 660 s（中间撞上一次发布断连重连）「第二家评分多少」仍由 `candidate_query` 答出第 1 轮第 2 项。
+  四个 release 每次 dry-run 零阻断（首个带 G-05 的 `ci_cd` 摘要重批）→ apply → status ok 5/5 → verify verified。
+- 尺子教训：W09 第一版判据「话术含"不吃辣"」量的是一句依赖记忆画像的话，collector 里两条线焦点块同样大小、A 线还带「不合口味的已排后」
+  ——约束其实活着；换成零 LLM 的候选台账尺子才算数。
+- 流程教训：另一会话的 push 顺带推走了 W01/W02（对方已记）；`verify` 连红十几分钟的真因是本会话一条被工具超时挪到后台、仍在跑的
+  bash `until verify` 循环（MSYS 下每 45 s 抢远端锁），`TaskStop` 后立刻绿——cloud 命令只在 PowerShell 前台跑、不写轮询。
+- 未做 / 待裁决：W10 澄清续接（改 HMI / Android 契约）、W06 DialogueDecision（改 Planner 输出契约，要 A/B）、W07 TaskFrame；P2 / P3 按评审原表。
+  顺带观察记在设计文档 §4.3：planner 对「X 附近的餐厅」槽位三次三样、纯偏好陈述常落技术失败出口、探针会写进共享 e2e 用户画像。

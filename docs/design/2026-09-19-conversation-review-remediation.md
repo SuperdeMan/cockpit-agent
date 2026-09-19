@@ -1,6 +1,7 @@
 # 落域 / 拒识 / 上下文 / 长会话评审：逐条重证与分阶段落地
 
-- 状态：落地中（批 1 = P0 W01–W04 + W05-lite；批 2 = P1 W08/W09；W06/W07/W10 与 P2/P3 待裁决）
+- 状态：批 1（P0 W01–W04 + W05-lite）与批 2（P1 W08/W09）已实施、已发布（生产 release `e8e6c949`，2026-09-19）；
+  W06/W07/W10 与 P2/P3 待用户裁决（§3.3）
 - 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`；HMI / Android 本批零改动
 - 关联：评审原文 [`docs/reviews/2026-09-19-cockpit_conversation_review.md`](../reviews/2026-09-19-cockpit_conversation_review.md)（基线 `2f3c574d`）；
   接手 `AGENTS.md` §4；QA 交接 `docs/reviews/2026-08-30-qa-closeout-handoff.md`；上一批收口 [`2026-09-19-qa-residual-closeout.md`](2026-09-19-qa-residual-closeout.md)
@@ -168,3 +169,42 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 - 顺带观察（不在本批修，记给 W13 / 范例）：纯偏好陈述「我不想排队」「我不吃辣，也不想排长队」在 MiniMax-M3 下 3/4 次落到
   「这次我没能把您的请求拆成可以执行的步骤」/「看不到刚才那次下单的记录」这类技术失败 / 执行史出口——约束照样登记成功
   （`_register_input_facts` 在提前出口上跑），但一句陈述得到一句报错式回复；另有 1/2 次把「今天可以排队」规划成一次搜索。
+
+### 4.3 批 2（2026-09-19，P1 确定性部分）
+
+| 工作包 | 提交 | 本地证据 |
+|---|---|---|
+| W01 追加 | `227457df`（裸确认询问走 `system.pending_state` 出口）、`49dacc1f`（「好的，明天早上八点」不进确认寻址） | `test_engine_confirm` 58；两处变异各判红 |
+| W08 候选集版本 | `0d4d795e` + `40edaad1`（地点提示 ≥3 字公共子串）+ `e8e6c949`（`keyword` 垫底） | `test_candidate_sets` +7；变异「合并键无签名」红 2 |
+| W09 生命周期拆分 | `0d4d795e` | 新 `test_focus_lifecycle` 8；变异「不过期短时引用」红 4 |
+
+- 全量固定口径（树 `0d4d795e`，`TZ=UTC0` `-n 8`）：**8453 passed / 0 failed / 31 skipped / 11 warnings**，249s；四门禁 + smoke_edge 全过。
+  后续三个小提交只跑 cloud 目录（1386 / 1388 passed）。
+- 发布链：`744fb655` → `0d4d795e`（22:07 status ok 5/5、verify `20260919T140833Z-0d4d795.json`）→ `49dacc1f`（22:27，verify
+  `20260919T143811Z-49dacc1.json`）→ **`e8e6c949`**（22:47 status ok 5/5 零 warning、verify `20260919T150023Z-e8e6c94.json`，
+  `minimax:MiniMax-M3`，lock `e2e`）。每次 dry-run 零阻断、apply `submitted`。
+- 真栈：
+  - CF7 ×2（`0d4d795e`）**2/2**：「可以吗 / 确认吗」⇒「有 1 条待确认的操作：「把全车门解锁」等你确认。说「确认」就执行，说「取消」就作废。」零动作、零 LLM；T4 带寻址键解锁。
+  - CD8（W08）：`0d4d795e` 上 1/2 → 差的那次 planner 填 `location=深圳湾万象城`，2 字前缀「深圳」对不上「万象城」⇒ `40edaad1` 改 ≥3 字公共子串；
+    `49dacc1f` 上 2/3 → 差的那次 planner 把「万象城」填进 `keyword`、`location` 空 ⇒ `e8e6c949` 让 `keyword` 垫底；**`e8e6c949` 上 3/3**：
+    「刚才万象城那批第二家评分多少」三次都答第 1 轮卡片第 2 项（TOVA / Auvers / TOVA），「第二家评分多少」三次都答最新批。
+    两次修的都是**取名通道对 planner 槽位方差的容错**，合并逻辑本身首跑就对。
+  - W09 沉默探针（自写脚本，`--silence 660`）：第一版尺子「话术含"不吃辣"」判红，但 collector 显示两条线 T2 的焦点块同样大小
+    （`ctx_chars − history_chars` 都是 152）且 A 线话术带「不合口味的已排后」——**约束其实活过去了，那句话依赖记忆画像里的
+    「爱吃川菜」，尺子量错了对象**。第二版零 LLM 尺子：「万象城附近的餐厅」→ 沉默 660 s（中间还撞上一次发布导致 WS 断连、同
+    session 重连）→「第二家评分多少」由 `candidate_query` 出口答出第 1 轮卡片第 2 项「TOVA西班牙餐厅」评分 4.5；旧 300 s key TTL
+    下必落 `cloud.candidate_missing`。对照线（零沉默）同样通过。焦点同时跨过了一次 planner 容器重启（Redis 未动）。
+- 记给后续的观察（不在本批修）：
+  - planner（MiniMax-M3）对「X 附近的餐厅」的槽位三次三样（`location=万象城` / `location=深圳湾万象城` / `keyword=万象城`），
+    第三种让 nearby 以车辆位置为中心搜——批次内容与用户所指不符，属于范例 / W13 层面；
+  - 纯偏好陈述（「我不吃辣」「我不想排队」）在 MiniMax-M3 下经常落技术失败 / 执行史出口（约束照样登记成功），归 W13 分账；
+  - 探针会写进共享 e2e 用户的长期记忆（「不吃辣」已进画像，后续取样话术带「您说过不吃辣」），读话术层读数时要知道这一点。
+
+### 4.4 装置与流程教训
+
+- `dev_stack.py verify` 紧跟 apply 之后的全空 artifact（`…-unknown.json`）是已知的锁窗口；但**连红十几分钟**的真因是本会话一条
+  被工具超时挪到后台、仍在跑的 bash `until verify` 循环——每 45 s 抢一次远端 release 锁，且跑在 MSYS 下。停掉它立刻 `verified`。
+  规矩：cloud 命令只在 PowerShell 前台跑，不写轮询循环；后台任务超时后要显式 `TaskStop`。
+- 另一会话的 push 顺带推走了本会话的 W01/W02（对方已记「列出与推送分两步」）；本会话之后每次 push 前先 `git fetch` + 列 `origin/main..HEAD`。
+- Bash 工具的多行 heredoc 在本机时有 EOF 解析失败，改用 Write 写 .py 补丁再执行。
+
