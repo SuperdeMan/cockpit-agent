@@ -227,18 +227,35 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       setError('')
       setErrorKind('')
     }
+    // 一次 enable 尝试从发起到落地（成功 / 作废 / 失败）的句柄。前台同步在它还没落地时**不叠一次新申请**：
+    // 系统权限弹窗关闭时 AppState 'active' 会先于权限结果到 JS，那一刻再 enable 就是多弹一次窗（2026-09-19 真机：
+    // 每次显式尝试弹两次）。等它落地：拒绝 ⇒ 上闩不再申请；作废（用户真的离开过）⇒ 再同步一次。
+    let attempt: Promise<void> | null = null
+    let followUp = false
+    const startEnable = () => {
+      const p: Promise<void> = ctl.enable().then(onEnabled).catch(onEnableError).finally(() => { if (attempt === p) attempt = null })
+      attempt = p
+    }
     // Zustand 通知同步发生：设置关掉的同一调用栈就撤回采集，不能等 React effect。
     const unsubscribeSettings = settingsStore.subscribe((state, previous) => {
       if (state.settings.handsFree === previous.settings.handsFree || !live) return
       if (!state.settings.handsFree) void ctl.disable().catch(() => {})
       else if (cbRef.current.enabled && (!opts.scope || opts.scope.canCapture())) {
         pausedRef.current = false
-        void ctl.enable().then(onEnabled).catch(onEnableError)
+        startEnable()
       }
     })
     const syncScope = () => {
-      if (opts.scope && !opts.scope.canCapture()) void ctl.disable().catch(() => {})
-      else if (!pausedRef.current && !deniedRef.current && settingsStore.getState().settings.handsFree) void ctl.enable().then(onEnabled).catch(onEnableError)
+      if (opts.scope && !opts.scope.canCapture()) { void ctl.disable().catch(() => {}); return }
+      if (pausedRef.current || deniedRef.current || !settingsStore.getState().settings.handsFree) return
+      if (attempt) {
+        if (!followUp) {
+          followUp = true
+          void attempt.then(() => { followUp = false; if (live) syncScope() })
+        }
+        return
+      }
+      startEnable()
     }
     const unsubscribeScope = opts.scope?.subscribe(syncScope)
     syncScope()

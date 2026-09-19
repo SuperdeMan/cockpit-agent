@@ -200,3 +200,50 @@ test('权限弹窗期间切后台、用户拒绝：原因照记（不因不在�
     await act(async () => view.unmount())
   }
 })
+
+// 真机第二轮（10f29b594）剩下的两次多弹：弹窗关闭时 AppState 'active' 先于权限结果到 JS ⇒ syncScope 在闩上闩前又 enable 了一次
+test('权限结果还没回来就回到前台：不叠申请；结果是拒绝 ⇒ 上闩；结果是作废 ⇒ 落地后再同步一次', async () => {
+  const scope = new InteractionScope({ route: '/settings', foreground: true, focused: true })
+  const gate = { resolve: () => {}, reject: (_e: Error) => {} }
+  mockEnablePending = gate
+  const h = mount(scope)
+  let view!: ReactTestRenderer
+  await act(async () => { view = create(createElement(h.Probe)) })
+  try {
+    const ctl = mockControllers[0]
+    expect(ctl.enable).toHaveBeenCalledTimes(1)
+    await act(async () => { scope.update({ foreground: false }) }) // 弹窗
+    await act(async () => { scope.update({ foreground: true }) }) // 弹窗关了，但结果还没到
+    expect(ctl.enable).toHaveBeenCalledTimes(1) // 不叠申请
+    const denied = new Error('录音权限未授予')
+    denied.name = 'PermissionDeniedError'
+    mockEnablePending = null
+    await act(async () => { gate.reject(denied) })
+    expect(h.ui().errorKind).toBe('permission')
+    expect(ctl.enable).toHaveBeenCalledTimes(1) // 落地后 followUp 同步一次：已上闩 ⇒ 仍不申请
+    await act(async () => { scope.update({ foreground: false }); scope.update({ foreground: true }) })
+    expect(ctl.enable).toHaveBeenCalledTimes(1)
+  } finally {
+    await act(async () => view.unmount())
+  }
+
+  // 作废分支：用户真的离开了又回来，第一次 enable 静默落地 ⇒ 回来后补一次
+  mockControllers.length = 0
+  const scope2 = new InteractionScope({ route: '/settings', foreground: true, focused: true })
+  const gate2 = { resolve: () => {}, reject: (_e: Error) => {} }
+  mockEnablePending = gate2
+  const h2 = mount(scope2)
+  await act(async () => { view = create(createElement(h2.Probe)) })
+  try {
+    const ctl = mockControllers[0]
+    await act(async () => { scope2.update({ foreground: false }) })
+    await act(async () => { scope2.update({ foreground: true }) })
+    expect(ctl.enable).toHaveBeenCalledTimes(1)
+    mockEnablePending = null
+    await act(async () => { gate2.resolve() })
+    expect(ctl.enable).toHaveBeenCalledTimes(2) // 作废落地 ⇒ 再同步一次
+    expect(h2.ui().error).toBe('')
+  } finally {
+    await act(async () => view.unmount())
+  }
+})
