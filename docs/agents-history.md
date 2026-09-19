@@ -9184,3 +9184,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - persona 同形序列 ×3（独立会话、钉 MiniMax-M3）：T1 机油灯 3/3 manual；T2「我会靠边停车检查」零动作；T4 解除陈述 3/3 chitchat 零动作无「靠边停车」；**T5「规划去广州路上的补能」3/3 `charging.plan`**（原 T47 红格）；T6「现在还能继续开吗」3/3 无「未解除」。
 - 第一趟探针多插一轮解除前的规划当观察，3 趟里 2 趟露出挂起黑洞：`charging.plan` 的 `dest_choice` 选择卡之后，下一句不论说什么都被 `_is_topic_change` 当目的地槽值整句吞掉（「暂时无法获取前往…的路线」），解除陈述因此到不了云侧规划轮 ⇒ 焦点里的机油灯清不掉；反方向「机油灯亮了」同样会被吞掉、登记不上。修：`_is_topic_change` 里安全信号 / 驾驶员状态 / 解除陈述一律判换题（排在槽形状之前，复用 `runtime.safety_signal`），`_verbs` 补「规划」；`test_engine_confirm` +1、摘闸当场红、cloud 1341 passed。**待单独发布。**
 - 装置坑：探针里插一轮「观察」会改变后续轮的挂起状态——它不是无副作用的观察，本身就是一个前提。
+
+### 同批追加 — 发布 `b342e3bb`（挂起吞句修法）与第三条漏点
+
+- 用户「授权推送部署」：push `0d414816..b342e3bb` → dry-run 零阻断 → apply 216s → status ok、5/5、running = `b342e3bb` → verify verified（`20260919T051116Z-b342e3b.json`）。
+- 带 `dest_choice` 挂起的六轮序列 ×3：解除陈述 **0/3** 再被当目的地吞（此前 2/3）；T5 的落点是 LLM 方差（search_poi / clarify / charging.plan 各一，零动作；目的地本来没答，再问是对的）；T6 2/3 无「未解除」。
+- 第 3 趟 T4 落了 planner 技术失败终态，T6 仍「未解除」⇒ 第三条漏点：`extract_focus` 里的输入侧登记只在 `update_focus` 跑到时才跑，而技术失败 / 授权缺失 / 澄清 / 取消未命中 / 没听清五条出口都在它之前 return（F09 是 09-14 新加的出口）。修 `engine.py::_register_input_facts`：出口前用只带 `raw_text` 的空步计划跑一遍 `update_focus`，什么都没扫出时焦点原样不动。`test_engine_input_facts.py` +4、摘调用 3 红、cloud 1345。**待发布。**
+- 装置坑：往 `@staticmethod` 装饰器和它的 `def` 之间插方法，装饰器会落到新方法头上——`missing 1 required positional argument` 是它的样子。
