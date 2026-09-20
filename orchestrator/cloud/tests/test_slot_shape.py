@@ -260,6 +260,19 @@ def test_shape_predicates_contain_no_domain_word():
 
 def test_shape_table_is_the_only_place_that_names_a_shape():
     """加一种形状=加一行表，不改主循环（同 `retry_policy` 的表驱动纪律）。"""
-    assert set(SHAPES) == {"order_id", "item_name", "ordinal"}
+    assert set(SHAPES) == {"order_id", "item_name", "ordinal", "task_title"}
     for name, fn in SHAPES.items():
         assert callable(fn), name
+
+
+# ── 批 5 W18：`task_title`——只对祈使开头定案 ─────────────────────────────────
+
+def test_task_title_accepts_only_short_imperative_phrases():
+    from orchestrator.cloud.slot_shape import _task_title
+    assert _task_title("把文件交给张总") is False
+    assert _task_title("请帮我订一下会议室") is False
+    assert _task_title("") is True
+    assert _task_title("把全车门解锁吗") is None          # 问句交回通用判据
+    assert _task_title("把文件交给张总，然后订会议室") is None
+    assert _task_title("讲个笑话") is None                # 非祈使开头：不表态
+    assert _task_title("把" + "很长的一件事" * 6) is None

@@ -2192,8 +2192,9 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
     """
     meta = dict(PROBE_META)
     overrides = meta_overrides or {}
+    # 只认评测 pin：LLM pin（D2）与历史视窗 pin（批 5 W19，`meta.planner_history_exchanges`）
     if not isinstance(overrides, dict) or set(overrides) - {
-            "llm_provider", "llm_model"}:
+            "llm_provider", "llm_model", "planner_history_exchanges"}:
         raise ValueError("unsupported meta override")
     for key, value in overrides.items():
         if not isinstance(value, str) or not value.strip() or len(value) > 80:

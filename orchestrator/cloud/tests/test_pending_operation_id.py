@@ -100,3 +100,14 @@ def test_stale_operation_id_cancel_does_not_clear_live_pending():
 
     assert "已经不在" in final["speech"]
     assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is not None
+
+
+def test_stale_operation_id_reports_that_id_as_closed_for_the_client():
+    """批 5 W18 真栈（continuity persona，沉默 600 s 后）：客户端还举着一条已过期挂起的确认条，
+    带着它的寻址键来「取消」，服务端答「已经不在了」——那条对客户端来说就是关掉了，
+    `closed_operation_ids` 要点名它（撤确认条 / 探针的清理台账都靠这个键，不靠话术）。"""
+    engine, _spy, _ = _make_engine()
+    final = _run(engine, _req(
+        "取消", is_confirmation=True, operation_id="op-expired"))[-1]
+    assert "已经不在" in final["speech"]
+    assert final.get("closed_operation_ids") == ["op-expired"]

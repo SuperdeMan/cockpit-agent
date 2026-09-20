@@ -2823,3 +2823,11 @@ chitchat 自己的召回读不到 + 记忆问句 ⇒ 同一句话术（`_build_m
 **⑥ 长会话 runner（W18）**。`scripts/probe_qa_long_sessions.py` 加 `continuity` persona（同 session ≥50 轮）与两条轮指令
 `silence_s`（沉默后重连，`--silence-scale` 缩放）/ `reconnect`（断连重连，同 session）；`names_item_from` 的轮号是 case 内的，
 相互引用的检查点必须住同一个 case。
+
+**⑦ 祈使开头不是槽值（真栈 continuity T21 逼出，2026-09-20）**：`question_shape.is_imperative_opening`——「把 / 将 + …」处置式与
+「请 / 麻烦 / 帮忙 / 替我 + …」礼貌祈使 ⇒ `wait_slot` 下判换题（路况补槽曾把「把全车门解锁」整句当路线搜，答「为您找到 0 个
+把全车门解锁 路况」，用户的车控指令消失）。形状表新增 `task_title`（只对祈使开头**定案为槽值**，其余不表态）：reminder.create
+的 `title` 声明它——「要提醒你什么事？」→「把文件交给张总」仍是答案。判据在 runtime，形状名在 Agent manifest，与 §9.35 同分工。
+
+**⑧ `pending_missing` 点名关闭**：带寻址键的确认 / 取消对不上任何挂起（真栈：沉默 600 s 后客户端还举着已过期的确认条），
+final 的 `closed_operation_ids` 点名那个 id——对客户端它就是关掉了（撤确认条 / 探针清理台账读这个键，不读话术）。

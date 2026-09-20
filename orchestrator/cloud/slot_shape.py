@@ -41,6 +41,7 @@ import re
 #: 此前 `_NEW_SEARCH_RE` 与 `_is_topic_change` 各自演化，是 B1 那个 bug 的形态
 #: 在词表层的复发——同一个判据抄两份，迟早给同一句话两个答案。
 from .candidate_query import NEW_SEARCH_RE
+from runtime.question_shape import is_imperative_opening
 
 #: 疑问词（形态判据，零领域词）。问句不是槽位答案——同 `_is_topic_change`
 #: 那条既有判据，这里只是把它收进形状里，让「长得像不像」一次判完。
@@ -140,12 +141,35 @@ def _ordinal(text: str) -> bool | None:
     return bool(_ORDINAL_FILLER_RE.sub("", rest))
 
 
+#: `task_title` 的长度上限：一件待办的名字。
+_TASK_TITLE_MAX = 24
+
+
+def _task_title(text: str) -> bool | None:
+    """待办 / 提醒的标题：一个短的动宾短语。**只对祈使开头定案**（返回 False）。
+
+    批 5 W18（2026-09-20）：通用换题判据新认「把 / 将 + …」「请 / 麻烦 + …」为新指令
+    （路况补槽把「把全车门解锁」整句当路线吞掉），而「要提醒你什么事？」→「把文件交给张总」
+    恰是这种形状的**合法答案**。形状声明在 reminder 的 manifest（`title: task_title`），
+    这里只判：祈使开头 ∧ 不是问句 ∧ 单分句 ∧ 不超长 ⇒ 就是标题；其余交回通用判据（None）。
+    """
+    t = (text or "").strip()
+    if not t:
+        return True
+    if (is_imperative_opening(t) and not _QUESTION_RE.search(t)
+            and not _CLAUSE_RE.search(t) and not NEW_SEARCH_RE.search(t)
+            and len(t) <= _TASK_TITLE_MAX):
+        return False
+    return None
+
+
 #: 形状名 → 判据。**加一种形状=加一行**，`_is_topic_change` 主体不动
 #: （同 `retry_policy` 的表驱动纪律）。
 SHAPES: dict[str, object] = {
     "order_id": _order_id,
     "item_name": _item_name,
     "ordinal": _ordinal,
+    "task_title": _task_title,
 }
 
 #: 声明缺省时按**槽名**兜底的形状。目前只有一条，而且它是刻意的：

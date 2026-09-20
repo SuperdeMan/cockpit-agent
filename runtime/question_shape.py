@@ -86,6 +86,21 @@ _IMPERATIVE_BODY_RE = re.compile(
     rf"(?:(?:.{{0,3}}?)(?:把|将)[^，,。！？!?]{{1,12}}?)?(?:{_IMPERATIVE_VERB_ALT})")
 
 
+#: 祈使**开头**（批 5 W18，2026-09-20）：「把 / 将 + …」处置式，或「请 / 麻烦 / 帮忙 / 替我 + …」
+#: 礼貌前缀。它回答的是「这句话是不是在下一条新指令」——补槽挂起下的换题判据消费它：
+#: 路况挂起（「您想查询哪条路线的路况？」）曾把「把全车门解锁」整句当路线吞掉。
+#: 零领域词：全是虚词框架；不要求动词在表里（`_IMPERATIVE_BODY_RE` 那条要动词，是给礼貌尾词用的）。
+IMPERATIVE_OPENING_RE = re.compile(
+    r"^(?:请|麻烦|帮我|帮忙|给我|替我)?\s*(?:再|先|也|都)?\s*(?:把|将)\S"
+    r"|^(?:请|麻烦|帮忙|替我)\s*\S")
+
+
+def is_imperative_opening(t: str | None) -> bool:
+    """「把全车门解锁」「将空调调到26度」「请打开车窗」「麻烦关一下天窗」→ True；
+    「走滨海大道」「深南大道」「晚上九点」→ False。"""
+    return bool(IMPERATIVE_OPENING_RE.match((t or "").strip()))
+
+
 def _polite_tail_body(t: str) -> str | None:
     """礼貌尾词前面的主体；没有礼貌尾词返回 None。"""
     cleaned = (t or "").strip().rstrip("。！!？?~ ")

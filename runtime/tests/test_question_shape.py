@@ -188,3 +188,19 @@ def test_polite_tails_are_a_closed_function_word_class():
     for tail in POLITE_TAILS:
         assert tail.endswith(("吗", "么", "好", "行", "以", "成")), tail
 
+
+
+# ── 批 5 W18：祈使开头（处置式 / 礼貌前缀） ─────────────────────────────────
+
+@pytest.mark.parametrize("text", ["把全车门解锁", "将空调调到26度", "请打开车窗", "麻烦关一下天窗",
+                                  "帮我把后备箱打开", "先把音乐停了", "替我查一下路况"])
+def test_imperative_openings(text):
+    from runtime.question_shape import is_imperative_opening
+    assert is_imperative_opening(text), text
+
+
+@pytest.mark.parametrize("text", ["走滨海大道", "深南大道", "晚上九点", "科苑南路店", "第二个",
+                                  "把", "", "我把钥匙忘车里了吗"])
+def test_non_imperative_openings(text):
+    from runtime.question_shape import is_imperative_opening
+    assert not is_imperative_opening(text), text

@@ -1278,3 +1278,31 @@ def test_a_safety_statement_is_never_a_slot_answer():
     # 误伤对照：真正的目的地答案照旧是槽值
     for text in ("广州南站", "白云机场", "第二个"):
         assert PlannerEngine._is_topic_change(text, pending) is False, text
+
+
+def test_slot_pending_disposal_frame_and_polite_imperative_are_topic_change():
+    """批 5 W18 真栈（continuity persona T21）：路况补槽挂起（「您想查询哪条路线的路况？」）把
+    「把全车门解锁」整句当路线吃掉——答「为您找到 0 个把全车门解锁 路况」，用户的车控指令消失。
+    「把 / 将 + 对象 + 动词」是处置式祈使，「请 / 麻烦 + 动词」是礼貌祈使，都不是槽值。"""
+    assert PlannerEngine._is_topic_change("把全车门解锁") is True
+    assert PlannerEngine._is_topic_change("将空调调到26度") is True
+    assert PlannerEngine._is_topic_change("请打开车窗") is True
+    assert PlannerEngine._is_topic_change("麻烦关一下天窗") is True
+    # 真路线 / 地址答案不误判
+    assert PlannerEngine._is_topic_change("走滨海大道") is False
+    assert PlannerEngine._is_topic_change("深南大道") is False
+    assert PlannerEngine._is_topic_change("从科技园到机场那条") is False
+
+
+def test_slot_pending_task_title_accepts_a_disposal_phrase_as_its_value():
+    """批 5 W18 的对照：待办标题槽声明了 `task_title` ⇒「把文件交给张总」是槽值不是新指令；
+    没声明形状的槽（路况 route）照旧把它判成换题。"""
+    from orchestrator.cloud.models import SessionState
+    titled = SessionState(phase="wait_slot", pending_step_id="s1",
+                          missing_slots=["title"], slot_shapes={"title": "task_title"})
+    assert PlannerEngine._is_topic_change("把文件交给张总", titled) is False
+    assert PlannerEngine._is_topic_change("请帮我订一下会议室", titled) is False
+    assert PlannerEngine._is_topic_change("讲个笑话", titled) is True          # 通用判据照旧
+    assert PlannerEngine._is_topic_change("把全车门解锁吗", titled) is True     # 问句不是标题
+    routed = SessionState(phase="wait_slot", pending_step_id="s1", missing_slots=["route"])
+    assert PlannerEngine._is_topic_change("把全车门解锁", routed) is True

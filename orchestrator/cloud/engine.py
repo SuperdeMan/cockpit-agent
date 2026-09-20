@@ -33,7 +33,7 @@ from runtime.clause_split import split_clauses
 from runtime.cntime import cn_int
 from runtime.outcome import category_of, outcome_of_results
 from runtime.polarity import is_negated_directive
-from runtime.question_shape import is_non_directive_question
+from runtime.question_shape import is_imperative_opening, is_non_directive_question
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
 from runtime.session_constraints import (constraint_recall_answer, constraints_in,
                                          describe_constraints,
@@ -573,6 +573,10 @@ class PlannerEngine:
                         ctx.operation_id[:16])
             await _emit_engine_lifecycle(
                 ctx, "cloud.pending_missing", "system.pending_missing")
+            # 批 5 W18：客户端还举着这条挂起的确认条（真栈：沉默 600 s 后它在服务端过期了），
+            # 服务端说它已经不在——对客户端它就是关掉了：`closed_operation_ids` 点名它，
+            # 撤确认条 / 探针清理台账都读这个键，不读话术。
+            ctx.closed_operation_ids.append(ctx.operation_id)
             yield {"kind": "final",
                    "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。",
                    "_outcome": "pending_missing"}
@@ -2541,6 +2545,12 @@ class PlannerEngine:
         if candidate_query.RELIST_RE.search(t):
             return True
         if any(k in t for k in ("为什么", "为何", "什么原因")):
+            return True
+        # 批 5 W18 真栈（continuity T21）：路况补槽挂起把「把全车门解锁」整句当路线吞掉，
+        # 答「为您找到 0 个把全车门解锁 路况」——用户的车控指令就此消失（方向 fail-safe，但
+        # 「未完成的不会失踪」被违反）。「把 / 将 + …」处置式与「请 / 麻烦 + …」礼貌祈使都是
+        # 新指令，不是槽值；判据在 `runtime.question_shape`（唯一实现，零领域词）。
+        if is_imperative_opening(t):
             return True
         # 「动词+数量+量词+宾语」是完整新指令（在X点一杯标准美式/来两份炒饭）——
         # 槽位答案是名词短语，不自带量词结构（同一次探针：整句新单被旧挂起吞掉）。
