@@ -2836,3 +2836,25 @@ final 的 `closed_operation_ids` 点名那个 id——对客户端它就是关�
 未声明的 `near`）只有第一种到得了 `_near`，其余全按车辆位置搜——三个地名三份逐字相同的列表。`_place_anchor`：原话
 「X 附近 / 周边 / 一带」的 X（排除那 / 这 / 我 等指代与第一人称）或 `near` / `around` / `area` 别名槽 ⇒ 中心（解析仍走
 `_resolve_center` 的偏置搜索 + 名字校验）；地名被填进 `keyword` 时剥掉它（它是中心不是检索词）。`location` 槽照旧优先。
+
+### 9.45 步级起点原话 / 持久订阅落域（评审批 6，2026-09-20）
+
+出处：[对话评审逐条落地 §8](design/2026-09-19-conversation-review-remediation.md)。
+
+**① 步级起点原话（W16-b）**。`Step.origin_text` = 这一步被规划时的那句用户原话，服务端持有：engine 在 `planner.build` 之后
+与 `safety_origin_text` 同处盖章；T2 replan 步在 `to_plan` 后盖任务起点；澄清预解析步盖用户选定的那句；escalate mini-plan
+**不盖**（改派是当前这一步在处理当前这句话）。随 `step_record` 持久化；`_restore` 对没有它的旧记录用持久化的
+`safety_origin_text` / `raw_text` 回填（goal 是 LLM 写的，无权冒充原话），并给 `pending_step_id` 那一步打进程内标记
+`Step.resumed`。**判据一份 `models.step_raw_text`**：续接的那一步看本轮原话（槽答案 / 「确认」就在里面）、其余步看自己的
+起点原话、没有起点原话退回本轮原话（逐字同旧）。传输层经 `models.step_call_context` 拿一份只换了 `raw_text` 的浅拷贝
+（同一句时返回 ctx 本身 ⇒ 新计划零拷贝），三条执行路径各接一处（dispatcher 云端调用 + legacy adapter / engine
+`_stream_single_step` / loop T2 单步流式）；`_restore_slot_fidelity` 读同一判据。step span 在换了时带 `raw_text_from=origin`。
+修前：续接轮里的下游 `reminder.create`（槽 `title=有堵车`）读到「去宝安机场的路况」⇒ 「好的，有堵车。什么时候提醒你？」；
+规划好的 `time_text` 被 `user_time_signal(raw)` 无视再问一遍；nearby「X 附近」锚定与「按原话补回限定词」在下游步上读的都是
+别的步的答案。`PlanContext.raw_text` 本身在整轮里不变，`safety_origin_text` 仍只做授权边界、不下发替代 raw_text。
+
+**② 持久订阅落域（W19-b）**。`skills/guides/conditional-reminder` v6 第四分：「一旦 / 每当 / 只要 / 每次 / 凡是 … 就通知我 /
+提醒我 / 告诉我」、没有要现在查的事、没有具体时间 ⇒ **只规划 `reminder.create`**、整句交给提醒域（它按 §9.44 ④ 诚实拒绝），
+不查天气 / 路况、不标 adaptive。keywords 只加订阅框架词（`一旦 / 每当 / 就通知我 / 就告诉我 / 就叫我`），「只要 / 每次 / 凡是」
+是常用词刻意不做 keyword（「只要一杯拿铁」不该把这条知识检进 prompt）。范例 `reminder.yaml` 追加两句真栈原句。
+知识预算：本 guide 与 charging-strategy 并列最大（rendered ≤ 1015），headroom 守卫钉着。

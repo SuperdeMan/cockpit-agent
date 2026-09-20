@@ -285,3 +285,29 @@ exemplars:
     最恶性的两种都是写：`reminder.create`（说取消，系统问「什么时候提醒你？」）与
     `luckin.order_cancel`（跨域写）。另两种是 `system.clarify` 与兜底闲聊，
     后者还会**零动作地声称已经取消了**（「好的，已为你取消…」，C11 那一族）。
+- text: 之后一旦下雨就通知我
+  plan:
+  - agent: reminder
+    intent: reminder.create
+    slots:
+      title: 下雨通知我
+  source: trace
+  added: '2026-09-20'
+  tags:
+  - badcase
+  note: >-
+    批 6 W19-b（真栈 RS9，release 485fccd1）：持久订阅被条件提醒知识按「查一次天气」读，
+    落 info.weather 答「今天没雨」。用户要的是盯着变化再通知；提醒域会诚实说做不到并给替代。
+- text: 只要有堵车就提醒我
+  plan:
+  - agent: reminder
+    intent: reminder.create
+    slots:
+      title: 有堵车提醒我
+  source: trace
+  added: '2026-09-20'
+  tags:
+  - badcase
+  note: >-
+    同上一条的第二个形状：同趟真栈里给了路况查询（问「哪条路线」），reminder 步排在其后、
+    续接轮才跑。整句交给提醒域即可，不查路况、不 adaptive。

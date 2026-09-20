@@ -226,6 +226,25 @@ def test_conditional_reminder_guide_demonstrates_the_replan_observation_contract
     assert "明天要是下雨就提醒我带伞" not in guide.knowledge
 
 
+def test_conditional_reminder_guide_names_the_subscription_branch():
+    """批 6 W19-b：第四分「持久订阅」必须在知识里有名字、有词形、有落点（只规划 reminder.create），
+    golden 必须钉住两句真栈原句各自的「另一半」（expect_not 查询族）。真栈 RS9（485fccd1）：
+    两句都被本知识检回、按条件依赖读成「查一次」——知识缺的不是召回，是这一分判据。"""
+    guide = next(d for d in sk.SkillStore().guides()
+                 if d.name == "conditional-reminder")
+    for marker in ("持久订阅", "一旦", "每当", "就通知我", "只规划 reminder.create", "不标 adaptive"):
+        assert marker in guide.knowledge, marker
+    by_text = {g["text"]: g for g in guide.golden}
+    rain = by_text["之后一旦下雨就通知我"]
+    traffic = by_text["只要有堵车就提醒我"]
+    assert rain["expect_intents"] == ["reminder.create"]
+    assert {"info.weather", "info.forecast"} <= set(rain["expect_not"])
+    assert traffic["expect_intents"] == ["reminder.create"]
+    assert "safety.road_condition" in traffic["expect_not"]
+    # 常用词不做 keyword：「只要一杯拿铁」「每次都这样」不该把这条知识检进 prompt
+    assert not {"只要", "每次", "凡是"} & set(guide.keywords)
+
+
 def test_conditional_reminder_guide_demonstrates_initial_adaptive_shape():
     """Prose alone did not reliably preserve the deferred branch in fresh processes."""
     guide = next(d for d in sk.SkillStore().guides()
