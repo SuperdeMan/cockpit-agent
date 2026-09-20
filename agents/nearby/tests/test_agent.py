@@ -3,6 +3,8 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from runtime.clock import epoch_at
 from agents._sdk.testing import make_context, run_handle, assert_manifest_consistent
 from agents.nearby.src.agent import NearbyAgent
@@ -1524,3 +1526,67 @@ def test_a_companions_spicy_wish_this_turn_does_not_lift_the_speakers_no_spicy(m
                                  ctx=make_context(), meta=meta))
     assert seen["keyword"] != "川菜"
     assert [i["name"] for i in res.data["items"]][0] == "淮扬人家"
+
+
+# ── 批 5 W18 真栈（continuity 两趟）：「万象城附近的餐厅」的中心由原话锚定，不靠 planner 填对槽 ──
+
+@pytest.mark.parametrize("slots, raw", [
+    ({"keyword": "万象城", "category": "餐厅"}, "万象城附近的餐厅"),   # 真栈：地名被填进 keyword
+    ({"keyword": "餐厅", "near": "南山书城"}, "南山书城附近的餐厅"),   # 真栈：填进未声明的 near
+    ({"category": "餐厅"}, "科技园附近的餐厅"),                        # 真栈：什么都没填
+])
+def test_place_named_before_nearby_anchors_the_center(slots, raw):
+    """真栈 continuity：三个地点三份**逐字相同**的列表——planner 把地名填进 keyword / near /
+    不填，nearby 只认 `location` 槽，于是全按车辆位置搜。地名就在原话里（「X附近的…」），
+    Agent 自己锚定它；中心解析走既有的偏置搜索 + 名字校验（`_resolve_center`）。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.setdefault("calls", []).append((keyword, kwargs.get("near")))
+        if keyword == raw.split("附近")[0]:
+            # 中心解析那一步（`_resolve_center`）：按地名、以车辆位置偏置搜到该地标
+            from agents.nearby.src.providers.base import Place
+            return [Place(id="x", name=f"{keyword}购物中心", lat=22.6, lng=114.1,
+                          city="深圳市", rating=4.5)]
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search", slots=slots, raw_text=raw, meta=_LOC))
+    place = raw.split("附近")[0]
+    # 第一次调用是解析中心（按地名），最后一次调用的中心是解析出的坐标而不是车辆 GPS
+    assert seen["calls"][0][0] == place
+    final_near = seen["calls"][-1][1]
+    assert final_near is not None and abs(final_near.lat - 22.6) < 1e-6, seen["calls"]
+    # 地名不再当检索关键词（否则只剩名字里带「万象城」的店）
+    assert place not in seen["calls"][-1][0]
+
+
+def test_plain_nearby_without_a_place_still_uses_the_vehicle_position():
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen["near"] = kwargs.get("near")
+        return []
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐厅"},
+                           raw_text="附近的餐厅", meta=_LOC))
+    assert seen["near"] is not None and not getattr(seen["near"], "address", None)
+
+
+def test_deictic_or_first_person_place_words_do_not_become_an_anchor():
+    """「那附近」走焦点目的地那条既有通道；「我家附近」不是一个可以拿去 geocode 的地名。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen["near"] = kwargs.get("near")
+        return []
+
+    agent.place.search = search
+    for raw in ("那附近有停车场吗", "我家附近的餐厅", "这附近的咖啡店"):
+        asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐厅"},
+                               raw_text=raw, meta=_LOC))
+        assert not getattr(seen["near"], "address", None), raw

@@ -2831,3 +2831,8 @@ chitchat 自己的召回读不到 + 记忆问句 ⇒ 同一句话术（`_build_m
 
 **⑧ `pending_missing` 点名关闭**：带寻址键的确认 / 取消对不上任何挂起（真栈：沉默 600 s 后客户端还举着已过期的确认条），
 final 的 `closed_operation_ids` 点名那个 id——对客户端它就是关掉了（撤确认条 / 探针清理台账读这个键，不读话术）。
+
+**⑨ 「X 附近的…」的中心由原话锚定（nearby，真栈 continuity 两趟逼出）**：planner 三种填法（`location` / `keyword` /
+未声明的 `near`）只有第一种到得了 `_near`，其余全按车辆位置搜——三个地名三份逐字相同的列表。`_place_anchor`：原话
+「X 附近 / 周边 / 一带」的 X（排除那 / 这 / 我 等指代与第一人称）或 `near` / `around` / `area` 别名槽 ⇒ 中心（解析仍走
+`_resolve_center` 的偏置搜索 + 名字校验）；地名被填进 `keyword` 时剥掉它（它是中心不是检索词）。`location` 槽照旧优先。

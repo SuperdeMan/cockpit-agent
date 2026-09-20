@@ -380,3 +380,45 @@ P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：
   `contrast` CT2 复跑（持久订阅诚实拒绝）、新增 `residual` RS7（约束问句读出口）/ CD9（墓碑）；W19 单变量读数单独成表。
   `memory_unavailable` 出口在真栈上**不可触发**（不停别人的 PG / Redis），只有离线用例 + 生产 `turns.outcome` 分布作为后续读数。
 
+### 7.1 落地记录（2026-09-20 晚，release `485fccd1` → `8e403d5c`）
+
+| 包 | 提交 | 做了什么 | 本地证据 |
+|---|---|---|---|
+| W17 读取三态 | `485fccd1` | `runtime/memory_read.py`（四态词表 + `is_memory_recall_question` + 两句固定话术）；memory 服务 `RecallResponse.degraded` / `GetSessionResponse.degraded`（proto 字段 3 / 2）+ `MemoryVectorStore.ensure()` 按 30 s 退避后台重连（此前 `init()` 只跑一次）；云侧 `Clients.recall_read` / `get_session_read`、SDK `MemoryClient.recall_read` / `Context.recall_read`；`WorkingSet.history_state` / `memory_state` 进 `context_stats` 与 `cloud.planning` span；engine `memory_unavailable` 出口（新 kind）+ 执行史出口读不到时答「查不到」；chitchat `_build_messages` 一个入口盖 handle / handle_stream | `runtime/tests/test_memory_read` 23、`memory/tests/test_degraded_read` 8、`test_context_read_state` 9、`test_engine_memory_read_state` 10、chitchat +3（`make_context` 的 `recall_read` 跟 `recall` 走）；变异 6 处各判红（三态吞成 NONE / 服务端不自报 / 不重连 / 读接口异常记 NONE / 出口不接 / 执行史不分账） |
+| W16 胶囊 | `485fccd1` | 结构已在，本批只补读态两格 + 视窗一格进胶囊与 span；投影通道仍只有 `_apply_focus_meta` 一条 | `test_planning_span_attrs_carry_read_states_and_window` |
+| W18-a 墓碑 | `485fccd1` | `Focus.retired_candidate_sets`（≤6 条、2 h；封顶顶掉与过期各立一次；同键新版本不立）；`retired_candidate_hit`；engine 在 `resolve_candidate_scope` 零命中且点到墓碑 ∧（句首序数 ∨ 候选聚合形态）时走 `candidate_missing` 第二种话术 | `test_candidate_sets` +4、`test_engine_candidate_shortcut` +3（修前逐字答「「南店2」评分 4.2」）；变异「墓碑不查」红 3 |
+| W18-b 约束读出口 | `485fccd1` | `is_constraint_recall_question` / `constraint_recall_answer`；engine `cloud.constraint_recall`（kind `fact_answered`，有账才劫持）；`constraints_in` 对回问句不登记 | runtime +6、engine +3；变异「回问句照登记」红 2 |
+| 生产缺陷（顺手抓到） | `485fccd1` | `is_pure_constraint_statement` 把「帮我找家不辣的餐厅」「附近有没有不辣的馆子」判成纯陈述 ⇒ `e9044daf` 起这类单分句请求答「好的，这次不吃辣…」零搜索。修法：问句形态与 `REQUEST_MARKER_RE` 任一在场就不是陈述；约束照登记 | runtime +7（含「陈述仍是陈述」对照）、`test_engine_outcome` +1；变异「去掉请求标记」红 4 |
+| 事件触发拒绝 | `485fccd1` | reminder `_EVENT_TRIGGER_RE`（连接词 + 事件 + 通知动词 / 「…就通知我」），时间 / 地点 / 可提醒事件都走不通后 `_refused="unsupported"` 诚实拒绝；`outcome_of_results` 新 kind `unsupported` | reminder +8、`test_outcome` +1；变异「仍追问时间」红 4、「记成 failed」红 1 |
+| W19 视窗 pin | `485fccd1` | `meta.planner_history_exchanges`（1–6 字面量）→ `PlanContext.history_exchanges`（不进 prefs）→ 取回 `2N+2`、渲染 N 对；预算仍硬上限；`context_stats.history_exchanges` | `test_context_history_pin` 5；变异「pin 恒 0」红 1 |
+| 探针 | `485fccd1` / `8e403d5c` | `continuity` persona（53 轮；`silence_s` / `reconnect` 轮指令、`--silence-scale`）；`residual` RS7 / RS8 / RS9、`candidate` CD9；`_ENGINE_ONLY_TRACE_NODES` 加四条零 Agent 出口；视窗 pin 进探针 meta 白名单 | `scripts/tests` +3 |
+| 真栈逼出的两条 | `8e403d5c` | ① 路况补槽把「把全车门解锁」整句当路线（continuity T21）：`question_shape.is_imperative_opening`（把 / 将 处置式、请 / 麻烦 礼貌祈使）⇒ `_is_topic_change` 判换题；形状表新增 `task_title`（只对祈使开头定案）声明在 reminder.create 的 `title`，「要提醒你什么事？」→「把文件交给张总」仍是答案；② 沉默 600 s 后客户端还举着过期确认条，带寻址键取消得到「已经不在了」却零 closed id ⇒ 探针清理台账证不了关闭：`pending_missing` 现在把寻址的 id 点进 `closed_operation_ids` | `test_engine_confirm` +2、`test_pending_operation_id` +1、`test_slot_shape` +1、runtime +2；三处变异各判红 |
+
+- 全量固定口径：`485fccd1` 工作树 **8692 passed / 0 failed / 32 skipped / 12 warnings，227 s**（上一基线 8593 / 0 / 32）；`8e403d5c` 工作树
+  **8710 passed / 1 failed / 32 skipped**——那 1 红 `test_cloud_deploy_assets::test_https_verifier_fails_closed_when_an_endpoint_never_becomes_ready`
+  是真实 bash 子进程的秒级时钟边界（单文件串行 185/185 ×2 绿，与本批改动无关；「真实子进程污染读数」形态）。四门禁 + smoke_edge 13/13 两趟全过；
+  `go build/vet ./gateway/...` 零错（proto 重生成）；十五处变异各自判红。
+- 发布链：push `7f5ff700..485fccd1`（`origin/main..HEAD` 恰一条、单独一步列出）→ dry-run 零阻断（基线 `9ebaa5c3`）→ apply `submitted`
+  → status **ok、5/5 healthy、零 warning、`release_sha` = `running_release_sha` = `485fccd1`** → verify **`verified`**
+  （`20260920T055706Z-485fccd.json`，`minimax:MiniMax-M3`，lock e2e）；第二个 release 同链：push `485fccd1..8e403d5c` → dry-run 零阻断 → apply →
+  status ok 5/5 零 warning → verify `verified`（`20260920T063543Z-8e403d5.json`）。
+- 真栈（`minimax:MiniMax-M3`）：
+  - `485fccd1`：`--cases RS7,RS8,RS9,CD9 --repeat 2` **8/8**。RS7 两趟都由 `constraint_recall` 出口逐字答「您这次说过：不吃辣、不想排队。…」，
+    「今天可以排队」之后再问答「不吃辣、可以排队」；RS8「帮我找家不辣的餐厅」出 place_list 10 家（话术带「您说了不要辣，这次就不按平时爱吃的
+    川菜找了」），修前是一句「记下了」；CD9 第 4 批顶掉第 1 批后「万象城那批第二家评分多少」两趟逐字答「「万象城」那批已经不在手边了，我只留
+    最近几批…」、「科技园那批」绑第 2 轮卡第 2 项、裸序数绑第 4 轮；RS9 两句持久订阅都零动作零声称、不追问时间——**但没有走到 reminder 的
+    拒绝出口**：planner 把「只要有堵车就提醒我」给了 road-safety（问路线）、「之后一旦下雨就通知我」给了 info.weather（答今天没雨）。
+    reminder 侧的拒绝只有离线证据；订阅句的落域方差归 W19 / 范例。
+  - `485fccd1` `continuity` persona（`--silence-scale 1`）：**41/43，在 CONT-SILENCE 末尾中止**。通过的检查点：约束陈述后 11 轮再问由读出口
+    答出、改口后答改口后的（T12 / T14）；两批共存时点名第 1 批绑第 1 批（T11）；四批后点名被顶掉那批 ⇒「不在手边」、点名活着的绑活着的、
+    裸序数绑最新（T17–T19）；挂起 → 插话 → 取消 → 「确认」⇒「没有待确认」（T21–T24 之外的 T6–T8）；执行史读出口 2 个操作（T27）；
+    TF1 改口「到达时限改为19:30」（T29）；**沉默 600 s + 重连后**「第二家评分多少」仍由候选台账答出沉默前那批的第 2 项（T37）、
+    后备箱确认已过期（T38「当前没有待确认」/ T39）、约束仍在（T40「不吃辣、可以排队」）。两条红都是真的：T21 路况补槽吞掉「把全车门解锁」
+    （见上表「真栈逼出的两条」①）；末尾 AUTO-CANCEL 对过期的后备箱确认得到「已经不在了」而零 closed id ⇒ 台账证不了关闭 ⇒ 中止
+    （②）。顺带：T5「明天呢」qweather 预报一次「没查到「深圳」的天气」（provider 瞬断，judge 只要求城市不漂）。
+  - `8e403d5c` `continuity` 复跑：见下一条（结果回填）。
+  - W19 单变量（`8e403d5c`，同一语料 4 组 × 2 次、T1 立指代物 → 两轮插话 → T4 省略回指，判 T4 的 `cloud.planning` 槽里有没有指代物）：
+    **视窗 2 对（生产缺省）指代解出 4/8**（3 轮 clarify / unresolved_object、1 轮落 chitchat），**4 对 7/8**（全部 completed；
+    `history_pairs_kept=3` 证明 pin 生效——T4 时历史恰 3 对）。n=8 / 单模型 / 共享 e2e 用户的长期记忆里有探针留下的同题情景记忆，
+    这是**仪器验证读数**，不据此改缺省（评审 F02：先量再定档）；下一步是 ≥30 组语料 + 干净用户再比 2 / 4 / 6 三档。
+

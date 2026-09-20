@@ -335,6 +335,25 @@ class NearbyAgent(BaseAgent):
     # 同族（那边/那儿/那里/目的地/终点），nearby 再收「那附近」。只有话里带指代时才
     # 消费焦点坐标——普通「附近有什么好吃的」必须仍按当前 GPS，不许被上次导航劫持。
     _DEST_DEICTIC_RE = re.compile(r"那附近|那边|那儿|那里|目的地|终点")
+    # 批 5 W18（真栈 continuity 两趟，2026-09-20）：「万象城附近的餐厅」的地名**就在原话里**，
+    # 而 planner 三种填法（`location` / `keyword` / 未声明的 `near` / 什么都不填）只有第一种能
+    # 到 `_near`——其余全按车辆位置搜，三个地名三份逐字相同的列表。锚定不该押在 planner 填对
+    # 槽名上：原话里「X 附近 / 周边 / 一带」的 X 就是中心（地名解析仍走 `_resolve_center` 的
+    # 偏置搜索 + 名字校验）。排除指代（那 / 这，走焦点目的地那条）与第一人称（「我家」不是地名）。
+    _PLACE_BEFORE_NEARBY_RE = re.compile(
+        r"^(?:请|帮我|帮忙|麻烦|想|想找|找|查|查一下|看看|搜|搜一下|推荐)?\s*(?:一下)?"
+        r"(?P<place>[^，,。！？!?\s那这我你咱]{2,15}?)(?:的)?(?:附近|周边|周围|一带|旁边)")
+    _NEAR_ALIAS_SLOTS = ("near", "around", "area")   # planner 偶发用的未声明槽名，只作地名别名
+
+    @classmethod
+    def _place_anchor(cls, intent) -> str:
+        """原话里「X 附近」的 X，或未声明的 near / around / area 槽；没有 ⇒ 空串。"""
+        for name in cls._NEAR_ALIAS_SLOTS:
+            value = str(intent.slots.get(name) or "").strip()
+            if 2 <= len(value) <= 15:
+                return value
+        m = cls._PLACE_BEFORE_NEARBY_RE.match((intent.raw_text or "").strip())
+        return m.group("place").strip() if m else ""
 
     @classmethod
     def _near(cls, intent, meta) -> GeoPoint | None:
@@ -355,6 +374,9 @@ class NearbyAgent(BaseAgent):
                 except ValueError:
                     pass
             return GeoPoint(address=loc)
+        anchor = cls._place_anchor(intent)
+        if anchor:
+            return GeoPoint(address=anchor)
         if cls._DEST_DEICTIC_RE.search(intent.raw_text or ""):
             try:
                 lat = float((meta or {}).get("focus_destination_lat", ""))
@@ -485,6 +507,12 @@ class NearbyAgent(BaseAgent):
         cuisine = (intent.slots.get("cuisine") or "").strip()
         brand = (intent.slots.get("brand") or "").strip()
         kw_slot = (intent.slots.get("keyword") or "").strip()
+        # 原话里的地名被 planner 填进了 keyword（「万象城」）：它是中心不是检索词——留着只会剩下
+        # 名字里带「万象城」的店。`location` 槽照旧优先（用户明说的中心），这里只剥 keyword。
+        anchor = self._place_anchor(intent)
+        if anchor and kw_slot and (kw_slot == anchor or anchor in kw_slot) and \
+                len(kw_slot) <= len(anchor) + 2:
+            kw_slot = ""
         keyword = self._build_keyword(category, cuisine, brand, kw_slot)
         raw = intent.raw_text or ""
         # G6：口味偏好在检索**前**生效。泛餐饮发现（用户没点菜系/品牌/关键词）时，
@@ -738,7 +766,8 @@ class NearbyAgent(BaseAgent):
         # center 来源随数据落盘（观测/下游可辨）：slot=用户指定位置 / vehicle=车辆
         # 位置 / none=指名门店按名检索。none 时话术不得出现「附近/为您找到」的
         # 就近暗示——按名找到就说按名找到。
-        center_src = ("slot" if (intent.slots.get("location") or "").strip()
+        center_src = ("slot" if ((intent.slots.get("location") or "").strip()
+                                 or self._place_anchor(intent))
                       else "vehicle" if near is not None else "none")
         if center_src == "none":
             speech = f"按名称找到 {len(results)} 家{label}，最匹配的是：{names}{extra_s}。"
