@@ -9369,3 +9369,42 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   status ok 5/5 → `9ebaa5c3` verify verified（`20260920T043927Z-9ebaa5c.json`）；RS6 / EC1 / CL1 复跑 6/6；CI 8/8（`e3528ee7`）。
 - 记给 P3 / W13 后续：「之后一旦下雨就通知我」被当成建提醒追问时间（零动作零声称，但没诚实说不支持持久订阅）；planner 对闲聊句在
   schema 变动下的脆弱是 W19 模型消融的第一个单变量。
+
+## 2026-09-20 — 对话评审批 5（P3 W16–W19 + 两条观察）：读取三态、候选墓碑、约束读出口、事件触发拒绝、视窗 pin；长会话 persona 逼出两条修；两个 release
+
+- 先重证再定范围（设计文档 §7）：W16 的胶囊结构已经在（`WorkingSet` 一轮一份，五条投影通道一条入口），缺的是**读取本身的结局**；
+  W17 的洞在四层各吞一次异常——memory 服务 PG / Redis 掉线静默退到进程内存、云侧 `_history` / `_recall` `except: return []`，一次 PG 故障会让
+  「你还记得我不吃辣吗」得到自信的「你没说过」；W18 runner 五个 persona 没有沉默 / 断连 / 旧批被顶掉后再点名 / 旧确认过期后再确认；
+  W19 视窗只能靠重新部署改 env。
+- W17 `485fccd1`：`runtime/memory_read.py`（found / none / unavailable / off + 记忆问句判据 + 两句固定话术）；memory 服务
+  `RecallResponse.degraded` / `GetSessionResponse.degraded`（proto 加法字段）+ `MemoryVectorStore.ensure()` 30 s 退避后台重连（此前 `init()` 只跑一次，
+  PG 起晚一步就永远空库直到重启）；云侧 `recall_read` / `get_session_read`、SDK `recall_read`；胶囊 `history_state` / `memory_state` 进
+  `cloud.planning` span；engine 记忆问句 ∧ 读不到 ⇒ `memory_unavailable`（新 kind），执行史出口读不到 ⇒「查不到」不说「没有」；
+  chitchat 自己的召回读不到 + 记忆问句 ⇒ 同一句（`_build_messages` 一个入口盖两条路径）。
+- W18-a `485fccd1`：`Focus.retired_candidate_sets` 墓碑（≤6 / 2 h；同键新版本不立）+ `retired_candidate_hit`；点名被顶掉 / 过期那批 ⇒
+  `candidate_missing` 第二种话术「「万象城」那批已经不在手边了…」——修前零方差答出最新那批的第二家（评审 F03「禁止悄悄换成另一家」）。
+- W18-b `485fccd1`：「我今天说过不吃辣吗」是系统持有的事实 ⇒ `cloud.constraint_recall` 读 `focus.session_constraints`；回问句不再登记约束
+  （此前「你还记得我不吃辣吗」被登记成 `no_spicy=True`）。**顺手抓到 `e9044daf` 起的生产缺陷**：「帮我找家不辣的餐厅」「附近有没有不辣的馆子」
+  每个分句都命中「不辣」⇒ 被当纯陈述 ⇒ 答「好的，这次不吃辣…」零搜索；陈述里不能带请求（问句形态 / `REQUEST_MARKER_RE`），约束照登记给 nearby。
+- 事件触发 `485fccd1`：reminder 只有时间 / 地点两种触发，「一旦 / 只要 / 每当…就通知我」在三条路都走不通后 `_refused="unsupported"` 诚实拒绝、
+  不追问时间；终态账本新 kind `unsupported`（`outcome_of_results` 全部为声明式 unsupported ⇒ unsupported，裸 `_refused` 仍 failed）。
+- W19 `485fccd1`：请求级 `meta.planner_history_exchanges`（1–6 字面量，不进 prefs）→ 取回 `2N+2`、渲染 N 对，预算仍硬上限；探针 meta 白名单收它。
+- 探针：`continuity` persona（53 轮，`silence_s` / `reconnect` 轮指令、`--silence-scale`）；RS7 / RS8 / RS9 / CD9；`_ENGINE_ONLY_TRACE_NODES` 加四条。
+- 真栈逼出两条 `8e403d5c`：① continuity T21——路况补槽（「您想查询哪条路线的路况？」）把「把全车门解锁」整句当路线搜，答「为您找到 0 个把全车门解锁 路况」，
+  车控指令消失（fail-safe 方向，但「未完成的不会失踪」被违反）⇒ `question_shape.is_imperative_opening`（把 / 将 处置式、请 / 麻烦 礼貌祈使）判换题；
+  形状表新增 `task_title`（只对祈使开头定案）声明在 reminder.create 的 `title`，「要提醒你什么事？」→「把文件交给张总」仍是答案；
+  ② 沉默 600 s 后客户端还举着过期确认条，带寻址键取消得到「已经不在了」却零 closed id ⇒ 探针清理台账证不了关闭、persona 中止 ⇒
+  `pending_missing` 把寻址的 id 点进 `closed_operation_ids`（对客户端它就是关掉了）。
+- 读数：全量 **8692 / 0 / 32**（`485fccd1`）、**8710 / 1 / 32**（`8e403d5c`；那 1 红是 deploy-assets 真实 bash 子进程的秒级时钟边界，串行 185/185 ×2 绿）；
+  四门禁 + smoke_edge 两趟全过；`go build/vet` 零错；十五处变异各判红。两个 release 各 push（`origin/main..HEAD` 恰一条）→ dry-run 零阻断 → apply →
+  status ok 5/5 零 warning → verify verified（`20260920T055706Z-485fccd.json` / `20260920T063543Z-8e403d5.json`，`minimax:MiniMax-M3`，lock e2e）。
+- 真栈：RS7 / RS8 / RS9 / CD9 ×2 **8/8**（`485fccd1`；RS9 两句订阅零动作零声称但落的是 road-safety / info.weather，reminder 拒绝出口只有离线证据）；
+  `continuity` `485fccd1` **41/43 中止**（两条红即上面两条修）→ `8e403d5c` **59/61 跑完整趟**（两条修各自兑现：T21 判换题出确认、
+  过期确认的 AUTO-CANCEL 点名关闭不再中止；断连重连后挂起 / 约束都在；两条红是同一件事——planner 把地名填进 `keyword` / 未声明的 `near` /
+  不填，nearby 只认 `location` ⇒ 三个地名三份逐字相同的列表，绑组本身是对的但判据分不开）⇒ 第三条修 `31e8fefc`（nearby `_place_anchor`：
+  原话「X 附近」的 X 就是中心，地名不当检索词；116 passed、变异红 3；**未 push**：`origin/main..HEAD` 夹着另一会话的三个 mobile 提交，
+  等用户裁决）；W19 单变量（同语料 4 组 × 2）：视窗 2 对指代解出 **4/8**
+  （3 轮 clarify / unresolved_object）、4 对 **7/8**（全部 completed，`history_pairs_kept=3` 证明 pin 生效）——仪器验证读数，不据此改缺省。
+- 记给后续：续接轮里下游步拿到的 `raw_text` 是补槽句不是任务起点原话（reminder 的事件触发判据在多步计划里够不着）；持久订阅句的落域方差（road-safety / info.weather 各接走一次，reminder 的拒绝出口真栈没走到）归 W19 / 范例；`memory_unavailable` 出口
+  真栈不可触发（不停别人的 PG / Redis），看生产 `turns.outcome` 分布；W19 下一步 ≥30 组语料 + 干净用户比 2 / 4 / 6 三档；共享 e2e 用户的长期记忆
+  里已有探针留下的同题情景记忆，读视窗实验要知道这一点。

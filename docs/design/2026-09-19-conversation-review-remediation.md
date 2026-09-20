@@ -416,9 +416,27 @@ P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：
     后备箱确认已过期（T38「当前没有待确认」/ T39）、约束仍在（T40「不吃辣、可以排队」）。两条红都是真的：T21 路况补槽吞掉「把全车门解锁」
     （见上表「真栈逼出的两条」①）；末尾 AUTO-CANCEL 对过期的后备箱确认得到「已经不在了」而零 closed id ⇒ 台账证不了关闭 ⇒ 中止
     （②）。顺带：T5「明天呢」qweather 预报一次「没查到「深圳」的天气」（provider 瞬断，judge 只要求城市不漂）。
-  - `8e403d5c` `continuity` 复跑：见下一条（结果回填）。
+  - `8e403d5c` `continuity` 复跑（`--silence-scale 1`）：**59/61，跑完整趟不中止**（53 计划轮 + 2 次 AUTO-CANCEL + 恢复 3 轮 + 导航 / 车态清理 3 轮；
+    零 open operation、车态恢复 verified、release 连续、TTS 取证零失败）。两条修各自兑现：T21「把全车门解锁」在路况补槽下**判换题 ⇒ 出确认**
+    （上一趟被吞）；T42 对过期后备箱确认的 AUTO-CANCEL 得到「已经不在了」且 `closed_operation_ids` 点名它 ⇒ 台账闭合、不再中止。新跑到的检查点：
+    **断连重连**后「现在还有待确认的操作吗」念出重连前挂起的「把全车门解锁」（T44），带寻址键取消关掉它（T45），再重连后约束仍在（T46）；
+    CA5「取消导航 → 换条路走」不复活旧路线（T49）；PU7 两段接人路线；SF4 困倦劝停不改口。**两条红是同一件事**：T11 / T18 点名旧批
+    绑对了组（collector `named_groups=1`），但三次检索（万象城 / 科技园 / 南山书城）的卡片**逐字相同**——planner 把地名填进 `keyword`
+    （T2 `keyword=万象城`）、未声明的 `near`（T16）或什么都不填（T9），nearby 只认 `location` ⇒ 三次都按车辆位置搜，
+    `not_names_item_from` 在相同列表上分不开。上一趟同一句 planner 填的是 `location` ⇒ 列表各不相同、判绿。修在 Agent（`31e8fefc`，
+    见下一条），不改判据。
+  - 第三条修 `31e8fefc`（nearby）：原话「X 附近 / 周边 / 一带」的 X（排除那 / 这 / 我等指代）或 `near` / `around` / `area` 别名槽 ⇒ 中心，
+    地名被填进 `keyword` 时剥掉它；`location` 槽照旧优先。nearby 116（+3 参数化 +2 对照）、变异「不锚定」红 3。**真栈证据待 push / deploy**
+    （见 §7.1 末尾的推送状态）。
   - W19 单变量（`8e403d5c`，同一语料 4 组 × 2 次、T1 立指代物 → 两轮插话 → T4 省略回指，判 T4 的 `cloud.planning` 槽里有没有指代物）：
     **视窗 2 对（生产缺省）指代解出 4/8**（3 轮 clarify / unresolved_object、1 轮落 chitchat），**4 对 7/8**（全部 completed；
     `history_pairs_kept=3` 证明 pin 生效——T4 时历史恰 3 对）。n=8 / 单模型 / 共享 e2e 用户的长期记忆里有探针留下的同题情景记忆，
     这是**仪器验证读数**，不据此改缺省（评审 F02：先量再定档）；下一步是 ≥30 组语料 + 干净用户再比 2 / 4 / 6 三档。
+- 推送状态（2026-09-20 15:0x）：`31e8fefc`（nearby 锚定）与本文档提交尚未 push——`origin/main..HEAD` 里夹着**另一会话的三个 mobile 提交**
+  （`59088760` / `8df1d117` / `6faa3c75`，只碰 `mobile/`），按「列出与推送分两步」纪律等用户裁决一并推送还是等对方先推；
+  生产 release 停在 `8e403d5c`。nearby 锚定的真栈证据（CD9 / continuity T2 vs T9 vs T16 列表应各不相同）在 deploy 之后补。
+- 留给后续：持久订阅句的落域方差（road-safety / info.weather 各接走一次，reminder 的拒绝出口真栈没走到）归 W19 / 范例；`memory_unavailable`
+  真栈不可触发，看生产 `turns.outcome` 分布；探针写进共享 e2e 用户的长期记忆（W19 语料的同题情景记忆）——视窗实验要换干净用户；
+  T2 loop / 续接轮里下游步拿到的 `raw_text` 是补槽句而不是任务起点原话（T20 的 reminder 步在 T21 才跑、看不见「只要有堵车」），
+  reminder 侧的事件触发判据因此在多步计划里够不着，归 W16 胶囊的下一步（步级 origin text 投影）。
 
