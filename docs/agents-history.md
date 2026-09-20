@@ -9321,3 +9321,30 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 结论与记账：这条旅程的「改口精确修改对象」由 navigation 自己的路线会话兑现，W06/W07 的继承通道真栈只见观测列（`acts=correct` 1/3）；planner 对 prompt-only 可选字段遵循率低
   （`acts` 1/3、`capability_ref` 0/2）——要靠范例；纯名词 / 纯偏好陈述落技术失败出口的 F09 家族本批又见两次（归 W13）。下一步 P2 / P3 见设计文档 §5。
 
+
+## 2026-09-20 — 对话评审批 4（P2 W11–W15）：先拿生产分布再动手；终态账本上线；一个 release
+
+- 分布先行：collector 只读 830 轮——终态族只有 `planner_technical_failure` 有名字（42）；shadow 列 `execution_claim` 6 条
+  （4 条 pending_cancel 出口的真取消是尺子误报、2 条 chitchat 零动作声称执行）、`clause_uncovered` 134 条逐条看 ≥95% 误报
+  （整句透传 / 单步双槽「导航去深圳湾公园，晚上7点前到」/ 修饰分句「联网查询」）。每包做到哪、不做到哪由这两组数决定（设计文档 §5）。
+- W13 `b0b39c7d`：`runtime/outcome.py` 封闭词表（27 kind → 评审 §5.1 八类），engine 每条 final 声明 `_outcome`、`run()` 唯一出口发 `cloud.outcome`
+  {kind, category, actions, answer_only}，执行类按结果集算 completed / partial / failed；collector `turns.outcome`（加法迁移）+ dashboard 徽记。
+  F09-a：纯偏好陈述（每个分句都在谈口味 / 排队）⇒ 登记 + 确定性致谢，零 LLM（`is_pure_constraint_statement`、`phrase_of` 与焦点块一份词表）。
+  F09-b：planner 某轮自己说过要澄清却没交出卡而落兜底 ⇒ `Plan.clarify_wanted` → 「我听到了 X，但没听清要拿它做什么」，不出 retry issue。
+- W14：只拦按声明必假的那一种——本轮执行的步全是 `response_only`（`ctx.answer_only`，D0 / executor / escalate 各自置）∧ 零动作 ∧ `execution_claim`
+  命中 ⇒ `strip_execution_claims` 按句剥掉、剥空换固定话术；span 加 `intercepted`。任务步的完成语照旧只观测。
+- W11：`Capability.effect`（proto 字段 11）——云侧 manifest 显式（8 份 23 条 `write`，loader 值域外启动即失败）、端侧 `_effect_for`（对象 effect × 操作名）、
+  MCP 桥 `tool.write`；registry 全字段无损 round-trip；`Step.effect` / `step_record`；消费方 `context.task_writes`（不出 action 的 `reminder.create`
+  现在是写任务，查询顶不掉它）。**刻意不接问句安全闸**：`is_non_directive_question` 把「…好吗」当问句，接进去等于把云侧写请求拦成闲聊。
+- W15：`_always_include` = 兜底 ∪ core（hint 不再是保护资格）；`WorkingSet.registry_agents` + `PlanBuilder._hint_map`（权限过滤后的完整注册表）
+  ——被裁出 prompt 的 Agent 的 hint 照样命中。`test_catalog_budget` 的 8000 档期望集按新规则改（ecosystem 全裁、core 一个不掉、16000 零裁剪不变）。
+- W12 记账：`clause_uncovered` 去噪三类可判定误报；用户可见的「还有一件事没处理」不落——修饰分句与真诉求形态无差别，要 planner 侧 `goal/covers`
+  契约先 A/B（本轮已量到 prompt-only 可选字段遵循率 ≤ 1/3）。
+- 读数：全量固定口径 **8548 / 0 / 32**（237 s；上一基线 8485 / 1 / 32）；四门禁 + smoke_edge 13/13；九处变异各自判红；dashboard vitest 2 + tsc 0；
+  `go build/vet ./gateway/...` 零错。push `c574bd31..e9044daf`（`origin/main..HEAD` 恰两条，单独一步列出）→ dry-run 零阻断 → apply → status ok 5/5 零 warning
+  → verify verified（`20260920T032437Z-e9044da.json`，`minimax:MiniMax-M3`，lock `e2e`）。真栈 `--repeat 2`：RS6 纯偏好致谢 **2/2**（下一句推荐带
+  「地图没有实时排队数据，这条我按不上」）、EC1 零动作零声称 **2/2**（一次 `unresolved_object`、一次 `planner_failure`，拦截通道没被走到）；
+  `turns.outcome` 上线即有读数（constraint_noted / completed / unresolved_object / planner_failure / clarify）。
+- 观察记账：verify 的问候句「你好，请只回复一句问候」一次落 `unresolved_object`——planner 对琐碎输入先标「需要澄清」再两轮交不出卡，F09-b 只改了失败时的
+  措辞、没改失败本身（同一句其余取样走 salvage_no_action → chitchat）；归范例 / W19。
+- 流程：Bash 工具的多行 heredoc 含 `'''` / 反引号时又两次 EOF 解析失败，补丁一律 Write 成 .py 再跑；heredoc 追加的 LF 行让 CRLF 文件变混合，提交前整文件归一。

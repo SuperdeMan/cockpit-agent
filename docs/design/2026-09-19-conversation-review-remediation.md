@@ -302,9 +302,23 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 - 真栈：push → dry-run → apply → status / verify → 探针：`residual` RS6（纯偏好陈述 ⇒ 致谢、零动作、约束下一轮生效）、
   `confirm` CL2（裸地名技术失败改口）无法稳定触发时用离线用例锁；collector `turns.outcome` 分布作为 W05 新基线读数。
 
-### 5.6 落地记录
+### 5.6 落地记录（2026-09-20，release `e9044daf`）
 
-（实施后回填）
+| 工作包 | 提交 | 做了什么 | 本地证据 |
+|---|---|---|---|
+| W13 终态账本 + F09-a/b | `b0b39c7d` | `runtime/outcome.py` 词表（27 kind → 8 类）；engine 全部 final 出口声明 `_outcome`，`run()` 发 `cloud.outcome`；loop.py 的 T2 final 同款；collector `turns.outcome` 列（加法迁移）+ dashboard 徽记；`constraint_noted` 出口（`is_pure_constraint_statement` + `phrase_of` 词表与焦点块共用）；`Plan.clarify_wanted` → `unresolved_object` 出口 | 新 `test_engine_outcome` 16（源码级：engine / loop 声明的每个 kind 都在词表里）、`runtime/tests/test_outcome` 6、`test_planning_no_action` +3、collector +3、dashboard vitest 2 + tsc 0；变异「漏声明 no_plan」「常量关掉约束出口」「忽略 clarify_wanted」各判红 |
+| W14 声称拦截 | `b0b39c7d` | `strip_execution_claims`（按句、同一份正则）；`PlanContext.answer_only`（D0 / executor / escalate 三条路各自置）；`_emit_execution_claim` 只在 answer_only ∧ 零动作时剥句，span 加 `intercepted` | `test_execution_claim` +4、`test_engine_outcome` W14 段 4（含「任务步的完成语只观测」对照）；变异「永不拦截」判红 |
+| W11 `effect` | `b0b39c7d` | proto 字段 11 + `gen-proto.ps1`（Go gateway build/vet 零错）；loader `capability_effect`（值域外 ValueError）；registry `_manifest_to_dict` / `_dict_to_manifest` + 全字段夹具；`Step.effect` / `step_record` / `_validated_steps`（`_declared_effect` 只认 read / write）；`context.task_writes`；端侧 `_effect_for`、MCP 桥 `tool.write`；8 份云侧 manifest 共 23 条 `effect: write` | `test_manifest_effect` 6、`test_store_roundtrip` 全字段无损、`test_capabilities` +2、`test_bridge` 断言、`test_engine_task_frame` +3（不出 action 的 `reminder.create` 现在是写任务、查询顶不掉它）；变异「还原时丢 effect」「帧忽略声明」各判红 |
+| W15 hint 解耦 | `b0b39c7d` | `_always_include` = 兜底 ∪ core；`WorkingSet.registry_agents`（`_catalog_with_registry`）；`PlanBuilder._hint_map`（权限过滤后的完整注册表）喂 `apply` 与 `matches_clause_scope` | `test_context` 两条改写、`test_route_hints` +3（被裁出 prompt 的 Agent 的 hint 照样命中 / 无权 Agent 的 hint 不偷渡 / 退役 hint 不改保护）、`test_catalog_budget` 期望集按新规则改（8000 下 ecosystem 全裁、core 一个不掉、16000 零裁剪不变）；变异「扫回 prompt 目录」「跳过权限过滤」各判红 |
+| W12 记账 | `b0b39c7d` | `_clause_uncovered` 去噪三类 | `test_obs_spans` +5；变异「去掉槽容量规则」判红 |
+| 探针 + 文档 | `e9044daf` | RS6 / EC1、判据 `no_execution_claim`；conventions §9.43；本文 §5 | — |
+
+- 全量固定口径（树 `b0b39c7d` 的工作树，`TZ=UTC0` `-n 8`）：**8548 passed / 0 failed / 32 skipped / 11 warnings，237 s**（上一基线 8485 / 1 / 32；那条 OS-lock 用例本趟绿）。四门禁 + smoke_edge 13/13 全过；九处变异各自判红。
+- 发布链：push `c574bd31..e9044daf`（`origin/main..HEAD` 恰两条、单独一步列出）→ dry-run 零阻断 → apply `submitted` → status **ok、5/5 healthy、零 warning、`release_sha` = `running_release_sha` = `e9044daf`** → verify **`verified`**（artifact `20260920T032437Z-e9044da.json`，`minimax:MiniMax-M3`，lock `e2e`，`e2e_remote_safe` passed）。
+- 真栈（`minimax:MiniMax-M3`，`--repeat 2`）：**RS6 2/2**——「我不吃辣，也不想排长队」⇒「好的，这次不吃辣、不想排队，找地方的时候我按这个来。」零动作、零 LLM；下一句推荐带「地图没有实时排队数据，这条我按不上」/「您说过不吃辣，这次就不按平时爱吃的川菜找了」。
+  **EC1 2/2**——生产 PTT 噪声原句「但是，这里面来。哎妈。」一次落 `unresolved_object`（「我听到了「…」，但没听清要拿它做什么」）、一次落 `planner_failure`，两次都零动作、零执行性声称（拦截通道在这两次里没被走到——模型这次没编）。
+- collector `turns.outcome` 上线即有读数：探针与 verify 的十条新轮分别落 `constraint_noted ×2 / completed ×3 / unresolved_object ×2 / planner_failure / clarify`，旧轮为空。
+- 记给后续：verify 的问候句「你好，请只回复一句问候」有一次落 `unresolved_object`（planner 对问候先标「需要澄清」再两轮交不出卡）——这是 planner 在琐碎输入上的方差（同一句其余取样走 `toolcall_salvage_no_action` → chitchat），F09-b 只改了它失败时的措辞，没改失败本身；这类「模型对问候要澄清」归范例 / W19。
 
 ## 6. 后续入口（P3 与 P2 余项，未启动）
 
