@@ -93,6 +93,14 @@ def test_operation_verbs_are_single_char_function_words():
     "后备箱能开吗？",
     "空调最低多少度",
     "双闪什么时候用",
+    # W19-c 真栈（run 0920b，w6 g05 trace 611a4134c32745eb）：座椅加热话题下「它有几档」被规划成
+    # `seat.heating.on` 并**真的执行了**——数量疑问词「几档 / 几级」与条件疑问「什么条件 / 什么情况」
+    # 不在表里，问句闸没认出它是在问。同趟「它最多能设几档」「它在什么条件下会自动关闭」同形。
+    "它有几档",
+    "它最多能设几档",
+    "座椅加热有几级",
+    "它在什么条件下会自动关闭",
+    "什么情况下双闪会自动打开",
 ])
 def test_questions_are_recognised(text):
     assert is_non_directive_question(text) is True, text
@@ -107,6 +115,8 @@ def test_questions_are_recognised(text):
     "请把空调调到 24 度",
     "温度如何调高",              # 方式问法 + 操作动词 ⇒ 仍是指令
     "怎么把座椅加热打开",
+    "调到三档",                  # 对照：说了具体档位就是指令，不带数量疑问词
+    "座椅加热开到二档",
 ])
 def test_directives_are_not_mistaken_for_questions(text):
     assert is_non_directive_question(text) is False, text
