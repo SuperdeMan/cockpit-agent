@@ -9402,8 +9402,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   `continuity` `485fccd1` **41/43 中止**（两条红即上面两条修）→ `8e403d5c` **59/61 跑完整趟**（两条修各自兑现：T21 判换题出确认、
   过期确认的 AUTO-CANCEL 点名关闭不再中止；断连重连后挂起 / 约束都在；两条红是同一件事——planner 把地名填进 `keyword` / 未声明的 `near` /
   不填，nearby 只认 `location` ⇒ 三个地名三份逐字相同的列表，绑组本身是对的但判据分不开）⇒ 第三条修 `31e8fefc`（nearby `_place_anchor`：
-  原话「X 附近」的 X 就是中心，地名不当检索词；116 passed、变异红 3；**未 push**：`origin/main..HEAD` 夹着另一会话的三个 mobile 提交，
-  等用户裁决）；W19 单变量（同语料 4 组 × 2）：视窗 2 对指代解出 **4/8**
+  原话「X 附近」的 X 就是中心，地名不当检索词；116 passed、变异红 3）。用户裁决「授权推送」后：push `8e403d5c..cf1d0f96`（连同另一会话的
+  四个 mobile 提交，推前单独列出）、主树被对方未提交文档弄脏 ⇒ 隔离 worktree deploy → status ok 5/5 → verify verified
+  （`20260920T074422Z-cf1d0f9.json`）→ CD9 / RS7 ×3 **6/6**：planner 填 `keyword=万象城` 那趟列表照样锚在万象城；W19 单变量（同语料 4 组 × 2）：视窗 2 对指代解出 **4/8**
   （3 轮 clarify / unresolved_object）、4 对 **7/8**（全部 completed，`history_pairs_kept=3` 证明 pin 生效）——仪器验证读数，不据此改缺省。
 - 记给后续：续接轮里下游步拿到的 `raw_text` 是补槽句不是任务起点原话（reminder 的事件触发判据在多步计划里够不着）；持久订阅句的落域方差（road-safety / info.weather 各接走一次，reminder 的拒绝出口真栈没走到）归 W19 / 范例；`memory_unavailable` 出口
   真栈不可触发（不停别人的 PG / Redis），看生产 `turns.outcome` 分布；W19 下一步 ≥30 组语料 + 干净用户比 2 / 4 / 6 三档；共享 e2e 用户的长期记忆

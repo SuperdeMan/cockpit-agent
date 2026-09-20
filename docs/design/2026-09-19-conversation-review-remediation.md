@@ -426,15 +426,18 @@ P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：
     `not_names_item_from` 在相同列表上分不开。上一趟同一句 planner 填的是 `location` ⇒ 列表各不相同、判绿。修在 Agent（`31e8fefc`，
     见下一条），不改判据。
   - 第三条修 `31e8fefc`（nearby）：原话「X 附近 / 周边 / 一带」的 X（排除那 / 这 / 我等指代）或 `near` / `around` / `area` 别名槽 ⇒ 中心，
-    地名被填进 `keyword` 时剥掉它；`location` 槽照旧优先。nearby 116（+3 参数化 +2 对照）、变异「不锚定」红 3。**真栈证据待 push / deploy**
-    （见 §7.1 末尾的推送状态）。
+    地名被填进 `keyword` 时剥掉它；`location` 槽照旧优先。nearby 116（+3 参数化 +2 对照）、变异「不锚定」红 3。真栈证据见 `cf1d0f96` 那条。
   - W19 单变量（`8e403d5c`，同一语料 4 组 × 2 次、T1 立指代物 → 两轮插话 → T4 省略回指，判 T4 的 `cloud.planning` 槽里有没有指代物）：
     **视窗 2 对（生产缺省）指代解出 4/8**（3 轮 clarify / unresolved_object、1 轮落 chitchat），**4 对 7/8**（全部 completed；
     `history_pairs_kept=3` 证明 pin 生效——T4 时历史恰 3 对）。n=8 / 单模型 / 共享 e2e 用户的长期记忆里有探针留下的同题情景记忆，
     这是**仪器验证读数**，不据此改缺省（评审 F02：先量再定档）；下一步是 ≥30 组语料 + 干净用户再比 2 / 4 / 6 三档。
-- 推送状态（2026-09-20 15:0x）：`31e8fefc`（nearby 锚定）与本文档提交尚未 push——`origin/main..HEAD` 里夹着**另一会话的三个 mobile 提交**
-  （`59088760` / `8df1d117` / `6faa3c75`，只碰 `mobile/`），按「列出与推送分两步」纪律等用户裁决一并推送还是等对方先推；
-  生产 release 停在 `8e403d5c`。nearby 锚定的真栈证据（CD9 / continuity T2 vs T9 vs T16 列表应各不相同）在 deploy 之后补。
+- 第三个 release `cf1d0f96`（2026-09-20 15:4x，用户裁决「授权推送」）：push `8e403d5c..cf1d0f96`（6 条：另一会话的四个 mobile 提交
+  `59088760` / `8df1d117` / `6faa3c75` / `e7a83638` + `31e8fefc` + 本文档 `cf1d0f96`，推前单独列出）；主工作树被对方的两份未提交文档弄脏 ⇒
+  按 dev-guide 用隔离 worktree（`git worktree add --detach` + 只复制 `dev-stack.local`）deploy：dry-run 零阻断（基线 `8e403d5c`）→ apply
+  `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` = `cf1d0f96` → verify `verified`（`20260920T074422Z-cf1d0f9.json`，
+  `minimax:MiniMax-M3`，lock e2e）。真栈 `--cases CD9,RS7 --repeat 3` **6/6**：CD9 第 1 趟 T1 planner 又把地名填进 `keyword`
+  （`{"keyword": "万象城", "category": "餐厅"}`），列表照样锚在万象城（首项「蟹叁寳(深圳湾万象城店)」，与 `location=万象城` 那两趟同一份）；
+  四个地名四份各不相同的列表、点名被顶掉的那批三趟都答「不在手边」（第 3 趟按 planner 填的 `location=深圳湾万象城` 念成「深圳湾万象城」那批）。
 - 留给后续：持久订阅句的落域方差（road-safety / info.weather 各接走一次，reminder 的拒绝出口真栈没走到）归 W19 / 范例；`memory_unavailable`
   真栈不可触发，看生产 `turns.outcome` 分布；探针写进共享 e2e 用户的长期记忆（W19 语料的同题情景记忆）——视窗实验要换干净用户；
   T2 loop / 续接轮里下游步拿到的 `raw_text` 是补槽句而不是任务起点原话（T20 的 reminder 步在 T21 才跑、看不见「只要有堵车」），
