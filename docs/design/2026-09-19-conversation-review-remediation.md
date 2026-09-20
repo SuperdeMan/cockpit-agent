@@ -507,3 +507,18 @@ release B = W19-b（RS9 / RS11 复跑：订阅句应直接落 `reminder.create` 
   `_refused: unsupported` 的观察应终止该诉求的再规划，归 W12 / T2 判重的下一步；② road-safety 零结果话术「为您找到 0 个…路况，推荐前三个：。」（空列表模板，
   与本批无关）；③ 订阅句 4/9 仍并列一个路况步（首意图对、多一步），是 MiniMax-M3 方差，范例已在、不加 hint；④ reminder 事件短语剥前缀表可加「往后 / 今后 / 以后」；
   ⑤ W19-c 干净用户仍需用户裁决开签名身份车道（改 `.env` 一行 + 网关重启）。
+
+### 8.2 W19-c 视窗单变量实验（2026-09-20 晚，用户授权「切换干净用户」）
+
+- **改的什么**：云端 `/opt/car-agent/shared/.env`（先备份 `.env.bak-w19c-<ts>`）与根 `.env` 各加两行 `E2E_IDENTITY_ENABLED=true` /
+  `E2E_IDENTITY_SECRET=<32 字节 base64url>`（同一个秘密；根 `.env` 是 gitignore 的唯一密钥源）。其余条目一字未动、`600 root:root`。
+  第一次写坏了：Windows 上 `subprocess` 文本模式的 stdin 把 LF 变成 CRLF，网关会读到 `true\r`——按备份整文件恢复后改用原始字节重写，
+  验证只看 `grep -c`（不回显值）。网关重启走**正式发布**（本 docs 提交作为新 SHA 部署，`up -d` 只重建 env 变了的容器），不手敲 compose
+  ——2026-09-10 那次手工 compose 漏 `RELEASE_SHA` 把 edge-gateway 换成八月镜像的事故就是这条路。
+- **装置** `scripts/probe_history_window.py`：签名身份车道每臂一个全新 user（`e2e-w19c-<run>-w<N>`），session `<user>-session-<g>`
+  （网关硬校验；前缀 `e2e-` 不做记忆抽取 ⇒ 臂内各组也不互相喂记忆）；每轮 `meta.planner_history_exchanges=<N>`；32 组语料
+  （16 组 k=2 区分 2 对 vs 4 对、16 组 k=4 区分 4 对 vs 6 对；指代物只活在对话历史——联网搜索主题 / 手册功能 / 球队，避开焦点块自己
+  记住的城市 / POI / 目的地 / 股票 / 车控对象 / 候选集；插话固定为闲聊 / 时间）；判据结构化：最后一轮 `cloud.planning` 的槽里有没有
+  关键词，另记 `history_pairs_kept`（pin 生效证明）、intents / outcome、话术提到与否（chitchat 自己那 8 条历史答对不算 planner 解出）。
+  守卫 `scripts/tests/test_probe_history_window.py` 38（T1 含关键词、其余轮不含、插话不碰焦点、判据读槽不读话术）。
+- **不做**：不据此改缺省（评审 F02：先量再定档位）；不换主模型；不在实验里 pin LLM（以 collector 的 provider/model 为准）。
