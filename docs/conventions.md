@@ -2769,6 +2769,8 @@ FAILED / `_refused` ⇒ `partial`；全 FAILED ⇒ `failed`），挂起 / 澄清
 covers ∧ 某条诉求不在任何一步里 ∧ 槽值也不替它作证（≥2 字互不包含）∧ 没有整句型 / 整句透传步 ⇒ 完成类 final
 补一句「「X」这部分这次没有处理到，需要的话再单独说一次」、出 `goal.uncovered`（info）、终态记 `partial`；
 挂起 / 澄清 / T2 / 改派轮不说。任何一环缺席都 fail-open。`clause_uncovered` 观测列去掉三类可判定误报后保留为对照。
+**缺省 `PLANNER_GOALS=off`**（真栈 A/B，2026-09-20：同一语料 45 句 × 2、MiniMax-M3——开着时工具通道 82/90 → 54/90、
+多 3 轮 planner_failure，账本 goals 只填 24/90、gap 0/90，代价实收益零）；机制与判据都在，换模型 / 范例把遵循率拉上来再开。
 
 **⑥ 礼貌尾词（`question_shape.POLITE_TAILS`，2026-09-20）**：礼貌尾词 + **祈使主体**（动词打头，或 ≤3 字前缀 +
 「把 / 将 + 对象 + 动词」）⇒ 请求（「把车窗关上好吗」「关一下空调好吗」照做）；主体不是祈使 ⇒ A-not-A 提问

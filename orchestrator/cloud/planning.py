@@ -721,7 +721,11 @@ _EMOTION_SECTION = (
 # （goal_id = 序号，source_span = 截段），每个 step 标它负责哪几条（`covers`）。系统据此判「哪条诉求
 # 没有步骤承接」并**如实告诉用户**——按分句猜在生产分布上 ≥95% 误报（设计文档 §5 W12），
 # 只有模型自己知道「联网查一下」是修饰、「再点生椰拿铁」是诉求。两条通道都进（JSON 段 + toolcall
-# schema），`PLANNER_GOALS=off` 一键关掉（A/B 单变量）。模型不填 = 系统不据此判漏（fail-open）。
+# schema），`PLANNER_GOALS` 开关（A/B 单变量）。模型不填 = 系统不据此判漏（fail-open）。
+# ⚠ **缺省 off**（2026-09-20 真栈 A/B，同一语料 45 句 × 2、`minimax:MiniMax-M3`，release `e9044daf` vs `e3528ee7`）：
+# 开着时工具通道从 82/90 掉到 54/90（salvage 14 + salvage_kept 16 + fallback 1），多出 3 轮 planner_failure
+# （其中两句是闲聊「陪我说说话」「随便聊点什么」），而账本本身 goals 只在 24/90 轮被填、covers 全填 21/90、
+# 判出漏承接 0/90——代价实、收益零。机制留着，换更强的规划模型或范例把遵循率拉上来之后再开。
 _GOALS_SECTION = (
     "\n\n== 诉求账本（可选）==\n"
     "额外输出顶层字段 \"goals\"：把用户这句话里的每个**肯定诉求**按原话截成一条（不改写、不合并；"
@@ -732,7 +736,7 @@ _GOALS_SECTION = (
 
 
 def _goals_enabled() -> bool:
-    return os.getenv("PLANNER_GOALS", "on").strip().lower() != "off"
+    return os.getenv("PLANNER_GOALS", "off").strip().lower() == "on"
 
 
 def _parse_goals(raw) -> list[str]:

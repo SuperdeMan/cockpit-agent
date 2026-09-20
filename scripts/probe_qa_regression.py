@@ -1092,7 +1092,9 @@ CASES = [
      ]},
     # W12 诉求账本（2026-09-20）：一句话里有一条诉求没有能力承接时，完成类 final 要如实补一句
     # 「「X」这部分这次没有处理到」，而不是只答另一半就当完成。判 follow_up 的确定性句式。
-    {"id": "GL1", "group": "contrast", "card": "W12", "issue": "F07",
+    # ⚠ **只在服务端 `PLANNER_GOALS=on` 时有意义**：真栈 A/B 后缺省 off（planning.py 那段注释有读数），
+    # 所以单独成组 `ledger`，不混进 contrast 组的读数。
+    {"id": "GL1", "group": "ledger", "card": "W12", "issue": "F07",
      "why": "两条诉求只承接了一条 ⇒ 补一句没处理到的那条（模型账本 + 系统核对）",
      "known": "red",
      "turns": [

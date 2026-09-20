@@ -297,7 +297,9 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
   （`engine.goal_gap`：每一步都填了 covers ∧ 某条诉求没人认领 ∧ 槽值也不替它作证）才在完成类 final 上补一句
   「「X」这部分这次没有处理到」+ `goal.uncovered` + 终态 partial；任何一环缺席 fail-open。为什么现在能落：判断
   「联网查一下」是修饰、「再点生椰拿铁」是诉求的只有模型自己，系统做的是核对而不是猜；schema 里的注记字段填多了
-  无害（与 clarify / acts 那类决策字段不同），所以可以进 schema 拿结构遵循率。A/B 见 §5.6（同一语料两个 release）。
+  无害（与 clarify / acts 那类决策字段不同），所以可以进 schema 拿结构遵循率。A/B 见 §5.6（同一语料两个 release）
+  ——**结果是缺省关**：MiniMax-M3 开着时工具通道 82/90 → 54/90、多 3 轮 planner_failure，而账本 goals 只填 24/90、
+  covers 全填 21/90、判出漏承接 0/90。机制与判据留着（`PLANNER_GOALS=on` 一键开），换模型 / 范例后重跑同一语料再定。
 
 ### P2 余项收尾（2026-09-20 下午）
 
