@@ -2761,6 +2761,21 @@ FAILED / `_refused` ⇒ `partial`；全 FAILED ⇒ `failed`），挂起 / 澄清
 交给 `RouteHintEngine`——被 top-k / 预算裁出 prompt 的 Agent，它的 hint 照样命中、补出的步照样过
 `_validated_steps`。退役一条 hint 不再顺手改变目录裁剪。今天 14 个 Agent 两道裁剪都不触发，行为逐字不变。
 
-**W12 记账**：`clause_uncovered` 观测列去掉三类可判定的误报（整句型 / 整句透传槽、步数 ≥ 分句数、单步已填槽数 ≥
-分句数）；用户可见的「还有一件事没处理」**不落**——修饰分句（「联网查询」）与真诉求形态无差别，要 planner 侧
-`goal_id / covers` 契约（先 A/B）。
+**⑤ 诉求账本 `goals` / `covers`（W12，P2 收尾，2026-09-20）**。planner 把这句话里的每个肯定诉求按原话截成顶层
+`goals[]`（≤6 条、每条 ≤40 字；修饰语、被否定的动作不是诉求），每个 step 标 `covers[]`（1 起序号）。两条通道
+都进（JSON 段 `_GOALS_SECTION` + toolcall schema 的可选字段，`PLANNER_GOALS=off` 一键关）。`covers` 是**可选注记**：
+不进 required、`additionalProperties: False` 不变、能力身份仍只有 `capability_ref` 一条通道（`test_planning_toolcall` /
+`e2e_planner_toolcall._schema_is_ref_only` 都按此改）。系统只核对（`engine.goal_gap`）：goals ≥ 2 ∧ **每一步**都填了
+covers ∧ 某条诉求不在任何一步里 ∧ 槽值也不替它作证（≥2 字互不包含）∧ 没有整句型 / 整句透传步 ⇒ 完成类 final
+补一句「「X」这部分这次没有处理到，需要的话再单独说一次」、出 `goal.uncovered`（info）、终态记 `partial`；
+挂起 / 澄清 / T2 / 改派轮不说。任何一环缺席都 fail-open。`clause_uncovered` 观测列去掉三类可判定误报后保留为对照。
+
+**⑥ 礼貌尾词（`question_shape.POLITE_TAILS`，2026-09-20）**：礼貌尾词 + **祈使主体**（动词打头，或 ≤3 字前缀 +
+「把 / 将 + 对象 + 动词」）⇒ 请求（「把车窗关上好吗」「关一下空调好吗」照做）；主体不是祈使 ⇒ A-not-A 提问
+（「这一家评价好不好」「空气好吗」「慢一点开可以吗」——SF3 那句仍被拦，`test_question_write_guard` 钉着）。
+2026-08-30 记的「不给礼貌尾开口子」改成「只在祈使框架上开」，口子比当年担心的窄一档。
+
+**⑦ 云侧 `effect: write` 不接问句安全闸（裁决，数据）**：132 条 gold 为云侧写能力的语料里 3 条会被新闸拦掉
+（「去杭州怎么充电」→ charging.plan、「出场怎么交钱」→ parking.pay、「明天早上八点提醒我带伞，再看下明天深圳会不会下雨」
+——第二个分句的「会不会」让整句判成问句）；而闸今天已覆盖的危险类（端侧写 + require_confirm 云步）一个都不会因此多拦。
+收益零、代价 2.3% ⇒ 不接。真要护「问句被规划成云侧写」，方向是给被拦的写请求一次澄清，不是扩闸。

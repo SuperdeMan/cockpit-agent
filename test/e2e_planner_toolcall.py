@@ -73,8 +73,13 @@ def _schema_is_ref_only(tools: dict, catalog) -> bool:
     try:
         step = tools["tools"][0]["function"]["parameters"]["properties"]["steps"]["items"]
         props = step["properties"]
+        # W12：`covers`（整数数组）是可选的诉求账本注记，不是能力身份通道；有就必须是这个形状
+        covers = props.get("covers")
+        covers_ok = covers is None or (
+            covers.get("type") == "array" and (covers.get("items") or {}).get("type") == "integer")
         return (
-            set(props) == set(_PLANNER_STEP_FIELDS)
+            set(props) - {"covers"} == set(_PLANNER_STEP_FIELDS)
+            and covers_ok
             and set(step["required"]) == set(_PLANNER_STEP_FIELDS)
             and step.get("additionalProperties") is False
             and props["capability_ref"].get("enum") == list(catalog.ref_to_pair)
@@ -92,7 +97,7 @@ def _wire_fields_ok(args: dict, catalog) -> bool:
         and isinstance(steps, list)
         and all(
             isinstance(step, dict)
-            and set(step) == set(_PLANNER_STEP_FIELDS)
+            and set(step) - {"covers"} == set(_PLANNER_STEP_FIELDS)
             and isinstance(step.get("id"), str)
             and bool(step["id"])
             and isinstance(step.get("capability_ref"), str)

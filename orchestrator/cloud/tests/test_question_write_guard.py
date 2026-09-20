@@ -417,10 +417,10 @@ def test_focused_question_does_not_bypass_confirmed_fallback_guard(monkeypatch):
 # ── 7. 本闸的行为代价，**钉成可见断言**：礼貌请求会被答而不是被做 ─────────────
 
 @pytest.mark.parametrize("text", [
-    "把空调关了好吗？",
-    "关一下空调好吗",
-    "空调关一下行吗",
-    "空调可以关了吗",
+    "空调关一下行吗",         # 对象在前、无「把」框架：请求与询问分不开，仍当提问
+    "空调可以关了吗",         # 能力问法
+    "慢一点开可以吗？",       # SF3 第三轮原句：副词打头，不是祈使主体
+    "现在开空调合适吗",
 ])
 def test_polite_request_with_a_question_tail_is_also_blocked(text):
     """这一类**会被拦**——它是本闸的代价，不是遗漏，所以钉在这里而不是藏着。
@@ -432,21 +432,37 @@ def test_polite_request_with_a_question_tail_is_also_blocked(text):
     规划成 `hvac.off` 并执行，从今往后落到兜底 Agent 答一句。
     也就是说**端侧的既有裁定这次真正生效了**，不是新发明了一条判据。
 
-    ## 为什么不给「好吗/行吗」开口子
+    ## 礼貌尾词的口子只开在**祈使框架**上（2026-09-20，评审 P2 余项）
 
-    因为同一个口子会把 **SF3 第三轮**放回去：「慢一点开可以吗？」与
-    「空调关一下行吗」逐字同构（礼貌尾 + 操作动词），而前者正是 QA 轮里被执行成
-    `volume.dec`（「调小了」）的那一句——安全对话中途被一个无关车控劫持。
-    **收窄面只写一边守不住**：放宽礼貌尾就等于把那个洞重新打开。
-
-    真要救这一类，方向是**让被拦下来的写请求走一次澄清**（「您是想现在关，
-    还是在问怎么关？」），而不是放宽问句判据——那是独立一笔，需要单独评审。
+    2026-08-30 记的理由是：整体放宽「好吗/行吗」会把 **SF3 第三轮**放回去——
+    「慢一点开可以吗？」与「空调关一下行吗」逐字同构（礼貌尾 + 操作动词），而前者正是
+    QA 轮里被执行成 `volume.dec` 的那一句。现在的判据不是「礼貌尾 + 操作动词」，是
+    **礼貌尾 + 祈使主体**（动词打头，或「把 / 将 + 对象 + 动词」，`question_shape._polite_request`）：
+    「把空调关了好吗」「关一下空调好吗」是请求、照做；「慢一点开可以吗」（副词打头）、
+    「空调关一下行吗」（对象在前、无「把」）仍是提问、照拦——SF3 的洞没有重新打开
+    （`test_the_sf3_sentence_stays_blocked_after_the_polite_frame`）。
 
     ⚠ 与 C11 的交互也一并记在这里：落到 chitchat 之后**它可能编造「已为您关闭」**
-    （findings N4 同族）。C11 修的就是这个，在第 5 批；在那之前这一类的下限是
-    「答了一句可能不准的话」，而不是「执行了一个用户没下的指令」。
+    （findings N4 同族）——W14 已把谈话步零动作的声称句剥掉。
     """
     assert _GUARD([_step("hvac.off")], text)
+
+
+@pytest.mark.parametrize("text", [
+    "把空调关了好吗？",
+    "关一下空调好吗",
+    "现在把空调关闭行吗",
+])
+def test_polite_request_with_an_imperative_body_is_a_request(text):
+    """评审 §4 最小对比对「帮我把窗关上好吗（礼貌请求）vs 关窗会影响通风吗（效果询问）」的
+    无「帮我」版：祈使框架 + 礼貌尾 ⇒ 请求，闸不拦。"""
+    assert _GUARD([_step("hvac.off")], text) == []
+
+
+def test_the_sf3_sentence_stays_blocked_after_the_polite_frame():
+    """收窄面两边都写：礼貌口子开了之后，SF3 那句仍然是提问、仍然被拦。"""
+    assert _GUARD([_step("volume.dec")], "慢一点开可以吗？")
+    assert _GUARD([_step("hvac.off")], "关窗会影响通风吗")
 
 
 def test_directive_marker_still_rescues_the_common_polite_form():

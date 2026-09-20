@@ -74,6 +74,10 @@ class Step:
     # 能力效果 `""|read|write`（评审 W11，2026-09-20）：从 capability.effect 装配（LLM 字段不读）。
     # 消费方：W07 任务帧的 `kind`、终态账本。未声明 = 启发式（结果带 actions / require_confirm）。
     effect: str = ""
+    # W12 诉求账本（评审 F07 / §3.1 goal_id）：这一步**负责哪几条诉求**（`Plan.goals` 的 1 起序号）。
+    # 模型自报、校验后只留合法序号；空 = 模型没填（fail-open：系统不据此判漏）。**进程内字段**，
+    # 漏诉求的判定在规划轮当场做（`engine.goal_gap`），不随挂起持久化。
+    covers: list[int] = field(default_factory=list)
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -227,6 +231,10 @@ class Plan:
     # 把终态从「技术失败 + 重试」改成「我听到了 X，但没听清要拿它做什么」——那是歧义不是故障。
     # 真栈 CL1（2026-09-20）：「云岚国际中心」1/3 次走的正是这条路。
     clarify_wanted: bool = False
+    # W12 诉求账本：模型按原话截出的**肯定诉求**列表（≤ 6 条、每条 ≤ 40 字）。与 `Step.covers` 一起
+    # 回答「哪条诉求没有步骤承接」——这是评审 F07 要的 goal ledger 的最小形式：goal_id = 序号，
+    # source_span = 原话截段。缺省 [] = 模型没填（旧 prompt / 弱模型），系统不猜。
+    goals: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -323,6 +331,9 @@ class PlanContext:
     # （谈话，按声明不可能改变世界）。终态账本据此标 `answer_only`；执行性声明拦截
     # （`runtime.execution_claim`）只在它为真且零动作时才动手——那是唯一「按声明必假」的形态。
     answer_only: bool = False
+    # W12 **本轮 scratch**：规划轮账本判出的、没有步骤承接的诉求原话截段。`run()` 在完成类 final 上
+    # 据此补一句「「X」这部分这次没有处理到」并把终态记成 partial；进 T2 / 改派时清空。
+    goal_gap: list = field(default_factory=list)
 
 
 @dataclass

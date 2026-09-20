@@ -46,6 +46,12 @@ HYPOTHETICAL_FRAMES = ("要是", "如果", "假如", "万一", "假设")
 #: 面向助手的祈使标记：带这些词的疑问句是**礼貌请求**（「能帮我关下车窗吗」），
 #: 是指令不是提问。
 DIRECTIVE_MARKERS = ("帮我", "帮忙", "给我", "替我", "麻烦", "请")
+#: 礼貌尾词（评审 2026-09-19 §4「帮我把窗关上好吗 vs 关窗会影响通风吗——不能只看问号」）：
+#: 跟在**祈使主体**后面的「…好吗 / 行吗 / 可以吗」是软化的请求，不是提问。只有主体本身是
+#: 祈使形态（动词打头，或「把 / 将 + 对象 + 动词」）才算——「这样开下去行不行」「空气好吗」
+#: 「确认可以吗」的主体都不是祈使，照旧当提问（判据见 `_polite_request`）。
+POLITE_TAILS = ("好吗", "好么", "好不好", "行吗", "行么", "行不行",
+                "可以吗", "可以么", "可不可以", "成吗", "成不成", "可好")
 #: 操作动词。与 `MANNER_ASKS` 配对：「怎么把温度调高」带「调」⇒ 仍是指令。
 OPERATION_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
 
@@ -66,6 +72,40 @@ _ACTION_FIRST_HOW_TO_RE = re.compile(
     rf"^(?:怎么|咋|如何)(?:才|才能|可以|应该|要|去)?(?:{_HOW_TO_ACTION_ALT}).+"
     r"(?:一下|呢|啊|呀|吧|才行)?$"
 )
+
+
+_POLITE_TAIL_ALT = "|".join(sorted(map(re.escape, POLITE_TAILS), key=len, reverse=True))
+_POLITE_TAIL_RE = re.compile(rf"^(?P<body>.+?)[，,、\s]*(?:{_POLITE_TAIL_ALT})$")
+_IMPERATIVE_VERB_ALT = "|".join(sorted(
+    map(re.escape, set(OPERATION_VERBS) | set(HOW_TO_ACTIONS)), key=len, reverse=True))
+#: 祈使主体：动词打头（可带礼貌前缀 / 「再 / 先」），或最多 3 字前缀后的「把 / 将 + 对象 + 动词」。
+#: 动词不在句首又没有「把」框架（「这样开下去」「空调开到26度」）不算——那正是问句与请求
+#: 分不开的形态，宁可少认一次请求。
+_IMPERATIVE_BODY_RE = re.compile(
+    rf"^(?:请|麻烦|帮我|帮忙|给我|替我)?\s*(?:再|先|也)?\s*"
+    rf"(?:(?:.{{0,3}}?)(?:把|将)[^，,。！？!?]{{1,12}}?)?(?:{_IMPERATIVE_VERB_ALT})")
+
+
+def _polite_tail_body(t: str) -> str | None:
+    """礼貌尾词前面的主体；没有礼貌尾词返回 None。"""
+    cleaned = (t or "").strip().rstrip("。！!？?~ ")
+    m = _POLITE_TAIL_RE.match(cleaned)
+    return m.group("body").strip() if m else None
+
+
+def _polite_request(t: str) -> bool:
+    """「把车窗关上好吗」——礼貌尾词 + 祈使主体 ⇒ 请求，不是提问。"""
+    body = _polite_tail_body(t)
+    if body is None:
+        return False
+    # 主体取最后一个分句：「仪表灯亮着，这样开下去行不行」看的是「这样开下去」
+    body = re.split(r"[，,；;。！？!?]", body)[-1].strip()
+    if not body:
+        return False
+    if any(w in body for w in HYPOTHETICAL_FRAMES) or any(
+            w in body for w in (*CAPABILITY_ASKS, *PROPERTY_ASKS, *CHOICE_ASKS, *REFERENCE_ASKS)):
+        return False
+    return bool(_IMPERATIVE_BODY_RE.match(body))
 
 
 def _is_how_to_question(t: str) -> bool:
@@ -89,6 +129,12 @@ def is_non_directive_question(t: str) -> bool:
         return True
     if any(w in t for w in DIRECTIVE_MARKERS):
         return False
+    # 礼貌尾词 + 祈使主体（「把车窗关上好吗」）是请求；排在疑问尾词之前，否则被「吗」一刀切。
+    # 主体不是祈使的礼貌尾词句（「这一家评价好不好」「空气好吗」）是 A-not-A 提问。
+    if _polite_request(t):
+        return False
+    if _polite_tail_body(t):
+        return True
     if t.rstrip("。！!.~ ").endswith(QUESTION_TAILS):
         return True
     if any(w in t for w in HYPOTHETICAL_FRAMES):

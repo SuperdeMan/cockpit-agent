@@ -14,7 +14,7 @@ import yaml
 
 from runtime.question_shape import (
     CAPABILITY_ASKS, CHOICE_ASKS, DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
-    MANNER_ASKS, HOW_TO_ACTIONS, OPERATION_VERBS, PROPERTY_ASKS,
+    MANNER_ASKS, HOW_TO_ACTIONS, OPERATION_VERBS, POLITE_TAILS, PROPERTY_ASKS,
     QUESTION_TAILS, REFERENCE_ASKS,
     is_non_directive_question,
 )
@@ -32,6 +32,7 @@ _CLASSES = {
     "HYPOTHETICAL_FRAMES": HYPOTHETICAL_FRAMES,
     "DIRECTIVE_MARKERS": DIRECTIVE_MARKERS,
     "HOW_TO_ACTIONS": HOW_TO_ACTIONS,
+    "POLITE_TAILS": POLITE_TAILS,
 }
 
 
@@ -148,3 +149,42 @@ def test_choice_and_requirements_shapes_are_questions_without_punctuation(text):
 ])
 def test_explicit_execution_shapes_remain_directives(text):
     assert is_non_directive_question(text) is False
+
+
+# ── 4. 礼貌尾词（评审 2026-09-19 §4 最小对比对，2026-09-20）──────────────────
+# 「帮我把窗关上好吗」是礼貌请求、「关窗会影响通风吗」是效果询问——不能只看问号。
+# 判据：礼貌尾词 + **祈使主体**（动词打头，或「把 / 将 + 对象 + 动词」）⇒ 请求；
+# 主体不是祈使 ⇒ A-not-A 提问。两向各写一半。
+
+@pytest.mark.parametrize("text", [
+    "把车窗关上好吗",
+    "帮我把窗关上好吗",
+    "关掉音乐好不好",
+    "开一下天窗可以吗",
+    "现在把空调关闭好吗",
+    "请把空调调到24度行吗",
+])
+def test_polite_tail_after_an_imperative_body_is_a_request(text):
+    assert is_non_directive_question(text) is False, text
+
+
+@pytest.mark.parametrize("text", [
+    "关窗会影响通风吗",                          # 效果询问
+    "仪表上水温警告灯一直亮着，这样开下去行不行",   # 安全问句：动词不在句首、没有「把」框架
+    "今天空气好吗",
+    "这一家评价好不好",
+    "确认可以吗",                                # W01：裸确认询问不是授权
+    "可以吗",
+    "行不行",
+    "空调开到26度行吗",                          # 对象在前、无「把」：分不开请求与询问，宁可当提问
+    "要是开着天窗下雨了行吗",                     # 假设框架
+    "现在开天窗合适吗",
+])
+def test_polite_tail_without_an_imperative_body_stays_a_question(text):
+    assert is_non_directive_question(text) is True, text
+
+
+def test_polite_tails_are_a_closed_function_word_class():
+    for tail in POLITE_TAILS:
+        assert tail.endswith(("吗", "么", "好", "行", "以", "成")), tail
+

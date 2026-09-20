@@ -51,7 +51,7 @@ _DOUBLE_NEGATIVE_RE = re.compile(rf"{_NEG}\s*(?:忘|忘了|忘记)")
 _NEGATED_DIRECTIVE_RE = re.compile(
     rf"{_NEG}[^，。；！？,;!?]{{0,6}}?"
     r"(?:开|关|打开|关闭|开启|关掉|停|暂停|播放|放|调|设|升|降|锁|解锁|"
-    r"折叠|展开|收起|打|启动|切换|静音)")
+    r"折叠|展开|收起|打|启动|切换|静音|换)")   # 「换」：评审 §4 对比对「不要换第二家」（2026-09-20）
 
 
 def is_negated_directive(text: str) -> bool:

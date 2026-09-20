@@ -225,7 +225,8 @@ def test_ref_only_schema_static_prompts_and_user_message_tail(monkeypatch):
         "id", "capability_ref", "slots", "depends_on", "slot_refs",
     }
     assert {
-        "properties": set(item["properties"]),
+        # W12：`covers` 是可选的诉求账本注记，不是能力身份通道；required 与封闭性不变
+        "properties": set(item["properties"]) - {"covers"},
         "required": set(item["required"]),
         "additionalProperties": item.get("additionalProperties"),
     } == {

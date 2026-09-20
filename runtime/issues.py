@@ -19,6 +19,7 @@ ISSUE_SERVICE_DEGRADED = "service.degraded"                   # 云端不可达/
 ISSUE_TRANSPORT_ERROR = "transport.error"                     # 网络/超时
 ISSUE_AUTH_REJECTED = "auth.rejected"                         # token 被明确拒绝
 ISSUE_PLANNER_TECHNICAL_FAILURE = "planner.technical_failure" # 规划技术失败（非法/空计划）
+ISSUE_GOAL_UNCOVERED = "goal.uncovered"                       # 这句话里有一条诉求没有步骤承接（W12）
 ISSUE_TTS_SILENT = "tts.silent"                               # 客户端：该出声却没出声
 ISSUE_ASR_FALLBACK = "asr.fallback"                           # 客户端：流式退批处理
 ISSUE_DEVICE_PERMISSION_DENIED = "device.permission_denied"   # 客户端：系统权限被拒
@@ -47,7 +48,7 @@ ISSUE_CODES = frozenset({
     ISSUE_PERMISSION_SCOPE_MISSING, ISSUE_SAFETY_VAL_REJECTED,
     ISSUE_SERVICE_DEGRADED, ISSUE_TRANSPORT_ERROR, ISSUE_AUTH_REJECTED,
     ISSUE_PLANNER_TECHNICAL_FAILURE, ISSUE_TTS_SILENT, ISSUE_ASR_FALLBACK,
-    ISSUE_DEVICE_PERMISSION_DENIED,
+    ISSUE_DEVICE_PERMISSION_DENIED, ISSUE_GOAL_UNCOVERED,
 })
 
 

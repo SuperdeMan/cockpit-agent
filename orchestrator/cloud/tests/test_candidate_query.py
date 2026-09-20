@@ -536,3 +536,14 @@ def test_relist_answers_from_the_named_group_not_the_newest():
     """组指代对重列同样成立：点名了麦当劳就重列麦当劳那份。"""
     got = cq.answer("重新列出麦当劳刚才可以选择的项目", _G_MCD, [_G_MCD])
     assert got is not None and "巨无霸" in got and "生椰拿铁" not in got
+
+
+def test_ordinal_distance_with_a_from_here_phrase_is_answered():
+    """「第二家离这里多远」——评审 §4 对比对「导航到第二家（写）vs 第二家离这里多远（读）」。"""
+    from orchestrator.cloud import candidate_query as cq
+    entry = {"source_intent": "nearby.search", "purpose": "list", "items": [
+        {"name": "一号店", "distance_km": 1.2}, {"name": "二号店", "distance_km": 3.4}]}
+    assert cq.is_candidate_aggregate_question("第二家离这里多远", entry["items"])
+    assert cq.answer("第二家离这里多远", entry, []) == "「二号店」3.4 公里。"
+    assert cq.answer("第二家离我有多远", entry, []) == "「二号店」3.4 公里。"
+    assert cq.answer("导航到第二家", entry, []) is None

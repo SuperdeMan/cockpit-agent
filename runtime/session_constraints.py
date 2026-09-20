@@ -47,6 +47,7 @@ from __future__ import annotations
 import re
 
 from runtime.clause_split import split_clauses
+from runtime.memory_directive import is_memory_directive
 
 #: 忌辣说法：**原话、记忆文本、会话约束三处共用**。首版（在 nearby 里）只认
 #: 「不…吃/沾辣」，真栈实测「不要太辣」根本不匹配——用户当轮明说的忌口连识别
@@ -142,6 +143,10 @@ def is_pure_constraint_statement(text: str | None) -> bool:
     """
     t = (text or "").strip()
     if not t:
+        return False
+    # 「记住我喜欢清淡」是要长期记住的偏好（评审 §4 对比对「稳定偏好 vs 本次约束」），
+    # 不是本次口味的陈述：交给正常规划 / 记忆抽取，不在这里答成「这次…」。
+    if is_memory_directive(t):
         return False
     clauses = split_clauses(t)
     return bool(clauses) and all(_clause_facts(c) for c in clauses)

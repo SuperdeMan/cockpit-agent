@@ -32,6 +32,7 @@ from .retry_policy import (
 from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
+from runtime import memory_directive as _memory_directive
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import is_non_directive_question
@@ -209,11 +210,10 @@ def _verification_dict(cap) -> dict:
 # 短路，用户**说了、没回、也没记**（拒识轮按设计不落库不进画像）。而它是间歇的——同一句
 # 某次 3/3 被拒、换一批 6 条又只拒 1 条，是 LLM 判定的方差，不是判据问题。
 # 同「系统持有的事实不交给 LLM 答」一族：**用户用祈使句直接对你下指令，这件事不需要模型
-# 判断**。只覆盖无歧义的祈使前缀（记忆类指令，误判代价最大的一类），其余仍由模型判。
-# 须**锚在句首**（去礼貌前缀后）：「我不记得了」「他记住了」不是指令，不能劫持。
-_POLITE_PREFIX_RE = re.compile(r"^[\s，,。.、]*(那|哎|诶|嘿|嗯|请|麻烦|你好|喂)*[\s，,、]*")
-_DIRECTIVE_RE = re.compile(
-    r"^(帮我|给我|你|请)?(记住|记一下|记下来|记下|记着|记得|别忘了|别忘记|别忘)")
+# 判断**。判据本体 2026-09-20 下沉到 `runtime/memory_directive.py`（会话约束的纯陈述判据也要
+# 用同一条：「记住我喜欢清淡」是长期偏好、不是本次口味）；这里只留别名。
+_POLITE_PREFIX_RE = _memory_directive.POLITE_PREFIX_RE
+_DIRECTIVE_RE = _memory_directive.MEMORY_DIRECTIVE_RE
 _CLARIFY_GOAL_RE = re.compile(
     r"澄清|询问(?:用户)?(?:意图|需求|想法)"
     r"|(?:没有|缺少)动词|意图(?:不明确|不清楚)"
@@ -328,7 +328,7 @@ _UTTERANCE_PASSTHROUGH_SLOT_KEYS = frozenset({
 
 def _is_directive_to_assistant(text: str) -> bool:
     """句首是显式祈使指令（「记住…」）→ 必然是对助手说的，不接受模型的 not_addressed 判定。"""
-    return bool(_DIRECTIVE_RE.match(_POLITE_PREFIX_RE.sub("", (text or "").strip())))
+    return _memory_directive.is_memory_directive(text)
 
 
 def _is_pure_no_action_utterance(text: str) -> bool:
@@ -717,6 +717,63 @@ _EMOTION_SECTION = (
 )
 
 
+# W12（评审 F07 / §3.1，2026-09-20）：诉求账本。模型把这句话里的每个**肯定诉求**按原话截成一条
+# （goal_id = 序号，source_span = 截段），每个 step 标它负责哪几条（`covers`）。系统据此判「哪条诉求
+# 没有步骤承接」并**如实告诉用户**——按分句猜在生产分布上 ≥95% 误报（设计文档 §5 W12），
+# 只有模型自己知道「联网查一下」是修饰、「再点生椰拿铁」是诉求。两条通道都进（JSON 段 + toolcall
+# schema），`PLANNER_GOALS=off` 一键关掉（A/B 单变量）。模型不填 = 系统不据此判漏（fail-open）。
+_GOALS_SECTION = (
+    "\n\n== 诉求账本（可选）==\n"
+    "额外输出顶层字段 \"goals\"：把用户这句话里的每个**肯定诉求**按原话截成一条（不改写、不合并；"
+    "修饰语如「联网查一下」「至少五百字」「按顺序执行」不是诉求；被否定的动作不是诉求）；"
+    "单诉求就只有一条。每个 step 加字段 \"covers\"：它负责的诉求序号列表（从 1 起）。"
+    "系统据此核对哪条诉求没有步骤承接并如实告诉用户，所以不要为了凑数拆诉求，也不要把没做的诉求标成已覆盖。"
+)
+
+
+def _goals_enabled() -> bool:
+    return os.getenv("PLANNER_GOALS", "on").strip().lower() != "off"
+
+
+def _parse_goals(raw) -> list[str]:
+    """LLM 输出的顶层 `goals` → 去空、去重、截长的原话片段列表；非法形状 ⇒ []。"""
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        span = re.sub(r"\s+", " ", item).strip()[:40]
+        if span and span not in out:
+            out.append(span)
+        if len(out) >= 6:
+            break
+    return out
+
+
+def _parse_covers(raw, goal_count: int) -> list[int]:
+    """step 的 `covers` → 合法序号（1..goal_count）去重有序；非法形状 / 越界项丢弃。"""
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    out: list[int] = []
+    for item in raw:
+        if isinstance(item, bool):
+            continue
+        if isinstance(item, (int, float)):
+            index = int(item)
+        elif isinstance(item, str) and item.strip().isdigit():
+            index = int(item.strip())
+        else:
+            continue
+        if 1 <= index <= goal_count and index not in out:
+            out.append(index)
+    return out
+
+
 # W06：对话行为标注段。prompt-only（同 emotion / clarify 的理由）。判据刻意写成
 # 「修改上一件正在处理的事的某个参数」——它不是路由，也不改变 steps，只告诉系统
 # 「这一步是补丁不是新任务」，于是缺的槽可以从活动任务继承、版本号 +1。
@@ -752,8 +809,9 @@ _TOOLCALL_SECTION = (
     "也严禁把数组编码成字符串。\n"
     "steps 的每个元素必须是 JSON 对象，绝不能是字符串；能力缺席时只能提交 steps=[]，"
     "不能把解释、候选能力名或自然语言写进数组。\n"
-    "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段。"
-    "这五个字段名必须逐字原样输出，不得转义、增删字符或改变拼写。"
+    "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段"
+    "（诉求账本开启时另可带 covers）。"
+    "这些字段名必须逐字原样输出，不得转义、增删字符或改变拼写。"
     "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数。\n"
     "slots 是该步骤的**完整参数表，不是增量**：省略式追问必须把上一轮继承的槽位与本轮"
     "变化的槽位一起写全。例：上一轮『明天A市天气怎么样』该步 slots={\"city\":\"A市\","
@@ -902,11 +960,16 @@ def _submit_plan_tools(
         "depends_on": {"type": "array", "items": {"type": "string"}},
         "slot_refs": {"type": "object"},
     }
+    step_properties = {field: step_field_schemas[field] for field in _PLANNER_STEP_FIELDS}
+    if _goals_enabled():
+        # W12：可选、不进 required——模型不填 = 系统不据此判漏；填错序号会被丢弃
+        step_properties["covers"] = {
+            "type": "array", "items": {"type": "integer"},
+            "description": "这一步负责 goals 里哪几条诉求（从 1 起的序号）"}
     step_item_schema = {"type": "object", "description": (
-        "每个元素必须是 JSON 对象，绝不能是字符串；只允许下列五个字段，"
-        "不得把解释或候选能力名写成数组元素"), "properties": {
-        field: step_field_schemas[field] for field in _PLANNER_STEP_FIELDS
-    }, "required": list(_PLANNER_STEP_FIELDS),
+        "每个元素必须是 JSON 对象，绝不能是字符串；只允许下列字段，"
+        "不得把解释或候选能力名写成数组元素"), "properties": step_properties,
+        "required": list(_PLANNER_STEP_FIELDS),
         "additionalProperties": False}
     steps_schema = {
         "type": "array",
@@ -927,6 +990,11 @@ def _submit_plan_tools(
                       "description": "这句话是否是对车载助手说的；拿不准必须输出 true"},
         "steps": steps_schema,
     }
+    if _goals_enabled():
+        props["goals"] = {
+            "type": "array", "items": {"type": "string"}, "maxItems": 6,
+            "description": ("用户这句话里的每个肯定诉求，按原话截成一条、不改写；修饰语与被否定的动作"
+                            "不是诉求；单诉求只有一条")}
     # clarify 刻意**不进 schema**（真栈 B4-1 两轮教训）：schema 把 clarify 变成「摆在
     # 眼前的可选字段」，结构可见性把误澄清率从 0 抬到 ~50-66%（历史追问「我刚才让你调到
     # 多少」被反问），且 description 带满「绝大多数请求明确」约束也压不回去——模型对
@@ -971,6 +1039,8 @@ def _planner_system(toolcall: bool = False, clarification: bool = False,
         prompt += _EMOTION_SECTION
     if os.getenv("PLANNER_ACTS", "on").strip().lower() != "off":
         prompt += _ACTS_SECTION
+    if _goals_enabled():
+        prompt += _GOALS_SECTION
     # 缺省 on = 与部署缺省同源。`.env.example` 与 compose 自 2026-07-08 真栈 CDP 验收后
     # 就是 `${CLARIFY_ENABLED:-on}`，只有**代码兜底**还停在 off——于是任何不经 compose
     # 起的进程（评测/单测/CLI）测的都不是生产装配。对抗测试 §4.1 那四条 candidate 正是
@@ -1214,7 +1284,7 @@ def _trigger_plan_only_contract_violated(state: PlanAttemptState) -> bool:
     return not (
         isinstance(data, dict)
         and set(data).issubset({
-            "complexity", "goal", "addressed", "steps", "emotion",
+            "complexity", "goal", "addressed", "steps", "emotion", "goals",
         })
         and data.get("complexity") in {"simple", "adaptive"}
         and isinstance(data.get("goal"), str)
@@ -2214,12 +2284,19 @@ class PlanBuilder:
         # 是值被丢在了外面；归一会让计划带着空槽被静默执行。整份拒绝交给重试，
         # 只有「哪儿都没有这些值」的纯缺席才允许补空。
         displaced_step_fields = _NORMALIZABLE_STEP_FIELDS & set(wire)
+        goals = _parse_goals(wire.get("goals"))
+        covers_by_id: dict[str, list[int]] = {}
         resolved_steps = []
         for raw_step in raw_steps:
             if not isinstance(raw_step, dict):
                 logger.warning("Plan step is %s (not object), dropping plan for retry",
                                type(raw_step).__name__)
                 return None
+            if "covers" in raw_step:
+                # W12：账本字段先摘出来，线契约的五字段校验照旧严格
+                raw_step = dict(raw_step)
+                covers_by_id[str(raw_step.get("id") or "")] = _parse_covers(
+                    raw_step.pop("covers"), len(goals))
             if not displaced_step_fields:
                 raw_step = self._normalize_step_containers(raw_step)
             if set(raw_step) != set(_PLANNER_STEP_FIELDS):
@@ -2247,6 +2324,8 @@ class PlanBuilder:
             if clarify:      # 是请求但落法歧义：无 steps 但带合法 clarify → 合法计划（P1 消费）
                 return Plan(steps=[], raw_text=fallback_text, clarify=clarify)
             return None
+        for step in steps:
+            step.covers = list(covers_by_id.get(step.id, []))
         # steps 非空 → clarify 忽略（互斥，执行优先，母卡 D6-2>D6-3）；后续现状不动。
 
         # Chitchat is the open-domain fallback. Never trust an LLM-generated
@@ -2286,6 +2365,7 @@ class PlanBuilder:
             goal=goal,
             emotion=emotion,
             acts=acts,
+            goals=goals,
         )
 
     @staticmethod

@@ -260,6 +260,40 @@ def _clause_uncovered(plan, text: str) -> str:
     return f"{uncovered}/{len(clauses)}" if uncovered else ""
 
 
+def goal_gap(plan, text: str) -> list[str]:
+    """哪些诉求**没有步骤承接**（W12，评审 F07）→ 原话截段列表；判不出 / 没证据 ⇒ []。
+
+    账本由模型自报（`Plan.goals` + `Step.covers`），系统只做四道核对，缺一不报：
+      ① goals ≥ 2（单诉求有步就是被承接）；② **每一步**都填了 covers（少填一步 = 模型没参与账本，
+      不据此判漏）；③ 某条诉求不在任何一步的 covers 里；④ 那条诉求与所有槽值互不包含（≥2 字）
+      ——模型漏标了一步实际负责的诉求时，槽值会替它作证。整句型能力 / 整句透传槽的步吃整句，不报。
+    生产分布里按分句猜 ≥95% 误报的三类（整句透传、单步双槽、修饰分句）在这里都由模型账本区分。
+    """
+    steps = list(getattr(plan, "steps", None) or [])
+    goals = [str(g) for g in (getattr(plan, "goals", None) or []) if str(g).strip()]
+    if len(goals) < 2 or not steps:
+        return []
+    if any(bool(getattr(s, "whole_utterance", False)) for s in steps):
+        return []
+    if any(not (getattr(s, "covers", None) or []) for s in steps):
+        return []
+    whole = re.sub(r"\s+", "", str(text or ""))
+    values = [re.sub(r"\s+", "", v) for s in steps for v in (s.slots or {}).values()
+              if isinstance(v, str) and len(v.strip()) >= _COVER_MIN_LEN]
+    if whole and any(whole in v for v in values):
+        return []
+    covered = {index for s in steps for index in (s.covers or [])}
+    gap: list[str] = []
+    for index, span in enumerate(goals, 1):
+        if index in covered:
+            continue
+        compact = re.sub(r"\s+", "", span)
+        if any(v in compact or compact in v for v in values):
+            continue
+        gap.append(span)
+    return gap
+
+
 def _goal_text(plan) -> str:
     """从 `raw_llm` 里取 goal 字段；取不到就返回空串（观测信号，不值得为它抛异常）。"""
     try:
@@ -396,6 +430,7 @@ class PlannerEngine:
                 # 而它们全都从这个 for 里流过——**同一条纪律写成注释还是写成结构，
                 # 差别就是会不会有第三次**（`_deterministic_reply` 那条老账）。
                 await self._emit_execution_claim(ctx, ev, executed_actions)
+                outcome_kind = self._apply_goal_gap(ctx, ev, outcome_kind)
                 if ev.get("speech"):
                     assistant_speech = ev["speech"]
                 await self._emit_outcome(ctx, outcome_kind, ev, executed_actions)
@@ -460,6 +495,29 @@ class PlannerEngine:
                        **({"intercepted": "true"} if intercepted else {})})
         except Exception as e:      # 观测绝不阻塞主链路
             logger.debug("execution claim obs failed: %s", e)
+
+    @staticmethod
+    def _apply_goal_gap(ctx, event: dict, kind: str) -> str:
+        """W12：这一轮完成了，但账本说有诉求没人承接 ⇒ 如实补一句、出 `goal.uncovered`、终态记 partial。
+
+        只在**完成类** final 上说（挂起 / 澄清 / 拒识那些出口本来就没完成任何事）；话术是固定句式，
+        引用的是模型按原话截出的那一段，不改写。
+        """
+        gap = list(getattr(ctx, "goal_gap", None) or [])
+        if not gap or kind not in ("completed", "partial") or event.get("operation_id"):
+            return kind
+        named = "、".join(f"「{span}」" for span in gap[:2])
+        hint = f"{named}这部分这次没有处理到，需要的话再单独说一次。"
+        event["follow_up"] = PlannerEngine._append_hint(event.get("follow_up"), hint)
+        issues = list(event.get("issues") or [])
+        issues.append(contracts.build_issue(
+            contracts.ISSUE_GOAL_UNCOVERED,
+            f"{named}没有步骤承接，本轮只处理了其余部分。",
+            severity=contracts.SEVERITY_INFO,
+            request_id=ctx.request_id))
+        event["issues"] = issues
+        logger.info("goal gap on a completed turn: %s", gap)
+        return "partial"
 
     @staticmethod
     async def _emit_outcome(ctx, kind: str, event: dict, actions: list) -> None:
@@ -992,6 +1050,8 @@ class PlannerEngine:
             # W13 / W14：这一轮的步是不是全都只会「说」（按声明不可能改变世界）
             ctx.answer_only = bool(plan.steps) and all(
                 bool(getattr(s, "response_only", False)) for s in plan.steps)
+            # W12：没有步骤承接的诉求（只对 simple 计划算；adaptive 的第二阶段本来就等观察）
+            ctx.goal_gap = [] if plan.complexity != "simple" else goal_gap(plan, text)
             # 跨轮门店锚定的**唯一入口**：把上一轮 nearby.search 的公开 POI 放上
             # PlanContext（服务端对象，LLM 与客户端都写不到）。executor 只在本轮 plan
             # 内没有生产者时才用它补门店三元组，并写同构 provenance——
@@ -1067,6 +1127,12 @@ class PlannerEngine:
                     **_context_stats_attrs(working_set),
                     # W06 / W07：对话行为标签与「这一轮是不是改口合并」（枚举值，不过内容门控）
                     **({"acts": ",".join(plan.acts)} if getattr(plan, "acts", None) else {}),
+                    # W12 诉求账本可观测：模型报了几条诉求、每一步是否都填了 covers、判出几条漏承接
+                    **({"goals_declared": len(plan.goals),
+                        "covers_filled": "1" if all(
+                            (getattr(s, "covers", None) or []) for s in plan.steps) else "0"}
+                       if getattr(plan, "goals", None) else {}),
+                    **({"goal_gap": len(ctx.goal_gap)} if ctx.goal_gap else {}),
                     **({"task_patch": "true", "task_revision": plan.task_patch.get("revision", 0)}
                        if getattr(plan, "task_patch", None) else {}),
                 },
@@ -1102,6 +1168,7 @@ class PlannerEngine:
         for s in plan.steps:
             metrics.record_intent(s.intent, 0, True)
         if plan.complexity == "adaptive":
+            ctx.goal_gap = []          # T2 会补第二阶段，规划轮的账本不再作数
             if not agents:
                 agents = await self.clients.list_agents()
             async for event in self.loop.run(
@@ -1285,6 +1352,7 @@ class PlannerEngine:
             # 压掉别的步产出
 
         if new_plan and await self._needs_replan(plan, results):
+            ctx.goal_gap = []          # 同上：升级到 T2 之后由再规划补
             metrics.record_intent("reactive_upgrade", 0, True)
             logger.info("Reactive upgrade: simple→T2 for session %s",
                         ctx.session_id)
@@ -1583,9 +1651,10 @@ class PlannerEngine:
                 return
             mini.safety_origin_text = safety_origin_text
         steps = mini.steps
-        # W13 / W14：改派后真正执行的是 mini 计划，谈话与否按它算
+        # W13 / W14：改派后真正执行的是 mini 计划，谈话与否按它算；规划轮的诉求账本不再对应这些步
         ctx.answer_only = bool(steps) and all(
             bool(getattr(s, "response_only", False)) for s in steps)
+        ctx.goal_gap = []
         show_esc_process = is_complex(mini)
         if show_esc_process:
             for s in mini.steps:

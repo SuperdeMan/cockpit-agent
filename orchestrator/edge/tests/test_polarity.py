@@ -97,3 +97,11 @@ def test_compound_sentence_keeps_only_the_real_directive():
     mid = by_text["空调关了"]
     assert mid["_needs_cloud"] is False
     assert mid["data"]["object"] == "aircon"
+
+
+def test_replace_verb_is_negatable():
+    """「不要换第二家」是禁止变更；「这家不要了，换第二家」是局部取消 + 新动作（评审 §4 对比对，2026-09-20）。"""
+    from runtime.polarity import is_negated_directive
+    assert is_negated_directive("不要换第二家") is True
+    assert is_negated_directive("别换台") is True
+    assert is_negated_directive("这家不要了，换第二家") is False

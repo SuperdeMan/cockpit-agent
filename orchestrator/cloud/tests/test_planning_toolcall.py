@@ -1112,8 +1112,11 @@ def test_submit_plan_tools_shape_and_confirm_absent(monkeypatch):
     props = fn["parameters"]["properties"]
     assert set(fn["parameters"]["required"]) == {"addressed", "steps"}
     step_props = props["steps"]["items"]["properties"]
-    assert set(step_props) == {"id", "capability_ref", "slots",
-                               "depends_on", "slot_refs"}
+    # W12：`covers` 是可选注记（不在 required 里）；能力身份仍只有 capability_ref 一条通道
+    assert set(step_props) - {"covers"} == {"id", "capability_ref", "slots",
+                                            "depends_on", "slot_refs"}
+    assert set(props["steps"]["items"]["required"]) == {"id", "capability_ref", "slots",
+                                                        "depends_on", "slot_refs"}
     # slots 语义随字段走（真栈 B1-4：空 object 诱发省略追问丢继承槽）
     assert "继承的槽位" in step_props["slots"]["description"]
     assert "require_confirm" not in json.dumps(spec)
@@ -1329,7 +1332,7 @@ def test_toolcall_prompt_locks_each_step_to_the_five_exact_nested_fields():
     prompt = _planner_system(toolcall=True)
     for clause in (
         "steps 数组中每一项只能包含 id、capability_ref、slots、depends_on、slot_refs 这五个字段",
-        "这五个字段名必须逐字原样输出，不得转义、增删字符或改变拼写",
+        "这些字段名必须逐字原样输出，不得转义、增删字符或改变拼写",
         "属于 step 的字段必须留在对应 step 对象内，不得移到顶层参数",
     ):
         assert clause in prompt

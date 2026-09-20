@@ -287,13 +287,32 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
   预算裁出 prompt 的 Agent，它的 hint 照样命中、步照样过 `_validated_steps`。今天 14 个 Agent 两道裁剪都不触发，
   行为逐字不变；改的是结构。
 
-### W12 多目标闭环（部分，裁决记账）
+### W12 多目标闭环（分两步）
 
-- 落：终态账本区分 `completed / partial / failed`（**按结果集，精确**）；`clause_uncovered` 观测列去掉三类已证实的
-  误报（整句透传槽 / 兜底 Agent 吃整句 / 单步已填槽数 ≥ 分句数），让这一列变成可读的基线。
-- **不落**「这句话里还有一件事没处理」的用户可见话术：生产 134 条 shadow 里真阳性个位数，裁掉三类误报后剩下的仍含修饰
-  分句（「联网查询」「至少五百字」）——按分句子串判「哪一段没人管」在真实分布上不成立；评审建议的 `goal_id / covers`
-  要改 planner 输出契约，而本轮已量到 prompt-only 可选字段遵循率 ≤ 1/3，得先 A/B。归下一批。
+- 第一步（批 4 首个 release `e9044daf`）：终态账本区分 `completed / partial / failed`（**按结果集，精确**）；
+  `clause_uncovered` 观测列去掉三类已证实的误报（整句透传槽 / 兜底 Agent 吃整句 / 单步已填槽数 ≥ 分句数）。
+  用户可见话术当时**不落**：生产 134 条 shadow 里真阳性个位数，按分句子串判「哪一段没人管」在真实分布上不成立。
+- 第二步（P2 收尾，用户 2026-09-20 下午指示「P2 推进至完整收尾」）：**planner 侧诉求账本**——顶层 `goals[]`（按原话
+  截的肯定诉求）+ step `covers[]`，JSON 段与 toolcall schema 两条通道都进（可选字段、`PLANNER_GOALS` 开关），系统只核对
+  （`engine.goal_gap`：每一步都填了 covers ∧ 某条诉求没人认领 ∧ 槽值也不替它作证）才在完成类 final 上补一句
+  「「X」这部分这次没有处理到」+ `goal.uncovered` + 终态 partial；任何一环缺席 fail-open。为什么现在能落：判断
+  「联网查一下」是修饰、「再点生椰拿铁」是诉求的只有模型自己，系统做的是核对而不是猜；schema 里的注记字段填多了
+  无害（与 clarify / acts 那类决策字段不同），所以可以进 schema 拿结构遵循率。A/B 见 §5.6（同一语料两个 release）。
+
+### P2 余项收尾（2026-09-20 下午）
+
+- **礼貌尾词进 `question_shape`**：只在祈使框架上开口子（`_polite_request`：动词打头 / 「把 / 将」框架 + 礼貌尾）；
+  非祈使主体的礼貌尾句是 A-not-A 提问。SF3 那句「慢一点开可以吗」仍是提问、仍被拦；`test_question_write_guard` 的
+  「礼貌请求也会被拦」改成两向：祈使框架照做、其余照拦。评审 §4 对比对「帮我把窗关上好吗 vs 关窗会影响通风吗」
+  从此不靠「帮我」也分得开。
+- **云侧 `effect: write` 是否接问句闸——用数据裁**：扫 132 条 gold 为云侧写能力的语料，3 条会被新闸拦掉（含一条
+  多分句里第二句「会不会」把整句判成问句的假阳性），危险类零增益 ⇒ **不接**（conventions §9.43 ⑦）。
+- **W11 数据有效期 / 结果投影**：仍无现成消费方（跨轮读复用不存在；T2 观察投影没有声明方）⇒ 不落，维持 §5 W11 的裁决。
+- **最小对比对**（评审 §4 表，P2 退出条件）：确定性能分的七对进 `test/test_contrast_pairs.py`，两对当场红——
+  「第二家离这里多远」候选算子不认「离这里」这个方位虚词（`_PICK_DIMS` 距离维加 `离我 / 离这里`）、
+  「不要换第二家」极性判据的动词表没有「换」（`polarity` 加「换」）；模型才能分的五对 + W12 一条进探针 `contrast` 组。
+- 顺带：「记住…」记忆祈使的判据下沉到 `runtime/memory_directive.py`（planning 只 import），纯偏好陈述判据排除它
+  ——「记住我喜欢清淡」是长期偏好，不能答成「这次不吃辣」。
 
 ### 批 4 验收
 
@@ -320,11 +339,9 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 - collector `turns.outcome` 上线即有读数：探针与 verify 的十条新轮分别落 `constraint_noted ×2 / completed ×3 / unresolved_object ×2 / planner_failure / clarify`，旧轮为空。
 - 记给后续：verify 的问候句「你好，请只回复一句问候」有一次落 `unresolved_object`（planner 对问候先标「需要澄清」再两轮交不出卡）——这是 planner 在琐碎输入上的方差（同一句其余取样走 `toolcall_salvage_no_action` → chitchat），F09-b 只改了它失败时的措辞，没改失败本身；这类「模型对问候要澄清」归范例 / W19。
 
-## 6. 后续入口（P3 与 P2 余项，未启动）
+## 6. 后续入口（P3，用户另开会话推进）
 
-P2 余项：W12 的 planner 侧 `goal_id / covers` 契约（先 A/B）与用户可见的「还有一件事没处理」话术；礼貌尾词
-（「…好吗 / 行吗」）进 `question_shape` 后再评估把云侧 `effect: write` 接进问句安全闸；W11 的数据有效期 / 结果投影
-（`freshness_s` / `observation_keys`）等有真实消费方再落。
+P2 已收尾（§5 与 §5.6 第二段）：余项里唯一保留为条件的是 W11 的数据有效期 / 结果投影（等有真实消费方再落）。
 P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：找到 / 无结果 / 后端不可用）、W18 50/100 轮长会话与恢复
 （`scripts/probe_qa_long_sessions.py` 是现成 runner）、W19 模型与检索消融。每包仍按「先红测试、独立开关、旧 schema 读兼容」推进。
 
