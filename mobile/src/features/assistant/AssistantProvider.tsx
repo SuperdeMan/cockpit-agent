@@ -15,6 +15,7 @@ import type { SendOpts } from '@/core/session/store'
 import { currentTurn } from '@/core/session/turnView'
 import { settingsStore } from '@/core/settings/store'
 import { activityLog } from '@/core/presence/activityLog'
+import { presenceTrail } from '@/core/presence/presenceTrail'
 import { sheetResident } from '@/core/presence/drivingMode'
 import { IdleClock } from '@/core/presence/orbIdle'
 import { useReduceMotion } from '@/core/a11y/reduceMotion'
@@ -269,7 +270,11 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   // 系统抢占（来电 / 闹钟 / 拔耳机）与屏上的停止键走**同一份**停播语义（audioFocus.ts 头注第三段）：
   // 先免唤醒后主链、S2S 一并停、FSM 回 ARMED 不开续问窗。依赖取 hf.stopSpeaking（稳定引用），不取 hf 对象
   const hfStopSpeaking = hf.stopSpeaking
-  useEffect(() => bindSystemStop(() => stopPlayback({ handsFree: { stopSpeaking: hfStopSpeaking }, speech: speechController() })), [hfStopSpeaking])
+  // 轨迹打点在停播之前（D-09 取证：生产包只读的在场轨迹页要能看见「这次是系统抢占停的」，与用户按停分开）
+  useEffect(() => bindSystemStop((reason) => {
+    presenceTrail.mark('system_stop:' + reason)
+    stopPlayback({ handsFree: { stopSpeaking: hfStopSpeaking }, speech: speechController() })
+  }), [hfStopSpeaking])
   const stopMic = useCallback(() => { ptt.cancel(); hf.pause() }, [ptt, hf])
   useEffect(() => {
     if (snapshot.privacy.micActive) activityLog.push('mic', '麦克风已开启（设备采集）')

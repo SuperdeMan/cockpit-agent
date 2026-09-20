@@ -1,0 +1,19 @@
+// 音频路由事实原生桥（2026-09-20 D-09 / GPT-6 评审 F02「耳机断开」维）。只做一件事：把系统的
+// ACTION_AUDIO_BECOMING_NOISY（拔有线耳机 / 蓝牙音频断开）透传成 Expo 事件。
+// 不判定要不要停播——那份判据住 src/core/voice/audioFocus.ts（与来电 / 抢焦点同一出口）。
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.xiaozhou.audioroute'
+version = '0.1.0'
+
+android {
+  namespace "com.xiaozhou.audioroute"
+  // ⚠ 这两行不是样板（坑账 §9.45②）：缺 versionName 时报错在 :expo 头上，看起来像 expo 自己坏了
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}

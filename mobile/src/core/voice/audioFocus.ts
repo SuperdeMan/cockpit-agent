@@ -23,11 +23,22 @@
 // `systemStop` 出口：缺省仍是只停主链（Provider 没装配时没有免唤醒，行为与 M2-4 逐字相同）；
 // AssistantProvider 装配后 `bindSystemStop` 换成 `stopPlayback({ handsFree, speech })` 那一份。
 // 系统抢占按「用户停播」语义收尾：FSM → ARMED、不开续问窗、恢复焦点不续播。
+//
+// 2026-09-20（D-09 取证前核源码）：**Android 上库的 `routeChange` 是死监听**——react-native-audio-api 0.13.3 的
+// Android 端只有 AudioFocusListener（焦点变化 ⇒ interruption / duck），`AudioEvent.ROUTE_CHANGE` 没有任何
+// 调用点；「拔耳机 ⇒ 停播」在 Android 上从来没成立过。系统给的事实是 ACTION_AUDIO_BECOMING_NOISY 广播，
+// 由本仓库 `modules/audioroute` 透传成 `onBecomingNoisy`，这里按 OldDeviceUnavailable 同一条处置停播
+// （库的 routeChange 监听照留：iOS 走它）。取证先看 `audioRouteInstalled()`，再看事件到没到。
+import AudioRouteNative from '../../../modules/audioroute'
+
 import { speechController } from './speech'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
 let installed = false
+/** becoming-noisy 原生接收装上了没有（Android；旧 APK / iOS 上是 false，拔耳机那一维走不到） */
+let routeInstalled = false
+let routeSub: { remove(): void } | null = null
 
 export type SystemStopReason = 'interruption' | 'routeChange'
 
@@ -105,8 +116,38 @@ export function audioFocusInstalled(): boolean {
   return installed
 }
 
+/** becoming-noisy（拔耳机 / 蓝牙断开）的原生接收装上了没有。false ⇒ 「耳机断开」那一维在这个 APK 上不会到。 */
+export function audioRouteInstalled(): boolean {
+  return routeInstalled
+}
+
+/** 拔耳机 / 蓝牙音频断开（Android ACTION_AUDIO_BECOMING_NOISY）：与库的 OldDeviceUnavailable 同一条处置 */
+function onBecomingNoisy(e: { at?: number; count?: number } | undefined, onEvent?: (e: AudioFocusEvent) => void): void {
+  const via = stopForSystem('routeChange')
+  const ev: AudioFocusEvent = {
+    kind: 'routeChange',
+    detail: 'OldDeviceUnavailable becomingNoisy#' + String(e?.count ?? '?'),
+    stoppedPlayback: true,
+    stoppedVia: via,
+  }
+  record(ev)
+  onEvent?.(ev)
+}
+
+function installRouteReceiver(onEvent?: (e: AudioFocusEvent) => void): void {
+  if (routeInstalled || !AudioRouteNative) return
+  try {
+    routeSub = AudioRouteNative.addListener('onBecomingNoisy', (e) => onBecomingNoisy(e, onEvent))
+    routeInstalled = true
+  } catch {
+    routeInstalled = false
+  }
+}
+
 /** App 启动时装一次（幂等）。onEvent 供调试屏观测，生产不传。 */
 export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void): void {
+  // 两个来源各自幂等：库的焦点监听装不上（jest / 旧 dev-client）不该连带丢掉 becoming-noisy 那一路
+  installRouteReceiver(onEvent)
   if (installed) return
   try {
     const { AudioManager } = require('react-native-audio-api')
@@ -145,6 +186,9 @@ export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void
 /** 测试用：允许重新装载 */
 export function resetAudioFocusForTest(): void {
   installed = false
+  routeSub?.remove()
+  routeSub = null
+  routeInstalled = false
   log.length = 0
   watchers.clear()
   systemStop = defaultStop

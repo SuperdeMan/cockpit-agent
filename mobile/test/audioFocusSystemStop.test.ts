@@ -10,7 +10,10 @@
 //  ② 装配后系统事件走装配的出口，顺序是 handsFree → speech，缺省路径**不再**被走到；
 //  ③ 解除装配回到缺省；
 //  ④ 只有「中断开始」「旧设备不可用」才停，恢复 / 新设备接入不停（M2-4 两条不对称处置照旧）；
-//  ⑤ 出口抛错不能吞掉事件记录（日志是真机取证的唯一读数）。
+//  ⑤ 出口抛错不能吞掉事件记录（日志是真机取证的唯一读数）；
+//  ⑥ Android 的「拔耳机」事实来自本仓库 modules/audioroute 的 becoming-noisy 广播（库 0.13.3 的 Android 端从不发
+//     routeChange，2026-09-20 D-09 核源码），它与 OldDeviceUnavailable 走同一条处置、同一个出口；原生缺席时
+//     不装、不崩、`audioRouteInstalled()` 如实为 false。
 // 外加一条源码级接线断言：AssistantProvider 真的用 stopPlayback 那一份去装配（「加了通道没接消费方 = 没做」）。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -37,12 +40,29 @@ function installFakeAudioApi() {
   return { fire(name: string, e: unknown) { for (const cb of listeners[name] ?? []) cb(e) } }
 }
 
-function load() {
+/** modules/audioroute 的假原生：present=false 模拟旧 APK / iOS（requireOptionalNativeModule 给 null） */
+function installFakeAudioRoute(present: boolean) {
+  const listeners: ((e: unknown) => void)[] = []
+  const native = present
+    ? {
+        addListener: (_name: string, cb: (e: unknown) => void) => {
+          listeners.push(cb)
+          return { remove: () => { listeners.splice(listeners.indexOf(cb), 1) } }
+        },
+        stats: () => ({ registered: true, count: listeners.length, lastAt: 0 }),
+      }
+    : null
+  jest.doMock('../modules/audioroute', () => ({ __esModule: true, default: native, AUDIO_ROUTE_NATIVE_AVAILABLE: present }))
+  return { noisy(count = 1) { for (const cb of [...listeners]) cb({ at: Date.now(), count }) }, listeners }
+}
+
+function load(opts: { route?: boolean } = {}) {
   const fake = installFakeAudioApi()
+  const route = installFakeAudioRoute(opts.route ?? false)
   const mod = require('@/core/voice/audioFocus')
   mod.resetAudioFocusForTest()
   mod.installAudioFocusHandlers()
-  return { fake, mod }
+  return { fake, route, mod }
 }
 
 beforeEach(() => {
@@ -118,9 +138,46 @@ test('⑤ 出口抛错不能吞掉事件记录', () => {
   expect(mod.audioFocusLog()[0]).toMatchObject({ kind: 'interruption', stoppedPlayback: true, stoppedVia: 'unified' })
 })
 
-test('接线：AssistantProvider 用 stopPlayback 那一份装配系统停播出口', () => {
+test('⑥ Android 拔耳机：becoming-noisy 走同一出口、记 routeChange；原生缺席时不装不崩', () => {
+  const { route, mod } = load({ route: true })
+  expect(mod.audioRouteInstalled()).toBe(true)
+  expect(route.listeners).toHaveLength(1)
+  const order: string[] = []
+  const reasons: string[] = []
+  mod.bindSystemStop((reason: string) => {
+    reasons.push(reason)
+    stopPlayback({
+      handsFree: { stopSpeaking: () => order.push('handsFree') },
+      speech: { stop: () => order.push('speech') },
+    })
+  })
+  route.noisy(3)
+  expect(order).toEqual(['handsFree', 'speech'])
+  expect(reasons).toEqual(['routeChange'])
+  expect(mockSpeechStop).not.toHaveBeenCalled()
+  expect(mod.audioFocusLog().at(-1)).toMatchObject({
+    kind: 'routeChange',
+    detail: 'OldDeviceUnavailable becomingNoisy#3',
+    stoppedPlayback: true,
+    stoppedVia: 'unified',
+  })
+  // 再装一次是幂等的：不会挂第二个监听（否则一次拔耳机停两次、日志记两条）
+  mod.installAudioFocusHandlers()
+  expect(route.listeners).toHaveLength(1)
+
+  jest.resetModules()
+  const absent = load({ route: false })
+  expect(absent.mod.audioRouteInstalled()).toBe(false)
+  expect(absent.mod.audioFocusInstalled()).toBe(true) // 库那一路不受影响
+  absent.fake.fire('interruption', { type: 'began' })
+  expect(mockSpeechStop).toHaveBeenCalledTimes(1)
+})
+
+test('接线：AssistantProvider 用 stopPlayback 那一份装配系统停播出口，并先在轨迹上记 system_stop', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/features/assistant/AssistantProvider.tsx'), 'utf8')
-  expect(src).toMatch(/bindSystemStop\(\(\) => stopPlayback\(\{ handsFree: \{ stopSpeaking: hfStopSpeaking \}, speech: speechController\(\) \}\)\)/)
+  expect(src).toMatch(
+    /bindSystemStop\(\(reason\) => \{\s*presenceTrail\.mark\('system_stop:' \+ reason\)\s*stopPlayback\(\{ handsFree: \{ stopSpeaking: hfStopSpeaking \}, speech: speechController\(\) \}\)/,
+  )
   // 装配挂在 effect 上（有解除），而不是渲染期直接调
   expect(src).toMatch(/useEffect\(\(\) => bindSystemStop\(/)
 })
