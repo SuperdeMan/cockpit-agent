@@ -2,7 +2,7 @@
 from __future__ import annotations
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from enum import Enum
 
 
@@ -78,6 +78,18 @@ class Step:
     # 模型自报、校验后只留合法序号；空 = 模型没填（fail-open：系统不据此判漏）。**进程内字段**，
     # 漏诉求的判定在规划轮当场做（`engine.goal_gap`），不随挂起持久化。
     covers: list[int] = field(default_factory=list)
+    # 批 6 W16-b（评审 §7.1 留项，2026-09-20）：**这一步被规划时的那句用户原话**。服务端持有——engine 在
+    # `planner.build` 之后与 `safety_origin_text` 同处盖章、T2 replan 步盖任务起点、澄清预解析步盖用户
+    # 选定的那句；LLM / Agent / 客户端都写不到。随 `step_record` 持久化；旧记录没有它时 `_restore` 用
+    # 持久化的 `safety_origin_text` 回填（同一条「只允许服务端持有的文本回填」规则）。
+    # 消费方只有一个判据 `step_raw_text`：续接轮里**还没跑的下游步**读它当 `Intent.raw_text`，
+    # 而不是读另一步的槽答案——修前 `reminder.create`（槽 `title=有堵车`）在续接轮读到「去宝安机场的路」，
+    # 答「好的，有堵车。什么时候提醒你？」；读自己的起点原话「只要有堵车就提醒我」才走得到诚实拒绝。
+    # 空 = 旧记录 / 没盖章 ⇒ 退回本轮原话（逐字同旧）。
+    origin_text: str = ""
+    # **进程内字段**：这一步是本轮续接的那条挂起（`_restore` 按 `pending_step_id` 打标）。它看到的
+    # `raw_text` 必须仍是本轮原话——补槽答案 / 「确认」就在里面（reminder 在 pending 下读 raw 解时间）。
+    resumed: bool = False
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -107,10 +119,43 @@ def step_record(step: "Step") -> dict:
         "required_permissions": list(step.required_permissions or []),
         "trust_level": step.trust_level,
         "context_scopes": list(step.context_scopes or []),
+        # W16-b：起点原话跟着步走过挂起（下游步续接时读它，不读槽答案）；`resumed` 是进程内标记不落盘
+        "origin_text": str(getattr(step, "origin_text", "") or ""),
         # M2 Verifier：确认后重跑的正是最该对账的车控步——挂起态不带上它，
         # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
         "verification": dict(step.verification or {}),
     }
+
+
+def step_raw_text(step: "Step", ctx) -> str:
+    """Agent 在 `Intent.raw_text` 里看到的那句话——**全仓唯一的一份判据**（批 6 W16-b）。
+
+    · 本轮续接的那一步（`resumed`）看本轮原话：补槽答案 / 「确认」就在里面；
+    · 其余步看自己被规划时的那句原话（`origin_text`）；
+    · 没有起点原话（旧记录 / 没盖章）退回本轮原话——行为逐字同旧。
+    新计划里每一步的起点原话就是本轮原话，所以只有续接轮（补槽 / 确认 / T2 续接）才会换。
+    `safety_origin_text` 刻意不参与：它是授权边界，不是「这一步从哪句话来」。
+    """
+    current = str(getattr(ctx, "raw_text", "") or "")
+    if getattr(step, "resumed", False):
+        return current
+    return str(getattr(step, "origin_text", "") or "") or current
+
+
+def step_call_context(step: "Step", ctx):
+    """下发这一步时传输层看到的 ctx：`raw_text` 换成 `step_raw_text` 的裁决。
+
+    同一句时返回 ctx **本身**（零拷贝、零行为变化）；不同才做一份只活到这次调用的浅拷贝
+    （`dataclasses.replace`：PlanContext 的字段全是 init 字段，list 字段共享引用）。
+    三条执行路径各接一处（dispatcher 云端调用 / engine `_stream_single_step` / loop T2 单步流式），
+    edge 下发本就不带 raw_text。
+    """
+    if ctx is None:
+        return ctx
+    text = step_raw_text(step, ctx)
+    if text == str(getattr(ctx, "raw_text", "") or ""):
+        return ctx
+    return _dc_replace(ctx, raw_text=text)
 
 
 @dataclass
@@ -286,6 +331,8 @@ class PlanContext:
     trace_id: str = ""
     # **当前这一轮**的用户原话，透传给 Agent（补槽轮就是“深圳/拿铁/确认”）。
     # 安全判定不得复用它；跨挂起不变的任务起点在 safety_origin_text。
+    # 批 6 W16-b：续接轮里**还没跑的下游步**不读它——读自己的 `Step.origin_text`（判据 `step_raw_text`，
+    # 传输层经 `step_call_context` 拿一份换了 raw_text 的浅拷贝）；本字段本身在整轮里不变。
     raw_text: str = ""
     # HMI 会话级偏好（model_pref/answer_length/assistant_name/memory_enabled），
     # 来源 HandleRequest.meta，调用 Agent 时并入 ExecuteRequest.meta 透传。

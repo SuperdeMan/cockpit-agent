@@ -1085,6 +1085,40 @@ CASES = [
           "expect": {"no_actions": True, "no_execution_claim": True,
                      "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
      ]},
+    # 批 6 W16-b（2026-09-20）：多步计划在**续接轮**跑到的下游步读自己的起点原话，不读别的步的槽答案。
+    # 真栈 continuity T20（8e403d5c）：「只要有堵车就提醒我」被规划成「查路况 → 若堵车建提醒」，路况步
+    # 先问「哪条路线」；答完路线后 reminder 步才跑——修前它读到的 raw_text 是「去宝安机场的路况」，
+    # 答「好的，有堵车。什么时候提醒你？」（离线复现同形）。判据不押注 T1 的形态：T1 直接落提醒域
+    # （诚实拒绝）也算过——那时 T2 只是一次路况查询。两轮都不许追问提醒时间、不许声称已设置。
+    {"id": "RS10", "group": "residual", "card": "余项", "issue": "W16-b",
+     "why": "续接轮的下游 reminder 步读任务起点原话 ⇒ 诚实拒绝，不是「什么时候提醒你」",
+     "known": "red",
+     "turns": [
+         {"say": "只要有堵车就提醒我",
+          "expect": {"no_actions": True, "no_execution_claim": True,
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
+         {"say": "去宝安机场的路况",
+          "expect": {"no_actions": True, "no_execution_claim": True,
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
+     ]},
+    # 批 6 W19-b（2026-09-20）：持久订阅句**直落提醒域**并诚实拒绝——条件提醒知识补了第四分
+    # （一旦 / 只要 / 每当…就通知我 ⇒ 只规划 reminder.create），范例库同步两条真栈原句。
+    # 修前 RS9 两句各被 info.weather（答今天没雨）/ road-safety（问路线）接走，拒绝出口够不着。
+    # 第三句是 holdout（避开全部 keywords 字面）。「做不到」是 reminder 拒绝话术的定字。
+    {"id": "RS11", "group": "residual", "card": "余项", "issue": "W19-b",
+     "why": "订阅句不查天气 / 路况、不追问时间：提醒域一句「做不到盯着…这类变化」",
+     "known": "red",
+     "turns": [
+         {"say": "只要有堵车就提醒我",
+          "expect": {"no_actions": True, "no_execution_claim": True, "speech_has": ["做不到"],
+                     "speech_not": ["什么时候提醒", "哪条路线", "已为您设置", "已设置"]}},
+         {"say": "之后一旦下雨就通知我", "sid": 1,
+          "expect": {"no_actions": True, "no_execution_claim": True, "speech_has": ["做不到"],
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
+         {"say": "往后一有暴雨预警就马上告诉我", "sid": 2,
+          "expect": {"no_actions": True, "no_execution_claim": True, "speech_has": ["做不到"],
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

@@ -14,7 +14,8 @@ from collections import defaultdict, deque
 from google.protobuf.json_format import MessageToDict
 
 from . import verify as _verify
-from .models import Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan, step_fingerprint
+from .models import (Plan, Step, StepResult, StepStatus, PlanContext, CyclicPlan,
+                     step_call_context, step_fingerprint, step_raw_text)
 from observability import events as obs_events
 from runtime.slot_fidelity import (restore_dropped_qualifiers,
                                    undeclared_slots)
@@ -673,7 +674,8 @@ class DagExecutor:
             logger.info("Step %s(%s): 槽位 %s 不在能力契约里，值被下游忽略"
                         "（planner 往契约外塞了东西，多半是缺一维能力）",
                         step.id, step.intent, extra)
-        raw = str(getattr(ctx, "raw_text", "") or "")
+        # W16-b：「按原话补回」的原话是**这一步**被规划时的那句（续接轮的下游步不读槽答案）
+        raw = step_raw_text(step, ctx) if ctx is not None else ""
         if not raw:
             return
         for name, (value, reason) in restore_dropped_qualifiers(
@@ -950,4 +952,4 @@ class _LegacyDispatcher:
 
     async def dispatch(self, step: Step, ctx: PlanContext):
         return await self._call(
-            step.endpoint, step.intent, step.slots, ctx, step.meta)
+            step.endpoint, step.intent, step.slots, step_call_context(step, ctx), step.meta)

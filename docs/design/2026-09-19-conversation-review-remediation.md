@@ -443,3 +443,26 @@ P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：
   T2 loop / 续接轮里下游步拿到的 `raw_text` 是补槽句而不是任务起点原话（T20 的 reminder 步在 T21 才跑、看不见「只要有堵车」），
   reminder 侧的事件触发判据因此在多步计划里够不着，归 W16 胶囊的下一步（步级 origin text 投影）。
 
+
+## 8. 批 6 方案与裁决（2026-09-20 晚，用户授权提交 / 推送 / 部署 / 真栈验证）
+
+批 5 §7.1 末尾留下四条。先对 HEAD `4cf5ab04`（生产 `cf1d0f96`）重证，再定每条做到哪：
+
+| 留项 | 现状（代码事实） | 本批做什么 | 刻意不做 |
+|---|---|---|---|
+| W16-b 步级起点原话 | `Intent.raw_text` 在三条执行路径上一律取 `ctx.raw_text` = **本轮**原话（`clients._exec_request`）。续接轮（补槽 / 确认）里它是槽答案 / 「确认」——对**被续接的那一步**这是对的（reminder 在 pending 下读它解时间）；对同一份计划里**还没跑的下游步**它是错的：下游步的槽是按任务起点原话规划的，它读到的却是另一步的槽答案。离线复现：`reminder.create` 槽 `title=有堵车`、`raw_text=去宝安机场的路` ⇒ 「好的，有堵车。什么时候提醒你？」；同槽 `raw_text=只要有堵车就提醒我` ⇒ 诚实拒绝。这一族不止事件触发：下游 reminder 的 `user_time_signal` 读 raw ⇒ 规划好的 `time_text` 被无视再追问一遍；`parse_place_text(raw)` 读槽答案可能把它当地点；nearby「X 附近」锚定、`_restore_slot_fidelity` 的「按原话补回限定词」在下游步上都读的是别的步的答案。T2 续接轮的 replan 步同族（`ctx.raw_text` 仍是槽答案） | `Step.origin_text`（服务端持有；engine 在 `planner.build` 之后与 `safety_origin_text` 同处盖章；`step_record` 持久化；`_restore` 对旧记录用持久化的 `safety_origin_text` 回填，与既有「只允许服务端持有的文本回填」同一条规则）+ 进程内 `Step.resumed`（`_restore` 给 `pending_step_id` 那一步打标）。判据一份 `models.step_raw_text`：**被续接的那一步看本轮原话，其余步看自己的起点原话，没有起点原话的旧记录退回本轮原话**；`step_call_context` 只在两者不同时给传输层一个 `raw_text` 换掉的浅拷贝（同一句时返回 ctx 本身 ⇒ 新计划零拷贝、逐字同旧）。三条执行路径各接一处（dispatcher 云端调用 + legacy adapter / engine `_stream_single_step` / loop T2 单步流式），`_restore_slot_fidelity` 读同一判据；T2 replan 步在 `to_plan` 后盖 `safety_origin_text`；澄清预解析步盖 `chosen_text`。step span 加 `raw_text_from=origin`（只在换了时出现） | escalate mini-plan **不盖**（保持本轮原话）：改派是当前这一步在处理当前这句话时的改派，`test_resumed_escalate_uses_origin_but_agent_keeps_current_slot_answer` 钉的就是它；edge 下发本就不带 raw_text；不改 SDK / Agent；不把 `safety_origin_text` 下发替代 raw_text（它是授权边界，不是「这一步从哪句话来」） |
+| W19-b 持久订阅落域 | `skills/guides/conditional-reminder.yaml` 只教三分判据（条件依赖 / 否定 / 顺承）；「之后一旦下雨就通知我」「只要有堵车就提醒我」都被它的 keywords（`下雨就` / `就提醒`）检回，再按「条件依赖 ⇒ 只规划查询步 + adaptive」读 ⇒ 真栈 RS9 各接走一次（info.weather 答今天没雨 / road-safety 问路线）。reminder 的诚实拒绝出口够不着。road-safety 没有「堵车」hint（LLM 落域，不是 hint 劫持） | guide 加第四分「持久订阅」：`一旦 / 只要 / 每当 / 每次 / 凡是 … 就通知我 / 提醒我`、没有一个「现在能查」的前件 ⇒ 用户要的是盯着世界变化，**只规划 `reminder.create`**（整句交给提醒域，它会说做不到并给替代），不查、不 adaptive；keywords 补 `一旦 / 只要 / 每当 / 每次 / 凡是 / 就通知我 / 就告诉我`；golden 两条 + holdout 一条（`expect_intents [reminder.create]`、`expect_not` 查询族）；范例 `reminder.yaml` 追加两条（source: trace，RS9 真栈句）。预算：headroom 守卫 + `test_skills_budget_headroom` 的真实候选混合 | 不给 road-safety / info 加 hint；不在 engine 造第二份事件触发判据（领域知识留在 Agent）；不把「要是下雨就提醒我带伞」这种单条件句改判——它仍按条件依赖查一次 |
+| W19-c 视窗实验换干净用户 | 云端网关只有一条 `AUTH_TOKENS`（u1）；签名身份车道 `E2E_IDENTITY_ENABLED` 根 `.env` 未开、compose 缺省 false ⇒ 换 user 必须改 `.env` + 重启网关（红线，通用授权不覆盖）；`mem_on=false` 会一并关掉历史 / 焦点装配（评审 F11），不是干净用户的替身 | **不做**；把「开签名身份车道」作为独立决策项交用户（改 `.env` 一行 + 网关重启）；开了之后 W19 三档 A/B 才有意义 | 不用 nonce 化语料冒充干净用户（情景记忆按语义召回，同模板旧轮次照样回来） |
+| `memory_unavailable` 生产分布 | 只读 collector | 本批部署后读一次 `turns.outcome` 分布（含 `unsupported` 是否出现）作为 W05 读数 | 不停别人的 PG / Redis 去触发 |
+
+裁决顺序与发布：**两个 release**，每个只推进一个变量——release A = W16-b（探针 RS10：「只要有堵车就提醒我」在**当前**知识下仍是
+road-safety 先问路线、reminder 步在续接轮才跑，正好是 W16-b 的活体证据：T2 答路线后 reminder 应诚实拒绝而不是「什么时候提醒你」）；
+release B = W19-b（RS9 / RS11 复跑：订阅句应直接落 `reminder.create` 并拒绝；A 臂读数取自 release A 同题）。W16-b 先发是因为 W19-b
+落地后 RS10 的多步形态就不再出现（订阅句直接落 reminder），活体证据只有这一趟窗口。
+
+### 批 6 验收
+
+- 每包先红测试再改实现；定向套件（cloud / runtime / reminder / skills gates）+ 四门禁 + smoke_edge；全量固定口径一次；变异各自判红
+  （不盖章 / 续接步也换成起点原话 / 旧记录不回填 / T2 replan 不盖 / guide 第四分删掉）。
+- 真栈：push → dry-run → apply → status / verify → 探针：release A 跑 `RS10 --repeat 3`（多步续接：下游 reminder 步读起点原话）；
+  release B 跑 `RS9,RS11 --repeat 3`（订阅句直落 reminder 并拒绝，`turns.outcome=unsupported`）+ `contrast` CT2 复跑；两臂读数单独成表。

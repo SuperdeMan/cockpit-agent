@@ -14,7 +14,7 @@ import uuid
 from typing import AsyncIterator
 
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionState,
-                     step_record)
+                     step_call_context, step_record)
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
@@ -698,6 +698,8 @@ class PlannerEngine:
                             goal=chosen_text,
                             # 用户点选了系统展示过的这条指令，它就是这次任务的起点原话
                             safety_origin_text=chosen_text)
+                        for s in plan.steps:
+                            s.origin_text = chosen_text          # W16-b：预解析步从这句话来
                         seed_results = []
                     except TypeError as exc:
                         logger.warning("Pre-resolved clarify step is unreadable (%s); replanning", exc)
@@ -974,6 +976,10 @@ class PlannerEngine:
             # Planner/Agent 给出的 goal/reason 即使看起来更像指令也没有这项权威。
             plan.safety_origin_text = text
             ctx.safety_origin_text = text
+            # W16-b：每一步的起点原话也在这里盖（同一权威、同一处）。新计划里它就是本轮原话，
+            # 只有这份计划挂起后在续接轮跑到的下游步才会真正用到它（`models.step_raw_text`）。
+            for s in plan.steps:
+                s.origin_text = text
 
             # 语音来源 + LLM 判非受话 → 静默拒识（route_hints 兜底的 steps 一并作废）。
             # Android 手动录音显式带 ptt；按下按钮只授权采集，不代表背景话就是给助手的请求。
@@ -1595,7 +1601,8 @@ class PlannerEngine:
             # 总截止是 `call_agent_stream` 的缺省（clients.AGENT_STREAM_TIMEOUT_S，60s）：流式 Agent
             # 边生成边流，长回答会超过旧的 30s，然后走「只流了话术」那档、把已流出的整段替掉
             async for kind, payload in self.clients.call_agent_stream(
-                    step.endpoint, step.intent, step.slots, ctx, step.meta):
+                    step.endpoint, step.intent, step.slots,
+                    step_call_context(step, ctx), step.meta):   # W16-b：这一步的起点原话
                 if kind == "speech":
                     payload = softener.feed(payload)
                     # 记的是**软化之后**的增量：softener 会把悬空的 `*` 扣下一拍，那一拍用户什么都没看到。
@@ -2826,6 +2833,16 @@ class PlannerEngine:
                 for s in steps:
                     if s.id == state.pending_step_id:
                         s.meta = {**s.meta, "confirmed": "true"}
+            # W16-b：被续接的那一步打标（它读本轮原话——槽答案 / 「确认」就在里面）；其余步没有
+            # 起点原话的旧记录用**持久化的服务端文本**回填——与下面 safety_origin_text 的滚动升级
+            # 规则同一条：只认 `safety_origin_text` / `raw_text`，goal 是 LLM 写的，无权冒充原话。
+            persisted_origin = str(
+                state.pending_plan.get("safety_origin_text", "")
+                or state.pending_plan.get("raw_text", "") or "")
+            for s in steps:
+                s.resumed = (s.id == state.pending_step_id)
+                if not s.origin_text:
+                    s.origin_text = persisted_origin
 
             # Keep the long-standing unbound-call compatibility used by small
             # contract tests and migration helpers (``_restore(None, ...)``).

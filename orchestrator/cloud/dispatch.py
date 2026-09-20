@@ -14,7 +14,7 @@ from security.audit import AuditLogger
 from security.permission import check_permission
 
 from .circuit import CircuitBreakerManager
-from .models import PlanContext, Step
+from .models import PlanContext, Step, step_call_context
 
 logger = logging.getLogger("planner.dispatch")
 
@@ -58,6 +58,7 @@ class UnifiedDispatcher:
         ok: bool,
         elapsed_ms: float,
         pending: bool = False,
+        raw_text_from: str = "",
     ) -> None:
         try:
             emitter = obs_events.get_emitter("cloud")
@@ -71,6 +72,8 @@ class UnifiedDispatcher:
                     "agent_id": step.agent_id,
                     "kind": step.kind,
                     "deployment": step.deployment,
+                    # W16-b 可观测：这一步读的是自己的起点原话而不是本轮原话（只在换了时出现）
+                    **({"raw_text_from": raw_text_from} if raw_text_from else {}),
                 },
             )
             snapshot = metrics.agent_snapshot(step.agent_id)
@@ -99,6 +102,7 @@ class UnifiedDispatcher:
             st == agent_pb2.ExecuteResponse.OK,
             elapsed_ms,
             pending=pending,
+            raw_text_from=("origin" if step_call_context(step, ctx) is not ctx else ""),
         )
         return response
 
@@ -227,8 +231,9 @@ class UnifiedDispatcher:
             # 尤其开思考后）。下限兜底，缺省/异常仍走默认。
             budget_ms = getattr(step, "latency_budget_ms", 0) or 0
             timeout = max(budget_ms / 1000.0, 10.0) if budget_ms else 10.0
+            # W16-b：续接轮里的下游步读自己的起点原话（`models.step_raw_text`）；新计划零拷贝
             resp = await self._cloud_call(
-                step.endpoint, step.intent, step.slots, ctx, step.meta,
+                step.endpoint, step.intent, step.slots, step_call_context(step, ctx), step.meta,
                 timeout=timeout, context_scopes=step.context_scopes)
             elapsed = (time.monotonic() - start) * 1000
             # 收到响应=endpoint 存活（业务 FAILED 不算 endpoint 故障，不误触熔断）。

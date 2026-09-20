@@ -7,7 +7,8 @@ import time
 from typing import AsyncIterator
 
 from .executor import DagExecutor
-from .models import Plan, PlanContext, ReplanDecision, StepResult, StepStatus
+from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
+                     step_call_context)
 from .planning import PlanBuilder
 from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
@@ -214,6 +215,9 @@ class LoopController:
                 current = decision.to_plan(
                     goal, safety_origin_text=safety_origin_text,
                 )
+                # W16-b：再规划步的起点原话是任务的（续接轮里 ctx.raw_text 是槽答案，不是它们从哪来）
+                for step in current.steps:
+                    step.origin_text = safety_origin_text
                 # T2 知识继承贯通挂起链（2026-07-27 评审三批）：to_plan 新建的 Plan
                 # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
                 # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。
@@ -256,7 +260,8 @@ class LoopController:
                 try:
                     async for kind, payload in self._stream(
                             step.endpoint, step.intent, step.slots,
-                            ctx, step.meta, timeout=timeout):
+                            step_call_context(step, ctx), step.meta,   # W16-b
+                            timeout=timeout):
                         if kind == "speech":
                             stream.on_speech(payload)
                             yield {"kind": "speech", "delta": payload}
