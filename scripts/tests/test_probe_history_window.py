@@ -26,11 +26,14 @@ def test_referent_only_lives_in_the_opening_turn(group):
     assert len(turns) == group["k"] + 2
 
 
-def test_fillers_are_history_neutral():
-    """插话不能是天气 / 导航 / 车控 / 附近——那些会改写焦点块（上个城市 / POI / 对象）。"""
-    banned = ("天气", "导航", "附近", "空调", "音量", "车窗", "股", "去")
-    for text in (*hw._FILLERS_K2, *hw._FILLERS_K4):
-        assert not any(b in text for b in banned), text
+def test_fillers_end_with_a_task_turn_and_never_touch_referent_channels():
+    """最后一个插话必须是任务轮（顶掉 W07 活动任务帧，否则 T1 的槽经帧到达 planner、视窗不是唯一变量）；
+    插话不能是导航 / 附近 / 车控 / 股票——那些会写入 POI / 目的地 / 候选集 / 股票 / 车控对象等指代通道。"""
+    banned = ("导航", "附近", "空调", "音量", "车窗", "股", "去", "提醒")
+    for fillers in (hw._FILLERS_K2, hw._FILLERS_K4):
+        assert any(word in fillers[-1] for word in ("天气", "空气")), fillers
+        for text in fillers:
+            assert not any(b in text for b in banned), text
 
 
 def test_parse_groups():

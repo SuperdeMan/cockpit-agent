@@ -11,7 +11,8 @@
   · **单变量**：每轮 `meta.planner_history_exchanges=<N>`（批 5 W19 的请求级 pin），其余全同。
 
 语料形态：T1 立一个**只活在对话历史里**的指代物（联网搜索主题 / 手册功能 / 球队——刻意避开焦点块
-会自己记住的城市 / POI / 目的地 / 股票 / 车控对象 / 候选集），插 k 轮无关闲聊，最后一轮省略回指。
+会自己记住的城市 / POI / 目的地 / 股票 / 车控对象 / 候选集），插 k 轮无关插话（闲聊 + 一轮 read 任务，
+后者把 W07 活动任务帧顶掉——见 `_FILLERS_*` 的注释），最后一轮省略回指。
 k=2 的组区分「2 对 vs 4 对」，k=4 的组区分「4 对 vs 6 对」。判据是**结构的**：最后一轮
 `cloud.planning` 的计划槽里有没有指代物关键词（planner 自己把它填回去了），同时记
 `history_pairs_kept`（证明 pin 生效）、intents、outcome，以及一条弱读数「话术里提到了没有」
@@ -54,8 +55,13 @@ from scripts.e2e_identity import decode_secret, sign_identity            # noqa:
 from scripts.e2e_target import endpoint_environment, resolve_e2e_target  # noqa: E402
 from scripts.render_cloud_env import DEMO_AUTH_SCOPES                    # noqa: E402
 
-_FILLERS_K2 = ("讲个笑话", "现在几点了")
-_FILLERS_K4 = ("讲个笑话", "现在几点了", "今天星期几", "一加一等于几")
+#: 插话里必须有**任务轮**（天气 / 空气质量：read 任务、指代物不可能是它）：W07 的活动任务帧会把上一件
+#: 任务的槽（`query=华为问界M9的售价`）在焦点块里保 1800 s，而 chitchat 是 response_only、不顶帧——
+#: 只插闲聊的话，T1 的指代物会经任务帧而不是历史到达 planner（首跑 run 0920a：视窗 2 对下 g02 / g03
+#: 的槽里照样出现 M9 / Model Y，pairs_kept=2、dropped=1）。让最后一个插话是任务轮，帧才被顶掉，
+#: 历史视窗才是唯一变量。天气只改 `last_city` / `上一轮意图`，与本语料的指代物无关。
+_FILLERS_K2 = ("讲个笑话", "深圳今天天气怎么样")
+_FILLERS_K4 = ("讲个笑话", "深圳今天天气怎么样", "现在几点了", "深圳空气质量怎么样")
 
 #: 32 组：(T1 指代物句, 最后一轮省略回指, 判据关键词, k)。关键词是指代物里最不会被改写掉的那一段。
 GROUPS: list[dict] = [
