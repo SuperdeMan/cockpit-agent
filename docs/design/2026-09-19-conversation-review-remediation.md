@@ -2,8 +2,9 @@
 
 - 状态：批 1（P0 W01–W04 + W05-lite）、批 2（P1 W08/W09）、批 3（P1 W10 / W06 / W07，2026-09-20 用户批准后实施）已发布
   （生产 release `88a89456`）；批 4（P2 W11–W15）方案见 §5、落地记录见 §5.6（P2 收尾 release `9ebaa5c3`）；
-  **批 5（P3 W16–W19 + 两条观察，2026-09-20 晚，用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §7、落地记录见 §7.1**
-- 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`；HMI / Android 本批零改动
+  批 5（P3 W16–W19 + 两条观察，2026-09-20 晚）方案见 §7、落地记录见 §7.1；
+  **批 6（批 5 留项：W16-b 步级起点原话 / W19-b 持久订阅落域，2026-09-20 晚，用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §8、落地记录见 §8.1**
+- 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`、`skills/`；HMI / Android 零改动
 - 关联：评审原文 [`docs/reviews/2026-09-19-cockpit_conversation_review.md`](../reviews/2026-09-19-cockpit_conversation_review.md)（基线 `2f3c574d`）；
   接手 `AGENTS.md` §4；QA 交接 `docs/reviews/2026-08-30-qa-closeout-handoff.md`；上一批收口 [`2026-09-19-qa-residual-closeout.md`](2026-09-19-qa-residual-closeout.md)
 
@@ -466,3 +467,43 @@ release B = W19-b（RS9 / RS11 复跑：订阅句应直接落 `reminder.create` 
   （不盖章 / 续接步也换成起点原话 / 旧记录不回填 / T2 replan 不盖 / guide 第四分删掉）。
 - 真栈：push → dry-run → apply → status / verify → 探针：release A 跑 `RS10 --repeat 3`（多步续接：下游 reminder 步读起点原话）；
   release B 跑 `RS9,RS11 --repeat 3`（订阅句直落 reminder 并拒绝，`turns.outcome=unsupported`）+ `contrast` CT2 复跑；两臂读数单独成表。
+
+### 8.1 落地记录（2026-09-20 晚，release A `cc331315` → release B `eb87b571`）
+
+| 包 | 提交 | 做了什么 | 本地证据 |
+|---|---|---|---|
+| W16-b 步级起点原话 | `cc331315`（release A）+ `eb87b571`（两条流式路径的 span 格） | `Step.origin_text`（engine 在 `planner.build` 后与 `safety_origin_text` 同处盖章；`step_record` 持久化；`_restore` 旧记录用持久化的 `safety_origin_text` / `raw_text` 回填、给 `pending_step_id` 打 `resumed`；澄清预解析步盖 `chosen_text`；loop replan 步盖任务起点；escalate mini-plan 不盖）；判据 `models.step_raw_text` + 传输视图 `step_call_context`（同一句返回 ctx 本身）；三条执行路径各接一处 + `_restore_slot_fidelity`；step span `raw_text_from=origin`（三条路径同一格，只在换了时出现） | 新 `test_step_origin_text` 19（补槽 / 确认续接走真实 engine、旧记录回填只认服务端文本、T2 replan + 单步流式、三处传输接线、槽值保真、PlanContext replace 安全、三条路径 span 格）；六处变异各判红（不盖章 / 忽略 resumed / 不回填 / loop 不盖 / dispatcher 传 ctx / 保真读 ctx）；既有 `test_resumed_escalate_uses_origin_but_agent_keeps_current_slot_answer` 钉住 escalate 不变 |
+| W19-b 持久订阅落域 | `ca2725b0`（release B） | guide v6 第四分「持久订阅」+ keywords 只加订阅框架词（`只要 / 每次 / 凡是` 常用词刻意不做）+ golden 两条 + holdout 一条；范例 `reminder.yaml` 追加两句真栈原句；知识压到与 charging-strategy 并列最大（headroom 守卫 +1，与修前相同）。踩到两条：① 知识写 `data.condition` 会被架构守卫读成 intent 形 token（`data` 变成业务词 ⇒ `verify.py` 的 `data` 形参被判违规），改回 `` `data` 中 `condition` ``；② 每加一句都要回量预算（四次才放得进） | `test_skills` +1（第四分名字 / 词形 / 落点、两句 golden 的另一半、keyword 纪律）；四门禁 + smoke_edge + 架构守卫全过 |
+| 探针 | `cc331315` | RS10（W16-b 活体：T1 订阅句 → T2 答路线）、RS11（W19-b：两句真栈原句 + holdout） | `--list` 通过 |
+
+- 全量固定口径（包含批 6 两包的工作树，`TZ=UTC0` `-n 8`）：**8733 passed / 0 failed / 32 skipped / 12 warnings，248 s**（上一基线 8710 / 1 / 32）；
+  cloud 目录在 `eb87b571` 工作树 1525 passed；四门禁 + smoke_edge 13/13、架构守卫全过。
+- 发布链（两个 release 各推进一个变量；主树被另一会话的两份未提交文档弄脏 ⇒ 隔离 worktree deploy）：
+  push `4cf5ab04..cc331315`（恰一条、单独列出）→ dry-run 零阻断（基线 `cf1d0f96`）→ apply `submitted` → status **ok、5/5 healthy、零 warning、
+  `release_sha` = `running_release_sha` = `cc331315`** → verify **`verified`**（`20260920T085748Z-cc33131.json`，`minimax:MiniMax-M3`，lock e2e）；
+  push `cc331315..eb87b571`（两条：`ca2725b0` + `eb87b571`，单独列出）→ dry-run 零阻断（基线 `cc331315`）→ apply → status ok 5/5 零 warning
+  `eb87b571` → verify `verified`（`20260920T090840Z-eb87b57.json`）。
+- 真栈 release A `cc331315`（`--cases RS10,RS9 --repeat 3`，MiniMax-M3）：判据 **6/6**。
+  - **RS10 第 3 趟就是 W16-b 的活体**：T1「只要有堵车就提醒我」被规划成 adaptive 单步 `safety.road_condition`（goal「查询路况，根据是否拥堵决定是否提醒」——
+    正是 W19-b 要改的读法），问「哪条路线」挂起；T2「去宝安机场的路况」续接，T2 loop 再规划出 `reminder.create`（单步流式路径），Agent 日志
+    **「reminder.create 拒建（事件触发不支持）：只要有堵车就提醒我」**——`ctx.raw_text` 是路线答案，它读到的是起点原话，final 里带着诚实拒绝。
+    修前同形（离线复现）是「好的，有堵车。什么时候提醒你？」。span 上没有 `raw_text_from` 格（当时只接了 dispatcher 那一路）⇒ `eb87b571` 补齐两条流式路径。
+    另两趟 T1 把两步排在同一轮并行（无续接，行为逐字同旧）。
+  - **RS9 = W19-b 的 A 臂**：「只要有堵车就提醒我」**0/3 直落 reminder**（3/3 先 `safety.road_condition`：2 趟问路线挂起、1 趟并行答「当前还没有正在导航的路线」+ 拒绝）；
+    「之后一旦下雨就通知我」2/3 直落 reminder `unsupported`，1/3 `info.weather` + reminder 并行 ⇒ 话术「今天深圳南山晴着…**等真下雨了我再跟你说一声**。我只能按时间或地点提醒…」
+    ——查询与拒绝拼在一起，前半句是系统兑现不了的承诺。
+- 真栈 release B `eb87b571`（`--cases RS11,RS9,RS10,CT2 --repeat 3`）：判据 **11/12**（RS11 第 1 趟 T1 落 `no_plan`「没听清」，F09 家族方差）。按 collector 逐轮：
+  - 「只要有堵车就提醒我」9 趟：`reminder.create` 单步 `unsupported` **4/9**、`reminder.create` + `safety.road_condition` 并列 **4/9**（首意图仍是 reminder；其中 2 趟路况步问路线挂起，
+    用户听到「做不到盯着…」+「您想查询哪条路线的路况？」）、`no_plan` 1/9；**0/9 只走路况**（A 臂 3/3 路况先行）。
+  - 「之后一旦下雨就通知我」9 趟（RS9 / RS11 / CT2）：**9/9** `reminder.create` 单步 `unsupported`（A 臂 2/3）。holdout「往后一有暴雨预警就马上告诉我」**3/3** `unsupported`
+    （事件短语念成「往后一有暴雨预警」，`_EVENT_STRIP_RE` 没剥「往后」，只是话术不够好看）。
+  - CT2 3/3：即时条件句仍走查询 + 提醒（T1「明天有雨…什么时候提醒你？」），订阅句拒绝——对比对两侧都稳。
+  - RS10 第 2 趟：T1 两步（reminder 拒绝 + 路况问路线挂起）→ T2 续接，span 上 **`raw_text_from=origin` 出现在下游 reminder 步与再规划的路况步上**、
+    被续接的路况步没有——三条路径的格子对齐了。
+- 生产 `turns.outcome` 读数（W05，collector 自 `485fccd1` 部署起 292 轮）：completed 148、fact_answered 47、**unsupported 18**（全部来自本批探针的 reminder 拒绝）、
+  constraint_noted 14、pending_slot 12、partial 9、candidate_missing 7、cancelled 6、pending_confirm 6、no_pending 4、clarify 3、pending_missing 2、
+  no_plan / unresolved_object / failed 各 1、空 13；**`memory_unavailable` 0**（如预期：真栈没触发过后端不可用）。
+- 留给后续：① T2 loop 在收到 `unsupported` 拒绝观察后仍会再规划（release A RS10 第 3 趟接着规划出 `reminder.cancel`，答「提醒方面也没找到」）——
+  `_refused: unsupported` 的观察应终止该诉求的再规划，归 W12 / T2 判重的下一步；② road-safety 零结果话术「为您找到 0 个…路况，推荐前三个：。」（空列表模板，
+  与本批无关）；③ 订阅句 4/9 仍并列一个路况步（首意图对、多一步），是 MiniMax-M3 方差，范例已在、不加 hint；④ reminder 事件短语剥前缀表可加「往后 / 今后 / 以后」；
+  ⑤ W19-c 干净用户仍需用户裁决开签名身份车道（改 `.env` 一行 + 网关重启）。

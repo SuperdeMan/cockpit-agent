@@ -9409,3 +9409,28 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 记给后续：续接轮里下游步拿到的 `raw_text` 是补槽句不是任务起点原话（reminder 的事件触发判据在多步计划里够不着）；持久订阅句的落域方差（road-safety / info.weather 各接走一次，reminder 的拒绝出口真栈没走到）归 W19 / 范例；`memory_unavailable` 出口
   真栈不可触发（不停别人的 PG / Redis），看生产 `turns.outcome` 分布；W19 下一步 ≥30 组语料 + 干净用户比 2 / 4 / 6 三档；共享 e2e 用户的长期记忆
   里已有探针留下的同题情景记忆，读视窗实验要知道这一点。
+
+## 2026-09-20 — 对话评审批 6（批 5 留项）：步级起点原话（W16-b）与持久订阅落域（W19-b）；两个 release 各推进一个变量
+
+- 先重证再定范围（设计文档 §8）：`Intent.raw_text` 三条执行路径一律取本轮原话——对被续接的那一步是对的，对同一份计划里还没跑的下游步是错的
+  （离线复现：`reminder.create` 槽 `title=有堵车` + raw「去宝安机场的路况」⇒「好的，有堵车。什么时候提醒你？」；raw「只要有堵车就提醒我」⇒ 诚实拒绝）；
+  订阅句被条件提醒 guide 的 keywords 检回、按「条件依赖 ⇒ 只规划查询步 + adaptive」读 ⇒ 落 info.weather / road-safety，reminder 的拒绝出口够不着
+  （不是 hint 劫持，road-safety 没有「堵车」hint）。W19-c 干净用户：签名身份车道未开、只有一条 `AUTH_TOKENS` ⇒ 要改 `.env` + 重启网关（红线，交用户裁决）。
+- W16-b `cc331315`：`Step.origin_text`（engine 在 `planner.build` 后与 `safety_origin_text` 同处盖章；`step_record` 持久化；`_restore` 旧记录用持久化的服务端文本回填、
+  给 `pending_step_id` 打进程内 `resumed`；澄清预解析步盖 `chosen_text`；loop replan 步盖任务起点；escalate mini-plan 不盖）；判据一份 `models.step_raw_text`
+  （续接那一步看本轮原话、其余步看起点原话、没有起点原话退回本轮原话）+ `step_call_context`（同一句返回 ctx 本身、否则只换 raw_text 的浅拷贝）；
+  dispatcher 云端调用 + legacy adapter / engine `_stream_single_step` / loop T2 单步流式各接一处，`_restore_slot_fidelity` 读同一判据；新 `test_step_origin_text` 16，六处变异各判红。
+  `eb87b571` 补两条流式路径的 span 格 `raw_text_from=origin`（真栈第一趟发现只有 dispatcher 那一路有格），+3 span 测试。
+- W19-b `ca2725b0`：guide v6 第四分「持久订阅」（一旦 / 每当 / 只要 / 每次 / 凡是 … 就通知我，没有要现在查的事、没有具体时间 ⇒ 只规划 reminder.create，不查、不 adaptive）；
+  keywords 只加订阅框架词（常用词「只要 / 每次 / 凡是」刻意不做）；golden 两条 + holdout；范例两句真栈原句。两条坑：知识里写 `data.condition` 会被架构守卫读成 intent 形 token
+  （`data` 变业务词 ⇒ `verify.py` 形参被判违规），改回 `` `data` 中 `condition` ``；每加一句都要回量 SKILL_BUDGET（四次才放进去，headroom 与修前同为 +1）。
+- 读数：全量（含两包的工作树）**8733 / 0 / 32**，248 s；四门禁 + smoke_edge + 架构守卫全过。两个 release 各 push（推前单独列出）→ 隔离 worktree dry-run 零阻断 → apply →
+  status ok 5/5 零 warning → verify verified（`20260920T085748Z-cc33131.json` / `20260920T090840Z-eb87b57.json`，`minimax:MiniMax-M3`，lock e2e）。
+- 真栈：release A `RS10,RS9 ×3` 6/6——**RS10 第 3 趟是 W16-b 活体**：T1 订阅句被规划成 adaptive 单步路况、问路线挂起；T2 答路线后 T2 loop 再规划出 reminder 步，
+  Agent 日志「reminder.create 拒建（事件触发不支持）：只要有堵车就提醒我」（`ctx.raw_text` 是路线答案）；RS9 = A 臂：堵车句 0/3 直落 reminder、下雨句 2/3（1/3 查询 + 拒绝拼在一起、
+  前半句「等真下雨了我再跟你说一声」是兑现不了的承诺）。release B `RS11,RS9,RS10,CT2 ×3` 11/12（1 红 = `no_plan`「没听清」方差）：堵车句 reminder 首意图 **8/9**
+  （单步 unsupported 4、并列路况步 4、no_plan 1；0/9 只走路况）、下雨句 **9/9** 单步 unsupported、holdout「往后一有暴雨预警就马上告诉我」3/3、CT2 3/3；
+  RS10 第 2 趟续接轮 span 上 `raw_text_from=origin` 出现在下游 reminder 步与再规划步、不在被续接的路况步。生产 `turns.outcome`（自 `485fccd1` 起 292 轮）：
+  unsupported 18（全部本批探针）、`memory_unavailable` 0。
+- 记给后续：T2 loop 收到 `unsupported` 观察后仍再规划（一次规划出 `reminder.cancel`、答「提醒方面也没找到」）⇒ 该诉求应就此终止，归 W12 / T2 判重下一步；
+  road-safety 零结果话术「为您找到 0 个…推荐前三个：。」是空列表模板；订阅句 4/9 并列一个路况步是 MiniMax-M3 方差、范例已在不加 hint；reminder 事件短语剥前缀表可加「往后 / 今后」。
