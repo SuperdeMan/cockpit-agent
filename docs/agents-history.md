@@ -9348,3 +9348,24 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 观察记账：verify 的问候句「你好，请只回复一句问候」一次落 `unresolved_object`——planner 对琐碎输入先标「需要澄清」再两轮交不出卡，F09-b 只改了失败时的
   措辞、没改失败本身（同一句其余取样走 salvage_no_action → chitchat）；归范例 / W19。
 - 流程：Bash 工具的多行 heredoc 含 `'''` / 反引号时又两次 EOF 解析失败，补丁一律 Write 成 .py 再跑；heredoc 追加的 LF 行让 CRLF 文件变混合，提交前整文件归一。
+
+### 同日追加 — P2 收尾（用户指示「P2 推进至完整收尾，P3 另开会话」）：两个 release，A/B 把诉求账本关回 off
+
+- W12 planner 侧诉求账本 `e3528ee7`：顶层 `goals[]` + step `covers[]`（JSON 段 + toolcall schema 可选字段，`PLANNER_GOALS` 开关；
+  `covers` 不进 required、能力身份仍只有 capability_ref，`e2e_planner_toolcall._schema_is_ref_only` 与三条封闭形状测试按此改）；
+  `engine.goal_gap` 四道核对 ⇒ 完成类 final 补「「X」这部分这次没有处理到」+ `goal.uncovered` + 终态 partial；span 加 goals_declared /
+  covers_filled / goal_gap。
+- **真栈 A/B**（同一语料 45 句 × 2，`minimax:MiniMax-M3`，A=`e9044daf` B=`e3528ee7`，探针脚本在会话 scratchpad）：通过 84/90 → 81/90、
+  意图集一致 80/90；**plan_mode toolcall 82 → 54**（salvage 14 + salvage_kept 16 + fallback 1）、B 多 3 轮 planner_failure（两句闲聊）；
+  账本 goals 只在 24/90 轮被填、covers 全填 21/90、**goal_gap 0/90** ⇒ `9ebaa5c3` 把缺省改成 off（机制、判据、开关都在）。
+  判据：schema 里多两个可选注记字段就让 MiniMax 掉出工具通道——「注记字段填多了无害」对了，「加了不影响协议」错了。
+- 礼貌尾词 `e3528ee7`：`question_shape.POLITE_TAILS` + `_polite_request`——只在**祈使框架**（动词打头 / 「把 / 将」框架）上开口子；
+  2026-08-30 的裁决「不给礼貌尾开口子」改成「口子只开在祈使框架」，SF3「慢一点开可以吗」仍是提问、仍被拦（两向钉死）。
+- `effect: write` 是否接问句闸——扫 132 条云侧写 gold：3 条会被误拦（含多分句「…会不会下雨」把整句判成问句），危险类零增益 ⇒ 不接。
+- 对比对（评审 §4）：`test/test_contrast_pairs.py` 七对，当场红两对修掉（候选算子距离维加「离我 / 离这里」；极性动词表加「换」）；
+  「记住…」判据下沉 `runtime/memory_directive.py`，纯偏好陈述排除它（「记住我喜欢清淡」不再答成「这次不吃辣」）。
+  真栈 `contrast` 组 CT1–CT5 **10/10**（CT1 首跑探针自己撞了内置模式名「静音模式」，改「读书模式」）。
+- 读数：全量 **8593 / 0 / 32**；四门禁 + smoke_edge 全过；九处变异判红；edge 895、fast_intent 69/69。两个 release 各 dry-run 零阻断 → apply →
+  status ok 5/5 → `9ebaa5c3` verify verified（`20260920T043927Z-9ebaa5c.json`）；RS6 / EC1 / CL1 复跑 6/6；CI 8/8（`e3528ee7`）。
+- 记给 P3 / W13 后续：「之后一旦下雨就通知我」被当成建提醒追问时间（零动作零声称，但没诚实说不支持持久订阅）；planner 对闲聊句在
+  schema 变动下的脆弱是 W19 模型消融的第一个单变量。

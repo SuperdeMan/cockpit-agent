@@ -341,6 +341,18 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 - collector `turns.outcome` 上线即有读数：探针与 verify 的十条新轮分别落 `constraint_noted ×2 / completed ×3 / unresolved_object ×2 / planner_failure / clarify`，旧轮为空。
 - 记给后续：verify 的问候句「你好，请只回复一句问候」有一次落 `unresolved_object`（planner 对问候先标「需要澄清」再两轮交不出卡）——这是 planner 在琐碎输入上的方差（同一句其余取样走 `toolcall_salvage_no_action` → chitchat），F09-b 只改了它失败时的措辞，没改失败本身；这类「模型对问候要澄清」归范例 / W19。
 
+#### P2 收尾（2026-09-20 下午，release `e3528ee7` → `9ebaa5c3`）
+
+| 项 | 提交 | 做了什么 | 证据 |
+|---|---|---|---|
+| W12 诉求账本（planner 侧） | `e3528ee7` | `goals[]` + `covers[]` 两条通道、`engine.goal_gap` 四道核对、`goal.uncovered` issue、终态 partial、span 三列 | `test_goal_ledger` 15；变异四处判红（漏 fail-open / 去槽值作证 / 不补话术 / 不接 covers） |
+| A/B（同一语料两个 release） | — | 45 句（30 组合 / 适应 + 15 单意图）× 2，`minimax:MiniMax-M3`，A=`e9044daf` B=`e3528ee7` | 通过 **84/90 → 81/90**（组合 56 → 53、单意图 28 = 28）；意图集一致 80/90；**plan_mode：toolcall 82 → 54**（salvage 14 + salvage_kept 16 + fallback 1）；B 多 3 轮 `planner_failure`（「陪我说说话」「随便聊点什么」「找个充电站，同时看看附近有什么吃的」）；账本 goals_declared **24/90**、covers 全填 21/90、**goal_gap 0/90** |
+| 裁决 | `9ebaa5c3` | **`PLANNER_GOALS` 缺省 off**（机制、判据、开关都在；GL1 探针挪到 `ledger` 组） | 代价实（工具通道掉 28 轮、3 轮技术失败）、收益零（0 条漏承接判出）——换模型 / 范例把遵循率拉上来再开，重跑同一语料 |
+| 礼貌尾词 | `e3528ee7` | `question_shape.POLITE_TAILS` + `_polite_request`（祈使框架才开口子） | `test_question_shape` +17、`test_question_write_guard` 改两向（SF3 句仍拦）；变异两处判红；edge 895 / fast_intent 69/69 / 四门禁全过 |
+| `effect` 进问句闸 | — | **不接**（数据：132 条云侧写 gold 里 3 条会被误拦、危险类零增益） | conventions §9.43 ⑦ |
+| 对比对 | `e3528ee7` | `test/test_contrast_pairs.py` 七对；当场红两对修掉（候选算子距离维 + 极性「换」）；`runtime/memory_directive.py` 下沉 | 探针 `contrast` 组 CT1–CT5 **10/10**（CT1 首跑探针自己撞了内置模式名「静音模式」，改「读书模式」后 2/2）；CT2 T2「之后一旦下雨就通知我」零动作零声称但被当成建提醒追问时间（记给 W13 后续：持久订阅的诚实拒绝） |
+| 发布链 | `e3528ee7` / `9ebaa5c3` | push（每次 `origin/main..HEAD` 恰一条）→ dry-run 零阻断 → apply → status ok 5/5 零 warning → `9ebaa5c3` verify `verified`（`20260920T043927Z-9ebaa5c.json`，MiniMax-M3，lock e2e）；RS6 / EC1 / CL1 复跑 **6/6**；CI 8/8（`e3528ee7`） | 全量固定口径 **8593 / 0 / 32**（`e3528ee7` 工作树）；九处变异各自判红 |
+
 ## 6. 后续入口（P3，用户另开会话推进）
 
 P2 已收尾（§5 与 §5.6 第二段）：余项里唯一保留为条件的是 W11 的数据有效期 / 结果投影（等有真实消费方再落）。

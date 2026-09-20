@@ -1047,7 +1047,8 @@ CASES = [
      "why": "创建午休模式（定义，要保存确认） vs 开启午休模式（激活，不问保存）",
      "known": "red",
      "turns": [
-         {"say": "创建一个静音模式，音量调到3",
+         # 名字不能撞车上本来就有的模式（「静音模式」会被 scene.create 诚实拒掉，探针首跑踩到）
+         {"say": "创建一个读书模式，音量调到3",
           "expect": {"need_confirm": True, "has_operation_id": True}},
          {"say": "取消", "expect": {"no_actions": True}},
          {"say": "开启午休模式", "sid": 1,
