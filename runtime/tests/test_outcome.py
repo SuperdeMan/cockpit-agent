@@ -45,3 +45,19 @@ def test_a_pending_result_is_never_counted_as_done():
 
 def test_status_may_be_a_plain_string():
     assert outcome_of_results([SimpleNamespace(status="ok", data={})]) == "completed"
+
+
+# ── 批 5：`_refused="unsupported"` ⇒ unsupported（不是 failed）──
+
+def test_all_unsupported_refusals_are_unsupported_not_failed():
+    from types import SimpleNamespace
+    ok = SimpleNamespace(value="ok")
+    unsupported = SimpleNamespace(status=ok, data={"_refused": "unsupported"})
+    generic = SimpleNamespace(status=ok, data={"_refused": True})
+    done = SimpleNamespace(status=ok, data={})
+    assert outcome_of_results([unsupported]) == "unsupported"
+    assert outcome_of_results([unsupported, unsupported]) == "unsupported"
+    assert outcome_of_results([generic]) == "failed"            # 泛拒绝仍是 failed
+    assert outcome_of_results([unsupported, generic]) == "failed"
+    assert outcome_of_results([unsupported, done]) == "partial"  # 做成一半照旧 partial
+    assert category_of("unsupported") == "unsupported"

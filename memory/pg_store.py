@@ -12,6 +12,7 @@
 - **过期**：expires_at 到期的临时偏好不召回。
 """
 from __future__ import annotations
+import asyncio
 import json
 import logging
 import math
@@ -161,6 +162,10 @@ def _rowcount(tag) -> int:
 class MemoryVectorStore:
     """语义/情景记忆存储。PG(pgvector) 优先，无 PG 纯内存（lexical）。"""
 
+    #: 退化态下再次尝试连 PG 的最小间隔（秒）。批 5 W17：此前 `init()` 只跑一次，PG 比 memory
+    #: 服务晚起一步、或中途掉一次线，之后就**永远**在用空内存直到有人重启服务。
+    REINIT_BACKOFF_S = 30.0
+
     def __init__(self, dsn: str = ""):
         self._dsn = dsn or os.getenv("POSTGRES_DSN", "")
         self._pool = None
@@ -171,10 +176,33 @@ class MemoryVectorStore:
         self._mem: dict[str, dict] = {}  # id -> item（PG 不可用时兜底）
         self._rel: dict[str, dict] = {}  # id -> 关系边（同上兜底；M2 P1）
         self._vp: dict[str, dict] = {}   # id -> 声纹模板（同上兜底；M4 P4）
+        self._retry_at = 0.0             # 下一次允许重连的时刻（退化态）
+        self._reinit_tasks: set = set()  # 在途的后台重连任务（持引用）
+        self._clock = time.time
 
     @property
     def pg_ok(self) -> bool:
         return self._pg_ok
+
+    @property
+    def degraded(self) -> bool:
+        """配置了持久后端却在用内存兜底。没配 DSN 的栈内存就是设计的后端，不算退化——
+        读侧据此分「读到了、是空的」与「后端掉了、兜底是空的」（`runtime/memory_read`）。"""
+        return bool(self._dsn) and not self._pg_ok
+
+    async def ensure(self) -> bool:
+        """退化态下按退避在后台重连；读路径不等它（读仍走内存兜底、并自报 degraded）。
+        PG 正常或没配 DSN 时是 no-op。返回当前 `pg_ok`。"""
+        if self._pg_ok or not self._dsn:
+            return self._pg_ok
+        now = self._clock()
+        if now < self._retry_at:
+            return False
+        self._retry_at = now + self.REINIT_BACKOFF_S
+        task = asyncio.ensure_future(self.init())
+        self._reinit_tasks.add(task)
+        task.add_done_callback(self._reinit_tasks.discard)
+        return False
 
     @property
     def semantic_available(self) -> bool:
@@ -187,10 +215,7 @@ class MemoryVectorStore:
             logger.info("MemoryVectorStore: no POSTGRES_DSN, in-memory fallback (lexical)")
             return False
         try:
-            import asyncpg
-            self._pool = await asyncpg.create_pool(
-                self._dsn, min_size=1, max_size=5,
-                command_timeout=10, max_inactive_connection_lifetime=300)
+            self._pool = await self._connect()
             await self._ensure_schema()
             self._pg_ok = True
             await self._probe_embedder()  # 探测 embedding 源（llm-gateway 优先）
@@ -201,6 +226,13 @@ class MemoryVectorStore:
             logger.warning("MemoryVectorStore: PG unavailable, in-memory fallback: %s", e)
             self._pg_ok = False
             return False
+
+    async def _connect(self):
+        """建连接池（单独成方法：退化态重连与测试替身都从这里换）。"""
+        import asyncpg
+        return await asyncpg.create_pool(
+            self._dsn, min_size=1, max_size=5,
+            command_timeout=10, max_inactive_connection_lifetime=300)
 
     async def _probe_embedder(self):
         """探测可用 embedding 源：llm-gateway 优先（项目推荐），本地模型次之，皆无→lexical。

@@ -1137,3 +1137,48 @@ async def test_bare_domain_word_is_not_trimmed():
     assert "没找到这条提醒" in res.speech, res.speech
     times, todos = await a.store.list_split("u1")
     assert [r.title for r in times + todos] == ["买牛奶"], "削光杆域词捞错了条目"
+
+
+# ── 批 5（评审留下的观察 / W13 后续）：事件触发不是时间也不是地点 ⇒ 诚实拒绝 ──
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw, event", [
+    ("之后一旦下雨就通知我", "下雨"),
+    ("只要有堵车就提醒我", "有堵车"),
+    ("每当油价降了就告诉我", "油价降了"),
+    ("电量低于两成就提醒我", "电量低于两成"),
+])
+async def test_event_trigger_is_refused_honestly_not_asked_for_a_time(raw, event):
+    """真栈 CT2 T2：「之后一旦下雨就通知我」被当成缺时间的提醒追问「什么时候提醒你？」——
+    用户要的是一个持续盯着世界变化的订阅，这个能力只有时间 / 地点两种触发，该说做不到。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=raw)
+    assert res.status == "ok"
+    assert "什么时候" not in res.speech
+    assert event in res.speech and "做不到" in res.speech
+    assert (res.data or {}).get("_refused") == "unsupported"
+    times, todos = await a.store.list_split("u1")
+    assert not times and not todos, "拒绝就不能建东西"
+    assert not res.missing_slots
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", [
+    "到公司提醒我拿文件",          # 地点触发：支持
+    "明天早上八点提醒我带伞",      # 时间触发：支持
+    "如果明天下雨提醒我带伞",      # 带时间的条件句：仍按时间建（既有行为）
+])
+async def test_supported_triggers_are_untouched(raw):
+    a = await _agent()
+    ctx = make_context()
+    res = await run_handle(a, "reminder.create", raw_text=raw, ctx=ctx)
+    assert (res.data or {}).get("_refused") is None
+    assert "做不到" not in res.speech
+
+
+@pytest.mark.asyncio
+async def test_a_plain_reminder_without_time_still_asks_for_the_time():
+    """对照：没有触发框架、只是没说时间 ⇒ 照旧追问（既有行为一个字不变）。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text="提醒我开会", ctx=make_context())
+    assert res.status == "need_slot" and "什么时候" in res.speech

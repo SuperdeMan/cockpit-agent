@@ -2781,3 +2781,45 @@ covers ∧ 某条诉求不在任何一步里 ∧ 槽值也不替它作证（≥2
 （「去杭州怎么充电」→ charging.plan、「出场怎么交钱」→ parking.pay、「明天早上八点提醒我带伞，再看下明天深圳会不会下雨」
 ——第二个分句的「会不会」让整句判成问句）；而闸今天已覆盖的危险类（端侧写 + require_confirm 云步）一个都不会因此多拦。
 收益零、代价 2.3% ⇒ 不接。真要护「问句被规划成云侧写」，方向是给被拦的写请求一次澄清，不是扩闸。
+
+### 9.44 读取三态 / 候选墓碑 / 会话约束读出口 / 事件触发拒绝 / 视窗 pin（评审 P3 批 5，2026-09-20）
+
+出处：[对话评审逐条落地 §7](design/2026-09-19-conversation-review-remediation.md)。共用一条纪律——
+**「读到了、是空的」与「根本没读到」不是同一个值**，以及**旧对象找不到时说找不到，不拿别的顶替**。
+
+**① 记忆 / 历史读取三态（W17）**。词表 `runtime/memory_read.py`：`found / none / unavailable / off`。memory 服务
+配置了持久后端却在用内存兜底时自报 `RecallResponse.degraded` / `GetSessionResponse.degraded`（proto 加法字段；旧服务端不发
+⇒ false ⇒ 逐字同旧），PG 掉线后按 `REINIT_BACKOFF_S` 在后台重连。云侧 `Clients.recall_read` / `get_session_read`
+与 SDK `MemoryClient.recall_read` / `Context.recall_read` 返回 `(items, state)`：RPC 失败 = `unavailable`、`degraded` 下的空
+= `unavailable`、`degraded` 下有东西 = `found`（兜底里的东西是本进程写的，是真的）。胶囊 `WorkingSet.history_state` /
+`memory_state` 随 `cloud.planning` span 出观测。消费方：engine 在 `is_memory_recall_question`（「你还记得…吗 / 我之前
+说过…吗 / 你知道我喜欢…吗」，问句形态、零领域词）∧ `memory_state=unavailable` 时走确定性出口
+`memory_unavailable`（类 `dependency_or_planner_failure`），话术 `MEMORY_UNAVAILABLE_SPEECH` 不说「没有」；执行史读出口在
+`history_state=unavailable` 时答 `HISTORY_UNAVAILABLE_SPEECH`；数据源出口本就「有账才劫持」，读不到就是没账、交回规划；
+chitchat 自己的召回读不到 + 记忆问句 ⇒ 同一句话术（`_build_messages` 一个入口盖两条路径）。读得到（哪怕空）行为逐字同旧。
+
+**② 候选墓碑（W18-a）**。`Focus.retired_candidate_sets`：被封顶顶掉 / 过期的候选组只留 `{label, place_hint, source_intent, ts}`
+（≤6 条、2 h；同键新版本「换一批」不立墓碑）。`retired_candidate_hit(text, focus)`：没有任何活着的组被点名 ∧ 点名了墓碑
+（或过期仍躺在台账里的组）⇒ engine 走 `candidate_missing` 的第二种话术「「X」那批已经不在手边了…」，绝不让
+`newest_candidate_set` 顶替作答（修前「万象城那批第二家评分多少」零方差答出最新那批的第二家）。`resolve_candidate_scope`
+本身的「零命中退回最新」契约不变——它服务的是**没点名**的句子。
+
+**③ 会话约束读出口（W18-b）**。`session_constraints.is_constraint_recall_question`（问句形态 + 「我说过 / 你记得我」框架 + 谈到某个键）
+⇒ engine 念 `constraint_recall_answer(focus.session_constraints)`「您这次说过：不吃辣、可以排队。…」，节点
+`cloud.constraint_recall`、kind `fact_answered`；说话人自己一个键都没有 ⇒ 交回规划（长期记忆里有没有是另一件事）。
+同一判据让 `constraints_in` 对回问句**不登记**（此前「你还记得我不吃辣吗」被登记成 `no_spicy=True`——一句问话改写事实）。
+**陈述里不能带请求**：`is_pure_constraint_statement` 现在排除问句形态与 `REQUEST_MARKER_RE`（帮我 / 找 / 推荐 / 附近 / 有没有…）
+——`e9044daf` 起「帮我找家不辣的餐厅」曾被当成纯陈述答「好的，这次不吃辣…」、零搜索；约束照样由 `constraints_in` 登记给 nearby。
+
+**④ 事件触发订阅（评审留下的观察）**。reminder 只有时间 / 地点两种触发；「一旦 / 只要 / 每当…就通知我」「…就提醒我」在时间、
+地点、可提醒事件三条路都走不通之后 ⇒ `_refused: "unsupported"` + 「我只能按时间或地点提醒，还做不到盯着「X」这类变化再来
+通知你」，不建、不挂起、不追问时间。终态账本新 kind `unsupported`（`outcome_of_results`：全部是 `unsupported` 声明式拒绝 ⇒
+`unsupported`；裸 `_refused: True` 仍归 failed）。判据住在 Agent（领域知识留在 Agent）。
+
+**⑤ 请求级视窗 pin（W19）**。`meta.planner_history_exchanges`（1–6 的整数字面量，其余一律缺省）→ `PlanContext.history_exchanges`
+（不进 `prefs`）→ 取回 `2N+2` 条、渲染 N 对；预算 `_CTX_BUDGET` 仍是硬上限。定位同 D2 的 `llm_provider` / `llm_model`：
+评测 / 重放 A/B 的单变量入口，不是产品旋钮；`context_stats.history_exchanges` 证明它生效。缺省不改（评审 F02：先量再定档位）。
+
+**⑥ 长会话 runner（W18）**。`scripts/probe_qa_long_sessions.py` 加 `continuity` persona（同 session ≥50 轮）与两条轮指令
+`silence_s`（沉默后重连，`--silence-scale` 缩放）/ `reconnect`（断连重连，同 session）；`names_item_from` 的轮号是 case 内的，
+相互引用的检查点必须住同一个 case。

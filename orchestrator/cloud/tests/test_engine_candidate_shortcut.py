@@ -355,3 +355,52 @@ def test_the_downlink_each_step_gets_is_its_own_domain_s_group():
     payload = json.loads(spy.last_meta["focus_candidate_set"])
     assert payload["source_intent"] == "mcd.menu"
     assert [i["name"] for i in payload["items"]] == ["巨无霸", "麦辣鸡腿堡"]
+
+
+# ── 批 5 W18-a：点名了一批已经不在手边的候选 ⇒ 说不在，不用最新那批顶替 ────────
+
+def _four_searches_in_session(session_id, engine=None):
+    """四次同能力、不同地点的检索：台账封顶 3 组，「万象城」那批被第 4 批顶掉。
+    planner 每次把地点填进 `location`（W08 的 query_signature 靠它分开）。"""
+    items = [[{"id": f"{tag}{i}", "name": f"{tag}店{i}", "rating": 4.0 + i / 10}
+              for i in (1, 2)] for tag in ("万", "科", "欢", "南")]
+    spy = _BridgeSpy(
+        unary_seq=[_Resp(speech="找到 2 家。", data={"items": it, "_candidate_label": "餐饮"})
+                   for it in items],
+        plan_seq=[json.dumps({"steps": [
+            {"id": "s1", "capability_ref": "cap_0001", "slots": {"keyword": "餐厅", "location": loc},
+             "depends_on": [], "slot_refs": {}}]})
+            for loc in ("万象城", "科技园", "欢乐海岸", "南山书城")])
+    spy.resolve = _Spy.resolve.__get__(spy)      # 回到 nearby 那份目录
+    spy.list_agents = _Spy.list_agents.__get__(spy)
+    engine = _engine(spy)
+    for loc in ("万象城", "科技园", "欢乐海岸", "南山书城"):
+        _run(engine, f"{loc}附近的餐厅", session_id)
+    return spy, engine
+
+
+def test_naming_an_evicted_batch_says_it_is_gone_instead_of_answering_from_another():
+    """修前：零命中退回最新那组 ⇒「万象城那批第二家评分多少」答的是南山书城那批的第二家，
+    零方差、名字与评分都真实存在——比编造更难发现（评审 F03 / W18）。"""
+    spy, engine = _four_searches_in_session("sess-tomb-1")
+    calls_before, llm_before = len(spy.unary_calls), spy.llm_calls
+
+    got = _finals(_run(engine, "万象城那批第二家评分多少", "sess-tomb-1"))[-1]
+
+    assert "万象城" in got["speech"] and "不在" in got["speech"]
+    assert "南店2" not in got["speech"] and "4.2" not in got["speech"]
+    assert len(spy.unary_calls) == calls_before and spy.llm_calls == llm_before
+
+
+def test_naming_a_live_batch_still_binds_to_it():
+    """对照：点的是还活着的那批 ⇒ 照旧确定性作答（W08 的 CD8 形态）。"""
+    _spy, engine = _four_searches_in_session("sess-tomb-2")
+    got = _finals(_run(engine, "科技园那批第二家评分多少", "sess-tomb-2"))[-1]["speech"]
+    assert "科店2" in got
+
+
+def test_an_unnamed_ordinal_after_eviction_still_binds_to_the_newest():
+    """对照：没点名 ⇒ 最新那批（逐字旧行为）。"""
+    _spy, engine = _four_searches_in_session("sess-tomb-3")
+    got = _finals(_run(engine, "第二家评分多少", "sess-tomb-3"))[-1]["speech"]
+    assert "南店2" in got

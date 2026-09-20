@@ -24,12 +24,12 @@
 | `UpsertProfile` | 写画像字段；`places` 按 OwnerKey 落 highly_sensitive `memory_item place.*`，**per-key patch 不整块覆盖** |
 | `DeleteMemoryItem` | L1 精确删除：OwnerKey + item id 删一条，同事务清派生关系边 |
 | `Remember` | 写语义/情景记忆（抽取管线或 Agent 显式） |
-| `Recall` | 语义召回（向量 + scope/occupant + 时序融合；`predicate_prefix` 精确优先，`min_score/min_confidence/max_age_days` 阈值） |
+| `Recall` | 语义召回（向量 + scope/occupant + 时序融合；`predicate_prefix` 精确优先，`min_score/min_confidence/max_age_days` 阈值）。**`degraded=true`**（批 5 W17）= 配置了 `POSTGRES_DSN` 却在用进程内存兜底——读侧据此把「兜底的空」与「用户的空」分开（`runtime/memory_read`）；`GetSessionResponse.degraded` 同义（`REDIS_URL`） |
 | `ResolvePersonPlace` | 人称 → 常去地一跳解析（`family` 边找实体 → `place_of ∪ works_at ∪ lives_at` 找地点）。**查不到或有歧义一律返回 not found，调用方须诚实追问**——导航到错地方比查不到更糟。⚠ **匿名占位与具名是同一个人**（2026-08-20）：`女儿--family-->女儿` 是「无名的人」的表示法，用户后来说「我女儿叫小雨」再存 `小雨--family-->女儿` ⇒ 两个 subject 指向同一个人，旧判据数成两个人判歧义、**一跳解析对该称谓永久失效**。现按「占位不算独立的人、**具名主体 ≥2 才是真歧义**」分组，地点在合并后的实体上取并集；**「地点必须唯一否则返回 not found」那道闸没动**——放宽识别不等于放宽授权 |
 | `ForgetUser` / `ExportUser` | 合规：被遗忘权（硬删）/ 数据导出 |
 
 ## 存储与 embedding
-- **PostgreSQL + pgvector**：单表 `memory_item`（`schema.sql`，`kind` 区分 semantic/episodic/procedural）。无 `POSTGRES_DSN` 降级纯内存（lexical 召回）。
+- **PostgreSQL + pgvector**：单表 `memory_item`（`schema.sql`，`kind` 区分 semantic/episodic/procedural）。无 `POSTGRES_DSN` 降级纯内存（lexical 召回）——那是设计的后端，不自报 `degraded`；**配了 DSN 却连不上**才是退化：读侧自报 `degraded`，并按 `REINIT_BACKOFF_S`（30 s）在后台重连（批 5 W17 之前 `init()` 只跑一次，PG 起晚一步就永远空库直到重启）。
 - **embedding 走 llm-gateway → 阿里云百炼 text-embedding-v4**（1024 维，`EMBED_DIM` 配置）。无 `LLM_EMBED_API_KEY` 时**诚实降级 lexical，绝不哈希伪语义**喂规划。
 - 关键文件：`pg_store.py`（向量存储）、`store.py`（门面）、`extract.py`（四分类抽取治理 + PII/坐标黑名单）、`routine.py`（routine 派生）、`server.py`（gRPC）。
 

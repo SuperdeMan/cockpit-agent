@@ -1,8 +1,8 @@
 # 落域 / 拒识 / 上下文 / 长会话评审：逐条重证与分阶段落地
 
 - 状态：批 1（P0 W01–W04 + W05-lite）、批 2（P1 W08/W09）、批 3（P1 W10 / W06 / W07，2026-09-20 用户批准后实施）已发布
-  （生产 release `88a89456`）；**批 4（P2 W11–W15，2026-09-20 用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §5、落地记录见 §5.6**；
-  P3（W16–W19）按评审原表为后续入口（§6）
+  （生产 release `88a89456`）；批 4（P2 W11–W15）方案见 §5、落地记录见 §5.6（P2 收尾 release `9ebaa5c3`）；
+  **批 5（P3 W16–W19 + 两条观察，2026-09-20 晚，用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §7、落地记录见 §7.1**
 - 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`；HMI / Android 本批零改动
 - 关联：评审原文 [`docs/reviews/2026-09-19-cockpit_conversation_review.md`](../reviews/2026-09-19-cockpit_conversation_review.md)（基线 `2f3c574d`）；
   接手 `AGENTS.md` §4；QA 交接 `docs/reviews/2026-08-30-qa-closeout-handoff.md`；上一批收口 [`2026-09-19-qa-residual-closeout.md`](2026-09-19-qa-residual-closeout.md)
@@ -358,4 +358,25 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
 P2 已收尾（§5 与 §5.6 第二段）：余项里唯一保留为条件的是 W11 的数据有效期 / 结果投影（等有真实消费方再落）。
 P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：找到 / 无结果 / 后端不可用）、W18 50/100 轮长会话与恢复
 （`scripts/probe_qa_long_sessions.py` 是现成 runner）、W19 模型与检索消融。每包仍按「先红测试、独立开关、旧 schema 读兼容」推进。
+**2026-09-20 晚起由批 5 接（§7）。**
+
+## 7. 批 5（P3）方案与裁决（2026-09-20，用户授权提交 / 推送 / 部署 / 真栈验证）
+
+先对 HEAD `7f5ff700` 重证四包的现状，再定每包做到哪：
+
+| 包 | 现状（代码事实） | 本批做什么 | 刻意不做 |
+|---|---|---|---|
+| W16 ContextCapsule | 胶囊**已经存在**：`WorkingSet` 一轮装配一次，Planner prompt、五条确定性读出口、`_apply_focus_meta` 的五条投影通道（`focus_active_route` / `focus_candidate_set` / `focus_session_constraints` / `focus_safety_alert` / `focus_destination_*`）全读它。缺的是**读取本身的结局**：`_history` / `_recall` 各自 `except Exception: return []`，「读到了、是空的」与「根本没读到」在胶囊上是同一个值 | 胶囊加两格读态 `history_state` / `memory_state`（`found / none / unavailable`），随 `context_stats` 进 `cloud.planning` span；投影通道保持一条（`_apply_focus_meta`），不新开第二条 | 不把整份历史下发给 Agent（chitchat 的 8 条是**谈话文本**读，不是事实通道——事实由确定性出口按胶囊答）；不加没有消费方的任务帧下发 |
+| W17 记忆读取三态 | memory 服务 PG 连不上 ⇒ 静默退到进程内存（`MemoryVectorStore.init` 只试一次，之后**永远**是空库）；Redis 连不上 ⇒ 会话历史也退到内存。两条都让「后端不可用」在读侧长得和「没有记忆 / 没有历史」一模一样；云侧再吞一次异常。后果：一次 PG 故障会让「你还记得我不吃辣吗」得到一句自信的「你没说过」，「刚才执行了什么」得到「没有执行记录」 | ① memory 服务：`RecallResponse.degraded` / `GetSessionResponse.degraded`（proto 加法字段）= 配置了持久后端却在用内存兜底；PG 初始化失败后**带退避重试**（不再要重启服务才恢复）。② 云侧 `Clients.recall_read` / `get_session_read` → `(items, state)`；gRPC 失败 = `unavailable`、`degraded=true` = `unavailable`、空 = `none`。③ 判据 `runtime/memory_read.py`（唯一实现）：`is_memory_recall_question`（「你还记得…吗 / 我之前说过…吗 / 你知道我喜欢…吗」，问句形态、零领域词、排除「记住…」祈使）与固定话术。④ engine：记忆问句 ∧ `memory_state=unavailable` ⇒ 确定性出口「记忆服务这会儿连不上…」，kind `memory_unavailable`（新登记，类 `dependency_or_planner_failure`）；执行史 / 数据源两条读出口在 `history_state=unavailable` 时答「我这会儿查不到执行记录」而不是「没有记录」。⑤ chitchat：`_memory_context` 三态，自己的召回失败 + 记忆问句 ⇒ 同一句诚实话术（`handle` / `handle_stream` 共用一个入口） | 不建第二套向量库；不做摘要层（历史视窗是 W19 的单变量，先量再改）；时间感知检索（`max_age_days`）没有证据先不接 |
+| W18 长会话与恢复 | runner 五个 persona 已覆盖 50–100 轮、失败后恢复、清理与 TTS；**没有**沉默 / 断连重连 / 旧批候选被顶掉后再点名 / 旧确认与已取消之后再「确认」/ 修正后的约束再问 | runner 加 `continuity` persona（同一 session 连续 ≥50 轮、每轮 `silence_s` / `reconnect` 指令）；两条由设计先揭出的真缺陷各配红测试再修：**(a) 被顶掉 / 过期的候选批被点名时不许悄悄换成另一批**（`resolve_candidate_scope` 零命中退回最新——用户点名「万象城那批」而它已不在台账 ⇒ 今天答的是科技园那批第二家、零方差）⇒ 台账保留被顶掉组的**墓碑**（label / place_hint / ts，≤6 条、2h），点名到墓碑 ⇒ `candidate_missing` 出口的第二种话术「万象城那批已经不在手边了，要我重新查一下吗」；**(b) 「我今天说过不吃辣吗」是系统持有的事实**（`focus.session_constraints`）⇒ `session_facts` 家族第四条读出口，零 LLM | 「别人的偏好不会串给我」要第二个 user，WS 探针换不了 user（§4.3 那条老账），不写成已验；跨端会话迁移按现设计各自独立会话，不在本批造迁移协议 |
+| W19 模型与检索消融 | 请求级 LLM pin 已有（`llm_provider` / `llm_model`）；上下文视窗 `PLANNER_HISTORY_EXCHANGES` 只能靠部署改 env（compose 不透传 ⇒ 生产恒 2），单变量 A/B 要两次发布 | 请求级视窗 pin `meta.planner_history_exchanges`（1–6，预算仍是硬上限）——同 D2 那条「评测 / 重放 A/B」pin 的定位；`context_stats.history_pairs_kept` 证明它生效；用一组**要跨过 ≥3 对才能接上**的省略追问语料做首个单变量读数（2 对 vs 4 对，同一 release） | 不据此改缺省（评审 F02 原话：先量再定档位）；不换主模型 |
+| 留下的观察 | 「之后一旦下雨就通知我」被 reminder 当成缺时间追问 | 事件触发（一旦 / 只要 / 每当…就…通知我）不是时间也不是地点 ⇒ reminder 自己诚实拒绝（领域知识留在 Agent）：`_refused: "unsupported"`，终态账本新 kind `unsupported`（`outcome_of_results`：全部是 `unsupported` 拒绝 ⇒ `unsupported`，不再记成 failed） | 问候句偶尔「需要澄清」：模型方差，留给 W19 后续（不为它加 hint） |
+
+### 批 5 验收
+
+- 每包先红测试再改实现；定向套件（cloud / runtime / memory / agents/_sdk / chitchat / reminder）+ 四门禁 + smoke_edge；全量固定口径一次；变异各自判红
+  （三态吞成空 / 墓碑不落 / 约束问句不接管 / 事件触发仍追问时间 / 视窗 pin 不生效）。
+- 真栈：push → dry-run → apply → status / verify → 探针：`continuity` persona（≥50 轮，含 `silence_s` 与 `reconnect`）、
+  `contrast` CT2 复跑（持久订阅诚实拒绝）、新增 `residual` RS7（约束问句读出口）/ CD9（墓碑）；W19 单变量读数单独成表。
+  `memory_unavailable` 出口在真栈上**不可触发**（不停别人的 PG / Redis），只有离线用例 + 生产 `turns.outcome` 分布作为后续读数。
 

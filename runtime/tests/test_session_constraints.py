@@ -107,3 +107,71 @@ def test_merge_never_writes_a_none_value():
     assert merge_constraints({}, {"no_spicy": None}) == {}
     assert merge_constraints({"others": {"no_spicy": True}},
                              {"others": {"no_spicy": None}}) == {}
+
+
+# ── 批 5 W18-b：「我今天说过不吃辣吗」是问，不是陈述 ────────────────────────────
+
+from runtime.session_constraints import (constraint_recall_answer,  # noqa: E402
+                                         is_constraint_recall_question,
+                                         is_pure_constraint_statement)
+
+
+@pytest.mark.parametrize("text", [
+    "你还记得我不吃辣吗",
+    "我今天说过不吃辣吗",
+    "我刚才是不是说过不想排队",
+    "我有没有跟你说过不吃辣",
+    "记得我说过可以排队吗",
+])
+def test_a_question_about_a_constraint_is_not_a_statement(text):
+    """此前「你还记得我不吃辣吗」被当成纯陈述登记成 `no_spicy=True`——一句问话改写了事实。"""
+    assert not is_pure_constraint_statement(text), text
+    assert is_constraint_recall_question(text), text
+
+
+@pytest.mark.parametrize("text", [
+    "我不吃辣",
+    "今天吃清淡一点",
+    "我不想排队，不吃辣",
+    "帮我找家不辣的餐厅",      # 请求，不是回问
+    "附近有没有不辣的馆子",    # 新检索问句：问的是店，不是自己说过什么
+    "你还记得我的车牌号吗",    # 记忆问句，但没谈口味 / 排队
+])
+def test_constraint_recall_question_is_narrow(text):
+    assert not is_constraint_recall_question(text), text
+
+
+def test_a_recall_question_registers_nothing_but_a_constrained_request_still_does():
+    """问自己说过什么 ⇒ 不登记；带约束的请求 / 新检索 ⇒ 照常登记（nearby 当轮要读它）。"""
+    assert constraints_in("你还记得我不吃辣吗") == {}
+    assert constraints_in("我今天说过不想排队吗") == {}
+    assert constraints_in("帮我找家不辣的餐厅") == {"no_spicy": True}
+    assert constraints_in("附近有没有不辣的馆子") == {"no_spicy": True}
+
+
+@pytest.mark.parametrize("text", [
+    "帮我找家不辣的餐厅",
+    "附近有没有不辣的馆子",
+    "推荐个清淡点的",
+    "找个不用排队的地方吃饭",
+    "哪里有不辣的火锅",
+])
+def test_a_request_carrying_a_constraint_is_not_a_pure_statement(text):
+    """生产缺陷（W13 落地后）：这些句子每个分句都命中「不辣」，被当成纯陈述 ⇒ 答「好的，这次不吃辣」、
+    零搜索。陈述里不能带请求。"""
+    assert not is_pure_constraint_statement(text), text
+
+
+@pytest.mark.parametrize("text", ["我不吃辣", "今天吃清淡一点", "我不吃辣，也不想排长队",
+                                  "之前不吃辣，今天想吃辣", "排不排队都行"])
+def test_pure_statements_are_still_pure(text):
+    assert is_pure_constraint_statement(text), text
+
+
+def test_constraint_recall_answer_reads_the_projection_verbatim():
+    assert constraint_recall_answer({"no_spicy": True, "no_queue": False}) == \
+        "您这次说过：不吃辣、可以排队。找地方的时候我按这个来。"
+    assert constraint_recall_answer({"no_queue": True}) == \
+        "您这次说过：不想排队。找地方的时候我按这个来。"
+    assert constraint_recall_answer({}) == ""
+    assert constraint_recall_answer({"others": {"no_spicy": True}}) == ""

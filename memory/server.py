@@ -298,7 +298,8 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
         turns = await self.store.get_session(
             request.session_id, request.last_n or 6,
             user_id=request.user_id, occupant_id=request.occupant_id, scope=scope)
-        return memory_pb2.GetSessionResponse(turns=[
+        # 批 5 W17：配置了 Redis 却在用内存兜底 ⇒ 自报退化。读侧把「兜底的空」与「用户的空」分开。
+        return memory_pb2.GetSessionResponse(degraded=self.store.session_degraded, turns=[
             memory_pb2.Turn(
                 role=t["role"], text=t["text"], ts=t["ts"],
                 user_id=t.get("user_id", ""), vehicle_id=t.get("vehicle_id", ""),
@@ -360,7 +361,7 @@ class MemoryServicer(memory_pb2_grpc.MemoryServicer):
             predicate_prefix=request.predicate_prefix, min_score=request.min_score,
             min_confidence=request.min_confidence, max_age_days=request.max_age_days,
             subject=request.subject)
-        resp = memory_pb2.RecallResponse()
+        resp = memory_pb2.RecallResponse(degraded=self.store.memory_degraded)
         for d, score in pairs:
             resp.items.append(_dict_to_item(d))
             resp.scores.append(float(score))

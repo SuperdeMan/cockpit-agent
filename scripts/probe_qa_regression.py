@@ -1041,6 +1041,69 @@ CASES = [
          {"say": "但是，这里面来。哎妈。",
           "expect": {"no_actions": True, "no_execution_claim": True}},
      ]},
+    # ── 批 5（P3，2026-09-20）──────────────────────────────────────────────
+    # W18-b：「我今天说过不吃辣吗」是系统持有的事实（焦点里的会话约束），确定性读出口、零 LLM；
+    # 修正（「今天可以排队」）之后再问，念的是修正后的投影。此前它会被当成纯陈述登记成 no_spicy=True
+    # ——一句问话改写事实。
+    {"id": "RS7", "group": "residual", "card": "余项", "issue": "W18",
+     "why": "问自己这次说过的约束 ⇒ 确定性念出焦点投影；改口后念改口后的",
+     "known": "red",
+     "turns": [
+         {"say": "我不吃辣，也不想排长队",
+          "expect": {"no_actions": True, "speech_has": ["不吃辣", "不想排队"]}},
+         {"say": "讲个笑话", "expect": {"no_actions": True}},
+         {"say": "我今天说过不吃辣吗",
+          "expect": {"no_actions": True, "speech_has": ["您这次说过", "不吃辣", "不想排队"]}},
+         {"say": "今天可以排队，等一会儿没关系", "expect": {"no_actions": True}},
+         {"say": "我刚才是不是说过不想排队",
+          "expect": {"no_actions": True, "speech_has": ["您这次说过", "可以排队"],
+                     "speech_not": ["不想排队"]}},
+     ]},
+    # 批 5 抓到的生产缺陷（`e9044daf` 起）：单分句带约束的**请求**被当成纯陈述 ⇒ 答「好的，这次
+    # 不吃辣…」、零搜索。判据：出的是列表卡，不是致谢；约束照样生效（不按川菜检索）。
+    {"id": "RS8", "group": "residual", "card": "余项", "issue": "W13 回归",
+     "why": "「帮我找家不辣的餐厅」是请求不是陈述：要出店，不能只说「记下了」",
+     "known": "red",
+     "turns": [
+         {"say": "帮我找家不辣的餐厅",
+          "expect": {"card_type": "place_list", "no_actions": True,
+                     "speech_not": ["找地方的时候我按这个来"], "honors_no_spicy": True}},
+         {"say": "附近有没有不辣的馆子", "sid": 1,
+          "expect": {"card_type": "place_list", "no_actions": True,
+                     "speech_not": ["找地方的时候我按这个来"]}},
+     ]},
+    # 评审留下的观察（真栈 CT2 T2）：事件触发不是时间也不是地点 ⇒ reminder 诚实拒绝，不追问时间。
+    # 判据不绑定落域（planner 可能把它给 chitchat）：无论谁答，都不许追问「什么时候提醒」、不许声称已订阅。
+    {"id": "RS9", "group": "residual", "card": "余项", "issue": "W13 后续",
+     "why": "「只要有堵车就提醒我」⇒ 不追问时间、不声称执行（做不到就说做不到）",
+     "known": "red",
+     "turns": [
+         {"say": "只要有堵车就提醒我",
+          "expect": {"no_actions": True, "no_execution_claim": True,
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
+         {"say": "之后一旦下雨就通知我", "sid": 1,
+          "expect": {"no_actions": True, "no_execution_claim": True,
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
+     ]},
+    # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
+    # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
+    {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
+     "why": "被顶掉的那批被点名 ⇒ 「那批已经不在手边」，不悄悄换成另一批",
+     "known": "red",
+     "turns": [
+         {"say": "万象城附近的餐厅", "expect": {"card_type": "place_list"}},
+         {"say": "科技园附近的餐厅", "expect": {"card_type": "place_list"}},
+         {"say": "欢乐海岸附近的餐厅", "expect": {"card_type": "place_list"}},
+         {"say": "南山书城附近的餐厅", "expect": {"card_type": "place_list"}},
+         {"say": "万象城那批第二家评分多少",
+          "expect": {"no_actions": True, "speech_has": ["万象城", "不在"],
+                     "not_names_item_from": 4}},
+         {"say": "科技园那批第二家评分多少",
+          "expect": {"no_actions": True, "names_item_from": {"turn": 2, "index": 2},
+                     "not_names_item_from": 4}},
+         {"say": "第二家评分多少",
+          "expect": {"no_actions": True, "names_item_from": {"turn": 4, "index": 2}}},
+     ]},
     # ── 评审 §4 最小对比对（P2 退出条件，2026-09-20）：确定性能分的那几对在 test/test_contrast_pairs.py，
     # 这里是**模型才能分**的几对 + 一对端侧执行 vs 指导。每对两条独立会话（sid），同一次取样里前后看。
     {"id": "CT1", "group": "contrast", "card": "对比对", "issue": "P2",

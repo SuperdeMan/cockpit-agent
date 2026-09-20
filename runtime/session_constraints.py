@@ -48,6 +48,7 @@ import re
 
 from runtime.clause_split import split_clauses
 from runtime.memory_directive import is_memory_directive
+from runtime.question_shape import is_non_directive_question
 
 #: 忌辣说法：**原话、记忆文本、会话约束三处共用**。首版（在 nearby 里）只认
 #: 「不…吃/沾辣」，真栈实测「不要太辣」根本不匹配——用户当轮明说的忌口连识别
@@ -86,6 +87,14 @@ SELF_INCLUDED_RE = re.compile(r"我们|我也|我和|我跟|我与|大家都?")
 SPICY_MARKS = ("川菜", "湘菜", "火锅", "串串", "麻辣烫", "冒菜", "麻辣")
 
 
+#: 请求标记（零领域名词）：句子里带它就是在**要东西**，不是在陈述偏好。前半是面向助手的祈使
+#: 标记（与 `question_shape.DIRECTIVE_MARKERS` 同一组词），后半是检索 / 推荐类动词与「哪里有 / 附近」
+#: 这类新检索形态（与云侧 `candidate_query.NEW_SEARCH_RE` 同一族——两处各回答一个问题：那条问
+#: 「是不是新检索」，这条问「是不是在要东西」；runtime 够不着 cloud，所以不 import 它）。
+REQUEST_MARKER_RE = re.compile(
+    r"帮我|帮忙|给我|替我|麻烦|找|搜|推荐|查|来一|来个|来家|安排|哪里|哪儿|哪有|有没有|附近|周边|就近")
+
+
 def _clause_facts(clause: str) -> dict:
     """一个分句里说出来的键。值 True/False 是事实，None 是撤销；没提的键不出现。"""
     out: dict = {}
@@ -119,6 +128,10 @@ def constraints_in(text: str | None) -> dict:
     t = (text or "").strip()
     if not t:
         return {}
+    # 批 5 W18-b：「你还记得我不吃辣吗」是在**问**自己说过什么，不是在说——登记它等于让一句
+    # 问话改写事实。只排除回问形态；「附近有没有不辣的馆子」是带约束的新检索，照常登记。
+    if is_constraint_recall_question(t):
+        return {}
     out: dict = {}
     for clause in split_clauses(t):
         if PAST_FRAME_RE.search(clause) and not NOW_FRAME_RE.search(clause):
@@ -148,8 +161,46 @@ def is_pure_constraint_statement(text: str | None) -> bool:
     # 不是本次口味的陈述：交给正常规划 / 记忆抽取，不在这里答成「这次…」。
     if is_memory_directive(t):
         return False
+    # 批 5（2026-09-20）：**陈述里不能带请求**。此前「帮我找家不辣的餐厅」「附近有没有不辣的馆子」
+    # 每个分句都命中了 `不辣` ⇒ 被判成纯陈述 ⇒ 确定性致谢「好的，这次不吃辣…」，一次搜索都没做
+    # ——用户要的是店，拿到的是一句「记下了」。问句形态（`question_shape` 那一份）与请求标记
+    # （`REQUEST_MARKER_RE`）任一在场就不是纯陈述，交回规划；约束照样由 `constraints_in` 登记。
+    if is_non_directive_question(t):
+        return False
     clauses = split_clauses(t)
-    return bool(clauses) and all(_clause_facts(c) for c in clauses)
+    if not clauses or any(REQUEST_MARKER_RE.search(c) for c in clauses):
+        return False
+    return all(_clause_facts(c) for c in clauses)
+
+
+#: 「我说过 / 你记得我」——回问自己**说过什么**的框架（零领域词）。与 `runtime.memory_read` 的
+#: 记忆问句判据是两个问题：那条问「在问记忆吗」，这条问「在问**这次会话里**自己说过的约束吗」
+#: ——后者是系统持有的事实（`focus.session_constraints`），答案不经任何模型。
+_RECALL_FRAME_RE = re.compile(
+    r"(?:你|您)?(?:还)?(?:记得|记不记得|有印象)(?:我|咱)"
+    r"|^(?:我|咱|咱们)(?:今天|刚才|之前|先前|上次|刚刚|前面|早前|一开始)?"
+    r"(?:有没有|是不是|是否)?(?:跟你|和你|对你|给你)?(?:说过|提过|讲过|说了|说的)")
+
+
+def is_constraint_recall_question(text: str | None) -> bool:
+    """「我今天说过不吃辣吗」「你还记得我不想排队吗」→ True：问句形态 + 回问框架 + 谈到了某个键。
+    「帮我找家不辣的餐厅」（请求）/「附近有没有不辣的馆子」（新检索）/「你还记得我的车牌号吗」
+    （没谈口味 / 排队）→ False。判据窄：编排层的短路看到的是全部流量。"""
+    t = (text or "").strip()
+    if not t or not is_non_directive_question(t):
+        return False
+    if not _RECALL_FRAME_RE.search(t):
+        return False
+    return any(_clause_facts(c) for c in split_clauses(t))
+
+
+def constraint_recall_answer(constraints: dict | None) -> str:
+    """会话约束投影 → 「您这次说过：不吃辣、可以排队。…」；说话人自己一个键都没有 ⇒ 空串
+    （调用方不劫持——「这次会话里没记到」与长期记忆里有没有是两回事，交回规划）。"""
+    words = describe_constraints(constraints)
+    if not words:
+        return ""
+    return f"您这次说过：{'、'.join(words)}。找地方的时候我按这个来。"
 
 
 #: 扁平键的人话（唯一词表）：焦点块与致谢话术共用，改词只改这里。

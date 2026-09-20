@@ -97,6 +97,27 @@ _REMINDABLE_REF_RE = re.compile(
     r"到[^，。,]{0,6}之?前|到达前|抵达前|快到(的时候|时)?")
 _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
            "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+# 批 5（评审 2026-09-19 留下的观察，真栈 CT2 T2）：**事件触发**——「之后一旦下雨就通知我」
+# 「只要有堵车就提醒我」「电量低于两成就提醒我」。这个能力只有两种触发：时间与地点；
+# 「盯着世界变化再通知」是一次持久订阅，没有这条能力。此前时间 / 地点都解析不出就追问
+# 「什么时候提醒你？」——把用户要的东西改写成另一件事。领域知识留在 Agent（CLAUDE.md §3），
+# 所以判据住这里不住编排：两种词形——条件连接词 + 事件 + 通知动词；或「…就 / 的时候 + 通知我」。
+# 只在时间、地点、可提醒事件三条路都走不通之后求值，支持的触发一个字不变。
+_EVENT_TRIGGER_RE = re.compile(
+    r"(?:一旦|只要|每当|每次|每逢|如果|要是|万一|假如|等到|凡是)"
+    r"(?P<event>[^，,。；;！？!?]{1,20}?)"
+    r"(?:就|的话|时|的时候|了)?(?:马上|立刻|立即|及时|记得)?(?:通知|提醒|告诉|叫|喊)(?:一下|一声)?我"
+    r"|(?P<event2>[^，,。；;！？!?]{2,20}?)(?:就|的时候|的话就)(?:马上|立刻|立即|及时)?(?:通知|提醒|告诉|叫)(?:一下|一声)?我")
+_EVENT_STRIP_RE = re.compile(r"^(?:之后|以后|后面|接下来|然后|等会儿?|待会儿?|回头)+")
+
+
+def _event_trigger(raw: str) -> str | None:
+    """这句话要的是「某件事发生时通知我」→ 事件短语；不是 → None。"""
+    m = _EVENT_TRIGGER_RE.search(_EVENT_STRIP_RE.sub("", (raw or "").strip()))
+    if not m:
+        return None
+    event = (m.group("event") or m.group("event2") or "").strip(" 、的就")
+    return event[:12] or "这类变化"
 
 
 def _has_time_signal(text: str) -> bool:
@@ -380,6 +401,16 @@ class ReminderAgent(BaseAgent):
         if pt.status == T_FAIL and user_time_signal:
             pt = await self._llm_time_fallback(time_text or raw)
         if pt.status != T_OK:
+            # 事件触发（见 `_EVENT_TRIGGER_RE`）：不是缺时间，是要一种没有的触发方式 ⇒ 诚实拒绝，
+            # 不建、不挂起、不追问。`_refused="unsupported"` 让终态账本记成 unsupported 而不是 failed。
+            event = _event_trigger(raw)
+            if event and not user_time_signal:
+                logger.info("reminder.create 拒建（事件触发不支持）：%s", raw[:40])
+                await self._clear_pending(ctx)
+                return AgentResult(
+                    speech=f"我只能按时间或地点提醒，还做不到盯着「{event}」这类变化再来通知你。",
+                    follow_up="可以现在查一次，或者定一个具体时间提醒。",
+                    data={"_refused": "unsupported"})
             await self._save_pending(ctx, title, update_id=pend_update_id)
             return AgentResult(status=NEED_SLOT,
                                speech=f"好的，{title}。什么时候提醒你？",

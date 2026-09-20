@@ -27,7 +27,7 @@ from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
 from . import slot_shape
-from runtime import session_facts
+from runtime import memory_read, session_facts
 from runtime.execution_claim import execution_claim, strip_execution_claims
 from runtime.clause_split import split_clauses
 from runtime.cntime import cn_int
@@ -35,13 +35,15 @@ from runtime.outcome import category_of, outcome_of_results
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import is_non_directive_question
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
-from runtime.session_constraints import (constraints_in, describe_constraints,
+from runtime.session_constraints import (constraint_recall_answer, constraints_in,
+                                         describe_constraints,
+                                         is_constraint_recall_question,
                                          is_pure_constraint_statement,
                                          merge_constraints, phrase_of)
 from .context import (ContextManager, active_task_live, build_context, candidate_downlink,
                       candidate_set_for, _is_choice_card,
                       references_a_candidate, resolve_candidate_scope,
-                      safety_alert_active,
+                      retired_candidate_hit, safety_alert_active,
                       WEATHER_CONTEXT_INTENTS, normalize_weather_city_slot,
                       _POC_DEFAULT_SCOPES)
 from . import contracts
@@ -325,12 +327,18 @@ def _context_stats_attrs(working_set) -> dict:
         return {}
     out = {}
     for key in ("ctx_chars", "history_chars", "history_pairs_kept",
-                "history_pairs_dropped"):
+                "history_pairs_dropped", "history_exchanges"):
         value = stats.get(key)
         if isinstance(value, int) and not isinstance(value, bool):
             out[key] = value
     if stats.get("history_trimmed"):
         out["history_trimmed"] = "true"
+    # 批 5 W17：两格读态（found / none / unavailable / off）——生产里「记忆到底多常读不到」的读数；
+    # 值域封闭（`runtime.memory_read.READ_STATES`），不是用户内容。
+    for key in ("history_state", "memory_state"):
+        value = stats.get(key)
+        if isinstance(value, str) and value in memory_read.READ_STATES:
+            out[key] = value
     return out
 
 
@@ -855,6 +863,26 @@ class PlannerEngine:
                        "_outcome": "candidate_missing"}
                 return
 
+            # 批 5 W18-a：点名的是一批**已经不在手边**的候选（被第 4 批顶掉 / 过期）⇒ 说它不在，
+            # 绝不让 `newest_candidate_set` 顶替作答。修前「万象城那批第二家评分多少」零方差地答出
+            # 南山书城那批的第二家——名字与评分都真实存在，比编造更难发现（评审 F03「过期后可说明
+            # 需重新查询，禁止悄悄换成另一家」）。判据两段：点名了墓碑 ∧ 这句话确实在引用候选
+            # （句首序数，或候选聚合形态）；活着的组被点名时永远优先（`retired_candidate_hit` 内判）。
+            if not named_candidates:
+                retired = retired_candidate_hit(text, working_set.focus)
+                if retired and (references_a_candidate(text)
+                                or candidate_query.is_candidate_aggregate_question(
+                                    text, (live_candidates or {}).get("items"))):
+                    name = str(retired.get("place_hint") or retired.get("label") or "")
+                    logger.info("Named a retired candidate set (%s): %s", name, text[:40])
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.candidate_missing", "system.candidate_missing")
+                    yield {"kind": "final",
+                           "speech": f"「{name}」那批已经不在手边了，我只留最近几批。"
+                                     f"要的话我重新查一下，再说「第几个」就能接上。",
+                           "actions": [], "_outcome": "candidate_missing"}
+                    return
+
             # Q2 残余：候选集上的**聚合问题**由确定性算子回答，同样不进 Planner。
             # 与上面那条**一正一反、同一个判据面**：那条是「引用了候选但一份都没有」，
             # 这条是「引用了候选而候选就在手里」。
@@ -892,6 +920,31 @@ class PlannerEngine:
                 await _emit_engine_lifecycle(
                     ctx, f"cloud.{node}", f"system.{node}")
                 yield {"kind": "final", "speech": speech, "_outcome": "fact_answered"}
+                return
+
+            # 批 5 W18-b：「我今天说过不吃辣吗」问的是**这次会话里**自己说过的约束——系统持有的
+            # 事实（`focus.session_constraints`），同一族的第四条读出口。有账才劫持：说话人自己一个
+            # 键都没有时交回规划（长期记忆里有没有是另一件事，chitchat 带召回去答）。
+            if is_constraint_recall_question(text):
+                recalled = constraint_recall_answer(
+                    getattr(working_set.focus, "session_constraints", None) or {})
+                if recalled:
+                    logger.info("Deterministic constraint recall: %s", text[:40])
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.constraint_recall", "system.constraint_recall")
+                    yield {"kind": "final", "speech": recalled, "actions": [],
+                           "_outcome": "fact_answered"}
+                    return
+
+            # 批 5 W17：在问记忆、而记忆**读不到**（RPC 失败 / 服务自报后端掉线）⇒ 说查不到，
+            # 不让 chitchat 拿着一份「兜底的空」去答「你没说过」。读得到（哪怕是空的）照旧进规划。
+            if (memory_read.is_memory_recall_question(text)
+                    and working_set.memory_state == memory_read.UNAVAILABLE):
+                logger.warning("memory question while memory is unavailable: %s", text[:40])
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.memory_unavailable", "system.memory_unavailable")
+                yield {"kind": "final", "speech": memory_read.MEMORY_UNAVAILABLE_SPEECH,
+                       "actions": [], "_outcome": "memory_unavailable"}
                 return
 
             # W13 F09-a：**纯偏好陈述**（「我不吃辣，也不想排长队」）是系统持有的事实的登记，
@@ -1471,6 +1524,11 @@ class PlannerEngine:
                 return ("pending_state", "我这会儿查不到待确认列表，稍后再问我一次。")
             return ("pending_state", session_facts.pending_answer(digest))
         history = list(getattr(working_set, "history", None) or [])
+        # 批 5 W17：账本**读不到**（历史读态 unavailable）与账本是空的分开报。
+        # 数据源出口本就「有账才劫持」——读不到就是没账，照常进 Planner（域内直答仍在）；
+        # 执行史没有第二个能答的人，读不到只能说「查不到」，绝不说「没有记录」。
+        history_unavailable = (getattr(working_set, "history_state", "")
+                               == memory_read.UNAVAILABLE)
         # **有账才劫持**：账本空说明这一轮之前没有任何外部数据卡，那就不是
         # 「系统持有的事实」，照常进 Planner——`info.stock` 那条域内直答
         # （重判 5：确定性面早就都在）比一句「我没记到」有用得多。
@@ -1479,6 +1537,8 @@ class PlannerEngine:
                 and session_facts.latest_sources(history)):
             return ("data_provenance", session_facts.provenance_answer(history))
         if session_facts.is_execution_audit_question(text):
+            if history_unavailable:
+                return ("execution_audit", memory_read.HISTORY_UNAVAILABLE_SPEECH)
             return ("execution_audit", session_facts.audit_answer(
                 history, with_time=session_facts.asks_when(text)))
         return None

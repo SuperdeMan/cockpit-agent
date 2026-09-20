@@ -52,6 +52,7 @@ CATEGORY_OF: dict[str, str] = {
     "candidate_missing": CAT_AMBIGUOUS,  # 引用了候选、一份都没有
     "fact_answered": CAT_SESSION,        # 候选聚合 / 挂起状态 / 数据源 / 执行史
     "constraint_noted": CAT_SESSION,     # 纯偏好陈述已登记（W13 F09-a）
+    "memory_unavailable": CAT_FAILURE,   # 在问记忆而记忆读不到（批 5 W17）：说查不到，不说没有
     # 规划轮出口
     "not_addressed": CAT_NOT_ADDRESSED,  # 语音源 + 模型判非受话
     "unresolved_object": CAT_AMBIGUOUS,  # 模型想澄清却没交出卡（W13 F09-b）
@@ -60,6 +61,7 @@ CATEGORY_OF: dict[str, str] = {
     "clarify": CAT_AMBIGUOUS,            # 出了澄清卡，等选择
     "cancel_unresolved": CAT_AMBIGUOUS,  # 取消话没落到任何东西上
     "no_plan": CAT_UNSUPPORTED,          # 规划两轮零步、无兜底可答
+    "unsupported": CAT_UNSUPPORTED,      # Agent 按声明拒绝：理解了、这个能力做不到（批 5，`_refused="unsupported"`）
     # 执行
     "pending_confirm": CAT_PROGRESS,
     "pending_slot": CAT_PROGRESS,
@@ -92,6 +94,13 @@ def _refused(result) -> bool:
     return isinstance(data, dict) and bool(data.get("_refused"))
 
 
+def _refused_unsupported(result) -> bool:
+    """Agent 按声明拒绝且说明理由是**能力做不到**（`_refused="unsupported"`，批 5）。
+    裸 `True` 仍是泛拒绝（安全 / 前置不满足），归 failed 那一支。"""
+    data = getattr(result, "data", None)
+    return isinstance(data, dict) and data.get("_refused") == "unsupported"
+
+
 def outcome_of_results(results) -> str:
     """执行类 final 的终态：`completed` / `partial` / `failed`。
 
@@ -118,5 +127,10 @@ def outcome_of_results(results) -> str:
         return "completed"
     if done and undone:
         return "partial"
-    # 全没做成，或全是 skipped / pending（什么都没发生也不是完成）
+    # 全没做成：若每一步都是「能力做不到」的声明式拒绝 ⇒ unsupported（评审 §5.1 单列的那一类）
+    if undone and all(_refused_unsupported(r) for r in rows
+                      if _status_name(r) in _FAILED_STATUSES or _refused(r)
+                      or _status_name(r) in ("need_confirm", "need_slot")):
+        return "unsupported"
+    # 其余：全 FAILED，或全是 skipped / pending（什么都没发生也不是完成）
     return "failed"

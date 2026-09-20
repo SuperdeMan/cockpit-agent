@@ -21,6 +21,7 @@ from agents._sdk.grounding import shanghai_now
 # Q6 审计出口 2026-08-28 从 `.audit` 迁入 `runtime/session_facts`（C4）：
 # 编排层也要用同一条判据，而云侧镜像不 COPY agents/——在两边各写一份
 # 正是 B1 那个 bug 的成因。这里只剩兜底位的消费，判据与话术都在那一份里。
+from runtime import memory_read
 from runtime.session_facts import (
     asks_when, audit_answer, is_execution_audit_question,
 )
@@ -244,31 +245,37 @@ class ChitchatAgent(BaseAgent):
 
     async def _memory_context(self, intent, ctx):
         """召回与本问相关的个人信息/偏好（如宠物名、口味），注入 system 供自然作答。
-        返回 `(注入块, 召回到的记忆)`；失败/无 user_id 返回 `("", [])`，不阻塞。"""
+        返回 `(注入块, 召回到的记忆, 读态)`；无 user_id 返回 `("", [], "off")`，不阻塞。
+
+        批 5 W17：读态（`runtime.memory_read`）分「读到了 / 空 / 读不到」——此前失败被吞成空，
+        一次 memory 故障就让「你还记得我不吃辣吗」得到一句自信的「你没说过」。"""
         query = intent.raw_text or intent.slots.get("text", "")
         if not query:
-            return "", []
-        try:
-            # 含 episodic：个人事实（宠物/家人名）抽取时可能被归为 semantic 或 episodic（叙事式输入常落
-            # episodic），只召 semantic 会漏「我的猫叫什么」这类问题。语义排序 + top_k 保证不相关片段不被注入。
-            mems = await ctx.recall(query, kinds=["semantic", "episodic"], top_k=4, min_confidence=0.5)
-        except Exception:
-            return "", []
+            return "", [], memory_read.OFF
+        # 含 episodic：个人事实（宠物/家人名）抽取时可能被归为 semantic 或 episodic（叙事式输入常落
+        # episodic），只召 semantic 会漏「我的猫叫什么」这类问题。语义排序 + top_k 保证不相关片段不被注入。
+        mems, state = await ctx.recall_read(
+            query, kinds=["semantic", "episodic"], top_k=4, min_confidence=0.5)
         lines = [f"- {m.get('text', '')}" for m in mems if m.get("text")]
         if not lines:
-            return "", []
+            return "", [], state
         # ⚠ **原来这里写着「勿暴露这是系统记忆」**（Q5 残余，2026-08-16 删）。
         # 那句话是 XS3 三次取样一次都不说出处的**直接成因**——不是模型忘了，
         # 是系统让它别说。而卡的要求正相反：真记忆没有出处，在用户眼里就是幻觉。
         # 现在出处由 `mem_source.with_provenance` **确定性追加**（要的是机制不是
         # 提示词），这里只需不再反向指示；也**不改成正向指示**——那仍是求 LLM 说。
         return ("已知用户信息（仅在与问题相关时自然引用，勿生硬复述）：\n"
-                + "\n".join(lines), list(mems))
+                + "\n".join(lines), list(mems), state)
 
     async def _build_messages(self, intent, ctx, meta):
-        """返回 `(msgs, 本轮召回到的记忆)`——后者供确定性出处披露判定。"""
-        sys = _system(meta, intent.raw_text or intent.slots.get("text", ""))
-        mem_ctx, mems = await self._memory_context(intent, ctx)
+        """返回 `(msgs, 本轮召回到的记忆)`——后者供确定性出处披露判定。
+        **记忆读不到 + 在问记忆 ⇒ 返回 `(None, None)`**：调用方走诚实话术，不让模型拿着一份
+        「兜底的空」去答「你没说过」（两条路径都经这里，一个入口）。"""
+        text = intent.raw_text or intent.slots.get("text", "")
+        sys = _system(meta, text)
+        mem_ctx, mems, state = await self._memory_context(intent, ctx)
+        if state == memory_read.UNAVAILABLE and memory_read.is_memory_recall_question(text):
+            return None, None
         if mem_ctx:
             sys = f"{sys}\n\n{mem_ctx}"
         msgs = [{"role": "system", "content": sys}]
@@ -329,6 +336,8 @@ class ChitchatAgent(BaseAgent):
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs, mems = await self._build_messages(intent, ctx, meta)
+        if msgs is None:            # W17：记忆读不到、又在问记忆 ⇒ 诚实说查不到
+            return AgentResult(speech=memory_read.MEMORY_UNAVAILABLE_SPEECH)
         reply = await self.llm.complete(msgs, model=model, temperature=0.8, max_tokens=max_tokens)
         if not reply.strip():  # MiMo 偶发空响应：兜底重试一次
             reply = await self.llm.complete(msgs, model=model, temperature=0.9, max_tokens=max_tokens)
@@ -357,6 +366,10 @@ class ChitchatAgent(BaseAgent):
         max_tokens, _ = _length(meta)
         model = _resolve_model(meta, intent.slots)
         msgs, mems = await self._build_messages(intent, ctx, meta)
+        if msgs is None:            # W17：同 handle，一个入口
+            yield ("speech", memory_read.MEMORY_UNAVAILABLE_SPEECH)
+            yield ("final", AgentResult(speech=memory_read.MEMORY_UNAVAILABLE_SPEECH))
+            return
         buf = ""
         held = ""
         mode = "probe"          # probe=判定中 | stream=正常放流 | silent=标记确认，静默缓冲

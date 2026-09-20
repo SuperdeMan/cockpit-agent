@@ -842,3 +842,72 @@ def test_place_hint_falls_back_to_the_keyword_slot_when_the_planner_misfiles_the
     from orchestrator.cloud.context import _place_hint
     assert _place_hint({"category": "餐厅", "keyword": "万象城"}) == "万象城"
     assert _place_hint({"category": "餐厅", "location": "科技园", "keyword": "火锅"}) == "科技园"
+
+
+# ── 批 5 W18-a：被顶掉 / 过期的那批被点名时，不许悄悄换成另一批 ────────────────
+
+from orchestrator.cloud.context import (  # noqa: E402
+    _RETIRED_SETS_MAX, retired_candidate_hit)
+
+
+def _search_turn(location: str, names: list[str]):
+    """同能力、不同地点的一次 nearby 检索（W08：query_signature 靠 slots 分开）。"""
+    plan = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search",
+                            slots={"keyword": "餐厅", "location": location})])
+    results = [StepResult(step_id="s1", status=StepStatus.OK, source_intent="nearby.search",
+                          data={"items": [{"name": n} for n in names],
+                                "_candidate_label": "餐饮"})]
+    return plan, results
+
+
+def test_an_evicted_set_leaves_a_tombstone_the_user_can_still_name():
+    """台账封顶 3 组：第 4 批进来时「万象城那批」被顶掉——它的名字要留下（墓碑），
+    点名它时才知道「那批已经不在」而不是把最新那批当它答。"""
+    focus = _drive(_mgr(), [
+        _search_turn("万象城", ["A1", "A2"]),
+        _search_turn("科技园", ["B1", "B2"]),
+        _search_turn("欢乐海岸", ["C1", "C2"]),
+        _search_turn("南山书城", ["D1", "D2"]),
+    ])
+    assert len(focus.candidate_sets) == _CANDIDATE_SETS_MAX
+    assert [s["place_hint"] for s in focus.retired_candidate_sets] == ["万象城"]
+    hit = retired_candidate_hit("万象城那批第二家评分多少", focus)
+    assert hit is not None and hit["place_hint"] == "万象城"
+    # 点的是还活着的那批 ⇒ 不是墓碑命中
+    assert retired_candidate_hit("科技园那批第二家评分多少", focus) is None
+    # 没点名 ⇒ 不是墓碑命中（照旧绑最新那批）
+    assert retired_candidate_hit("第二家评分多少", focus) is None
+
+
+def test_a_same_query_revision_is_not_a_tombstone():
+    """「换一批」是同键新版本（revision+1），旧版本被替换不是被顶掉——点名它仍指向新版本。"""
+    focus = _drive(_mgr(), [
+        _search_turn("万象城", ["A1", "A2"]),
+        _search_turn("万象城", ["A3", "A4"]),
+    ])
+    assert focus.retired_candidate_sets == []
+    assert focus.candidate_sets[-1]["revision"] == 2
+
+
+def test_an_expired_set_still_in_the_ledger_counts_as_retired():
+    """限龄先于点名（`test_an_expired_group_cannot_be_named`）——但过期那组被点名时，
+    也得说「不在了」，不能让最新那组顶替它作答。"""
+    stale = _labelled("mcd.menu", "麦当劳", [{"name": "巨无霸"}],
+                      ts_offset=-_CANDIDATE_TTL_S - 1)
+    _, luckin = _merchant_sets()
+    focus = Focus(candidate_sets=[stale, luckin])
+    hit = retired_candidate_hit("麦当劳的第二个多少钱", focus)
+    assert hit is not None and hit["label"] == "麦当劳"
+    assert retired_candidate_hit("瑞幸的第二个多少钱", focus) is None
+
+
+def test_tombstones_are_capped_and_aged():
+    manager = _mgr()
+    turns = [_search_turn(f"地点{i:02d}号", [f"n{i}"]) for i in range(_RETIRED_SETS_MAX + 6)]
+    focus = _drive(manager, turns)
+    assert len(focus.retired_candidate_sets) == _RETIRED_SETS_MAX
+    # 最新被顶掉的在最后
+    assert focus.retired_candidate_sets[-1]["place_hint"] == f"地点{_RETIRED_SETS_MAX + 2:02d}号"
+    old = dict(focus.retired_candidate_sets[0], ts=time.time() - 8000)
+    aged = Focus(retired_candidate_sets=[old], candidate_sets=list(focus.candidate_sets))
+    assert retired_candidate_hit(f"{old['place_hint']}那批第一个", aged) is None

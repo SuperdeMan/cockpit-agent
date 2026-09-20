@@ -18,8 +18,11 @@
   （一个补槽问题不许劫持整轮）。两档都**先把本层已算出的结果全部交出去再判**
   ——同层是一次 gather 跑完的，丢掉不是「没执行」是「执行了但不报」
 - `dispatch.py` — cloud Agent / edge fast / tool 统一调度，执行层权限与审计
-- `context.py` — working/core 上下文装配 + 焦点态 + 候选集一等对象 + 按 manifest
-  `context_scopes` 最小化下发
+- `context.py` — working/core 上下文装配 + 焦点态 + 候选集一等对象（含被顶掉批的墓碑，批 5 W18）+ 按 manifest
+  `context_scopes` 最小化下发；`WorkingSet` 就是一轮的上下文胶囊（评审 W16）——Planner prompt、
+  确定性读出口、`_apply_focus_meta` 的五条投影通道都读它；它带两格读态 `history_state` /
+  `memory_state`（`runtime/memory_read`：found / none / unavailable / off）与本轮视窗 `history_exchanges`
+  （请求级 pin `meta.planner_history_exchanges`，W19 单变量入口）
 - `route_hints.py` — 确定性路由兜底的通用引擎（领域知识在各 Agent 的 manifest；
   `scope: clause` 支持分句级锚定，契约 `docs/conventions.md` §9.36）
 - `candidate_query.py` / `slot_shape.py` / `actionability.py` / `retry_policy.py` /

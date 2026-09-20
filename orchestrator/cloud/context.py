@@ -25,6 +25,7 @@ import uuid
 from dataclasses import dataclass, field, fields, asdict
 
 from .models import PlanContext, step_fingerprint
+from runtime import memory_read
 from runtime.clock import hhmm as clock_hhmm
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
                                    alert_resolved, alert_signal, driver_state)
@@ -313,6 +314,13 @@ class Focus:
     # 同样的理由：`safety_alert` 的粘性接力条件在合并里体现为「本轮为空 ⇒ 取旧」，
     # 而「解除」恰恰让本轮为空——不立旗，上一轮那条 critical 会被原样搬回来。
     safety_alert_cleared: bool = False
+    # 批 5 W18-a（2026-09-20）：被顶掉 / 过期的候选批的**墓碑** `[{label, place_hint, source_intent, ts}]`。
+    # 台账封顶 3 组、限龄 15 分钟——「万象城那批」被第 4 批顶掉之后，用户再点名它时
+    # `resolve_candidate_scope` 零命中会退回最新那组，于是「万象城那批第二家评分多少」答的是
+    # 南山书城那批的第二家、零方差（评审 F03「过期后可说明需重新查询，禁止悄悄换成另一家」）。
+    # 墓碑只留名字（不留 items）：它的用途只有一个——认出「你说的那批已经不在手边了」。
+    # 封顶 `_RETIRED_SETS_MAX`、限龄 `_RETIRED_TTL_S`；同键新版本（「换一批」）不是被顶掉，不立墓碑。
+    retired_candidate_sets: list[dict] = field(default_factory=list)
     # W07（2026-09-20）活动任务帧：最近一个**任务性**步骤（非 response_only）执行后的账
     # `{task_id, intent, agent_id, slots, revision, outcome, ts, goal}`。它是「改口精确修改对象」
     # 的对象：`acts` 含 correct 且同 intent ⇒ 缺槽从这里继承、revision+1、task_id 不变。
@@ -332,6 +340,7 @@ class Focus:
                     or self.last_intent
                     or self.last_choice_purpose or self.last_choices
                     or self.candidate_sets
+                    or self.retired_candidate_sets
                     or self.last_places or self.active_route or self.safety_alert
                     or self.session_constraints
                     or self.active_task
@@ -350,6 +359,15 @@ class WorkingSet:
     registry_agents: list = field(default_factory=list)
     history: list[dict] = field(default_factory=list)  # [{role, text, ts}]
     memories: list[dict] = field(default_factory=list) # [{text, scope, predicate, provenance, confidence}]
+    # 批 5 W16 / W17：这两份**读取本身的结局**（`runtime.memory_read`：found / none / unavailable / off）。
+    # 此前 `_history` / `_recall` 各自 `except Exception: return []`——「读到了、是空的」与「根本没读到」
+    # 在胶囊上是同一个值，一次 PG / Redis 故障就会让读出口说出一句自信的「没有记录」。
+    # 消费方：确定性读出口（执行史 / 数据源 / 记忆问句）按它选「查不到」而不是「没有」；
+    # 随 `context_stats` 进 span，生产里「记忆到底多常读不到」从此有数。
+    history_state: str = memory_read.NONE
+    memory_state: str = memory_read.NONE
+    # 批 5 W19：本轮历史视窗（对数）。0 = 部署缺省 `_HISTORY_EXCHANGES`；请求级 pin 落在这里。
+    history_exchanges: int = 0
     focus: "Focus | None" = None                       # 结构化焦点态（指代消解）
     # 落域可观测（数据飞轮 P0）：render_catalog 回填 {chars_full, chars_final, dropped}
     catalog_stats: dict = field(default_factory=dict)
@@ -373,14 +391,18 @@ class WorkingSet:
                                     drop_sticky_places=self.suppress_sticky_places)
         mem_block = _render_memory(self.memories)
         budget_left = max(0, _CTX_BUDGET - len(focus_block) - len(mem_block))
+        exchanges = int(self.history_exchanges or 0) or _HISTORY_EXCHANGES
         hist_block, hist_stats = _render_history_with_stats(
-            self.history, budget=budget_left)
+            self.history, budget=budget_left, exchanges=exchanges)
         out = focus_block + mem_block + hist_block
         self.context_stats = {
             "ctx_chars": len(out),
             "focus_chars": len(focus_block),
             "memory_chars": len(mem_block),
             "history_chars": len(hist_block),
+            "history_state": self.history_state,
+            "memory_state": self.memory_state,
+            "history_exchanges": exchanges,
             **hist_stats,
         }
         return out
@@ -589,12 +611,15 @@ def _fit_last_exchange(msgs: list[dict], budget: int) -> tuple[str, bool]:
 
 
 def _render_history_with_stats(history: list[dict] | None,
-                               budget: int = _CTX_BUDGET) -> tuple[str, dict]:
+                               budget: int = _CTX_BUDGET,
+                               exchanges: int | None = None) -> tuple[str, dict]:
     """最近对话 → prompt 片段 + 裁剪统计（W02）。
 
-    视窗按完整 exchange 计（`_HISTORY_EXCHANGES` 对）；**预算是硬约束**：整对从最旧丢起，
-    最后一对按句收缩，绝不出现「预算 0 仍渲染 2019 字符」。格式逐字沿用旧 `_format_history`。
+    视窗按完整 exchange 计（缺省 `_HISTORY_EXCHANGES` 对；W19 请求级 pin 经 `exchanges` 传入）；
+    **预算是硬约束**：整对从最旧丢起，最后一对按句收缩，绝不出现「预算 0 仍渲染 2019 字符」。
+    格式逐字沿用旧 `_format_history`。
     """
+    exchanges = int(exchanges or 0) or _HISTORY_EXCHANGES
     pairs = _pair_exchanges(history)
     stats = {"history_pairs_kept": 0, "history_pairs_dropped": len(pairs),
              "history_trimmed": False}
@@ -608,7 +633,7 @@ def _render_history_with_stats(history: list[dict] | None,
         stats["history_trimmed"] = trimmed
         return block, stats
 
-    window = pairs[-max(1, _HISTORY_EXCHANGES):]
+    window = pairs[-max(1, exchanges):]
     while window:
         block = _history_block(window)
         if not block:
@@ -1142,6 +1167,52 @@ def candidate_merge_key(entry: dict) -> tuple:
     """
     return (entry.get("source_intent"), entry.get("purpose"),
             bool(entry.get("is_fallback")), str(entry.get("query_signature") or ""))
+
+
+#: 墓碑（W18-a）：留几条、留多久。2h 与安全告警 / 会话约束同一档——「刚才那批」在一次出行里都还叫得出名。
+_RETIRED_SETS_MAX = 6
+_RETIRED_TTL_S = 7200.0
+
+
+def _tombstone(entry: dict, now: float) -> dict | None:
+    """被顶掉 / 过期的候选组 → 墓碑（只留名字）。叫不出名的组（无 label 无地点提示）不立——
+    用户也点不了名。"""
+    label = str((entry or {}).get("label") or "").strip()
+    hint = str((entry or {}).get("place_hint") or "").strip()
+    if len(label) < _CANDIDATE_LABEL_MIN and len(hint) < _CANDIDATE_LABEL_MIN:
+        return None
+    return {"label": label, "place_hint": hint,
+            "source_intent": str(entry.get("source_intent") or ""), "ts": now}
+
+
+def _live_tombstones(stones: list, now: float | None = None) -> list[dict]:
+    now = time.time() if now is None else now
+    return [t for t in stones
+            if isinstance(t, dict) and 0 < float(t.get("ts") or 0) > now - _RETIRED_TTL_S]
+
+
+def retired_candidate_hit(text: str, focus) -> dict | None:
+    """这句话点名的是一批**已经不在手边**的候选吗 → 那条墓碑（或过期仍躺在台账里的那组），
+    否则 None。
+
+    只在**没有任何活着的组被点名**时才算：活着的同名组永远优先（「换一批」的新版本就是它）。
+    判据复用 `label_hit`——名字通道只有一份。消费方（engine）据此走 `candidate_missing` 的
+    第二种话术，而不是让 `newest_candidate_set` 顶替作答。
+    """
+    text = str(text or "")
+    sets = list(getattr(focus, "candidate_sets", None) or [])
+    live = _live_candidate_sets(sets)
+    if any(label_hit(text, s) is not None for s in live):
+        return None
+    now = time.time()
+    expired_in_place = [s for s in sets if s not in live and isinstance(s, dict)]
+    stones = _live_tombstones(list(getattr(focus, "retired_candidate_sets", None) or []), now)
+    for entry in reversed(expired_in_place + stones):
+        if label_hit(text, entry) is not None:
+            stone = _tombstone(entry, now) or {}
+            stone["ts"] = float(entry.get("ts") or now)
+            return stone
+    return None
 
 
 def label_hit(text: str, entry: dict) -> int | None:
@@ -1766,16 +1837,18 @@ class ContextManager:
         async def _none():
             return None
 
-        async def _empty():
-            return []
+        async def _off():
+            return [], memory_read.OFF
 
-        history, memories, focus, (catalog, registry_agents) = await asyncio.gather(
-            self._history(ctx) if mem_on else _empty(),
-            self._recall(text, ctx) if mem_on else _empty(),
-            self._load_focus(ctx.session_id, ctx.user_id)
-            if (mem_on and self.session) else _none(),
-            self._catalog_with_registry(text),
-        )
+        exchanges = _pinned_history_exchanges(ctx)
+        (history, history_state), (memories, memory_state), focus, (catalog, registry_agents) = \
+            await asyncio.gather(
+                self._history(ctx, exchanges=exchanges) if mem_on else _off(),
+                self._recall(text, ctx) if mem_on else _off(),
+                self._load_focus(ctx.session_id, ctx.user_id)
+                if (mem_on and self.session) else _none(),
+                self._catalog_with_registry(text),
+            )
         # Q7-EL1/OR2：用**最近执行事实**刷新车控焦点（跨轮取会话轮次的
         # `actions`，同轮取端侧刚执行掉的那批）。端侧本地快路径根本不写云侧焦点，
         # 「打开天窗」→「不用了，关掉」此前只能让 planner 猜对象。
@@ -1787,7 +1860,9 @@ class ContextManager:
             previous_local_actions=getattr(
                 ctx, "previous_local_actions", None))
         return WorkingSet(catalog=catalog, registry_agents=registry_agents,
-                          history=history, memories=memories, focus=focus)
+                          history=history, memories=memories, focus=focus,
+                          history_state=history_state, memory_state=memory_state,
+                          history_exchanges=exchanges)
 
     async def _load_focus(self, session_id: str, user_id: str):
         """载入会话焦点。失败/无则 None，不阻塞规划。"""
@@ -1827,14 +1902,20 @@ class ContextManager:
                 # 其余几维行为逐字不变：它们的接力分支都带 `not focus.X` 前置，
                 # 只要那个前置成立，原条件本来也会载入。代价是极少数轮多一次 Redis 读。
                 previous = await self._load_focus(session_id, user_id)
+                # W18-a：墓碑接力（ts 不续期），本轮被顶掉 / 过期的组在下面追加
+                retired = list(getattr(previous, "retired_candidate_sets", None) or []) \
+                    if previous is not None else []
                 # Q2 候选集台账：**旧组保留、新组追加**，按 ts 限龄、封顶 N 组。
                 # 这里刻意**不是**「第四个字段也加一条粘性接力」——那是卡里点名
                 # 不要做的第三次打补丁。三格粘性（last_places/active_route/
                 # safety_alert）各自是被真栈烧出来的补丁；候选集换的是**载体**：
                 # 一张有来源、有版本、有时效的台账，新旧共存而不是互相覆盖。
                 if previous is not None:
-                    merged = _live_candidate_sets(
-                        list(getattr(previous, "candidate_sets", None) or []))
+                    prior_sets = list(getattr(previous, "candidate_sets", None) or [])
+                    merged = _live_candidate_sets(prior_sets)
+                    # 过期的那些从台账里掉出去了——它们的名字进墓碑（W18-a）
+                    retired += [t for t in (_tombstone(s, time.time())
+                                            for s in prior_sets if s not in merged) if t]
                     fresh = focus.candidate_sets
                     # 合并键带 `is_fallback`：**兜底那份与点名那份不是同一件事的两个
                     # 版本，是两种东西**。首版键只有 (intent, purpose)，于是
@@ -1854,8 +1935,12 @@ class ContextManager:
                     focus.candidate_sets = [
                         s for s in merged if _key(s) not in fresh_keys
                     ] + fresh
-                focus.candidate_sets = _live_candidate_sets(
-                    focus.candidate_sets)[-_CANDIDATE_SETS_MAX:]
+                kept = _live_candidate_sets(focus.candidate_sets)
+                # 封顶时被顶掉的那几组也进墓碑（W18-a）：它们是被**新批**挤出去的，不是过期
+                evicted = kept[:-_CANDIDATE_SETS_MAX] if len(kept) > _CANDIDATE_SETS_MAX else []
+                retired += [t for t in (_tombstone(s, time.time()) for s in evicted) if t]
+                focus.candidate_sets = kept[-_CANDIDATE_SETS_MAX:]
+                focus.retired_candidate_sets = _live_tombstones(retired)[-_RETIRED_SETS_MAX:]
                 _derive_choice_view(focus)
                 if previous is not None and not focus.last_places \
                         and previous.last_places:
@@ -1997,52 +2082,94 @@ class ContextManager:
                     len(picked), len(full), self.top_k)
         return list(picked.values()), full
 
-    async def _history(self, ctx) -> list[dict]:
-        """取最近对话历史（供指代消解）。失败返回空，不阻塞规划。
+    async def _history(self, ctx, *, exchanges: int = 0) -> tuple[list[dict], str]:
+        """取最近对话历史（供指代消解）→ `(turns, 读态)`。失败返回空 + `unavailable`，不阻塞规划。
+        `exchanges` 非零（W19 pin）时取回条数按它算（2N+2），否则用构造时的 `history_n`。
 
         M-B：按 OwnerKey 取，默认 OWNER_ONLY。车里只有一个会话而说话人会换——
         不按 owner 过滤时，上一位的称呼会比 system 提示更近，把当前这位的答案盖掉
         （P4 真机第四批实测：先聊过阿灵再问「我是谁」会答成阿灵）。
+
+        批 5 W17：生产客户端有 `get_session_read`（服务端自报 degraded 也算读不到）；
+        旧形态 / 测试替身只有 `get_session`，读态由结果与异常推断。
         """
+        owner = dict(user_id=getattr(ctx, "user_id", "") or "",
+                     occupant_id=getattr(ctx, "occupant_id", "") or "primary")
+        last_n = (2 * max(1, int(exchanges)) + 2) if exchanges else self.history_n
+        fn = getattr(self.clients, "get_session_read", None)
+        if fn:
+            try:
+                turns, state = await fn(ctx.session_id, last_n, **owner)
+                return list(turns or []), state
+            except Exception as e:
+                logger.debug("get_session_read failed: %s", e)
+                return [], memory_read.UNAVAILABLE
         fn = getattr(self.clients, "get_session", None)
         if not fn:
-            return []
+            return [], memory_read.OFF
         try:
-            return await _call_with_owner(
-                fn, ctx.session_id, self.history_n,
-                user_id=getattr(ctx, "user_id", "") or "",
-                occupant_id=getattr(ctx, "occupant_id", "") or "primary")
+            turns = list(await _call_with_owner(fn, ctx.session_id, last_n, **owner) or [])
+            return turns, memory_read.read_state(turns)
         except Exception as e:
             logger.debug("get_session failed: %s", e)
-            return []
+            return [], memory_read.UNAVAILABLE
 
     # G6（EVA 二轮）：历史指代词 → 放开情景记忆召回。episodic 此前被 kinds=["semantic"]
     # 写死永远进不了规划——「带我去上次看夜景那个地方」只能在闲聊里被复述。
     # 只在话里出现历史指代时才放开：episodic 噪声大，无差别注入会挤掉偏好（预算 400 字符）。
     _EPISODIC_REF_RE = re.compile(r"上次|上回|那次|上一次|之前去过?的?|前几天去")
 
-    async def _recall(self, text: str, ctx) -> list[dict]:
-        """召回与本轮相关的长期偏好（供 planner）。只取现行高置信语义偏好，
-        阈值过滤避免污染；失败/无能力返回空，不阻塞规划。"""
-        fn = getattr(self.clients, "recall", None)
+    async def _recall(self, text: str, ctx) -> tuple[list[dict], str]:
+        """召回与本轮相关的长期偏好（供 planner）→ `(items, 读态)`。只取现行高置信语义偏好，
+        阈值过滤避免污染；失败返回空 + `unavailable`、无能力 / 无 user 返回空 + `off`，不阻塞规划。"""
+        read_fn = getattr(self.clients, "recall_read", None)
+        fn = read_fn or getattr(self.clients, "recall", None)
         if not fn or not getattr(ctx, "user_id", ""):
-            return []
+            return [], memory_read.OFF
+        kinds = ["semantic"]
+        if self._EPISODIC_REF_RE.search(text or ""):
+            kinds = ["semantic", "episodic"]
+        # M4 P4：按乘员召回。memory 侧 recall 本来就是 occupant 精确过滤，
+        # 传进去隔离即自动成立（缺的从来不是记忆能力，是这个参数）。
+        kwargs = dict(kinds=kinds, occupant_id=getattr(ctx, "occupant_id", "") or "primary",
+                      top_k=3, min_confidence=0.5)
         try:
-            kinds = ["semantic"]
-            if self._EPISODIC_REF_RE.search(text or ""):
-                kinds = ["semantic", "episodic"]
-            # M4 P4：按乘员召回。memory 侧 recall 本来就是 occupant 精确过滤，
-            # 传进去隔离即自动成立（缺的从来不是记忆能力，是这个参数）。
-            mems = await fn(ctx.user_id, text, kinds=kinds,
-                            occupant_id=getattr(ctx, "occupant_id", "") or "primary",
-                            top_k=3, min_confidence=0.5)
-            if mems:
-                logger.info("memory recall for %s: %d items %s", ctx.user_id,
-                            len(mems), [m.get("predicate") for m in mems])
-            return mems
+            if read_fn:
+                mems, state = await read_fn(ctx.user_id, text, **kwargs)
+                mems = list(mems or [])
+            else:
+                mems = list(await fn(ctx.user_id, text, **kwargs) or [])
+                state = memory_read.read_state(mems)
         except Exception as e:
             logger.debug("recall failed: %s", e)
-            return []
+            return [], memory_read.UNAVAILABLE
+        if mems:
+            logger.info("memory recall for %s: %d items %s", ctx.user_id,
+                        len(mems), [m.get("predicate") for m in mems])
+        return mems, state
+
+
+#: W19 请求级视窗 pin 的值域：1–6 对。上限 6 = 14 条取回（`2N+2`），再大也被 1400 字符预算裁掉。
+_HISTORY_PIN_MAX = 6
+
+
+def _pinned_history_exchanges(ctx) -> int:
+    """`PlanContext.history_exchanges`（已在 `build_context` 里夹紧）→ 本轮视窗对数；0 = 缺省。"""
+    try:
+        value = int(getattr(ctx, "history_exchanges", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+    return value if 1 <= value <= _HISTORY_PIN_MAX else 0
+
+
+def pinned_history_exchanges_from_meta(meta: dict | None) -> int:
+    """`meta.planner_history_exchanges` → 1–6 的整数，其余（缺省 / 非法 / 越界）一律 0。
+    模型输出与客户端值都当不可信输入：只认落在值域内的整数字面量。"""
+    raw = str((meta or {}).get("planner_history_exchanges", "") or "").strip()
+    if not raw.isdigit():
+        return 0
+    value = int(raw)
+    return value if 1 <= value <= _HISTORY_PIN_MAX else 0
 
 
 def build_context(request) -> PlanContext:
@@ -2121,4 +2248,5 @@ def build_context(request) -> PlanContext:
         previous_local_actions=[a.strip() for a in str(
             meta.get("_edge_previous_local_actions", "") or ""
         ).split(",") if a.strip()],
+        history_exchanges=pinned_history_exchanges_from_meta(meta),
     )

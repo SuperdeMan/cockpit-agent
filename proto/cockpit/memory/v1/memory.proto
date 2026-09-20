@@ -138,7 +138,13 @@ message Turn {
   // 一行，端侧 40% 的车控动作云端整整看不见（Q7-EL1 才补上）。
   repeated TurnSource sources = 10;
 }
-message GetSessionResponse { repeated Turn turns = 1; }
+message GetSessionResponse {
+  repeated Turn turns = 1;
+  // 批 5 W17（2026-09-20）：配置了持久后端（REDIS_URL）却在用进程内存兜底 ⇒ true。
+  // 读侧据此把「读到了、是空的」与「后端掉了、兜底是空的」分开报（`runtime/memory_read`）。
+  // 旧服务端不发此字段 ⇒ false ⇒ 逐字同旧。
+  bool degraded = 2;
+}
 
 message UpsertProfileRequest {
   string user_id = 1;
@@ -215,6 +221,8 @@ message RecallRequest {
 message RecallResponse {
   repeated MemoryItem items = 1;
   repeated float scores = 2;       // 与 items 一一对应的相似度
+  // 批 5 W17：配置了 POSTGRES_DSN 却在用进程内存兜底 ⇒ true（语义同 GetSessionResponse.degraded）。
+  bool degraded = 3;
 }
 
 message ForgetUserRequest {

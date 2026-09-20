@@ -163,6 +163,25 @@ def test_constraint_plus_request_still_plans(monkeypatch):
     assert seen.get("text") == "我不吃辣，帮我找家餐厅"
 
 
+def test_a_single_clause_request_carrying_a_constraint_still_plans(monkeypatch):
+    """批 5 抓到的生产缺陷（`e9044daf` 起）：「帮我找家不辣的餐厅」只有一个分句、命中「不辣」⇒
+    被当成纯陈述 ⇒ 答「好的，这次不吃辣…」、零搜索。陈述里不能带请求；约束照样登记给 nearby。"""
+    engine, _spy, _session = _make_engine()
+    seen = {}
+
+    async def build(text, working_set, ctx, **kwargs):
+        seen["text"] = text
+        return Plan(steps=[], raw_text=text)
+    engine.planner.build = build
+
+    for text in ("帮我找家不辣的餐厅", "附近有没有不辣的馆子"):
+        seen.clear()
+        _run(engine, _req(text))
+        assert seen.get("text") == text, text
+    focus = asyncio.run(engine.context._load_focus("sess-1", "u1"))
+    assert focus is not None and focus.session_constraints == {"no_spicy": True}
+
+
 def test_constraint_waiver_is_acknowledged_as_a_waiver(monkeypatch):
     engine, _spy, _session = _make_engine()
     _run(engine, _req("我不想排队"))

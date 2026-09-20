@@ -269,3 +269,45 @@ def test_identity_answer_survives_polite_prefix_and_particles():
     meta = {"occupant_name": "泓舟"}
     assert A._identity_answer("请问我是谁呀？", meta) == "你是泓舟呀。"
     assert A._identity_answer("那我是谁嘛", meta) == "你是泓舟呀。"
+
+
+# ─── 批 5 W17：记忆读不到时，在问记忆 ⇒ 诚实说查不到（两条路径一个入口）───
+
+def test_memory_question_with_memory_unavailable_is_honest_on_both_paths():
+    from runtime import memory_read
+    from agents._sdk.testing import run_handle_stream
+    agent = ChitchatAgent()
+    agent.llm.complete = AsyncMock(return_value="你没跟我说过呀")
+    ctx = make_context()
+    ctx._memory.recall.side_effect = RuntimeError("memory down")
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="你还记得我不吃辣吗", ctx=ctx))
+    assert res.speech == memory_read.MEMORY_UNAVAILABLE_SPEECH
+    agent.llm.complete.assert_not_called()
+
+    async def no_stream(*a, **k):
+        raise AssertionError("读不到时不该调 LLM")
+        yield  # pragma: no cover
+    agent.llm.stream = no_stream
+    events = asyncio.run(run_handle_stream(agent, "chitchat.talk",
+                                           raw_text="你还记得我不吃辣吗", ctx=ctx))
+    assert events[-1][0] == "final"
+    assert events[-1][1].speech == memory_read.MEMORY_UNAVAILABLE_SPEECH
+
+
+def test_memory_unavailable_does_not_touch_ordinary_turns():
+    """对照：记忆读不到但没在问记忆 ⇒ 照常聊（少了个性化而已）。"""
+    agent = ChitchatAgent()
+    agent.llm.complete = AsyncMock(return_value="哈哈，讲个冷笑话～")
+    ctx = make_context()
+    ctx._memory.recall.side_effect = RuntimeError("memory down")
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="讲个笑话", ctx=ctx))
+    assert res.speech.startswith("哈哈")
+
+
+def test_memory_question_with_empty_readable_memory_still_asks_the_model():
+    """对照：读到了、是空的 ⇒ 模型如实答「没记到」是允许的（那是事实）。"""
+    agent = ChitchatAgent()
+    agent.llm.complete = AsyncMock(return_value="你还没跟我说过口味呢")
+    ctx = make_context()
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="你还记得我不吃辣吗", ctx=ctx))
+    assert res.speech.startswith("你还没")

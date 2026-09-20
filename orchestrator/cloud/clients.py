@@ -10,7 +10,7 @@ from contextvars import ContextVar
 import grpc
 
 from runtime.grpcio import aio_channel
-from runtime import admission
+from runtime import admission, memory_read
 
 logger = logging.getLogger("planner.clients")
 
@@ -129,36 +129,73 @@ class Clients:
         无动作 / 反向执行 / 正确）。
         > 判据：**读写对称要逐个消费方验，不是「写侧加了字段」就算通了。**
         """
-        resp = await self._memory_stub().GetSession(
-            memory_pb2.GetSessionRequest(
-                session_id=session_id, last_n=last_n, user_id=user_id,
-                occupant_id=occupant_id or "primary",
-                scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY),
-            timeout=_DEFAULT_TIMEOUT)
-        return [{"role": t.role, "text": t.text, "ts": t.ts,
-                 "occupant_id": t.occupant_id,
-                 "actions": list(t.actions), "exchange_id": t.exchange_id,
-                 # C4-A：来源账本的读侧。**这一行就是上面那条教训的复刻位**——
-                 # 写侧加了字段而这里不读，云侧读出口手里就还是空的。
-                 "sources": [{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
-                             for s in t.sources]}
-                for t in resp.turns]
+        turns, _state = await self.get_session_read(
+            session_id, last_n, user_id=user_id, occupant_id=occupant_id)
+        return turns
+
+    async def get_session_read(self, session_id: str, last_n: int = 6, *,
+                               user_id: str = "", occupant_id: str = "") -> tuple[list[dict], str]:
+        """`get_session` 的三态版（批 5 W17）→ `(turns, state)`，state ∈ `runtime.memory_read`。
+
+        RPC 失败**在这里就是 unavailable**，不再让上层把异常吞成空列表；服务端自报 `degraded`
+        （配了 Redis 却在用内存兜底）时空列表同样是 unavailable。"""
+        try:
+            resp = await self._memory_stub().GetSession(
+                memory_pb2.GetSessionRequest(
+                    session_id=session_id, last_n=last_n, user_id=user_id,
+                    occupant_id=occupant_id or "primary",
+                    scope=memory_pb2.HISTORY_SCOPE_OWNER_ONLY),
+                timeout=_DEFAULT_TIMEOUT)
+        except Exception as e:
+            logger.debug("get_session unavailable: %s", e)
+            return [], memory_read.UNAVAILABLE
+        turns = [{"role": t.role, "text": t.text, "ts": t.ts,
+                  "occupant_id": t.occupant_id,
+                  "actions": list(t.actions), "exchange_id": t.exchange_id,
+                  # C4-A：来源账本的读侧。**这一行就是上面那条教训的复刻位**——
+                  # 写侧加了字段而这里不读，云侧读出口手里就还是空的。
+                  "sources": [{k: getattr(s, k) for k in _TURN_SOURCE_FIELDS}
+                              for s in t.sources]}
+                 for t in resp.turns]
+        return turns, memory_read.read_state(turns, degraded=bool(resp.degraded))
 
     async def recall(self, user_id: str, query: str = "", *, occupant_id: str = "",
                      scopes: list[str] | None = None, kinds: list[str] | None = None,
                      top_k: int = 3, min_confidence: float = 0.0) -> list[dict]:
-        """语义召回用户偏好（供 planner 注入）。返回 dict 列表（含 score）。"""
+        """语义召回用户偏好（供 planner 注入）。返回 dict 列表（含 score）。
+        RPC 失败照旧抛（既有调用方自己吞）；要三态用 `recall_read`。"""
         resp = await self._memory_stub().Recall(
             memory_pb2.RecallRequest(
                 user_id=user_id, occupant_id=occupant_id, query=query,
                 scopes=scopes or [], kinds=kinds or [], top_k=top_k,
                 min_confidence=min_confidence),
             timeout=_DEFAULT_TIMEOUT)
+        return self._recall_items(resp)
+
+    @staticmethod
+    def _recall_items(resp) -> list[dict]:
         return [{"text": it.text, "scope": it.scope, "predicate": it.predicate,
                  "provenance": it.provenance, "confidence": it.confidence,
                  # M2 P0：偏好强度（0=未参与加权的存量条目，渲染时回退 confidence）
                  "weight": it.weight, "evidence_count": it.evidence_count}
                 for it in resp.items]
+
+    async def recall_read(self, user_id: str, query: str = "", *, occupant_id: str = "",
+                          scopes: list[str] | None = None, kinds: list[str] | None = None,
+                          top_k: int = 3, min_confidence: float = 0.0) -> tuple[list[dict], str]:
+        """`recall` 的三态版（批 5 W17）→ `(items, state)`。语义同 `get_session_read`。"""
+        try:
+            resp = await self._memory_stub().Recall(
+                memory_pb2.RecallRequest(
+                    user_id=user_id, occupant_id=occupant_id, query=query,
+                    scopes=scopes or [], kinds=kinds or [], top_k=top_k,
+                    min_confidence=min_confidence),
+                timeout=_DEFAULT_TIMEOUT)
+        except Exception as e:
+            logger.debug("recall unavailable: %s", e)
+            return [], memory_read.UNAVAILABLE
+        items = self._recall_items(resp)
+        return items, memory_read.read_state(items, degraded=bool(resp.degraded))
 
     async def list_agents(self):
         resp = await self._registry_stub().ListAgents(

@@ -100,6 +100,15 @@ class Context:
             predicate_prefix=predicate_prefix, min_score=min_score,
             min_confidence=min_confidence, max_age_days=max_age_days, subject=subject)
 
+    async def recall_read(self, query: str = "", **kw) -> tuple[list[dict], str]:
+        """`recall` 的三态版（批 5 W17）→ `(items, state)`；无 user_id 返回 `([], "off")`。
+        state ∈ `runtime.memory_read`：found / none / unavailable / off。"""
+        from runtime import memory_read
+        if not self.user_id:
+            return [], memory_read.OFF
+        kw.setdefault("occupant_id", self.occupant_id)
+        return await self._memory.recall_read(self.user_id, query, **kw)
+
     async def resolve_person_place(self, person_word: str) -> dict | None:
         """人称词 → 常去地点（M2 记忆图谱 P1 关系边一跳，「去接孩子放学」）。
 

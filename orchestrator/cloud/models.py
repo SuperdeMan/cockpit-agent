@@ -334,6 +334,11 @@ class PlanContext:
     # W12 **本轮 scratch**：规划轮账本判出的、没有步骤承接的诉求原话截段。`run()` 在完成类 final 上
     # 据此补一句「「X」这部分这次没有处理到」并把终态记成 partial；进 T2 / 改派时清空。
     goal_gap: list = field(default_factory=list)
+    # 批 5 W19（2026-09-20）：请求级**历史视窗 pin**（`meta.planner_history_exchanges`，1–6 对；
+    # 0 = 用部署缺省 `PLANNER_HISTORY_EXCHANGES`）。与 D2 的 `llm_provider` / `llm_model` 同一定位：
+    # 评测 / 重放 A/B 的单变量入口——此前视窗只能靠改 env 重新部署来比较。预算（`_CTX_BUDGET`）
+    # 仍是硬上限，pin 只放宽视窗不放宽预算。**刻意不进 `prefs`**（Agent 不该看见编排自己的实验旋钮）。
+    history_exchanges: int = 0
 
 
 @dataclass

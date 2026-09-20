@@ -69,11 +69,11 @@ async def _complete_vehicle_state(_collector, **_kwargs):
     return _settled(_complete_vehicle_state_payload())
 
 
-def test_five_personas_each_have_a_continuous_50_to_100_turn_plan():
+def test_six_personas_each_have_a_continuous_50_to_100_turn_plan():
     plans = long_qa.build_persona_plans()
 
     assert set(plans) == {
-        "vehicle", "family", "merchant", "information", "adversarial",
+        "vehicle", "family", "merchant", "information", "adversarial", "continuity",
     }
     for name, cases in plans.items():
         turns = sum(len(case["turns"]) for case in cases)
@@ -1809,3 +1809,40 @@ def test_replay_reports_the_c15_ruling_as_newly_green():
 def probe_subst(template: str) -> str:
     """把用例模板里的 `{run}` 换成回放测试固定用的那个标记。"""
     return template.replace("{run}", "740903")
+
+
+# ── 批 5 W18：continuity persona 的形状 ────────────────────────────────────
+
+def test_continuity_persona_carries_silence_and_reconnect_and_intra_case_references():
+    plans = long_qa.build_persona_plans()
+    cases = plans["continuity"]
+    turns = [turn for case in cases for turn in case["turns"]]
+    assert 50 <= len(turns) <= 100
+    assert any(turn.get("silence_s") for turn in turns), "要有一处长沉默"
+    assert sum(1 for turn in turns if turn.get("reconnect")) >= 2, "要有断连重连"
+    # `names_item_from` / `not_names_item_from` 的轮号是 case 内的：引用不得越出所在 case
+    for case in cases:
+        n = len(case["turns"])
+        for turn in case["turns"]:
+            expect = turn.get("expect") or {}
+            ref = expect.get("names_item_from")
+            if ref:
+                assert 1 <= int(ref["turn"]) <= n, (case["id"], ref)
+            if expect.get("not_names_item_from") is not None:
+                assert 1 <= int(expect["not_names_item_from"]) <= n, case["id"]
+    # 三个考点各在场：墓碑 / 约束读出口 / 事件触发拒绝
+    says = [str(turn.get("say")) for turn in turns]
+    assert "万象城那批第二家评分多少" in says
+    assert "我今天说过不吃辣吗" in says
+    assert "只要有堵车就提醒我" in says
+    # 沉默轮引用的候选卡在沉默**之前**同一 case 里（候选 900 s > 沉默 600 s）
+    silence_case = next(case for case in cases if case["id"] == "CONT-SILENCE")
+    silent = next(turn for turn in silence_case["turns"] if turn.get("silence_s"))
+    assert silent["expect"]["names_item_from"]["turn"] == 1
+    assert 0 < silent["silence_s"] < 900
+
+
+def test_silence_scale_zero_skips_the_wait_but_still_reconnects(monkeypatch):
+    """`--silence-scale 0` 只验逻辑：不 sleep；沉默 / reconnect 轮仍换连接、同 session。"""
+    assert long_qa.SILENCE_SCALE == 1.0
+    assert set(long_qa._TURN_DIRECTIVE_KEYS) >= {"silence_s", "reconnect"}

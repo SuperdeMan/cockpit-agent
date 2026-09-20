@@ -173,6 +173,8 @@ class MemoryStore:
         # 分层记忆（语义画像/情景）——PG+pgvector，无 PG 内存兜底；首用懒初始化。
         self._vstore = MemoryVectorStore()
         self._vstore_inited = False
+        # 批 5 W17：最近一次 `_redis()` 有没有拿到连接（URL 配了才有意义）。读出口据此自报退化。
+        self._redis_down = False
 
     async def _redis(self):
         if aioredis and self.url and self._r is None:
@@ -185,7 +187,18 @@ class MemoryStore:
             except Exception as e:
                 logger.warning("Redis unavailable, using in-memory: %s", e)
                 self._r = None
+        self._redis_down = bool(self.url) and self._r is None
         return self._r
+
+    @property
+    def session_degraded(self) -> bool:
+        """配置了 REDIS_URL 却在用进程内存兜底（按最近一次 `_redis()` 的结果）。"""
+        return bool(self.url) and self._redis_down
+
+    @property
+    def memory_degraded(self) -> bool:
+        """长期记忆：配置了 POSTGRES_DSN 却在用内存兜底（`MemoryVectorStore.degraded`）。"""
+        return self._vstore.degraded
 
     async def append_turn(self, session_id: str, role: str, text: str,
                           user_id: str = "", occupant_id: str = "",
@@ -522,6 +535,8 @@ class MemoryStore:
         if not self._vstore_inited:
             self._vstore_inited = True
             await self._vstore.init()
+        else:
+            await self._vstore.ensure()      # 退化态按退避后台重连（批 5 W17）
         return self._vstore
 
     async def remember(self, items: list[dict]) -> list[str]:

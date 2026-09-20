@@ -1,4 +1,4 @@
-"""MiniMax 云端真栈长会话 QA：5 类 persona，每类 50–100 连续业务轮。
+"""MiniMax 云端真栈长会话 QA：6 类 persona，每类 50–100 连续业务轮。
 
 这不是把 61 条迷你集各自放进干净 session。它把同一批已知红绿对照串进长上下文，
 并补一条 50 轮信息/出行业务线；每个 persona 始终复用同一个 session_id。逐轮同时保存：
@@ -9,8 +9,14 @@ LLM provider。所有 LLM 调用必须是 minimax:MiniMax-M3；商户与危险�
 用法（真栈动作前仍须先 `python scripts/dev_stack.py target show`）：
     python scripts/probe_qa_long_sessions.py
     python scripts/probe_qa_long_sessions.py --persona vehicle,merchant
+    python scripts/probe_qa_long_sessions.py --persona continuity --silence-scale 1
     python scripts/probe_qa_long_sessions.py --dry-run
     python scripts/probe_qa_long_sessions.py --replay <artifact.json>   # 修正后计分
+
+批 5 W18（2026-09-20）加 `continuity` persona：同一 session 连续 ≥50 轮，穿插不同域、插话、
+挂起与取消、四批同类候选（第 4 批把第 1 批顶出台账）、约束改口后再问、长沉默（`silence_s`）
+与断连重连（`reconnect`）——评审 §6.4「旧对象还找得到、已取消的不会复活、未完成的不会失踪」。
+`--silence-scale` 缩放每处沉默（0 = 跳过，只验逻辑不验时效）。
 """
 from __future__ import annotations
 
@@ -275,6 +281,137 @@ _FAMILY_TOPIC_PIVOT = _custom_case(
      "audit": {"intent_any": ["info.weather"]}},
 )
 
+#: W18 沉默长度（秒）。候选批限龄 900 s、挂起 300 s、约束 / 路线 / 告警 2 h：600 s 落在
+#: 「挂起早已过期、候选与约束仍在」这一档——沉默之后要能证明的正是这三档各自的寿命。
+_CONTINUITY_SILENCE_S = 600
+
+
+def build_continuity_cases() -> list[dict]:
+    """`continuity` persona：一个 session 里把评审 §6.4 那条代表性长会话的检查点串起来。
+
+    每个检查点的判据都是**结构的**（`names_item_from` / 确定性话术 / 零动作 / `intent_any`），
+    不靠「听起来对」。`names_item_from` 的轮号是 **case 内**的，所以相互引用的检查点必须住在
+    同一个 case 里（下面三个大 case），其余复用回归集里的 case 当穿插。顺序即考点：
+      ① 约束陈述 → 十几轮之后再问「我今天说过不吃辣吗」（修正后的约束还在、且是确定性读出口）；
+      ② 四批同能力候选（W08 共存 + W18 墓碑）：第 4 批顶掉第 1 批后点名第 1 批 ⇒ 说不在，
+         不拿最新那批顶替；点名还活着的第 2 批 ⇒ 仍绑它；裸序数 ⇒ 最新批；
+      ③ 挂起 → 插话 → 取消 → 再「确认」⇒ 已取消的不会复活；
+      ④ 事件触发订阅 ⇒ 诚实拒绝，不追问时间；
+      ⑤ 长沉默 600 s：挂起（300 s）过期、沉默前刚查的候选（900 s）与约束（2 h）仍在；
+      ⑥ 断连重连（同 session）：挂起表、约束都还在服务端，寻址键仍能取消。
+    """
+    cases: list[dict] = []
+
+    def reuse(cid: str) -> dict:
+        case = copy.deepcopy(_CASE_BY_ID[cid])
+        case["source_case_id"] = cid
+        for turn in case["turns"]:
+            turn.pop("sid", None)
+        return case
+
+    place = {"card_type": "place_list", "no_actions": True}
+    nearby = {"intent_any": ["nearby.search"]}
+    cases.append(_custom_case(
+        "CONT-A",
+        # ① 约束陈述（W13 确定性致谢）
+        {"say": "我不吃辣，也不想排长队",
+         "expect": {"no_actions": True, "speech_has": ["不吃辣", "不想排队"]}},
+        {"say": "万象城附近的餐厅", "expect": place, "audit": nearby},                      # T2
+        {"say": "第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 2, "index": 2}}},
+        {"say": "深圳现在天气怎么样", "expect": {"no_actions": True, "city_any": ["深圳"]},
+         "audit": {"intent_any": ["info.weather"], "provenance_required": True}},
+        {"say": "明天呢", "expect": {"no_actions": True, "city_any": ["深圳"]},
+         "audit": {"intent_any": ["info.weather", "info.forecast"], "provenance_required": True}},
+        # ③ 挂起 → 复合取消 → 挂起表读出口（CF1 原句）
+        {"say": "把全车门解锁", "expect": {"need_confirm": True, "has_operation_id": True}},
+        {"say": "取消刚才解锁", "expect": {"speech_any": ["已为您取消", "已取消"], "no_actions": True}},
+        {"say": "现在还有待确认的操作吗",
+         "expect": {"speech_not": ["解锁"], "need_confirm": False, "no_actions": True},
+         "audit": {"intent_any": ["system.pending_state", "system.no_pending"]}},
+        {"say": "科技园附近的餐厅", "expect": place, "audit": nearby},                      # T9
+        {"say": "讲个笑话", "expect": {"no_actions": True, "no_execution_claim": True}},
+        # ② 两批共存（W08）：点名第 1 批仍绑第 1 批
+        {"say": "刚才万象城那批第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 2, "index": 2},
+                    "not_names_item_from": 9}},
+        # ① 修正后的约束再问：系统持有的事实（批 5 W18-b）
+        {"say": "我今天说过不吃辣吗",
+         "expect": {"no_actions": True, "speech_has": ["您这次说过", "不吃辣"]},
+         "audit": {"intent_any": ["system.constraint_recall"]}},
+        {"say": "今天可以排队，等一会儿没关系",
+         "expect": {"no_actions": True, "speech_has": ["可以排队"]}},
+        {"say": "我刚才是不是说过不想排队",
+         "expect": {"no_actions": True, "speech_has": ["您这次说过", "可以排队"],
+                    "speech_not": ["不想排队"]},
+         "audit": {"intent_any": ["system.constraint_recall"]}},
+        {"say": "欢乐海岸附近的餐厅", "expect": place, "audit": nearby},                    # T15
+        {"say": "南山书城附近的餐厅", "expect": place, "audit": nearby},                    # T16
+        # ② 台账封顶 3 组：万象城那批被顶出 ⇒ 说不在，绝不用南山书城那批顶替（批 5 W18-a）
+        {"say": "万象城那批第二家评分多少",
+         "expect": {"no_actions": True, "speech_has": ["万象城", "不在"],
+                    "not_names_item_from": 16},
+         "audit": {"intent_any": ["system.candidate_missing"]}},
+        {"say": "科技园那批第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 9, "index": 2},
+                    "not_names_item_from": 16}},
+        {"say": "第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 16, "index": 2}}},
+        # ④ 持久订阅 ⇒ 诚实拒绝，不追问时间、不声称执行
+        {"say": "只要有堵车就提醒我",
+         "expect": {"no_actions": True, "no_execution_claim": True,
+                    "speech_not": ["什么时候提醒"]}},
+        # ③ 已取消的不会复活
+        {"say": "把全车门解锁", "expect": {"need_confirm": True, "has_operation_id": True}},
+        {"say": "现在几点了", "expect": {"no_actions": True}},
+        {"say": "取消", "expect": {"speech_any": ["已为您取消", "已取消"], "no_actions": True}},
+        # 裸「确认」不带确认标记（长会话 runner 的结构守卫：任何轮不得带 confirm），
+        # 判据同样成立：没有挂起 ⇒ `system.no_pending` 出口，与带标记时同一条路
+        {"say": "确认", "expect": {"speech_has": ["没有待确认"], "no_actions": True},
+         "audit": {"intent_any": ["system.no_pending"]}},
+    ))
+    cases.append(reuse("AU1"))                       # 车控两步 + 执行史读出口（车态末尾恢复）
+    cases.append(reuse("TF1"))                       # 改口精确修改对象（navigation 路线会话）
+    cases.append(reuse("EL1"))                       # 省略式开关
+    cases.append(reuse("CD1"))                       # 候选聚合
+    cases.append(_custom_case(
+        "CONT-SILENCE",
+        {"say": "深圳湾附近的咖啡店", "expect": place, "audit": nearby},                    # T1
+        {"say": "把后备箱打开", "expect": {"need_confirm": True, "has_operation_id": True}},
+        # ⑤ 沉默 600 s：挂起（300 s）过期、候选（900 s）与约束（2 h）仍在
+        {"say": "第二家评分多少", "silence_s": _CONTINUITY_SILENCE_S,
+         "expect": {"no_actions": True, "names_item_from": {"turn": 1, "index": 2}}},
+        {"say": "现在还有待确认的操作吗",
+         "expect": {"no_actions": True, "need_confirm": False, "speech_not": ["后备箱"]},
+         "audit": {"intent_any": ["system.pending_state", "system.no_pending"]}},
+        # 裸「确认」不带确认标记（长会话 runner 的结构守卫：任何轮不得带 confirm），
+        # 判据同样成立：没有挂起 ⇒ `system.no_pending` 出口，与带标记时同一条路
+        {"say": "确认", "expect": {"speech_has": ["没有待确认"], "no_actions": True},
+         "audit": {"intent_any": ["system.no_pending"]}},
+        {"say": "我今天说过不吃辣吗",
+         "expect": {"no_actions": True, "speech_has": ["您这次说过", "不吃辣"]}},
+    ))
+    cases.append(_custom_case(
+        "CONT-RECONNECT",
+        {"say": "把全车门解锁", "expect": {"need_confirm": True, "has_operation_id": True}},
+        # ⑥ 断连重连（同 session）：挂起还在服务端，寻址键仍能取消它
+        {"say": "现在还有待确认的操作吗", "reconnect": True,
+         "expect": {"no_actions": True, "speech_has": ["解锁"]},
+         "audit": {"intent_any": ["system.pending_state"]}},
+        {"say": "取消", "op_from": 1,
+         "expect": {"speech_any": ["已为您取消", "已取消"], "no_actions": True,
+                    "closes_op_from": 1}},
+        {"say": "我刚才是不是说过可以排队", "reconnect": True,
+         "expect": {"no_actions": True, "speech_has": ["您这次说过", "可以排队"]}},
+    ))
+    cases.append(reuse("CA5"))                       # 导航结束后「换条路」不复活旧路线
+    cases.append(reuse("NG5"))
+    cases.append(reuse("NG6"))
+    cases.append(reuse("OR1"))
+    cases.append(reuse("PU7"))
+    cases.append(reuse("SF4"))
+    return cases
+
 
 _PERSONA_CASE_IDS = {
     "vehicle": (
@@ -356,6 +493,7 @@ def build_persona_plans() -> dict[str, list[dict]]:
         elif persona == "family":
             plans[persona].append(copy.deepcopy(_FAMILY_TOPIC_PIVOT))
     plans["information"] = copy.deepcopy(_INFORMATION_CASES)
+    plans["continuity"] = build_continuity_cases()
     return plans
 
 
@@ -375,6 +513,11 @@ _ENGINE_ONLY_TRACE_NODES = frozenset({
     "cloud.pending_state",
     "cloud.data_provenance",
     "cloud.execution_audit",
+    # W13（2026-09-20）两条新出口 + 批 5 的两条（会话约束读出口 / 记忆读不到）：同上，零 Agent 是常态
+    "cloud.constraint_noted",
+    "cloud.unresolved_object",
+    "cloud.constraint_recall",
+    "cloud.memory_unavailable",
     "clarify",
     "rejected",
 })
@@ -1681,6 +1824,13 @@ async def _reminder_cleanup_turns(
     return rows, failures
 
 
+#: `--silence-scale`：每处 `silence_s` 乘以它（0 = 跳过沉默，只验逻辑）。由 `main()` 写。
+SILENCE_SCALE = 1.0
+#: W18 长会话 runner 自己的轮指令键（回归集的 `probe._TURN_KEYS` 不认它们——这两个只在
+#: 长会话里有意义，回归集的 `_run_case` 一个 case 一条连接、没有「沉默」可言）。
+_TURN_DIRECTIVE_KEYS = frozenset({"silence_s", "reconnect"})
+
+
 async def _run_persona(name: str, cases: list[dict], ws_url: str,
                        collector: str, stamp: int) -> dict:
     session = f"probe-qa-long-{name}-{stamp}"
@@ -1767,6 +1917,22 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                 else:
                     say = probe._subst(str(turn.get("say") or ""), case_stamp)
 
+                # W18：沉默 / 断连重连都发生在**这一轮之前**，session_id 不变。
+                # 沉默期间连接可能被对端收掉（网关 idle / 发布），沉默完一律重连——
+                # 要证明的是服务端状态跨过了沉默，不是这条 TCP 连接活了多久。
+                silence_s = float(turn.get("silence_s") or 0) * SILENCE_SCALE
+                if silence_s > 0:
+                    print(f"  … {name:<11} 沉默 {silence_s:.0f}s（{source_id} T{local_turn} 之前）")
+                    await asyncio.sleep(silence_s)
+                if silence_s > 0 or turn.get("reconnect"):
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    ws = await _connect(ws_url)
+                    pre_note = "沉默后重连" if silence_s > 0 else "断连重连"
+                else:
+                    pre_note = ""
                 trace_id = uuid.uuid4().hex
                 try:
                     obs = await _turn(
@@ -1789,6 +1955,8 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                 failures, notes = judge_persona_turn(
                     turn, obs, local_rows, stamp=case_stamp)
                 failures = pre_failures + failures
+                if pre_note:
+                    notes = [pre_note, *notes]
                 if obs.get("error"):
                     failures.append("本轮 transport/backend error")
                 if not (obs.get("speech") or obs.get("actions") or obs.get("card_type")):
@@ -2426,6 +2594,9 @@ def main() -> int:
         "qa-minimax-long-sessions.json"))
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
+        "--silence-scale", type=float, default=1.0,
+        help="W18：每处 silence_s 的缩放（0 = 跳过沉默只验逻辑；默认 1）")
+    parser.add_argument(
         "--replay", default="",
         help="拿当前判据重算一份已有 artifact（修正后计分）——纯本地、零网络")
     parser.add_argument(
@@ -2450,6 +2621,8 @@ def main() -> int:
             print(f"\n回放明细：{out}")
         return 0
 
+    global SILENCE_SCALE
+    SILENCE_SCALE = max(0.0, float(args.silence_scale))
     plans = build_persona_plans()
     selected = list(plans)
     if args.persona:

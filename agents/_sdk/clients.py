@@ -8,7 +8,7 @@ import os
 import grpc
 
 from runtime.grpcio import aio_channel
-from runtime import admission
+from runtime import admission, memory_read
 
 from cockpit.llm.v1 import llm_pb2, llm_pb2_grpc
 from cockpit.memory.v1 import memory_pb2, memory_pb2_grpc
@@ -227,7 +227,31 @@ class MemoryClient:
                      min_confidence: float = 0.0, max_age_days: int = 0,
                      subject: str = "") -> list[dict]:
         """语义召回。返回 dict 列表（含 score）。memory 重启 UNAVAILABLE 自动重连重试一次。
-        subject 非空=只取「关于该人」的记忆（G6，如 subject="老婆" 取老婆的口味）。"""
+        subject 非空=只取「关于该人」的记忆（G6，如 subject="老婆" 取老婆的口味）。
+        失败照旧抛 RuntimeError；要「读到了 / 空 / 读不到」三态用 `recall_read`。"""
+        items, _state = await self._recall_resp(
+            user_id, query, occupant_id=occupant_id, scopes=scopes, kinds=kinds, top_k=top_k,
+            include_superseded=include_superseded, predicate_prefix=predicate_prefix,
+            min_score=min_score, min_confidence=min_confidence, max_age_days=max_age_days,
+            subject=subject)
+        return items
+
+    async def recall_read(self, user_id: str, query: str = "", **kw) -> tuple[list[dict], str]:
+        """`recall` 的三态版（批 5 W17）→ `(items, state)`，state ∈ `runtime.memory_read`。
+        RPC 失败在这里就是 `unavailable`（不抛）；服务端自报 `degraded` 时空列表同样是 `unavailable`。"""
+        try:
+            return await self._recall_resp(user_id, query, **kw)
+        except Exception as e:
+            import logging
+            logging.getLogger("agent.sdk").debug("recall unavailable: %s", e)
+            return [], memory_read.UNAVAILABLE
+
+    async def _recall_resp(self, user_id: str, query: str = "", *, occupant_id: str = "",
+                           scopes: list[str] | None = None, kinds: list[str] | None = None,
+                           top_k: int = 5, include_superseded: bool = False,
+                           predicate_prefix: str = "", min_score: float = 0.0,
+                           min_confidence: float = 0.0, max_age_days: int = 0,
+                           subject: str = "") -> tuple[list[dict], str]:
         req = memory_pb2.RecallRequest(
             user_id=user_id, occupant_id=occupant_id, query=query,
             scopes=scopes or [], kinds=kinds or [], top_k=top_k,
@@ -242,7 +266,7 @@ class MemoryClient:
                     d = _from_memory_item(it)
                     d["score"] = score
                     out.append(d)
-                return out
+                return out, memory_read.read_state(out, degraded=bool(resp.degraded))
             except grpc.aio.AioRpcError as e:
                 if attempt == 1 and e.code() == grpc.StatusCode.UNAVAILABLE:
                     await self._reset_channel()

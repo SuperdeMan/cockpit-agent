@@ -32,6 +32,18 @@ def make_context(session_id: str = "test-sess", user_id: str = "u1",
     mem.get_context.return_value = context_values or {}
     mem.get_session.return_value = history or []
     mem.recall.return_value = []  # 默认无语义记忆；用 ctx.recall 的 Agent 测试可覆盖
+
+    async def _recall_read(user_id, query="", **kw):
+        """三态版跟着 `recall` 走（批 5 W17）：测试只需改 `mem.recall.return_value` /
+        `side_effect`；抛异常 ⇒ `unavailable`，与生产 `MemoryClient.recall_read` 同契约。"""
+        from runtime import memory_read
+        try:
+            items = list(await mem.recall(user_id, query, **kw) or [])
+        except Exception:
+            return [], memory_read.UNAVAILABLE
+        return items, memory_read.read_state(items)
+
+    mem.recall_read.side_effect = _recall_read
     return Context(session_id, user_id, vehicle_id, mem)
 
 
