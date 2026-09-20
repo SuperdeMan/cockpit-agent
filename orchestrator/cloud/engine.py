@@ -28,12 +28,16 @@ from .clients import set_llm_pin
 from . import candidate_query
 from . import slot_shape
 from runtime import session_facts
-from runtime.execution_claim import execution_claim
+from runtime.execution_claim import execution_claim, strip_execution_claims
 from runtime.clause_split import split_clauses
 from runtime.cntime import cn_int
+from runtime.outcome import category_of, outcome_of_results
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import is_non_directive_question
 from runtime.safety_signal import alert_level, alert_resolved, driver_state
+from runtime.session_constraints import (constraints_in, describe_constraints,
+                                         is_pure_constraint_statement,
+                                         merge_constraints, phrase_of)
 from .context import (ContextManager, active_task_live, build_context, candidate_downlink,
                       candidate_set_for, _is_choice_card,
                       references_a_candidate, resolve_candidate_scope,
@@ -224,10 +228,15 @@ def _clause_uncovered(plan, text: str) -> str:
     ## 已知误报面（**先拿真实分布**，B6 shadow 的纪律）
 
     - **零槽步覆盖不了任何分句**（`navigation.locate` 这类）——它们会让所在分句报未覆盖；
-    - planner 把槽值**转述**过（「瑞幸」→「luckin」）时子串够不着。
+    - planner 把槽值**转述**过（「瑞幸」→「luckin」）时子串够不着；
+    - 修饰分句（「联网查询」「至少五百字」）不是一个诉求，却是一个分句。
 
-    两类都会抬高未覆盖率。这正是本批只发观测、不进决策的原因：先看两周真实分布里
-    误报占多少，再谈 C 的 salvage 重试。**误报的代价只是一位观测，漏报的代价是缺陷继续隐形。**
+    2026-09-20 拿到生产分布（830 轮里 134 条命中，逐条看 ≥95% 误报）后去掉三类**可判定**的
+    误报：整句型能力 / 整句透传槽（chitchat 的 `text`、兜底）——一步吃整句；步数 ≥ 分句数
+    ——每个分句都可能有自己的步（槽值转述时子串够不着，但那不是漏步）；单步已填槽数 ≥ 分句数
+    ——「导航去深圳湾公园，晚上7点前到」的 destination + arrive_by 两个槽正是两个分句。
+    修饰分句那一类判不掉（它与真诉求在形态上无差别），所以这一列仍只观测、不出用户可见话术
+    （评审 W12 记账，设计文档 §5）。**误报的代价只是一位观测，漏报的代价是缺陷继续隐形。**
 
     零领域字面量：不认识任何 intent，也不认识任何槽名。
     """
@@ -235,8 +244,17 @@ def _clause_uncovered(plan, text: str) -> str:
     clauses = [c for c in split_clauses(text) if not is_negated_directive(c)]
     if len(clauses) < 2 or not steps:
         return ""
+    if len(steps) >= len(clauses):
+        return ""
+    if any(bool(getattr(s, "whole_utterance", False)) for s in steps):
+        return ""
+    whole = re.sub(r"\s+", "", str(text or ""))
     values = [v for s in steps for v in (s.slots or {}).values()
               if isinstance(v, str) and len(v.strip()) >= _COVER_MIN_LEN]
+    if whole and any(whole in re.sub(r"\s+", "", v) for v in values):
+        return ""
+    if len(steps) == 1 and len(values) >= len(clauses):
+        return ""
     uncovered = sum(1 for c in clauses
                     if not any(v.strip() in c for v in values))
     return f"{uncovered}/{len(clauses)}" if uncovered else ""
@@ -360,23 +378,27 @@ class PlannerEngine:
             if ev.pop("_rejected", False):
                 rejected = True
             if ev.get("kind") == "final":
+                # W13 终态账本：每条 final 出口都声明了自己是哪一种结局（内部键，这里剥掉）。
+                outcome_kind = str(ev.pop("_outcome", "") or "")
                 # Q1-C：本轮关掉了哪几条挂起，由服务端权威告诉 HMI（撤确认条）。
                 # 空则不发键——多一个恒空字段就是多一处噪声。
                 if ctx.closed_operation_ids:
                     ev["closed_operation_ids"] = list(ctx.closed_operation_ids)
-                if ev.get("speech"):
-                    assistant_speech = ev["speech"]
                 # Q6：本轮真实执行了什么，随 assistant 轮一起落库。
                 # 取 final 帧而不是 step_result——**用户看到的那份就是这一份**，
                 # 中途被聚合器丢掉的步不该出现在审计回答里。
                 executed_actions = _executed_action_names(ev.get("actions"))
                 # C4-A：这一轮的数据源事实与动作事实同源同格，一起落库。
                 turn_sources = _turn_sources(ev.get("ui_card"))
-                # C11-C：「话里有一次执行，账上没有」的**观测列**（零决策）。
+                # C11-C：「话里有一次执行，账上没有」——观测列，以及 W14 里唯一动手的那一种
+                # （谈话步 + 零动作 ⇒ 按声明必假，剥掉声称句）。
                 # 挂在这里而不是聚合器：final 有四条出口（adaptive/stream/reactive/E），
                 # 而它们全都从这个 for 里流过——**同一条纪律写成注释还是写成结构，
                 # 差别就是会不会有第三次**（`_deterministic_reply` 那条老账）。
                 await self._emit_execution_claim(ctx, ev, executed_actions)
+                if ev.get("speech"):
+                    assistant_speech = ev["speech"]
+                await self._emit_outcome(ctx, outcome_kind, ev, executed_actions)
             yield ev
 
         # R4.4：拒识轮 user+assistant 均不落库——不污染指代消解、不触发 memory 画像抽取
@@ -399,26 +421,65 @@ class PlannerEngine:
                                                actions=executed_actions,
                                                sources=turn_sources)
 
+    #: W14：谈话步的声称句全部剥空之后的诚实话术（零领域词）。
+    _CLAIM_STRIPPED_SPEECH = "这一轮我没有执行任何操作。要我做什么的话，说具体一点，我来安排。"
+
     @staticmethod
     async def _emit_execution_claim(ctx, event: dict, actions: list) -> None:
         """本轮 final 说了「已为您…」却零动作 ⇒ 出一位 obs 观测（C11-C，shadow）。
 
         判据本体在 `runtime/execution_claim.py`（形态、零领域词），探针 C16-2 复用
-        同一份。**只观测不拦截**：直拦的误伤面（信息类能力的合法完成语、转述历史）
-        没量过，先拿两周真实分布——同 B6 `actionability` 与 C5-A `clause_uncovered`
-        的纪律。命中就发一条 span，不命中一个字都不发（多一个恒空字段就是多一处噪声）。
+        同一份。命中就发一条 span，不命中一个字都不发（多一个恒空字段就是多一处噪声）。
+
+        W14（评审 §7，2026-09-20）：生产 830 轮的分布——6 条命中，4 条是 engine 自己的
+        `pending_cancel` 出口（真关掉了一条挂起，是尺子误报），2 条是 chitchat 零动作声称
+        执行（「可以，已为您执行」「已为您避开此路段。已为您重新规划路线：…7.4公里」）。
+        两条真阳性都满足同一条**按声明必假**的判据：这一轮执行的步全是 `response_only`
+        （`ctx.answer_only`）∧ 零动作 ∧ 话术命中执行性声明。只拦这一种：按句剥掉声称句，
+        剥空了换成固定的诚实话术；其余形态（信息类能力的「已为您规划 3 天行程」是真的）照旧只观测。
+        剥掉的是**模型编的执行事实**，不是润色——把假话删掉与把失败改写成成功方向相反。
         """
         if actions:
             return
-        family = execution_claim(str(event.get("speech") or ""))
+        speech = str(event.get("speech") or "")
+        family = execution_claim(speech)
         if not family:
             return
+        intercepted = False
+        if getattr(ctx, "answer_only", False):
+            cleaned, removed = strip_execution_claims(speech)
+            if removed:
+                intercepted = True
+                logger.warning("response-only turn claimed an execution (%s); "
+                               "stripped %d sentence(s): %r", family, removed, speech[:80])
+                event["speech"] = cleaned or PlannerEngine._CLAIM_STRIPPED_SPEECH
         try:
             await obs_events.get_emitter("cloud").emit_span(
                 ctx.trace_id, "cloud.execution_claim",
-                attrs={"family": family})
+                attrs={"family": family,
+                       **({"intercepted": "true"} if intercepted else {})})
         except Exception as e:      # 观测绝不阻塞主链路
             logger.debug("execution claim obs failed: %s", e)
+
+    @staticmethod
+    async def _emit_outcome(ctx, kind: str, event: dict, actions: list) -> None:
+        """W13 终态账本：每条 final 在唯一出口发一条 `cloud.outcome`（collector 合并成 `turns.outcome`）。
+
+        `kind` 由各出口声明（`runtime.outcome` 词表）；没声明的记 `unknown` 并告警——账本上
+        「不知道」必须与任何一种结局分得开，静默补一个默认值就是评审 §6.3 说的「摘要改写事实」。
+        """
+        kind = kind or "unknown"
+        if kind == "unknown":
+            logger.warning("final without an outcome kind (speech=%r)",
+                           str(event.get("speech") or "")[:60])
+        try:
+            await obs_events.get_emitter("cloud").emit_span(
+                ctx.trace_id, "cloud.outcome",
+                attrs={"kind": kind, "category": category_of(kind) or "unknown",
+                       "actions": len(actions or []),
+                       "answer_only": "1" if getattr(ctx, "answer_only", False) else "0"})
+        except Exception as e:      # 观测绝不阻塞主链路
+            logger.debug("outcome obs failed: %s", e)
 
     async def _orchestrate(self, request, ctx: PlanContext, text: str,
                            mem_on: bool) -> AsyncIterator[dict]:
@@ -447,7 +508,8 @@ class PlannerEngine:
             await _emit_engine_lifecycle(
                 ctx, "cloud.pending_missing", "system.pending_missing")
             yield {"kind": "final",
-                   "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。"}
+                   "speech": "这条确认对应的操作已经不在了，麻烦您再说一遍需求。",
+                   "_outcome": "pending_missing"}
             return
 
         # W01（评审 F01，2026-09-19）：**没有寻址键的确认**先问「它在说哪一条」，
@@ -470,7 +532,8 @@ class PlannerEngine:
                        "actions": [],
                        "held_operation_ids": [
                            s.operation_id for s in spoken.candidates
-                           if s.operation_id]}
+                           if s.operation_id],
+                       "_outcome": "pending_ambiguous"}
                 return
             if spoken.kind == "asking":
                 # 确定性读出口（同 `system.pending_state` 族）：念出挂着的是什么、怎么确认。
@@ -483,14 +546,15 @@ class PlannerEngine:
                        "actions": [],
                        "held_operation_ids": [
                            s.operation_id for s in spoken.candidates
-                           if s.operation_id]}
+                           if s.operation_id],
+                       "_outcome": "pending_asked"}
                 return
             if spoken.kind == "none":
                 await _emit_engine_lifecycle(
                     ctx, "cloud.no_pending", "system.no_pending")
                 final = {"kind": "final",
                          "speech": "当前没有待确认的操作。您可以重新告诉我需求。",
-                         "actions": []}
+                         "actions": [], "_outcome": "no_pending"}
                 self._append_pending_hint(final, entries[-1])
                 yield final
                 return
@@ -521,7 +585,8 @@ class PlannerEngine:
                              if len(entries) >= 2 else "")
                     yield {"kind": "final",
                            "speech": (f"好的，已为您取消{which}。" if which
-                                      else "好的，已为您取消。")}
+                                      else "好的，已为您取消。"),
+                           "_outcome": "cancelled"}
                     return
                 # 复合句（「算了咖啡不买了，**先去加点油**」）：取消只作用于挂起，
                 # 其余内容按全新请求继续处理——不 return、不进确认/补槽/话题分支。
@@ -585,7 +650,8 @@ class PlannerEngine:
                     await _emit_engine_lifecycle(
                         ctx, "cloud.pending_expired", "system.pending_expired")
                     yield {"kind": "final",
-                           "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
+                           "speech": "刚才的操作已过期，麻烦您再说一遍需求。",
+                           "_outcome": "pending_expired"}
                     return
                 ctx.pending_operation_id = pending.operation_id
                 logger.info("Resuming plan for session %s (confirm step %s)",
@@ -619,7 +685,8 @@ class PlannerEngine:
                     await _emit_engine_lifecycle(
                         ctx, "cloud.pending_expired", "system.pending_expired")
                     yield {"kind": "final",
-                           "speech": "刚才的操作已过期，麻烦您再说一遍需求。"}
+                           "speech": "刚才的操作已过期，麻烦您再说一遍需求。",
+                           "_outcome": "pending_expired"}
                     return
                 ctx.pending_operation_id = pending.operation_id
                 # C3-D：带上这条挂起当时**问的是什么**，`_suspend` 才分得清
@@ -650,7 +717,8 @@ class PlannerEngine:
             await _emit_engine_lifecycle(
                 ctx, "cloud.no_pending", "system.no_pending")
             yield {"kind": "final",
-                   "speech": "当前没有待确认的操作。您可以重新告诉我需求。"}
+                   "speech": "当前没有待确认的操作。您可以重新告诉我需求。",
+                   "_outcome": "no_pending"}
             return
 
         new_plan = plan is None
@@ -683,7 +751,8 @@ class PlannerEngine:
                         "刚才挂起的操作缺少可验证的原始请求，为安全起见没有执行，"
                         "请重新发起。"
                     )
-                    yield {"kind": "final", "speech": speech}
+                    yield {"kind": "final", "speech": speech,
+                           "_outcome": "safety_origin_blocked"}
                     return
         if plan is None:
             # ws8 P1: 注入检测——疑似 prompt injection 时拦截，不进 Planner
@@ -693,7 +762,8 @@ class PlannerEngine:
                 await _emit_engine_lifecycle(
                     ctx, "cloud.injection_reject", "system.injection_reject")
                 yield {"kind": "final",
-                       "speech": "抱歉，您的请求包含异常内容，无法处理。"}
+                       "speech": "抱歉，您的请求包含异常内容，无法处理。",
+                       "_outcome": "injection_rejected"}
                 return
 
             # B. 新规划：经 ContextManager 统一装配（catalog 语义预筛 + 此前对话历史
@@ -723,7 +793,8 @@ class PlannerEngine:
                     ctx, "cloud.candidate_missing", "system.candidate_missing")
                 yield {"kind": "final",
                        "speech": "我这边没有可以引用的列表。你先说要找什么，"
-                                 "我列出来之后再说「第几个」就能接上。"}
+                                 "我列出来之后再说「第几个」就能接上。",
+                       "_outcome": "candidate_missing"}
                 return
 
             # Q2 残余：候选集上的**聚合问题**由确定性算子回答，同样不进 Planner。
@@ -747,7 +818,7 @@ class PlannerEngine:
                         # 「答错组」在话术层看不出来（名字与价格都真实存在），
                         # 只有把「按谁答的」记下来才查得了。
                         "named_groups": len(named_candidates)})
-                yield {"kind": "final", "speech": aggregate}
+                yield {"kind": "final", "speech": aggregate, "_outcome": "fact_answered"}
                 return
 
             # C4-B：**系统持有的会话事实**的确定性读出口族——挂起状态 / 数据源 /
@@ -762,7 +833,23 @@ class PlannerEngine:
                 logger.info("Deterministic session fact (%s): %s", node, text[:40])
                 await _emit_engine_lifecycle(
                     ctx, f"cloud.{node}", f"system.{node}")
-                yield {"kind": "final", "speech": speech}
+                yield {"kind": "final", "speech": speech, "_outcome": "fact_answered"}
+                return
+
+            # W13 F09-a：**纯偏好陈述**（「我不吃辣，也不想排长队」）是系统持有的事实的登记，
+            # 不是一个要规划的请求。真栈三批四次：MiniMax-M3 下 3/4 落技术失败出口、1 次被规划成
+            # 一次搜索——而登记本身（`_register_input_facts`）每次都成功了，用户拿到的却是一句报错。
+            # 判据在 `runtime.session_constraints.is_pure_constraint_statement`（每个分句都在谈
+            # 口味 / 排队）；带安全信号的句子让给安全那条路；记忆关掉时焦点不落盘，「记下了」
+            # 会是假话，退回正常规划。致谢按登记后的投影念（合并旧值），零 LLM。
+            if (mem_on and is_pure_constraint_statement(text)
+                    and not (alert_level(text) or driver_state(text) or alert_resolved(text))):
+                await self._register_input_facts(ctx, text, mem_on)
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.constraint_noted", "system.constraint_noted")
+                yield {"kind": "final",
+                       "speech": await self._constraint_ack(ctx, text),
+                       "actions": [], "_outcome": "constraint_noted"}
                 return
 
             plan = await self.planner.build(
@@ -788,7 +875,7 @@ class PlannerEngine:
                            "owner": "cloud-engine"})
                 yield {"kind": "final", "speech": "",
                        "ui_card": {"type": "rejected", "reason": "not_addressed"},
-                       "_rejected": True}
+                       "_rejected": True, "_outcome": "not_addressed"}
                 return
 
             # AR05 F09：规划技术失败**不许伪装成一次成功的闲聊**。
@@ -799,6 +886,21 @@ class PlannerEngine:
             # 空计划仍走下面既有的澄清/取消未命中/「没听清」三条路，一个字不变。
             if plan.steps and getattr(plan, "technical_failure", False):
                 await self._register_input_facts(ctx, text, mem_on)
+                # W13 F09-b：模型在某一轮里**自己说过要澄清**（`clarify_wanted`）却没交出合法
+                # 澄清卡——这不是故障，是「听到了对象、不知道要拿它做什么」。真栈 CL1：
+                # 「云岚国际中心」1/3 次走到这里，用户听到的是「换个说法再说一次」外加一张
+                # 重试卡。诚实的终态是把听到的东西念回去、说清缺的是什么；不出 retry issue。
+                if getattr(plan, "clarify_wanted", False):
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.unresolved_object", "system.unresolved_object")
+                    heard = str(text or "").strip()[:20]
+                    yield {
+                        "kind": "final",
+                        "speech": f"我听到了「{heard}」，但没听清要拿它做什么——"
+                                  f"说完整一点我就能办。",
+                        "actions": [], "_outcome": "unresolved_object",
+                    }
+                    return
                 await _emit_engine_lifecycle(
                     ctx, "cloud.planner_technical_failure", "system.planner_failure")
                 yield {
@@ -810,6 +912,7 @@ class PlannerEngine:
                         severity=contracts.SEVERITY_ERROR,
                         request_id=ctx.request_id,
                         recovery=[(contracts.RECOVERY_RETRY_REQUEST, "换个说法再试")])],
+                    "_outcome": "planner_failure",
                 }
                 return
 
@@ -842,6 +945,7 @@ class PlannerEngine:
                             affected_capabilities=[plan.scope_blocked],
                             recovery=[(contracts.RECOVERY_OPEN_CAPABILITY_SETTINGS,
                                        "查看账号能力")])],
+                        "_outcome": "permission_missing",
                     }
                     return
                 # R4.4 D6-3：路由歧义澄清（CLARIFY 开 + 本轮非 clarify_resume 深度=1 才生效）。
@@ -869,12 +973,14 @@ class PlannerEngine:
                     yield {"kind": "final",
                            "speech": f"我没找到和「{plan.cancel_unresolved}」"
                                      f"对得上的事，你说的是哪一件？"
-                                     f"说得再具体点我就能取消。"}
+                                     f"说得再具体点我就能取消。",
+                           "_outcome": "cancel_unresolved"}
                     return
                 # R4.4 D5-2：诚实降级话术（含 fallback 低分不硬执行的场景），比「无法处理」更引导重说。
                 await _emit_engine_lifecycle(
                     ctx, "cloud.no_plan", "system.no_plan")
-                yield {"kind": "final", "speech": "抱歉，我没听清您想让我做什么，可以换个说法吗。"}
+                yield {"kind": "final", "speech": "抱歉，我没听清您想让我做什么，可以换个说法吗。",
+                       "_outcome": "no_plan"}
                 return
 
             # 用系统持有的会话焦点补全 Planner 省略的结构化上下文，再记录 trace；
@@ -883,6 +989,9 @@ class PlannerEngine:
             # 缺的槽从活动任务继承（新值优先），任务帧记成同一 task_id 的下一版。
             self._apply_task_patch(plan, working_set.focus)
             self._apply_focus_meta(plan, working_set.focus)
+            # W13 / W14：这一轮的步是不是全都只会「说」（按声明不可能改变世界）
+            ctx.answer_only = bool(plan.steps) and all(
+                bool(getattr(s, "response_only", False)) for s in plan.steps)
             # 跨轮门店锚定的**唯一入口**：把上一轮 nearby.search 的公开 POI 放上
             # PlanContext（服务端对象，LLM 与客户端都写不到）。executor 只在本轮 plan
             # 内没有生产者时才用它补门店三元组，并写同构 provenance——
@@ -1059,7 +1168,8 @@ class PlannerEngine:
                         # 改派装配/执行失败：原 speech 为空（agent 零播报），给诚实兜底话术
                         await self._settle_session(ctx, held_pending)
                         yield {"kind": "final",
-                               "speech": "这个需要联网查询，刚才没查成，请再说一次。"}
+                               "speech": "这个需要联网查询，刚才没查成，请再说一次。",
+                               "_outcome": "escalate_failed"}
                         return
                 if final_sr.status in (StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
                     yield await self._suspend(final_sr, results, plan, ctx)
@@ -1081,7 +1191,7 @@ class PlannerEngine:
                     "aggregate",
                     attrs={"path": "stream"},
                 )
-                yield {"kind": "final", **final}
+                yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
                 return
             if not allow_unary_fallback(stream.state):
                 # 流出过输出却没收到 final：不回退重跑，避免重复播报 / 重复副作用。
@@ -1094,10 +1204,11 @@ class PlannerEngine:
                         step, ctx)
                     final = await self.aggregator.compose(
                         text or plan.raw_text, [uncertain_sr])
-                    yield {"kind": "final", **final}
+                    yield {"kind": "final", **final, "_outcome": "uncertain"}
                     return
                 # 只流了话术：话已经说了一半，重跑会播两遍。
-                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH}
+                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH,
+                       "_outcome": "stream_lost"}
                 return
             # 无任何流式事件（不支持/连接失败）→ 安全回退到下面的 executor 路径
 
@@ -1217,7 +1328,29 @@ class PlannerEngine:
             ctx.trace_id,
             "aggregate",
         )
-        yield {"kind": "final", **final}
+        yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+
+    async def _constraint_ack(self, ctx, text: str) -> str:
+        """纯偏好陈述的致谢：按**登记后的投影**念（合并了之前说过的），词表与焦点块共用。"""
+        stated = constraints_in(text)
+        merged: dict = {}
+        try:
+            focus = await self.context._load_focus(ctx.session_id, ctx.user_id)
+            merged = dict(getattr(focus, "session_constraints", None) or {}) if focus else {}
+        except Exception as exc:                       # 焦点读不到就只念这一句说的
+            logger.debug("constraint ack: focus unavailable (%s)", exc)
+        if not merged:
+            merged = merge_constraints({}, stated)
+        words = describe_constraints(merged)
+        waived = [phrase_of(key, None) for key, value in stated.items()
+                  if key != "others" and value is None and phrase_of(key, None)]
+        if words and waived:
+            return f"好的，{'、'.join(waived)}；这次{'、'.join(words)}，找地方的时候我按这个来。"
+        if words:
+            return f"好的，这次{'、'.join(words)}，找地方的时候我按这个来。"
+        if waived:
+            return f"好的，{'、'.join(waived)}。"
+        return "好的，记下了。"
 
     async def _pending_digest(self, ctx) -> list[dict] | None:
         """挂起表 → 读出口能念的最小形状 `[{"what","phase"}]`；读不到返回 **None**。
@@ -1450,6 +1583,9 @@ class PlannerEngine:
                 return
             mini.safety_origin_text = safety_origin_text
         steps = mini.steps
+        # W13 / W14：改派后真正执行的是 mini 计划，谈话与否按它算
+        ctx.answer_only = bool(steps) and all(
+            bool(getattr(s, "response_only", False)) for s in steps)
         show_esc_process = is_complex(mini)
         if show_esc_process:
             for s in mini.steps:
@@ -1489,7 +1625,8 @@ class PlannerEngine:
                     sink["results"] = [await self.executor.stream_uncertain_result(step0, ctx)]
                     sink["plan"] = mini
                     return
-                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH}
+                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH,
+                       "_outcome": "stream_lost"}
                 sink["suspended"] = True   # 终态已给出，调用方直接 return
                 return
             # 零输出（Agent 不支持流式 / 建连失败）→ 与 D0 同款：安全回退到 executor 路径
@@ -1770,6 +1907,7 @@ class PlannerEngine:
                 "actions": [],
                 "ui_card": None,
                 "need_confirm": False,
+                "_outcome": "store_fenced",
             }
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
@@ -1802,6 +1940,8 @@ class PlannerEngine:
             "ui_card": step_result.ui_card,
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
             "operation_id": operation_id,
+            "_outcome": ("pending_confirm" if step_result.status == StepStatus.NEED_CONFIRM
+                         else "pending_slot"),
         }
         if step_result.status == StepStatus.NEED_CONFIRM:
             final_event["confirm_policy"] = contracts.build_confirm_policy(
@@ -1888,7 +2028,7 @@ class PlannerEngine:
         if saved is False:
             return {"kind": "final",
                     "speech": "正在清除你的数据，这次操作没有保存，请稍后重新发起。",
-                    "actions": [], "ui_card": None}
+                    "actions": [], "ui_card": None, "_outcome": "store_fenced"}
         final = {
             "kind": "final",
             "speech": clarify["question"],
@@ -1896,6 +2036,7 @@ class PlannerEngine:
             "operation_id": operation_id,
             "ui_card": contracts.build_clarify_card(
                 operation_id=operation_id, clarify=clarify, state=state),
+            "_outcome": "clarify",
         }
         if evicted is not None:
             ctx.closed_operation_ids.append(evicted.operation_id)

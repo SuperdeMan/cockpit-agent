@@ -50,6 +50,7 @@ class MockAgent:
             cap.whole_utterance = intent in (whole_utterance or ())
             cap.require_confirm = intent in (require_confirm or ())
             cap.response_only = intent in (response_only or ())
+            cap.effect = ""            # W11：MagicMock 字符串化不是声明，显式给「未声明」
             self.manifest.capabilities.append(cap)
         # 真实 manifest 的确定性路由提示（R2.1）；未声明的 agent 为空列表。
         self.manifest.route_hints = _load_route_hints(agent_id)

@@ -596,6 +596,8 @@ def _manifest_to_dict(manifest) -> dict:
         for ck in ("intent", "description", "examples", "require_confirm", "heavy",
                    "response_only", "whole_utterance"):
             cap[ck] = getattr(c, ck, None if ck != "examples" else [])
+        # W11 能力效果：与 slot_shapes / whole_utterance 同族，丢了它任务帧的 kind 静默退回启发式
+        cap["effect"] = str(getattr(c, "effect", "") or "")
         cap["slots"] = list(getattr(c, "slots", []))
         # C3 槽位形状：与 verification/route_hints 同族——丢了它 registry 重启后
         # wait_slot 的「这句话像不像这个槽的值」判据静默消失（AR05 F08）。
@@ -683,6 +685,8 @@ def _dict_to_manifest(d: dict):
             slot_shapes={str(k): str(v)
                          for k, v in (c.get("slot_shapes") or {}).items()},
             whole_utterance=bool(c.get("whole_utterance", False)),
+            # W11 能力效果（2026-09-20）：同一条 round-trip 纪律
+            effect=str(c.get("effect", "") or ""),
             # M2 Verifier：**必须随 round-trip 还原**——R2.1 当年 route_hints 正是在这里丢过，
             # registry 重启恢复后声明静默失效、执行后对账形同虚设（契约测试 test_store_roundtrip）。
             verification=_dict_to_verification(c.get("verification")),

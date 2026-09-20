@@ -63,3 +63,34 @@ def execution_claim(text: str | None) -> str:
     if _ONGOING_RE.search(t):
         return "ongoing"
     return ""
+
+
+#: 句边界（W14 按句剥）：只认句末标点与换行，零领域词。
+_SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?|\n")
+
+
+def strip_execution_claims(text: str | None) -> tuple[str, int]:
+    """把话术里**声称执行**的句子剥掉 → `(剩下的话术, 剥掉的句数)`（评审 W14，2026-09-20）。
+
+    只在调用方已经证明「这一轮按声明不可能执行任何事」时才该调它（谈话步 + 零动作）；
+    判据与 `execution_claim` 同一份正则，按句求值——一句「已为您避开此路段」后面跟着
+    真正的建议时，建议留下、声称走。剥空了由调用方换固定的诚实话术，这里不编话。
+    """
+    t = (text or "").strip()
+    if not t:
+        return "", 0
+    kept: list[str] = []
+    removed = 0
+    for sentence in _SENTENCE_RE.findall(t):
+        if sentence == "\n":
+            kept.append(sentence)
+            continue
+        if _DONE_RE.search(sentence) or _ONGOING_RE.search(sentence):
+            removed += 1
+            continue
+        kept.append(sentence)
+    if not removed:
+        return t, 0
+    cleaned = "".join(kept).strip()
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned).strip()
+    return cleaned, removed

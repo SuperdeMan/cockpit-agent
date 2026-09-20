@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS turns(
   plan_mode TEXT DEFAULT '',     -- 规划输出通道（toolcall|…|toolcall_degraded）
   gold_intents TEXT DEFAULT '',  -- 人工标注的正确落域（数据飞轮资产；UPSERT 不碰、保留期豁免）
   edge_nlu TEXT DEFAULT '',      -- 端云分歧（M5 P2-D2）：'<端侧初判>|<conf>' + '!=' 后缀表示与云侧落域不一致
-  actionability TEXT DEFAULT ''  -- 可执行性 shadow（B6 §2）：'<execute|clarify|reject>|<conf>' + '!=' 后缀表示与 planner 分歧
+  actionability TEXT DEFAULT '', -- 可执行性 shadow（B6 §2）：'<execute|clarify|reject>|<conf>' + '!=' 后缀表示与 planner 分歧
+  outcome TEXT DEFAULT ''        -- 终态账本（评审 W13）：cloud.outcome span 的 kind（runtime/outcome.py 词表）
 );
 CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
@@ -185,6 +186,8 @@ class ObsDB:
             self._ensure_column("turns", "edge_nlu", "TEXT DEFAULT ''")
             # B6 §2（2026-08-11）：可执行性 shadow 判定，`!=` 后缀=与 planner 分歧
             self._ensure_column("turns", "actionability", "TEXT DEFAULT ''")
+            # 评审 W13（2026-09-20）：一轮的结局（受话 / 理解 / 支持 / 执行失败分账）
+            self._ensure_column("turns", "outcome", "TEXT DEFAULT ''")
             self._conn.commit()
 
     def _ensure_column(self, table: str, column: str, decl: str) -> None:
@@ -265,6 +268,15 @@ class ObsDB:
                         "edge_nlu=excluded.edge_nlu, "
                         "actionability=excluded.actionability",
                         (trace_id, intents, plan_mode, edge_nlu, actionability))
+            # 终态账本（评审 W13）：engine 在 final 唯一出口发 `cloud.outcome`，kind 合并进
+            # turns 行。同 planning 的口径：顺序无关、不在 _TURN_FIELDS、turn 重复到达不抹。
+            if trace_id and (event.get("node") or "") == "cloud.outcome":
+                kind = str((event.get("attrs") or {}).get("kind") or "")[:40]
+                if kind:
+                    self._conn.execute(
+                        "INSERT INTO turns(trace_id, outcome) VALUES(?,?) "
+                        "ON CONFLICT(trace_id) DO UPDATE SET outcome=excluded.outcome",
+                        (trace_id, kind))
             self._conn.commit()
 
     def insert_llm(self, event: dict) -> None:

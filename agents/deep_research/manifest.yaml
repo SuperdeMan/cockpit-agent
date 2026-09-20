@@ -11,6 +11,8 @@ fallback: chitchat
 
 capabilities:
   - intent: research.run
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     # 【历史约束已解除，M5 P2-D4】此处原写着「desc 刻意保持原句不加长」——因为 registry
     # 离线路由曾按「query 单字符 ∩ capability 文本」打分，文本每加长一分所有 query 的分
     # 都会涨（曾把「自驾游路线安排」从 trip-planner 吸过来）。那是**描述写法在为打分算法
@@ -35,6 +37,7 @@ capabilities:
     examples: ["刚才那个调研查得怎么样了", "调研有结果了吗", "还在查吗", "后台那个任务什么进度"]
 
   - intent: research.cancel
+    effect: write
     description: 停掉正在跑的后台深度调研任务。用户说「别查了/不用查了/取消那个调研/停下」时走本能力。
     slots: [query]
     examples: ["别查了", "不用查了", "取消那个调研", "停掉刚才那个调研", "调研不用继续了"]

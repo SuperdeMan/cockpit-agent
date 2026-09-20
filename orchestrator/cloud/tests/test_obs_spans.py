@@ -217,8 +217,45 @@ def test_clause_uncovered_drops_negated_clauses():
 def test_clause_uncovered_ignores_one_char_slot_values():
     """1 字的槽值在任何句子里都可能撞上，拿它判覆盖是把噪声当信号。"""
     from orchestrator.cloud.engine import _clause_uncovered
-    plan = _plan_with("", [{"n": "1"}, {"ok": "是"}])
+    plan = _plan_with("", [{"n": "1"}])
     assert _clause_uncovered(plan, "先查瑞幸，再点生椰拿铁") == "2/2"
+
+
+# ── W12（2026-09-20）：三类可判定的误报不再进观测列 ────────────────────────
+
+def test_clause_uncovered_is_quiet_when_every_clause_may_have_its_own_step():
+    """步数 ≥ 分句数：槽值被转述（瑞幸→luckin）子串够不着，但那不是漏步。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"keyword": "luckin"}, {"item": "latte"}])
+    assert _clause_uncovered(plan, "先查瑞幸，再点生椰拿铁") == ""
+
+
+def test_clause_uncovered_is_quiet_for_whole_utterance_passthrough():
+    """chitchat / 兜底把整句放进 text 槽 ⇒ 一步吃整句，不存在「哪一段没人管」。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    text = "你好，请只回复一句问候"
+    assert _clause_uncovered(_plan_with("", [{"text": text}]), text) == ""
+
+
+def test_clause_uncovered_is_quiet_for_a_whole_utterance_capability():
+    from orchestrator.cloud.engine import _clause_uncovered
+    from orchestrator.cloud.models import Plan, Step
+    plan = Plan(steps=[Step(id="s1", agent_id="reminder", intent="reminder.create_batch",
+                            slots={}, whole_utterance=True)])
+    assert _clause_uncovered(plan, "明天四点提醒我开会，三点半再提醒一次") == ""
+
+
+def test_clause_uncovered_is_quiet_when_one_step_filled_a_slot_per_clause():
+    """「导航去深圳湾公园，晚上7点前到」= destination + arrive_by，两个槽就是两个分句。"""
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"destination": "深圳湾公园", "arrive_by": "19:00"}])
+    assert _clause_uncovered(plan, "导航去深圳湾公园，晚上7点前到") == ""
+
+
+def test_clause_uncovered_still_flags_a_single_slot_step_for_two_clauses():
+    from orchestrator.cloud.engine import _clause_uncovered
+    plan = _plan_with("", [{"keyword": "麦当劳"}])
+    assert _clause_uncovered(plan, "接孩子放学，顺便找麦当劳") == "1/2"
 
 
 def test_clause_uncovered_needs_steps():

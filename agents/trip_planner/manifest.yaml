@@ -9,6 +9,8 @@ fallback: chitchat
 
 capabilities:
   - intent: trip.plan
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点。凡"去X玩N天/N日游"
       并带出行偏好(带老人/带娃/轻松/不要太累/悠闲)，即便同句还问天气/充电，行程规划也应单独成步。
       「跟着《某剧》游X」「X同款打卡」这类影视/文化主题行程把主题名填 theme（会检索
@@ -27,11 +29,13 @@ capabilities:
                "周末去杭州两天带老人，顺便看看天气和是否需要中途充电",
                "跟着《太平年》游杭州", "先去杭州再去苏州玩四天"]
   - intent: trip.modify
+    effect: write
     description: 修改已有行程（结构化局部编辑：换/加/删某个停靠点，只动受影响的天）
     slots: [modification]
     heavy: true    # 局部重规划仍走 LLM → 开思考+过程区
     examples: ["第二天换成宋城", "不去千岛湖了", "加一个西湖", "删掉第三天的奥林匹克公园"]
   - intent: trip.navigate
+    effect: write
     description: 导航到当前行程里的某个停靠点（『下一站』『导航去第二天的西湖』『第三天第一个』）。
       仅在已有规划好的行程时由确定性路由命中，普通导航仍走 navigation。
     slots: [day, stop, target]
@@ -44,6 +48,7 @@ capabilities:
     examples: ["行程到哪了", "还剩几站", "我在第几站", "还要充几次电",
                "第二天有哪些安排", "第三天去哪几个地方"]
   - intent: trip.reschedule
+    effect: write
     description: 在途精简剩余行程（时间不够/太累/想提前回）——确定性砍掉靠后的停靠点或最后一天，需二次确认。
     slots: [hint]
     examples: ["时间不够了", "太累了精简一下", "想提前回家", "今天少玩一个"]

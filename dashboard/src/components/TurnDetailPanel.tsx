@@ -188,6 +188,19 @@ export function TurnDetailPanel({
                 {turn.plan_mode}
               </span>
             )}
+            {turn.outcome && (
+              <span
+                className={
+                  'det-chip' +
+                  (/failure|failed|stream_lost|escalate_failed|unknown/.test(turn.outcome)
+                    ? ' det-chip--warn'
+                    : '')
+                }
+                title="终态账本（cloud.outcome）"
+              >
+                {turn.outcome}
+              </span>
+            )}
             {!!turn.is_confirmation && <span className="det-chip">确认轮</span>}
             <span className="det-ms">{Math.round(turn.duration_ms)}ms</span>
             <span className="det-time">{fmtTime(turn.ts)}</span>

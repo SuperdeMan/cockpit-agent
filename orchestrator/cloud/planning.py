@@ -167,6 +167,15 @@ def _assemble_capability_catalog(agents: list) -> PlannerCapabilityCatalog:
     )
 
 
+def _declared_effect(cap) -> str:
+    """capability.effect → `read` / `write` / `""`（词表外或非字符串一律当未声明）。"""
+    value = getattr(cap, "effect", "")
+    if not isinstance(value, str):
+        return ""
+    value = value.strip().lower()
+    return value if value in ("read", "write") else ""
+
+
 def _verification_dict(cap) -> dict:
     """capability.verification（proto/dict/None）→ Step 用的纯 dict。
 
@@ -1453,6 +1462,10 @@ class PlanBuilder:
         if granted_permissions is not None:
             agents, scope_blocked_agents = self._partition_by_permission(
                 agents, granted_permissions)
+        # W15：route_hints 从**权限过滤后的完整注册表**扫，不从 prompt 目录扫——被 top-k /
+        # 预算裁出 prompt 的 Agent，它的 hint 照样命中、补出的步照样过 `_validated_steps`
+        # （endpoint / 权限 / 能力集校验一样不少）。旧调用方没给 `registry_agents` 时退回 catalog。
+        hint_map = self._hint_map(working_set, granted_permissions)
         catalog = _assemble_capability_catalog(agents)
         agents = list(catalog.visible_agents)
         agent_map = catalog.agent_map
@@ -1477,7 +1490,7 @@ class PlanBuilder:
         # 这里零领域词）。置位必须在两条 prompt 路径**之前**——json 与 toolcall 两档
         # 的 user message 逐字一致是 A/B 单变量的前提，让路只能从这一格进去。
         working_set.suppress_sticky_places = self._route_hints.matches_clause_scope(
-            text, agent_map)
+            text, hint_map)
 
         # Q7 EL1/OR2：动作明确、对象完全省略、且执行焦点能唯一落到本轮授权 capability
         # ⇒ **确定性成计划，一次 LLM 都不调**（连下面两次检索 embed 也省了）。
@@ -1529,6 +1542,7 @@ class PlanBuilder:
         salvage_kept = None  # 掉档轮抢救出来的可用计划：重试工具通道失败时的回落
         clarification_expected = False   # 上一轮要过澄清专用 schema
         plan_only_expected = False       # 上一轮要过计划修正专用 schema
+        clarify_wanted = False           # W13 F09-b：某一轮里模型自己说过要澄清（裸对象族）
         for attempt in range(2):
             mode = "json"
             use_tool = toolcall and (attempt == 0 or retry_with_tool)
@@ -1606,6 +1620,9 @@ class PlanBuilder:
                 (_goal_requires_clarification(data, text)
                  and not complete_conditional_goal_marker)
                 or _bare_object_plan_invents_action(parsed, text))
+            # 只认 goal 标记 / 裸对象被包成动作这两种「模型自己说要澄清」；完整条件句被误澄清
+            # 那一族（`complete_conditional_goal_marker`）刻意不算——那句话本身没有歧义。
+            clarify_wanted = clarify_wanted or goal_requires_clarification
             state = PlanAttemptState(
                 attempt=attempt, wire_mode=mode, data=data, parsed=parsed,
                 text=text, working_set=working_set, catalog=catalog, ctx=ctx,
@@ -1762,6 +1779,9 @@ class PlanBuilder:
         plan.exemplars = ex_names
         plan.plan_mode = plan_mode
         plan.technical_failure = technical_failure
+        # 只对技术失败终态有意义：engine 据此把「换个说法再试 + 重试卡」改成「我听到了 X，
+        # 但没听清要拿它做什么」（真栈 CL1 那 1/3）。正常出了澄清卡 / 计划时它不被读。
+        plan.clarify_wanted = bool(technical_failure and clarify_wanted)
         # B6 §2 shadow：可执行性形态判定。**只写观测、不参与上面任何一步决策**
         # ——这一行放在计划已经定稿之后，就是为了让「它不可能影响计划」是结构性的
         # 而不是靠人记得（同 P3a 影子「它的全部价值就是不生效」的口径）。
@@ -1784,7 +1804,7 @@ class PlanBuilder:
         # 依赖率（北极星 N2）的分子，「盖掉澄清」是 D3 行为裁决的数据。仅观测不改行为。
         had_clarify = plan.clarify is not None
         before = [(s.agent_id, s.intent) for s in plan.steps]
-        hit = self._route_hints.apply(plan, text, agent_map)
+        hit = self._route_hints.apply(plan, text, hint_map)
         plan.hint_effect = _hint_effect(
             hit, before, [(s.agent_id, s.intent) for s in plan.steps], had_clarify)
         # F09 例外②：hint 命中 = 规则引擎对这句话有确定性裁决（replace/fill 改写了兜底
@@ -1865,6 +1885,19 @@ class PlanBuilder:
         step_summary = [(s.id, s.agent_id, s.intent) for s in plan.steps]
         logger.info("Plan ready: complexity=%s steps=%s", plan.complexity, step_summary)
         return plan
+
+    def _hint_map(self, working_set: WorkingSet, granted_permissions) -> dict:
+        """route_hints 的扫描面（W15）：权限过滤后的完整注册表，键是 agent_id。"""
+        hint_agents = list(getattr(working_set, "registry_agents", None)
+                           or working_set.catalog)
+        if granted_permissions is not None:
+            hint_agents = self._filter_by_permission(hint_agents, granted_permissions)
+        out: dict = {}
+        for agent in hint_agents:
+            agent_id = str(getattr(getattr(agent, "manifest", None), "agent_id", "") or "")
+            if agent_id:
+                out.setdefault(agent_id, agent)
+        return out
 
     @staticmethod
     def _planner_user_msg(text: str, catalog: PlannerCapabilityCatalog,
@@ -2491,6 +2524,9 @@ class PlanBuilder:
                 response_only=next(
                     (bool(getattr(c, "response_only", False))
                      for c in manifest.capabilities if c.intent == intent), False),
+                # W11 能力效果：同一条权威链（capability 声明，LLM 字段不读）；词表外一律当未声明
+                effect=next(
+                    (_declared_effect(c) for c in manifest.capabilities if c.intent == intent), ""),
                 # M2 Verifier：执行后对账期望同样只从 capability 读（LLM 字段不读——
                 # 「验不验、验什么」不是模型的决定权，与 require_confirm 同一条权威链）。
                 verification=next(

@@ -231,3 +231,32 @@ def test_one_no_action_plus_one_garbage_is_a_degradation_not_a_judgement():
         assert [s.intent for s in plan.steps] == ["chitchat.talk"]
         assert calls["fallback"] == 1, f"{replies} 应走降级"
         assert not plan.plan_mode.endswith("_no_action"), replies
+
+
+# ── W13 F09-b：模型说过要澄清、却没交出卡而落兜底 ⇒ `clarify_wanted` ────────
+
+CLARIFY_MARKER = '{"addressed":true,"steps":[],"goal":"需要澄清：用户只给了地点名，未说明要做什么"}'
+
+
+def test_clarify_marker_then_garbage_marks_the_technical_failure_as_clarify_wanted():
+    plan, calls = _build([CLARIFY_MARKER, "这不是 JSON"], text="云岚国际中心")
+    assert plan.technical_failure is True
+    assert plan.clarify_wanted is True
+    assert calls["fallback"] == 1
+
+
+def test_plain_double_garbage_is_a_technical_failure_without_clarify_wanted():
+    plan, _calls = _build(["这不是 JSON", "还不是 JSON"], text="云岚国际中心")
+    assert plan.technical_failure is True
+    assert plan.clarify_wanted is False
+
+
+def test_a_valid_clarify_card_never_sets_clarify_wanted(monkeypatch):
+    monkeypatch.setenv("CLARIFY_ENABLED", "on")
+    card = ('{"addressed":true,"steps":[],"clarify":{"question":"要拿它做什么？",'
+            '"options":[{"label":"导航","send_text":"导航到云岚国际中心"},'
+            '{"label":"介绍","send_text":"介绍一下云岚国际中心"}]}}')
+    plan, _calls = _build([card], text="云岚国际中心")
+    assert plan.clarify is not None
+    assert plan.technical_failure is False
+    assert plan.clarify_wanted is False

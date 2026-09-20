@@ -46,6 +46,8 @@ capabilities:
     slots: [poi_id, name]
     examples: ["看第一个的详情", "这家怎么样", "它家电话多少", "几点关门", "人均多少"]
   - intent: nearby.order
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     description: 在餐厅等商户点单/订位/预订座位（涉及费用/承诺，需二次确认；当前仅少数连锁接入，预留）
     # 2026-08-14 摘除 datetime/party_size：诚实桩不读它们（订座属生态搁置面），
     # 声明会让 LLM 白抽取；真实订座接入时随能力一起回来。

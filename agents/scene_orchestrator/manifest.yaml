@@ -9,6 +9,8 @@ fallback: chitchat
 
 capabilities:
   - intent: scene.create
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     description: 用一句话创建自定义场景模式（钓鱼模式/观星模式），说清要做哪些事
       （座椅放平、空调温度、氛围灯亮度、香氛、车窗、音乐…），保存后随叫随到。
       场景本身可以带触发条件（「电量低于20%的时候提醒我开」「每天中午12点提醒我」）——
@@ -21,6 +23,7 @@ capabilities:
                "自定义一个遛狗模式：车窗开一半，空调外循环",
                "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开"]
   - intent: scene.activate
+    effect: write
     description: 开启场景模式（自建的或内置的）。用户同句给出的温度、灯光等覆盖参数属于
       custom_params，必须与场景激活保留在同一个 scene.activate 步骤里，不要拆成独立车控步骤，
       否则场景默认值与覆盖值会发生并发覆盖。
@@ -28,14 +31,17 @@ capabilities:
     examples: ["开启回家模式", "露营模式", "午休模式", "来个钓鱼模式", "打开浪漫模式",
                "开启午休模式，温度26"]
   - intent: scene.deactivate
+    effect: write
     description: 退出当前场景模式，把座椅/空调/灯光恢复到开启前的样子
     slots: [scene]
     examples: ["退出露营模式", "关闭午休模式", "退出场景"]
   - intent: scene.update
+    effect: write
     description: 修改已有自建场景的动作或参数
     slots: [scene, modification]
     examples: ["把钓鱼模式的温度改成24", "钓鱼模式再加一个开香氛", "观星模式去掉座椅放平"]
   - intent: scene.delete
+    effect: write
     description: 删除自建场景（需二次确认）
     slots: [scene]
     examples: ["删掉钓鱼模式", "不要观星模式了"]

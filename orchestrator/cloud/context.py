@@ -28,7 +28,7 @@ from .models import PlanContext, step_fingerprint
 from runtime.clock import hhmm as clock_hhmm
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
                                    alert_resolved, alert_signal, driver_state)
-from runtime.session_constraints import constraints_in, merge_constraints
+from runtime.session_constraints import constraints_in, merge_constraints, phrase_of
 from runtime.slots import normalize_city_slot as normalize_weather_city_slot
 from security.audit import AuditLogger
 from security.session_scopes import (
@@ -160,20 +160,17 @@ def _always_include(a) -> bool:
     """catalog 语义预筛/预算裁剪都不得丢的 Agent（取代硬编码 _ALWAYS_INCLUDE，去领域字面量）：
 
     ①全局兜底 Agent（env `PLANNER_FALLBACK_AGENT`）；
-    ②声明了 `route_hints` 的 Agent——**机制依赖**：RouteHintEngine 从 `agent_map` 里读
-      hints，manifest 被预筛丢掉它就看不到（这一条不是巧合耦合，是硬约束）；
-    ③`category: core` 的 Agent——**领域重要性**（M5 P2 补）。
+    ②`category: core` 的 Agent——**领域重要性**（M5 P2 补）。
 
-    为什么补③：此前只有①②，于是保护资格与领域重要性无关——`navigation` 与 `road-safety`
-    都是 `core` 却因为**恰好没写 route_hints** 而全程可被裁掉（数据飞轮 D1 的根因，
-    navigation 恰是 Shadow NLU 里缺口最大的域）。而 P2 的 hint 退役流水线会让这件事更糟：
-    摘掉一条 hint 会**顺手删掉那个 Agent 的 catalog 保护**——治理规则的动作不该有这种
-    远处的副作用。`category` 是 manifest/proto/registry 已有的字段，用它即机制化，不新增管道。
-
-    ⚠ 注意②与③是**并集不是替换**（RFC §5-P2-4 原设想是替换，实测会打断 hint 可见性）。"""
+    ⚠ 2026-09-20（评审 W15）：「声明了 `route_hints`」**不再**是保护资格。此前它是机制依赖——
+    RouteHintEngine 从 prompt 目录的 `agent_map` 里读 hints，manifest 被预筛丢掉它就看不到；
+    于是退役一条 hint 会顺手改变目录裁剪（治理规则的动作有远处的副作用），而一条 hint 又能
+    让一个非 core 的 Agent 永远占着 prompt 预算。现在 hint 扫描改读**权限过滤后的完整注册表**
+    （`WorkingSet.registry_agents`，`PlanBuilder.build` 里另起一张 `hint_map`），被裁出 prompt
+    的 Agent 它的 hint 照样命中、补出的步照样过 `_validated_steps`——**能力可见性与规则存亡
+    从此是两件事**。`category` 是 manifest/proto/registry 已有的字段，用它即机制化，不新增管道。"""
     m = getattr(a, "manifest", None)
     return (getattr(m, "agent_id", "") == _FALLBACK_AGENT
-            or bool(getattr(m, "route_hints", []))
             or str(getattr(m, "category", "")) == "core")
 
 
@@ -348,6 +345,9 @@ class Focus:
 class WorkingSet:
     """一次规划轮装配好的工作上下文。catalog 是已（语义）预筛的 agent 列表。"""
     catalog: list = field(default_factory=list)        # ResolvedAgent 列表（含 .manifest/.endpoint）
+    # W15：**完整**注册表（预筛 / 预算裁剪之前的那份）。route_hints 从这里扫，不从 prompt 目录扫
+    # ——被裁出 prompt 的 Agent 的 hint 照样命中。空 = 旧调用方没给，退回 `catalog`。
+    registry_agents: list = field(default_factory=list)
     history: list[dict] = field(default_factory=list)  # [{role, text, ts}]
     memories: list[dict] = field(default_factory=list) # [{text, scope, predicate, provenance, confidence}]
     focus: "Focus | None" = None                       # 结构化焦点态（指代消解）
@@ -389,7 +389,7 @@ class WorkingSet:
     def render_catalog(agents: list, stats: dict | None = None) -> str:
         """能力清单 JSON；超 catalog 预算时优先丢相关性最低的**非受保护** agent（从尾部找）。
 
-        受保护 = edge 车控核心（edge-vehicle/edge-media）∪ 兜底 Agent（env）∪ 有 route_hints 的 Agent（见 _always_include）。
+        受保护 = edge 车控核心（edge-vehicle/edge-media）∪ 兜底 Agent（env）∪ core Agent（见 _always_include；W15 起 hint 不再是资格）。
         根因修复：edge-vehicle 有几十个 caps、渲染体积大，旧逻辑无差别 pop 尾部会把它或
         chitchat 丢掉——丢 edge 车控→危险动作规划空计划退化（dangerous_trunk_confirm）；丢
         chitchat→开放域兜底缺席、误路由到 info（cloud_chitchat_streaming）。
@@ -644,6 +644,22 @@ def active_task_live(task: dict | None, *, now: float | None = None) -> bool:
     return 0 < ts and now - ts <= _ACTIVE_TASK_TTL_S
 
 
+def task_writes(step, result=None) -> bool:
+    """这一步是不是**写**任务（W07 帧的 `kind`）。
+
+    声明优先（`Step.effect`，评审 W11）：`write` ⇒ 写、`read` ⇒ 读；未声明退回启发式
+    「结果带 actions / 声明 require_confirm ⇒ 写」。`reminder.create` 这类不出 action 的云侧
+    写此前被记成 read，下一轮一句查询就把它顶掉——改口的对象没了。
+    """
+    declared = str(getattr(step, "effect", "") or "").strip().lower()
+    if declared == "write":
+        return True
+    if declared == "read":
+        return False
+    return bool(getattr(result, "actions", None)) or bool(
+        getattr(step, "require_confirm", False))
+
+
 def _task_frame(plan, step, outcome: str, kind: str) -> dict:
     """一个任务性步骤 → 任务帧。改口（`plan.task_patch`）沿用 task_id、版本 +1。
 
@@ -721,11 +737,15 @@ def _render_focus(focus, drop_sticky_places: bool = False) -> str:
     # 值是投影（`runtime.session_constraints` 的扁平键），话术按当前值渲染，改口后显示改口后的。
     constraints = focus.session_constraints or {}
     if constraints:
+        # 词表与致谢话术共用 `runtime.session_constraints.phrase_of`（W13 F09-a）；
+        # 「想吃辣」在这里带「今天」是焦点块自己的时间框架。
         words = []
-        if "no_spicy" in constraints:
-            words.append("不吃辣" if constraints["no_spicy"] else "今天想吃辣")
-        if "no_queue" in constraints:
-            words.append("不想排队" if constraints["no_queue"] else "可以排队")
+        for key in ("no_spicy", "no_queue"):
+            if key in constraints:
+                phrase = phrase_of(key, constraints[key])
+                if phrase:
+                    words.append(("今天" + phrase) if (key, constraints[key]) == ("no_spicy", False)
+                                 else phrase)
         if words:
             parts.append("本次会话约束=" + "/".join(words))
     # W07：活动任务帧——planner 判「这句是不是在改它」的对象（acts=correct 的前提）。
@@ -1585,8 +1605,7 @@ def extract_focus(plan, results) -> "Focus | None":
         if bool(getattr(step, "response_only", False)) or not step.intent:
             continue
         result = by_id.get(step.id)
-        wrote = bool(getattr(result, "actions", None)) or bool(
-            getattr(step, "require_confirm", False))
+        wrote = task_writes(step, result)
         if step.id in ok:
             focus.active_task = _task_frame(
                 plan, step, "completed", "write" if wrote else "read")
@@ -1750,12 +1769,12 @@ class ContextManager:
         async def _empty():
             return []
 
-        history, memories, focus, catalog = await asyncio.gather(
+        history, memories, focus, (catalog, registry_agents) = await asyncio.gather(
             self._history(ctx) if mem_on else _empty(),
             self._recall(text, ctx) if mem_on else _empty(),
             self._load_focus(ctx.session_id, ctx.user_id)
             if (mem_on and self.session) else _none(),
-            self._catalog(text),
+            self._catalog_with_registry(text),
         )
         # Q7-EL1/OR2：用**最近执行事实**刷新车控焦点（跨轮取会话轮次的
         # `actions`，同轮取端侧刚执行掉的那批）。端侧本地快路径根本不写云侧焦点，
@@ -1767,8 +1786,8 @@ class ContextManager:
                 ctx, "previous_local_exchange", ""),
             previous_local_actions=getattr(
                 ctx, "previous_local_actions", None))
-        return WorkingSet(catalog=catalog, history=history, memories=memories,
-                          focus=focus)
+        return WorkingSet(catalog=catalog, registry_agents=registry_agents,
+                          history=history, memories=memories, focus=focus)
 
     async def _load_focus(self, session_id: str, user_id: str):
         """载入会话焦点。失败/无则 None，不阻塞规划。"""
@@ -1934,16 +1953,23 @@ class ContextManager:
             logger.debug("append_turn failed: %s", e)
 
     async def _catalog(self, text: str) -> list:
-        """catalog 语义预筛：agent 数 ≤ top_k 时返回全量（no-op）；否则 resolve top-K
-        ∪ always-include；resolve 不可用/为空 → 回退全量（de-risk）。"""
+        """catalog 语义预筛（见 `_catalog_with_registry`；既有调用方只要预筛后的那份）。"""
+        return (await self._catalog_with_registry(text))[0]
+
+    async def _catalog_with_registry(self, text: str) -> tuple[list, list]:
+        """→ `(预筛后的 catalog, 完整注册表)`。
+
+        预筛：agent 数 ≤ top_k 时返回全量（no-op）；否则 resolve top-K ∪ always-include；
+        resolve 不可用/为空 → 回退全量（de-risk）。完整注册表另给一份（W15）：route_hints
+        从它扫，能力可见性与规则存亡分开。"""
         try:
             full = await self.clients.list_agents()
         except Exception as e:
             logger.warning("list_agents failed: %s", e)
-            return []
+            return [], []
         full = list(full)
         if len(full) <= self.top_k:
-            return full
+            return full, full
         fn = getattr(self.clients, "resolve", None)
         top = []
         if fn:
@@ -1953,10 +1979,10 @@ class ContextManager:
                 logger.debug("catalog resolve failed, using full catalog: %s", e)
                 top = []
         if not top:
-            return full
+            return full, full
         by_id = {a.manifest.agent_id: a for a in full}
         picked = {a.manifest.agent_id: a for a in top if a.manifest.agent_id in by_id}
-        # 兜底 Agent + 有 route_hints 的 Agent 必须在 catalog（确定性路由依赖），R2.1 P5
+        # 兜底 Agent + core Agent 必须在 catalog（R2.1 P5 / M5 P2；W15 起 hint 不再是资格）
         for a in full:
             if _always_include(a):
                 picked.setdefault(a.manifest.agent_id, a)
@@ -1969,7 +1995,7 @@ class ContextManager:
                 picked.setdefault(a.manifest.agent_id, a)
         logger.info("catalog pre-filtered: %d/%d agents (top_k=%d)",
                     len(picked), len(full), self.top_k)
-        return list(picked.values())
+        return list(picked.values()), full
 
     async def _history(self, ctx) -> list[dict]:
         """取最近对话历史（供指代消解）。失败返回空，不阻塞规划。

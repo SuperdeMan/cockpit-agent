@@ -82,19 +82,31 @@ def test_catalog_multi_intent_agents_preserved():
     assert {"hvac", "media", "info"}.issubset(_ids(ws))
 
 
-def test_catalog_always_includes_fallback_and_route_hint_agents():
-    """兜底 Agent（chitchat）与声明了 route_hints 的 Agent（如 trip-planner）总在 catalog，
-    即便 resolve 没选中——route_hint 的确定性路由依赖该 manifest 在 catalog 可见（R2.1 P5，
-    通用保护取代硬编码 _ALWAYS_INCLUDE）。"""
+def test_catalog_always_includes_fallback_and_core_agents_not_hint_agents():
+    """兜底 Agent（chitchat）与 `category: core` 的 Agent 总在 catalog，即便 resolve 没选中。
+
+    W15（2026-09-20）：「声明了 route_hints」**不再**是保护资格——退役一条 hint 不许顺手改变
+    目录裁剪。trip-planner 只有 hint、没有 core，预筛照裁；它的 hint 从 `registry_agents`
+    扫（见 `test_route_hints.py::test_hint_from_an_agent_outside_the_prompt_catalog_still_fires`）。"""
     agents = ([_agent(f"ag{i}", [f"ag{i}.x"]) for i in range(5)]
               + [_agent("chitchat", ["chitchat.talk"]),
-                 _agent("trip-planner", ["trip.plan"])])
-    # trip-planner 靠「声明 route_hints」被通用保护（不再靠硬编码 agent_id）
-    agents[-1].manifest.route_hints = [SimpleNamespace(
+                 _agent("trip-planner", ["trip.plan"]),
+                 _agent("navigation", ["navigation.navigate_to"])])
+    agents[-2].manifest.route_hints = [SimpleNamespace(
         pattern="去.+天", intent="trip.plan", policy="append", priority=50, guard="", slots={})]
+    agents[-1].manifest.category = "core"
     cm = ContextManager(_Clients(agents, resolve_result=[agents[0]]), top_k=3)
     ws = asyncio.run(cm.assemble("hi", _ctx()))
-    assert _ids(ws) == {"ag0", "chitchat", "trip-planner"}
+    assert _ids(ws) == {"ag0", "chitchat", "navigation"}
+    # 完整注册表随 WorkingSet 一起交出去：hint 扫描面不受预筛影响
+    assert {a.manifest.agent_id for a in ws.registry_agents} == {a.manifest.agent_id for a in agents}
+
+
+def test_registry_agents_equal_catalog_when_no_prefilter_happens():
+    agents = [_agent("a", ["a.x"]), _agent("b", ["b.y"])]
+    cm = ContextManager(_Clients(agents, resolve_result=[agents[0]]), top_k=12)
+    ws = asyncio.run(cm.assemble("hi", _ctx()))
+    assert [a.manifest.agent_id for a in ws.registry_agents] == ["a", "b"]
 
 
 def test_catalog_always_keeps_edge_control_agents():

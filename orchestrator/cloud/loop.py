@@ -13,6 +13,7 @@ from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
+from runtime.outcome import outcome_of_results
 from observability import events as obs_events
 from observability.metrics import metrics
 
@@ -407,5 +408,6 @@ class LoopController:
             user_text or goal, results, thinking=thinking)
         if exhausted and not final.get("follow_up"):
             final["follow_up"] = "要我继续吗？"
-        yield {"kind": "final", **final}
+        # W13 终态账本：T2 的执行类 final 也按结果集算（engine `run()` 出口统一发 span）
+        yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
 

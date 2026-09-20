@@ -9,6 +9,8 @@ fallback: chitchat
 
 capabilities:
   - intent: reminder.create
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     description: 创建定时提醒、位置提醒或待办。支持绝对时间（明天早上八点/周五下午三点）、
       相对时间（半小时后/20分钟后）、重复（每天/每个工作日/每周X）；**到某地/离开某地
       触发的位置提醒**（到公司提醒我拿文件）；只说"记一下"不带时间则存为待办；
@@ -19,6 +21,7 @@ capabilities:
                "每天早上八点提醒我吃药", "过10分钟再提醒我",
                "到公司提醒我拿文件", "到家提醒我收快递", "离开公司提醒我买菜"]
   - intent: reminder.create_batch
+    effect: write
     description: 为同一事项一次创建两个明确时刻的提醒；仅处理“某时提醒我某事，另一时刻
       再提醒我一次”的同日双提醒句，两个时刻整组写入，不依赖规划器生成两个步骤。
     slots: []
@@ -33,11 +36,13 @@ capabilities:
     examples: ["我今天有什么安排", "我有哪些提醒", "看看我的待办", "明天有什么提醒",
                "这周有什么安排", "未来三天有什么提醒"]
   - intent: reminder.complete
+    effect: write
     description: 完成某条提醒/待办（按序号或内容）
     slots: [index, title]
     slot_shapes: {index: ordinal}   # C3 值形状，理由见 reminder.cancel 那处
     examples: ["完成第二条", "买牛奶那条办完了", "标记第一个完成", "完成提醒：给客户回电话"]
   - intent: reminder.cancel
+    effect: write
     description: 取消某条提醒，或清空全部（清空需二次确认）；按标题取消时 title 填用户
       点名的原文，别转述或简写（子串匹配，放宽一个字就会命中另一条）
     slots: [index, title, all]
@@ -52,6 +57,7 @@ capabilities:
     # 的职责面（检索后作 few-shot），不是 catalog 的。
     examples: ["取消第二条提醒", "不用提醒我回电话了", "把提醒都清空"]
   - intent: reminder.update
+    effect: write
     description: 修改某条提醒的时间（改到/推迟/提前/换个时间）；按标题或"第N条"定位，
       缺新时间会追问后续接
     slots: [index, title, time_text]

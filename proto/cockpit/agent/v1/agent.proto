@@ -59,6 +59,14 @@ message Capability {
   bool whole_utterance = 9;
   // 只允许直接回答：manifest 是唯一权威，planner wire 无权设置。
   bool response_only = 10;
+  // 能力效果（评审 W11，2026-09-20）：`""`（未声明，缺省）| `read`（纯查询 / 回答）|
+  // `write`（改变世界或建了记录：车控、导航、提醒 / 场景 / 订单的增删改、异步任务）。
+  // 声明在 Agent（云侧 manifest 显式写；端侧由 `commands.yaml` 的对象 effect × 操作名派生；
+  // MCP 桥由 tool.write / 工作流 require_confirm 派生），中央只消费：W07 活动任务帧的
+  // `kind`（写任务只被写任务顶掉）与终态账本。未声明 = 今天的启发式（结果带 actions /
+  // 声明 require_confirm ⇒ 写），旧 manifest 零行为变化。**刻意不接进问句安全闸**
+  // （理由见设计文档 2026-09-19-conversation-review-remediation §5 W11）。
+  string effect = 11;
 }
 
 // 执行后对账声明（M2 Outcome Verifier）：解「步骤 OK ≠ 结果达成」——

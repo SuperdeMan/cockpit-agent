@@ -194,3 +194,38 @@ def test_cleanup_exempts_gold_labeled():
     assert deleted == 1
     remaining = [t["trace_id"] for t in db.search_turns(limit=10)]
     assert remaining == ["old-gold"]
+
+
+# ── W13 终态账本：cloud.outcome span → turns.outcome（顺序无关、UPSERT 不抹）────
+
+def _outcome_span(trace_id: str, kind: str, category: str = "progress") -> dict:
+    return {"trace_id": trace_id, "span_id": "so", "ts": 1002, "node": "cloud.outcome",
+            "attrs": {"kind": kind, "category": category, "actions": 0, "answer_only": "0"}}
+
+
+def test_outcome_span_merges_into_the_turn_row_in_either_order():
+    db = ObsDB(":memory:")
+    db.insert_span(_outcome_span("tr-o1", "planner_failure", "dependency_or_planner_failure"))
+    db.insert_turn({"trace_id": "tr-o1", "session_id": "s", "ts": 1000, "user_text": "云岚国际中心"})
+    assert db.search_turns(q="云岚")[0]["outcome"] == "planner_failure"
+
+    db.insert_turn({"trace_id": "tr-o2", "session_id": "s", "ts": 1000, "user_text": "确认"})
+    db.insert_span(_outcome_span("tr-o2", "no_pending", "session_control"))
+    db.insert_turn({"trace_id": "tr-o2", "session_id": "s", "ts": 1000, "user_text": "确认",
+                    "status": "ok"})
+    assert db.search_turns(q="确认")[0]["outcome"] == "no_pending"
+
+
+def test_outcome_column_is_empty_when_no_outcome_span_arrived():
+    db = ObsDB(":memory:")
+    db.insert_turn({"trace_id": "tr-o3", "session_id": "s", "ts": 1000, "user_text": "x"})
+    assert db.search_turns()[0]["outcome"] == ""
+
+
+def test_outcome_span_does_not_touch_planning_merge_columns():
+    db = ObsDB(":memory:")
+    db.insert_span(_planning_span("tr-o4", "nearby.search", "toolcall"))
+    db.insert_span(_outcome_span("tr-o4", "completed"))
+    row = db.search_turns()[0]
+    assert row["intents"] == "nearby.search" and row["plan_mode"] == "toolcall"
+    assert row["outcome"] == "completed"

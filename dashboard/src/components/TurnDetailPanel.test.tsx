@@ -12,6 +12,7 @@ const detail: TurnDetail = {
     is_confirmation: 0, ui_card_type: 'route_plan', actions: 1,
     error: '', badcase: 0, note: '',
     intents: 'navigation.navigate_to', plan_mode: 'toolcall', gold_intents: '',
+    outcome: 'completed',
   },
   spans: [
     {
@@ -62,6 +63,8 @@ test('renders turn content, plan, llm calls and logs', async () => {
   expect(screen.getByText('#trace1234567')).toBeTruthy()
   // 数据飞轮 P0：plan_mode 徽记 + 实际落域 + gold 标注入口
   expect(screen.getByText('toolcall')).toBeTruthy()
+  // 评审 W13：终态账本徽记
+  expect(screen.getByText('completed')).toBeTruthy()
   expect(screen.getByText(/实际: navigation.navigate_to/)).toBeTruthy()
   expect(screen.getByPlaceholderText(/正确落域标注/)).toBeTruthy()
 })

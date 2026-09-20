@@ -739,3 +739,75 @@ def test_manual_recovery_hints_preserve_adjacent_non_manual_intents():
         assert _engine().apply(plan, text, amap) is False, text
         assert [step.intent for step in plan.steps] == [initial], text
 
+
+
+# ── W15：hint 扫描面 = 完整注册表，不是 prompt 目录 ────────────────────────
+
+def test_hint_from_an_agent_outside_the_prompt_catalog_still_fires():
+    """被预筛 / 预算裁出 prompt 的 Agent，它的 hint 照样命中，补出的步照样过校验。"""
+    import asyncio
+    from orchestrator.cloud.context import WorkingSet
+    from orchestrator.cloud.models import PlanContext
+    from orchestrator.cloud.planning import PlanBuilder
+    from tests.test_planning import MockAgent
+
+    chitchat = MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",))
+    research = MockAgent("deep-research", ["research.run"])
+    research.manifest.route_hints = [_hint(r"深入调研(.+)", "research.run", policy="replace",
+                                           priority=100, slots={"topic": "$1"})]
+
+    async def llm(messages):
+        return '{"addressed":true,"steps":[]}'
+
+    async def resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=resolve)
+    ws = WorkingSet(catalog=[chitchat], registry_agents=[chitchat, research])
+    plan = asyncio.run(builder.build("深入调研固态电池", ws, PlanContext(session_id="t")))
+
+    assert [(s.agent_id, s.intent) for s in plan.steps] == [("deep-research", "research.run")]
+    assert plan.steps[0].slots == {"topic": "固态电池"}
+    assert plan.steps[0].endpoint == research.endpoint
+    assert plan.hint_effect in ("fill", "replace")
+
+
+def test_hint_scan_still_respects_permission_filtering():
+    """完整注册表也要过权限：无权的 Agent 的 hint 不得把它偷渡进计划。"""
+    import asyncio
+    from orchestrator.cloud.context import WorkingSet
+    from orchestrator.cloud.models import PlanContext
+    from orchestrator.cloud.planning import PlanBuilder
+    from tests.test_planning import MockAgent
+
+    chitchat = MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",))
+    research = MockAgent("deep-research", ["research.run"], permissions=["network.external"])
+    research.manifest.route_hints = [_hint(r"深入调研(.+)", "research.run", policy="replace",
+                                           priority=100, slots={"topic": "$1"})]
+
+    async def llm(messages):
+        return '{"addressed":true,"steps":[]}'
+
+    async def resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=llm, registry_fn=resolve)
+    ws = WorkingSet(catalog=[chitchat], registry_agents=[chitchat, research])
+    plan = asyncio.run(builder.build("深入调研固态电池", ws, PlanContext(session_id="t"),
+                                     granted_permissions=[]))
+
+    assert all(s.agent_id != "deep-research" for s in plan.steps)
+
+
+def test_retiring_a_hint_does_not_change_catalog_protection():
+    from orchestrator.cloud.context import _always_include
+    from tests.test_planning import MockAgent
+
+    agent = MockAgent("trip-planner", ["trip.plan"])
+    agent.manifest.category = "ecosystem"
+    agent.manifest.route_hints = [_hint(r"去.+天", "trip.plan", policy="append", priority=50)]
+    protected_with_hint = _always_include(agent)
+    agent.manifest.route_hints = []
+    assert _always_include(agent) == protected_with_hint is False
+    agent.manifest.category = "core"
+    assert _always_include(agent) is True

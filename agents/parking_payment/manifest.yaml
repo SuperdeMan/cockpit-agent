@@ -20,6 +20,8 @@ capabilities:
     # examples 等于把那条 unseen 用例洗成 seen（M5 纪律，findings §5.3-3）
     examples: ["停车费多少钱", "这次停车花了多少", "看看停车要交多少"]
   - intent: parking.pay
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     description: 停车缴费（**真的把钱付出去**，涉及支付，需二次确认）
     slots: [order_id, plate, amount]
     examples: ["交停车费", "缴费", "把停车费付了"]

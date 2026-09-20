@@ -71,6 +71,9 @@ class Step:
     whole_utterance: bool = False
     # 直接回答能力：只能返回零动作 OK/FAILED；manifest 是唯一权威。
     response_only: bool = False
+    # 能力效果 `""|read|write`（评审 W11，2026-09-20）：从 capability.effect 装配（LLM 字段不读）。
+    # 消费方：W07 任务帧的 `kind`、终态账本。未声明 = 启发式（结果带 actions / require_confirm）。
+    effect: str = ""
     # M2 Outcome Verifier：执行后对账期望，从 capability.verification 装配（LLM 字段不读，
     # 同 require_confirm 权威链）。空 dict = 不验（缺省，零行为变化）。
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
@@ -95,6 +98,7 @@ def step_record(step: "Step") -> dict:
         "depends_on": list(step.depends_on or []),
         "slot_refs": dict(step.slot_refs or {}), "require_confirm": step.require_confirm,
         "response_only": bool(getattr(step, "response_only", False)),
+        "effect": str(getattr(step, "effect", "") or ""),
         "latency_budget_ms": step.latency_budget_ms,
         "required_permissions": list(step.required_permissions or []),
         "trust_level": step.trust_level,
@@ -218,6 +222,11 @@ class Plan:
     # W07：这一份计划**修改的是哪个活动任务**（engine 在改口合并时置 `{"task_id", "revision"}`），
     # `extract_focus` 据此把任务帧记成同一个 task_id 的下一版而不是新任务。空 = 新任务。
     task_patch: dict = field(default_factory=dict)
+    # W13 F09-b（2026-09-20）：规划的某一轮里模型**自己说过要澄清**（goal 带澄清标记 / 裸对象被
+    # 包成动作），却没交出合法澄清卡、最后落了 `_fallback`。与 `technical_failure` 同真时，engine
+    # 把终态从「技术失败 + 重试」改成「我听到了 X，但没听清要拿它做什么」——那是歧义不是故障。
+    # 真栈 CL1（2026-09-20）：「云岚国际中心」1/3 次走的正是这条路。
+    clarify_wanted: bool = False
 
 
 @dataclass
@@ -310,6 +319,10 @@ class PlanContext:
     # "labels": [str]}`。止损判据 `planning.clarify_is_progress` 拿它判「模型又问的是不是
     # 同一个问题」：同题不再问、换题可以再问。空 = 本轮不是澄清续接。
     clarify_probe: dict = field(default_factory=dict)
+    # W13 / W14（2026-09-20）**本轮 scratch**：这一轮真正执行的步**全部**是 `response_only`
+    # （谈话，按声明不可能改变世界）。终态账本据此标 `answer_only`；执行性声明拦截
+    # （`runtime.execution_claim`）只在它为真且零动作时才动手——那是唯一「按声明必假」的形态。
+    answer_only: bool = False
 
 
 @dataclass

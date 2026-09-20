@@ -132,6 +132,49 @@ def constraints_in(text: str | None) -> dict:
     return out
 
 
+def is_pure_constraint_statement(text: str | None) -> bool:
+    """这句话**只**在陈述偏好 / 忌口（评审 W13 F09-a，2026-09-20）。
+
+    判据：每个分句都说出了某个键（`_clause_facts` 非空），包括转述过去与撤销的分句——
+    「之前不吃辣，今天想吃辣」整句都在谈口味。任何一个分句谈的是别的（「我不吃辣，帮我找家餐厅」）
+    ⇒ 不是纯陈述，交回正常规划。真栈三批四次：这类句子在 MiniMax-M3 下 3/4 落技术失败出口，
+    而登记本身早就成功——一句陈述换来一句报错，缺的只是一句确定性的致谢。
+    """
+    t = (text or "").strip()
+    if not t:
+        return False
+    clauses = split_clauses(t)
+    return bool(clauses) and all(_clause_facts(c) for c in clauses)
+
+
+#: 扁平键的人话（唯一词表）：焦点块与致谢话术共用，改词只改这里。
+_PHRASES = {
+    ("no_spicy", True): "不吃辣",
+    ("no_spicy", False): "想吃辣",
+    ("no_queue", True): "不想排队",
+    ("no_queue", False): "可以排队",
+}
+_WAIVER_PHRASES = {"no_spicy": "辣不辣都行", "no_queue": "排不排队都行"}
+
+
+def phrase_of(key: str, value) -> str:
+    """`(键, 值)` → 人话；`None`（撤销）→「X 都行」；认不出返回空串。"""
+    if value is None:
+        return _WAIVER_PHRASES.get(str(key), "")
+    return _PHRASES.get((str(key), bool(value)), "")
+
+
+def describe_constraints(constraints: dict | None) -> list[str]:
+    """投影里说话人自己的键 → 人话列表（声明序），不含 `others`。"""
+    out: list[str] = []
+    for key in ("no_spicy", "no_queue"):
+        if key in (constraints or {}):
+            phrase = phrase_of(key, constraints[key])
+            if phrase:
+                out.append(phrase)
+    return out
+
+
 def merge_constraints(previous: dict | None, current: dict | None) -> dict:
     """跨轮合并：**后说的覆盖先说的**，没说的沿用，`None` 删键。返回新 dict，不改入参。
 

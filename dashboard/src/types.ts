@@ -62,6 +62,7 @@ export type Turn = {
   intents?: string // 实际落域（cloud.planning span 合并列，逗号串）
   plan_mode?: string // 规划输出通道（toolcall|…|toolcall_degraded）
   gold_intents?: string // 人工标注的正确落域
+  outcome?: string // 终态账本（评审 W13）：cloud.outcome 的 kind（runtime/outcome.py 词表）
 }
 
 export type SessionSummary = {

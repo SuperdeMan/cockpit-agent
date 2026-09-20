@@ -43,7 +43,14 @@ if _TEST_DIR not in sys.path:
 #      等于把 category 变成第二个「有 hint 就保护」；
 #   ④ 但要记一笔风险：若预算再被追上，被裁的将包含**周边发现这个高频功能**。
 #      正确动作是启用 catalog 检索化预筛（RFC §5-P2-4），不是回填规则或改分类。
-_UNPROTECTED = {"parking-payment", "nearby"}
+#
+# 2026-09-20（评审 W15）：**hint 不再是保护资格**——保护 = 兜底 ∪ `category: core`，hint 扫描改读
+# 完整注册表（`WorkingSet.registry_agents`），被裁出 prompt 的 Agent 它的 hint 照样命中
+# （`test_route_hints.py::test_hint_from_an_agent_outside_the_prompt_catalog_still_fires`）。
+# 于是 8000 预算下全部 ecosystem Agent（trip-planner / deep-research / mcp-bridge / manual-rag）
+# 都会被裁，而它们的确定性兜底不受影响。生产 16000 下仍零裁剪（下一个测试守着）。
+_UNPROTECTED = {"parking-payment", "nearby", "trip-planner", "deep-research", "mcp-bridge",
+                "manual-rag"}
 # 核心域：无论预算多紧都不许被裁（P0 时 navigation/road-safety 恰恰会被裁，那是 D1 根因）
 _CORE_MUST_SURVIVE = {"navigation", "road-safety", "info", "reminder",
                       "scene-orchestrator", "vision", "charging-planner"}
@@ -94,7 +101,7 @@ def test_eval_live_edge_inventory_is_the_production_registered_manifest():
 
 
 def test_tight_budget_only_drops_unprotected_and_never_core(monkeypatch):
-    """预算再紧也只裁「非 core 且无 hint」的 agent；**核心域一个都不许掉**。
+    """预算再紧也只裁「非 core、非兜底」的 agent；**核心域一个都不许掉**。
 
     这条断言是 M5 P2 的成果：同样的 8000 预算下，P0 时 navigation 与 road-safety
     会被整域裁出 prompt（planner 从此看不见它们、步骤校验还会拒它们的 intent），

@@ -277,3 +277,78 @@ def test_a_stale_frame_is_dropped_at_load():
     loaded = asyncio.run(cm._load_focus("s1", "u1"))
     assert loaded is not None and loaded.active_task == {}
 
+
+
+# ── W11：声明的 `effect` 决定帧的 kind（不出 action 的云侧写不再被记成 read） ──
+
+def _effect_agent(effect_by_intent: dict):
+    caps = []
+    for intent, effect in effect_by_intent.items():
+        cap = _Cap(intent, ["title", "time_text"])
+        cap.effect = effect
+        caps.append(cap)
+    manifest = SimpleNamespace(
+        agent_id="reminder", trust_level="first_party", latency_budget_ms=2000,
+        requires_permissions=[], kind="agent", deployment="cloud",
+        route_hints=[], context_scopes=[], capabilities=caps)
+    return SimpleNamespace(manifest=manifest, endpoint="stub:50080")
+
+
+def _make_with_agents(replies, agents):
+    engine, spy, session = _make(replies)
+
+    async def list_agents():
+        return list(agents)
+
+    async def resolve(query="", intent="", top_k=1):
+        return list(agents)
+    spy.list_agents = list_agents
+    spy.resolve = resolve
+    return engine, spy, session
+
+
+def test_declared_write_without_actions_is_a_write_task_and_survives_a_read():
+    """`reminder.create` 不出 action；此前按启发式记成 read，下一轮查询就把它顶掉。"""
+    reminder = _effect_agent({"reminder.create": "write", "reminder.list": "read"})
+    # 映射按 (agent_id, intent) 排序：cap_0001=info.weather、cap_0002=reminder.create、cap_0003=reminder.list
+    replies = {
+        "提醒我": {"addressed": True, "steps": [
+            {"id": "s1", "capability_ref": "cap_0002",
+             "slots": {"title": "开会", "time_text": "明天八点"}, "depends_on": [], "slot_refs": {}}]},
+        "有什么提醒": {"addressed": True, "steps": [
+            {"id": "s1", "capability_ref": "cap_0003", "slots": {}, "depends_on": [], "slot_refs": {}}]},
+    }
+    engine, spy, session = _make_with_agents(replies, [_info_agent(), reminder])
+
+    _run(engine, "明天八点提醒我开会")
+    task = _focus(session)["active_task"]
+    assert task["intent"] == "reminder.create" and task["kind"] == "write"
+    assert spy.agent_calls[-1][0] == "reminder.create"
+
+    _run(engine, "我有什么提醒")
+    assert spy.agent_calls[-1][0] == "reminder.list"
+    task = _focus(session)["active_task"]
+    assert task["intent"] == "reminder.create", "声明为 read 的查询不得顶掉写任务"
+
+
+def test_undeclared_effect_keeps_the_heuristic():
+    from orchestrator.cloud.context import task_writes
+    step = SimpleNamespace(effect="", require_confirm=False)
+    assert task_writes(step, SimpleNamespace(actions=[])) is False
+    assert task_writes(step, SimpleNamespace(actions=[{"type": "navigate"}])) is True
+    assert task_writes(SimpleNamespace(effect="", require_confirm=True), None) is True
+    assert task_writes(SimpleNamespace(effect="read", require_confirm=True), None) is False
+    assert task_writes(SimpleNamespace(effect="write", require_confirm=False), None) is True
+
+
+def test_validated_steps_carry_the_declared_effect():
+    reminder = _effect_agent({"reminder.create": "write", "reminder.list": ""})
+    steps = PlanBuilder._validated_steps(
+        [{"id": "s1", "agent_id": "reminder", "intent": "reminder.create",
+          "slots": {}, "depends_on": [], "slot_refs": {}},
+         {"id": "s2", "agent_id": "reminder", "intent": "reminder.list",
+          "slots": {}, "depends_on": [], "slot_refs": {}}],
+        {"reminder": reminder})
+    assert [s.effect for s in steps] == ["write", ""]
+    from orchestrator.cloud.models import step_record
+    assert step_record(steps[0])["effect"] == "write"

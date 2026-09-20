@@ -29,6 +29,19 @@ def build_verification(raw) -> agent_pb2.Verification | None:
     )
 
 
+#: `Capability.effect` 的合法值（评审 W11）。`""` = 未声明（缺省，今天的启发式）。
+EFFECTS = ("", "read", "write")
+
+
+def capability_effect(raw) -> str:
+    """manifest 的 `effect` → 规范值；词表外的值**启动即失败**——写错一个字母静默变成
+    「未声明」，比不声明更糟（B4：漂移的声明）。"""
+    value = str(raw or "").strip().lower()
+    if value not in EFFECTS:
+        raise ValueError(f"capability.effect 只能是 read / write（或不写），得到 {raw!r}")
+    return value
+
+
 def load_manifest(path: str) -> agent_pb2.AgentManifest:
     with open(path, encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
@@ -53,6 +66,8 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             whole_utterance=bool(c.get("whole_utterance", False)),
             # 只回答、不允许直接动作/挂起。缺省 false 保持旧 manifest 行为。
             response_only=bool(c.get("response_only", False)),
+            # 能力效果 read / write（评审 W11）：声明在 Agent，中央只消费。
+            effect=capability_effect(c.get("effect")),
         )
         for c in (data.get("capabilities") or [])
     ]

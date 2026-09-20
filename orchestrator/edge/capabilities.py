@@ -37,6 +37,8 @@ from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
 from runtime.grpcio import aio_channel
 from runtime import admission
+from runtime.intent_effect import is_write_intent
+from capability_meta import effect_of
 from edge_agents_mod.media import MEDIA_INTENTS
 from edge_agents_mod.vehicle import VEHICLE_INTENTS
 from edge_call import decode_intent
@@ -192,6 +194,17 @@ def _describe(intent: str, objects: dict, entities: dict) -> str:
     return text
 
 
+def _effect_for(intent: str, objects: dict) -> str:
+    """端侧能力的 `effect`（评审 W11）：**从既有的两份声明派生，不另立一张表**——
+    对象级 `commands.yaml` 的 `effect`（`capability_meta.effect_of`）× 操作名的读写
+    （`runtime.intent_effect.is_write_intent`）。两者都是写才是写：`media` 对象能写，
+    `media.query` 这一步仍是读。解码不出对象时按对象 write 处理（`is_write_intent` 单独裁）。"""
+    decoded = decode_intent(intent, set(objects) or None)
+    obj = (decoded or {}).get("data", {}).get("object", "") if decoded else ""
+    object_writes = effect_of(objects.get(obj) or {}) == "write" if obj else True
+    return "write" if (object_writes and is_write_intent(intent)) else "read"
+
+
 def _capabilities(intents: set[str], fallback: str):
     objects, entities = _knowledge()
     return [
@@ -200,6 +213,7 @@ def _capabilities(intents: set[str], fallback: str):
             description=_describe(intent, objects, entities) or fallback,
             examples=[],
             verification=_verification_for(intent),
+            effect=_effect_for(intent, objects),
         )
         for intent in sorted(intents)
     ]

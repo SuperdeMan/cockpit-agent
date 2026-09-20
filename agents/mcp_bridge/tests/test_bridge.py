@@ -514,6 +514,9 @@ async def test_bootstrap_synthesizes_capabilities_from_allowlist(monkeypatch):
                            "shop.preview_discard"}
         order = next(c for c in a.manifest.capabilities if c.intent == "shop.order")
         assert order.require_confirm is True, "写操作必须声明二次确认"
+        assert order.effect == "write", "W11：准入清单的 write 就是能力效果声明"
+        menu = next(c for c in a.manifest.capabilities if c.intent == "shop.menu")
+        assert menu.effect == "read"
         assert "演示商户" in order.description, "演示身份要出现在能力描述里"
         assert a._bindings["shop.order"].input_schema["required"] == [
             "sku", "idempotency_key"], "_Binding 必须保留实时 inputSchema 本体"

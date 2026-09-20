@@ -258,6 +258,8 @@ class McpBridgeAgent(BaseAgent):
                 intent=intent, description=desc, slots=b.tool.slots,
                 examples=b.tool.examples,
                 require_confirm=bool(b.tool.require_confirm or b.tool.write),
+                # W11 能力效果：准入清单的 `write` 就是声明本身
+                effect="write" if b.tool.write else "read",
             ))
         for intent, b in self._workflow_bindings.items():
             spec = b.spec
@@ -271,6 +273,8 @@ class McpBridgeAgent(BaseAgent):
                 require_confirm=bool(spec.require_confirm),
                 # C3：槽位值形状随 capability 上注册中心——编排的换题判定要看它。
                 slot_shapes=dict(spec.slot_shapes or {}),
+                # W11：商户订单工作流建订单 / 出预览，是写
+                effect="write",
             ))
         for spec in self._local_capabilities:
             if not spec.expose:

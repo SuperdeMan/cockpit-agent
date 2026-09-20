@@ -131,3 +131,33 @@ def test_claim_predicate_contains_no_domain_word():
         assert not hit, (
             f"execution_claim 判据里出现了 VAL 领域词 `{word}`——"
             f"「说了做没做」必须是形态量，不能认识具体对象")
+
+
+# ── 5. W14：按句剥掉声称句（谈话步 + 零动作时由 engine 调用）────────────────
+
+from runtime.execution_claim import strip_execution_claims  # noqa: E402
+
+
+def test_strip_removes_only_the_claiming_sentences():
+    text = ("好的，已为您避开此路段。已为您重新规划路线：当前位置 → A → B，全程约7.4公里。"
+            "路上注意安全。")
+    cleaned, removed = strip_execution_claims(text)
+    assert removed == 2
+    assert cleaned == "路上注意安全。"
+
+
+def test_strip_returns_empty_when_everything_was_a_claim():
+    cleaned, removed = strip_execution_claims("可以，已为您执行。")
+    assert (cleaned, removed) == ("", 1)
+
+
+def test_strip_is_a_no_op_on_plain_answers():
+    text = "为您找到 10 家川菜，推荐川胖虎、辣宴。路线已经算好了吗？"
+    assert strip_execution_claims(text) == (text, 0)
+    assert strip_execution_claims("") == ("", 0)
+
+
+def test_strip_keeps_line_structure_of_the_rest():
+    cleaned, removed = strip_execution_claims("第一行建议。\n正在为您安排。\n第三行建议。")
+    assert removed == 1
+    assert cleaned == "第一行建议。\n第三行建议。"

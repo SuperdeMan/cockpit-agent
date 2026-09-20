@@ -167,6 +167,7 @@ def _fully_populated_manifest():
                 slot_shapes={"when": "time_phrase"},
                 whole_utterance=True,
                 response_only=True,
+                effect="write",
                 verification=agent_pb2.Verification(
                     mode="schema", timeout_ms=1500, on_fail="retry", max_attempts=2,
                     expect=_expect({"data_keys": ["items"]})),
@@ -243,6 +244,7 @@ def test_non_proto_manifest_roundtrip_is_lossless_for_declared_fields():
 
     assert restored.capabilities[0].slot_shapes == original.capabilities[0].slot_shapes
     assert restored.capabilities[0].whole_utterance is True
+    assert restored.capabilities[0].effect == "write"
     assert list(restored.context_scopes) == ["location"]
     assert list(restored.edge_intents) == ["window.open"]
     assert restored.kind == "edge_fast"

@@ -171,3 +171,23 @@ def test_every_val_object_declares_a_display_name():
     assert len(objects) >= 60, "VAL 知识库没加载到？"
     missing = [k for k, v in objects.items() if not (v or {}).get("display_name")]
     assert not missing, f"这些对象缺 display_name：{missing}"
+
+
+# ── W11：端侧能力的 effect 从既有声明派生（对象 effect × 操作名读写） ────────
+
+def test_edge_capabilities_derive_effect_from_object_and_operation():
+    from capabilities import _effect_for
+    objects, _ = _knowledge()
+    assert _effect_for("window.open", objects) == "write"
+    assert _effect_for("hvac.set", objects) == "write"
+    # 只读操作名恒为读，即使对象能写
+    assert _effect_for("media.query", objects) == "read"
+    assert _effect_for("battery.query", objects) == "read"
+
+
+def test_every_edge_capability_carries_an_effect():
+    manifests = build_edge_manifests()
+    caps = [c for m in manifests for c in m.capabilities]
+    assert caps
+    assert all(c.effect in ("read", "write") for c in caps)
+    assert any(c.effect == "write" for c in caps) and any(c.effect == "read" for c in caps)

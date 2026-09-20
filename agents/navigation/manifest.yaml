@@ -23,6 +23,8 @@ capabilities:
     slots: [keyword, category, near, rating_min]
     examples: ["最近的加油站在哪", "去深圳像笋一样的那栋大楼", "国贸三期在哪个位置"]
   - intent: navigation.navigate_to
+    # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
+    effect: write
     description: 导航到指定目的地；支持常用地点别名（家/公司/学校，未设置会反问地址并记住）、
       顺路停靠（stop_category=吃饭/咖啡…→给沿途候选让用户选）、带途经点（waypoint=已选停靠
       点名，多个用顿号连写）。「X点前到/别迟到」这类到达时限把时间原话填 arrive_by（会核对
@@ -44,6 +46,7 @@ capabilities:
     examples: ["从深圳市民中心到深圳北站开车大概多远、要多久", "到公司还有多远",
                "从家开到宝安机场大概要多久", "去趟世界之窗多长时间"]
   - intent: navigation.reroute
+    effect: write
     description: 增量调整**当前正在进行的这次导航**（对话焦点里有「当前正在导航」时用本条）——
       去掉/加上途经点（「肯德基不去了」「顺路加个加油站」，remove_waypoint/add_waypoint）、
       换条路（「换条避堵的路」，route_pref）、改目的地（「改去COCO Park」，destination）、
@@ -59,12 +62,14 @@ capabilities:
   # 「取消导航」不再被前置闸当成「取消挂起」吞掉，**它必须有一个落点**——
   # 放开一条路却不给它落点，是把一个错换成另一个错。
   - intent: navigation.cancel
+    effect: write
     description: 结束/取消**当前正在进行的这次导航**（「取消导航」「别导了」「不去了」
       在有活动路线时）。它是终止不是调整——删途经点/换路线/改目的地归 navigation.reroute；
       没有正在进行的导航时诚实说明，不当作取消待确认操作
     slots: []
     examples: ["取消导航", "结束导航", "别导航了", "不用导航了", "退出导航"]
   - intent: navigation.set_place
+    effect: write
     description: 设置常用地点（家/公司/学校）的地址，记住后可直接『导航去家/公司』。只记录不导航。
     slots: [place, address]
     examples: ["把家设成上海长宁区某某小区", "我家在深圳南山区科技园", "设置公司地址为北京国贸三期", "公司在杭州西湖区某某大厦"]
