@@ -44,6 +44,14 @@ import java.util.concurrent.atomic.AtomicLong
  *     **抛 [KwsWorkerStuckException] 拒绝加载**（JS 侧 kws.start 拿到异常 ⇒ 免唤醒开关弹回并说明，
  *     用户稍后再开即可），不再让两条线程并存。⚠ join 的 1s 是告警阈值不是 release 的上限：
  *     旧线程若正握着锁在 JNI 里解码，随后的 release 仍会等它出锁——正确性优先于时延。
+ *  6. **慢解码替身与强制加载失败只是替身，不是策略**（2026-09-20 D-08 / G-06 引擎成因分支）。评审 F07 的
+ *     验收要求「可控的慢解码 / 阻塞替身」——真机上没有不改代码就能造出的慢 JNI 与引擎失败。
+ *     `setDebugDecodeDelayMs` 让解码线程在**锁内**、真解码之后再多占 N ms（不可被 interrupt 缩短，
+ *     模拟卡在 JNI 里的那一次调用）；`setDebugFailNextLoad` 让下一次 load 在建 spotter 前抛
+ *     [KwsDebugLoadFailureException]。两者都只由 dev 变体的 voice-spike 屏触发（JS 侧变体闸），
+ *     缺省 0 / false，生产路径一行不走。`stats()` 顺带把线程事实暴露出去（workerAlive / staleAlive /
+ *     staleEvents / stuckRefusals / decodeFailures）——「至多一条活线程」只能由这些数字证明，不能由
+ *     「没崩」证明。
  */
 private const val TAG = "KwsModule"
 private const val ASSET_DIR = "kws"
@@ -60,6 +68,10 @@ private const val STALE_GRACE_MS = 200L
 class KwsWorkerStuckException :
   CodedException("KWS_WORKER_STUCK", "唤醒词引擎上一条解码线程未退出，暂不能重新加载；请稍后再开", null)
 
+/** 替身（头注 6）：dev 诊断屏要求下一次 load 失败。code 固定，取证按它认。 */
+class KwsDebugLoadFailureException :
+  CodedException("KWS_DEBUG_LOAD_FAILED", "唤醒词引擎加载失败（诊断替身：强制失败一次）", null)
+
 class KwsModule : Module() {
   private var spotter: KeywordSpotter? = null
   private var stream: OnlineStream? = null
@@ -71,11 +83,35 @@ class KwsModule : Module() {
   private val running = AtomicBoolean(false)
   private val dropped = AtomicLong(0)
   private val processed = AtomicLong(0)
+  /** 线程事实（头注 6）：join 超时进 stale 的次数 / 因 stale 拒绝 load 的次数 / 解码抛错次数 / 起过的线程数 */
+  private val staleEvents = AtomicLong(0)
+  private val stuckRefusals = AtomicLong(0)
+  private val decodeFailures = AtomicLong(0)
+  private val workersStarted = AtomicLong(0)
+  /** 最近一次解码（含替身延时）耗时 ms */
+  @Volatile private var lastDecodeMs = 0L
+  /** 替身（头注 6）。缺省 0 / false = 生产路径 */
+  @Volatile private var debugDecodeDelayMs = 0L
+  @Volatile private var debugFailNextLoad = false
 
   /** 解码线程 + 它自己的停止标记。release 只翻这一位，别的线程的 alive 与它无关。 */
   private inner class Worker : Thread("kws-decode") {
     val alive = AtomicBoolean(true)
     override fun run() = loop(alive)
+  }
+
+  /** 替身用：不可被 interrupt 缩短的占用（模拟卡在 JNI 里的解码）。release 的 interrupt 打不断它——这正是要测的形态 */
+  private fun holdUninterruptibly(ms: Long) {
+    val end = System.nanoTime() + ms * 1_000_000L
+    while (true) {
+      val left = (end - System.nanoTime()) / 1_000_000L
+      if (left <= 0) return
+      try {
+        Thread.sleep(minOf(left, 50L))
+      } catch (e: InterruptedException) {
+        // 吞掉：真 JNI 调用不理会 interrupt；标记留给 loop 的 alive 判定，这里不需要
+      }
+    }
   }
 
   override fun definition() = ModuleDefinition {
@@ -127,7 +163,29 @@ class KwsModule : Module() {
         "queued" to queue.size,
         "dropped" to dropped.get(),
         "processed" to processed.get(),
+        // 线程事实（头注 6）——F07 的验收读的是这几列，不是 loaded
+        "running" to running.get(),
+        "workerAlive" to (worker?.isAlive ?: false),
+        "staleAlive" to (stale?.isAlive ?: false),
+        "workersStarted" to workersStarted.get(),
+        "staleEvents" to staleEvents.get(),
+        "stuckRefusals" to stuckRefusals.get(),
+        "decodeFailures" to decodeFailures.get(),
+        "lastDecodeMs" to lastDecodeMs,
+        "debugDecodeDelayMs" to debugDecodeDelayMs,
       )
+    }
+
+    /** 替身（头注 6）：解码线程每帧在锁内多占 ms 毫秒；0 = 关。只由 dev 诊断屏调。 */
+    Function("setDebugDecodeDelayMs") { ms: Int ->
+      debugDecodeDelayMs = maxOf(0, ms).toLong()
+      Log.i(TAG, "debugDecodeDelayMs=$debugDecodeDelayMs")
+    }
+
+    /** 替身（头注 6）：下一次 load 在建 spotter 前抛 KWS_DEBUG_LOAD_FAILED（一次性）。只由 dev 诊断屏调。 */
+    Function("setDebugFailNextLoad") { fail: Boolean ->
+      debugFailNextLoad = fail
+      Log.i(TAG, "debugFailNextLoad=$fail")
     }
 
     OnDestroy { releaseInternal() }
@@ -147,8 +205,17 @@ class KwsModule : Module() {
           Thread.currentThread().interrupt()
         }
       }
-      if (old.isAlive) throw KwsWorkerStuckException()
+      if (old.isAlive) {
+        stuckRefusals.incrementAndGet()
+        throw KwsWorkerStuckException()
+      }
       stale = null
+    }
+    if (debugFailNextLoad) {
+      // 替身（头注 6）：一次性，抛之前先清，免得把设置页的下一次重试也拖下水
+      debugFailNextLoad = false
+      Log.w(TAG, "load refused by debugFailNextLoad")
+      throw KwsDebugLoadFailureException()
     }
     val ctx = appContext.reactContext ?: throw Exceptions.ReactContextLost()
     val config = KeywordSpotterConfig(
@@ -182,8 +249,9 @@ class KwsModule : Module() {
     val t = Worker()
     t.isDaemon = true
     worker = t
+    workersStarted.incrementAndGet()
     t.start()
-    Log.i(TAG, "KWS loaded keywords=$keywords threshold=$threshold score=$score")
+    Log.i(TAG, "KWS loaded keywords=$keywords threshold=$threshold score=$score worker=${t.id}")
   }
 
   private fun loop(alive: AtomicBoolean) {
@@ -195,6 +263,7 @@ class KwsModule : Module() {
       } ?: continue
       var decoded = false
       try {
+        val t0 = System.nanoTime()
         synchronized(this) {
           // **字段必须在锁内重读**（头注 4）。在锁外抓 spotter/stream 的引用，
           // 与 releaseInternal 之间就有一个窗口：引用拿到手之后、进锁之前 release
@@ -211,11 +280,18 @@ class KwsModule : Module() {
               sp.reset(st)
               sendEvent("onKeyword", mapOf("keyword" to r.keyword))
             }
+            // 替身（头注 6）：仍在锁内、真解码之后——release 的 interrupt + join 会撞上它，与慢 JNI 同形态
+            val hold = debugDecodeDelayMs
+            if (hold > 0) holdUninterruptibly(hold)
             decoded = true
           }
         }
-        if (decoded) processed.incrementAndGet()
+        if (decoded) {
+          processed.incrementAndGet()
+          lastDecodeMs = (System.nanoTime() - t0) / 1_000_000L
+        }
       } catch (e: Throwable) {
+        decodeFailures.incrementAndGet()
         Log.w(TAG, "decode failed: ${e.message}")
       }
     }
@@ -241,7 +317,8 @@ class KwsModule : Module() {
       // 超时不静默、也不「照常」：解码卡在一次 JNI 调用里。它的 alive 已是 false、醒来就退出，
       // 但在它确认退出前不许开始下一次加载（头注 5，loadInternal 检查 stale）。
       if (t.isAlive) {
-        Log.w(TAG, "kws-decode 未在 ${JOIN_TIMEOUT_MS}ms 内退出，进入 stale")
+        Log.w(TAG, "kws-decode 未在 ${JOIN_TIMEOUT_MS}ms 内退出，进入 stale worker=${t.id}")
+        staleEvents.incrementAndGet()
         stale = t
       }
     }

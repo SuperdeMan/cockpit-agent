@@ -11,6 +11,16 @@ export interface KwsStats {
   queued: number
   dropped: number
   processed: number
+  // 线程事实（2026-09-20 D-08，KwsModule 头注 6）。旧 APK 没有这几列 ⇒ 全部可选，读方按 undefined 处理
+  running?: boolean
+  workerAlive?: boolean
+  staleAlive?: boolean
+  workersStarted?: number
+  staleEvents?: number
+  stuckRefusals?: number
+  decodeFailures?: number
+  lastDecodeMs?: number
+  debugDecodeDelayMs?: number
 }
 
 interface KwsNativeModule {
@@ -20,6 +30,9 @@ interface KwsNativeModule {
   acceptFrame(pcm: Int16Array): boolean
   isLoaded(): boolean
   stats(): KwsStats
+  /** 替身（KwsModule 头注 6）：只由 dev 变体的 voice-spike 调；旧 APK 没有 ⇒ 调用方可选链 */
+  setDebugDecodeDelayMs?(ms: number): void
+  setDebugFailNextLoad?(fail: boolean): void
   addListener(event: 'onKeyword', cb: (e: { keyword: string }) => void): { remove(): void }
 }
 

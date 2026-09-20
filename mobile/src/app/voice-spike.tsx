@@ -32,6 +32,7 @@ import { base64ToBytes } from '@/core/voice/base64'
 import { audioFocusInstalled, audioFocusLog } from '@/core/voice/audioFocus'
 import { handsFreeAvailability } from '@/core/voice/handsFree'
 import { DEFAULT_KEYWORDS, KwsEngine, kwsBusy, kwsNativeAvailable } from '@/core/voice/kws'
+import KwsNative from '../../modules/kws'
 import { micBusStats, micLease } from '@/core/voice/micBus'
 import { recorder } from '@/core/voice/recorder'
 import { VadEngine, vadNativeAvailable } from '@/core/voice/vad'
@@ -1185,6 +1186,119 @@ function VoiceSpikeTools() {
     }
   }, [log])
 
+  // ── D-08（GPT-6 评审 F07 验收）：慢解码替身下的 load / release / 快速启停压力 ──
+  //  F07 的修法（每条解码线程自带 alive、join 超时进 stale、stale 未退出前拒绝 load）在 JS 单测里签不了收：
+  //  它的对象是原生线程。这里用 KwsModule 头注 6 的替身把每帧解码拉长到 delayMs（锁内、不可 interrupt），
+  //  在解码在飞时 release → load，读原生 stats 的线程事实：任何采样点 workerAlive 与 staleAlive 不同时为真、
+  //  staleEvents 与「release 撞上在飞解码」的次数对得上、decodeFailures 为 0、stuckRefusals 按实际记。
+  //  素材用模型自带测试音频（与 kws-inject 同源）而不是麦克风：压力要可复现，不能受房间声学左右。
+  const probeKwsStress = useCallback(async (delayMs = 1500, cycles = 6) => {
+    if (!developmentDiagnosticsEnabled()) return
+    setBusy('kws-stress')
+    const native = KwsNative
+    try {
+      if (!kwsNativeAvailable() || !native) {
+        log('kws-stress: 原生不在场')
+        return
+      }
+      if (kwsBusy()) {
+        log('kws-stress: ✗ 原生 KWS 已被免唤醒回路占用——先在设置里关掉「免唤醒」再跑本探针')
+        return
+      }
+      if (!native.setDebugDecodeDelayMs) {
+        log('kws-stress: 这个 APK 的 KwsModule 没有替身入口（旧原生），压力跑不了')
+        return
+      }
+      const { Asset } = require('expo-asset')
+      const testKeywords = 'w én s ēn t è k ǎ s uǒ @文森特卡索/zh ōu w àng j ūn @周望军'
+      const asset = Asset.fromModule(require('../../assets/models/kws_test/0.wav'))
+      await asset.downloadAsync()
+      const bytes = new Uint8Array(await (await fetch(asset.localUri || asset.uri)).arrayBuffer())
+      const wav = parseWav(bytes)
+      if (!wav) {
+        log('kws-stress: 0.wav 解析失败')
+        return
+      }
+      const pcm = toMono(wav)
+      native.setDebugDecodeDelayMs(delayMs)
+      const base = native.stats()
+      log('kws-stress: 起点 ' + JSON.stringify(base))
+      let bothAlive = 0
+      let stuck = 0
+      for (let c = 0; c < cycles; c += 1) {
+        const kws = new KwsEngine()
+        const t0 = Date.now()
+        try {
+          await kws.start({ onKeyword: () => {} }, testKeywords)
+        } catch (e: any) {
+          const code = e?.code ?? e?.message ?? ''
+          if (String(code).includes('KWS_WORKER_STUCK')) {
+            stuck += 1
+            log('kws-stress: #' + c + ' load 被拒 KWS_WORKER_STUCK（stale 线程未退出）' + JSON.stringify(native.stats()))
+            await sleep(delayMs)
+            continue
+          }
+          throw e
+        }
+        const loadMs = Date.now() - t0
+        const atStart = native.stats()
+        if (atStart.workerAlive && atStart.staleAlive) bothAlive += 1
+        // 灌 10 帧（1s 音频）：队列上限 30，全进；解码线程按 delayMs/帧慢慢啃
+        let fed = 0
+        for (let off = 0; off + 1600 <= pcm.length && off < 16000; off += 1600) {
+          if (kws.accept(pcm.subarray(off, off + 1600))) fed += 1
+        }
+        await sleep(Math.min(300, Math.max(60, delayMs / 3))) // 让第一帧的解码在飞
+        const mid = native.stats()
+        if (mid.workerAlive && mid.staleAlive) bothAlive += 1
+        const t1 = Date.now()
+        await kws.stop() // release：interrupt + join(1s) 撞上在飞解码 ⇒ stale；随后在锁上等它出来
+        const releaseMs = Date.now() - t1
+        const after = native.stats()
+        if (after.workerAlive && after.staleAlive) bothAlive += 1
+        log(
+          'kws-stress: #' + c + ' load=' + loadMs + 'ms fed=' + fed +
+          ' mid{queued=' + mid.queued + ' workerAlive=' + mid.workerAlive + ' staleAlive=' + mid.staleAlive + '}' +
+          ' release=' + releaseMs + 'ms' +
+          ' after{loaded=' + after.loaded + ' workerAlive=' + after.workerAlive + ' staleAlive=' + after.staleAlive +
+          ' stale=' + after.staleEvents + ' stuck=' + after.stuckRefusals + ' fail=' + after.decodeFailures +
+          ' started=' + after.workersStarted + ' lastDecode=' + after.lastDecodeMs + 'ms}',
+        )
+      }
+      await sleep(400)
+      const fin = native.stats()
+      const staleDelta = (fin.staleEvents ?? 0) - (base.staleEvents ?? 0)
+      const failDelta = (fin.decodeFailures ?? 0) - (base.decodeFailures ?? 0)
+      const startedDelta = (fin.workersStarted ?? 0) - (base.workersStarted ?? 0)
+      const ok = failDelta === 0 && bothAlive === 0 && !fin.workerAlive && !fin.staleAlive
+      log(
+        'kws-stress: 结论 delay=' + delayMs + 'ms cycles=' + cycles + ' staleEvents+' + staleDelta + ' stuckRefusals=' + stuck +
+        ' decodeFailures+' + failDelta + ' workersStarted+' + startedDelta + ' bothAlive=' + bothAlive +
+        ' end{workerAlive=' + fin.workerAlive + ' staleAlive=' + fin.staleAlive + '} ⇒ ' +
+        (ok ? '✓ 无跨代并存、无解码失败、收尾零活线程' : '✗ 见上行'),
+      )
+    } catch (e: any) {
+      log('kws-stress: 抛错 = ' + (e?.message ?? e))
+    } finally {
+      native?.setDebugDecodeDelayMs?.(0)
+      setBusy('')
+    }
+  }, [log])
+
+  // ── G-06 引擎成因分支（真机没有不改代码就能造出的引擎失败）：让下一次 KWS load 失败一次 ──
+  //  用法：点它 → 去设置页打开「免唤醒」→ 开关下应出现引擎成因的错误行（不是权限那句）、开关保持开；
+  //  再关掉再打开 ⇒ 正常起来（替身一次性）。
+  const probeKwsFailNext = useCallback(() => {
+    if (!developmentDiagnosticsEnabled()) return
+    const native = KwsNative
+    if (!native?.setDebugFailNextLoad) {
+      log('kws-fail-next: 这个 APK 的 KwsModule 没有替身入口（旧原生）')
+      return
+    }
+    native.setDebugFailNextLoad(true)
+    log('kws-fail-next: 已置位——下一次 KWS load 会抛 KWS_DEBUG_LOAD_FAILED（一次性）。去设置页打开「免唤醒」看开关下的错误行')
+  }, [log])
+
   // ── M4-4 免唤醒整轮的无人取证：**只放一句话，不建任何引擎** ──
   //  用法：先在设置里打开免唤醒 → 回对话页确认「待唤醒」→ 进本屏点它 → 回对话页看状态条。
   //  它刻意**不自己建 KwsEngine**：原生侧的 KeywordSpotter 是单例，本按钮的全部作用
@@ -1211,6 +1325,7 @@ function VoiceSpikeTools() {
     const a = handsFreeAvailability()
     log('avail: vad=' + a.vad + ' kws=' + a.kws + ' usable=' + a.usable + ' mic=' + JSON.stringify(micBusStats()))
     log('focus: installed=' + audioFocusInstalled() + '（false ⇒ 四场景一个都不会到，先查这一位）')
+    log('kws: stats=' + JSON.stringify(KwsNative?.stats?.() ?? null))
     const lg = audioFocusLog()
     if (!lg.length) log('focus: 日志空——还没发生过中断/路由事件')
     for (const e of lg) {
@@ -1244,6 +1359,9 @@ function VoiceSpikeTools() {
         <Btn {...btn} label="M4 vad" onPress={() => void probeVad()} />
         <Btn {...btn} label="M4 kws" onPress={() => void probeKws()} />
         <Btn {...btn} label="M4 kws 直灌" onPress={() => void probeKwsInject()} />
+        <Btn {...btn} label="kws 压力 1.5s" testID="probe-kws-stress" onPress={() => void probeKwsStress(1500, 6)} />
+        <Btn {...btn} label="kws 压力 0.3s" testID="probe-kws-stress-fast" onPress={() => void probeKwsStress(300, 10)} />
+        <Btn {...btn} label="kws 下次加载失败" testID="probe-kws-fail-next" onPress={() => probeKwsFailNext()} />
         <Btn {...btn} label="M4 播唤醒句" onPress={() => void probeSpeakWake()} />
         <Btn {...btn} label="M4 状态/焦点" onPress={() => probeStatus()} />
         <Btn {...btn} label="clear" onPress={() => setLines([])} />
