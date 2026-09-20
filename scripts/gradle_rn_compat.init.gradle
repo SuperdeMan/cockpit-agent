@@ -1,0 +1,42 @@
+// gradle_rn_compat.init.gradle — 第三方 RN 原生库对 Gradle 版本的假设与本工程不符时的垫片。
+// 与本机网络 / 路径形态无关（那些在 gradle_cn_mirrors.init.gradle），所以 CI 的 Linux runner 也要 -I 它：
+//   本机：scripts/build_mobile.ps1 传 -I；CI：.github/workflows/mobile-apk.yml 的 gradlew 一行传 -I。
+// 垫片只留这一份；谁漏了谁先红（G-05 首次 dispatch 2026-09-20 就是 CI 漏了）。
+//
+// ── onnxruntime-react-native 用了 Gradle 9 已删除的 VersionNumber（M4-1 实测，2026-08-28）──
+// 它的 android/build.gradle:250 写着
+//     if (VersionNumber.parse(REACT_NATIVE_VERSION) < VersionNumber.parse("0.71")) { ... }
+// `org.gradle.util.VersionNumber` 在 Gradle 8 弃用、**9 删除**，而本工程是 9.3.1 ⇒
+//     A problem occurred evaluating project ':onnxruntime-react-native'.
+//     > Could not get unknown property 'VersionNumber' ...
+// 报错还会**连带**一条 `:expo` 的「SoftwareComponent with name 'release' not found」，
+// 那是级联不是第二个 bug——别顺着它去查 expo。
+// 同 audio-api 那条 bash 路径的性质：**本机/工具链形态与库的假设不符**，所以落这份
+// init script，不改 node_modules（它是镜像产物，改了每次同步都要重做）。
+// 只给这一个工程注入，别的工程若也用到会照旧报错——那才是我们想要的（知道还有谁在用）。
+class RnVersionNumber implements Comparable<RnVersionNumber> {
+    final List<Integer> parts
+    RnVersionNumber(List<Integer> p) { this.parts = p }
+    static RnVersionNumber parse(String s) {
+        def nums = []
+        def m = (s ?: '') =~ /\d+/
+        while (m.find()) { nums << m.group().toInteger() }
+        while (nums.size() < 3) { nums << 0 }
+        return new RnVersionNumber(nums.subList(0, 3))
+    }
+    int compareTo(RnVersionNumber o) {
+        for (int i = 0; i < 3; i++) {
+            int c = (parts[i] <=> o.parts[i])
+            if (c != 0) return c
+        }
+        return 0
+    }
+    String toString() { parts.join('.') }
+}
+
+gradle.beforeProject { proj ->
+    // beforeProject 而不是 afterEvaluate：ext 必须在它自己的 build.gradle **求值前**就位
+    if (proj.name == 'onnxruntime-react-native' && !proj.ext.has('VersionNumber')) {
+        proj.ext.set('VersionNumber', RnVersionNumber)
+    }
+}

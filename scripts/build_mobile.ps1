@@ -278,7 +278,9 @@ try {
         # ninja 1.10.2 的 260 上限；顺带让原生中间产物躲过 robocopy /MIR 的清扫、跨构建保留）
         $cxxInit = Join-Path $PSScriptRoot 'gradle_cxx_staging.init.gradle'
         $cxxRoot = (Join-Path (Split-Path -Parent $BuildRoot) 'cxx') -replace '\\', '/'
-        $gradleArgs = @($task, '--console=plain', '-I', $initScript, '-I', $cxxInit, "-PxiaozhouCxxRoot=$cxxRoot")
+        # 第三方 RN 库的 Gradle 9 兼容垫片（onnxruntime 的 VersionNumber）：与网络 / 路径形态无关，CI 同样 -I 这一份
+        $rnCompatInit = Join-Path $PSScriptRoot 'gradle_rn_compat.init.gradle'
+        $gradleArgs = @($task, '--console=plain', '-I', $initScript, '-I', $rnCompatInit, '-I', $cxxInit, "-PxiaozhouCxxRoot=$cxxRoot")
         if ($CompileJobs -gt 0) {
             $lowMemInit = Join-Path $PSScriptRoot 'gradle_low_memory.init.gradle'
             $gradleArgs += @('-I', $lowMemInit, "-PxiaozhouCompileJobs=$CompileJobs", '--max-workers=2')
