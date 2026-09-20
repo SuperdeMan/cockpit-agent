@@ -94,8 +94,9 @@ class KwsModule : Module() {
   @Volatile private var debugDecodeDelayMs = 0L
   @Volatile private var debugFailNextLoad = false
 
-  /** 解码线程 + 它自己的停止标记。release 只翻这一位，别的线程的 alive 与它无关。 */
-  private inner class Worker : Thread("kws-decode") {
+  /** 解码线程 + 它自己的停止标记。release 只翻这一位，别的线程的 alive 与它无关。
+   *  `tag` 是进程内第几条（Thread.id 在 Java 19+ 已弃用，且日志要的是「第几代」不是系统 id） */
+  private inner class Worker(val tag: Long) : Thread("kws-decode-$tag") {
     val alive = AtomicBoolean(true)
     override fun run() = loop(alive)
   }
@@ -246,12 +247,11 @@ class KwsModule : Module() {
     dropped.set(0)
     processed.set(0)
     running.set(true)
-    val t = Worker()
+    val t = Worker(workersStarted.incrementAndGet())
     t.isDaemon = true
     worker = t
-    workersStarted.incrementAndGet()
     t.start()
-    Log.i(TAG, "KWS loaded keywords=$keywords threshold=$threshold score=$score worker=${t.id}")
+    Log.i(TAG, "KWS loaded keywords=$keywords threshold=$threshold score=$score worker=${t.tag}")
   }
 
   private fun loop(alive: AtomicBoolean) {
@@ -317,7 +317,7 @@ class KwsModule : Module() {
       // 超时不静默、也不「照常」：解码卡在一次 JNI 调用里。它的 alive 已是 false、醒来就退出，
       // 但在它确认退出前不许开始下一次加载（头注 5，loadInternal 检查 stale）。
       if (t.isAlive) {
-        Log.w(TAG, "kws-decode 未在 ${JOIN_TIMEOUT_MS}ms 内退出，进入 stale worker=${t.id}")
+        Log.w(TAG, "kws-decode 未在 ${JOIN_TIMEOUT_MS}ms 内退出，进入 stale worker=${t.tag}")
         staleEvents.incrementAndGet()
         stale = t
       }

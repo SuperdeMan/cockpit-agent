@@ -29,7 +29,7 @@ import {
   sharedAudioContext,
 } from '@/core/voice/audioCtx'
 import { base64ToBytes } from '@/core/voice/base64'
-import { audioFocusInstalled, audioFocusLog, audioRouteInstalled } from '@/core/voice/audioFocus'
+import { audioFocusHeld, audioFocusInstalled, audioFocusLog, audioRouteInstalled } from '@/core/voice/audioFocus'
 import { handsFreeAvailability } from '@/core/voice/handsFree'
 import { DEFAULT_KEYWORDS, KwsEngine, kwsBusy, kwsNativeAvailable } from '@/core/voice/kws'
 import AudioRouteNative from '../../modules/audioroute'
@@ -1325,7 +1325,7 @@ function VoiceSpikeTools() {
     if (!developmentDiagnosticsEnabled()) return
     const a = handsFreeAvailability()
     log('avail: vad=' + a.vad + ' kws=' + a.kws + ' usable=' + a.usable + ' mic=' + JSON.stringify(micBusStats()))
-    log('focus: installed=' + audioFocusInstalled() + '（false ⇒ 四场景一个都不会到，先查这一位）')
+    log('focus: installed=' + audioFocusInstalled() + ' held=' + audioFocusHeld() + '（installed=false ⇒ 四场景一个都不会到，先查这一位；held 只在出声期为 true）')
     log('route: installed=' + audioRouteInstalled() + ' native=' + JSON.stringify(AudioRouteNative?.stats?.() ?? null) +
       '（Android 拔耳机 / 蓝牙断开只能从这一路到；库的 routeChange 在 Android 上不发）')
     log('kws: stats=' + JSON.stringify(KwsNative?.stats?.() ?? null))

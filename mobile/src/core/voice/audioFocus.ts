@@ -29,13 +29,32 @@
 // 调用点；「拔耳机 ⇒ 停播」在 Android 上从来没成立过。系统给的事实是 ACTION_AUDIO_BECOMING_NOISY 广播，
 // 由本仓库 `modules/audioroute` 透传成 `onBecomingNoisy`，这里按 OldDeviceUnavailable 同一条处置停播
 // （库的 routeChange 监听照留：iOS 走它）。取证先看 `audioRouteInstalled()`，再看事件到没到。
+//
+// 2026-09-20（D-09 真机核出的第二件事）：**焦点不能在启动时请求一次然后永久持有**。库的
+// `observeAudioInterruptions(true)` 就是这么做的（Android 端 = 请求一次 AUDIOFOCUS_GAIN），真机读数两条：
+//  ① 打开 App 就把用户正在放的音乐永久停掉（GAIN 对别的持有者是永久 LOSS）；
+//  ② 第一次被别的媒体 App 永久抢走（onAudioFocusChange(-1)）后我们的条目被移出焦点栈，之后再来的来电 / 闹钟
+//     **一个回调都到不了**（OPPO：视频播放器抢走之后计时器响铃，App 收到 0 次回调）——中断检测只活到第一次 LOSS。
+// ⇒ 改成**出声才持焦点**：任一路播放通道活着（`audioPlaybackLive`：会话开着 / 播放器建好 / 在出声）就请求
+// GAIN_TRANSIENT_MAY_DUCK（别人的音乐压低、不停），全部收尾后过 FOCUS_RELEASE_GRACE_MS 放掉（分段播报的
+// 段间不抖动、音乐回到原音量）；每次起播都重新请求，永久 LOSS 之后下一次出声检测又活了。不出声的时候不持焦点：
+// 那时来电 / 闹钟本来也没有播放可停（LISTENING 期的采集策略是另一件事，remediation D-08）。
 import AudioRouteNative from '../../../modules/audioroute'
 
+import { audioPlaybackLive, subscribeAudioPlayback } from './playbackFacts'
 import { speechController } from './speech'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 
 let installed = false
+/** 出声才持焦点：请求的焦点类型（库的 AudioFocusType 串） */
+export const FOCUS_TYPE = 'gainTransientMayDuck'
+/** 全部播放收尾后再等这么久才放焦点：分段播报段间、批处理兜底切换都在这个窗口内，不让别人的音乐抖 */
+export const FOCUS_RELEASE_GRACE_MS = 1000
+let audioManager: { observeAudioInterruptions(param: string | boolean): void } | null = null
+let focusHeld = false
+let releaseTimer: ReturnType<typeof setTimeout> | null = null
+let playbackUnsub: (() => void) | null = null
 /** becoming-noisy 原生接收装上了没有（Android；旧 APK / iOS 上是 false，拔耳机那一维走不到） */
 let routeInstalled = false
 let routeSub: { remove(): void } | null = null
@@ -58,7 +77,8 @@ export function systemStopBound(): boolean {
 }
 
 export interface AudioFocusEvent {
-  kind: 'interruption' | 'routeChange'
+  /** focus = 我们自己请求 / 放掉焦点（纯观测：真机上对照 dumpsys audio 的焦点栈） */
+  kind: 'interruption' | 'routeChange' | 'focus'
   detail: string
   stoppedPlayback: boolean
   /** 停播走的是哪条出口：unified = Provider 装配的统一语义；speech = 只停主链的缺省 */
@@ -116,6 +136,44 @@ export function audioFocusInstalled(): boolean {
   return installed
 }
 
+/** 此刻是不是持着焦点（按本文件的账；系统那边的真值是 dumpsys audio 焦点栈里有没有我们的条目） */
+export function audioFocusHeld(): boolean {
+  return focusHeld
+}
+
+/** 出声才持焦点（头注最后一段）：播放事实翻转就同步一次。请求同步、放掉带宽限。 */
+function syncFocusToPlayback(): void {
+  const am = audioManager
+  if (!am) return
+  if (audioPlaybackLive()) {
+    if (releaseTimer) {
+      clearTimeout(releaseTimer)
+      releaseTimer = null
+    }
+    if (focusHeld) return
+    try {
+      am.observeAudioInterruptions(FOCUS_TYPE)
+      focusHeld = true
+      record({ kind: 'focus', detail: 'request ' + FOCUS_TYPE, stoppedPlayback: false })
+    } catch {
+      focusHeld = false
+    }
+    return
+  }
+  if (!focusHeld || releaseTimer) return
+  releaseTimer = setTimeout(() => {
+    releaseTimer = null
+    if (audioPlaybackLive()) return
+    try {
+      am.observeAudioInterruptions(false)
+    } catch {
+      /* 放不掉就放不掉：下一次起播会重新请求 */
+    }
+    focusHeld = false
+    record({ kind: 'focus', detail: 'abandon', stoppedPlayback: false })
+  }, FOCUS_RELEASE_GRACE_MS)
+}
+
 /** becoming-noisy（拔耳机 / 蓝牙断开）的原生接收装上了没有。false ⇒ 「耳机断开」那一维在这个 APK 上不会到。 */
 export function audioRouteInstalled(): boolean {
   return routeInstalled
@@ -151,7 +209,7 @@ export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void
   if (installed) return
   try {
     const { AudioManager } = require('react-native-audio-api')
-    AudioManager.observeAudioInterruptions(true)
+    // 不在这里请求焦点（头注最后一段）：焦点跟播放事实走，见 syncFocusToPlayback
     AudioManager.addSystemEventListener('interruption', (e: any) => {
       const began = e?.type === 'began'
       const via = began ? stopForSystem('interruption') : undefined
@@ -177,6 +235,9 @@ export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void
       onEvent?.(ev)
     })
     installed = true
+    audioManager = AudioManager
+    playbackUnsub = subscribeAudioPlayback(syncFocusToPlayback)
+    syncFocusToPlayback()
   } catch {
     // 原生模块不在（jest / 未装新 dev-client）：不装监听也不该拦住 App 启动
     installed = false
@@ -189,6 +250,12 @@ export function resetAudioFocusForTest(): void {
   routeSub?.remove()
   routeSub = null
   routeInstalled = false
+  playbackUnsub?.()
+  playbackUnsub = null
+  if (releaseTimer) clearTimeout(releaseTimer)
+  releaseTimer = null
+  audioManager = null
+  focusHeld = false
   log.length = 0
   watchers.clear()
   systemStop = defaultStop

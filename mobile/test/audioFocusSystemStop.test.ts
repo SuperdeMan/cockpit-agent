@@ -13,7 +13,10 @@
 //  ⑤ 出口抛错不能吞掉事件记录（日志是真机取证的唯一读数）；
 //  ⑥ Android 的「拔耳机」事实来自本仓库 modules/audioroute 的 becoming-noisy 广播（库 0.13.3 的 Android 端从不发
 //     routeChange，2026-09-20 D-09 核源码），它与 OldDeviceUnavailable 走同一条处置、同一个出口；原生缺席时
-//     不装、不崩、`audioRouteInstalled()` 如实为 false。
+//     不装、不崩、`audioRouteInstalled()` 如实为 false；
+//  ⑦ 出声才持焦点（2026-09-20 D-09 真机：启动时持 GAIN 一次 ⇒ 打开 App 停掉用户的音乐，且第一次永久 LOSS 之后
+//     再没有任何回调）：装载时不请求；播放通道活着才请求 gainTransientMayDuck；段间空隙不放；全部收尾过宽限才放；
+//     再起播再请求。
 // 外加一条源码级接线断言：AssistantProvider 真的用 stopPlayback 那一份去装配（「加了通道没接消费方 = 没做」）。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -25,11 +28,12 @@ jest.mock('@/core/voice/speech', () => ({ speechController: () => ({ stop: mockS
 
 function installFakeAudioApi() {
   const listeners: Record<string, ((e: unknown) => void)[]> = {}
+  const focusCalls: (string | boolean)[] = []
   jest.doMock(
     'react-native-audio-api',
     () => ({
       AudioManager: {
-        observeAudioInterruptions: () => {},
+        observeAudioInterruptions: (param: string | boolean) => { focusCalls.push(param) },
         addSystemEventListener: (name: string, cb: (e: unknown) => void) => {
           ;(listeners[name] ??= []).push(cb)
         },
@@ -37,7 +41,7 @@ function installFakeAudioApi() {
     }),
     { virtual: true },
   )
-  return { fire(name: string, e: unknown) { for (const cb of listeners[name] ?? []) cb(e) } }
+  return { fire(name: string, e: unknown) { for (const cb of listeners[name] ?? []) cb(e) }, focusCalls }
 }
 
 /** modules/audioroute 的假原生：present=false 模拟旧 APK / iOS（requireOptionalNativeModule 给 null） */
@@ -171,6 +175,49 @@ test('⑥ Android 拔耳机：becoming-noisy 走同一出口、记 routeChange�
   expect(absent.mod.audioFocusInstalled()).toBe(true) // 库那一路不受影响
   absent.fake.fire('interruption', { type: 'began' })
   expect(mockSpeechStop).toHaveBeenCalledTimes(1)
+})
+
+test('⑦ 出声才持焦点：装载不请求、播放通道活着才请求、段间不放、收尾过宽限才放、再起播再请求', () => {
+  jest.useFakeTimers()
+  try {
+    const { fake, mod } = load()
+    const facts = require('@/core/voice/playbackFacts')
+    expect(fake.focusCalls).toEqual([]) // 装载时一次都不请求：打开 App 不能停掉用户正在放的音乐
+    expect(mod.audioFocusHeld()).toBe(false)
+
+    const main = {}
+    facts.setAudioPlaybackFact(main, true, 'live') // 会话开着、首片还没到——这时就要持住（首片起播前被抢也要能收到）
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+    expect(mod.audioFocusHeld()).toBe(true)
+    expect(mod.audioFocusLog().at(-1)).toMatchObject({ kind: 'focus', detail: 'request ' + mod.FOCUS_TYPE, stoppedPlayback: false })
+
+    facts.setAudioPlaybackFact(main, true) // 出声：不重复请求
+    facts.setAudioPlaybackFact(main, false) // 段间：playing 落、live 还在 ⇒ 不放
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+
+    facts.setAudioPlaybackFact(main, false, 'live') // 全部收尾 ⇒ 宽限内不放
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS - 50)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+    const s2s = {}
+    facts.setAudioPlaybackFact(s2s, true, 'live') // 宽限内另一路起来 ⇒ 撤销放焦点，也不重复请求
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+    expect(mod.audioFocusHeld()).toBe(true)
+
+    facts.setAudioPlaybackFact(s2s, false, 'live')
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE, false]) // 过了宽限才放：别人的音乐回到原音量
+    expect(mod.audioFocusHeld()).toBe(false)
+    expect(mod.audioFocusLog().at(-1)).toMatchObject({ kind: 'focus', detail: 'abandon' })
+
+    facts.setAudioPlaybackFact(main, true, 'live') // 再起播再请求——永久 LOSS 之后检测复活靠的就是这一次
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE, false, mod.FOCUS_TYPE])
+    facts.setAudioPlaybackFact(main, false, 'live')
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+  } finally {
+    jest.useRealTimers()
+  }
 })
 
 test('接线：AssistantProvider 用 stopPlayback 那一份装配系统停播出口，并先在轨迹上记 system_stop', () => {
