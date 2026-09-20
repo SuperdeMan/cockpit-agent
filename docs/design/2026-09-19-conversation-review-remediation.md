@@ -1,7 +1,8 @@
 # 落域 / 拒识 / 上下文 / 长会话评审：逐条重证与分阶段落地
 
 - 状态：批 1（P0 W01–W04 + W05-lite）、批 2（P1 W08/W09）、批 3（P1 W10 / W06 / W07，2026-09-20 用户批准后实施）已发布
-  （生产 release `88a89456`）；P2（W11–W15）/ P3（W16–W19）按评审原表为后续入口（§5）
+  （生产 release `88a89456`）；**批 4（P2 W11–W15，2026-09-20 用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §5、落地记录见 §5.6**；
+  P3（W16–W19）按评审原表为后续入口（§6）
 - 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`；HMI / Android 本批零改动
 - 关联：评审原文 [`docs/reviews/2026-09-19-cockpit_conversation_review.md`](../reviews/2026-09-19-cockpit_conversation_review.md)（基线 `2f3c574d`）；
   接手 `AGENTS.md` §4；QA 交接 `docs/reviews/2026-08-30-qa-closeout-handoff.md`；上一批收口 [`2026-09-19-qa-residual-closeout.md`](2026-09-19-qa-residual-closeout.md)
@@ -229,9 +230,87 @@ Focus 内分两层：**短时引用**（`obj/attr/positions/last_poi/last_destin
     通道本身单测钉死，但**真栈证据只有观测列**（`acts=correct` 1/3）。哪类旅程会真正走到「同 intent 改口」（无活动路线的路线规划、提醒改期、行程改日）留给 P2 的 14 类边界矩阵。
 - 记给后续：planner 对可选字段（`capability_ref` / `acts`）的遵循率低（MiniMax-M3：`acts` 1/3、`capability_ref` 0/2）——prompt-only 字段要靠范例；纯名词 / 纯偏好陈述落技术失败出口的 F09 家族在本批探针里又出现两次（CL1 T1、RS5 T1）。
 
-## 5. 后续入口（P2 / P3，未启动）
+## 5. 批 4（P2）方案与裁决（2026-09-20）
 
-按评审原表：W11 Capability Contract（manifest / SDK / Registry 声明效果、前提、读写、所需上下文、结果投影）、W12 多目标闭环（每个 goal 有终态）、
-W13 受话与失败分类（PTT / 免唤醒 / 文字分账；本批两次观察到的技术失败出口归它）、W14 AnswerContract（执行性表述要证据；`execution_claim` 从观测转拦截的前提是两周分布）、
-W15 hint 与目录解耦；P3 W16 ContextCapsule、W17 摘要 / Memory 检索、W18 50/100 轮长会话与恢复、W19 模型与检索消融。每包仍按「先红测试、独立开关、旧 schema 读兼容」推进。
+先拿生产分布再动手（评审 W05 的纪律）：collector 只读 830 轮（2026-07-10 → 09-20 01:07，
+含标注豁免的老轮）——终态族 `planner_technical_failure` **42**、`candidate_aggregate` 19、`pending_state` 10、
+`clarify_choice` 4、`pending_cancel` 4、`no_pending` 4、`no_plan` 2、`pending_ambiguous` 2；两条 shadow 列：
+`execution_claim` **6**（4 条是 `pending_cancel` 出口的「好的，已为您取消」——它真的关掉了一条挂起，是尺子的误报；
+2 条是 chitchat 零动作声称执行：「可以，已为您执行」（W01 追加已修）与 PTT 噪声句「但是，这里面来。哎妈。」答
+「已为您避开此路段。已为您重新规划路线：当前位置 → 浮木咖啡 → …7.4公里」）；`clause_uncovered` **134/830**，逐条看
+≥ 95% 是误报（chitchat / `info.search` 整句透传、单步双槽「导航去深圳湾公园，晚上7点前到」、修饰分句「联网查询」「至少五百字」、
+安全陈述）。这两组数字决定了下面每包做到哪、不做到哪。
+
+### W13 受话与失败分账（本批主干）
+
+1. **终态账本**：`runtime/outcome.py` 一份封闭词表（`not_addressed / pending_missing / pending_ambiguous / pending_asked /
+   no_pending / cancelled / pending_expired / safety_origin_blocked / injection_rejected / candidate_missing / fact_answered /
+   constraint_noted / unresolved_object / planner_failure / permission_missing / clarify / cancel_unresolved / no_plan /
+   pending_confirm / pending_slot / completed / partial / failed / uncertain / stream_lost / escalate_failed / store_fenced`），
+   每个 kind 映射到评审 §5.1 的八类之一（`CATEGORY_OF`）。engine 的**每一条 final 出口**都声明 `_outcome`（内部键，`run()`
+   剥掉），执行类 final 由结果集算（全 OK ⇒ completed；有 OK 有 FAILED / `_refused` ⇒ partial；全 FAILED ⇒ failed），
+   `run()` 在唯一出口发 `cloud.outcome` span `{kind, category, actions, answer_only}`；collector 合并成 `turns.outcome` 列
+   （加法迁移，`/api/search` 直接可查），dashboard 详情页多一枚徽记。**这就是「受话 / 理解 / 支持 / 执行失败分账」的载体**——
+   此前只有 `planner_technical_failure` 这一格有名字，其余都混在 `status=ok` 里。
+2. **F09-a 纯偏好陈述**（真栈三批共见四次）：`constraints_in(text)` 覆盖了**全部分句**、无安全信号、`mem_on` 时 ⇒
+   登记（`_register_input_facts`）+ 确定性致谢「好的，这次不吃辣、可以排队，找地方的时候我按这个来。」，零 LLM，kind
+   `constraint_noted`。话术用词与焦点块共用 `runtime.session_constraints.phrase_of`（一份词表）。挂起分支之后、规划之前
+   （与候选 / 会话事实短路同挂点）。
+3. **F09-b 裸对象落技术失败**（CL1 差的那次）：planner 两轮里出现过澄清标记（`goal_requires_clarification` /
+   `clarification_marker`）却没交出合法澄清卡而落 `_fallback` ⇒ `Plan.clarify_wanted=True`；engine 把这一种技术失败改成
+   `unresolved_object` 出口：「我听到了「云岚国际中心」，但没听清要拿它做什么——说完整一点我就能办。」不出 retry issue
+   （它不是技术失败，是歧义）。
+4. PTT 静默拒识**不改**：客户端已把拒识轮渲染成「已忽略疑似环境人声（点错了可重说一遍）」，评审要的可见状态在那里。
+
+### W14 AnswerContract（执行性表述）
+
+- 只拦**按声明不可能为真**的那一种：这一轮执行的步全是 `response_only`（chitchat 谈话）、final 零动作、话术命中
+  `execution_claim`（完成体 / 进行体 + 指向用户）⇒ 按句剥掉声称句（`runtime.execution_claim.strip_execution_claims`），
+  剥空了换成「这一轮我没有执行任何操作；要我做什么的话说具体一点。」；`cloud.execution_claim` span 加 `intercepted=true`。
+  非 response_only 的步照旧只观测（信息类能力的「已为您规划 3 天行程」是真的）。
+- 生产 830 轮里两条真阳性都在这条判据里；四条误报（pending_cancel 出口）是 engine 自己的确定性话术，不经这条路。
+
+### W11 Capability Contract：`effect`
+
+- `Capability.effect`（proto 字段 11，`""|read|write`）：manifest → SDK loader → Registry round-trip（逐字段无损用例跟着长）→
+  `Step.effect` / `step_record` → 消费方：① W07 任务帧 `kind` 由声明决定（此前靠「结果带 actions / 声明 require_confirm」猜，
+  `reminder.create` 这类不出 action 的云侧写被记成 read，下一轮查询就把它顶掉、「改成八点半」无处继承）；② `cloud.outcome`
+  的 `answer_only` / 执行类 kind 只看声明。缺省 `""` = 今天的启发式（旧 manifest 零行为变化）。
+- **刻意不接进问句安全闸**：把云侧声明写接进 `_side_effect_steps` 会让「明天八点提醒我开会好吗」（`is_non_directive_question`
+  认「…好吗」为问句、`DIRECTIVE_MARKERS` 里没有它）被拦成闲聊——那是新造的洞。礼貌尾词的判据先补、再谈扩闸。
+- 数据有效期 / 结果投影（`freshness_s` / `observation_keys`）**不落**：没有现成消费方，落了就是会漂移的声明（B4）。
+
+### W15 hint 与目录解耦
+
+- 能力可见性 = 兜底 Agent ∪ `category: core`，**不再**因「声明了 route_hints」而受保护（退役一条 hint 不再顺手改变
+  目录裁剪）；hint 扫描改用**权限过滤后的完整注册表**（`WorkingSet.registry_agents`），不用 prompt 目录——被 top-k /
+  预算裁出 prompt 的 Agent，它的 hint 照样命中、步照样过 `_validated_steps`。今天 14 个 Agent 两道裁剪都不触发，
+  行为逐字不变；改的是结构。
+
+### W12 多目标闭环（部分，裁决记账）
+
+- 落：终态账本区分 `completed / partial / failed`（**按结果集，精确**）；`clause_uncovered` 观测列去掉三类已证实的
+  误报（整句透传槽 / 兜底 Agent 吃整句 / 单步已填槽数 ≥ 分句数），让这一列变成可读的基线。
+- **不落**「这句话里还有一件事没处理」的用户可见话术：生产 134 条 shadow 里真阳性个位数，裁掉三类误报后剩下的仍含修饰
+  分句（「联网查询」「至少五百字」）——按分句子串判「哪一段没人管」在真实分布上不成立；评审建议的 `goal_id / covers`
+  要改 planner 输出契约，而本轮已量到 prompt-only 可选字段遵循率 ≤ 1/3，得先 A/B。归下一批。
+
+### 批 4 验收
+
+- 每包先红测试再改实现；定向套件（cloud / runtime / registry / collector / dashboard）+ 四门禁 + smoke_edge；全量固定口径一次；
+  变异各自判红（outcome 漏声明 / 剥声称 / effect round-trip / hint 解耦 / 观测去噪）。
+- 真栈：push → dry-run → apply → status / verify → 探针：`residual` RS6（纯偏好陈述 ⇒ 致谢、零动作、约束下一轮生效）、
+  `confirm` CL2（裸地名技术失败改口）无法稳定触发时用离线用例锁；collector `turns.outcome` 分布作为 W05 新基线读数。
+
+### 5.6 落地记录
+
+（实施后回填）
+
+## 6. 后续入口（P3 与 P2 余项，未启动）
+
+P2 余项：W12 的 planner 侧 `goal_id / covers` 契约（先 A/B）与用户可见的「还有一件事没处理」话术；礼貌尾词
+（「…好吗 / 行吗」）进 `question_shape` 后再评估把云侧 `effect: write` 接进问句安全闸；W11 的数据有效期 / 结果投影
+（`freshness_s` / `observation_keys`）等有真实消费方再落。
+P3 按评审原表：W16 ContextCapsule、W17 摘要 / Memory 检索（三态：找到 / 无结果 / 后端不可用）、W18 50/100 轮长会话与恢复
+（`scripts/probe_qa_long_sessions.py` 是现成 runner）、W19 模型与检索消融。每包仍按「先红测试、独立开关、旧 schema 读兼容」推进。
 

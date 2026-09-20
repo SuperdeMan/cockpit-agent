@@ -2724,3 +2724,43 @@ outline原子叶子、350个视觉放置/299个blob/17个skipped、35个受控�
 `security.permission.check_permission`。此前云侧一直在按这个键硬拒、**端侧四个本地执行出口
 一个都没读**：token 只授 `location.read` 时「打开车窗」照样把车窗打开了。需要哪个 scope 由
 端侧 manifest 的 `edge_intents × requires_permissions` 回答，新增端侧车控能力不必回头改闸。
+
+### 9.43 终态账本 / 能力效果 `effect` / 谈话步的执行性声明拦截 / hint 扫描面（评审 P2，2026-09-20）
+
+出处：[对话评审逐条落地 §5](design/2026-09-19-conversation-review-remediation.md)。四件事共用一条纪律——
+**系统持有的事实由系统自己说**（结局、能力效果、有没有执行），模型只产它有权产的那部分。
+
+**① 终态账本（W13）**。词表在 `runtime/outcome.py`（封闭；`CATEGORY_OF` 映射到评审 §5.1 的八类），
+engine **每一条** final 出口声明内部键 `_outcome`，`run()` 唯一出口剥掉并发 `cloud.outcome` span
+`{kind, category, actions, answer_only}`；collector 合并成 `turns.outcome`（加法迁移，`/api/search` 可查），
+dashboard 详情页出徽记。执行类 final 按结果集算（`outcome_of_results`：全 OK ⇒ `completed`；有 OK 有
+FAILED / `_refused` ⇒ `partial`；全 FAILED ⇒ `failed`），挂起 / 澄清 / 各确定性出口各有自己的 kind。
+不变量：新出口先登记词表再上线（`test_engine_outcome.py` 源码级扫描）；没声明的记 `unknown` 并告警，
+**不补默认值**——「不知道」必须与任何一种结局分得开。
+两条新出口：`constraint_noted`（`runtime.session_constraints.is_pure_constraint_statement`：每个分句都在谈
+口味 / 排队 ⇒ 登记 + 确定性致谢，零 LLM；带安全信号或记忆关闭时不接管）与 `unresolved_object`
+（`Plan.clarify_wanted`：planner 某一轮自己说过要澄清却没交出卡而落兜底 ⇒ 「我听到了 X，但没听清要拿它
+做什么」，不出 retry issue）。
+
+**② 能力效果 `Capability.effect`（W11，proto 字段 11，`""|read|write`）**。声明在 Agent：云侧 manifest
+显式写（loader 校验值域，词表外**启动即失败**）；端侧由 `commands.yaml` 对象 effect × 操作名读写派生
+（`orchestrator/edge/capabilities.py::_effect_for`）；MCP 桥由 `tool.write` / 工作流派生。Registry round-trip
+逐字段无损（夹具跟着长），`Step.effect` / `step_record` 随挂起持久化。消费方：W07 任务帧 `kind`
+（`context.task_writes`：声明优先，未声明退回「结果带 actions / require_confirm」的启发式）与终态账本。
+**不接进问句安全闸**：`is_non_directive_question` 把「明天八点提醒我开会好吗」当问句，接进去等于把云侧
+写请求拦成闲聊——礼貌尾词先进 `question_shape` 再谈。
+
+**③ 谈话步的执行性声明拦截（W14）**。生产 830 轮的 shadow 分布：6 命中，4 条是 `pending_cancel` 出口的
+「好的，已为您取消」（真关掉了挂起，尺子误报），2 条是 chitchat 零动作声称执行。只拦**按声明必假**的那一种：
+`ctx.answer_only`（本轮执行的步全是 `response_only`）∧ 零动作 ∧ `runtime.execution_claim` 命中 ⇒
+`strip_execution_claims` 按句剥掉声称句，剥空换固定话术「这一轮我没有执行任何操作…」；span 带
+`intercepted=true`。其余形态照旧只观测（信息类能力的「已为您规划 3 天行程」可能是真的）。
+
+**④ hint 扫描面与能力可见性分开（W15）**。`_always_include` = 兜底 ∪ `category: core`，「声明了 route_hints」
+不再是保护资格；`WorkingSet.registry_agents` 带出预筛前的完整注册表，`PlanBuilder._hint_map` 对它做权限过滤后
+交给 `RouteHintEngine`——被 top-k / 预算裁出 prompt 的 Agent，它的 hint 照样命中、补出的步照样过
+`_validated_steps`。退役一条 hint 不再顺手改变目录裁剪。今天 14 个 Agent 两道裁剪都不触发，行为逐字不变。
+
+**W12 记账**：`clause_uncovered` 观测列去掉三类可判定的误报（整句型 / 整句透传槽、步数 ≥ 分句数、单步已填槽数 ≥
+分句数）；用户可见的「还有一件事没处理」**不落**——修饰分句（「联网查询」）与真诉求形态无差别，要 planner 侧
+`goal_id / covers` 契约（先 A/B）。

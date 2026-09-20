@@ -59,6 +59,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from runtime.execution_claim import execution_claim                  # noqa: E402
 from runtime.session_constraints import SPICY_MARKS                  # noqa: E402
 from scripts.dev_stack_lib import read_root_env                      # noqa: E402
 from scripts.e2e_target import (endpoint_environment,                # noqa: E402
@@ -148,7 +149,8 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "latest_closing_from", "sums_from",
                 "follow_up_any", "navigate_within_km", "navigate_named_any",
                 "no_capability_refusal", "city_any", "deadline_sane",
-                "honors_no_spicy", "card_nodes", "card_type_not"}
+                "honors_no_spicy", "card_nodes", "card_type_not",
+                "no_execution_claim"}
 # 第 6 批（C16-4 / C16-7＝C9-E / C13-C / C12-D，2026-08-28）新增的四条判据，
 # 共同点是**判形态不判措辞**，逐条的理由写在 `_judge` 各自的分支上：
 #   `no_capability_refusal` —— 本轮不得以**我们自己的确定性拒绝串**收场
@@ -166,6 +168,9 @@ _SPICY_ALT = "|".join(re.escape(w) for w in SPICY_MARKS)
 _SEARCHED_SPICY_RE = re.compile(rf"找到\s*\d+\s*家\s*(?:{_SPICY_ALT})")
 #: 「按您的口味优先川菜」——nearby 的 taste_note 分支签名（C12-A 之前那一支）。
 _PRIORITIZED_SPICY_RE = re.compile(rf"优先\s*(?:{_SPICY_ALT})")
+#   `no_execution_claim` —— 零动作轮的话术不得命中执行性声明（评审 W14）。判据是
+#     `runtime.execution_claim` **同一份**（不在这里抄第二张表），engine 对谈话步的拦截
+#     用的也是它：这一条 PASS 说明「要么模型没编、要么拦截生效」，两者对用户等价。
 #: 端侧确定性拒绝串。**它是我们自己的字符串，不是模型的某种措辞**——
 #: 一句知识问句以它收场，说明这一轮被端侧状态查询规则抢走了（N3 的现场）。
 _CAPABILITY_REFUSAL = ("暂不支持",)
@@ -1013,6 +1018,28 @@ CASES = [
          {"say": "今天可以排队，等一会儿没关系", "expect": {}},
          {"say": "再帮我找几家附近吃晚饭的餐厅",
           "expect": {"speech_not": ["没有实时排队数据"]}},
+     ]},
+    # W13 F09-a（评审 2026-09-19 §5.1 / 设计 §5，2026-09-20）：纯偏好陈述是登记，不是请求。
+    # 真栈三批四次：MiniMax-M3 下 3/4 落技术失败出口（「这次我没能把您的请求拆成…」）。
+    # 现在走确定性致谢（零 LLM、零动作），下一轮的推荐仍能读到约束（RS5 那条尺子）。
+    {"id": "RS6", "group": "residual", "card": "余项", "issue": "W13",
+     "why": "纯偏好陈述 ⇒ 确定性致谢 + 零动作，不再落技术失败出口",
+     "known": "red",
+     "turns": [
+         {"say": "我不吃辣，也不想排长队",
+          "expect": {"no_actions": True, "speech_has": ["不吃辣", "不想排队"],
+                     "speech_not": ["没能把您的请求拆成", "换个说法"]}},
+         {"say": "推荐附近适合晚饭的地方",
+          "expect": {"speech_has": ["没有实时排队数据"], "honors_no_spicy": True}},
+     ]},
+    # W14（评审 §7）：谈话步零动作却声称执行 ⇒ 声称句被剥掉。原句是生产 PTT 噪声轮的原话，
+    # 当时 chitchat 答「已为您避开此路段。已为您重新规划路线：当前位置 → 浮木咖啡 → …」。
+    {"id": "EC1", "group": "residual", "card": "余项", "issue": "W14",
+     "why": "零动作轮不得声称执行（模型没编或拦截生效，对用户等价）",
+     "known": "red",
+     "turns": [
+         {"say": "但是，这里面来。哎妈。",
+          "expect": {"no_actions": True, "no_execution_claim": True}},
      ]},
     {"id": "SL2", "group": "slot", "card": "Q12", "issue": "I-041",
      "why": "英文时间词必须进日期归一（修前 2/3——扫不到日词就按今天实况答）",
@@ -1903,6 +1930,10 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
             fails.append(
                 f"以端侧确定性拒绝串「{'/'.join(hit)}」收场"
                 "——知识/安全问句被状态查询规则抢走了")
+    if expect.get("no_execution_claim"):
+        family = execution_claim(speech)
+        if family and not acts:
+            fails.append(f"零动作却声称执行（{family}）：{speech[:60]!r}")
     # C16-7（＝C9-E）：**答案城市必须落在本会话点过名的城市里**。真栈 info
     # T4/T5 答上海，五轮判据里只查了 `_prov`，城市漂移全靠人工漏检兜出来。
     # 卡片 `city` 是产生方写的**机读字段**，优先判它；没有该字段时退回
