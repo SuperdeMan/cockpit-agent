@@ -416,3 +416,89 @@ def test_plan_context_replace_keeps_all_scratch_fields():
     names = {f.name for f in dataclasses.fields(PlanContext) if f.init}
     assert {"pending_operation_id", "closed_operation_ids", "answer_only", "goal_gap",
             "clarify_probe", "safety_origin_text", "focus_places"} <= names
+
+
+# ─── 可观测：三条路径的 step span 都在换了起点原话时带 raw_text_from=origin（没换不带）───
+
+def _capture_spans(monkeypatch):
+    from observability import events
+
+    spans = []
+
+    class FakeEmitter:
+        async def emit_span(self, trace_id, node, **kwargs):
+            spans.append((node, kwargs))
+
+        async def emit_metric(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(events, "get_emitter", lambda service="cloud": FakeEmitter(),
+                        raising=False)
+    return spans
+
+
+def _step_attrs(spans):
+    return [kw.get("attrs") or {} for node, kw in spans if str(node).startswith("step.agent:")]
+
+
+def test_dispatcher_span_marks_the_swap_only_when_it_happened(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+
+    async def cloud(endpoint, intent, slots, ctx, meta, **kwargs):
+        return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech="ok")
+
+    dispatcher = UnifiedDispatcher(cloud_call=cloud, edge_call=None, tools=None)
+    ctx = PlanContext(vehicle_id="v1", raw_text="川菜", trace_id="t")
+    asyncio.run(dispatcher.dispatch(
+        Step(id="s2", agent_id="nearby", endpoint="n:1", intent="nearby.order", origin_text=ORIGIN), ctx))
+    asyncio.run(dispatcher.dispatch(
+        Step(id="s1", agent_id="nearby", endpoint="n:1", intent="nearby.search", origin_text="川菜"), ctx))
+    attrs = _step_attrs(spans)
+    assert [a.get("raw_text_from") for a in attrs] == ["origin", None]
+
+
+def test_loop_stream_span_marks_the_swap(monkeypatch):
+    """真栈 RS10 第 3 趟走的正是这条路（T2 单步流式）：日志证明读了起点原话，span 却没格子。"""
+    spans = _capture_spans(monkeypatch)
+
+    async def stream_fn(endpoint, intent, slots, ctx, meta, timeout=None):
+        yield ("final", agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK, speech="ok"))
+
+    async def unused(*_a, **_k):
+        raise AssertionError("不该 unary")
+
+    planner = _Planner([ReplanDecision(done=False, steps=[
+        Step(id="r2", agent_id="reminder", intent="reminder.create", endpoint="stub:1",
+             kind="agent", deployment="cloud")]),
+        ReplanDecision(done=True)])
+    origin = "只要有堵车就提醒我"
+    initial = Plan(steps=[], complexity="adaptive", goal="g", safety_origin_text=origin)
+    ctx = PlanContext(raw_text="去宝安机场的路况", safety_origin_text=origin, trace_id="t")
+    controller = LoopController(planner, DagExecutor(call_agent_fn=unused), _Agg(), None,
+                                max_iters=2, budget_ms=5000, stream_fn=stream_fn)
+    _collect(controller, goal="g", initial_plan=initial, agents=[], ctx=ctx, user_text="去宝安机场的路况")
+    assert [a.get("raw_text_from") for a in _step_attrs(spans)] == ["origin"]
+
+
+def test_engine_stream_span_marks_the_swap(monkeypatch):
+    spans = _capture_spans(monkeypatch)
+
+    class _Clients:
+        async def call_agent_stream(self, endpoint, intent, slots, ctx, meta, timeout=None):
+            yield ("final", agent_pb2.ExecuteResponse(
+                status=agent_pb2.ExecuteResponse.OK, speech="ok"))
+
+    engine = PlannerEngine(clients=_Clients(), planner=None,
+                           executor=DagExecutor(call_agent_fn=_unused_call),
+                           aggregator=None, session=SessionStore(redis_url=""))
+    ctx = PlanContext(raw_text="川菜", trace_id="t")
+
+    async def run(step):
+        sink = {}
+        return [e async for e in engine._stream_single_step(step, ctx, False, sink)]
+
+    asyncio.run(run(Step(id="s2", agent_id="nearby", endpoint="n:1", intent="nearby.order",
+                         kind="agent", deployment="cloud", origin_text=ORIGIN)))
+    asyncio.run(run(Step(id="s1", agent_id="nearby", endpoint="n:1", intent="nearby.search",
+                         kind="agent", deployment="cloud", origin_text="川菜")))
+    assert [a.get("raw_text_from") for a in _step_attrs(spans)] == ["origin", None]

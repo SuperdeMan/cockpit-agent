@@ -314,7 +314,10 @@ class LoopController:
                             duration_ms=(self.clock() - stream_start) * 1000,
                             attrs={"intent": step.intent, "agent_id": step.agent_id,
                                    "kind": "agent", "deployment": "cloud",
-                                   "via": "stream"})
+                                   "via": "stream",
+                                   # W16-b 可观测（与 dispatcher 同一格）：换了起点原话才出现
+                                   **({"raw_text_from": "origin"}
+                                      if step_call_context(step, ctx) is not ctx else {})})
                     except Exception:
                         pass
                     results.append(final_sr)

@@ -1649,7 +1649,10 @@ class PlannerEngine:
                 "ok" if final_sr.status == StepStatus.OK else "err"),
             duration_ms=(time.monotonic() - started) * 1000,
             attrs={"intent": step.intent, "agent_id": step.agent_id,
-                   "kind": "agent", "deployment": "cloud", "via": "stream"})
+                   "kind": "agent", "deployment": "cloud", "via": "stream",
+                   # W16-b 可观测（与 dispatcher / loop 同一格）：换了起点原话才出现
+                   **({"raw_text_from": "origin"}
+                      if step_call_context(step, ctx) is not ctx else {})})
         # 过程区的「完成」事件与 executor 路径同款（同一 step_id 合并 running→done）
         if show_process and final_sr.status in (
                 StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):
