@@ -218,6 +218,35 @@ def test_refused_step_speech_survives_aggregation_exactly_once():
     assert out["follow_up"] == "可以问「附近哪家瑞幸还营业」。"
 
 
+def test_llm_material_says_the_refused_demand_is_answered_elsewhere():
+    """批 7（真栈 RS13）：拒绝步不进材料之后，LLM 看见用户原话里有一部分诉求没有结果，会替它编一段
+    「没拿到设置结果，建议你再确认一下有没有成功开启」——紧跟系统附加的「做不到」，一段自相矛盾。
+    有拒绝步被拿掉时，提示里必须说明那部分已由系统另行作答、不许提及；没有拒绝步时一个字不多。"""
+    from orchestrator.cloud.models import StepResult, StepStatus
+
+    seen_prompts: list[str] = []
+
+    async def llm(messages, **kwargs):
+        seen_prompts.append(messages[-1]["content"])
+        return "到宝安机场约 24 公里，预计 44 分钟，沿途基本畅通。"
+
+    agg = Aggregator(llm)
+    traffic = StepResult(step_id="s1", status=StepStatus.OK,
+                         speech="从当前位置到深圳宝安国际机场全程约24.2公里、预计44分钟，沿途基本畅通。")
+    refused = StepResult(step_id="r1", status=StepStatus.OK,
+                         speech="我只能按时间或地点提醒，还做不到盯着「有堵车」这类变化再来通知你。",
+                         data={"_refused": "unsupported"})
+    out = asyncio.run(agg.compose("先看看去宝安机场的路况，要是堵的话，之后只要有堵车就提醒我",
+                                  [traffic, refused]))
+    assert "已由系统另行直接作答" in seen_prompts[0] and "不要建议用户去确认" in seen_prompts[0]
+    assert "做不到" not in seen_prompts[0], "拒绝句本身仍不进材料"
+    assert out["speech"].endswith("我只能按时间或地点提醒，还做不到盯着「有堵车」这类变化再来通知你。")
+
+    weather = StepResult(step_id="s2", status=StepStatus.OK, speech="深圳今天多云 30℃。")
+    asyncio.run(agg.compose("查路况和天气", [traffic, weather]))
+    assert "另行直接作答" not in seen_prompts[1], "没有拒绝步时提示一个字不多"
+
+
 def test_all_refused_multi_step_skips_llm_and_dedupes():
     """全员被拒（78b635db：两步同一句拒绝）：零 LLM、逐字去重后原样输出。"""
     from orchestrator.cloud.models import StepResult, StepStatus

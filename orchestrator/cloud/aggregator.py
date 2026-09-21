@@ -220,7 +220,8 @@ class Aggregator:
             speech = "".join(self._sentence(line) for line in refused_lines)
         else:
             speech = strip_markdown_speech(
-                await self._aggregate_speech(user_text, spoken, thinking))
+                await self._aggregate_speech(user_text, spoken, thinking,
+                                             omitted_demands=bool(refused)))
             for line in refused_lines:
                 speech = self._sentence(speech) + line
         refused_follow = next(
@@ -280,9 +281,24 @@ class Aggregator:
             composed.append(a)
         return composed
 
+    #: 批 7（真栈 RS13，`1e892f1b`）：拒绝步不进聚合材料是对的，但 LLM 看得见用户原话里那部分诉求
+    #: 在「各步骤结果」里**没有对应项**，于是自己替它编一段——「你说的堵车提醒这边没拿到设置结果，
+    #: 没法确认是否已经帮你开通了，建议你再确认一下」，后面紧跟系统确定性附加的「我只能按时间或地点
+    #: 提醒，还做不到…」，一段自相矛盾。系统持有的事实由系统说，LLM 要被明确告知：那部分不归它。
+    _OMITTED_DEMANDS_NOTE = (
+        "用户这句话里还有一部分诉求（各步骤结果里没有对应项的那部分）已由系统另行直接作答，"
+        "你不知道也不需要知道它的结果：回复里不要提及它、不要猜测它是否已办、不要建议用户去确认它，"
+        "只组织上面列出的结果。"
+    )
+
     async def _aggregate_speech(self, user_text: str, results: list[StepResult],
-                                thinking: bool = False) -> str:
-        """用 LLM 把多步结果改写为连贯口语。thinking=True 时开思考（复杂跨域合成）。"""
+                                thinking: bool = False, *,
+                                omitted_demands: bool = False) -> str:
+        """用 LLM 把多步结果改写为连贯口语。thinking=True 时开思考（复杂跨域合成）。
+
+        omitted_demands：本轮有拒绝步被从材料里拿掉（它们由系统确定性附加）——提示里要说明，
+        否则 LLM 会替那部分诉求补一段猜测（见 `_OMITTED_DEMANDS_NOTE`）。
+        """
         summaries = []
         for r in results:
             if r.status == StepStatus.OK and r.speech:
@@ -297,6 +313,8 @@ class Aggregator:
             "请组织为口语回复：保留各意图实质、不要互相吞掉；"
             "用户对某问题要了 N 条结论时，这 N 条都紧扣那个问题、不拿其它意图凑数。"
         )
+        if omitted_demands:
+            prompt += "\n\n" + self._OMITTED_DEMANDS_NOTE
         try:
             return await self._llm([
                 {"role": "system", "content": _AGGREGATE_SYSTEM},
