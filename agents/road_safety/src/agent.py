@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
@@ -34,6 +35,40 @@ _STATE_SUBJECT = "vehicle.state.changed"
 # 驾驶员状态与车辆告警判据的**唯一实现**在 `runtime/safety_signal.py`。
 # 这里曾经有一份本地副本、manual-rag 有第二份，chitchat 还要第三份——
 # 收口发生在第三个消费方出现的**当天**，不是等它错了再收（§4.3 时区族那笔账）。
+
+
+# ── 批 7 ②：`route` 槽归一（路况查的是哪条路）────────────────────────────────────────
+# planner 填的 route 是自由转述：「去宝安机场的路况」「深南大道路况」「高速」「宝安机场」。
+# 三种形态各走各的数据源（判据全是封闭虚词 / 道路量词，零 POI 名）：
+#   destination —「去 / 到 X（的路况）」或裸地名 ⇒ 当前位置到 X 一路的逐段拥堵；
+#   road        — 路 / 大道 / 高速 / 大桥… 结尾或 G4 / S3 编号 ⇒ 按路名查态势；
+#   active      — 「路上 / 前面 / 这条路 / 高速（裸）」或空 ⇒ 正在导航的那条路线。
+_ROUTE_ACTIVE_WORDS = frozenset({
+    "路上", "前面", "前方", "当前", "当前路线", "这条路", "那条路", "沿途", "高速", "高速上",
+    "现在的路", "路况", "一路", "路线", "这段路",
+})
+_ROUTE_DEST_PREFIX_RE = re.compile(r"^(?:前往|开到|开往|去|到|往|回)")
+_ROUTE_NOISE_RE = re.compile(
+    r"(?:的路况|的路上|的路|这条路|那条路|路上|沿途|一路|方向|路况|堵不堵|堵吗|堵车吗|堵车|"
+    r"怎么走|怎么样|怎样|如何|好走吗|顺不顺|通不通|畅通吗)+$")
+_ROAD_SUFFIX_RE = re.compile(
+    r"(?:高速公路|高速|快速路|快速干道|大道|环线|环路|大桥|隧道|立交|国道|省道|公路|路|街)$")
+_ROAD_CODE_RE = re.compile(r"^[GSgs]\d{1,4}$")
+
+
+def route_target(text: str | None) -> tuple[str, str]:
+    """route 槽 / 原话 → ("destination" | "road" | "active", 目标名)。见上方注释。"""
+    t = re.sub(r"[\s，,。！？!?、]+", "", (text or "").strip())
+    if not t or t in _ROUTE_ACTIVE_WORDS:
+        return "active", ""
+    had_prefix = bool(_ROUTE_DEST_PREFIX_RE.match(t))
+    core = _ROUTE_DEST_PREFIX_RE.sub("", t, count=1)
+    core = _ROUTE_NOISE_RE.sub("", core).strip()
+    if not core or core in _ROUTE_ACTIVE_WORDS:
+        return "active", ""
+    if _ROAD_CODE_RE.match(core) or (not had_prefix and _ROAD_SUFFIX_RE.search(core)):
+        return "road", core.upper() if _ROAD_CODE_RE.match(core) else core
+    return "destination", core
 
 
 def _focus_safety_alert(meta) -> dict:
@@ -457,26 +492,55 @@ class RoadSafetyAgent(BaseAgent):
 
         return AgentResult(speech=f"{spoken}当前没有生效的天气预警。")
 
+    #: 拥堵 + 严重拥堵合计到这个里程才补安全提示——几百米的堵点不值得唠叨一句。
+    _CONGESTION_TIP_KM = 1.0
+
     async def _road_condition(self, intent, ctx, meta) -> AgentResult:
-        """查询路况。"""
-        route = intent.slots.get("route", "").strip()
-        if not route:
+        """查询路况（批 7 ② 重写）。
+
+        修前拿「X 路况」当关键词搜 POI，空结果原样播「为您找到 0 个X 路况，推荐前三个：。需要导航过去吗？」
+        ——名字存在能力不可达。现在：route 槽（空则看原话）归一成 destination / road / active 三种形态，
+        交 navigation 的内部意图 `route_traffic`（真数据：路线逐段 tmcs / 路名态势 / 活动路线）；
+        话术与卡原样转发，拥堵成规模时补一句安全提示。数据拿不到由对方如实说，这里不编。
+        """
+        route = (intent.slots.get("route") or "").strip()
+        kind, target = route_target(route or getattr(intent, "raw_text", ""))
+        slots: dict[str, str] = {}
+        if kind == "destination":
+            slots["destination"] = target
+        elif kind == "road":
+            slots["road"] = target
+        elif not (meta or {}).get("focus_active_route"):
+            # 既没说哪条路，也没有正在导航的路线：照旧反问（本能力自己的槽名）
             return AgentResult(
                 status=NEED_SLOT, speech="您想查询哪条路线的路况？",
                 follow_up="请告诉我路线或目的地", missing_slots=["route"])
+        origin = (intent.slots.get("origin") or "").strip()
+        if origin:
+            slots["origin"] = origin
 
-        # 调用 navigation agent 查路线
+        label = target or "这一路"
+        if kind == "destination":
+            label = f"去{target}这一路"
         try:
-            result = await self.agents.call(
-                "navigation", "navigation.search_poi",
-                {"keyword": f"{route} 路况"}, ctx)
-            if result and result.speech:
-                return AgentResult(
-                    speech=result.speech,
-                    ui_card=result.ui_card,
-                    data=result.data,
-                )
+            result = await self.agents.call("navigation", "navigation.route_traffic", slots, ctx)
         except Exception as e:
             logger.warning("road condition query failed: %s", e)
-
-        return AgentResult(speech=f"暂无{route}的实时路况信息。")
+            result = None
+        if result is None or result.status not in ("ok", "need_slot") or not result.speech:
+            return AgentResult(speech=f"暂时查不到{label}的路况。")
+        if result.status == "need_slot":
+            # 对方要目的地（活动路线过龄等）：挂起落在本能力自己的槽上
+            return AgentResult(
+                status=NEED_SLOT, speech="您想查询哪条路线的路况？",
+                follow_up="请告诉我路线或目的地", missing_slots=["route"])
+        speech = result.speech
+        traffic = (result.data or {}).get("traffic") if isinstance(result.data, dict) else None
+        if isinstance(traffic, dict):
+            try:
+                jam_km = float(traffic.get("congested_km") or 0) + float(traffic.get("blocked_km") or 0)
+            except (TypeError, ValueError):
+                jam_km = 0.0
+            if jam_km >= self._CONGESTION_TIP_KM:
+                speech = speech.rstrip() + "拥堵路段请保持车距、提前变道。"
+        return AgentResult(speech=speech, ui_card=result.ui_card, data=result.data)

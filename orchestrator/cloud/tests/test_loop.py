@@ -1038,3 +1038,83 @@ def test_summarize_carries_the_step_slots_for_the_replan_reuse_key():
     observation = summarize(result, intent="info.weather", slots={"city": "深圳"})
     assert observation["slots"] == {"city": "深圳"}
     assert "slots" not in summarize(result, intent="info.weather")
+
+
+
+# ── 批 7 ①：`_refused="unsupported"` 是该诉求的终态，不是「换个能力再试」的起点 ────────────
+# 真栈 RS10 第 3 趟（`cc331315`）：reminder 诚实拒绝之后 loop 又 replan 出 `reminder.cancel`，
+# 用户听到「提醒方面也没找到」——一句诚实拒绝被下一轮盖掉。
+
+def _refused_unsupported(step_id: str, speech: str = "我只能按时间或地点提醒，还做不到盯着「有堵车」。"):
+    return StepResult(step_id, StepStatus.OK, speech=speech, data={"_refused": "unsupported"})
+
+
+def test_summarize_surfaces_the_refusal_even_when_data_is_truncated():
+    """观察给 replan 看的是前 12 个 data 键；`_refused` 埋在第 13 位就丢了——所以它要有自己的格。"""
+    data = {f"k{i}": i for i in range(14)}
+    data["_refused"] = "unsupported"
+    observation = summarize(StepResult("r1", StepStatus.OK, data=data), intent="reminder.create")
+    assert observation["refused"] == "unsupported"
+    assert "refused" not in summarize(StepResult("r2", StepStatus.OK, data={"x": 1}))
+
+
+def test_a_batch_of_only_unsupported_refusals_ends_the_loop_without_replanning():
+    planner = _Planner([ReplanDecision(done=False, steps=[
+        Step(id="r1", agent_id="reminder", intent="reminder.cancel")])])
+    executor = _Executor({"s1": _refused_unsupported("s1")})
+    aggregator = _Aggregator()
+    controller = LoopController(planner, executor, aggregator, None, max_iters=3, budget_ms=5000)
+    events = _collect(
+        controller, goal="只要有堵车就提醒我",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="reminder", intent="reminder.create")],
+                          complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="只要有堵车就提醒我")
+    assert planner.observations == [], "全批都是 unsupported 拒绝：不该再问 replanner"
+    assert executor.runs == [["s1"]]
+    assert events[-1]["kind"] == "final" and events[-1]["_outcome"] == "unsupported"
+    assert aggregator.calls and aggregator.calls[0][1][0].data == {"_refused": "unsupported"}
+
+
+def test_a_mixed_batch_still_replans_for_the_other_goal():
+    """混合批（一步拒绝、一步做成）照旧 replan——终止规则只认「整批都是 unsupported」。"""
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({
+        "s1": _refused_unsupported("s1"),
+        "s2": StepResult("s2", StepStatus.OK, speech="深南大道畅通", data={"traffic": "ok"}),
+    })
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000)
+    events = _collect(
+        controller, goal="只要有堵车就提醒我，顺便看看深南大道路况",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="reminder", intent="reminder.create"),
+                                 Step(id="s2", agent_id="road-safety", intent="safety.road_condition")],
+                          complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="只要有堵车就提醒我，顺便看看深南大道路况")
+    assert len(planner.observations) == 1
+    assert [o.get("refused") for o in planner.observations[0]] == ["unsupported", None]
+    assert events[-1]["_outcome"] == "partial"
+
+
+def test_resumed_loop_stops_after_the_replanned_step_is_refused_as_unsupported():
+    """RS10 第 3 趟的形态：续接轮带着路况结果进 loop，replan 出 reminder 步，它诚实拒绝 ⇒ 到此为止，
+    不再 replan 第二次（修前第二次 replan 出了 `reminder.cancel`）。"""
+    planner = _Planner([
+        ReplanDecision(done=False, steps=[Step(id="r1", agent_id="reminder", intent="reminder.create",
+                                               slots={"title": "有堵车"})]),
+        ReplanDecision(done=False, steps=[Step(id="r2", agent_id="reminder", intent="reminder.cancel")]),
+    ])
+    seed = StepResult("s1", StepStatus.OK, speech="去宝安机场约 35 公里，沿途畅通")
+    # 测试替身不会像真 executor 那样跳过 done 里的步：s1 在这里再跑一次（结果同种子），
+    # 断言的对象是「r1 拒绝之后不再 replan」，与 s1 跑几次无关。
+    executor = _Executor({"s1": seed, "r1": _refused_unsupported("r1"),
+                          "r2": StepResult("r2", StepStatus.OK, speech="不该执行")})
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000)
+    initial = Plan(steps=[Step(id="s1", agent_id="road-safety", intent="safety.road_condition")],
+                   complexity="adaptive", safety_origin_text="只要有堵车就提醒我")
+    events = _collect(
+        controller, goal="只要有堵车就提醒我", initial_plan=initial, agents=[],
+        ctx=PlanContext(raw_text="去宝安机场的路况", safety_origin_text="只要有堵车就提醒我"),
+        user_text="去宝安机场的路况", seed_results=[seed])
+    assert executor.runs == [["s1"], ["r1"]], executor.runs
+    assert len(planner.observations) == 1, "拒绝之后不该有第二次 replan"
+    assert len(planner.decisions) == 1, "第二份决策（reminder.cancel）从没被取走"
+    assert events[-1]["_outcome"] == "partial"

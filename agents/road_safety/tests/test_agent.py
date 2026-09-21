@@ -255,3 +255,134 @@ def test_state_event_ignores_non_location_change(monkeypatch):
 
     asyncio.run(agent._on_state_event(_msg([{"key": "speed_kmh", "new": 60}])))
     assert called["hazard"] is False
+
+
+# ── 批 7 ②：safety.road_condition 接真路况（不再拿「X 路况」搜 POI）──────────────────────
+# 修前：`navigation.search_poi keyword="去宝安机场的路况 路况"`，空结果原样播「为您找到 0 个…推荐前三个：。
+# 需要导航过去吗？」；非空是几个名字带「路况」的 POI。名字存在能力不可达。现在归一 route 槽后调
+# navigation 的内部意图 `route_traffic`，话术 / 卡原样转发，拥堵时补一句安全提示。
+
+import json
+import time
+
+from agents.road_safety.src.agent import route_target
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("去宝安机场的路况", ("destination", "宝安机场")),
+    ("到深圳北站堵不堵", ("destination", "深圳北站")),
+    ("前往东方之门的路", ("destination", "东方之门")),
+    ("宝安机场", ("destination", "宝安机场")),
+    ("深南大道路况", ("road", "深南大道")),
+    ("京港澳高速堵吗", ("road", "京港澳高速")),
+    ("北环大道", ("road", "北环大道")),
+    ("G4 堵不堵", ("road", "G4")),
+    ("去深南大道的路况", ("destination", "深南大道")),     # 明说「去」就是到那儿的一路
+    ("路况怎么样", ("active", "")),
+    ("高速堵车吗", ("active", "")),
+    ("前面堵不堵", ("active", "")),
+    ("这条路", ("active", "")),
+    ("", ("active", "")),
+])
+def test_route_target_normalises_the_route_slot(text, expected):
+    assert route_target(text) == expected
+
+
+def _traffic_result(**data):
+    payload = {"destination": "深圳宝安国际机场", "distance_km": 35.2, "duration_min": 42,
+               "traffic": {"expedite_km": 30.0, "slow_km": 3.0, "congested_km": 0.3,
+                           "blocked_km": 0.0, "unknown_km": 1.0},
+               "traffic_source": "route_tmcs", "traffic_lookup": "route"}
+    payload.update(data)
+    return AgentResult(status="ok", speech="从当前位置到深圳宝安国际机场全程约35.2公里、预计42分钟，"
+                                          "沿途缓行约3.0公里、拥堵约0.3公里，其余畅通。",
+                       ui_card={"type": "route_plan", "estimate": True}, data=payload)
+
+
+def test_road_condition_to_a_destination_calls_route_traffic_not_poi_search():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(_traffic_result())
+    res = asyncio.run(run_handle(agent, "safety.road_condition",
+                                 slots={"route": "去宝安机场的路况"}, raw_text="去宝安机场的路况",
+                                 ctx=make_context()))
+    assert agent._agents.calls == [("navigation", "navigation.route_traffic", {"destination": "宝安机场"})]
+    assert res.status == "ok" and not res.actions
+    assert res.speech.startswith("从当前位置到深圳宝安国际机场全程约35.2公里")
+    for junk in ("为您找到", "推荐前三个", "需要导航过去吗", "搜索"):
+        assert junk not in res.speech
+    assert res.ui_card == {"type": "route_plan", "estimate": True}
+    assert res.data["traffic_source"] == "route_tmcs"
+
+
+def test_road_condition_for_a_named_road_passes_the_road():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深南大道目前整体畅通，畅通路段约占88.5%。",
+                                            data={"status": 1, "traffic_lookup": "road"}))
+    res = asyncio.run(run_handle(agent, "safety.road_condition",
+                                 slots={"route": "深南大道路况"}, raw_text="深南大道路况怎么样",
+                                 ctx=make_context()))
+    assert agent._agents.calls == [("navigation", "navigation.route_traffic", {"road": "深南大道"})]
+    assert res.speech == "深南大道目前整体畅通，畅通路段约占88.5%。"
+
+
+def test_road_condition_without_a_route_uses_the_active_route_when_there_is_one():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(_traffic_result())
+    active = {"destination": "深圳宝安国际机场", "lat": 22.6393, "lng": 113.8107, "ts": int(time.time())}
+    res = asyncio.run(run_handle(agent, "safety.road_condition", slots={}, raw_text="路况怎么样",
+                                 ctx=make_context(), meta={"focus_active_route": json.dumps(active)}))
+    assert agent._agents.calls == [("navigation", "navigation.route_traffic", {})]
+    assert res.status == "ok"
+
+
+def test_road_condition_reads_the_destination_from_the_raw_text_when_the_slot_is_empty():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(_traffic_result())
+    res = asyncio.run(run_handle(agent, "safety.road_condition", slots={}, raw_text="去宝安机场的路堵不堵",
+                                 ctx=make_context()))
+    assert agent._agents.calls == [("navigation", "navigation.route_traffic", {"destination": "宝安机场"})]
+    assert res.status == "ok"
+
+
+def test_road_condition_without_route_or_active_route_still_asks_and_calls_nobody():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(_traffic_result())
+    res = asyncio.run(run_handle(agent, "safety.road_condition", slots={}, raw_text="路况怎么样",
+                                 ctx=make_context()))
+    assert res.status == "need_slot" and "route" in res.missing_slots
+    assert agent._agents.calls == []
+
+
+def test_navigation_asking_for_a_destination_becomes_our_route_slot():
+    """navigation 反问「哪条路线」时（活动路线过龄等），挂起要落在本能力自己的槽名上。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="need_slot", speech="您想查询哪条路线的路况？",
+                                            missing_slots=["destination"]))
+    active = {"destination": "深圳宝安国际机场", "lat": 22.6393, "lng": 113.8107, "ts": 1}
+    res = asyncio.run(run_handle(agent, "safety.road_condition", slots={}, raw_text="路况怎么样",
+                                 ctx=make_context(), meta={"focus_active_route": json.dumps(active)}))
+    assert res.status == "need_slot" and res.missing_slots == ["route"]
+
+
+def test_road_condition_collaboration_failure_is_honest():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="failed", speech=""))
+    res = asyncio.run(run_handle(agent, "safety.road_condition",
+                                 slots={"route": "去宝安机场的路况"}, raw_text="去宝安机场的路况",
+                                 ctx=make_context()))
+    assert res.status == "ok" and res.speech == "暂时查不到去宝安机场这一路的路况。"
+    assert not res.actions
+
+
+def test_heavy_congestion_gets_a_safety_tip_light_congestion_does_not():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(_traffic_result(
+        traffic={"expedite_km": 20.0, "slow_km": 3.0, "congested_km": 1.4, "blocked_km": 0.6,
+                 "unknown_km": 0.0}))
+    res = asyncio.run(run_handle(agent, "safety.road_condition", slots={"route": "宝安机场"},
+                                 raw_text="去宝安机场堵不堵", ctx=make_context()))
+    assert "保持车距" in res.speech
+    agent._agents = _FakeAgents(_traffic_result())      # 拥堵 0.3 公里：不唠叨
+    res = asyncio.run(run_handle(agent, "safety.road_condition", slots={"route": "宝安机场"},
+                                 raw_text="去宝安机场堵不堵", ctx=make_context()))
+    assert "保持车距" not in res.speech

@@ -14,7 +14,7 @@ from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
-from runtime.outcome import outcome_of_results
+from runtime.outcome import all_refused_unsupported, outcome_of_results
 from observability import events as obs_events
 from observability.metrics import metrics
 
@@ -89,6 +89,10 @@ def summarize(result: StepResult, *, intent: str = "",
             if isinstance(v, (str, int, float, bool))}
     if data.get("retry_same_intent") is True:
         observation["retry_same_intent"] = True
+    # 批 7 ①：Agent 的声明式拒绝要有自己的格——`_refused` 埋在 data 里第 13 位就被上面截掉了，
+    # 而 replan 的「同域不再换能力再试」判据读的正是它。
+    if (result.data or {}).get("_refused"):
+        observation["refused"] = (result.data or {})["_refused"]
     return observation
 
 
@@ -225,6 +229,7 @@ class LoopController:
                 current.exemplars = list(getattr(initial_plan, "exemplars", []) or [])
 
             done_seed = {result.step_id: result for result in results}
+            batch_start = len(results)     # 批 7 ①：这一批的结果从这里开始
 
             # T2 流式直通：单步 cloud agent 尝试流式，yield speech delta。
             # 与 engine.py T1 快路径同模式：流式成功则 yield delta 并收集结果，
@@ -402,6 +407,13 @@ class LoopController:
             current = None
             if self.clock() >= deadline:
                 exhausted = True
+                break
+            # 批 7 ①：这一批**全部**是「能力做不到」的声明式拒绝 ⇒ 该诉求有终态，不再 replan。
+            # 真栈 RS10 第 3 趟（`cc331315`）：reminder 诚实拒绝之后 loop 又规划出 `reminder.cancel`，
+            # 用户听到「提醒方面也没找到」——一句诚实拒绝被下一轮的换能力再试盖掉。
+            # 判据一份（`runtime.outcome`，与终态账本同源）；混合批照旧回到 replan。
+            if all_refused_unsupported(results[batch_start:]):
+                logger.info("T2 loop: batch is all unsupported refusals; not replanning")
                 break
 
         elapsed_ms = (self.clock() - (deadline - self.budget_ms / 1000.0)) * 1000

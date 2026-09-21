@@ -26,6 +26,41 @@ def _as_str(v) -> str:
     return str(v) if v is not None else ""
 
 
+def _pct(v) -> float:
+    """高德态势接口的百分比是字符串（"90.00%"）；解析不出记 0。"""
+    try:
+        return round(float(_as_str(v).rstrip("%") or 0), 1)
+    except ValueError:
+        return 0.0
+
+
+# 路线 `extensions=all` 逐段 `tmcs.status` 的取值 → 我们的键（批 7 ②）。高德文档给的就是这五个中文值；
+# 认不出的一律记 unknown，不猜。
+_TMC_STATUS_KEY = {"畅通": "expedite_km", "缓行": "slow_km", "拥堵": "congested_km",
+                   "严重拥堵": "blocked_km"}
+
+
+def traffic_from_path(path: dict) -> dict | None:
+    """把一条 path 的逐段 tmcs 聚合成各状态公里数；path 里一段 tmcs 都没有 ⇒ None（**没有就是没有**）。"""
+    totals = {"expedite_km": 0.0, "slow_km": 0.0, "congested_km": 0.0,
+              "blocked_km": 0.0, "unknown_km": 0.0}
+    seen = False
+    for step in (path.get("steps") or []):
+        for tmc in (step.get("tmcs") or []):
+            if not isinstance(tmc, dict):
+                continue
+            try:
+                metres = float(tmc.get("distance") or 0)
+            except (TypeError, ValueError):
+                continue
+            seen = True
+            key = _TMC_STATUS_KEY.get(_as_str(tmc.get("status")), "unknown_km")
+            totals[key] += metres / 1000
+    if not seen:
+        return None
+    return {k: round(v, 1) for k, v in totals.items()}
+
+
 class AmapPOIProvider(POIProvider):
     def __init__(self, key: str, base_url: str = _BASE):
         if not key:
@@ -169,6 +204,10 @@ class AmapPOIProvider(POIProvider):
                       for s in (path.get("steps") or []) if s.get("instruction")],
         }
         if with_polyline:
+            # 批 7 ②：`extensions=all` 的逐段 tmcs 一直在响应里、一直被丢掉——路况能力从这里接真数据。
+            traffic = traffic_from_path(path)
+            if traffic is not None:
+                result["traffic"] = traffic
             # 逐步累计里程，记录每步终点坐标——用于按"沿途第 N 公里"取一个途经坐标
             points, cum_m = [], 0.0
             for s in (path.get("steps") or []):
@@ -197,7 +236,38 @@ class AmapPOIProvider(POIProvider):
                                "geocode_regeo", meta)
         regeocode = data.get("regeocode") or {}
         addr = _as_str(regeocode.get("formatted_address"))
-        return GeoPoint(lat=lat, lng=lng, address=addr)
+        component = regeocode.get("addressComponent") or {}
+        # 直辖市的 city 是 []，城市名落在 province（北京市 / 上海市…）；adcode 是区级码，态势接口也认。
+        city = _as_str(component.get("city")) or _as_str(component.get("province"))
+        return GeoPoint(lat=lat, lng=lng, address=addr, city=city,
+                        adcode=_as_str(component.get("adcode")))
+
+    async def road_traffic(self, name: str, city: str,
+                           meta: dict | None = None) -> dict:
+        """按路名查实时态势。高德 /v3/traffic/status/road（Web 服务 API，city 必填：名称或 adcode）。"""
+        road = (name or "").strip()
+        if not road or not (city or "").strip():
+            raise ProviderError("amap road_traffic: name and city are required")
+        data = await self._get("/v3/traffic/status/road",
+                               {"name": road, "city": city.strip(), "extensions": "base"},
+                               "traffic_status_road", meta)
+        info = data.get("trafficinfo") or {}
+        evaluation = info.get("evaluation") or {}
+        if not isinstance(evaluation, dict) or not evaluation:
+            raise ProviderError(f"amap road_traffic: no evaluation for {road}")
+        try:
+            status = int(_as_str(evaluation.get("status")) or 0)
+        except ValueError:
+            status = 0
+        return {
+            "name": road,
+            "status": status,
+            "description": _as_str(evaluation.get("description")) or _as_str(info.get("description")),
+            "expedite_pct": _pct(evaluation.get("expedite")),
+            "congested_pct": _pct(evaluation.get("congested")),
+            "blocked_pct": _pct(evaluation.get("blocked")),
+            "unknown_pct": _pct(evaluation.get("unknown")),
+        }
 
     async def poi_detail(self, poi_id: str,
                          meta: dict | None = None) -> POI:

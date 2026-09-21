@@ -94,11 +94,26 @@ def _refused(result) -> bool:
     return isinstance(data, dict) and bool(data.get("_refused"))
 
 
-def _refused_unsupported(result) -> bool:
+def refused_unsupported(result) -> bool:
     """Agent 按声明拒绝且说明理由是**能力做不到**（`_refused="unsupported"`，批 5）。
     裸 `True` 仍是泛拒绝（安全 / 前置不满足），归 failed 那一支。"""
     data = getattr(result, "data", None)
     return isinstance(data, dict) and data.get("_refused") == "unsupported"
+
+
+_refused_unsupported = refused_unsupported     # 模块内旧名
+
+
+def all_refused_unsupported(results) -> bool:
+    """这一批结果**全部**是「能力做不到」的声明式拒绝（批 7 ①）。
+
+    T2 循环消费它：整批都是 unsupported ⇒ 这个诉求已经有终态（用户听到了「做不到」），
+    再 replan 只会换一个同域能力再试一次（真栈 RS10：reminder 拒绝之后规划出 `reminder.cancel`，
+    答「提醒方面也没找到」）。混合批（别的诉求还在）与泛拒绝（`_refused=True`）不算——
+    前者还有事没做完，后者不是能力边界。空批什么都不证明。
+    """
+    rows = list(results or [])
+    return bool(rows) and all(refused_unsupported(r) for r in rows)
 
 
 def outcome_of_results(results) -> str:

@@ -601,3 +601,44 @@ g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` �
 - 真栈读数（run `0921b`，不 pin，k=2 的 16 组，新干净用户）：进了规划轮的 10 格 **`history_exchanges=4` 10/10、`pairs_kept=3` 9/10**（1 格 2：预算裁掉最旧一对）、
   planner 槽解出 **8/10**；另 6 格最后一轮没进规划（clarify 2 / unresolved_object 2 / no_plan 1 / 端侧 `battery.query` 1）——F09 家族与端侧规则，与视窗无关。
   合计 8/16，与 0920b 的 4 对 pin 臂 8/16 一致；g14「它在什么条件下会自动关闭」这次由 `manual.query` 解出（`eb55e502` 后端侧不再劫持成 `media.stop`）。
+
+## 9. 批 7 方案与裁决（2026-09-21，用户授权提交 / 推送 / 部署 / 真栈验证）
+
+批 6 §8.1 与 §8.2 留下的条目，先对 HEAD `994f582f`（生产 `eb1dd6bd`）重证，再定每条做到哪：
+
+| 留项 | 现状（代码事实） | 本批做什么 | 刻意不做 |
+|---|---|---|---|
+| ① T2 收到 `unsupported` 后仍再规划 | `loop.run` 每批执行完一律 `current = None` 回到 `planner.replan`；`summarize` 只透传 `retry_same_intent`，`_refused` 埋在 `data` 里（超 12 键还会被截掉）；`_REPLAN_SYSTEM` 只说「status=ok 的步不得以相同参数重复」，对「Agent 声明做不到」一个字没有。真栈 RS10 第 3 趟（`cc331315`）：reminder 诚实拒绝之后 loop 又规划出 `reminder.cancel`，用户听到「提醒方面也没找到」——**一句诚实拒绝被下一轮的换能力再试盖掉** | 判据一份 `runtime/outcome.py`（`refused_unsupported` / `all_refused_unsupported`，与终态账本同源）。loop：**这一批全部是 `unsupported` 声明式拒绝 ⇒ 该诉求有终态，不再 replan**（其余批照旧）。replan：观察显式带 `refused`；`_drop_refused_domain_steps` 丢掉与 `refused=unsupported` 观察**同域**（intent 前缀）的新步——同域换 intent 就是「换能力再试」；丢空 ⇒ `done`。`_REPLAN_SYSTEM` 补一句（prompt 是弱约束，确定性那两条才是闸） | 不按 agent 级封禁其他诉求（混合批里没被拒绝的诉求照常）；不改 `_refused` 保留键的语义（非 `unsupported` 的拒绝——「请重新选门店」那类——仍可再规划） |
+| ② `safety.road_condition` 零结果空模板 | `_road_condition` 调 `navigation.search_poi` `keyword="X 路况"`，把 POI 列表话术原样转发：空结果 ⇒「为您找到 0 个X 路况，推荐前三个：。需要导航过去吗？」；非空 ⇒ 几个名字碰巧带「路况」的 POI 加「需要导航过去吗」。**名字存在能力不可达**（CLAUDE.md §3 五段里的「执行 / 话术」两段都是假的），且 AMap 的实时路况在仓里从没接过——`get_route(with_polyline=True)` 请求的 `extensions=all` 已经返回逐段 `tmcs`（畅通 / 缓行 / 拥堵 / 严重拥堵），一直被丢掉 | 真 provider 已在，接真能力：**(a)** AMap `get_route(with_polyline=True)` 聚合 `tmcs` ⇒ `traffic`（各状态公里数 + 已知总公里）；`/v3/traffic/status/road`（路名 + 城市）⇒ `road_traffic`；`reverse_geocode` 多回 `city` / `adcode`（GeoPoint 加两格缺省空）。**(b)** navigation 新**内部**意图 `navigation.route_traffic`（不进 manifest：planner 不可见，只供 Agent 间调用——进 manifest 就是和 `safety.road_condition` 摆两个等价工具让 planner 掷硬币）：`road` ⇒ 路名态势（城市取当前位置 regeo）；`destination` ⇒ 解析地点 → 当前位置起算路 → 沿途拥堵；两者皆无 ⇒ 读 `meta.focus_active_route`（活动路线）。**(c)** road_safety 把 `route` 槽归一（「去 X 的路况 / 到 X 堵不堵」⇒ destination；「X 路 / 大道 / 高速 / 快速路 / 大桥 / 隧道 / G4」⇒ road；「路上 / 前面 / 这条路 / 高速（裸）」⇒ 活动路线），调 `route_traffic`，转发话术 + 卡，拥堵 / 严重拥堵 > 0 时补一句跟车提示。诚实降级三条：provider 没给 `tmcs` ⇒ 只报里程时长 +「实时拥堵数据这会儿拿不到」；无位置 ⇒ 说拿不到位置（路名查询无法定城市 / 路线查询无起点）；provider 失败 ⇒「暂时查不到」。mock provider 同构字段（离线 / nightly mock 车道） | manifest 与 catalog 不动（`test_catalog_budget` 钉精确字数）；`navigation.estimate` 话术不动（只在 `data` 多带 `traffic`）；不做「拥堵就自动换路」（写动作，用户没要）；路名查询不猜城市 |
+| ③ reminder 事件短语剥前缀 | `_EVENT_STRIP_RE` 只剥「之后 / 以后 / 后面 / 接下来 / 然后 / 等会儿 / 待会儿 / 回头」；「往后一有暴雨预警就马上告诉我」念成「盯着『往后一有暴雨预警』」；「一…就」不是连接词 ⇒ 走 event2 兜底把「往后一有」整个吃进事件 | 剥前缀表补「往后 / 今后 / 从今往后 / 从现在起 / 从今天起 / 从今以后 / 以后 / 日后」；连接词补「一（后接 有 / 到 / 出 / 发 / 下 / 开 / 来 / 变 / 超 / 低 / 降 / 升）」 | 不动支持的触发（时间 / 地点 / 可提醒事件三条路先走，事件触发仍最后求值） |
+| ④ 端侧代词主语劫持读查询 | W19-c 三臂恒定的 4 组里 3 组是「它续航多久 / 那它的纯电续航呢 / 那它的续航呢」⇒ 端侧 `battery.query` 答**本车**电量（指代物「问界 M9」只活在云端历史）。`classify_structured` 出口三维否决（问句 / 负极性 / 播报语域）**只盖写操作**，读查询没有任何一维 | 第四维 `runtime/anaphora.py::has_anaphoric_subject`：句首（可带「那 / 那么 / 然后 / 还有 / 另外 / 对了」引子）是「它 / 它的 / 它们 / 那款 / 那台 / 那辆 / 那部 / 那个车 / 那款车 / 那台车 / 那辆车」⇒ 主语是会话里的另一个东西，不是这辆车。出口：**只盖查询**（`intent == "query"`）——写操作带对象词时「它」是冗余的，没对象词本来就出不了本地意图。三条入口（单句 / 拆分 / 混合拆分）同一出口 | 不收「这车 / 这辆 / 这个」（坐在车里说「这车电量多少」是指本车）、不收裸「那个」（口头填充词）；不改云侧（历史在，planner 自己解） |
+| ⑤ T1 出视窗后 planner 拿焦点城市 / 范例实体冒充指代物（g32 / g17） | g32「它的通行费是多少」⇒「深圳通行费」：插话轮的天气城市留在焦点块，从 planner 看它**就在可见上下文里**——只有知道 T1 存在才判得出错，而 T1 恰在视窗外；g17「那它的售价呢」⇒「瑞幸咖啡门店招商政策」：什么都没有时 prompt 范例里的实体被当成指代物 | **不做**（记录裁决）：g32 是视窗问题的本体，视窗已抬到 4 对（k=2 盖住）；g17 的确定性闸要判「槽值在原话 ∪ 可见上下文里找不到」，planner 的正常规范化（问界 M9 → AITO 问界 M9）会被同一把尺子误伤，一例证据不够立闸 | 不加 hint、不加范例 |
+| ⑥ 「别人的偏好不会串给我」 | 签名身份车道已开，能造第二个 user；但 `e2e-` 前缀不做记忆抽取 ⇒ 能验的只有会话层（按 session_id 隔离，构造上不会串），长期记忆（OwnerKey）那一层恰恰验不到 | **不做**（记录）：装置的能力边界，等有非 `e2e-` 的干净用户车道再验 | — |
+
+裁决顺序与发布：**一个 release**（四条都是确定性判据 + Agent 侧实现，互不耦合、各自有离线红测试与真栈判据），
+探针：`RS10 --repeat 3`（① 的活体：T2 续接后不得出「提醒方面」/ 取消提醒）、新增 `RS12`（②：「去宝安机场的路况」出里程 / 时长 / 拥堵，
+不出「推荐前三个」「为您找到 0 个」「需要导航过去吗」）与 `RS11 --repeat 1`（③ holdout 话术不再念「往后」）、`probe_history_window.py --groups g12,g18,g27`
+（④：端侧不再 `battery.query`，云端规划轮出现）。
+
+### 批 7 验收
+
+- 每条先红测试再改实现；定向套件（cloud loop / planning、runtime、reminder、navigation、road_safety、edge）+ 四门禁 + smoke_edge；全量固定口径一次；
+  变异各自判红（loop 不 break / replan 不丢同域步 / 剥前缀表回退 / 出口不盖查询 / tmcs 不聚合 / road_safety 仍调 search_poi）。
+- 真栈：push → dry-run → apply → status / verify → 上述探针；读数按 SHA 分栏写 §9.1。
+
+### 9.1 落地记录（2026-09-21）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| ① `unsupported` 终态 | `runtime/outcome.py`：`refused_unsupported` / `all_refused_unsupported`（与终态账本同源）；`loop.run` 每批记 `batch_start`，整批 unsupported ⇒ `break` 不 replan；`summarize` 显式带 `refused`（`_refused` 埋在 data 第 13 位会被 12 键截断丢掉）；`planning._refused_domains` / `_drop_refused_domain_steps`（同域新步丢掉，丢空 ⇒ done）；`_REPLAN_SYSTEM` 一句弱约束（措辞避开「取消」二字——L0 门禁的 cohort-leakage 闸会把静态 prompt 里字面出现的 case 原话「取消」判成知识泄漏） | `test_outcome` +1、`test_loop` +4（全批拒绝不 replan / 混合批照旧 / 续接形态第二份决策从没被取走 / 截断后仍带 refused）、`test_planning` +3（同域丢 / 丢空 done / 泛拒绝不受限）；变异三处各判红（不 break / 不丢同域 / 不带 refused） |
+| ② 路况真能力 | provider：`GeoPoint.city / adcode`；`traffic_from_path` 聚合 `extensions=all` 逐段 tmcs ⇒ `get_route(with_polyline=True)["traffic"]`（无 tmcs 无键）；`reverse_geocode` 回填 city（直辖市取 province）/ adcode；`road_traffic`（`/v3/traffic/status/road`，city 必填）；`POIProvider.road_traffic` 非抽象缺省抛 ProviderError；mock 同构。navigation：内部意图 `navigation.route_traffic`（road / destination / 活动路线三入口，永不导航，三条诚实降级）+ `_traffic_summary`。road_safety：`route_target`（destination / road / active 归一，零 POI 名）；`_road_condition` 重写——调 `route_traffic`，转发话术 + 卡，拥堵 + 严重拥堵 ≥ 1 km 补安全提示，对方 NEED_SLOT 落回本能力的 `route` 槽，失败「暂时查不到」 | `test_amap_provider` +5、新 `test_route_traffic` 11、road_safety +9（含 `route_target` 14 组参数化）；变异三处各判红（不聚合 tmcs / 仍调 search_poi / 忽略活动路线） |
+| ③ 事件短语剥前缀 | `_EVENT_STRIP_RE` 补时间状语；连接词补「一（+ 动态动词）」 | reminder +4；变异两处各判红（剥前缀表回退 / 去掉「一…就」） |
+| ④ 回指主语让路 | 新 `runtime/anaphora.py`（`has_anaphoric_subject`，零领域词源码级钉子）；`classify_structured` 出口第四维只盖 `intent == "query"` | 新 `runtime/tests/test_anaphora` 20、`orchestrator/edge/tests/test_anaphora_gate` 9（三条入口 + 本车查询对照）；变异「出口不盖查询」红 5 |
+| 探针 | RS10 T2 加 `speech_not`「提醒方面 / 推荐前三个 / 为您找到 0 个 / 需要导航过去吗」；新增 RS12（路况：目的地一路 + 路名两轮） | `--list` 通过；`scripts/tests` 136 passed |
+| 文档 | 本节；conventions §9.46；navigation / road_safety README | docs 守卫在全量里 |
+
+- 全量固定口径（`TZ=UTC0` `-n 8`，含本批全部改动的工作树）：**8861 passed / 0 failed / 32 skipped / 12 warnings，272 s**（上一基线 8782 / 0 / 32）。
+  四门禁 + smoke_edge 13/13 全过（L0 门禁第一趟被 prompt 里的「取消」二字判红，改措辞后绿——门禁在 HEAD 上是绿的，红的是本批那一句）；
+  边缘目录 905 passed。九处变异各自判红。
+- 记录的两条不做（§9 表 ⑤⑥）：T1 出视窗后 planner 拿焦点城市 / 范例实体冒充指代物——视窗问题的本体 + 一例证据不够立闸；「别人的偏好不会串给我」——
+  `e2e-` 身份不做记忆抽取，长期记忆那一层验不到。

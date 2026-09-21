@@ -1231,3 +1231,72 @@ def test_planning_and_executor_share_one_fingerprint():
     assert DagExecutor._fingerprint(step) == step_fingerprint(step.intent, step.slots)
     assert step_fingerprint("info.weather", {"day": "明天", "city": "深圳"}) == \
         step_fingerprint("info.weather", {"city": "深圳", "day": "明天"})
+
+
+# ── 批 7 ①：观察里的 `refused=unsupported` 关掉同域的「换能力再试」 ────────────────────
+
+def test_replan_drops_new_steps_in_the_domain_that_already_refused_as_unsupported():
+    """reminder 说了「做不到」，再规划出 `reminder.cancel` 就是换 intent 再试同一个诉求 ⇒ 丢掉；
+    别的域（路况）照常保留。"""
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"]),
+              MockAgent("road-safety", ["safety.road_condition"])]
+    messages_seen = []
+
+    async def mock_llm(messages):
+        messages_seen.append(messages)
+        return ('{"done":false,"steps":['
+                '{"id":"r1","capability_ref":"cap_0001","slots":{},"depends_on":[],"slot_refs":{}},'
+                '{"id":"r2","capability_ref":"cap_0003","slots":{"route":"深南大道"},'
+                '"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "只要有堵车就提醒我",
+        [{"step_id": "s1", "status": "ok", "intent": "reminder.create",
+          "slots": {"title": "有堵车"}, "refused": "unsupported",
+          "data": {"_refused": "unsupported"}}],
+        agents, PlanContext(),
+    ))
+    assert [step.intent for step in decision.steps] == ["safety.road_condition"]
+    assert decision.done is False
+    assert "refused" in messages_seen[0][0]["content"], "系统提示要把这条规则说出来"
+
+
+def test_replan_is_done_when_the_only_new_step_retries_the_refused_domain():
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"])]
+
+    async def mock_llm(_messages):
+        return ('{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+                '"slots":{},"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "只要有堵车就提醒我",
+        [{"step_id": "s1", "status": "ok", "intent": "reminder.create",
+          "refused": "unsupported"}],
+        agents, PlanContext(),
+    ))
+    assert decision.done is True and decision.steps == []
+
+
+def test_replan_keeps_the_same_domain_when_the_refusal_was_not_unsupported():
+    """泛拒绝（`_refused=True`，「请重新选门店」那类）不是能力边界，同域再规划照旧允许。"""
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"])]
+
+    async def mock_llm(_messages):
+        return ('{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+                '"slots":{},"depends_on":[],"slot_refs":{}}]}')
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    decision = asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        "取消刚才的提醒",
+        [{"step_id": "s1", "status": "ok", "intent": "reminder.create", "refused": True}],
+        agents, PlanContext(),
+    ))
+    assert [step.intent for step in decision.steps] == ["reminder.cancel"]

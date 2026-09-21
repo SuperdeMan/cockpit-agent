@@ -2864,3 +2864,34 @@ final 的 `closed_operation_ids` 点名那个 id——对客户端它就是关�
 23/48**；2 对在 ≥2 轮插话下必失，4 对与 6 对在 k=2 插话下相同（8/16 = 8/16），6 对只多救回 k=4 插话（7/16）。`_HISTORY_EXCHANGES` 缺省 2 → 4
 （取回 10 条）；`_CTX_BUDGET` 1400 不动——长回答下整对从最旧丢起，`history_pairs_kept / dropped / trimmed` 是读数。同一实验的两条副产物：
 W07 任务帧是历史之外的第二条指代通道（闲聊不顶帧）；代词开头的省略追问在端侧被对象规则接走（「它续航多久」⇒ `battery.query`）。
+
+### 9.46 `unsupported` 拒绝是终态 / 路况真能力与内部意图 / 事件短语剥前缀 / 回指主语让路（评审批 7，2026-09-21）
+
+出处：[对话评审逐条落地 §9](design/2026-09-19-conversation-review-remediation.md)。
+
+**① `_refused="unsupported"` 是该诉求的终态，不是「换个能力再试」的起点**。判据一份 `runtime/outcome.py`
+（`refused_unsupported` / `all_refused_unsupported`，与终态账本同源）。T2 循环：一批执行完若**整批**都是 unsupported 声明式拒绝
+⇒ 不再 replan（用户已经听到「做不到」）；混合批照旧。再规划：`summarize` 观察显式带 `refused`（`_refused` 埋在 data 第 13 位会被截掉），
+`_drop_refused_domain_steps` 丢掉与 `refused=unsupported` 观察**同域**（intent 前缀）的新步——同域换 intent 就是换能力再试同一件事，
+丢空 ⇒ `done`；`_REPLAN_SYSTEM` 补一句作弱约束。泛拒绝（`_refused=True`，「请重新选门店」那类）不是能力边界，不受此限。
+修前真栈 RS10 第 3 趟：reminder 诚实拒绝后 loop 又规划出 `reminder.cancel`，答「提醒方面也没找到」。
+
+**② `safety.road_condition` 接真数据；navigation 的内部意图**。修前拿「X 路况」当关键词搜 POI，空结果原样播
+「为您找到 0 个X 路况，推荐前三个：。需要导航过去吗？」——名字存在能力不可达。现在：road_safety 把 `route` 槽（空则看原话）归一成
+destination（「去 X 的路况」/ 裸地名）/ road（路 / 大道 / 高速 / 大桥… 结尾或 G4 编号，无「去 / 到」前缀）/ active（「路上 / 前面 / 高速」
+或空 ⇒ `meta.focus_active_route`），调 navigation **内部意图** `navigation.route_traffic`：路名 ⇒ 高德 `/v3/traffic/status/road`（城市取
+当前位置 regeo 的 `adcode`，`GeoPoint` 新增 `city` / `adcode`）；目的地 / 活动路线 ⇒ `get_route(with_polyline=True)` 新聚合的逐段 tmcs
+`traffic`（畅通 / 缓行 / 拥堵 / 严重拥堵各多少公里；无 tmcs ⇒ 没有 `traffic` 键，不编）。road_safety 转发话术 + 卡，拥堵 + 严重拥堵 ≥ 1 km
+补一句安全提示。**内部意图 = handle() 认、manifest 不声明、planner 不可见、只供 AgentClient 调用**——进 manifest 就是在 planner 面前
+摆两个等价工具掷硬币；`POIProvider.road_traffic` 非抽象、缺省抛 ProviderError（没有就是没有，不给 mock 数）。诚实降级三条：
+tmcs 缺席只报里程时长 +「实时拥堵数据这会儿拿不到」；无位置说拿不到位置；provider 失败说查不到。`navigation.estimate` 话术不动。
+
+**③ reminder 事件短语剥前缀**。`_EVENT_STRIP_RE` 补「往后 / 今后 / 日后 / 从今往后 / 从今以后 / 从现在起 / 从今天起 / 从明天起 / 从此」；
+连接词补「一（后接 有 / 到 / 出 / 发 / 下 / 开 / 来 / 变 / 超 / 低 / 降 / 升）」（「一有暴雨预警就告诉我」）。修前 holdout 念成
+「盯着『往后一有暴雨预警』」。
+
+**④ 回指主语的查询让路（端侧出口第四维）**。`runtime/anaphora.py::has_anaphoric_subject`：句首（可带「那 / 那么 / 然后 / 还有 / 另外 /
+对了」引子）是「它 / 它的 / 它们 / 那款 / 那台 / 那辆 / 那部 / 那个车…」⇒ 主语是会话里的另一个东西。`classify_structured` 出口
+**只盖查询**（`intent == "query"`）：写操作带对象词时「它」是冗余的，不带对象词本来就出不了本地意图。三条入口同一出口。不收
+「这车 / 这辆 / 这个」（近指 = 本车）与裸「那个」（口头填充词）。修前 W19-c 三臂恒定：「它续航多久 / 那它的纯电续航呢」⇒ `battery.query`
+答本车电量，云端解指代的机会都没有。

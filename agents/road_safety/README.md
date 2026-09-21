@@ -8,7 +8,7 @@
 |---|---|---|
 | `safety.driving_advice` | 综合天气+路况给出驾驶安全建议 | destination |
 | `safety.weather_alert` | 查询天气预警对驾驶的影响 | city |
-| `safety.road_condition` | 查询路况（拥堵/事故/施工） | route |
+| `safety.road_condition` | 查询路况（拥堵/事故/施工）。批 7 ②（2026-09-21）起接**真数据**：`route` 槽（空则看原话）归一成 destination（「去 X 的路况」/ 裸地名）/ road（路 / 大道 / 高速… 结尾或 G4 编号）/ active（「路上 / 前面 / 高速」或空 ⇒ 正在导航的路线，读 `meta.focus_active_route`）三种形态，交 navigation 内部意图 `route_traffic`（高德路线逐段 tmcs / 路名态势），话术与卡原样转发，拥堵 + 严重拥堵 ≥ 1 km 补一句「保持车距、提前变道」。修前拿「X 路况」当关键词搜 POI，空结果播「为您找到 0 个X 路况，推荐前三个：。需要导航过去吗？」。既没路也没活动路线 ⇒ 反问 `route` | route |
 
 ## 端口
 

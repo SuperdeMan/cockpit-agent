@@ -296,6 +296,10 @@ class NavigationAgent(BaseAgent):
             "navigation.poi_detail": self._poi_detail,
             "navigation.set_place": self._set_place,
             "navigation.locate": self._locate,
+            # 内部意图（批 7 ②）：**不进 manifest**——planner 看不见，只供 road-safety 的
+            # `safety.road_condition` 经 AgentClient 调用。进 manifest 就是在 planner 面前摆两个
+            # 等价工具让它掷硬币（本文件 search_poi vs nearby.search 那条老账）。
+            "navigation.route_traffic": self._route_traffic,
         }
         handler = handlers.get(intent.name)
         if handler:
@@ -474,6 +478,135 @@ class NavigationAgent(BaseAgent):
                            data={"origin": origin_name, "destination": dest_name,
                                  "distance_km": distance_km,
                                  "duration_min": duration_min, "eta_ts": eta})
+
+    # ── 批 7 ②：实时路况（内部意图，供 road-safety 调用）───────────────────────────
+    # 此前 `safety.road_condition` 拿「X 路况」当关键词搜 POI，空结果原样播「为您找到 0 个X 路况，
+    # 推荐前三个：。需要导航过去吗？」——名字存在能力不可达。高德的实时路况一直在响应里：
+    # 路线 `extensions=all` 逐段带 tmcs（畅通 / 缓行 / 拥堵 / 严重拥堵），路名另有态势接口。
+    # 三种入口：`road`（路名）/ `destination`（到某地沿途）/ 都没有 ⇒ 活动路线（meta.focus_active_route）。
+    # **永不产出 navigate 动作**；数据缺席一律诚实说「拿不到」，不编。
+
+    @staticmethod
+    def _traffic_summary(traffic: dict | None) -> str:
+        """各状态公里数 → 一句沿途概况；`None` ⇒ 空串（调用方另说「拿不到」）。"""
+        if not isinstance(traffic, dict):
+            return ""
+        def _km(key):
+            try:
+                return round(float(traffic.get(key) or 0), 1)
+            except (TypeError, ValueError):
+                return 0.0
+        slow, congested, blocked = _km("slow_km"), _km("congested_km"), _km("blocked_km")
+        parts = []
+        if slow >= 0.1:
+            parts.append(f"缓行约{slow}公里")
+        if congested >= 0.1:
+            parts.append(f"拥堵约{congested}公里")
+        if blocked >= 0.1:
+            parts.append(f"严重拥堵约{blocked}公里")
+        if not parts:
+            return "沿途基本畅通"
+        return "沿途" + "、".join(parts) + ("，其余畅通" if _km("expedite_km") >= 0.1 else "")
+
+    async def _route_traffic(self, intent, ctx, meta) -> AgentResult:
+        road = (intent.slots.get("road") or "").strip()
+        if road:
+            return await self._road_name_traffic(road, ctx, meta)
+
+        dest_text = (intent.slots.get("destination") or "").strip()
+        waypoints: list[GeoPoint] = []
+        if dest_text:
+            dest_name, dest_pt = await self._resolve_point(dest_text, ctx, meta)
+            if dest_pt is None:
+                return AgentResult(
+                    speech=f"我没找到「{dest_name or dest_text}」这个地方，换个说法再试试？",
+                    data={"traffic_lookup": "destination_unresolved"})
+        else:
+            active = self._active_route_from(meta)
+            if not active:
+                # 没有目的地也没有正在导航的路线：让调用方去问「哪条路线」（它有自己的槽名）
+                return AgentResult(status=NEED_SLOT, speech="您想查询哪条路线的路况？",
+                                   follow_up="说个目的地或路名", missing_slots=["destination"])
+            dest_name = active["destination"]
+            dest_pt = GeoPoint(lat=active["lat"], lng=active["lng"])
+            waypoints = [GeoPoint(lat=w["lat"], lng=w["lng"]) for w in active.get("waypoints") or []]
+
+        origin_text = (intent.slots.get("origin") or "").strip()
+        if origin_text:
+            origin_name, origin_pt = await self._resolve_point(origin_text, ctx, meta)
+            if origin_pt is None:
+                return AgentResult(
+                    speech=f"我没找到起点「{origin_name or origin_text}」，换个说法再试试？",
+                    data={"traffic_lookup": "origin_unresolved"})
+        else:
+            origin_name, origin_pt = "当前位置", await self._current_position(ctx, meta)
+            if origin_pt is None:
+                # 诚实降级：没有起点就没有这条路，别拿一个假起点算出一份像模像样的路况。
+                return AgentResult(
+                    speech=f"我现在拿不到车辆的位置，算不出到{dest_name}这一路的路况；"
+                           f"你说一下从哪儿出发，我就能查。",
+                    data={"traffic_lookup": "no_position"})
+        try:
+            route = await self.poi.get_route(origin_pt, dest_pt, meta=meta, with_polyline=True,
+                                             waypoints=waypoints or None)
+        except ProviderError as e:
+            logger.warning("route traffic failed（诚实降级，不猜）: %s", e)
+            return AgentResult(speech=f"地图服务暂时不可用，查不到到{dest_name}的路况，稍后再试。",
+                               data={"traffic_lookup": "provider_error"})
+        distance_km = route.get("distance_km") or 0
+        duration_min = route.get("duration_min") or 0
+        traffic = route.get("traffic") if isinstance(route.get("traffic"), dict) else None
+        head = f"从{origin_name}到{dest_name}全程约{distance_km}公里"
+        dur = self._fmt_dur(duration_min)
+        if dur:
+            head += f"、预计{dur}"
+        summary = self._traffic_summary(traffic)
+        speech = f"{head}，{summary}。" if summary else f"{head}；实时拥堵数据这会儿拿不到。"
+        card = attach({"type": "route_plan", "estimate": True,
+                       "origin": origin_name, "destination": dest_name, "waypoints": [],
+                       "distance_km": distance_km, "duration_min": duration_min,
+                       **({"traffic": traffic} if traffic else {}),
+                       **card_geometry(origin=origin_pt, destination=dest_pt,
+                                       path=route.get("path"))}, self.poi)
+        return AgentResult(speech=speech, ui_card=card,
+                           data={"origin": origin_name, "destination": dest_name,
+                                 "distance_km": distance_km, "duration_min": duration_min,
+                                 "traffic": traffic or {},
+                                 "traffic_source": "route_tmcs" if traffic else "",
+                                 "traffic_lookup": "route"})
+
+    async def _road_name_traffic(self, road: str, ctx, meta) -> AgentResult:
+        """按路名查态势：城市取当前位置的逆地理编码（adcode 优先）；没有位置就说没法定城市，不猜。"""
+        here = await self._current_position(ctx, meta)
+        if here is None:
+            return AgentResult(
+                speech=f"我现在拿不到车辆的位置，没法确定是哪个城市的{road}。",
+                data={"traffic_lookup": "no_position", "road": road})
+        try:
+            regeo = await self.poi.reverse_geocode(here.lng, here.lat, meta=meta)
+            city = (getattr(regeo, "adcode", "") or getattr(regeo, "city", "") or "").strip()
+            if not city:
+                raise ProviderError("reverse geocode gave no city")
+            status = await self.poi.road_traffic(road, city, meta=meta)
+        except ProviderError as e:
+            logger.warning("road traffic failed（诚实降级，不猜）: %s", e)
+            return AgentResult(speech=f"暂时查不到{road}的实时路况。",
+                               data={"traffic_lookup": "provider_error", "road": road})
+        description = (status.get("description") or "").strip()
+        speech = f"{status.get('name') or road}目前{description}" if description else f"{road}的路况已查到"
+        pct = []
+        for key, label in (("expedite_pct", "畅通"), ("congested_pct", "拥堵"), ("blocked_pct", "严重拥堵")):
+            try:
+                value = float(status.get(key) or 0)
+            except (TypeError, ValueError):
+                value = 0.0
+            if value >= 1:
+                pct.append(f"{label}路段约占{value:g}%")
+        if pct:
+            speech += "，" + "、".join(pct)
+        return AgentResult(speech=speech + "。",
+                           data={**status, "traffic_source": "road_status",
+                                 "traffic_lookup": "road"})
 
     async def _search_poi(self, intent, ctx, meta) -> AgentResult:
         keyword = intent.slots.get("keyword") or intent.slots.get("category")

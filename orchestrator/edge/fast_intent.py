@@ -10,6 +10,7 @@ import re
 from runtime.clause_split import SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
 from runtime.polarity import is_negated_directive
 from runtime.reported_speech import is_reported_speech
+from runtime.anaphora import has_anaphoric_subject
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
 from runtime.question_shape import is_non_directive_question
 
@@ -354,6 +355,12 @@ def classify_structured(text: str) -> dict | None:
     # 判据是**语域**（说话人在对听众播报 / 转述），零领域词；同样只盖写操作（判据全在 reported_speech.py）
     if _is_write_action(result) and is_reported_speech(text):
         return None                       # 整句上云：由云侧受话判定决定要不要回应
+    # 第四维（批 7 ④，W19-c 视窗实验三臂恒定的 3 组）：主语是会话里的**另一个东西**（「它续航多久」
+    # 「那它的纯电续航呢」——刚在云端聊完问界 M9），端侧命中「续航」就秒回本车电量。指代物只活在
+    # 云端历史里，这里看不见。这一维只盖**查询**：写操作带对象词时「它」是冗余的，不带对象词
+    # 本来就出不了本地意图（判据全在 runtime/anaphora.py）。
+    if result is not None and result.get("intent") == "query" and has_anaphoric_subject(text):
+        return None                       # 整句上云：指代物在云端历史里，由 planner 解
     if result is not None:
         # Q13：原话随意图走。**不是为了让下游再分类一次**——是因为结构化意图里
         # 有信息拿不回来：`下一首` 与 `上一首` 解出的 data 逐字相同（都是

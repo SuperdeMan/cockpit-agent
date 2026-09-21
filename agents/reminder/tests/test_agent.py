@@ -1162,6 +1162,24 @@ async def test_event_trigger_is_refused_honestly_not_asked_for_a_time(raw, event
     assert not res.missing_slots
 
 
+# 批 7 ③（真栈 RS11 holdout，`eb87b571`）：「往后一有暴雨预警就马上告诉我」被拒绝了，但事件短语念成
+# 「往后一有暴雨预警」——剥前缀表缺「往后」，「一…就」不是连接词 ⇒ 兜底把整段吃进事件。判据钉**事件短语**本身。
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw, event", [
+    ("往后一有暴雨预警就马上告诉我", "有暴雨预警"),
+    ("今后一出雾霾预警就提醒我", "出雾霾预警"),
+    ("从今往后每次油价上涨就通知我", "油价上涨"),
+    ("以后一下雪就叫我", "下雪"),
+])
+async def test_event_phrase_drops_time_adverb_prefixes_and_yi_jiu_connector(raw, event):
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=raw)
+    assert (res.data or {}).get("_refused") == "unsupported"
+    assert f"「{event}」" in res.speech, res.speech
+    for junk in ("往后", "今后", "从今", "以后", "一有", "一出", "一下"):
+        assert f"「{junk}" not in res.speech, res.speech
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw", [
     "到公司提醒我拿文件",          # 地点触发：支持

@@ -9,6 +9,9 @@ class GeoPoint:
     lat: float = 0.0
     lng: float = 0.0
     address: str = ""
+    # 逆地理编码顺带回填（批 7 ②）：路名态势接口要城市（adcode 优先）。缺省空串，旧调用方零变化。
+    city: str = ""
+    adcode: str = ""
 
 
 @dataclass
@@ -49,8 +52,20 @@ class POIProvider(ABC):
     @abstractmethod
     async def reverse_geocode(self, lng: float, lat: float,
                               meta: dict | None = None) -> GeoPoint:
-        """逆地理编码：坐标 → 地址。返回 GeoPoint（address 填充）。"""
+        """逆地理编码：坐标 → 地址。返回 GeoPoint（address 填充；能给的话再带 city / adcode）。"""
         ...
+
+    async def road_traffic(self, name: str, city: str,
+                           meta: dict | None = None) -> dict:
+        """按**路名**查实时路况态势（批 7 ②）。返回
+        {"name", "status"(0 未知 / 1 畅通 / 2 缓行 / 3 拥堵 / 4 严重拥堵), "description",
+         "expedite_pct", "congested_pct", "blocked_pct", "unknown_pct"}。
+
+        非抽象：不是每个厂商都有这条接口，缺省诚实抛 ProviderError（调用方按「拿不到」降级），
+        不给 mock 数——与 `get_route` 的 `traffic` 字段一样，**没有就是没有**。
+        """
+        from agents._sdk.http import ProviderError
+        raise ProviderError(f"{type(self).__name__}: road traffic not supported")
 
     @abstractmethod
     async def poi_detail(self, poi_id: str,

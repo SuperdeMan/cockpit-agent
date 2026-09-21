@@ -1070,6 +1070,8 @@ _REPLAN_SYSTEM = (
     "最近观察是已经执行过的步骤结果：status=ok 表示该步骤已经完成，除非观察明确要求"
     "重试（retry_same_intent=true），否则不得以**相同参数**重复 observation.intent 指向的"
     "同一查询或动作；参数不同（另一个城市、日期、对象）是新的查询，可以规划；"
+    "观察带 refused=unsupported 表示该诉求当前能力做不到、已如实告知用户：不得为它换同一领域的"
+    "其他能力再试，也不得对它规划撤销或改动步骤；其余诉求照常。\n"
     "先用观察中的 data/speech 判断用户目标里的"
     "条件分支，再只规划尚未完成的后续步骤。\n"
     "条件目标必须先拆成条件前件与条件后件：观察满足前件时，steps 只执行后件；"
@@ -1194,6 +1196,39 @@ def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str
         key = step_fingerprint(intent.strip(), slots if isinstance(slots, dict) else {})
         completed.setdefault(key, []).append(str(observation.get("step_id") or ""))
     return completed
+
+
+def _refused_domains(observations: list[dict]) -> set[str]:
+    """观察里被 Agent 声明为「能力做不到」（`refused=unsupported`）的**领域**（intent 前缀）。
+
+    批 7 ①：这类拒绝是该诉求的终态。再规划时同域换一个 intent（reminder.create 拒绝后
+    规划 `reminder.cancel`）就是「换能力再试同一件事」，用户会听到一句盖掉诚实拒绝的废话
+    （真栈 RS10 第 3 趟：「提醒方面也没找到」）。泛拒绝（`refused=True`）不算——它不是能力边界。
+    """
+    domains: set[str] = set()
+    for observation in observations or []:
+        if not isinstance(observation, dict) or observation.get("refused") != "unsupported":
+            continue
+        intent = observation.get("intent")
+        if isinstance(intent, str) and "." in intent:
+            domains.add(intent.split(".", 1)[0])
+    return domains
+
+
+def _drop_refused_domain_steps(
+        steps: list[Step], refused_domains: set[str]) -> tuple[list[Step], list[str]]:
+    """丢掉落在已拒绝领域里的新步；返回 ``(remaining, dropped_intents)``。"""
+    if not refused_domains:
+        return steps, []
+    dropped = [step for step in steps
+               if "." in step.intent and step.intent.split(".", 1)[0] in refused_domains]
+    if not dropped:
+        return steps, []
+    dropped_ids = {step.id for step in dropped}
+    remaining = [step for step in steps if step.id not in dropped_ids]
+    for step in remaining:
+        step.depends_on = [d for d in step.depends_on if d not in dropped_ids]
+    return remaining, sorted({step.intent for step in dropped})
 
 
 def _rewrite_completed_ref(value, replacements: dict[str, str]):
@@ -2087,6 +2122,7 @@ class PlanBuilder:
             f"目标：{goal}"
         )
         completed = _completed_observation_steps(observations)
+        refused_domains = _refused_domains(observations)
         conditional_goal = bool(_CONDITIONAL_GOAL_RE.search(goal or ""))
         # 「首轮声明了会有第二阶段」的两种来源，共用同一次纠偏机会。**不合并成一个布尔**
         # 就写不出对得上的反馈话术：条件目标要模型去比对前件，adaptive 要它去消费观察结果。
@@ -2116,6 +2152,13 @@ class PlanBuilder:
             candidate = list(parsed.steps) if parsed is not None else []
             candidate, repeated, unresolved = _drop_completed_replan_steps(
                 candidate, completed)
+            # 批 7 ①：同域换能力再试一个已声明「做不到」的诉求 ⇒ 确定性丢掉（prompt 那句只是弱约束）。
+            # 丢空就是 done：那个诉求的终态已经给过用户了。
+            candidate, refused_retry = _drop_refused_domain_steps(candidate, refused_domains)
+            if refused_retry:
+                logger.info("Replan dropped retries in refused domain(s): %s", refused_retry)
+                if not candidate:
+                    return ReplanDecision(done=True)
             empty_conditional_followup = bool(
                 isinstance(data, dict)
                 and data.get("done") is False

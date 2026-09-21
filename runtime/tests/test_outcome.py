@@ -61,3 +61,20 @@ def test_all_unsupported_refusals_are_unsupported_not_failed():
     assert outcome_of_results([unsupported, generic]) == "failed"
     assert outcome_of_results([unsupported, done]) == "partial"  # 做成一半照旧 partial
     assert category_of("unsupported") == "unsupported"
+
+
+# ── 批 7 ①：「这一批全是能力做不到的声明式拒绝」= 该诉求有终态，T2 不再为它换能力再试 ──
+
+def test_all_refused_unsupported_is_true_only_for_a_nonempty_all_unsupported_batch():
+    from runtime.outcome import all_refused_unsupported, refused_unsupported
+    ok = SimpleNamespace(value="ok")
+    unsupported = SimpleNamespace(status=ok, data={"_refused": "unsupported"})
+    generic = SimpleNamespace(status=ok, data={"_refused": True})
+    done = SimpleNamespace(status=ok, data={})
+    assert refused_unsupported(unsupported) is True
+    assert refused_unsupported(generic) is False and refused_unsupported(done) is False
+    assert all_refused_unsupported([unsupported]) is True
+    assert all_refused_unsupported([unsupported, unsupported]) is True
+    assert all_refused_unsupported([unsupported, done]) is False      # 混合批：别的诉求还在
+    assert all_refused_unsupported([generic]) is False                # 泛拒绝可再规划
+    assert all_refused_unsupported([]) is False                       # 空批什么都不证明
