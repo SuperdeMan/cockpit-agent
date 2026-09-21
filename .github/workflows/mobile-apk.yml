@@ -61,7 +61,9 @@ jobs:
         working-directory: mobile/android
         env:
           APP_VARIANT: ${{ github.event.inputs.variant }}
-        run: ./gradlew assembleDebug --console=plain
+        # G-05 首次 dispatch（2026-09-20 run #35494521133）：onnxruntime-react-native 的 build.gradle 用了 Gradle 9 删掉的
+        # VersionNumber，本机靠 scripts/gradle_rn_compat.init.gradle 垫片；CI 同样 -I 这一份（垫片只留一处，见该文件头注）
+        run: ./gradlew assembleDebug --console=plain -I ../../scripts/gradle_rn_compat.init.gradle
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
