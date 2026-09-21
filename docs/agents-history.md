@@ -9476,6 +9476,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 读数：mobile jest 111 suites / 1145（+ nativeErrorText 2）、tsc 0、eslint 0；变异「启动时再请求焦点」判红；`:audioroute` / `:kws` Kotlin 编译过、
   最终包零 KwsModule 告警。提交 `59088760` → `8df1d117` → `6faa3c75` → `e7a83638`（另一会话推走，CI 8/8）→ `2ed312fb` → `5286c3ba`。
   服务端零改动、不 deploy。
+- G-05 第二次 dispatch（run #35563352811）：**构建 24 分钟成功（M4 以来第一次）**，ABI 读数 = CI debug 包四个 ABI 全有（`ABI_MATCH=native`，
+  评审「只打 ARM」的前提对 CI 包不成立），x86_64 镜像装包 Success；冒烟没跑到——emulator-runner 把多行 `script:` 逐行执行，`if…fi` 被拆开语法错。
+  逻辑搬进 `scripts/ci_mobile_smoke.sh`，workflow 一行调用等批准。
 - 2026-09-21 追加：用户批准清理 ①②——删 `incoming/releases/` 108 个上传目录（5.14 GB，保留当前 release 那个）+ `docker builder prune -af`（25.43 GB），
   可用 31.9 → 55.1 GB；③④ 未做。`eb55e502` 随后部署（无缓存全量重建约 75 min；status ok 5/5、verify `20260921T051142Z-eb55e50.json`），
   真栈复验 g05「它有几档」→ `manual.query` 零动作（修前执行 `seat.heating.on`）、g14 → 云端 chitchat 零动作（修前端侧 `media.stop`）、g29 → `manual.query`

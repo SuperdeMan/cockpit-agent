@@ -292,6 +292,18 @@ dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，r
 
 装置坑（这一节花掉的时间大半在这里，下次直接绕开）：① **`dumpsys audio` 持 AudioService 锁，0.4s 一次轮询会把 `AudioRecord.start` 的回调饿到 37s 后**——ARMED「迟到」是探针自己造成的；进程线程名（`ps -T -p`：`AudioRecord` / `AudioTrack` / `kws-decode-N`）零锁毫秒级，焦点时刻用 logcat `MediaFocusControl`；② 路由切换后立刻 `uiautomator dump` 挂 25–30s（等窗口 idle），ARMED 本身只要 0.7s；③ 在场轨迹只有 20 条，每次导航塞 4–5 条，**先读轨迹再撤销事件 / 回对话页**，不然 LISTENING/SPEAKING 那几条被挤掉；④ `AudioTrack` 线程 / AAudio 流 `state:started` 在提示音之后就常驻（空闲挂起前 15s），不是「在播报」；⑤ 电脑扬声器喂麦要先看 PC 主音量（这台是 0% + 静音）、慢速 -2 / 100% 才认得清「介绍一下深圳」；⑥ 探针跑完还原：免唤醒关、播报回自动（`choose_pill` 的 selected 回读要看父节点）、helper App force-stop、测试音删掉、PC 音量归 0 静音。
 
+#### G-05 第二次 dispatch（run #35563352811，main `aa312911`，2026-09-21 13:06–14:21）
+
+| 读数 | 结果 |
+|---|---|
+| 构建 | **`debug-apk` 24 分钟成功**——onnxruntime 进仓（2026-08-28）以来这条工作流第一次构建通过；工件 `xiaozhou-companion-debug-apk-35563352811`（214,397,993 B，14 天） |
+| ① ABI | 评审的前提「原生插件只打 ARM ABI」对 CI 的 debug 包**不成立**：`apk-abis.txt` = `arm64-v8a / armeabi-v7a / x86 / x86_64`（CI 没有本机 `reactNativeArchitectures` 那条 ARM 限制）⇒ `ABI_MATCH=native`，不需要镜像的 ARM 转译 |
+| ② 安装 | x86_64 镜像（api 34 google_apis）`adb install -r` → `Performing Streamed Install` / **`Success`**（模拟器冷启 650s） |
+| ③ .so 加载 / 冒烟 | **没跑到**：`reactivecircus/android-emulator-runner` 把多行 `script:` 逐行当独立命令执行，`if … fi` 被拆开 ⇒ `/usr/bin/sh: Syntax error: end of file unexpected (expecting "fi")`，装包成功后一行冒烟都没跑，`e2e-smoke` 30 分钟红。这是 09-19 写 G-05 时没能跑通的那段脚本自己的缺陷（当时本机装不成 Maestro、脚本只对着文档核）。修：逻辑逐字搬进 `scripts/ci_mobile_smoke.sh`（`bash -n` 过），workflow 的 `script:` 改成一行 `bash scripts/ci_mobile_smoke.sh`——这是又一处 CI/CD 改动，**等用户批准后再提**，再 dispatch 一次才有 ③（UnsatisfiedLinkError / dlopen failed 扫描 + `ndk_translation` 计数 + Maestro 离线冒烟结果） |
+| 顺带 | `metro.log` 开头一条 ` ERROR  An unknown error occurred while installing React Native`，Metro 之后照常在 8081 服务；冒烟没跑到，无法判断它有没有后果，下一次 dispatch 一并看 |
+
+原生模块注册核对（「构建成功 ≠ 注册上了」）：最终包所在镜像工作区的 `node_modules/expo/android/build/generated/expo/src/main/java/expo/modules/ExpoModulesPackageList.kt` 第 25 行 `com.xiaozhou.audioroute.AudioRouteModule::class.java`（与 foldstate / kws / platformlocation 并列），`mergeDexRelease/classes4.dex` 含 `com/xiaozhou/audioroute/AudioRouteModule`。
+
 ### 6.11 本批未达与去向
 
 | 项 | 去向 |
