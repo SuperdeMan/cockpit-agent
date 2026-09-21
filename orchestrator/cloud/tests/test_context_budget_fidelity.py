@@ -77,8 +77,10 @@ def test_window_keeps_whole_exchanges_never_half_of_one(monkeypatch):
     assert "问一" not in out and "答一" not in out
 
 
-def test_window_size_defaults_to_two_exchanges_which_equals_the_old_four_messages():
-    assert ctxmod._HISTORY_EXCHANGES == 2
+def test_window_size_defaults_to_four_exchanges():
+    """缺省 4 对（2026-09-21 用户裁决，W19-c 数据：指代物出视窗 0/48、在视窗 23/48，4 对 = 6 对）。
+    此前 2 对 = 旧的 4 条消息；改缺省要连本断言一起改——它钉的是「缺省是有数据的决定」。"""
+    assert ctxmod._HISTORY_EXCHANGES == 4
 
 
 def test_over_budget_drops_the_oldest_exchange_first_then_trims_the_last_one():

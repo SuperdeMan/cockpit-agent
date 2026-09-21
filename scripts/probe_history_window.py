@@ -22,6 +22,7 @@ k=2 的组区分「2 对 vs 4 对」，k=4 的组区分「4 对 vs 6 对」。�
     python scripts/probe_history_window.py --dry-run
     python scripts/probe_history_window.py --run 0920a --windows 2,4,6 --groups 1-8
     python scripts/probe_history_window.py --run 0920a --windows 6 --groups 9-16 --out <同一份 artifact>
+    python scripts/probe_history_window.py --run 0921b --windows 0 --groups 1-16    # 0 = 不 pin，验部署缺省
     python scripts/probe_history_window.py --report <artifact.json>       # 纯本地汇总
 
 同一个 `--run` 下分多次跑（每次 ≤ 10 分钟），artifact 按 (window, group) 合并；同一格重跑会覆盖。
@@ -102,7 +103,8 @@ GROUPS: list[dict] = [
 ]
 assert len(GROUPS) == 32 and sum(1 for g in GROUPS if g["k"] == 2) == 16
 
-_WINDOWS = (2, 4, 6)
+#: 0 = 不 pin（部署缺省，2026-09-21 起 4 对）——用来验证缺省本身；判读用 span 里自报的 `history_exchanges`。
+_WINDOWS = (0, 2, 4, 6)
 _RUN_RE = re.compile(r"^[A-Za-z0-9._:-]{1,24}$")
 
 
@@ -233,6 +235,7 @@ async def run_group(ws_url: str, collector: str, secret: bytes, run: str,
     session = f"{user_id}-session-{index}"
     token = sign_identity(secret, run_id=run_id, user_id=user_id, vehicle_id="v1",
                           scopes=list(DEMO_AUTH_SCOPES), timeout_s=1800)
+    overrides = {"planner_history_exchanges": str(window)} if window else None   # 0 = 不 pin
     started = time.time()
     rows: list[dict] = []
     async with websockets.connect(_ws_url_with(ws_url, token)) as ws:
@@ -242,9 +245,7 @@ async def run_group(ws_url: str, collector: str, secret: bytes, run: str,
             pass
         for turn_no, text in enumerate(turns_of(group), 1):
             try:
-                obs = await probe._one_turn(
-                    ws, session, text,
-                    meta_overrides={"planner_history_exchanges": str(window)})
+                obs = await probe._one_turn(ws, session, text, meta_overrides=overrides)
             except asyncio.TimeoutError:
                 obs = {"speech": "[timeout]", "actions": [], "error": True}
             rows.append({"turn": turn_no, "say": text,
@@ -261,9 +262,11 @@ async def run_group(ws_url: str, collector: str, secret: bytes, run: str,
           f"slot={verdict['slot_resolved']} speech={verdict['speech_mentions']} "
           f"intents={verdict['intents']} outcome={verdict['outcome']} "
           f"pairs_kept={verdict['history_pairs_kept']} exch={verdict['history_exchanges']}")
-    return {"window": window, "group": index, "k": group["k"], "kw": group["kw"],
-            "user_id": user_id, "session": session, "elapsed_s": round(time.time() - started, 1),
-            "turns": rows, **verdict}
+    # 不 pin 的臂按 span 自报的缺省归档（`history_exchanges`），表里看得出缺省是几对
+    effective = window or int(verdict.get("history_exchanges") or 0)
+    return {"window": window, "window_effective": effective, "group": index, "k": group["k"],
+            "kw": group["kw"], "user_id": user_id, "session": session,
+            "elapsed_s": round(time.time() - started, 1), "turns": rows, **verdict}
 
 
 def load_artifact(path: Path) -> dict:
@@ -279,30 +282,35 @@ def save_artifact(path: Path, artifact: dict) -> None:
 
 def report(artifact: dict) -> str:
     cells = artifact.get("cells") or []
+    def _eff(c):
+        return int(c.get("window_effective") or c.get("window") or 0)
+
+    def _label(c):
+        return f"{_eff(c)} 对" + ("（缺省）" if not c.get("window") else "")
+
     by = defaultdict(list)
     for c in cells:
-        by[(c["k"], c["window"])].append(c)
+        by[(c["k"], _label(c))].append(c)
     lines = ["| k | 视窗 | 组数 | planner 槽解出 | 话术提到 | 落 chitchat | pin 生效(pairs_kept) |",
              "|---|---|---|---|---|---|---|"]
     for k in (2, 4):
-        for w in _WINDOWS:
-            rows = by.get((k, w)) or []
-            if not rows:
-                continue
+        for label in sorted({lab for (kk, lab) in by if kk == k}):
+            rows = by[(k, label)]
+            w = _eff(rows[0])
             solved = sum(1 for r in rows if r["slot_resolved"])
             spoken = sum(1 for r in rows if r["speech_mentions"])
             chit = sum(1 for r in rows if "chitchat" in (r["intents"] or ""))
             expected_pairs = k + 1 if w >= k + 1 else w
             kept = sum(1 for r in rows if r.get("history_pairs_kept") == expected_pairs)
-            lines.append(f"| {k} | {w} 对 | {len(rows)} | **{solved}/{len(rows)}** | {spoken}/{len(rows)} "
+            lines.append(f"| {k} | {label} | {len(rows)} | **{solved}/{len(rows)}** | {spoken}/{len(rows)} "
                          f"| {chit}/{len(rows)} | {kept}/{len(rows)} (期望 {expected_pairs}) |")
     total = defaultdict(lambda: [0, 0])
     for c in cells:
-        total[c["window"]][0] += int(bool(c["slot_resolved"]))
-        total[c["window"]][1] += 1
+        total[_label(c)][0] += int(bool(c["slot_resolved"]))
+        total[_label(c)][1] += 1
     lines.append("")
     lines.append("合计（全部组）：" + "；".join(
-        f"视窗 {w} 对 {total[w][0]}/{total[w][1]}" for w in _WINDOWS if total[w][1]))
+        f"视窗 {lab} {v[0]}/{v[1]}" for lab, v in sorted(total.items())))
     return "\n".join(lines)
 
 

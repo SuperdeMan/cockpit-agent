@@ -344,7 +344,7 @@
 | `PLANNER_CATALOG_TOP_K` | 规划时 catalog 语义预筛上限；agent 数 ≤ 此值不预筛（始终保留有 `route_hints` 的 Agent、`PLANNER_FALLBACK_AGENT` 与 edge 车控）| 否（默认 20） |
 | `PLANNER_CTX_BUDGET_CHARS` | 上下文块（焦点+记忆+历史）字符预算。**硬约束**（2026-09-19 W02）：历史整对从最旧丢起、最后一对按句收缩、记忆按条裁，绝不超预算 | 否（默认 1400；生产未覆盖 ⇒ 1400） |
 | `PLANNER_ACTS` | W06（2026-09-20）对话行为标注段：`on`/默认 = prompt 里让模型在**修改当前任务的某个参数**时额外输出顶层 `acts:["correct"]`（继续/恢复 = `resume`）；prompt-only、不进 submit_plan schema（同 emotion / clarify：schema 可见性诱发多填）；`off` 一键回今天。词表 `planning.ACTS`，缺省 [] = 今天的行为。唯一决策消费方：engine `_apply_task_patch`——`correct` ∧ 单步 ∧ 与焦点 `active_task` 同 intent ∧ 帧未过期 ⇒ 缺槽从活动任务继承（新值优先）、任务帧记成同一 `task_id` 的下一版（`plan.task_patch`）；没有标签绝不猜（误继承陈旧目的地比漏继承更危险）。span 列 `acts` / `task_patch` / `task_revision` | 否（默认 `on`） |
-| `PLANNER_HISTORY_EXCHANGES` | 历史视窗：最近 N 对完整 exchange（一问一答），不按消息条数计；取回条数 = 2N+2。扩窗是单变量实验档位（评审 W19），改前先量 | 否（默认 2 = 旧的 4 条消息） |
+| `PLANNER_HISTORY_EXCHANGES` | 历史视窗：最近 N 对完整 exchange（一问一答），不按消息条数计；取回条数 = 2N+2。请求级 pin `meta.planner_history_exchanges` 供单变量实验（评审 W19） | 否（默认 **4**，2026-09-21 起；依据 W19-c 干净用户实验：指代物出视窗 0/48、在视窗 23/48，4 对 = 6 对。此前 2 = 旧的 4 条消息；预算仍是硬上限） |
 | `PLANNER_CATALOG_BUDGET_CHARS` | catalog JSON 字符预算（超则丢尾部 agent）| 否（默认 8000） |
 | `PLANNER_FALLBACK_AGENT` | LLM 规划失败/抽风时的全局兜底 Agent（R2.1 P5，取代硬编码 chitchat）| 否（默认 `chitchat`） |
 | `SKILLS_MODE` | 规划知识 Skill 层（M0b）：`full`=检索注入（默认）\|`canary`\|`shadow`=只检索记录\|`off`；Full Migration 后中央 base 无领域知识，shadow/off 仅研究/debug 档 | 否（默认 `full`） |
@@ -2818,7 +2818,7 @@ chitchat 自己的召回读不到 + 记忆问句 ⇒ 同一句话术（`_build_m
 
 **⑤ 请求级视窗 pin（W19）**。`meta.planner_history_exchanges`（1–6 的整数字面量，其余一律缺省）→ `PlanContext.history_exchanges`
 （不进 `prefs`）→ 取回 `2N+2` 条、渲染 N 对；预算 `_CTX_BUDGET` 仍是硬上限。定位同 D2 的 `llm_provider` / `llm_model`：
-评测 / 重放 A/B 的单变量入口，不是产品旋钮；`context_stats.history_exchanges` 证明它生效。缺省不改（评审 F02：先量再定档位）。
+评测 / 重放 A/B 的单变量入口，不是产品旋钮；`context_stats.history_exchanges` 证明它生效。缺省先不改（评审 F02：先量再定档位）——**量完之后 2026-09-21 缺省抬到 4 对**（§9.45 ③）。
 
 **⑥ 长会话 runner（W18）**。`scripts/probe_qa_long_sessions.py` 加 `continuity` persona（同 session ≥50 轮）与两条轮指令
 `silence_s`（沉默后重连，`--silence-scale` 缩放）/ `reconnect`（断连重连，同 session）；`names_item_from` 的轮号是 case 内的，
@@ -2858,3 +2858,9 @@ final 的 `closed_operation_ids` 点名那个 id——对客户端它就是关�
 不查天气 / 路况、不标 adaptive。keywords 只加订阅框架词（`一旦 / 每当 / 就通知我 / 就告诉我 / 就叫我`），「只要 / 每次 / 凡是」
 是常用词刻意不做 keyword（「只要一杯拿铁」不该把这条知识检进 prompt）。范例 `reminder.yaml` 追加两句真栈原句。
 知识预算：本 guide 与 charging-strategy 并列最大（rendered ≤ 1015），headroom 守卫钉着。
+
+**③ 缺省历史视窗 4 对（W19-c，2026-09-21 用户裁决）**。干净用户单变量实验（`scripts/probe_history_window.py`：签名 E2E 身份每臂一个新 user、
+`e2e-` 前缀不做记忆抽取、插话末尾一轮 read 任务顶掉 W07 任务帧、判据读最后一轮 `cloud.planning` 的槽）：指代物所在那一对**出视窗 0/48、在视窗
+23/48**；2 对在 ≥2 轮插话下必失，4 对与 6 对在 k=2 插话下相同（8/16 = 8/16），6 对只多救回 k=4 插话（7/16）。`_HISTORY_EXCHANGES` 缺省 2 → 4
+（取回 10 条）；`_CTX_BUDGET` 1400 不动——长回答下整对从最旧丢起，`history_pairs_kept / dropped / trimmed` 是读数。同一实验的两条副产物：
+W07 任务帧是历史之外的第二条指代通道（闲聊不顶帧）；代词开头的省略追问在端侧被对象规则接走（「它续航多久」⇒ `battery.query`）。

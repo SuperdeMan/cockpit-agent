@@ -86,3 +86,14 @@ def test_report_groups_by_k_and_window():
     assert "| 4 | 4 对 | 1 | **0/1** |" in text
     assert "| 4 | 6 对 | 1 | **1/1** |" in text
     assert "视窗 6 对 2/2" in text
+
+
+def test_unpinned_arm_is_reported_under_the_default_it_saw():
+    """window=0 = 不 pin；表里按 span 自报的 `history_exchanges` 归档并标「缺省」。"""
+    g = hw.GROUPS[0]
+    cells = [{"window": 0, "window_effective": 4, "group": 1, "k": 2, "kw": g["kw"],
+              "slot_resolved": True, "speech_mentions": True, "intents": "info.search",
+              "history_pairs_kept": 3, "history_exchanges": 4}]
+    text = hw.report({"cells": cells})
+    assert "| 2 | 4 对（缺省） | 1 | **1/1** |" in text and "(期望 3)" in text
+    assert 0 in hw._WINDOWS

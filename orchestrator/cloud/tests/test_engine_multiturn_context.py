@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from cockpit.agent.v1 import agent_pb2
 from orchestrator.cloud.aggregator import Aggregator
+from orchestrator.cloud.context import _HISTORY_EXCHANGES
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.planning import PlanBuilder
@@ -176,7 +177,7 @@ def test_same_session_history_reaches_planner_before_current_turn_is_appended():
 
     events = _run(engine, _req(current_text, session_id="session-a"))
 
-    assert spy.read_calls == [("session-a", 6)]
+    assert spy.read_calls == [("session-a", 2 * _HISTORY_EXCHANGES + 2)]   # 取回条数跟视窗走（缺省 4 对 ⇒ 10）
     assert spy.append_calls_at_reads == [[]]
     prompt = spy.planner_prompts[0]
     assert "Set passenger AC to 26" in prompt
@@ -206,7 +207,7 @@ def test_session_histories_are_isolated_when_building_planner_prompt():
 
     events = _run(engine, _req("Which one is open now?", session_id="session-a"))
 
-    assert spy.read_calls == [("session-a", 6)]
+    assert spy.read_calls == [("session-a", 2 * _HISTORY_EXCHANGES + 2)]   # 取回条数跟视窗走（缺省 4 对 ⇒ 10）
     prompt = spy.planner_prompts[0]
     assert "Find chargers near there" in prompt
     assert "Showing chargers near your current route." in prompt

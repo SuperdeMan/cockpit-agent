@@ -143,9 +143,13 @@ async def _call_with_owner(fn, session_id: str, last_n: int, *,
 _CTX_BUDGET = int(os.getenv("PLANNER_CTX_BUDGET_CHARS", "1400"))   # 记忆+历史(+焦点)合计
 _MEMORY_BUDGET = 400                                              # 记忆块上限（同旧 _format_memory）
 # 历史视窗按**完整 exchange（一问一答）**计，不按消息条数计（评审 2026-09-19 F02 / W02）：
-# 旧的 `history[-4:]` 会从第二对的回答开始截，把「用户问了什么」丢掉。默认 2 对 = 旧的 4 条；
-# 扩窗是 W19 的单变量实验（2K/4K/8K 档位），不在这里无证据地改。
-_HISTORY_EXCHANGES = int(os.getenv("PLANNER_HISTORY_EXCHANGES", "2"))
+# 旧的 `history[-4:]` 会从第二对的回答开始截，把「用户问了什么」丢掉。
+# 缺省 4 对（2026-09-21，用户裁决；此前 2 对 = 旧的 4 条）。依据是 W19-c 干净用户单变量实验
+# （设计文档 §8.2.1，32 组 × 3 臂）：指代物所在那一对不在视窗内时 planner **0/48** 解出、在视窗内 23/48；
+# 2 对在任何 ≥2 轮插话下必失，4 对与 6 对在 k=2 插话下读数相同（8/16 = 8/16），6 对只多救回 k=4 的插话。
+# 预算 `_CTX_BUDGET` 仍是硬上限：长回答下 `_render_history_with_stats` 会整对从最旧丢起，
+# 实际视窗可能小于 4——`context_stats.history_pairs_kept / history_pairs_dropped` 是读数，不是承诺。
+_HISTORY_EXCHANGES = int(os.getenv("PLANNER_HISTORY_EXCHANGES", "4"))
 # 数据飞轮 P0 D1 应急：8000 时代的假设「正常情况下根本不触发裁剪」已随 M3/M4 新增
 # mcp-bridge/vision 失效——16 agent 全量渲染约 9.7k 字符，超算后从尾部裁非受保护 agent，
 # 而保护判据（有无 route_hints）与领域重要性无关，navigation 等 4 个无 hint agent 会被
@@ -1816,7 +1820,7 @@ class ContextManager:
         self.clients = clients
         self.session = session   # SessionStore，供焦点态 load/save（None 则不启用焦点）
         # 取回条数跟着渲染视窗走（W02）：N 对 exchange 要 2N 条，多取一对做裁剪余量。
-        # 默认 N=2 ⇒ 6 条，与此前写死的 6 逐字相同。
+        # 缺省 N=4 ⇒ 10 条（2026-09-21 起；N=2 时是此前写死的 6 条）。
         if history_n is None:
             history_n = 2 * max(1, _HISTORY_EXCHANGES) + 2
         # 默认给足 headroom：高于当前 agent 规模，预筛只在真正大规模(20+)时触发，
