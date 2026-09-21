@@ -68,7 +68,9 @@ afterEach(() => { settingsStore.setState({ settings: DEFAULT_APP_SETTINGS }) })
 
 test('① 启动失败：原因可读、开关不弹回、控制器不重建；② 权限成因单独标出', async () => {
   const scope = new InteractionScope({ route: '/', foreground: true, focused: true })
-  mockEnableFailure = new Error('onnxruntime-react-native 不在本 APK 里')
+  // Expo 把原生 CodedException 包成「Call to function … has been rejected. ⏎ → Caused by: …」——用户那一行只要最里层那句
+  // （2026-09-21 真机 G-06 引擎成因分支：错误行原样带着包装文本）
+  mockEnableFailure = new Error("Call to function 'Kws.load' has been rejected.\n→ Caused by: onnxruntime-react-native 不在本 APK 里")
   const h = mount(scope)
   let view!: ReactTestRenderer
   await act(async () => { view = create(createElement(h.Probe)) })

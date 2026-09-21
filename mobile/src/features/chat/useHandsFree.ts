@@ -19,6 +19,7 @@ import {
   handsFreeAvailability,
   type HandsFreeDeps,
 } from '@/core/voice/handsFree'
+import { nativeErrorText } from '@/core/voice/nativeErrorText'
 import { speechController } from '@/core/voice/speech'
 import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
 import type { InteractionScope } from '@/core/session/interactionScope'
@@ -216,7 +217,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       // 只认控制器身份，不认前后台 / 路由：失败是这个控制器的事实，与此刻在不在前台无关——
       // 权限弹窗本身就会把 App 切到后台，按 allowed() 过滤会把「用户拒绝了」这条事实恰好丢掉
       if (!live || ctlRef.current !== ctl) return
-      const msg = e instanceof Error ? e.message : String(e)
+      const msg = nativeErrorText(e)
       const kind = e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine'
       if (kind === 'permission') deniedRef.current = true
       setError(msg)
@@ -336,7 +337,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         if (ctlRef.current !== ctl) return
         const kind = e instanceof Error && e.name === 'PermissionDeniedError' ? 'permission' : 'engine'
         if (kind === 'permission') deniedRef.current = true
-        setError(e instanceof Error ? e.message : String(e))
+        setError(nativeErrorText(e))
         setErrorKind(kind)
       }).finally(() => { if (attemptRef.current === p) attemptRef.current = null })
       attemptRef.current = p // 这一路的申请也算在途：弹窗关闭回前台时 syncScope 不叠第二次
