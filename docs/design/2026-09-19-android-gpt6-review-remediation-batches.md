@@ -319,6 +319,16 @@ dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，r
 | 语音轮 SPEAKING / FOLLOWUP / S2S × 中断 | **仍未取** | 两趟采样的 LISTENING 转写抓到的是屋里的视频对白（「出了差池，你们知道什么后果吗」「あと」），VAD 一直判有人说话、端点 15s 内不来 ⇒ 轮次到不了 THINKING 之后的态。协议已改成「不瞄准、整轮持焦点、铃落在哪个态事后按 `[handsfree] fsm` 分类」（`probe_d09.py`），电视关掉后每个 lead 采一趟即可 |
 | 耳机断开 OS 层 | **未取** | OPPO 上零 bonded 蓝牙设备、桌上没有有线口；PC 那副 Enco Air2 与它没有配对（配对要按耳机实体键）——只能等一副能连到 OPPO 的耳机 |
 
+#### G-05 第三次 dispatch（run #35611616585，main `b08579f6`，冒烟脚本已成文件）
+
+| 读数 | 结果 |
+|---|---|
+| 构建 | ✅ 32 分钟 |
+| ①② | 同第二次：四 ABI、x86_64 装包 Success（模拟器冷启 771s、软件渲染 `Failed to find ColorBuffer`） |
+| ③ / Maestro | **仍是空读数**：脚本这次跑到了，但 Maestro 的 Android driver 15s 内没在这台慢模拟器上起来（`AndroidDriverTimeoutException`，driver port 7001），两条 offline flow 立刻红（261ms / 3ms）、App 根本没被拉起 ⇒ `ndk_translation lines: 0`、logcat 无 `UnsatisfiedLinkError` 都不算数 |
+
+处置（只改 `scripts/ci_mobile_smoke.sh`，workflow 不动）：③ 不再系在 Maestro 身上——装完先自己 `am start -W` 一次、等 25s、读 logcat（onnxruntime / audio-api / worklets 进程起来就 dlopen；sherpa KWS 要开免唤醒才加载，覆盖不到，如实记）；Maestro driver 超时放宽到 180s（`MAESTRO_DRIVER_STARTUP_TIMEOUT`）。第四次 dispatch 的读数待回填。
+
 ### 6.11 本批未达与去向
 
 | 项 | 去向 |
