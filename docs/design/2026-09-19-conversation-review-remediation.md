@@ -568,3 +568,15 @@ release B = W19-b（RS9 / RS11 复跑：订阅句应直接落 `reminder.create` 
 （`cleanup-candidates.txt` 已列 7 天以上的 observability dump）。候选按风险从低到高：① 构建缓存 `docker builder prune`（15.3 GB，纯缓存）；
 ② 上传目录（除当前 release 的）4.9 GB；③ 停止的旧 release 容器（118 MB）；④ 旧 release 镜像集与源码目录（保留当前 + 上一基线 + 最近 N 份）。
 每一项都要单独批准后再执行；本批只做了列举。
+
+**执行记录（2026-09-20 晚，用户批准「①+②」）**：先确认无发布事务在跑；② 删除 `incoming/releases/` 下 108 个上传目录（5.14 GB，
+保留当前 release `b0d79dbe…` 那一个；清单先落 `/tmp/w19c-upload-cleanup.txt` 再 `xargs rm -rf`）；① `docker builder prune -af` 回收 25.43 GB。
+可用 31.9 GB → **55.1 GB**（74% → 55%）。③④ 未执行（④ 保留几份待定）。代价：下一次发布 26 个镜像全部从零构建（无缓存），耗时远超今天
+前几次的 3–4 分钟——实测 `eb55e502` 约 75 min（pip wheel 缓存也在 builder cache 里，每个 Python 镜像重新下载；共享基础层建好之后剩下的很快）。
+
+**部署 `eb55e502`（2026-09-21 12:0x–13:1x）**：dry-run 零阻断（可用 55.1 GB）→ apply `submitted` → status ok 5/5 零 warning、
+`release_sha` = `running_release_sha` = `eb55e502`（切换后锁未释放的几分钟报 `degraded` + `remote release lock is unavailable`）→ verify `verified`
+（`20260921T051142Z-eb55e50.json`，`minimax:MiniMax-M3`，lock e2e）。真栈复验（run `0921a`，视窗 6，三个曾经执行动作的格）：
+g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` 执行）；g14「它在什么条件下会自动关闭」→ 云端 `chitchat.talk`、零动作、
+答对了自适应远光的关闭条件（修前端侧劫持成 `media.stop`）；g29「它最多能设几档」→ `manual.query`，槽里带「自适应巡航」（修前 `tire_pressure.query`）。
+`battery.query` 那三格（g12 / g18 / g27）不在闸的否决面上（读操作），照旧归端侧规则的下一条。
