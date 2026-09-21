@@ -134,8 +134,9 @@ jobs:
             sleep 2
           done
 
-      # G-05（2026-09-19，GPT-6 评审 §七-3）：原生插件（sherpa KWS / onnxruntime）只打 arm64-v8a + armeabi-v7a，
-      # 下面的模拟器是 x86_64。能不能装、装上后 .so 能不能经镜像的 ARM 转译加载，**由本 job 自己给读数**，不预设结论：
+      # G-05（2026-09-19，GPT-6 评审 §七-3）：评审假设原生插件（sherpa KWS / onnxruntime）只打 arm64-v8a + armeabi-v7a，
+      # 而下面的模拟器是 x86_64。能不能装、装上后 .so 能不能加载，**由本 job 自己给读数**，不预设结论
+      # （2026-09-21 run #35563352811 的读数：CI 的 debug 包四个 ABI 全有——本机脚本才限 ARM——⇒ ABI_MATCH=native，装包 Success）：
       #  ① 这里列出 APK 的 lib/ ABI 与模拟器 arch；② 安装失败时把 INSTALL_FAILED_NO_MATCHING_ABIS 翻成人话；
       #  ③ 冒烟后从 logcat 找 UnsatisfiedLinkError / dlopen failed，连同 ABI 清单一起上传。
       - name: APK ABI preflight (vs emulator arch)
@@ -154,24 +155,9 @@ jobs:
           target: google_apis
           arch: x86_64
           disable-animations: false   # ⚠ 别关：本 App 的光球动画本来就在，关了等于测了另一个东西
-          script: |
-            adb reverse tcp:8081 tcp:8081
-            adb install -r apk/*.apk 2>&1 | tee install.log
-            if grep -q 'INSTALL_FAILED_NO_MATCHING_ABIS' install.log; then
-              echo "::error::APK 没有模拟器 arch 的 .so 且镜像没有 ARM 转译（见 apk-abis.txt）——给插件加 x86_64 ABI，或换带转译的镜像"
-              exit 1
-            fi
-            grep -q '^Success' install.log || { echo "::error::adb install 失败"; exit 1; }
-            adb logcat -c
-            maestro hierarchy > hierarchy.txt || true
-            maestro test mobile/e2e/ --include-tags offline && rc=0 || rc=$?
-            adb logcat -d > logcat.txt || true
-            if grep -qE 'UnsatisfiedLinkError|dlopen failed' logcat.txt; then
-              echo "::error::原生 .so 加载失败（见 logcat.txt）：ARM 插件在 x86_64 镜像上没有跑起来"
-              exit 1
-            fi
-            echo "ndk_translation lines: $(grep -c ndk_translation logcat.txt || true)"
-            exit $rc
+          # 冒烟逻辑在 scripts/ci_mobile_smoke.sh（G-05 第二次 dispatch run #35563352811：本 action 把多行 script 逐行当独立命令跑，
+          # 写在这里的 if…fi 被拆开 ⇒ `sh: Syntax error: expecting "fi"`；装包 Success 之后一行冒烟都没跑）
+          script: bash scripts/ci_mobile_smoke.sh
 
       - name: Upload maestro artifacts
         if: always()
