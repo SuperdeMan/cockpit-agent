@@ -97,3 +97,9 @@ def test_unpinned_arm_is_reported_under_the_default_it_saw():
     text = hw.report({"cells": cells})
     assert "| 2 | 4 对（缺省） | 1 | **1/1** |" in text and "(期望 3)" in text
     assert 0 in hw._WINDOWS
+    # 最后一轮没进规划（澄清 / 技术失败 / 端侧接走）的格没有视窗读数：单独一行，不冒充「0 对」
+    cells.append({"window": 0, "window_effective": 0, "group": 2, "k": 2, "kw": hw.GROUPS[1]["kw"],
+                  "slot_resolved": False, "speech_mentions": False, "intents": "",
+                  "history_pairs_kept": None, "history_exchanges": None})
+    text = hw.report({"cells": cells})
+    assert "| 2 | 缺省（最后一轮没进规划） | 1 | **0/1** |" in text

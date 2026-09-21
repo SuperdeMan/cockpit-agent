@@ -286,6 +286,8 @@ def report(artifact: dict) -> str:
         return int(c.get("window_effective") or c.get("window") or 0)
 
     def _label(c):
+        if not c.get("window") and not _eff(c):
+            return "缺省（最后一轮没进规划）"      # 澄清 / 技术失败 / 端侧接走：span 里没有视窗读数
         return f"{_eff(c)} 对" + ("（缺省）" if not c.get("window") else "")
 
     by = defaultdict(list)
