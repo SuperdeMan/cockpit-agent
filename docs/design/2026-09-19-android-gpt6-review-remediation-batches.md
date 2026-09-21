@@ -332,7 +332,18 @@ dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，r
 | ①② | 同第二次：四 ABI、x86_64 装包 Success（模拟器冷启 771s、软件渲染 `Failed to find ColorBuffer`） |
 | ③ / Maestro | **仍是空读数**：脚本这次跑到了，但 Maestro 的 Android driver 15s 内没在这台慢模拟器上起来（`AndroidDriverTimeoutException`，driver port 7001），两条 offline flow 立刻红（261ms / 3ms）、App 根本没被拉起 ⇒ `ndk_translation lines: 0`、logcat 无 `UnsatisfiedLinkError` 都不算数 |
 
-处置（只改 `scripts/ci_mobile_smoke.sh`，workflow 不动）：③ 不再系在 Maestro 身上——装完先自己 `am start -W` 一次、等 25s、读 logcat（onnxruntime / audio-api / worklets 进程起来就 dlopen；sherpa KWS 要开免唤醒才加载，覆盖不到，如实记）；Maestro driver 超时放宽到 180s（`MAESTRO_DRIVER_STARTUP_TIMEOUT`）。第四次 dispatch 的读数待回填。
+处置（只改 `scripts/ci_mobile_smoke.sh`，workflow 不动）：③ 不再系在 Maestro 身上——装完先自己 `am start -W` 一次、等 25s、读 logcat（onnxruntime / audio-api / worklets 进程起来就 dlopen；sherpa KWS 要开免唤醒才加载，覆盖不到，如实记）；Maestro driver 超时放宽到 180s（`MAESTRO_DRIVER_STARTUP_TIMEOUT`）。
+
+#### G-05 第四次 dispatch（run #35620321623，main `781e7530`）——三个读数齐了
+
+| 读数 | 结果 |
+|---|---|
+| 构建 | ✅ 25 分钟 |
+| ① ABI | 四 ABI，`ABI_MATCH=native` |
+| ② 安装 | x86_64 镜像 `Success`（冷启 710s） |
+| **③ .so 加载** | ✅ **App 在 x86_64 镜像上原生跑起来了**：`am start` 后 25s 进程仍在（pid 11110），logcat **无 `UnsatisfiedLinkError` / `dlopen failed`**，`ndk_translation lines: 0`（没有走 ARM 转译）。覆盖：进程启动即加载的 onnxruntime / audio-api / worklets；sherpa KWS 只在开免唤醒时加载，本读数不含 |
+| Maestro 离线冒烟 | driver 这次起来了（180s 够），flow 09 跑了 3m31s 后红在 `Assertion is false: id: composer-input is visible`（fresh install 的 dev 包大概率落在引导页 / 未配置态，flow 的前提没成立——那是 flow 自己的账），随后 job 撞 45 分钟上限被取消（冷启 12 分钟 + Maestro 在软件渲染的模拟器上每步都慢）。评审 §七-3 问的「装不装得上、.so 加不加载」到此有答案；离线冒烟要不要在 hosted runner 上养，是 CI 预算的事（`timeout-minutes` / 更小的镜像 / 或只保留 ①②③ 三个读数），另立 |
+
 
 ### 6.11 本批未达与去向
 

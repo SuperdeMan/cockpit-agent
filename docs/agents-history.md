@@ -9488,6 +9488,9 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   FOLLOWUP × 中断 ×2（续问窗 0.18s 关掉回 ARMED；焦点靠热窗理由持到那一刻）。**S2S 格取不到、原因在云端**：切端到端后
   冷启动 +24ms 就记降级、轮次走三段式（collector `voice_wake`）；握手探针 `/api/s2s` 立即 close 1008 `unauthorized test identity`
   ⇒ `E2E_IDENTITY_ENABLED` 让 `resolve_s2s_identity` 对所有 S2S 会话强制签名 token，真 App 不带 ⇒ 端到端挡位当前不可用（总表 N-04，cloud 侧）。
+- G-05 第三 / 四次 dispatch：第三次 Maestro driver 15s 超时（hosted 模拟器冷启 771s、软件渲染）App 没被拉起 ⇒ 脚本自己 `am start` 取 .so 读数 +
+  driver 180s（`781e7530`）；第四次三个读数齐：四 ABI native、装包 Success、**App 在 x86_64 上原生跑起来（无 UnsatisfiedLinkError / dlopen failed）**。
+  Maestro 冒烟本身红在 flow 09 `composer-input is visible`（fresh install 落引导页）+ 45 分钟 job 上限——CI 预算 / flow 前提，另立。
 - 2026-09-21 追加：用户批准清理 ①②——删 `incoming/releases/` 108 个上传目录（5.14 GB，保留当前 release 那个）+ `docker builder prune -af`（25.43 GB），
   可用 31.9 → 55.1 GB；③④ 未做。`eb55e502` 随后部署（无缓存全量重建约 75 min；status ok 5/5、verify `20260921T051142Z-eb55e50.json`），
   真栈复验 g05「它有几档」→ `manual.query` 零动作（修前执行 `seat.heating.on`）、g14 → 云端 chitchat 零动作（修前端侧 `media.stop`）、g29 → `manual.query`
