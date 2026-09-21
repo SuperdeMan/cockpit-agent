@@ -1138,6 +1138,19 @@ CASES = [
           "expect": {"no_actions": True, "no_execution_claim": True, "speech_has": ["做不到"],
                      "speech_not": ["什么时候提醒", "已为您设置", "已设置"]}},
      ]},
+    # 批 7 ①：T2 循环里 reminder 声明「做不到」之后不得再换能力试一次（修前 RS10 第 3 趟 replan 出 `reminder.cancel`，
+    # 答「提醒方面也没找到」）。W19-b 之后订阅句直落 reminder 不进 T2，所以这里用条件句逼出 adaptive 形态：先查路况、
+    # 再按结果规划提醒 ⇒ reminder 拒绝 ⇒ 到此为止。判据不押注 planner 一定走 T2（它也可能一轮并列两步）：无论哪种形态，
+    # 都不许出现拒绝之后的第二次尝试话术、不许追问提醒时间、不许声称已设置。
+    {"id": "RS13", "group": "residual", "card": "余项", "issue": "批 7 ①",
+     "why": "T2 里 reminder 诚实拒绝之后不再换能力再试（修前 replan 出 reminder.cancel）",
+     "known": "red",
+     "turns": [
+         {"say": "先看看去宝安机场的路况，要是堵的话，之后只要有堵车就提醒我",
+          "expect": {"no_actions": True, "no_execution_claim": True,
+                     "speech_not": ["提醒方面", "没找到提醒", "什么时候提醒", "已为您设置", "已设置", "已取消",
+                                    "推荐前三个", "为您找到 0 个", "需要导航过去吗"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

@@ -1170,6 +1170,9 @@ async def test_event_trigger_is_refused_honestly_not_asked_for_a_time(raw, event
     ("今后一出雾霾预警就提醒我", "出雾霾预警"),
     ("从今往后每次油价上涨就通知我", "油价上涨"),
     ("以后一下雪就叫我", "下雪"),
+    # 真栈 RS13（`1e892f1b`）：整句里连接词形态要先于「…就通知我」兜底命中，分句开头的时间状语也要剥
+    ("先看看去宝安机场的路况，要是堵的话，之后只要有堵车就提醒我", "有堵车"),
+    ("查一下路况，然后以后一堵车就通知我", "堵车"),
 ])
 async def test_event_phrase_drops_time_adverb_prefixes_and_yi_jiu_connector(raw, event):
     a = await _agent()

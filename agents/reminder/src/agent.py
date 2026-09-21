@@ -106,10 +106,13 @@ _CN_IDX = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
 # 批 7 ③（真栈 RS11 holdout）：「一…就」也是条件连接（「一有暴雨预警就告诉我」），只认后面紧跟
 # 动态动词的「一」——「一杯拿铁」「一会儿」不是连接词。
 _EVENT_TRIGGER_RE = re.compile(
-    r"(?:一旦|只要|每当|每次|每逢|如果|要是|万一|假如|等到|凡是|一(?=[有到出发下开来变超低降升]))"
+    r"(?:一旦|只要|每当|每次|每逢|如果|要是|万一|假如|等到|凡是|一(?=[有到出发下开来变超低降升堵亮响停涨跌满起过]))"
     r"(?P<event>[^，,。；;！？!?]{1,20}?)"
-    r"(?:就|的话|时|的时候|了)?(?:马上|立刻|立即|及时|记得)?(?:通知|提醒|告诉|叫|喊)(?:一下|一声)?我"
-    r"|(?P<event2>[^，,。；;！？!?]{2,20}?)(?:就|的时候|的话就)(?:马上|立刻|立即|及时)?(?:通知|提醒|告诉|叫)(?:一下|一声)?我")
+    r"(?:就|的话|时|的时候|了)?(?:马上|立刻|立即|及时|记得)?(?:通知|提醒|告诉|叫|喊)(?:一下|一声)?我")
+# 兜底形态「…就 / 的时候 + 通知我」**单独一条、后求值**：合在一条正则里时最左匹配会让它抢在连接词形态前面
+# ——「先看看路况，要是堵的话，之后只要有堵车就提醒我」念成「之后只要有堵车」（真栈 RS13，`1e892f1b`）。
+_EVENT_TRIGGER_FALLBACK_RE = re.compile(
+    r"(?P<event2>[^，,。；;！？!?]{2,20}?)(?:就|的时候|的话就)(?:马上|立刻|立即|及时)?(?:通知|提醒|告诉|叫)(?:一下|一声)?我")
 # 事件短语前的时间状语（「往后 / 今后 / 从今往后…」）不是事件的一部分——RS11 holdout 曾把
 # 「往后一有暴雨预警」整段念进话术。长词在前，`+` 允许叠用（「以后往后」）。
 _EVENT_STRIP_RE = re.compile(
@@ -118,11 +121,16 @@ _EVENT_STRIP_RE = re.compile(
 
 
 def _event_trigger(raw: str) -> str | None:
-    """这句话要的是「某件事发生时通知我」→ 事件短语；不是 → None。"""
-    m = _EVENT_TRIGGER_RE.search(_EVENT_STRIP_RE.sub("", (raw or "").strip()))
+    """这句话要的是「某件事发生时通知我」→ 事件短语；不是 → None。
+
+    连接词形态（一旦 / 只要 / 一…就）先于兜底形态（…就通知我）在整句上求值；时间状语前缀在**每个分句**开头剥。
+    """
+    text = "，".join(_EVENT_STRIP_RE.sub("", part.strip())
+                    for part in re.split(r"[，,；;]", (raw or "").strip()) if part.strip())
+    m = _EVENT_TRIGGER_RE.search(text) or _EVENT_TRIGGER_FALLBACK_RE.search(text)
     if not m:
         return None
-    event = (m.group("event") or m.group("event2") or "").strip(" 、的就")
+    event = (m.groupdict().get("event") or m.groupdict().get("event2") or "").strip(" 、的就")
     return event[:12] or "这类变化"
 
 
