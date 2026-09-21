@@ -9488,3 +9488,33 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   （唯一阻断类别 `ci_cd`），status ok 5/5、verify `20260921T065448Z-eb1dd6b.json`；不 pin 真栈 16 组：进规划的 10 格 `history_exchanges=4` 10/10、槽解出 8/10，
   另 6 格最后一轮没进规划（F09 家族 / 端侧）。清理 ④：保留最近 6 份 release，删 89 份镜像集（两族 tag）+ 源码目录，镜像 2523 → 261、可用 48.5 → 59 GB；
   ③ 那 415 个停止容器是同机 drone-agent 的，不碰。生产 release 现为 `eb1dd6bd`。
+
+## 2026-09-21 — 对话评审批 7（批 6 留项）：`unsupported` 终止 T2 再规划、路况真能力、事件短语剥前缀、端侧回指主语让路；四个 release 各推进一件事
+
+- 先重证再定范围（设计文档 §9）：T2 loop 执行完一批一律回 replan，`_REPLAN_SYSTEM` 对「Agent 声明做不到」一个字没有，`_refused` 埋在 data 里超 12 键还会被截掉
+  ⇒ 真栈 RS10 第 3 趟 reminder 拒绝后 replan 出 `reminder.cancel`；`safety.road_condition` 拿「X 路况」当关键词搜 POI，空结果原样播「为您找到 0 个X 路况，推荐前三个：。
+  需要导航过去吗？」——名字存在能力不可达，而高德 `extensions=all` 的逐段 tmcs 一直在响应里被丢掉；`_EVENT_STRIP_RE` 只剥「之后 / 以后…」，「往后一有暴雨预警」整段进事件；
+  端侧出口三维否决只盖写操作，「它续航多久」命中「续航」⇒ `battery.query` 答本车电量（W19-c 三臂恒定）。两条记录不做：T1 出视窗后 planner 拿焦点城市 / 范例实体冒充指代物
+  （视窗问题本体 + 一例证据不够立闸）、「别人的偏好不会串给我」（`e2e-` 身份不做记忆抽取，长期记忆那层验不到）。
+- ① `runtime/outcome.py` `refused_unsupported` / `all_refused_unsupported`（与终态账本同源）；loop 整批 unsupported ⇒ break；`summarize` 显式带 `refused`；
+  `planning._drop_refused_domain_steps` 丢同域新步（丢空 ⇒ done）+ prompt 一句。**L0 门禁把 prompt 里的「取消」二字判成 cohort-leakage**（静态 `_UPPER` 常量与 case 原话字面比对，
+  「取消」是 `cs.pending.cancel` 的原话）——改措辞「撤销或改动」。② provider：`GeoPoint.city / adcode`、`traffic_from_path` 聚合 tmcs ⇒ `get_route()["traffic"]`、
+  `road_traffic`（`/v3/traffic/status/road`）、`reverse_geocode` 回填城市；`POIProvider.road_traffic` 非抽象缺省抛 ProviderError（trip-planner 测试里的最小 provider 子类不能被抽象方法打断）。
+  navigation **内部意图** `route_traffic`（handle() 认、manifest 不声明、planner 不可见——进 manifest 就是与 `safety.road_condition` 摆两个等价工具掷硬币）：road / destination / 活动路线，
+  永不导航，三条诚实降级。road_safety `route_target` 归一 route 槽（destination / road / active），`_road_condition` 重写。③ 剥前缀表 + 「一…就」连接词。④ `runtime/anaphora.py`
+  + `classify_structured` 出口第四维只盖 `intent == "query"`。探针 RS10 加断言、RS12 新增。
+- 读数：全量固定口径 **8861 / 0 / 32**，272 s（上一基线 8782）；四门禁 + smoke_edge 13/13；九处变异各判红。发布链四次同形：push（`origin/main..HEAD` 恰一条、推前 fetch 列出）→
+  dry-run 零阻断 → apply → status ok 5/5 零 warning → verify verified。
+- 真栈 `3f9b18e4`（MiniMax-M3）：`RS12,RS10 ×3` 6/6——路况真答「全程约24.2公里、预计42分钟，沿途缓行约2.4公里，其余畅通」（`route_plan` 卡带折线、`_prov.vendor=amap`）；
+  **「深南大道现在堵不堵」3/3「暂时查不到」**：trace 上态势接口有调用、返回被判无 evaluation；本机直探——**高德态势接口对 adcode（440305 / 440300）一律 `UNKNOWN_ERROR 20003`，只认「深圳市」**，
+  离线假设「adcode 优先」被真栈证否 ⇒ `1e892f1b` 城市名优先。窗口装置 `--groups 12,18,27 --windows 0,6`（run `0921c`）：端侧 `battery.query` **0/6**（修前三臂恒定），全进云端；
+  g12 缺省 4 对槽解出 1/1；w6 g18 planner 落 chitchat、chitchat 拿本车 335 km 答「那它的纯电续航呢」——云侧版「答成本车」，落域方差。
+- 真栈 `1e892f1b`：`RS12,RS11 ×3` 6/6（「深南大道目前畅通，畅通路段约占95.6%、拥堵路段约占4.4%」；holdout「有暴雨预警」）；新增 RS13（条件句逼出 adaptive：先查路况 → replan 出 reminder
+  → 拒绝）×3 3/3——**① 活体**：trace 上拒绝之后只剩聚合那一次 LLM，云端 `planner.loop`「batch is all unsupported refusals; not replanning」在 RS13 ×3 与 RS11 ×3 各一行。
+  两条新账：事件短语念成「之后只要有堵车」（合在一条正则里最左匹配让「…就通知我」兜底抢在连接词形态前面、剥前缀只看句首）⇒ `551dd66c` 连接词形态先求值 + 按分句剥前缀 +
+  「一…就」动词表扩；聚合 LLM 替被拿掉的拒绝步编「没拿到设置结果…建议你再确认一下有没有成功开启」再接系统的「做不到」（RS13 判据在 `551dd66c` 上因此 0/2：那段被
+  `no_execution_claim` 判成「帮你开通了」）⇒ `74f334f4` 有拒绝步被拿掉时提示里说明「已由系统另行作答，不提、不猜、不建议确认」；RS13 ×3 3/3 零猜测。
+- 生产 `turns.outcome`（自 `3f9b18e4` 起 89 轮）：completed 55 / unsupported 18 / partial 8 / planner_failure 8——其中 5 条是 `cloud-release-*` 发布预检的问候句，各 32–34 s
+  = planner LLM 超时，时间戳全落在四次切换的那一两分钟（06:54 那两条同样落在 `eb1dd6bd` 切换时）：切换窗口 LLM 链路冷，与本批逻辑无关；记给后续（预检 smoke 等网关就绪或超时单列）。
+- 装置账：Bash 工具 heredoc 里的 `\\n` 会被收成真换行（prompt 常量断成两行 ⇒ SyntaxError），含转义的补丁一律 Write 成 .py 再跑；`cat >>` 追加的 scratchpad 文件带 CRLF，
+  追加前按目标文件的换行符归一；只读云端容器日志复用 `cloud_release_lib.SshConfig.ssh_argv`（`docker logs --since | grep -F`），不手敲 ssh 参数。
