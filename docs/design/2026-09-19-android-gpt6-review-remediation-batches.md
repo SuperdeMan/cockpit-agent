@@ -1,6 +1,6 @@
 # GPT-6 Pro Android 评审：逐条核对 + 分批待办（2026-09-19）
 
-> 状态：**2026-09-20/21 第三批（D-08 替身 + D-09 系统音频 + G-05 首跑 + G-07）已落地，见 §6.15；OPPO 常驻包 `b08579f6c`**。**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
+> 状态：**2026-09-20/22 第三批（D-08 替身 + D-09 系统音频 + G-05 首跑 + G-07）已落地，见 §6.15；D-09 语音轮 SPEAKING / FOLLOWUP × 中断 09-22 凌晨在安静环境取到；S2S 格被云端身份闸挡住（1008）；OPPO 常驻包 `b08579f6c`**。**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
 > （外部评审，基线 `0d414816`）。本页是这份评审的唯一待办入口：先按「接手别人的卡先重新证机制」逐条对着代码核，
 > 再分批推进；核不成立的条目写明为什么，不照单全收。与 [Android 剩余待办总表](2026-09-14-android-remaining-todos.md)
 > 的关系：本页只管评审新提出的事项，评审里与总表既有条目重合的建议一律指回总表，不另立卡（§4）。
@@ -316,8 +316,13 @@ dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，r
 | ARMED 不持焦点 | ✅ | 免唤醒开着（`AudioRecord` + `kws-decode-2` 线程在）焦点栈为空——热窗之外的常开麦只喂 KWS，不持 |
 | **LISTENING × 系统中断**（G-07 主格） | ✅ | 点球 `fsm LISTENING` 22:38:56.305 → **+4ms `requestAudioFocus req=3`**（热窗）→ 计时器 GAIN_TRANSIENT 22:38:58.835 → `-2` .839 → `system_stop:interruption` .840 → **`fsm:ARMED` .841**（半句「あと / I四个」不上云、没有 THINKING）→ abandon 22:38:59.868。第二趟（22:40:00 点球、铃 22:40:15.57）同形态：LISTENING → ARMED |
 | 主 TTS 出声中 × 系统中断（回归） | ✅ | 文字轮 22:54:26.094 发送 → +0.2s req=3 → `播报中` 22:54:34.643 → 铃 22:54:38.083 → `-2` .085 → `system_stop` .090 → 出声落 .091（**6ms**）→ abandon 22:54:39.110；免唤醒 ARMED 全程不变 |
-| 语音轮 SPEAKING / FOLLOWUP / S2S × 中断 | **仍未取** | 两趟采样的 LISTENING 转写抓到的是屋里的视频对白（「出了差池，你们知道什么后果吗」「あと」），VAD 一直判有人说话、端点 15s 内不来 ⇒ 轮次到不了 THINKING 之后的态。协议已改成「不瞄准、整轮持焦点、铃落在哪个态事后按 `[handsfree] fsm` 分类」（`probe_d09.py`），电视关掉后每个 lead 采一趟即可 |
+| **语音轮 SPEAKING（出声中）× 系统中断**（环境安静后，00:xx 采样 q3） | ✅ | 点球 23:48:19.15 → THINKING 25.91 → `fsm:SPEAKING` 31.189「播报中」→ 铃 → `-2` 31.696 → `system_stop` 31.697 → **`fsm:ARMED` 31.697**、出声落 31.698（2ms）；没有 FOLLOWUP；abandon 32.712（`probe_d09-speaking-timer-q3.log`） |
+| **语音轮 FOLLOWUP × 系统中断** ×2（q1 / q2） | ✅ | q1：SPEAKING 23:42:32.28 → `fsm:FOLLOWUP` 37.250「可以接着说」→ 铃 → `-2` 37.429 → `system_stop` → **`fsm:ARMED` 37.429**（续问窗 0.18s 就被关掉，焦点是靠热窗理由持到这一刻的：abandon 在 38.443，不在播完那一刻）；q2：THINKING 23:43:45.65 → FOLLOWUP 51.55（这轮没出声）→ 铃 52.64 → ARMED 52.639 |
+| 语音轮 THINKING × 中断（S2S 尝试趟，实为三段式） | ✅（同前） | 23:50:05.53 THINKING → 铃 → ARMED 23:50:11.208 |
+| S2S 自答 × 中断 | **取不到，原因在云端**：端到端挡位当前在生产上被拒 | 设置切「端到端」（同意页已过、pill selected）、冷启动后 `fsm:ARMED` +24ms 就记了一条 `degradation`；轮次时间线有 `request_sent` / `tts_text_sent`、collector 记 `input_source=voice_wake` ⇒ 走的是三段式回落。握手探针（`s2s_probe.py`，只发 `session.start` 不发音频）：**`/api/s2s` 立即 close 1008 "unauthorized test identity"** ⇒ 云端 `E2E_IDENTITY_ENABLED=true`（另一会话 W19-c 的签名身份车道）让 `resolve_s2s_identity` 对**所有** S2S 会话强制要签名 token，真 App 不带 ⇒ 端到端整档不可用、静默回落（用户只见一条降级）。这是 cloud 侧 / `.env` 的事（红线），归对话评审那条线处理；App 侧的 S2S × 中断格等它恢复后一趟就够（`run s2s timer`） |
 | 耳机断开 OS 层 | **未取** | OPPO 上零 bonded 蓝牙设备、桌上没有有线口；PC 那副 Enco Air2 与它没有配对（配对要按耳机实体键）——只能等一副能连到 OPPO 的耳机 |
+
+安静环境下的时序（供下次直接用）：慢速「介绍一下深圳」点球后定稿 ≈ +6.5s、THINKING ≈ +6.8、SPEAKING ≈ +10.5（三段式 TTS 首片）、播完 ≈ +14.5…16、FOLLOWUP 8s；`tap − set ≈ 26s` ⇒ lead 38 打 SPEAKING、41–43 打 FOLLOWUP、28 打 LISTENING。ASR 对电脑喇叭这一路仍常听成「西如素捐欧元捐荣凡诗」（答句因此短，只有 4–5s 出声），SPEAKING 窗窄；真人说话会宽得多。
 
 #### G-05 第三次 dispatch（run #35611616585，main `b08579f6`，冒烟脚本已成文件）
 

@@ -9484,6 +9484,10 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   真机 `b08579f6c`（常驻包）：LISTENING 点球 +4ms 持焦点、铃 → `-2` → `fsm:ARMED` 2ms 内、半句不上云；主 TTS 回归 6ms 停声。
   语音轮 SPEAKING / FOLLOWUP / S2S 仍未采到：屋里的视频对白（转写抓到「出了差池，你们知道什么后果吗」）让端点不来；
   协议改成整轮持焦点、铃落哪态事后按 `[handsfree] fsm` 分类。耳机断开：OPPO 零 bonded 蓝牙。hmi 342、mobile 112 / 1153。
+- **09-22 凌晨环境安静后补采**：语音轮 SPEAKING × 中断（`fsm:SPEAKING` 31.189 → `-2` 31.696 → ARMED 31.697，2ms 停声，无 FOLLOWUP）、
+  FOLLOWUP × 中断 ×2（续问窗 0.18s 关掉回 ARMED；焦点靠热窗理由持到那一刻）。**S2S 格取不到、原因在云端**：切端到端后
+  冷启动 +24ms 就记降级、轮次走三段式（collector `voice_wake`）；握手探针 `/api/s2s` 立即 close 1008 `unauthorized test identity`
+  ⇒ `E2E_IDENTITY_ENABLED` 让 `resolve_s2s_identity` 对所有 S2S 会话强制签名 token，真 App 不带 ⇒ 端到端挡位当前不可用（总表 N-04，cloud 侧）。
 - 2026-09-21 追加：用户批准清理 ①②——删 `incoming/releases/` 108 个上传目录（5.14 GB，保留当前 release 那个）+ `docker builder prune -af`（25.43 GB），
   可用 31.9 → 55.1 GB；③④ 未做。`eb55e502` 随后部署（无缓存全量重建约 75 min；status ok 5/5、verify `20260921T051142Z-eb55e50.json`），
   真栈复验 g05「它有几档」→ `manual.query` 零动作（修前执行 `seat.heating.on`）、g14 → 云端 chitchat 零动作（修前端侧 `media.stop`）、g29 → `manual.query`
