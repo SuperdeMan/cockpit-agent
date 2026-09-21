@@ -9434,3 +9434,18 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   unsupported 18（全部本批探针）、`memory_unavailable` 0。
 - 记给后续：T2 loop 收到 `unsupported` 观察后仍再规划（一次规划出 `reminder.cancel`、答「提醒方面也没找到」）⇒ 该诉求应就此终止，归 W12 / T2 判重下一步；
   road-safety 零结果话术「为您找到 0 个…推荐前三个：。」是空列表模板；订阅句 4/9 并列一个路况步是 MiniMax-M3 方差、范例已在不加 hint；reminder 事件短语剥前缀表可加「往后 / 今后」。
+
+### 同日追加 — W19-c 视窗单变量实验：用户授权切干净用户；签名身份车道开通；32 组 × 3 臂；真栈逼出问句闸一条修（部署被磁盘闸挡住）
+
+- 开车道：云端 `shared/.env` + 根 `.env` 各加 `E2E_IDENTITY_ENABLED=true` / `E2E_IDENTITY_SECRET`（同一份秘密；云端先备份 `.env.bak-w19c-<ts>`）。
+  第一次写坏：Windows `subprocess` 文本模式 stdin 把 LF 变 CRLF ⇒ `true\r`；按备份整文件恢复后用原始字节重写，验证只看 `grep -c`。网关重启走正式发布
+  （docs 提交 `b0d79dbe` 作为新 SHA 部署，`up -d` 只重建 env 变了的容器；日志 `e2e_identity=true`），不手敲 compose。
+- 装置 `scripts/probe_history_window.py`（`b0d79dbe` / `69c63e36`）：每臂一个全新 user（`e2e-w19c-<run>-w<N>`）、session `<user>-session-<g>`
+  （`e2e-` 前缀不做记忆抽取）、每轮 pin `planner_history_exchanges`、判据读最后一轮 `cloud.planning` 的槽 + `history_pairs_kept`。首跑发现 **W07 活动
+  任务帧是历史之外的第二条指代通道**（闲聊不顶帧，T1 的槽经帧到达 planner）⇒ 插话末尾改成 read 任务把帧顶掉。守卫 38 条。
+- 读数（run `0920b`，`b0d79dbe`，MiniMax-M3，96 session）：T1 出视窗 **0/48**、在视窗 **23/48**（人工补三格判据漏判 26/48）；k=2 下 4 对 = 6 对（8/16 = 8/16，
+  逐组翻面是模型方差）；k=4 只有 6 对救回（7/16 vs 0/16）；T1 出视窗后 chitchat 用自己的 8 条历史答对 k=2 的 5/16；端侧劫持 4 组恒定（代词开头的续航 /
+  关闭追问被 `battery.query` / `media.stop` 接走）；「上个城市」与 prompt 范例实体会在 T1 出视窗后冒充指代物。缺省不改，待用户裁决档位。
+- 真栈逼出的修 `eb55e502`：「它有几档」被规划成 `seat.heating.on` 并执行（trace `611a4134c32745eb`）——`question_shape` 补「几档 / 几级 / 几种 / 多少档」
+  与「什么条件 / 什么情况」；两向 +7；全量 **8781 / 0 / 32**；四门禁 + smoke_edge + 架构守卫全过；已 push。**部署失败 `insufficient disk capacity`**
+  （可用 29.7 GiB < 30 GiB 下限：93 份 release 目录、94 套镜像、109 个上传目录、25 GB 构建缓存）——清理候选已列（设计文档 §8.2.2），逐项待批准。
