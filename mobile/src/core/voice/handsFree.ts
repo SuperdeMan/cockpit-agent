@@ -350,6 +350,23 @@ export class HandsFreeController {
     }
   }
 
+  /** 系统抢占（来电 / 闹钟 / 别的 App 抢焦点；2026-09-21 G-07）= 停播（同 stopSpeaking）**+ 放弃收音与续问窗**：
+   *  FSM 任何非 IDLE 态回 ARMED（voiceLoop.systemInterrupt），关 ASR 不定稿（铃声 / 通话毁掉的半句不上云），
+   *  S2S 在飞的一轮让 provider 取消。ARMED 的麦不动——它只喂 KWS，不上行。 */
+  systemInterrupt(): void {
+    if (!this.on) return
+    this.userStopping = true
+    try {
+      const capturing = this.vl.state === 'LISTENING' || this.vl.state === 'FOLLOWUP'
+      this.s2s?.bargeIn()
+      if (capturing) this.s2s?.cancelTurn()
+      this.deps.onStopTts()
+      this.vl.systemInterrupt()
+    } finally {
+      this.userStopping = false
+    }
+  }
+
   /** 本轮云端处理终结但没有播报（TTS 关 / 纯卡片 / 出错）——必须补调，
    *  否则 FSM 停在 THINKING 直到 100s 兜底，那段时间整个回路是聋的 */
   turnEnded(): void {

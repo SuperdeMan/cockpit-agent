@@ -268,13 +268,17 @@ function useAssistantRuntime({ wired, cfg, scope }: Connection & { scope: Intera
   }, [snapshot.agent, core, startListening, latestTurnId, scope])
   const onStopPlayback = useCallback(() => stopPlayback({ handsFree: hf, speech: speechController() }), [hf])
   // 系统抢占（来电 / 闹钟 / 拔耳机）与屏上的停止键走**同一份**停播语义（audioFocus.ts 头注第三段）：
-  // 先免唤醒后主链、S2S 一并停、FSM 回 ARMED 不开续问窗。依赖取 hf.stopSpeaking（稳定引用），不取 hf 对象
-  const hfStopSpeaking = hf.stopSpeaking
+  // 先免唤醒后主链、S2S 一并停、FSM 回 ARMED 不开续问窗。G-07（2026-09-21）：免唤醒那一步用 systemInterrupt
+  // 而不是 stopSpeaking——除了停播还放弃收音 / 续问窗（铃声 / 通话毁掉的半句不上云）；PTT 在录也一并取消。
+  // 依赖取稳定引用，不取 hf / ptt 对象
+  const hfSystemInterrupt = hf.systemInterrupt
+  const pttCancel = ptt.cancel
   // 轨迹打点在停播之前（D-09 取证：生产包只读的在场轨迹页要能看见「这次是系统抢占停的」，与用户按停分开）
   useEffect(() => bindSystemStop((reason) => {
     presenceTrail.mark('system_stop:' + reason)
-    stopPlayback({ handsFree: { stopSpeaking: hfStopSpeaking }, speech: speechController() })
-  }), [hfStopSpeaking])
+    stopPlayback({ handsFree: { stopSpeaking: hfSystemInterrupt }, speech: speechController() })
+    pttCancel()
+  }), [hfSystemInterrupt, pttCancel])
   const stopMic = useCallback(() => { ptt.cancel(); hf.pause() }, [ptt, hf])
   useEffect(() => {
     if (snapshot.privacy.micActive) activityLog.push('mic', '麦克风已开启（设备采集）')

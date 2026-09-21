@@ -9,6 +9,7 @@
 //   SPEAKING ─barge-in（VAD≥300ms 过护栏）→ stopTTS + LISTENING
 //   LISTENING ─唤醒后 5s 无 speech→ ARMED（误唤醒静默回收，不发请求）
 //   任意态 ─handsFreeOff→ IDLE（拆机）
+//   非 IDLE ─systemInterrupt（来电 / 闹钟 / 抢焦点）→ ARMED（停播、放弃收音与续问窗，不发）
 //
 // push-to-talk 与文本输入不进本 FSM（原路径原样保留）；hands-free 关闭即整个 FSM 挂空。
 
@@ -484,6 +485,15 @@ export class VoiceLoop {
     if (this.state === VoiceState.SPEAKING || this.state === VoiceState.THINKING) {
       this._gotoArmed()
     }
+  }
+  // 系统抢占（来电 / 闹钟 / 别的 App 抢焦点；2026-09-21 G-07）：非 IDLE 的任何态都回 ARMED。
+  // 播报 / 处理中同 stopSpeaking；**收音与续问窗放弃**（关 ASR 不定稿、不发）——铃声 / 通话把这一句毁了，
+  // 发上去只是噪声，且 FOLLOWUP 的 8s 免唤醒窗在来电时开着等于隐式采集。ARMED 本身不动（麦归 KWS，不上行）。
+  // 与 handsFreeOff→On（recycle）的分界：不复位会话级护栏（自触发计数 / _bargeInDisabled），这不是「重新开启插话」。
+  systemInterrupt() {
+    if (this.state === VoiceState.IDLE || this.state === VoiceState.ARMED) return
+    if (this.state === VoiceState.LISTENING || this.state === VoiceState.FOLLOWUP) this.onMetric('system_interrupt_capture')
+    this._gotoArmed()
   }
 
   // ─── 内部判定 ───

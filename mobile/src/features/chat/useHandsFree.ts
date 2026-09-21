@@ -19,6 +19,7 @@ import {
   handsFreeAvailability,
   type HandsFreeDeps,
 } from '@/core/voice/handsFree'
+import { setFocusHold } from '@/core/voice/audioFocus'
 import { nativeErrorText } from '@/core/voice/nativeErrorText'
 import { speechController } from '@/core/voice/speech'
 import { ASR_FALLBACK_MODEL, settingsStore } from '@/core/settings/store'
@@ -69,6 +70,8 @@ export interface HandsFreeUi {
   endUtterance(): void
   /** 只停播（AR03 / 评审 R06）：停当前出声，不发 cancel 帧、不开麦、不开续问窗。免唤醒关着时是 no-op */
   stopSpeaking(): void
+  /** 系统抢占（G-07）：停播 + 放弃收音 / 续问窗（FSM 回 ARMED）。只由 Provider 装进 audioFocus.bindSystemStop */
+  systemInterrupt(): void
   /** 结束本轮收音 / 重新开启插话（评审 D7） */
   recycle(): void
   /** 暂停设备采集；设置不变，下次明确点光球可恢复。 */
@@ -174,6 +177,10 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
         // §11.4「首反馈时延」的取数源：这里是 FSM 换态的**回调时刻**（≈KWS 命中），
         // 与随后第一条 primary=listening 的轨迹快照之差 = 屏上多久才有反应（B2 T14）
         presenceTrail.mark('fsm:' + f)
+        // 真机取证的免费通道（logcat ReactNativeJS）：只有状态名，没有内容
+        console.log('[handsfree] fsm', f)
+        // G-07：LISTENING / FOLLOWUP 是热窗（下一句不用唤醒词就上行）⇒ 持焦点，来电 / 闹钟才到得了
+        setFocusHold('handsfree-hot', f === 'LISTENING' || f === 'FOLLOWUP')
         setOrb(o)
         setFsm(f)
         if (f !== 'LISTENING') setPartial('')
@@ -301,6 +308,7 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
       sc.onSilent = prevSilent
       ctlRef.current = null
       void ctl.dispose().catch(() => {})
+      setFocusHold('handsfree-hot', false) // dispose 的 IDLE 回调可能被 live=false 挡掉：这里兜底放掉热窗
       setOrb(null)
       setFsm('IDLE')
       setPartial('')
@@ -346,9 +354,11 @@ export function useHandsFree(opts: UseHandsFreeOpts): HandsFreeUi {
   const endUtterance = useCallback(() => ctlRef.current?.endUtterance(), [])
   const recycle = useCallback(() => ctlRef.current?.recycle(), [])
   const stopSpeaking = useCallback(() => ctlRef.current?.stopSpeaking(), [])
+  /** 系统抢占出口（G-07）：停播 + 放弃收音 / 续问窗；Provider 把它装进 bindSystemStop */
+  const systemInterrupt = useCallback(() => ctlRef.current?.systemInterrupt(), [])
   const pause = useCallback(() => {
     pausedRef.current = true
     void ctlRef.current?.disable().catch(() => {})
   }, [])
-  return { fsm, orb, partial, availability, error, errorKind, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, pause, echoAt }
+  return { fsm, orb, partial, availability, error, errorKind, bargeInDisabled, pipelineDegraded, wake, endUtterance, recycle, stopSpeaking, systemInterrupt, pause, echoAt }
 }

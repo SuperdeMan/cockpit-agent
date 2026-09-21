@@ -16,7 +16,9 @@
 //     不装、不崩、`audioRouteInstalled()` 如实为 false；
 //  ⑦ 出声才持焦点（2026-09-20 D-09 真机：启动时持 GAIN 一次 ⇒ 打开 App 停掉用户的音乐，且第一次永久 LOSS 之后
 //     再没有任何回调）：装载时不请求；播放通道活着才请求 gainTransientMayDuck；段间空隙不放；全部收尾过宽限才放；
-//     再起播再请求。
+//     再起播再请求；
+//  ⑧ 收音期也持（2026-09-21 G-07）：上行采集事实（PTT / 免唤醒 LISTENING 的 asrUploading、S2S 的 s2sUploading）与
+//     免唤醒热窗（useHandsFree 报的 LISTENING / FOLLOWUP）都是持焦点的理由；多条理由只请求一次、全部撤销过宽限才放。
 // 外加一条源码级接线断言：AssistantProvider 真的用 stopPlayback 那一份去装配（「加了通道没接消费方 = 没做」）。
 import fs from 'node:fs'
 import path from 'node:path'
@@ -189,7 +191,7 @@ test('⑦ 出声才持焦点：装载不请求、播放通道活着才请求、�
     facts.setAudioPlaybackFact(main, true, 'live') // 会话开着、首片还没到——这时就要持住（首片起播前被抢也要能收到）
     expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
     expect(mod.audioFocusHeld()).toBe(true)
-    expect(mod.audioFocusLog().at(-1)).toMatchObject({ kind: 'focus', detail: 'request ' + mod.FOCUS_TYPE, stoppedPlayback: false })
+    expect(mod.audioFocusLog().at(-1)).toMatchObject({ kind: 'focus', detail: 'request ' + mod.FOCUS_TYPE + ' playback', stoppedPlayback: false })
 
     facts.setAudioPlaybackFact(main, true) // 出声：不重复请求
     facts.setAudioPlaybackFact(main, false) // 段间：playing 落、live 还在 ⇒ 不放
@@ -220,11 +222,46 @@ test('⑦ 出声才持焦点：装载不请求、播放通道活着才请求、�
   }
 })
 
-test('接线：AssistantProvider 用 stopPlayback 那一份装配系统停播出口，并先在轨迹上记 system_stop', () => {
+test('⑧ 收音期也持焦点：上行采集事实与免唤醒热窗各是一条理由；多条理由只请求一次、全撤过宽限才放', () => {
+  jest.useFakeTimers()
+  try {
+    const { fake, mod } = load()
+    const capture = require('@/core/voice/captureFacts')
+    const asr = {}
+    capture.setAudioCaptureFact('asrUploading', asr, true) // PTT / 免唤醒 LISTENING 真的在上行
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+    expect(mod.audioFocusHoldReasons()).toEqual(['capture'])
+    mod.setFocusHold('handsfree-hot', true) // 同时进了热窗：不再请求第二次
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+    capture.setAudioCaptureFact('asrUploading', asr, false) // 定稿了、上行停了，但续问窗还开着 ⇒ 不放
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE])
+    expect(mod.audioFocusHeld()).toBe(true)
+    mod.setFocusHold('handsfree-hot', false) // 窗关了 ⇒ 过宽限放
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE, false])
+    expect(mod.audioFocusHoldReasons()).toEqual([])
+
+    const s2s = {}
+    capture.setAudioCaptureFact('s2sUploading', s2s, true) // S2S 上行同样算
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE, false, mod.FOCUS_TYPE])
+    capture.setAudioCaptureFact('s2sUploading', s2s, false)
+    jest.advanceTimersByTime(mod.FOCUS_RELEASE_GRACE_MS + 10)
+    expect(fake.focusCalls).toEqual([mod.FOCUS_TYPE, false, mod.FOCUS_TYPE, false])
+  } finally {
+    jest.useRealTimers()
+  }
+})
+
+test('接线：AssistantProvider 用 stopPlayback 那一份装配系统停播出口（免唤醒那一步是 systemInterrupt）、先在轨迹上记 system_stop、PTT 一并取消', () => {
   const src = fs.readFileSync(path.join(__dirname, '../src/features/assistant/AssistantProvider.tsx'), 'utf8')
   expect(src).toMatch(
-    /bindSystemStop\(\(reason\) => \{\s*presenceTrail\.mark\('system_stop:' \+ reason\)\s*stopPlayback\(\{ handsFree: \{ stopSpeaking: hfStopSpeaking \}, speech: speechController\(\) \}\)/,
+    /bindSystemStop\(\(reason\) => \{\s*presenceTrail\.mark\('system_stop:' \+ reason\)\s*stopPlayback\(\{ handsFree: \{ stopSpeaking: hfSystemInterrupt \}, speech: speechController\(\) \}\)\s*pttCancel\(\)/,
   )
+  expect(src).toMatch(/const hfSystemInterrupt = hf\.systemInterrupt/)
   // 装配挂在 effect 上（有解除），而不是渲染期直接调
   expect(src).toMatch(/useEffect\(\(\) => bindSystemStop\(/)
+  // useHandsFree 按 FSM 报热窗
+  const hook = fs.readFileSync(path.join(__dirname, '../src/features/chat/useHandsFree.ts'), 'utf8')
+  expect(hook).toMatch(/setFocusHold\('handsfree-hot', f === 'LISTENING' \|\| f === 'FOLLOWUP'\)/)
 })

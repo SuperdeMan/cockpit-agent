@@ -263,3 +263,84 @@ test('合成出口：免唤醒缺席时主链照停（stopSpeaking 是 no-op）'
   stopPlayback({ handsFree: { stopSpeaking: () => {} }, speech: { stop } })
   expect(stop).toHaveBeenCalledTimes(1)
 })
+
+// ── G-07 systemInterrupt（2026-09-21）：来电 / 闹钟 / 抢焦点 = 停播 **+ 放弃收音与续问窗** ──────
+test('G-07 系统抢占在 LISTENING：ASR 取消（不定稿、不发）、FSM 回 ARMED；迟到的定稿被忽略', async () => {
+  const onSend = jest.fn()
+  const ctl = makeCtl({ onSend })
+  await ctl.enable()
+  kws.cb.onKeyword('小舟小舟')
+  vad.cb.onSpeechStart()
+  expect(ctl.state).toBe('LISTENING')
+  expect(asrLog).toEqual(['start'])
+
+  ctl.systemInterrupt()
+
+  expect(ctl.state).toBe('ARMED')
+  expect(asrLog).toEqual(['start', 'cancel']) // cancel，不是 stop（stop = 请定稿）
+  // 旧一轮的端点 / 定稿迟到：不上云、不改态
+  vad.cb.onSpeechEnd()
+  FakeAsr.last!.cb.onFinal('导航到机场')
+  expect(onSend).not.toHaveBeenCalled()
+  expect(ctl.state).toBe('ARMED')
+  // 麦是会话级的：不关（ARMED 继续喂 KWS），显式唤醒照常
+  expect(recStarts.stops).toBe(0)
+  kws.cb.onKeyword('小舟小舟')
+  expect(ctl.state).toBe('LISTENING')
+})
+
+test('G-07 系统抢占在 FOLLOWUP：续问窗关掉回 ARMED，之后环境说话不再被收走', async () => {
+  const ctl = makeCtl()
+  await toSpeaking(ctl)
+  ctl.ttsEnd()
+  expect(ctl.state).toBe('FOLLOWUP')
+
+  ctl.systemInterrupt()
+
+  expect(ctl.state).toBe('ARMED')
+  vad.cb.onSpeechStart()
+  expect(ctl.state).toBe('ARMED')
+  expect(asrLog.filter((x) => x === 'start')).toHaveLength(1)
+})
+
+test('G-07 系统抢占在 SPEAKING：与 stopSpeaking 同（停声一次、ARMED、不进 FOLLOWUP）', async () => {
+  const stopTts = jest.fn()
+  const ctl = makeCtl({ onStopTts: stopTts })
+  await toSpeaking(ctl)
+  ctl.systemInterrupt()
+  expect(stopTts).toHaveBeenCalledTimes(1)
+  expect(ctl.state).toBe('ARMED')
+  ctl.ttsEnd()
+  ctl.turnEnded()
+  expect(ctl.state).toBe('ARMED')
+})
+
+test('G-07 S2S 收音中被系统抢占：停采集（collecting 落）+ 上行 cancel_turn，FSM 回 ARMED', async () => {
+  ;(globalThis as { WebSocket: unknown }).WebSocket = CaptureWs
+  CaptureWs.all = []
+  const { getAudioCaptureSnapshot } = require('@/core/voice/captureFacts')
+  const ctl = makeCtl({ getVoicePipeline: () => 's2s' })
+  await ctl.enable()
+  const ws = CaptureWs.all.at(-1)!
+  ws.open()
+  ctl.wakeManually()
+  expect(ctl.state).toBe('LISTENING')
+  for (let i = 0; i < 40; i += 1) vad.onWindow?.(new Float32Array(512)) // 攒够一个分片真的上行了，采集事实才为真（事实来自 send，不来自状态）
+  expect(getAudioCaptureSnapshot().s2sUploading).toBe(true)
+  const before = ws.sent.length
+
+  ctl.systemInterrupt()
+
+  expect(ctl.state).toBe('ARMED')
+  expect(getAudioCaptureSnapshot().s2sUploading).toBe(false)
+  const frames = ws.sent.slice(before).filter((f): f is string => typeof f === 'string').map((f) => JSON.parse(f).type)
+  expect(frames).toContain('cancel_turn')
+})
+
+test('G-07 免唤醒没开时 systemInterrupt 是 no-op', () => {
+  const stopTts = jest.fn()
+  const ctl = makeCtl({ onStopTts: stopTts })
+  ctl.systemInterrupt()
+  expect(stopTts).not.toHaveBeenCalled()
+  expect(ctl.state).toBe('IDLE')
+})

@@ -38,9 +38,17 @@
 // ⇒ 改成**出声才持焦点**：任一路播放通道活着（`audioPlaybackLive`：会话开着 / 播放器建好 / 在出声）就请求
 // GAIN_TRANSIENT_MAY_DUCK（别人的音乐压低、不停），全部收尾后过 FOCUS_RELEASE_GRACE_MS 放掉（分段播报的
 // 段间不抖动、音乐回到原音量）；每次起播都重新请求，永久 LOSS 之后下一次出声检测又活了。不出声的时候不持焦点：
-// 那时来电 / 闹钟本来也没有播放可停（LISTENING 期的采集策略是另一件事，remediation D-08）。
+// 那时来电 / 闹钟本来也没有播放可停。
+//
+// 2026-09-21（G-07，用户裁决「都做」）：**收音期也持焦点**。真机读数：LISTENING 期不持焦点 ⇒ 来电 / 闹钟零回调、麦照开、
+// ASR 照传、铃声灌进麦把端点拖到铃停；FOLLOWUP 的 8s 免唤醒窗在来电时开着等于隐式采集。⇒ 持焦点的理由有三种，
+// 任一成立就持：播放通道活着（playbackFacts）、上行采集中（captureFacts 的 asrUploading / s2sUploading：PTT 与
+// 免唤醒 LISTENING 都算）、免唤醒热窗（useHandsFree 按 FSM 报的 LISTENING / FOLLOWUP：FOLLOWUP 的空窗里 ASR 还没开，
+// 单看采集事实会漏掉它）。收音期持 GAIN_TRANSIENT_MAY_DUCK 的顺带收益：别人的音乐在我们听的时候压低，ASR 听得清。
+// 中断到了走同一个 systemStop 出口——Provider 装配的那份会把回路的收音 / 续问窗一起放弃（voiceLoop.systemInterrupt）。
 import AudioRouteNative from '../../../modules/audioroute'
 
+import { getAudioCaptureSnapshot, subscribeAudioCapture } from './captureFacts'
 import { audioPlaybackLive, subscribeAudioPlayback } from './playbackFacts'
 import { speechController } from './speech'
 
@@ -55,6 +63,10 @@ let audioManager: { observeAudioInterruptions(param: string | boolean): void } |
 let focusHeld = false
 let releaseTimer: ReturnType<typeof setTimeout> | null = null
 let playbackUnsub: (() => void) | null = null
+let captureUnsub: (() => void) | null = null
+/** 持焦点的理由（G-07）：任一在场就持。'playback' / 'capture' 由两份事实自动喂，'handsfree-hot' 由 useHandsFree 按 FSM 报 */
+export type FocusHoldReason = 'playback' | 'capture' | 'handsfree-hot'
+const holdReasons = new Set<FocusHoldReason>()
 /** becoming-noisy 原生接收装上了没有（Android；旧 APK / iOS 上是 false，拔耳机那一维走不到） */
 let routeInstalled = false
 let routeSub: { remove(): void } | null = null
@@ -141,11 +153,16 @@ export function audioFocusHeld(): boolean {
   return focusHeld
 }
 
-/** 出声才持焦点（头注最后一段）：播放事实翻转就同步一次。请求同步、放掉带宽限。 */
-function syncFocusToPlayback(): void {
+/** 此刻持焦点的理由（取证读数；空 = 不该持） */
+export function audioFocusHoldReasons(): readonly FocusHoldReason[] {
+  return [...holdReasons]
+}
+
+/** 出声 / 收音才持焦点（头注最后两段）：理由集合翻转就同步一次。请求同步、放掉带宽限。 */
+function syncFocus(): void {
   const am = audioManager
   if (!am) return
-  if (audioPlaybackLive()) {
+  if (holdReasons.size > 0) {
     if (releaseTimer) {
       clearTimeout(releaseTimer)
       releaseTimer = null
@@ -154,7 +171,7 @@ function syncFocusToPlayback(): void {
     try {
       am.observeAudioInterruptions(FOCUS_TYPE)
       focusHeld = true
-      record({ kind: 'focus', detail: 'request ' + FOCUS_TYPE, stoppedPlayback: false })
+      record({ kind: 'focus', detail: 'request ' + FOCUS_TYPE + ' ' + [...holdReasons].join('+'), stoppedPlayback: false })
     } catch {
       focusHeld = false
     }
@@ -163,7 +180,7 @@ function syncFocusToPlayback(): void {
   if (!focusHeld || releaseTimer) return
   releaseTimer = setTimeout(() => {
     releaseTimer = null
-    if (audioPlaybackLive()) return
+    if (holdReasons.size > 0) return
     try {
       am.observeAudioInterruptions(false)
     } catch {
@@ -172,6 +189,29 @@ function syncFocusToPlayback(): void {
     focusHeld = false
     record({ kind: 'focus', detail: 'abandon', stoppedPlayback: false })
   }, FOCUS_RELEASE_GRACE_MS)
+}
+
+/** 登记 / 撤销一条持焦点的理由。'playback' / 'capture' 由事实订阅自动维护；'handsfree-hot' 由 useHandsFree 报。 */
+export function setFocusHold(reason: FocusHoldReason, active: boolean): void {
+  const had = holdReasons.has(reason)
+  if (had === active) return
+  if (active) holdReasons.add(reason)
+  else holdReasons.delete(reason)
+  syncFocus()
+}
+
+function syncFromFacts(): void {
+  const c = getAudioCaptureSnapshot()
+  // 两条一起改再同步一次：先算再登记，避免中间态各请求一次
+  const wantPlayback = audioPlaybackLive()
+  const wantCapture = c.asrUploading || c.s2sUploading
+  const changed = (wantPlayback !== holdReasons.has('playback')) || (wantCapture !== holdReasons.has('capture'))
+  if (!changed) return
+  if (wantPlayback) holdReasons.add('playback')
+  else holdReasons.delete('playback')
+  if (wantCapture) holdReasons.add('capture')
+  else holdReasons.delete('capture')
+  syncFocus()
 }
 
 /** becoming-noisy（拔耳机 / 蓝牙断开）的原生接收装上了没有。false ⇒ 「耳机断开」那一维在这个 APK 上不会到。 */
@@ -209,7 +249,7 @@ export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void
   if (installed) return
   try {
     const { AudioManager } = require('react-native-audio-api')
-    // 不在这里请求焦点（头注最后一段）：焦点跟播放事实走，见 syncFocusToPlayback
+    // 不在这里请求焦点（头注最后两段）：焦点跟播放 / 采集事实与免唤醒热窗走，见 syncFocus
     AudioManager.addSystemEventListener('interruption', (e: any) => {
       const began = e?.type === 'began'
       const via = began ? stopForSystem('interruption') : undefined
@@ -236,8 +276,9 @@ export function installAudioFocusHandlers(onEvent?: (e: AudioFocusEvent) => void
     })
     installed = true
     audioManager = AudioManager
-    playbackUnsub = subscribeAudioPlayback(syncFocusToPlayback)
-    syncFocusToPlayback()
+    playbackUnsub = subscribeAudioPlayback(syncFromFacts)
+    captureUnsub = subscribeAudioCapture(syncFromFacts)
+    syncFromFacts()
   } catch {
     // 原生模块不在（jest / 未装新 dev-client）：不装监听也不该拦住 App 启动
     installed = false
@@ -252,10 +293,13 @@ export function resetAudioFocusForTest(): void {
   routeInstalled = false
   playbackUnsub?.()
   playbackUnsub = null
+  captureUnsub?.()
+  captureUnsub = null
   if (releaseTimer) clearTimeout(releaseTimer)
   releaseTimer = null
   audioManager = null
   focusHeld = false
+  holdReasons.clear()
   log.length = 0
   watchers.clear()
   systemStop = defaultStop
