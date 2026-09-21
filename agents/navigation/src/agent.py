@@ -576,7 +576,11 @@ class NavigationAgent(BaseAgent):
                                  "traffic_lookup": "route"})
 
     async def _road_name_traffic(self, road: str, ctx, meta) -> AgentResult:
-        """按路名查态势：城市取当前位置的逆地理编码（adcode 优先）；没有位置就说没法定城市，不猜。"""
+        """按路名查态势：城市取当前位置的逆地理编码——**城市名优先**，adcode 只兜底。
+
+        真栈 RS12 第一趟（`3f9b18e4`）：高德 `/v3/traffic/status/road` 对 `city=440305` / `440300` 一律
+        `UNKNOWN_ERROR 20003`，只认「深圳市」这样的名称（文档写两者皆可，实测不是）。没有位置就说没法定城市，不猜。
+        """
         here = await self._current_position(ctx, meta)
         if here is None:
             return AgentResult(
@@ -584,7 +588,7 @@ class NavigationAgent(BaseAgent):
                 data={"traffic_lookup": "no_position", "road": road})
         try:
             regeo = await self.poi.reverse_geocode(here.lng, here.lat, meta=meta)
-            city = (getattr(regeo, "adcode", "") or getattr(regeo, "city", "") or "").strip()
+            city = (getattr(regeo, "city", "") or getattr(regeo, "adcode", "") or "").strip()
             if not city:
                 raise ProviderError("reverse geocode gave no city")
             status = await self.poi.road_traffic(road, city, meta=meta)

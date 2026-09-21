@@ -2880,7 +2880,8 @@ W07 任务帧是历史之外的第二条指代通道（闲聊不顶帧）；代�
 「为您找到 0 个X 路况，推荐前三个：。需要导航过去吗？」——名字存在能力不可达。现在：road_safety 把 `route` 槽（空则看原话）归一成
 destination（「去 X 的路况」/ 裸地名）/ road（路 / 大道 / 高速 / 大桥… 结尾或 G4 编号，无「去 / 到」前缀）/ active（「路上 / 前面 / 高速」
 或空 ⇒ `meta.focus_active_route`），调 navigation **内部意图** `navigation.route_traffic`：路名 ⇒ 高德 `/v3/traffic/status/road`（城市取
-当前位置 regeo 的 `adcode`，`GeoPoint` 新增 `city` / `adcode`）；目的地 / 活动路线 ⇒ `get_route(with_polyline=True)` 新聚合的逐段 tmcs
+当前位置 regeo 的**城市名**，adcode 只兜底——真栈 RS12 首趟：该接口对 `440305` / `440300` 一律 `UNKNOWN_ERROR 20003`，文档说的「名称或 adcode」
+实测只认名称；`GeoPoint` 新增 `city` / `adcode`）；目的地 / 活动路线 ⇒ `get_route(with_polyline=True)` 新聚合的逐段 tmcs
 `traffic`（畅通 / 缓行 / 拥堵 / 严重拥堵各多少公里；无 tmcs ⇒ 没有 `traffic` 键，不编）。road_safety 转发话术 + 卡，拥堵 + 严重拥堵 ≥ 1 km
 补一句安全提示。**内部意图 = handle() 认、manifest 不声明、planner 不可见、只供 AgentClient 调用**——进 manifest 就是在 planner 面前
 摆两个等价工具掷硬币；`POIProvider.road_traffic` 非抽象、缺省抛 ProviderError（没有就是没有，不给 mock 数）。诚实降级三条：

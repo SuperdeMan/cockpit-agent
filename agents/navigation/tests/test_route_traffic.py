@@ -144,7 +144,7 @@ def test_road_name_uses_the_current_city_from_reverse_geocode():
     res = _traffic(agent, {"road": "深南大道"}, "深南大道路况")
     assert res.status == "ok" and not res.actions
     assert calls["regeo"] == [(113.9412, 22.541)]
-    assert calls["road"] == [("深南大道", "440305")], "adcode 优先于城市名"
+    assert calls["road"] == [("深南大道", "深圳市")], "城市名优先（真栈：态势接口对 adcode 一律 20003）"
     assert res.speech.startswith("深南大道目前整体畅通") and "畅通路段约占88.5%" in res.speech
     assert res.data["traffic_source"] == "road_status" and res.data["status"] == 1
 

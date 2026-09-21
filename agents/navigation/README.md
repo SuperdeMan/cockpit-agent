@@ -13,7 +13,7 @@
 | `navigation.reverse_geocode` | 坐标→地址 | lng/lat |
 | `navigation.locate` | 「我在哪」：当前位置逆地理 | — |
 | `navigation.poi_detail` | POI 详情 | poi_id |
-| `navigation.route_traffic`（**内部意图，不进 manifest**） | 实时路况，只供 road-safety 的 `safety.road_condition` 经 AgentClient 调用（批 7 ②，2026-09-21）：`road` ⇒ 高德路名态势（城市取当前位置逆地理的 adcode）；`destination` ⇒ 当前位置到该地一路的逐段 tmcs 聚合（畅通 / 缓行 / 拥堵 / 严重拥堵各多少公里，`get_route(with_polyline=True)` 的 `traffic`）；两者皆无 ⇒ `meta.focus_active_route` 活动路线。**永不导航**；tmcs 缺席说「实时拥堵数据这会儿拿不到」、无位置说拿不到位置、provider 失败说查不到——不编。不进 manifest 是因为进了就是在 planner 面前摆两个等价工具（与 `safety.road_condition` 掷硬币） | road / destination / origin |
+| `navigation.route_traffic`（**内部意图，不进 manifest**） | 实时路况，只供 road-safety 的 `safety.road_condition` 经 AgentClient 调用（批 7 ②，2026-09-21）：`road` ⇒ 高德路名态势（城市取当前位置逆地理的**城市名**；adcode 只兜底，该接口实测不认 adcode）；`destination` ⇒ 当前位置到该地一路的逐段 tmcs 聚合（畅通 / 缓行 / 拥堵 / 严重拥堵各多少公里，`get_route(with_polyline=True)` 的 `traffic`）；两者皆无 ⇒ `meta.focus_active_route` 活动路线。**永不导航**；tmcs 缺席说「实时拥堵数据这会儿拿不到」、无位置说拿不到位置、provider 失败说查不到——不编。不进 manifest 是因为进了就是在 planner 面前摆两个等价工具（与 `safety.road_condition` 掷硬币） | road / destination / origin |
 
 ## 结构
 ```
