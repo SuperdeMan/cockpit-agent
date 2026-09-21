@@ -9483,3 +9483,8 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   可用 31.9 → 55.1 GB；③④ 未做。`eb55e502` 随后部署（无缓存全量重建约 75 min；status ok 5/5、verify `20260921T051142Z-eb55e50.json`），
   真栈复验 g05「它有几档」→ `manual.query` 零动作（修前执行 `seat.heating.on`）、g14 → 云端 chitchat 零动作（修前端侧 `media.stop`）、g29 → `manual.query`
   带「自适应巡航」（修前 `tire_pressure.query`）。生产 release 现为 `eb55e502`。
+- 2026-09-21 追加（用户裁决「缺省视窗抬到 4 对 + 授权部署真栈验证 + 清理按建议」）：`_HISTORY_EXCHANGES` 2 → 4（`eb1dd6bd`，取回 10 条，预算 1400 不动；
+  0920b 的 302 个规划轮 `history_chars` 最大 676、零裁剪）；装置加不 pin 臂。发布区间含另一会话经用户批准的 CI 改动 ⇒ 走 dev-guide 一次性 digest 批准
+  （唯一阻断类别 `ci_cd`），status ok 5/5、verify `20260921T065448Z-eb1dd6b.json`；不 pin 真栈 16 组：进规划的 10 格 `history_exchanges=4` 10/10、槽解出 8/10，
+  另 6 格最后一轮没进规划（F09 家族 / 端侧）。清理 ④：保留最近 6 份 release，删 89 份镜像集（两族 tag）+ 源码目录，镜像 2523 → 261、可用 48.5 → 59 GB；
+  ③ 那 415 个停止容器是同机 drone-agent 的，不碰。生产 release 现为 `eb1dd6bd`。

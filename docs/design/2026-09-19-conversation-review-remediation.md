@@ -580,3 +580,24 @@ release B = W19-b（RS9 / RS11 复跑：订阅句应直接落 `reminder.create` 
 g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` 执行）；g14「它在什么条件下会自动关闭」→ 云端 `chitchat.talk`、零动作、
 答对了自适应远光的关闭条件（修前端侧劫持成 `media.stop`）；g29「它最多能设几档」→ `manual.query`，槽里带「自适应巡航」（修前 `tire_pressure.query`）。
 `battery.query` 那三格（g12 / g18 / g27）不在闸的否决面上（读操作），照旧归端侧规则的下一条。
+
+**清理 ④（2026-09-21，用户「清理保留按你的建议」）**：保留最近 6 份 release（`eb1dd6bd` 当前 / `eb55e502` / `b0d79dbe` / `eb87b571` / `cc331315` / `cf1d0f96`），
+删掉其余 89 份的镜像集（`car-agent-release/<svc>:<sha>` 26 个 + 构建工程的 `car-agent-release-<sha>-<svc>:latest` 26 个，两族都要删，
+只删一族层不会释放）与 `/opt/car-agent/releases/<sha>` 源码目录；备份、evidence、运行容器一律不碰。先落 keep / delete 清单到 `/tmp/w19c-*.txt`
+并校验 current 在 keep 里；第一批 30 份用 ssh 前台循环（每份重新 `docker images` 列 2500 个镜像 ⇒ 约 1 份/分钟，客户端 560 s 超时后远端循环照跑），
+后 59 份改成 `nohup` 分离作业、列一次镜像再删（约 20 min）。结果：镜像 2523 → **261**（51.4 → 29.9 GB）、release 目录 96 → **6**、
+可用 48.5 → **59 GB**（49% 用）；运行容器 30 个不变、26 个跑在当前 tag 上。**③ 不做**：那 415 个停止容器属于同机的 drone-agent 项目
+（`drone-agent-cloud` / `drone-agent-m0`），不是本项目的。留下一个 `bf92c22d` 的残缺构建工程（4 个 latest tag，非 release），未动。
+
+#### 8.2.3 缺省视窗 2 → 4 对（2026-09-21，用户裁决「抬到 4 对」并授权部署真栈验证）
+
+- 改的是代码缺省 `_HISTORY_EXCHANGES`（`eb1dd6bd`；compose 不透传 env、`.env.example` 是硬阻断类别，所以不走配置）：取回 10 条、渲染 4 对；
+  `_CTX_BUDGET` 1400 不动——0920b 全部 302 个云端规划轮里 `history_chars` 最大 676（p90 410）、零次 `history_trimmed`，4 对在本语料下放得进；
+  真实长回答会让 W02 从最旧整对丢起，`history_pairs_kept / dropped` 是读数。装置加 `--windows 0`（不 pin，按 span 自报的 `history_exchanges` 归档）。
+- 发布链：push `eb1dd6bd`（恰一条）→ dry-run `plan_rejected`（区间里有另一会话经用户批准的 CI 改动 `.github/workflows/mobile-apk.yml`，`5286c3ba`
+  「CI红线我批准」）→ 按 dev-guide 的一次性摘要批准流程：唯一阻断类别是 `ci_cd`、digest `671eff1d…`、`--approve-ci-cd-sha256` dry-run 零阻断 → apply
+  `submitted`（有缓存，几分钟）→ status ok 5/5 零 warning、`release_sha` = `running_release_sha` = `eb1dd6bd` → verify `verified`
+  （`20260921T065448Z-eb1dd6b.json`，`minimax:MiniMax-M3`）。
+- 真栈读数（run `0921b`，不 pin，k=2 的 16 组，新干净用户）：进了规划轮的 10 格 **`history_exchanges=4` 10/10、`pairs_kept=3` 9/10**（1 格 2：预算裁掉最旧一对）、
+  planner 槽解出 **8/10**；另 6 格最后一轮没进规划（clarify 2 / unresolved_object 2 / no_plan 1 / 端侧 `battery.query` 1）——F09 家族与端侧规则，与视窗无关。
+  合计 8/16，与 0920b 的 4 对 pin 臂 8/16 一致；g14「它在什么条件下会自动关闭」这次由 `manual.query` 解出（`eb55e502` 后端侧不再劫持成 `media.stop`）。
