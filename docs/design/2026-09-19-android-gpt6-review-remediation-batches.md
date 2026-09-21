@@ -1,6 +1,6 @@
 # GPT-6 Pro Android 评审：逐条核对 + 分批待办（2026-09-19）
 
-> 状态：**2026-09-20/21 第三批（D-08 替身 + D-09 系统音频 + G-05 首跑）已落地，见 §6.15；OPPO 常驻包 `5286c3ba5`**。**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
+> 状态：**2026-09-20/21 第三批（D-08 替身 + D-09 系统音频 + G-05 首跑 + G-07）已落地，见 §6.15；OPPO 常驻包 `b08579f6c`**。**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
 > （外部评审，基线 `0d414816`）。本页是这份评审的唯一待办入口：先按「接手别人的卡先重新证机制」逐条对着代码核，
 > 再分批推进；核不成立的条目写明为什么，不照单全收。与 [Android 剩余待办总表](2026-09-14-android-remaining-todos.md)
 > 的关系：本页只管评审新提出的事项，评审里与总表既有条目重合的建议一律指回总表，不另立卡（§4）。
@@ -304,6 +304,21 @@ dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，r
 
 原生模块注册核对（「构建成功 ≠ 注册上了」）：最终包所在镜像工作区的 `node_modules/expo/android/build/generated/expo/src/main/java/expo/modules/ExpoModulesPackageList.kt` 第 25 行 `com.xiaozhou.audioroute.AudioRouteModule::class.java`（与 foldstate / kws / platformlocation 并列），`mergeDexRelease/classes4.dex` 含 `com/xiaozhou/audioroute/AudioRouteModule`。
 
+#### G-07 落地（用户「留着的都做」，2026-09-21 晚）：收音期也持焦点，系统抢占放弃收音与续问窗；常驻包 `b08579f6c`
+
+- 一份 FSM（`hmi/src/voiceLoop.mjs`）加 `systemInterrupt()`：非 IDLE 的任何态回 ARMED——SPEAKING / THINKING 同 stopSpeaking；LISTENING / FOLLOWUP 关 ASR **不定稿、不发**（metric `system_interrupt_capture`）；ARMED / IDLE 空操作；不复位会话级插话护栏（不是 recycle）。`HandsFreeController.systemInterrupt()` = 停播 + 收音中的 S2S `cancel_turn` + FSM；`useHandsFree` 暴露它、按 FSM 向 `audioFocus` 报热窗（LISTENING / FOLLOWUP）并 `console.log('[handsfree] fsm', f)`（真机取证的免费通道，只有状态名）。
+- `audioFocus.ts` 持焦点的理由改成三条任一：播放通道活着 / 上行采集中（`captureFacts` 的 asrUploading / s2sUploading，PTT 与免唤醒都算）/ 免唤醒热窗（FOLLOWUP 空窗里 ASR 还没开，单看采集事实会漏）；多条理由只请求一次，全撤过 1s 宽限才放；`audioFocusHoldReasons()` 供取证。Provider 的系统停播出口改用 `systemInterrupt` 做免唤醒那一步（顺序不变：先免唤醒后主链），PTT 在录一并取消。
+- 单测：voiceLoop +4（hmi 342）、handsFreeStopSpeaking +5（含 S2S：采集事实来自真的 send，不来自状态——要攒够一个 3200B 分片才为真）、audioFocusSystemStop ⑧ + 接线断言；mobile jest 112 suites / 1153、tsc 0、eslint 0。提交 `ec7e0fc0`；CI 冒烟一行 `b08579f6`（下一条）。
+- 真机（prod `b08579f6c`，APK SHA-256 `f7f1c753…a23a` / 212,504,674 B，`lastUpdateTime 2026-09-21 22:35:02`，端本一致；**OPPO 常驻包**；证据目录 `GPT6J-20260921-222050-b08579f6\`）：
+
+| 格 | 结果 | 读数 |
+|---|---|---|
+| ARMED 不持焦点 | ✅ | 免唤醒开着（`AudioRecord` + `kws-decode-2` 线程在）焦点栈为空——热窗之外的常开麦只喂 KWS，不持 |
+| **LISTENING × 系统中断**（G-07 主格） | ✅ | 点球 `fsm LISTENING` 22:38:56.305 → **+4ms `requestAudioFocus req=3`**（热窗）→ 计时器 GAIN_TRANSIENT 22:38:58.835 → `-2` .839 → `system_stop:interruption` .840 → **`fsm:ARMED` .841**（半句「あと / I四个」不上云、没有 THINKING）→ abandon 22:38:59.868。第二趟（22:40:00 点球、铃 22:40:15.57）同形态：LISTENING → ARMED |
+| 主 TTS 出声中 × 系统中断（回归） | ✅ | 文字轮 22:54:26.094 发送 → +0.2s req=3 → `播报中` 22:54:34.643 → 铃 22:54:38.083 → `-2` .085 → `system_stop` .090 → 出声落 .091（**6ms**）→ abandon 22:54:39.110；免唤醒 ARMED 全程不变 |
+| 语音轮 SPEAKING / FOLLOWUP / S2S × 中断 | **仍未取** | 两趟采样的 LISTENING 转写抓到的是屋里的视频对白（「出了差池，你们知道什么后果吗」「あと」），VAD 一直判有人说话、端点 15s 内不来 ⇒ 轮次到不了 THINKING 之后的态。协议已改成「不瞄准、整轮持焦点、铃落在哪个态事后按 `[handsfree] fsm` 分类」（`probe_d09.py`），电视关掉后每个 lead 采一趟即可 |
+| 耳机断开 OS 层 | **未取** | OPPO 上零 bonded 蓝牙设备、桌上没有有线口；PC 那副 Enco Air2 与它没有配对（配对要按耳机实体键）——只能等一副能连到 OPPO 的耳机 |
+
 ### 6.11 本批未达与去向
 
 | 项 | 去向 |
@@ -316,3 +331,4 @@ dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，r
 | G-05 读数 | 首次 dispatch 在 assembleDebug 就红（工作流自 M4 起没构建过，§6.15）；垫片拆出 + CI 一行（用户批准）后第二次 dispatch 见 §6.15 末 |
 | G-06 权限分支 + E-23 | **已闭合**（§6.14，`cebd53848`） |
 | G-06 引擎成因分支真机 | **已取**（§6.15：强制加载失败替身 ⇒ 错误行 + 开关保持开 + 关开即恢复）；顺带修掉错误行里的 Expo 包装文本（`2ed312fb`） |
+| G-07 收音期持焦点 / 系统占麦事实 | **已做 `ec7e0fc0`、真机 LISTENING × 中断闭合（§6.15 G-07 落地）** |

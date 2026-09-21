@@ -9478,7 +9478,12 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   服务端零改动、不 deploy。
 - G-05 第二次 dispatch（run #35563352811）：**构建 24 分钟成功（M4 以来第一次）**，ABI 读数 = CI debug 包四个 ABI 全有（`ABI_MATCH=native`，
   评审「只打 ARM」的前提对 CI 包不成立），x86_64 镜像装包 Success；冒烟没跑到——emulator-runner 把多行 `script:` 逐行执行，`if…fi` 被拆开语法错。
-  逻辑搬进 `scripts/ci_mobile_smoke.sh`，workflow 一行调用等批准。
+  逻辑搬进 `scripts/ci_mobile_smoke.sh`，workflow 一行调用（`b08579f6`，用户「留着的都做」）⇒ 第三次 dispatch run #35611616585。
+- **G-07 当晚落地**（用户「留着的都做」）：一份 FSM 加 `systemInterrupt()`（非 IDLE 都回 ARMED，LISTENING / FOLLOWUP 关 ASR 不定稿不发）；
+  持焦点的理由 = 播放 / 上行采集 / 免唤醒热窗任一（`setFocusHold`）；Provider 的系统停播出口用它 + PTT 取消；`[handsfree] fsm` 进 logcat。
+  真机 `b08579f6c`（常驻包）：LISTENING 点球 +4ms 持焦点、铃 → `-2` → `fsm:ARMED` 2ms 内、半句不上云；主 TTS 回归 6ms 停声。
+  语音轮 SPEAKING / FOLLOWUP / S2S 仍未采到：屋里的视频对白（转写抓到「出了差池，你们知道什么后果吗」）让端点不来；
+  协议改成整轮持焦点、铃落哪态事后按 `[handsfree] fsm` 分类。耳机断开：OPPO 零 bonded 蓝牙。hmi 342、mobile 112 / 1153。
 - 2026-09-21 追加：用户批准清理 ①②——删 `incoming/releases/` 108 个上传目录（5.14 GB，保留当前 release 那个）+ `docker builder prune -af`（25.43 GB），
   可用 31.9 → 55.1 GB；③④ 未做。`eb55e502` 随后部署（无缓存全量重建约 75 min；status ok 5/5、verify `20260921T051142Z-eb55e50.json`），
   真栈复验 g05「它有几档」→ `manual.query` 零动作（修前执行 `seat.heating.on`）、g14 → 云端 chitchat 零动作（修前端侧 `media.stop`）、g29 → `manual.query`
