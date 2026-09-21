@@ -9449,3 +9449,30 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 真栈逼出的修 `eb55e502`：「它有几档」被规划成 `seat.heating.on` 并执行（trace `611a4134c32745eb`）——`question_shape` 补「几档 / 几级 / 几种 / 多少档」
   与「什么条件 / 什么情况」；两向 +7；全量 **8781 / 0 / 32**；四门禁 + smoke_edge + 架构守卫全过；已 push。**部署失败 `insufficient disk capacity`**
   （可用 29.7 GiB < 30 GiB 下限：93 份 release 目录、94 套镜像、109 个上传目录、25 GB 构建缓存）——清理候选已列（设计文档 §8.2.2），逐项待批准。
+
+## 2026-09-20/21 — GPT-6 Android 评审第三批：D-08 慢解码替身、D-09 系统音频（核出两条真缺陷）、G-05 首跑揭穿工作流从没构建过
+
+- 入口 remediation §6.15；四件事：G-05 dispatch、D-08 替身 + 真机、D-09 上机前核源码 + 真机、CI 一行（用户批准）。另一会话同期在同一 main 落 cloud 侧
+  批 5 / 批 6 的提交并把本批前四个 mobile 提交一并推走（它自己「等用户裁决」的那条也在里面）——push 前列出要重复做。
+- **G-05 首跑（run #35494521133）在 assembleDebug 2m33s 就红**：onnxruntime-react-native 的 `VersionNumber`（Gradle 9 删了），本机 2026-08-28 起就在
+  `gradle_cn_mirrors.init.gradle` 里垫着，CI 的 `./gradlew` 一个 init script 都不带 ⇒ Mobile APK 工作流自 M4 起没构建通过、「首次运行需要人盯着」从没等到首次。
+  垫片拆成 `scripts/gradle_rn_compat.init.gradle`（一份，本机 + CI 各 `-I`），CI 一行经用户批准 `5286c3ba`。
+- **D-08**：KwsModule 头注 6 两个替身（锁内不可 interrupt 的慢解码、一次性强制加载失败）+ 线程事实进 `stats()`；dev 包 `8df1d1173`：1.5s×6 每轮
+  `join(1s)` 超时进 stale、release ≈ 剩余解码（1.2s）、stuck 0 / fail 0 / 零跨代并存 / 收尾零活线程；0.3s×10 零 stale。`KWS_WORKER_STUCK` 在锁纪律下只有
+  「卡在锁外」才可达，替身造不出也不该造。G-06 引擎分支 ✅，顺带露出错误行原样带 Expo 包装文本（E-26，`nativeErrorText` 修）。
+- **D-09 上机前核源码两条**：① react-native-audio-api 0.13.3 Android 端从不发 `routeChange`（枚举有、零调用点）⇒「拔耳机停播」在 Android 上从来没成立
+  ⇒ `modules/audioroute` 透传 ACTION_AUDIO_BECOMING_NOISY（E-24）；② 库启动时 `requestAudioFocus(GAIN)` 一次永久持有 ⇒ 打开 App 就停掉用户的音乐，且
+  被别的媒体 App 永久抢走后条目移出焦点栈、**之后来电 / 闹钟零回调**（真机：视频播放器抢走后计时器响铃 0 次回调）⇒ 出声才持 `gainTransientMayDuck`、
+  收尾 1s 后放、每次起播重请求（E-25）。Provider 的系统停播出口先在轨迹打 `system_stop:<reason>`。
+- **D-09 真机**（`e7a836383` / 常驻包 `5286c3ba5`）：冷启动焦点栈空；9 轮「定稿那一刻 req=3、播完 +1.0–1.3s abandon」；我们出声时 heytap.music
+  `LOSS_TRANSIENT_CAN_DUCK`；主 TTS 出声中 × 计时器：`-2` 后 **2ms 停声**、`system_stop:interruption`、不进 FOLLOWUP、App 不切后台、1s 后放焦点；
+  THINKING（TTS live）× 中断 ×3 同一进程 ⇒ 检测一直活着；LISTENING 期不持焦点 ⇒ 零回调、铃声进麦拖端点 ⇒ G-07 立卡（收音期持 MAY_DUCK：压低音乐
+  + 收得到来电回调 + 系统占麦事实，产品裁决）；永久 LOSS 源到前台 ⇒ 前后台闸 0.4s 内释放麦。**未取**：语音轮 SPEAKING / FOLLOWUP / S2S × 中断
+  （定稿 tap+7…10s、首片再 +2.5…6s 的抖动，屋里电视在放、ASR 被搅乱、预约的铃三次落在 THINKING）、耳机断开 OS 层（无硬件）。
+- 装置账（这批一半时间花在这）：`dumpsys audio` 持锁，0.4s 轮询把 `AudioRecord.start` 回调饿到 37s ⇒ `ps -T` 看 `AudioRecord / AudioTrack / kws-decode-N`
+  线程、焦点时刻读 logcat `MediaFocusControl`（我们 req=3 / 计时器 req=2 / abandon 都有毫秒戳）；路由切换后 `uiautomator dump` 挂 25–30s；20 条在场轨迹
+  一次导航塞 4–5 条，先读再撤销；`am start SET_TIMER` 闪一下 Activity ⇒ 只能预约；ColorOS 计时器 App 在用时是 heads-up、闲置时全屏；heytap.music
+  暂停 / STOP 都不放焦点；电脑主音量是 0% 静音时「PC 喇叭喂麦」全是幻觉；logcat 主缓冲 256KiB 只能流式捕获；`choose_pill` 的 selected 在父节点。
+- 读数：mobile jest 111 suites / 1145（+ nativeErrorText 2）、tsc 0、eslint 0；变异「启动时再请求焦点」判红；`:audioroute` / `:kws` Kotlin 编译过、
+  最终包零 KwsModule 告警。提交 `59088760` → `8df1d117` → `6faa3c75` → `e7a83638`（另一会话推走，CI 8/8）→ `2ed312fb` → `5286c3ba`。
+  服务端零改动、不 deploy。

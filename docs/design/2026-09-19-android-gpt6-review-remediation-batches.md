@@ -1,6 +1,6 @@
 # GPT-6 Pro Android 评审：逐条核对 + 分批待办（2026-09-19）
 
-> 状态：**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
+> 状态：**2026-09-20/21 第三批（D-08 替身 + D-09 系统音频 + G-05 首跑）已落地，见 §6.15；OPPO 常驻包 `5286c3ba5`**。**2026-09-19 立卡 + 第一批 / 第二批同日实施、提交、推送、装机完毕**：七条各一个 commit `6931968f`(F01) → `18b83d5c`(F02) → `bc7e07c3`(F03) → `4a7bf2ae`(F04) → `48cabf14`(F05) → `abcc0ab7`(F06) → `15fb4c0a`(F07) + docs `0a6a19e6`，用户授权后 push `2f3c574d..0a6a19e6`（CI 8/8 绿）；clean 树候选包 `0a6a19e68` 已装 OPPO 测试机为常驻包，真机取证见 §6.9。服务端**未 deploy**（本批零 Python 改动；`hmi/src/ws.mjs` 的 F06 在云端 HMI 上要等下一次 deploy 才生效）。原文见 [评审原文](../reviews/2026-09-19-android-gpt6-pro-review.md)
 > （外部评审，基线 `0d414816`）。本页是这份评审的唯一待办入口：先按「接手别人的卡先重新证机制」逐条对着代码核，
 > 再分批推进；核不成立的条目写明为什么，不照单全收。与 [Android 剩余待办总表](2026-09-14-android-remaining-todos.md)
 > 的关系：本页只管评审新提出的事项，评审里与总表既有条目重合的建议一律指回总表，不另立卡（§4）。
@@ -226,15 +226,81 @@ FlashList 只渲染可见项，`bubble-text` 节点数不能当「新消息到�
 本会话把「逐条列出」和 `git push` 写在同一条命令里，没有停下来让用户看就推了出去。两条各自带测试、CI 会跑，内容无破坏性，但违反 AGENTS §3.2「push 前逐条展示」的本意。
 教训：**列出与推送必须是两个动作**，中间要有人看；ahead 里出现陌生提交先 `git show --stat`，再决定。
 
+### 6.15 2026-09-20 第三批推进：D-08 替身 + D-09 系统音频 + G-05 首跑（用户「都授权」，同一工作树另有会话在提 cloud 侧改动）
+
+先把余项对表：ws.mjs F06 的云端 deploy 已随后续 release 带上生产（`abcc0ab7` ⊂ 会话起点的生产 release `485fccd1`，只记账不另发）；G-02 / G-03 按设计仍延后（接真实导航 / 真车前）；本节推进 G-05、D-08、D-09 三项。
+
+#### G-05 首跑：Mobile APK 工作流自 M4 起就没构建通过
+
+dispatch `mobile-apk.yml`（`variant=dev`、`run_e2e=true`，main `8e403d5c`，run #35494521133）：`debug-apk` 在 **Gradle assembleDebug 2m33s 失败**，`e2e-smoke` skipped ⇒ ABI / 安装 / .so 三个读数一个都没到。
+失败原文 `onnxruntime-react-native/android/build.gradle:250 > Could not get unknown property 'VersionNumber'`（连带 `:expo` 的 SoftwareComponent 'release' not found 级联）——**正是本机 2026-08-28 就绕过的那条**：`org.gradle.util.VersionNumber` 在 Gradle 9 删除，垫片（`RnVersionNumber` 经 `gradle.beforeProject` 注入）住在 `scripts/gradle_cn_mirrors.init.gradle`，只有 `build_mobile.ps1` 会 `-I` 它；CI 的 `./gradlew assembleDebug` 什么 init script 都不带 ⇒ onnxruntime 进仓后这条 job 从来没跑通过，工作流头注那句「首次运行需要人盯着」一直没等到首次运行。
+处置：垫片拆成独立的 `scripts/gradle_rn_compat.init.gradle`（只有垫片，不含镜像与 Windows bash 路径；本机 `build_mobile.ps1` 已改为同时 `-I` 它，`e7a83638`），CI 那一行 `-I ../../scripts/gradle_rn_compat.init.gradle` 是 CI/CD 改动，用户 09-21 批准后提 `5286c3ba`；push 后第二次 dispatch 的读数见本节末「G-05 第二次 dispatch」。
+
+#### D-08：慢解码 / 强制失败替身（`59088760`）
+
+评审 F07 的验收原文「用可控的慢解码 / 阻塞替身覆盖加载、释放、重复启停，不能只靠 JS 单测签收」——真机上没有不改代码就能造出的慢 JNI 与引擎失败，所以 KwsModule 头注 6 加两个替身，只由 dev 变体的 voice-spike 触发（JS 变体闸；缺省 0 / false，生产路径一行不走）：
+`setDebugDecodeDelayMs(ms)`（解码线程在**锁内**、真解码之后再多占 ms，不可被 interrupt 缩短——与卡在 JNI 里的那次调用同形态）、`setDebugFailNextLoad(true)`（下一次 load 在建 spotter 前抛 `KWS_DEBUG_LOAD_FAILED`，一次性）。
+`stats()` 暴露线程事实 `running / workerAlive / staleAlive / workersStarted / staleEvents / stuckRefusals / decodeFailures / lastDecodeMs`——「至多一条活线程」只能由这些数字证明。voice-spike 加「kws 压力 1.5s ×6」「kws 压力 0.3s ×10」（load → 灌 1s 模型自带测试音频 → 解码在飞时 release，三个采样点读 stats，末行给结论）与「kws 下次加载失败」。
+源码级预期（写在取证前，真机来对）：1.5s 档每轮 release 都撞上在飞解码 ⇒ `join(1s)` 超时、`staleEvents` 每轮 +1、release 耗时 ≈ 剩余解码时间（release 随后在锁上等它出来）；旧线程出锁后立刻退出，下一次 load 的 200ms 宽限内已死 ⇒ `stuckRefusals` 0——**`KWS_WORKER_STUCK` 在锁纪律下只有「线程卡在锁外」才可达**，这条替身造不出来，也不该造（那是另一种缺陷的替身）。0.3s 档不超时、`staleEvents` 不变。两档 `decodeFailures` 都必须为 0、任何采样点 `workerAlive ∧ staleAlive` 不同时为真。
+
+#### D-09：系统音频五维 × 四态——取证前核源码、上机前先量事件源
+
+核源码两条（都在 F02 家族，评审的验收表要求「焦点丢失 / 耳机断开 / 系统中断」三种事件）：
+1. **Android 上库的 `routeChange` 是死监听**：react-native-audio-api 0.13.3 的 Android 端只有 `AudioFocusListener`（焦点变化 ⇒ interruption / duck），`AudioEvent.ROUTE_CHANGE` 只在枚举里、没有调用点（iOS 才从 AVAudioSession 拿）。M2-4 那条「OldDeviceUnavailable ⇒ 停播，拔了耳机不能把私密内容外放」在 Android 上从写下那天起就没成立过——评审的「耳机断开」列根本没有事件源。修：`modules/audioroute`（本地 Expo 模块，只在 JS 订阅期间注册 `ACTION_AUDIO_BECOMING_NOISY`，33+ 用 RECEIVER_NOT_EXPORTED，系统广播照到；`stats()` 报 registered / count / lastAt），`audioFocus.ts` 独立于库的安装订阅它、按 OldDeviceUnavailable 同一条处置走统一出口、日志 `routeChange · OldDeviceUnavailable becomingNoisy#n`；原生缺席（旧 APK / iOS）行为与之前逐字相同（`8df1d117`）。
+2. **焦点在启动时请求一次然后永久持有**：库的 `observeAudioInterruptions(true)` = 启动时 `requestAudioFocus(GAIN)` 一次。真机（OPPO，常驻包 `cebd53848`）两条读数：① 计时器（`com.coloros.alarmclock` GAIN_TRANSIENT）响铃时我们的条目 `loss: LOSS_TRANSIENT`，回调到了；② `com.coloros.video` 播一段音（GAIN）⇒ 我们收到 `onAudioFocusChange(-1)`（14:52:33）、**条目被移出焦点栈**，之后再响计时器 ⇒ **App 收到 0 次回调**。也就是说来电 / 闹钟检测只活到第一次被别的媒体 App 永久抢走为止；而 GAIN 对别的持有者是永久 LOSS ⇒ **打开 App 就把用户正在放的音乐停掉**。修：焦点跟播放事实走（`playbackFacts.audioPlaybackLive`）——任一路播放通道活着就请求 `gainTransientMayDuck`（别人的音乐压低不停；首片到达前就持住，缓冲期被抢也看得见），全部收尾后过 1000ms 宽限再放（段间不抖），每次起播重新请求 ⇒ 永久 LOSS 之后下一次出声检测又活了；不出声不持焦点（`6faa3c75`）。日志加 `focus · request / abandon`，`audioFocusHeld()` 进 voice-spike 状态行。
+3. 取证通道：`AssistantProvider` 装配的系统停播出口先在在场轨迹上打 `system_stop:<reason>` 再停——生产包只读的轨迹页就能分辨「这次是系统停的」还是用户按的停止键（`8df1d117`）。
+
+事件源的真机装置（`cebd53848` 上验过）：「系统中断」= `SET_TIMER` 1s（GAIN_TRANSIENT，**同时**全屏 `TimerAlertFullScreen` 把 App 压到后台——与来电响铃的 heads-up 形态不同，那个没有 SIM 造不出）；「焦点丢失」= 后台的 `com.coloros.video` 会话按 `KEYCODE_MEDIA_PLAY` 续播（GAIN，App 留在前台，纯焦点丢失）；「耳机断开」= 这张桌上没有有线口也没有可远程连的蓝牙音频，OS 事件层取不到，只有 JS 链单测（⑥）。
+单测：`audioFocusSystemStop` ⑥（becoming-noisy 走统一出口、顺序 handsFree → speech、幂等只挂一个监听、原生缺席不装不崩）、⑦（装载不请求 / live 才请求 / 段间与宽限内另一路起来都不放 / 过宽限才放 / 再起播再请求），变异「启动时再请求一次」⑦ 判红。mobile jest **111 suites / 1145**、tsc 0、eslint 0。
+
+#### 候选包（三个，全部 clean 树、`-Release -CompileJobs 3`）
+
+| 包 | 变体 | 源 | 用途 | APK SHA-256 / 大小 | 证据目录 |
+|---|---|---|---|---|---|
+| `8df1d1173` | dev | `8df1d117` | D-08 压力 + G-06 引擎分支（voice-spike 替身只在 dev 变体开放） | `6d0492ef…0889` / 212,502,066 B（13m35s，822 执行 / 482 缓存） | `%LOCALAPPDATA%\car-agent\artifacts\GPT6G-20260920-144750-8df1d117\`（`probe_d08.py`） |
+| `e7a836383` | prod | `e7a83638` | D-09 矩阵（含 audioroute / 焦点策略 / system_stop 打点） | `2f3d44fe…9856` / 212,502,934 B（13m4s） | `GPT6H-20260920-150406-e7a83638\`（`probe_d09.py`） |
+| **`5286c3ba5`** | prod | `5286c3ba` | + 错误行去包装文本（`2ed312fb`）+ CI 一行；**OPPO 常驻包**（`lastUpdateTime 2026-09-21 12:56:31`，端本 SHA 一致、非 DEBUGGABLE） | `bf88d1e9…5670` / 212,503,266 B（13m2s，零 KwsModule 告警） | `GPT6I-20260921-120914-5286c3ba\`（`probe_tts_timer.py`） |
+
+设备 09-20 15:03 掉线、09-21 上午回来（与 09-19 20:09 同形态，USB PnP 里 `VID_22D9…919FD6F9` 消失，只能重插）。
+
+#### D-08 真机读数（`8df1d1173`，2026-09-21 11:57–12:01，`d08-report-8df1d117.json` / `d08-logcat-8df1d117.txt`）
+
+| 格 | 结果 | 读数 |
+|---|---|---|
+| 慢解码 1.5s × 6 轮 | ✅ 与源码级预期逐项相同 | 每轮 load 325–410ms、灌 10 帧后 `queued=9 workerAlive=true`；release **1198–1225ms**（= 剩余解码时间：interrupt + join(1s) 撞上锁内的替身，随后在锁上等它出来）；logcat 每轮一条 `kws-decode 未在 1000ms 内退出，进入 stale worker=89…94`；结论行 `staleEvents+6 stuckRefusals=0 decodeFailures+0 workersStarted+6 bothAlive=0 end{workerAlive=false staleAlive=false}` |
+| 快速启停 0.3s × 10 轮 | ✅ | release 193–214ms（不超时）、`staleEvents+0 stuckRefusals=0 decodeFailures+0 workersStarted+10 bothAlive=0`，worker 95…104 逐代递增 |
+| `KWS_WORKER_STUCK` | 未触发（按设计不可达） | 锁纪律下 release 出锁前旧线程必已出解码、200ms 宽限内退出；两档 `stuckRefusals` 都是 0。**它只在「线程卡在锁外」才可达**，这条替身造不出来也不该造 |
+| G-06 引擎成因分支 | ✅ 分支成立，露出一条文案缺陷（已修） | 置位「下次加载失败」→ 设置页开免唤醒 → 错误行 `免唤醒没有启动：Call to function 'Kws.load' has been rejected.→ Caused by: 唤醒词引擎加载失败（诊断替身：强制失败一次）。关掉再打开可以重试`、**开关保持开**；关掉再打开 → 错误行消失、`KWS loaded … worker=112`；还原关。Expo 的 DecoratedException 包装文本原样到了用户那一行 ⇒ `nativeErrorText` 只取最里层原因（`2ed312fb`，在 `5286c3ba5` 里） |
+
+装置坑：voice-spike 的日志区在屏内只画得下前几行，`uiautomator dump` 拿不到折在下面的结论行——`console.log` 同步进了 logcat `ReactNativeJS`，结论从那里读；这台机的 logcat 主缓冲只有 256KiB、系统噪声几秒就冲掉，App 侧读数必须开着 `logcat` 流式捕获而不是事后 `-d`。
+
+#### D-09 真机读数（`e7a836383` 2026-09-21 12:09–12:55、`5286c3ba5` 12:58）
+
+事件源实测（这台 OPPO / ColorOS 14）：**计时器**（`SET_TIMER` + SKIP_UI）= GAIN_TRANSIENT，App 在用时是 heads-up 横幅（**不切后台**；09-20 那次全屏是因为 App 闲置）；`am start SET_TIMER` 本身会闪一下时钟 Activity ⇒ 前后台闸停/起一次采集（`rec stop`/`rec update` 相隔 0.8s）⇒ 只能**预约**，不能在目标状态里 `am start`；铃声会灌进麦 ⇒ LISTENING 期端点推迟到铃停。**永久 LOSS**：`com.coloros.video` 起播（GAIN）会到前台；`com.heytap.music` 暂停 / STOP 都**不放焦点**（续播不重新请求，造不出 LOSS）、被 force-stop 后按 MEDIA_PLAY 有时由媒体键接收器在后台拉起并请求 GAIN（12:52 一次成功、12:53 一次没起）——不可靠。**耳机断开**：无有线口、无可远程连的蓝牙音频，OS 事件层未取。
+
+| 格 | 结果 | 读数（设备时钟，`logcat -s MediaFocusControl AudioFocusListener` + 在场轨迹 + `dumpsys audio`） |
+|---|---|---|
+| 冷启动不再持焦点（E-25 ①） | ✅ 两个包 | 冷启动落对话页后 `Audio Focus stack entries` **为空**（`cebd53848` 上是我们的 GAIN 条目常驻） |
+| 出声才持、收尾放（E-25 修法） | ✅ 9 次 | 每一轮：定稿那一刻 `requestAudioFocus() … callingPack=com.xiaozhou.companion req=3`（GAIN_TRANSIENT_MAY_DUCK），播完 +1.0–1.3s `abandonAudioFocus()`（12:36:10→12:36:28、12:39:54→12:40:06、12:42:32→12:42:44、12:45:50→12:45:52、12:47:25→12:47:30、12:48:47→12:49:00、12:49:02→12:49:04、12:53:04→12:53:12、`5286c3ba5` 12:58:09→12:58:22） |
+| 别人的音乐压低不停 | ✅ | 我们出声时 heytap.music 的条目 `loss: LOSS_TRANSIENT_CAN_DUCK`（12:30 趟），放掉后回原音量 |
+| **主 TTS（出声中）× 系统中断**（`5286c3ba5`，文字轮 + 播报=总是，时序确定） | ✅ 五维齐 | `speaking · 播报中` 12:58:17.281 → 计时器 GAIN_TRANSIENT 12:58:21.374 → `onAudioFocusChange(-2)` 21.376 → `◇ system_stop:interruption` 21.377 → `speaking` 落 21.378（**2ms 内停声**）→ `abandonAudioFocus` 22.395；App 仍在前台；免唤醒麦照开（ARMED，`AudioRecord` 线程在）、没有 LISTENING / 上行；轨迹上没有 FOLLOWUP |
+| **THINKING（TTS 已 live、首片未出）× 系统中断**（语音轮，`e7a836383`）× 3 | ✅ | 12:45:51.500 / 12:47:29.572 / 12:49:03.715 三次 `-2` → 同毫秒 `system_stop:interruption` → **`fsm:ARMED`**（THINKING → ARMED，不进 FOLLOWUP）→ +1s abandon；三次都在同一进程里、中间隔着别的轮次 ⇒ 每次起播重新请求让检测一直活着（`cebd53848` 上第一次永久 LOSS 之后是 0 次回调） |
+| LISTENING × 系统中断 | 按现状记录 | 收音期不持焦点 ⇒ 零回调、麦照开、ASR 照传；铃声进麦 ⇒ VAD 一直判有人说话、端点推迟到铃停（12:39 趟 THINKING 晚了 27s）⇒ **G-07**（收音期持 MAY_DUCK：压低音乐 + 收得到来电回调 + 「系统占麦」事实）产品裁决 |
+| LISTENING × 永久 LOSS（`coloros.video` 起播到前台，12:55） | 按现状记录 | 没有焦点回调；播放器到前台 ⇒ 前后台闸 `fsm:IDLE` 12:55:26.540、麦 `rec stop` 12:55:26.599（切走 0.4s 内释放）——来电接听（InCall 到前台）走的就是这条 |
+| 语音轮 SPEAKING（出声中）/ FOLLOWUP / S2S × 中断 | **未取** | 声学路径抖动 ±4s（定稿 tap+7…10.3s、首片再 +2.5…6s、答长 10–16s），而这间屋子当时有电视在放（LISTENING 转写抓到整段动画台词、ASR 常被搅成乱码、端点被拖），预约的铃三次都落在 THINKING；后台永久 LOSS 源不可靠。协议与装置（`probe_d09.py`：logcat `req=3` 触发、`ps -T` 判线程、预读轨迹）已就绪，换安静环境即可补 |
+| 耳机断开 | **未取**（OS 层） | 只有 JS 链单测 ⑥；`audioRouteInstalled()` 在 `5286c3ba5` 上可由 voice-spike 状态行读（prod 包不开放该屏，留 dev 包） |
+
+装置坑（这一节花掉的时间大半在这里，下次直接绕开）：① **`dumpsys audio` 持 AudioService 锁，0.4s 一次轮询会把 `AudioRecord.start` 的回调饿到 37s 后**——ARMED「迟到」是探针自己造成的；进程线程名（`ps -T -p`：`AudioRecord` / `AudioTrack` / `kws-decode-N`）零锁毫秒级，焦点时刻用 logcat `MediaFocusControl`；② 路由切换后立刻 `uiautomator dump` 挂 25–30s（等窗口 idle），ARMED 本身只要 0.7s；③ 在场轨迹只有 20 条，每次导航塞 4–5 条，**先读轨迹再撤销事件 / 回对话页**，不然 LISTENING/SPEAKING 那几条被挤掉；④ `AudioTrack` 线程 / AAudio 流 `state:started` 在提示音之后就常驻（空闲挂起前 15s），不是「在播报」；⑤ 电脑扬声器喂麦要先看 PC 主音量（这台是 0% + 静音）、慢速 -2 / 100% 才认得清「介绍一下深圳」；⑥ 探针跑完还原：免唤醒关、播报回自动（`choose_pill` 的 selected 回读要看父节点）、helper App force-stop、测试音删掉、PC 音量归 0 静音。
+
 ### 6.11 本批未达与去向
 
 | 项 | 去向 |
 |---|---|
 | F02 通话期间采集策略 | 第三批（真机：来电时 recorder 收到什么） |
 | `useHandsFree` 启动失败不弹回开关、错误没有可读落点 | **G-06（E）已做 `7ea487c8`**，裁决**不弹回**：开关是意图、失败是事实——设置页开关下方 `handsfree-error`（权限成因指系统设置、其余「关掉再打开」）+ Presence 降级（权限并进 mic 那条，其余 `service_degraded`）+ `errorKind`；回前台的 scope 同步与重新开关都重试，成功即清。接口注释里「UI 弹回」的说法删掉 |
-| F07 运行时压力 | 第三批（候选包） |
-| 第三批固定包验收五维 × 四态 | 总表 D-05 / D-06 + 本页 §3 |
+| F07 运行时压力 | **已取**（§6.15 D-08：慢解码 1.5s×6 / 0.3s×10，stale 每轮 +1、stuck 0、fail 0、零跨代并存） |
+| 第三批固定包验收五维 × 四态 | 部分已取（§6.15 D-09：主 TTS 出声中 × 中断五维齐、THINKING × 中断 ×3、LISTENING 两格按现状记录）；语音轮 SPEAKING / FOLLOWUP / S2S × 中断与耳机断开未取（安静环境 + 装置已就绪）；其余归总表 D-05 / D-06 |
 | G-02 / G-03 | G-02 接真实导航执行前（manifest 链路）；G-03 产品裁决 |
-| G-05 读数 | 已应用；要你 dispatch 一次 `run_e2e=true` 才有 ABI / 安装 / .so 加载三个读数 |
+| G-05 读数 | 首次 dispatch 在 assembleDebug 就红（工作流自 M4 起没构建过，§6.15）；垫片拆出 + CI 一行（用户批准）后第二次 dispatch 见 §6.15 末 |
 | G-06 权限分支 + E-23 | **已闭合**（§6.14，`cebd53848`） |
-| G-06 引擎成因分支真机 | 没有不改代码就能造出的引擎失败；留给候选包 + 慢解码替身（D-08） |
+| G-06 引擎成因分支真机 | **已取**（§6.15：强制加载失败替身 ⇒ 错误行 + 开关保持开 + 关开即恢复）；顺带修掉错误行里的 Expo 包装文本（`2ed312fb`） |
