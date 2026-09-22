@@ -9575,6 +9575,25 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 留下：批 B（R4 / R5）、批 C（R6 / R7 / R8）、批 D 待做；「取消刚才 X」单条挂起时仍无条件清它（子串点名太弱，撤销方向 fail-safe）；
   云侧对无挂起的撤回句交 planner（本趟落 hvac.off，不立闸）。
 
+### 同日追加（2026-09-22 夜）— 对话评审第二轮批 D：独立验证（固定反例集 / 长会话留出集 / L1+L2 诊断 / 分层归因）
+
+- 反例集固定成测试：`test_the_round_two_counterexample_set_is_fixed` 钉住 RS15–RS24 的 id、`residual` 组与「每条至少一项形态判据」。
+  **只写进文档的集合，下次改 id 就悄悄少一条而读数照常全绿**——这条纪律与「恒绿的断言比没有更糟」同源。
+- 长会话留出集（`continuity`，71 检查点，含 600 s 沉默 + 两次断连重连，绑 `86c43998`）：**70/71**，零 open operation、零 cleanup 失败、
+  battery 72 放回、release 连续。与本轮三批相关的出口全绿（`constraint_noted` 2 / `constraint_recall` 4 / `pending_cancel` 3 /
+  `pending_state` 4 / `no_pending` 2 / `pending_missing` 1 / `candidate_aggregate` 9）；**批 8 的唯一红 SF4 T65 这次通过**。
+  唯一红 T63「接孩子后去万象城」：planner 先导航到学校并在话术里说「接上孩子再一起去万象城」，尺子要目的地含「万象城」⇒ 红。
+  是 family 域落域方差的另一种形态（批 8 那次是把「接孩子」当途经点搜家政），**不改 gold**，留成产品口径裁决。
+- L1 / L2 诊断（同批 8 跑法；容器 IP 每次发布都变，本轮 `172.18.0.7`）：**L1 107/117、L2 3/4**。与批 8 的 111/117 / 4/4 的差
+  **逐条查过是采样方差**：六条 new-only 的失败样本 `raw_intents` 全空或 `__invalid_capability_reference__`（模型没交出工具调用），
+  三个新判据（问句 / 元请求 / 撤回）对那几句原话全判 False，`--repeat 3` 重跑 32/36；反方向两条（`cs.cancel-it.research`、
+  `os.open.window`）由红转绿。安全面不动：`forbidden_route_rate` 0/117、validator 后逃逸 0/117。L2 唯一红是模型把 `item` 写成
+  字面量而不是引用上一步结果（`slot_refs` 空），确认前零副作用四样本全绿。唯一 stable_fail 仍是「关掉音乐」`media.stop` vs gold `media.pause`。
+- **正式基线仍未重建**，原因一字不变（§10.2）：L3 `e2e_journeys` 是签名身份 + 持久数据、runner 对 cloud 目标按设计拒绝，
+  要切 `dev-stack.local=local` 起全栈才能跑；本轮没有切 target。
+- 分层归因（评审 §6 批 D 要的那件事）：continuity T63 = 计划层 + 产品口径未定；L1 六条 = 模型采样方差；
+  L1 `os.turn-off.media` = gold 口径待裁；L2 `order-hold` = 计划质量方差。**没有一条落在本轮修过的层。**
+
 ### 同日追加（2026-09-22 夜）— 对话评审第二轮批 C：裁剪不反转极性、焦点私有半按乘员归属、挂起存储读写三态；release `86c43998`
 
 - 入口同批 A / B（设计文档 §4 / §4.1 / §4.1.1）。三条对 HEAD 重证成立：`_fit_last_exchange` 按「最长那条」删句、不看角色；
