@@ -1632,3 +1632,53 @@ def test_nearby_does_not_declare_a_place_for_vehicle_centred_or_coordinate_searc
                                  slots={"category": "餐厅", "location": "113.94,22.54"},
                                  raw_text="这个坐标附近的餐厅", meta=_LOC))
     assert "_candidate_place" not in res.data, "坐标不是名字，叫不出来"
+
+
+# ── 批 7 追加（真栈 continuity 两趟，2026-09-22）：陈旧的 location 槽让路给原话里的地名 ──────────
+
+@pytest.mark.parametrize("slots, raw, wanted", [
+    ({"category": "餐厅", "sort": "rating", "location": "深圳南山科技园"}, "欢乐海岸附近的餐厅", "欢乐海岸"),
+    ({"category": "餐厅", "location": "科技园"}, "南山书城附近的餐厅", "南山书城"),
+])
+def test_a_location_slot_carried_over_from_the_previous_turn_loses_to_the_spoken_place(slots, raw, wanted):
+    """T9「科技园附近」之后 T15「欢乐海岸附近」被 planner 填成 `location=深圳南山科技园`：用户要的是欢乐海岸，
+    搜的却是科技园。planner 改写是不可信通道，地名只信原话（`slot_fidelity` 同一条判据）。"""
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.setdefault("calls", []).append((keyword, kwargs.get("near")))
+        from agents.nearby.src.providers.base import Place
+        if keyword == wanted:
+            return [Place(id="x", name=f"{keyword}中心", lat=22.6, lng=114.1, city="深圳市", rating=4.5)]
+        return [Place(id="a", name="甲店", category="餐饮", rating=4.6, lat=22.61, lng=114.11)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots=slots, raw_text=raw, meta=_LOC))
+    assert seen["calls"][0][0] == wanted, "中心按原话的地名解析，不按陈旧槽"
+    assert not any(call[0] == slots["location"] for call in seen["calls"]), "陈旧槽的地名一次都不该去解析"
+    assert res.data["_candidate_place"] == wanted and res.data["center"] == "slot"
+
+
+@pytest.mark.parametrize("slots, raw", [
+    ({"category": "餐厅", "location": "深圳湾万象城"}, "万象城附近的餐厅"),   # 写法不同、同一个地方
+    ({"category": "餐厅", "location": "科技园"}, "科技园附近的餐厅"),
+    ({"category": "餐厅", "location": "113.94,22.54"}, "万象城附近的餐厅"),   # 坐标不是名字
+])
+def test_a_location_slot_that_agrees_with_the_spoken_place_is_still_preferred(slots, raw):
+    agent = NearbyAgent()
+    seen = {}
+
+    async def search(keyword, **kwargs):
+        seen.setdefault("calls", []).append((keyword, kwargs.get("near")))
+        from agents.nearby.src.providers.base import Place
+        return [Place(id="a", name="甲店", category="餐饮", rating=4.6, lat=22.61, lng=114.11)]
+
+    agent.place.search = search
+    asyncio.run(run_handle(agent, "nearby.search", slots=slots, raw_text=raw, meta=_LOC))
+    loc = slots["location"]
+    if "," in loc:
+        first_near = seen["calls"][0][1]
+        assert first_near is not None and abs(first_near.lat - 22.54) < 1e-6
+    else:
+        assert seen["calls"][0][0] == loc, "槽与原话一致：照旧按槽解析"

@@ -346,14 +346,45 @@ class NearbyAgent(BaseAgent):
     _NEAR_ALIAS_SLOTS = ("near", "around", "area")   # planner 偶发用的未声明槽名，只作地名别名
 
     @classmethod
+    def _raw_place_anchor(cls, intent) -> str:
+        """原话里「X 附近 / 周边 / 一带」的 X；没有 ⇒ 空串。这是用户的原话，不是 planner 的转述。"""
+        m = cls._PLACE_BEFORE_NEARBY_RE.match((intent.raw_text or "").strip())
+        return m.group("place").strip() if m else ""
+
+    @classmethod
     def _place_anchor(cls, intent) -> str:
         """原话里「X 附近」的 X，或未声明的 near / around / area 槽；没有 ⇒ 空串。"""
         for name in cls._NEAR_ALIAS_SLOTS:
             value = str(intent.slots.get(name) or "").strip()
             if 2 <= len(value) <= 15:
                 return value
-        m = cls._PLACE_BEFORE_NEARBY_RE.match((intent.raw_text or "").strip())
-        return m.group("place").strip() if m else ""
+        return cls._raw_place_anchor(intent)
+
+    @staticmethod
+    def _names_overlap(a: str, b: str, min_run: int = 2) -> bool:
+        """两个地名是否在说同一个地方：有 ≥min_run 字的公共子串（「万象城」⊂「深圳湾万象城」）。"""
+        a, b = (a or "").strip(), (b or "").strip()
+        if not a or not b:
+            return False
+        if a in b or b in a:
+            return True
+        return any(a[i:i + min_run] in b for i in range(len(a) - min_run + 1))
+
+    @classmethod
+    def _stale_location_slot(cls, intent) -> str:
+        """`location` 槽与原话「X 附近」的 X **说的不是同一个地方** ⇒ 槽是陈旧的（planner 从上一轮
+        带过来的），返回原话的 X；否则空串。
+
+        真栈 continuity（2026-09-22，两趟）：T9「科技园附近的餐厅」之后 T15「欢乐海岸附近的餐厅」被 planner
+        填成 `location=深圳南山科技园`——用户要的是欢乐海岸，搜的却是科技园，三个地名两份同地列表；十几轮后
+        「科技园那批」命中两组。判据与 `runtime/slot_fidelity` 同一条：planner 改写是不可信通道，地名只信原话。
+        坐标槽不在此列（坐标不是名字）；槽与原话只是写法不同（万象城 / 深圳湾万象城）不算陈旧。
+        """
+        loc = str(intent.slots.get("location") or "").strip()
+        raw = cls._raw_place_anchor(intent)
+        if not loc or not raw or "," in loc:
+            return ""
+        return "" if cls._names_overlap(raw, loc) else raw
 
     @classmethod
     def _near(cls, intent, meta) -> GeoPoint | None:
@@ -366,6 +397,11 @@ class NearbyAgent(BaseAgent):
         engine 按 manifest `context_scopes: [location]` 把 `focus_destination_*` 注进
         meta，与 info `_deictic_destination` 同款：LLM 与客户端都写不到这三个键。"""
         loc = (intent.slots.get("location") or "").strip()
+        stale_for = cls._stale_location_slot(intent)
+        if stale_for:
+            logger.info("nearby: location slot %r contradicts the spoken place %r; using the spoken one",
+                        loc, stale_for)
+            return GeoPoint(address=stale_for)
         if loc:
             parts = loc.split(",")
             if len(parts) == 2:
@@ -777,7 +813,11 @@ class NearbyAgent(BaseAgent):
         candidate_place = ""
         if center_src == "slot":
             loc_slot = (intent.slots.get("location") or "").strip()
-            candidate_place = loc_slot if (loc_slot and "," not in loc_slot) else self._place_anchor(intent)
+            stale_for = self._stale_location_slot(intent)
+            if stale_for:
+                candidate_place = stale_for          # 陈旧槽让路：这批是按原话那个地方搜的
+            else:
+                candidate_place = loc_slot if (loc_slot and "," not in loc_slot) else self._place_anchor(intent)
         if candidate_place:
             extra_data["_candidate_place"] = candidate_place
         if center_src == "none":
