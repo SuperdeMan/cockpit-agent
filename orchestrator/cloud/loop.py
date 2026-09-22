@@ -14,6 +14,7 @@ from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
+from runtime.execution_claim import ExecutionClaimGate
 from runtime.outcome import all_refused_unsupported, outcome_of_results
 from observability import events as obs_events
 from observability.metrics import metrics
@@ -207,6 +208,15 @@ class LoopController:
                     logger.exception("Replan call failed; ending the loop")
                     break
                 replans += 1
+                if getattr(decision, "blocked", None):
+                    # 评审二轮 R5：依赖被拒诉求再试的下游步没执行——留一条可查的观测，不静默。
+                    try:
+                        await obs_events.get_emitter("cloud").emit_span(
+                            ctx.trace_id, "t2.blocked",
+                            attrs={"intents": ",".join(decision.blocked),
+                                   "replans": replans})
+                    except Exception:
+                        pass
                 if decision.done or not decision.steps:
                     break
                 kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
@@ -272,14 +282,20 @@ class LoopController:
                 final_sr = None
                 response_violation: StepResult | None = None
                 stream_start = self.clock()
+                # 评审二轮 R4：谈话步的增量先过句级闸（与 engine D0 同一条 `ExecutionClaimGate`）。
+                gate = (ExecutionClaimGate()
+                        if bool(getattr(step, "response_only", False)) else None)
                 try:
                     async for kind, payload in self._stream(
                             step.endpoint, step.intent, step.slots,
                             step_call_context(step, ctx), step.meta,   # W16-b
                             timeout=timeout):
                         if kind == "speech":
+                            if gate is not None:
+                                payload = gate.feed(payload)
                             stream.on_speech(payload)
-                            yield {"kind": "speech", "delta": payload}
+                            if payload:
+                                yield {"kind": "speech", "delta": payload}
                         elif kind == "action":
                             if bool(getattr(step, "response_only", False)):
                                 response_violation = self.executor._enforce_response_only(
@@ -300,6 +316,14 @@ class LoopController:
                         "T2 stream failed for %s, falling back: %s",
                         step.id, exc)
                     final_sr = None
+                if gate is not None:
+                    tail = gate.flush()
+                    stream.on_speech(tail)
+                    if tail:
+                        yield {"kind": "speech", "delta": tail}
+                    if gate.removed:
+                        logger.warning("T2 response-only stream held %d execution claim "
+                                       "sentence(s) before release (%s)", gate.removed, step.intent)
 
                 if response_violation is not None:
                     final_sr = response_violation

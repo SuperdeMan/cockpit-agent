@@ -288,6 +288,9 @@ class ReplanDecision:
     done: bool
     steps: list[Step] = field(default_factory=list)
     skill_effects: list[str] = field(default_factory=list)
+    # 评审二轮 R5：依赖「被拒诉求的再试」的下游步——前置没满足，不执行、也不删边让它变根节点；
+    # 记 intent 名供观测（`t2.iter` span）。
+    blocked: list[str] = field(default_factory=list)
 
     def to_plan(self, goal: str = "", safety_origin_text: str = "") -> Plan:
         return Plan(steps=self.steps, complexity="adaptive", goal=goal,

@@ -1300,3 +1300,93 @@ def test_replan_keeps_the_same_domain_when_the_refusal_was_not_unsupported():
         agents, PlanContext(),
     ))
     assert [step.intent for step in decision.steps] == ["reminder.cancel"]
+
+
+# ── 评审二轮 R5（2026-09-22）：unsupported 终止的是那一个诉求，不是整个领域；被拒步的下游不删边 ──
+
+def _replan_with(agents, steps_json: str, observations: list[dict], goal: str):
+    async def mock_llm(_messages):
+        return steps_json
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    return asyncio.run(PlanBuilder(mock_llm, mock_resolve).replan(
+        goal, observations, agents, PlanContext()))
+
+
+_REFUSED_EVENT_REMINDER = {"step_id": "s1", "status": "ok", "intent": "reminder.create",
+                           "slots": {"title": "有堵车就提醒我"}, "refused": "unsupported",
+                           "data": {"_refused": "unsupported"}}
+
+
+def test_replan_keeps_an_independent_same_domain_goal_after_an_unsupported_refusal():
+    """「以后有堵车就提醒我，另外列出明天的提醒」：第一件做不到，第二件（同域、参数是自己的）照做。"""
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel", "reminder.list"])]
+    decision = _replan_with(
+        agents,
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0003",'
+        '"slots":{"scope":"明天"},"depends_on":[],"slot_refs":{}}]}',
+        [_REFUSED_EVENT_REMINDER], "以后有堵车就提醒我，另外列出明天的提醒")
+    assert [(s.intent, s.slots) for s in decision.steps] == [("reminder.list", {"scope": "明天"})]
+    assert decision.done is False
+
+
+def test_replan_keeps_a_supported_timed_reminder_after_an_event_trigger_refusal():
+    """同一 intent、参数是另一件事（明早八点开会）⇒ 不是换能力再试，照做。"""
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"])]   # catalog 按 intent 排：cancel=0001, create=0002
+    decision = _replan_with(
+        agents,
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0002",'
+        '"slots":{"title":"开会","time":"明早八点"},"depends_on":[],"slot_refs":{}}]}',
+        [_REFUSED_EVENT_REMINDER], "有堵车就提醒我；另外明早八点提醒我开会")
+    assert [(s.intent, s.slots) for s in decision.steps] == [
+        ("reminder.create", {"title": "开会", "time": "明早八点"})]
+
+
+def test_replan_still_drops_a_same_domain_retry_that_shares_the_refused_substance():
+    """「换个能力再试同一件事」仍被拦：cancel / create 的槽里带着被拒那件事的字眼，或干脆没有槽。"""
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"])]
+    for steps_json in (   # cancel=cap_0001, create=cap_0002
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{"title":"堵车提醒"},"depends_on":[],"slot_refs":{}}]}',
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0001",'
+        '"slots":{},"depends_on":[],"slot_refs":{}}]}',
+        '{"done":false,"steps":[{"id":"r1","capability_ref":"cap_0002",'
+        '"slots":{"title":"有堵车就提醒","time":"每天"},"depends_on":[],"slot_refs":{}}]}',
+    ):
+        decision = _replan_with(agents, steps_json, [_REFUSED_EVENT_REMINDER], "只要有堵车就提醒我")
+        assert decision.done is True and decision.steps == [], steps_json
+
+
+def test_replan_blocks_the_dependents_of_a_dropped_retry_instead_of_rewiring_them():
+    """r2 依赖被丢掉的 r1（slot_refs 还指着它）⇒ r2 也不执行、记为 blocked；不许删边让 r2 变根节点。"""
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"]),
+              MockAgent("info", ["info.weather"])]   # catalog 按 agent_id / intent 排：weather=0001, cancel=0002, create=0003
+    decision = _replan_with(
+        agents,
+        '{"done":false,"steps":['
+        '{"id":"r1","capability_ref":"cap_0002","slots":{"title":"堵车提醒"},"depends_on":[],"slot_refs":{}},'
+        '{"id":"r2","capability_ref":"cap_0001","slots":{"city":"深圳"},"depends_on":["r1"],'
+        '"slot_refs":{"note":"r1.data.id"}},'
+        '{"id":"r3","capability_ref":"cap_0001","slots":{"city":"广州"},"depends_on":[],"slot_refs":{}}]}',
+        [_REFUSED_EVENT_REMINDER], "有堵车就提醒我，然后看深圳和广州的天气")
+    assert [s.id for s in decision.steps] == ["r3"]
+    assert decision.blocked == ["info.weather"]
+    for step in decision.steps:
+        assert "r1" not in step.depends_on
+        assert not any(str(v).startswith("r1.") for v in step.slot_refs.values())
+
+
+def test_replan_blocks_transitively_through_a_blocked_dependent():
+    agents = [MockAgent("reminder", ["reminder.create", "reminder.cancel"]),
+              MockAgent("info", ["info.weather", "info.search"])]   # search=0001, weather=0002, cancel=0003, create=0004
+    decision = _replan_with(
+        agents,
+        '{"done":false,"steps":['
+        '{"id":"r1","capability_ref":"cap_0003","slots":{},"depends_on":[],"slot_refs":{}},'
+        '{"id":"r2","capability_ref":"cap_0002","slots":{},"depends_on":["r1"],"slot_refs":{}},'
+        '{"id":"r3","capability_ref":"cap_0001","slots":{"query":"x"},"depends_on":["r2"],"slot_refs":{}}]}',
+        [_REFUSED_EVENT_REMINDER], "有堵车就提醒我")
+    assert decision.done is True and decision.steps == []
+    assert sorted(decision.blocked) == ["info.search", "info.weather"]

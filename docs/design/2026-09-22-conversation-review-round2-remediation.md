@@ -91,3 +91,34 @@ agents + test + security + memory 3570 / 19 skipped；四门禁 + smoke_edge 13/
 
 留下（本批不动）：单条挂起时「取消刚才 X」仍无条件清它（点名匹配对随口称呼太弱，撤销方向 fail-safe）；云侧对无挂起的撤回句交 planner（本趟三次都 hvac.off，不立闸）；
 「我不吃辣」在 `voice_followup` 下 1/3 受话是 planner 的判定，不是本批的判据。
+
+## 3. 批 B 方案与裁决（R4 / R5，2026-09-22 晚）
+
+| 条 | 现状（代码事实） | 本批做什么 | 刻意不做 |
+|---|---|---|---|
+| R4 | W14 只在 final 出口剥谈话步的声称句（`_emit_execution_claim`）；D0 `_stream_single_step` 与 T2 `loop.run` 的流式直通把 speech delta 直接 yield，E 路径逐步播报（`step_result.speech + "。"`）也在 final 之前 | `runtime.execution_claim.ExecutionClaimGate`：**句级有界闸**——增量攒到句边界再判，声称句整句丢、其余整句放；一句超过 160 字还没标点且不像声称 ⇒ 放（有界）；流末 flush 把没标点的尾巴按一句判。判据与 final 那份同源（`is_execution_claim_sentence`，`strip_execution_claims` 改消费它）。挂在**按声明不可能执行**的步上：D0 与 T2 的流式出口（`step.response_only`）、E 路径的逐步播报（谈话步 + 零动作 ⇒ `strip_execution_claims`）。流出的 = final 的 = 落库的 | 不串联模型审稿；不拦信息类能力的合法完成语（「已为您规划 3 天行程」）；不改 chitchat 的 `<search>` 头部缓冲（引擎出口一份闸盖住全部 Agent） |
+| R5 | `_refused_domains` 把 `refused=unsupported` 映射成 intent 前缀，`_drop_refused_domain_steps` 删同域一切新步，并把余下步 `depends_on` 里的被删 id 直接删掉（`slot_refs` 仍指着它） | 终止标记绑定**那一个诉求**：`_refused_goals` = (领域, 被拒那步的槽值实质)；`_retries_refused_goal` = 同域 ∧（槽里带被拒那件事的字眼 ∨ 干脆没有槽值）——「列出明天的提醒」「明早八点提醒我开会」是独立诉求照做，`reminder.cancel {}` / `{title: 堵车提醒}` 仍拦。被丢步的下游（`depends_on` 与 `slot_refs` 两条边，传递闭包）一起不执行、记 `ReplanDecision.blocked`，loop 出 `t2.blocked` span；不再删边 | 不撤 loop 的「整批 unsupported ⇒ 不再 replan」防循环（记一条边界：adaptive 计划把独立诉求推迟到后一批而前一批全被拒时，那个诉求不会再被规划）；同域无槽步一律当再试（「列出我的提醒」无参数形态会被误拦，记为边界） |
+
+探针（`--cases RS21,RS22 --repeat 3`）：RS21 三句零动作谈话轮，`no_execution_claim` 现在同时看**流式增量**（探针 `_one_turn` 记 `speech_delta`
+拼成 `streamed`）与 final；RS22 「明早八点提醒我参加代号{run}的评审会」→「以后有堵车就提醒我，另外列出明天的提醒」（话术要念出评审会、
+不许追问提醒时间 / 声称已设置 / 「提醒方面也没找到」）→ 取消它。
+
+### 批 B 验收
+
+- 每条先红测试再改实现；定向套件 + 四门禁 + smoke_edge；全量固定口径一次；变异各自判红（D0 不挂闸 / T2 不挂闸 / E 路径不剥 / 回到按域拦 / 下游删边，共五处）。
+- 真栈：push → dry-run → apply → status / verify → 上述探针；读数写 §3.1.1。
+
+### 3.1 落地记录（2026-09-22 晚）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| R4 | `runtime/execution_claim.py` `is_execution_claim_sentence` + `ExecutionClaimGate`；engine D0 出口挂闸 + 流末 flush、E 路径逐步播报剥声称；loop T2 出口挂闸 | 新 `test_stream_claim_gate` 10（闸五条：句边界 / 干净尾巴 / 无标点声称 / 超长干净句放行 / 超长声称继续攥；D0 三条：声称句不出流且流出 = final、只有声称 ⇒ 诚实 final、非谈话步不拦；T2 一条；E 路径 unary 回退一条）；既有 `test_d0_response_only_legal_speech_stream_is_unchanged` / `test_t2_…` 改成「文本不变、按句释放」；变异三处各判红（D0 红 2、T2 红 1、E 红 1） |
+| R5 | `planning.py` `_refused_goals` / `_substance` / `_overlaps` / `_retries_refused_goal` / `_drop_refused_goal_steps`（替换 `_refused_domains` / `_drop_refused_domain_steps`）；`ReplanDecision.blocked`；loop `t2.blocked` span | `test_planning` +5（独立同域诉求照做 / 同 intent 不同参数照做 / 三种再试形态仍拦 / 下游 blocked 不删边、`slot_refs` 无悬空 / 传递 blocked）；`test_loop` +1（混合批只拒一项照常 replan、观察带被拒那步的槽）；既有批 7 ① 三条不变；变异两处各判红（按域拦红 2、删边红 2） |
+| 探针 | RS21 / RS22；`_one_turn` 记 `streamed`，`no_execution_claim` 同时判增量 | `--list` 通过；探针相关 226 passed |
+
+定向读数：cloud + edge + runtime + scripts 4792 / 12 skipped；chitchat + reminder + info + contrast 530；四门禁 + smoke_edge 13/13；五处变异各判红。
+**全量固定口径（批 B 工作树，`TZ=UTC0` `-n 6`）：9006 passed / 0 failed / 32 skipped / 10 warnings，305 s。**
+
+#### 3.1.1 发布链与真栈读数
+
+（待 push / deploy / verify / 探针后回填。）

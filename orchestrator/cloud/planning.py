@@ -1200,37 +1200,100 @@ def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str
     return completed
 
 
-def _refused_domains(observations: list[dict]) -> set[str]:
-    """观察里被 Agent 声明为「能力做不到」（`refused=unsupported`）的**领域**（intent 前缀）。
+def _refused_goals(observations: list[dict]) -> list[tuple[str, set[str]]]:
+    """观察里被 Agent 声明为「能力做不到」（`refused=unsupported`）的**诉求**：``(领域, 槽值实质)``。
 
-    批 7 ①：这类拒绝是该诉求的终态。再规划时同域换一个 intent（reminder.create 拒绝后
-    规划 `reminder.cancel`）就是「换能力再试同一件事」，用户会听到一句盖掉诚实拒绝的废话
-    （真栈 RS10 第 3 趟：「提醒方面也没找到」）。泛拒绝（`refused=True`）不算——它不是能力边界。
+    批 7 ①：这类拒绝是该诉求的终态。再规划时同域换一个 intent（reminder.create 拒绝后规划
+    `reminder.cancel`）就是「换能力再试同一件事」，用户会听到一句盖掉诚实拒绝的废话（真栈 RS10 第 3 趟：
+    「提醒方面也没找到」）。评审二轮 R5：终止标记绑定**那一个诉求**，不是整个领域——「以后有堵车就提醒我，
+    另外列出明天的提醒」第一件做不到不等于第二件也做不到。诉求的身份 = 领域 + 被拒那一步的槽值实质
+    （`_substance`）；泛拒绝（`refused=True`）不算——它不是能力边界。
     """
-    domains: set[str] = set()
+    goals: list[tuple[str, set[str]]] = []
     for observation in observations or []:
         if not isinstance(observation, dict) or observation.get("refused") != "unsupported":
             continue
         intent = observation.get("intent")
-        if isinstance(intent, str) and "." in intent:
-            domains.add(intent.split(".", 1)[0])
-    return domains
+        if not (isinstance(intent, str) and "." in intent):
+            continue
+        slots = observation.get("slots")
+        goals.append((intent.split(".", 1)[0],
+                      _substance(slots if isinstance(slots, dict) else {})))
+    return goals
 
 
-def _drop_refused_domain_steps(
-        steps: list[Step], refused_domains: set[str]) -> tuple[list[Step], list[str]]:
-    """丢掉落在已拒绝领域里的新步；返回 ``(remaining, dropped_intents)``。"""
-    if not refused_domains:
-        return steps, []
-    dropped = [step for step in steps
-               if "." in step.intent and step.intent.split(".", 1)[0] in refused_domains]
+def _substance(slots: dict) -> set[str]:
+    """槽值的实质：≥2 字的标量值（去空白）。零领域词——只看「有没有内容、内容是不是同一段字」。"""
+    out: set[str] = set()
+    for value in (slots or {}).values():
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = re.sub(r"\s+", "", str(value))
+            if len(text) >= 2:
+                out.add(text.lower())
+    return out
+
+
+def _overlaps(a: set[str], b: set[str]) -> bool:
+    """两组槽值有没有共用的字眼：整值相等、一方是另一方的子串，或共享 ≥2 字的片段。"""
+    for x in a:
+        for y in b:
+            if x == y or x in y or y in x:
+                return True
+            if any(x[i:i + 2] in y for i in range(len(x) - 1)):
+                return True
+    return False
+
+
+def _retries_refused_goal(step: Step, refused_goals: list[tuple[str, set[str]]]) -> bool:
+    """这一步是不是在为一个已声明「做不到」的诉求换能力再试。
+
+    同域 ∧（槽里带着被拒那件事的字眼 ∨ 干脆没有槽值）。同域但参数是自己的（「列出明天的提醒」
+    「明早八点提醒我开会」）是独立诉求，照做。
+    """
+    if "." not in step.intent:
+        return False
+    domain = step.intent.split(".", 1)[0]
+    mine = _substance(step.slots)
+    for refused_domain, refused_substance in refused_goals:
+        if domain != refused_domain:
+            continue
+        if not mine or _overlaps(mine, refused_substance):
+            return True
+    return False
+
+
+def _drop_refused_goal_steps(
+        steps: list[Step], refused_goals: list[tuple[str, set[str]]],
+) -> tuple[list[Step], list[str], list[str]]:
+    """丢掉「为已拒诉求换能力再试」的新步，**连同依赖它们的下游**；返回
+    ``(remaining, dropped_intents, blocked_intents)``。
+
+    评审二轮 R5：此前删掉被拒步后把余下步的 `depends_on` 里对应 id 直接删掉——原本依赖 r1 的 r2 变成
+    无依赖根节点，`slot_refs` 却仍指着已删的 r1。前置未满足不能靠删边变成可执行：下游一起不执行、
+    记 blocked（传递闭包，`depends_on` 与 `slot_refs` 两条边都算）。
+    """
+    if not refused_goals:
+        return steps, [], []
+    dropped = [step for step in steps if _retries_refused_goal(step, refused_goals)]
     if not dropped:
-        return steps, []
-    dropped_ids = {step.id for step in dropped}
-    remaining = [step for step in steps if step.id not in dropped_ids]
-    for step in remaining:
-        step.depends_on = [d for d in step.depends_on if d not in dropped_ids]
-    return remaining, sorted({step.intent for step in dropped})
+        return steps, [], []
+    gone = {step.id for step in dropped}
+    blocked: list[Step] = []
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            if step.id in gone:
+                continue
+            refs = {str(v).split(".", 1)[0] for v in (step.slot_refs or {}).values()}
+            if gone & (set(step.depends_on) | refs):
+                gone.add(step.id)
+                blocked.append(step)
+                changed = True
+    remaining = [step for step in steps if step.id not in gone]
+    return (remaining,
+            sorted({step.intent for step in dropped}),
+            sorted({step.intent for step in blocked}))
 
 
 def _rewrite_completed_ref(value, replacements: dict[str, str]):
@@ -2138,7 +2201,8 @@ class PlanBuilder:
             f"目标：{goal}"
         )
         completed = _completed_observation_steps(observations)
-        refused_domains = _refused_domains(observations)
+        refused_goals = _refused_goals(observations)
+        blocked_intents: list[str] = []
         conditional_goal = bool(_CONDITIONAL_GOAL_RE.search(goal or ""))
         # 「首轮声明了会有第二阶段」的两种来源，共用同一次纠偏机会。**不合并成一个布尔**
         # 就写不出对得上的反馈话术：条件目标要模型去比对前件，adaptive 要它去消费观察结果。
@@ -2168,13 +2232,16 @@ class PlanBuilder:
             candidate = list(parsed.steps) if parsed is not None else []
             candidate, repeated, unresolved = _drop_completed_replan_steps(
                 candidate, completed)
-            # 批 7 ①：同域换能力再试一个已声明「做不到」的诉求 ⇒ 确定性丢掉（prompt 那句只是弱约束）。
-            # 丢空就是 done：那个诉求的终态已经给过用户了。
-            candidate, refused_retry = _drop_refused_domain_steps(candidate, refused_domains)
+            # 批 7 ① / 评审二轮 R5：为已声明「做不到」的**那个诉求**换能力再试 ⇒ 确定性丢掉（prompt 那句只是
+            # 弱约束），依赖它的下游一起不执行（blocked）；同域的独立诉求照做。丢空就是 done：那个诉求的终态
+            # 已经给过用户了。
+            candidate, refused_retry, blocked_intents = _drop_refused_goal_steps(
+                candidate, refused_goals)
             if refused_retry:
-                logger.info("Replan dropped retries in refused domain(s): %s", refused_retry)
+                logger.info("Replan dropped retries of refused goal(s): %s; blocked dependents: %s",
+                            refused_retry, blocked_intents)
                 if not candidate:
-                    return ReplanDecision(done=True)
+                    return ReplanDecision(done=True, blocked=blocked_intents)
             empty_conditional_followup = bool(
                 isinstance(data, dict)
                 and data.get("done") is False
@@ -2209,7 +2276,8 @@ class PlanBuilder:
 
         repair_plan = Plan(steps=steps)
         effects = _skills.apply_plan_repairs(repair_plan, goal, skill_names)
-        return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects)
+        return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects,
+                              blocked=blocked_intents)
 
     def _extract_data(self, raw: str):
         """raw 文本 → dict；解析不出来返回 None。

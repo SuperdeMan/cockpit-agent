@@ -67,6 +67,54 @@ def execution_claim(text: str | None) -> str:
 
 #: 句边界（W14 按句剥）：只认句末标点与换行，零领域词。
 _SENTENCE_RE = re.compile(r"[^。！？!?；;\n]+[。！？!?；;]?|\n")
+_SENTENCE_END_RE = re.compile(r"[。！？!?；;\n]")
+
+
+def is_execution_claim_sentence(sentence: str) -> bool:
+    """一句话是不是执行性声称（`strip_execution_claims` 与流式闸共用同一条判据）。"""
+    return bool(_DONE_RE.search(sentence) or _ONGOING_RE.search(sentence))
+
+
+class ExecutionClaimGate:
+    """流式 speech 的**句级有界闸**（评审二轮 R4，2026-09-22）。
+
+    W14 只在 final 上剥谈话步的声称句；而 D0 / T2 的流式直通把增量直接放出去——「已为您关闭」
+    「车窗。」先到了屏幕 / TTS，final 才把同一句剥掉：终态对了，用户已经听到了假话。
+    闸把增量攒到句边界再判：不是声称就整句放行，是声称就整句丢；一句话超过 `limit` 字还没标点、
+    且到目前为止不像声称 ⇒ 放行（有界：不让正常长句卡在缓冲里）；像声称就继续攥着直到句末或 flush。
+    判据与 final 那一份同源（`is_execution_claim_sentence`），流出的、final 的、落库的三份文本因此对得上。
+    只该挂在**按声明不可能执行**的步上（response_only）——信息类能力的「已为您规划 3 天行程」是真的。
+    """
+
+    def __init__(self, limit: int = 160):
+        self._buf = ""
+        self._limit = max(1, int(limit))
+        self.removed = 0
+
+    def _take(self, sentence: str) -> str:
+        if is_execution_claim_sentence(sentence):
+            self.removed += 1
+            return ""
+        return sentence
+
+    def feed(self, delta: str | None) -> str:
+        self._buf += delta or ""
+        out: list[str] = []
+        while True:
+            m = _SENTENCE_END_RE.search(self._buf)
+            if m is None:
+                break
+            sentence, self._buf = self._buf[:m.end()], self._buf[m.end():]
+            out.append(self._take(sentence))
+        if len(self._buf) > self._limit and not is_execution_claim_sentence(self._buf):
+            out.append(self._buf)
+            self._buf = ""
+        return "".join(out)
+
+    def flush(self) -> str:
+        """流结束：没标点的尾巴按一句判。"""
+        tail, self._buf = self._buf, ""
+        return self._take(tail) if tail else ""
 
 
 def strip_execution_claims(text: str | None) -> tuple[str, int]:
@@ -85,7 +133,7 @@ def strip_execution_claims(text: str | None) -> tuple[str, int]:
         if sentence == "\n":
             kept.append(sentence)
             continue
-        if _DONE_RE.search(sentence) or _ONGOING_RE.search(sentence):
+        if is_execution_claim_sentence(sentence):
             removed += 1
             continue
         kept.append(sentence)

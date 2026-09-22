@@ -4,7 +4,7 @@ from __future__ import annotations
 import asyncio
 
 from orchestrator.cloud.executor import DagExecutor
-from orchestrator.cloud.loop import LoopController, summarize
+from orchestrator.cloud.loop import THINKING_FILLER, LoopController, summarize
 from orchestrator.cloud.models import (
     Plan, PlanContext, ReplanDecision, Step, StepResult, StepStatus,
 )
@@ -898,8 +898,9 @@ def test_t2_response_only_legal_speech_stream_is_unchanged():
     executor, captured, events = _capture_response_only_stream_result(stream_fn)
 
     deltas = [event.get("delta") for event in events if event["kind"] == "speech"]
-    assert "先停车，" in deltas
-    assert "再检查机油液位。" in deltas
+    # 评审二轮 R4：谈话步的增量按**句**释放（句级闸），文本一字不变、只是攒到句号再出
+    assert "先停车，再检查机油液位。" in deltas
+    assert "".join(d for d in deltas if d != THINKING_FILLER) == "先停车，再检查机油液位。"
     assert executor.runs == []
     assert captured.status == StepStatus.OK
     assert captured.actions == []
@@ -1186,3 +1187,35 @@ def test_settle_still_runs_when_the_replanner_fails():
                           complexity="adaptive"),
         agents=[], ctx=PlanContext(), user_text="导航", settle=settle)
     assert calls == [(["s1"], ["s1"])]
+
+
+# ── 评审二轮 R5（2026-09-22）：混合批里被拒的只是那一个诉求 ────────────────────────
+
+def test_a_mixed_batch_with_one_unsupported_refusal_still_replans_the_rest():
+    """reminder 拒绝 + 天气 ok 的一批 ⇒ 不是「整批 unsupported」，照常回到 replan；
+    再规划出的独立同域步（列明天的提醒）照做，被拒那件事的再试（cancel 无槽）不做。"""
+    planner = _Planner([
+        ReplanDecision(done=False, steps=[
+            Step(id="r1", agent_id="reminder", intent="reminder.list", slots={"scope": "明天"})]),
+        ReplanDecision(done=True),
+    ])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="这种持续订阅我做不到",
+                         data={"_refused": "unsupported"}),
+        "s2": StepResult("s2", StepStatus.OK, speech="深圳晴"),
+        "r1": StepResult("r1", StepStatus.OK, speech="明天有 2 条提醒"),
+    })
+    controller = LoopController(planner, executor, _Aggregator(), None,
+                                max_iters=3, budget_ms=5000)
+    events = _collect(
+        controller, goal="有堵车就提醒我；查深圳天气；列出明天的提醒",
+        initial_plan=Plan(steps=[
+            Step(id="s1", agent_id="reminder", intent="reminder.create", slots={"title": "有堵车就提醒我"}),
+            Step(id="s2", agent_id="info", intent="info.weather", slots={"city": "深圳"})],
+            complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="有堵车就提醒我；查深圳天气；列出明天的提醒")
+    assert executor.runs == [["s1", "s2"], ["r1"]]
+    assert events[-1]["kind"] == "final"
+    # 观察里被拒那条带着它自己的槽——再规划的绑定键就是它
+    refused = [o for o in planner.observations[0] if o.get("refused") == "unsupported"]
+    assert refused and refused[0]["slots"] == {"title": "有堵车就提醒我"}

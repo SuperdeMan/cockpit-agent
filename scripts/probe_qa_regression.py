@@ -1270,6 +1270,37 @@ CASES = [
           "expect": {"actions_exclude": ["hvac.on", "aircon.open"], "no_execution_claim": True}},
          {"say": "取消静音", "expect": {"actions_include": ["unmute"]}},
      ]},
+    # ── 评审二轮批 B（R4 / R5，2026-09-22）─────────────────────────────────────
+    # R4：谈话步的执行性声称在**首次释放前**就拦——判据现在同时看流式增量（`streamed`）与 final。这三句都是
+    # 零动作的谈话轮（模型可能编「已为您…」也可能不编），增量与 final 两份都不许命中；真栈能看到的是「拦截生效
+    # 或模型没编」，两者对用户等价。第三句是 C11 原现场（family T21 的形态）。
+    {"id": "RS21", "group": "residual", "card": "余项", "issue": "评审二轮 R4",
+     "why": "零动作谈话轮的流式增量里也不许出现「已为您 / 正在为您」",
+     "known": "red",
+     "turns": [
+         {"say": "帮我避开前面这段路", "sid": 0,
+          "expect": {"no_execution_claim": True, "actions_exclude": ["navigate"]}},
+         {"say": "从深圳欢乐海岸出发，不走高速", "sid": 1,
+          "expect": {"no_execution_claim": True, "actions_exclude": ["navigate"]}},
+         {"say": "可以，已为您执行", "sid": 2,
+          "expect": {"no_execution_claim": True, "no_actions": True}},
+     ]},
+    # R5：unsupported 终止的是那一个诉求。「有堵车就提醒我」reminder 声明做不到；同一句里的独立诉求
+    # 「列出明天的提醒」是自己的参数 ⇒ 要么第一批并列做了、要么再规划批做——两种形态都算；不许追问提醒
+    # 时间、不许声称已设置（RS13 的守护面不能因为放开独立诉求而回退）。
+    {"id": "RS22", "group": "residual", "card": "余项", "issue": "评审二轮 R5",
+     "why": "一项做不到不影响同域另一项独立诉求；被拒那件事不换能力再试",
+     "known": "red",
+     "turns": [
+         {"say": "明天早上八点提醒我参加代号{run}的评审会",
+          "expect": {"speech_has": ["代号{run}"]}},
+         {"say": "以后有堵车就提醒我，另外列出明天的提醒",
+          "expect": {"no_actions": True,
+                     "speech_has": ["代号{run}"],
+                     "speech_not": ["什么时候提醒", "已为您设置", "已设置", "提醒方面也没找到"]}},
+         {"say": "取消代号{run}的评审会提醒",
+          "expect": {"speech_has": ["代号{run}"], "speech_not": ["没找到"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
@@ -2243,6 +2274,11 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
         family = execution_claim(speech)
         if family and not acts:
             fails.append(f"零动作却声称执行（{family}）：{speech[:60]!r}")
+        # 评审二轮 R4：final 干净不等于用户没听到——流出的增量拼起来再判一次（TTS 吃的就是这一份）。
+        streamed = str(obs.get("streamed") or "")
+        family = execution_claim(streamed) if streamed else ""
+        if family and not acts:
+            fails.append(f"零动作却在流式增量里声称执行（{family}）：{streamed[:60]!r}")
     # C16-7（＝C9-E）：**答案城市必须落在本会话点过名的城市里**。真栈 info
     # T4/T5 答上海，五轮判据里只查了 `_prov`，城市漂移全靠人工漏检兜出来。
     # 卡片 `city` 是产生方写的**机读字段**，优先判它；没有该字段时退回
@@ -2399,6 +2435,7 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
     merged: dict | None = None
     timeout = TIMEOUT
     deadline = 0.0
+    streamed: list[str] = []          # 评审二轮 R4：这一轮流出过的 speech 增量（用户 / TTS 先听到的那份）
     while True:
         try:
             raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
@@ -2406,12 +2443,16 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
             if merged is not None:
                 if trace_id:
                     merged["trace_id"] = trace_id
+                merged["streamed"] = "".join(streamed)
                 return merged
             raise
         msg = json.loads(raw)
         kind = msg.get("type")
+        if kind == "speech_delta":
+            streamed.append(str(msg.get("delta") or ""))
         if kind == "final":
             merged = _observe(msg) if merged is None else _merge_finals(merged, _observe(msg))
+            merged["streamed"] = "".join(streamed)
             # 说完了？先只等一个**短 idle 窗**——单 final 的用例就此返回，只多花 0.6s。
             timeout = _TAIL_IDLE_S
             if not deadline:
@@ -2423,6 +2464,7 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
             out = _merge_finals(merged, err) if merged is not None else err
             if trace_id:
                 out["trace_id"] = trace_id
+            out["streamed"] = "".join(streamed)
             return out
         elif merged is not None:
             # final 之后又来了事件（mixed 的云段占位 / 云侧流式）⇒ **这一轮还没说完**，

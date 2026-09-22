@@ -29,7 +29,8 @@ from .clients import set_llm_pin
 from . import candidate_query
 from . import slot_shape
 from runtime import memory_read, session_facts
-from runtime.execution_claim import execution_claim, strip_execution_claims
+from runtime.execution_claim import (
+    ExecutionClaimGate, execution_claim, strip_execution_claims)
 from runtime.clause_split import split_clauses
 from runtime.cntime import cn_int
 from runtime.outcome import category_of, outcome_of_results
@@ -1446,8 +1447,14 @@ class PlannerEngine:
             # 气泡只留最终答案，避免与过程区重复刷屏。整步文本此处就位，直接完整剥 md。
             if (step_result.speech and step_result.status == StepStatus.OK
                     and not complex_task):
-                yield {"kind": "speech",
-                       "delta": strip_markdown_speech(step_result.speech) + "。"}
+                step_speech = strip_markdown_speech(step_result.speech)
+                # 评审二轮 R4：E 路径的逐步播报同样在释放前过闸——谈话步 + 零动作的声称句不出门。
+                talk_step = next((s for s in plan.steps if s.id == step_result.step_id), None)
+                if (talk_step is not None and bool(getattr(talk_step, "response_only", False))
+                        and not step_result.actions):
+                    step_speech, _held = strip_execution_claims(step_speech)
+                if step_speech:
+                    yield {"kind": "speech", "delta": step_speech + "。"}
 
             # 挂起：需确认/需补槽。prior=本轮新完成步（种子是上轮已播报过的，切掉）；
             # 非复杂路径逐步 speech 已流出，但那只在单步计划成立（多步即 is_complex），
@@ -1679,6 +1686,9 @@ class PlannerEngine:
         stream = StreamTracker()
         sink["stream"] = stream
         softener = MdDeltaSoftener()   # 流式增量剥 **/`（final 由 compose 出口彻底清理）
+        # 评审二轮 R4：谈话步（按声明不可能执行）的增量在**首次对外释放之前**过句级闸——W14 只在 final
+        # 上剥，「已为您关闭」「车窗。」两个增量早就到了屏幕 / TTS。判据与 final 那份同源，T2 同一条闸。
+        gate = ExecutionClaimGate() if bool(getattr(step, "response_only", False)) else None
         final_sr: StepResult | None = None
         response_violation: StepResult | None = None
         try:
@@ -1689,6 +1699,8 @@ class PlannerEngine:
                     step_call_context(step, ctx), step.meta):   # W16-b：这一步的起点原话
                 if kind == "speech":
                     payload = softener.feed(payload)
+                    if gate is not None:
+                        payload = gate.feed(payload)
                     # 记的是**软化之后**的增量：softener 会把悬空的 `*` 扣下一拍，那一拍用户什么都没看到。
                     # 「流出过输出」必须指用户真的收到了东西，否则一个空串就能把 unary 回退整条关掉。
                     stream.on_speech(payload)
@@ -1711,6 +1723,14 @@ class PlannerEngine:
                     final_sr = DagExecutor._to_result(step.id, payload)
         except Exception as e:
             logger.warning("Single-step stream failed (%s); caller decides fallback", e)
+        if gate is not None:
+            tail = gate.feed(softener.flush()) + gate.flush()
+            stream.on_speech(tail)
+            if tail:
+                yield {"kind": "speech", "delta": tail}
+            if gate.removed:
+                logger.warning("response-only stream held %d execution claim sentence(s) "
+                               "before release (%s)", gate.removed, step.intent)
 
         if response_violation is not None:
             final_sr = response_violation

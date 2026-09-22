@@ -221,8 +221,9 @@ def test_d0_response_only_legal_speech_stream_is_unchanged():
         ("final", _Resp(status=0, speech="先停车，再检查机油液位。")),
     ])
 
+    # 评审二轮 R4：谈话步的增量按**句**释放（句级闸），文本一字不变、只是攒到句号再出
     assert [event["delta"] for event in events if event["kind"] == "speech"] == [
-        "先停车，", "再检查机油液位。",
+        "先停车，再检查机油液位。",
     ]
     assert spy.unary_calls == []
     assert captured.status == StepStatus.OK
