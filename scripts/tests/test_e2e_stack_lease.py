@@ -72,12 +72,12 @@ def _voiceprint_fixture(run_root: Path, case_id: str = "e2e_voiceprint"):
     return fixture_dir, manifest, hashlib.sha256(content).hexdigest()
 
 
-def test_single_owner_enables_and_restores_exactly_once_without_leaking_secret():
+def test_single_owner_enables_and_restores_exactly_once_without_leaking_secret(tmp_path):
     module = require_module()
     compose = FakeCompose()
     process_env = {"KEEP": "yes"}
     lease = module.IdentityStackLease(
-        repo_root=Path.cwd(),
+        repo_root=tmp_path,        # 每个用例自己的锁（tmp_path 不在 git 仓库里）——真仓库根的锁在 xdist 下必撞
         environ=process_env,
         compose=compose,
         ready=lambda: True,
@@ -99,13 +99,13 @@ def test_single_owner_enables_and_restores_exactly_once_without_leaking_secret()
     assert "E2E_IDENTITY_ENABLED" not in process_env
 
 
-def test_identity_enable_retries_one_transient_readiness_failure_before_restore():
+def test_identity_enable_retries_one_transient_readiness_failure_before_restore(tmp_path):
     module = require_module()
     compose = FakeCompose()
     readiness = iter((False, True, True))
     process_env = {"KEEP": "yes"}
     lease = module.IdentityStackLease(
-        repo_root=Path.cwd(),
+        repo_root=tmp_path,
         environ=process_env,
         compose=compose,
         ready=lambda: next(readiness),
@@ -945,11 +945,11 @@ def test_one_child_crash_still_waits_for_the_other():
     assert outcomes == [1, 0]
 
 
-def test_restore_failure_is_identity_cleanup_and_overrides_pass():
+def test_restore_failure_is_identity_cleanup_and_overrides_pass(tmp_path):
     module = require_module()
     compose = FakeCompose(fail_restore=True)
     lease = module.IdentityStackLease(
-        repo_root=Path.cwd(),
+        repo_root=tmp_path,
         environ={},
         compose=compose,
         ready=lambda: True,
@@ -1479,8 +1479,12 @@ def _install_parallel_fakes(
     trees = []
 
     def lease_factory(*, repo_root, environ):
+        # runner 传进来的 repo_root 是真仓库根（manifest / compose 从那儿读），但**锁不能跟着它走**：
+        # `identity_lock_path(真仓库根)` 是 `.git/` 下那把全仓库唯一的 OS 锁，xdist 多 worker 与同机的真 e2e
+        # 都会去抢它（隔离债，2026-09-19 起全量偶红）。FakeCompose 不读 repo_root，锁路径按本用例的 tmp_path 派生。
+        del repo_root
         lease = module.IdentityStackLease(
-            repo_root=repo_root,
+            repo_root=tmp_path / "lease-root",
             environ=environ,
             compose=compose,
             ready=lambda: True,
