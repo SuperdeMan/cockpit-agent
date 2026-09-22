@@ -9,6 +9,8 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.planning import PlanBuilder
 from orchestrator.cloud.executor import DagExecutor
@@ -1306,3 +1308,57 @@ def test_slot_pending_task_title_accepts_a_disposal_phrase_as_its_value():
     assert PlannerEngine._is_topic_change("把全车门解锁吗", titled) is True     # 问句不是标题
     routed = SessionState(phase="wait_slot", pending_step_id="s1", missing_slots=["route"])
     assert PlannerEngine._is_topic_change("把全车门解锁", routed) is True
+
+
+# ── 评审二轮 R1（2026-09-22）：肯定词 + 任意实质短尾不是授权 ────────────────
+
+@pytest.mark.parametrize("text", ["行程", "确认函", "可以改", "行李", "确定性", "好的那本", "可以看"])
+def test_a_yes_word_with_a_substantive_tail_never_authorizes(text):
+    """「行程」「确认函」「可以改」：肯定词开头、剩一个实质字——旧判据把 ≤1 字的余量当语气尾
+    ⇒ 裸确认 ⇒ `confirm_resolved` ⇒ 恢复挂起并注入 confirmed（局部复算已复现）。
+    语气词剥完必须一个实质字都不剩，才是裸确认；剩下的按插话 / 新请求走。"""
+    engine, spy, session = _make_engine()
+    op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+
+    final = _run(engine, _req(text))[-1]
+
+    assert all(m.get("confirmed") != "true" for m in spy.metas("nearby.order")), text
+    assert op1 not in (final.get("closed_operation_ids") or []), text
+    assert asyncio.run(session.load(
+        "sess-1", owner_user_id="u1", operation_id=op1)) is not None, text
+    assert spy.llm_plan_calls == 2, text                  # 当新请求规划了，没被短路成确认
+
+
+@pytest.mark.parametrize("text", ["好的，确认吧", "嗯确认", "可以可以", "确认了", "行啊", "好的好的",
+                                  "嗯，可以", "确认一下", "好，确认", "确认吧。", "好"])
+def test_a_bare_affirmation_with_tone_particles_still_confirms(text):
+    """对照面：全句只有肯定词与语气词 ⇒ 仍是确认（「好的，确认吧」此前被拆成点名「确认」而落空）。"""
+    engine, spy, session = _make_engine()
+    op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
+
+    final = _run(engine, _req(text))[-1]
+
+    assert spy.metas("nearby.order")[-1].get("confirmed") == "true", text
+    assert op1 in (final.get("closed_operation_ids") or []), text
+    assert spy.llm_plan_calls == 1, text
+
+
+def test_confirm_reply_strict_rules():
+    f = PlannerEngine._confirm_reply
+    for t in ("行程", "确认函", "可以改", "行李箱", "好的那个", "确定性", "可以看"):
+        assert f(t, False) is None, t
+    for t in ("好的，确认吧", "嗯确认", "可以可以", "确认了", "行啊", "确认一下", "好", "好了", "ok了"):
+        assert f(t, False) == "yes", t
+    assert PlannerEngine._is_bare_confirm_word("行程") is False
+    assert PlannerEngine._is_bare_confirm_word("确认函") is False
+    assert PlannerEngine._split_confirm_prefix("行程") == (False, "")
+    assert PlannerEngine._split_confirm_prefix("好的，确认吧") == (True, "")
+    assert PlannerEngine._split_confirm_prefix("确认订单") == (False, "订单")
+
+
+def test_a_yes_word_with_a_tail_and_no_pending_is_not_hijacked_as_no_pending():
+    """没有挂起时「行程」曾被 `_is_bare_confirm_word` 拦成「当前没有待确认的操作」——它是一个新请求。"""
+    engine, spy, _ = _make_engine()
+    final = _run(engine, _req("行程"))[-1]
+    assert "没有待确认" not in final["speech"]
+    assert spy.llm_plan_calls == 1

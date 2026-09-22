@@ -208,3 +208,71 @@ def test_clarify_suppressed_on_resume(monkeypatch):
     final = _run(engine, _req("华润大厦", meta={"clarify_resume": "1"}))[-1]
     assert "抱歉" in final["speech"]
     assert not (final.get("ui_card") or {}).get("type") == "intent_choice"
+
+
+# ── 评审二轮 R3（2026-09-22）：纯偏好短路只消费已受话的输入 ─────────────────
+#
+# 「我不吃辣」这样的纯偏好陈述有一条确定性出口（W13 F09-a：登记 + 致谢、零 LLM）。它排在
+# planner 之前，于是语音来源的这句话**跳过了受话判定**：乘客对别人说的一句「我不吃辣」被登记
+# 进焦点、被应答、还落进普通历史。语音来源先走既有的受话判定（planner `addressed`），
+# 判非受话 ⇒ 与其他非受话轮同一条拒识出口；文字 / 按钮来源没有受话问题，照旧零 LLM。
+
+_ADDRESSED_EMPTY_PLAN = json.dumps({"addressed": True, "steps": []})
+
+
+def _focus_constraints(engine, session_id="s1"):
+    focus = asyncio.run(engine.context._load_focus(session_id, "u1"))
+    return dict(getattr(focus, "session_constraints", None) or {}) if focus else {}
+
+
+def test_voice_pure_preference_judged_not_addressed_is_rejected_and_not_recorded():
+    engine, spy, _ = _make_engine(_REJECT_PLAN)
+    final = _run(engine, _req("我不吃辣", meta=_VOICE))[-1]
+    assert final["ui_card"] == {"type": "rejected", "reason": "not_addressed"}
+    assert final["speech"] == ""
+    assert spy.append_turns == []                       # 不落普通历史
+    assert _focus_constraints(engine) == {}             # 不登记会话约束
+    assert spy.agent_calls == 0
+
+
+def test_voice_pure_preference_judged_addressed_takes_the_deterministic_ack():
+    engine, spy, _ = _make_engine(_ADDRESSED_EMPTY_PLAN)
+    final = _run(engine, _req("我不吃辣", meta=_VOICE))[-1]
+    assert "不吃辣" in final["speech"]
+    assert final.get("actions") == []
+    assert _focus_constraints(engine) == {"no_spicy": True}
+    assert len(spy.append_turns) == 2
+    assert spy.agent_calls == 0
+
+
+def test_voice_pure_preference_takes_the_ack_even_when_the_planner_only_fails_technically():
+    """保留短路诞生的理由：受话了但 planner 交不出合法计划（技术失败 / 规划成一次搜索）
+    ⇒ 仍走确定性致谢，不是一句报错。"""
+    engine, spy, _ = _make_engine("this is not json at all")
+    final = _run(engine, _req("我不吃辣", meta={"input_source": "ptt"}))[-1]
+    assert "不吃辣" in final["speech"]
+    assert _focus_constraints(engine) == {"no_spicy": True}
+
+
+def test_text_pure_preference_keeps_the_zero_llm_shortcut():
+    engine, spy, _ = _make_engine(_REJECT_PLAN)      # 即使 planner 会判非受话，文字源也不问它
+    planned = {"n": 0}
+    orig = spy.llm
+
+    async def llm(messages, **kwargs):
+        if "任务编排器" in messages[0]["content"]:
+            planned["n"] += 1
+        return await orig(messages, **kwargs)
+    engine.planner._llm = llm
+    final = _run(engine, _req("我不吃辣", meta={}))[-1]
+    assert "不吃辣" in final["speech"]
+    assert planned["n"] == 0
+    assert _focus_constraints(engine) == {"no_spicy": True}
+
+
+def test_voice_pure_preference_with_reject_disabled_keeps_the_shortcut(monkeypatch):
+    monkeypatch.setenv("REJECT_NON_ADDRESSED", "off")
+    engine, spy, _ = _make_engine(_REJECT_PLAN)
+    final = _run(engine, _req("我不吃辣", meta=_VOICE))[-1]
+    assert "不吃辣" in final["speech"]
+    assert _focus_constraints(engine) == {"no_spicy": True}

@@ -133,3 +133,59 @@ def test_compound_judgment_is_anaphora_not_length():
     assert detect_cancel("算了那个不要了，先去帮我看看附近有什么景点").compound is True
     # ④ 剥完只剩承接词 ⇒ 纯取消（「先不用了吧」只剩一个「先」）
     assert detect_cancel("先不用了吧").compound is False
+
+
+# ─── 评审二轮 R2（2026-09-22）：极性、问句、目标 ───
+
+def test_negated_cancel_is_keep_not_cancel():
+    """「不要取消」剥掉「取消」再剥掉「不要」余量为空 ⇒ 旧判据判成纯取消——极性反了。"""
+    for t in ("不要取消", "别取消", "不用取消", "先别取消", "不取消", "不取消了", "甭取消", "不要取消。"):
+        d = detect_cancel(t)
+        assert d.cancelled is False, t
+        assert d.act == "keep", t
+        assert d.remainder == "", t
+
+
+def test_negated_cancel_keeps_its_remainder():
+    d = detect_cancel("不要取消，改成明晚")
+    assert d.cancelled is False and d.act == "keep"
+    assert "改成明晚" in d.remainder
+
+
+def test_how_about_cancelling_is_still_a_cancel():
+    """「要不取消吧」的「不」属于「要不」，不是否定「取消」。"""
+    d = detect_cancel("要不取消吧")
+    assert d.cancelled is True and d.act == "cancel" and d.compound is False
+
+
+def test_asking_about_cancel_is_ask_not_cancel():
+    for t in ("怎么取消", "如何取消", "咋取消", "取消了吗", "能取消吗", "可以取消吗", "能不能取消",
+              "取消吗", "取消了没有", "请问怎么取消"):
+        d = detect_cancel(t)
+        assert d.cancelled is False, t
+        assert d.act == "ask", t
+
+
+def test_polite_tail_after_the_cancel_word_is_a_cancel_not_a_question():
+    for t in ("取消好吗", "取消可以吗", "取消行吗", "取消吧？", "取消刚才那个可以吗", "取消，好吗"):
+        d = detect_cancel(t)
+        assert d.cancelled is True and d.act == "cancel", t
+        assert d.compound is False, t
+
+
+def test_cancel_decisions_carry_the_named_target():
+    """余量剥掉回指虚词后剩下的实质名字——多条挂起并存时按它绑定目标。"""
+    assert detect_cancel("取消刚才咖啡订单").target == "咖啡订单"
+    assert detect_cancel("取消刚才解锁").target == "解锁"
+    assert detect_cancel("取消刚才那个").target == ""
+    assert detect_cancel("取消").target == ""
+    assert detect_cancel("取消刚才那笔订单").target == "订单"
+    assert detect_cancel("取消导航").compound is True          # 复合句不带目标（余句是新请求）
+
+
+def test_negated_cancel_is_not_a_cancel_instruction_object():
+    """规划侧的取消闸读同一份极性：「不要取消导航」不是「取消导航」。"""
+    from orchestrator.cloud.pending_cancel import cancel_instruction_object
+    assert cancel_instruction_object("不要取消导航") == ""
+    assert cancel_instruction_object("别取消提醒") == ""
+    assert cancel_instruction_object("取消导航") == "导航"

@@ -43,6 +43,7 @@ CATEGORY_OF: dict[str, str] = {
     "pending_asked": CAT_SESSION,        # 「可以吗 / 确认吗」念出挂着什么
     "no_pending": CAT_SESSION,           # 裸确认词、没有待确认
     "cancelled": CAT_SESSION,            # 取消了一条挂起
+    "pending_kept": CAT_SESSION,         # 「不要取消」——按用户的话保留了挂起（评审二轮 R2）
     "pending_expired": CAT_SESSION,      # 挂起计划恢复不出来
     "store_fenced": CAT_SESSION,         # 隐私删除写栅栏期间不保存挂起
     # 安全与注入

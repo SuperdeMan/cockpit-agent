@@ -477,9 +477,13 @@ def test_action_first_howto_question_is_blocked_without_changing_adjustment_comm
     """「怎么打开双闪」是方法问句；无标点也不能执行成 warning_light.open。
 
     v2 在共享 question_shape 中用词序收口：`怎么 + 打开 + 对象` 与
-    `对象 + 怎么 + 打开` 是询问；`怎么把对象打开`、`温度如何调高` 仍按既有祈使合同。
+    `对象 + 怎么 + 打开` 是询问；`温度如何调高` 仍按既有祈使合同（`怎么把对象打开` 自评审二轮 R9 起也是询问）。
     端侧与云侧继续复用同一实现，没有为 manual 另抄判据。
     """
     step = _step("warning_light.open")
     assert _GUARD([step], "怎么打开双闪") == [step]
     assert _GUARD([step], "温度如何调高") == []
+    # 评审二轮 R9（2026-09-22）：「怎么把对象打开」不再按祈使合同——「把」是句法结构，不是授权证据。
+    assert _GUARD([step], "怎么把双闪打开") == [step]
+    assert _GUARD([step], "请告诉我怎么打开双闪") == [step]
+    assert _GUARD([step], "帮我把双闪打开") == []

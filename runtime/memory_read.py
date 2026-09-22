@@ -33,6 +33,7 @@ from __future__ import annotations
 import re
 
 from runtime.memory_directive import POLITE_PREFIX_RE
+from runtime.question_shape import strip_ask_prefix
 
 FOUND = "found"
 NONE = "none"
@@ -67,8 +68,8 @@ _MEMORY_RECALL_RE = re.compile(
     rf"(?:跟你|和你|对你|给你)?(?:说过|提过|讲过|告诉过|说了)"
     # 「你知道我喜欢/爱吃/常去…吗」「你知不知道我…」
     rf"|^(?:你|您)(?:知道|知不知道|了解|了不了解|清楚|清不清楚)(?:我|咱)")
-#: 「请问 / 问一下」这类提问前缀（`POLITE_PREFIX_RE` 只剥「请」）。
-_ASK_PREFIX_RE = re.compile(r"^(?:请问|问一下|问下|想问|想问一下)[，,]?\s*")
+# 「请问 / 问一下」这类提问前缀（`POLITE_PREFIX_RE` 只剥「请」）：判据在 `question_shape.strip_ask_prefix`
+# （评审二轮 R9 起唯一一份），这里只消费。
 _QUESTION_MARKS = ("吗", "么", "嘛", "呢", "?", "？", "记不记得", "有没有", "是不是",
                    "知不知道", "了不了解", "清不清楚")
 #: 自述而非提问：「我不记得了」「我记得是八点」——句首是「我（不）记得」且没有对助手的指向。
@@ -79,7 +80,7 @@ def is_memory_recall_question(text: str | None) -> bool:
     """「你还记得我不吃辣吗」「我之前说过我老婆爱吃什么吗」「你知道我常去哪吗」→ True。
     「记住我喜欢清淡」（祈使）/「我不记得了」（自述）/「我喜欢清淡」（陈述）→ False。"""
     # 先剥「请问」再剥「请」：`POLITE_PREFIX_RE` 会把「请问」啃成「问…」
-    raw = POLITE_PREFIX_RE.sub("", _ASK_PREFIX_RE.sub("", str(text or "").strip()))
+    raw = POLITE_PREFIX_RE.sub("", strip_ask_prefix(str(text or "").strip()))
     if not raw or _SELF_STATEMENT_RE.match(raw):
         return False
     if not _MEMORY_RECALL_RE.match(raw):

@@ -33,6 +33,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from runtime.question_shape import POLITE_TAILS, is_non_directive_question
+
 # ── 唯一词表 ──────────────────────────────────────────────────────────
 # STRONG：语义自足的取消短语，做子串安全（旅程 B5-1 的 `_SLOT_CANCEL_RE`）。
 _STRONG_WORDS = ("取消", "不用了", "算了", "不需要了", "不要了",
@@ -63,13 +65,41 @@ _WEAK_STRIP_RE = re.compile("|".join(_WEAK_WORDS) + r"|[，。,、！!？?；;\s
 
 @dataclass(frozen=True)
 class CancelDecision:
-    """`cancelled=False` 时另外两个字段无意义（保持默认）。"""
+    """有挂起时对一句话的取消判定。
+
+    `act` 是对话行为（评审二轮 R2，2026-09-22）：
+      · `"cancel"` —— 在取消（`cancelled=True`；`compound` / `remainder` / `target` 照旧有意义）；
+      · `"keep"`   —— 否定极性「不要取消 / 别取消」：在**保留**挂起（`remainder` = 除此之外还说了什么）；
+      · `"ask"`    —— 在**问**「怎么取消 / 取消了吗」：解释、不改状态；
+      · `""`       —— 不是在谈取消。
+    `cancelled` 只在 `act == "cancel"` 时为真——既有消费方按它分支，语义不变。
+    `target`：纯取消里剥掉回指虚词后剩下的实质名字（「取消刚才咖啡订单」→「咖啡订单」），
+    多条挂起并存时按它绑定目标；复合句 / 裸取消为空。
+    """
     cancelled: bool = False
     remainder: str = ""
     compound: bool = False
+    act: str = ""
+    target: str = ""
 
 
 _NOT_CANCEL = CancelDecision()
+
+#: 否定极性（评审二轮 R2）：否定词紧贴在「取消」前面 ⇒ 用户在说**别取消**。
+#: 「要不取消吧」的「不」属于「要不」（承接词），「还不取消」「能不取消」不是否定取消 ⇒ 排除。
+_NEGATED_CANCEL_RE = re.compile(
+    r"(?:不要|不用|不必|不需要|不想|不是|甭|别|(?<![要还能可])不)\s*(?:再|先|去|给我|帮我)?\s*取消")
+#: 礼貌尾（`question_shape.POLITE_TAILS` 同一份）在句尾：「取消好吗」「取消刚才那个可以吗」是软化的
+#: 请求，不是在问——但只有礼貌尾之前的主体本身不是问句时才算（「可以取消吗」的「吗」不在此列）。
+_POLITE_TAIL_END_RE = re.compile(
+    "(?:" + "|".join(sorted(map(re.escape, POLITE_TAILS), key=len, reverse=True))
+    + r")[。！？!?~\s]*$")
+#: 取消专用的完成问法：「取消了没 / 取消了没有」——`question_shape` 的尾词表没有「没有」尾。
+_CANCEL_DONE_ASK_RE = re.compile(r"了没(?:有)?[。！？!?~\s]*$")
+#: 目标名字的量具：回指 + 指示词 / 量词 + 结构助词剥掉，剩下的才是「点名了哪件事」。
+_TARGET_STRIP_RE = re.compile(
+    r"刚才|刚刚|方才|上一(?:步|条|个|次)|前面|上面|(?:这|那)(?:个|条|笔|杯|份|单|件|次|台|辆|家|张|项|趟|回)?"
+    r"|的|[，。,、！!？?；;\s]")
 
 
 def _whole_sentence_hit(text: str, words: tuple[str, ...]) -> bool:
@@ -101,7 +131,7 @@ _ANAPHORA_RE = re.compile(
 #: 虚词面（语气/客套），这几个是**复合判定专用**的那一小片——「先不用了吧」剥完
 #: 只剩一个「先」，那不是新请求。刻意不并进上面那份：`_CANCEL_FILLER_RE` 同时被
 #: `is_standalone_cancel` 消费，往那里加词会顺手放宽**另一条**路径的判据。
-_COMPOUND_ADVERB_RE = re.compile(r"先|就|还是|再|然后|另外|不然|干脆|反正")
+_COMPOUND_ADVERB_RE = re.compile(r"先|就|还是|再|然后|另外|不然|干脆|反正|要不")
 #: ⚠ 这里**不许放裸「那」/「这」**：它们会把「那个」剥成「个」，
 #: 回指判据当场瞎掉（既有用例「那个提醒不用了，取消吧」当场报红）。
 
@@ -186,12 +216,35 @@ def is_standalone_cancel(text: str) -> bool:
     return _no_substance_left(parts[0])
 
 
+def _named_target(remainder: str) -> str:
+    """纯取消的余量 → 点名的实质名字（回指 / 指示量词 / 助词剥掉）；什么都不剩就是空串。"""
+    rest = _CANCEL_FILLER_RE.sub("", remainder or "")
+    rest = _COMPOUND_ADVERB_RE.sub("", rest)
+    return _TARGET_STRIP_RE.sub("", rest).strip()
+
+
+def _strip_polite_cancel_tail(t: str) -> str | None:
+    """「取消好吗」「取消刚才那个可以吗」：礼貌尾在句尾、尾前的主体不是问句 ⇒ 请求，
+    返回去掉礼貌尾的主体；不是这个形态返回 None。"""
+    m = _POLITE_TAIL_END_RE.search(t)
+    if not m:
+        return None
+    body = t[:m.start()].rstrip("，, ")
+    if not body or is_non_directive_question(body):
+        return None
+    return body
+
+
 def detect_cancel(text: str) -> CancelDecision:
     """**有挂起**的语境：这句话是不是在取消挂起？复合句的余量是什么？
 
-    - `cancelled=False`：不是取消，按各分支原有语义继续（确认/补槽/换话题）。
-    - `cancelled=True, compound=False`：纯取消——清挂起、回「已为您取消」。
+    - `cancelled=False`：不是取消，按各分支原有语义继续（确认/补槽/换话题）；
+      其中 `act="keep"`（「不要取消」）与 `act="ask"`（「怎么取消」）由 engine 各出一条确定性出口；
+    - `cancelled=True, compound=False`：纯取消——清挂起、回「已为您取消」；
     - `cancelled=True, compound=True`：取消只作用于挂起，**余句按全新请求继续处理**。
+
+    评审二轮 R2（2026-09-22）之前，「不要取消」剥掉「取消」再剥掉「不要」余量为空 ⇒ 纯取消；
+    「怎么取消」余量「怎么」⇒ 复合取消——询问本身把挂起清掉了。极性与问句都要在改状态之前判。
     """
     t = str(text or "").strip()
     if not t:
@@ -200,11 +253,25 @@ def detect_cancel(text: str) -> CancelDecision:
     if not (_STRONG_RE.search(lowered)
             or _whole_sentence_hit(lowered, _WEAK_WORDS)):
         return _NOT_CANCEL
+    if _NEGATED_CANCEL_RE.search(lowered):
+        rest = _CANCEL_FILLER_RE.sub("", _NEGATED_CANCEL_RE.sub("", t))
+        rest = _COMPOUND_ADVERB_RE.sub("", rest).strip()
+        return CancelDecision(act="keep", remainder=rest)
+    body = _strip_polite_cancel_tail(t)
+    if body is not None:
+        t = body                               # 「取消好吗」的礼貌尾不是内容
     remainder = _WEAK_STRIP_RE.sub("", _STRIP_RE.sub("", t))
+    substance = _COMPOUND_ADVERB_RE.sub("", _CANCEL_FILLER_RE.sub("", remainder)).strip()
+    if (substance and body is None
+            and (is_non_directive_question(t) or _CANCEL_DONE_ASK_RE.search(t))):
+        return CancelDecision(act="ask", remainder=remainder)
+    compound = _is_compound_remainder(remainder)
     return CancelDecision(
         cancelled=True,
         remainder=remainder,
-        compound=_is_compound_remainder(remainder),
+        compound=compound,
+        act="cancel",
+        target="" if compound else _named_target(remainder),
     )
 
 
@@ -241,6 +308,9 @@ def cancel_instruction_object(text: str) -> str:
     if not t:
         return ""
     if not _STRONG_RE.search(t.lower()):
+        return ""
+    # 极性同一份（评审二轮 R2）：「不要取消导航」不是「取消导航」。
+    if _NEGATED_CANCEL_RE.search(t.lower()):
         return ""
     parts = _CLAUSE_SEP_RE.split(t, 1)
     if len(parts) > 1 and parts[1].strip():

@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 from runtime.clause_split import SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
-from runtime.polarity import is_negated_directive
+from runtime.polarity import is_negated_directive, is_withdrawn_directive
 from runtime.reported_speech import is_reported_speech
 from runtime.anaphora import has_anaphoric_subject
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
@@ -350,6 +350,10 @@ def classify_structured(text: str) -> dict | None:
     # 映射成「关」只是换了一个**有副作用**的错误动作（判据全在 polarity.py）。
     if _is_write_action(result) and is_negated_directive(text):
         return None                       # 整句上云：宁可慢一点，不要按反
+    # 撤回（评审二轮批 A 顺手）：「取消刚才打开空调」命中「空调」+「打开」⇒ `aircon.open`——用户在撤回，
+    # 端侧却把它做了一遍。撤回的对象只有云侧知道（挂起表 / 上一轮动作），这里只保证**不执行**。
+    if _is_write_action(result) and is_withdrawn_directive(text):
+        return None                       # 整句上云：撤回不是执行
     # 受话边界的第三维（2026-09-11 语音采纳真栈探针）：「欢迎收听今天的节目，本台记者为您报道新闻。」
     # 命中 `新闻` + `听` → media.play，0.97s 内把媒体置成 playing——说话的是收音机 / 乘客，不是用户。
     # 判据是**语域**（说话人在对听众播报 / 转述），零领域词；同样只盖写操作（判据全在 reported_speech.py）

@@ -114,7 +114,6 @@ def test_questions_are_recognised(text):
     "能帮我关下车窗吗",
     "请把空调调到 24 度",
     "温度如何调高",              # 方式问法 + 操作动词 ⇒ 仍是指令
-    "怎么把座椅加热打开",
     "调到三档",                  # 对照：说了具体档位就是指令，不带数量疑问词
     "座椅加热开到二档",
 ])
@@ -152,13 +151,66 @@ def test_choice_and_requirements_shapes_are_questions_without_punctuation(text):
 
 
 @pytest.mark.parametrize("text", [
-    "怎么把座椅加热打开",
+    "帮我把座椅加热打开",
     "帮我打开雨刮器",
     "现在把空调关闭",
     "温度如何调高",
 ])
 def test_explicit_execution_shapes_remain_directives(text):
     assert is_non_directive_question(text) is False
+
+
+# ── 评审二轮 R9（2026-09-22）：「把」是句法结构，不是授权证据 ────────────────
+#
+# 「怎么把车窗打开」曾被显式排除在方法问句之外（manual-rag v2 的「既有祈使合同」），于是端侧
+# 直接执行成 window.open——问怎么做的被当成要执行。方式疑问词 + 「把 / 将」处置式 + 操作动作
+# 是方法询问；「帮我把车窗关上好吗」这类礼貌执行句（祈使标记 / 礼貌尾 + 祈使主体）照旧是请求。
+# 「温度如何调高」（调 / 设 / 升 / 降类调节动词）的既有合同不在本批扩大。
+
+@pytest.mark.parametrize("text", [
+    "怎么把车窗打开",
+    "如何把空调关闭",
+    "咋把天窗打开",
+    "怎样把座椅加热打开",
+    "怎么才能把后备箱打开",
+    "怎么把音乐关了",
+])
+def test_how_to_with_a_ba_frame_is_a_question(text):
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "请告诉我怎么关闭空调",        # 元请求：请求解释，不是请求控车
+    "告诉我怎么开天窗",
+    "请说说雨刮怎么用",
+    "给我讲讲天窗是怎么开的",
+    "教我怎么打开后备箱",
+    "请问车窗能不能打开",          # 「请问」是提问前缀，不是祈使标记
+    "请问怎么打开后备箱",
+    "问一下座椅加热有几档",
+])
+def test_explanation_requests_and_ask_prefixes_are_questions(text):
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "帮我把车窗关上好吗",          # 礼貌执行句对照
+    "请把车窗打开",
+    "麻烦把空调关一下",
+    "请问能帮我把车窗打开吗",      # 「请问」之后仍是礼貌请求
+    "帮我深入调研固态电池，查完告诉我",   # 「告诉我」在句尾是交付要求，不是元请求
+    "怎么把温度调高",              # 调节类动词的既有合同不动
+])
+def test_polite_execution_requests_stay_directives(text):
+    assert is_non_directive_question(text) is False, text
+
+
+def test_ask_prefix_and_explain_request_tables_are_closed_function_word_classes():
+    from runtime.question_shape import ASK_PREFIXES, EXPLAIN_REQUESTS
+    assert "请问" in ASK_PREFIXES and "告诉我" in EXPLAIN_REQUESTS
+    vocab = _domain_vocabulary()
+    for word in (*ASK_PREFIXES, *EXPLAIN_REQUESTS):
+        assert word not in vocab, word
 
 
 # ── 4. 礼貌尾词（评审 2026-09-19 §4 最小对比对，2026-09-20）──────────────────

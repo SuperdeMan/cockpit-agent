@@ -1786,7 +1786,11 @@ def test_https_verifier_fails_closed_when_an_endpoint_never_becomes_ready(tmp_pa
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["rc=1"]
-    assert "cloud verification: HTTPS endpoint hmi failed (http_code 502 after 0s)" in result.stderr
+    # bash `SECONDS` 是整秒时钟：xdist 满载时预算 0 的那一次 curl 跨过秒界会记成 1s（与下面 loopback
+    # 那条同形态，批 8 已改成 `\d+s`）——断的是「截止即失败」，不是那个秒数。
+    assert re.search(
+        r"cloud verification: HTTPS endpoint hmi failed \(http_code 502 after \d+s\)",
+        result.stderr), result.stderr
     # 截止即失败：不再 sleep、不再往后打下一个端点，也不留下任何 200 记录。
     assert calls.read_text(encoding="utf-8").splitlines() == [
         "https://car-agent-dev.example.ts.net/",

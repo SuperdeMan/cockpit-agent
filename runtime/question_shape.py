@@ -60,6 +60,15 @@ POLITE_TAILS = ("好吗", "好么", "好不好", "行吗", "行么", "行不行"
                 "可以吗", "可以么", "可不可以", "成吗", "成不成", "可好")
 #: 操作动词。与 `MANNER_ASKS` 配对：「怎么把温度调高」带「调」⇒ 仍是指令。
 OPERATION_VERBS = ("调", "设", "开", "关", "升", "降", "加", "减")
+#: 提问前缀（评审二轮 R9，2026-09-22）：「请问车窗能不能打开」的「请」不是祈使标记——
+#: 「请问」整体是在开一个问句。先剥掉它再看主体；`runtime.memory_read` 消费同一份。
+ASK_PREFIXES = ("请问", "问一下", "问下", "想问一下", "想问", "请教一下", "请教")
+#: 元请求动词（同一批）：「请告诉我怎么关闭空调」「给我讲讲天窗是怎么开的」请求的是**解释**，
+#: 不是控车——「告诉我 / 说说 / 教我」+ 一个疑问框架 ⇒ 提问，哪怕带「请 / 帮我 / 给我」。
+#: 判据两段都要：动词在句首（可带礼貌前缀 / 人称），且其后有疑问框架；「查完告诉我」在句尾、
+#: 后面没有疑问框架，是交付要求，不在此列。零领域词。
+EXPLAIN_REQUESTS = ("告诉我", "说说", "讲讲", "说一下", "讲一下", "说明一下", "解释一下", "解释",
+                    "介绍一下", "介绍", "教我", "教教我", "科普一下")
 
 # 方法问句中的动作词。它们仍是零领域的句法词，不包含任何车辆对象；“对象在前/动作在前，
 # 中间带怎么/如何”的形态由本模块统一判定，端侧与云侧共用。刻意不含“调高/调低”：
@@ -78,6 +87,23 @@ _ACTION_FIRST_HOW_TO_RE = re.compile(
     rf"^(?:怎么|咋|如何)(?:才|才能|可以|应该|要|去)?(?:{_HOW_TO_ACTION_ALT}).+"
     r"(?:一下|呢|啊|呀|吧|才行)?$"
 )
+#: 评审二轮 R9（2026-09-22）：「怎么把车窗打开」「如何把空调关闭」——方式疑问词 + 「把 / 将」处置式
+#: + 操作动作，是方法询问。manual-rag v2 曾把「怎么把」显式排除（「显式执行框架」），于是端侧直接
+#: 执行成 window.open：**「把」是句法结构，不是授权证据**。礼貌执行句（「帮我把车窗关上好吗」）
+#: 由祈使标记 / 礼貌尾 + 祈使主体照旧判成请求；调节类动词（调 / 设 / 升 / 降）的既有合同不动
+#: （`HOW_TO_ACTIONS` 刻意不含它们）。
+_BA_FRAME_HOW_TO_RE = re.compile(
+    rf"^(?:怎么|怎样|咋|如何)(?:才|才能|可以|应该|要|去)?(?:把|将)[^，,。！？!?]+?"
+    rf"(?:{_HOW_TO_ACTION_ALT})(?:一下|呢|啊|呀|吧|了|才行)?$"
+)
+_ASK_PREFIX_ALT = "|".join(sorted(map(re.escape, ASK_PREFIXES), key=len, reverse=True))
+_ASK_PREFIX_RE = re.compile(rf"^(?:{_ASK_PREFIX_ALT})[，,]?\s*")
+_EXPLAIN_ALT = "|".join(sorted(map(re.escape, EXPLAIN_REQUESTS), key=len, reverse=True))
+#: 元请求：句首（礼貌前缀 / 人称 / 「能 / 能不能 / 可以」之后）就是解释动词，其后跟着疑问框架。
+_EXPLAIN_REQUEST_RE = re.compile(
+    rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再)*\s*(?:{_EXPLAIN_ALT})"
+    r"[，,]?\s*.{0,16}?(?:怎么|怎样|咋|如何|为什么|为啥|什么|哪个|哪种|哪里|哪边|几|多少|多久"
+    r"|能不能|可不可以|是不是|有没有|会不会|支不支持)")
 
 
 _POLITE_TAIL_ALT = "|".join(sorted(map(re.escape, POLITE_TAILS), key=len, reverse=True))
@@ -130,23 +156,36 @@ def _polite_request(t: str) -> bool:
 
 
 def _is_how_to_question(t: str) -> bool:
-    """无标点 ASR 的操作方法问句；显式“把/将”执行框架不在本形态内。"""
+    """无标点 ASR 的操作方法问句：对象在前 / 动作在前 / 「怎么把对象 + 动作」三种形态。"""
     cleaned = (t or "").strip().rstrip("。！!？?~ ")
-    if "怎么把" in cleaned or "如何把" in cleaned or "咋把" in cleaned:
-        return False
     return bool(
         _OBJECT_FIRST_HOW_TO_RE.fullmatch(cleaned)
         or _ACTION_FIRST_HOW_TO_RE.fullmatch(cleaned)
+        or _BA_FRAME_HOW_TO_RE.fullmatch(cleaned)
     )
+
+
+def strip_ask_prefix(t: str | None) -> str:
+    """剥掉句首的提问前缀（「请问 / 问一下 / 想问」）；没有就原样返回。"""
+    return _ASK_PREFIX_RE.sub("", (t or "").strip(), count=1)
+
+
+def is_explanation_request(t: str | None) -> bool:
+    """「请告诉我怎么关闭空调」「给我讲讲天窗是怎么开的」——请求解释，不是请求执行。"""
+    return bool(_EXPLAIN_REQUEST_RE.match(strip_ask_prefix(t)))
 
 
 def is_non_directive_question(t: str) -> bool:
     """这句话是在**问**，而不是在**下指令**。"""
-    t = t or ""
+    # 「请问…」的「请」不是祈使标记：先剥掉提问前缀，再按主体判（评审二轮 R9）。
+    t = strip_ask_prefix(t or "")
     # 真实 ASR 常不带问号。“雨刮器怎么打开”若继续落入下方“疑问词+操作动词”旧档，
     # 会被端侧直接执行成 wiper.on。对象/动作的词序已经给出方法询问信号，先于礼貌
-    # marker 判定；“帮我把/怎么把”仍由上面的显式执行框架挡住。
+    # marker 判定；“帮我把”仍由祈使标记挡住。
     if _is_how_to_question(t):
+        return True
+    # 元请求「请告诉我怎么…」带着「请」，却是在要一段解释——排在祈使标记之前。
+    if is_explanation_request(t):
         return True
     if any(w in t for w in DIRECTIVE_MARKERS):
         return False

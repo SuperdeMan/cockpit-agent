@@ -129,7 +129,15 @@ def _turn_sources(ui_card) -> list[dict]:
 # 肯定话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）。
 # 否定侧不在这里——它是 `pending_cancel` 的职责。
 _YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
-              "嗯", "行", "ok", "付吧", "支付", "下单", "就这家", "就它")
+              "嗯", "行", "好", "ok", "付吧", "支付", "下单", "就这家", "就它")
+_YES_WORDS_BY_LEN = tuple(sorted(_YES_WORDS, key=len, reverse=True))
+#: 裸确认的语气面（评审二轮 R1，2026-09-22）：肯定词之外**只允许**语气尾 / 承接虚词 / 礼貌前缀 / 标点。
+#: 剥完必须一个实质字都不剩——「行程」的「程」、「确认函」的「函」、「可以改」的「改」都不是语气尾。
+#: 旧判据给裸确认留了 2 字松弛（`len(t) <= len(k)+2`），它本来是给语气尾留的，却把任何 ≤2 字的
+#: 实质尾巴一并当成了授权（局部复算：三句都判 `kind=one`）。
+_CONFIRM_PARTICLE_RE = re.compile(
+    r"^(?:请|麻烦|那就|那|就|一下|吧|呀|啊|呢|哦|噢|喔|啦|嘛|哈|喽|咯|哟|呗|嗯|哎|唉|的|了"
+    r"|[，,、。！!？?~\s])+")
 #: 「可以吗 / 确认吗 / 行不行」——**只问能不能、不含任何别的内容**的确认询问（W01）。
 #: 剥掉疑问尾词后剩下的必须就是一个肯定词或一个「X不X」能力问法；「可以换第二天的安排吗」
 #: 剥完还有内容，不在这一档。
@@ -644,6 +652,47 @@ class PlannerEngine:
         just_cancelled = False
         if pending and not self._is_cancel_index_answer(text, pending):
             cancelled = detect_cancel(text)
+            # 评审二轮 R2（2026-09-22）：极性与问句都在改状态**之前**判。
+            #   · 「不要取消 / 别取消」是在保留挂起——此前剥掉「取消」再剥掉「不要」余量为空 ⇒ 纯取消；
+            #   · 「怎么取消 / 取消了吗」是在问——此前按复合取消先清挂起，询问本身改变了状态；
+            #   · 「取消刚才咖啡订单」在两条挂起并存时按点名绑定，点不到 / 点到多条就问，不清另一条。
+            # 带余量的「不要取消，改成明晚」不进取消出口，余下的话按既有分支（插话 / 换题）走。
+            if cancelled.act == "keep" and not cancelled.remainder:
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.pending_kept", "system.pending_kept")
+                yield {"kind": "final",
+                       "speech": f"好的，不取消，{self._pending_label(pending)}"
+                                 f"还在等您{self._pending_ask_word(pending)}。",
+                       "actions": [],
+                       "held_operation_ids": [pending.operation_id] if pending.operation_id else [],
+                       "_outcome": "pending_kept"}
+                return
+            if cancelled.act == "ask":
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.pending_state", "system.pending_state")
+                yield {"kind": "final",
+                       "speech": "还没有取消。" + session_facts.pending_answer(
+                           self._digest_of([pending])),
+                       "actions": [],
+                       "held_operation_ids": [pending.operation_id] if pending.operation_id else [],
+                       "_outcome": "pending_asked"}
+                return
+            if cancelled.cancelled and cancelled.target and len(entries) >= 2:
+                hits = [s for s in entries if self._pending_names(s, cancelled.target)]
+                if len(hits) == 1:
+                    pending = hits[0]
+                else:
+                    labels = "，还是".join(
+                        self._pending_label(s) for s in (hits or entries))
+                    await _emit_engine_lifecycle(
+                        ctx, "cloud.pending_ambiguous", "system.pending_ambiguous")
+                    yield {"kind": "final",
+                           "speech": f"您要取消{labels}？请点选对应的确认条，或说出要取消哪一条。",
+                           "actions": [],
+                           "held_operation_ids": [
+                               s.operation_id for s in (hits or entries) if s.operation_id],
+                           "_outcome": "pending_ambiguous"}
+                    return
             if cancelled.cancelled:
                 just_cancelled = True
                 await self._close_pending(ctx, pending)
@@ -960,8 +1009,22 @@ class PlannerEngine:
             # 判据在 `runtime.session_constraints.is_pure_constraint_statement`（每个分句都在谈
             # 口味 / 排队）；带安全信号的句子让给安全那条路；记忆关掉时焦点不落盘，「记下了」
             # 会是假话，退回正常规划。致谢按登记后的投影念（合并旧值），零 LLM。
+            input_source = ctx.prefs.get("input_source", "")
             if (mem_on and is_pure_constraint_statement(text)
                     and not (alert_level(text) or driver_state(text) or alert_resolved(text))):
+                # 评审二轮 R3（2026-09-22）：这条出口排在 planner 之前，语音来源的这句话就**跳过了
+                # 受话判定**——乘客对别人说的「我不吃辣」被登记、被应答、还落进普通历史。语音来源先走
+                # 既有的受话判定（planner `addressed`，与其他语音轮同一条路），判非受话 ⇒ 同一条拒识
+                # 出口（零登记、零落库）；受话了才致谢。planner 交出的步 / 技术失败一概不用——短路诞生
+                # 的理由（MiniMax-M3 下 3/4 落技术失败）照旧成立。文字 / 按钮来源没有受话问题，零 LLM。
+                if is_voice_input_source(input_source) and _reject_enabled():
+                    admission = await self.planner.build(
+                        text, working_set, ctx,
+                        granted_permissions=ctx.granted_permissions)
+                    if not admission.addressed:
+                        async for ev in self._reject_not_addressed(ctx):
+                            yield ev
+                        return
                 await self._register_input_facts(ctx, text, mem_on)
                 await _emit_engine_lifecycle(
                     ctx, "cloud.constraint_noted", "system.constraint_noted")
@@ -987,17 +1050,10 @@ class PlannerEngine:
             # 文字/按钮和旧客户端没有来源，保留原行为；确认/补槽仍走前面的续接分支。必须在
             # `if not plan.steps` 之前——addressed=false 时 steps 恰为空，否则先走空计划话术+TTS
             # 令拒识失效（母卡实施计划 §0-4）。
-            input_source = ctx.prefs.get("input_source", "")
             if (is_voice_input_source(input_source)
                     and not plan.addressed and _reject_enabled()):
-                await obs_events.get_emitter("cloud").emit_span(
-                    ctx.trace_id, "rejected",
-                    attrs={"reason": "not_addressed",
-                           "intent": "system.rejected",
-                           "owner": "cloud-engine"})
-                yield {"kind": "final", "speech": "",
-                       "ui_card": {"type": "rejected", "reason": "not_addressed"},
-                       "_rejected": True, "_outcome": "not_addressed"}
+                async for ev in self._reject_not_addressed(ctx):
+                    yield ev
                 return
 
             # AR05 F09：规划技术失败**不许伪装成一次成功的闲聊**。
@@ -1475,6 +1531,19 @@ class PlannerEngine:
             "aggregate",
         )
         yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+
+    @staticmethod
+    async def _reject_not_addressed(ctx) -> AsyncIterator[dict]:
+        """语音来源 + 受话判定为「不是对助手说的」⇒ 静默拒识（唯一出口：规划轮与纯偏好短路共用）。
+        `_rejected` 让 `run()` 跳过落库；卡片让客户端知道这一轮被拒而不是丢了。"""
+        await obs_events.get_emitter("cloud").emit_span(
+            ctx.trace_id, "rejected",
+            attrs={"reason": "not_addressed",
+                   "intent": "system.rejected",
+                   "owner": "cloud-engine"})
+        yield {"kind": "final", "speech": "",
+               "ui_card": {"type": "rejected", "reason": "not_addressed"},
+               "_rejected": True, "_outcome": "not_addressed"}
 
     async def _constraint_ack(self, ctx, text: str) -> str:
         """纯偏好陈述的致谢：按**登记后的投影**念（合并了之前说过的），词表与焦点块共用。"""
@@ -2336,6 +2405,14 @@ class PlannerEngine:
             f"（{label}问了几次都没接上，先放一放；需要的话重新说一次。）")
 
     @staticmethod
+    def _pending_ask_word(state) -> str:
+        """这条挂起在等用户做什么（软提醒 / 保留话术共用一份）。"""
+        phase = getattr(state, "phase", "")
+        return ("确认" if phase == "wait_confirm"
+                else "选择" if phase == "wait_clarify"
+                else "继续补充")
+
+    @staticmethod
     def _append_pending_hint(final: dict, held_pending) -> None:
         """插话轮的 final 补软提醒：告知挂起还在（Q1 决策的配套——插话后 HMI 确认条
         已被新消息顶掉，不提示的话用户忘了挂起、说「确认」会显得凭空执行）。原地改 final。
@@ -2356,10 +2433,7 @@ class PlannerEngine:
         except AttributeError:
             pass
         what = f"「{goal[:20]}」" if goal else "刚才的操作"
-        ask = ("确认" if held_pending.phase == "wait_confirm"
-               else "选择" if held_pending.phase == "wait_clarify"
-               else "继续补充")
-        hint = f"对了，{what}还在等你{ask}。"
+        hint = f"对了，{what}还在等你{PlannerEngine._pending_ask_word(held_pending)}。"
         follow = str(final.get("follow_up") or "")
         final["follow_up"] = (follow + (" " if follow else "") + hint).strip()
 
@@ -2393,11 +2467,30 @@ class PlannerEngine:
         # （「请确认」带祈使标记）仍是指令，不在否决面内。
         if is_non_directive_question(t):
             return None
-        # "词占据整句"判定：肯定词须近似为全句（len(t) ≤ 词长+slack），不做宽松子串包含。
-        # 否则"第二天行程换一个"含"行"、"可以换X"含"可以"会被误判。
-        if any(k in t and len(t) <= len(k) + 2 for k in _YES_WORDS):
+        # 「词占据整句」（评审二轮 R1）：全句只能由肯定词与语气面组成，剥完一个实质字都不剩。
+        # 「第二天行程换一个」「可以换X」「行程」「确认函」「可以改」都剩了实质内容 ⇒ 不是确认。
+        if PlannerEngine._bare_affirmation(t):
             return "yes"
         return None
+
+    @staticmethod
+    def _bare_affirmation(t: str) -> bool:
+        """整句是否只由肯定词 + 语气面组成（「好的，确认吧」「嗯可以」「行啊」→ True；
+        「行程」「确认函」「好像不对」→ False）。"""
+        core = (t or "").strip().lower()
+        if not core:
+            return False
+        while core:
+            core = _CONFIRM_PARTICLE_RE.sub("", core)
+            if not core:
+                return True
+            for word in _YES_WORDS_BY_LEN:
+                if core.startswith(word):
+                    core = core[len(word):]
+                    break
+            else:
+                return False
+        return True
 
     @staticmethod
     def _address_pending(entries: list, operation_id: str):
@@ -2469,24 +2562,33 @@ class PlannerEngine:
         """
         if not t or is_standalone_cancel(t) or is_non_directive_question(t):
             return False, ""
-        # 先看「肯定词 + 余量」：「确认订单」余量 2 字是点名，不是裸确认——
-        # 裸判据的 2 字松弛量（`len(t) <= len(k)+2`）本来是给语气尾留的，不是给宾语留的。
-        for word in sorted(_YES_WORDS, key=len, reverse=True):
+        # 裸确认 = 肯定词 + 语气面、剥完什么都不剩（「好的，确认吧」也在此列——此前被拆成点名「确认」）。
+        if PlannerEngine._bare_affirmation(t):
+            return True, ""
+        # 「肯定词 + 余量」：「确认订单」余量 2 字是点名；「行程」剩一个实质字「程」，
+        # 既不是语气尾也不够点名 ⇒ 两边都不是（评审二轮 R1：剩一个实质字也不是裸确认）。
+        for word in _YES_WORDS_BY_LEN:
             if t.startswith(word):
                 rest = _CONFIRM_FILLER_RE.sub("", t[len(word):])
                 if len(rest) >= 2:
                     return False, rest
-                return True, ""
-        if PlannerEngine._confirm_reply(t, False) == "yes":
-            return True, ""
+                return False, ""
         return False, ""
 
     @staticmethod
     def _pending_names(state, needle: str) -> bool:
-        """余量是否点名了这条挂起：看 goal 与任务起点原话两处（都是这条任务自己的话）。"""
+        """余量是否点名了这条挂起：看 goal 与任务起点原话两处（都是这条任务自己的话）。
+
+        整串子串命中，或余量的任一二元片段命中（「咖啡订单」对「订一杯拿铁咖啡」靠「咖啡」）——
+        取消 / 确认的点名都是用户随口的称呼，很少与 goal 逐字相同；单字不算（评审二轮 R2）。"""
         plan = getattr(state, "pending_plan", None) or {}
-        haystacks = (str(plan.get("goal") or ""), str(plan.get("raw_text") or ""))
-        return any(needle in h.lower() for h in haystacks if h)
+        haystacks = [h.lower() for h in
+                     (str(plan.get("goal") or ""), str(plan.get("raw_text") or "")) if h]
+        needle = str(needle or "").strip().lower()
+        if len(needle) < 2 or not haystacks:
+            return False
+        grams = {needle} | {needle[i:i + 2] for i in range(len(needle) - 1)}
+        return any(g in h for h in haystacks for g in grams)
 
     @staticmethod
     def _is_bare_confirm_word(text: str) -> bool:

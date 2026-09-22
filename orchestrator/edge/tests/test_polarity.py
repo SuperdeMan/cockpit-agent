@@ -67,6 +67,40 @@ def test_negated_write_action_is_not_classified_locally(text, forbidden):
     assert got is None
 
 
+# ── 撤回（评审二轮批 A 顺手，2026-09-22）：「取消刚才打开空调」不是「打开空调」 ────────
+
+@pytest.mark.parametrize("text,forbidden", [
+    ("取消刚才打开空调", "hvac.on"),
+    ("取消开车窗", "window.open"),
+    ("算了刚才开空调不用了", "hvac.on"),
+    ("取消刚才那个座椅加热", "seat.heating.on"),
+    ("撤销刚才解锁", "door_lock.open"),
+])
+def test_withdrawn_write_action_is_not_classified_locally(text, forbidden):
+    """撤回一个动作 ≠ 再做一遍那个动作。离线复算：三句都被端侧判成正向执行。"""
+    from runtime.polarity import is_withdrawn_directive
+    assert is_withdrawn_directive(text) is True, text
+    assert classify_structured(text) is None, f"{text} 仍被判成可本地执行"
+    assert (classify(text) or {}).get("name") != forbidden, text
+
+
+@pytest.mark.parametrize("text,want", [
+    ("取消静音", "volume.unmute"),          # 「取消静音」是 unmute 的词面本身
+    ("取消导航", "navigate_cancel"),
+])
+def test_lexicalised_cancel_commands_stay_local(text, want):
+    from runtime.polarity import is_withdrawn_directive
+    assert is_withdrawn_directive(text) is False, text
+    got = (classify(text) or {}).get("name") or ""
+    assert got and (got == want or got.endswith(want.split(".")[-1]) or "cancel" in got), (text, got)
+
+
+def test_withdrawal_is_not_the_edge_noop_reply():
+    """撤回句不走「保持当前状态」本地直回——云侧的挂起取消要收得到它。"""
+    from fast_intent import is_negated_write_directive
+    assert is_negated_write_directive("取消刚才打开空调") is False
+
+
 def test_positive_counterparts_still_classify():
     """反向对照——这一半和上一半一样重要（§4.3「反向验证要两头做」）。"""
     for text, want in (("打开车窗", "window.open"),

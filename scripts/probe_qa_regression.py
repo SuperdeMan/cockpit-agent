@@ -239,7 +239,7 @@ _ACTION_WORDS = {
 # 用例集是**共享的尺子**，两个跑批入口都读它——只在一处允许这个键，
 # 另一处就永远写不进来。
 _TURN_KEYS = {"say", "sid", "expect", "op_from", "op_literal", "confirm",
-              "say_button", "audit"}
+              "say_button", "audit", "source"}
 
 # ── 用例集 ────────────────────────────────────────────────────────────────
 # `known` = 立卡时的已知现状（红/绿/待测），写在用例里是为了让第一次跑批的输出
@@ -1168,6 +1168,107 @@ CASES = [
          {"say": "取消导航",
           "expect": {"actions_include": ["navigate_cancel"], "speech_has": ["已结束"],
                      "speech_not": ["没有正在进行的导航", "没有待确认"]}},
+     ]},
+    # ── 评审二轮批 A（R1 / R2 / R3 / R9，2026-09-22）──────────────────────────────
+    # R1：肯定词 + 实质短尾不是授权。「行程」以「行」开头、余量「程」≤1 字，旧判据当语气尾 ⇒ 裸确认 ⇒
+    # 恢复挂起注入 confirmed（局部复算复现）。判据：那一轮零车控动作；随后带寻址键的确认仍能执行
+    # ——证明「行程」既没消费也没关掉挂起。对照臂：「好的，确认吧」（此前被拆成点名「确认」而落空）要真的执行。
+    {"id": "RS15", "group": "residual", "card": "余项", "issue": "评审二轮 R1",
+     "why": "「行程」「确认函」不是确认；「好的，确认吧」是",
+     "known": "red",
+     "turns": [
+         {"say": "把全车门解锁",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "行程",
+          "expect": {"actions_exclude": ["door_lock.open"], "speech_not": ["已为您取消"]}},
+         {"say": "确认函",
+          "expect": {"actions_exclude": ["door_lock.open"], "speech_not": ["已为您取消"]}},
+         {"say": "确认", "confirm": True, "op_from": 1,
+          "expect": {"actions_include": ["door_lock.open"], "closes_op_from": 1}},
+         {"say": "把全车门解锁", "sid": 1,
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "好的，确认吧", "sid": 1,
+          "expect": {"actions_include": ["door_lock.open"], "closes_op_from": 5}},
+     ]},
+    # R2：取消的极性与问句。「不要取消」剥掉「取消」再剥掉「不要」余量为空 ⇒ 旧判据纯取消；「怎么取消」
+    # 余量「怎么」⇒ 复合取消先清挂起——询问改变了状态。判据：两句都零动作、不出「已为您取消」、挂起仍在
+    # （最后一句「取消」真的取消它，说明前两句没消费掉）；两条出口都是确定性的（`system.pending_kept` /
+    # `system.pending_state`）。
+    {"id": "RS16", "group": "residual", "card": "余项", "issue": "评审二轮 R2",
+     "why": "「不要取消」保留挂起、「怎么取消」解释；两句都不改状态",
+     "known": "red",
+     "turns": [
+         {"say": "把全车门解锁",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "不要取消",
+          "expect": {"no_actions": True, "speech_has": ["不取消"], "speech_not": ["已为您取消"]},
+          "audit": {"intent_any": ["system.pending_kept"]}},
+         {"say": "怎么取消",
+          "expect": {"no_actions": True, "speech_has": ["还没有取消"], "speech_not": ["已为您取消"]},
+          "audit": {"intent_any": ["system.pending_state"]}},
+         {"say": "取消",
+          "expect": {"speech_any": ["已为您取消", "已取消"], "no_actions": True, "closes_op_from": 1}},
+         {"say": "确认", "confirm": True,
+          "expect": {"speech_has": ["没有待确认"], "no_actions": True}},
+     ]},
+    # R2 目标绑定：两条挂起并存时「取消刚才午休模式」要清掉点名的那条（第 2 轮），不是最新的那条——
+    # 修前无寻址键的取消一律落 `entries[-1]`（这里恰好也是第 2 轮，所以再加一臂：点名**更早**那条）。
+    {"id": "RS17", "group": "residual", "card": "余项", "issue": "评审二轮 R2",
+     "why": "点名取消绑定被点名的那条挂起，不是最新一条",
+     "known": "red",
+     "turns": [
+         {"say": "把全车门解锁",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "创建一个午休模式，空调调到24度",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "取消刚才解锁",
+          "expect": {"no_actions": True, "speech_has": ["已为您取消", "解锁"], "closes_op_from": 1}},
+         {"say": "取消刚才午休模式",
+          "expect": {"no_actions": True, "speech_any": ["已为您取消", "已取消"], "closes_op_from": 2}},
+     ]},
+    # R9：「怎么把车窗打开」曾被显式排除在方法问句之外 ⇒ 端侧直接执行 window.open；「请告诉我怎么关闭空调」
+    # 带「请」被当祈使；「请问车窗能不能打开」的「请」同样。三句都要零车控动作、零执行声称；对照臂
+    # 「帮我把车窗关上好吗」照旧执行。
+    {"id": "RS18", "group": "residual", "card": "余项", "issue": "评审二轮 R9",
+     "why": "问怎么做的不被当成要执行；礼貌执行句照做",
+     "known": "red",
+     "turns": [
+         {"say": "怎么把车窗打开",
+          "expect": {"actions_exclude": ["window"], "no_execution_claim": True}},
+         {"say": "请告诉我怎么关闭空调",
+          "expect": {"actions_exclude": ["hvac", "aircon"], "no_execution_claim": True}},
+         {"say": "请问车窗能不能打开",
+          "expect": {"actions_exclude": ["window"], "no_execution_claim": True}},
+         {"say": "帮我把车窗关上好吗",
+          "expect": {"actions_include": ["window.close"]}},
+     ]},
+    # R3：语音来源的纯偏好陈述先过受话判定。planner 判受话与否是模型方差，尺子不押注哪一边：要么被拒
+    # （空话术 + rejected 卡、零动作）、要么是确定性致谢「不吃辣」；两边都不许落技术失败 / 「没听清」。
+    # 哪一边由 artifact 里的 `card_type` / `speech` 读（`rejected` vs 「不吃辣」）。文字来源对照（sid 1）：
+    # 零 LLM 致谢，且「我今天说过不吃辣吗」由会话约束读出口答出「不吃辣」。
+    {"id": "RS19", "group": "residual", "card": "余项", "issue": "评审二轮 R3",
+     "why": "语音来源的「我不吃辣」先过受话判定；被拒则零登记，受话则确定性致谢",
+     "known": "red",
+     "turns": [
+         {"say": "我不吃辣", "source": "voice_followup",
+          "expect": {"no_actions": True, "speech_not": ["没听清", "换个说法", "没能把您的请求"]}},
+         {"say": "我不吃辣", "sid": 1,
+          "expect": {"no_actions": True, "speech_has": ["不吃辣"]},
+          "audit": {"intent_any": ["system.constraint_noted"]}},
+         {"say": "我今天说过不吃辣吗", "sid": 1,
+          "expect": {"no_actions": True, "speech_has": ["不吃辣"]},
+          "audit": {"intent_any": ["system.constraint_recall"]}},
+     ]},
+    # 批 A 顺手（离线复算逼出）：「取消刚才打开空调」在端侧命中「空调」+「打开」⇒ `aircon.open`——撤回被执行成
+    # 再做一遍。判据只要求**不再执行那个动作**（关掉 / 解释都可以，交云侧判）；对照臂「取消静音」照旧本地 unmute。
+    {"id": "RS20", "group": "residual", "card": "余项", "issue": "评审二轮批 A 顺手",
+     "why": "撤回一个动作 ≠ 再做一遍那个动作；「取消静音」仍是本地命令",
+     "known": "red",
+     "turns": [
+         {"say": "打开空调", "expect": {"actions_include": ["hvac"]}},
+         {"say": "取消刚才打开空调",
+          "expect": {"actions_exclude": ["hvac.on", "aircon.open"], "no_execution_claim": True}},
+         {"say": "取消静音", "expect": {"actions_include": ["unmute"]}},
      ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
@@ -2276,9 +2377,10 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
     """
     meta = dict(PROBE_META)
     overrides = meta_overrides or {}
-    # 只认评测 pin：LLM pin（D2）与历史视窗 pin（批 5 W19，`meta.planner_history_exchanges`）
+    # 只认评测 pin：LLM pin（D2）、历史视窗 pin（批 5 W19，`meta.planner_history_exchanges`）与
+    # 输入来源（评审二轮 R3：`input_source=voice_followup / ptt` 走语音受话判定；文字轮不传）
     if not isinstance(overrides, dict) or set(overrides) - {
-            "llm_provider", "llm_model", "planner_history_exchanges"}:
+            "llm_provider", "llm_model", "planner_history_exchanges", "input_source"}:
         raise ValueError("unsupported meta override")
     for key, value in overrides.items():
         if not isinstance(value, str) or not value.strip() or len(value) > 80:
@@ -2416,10 +2518,13 @@ async def _run_case(case: dict, stamp: int) -> dict:
                 say = buttons[index - 1]
             else:
                 say = _subst(turn["say"], stamp)
+            source = str(turn.get("source") or "")
             try:
                 obs = await _one_turn(ws, sessions[sid], say,
                                       operation_id=op,
-                                      is_confirmation=bool(turn.get("confirm")))
+                                      is_confirmation=bool(turn.get("confirm")),
+                                      meta_overrides=(
+                                          {"input_source": source} if source else None))
             except asyncio.TimeoutError:
                 obs = {"speech": "[timeout]", "actions": [], "need_confirm": False,
                        "card_type": "", "is_question": False, "error": True}
