@@ -193,3 +193,31 @@ A 说「我不吃辣」→ B 回问不许听到「您这次说过」→ A 自己
   第 3 趟 planner 反过来先澄清要比较什么（落域方差，判据不押注）。
 - R8 的三条新出口**在云端没有触发场景**（Redis 正常）：证据是离线的 10 条（存储三态 + engine 四条出口 + 两条兼容形状）与三处变异判红；
   真栈要复现得停 Redis，属于 AR05 V06 同族的「需要一次受控故障」，不在本轮范围。
+
+## 5. 批 D：独立验证（R1–R9 之后的读数，2026-09-22 夜）
+
+评审 §6 批 D 要的三件事，在本仓的形态：
+
+| 要求 | 本仓的形态 | 状态 |
+|---|---|---|
+| 先固定确定性反例集 | 探针 RS15–RS24（`residual` 组）+ 它们各自的离线红测试。**固定 = 改名 / 删掉 / 换组会红**：`scripts/tests/test_probe_qa_regression.py::test_the_round_two_counterexample_set_is_fixed` 钉住十个 id、组别与「每条至少有一项形态判据」——只写进文档的集合，下次改 id 就悄悄少一条而读数照常全绿 | 已做 |
+| 跑现有正式基线 | L3（`e2e_journeys`）按设计拒绝 cloud 目标（签名身份 + 持久数据），正式资格要 L3 恰一份新鲜报告 ⇒ **正式基线仍只能在本地全栈跑**（§10.2 的结论不变，本轮同样没有切 target）。L1 / L2 诊断读数可以：SSH 本地转发到 llm-gateway 容器 | L1 / L2 已跑，见 §5.1 |
+| 未用于修复的长会话留出集 | `probe_qa_long_sessions.py --persona continuity`（71 检查点，含 600 s 沉默与两次断连重连）。它**不是**本轮任何一条修复的来源，所以是留出集 | 已跑，见 §5.2 |
+
+### 5.2 长会话留出集（`86c43998`，`--silence-scale 1`，MiniMax-M3 pin）
+
+**70/71，跑完整趟不中止、零 open operation、零 cleanup 失败、`vehicle_env_restore` battery 72 放回、release 连续性 start/end 同 SHA**
+（artifact `.artifacts/dev-stack-verifications/round2-batchD-continuity-86c43998.json`）。路径分布 cloud 48 / mixed 11 / local 12；
+LLM 全部 pin 在 `minimax:MiniMax-M3`（50 次）；外部 provider amap 16 / qweather 3；卡片 provenance `real` 19 / `deterministic` 2。
+
+与本轮修复直接相关的检查点都绿：`system.constraint_noted` 2、`system.constraint_recall` 4（R3 / R7 的两条出口）、
+`system.pending_cancel` 3 / `system.pending_state` 4 / `system.no_pending` 2 / `system.pending_missing` 1（R1 / R2 / R8 的出口族）、
+`system.candidate_aggregate` 9 / `system.candidate_missing` 1、`system.execution_audit` 1；**批 8 的唯一红 SF4 T65 这一趟通过**。
+
+唯一红 **T63「接孩子后去万象城。」**：planner 先导航到鼎太小学并在话术里说明「接上孩子再一起去万象城」，尺子要求 `navigate` 的目的地
+里至少有一个含「万象城」⇒ 判红。这是 §10（批 8）就记着的 family 域落域方差的**另一种形态**（那次是把「接孩子」当途经点关键词搜出三家家政公司，
+这次是把它当第一段目的地）。两件事都不是本轮三批的机制：**不改 gold 让它绿**（评审 §7「不要把明显的方法询问写成执行 gold 以维护旧高分」的同一条纪律），
+留成产品裁决——「接 A 后去 B」到底该规划成 `navigate(B, waypoint=A)` 还是两段导航，要先有产品口径再动尺子。
+
+不做（与评审一致）：不强行启用 `goals/covers`（A/B 已证有损，缺省仍 off）；不为通过率改 gold；
+不把「内部 Agent 名不同」当错误、也不把「名对了」当办对了。

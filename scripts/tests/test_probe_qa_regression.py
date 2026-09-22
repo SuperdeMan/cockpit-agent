@@ -759,3 +759,47 @@ def test_say_button_still_says_it_cannot_invent_a_sentence():
     收紧的只有「打烊要说出来」，不是「没按钮就免检」。"""
     msg = probe._say_button_failure("SP1", 2, 1, 1, 0, "这是您的门店列表。")
     assert "探针不许自己编一句" in msg and "商户" not in msg
+
+
+# ── 评审二轮批 D（2026-09-22）：固定反例集 ─────────────────────────────────
+#
+# 评审 §6 批 D 的第一件事是「先固定上述确定性反例集」。在本仓里它就是这十条探针——
+# 固定的意思不是写进文档，是**改名 / 删掉 / 换组都会红**：一个只活在文档里的集合，
+# 下次有人改 id 就悄悄少了一条，而读数还照常「全绿」。
+
+ROUND2_CASES = (
+    "RS15",   # R1 肯定词 + 实质短尾不是授权
+    "RS16",   # R2 「不要取消」保留 / 「怎么取消」解释
+    "RS17",   # R2 点名取消绑定被点名那条
+    "RS18",   # R9 方法询问 / 元请求不是执行
+    "RS19",   # R3 语音来源的纯偏好先过受话判定
+    "RS20",   # 端侧撤回否决
+    "RS21",   # R4 执行性声称在首次释放前拦
+    "RS22",   # R5 一项做不到不影响同域独立诉求
+    "RS23",   # R6 裁剪不反转极性
+    "RS24",   # R7 会话约束按乘员归属
+)
+
+
+def test_the_round_two_counterexample_set_is_fixed():
+    by_id = {case["id"]: case for case in probe.CASES}
+    missing = [cid for cid in ROUND2_CASES if cid not in by_id]
+    assert not missing, f"评审二轮反例集少了：{missing}"
+    for cid in ROUND2_CASES:
+        case = by_id[cid]
+        assert case["group"] == "residual", cid
+        assert case["turns"], cid
+        assert str(case.get("issue") or "").strip(), cid
+
+
+def test_every_round_two_case_declares_a_mechanical_expectation():
+    """每条至少有一项**形态判据**（动作 / 卡片 / 声称），不能只靠关键词排除。"""
+    mechanical = {"actions_include", "actions_exclude", "no_actions", "card_type",
+                  "card_text_has", "no_execution_claim", "closes_op_from",
+                  "has_operation_id", "need_confirm"}
+    by_id = {case["id"]: case for case in probe.CASES}
+    for cid in ROUND2_CASES:
+        keys = set()
+        for turn in by_id[cid]["turns"]:
+            keys |= set(turn.get("expect") or {})
+        assert keys & mechanical, f"{cid} 只有话术判据"
