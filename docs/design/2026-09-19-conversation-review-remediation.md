@@ -659,3 +659,28 @@ g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` �
   记给后续：发布预检的问候 smoke 该等 LLM 网关就绪再发，或对超时单独归类。
 - 留给后续：w6 g18「那它的纯电续航呢」在 T1（理想 L9）在视窗内时 planner 仍给 chitchat、chitchat 拿本车 335 km 作答——云侧版的「答成本车」，是落域方差不是端侧；
   `route_target` 只认中文路名后缀与 G/S 编号，英文路名与「机场高速」这类既像目的地又像路的词按后缀归路名（查态势），有真栈反例再调。
+
+### 9.2 批 7 追加（2026-09-22 上午，用户「1234 都做，需要权限的我授权」）
+
+四件事：① 发布预检问候 smoke 等 LLM 就绪 / 超时单列；② W05 正式基线用 MiniMax-M3 在当前 SHA 重建；③ continuity persona 加两条系统事实检查点；
+④ `test_e2e_stack_lease` 隔离债。① 顺带修掉发布验收闸里两条把两次发布都打成 `ROLLBACK_FAILED` 的判据；③ 的两趟真栈各逼出一条 nearby 候选命名缺陷。
+
+| 条 | 做了什么 | 证据 |
+|---|---|---|
+| ④ 隔离债 | 三条单测的 `repo_root=Path.cwd()` 与 parallel-owner 替身工厂都改成按 `tmp_path` 派生锁路径（真仓库根的 `.git/car-agent-e2e-identity-stack.lock` 是全仓库唯一的 OS 锁，xdist 多 worker 必撞） | `74004bdd`：同文件 `-n 8` 修前两趟 5 红 / 3 红、修后三趟 0 红、串行 61/61 |
+| ① 问候 smoke | `edge_ws_probe.py`：问候带 `meta.input_source=release_probe`（collector 单列）；final 带 `planner.technical_failure` issue 的「冷启形态」不算 pass、退避 10 s 重问，最多 `GREETING_ATTEMPTS=3`；其余失败形态（异常 / error 帧 / 空话术）照旧一次判红；证据行加 `attempt / issue_codes / attempts_allowed`，每次重试新会话 | `267b5d8b`：三条替身测试（暖起即过 / 预算耗尽判红 / 真失败不重试）；变异「不认冷启形态」红 2 |
+| ①-a 验收闸 | `verify-release.sh::verify_loopback_listeners` 加有界就绪等待（`LISTENER_READY_TIMEOUT_S=60`，每秒重试；绑在非回环地址仍当场判红）；证据加 `listener_ready_s` | `1a8ff180`：三条 bash 替身测试 |
+| ①-b 验收闸 | `verify_tailscale_serve` 从「整机恰好五条 tailnet only」改成「本项目五条映射一条不少、各指约定回环端口、同一主机」，别的项目的条目只计数；Funnel 任何条目仍判红（改成 bash 子串判断——Git Bash 下 `grep <<<` 会 Abort，那一支此前不可测） | `c4c1186d`：六条 bash 替身测试；`verify-current` 在健康的 `74f334f4` 上修前 rc=1（「does not expose five tailnet only entries」）、装上新脚本后 rc=0 |
+| 基础设施批准 | `deploy/cloud/**` 每改一次都要重新批准锚 `/opt/car-agent/shared/release-infrastructure.json`（普通 deploy 只读它）。三轮材料 `.artifacts/infrastructure-approval/<sha>/`（与 2026-09-06 cf7091c 的四个脚本逐常量替换：验旧锚 → 备份 → 装新 → 验新 → 失败自动还原；第一轮只改锚，后两轮连装 `verify-release.sh`）：`267b5d8b` 锚 `499fc97c → 1ce1525f`；`1a8ff180` `→ 36364333`（装 verify `12aab4bd`）；`c4c1186d` `→ 86edd25e`（装 verify `f13313e0`）。三次 `infrastructure_approved`，备份各在 `…/infrastructure-approvals/<sha>-<digest8>` | 远端 sha256sum 与材料逐字一致；生成器第一版把模板里 manifest[:32] / [:8] 的短前缀漏换（STAGE 还挂着 cf7091c 的 `45f7a725…`），断言补上后重生成 |
+| 发布（①） | `267b5d8b` apply：切换 → 验收失败 → 回滚 → 回滚验收也失败 ⇒ `ROLLBACK_FAILED`（08:15），**30 个容器全在 74f334f4、5/5 healthy**。`1a8ff180`（带回环等待）同样 `ROLLBACK_FAILED`（08:33）。真因：`verify-current` 在健康栈上直接 rc=1——**同机另一项目（drone-agent）加了第六条 Tailscale Serve 条目 `:8447 → 127.0.0.1:8768`**，「恰好五条」的计数判据让本项目每一次验收都红；回滚验收 1.5 s 内红另有回环端口的 1–2 s 竞态（hmi 容器 :18.5 起、Vite :19.85 监听、验收 :19 判）。`c4c1186d` apply → `VERIFIED`（08:42）→ status ok 5/5 → verify `20260922T004405Z-c4c1186.json`；验收证据 `tailnet_entries: 6`、`https_ready_s: 1`、`listener_ready_s: 0`、问候 smoke `attempt 1 pass, issue_codes []`（11.1 s；verify-current 那次 3.0 s） | collector：两条 `cloud-release-*` 轮 `input_source=release_probe`（08:42:01、08:43:36），旧 probe 那轮（08:39:36）无来源 |
+| ③ persona | `continuity` 加 `CONT-REFRESH`（同一查询再来一次 = 同键新版本 = 最新：裸序数跟刷新走、不绑更晚创建的别的查询；旧版本不是墓碑）与 `CONT-ENV`（经 collector `POST /api/debug/vehicle` 把 `battery` 改到 37 再问「电量还有多少」⇒ 答改过之后的系统事实，末轮 `$baseline` 放回；runner 新轮指令 `vehicle_env`：写 → 回读到位 → 结束兜底恢复；白名单外 / 无基线 / 通道关着 / 回读不到位四种都不落、都报因「不构成证据」）。用地图候选不用商户菜单：菜单 / 价格的刷新在真栈上内容不变，判据分不开新旧，而两者走的是同一份 `candidate_merge_key` | `93564e19`：`test_probe_qa_long_sessions` +3；真栈三趟见下 |
+| ⑤ 候选命名（③ 第一趟逼出） | T9「科技园附近的餐厅」planner 填成 `{cuisine: 餐厅, sort: rating}`——地名整个丢了；nearby 从原话锚定了科技园、结果也对，但编排的 `place_hint` 只从槽派生 ⇒ 这批叫不出名 ⇒ T18「科技园那批第二家」零命中退回最新那批（南山书城），答了别人家的店。修：nearby 声明保留键 `_candidate_place`（真正搜的那个地方；坐标不声明）、`context._place_hint(slots, data)` 优先读它（conventions §9.1 新登记） | `93564e19`：nearby +2、`test_candidate_sets` +2；变异「不读声明」红 2 |
+| ⑥ 陈旧 location 槽（③ 第二趟逼出） | T9 之后 T15「欢乐海岸附近的餐厅」被 planner 填成 `location=深圳南山科技园`（上一轮带过来的）：用户要欢乐海岸、搜的是科技园，「科技园那批」命中两组。修：`location` 槽与原话「X 附近」的 X 说的不是同一个地方（无 ≥2 字公共子串）⇒ 槽是陈旧的，中心与 `_candidate_place` 都按原话；写法不同（万象城 / 深圳湾万象城）与坐标槽照旧按槽——判据与 `slot_fidelity` 同一条：planner 改写是不可信通道 | `c98fb087`：nearby +2（参数化 ×5）；变异「永不判陈旧」红 2 |
+| ② 基线 | **本会话做不了，记原因**：正式对抗基线（`--suite gate --layer all --live --write-baseline`）的 L1/L2 要 `LLM_GATEWAY_ADDR` 的 gRPC（云端只在回环 50052，tailnet 不暴露）、L3 要 mock 车道 journeys ⇒ 只能在**本地全栈**跑；`target=cloud` 禁本地 Compose、CLAUDE.md §6.1「不切换 target」，且本机 Docker Desktop 未启动、可用内存 5.3 GB（27 个容器起不来）。要做：用户切 `dev-stack.local=local` + 起 Docker + `make up`，再 `export LLM_GATEWAY_ADDR=localhost:50052 EXEMPLAR_EMBED_TIMEOUT=8 SKILL_EMBED_TIMEOUT=8` 跑；预期多半是 `eligible=False` 的 rejected 诊断报告（同 SHA MiniMax 上次 141/147）——那份报告就是「当前读数」，正式基线文件按设计不会被它覆盖 | — |
+
+**真栈 continuity 三趟**（`--silence-scale 1`，含 600 s 沉默 + 两次断连重连，MiniMax-M3 pin）：
+
+- `c4c1186d` 第一趟：**64/71**，中止于导航清理。新检查点：CONT-REFRESH **6/6**；CONT-ENV 话术字字正确（72% → 37% → 37% → 72%）但四轮红——尺子要 `no_actions`，而端侧读查询以 `battery.query` **动作**上报 ⇒ 判据改成「那一枚读动作在、写动作不在」。另三条红：T18（⑤）；SF4 T65「别提醒我，继续开就行」落「没听清」（F09 方差，批 5 已记）；PU7 T63「接孩子后去万象城」两段接人路线之后「取消导航」答「当前没有正在进行的导航」⇒ runner 判导航清理未证明而中止——路线会话没被那条多步接人计划盖上，pre-existing。
+  首跑前还有一趟在 T6 因 WS 传输超时中止（服务端 2.2 s 出了 `pending_confirm` final、客户端 120 s 没收到）——工具把 600 s 的 PowerShell 挪到后台后传输就不稳，改用 `Start-Process` 分离跑。
+- `93564e19` 第二趟：**69/71**，跑完整趟、零 cleanup 失败、`vehicle_env_restore` 记到 battery 72 放回、release 连续性 start/end 同 SHA。CONT-REFRESH 6/6、CONT-ENV **5/5**；红 = T18（⑥：`named_groups=2`）+ PU7 T63（planner 只导航到学校、万象城那段丢了——family 域老方差）。
+- `c98fb087` 第三趟：**70/71**，跑完整趟、零 cleanup 失败、env 放回、release 连续；唯一红 = SF4 T65「别提醒我，继续开就行」答「提醒我不会撤——…请就近停下」——拒绝了也给了替代，尺子词表没有「停下」（同 2026-08-30 那六个词的形态：被测对象做对了、尺子认不出）⇒ 词表补「停下」。T18 绑对（`named_groups=1`）——这趟 planner 四个地名都填对了 `location`，⑥ 那条路没被走到，只有离线证据。

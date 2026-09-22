@@ -9530,3 +9530,21 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   = planner LLM 超时，时间戳全落在四次切换的那一两分钟（06:54 那两条同样落在 `eb1dd6bd` 切换时）：切换窗口 LLM 链路冷，与本批逻辑无关；记给后续（预检 smoke 等网关就绪或超时单列）。
 - 装置账：Bash 工具 heredoc 里的 `\\n` 会被收成真换行（prompt 常量断成两行 ⇒ SyntaxError），含转义的补丁一律 Write 成 .py 再跑；`cat >>` 追加的 scratchpad 文件带 CRLF，
   追加前按目标文件的换行符归一；只读云端容器日志复用 `cloud_release_lib.SshConfig.ssh_argv`（`docker logs --since | grep -F`），不手敲 ssh 参数。
+
+### 同日追加（2026-09-22 上午）— 批 7 余项四件：预检 smoke / 基线（记原因）/ persona 两检查点 / 隔离债；两次 ROLLBACK_FAILED 的真因是同机另一项目的第六条 Serve 条目
+
+- ④ `test_e2e_stack_lease`：三条 `repo_root=Path.cwd()` 与 parallel-owner 替身工厂改按 `tmp_path` 派生锁——同文件 `-n 8` 修前 5 红 / 3 红、修后三趟 0 红（`74004bdd`）。
+- ① `edge_ws_probe.py`：问候带 `input_source=release_probe`；`planner.technical_failure` 的冷启形态退避重试（最多 3 次），别的失败一次判红（`267b5d8b`）。
+  部署它撞出两件事：**(a)** `267b5d8b` / `1a8ff180` 两次 apply 都 `ROLLBACK_FAILED`，容器却全在 74f334f4、5/5 healthy——`dev_stack deploy` 的远端 stderr 两条路都不落盘，
+  靠 `verify-current` 直跑才看见「Tailscale Serve does not expose five tailnet only entries」：**同机 drone-agent 加了 `:8447 → 127.0.0.1:8768`**，「恰好五条」把本项目每次验收都判红；
+  **(b)** 回滚验收在 hmi 容器起来 1 s 后就跑 `ss`（Vite 1.3 s 后才监听）。修 `verify-release.sh`：回环端口有界等待（`1a8ff180`）+ Serve 判「我们的五条一条不少」（`c4c1186d`）。
+  三轮基础设施批准（材料按 cf7091c 模板逐常量替换，`.artifacts/infrastructure-approval/<sha>/`；第一版漏换 manifest 短前缀）；`c4c1186d` `VERIFIED`，
+  验收证据 `tailnet_entries: 6 / listener_ready_s: 0 / 问候 attempt 1 pass`。
+- ③ `continuity` 加 CONT-REFRESH（同键新版本 = 最新）与 CONT-ENV（`vehicle_env` 轮指令：collector 调试通道改 battery → 回读 → `$baseline` 放回）。三趟：
+  `c4c1186d` 64/71（CONT-ENV 尺子错：端侧读查询以 `battery.query` 动作上报，话术 72→37→37→72 字字对）；`93564e19` 69/71（CONT-ENV 5/5）；`c98fb087` 70/71（唯一红 SF4「停下」是尺子词表缺词，已补）。
+  两趟各逼出一条 nearby 命名缺陷：⑤ planner 把地名整个丢掉 ⇒ 这批叫不出名 ⇒ `_candidate_place` 由产生方声明、`_place_hint(slots, data)` 优先读（`93564e19`）；
+  ⑥ planner 把上一轮的 `location=深圳南山科技园` 带进「欢乐海岸附近」⇒ 槽与原话「X 附近」的 X 不是同一地方即陈旧、按原话（`c98fb087`）。
+  余下两条红是老方差：SF4「别提醒我，继续开就行」落「没听清」；PU7 接人两段路线的第二段丢 / 路线会话没盖上。
+- ② 正式基线：本会话做不了——L1/L2 要本地 gRPC 网关、L3 要 mock 车道，`target=cloud` 禁本地 Compose、Docker 未起、内存 5.3 GB；步骤与预期写在设计文档 §9.2。
+- 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
+  `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
