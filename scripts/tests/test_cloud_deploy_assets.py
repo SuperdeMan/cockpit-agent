@@ -2834,6 +2834,98 @@ def test_edge_probe_rejects_missing_and_invalid_credentials(monkeypatch, capsys)
     assert all(item["http_status"] == 403 for item in emitted)
 
 
+def _greeting_socket_factory(probe, finals):
+    """按顺序回放 final 帧的假 WebSocket：记录每次发出的请求，供断言 meta / 会话前缀。"""
+    sent: list[dict] = []
+    queue = list(finals)
+
+    class Socket:
+        def __init__(self):
+            self.final = queue.pop(0)
+
+        async def send(self, payload: str):
+            sent.append(json.loads(payload))
+
+        async def recv(self):
+            return json.dumps(self.final)
+
+    class Context:
+        async def __aenter__(self):
+            return Socket()
+
+        async def __aexit__(self, *_args):
+            return False
+
+    return sent, (lambda *_args, **_kwargs: Context())
+
+
+def _cold_final():
+    return {"type": "final", "speech": "这次我没能把您的请求拆成可以执行的步骤，换个说法再说一次就行。",
+            "issues": [{"code": "planner.technical_failure", "severity": "error"}]}
+
+
+def _warm_final():
+    return {"type": "final", "speech": "你好！今天过得怎么样？", "issues": []}
+
+
+def test_edge_probe_greeting_is_labelled_and_retries_only_the_cold_planner_shape(monkeypatch, capsys):
+    """批 7 追加（2026-09-22）：四次切换后的问候 smoke 各 32–34 s 落 planner_failure（LLM 链路冷），以前照样 pass
+    并往 turns.outcome 塞假失败。现在：带 input_source=release_probe 单列；冷启形态退避重试；暖起来即 pass。"""
+    monkeypatch.setenv("WS_URL", "wss://example.invalid/ws")
+    monkeypatch.setenv("WS_TOKEN", "test-only")
+    monkeypatch.setenv("GREETING_ATTEMPTS", "3")
+    monkeypatch.setenv("GREETING_RETRY_WAIT_S", "0")
+    probe = _load_probe(EDGE_WS_PROBE_PATH, "cloud_edge_probe_warmup_test")
+    sent, connect = _greeting_socket_factory(probe, [_cold_final(), _warm_final()])
+    monkeypatch.setattr(probe.websockets, "connect", connect)
+
+    assert asyncio.run(probe.ask_safe_chitchat(probe.WS_URL, probe.WS_TOKEN)) is True
+    emitted = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [item["status"] for item in emitted] == ["cold", "pass"]
+    assert [item["attempt"] for item in emitted] == [1, 2]
+    assert emitted[0]["issue_codes"] == ["planner.technical_failure"]
+    assert all(item["case"] == "safe_chitchat" for item in emitted)
+    assert len(sent) == 2
+    assert all(req["meta"] == {"input_source": "release_probe"} for req in sent)
+    assert all(req["session_id"].startswith("cloud-release-") for req in sent)
+    assert len({req["session_id"] for req in sent}) == 2, "每次重试新会话，不让上一轮的失败留在同一会话里"
+
+
+def test_edge_probe_greeting_fails_closed_after_the_last_cold_attempt(monkeypatch, capsys):
+    monkeypatch.setenv("WS_URL", "wss://example.invalid/ws")
+    monkeypatch.setenv("WS_TOKEN", "test-only")
+    monkeypatch.setenv("GREETING_ATTEMPTS", "2")
+    monkeypatch.setenv("GREETING_RETRY_WAIT_S", "0")
+    probe = _load_probe(EDGE_WS_PROBE_PATH, "cloud_edge_probe_cold_fail_test")
+    _sent, connect = _greeting_socket_factory(probe, [_cold_final(), _cold_final(), _warm_final()])
+    monkeypatch.setattr(probe.websockets, "connect", connect)
+
+    assert asyncio.run(probe.ask_safe_chitchat(probe.WS_URL, probe.WS_TOKEN)) is False
+    emitted = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [item["status"] for item in emitted] == ["cold", "cold"], "第三次不该再问：预算就是 2 次"
+
+
+def test_edge_probe_greeting_does_not_retry_a_genuine_failure(monkeypatch, capsys):
+    """空话术 / error 帧是真失败：一次判红，不借冷启重试放宽。"""
+    monkeypatch.setenv("WS_URL", "wss://example.invalid/ws")
+    monkeypatch.setenv("WS_TOKEN", "test-only")
+    monkeypatch.setenv("GREETING_ATTEMPTS", "3")
+    monkeypatch.setenv("GREETING_RETRY_WAIT_S", "0")
+    probe = _load_probe(EDGE_WS_PROBE_PATH, "cloud_edge_probe_genuine_fail_test")
+    _sent, connect = _greeting_socket_factory(
+        probe, [{"type": "error", "message": "boom"}, _warm_final(), _warm_final()])
+    monkeypatch.setattr(probe.websockets, "connect", connect)
+
+    assert asyncio.run(probe.ask_safe_chitchat(probe.WS_URL, probe.WS_TOKEN)) is False
+    emitted = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [item["status"] for item in emitted] == ["fail"]
+
+    probe2 = _load_probe(EDGE_WS_PROBE_PATH, "cloud_edge_probe_empty_speech_test")
+    _sent2, connect2 = _greeting_socket_factory(probe2, [{"type": "final", "speech": ""}, _warm_final()])
+    monkeypatch.setattr(probe2.websockets, "connect", connect2)
+    assert asyncio.run(probe2.ask_safe_chitchat(probe2.WS_URL, probe2.WS_TOKEN)) is False
+
+
 def test_collector_probe_rejects_second_connection_without_snapshot(
     monkeypatch,
     capsys,
