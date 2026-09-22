@@ -1285,19 +1285,23 @@ CASES = [
          {"say": "可以，已为您执行", "sid": 2,
           "expect": {"no_execution_claim": True, "no_actions": True}},
      ]},
-    # R5：unsupported 终止的是那一个诉求。「有堵车就提醒我」reminder 声明做不到；同一句里的独立诉求
-    # 「列出明天的提醒」是自己的参数 ⇒ 要么第一批并列做了、要么再规划批做——两种形态都算；不许追问提醒
-    # 时间、不许声称已设置（RS13 的守护面不能因为放开独立诉求而回退）。
+    # R5：unsupported 终止的是那一个诉求。「有堵车就提醒我」reminder 要诚实拒绝（批 7 ③ + 批 B 的分句时间信号），
+    # 而整个 reminder 域不许因此被封死：下一轮的「列出明天的提醒」必须照答。
+    # ⚠ 判据用**卡片**不用话术（`card_text_has`）：同一轮里聚合器会把标题重排（真栈实测「代号 083953」带空格），
+    # 卡片是产生方写的机读字段（同 Q2 那条「期望要从被消费方派生」）。同一句里的独立诉求由 T2 的
+    # `card_type_not` 之外的 artifact 逐轮读——planner 会不会把它规划成第二步是落域方差，不写进判据。
     {"id": "RS22", "group": "residual", "card": "余项", "issue": "评审二轮 R5",
      "why": "一项做不到不影响同域另一项独立诉求；被拒那件事不换能力再试",
      "known": "red",
      "turns": [
          {"say": "明天早上八点提醒我参加代号{run}的评审会",
-          "expect": {"speech_has": ["代号{run}"]}},
+          "expect": {"card_text_has": ["代号{run}"]}},
          {"say": "以后有堵车就提醒我，另外列出明天的提醒",
-          "expect": {"no_actions": True,
-                     "speech_has": ["代号{run}"],
+          "expect": {"no_actions": True, "speech_has": ["做不到"],
                      "speech_not": ["什么时候提醒", "已为您设置", "已设置", "提醒方面也没找到"]}},
+         {"say": "列出明天的提醒",
+          "expect": {"no_actions": True, "card_text_has": ["代号{run}"],
+                     "speech_not": ["没找到", "做不到"]}},
          {"say": "取消代号{run}的评审会提醒",
           "expect": {"speech_has": ["代号{run}"], "speech_not": ["没找到"]}},
      ]},

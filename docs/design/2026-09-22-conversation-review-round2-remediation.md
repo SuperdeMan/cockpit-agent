@@ -136,3 +136,15 @@ agents + test + security + memory 3570 / 19 skipped；四门禁 + smoke_edge 13/
   时间信号问**事件短语所在的那个分句**（`_event_trigger_clause` 返回 `(事件, 分句)`）。边界明写：一句里既有
   「明天早上八点提醒我开会」又有事件触发时，单次 `reminder.create` 仍按时间建——两个诉求本该由 planner 拆成两步。
   离线证据：`test_agent` +4（三句混合分句拒绝、一条边界正例）；变异（时间信号回到整句）判红 3。
+
+| release | 发布链 | 真栈 |
+|---|---|---|
+| `06ad7ae4` | push `8af9b8bd..06ad7ae4`（恰一条）→ dry-run 零阻断（基线 `8af9b8bd`）→ apply `submitted` → status ok 5/5、`release_sha` = `running_release_sha` → verify `verified`（`20260922T132905Z-06ad7ae.json`） | `--cases RS22,RS13,RS11 --repeat 3`：RS11 **3/3**（三句事件触发逐字同款诚实拒绝，`[det]`）、RS13 **3/3**、RS22 首轮 0/3 **是尺子不是系统**（见下），改判据后 **3/3** |
+
+- RS22 首轮 0/3 的三趟读数：事件触发**三趟都诚实拒绝了**（批 B 的分句时间信号生效）；红的是
+  `speech_has: ["代号{run}"]`——聚合器把标题重排成「代号 083953」（带空格），而**卡片里的标题逐字正确**
+  （`card_items: ['参加代号083953的评审会']`）。⇒ 判据改读卡片（`card_text_has`，产生方写的机读字段，同 Q2
+  那条「期望要从被消费方派生」），并补一轮「列出明天的提醒」证明**整个域没有被那条拒绝封死**。
+  改判据后 `--cases RS22 --repeat 3` = **3/3**，且三趟的 T2 话术里两件事都在：先念出明天那条提醒，再诚实拒绝事件触发
+  （artifact `.artifacts/probe-round2-batchB-06ad7ae4-rs22.json`）。第一轮那趟「只有拒绝、没有列表」是 planner 只规划了一步
+  （落域方差，不写进判据）。

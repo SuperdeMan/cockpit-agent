@@ -9575,6 +9575,29 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 留下：批 B（R4 / R5）、批 C（R6 / R7 / R8）、批 D 待做；「取消刚才 X」单条挂起时仍无条件清它（子串点名太弱，撤销方向 fail-safe）；
   云侧对无挂起的撤回句交 planner（本趟落 hvac.off，不立闸）。
 
+### 同日追加（2026-09-22 夜）— 对话评审第二轮批 B：执行性声称在首次释放前拦、unsupported 缩到具体诉求且下游 blocked；release `8af9b8bd` + 真栈追加 `06ad7ae4`
+
+- 入口同批 A（设计文档 §3 / §3.1 / §3.1.1）。R4 / R5 两条对 HEAD 重证成立：`_emit_execution_claim` 只在 final 出口剥、
+  `_stream_single_step` 与 `loop.run` 的 speech delta 直接 yield；`_refused_domains` 取 intent 前缀、`_drop_refused_domain_steps`
+  删掉被拒步后把余下步的 `depends_on` 直接删掉（`slot_refs` 仍指着它）。
+- 做法：① `runtime.execution_claim.ExecutionClaimGate`——句级**有界**缓冲（攒到句边界再判；超 160 字且不像声称就放；flush 把没标点的
+  尾巴按一句判），判据与 final 那份同源（`is_execution_claim_sentence`，`strip_execution_claims` 改消费它），挂在 `response_only` 步的
+  D0 / T2 流式出口与 E 路径逐步播报上。② `_refused_goals` =（领域, 被拒那步的槽值实质）；`_retries_refused_goal` = 同域 ∧（槽里带
+  被拒那件事的字眼 ∨ 干脆没有槽值）；被丢步的下游按 `depends_on` + `slot_refs` 传递闭包一起不执行、记 `ReplanDecision.blocked`
+  与 `t2.blocked` span。探针 RS21 / RS22，`_one_turn` 记下 `streamed`，`no_execution_claim` 同时判流式增量与 final。
+- 读数：全量固定口径 **9006 / 0 / 32**（批 B）→ **9011 / 0 / 32**（真栈追加）；四门禁 + smoke_edge 13/13；六处变异各判红。
+  真栈 `8af9b8bd`：RS21 3/3（三句零动作谈话轮，增量与 final 都没有声称）、EC1 3/3、RS13 3/3、**RS22 1/3**。
+- **真栈逼出一条（`06ad7ae4`）**：RS22 的 2/3 趟里「以后有堵车就提醒我，另外列出明天的提醒」被追问「什么时候提醒你？」——
+  R5 的主张其实成立（列表三趟都答出来了，修前整域封死），红的是 reminder Agent 的 `user_time_signal = _has_time_signal(raw)`
+  **问的是整句**：另一个诉求里的「明天」把这一条的诚实拒绝挡掉了。修法与 W16-b「步级起点原话」同形——`_event_trigger_clause`
+  返回（事件短语, 它所在的分句），时间信号只问那一句；边界明写：一句里既有「明天早上八点提醒我开会」又有事件触发时，
+  单次 `reminder.create` 仍按时间建（拆两步是 planner 的事）。发布后 RS11 3/3、RS13 3/3。
+- **尺子也被逼出一条**：RS22 首轮 0/3 里有两趟是**尺子红不是系统红**——聚合器把标题重排成「代号 083953」（带空格），
+  而卡片里的标题逐字正确 ⇒ 判据改读卡片（`card_text_has`，产生方写的机读字段），并补一轮「列出明天的提醒」证明整个域
+  没被那条拒绝封死；改后 3/3，三趟 T2 都是「先念出明天那条提醒 + 诚实拒绝事件触发」。
+- 留下：批 C（R6 / R7 / R8）、批 D 未做；同域**无槽**步一律当再试（「列出我的提醒」这种无参数形态会被误拦，边界已记）；
+  adaptive 把独立诉求推迟到后一批而前一批全被拒时，那个诉求不会再被规划（loop 防循环的既有边界，未动）。
+
 ### 同日追加（2026-09-22 下午）— 批 8（批 7 追加留项）：T2 完成轮从不写焦点的真因、安全闸二第二臂、chitchat 车辆读数、迁移预检 Serve 判据；两个 release
 
 - 先重证再定范围（设计文档 §10）：PU7「路线会话没盖上」被记成 family 域老方差，按 trace 分路径后真因是**路径**——第一趟 T63 走了四轮 T2（`t2.iter` ×4）、
