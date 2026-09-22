@@ -19,7 +19,8 @@ from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionSta
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
-from .session import SessionStore
+from .session import (
+    PENDING_UNAVAILABLE, SAVE_FENCED, SAVE_OK, SessionStore)
 from .loop import LoopController
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
@@ -571,9 +572,23 @@ class PlannerEngine:
         # （确认条 UI 也只有一个，语义一致）。held_pending 贯穿本轮：完成路径经
         # _settle_session 跳过 clear，并在 final 上补一句软提醒。
         held_pending = None
-        entries = await self.session.load_all(
+        entries, pending_state = await self.session.load_all_result(
             ctx.session_id, owner_user_id=ctx.user_id)
         pending = self._address_pending(entries, ctx.operation_id)
+
+        # 评审二轮 R8：挂起表**读不到**时，「没有挂起」这句话是假的。带寻址键的确认、裸确认词
+        # 与挂起读出口三条出口都要说「暂时读不到」，绝不下发 `closed_operation_ids`（那条挂起
+        # 可能还在），也绝不执行。普通请求照旧进规划（fail-open：一次存储故障不该让整轮不可用）。
+        if pending_state == PENDING_UNAVAILABLE and (
+                ctx.operation_id or ctx.is_confirmation
+                or self._is_bare_confirm_word(text)):
+            logger.warning("pending table unavailable on a confirm-shaped turn")
+            await _emit_engine_lifecycle(
+                ctx, "cloud.pending_unavailable", "system.pending_unavailable")
+            yield {"kind": "final",
+                   "speech": session_facts.PENDING_UNAVAILABLE_SPEECH,
+                   "actions": [], "_outcome": "pending_unavailable"}
+            return
 
         # Q1-B：确认帧带了寻址键却对不上任何挂起 → **诚实拒绝**。
         # 不静默打给当前挂起（I-013 全局确认命中旧请求），也不清掉它——
@@ -1377,7 +1392,8 @@ class PlannerEngine:
                     await self.context.update_focus(
                         ctx.session_id, focus_plan, results,
                         user_id=ctx.user_id,
-                        exchange_id=ctx.request_id)
+                        exchange_id=ctx.request_id,
+                        occupant_id=getattr(ctx, "occupant_id", ""))
                 final = await self.aggregator.compose(text or plan.raw_text, results)
                 self._append_pending_hint(final, held_pending)
                 self._append_abandoned_hint(final, ctx.abandoned_pending_label)
@@ -1523,7 +1539,8 @@ class PlannerEngine:
             await self.context.update_focus(
                 ctx.session_id, plan, results,
                 user_id=ctx.user_id,
-                exchange_id=ctx.request_id)  # 焦点态供下轮指代
+                exchange_id=ctx.request_id,
+                occupant_id=getattr(ctx, "occupant_id", ""))  # 焦点态供下轮指代
         if show_process:
             yield self._progress("synthesize", "整理结果",
                                  summary="合并各步结果生成回复", status="start")
@@ -1557,7 +1574,9 @@ class PlannerEngine:
         stated = constraints_in(text)
         merged: dict = {}
         try:
-            focus = await self.context._load_focus(ctx.session_id, ctx.user_id)
+            focus = await self.context._load_focus(
+                ctx.session_id, ctx.user_id,
+                occupant_id=getattr(ctx, "occupant_id", ""))
             merged = dict(getattr(focus, "session_constraints", None) or {}) if focus else {}
         except Exception as exc:                       # 焦点读不到就只念这一句说的
             logger.debug("constraint ack: focus unavailable (%s)", exc)
@@ -1585,11 +1604,13 @@ class PlannerEngine:
         一句听起来很确定的假话，而用户正是靠它决定要不要重说一遍。
         """
         try:
-            entries = await self.session.load_all(
+            entries, state = await self.session.load_all_result(
                 ctx.session_id, owner_user_id=ctx.user_id)
         except Exception as e:
             logger.debug("pending digest unavailable: %s", e)
             return None
+        if state == PENDING_UNAVAILABLE:
+            return None            # R8：读不到 ≠ 没有（`load_all` 的 `[]` 曾把两者混成一句）
         return self._digest_of(entries or [])
 
     @staticmethod
@@ -2070,7 +2091,8 @@ class PlannerEngine:
             try:
                 await self.context.update_focus(
                     ctx.session_id, plan, results,
-                    user_id=ctx.user_id, exchange_id=ctx.request_id)
+                    user_id=ctx.user_id, exchange_id=ctx.request_id,
+                    occupant_id=getattr(ctx, "occupant_id", ""))
             except Exception as exc:            # 焦点是 best-effort，绝不拖垮挂起
                 logger.debug("focus update on a choice-card suspend failed: %s", exc)
         # The pending step is always re-run from ``pending_plan``.  Keeping its
@@ -2142,19 +2164,23 @@ class PlannerEngine:
             completed_results=completed,
             pending_plan=self._serialize_plan(plan),
         )
-        saved, evicted = await self.session.save_pending(
+        save_status, evicted = await self.session.save_pending_result(
             ctx.session_id, pending_state)
-        if saved is False:
-            # A concurrent privacy deletion owns the write fence.  Do not show
-            # a confirmation UI for state that cannot be resumed safely.
+        if save_status != SAVE_OK:
+            # 两种都 fail-closed（不给确认条、不执行），但**说的是不同的事**（评审二轮 R8）：
+            # 写栅栏是隐私清理正在进行，连不上后端只是这一步存不下。
+            fenced = save_status == SAVE_FENCED
             return {
                 "kind": "final",
-                "speech": "正在清除你的数据，这次操作没有保存，请稍后重新发起。",
-                "follow_up": "数据清除完成后可以重新尝试。",
+                "speech": ("正在清除你的数据，这次操作没有保存，请稍后重新发起。" if fenced
+                           else "这一步需要等你确认，但会话状态暂时存不下来，"
+                                "所以我没有往下执行，稍后再说一次。"),
+                "follow_up": ("数据清除完成后可以重新尝试。" if fenced
+                              else "稍后再说一次就行。"),
                 "actions": [],
                 "ui_card": None,
                 "need_confirm": False,
-                "_outcome": "store_fenced",
+                "_outcome": "store_fenced" if fenced else "store_unavailable",
             }
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
@@ -2384,7 +2410,8 @@ class PlannerEngine:
                     try:
                         await engine.context.update_focus(
                             ctx.session_id, dataclasses.replace(plan, steps=merged), results,
-                            user_id=ctx.user_id, exchange_id=ctx.request_id)
+                            user_id=ctx.user_id, exchange_id=ctx.request_id,
+                            occupant_id=getattr(ctx, "occupant_id", ""))
                     except Exception as exc:        # 焦点是 best-effort，绝不拖垮已完成的回答
                         logger.warning("focus update after the T2 loop failed: %s", exc)
                 self.done = True
@@ -2793,7 +2820,8 @@ class PlannerEngine:
         try:
             await self.context.update_focus(
                 ctx.session_id, Plan(steps=[], raw_text=str(text or "")), [],
-                user_id=ctx.user_id, exchange_id=ctx.request_id)
+                user_id=ctx.user_id, exchange_id=ctx.request_id,
+                occupant_id=getattr(ctx, "occupant_id", ""))
         except Exception as exc:
             logger.debug("input-fact registration on an early exit failed: %s", exc)
 

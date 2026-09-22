@@ -317,6 +317,12 @@ def is_pending_question(raw_text: str) -> bool:
                 or _PENDING_QUERY_RE.search(text))
 
 
+#: 挂起表**读不到**时的话术（评审二轮 R8）。**不说「没有」**——说不清楚才是真话，
+#: 与 `memory_read.MEMORY_UNAVAILABLE_SPEECH` 同一条纪律。三个消费方共用这一句。
+PENDING_UNAVAILABLE_SPEECH = (
+    "我这会儿读不到待确认列表，没法替你确认或取消，稍后再说一次。")
+
+
 def pending_answer(pendings) -> str:
     """挂起问题的确定性回答。`pendings` = `[{"what": 目标描述, "phase": 阶段}, ...]`。
 

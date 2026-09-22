@@ -39,6 +39,16 @@ _FOCUS_PREFIX = "planner:focus:"
 # 此前一个 300s 的 key 让「沉默五分钟」把活动路线和告警一起抹掉——缓存超时不是事实解除。
 _FOCUS_TTL = 7200  # 秒
 
+# 评审二轮 R8（2026-09-22）：**读写各三态**。此前「后端连不上」与「表是空的」都是 `[]`、
+# 「存不下」与「隐私删除写栅栏」都是 `False`——一次 Redis 故障因此被说成「当前没有待确认的操作」
+# 甚至「正在清除你的数据」，而用户正是靠这句话决定要不要重说一遍（同批 5 W17 给 memory 补的那三态）。
+PENDING_FOUND = "found"
+PENDING_EMPTY = "empty"
+PENDING_UNAVAILABLE = "unavailable"
+SAVE_OK = "saved"
+SAVE_UNAVAILABLE = "unavailable"
+SAVE_FENCED = "privacy_fenced"
+
 PERSONAL_DATA_TARGETS = (
     {
         "id": "planner_pending_session",
@@ -194,31 +204,53 @@ class SessionStore:
 
     async def load_all(self, session_id: str, *,
                        owner_user_id: str = "") -> list[SessionState]:
-        """本会话全部未过期挂起，顺序 = 挂起先后（最后一条最新）。"""
+        """本会话全部未过期挂起，顺序 = 挂起先后（最后一条最新）。
+
+        ⚠ 返回 `[]` **分不清**「没有」与「读不到」——要分清的调用方用 `load_all_result`（R8）。
+        """
+        entries, _state = await self.load_all_result(
+            session_id, owner_user_id=owner_user_id)
+        return entries
+
+    async def load_all_result(self, session_id: str, *,
+                              owner_user_id: str = "") -> tuple[list[SessionState], str]:
+        """`(挂起列表, 读取状态)`；状态 ∈ `found / empty / unavailable`（评审二轮 R8）。
+
+        「配了 Redis 但拿不到连接」「读的时候抛了」= `unavailable`：调用方不得把它说成「没有」，
+        更不得据此给客户端下发 `closed_operation_ids`——那条挂起**可能还在**。
+        隐私删除栅栏命中仍报 `empty`：那不是故障，是数据确实不该被读到。
+        """
         owner = str(owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
-            return []
+            return [], PENDING_EMPTY
         r = await self._redis()
         if self._url and r is None:
-            return []
+            return [], PENDING_UNAVAILABLE
         key = self._session_key(owner, session_id)
         if r:
-            raw = await r.eval(
-                _LOAD_OWNER_LUA, 2, key, self._owner_fence_key(owner))
-            return self._live(self._decode(raw, owner)) if raw else []
+            try:
+                raw = await r.eval(
+                    _LOAD_OWNER_LUA, 2, key, self._owner_fence_key(owner))
+            except Exception as exc:
+                logger.warning("pending read failed (%s); reporting unavailable",
+                               type(exc).__name__)
+                return [], PENDING_UNAVAILABLE
+            entries = self._live(self._decode(raw, owner)) if raw else []
+            return entries, (PENDING_FOUND if entries else PENDING_EMPTY)
 
         # 内存兜底
         if self._memory_tombstoned(owner):
-            return []
+            return [], PENDING_EMPTY
         entry = self._mem.get(key)
         if not entry:
-            return []
+            return [], PENDING_EMPTY
         entries, expire_ts = entry
         if time.time() >= expire_ts:
             del self._mem[key]
-            return []
-        return self._live([s for s in entries
+            return [], PENDING_EMPTY
+        live = self._live([s for s in entries
                            if str(s.owner_user_id or "").strip() == owner])
+        return live, (PENDING_FOUND if live else PENDING_EMPTY)
 
     async def save(self, session_id: str, state: SessionState) -> bool:
         """Save owner-bound pending state, or fail closed."""
@@ -230,22 +262,39 @@ class SessionStore:
             state: SessionState) -> tuple[bool, SessionState | None]:
         """存一条挂起，返回 `(是否成功, 被 LRU 淘汰的那条或 None)`。
 
+        ⚠ `False` **分不清**「后端连不上」与「隐私删除写栅栏」——要分清的调用方用
+        `save_pending_result`（R8）。
+        """
+        status, evicted = await self.save_pending_result(session_id, state)
+        return status == SAVE_OK, evicted
+
+    async def save_pending_result(
+            self, session_id: str,
+            state: SessionState) -> tuple[str, SessionState | None]:
+        """存一条挂起，返回 `(写入状态, 被 LRU 淘汰的那条或 None)`。
+
+        状态 ∈ `saved / unavailable / privacy_fenced`（评审二轮 R8）：连接故障不是隐私清理，
+        两者的话术与恢复出口都不一样；fail-closed 的那一半（不给确认条、不执行）两边都保留。
+
         **淘汰必须回传**：调用方要拿它对用户说一句「刚才那条 X 已过期」——
         静默丢弃就是 B3 那条「认不出就用默认值」的确认版（卡 §3-Q1 的 ⚠）。
         同 `operation_id` 视为**替换**（补槽再次追问不占新槽位）。
         """
         owner = str(state.owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
-            return False, None
+            return SAVE_UNAVAILABLE, None
         r = await self._redis()
         if self._url and r is None:
-            return False, None
+            return SAVE_UNAVAILABLE, None
         key = self._session_key(owner, session_id)
         ttl = state.ttl_seconds or _DEFAULT_TTL
         if not state.expires_at:
             state.expires_at = time.time() + ttl
 
-        entries = await self.load_all(session_id, owner_user_id=owner)
+        entries, read_state = await self.load_all_result(
+            session_id, owner_user_id=owner)
+        if read_state == PENDING_UNAVAILABLE:
+            return SAVE_UNAVAILABLE, None
         entries = [s for s in entries
                    if s.operation_id != state.operation_id]
         entries.append(state)
@@ -253,9 +302,18 @@ class SessionStore:
         while len(entries) > _PENDING_CAPACITY:
             evicted = entries.pop(0)
 
-        if not await self._write(r, key, owner, entries):
-            return False, None
-        return True, evicted
+        if self._memory_tombstoned(owner) if not r else False:
+            return SAVE_FENCED, None
+        try:
+            written = await self._write(r, key, owner, entries)
+        except Exception as exc:
+            logger.warning("pending write failed (%s); reporting unavailable",
+                           type(exc).__name__)
+            return SAVE_UNAVAILABLE, None
+        if not written:
+            # Redis 路径下 `_write` 只在 Lua 看到写栅栏时返回 0（其余失败都抛）。
+            return SAVE_FENCED, None
+        return SAVE_OK, evicted
 
     async def _write(self, r, key: str, owner: str,
                      entries: list[SessionState]) -> bool:

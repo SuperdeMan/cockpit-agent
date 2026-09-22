@@ -192,7 +192,10 @@ def test_render_context_budget_trims_oldest_history(monkeypatch):
         {"role": "assistant", "text": "最新一句啊啊啊啊啊啊"},
     ], memories=[])
     out = ws.render_context()
-    assert "最新一句" in out      # 最新一轮保留
+    # 评审二轮 R6（2026-09-22）：紧预算下留下的是**用户那条**，不是孤立的助手回答——
+    # 此前这里断言「最新一句」（助手）保留，而用户问了什么被丢掉，正是「只保留相反的
+    # 正向目标」的另一种形态。助手的回答可再生成，用户的请求不行。
+    assert "中间一句" in out      # 最后一对里用户那条保住
     assert "最旧一句" not in out  # 紧预算下最旧一轮被裁
 
 

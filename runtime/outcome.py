@@ -46,6 +46,8 @@ CATEGORY_OF: dict[str, str] = {
     "pending_kept": CAT_SESSION,         # 「不要取消」——按用户的话保留了挂起（评审二轮 R2）
     "pending_expired": CAT_SESSION,      # 挂起计划恢复不出来
     "store_fenced": CAT_SESSION,         # 隐私删除写栅栏期间不保存挂起
+    "store_unavailable": CAT_FAILURE,    # 会话状态后端连不上，这一步没挂起也没执行（评审二轮 R8）
+    "pending_unavailable": CAT_FAILURE,  # 挂起表读不到：不说「没有」（同上）
     # 安全与注入
     "safety_origin_blocked": CAT_POLICY_BLOCKED,
     "injection_rejected": CAT_POLICY_BLOCKED,

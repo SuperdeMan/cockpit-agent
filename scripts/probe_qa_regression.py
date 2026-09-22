@@ -239,7 +239,7 @@ _ACTION_WORDS = {
 # 用例集是**共享的尺子**，两个跑批入口都读它——只在一处允许这个键，
 # 另一处就永远写不进来。
 _TURN_KEYS = {"say", "sid", "expect", "op_from", "op_literal", "confirm",
-              "say_button", "audit", "source"}
+              "say_button", "audit", "source", "occupant"}
 
 # ── 用例集 ────────────────────────────────────────────────────────────────
 # `known` = 立卡时的已知现状（红/绿/待测），写在用例里是为了让第一次跑批的输出
@@ -1304,6 +1304,34 @@ CASES = [
                      "speech_not": ["没找到", "做不到"]}},
          {"say": "取消代号{run}的评审会提醒",
           "expect": {"speech_has": ["代号{run}"], "speech_not": ["没找到"]}},
+     ]},
+    # ── 评审二轮批 C（R6 / R7 / R8，2026-09-22）─────────────────────────────────
+    # R6：长输入的**最后一句放否定**。判据是形态：下一轮的动作里不许出现被否定掉的那件事。
+    # 视窗 pin 不在探针里，预算压力靠长句自己造（一句 300+ 字把最后一对逼进 `_fit_last_exchange`）。
+    {"id": "RS23", "group": "residual", "card": "余项", "issue": "评审二轮 R6",
+     "why": "裁剪不许反转极性：上一轮末句的「只查路线，不要启动导航」在下一轮仍成立",
+     "known": "red",
+     "turns": [
+         {"say": "我在想周末去深圳湾公园还是欢乐海岸，两边都有人推荐，天气好像都还行，"
+                 "停车可能是个问题，深圳湾那边周末车位紧张，欢乐海岸的商场停车场倒是大一些，"
+                 "不过要收费，说起来我上次去还堵了很久，所以这次想先把路线看清楚再决定。"
+                 "只查路线，不要启动导航。",
+          "expect": {"actions_exclude": ["navigate"], "no_execution_claim": True}},
+         {"say": "那条路线大概多久",
+          "expect": {"actions_exclude": ["navigate"]}},
+     ]},
+    # R7：同账号同会话、两位已识别乘员。A 说「我不吃辣」之后 B 回问「我今天说过不吃辣吗」——
+    # 不许把 A 的话念成「您这次说过」。探针经 `meta.occupant_id` 切换说话人（声纹的下游同一格）。
+    {"id": "RS24", "group": "residual", "card": "余项", "issue": "评审二轮 R7",
+     "why": "A 的会话约束不是 B 的；共享车辆状态照旧共享",
+     "known": "red",
+     "turns": [
+         {"say": "我不吃辣", "occupant": "alice",
+          "expect": {"no_actions": True, "speech_has": ["不吃辣"]}},
+         {"say": "我今天说过不吃辣吗", "occupant": "bob",
+          "expect": {"no_actions": True, "speech_not": ["您这次说过"]}},
+         {"say": "我今天说过不吃辣吗", "occupant": "alice",
+          "expect": {"no_actions": True, "speech_has": ["不吃辣"]}},
      ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
@@ -2420,7 +2448,8 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
     # 只认评测 pin：LLM pin（D2）、历史视窗 pin（批 5 W19，`meta.planner_history_exchanges`）与
     # 输入来源（评审二轮 R3：`input_source=voice_followup / ptt` 走语音受话判定；文字轮不传）
     if not isinstance(overrides, dict) or set(overrides) - {
-            "llm_provider", "llm_model", "planner_history_exchanges", "input_source"}:
+            "llm_provider", "llm_model", "planner_history_exchanges", "input_source",
+            "occupant_id"}:
         raise ValueError("unsupported meta override")
     for key, value in overrides.items():
         if not isinstance(value, str) or not value.strip() or len(value) > 80:
@@ -2565,12 +2594,17 @@ async def _run_case(case: dict, stamp: int) -> dict:
             else:
                 say = _subst(turn["say"], stamp)
             source = str(turn.get("source") or "")
+            occupant = str(turn.get("occupant") or "")
+            overrides = {}
+            if source:
+                overrides["input_source"] = source
+            if occupant:
+                overrides["occupant_id"] = occupant     # 评审二轮 R7：这一句是谁说的
             try:
                 obs = await _one_turn(ws, sessions[sid], say,
                                       operation_id=op,
                                       is_confirmation=bool(turn.get("confirm")),
-                                      meta_overrides=(
-                                          {"input_source": source} if source else None))
+                                      meta_overrides=overrides or None)
             except asyncio.TimeoutError:
                 obs = {"speech": "[timeout]", "actions": [], "need_confirm": False,
                        "card_type": "", "is_question": False, "error": True}

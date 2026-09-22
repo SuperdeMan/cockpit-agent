@@ -330,6 +330,14 @@ class Focus:
     # 的对象：`acts` 含 correct 且同 intent ⇒ 缺槽从这里继承、revision+1、task_id 不变。
     # 活动状态（不随短时引用过期），按自己的 `ts` 限龄 `_ACTIVE_TASK_TTL_S`；新任务替换它。
     active_task: dict = field(default_factory=dict)
+    # 评审二轮 R7（2026-09-22）：焦点里**私有那一半**按乘员归属 `{occupant_id: {字段: 值}}`。
+    # 历史与长期记忆早就按 `user_id + occupant_id` 读，焦点只按 `user_id + session_id`——
+    # 同一辆车、同一账号、两位已识别乘员时，A 的「不吃辣」成了 B 问「我今天说过不吃辣吗」的答案，
+    # 话术还说「您这次说过」。归属错了比答不出更难发现。
+    # 只盖**明确私有**的两格（`_OWNED_FOCUS_FIELDS`）：会话约束与活动任务帧；
+    # 共享车辆 / 路线状态（活动路线、安全告警、候选台账、上一轮意图）刻意仍然共享——
+    # 它们是车上所有人看的同一块屏、同一条路。声纹只是归属线索，不参与权限 / 确认 / 支付。
+    by_occupant: dict = field(default_factory=dict)
     # W09：这份焦点**落盘的时刻**（epoch 秒）。短时引用（对象 / 属性 / 位置 / 上个地点 /
     # 上个目的地 / 上个城市 / 上个标的 / 上一轮意图 / 最新候选视图）只活 `_FOCUS_SHORT_TTL_S`，
     # 读取时按它判；活动状态各按自己的 ts。0 = 旧数据没盖过章，按未过期读（滚动窗口内无害）。
@@ -584,17 +592,26 @@ def _history_block(pairs: list[list[dict]]) -> str:
     return (_HISTORY_HEAD + "\n".join(lines) + "\n\n") if lines else ""
 
 
-def _fit_last_exchange(msgs: list[dict], budget: int) -> tuple[str, bool]:
-    """最后一对也放不下时的收缩顺序（W02）：先把**最长那条**按句从尾部裁（回答是可再取的，
-    半句不是）；全部裁到只剩一句仍放不下 ⇒ 丢掉较旧那条只留最新一条；最新一条也放不下 ⇒ 空。
-    返回 `(block, 是否发生了裁剪)`。"""
+def _fit_last_exchange(msgs: list[dict], budget: int) -> tuple[str, bool, bool]:
+    """最后一对也放不下时的收缩顺序（W02 + 评审二轮 R6）。返回 `(block, 是否裁过, 是否整对舍弃)`。
+
+    **只裁助手那半**：回答是可再生成的，用户的请求不是。评审二轮 R6 的最小反例——
+    「我想去机场。只查路线，不要启动导航。」在 32 字预算下被按尾部删句裁成「我想去机场。」：
+    字数合规，**约束消失了，剩下的是一个相反的正向目标**。旧实现按「最长那条」裁、不看角色，
+    所以用户那条最后的否定 / 纠正 / 预算 / 期限都可能被删掉。
+
+    顺序：① 助手消息按句从尾部裁（长的先裁）；② 还放不下就整条丢掉助手消息，只留用户那条；
+    ③ 用户那条自己都放不下 ⇒ **整对舍弃**并报 `omitted`——绝不只留一句助手的回答
+    （那正是「只保留相反的正向目标」的另一种形态：用户问了什么不在了，答案还在）。
+    """
     work = [dict(m) for m in msgs]
-    shrinkable = {i for i in range(len(work))}
+    assistant_idx = [i for i, m in enumerate(work) if m.get("role") != "user"]
+    shrinkable = set(assistant_idx)
     trimmed = False
     while True:
         block = _history_block([work])
         if block and len(block) <= budget:
-            return block, trimmed
+            return block, trimmed, False
         candidates = sorted(
             shrinkable, key=lambda i: len(str(work[i].get("text") or "")), reverse=True)
         if not candidates:
@@ -606,12 +623,18 @@ def _fit_last_exchange(msgs: list[dict], budget: int) -> tuple[str, bool]:
             continue
         work[idx]["text"] = "".join(sentences[:-1]).strip()
         trimmed = True
-    # 只留最新一条（它可能已经按句裁过）
+    user_only = [m for m in work if m.get("role") == "user"]
+    if user_only:
+        block = _history_block([user_only])
+        if block and len(block) <= budget:
+            return block, True, False
+        return "", True, True            # 用户那条放不下：整对舍弃，不留孤立的回答
+    # 这一对里根本没有用户消息（主动播报自成一对）：按原口径留最新那条
     newest = work[-1:]
     block = _history_block([newest])
     if block and len(block) <= budget:
-        return block, True
-    return "", True
+        return block, True, False
+    return "", True, True
 
 
 def _render_history_with_stats(history: list[dict] | None,
@@ -625,16 +648,21 @@ def _render_history_with_stats(history: list[dict] | None,
     """
     exchanges = int(exchanges or 0) or _HISTORY_EXCHANGES
     pairs = _pair_exchanges(history)
+    # `history_omitted`（评审二轮 R6）：最后一对里**用户那条**放不下 ⇒ 整对舍弃。
+    # 它与 `history_trimmed` 不是一件事：裁的是可再生成的回答，舍弃的是一个够不着的请求。
     stats = {"history_pairs_kept": 0, "history_pairs_dropped": len(pairs),
-             "history_trimmed": False}
+             "history_trimmed": False, "history_omitted": False}
     if not pairs or budget <= 0:
         return "", stats
 
-    def _done(block: str, kept: int, trimmed: bool = False) -> tuple[str, dict]:
+    def _done(block: str, kept: int, trimmed: bool = False,
+              omitted: bool = False) -> tuple[str, dict]:
         # dropped = 历史里有的对数 − 渲染出来的对数（只要没进 prompt 就算丢，含视窗外的）
+        # kept 只数**真正渲染出来的完整对**：孤立的助手行不算一对（评审二轮 R6）。
         stats["history_pairs_kept"] = kept
         stats["history_pairs_dropped"] = len(pairs) - kept
         stats["history_trimmed"] = trimmed
+        stats["history_omitted"] = omitted
         return block, stats
 
     window = pairs[-max(1, exchanges):]
@@ -647,8 +675,8 @@ def _render_history_with_stats(history: list[dict] | None,
         if len(window) > 1:
             window.pop(0)
             continue
-        block, trimmed = _fit_last_exchange(window[0], budget)
-        return _done(block, 1 if block else 0, trimmed)
+        block, trimmed, omitted = _fit_last_exchange(window[0], budget)
+        return _done(block, 1 if block else 0, trimmed, omitted)
     return _done("", 0)
 
 
@@ -721,6 +749,57 @@ _SHORT_TERM_FIELDS = (
     "last_stock_symbol", "last_intent", "last_agent_id", "last_choices",
     "last_choice_purpose", "destination_lat", "destination_lng", "origin_exchange_id",
 )
+
+
+#: 评审二轮 R7：按乘员归属的字段。改这张表要同时改设计文档 §4 的边界表——
+#: 「哪一半是共享的」是产品裁决，不是实现细节。
+_OWNED_FOCUS_FIELDS = ("session_constraints", "active_task")
+#: 归属不明时的默认乘员（与 `prefs["occupant_id"]` 的缺省同一个词）。
+_DEFAULT_OCCUPANT = "primary"
+
+
+def _occupant_of(occupant_id: str | None) -> str:
+    return str(occupant_id or "").strip() or _DEFAULT_OCCUPANT
+
+
+def _project_owned_fields(record: dict, occupant_id: str | None) -> dict:
+    """存储记录 → 这位乘员看到的焦点（私有两格取自他自己的格子）。
+
+    旧记录（没有 `by_occupant`）里的扁平私有值算 `primary` 的：别人读不到，
+    而缺省乘员的连续性一字不变——归属不确定时不把未归属的偏好写进某位乘员名下。
+    """
+    out = dict(record or {})
+    owned = out.pop("by_occupant", None)
+    owned = owned if isinstance(owned, dict) else {}
+    who = _occupant_of(occupant_id)
+    mine = owned.get(who) if isinstance(owned.get(who), dict) else None
+    if mine is None and not owned and who == _DEFAULT_OCCUPANT:
+        return out                       # 旧记录 + 缺省乘员：行为逐字不变
+    for name in _OWNED_FOCUS_FIELDS:
+        value = (mine or {}).get(name)
+        out[name] = value if value is not None else (
+            {} if name in ("session_constraints", "active_task") else None)
+    return out
+
+
+def _merge_owned_fields(stored: dict, focus_record: dict,
+                        occupant_id: str | None) -> dict:
+    """本轮焦点 + 存储里别人的格子 → 要落盘的记录（私有两格只写说话人自己的）。"""
+    out = dict(focus_record or {})
+    owned = dict((stored or {}).get("by_occupant") or {})
+    who = _occupant_of(occupant_id)
+    legacy = {name: (stored or {}).get(name) for name in _OWNED_FOCUS_FIELDS}
+    if not owned and any(legacy.values()):
+        # 迁移：旧记录的扁平私有值归 `primary`（读侧同一条判据）
+        owned[_DEFAULT_OCCUPANT] = {name: value for name, value in legacy.items() if value}
+    mine = dict(owned.get(who) or {})
+    for name in _OWNED_FOCUS_FIELDS:
+        mine[name] = out.get(name)
+    owned[who] = {name: value for name, value in mine.items() if value}
+    if not owned[who]:
+        owned.pop(who, None)
+    out["by_occupant"] = owned
+    return out
 
 
 def expire_short_term(focus: "Focus | None", *, now: float | None = None) -> "Focus | None":
@@ -1858,7 +1937,8 @@ class ContextManager:
             await asyncio.gather(
                 self._history(ctx, exchanges=exchanges) if mem_on else _off(),
                 self._recall(text, ctx) if mem_on else _off(),
-                self._load_focus(ctx.session_id, ctx.user_id)
+                self._load_focus(ctx.session_id, ctx.user_id,
+                                 occupant_id=getattr(ctx, "occupant_id", ""))
                 if (mem_on and self.session) else _none(),
                 self._catalog_with_registry(text),
             )
@@ -1877,14 +1957,18 @@ class ContextManager:
                           history_state=history_state, memory_state=memory_state,
                           history_exchanges=exchanges)
 
-    async def _load_focus(self, session_id: str, user_id: str):
-        """载入会话焦点。失败/无则 None，不阻塞规划。"""
+    async def _load_focus(self, session_id: str, user_id: str, occupant_id: str = ""):
+        """载入会话焦点。失败/无则 None，不阻塞规划。
+
+        `occupant_id`（评审二轮 R7）：私有那两格按说话人投影——别人的约束 / 任务帧读不到。
+        """
         try:
             d = await self.session.load_focus(
                 session_id, owner_user_id=user_id)
             if not d:
                 return None
             valid = {f.name for f in fields(Focus)}
+            d = _project_owned_fields(d, occupant_id)
             # W09：短时引用按 `focus_ts` 过期，活动状态照旧（各按自己的 ts 判活）
             focus = expire_short_term(Focus(**{k: v for k, v in d.items() if k in valid}))
             if focus is not None and not active_task_live(focus.active_task):
@@ -1895,8 +1979,11 @@ class ContextManager:
             return None
 
     async def update_focus(self, session_id: str, plan, results, *,
-                           user_id: str, exchange_id: str = ""):
-        """每轮成功完成后更新焦点态（供下一轮指代消解）。绝不抛错、不阻塞主链路。"""
+                           user_id: str, exchange_id: str = "", occupant_id: str = ""):
+        """每轮成功完成后更新焦点态（供下一轮指代消解）。绝不抛错、不阻塞主链路。
+
+        `occupant_id`（评审二轮 R7）：私有那两格写进说话人自己的格子，别人的原样保留。
+        """
         if not self.session:
             return
         try:
@@ -1914,7 +2001,10 @@ class ContextManager:
                 # 只在**本轮有新告警**时才需要旧值——那一轮原条件不去取。
                 # 其余几维行为逐字不变：它们的接力分支都带 `not focus.X` 前置，
                 # 只要那个前置成立，原条件本来也会载入。代价是极少数轮多一次 Redis 读。
-                previous = await self._load_focus(session_id, user_id)
+                previous = await self._load_focus(session_id, user_id,
+                                                  occupant_id=occupant_id)
+                stored_before = await self.session.load_focus(
+                    session_id, owner_user_id=user_id) or {}
                 # W18-a：墓碑接力（ts 不续期），本轮被顶掉 / 过期的组在下面追加
                 retired = list(getattr(previous, "retired_candidate_sets", None) or []) \
                     if previous is not None else []
@@ -2012,8 +2102,10 @@ class ContextManager:
                 focus.route_ended = False
                 focus.safety_alert_cleared = False
                 focus.focus_ts = time.time()          # W09：短时引用的寿命从此刻起算
+                record = _merge_owned_fields(
+                    stored_before, asdict(focus), occupant_id)
                 await self.session.save_focus(
-                    session_id, asdict(focus), owner_user_id=user_id)
+                    session_id, record, owner_user_id=user_id)
         except Exception as e:
             logger.debug("update_focus failed: %s", e)
 

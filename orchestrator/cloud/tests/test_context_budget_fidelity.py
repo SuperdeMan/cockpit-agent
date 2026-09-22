@@ -102,11 +102,17 @@ def test_last_exchange_answer_is_trimmed_at_a_sentence_boundary_not_mid_sentence
     assert "不吃花生的可以去" not in body or "不吃花生的可以去。" in body
 
 
-def test_newest_message_alone_wins_when_even_the_last_pair_does_not_fit():
-    """与既有 `test_render_context_budget_trims_oldest_history` 同口径：最新那条最值钱。"""
+def test_the_pair_is_dropped_when_even_the_user_turn_alone_does_not_fit():
+    """⚠ 2026-09-22（评审二轮 R6）**换了契约**：此前这条叫「最新那条最值钱」，断言紧预算下
+    只留助手的「简答」——用户问了什么没了、答案还在，planner 读到的是一个没有前提的结论。
+    现在：助手那条先让位；用户那条自己都放不下 ⇒ 整对舍弃（`history_omitted`），不留孤立回答。"""
     history = _hist(("这是一个相当长的问题啊啊啊啊啊啊", "简答"))
-    out = _render_history(history, budget=30)
-    assert "简答" in out and len(out) <= 30
+    block, stats = ctxmod._render_history_with_stats(history, budget=30)
+    assert block == "" and stats["history_omitted"] is True
+    assert stats["history_pairs_kept"] == 0
+    # 预算够放下用户那条时，留的就是它（助手那条让位）
+    out = _render_history(history, budget=40)
+    assert "这是一个相当长的问题" in out and "简答" not in out
 
 
 # ── 记忆按条裁不按字裁 ───────────────────────────────────────────────────
@@ -172,3 +178,48 @@ def test_a_waiver_with_nothing_to_waive_saves_no_none_value():
                                 [], user_id="u1"))
     saved = asyncio.run(session.load_focus("sess-w03b", owner_user_id="u1"))
     assert not (saved or {}).get("session_constraints")
+
+
+# ── 评审二轮 R6（2026-09-22）：裁剪不许反转用户请求的极性 ────────────────────
+#
+# 硬预算是对的，但「最后一对放不下时按尾部删最长那条的句子」不区分角色：
+# 「我想去机场。只查路线，不要启动导航。」在 32 字预算下被裁成「我想去机场。」——字数合规，
+# **约束消失了，剩下的是相反的正向目标**。助手的解释是可再生成的，用户的请求不是。
+
+def test_trimming_never_rewrites_the_user_turn_and_drops_the_pair_instead():
+    history = _hist(("我想去机场。只查路线，不要启动导航。", "好的。"))
+    out = _render_history(history, budget=32)
+    # 要么整句原样在（含否定），要么这一对整体不渲染——绝不出现只剩「我想去机场。」
+    assert "我想去机场" not in out or "不要启动导航" in out
+    assert "助手：好的。" not in out or "用户：" in out      # 不留孤立助手行
+
+
+def test_the_assistant_answer_is_trimmed_first_and_the_user_request_stays_whole():
+    history = _hist(("只查路线，不要启动导航。", "好的。已为你查到三条路线。第一条走机场高速。第二条走滨海大道。"))
+    out = _render_history(history, budget=60)
+    assert "只查路线，不要启动导航。" in out          # 用户那条一字不动
+    assert len(out) <= 60
+    assert "第二条走滨海大道" not in out              # 助手的解释按句让位
+
+
+def test_a_user_turn_that_cannot_fit_leaves_an_omitted_flag_not_an_orphan_answer():
+    """超长用户单句 + 很短的助手回复：此前输出只剩「助手：好的。」——用户的限制一个字没剩，
+    调用方还按「非空」记成保留了一对。现在整对不渲染，`history_omitted` 明写。"""
+    history = _hist(("这是一个很长很长的请求" * 20 + "。不要下单。", "好的。"))
+    block, stats = ctxmod._render_history_with_stats(history, budget=40)
+    assert block == ""
+    assert stats["history_pairs_kept"] == 0
+    assert stats["history_omitted"] is True
+
+
+def test_dropping_the_user_turn_is_recorded_even_when_an_older_pair_survives():
+    history = _hist(("上一问", "上一答"), ("这是一个很长很长的请求" * 20 + "。不要下单。", "好的。"))
+    block, stats = ctxmod._render_history_with_stats(history, budget=40)
+    assert "不要下单" in block or stats["history_omitted"] is True
+
+
+def test_only_the_user_line_survives_when_the_answer_cannot_fit_at_all():
+    history = _hist(("只查路线，不要启动导航。", "好的。" + "补充说明。" * 30))
+    out = _render_history(history, budget=40)
+    assert "只查路线，不要启动导航。" in out and len(out) <= 40
+    assert "补充说明" not in out

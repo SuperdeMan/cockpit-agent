@@ -148,3 +148,38 @@ agents + test + security + memory 3570 / 19 skipped；四门禁 + smoke_edge 13/
   改判据后 `--cases RS22 --repeat 3` = **3/3**，且三趟的 T2 话术里两件事都在：先念出明天那条提醒，再诚实拒绝事件触发
   （artifact `.artifacts/probe-round2-batchB-06ad7ae4-rs22.json`）。第一轮那趟「只有拒绝、没有列表」是 planner 只规划了一步
   （落域方差，不写进判据）。
+
+## 4. 批 C 方案与裁决（R6 / R7 / R8，2026-09-22 夜）
+
+| 条 | 现状（代码事实） | 本批做什么 | 刻意不做 |
+|---|---|---|---|
+| R6 | `_fit_last_exchange` 对「最长那条」按句从尾部删，**不看角色**：「我想去机场。只查路线，不要启动导航。」在 32 字预算下变成「我想去机场。」——字数合规、约束没了、剩下的是相反的正向目标；用户那条放不下时输出只剩「助手：好的。」而调用方按非空记成保留了一对 | 只裁**助手**那半（回答可再生成，请求不行）：① 助手按句从尾部裁；② 还放不下就整条丢掉助手、只留用户那条；③ 用户那条自己放不下 ⇒ **整对舍弃**并记 `history_omitted`，绝不留孤立回答。`history_pairs_kept` 只数真正渲染出来的完整对 | 不给否定 / 限制做关键词表（「决定性否定结构化保护」在本仓的形态就是「用户那条不许被改写」——判据零领域词）；不改视窗大小与预算值 |
+| R7 | 历史与长期记忆按 `user_id + occupant_id` 读，`SessionStore._focus_key` 只有 `user_id + session_id`：同账号同会话下 A 的「不吃辣」会成为 B 回问的答案，话术还说「您这次说过」 | Focus 加 `by_occupant`：**私有两格**（`session_constraints` / `active_task`）按说话人读写（`_project_owned_fields` / `_merge_owned_fields`），别人的格子原样保留；`_load_focus` / `update_focus` 多一个 `occupant_id`，engine 七个调用点从 `ctx.occupant_id` 传。旧记录（无 `by_occupant`）的扁平私有值算 `primary` 的——归属不确定时不写进某位乘员名下，缺省乘员行为逐字不变 | **共享车辆 / 路线状态仍然共享**（活动路线、安全告警、候选台账、上一轮意图、上个地点）：它们是车上所有人看的同一块屏、同一条路；B 说「取消导航」必须能取消 A 发起的那条。评审把「候选」列进私有，这里按产品事实裁成共享并写明边界。声纹仍只是归属线索，不参与权限 / 确认 / 支付 |
+| R8 | `load_all` 在「配了 Redis 但连不上」时返回 `[]`，与空表逐字相同 ⇒ 「当前没有待确认的操作」；带寻址键时更进一步：`pending_missing` + `closed_operation_ids` 把**可能还在**的挂起告诉客户端说没了。`save_pending` 的 `False` 把连接故障说成「正在清除你的数据」 | 读写各三态：`load_all_result → found / empty / unavailable`、`save_pending_result → saved / unavailable / privacy_fenced`（老方法保留原形状，注释指向新出口）。engine：读不到 ∧ 确认形态（带寻址键 / `is_confirmation` / 裸确认词）⇒ `system.pending_unavailable`「我这会儿读不到待确认列表…」，零动作、**零 `closed_operation_ids`**；`_pending_digest` 读不到返回 None（读出口说「查不到」）；`_suspend` 分开报 `store_fenced` 与 `store_unavailable` | 普通请求照旧进规划（fail-open：一次存储故障不该让整轮不可用）；隐私 fence 的 fail-closed 一字不改；不给客户端加新字段 |
+
+探针（`--cases RS23,RS24 --repeat 3`）：RS23 用一句 300+ 字、末句「只查路线，不要启动导航」的长输入把最后一对逼进裁剪，
+下一轮「那条路线大概多久」不许出现 `navigate`；RS24 经 `meta.occupant_id` 切换说话人（探针新增 per-turn `occupant` 键），
+A 说「我不吃辣」→ B 回问不许听到「您这次说过」→ A 自己回问要听到「不吃辣」。
+
+### 批 C 验收
+
+- 每条先红测试再改实现；定向套件 + 四门禁 + smoke_edge；全量固定口径一次；变异各自判红
+  （裁剪回到「最长那条」/ 放不下时留孤立助手行 / 私有字段不投影 / 写回不保留别人的格子 / 读三态塌回两态 /
+  写三态塌回两态 / 读不到仍按「没有挂起」走，共七处）。
+- 真栈：push → dry-run → apply → status / verify → 上述探针；读数写 §4.1.1。
+
+### 4.1 落地记录（2026-09-22 夜）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| R6 | `context.py::_fit_last_exchange` 改成「只裁助手 → 丢助手 → 整对舍弃」三段，返回值加 `omitted`；`_render_history_with_stats` 的 stats 加 `history_omitted`，`kept` 只数完整对 | `test_context_budget_fidelity` +5（极性不反转 / 助手先让位 / 用户那条放不下记 omitted / 更旧一对仍在时也记 / 只剩用户那条）；两条旧契约测试改写并留痕（`test_the_pair_is_dropped_when_even_the_user_turn_alone_does_not_fit`、`test_render_context_budget_trims_oldest_history`——它们钉的「最新那条最值钱」正是评审点名的形态）；变异两处各判红 |
+| R7 | `Focus.by_occupant` + `_project_owned_fields` / `_merge_owned_fields` / `_OWNED_FOCUS_FIELDS`；`_load_focus` / `update_focus` 接 `occupant_id`；engine 七处调用点传 `ctx.occupant_id`；`assemble` 同款 | 新 `test_focus_owner_scope` 7（B 读不到 A 的 / 各自跨轮独立 / 缺省乘员连续 / 旧记录归 primary / 共享那一半仍共享 / 任务帧私有 / engine 读出口端到端）；变异两处各判红 |
+| R8 | `session.py` 六个常量 + `load_all_result` / `save_pending_result`（老方法委托）；engine 三条出口（确认形态读不到 / `_pending_digest` / `_suspend` 分账）；`session_facts.PENDING_UNAVAILABLE_SPEECH`；`runtime/outcome.py` 两个新 kind | 新 `test_pending_store_states` 10（存储三态 ×2 + 兼容形状 ×2 + engine 四条 + 写两态）；`test_engine_session_facts` 的坏存储替身改挂新接缝（钉在旧方法上会静默失效）；变异三处各判红 |
+| 探针 | RS23 / RS24；per-turn `occupant` 键 → `meta.occupant_id` | `--list` 通过；探针相关 226 passed |
+
+定向读数：cloud + runtime 2411 / 1 skipped；四门禁 + smoke_edge 13/13；七处变异各判红。
+**全量固定口径（批 C 工作树，`TZ=UTC0` `-n 6`）：9033 passed / 0 failed / 32 skipped / 10 warnings，257 s。**
+
+#### 4.1.1 发布链与真栈读数
+
+（待 push / deploy / verify / 探针后回填。）

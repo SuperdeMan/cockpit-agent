@@ -304,14 +304,17 @@ def test_an_unreadable_pending_table_says_so_instead_of_saying_none():
     假话——而用户正是靠它决定要不要重说一遍。
     """
     class _Broken(SessionStore):
-        # engine 开头判挂起的那一次取数（W01 起同样走 `load_all`）保持可用——本用例要
-        # 隔离的是**读出口那一次取数**失败，不是整轮不可用。第一次调用回空表，之后再坏。
+        # engine 开头判挂起的那一次取数（W01 起同样走这一份）保持可用——本用例要隔离的是
+        # **读出口那一次取数**失败，不是整轮不可用。第一次调用回空表，之后再坏。
+        # ⚠ 挂的是 `load_all_result`（评审二轮 R8 起三态出口就是它）：钉在 `load_all` 上
+        # 只会在下一次换接缝时静默失效——「改对了而调用方在它之前就返回了」的同族。
         calls = 0
 
-        async def load_all(self, session_id, *, owner_user_id=""):
+        async def load_all_result(self, session_id, *, owner_user_id=""):
             type(self).calls += 1
             if type(self).calls == 1:
-                return []
+                from orchestrator.cloud.session import PENDING_EMPTY
+                return [], PENDING_EMPTY
             raise RuntimeError("redis down")
 
     spy = _Spy()
