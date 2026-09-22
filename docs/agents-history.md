@@ -9576,5 +9576,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   旧常量与短前缀一个不剩；只读 precheck → prepare-upload + scp 四文件 → trusted entry `infrastructure_approved` → 只读 postcheck 三个摘要齐）；
   dry-run 零阻断（infra digest 与锚一致）；主树带着未提交文档时 apply `safety_rejected` ⇒ 按 dev-guide 隔离 worktree（`git worktree add --detach` + 只复制
   `dev-stack.local`）再 dry-run → apply → status / verify，见 AGENTS §4.0。
-- 留下：正式基线未重建（§9.2，需切 local 全栈）；两次失败发布的 builds / releases / 镜像残留（需删除授权）；planner「接孩子后去万象城」只导航到
-  学校那半、「adaptive 却零步」两种落域方差；chitchat 车辆读数条款等真栈样本。
+- 追问两件（同日下午，设计文档 §10.2）：**正式基线不能在云端跑**——L3 `e2e_journeys` 签名身份 + 持久数据，runner 对 cloud 目标按设计拒；
+  **L1 / L2 诊断读数可以**：云端 llm-gateway 的 gRPC 根本没发布到宿主（§9.2「回环 50052」记错了），SSH 转发直指容器 IP `172.18.0.6:50052` + HTTP 宿主回环；
+  parent 把 worker stderr 吞成「exit code 2」，排障靠把 worker 命令直跑一条 case。读数：**L1 111/117**（1 stable_fail「关掉音乐」`media.stop` vs gold `media.pause`；
+  5 unstable 全是 planner 方差形态；forbidden 0、escape 0；工具通道 96/117），**L2 4/4**。第一趟 L1 作废：跑批期间改主树文档 ⇒ `worktree_clean` 判红——
+  **eval 与全量 pytest 一样，跑批期间不改工作树**（自己的改动先 stash）。第一趟 L2 bundle 因 `cs.pending.dangerous-hold@l2` 两次 build 尝试目录不一致被判红，
+  单 case 与第二趟都一致，记为装置对 planner 方差的敏感。**云端残留清理（用户授权）**：只删两次失败发布本身——builds / releases 各 2（162 M + 210 M × 2）、
+  104 个镜像 tag、5 个上传暂存目录；`evidence/releases/<sha>` 与 `infrastructure-approvals/<sha>-*` 是证据 / 锚备份，保留；status ok 5/5。
+  删除脚本的 current 守卫要读 `/opt/car-agent/current`（`releases/current` 不存在）。仍是候选未批：其余 13 个成功发布的暂存目录（~690 M）、110 份 build record（16 G）。
+- 留下：正式基线未重建（§9.2，需切 local 全栈）；planner「接孩子后去万象城」只导航到学校那半、「adaptive 却零步」两种落域方差；chitchat 车辆读数条款等真栈样本；
+  「关掉音乐」gold `media.pause` 是否该放开 `media.stop`（案例集裁决）。

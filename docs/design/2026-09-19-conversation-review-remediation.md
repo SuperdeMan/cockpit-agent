@@ -735,3 +735,49 @@ g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` �
   ——走 E 路径，T69「取消导航」正常「已结束到深圳湾万象城的导航」；① 的活体在本趟没有出现（planner 没走 T2），由 RS14 那两趟承担。
 - 留给后续（本批不动）：planner「adaptive 却零步」（RS14 第三趟）与「接孩子后去万象城」只给一步 / 把接人当途经点搜（continuity T63）两种落域方差；
   chitchat 在告警前提下拒绝得过短、不给替代（SF4 T65，尺子判红）；③ 的条款等真栈样本（两趟 g18 都没落 chitchat）。
+
+### 10.2 追问两件（2026-09-22 下午，用户「1. 是否可以云端测试；2. 授权」）
+
+**① 正式对抗基线能不能在云端跑：不能；L1 / L2 诊断读数可以。**
+
+- L3 走 `run_e2e.py --id e2e_journeys`，manifest 声明 `signed_identity: true / persistent_data: true / remote_safe: false`——`e2e_target.select_for_target`
+  对 cloud 目标直接拒「cloud case requires unsupported local state」（不是没接线，是设计：签名身份 + 持久业务数据只准打本地栈）；正式资格要 L3 恰一份
+  新鲜报告 ⇒ `--layer all --write-baseline` 只能本地全栈（§9.2 的步骤不变）。
+- L1 / L2 只要 llm-gateway：gRPC `50052` + HTTP `50059`。§9.2 写的「云端只在回环 50052」不准确——**gRPC 根本没发布到宿主**（`compose.cloud.yaml` 对
+  llm-gateway 只 `127.0.0.1:50059:50059`），它只在 compose 网络里；SSH 本地转发直接指容器 IP（`-L 50052:172.18.0.6:50052`，宿主能路由到 docker 桥）即通，
+  HTTP 走宿主回环。`ProviderLock.pin()` 会 POST `/api/llm/provider`（pin 的就是当前 active `minimax:MiniMax-M3`，`set_active` 同值幂等；跑前 GET 核过）。
+  parent 把 worker 的 stderr 吞成「worker returned exit code 2」，第一趟排障是把 worker 命令原样直跑一条 case（`cs.weather.clean@l1` 1/1、toolcall、
+  范例预热正常）。
+- 读数（`--suite gate --layer l1 --live --provider minimax --model MiniMax-M3 --repeat 1`，2 进程 × 139 case × 1 样本，代码 `a7989a20` 干净树 =
+  生产 `5818d136` + docs；报告 `docs/reviews/eval/_ci-run-intent-adversarial-{l1,l2}-minimax-016bd8b1.{json,md}`，gitignore）：
+  - L1 读数（gate、MiniMax-M3、`--repeat 1`、2 进程 × 139 case、代码 `a7989a20` 干净树、15:12–15:36）：**111/117 证据单元（94.9%）**，
+    `exact_plan_set_rate` 95.7%（112/117）、`required_group_recall` 96.0%、`forbidden_route_rate` 0/117、validator 后逃逸 0/117、raw 能力幻觉 2/117（都被
+    validator 拦下）、fallback 4/117（1 条未声明：`nq.landmark.bare` 一次落 `_fallback` 的 chitchat）；工具通道 96/117 走成 toolcall，其余 21 轮 salvage / degraded /
+    fallback（与批 4 的「82/90」同一量级）。6 条非 pass：**1 条 stable_fail** `os.turn-off.media`「关掉音乐」两进程都给 `media.stop`，gold 要 `media.pause`——
+    model 与 gold 的分歧（stop 语义上不错；gold 是按 DeepSeek 当年的选择写的），记为案例集候选、不为模型改 gate；**5 条 unstable**（两进程一对一错，全是
+    planner 方差形态）：`cs.cancel-it.research`「那个取消掉」一次 `cancel_unresolved` 零步；`nq.landmark.bare`「华润大厦」一次 `toolcall_degraded` 落 chitchat、
+    一次 `search_poi`（gold 要澄清）；`nq.landmark.explicit`「导航到华润大厦」两次都是 `navigate_to`——**计划本身对**，红在 `clarify_flip` 关系依赖的 base case 红了；
+    `os.battery.phone`「手机没电了」一次 salvage 出 `media.stop`；`os.open.window`「打开车窗」一次 JSON 回落路径 `addressed=false` 零步。
+  - L2（同参数，gate 里声明 l2 的只有 4 个证据单元，全是 A5 挂起 / 危险动作：dangerous-hold / order-hold / parking-hold / interject）：**4/4**，toolcall 4/4，
+    确认前零副作用、挂起落库。第一趟 L2 的 parent 把 bundle 判红——`cs.pending.dangerous-hold@l2` 「request_capability_catalog does not match
+    admitted_intents」且两进程「differs」：单 case 直跑与第二趟整层都一致（154 = 154），worker 报告在临时目录里随 parent 退出被清掉、取不到现场；最像的机制是
+    该 case 那一趟两次 build 尝试渲染的能力映射不一致（`catalog_consistent=False` ⇒ 记成空）——eval 装置对「跨尝试目录逐字一致」的要求被 planner 方差触发，
+    不是产品缺陷；记一笔、第二趟为准。
+  - **第一趟 L1 作废**（21 分钟、~400 次 LLM 调用）：跑批期间我在主树改文档，worker 的 `worktree_clean` 判 false ⇒ bundle 无效。**「跑批期间不改工作树」对 eval
+    与全量 pytest 同样成立**——文档改动先 `git stash`（自己的改动），跑完再 pop。
+  这是**诊断读数**（`--repeat 1`、无 L3、`eligible=False` 按设计），不是正式基线；与 2026-08-09 的 MiniMax 141/147（all-layer、`f0af9c0`）不可直比
+  （层不同、代码相隔 40 天、单样本）。
+
+**② 云端残留清理（用户授权）**：先只读盘点再删，范围只到两次失败发布本身——
+
+| 对象 | 大小 | 处置 |
+|---|---|---|
+| `/opt/car-agent/builds/{267b5d8b,1a8ff180}` | 162 M × 2 | 删 |
+| `/opt/car-agent/releases/{267b5d8b,1a8ff180}` | 210 M × 2 | 删（`/opt/car-agent/current` → `5818d136`，两份都不是 current、无容器引用） |
+| 镜像 `car-agent-release/*:{sha}` + `car-agent-release-{sha}-*:latest` | 26 × 2 tag × 2 SHA = 104 个 tag | `docker rmi`（层大多与其他 release 共享，磁盘 63 G → 62 G） |
+| `/opt/car-agent/incoming/releases/{267b5d8b-*×3, 1a8ff180-*×2}` | 53 M + 53 M + 28 K / 53 M + 44 K | 删（同一批失败事务的上传暂存） |
+| `shared/evidence/releases/{sha}`、`shared/evidence/infrastructure-approvals/{sha}-*` | — | **保留**：验收证据与锚备份，不是残留 |
+
+删后：两个 SHA 在 builds / releases / incoming / images 四处都为空，32 个容器照旧、status ok 5/5、running `5818d136`。
+仍是候选、本轮不动（要另批）：其余 13 个成功发布的 `incoming/releases/<sha>-*` 暂存目录（各 53 M，共约 690 M）、`/opt/car-agent/builds` 共 110 份 16 G
+（含 8 月起的全部历史 build record）、docker `system df` 报 557 个镜像 34 G。
