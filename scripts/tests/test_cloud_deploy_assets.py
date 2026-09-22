@@ -1880,6 +1880,72 @@ def test_loopback_verifier_fails_closed_when_a_port_never_listens(tmp_path: Path
     assert '"listener_ready_s": int(os.environ["LISTENER_READY_S"])' in text
 
 
+_SERVE_STATUS_SIX = """https://car-agent-dev.tailc936bb.ts.net (tailnet only)
+|-- / proxy http://127.0.0.1:5173
+
+https://car-agent-dev.tailc936bb.ts.net:8443 (tailnet only)
+|-- / proxy http://127.0.0.1:8090
+
+https://car-agent-dev.tailc936bb.ts.net:8444 (tailnet only)
+|-- / proxy http://127.0.0.1:50059
+
+https://car-agent-dev.tailc936bb.ts.net:8445 (tailnet only)
+|-- / proxy http://127.0.0.1:5174
+
+https://car-agent-dev.tailc936bb.ts.net:8446 (tailnet only)
+|-- / proxy http://127.0.0.1:8092
+
+https://car-agent-dev.tailc936bb.ts.net:8447 (tailnet only)
+|-- / proxy http://127.0.0.1:8768
+"""
+
+
+def _run_serve_verifier(tmp_path: Path, transform: str):
+    status_file = tmp_path / "serve-status"
+    status_file.write_text(_SERVE_STATUS_SIX, encoding="utf-8", newline="\n")
+    return _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        STATUS_FILE="$1"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$2"
+        tailscale() { """ + transform + """; }
+        verify_tailscale_serve
+        printf 'count=%s\n' "$TAILNET_ENTRY_COUNT"
+        """,
+        status_file,
+        VERIFY_RELEASE_PATH,
+    )
+
+
+def test_serve_verifier_accepts_another_projects_extra_entry_and_counts_it(tmp_path: Path):
+    """2026-09-22 真栈：同机另一项目加了 `:8447 → 127.0.0.1:8768`，「恰好五条」把本项目每次验收判红（两次切换后回滚、回滚验收也红
+    ⇒ ROLLBACK_FAILED，容器全部健康）。判据改成「我们的五条一条不少、各指约定回环端口」；别人的条目只计数不裁。"""
+    result = _run_serve_verifier(tmp_path, 'cat "$STATUS_FILE"')
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "count=6"
+
+
+@pytest.mark.parametrize("transform, message", [
+    ('grep -v -e 8446 -e 8092 "$STATUS_FILE"', "car-agent serve entries missing: 8446"),
+    ('sed "s#127.0.0.1:8090#127.0.0.1:9999#" "$STATUS_FILE"', "serve entry :8443 does not proxy to 127.0.0.1:8090"),
+    ('sed "s#127.0.0.1:5173#127.0.0.1:5173#; s#car-agent-dev.tailc936bb.ts.net:8445#other-node.tailc936bb.ts.net:8445#" "$STATUS_FILE"',
+     "car-agent serve entries span more than one host"),
+    ('sed "s/(tailnet only)/(Funnel on)/" "$STATUS_FILE"', "car-agent serve entries missing"),
+])
+def test_serve_verifier_still_fails_closed_on_our_own_entries(tmp_path: Path, transform: str, message: str):
+    result = _run_serve_verifier(tmp_path, transform)
+    assert result.returncode != 0
+    assert message in result.stderr
+    assert "does not expose the five car-agent tailnet only entries" in result.stderr
+
+
+def test_serve_verifier_rejects_funnel_anywhere_on_the_node(tmp_path: Path):
+    result = _run_serve_verifier(tmp_path, 'cat "$STATUS_FILE"; printf "https://car-agent-dev.tailc936bb.ts.net:8448 (Funnel on)\n|-- / proxy http://127.0.0.1:8768\n"')
+    assert result.returncode != 0
+    assert "Tailscale Funnel must remain disabled" in result.stderr
+
+
 def test_release_probes_have_no_dangerous_utterances():
     payload = _required_text(EDGE_WS_PROBE_PATH).lower()
     for forbidden in ("支付", "下单", "购买", "开门", "解锁", "启动发动机", "退款"):

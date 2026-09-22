@@ -135,12 +135,47 @@ if seen != required:
   LISTENER_READY_S=$(( SECONDS - started ))
 }
 
+# Tailscale Serve 判据（2026-09-22 改）：**本项目的五条映射一条不少、每条 tailnet only、后端是约定的回环端口**；
+# 不再要求「恰好五条」。来历：同机另一个项目加了第六条 `:8447 → 127.0.0.1:8768`，计数判据把本项目每一次验收都判红——
+# `267b5d8b` / `1a8ff180` 两次切换后回滚、回滚验收同样红 ⇒ ROLLBACK_FAILED，而 30 个容器全部健康、五个端点全 200。
+# 别的项目的条目不归本闸管；Funnel 仍一条都不许出现（那是整机的公网暴露）。
 verify_tailscale_serve() {
   local status count
   status="$(tailscale serve status)" || return $?
-  count="$(awk 'BEGIN { IGNORECASE=1; count=0 } /[(]tailnet only[)]/ { count++ } END { print count }' <<<"${status}")" || return $?
-  [[ "${count}" -eq 5 ]] || { verify_error "Tailscale Serve does not expose five tailnet only entries"; return 1; }
-  if grep -Fqi 'funnel' <<<"${status}"; then verify_error "Tailscale Funnel must remain disabled"; return 1; fi
+  count="$(python3 -c '
+import re
+import sys
+
+expected = {"443": 5173, "8443": 8090, "8444": 50059, "8445": 5174, "8446": 8092}
+header = re.compile(r"^https://(?P<host>[a-z0-9.-]+\.ts\.net)(?::(?P<port>[0-9]+))? \(tailnet only\)$", re.IGNORECASE)
+proxy = re.compile(r"^\|-- / proxy http://127\.0\.0\.1:(?P<backend>[0-9]+)$")
+lines = [line.rstrip() for line in sys.stdin]
+seen = {}
+hosts = set()
+total = 0
+for index, line in enumerate(lines):
+    match = header.match(line.strip())
+    if not match:
+        continue
+    total += 1
+    port = match.group("port") or "443"
+    if port not in expected:
+        continue
+    body = next((candidate.strip() for candidate in lines[index + 1:index + 3] if candidate.strip()), "")
+    target = proxy.match(body)
+    if target is None or int(target.group("backend")) != expected[port]:
+        raise SystemExit(f"serve entry :{port} does not proxy to 127.0.0.1:{expected[port]}")
+    seen[port] = True
+    hosts.add(match.group("host").lower())
+missing = sorted(set(expected) - set(seen), key=int)
+if missing:
+    raise SystemExit("car-agent serve entries missing: " + ",".join(missing))
+if len(hosts) != 1:
+    raise SystemExit("car-agent serve entries span more than one host")
+print(total)
+ ' <<<"${status}")" || { verify_error "Tailscale Serve does not expose the five car-agent tailnet only entries"; return 1; }
+  # 纯 bash 子串判断：Git Bash 下 `grep -Fqi <<<` 会 Abort 而不判——测试替身在 Windows 上跑不动它
+  if [[ "${status,,}" == *funnel* ]]; then verify_error "Tailscale Funnel must remain disabled"; return 1; fi
   TAILNET_ENTRY_COUNT="${count}"
 }
 
