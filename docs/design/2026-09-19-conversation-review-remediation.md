@@ -3,7 +3,9 @@
 - 状态：批 1（P0 W01–W04 + W05-lite）、批 2（P1 W08/W09）、批 3（P1 W10 / W06 / W07，2026-09-20 用户批准后实施）已发布
   （生产 release `88a89456`）；批 4（P2 W11–W15）方案见 §5、落地记录见 §5.6（P2 收尾 release `9ebaa5c3`）；
   批 5（P3 W16–W19 + 两条观察，2026-09-20 晚）方案见 §7、落地记录见 §7.1；
-  **批 6（批 5 留项：W16-b 步级起点原话 / W19-b 持久订阅落域，2026-09-20 晚，用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §8、落地记录见 §8.1**
+  批 6（批 5 留项：W16-b 步级起点原话 / W19-b 持久订阅落域，2026-09-20 晚）方案见 §8、落地记录见 §8.1；批 7（批 6 留项，2026-09-21）
+  方案见 §9、落地记录见 §9.1 / §9.2；**批 8（批 7 追加留项：T2 完成轮收口 / 安全闸二第二臂 / chitchat 车辆读数 / 迁移预检 Serve 判据，
+  2026-09-22 下午，用户授权提交 / 推送 / 部署 / 真栈验证）方案见 §10、落地记录见 §10.1**
 - 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、`agents/nearby`、`skills/`；HMI / Android 零改动
 - 关联：评审原文 [`docs/reviews/2026-09-19-cockpit_conversation_review.md`](../reviews/2026-09-19-cockpit_conversation_review.md)（基线 `2f3c574d`）；
   接手 `AGENTS.md` §4；QA 交接 `docs/reviews/2026-08-30-qa-closeout-handoff.md`；上一批收口 [`2026-09-19-qa-residual-closeout.md`](2026-09-19-qa-residual-closeout.md)
@@ -684,3 +686,36 @@ g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` �
   首跑前还有一趟在 T6 因 WS 传输超时中止（服务端 2.2 s 出了 `pending_confirm` final、客户端 120 s 没收到）——工具把 600 s 的 PowerShell 挪到后台后传输就不稳，改用 `Start-Process` 分离跑。
 - `93564e19` 第二趟：**69/71**，跑完整趟、零 cleanup 失败、`vehicle_env_restore` 记到 battery 72 放回、release 连续性 start/end 同 SHA。CONT-REFRESH 6/6、CONT-ENV **5/5**；红 = T18（⑥：`named_groups=2`）+ PU7 T63（planner 只导航到学校、万象城那段丢了——family 域老方差）。
 - `c98fb087` 第三趟：**70/71**，跑完整趟、零 cleanup 失败、env 放回、release 连续；唯一红 = SF4 T65「别提醒我，继续开就行」答「提醒我不会撤——…请就近停下」——拒绝了也给了替代，尺子词表没有「停下」（同 2026-08-30 那六个词的形态：被测对象做对了、尺子认不出）⇒ 词表补「停下」。T18 绑对（`named_groups=1`）——这趟 planner 四个地名都填对了 `location`，⑥ 那条路没被走到，只有离线证据。
+
+## 10. 批 8 方案与裁决（2026-09-22 下午，用户授权提交 / 推送 / 部署 / 真栈验证）
+
+批 7 追加（§9.2）留下的条目，先对 HEAD `15b8c9bc`（生产 `c98fb087`）重证，再定每条做到哪：
+
+| 留项 | 现状（代码事实） | 本批做什么 | 刻意不做 |
+|---|---|---|---|
+| ① PU7「路线会话没盖上」 | continuity 第一趟 T63 走了**四轮 T2**（`t2.iter` ×4）、发出两次 `navigate`，navigation 每步都声明了 `_route_session`；T69「取消导航」答「当前没有正在进行的导航」。真因不在 navigation：engine 的 adaptive（`engine.py` D-T2）与 reactive（`_needs_replan` 升级）两条出口在 `loop.run` 之后直接 `return`，而 `_settle_session` / `update_focus` / `_append_pending_hint` 都在它们之后——**任何 T2 完成轮都不写焦点、不清续接挂起、不补挂起软提醒**（候选批 / 活动路线 / 任务帧 / Agent 声明的安全告警全部丢；确认续接进 T2 的挂起躺到 TTL）。第三趟同一句走 E 路径（两步并列）⇒ 路线落了、T69 正常——这就是「偶发」的全部机制。「抽取改对了，而调用方在它之前就返回了」第四例 | `LoopController.run(..., settle=)`：完成轮合成 final 之前调 `settle(executed_steps, results)`（初计划 + 每个再规划批的步；挂起出口在前、不调）。engine `_loop_settler` 闭包做 E 路径那三件事、同一顺序（`_settle_session` → `update_focus`(本轮真正跑过的全部步的 `Plan` 视图) → final 补 `held_operation_ids` / 放弃提示 / 情绪），`done` 旗子只修饰完成轮的 final。探针 RS14：「如果深圳今天不下雪，就导航去深圳湾公园」——「如果…就」命中 `_DEFERRED_CONDITION_RE` ⇒ 简单计划被确定性升成 adaptive（客户端逼不出 T2，条件句能）；前件恒真 ⇒ navigate 必在再规划批里跑；「取消导航」必须 `navigate_cancel` + 「已结束」 | 不改 navigation；不把 planner 「只导航到学校、万象城那段丢了」（第二趟）当本批对象——那是 family 域落域方差，本批只修确定性的那一半 |
+| ② SF4「别提醒我，继续开就行」落「没听清」 | 第一趟 T65 trace：planner 第一轮抢救出一步 `cap_0138`（= 映射表最后一个键 `vision.describe`，空槽），第二轮 `addressed=false, steps=[]`——后者在 planner 里是**合法空计划**（R4.4）、被直接接受；文字输入的 engine 不消费 `addressed` ⇒ 空计划直落 `cloud.no_plan`「抱歉，我没听清」。T64 刚由 road-safety 把「驾驶员困倦」登记进焦点，用户这一句是在**拒绝安全建议**，系统答「没听清」等于把安全这条线整个丢掉；批 5 记过一次同形态。第二、三趟同一句落 `chitchat.talk`，chitchat 拿着 `focus_safety_alert` 答「立场不改」——正确出口 | 既有安全闸二（`planning.build` 出口，2026-08-29：这一句本身是安全信号 ∧ 零步 ⇒ `_talk_only_plan`）补**第二臂**：焦点里 `safety_alert_active` 的告警也是前提（与 `_apply_focus_meta` 下发的同一格）。比第一臂窄一格：只接零步且无澄清卡；`alert_resolved(text)` 不算；不改 `addressed`。同一份 `_talk_only_plan`、同一个 `_safety_talk` 后缀 | 不在 engine 另开一条出口（首版写在 engine，发现 planner 早有同一条闸的第一臂后合回去——**判据只留一份**）；不让 `addressed=false` 对文字输入失去合法性（语音源的非受话判定仍归 engine） |
+| ③ w6 g18「那它的纯电续航呢」答本车 335 km | trace `96b0d919847b4e33`：planner 两轮「no action」⇒ 兜底 chitchat；chitchat（MiniMax-M3 @fast）答「当前纯电续航335km，满电续航335km」——历史 8 条里没有任何数字，两个数都是编的。chitchat system 的类别否定只盖「系统做了什么」，没盖「车现在是什么状态」 | system 补一条类别否定：看不到这辆车的任何实时读数，问到就说看不到并引导去问车辆能力，不编数字；别的车型不确定也不猜。条款存在性进既有的逐条款断言 | 不给 chitchat 接车态（它 `response_only`、没有 `context_scopes`，本车读数归端侧 `battery.query`）；不为 g18 的落域方差加 hint / 范例（§9 表 ⑤ 的同一裁决） |
+| ④ `remote-data-migration.sh` 迁移预检仍「恰好五条」 | `assert_expected_cloud_topology` 末尾三行与修前的 `verify_tailscale_serve` 同一判据（`grep -Fic '(tailnet only)'` 恰好 5 + `grep -Fqi funnel <<<`）；同机 drone-agent 的第六条 `:8447` 在场 ⇒ 下一次迁移预检必红 | 迁移脚本在 `preflight` 之前已 `source verify-release.sh` ⇒ 三行换成 `verify_tailscale_serve`（判据只留一份：我们的五条一条不少、各指约定回环端口、同一主机、任何 Funnel 判红）。`deploy/cloud/**` 改动 ⇒ 单独一个提交、单独一轮基础设施批准锚（安装到 `/opt/car-agent/shared/bin/`），在 ①②③ 的 release 验完之后做 | 不动迁移状态机与其余预检 |
+
+裁决顺序与发布：①②③ **一个 release**（三条各自有离线红测试与变异判红，互不耦合）；④ 随后单独一个提交 + 一轮基础设施批准 + 一次 deploy。
+探针：`RS14 --repeat 3`（① 的活体：artifact `trace.span_nodes` 里要看到 `t2.iter`，「取消导航」出 `navigate_cancel` + 「已结束」）、
+`continuity` persona 一趟（71 检查点；SF4 T65 与 PU7 T63/T69 各自的路径按 trace 读；planner 落域方差不进判据）、
+`probe_history_window.py --groups 18 --windows 6` ×2（③ 的弱读数：落 chitchat 时话术不带编造的 km 数）。
+
+### 批 8 验收
+
+- 每条先红测试再改实现；定向套件（cloud loop / engine / planning、chitchat）+ 四门禁 + smoke_edge；全量固定口径一次；变异各自判红
+  （loop 不调 settle / done 旗子不置 / 焦点视图丢再规划步 / loop 不记执行步 / 第二臂去掉 / 第二臂吃澄清卡 / 第二臂无 TTL 与解除判据）。
+- 真栈：push → dry-run → apply → status / verify → 上述探针；读数按 SHA 分栏写 §10.1。
+
+### 10.1 落地记录（2026-09-22 下午）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| ① T2 收口 | `loop.run(settle=)` + `executed_steps`（每批执行前记）；engine `_loop_settler` / `_decorate_loop_final`，adaptive 与 reactive 两个调用点同款接线 | 新 `test_engine_loop_settle` 6（活动路线落焦点 / 再规划批的候选与任务帧 / 确认续接清挂起 + `closed_operation_ids` / 插话轮 final 带 `held_operation_ids` / 挂起轮不写焦点不清新挂起 / reactive 升级轮种子步 + 再规划步都落焦点）、`test_loop` +3（步与结果一步不少 / 挂起不调 / replan 抛异常仍收口）；变异四处各判红（不调 settle 红 6、旗子不置红 1、视图丢再规划步红 1、不记执行步红 3） |
+| ② 安全闸二第二臂 | `planning.build` 出口：`premise_focus = not plan.clarify ∧ safety_alert_active(focus.safety_alert) ∧ not alert_resolved(text)`；engine「没听清」出口注释指回同一条闸 | 新 `test_engine_safety_talk_fallback` 7（`addressed=false` 零步 + 焦点告警 ⇒ 兜底谈话 / 无告警不变 / 过期不算 / 解除句不算 / 澄清卡不吃 / `addressed` 不改 / 端到端 final 不再「没听清」且 `focus_safety_alert` 随 meta 下发）；既有 `test_planning_safety_talk` 14 不变；变异三处各判红（去掉第二臂红 3、吃澄清卡红 1、无 TTL 无解除判据红 2） |
+| ③ chitchat 车辆读数 | system 补类别否定一段 | 逐条款断言 +2（chitchat 68 passed） |
+| 探针 | 新增 RS14（residual） | `--list` 通过；`scripts/tests` 探针相关 226 passed |
+| 文档 | 本节；conventions §9.47 | docs 守卫在全量里 |
+| 顺手 | `test_loopback_verifier_fails_closed_when_a_port_never_listens` 的断言从「within 0s」改成 `within \d+s`：bash `SECONDS` 整秒时钟，xdist 满载时预算 0 的那一次 `ss` 跨过秒界记成 1s（本批全量第一趟 1 红、串行 3/3 绿——与批 5 那条 `test_https_verifier_…` 同形态「真实子进程污染读数」） | 单文件 loopback 5/5 |

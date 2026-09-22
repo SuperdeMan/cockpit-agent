@@ -1153,6 +1153,22 @@ CASES = [
                      "speech_not": ["提醒方面", "没找到提醒", "什么时候提醒", "已为您设置", "已设置", "已取消",
                                     "推荐前三个", "为您找到 0 个", "需要导航过去吗"]}},
      ]},
+    # 批 8 ①（2026-09-22）：T2 完成轮此前**不写焦点**——continuity 第一趟 T63「接孩子后去万象城」四轮 T2 两次
+    # navigate，T69「取消导航」答「当前没有正在进行的导航」（`_route_session` 每步都声明了，engine 的 adaptive /
+    # reactive 出口在 `loop.run` 之后直接 return，`update_focus` 在它们之后）。planner 走不走 T2 由不得客户端，
+    # 这里用条件句逼：`如果…就…` 命中 `_DEFERRED_CONDITION_RE` ⇒ 简单计划被确定性升成 adaptive（planning.py
+    # `_preserve_conditional_replan_contract`），前件挑一个恒真的事实（深圳九月不下雪）⇒ 后件 navigate 必然在
+    # 再规划批里跑；第二轮「取消导航」必须真的结束这一趟。artifact 的 `trace.span_nodes` 里要看到 `t2.iter`。
+    {"id": "RS14", "group": "residual", "card": "余项", "issue": "批 8 ①",
+     "why": "T2 里发出的 navigate 要落活动路线：下一句「取消导航」结束这一趟，而不是「当前没有正在进行的导航」",
+     "known": "red",
+     "turns": [
+         {"say": "如果深圳今天不下雪，就导航去深圳湾公园",
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"]}},
+         {"say": "取消导航",
+          "expect": {"actions_include": ["navigate_cancel"], "speech_has": ["已结束"],
+                     "speech_not": ["没有正在进行的导航", "没有待确认"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

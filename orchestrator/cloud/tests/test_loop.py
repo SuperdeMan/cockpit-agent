@@ -1118,3 +1118,71 @@ def test_resumed_loop_stops_after_the_replanned_step_is_refused_as_unsupported()
     assert len(planner.observations) == 1, "拒绝之后不该有第二次 replan"
     assert len(planner.decisions) == 1, "第二份决策（reminder.cancel）从没被取走"
     assert events[-1]["_outcome"] == "partial"
+
+
+# ── 批 8 ①：完成轮收口回调 `settle(steps, results)` ─────────────────────────────
+
+def _settle_recorder():
+    calls = []
+
+    async def settle(steps, results):
+        calls.append(([s.id for s in steps], [r.step_id for r in results]))
+    return calls, settle
+
+
+def test_settle_receives_every_executed_step_and_every_result_before_the_final():
+    """engine 靠它写焦点：初计划的步 + 每个再规划批的步一步不少，结果含种子；只调一次、在 final 之前。"""
+    planner = _Planner([
+        ReplanDecision(done=False, steps=[Step(id="r1", agent_id="nearby", intent="nearby.search")]),
+        ReplanDecision(done=True),
+    ])
+    executor = _Executor({
+        "s1": StepResult("s1", StepStatus.OK, speech="天气"),
+        "r1": StepResult("r1", StepStatus.OK, speech="两家店"),
+    })
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000)
+    calls, settle = _settle_recorder()
+    seed = StepResult("s0", StepStatus.OK, speech="种子")
+    events = _collect(
+        controller, goal="看天气再找店",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="info", intent="info.weather")],
+                          complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="看天气再找店", seed_results=[seed],
+        settle=settle)
+    assert calls == [(["s1", "r1"], ["s0", "s1", "r1"])], calls
+    assert events[-1]["kind"] == "final"
+
+
+def test_settle_is_not_called_when_the_loop_suspends():
+    """挂起轮从来不写焦点（I-024 第二层）：挂起出口 return 在回调之前。"""
+    async def suspend(step_result, results, plan, ctx, prior=None):
+        return {"kind": "final", "need_confirm": True, "speech": "要确认吗"}
+
+    planner = _Planner([ReplanDecision(done=True)])
+    executor = _Executor({"s1": StepResult("s1", StepStatus.NEED_CONFIRM, speech="要确认吗")})
+    controller = LoopController(planner, executor, _Aggregator(), suspend, max_iters=3, budget_ms=5000)
+    calls, settle = _settle_recorder()
+    events = _collect(
+        controller, goal="导航",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.navigate_to")],
+                          complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="导航", settle=settle)
+    assert events[-1].get("need_confirm") is True
+    assert calls == []
+
+
+def test_settle_still_runs_when_the_replanner_fails():
+    """再规划抛异常时 loop 静默收场（既有语义），已经拿到的结果仍是事实 ⇒ 照旧收口。"""
+    class _Boom(_Planner):
+        async def replan(self, *args, **kwargs):
+            raise RuntimeError("replanner down")
+
+    executor = _Executor({"s1": StepResult("s1", StepStatus.OK, speech="路线")})
+    controller = LoopController(_Boom([]), executor, _Aggregator(), None, max_iters=3, budget_ms=5000)
+    calls, settle = _settle_recorder()
+    _collect(
+        controller, goal="导航",
+        initial_plan=Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.navigate_to")],
+                          complexity="adaptive"),
+        agents=[], ctx=PlanContext(), user_text="导航", settle=settle)
+    assert calls == [(["s1"], ["s1"])]

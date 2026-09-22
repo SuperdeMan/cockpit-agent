@@ -122,9 +122,18 @@ class LoopController:
                   ctx: PlanContext, user_text: str,
                   seed_results: list[StepResult] | None = None,
                   working_set=None,
-                  show_process: bool = False, thinking: bool = False
+                  show_process: bool = False, thinking: bool = False,
+                  settle=None,
                   ) -> AsyncIterator[dict]:
+        """`settle(steps, results)`：**完成轮**（不含挂起）合成 final 之前的收口回调（批 8 ①）。
+
+        engine 的 E 路径在聚合前做三件事——清续接挂起、写焦点、补挂起软提醒——而 T2 的两条
+        出口在本函数之后直接 `return`，一件都没做：候选批、活动路线（continuity T63/T69：两次
+        `navigate` 之后「取消导航」答「当前没有正在进行的导航」）、任务帧全部丢失，确认续接进
+        T2 的挂起躺到 TTL。回调拿到的是**本轮真正执行过的全部步**（初计划 + 每个再规划批）
+        与全部结果；挂起路径不调它（挂起轮从来不写焦点，I-024 第二层）。"""
         results = list(seed_results or [])
+        executed_steps: list = []  # 本轮跑过的全部步（初计划 + 每个再规划批），供 settle 抽焦点
         n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
         spoken: set[int] = set()   # 已流式播报过的结果（id()）——挂起前缀不再复读
         initial_steps = {
@@ -230,6 +239,7 @@ class LoopController:
 
             done_seed = {result.step_id: result for result in results}
             batch_start = len(results)     # 批 7 ①：这一批的结果从这里开始
+            executed_steps.extend(current.steps)
 
             # T2 流式直通：单步 cloud agent 尝试流式，yield speech delta。
             # 与 engine.py T1 快路径同模式：流式成功则 yield delta 并收集结果，
@@ -421,6 +431,10 @@ class LoopController:
         logger.info("T2 loop done: tier=%s replans=%d/%d exhausted=%s elapsed=%.0fms",
                     complexity, replans, self.max_iters, exhausted, elapsed_ms)
 
+        # 批 8 ①：完成轮收口（清续接挂起 / 写焦点）在合成之前，与 E 路径同一顺序；
+        # 上面所有挂起出口都已 `return`，走到这里的只有完成轮。
+        if settle is not None:
+            await settle(list(executed_steps), list(results))
         if show_process:
             yield make_progress("synthesize", "整理结果",
                                 summary="合并各步结果生成回复", status="start")

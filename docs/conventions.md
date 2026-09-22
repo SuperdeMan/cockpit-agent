@@ -2898,3 +2898,28 @@ tmcs 缺席只报里程时长 +「实时拥堵数据这会儿拿不到」；无�
 **只盖查询**（`intent == "query"`）：写操作带对象词时「它」是冗余的，不带对象词本来就出不了本地意图。三条入口同一出口。不收
 「这车 / 这辆 / 这个」（近指 = 本车）与裸「那个」（口头填充词）。修前 W19-c 三臂恒定：「它续航多久 / 那它的纯电续航呢」⇒ `battery.query`
 答本车电量，云端解指代的机会都没有。
+
+### 9.47 T2 完成轮收口与 E 路径同一份 / 安全闸二第二臂（焦点告警）/ chitchat 车辆读数（评审批 8，2026-09-22）
+
+出处：[对话评审逐条落地 §10](design/2026-09-19-conversation-review-remediation.md)。
+
+**① T2（adaptive / reactive）完成轮的收口与 E 路径同一份：清续接挂起、写焦点、补挂起软提醒**。修前 engine 的两条 T2 出口在
+`loop.run` 之后直接 `return`，`_settle_session` / `update_focus` / `_append_pending_hint` 都在它们之后——T2 轮里发出的活动路线、
+候选批、任务帧、Agent 声明的安全告警一律不落焦点，确认续接进 T2 的那条挂起躺到 TTL（continuity 第一趟 T63「接孩子后去万象城」
+四轮 T2 两次 `navigate`，T69「取消导航」答「当前没有正在进行的导航」）。「抽取改对了，而调用方在它之前就返回了」——同一形态第四例。
+契约：`LoopController.run(..., settle=)` 在**完成轮**合成 final 之前调 `settle(executed_steps, results)`（初计划 + 每个再规划批的步，
+结果含种子；挂起出口在它之前 `return`，挂起轮照旧不写焦点）；engine 用 `_loop_settler` 闭包做 E 路径那三件事（焦点按「本轮真正跑过的
+全部步」的 `Plan` 视图抽，`raw_text` / `acts` / `task_patch` 照旧），`done` 旗子只让完成轮的 final 被 `_decorate_loop_final` 修饰。
+探针 RS14 用「如果…就…」逼 adaptive（`_preserve_conditional_replan_contract` 把简单计划确定性升成 T2）+ 恒真前件，验「取消导航」真的结束这一趟。
+
+**② 安全闸二第二臂：会话里有未解除的安全告警时，planner 空手的轮同样不许以「没听清」收场**。`planning.build` 出口既有的安全闸二只认
+「这一句本身是安全信号」；现在焦点里 `safety_alert_active` 的告警（与 `_apply_focus_meta` 下发给 Agent 的同一格）也是前提。比第一臂再窄一格：
+只接**零步且无澄清卡**的那一路（告警在会话里、这一句可能是任何话题，模型问出的澄清卡仍是它的）；这一句已在解除告警（`alert_resolved`）不算前提；
+不改 `addressed`（免唤醒语音源的非受话判定仍归 engine）。产物同一份 `_talk_only_plan`（`response_only`、不 `require_confirm`），
+plan_mode 同一个 `_safety_talk` 后缀；chitchat 拿着 `focus_safety_alert` 答「立场不改」。修前 continuity T65「别提醒我，继续开就行」
+（模型一轮抢救出映射表最后一个键、一轮 `addressed=false`）答「抱歉，我没听清」——用户刚拒绝安全建议，安全这条线整个丢掉。
+
+**③ chitchat system 的类别否定补「车辆读数」**：模型看不到这辆车的任何实时读数（电量 / 续航 / 胎压 / 里程 / 车速 / 车内温度 / 油量），
+问到就如实说看不到并引导去问车辆能力，不编数字；问别的车型不确定时也不猜。修前 W19-c g18「那它的纯电续航呢」落 chitchat 答
+「当前纯电续航335km，满电续航335km」——两个数都是编的（本车电量只有端侧 `battery.query` 读 VAL 才有）。prompt 是弱约束，条款存在性由
+`test_system_forbids_execution_claims_as_a_category_not_a_word_list` 钉。

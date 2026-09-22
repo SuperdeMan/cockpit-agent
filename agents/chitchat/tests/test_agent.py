@@ -75,7 +75,10 @@ def test_system_forbids_execution_claims_as_a_category_not_a_word_list():
                    "接下来会做什么",
                    "不管这句话出现在开头、中间还是结尾",
                    "别否认系统查过",
-                   "不许虚构自己此前犯过的错误"):
+                   "不许虚构自己此前犯过的错误",
+                   # 批 8 ③：车辆读数是系统持有的事实（g18「纯电续航335km」两个数都是编的）
+                   "看不到这辆车的任何实时读数",
+                   "不要编数字"):
         assert clause in sys_text, f"防编造条款缺了「{clause}」"
 
 

@@ -5,6 +5,7 @@ WS3 §3。串联 planning / executor / aggregator / session。
 且 confirmed 标记严格限定在挂起那一步——后续 require_confirm 步骤各自再走确认（架构 §9.1）。
 """
 from __future__ import annotations
+import dataclasses
 import json
 import logging
 import os
@@ -1098,6 +1099,9 @@ class PlannerEngine:
                            "_outcome": "cancel_unresolved"}
                     return
                 # R4.4 D5-2：诚实降级话术（含 fallback 低分不硬执行的场景），比「无法处理」更引导重说。
+                # （批 8 ②：会话里有未解除安全告警的空计划轮在 `planning.build` 出口的安全闸二里已被
+                # 改写成兜底谈话，与「这句本身是安全信号」同一条闸、同一份 `_talk_only_plan`——走到
+                # 这里的空计划没有安全前提。）
                 await _emit_engine_lifecycle(
                     ctx, "cloud.no_plan", "system.no_plan")
                 yield {"kind": "final", "speech": "抱歉，我没听清您想让我做什么，可以换个说法吗。",
@@ -1234,6 +1238,10 @@ class PlannerEngine:
             ctx.goal_gap = []          # T2 会补第二阶段，规划轮的账本不再作数
             if not agents:
                 agents = await self.clients.list_agents()
+            # 批 8 ①：T2 完成轮的收口与 E 路径同一份（清续接挂起 / 写焦点 / 补挂起软提醒）。
+            # 此前这条出口在 `loop.run` 之后直接 return，三件事一件没做——continuity T63/T69：
+            # 「接孩子后去万象城」四轮 T2 两次 navigate，「取消导航」答「当前没有正在进行的导航」。
+            settled = self._loop_settler(ctx, plan, held_pending, mem_on)
             async for event in self.loop.run(
                     goal=plan.goal or text or plan.raw_text,
                     initial_plan=plan,
@@ -1242,8 +1250,11 @@ class PlannerEngine:
                     user_text=text or plan.raw_text,
                     seed_results=seed_results,
                     working_set=working_set,
-                    show_process=show_process, thinking=complex_task):
+                    show_process=show_process, thinking=complex_task,
+                    settle=settled.settle):
                 if event.get("kind") == "final":
+                    if settled.done:
+                        self._decorate_loop_final(event, plan, held_pending, ctx)
                     await obs_events.get_emitter("cloud").emit_span(
                         ctx.trace_id,
                         "aggregate",
@@ -1421,6 +1432,7 @@ class PlannerEngine:
                         ctx.session_id)
             if not agents:
                 agents = await self.clients.list_agents()
+            settled = self._loop_settler(ctx, plan, held_pending, mem_on)   # 批 8 ①，同 adaptive
             async for event in self.loop.run(
                     goal=plan.goal or text or plan.raw_text,
                     initial_plan=None,
@@ -1429,8 +1441,11 @@ class PlannerEngine:
                     user_text=text or plan.raw_text,
                     seed_results=results,
                     working_set=working_set,
-                    show_process=show_process, thinking=complex_task):
+                    show_process=show_process, thinking=complex_task,
+                    settle=settled.settle):
                 if event.get("kind") == "final":
+                    if settled.done:
+                        self._decorate_loop_final(event, plan, held_pending, ctx)
                     await obs_events.get_emitter("cloud").emit_span(
                         ctx.trace_id,
                         "aggregate",
@@ -2255,6 +2270,44 @@ class PlannerEngine:
             ctx.session_id, owner_user_id=ctx.user_id, operation_id=op)
         if op and op not in ctx.closed_operation_ids:
             ctx.closed_operation_ids.append(op)
+
+    def _loop_settler(self, ctx: PlanContext, plan: Plan, held_pending, mem_on: bool):
+        """T2 完成轮的收口回调（批 8 ①）。返回一个带 `settle` 协程与 `done` 旗子的小对象：
+        loop 在合成 final 之前调 `settle(steps, results)`；旗子让调用方只给**完成轮**的 final
+        补挂起软提醒（挂起路径不调 settle，旗子保持 False，`_suspend` 自己出的 final 一个字不动）。
+
+        为什么不在 loop 里直接写焦点：焦点 / 挂起表 / 软提醒都是 engine 的状态，loop 只知道
+        自己跑了哪些步；E 路径的顺序是 `_settle_session → update_focus → compose → 补提醒`，
+        这里逐字同序。"""
+        engine = self
+
+        class _Settler:
+            done = False
+
+            async def settle(self, loop_steps, results):
+                await engine._settle_session(ctx, held_pending)
+                if mem_on:
+                    # 焦点按 plan.steps 抽（候选批 / 任务帧 / 目的地），再规划批的步不在初计划里
+                    # ⇒ 合成一份「本轮真正跑过的全部步」的视图；raw_text / acts / task_patch 照旧。
+                    merged = list(plan.steps)
+                    merged.extend(step for step in loop_steps
+                                  if not any(step is kept for kept in merged))
+                    try:
+                        await engine.context.update_focus(
+                            ctx.session_id, dataclasses.replace(plan, steps=merged), results,
+                            user_id=ctx.user_id, exchange_id=ctx.request_id)
+                    except Exception as exc:        # 焦点是 best-effort，绝不拖垮已完成的回答
+                        logger.warning("focus update after the T2 loop failed: %s", exc)
+                self.done = True
+
+        return _Settler()
+
+    def _decorate_loop_final(self, final: dict, plan: Plan, held_pending, ctx: PlanContext) -> None:
+        """T2 完成轮 final 的收尾修饰，与 E 路径逐字同款：挂起软提醒 / 放弃提示 / 情绪。"""
+        self._append_pending_hint(final, held_pending)
+        self._append_abandoned_hint(final, ctx.abandoned_pending_label)
+        if getattr(plan, "emotion", ""):
+            final["emotion"] = plan.emotion
 
     async def _settle_session(self, ctx: PlanContext, held_pending) -> None:
         """本轮正常收口时的会话清理（R2）：插话轮（held_pending 非空）**不清挂起**——

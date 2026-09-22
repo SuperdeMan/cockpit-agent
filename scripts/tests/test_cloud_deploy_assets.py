@@ -1874,7 +1874,9 @@ def test_loopback_verifier_fails_closed_when_a_port_never_listens(tmp_path: Path
     """, timeout_s=0)
     assert result.returncode != 0
     assert calls.read_text(encoding="utf-8").splitlines() == ["ss"], "预算 0：不 sleep、不再打第二次"
-    assert "loopback business ports did not all listen within 0s" in result.stderr
+    # 报的是真实等待秒数（bash `SECONDS` 整秒时钟）：预算 0 下通常是 0s，xdist 满载时那一次 `ss` 跨过秒界会记成 1s
+    # （2026-09-22 全量 -n 8 红过一次、串行 3/3 绿）——判据是「预算到点即判红」，不是壁钟恰好没跳。
+    assert re.search(r"loopback business ports did not all listen within \d+s", result.stderr), result.stderr
     text = _required_text(VERIFY_RELEASE_PATH)
     assert 'LISTENER_READY_TIMEOUT_S="${LISTENER_READY_TIMEOUT_S:-60}"' in text
     assert '"listener_ready_s": int(os.environ["LISTENER_READY_S"])' in text

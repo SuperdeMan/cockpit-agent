@@ -21,6 +21,7 @@ from .context import (
     _valid_safety_alert,
     assemble_budgeted_catalog,
     input_safety_alert,
+    safety_alert_active,
 )
 from . import pending_cancel
 from .route_hints import RouteHintEngine
@@ -37,6 +38,7 @@ from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import is_non_directive_question
 from runtime.reported_speech import is_reported_speech
+from runtime.safety_signal import alert_resolved
 
 logger = logging.getLogger("planner.planning")
 
@@ -1943,11 +1945,25 @@ class PlanBuilder:
         # 产物复用既有机制（`_talk_only_plan` 的第四个调用方），不新增路由、不加正则：
         # 兜底 Agent 自带 `runtime.safety_signal` 的分级建议，并经保留键 `_safety_alert`
         # 把会话态登记上——**「答一句」与「记下来」在这一条修法里是同一个动作**。
-        if not plan.steps and _valid_safety_alert(input_safety_alert(text)):
+        #
+        # 批 8 ②（2026-09-22）第二臂：**会话里已有未解除的安全告警**（焦点 `safety_alert`，与
+        # `engine._apply_focus_meta` 下发给 Agent 的是同一格）时，planner 空手的轮同样不许以「没听清」
+        # 收场。continuity 第一趟 T64/T65（c4c1186d）：T64 road-safety 把「驾驶员困倦」登记进焦点，T65
+        # 「别提醒我，继续开就行」模型两轮——一轮抢救出映射表最后一个键 vision.describe、一轮
+        # `addressed=false, steps=[]`——用户刚拒绝安全建议，系统答「抱歉，我没听清」，安全这条线整个
+        # 丢掉（批 5 记过一次同形态）；第二、三趟同一句落 chitchat，它拿着 `focus_safety_alert` 答
+        # 「立场不改」——那才是正确出口。这一臂比第一臂再窄一格：**只接零步且无澄清卡**的那一路
+        # （告警在会话里、这一句本身可能是任何话题，模型问出的澄清卡仍是它的）；这一句已在解除告警
+        # （`alert_resolved`）的不算前提。产物同一份 `_talk_only_plan`，plan_mode 同一个后缀。
+        focus_alert = getattr(getattr(working_set, "focus", None), "safety_alert", None) or {}
+        premise_now = _valid_safety_alert(input_safety_alert(text))
+        premise_focus = (not plan.clarify and safety_alert_active(focus_alert)
+                         and not alert_resolved(text))
+        if not plan.steps and (premise_now or premise_focus):
             talk = self._talk_only_plan(text, agents)
             if talk is not None:
-                logger.info("safety signal with empty plan → 兜底 Agent 应答: %s",
-                            text[:40])
+                logger.info("safety %s with empty plan → 兜底 Agent 应答: %s",
+                            "signal" if premise_now else "alert in focus", text[:40])
                 plan.steps = talk.steps
                 plan.clarify = None
                 plan.plan_mode = f"{plan.plan_mode or ''}_safety_talk"
