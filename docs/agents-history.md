@@ -9548,3 +9548,33 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - ② 正式基线：本会话做不了——L1/L2 要本地 gRPC 网关、L3 要 mock 车道，`target=cloud` 禁本地 Compose、Docker 未起、内存 5.3 GB；步骤与预期写在设计文档 §9.2。
 - 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
   `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
+
+### 同日追加（2026-09-22 下午）— 批 8（批 7 追加留项）：T2 完成轮从不写焦点的真因、安全闸二第二臂、chitchat 车辆读数、迁移预检 Serve 判据；两个 release
+
+- 先重证再定范围（设计文档 §10）：PU7「路线会话没盖上」被记成 family 域老方差，按 trace 分路径后真因是**路径**——第一趟 T63 走了四轮 T2（`t2.iter` ×4）、
+  两次 navigate 全没落 `active_route`，第三趟走 E 路径就正常。engine 的 adaptive / reactive 两条出口在 `loop.run` 之后直接 `return`，
+  `_settle_session` / `update_focus` / `_append_pending_hint` 都在它们之后 ⇒ **任何 T2 完成轮都不写焦点、不清续接挂起、不补挂起软提醒**
+  （「抽取改对了，而调用方在它之前就返回了」第四例，也是最大的一例）。SF4「别提醒我，继续开就行」落「没听清」：trace 上 planner 第一轮抢救出
+  `cap_0138`（= 映射表最后一个键 `vision.describe`，空槽）、第二轮 `addressed=false, steps=[]`——文字输入下这是合法空计划、直落 `cloud.no_plan`；
+  T64 刚由 road-safety 把「驾驶员困倦」登记进焦点。g18「那它的纯电续航呢」：chitchat（@fast）答「当前纯电续航335km，满电续航335km」，历史 8 条里没有任何数字。
+- ① `loop.run(settle=)` 完成轮合成前回调（初计划 + 每个再规划批的步；挂起出口在前不调）；engine `_loop_settler` 做 E 路径那三件事、同一顺序，
+  焦点按「本轮真正跑过的全部步」的 `Plan` 视图抽；`done` 旗子只修饰完成轮 final。② 首版写在 engine 的空计划出口，conventions §9 一句话揭出
+  `planning.build` 出口早有安全闸二（只认当前句是信号）⇒ 删掉 engine 版、给那条闸补第二臂（焦点 `safety_alert_active` 也是前提；只接零步且无澄清卡；
+  `alert_resolved` 不算；不改 `addressed`）。③ chitchat system 补「看不到这辆车的任何实时读数」类别否定。④ `remote-data-migration.sh`
+  `assert_expected_cloud_topology` 末尾三行换成 `verify_tailscale_serve`（preflight 前已 source verify-release.sh）。探针 RS14：条件句
+  「如果深圳今天不下雪，就导航去深圳湾公园」——`_DEFERRED_CONDITION_RE` 把简单计划确定性升成 adaptive（客户端逼不出 T2，条件句能）。
+- 读数：全量固定口径 **8906 / 0 / 32**（265 s；第一趟 8904 / 1 / 32，红的是 `test_loopback_verifier_fails_closed_when_a_port_never_listens` 的 bash
+  整秒时钟——预算 0 的那一次 `ss` 跨秒界记成「within 1s」，断言改 `within \d+s`）；四门禁 + smoke_edge 13/13；九处变异各判红。
+- 真栈 `016bd8b1`（push → dry-run 零阻断 → apply → status ok 5/5 → verify verified）：**RS14 ×3 = 2/3**——两趟 T1 走 T2（adaptive、`t2.iter` ×1、
+  再规划批 navigate 到深圳湾公园），**「取消导航」→ `navigate_cancel`「已结束到深圳湾公园的导航」**（① 活体：修前只能答「当前没有正在进行的导航」）；
+  第三趟 planner 两轮都给 `adaptive` 却 `steps=[]` ⇒ 按 no-action 交 chitchat 答天气、零导航（planner 方差，声明第二阶段却零步）。window g18 ×2
+  （干净用户）：planner 两趟都把「理想L9」填回槽落 manual.query、答「手册里没查到」，chitchat 没被走到，③ 只有离线条款证据。
+  continuity `--silence-scale 1`：**70/71**，跑完整趟不中止、零 open operation、零 cleanup 失败、battery 72 放回、release 连续；唯一红 SF4 T65「抱歉，这个我不能撤回。」——
+  planner 两轮 `addressed=true, steps=[]` ⇒ `_no_action` 交 chitchat，立场守住但一句替代都没给（尺子要「休息 / 停车」任一）；② 的第二臂这趟没被走到。PU7 T63 planner 只给一步
+  `navigate_to(万象城)`、navigation 把「接孩子」当途经点搜出三家家政公司（family 域方差，E 路径），T69「取消导航」正常。
+- ④ `5818d136`：基础设施批准锚 `86edd25e → bd0671c4`（材料 `.artifacts/infrastructure-approval/5818d136…/`，按 c4c1186d 模板逐常量替换、生成器断言
+  旧常量与短前缀一个不剩；只读 precheck → prepare-upload + scp 四文件 → trusted entry `infrastructure_approved` → 只读 postcheck 三个摘要齐）；
+  dry-run 零阻断（infra digest 与锚一致）；主树带着未提交文档时 apply `safety_rejected` ⇒ 按 dev-guide 隔离 worktree（`git worktree add --detach` + 只复制
+  `dev-stack.local`）再 dry-run → apply → status / verify，见 AGENTS §4.0。
+- 留下：正式基线未重建（§9.2，需切 local 全栈）；两次失败发布的 builds / releases / 镜像残留（需删除授权）；planner「接孩子后去万象城」只导航到
+  学校那半、「adaptive 却零步」两种落域方差；chitchat 车辆读数条款等真栈样本。

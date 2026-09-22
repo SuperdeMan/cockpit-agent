@@ -719,3 +719,19 @@ g05「它有几档」→ `manual.query`、零动作（修前 `seat.heating.on` �
 | 探针 | 新增 RS14（residual） | `--list` 通过；`scripts/tests` 探针相关 226 passed |
 | 文档 | 本节；conventions §9.47 | docs 守卫在全量里 |
 | 顺手 | `test_loopback_verifier_fails_closed_when_a_port_never_listens` 的断言从「within 0s」改成 `within \d+s`：bash `SECONDS` 整秒时钟，xdist 满载时预算 0 的那一次 `ss` 跨过秒界记成 1s（本批全量第一趟 1 红、串行 3/3 绿——与批 5 那条 `test_https_verifier_…` 同形态「真实子进程污染读数」） | 单文件 loopback 5/5 |
+
+#### 10.1.1 发布链与真栈读数（2026-09-22 13:0x–，MiniMax-M3）
+
+| release | 内容 | 发布链 | 真栈 |
+|---|---|---|---|
+| `5818d136` | ④ 迁移预检 Serve 判据复用 `verify_tailscale_serve` | 单独一个提交（`deploy/cloud/**` 改动）；守卫测试反向验证：换回旧脚本判红。基础设施批准锚 `86edd25e → bd0671c4`：材料 `.artifacts/infrastructure-approval/5818d136…/`（按 c4c1186d 模板逐常量替换，生成器断言只有迁移脚本一项变化、聚合摘要与 `compute_infrastructure_digest` 一致、旧常量与短前缀一个不剩；`validate_anchor` 的专项摘要核对与 `pre` 模式 skip 集两处都换成迁移脚本）；只读 precheck（远端锚 `86edd25e`、已装迁移脚本 `9b1a81cb`、stage 不存在）→ prepare-upload + scp 四文件（远端 sha256 逐一对上）→ trusted entry `infrastructure_approved`（备份 `…/5818d136…-bd0671c4`）→ 只读 postcheck（锚 `bd0671c4`、锚内与已装迁移脚本都是 `817e58c4`）。dry-run 零阻断（infra digest = 锚）；主树带着未提交文档时 apply `safety_rejected` ⇒ 隔离 worktree 重跑 dry-run → apply `submitted` → status ok 5/5、`release_sha` = `running_release_sha` → verify `verified`（`20260922T053020Z-5818d13.json`） | 迁移预检本身没有触发场景（不做迁移）；判据同一份，`verify_tailscale_serve` 的真栈读数已由 c4c1186d / 本批两次 verify 给出（`tailnet_entries: 6` 下 verified） |
+| `016bd8b1` | ①②③ + RS14 + 文档 | 全量固定口径 **8906 / 0 / 32**（265 s；第一趟 8904 / 1 / 32，红的是 loopback 验证器测试的整秒时钟，见上表「顺手」）；四门禁 + smoke_edge 13/13；push `15b8c9bc..016bd8b1`（恰一条）→ dry-run 零阻断（基线 `c98fb087`）→ apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260922T050629Z-016bd8b.json`，minimax / MiniMax-M3，lock e2e） | **RS14 ×3 = 2/3**：两趟 T1 `complexity=adaptive`、`t2.iter` ×1、「T2 loop done replans=1/3」，info.weather → 再规划批 navigate（「今天深圳不会下雪…为您导航到深圳湾公园（滨海大道）。全程约8.4公里」）；**T2「取消导航」→ `navigate_cancel`「已结束到深圳湾公园的导航」**——修前 T2 轮的 navigate 从不落 `active_route`，这句只能答「当前没有正在进行的导航」（**① 活体**）。第三趟 planner 两轮都给 `complexity=adaptive, steps=[]`（goal「需要先确认深圳今天是否下雪」）⇒ 按 no-action 交 chitchat 答了天气、零导航，随后「取消导航」诚实答「没有正在进行的导航」——planner 方差（adaptive 声明却零步，是自相矛盾的输出），不是 ①。**window g18 ×2**（`0922a` / `0922b`，干净用户、6 对）：两趟 T6「那它的纯电续航呢」planner 都把「理想L9」填回槽（slot_resolved 1/1）落 `manual.query`，答「手册里没有查到」——chitchat 没被走到，③ 的条款没有真栈样本；编造 km 数的形态 0/2 |
+
+- **真栈 continuity（`016bd8b1`，`--silence-scale 1`，含 600 s 沉默 + 两次断连重连，MiniMax-M3 pin）：70/71，跑完整趟不中止、零 open operation、零 cleanup 失败、
+  `vehicle_env_restore` battery 72 放回、release 连续性 start/end 同 SHA。** 唯一红 = SF4 T65「别提醒我，继续开就行」：planner 两轮 `addressed=true, steps=[]`
+  ⇒ `_no_action` 交 chitchat（`toolcall_no_action`），答「抱歉，这个我不能撤回。」——立场守住了、但一句替代建议都没给（尺子要「休息 / 停车 / 服务区…」任一），
+  是 chitchat 在告警 prompt「可以不再重复啰嗦，但立场不改」下的过度简短，不是本批两条判据的形态：② 的第二臂（`addressed=false` 零步）这一趟没被走到，
+  只有离线证据；PU7 T63 这趟 planner 只给一步 `navigate_to(万象城)`，navigation 把「接孩子」当途经点关键词搜出三家家政公司（family 域落域 / 接人形态方差，§9.2 已记）
+  ——走 E 路径，T69「取消导航」正常「已结束到深圳湾万象城的导航」；① 的活体在本趟没有出现（planner 没走 T2），由 RS14 那两趟承担。
+- 留给后续（本批不动）：planner「adaptive 却零步」（RS14 第三趟）与「接孩子后去万象城」只给一步 / 把接人当途经点搜（continuity T63）两种落域方差；
+  chitchat 在告警前提下拒绝得过短、不给替代（SF4 T65，尺子判红）；③ 的条款等真栈样本（两趟 g18 都没落 chitchat）。
