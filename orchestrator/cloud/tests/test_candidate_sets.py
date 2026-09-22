@@ -911,3 +911,39 @@ def test_tombstones_are_capped_and_aged():
     old = dict(focus.retired_candidate_sets[0], ts=time.time() - 8000)
     aged = Focus(retired_candidate_sets=[old], candidate_sets=list(focus.candidate_sets))
     assert retired_candidate_hit(f"{old['place_hint']}那批第一个", aged) is None
+
+
+
+# ── 批 7 追加（真栈 continuity T9 → T18，2026-09-22）：地点提示优先读产生方声明的 `_candidate_place` ──
+
+def test_place_hint_prefers_the_place_the_producer_declares_over_the_slots():
+    from orchestrator.cloud.context import _place_hint
+    # planner 把地名整个丢了（真栈原槽）：只看槽 ⇒ 空；产生方声明 ⇒ 科技园
+    assert _place_hint({"cuisine": "餐厅", "sort": "rating"}) == ""
+    assert _place_hint({"cuisine": "餐厅", "sort": "rating"}, {"_candidate_place": "科技园"}) == "科技园"
+    # 声明优先于槽（槽里是别的填法时，以 Agent 真正搜的那个地方为准）
+    assert _place_hint({"keyword": "万象城"}, {"_candidate_place": "深圳湾万象城"}) == "深圳湾万象城"
+    # 声明太短 / 没声明 ⇒ 退回槽派生（行为逐字同旧）
+    assert _place_hint({"location": "科技园"}, {"_candidate_place": "x"}) == "科技园"
+    assert _place_hint({"location": "科技园"}, {}) == "科技园"
+
+
+def test_a_batch_whose_slots_lost_the_place_is_still_nameable_when_the_producer_declared_it():
+    """真栈 continuity：T9「科技园附近的餐厅」planner 槽 `{cuisine, sort}`，T16 之后「科技园那批第二家」
+    零命中 ⇒ 退回最新（南山书城）答了别人家的店。产生方声明地点后，点名绑到它自己那批。"""
+    focus = _drive(_mgr(), [
+        _turn_with_slots("nearby.search", "nearby",
+                         {"cuisine": "餐厅", "sort": "rating"},
+                         {"items": [{"name": "科技·甲"}, {"name": "科技·乙"}],
+                          "_candidate_label": "餐厅", "_candidate_place": "科技园"}),
+        _turn_with_slots("nearby.search", "nearby",
+                         {"category": "餐厅", "location": "南山书城"},
+                         {"items": [{"name": "书城·甲"}, {"name": "书城·乙"}],
+                          "_candidate_label": "美食"}),
+    ])
+    assert [s["place_hint"] for s in focus.candidate_sets] == ["科技园", "南山书城"]
+    primary, named = resolve_candidate_scope("科技园那批第二家评分多少", focus)
+    assert [i["name"] for i in primary["items"]] == ["科技·甲", "科技·乙"]
+    assert len(named) == 1
+    # 裸序数仍绑最新那批（行为逐字同旧）
+    assert focus.last_choices == ["书城·甲", "书城·乙"]

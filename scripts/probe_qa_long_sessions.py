@@ -286,6 +286,13 @@ _FAMILY_TOPIC_PIVOT = _custom_case(
 _CONTINUITY_SILENCE_S = 600
 
 
+#: CONT-ENV 把电量改到这个值再问。取一个真栈基线（72）之外的值。
+_CONTINUITY_ENV_BATTERY = 37
+#: 电量读查询那几轮**不许**夹带的写动作（读查询本身以 `battery.query` 上报在 actions 里）。
+_WRITE_ACTIONS_ANY = ["hvac.on", "hvac.off", "window.open", "window.close", "door_lock.open",
+                      "door_lock.close", "trunk.open", "navigate", "media.play", "media.stop"]
+
+
 def build_continuity_cases() -> list[dict]:
     """`continuity` persona：一个 session 里把评审 §6.4 那条代表性长会话的检查点串起来。
 
@@ -405,6 +412,47 @@ def build_continuity_cases() -> list[dict]:
          "expect": {"no_actions": True, "speech_has": ["您这次说过", "可以排队"]}},
     ))
     cases.append(reuse("CA5"))                       # 导航结束后「换条路」不复活旧路线
+    # ⑦（批 7 追加，评审 §6.4「旧价格不会被当最新」的确定性形态）：同一查询再来一次是**同键新版本**
+    # （W08 `revision+1`），它就是「最新」——裸序数跟着刷新走，不绑那批更晚**创建**的别的查询；
+    # 被刷新的旧版本不是墓碑（点名它仍绑活着的新版本）；点名另一批仍绑另一批。
+    # 用地图候选而不用商户菜单：菜单 / 价格的刷新在真栈上内容不变，判据分不开新旧；候选的
+    # 「刷新 = 最新」与菜单的「刷新 = 最新」走的是同一份 `candidate_merge_key`。
+    cases.append(_custom_case(
+        "CONT-REFRESH",
+        {"say": "深圳湾附近的咖啡店", "expect": place, "audit": nearby},                    # T1
+        {"say": "科技园附近的咖啡店", "expect": place, "audit": nearby},                    # T2
+        {"say": "再搜一次深圳湾附近的咖啡店", "expect": place, "audit": nearby},            # T3 = T1 的新版本
+        {"say": "第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 3, "index": 2},
+                    "not_names_item_from": 2}},
+        {"say": "科技园那批第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 2, "index": 2}}},
+        {"say": "深圳湾那批第二家评分多少",
+         "expect": {"no_actions": True, "names_item_from": {"turn": 3, "index": 2},
+                    "speech_not": ["不在手边"]}},
+    ))
+    # ⑧（批 7 追加，评审 §6.4「手动改车态后再问」）：不经助手改车辆环境量（collector 调试通道
+    # `POST /api/debug/vehicle` → NATS → VAL，白名单只有 speed / battery / gear / location / cabin_temp），
+    # 再问电量——答案必须是**改过之后**的系统事实（端侧 `battery.query` 读 VAL，零 LLM），不是上一轮
+    # 谁说过的数。`$baseline` 由 runner 换成 persona 开始前读到的值，结束时恢复。
+    # 端侧读查询在 actions 里以 `battery.query` 上报（首跑四轮全被 `no_actions` 误判红，话术却字字正确
+    # 72% → 37% → 37% → 72%）：判据钉的是**那一枚读动作 + 话术里的数**，不是零动作。
+    battery_read = {"actions_include": ["battery.query"], "actions_exclude": _WRITE_ACTIONS_ANY}
+    cases.append(_custom_case(
+        "CONT-ENV",
+        {"say": "电量还有多少", "expect": dict(battery_read),
+         "audit": {"intent_any": ["battery.query"]}},
+        {"say": "电量还有多少", "vehicle_env": {"battery": _CONTINUITY_ENV_BATTERY},
+         "expect": {**battery_read, "speech_has": [f"{_CONTINUITY_ENV_BATTERY}%"]},
+         "audit": {"intent_any": ["battery.query"]}},
+        {"say": "讲个笑话", "expect": {"no_actions": True, "no_execution_claim": True}},
+        {"say": "现在还剩多少电",
+         "expect": {**battery_read, "speech_has": [f"{_CONTINUITY_ENV_BATTERY}%"]},
+         "audit": {"intent_any": ["battery.query"]}},
+        {"say": "电量还有多少", "vehicle_env": {"battery": "$baseline"},
+         "expect": {**battery_read, "speech_not": [f"{_CONTINUITY_ENV_BATTERY}%"]},
+         "audit": {"intent_any": ["battery.query"]}},
+    ))
     cases.append(reuse("NG5"))
     cases.append(reuse("NG6"))
     cases.append(reuse("OR1"))
@@ -1828,7 +1876,66 @@ async def _reminder_cleanup_turns(
 SILENCE_SCALE = 1.0
 #: W18 长会话 runner 自己的轮指令键（回归集的 `probe._TURN_KEYS` 不认它们——这两个只在
 #: 长会话里有意义，回归集的 `_run_case` 一个 case 一条连接、没有「沉默」可言）。
-_TURN_DIRECTIVE_KEYS = frozenset({"silence_s", "reconnect"})
+_TURN_DIRECTIVE_KEYS = frozenset({"silence_s", "reconnect", "vehicle_env"})
+
+#: `vehicle_env` 能改的键 = collector 调试通道的白名单（`observability/collector/server.py::DEBUG_KEYS`）。
+#: 这里只做**这一侧**的守卫：写别的键就是写错了地方（车控键要走真实车控链）。
+_VEHICLE_ENV_KEYS = frozenset({"speed_kmh", "battery", "gear", "location", "cabin_temp"})
+
+
+def _http_post_json(url: str, payload: dict, timeout: float = 20.0) -> dict:
+    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        url, data=data, headers={"content-type": "application/json"}, method="POST")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        value = json.load(response)
+    return value if isinstance(value, dict) else {}
+
+
+async def apply_vehicle_env(collector: str, env: dict, baseline: dict,
+                            *, attempts: int = 20) -> tuple[dict, list[str]]:
+    """经 collector 调试通道改车辆环境量，并**回读到位**才算落。返回 (实际写入的键值, 失败列表)。
+
+    - `$baseline` ⇒ persona 开始前读到的那个值（恢复用）；基线里没有这把键 ⇒ 失败，不猜。
+    - 调试通道关着（`DEBUG_VEHICLE_CONTROL=false`）/ 不可达 ⇒ 失败并写明「本检查点不构成证据」——
+      **前提不成立 ≠ 通过**，也不能当成系统答错。
+    - 回读：`/api/vehicle/state` 连续两次等于目标值才算落（与 `_settled_vehicle_state` 同一口径）。
+    """
+    applied: dict = {}
+    failures: list[str] = []
+    for key, wanted in (env or {}).items():
+        if key not in _VEHICLE_ENV_KEYS:
+            failures.append(f"vehicle_env 只能改环境量白名单，{key} 不在其中")
+            continue
+        value = baseline.get(key) if wanted == "$baseline" else wanted
+        if wanted == "$baseline" and key not in baseline:
+            failures.append(f"vehicle_env 恢复 {key} 失败：persona 开始前没读到基线值")
+            continue
+        try:
+            reply = await asyncio.to_thread(
+                _http_post_json, f"{collector}/api/debug/vehicle", {"key": key, "value": value})
+        except Exception as exc:
+            failures.append(f"调试车态通道不可达（{type(exc).__name__}）：本检查点不构成证据")
+            continue
+        if not reply.get("ok"):
+            failures.append(
+                f"调试车态通道拒绝 {key}：{reply.get('error') or 'unknown'}——本检查点不构成证据")
+            continue
+        stable = 0
+        for _ in range(attempts):
+            state = await _vehicle_state(collector)
+            if state.get(key) == value:
+                stable += 1
+                if stable >= 2:
+                    break
+            else:
+                stable = 0
+            await asyncio.sleep(0.5)
+        if stable < 2:
+            failures.append(f"vehicle_env {key}={value!r} 发出后 collector 回读未到位")
+            continue
+        applied[key] = value
+    return applied, failures
 
 
 async def _run_persona(name: str, cases: list[dict], ws_url: str,
@@ -1848,6 +1955,14 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
     baseline_state = managed_vehicle_state(
         baseline_read.value, required_keys=set(required_vehicle_keys),
     ) if baseline_read.value else {}
+    # 批 7 ⑧：环境量基线（battery / speed / gear…）单独读一份原始状态——`managed_vehicle_state`
+    # 只投影车控键。`$baseline` 与结束时的恢复都从这里取。
+    env_baseline: dict = {
+        key: value for key, value in (await _vehicle_state(collector)).items()
+        if key in _VEHICLE_ENV_KEYS
+    }
+    env_touched: dict = {}
+    vehicle_env_restore: dict = {"touched": {}, "restored": {}, "failures": []}
     missing_baseline_keys = [
         key for key in required_vehicle_keys if key not in baseline_state
     ]
@@ -1933,6 +2048,17 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                     pre_note = "沉默后重连" if silence_s > 0 else "断连重连"
                 else:
                     pre_note = ""
+                # 批 7 ⑧：这一轮之前把环境量改掉（手动改车态的替身），回读到位再发话。
+                env_applied: dict = {}
+                if turn.get("vehicle_env"):
+                    env_applied, env_failures = await apply_vehicle_env(
+                        collector, dict(turn["vehicle_env"]), env_baseline)
+                    pre_failures.extend(env_failures)
+                    for key in env_applied:
+                        env_touched.setdefault(key, env_baseline.get(key))
+                    if env_applied:
+                        pre_note = (pre_note + "；" if pre_note else "") + "改车态 " + ", ".join(
+                            f"{key}={value!r}" for key, value in env_applied.items())
                 trace_id = uuid.uuid4().hex
                 try:
                     obs = await _turn(
@@ -1975,6 +2101,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                     "case_instance": case["id"], "local_turn": local_turn,
                     "say": say, "audit_expect": dict(turn.get("audit") or {}),
                     **obs, "notes": notes, "fails": failures,
+                    **({"vehicle_env_applied": env_applied} if env_applied else {}),
                 }
                 rows.append(row)
                 local_rows.append(row)
@@ -2101,6 +2228,21 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
                 })
                 if abort_reason:
                     break
+
+        # 批 7 ⑧：把 persona 期间改过的环境量放回基线（用例里通常已经用 `$baseline` 放回过，
+        # 这里是兜底：中途 abort 也要还原）。恢复的读数进结果 JSON，恢复不了算 cleanup 失败。
+        vehicle_env_restore = {"touched": dict(env_touched), "restored": {}, "failures": []}
+        for key, base_value in list(env_touched.items()):
+            current = (await _vehicle_state(collector)).get(key)
+            if current == base_value:
+                vehicle_env_restore["restored"][key] = base_value
+                continue
+            restored, env_failures = await apply_vehicle_env(
+                collector, {key: "$baseline"}, env_baseline)
+            vehicle_env_restore["restored"].update(restored)
+            vehicle_env_restore["failures"].extend(env_failures)
+        if vehicle_env_restore["failures"]:
+            cleanup_failures.extend(vehicle_env_restore["failures"])
 
         if not abort_reason and _navigation_is_active(rows):
             trace_id = uuid.uuid4().hex
@@ -2295,6 +2437,7 @@ async def _run_persona(name: str, cases: list[dict], ws_url: str,
         "abort_reason": abort_reason,
         "open_operation_ids": sorted(active_ops),
         "vehicle_cleanup": vehicle_cleanup,
+        "vehicle_env_restore": vehicle_env_restore,
         "merchant_cleanup_proofs": merchant_cleanup_proofs,
         "cleanup_failures": list(dict.fromkeys(cleanup_failures)),
         "turns": rows,

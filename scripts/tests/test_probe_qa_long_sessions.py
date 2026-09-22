@@ -1846,3 +1846,87 @@ def test_silence_scale_zero_skips_the_wait_but_still_reconnects(monkeypatch):
     """`--silence-scale 0` 只验逻辑：不 sleep；沉默 / reconnect 轮仍换连接、同 session。"""
     assert long_qa.SILENCE_SCALE == 1.0
     assert set(long_qa._TURN_DIRECTIVE_KEYS) >= {"silence_s", "reconnect"}
+
+
+# ── 批 7 追加：continuity 两条系统事实检查点 + `vehicle_env` 轮指令 ─────────────────────────
+
+def test_continuity_persona_has_refresh_and_manual_state_checkpoints():
+    cases = long_qa.build_persona_plans()["continuity"]
+    by_id = {case["id"]: case for case in cases}
+    refresh = by_id["CONT-REFRESH"]
+    says = [turn["say"] for turn in refresh["turns"]]
+    assert says[0] == "深圳湾附近的咖啡店" and says[2].startswith("再搜一次深圳湾")
+    bare = refresh["turns"][3]["expect"]
+    # 裸序数绑刷新那一轮（同键新版本 = 最新），且不绑那批更晚创建的别的查询
+    assert bare["names_item_from"] == {"turn": 3, "index": 2} and bare["not_names_item_from"] == 2
+    assert refresh["turns"][5]["expect"]["speech_not"] == ["不在手边"], "被刷新的旧版本不是墓碑"
+
+    env = by_id["CONT-ENV"]
+    directives = [turn.get("vehicle_env") for turn in env["turns"] if turn.get("vehicle_env")]
+    assert directives == [{"battery": long_qa._CONTINUITY_ENV_BATTERY}, {"battery": "$baseline"}], \
+        "先改电量、末轮放回基线——恢复写进用例本身，不只靠 runner 兜底"
+    changed = env["turns"][1]
+    assert f"{long_qa._CONTINUITY_ENV_BATTERY}%" in changed["expect"]["speech_has"]
+    # 端侧读查询以 `battery.query` 动作上报：判据是那一枚读动作在、写动作不在，不是零动作
+    assert changed["expect"]["actions_include"] == ["battery.query"]
+    assert "no_actions" not in changed["expect"] and "hvac.on" in changed["expect"]["actions_exclude"]
+    assert changed["audit"]["intent_any"] == ["battery.query"]
+    assert env["turns"][4]["expect"]["speech_not"] == [f"{long_qa._CONTINUITY_ENV_BATTERY}%"]
+    assert "vehicle_env" in long_qa._TURN_DIRECTIVE_KEYS
+    assert set(directives[0]) <= long_qa._VEHICLE_ENV_KEYS
+
+
+def test_apply_vehicle_env_writes_then_reads_back_and_resolves_baseline(monkeypatch):
+    posted = []
+    state = {"battery": 72, "speed_kmh": 0}
+
+    def fake_post(url, payload, timeout=20.0):
+        posted.append((url, payload))
+        state[payload["key"]] = payload["value"]
+        return {"ok": True, "key": payload["key"], "value": payload["value"]}
+
+    async def fake_state(_collector):
+        return dict(state)
+
+    monkeypatch.setattr(long_qa, "_http_post_json", fake_post)
+    monkeypatch.setattr(long_qa, "_vehicle_state", fake_state)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", _no_sleep)
+
+    applied, failures = asyncio.run(long_qa.apply_vehicle_env(
+        "http://collector", {"battery": 37}, {"battery": 72}))
+    assert (applied, failures) == ({"battery": 37}, [])
+    assert posted == [("http://collector/api/debug/vehicle", {"key": "battery", "value": 37})]
+
+    applied, failures = asyncio.run(long_qa.apply_vehicle_env(
+        "http://collector", {"battery": "$baseline"}, {"battery": 72}))
+    assert (applied, failures) == ({"battery": 72}, [])
+    assert posted[-1][1] == {"key": "battery", "value": 72}
+
+
+async def _no_sleep(_seconds):
+    return None
+
+
+def test_apply_vehicle_env_fails_closed_without_inventing(monkeypatch):
+    """白名单外的键 / 没有基线的 `$baseline` / 调试通道关着 / 回读不到位——四种都不落、都报因，
+    且「不构成证据」的措辞在（前提不成立 ≠ 通过，也 ≠ 系统答错）。"""
+    async def fake_state(_collector):
+        return {"battery": 72}
+
+    monkeypatch.setattr(long_qa, "_vehicle_state", fake_state)
+    monkeypatch.setattr(long_qa.asyncio, "sleep", _no_sleep)
+    monkeypatch.setattr(long_qa, "_http_post_json",
+                        lambda url, payload, timeout=20.0: {"ok": False, "error": "debug disabled"})
+
+    applied, failures = asyncio.run(long_qa.apply_vehicle_env(
+        "http://collector", {"hvac_on": True, "gear": "$baseline", "battery": 37}, {"battery": 72}))
+    assert applied == {}
+    assert any("白名单" in f and "hvac_on" in f for f in failures)
+    assert any("没读到基线值" in f and "gear" in f for f in failures)
+    assert any("debug disabled" in f and "不构成证据" in f for f in failures)
+
+    monkeypatch.setattr(long_qa, "_http_post_json",
+                        lambda url, payload, timeout=20.0: {"ok": True})
+    applied, failures = asyncio.run(long_qa.apply_vehicle_env(
+        "http://collector", {"battery": 37}, {"battery": 72}, attempts=3))
+    assert applied == {} and any("回读未到位" in f for f in failures)

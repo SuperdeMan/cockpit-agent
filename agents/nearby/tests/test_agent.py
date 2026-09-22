@@ -1590,3 +1590,45 @@ def test_deictic_or_first_person_place_words_do_not_become_an_anchor():
         asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐厅"},
                                raw_text=raw, meta=_LOC))
         assert not getattr(seen["near"], "address", None), raw
+
+
+# ── 批 7 追加（真栈 continuity T9 → T18，2026-09-22）：这批在哪一带搜的，由产生方声明 ─────────
+
+@pytest.mark.parametrize("slots, raw, place", [
+    ({"cuisine": "餐厅", "sort": "rating"}, "科技园附近的餐厅", "科技园"),       # 真栈：地名整个丢了
+    ({"category": "餐厅", "location": "南山书城"}, "南山书城附近的餐厅", "南山书城"),
+    ({"keyword": "万象城", "category": "餐厅"}, "万象城附近的餐厅", "万象城"),
+])
+def test_nearby_declares_where_it_searched(slots, raw, place):
+    """planner 把「科技园附近的餐厅」填成 `{cuisine, sort}`，Agent 从原话锚定了科技园、搜对了，但编排的
+    地点提示只从槽派生 ⇒ 这批叫不出名 ⇒ 十几轮后「科技园那批第二家」退回最新那批。产生方知道，就声明。"""
+    agent = NearbyAgent()
+
+    async def search(keyword, **kwargs):
+        from agents.nearby.src.providers.base import Place
+        if keyword == place:
+            return [Place(id="x", name=f"{keyword}中心", lat=22.6, lng=114.1, city="深圳市", rating=4.5)]
+        return [Place(id="a", name="甲店", category="餐饮", rating=4.6, lat=22.61, lng=114.11),
+                Place(id="b", name="乙店", category="餐饮", rating=4.2, lat=22.62, lng=114.12)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots=slots, raw_text=raw, meta=_LOC))
+    assert res.data["_candidate_place"] == place
+    assert res.data["center"] == "slot"
+
+
+def test_nearby_does_not_declare_a_place_for_vehicle_centred_or_coordinate_searches():
+    agent = NearbyAgent()
+
+    async def search(keyword, **kwargs):
+        from agents.nearby.src.providers.base import Place
+        return [Place(id="a", name="甲店", category="餐饮", rating=4.6, lat=22.61, lng=114.11)]
+
+    agent.place.search = search
+    res = asyncio.run(run_handle(agent, "nearby.search", slots={"category": "餐厅"},
+                                 raw_text="附近的餐厅", meta=_LOC))
+    assert "_candidate_place" not in res.data and res.data["center"] == "vehicle"
+    res = asyncio.run(run_handle(agent, "nearby.search",
+                                 slots={"category": "餐厅", "location": "113.94,22.54"},
+                                 raw_text="这个坐标附近的餐厅", meta=_LOC))
+    assert "_candidate_place" not in res.data, "坐标不是名字，叫不出来"

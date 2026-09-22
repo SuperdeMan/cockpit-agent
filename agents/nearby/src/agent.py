@@ -769,6 +769,17 @@ class NearbyAgent(BaseAgent):
         center_src = ("slot" if ((intent.slots.get("location") or "").strip()
                                  or self._place_anchor(intent))
                       else "vehicle" if near is not None else "none")
+        # 批 7 追加（真栈 continuity T9 → T18，2026-09-22）：这批是在哪一带搜的，**只有产生方知道**。
+        # planner 那次把「科技园附近的餐厅」填成 `{cuisine: 餐厅, sort: rating}`——地名整个丢了；本 Agent
+        # 从原话锚定了科技园、结果也对，但编排的 `place_hint` 只从槽派生 ⇒ 这批叫不出名 ⇒ 十几轮后
+        # 「科技园那批第二家」零命中、退回最新那批（南山书城）答了别人家的店。保留键 `_candidate_place`
+        # 与 `_candidate_label` 同族：编排优先读它，没有再从槽派生（行为逐字同旧）。坐标不是名字，不声明。
+        candidate_place = ""
+        if center_src == "slot":
+            loc_slot = (intent.slots.get("location") or "").strip()
+            candidate_place = loc_slot if (loc_slot and "," not in loc_slot) else self._place_anchor(intent)
+        if candidate_place:
+            extra_data["_candidate_place"] = candidate_place
         if center_src == "none":
             speech = f"按名称找到 {len(results)} 家{label}，最匹配的是：{names}{extra_s}。"
         else:

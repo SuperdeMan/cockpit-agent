@@ -1154,7 +1154,16 @@ def _earlier_candidate_set(focus, newest: dict) -> dict | None:
 _PLACE_HINT_SLOTS = ("location", "destination", "near", "area", "city", "keyword")
 
 
-def _place_hint(slots: dict | None) -> str:
+def _place_hint(slots: dict | None, data: dict | None = None) -> str:
+    """这批候选「在哪一带找」：产生方声明的 `_candidate_place`（批 7 追加）优先，其次从查询槽派生。
+
+    真栈 continuity（2026-09-22）：planner 把「科技园附近的餐厅」填成 `{cuisine, sort}`——地名整个丢了，
+    nearby 从原话锚定了科技园并搜对了，但这里只看槽 ⇒ 地点提示空 ⇒ 这批叫不出名 ⇒ 「科技园那批第二家」
+    零命中退回最新那批。产生方知道它在哪搜的，编排不该替它从槽里猜。
+    """
+    declared = str((data or {}).get("_candidate_place") or "").strip()
+    if _CANDIDATE_LABEL_MIN <= len(declared):
+        return declared[:_CANDIDATE_LABEL_MAX]
     for key in _PLACE_HINT_SLOTS:
         value = str((slots or {}).get(key) or "").strip()
         if _CANDIDATE_LABEL_MIN <= len(value):
@@ -1606,7 +1615,7 @@ def extract_focus(plan, results) -> "Focus | None":
                         "items": items,
                         # W08：这一组是**哪次查询**产的；同能力不同查询靠它共存
                         "query_signature": step_fingerprint(step.intent or "", step.slots),
-                        "place_hint": _place_hint(step.slots),
+                        "place_hint": _place_hint(step.slots, data),
                         "revision": 1,
                     })
             continue
@@ -1654,7 +1663,7 @@ def extract_focus(plan, results) -> "Focus | None":
                     "items": items,
                     # W08：查询签名 / 地点提示 / 版本（见上一处同款注释）
                     "query_signature": step_fingerprint(step.intent or "", step.slots),
-                    "place_hint": _place_hint(step.slots),
+                    "place_hint": _place_hint(step.slots, data),
                     "revision": 1,
                 })
         # 导航 Agent 的成功结果带地图已解析坐标。只从 navigation 域消费，避免把天气/
