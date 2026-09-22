@@ -262,6 +262,7 @@ SSH 客户端使用 application keepalive 保护长构建；Python 镜像通过 
 - merge、git push、首次真实 `deploy --apply` 和每次 `rollback --apply` 分别取得授权。
 - 普通发布不修改 `.env`、Tailscale Serve、安全组、systemd、数据库 schema 或数据。
 - 切换后的验收对五个 Tailnet HTTPS 端点先做就绪等待：每秒重试、五个端点共享 120 s 截止（`HTTPS_READY_TIMEOUT_S`），到点仍非 200 才判失败并回滚；等待只放宽「何时判」，不放宽「判什么」，等待秒数写入 verification 证据的 `https_ready_s`。来历：2026-09-06 `60a72a2` 切栈后 27 个容器同时冷启，hmi 在第 6 s 仍未监听、curl `--fail` 当场判红，被误判回滚。
+- 五个回环业务端口（5173 / 5174 / 8090 / 8092 / 50059）同样先做就绪等待：每秒重试、共享 60 s 截止（`LISTENER_READY_TIMEOUT_S`），到点仍缺才判失败；端口绑在非回环地址上是真违规、不等当场判红；等待秒数写入 `listener_ready_s`。来历：2026-09-22 `267b5d8b` 回滚验收在 hmi 容器起来 1 s 后就跑 `ss`，Vite 还要 1.3 s 才监听 ⇒ 状态写成 `ROLLBACK_FAILED`，而 30 个容器全部健康。
 
 ## 备份与清理候选
 

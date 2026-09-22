@@ -1799,6 +1799,87 @@ def test_https_verifier_fails_closed_when_an_endpoint_never_becomes_ready(tmp_pa
     assert '"https_ready_s": int(os.environ["HTTPS_READY_S"])' in text
 
 
+_SS_ALL = """LISTEN 0 4096 127.0.0.1:5173 0.0.0.0:*
+LISTEN 0 4096 127.0.0.1:5174 0.0.0.0:*
+LISTEN 0 4096 127.0.0.1:8090 0.0.0.0:*
+LISTEN 0 4096 127.0.0.1:8092 0.0.0.0:*
+LISTEN 0 4096 127.0.0.1:50059 0.0.0.0:*
+"""
+
+
+def _run_loopback_verifier(tmp_path: Path, ss_script: str, timeout_s: int = 30):
+    calls = tmp_path / "ss-calls"
+    result = _run_cloud_bash(
+        """
+        set -Eeuo pipefail
+        CALLS="$1"
+        die() { printf '%s\n' "$1" >&2; return "${2:-1}"; }
+        source "$2"
+        LISTENER_READY_TIMEOUT_S="$3"
+        sleep() { printf 'slept\n' >>"$CALLS"; }
+        """ + ss_script + """
+        verify_loopback_listeners
+        printf 'ready_s=%s\n' "$LISTENER_READY_S"
+        """,
+        calls,
+        VERIFY_RELEASE_PATH,
+        str(timeout_s),
+    )
+    return result, calls
+
+
+def test_loopback_verifier_waits_for_late_vite_listeners_then_passes(tmp_path: Path):
+    """2026-09-22 真栈：`compose up -d` 返回时 hmi / dashboard 的 Vite 还没监听（容器 :18.5 起、Vite :19.85 就绪），
+    回滚验收在 :19 判红 ⇒ ROLLBACK_FAILED 而容器全部健康。与 HTTPS 那条同一口径：缺端口只是「还没就绪」，重试；到点才判。"""
+    result, calls = _run_loopback_verifier(tmp_path, """
+        ss() {
+          printf 'ss\n' >>"$CALLS"
+          seen="$(grep -c -x ss "$CALLS")"
+          if [[ "$seen" -ge 3 ]]; then
+            printf '%s' "$SS_ALL"
+          else
+            printf 'LISTEN 0 4096 127.0.0.1:8090 0.0.0.0:*\nLISTEN 0 4096 127.0.0.1:8092 0.0.0.0:*\nLISTEN 0 4096 127.0.0.1:50059 0.0.0.0:*\n'
+          fi
+        }
+        SS_ALL='""" + _SS_ALL + """'
+    """)
+    assert result.returncode == 0, result.stderr
+    assert calls.read_text(encoding="utf-8").splitlines() == ["ss", "slept", "ss", "slept", "ss"]
+    assert re.fullmatch(r"ready_s=\d+", result.stdout.strip()) is not None
+    assert "not listening yet: 5173,5174" in result.stderr
+
+
+def test_loopback_verifier_fails_closed_on_a_non_loopback_bind_without_waiting(tmp_path: Path):
+    """绑在 0.0.0.0 上是真违规，不是「还没就绪」：一次判红、零次 sleep。"""
+    result, calls = _run_loopback_verifier(tmp_path, """
+        ss() {
+          printf 'ss\n' >>"$CALLS"
+          printf '%s' "$SS_ALL" | sed 's/127.0.0.1:8090/0.0.0.0:8090/'
+        }
+        SS_ALL='""" + _SS_ALL + """'
+    """)
+    assert result.returncode != 0
+    assert calls.read_text(encoding="utf-8").splitlines() == ["ss"]
+    assert "business port 8090 is not loopback-only" in result.stderr
+    assert "loopback listener check failed (rc=2)" in result.stderr
+
+
+def test_loopback_verifier_fails_closed_when_a_port_never_listens(tmp_path: Path):
+    result, calls = _run_loopback_verifier(tmp_path, """
+        ss() {
+          printf 'ss\n' >>"$CALLS"
+          printf '%s' "$SS_ALL" | grep -v ':5173 '
+        }
+        SS_ALL='""" + _SS_ALL + """'
+    """, timeout_s=0)
+    assert result.returncode != 0
+    assert calls.read_text(encoding="utf-8").splitlines() == ["ss"], "预算 0：不 sleep、不再打第二次"
+    assert "loopback business ports did not all listen within 0s" in result.stderr
+    text = _required_text(VERIFY_RELEASE_PATH)
+    assert 'LISTENER_READY_TIMEOUT_S="${LISTENER_READY_TIMEOUT_S:-60}"' in text
+    assert '"listener_ready_s": int(os.environ["LISTENER_READY_S"])' in text
+
+
 def test_release_probes_have_no_dangerous_utterances():
     payload = _required_text(EDGE_WS_PROBE_PATH).lower()
     for forbidden in ("支付", "下单", "购买", "开门", "解锁", "启动发动机", "退款"):

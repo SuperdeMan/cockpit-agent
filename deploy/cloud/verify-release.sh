@@ -85,10 +85,23 @@ print(len(rows), running, bad)
     || { verify_error "runtime project container state is not 30 running and 0 bad"; return 1; }
 }
 
+# 五个回环业务端口的就绪等待（2026-09-22）。`compose up -d` 在容器**起来**时就返回，hmi / dashboard 的 Vite
+# 还要 1–2 s 才开始监听（真栈：容器 00:15:18.5 起、Vite 00:15:19.85 就绪，而回滚验收在 00:15:19 就判了红 ⇒ 状态写成
+# ROLLBACK_FAILED，容器其实全部健康）。与上面 HTTPS 那条同一口径：每秒重试、共享一个截止点，到点仍缺才判失败——
+# 等待只放宽「何时判」，不放宽「判什么」：端口绑在非回环地址上是真违规，不等、当场判红。
+LISTENER_READY_TIMEOUT_S="${LISTENER_READY_TIMEOUT_S:-60}"
+LISTENER_READY_INTERVAL_S="${LISTENER_READY_INTERVAL_S:-1}"
+
 verify_loopback_listeners() {
-  local listeners
-  listeners="$(ss -lntH)" || return $?
-  python3 -c '
+  local listeners started waited rc
+  LISTENER_READY_S=0
+  [[ "${LISTENER_READY_TIMEOUT_S}" =~ ^[0-9]+$ && "${LISTENER_READY_INTERVAL_S}" =~ ^[0-9]+$ ]] \
+    || { verify_error "listener readiness budget is invalid"; return 1; }
+  started="${SECONDS}"
+  while :; do
+    listeners="$(ss -lntH)" || return $?
+    rc=0
+    python3 -c '
 import sys
 
 required = {5173, 5174, 8090, 8092, 50059}
@@ -102,11 +115,24 @@ for line in sys.stdin:
         if not address.endswith(f":{port}"):
             continue
         if address != f"127.0.0.1:{port}":
-            raise SystemExit(f"business port {port} is not loopback-only")
+            print(f"business port {port} is not loopback-only", file=sys.stderr)
+            raise SystemExit(2)
         seen.add(port)
 if seen != required:
-    raise SystemExit("one or more loopback business ports are missing")
- ' <<<"${listeners}" || return $?
+    missing = ",".join(str(port) for port in sorted(required - seen))
+    print(f"loopback business ports not listening yet: {missing}", file=sys.stderr)
+    raise SystemExit(3)
+ ' <<<"${listeners}" || rc=$?
+    [[ "${rc}" -ne 0 ]] || break
+    [[ "${rc}" -eq 3 ]] || { verify_error "loopback listener check failed (rc=${rc})"; return 1; }
+    waited=$(( SECONDS - started ))
+    if (( waited >= LISTENER_READY_TIMEOUT_S )); then
+      verify_error "loopback business ports did not all listen within ${waited}s"
+      return 1
+    fi
+    sleep "${LISTENER_READY_INTERVAL_S}"
+  done
+  LISTENER_READY_S=$(( SECONDS - started ))
 }
 
 verify_tailscale_serve() {
@@ -220,6 +246,7 @@ write_verification_evidence() {
   TAILNET_ENTRY_COUNT="${TAILNET_ENTRY_COUNT}" \
   HTTPS_RESULTS="${HTTPS_RESULTS}" \
   HTTPS_READY_S="${HTTPS_READY_S}" \
+  LISTENER_READY_S="${LISTENER_READY_S:-0}" \
   EDGE_PROBE_OUTPUT="${EDGE_PROBE_OUTPUT}" \
   COLLECTOR_PROBE_OUTPUT="${COLLECTOR_PROBE_OUTPUT}" \
   python3 - "${target}" "${sha}" "${timestamp}" <<'PY' || return $?
@@ -250,6 +277,7 @@ payload = {
     "tailnet_entries": int(os.environ["TAILNET_ENTRY_COUNT"]),
     "https_codes": https_codes,
     "https_ready_s": int(os.environ["HTTPS_READY_S"]),
+    "listener_ready_s": int(os.environ["LISTENER_READY_S"]),
     "edge_probe": edge_probe,
     "collector_probe": collector_probe,
     "postgres_ready": True,
