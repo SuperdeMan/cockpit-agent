@@ -9575,6 +9575,28 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 留下：批 B（R4 / R5）、批 C（R6 / R7 / R8）、批 D 待做；「取消刚才 X」单条挂起时仍无条件清它（子串点名太弱，撤销方向 fail-safe）；
   云侧对无挂起的撤回句交 planner（本趟落 hvac.off，不立闸）。
 
+### 同日追加（2026-09-22 夜）— 对话评审第二轮批 C：裁剪不反转极性、焦点私有半按乘员归属、挂起存储读写三态；release `86c43998`
+
+- 入口同批 A / B（设计文档 §4 / §4.1 / §4.1.1）。三条对 HEAD 重证成立：`_fit_last_exchange` 按「最长那条」删句、不看角色；
+  `SessionStore._focus_key` 只有 user + session；`load_all` 的 `[]` 与 `save_pending` 的 `False` 各自把两件事混成一件。
+- 做法：① 裁剪顺序改成「助手按句让位 → 丢助手 → 整对舍弃（`history_omitted`）」，`history_pairs_kept` 只数完整对——
+  **孤立的助手行不算一对**，它正是「只保留相反的正向目标」的另一种形态（用户问了什么没了、答案还在）。
+  ② `Focus.by_occupant`：私有两格（`session_constraints` / `active_task`）按说话人投影 / 合并，旧记录的扁平值归 `primary`；
+  `_load_focus` / `update_focus` 接 `occupant_id`，engine 七个调用点从 `ctx.occupant_id` 传。**共享车辆 / 路线状态刻意仍共享**
+  （活动路线、安全告警、候选台账、上一轮意图）——B 说「取消导航」必须能取消 A 发起的那条；评审把「候选」列进私有，这里按
+  产品事实裁成共享并写明边界。③ `load_all_result` / `save_pending_result` 三态 + engine 三条出口（确认形态读不到 ⇒
+  `system.pending_unavailable`，零动作、**零 `closed_operation_ids`**；`_pending_digest` 读不到返回 None；`_suspend` 分开报
+  `store_fenced` / `store_unavailable`）；普通请求照旧进规划（fail-open）。
+- 读数：全量固定口径 **9033 / 0 / 32**（257 s）；四门禁 + smoke_edge 13/13；七处变异各判红。
+  真栈（`86c43998`，push → dry-run → apply → status ok 5/5 → verify verified）：`RS23,RS24,RS7 ×3` = **9/9**。
+  **RS24 是 R7 的活体**：A（alice）说「我不吃辣」→ 确定性致谢；B（bob）回问「我今天说过不吃辣吗」三趟都没有「您这次说过」
+  （确定性出口对 B 不成立 ⇒ 交回规划，模型如实答「今天的对话记录里没显示你提过这个」）；A 自己再问三趟逐字同款。
+  RS23 两轮零 `navigate`（末句否定守住），RS7 3/3 证明缺省乘员那条路一字未变。
+- 留下：R8 的三条新出口**在云端没有触发场景**（Redis 正常），真栈要复现得停 Redis（AR05 V06 同族的「需要一次受控故障」）；
+  批 D（固定反例集 + 正式基线 + 留出长会话）未做。
+- 尺子教训一条：`test_engine_session_facts` 里那个「坏存储」替身原本挂在 `load_all` 上，engine 换到 `load_all_result` 之后
+  **它就再也拦不到了**——替身要挂在新接缝上，否则是「改对了而调用方在它之前就返回了」的测试版。
+
 ### 同日追加（2026-09-22 夜）— 对话评审第二轮批 B：执行性声称在首次释放前拦、unsupported 缩到具体诉求且下游 blocked；release `8af9b8bd` + 真栈追加 `06ad7ae4`
 
 - 入口同批 A（设计文档 §3 / §3.1 / §3.1.1）。R4 / R5 两条对 HEAD 重证成立：`_emit_execution_claim` 只在 final 出口剥、
