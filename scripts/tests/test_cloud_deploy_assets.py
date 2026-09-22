@@ -3192,10 +3192,15 @@ def test_preflight_locks_complete_cloud_topology_volumes_serve_and_backup_timer(
     topology = re.search(r"(?ms)^assert_expected_cloud_topology\(\) \{(?P<body>.*?)^\}", text)["body"]
     preflight = re.search(r"(?ms)^write_preflight_current\(\) \{(?P<body>.*?)^\}", text)["body"]
     for token in ("car-agent-postgres-data", "POSTGRES_VOLUME", "REDIS_VOLUME", "COLLECTOR_VOLUME",
-                  "car-agent-backup.timer", "tailscale serve status", "tailnet only", "{{.Image}}"):
+                  "car-agent-backup.timer", "{{.Image}}"):
         assert token in topology or token in text
     assert '"${#services[@]}" -eq 30' in topology
     assert "assert_expected_cloud_topology" in preflight
+    # 批 8 ④：Serve 判据只留一份——迁移预检调 verify-release.sh 的 `verify_tailscale_serve`（preflight 前已 source），
+    # 旧的「整机恰好五条 tailnet only」不得再出现（同机另一项目的第六条 Serve 条目把它判红过两次）。
+    assert "verify_tailscale_serve" in topology
+    assert "tailscale serve status" not in topology and "-eq 5" not in topology
+    assert text.index('source "${SCRIPT_ROOT}/verify-release.sh"') < text.index("preflight) preflight_migration")
 
 
 @pytest.mark.parametrize(

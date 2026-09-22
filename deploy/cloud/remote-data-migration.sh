@@ -671,7 +671,7 @@ PY
 }
 
 assert_expected_cloud_topology() {
-  local services_text service cid image volume serve_status serve_count state config_image timer_result
+  local services_text service cid image volume state config_image timer_result
   local expected_service expected_image expected_rows inspection_text _status service_set expected_set
   local -a services inspection fixed_infra=(postgres redis nats http-proxy)
   local -A expected_images=()
@@ -736,10 +736,11 @@ PY
   systemctl is-enabled --quiet car-agent-backup.timer || return $?
   timer_result="$(systemctl show car-agent-backup.service --property=Result --value)" || return $?
   [[ "${timer_result}" == "success" ]] || return 1
-  serve_status="$(tailscale serve status)" || return $?
-  serve_count="$(grep -Fic '(tailnet only)' <<<"${serve_status}")" || return $?
-  [[ "${serve_count}" -eq 5 ]] || return 1
-  if grep -Fqi funnel <<<"${serve_status}"; then return 1; fi
+  # 批 8 ④（2026-09-22）：Serve 判据只留一份——复用 verify-release.sh 的 `verify_tailscale_serve`（本脚本在 preflight 之前
+  # 已 source 它）：我们的五条映射一条不少、各指约定回环端口、同一主机；别的项目的条目只计数；任何 Funnel 条目判红。
+  # 修前这里与旧 verify 同款「整机恰好五条 tailnet only」——同机 drone-agent 加了第六条 `:8447` 之后，两次发布验收都被判成
+  # ROLLBACK_FAILED（c4c1186d 修了 verify 那份），迁移预检这份没跟上，下一次迁移预检必红。
+  verify_tailscale_serve || { migration_fail "Tailscale Serve does not expose the five car-agent tailnet only entries"; return 1; }
 }
 
 assert_locked_store_identity() {
