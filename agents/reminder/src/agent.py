@@ -120,18 +120,37 @@ _EVENT_STRIP_RE = re.compile(
     r"接下来|然后|等会儿?|待会儿?|回头)+")
 
 
-def _event_trigger(raw: str) -> str | None:
-    """这句话要的是「某件事发生时通知我」→ 事件短语；不是 → None。
+def _event_trigger_clause(raw: str) -> tuple[str, str] | None:
+    """`(事件短语, 它所在的那个分句)`；不是事件触发 → None。
 
     连接词形态（一旦 / 只要 / 一…就）先于兜底形态（…就通知我）在整句上求值；时间状语前缀在**每个分句**开头剥。
+
+    分句要跟着一起返回，是因为「有没有给时间」必须问**这个诉求自己的那半句**（评审二轮批 B 真栈 RS22 2/3）：
+    「以后有堵车就提醒我，另外列出明天的提醒」里的「明天」属于另一个诉求，此前它把这条的诚实拒绝挡掉、
+    改成追问「什么时候提醒你？」——同 W16-b「步级起点原话」的判据形态：别的诉求的字不归这一步。
     """
-    text = "，".join(_EVENT_STRIP_RE.sub("", part.strip())
-                    for part in re.split(r"[，,；;]", (raw or "").strip()) if part.strip())
+    parts = [_EVENT_STRIP_RE.sub("", part.strip())
+             for part in re.split(r"[，,；;]", (raw or "").strip()) if part.strip()]
+    text = "，".join(parts)
     m = _EVENT_TRIGGER_RE.search(text) or _EVENT_TRIGGER_FALLBACK_RE.search(text)
     if not m:
         return None
     event = (m.groupdict().get("event") or m.groupdict().get("event2") or "").strip(" 、的就")
-    return event[:12] or "这类变化"
+    clause, at = text, m.start()
+    cursor = 0
+    for part in parts:                       # 命中位置落在哪个分句里
+        end = cursor + len(part)
+        if at < end:
+            clause = part
+            break
+        cursor = end + 1                     # 连接用的那个「，」
+    return (event[:12] or "这类变化"), clause
+
+
+def _event_trigger(raw: str) -> str | None:
+    """这句话要的是「某件事发生时通知我」→ 事件短语；不是 → None。"""
+    hit = _event_trigger_clause(raw)
+    return hit[0] if hit else None
 
 
 def _has_time_signal(text: str) -> bool:
@@ -417,8 +436,10 @@ class ReminderAgent(BaseAgent):
         if pt.status != T_OK:
             # 事件触发（见 `_EVENT_TRIGGER_RE`）：不是缺时间，是要一种没有的触发方式 ⇒ 诚实拒绝，
             # 不建、不挂起、不追问。`_refused="unsupported"` 让终态账本记成 unsupported 而不是 failed。
-            event = _event_trigger(raw)
-            if event and not user_time_signal:
+            hit = _event_trigger_clause(raw)
+            # 「有没有给时间」问的是事件短语**自己那半句**：另一个诉求的「明天」不作数（批 B 真栈 RS22）。
+            event = hit[0] if hit and not _has_time_signal(hit[1]) else ""
+            if event:
                 logger.info("reminder.create 拒建（事件触发不支持）：%s", raw[:40])
                 await self._clear_pending(ctx)
                 return AgentResult(

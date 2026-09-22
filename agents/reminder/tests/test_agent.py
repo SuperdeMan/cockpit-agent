@@ -1183,11 +1183,42 @@ async def test_event_phrase_drops_time_adverb_prefixes_and_yi_jiu_connector(raw,
         assert f"「{junk}" not in res.speech, res.speech
 
 
+# 评审二轮批 B 真栈逼出（`8af9b8bd`，RS22 2/3）：「以后有堵车就提醒我，另外列出明天的提醒」——事件短语认出来了，
+# 但「有没有给时间」问的是**整句**，另一个诉求的「明天」把这一条的诚实拒绝挡掉了，于是追问「什么时候提醒你？」。
+# 时间信号要问**事件短语所在的那个分句**（同 W16-b「步级起点原话」的判据形态：别的诉求的字不归这一步）。
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw, event", [
+    ("以后有堵车就提醒我，另外列出明天的提醒", "有堵车"),
+    ("只要下雨就通知我，顺便看看明天的天气", "下雨"),
+    ("一下雪就叫我，另外查一下明天的路况", "下雪"),
+])
+async def test_another_clause_time_word_does_not_cancel_the_event_refusal(raw, event):
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=raw)
+    assert (res.data or {}).get("_refused") == "unsupported", res.speech
+    assert f"「{event}」" in res.speech and "什么时候" not in res.speech, res.speech
+    assert not res.missing_slots
+    times, todos = await a.store.list_split("u1")
+    assert not times and not todos, "拒绝就不能建东西"
+
+
+@pytest.mark.asyncio
+async def test_a_clause_with_a_real_time_still_builds_even_next_to_an_event_clause():
+    """边界明写：一句里既有「明天早上八点提醒我开会」又有事件触发时，**单次** reminder.create 仍按时间建——
+    两个诉求本该由 planner 拆成两步（各自带自己的起点原话，W16-b），不是在 Agent 里猜哪半才是这一步。"""
+    a = await _agent()
+    res = await run_handle(a, "reminder.create",
+                           raw_text="明天早上八点提醒我开会，另外一堵车就告诉我")
+    assert (res.data or {}).get("_refused") is None
+    assert "08:00" in res.speech and "什么时候" not in res.speech
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("raw", [
     "到公司提醒我拿文件",          # 地点触发：支持
     "明天早上八点提醒我带伞",      # 时间触发：支持
     "如果明天下雨提醒我带伞",      # 带时间的条件句：仍按时间建（既有行为）
+    "明天早上八点提醒我开会",      # 同分句里的时间照旧成立
 ])
 async def test_supported_triggers_are_untouched(raw):
     a = await _agent()

@@ -119,6 +119,20 @@ agents + test + security + memory 3570 / 19 skipped；四门禁 + smoke_edge 13/
 定向读数：cloud + edge + runtime + scripts 4792 / 12 skipped；chitchat + reminder + info + contrast 530；四门禁 + smoke_edge 13/13；五处变异各判红。
 **全量固定口径（批 B 工作树，`TZ=UTC0` `-n 6`）：9006 passed / 0 failed / 32 skipped / 10 warnings，305 s。**
 
-#### 3.1.1 发布链与真栈读数
+#### 3.1.1 发布链与真栈读数（2026-09-22 18:1x–18:2x，MiniMax-M3）
 
-（待 push / deploy / verify / 探针后回填。）
+| release | 发布链 | 真栈 |
+|---|---|---|
+| `8af9b8bd` | push `d0170329..8af9b8bd`（恰一条）→ dry-run 零阻断（基线 `d0170329`）→ apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260922T102118Z-8af9b8b.json`） | `--cases RS21,RS22,RS13,EC1 --repeat 3`（artifact `.artifacts/probe-round2-batchB-8af9b8bd.json`）：**10/12**——RS21 3/3、EC1 3/3、RS13 3/3（守护面不回退）、**RS22 1/3**（下面这条真栈逼出的缺陷） |
+
+- **RS21 3/3**：三句零动作谈话轮，增量与 final 两份都没有执行性声称（「帮我避开前面这段路」三趟逐字同款
+  「当前没有正在进行的导航。直接说「导航去某地」，我就为您规划路线。」——C11 原现场那句「已经为您重新计算路线」形态 0/3）。
+  这一趟是「拦截生效或模型没编」的合并读数：判据现在同时看流出的增量，所以它至少证明**用户没听到**假话。
+- **RS13 3/3 / EC1 3/3**：批 7 ① 与 W14 的守护面没有因为本批放开独立诉求而回退（RS13 三趟都只答路况、零提醒追问）。
+- **RS22 1/3 → 真栈逼出一条**：R5 的主张成立——「另外列出明天的提醒」三趟都被答出来了（修前整域封死）；
+  但 2/3 趟里那句事件触发**没有被诚实拒绝**，而是追问「什么时候提醒你？」。真因不在本批的改动，在 reminder Agent：
+  `user_time_signal = _has_time_signal(raw)` 问的是**整句**，另一个诉求里的「明天」把这一条的拒绝挡掉了
+  （批 7 ③ 的事件短语识别照常命中，`_event_trigger` 返回「有堵车」）。修法与 W16-b「步级起点原话」同形：
+  时间信号问**事件短语所在的那个分句**（`_event_trigger_clause` 返回 `(事件, 分句)`）。边界明写：一句里既有
+  「明天早上八点提醒我开会」又有事件触发时，单次 `reminder.create` 仍按时间建——两个诉求本该由 planner 拆成两步。
+  离线证据：`test_agent` +4（三句混合分句拒绝、一条边界正例）；变异（时间信号回到整句）判红 3。
