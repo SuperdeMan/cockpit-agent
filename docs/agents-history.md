@@ -9549,6 +9549,32 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
   `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
 
+### 同日追加（2026-09-22 晚）— 对话评审第二轮批 A：裸确认语气面、取消极性 / 问句 / 目标绑定、端侧撤回否决、语音纯偏好先受话、「怎么把 / 请问 / 请告诉我」是提问；release `d0170329`
+
+- 入口：评审二轮原文 `docs/reviews/2026-09-22-cockpit_conversation_review_round_2.md`（冻结 `f827ebdd` = 当时 main）；设计文档
+  `docs/design/2026-09-22-conversation-review-round2-remediation.md`（§1 逐条重证、§2 批 A 方案、§2.1 / §2.1.1 落地与真栈）。
+- 重证（本地复算）：R1「行程 / 确认函 / 可以改」`_split_confirm_prefix` 全 `(True, "")`、`_confirm_reply` 全 yes，且没有挂起时「行程」会被
+  `_is_bare_confirm_word` 拦成「当前没有待确认的操作」；反向「好的，确认吧」被拆成点名「确认」⇒ `named_miss` 不确认。R2「不要取消」纯取消、
+  「怎么取消 / 取消了吗」复合取消（先清挂起）、两条挂起并存「取消刚才订单」落 `entries[-1]`；顺手核出端侧 `classify_structured("取消刚才打开空调")`
+  = `aircon.open`、「取消播放」= `media.play`。R3 纯偏好短路在 planner 之前。R9 四句全 False，「怎么把座椅加热打开」在三份测试里钉成祈使合同。
+- 做法：R1 `_CONFIRM_PARTICLE_RE` + `_bare_affirmation`（语气面一份，剥完一个实质字都不剩才是裸确认；剩一个实质字既不裸确认也不点名）、`_YES_WORDS`
+  加「好」、`_pending_names` 整串或任一二元片段。R2 `CancelDecision.act`（cancel / keep / ask）+ `target`：否定词紧贴「取消」（lookbehind 排除「要不 / 还不」）
+  ⇒ keep；余量有实质且整句问句（`question_shape` + 「了没(有)」）⇒ ask；礼貌尾跟在非问句主体后仍是取消；engine 三条出口——`system.pending_kept`
+  （新 outcome kind）/ `system.pending_state`「还没有取消。」+ `pending_answer` / ≥2 条挂起按 `target` 绑定、点不到或点到多条就问零关闭；`cancel_instruction_object`
+  读同一份极性。端侧 `runtime.polarity.is_withdrawn_directive`（撤回词 + 回指，或 + ≤6 字 + 动作词；不含「静音」）⇒ `classify_structured` 第四条否决、
+  整句上云（不走「保持当前状态」本地直回，云侧挂起取消要收得到）。R3 语音来源先 `planner.build` 只取 `addressed`，非受话走同一条 `_reject_not_addressed`。
+  R9 `_BA_FRAME_HOW_TO_RE` / `ASK_PREFIXES` + `strip_ask_prefix`（`memory_read` 改消费）/ `EXPLAIN_REQUESTS` + `is_explanation_request`（句首 + 其后疑问框架）。
+  探针 RS15–RS20 + per-turn `source` 键 ⇒ `meta.input_source`。
+- 读数：全量固定口径 **8990 / 0 / 32**（295 s，-n 6）；四门禁 + smoke_edge 13/13；十一处变异各判红；定向那趟 `test_https_verifier_…` 「after 0s」
+  整秒时钟红过一次 ⇒ 改 `\d+s`（批 8 loopback 同形态）。真栈 `d0170329`（push → dry-run 零阻断 → apply → status ok 5/5 → verify verified）：
+  **RS15–RS20 ×3 = 18/18**——「行程」被当新请求（答贵州行程）、「确认函」答「没听清」/「没有执行任何操作」、寻址确认与「好的，确认吧」都真解锁；
+  「不要取消 / 怎么取消」两句确定性、挂起原样、随后「取消」才清；「取消刚才解锁」清第 1 条（话术点名「把全车门解锁」）、再「取消刚才午休模式」清第 2 条；
+  「怎么把车窗打开」落 manual.query、「请告诉我怎么关闭空调」「请问车窗能不能打开」零动作、「帮我把车窗关上好吗」`window.close`；
+  「取消刚才打开空调」云侧规划成 `hvac.off`（不再 hvac.on）、「取消静音」本地 unmute。R3 受话读数：「我不吃辣」voice_followup 1/3 受话、ptt 2/3、
+  voice_wake 3/3——被拒的 rejected 卡 + 零登记、受话的致谢 + 约束读出口逐字相同（planner 判受话是模型方差，机制两边都对）。
+- 留下：批 B（R4 / R5）、批 C（R6 / R7 / R8）、批 D 待做；「取消刚才 X」单条挂起时仍无条件清它（子串点名太弱，撤销方向 fail-safe）；
+  云侧对无挂起的撤回句交 planner（本趟落 hvac.off，不立闸）。
+
 ### 同日追加（2026-09-22 下午）— 批 8（批 7 追加留项）：T2 完成轮从不写焦点的真因、安全闸二第二臂、chitchat 车辆读数、迁移预检 Serve 判据；两个 release
 
 - 先重证再定范围（设计文档 §10）：PU7「路线会话没盖上」被记成 family 域老方差，按 trace 分路径后真因是**路径**——第一趟 T63 走了四轮 T2（`t2.iter` ×4）、

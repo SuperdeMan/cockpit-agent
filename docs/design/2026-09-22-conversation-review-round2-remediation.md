@@ -70,6 +70,24 @@ RS15 「行程 / 确认函」零车控、寻址确认仍能执行、「好的，
 agents + test + security + memory 3570 / 19 skipped；四门禁 + smoke_edge 13/13 全过；十一处变异各判红。
 **全量固定口径（批 A 工作树，`TZ=UTC0` `-n 6`）：8990 passed / 0 failed / 32 skipped / 10 warnings，295 s。**
 
-#### 2.1.1 发布链与真栈读数
+#### 2.1.1 发布链与真栈读数（2026-09-22 17:4x–17:5x，MiniMax-M3）
 
-（待 push / deploy / verify / 探针后回填。）
+| release | 发布链 | 真栈 |
+|---|---|---|
+| `d0170329` | push `f827ebdd..d0170329`（恰一条）→ dry-run 零阻断（基线 `5818d136`，disk 51.8 G）→ apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260922T094509Z-d017032.json`，minimax / MiniMax-M3，lock e2e，`e2e_remote_safe` passed） | `probe_qa_regression.py --cases RS15,RS16,RS17,RS18,RS19,RS20 --repeat 3`（artifact `.artifacts/probe-round2-batchA-d0170329.json`）：**18/18** |
+
+逐条读（自动 PASS 之外看话术与动作）：
+
+- **RS15 3/3 [det]**：「行程」被当新请求（planner 落 trip，答「您正在贵州5天行程…」——探针用户的持久行程数据）、「确认函」答「抱歉，我没听清」/
+  「这一轮我没有执行任何操作」，两句零车控；T4 带寻址键的确认 `door_lock.open`（挂起既没被消费也没被关）；sid 1「好的，确认吧」`door_lock.open`（修前 `named_miss`）。
+- **RS16 3/3 [det]**：「不要取消」→「好的，不取消，「把全车门解锁」还在等您确认。」；「怎么取消」→「还没有取消。有 1 条待确认的操作：…说「确认」就执行，说「取消」就作废」；
+  随后「取消」才「已为您取消」、再「确认」→「当前没有待确认的操作」。三趟话术逐字相同。
+- **RS17 3/3 [det]**：两条挂起并存，「取消刚才解锁」→「好的，已为您取消「把全车门解锁」」（绑定第 1 条、`closed_operation_ids` 点名它）；「取消刚才午休模式」→ 清第 2 条。
+- **RS18 3/3 [var]**：「怎么把车窗打开」三趟都落 manual.query（「手册里没有查到…」）；「请告诉我怎么关闭空调」「请问车窗能不能打开」零动作（chitchat / manual 措辞各异，
+  第三趟从手册答出车窗开关的档位说明）；「帮我把车窗关上好吗」三趟 `window.close`。`[var]` 只是话术措辞。
+- **RS19 3/3 [det]**：语音来源（`voice_followup`）「我不吃辣」第 1、3 趟 rejected 卡 + 空话术、第 2 趟致谢；文字臂三趟致谢 + 「我今天说过不吃辣吗」→「您这次说过：不吃辣」。
+  补采样（同句 ×3）：`ptt` 2/3 受话、`voice_wake` 3/3 受话——受话与否是 planner 方差，两边的出口都是确定性的（被拒零登记零落库；受话致谢 + 约束读出口逐字相同）。
+- **RS20 3/3 [det]**：「打开空调」`hvac.on` → 「取消刚才打开空调」云侧规划成 **`hvac.off`**（修前端侧秒回 `aircon.open`）→ 「取消静音」本地 `volume.unmute`。
+
+留下（本批不动）：单条挂起时「取消刚才 X」仍无条件清它（点名匹配对随口称呼太弱，撤销方向 fail-safe）；云侧对无挂起的撤回句交 planner（本趟三次都 hvac.off，不立闸）；
+「我不吃辣」在 `voice_followup` 下 1/3 受话是 planner 的判定，不是本批的判据。
