@@ -76,7 +76,9 @@ def test_pair_partial_replace_vs_forbid_change():
 
 def test_pair_quoting_confirm_vs_authorising():
     """你说"确认"是什么意思（引用 / 解释） vs 确认提交这笔订单（授权）。"""
+    # 评审三轮 R3-01 B：点名授权的裁决面是挂起那一刻的已校验步骤摘要（`action_summary`），真实挂起都带它
     pending = SessionState(phase="wait_confirm", operation_id="op-1",
+                           action_summary="提交这笔订单",
                            pending_plan={"goal": "提交这笔订单", "raw_text": "提交这笔订单"})
     quoted = PlannerEngine._resolve_spoken_confirm('你说"确认"是什么意思', False, [pending])
     assert quoted.kind in ("", "named_miss"), "引用「确认」不是授权"

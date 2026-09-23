@@ -803,3 +803,25 @@ def test_every_round_two_case_declares_a_mechanical_expectation():
         for turn in by_id[cid]["turns"]:
             keys |= set(turn.get("expect") or {})
         assert keys & mechanical, f"{cid} 只有话术判据"
+
+# ── 评审三轮反例集（2026-09-23 起随批追加）：同一条纪律——改 id / 换组 / 只留话术判据都会红 ──
+ROUND3_CASES = (
+    "RS25",   # R3-01 语气词不授权 / 点名与挂起步骤矛盾不授权
+)
+
+
+def test_the_round_three_counterexample_set_is_fixed():
+    by_id = {case["id"]: case for case in probe.CASES}
+    missing = [cid for cid in ROUND3_CASES if cid not in by_id]
+    assert not missing, f"评审三轮反例集少了：{missing}"
+    mechanical = {"actions_include", "actions_exclude", "no_actions", "card_type",
+                  "card_text_has", "no_execution_claim", "closes_op_from",
+                  "has_operation_id", "need_confirm"}
+    for cid in ROUND3_CASES:
+        case = by_id[cid]
+        assert case["group"] == "residual", cid
+        assert str(case.get("issue") or "").startswith("评审三轮"), cid
+        keys = set()
+        for turn in case["turns"]:
+            keys |= set(turn.get("expect") or {})
+        assert keys & mechanical, f"{cid} 只有话术判据"

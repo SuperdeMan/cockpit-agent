@@ -1333,6 +1333,32 @@ CASES = [
          {"say": "我今天说过不吃辣吗", "occupant": "alice",
           "expect": {"no_actions": True, "speech_has": ["不吃辣"]}},
      ]},
+    # ── 评审三轮批 A（R3-01，2026-09-23）────────────────────────────────────────
+    # A：只有语气面的「啊」不是授权（修前剥空即裸确认 ⇒ 唯一一条待确认被注入 confirmed）；
+    # B：点名召回到了挂起、却与它的已校验步骤矛盾（「确认关闭后备箱」而挂着的是打开后备箱）⇒ 零动作、
+    # `system.pending_mismatch` 念出等确认的是什么。端侧把这两句判成 `trunk.close` / `door_lock.close`，
+    # 后备箱与门锁都 `require_confirm` ⇒ 必然上云，真栈可达。第 4 轮用寻址键确认，证明前两句没有消费掉挂起；
+    # sid 1 同形换门锁，最后一句是二轮 R1 的正面对照「好的，确认吧」。
+    {"id": "RS25", "group": "residual", "card": "余项", "issue": "评审三轮 R3-01",
+     "why": "语气词不授权；点名与挂起步骤矛盾不授权；随后的确认照常",
+     "known": "red",
+     "turns": [
+         {"say": "打开后备箱",
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "啊",
+          "expect": {"actions_exclude": ["trunk.open"], "speech_not": ["已为您打开", "已打开"]}},
+         {"say": "确认关闭后备箱",
+          "expect": {"no_actions": True, "speech_has": ["没有执行"]},
+          "audit": {"intent_any": ["system.pending_mismatch"]}},
+         {"say": "确认", "confirm": True, "op_from": 1,
+          "expect": {"actions_include": ["trunk.open"], "closes_op_from": 1}},
+         {"say": "把全车门解锁", "sid": 1,
+          "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "确认锁车门", "sid": 1,
+          "expect": {"actions_exclude": ["door_lock.open"], "speech_has": ["没有执行"]}},
+         {"say": "好的，确认吧", "sid": 1,
+          "expect": {"actions_include": ["door_lock.open"], "closes_op_from": 5}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

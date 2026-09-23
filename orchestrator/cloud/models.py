@@ -423,6 +423,11 @@ class SessionState:
     # （`capability_ref` + slots 都经 `_validated_steps`），用户点选后**零 LLM 直接执行**；
     # 没有 `step` 的选项退回「send_text 重新规划」。老部署读到本字段（未知键）会整条跳过。
     clarify: dict = field(default_factory=dict)
+    # 评审三轮 R3-01 B（2026-09-23）：挂起那一刻服务端生成的**已校验步骤摘要**——Registry 能力描述 + 槽值，
+    # 与确认卡 `confirm_policy.action_summary` 同一句（`contracts.action_summary`）。点名确认的**裁决面只认它**，
+    # 不认模型的 goal 与任务原话。空 = 旧记录 / 描述取不到：engine 现取一次，仍为空就判点名不兼容（裸「确认」不受影响）。
+    # 老部署读到本字段会整条跳过（同 `clarify`，fail-safe：那一刻读不到挂起，不会误执行）。
+    action_summary: str = ""
 
 
 class CyclicPlan(Exception):

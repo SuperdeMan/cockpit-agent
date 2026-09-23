@@ -552,6 +552,7 @@ _ENGINE_ONLY_TRACE_NODES = frozenset({
     "cloud.pending_missing",
     "cloud.pending_ambiguous",    # W01（2026-09-19）：裸确认撞上两条挂起 ⇒ 问一次
     "cloud.pending_kept",         # 评审二轮 R2（2026-09-22）：「不要取消」按用户的话保留了挂起
+    "cloud.pending_mismatch",     # 评审三轮 R3-01 B（2026-09-23）：点名确认与挂起的步骤对不上，零动作
     "cloud.clarify_choice",       # W10（2026-09-20）：澄清选项在服务端解出（可能零 Agent，也可能接着执行）
     "cloud.pending_expired",
     "cloud.no_pending",

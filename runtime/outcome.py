@@ -44,6 +44,7 @@ CATEGORY_OF: dict[str, str] = {
     "no_pending": CAT_SESSION,           # 裸确认词、没有待确认
     "cancelled": CAT_SESSION,            # 取消了一条挂起
     "pending_kept": CAT_SESSION,         # 「不要取消」——按用户的话保留了挂起（评审二轮 R2）
+    "pending_mismatch": CAT_SESSION,     # 点名确认与挂起的已校验步骤对不上，没执行（评审三轮 R3-01 B）
     "pending_expired": CAT_SESSION,      # 挂起计划恢复不出来
     "store_fenced": CAT_SESSION,         # 隐私删除写栅栏期间不保存挂起
     "store_unavailable": CAT_FAILURE,    # 会话状态后端连不上，这一步没挂起也没执行（评审二轮 R8）

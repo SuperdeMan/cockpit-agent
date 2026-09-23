@@ -526,10 +526,20 @@ def test_named_confirm_that_names_nothing_pending_is_not_an_authorization():
 
 
 def test_spoken_confirm_can_name_one_of_two_pendings():
-    """「确认订明晚那个」——肯定词 + 点名了恰好一条挂起的 goal ⇒ 打给它。"""
+    """「确认明晚8点那个」——肯定词 + 点名了恰好一条挂起 ⇒ 打给它。
+
+    ⚠ 评审三轮 R3-01 B（2026-09-23）起点名要过**裁决**：点名的「明晚8点」必须出现在那一步的已校验摘要
+    （能力描述 + 槽值）里。本文件的替身计划对两句话都写死 `datetime=今晚7点`、能力描述是机器名 ⇒ 摘要为空，
+    点名按新规则不能授权——那正是新规则要挡的形态（点的和要执行的不是一回事）。所以这里把两条挂起的摘要
+    写成真实挂起会有的样子（`_suspend` 从步骤槽值生成），验的仍是「点名在两条之间选中那一条」。"""
     engine, spy, session = _make_engine()
     op1 = _run(engine, _req("找家川菜馆订今晚7点两位"))[-1]["operation_id"]
     op2 = _run(engine, _req("再找一家川菜馆订明晚8点三位"))[-1]["operation_id"]
+    for op, summary in ((op1, "预订餐厅（2，今晚7点，川菜·名店1）"),
+                        (op2, "预订餐厅（3，明晚8点，川菜·名店1）")):
+        state = asyncio.run(session.load("sess-1", owner_user_id="u1", operation_id=op))
+        state.action_summary = summary
+        asyncio.run(session.save("sess-1", state))
 
     final = _run(engine, _req("确认明晚8点那个"))[-1]
     assert spy.metas("nearby.order")[-1].get("confirmed") == "true"

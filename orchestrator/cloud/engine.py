@@ -12,6 +12,7 @@ import os
 import re
 import time
 import uuid
+from types import SimpleNamespace
 from typing import AsyncIterator
 
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionState,
@@ -33,7 +34,7 @@ from runtime import memory_read, session_facts
 from runtime.execution_claim import (
     ExecutionClaimGate, execution_claim, strip_execution_claims)
 from runtime.clause_split import split_clauses
-from runtime.cntime import cn_int
+from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import is_imperative_opening, is_non_directive_question
@@ -137,8 +138,11 @@ _YES_WORDS_BY_LEN = tuple(sorted(_YES_WORDS, key=len, reverse=True))
 #: 剥完必须一个实质字都不剩——「行程」的「程」、「确认函」的「函」、「可以改」的「改」都不是语气尾。
 #: 旧判据给裸确认留了 2 字松弛（`len(t) <= len(k)+2`），它本来是给语气尾留的，却把任何 ≤2 字的
 #: 实质尾巴一并当成了授权（局部复算：三句都判 `kind=one`）。
+#: ⚠ 评审三轮 R3-01 A（2026-09-23）：语气面**只能修饰**。剥完而一个肯定词都没吃到（「啊 / 唉 / 请 / 那 / 。」）
+#: 不是授权——`_bare_affirmation` 记着有没有消费过肯定词。「嗯」是 `_YES_WORDS` 里的肯定词（产品口径），所以不在
+#: 这张语气表里：留着它会先被当语气剥掉，「嗯」单说反而不算确认。
 _CONFIRM_PARTICLE_RE = re.compile(
-    r"^(?:请|麻烦|那就|那|就|一下|吧|呀|啊|呢|哦|噢|喔|啦|嘛|哈|喽|咯|哟|呗|嗯|哎|唉|的|了"
+    r"^(?:请|麻烦|那就|那|就|一下|吧|呀|啊|呢|哦|噢|喔|啦|嘛|哈|喽|咯|哟|呗|哎|唉|的|了"
     r"|[，,、。！!？?~\s])+")
 #: 「可以吗 / 确认吗 / 行不行」——**只问能不能、不含任何别的内容**的确认询问（W01）。
 #: 剥掉疑问尾词后剩下的必须就是一个肯定词或一个「X不X」能力问法；「可以换第二天的安排吗」
@@ -152,15 +156,65 @@ _CONFIRM_FILLER_RE = re.compile(
     r"^(?:一下|吧|呀|啊|那个|这个|那条|这条|那笔|这笔|的|[，,、\s])+"
     r"|(?:那个|这个|那条|这条|那笔|这笔|的|吧|呢|啊|呀|一下|[，,、。！!\s])+$")
 
+# ── 点名的召回与裁决（评审三轮 R3-01 B，2026-09-23）──────────────────────────────
+# 召回（`_pending_names`，二元片段）只负责**找候选**；授权要过裁决（`_naming_coverage`）：点名余量去掉零领域虚词后，
+# 每个非数字字都要落在 ≥2 字、且是**已校验步骤事实**子串的片段里，每个数字串都要作为完整数字出现在事实里。
+# 修前挂着「打开后备箱」时，「确认关闭后备箱 / 锁上后备箱 / 打开车窗」都靠共享片段命中唯一候选、注入了 confirmed。
+# 二字阈值改三字没用——「后备箱」照样共享；判据是「点名说的每一样东西都得是这一步本来就有的」。
+#: 零领域虚词：只修饰、不带动作 / 对象 / 数量。裁决前从点名余量里剥掉（事实那一侧不剥）。
+_NAMING_NEUTRAL_RE = re.compile(
+    r"那个|这个|那条|这条|那笔|这笔|那件|这件|那次|这次|一下|刚才|刚刚|方才|帮我|替我|给我|麻烦"
+    r"|请|把|将|的|了|吧|呢|啊|呀|嘛|就|再|那|这")
+_NAMING_PUNCT_RE = re.compile(
+    r"[\s，,、。．.！!？?~～·…:：;；\"'“”‘’「」『』《》〈〉（）()\[\]【】\-—_/|]+")
+_CN_NUMERAL_RUN_RE = re.compile(rf"[{CN_NUM_CHARS}零〇]+")
+_DIGIT_RUN_RE = re.compile(r"\d+")
+
+
+def _naming_core(text: str, *, neutral: bool) -> str:
+    """点名 / 事实的比较形态：小写、去空白标点、（点名一侧）去零领域虚词、中文数字转阿拉伯数字（两侧同一规则）。"""
+    t = _NAMING_PUNCT_RE.sub("", str(text or "").lower())
+    if neutral:
+        t = _NAMING_NEUTRAL_RE.sub("", t)
+
+    def _arabic(m: re.Match) -> str:
+        value = cn_int(m.group(0))
+        return str(value) if value is not None else m.group(0)
+
+    return _CN_NUMERAL_RUN_RE.sub(_arabic, t)
+
+
+def _naming_coverage(needle: str, facts: list[str]) -> float:
+    """点名余量被事实覆盖的比例（0–1）。数字只认整串相等（「50」不被「500」覆盖），其余字只认
+    ≥2 字的事实子串片段（单字不算——「锁」「关」单字到处都有）。"""
+    n = _naming_core(needle, neutral=True)
+    cores = [c for c in (_naming_core(f, neutral=False) for f in facts or []) if c]
+    if not n or not cores:
+        return 0.0
+    covered = [False] * len(n)
+    numbers = {d for c in cores for d in _DIGIT_RUN_RE.findall(c)}
+    for m in _DIGIT_RUN_RE.finditer(n):
+        if m.group(0) in numbers:
+            covered[m.start():m.end()] = [True] * (m.end() - m.start())
+    for i in range(len(n) - 1):
+        for j in range(len(n), i + 1, -1):
+            if any(n[i:j] in c for c in cores):
+                for k in range(i, j):
+                    if not n[k].isdigit():         # 数字只由上面的整串比较覆盖
+                        covered[k] = True
+                break
+    return sum(covered) / len(n)
+
 
 class _SpokenConfirm:
     """`_resolve_spoken_confirm` 的返回值（见其 docstring）。"""
-    __slots__ = ("kind", "target", "candidates")
+    __slots__ = ("kind", "target", "candidates", "named")
 
-    def __init__(self, kind: str, target=None, candidates=None):
+    def __init__(self, kind: str, target=None, candidates=None, named: str = ""):
         self.kind = kind
         self.target = target
         self.candidates = list(candidates or [])
+        self.named = named
 
 # M2 重复副作用防抖的 fingerprint 和可信来源 source_intent 会由
 # ``_resume_result`` 显式保留；其它字段默认不进入挂起种子。
@@ -615,8 +669,29 @@ class PlannerEngine:
         #   · 一条 wait_confirm 都没有 ⇒ 「没有待确认的操作」，并提醒还在等补充的那条。
         confirm_resolved = False   # W01：本轮的确认已在挂起表里寻址完成（点名 / 唯一所指）
         if entries and not ctx.operation_id:
+            # 评审三轮 R3-01 B：点名确认的裁决面是已校验步骤摘要；旧记录没有就现取一次（只在有点名余量时）。
+            # 端侧对整句的解析只做否决（`_edge_nlu` 是端侧自己盖的章，客户端同名键在端侧入口剥掉）。
+            await self._ensure_confirm_facts(entries, text, ctx.is_confirmation)
             spoken = self._resolve_spoken_confirm(
-                text, ctx.is_confirmation, entries)
+                text, ctx.is_confirmation, entries,
+                edge_intent=str(getattr(ctx, "edge_nlu", "") or "").split("|", 1)[0].strip())
+            if spoken.kind == "mismatch":
+                # 点名召回到了挂起，却与它的已校验步骤对不上（「确认关闭后备箱」而挂着的是打开后备箱）——
+                # **不是授权**，也不按插话把这句交给规划去猜：念出等确认的是什么、怎么确认 / 作废。零动作、零关闭。
+                labels = "、".join(self._pending_label(s) for s in spoken.candidates)
+                await _emit_engine_lifecycle(
+                    ctx, "cloud.pending_mismatch", "system.pending_mismatch")
+                if len(spoken.candidates) == 1:
+                    speech = (f"我这边等您确认的是{labels}；您说的「{spoken.named}」我没法确定就是它，"
+                              "所以这次没有执行。是它的话请说「确认」，不需要就说「取消」。")
+                else:
+                    speech = (f"我这边等您确认的有{labels}；您说的「{spoken.named}」对不上其中任何一条，"
+                              "所以这次没有执行。请点选对应的确认条，或说出要确认哪一条。")
+                yield {"kind": "final", "speech": speech, "actions": [],
+                       "held_operation_ids": [
+                           s.operation_id for s in spoken.candidates if s.operation_id],
+                       "_outcome": "pending_mismatch"}
+                return
             if spoken.kind == "ambiguous":
                 labels = "，还是".join(
                     self._pending_label(s) for s in spoken.candidates)
@@ -695,6 +770,8 @@ class PlannerEngine:
                 return
             if cancelled.cancelled and cancelled.target and len(entries) >= 2:
                 hits = [s for s in entries if self._pending_names(s, cancelled.target)]
+                # 评审三轮 R3-01 B′：召回到多条时按覆盖度挑唯一最高者，并列才问（取消方向 fail-safe）
+                hits = self._best_named(hits, cancelled.target)
                 if len(hits) == 1:
                     pending = hits[0]
                 else:
@@ -2151,6 +2228,10 @@ class PlannerEngine:
             step_result.status == StepStatus.NEED_SLOT
             and probe.get("step_id") == step_result.step_id
             and probe.get("missing") == sorted(step_result.missing_slots or []))
+        # 评审三轮 R3-01 B：确认卡上那句「这次要确认的是什么」（Registry 能力描述 + 槽值）同时落进挂起态，
+        # 作为点名确认的裁决面——服务端生成、不经模型。一次 Registry 往返，卡片与挂起态共用。
+        describe = (await self._capability_describer()
+                    if step_result.status == StepStatus.NEED_CONFIRM else None)
         pending_state = SessionState(
             phase=("wait_confirm"
                    if step_result.status == StepStatus.NEED_CONFIRM
@@ -2163,6 +2244,8 @@ class PlannerEngine:
             slot_retry=(int(probe.get("retry") or 0) + 1) if repeated else 0,
             completed_results=completed,
             pending_plan=self._serialize_plan(plan),
+            action_summary=(contracts.action_summary(pending_step, describe)
+                            if describe is not None else ""),
         )
         save_status, evicted = await self.session.save_pending_result(
             ctx.session_id, pending_state)
@@ -2225,7 +2308,7 @@ class PlannerEngine:
                            or ctx.safety_origin_text or ctx.raw_text),
                 # 打磨批 G（裁决 J4）：人话摘要取 Registry 目录里这条能力的描述
                 # （端侧由 commands.yaml 机械生成，云侧不抄词表）；取不到就回退原话
-                describe=await self._capability_describer())
+                describe=describe)
         elif step_result.missing_slots:
             final_event["slot_request"] = contracts.build_slot_request(
                 operation_id=operation_id, step=pending_step,
@@ -2522,22 +2605,23 @@ class PlannerEngine:
 
     @staticmethod
     def _bare_affirmation(t: str) -> bool:
-        """整句是否只由肯定词 + 语气面组成（「好的，确认吧」「嗯可以」「行啊」→ True；
-        「行程」「确认函」「好像不对」→ False）。"""
+        """整句是否只由肯定词 + 语气面组成，**且至少有一个肯定词**（「好的，确认吧」「嗯可以」「行啊」→ True；
+        「行程」「确认函」「好像不对」→ False；「啊 / 唉 / 请 / 那 / 。」→ False——评审三轮 R3-01 A：
+        语气面只能修饰，不能独立授权，修前剥空即 True）。"""
         core = (t or "").strip().lower()
-        if not core:
-            return False
+        consumed = False
         while core:
             core = _CONFIRM_PARTICLE_RE.sub("", core)
             if not core:
-                return True
+                break
             for word in _YES_WORDS_BY_LEN:
                 if core.startswith(word):
                     core = core[len(word):]
+                    consumed = True
                     break
             else:
                 return False
-        return True
+        return consumed
 
     @staticmethod
     def _address_pending(entries: list, operation_id: str):
@@ -2549,22 +2633,27 @@ class PlannerEngine:
         return entries[-1] if entries else None
 
     @staticmethod
-    def _resolve_spoken_confirm(text: str, flagged: bool, entries: list) -> "_SpokenConfirm":
+    def _resolve_spoken_confirm(text: str, flagged: bool, entries: list,
+                                edge_intent: str = "") -> "_SpokenConfirm":
         """无寻址键的确认在挂起表里**指向谁**（W01）。
 
         返回 `kind`：
           · `""`           —— 这句话不是确认，本函数不表态；
           · `"one"`        —— 唯一所指（`target`）；
-          · `"ambiguous"`  —— ≥2 条 wait_confirm 且没点名（`candidates` 按挂起先后）；
+          · `"ambiguous"`  —— ≥2 条 wait_confirm 且没点名 / 点名同时兼容多条（`candidates`）；
           · `"none"`       —— 是确认词，但一条 wait_confirm 都没有；
-          · `"named_miss"` —— 「确认+点名」点到了不存在的那条（或点到多条）；
+          · `"named_miss"` —— 「确认+点名」一条都没召回到（按插话走）；
+          · `"mismatch"`   —— 点名召回到了候选，但没有一条与点名兼容（评审三轮 R3-01 B：`candidates` =
+                              召回到的那些、`named` = 点名余量）。**不是授权**，确定性出口念出等确认的是什么；
           · `"asking"`     —— 「可以吗 / 确认吗 / 行不行」：在**问**有没有 / 能不能确认
                               （`candidates` = 全部 wait_confirm）。真栈 2026-09-19 CF7：
                               这句交给规划会落 chitchat，1/2 次答「可以，已为您执行」——
                               零动作却声称做了。系统自己知道挂着什么，不该让模型答。
 
-        点名通道刻意窄：肯定词开头、余量 ≥2 字、余量是某条挂起 goal / 原话的**子串**，
-        且恰好命中一条。序数（「第一个」）不接——它在 wait_slot 语境里是选择卡的答案。
+        点名通道两段（R3-01 B）：肯定词开头、余量 ≥2 字 ⇒ **召回**（`_pending_names`，只找候选）⇒ **裁决**
+        （`_named_confirm_compatible`：点名的每一样东西都得是这一步已校验摘要里本来就有的；`edge_intent` =
+        端侧对整句的解析，点出另一个 intent 一票否决、从不授权）。序数（「第一个」）不接——它在 wait_slot
+        语境里是选择卡的答案。
         """
         confirms = [s for s in entries if getattr(s, "phase", "") == "wait_confirm"]
         t = (text or "").strip().lower()
@@ -2583,9 +2672,15 @@ class PlannerEngine:
                 return _SpokenConfirm("")
             hits = [s for s in confirms
                     if PlannerEngine._pending_names(s, remainder)]
-            if len(hits) == 1:
-                return _SpokenConfirm("one", target=hits[0])
-            return _SpokenConfirm("named_miss")
+            if not hits:
+                return _SpokenConfirm("named_miss")
+            compatible = [s for s in hits if PlannerEngine._named_confirm_compatible(
+                s, remainder, edge_intent)]
+            if len(compatible) == 1:
+                return _SpokenConfirm("one", target=compatible[0])
+            if len(compatible) >= 2:
+                return _SpokenConfirm("ambiguous", candidates=compatible)
+            return _SpokenConfirm("mismatch", candidates=hits, named=remainder)
         if len(confirms) == 1:
             return _SpokenConfirm("one", target=confirms[0])
         if len(confirms) >= 2:
@@ -2624,18 +2719,83 @@ class PlannerEngine:
 
     @staticmethod
     def _pending_names(state, needle: str) -> bool:
-        """余量是否点名了这条挂起：看 goal 与任务起点原话两处（都是这条任务自己的话）。
+        """**召回**：余量是否可能在说这条挂起——goal、任务起点原话、已校验步骤摘要三处。
 
         整串子串命中，或余量的任一二元片段命中（「咖啡订单」对「订一杯拿铁咖啡」靠「咖啡」）——
-        取消 / 确认的点名都是用户随口的称呼，很少与 goal 逐字相同；单字不算（评审二轮 R2）。"""
-        plan = getattr(state, "pending_plan", None) or {}
-        haystacks = [h.lower() for h in
-                     (str(plan.get("goal") or ""), str(plan.get("raw_text") or "")) if h]
+        取消 / 确认的点名都是用户随口的称呼，很少与 goal 逐字相同；单字不算（评审二轮 R2）。
+        ⚠ 这只是召回（评审三轮 R3-01 B）：「关闭后备箱」对「打开后备箱」照样召回得到，授权与否由裁决判。"""
+        haystacks = [h.lower() for h in PlannerEngine._naming_haystacks(state) if h]
         needle = str(needle or "").strip().lower()
         if len(needle) < 2 or not haystacks:
             return False
         grams = {needle} | {needle[i:i + 2] for i in range(len(needle) - 1)}
         return any(g in h for h in haystacks for g in grams)
+
+    @staticmethod
+    def _naming_haystacks(state) -> list[str]:
+        plan = getattr(state, "pending_plan", None) or {}
+        return [str(plan.get("goal") or ""), str(plan.get("raw_text") or ""),
+                str(getattr(state, "action_summary", "") or "")]
+
+    @staticmethod
+    def _pending_step(state):
+        """挂起那一步的 `(intent, slots)` 视图（从持久化计划里取；取不到返回 None）。"""
+        plan = getattr(state, "pending_plan", None) or {}
+        wanted = str(getattr(state, "pending_step_id", "") or "")
+        for item in plan.get("steps") or []:
+            if isinstance(item, dict) and str(item.get("id") or "") == wanted:
+                slots = item.get("slots") if isinstance(item.get("slots"), dict) else {}
+                return SimpleNamespace(intent=str(item.get("intent") or ""), slots=dict(slots))
+        return None
+
+    @staticmethod
+    def _named_confirm_compatible(state, needle: str, edge_intent: str = "") -> bool:
+        """**裁决**：点名余量与这条挂起的已校验步骤是否兼容（评审三轮 R3-01 B）。
+
+        事实只取 `state.action_summary`——挂起那一刻服务端生成的能力描述 + 槽值（确认卡上给用户看的同一句）。
+        **LLM goal 与任务原话只进召回，不进裁决**：原话里可能正有与这一步相反的词（「打开后备箱，别关闭车窗」时
+        「确认关闭车窗」会被原话覆盖）。摘要为空（旧记录现取也取不到）⇒ 不兼容：点名不能授权，裸「确认」仍可。
+        `edge_intent`（端侧对整句的规则解析）只做否决：它点出另一个 intent ⇒ 不兼容；与这一步相同也不替摘要授权。
+        """
+        step = PlannerEngine._pending_step(state)
+        if edge_intent and step is not None and step.intent and edge_intent != step.intent:
+            return False
+        summary = str(getattr(state, "action_summary", "") or "")
+        return bool(summary) and _naming_coverage(needle, [summary]) >= 1.0
+
+    @staticmethod
+    def _best_named(hits: list, needle: str) -> list:
+        """点名取消在 ≥2 条召回里挑**覆盖度唯一最高**的那条（R3-01 B′）；并列返回并列的全部（调用方问一次）。
+
+        取消方向 fail-safe，覆盖面用召回那三处（goal / 原话 / 摘要）。「取消刚才拿铁咖啡」在拿铁 / 美式并存时
+        不再白问一次；「取消刚才那杯咖啡」两条同分，照旧问。"""
+        if len(hits) < 2:
+            return list(hits)
+        scored = [(_naming_coverage(needle, PlannerEngine._naming_haystacks(s)), s) for s in hits]
+        top = max(score for score, _ in scored)
+        return [s for score, s in scored if score == top]
+
+    async def _ensure_confirm_facts(self, entries: list, text: str, flagged: bool) -> None:
+        """旧记录（本字段诞生之前挂起的）没有 `action_summary`：点名确认时现取一次 Registry 描述补上（只在内存里）。
+
+        只在这句话真有点名余量时才去取——裸「确认」与普通插话不多一次 Registry 往返。取不到就留空，裁决判不兼容。"""
+        if flagged:
+            return
+        missing = [s for s in entries or []
+                   if getattr(s, "phase", "") == "wait_confirm"
+                   and not getattr(s, "action_summary", "")]
+        if not missing:
+            return
+        _bare, remainder = self._split_confirm_prefix((text or "").strip().lower())
+        if not remainder:
+            return
+        describe = await self._capability_describer()
+        if describe is None:
+            return
+        for state in missing:
+            step = self._pending_step(state)
+            if step is not None:
+                state.action_summary = contracts.action_summary(step, describe)
 
     @staticmethod
     def _is_bare_confirm_word(text: str) -> bool:

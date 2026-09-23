@@ -703,10 +703,13 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         # `_edge_executed` 是端侧执行器签发给云侧的内部事实，不是客户端输入。
         # 网关会透传 HMI meta，因此每轮入口必须先剥掉同名键；混合路径只有在 VAL
         # 实际成功后才会重新写入。否则网页/手机可伪造「刚执行过什么」污染指代焦点。
+        # `_edge_nlu` 同理（评审三轮 R3-01 B，2026-09-23）：云侧拿它否决与挂起步骤矛盾的点名确认，
+        # 它必须是端侧自己的规则判断，客户端带来的同名键一律不算。
         try:
             request.meta.pop("_edge_executed", None)
             request.meta.pop("_edge_previous_local_exchange", None)
             request.meta.pop("_edge_previous_local_actions", None)
+            request.meta.pop("_edge_nlu", None)
         except Exception:
             pass
         # 把端侧真实车辆电量注入 meta，透传给云端 Agent（充电规划等），避免云端读 memory
