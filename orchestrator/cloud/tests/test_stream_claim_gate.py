@@ -46,11 +46,17 @@ def test_gate_drops_a_claim_that_never_got_its_punctuation():
 
 
 def test_gate_releases_an_overlong_clean_sentence_without_waiting():
-    """有界：一句话超过上限还没标点 ⇒ 不是声称就放（不让正常长句卡在缓冲里）。"""
+    """有界：一句话超过上限还没标点 ⇒ 不是声称就放（不让正常长句卡在缓冲里）。
+
+    ⚠ 评审三轮 R3-04 改写：二轮版在这里**整段**放行、flush 为空——正是它让「160 字前缀 +『已』」一包放行、
+    「为您关闭车窗。」下一包也放行。三轮起超长句只放保留区之前的前缀，末尾 `CLAIM_SPAN_MAX` 个非空白字等后文或流末。"""
+    from runtime.execution_claim import CLAIM_SPAN_MAX
+    text = "这是一段很长很长没有标点的普通解释文字一直说下去"
     gate = ExecutionClaimGate(limit=20)
-    out = gate.feed("这是一段很长很长没有标点的普通解释文字一直说下去")
+    out = gate.feed(text)
     assert out.startswith("这是一段")
-    assert gate.flush() == ""
+    assert len(text) - len(out) <= CLAIM_SPAN_MAX
+    assert out + gate.flush() == text
 
 
 def test_gate_keeps_holding_an_overlong_claim():

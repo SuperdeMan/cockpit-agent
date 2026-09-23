@@ -200,6 +200,19 @@ R3-06 在真栈上要靠模型恰好复用 ID，确定性证据是离线三批�
   `strip_execution_claims` 与闸一次喂入逐字相同；D0 / T2 的 final 与增量拼接一致。
 - 变异：保留窗口改 0 / 超长句退回整段放行 / final 重新全文剥，各自判红。
 
+### 5.1 落地记录（2026-09-23）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| 切包不变 | `runtime/execution_claim.py`：`ExecutionClaimGate` 重写——≤ 160 字的句子整句判（同二轮）；超长句进分段模式，只放「保留区」之前的前缀（`CLAIM_SPAN_MAX = 15` 个非空白字），声称成立就丢掉从它起点到所在分句结束的那一段（句末标点照放），其余照放；`released` 记用户实际收到的全部文本；`first_hold_ms` 记首次放行等待。三条正则合成 `_CLAIM_RE`（最左一处）；`strip_execution_claims` 改成同一个闸一次喂入；诚实话术 `CLAIM_STRIPPED_SPEECH` 只留一份 | 新 `test_claim_gate_invariance` 13：13 段语料 × 45 种随机切包 = 585 次，放出文本与删掉处数都与一次喂入逐字相同、且不含任何声称；评审反例（160 字 +「已」/「为您关闭车窗。」）；strip = 一次喂入；保留区从三条正则推导（`re._parser` 去掉 `\s*` 后求最大宽度）；超长干净句分段放；首次放行等待量得到；超长句里只丢声称那一分句（不残留「关闭车窗」） |
+| 发布即权威 | `engine._stream_single_step` / `loop` T2 流式：闸拦过东西时，这一步的话术 = 闸实际放出去的那份（全拦 ⇒ 诚实话术），final / 落库不再对 Agent 全文另切一遍；`step.agent` span 加 `claim_gate_hold_ms` / `claim_gate_removed` | D0：评审切法不出客户端且 final = 流出；全拦 ⇒ 共用诚实话术；**Agent 的 final 全文与增量不一致时 final 仍取流出的那份**（这一条才分得开「发布即权威」与「切包不变」）；span 带等待；T2 同两条 |
+| 既有测试改写（留痕） | `test_gate_releases_an_overlong_clean_sentence_without_waiting`：二轮版钉的「超长干净句整段放、flush 为空」正是评审点名的放行规则，改成「只留保留区、合起来逐字相同」 | 绿 |
+
+定向读数：cloud + runtime + chitchat + scripts + 对比对 4096 passed / 12 skipped；四门禁 + smoke_edge 13/13；**六处变异各判红**
+（无保留区（二轮规则）红 4、保留区窄于最宽声称红 1、超长句只丢标记不丢到分句结束红 1——第一趟是绿的，补了「不残留关闭车窗」才判红、D0 final 重剥全文红 1、
+T2 final 重剥全文红 2、span 不带等待红 1）。
+**全量固定口径（批 D + §4.2 工作树，`TZ=UTC0` `-n 6`）：9159 passed / 0 failed / 32 skipped / 10 warnings，312 s。**
+
 ## 6. 评审「体验与评测意见」的处置
 
 | 意见 | 处置 |

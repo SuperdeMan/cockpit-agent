@@ -32,7 +32,7 @@ from . import candidate_query
 from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
-    ExecutionClaimGate, execution_claim, strip_execution_claims)
+    CLAIM_STRIPPED_SPEECH, ExecutionClaimGate, execution_claim, strip_execution_claims)
 from runtime.clause_split import split_clauses
 from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
@@ -434,6 +434,14 @@ def _actionability_attrs(plan) -> dict:
                 "1" if raw.split("|", 1)[0] == planner_decision else "0")}
 
 
+def _claim_gate_attrs(gate) -> dict:
+    """流式声称闸的观测（评审三轮 R3-04）：首次放行等待与拦下处数；没挂闸 / 没放行过就不发。"""
+    if gate is None or gate.first_hold_ms is None:
+        return {}
+    return {"claim_gate_hold_ms": int(round(gate.first_hold_ms)),
+            "claim_gate_removed": int(gate.removed)}
+
+
 async def _emit_engine_lifecycle(ctx: PlanContext, node: str, intent: str) -> None:
     """Give deterministic engine-only turns an auditable owner and intent."""
     await obs_events.get_emitter("cloud").emit_span(
@@ -530,7 +538,7 @@ class PlannerEngine:
                                                sources=turn_sources)
 
     #: W14：谈话步的声称句全部剥空之后的诚实话术（零领域词）。
-    _CLAIM_STRIPPED_SPEECH = "这一轮我没有执行任何操作。要我做什么的话，说具体一点，我来安排。"
+    _CLAIM_STRIPPED_SPEECH = CLAIM_STRIPPED_SPEECH     # 一句话只留一份（runtime.execution_claim，流式出口共用）
 
     @staticmethod
     async def _emit_execution_claim(ctx, event: dict, actions: list) -> None:
@@ -1843,6 +1851,10 @@ class PlannerEngine:
             final_sr = self.executor._enforce_response_only(step, final_sr)
         if final_sr is None:
             return
+        # 评审三轮 R3-04：发布即权威——闸拦过东西时，这一步的话术就是闸**实际放出去**的那份（全拦 ⇒ 诚实话术），
+        # final / 落库不再对 Agent 的全文另用一套切法重剥（切法不同，用户听到的与存下来的就可能不同）。
+        if gate is not None and gate.removed and final_sr.status == StepStatus.OK:
+            final_sr.speech = gate.released or CLAIM_STRIPPED_SPEECH
         stream.on_final()
         # M2 Verifier：流式直通不经 executor._exec_step，必须在此显式对账，否则 capability 声明了
         # verification 却静默不生效（真栈首验实测：weather 走 D0 流式，一条 step.verify span 都没有）。
@@ -1861,7 +1873,9 @@ class PlannerEngine:
                    "kind": "agent", "deployment": "cloud", "via": "stream",
                    # W16-b 可观测（与 dispatcher / loop 同一格）：换了起点原话才出现
                    **({"raw_text_from": "origin"}
-                      if step_call_context(step, ctx) is not ctx else {})})
+                      if step_call_context(step, ctx) is not ctx else {}),
+                   # R3-04：句级等待的代价量出来——第一个增量进门到第一次放行（首字时延里闸占的那一截）
+                   **_claim_gate_attrs(gate)})
         # 过程区的「完成」事件与 executor 路径同款（同一 step_id 合并 running→done）
         if show_process and final_sr.status in (
                 StepStatus.OK, StepStatus.NEED_CONFIRM, StepStatus.NEED_SLOT):

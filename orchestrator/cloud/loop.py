@@ -14,7 +14,7 @@ from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
-from runtime.execution_claim import ExecutionClaimGate
+from runtime.execution_claim import CLAIM_STRIPPED_SPEECH, ExecutionClaimGate
 from runtime.outcome import all_refused_unsupported, outcome_of_results
 from observability import events as obs_events
 from observability.metrics import metrics
@@ -344,6 +344,10 @@ class LoopController:
                 elif (final_sr is not None
                       and bool(getattr(step, "response_only", False))):
                     final_sr = self.executor._enforce_response_only(step, final_sr)
+                # 评审三轮 R3-04：发布即权威（与 engine D0 同一条）——闸拦过东西，这一步的话术就是闸放出去的那份
+                if (gate is not None and gate.removed and final_sr is not None
+                        and final_sr.status == StepStatus.OK):
+                    final_sr.speech = gate.released or CLAIM_STRIPPED_SPEECH
 
                 if final_sr is not None:
                     stream.on_final()
@@ -370,7 +374,11 @@ class LoopController:
                                    "via": "stream",
                                    # W16-b 可观测（与 dispatcher 同一格）：换了起点原话才出现
                                    **({"raw_text_from": "origin"}
-                                      if step_call_context(step, ctx) is not ctx else {})})
+                                      if step_call_context(step, ctx) is not ctx else {}),
+                                   # R3-04：闸的首次放行等待与拦下处数（同 engine D0 那一格）
+                                   **({"claim_gate_hold_ms": int(round(gate.first_hold_ms)),
+                                       "claim_gate_removed": int(gate.removed)}
+                                      if gate is not None and gate.first_hold_ms is not None else {})})
                     except Exception:
                         pass
                     results.append(final_sr)
