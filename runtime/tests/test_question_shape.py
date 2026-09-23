@@ -266,3 +266,72 @@ def test_imperative_openings(text):
 def test_non_imperative_openings(text):
     from runtime.question_shape import is_imperative_opening
     assert not is_imperative_opening(text), text
+
+
+# ── 评审三轮追加批 E（2026-09-23）：列举问法与原因问法 ─────────────────────────
+# E1：「有哪些 / 有什么 / 哪些 / 哪几 / 哪部 / 哪首」此前不在任何一类里 ⇒ 端侧本地复算「天窗有什么用」打开天窗、
+# 「空调有什么模式」开空调、「氛围灯有哪些颜色」开氛围灯、「有什么好看的电影」播视频——正是本模块 docstring
+# 第一段要挡的形态。与 `MANNER_ASKS` 同一条配对：句中带操作动词仍是指令。
+# E2：原因问法只用于**查询**的让路（端侧只有读数，答不了「为什么」），不参与写操作的问句判定。
+
+@pytest.mark.parametrize("text", [
+    "天窗有什么用",
+    "空调有什么模式",
+    "氛围灯有哪些颜色",
+    "座椅有哪些模式",
+    "香氛有什么味道",
+    "有什么好看的电影",
+    "适合全家看的电影有哪些",
+    "哪部电影好看",
+    "哪首歌最好听",           # 「哪首歌适合开车听」不在此列：「开车」里的「开」按操作动词配对（与方式问法同样粗）
+    "驾驶模式有哪几种",
+])
+def test_enumeration_asks_are_questions(text):
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "空调有哪些模式，开个制冷",      # 列举问 + 操作动词：用户同时下了指令
+    "没有什么问题，把车窗打开",      # 「没有什么」不是列举问
+    "没什么事，关掉音乐",
+    "帮我看看有什么歌",              # 祈使标记在前
+    "天窗有什么用，打开看看",
+    "打开车窗，没有什么问题",        # 「没有什么」在后、其后无操作动词：只有「没」的排除挡得住
+])
+def test_enumeration_words_do_not_veto_a_directive(text):
+    assert is_non_directive_question(text) is False, text
+
+
+def test_enumeration_and_reason_tables_are_closed_function_word_classes():
+    from runtime.question_shape import ENUMERATION_ASKS, REASON_ASKS
+    vocab = _domain_vocabulary()
+    for word in (*ENUMERATION_ASKS, *REASON_ASKS):
+        assert word not in vocab, word
+
+
+@pytest.mark.parametrize("text", [
+    "给我讲讲新能源车冬天续航为什么会下降",
+    "为什么续航下降这么快",
+    "电量为什么掉得这么快",
+    "胎压为什么报警",
+    "续航下降是什么原因",
+    "电量怎么这么低",
+    "胎压报警是怎么回事",
+    "续航怎么会差这么多",
+])
+def test_reason_asks_are_recognised(text):
+    from runtime.question_shape import asks_for_reason
+    assert asks_for_reason(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "续航还有多少",
+    "电量还剩多少",
+    "告诉我还剩多少电",
+    "胎压多少",
+    "续航怎么样",
+    "介绍一下这车的续航",
+])
+def test_value_questions_are_not_reason_asks(text):
+    from runtime.question_shape import asks_for_reason
+    assert asks_for_reason(text) is False, text

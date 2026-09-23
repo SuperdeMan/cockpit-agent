@@ -69,6 +69,15 @@ ASK_PREFIXES = ("请问", "问一下", "问下", "想问一下", "想问", "请�
 #: 后面没有疑问框架，是交付要求，不在此列。零领域词。
 EXPLAIN_REQUESTS = ("告诉我", "说说", "讲讲", "说一下", "讲一下", "说明一下", "解释一下", "解释",
                     "介绍一下", "介绍", "教我", "教教我", "科普一下")
+#: 列举问法（评审三轮追加批 E，2026-09-23）：问的是「有哪些 / 是哪几个」，不是让系统操作。此前不在任何一类里，
+#: 端侧本地复算「天窗有什么用」**打开天窗**、「空调有什么模式」开空调、「氛围灯有哪些颜色」开氛围灯、「有什么好看的
+#: 电影」播视频——本模块第一段要挡的就是这种形态。配对规则见 `_enumeration_question`：列举词之后带操作动词仍算指令
+#: （「空调有哪些模式，开个制冷」）。「没有什么 / 没有哪些」是否定陈述，不算。
+ENUMERATION_ASKS = ("有哪些", "有什么", "哪些", "哪几", "哪部", "哪首")
+#: 原因问法（同一批）：问的是「为什么 / 怎么回事」，要的是**解释**。它不参与写操作的问句判定（「为什么要把温度调那么高」
+#: 的既有合同由 `MANNER_ASKS` 管），只供**查询**让路——端侧只有读数，「新能源车冬天续航为什么会下降」曾被答成「电量72%」。
+REASON_ASKS = ("为什么", "为啥", "什么原因", "啥原因", "原因", "原理", "怎么回事", "咋回事",
+               "怎么会", "咋会", "怎么这么", "咋这么", "怎么那么")
 
 # 方法问句中的动作词。它们仍是零领域的句法词，不包含任何车辆对象；“对象在前/动作在前，
 # 中间带怎么/如何”的形态由本模块统一判定，端侧与云侧共用。刻意不含“调高/调低”：
@@ -104,6 +113,10 @@ _EXPLAIN_REQUEST_RE = re.compile(
     rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再)*\s*(?:{_EXPLAIN_ALT})"
     r"[，,]?\s*.{0,16}?(?:怎么|怎样|咋|如何|为什么|为啥|什么|哪个|哪种|哪里|哪边|几|多少|多久"
     r"|能不能|可不可以|是不是|有没有|会不会|支不支持)")
+#: 「有 …」开头的两种列举问前面不能紧挨「没」（「没有什么问题」是陈述）。
+_ENUMERATION_RE = re.compile("|".join(
+    (rf"(?<!没){re.escape(word)}" if word.startswith("有") else re.escape(word))
+    for word in sorted(ENUMERATION_ASKS, key=len, reverse=True)))
 
 
 _POLITE_TAIL_ALT = "|".join(sorted(map(re.escape, POLITE_TAILS), key=len, reverse=True))
@@ -175,6 +188,15 @@ def is_explanation_request(t: str | None) -> bool:
     return bool(_EXPLAIN_REQUEST_RE.match(strip_ask_prefix(t)))
 
 
+def asks_for_reason(t: str | None) -> bool:
+    """「续航为什么会下降」「胎压报警是怎么回事」「电量怎么这么低」——要的是解释，不是一个读数。
+
+    只给**查询**的让路用（端侧 `classify_structured` 出口第五维）；「续航还有多少」「续航怎么样」不算。
+    """
+    body = strip_ask_prefix(t)
+    return any(word in body for word in REASON_ASKS)
+
+
 def is_non_directive_question(t: str) -> bool:
     """这句话是在**问**，而不是在**下指令**。"""
     # 「请问…」的「请」不是祈使标记：先剥掉提问前缀，再按主体判（评审二轮 R9）。
@@ -204,5 +226,20 @@ def is_non_directive_question(t: str) -> bool:
             or any(w in t for w in CHOICE_ASKS)
             or any(w in t for w in REFERENCE_ASKS)):
         return True
+    if _enumeration_question(t):
+        return True
     return (any(w in t for w in MANNER_ASKS)
             and not any(v in t for v in OPERATION_VERBS))
+
+
+def _enumeration_question(t: str) -> bool:
+    """列举问，且列举词**之后**没有操作动词。
+
+    配对只看列举词之后：列举问的主语在前（「空调有什么模式」），而操作动词按字匹配，「空调」的「调」会把
+    整句误判成指令；跟在后面的操作动词才说明用户同时下了指令（「空调有哪些模式，开个制冷」「天窗有什么用，打开看看」）。
+    """
+    match = _ENUMERATION_RE.search(t)
+    if not match:
+        return False
+    tail = t[match.end():]
+    return not any(v in tail for v in OPERATION_VERBS)

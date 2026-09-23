@@ -266,6 +266,36 @@ def _route_preference_only(text: str) -> bool:
     ))
 
 
+# ── 只说了从哪出发（评审三轮追加批 E，2026-09-23）───────────────────────────
+# 真栈 `c99a9a74` RS21「从深圳欢乐海岸出发，不走高速」三趟两趟被执行成导航：planner 只给 origin 时，目的地
+# 为空的原话兜底拿**整句**去搜，搜回起点本身（「从华侨城欢乐海岸导航到华侨城欢乐海岸」）；planner 编出
+# `destination=天安门` 时照单规划了 2390 km。这句话里的地点只有起点——目的地必须来自这句话或会话，否则问。
+#: 起点框架：「从 X 出发 / 动身 / 启程 / 开车」。只认出发义动词：「从北京到上海」的「到」是去向，去掉起点那截
+#: 之后它还在；「从滨海大道走」的「走」是途经不是起点，不收。起点里不许含去向字——否则
+#: 「从深圳市民中心到深圳北站开车大概多远」会把「深圳市民中心到深圳北站」整段吃成起点（第一版就这么红的）。
+_ORIGIN_FRAME_RE = re.compile(r"从\s*([^，,。！？!?\s去到往回]{1,20}?)\s*(?:出发|动身|启程|开车)")
+#: 去向表达：这句话自己说了要去哪——去 / 到 / 往 / 回 / 接 / 送 / 导航 / 指代。
+_DEST_EXPR_RE = re.compile(r"[去到往回接送]|导航|那里|那儿|那边|那家|这家")
+#: 起终点解析到同一处的距离（km）：从 X 导航到 X 永远不是用户要的。
+_SAME_PLACE_KM = 0.3
+
+
+def _origin_named(raw_text: str) -> tuple[str, str]:
+    """(原话去掉「从 X 出发」那一截, X)；原话没说从哪出发 ⇒ (原话, "")。"""
+    text = raw_text or ""
+    m = _ORIGIN_FRAME_RE.search(text)
+    if not m:
+        return text, ""
+    return text[:m.start()] + text[m.end():], m.group(1)
+
+
+def _without_route_prefs(text: str) -> str:
+    """去掉路线偏好短语（不走高速 / 避堵 / 少收费 / 不走快速路）——它们从来不是地名。"""
+    for pattern in (_PREF_NO_HW_RE, _PREF_JAM_RE, _PREF_TOLL_RE, _PREF_EXPRESS_RE):
+        text = pattern.sub("", text or "")
+    return text
+
+
 def _rating_policy(value, raw_text: str) -> tuple[float, bool]:
     """Normalize planner rating slots and retain superlative ordering semantics."""
     text = str(value or "").strip()
@@ -427,6 +457,10 @@ class NavigationAgent(BaseAgent):
             return AgentResult(status=NEED_SLOT, speech="您想算到哪里的路程？",
                                follow_up="说个目的地，比如「到深圳北站多远」",
                                missing_slots=["destination"])
+        # 批 E：与 navigate_to 同一份判据——只说了从哪出发，目的地不许是 planner 编的
+        origin_only = self._unspoken_destination(dest_text, raw_text, meta)
+        if origin_only:
+            return self._ask_destination(origin_only, estimate=True)
         dest_name, dest_pt = await self._resolve_point(dest_text, ctx, meta)
         if dest_pt is None:
             return AgentResult(
@@ -746,12 +780,52 @@ class NavigationAgent(BaseAgent):
                 return v
         return c
 
+    def _unspoken_destination(self, dest: str, raw_text: str, meta) -> str:
+        """原话只说了从哪出发、目的地既不来自这句话也不来自会话 ⇒ 返回起点原话（调用方据此追问）；否则空串。
+
+        三条同时成立才算：① 去掉「从 X 出发」那截之后没有去向表达；② 目的地（可以为空）不沾那截之外的原话；
+        ③ 目的地不是会话里已确立的——引擎按 location scope 下发的焦点目的地 / 活动路线终点（LLM 与客户端都写不到
+        step.meta）。「上一轮算过到世界之窗多远，这一轮『那就从欢乐海岸出发吧』」由 ③ 放行。
+        """
+        rest, origin = _origin_named(raw_text)
+        if not origin or _DEST_EXPR_RE.search(rest):
+            return ""
+        d = (dest or "").strip()
+        if d and _grounded_in_raw(d, rest):
+            return ""
+        route = self._active_route_from(meta) or {}
+        known = [str((meta or {}).get("focus_destination") or "").strip(),
+                 str(route.get("destination") or "").strip()]
+        if d and any(k and _grounded_in_raw(d, k) for k in known):
+            return ""
+        return origin
+
+    @staticmethod
+    def _ask_destination(origin: str, *, estimate: bool = False,
+                         same_place: bool = False) -> AgentResult:
+        """追问去哪。`missing_slots=["destination"]` 不能省：续接时引擎只覆盖列出的槽，
+        否则 planner 编的目的地还留在槽里，用户答完照样导航过去。"""
+        if same_place:
+            speech = f"起点和终点都在{origin}这一带。您要从{origin}出发去哪里？"
+        elif estimate:
+            speech = f"您想算从{origin}出发到哪里的路程？"
+        else:
+            speech = f"您要从{origin}出发去哪里？"
+        return AgentResult(status=NEED_SLOT, speech=speech,
+                           follow_up="说个目的地，比如「去世界之窗」",
+                           missing_slots=["destination"])
+
     async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
         raw_text = (intent.raw_text or "").strip()
+        # 批 E：只说了从哪出发 ⇒ 目的地必须来自这句话或会话（planner 编的、原话兜底搜回起点的都不算）
+        origin_only = self._unspoken_destination(dest, raw_text, meta)
+        if origin_only:
+            return self._ask_destination(origin_only)
         if not dest:
-            # 槽位为空时，尝试用 raw_text 做模糊搜索（处理"导航到上海那个像船一样的建筑"）
-            raw = raw_text
+            # 槽位为空时，尝试用 raw_text 做模糊搜索（处理"导航到上海那个像船一样的建筑"）。
+            # 批 E：先去掉「从 X 出发」与路线偏好——起点和「不走高速」都不是目的地（修前「不走高速」被拿去搜地名）。
+            raw = _without_route_prefs(_origin_named(raw_text)[0]).strip("，。, 、")
             for prefix in ("导航到", "导航去", "导航", "带我去", "去", "到"):
                 if raw.startswith(prefix):
                     raw = raw[len(prefix):].strip()
@@ -760,7 +834,8 @@ class NavigationAgent(BaseAgent):
             if raw:
                 dest = raw
         if not dest:
-            return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地")
+            return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地",
+                               missing_slots=["destination"])
 
         # G1/G11：到达时限（「五点前到」）与路线偏好（「不走高速/避堵」）——slot 优先、
         # 原话确定性兜底；解析结果贯穿本次导航的全部路径（普通/顺路停靠/途经点/常用地点）。
@@ -1062,6 +1137,10 @@ class NavigationAgent(BaseAgent):
                     speech=f"我没找到您说的起点「{o_name or origin_text}」。",
                     follow_up="换个说法告诉我出发地，或者直接说「从当前位置出发」。",
                     missing_slots=["origin"])
+            # 批 E：起终点解析到同一处（修前「从华侨城欢乐海岸导航到华侨城欢乐海岸」）——从 X 导航到 X 永远不是用户要的。
+            if (first.lat is not None and first.lng is not None and self._rough_km(
+                    o_pt.lat, o_pt.lng, float(first.lat), float(first.lng)) < _SAME_PLACE_KM):
+                return self._ask_destination(o_name, same_place=True)
             origin_pair = (o_name, o_pt)
         return await self._route_plan_to(
             first.name, first.address, first.lat, first.lng, meta,
