@@ -122,3 +122,47 @@ def test_a_bare_object_with_a_clarify_marker_still_gets_the_honest_unresolved_ex
     marker = '{"addressed":true,"steps":[],"goal":"需要澄清：用户只给了地点名，未说明要做什么"}'
     plan, calls = _build([marker, "这不是 JSON"], "云岚国际中心")
     assert plan.technical_failure is True and plan.clarify_wanted is True
+
+
+def _build_with_source(replies, text, input_source):
+    calls = {"llm": 0}
+
+    async def mock_llm(messages):
+        calls["llm"] += 1
+        return replies[min(calls["llm"] - 1, len(replies) - 1)]
+
+    async def mock_resolve(query, top_k=1):
+        return []
+
+    builder = PlanBuilder(llm_fn=mock_llm, registry_fn=mock_resolve)
+    ctx = PlanContext(session_id="test", prefs={"input_source": input_source} if input_source else {})
+    return asyncio.run(builder.build(text, WorkingSet(catalog=_agents()), ctx))
+
+
+@pytest.mark.parametrize("replies", [
+    [NO_ACTION, NOT_ADDRESSED],          # 真栈 `a59b1621` RS29「天窗为什么关不上」第 3 趟逐字
+    [NOT_ADDRESSED, NOT_ADDRESSED],
+])
+def test_a_not_addressed_empty_plan_on_typed_information_request_is_answered(replies):
+    """显式输入里「不受话」不成立（拒识只盖语音来源）：最后一轮合法的「不受话、零步」落进 engine 就是「抱歉，我没听清」。"""
+    plan = _build_with_source(replies, "天窗为什么关不上", "")
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan.steps
+    assert plan.plan_mode.endswith("_not_addressed_info"), plan.plan_mode
+
+
+def test_voice_not_addressed_stays_a_rejection():
+    """语音来源的「不受话」是拒识的正式出口，一字不动。"""
+    plan = _build_with_source([NOT_ADDRESSED], "天窗为什么关不上", "voice_wake")
+    assert plan.steps == [] and plan.addressed is False
+
+
+def test_a_typed_directive_not_addressed_is_not_turned_into_talk():
+    plan = _build_with_source([NOT_ADDRESSED, NOT_ADDRESSED], "打开空调", "")
+    assert not plan.plan_mode.endswith("_not_addressed_info")
+
+
+def test_a_typed_bare_object_not_addressed_is_not_turned_into_talk():
+    """对照（走得到新规则的那一条）：光说一个地名不是求信息的请求，「不受话、零步」照旧交 engine。"""
+    plan = _build_with_source([NOT_ADDRESSED, NOT_ADDRESSED], "云岚国际中心", "")
+    assert plan.steps == [] and plan.addressed is False
+    assert not plan.plan_mode.endswith("_not_addressed_info")

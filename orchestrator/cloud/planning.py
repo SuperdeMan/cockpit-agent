@@ -2035,6 +2035,18 @@ class PlanBuilder:
                             "answering with the talk agent: %s", text[:40])
                 plan = talk
                 plan_mode = f"{last_mode}_no_action_info"
+        # F-2 续：显式输入（文字 / 按键 / 旧客户端，非语音）里最后一轮是合法的「不受话、零步」——对显式输入它不成立
+        # （拒识只盖语音来源，engine 对它不消费 addressed），落进 engine 就是「抱歉，我没听清」。真栈 `a59b1621` RS29
+        # 「天窗为什么关不上」第 3 趟：一轮无需动作、一轮不受话 ⇒「没听清」。求信息的请求照样交兜底谈话；指令句不动。
+        if (plan is not None and not plan.steps and not plan.clarify and not plan.addressed
+                and not is_voice_input_source((ctx.prefs or {}).get("input_source", ""))
+                and is_information_request(text)):
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                logger.info("typed information request planned as not-addressed; "
+                            "answering with the talk agent: %s", text[:40])
+                plan = talk
+                plan_mode = f"{plan_mode or last_mode}_not_addressed_info"
 
         technical_failure = False
         if plan is None:
