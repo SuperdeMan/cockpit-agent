@@ -35,6 +35,7 @@ from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
 from runtime import memory_directive as _memory_directive
+from runtime.affirmation import is_acknowledgment_only
 from runtime.clause_split import split_clauses
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
@@ -1806,7 +1807,9 @@ class PlanBuilder:
                 input_source=str((ctx.prefs or {}).get("input_source", ""))).as_attr()
             # 两个 build 出口共用同一终结器：blocked 后只允许未确认的 talk 兜底，
             # 否则保持空计划 fail closed；不能由早退路径绕开确认写安全闸。
-            return self._apply_question_side_effect_guard(focused_plan, text, agents)
+            return self._apply_ack_write_guard(
+                self._apply_question_side_effect_guard(focused_plan, text, agents),
+                text, working_set, agents)
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
         # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
@@ -2187,6 +2190,8 @@ class PlanBuilder:
         # 所有 build 出口共用同一终结器：LLM 计划、降级语义路由、route_hints 补步
         # 与 focused 早退均按同一份判据收束，避免任何一路绕开确认写安全闸。
         plan = self._apply_question_side_effect_guard(plan, text, agents)
+        # 追加批 I：纯应答（「可以，已为您执行」）长不出写步——同一个终结器位置，两个出口都挂。
+        plan = self._apply_ack_write_guard(plan, text, working_set, agents)
         # ── 安全闸二：安全信号在场时不许以「澄清 / 没听清」收场（余项 ①，2026-08-29）──
         # 挂在常规规划出口、紧随终结器之后：上面那条只管「问句被规划成端侧写或需确认步骤之后
         # 空了」，这条管**planner 自己就没产出步**的那一类——真栈取样里它才是主形态。
@@ -3232,6 +3237,53 @@ class PlanBuilder:
             if talk is not None:
                 plan.steps = talk.steps
                 plan.clarify = None
+        return plan
+
+    @staticmethod
+    def _write_steps(steps: list) -> list:
+        """有副作用的步：问句安全闸那一份（端侧写 / 需确认）+ 能力声明 `effect: write` 的云侧步（追加批 I）。
+
+        云侧未声明 effect 的步不算（同问句闸的口径：对每个云侧操作名套 `is_write_intent` 会把 search / menu 误判成写）。
+        """
+        side = PlanBuilder._side_effect_steps(steps)
+        seen = {id(step) for step in side}
+        return side + [step for step in steps if id(step) not in seen
+                       and str(getattr(step, "effect", "") or "") == "write"]
+
+    @staticmethod
+    def _assistant_asked(working_set) -> bool:
+        """最近一条助手话在问 / 在提议（带问号）⇒ 这一轮的「好的 / 可以」可能是在接受它。没有上文 ⇒ False。"""
+        for message in reversed(list(getattr(working_set, "history", None) or [])):
+            if not isinstance(message, dict) or message.get("role") == "user":
+                continue
+            said = str(message.get("text") or "")
+            return "？" in said or "?" in said
+        return False
+
+    def _apply_ack_write_guard(self, plan: Plan, text: str, working_set,
+                               agents: list = None) -> Plan:
+        """追加批 I（设计 §12）：**纯应答长不出写步。**
+
+        `a4bb73bf` RS21 第 3 趟：「可以，已为您执行」**第一轮**就被规划成 `reminder.cancel {index:"2"}`（没经过任何重试，
+        批 G 的 G-3 不在场），碰巧没有第 2 条提醒；历史上同一句还被规划成 `reminder.cancel {title:"第二个"}` / `research.run`。
+        这句话 = 一个应答词 + 一句助手口吻的执行声称，没有任何请求（`runtime.affirmation`），上一轮助手也没有提议。
+        判据三条同时成立才拦：原话是纯应答、计划里有写步（`_write_steps`）、最近一条助手话不是提问——「好的」接在
+        「要不要我帮你把空调调高一点？」之后照常执行。拦就整份换兜底谈话：请求本身不存在，剩下的步同样没有来由。
+        只读步不管（不是安全问题）。先量过误伤：历史 417 轮不需确认的云侧写里，只有这一句命中。
+        """
+        if not plan.steps or not is_acknowledgment_only(text):
+            return plan
+        blocked = self._write_steps(plan.steps)
+        if not blocked or self._assistant_asked(working_set):
+            return plan
+        logger.warning("Acknowledgment-only utterance planned into write step(s) %s with no "
+                       "offer before it; dropping the plan (text=%r)",
+                       [step.intent for step in blocked], text[:40])
+        talk = self._talk_only_plan(text, agents)
+        plan.steps = list(talk.steps) if talk is not None else []
+        plan.clarify = None
+        plan.complexity = "simple"
+        plan.plan_mode = f"{plan.plan_mode or ''}_ack_write_blocked"
         return plan
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:

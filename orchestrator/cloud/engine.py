@@ -33,6 +33,7 @@ from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
     CLAIM_STRIPPED_SPEECH, ExecutionClaimGate, execution_claim, strip_execution_claims)
+from runtime.affirmation import ACK_WORDS, PARTICLE_RE, consists_of
 from runtime.clause_split import split_clauses
 from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
@@ -131,19 +132,12 @@ def _turn_sources(ui_card) -> list[dict]:
 
 # 肯定话术词表（语音兜底；HMI 确认按钮走 is_confirmation 显式标记）。
 # 否定侧不在这里——它是 `pending_cancel` 的职责。
-_YES_WORDS = ("确认", "确定", "好的", "好啊", "可以", "订吧", "订了", "是的",
-              "嗯", "行", "好", "ok", "付吧", "支付", "下单", "就这家", "就它")
+# 追加批 I（2026-09-24）：应答词与语气面下沉到 `runtime.affirmation`（planner 出口的纯应答写步闸读同一份）；
+# 这里只加确认 / 下单 / 支付 / 选定类——它们在挂起语境里是授权，在候选列表之后本身就是请求，不算应答。
+_YES_WORDS = ("确认", "确定", *ACK_WORDS, "订吧", "订了", "付吧", "支付", "下单", "就这家", "就它")
 _YES_WORDS_BY_LEN = tuple(sorted(_YES_WORDS, key=len, reverse=True))
-#: 裸确认的语气面（评审二轮 R1，2026-09-22）：肯定词之外**只允许**语气尾 / 承接虚词 / 礼貌前缀 / 标点。
-#: 剥完必须一个实质字都不剩——「行程」的「程」、「确认函」的「函」、「可以改」的「改」都不是语气尾。
-#: 旧判据给裸确认留了 2 字松弛（`len(t) <= len(k)+2`），它本来是给语气尾留的，却把任何 ≤2 字的
-#: 实质尾巴一并当成了授权（局部复算：三句都判 `kind=one`）。
-#: ⚠ 评审三轮 R3-01 A（2026-09-23）：语气面**只能修饰**。剥完而一个肯定词都没吃到（「啊 / 唉 / 请 / 那 / 。」）
-#: 不是授权——`_bare_affirmation` 记着有没有消费过肯定词。「嗯」是 `_YES_WORDS` 里的肯定词（产品口径），所以不在
-#: 这张语气表里：留着它会先被当语气剥掉，「嗯」单说反而不算确认。
-_CONFIRM_PARTICLE_RE = re.compile(
-    r"^(?:请|麻烦|那就|那|就|一下|吧|呀|啊|呢|哦|噢|喔|啦|嘛|哈|喽|咯|哟|呗|哎|唉|的|了"
-    r"|[，,、。！!？?~\s])+")
+#: 裸确认的语气面：判据与理由（评审二轮 R1 / 三轮 R3-01 A）见 `runtime.affirmation.PARTICLE_RE`。
+_CONFIRM_PARTICLE_RE = PARTICLE_RE
 #: 「可以吗 / 确认吗 / 行不行」——**只问能不能、不含任何别的内容**的确认询问（W01）。
 #: 剥掉疑问尾词后剩下的必须就是一个肯定词或一个「X不X」能力问法；「可以换第二天的安排吗」
 #: 剥完还有内容，不在这一档。
@@ -2644,21 +2638,8 @@ class PlannerEngine:
     def _bare_affirmation(t: str) -> bool:
         """整句是否只由肯定词 + 语气面组成，**且至少有一个肯定词**（「好的，确认吧」「嗯可以」「行啊」→ True；
         「行程」「确认函」「好像不对」→ False；「啊 / 唉 / 请 / 那 / 。」→ False——评审三轮 R3-01 A：
-        语气面只能修饰，不能独立授权，修前剥空即 True）。"""
-        core = (t or "").strip().lower()
-        consumed = False
-        while core:
-            core = _CONFIRM_PARTICLE_RE.sub("", core)
-            if not core:
-                break
-            for word in _YES_WORDS_BY_LEN:
-                if core.startswith(word):
-                    core = core[len(word):]
-                    consumed = True
-                    break
-            else:
-                return False
-        return consumed
+        语气面只能修饰，不能独立授权，修前剥空即 True）。剥离循环在 `runtime.affirmation.consists_of`。"""
+        return consists_of(t, _YES_WORDS_BY_LEN)
 
     @staticmethod
     def _address_pending(entries: list, operation_id: str):
