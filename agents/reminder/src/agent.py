@@ -40,6 +40,7 @@ _TITLE_FIELD_RE = re.compile(r"^(?:提醒)?(?:内容|标题)(?:是|为|[:：])\s
 _ORDINAL_RE = re.compile(r"第([一二三四五六七八九十0-9]+)\s*[条个项场]?")   # 场：跨域「第N场」
 _ALL_RE = re.compile(r"全部|所有|都|清空|全删")
 from runtime.polarity import NEG_WORDS   # 极性词表唯一来源（Q7/Q11 共用）
+from runtime.clause_split import split_clauses   # 分句分隔符唯一来源（拆步后「这一步自己那半句」）
 
 _AGAIN_RE = re.compile(r"再(提醒|叫)")   # P1a：显式 snooze 标记（「过10分钟再提醒我」）
 #: 标题尾巴上的**域词**（「…的提醒」「…那条待办」）。查空之后再削一次尾，见
@@ -151,6 +152,49 @@ def _event_trigger(raw: str) -> str | None:
     """这句话要的是「某件事发生时通知我」→ 事件短语；不是 → None。"""
     hit = _event_trigger_clause(raw)
     return hit[0] if hit else None
+
+
+#: 一个分句自己带着「提醒 / 通知 / 告诉…我」——它是**另一个诉求**，不是这一步标题的续写（评审三轮真栈 RS27）。
+_OTHER_REQUEST_RE = re.compile(r"(?:提醒|通知|告诉|叫|喊)(?:一下|一声)?我")
+
+
+def _title_scope(slot_title: str, raw: str) -> str:
+    """planner 已经给出这一步的标题时，这一步**自己那半句**；判不出就是整句（绝大多数情况，行为不变）。
+
+    评审三轮真栈 RS27（`5c729fbc`）：「深圳下雨就通知我，另外明天早上八点提醒我和深圳客户开代号X的会」被 planner 拆成两步，
+    库里却落了两条一模一样的合并标题 08:00 提醒——标题补全（`_fuller_title`）与时间回退都拿的是整句。判据只认一种形态：
+    标题恰好落在一个分句里（`runtime.clause_split` 那一份分隔符），而**别的分句自己也在要提醒 / 通知**——那是另一个诉求，
+    它的字（标题、时间、事件）不归这一步。别的分句只是续写（「写通知，内容是项目验收」）时照旧用整句（C10-B「宁长勿短」）。
+    """
+    title = (slot_title or "").strip()
+    parts = split_clauses(raw or "")
+    if not title or len(parts) < 2:
+        return raw
+    own = [part for part in parts
+           if title in part or title in ReminderAgent._extract_title(part)]
+    if len(own) != 1:
+        return raw
+    if any(_is_its_own_request(part) for part in parts if part is not own[0]):
+        return own[0]
+    return raw
+
+
+def _is_its_own_request(clause: str) -> bool:
+    """这个分句本身就是一个完整的提醒诉求：事件触发句，或自己带时间、带「提醒 / 通知…我」**且**抽得出自己的事项。
+    「2分钟后提醒我」「记得提醒我」只是同一个诉求的一截（抽不出事项），不算——
+    「创建一条定时提醒，2分钟后提醒我，提醒内容是X」是一个诉求铺在三个分句上。"""
+    if _event_trigger_clause(clause) is not None:
+        return True
+    return bool(_OTHER_REQUEST_RE.search(clause) and _has_time_signal(clause)
+                and ReminderAgent._extract_title(clause))
+
+
+def _event_refusal(event: str) -> AgentResult:
+    """事件触发的诚实拒绝（唯一一份话术）：不建、不挂起、不追问，终态账本记 unsupported。"""
+    return AgentResult(
+        speech=f"我只能按时间或地点提醒，还做不到盯着「{event}」这类变化再来通知你。",
+        follow_up="可以现在查一次，或者定一个具体时间提醒。",
+        data={"_refused": "unsupported"})
 
 
 def _has_time_signal(text: str) -> bool:
@@ -352,10 +396,12 @@ class ReminderAgent(BaseAgent):
                 follow_up="要建的时候说一声就行。")
         title = (intent.slots.get("title") or "").strip()
         time_text = (intent.slots.get("time_text") or "").strip()
+        # 评审三轮真栈 RS27：planner 已经把一句话拆成几步时，这一步只认**自己那半句**（见 `_title_scope`）
+        scope = _title_scope(title, raw) if title and title != raw else raw
         if not title or title == raw:            # route_hints 灌整句 / planner 未抽槽
             title = self._extract_title(raw)
         else:
-            title = self._fuller_title(title, raw)
+            title = self._fuller_title(title, scope)
         if title and not _REMINDABLE_REF_RE.sub("", title).strip(" ，。,、的时候了吧呀"):
             title = ""    # P1c：纯事件指代（「开赛的时候」）不是标题 → 走 pending/跨域推导
         pend_update_id = ""
@@ -407,6 +453,14 @@ class ReminderAgent(BaseAgent):
         pp = parse_place_text(raw)
         if pp.ok:
             return await self._create_location(pp, title, ctx, meta)
+        # 评审三轮真栈 RS27：这一步自己那半句是事件触发、自己又没给时间 ⇒ 诚实拒绝，**不许**回退去整句里借另一个诉求的时间
+        # （修前「深圳下雨就通知我」借了「明天早上八点」，建成一条 08:00 的定时提醒）。只在拆步形态下生效（`scope != raw`）。
+        if scope != raw and not time_text:
+            own_hit = _event_trigger_clause(scope)
+            if own_hit and not _has_time_signal(own_hit[1]):
+                logger.info("reminder.create 拒建（拆步后的事件触发）：%s", scope[:40])
+                await self._clear_pending(ctx)
+                return _event_refusal(own_hit[0])
         now = self._now_utc()
         user_time_signal = _has_time_signal(raw or time_text)
         pt = (
@@ -442,10 +496,7 @@ class ReminderAgent(BaseAgent):
             if event:
                 logger.info("reminder.create 拒建（事件触发不支持）：%s", raw[:40])
                 await self._clear_pending(ctx)
-                return AgentResult(
-                    speech=f"我只能按时间或地点提醒，还做不到盯着「{event}」这类变化再来通知你。",
-                    follow_up="可以现在查一次，或者定一个具体时间提醒。",
-                    data={"_refused": "unsupported"})
+                return _event_refusal(event)
             await self._save_pending(ctx, title, update_id=pend_update_id)
             return AgentResult(status=NEED_SLOT,
                                speech=f"好的，{title}。什么时候提醒你？",

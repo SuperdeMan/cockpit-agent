@@ -9549,6 +9549,19 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
   `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
 
+### 2026-09-23 — 对话评审第三轮批 C：被拒诉求按来源分句认同一性、T2 运行时步骤 ID；release `5c729fbc`；真栈逼出 reminder 拆步缺陷
+
+- 入口：设计文档 §4 / §4.1 / §4.1.1 / §4.2。
+- R3-03：`_overlaps`（任意两字交集）删掉，被拒诉求 = 任务起点原话里它的来源分句（每个槽值取最长公共子串最大的分句）；新步落点全在被拒分句里才是再试，
+  否则独立诉求照做；证据不足时原话只有被拒分句 / 空槽写能力才算再试（二轮 R5 记下的「列出我的提醒」误拦边界关掉）。
+- R3-06：`replan(taken_ids=, batch_tag=)` 在两道筛之前把局部 ID 换成 `t<批次>-<局部>`（撞了加后缀），同批引用与两种占位一并改写；loop 对不认标签的规划器只改撞名的；
+  `t2.iter` 记 `local_ids`。四个固定签名的规划器替身没跟上新 kwargs，loop 把 TypeError 咽成「Replan call failed」、19 条既有测试红——补 `**_kwargs`（批 7 那条「替身签名跟不上」第二例）。
+- 读数：全量 **9141 / 0 / 32**（295 s）；新增 19；七处变异各判红。
+- 真栈 `5c729fbc`：RS27/RS22/RS13/RS14 ×3 = **7/12**，五条红里四条在初次规划（RS22 两趟澄清卡 / `unresolved_object`、RS14 一趟 `unresolved_object`、RS27 一趟澄清卡），另一条是 RS27 第 2 趟的 reminder 缺陷；
+  R3-06 在 RS14 的 trace 上可见（`local_ids: t1-r1<r1`）。**RS27 逼出真缺陷**：planner 拆对了两步，reminder 却用整句补全两步的短标题、事件那步借另一个诉求的时间
+  ⇒ 库里两条一模一样的 08:00 合并标题提醒、事件没被拒（二轮批 B「别的诉求的字不归这一步」只修到拒绝判定）；修法见 §4.2，随批 D 发布。
+  三趟留下的 3 条残留提醒用探针同一身份按产品路径清掉（列出 → 按序号取消 → 列出为空）。
+
 ### 2026-09-23 — 对话评审第三轮批 B：约束补丁不提前归一、挂起删除说真话；release `926d4c17`
 
 - 入口：设计文档 §3 / §3.1 / §3.1.1。

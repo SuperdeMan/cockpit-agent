@@ -1234,3 +1234,57 @@ async def test_a_plain_reminder_without_time_still_asks_for_the_time():
     a = await _agent()
     res = await run_handle(a, "reminder.create", raw_text="提醒我开会", ctx=make_context())
     assert res.status == "need_slot" and "什么时候" in res.speech
+
+
+# 评审三轮真栈逼出（`5c729fbc`，RS27）：「深圳下雨就通知我，另外明天早上八点提醒我和深圳客户开代号X的会」——planner 拆对了
+# 两步（事件那步 `{title: 深圳下雨就通知我, time_text: ""}`、会议那步 `{title: 和深圳客户开代号X的会, time_text: 明天早上八点}`），
+# 库里却落了**两条一模一样**的 08:00「深圳下雨就通知我，另外提醒我和深圳客户开代号X的会」：`_fuller_title` 拿**整句**的抽取结果
+# 去补全两步的短标题；事件那步 `time_text` 为空就回退解析整句、吃到另一个诉求的「明天早上八点」，走不到事件拒绝。
+# 同二轮批 B 那条判据：别的诉求的字不归这一步——另一个分句自己带着「提醒 / 通知…我」时，这一步只认自己那半句。
+_TWO_REQUESTS = "深圳下雨就通知我，另外明天早上八点提醒我和深圳客户开代号X的会"
+
+
+@pytest.mark.asyncio
+async def test_the_event_step_of_a_split_utterance_is_refused_not_timed_by_the_other_clause():
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=_TWO_REQUESTS,
+                           slots={"title": "深圳下雨就通知我", "time_text": "", "kind": "weather"})
+    assert (res.data or {}).get("_refused") == "unsupported", res.speech
+    assert "深圳下雨" in res.speech and "什么时候" not in res.speech
+    times, todos = await a.store.list_split("u1")
+    assert not times and not todos
+
+
+@pytest.mark.asyncio
+async def test_the_timed_step_of_a_split_utterance_keeps_its_own_title():
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=_TWO_REQUESTS,
+                           slots={"title": "和深圳客户开代号X的会", "time_text": "明天早上八点"})
+    assert res.status == "ok" and "08:00" in res.speech
+    times, _ = await a.store.list_split("u1")
+    assert [t.title for t in times] == ["和深圳客户开代号X的会"]
+
+
+@pytest.mark.asyncio
+async def test_both_steps_of_the_split_utterance_leave_exactly_one_reminder():
+    a = await _agent()
+    for slots in ({"title": "深圳下雨就通知我", "time_text": "", "kind": "weather"},
+                  {"title": "和深圳客户开代号X的会", "time_text": "明天早上八点"}):
+        await run_handle(a, "reminder.create", raw_text=_TWO_REQUESTS, slots=slots)
+    times, todos = await a.store.list_split("u1")
+    assert [t.title for t in times] == ["和深圳客户开代号X的会"] and not todos
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw, slot, stored", [
+    # C10-B「宁长勿短」照旧：planner 转述短了，存原话那份
+    ("明天下午四点提醒我交周报QA015958", "交周报", "交周报QA015958"),
+    # 同一个诉求的续写（另一个分句里没有「提醒 / 通知…我」）照旧补全
+    ("明天八点提醒我写通知，内容是项目验收", "写通知", "写通知，内容是项目验收"),
+])
+async def test_a_single_request_title_is_still_completed_from_the_whole_utterance(raw, slot, stored):
+    a = await _agent()
+    res = await run_handle(a, "reminder.create", raw_text=raw, slots={"title": slot, "time_text": ""})
+    assert res.status == "ok", res.speech
+    times, _ = await a.store.list_split("u1")
+    assert [t.title for t in times] == [stored]
