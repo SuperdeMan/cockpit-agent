@@ -9549,6 +9549,25 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
   `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
 
+### 2026-09-23 — 对话评审第三轮批 A：确认要有明确肯定、点名要与挂起步骤兼容；release `416e47bc`
+
+- 入口：评审三轮原文 `docs/reviews/2026-09-23-cockpit_conversation_review_round_3.md`（冻结 `7e41fcf2` = 当时 main）；设计文档
+  `docs/design/2026-09-23-conversation-review-round3-remediation.md` §1（六组逐条复算）/ §2 / §2.1 / §2.1.1。用户授权提交 / 推送 / 部署 / 真栈。
+- 复算：唯一一条待确认下「啊 / 唉 / 请 / 那 / 。/ 的 / 了 / 哈 / 就 / 一下」全是 `kind=one`（剥空即裸确认）；挂着「打开后备箱」时
+  「确认关闭后备箱 / 锁上后备箱」**以及「确认打开车窗」**都 `kind=one`（二元片段「后备箱」「打开」）；端侧把前两句判成 `trunk.close` / `door_lock.close`，
+  两者 `require_confirm` ⇒ 必上云，真栈可达。
+- 修：`_bare_affirmation` 必须吃到肯定词（「嗯」移出语气面，它本身是肯定词）；点名确认 = 召回（二元片段，只找候选）+ 裁决（点名余量去零领域虚词后，
+  每个非数字字落在 ≥2 字的已校验摘要子串里、数字整串相等；端侧解析点出另一个 intent 一票否决）；已校验摘要 = 挂起那一刻 `contracts.action_summary`
+  （Registry 能力描述 + 槽值，与确认卡同一句），落 `SessionState.action_summary`，旧记录现取、取不到判不兼容；**LLM goal 与任务原话只进召回不进裁决**
+  （原话里可能正有相反的词）；新出口 `system.pending_mismatch`（零动作零关闭零 LLM）；兼容多条 ⇒ 问；点名取消按覆盖度取唯一最高；端侧入口 pop 客户端的 `_edge_nlu`。
+- 读数：全量固定口径 **9098 / 0 / 32**（314 s）；新增 62；四门禁 + smoke_edge 13/13；八处变异各判红——「单字当片段」第一趟是绿的（没有测试盯着
+  「锁车门 ⊂ 打开车门锁」这种反方向），补测试后判红。两条既有测试按新语义改写并留痕（替身计划写死今晚7点、描述是机器名 ⇒ 摘要为空，点名本就不该授权）。
+- 发布：dry-run 显示可用磁盘 27.5 GiB < 远端构建 30 GiB 闸 ⇒ 只读盘点（`builds/` 110 份 16.1 GB、20 套镜像、构建缓存 8.2 GB）后问用户，批准「只删 104 份旧构建记录」；
+  执行前复核可用已回到 58.2 GB（同机另一项目释放了约 29 GB 容器层）⇒ **一个都没删**。apply → status ok 5/5 → verify `verified`（`20260923T051015Z-416e47b.json`）。
+- 真栈 RS25 ×3 **3/3 [det]**：「啊」零动作（落 planner 无步出口）；「确认关闭后备箱」「确认锁车门」三趟逐字同款「我这边等您确认的是…没有执行」；随后寻址确认 / 「好的，确认吧」照常执行。
+- 工具账：Bash heredoc 里的 `\n` / `\r\n` 又被收成真换行两次（远端盘点脚本）⇒ 带反斜杠的脚本一律 Write 写 .py；Windows 下 `subprocess.run(input=str)` 会把 `\n` 译成 `\r\n`，
+  远端 bash 报 `$'\r': command not found` ⇒ 传 bytes。
+
 ### 同日追加（2026-09-22 晚）— 对话评审第二轮批 A：裸确认语气面、取消极性 / 问句 / 目标绑定、端侧撤回否决、语音纯偏好先受话、「怎么把 / 请问 / 请告诉我」是提问；release `d0170329`
 
 - 入口：评审二轮原文 `docs/reviews/2026-09-22-cockpit_conversation_review_round_2.md`（冻结 `f827ebdd` = 当时 main）；设计文档

@@ -67,6 +67,20 @@
 **全量固定口径（批 A 工作树，`TZ=UTC0` `-n 6`）：9098 passed / 0 failed / 32 skipped / 10 warnings，314 s。**（其后只改了一处 docstring 示例，
 相关 166 条复跑绿。）
 
+#### 2.1.1 发布链与真栈读数（2026-09-23 12:5x–13:1x，MiniMax-M3）
+
+| release | 发布链 | 真栈 |
+|---|---|---|
+| `416e47bc` | push `7e41fcf2..416e47bc`（恰一条）→ dry-run 零阻断（基线 `86c43998`）——可用磁盘 27.5 GiB，低于远端构建的 30 GiB 闸 ⇒ 只读盘点后请用户批准清理（批准「只删 104 份旧构建记录、保留最近 6 份 release 的」）；执行前复核发现同机另一项目刚释放约 29 GB 容器层、可用 58.2 GB，**没有删任何东西**（批准留作本轮后续发布再被挡时用）→ apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260923T051015Z-416e47b.json`，minimax / MiniMax-M3，lock e2e） | `--cases RS25 --repeat 3`（artifact `.artifacts/probe-round3-batchA-416e47bc.json`）：**3/3 [det]** |
+
+逐条读（自动 PASS 之外看话术与动作）：
+
+- T2「啊」三趟零动作，交规划后落「这次我没能把您的请求拆成可以执行的步骤…」（planner 对无意义输入给不出步）——修前按代码它会把后备箱打开。
+- T3「确认关闭后备箱」三趟逐字同款「我这边等您确认的是「打开后备箱」；您说的「关闭后备箱」我没法确定就是它，所以这次没有执行。…」，零动作、零关闭；
+  端侧把这句判成 `trunk.close`（`require_confirm` ⇒ 上云），云侧点名召回到了打开后备箱那条、裁决不兼容。
+- T4 寻址确认三趟 `trunk.open` 并关掉 T1 那条——前两句都没消费挂起。
+- sid 1：T6「确认锁车门」三趟同款出口、零 `door_lock.open`；T7「好的，确认吧」三趟 `door_lock.open`（二轮 R1 的正面对照不回退）。
+
 ## 3. 批 B：R3-02 补丁 / 快照分开 + R3-05 删除三态与提交语义
 
 | 条 | 本批做什么 | 刻意不做 |
