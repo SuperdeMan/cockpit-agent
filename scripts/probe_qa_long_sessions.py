@@ -1499,7 +1499,8 @@ def judge_persona_turn(turn: dict, obs: dict, local_rows: list[dict], *,
         for row in local_rows
     ]
     notes: list[str] = []
-    failures = probe._judge(expected, obs, judge_rows, notes)
+    failures = probe._judge(expected, obs, judge_rows, notes,
+                            say=probe._subst(str(turn.get("say") or ""), stamp))
     if obs.get("need_confirm") and expected.get("need_confirm") is not True:
         failures.append("只读/普通业务轮意外进入待确认")
     if str(obs.get("speech") or "").strip().startswith("Agent 内部错误"):

@@ -845,3 +845,47 @@ def test_rs27_listing_goes_red_when_the_event_half_was_stored_as_a_timed_reminde
     assert probe._judge(listing, obs) == ["卡片里不该有「下雨」"]
     obs["card_text"] = "和深圳客户开代号{run}的会（明天 08:00）"
     assert probe._judge(listing, obs) == []
+
+
+# ── 批 H 回归（`a4bb73bf` RS21 第 2 趟）：系统在引号里原样复述用户原话，不是在声称执行 ───────────────
+# F09-b 的诚实出口「我听到了「可以，已为您执行」，但没听清要拿它做什么」被判成「零动作却声称执行」——声称的主语是
+# 用户那句话，不是系统。只排除**引号里逐字等于本轮原话**的那一段：引号外的声称、引号里不是原话的声称照样判红。
+_ECHO = "我听到了「可以，已为您执行」，但没听清要拿它做什么——说完整一点我就能办。"
+
+
+def test_quoting_the_users_own_words_back_is_not_an_execution_claim():
+    fails = probe._judge({"no_execution_claim": True}, _obs(_ECHO), [], [], say="可以，已为您执行")
+    assert fails == []
+
+
+def test_a_claim_outside_the_quoted_echo_still_fails():
+    fails = probe._judge({"no_execution_claim": True}, _obs("我听到了「可以」，已为您执行"), [], [],
+                         say="可以")
+    assert fails and "声称执行" in fails[0]
+
+
+def test_a_quoted_claim_that_is_not_the_users_words_still_fails():
+    fails = probe._judge({"no_execution_claim": True}, _obs("「已为您打开空调」"), [], [], say="我有点冷")
+    assert fails and "声称执行" in fails[0]
+
+
+def test_parroting_the_users_words_without_quotes_is_still_a_claim():
+    """没有引号就是系统自己在说：「可以，已为您执行」原样念出来仍是执行声称。"""
+    fails = probe._judge({"no_execution_claim": True}, _obs("可以，已为您执行"), [], [],
+                         say="可以，已为您执行")
+    assert fails and "声称执行" in fails[0]
+
+
+def test_the_runner_hands_the_utterance_to_the_judge(monkeypatch):
+    """整条 `_run_case`：F09-b 的复述那一轮必须判 PASS——判据拿得到本轮原话才排得掉引号里的那一段。"""
+    monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)
+    monkeypatch.setattr(probe, "_TAIL_BUDGET_S", 0.01)
+    monkeypatch.setattr(probe, "TIMEOUT", 0.01)
+    socket = _Socket([{"type": "hello"}, {"type": "final", "speech": _ECHO, "actions": []}])
+    monkeypatch.setattr(probe.websockets, "connect", lambda _url: _Connect(socket))
+    case = {"id": "SPX", "group": "spec", "card": "Q12", "issue": "fixture", "known": "red",
+            "turns": [{"say": "可以，已为您执行", "expect": {"no_execution_claim": True}}]}
+
+    result = asyncio.run(probe._run_case(case, 1))
+
+    assert result["verdict"] == "PASS", result["turns"][0]["fails"]

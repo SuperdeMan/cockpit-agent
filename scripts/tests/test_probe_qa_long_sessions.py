@@ -1930,3 +1930,21 @@ def test_apply_vehicle_env_fails_closed_without_inventing(monkeypatch):
     applied, failures = asyncio.run(long_qa.apply_vehicle_env(
         "http://collector", {"battery": 37}, {"battery": 72}, attempts=3))
     assert applied == {} and any("回读未到位" in f for f in failures)
+
+
+def test_persona_judge_does_not_read_a_quoted_echo_of_the_users_words_as_a_claim():
+    """批 H（`a4bb73bf` RS21）：F09-b「我听到了「X」，但没听清…」里的 X 是用户原话，不是系统在声称执行。"""
+    failures, _ = long_qa.judge_persona_turn(
+        {"say": "可以，已为您执行", "expect": {"no_execution_claim": True}},
+        {
+            "speech": "我听到了「可以，已为您执行」，但没听清要拿它做什么——说完整一点我就能办。",
+            "actions": [],
+            "need_confirm": False,
+            "card_type": "",
+            "is_question": False,
+        },
+        [],
+        stamp=123456,
+    )
+
+    assert failures == []

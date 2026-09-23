@@ -2105,8 +2105,25 @@ def _amount_forms(total: float) -> tuple[str, ...]:
     return tuple(dict.fromkeys(forms))
 
 
+#: 系统复述用户原话时的几种括法（F09-b「我听到了「…」，但没听清要拿它做什么」）。
+_QUOTE_PAIRS = (("「", "」"), ("『", "』"), ("“", "”"), ('"', '"'))
+
+
+def _without_quoted_echo(text: str, say: str) -> str:
+    """去掉引号里**逐字等于本轮原话**的那一段：系统在复述用户说了什么，不是自己声称执行了（批 H，`a4bb73bf` RS21 第 2 趟）。
+
+    只认逐字相等：引号外的声称、引号里不是原话的声称照样交给 `execution_claim` 判。
+    """
+    said = str(say or "").strip()
+    if not said:
+        return text
+    for left, right in _QUOTE_PAIRS:
+        text = text.replace(f"{left}{said}{right}", f"{left}{right}")
+    return text
+
+
 def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
-           notes: list[str] | None = None) -> list[str]:
+           notes: list[str] | None = None, say: str = "") -> list[str]:
     """返回**失败原因列表**（空 = 通过）。判据全部机械，不做语义理解。"""
     bad = set(expect) - _EXPECT_KEYS
     if bad:
@@ -2418,12 +2435,12 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
                 f"以端侧确定性拒绝串「{'/'.join(hit)}」收场"
                 "——知识/安全问句被状态查询规则抢走了")
     if expect.get("no_execution_claim"):
-        family = execution_claim(speech)
+        family = execution_claim(_without_quoted_echo(speech, say))
         if family and not acts:
             fails.append(f"零动作却声称执行（{family}）：{speech[:60]!r}")
         # 评审二轮 R4：final 干净不等于用户没听到——流出的增量拼起来再判一次（TTS 吃的就是这一份）。
         streamed = str(obs.get("streamed") or "")
-        family = execution_claim(streamed) if streamed else ""
+        family = execution_claim(_without_quoted_echo(streamed, say)) if streamed else ""
         if family and not acts:
             fails.append(f"零动作却在流式增量里声称执行（{family}）：{streamed[:60]!r}")
     # C16-7（＝C9-E）：**答案城市必须落在本会话点过名的城市里**。真栈 info
@@ -2725,7 +2742,7 @@ async def _run_case(case: dict, stamp: int) -> dict:
                        "card_type": "", "is_question": False, "error": True}
             notes: list[str] = []
             fails = _judge(_subst(turn.get("expect") or {}, stamp), obs,
-                           rows, notes)
+                           rows, notes, say=say)
             rows.append({"turn": i, "sid": sid, "say": say,
                          "session": sessions[sid], **obs, "fails": fails})
             flag = "✔" if not fails else "✘"
