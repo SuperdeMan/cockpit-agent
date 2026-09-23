@@ -429,3 +429,52 @@ def test_operation_cue_is_carried_by_the_utterance(text):
 def test_utterances_without_an_operation_cue(text):
     from runtime.question_shape import carries_operation_cue
     assert carries_operation_cue(text) is False, text
+
+
+# ── 追加批 H：「几个」计数问（设计 §11）───────────────────────────────────────────────────────
+# 本地复算：23 句计数问里 13 句被端侧执行成写车控——「空调有几个风量档」调风量、「这车有几个座位」`seat.on`、
+# 「后备箱能放几个行李箱」`trunk.open`。批 6 只收了「几档 / 几级 / 几种」，刻意不收「几个」（「开几个车窗」是模糊的祈使）。
+# 区别在「几」前面：「有 / 分 / 共 / 能 / 可以 / 最多 + … + 几 + 量词」是在问，「动词 + 几 + 量词」是指令。
+
+@pytest.mark.parametrize("text", [
+    "空调有几个风量档",
+    "这车有几个座位",
+    "座椅加热有几个档位",
+    "空调有几个出风口",
+    "座椅加热分几个档",
+    "一共几个座位",
+    "后备箱能放几个行李箱",
+    "座椅能调几个方向",        # 「能」与「几」之间的操作字是被问的能力，不是指令
+    "香氛有几个味道",
+    "大灯有几个模式",
+    "座椅有几个记忆位",
+    "空调温度能调几度",
+    "雨刮有几个速度",
+    "这车可以坐几个人",
+    "车窗最多开几个",
+])
+def test_count_questions_are_questions(text):
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "开几个车窗",              # 批 6 不收「几个」的理由：「几」= 一些，模糊的祈使
+    "找几个充电站",
+    "放几首歌",
+    "音量调大几格",
+    "开几分钟窗",
+    "温度调低几度",
+    "车窗开了几个，都关上",
+    "后排有几个窗开着，关一下",   # 计数问 + 另起分句的操作动词 ⇒ 仍是指令（同列举问）
+    "能帮我调高几度吗",          # 祈使标记在前
+    "车上没有几个人",            # 「没有几个」是否定陈述，不是计数问
+])
+def test_indefinite_ji_is_not_a_count_question(text):
+    assert is_non_directive_question(text) is False, text
+
+
+def test_count_question_tables_are_closed_function_word_classes():
+    from runtime.question_shape import COUNT_HEADS, COUNT_UNITS
+    vocab = _domain_vocabulary()
+    for word in (*COUNT_HEADS, *COUNT_UNITS):
+        assert word not in vocab, word

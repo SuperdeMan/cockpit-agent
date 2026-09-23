@@ -34,9 +34,16 @@ CAPABILITY_ASKS = ("能不能", "可不可以", "会不会", "是不是", "支�
 #: 数量/属性疑问词：问的是**参数本身**，构不成指令 → 无条件否决写操作。
 #: 「几档 / 几级 / 几种 / 多少档」（批 6 W19-c 真栈：座椅加热话题下「它有几档」被规划成 `seat.heating.on`
 #: 并执行——「几」族数量疑问此前不在表里）。刻意只收档位 / 等级 / 种类三个封闭量词，不收「几个」
-#: （「开几个车窗」是模糊的祈使，宁可不认）。
+#: （「开几个车窗」是模糊的祈使，宁可不认）。「几个」由追加批 H 按句法头认（`COUNT_HEADS`，见下）。
 PROPERTY_ASKS = ("多大", "多高", "多宽", "多长", "多快", "多少", "多久", "多远",
                  "几档", "几级", "几种", "多少档")
+#: 计数问法（追加批 H，2026-09-23）：「空调有几个风量档」「后备箱能放几个行李箱」「座椅加热分几个档」问的是数量，此前端侧
+#: 把 23 句里的 13 句执行成了写车控。区别在「几」前面：计数问是「头 + 至多四个字 + 几 + 量词」，头是存在 / 划分 / 能力；
+#: 「开几个车窗」「放几首歌」是「动词 + 几 + 量词」，「几」= 一些，仍是指令（批 6 的顾虑）。「没有几个」是否定陈述，不算。
+#: 配对规则同列举问：另起的分句带操作动词仍算指令（「后排有几个窗开着，关一下」），见 `_count_question`。
+COUNT_HEADS = ("有", "分", "共", "能", "可以", "最多")
+COUNT_UNITS = ("个", "位", "项", "种", "档", "挡", "级", "排", "座", "块", "根", "条", "张", "颗", "路", "段",
+               "层", "款", "套", "扇", "盏", "把", "辆", "台", "组", "处", "只", "家", "人", "首", "度", "格")
 #: 选择/位置疑问词。它们问的是“哪一个”，不是让系统当场操作。
 CHOICE_ASKS = ("哪个", "哪种", "哪边", "哪侧", "哪儿", "哪里", "在哪")
 #: 规范/注意事项/条件问法。仍只放封闭句法，不放轮胎、保养等领域对象。
@@ -122,6 +129,11 @@ _EXPLAIN_REQUEST_RE = re.compile(
 _ENUMERATION_RE = re.compile("|".join(
     (rf"(?<!没){re.escape(word)}" if word.startswith("有") else re.escape(word))
     for word in sorted(ENUMERATION_ASKS, key=len, reverse=True)))
+#: 计数问：头（「有」前面不能紧挨「没」）+ 同一分句里至多四个字 + 几 + 量词。
+_COUNT_ASK_RE = re.compile(
+    "(?:" + "|".join((rf"(?<!没){re.escape(head)}" if head == "有" else re.escape(head))
+                     for head in sorted(COUNT_HEADS, key=len, reverse=True)) + ")"
+    + rf"[^，,。；;！!？?\s]{{0,4}}?几[{''.join(COUNT_UNITS)}]")
 _OPERATION_CLASS = "".join(OPERATION_VERBS)
 #: 带操作动词字、却不是在下指令的四种形态（追加批 F，F-4）：可能补语的否定式「关不上 / 打不开 / 调不动 / 降不下来」、
 #: 正反问「开不开 / 关不关」、已然否定「没关上」、设备自己的行为「自己关掉 / 自动开启」——说的是做不到 / 没做成 /
@@ -271,6 +283,8 @@ def is_non_directive_question(t: str) -> bool:
         return True
     if _enumeration_question(t):
         return True
+    if _count_question(t):
+        return True
     if _reason_question(t):
         return True
     return (any(w in t for w in MANNER_ASKS)
@@ -300,8 +314,21 @@ def _enumeration_question(t: str) -> bool:
     带操作动词才说明用户同时下了指令（「空调有哪些模式，开个制冷」「天窗有什么用，打开看看」）。
     """
     match = _ENUMERATION_RE.search(t)
-    if not match:
-        return False
-    later = re.split(r"[，,；;。！!？?]", t[match.end():], maxsplit=1)
+    return bool(match) and not _later_clause_operates(t, match.end())
+
+
+def _count_question(t: str) -> bool:
+    """计数问（「有几个 / 能放几个 / 分几个」），且之后**另起的分句**里没有操作动词（追加批 H，配对同列举问）。
+
+    「几」前面的头与「几」之间允许至多四个字：「后备箱能放几个行李箱」「座椅能调几个方向」里「能」后面的操作字是被问的
+    能力，不是指令。「开几个车窗」没有头，照旧是祈使；「后排有几个窗开着，关一下」另起的分句带「关」，仍是指令。
+    """
+    match = _COUNT_ASK_RE.search(t)
+    return bool(match) and not _later_clause_operates(t, match.end())
+
+
+def _later_clause_operates(t: str, end: int) -> bool:
+    """`end` 之后**另起的分句**里有操作动词 ⇒ 用户在问之外还下了指令。"""
+    later = re.split(r"[，,；;。！!？?]", t[end:], maxsplit=1)
     tail = later[1] if len(later) > 1 else ""
-    return not any(v in tail for v in OPERATION_VERBS)
+    return any(v in tail for v in OPERATION_VERBS)

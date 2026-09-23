@@ -1435,6 +1435,19 @@ CASES = [
          {"say": "座椅有哪些调节功能", "sid": 1, "expect": {"no_actions": True, "speech_not": ["瑞幸"]}},
          {"say": "座椅有哪些加热档位", "sid": 2, "expect": {"no_actions": True}},
      ]},
+    # ── 评审三轮追加批 H（2026-09-23）：「几个」计数问 ─────────────────────────────────────────
+    # 批 G 收口时本地复算：23 句计数问里 13 句端侧执行成写车控（「空调有几个风量档」调风量、「这车有几个座位」`seat.on`、
+    # 「后备箱能放几个行李箱」`trunk.open` 要确认）。判据是形态：零动作、不出确认卡。
+    {"id": "RS31", "group": "residual", "card": "余项", "issue": "评审三轮追加批 H",
+     "why": "「有几个 / 能放几个 / 分几个」是在问数量，不许被执行成写车控或挂出确认",
+     "known": "red",
+     "turns": [
+         {"say": "空调有几个风量档", "sid": 0, "expect": {"no_actions": True}},
+         {"say": "这车有几个座位", "sid": 1, "expect": {"no_actions": True}},
+         {"say": "座椅加热有几个档位", "sid": 2, "expect": {"no_actions": True}},
+         {"say": "后备箱能放几个行李箱", "sid": 3, "expect": {"no_actions": True, "need_confirm": False}},
+         {"say": "大灯有几个模式", "sid": 4, "expect": {"no_actions": True}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
