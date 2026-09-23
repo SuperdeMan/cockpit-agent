@@ -2,7 +2,7 @@
 
 - 状态：**已落地**（2026-09-23，用户授权提交 / 推送 / 部署 / 真栈验证）。批 A（R3-01）`416e47bc` → 批 B（R3-02 + R3-05）`926d4c17` →
   批 C（R3-03 + R3-06）`5c729fbc` → 批 D（R3-04）`c99a9a74` → 真栈逼出的 reminder 拆步修正（第一版 `a2d03dde` 随 `c99a9a74` 发布、第二版 `1255f7b2`）；
-  当前生产 `1255f7b2`。顺序同评审「建议实施顺序」，各批的落地记录接在方案后面；收口读数见 §5.1.1，顺带发现（仅记录）见 §7
+  当前生产 `f9bec423`（追加批 E：§7 里的端侧两条 + 无目的地导航，§8）。顺序同评审「建议实施顺序」，各批的落地记录接在方案后面；收口读数见 §5.1.1，顺带发现见 §7，追加批 E 见 §8，真栈照出的云侧待裁决项见 §8.2
 - 交付对象：云侧编排（`orchestrator/cloud`）、`runtime/`、端侧一处 meta 卫生（`orchestrator/edge/server.py`）、探针；HMI / Android 零改动
 - 关联：评审原文 [`docs/reviews/2026-09-23-cockpit_conversation_review_round_3.md`](../reviews/2026-09-23-cockpit_conversation_review_round_3.md)
   （冻结 `7e41fcf2` = 当时 main）；上一轮 [`2026-09-22-conversation-review-round2-remediation.md`](2026-09-22-conversation-review-round2-remediation.md)；
@@ -317,3 +317,33 @@ T2 final 重剥全文红 2、span 不带等待红 1）。
 留下（本批核出、未改）：方式问法（`MANNER_ASKS`）的操作动词配对同样按字、不看位置——「空调为什么不制冷」被判成指令、端侧执行 `hvac.on`，
 「天窗为什么关不上」执行 `sunroof.close`。改它要动既有合同（`test_manner_ask_without_operation_verb_is_a_question` 钉着「为什么要把温度调那么高」
 按指令处理），先裁决再改。
+
+#### 8.1.1 发布链与真栈读数（2026-09-23 16:2x–16:3x，MiniMax-M3）
+
+| release | 发布链 | 真栈 |
+|---|---|---|
+| `f9bec423` | push `03f1d146..f9bec423` → dry-run 零阻断（基线 `1255f7b2`，磁盘可用 52 GB）→ apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260923T083310Z-f9bec42.json`） | `--cases RS28,RS21 --repeat 3`（`.artifacts/probe-round3-batchE-f9bec423.json`）：RS21 **3/3**、RS28 **3/3**（判据层） |
+
+- **RS21 3/3**（`c99a9a74` 上 1/3）：第二句两趟落 `navigate_to` ⇒ 新追问「您要从深圳欢乐海岸出发去哪里？」，一趟落 `estimate` ⇒「您想算到哪里的路程？」；三趟零导航动作。
+- **RS28 判据全过**：12 句零写操作（修前端侧会开天窗、开空调、放视频）；原因句 3/3 由 chitchat 解释低温电池活性与暖风耗电，不再是「电量72%」。
+  **判据过不等于答得好**，逐句读话术：
+
+  | 句子 | 三趟话术 | 层 |
+  |---|---|---|
+  | 天窗有什么用 | 2 趟答用途；1 趟「这次我没能把您的请求拆成可以执行的步骤」 | planner 第一次给 `addressed=true, steps=[]`，重试给了一段非 JSON 的自然语言 ⇒ 两次解析失败 ⇒ 兜底 chitchat 被 AR05 F09 判成技术失败 |
+  | 空调有什么模式 | 3 趟都答成场景列表（「你建的：午休模式、钓鱼模式；内置的：回家模式…」） | planner 按「模式」落 `scene.list`：落域错，但零动作（修前端侧直接执行 `hvac.on`） |
+  | 推荐三部适合全家看的电影 | 2 趟「没能拆成可以执行的步骤」；1 趟「想点哪一款瑞幸饮品？」 | 两趟 planner 连给两次空计划（先 `addressed=false`、再 `addressed=true, steps=[]`）⇒ 同上 F09；第三趟 planner 给 `cap_0107` + `{depth: deep}`——`depth` 是 chitchat（`cap_0007`）的槽，编号错位成 `luckin.order`，executor 记了一条「槽位 ['depth'] 不在能力契约里」照常派发，挂起补槽 |
+  | 给我讲讲新能源车冬天续航为什么会下降 | 3 趟 chitchat 解释 | ✓ |
+
+- 结论：端侧误执行三处全部消失、原因句答对、无目的地不再导航；**推荐与列举问交到云端后 planner 接不住**——那是规划层的三件事（§8.2），本批不改。
+  本批两组探针零写操作、零提醒，不需要复原车态或清理残留（第三趟的瑞幸补槽挂起留在探针会话里，按 TTL 过期）。
+
+### 8.2 真栈照出的云侧三件事（仅记录，待裁决）
+
+| 现象 | 真因（cloud-planner 日志逐 trace） | 可选修法 |
+|---|---|---|
+| 知识 / 推荐问句拿到空计划 | MiniMax-M3 对「天窗有什么用」「推荐三部适合全家看的电影」给 `addressed=true, steps=[]`——没有专门能力时它不选 chitchat | 规划知识：guide / 范例把「推荐 / 用途 / 介绍」这类知识性请求指向 chitchat（或 info.search）。按项目规矩要真栈 A/B 证伪 |
+| 兜底 chitchat 被判成技术失败 | 两次解析失败 ⇒ `technical_failure` ∧ 兜底给了步 ⇒「没能拆成可以执行的步骤」（AR05 F09）；而这两句恰恰就该 chitchat 答 | F09 区分「模型坏输出」与「模型给了合法空计划、这句又不是指令」——后者兜底谈话不算伪装。要改 F09 的判据，先裁决 |
+| 能力编号错位照常派发 | planner 引用 `cap_0107`（`luckin.order`）却带着 chitchat 的 `depth` 槽；executor 看见槽位全在契约外，只记日志 | 计划校验：一步的槽**全部**落在所引能力的契约之外、又**全部**落在另一个能力的契约之内 ⇒ 判编号错位，丢步重试或兜底（模型输出当不可信输入，校验到执行的值） |
+
+另有 §8.1 末尾那条方式问法按字配对（「空调为什么不制冷」执行 `hvac.on`、「天窗为什么关不上」执行 `sunroof.close`），同样待裁决。
