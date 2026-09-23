@@ -101,3 +101,24 @@ def test_an_information_request_still_gets_its_retry():
     assert [s.intent for s in plan.steps] == ["hvac.set"]
     assert calls["llm"] == 2 and calls["fallback"] == 0
     assert not plan.plan_mode.endswith("_no_action_info")
+
+
+def test_a_clarify_flavoured_empty_plan_on_an_information_request_is_answered_too():
+    """真栈 `01564cc2` C 臂 K3 第 1 趟逐字：第一轮 `{"addressed":true,"steps":[],"goal":"需要澄清：用户未指定动作类型
+    （介绍/导航/查天气等）"}`、第二轮 `{"addressed":"calc","steps":[]}` ⇒ 技术失败 + `clarify_wanted` ⇒ 用户听到「我听到了
+    「介绍一下北京有哪些著名的历史建筑」，但没听清要拿它做什么」——可用户说了「介绍一下」。原话的请求形态是确定性证据，
+    模型口中的「没指定动作」与它矛盾；带澄清口吻的合法空计划同样算模型「交了零步」。"""
+    marker = ('{"addressed":true,"steps":[],'
+              '"goal":"需要澄清：用户未指定动作类型（介绍/导航/查天气等）"}')
+    plan, calls = _build([marker, '{"addressed":"calc","steps":[]}'],
+                         "介绍一下北京有哪些著名的历史建筑")
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan.steps
+    assert plan.technical_failure is False and plan.clarify_wanted is False
+    assert plan.plan_mode.endswith("_no_action_info"), plan.plan_mode
+
+
+def test_a_bare_object_with_a_clarify_marker_still_gets_the_honest_unresolved_exit():
+    """对照：光说一个地名（不是求信息的请求）时，F09-b 那条「我听到了 X，但没听清要拿它做什么」照旧。"""
+    marker = '{"addressed":true,"steps":[],"goal":"需要澄清：用户只给了地点名，未说明要做什么"}'
+    plan, calls = _build([marker, "这不是 JSON"], "云岚国际中心")
+    assert plan.technical_failure is True and plan.clarify_wanted is True

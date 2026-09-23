@@ -1840,6 +1840,7 @@ class PlanBuilder:
         clarification_expected = False   # 上一轮要过澄清专用 schema
         plan_only_expected = False       # 上一轮要过计划修正专用 schema
         clarify_wanted = False           # W13 F09-b：某一轮里模型自己说过要澄清（裸对象族）
+        said_no_steps = False            # 追加批 F（F-2）：某一轮交过合法的「受话、零步」（带不带澄清口吻都算）
         for attempt in range(2):
             mode = "json"
             use_tool = toolcall and (attempt == 0 or retry_with_tool)
@@ -1920,6 +1921,7 @@ class PlanBuilder:
             # 只认 goal 标记 / 裸对象被包成动作这两种「模型自己说要澄清」；完整条件句被误澄清
             # 那一族（`complete_conditional_goal_marker`）刻意不算——那句话本身没有歧义。
             clarify_wanted = clarify_wanted or goal_requires_clarification
+            said_no_steps = said_no_steps or self._looks_like_no_action(data)
             state = PlanAttemptState(
                 attempt=attempt, wire_mode=mode, data=data, parsed=parsed,
                 text=text, working_set=working_set, catalog=catalog, ctx=ctx,
@@ -2021,9 +2023,12 @@ class PlanBuilder:
         # ⇒ 兜底谈话就是答案，不是技术失败。真栈 `f9bec423`：「推荐三部适合全家看的电影」一轮不受话 + 一轮无需动作、
         # 「天窗有什么用」一轮无需动作 + 一轮非 JSON，都落 `_fallback` + F09，用户听到「没能拆成可以执行的步骤」。
         # 上面「连说两次才认」的理由（一次可能是抽风、指令句靠第二轮补上动作）对指令句照旧成立，所以这一条只收
-        # 求信息的请求（判据 `runtime.question_shape.is_information_request`，零领域词）；两轮都坏、模型一次都没说过
-        # 无需动作的也不收——那才是真技术失败。重试照旧先跑：第二轮拿到真计划就用真计划。
-        if plan is None and no_action >= 1 and is_information_request(text):
+        # 求信息的请求（判据 `runtime.question_shape.is_information_request`，零领域词）；两轮都坏、模型一次都没交过
+        # 合法零步计划的也不收——那才是真技术失败。重试照旧先跑：第二轮拿到真计划就用真计划。
+        # 「交过零步」带不带澄清口吻都算（`said_no_steps`，不是 `no_action`）：C 臂 K3 第一轮 goal 写「需要澄清：用户未指定
+        # 动作类型（介绍/导航/查天气等）」——可用户说了「介绍一下」。原话的请求形态是确定性证据，模型那句与它矛盾；不收的话
+        # 就落 F09-b「我听到了 X，但没听清要拿它做什么」。光说一个地名（不是求信息的请求）时 F09-b 照旧。
+        if plan is None and said_no_steps and is_information_request(text):
             talk = self._talk_only_plan(text, agents)
             if talk is not None:
                 logger.info("information request judged no-action once and never planned; "
