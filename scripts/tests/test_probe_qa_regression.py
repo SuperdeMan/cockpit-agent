@@ -827,3 +827,17 @@ def test_the_round_three_counterexample_set_is_fixed():
         for turn in case["turns"]:
             keys |= set(turn.get("expect") or {})
         assert keys & mechanical, f"{cid} 只有话术判据"
+
+
+def test_rs27_listing_goes_red_when_the_event_half_was_stored_as_a_timed_reminder():
+    """RS27 的列表轮要能判红 reminder 那条缺陷（设计文档 §4.2）。
+
+    `c99a9a74` 上列表卡里躺着「深圳下雨就通知我（明天 08:00）」，旧判据只看会议那条在不在，照判 PASS。
+    """
+    case = next(case for case in probe.CASES if case["id"] == "RS27")
+    listing = next(turn for turn in case["turns"] if turn["say"] == "列出明天的提醒")["expect"]
+    obs = _obs("")
+    obs["card_text"] = "和深圳客户开代号{run}的会（明天 08:00） 深圳下雨就通知我（明天 08:00）"
+    assert probe._judge(listing, obs) == ["卡片里不该有「下雨」"]
+    obs["card_text"] = "和深圳客户开代号{run}的会（明天 08:00）"
+    assert probe._judge(listing, obs) == []
