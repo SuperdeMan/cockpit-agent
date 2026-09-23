@@ -411,3 +411,24 @@ K1–K3 期望 {chitchat, info.search}（两者都答得出片单 / 书单 / 建
 
 本地：四门禁 + smoke_edge 13/13，范例库 334 条（23 域）；cloud + skills + test + scene + registry 定向全绿；
 **全量固定口径（F2 工作树）：9278 passed / 0 failed / 32 skipped / 10 warnings，304 s。** B 臂读数见 §9.2.1。
+
+#### 9.2.1 B 臂读数与处置：F2 撤回（2026-09-23 18:1x–18:3x，MiniMax-M3）
+
+发布链：push `7b0ee8de..bb609ef5` → dry-run 零阻断（基线 `7b0ee8de`）→ apply → status ok 5/5 零 warning、`release_sha` = `running_release_sha`
+→ verify `verified`（`20260923T101645Z-bb609ef.json`）。
+
+B 臂同一组六句 × 3（`.artifacts/kn-ab-armB-bb609ef5-*.json`）：**首选 3/18（A 臂 4/18）、终态 12/18（A 臂 15/18）**；K4 仍 3/3 `scene.list`；
+另有 3 趟（K1 / K3 / K6）planner 交出澄清卡（「你希望我怎么帮你？」），A 臂 0 趟。
+
+归因（逐 trace 读 `cloud.planning.exemplars`）：
+- **四条新范例一次都没被检回**：K1、K2 仍零命中，K4 仍只检回 `scene#8`。离线复算：新范例对留出句的词法分都够不上 0.34，语义通道也没过 0.65
+  ——**两臂在范例上根本没有不同**，B 臂实际只测到 `scene.list` 描述那一处，而它没扭动 K4（0/3）。「A/B 之前先证明两臂真的不同」又一例：
+  范例写得离留出句太远，检索门槛就把它挡在 prompt 外面。
+- 3 趟澄清卡与改动对不上（三句都不经 scene），更像模型方差；撤回后的 C 臂给读数（§9.2.2）。
+
+第二版试过、未发布：撤下四条，补同模板换设备的「香氛都有什么模式」「大灯都有哪些模式」——离线对 K4 词法 0.53（高于 `scene#8` 的 0.42）、
+「空调都有哪些模式」0.68，检得回。但它与场景范例「我能用什么模式」IDF-Dice 0.378 ≥ 0.35，范例门禁要求登记跨域边界裁定；台账契约
+（`validate_boundary_coverage`）要每条裁定左右各 2 条 `reviewed` 对照用例，而设计 §7.5 规定模型不能自填 `reviewed_by: human`
+（既有的都是用户概括授权后自审留痕）。**这一步必须人审**，本批不越过。
+
+处置：F2 全部撤回——两份范例、`scene.list` 描述、目录预算钉子回到 F1 逐字一致（与 `7b0ee8de` 零差异）。K4 的修法与需要人审的那一步见 §9.3。
