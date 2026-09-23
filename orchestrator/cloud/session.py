@@ -48,6 +48,15 @@ PENDING_UNAVAILABLE = "unavailable"
 SAVE_OK = "saved"
 SAVE_UNAVAILABLE = "unavailable"
 SAVE_FENCED = "privacy_fenced"
+# 评审三轮 R3-05（2026-09-23）：**删除**也要说真话。此前 `clear` 是布尔：初次读到挂起、删除那一刻后端不可用时返回
+# False，调用方不看返回值照样宣布「已为您取消」、照样下发 `closed_operation_ids`——而那条挂起还在存储里，下一句「确认」
+# 就能把被取消的动作执行掉（`_settle_session` 同形：确认执行完没删掉 ⇒ 再说「确认」重复执行）。
+CLEAR_DELETED = "deleted"
+CLEAR_ABSENT = "already_absent"
+CLEAR_UNAVAILABLE = "unavailable"
+CLEAR_FENCED = "privacy_fenced"
+#: 删不掉的那条在**本进程**里的墓碑寿命（秒）。墓碑只挡这一个随机 operation_id，给宽一点不伤；挂起自身 TTL 缺省 300 s。
+_TOMBSTONE_TTL = 3600
 
 PERSONAL_DATA_TARGETS = (
     {
@@ -95,6 +104,10 @@ class SessionStore:
         # owner -> expiry; successful privacy deletion retains this tombstone
         # for at least the pending TTL to reject requests already in flight.
         self._owner_fences: dict[str, float] = {}
+        # 评审三轮 R3-05：「<挂起表 key>|<operation_id>」→ 墓碑到期时刻。已被本进程关闭 / 消费、却没能从后端删掉的挂起：
+        # 读出口一律过滤掉（确认 / 续接复活不了），后端恢复后的下一次整表写把它真正删掉。**进程内**——`cloud-planner`
+        # 单副本；进程重启会丢墓碑，那一刻若后端刚好恢复、挂起未过期、用户又说「确认」，是记账的残余风险。
+        self._closing: dict[str, float] = {}
 
     async def _redis(self):
         if aioredis and self._url and self._r is None:
@@ -151,6 +164,27 @@ class SessionStore:
             return True
         self._owner_fences.pop(user_id, None)
         return False
+
+    def _close_locally(self, key: str, operation_id: str | None) -> None:
+        """给一条删不掉的挂起立**进程内墓碑**（R3-05）。没有 operation_id 的旧形态立不了。"""
+        if operation_id:
+            self._closing[f"{key}|{operation_id}"] = time.time() + _TOMBSTONE_TTL
+
+    def _closed_locally(self, key: str, operation_id: str) -> bool:
+        if not self._closing or not operation_id:
+            return False
+        tag = f"{key}|{operation_id}"
+        expires = self._closing.get(tag, 0.0)
+        if expires > time.time():
+            return True
+        self._closing.pop(tag, None)
+        return False
+
+    def _forget_closed(self, key: str) -> None:
+        """这张挂起表刚被整表重写过——写进去的是过滤后的条目，墓碑挡的那些已经真的不在了。"""
+        prefix = f"{key}|"
+        for tag in [t for t in self._closing if t.startswith(prefix)]:
+            self._closing.pop(tag, None)
 
     async def load(self, session_id: str, *,
                    owner_user_id: str = "",
@@ -236,6 +270,8 @@ class SessionStore:
                                type(exc).__name__)
                 return [], PENDING_UNAVAILABLE
             entries = self._live(self._decode(raw, owner)) if raw else []
+            # R3-05：本进程关掉却没删掉的那些不算数（确认 / 续接都复活不了它）
+            entries = [s for s in entries if not self._closed_locally(key, s.operation_id)]
             return entries, (PENDING_FOUND if entries else PENDING_EMPTY)
 
         # 内存兜底
@@ -249,7 +285,8 @@ class SessionStore:
             del self._mem[key]
             return [], PENDING_EMPTY
         live = self._live([s for s in entries
-                           if str(s.owner_user_id or "").strip() == owner])
+                           if str(s.owner_user_id or "").strip() == owner
+                           and not self._closed_locally(key, s.operation_id)])
         return live, (PENDING_FOUND if live else PENDING_EMPTY)
 
     async def save(self, session_id: str, state: SessionState) -> bool:
@@ -270,7 +307,8 @@ class SessionStore:
 
     async def save_pending_result(
             self, session_id: str,
-            state: SessionState) -> tuple[str, SessionState | None]:
+            state: SessionState, *,
+            replaces: str = "") -> tuple[str, SessionState | None]:
         """存一条挂起，返回 `(写入状态, 被 LRU 淘汰的那条或 None)`。
 
         状态 ∈ `saved / unavailable / privacy_fenced`（评审二轮 R8）：连接故障不是隐私清理，
@@ -279,14 +317,19 @@ class SessionStore:
         **淘汰必须回传**：调用方要拿它对用户说一句「刚才那条 X 已过期」——
         静默丢弃就是 B3 那条「认不出就用默认值」的确认版（卡 §3-Q1 的 ⚠）。
         同 `operation_id` 视为**替换**（补槽再次追问不占新槽位）。
+
+        `replaces`（评审三轮 R3-05）：本轮续接上来、已经消费掉的那条挂起——在**同一次整表写**里去掉它、加上新的。
+        此前调用方先 `clear` 旧条再存新条：存失败时两头落空（旧的删了、新的没存）。写失败时这条旧的立进程内墓碑
+        （它已被本轮消费，不能再被确认 / 续接一次）。
         """
         owner = str(state.owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
             return SAVE_UNAVAILABLE, None
+        key = self._session_key(owner, session_id)
         r = await self._redis()
         if self._url and r is None:
+            self._close_locally(key, replaces)
             return SAVE_UNAVAILABLE, None
-        key = self._session_key(owner, session_id)
         ttl = state.ttl_seconds or _DEFAULT_TTL
         if not state.expires_at:
             state.expires_at = time.time() + ttl
@@ -294,25 +337,31 @@ class SessionStore:
         entries, read_state = await self.load_all_result(
             session_id, owner_user_id=owner)
         if read_state == PENDING_UNAVAILABLE:
+            self._close_locally(key, replaces)
             return SAVE_UNAVAILABLE, None
         entries = [s for s in entries
-                   if s.operation_id != state.operation_id]
+                   if s.operation_id not in (state.operation_id, replaces or None)]
         entries.append(state)
         evicted: SessionState | None = None
         while len(entries) > _PENDING_CAPACITY:
             evicted = entries.pop(0)
 
         if self._memory_tombstoned(owner) if not r else False:
+            self._close_locally(key, replaces)
             return SAVE_FENCED, None
         try:
             written = await self._write(r, key, owner, entries)
         except Exception as exc:
             logger.warning("pending write failed (%s); reporting unavailable",
                            type(exc).__name__)
+            self._close_locally(key, replaces)
             return SAVE_UNAVAILABLE, None
         if not written:
             # Redis 路径下 `_write` 只在 Lua 看到写栅栏时返回 0（其余失败都抛）。
+            self._close_locally(key, replaces)
             return SAVE_FENCED, None
+        # 整表重写成功：读出来时已滤掉的墓碑条这次没写回去，它们真的不在了
+        self._forget_closed(key)
         return SAVE_OK, evicted
 
     async def _write(self, r, key: str, owner: str,
@@ -348,28 +397,65 @@ class SessionStore:
 
         `operation_id=None` = 清空整张挂起表（隐私删除/整会话作废）；
         给了 id = **只清那一条**，其余挂起原样保留（Q1-C）。
+
+        ⚠ 布尔**分不清**「删掉了」「本来就不在」「后端删不掉」——要分清的调用方用 `clear_result`（R3-05）。
+        """
+        return await self.clear_result(
+            session_id, owner_user_id=owner_user_id,
+            operation_id=operation_id) == CLEAR_DELETED
+
+    async def clear_result(self, session_id: str, *, owner_user_id: str = "",
+                           operation_id: str | None = None) -> str:
+        """删除挂起，返回 `deleted / already_absent / unavailable / privacy_fenced`（评审三轮 R3-05）。
+
+        给了 id 却删不掉（后端不可用 / 写抛错——含「写已生效、回执丢失」）⇒ `unavailable`，并给这条立**进程内墓碑**：
+        本进程的读出口从此看不到它，确认 / 续接复活不了；后端恢复后的下一次整表写把它真正删掉。
+        「能证明的」只有这些：调用方据此决定回执怎么说，不替后端宣布删掉了。
         """
         owner = str(owner_user_id or "").strip()
         if not owner or not str(session_id or "").strip():
-            return False
+            return CLEAR_ABSENT                  # 空 owner 下什么都存不进去，也就没有可删的
+        key = self._session_key(owner, session_id)
         r = await self._redis()
         if self._url and r is None:
-            return False
-        key = self._session_key(owner, session_id)
+            self._close_locally(key, operation_id)
+            return CLEAR_UNAVAILABLE
         if operation_id is None:
-            if r:
-                pipe = r.pipeline(transaction=True)
-                pipe.delete(key)
-                pipe.srem(self._owner_key(owner), key)
-                result = await pipe.execute()
-                return bool(result and int(result[0] or 0))
-            return self._mem.pop(key, None) is not None
+            try:
+                if r:
+                    pipe = r.pipeline(transaction=True)
+                    pipe.delete(key)
+                    pipe.srem(self._owner_key(owner), key)
+                    result = await pipe.execute()
+                    deleted = bool(result and int(result[0] or 0))
+                else:
+                    deleted = self._mem.pop(key, None) is not None
+            except Exception as exc:
+                logger.warning("pending table delete failed (%s); reporting unavailable",
+                               type(exc).__name__)
+                return CLEAR_UNAVAILABLE
+            self._forget_closed(key)
+            return CLEAR_DELETED if deleted else CLEAR_ABSENT
 
-        entries = await self.load_all(session_id, owner_user_id=owner)
+        entries, read_state = await self.load_all_result(session_id, owner_user_id=owner)
+        if read_state == PENDING_UNAVAILABLE:
+            self._close_locally(key, operation_id)
+            return CLEAR_UNAVAILABLE
         kept = [s for s in entries if s.operation_id != operation_id]
         if len(kept) == len(entries):
-            return False
-        return await self._write(r, key, owner, kept)
+            return CLEAR_ABSENT                  # 不在（含本进程早已立墓碑的那条）
+        try:
+            written = await self._write(r, key, owner, kept)
+        except Exception as exc:
+            logger.warning("pending delete failed (%s); tombstoned locally, reporting unavailable",
+                           type(exc).__name__)
+            self._close_locally(key, operation_id)
+            return CLEAR_UNAVAILABLE
+        if not written:
+            self._close_locally(key, operation_id)
+            return CLEAR_FENCED
+        self._forget_closed(key)
+        return CLEAR_DELETED
 
     @staticmethod
     def _owner_key(user_id: str) -> str:

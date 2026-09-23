@@ -21,7 +21,7 @@ from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
 from .session import (
-    PENDING_UNAVAILABLE, SAVE_FENCED, SAVE_OK, SessionStore)
+    CLEAR_UNAVAILABLE, PENDING_UNAVAILABLE, SAVE_FENCED, SAVE_OK, SessionStore)
 from .loop import LoopController
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
@@ -788,10 +788,17 @@ class PlannerEngine:
                     return
             if cancelled.cancelled:
                 just_cancelled = True
-                await self._close_pending(ctx, pending)
+                cleared = await self._close_pending(ctx, pending)
                 if not cancelled.compound:
                     await _emit_engine_lifecycle(
                         ctx, "cloud.pending_cancel", "system.pending_cancel")
+                    if cleared == CLEAR_UNAVAILABLE:
+                        # 评审三轮 R3-05：删除那一刻后端不可用——能证明的是「本进程不会再执行它」（墓碑），
+                        # 不能证明「已从记录里删掉」。不说「已取消」，也不让用户猜要不要再说一次。
+                        yield {"kind": "final",
+                               "speech": f"好的，{self._pending_label(pending)}不会执行了。",
+                               "actions": [], "_outcome": "cancel_unconfirmed"}
+                        return
                     # 多条挂起并存时说清取消的是哪一条（W01 的对照面）：裸「取消」
                     # 仍按最近一条处理——撤销方向是 fail-safe 的，但不能让用户猜。
                     which = (self._pending_label(pending)
@@ -2203,14 +2210,14 @@ class PlannerEngine:
             }
 
         # Q1-B：每条挂起自带寻址键，随 final 下发给 HMI 并由确认帧原样回传。
-        # 本轮续接上来的那条先关掉——补槽追问「再问一次」是同一件事的下一步，
-        # 不该在挂起表里占两格（Q1-C）。
-        if ctx.pending_operation_id:
-            await self.session.clear(
-                ctx.session_id, owner_user_id=ctx.user_id,
-                operation_id=ctx.pending_operation_id)
-            if ctx.pending_operation_id not in ctx.closed_operation_ids:
-                ctx.closed_operation_ids.append(ctx.pending_operation_id)
+        # 本轮续接上来的那条要关掉——补槽追问「再问一次」是同一件事的下一步，
+        # 不该在挂起表里占两格（Q1-C）。评审三轮 R3-05：「关旧」与「开新」是**同一次整表写**
+        # （`save_pending_result(replaces=)`）；此前先删旧再存新，存失败时两头落空。它已被本轮消费，
+        # 写成没写成都进 `closed_operation_ids`（没写成时 store 给它立进程内墓碑，不会被再确认一次）。
+        replaces = ctx.pending_operation_id
+        if replaces:
+            if replaces not in ctx.closed_operation_ids:
+                ctx.closed_operation_ids.append(replaces)
             ctx.pending_operation_id = ""
         operation_id = f"op-{uuid.uuid4().hex[:16]}"
         # C3-A：把**待补那几个槽**的值形状抄进挂起态——续接轮据此判「这句话长得
@@ -2248,7 +2255,7 @@ class PlannerEngine:
                             if describe is not None else ""),
         )
         save_status, evicted = await self.session.save_pending_result(
-            ctx.session_id, pending_state)
+            ctx.session_id, pending_state, replaces=replaces)
         if save_status != SAVE_OK:
             # 两种都 fail-closed（不给确认条、不执行），但**说的是不同的事**（评审二轮 R8）：
             # 写栅栏是隐私清理正在进行，连不上后端只是这一步存不下。
@@ -2358,13 +2365,11 @@ class PlannerEngine:
     async def _suspend_clarify(self, ctx: PlanContext, plan: Plan, clarify: dict,
                                text: str) -> dict:
         """澄清轮落一条 `wait_clarify` 挂起并构造 final（W10）。"""
-        if ctx.pending_operation_id:
-            # 续接上来的那条已经消费完，不在表里占两格（同 `_suspend`）
-            await self.session.clear(
-                ctx.session_id, owner_user_id=ctx.user_id,
-                operation_id=ctx.pending_operation_id)
-            if ctx.pending_operation_id not in ctx.closed_operation_ids:
-                ctx.closed_operation_ids.append(ctx.pending_operation_id)
+        # 续接上来的那条已经消费完，不在表里占两格（同 `_suspend`，评审三轮 R3-05：关旧开新同一次整表写）
+        replaces = ctx.pending_operation_id
+        if replaces:
+            if replaces not in ctx.closed_operation_ids:
+                ctx.closed_operation_ids.append(replaces)
             ctx.pending_operation_id = ""
         operation_id = f"op-{uuid.uuid4().hex[:16]}"
         state = SessionState(
@@ -2380,11 +2385,16 @@ class PlannerEngine:
                      "options": [dict(o) for o in (clarify.get("options") or [])
                                  if isinstance(o, dict)]},
         )
-        saved, evicted = await self.session.save_pending(ctx.session_id, state)
-        if saved is False:
+        save_status, evicted = await self.session.save_pending_result(
+            ctx.session_id, state, replaces=replaces)
+        if save_status != SAVE_OK:
+            # 评审三轮 R3-05 顺手：这里此前把**任何**保存失败都说成「正在清除你的数据」——二轮 R8 只修了 `_suspend`
+            fenced = save_status == SAVE_FENCED
             return {"kind": "final",
-                    "speech": "正在清除你的数据，这次操作没有保存，请稍后重新发起。",
-                    "actions": [], "ui_card": None, "_outcome": "store_fenced"}
+                    "speech": ("正在清除你的数据，这次操作没有保存，请稍后重新发起。" if fenced
+                               else "我想先问清楚你要哪一种，但会话状态暂时存不下来，稍后再说一次。"),
+                    "actions": [], "ui_card": None,
+                    "_outcome": "store_fenced" if fenced else "store_unavailable"}
         final = {
             "kind": "final",
             "speech": clarify["question"],
@@ -2455,19 +2465,25 @@ class PlannerEngine:
                 parts.append(s)
         return "；".join(parts) + "。" if parts else ""
 
-    async def _close_pending(self, ctx: PlanContext, pending) -> None:
-        """关掉一条挂起，并记进本轮的 `closed_operation_ids`（Q1-C）。
+    async def _close_pending(self, ctx: PlanContext, pending) -> str:
+        """关掉一条挂起，并记进本轮的 `closed_operation_ids`（Q1-C）；返回删除结果（`session.CLEAR_*`）。
 
         **只清这一条**：挂起表里其余的与本轮无关，清掉它们等于把用户还惦记着的
         另一件事悄悄抹掉——正是单槽时代那个语义（`_suspend` 覆盖旧挂起）的换皮。
+
+        评审三轮 R3-05：删除有四种结果，四种都意味着「这条不会再被执行」——删掉了 / 本来就不在 / 隐私写栅栏挡着读 /
+        后端删不掉但 store 已立进程内墓碑——所以都进 `closed_operation_ids`；**话术**按能证明的那一种说（调用方读返回值）。
         """
         if pending is None:
-            return
+            return ""
         op = getattr(pending, "operation_id", "") or ""
-        await self.session.clear(
+        state = await self.session.clear_result(
             ctx.session_id, owner_user_id=ctx.user_id, operation_id=op)
+        if state == CLEAR_UNAVAILABLE:
+            logger.warning("pending %s could not be deleted; tombstoned in-process", op[:16])
         if op and op not in ctx.closed_operation_ids:
             ctx.closed_operation_ids.append(op)
+        return state
 
     def _loop_settler(self, ctx: PlanContext, plan: Plan, held_pending, mem_on: bool):
         """T2 完成轮的收口回调（批 8 ①）。返回一个带 `settle` 协程与 `done` 旗子的小对象：
@@ -2516,9 +2532,13 @@ class PlannerEngine:
         以前这里 `clear()` 清的是整个 key，多槽下会连带抹掉两件不相干的挂起。
         不刷新 TTL：挂起窗口以首次挂起时刻起算，插话不无限续命。"""
         if held_pending is None and ctx.pending_operation_id:
-            await self.session.clear(
+            # R3-05：续接执行完却删不掉（后端那一刻不可用）⇒ store 立进程内墓碑——再说一次「确认」不会把它重复执行
+            state = await self.session.clear_result(
                 ctx.session_id, owner_user_id=ctx.user_id,
                 operation_id=ctx.pending_operation_id)
+            if state == CLEAR_UNAVAILABLE:
+                logger.warning("settled pending %s could not be deleted; tombstoned in-process",
+                               ctx.pending_operation_id[:16])
             if ctx.pending_operation_id not in ctx.closed_operation_ids:
                 ctx.closed_operation_ids.append(ctx.pending_operation_id)
 

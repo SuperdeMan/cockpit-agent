@@ -87,7 +87,7 @@
 |---|---|---|
 | R3-02 | `extract_focus` 里 `session_constraints` 一律存**本轮补丁**（`constraints_in` 原样，带 `None` 墓碑，含 `others`），不再提前 `merge_constraints({}, …)`；`update_focus` 是唯一把补丁合进旧快照、再归一成「说过且仍有效」的地方（旧逻辑本来就在那里归一）。owner 投影 / 回存不动 | 不加词表、不为这一句写特例；不改 `constraints_in` 的抽取 |
 | R3-05 删除三态 | `SessionStore.clear_result` → `deleted / already_absent / unavailable / privacy_fenced`（`clear()` 保留布尔形状委托它）；`_write` 抛错不再冒到编排层 | — |
-| R3-05 可靠墓碑 | 删不掉（`unavailable`）时在 store 里记**进程内墓碑**（operation_id → 那条挂起的截止时刻）：`load_all_result` 过滤掉墓碑条并顺手重试删除，整表重写（`save_pending_result`）时把墓碑条一并去掉——删不掉的那条再也不会被确认 / 续接复活，后端恢复后第一次读写就把它清掉 | 不跨进程：`cloud-planner` 单副本，进程重启丢墓碑（且此刻后端刚好恢复、挂起未过期、用户又说「确认」）是记账的残余风险 |
+| R3-05 可靠墓碑 | 删不掉（`unavailable`）时在 store 里记**进程内墓碑**（operation_id → 那条挂起的截止时刻）：`load_all_result` 过滤掉墓碑条，下一次整表重写（`save_pending_result` / `clear_result`）自然不再写回它——删不掉的那条再也不会被确认 / 续接复活，后端恢复后的第一次整表写就把它真正删掉（读路径不顺手写，避免读出口带副作用） | 不跨进程：`cloud-planner` 单副本，进程重启丢墓碑（且此刻后端刚好恢复、挂起未过期、用户又说「确认」）是记账的残余风险 |
 | R3-05 回执 | `_close_pending` / `_settle_session` 返回删除结果；只有 `deleted / already_absent / privacy_fenced / 已立墓碑` 才进 `closed_operation_ids`；取消出口按能证明的状态说：删掉了 ⇒「已为您取消」，只立了墓碑 ⇒「好的，X 不会执行了」（不说「已取消」、不让用户猜要不要再说一次）；新 outcome `cancel_unconfirmed` | 墓碑都立不起来的形态不存在（它是进程内状态） |
 | R3-05 提交语义 | `_suspend` / `_suspend_clarify` 的「关旧开新」改成**一次整表写**：`save_pending_result(…, replaces=旧 op)` 在同一次写里去掉旧条、加新条；写失败 ⇒ 旧条（本轮已消费）立墓碑、`closed_operation_ids` 点名它，新条没存 ⇒ 按 R8 话术说存不下；`_suspend_clarify` 也改用三态（修掉「正在清除你的数据」那句误报） | — |
 
@@ -100,6 +100,21 @@ R3-05 的三条新出口在云端没有触发场景（Redis 正常），证据�
 - R3-05：初次读成功、删除时失败（取消 / 收口 / 澄清选中 / 过期四条出口）；删除成功但回执丢失（写已生效、调用抛错）；重挂起保存失败（旧条不复活、新条不假存）；
   成功取消后再次确认不能复活（含墓碑那一支）；后端恢复后墓碑条被真正删掉。
 - 变异：提前归一放回 / 墓碑不过滤 / 回执不看结果 / 关旧开新拆回两步，各自判红。
+
+### 3.1 落地记录（2026-09-23）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| R3-02 | `context.py::extract_focus`：`session_constraints` 存本轮补丁（`constraints_in` 原样，带 `None` 墓碑、含 `others`）；`update_focus` 是唯一「合进旧快照 → 归一」的地方（本来就在那里归一，只是前面先归一过一次） | 新 `test_constraint_patch` 10：补丁带墓碑、同句 SET + DELETE、两维互换、仅 DELETE、仅 SET、未提及保持、`others` 子对象 SET + DELETE、owner 隔离、首轮纯撤销不落键；引擎级：第二句致谢不再念「不想排队」、回问也不念 |
+| R3-05 删除三态 + 墓碑 | `session.py`：`CLEAR_*` 四态 + `clear_result`（`clear()` 委托、布尔形状不变）；`_close_locally` / `_closed_locally` / `_forget_closed`；`load_all_result` 两条路径都过滤墓碑条；`_write` 抛错不再冒到编排层 | 新 `test_pending_clear_states` 14 条里的存储层 6 条：三态、布尔形状、删不掉 ⇒ 墓碑读不出、恢复后下一次整表写真的删掉、写已生效回执丢失 ⇒ 报 unavailable 但读不回来、`replaces` 一次写 |
+| R3-05 回执 | `engine.py`：`_close_pending` 返回删除结果，四态都进 `closed_operation_ids`（都不会再执行）；取消出口删不掉 ⇒「好的，X 不会执行了。」+ 新 outcome `cancel_unconfirmed`（`runtime/outcome.py`）；`_settle_session` 同用 `clear_result` | 引擎 4 条：取消时删不掉不说「已为您取消」、后端恢复后再确认不复活；回执丢失的取消不复活；确认执行后删不掉不会被再确认一次；成功取消后确认不复活 |
+| R3-05 提交语义 | `_suspend` / `_suspend_clarify`：「关旧开新」= `save_pending_result(replaces=)` 一次整表写，写失败旧条立墓碑；`_suspend_clarify` 改三态（此前任何保存失败都说「正在清除你的数据」——二轮 R8 只修了 `_suspend`） | 引擎 4 条：重挂起写失败 ⇒ 旧条留在存储里但读不出、新条没假存、话术说存不下；关旧开新写次数 = 1；澄清存不下不说隐私清除；澄清选中后删不掉不能再选一次 |
+| 探针 | RS26（同句 SET + DELETE 的致谢与回问）；第三轮反例集 += RS26 | `--list` 通过 |
+
+定向读数：新增 24 条；cloud + runtime + 对比对 + 探针 2557 passed / 1 skipped；四门禁 + smoke_edge 13/13；**六处变异各判红**
+（提前归一放回红 6、墓碑不过滤红 6、取消回执不看删除结果红 1、删不掉不立墓碑红 4、关旧开新拆回两步红 1、替换失败不立墓碑红 2）。
+「关旧开新拆两步」这条在行为层与一次写**等价**（全失败时旧条都读不出、新条都没存），只有写次数分得开，所以钉的是「一次写」。
+**全量固定口径（批 B 工作树，`TZ=UTC0` `-n 6`）：9122 passed / 0 failed / 32 skipped / 10 warnings，301 s。**
 
 ## 4. 批 C：R3-03 拒绝绑定到原话分句 + R3-06 运行时步骤身份
 

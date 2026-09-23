@@ -1359,6 +1359,23 @@ CASES = [
          {"say": "好的，确认吧", "sid": 1,
           "expect": {"actions_include": ["door_lock.open"], "closes_op_from": 5}},
      ]},
+    # ── 评审三轮批 B（R3-02，2026-09-23）────────────────────────────────────────
+    # 同一句里一维改口、一维撤销：修前 `extract_focus` 先把补丁归一，撤销那一半丢了，旧的「不想排队」复活——
+    # 第二句的确定性致谢会念出「这次想吃辣、不想排队」（用户刚说排不排队都行）。判据是话术里不出现被撤掉的那一维。
+    # R3-05 的删除三态在云端没有触发场景（Redis 正常），证据在离线用例。
+    {"id": "RS26", "group": "residual", "card": "余项", "issue": "评审三轮 R3-02",
+     "why": "同一句 SET + DELETE：撤掉的那一维不复活",
+     "known": "red",
+     "turns": [
+         {"say": "我不吃辣，也不想排队",
+          "expect": {"no_actions": True, "speech_has": ["不吃辣", "不想排队"]},
+          "audit": {"intent_any": ["system.constraint_noted"]}},
+         {"say": "今天想吃辣，排不排队都行",
+          "expect": {"no_actions": True, "speech_has": ["想吃辣"], "speech_not": ["不想排队"]},
+          "audit": {"intent_any": ["system.constraint_noted"]}},
+         {"say": "我今天说过不想排队吗",
+          "expect": {"no_actions": True, "speech_not": ["不想排队"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

@@ -1830,14 +1830,14 @@ def extract_focus(plan, results) -> "Focus | None":
     # T28「我不吃辣，也不想排长队」落的是 chitchat，如果只在 nearby 那条路上抽，
     # 下一轮的推荐就永远读不到它（那正是真栈发生的事）。
     if raw_text:
-        # W03：`constraints_in` 可能带 `None`（撤销）——没有旧值可撤时它什么都不是，
-        # 经一次空合并归一掉，焦点里永远只存「说过且仍有效」的键。
-        stated = merge_constraints({}, constraints_in(raw_text))
-        if stated:
-            focus.session_constraints = stated
-        elif constraints_in(raw_text):
-            # 只有撤销、没有新约束：本轮仍要把撤销带给 `update_focus` 的跨轮合并去删旧键
-            focus.session_constraints = constraints_in(raw_text)
+        # W03 / 评审三轮 R3-02（2026-09-23）：这里存的是**本轮补丁**——`constraints_in` 原样，带 `None` 墓碑（撤销），
+        # 含 `others` 子对象；把它合进旧快照、再归一成「说过且仍有效」的，**只在** `update_focus` 做一次。
+        # 修前这里先 `merge_constraints({}, …)` 提前归一：只要同一句里还有 SET，DELETE 就被归一掉了——
+        # 「今天想吃辣，排不排队都行」只剩 `{no_spicy: False}` 进跨轮合并，旧的 `no_queue=True` 复活，
+        # 致谢话术还念出用户刚撤掉的「不想排队」。只有纯删除那一种当年走了保留 `None` 的旁支，所以撤销用例一直是绿的。
+        patch = constraints_in(raw_text)
+        if patch:
+            focus.session_constraints = patch
     if raw_text:
         # QA T47 裁决 A（2026-09-19）：用户明确说「机油灯灭了 / 处理好了 / 是误报」⇒ 会话里那条
         # 告警解除。判据在 `runtime.safety_signal.alert_resolved`（与 chitchat / road-safety /

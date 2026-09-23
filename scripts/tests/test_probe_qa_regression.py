@@ -807,6 +807,7 @@ def test_every_round_two_case_declares_a_mechanical_expectation():
 # ── 评审三轮反例集（2026-09-23 起随批追加）：同一条纪律——改 id / 换组 / 只留话术判据都会红 ──
 ROUND3_CASES = (
     "RS25",   # R3-01 语气词不授权 / 点名与挂起步骤矛盾不授权
+    "RS26",   # R3-02 同一句 SET + DELETE，撤掉的一维不复活
 )
 
 
