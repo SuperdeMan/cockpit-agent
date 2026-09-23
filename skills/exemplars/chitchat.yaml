@@ -180,3 +180,23 @@ exemplars:
   tags:
   - canonical
   note: 同上：配偶/家人的位置陈述走记忆抽取（person→place 一跳解析的数据源），不落 set_place
+# 评审三轮追加批 F（F-3，2026-09-23）：推荐 / 列单子类的知识请求。真栈 `f9bec423`「推荐三部适合全家看的电影」
+# planner 两趟空计划、一趟把编号错写成瑞幸下单；这一类没有专门能力时就是 chitchat 的活。说法刻意避开 A/B 留出集（K1–K3）。
+- text: 推荐几个适合全家一起玩的桌游
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manual
+  added: '2026-09-23'
+  tags:
+  - badcase
+  note: 推荐 / 列单子类知识请求没有专门能力时归 chitchat，不是空计划
+- text: 推荐几道适合新手做的家常菜
+  plan:
+  - agent: chitchat
+    intent: chitchat.talk
+  source: manual
+  added: '2026-09-23'
+  tags:
+  - badcase
+  note: 同上

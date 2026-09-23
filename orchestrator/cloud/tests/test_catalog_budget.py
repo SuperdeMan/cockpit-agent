@@ -250,14 +250,18 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 与手册处置步骤归车型手册问答」）。同一个病的第三例：Agent 在 C1-B 就实现了
     # 「本轮原话带告警 ⇒ 按等级给确定性结论」，但 planner **只看得见描述**，于是
     # 「红色机油灯亮了还能继续开吗」被规划成 info.search（information T24）。条数不变。
-    assert catalog.catalog_stats["chars_full"] == 13855
-    assert catalog.catalog_stats["chars_final"] == 13855
+    # 2026-09-23 +69 → 13924：评审三轮追加批 F（F-3）给 `scene.list` 的描述补上**判别句**
+    # （「一个场景是一组车控设定的组合；单个设备自己有哪几种工作模式不归本条——那是车辆手册问答」）。
+    # 真栈「空调有什么模式」3/3 落 scene.list：场景范例「我能用什么模式」被检回，而描述没说设备模式不归它。
+    # 同一个病的又一例——描述就是 planner 的选择权重。条数不变，默认 16k 下仍零裁剪。
+    assert catalog.catalog_stats["chars_full"] == 13924
+    assert catalog.catalog_stats["chars_final"] == 13924
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13855 → 2145）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（13924 → 2076）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2145
+    assert 16000 - catalog.catalog_stats["chars_final"] == 2076
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
