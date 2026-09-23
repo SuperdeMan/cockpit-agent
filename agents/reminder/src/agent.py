@@ -170,13 +170,30 @@ def _title_scope(slot_title: str, raw: str) -> str:
     parts = split_clauses(raw or "")
     if not title or len(parts) < 2:
         return raw
-    own = [part for part in parts
-           if title in part or title in ReminderAgent._extract_title(part)]
-    if len(own) != 1:
+    # 标题落在哪个分句：取与它最长公共子串最大（≥2 字）且唯一的那一个——planner 的标题常是转述
+    # （真栈 `c99a9a74`：「深圳下雨通知我」少一个「就」，逐字子串就找不到它的分句）
+    scores = [_common_run(title, part) for part in parts]
+    top = max(scores)
+    own = [part for part, score in zip(parts, scores) if score == top]
+    if top < 2 or len(own) != 1:
         return raw
     if any(_is_its_own_request(part) for part in parts if part is not own[0]):
         return own[0]
     return raw
+
+
+def _common_run(a: str, b: str) -> int:
+    """最长公共子串的长度（两边都是短串）。"""
+    best = 0
+    previous = [0] * (len(b) + 1)
+    for i in range(1, len(a) + 1):
+        current = [0] * (len(b) + 1)
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                current[j] = previous[j - 1] + 1
+                best = max(best, current[j])
+        previous = current
+    return best
 
 
 def _is_its_own_request(clause: str) -> bool:
@@ -455,7 +472,8 @@ class ReminderAgent(BaseAgent):
             return await self._create_location(pp, title, ctx, meta)
         # 评审三轮真栈 RS27：这一步自己那半句是事件触发、自己又没给时间 ⇒ 诚实拒绝，**不许**回退去整句里借另一个诉求的时间
         # （修前「深圳下雨就通知我」借了「明天早上八点」，建成一条 08:00 的定时提醒）。只在拆步形态下生效（`scope != raw`）。
-        if scope != raw and not time_text:
+        # 不看 `time_text`：这半句里没有时间，planner 填进时间槽的只能是别的诉求的时间，或干脆把事件短语塞进了时间槽（真栈 `c99a9a74` 两种都有）。
+        if scope != raw:
             own_hit = _event_trigger_clause(scope)
             if own_hit and not _has_time_signal(own_hit[1]):
                 logger.info("reminder.create 拒建（拆步后的事件触发）：%s", scope[:40])

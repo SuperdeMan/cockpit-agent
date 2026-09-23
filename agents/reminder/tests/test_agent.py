@@ -1245,10 +1245,17 @@ _TWO_REQUESTS = "深圳下雨就通知我，另外明天早上八点提醒我和
 
 
 @pytest.mark.asyncio
-async def test_the_event_step_of_a_split_utterance_is_refused_not_timed_by_the_other_clause():
+@pytest.mark.parametrize("slots", [
+    {"title": "深圳下雨就通知我", "time_text": "", "kind": "weather"},
+    # 真栈 `c99a9a74` 的两种 planner 写法：事件短语塞进时间槽 / 标题少一个「就」（逐字子串就找不到它的分句）
+    {"title": "深圳下雨", "time_text": "深圳下雨就通知我"},
+    {"title": "深圳下雨通知我", "time_text": ""},
+    # 另一个诉求的时间被抄进这一步的时间槽：时间只能是那一句的
+    {"title": "深圳下雨就通知我", "time_text": "明天早上八点"},
+])
+async def test_the_event_step_of_a_split_utterance_is_refused_not_timed_by_the_other_clause(slots):
     a = await _agent()
-    res = await run_handle(a, "reminder.create", raw_text=_TWO_REQUESTS,
-                           slots={"title": "深圳下雨就通知我", "time_text": "", "kind": "weather"})
+    res = await run_handle(a, "reminder.create", raw_text=_TWO_REQUESTS, slots=dict(slots))
     assert (res.data or {}).get("_refused") == "unsupported", res.speech
     assert "深圳下雨" in res.speech and "什么时候" not in res.speech
     times, todos = await a.store.list_split("u1")
