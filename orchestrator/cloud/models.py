@@ -291,6 +291,8 @@ class ReplanDecision:
     # 评审二轮 R5：依赖「被拒诉求的再试」的下游步——前置没满足，不执行、也不删边让它变根节点；
     # 记 intent 名供观测（`t2.iter` span）。
     blocked: list[str] = field(default_factory=list)
+    # 评审三轮 R3-06：`{运行时步骤 ID: 模型给的局部 ID}`——planner_local_id 与 runtime_step_id 分开记，只供观测。
+    local_ids: dict[str, str] = field(default_factory=dict)
 
     def to_plan(self, goal: str = "", safety_origin_text: str = "") -> Plan:
         return Plan(steps=self.steps, complexity="adaptive", goal=goal,

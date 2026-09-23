@@ -808,6 +808,7 @@ def test_every_round_two_case_declares_a_mechanical_expectation():
 ROUND3_CASES = (
     "RS25",   # R3-01 语气词不授权 / 点名与挂起步骤矛盾不授权
     "RS26",   # R3-02 同一句 SET + DELETE，撤掉的一维不复活
+    "RS27",   # R3-03 被拒诉求与独立诉求共用城市名，独立的照做
 )
 
 

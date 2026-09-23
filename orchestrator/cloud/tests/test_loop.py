@@ -22,7 +22,7 @@ class _Planner:
 
     async def replan(self, goal, observations, agents, ctx, granted_permissions=None,
                      working_set=None, skill_names=None, exemplar_names=None,
-                     adaptive=False):
+                     adaptive=False, **_kwargs):   # R3-06：loop 另传 taken_ids / batch_tag
         self.observations.append(list(observations))
         self.adaptive_flags.append(adaptive)
         return self.decisions.pop(0)
@@ -779,7 +779,7 @@ def _wrap_planner(planner):
 
         async def replan(self, goal, observations, agents, ctx,
                          granted_permissions=None, working_set=None,
-                         skill_names=None, exemplar_names=None, adaptive=False):
+                         skill_names=None, exemplar_names=None, adaptive=False, **_kwargs):
             self._inner.skill_names_seen.append(list(skill_names or []))
             self._inner.exemplar_names_seen.append(list(exemplar_names or []))
             return await self._inner.replan(

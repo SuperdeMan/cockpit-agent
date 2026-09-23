@@ -439,7 +439,7 @@ class _Planner:
 
     async def replan(self, goal, observations, agents, ctx,
                      granted_permissions=None, working_set=None,
-                     skill_names=None, exemplar_names=None, adaptive=False):
+                     skill_names=None, exemplar_names=None, adaptive=False, **_kwargs):
         return self.decisions.pop(0)
 
 

@@ -244,7 +244,7 @@ class _Planner:
 
     async def replan(self, goal, observations, agents, ctx, granted_permissions=None,
                      working_set=None, skill_names=None, exemplar_names=None,
-                     adaptive=False):
+                     adaptive=False, **_kwargs):   # R3-06：loop 另传 taken_ids / batch_tag
         return self.decisions.pop(0)
 
 

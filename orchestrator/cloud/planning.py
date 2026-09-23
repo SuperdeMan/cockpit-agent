@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
+from typing import NamedTuple
 from security.permission import check_permission
 from .models import Plan, Step, PlanContext, ReplanDecision, step_fingerprint, step_record
 from .context import (
@@ -34,6 +35,7 @@ from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
 from runtime import memory_directive as _memory_directive
+from runtime.clause_split import split_clauses
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import is_non_directive_question
@@ -1200,25 +1202,80 @@ def _completed_observation_steps(observations: list[dict]) -> dict[str, list[str
     return completed
 
 
-def _refused_goals(observations: list[dict]) -> list[tuple[str, set[str]]]:
-    """观察里被 Agent 声明为「能力做不到」（`refused=unsupported`）的**诉求**：``(领域, 槽值实质)``。
+class _RefusedGoal(NamedTuple):
+    """一个被 Agent 声明「能力做不到」的诉求（评审三轮 R3-03）。
+
+    `spans` = 它在任务起点原话里的**来源分句**（`_grounding`）；空 = 被拒那一步的槽值在原话里落不下，
+    同一性只剩强证据（同指纹 / 同值）。`fingerprint` 与执行侧防抖是同一份键（`models.step_fingerprint`）。"""
+    domain: str
+    substance: frozenset
+    spans: frozenset
+    fingerprint: str
+
+
+#: 原话先按句末标点断句，再按 `runtime.clause_split` 那一份分隔符拆分句（两张表都不在这里另抄）。
+_ORIGIN_SENTENCE_END_RE = re.compile(r"[。！？!?；;\n]+")
+
+
+def _origin_clauses(text: str) -> list[str]:
+    """任务起点原话 → 分句列表（去空白、小写），被拒诉求与新步的「来源」都落在这些分句上。"""
+    out: list[str] = []
+    for sentence in _ORIGIN_SENTENCE_END_RE.split(str(text or "")):
+        out.extend(split_clauses(sentence))
+    return [c for c in (re.sub(r"\s+", "", part).lower() for part in out) if c]
+
+
+def _longest_common_run(a: str, b: str) -> int:
+    """最长公共子串的长度（两边都是短串，O(len·len)）。"""
+    best = 0
+    previous = [0] * (len(b) + 1)
+    for i in range(1, len(a) + 1):
+        current = [0] * (len(b) + 1)
+        for j in range(1, len(b) + 1):
+            if a[i - 1] == b[j - 1]:
+                current[j] = previous[j - 1] + 1
+                best = max(best, current[j])
+        previous = current
+    return best
+
+
+def _grounding(values, clauses: list[str]) -> set[int]:
+    """槽值落在原话的哪些分句：每个值取最长公共子串最大（且 ≥2 字）的分句，并列都算。
+
+    「深圳客户会议」对「深圳下雨就通知我」只共享「深圳」（2），对「明天八点提醒我和深圳客户开会」共享「深圳客户」（4）
+    ⇒ 它来自后者。二字交集只能说明两句话都提到了深圳，说明不了是同一件事（评审三轮 R3-03 的反例）。"""
+    spans: set[int] = set()
+    for value in values or ():
+        scores = [_longest_common_run(str(value), clause) for clause in clauses]
+        top = max(scores, default=0)
+        if top >= 2:
+            spans |= {index for index, score in enumerate(scores) if score == top}
+    return spans
+
+
+def _refused_goals(observations: list[dict], origin_text: str = "") -> list[_RefusedGoal]:
+    """观察里被 Agent 声明为「能力做不到」（`refused=unsupported`）的**诉求**。
 
     批 7 ①：这类拒绝是该诉求的终态。再规划时同域换一个 intent（reminder.create 拒绝后规划
     `reminder.cancel`）就是「换能力再试同一件事」，用户会听到一句盖掉诚实拒绝的废话（真栈 RS10 第 3 趟：
-    「提醒方面也没找到」）。评审二轮 R5：终止标记绑定**那一个诉求**，不是整个领域——「以后有堵车就提醒我，
-    另外列出明天的提醒」第一件做不到不等于第二件也做不到。诉求的身份 = 领域 + 被拒那一步的槽值实质
-    （`_substance`）；泛拒绝（`refused=True`）不算——它不是能力边界。
+    「提醒方面也没找到」）。评审二轮 R5：终止标记绑定**那一个诉求**，不是整个领域。评审三轮 R3-03：诉求的身份
+    不再是「槽值的任意两字交集」，而是它在任务起点原话里的**来源分句**（`_grounding`）；泛拒绝（`refused=True`）
+    不算——它不是能力边界。
     """
-    goals: list[tuple[str, set[str]]] = []
+    clauses = _origin_clauses(origin_text)
+    goals: list[_RefusedGoal] = []
     for observation in observations or []:
         if not isinstance(observation, dict) or observation.get("refused") != "unsupported":
             continue
         intent = observation.get("intent")
         if not (isinstance(intent, str) and "." in intent):
             continue
-        slots = observation.get("slots")
-        goals.append((intent.split(".", 1)[0],
-                      _substance(slots if isinstance(slots, dict) else {})))
+        slots = observation.get("slots") if isinstance(observation.get("slots"), dict) else {}
+        substance = _substance(slots)
+        goals.append(_RefusedGoal(
+            domain=intent.split(".", 1)[0], substance=frozenset(substance),
+            spans=frozenset(_grounding(substance, clauses)),
+            fingerprint=step_fingerprint(intent.strip(), slots)))
     return goals
 
 
@@ -1233,37 +1290,51 @@ def _substance(slots: dict) -> set[str]:
     return out
 
 
-def _overlaps(a: set[str], b: set[str]) -> bool:
-    """两组槽值有没有共用的字眼：整值相等、一方是另一方的子串，或共享 ≥2 字的片段。"""
-    for x in a:
-        for y in b:
-            if x == y or x in y or y in x:
-                return True
-            if any(x[i:i + 2] in y for i in range(len(x) - 1)):
-                return True
-    return False
+def _retries_refused_goal(step: Step, refused_goals: list[_RefusedGoal],
+                          clauses: list[str] | None = None) -> bool:
+    """这一步是不是在为一个已声明「做不到」的诉求换能力再试——**只在有充分同一性证据时**判是（评审三轮 R3-03）。
 
-
-def _retries_refused_goal(step: Step, refused_goals: list[tuple[str, set[str]]]) -> bool:
-    """这一步是不是在为一个已声明「做不到」的诉求换能力再试。
-
-    同域 ∧（槽里带着被拒那件事的字眼 ∨ 干脆没有槽值）。同域但参数是自己的（「列出明天的提醒」
-    「明早八点提醒我开会」）是独立诉求，照做。
+    同域才谈得上。证据按强到弱：
+      · 与被拒那一步同指纹 ⇒ 原样再来一次；
+      · 被拒诉求的来源分句已知、新步的槽值有落点 ⇒ 落点**全在**被拒分句里才是再试，有任何一个落在别的分句就是
+        独立诉求（「深圳下雨就通知我，另外明天八点提醒我和深圳客户开会」里的会议提醒照做）；
+      · 新步一个落点都没有（空槽 / 值在原话里落不下）⇒ 原话里没有被拒分句以外的分句时只能是再试；否则只有**空槽的写能力**
+        （`reminder.cancel {}`——对那件事撤销 / 改动）算再试，读能力（「另外列出我的提醒」的 `reminder.list {}`）照做；
+      · 被拒那一步自己落不下（来源未知）⇒ 只认同值；空槽步在原话只有一句、或它是写能力时算再试。
+    模糊相似（共用一个城市名 / 模板词）不再是终止独立诉求的理由。
     """
     if "." not in step.intent:
         return False
     domain = step.intent.split(".", 1)[0]
+    clauses = list(clauses or [])
     mine = _substance(step.slots)
-    for refused_domain, refused_substance in refused_goals:
-        if domain != refused_domain:
+    grounds = _grounding(mine, clauses)
+    fingerprint = step_fingerprint(step.intent, step.slots)
+    slotless_write = (not step.slots
+                      and str(getattr(step, "effect", "") or "") == "write")
+    for goal in refused_goals:
+        if goal.domain != domain:
             continue
-        if not mine or _overlaps(mine, refused_substance):
+        if fingerprint == goal.fingerprint:
+            return True
+        if goal.spans:
+            if grounds:
+                if grounds <= goal.spans:
+                    return True
+                continue
+            if not (set(range(len(clauses))) - goal.spans) or slotless_write:
+                return True
+            continue
+        if mine and goal.substance and mine & goal.substance:
+            return True
+        if not mine and (len(clauses) <= 1 or slotless_write):
             return True
     return False
 
 
 def _drop_refused_goal_steps(
-        steps: list[Step], refused_goals: list[tuple[str, set[str]]],
+        steps: list[Step], refused_goals: list[_RefusedGoal],
+        clauses: list[str] | None = None,
 ) -> tuple[list[Step], list[str], list[str]]:
     """丢掉「为已拒诉求换能力再试」的新步，**连同依赖它们的下游**；返回
     ``(remaining, dropped_intents, blocked_intents)``。
@@ -1274,7 +1345,7 @@ def _drop_refused_goal_steps(
     """
     if not refused_goals:
         return steps, [], []
-    dropped = [step for step in steps if _retries_refused_goal(step, refused_goals)]
+    dropped = [step for step in steps if _retries_refused_goal(step, refused_goals, clauses)]
     if not dropped:
         return steps, [], []
     gone = {step.id for step in dropped}
@@ -1296,7 +1367,14 @@ def _drop_refused_goal_steps(
             sorted({step.intent for step in blocked}))
 
 
+#: executor `_resolve_slot_refs` 认的两种线上占位写法（槽值里直接写引用）：`${s1.data...}` 与 `$s1.data...`。
+_REF_PLACEHOLDER_RE = re.compile(r"\$\{([^{}.]+)((?:\.[^{}]*)?)\}")
+_REF_BARE_PLACEHOLDER_RE = re.compile(r"\$([A-Za-z0-9_-]+)(\.data\.[A-Za-z0-9_.]+)")
+
+
 def _rewrite_completed_ref(value, replacements: dict[str, str]):
+    """把一个引用值里的步骤 ID 换掉：裸 ID、`id.路径`，以及两种占位写法（评审三轮 R3-06 补上后两种——
+    运行时 ID 改写时，槽值里的 `${r1.data.x}` 若不跟着换，就会读到另一批的 r1）。"""
     if not isinstance(value, str):
         return value
     for old, new in replacements.items():
@@ -1304,7 +1382,52 @@ def _rewrite_completed_ref(value, replacements: dict[str, str]):
             return new
         if value.startswith(f"{old}."):
             return f"{new}{value[len(old):]}"
+    stripped = value.strip()
+    m = _REF_PLACEHOLDER_RE.fullmatch(stripped)
+    if m and m.group(1) in replacements:
+        return "${" + replacements[m.group(1)] + m.group(2) + "}"
+    m = _REF_BARE_PLACEHOLDER_RE.fullmatch(stripped)
+    if m and m.group(1) in replacements:
+        return "$" + replacements[m.group(1)] + m.group(2)
     return value
+
+
+_RUNTIME_ID_UNSAFE_RE = re.compile(r"[^A-Za-z0-9_]")
+
+
+def assign_runtime_ids(steps: list[Step], taken, tag: str, *,
+                       only_colliding: bool = False) -> dict[str, str]:
+    """再规划批的局部 ID → **本轮唯一的运行时 ID**（评审三轮 R3-06），返回 `{运行时 ID: 局部 ID}`（只含改了的）。
+
+    T2 把历史结果按 step_id 建 `done_seed`，执行器以 `s.id not in done` 决定跑不跑——模型每批都从 r1 编号，
+    上一批 r1 是天气、这一批 r1 是新提醒 ⇒ 新提醒被当成已完成跳过，同批 `slot_refs: r1.data.x` 读到上一批的结果。
+    运行时 ID = `<标签>-<局部 ID>`（标签由 loop 按批次给：`t1` / `t2`…），与 `taken`（本轮已知的全部 ID：结果、种子、
+    初计划）或同批已分配的撞了就加 `-2`、`-3`。同批内的 `depends_on` / `slot_refs` / 槽值占位一并改写；指向前批观察的
+    引用（模型在观察里看到的就是运行时 ID）不动。`only_colliding`：只改撞名的那些（loop 给不认识标签的规划器兜底用）。
+    业务幂等不靠 ID：执行侧 `(intent, slots)` 指纹照旧防重。
+    """
+    used = set(taken or ())
+    mapping: dict[str, str] = {}
+    for step in steps:
+        local = str(step.id)
+        if only_colliding and local not in used:
+            used.add(local)
+            continue
+        base = f"{tag}-{_RUNTIME_ID_UNSAFE_RE.sub('_', local) or 's'}"
+        runtime_id, n = base, 2
+        while runtime_id in used:
+            runtime_id, n = f"{base}-{n}", n + 1
+        used.add(runtime_id)
+        mapping[local] = runtime_id
+    if not mapping:
+        return {}
+    for step in steps:
+        step.id = mapping.get(step.id, step.id)
+        step.depends_on = [mapping.get(dep, dep) for dep in step.depends_on]
+        for values in (step.slots, step.slot_refs):
+            for key, value in list(values.items()):
+                values[key] = _rewrite_completed_ref(value, mapping)
+    return {runtime_id: local for local, runtime_id in mapping.items()}
 
 
 def _drop_completed_replan_steps(
@@ -2163,7 +2286,8 @@ class PlanBuilder:
                      working_set: WorkingSet = None,
                      skill_names: list[str] | None = None,
                      exemplar_names: list[str] | None = None,
-                     adaptive: bool = False) -> ReplanDecision:
+                     adaptive: bool = False,
+                     taken_ids=None, batch_tag: str = "") -> ReplanDecision:
         """Decide completion and optionally produce the next validated batch.
 
         working_set: 复用初规划的同一装配——再规划也注入历史(+焦点)，消除初规划与
@@ -2178,6 +2302,9 @@ class PlanBuilder:
         就与它自己的声明矛盾，**与条件目标是同一形态，只是判据来源不同**：一个来自目标
         文本（`_CONDITIONAL_GOAL_RE`），一个来自计划的 complexity。既有的一次性纠偏
         此前只认前者，adaptive 族（先查天气再推去处一类）恰好在这里失忆。
+        taken_ids / batch_tag（评审三轮 R3-06）：loop 给的「本轮已知的全部步骤 ID」与本批标签（`t1` / `t2`…）。给了标签，
+        解析出来的批一进来就换成运行时 ID（`assign_runtime_ids`）——在「已完成步复用」「被拒诉求再试」两道筛**之前**，
+        于是它们改写到前序观察的引用永远不会被同名的局部 ID 截胡。
         """
         if granted_permissions is not None:
             agents = self._filter_by_permission(agents, granted_permissions)
@@ -2201,8 +2328,13 @@ class PlanBuilder:
             f"目标：{goal}"
         )
         completed = _completed_observation_steps(observations)
-        refused_goals = _refused_goals(observations)
+        # 评审三轮 R3-03：被拒诉求的身份按**任务起点原话**的分句判——服务端持有的那句优先，没有才退到本次目标
+        origin = (str(getattr(ctx, "safety_origin_text", "") or "")
+                  or str(goal or "") or str(getattr(ctx, "raw_text", "") or ""))
+        origin_clauses = _origin_clauses(origin)
+        refused_goals = _refused_goals(observations, origin)
         blocked_intents: list[str] = []
+        local_ids: dict[str, str] = {}
         conditional_goal = bool(_CONDITIONAL_GOAL_RE.search(goal or ""))
         # 「首轮声明了会有第二阶段」的两种来源，共用同一次纠偏机会。**不合并成一个布尔**
         # 就写不出对得上的反馈话术：条件目标要模型去比对前件，adaptive 要它去消费观察结果。
@@ -2230,13 +2362,15 @@ class PlanBuilder:
                     continue
                 return ReplanDecision(done=True)
             candidate = list(parsed.steps) if parsed is not None else []
+            if batch_tag and candidate:
+                local_ids = assign_runtime_ids(candidate, taken_ids or (), batch_tag)
             candidate, repeated, unresolved = _drop_completed_replan_steps(
                 candidate, completed)
-            # 批 7 ① / 评审二轮 R5：为已声明「做不到」的**那个诉求**换能力再试 ⇒ 确定性丢掉（prompt 那句只是
-            # 弱约束），依赖它的下游一起不执行（blocked）；同域的独立诉求照做。丢空就是 done：那个诉求的终态
-            # 已经给过用户了。
+            # 批 7 ① / 评审二轮 R5 / 三轮 R3-03：为已声明「做不到」的**那个诉求**换能力再试 ⇒ 确定性丢掉（prompt 那句只是
+            # 弱约束），依赖它的下游一起不执行（blocked）；同域的独立诉求照做——「是不是同一个诉求」看原话来源分句。
+            # 丢空就是 done：那个诉求的终态已经给过用户了。
             candidate, refused_retry, blocked_intents = _drop_refused_goal_steps(
-                candidate, refused_goals)
+                candidate, refused_goals, origin_clauses)
             if refused_retry:
                 logger.info("Replan dropped retries of refused goal(s): %s; blocked dependents: %s",
                             refused_retry, blocked_intents)
@@ -2276,8 +2410,10 @@ class PlanBuilder:
 
         repair_plan = Plan(steps=steps)
         effects = _skills.apply_plan_repairs(repair_plan, goal, skill_names)
+        kept_ids = {step.id for step in steps}
         return ReplanDecision(done=not bool(steps), steps=steps, skill_effects=effects,
-                              blocked=blocked_intents)
+                              blocked=blocked_intents,
+                              local_ids={rid: lid for rid, lid in local_ids.items() if rid in kept_ids})
 
     def _extract_data(self, raw: str):
         """raw 文本 → dict；解析不出来返回 None。

@@ -9,7 +9,7 @@ from typing import AsyncIterator
 from .executor import DagExecutor
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
-from .planning import PlanBuilder
+from .planning import PlanBuilder, assign_runtime_ids
 from .progress import make_progress, phase_label, step_summary
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
@@ -162,6 +162,7 @@ class LoopController:
         )
         replans = 0
         exhausted = False
+        batch_local_ids: dict[str, str] = {}   # 本批 {运行时 ID: 模型的局部 ID}（R3-06，只供 t2.iter 观测）
 
         def _prior(sr):
             """本轮新完成且未播报的结果，供挂起 final 前缀简报（旅程 A1-4：
@@ -179,6 +180,10 @@ class LoopController:
                 if replans >= self.max_iters or self.clock() >= deadline:
                     exhausted = self.clock() >= deadline
                     break
+                # 评审三轮 R3-06：本轮已知的全部步骤 ID（结果 / 种子 / 初计划 / 跑过的批）——再规划批的运行时 ID 不许与它们撞
+                taken = ({r.step_id for r in results} | {s.id for s in executed_steps}
+                         | set(initial_steps))
+                batch_tag = f"t{replans + 1}"
                 try:
                     decision = await self.planner.replan(
                         goal,
@@ -197,6 +202,7 @@ class LoopController:
                         # 在那儿也纠偏等于给每个 adaptive 请求白加一次 LLM 往返。
                         adaptive=(getattr(initial_plan, "complexity", "") == "adaptive"
                                   and replans == 0),
+                        taken_ids=taken, batch_tag=batch_tag,
                     )
                 except Exception:
                     # 静默 break 是有意的（再规划失败就收场，不把异常抛给用户），但
@@ -230,11 +236,19 @@ class LoopController:
                     )
                 if not kept:
                     break
+                # 评审三轮 R3-06 兜底：规划器本该已经换成运行时 ID；不认识标签的（替身 / 旧实现）交回来的局部 ID
+                # 若与本轮已知 ID 撞了，这里只改撞名的那些——否则执行器按 `s.id not in done` 把新步当成已完成跳过。
+                collided = assign_runtime_ids(kept, taken, batch_tag, only_colliding=True)
+                if collided:
+                    logger.warning("T2 replan batch reused step id(s) %s; renamed to %s",
+                                   sorted(collided.values()), sorted(collided))
                 decision = ReplanDecision(
                     done=False,
                     steps=kept,
                     skill_effects=list(decision.skill_effects),
+                    local_ids={**dict(getattr(decision, "local_ids", {}) or {}), **collided},
                 )
+                batch_local_ids = dict(decision.local_ids)
                 current = decision.to_plan(
                     goal, safety_origin_text=safety_origin_text,
                 )
@@ -434,11 +448,15 @@ class LoopController:
                     attrs={
                         "replans": replans,
                         "results": len(results),
+                        # R3-06：这一批的运行时 ID ← 模型给的局部 ID（「r1 撞上一批 r1」从此在 trace 上看得见）
+                        **({"local_ids": ",".join(f"{rid}<{lid}" for rid, lid in sorted(batch_local_ids.items()))}
+                           if batch_local_ids else {}),
                     },
                 )
             except Exception:
                 pass
             current = None
+            batch_local_ids = {}
             if self.clock() >= deadline:
                 exhausted = True
                 break

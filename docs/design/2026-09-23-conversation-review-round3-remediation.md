@@ -146,6 +146,18 @@ R3-06 在真栈上要靠模型恰好复用 ID，确定性证据是离线三批�
 - R3-06：三批固定 planner 输出重复 `r1/r2`：不漏步、不重复副作用、不串结果（`slot_refs` 读到本批的 r1）；单步流式 / unary 回退 / 挂起恢复后再规划 / 引用前批观察 ID 都对。
 - 变异：落点退回二字交集 / 空槽一律再试 / 不换 ID / 换 ID 不重写引用，各自判红。
 
+### 4.1 落地记录（2026-09-23）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| R3-03 | `planning.py`：`_origin_clauses`（句末标点 + `runtime.clause_split` 那一份分隔符）、`_longest_common_run` / `_grounding`（每个槽值取最长公共子串最大的分句）、`_RefusedGoal`（领域 / 实质 / 来源分句 / 指纹）；`_retries_refused_goal` 按「同指纹 ⇒ 来源分句包含 ⇒ 落不下时看原话还有没有别的分句、空槽写能力」的强弱顺序判；`_overlaps`（二字交集）删掉；`replan` 的原话取服务端 `safety_origin_text`，没有才退到目标 | 新 `test_refused_goal_identity` 10：分句与落点两条纯函数、评审反例（共用「深圳」）照做、控制样本照做、只落在被拒分句的再试照丢、空槽写能力照丢、空槽读能力照做（二轮 R5 记下的边界关掉）、单分句原话一律再试、被拒步落不下只认强证据、下游 blocked 不删边；二轮 R5 与批 7 ① 的既有 8 条原样绿 |
+| R3-06 | `planning.py`：`assign_runtime_ids`（`t<批次>-<局部>`，与本轮已知 ID 撞了加后缀，同批 `depends_on` / `slot_refs` / 两种槽值占位一并改写）；`replan(taken_ids=, batch_tag=)` 在「已完成步复用」「被拒诉求再试」两道筛之前换 ID；`_rewrite_completed_ref` 补占位写法；`ReplanDecision.local_ids`；`loop.py` 传本轮已知 ID 与批次标签、对不认识标签的规划器只改撞名的兜底、`t2.iter` span 记 `local_ids` | 新 `test_loop_step_identity` 9（真 `PlanBuilder.replan` 三批固定输出 + 真 `DagExecutor`）：三批重复 r1 不漏步不串结果、同一副作用换 ID 仍只执行一次、引用前批观察的运行时 ID 照读、单步流式批与后续执行器批不撞、流式失败回退不撞、挂起后续跑不撞种子 ID、loop 兜底、一轮结果 ID 唯一、纯函数改写全部引用；四个固定签名的规划器替身补 `**_kwargs`（loop 会把 TypeError 咽成「Replan call failed」） |
+| 探针 | RS27（评审反例原句：拒绝诚实、共用「深圳」的会议提醒照建、清理）；第三轮反例集 += RS27 | `--list` 通过 |
+
+定向读数：新增 19；cloud + runtime + 对比对 + 探针 2576 passed / 1 skipped；四门禁 + smoke_edge 13/13；**七处变异各判红**
+（落点取任意共享两字的分句红 4、空槽一律再试红 1、拒绝不绑原话红 3、replan 不换 ID 红 2、loop 无兜底红 1、换 ID 不改引用红 4、占位不改写红 1）。
+**全量固定口径（批 C 工作树，`TZ=UTC0` `-n 6`）：9141 passed / 0 failed / 32 skipped / 10 warnings，295 s。**
+
 ## 5. 批 D：R3-04 流式闸切包不变 + 发布即权威
 
 | 条 | 本批做什么 | 刻意不做 |
