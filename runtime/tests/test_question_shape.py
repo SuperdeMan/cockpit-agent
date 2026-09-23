@@ -377,3 +377,19 @@ def test_information_request_predicate():
     vocab = _domain_vocabulary()
     for word in INFO_REQUEST_VERBS:
         assert word not in vocab, word
+
+
+# ── 追加批 F 续：列举问里名词短语自带操作字（「调节功能 / 开启方式 / 加热档位」）──────────────
+# `07e9ea5c` 知识集复查时本地复算：「车窗有哪些开启方式」端侧执行 `window.open`、「座椅有哪些调节功能」`seat.on`、
+# 「座椅有哪些加热档位」`seat.heating.on`——列举词之后的操作字是名词短语的修饰语，不是指令。只有**另起的分句**里
+# 出现操作动词才算同时下了指令（「空调有哪些模式，开个制冷」照旧是指令）。
+
+@pytest.mark.parametrize("text", [
+    "座椅有哪些调节功能",
+    "车窗有哪些开启方式",
+    "空调有哪些调节方式",
+    "座椅有哪些加热档位",
+    "空调为什么调节不了温度",      # 双字动词的「做不到」形态
+])
+def test_operation_characters_inside_the_asked_noun_phrase_do_not_make_a_directive(text):
+    assert is_non_directive_question(text) is True, text

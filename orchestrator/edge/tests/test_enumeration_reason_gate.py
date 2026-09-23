@@ -117,3 +117,15 @@ def test_reason_question_about_a_device_is_not_executed(text):
     result = classify_structured(text)
     assert result is None or result.get("intent") != "control", (text, result)
     assert classify(text) is None, text
+
+
+@pytest.mark.parametrize("text", [
+    "座椅有哪些调节功能",          # 修前 seat.on
+    "车窗有哪些开启方式",          # 修前 window.open
+    "空调有哪些调节方式",          # 修前 hvac.on
+    "座椅有哪些加热档位",          # 修前 seat.heating.on
+])
+def test_list_question_whose_noun_phrase_carries_an_operation_char_is_not_executed(text):
+    result = classify_structured(text)
+    assert result is None or result.get("intent") != "control", (text, result)
+    assert classify(text) is None, text

@@ -1423,6 +1423,18 @@ CASES = [
          {"say": "天窗为什么关不上", "sid": 1, "expect": {"no_actions": True}},
          {"say": "车窗怎么没关上", "sid": 2, "expect": {"no_actions": True}},
      ]},
+    # ── 评审三轮追加批 F 续（2026-09-23）：列举问的名词短语自带操作字 ─────────────────────────
+    # 本地复算：「车窗有哪些开启方式」端侧执行 `window.open`、「座椅有哪些调节功能」`seat.on`、「座椅有哪些加热档位」
+    # `seat.heating.on`。另：`07e9ea5c` 知识集里「座椅有哪些调节功能」一趟被规划成 `cap_0107` + `{item_query, depth}`
+    # 落瑞幸下单（F-1b）——话术里出现「瑞幸」就是那条签名。
+    {"id": "RS30", "group": "residual", "card": "余项", "issue": "评审三轮追加批 F",
+     "why": "列举问里「开启方式 / 调节功能 / 加热档位」是被问的名词，不是指令；也不许落到别的能力",
+     "known": "red",
+     "turns": [
+         {"say": "车窗有哪些开启方式", "sid": 0, "expect": {"no_actions": True}},
+         {"say": "座椅有哪些调节功能", "sid": 1, "expect": {"no_actions": True, "speech_not": ["瑞幸"]}},
+         {"say": "座椅有哪些加热档位", "sid": 2, "expect": {"no_actions": True}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

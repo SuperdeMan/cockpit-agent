@@ -2613,7 +2613,7 @@ class PlanBuilder:
             if pair is None:
                 logger.warning("Unknown capability_ref in plan: %s", ref)
                 return None
-            owner = self._misnumbered_ref_owner(ref, raw_step.get("slots"), catalog)
+            owner = self._misnumbered_ref_owner(ref, raw_step.get("slots"), catalog, fallback_text)
             if owner is not None:
                 owner_ref, pair = owner
                 logger.warning(
@@ -2676,8 +2676,8 @@ class PlanBuilder:
         )
 
     @staticmethod
-    def _misnumbered_ref_owner(ref: str, raw_slots,
-                               catalog: "PlannerCapabilityCatalog") -> tuple[str, tuple[str, str]] | None:
+    def _misnumbered_ref_owner(ref: str, raw_slots, catalog: "PlannerCapabilityCatalog",
+                               text: str = "") -> tuple[str, tuple[str, str]] | None:
         """能力编号笔误的唯一归属（评审三轮追加批 F，F-1）；证据不唯一就返回 None、一个字不动。
 
         真栈 `f9bec423`：「推荐三部适合全家看的电影」交出 `cap_0107`（`luckin.order`）+ `{depth: deep}`——`depth` 只有
@@ -2689,6 +2689,11 @@ class PlanBuilder:
         第一版没有 ④，当场撞红 `test_engine_sibling_steps`：桩计划里 `nearby.search` 带着导航的 `destination` 槽，
         编号与 `navigation.navigate_to` 只差一位（相邻编号天然只差一位），被归位成**真的开始导航**。槽名是多家共用的
         词汇、模型会串用，「槽位像谁」单独不够当证据；朝写操作改派就是替用户按下按钮。
+
+        F-1b（`07e9ea5c` 知识集 K5 逐字）：「座椅有哪些调节功能」交 `cap_0107` + `{item_query: 座椅调节功能, depth: deep}`
+        ——`item_query` 是瑞幸下单自己的槽，① 不成立，照样派发成「我还不知道你想去哪家瑞幸门店」。混槽时换一条同方向的
+        证据：原话是**求信息的请求**、所写能力本身不是只回答的，只看**只有只回答能力才认**的那几个槽（`depth`），②③④ 照旧。
+        原话是指令时混槽一个字不动。
         """
         slots = PlanBuilder._unwrap_freeform_object(raw_slots or {})
         if not isinstance(slots, dict):
@@ -2703,8 +2708,16 @@ class PlanBuilder:
                     answer_only.add(pair)
         known_anywhere = set().union(*declared.values()) if declared else set()
         keys = {str(k) for k, v in slots.items() if v is not None} & known_anywhere
-        if not keys or keys & declared.get(catalog.ref_to_pair[ref], set()):
+        if not keys:
             return None
+        written = catalog.ref_to_pair[ref]
+        if keys & declared.get(written, set()):
+            if written in answer_only or not is_information_request(text):
+                return None
+            keys = {key for key in keys
+                    if all(pair in answer_only for pair, names in declared.items() if key in names)}
+            if not keys:
+                return None
         owners = [(other, pair) for other, pair in catalog.ref_to_pair.items()
                   if other != ref and len(other) == len(ref)
                   and sum(a != b for a, b in zip(other, ref)) == 1

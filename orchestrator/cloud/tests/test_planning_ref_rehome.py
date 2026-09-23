@@ -96,8 +96,9 @@ def test_live_shape_is_rehomed_to_the_capability_that_owns_the_slots():
     {},                                     # 没带槽：没有证据
 ])
 def test_a_step_with_any_fitting_slot_or_no_slot_is_untouched(slots):
+    """证据 ①：原话是指令时，槽位有一个对得上就不算笔误（求信息的请求另有 F-1b，见文件末尾）。"""
     agents = _live_catalog()
-    plan = _build(agents, _reply("cap_0107", slots))
+    plan = _build(agents, _reply("cap_0107", slots), text="帮我点一杯拿铁")
     assert [s.intent for s in plan.steps] == ["luckin.order"]
     assert plan.ref_rehomed == []
 
@@ -230,3 +231,40 @@ def test_the_rehome_is_visible_on_the_planning_span_and_the_talk_agent_is_what_r
     planning = [attrs for node, attrs in spans if node == "cloud.planning"]
     assert planning and planning[0].get("ref_rehomed") == "cap_0002>cap_0001", planning
     assert spy.calls == ["chitchat.talk"], spy.calls
+
+
+# ── F-1b：混槽笔误（真栈 `07e9ea5c` 知识集 K5 第 3 趟逐字）────────────────────────────
+# 「座椅有哪些调节功能」planner 交 `cap_0107` + `{item_query: 座椅调节功能, depth: deep}`、goal「回答座椅调节功能相关知识」：
+# `item_query` 是 luckin.order 自己的槽 ⇒ 证据 ① 不成立 ⇒ 照样派发，用户听到「我还不知道你想去哪家瑞幸门店」。
+# 补一条同方向的证据链：原话是**求信息的请求**，这一步带着**只有只回答能力才认**的槽，那个能力编号只差一位且唯一 ⇒ 归位。
+
+def _live_catalog_with_item_query():
+    agents = _live_catalog()
+    _with_slots(agents[3], {"luckin.order": ["item_query", "size"]})
+    return agents
+
+
+def test_mixed_slots_on_an_information_request_are_rehomed_toward_the_answer():
+    agents = _live_catalog_with_item_query()
+    plan = _build(agents, _reply("cap_0107", {"item_query": "座椅调节功能", "depth": "deep"}),
+                  text="座椅有哪些调节功能")
+    assert [(s.agent_id, s.intent) for s in plan.steps] == [("chitchat", "chitchat.talk")]
+    assert plan.ref_rehomed == ["cap_0107>cap_0007"]
+
+
+def test_mixed_slots_on_a_directive_are_left_alone():
+    """原话是指令（点单）：`depth` 混进来不足以把一次点单改成闲聊——证据 ① 那条老规矩管。"""
+    agents = _live_catalog_with_item_query()
+    plan = _build(agents, _reply("cap_0107", {"item_query": "拿铁", "depth": "deep"}),
+                  text="帮我点一杯拿铁")
+    assert [s.intent for s in plan.steps] == ["luckin.order"]
+    assert plan.ref_rehomed == []
+
+
+def test_an_information_request_without_an_answer_only_slot_is_left_alone():
+    """只带所写能力自己的槽：没有「它本想回答」的证据，不动。"""
+    agents = _live_catalog_with_item_query()
+    plan = _build(agents, _reply("cap_0107", {"item_query": "座椅调节功能"}),
+                  text="座椅有哪些调节功能")
+    assert [s.intent for s in plan.steps] == ["luckin.order"]
+    assert plan.ref_rehomed == []

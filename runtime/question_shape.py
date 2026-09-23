@@ -127,8 +127,8 @@ _OPERATION_CLASS = "".join(OPERATION_VERBS)
 #: 正反问「开不开 / 关不关」、已然否定「没关上」、设备自己的行为「自己关掉 / 自动开启」——说的是做不到 / 没做成 /
 #: 要不要 / 它自己怎么了，原因问句里它们不算操作动词。
 _NOT_AN_OPERATION_RE = re.compile(
-    rf"[{_OPERATION_CLASS}]不[上开了动下掉起出进住{_OPERATION_CLASS}]|没[{_OPERATION_CLASS}]"
-    rf"|(?:自己|自动|自行)[{_OPERATION_CLASS}]")
+    rf"[{_OPERATION_CLASS}][^，,。！!？?\s不]?不[上开了动下掉起出进住{_OPERATION_CLASS}]|没[{_OPERATION_CLASS}]"
+    rf"|(?:自己|自动|自行)[{_OPERATION_CLASS}]")   # 「调节不了 / 开启不了」：双字动词中间隔一个字
 _INFO_REQUEST_ALT = "|".join(sorted(map(re.escape, INFO_REQUEST_VERBS), key=len, reverse=True))
 _INFO_REQUEST_RE = re.compile(
     rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|再)*\s*(?:{_INFO_REQUEST_ALT})")
@@ -276,13 +276,16 @@ def _reason_question(t: str) -> bool:
 
 
 def _enumeration_question(t: str) -> bool:
-    """列举问，且列举词**之后**没有操作动词。
+    """列举问，且列举词之后**另起的分句**里没有操作动词。
 
     配对只看列举词之后：列举问的主语在前（「空调有什么模式」），而操作动词按字匹配，「空调」的「调」会把
-    整句误判成指令；跟在后面的操作动词才说明用户同时下了指令（「空调有哪些模式，开个制冷」「天窗有什么用，打开看看」）。
+    整句误判成指令。列举词所在的分句是被问的名词短语——「座椅有哪些调节功能」「车窗有哪些开启方式」里的操作字是
+    修饰语（第一版只看「之后」，这几句照样判成指令，端侧真执行了 `seat.on` / `window.open`）；只有后面另起的分句
+    带操作动词才说明用户同时下了指令（「空调有哪些模式，开个制冷」「天窗有什么用，打开看看」）。
     """
     match = _ENUMERATION_RE.search(t)
     if not match:
         return False
-    tail = t[match.end():]
+    later = re.split(r"[，,；;。！!？?]", t[match.end():], maxsplit=1)
+    tail = later[1] if len(later) > 1 else ""
     return not any(v in tail for v in OPERATION_VERBS)
