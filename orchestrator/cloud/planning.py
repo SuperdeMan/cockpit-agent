@@ -38,7 +38,9 @@ from runtime import memory_directive as _memory_directive
 from runtime.clause_split import split_clauses
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
-from runtime.question_shape import is_information_request, is_non_directive_question
+from runtime.question_shape import (
+    carries_operation_cue, is_information_request, is_non_directive_question,
+)
 from runtime.reported_speech import is_reported_speech
 from runtime.safety_signal import alert_resolved
 
@@ -1841,6 +1843,10 @@ class PlanBuilder:
         plan_only_expected = False       # 上一轮要过计划修正专用 schema
         clarify_wanted = False           # W13 F09-b：某一轮里模型自己说过要澄清（裸对象族）
         said_no_steps = False            # 追加批 F（F-2）：某一轮交过合法的「受话、零步」（带不带澄清口吻都算）
+        # 追加批 G（设计 §10）：第一轮「不受话」被 `explicit_input_not_addressed` 重试 ⇒ 下一轮是**被催出来的**。
+        nudged_attempt = -1
+        plan_nudged = False              # 最终计划出自被催的那一轮
+        nudged_no_action = False         # 被催的那一轮如实答了「受话、零步」
         for attempt in range(2):
             mode = "json"
             use_tool = toolcall and (attempt == 0 or retry_with_tool)
@@ -1937,7 +1943,10 @@ class PlanBuilder:
             retries.begin_attempt(state)
 
             # 守卫段：首个命中即停，命中即判掉本版计划（控制器统一施加）。
-            retries.run(STAGE_GUARD, state)
+            guard_hits = retries.run(STAGE_GUARD, state)
+            if any(policy.trigger is TriggerKind.EXPLICIT_INPUT_NOT_ADDRESSED
+                   for policy in guard_hits):
+                nudged_attempt = attempt + 1
             parsed = state.parsed
             # 下一轮通道由命中策略的 next_wire 声明。语义与表驱动之前逐字一致：
             # 澄清档把第 2 轮强拉回工具通道；计划修正档只在本来就要重试工具通道时生效。
@@ -1958,6 +1967,7 @@ class PlanBuilder:
                     continue
                 plan = parsed
                 plan_mode = mode
+                plan_nudged = attempt == nudged_attempt
                 break
 
             # 收尾段：逐条求值、不互斥——计数器与通用兜底反馈是两件事。
@@ -1966,10 +1976,27 @@ class PlanBuilder:
                    for policy in tail_hits):
                 no_action += 1
                 last_mode = mode
+                nudged_no_action = nudged_no_action or attempt == nudged_attempt
                 if _is_pure_no_action_utterance(text):
                     # 输入自身已提供确定性证据；不让第二次抽样把正确的空动作翻成执行。
                     no_action = 2
                     break
+
+        # 追加批 G（G-3，设计 §10）：**被催出来的写操作要原话佐证。** `explicit_input_not_addressed` 的纠正话术断言
+        # 「无法完成显式请求」——原话里没有请求时，模型顺着这个前提编一个：真栈 `a59b1621` RS21「可以，已为您执行」
+        # 第一轮不受话（对），第二轮 goal「关闭雾灯」+ `warning_light.close` ⇒ 端侧关了双闪。判据两半都是确定性的：
+        # 副作用步与问句安全闸同一份（`_side_effect_steps`：端侧写 / 需确认），原话证据是 `carries_operation_cue`
+        # （祈使开头 / 操作动词 / 操作动作词）。整份作废而不是摘掉写步：前提是编的，剩下的步同样可疑，摘步还会留下悬空依赖。
+        # 首轮就出的写步不管（没有被催）；只改纠正话术的 A/B 已证伪（「我有点冷」救回 8/8 → 5/8，编造两臂都是 0/48）。
+        if (plan is not None and plan_nudged and self._side_effect_steps(plan.steps)
+                and not carries_operation_cue(text)):
+            logger.warning(
+                "Side-effecting step(s) %s planned only after the not-addressed retry, and the "
+                "utterance carries no operation cue; dropping the plan (text=%r)",
+                [s.intent for s in plan.steps], text[:40])
+            talk = self._talk_only_plan(text, agents)
+            plan = talk if talk is not None else Plan(steps=[], raw_text=str(text or ""))
+            plan_mode = f"{plan_mode}_nudged_write_blocked"
 
         # 受话边界的确定性一维（2026-09-11 语音采纳真栈探针：背景播报句 12 次里 6 次漏拒——
         # 模型把「本台记者报道，项目建设已经进入第二阶段。」判成 addressed=true、steps=[]，
@@ -2047,6 +2074,18 @@ class PlanBuilder:
                             "answering with the talk agent: %s", text[:40])
                 plan = talk
                 plan_mode = f"{plan_mode or last_mode}_not_addressed_info"
+        # 追加批 G（G-2，设计 §10）：第一轮「不受话」被重试、第二轮如实答「受话、零步」= 模型两次都说没事可做，按上面
+        # 「连说两次无需动作」兑现成兜底谈话。collector 里这条重试 80 次触发有 40 次落技术失败，其中 ≥ 26 次第二轮逐字
+        # `{"addressed":true,"steps":[]}`：「你好，请只回复一句问候」（发布验收探针原句）「hello」「啊」「可以，已为您执行」
+        # 都让用户听「没能把您的请求拆成可以执行的步骤」。原话带操作证据的（「把全车门解锁」）不收——两轮空手在那里是
+        # 规划失败，F09 照报；求信息的请求已被上面 F-2 接住；「记住…」走 `directive_not_addressed`，不在此列。
+        if plan is None and nudged_no_action and not carries_operation_cue(text):
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                logger.info("typed input judged not-addressed, then no-action on retry; "
+                            "answering with the talk agent: %s", text[:40])
+                plan = talk
+                plan_mode = f"{last_mode}_no_action"
 
         technical_failure = False
         if plan is None:

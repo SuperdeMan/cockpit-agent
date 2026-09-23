@@ -393,3 +393,39 @@ def test_information_request_predicate():
 ])
 def test_operation_characters_inside_the_asked_noun_phrase_do_not_make_a_directive(text):
     assert is_non_directive_question(text) is True, text
+
+
+# ── 追加批 G：原话自带的「要系统操作」句法证据（显式输入「不受话」重试的两处消费）──────────────────
+# 云侧 `explicit_input_not_addressed` 把第一轮「不受话」重试一次；第二轮被催出来的计划里有写车控 / 需确认步，
+# 而原话一个操作证据都没有（「可以，已为您执行」→ 真栈关了双闪）⇒ 作废。反过来，第二轮如实答「受话、零步」时，
+# 没有操作证据的原话（问候 / 附和）交谈话作答；带操作证据的（「把全车门解锁」）照旧诚实报失败。
+
+@pytest.mark.parametrize("text", [
+    "把后备箱打开",
+    "把全车门解锁",          # 「解锁」不在动词表里，靠「把」字处置式
+    "打开空调",
+    "温度调高一点",
+    "请锁车",               # 礼貌前缀的祈使开头
+    "麻烦关一下天窗",
+    "帮我把座椅加热打开",
+    "换一首歌",             # 只有操作动作词（`HOW_TO_ACTIONS`）
+])
+def test_operation_cue_is_carried_by_the_utterance(text):
+    from runtime.question_shape import carries_operation_cue
+    assert carries_operation_cue(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "可以，已为您执行",       # 真栈 `a59b1621` RS21：第二轮被催出 `warning_light.close`
+    "你好，请只回复一句问候",   # 发布验收探针原句：「请」在句中，不是祈使开头
+    "啊",
+    "hello",
+    "我不想排队",
+    "好的，谢谢",
+    "妈你到哪了",
+    "我有点冷",              # 隐式车控：没有句法证据（批 G 的已知代价，见设计 §10）
+    "请问你叫什么名字",        # 「请问」是提问前缀，不是祈使开头
+])
+def test_utterances_without_an_operation_cue(text):
+    from runtime.question_shape import carries_operation_cue
+    assert carries_operation_cue(text) is False, text

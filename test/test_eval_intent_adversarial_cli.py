@@ -3582,6 +3582,15 @@ def test_a_tag_hitting_several_tag_keys_is_flagged():
     ("toolcall_fallback_no_action", True),
     ("toolcall_degraded", True),
     ("", False),
+    # 其余后缀同样只说**出口**、不说通道（批 F 的 `_no_action_info` / `_not_addressed_info`，批 G 的
+    # `_nudged_write_blocked`，C1-A 的 `_question_write_blocked`）：只剥 `_no_action` 时，抢救轮挂上它们就被记成走成了工具通道。
+    ("toolcall_no_action_info", False),
+    ("toolcall_salvage_no_action_info", True),
+    ("toolcall_salvage_not_addressed_info", True),
+    ("toolcall_nudged_write_blocked", False),
+    ("toolcall_salvage_nudged_write_blocked", True),
+    ("toolcall_fallback_question_write_blocked", True),
+    ("focus_deterministic", False),
 ])
 def test_off_tool_classifier_counts_only_real_channel_drops(mode, off_tool):
     """`<通道>_no_action` 的后缀说的是**判断**，不是掉档。

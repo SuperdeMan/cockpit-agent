@@ -1773,11 +1773,11 @@ def _is_off_tool_mode(mode: str) -> bool:
     """这一轮是不是**没能**走成工具通道。
 
     `json*`（`PLANNER_TOOLCALL=off`）不算掉档——那一档压根没打算用工具。
+    看**前缀**不看整串：`_no_action` 之外，planner 还会挂 `_no_action_info` / `_nudged_write_blocked` /
+    `_question_write_blocked` 这类只说出口的后缀；只剥 `_no_action` 时，抢救轮挂上它们就被记成走成了工具通道。
     """
-    base = str(mode or "")
-    if base.endswith("_no_action"):
-        base = base[: -len("_no_action")]
-    return base in _OFF_TOOL_BASES
+    mode = str(mode or "")
+    return any(mode == base or mode.startswith(f"{base}_") for base in _OFF_TOOL_BASES)
 
 
 def _plan_mode_counts(results) -> dict[str, int]:

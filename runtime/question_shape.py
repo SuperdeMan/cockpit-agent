@@ -161,6 +161,22 @@ def is_imperative_opening(t: str | None) -> bool:
     return bool(IMPERATIVE_OPENING_RE.match((t or "").strip()))
 
 
+def carries_operation_cue(t: str | None) -> bool:
+    """原话自己带着「要系统操作」的句法证据：祈使开头、操作动词，或操作动作词（追加批 G）。
+
+    消费方只有一处：云侧 `explicit_input_not_addressed`（模型第一轮判「不受话」、被重试一次）。第二轮被催出来的写车控 /
+    需确认步，原话里没有这份证据就作废（「可以，已为您执行」→ 关双闪）；第二轮如实答「受话、零步」时，没有这份证据的
+    原话（问候 / 附和）交谈话作答，有的（「把全车门解锁」）照旧诚实报失败。零领域词：全是本模块既有的词表。
+    「我有点冷」这类隐式诉求没有句法证据——是已知代价（设计 §10）。
+    """
+    body = strip_ask_prefix(t)
+    if not body:
+        return False
+    return bool(is_imperative_opening(body)
+                or any(v in body for v in OPERATION_VERBS)
+                or any(a in body for a in HOW_TO_ACTIONS))
+
+
 def _polite_tail_body(t: str) -> str | None:
     """礼貌尾词前面的主体；没有礼貌尾词返回 None。"""
     cleaned = (t or "").strip().rstrip("。！!？?~ ")
