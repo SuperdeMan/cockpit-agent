@@ -335,3 +335,45 @@ def test_reason_asks_are_recognised(text):
 def test_value_questions_are_not_reason_asks(text):
     from runtime.question_shape import asks_for_reason
     assert asks_for_reason(text) is False, text
+
+
+# ── 评审三轮追加批 F（F-4，2026-09-23）：原因式问法只看问词之后的操作动词 ─────────────
+# 方式问法与操作动词按字配对、不看位置：「空调」的「调」、「关不上」的「关」让下面几句判成指令，端侧真的执行了
+# `hvac.on` / `sunroof.close`。原因式问法（`REASON_ASKS`）改成只看问词**之后**；「关不上 / 打不开 / 调不动」这类
+# 可能补语的否定式、「开不开」这类正反问、「没关上」这类已然否定都不是在下指令。
+
+@pytest.mark.parametrize("text", [
+    "空调为什么不制冷",
+    "天窗为什么关不上",
+    "空调怎么不出风",
+    "空调开不了是怎么回事",
+    "车窗怎么没关上",
+    "空调为啥一直在响",
+    "座椅加热怎么会自己关掉",
+])
+def test_reason_questions_are_questions_wherever_the_subject_puts_an_operation_char(text):
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "为什么要把温度调那么高",      # 钉住的合同：问词之后有「调」⇒ 仍是指令
+    "为什么不开空调",              # 问词之后有「开」：建议式，仍是指令
+    "怎么这么热，空调开大点",
+    "温度如何调高",                # 方式问法维持原配对
+    "调低一点怎么样",
+    "空调怎么调",
+])
+def test_reason_pairing_keeps_the_existing_directive_contracts(text):
+    assert is_non_directive_question(text) is False, text
+
+
+def test_information_request_predicate():
+    from runtime.question_shape import INFO_REQUEST_VERBS, is_information_request
+    for text in ("推荐三部适合全家看的电影", "给我推荐几本适合小学生读的书", "介绍一下北京有哪些著名的历史建筑",
+                 "天窗有什么用", "为什么冬天续航会下降", "说说你能帮我做哪些事", "请问天窗怎么打开"):
+        assert is_information_request(text) is True, text
+    for text in ("打开空调", "帮我订一张明天去上海的机票", "导航去公司", "明天早上八点提醒我开会", "云岚国际中心"):
+        assert is_information_request(text) is False, text
+    vocab = _domain_vocabulary()
+    for word in INFO_REQUEST_VERBS:
+        assert word not in vocab, word

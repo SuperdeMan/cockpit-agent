@@ -102,3 +102,18 @@ def test_reason_clause_inside_a_mixed_utterance_goes_to_cloud():
     local, cloud = parts
     assert local["_needs_cloud"] is False and local["data"]["object"] == "aircon"
     assert cloud["_needs_cloud"] is True
+
+
+# ── 追加批 F（F-4）：原因问句不执行写操作 ─────────────────────────────────────
+# 修前端侧：「空调为什么不制冷」⇒ hvac.on、「天窗为什么关不上」⇒ sunroof.close（本地复算）。
+
+@pytest.mark.parametrize("text", [
+    "空调为什么不制冷",
+    "天窗为什么关不上",
+    "空调怎么不出风",
+    "车窗怎么没关上",
+])
+def test_reason_question_about_a_device_is_not_executed(text):
+    result = classify_structured(text)
+    assert result is None or result.get("intent") != "control", (text, result)
+    assert classify(text) is None, text

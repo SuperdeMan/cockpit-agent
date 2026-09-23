@@ -77,7 +77,12 @@ ENUMERATION_ASKS = ("有哪些", "有什么", "哪些", "哪几", "哪部", "哪
 #: 原因问法（同一批）：问的是「为什么 / 怎么回事」，要的是**解释**。它不参与写操作的问句判定（「为什么要把温度调那么高」
 #: 的既有合同由 `MANNER_ASKS` 管），只供**查询**让路——端侧只有读数，「新能源车冬天续航为什么会下降」曾被答成「电量72%」。
 REASON_ASKS = ("为什么", "为啥", "什么原因", "啥原因", "原因", "原理", "怎么回事", "咋回事",
-               "怎么会", "咋会", "怎么这么", "咋这么", "怎么那么")
+               "怎么会", "咋会", "怎么这么", "咋这么", "怎么那么",
+               # 追加批 F（F-4）：「空调怎么不出风」「车窗怎么没关上」——问的是怎么回事，不是怎么做
+               "怎么不", "咋不", "怎么没", "咋没")
+#: 求信息的请求（追加批 F，F-2）：要的是一段回答，不是一个动作——「推荐 / 介绍 / 讲讲 / 说说 / 科普 / 解释」开头
+#: （可带礼貌前缀）。与问句、原因问、解释元请求合起来，是规划失败时「兜底谈话就是答案」的那一类（AR05 F09 的例外）。
+INFO_REQUEST_VERBS = ("推荐", "介绍", "讲讲", "说说", "科普", "解释")
 
 # 方法问句中的动作词。它们仍是零领域的句法词，不包含任何车辆对象；“对象在前/动作在前，
 # 中间带怎么/如何”的形态由本模块统一判定，端侧与云侧共用。刻意不含“调高/调低”：
@@ -117,6 +122,16 @@ _EXPLAIN_REQUEST_RE = re.compile(
 _ENUMERATION_RE = re.compile("|".join(
     (rf"(?<!没){re.escape(word)}" if word.startswith("有") else re.escape(word))
     for word in sorted(ENUMERATION_ASKS, key=len, reverse=True)))
+_OPERATION_CLASS = "".join(OPERATION_VERBS)
+#: 带操作动词字、却不是在下指令的四种形态（追加批 F，F-4）：可能补语的否定式「关不上 / 打不开 / 调不动 / 降不下来」、
+#: 正反问「开不开 / 关不关」、已然否定「没关上」、设备自己的行为「自己关掉 / 自动开启」——说的是做不到 / 没做成 /
+#: 要不要 / 它自己怎么了，原因问句里它们不算操作动词。
+_NOT_AN_OPERATION_RE = re.compile(
+    rf"[{_OPERATION_CLASS}]不[上开了动下掉起出进住{_OPERATION_CLASS}]|没[{_OPERATION_CLASS}]"
+    rf"|(?:自己|自动|自行)[{_OPERATION_CLASS}]")
+_INFO_REQUEST_ALT = "|".join(sorted(map(re.escape, INFO_REQUEST_VERBS), key=len, reverse=True))
+_INFO_REQUEST_RE = re.compile(
+    rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|再)*\s*(?:{_INFO_REQUEST_ALT})")
 
 
 _POLITE_TAIL_ALT = "|".join(sorted(map(re.escape, POLITE_TAILS), key=len, reverse=True))
@@ -197,6 +212,18 @@ def asks_for_reason(t: str | None) -> bool:
     return any(word in body for word in REASON_ASKS)
 
 
+def is_information_request(t: str | None) -> bool:
+    """要的是一段回答，不是一个动作：问句 / 原因问 / 解释元请求 /「推荐 · 介绍 · 讲讲…」开头（追加批 F，F-2）。
+
+    只供规划失败后的终态判定用（兜底谈话是答案还是伪装）；「打开空调」「导航去公司」「明天八点提醒我开会」不算。
+    """
+    body = strip_ask_prefix(t)
+    if not body:
+        return False
+    return bool(is_non_directive_question(body) or asks_for_reason(body)
+                or is_explanation_request(body) or _INFO_REQUEST_RE.match(body))
+
+
 def is_non_directive_question(t: str) -> bool:
     """这句话是在**问**，而不是在**下指令**。"""
     # 「请问…」的「请」不是祈使标记：先剥掉提问前缀，再按主体判（评审二轮 R9）。
@@ -228,8 +255,24 @@ def is_non_directive_question(t: str) -> bool:
         return True
     if _enumeration_question(t):
         return True
+    if _reason_question(t):
+        return True
     return (any(w in t for w in MANNER_ASKS)
             and not any(v in t for v in OPERATION_VERBS))
+
+
+def _reason_question(t: str) -> bool:
+    """原因式问法，且问词**之后**没有操作动词（追加批 F，F-4）。
+
+    「空调为什么不制冷」里「调」在问词之前（主语「空调」的一部分）、「天窗为什么关不上」里「关」是做不到的「关不上」
+    ——按字、不看位置的配对曾把两句判成指令，端侧真执行了 `hvac.on` / `sunroof.close`。「为什么要把温度调那么高」
+    「为什么不开空调」问词之后仍有操作动词，照旧落到下面的方式问法配对里算指令（被测试钉住的合同）。
+    """
+    positions = [t.find(word) for word in REASON_ASKS if word in t]
+    if not positions:
+        return False
+    tail = _NOT_AN_OPERATION_RE.sub("", t[min(positions):])
+    return not any(v in tail for v in OPERATION_VERBS)
 
 
 def _enumeration_question(t: str) -> bool:

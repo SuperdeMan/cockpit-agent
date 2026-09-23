@@ -38,7 +38,7 @@ from runtime import memory_directive as _memory_directive
 from runtime.clause_split import split_clauses
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
-from runtime.question_shape import is_non_directive_question
+from runtime.question_shape import is_information_request, is_non_directive_question
 from runtime.reported_speech import is_reported_speech
 from runtime.safety_signal import alert_resolved
 
@@ -2017,6 +2017,20 @@ class PlanBuilder:
             plan = salvage_kept
             plan_mode = "toolcall_salvage_kept"
 
+        # 追加批 F（F-2，2026-09-23）：**求信息的请求**，模型说过一次「受话了、无需动作」、两轮又都没交出合法计划
+        # ⇒ 兜底谈话就是答案，不是技术失败。真栈 `f9bec423`：「推荐三部适合全家看的电影」一轮不受话 + 一轮无需动作、
+        # 「天窗有什么用」一轮无需动作 + 一轮非 JSON，都落 `_fallback` + F09，用户听到「没能拆成可以执行的步骤」。
+        # 上面「连说两次才认」的理由（一次可能是抽风、指令句靠第二轮补上动作）对指令句照旧成立，所以这一条只收
+        # 求信息的请求（判据 `runtime.question_shape.is_information_request`，零领域词）；两轮都坏、模型一次都没说过
+        # 无需动作的也不收——那才是真技术失败。重试照旧先跑：第二轮拿到真计划就用真计划。
+        if plan is None and no_action >= 1 and is_information_request(text):
+            talk = self._talk_only_plan(text, agents)
+            if talk is not None:
+                logger.info("information request judged no-action once and never planned; "
+                            "answering with the talk agent: %s", text[:40])
+                plan = talk
+                plan_mode = f"{last_mode}_no_action_info"
+
         technical_failure = False
         if plan is None:
             logger.warning("Plan parse failed twice, falling back to chitchat/routing")
@@ -2554,6 +2568,7 @@ class PlanBuilder:
         goals = _parse_goals(wire.get("goals"))
         covers_by_id: dict[str, list[int]] = {}
         resolved_steps = []
+        rehomed: list[str] = []     # 追加批 F（F-1）：编号笔误归位记录，进 cloud.planning span
         for raw_step in raw_steps:
             if not isinstance(raw_step, dict):
                 logger.warning("Plan step is %s (not object), dropping plan for retry",
@@ -2581,6 +2596,13 @@ class PlanBuilder:
             if pair is None:
                 logger.warning("Unknown capability_ref in plan: %s", ref)
                 return None
+            owner = self._misnumbered_ref_owner(ref, raw_step.get("slots"), catalog)
+            if owner is not None:
+                owner_ref, pair = owner
+                logger.warning(
+                    "capability_ref %s carries only slots owned by %s (%s, one character "
+                    "apart); re-homing the step", ref, owner_ref, pair)
+                rehomed.append(f"{ref}>{owner_ref}")
             resolved = dict(raw_step)
             resolved.pop("capability_ref", None)
             resolved["agent_id"], resolved["intent"] = pair
@@ -2633,7 +2655,46 @@ class PlanBuilder:
             emotion=emotion,
             acts=acts,
             goals=goals,
+            ref_rehomed=rehomed,
         )
+
+    @staticmethod
+    def _misnumbered_ref_owner(ref: str, raw_slots,
+                               catalog: "PlannerCapabilityCatalog") -> tuple[str, tuple[str, str]] | None:
+        """能力编号笔误的唯一归属（评审三轮追加批 F，F-1）；证据不唯一就返回 None、一个字不动。
+
+        真栈 `f9bec423`：「推荐三部适合全家看的电影」交出 `cap_0107`（`luckin.order`）+ `{depth: deep}`——`depth` 只有
+        chitchat（`cap_0007`）认。wire 校验只问 ref 在不在映射里，于是照样派发成瑞幸下单。与 `_validated_steps` 里
+        「intent 唯一归属时归位」同一族，四条证据缺一不可：
+        ① 这一步的槽（只数本请求里**有能力声明过**的槽名——谁都不认的槽名不是证据）**一个都不属于**所写能力；
+        ② **恰好一个**别的能力的声明装得下它们全部；③ 两者编号**只差一个字符**（笔误的形状）；
+        ④ 那个能力**只回答不执行**（`response_only`）——归位只许把一步从「做事」推向「回答」，永不反向。
+        第一版没有 ④，当场撞红 `test_engine_sibling_steps`：桩计划里 `nearby.search` 带着导航的 `destination` 槽，
+        编号与 `navigation.navigate_to` 只差一位（相邻编号天然只差一位），被归位成**真的开始导航**。槽名是多家共用的
+        词汇、模型会串用，「槽位像谁」单独不够当证据；朝写操作改派就是替用户按下按钮。
+        """
+        slots = PlanBuilder._unwrap_freeform_object(raw_slots or {})
+        if not isinstance(slots, dict):
+            return None
+        declared: dict[tuple[str, str], set[str]] = {}
+        answer_only: set[tuple[str, str]] = set()
+        for agent_id, agent in catalog.agent_map.items():
+            for cap in (getattr(agent.manifest, "capabilities", None) or []):
+                pair = (agent_id, str(getattr(cap, "intent", "") or ""))
+                declared[pair] = {str(name) for name in (getattr(cap, "slots", None) or [])}
+                if getattr(cap, "response_only", False) is True:
+                    answer_only.add(pair)
+        known_anywhere = set().union(*declared.values()) if declared else set()
+        keys = {str(k) for k, v in slots.items() if v is not None} & known_anywhere
+        if not keys or keys & declared.get(catalog.ref_to_pair[ref], set()):
+            return None
+        owners = [(other, pair) for other, pair in catalog.ref_to_pair.items()
+                  if other != ref and len(other) == len(ref)
+                  and sum(a != b for a, b in zip(other, ref)) == 1
+                  and keys <= declared.get(pair, set())]
+        if len(owners) != 1 or owners[0][1] not in answer_only:
+            return None
+        return owners[0]
 
     @staticmethod
     def _is_acyclic(steps: list[Step]) -> bool:

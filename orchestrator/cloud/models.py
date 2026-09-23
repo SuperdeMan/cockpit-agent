@@ -225,6 +225,9 @@ class Plan:
     # 声明式 plan_repairs 实际改动记录。它只连接已有步骤，不新增 intent/覆盖槽位；单独
     # 留痕是为了分开「模型原生接对」与「soft skill 归一后接对」。
     skill_effects: list[str] = field(default_factory=list)
+    # 评审三轮追加批 F（F-1）：能力编号笔误归位记录（"<所写 ref>><归位 ref>"）。只供 cloud.planning span 观测
+    # ——「模型原生选对」与「编号笔误被校验归位」必须分开看得见。
+    ref_rehomed: list[str] = field(default_factory=list)
     # M5 P1 范例库：本轮检索/注入的范例名单（"<mode>:<eid>@lex|vec:分数"，超预算记
     # !clipped），契约与语义逐项对齐 skills。同样只供 span 归因，不参与编排逻辑。
     exemplars: list[str] = field(default_factory=list)

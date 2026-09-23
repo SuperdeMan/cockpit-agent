@@ -1323,6 +1323,9 @@ class PlannerEngine:
                     # 在观测上完全看不见，只能靠日志。
                     **({"retry_policies": ",".join(plan.retry_policies)}
                        if getattr(plan, "retry_policies", None) else {}),
+                    # 追加批 F（F-1）：能力编号笔误被校验归位（模型原生选对与归位后选对分开看）
+                    **({"ref_rehomed": ",".join(plan.ref_rehomed)}
+                       if getattr(plan, "ref_rehomed", None) else {}),
                     # B6 §2 可执行性 shadow（主链零行为变化）
                     **_actionability_attrs(plan),
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
