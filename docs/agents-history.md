@@ -9549,6 +9549,18 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
   `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
 
+### 2026-09-23 — 对话评审第三轮批 B：约束补丁不提前归一、挂起删除说真话；release `926d4c17`
+
+- 入口：设计文档 §3 / §3.1 / §3.1.1。
+- R3-02：`extract_focus` 提前 `merge_constraints({}, patch)` ⇒ 同句还有 SET 时 DELETE 被归一掉（只有纯删除走了保留 `None` 的旁支，所以撤销用例一直绿）；
+  改成补丁原样（带墓碑、含 `others`）交给 `update_focus` 那唯一一处合并 + 归一。用户可见面是第二句致谢自相矛盾（「排不排队都行；这次想吃辣、不想排队」）。
+- R3-05：`clear` 布尔 ⇒ `clear_result` 四态；删不掉 ⇒ store 立进程内墓碑（读出口过滤、下一次整表写真删）；取消出口删不掉说「X 不会执行了」（`cancel_unconfirmed`），
+  确认执行后删不掉不会被再确认一次；`_suspend` / `_suspend_clarify` 关旧开新一次整表写（`replaces=`），`_suspend_clarify` 顺手分三态（二轮 R8 漏了它）。
+  「拆两步」与「一次写」在全失败时行为等价，只有写次数分得开 ⇒ 测试钉写次数。墓碑是进程内的（`cloud-planner` 单副本），进程重启丢墓碑是记账的残余风险。
+- 读数：全量 **9122 / 0 / 32**（301 s）；新增 24；四门禁 + smoke_edge 13/13；六处变异各判红。一条新测试第一版查的是 `s1` 而引擎用 `sess-1` ⇒ 恒空、断言不作数，写完就查出来改了。
+- 真栈 `926d4c17`（push → dry-run 零阻断 → apply → status ok 5/5 → verify `20260923T053248Z-926d4c1.json`）：RS26 / RS7 / RS24 / RS16 ×3 **12/12 [det]**；
+  R3-05 三条出口云端无触发场景（Redis 正常）。
+
 ### 2026-09-23 — 对话评审第三轮批 A：确认要有明确肯定、点名要与挂起步骤兼容；release `416e47bc`
 
 - 入口：评审三轮原文 `docs/reviews/2026-09-23-cockpit_conversation_review_round_3.md`（冻结 `7e41fcf2` = 当时 main）；设计文档
