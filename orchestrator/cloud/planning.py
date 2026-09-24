@@ -1871,6 +1871,8 @@ class PlanBuilder:
         last_mode = "json"
         retry_with_tool = False
         salvage_kept = None  # 掉档轮抢救出来的可用计划：重试工具通道失败时的回落
+        salvage_attempt = -1             # 追加批 N（N-3）：抢救计划出自哪一轮
+        last_no_action_attempt = -1      # 最近一次「受话、零步」出自哪一轮
         clarification_expected = False   # 上一轮要过澄清专用 schema
         plan_only_expected = False       # 上一轮要过计划修正专用 schema
         clarify_wanted = False           # W13 F09-b：某一轮里模型自己说过要澄清（裸对象族）
@@ -1996,6 +1998,7 @@ class PlanBuilder:
             if parsed and (parsed.steps or not parsed.addressed or parsed.clarify):
                 if retries.run(STAGE_ACCEPT, state):
                     salvage_kept = parsed      # 留作回落，再给工具通道一次机会
+                    salvage_attempt = attempt
                     continue
                 plan = parsed
                 plan_mode = mode
@@ -2009,6 +2012,7 @@ class PlanBuilder:
                 no_action += 1
                 last_mode = mode
                 nudged_no_action = nudged_no_action or attempt == nudged_attempt
+                last_no_action_attempt = attempt
                 if _is_pure_no_action_utterance(text):
                     # 输入自身已提供确定性证据；不让第二次抽样把正确的空动作翻成执行。
                     no_action = 2
@@ -2073,6 +2077,17 @@ class PlanBuilder:
         # **强制重试不许比不重试更差**——它换来的是「多一次走成 schema 的机会」，
         # 不该把一份本来可用的计划换成兜底话术。`plan_mode` 单列 `_kept`，
         # 好让「重试后走成」「重试后仍掉档」在读数上分得开（观测面不许说谎）。
+        # 追加批 N（N-3，2026-09-24）：**抢救计划里的写操作，被工具通道的「受话、零步」推翻了，就不再回落到它。** 真栈 `f14d1e43`
+        # RS28：「推荐三部适合全家看的电影」第一轮掉档，文本里编出 `luckin.order`（奶咖 / 大杯）+ `navigation.navigate_to`，第二轮走工具
+        # 通道如实交了「受话、零步」——那不是「重试失败」，可这里照旧回落，导航真的发了出去。判据三条同时成立才不回落：重试轮说了零步、
+        # 原话是求信息的请求、抢救计划里有写步（`_write_steps`）；不回落就交给下面 F-2 的兜底谈话。collector 121 次回落里只命中这一次；
+        # 「改成7点半前到就行」「只要有堵车就提醒我」的抢救计划是对的（重试的零步反而错），它们不是求信息的请求，照旧回落。
+        if (plan is None and salvage_kept is not None and last_no_action_attempt > salvage_attempt
+                and is_information_request(text) and self._write_steps(salvage_kept.steps)):
+            logger.warning("Salvaged plan with write step(s) %s refuted by a no-action retry on an information "
+                           "request; not falling back to it (text=%r)",
+                           [s.intent for s in self._write_steps(salvage_kept.steps)], text[:40])
+            salvage_kept = None
         if plan is None and salvage_kept is not None:
             logger.info("toolcall retry after salvage failed; keeping salvaged plan")
             plan = salvage_kept
