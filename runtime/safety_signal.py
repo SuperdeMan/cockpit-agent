@@ -223,6 +223,15 @@ DRIVER_STATE_ADVICE = {
     },
 }
 
+def driver_state_of_signal(signal: str | None) -> str:
+    """会话告警的名字 → 驾驶员状态（它是 `DRIVER_STATE_ADVICE[*]["signal"]` 之一时）；车辆告警返回 ""（追加批 M）。
+
+    会话告警只存 `{level, signal, ts}`；消费方据此分辨「会话里挂着的是犯困 / 饮酒 / 不适」还是一盏灯，
+    答那个状态自己的话术，而不是车辆故障口吻（「在它排除之前…熄火，并联系救援」）。
+    """
+    return next((state for state, spec in DRIVER_STATE_ADVICE.items() if spec["signal"] == (signal or "")), "")
+
+
 # ── 此刻自述 vs 提到这类风险（追加批 K，2026-09-24）─────────────────────────────────────────
 # 修前 `driver_state` 是纯词表包含，三类句子被当成「用户此刻就是这个状态」——会话里登记一条 critical 告警、
 # 用户听到「您现在的状态不适合继续开」：① 否定（「我没喝酒」「别熬夜」「我不头晕」）；② 话题问句（「疲劳驾驶

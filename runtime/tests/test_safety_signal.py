@@ -240,3 +240,18 @@ def test_self_reports_that_look_like_negations_or_topics(text, state):
 ])
 def test_near_misses_are_not_refusals(text):
     assert refuses_safety_advice(text) is False, text
+
+
+# ── 追加批 M（2026-09-24；设计 §16）：会话告警名 → 驾驶员状态 ─────────────────────────────────
+
+from runtime.safety_signal import DRIVER_STATE_ADVICE, driver_state_of_signal  # noqa: E402
+
+
+def test_every_driver_state_signal_maps_back_to_its_state():
+    for state, spec in DRIVER_STATE_ADVICE.items():
+        assert driver_state_of_signal(spec["signal"]) == state
+
+
+@pytest.mark.parametrize("signal", ["机油灯", "胎压灯", "车辆告警", "", None])
+def test_vehicle_signals_are_not_driver_states(signal):
+    assert driver_state_of_signal(signal) == ""

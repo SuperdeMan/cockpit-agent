@@ -504,3 +504,71 @@ def test_a_mentioned_risk_with_a_destination_still_gets_the_topic_advice():
                                  raw_text="如果喝了酒开去上海安全吗", ctx=make_context()))
     assert res.speech == DRIVER_STATE_ADVICE["alcohol"]["topic_speech"]
     assert agent._agents.calls == [] and agent.llm.prompts == []
+
+
+# ── 追加批 M（2026-09-24；设计 §16）：会话里的驾驶员状态告警用状态话术；正在走的路不是目的地 ─────────────────
+
+@pytest.mark.parametrize("text", [
+    "当前高速路段",          # K 批真栈：planner 把「现在在高速还能继续开吗」的 destination 填成它
+    "当前路段", "现在在高速", "这段高速", "高速公路", "现在在路上",
+])
+def test_route_target_treats_the_road_being_driven_as_active(text):
+    assert route_target(text) == ("active", ""), text
+
+
+@pytest.mark.parametrize("state", ["fatigue", "alcohol", "unwell"])
+def test_a_driver_state_session_alert_is_answered_with_that_states_advice(state):
+    """修前犯困登记之后追问能不能继续开，答「…未解除的疲劳驾驶。在它排除之前不建议继续行驶——…熄火，并联系救援或前往就近服务点检查」。"""
+    spec = DRIVER_STATE_ADVICE[state]
+    alert = {"level": spec["level"], "signal": spec["signal"], "ts": 1790000000}
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(_TIPS)
+    for intent in ("safety.driving_advice", "safety.driver_state"):
+        res = asyncio.run(run_handle(agent, intent, slots={}, raw_text="现在在高速还能继续开吗", ctx=make_context(),
+                                     meta={"focus_safety_alert": json.dumps(alert, ensure_ascii=False)}))
+        assert res.speech == spec["speech"], (intent, res.speech)
+        assert not any(w in res.speech for w in ("排除", "熄火", "救援", "服务点检查")), res.speech
+        assert res.data["_safety_alert"] == alert, "照旧回写会话告警，时间戳不续期"
+    assert agent._agents.calls == [] and agent.llm.prompts == []
+
+
+def test_a_vehicle_session_alert_keeps_its_wording():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={}, raw_text="现在还能继续开吗", ctx=make_context(),
+                                 meta={"focus_safety_alert": json.dumps({"level": "critical", "signal": "机油灯"})}))
+    assert res.speech.startswith("您这次会话里还有未解除的机油灯"), res.speech
+
+
+def test_the_road_being_driven_is_not_a_destination():
+    """K 批真栈 trace `cfb1d513`：destination=「当前高速路段」⇒ 按它查天气 / 预报两次 400 ⇒ 模型建议「开启双闪谨慎驾驶」。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM("当前高速路段天气和路况信息暂未获取到，建议您开启双闪谨慎驾驶。")
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={"destination": "当前高速路段"},
+                                 raw_text="现在在高速还能继续开吗", ctx=make_context()))
+    assert agent._agents.calls == [("info", "info.weather", {})], agent._agents.calls   # 当前位置的天气泛建议
+    assert agent.llm.prompts == []
+    assert "双闪" not in res.speech
+
+
+def test_route_advice_without_any_data_does_not_ask_the_model():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="failed", speech=""))
+    agent.llm = _FakeLLM("建议您开启双闪谨慎驾驶。")
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={"destination": "上海"},
+                                 raw_text="开车去上海安全吗", ctx=make_context()))
+    assert agent.llm.prompts == [], "天气 / 预报 / 路线一样都没拿到，模型手里只有「暂无」"
+    assert res.speech.startswith("上海那边的天气和路况暂时没查到"), res.speech
+    assert "双闪" not in res.speech
+
+
+def test_route_advice_with_data_still_asks_the_model():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="上海当前小雨，气温22℃。"))
+    agent.llm = _FakeLLM("上海有小雨，注意减速、保持车距。")
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={"destination": "去上海"},
+                                 raw_text="开车去上海安全吗", ctx=make_context()))
+    assert res.speech == "上海有小雨，注意减速、保持车距。"
+    assert ("info", "info.weather", {"city": "上海"}) in agent._agents.calls

@@ -22,7 +22,7 @@ from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
                                    alert_resolved, alert_signal, driver_state,
-                                   driver_state_mentioned)
+                                   driver_state_mentioned, driver_state_of_signal)
 from runtime.clock import hour_of as clock_hour
 from runtime.proactive import P_CRITICAL, publish_proactive
 
@@ -46,6 +46,9 @@ _KNOWLEDGE_SYSTEM = (
     "总共不超过 100 字。不要编当前的天气、路况或车辆状态，不要声称已经为用户做了任何操作。")
 _KNOWLEDGE_FALLBACK = ("通用的安全建议是：保持车距、控制车速；连续开两个小时左右就找服务区歇一歇，"
                        "感到困倦就尽快停车休息。")
+#: 路线级建议一样数据都没拿到时的确定性回答（追加批 M）：如实说没查到，只给不依赖数据的通用建议。
+_NO_DATA_ADVICE = ("{dest}那边的天气和路况暂时没查到，没法给针对性的建议。出发前再确认一下天气，"
+                   "路上保持车距、控制车速，累了就进服务区歇一歇。")
 
 # 驾驶员状态与车辆告警判据的**唯一实现**在 `runtime/safety_signal.py`。
 # 这里曾经有一份本地副本、manual-rag 有第二份，chitchat 还要第三份——
@@ -60,8 +63,11 @@ _KNOWLEDGE_FALLBACK = ("通用的安全建议是：保持车距、控制车速�
 #   active      — 「路上 / 前面 / 这条路 / 高速（裸）」或空 ⇒ 正在导航的那条路线。
 _ROUTE_ACTIVE_WORDS = frozenset({
     "路上", "前面", "前方", "当前", "当前路线", "这条路", "那条路", "沿途", "高速", "高速上",
-    "现在的路", "路况", "一路", "路线", "这段路",
+    "现在的路", "路况", "一路", "路线", "这段路", "高速公路", "高速路",
 })
+#: 追加批 M：「当前高速路段」「现在在高速」「这段高速」——时间 / 指示词 + 泛称 + 「路段」，说的仍是正在走的那条路。
+_ROUTE_DEICTIC_RE = re.compile(r"^(?:当前|现在|目前|眼下|此刻|这会儿|这段|这条|那段|那条)(?:在|所在的?|的)?")
+_ROUTE_SEGMENT_RE = re.compile(r"(?:路段|这段|那段|一段)$")
 _ROUTE_DEST_PREFIX_RE = re.compile(r"^(?:前往|开到|开往|去|到|往|回)")
 _ROUTE_NOISE_RE = re.compile(
     r"(?:的路况|的路上|的路|这条路|那条路|路上|沿途|一路|方向|路况|堵不堵|堵吗|堵车吗|堵车|"
@@ -79,7 +85,8 @@ def route_target(text: str | None) -> tuple[str, str]:
     had_prefix = bool(_ROUTE_DEST_PREFIX_RE.match(t))
     core = _ROUTE_DEST_PREFIX_RE.sub("", t, count=1)
     core = _ROUTE_NOISE_RE.sub("", core).strip()
-    if not core or core in _ROUTE_ACTIVE_WORDS:
+    bare = _ROUTE_SEGMENT_RE.sub("", _ROUTE_DEICTIC_RE.sub("", core))
+    if not core or core in _ROUTE_ACTIVE_WORDS or not bare or bare in _ROUTE_ACTIVE_WORDS:
         return "active", ""
     if _ROAD_CODE_RE.match(core) or (not had_prefix and _ROAD_SUFFIX_RE.search(core)):
         return "road", core.upper() if _ROAD_CODE_RE.match(core) else core
@@ -296,7 +303,10 @@ class RoadSafetyAgent(BaseAgent):
         if mentioned:
             return self._driver_state_topic_advice(mentioned)
 
-        dest = intent.slots.get("destination", "").strip()
+        # 追加批 M：「现在在高速还能继续开吗」planner 填了 `destination=当前高速路段`——那是正在走的路，不是要去的地方；
+        # 按它查天气 / 预报两次 400，模型拿着全是「暂无」的数据建议「开启双闪谨慎驾驶」。判据同路况那份（`route_target`）。
+        kind, target = route_target(intent.slots.get("destination", ""))
+        dest = target if kind == "destination" else ""
         if not dest:
             # badcase 11db5215：「今天天气怎么样，适合出行吗」这类泛出行询问被规划到
             # 本能力时，反问「您要去哪里？」会在多步 plan 里吞掉并行天气步的答案。
@@ -337,6 +347,12 @@ class RoadSafetyAgent(BaseAgent):
                 elif "路线" in r.speech or "导航" in r.speech:
                     route_info = r.speech
 
+        # 追加批 M：天气、预报、路线一样都没拿到 ⇒ 不让模型综合（它手里只有「暂无」，写出来的建议没有依据——真栈是「开启双闪」）。
+        if not (weather_info or forecast_info or route_info):
+            advice = _NO_DATA_ADVICE.format(dest=dest)
+            return AgentResult(speech=advice,
+                               ui_card={"type": "safety_advice", "destination": dest, "advice": advice})
+
         # 读车辆状态
         ctx_values = await ctx.fetch("vehicle.speed", "vehicle.battery")
         speed = ctx_values.get("vehicle.speed", "")
@@ -373,6 +389,9 @@ class RoadSafetyAgent(BaseAgent):
         开场白分两种：告警是**本轮说出来的**时就不能说「您这次会话里还有未解除的…」
         ——那句话在用户刚说出口的那一轮听起来像系统在翻旧账。措辞分开，结论同一条。
         """
+        state = driver_state_of_signal(alert.get("signal"))
+        if state:
+            return self._driver_state_session_advice(state, alert)
         critical = alert.get("level") == "critical"
         sig = alert.get("signal") or "车辆告警"
         # 「亮起」只对灯成立。`alert_signal` 也会取到现象词（漏气/异响/过热），
@@ -457,6 +476,25 @@ class RoadSafetyAgent(BaseAgent):
                             "advice": spec["speech"]},
                            "road-safety", mode="deterministic",
                            note="确定性安全判据，未经模型生成"),
+            follow_up=spec["follow_up"],
+        )
+
+    def _driver_state_session_advice(self, state: str, alert: dict) -> AgentResult:
+        """会话里挂着的告警是驾驶员状态（追加批 M）：答那个状态自己的确定性话术，不用车辆故障口吻。
+
+        修前犯困自述之后问「现在在高速还能继续开吗」，听到的是「您这次会话里还有未解除的疲劳驾驶。在它排除之前不建议继续行驶
+        ——请尽快在安全位置靠边停车、熄火，并联系救援或前往就近服务点检查」。结论（劝停）不变；告警照旧回写、`ts` 保持原值
+        （这一问不是新的状态自述，不续期）。
+        """
+        spec = DRIVER_STATE_ADVICE[state]
+        return AgentResult(
+            speech=spec["speech"],
+            data={"driver_state": state, "safety_alert_bound": True, "level": alert.get("level"),
+                  "_safety_alert": {"level": alert.get("level"), "signal": spec["signal"],
+                                    "ts": int(alert.get("ts") or time.time())}},
+            ui_card=attach({"type": "safety_advice", "driver_state": state, "advice": spec["speech"]},
+                           "road-safety", mode="deterministic",
+                           note="按会话未解除的驾驶员状态给出，未经模型生成"),
             follow_up=spec["follow_up"],
         )
 
