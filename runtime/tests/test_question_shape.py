@@ -144,6 +144,8 @@ def test_object_first_how_to_shape_is_a_question_without_asr_punctuation(text):
 @pytest.mark.parametrize("text", [
     "防滑链应该装在哪个轮子上",
     "冬天轮胎有什么要求",
+    "开长途前要注意些什么",      # 追加批 L：「注意些什么」修前不算提问
+    "雨天开车需要注意些什么",
 ])
 def test_choice_and_requirements_shapes_are_questions_without_punctuation(text):
     """选择/要求型咨询也不是执行命令，云侧写闸应看见它们的问句形态。"""
@@ -478,3 +480,31 @@ def test_count_question_tables_are_closed_function_word_classes():
     vocab = _domain_vocabulary()
     for word in (*COUNT_HEADS, *COUNT_UNITS):
         assert word not in vocab, word
+
+
+# ── 追加批 L（2026-09-24；设计 §15）：规范 / 注意事项 / 条件问法 ────────────────────────────────
+
+from runtime.question_shape import is_reference_question  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "开长途前要注意些什么",                   # 真栈被规划成 scene.activate / scene.create
+    "去惠州要注意些什么", "冬天轮胎有什么要求", "它在什么条件下会自动关闭",
+    "请问开长途前要注意些什么",
+    "看看有没有预警，有的话说下开车要注意什么",  # 两个分句都是提问
+])
+def test_reference_questions(text):
+    assert is_reference_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "导航去公司，看看路上什么情况",            # 前一分句是指令
+    "帮我查一下开车要注意什么",               # 祈使标记
+    "去惠州怎么充电",                        # 方法问句：答案可以就是一份充电规划
+    "介绍一下北京有哪些著名的历史建筑",        # 求介绍：答案可以是一次深度调研
+    "如果深圳今天不下雪，就导航去深圳湾公园",   # 条件指令
+    "开长途前，要注意些什么",                 # 前一分句是碎片，不算提问——宁可不接管
+    "",
+])
+def test_not_reference_questions(text):
+    assert is_reference_question(text) is False, text

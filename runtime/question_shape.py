@@ -27,6 +27,8 @@ planner 把它规划成 `warning_light.close` 并**真的执行了**——云端
 from __future__ import annotations
 import re
 
+from runtime.clause_split import split_clauses
+
 #: 疑问尾词。判据是**结尾**（先剥掉标点），不是「句中出现过问号」。
 QUESTION_TAILS = ("吗", "呢", "吗?", "吗？", "呢?", "呢？", "?", "？")
 #: 能力问法：问的是「能不能」，不是让你做。
@@ -49,7 +51,9 @@ CHOICE_ASKS = ("哪个", "哪种", "哪边", "哪侧", "哪儿", "哪里", "在�
 #: 规范/注意事项/条件问法。仍只放封闭句法，不放轮胎、保养等领域对象。
 #: 「什么条件 / 什么情况」（同一趟真栈：「它在什么条件下会自动关闭」——「什么时候」在 `MANNER_ASKS` 里要与
 #: 操作动词配对，而这句带「关」，配对后仍算指令；条件问法是无条件的提问）。
-REFERENCE_ASKS = ("什么要求", "有何要求", "注意什么", "需要注意什么", "什么条件", "什么情况")
+#: 「注意些什么」（评审三轮追加批 L，2026-09-24）：「开长途前要注意些什么」修前不算提问——F-2 的「求信息的请求」
+#: 接不住它，真栈 `8cee1699` 一趟两轮空手后落 F09-b「我听到了…但没听清要拿它做什么」；另一趟被规划成 `scene.activate`。
+REFERENCE_ASKS = ("什么要求", "有何要求", "注意什么", "注意些什么", "需要注意什么", "什么条件", "什么情况")
 #: 方式/原因疑问词：可以出现在祈使式里（「温度如何调高」要的是调、不是问怎么调），
 #: 因此与 `OPERATION_VERBS` 配对判断——**带操作动词就仍算指令**。
 #: 两处判据必须是同一条，否则同一句话在「让不让给天气查询」与「算不算提问」上
@@ -238,6 +242,20 @@ def asks_for_reason(t: str | None) -> bool:
     """
     body = strip_ask_prefix(t)
     return any(word in body for word in REASON_ASKS)
+
+
+def is_reference_question(t: str | None) -> bool:
+    """问的是**规范 / 注意事项 / 条件**（`REFERENCE_ASKS`），而且每个分句都是提问（评审三轮追加批 L，2026-09-24）。
+
+    这类问法问的是规则本身，从来不是让系统改状态——云侧问句闸据此把拦截面从「端侧写 / 需确认」扩到**声明为写**的步：
+    「开长途前要注意些什么」真栈被规划成 `scene.activate` / `scene.create`（历史里带这类问法的 27 轮，规划出声明写步的只有这 2 轮）。
+    每个分句都要是提问：「导航去公司，看看路上什么情况」的前一分句是指令。只收这一类，不收全部问句——方法问句的答案可以就是一份规划
+    （「去惠州怎么充电」→ 充电规划），求介绍的答案可以是一次深度调研；那 13 轮扩到全部问句会全是误伤。
+    """
+    body = strip_ask_prefix(t)
+    if not body or not any(word in body for word in REFERENCE_ASKS):
+        return False
+    return all(is_non_directive_question(clause) for clause in (split_clauses(body) or [body]))
 
 
 def is_information_request(t: str | None) -> bool:

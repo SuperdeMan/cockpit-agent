@@ -41,6 +41,7 @@ from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.question_shape import (
     carries_operation_cue, is_information_request, is_non_directive_question,
+    is_reference_question,
 )
 from runtime.reported_speech import is_reported_speech
 from runtime.safety_signal import alert_resolved, refuses_safety_advice
@@ -3202,9 +3203,14 @@ class PlanBuilder:
         selected only when the capability authority already marked them
         `require_confirm`; applying `is_write_intent` to every cloud operation would
         misclassify read-like names such as search/menu/talk/status.
+
+        追加批 L：问的是规范 / 注意事项 / 条件（`is_reference_question`）时，声明为写的云侧步也拦——「开长途前要注意些什么」
+        被规划成 `scene.activate` / `scene.create`。只扩这一类问法：扩到全部问句在历史 13 轮上全是误伤（设计 §15.1）。
         """
         if not steps or not is_non_directive_question(text or ""):
             return []
+        if is_reference_question(text or ""):
+            return PlanBuilder._write_steps(steps)
         return PlanBuilder._side_effect_steps(steps)
 
     @staticmethod

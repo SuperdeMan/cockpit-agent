@@ -117,6 +117,18 @@ def test_a_clarify_flavoured_empty_plan_on_an_information_request_is_answered_to
     assert plan.plan_mode.endswith("_no_action_info"), plan.plan_mode
 
 
+def test_a_reference_question_with_some_is_an_information_request_too():
+    """追加批 L（设计 §15）：真栈 `8cee1699` trace `256c1c85` 逐字——「开长途前要注意些什么」第一轮 goal「需要澄清：用户给出对象…
+    但动作缺失」零步、第二轮 `{"addressed":false,"steps":[]}` ⇒ 技术失败 + `clarify_wanted` ⇒ 用户听到「我听到了…但没听清要拿它做什么」。
+    问句判据只收了「注意什么」，没收「注意些什么」，这句不算求信息的请求，F-2 接不住。"""
+    marker = ('{"addressed":true,"steps":[],"goal":"需要澄清：用户给出对象\\"开长途前要注意些什么\\"但动作缺失"}')
+    plan, calls = _build([marker, '{"addressed":false,"steps":[]}'], "开长途前要注意些什么")
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan.steps
+    assert plan.technical_failure is False and plan.clarify_wanted is False
+    # JSON 通道里第二轮「不受话」是合法空计划，由 F-2 续（`_not_addressed_info`）接；工具通道里它是违约、走 `_no_action_info`。
+    assert plan.plan_mode.endswith("_info"), plan.plan_mode
+
+
 def test_a_bare_object_with_a_clarify_marker_still_gets_the_honest_unresolved_exit():
     """对照：光说一个地名（不是求信息的请求）时，F09-b 那条「我听到了 X，但没听清要拿它做什么」照旧。"""
     marker = '{"addressed":true,"steps":[],"goal":"需要澄清：用户只给了地点名，未说明要做什么"}'
