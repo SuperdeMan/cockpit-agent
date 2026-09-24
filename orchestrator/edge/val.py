@@ -280,7 +280,8 @@ class VAL:
                         resolved.append(val)
                 else:
                     resolved.append(p)
-            normalized["positions"] = resolved
+            # 按序去重：「前排和主驾」不再得到两次 front_left（同一个位置执行两次）
+            normalized["positions"] = list(dict.fromkeys(resolved))
 
         # 模式归一化（seat_modes / aircon_modes / driving_modes 等）
         if "mode" in data and data["mode"]:

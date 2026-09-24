@@ -495,9 +495,12 @@ _SZ_META = {"current_lat": "22.5410", "current_lng": "113.9412"}
 
 def test_pickup_to_another_province_asks_instead_of_driving():
     """真栈 PU5 七次取样仍有一次导到 1582km 外的济南同名校（来源至今没查清）。
-    **来源查不清不等于不能防**：这条只问「接人接到这么远合理吗」。"""
+    **来源查不清不等于不能防**：这条只问「接人接到这么远合理吗」。
+
+    夹具是**名字 + 类目都校验得过**的外地学校（主干「南山实验」+ 类目「小学」）——校验不过的那种在接地一层就被
+    本地半径拦下了（评审四轮真栈顺带发现，下一条），走到这道闸的只剩「对得上名字、但远得不像接人」。"""
     far = _POI(id="j1", name="济南市南山实验小学",
-               category="科教文化服务;科教文化场所;科教文化场所",
+               category="科教文化服务;学校;小学",
                lat=36.5109, lng=117.0261)
     agent, _ = _agent_with_search({"南山实验小学": [far]})
     res = asyncio.run(run_handle(
@@ -507,6 +510,22 @@ def test_pickup_to_another_province_asks_instead_of_driving():
     assert res.status == "need_slot"
     assert "济南市南山实验小学" in res.speech and "公里" in res.speech
     assert not [a for a in res.actions if a["type"] == "navigate"]
+
+
+def test_pickup_to_an_unverified_school_in_another_province_is_not_driven_to():
+    """名字 / 类目都校验不过的外地同名校（真栈那条的高德类目是「科教文化场所」）：接地一层就不采信 ⇒
+    接不到地点 ⇒ 教学问（与「去接我爸」同一句），零导航。"""
+    far = _POI(id="j1", name="济南市南山实验小学",
+               category="科教文化服务;科教文化场所;科教文化场所",
+               lat=36.5109, lng=117.0261)
+    agent, _ = _agent_with_search({"南山实验小学": [far]})
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学，顺便帮我找一家麦当劳。",
+        ctx=_ctx_with(None), meta=_SZ_META))
+    assert res.status == "need_slot"
+    assert not [a for a in res.actions if a["type"] == "navigate"]
+    assert "济南" not in res.speech
 
 
 def test_pickup_nearby_is_untouched():

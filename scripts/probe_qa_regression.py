@@ -1483,8 +1483,11 @@ CASES = [
          {"say": "云岚国际中心",
           "expect": {"card_type": "intent_choice", "has_operation_id": True, "no_actions": True}},
          {"say": "附近的咖啡店", "expect": {"card_type": "place_list"}},
+         # `bda5af71` 第 1 趟判了 PASS，实际是规划把旧澄清的「云岚国际中心」当目的地、第二家当途经点，导去 2400 km 外北京的
+         # 「云岚之境美容美体中心」——话术里点到了第二家的名字，排除词只写了「云岚国际中心」。距离判据判的是执行出去的目的地。
          {"say": "第二个",
-          "expect": {"names_item_from": {"turn": 2, "index": 2}, "speech_not": ["云岚国际中心"]}},
+          "expect": {"names_item_from": {"turn": 2, "index": 2}, "speech_not": ["云岚"],
+                     "navigate_within_km": 150}},
      ]},
     # ── 评审四轮批 B（R4-01）：普通应答不被事务确认截获 ─────────────────────────────────────────
     # sid 0 是危险形态：挂着「打开后备箱」时插话听笑话，助手问「还要听吗」，用户答「好的」——修前唯一一条 wait_confirm 就是它，
@@ -1525,6 +1528,32 @@ CASES = [
          # 清理：模拟车态在端侧进程内存里，后备箱开着会让下一趟的「打开后备箱」答成「已经是打开状态」
          {"say": "关闭后备箱", "sid": 2, "expect": {"need_confirm": True}},
          {"say": "确认", "sid": 2, "confirm": True, "op_from": 4, "expect": {"actions_include": ["trunk.close"]}},
+     ]},
+    # ── 评审四轮真栈顺带发现：名字对不上的目的地不许兜底到另一座城 ──────────────────────────────────
+    # 修前（`bda5af71`，CL1 / RS33 同一处）：「云岚国际中心」近侧 / 全国都只捞回北京的「云岚之境美容美体中心」，名字校验不过、
+    # 地标解析也解不出 ⇒ 兜底照样当目的地，出发去全程约 2400 km 的路线。修后：名字对不上的弱匹配只在本地半径内才当目的地，
+    # 否则走「没找到」那条追问（固定 follow_up，判分支不判措辞）。名字对得上的长途照常导航的对照是 PU8。
+    {"id": "RS36", "group": "residual", "card": "余项", "issue": "评审四轮真栈顺带发现",
+     "why": "名字对不上、只捞回另一座城相近名的目的地：追问，不出发",
+     "known": "red",
+     "turns": [
+         {"say": "导航去云岚国际中心",
+          "expect": {"navigate_within_km": 150, "follow_up_any": ["请补充城市"]}},
+     ]},
+    # ── 评审四轮顺带发现：端侧位置抽取按词表顺序只取第一个 ────────────────────────────────────────
+    # 修前（`bda5af71` 源码）：「打开主驾和副驾车窗」payload 只有 `['主驾']`（两扇窗开一扇）；「打开副驾驶位车窗」先撞上词表里排在
+    # 前面的「驾驶位」⇒ `['驾驶位']`、归一化成主驾那一侧。判的是执行出去的 payload 位置（`action_positions` 子串匹配：
+    # 「驾驶位」不含「副驾」）。末轮关窗是清理（模拟车态在端侧进程内存里，跨会话共享）。
+    {"id": "RS37", "group": "residual", "card": "余项", "issue": "评审四轮顺带发现",
+     "why": "「主驾和副驾」两个位置都执行；「副驾驶位」执行的是副驾那一侧",
+     "known": "red",
+     "turns": [
+         {"say": "打开主驾和副驾车窗", "sid": 0,
+          "expect": {"actions_include": ["window.open"],
+                     "action_positions": {"window.open": ["主驾", "副驾"]}}},
+         {"say": "打开副驾驶位车窗", "sid": 1,
+          "expect": {"actions_include": ["window.open"], "action_positions": {"window.open": ["副驾"]}}},
+         {"say": "关闭车窗", "sid": 1, "expect": {"actions_include": ["window.close"]}},
      ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。

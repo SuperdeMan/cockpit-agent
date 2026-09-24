@@ -1477,19 +1477,36 @@ def _s(domain: str, intent: str, operate: str, obj: str, **kwargs) -> dict:
     return {"domain": domain, "intent": intent, "data": data, "confidence": kwargs.pop("conf", 0.9)}
 
 
+_POSITION_KEYWORDS = (
+    "主驾", "主驾位", "驾驶位",
+    "副驾", "副驾位", "副驾驶", "副驾驶位",
+    "前排", "后排",
+    "左后", "右后",
+    "全车",
+)
+
+
 def _extract_position(t: str) -> list[str] | None:
-    """从文本中提取位置信息。"""
-    position_keywords = [
-        "主驾", "主驾位", "驾驶位",
-        "副驾", "副驾位", "副驾驶", "副驾驶位",
-        "前排", "后排",
-        "左后", "右后",
-        "全车",
-    ]
-    for kw in position_keywords:
-        if kw in t:
-            return [kw]
-    return None
+    """从文本中提取位置词：**长词优先、互不重叠、按出现顺序全取**（同一个词只记一次）。
+
+    修前按词表顺序返回第一个命中：「副驾驶位」先撞上排在前面的「驾驶位」⇒ 归一化成主驾那一侧；
+    「主驾和副驾车窗」只留「主驾」（评审四轮顺带发现，2026-09-25）。
+    """
+    taken = [False] * len(t)
+    hits: list[tuple[int, str]] = []
+    for kw in sorted(_POSITION_KEYWORDS, key=len, reverse=True):
+        start = t.find(kw)
+        while start >= 0:
+            end = start + len(kw)
+            if not any(taken[start:end]):
+                taken[start:end] = [True] * len(kw)
+                hits.append((start, kw))
+            start = t.find(kw, start + 1)
+    found: list[str] = []
+    for _, kw in sorted(hits):
+        if kw not in found:
+            found.append(kw)
+    return found or None
 
 
 def _extract_color(t: str) -> str | None:

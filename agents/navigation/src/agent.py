@@ -89,6 +89,13 @@ _PICKUP_RE = re.compile(
 #: 会被问一句而不是被拒绝。可经 env 调，但**默认值本身就是判据**，别当调参旋钮。
 _PICKUP_MAX_KM = float(os.getenv("PICKUP_MAX_KM", "100"))
 
+#: 「本地」半径（km）：裸区县名的心智是本地（接地卡 D2），**名字对不上的弱匹配**也只在这个半径内才当目的地——
+#: 评审四轮真栈（`bda5af71`，CL1 / RS33 / RS36）：深圳定位下「云岚国际中心」近侧 / 全国都只捞回北京的「云岚之境美容美体中心」，
+#: 名字校验不过、地标解析也解不出，兜底照样当目的地，出发去 1940 km 外。两处判据同一个数，别各写一个。
+_LOCAL_RADIUS_KM = 150.0
+#: 「没找到这个地点」的追问——导航与地点搜索两条入口共用一句（探针按它判分支，`follow_up_any`）。
+_NOT_FOUND_FOLLOW_UP = "请补充城市、所在区域，或附近的地标，我再为您定位。"
+
 
 def _grounded_in_raw(dest: str, raw_text: str) -> bool:
     """这个目的地是不是**用户自己说出来的**（哪怕只沾了一小截）。
@@ -697,6 +704,12 @@ class NavigationAgent(BaseAgent):
                     resolved_keyword, results = candidate, candidate_results
                     break
 
+        if not results:
+            # 修前零结果照样套列表模板：「为您找到 0 个云岚国际中心，推荐前三个：。需要导航过去吗？」+「可以说『导航去第一个』」
+            if is_category:
+                return AgentResult(speech=f"附近暂时没找到{keyword}，换个类型或换个地方试试？")
+            return AgentResult(speech=f"没找到「{keyword}」。", follow_up=_NOT_FOUND_FOLLOW_UP)
+
         if prefer_highest:
             results = sorted(results, key=lambda item: item.rating or 0, reverse=True)
 
@@ -708,6 +721,13 @@ class NavigationAgent(BaseAgent):
 
         if results and not is_category and self._is_navigation_phrase(raw_text):
             first = results[0]
+            # 与 `_find_destination` 兜底同一道闸：名字对不上（地标候选解析过的算对得上）、又在本地半径之外的第一个结果
+            # 不许自动导过去——规划把「导航去X」落成 search_poi 时，这里就是北京那一跳的第二个入口
+            verified = resolved_keyword != keyword or self._dest_matches(keyword, first.name)
+            if not verified and self._beyond_local_radius(first, near) is not None:
+                logger.info("search_poi: unverified first result beyond the local radius, not navigating: %s → %s",
+                            keyword, first.name)
+                return AgentResult(speech=f"没找到「{keyword}」。", follow_up=_NOT_FOUND_FOLLOW_UP)
             # G6 轨迹写入也要挂这条自动导航路径——真栈「圆圆的湖→滴水湖」走的
             # 正是这里，漏挂则「上次去过的那个湖」无数据可召回（挂点枚举教训）。
             await self._remember_visited(ctx, first.name, first.lat, first.lng)
@@ -1047,7 +1067,7 @@ class NavigationAgent(BaseAgent):
             return AgentResult(
                 status=NEED_SLOT,
                 speech=f"暂时无法确定「{dest}」对应的具体地点。",
-                follow_up="请补充城市、所在区域，或附近的地标，我再为您定位。",
+                follow_up=_NOT_FOUND_FOLLOW_UP,
                 missing_slots=["destination"],
             )
 
@@ -2159,6 +2179,28 @@ class NavigationAgent(BaseAgent):
         dlng = (lng2 - lng1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
         return math.hypot(dlat, dlng)
 
+    @classmethod
+    def _beyond_local_radius(cls, poi, near) -> int | None:
+        """`poi` 在本地半径之外 ⇒ 直线公里数（取整）；在半径内、或判不了（没定位 / 没坐标）⇒ None。"""
+        if near is None or poi is None or not (poi.lat and poi.lng):
+            return None
+        km = cls._rough_km(near.lat, near.lng, poi.lat, poi.lng)
+        return round(km) if km > _LOCAL_RADIUS_KM else None
+
+    @classmethod
+    def _local_only(cls, description: str, results: list, near) -> list:
+        """名字校验不过的弱匹配兜底：只在本地半径内才当目的地（话术报出实际名，用户可纠正）。
+
+        超出 ⇒ 空，调用方走「没找到」那条追问——导去另一座城的代价是一声不吭地出发，问一句便宜得多。
+        名字对得上的长途（「导航去上海外滩」）不经这里；没定位判不了远近 ⇒ 照旧。
+        """
+        far = cls._beyond_local_radius(results[0], near) if results else None
+        if far is None:
+            return results
+        logger.info("unverified destination beyond the local radius, not taken: %s → %s (%dkm)",
+                    description, results[0].name, far)
+        return []
+
     @staticmethod
     def _ask_person_place(person_word: str) -> AgentResult:
         """不知道这个人在哪 → **教学问**（诚实追问 + 告诉用户怎么把它教给系统）。
@@ -2213,7 +2255,8 @@ class NavigationAgent(BaseAgent):
             name, results = await _via_landmark()
             if results:
                 return name, results
-            results = await _direct(near)    # 地标候选验证不出来 → 退回原话直搜
+            # 地标候选验证不出来 → 退回原话直搜；这份结果没过任何名字校验 ⇒ 只在本地半径内才采信
+            results = self._local_only(description, await _direct(near), near)
             return (description, results) if results else ("", [])
 
         # R1：短名先过行政级判定（「惠州」「珠海」这类裸城市名不带 市/省 后缀，
@@ -2239,7 +2282,7 @@ class NavigationAgent(BaseAgent):
                 # 跨城导航合法，维持无条件直达。
                 trustworthy = level != "区县" or (
                     lat_f is not None and near is not None
-                    and self._rough_km(near.lat, near.lng, lat_f, lng_f) <= 150)
+                    and self._rough_km(near.lat, near.lng, lat_f, lng_f) <= _LOCAL_RADIUS_KM)
                 if lat_f is not None and trustworthy:
                     admin_poi = POI(id=f"admin_{description}", name=description,
                                     address=f"{description}（市区中心）",
@@ -2285,7 +2328,8 @@ class NavigationAgent(BaseAgent):
             name, lm = await _via_landmark()
             if lm:
                 return name, lm
-            return description, results     # 兜底：报出实际名让用户纠正
+            # 兜底：本地半径内报出实际名让用户纠正；之外的不采信（评审四轮真栈：导去 1940 km 外）
+            return description, self._local_only(description, results, near)
         return await _via_landmark()
 
     async def _landmark_candidates(self, description: str) -> list[str]:

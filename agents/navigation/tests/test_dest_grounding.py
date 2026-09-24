@@ -318,3 +318,130 @@ def test_nationwide_namesake_is_rejected_when_the_rescue_runs():
         raw_text="导航去南山实验小学", meta=SZ))
     assert ("南山实验小学", False) in poi.calls    # 重搜确实跑了……
     assert "济南" not in _nav_dest(res)            # ……只是没被采信
+
+
+# ── 名字对不上的弱匹配不许兜底到另一座城（评审四轮真栈顺带发现，2026-09-25）────────────
+#
+# `bda5af71` 真栈 CL1 / RS33：深圳定位下「云岚国际中心」近侧搜索、全国重搜都只捞回北京的
+# 「云岚之境美容美体中心」（39.858012, 116.444415，约 1950 km 直线）；名字校验不过、地标解析也解不出
+# ⇒ 兜底照样当目的地，出发去全程约 2400 km、46 小时的路线。POI 取自那一轮的 navigate payload。
+
+_BEIJING_SALON = POI(id="b1", name="云岚之境美容美体中心", address="北京城区鑫源国际1号楼603",
+                     category="生活服务;美容美发店;美容美发店", lat=39.858012, lng=116.444415)
+
+
+class _NoLandmarkLlm:
+    """地标解析给不出候选（真栈那一轮同样解不出）。"""
+
+    async def complete(self, *args, **kwargs):
+        return "[]"
+
+
+def _agent_with(poi):
+    agent = NavigationAgent()
+    agent.poi = poi
+    agent.llm = _NoLandmarkLlm()
+    return agent
+
+
+def test_an_unverified_match_in_another_city_is_asked_about_not_driven_to():
+    poi = _RecordingPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.navigate_to", slots={"destination": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert res.status == "need_slot", (res.status, res.speech)
+    assert "云岚之境" not in res.speech
+    assert "请补充城市" in (res.follow_up or "")
+
+
+def test_an_unverified_local_match_still_navigates_under_its_real_name():
+    """对照（修前行为不变）：本地半径内的弱匹配照旧当目的地，话术报出实际名让用户纠正。"""
+    local = POI(id="l1", name="云岚美容(南山店)", category="生活服务;美容美发店;美容美发店",
+                lat=22.5361, lng=113.9285)
+    poi = _RecordingPoi(near_results=[local], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.navigate_to", slots={"destination": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert res.status == "ok", (res.status, res.speech)
+    assert _nav_dest(res) == "云岚美容(南山店)"
+
+
+def test_a_verified_destination_in_another_city_still_navigates():
+    """对照：名字对得上的长途照常跨城导航（PU8「导航去上海外滩」同形）。"""
+    tower = POI(id="t1", name="东方明珠广播电视塔", category="风景名胜;风景名胜;国家级景点",
+                lat=31.2397, lng=121.4998)
+    poi = _RecordingPoi(near_results=[tower], wide_results=[tower])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.navigate_to", slots={"destination": "东方明珠"},
+        raw_text="导航去东方明珠", meta=SZ))
+    assert res.status == "ok", (res.status, res.speech)
+    assert _nav_dest(res) == "东方明珠广播电视塔"
+
+
+def test_an_unverified_landmark_description_match_in_another_city_is_not_driven_to():
+    """地标描述那一路的兜底（地标候选验证不出来 ⇒ 退回原话直搜）同一道闸。"""
+    poi = _RecordingPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.navigate_to", slots={"destination": "像云一样的大楼"},
+        raw_text="导航去像云一样的大楼", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert res.status == "need_slot", (res.status, res.speech)
+
+
+def test_without_a_location_the_fallback_is_unchanged():
+    """边界：没有定位就判不了「在不在本地」——照旧报出实际名（修前行为）。"""
+    poi = _RecordingPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.navigate_to", slots={"destination": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta={}))
+    assert res.status == "ok", (res.status, res.speech)
+    assert _nav_dest(res) == "云岚之境美容美体中心"
+
+
+class _SearchPoi(_RecordingPoi):
+    """`search_poi` 走 `poi.search(keyword, near=…, rating_min=…)`：同一份近侧 / 全国结果。"""
+
+
+def test_search_poi_with_a_navigation_phrase_does_not_drive_to_an_unverified_far_match():
+    """同一个北京问题的第二个入口：规划把「导航去X」落成 `search_poi` 时，带导航词的原话会自动导到第一个结果。"""
+    poi = _SearchPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert "请补充城市" in (res.follow_up or ""), res.follow_up
+
+
+def test_search_poi_with_nothing_found_says_so():
+    """`bda5af71` RS36 第 2 趟逐字：「为您找到 0 个云岚国际中心，推荐前三个：。需要导航过去吗？」+「可以说『导航去第一个』」。"""
+    poi = _SearchPoi(near_results=[], wide_results=[])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert "0 个" not in res.speech and "推荐前三个" not in res.speech, res.speech
+    assert "云岚国际中心" in res.speech
+    assert "第一个" not in (res.follow_up or "")
+    assert "请补充城市" in (res.follow_up or ""), res.follow_up
+    assert not res.actions
+
+
+def test_search_poi_with_a_navigation_phrase_still_drives_to_a_verified_match():
+    """对照：名字对得上（哪怕在另一座城）照旧直接导航。"""
+    tower = POI(id="t1", name="东方明珠广播电视塔", category="风景名胜;风景名胜;国家级景点",
+                lat=31.2397, lng=121.4998)
+    poi = _SearchPoi(near_results=[tower], wide_results=[tower])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "东方明珠"},
+        raw_text="导航去东方明珠", meta=SZ))
+    assert _nav_dest(res) == "东方明珠广播电视塔"
+
+
+def test_search_poi_without_a_navigation_phrase_still_lists_what_it_found():
+    """对照：只是搜（原话不带导航词）⇒ 照旧把找到的列出来，由用户挑。"""
+    poi = _SearchPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
+        raw_text="搜一下云岚国际中心", meta=SZ))
+    assert not res.actions
+    assert "云岚之境美容美体中心" in res.speech
