@@ -36,14 +36,29 @@ def _write(agent, *intents):
     return agent
 
 
+#: 端侧能力在 Registry 里的描述（`orchestrator/edge/capabilities.py::_describe` 生成的就是这种）——评审四轮 R4-01 起
+#: 「好的」接受哪一步要看提议点没点名它，点名的依据正是这份描述（空描述的步没法被证明是提议的那一项）。
+_EDGE_DESCRIPTIONS = {"warning_light.close": "关闭警示灯", "hvac.inc": "调高空调温度", "hvac.on": "打开空调",
+                      "window.open": "打开车窗", "window.close": "关闭车窗",
+                      # 云侧写步的真实描述是一大段写给规划器的用法说明，点名只看功能主干（第一个标点之前）
+                      "navigation.cancel": "结束/取消**当前正在进行的这次导航**（「取消导航」「别导了」「不去了」 在有活动路线时）"}
+
+
+def _described(agent):
+    for cap in agent.manifest.capabilities:
+        cap.description = _EDGE_DESCRIPTIONS.get(cap.intent, cap.description)
+    return agent
+
+
 def _agents():
     return [
         MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",)),
         _write(MockAgent("reminder", ["reminder.cancel", "reminder.list"]), "reminder.cancel"),
         _write(MockAgent("deep-research", ["research.run"]), "research.run"),
-        _write(MockAgent("navigation", ["navigation.cancel"]), "navigation.cancel"),
-        MockAgent("edge-vehicle", ["warning_light.close", "hvac.inc", "hvac.on"],
-                  kind="edge_fast", deployment="edge"),
+        _described(_write(MockAgent("navigation", ["navigation.cancel"]), "navigation.cancel")),
+        _described(MockAgent("edge-vehicle", ["warning_light.close", "hvac.inc", "hvac.on",
+                                              "window.open", "window.close"],
+                             kind="edge_fast", deployment="edge")),
         MockAgent("nearby", ["nearby.search", "nearby.order"], require_confirm=("nearby.order",)),
     ]
 
@@ -126,3 +141,46 @@ def test_a_read_from_an_acknowledgment_is_not_touched():
     """只读步不是安全问题，本闸不管。"""
     plan = _build(_wire(("reminder", "reminder.list", {})), "可以，已为您执行")
     assert _intents(plan) == ["reminder.list"], _intents(plan)
+
+
+# ── 评审四轮 R4-01：「好的」只接受**提议点名的那一项** ─────────────────────────────────────────────
+# 修前判据是「最近一条助手话里有没有问号」：问号可能来自引用或知识问句，也不说明提议的是哪一步——纯应答可以长出任何写步。
+
+def _said(text):
+    return [{"role": "user", "text": "有点冷"}, {"role": "assistant", "text": text}]
+
+
+def test_an_offer_accepts_only_the_step_it_named():
+    plan = _build(_wire(("edge-vehicle", "hvac.inc", {}), ("edge-vehicle", "window.open", {})),
+                  "好的", _said("要不要我帮你把空调调高一点？"))
+    assert _intents(plan) == ["hvac.inc"], _intents(plan)
+    assert "_ack_write_trimmed" in plan.plan_mode
+
+
+def test_an_offer_of_something_else_does_not_authorise_this_write():
+    plan = _build(_wire(("edge-vehicle", "window.open", {})), "好的", _said("要不要我帮你把空调调高一点？"))
+    assert _intents(plan) == ["chitchat.talk"], _intents(plan)
+    assert "_ack_write_blocked" in plan.plan_mode
+
+
+def test_an_offer_to_close_does_not_authorise_opening_it():
+    plan = _build(_wire(("edge-vehicle", "window.open", {})), "好的", _said("要不要我帮你把车窗关上？"))
+    assert _intents(plan) == ["chitchat.talk"], _intents(plan)
+
+
+@pytest.mark.parametrize("said", [
+    "您刚才问的是「要不要打开车窗？」。车窗可以在中控屏上控制。",   # 引号里的问号不是提议
+    "你知道为什么空调会有异味吗？",                                 # 知识问句不是提议
+    "要不要我帮你打开空调？另外，今天气温二十六度。",                # 提议不在最后一句：接受的是最后那一句
+    "空调已经调高了一点。",                                          # 根本没有提问
+])
+def test_a_question_mark_alone_is_not_an_offer(said):
+    plan = _build(_wire(("edge-vehicle", "hvac.on", {})), "好的", _said(said))
+    assert _intents(plan) == ["chitchat.talk"], (said, _intents(plan))
+
+
+def test_a_cloud_write_named_by_the_head_of_its_description_is_accepted():
+    """云侧写步的描述是一大段用法说明，点名只看功能主干（「结束/取消当前正在进行的这次导航」）。"""
+    plan = _build(_wire(("navigation", "navigation.cancel", {})),
+                  "好的", _said("前方拥堵严重，需要我帮你把现在的导航取消吗？"))
+    assert _intents(plan) == ["navigation.cancel"], _intents(plan)

@@ -48,6 +48,7 @@ import re
 import sys
 import time
 import urllib.parse
+import uuid
 from pathlib import Path
 
 try:
@@ -1504,7 +1505,8 @@ CASES = [
          {"say": "好的", "sid": 1, "expect": {"no_actions": True, "speech_not": ["当前没有待确认"]}},
          # 清理：后备箱在第 4 轮被打开（修前在第 3 轮），关回去，免得下一趟答「已经是打开状态」
          {"say": "关闭后备箱", "sid": 2, "expect": {"need_confirm": True}},
-         {"say": "确认", "sid": 2, "confirm": True, "op_from": 7, "expect": {"actions_include": ["trunk.close"]}},
+         # 正常对照：确认卡就是最近那一问，「好的」照常授权（关后备箱，顺带完成清理）
+         {"say": "好的", "sid": 2, "expect": {"actions_include": ["trunk.close"], "closes_op_from": 7}},
      ]},
     # ── 评审四轮批 B（R4-03）：执行 + 询问的混合句不被整句问句闸删掉动作 ─────────────────────────────
     # 端侧把后备箱（需确认 ⇒ 上云）与问句一起上云；修前整句判成列举问，`trunk.open` 被删、确认卡不出。
@@ -2694,7 +2696,11 @@ async def _one_turn(ws, session: str, text: str, *, operation_id: str = "",
         # 长会话 QA 用这枚 id 与 collector 的 route/agent/provider/span 逐轮对账。
         # 普通迷你集不传时行为逐字不变。
         meta["trace_id"] = trace_id
-    frame = {"text": text, "session_id": session, "meta": meta}
+    # 评审四轮 R4-01：与两端客户端同形，每轮带自己的 `request_id`（HMI `App.tsx` / Android `gateway.ts` 都是每轮 uid）。
+    # 挂起记下「提出它的那一轮」、纯应答只授权最近那个提示——探针不带这个键时每条挂起都盖不上章，「确认卡后紧接『好的』」
+    # 这条正常对照会走一条真客户端不会走的路。
+    frame = {"text": text, "session_id": session, "meta": meta,
+             "request_id": f"probe-{uuid.uuid4().hex[:16]}"}
     if operation_id:
         frame["operation_id"] = operation_id      # Q1-B：点名确认哪一条挂起
     if is_confirmation:

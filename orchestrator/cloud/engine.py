@@ -33,7 +33,7 @@ from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
     CLAIM_STRIPPED_SPEECH, ExecutionClaimGate, execution_claim, strip_execution_claims)
-from runtime.affirmation import ACK_WORDS, PARTICLE_RE, consists_of
+from runtime.affirmation import ACK_WORDS, PARTICLE_RE, consists_of, is_bare_acknowledgment
 from runtime.clause_split import split_clauses
 from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
@@ -642,7 +642,7 @@ class PlannerEngine:
         # 可能还在），也绝不执行。普通请求照旧进规划（fail-open：一次存储故障不该让整轮不可用）。
         if pending_state == PENDING_UNAVAILABLE and (
                 ctx.operation_id or ctx.is_confirmation
-                or self._is_bare_confirm_word(text)):
+                or self._intercepts_as_confirm(text)):
             logger.warning("pending table unavailable on a confirm-shaped turn")
             await _emit_engine_lifecycle(
                 ctx, "cloud.pending_unavailable", "system.pending_unavailable")
@@ -679,9 +679,23 @@ class PlannerEngine:
             # 评审三轮 R3-01 B：点名确认的裁决面是已校验步骤摘要；旧记录没有就现取一次（只在有点名余量时）。
             # 端侧对整句的解析只做否决（`_edge_nlu` 是端侧自己盖的章，客户端同名键在端侧入口剥掉）。
             await self._ensure_confirm_facts(entries, text, ctx.is_confirmation)
+            # 评审四轮 R4-01：纯应答（「好的 / 嗯 / 可以」）回答的是**最近那一问**。最新一条挂起是待确认、且它就是最近那个
+            # 提示（提出它的那一轮就是最近一轮）才算对它的授权；证明不了就不授权——修前真栈：挂着「打开后备箱」时插话听笑话，
+            # 助手问「还要再听一个吗」，用户「好的」⇒ 后备箱被打开（RS34 3/3）。只在这一种句子上多读一次历史。
+            ack_binds = False
+            if (not ctx.is_confirmation and is_bare_acknowledgment(text)
+                    and getattr(entries[-1], "phase", "") == "wait_confirm"):
+                ack_binds = await self._pending_is_latest_prompt(ctx, entries[-1], mem_on)
             spoken = self._resolve_spoken_confirm(
                 text, ctx.is_confirmation, entries,
-                edge_intent=str(getattr(ctx, "edge_nlu", "") or "").split("|", 1)[0].strip())
+                edge_intent=str(getattr(ctx, "edge_nlu", "") or "").split("|", 1)[0].strip(),
+                ack_binds=ack_binds)
+            if spoken.kind == "ack":
+                # 这一声应答不是冲挂起来的：按插话保留（R2），交规划去接最近那一问，末尾提醒还在等的那条
+                logger.info("Bare acknowledgment is not addressed to the pending %s",
+                            (getattr(pending, "operation_id", "") or "")[:16])
+                held_pending = pending
+                pending = None
             if spoken.kind == "mismatch":
                 # 点名召回到了挂起，却与它的已校验步骤对不上（「确认关闭后备箱」而挂着的是打开后备箱）——
                 # **不是授权**，也不按插话把这句交给规划去猜：念出等确认的是什么、怎么确认 / 作废。零动作、零关闭。
@@ -947,7 +961,7 @@ class PlannerEngine:
                     "Resuming plan for session %s (slot fill step %s, text=%s)",
                     ctx.session_id, pending.pending_step_id, text[:20])
         elif not just_cancelled and (
-                ctx.is_confirmation or self._is_bare_confirm_word(text)):
+                ctx.is_confirmation or self._intercepts_as_confirm(text)):
             # 带确认标记，或裸"确认/取消"，但没有挂起任务（TTL 过期/上一步异常/重复点击）。
             # `just_cancelled` 排除复合取消刚清掉挂起的那一路——那句话的余量是新请求，
             # 不能因为它带确认标记就被答成「当前没有待确认的操作」。
@@ -2279,6 +2293,8 @@ class PlannerEngine:
             pending_plan=self._serialize_plan(plan),
             action_summary=(contracts.action_summary(pending_step, describe)
                             if describe is not None else ""),
+            # 评审四轮 R4-01：提出这条挂起的那一轮——纯应答只在它就是最近那个提示时才授权
+            prompt_exchange_id=str(ctx.request_id or ""),
         )
         save_status, evicted = await self.session.save_pending_result(
             ctx.session_id, pending_state, replaces=replaces)
@@ -2442,6 +2458,7 @@ class PlannerEngine:
             clarify={"question": str(clarify.get("question") or ""),
                      "options": [dict(o) for o in (clarify.get("options") or [])
                                  if isinstance(o, dict)]},
+            prompt_exchange_id=str(ctx.request_id or ""),     # 评审四轮：提出它的那一轮
         )
         save_status, evicted = await self.session.save_pending_result(
             ctx.session_id, state, replaces=replaces)
@@ -2699,7 +2716,7 @@ class PlannerEngine:
 
     @staticmethod
     def _resolve_spoken_confirm(text: str, flagged: bool, entries: list,
-                                edge_intent: str = "") -> "_SpokenConfirm":
+                                edge_intent: str = "", ack_binds: bool = True) -> "_SpokenConfirm":
         """无寻址键的确认在挂起表里**指向谁**（W01）。
 
         返回 `kind`：
@@ -2719,6 +2736,10 @@ class PlannerEngine:
         （`_named_confirm_compatible`：点名的每一样东西都得是这一步已校验摘要里本来就有的；`edge_intent` =
         端侧对整句的解析，点出另一个 intent 一票否决、从不授权）。序数（「第一个」）不接——它在 wait_slot
         语境里是选择卡的答案。
+
+          · `"ack"`        —— 评审四轮 R4-01：**纯应答**（「好的 / 嗯 / 可以」，不含确认 / 下单 / 支付 / 选定类），而最新一条
+                              挂起不是待确认、或它不是最近那个提示（`ack_binds=False`，engine 读历史判）。它回答的是最近那一问，
+                              不是这笔事务：调用方按插话保留挂起、交规划。「确认」这类事务词不受影响。
         """
         confirms = [s for s in entries if getattr(s, "phase", "") == "wait_confirm"]
         t = (text or "").strip().lower()
@@ -2730,6 +2751,12 @@ class PlannerEngine:
             bare, remainder = PlannerEngine._split_confirm_prefix(t)
             if not bare and not remainder:
                 return _SpokenConfirm("")
+        if bare and not flagged and is_bare_acknowledgment(t):
+            newest = entries[-1] if entries else None
+            if (ack_binds and newest is not None
+                    and getattr(newest, "phase", "") == "wait_confirm"):
+                return _SpokenConfirm("one", target=newest)
+            return _SpokenConfirm("ack")
         if remainder:
             if not confirms:
                 # 「好的，明天早上八点」——没有任何待确认时，肯定词开头的长句是**补槽答案 /
@@ -2874,6 +2901,43 @@ class PlannerEngine:
         「当前没有待确认的操作」而不是去规划——与 Q4 位置闸同款的「前置闸替编排
         做意图判定」。它与挂起语境的宽判据同源一份词表，语境规则不同。"""
         return PlannerEngine._confirm_reply(text, False) is not None
+
+    @staticmethod
+    def _intercepts_as_confirm(text: str) -> bool:
+        """这句话在**没有挂起 / 挂起表读不到**时要被拦成「当前没有待确认的操作 / 暂时读不到」：裸确认 / 裸取消，但**纯应答除外**。
+
+        评审四轮 R4-01：「好的 / 嗯 / 可以」回答的是最近那一问——它可能是闲聊里的「还要继续讲吗」，交规划去接；只有带事务词的
+        （「确认 / 好的，确认吧 / 下单」）才是冲着一笔事务来的，照旧诚实报过期（那道闸挡的是「确认」被借历史重规划成上一意图）。"""
+        return PlannerEngine._is_bare_confirm_word(text) and not is_bare_acknowledgment(text)
+
+    async def _pending_is_latest_prompt(self, ctx: PlanContext, state, mem_on: bool) -> bool:
+        """这条挂起是不是**最近那个提示**：提出它的那一轮就是最近一轮（评审四轮 R4-01）。
+
+        · 挂起没盖提出它的那一轮（旧记录）⇒ 证明不了 ⇒ False；
+        · 端侧签发了「上一轮是本地轮次」⇒ 挂起之后插过话 ⇒ False；
+        · 记忆关 / 客户端根本没有轮次读取能力 ⇒ 没有账可对，按修前行为 ⇒ True；
+        · 读一次历史：最近一轮的 exchange 就是它 ⇒ True；读不到 ⇒ False（fail-safe：纯应答不授权，显式「确认」照旧可用）。
+        """
+        stamp = str(getattr(state, "prompt_exchange_id", "") or "").strip()
+        if not stamp:
+            return False
+        if str(getattr(ctx, "previous_local_exchange", "") or "").strip():
+            return False
+        if not mem_on:
+            return True
+        read_state, latest = await self._latest_exchange(ctx)
+        if read_state == memory_read.OFF:
+            return True
+        return read_state != memory_read.UNAVAILABLE and latest == stamp
+
+    async def _latest_exchange(self, ctx: PlanContext) -> tuple[str, str]:
+        """`(读态, 最近一轮的 exchange id)`：读一次最近一对历史（`runtime.memory_read` 的四态）。"""
+        turns, read_state = await self.context._history(ctx, exchanges=1)
+        for turn in reversed(turns or []):
+            exchange = str(turn.get("exchange_id") or "").strip() if isinstance(turn, dict) else ""
+            if exchange:
+                return read_state, exchange
+        return read_state, ""
 
     @staticmethod
     def _is_cancel_index_answer(text: str, pending: SessionState | None) -> bool:

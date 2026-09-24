@@ -35,14 +35,16 @@ from . import actionability as _actionability
 from . import exemplars as _exemplars
 from . import skills as _skills
 from runtime import memory_directive as _memory_directive
-from runtime.affirmation import is_acknowledgment_only
+from runtime.affirmation import is_acknowledgment_only, offer_sentence
 from runtime.clause_split import split_clauses
 from runtime.clock import BUSINESS_TZ
 from runtime.intent_effect import is_create_intent, is_write_intent
+from runtime.polarity import is_negated_directive
 from runtime.question_shape import (
-    carries_operation_cue, is_information_request, is_non_directive_question,
+    HYPOTHETICAL_FRAMES, carries_operation_cue, is_information_request, is_non_directive_question,
     is_reference_question,
 )
+from .step_grounding import opens_as_instruction, step_naming_score
 from runtime.reported_speech import is_reported_speech
 from runtime.safety_signal import alert_resolved, refuses_safety_advice
 
@@ -3098,6 +3100,10 @@ class PlanBuilder:
                 whole_utterance=next(
                     (bool(getattr(c, "whole_utterance", False))
                      for c in manifest.capabilities if c.intent == intent), False),
+                # 评审四轮：能力描述（Registry 权威，LLM 字段不读）——「哪句话点名了这一步」的依据（`step_grounding`）
+                capability_description=next(
+                    (desc for c in manifest.capabilities if c.intent == intent
+                     for desc in [getattr(c, "description", "")] if isinstance(desc, str)), ""),
             )
             steps.append(step)
 
@@ -3252,9 +3258,50 @@ class PlanBuilder:
         """
         if not steps or not is_non_directive_question(text or ""):
             return []
-        if is_reference_question(text or ""):
-            return PlanBuilder._write_steps(steps)
-        return PlanBuilder._side_effect_steps(steps)
+        candidates = (PlanBuilder._write_steps(steps) if is_reference_question(text or "")
+                      else PlanBuilder._side_effect_steps(steps))
+        # 评审四轮 R4-03：整句判成问句，不等于每一步都出自提问。「打开后备箱，再告诉我空调有哪些模式」修前整句贴一个
+        # 「问句」标签、删掉全部写步——明确要求的后备箱连确认卡都不出（真栈 `ecbeed28` RS35 0/3）。拆得开「提问分句 +
+        # 以指令起句的分句」时，每一步看**点名它的是哪一类分句**（`step_grounding`，唯一判据）：指令分句点得比任何提问
+        # 分句都准 ⇒ 保留（需确认的照旧走确认）；点名不了 / 提问分句点得一样准 ⇒ 照旧拦。拆不开、全是提问、带假设 /
+        # 条件框架的句子行为逐字不变。
+        clauses = PlanBuilder._ask_and_act_clauses(text or "")
+        if not candidates or clauses is None:
+            return candidates
+        return [step for step in candidates
+                if not PlanBuilder._named_by_an_instruction(step, clauses)]
+
+    @staticmethod
+    def _ask_and_act_clauses(text: str):
+        """整句里既有提问分句、又有以指令起句的分句 ⇒ `[(分句, 是提问, 是指令)]`；否则 None（按整句判，行为同修前）。
+
+        假设 / 条件框架（「如果下雨，就把窗关上」）不拆：后半句是否执行取决于前半句，拆开会把条件指令当成立即执行。
+        指令分句 = 不是提问、不是否定、以指令起句（`step_grounding.opens_as_instruction`）；认不出的不算，保守一侧就是修前的整句拦。
+        """
+        if (any(frame in text for frame in HYPOTHETICAL_FRAMES)
+                or _DEFERRED_CONDITION_RE.search(text) or _COMPLETE_DEFERRED_CONDITION_RE.search(text)):
+            return None
+        parts = [clause for sentence in _ORIGIN_SENTENCE_END_RE.split(text)
+                 for clause in split_clauses(sentence) if clause.strip()]
+        if len(parts) < 2:
+            return None
+        rows = []
+        for clause in parts:
+            asks = is_non_directive_question(clause)
+            acts = (not asks and not is_negated_directive(clause)
+                    and opens_as_instruction(clause))
+            rows.append((clause, asks, acts))
+        if not any(acts for _, _, acts in rows) or not any(asks for _, asks, _ in rows):
+            return None
+        return rows
+
+    @staticmethod
+    def _named_by_an_instruction(step, rows) -> bool:
+        """这一步由某个指令分句点名，且点得比任何提问分句都准（平手不算——「关闭空调，告诉我空调有哪些模式」里编出来的
+        `hvac.on`，两边都只点到「空调」）。"""
+        act = max((step_naming_score(clause, step) for clause, _, acts in rows if acts), default=0)
+        ask = max((step_naming_score(clause, step) for clause, asks, _ in rows if asks), default=0)
+        return act > 0 and act > ask
 
     @staticmethod
     def _filter_question_side_effect_steps(
@@ -3326,14 +3373,21 @@ class PlanBuilder:
                        and str(getattr(step, "effect", "") or "") == "write"]
 
     @staticmethod
-    def _assistant_asked(working_set) -> bool:
-        """最近一条助手话在问 / 在提议（带问号）⇒ 这一轮的「好的 / 可以」可能是在接受它。没有上文 ⇒ False。"""
+    def _assistant_offer(working_set) -> str:
+        """最近一条助手话的**最后一句**若是提议问句 ⇒ 那一句（`runtime.affirmation.offer_sentence`）；没有上文 / 不是提议 ⇒ 空串。
+
+        评审四轮 R4-01：修前是「最近一条助手话里有没有问号」——问号可能来自引用（「您刚才问的是「怎么打开车窗？」」）或知识问句，
+        不是可执行提议的证明。"""
         for message in reversed(list(getattr(working_set, "history", None) or [])):
             if not isinstance(message, dict) or message.get("role") == "user":
                 continue
-            said = str(message.get("text") or "")
-            return "？" in said or "?" in said
-        return False
+            return offer_sentence(str(message.get("text") or ""))
+        return ""
+
+    @staticmethod
+    def _offer_accepts(offer: str, step) -> bool:
+        """提议点名了这一步，且开 / 关方向没有被反过来（`step_grounding`，唯一判据：提议说关、这一步是开 ⇒ 不算点名）。"""
+        return bool(offer) and step_naming_score(offer, step) > 0
 
     def _apply_ack_write_guard(self, plan: Plan, text: str, working_set,
                                agents: list = None) -> Plan:
@@ -3348,12 +3402,27 @@ class PlanBuilder:
         """
         if not plan.steps or not is_acknowledgment_only(text):
             return plan
-        blocked = self._write_steps(plan.steps)
-        if not blocked or self._assistant_asked(working_set):
+        writes = self._write_steps(plan.steps)
+        if not writes:
+            return plan
+        # 评审四轮 R4-01：「好的」只接受**提议点名的那一项**。提议是最近一条助手话的最后一句（引号里的不算）、提议句式，
+        # 且点名了这一步（能力描述的对象部分 / 槽值，`step_grounding`）；开关方向也要对得上。修前只要最近一条助手话里有问号，
+        # 纯应答可以长出任何写步。
+        offer = self._assistant_offer(working_set)
+        accepted = {id(step) for step in writes if self._offer_accepts(offer, step)}
+        if len(accepted) == len(writes):
+            return plan
+        if accepted:
+            dropped = [step for step in writes if id(step) not in accepted]
+            logger.warning("Acknowledgment accepted the offered step(s); dropping the unoffered write(s) %s "
+                           "(offer=%r)", [step.intent for step in dropped], offer[:40])
+            dropped_ids = {id(step) for step in dropped}
+            plan.steps = [step for step in plan.steps if id(step) not in dropped_ids]
+            plan.plan_mode = f"{plan.plan_mode or ''}_ack_write_trimmed"
             return plan
         logger.warning("Acknowledgment-only utterance planned into write step(s) %s with no "
-                       "offer before it; dropping the plan (text=%r)",
-                       [step.intent for step in blocked], text[:40])
+                       "offer naming them; dropping the plan (text=%r)",
+                       [step.intent for step in writes], text[:40])
         talk = self._talk_only_plan(text, agents)
         plan.steps = list(talk.steps) if talk is not None else []
         plan.clarify = None

@@ -87,6 +87,10 @@ class Step:
     # 答「好的，有堵车。什么时候提醒你？」；读自己的起点原话「只要有堵车就提醒我」才走得到诚实拒绝。
     # 空 = 旧记录 / 没盖章 ⇒ 退回本轮原话（逐字同旧）。
     origin_text: str = ""
+    # 评审四轮（2026-09-24）：这一步能力在 Registry 里的**描述**（`_validated_steps` 从 manifest 装配，LLM 写不到）。
+    # 唯一判据 `step_grounding` 拿它判「哪一句话点名了这一步」：问句闸按分句归属（R4-03）、纯应答只接受提议点名的那一步（R4-01）。
+    # 随 `step_record` 持久化——确认续接的安全原点复核走同一个问句闸，挂起前保留下来的后备箱，确认后还得认得出它依据哪一句。
+    capability_description: str = ""
     # **进程内字段**：这一步是本轮续接的那条挂起（`_restore` 按 `pending_step_id` 打标）。它看到的
     # `raw_text` 必须仍是本轮原话——补槽答案 / 「确认」就在里面（reminder 在 pending 下读 raw 解时间）。
     resumed: bool = False
@@ -121,6 +125,8 @@ def step_record(step: "Step") -> dict:
         "context_scopes": list(step.context_scopes or []),
         # W16-b：起点原话跟着步走过挂起（下游步续接时读它，不读槽答案）；`resumed` 是进程内标记不落盘
         "origin_text": str(getattr(step, "origin_text", "") or ""),
+        # 评审四轮：能力描述跟着步走过挂起（续接轮的问句闸复核要用它判这一步依据哪一句）
+        "capability_description": str(getattr(step, "capability_description", "") or ""),
         # M2 Verifier：确认后重跑的正是最该对账的车控步——挂起态不带上它，
         # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
         "verification": dict(step.verification or {}),
@@ -438,6 +444,10 @@ class SessionState:
     # 不认模型的 goal 与任务原话。空 = 旧记录 / 描述取不到：engine 现取一次，仍为空就判点名不兼容（裸「确认」不受影响）。
     # 老部署读到本字段会整条跳过（同 `clarify`，fail-safe：那一刻读不到挂起，不会误执行）。
     action_summary: str = ""
+    # 评审四轮 R4-01（2026-09-24）：**提出这条挂起的那一轮**（`ctx.request_id` = 那一轮的 exchange）。纯应答（「好的 / 嗯」）
+    # 只在这条挂起就是最近那个提示时才算对它的授权——对得上最近一轮才算；之后插过话（历史里有更新的 exchange / 上一轮是
+    # 端侧本地轮）就是在答别的。显式「确认」不受影响（R2：插话之后回头说「确认」照旧找回它）。空 = 旧记录，证明不了 ⇒ 纯应答不授权。
+    prompt_exchange_id: str = ""
 
 
 class CyclicPlan(Exception):

@@ -65,13 +65,17 @@ def test_one_turn_merges_the_local_and_cloud_finals(monkeypatch):
 
     observed = asyncio.run(probe._one_turn(socket, "session-1", "按顺序执行"))
 
-    assert socket.sent == [
+    # 评审四轮 R4-01：与两端客户端同形，每轮带自己的 request_id（挂起盖「提出它的那一轮」要用）
+    sent = [dict(frame) for frame in socket.sent]
+    request_ids = [frame.pop("request_id", "") for frame in sent]
+    assert sent == [
         {
             "text": "按顺序执行",
             "session_id": "session-1",
             "meta": dict(probe.PROBE_META),
         }
     ]
+    assert all(rid.startswith("probe-") and len(rid) > len("probe-") for rid in request_ids)
     assert observed["actions"] == ["hvac.off", "hvac.on"]
     assert observed["speech"] == "本地完成\n云端完成？"
     assert observed["is_question"] is True
