@@ -936,9 +936,10 @@ DO NOTHING`；竞争输了回读对方账目按 `Duplicate` 处理，**不能当
 | 上行 | `session.start` / `audio`(+二进制 PCM 16k mono s16le) / **`audio_done`** / `barge_in` / `cancel_turn` / `escalated_result{turn_id,text}` / **`occupant{occupant_id,display_name}`** / `session.end` |
 | **`occupant` 帧（M4 P4 验收补口）** | 本唤醒窗说话人——声纹识别落地即发（HMI 侧），唤醒窗结束归位 `primary` 也发（防上一个人残留到下一窗）；ws 未 open 时并进 `session.start`。网关就地更新回灌器的 `occupant_id`，**自答轮的 AppendTurn 按它隔离**（不发则会话级静态快照恒 primary=乘员闲聊全进主驾记忆）。escalated/classic 轮走请求 meta，不经此帧。**身份是唤醒粒度，不是会话粒度** |
 | **`audio_done` 不能省** | 本侧 VAD 判到端点后必须发它请 provider 收尾。server VAD 靠**连续静音**判「说完了」，而 HMI 端点后即停推流——不发就是死锁（provider 等静音 ↔ HMI 等定稿才进 THINKING 才关收音），表现为 turn 永久悬挂、**用户说什么都没有回复**。端点判定权在本侧，与 classic 的 `onEndpoint → asr.stop()` 同构；静音尾长度由 `commit_audio()` 按 `silence_duration_ms` 放大，HMI 不碰 provider VAD 参数 |
-| 下行 | `turn.transcript{final}` / `turn.answer_delta` / `turn.audio_meta{sample_rate}`(+二进制 PCM) / `turn.end{reason,detail?}` / `turn.escalated{utterance}` / `session.state{ready\|reconnecting\|degraded}` / `unsupported` |
+| 下行 | `turn.transcript{final}` / `turn.answer_delta` / `turn.audio_meta{sample_rate}`(+二进制 PCM) / `turn.end{reason,detail?}` / `turn.escalated{utterance, transcript, interpretation}` / `session.state{ready\|reconnecting\|degraded}` / `unsupported` |
+| **移交的请求只来自原话（评审四轮 R4-06）** | `turn.escalated.utterance` = `transcript` = 这一轮的**最终转写**；模型工具参数里的 `utterance` 只作 `interpretation` 留痕（obs `s2s.turn`），不作请求——修前参数优先，「不要开车窗，只解释怎么开」可被改写成「打开车窗」送进主链并盖成 `safety_origin_text`。工具调用早于转写定稿时等 `S2S_ESCALATE_TRANSCRIPT_WAIT_S`（缺省 2.0 s）；等不到**不移交**，`turn.end{error, transcript_unavailable}`（两端渲染成「刚才那句没处理成功，你可以再说一遍」）。不做两段文本相似度：多一个「不」字面几乎一样、意图相反 |
 | turn_id | **网关生成**（uuid4 前 16）。provider 的 response id 只在会话层对账，不透传上层——「provider session=可丢弃缓存」的协议面 |
-| **执行分工（安全铁律）** | S2S 会话内**没有任何执行通道**。模型唯一的工具是 `escalate(utterance)`，它只把原话交回文本主链——submit_plan / route_hints / Skill 注入 / `require_confirm` 闸 / VAL / R4.4 澄清**逐字全量生效**。S2S 是新的「话筒」，不是新的规划入口 |
+| **执行分工（安全铁律）** | S2S 会话内**没有任何执行通道**。模型唯一的工具是 `escalate(utterance)`，网关只把**这一轮的转写原话**交回文本主链——submit_plan / route_hints / Skill 注入 / `require_confirm` 闸 / VAL / R4.4 澄清**逐字全量生效**。S2S 是新的「话筒」，不是新的规划入口 |
 | **不注 capability 清单** | 单工具把判定权压成二元（自答 or 移交），错误面只剩「该移交没移交」（有三道背板）。注入几十个 capability 会让 M1a「tool schema 三向改输出分布」的教训在语音场景重演，而 S2S 轮不过 planner 校验、没有旅程级护栏可兜 |
 | 域灰度 | = 收放 `escalate` 的 **description 边界**（`S2S_ESCALATE_DESC`），**不做运行时按 intent 拦截**——判定点必须在模型生成前的工具选择，生成后拦截必然截断已播出的音频 |
 | 打断三层 | ①听感（本侧 VAD 权威→cancel+**残包丢弃**）②任务（复用 `{type:cancel}` 存量通道）③工具调用中（turn 标 abandoned：结果回来不 inject 不播报，**但副作用步照常走完确认链**——打断≠回滚） |

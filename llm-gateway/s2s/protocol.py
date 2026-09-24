@@ -30,6 +30,8 @@ DOWN_ANSWER_DELTA = "turn.answer_delta"  # 回答文本增量（字幕/气泡）
 DOWN_AUDIO_META = "turn.audio_meta"      # 之后跟二进制 PCM 帧（复用既有播放器）
 DOWN_TURN_END = "turn.end"               # reason=complete|cancelled|escalated|error
 DOWN_ESCALATED = "turn.escalated"        # 本轮改走文本主链，HMI 按既有 send(utterance) 走
+#   字段：`utterance` = `transcript` = 这一轮的最终转写（**请求只来自原话**，评审四轮 R4-06）；
+#   `interpretation` = 模型工具参数里的解读，只留痕、不作请求。等不到转写定稿 ⇒ 不移交，turn.end{error, transcript_unavailable}
 DOWN_SESSION_STATE = "session.state"     # ready|reconnecting|degraded
 DOWN_UNSUPPORTED = "unsupported"         # 无 provider/无 key（HMI 回落三段式，与 ASR 面同口径）
 

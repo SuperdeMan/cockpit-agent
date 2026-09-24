@@ -5,6 +5,7 @@ Phase 1 改进：云端 action 分发（车控→VAL）、连接状态追踪、�
 from __future__ import annotations
 import os
 import asyncio
+import json
 import logging
 import time
 import uuid
@@ -148,6 +149,24 @@ def _group_mixed_intents(intents: list[dict]) -> list[list[dict]]:
         else:
             groups.append([intent])
     return groups
+
+
+def _local_action_payload(name: str, slots: dict | None, structured: dict | None) -> dict:
+    """本地执行动作的 payload：`command` + legacy 槽，外加结构化命令的**目标位置**（评审四轮 R4-04）。
+
+    修前只有 `command`（「打开副驾车窗」的 legacy 槽是空的，`positions` 只活在结构化命令里、从没离开端侧），
+    于是上云的执行事实里没有位置，「关掉」确定性成 `window.close {}`（全车）。位置取 `data.positions`——
+    VAL 真拿去执行的就是这一份；payload 已带同名键时不覆盖。
+    """
+    payload = {"command": name, **(slots or {})}
+    positions = ((structured or {}).get("data") or {}).get("positions") if isinstance(structured, dict) else None
+    if isinstance(positions, str):
+        positions = [positions]
+    if isinstance(positions, list) and "positions" not in payload:
+        clean = [str(p).strip() for p in positions if str(p).strip()]
+        if clean:
+            payload["positions"] = clean
+    return payload
 
 
 class _MemoryClient:
@@ -495,6 +514,40 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                 out.append(name)
         return out
 
+    @staticmethod
+    def _executed_targets(items) -> list[dict]:
+        """本轮真实执行的动作 → `{command, positions}`（评审四轮 R4-04）；与 `_executed_names` 同口径、同顺序。
+
+        名字给审计 / obs / 探针，目标给云侧焦点——「关掉」要反向的是**那几个位置**上的那个动作。
+        没有位置的动作也留一行（positions 为空）：云侧按同一意图合并时，要知道这一组里有没有「不带位置」的那一次。
+        """
+        out: list[dict] = []
+        for a in items or []:
+            if isinstance(a, dict):
+                payload, atype = a.get("payload") or {}, a.get("type") or ""
+            else:
+                atype = getattr(a, "type", "") or ""
+                raw = getattr(a, "payload", None)
+                payload = MessageToDict(
+                    raw, preserving_proto_field_name=True) if raw else {}
+            name = str((payload or {}).get("command") or atype or "").strip()
+            if not name:
+                continue
+            raw_positions = (payload or {}).get("positions")
+            if isinstance(raw_positions, str):
+                raw_positions = [raw_positions]
+            positions = [str(p).strip() for p in (raw_positions or [])
+                         if isinstance(p, (str, int, float)) and str(p).strip()]
+            out.append({"command": name, "positions": positions})
+        return out
+
+    @staticmethod
+    def _targets_meta(targets: list[dict]) -> str:
+        """目标列表 → meta 串（JSON）。一个位置都没有时不发（多一个恒空字段就是多一处噪声）。"""
+        if not any(t.get("positions") for t in targets or []):
+            return ""
+        return json.dumps(targets, ensure_ascii=False, separators=(",", ":"))
+
     def _record_local_turn(self, request, user_text: str, assistant_speech: str,
                            actions=None):
         """把纯本地处理的一轮 best-effort 异步写入共享记忆（gated on memory_enabled）。
@@ -521,7 +574,7 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             self._prune_local_exchanges(now)
             self._last_local_exchange.pop(key, None)
             self._last_local_exchange[key] = (
-                exch, now, tuple(executed_names))
+                exch, now, tuple(executed_names), self._executed_targets(actions))
             while len(self._last_local_exchange) > _LOCAL_EXCHANGE_MAX:
                 self._last_local_exchange.popitem(last=False)
 
@@ -555,8 +608,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
     def _prune_local_exchanges(self, now: float) -> None:
         cutoff = now - _LOCAL_EXCHANGE_TTL_S
         while self._last_local_exchange:
-            _key, (_exchange, seen_at, _actions) = next(
-                iter(self._last_local_exchange.items()))
+            _key, entry = next(iter(self._last_local_exchange.items()))
+            seen_at = entry[1]
             if seen_at >= cutoff:
                 break
             self._last_local_exchange.popitem(last=False)
@@ -572,6 +625,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             request.meta["_edge_previous_local_exchange"] = entry[0]
             if entry[2]:
                 request.meta["_edge_previous_local_actions"] = ",".join(entry[2])
+            targets = self._targets_meta(entry[3] if len(entry) > 3 else [])
+            if targets:
+                request.meta["_edge_previous_local_targets"] = targets
 
     async def DescribeSession(self, request, context):
         """AR05 §6.1：会话身份与能力摘要的只读查询（网关 `GET /api/session` 的后端）。
@@ -710,6 +766,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             request.meta.pop("_edge_previous_local_exchange", None)
             request.meta.pop("_edge_previous_local_actions", None)
             request.meta.pop("_edge_nlu", None)
+            # 评审四轮 R4-04：执行目标（位置）与执行名字同一族——只能是端侧 VAL 真执行过之后自己盖的
+            request.meta.pop("_edge_executed_targets", None)
+            request.meta.pop("_edge_previous_local_targets", None)
         except Exception:
             pass
         # 把端侧真实车辆电量注入 meta，透传给云端 Agent（充电规划等），避免云端读 memory
@@ -786,7 +845,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                         action_type = action_type_for(obj)
                         actions.append(common_pb2.AgentAction(
                             type=action_type,
-                            payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
+                            payload=_struct(_local_action_payload(
+                                legacy["name"], legacy.get("slots", {}), m_intent)),
                             require_confirm=False,
                         ))
                     logger.info("MULTI-LOCAL %s -> %s (ok=%s)", legacy["name"], speech, ok)
@@ -861,7 +921,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                             action_type = action_type_for(obj)
                             local_actions.append(common_pb2.AgentAction(
                                 type=action_type,
-                                payload=_struct({"command": legacy["name"], **legacy.get("slots", {})}),
+                                payload=_struct(_local_action_payload(
+                                    legacy["name"], legacy.get("slots", {}), m_intent)),
                                 require_confirm=False,
                             ))
                         logger.info("MIXED-LOCAL %s -> %s (ok=%s)", legacy["name"], speech, ok)
@@ -933,6 +994,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     executed = self._executed_names(local_actions)
                     if executed:
                         cloud_req.meta["_edge_executed"] = ",".join(executed)
+                        targets = self._targets_meta(self._executed_targets(local_actions))
+                        if targets:
+                            cloud_req.meta["_edge_executed_targets"] = targets
                     self._attach_previous_local_exchange(cloud_req)
                     async for event in self.cloud.handle(cloud_req):
                         got = True
@@ -1001,7 +1065,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     action_type = action_type_for(structured.get("data", {}).get("object", ""))
                     action = {
                         "type": action_type,
-                        "payload": {"command": intent["name"], **intent.get("slots", {})},
+                        "payload": _local_action_payload(
+                            intent["name"], intent.get("slots", {}), structured),
                         "require_confirm": False,
                     } if ok else None
                 else:
@@ -1157,7 +1222,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                     action_type = action_type_for(obj)
                     action = common_pb2.AgentAction(
                         type=action_type,
-                        payload=_struct({"command": f"{obj}.{local_structured['data'].get('operate', '')}"}),
+                        payload=_struct(_local_action_payload(
+                            f"{obj}.{local_structured['data'].get('operate', '')}", {},
+                            local_structured)),
                         require_confirm=False,
                     )
                     final = orchestrator_pb2.FinalResult(speech=speech)

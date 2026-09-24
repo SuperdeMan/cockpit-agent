@@ -365,6 +365,11 @@ class PlanContext:
     # 不进 prefs、不下发 Agent；由 edge 剥离客户端同名 meta 后自行签发。
     previous_local_exchange: str = ""
     previous_local_actions: list[str] = field(default_factory=list)
+    # 评审四轮 R4-04：与上面两份名字**同一事实**的执行目标 `[{command, positions}]`（端侧 VAL 真执行过之后自己盖的，
+    # 客户端同名 meta 在端侧入口剥掉）。「关掉」反向的是**那几个位置上的**那个动作——名字里没有位置，
+    # 修前 `window.open`（副驾）之后的「关掉」确定性成全车的 `window.close {}`。同 `edge_executed`：不进 prefs、不下发 Agent。
+    edge_executed_targets: list[dict] = field(default_factory=list)
+    previous_local_targets: list[dict] = field(default_factory=list)
     # 跨轮门店锚定（2026-08-13）：上一轮 `nearby.search` 取回的公开 POI 列表
     # （只留 name/lng/lat 三标量）。**服务端持有、LLM 写不到**——这正是它能充当
     # 可信来源的全部理由：延续的是「服务端记得取回过哪些门店」，不是让模型把坐标再说一遍。

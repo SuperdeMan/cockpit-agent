@@ -250,6 +250,10 @@ class Focus:
     origin_exchange_id: str = ""
     obj: str = ""                                       # 语义对象，如 "空调"/"氛围灯"
     positions: list[str] = field(default_factory=list)  # ["副驾"]
+    # 评审四轮 R4-04：**落盘这份焦点的那一轮**真正执行过的控制目标 `[{command, positions}]`（云侧执行的控制步 + 同轮端侧那半）。
+    # 下一轮执行账本（只有名字）覆盖控制焦点时，位置从这里取——修前一律清空，云侧执行过的「副驾」也留不到「关掉」那一轮。
+    # 短时引用（随 `_FOCUS_SHORT_TTL_S` 过期），相邻性断开时一起清。
+    control_targets: list[dict] = field(default_factory=list)
     attr: str = ""                                      # "温度"/"颜色"...
     last_poi: str = ""                                  # 上个 POI（"还是刚才那家"）
     last_destination: str = ""                          # 上个导航目的地
@@ -346,7 +350,7 @@ class Focus:
     def is_empty(self) -> bool:
         # last_intent 也算有效焦点：纯信息轮（查赛程/天气）此前不落焦点，「明天呢」这类
         # 省略式追问就只能靠裸历史猜域（badcase demo-i9c92i 追问被错绑到天气）。
-        return not (self.obj or self.positions or self.attr
+        return not (self.obj or self.positions or self.control_targets or self.attr
                     or self.last_poi or self.last_destination or self.last_city
                     or self.last_stock_symbol
                     or self.last_intent
@@ -745,7 +749,7 @@ _FOCUS_SHORT_TTL_S = 300.0
 #: 短时引用字段：过期即回到缺省值。**不在名单里的就是活动状态**（候选台账 / 门店锚定 /
 #: 活动路线 / 安全告警 / 会话约束 / 坐标随目的地一起走）。
 _SHORT_TERM_FIELDS = (
-    "obj", "attr", "positions", "last_poi", "last_destination", "last_city",
+    "obj", "attr", "positions", "control_targets", "last_poi", "last_destination", "last_city",
     "last_stock_symbol", "last_intent", "last_agent_id", "last_choices",
     "last_choice_purpose", "destination_lat", "destination_lng", "origin_exchange_id",
 )
@@ -932,12 +936,15 @@ def _render_focus(focus, drop_sticky_places: bool = False) -> str:
 
 
 def _scan_positions(slots: dict) -> list[str]:
-    """从槽位值里扫出座位/区域词（主驾/副驾/后排…）。"""
-    found = []
+    """从槽位值里扫出座位/区域词（主驾/副驾/后排…）。
+
+    长词先认、被已认出的长词包含的短词不再单算（「副驾驶」不会再多出一个「副驾」）——评审四轮 R4-04 起「关掉」按位置
+    逐个反向，同一个位置被数两次就是同一个动作执行两次。"""
+    found: list[str] = []
     for v in (slots or {}).values():
         s = str(v)
         for w in _POSITION_WORDS:
-            if w in s and w not in found:
+            if w in s and w not in found and not any(w in longer for longer in found):
                 found.append(w)
     return found
 
@@ -1527,6 +1534,62 @@ def recent_control_execution(history, edge_executed=None) -> tuple[str, str, str
     return None
 
 
+#: 执行目标的尺寸上限（端侧签发，但仍按不可信输入收：一路防到真正被拿去用的值，CLAUDE.md §6）。
+_TARGETS_MAX = 16
+_TARGET_POSITIONS_MAX = 8
+_TARGET_TEXT_MAX = 64
+
+
+def parse_control_targets(raw) -> list[dict]:
+    """执行目标 `[{command, positions}]` 的唯一解析处（评审四轮 R4-04）：JSON 串或列表都收，形状不对的元素整条丢。
+
+    `command` 非空串；`positions` 只收非空短串（端侧给的是结构化命令里的中文位置词，如「副驾」）。
+    """
+    if isinstance(raw, str):
+        if not raw.strip():
+            return []
+        try:
+            raw = json.loads(raw)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return []
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list[dict] = []
+    for item in list(raw)[:_TARGETS_MAX]:
+        if not isinstance(item, dict):
+            continue
+        command = item.get("command")
+        if not isinstance(command, str) or not command.strip() or len(command) > _TARGET_TEXT_MAX:
+            continue
+        positions = item.get("positions") or []
+        if isinstance(positions, str):
+            positions = [positions]
+        if not isinstance(positions, (list, tuple)):
+            continue
+        clean = [p.strip() for p in positions[:_TARGET_POSITIONS_MAX]
+                 if isinstance(p, str) and p.strip() and len(p) <= _TARGET_TEXT_MAX]
+        out.append({"command": command.strip(), "positions": clean})
+    return out
+
+
+def target_positions(targets, intent: str) -> list[str]:
+    """同一组执行目标里，**这个意图**做过的全部位置（按序去重）。
+
+    这一组里同一意图有一次不带位置（全车 / 缺省范围）⇒ 返回空：那一次已经覆盖了更大的范围，不能把它收窄成某个位置。
+    「打开主驾座椅加热，再打开副驾座椅加热」⇒ `[主驾, 副驾]`——只取最后一个位置，「关掉」就漏关一个。
+    """
+    positions: list[str] = []
+    for target in parse_control_targets(targets):
+        if target["command"] != intent:
+            continue
+        if not target["positions"]:
+            return []
+        for position in target["positions"]:
+            if position not in positions:
+                positions.append(position)
+    return positions
+
+
 def augment_focus_with_execution(
     focus,
     history,
@@ -1534,6 +1597,8 @@ def augment_focus_with_execution(
     *,
     previous_local_exchange: str = "",
     previous_local_actions=None,
+    edge_executed_targets=None,
+    previous_local_targets=None,
 ) -> "Focus | None":
     """用最近执行事实刷新车控焦点；解不出时原焦点不动。
 
@@ -1541,8 +1606,10 @@ def augment_focus_with_execution(
     因此一旦解出，它就应覆盖 Redis 里可能由更早云侧轮次留下的控制对象。只填空会把
     「取不到对象」变成「稳定使用陈旧对象」（云侧调氛围灯→本地开天窗→关掉）。
 
-    动作账本没有位置与 agent，覆盖时清掉这两格，避免把旧对象的「副驾」等限定粘到
-    新对象上。地点、候选集、活动路线等其他正交焦点原样保留。
+    覆盖时 agent 清掉；**位置与意图取自同一条事实**（评审四轮 R4-04）：同轮端侧执行与上一轮本地轮次各带端侧签发的
+    执行目标，历史轮次用那一轮自己落盘的 `control_targets`（云侧执行过的控制、同轮端侧那半都在里面）。修前一律清空，
+    「打开副驾车窗」之后的「关掉」确定性成全车。取不到目标（只有名字的旧轮次）⇒ 位置为空，行为同修前——不猜，也不把
+    旧对象的「副驾」粘到新对象上。地点、候选集、活动路线等其他正交焦点原样保留。
     """
     latest_history_exchange = ""
     history_exchange_ids: set[str] = set()
@@ -1558,13 +1625,14 @@ def augment_focus_with_execution(
             if isinstance(turn, dict)
             and str(turn.get("exchange_id") or "").strip()
         ), "")
-    def apply_control(found):
+    def apply_control(found, targets=None):
         obj, attr, intent = found
         out = focus if focus is not None else Focus()
         out.obj, out.attr = obj, attr
         # `last_intent` 与 obj 必须来自同一事实：省略守卫按它的 namespace 校验计划。
         out.last_intent = intent
-        out.positions = []
+        # 位置也是（R4-04）：只取同一条事实里这个意图做过的位置
+        out.positions = target_positions(targets, intent)
         out.last_agent_id = ""
         if latest_history_exchange:
             out.origin_exchange_id = latest_history_exchange
@@ -1573,11 +1641,11 @@ def augment_focus_with_execution(
     # Same-request edge execution is newer than both Redis focus and history.
     edge_found = recent_control_execution([], edge_executed)
     if edge_found is not None:
-        return apply_control(edge_found)
+        return apply_control(edge_found, edge_executed_targets)
 
     signed_local_found = recent_control_execution([], previous_local_actions)
     if signed_local_found is not None:
-        out = apply_control(signed_local_found)
+        out = apply_control(signed_local_found, previous_local_targets)
         out.origin_exchange_id = str(previous_local_exchange or "").strip()
         return out
 
@@ -1598,7 +1666,10 @@ def augment_focus_with_execution(
         focus_memory_is_in_flight or local_boundary_is_in_flight
     ) else recent_control_execution(history)
     if history_found is not None:
-        return apply_control(history_found)
+        # 账本解出的是最近一轮的动作；那一轮若也落过焦点（云侧执行 / 混合路径），它自己记下的执行目标就是位置的来源
+        same_exchange = bool(origin) and origin == latest_history_exchange
+        saved_targets = getattr(focus, "control_targets", None) if same_exchange else None
+        return apply_control(history_found, saved_targets)
 
     if focus is None:
         return None
@@ -1616,6 +1687,7 @@ def augment_focus_with_execution(
     focus.obj = ""
     focus.attr = ""
     focus.positions = []
+    focus.control_targets = []
     focus.last_city = ""
     focus.last_stock_symbol = ""
     focus.origin_exchange_id = boundary
@@ -1702,9 +1774,12 @@ def extract_focus(plan, results) -> "Focus | None":
         if domain in _CONTROL_FOCUS:
             focus.obj, focus.attr = _CONTROL_FOCUS[domain]
             pos = _scan_positions(step.slots)
-            if pos:
-                focus.positions = pos
+            # 位置描述的是**这一步**（与 obj / last_intent 同一步）：前一个控制步的「副驾」不许粘到后一个不带位置的步上
+            # （修前只在有值时赋值：「打开副驾车窗，再开空调」之后的「关掉」会是 `hvac.off {副驾}`）
+            focus.positions = pos
             focus.last_agent_id, focus.last_intent = step.agent_id, step.intent
+            # 评审四轮 R4-04：这一步真正执行过的目标随焦点落盘，下一轮账本覆盖时位置从这里取
+            focus.control_targets.append({"command": step.intent, "positions": list(pos)})
         dest = (step.slots or {}).get("destination")
         if dest:
             focus.last_destination = str(dest)
@@ -1951,7 +2026,9 @@ class ContextManager:
             previous_local_exchange=getattr(
                 ctx, "previous_local_exchange", ""),
             previous_local_actions=getattr(
-                ctx, "previous_local_actions", None))
+                ctx, "previous_local_actions", None),
+            edge_executed_targets=getattr(ctx, "edge_executed_targets", None),
+            previous_local_targets=getattr(ctx, "previous_local_targets", None))
         return WorkingSet(catalog=catalog, registry_agents=registry_agents,
                           history=history, memories=memories, focus=focus,
                           history_state=history_state, memory_state=memory_state,
@@ -2353,5 +2430,8 @@ def build_context(request) -> PlanContext:
         previous_local_actions=[a.strip() for a in str(
             meta.get("_edge_previous_local_actions", "") or ""
         ).split(",") if a.strip()],
+        # 评审四轮 R4-04：同两份名字配套的执行目标（位置），端侧签发
+        edge_executed_targets=parse_control_targets(meta.get("_edge_executed_targets", "")),
+        previous_local_targets=parse_control_targets(meta.get("_edge_previous_local_targets", "")),
         history_exchanges=pinned_history_exchanges_from_meta(meta),
     )

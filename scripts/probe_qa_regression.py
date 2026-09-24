@@ -150,7 +150,10 @@ _EXPECT_KEYS = {"actions_include", "actions_exclude", "no_actions", "speech_has"
                 "follow_up_any", "navigate_within_km", "navigate_named_any",
                 "no_capability_refusal", "city_any", "deadline_sane",
                 "honors_no_spicy", "card_nodes", "card_type_not",
-                "no_execution_claim"}
+                "no_execution_claim", "action_positions"}
+#   `action_positions` —— 评审四轮 R4-04：`{命令子串: [位置, …]}`，每个位置都要出现在该命令的某个动作 payload 的
+#     `positions` 里（判的是**执行出去的目标**，不是话术——VAL 缺省 brief 话术不念位置）。「关掉」只判出 `window.close`
+#     会把「关了全车」判成 PASS：意图对了、位置丢了，正是这一条要抓的形态。
 # 第 6 批（C16-4 / C16-7＝C9-E / C13-C / C12-D，2026-08-28）新增的四条判据，
 # 共同点是**判形态不判措辞**，逐条的理由写在 `_judge` 各自的分支上：
 #   `no_capability_refusal` —— 本轮不得以**我们自己的确定性拒绝串**收场
@@ -1448,6 +1451,79 @@ CASES = [
          {"say": "后备箱能放几个行李箱", "sid": 3, "expect": {"no_actions": True, "need_confirm": False}},
          {"say": "大灯有几个模式", "sid": 4, "expect": {"no_actions": True}},
      ]},
+    # ── 评审四轮批 A（R4-04，2026-09-24）：反向控制继承位置 ─────────────────────────────────────
+    # 修前真栈：端侧本地执行「打开副驾车窗」时动作只记 `command`，上云的执行账本没有位置 ⇒「关掉」确定性成
+    # `window.close {}`（全车）。判据读执行出去的动作 payload 的 `positions`，不读话术（VAL 缺省 brief 话术不念位置）。
+    # sid 2 是「同轮两处加热之后的裸『关掉』」：两个位置都要回到反向动作里，不能只剩最后一个。
+    {"id": "RS32", "group": "residual", "card": "余项", "issue": "评审四轮 R4-04",
+     "why": "「关掉」反向控制带回上一轮的目标位置，不扩大到全车、不只剩最后一个",
+     "known": "red",
+     "turns": [
+         {"say": "打开副驾车窗", "sid": 0, "expect": {"actions_include": ["window.open"]}},
+         {"say": "关掉", "sid": 0,
+          "expect": {"actions_include": ["window.close"], "action_positions": {"window.close": ["副驾"]}}},
+         {"say": "打开副驾座椅加热", "sid": 1, "expect": {"actions_include": ["seat.heating.on"]}},
+         {"say": "关掉", "sid": 1,
+          "expect": {"actions_include": ["seat.heating.off"],
+                     "action_positions": {"seat.heating.off": ["副驾"]}}},
+         {"say": "打开主驾座椅加热，再打开副驾座椅加热", "sid": 2,
+          "expect": {"actions_include": ["seat.heating.on"]}},
+         {"say": "关掉", "sid": 2,
+          "expect": {"actions_include": ["seat.heating.off"],
+                     "action_positions": {"seat.heating.off": ["主驾", "副驾"]}}},
+     ]},
+    # ── 评审四轮批 A（R4-02）：旧澄清不抢新列表的序数 ─────────────────────────────────────────────
+    # 修前：澄清挂起还在（TTL 300 s）时，之后任何一轮的裸序数都先被它吃掉——哪怕中间刚列过一份新的候选。
+    # 第 1 轮是否出澄清卡是模型方差（CL1）；没出卡时这一趟对 R4-02 不构成证据（第 1 轮判红即可见）。
+    {"id": "RS33", "group": "residual", "card": "余项", "issue": "评审四轮 R4-02",
+     "why": "旧澄清还挂着、刚列了新候选：「第二个」指新列表的第二个，不是旧澄清的第二个选项",
+     "known": "red",
+     "turns": [
+         {"say": "云岚国际中心",
+          "expect": {"card_type": "intent_choice", "has_operation_id": True, "no_actions": True}},
+         {"say": "附近的咖啡店", "expect": {"card_type": "place_list"}},
+         {"say": "第二个",
+          "expect": {"names_item_from": {"turn": 2, "index": 2}, "speech_not": ["云岚国际中心"]}},
+     ]},
+    # ── 评审四轮批 B（R4-01）：普通应答不被事务确认截获 ─────────────────────────────────────────
+    # sid 0 是危险形态：挂着「打开后备箱」时插话听笑话，助手问「还要听吗」，用户答「好的」——修前唯一一条 wait_confirm 就是它，
+    # 后备箱被打开。修后「好的」交规划（续讲），挂起还在，显式「确认」照旧把它找回来（R2）。
+    # sid 1：没有挂起时「好的」不许被答成「当前没有待确认的操作」。
+    {"id": "RS34", "group": "residual", "card": "余项", "issue": "评审四轮 R4-01",
+     "why": "「好的」回答的是最近那一问：不确认被插话隔开的危险操作；无挂起时也不被说成没有待确认",
+     "known": "red",
+     "turns": [
+         {"say": "打开后备箱", "sid": 0, "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "先给我讲一个很短的笑话，讲完问我还要不要再听一个", "sid": 0,
+          "expect": {"actions_exclude": ["trunk.open"]}},
+         {"say": "好的", "sid": 0,
+          "expect": {"actions_exclude": ["trunk.open"], "speech_not": ["当前没有待确认"]}},
+         {"say": "确认", "sid": 0,
+          "expect": {"actions_include": ["trunk.open"], "closes_op_from": 1}},
+         {"say": "给我讲一个小故事的开头，讲完问我要不要继续听", "sid": 1, "expect": {"no_actions": True}},
+         {"say": "好的", "sid": 1, "expect": {"no_actions": True, "speech_not": ["当前没有待确认"]}},
+         # 清理：后备箱在第 4 轮被打开（修前在第 3 轮），关回去，免得下一趟答「已经是打开状态」
+         {"say": "关闭后备箱", "sid": 2, "expect": {"need_confirm": True}},
+         {"say": "确认", "sid": 2, "confirm": True, "op_from": 7, "expect": {"actions_include": ["trunk.close"]}},
+     ]},
+    # ── 评审四轮批 B（R4-03）：执行 + 询问的混合句不被整句问句闸删掉动作 ─────────────────────────────
+    # 端侧把后备箱（需确认 ⇒ 上云）与问句一起上云；修前整句判成列举问，`trunk.open` 被删、确认卡不出。
+    # 反向顺序同样要出确认卡；问的那一半（空调模式）不许被执行成开空调。
+    {"id": "RS35", "group": "residual", "card": "余项", "issue": "评审四轮 R4-03",
+     "why": "「打开后备箱，再告诉我空调有哪些模式」：后备箱照常要确认、确认后执行；问的那半零执行",
+     "known": "red",
+     "turns": [
+         {"say": "打开后备箱，再告诉我空调有哪些模式", "sid": 0,
+          "expect": {"need_confirm": True, "has_operation_id": True, "actions_exclude": ["hvac.on"]}},
+         # 语音确认而不是按钮：修前第 1 轮根本没有挂起，按钮确认会引用一个不存在的 operation_id（探针拒绝编 id、整趟中止）
+         {"say": "确认", "sid": 0,
+          "expect": {"actions_include": ["trunk.open"], "actions_exclude": ["hvac.on"]}},
+         {"say": "告诉我空调有哪些模式，然后打开后备箱", "sid": 1,
+          "expect": {"need_confirm": True, "actions_exclude": ["hvac.on"]}},
+         # 清理：模拟车态在端侧进程内存里，后备箱开着会让下一趟的「打开后备箱」答成「已经是打开状态」
+         {"say": "关闭后备箱", "sid": 2, "expect": {"need_confirm": True}},
+         {"say": "确认", "sid": 2, "confirm": True, "op_from": 4, "expect": {"actions_include": ["trunk.close"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
@@ -1896,6 +1972,25 @@ def _action_names(msg: dict) -> list[str]:
     return out
 
 
+def _action_targets(msg: dict) -> list[dict]:
+    """动作 → `{command, positions}`（评审四轮 R4-04）。`positions` 在 payload 里可能是串也可能是列表。"""
+    out = []
+    for a in msg.get("actions") or []:
+        if not isinstance(a, dict):
+            continue
+        payload = a.get("payload") or {}
+        raw = payload.get("positions")
+        if isinstance(raw, str):
+            positions = [p for p in re.split(r"[，,、\s]+", raw) if p]
+        elif isinstance(raw, list):
+            positions = [str(p) for p in raw if str(p).strip()]
+        else:
+            positions = []
+        out.append({"command": str(payload.get("command") or a.get("type") or ""),
+                    "positions": positions})
+    return out
+
+
 def _observe(msg: dict) -> dict:
     speech = str(msg.get("speech") or "")
     card = msg.get("ui_card") or {}
@@ -1905,6 +2000,8 @@ def _observe(msg: dict) -> dict:
         # 它是 AgentResult 里那一串固定文案，原样透到 WS final（gateway/edge/main.go:418）。
         "follow_up": str(msg.get("follow_up") or ""),
         "actions": _action_names(msg),
+        # 评审四轮 R4-04：每个动作 payload 里的目标位置（`positions`，字符串或列表都收）
+        "action_targets": _action_targets(msg),
         "need_confirm": bool(msg.get("need_confirm")),
         "card_type": str(card.get("type") or ""),
         "is_question": speech.rstrip().endswith(("？", "?")),
@@ -2145,6 +2242,12 @@ def _judge(expect: dict, obs: dict, prior: list[dict] | None = None,
             fails.append(f"不该有的动作 {bad_act}")
     if expect.get("no_actions") and acts:
         fails.append(f"不该有动作，实际 {acts}")
+    for cmd, wanted in (expect.get("action_positions") or {}).items():
+        have = [p for t in obs.get("action_targets") or [] if cmd in t.get("command", "")
+                for p in t.get("positions") or []]
+        for pos in wanted:
+            if not any(pos in p for p in have):
+                fails.append(f"{cmd} 的目标位置缺「{pos}」（实际 {have or '无位置'}）")
     for sub in expect.get("speech_has", []):
         if sub not in speech:
             fails.append(f"话术缺「{sub}」")

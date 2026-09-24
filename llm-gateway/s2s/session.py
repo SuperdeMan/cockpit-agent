@@ -56,7 +56,9 @@ class Turn:
     #                            被打断轮 provider 仍给完整全文，那≠用户听到的）
     status: str = T_ACTIVE
     escalate_call_id: str = ""
-    utterance: str = ""
+    utterance: str = ""       # 移交给主链的请求 = 这一轮的最终转写（评审四轮 R4-06）
+    interpretation: str = ""  # 模型工具参数里的 utterance：它对请求的**解读**，只留痕，不作请求
+    pending_call_id: str = ""  # 工具调用已到、转写还没定稿：这次移交在等转写
     audio_bytes: int = 0
     audio_meta_sent: bool = False
     truncated: bool = False
@@ -84,7 +86,7 @@ class S2SSession:
                  user_id: str = "", voice: str = "", now=time.monotonic,
                  max_reconnects: int = 3, max_turns: int = 0,
                  reconnect_backoff=(0.5, 1.5, 3.0), ring_max_bytes: int = 64000,
-                 turn_timeout_s: float = 0):
+                 turn_timeout_s: float = 0, escalate_transcript_wait_s: float = 0):
         self._provider_factory = provider_factory
         self._emit_json = emit_json
         self._emit_audio = emit_audio
@@ -108,6 +110,11 @@ class S2SSession:
         self.turn_timeout_s = turn_timeout_s or float(
             os.getenv("S2S_TURN_TIMEOUT_S", "") or "45",
         )
+        # 评审四轮 R4-06：移交要等这一轮的转写定稿（工具调用可能早于 `transcription.completed`）。
+        # 等不到就不移交——模型的重述不能顶替原话去主链当请求。
+        self.escalate_transcript_wait_s = escalate_transcript_wait_s or float(
+            os.getenv("S2S_ESCALATE_TRANSCRIPT_WAIT_S", "") or "2.0",
+        )
 
         self.state = SessionState.CONNECTING
         self.provider: BaseS2SProvider | None = None
@@ -116,6 +123,7 @@ class S2SSession:
         self._by_id: dict[str, Turn] = {}   # turn_id → Turn（escalated_result 回查）
         self._pump: asyncio.Task | None = None
         self._watchdog: asyncio.Task | None = None
+        self._transcript_wait: asyncio.Task | None = None  # 在等转写定稿的那次移交（R4-06）
         self._commit: asyncio.Task | None = None  # 在途的音频段收尾（静音尾）
         self._ring = bytearray()            # 重连期 HMI 音频缓冲
         self._reconnecting = False
@@ -136,6 +144,7 @@ class S2SSession:
         self._closed = True
         self.state = SessionState.CLOSED
         self._clear_watchdog()
+        self._cancel_transcript_wait()
         self._cancel_commit()
         if self._pump is not None:
             self._pump.cancel()
@@ -328,18 +337,20 @@ class S2SSession:
             t.transcript = ev.text or t.transcript
         await self._emit_json({"type": P.DOWN_TRANSCRIPT, "turn_id": t.turn_id,
                                "text": ev.text, "final": bool(ev.final)})
+        if ev.final and t.pending_call_id and t.transcript.strip():
+            await self._escalate(t, t.pending_call_id)   # 等到了定稿：这时才移交（R4-06）
 
     async def _on_answer_delta(self, ev: S2SEvent) -> None:
         t = self.turn
-        if t is None or t.status != T_ACTIVE:
-            return  # 打断后的残余文本：丢弃（否则字幕会继续往下走）
+        if t is None or t.status != T_ACTIVE or t.pending_call_id:
+            return  # 打断后的残余文本 / 已决定移交（等转写中）：丢弃（否则字幕会继续往下走）
         t.answer += ev.text
         await self._emit_json({"type": P.DOWN_ANSWER_DELTA, "turn_id": t.turn_id,
                                "text": ev.text})
 
     async def _on_audio_delta(self, ev: S2SEvent) -> None:
         t = self.turn
-        if t is None or t.status != T_ACTIVE:
+        if t is None or t.status != T_ACTIVE or t.pending_call_id:
             return  # ★1 残包丢弃（实测 provider cancel 很干净，但 cancel 在途时可能已在飞）
         if not t.audio_meta_sent:
             t.audio_meta_sent = True
@@ -350,27 +361,68 @@ class S2SSession:
         await self._emit_audio(ev.pcm)
 
     async def _on_tool_call(self, ev: S2SEvent) -> None:
-        """§5.2 逃逸：唯一的工具就是 escalate。本层只翻译+下行，**不代理执行**。"""
+        """§5.2 逃逸：唯一的工具就是 escalate。本层只翻译+下行，**不代理执行**。
+
+        评审四轮 R4-06：**移交出去的请求是这一轮的最终转写**，工具参数里的 `utterance` 只是模型的解读。
+        修前参数优先：转写「不要开车窗，只解释怎么开」+ 参数「打开车窗」⇒ 主链收到「打开车窗」，engine 还把它盖成
+        `safety_origin_text`——执行闸都在，看到的却是被改写过的请求。不做两段文本的相似度（多一个「不」字面几乎一样、
+        意图相反）；判据是**来源**：请求只能来自转写。转写还没定稿 ⇒ 等（有界）；等不到 ⇒ 不移交（`_transcript_timeout`）。
+        """
         t = self._ensure_turn()
         if ev.name != P.ESCALATE_TOOL_NAME:
             # 单工具契约下不该出现；出现即协议漂移，诚实记录不臆测
             logger.warning("s2s 收到未知工具调用 name=%s（单工具契约外）", ev.name)
             return
-        utterance = ""
         try:
-            utterance = (json.loads(ev.args or "{}") or {}).get("utterance", "") or ""
+            t.interpretation = str(
+                (json.loads(ev.args or "{}") or {}).get("utterance", "") or "").strip()
         except Exception:
-            pass
-        if not utterance:
-            # 槽位坏了也别丢这一轮：用转写原话兜底（utterance 本就是「原话转述」）
-            utterance = t.transcript
-            logger.info("s2s escalate 槽位缺失 → 回落转写原话")
+            t.interpretation = ""   # 槽位坏了不影响移交：请求本来就取转写
+        if t.transcript.strip():
+            await self._escalate(t, ev.call_id)
+            return
+        t.pending_call_id = ev.call_id
+        self._arm_transcript_wait(t)
+
+    async def _escalate(self, t: Turn, call_id: str) -> None:
+        """转写已定稿：以它为请求移交主链（HMI / Android 按既有 send(utterance) 走，旧客户端原样受益）。"""
+        self._cancel_transcript_wait()
+        t.pending_call_id = ""
         t.status = T_ESCALATED
-        t.escalate_call_id = ev.call_id
-        t.utterance = utterance
+        t.escalate_call_id = call_id
+        t.utterance = t.transcript.strip()
         await self._emit_json({"type": P.DOWN_ESCALATED, "turn_id": t.turn_id,
-                               "utterance": utterance})
+                               "utterance": t.utterance, "transcript": t.utterance,
+                               "interpretation": t.interpretation})
         await self._end_turn(t, P.END_ESCALATED, keep_status=True)
+
+    def _arm_transcript_wait(self, t: Turn) -> None:
+        self._cancel_transcript_wait()
+
+        async def expire():
+            try:
+                await asyncio.sleep(self.escalate_transcript_wait_s)
+            except asyncio.CancelledError:
+                return
+            await self._transcript_timeout(t)
+
+        self._transcript_wait = asyncio.create_task(expire())
+
+    def _cancel_transcript_wait(self) -> None:
+        if self._transcript_wait is not None:
+            self._transcript_wait.cancel()
+            self._transcript_wait = None
+
+    async def _transcript_timeout(self, t: Turn) -> None:
+        """等不到转写定稿：**不移交**。模型的重述不能冒充原话去主链当请求（它可能正好丢了「不要 / 只查」）。
+        本轮以 error 收束——两端早已把 error 渲染成「刚才那句没处理成功，你可以再说一遍」；悬挂的 function call 无害（R2 实测）。"""
+        self._transcript_wait = None
+        if not t.pending_call_id or t.end_reason or self._closed:
+            return
+        logger.warning("s2s turn %s 工具调用后 %.1fs 仍无转写定稿 → 不移交（模型重述不作请求）",
+                       t.turn_id, self.escalate_transcript_wait_s)
+        t.pending_call_id = ""
+        await self._end_turn(t, P.END_ERROR, detail="transcript_unavailable")
 
     async def _on_turn_done(self, ev: S2SEvent) -> None:
         t = self.turn
@@ -378,6 +430,8 @@ class S2SSession:
             return
         if t.status in (T_ESCALATED, T_ABANDONED, T_DONE):
             return  # escalate/打断路径已收束过，provider 的 done 不重复出
+        if t.pending_call_id:
+            return  # 工具调用之后 provider 照常发 done：这一轮归「等转写」收束（移交或诚实报错）
         reason = P.END_CANCELLED if ev.reason == "cancelled" else P.END_COMPLETE
         await self._end_turn(t, reason)
 
@@ -392,6 +446,10 @@ class S2SSession:
     # ── turn 收束 + 回灌 ──
     async def _end_turn(self, t: Turn, reason: str, *, keep_status: bool = False,
                         detail: str = "") -> None:
+        if reason != P.END_ESCALATED and t.pending_call_id:
+            # 等转写期间被打断 / 断线 / 看门狗收束：这次移交作废（R4-06）
+            t.pending_call_id = ""
+            self._cancel_transcript_wait()
         if t.end_reason:
             return  # 幂等：同一 turn 只收束一次
         t.end_reason = reason

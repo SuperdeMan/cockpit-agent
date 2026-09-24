@@ -151,6 +151,10 @@ class Reflux:
                     "s2s_false_promise": false_promise,
                     "utterance": (self._gate(turn.utterance, 120)
                                   if (self._gate and escalated) else ""),
+                    # 评审四轮 R4-06：模型对请求的解读（工具参数）与移交出去的原话分开留痕——
+                    # 两者不一致的轮次就是「模型改写了请求」的取证面，不参与任何决策
+                    "interpretation": (self._gate(getattr(turn, "interpretation", "") or "", 120)
+                                       if (self._gate and escalated) else ""),
                     # 被打断轮只存已播出的增量（★1：provider 全文≠用户听到的）
                     "answer": self._gate(answer, 200) if self._gate else "",
                 })

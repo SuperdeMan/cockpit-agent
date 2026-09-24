@@ -1017,12 +1017,27 @@ class VAL:
             template = template.replace("{value}", str(data.get("value", "")))
             template = template.replace("{mode}", str(data.get("mode", "")))
             template = template.replace("{tag}", str(data.get("tag", "")))
-            # 位置：取第一个
-            positions = data.get("positions", [])
-            if positions:
-                pos_display = positions[0] if isinstance(positions, list) else str(positions)
-            else:
-                pos_display = ""
-            template = template.replace("{position}", pos_display)
+            template = template.replace("{position}", self._position_display(
+                data.get("positions", [])))
 
         return template
+
+    def _position_display(self, positions) -> str:
+        """归一化后的位置标识 → 念给人听的中文（评审四轮顺带，2026-09-24）。
+
+        修前 `{position}` 直接替换成协议标识：多意图话术念出「front_left座椅加热已打开，front_right座椅加热已打开」
+        （真栈 `ecbeed28` RS32 修前那一轮原话）。词表就是归一化用的同一份 `entities.positions`（中文 → 标识），反查：
+        整组正好是某个多值词条（「后排」= 左后 + 右后）就念那个词，否则逐个取该标识的第一个中文说法；查不到原样念（不编）。
+        """
+        if not positions:
+            return ""
+        ids = [positions] if isinstance(positions, str) else [str(p) for p in positions]
+        table = (self.entities or {}).get("positions") or {}
+        for word, value in table.items():
+            if isinstance(value, list) and sorted(value) == sorted(ids):
+                return str(word)
+        first_word: dict[str, str] = {}
+        for word, value in table.items():
+            if isinstance(value, str) and value not in first_word:
+                first_word[value] = str(word)
+        return "、".join(first_word.get(i, i) for i in ids)

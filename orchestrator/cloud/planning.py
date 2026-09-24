@@ -1766,14 +1766,20 @@ class PlanBuilder:
                   if intent == target_intent]
         if len(owners) != 1:
             return None          # 能力缺席或归属歧义 ⇒ 交回正常规划，不猜
-        steps = PlanBuilder._validated_steps(
-            [{"id": "s1", "agent_id": owners[0], "intent": target_intent,
-              "slots": {}, "depends_on": [], "slot_refs": {}}],
-            dict(catalog.agent_map))
-        if len(steps) != 1:
+        # 评审四轮 R4-04：反向的是**上一个动作的目标**，不只是它的 intent。焦点位置与意图出自同一条执行事实
+        # （`augment_focus_with_execution`）；每个位置一步，只继承 `positions`（VAL 结构化命令的键）——数值 / 模式
+        # 这些旧槽不带（「关掉」不该把旧温度也设一遍）。没有位置 ⇒ 一步空槽，同修前（上一个动作本来就没限定位置）。
+        positions = [p for p in (getattr(focus, "positions", None) or []) if str(p).strip()]
+        raw_steps = ([{"id": f"s{i}", "agent_id": owners[0], "intent": target_intent,
+                       "slots": {"positions": str(p)}, "depends_on": [], "slot_refs": {}}
+                      for i, p in enumerate(positions, 1)]
+                     or [{"id": "s1", "agent_id": owners[0], "intent": target_intent,
+                          "slots": {}, "depends_on": [], "slot_refs": {}}])
+        steps = PlanBuilder._validated_steps(raw_steps, dict(catalog.agent_map))
+        if len(steps) != len(raw_steps):
             return None
-        logger.info("Focused control ellipsis: previous=%s action=%s -> %s",
-                    last_intent, match.group("action"), target_intent)
+        logger.info("Focused control ellipsis: previous=%s action=%s -> %s positions=%s",
+                    last_intent, match.group("action"), target_intent, positions)
         return Plan(steps=steps, raw_text=str(text or ""), goal=str(text or ""))
 
     async def build(self, text: str, working_set: WorkingSet, ctx: PlanContext,

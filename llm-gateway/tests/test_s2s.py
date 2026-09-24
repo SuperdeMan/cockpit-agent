@@ -395,6 +395,116 @@ async def test_escalate_with_broken_args_falls_back_to_transcript():
     await h.sess.close()
 
 
+# ────── 评审四轮 R4-06：移交出去的请求是原话，模型重述只作解读 ──────
+# 修前 `_on_tool_call` 优先用工具参数里的 `utterance`：转写「不要开车窗，只解释怎么开」+ 参数「打开车窗」⇒ 主链收到「打开车窗」，
+# engine 还把它盖成 `safety_origin_text`。限制从被传递的请求里消失，执行闸看到的是模型改写过的请求。
+
+_REWRITE = json.dumps({"utterance": "打开车窗"}, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_escalation_hands_over_the_transcript_not_the_model_rewrite():
+    h = Harness()
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TRANSCRIPT, text="不要开车窗，只解释怎么开", final=True),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE))
+    esc = h.of(P.DOWN_ESCALATED)
+    assert len(esc) == 1
+    assert esc[0]["utterance"] == "不要开车窗，只解释怎么开", "请求 = 原话（旧客户端原样 send 这个键）"
+    assert esc[0]["transcript"] == "不要开车窗，只解释怎么开"
+    assert esc[0]["interpretation"] == "打开车窗", "模型的重述只作解读留痕"
+    assert h.sess.turn.utterance == "不要开车窗，只解释怎么开"
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_escalation_waits_for_a_late_final_transcript():
+    """工具调用可能早于转写定稿（两种事件序都实测过）：等定稿再移交，partial 不算。"""
+    h = Harness()
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TRANSCRIPT, text="只解释", final=False),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE))
+    assert not h.of(P.DOWN_ESCALATED), "转写没定稿不移交，更不拿模型重述顶上"
+    assert not h.of(P.DOWN_TURN_END)
+    await h.pump_once(S2SEvent(kind=EV_TRANSCRIPT, text="只解释一下车窗怎么开", final=True))
+    esc = h.of(P.DOWN_ESCALATED)
+    assert [e["utterance"] for e in esc] == ["只解释一下车窗怎么开"]
+    assert h.of(P.DOWN_TURN_END)[-1]["reason"] == P.END_ESCALATED
+    assert h.sess.turn.escalate_call_id == "c1"
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_escalation_without_a_transcript_ends_honestly_and_never_hands_over_the_rewrite():
+    h = Harness(escalate_transcript_wait_s=0.05)
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE))
+    await asyncio.sleep(0.12)
+    assert not h.of(P.DOWN_ESCALATED)
+    end = h.of(P.DOWN_TURN_END)
+    assert len(end) == 1 and end[0]["reason"] == P.END_ERROR
+    assert end[0]["detail"] == "transcript_unavailable"
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_done_during_the_wait_does_not_end_the_turn():
+    """provider 在 function call 之后照常发 response.done：等转写期间它不许把这一轮收成 complete。"""
+    h = Harness()
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE),
+                      S2SEvent(kind=EV_TURN_DONE, reason="completed"))
+    assert not h.of(P.DOWN_TURN_END)
+    await h.pump_once(S2SEvent(kind=EV_TRANSCRIPT, text="车窗怎么开", final=True))
+    assert [e["utterance"] for e in h.of(P.DOWN_ESCALATED)] == ["车窗怎么开"]
+    assert [e["reason"] for e in h.of(P.DOWN_TURN_END)] == [P.END_ESCALATED]
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_output_after_the_tool_call_is_dropped_while_waiting():
+    """修前 tool call 一到就是 escalated，之后的增量全丢；等转写期间照旧不播。"""
+    h = Harness()
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE),
+                      S2SEvent(kind=EV_ANSWER_DELTA, text="好的，已为您打开"),
+                      S2SEvent(kind=EV_AUDIO_DELTA, pcm=b"a" * 8))
+    assert not h.of(P.DOWN_ANSWER_DELTA) and not h.audio_out
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_barge_in_during_the_wait_drops_the_escalation():
+    h = Harness()
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE))
+    await h.sess.barge_in()
+    await h.pump_once(S2SEvent(kind=EV_TRANSCRIPT, text="打开车窗吧", final=True))
+    assert not h.of(P.DOWN_ESCALATED), "被打断的那一轮不再移交"
+    assert h.of(P.DOWN_TURN_END)[0]["reason"] == P.END_CANCELLED
+    await h.sess.close()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_during_the_wait_drops_the_escalation():
+    h = Harness(escalate_transcript_wait_s=5.0)
+    await h.sess.start()
+    await h.pump_once(S2SEvent(kind=EV_TURN_STARTED),
+                      S2SEvent(kind=EV_TOOL_CALL, name="escalate", call_id="c1", args=_REWRITE))
+    waiting = h.sess.turn
+    await h.prov.close()             # 事件流结束 → 重连：在途的这一轮诚实收束
+    await asyncio.sleep(0.05)
+    assert not h.of(P.DOWN_ESCALATED)
+    assert waiting.end_reason == P.END_CANCELLED and not waiting.pending_call_id
+    await h.sess.close()
+
+
 @pytest.mark.asyncio
 async def test_unknown_tool_name_is_not_treated_as_escalate():
     """单工具契约外的调用=协议漂移，诚实忽略不臆测。"""
