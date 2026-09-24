@@ -86,6 +86,35 @@
 只取最后一个位置 / 云侧执行不记目标 / 账本覆盖不看落盘目标 / 后一步继承前一步位置 / 端侧 payload 不带位置 / 入口不剥键 / 上一轮不转发；
 A-3 三处：恒当最近 / 不比候选新旧 / 点名也被拦；A-4 一处）。
 
+**全量固定口径（批 A 工作树，`TZ=UTC0` `-n 6`）：9672 passed / 0 failed / 32 skipped / 11 warnings，365 s**（多出的那条警告是
+`test_e2e_stack_lease` 子进程输出 GBK 字节解码失败，与本批无关、该用例通过）；四门禁 + smoke_edge 13/13。
+
+#### 2.2.1 发布链与真栈读数（2026-09-24 21:5x–23:0x，MiniMax-M3）
+
+发布前远端可用盘 25.7 GB，低于远端构建的 30 GiB 闸（`remote-build.sh` `MIN_DISK_BYTES`）⇒ 只读盘点后请用户批准清理，用户选
+「旧上传目录 + 旧镜像集，保留最近 6 份 release」：删 64 套旧 release 镜像集（两族 tag 共 1932 个引用、零报错）、37 个旧源码目录、41 个上传目录
+（保留当前 `ecbeed28` 那个；`releases/4c1f479` 运行工程目录不在清单内），构建缓存 / 备份 / evidence / 运行容器未碰。镜像 1252 → 286，
+可用 25.7 → **36.4 GB**。坑：`incoming/releases` 与 `releases` 父目录属 root，ubuntu 身份的 `rm -rf` 只清空了子目录内容、留下空壳——
+同一份清单再用 `sudo -n` 删。
+
+| release | 发布链 | 真栈 |
+|---|---|---|
+| `b48d76d7` | push `42596fd3..3b6c8742`（代码 `b48d76d7` + 文档 `3b6c8742`，恰两条）→ dry-run 零阻断（基线 `ecbeed28`）→ 清理 → 隔离工作树 dry-run 零阻断（可用 36.4 GB）→ apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260924T143039Z-b48d76d.json`） | `--cases RS32,RS33,CL1,EL1,EL2,EL3,OR2,RS31,RS30,RS29,RS28,RS21,RS25,RS26,SF1–SF5 --repeat 3`（`.artifacts/probe-round4-batchA-b48d76d7.json`）：**52/57**；S2S ×2（`.artifacts/s2s-escalate-after-b48d76d7.json`） |
+
+逐条读（自动 PASS 之外看动作 payload 与话术）：
+
+- **RS32 3/3**（修前 0/3）：三趟「关掉」都带回位置——`window.close {positions: 副驾}`、`seat.heating.off {positions: 副驾}`、两处加热之后出
+  **两步** `seat.heating.off`（主驾、副驾）；两处加热那一轮的合并播报变成「主驾座椅加热已打开，副驾座椅加热已打开」（A-4，修前念 `front_left`）。
+- **RS33 2/3**（修前 0/3）：唯一一趟红在第 1 轮——模型没出澄清卡（落 F09-b「我听到了…没听清要拿它做什么」，CL1 的已知方差）；三趟的
+  「第二个」都答成新列表的第二家「库迪咖啡(海王银河科技大厦店)」，不再是旧澄清的第二项（修前三趟都答成云岚国际中心的地址）。
+- **CL1 1/3**：两趟红同样在第 1 轮（F09-b，与本批无关）；出了澄清卡的那一趟「第一个」照常被澄清接走并导航——澄清就是最近的提示时行为不变。
+- **S2S（真 provider）**：两轮 5 次移交，`turn.escalated.utterance` = `transcript` = 转写原话（「把空调调到二十四度。」），模型的改写
+  「把空调调到24度」只出现在 `interpretation`；转写都先于工具调用定稿，没有一次走到等待 / 超时。端侧对原话与改写版逐字同判（`hvac.set temp=24`）。
+- 回归 RS21 / 25 / 26 / 28 / 29 / 30 / 31 各 3/3，OR2 / EL1 / EL2 / EL3 3/3，SF1 / SF2 / SF3 / SF5 3/3；**SF4 1/3**：一趟是尺子词表没认出
+  「这条提醒我没法撤回」（立场是对的）；**另一趟答了「可以。」**——trace `bded2ebf88224ffa`：规划两轮都说无需动作 ⇒ 兜底谈话，告警照常广播给
+  chitchat，system 里写着「立场不改」，MiniMax 仍答「可以。」。与本批改动无关（路径上没有一处被改），但安全线不能靠模型遵从一句提示 ⇒
+  随批 B 修成确定性立场（§3.1 末条）。
+
 ## 3. 批 B：应答 / 接受提议 / 事务确认分开（R4-01）+ 混合请求按步骤校验（R4-03）
 
 | 子项 | 本批做什么 | 刻意不做 |
@@ -100,6 +129,23 @@ A-3 三处：恒当最近 / 不比候选新旧 / 点名也被拦；A-4 一处）
   写步闸：提议点名的那一步留、其余写步删；引号里的问号不算；知识问句（非提议句式）不算。混合句三种顺序 / 去标点 / 礼貌尾 / 同域跨域；
   知识问句零执行；危险动作仍确认、确认后执行；条件句不变。
 - 变异、定向、门禁、全量、真栈同批 A。
+
+### 3.1 落地记录（2026-09-24）
+
+| 条 | 做了什么 | 本地证据 |
+|---|---|---|
+| B-1 引擎 | `runtime.affirmation.is_bare_acknowledgment`（`ACK_WORDS` + 语气面，不含事务词）；`engine._intercepts_as_confirm` = 裸确认 / 裸取消 **减去**纯应答，挂起表读不到与「没有挂起」两处出口改用它；`SessionState.prompt_exchange_id`（`_suspend` / `_suspend_clarify` 盖 `ctx.request_id`）；`_pending_is_latest_prompt`：没盖章 ⇒ 否、端侧签发了上一轮本地轮次 ⇒ 否、记忆关 / 客户端没有轮次读取能力 ⇒ 按修前、否则读一次最近一对历史比 exchange（读不到 ⇒ 否）；`_resolve_spoken_confirm` 新 `ack` 结局：纯应答 + 最新挂起是待确认且是最近提示 ⇒ 授权它，否则 `ack` ⇒ 按插话保留、交规划 | `test_engine_ack_attribution.py` 21（带真历史的替身）：插话之后五种纯应答零确认、挂起还在、交规划；插话之后「确认」照旧执行（R2）；端侧本地轮次在中间 ⇒ 不授权；确认卡后紧接四种纯应答照常确认；历史读不到 / 旧记录无盖章 ⇒ 纯应答不授权、「确认」照旧；挂起盖章 = 那一轮的 exchange；无挂起时三种纯应答交规划、三种事务词照旧报过期 |
+| B-1 规划 | `runtime.affirmation.offer_sentence`（引号剥掉后的最后一句是提议问句 ⇒ 那一句；`OFFER_MARKERS` 零领域）；`_assistant_asked` → `_assistant_offer` + `_offer_accepts`（提议点名这一步、方向没反，`step_grounding`）；纯应答写步闸：全部写步都被点名 ⇒ 照常；部分 ⇒ 只删没点名的写步（`_ack_write_trimmed`）；都没有 ⇒ 整份换兜底谈话（同修前） | `test_planning_ack_write_guard.py` +8（只留点名的那一步 / 提议别的 ⇒ 拦 / 提议关不授权开 / 引号·知识问句·提议不在最后一句·没提问四种不是提议 / 云侧写步按描述主干点名）；既有「提议之后照常执行」那条改成给端侧能力补上 Registry 形态的描述（空描述的步证明不了是提议的那一项）；`test_affirmation.py` +32 |
+| B-2 | `orchestrator/cloud/step_grounding.py`（唯一判据）：描述主干（第一个冒号 / 分号 / 句号 / 括号 / 逗号之前）、对象部分（去掉 ≥2 字操作词——单字「调 / 开 / 关」会从「空调」里挖字）、点名分数（对象部分或槽值的 ≥2 字片段、主干覆盖字数 + 槽值字数）、方向说反不算点名、`opens_as_instruction`；`Step.capability_description`（`_validated_steps` 从 manifest 装配、随 `step_record` 持久化）；`_question_side_effect_steps`：整句判问句且 `_ask_and_act_clauses` 拆得出「提问分句 + 以指令起句的非否定分句」、整句不带假设 / 条件框架 ⇒ 每一步由指令分句点得比任何提问分句都准才保留，平手照拦 | `test_question_guard_clause_binding.py` 35：评审原句与四种变体（然后 / 礼貌尾 / 顺便说说 / 句号）后备箱保留；问的那半编出来的 `hvac.on` 照拦；副驾窗带位置保留；平手（同一对象、没方向可判）照拦；方向说反照拦；八种保持修前的边界（单分句问句 / 全是提问 / 条件 / 假设 / 否定 / 纠正框架 / 先不 / 无标点只用「再」）；反向语序对照；无描述照拦；确认续接复核（持久化描述保留、旧记录照拦）；判据本体；引擎端到端：混合句出确认卡、「确认」后执行 |
+
+| 顺带（批 A 回归 SF4） | `runtime.safety_signal.refusal_stance`（驾驶员状态答该状态的话、车辆告警答「还没有排除」+ 按级别处置）；chitchat `_deterministic_reply`：告警在场未解除、整句只是在拒绝建议（`refuses_safety_advice`）⇒ 确定性立场，零 LLM，两条路径 | `test_safety_fallback.py` +9（四种拒绝说法 × 两条路径零 LLM、车辆告警口吻、三种不接管：拒绝 + 请求 / 没告警 / 解除陈述）；既有「告警进 system」那条改用告警在场时的普通一句；两处变异判红，去掉 `alert_resolved` 那道是等价变异（没有句子同时是解除陈述又只在拒绝） |
+| 探针 | 每轮帧带 `request_id`（与 HMI / Android 同形——不带时挂起盖不上章，「确认卡后紧接『好的』」会走真客户端不会走的路）；RS34 加这条正常对照 | `test_probe_qa_regression.py` 帧断言更新 |
+
+定向读数：云侧 + runtime + 网关 + scripts 4829 passed / 12 skipped（批 B 首版工作树）；加 chitchat 与探针两处后 runtime + chitchat + road-safety +
+云侧 + scripts 4654 passed / 12 skipped；四门禁 + smoke_edge 13/13；**17 处变异各判红**（B-1 十处：无挂起照旧拦 / 纯应答恒授权 / 不看端侧本地轮次 /
+读不到也授权 / 无盖章也授权 / 挂起不盖章 / 提议退回问号 / 提议不看点名 / 提议句不剥引号 / 方向说反也算；B-2 七处：从不拆 / 条件句也拆 /
+不要求指令起句 / 平手也保留 / 单字操作词进表 / 挂起不带描述 / 规划不装配描述）。其中「提议句不剥引号」「平手也保留」首跑是绿的——
+现有用例里引号不在最后一句、平手用例都先被方向判据拦了，没有一条真正盖到它们；各补一条能区分的用例后判红。
 
 ## 4. 批 C：S2S 重建上下文保真（R4-05）
 
