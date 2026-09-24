@@ -843,6 +843,28 @@ _PLANNER_STEP_FIELDS = (
 # 「把真值放进错误字段名」这类静默错执行。
 _NORMALIZABLE_STEP_FIELDS = frozenset({"slots", "depends_on", "slot_refs"})
 
+# 追加批 N（2026-09-24）：**只可能表示「零步」**的编码残片。collector 35 个 trace 里模型把空数组连同工具编码的收尾标签一起
+# 吐进 steps（`["[]</steps>"]` / `"[]</steps>"`）——解析层当解析失败丢弃，于是模型明说了的「受话、零步」变成一次失败重试，
+# 第二轮再吐坏就是技术失败（「我没事，继续开」「座椅有哪些调节功能」「用两句话介绍一下深圳」）。规范化只认这一种精确形态、只可能
+# 产出零步；其余畸形照旧整份丢弃重试（「明确畸形的 steps 不许变成合法空列表」对它们照旧成立）。D14 防的是「试图执行、引用了
+# 不存在能力的步骤」被读成无需动作，这里根本没有步骤对象。⚠ `addressed` 写成字符串（`"true"`）**不**规范化：D14 的契约用例
+# 钉着「无需动作只认精确 JSON true」，对抗评测的原始合规率靠它。
+_EMPTY_STEPS_ARTIFACT_RE = re.compile(r"\s*\[\s*\]\s*(?:</steps>)?\s*")
+
+
+def _normalize_wire_artifacts(data):
+    """规划器输出 dict 里的空数组残片规范成 `steps: []`；其余原样返回（不改入参）。"""
+    if not isinstance(data, dict):
+        return data
+    steps = data.get("steps")
+    if isinstance(steps, str) and _EMPTY_STEPS_ARTIFACT_RE.fullmatch(steps):
+        pass
+    elif not (isinstance(steps, list) and len(steps) == 1 and isinstance(steps[0], str)
+              and _EMPTY_STEPS_ARTIFACT_RE.fullmatch(steps[0])):
+        return data
+    logger.info("Normalized planner wire artifact: steps=%r", steps)
+    return {**data, "steps": []}
+
 _CLARIFICATION_TOOLCALL_SECTION = (
     "\n\n== 输出通道（澄清卡专用工具调用）==\n"
     "上一版已经确定当前请求必须澄清。本轮只调用 submit_plan 一次，严格提交 "
@@ -2379,7 +2401,7 @@ class PlanBuilder:
         if args is not None:
             raw = json.dumps(args, ensure_ascii=False)
             logger.info("LLM plan toolcall args: %s", raw[:500])
-            return raw, args
+            return raw, _normalize_wire_artifacts(args)       # raw 保留原样供观测
         logger.info("LLM plan toolcall no tool_calls, content: %s", (content or "")[:300])
         return content or "", None
 
@@ -2527,7 +2549,7 @@ class PlanBuilder:
         if not raw:
             return None
         try:
-            return json.loads(self._extract_json(raw))
+            return _normalize_wire_artifacts(json.loads(self._extract_json(raw)))
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning("Plan JSON parse failed: %s", e)
             return None

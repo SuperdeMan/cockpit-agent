@@ -178,3 +178,22 @@ def test_a_typed_bare_object_not_addressed_is_not_turned_into_talk():
     plan = _build_with_source([NOT_ADDRESSED, NOT_ADDRESSED], "云岚国际中心", "")
     assert plan.steps == [] and plan.addressed is False
     assert not plan.plan_mode.endswith("_not_addressed_info")
+
+
+# ── 追加批 N（N-2，2026-09-24；设计 §17）：「帮我查查 / 查一下 + 疑问框架」也是求信息的请求 ────────────────────
+
+@pytest.mark.parametrize("text", [
+    "你帮我查查卤牛肉怎么做呀？",                 # 真实用户（collector app-mh5f6e）
+    "帮我查一下小米SU7的官方续航是多少",          # e2e w19c 两趟
+])
+def test_a_lookup_request_with_a_question_frame_is_answered_by_the_talk_agent(text):
+    marker = '{"addressed":true,"steps":[],"goal":"需要澄清：用户只提到对象，未说明要做什么动作"}'
+    plan, calls = _build([marker, NO_ACTION], text)
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan.steps
+    assert plan.technical_failure is False
+    assert plan.plan_mode.endswith("_no_action_info"), plan.plan_mode
+
+
+def test_a_lookup_directive_without_a_question_frame_is_still_a_technical_failure():
+    plan, calls = _build([NO_ACTION, GARBAGE], "替我查一下路况")
+    assert plan.technical_failure is True

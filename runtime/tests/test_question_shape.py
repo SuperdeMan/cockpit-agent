@@ -508,3 +508,32 @@ def test_reference_questions(text):
 ])
 def test_not_reference_questions(text):
     assert is_reference_question(text) is False, text
+
+
+# ── 追加批 N（N-2，2026-09-24；设计 §17）：查询请求 + 疑问框架是求信息的请求，但不改问句判据 ──────────────────
+
+from runtime.question_shape import LOOKUP_REQUESTS, is_information_request  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "你帮我查查卤牛肉怎么做呀？", "帮我查一下小米SU7的官方续航是多少", "搜一下这首歌叫什么", "查下明天几点日落",
+])
+def test_lookup_requests_with_a_question_frame_are_information_requests(text):
+    assert is_information_request(text) is True, text
+
+
+@pytest.mark.parametrize("text", ["替我查一下路况", "帮我查一下明天的天气", "查一下附近的充电桩", "搜一下周杰伦的歌"])
+def test_lookup_directives_without_a_question_frame_are_not(text):
+    assert is_information_request(text) is False, text
+
+
+def test_lookup_requests_do_not_change_the_question_judgment():
+    """只进 `is_information_request`：端侧写否决与云侧问句闸看的 `is_non_directive_question` 一个字不变。"""
+    assert is_non_directive_question("你帮我查查卤牛肉怎么做呀") is False
+    assert is_non_directive_question("帮我查一下小米SU7的官方续航是多少") is False
+
+
+def test_lookup_request_table_is_a_closed_function_word_class():
+    vocab = _domain_vocabulary()
+    for word in LOOKUP_REQUESTS:
+        assert word not in vocab, word

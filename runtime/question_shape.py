@@ -94,6 +94,10 @@ REASON_ASKS = ("为什么", "为啥", "什么原因", "啥原因", "原因", "�
 #: 求信息的请求（追加批 F，F-2）：要的是一段回答，不是一个动作——「推荐 / 介绍 / 讲讲 / 说说 / 科普 / 解释」开头
 #: （可带礼貌前缀）。与问句、原因问、解释元请求合起来，是规划失败时「兜底谈话就是答案」的那一类（AR05 F09 的例外）。
 INFO_REQUEST_VERBS = ("推荐", "介绍", "讲讲", "说说", "科普", "解释")
+#: 查询请求（评审三轮追加批 N，2026-09-24）：「你帮我查查卤牛肉怎么做呀」「帮我查一下小米SU7的官方续航是多少」——要的是一个答案。
+#: 与 `EXPLAIN_REQUESTS` 同一形态（句首动词 + 其后疑问框架），但**只进 `is_information_request`**，不进问句判据：
+#: 「替我查一下路况」这类不带疑问框架的是交给查询能力的指令，规划失败仍报技术失败。
+LOOKUP_REQUESTS = ("查查", "查一下", "查下", "查询一下", "搜搜", "搜一下", "搜下", "搜索一下")
 
 # 方法问句中的动作词。它们仍是零领域的句法词，不包含任何车辆对象；“对象在前/动作在前，
 # 中间带怎么/如何”的形态由本模块统一判定，端侧与云侧共用。刻意不含“调高/调低”：
@@ -127,6 +131,11 @@ _EXPLAIN_ALT = "|".join(sorted(map(re.escape, EXPLAIN_REQUESTS), key=len, revers
 #: 元请求：句首（礼貌前缀 / 人称 / 「能 / 能不能 / 可以」之后）就是解释动词，其后跟着疑问框架。
 _EXPLAIN_REQUEST_RE = re.compile(
     rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再)*\s*(?:{_EXPLAIN_ALT})"
+    r"[，,]?\s*.{0,16}?(?:怎么|怎样|咋|如何|为什么|为啥|什么|哪个|哪种|哪里|哪边|几|多少|多久"
+    r"|能不能|可不可以|是不是|有没有|会不会|支不支持)")
+_LOOKUP_ALT = "|".join(sorted(map(re.escape, LOOKUP_REQUESTS), key=len, reverse=True))
+_LOOKUP_REQUEST_RE = re.compile(
+    rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再)*\s*(?:{_LOOKUP_ALT})"
     r"[，,]?\s*.{0,16}?(?:怎么|怎样|咋|如何|为什么|为啥|什么|哪个|哪种|哪里|哪边|几|多少|多久"
     r"|能不能|可不可以|是不是|有没有|会不会|支不支持)")
 #: 「有 …」开头的两种列举问前面不能紧挨「没」（「没有什么问题」是陈述）。
@@ -267,7 +276,8 @@ def is_information_request(t: str | None) -> bool:
     if not body:
         return False
     return bool(is_non_directive_question(body) or asks_for_reason(body)
-                or is_explanation_request(body) or _INFO_REQUEST_RE.match(body))
+                or is_explanation_request(body) or _INFO_REQUEST_RE.match(body)
+                or _LOOKUP_REQUEST_RE.match(body))
 
 
 def is_non_directive_question(t: str) -> bool:
