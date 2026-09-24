@@ -199,6 +199,7 @@ from runtime.safety_signal import refuses_safety_advice  # noqa: E402
     "别提醒我，继续开就行",      # SF4 原句
     "我没事，继续开", "不用管我", "不用停，我撑得住", "别啰嗦了", "我不休息",
     "我撑得住", "我真没事",      # 只有自我担保
+    "好了好了，别提醒了", "行，我不休息",     # 夹应答词仍只是拒绝
 ])
 def test_refusals_of_safety_advice(text):
     assert refuses_safety_advice(text) is True, text
@@ -206,6 +207,7 @@ def test_refusals_of_safety_advice(text):
 
 @pytest.mark.parametrize("text", [
     "帮我找个地方", "最近的服务区在哪", "好的，我去休息", "那我停一下", "导航去公司", "",
+    "别提醒我，帮我找个地方", "别提醒我了，导航去公司",    # 夹着别的请求：不只是拒绝
 ])
 def test_other_utterances_are_not_refusals(text):
     assert refuses_safety_advice(text) is False, text
@@ -234,7 +236,7 @@ def test_self_reports_that_look_like_negations_or_topics(text, state):
 
 @pytest.mark.parametrize("text", [
     "现在还能继续开吗", "我可以不休息吗",      # 问句：在问能不能，不是拒绝
-    "继续开导航", "我不继续开了", "要不休息一下吧", "不用提醒我带伞", "我没事做，陪我聊聊", "我撑不住了",
+    "继续开导航", "我不继续开了", "要不休息一下吧", "不用提醒我带伞", "我没事做", "我撑不住了",
 ])
 def test_near_misses_are_not_refusals(text):
     assert refuses_safety_advice(text) is False, text

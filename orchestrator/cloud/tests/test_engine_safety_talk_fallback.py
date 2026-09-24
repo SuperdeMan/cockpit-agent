@@ -14,6 +14,7 @@ continuity 第一趟 T64/T65（`c4c1186d`）：T64「困到睁不开眼了，还
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from types import SimpleNamespace
 
@@ -26,7 +27,7 @@ from orchestrator.cloud.context import Focus, WorkingSet
 from orchestrator.cloud.engine import PlannerEngine
 from orchestrator.cloud.executor import DagExecutor
 from orchestrator.cloud.models import PlanContext
-from orchestrator.cloud.planning import PlanBuilder
+from orchestrator.cloud.planning import PlanBuilder, _assemble_capability_catalog
 from orchestrator.cloud.session import SessionStore
 
 from tests.test_planning import MockAgent
@@ -47,7 +48,14 @@ def _offline_retrieval(monkeypatch):
 
 def _agents():
     return [MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",)),
-            MockAgent("navigation", ["navigation.navigate_to"])]
+            MockAgent("navigation", ["navigation.navigate_to"]),
+            MockAgent("info", ["info.weather"])]
+
+
+def _step_reply(agent_id: str, intent: str) -> str:
+    ref = _assemble_capability_catalog(_agents()).pair_to_ref[(agent_id, intent)]
+    return json.dumps({"addressed": True, "steps": [
+        {"id": "s1", "capability_ref": ref, "slots": {}, "depends_on": [], "slot_refs": {}}]})
 
 
 def _alert(age_s: float = 0.0) -> dict:
@@ -99,21 +107,56 @@ def test_a_clarify_card_survives_the_focus_arm():
     assert not (plan.plan_mode or "").endswith("_safety_talk")
 
 
+# ── 追加批 K（K-1，设计 §14）：告警在场时，整句只是在拒绝安全建议 ⇒ 兜底谈话作答，不管规划产出了什么 ────────────
+
 @pytest.mark.parametrize("text", ["别提醒我，继续开就行", "我没事，继续开", "不用停，我撑得住"])
 def test_a_refusal_of_safety_advice_does_not_get_a_clarify_card(text):
-    """追加批 K（K-1，设计 §14）：SF4 第 2 趟（`8cee1699`）——焦点里有犯困告警，「别提醒我，继续开就行」规划器出了澄清卡
-    「「继续开」具体要做什么？」，把 chitchat「立场不改」那条出口绕开了。这句话在**拒绝安全建议**，不是别的话题。"""
+    """SF4 第 2 趟（`8cee1699`）：焦点里有犯困告警，「别提醒我，继续开就行」规划器出了澄清卡「「继续开」具体要做什么？」，
+    把 chitchat「立场不改」那条出口绕开了。这句话在**拒绝安全建议**，不是别的话题。"""
     plan = _build(text, _CLARIFY, focus_alert=_alert())
     assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan
     assert plan.clarify is None
     assert (plan.plan_mode or "").endswith("_safety_talk"), plan.plan_mode
 
 
+def test_a_refusal_planned_into_an_invented_step_becomes_the_talk():
+    """`36a92009` K-1 真栈第 5 趟：首轮「受话、零步」→「无动作」重试 → 第二轮编出 `info.weather(今晚)`，用户只听到天气。"""
+    plan = _build("别提醒我，继续开就行", _step_reply("info", "info.weather"), focus_alert=_alert())
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan
+    assert (plan.plan_mode or "").endswith("_safety_talk"), plan.plan_mode
+
+
+def test_a_refusal_whose_planning_failed_is_not_a_technical_failure():
+    """同一批第 5 趟另一句：重试第二轮吐出坏 JSON ⇒ 兜底 + 技术失败终态，用户听到「没能把您的请求拆成可以执行的步骤」。"""
+    plan = _build("我没事，继续开", "not json", focus_alert=_alert())
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan
+    assert plan.technical_failure is False
+    assert (plan.plan_mode or "").endswith("_safety_talk"), plan.plan_mode
+
+
+def test_the_talk_the_planner_already_chose_is_left_alone():
+    """规划器本就交出同一条兜底谈话：不动，plan_mode 也不记接管（观测不说谎）。"""
+    plan = _build("别提醒我，继续开就行", _step_reply("chitchat", "chitchat.talk"), focus_alert=_alert())
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+    assert not (plan.plan_mode or "").endswith("_safety_talk"), plan.plan_mode
+
+
+def test_a_refusal_with_another_request_keeps_the_models_plan():
+    """夹着一个请求就不只是拒绝：澄清卡 / 计划仍归模型。"""
+    plan = _build("别提醒我，帮我找个地方", _CLARIFY, focus_alert=_alert())
+    assert not plan.steps and plan.clarify is not None
+    plan = _build("别提醒我了，导航去公司", _step_reply("navigation", "navigation.navigate_to"),
+                  focus_alert=_alert())
+    assert [s.intent for s in plan.steps] == ["navigation.navigate_to"]
+
+
 @pytest.mark.parametrize("focus_alert", [None, "expired"])
-def test_a_refusal_without_an_active_alert_keeps_the_clarify_card(focus_alert):
+def test_a_refusal_without_an_active_alert_keeps_the_models_plan(focus_alert):
     alert = _alert(age_s=3 * 3600) if focus_alert == "expired" else None
     plan = _build("别提醒我，继续开就行", _CLARIFY, focus_alert=alert)
     assert not plan.steps and plan.clarify is not None
+    plan = _build("别提醒我，继续开就行", _step_reply("info", "info.weather"), focus_alert=alert)
+    assert [s.intent for s in plan.steps] == ["info.weather"]
 
 
 def test_the_voice_receipt_verdict_is_left_to_the_engine():

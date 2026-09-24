@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 
+from runtime.affirmation import is_acknowledgment_only
 from runtime.clause_split import split_clauses
 from runtime.question_shape import (DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
                                     is_non_directive_question)
@@ -334,8 +335,9 @@ def driver_state(text: str) -> str:
 
 
 # ── 拒绝安全建议（追加批 K，K-1）─────────────────────────────────────────────────────────
-# 会话里挂着告警时，「别提醒我，继续开就行」是在**拒绝安全建议**——不是别的话题，澄清卡问「「继续开」具体要做什么」
-# 把 chitchat「立场不改」那条出口绕开了（SF4，`8cee1699` 第 2 趟）。三类说法，全是封闭短语：
+# 会话里挂着告警时，「别提醒我，继续开就行」是在**拒绝安全建议**——不是别的话题：它的回答是拿着告警「立场不改」的兜底谈话，
+# 可规划器会给它出澄清卡（SF4，`8cee1699` 第 2 趟）、被「无动作」重试催出一步查天气、或催坏成技术失败（`36a92009` 真栈）。
+# 三类说法，全是封闭短语：
 # 推开建议（别提醒 / 不用管 / 别啰嗦）、坚持继续开（继续开 / 不用停 / 不休息）、自我担保（我没事 / 撑得住）。
 # 问句不算（「现在还能继续开吗」是在问能不能，不是拒绝）；「继续开」后面带宾语的不算（「继续开导航」「继续开空调」）；
 # 「不用提醒我带伞」后面带宾语的不算（那是提醒事项）；「要不休息一下」是提议休息。
@@ -350,11 +352,14 @@ _REFUSAL_RES = (
 
 
 def refuses_safety_advice(text: str) -> bool:
-    """这句话在拒绝安全建议（任一非问句分句命中三类说法之一）。只在会话里挂着告警时有意义，由调用方判。"""
+    """整句**只是**在拒绝安全建议：每个分句要么是拒绝说法（问句不算），要么只是应答（「好了 / 行」，`runtime.affirmation`），
+    且至少有一个拒绝分句。「别提醒我，帮我找个地方」不算——后半句是一个请求，它的澄清卡 / 计划仍归模型。
+    只在会话里挂着告警时有意义，由调用方判。"""
     t = (text or "").strip()
+    refused = False
     for clause in (split_clauses(t) or [t]) if t else []:
-        if is_non_directive_question(clause):
-            continue
-        if any(pattern.search(clause) for pattern in _REFUSAL_RES):
-            return True
-    return False
+        if not is_non_directive_question(clause) and any(p.search(clause) for p in _REFUSAL_RES):
+            refused = True
+        elif not is_acknowledgment_only(clause):
+            return False
+    return refused

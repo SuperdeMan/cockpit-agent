@@ -2222,13 +2222,30 @@ class PlanBuilder:
         # 「立场不改」——那才是正确出口。这一臂比第一臂再窄一格：**只接零步且无澄清卡**的那一路
         # （告警在会话里、这一句本身可能是任何话题，模型问出的澄清卡仍是它的）；这一句已在解除告警
         # （`alert_resolved`）的不算前提。产物同一份 `_talk_only_plan`，plan_mode 同一个后缀。
-        # 追加批 K（K-1，2026-09-24）：这一句**在拒绝安全建议**（`refuses_safety_advice`：别提醒 / 继续开 / 我没事）时
-        # 澄清卡也接管——SF4 第 2 趟（`8cee1699`）犯困告警在场，「别提醒我，继续开就行」出了澄清卡「「继续开」具体要
-        # 做什么？」。拒绝建议不是别的话题，它的正确出口就是拿着告警「立场不改」的兜底谈话；别的话题的澄清卡照旧归模型。
         focus_alert = getattr(getattr(working_set, "focus", None), "safety_alert", None) or {}
+        focus_active = safety_alert_active(focus_alert) and not alert_resolved(text)
+        # 追加批 K（K-1，2026-09-24）：告警在场时，**整句只是在拒绝安全建议**（`refuses_safety_advice`：别提醒 / 继续开 /
+        # 我没事，可夹应答词）⇒ 答案就是拿着告警「立场不改」的兜底谈话，**不管规划产出了什么**。同一句「别提醒我，继续开
+        # 就行」真栈出过四种丢安全线的形态：澄清卡「「继续开」具体要做什么？」（`8cee1699` SF4 第 2 趟）、首轮抢救映射到
+        # vision.describe（批 8）、「无动作」重试催出 `info.weather(今晚)`、重试催坏成技术失败「没能拆成步骤」（后两种
+        # `36a92009` K-1 真栈 10 轮里各 1 次）。夹着别的请求的（「别提醒我，帮我找个地方」）不算，计划 / 澄清卡仍归模型；
+        # 规划器本就交出同一条兜底谈话的不动（观测不说谎）；`addressed` 照旧留给 engine（免唤醒语音的背景话仍静默拒识）。
+        if focus_active and refuses_safety_advice(text):
+            talk = self._talk_only_plan(text, agents)
+            already = (talk is not None and not plan.clarify and not plan.technical_failure
+                       and [(s.agent_id, s.intent) for s in plan.steps]
+                       == [(s.agent_id, s.intent) for s in talk.steps])
+            if talk is not None and not already:
+                logger.info("safety advice refused under an alert in focus → 兜底 Agent 应答（替换 %s）: %s",
+                            [s.intent for s in plan.steps] or ("clarify" if plan.clarify else "empty"), text[:40])
+                plan.steps = talk.steps
+                plan.clarify = None
+                plan.complexity = "simple"
+                plan.technical_failure = False
+                plan.clarify_wanted = False
+                plan.plan_mode = f"{plan.plan_mode or ''}_safety_talk"
         premise_now = _valid_safety_alert(input_safety_alert(text))
-        premise_focus = (safety_alert_active(focus_alert) and not alert_resolved(text)
-                         and (not plan.clarify or refuses_safety_advice(text)))
+        premise_focus = not plan.clarify and focus_active
         if not plan.steps and (premise_now or premise_focus):
             talk = self._talk_only_plan(text, agents)
             if talk is not None:
