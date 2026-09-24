@@ -28,7 +28,8 @@ from runtime.session_facts import (
 from .mem_source import with_provenance
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
                                        alert_level, alert_resolved, alert_signal,
-                                       driver_state, driver_state_mentioned)
+                                       driver_state, driver_state_mentioned,
+                                       refusal_stance, refuses_safety_advice)
 
 logger = logging.getLogger("agent.chitchat")
 
@@ -327,6 +328,13 @@ class ChitchatAgent(BaseAgent):
         safety, alert = _safety_answer(text)
         if safety:              # 安全信号：确定性直答 + 声明会话告警（只提到风险时不声明），零 LLM
             return AgentResult(speech=safety, data={"_safety_alert": alert} if alert else None)
+        # 会话里挂着未解除的告警、这一句只是在拒绝安全建议（「别提醒我，继续开就行」）⇒ 确定性「立场不改」，零 LLM。
+        # 评审四轮批 A 回归（2026-09-24，SF4）：system 里的「立场不改」挡不住模型——MiniMax 一趟答了「可以。」。
+        active = {} if alert_resolved(text) else _active_alert(meta)
+        if active and refuses_safety_advice(text):
+            stance = refusal_stance(active)
+            if stance:
+                return AgentResult(speech=stance)
         if is_execution_audit_question(text):
             # Q6：「刚才实际执行了什么」是**系统持有的事实**，零 LLM。
             # 加提示词治不了它——模型手里根本没有那些数（真栈三次取样三个样，

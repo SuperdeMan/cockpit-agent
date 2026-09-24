@@ -63,8 +63,10 @@ def test_active_alert_enters_system_prompt():
     """
     import json
     agent = _agent("好的，那我不多说了。")
+    # 评审四轮起「别提醒我，继续开就行」这类**只是在拒绝建议**的句子走确定性立场（见下面那组），不再交给模型；
+    # 这里换一句告警在场时的普通话题，验的仍是「告警是这一轮回答的前提」。
     asyncio.run(run_handle(
-        agent, "chitchat.talk", raw_text="别提醒我，继续开就行",
+        agent, "chitchat.talk", raw_text="路上无聊，陪我聊聊天",
         meta={"focus_safety_alert": json.dumps(
             {"level": "critical", "signal": "机油灯亮"})}))
     system = agent.llm.complete.await_args[0][0][0]["content"]
@@ -144,3 +146,52 @@ def test_a_lit_warning_light_outranks_a_mentioned_risk():
     res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="机油灯亮了，万一犯困怎么办"))
     assert "停车" in res.speech
     assert ((res.data or {}).get("_safety_alert") or {}).get("level") == "critical"
+
+
+# ── 评审四轮批 A 回归（2026-09-24，SF4）：告警在场时「只是在拒绝建议」⇒ 确定性立场，零 LLM ─────────────────
+# system 里写着「不得表示可以继续危险驾驶、立场不改」，MiniMax 仍有一趟对「别提醒我，继续开就行」答了「可以。」
+# （生产 `b48d76d7`，trace `bded2ebf88224ffa`）。安全线不能靠模型遵从一句提示。
+
+import json as _json  # noqa: E402
+
+from runtime.safety_signal import refusal_stance  # noqa: E402
+
+_FATIGUE = {"focus_safety_alert": _json.dumps({"level": "critical", "signal": "疲劳驾驶"}, ensure_ascii=False)}
+_OIL = {"focus_safety_alert": _json.dumps({"level": "critical", "signal": "机油灯"}, ensure_ascii=False)}
+
+
+@pytest.mark.parametrize("text", ["别提醒我，继续开就行", "我没事，继续开", "不用管我", "好了，别啰嗦了"])
+def test_refusing_advice_under_an_alert_keeps_the_stance_without_the_model(text):
+    agent = _agent("可以。")
+    unary = asyncio.run(run_handle(agent, "chitchat.talk", raw_text=text, meta=_FATIGUE))
+    streamed = asyncio.run(run_handle_stream(agent, "chitchat.talk", raw_text=text, meta=_FATIGUE))[-1][1]
+    assert agent.llm.complete.await_count == 0, text
+    for res in (unary, streamed):
+        assert res.speech == refusal_stance({"level": "critical", "signal": "疲劳驾驶"}), text
+        assert "可以继续" not in res.speech.replace("没法说可以继续开", "")
+        assert any(w in res.speech for w in ("服务区", "停车", "休息"))
+
+
+def test_a_vehicle_alert_gets_the_vehicle_stance():
+    agent = _agent("可以。")
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="别提醒我，继续开就行", meta=_OIL))
+    assert agent.llm.complete.await_count == 0
+    assert "机油灯还没有排除" in res.speech and "停车" in res.speech
+
+
+@pytest.mark.parametrize("text, meta", [
+    ("别提醒我，帮我找个服务区", _FATIGUE),     # 拒绝 + 一个请求：不是「只在拒绝」，归模型
+    ("别提醒我，继续开就行", {}),               # 没有告警：普通闲聊
+    ("机油灯已经灭了，继续开就行", _OIL),       # 这一句在解除告警
+])
+def test_the_stance_only_answers_a_bare_refusal_under_a_live_alert(text, meta):
+    agent = _agent("好的。")
+    asyncio.run(run_handle(agent, "chitchat.talk", raw_text=text, meta=meta))
+    assert agent.llm.complete.await_count == 1, text
+
+
+def test_refusal_stance_text_by_alert_kind():
+    assert refusal_stance({}) == ""
+    assert "疲劳驾驶的风险还在" in refusal_stance({"level": "critical", "signal": "疲劳驾驶"})
+    assert "代驾" in refusal_stance({"level": "critical", "signal": "酒后/服药驾驶"})
+    assert "降低车速" in refusal_stance({"level": "amber", "signal": "胎压报警"})

@@ -360,6 +360,37 @@ _REFUSAL_RES = (
 )
 
 
+_REFUSAL_STANCE_OPENING = "好，我不再反复提醒。"
+_REFUSAL_STANCE_BY_STATE = {
+    "fatigue": "但疲劳驾驶的风险还在，我没法说可以继续开——请尽快找服务区或安全的地方停车，休息 15–20 分钟再走。",
+    "alcohol": "但酒后或服药后驾驶的风险不会因为少提醒就消失，我没法说可以继续开——请安全停车，叫代驾或打车。",
+    "unwell": "但身体不适还没缓解，我没法说可以继续开——请先在安全位置停车缓一缓，症状不缓解就别继续开。",
+}
+
+
+def refusal_stance(alert: dict | None) -> str:
+    """会话里挂着告警、用户**只是在拒绝安全建议**（`refuses_safety_advice`）时的确定性回答：不再啰嗦，但立场不改。
+
+    评审四轮批 A 回归（2026-09-24，SF4）：兜底谈话的 system 里写着「不得表示可以继续危险驾驶、立场不改」，MiniMax 仍有一趟
+    对「别提醒我，继续开就行」答了「可以。」——安全线不能靠模型遵从一句提示。驾驶员状态答那个状态的话（追加批 M 同一张表），
+    车辆告警答「还没有排除」+ 按级别的处置。告警为空返回空串。
+    """
+    alert = alert if isinstance(alert, dict) else {}
+    signal = str(alert.get("signal") or "").strip()
+    level = str(alert.get("level") or "")
+    if not signal and level not in ("critical", "amber"):
+        return ""
+    state = driver_state_of_signal(signal)
+    if state:
+        return _REFUSAL_STANCE_OPENING + _REFUSAL_STANCE_BY_STATE[state]
+    name = signal or "车辆告警"
+    if level == "critical":
+        return (_REFUSAL_STANCE_OPENING + f"但{name}还没有排除，我没法说可以继续开——"
+                "请尽快在安全位置靠边停车检查。")
+    return (_REFUSAL_STANCE_OPENING + f"但{name}还没有处理，请降低车速、避免长时间高速行驶，"
+            "尽快就近检查。")
+
+
 def refuses_safety_advice(text: str) -> bool:
     """整句**只是**在拒绝安全建议：每个分句要么是拒绝说法（问句不算），要么只是应答（「好了 / 行」，`runtime.affirmation`），
     且至少有一个拒绝分句。「别提醒我，帮我找个地方」不算——后半句是一个请求，它的澄清卡 / 计划仍归模型。
