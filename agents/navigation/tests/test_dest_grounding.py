@@ -515,3 +515,59 @@ def test_search_poi_does_not_auto_navigate_to_a_loose_landmark_match_in_another_
         slots={"keyword": "云岚国际中心"}, raw_text="导航去云岚国际中心", meta=SZ))
     assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
     assert "请补充城市" in (res.follow_up or ""), res.follow_up
+
+
+# ── 原话不是地标描述时，地标解析给的候选必须和原话沾边（`a7e664f3` 真栈 CT4 第 3 趟）──────────────
+#
+# 「附近的咖啡店」之后的「导航到第二家」被规划成 `search_poi {keyword: 第二家}`：搜不到 ⇒ 原话交给地标解析，模型从它提示里的示例
+# （「苏州的大秋裤 → 东方之门」）猜了一个名胜；检索结果与这个候选严格包含，于是被当成已验证，出发去 1478 km 外的苏州。
+# 地标解析本来是给「像船的建筑」这类描述用的；原话只是名字没对上时，候选若和原话一个字都不沾，它就是猜出来的。
+
+_SUZHOU_GATE = POI(id="s1", name="东方之门", address="星融街与星港街辅路交叉口西南140米",
+                   category="风景名胜;风景名胜相关;旅游景点", lat=31.3190, lng=120.6655)
+
+
+def test_search_poi_does_not_drive_to_a_landmark_guessed_out_of_nothing():
+    poi = _KeywordPoi({"东方之门": [_SUZHOU_GATE]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["东方之门"]), "navigation.search_poi",
+        slots={"keyword": "第二家"}, raw_text="导航到第二家", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+
+
+def test_navigate_to_does_not_drive_to_a_landmark_guessed_out_of_nothing():
+    poi = _KeywordPoi({"东方之门": [_SUZHOU_GATE]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["东方之门"]), "navigation.navigate_to",
+        slots={"destination": "第二家"}, raw_text="导航到第二家", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert res.status == "need_slot", (res.status, res.speech)
+
+
+def test_a_visual_description_still_crosses_cities():
+    """对照：原话就是地标描述（「像秋裤一样的大楼」）⇒ 那正是地标解析的用途，严格匹配照常跨城。"""
+    poi = _KeywordPoi({"东方之门": [_SUZHOU_GATE]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["东方之门"]), "navigation.navigate_to",
+        slots={"destination": "苏州那个像秋裤一样的大楼"}, raw_text="导航去苏州那个像秋裤一样的大楼", meta=SZ))
+    assert _nav_dest(res) == "东方之门"
+
+
+def test_a_guessed_candidate_that_shares_the_users_words_still_crosses_cities():
+    """对照：名字没对上、地标解析给出的候选和原话沾边（「上海虹桥火车站」→「上海虹桥站」）⇒ 照常跨城。"""
+    station = POI(id="h1", name="上海虹桥站", category="交通设施服务;火车站;火车站", lat=31.1944, lng=121.3200)
+    poi = _KeywordPoi({"上海虹桥站": [station]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["上海虹桥站"]), "navigation.navigate_to",
+        slots={"destination": "上海虹桥火车站"}, raw_text="导航去上海虹桥火车站", meta=SZ))
+    assert _nav_dest(res) == "上海虹桥站"
+
+
+def test_a_guess_after_an_unverified_nearby_result_does_not_cross_cities():
+    """中间那个入口：近侧有结果但名字没对上 ⇒ 全国重搜也没对上 ⇒ 地标猜测。猜出来的东方之门不采信，退回本地弱匹配（照旧报实际名）。"""
+    shop = POI(id="l2", name="美宜佳(华富洋大厦店)", category="购物服务;便利店;便利店", lat=22.5401, lng=113.9420)
+    poi = _KeywordPoi({"第二家": [shop], "东方之门": [_SUZHOU_GATE]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["东方之门"]), "navigation.navigate_to",
+        slots={"destination": "第二家"}, raw_text="导航到第二家", meta=SZ))
+    assert "东方之门" not in [a["payload"].get("destination") for a in res.actions if a["type"] == "navigate"]

@@ -723,8 +723,10 @@ class NavigationAgent(BaseAgent):
             first = results[0]
             # 与 `_find_destination` 兜底同一道闸：名字对不上（地标候选只有宽松匹配的也算对不上）、又在本地半径之外的第一个结果
             # 不许自动导过去——规划把「导航去X」落成 search_poi 时，这里就是北京那一跳的第二个入口
-            verified = (self._dest_matches(resolved_keyword, first.name)
-                        or self._dest_matches(keyword, first.name))
+            # 地标解析的候选只在原话是地标描述、或候选与关键词沾边时才算用户说的那个地方（`a7e664f3` 真栈：「第二家」→「东方之门」）
+            grounded = (is_visual_landmark or resolved_keyword == keyword
+                        or name_matches(keyword, resolved_keyword))
+            verified = grounded and self._dest_matches(resolved_keyword, first.name)
             if not verified and self._beyond_local_radius(first, near) is not None:
                 logger.info("search_poi: unverified first result beyond the local radius, not navigating: %s → %s",
                             keyword, first.name)
@@ -2239,7 +2241,7 @@ class NavigationAgent(BaseAgent):
                 logger.warning("destination POI search failed: %s", e)
                 return []
 
-        async def _via_landmark() -> tuple[str, list]:
+        async def _via_landmark(guess: bool = False) -> tuple[str, list]:
             for candidate in await self._landmark_candidates(description):
                 try:
                     results = await self.poi.search(candidate, limit=limit, meta=meta)
@@ -2250,8 +2252,11 @@ class NavigationAgent(BaseAgent):
                 # 只接受 top 结果名与候选实质匹配的，否则换下一个候选（如官方名“中国华润大厦”）。
                 if results and name_matches(candidate, results[0].name):
                     # 宽松匹配（2 字公共子串）只在本地半径内算验证通过；候选与结果严格包含的照旧跨城。`2f8f92be` 真栈：模型把
-                    # 「云岚国际中心」原样当候选，北京的「云岚之境美容美体中心」共享「云岚 / 中心」就被当成已验证，出发去 1940 km 外
-                    if (self._dest_matches(candidate, results[0].name)
+                    # 「云岚国际中心」原样当候选，北京的「云岚之境美容美体中心」共享「云岚 / 中心」就被当成已验证，出发去 1940 km 外。
+                    # `guess`：原话不是地标描述、只是名字没对上才走到这里——候选和原话一个字都不沾，就是模型猜出来的名胜（`a7e664f3`
+                    # 真栈：「第二家」→ 苏州的「东方之门」1478 km，它就在解析提示的示例里），同样只在本地半径内采信
+                    grounded = not guess or name_matches(description, candidate)
+                    if ((grounded and self._dest_matches(candidate, results[0].name))
                             or self._beyond_local_radius(results[0], near) is None):
                         return candidate, results
                     logger.info("loose landmark match beyond the local radius, not taken: %s → %s",
@@ -2332,12 +2337,12 @@ class NavigationAgent(BaseAgent):
                                 return description, [r] + [x for x in wide if x is not r]
                     elif self._dest_matches(description, wide[0].name):
                         return description, wide
-            name, lm = await _via_landmark()
+            name, lm = await _via_landmark(guess=True)
             if lm:
                 return name, lm
             # 兜底：本地半径内报出实际名让用户纠正；之外的不采信（评审四轮真栈：导去 1940 km 外）
             return description, self._local_only(description, results, near)
-        return await _via_landmark()
+        return await _via_landmark(guess=True)
 
     async def _landmark_candidates(self, description: str) -> list[str]:
         """把视觉化地标描述转换为少量地图可检索的正式 POI 候选（共享解析器，导航/充电共用）。"""

@@ -1612,8 +1612,10 @@ CASES = [
      "known": "red",
      "turns": [
          {"say": "附近的咖啡店", "expect": {"card_type": "place_list"}},
+         # `a7e664f3` 第 3 趟：规划成 `search_poi {keyword: 第二家}`，地标解析猜出苏州的「东方之门」、导去 1478 km 外——判执行出去的目的地
          {"say": "导航到第二家",
-          "expect": {"actions_include": ["navigate"], "names_item_from": {"turn": 1, "index": 2}}},
+          "expect": {"actions_include": ["navigate"], "names_item_from": {"turn": 1, "index": 2},
+                     "navigate_within_km": 150}},
          {"say": "附近的咖啡店", "sid": 1, "expect": {"card_type": "place_list"}},
          {"say": "第二家离这里多远", "sid": 1,
           "expect": {"no_actions": True, "speech_has": ["公里"],
