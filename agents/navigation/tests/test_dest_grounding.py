@@ -445,3 +445,73 @@ def test_search_poi_without_a_navigation_phrase_still_lists_what_it_found():
         raw_text="搜一下云岚国际中心", meta=SZ))
     assert not res.actions
     assert "云岚之境美容美体中心" in res.speech
+
+
+# ── 地标解析那一路的宽松匹配（`2f8f92be` 真栈 RS36 第 2 / 3 趟）──────────────────────────
+#
+# 名字校验 / 全国重搜都没过之后走地标解析：模型把「云岚国际中心」原样当候选返回，候选检索的第一条是北京那家，
+# `name_matches` 的「2 字公共子串」（云岚 / 中心）判它通过 ⇒ 被当成**已验证**的目的地，本地半径那道闸根本没机会看。
+
+class _LandmarkLlm:
+    def __init__(self, candidates):
+        self._raw = __import__("json").dumps(candidates, ensure_ascii=False)
+
+    async def complete(self, *args, **kwargs):
+        return self._raw
+
+
+def _agent_with_landmarks(poi, candidates):
+    agent = NavigationAgent()
+    agent.poi = poi
+    agent.llm = _LandmarkLlm(candidates)
+    return agent
+
+
+def test_a_loose_landmark_match_in_another_city_is_not_driven_to():
+    poi = _RecordingPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["云岚国际中心"]), "navigation.navigate_to",
+        slots={"destination": "云岚国际中心"}, raw_text="导航去云岚国际中心", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert res.status == "need_slot", (res.status, res.speech)
+
+
+def test_a_loose_landmark_match_nearby_is_still_taken():
+    """对照：俗称 → 官方名（「华润春笋大厦」→「中国华润大厦」只有宽松匹配）在本地照旧采信。"""
+    tower = POI(id="c1", name="中国华润大厦", category="商务住宅;楼宇;商务写字楼", lat=22.5144, lng=113.9442)
+    poi = _RecordingPoi(near_results=[POI(id="n1", name="华润万家(科技园店)", lat=22.54, lng=113.95)],
+                        wide_results=[tower])
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["华润春笋大厦"]), "navigation.navigate_to",
+        slots={"destination": "华润春笋大厦"}, raw_text="导航去华润春笋大厦", meta=SZ))
+    assert _nav_dest(res) == "中国华润大厦"
+
+
+def test_a_strict_landmark_match_in_another_city_still_navigates():
+    """对照：地标描述解析成官方名、检索结果与它严格包含 ⇒ 跨城照常导航（「北京的大裤衩」从深圳出发）。"""
+    cctv = POI(id="b2", name="中央电视台总部大楼", category="商务住宅;楼宇;商务写字楼", lat=39.9151, lng=116.4632)
+    poi = _RecordingPoi(near_results=[], wide_results=[cctv])
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["中央电视台总部大楼"]), "navigation.navigate_to",
+        slots={"destination": "北京的大裤衩"}, raw_text="导航去北京的大裤衩", meta=SZ))
+    assert _nav_dest(res) == "中央电视台总部大楼"
+
+
+class _KeywordPoi:
+    """按关键词返回：原关键词搜不到、地标候选搜得到（`search_poi` 的候选检索与原检索都带 near）。"""
+
+    def __init__(self, by_keyword):
+        self.by_keyword = by_keyword
+
+    async def search(self, keyword, near=None, **kw):
+        return list(self.by_keyword.get(keyword, []))
+
+
+def test_search_poi_does_not_auto_navigate_to_a_loose_landmark_match_in_another_city():
+    """修前 `search_poi` 把「地标候选解析过」一律当已验证：候选与结果只有宽松匹配、又在北京 ⇒ 照样自动导过去。"""
+    poi = _KeywordPoi({"云岚国际中心(北京)": [_BEIJING_SALON]})
+    res = asyncio.run(run_handle(
+        _agent_with_landmarks(poi, ["云岚国际中心(北京)"]), "navigation.search_poi",
+        slots={"keyword": "云岚国际中心"}, raw_text="导航去云岚国际中心", meta=SZ))
+    assert not [a for a in res.actions if a["type"] == "navigate"], res.actions
+    assert "请补充城市" in (res.follow_up or ""), res.follow_up

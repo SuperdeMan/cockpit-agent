@@ -29,6 +29,7 @@ from .stream_state import (
 from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
+from .reply_position import reply_position
 from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
@@ -163,11 +164,6 @@ _NAMING_PUNCT_RE = re.compile(
     r"[\s，,、。．.！!？?~～·…:：;；\"'“”‘’「」『』《》〈〉（）()\[\]【】\-—_/|]+")
 _CN_NUMERAL_RUN_RE = re.compile(rf"[{CN_NUM_CHARS}零〇]+")
 _DIGIT_RUN_RE = re.compile(r"\d+")
-#: 澄清选择的三种**位置性**形态（W10；评审四轮 R4-02 起还用来判「这句话只说了第几个」）。
-_CLARIFY_ORDINAL_RE = re.compile(
-    r"(?:选|要|就)?\s*第\s*([一二三四五六七八九十\d]+)\s*(?:个|项|条|种|款)?(?:吧|呢)?")
-_CLARIFY_NUMBER_RE = re.compile(r"\d{1,2}")
-_CLARIFY_HAO_RE = re.compile(r"([一二三四五六七八九十\d]+)\s*号(?:方案|选项)?")
 
 
 def _naming_core(text: str, *, neutral: bool) -> str:
@@ -2378,17 +2374,8 @@ class PlannerEngine:
 
     @staticmethod
     def _clarify_position(text: str) -> int | None:
-        """裸序数 / 纯数字 /「N 号」→ 第几项（1 起）；不是这三种形态 ⇒ None。选项 label / send_text 不在这里。"""
-        t = str(text or "").strip().rstrip("。！!？?").strip()
-        m = _CLARIFY_ORDINAL_RE.fullmatch(t)
-        if m:
-            return cn_int(m.group(1))
-        if _CLARIFY_NUMBER_RE.fullmatch(t):
-            return int(t)
-        m = _CLARIFY_HAO_RE.fullmatch(t)
-        if m:
-            return cn_int(m.group(1))
-        return None
+        """裸序数 / 纯数字 /「N 号」→ 第几项（1 起）；判据唯一一份在 `reply_position`（规划的序数写步闸读同一份）。"""
+        return reply_position(text)
 
     @staticmethod
     def _clarify_reply_is_positional(text: str) -> bool:

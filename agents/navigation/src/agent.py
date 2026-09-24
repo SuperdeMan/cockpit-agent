@@ -721,9 +721,10 @@ class NavigationAgent(BaseAgent):
 
         if results and not is_category and self._is_navigation_phrase(raw_text):
             first = results[0]
-            # 与 `_find_destination` 兜底同一道闸：名字对不上（地标候选解析过的算对得上）、又在本地半径之外的第一个结果
+            # 与 `_find_destination` 兜底同一道闸：名字对不上（地标候选只有宽松匹配的也算对不上）、又在本地半径之外的第一个结果
             # 不许自动导过去——规划把「导航去X」落成 search_poi 时，这里就是北京那一跳的第二个入口
-            verified = resolved_keyword != keyword or self._dest_matches(keyword, first.name)
+            verified = (self._dest_matches(resolved_keyword, first.name)
+                        or self._dest_matches(keyword, first.name))
             if not verified and self._beyond_local_radius(first, near) is not None:
                 logger.info("search_poi: unverified first result beyond the local radius, not navigating: %s → %s",
                             keyword, first.name)
@@ -2248,7 +2249,13 @@ class NavigationAgent(BaseAgent):
                 # 高德对非官方名会返回同位置的邻近无关 POI（搜“华润春笋大厦”→V东滨店）：
                 # 只接受 top 结果名与候选实质匹配的，否则换下一个候选（如官方名“中国华润大厦”）。
                 if results and name_matches(candidate, results[0].name):
-                    return candidate, results
+                    # 宽松匹配（2 字公共子串）只在本地半径内算验证通过；候选与结果严格包含的照旧跨城。`2f8f92be` 真栈：模型把
+                    # 「云岚国际中心」原样当候选，北京的「云岚之境美容美体中心」共享「云岚 / 中心」就被当成已验证，出发去 1940 km 外
+                    if (self._dest_matches(candidate, results[0].name)
+                            or self._beyond_local_radius(results[0], near) is None):
+                        return candidate, results
+                    logger.info("loose landmark match beyond the local radius, not taken: %s → %s",
+                                candidate, results[0].name)
             return "", []
 
         if is_landmark_description(description):

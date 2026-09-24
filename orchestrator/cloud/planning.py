@@ -22,6 +22,7 @@ from .context import (
     _valid_safety_alert,
     assemble_budgeted_catalog,
     input_safety_alert,
+    resolve_candidate_scope,
     safety_alert_active,
 )
 from . import pending_cancel
@@ -45,6 +46,7 @@ from runtime.question_shape import (
     is_reference_question,
 )
 from .step_grounding import opens_as_instruction, step_naming_score
+from .reply_position import reply_position
 from runtime.reported_speech import is_reported_speech
 from runtime.safety_signal import alert_resolved, refuses_safety_advice
 
@@ -1844,9 +1846,9 @@ class PlanBuilder:
                 input_source=str((ctx.prefs or {}).get("input_source", ""))).as_attr()
             # 两个 build 出口共用同一终结器：blocked 后只允许未确认的 talk 兜底，
             # 否则保持空计划 fail closed；不能由早退路径绕开确认写安全闸。
-            return self._apply_ack_write_guard(
+            return self._apply_ordinal_write_guard(self._apply_ack_write_guard(
                 self._apply_question_side_effect_guard(focused_plan, text, agents),
-                text, working_set, agents)
+                text, working_set, agents), text, working_set, agents)
 
         # M0b Skill 层（Full Migration 后默认 full）：canary/full=注入块；shadow=只检索
         # 记录；off=注入关（debug 档，无领域知识）。词法档零网络同步计算；hybrid 档一次
@@ -2244,6 +2246,8 @@ class PlanBuilder:
         plan = self._apply_question_side_effect_guard(plan, text, agents)
         # 追加批 I：纯应答（「可以，已为您执行」）长不出写步——同一个终结器位置，两个出口都挂。
         plan = self._apply_ack_write_guard(plan, text, working_set, agents)
+        # 评审四轮 R4-02 收尾：裸序数（「第二个」）长不出与所选那一项无关的写步——同一个终结器位置，两个出口都挂。
+        plan = self._apply_ordinal_write_guard(plan, text, working_set, agents)
         # ── 安全闸二：安全信号在场时不许以「澄清 / 没听清」收场（余项 ①，2026-08-29）──
         # 挂在常规规划出口、紧随终结器之后：上面那条只管「问句被规划成端侧写或需确认步骤之后
         # 空了」，这条管**planner 自己就没产出步**的那一类——真栈取样里它才是主形态。
@@ -3428,6 +3432,74 @@ class PlanBuilder:
         plan.clarify = None
         plan.complexity = "simple"
         plan.plan_mode = f"{plan.plan_mode or ''}_ack_write_blocked"
+        return plan
+
+    #: 候选项名字的「主干」：去掉括号注记与空白 / 连接符再比（「库迪咖啡(海王银河科技大厦店)」≈「库迪咖啡（海王银河…）」≈「库迪咖啡」）。
+    _ITEM_NOTE_RE = re.compile(r"[（(].*?[)）]")
+    _ITEM_PUNCT_RE = re.compile(r"[\s·,，\-—]")
+
+    @classmethod
+    def _step_names_item(cls, step, name: str) -> bool:
+        """这一步的某个槽值点名了这一项吗：去掉括号注记后任一方向包含，且较短的一方 ≥2 字。"""
+        core = cls._ITEM_PUNCT_RE.sub("", cls._ITEM_NOTE_RE.sub("", str(name or "")))
+        if len(core) < 2:
+            return False
+        for value in (getattr(step, "slots", None) or {}).values():
+            for raw in (value if isinstance(value, list) else [value]):
+                v = cls._ITEM_PUNCT_RE.sub("", cls._ITEM_NOTE_RE.sub("", str(raw or "")))
+                if len(v) >= 2 and (v in core or core in v):
+                    return True
+        return False
+
+    def _apply_ordinal_write_guard(self, plan: Plan, text: str, working_set,
+                                   agents: list = None) -> Plan:
+        """评审四轮 R4-02 收尾：**裸序数长不出与所选那一项无关的写步。**
+
+        `2f8f92be` 真栈 RS33：咖啡店列表之后的「第二个」被规划成 `reminder.cancel {index: 2}`（声明为写、不需确认——探针用户恰好
+        没有提醒，否则第二条提醒被静默删掉）；历史上同一句还被规划成 `reminder.cancel {title: 第二个}`。「第 N 个」指的是**最新那份
+        候选的第 N 项**（归属与引擎澄清分支同一条：回复归最近的提示，`resolve_candidate_scope` 同一份口径）；一个写步既不点名那一项、
+        也不是那份列表产生方自己的能力，就不是这句回复指向的事。去掉这样的写步（连同依赖它的步），只读步不管；一步不剩就换兜底谈话
+        （同纯应答写步闸）。没有能指向的列表（台账为空 / 序号越界）⇒ 裸序数授权不了任何写步。
+        真实客户端大多在发送前按最新一张卡改写序数（HMI / App `routeSend`）；带句号的语音「第二个。」与协议层直发的会走到这里。
+        """
+        index = reply_position(text)
+        if index is None or not plan.steps:
+            return plan
+        writes = self._write_steps(plan.steps)
+        if not writes:
+            return plan
+        entry, _named = resolve_candidate_scope(text, getattr(working_set, "focus", None))
+        items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
+        item = items[index - 1] if 0 < index <= len(items) else None
+        producer = str((entry or {}).get("agent_id") or "")
+        name = str((item or {}).get("name") or "")
+        kept = {id(step) for step in writes
+                if item is not None and ((producer and step.agent_id == producer)
+                                         or self._step_names_item(step, name))}
+        if len(kept) == len(writes):
+            return plan
+        dropped = {step.id for step in writes if id(step) not in kept}
+        changed = True
+        while changed:                  # 依赖被去掉的写步的步一并去掉（槽引用断了）
+            changed = False
+            for step in plan.steps:
+                if step.id not in dropped and set(step.depends_on or []) & dropped:
+                    dropped.add(step.id)
+                    changed = True
+        logger.warning("Bare ordinal %r planned write step(s) %s unrelated to item %d of the newest list "
+                       "(%r from %s); dropping them", text[:20],
+                       [step.intent for step in plan.steps if step.id in dropped], index, name[:30],
+                       producer or "no list")
+        remaining = [step for step in plan.steps if step.id not in dropped]
+        if remaining:
+            plan.steps = remaining
+            plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_trimmed"
+            return plan
+        talk = self._talk_only_plan(text, agents)
+        plan.steps = list(talk.steps) if talk is not None else []
+        plan.clarify = None
+        plan.complexity = "simple"
+        plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_blocked"
         return plan
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:

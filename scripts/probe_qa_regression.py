@@ -382,9 +382,11 @@ CASES = [
          {"say": "云岚国际中心",
           "expect": {"card_type": "intent_choice", "has_operation_id": True,
                      "no_actions": True}},
+         # `bda5af71` / `2f8f92be` 出了卡的那一趟「第一个」都导去了 2400 km 外北京的「云岚之境美容美体中心」（地标解析的宽松名字匹配），
+         # 本条的判据不看距离、照判 PASS——评审四轮批 E 起加上执行出去的目的地距离
          {"say": "第一个",
           "expect": {"closes_op_from": 1, "speech_not": ["没听清"],
-                     "card_type_not": "intent_choice"}},
+                     "card_type_not": "intent_choice", "navigate_within_km": 150}},
      ]},
     # W06 × W07（评审 §3.2，2026-09-20）：「改成 7 点半」是改口不是新任务。模型标 `acts=correct`
     # 且只写 arrive_by 时，engine 从活动任务帧继承 destination ⇒ 第二轮的 navigate 动作仍指向
@@ -1485,8 +1487,9 @@ CASES = [
          {"say": "附近的咖啡店", "expect": {"card_type": "place_list"}},
          # `bda5af71` 第 1 趟判了 PASS，实际是规划把旧澄清的「云岚国际中心」当目的地、第二家当途经点，导去 2400 km 外北京的
          # 「云岚之境美容美体中心」——话术里点到了第二家的名字，排除词只写了「云岚国际中心」。距离判据判的是执行出去的目的地。
+         # `2f8f92be` 第 1 / 3 趟：规划成 `reminder.cancel {index: 2}`（「没找到这条提醒…」）——删提醒不出 action，判话术里的「提醒」
          {"say": "第二个",
-          "expect": {"names_item_from": {"turn": 2, "index": 2}, "speech_not": ["云岚"],
+          "expect": {"names_item_from": {"turn": 2, "index": 2}, "speech_not": ["云岚", "提醒"],
                      "navigate_within_km": 150}},
      ]},
     # ── 评审四轮批 B（R4-01）：普通应答不被事务确认截获 ─────────────────────────────────────────
