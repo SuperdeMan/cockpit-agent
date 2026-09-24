@@ -1,6 +1,6 @@
 """问规范 / 注意事项 / 条件的问句不执行声明为写的云侧步（评审三轮追加批 L，2026-09-24；设计 §15）。
 
-「开长途前要注意些什么」真栈两次摸到改状态的云侧写：`8cee1699` 基线一趟 `scene.activate`「长途驾驶」（没有同名场景才没执行——
+「开长途前要注意些什么」真栈两次摸到改状态的云侧写：`fc1f5dde`（批 J 修前基线）一趟 `scene.activate`「长途驾驶」（没有同名场景才没执行——
 匹配上会直接下发非危险动作），`62414223` 基线一趟 `scene.create`「长途自驾模式，共 11 个动作…座椅放平到105度」挂出确认卡。问句闸只拦
 端侧写与需确认的步。扩到**全部**问句会误伤：collector 426 轮声明写步里被判成问句的 13 轮全是正当的（条件指令、嵌入式疑问、「去惠州怎么
 充电」→ 充电规划、「介绍一下…」→ 深度调研）；只扩「规范 / 注意事项 / 条件」这一类（`is_reference_question`），历史 27 轮里命中 2、误伤 0。
@@ -63,7 +63,7 @@ def _build(text, *pairs):
 
 
 @pytest.mark.parametrize("text, pair", [
-    ("开长途前要注意些什么", ("scene-orchestrator", "scene.activate")),   # `8cee1699` 基线
+    ("开长途前要注意些什么", ("scene-orchestrator", "scene.activate")),   # `fc1f5dde` 基线
     ("开长途前要注意些什么", ("scene-orchestrator", "scene.create")),     # `62414223` 基线
     ("去惠州要注意些什么", ("charging-planner", "charging.plan")),
 ])
