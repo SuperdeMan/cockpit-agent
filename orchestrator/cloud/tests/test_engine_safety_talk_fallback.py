@@ -67,8 +67,9 @@ def _build(text: str, reply: str, *, focus_alert: dict | None):
                                      PlanContext(session_id="t")))
 
 
-def test_empty_plan_under_an_active_focus_alert_becomes_a_talk():
-    plan = _build("别提醒我，继续开就行", _NOT_ADDRESSED, focus_alert=_alert())
+@pytest.mark.parametrize("text", ["别提醒我，继续开就行", "还要开两个小时"])   # 后一句不是拒绝：零步无澄清卡的臂不看说法
+def test_empty_plan_under_an_active_focus_alert_becomes_a_talk(text):
+    plan = _build(text, _NOT_ADDRESSED, focus_alert=_alert())
     assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan
     assert plan.steps[0].response_only is True
     assert (plan.plan_mode or "").endswith("_safety_talk"), plan.plan_mode
@@ -96,6 +97,23 @@ def test_a_clarify_card_survives_the_focus_arm():
     plan = _build("导航去那家", _CLARIFY, focus_alert=_alert())
     assert not plan.steps and plan.clarify is not None
     assert not (plan.plan_mode or "").endswith("_safety_talk")
+
+
+@pytest.mark.parametrize("text", ["别提醒我，继续开就行", "我没事，继续开", "不用停，我撑得住"])
+def test_a_refusal_of_safety_advice_does_not_get_a_clarify_card(text):
+    """追加批 K（K-1，设计 §14）：SF4 第 2 趟（`8cee1699`）——焦点里有犯困告警，「别提醒我，继续开就行」规划器出了澄清卡
+    「「继续开」具体要做什么？」，把 chitchat「立场不改」那条出口绕开了。这句话在**拒绝安全建议**，不是别的话题。"""
+    plan = _build(text, _CLARIFY, focus_alert=_alert())
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"], plan
+    assert plan.clarify is None
+    assert (plan.plan_mode or "").endswith("_safety_talk"), plan.plan_mode
+
+
+@pytest.mark.parametrize("focus_alert", [None, "expired"])
+def test_a_refusal_without_an_active_alert_keeps_the_clarify_card(focus_alert):
+    alert = _alert(age_s=3 * 3600) if focus_alert == "expired" else None
+    plan = _build("别提醒我，继续开就行", _CLARIFY, focus_alert=alert)
+    assert not plan.steps and plan.clarify is not None
 
 
 def test_the_voice_receipt_verdict_is_left_to_the_engine():

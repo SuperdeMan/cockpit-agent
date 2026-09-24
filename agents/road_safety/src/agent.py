@@ -21,7 +21,8 @@ from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED, NEED_CONFIRM
 from agents._sdk.location import current_location_from_meta
 from agents._sdk.provenance import attach
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
-                                   alert_resolved, alert_signal, driver_state)
+                                   alert_resolved, alert_signal, driver_state,
+                                   driver_state_mentioned)
 from runtime.clock import hour_of as clock_hour
 from runtime.proactive import P_CRITICAL, publish_proactive
 
@@ -289,6 +290,12 @@ class RoadSafetyAgent(BaseAgent):
         if alert:
             return self._alert_bound_advice(alert)
 
+        # 追加批 K：提到这类风险、但不是此刻自述（「喝酒后多久能开车」「如果喝了酒还能开车吗」）——排在目的地之前：
+        # 「如果喝了酒开去上海安全吗」要的也是这条常识，不是上海的天气与路线。
+        mentioned = driver_state_mentioned(intent.raw_text or "")
+        if mentioned:
+            return self._driver_state_topic_advice(mentioned)
+
         dest = intent.slots.get("destination", "").strip()
         if not dest:
             # badcase 11db5215：「今天天气怎么样，适合出行吗」这类泛出行询问被规划到
@@ -414,6 +421,9 @@ class RoadSafetyAgent(BaseAgent):
         alert = _focus_safety_alert(meta)
         if alert:
             return self._alert_bound_advice(alert)
+        mentioned = driver_state_mentioned(intent.raw_text or "")
+        if mentioned:                   # 追加批 K：「疲劳驾驶有什么危害」「万一开车时犯困怎么办」
+            return self._driver_state_topic_advice(mentioned)
         # 追加批 J：「怎么缓解开车时的疲劳」问的是方法、不是自述——按问题答，不报天气。
         if _KNOWLEDGE_ASK_RE.search(intent.raw_text or ""):
             return await self._knowledge_advice(intent.raw_text or "")
@@ -448,6 +458,18 @@ class RoadSafetyAgent(BaseAgent):
                            "road-safety", mode="deterministic",
                            note="确定性安全判据，未经模型生成"),
             follow_up=spec["follow_up"],
+        )
+
+    def _driver_state_topic_advice(self, state: str) -> AgentResult:
+        """提到这类风险、但不是此刻自述时的确定性回答（追加批 K）：同一类安全常识，**不断言「您现在」、不登记会话告警**
+        ——修前「疲劳驾驶有什么危害」答「您现在的状态不适合继续开」并登记一条 critical，之后整场会话都按犯困劝停车。"""
+        speech = DRIVER_STATE_ADVICE[state]["topic_speech"]
+        return AgentResult(
+            speech=speech,
+            data={"driver_state_mentioned": state},
+            ui_card=attach({"type": "safety_advice", "advice": speech},
+                           "road-safety", mode="deterministic",
+                           note="确定性安全常识，未经模型生成"),
         )
 
     async def _general_advice(self, ctx, meta) -> AgentResult:

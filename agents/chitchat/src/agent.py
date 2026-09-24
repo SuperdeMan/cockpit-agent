@@ -28,7 +28,7 @@ from runtime.session_facts import (
 from .mem_source import with_provenance
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_advice,
                                        alert_level, alert_resolved, alert_signal,
-                                       driver_state)
+                                       driver_state, driver_state_mentioned)
 
 logger = logging.getLogger("agent.chitchat")
 
@@ -144,7 +144,7 @@ def _length(meta: dict) -> tuple[int, str]:
 
 
 def _safety_answer(text: str) -> tuple[str, dict]:
-    """安全信号的**确定性**直答。返回 (话术, 告警声明)；不是安全问题返回 ("", {})。
+    """安全信号的**确定性**直答。返回 (话术, 告警声明)；不是安全问题返回 ("", {})；只提到风险（话题 / 假设句）时告警声明为空。
 
     与 `_clock_answer` / `_identity_answer` 同一形态、同一理由：
     **系统持有的判据绝不交给 LLM 答**。这里持有的是「这句话里有没有安全信号」。
@@ -164,6 +164,11 @@ def _safety_answer(text: str) -> tuple[str, dict]:
     if level:
         return (alert_advice(level),
                 {"level": level, "signal": alert_signal(text) or "车辆告警"})
+    # 追加批 K：提到这类风险、但不是此刻自述（「喝酒后多久能开车」「万一开车时犯困怎么办」）——同一类安全常识，
+    # 不断言「您现在」、不声明会话告警。排在车辆告警之后：此刻亮着的灯比一个话题更要紧。
+    mentioned = driver_state_mentioned(text)
+    if mentioned:
+        return DRIVER_STATE_ADVICE[mentioned]["topic_speech"], {}
     return "", {}
 
 
@@ -320,8 +325,8 @@ class ChitchatAgent(BaseAgent):
         if who:                 # 「我是谁」：声纹已认定，同样不交给 LLM（历史会盖过 system）
             return AgentResult(speech=who)
         safety, alert = _safety_answer(text)
-        if safety:              # 安全信号：确定性直答 + 声明会话告警，零 LLM
-            return AgentResult(speech=safety, data={"_safety_alert": alert})
+        if safety:              # 安全信号：确定性直答 + 声明会话告警（只提到风险时不声明），零 LLM
+            return AgentResult(speech=safety, data={"_safety_alert": alert} if alert else None)
         if is_execution_audit_question(text):
             # Q6：「刚才实际执行了什么」是**系统持有的事实**，零 LLM。
             # 加提示词治不了它——模型手里根本没有那些数（真栈三次取样三个样，

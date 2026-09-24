@@ -15,7 +15,8 @@
 
 三个判据，互不重叠：
   · `alert_level(text)`  车辆告警（警示语境词 × 关键系统）→ "critical" | "amber" | ""
-  · `driver_state(text)` 驾驶员状态（疲劳/饮酒/不适）→ "alcohol" | "fatigue" | "unwell" | ""
+  · `driver_state(text)` 驾驶员**此刻**的状态（疲劳/饮酒/不适）→ "alcohol" | "fatigue" | "unwell" | ""
+    （`driver_state_mentioned` 是它的上一层：这句话提到了哪类风险，话题问句 / 假设句也算）
   · `alert_signal(text)` 从原话里取**告警的名字**（不是整句）
 
 判据形态的两条纪律，都是实测换来的：
@@ -28,8 +29,11 @@
 """
 from __future__ import annotations
 
+import re
+
 from runtime.clause_split import split_clauses
-from runtime.question_shape import DIRECTIVE_MARKERS, is_non_directive_question
+from runtime.question_shape import (DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
+                                    is_non_directive_question)
 
 # ── 车辆告警 ─────────────────────────────────────────────────────────────
 #: **警示灯**的名字。刻意逐个列举，**不用「灯亮」这类通配**——
@@ -182,8 +186,9 @@ def alert_advice(level: str) -> str:
 DRIVER_STATE_WORDS = (
     ("alcohol", ("喝了酒", "喝酒", "酒后", "喝了两杯", "醉", "宿醉", "吃了感冒药",
                  "吃了药犯困")),
-    ("fatigue", ("睁不开眼", "困到", "太困", "很困", "犯困", "打瞌睡", "打盹",
-                 "疲劳驾驶", "熬夜", "一夜没睡", "没合眼", "累得不行", "撑不住")),
+    # 追加批 K：「好困 / 有点困 / 困了 / 困得 / 困死」——最常见的犯困自述此前一个都认不出（「我好困」答天气）。
+    ("fatigue", ("睁不开眼", "困到", "太困", "很困", "好困", "有点困", "困了", "困得", "困死",
+                 "犯困", "打瞌睡", "打盹", "疲劳驾驶", "熬夜", "一夜没睡", "没合眼", "累得不行", "撑不住")),
     ("unwell", ("头晕", "眼花", "胸闷", "心慌", "发烧", "很难受", "不太舒服")),
 )
 
@@ -193,6 +198,10 @@ DRIVER_STATE_ADVICE = {
         "speech": "喝过酒或服用可能致困的药物之后，请不要驾驶——这不是车速能补偿的风险。"
                   "建议就近安全停车，叫代驾或打车回去。",
         "follow_up": "需要我帮您叫代驾或查附近能停车的地方吗？",
+        # 追加批 K：提到这类风险（话题问句 / 假设句）时的回答——同一类安全常识，不断言用户此刻的状态。
+        "topic_speech": "喝过酒或吃了可能致困的药，都别开车——代谢快慢因人而异，没有哪个等待时间能保证安全，"
+                        "喝得多的话第二天也可能没代谢完。血液酒精含量每 100 毫升达到 20 毫克就算酒驾，"
+                        "80 毫克算醉驾、要追究刑事责任。需要用车请叫代驾或打车。",
     },
     "fatigue": {
         "level": "critical", "signal": "疲劳驾驶",
@@ -200,25 +209,152 @@ DRIVER_STATE_ADVICE = {
                   "而且犯困往往在自己意识到之前就发生了。"
                   "请就近找服务区或安全位置停车，先休息 15–20 分钟。",
         "follow_up": "要我帮您找最近的服务区吗？",
+        "topic_speech": "疲劳时的反应时间和酒后接近，而且犯困往往在自己意识到之前就发生了。"
+                        "没睡好就尽量别开长途；路上一犯困，就尽早找服务区或安全位置停车，休息 15–20 分钟再走。",
     },
     "unwell": {
         "level": "amber", "signal": "驾驶员身体不适",
         "speech": "身体不舒服时驾驶风险明显升高。建议先在安全位置停车缓一缓，"
                   "症状没有缓解就不要继续开。",
         "follow_up": "要我帮您找最近的休息点或医院吗？",
+        "topic_speech": "身体不舒服时驾驶风险会明显升高，头晕、胸闷、发烧这类症状尤其别硬撑。"
+                        "开车时出现不适，先在安全位置停车缓一缓，症状没有缓解就别继续开，必要时就医。",
     },
 }
 
+# ── 此刻自述 vs 提到这类风险（追加批 K，2026-09-24）─────────────────────────────────────────
+# 修前 `driver_state` 是纯词表包含，三类句子被当成「用户此刻就是这个状态」——会话里登记一条 critical 告警、
+# 用户听到「您现在的状态不适合继续开」：① 否定（「我没喝酒」「别熬夜」「我不头晕」）；② 话题问句（「疲劳驾驶
+# 有什么危害」「喝酒后多久能开车」）；③ 假设句（「如果喝了酒还能开车吗」「万一开车时犯困怎么办」）。
+# 拆两层：`driver_state_mentioned` = 提到了哪类风险（只排除否定）；`driver_state` = 此刻自述（再排除②③）。
+# 会话告警只由后者登记；提到但非自述时答 `topic_speech`（不断言「您现在」、不登记）。
+# 判据只用封闭词类（否定 / 程度副词 / 假设框架 / 人称与时间锚），不按场景扩词表。
+
+#: 状态词**紧前**是这些 ⇒ 这一处不算（「我没喝酒」「没有喝酒」「别熬夜」「我不头晕」；「被困了」不是犯困，
+#: 「被醉驾撞了」不是自己喝了酒）。只看紧前：「没怎么喝酒」的「没」隔着「怎么」——喝了一点，照旧算饮酒。
+_STATE_BLOCKERS = ("没有", "没", "不", "别", "未", "被")
+#: 以否定字结尾、却不是否定的词（「开车特别犯困」）。
+_NOT_BLOCKERS = ("特别",)
+#: 否定与状态词之间的程度副词（「不太困了」「没那么困了」「不怎么困了」）——**饮酒不跳**：酒没有「一点点不算」。
+_DEGREE_ADVERBS = ("怎么", "那么", "太", "很")
+#: 以「困」结尾的词后面跟这些字是另一个词（「好困难」「有点困惑」「很困扰」），不是犯困。
+_KUN_COMPOUNDS = ("难", "惑", "扰", "境")
+#: 话题名词：它们能当「一类风险」的名字用（「疲劳驾驶有什么危害」「醉驾怎么处罚」「喝酒后多久能开车」）。
+_TOPIC_NOUNS = ("疲劳驾驶", "酒后", "醉驾", "醉酒", "喝酒", "熬夜")
+#: 话题名词后面紧跟这些 ⇒ 是发生过的事（「熬夜了」「喝酒了」「疲劳驾驶了」），照旧是自述。
+_REALIZED_MARKS = ("了", "过")
+#: 说话人 / 此刻的锚：句子里有它们，话题名词就是在说自己（「我疲劳驾驶了怎么办」「昨晚熬夜，开车要注意什么」）。
+_SPEAKER_NOW_MARKS = ("我", "咱", "本人", "刚", "昨", "今天", "今晚", "今早", "一直", "已经", "现在", "这会儿")
+#: 「要是」在「主要是 / 只要是 / 需要是」里不是假设框架（「我主要是太困了」是自述）。
+_NOT_A_FRAME_BEFORE_YAOSHI = ("主", "只", "需")
+_CLAUSE_BREAK_RE = re.compile(r"[，,。；;！!？?、\s]")
+
+
+def _negated(head: str) -> bool:
+    return head.endswith(_STATE_BLOCKERS) and not head.endswith(_NOT_BLOCKERS)
+
+
+def _blocked(t: str, start: int, word: str, state: str) -> bool:
+    head = t[:start]
+    if _negated(head):
+        return True
+    if state != "alcohol" and any(head.endswith(adverb) and _negated(head[:-len(adverb)])
+                                  for adverb in _DEGREE_ADVERBS):
+        return True
+    after = t[start + len(word):start + len(word) + 1]
+    return word.endswith("困") and after in _KUN_COMPOUNDS
+
+
+def _state_hits(t: str):
+    """每一处**没被否定**的状态词：`(state, start, word)`，按 `DRIVER_STATE_WORDS` 的顺序。"""
+    for state, words in DRIVER_STATE_WORDS:
+        for word in words:
+            start = t.find(word)
+            while start >= 0:
+                if not _blocked(t, start, word, state):
+                    yield state, start, word
+                start = t.find(word, start + 1)
+
+
+def _in_hypothetical(t: str, start: int) -> bool:
+    """状态词所在分句里、它前面有假设框架（「如果喝了酒…」「万一开车时犯困…」）。"""
+    clause_head = _CLAUSE_BREAK_RE.split(t[:start])[-1]
+    for frame in HYPOTHETICAL_FRAMES:
+        at = clause_head.find(frame)
+        while at >= 0:
+            if not (frame == "要是" and at > 0 and clause_head[at - 1] in _NOT_A_FRAME_BEFORE_YAOSHI):
+                return True
+            at = clause_head.find(frame, at + 1)
+    return False
+
+
+def _topic_question(t: str) -> bool:
+    """整句是问句、且没有说话人 / 此刻的锚——话题名词在这里是一类风险的名字，不是自述。"""
+    return is_non_directive_question(t) and not any(m in t for m in _SPEAKER_NOW_MARKS)
+
+
+def _as_topic(t: str, start: int, word: str) -> bool:
+    """这一处状态词落在某个话题名词里，且那个名词后面不是「了 / 过」。"""
+    end = start + len(word)
+    for noun in _TOPIC_NOUNS:
+        at = t.find(noun)
+        while at >= 0:
+            if at <= start and end <= at + len(noun) and t[at + len(noun):at + len(noun) + 1] not in _REALIZED_MARKS:
+                return True
+            at = t.find(noun, at + 1)
+    return False
+
+
+def driver_state_mentioned(text: str) -> str:
+    """这句话**提到了**哪类驾驶员风险（否定的不算，话题问句 / 假设句算）。返回值同 `driver_state`。
+
+    只供「怎么答」用（提到但非自述 ⇒ `topic_speech`）；**会话告警只由 `driver_state` 登记**。
+    """
+    t = (text or "").strip()
+    return next((state for state, _, _ in _state_hits(t)), "") if t else ""
+
 
 def driver_state(text: str) -> str:
-    """驾驶员状态。返回 "alcohol" | "fatigue" | "unwell" | ""。
+    """驾驶员**此刻**的状态（自述）。返回 "alcohol" | "fatigue" | "unwell" | ""。
 
+    提到了（`driver_state_mentioned`）、且不在假设框架里、且不是「话题名词 + 问句 + 无说话人 / 此刻锚」。
     ⚠ **认不出返回空串，调用方不许 `or "fatigue"` 兜底**——见模块 docstring 纪律 ②。
     """
     t = (text or "").strip()
     if not t:
         return ""
-    for state, words in DRIVER_STATE_WORDS:
-        if any(w in t for w in words):
-            return state
+    topic_question = _topic_question(t)
+    for state, start, word in _state_hits(t):
+        if _in_hypothetical(t, start):
+            continue
+        if topic_question and _as_topic(t, start, word):
+            continue
+        return state
     return ""
+
+
+# ── 拒绝安全建议（追加批 K，K-1）─────────────────────────────────────────────────────────
+# 会话里挂着告警时，「别提醒我，继续开就行」是在**拒绝安全建议**——不是别的话题，澄清卡问「「继续开」具体要做什么」
+# 把 chitchat「立场不改」那条出口绕开了（SF4，`8cee1699` 第 2 趟）。三类说法，全是封闭短语：
+# 推开建议（别提醒 / 不用管 / 别啰嗦）、坚持继续开（继续开 / 不用停 / 不休息）、自我担保（我没事 / 撑得住）。
+# 问句不算（「现在还能继续开吗」是在问能不能，不是拒绝）；「继续开」后面带宾语的不算（「继续开导航」「继续开空调」）；
+# 「不用提醒我带伞」后面带宾语的不算（那是提醒事项）；「要不休息一下」是提议休息。
+_REFUSAL_RES = (
+    re.compile(r"(?:别|不用|不要|不必|无需|用不着)再?(?:提醒我?(?=$|[了啦吧啊呀，,。！!~\s])|管我|管了|啰嗦|唠叨|劝我?)"
+               r"|少(?:啰嗦|唠叨)"),
+    re.compile(r"(?<![不别没])(?:继续|接着)开(?=$|[车就吧了呗啊着，,。！!~\s])"
+               r"|(?:不用|不要|不想|不需要|不必|没必要|用不着|不打算)(?:停|休息|歇)"
+               r"|(?<!要)不(?:停车|休息|歇)"),
+    re.compile(r"我(?:真|都|还)?没事(?=$|[的了啦吧啊呀儿，,。！!~\s])|(?:撑|扛|顶)得住|我(?:还)?能行"),
+)
+
+
+def refuses_safety_advice(text: str) -> bool:
+    """这句话在拒绝安全建议（任一非问句分句命中三类说法之一）。只在会话里挂着告警时有意义，由调用方判。"""
+    t = (text or "").strip()
+    for clause in (split_clauses(t) or [t]) if t else []:
+        if is_non_directive_question(clause):
+            continue
+        if any(pattern.search(clause) for pattern in _REFUSAL_RES):
+            return True
+    return False

@@ -452,3 +452,55 @@ def test_a_self_reported_state_still_wins_over_the_knowledge_shape():
                                  raw_text="困到睁不开眼了，怎么办", ctx=make_context()))
     assert "不适合继续开" in res.speech
     assert agent.llm.prompts == []
+
+
+# ── 追加批 K（K-2，2026-09-24；设计 §14）：提到这类风险 ≠ 此刻自述 ────────────────────────────────
+from runtime.safety_signal import DRIVER_STATE_ADVICE  # noqa: E402
+
+
+@pytest.mark.parametrize("intent, text, state", [
+    ("safety.driving_advice", "喝酒后多久能开车", "alcohol"),
+    ("safety.driver_state", "疲劳驾驶有什么危害", "fatigue"),
+    ("safety.driving_advice", "如果喝了酒还能开车吗", "alcohol"),
+    ("safety.driver_state", "万一开车时犯困怎么办", "fatigue"),
+])
+def test_a_mentioned_risk_gets_the_topic_advice_without_registering_an_alert(intent, text, state):
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, intent, slots={}, raw_text=text, ctx=make_context()))
+    assert res.speech == DRIVER_STATE_ADVICE[state]["topic_speech"]
+    assert "_safety_alert" not in (res.data or {}), "提到这类风险不是此刻的状态，不许登记会话告警"
+    assert agent._agents.calls == [] and agent.llm.prompts == []
+
+
+@pytest.mark.parametrize("text", ["我好困", "困了怎么办"])
+def test_a_self_report_still_gets_the_deterministic_advice_and_registers(text):
+    agent = RoadSafetyAgent()
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, "safety.driver_state", slots={}, raw_text=text,
+                                 ctx=make_context()))
+    assert res.speech == DRIVER_STATE_ADVICE["fatigue"]["speech"]
+    assert res.data.get("_safety_alert", {}).get("level") == "critical"
+
+
+def test_a_negated_state_is_not_answered_as_that_state():
+    """「我没喝酒」修前被答成「喝过酒…请不要驾驶」并登记一条 critical 告警。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={}, raw_text="我没喝酒，现在能开吗",
+                                 ctx=make_context()))
+    assert "喝过酒" not in res.speech and "代驾" not in res.speech
+    assert "_safety_alert" not in (res.data or {})
+
+
+def test_a_mentioned_risk_with_a_destination_still_gets_the_topic_advice():
+    """「如果喝了酒开去上海安全吗」要的是那条常识，不是上海的天气与路线——提到风险排在目的地之前。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="上海当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={"destination": "上海"},
+                                 raw_text="如果喝了酒开去上海安全吗", ctx=make_context()))
+    assert res.speech == DRIVER_STATE_ADVICE["alcohol"]["topic_speech"]
+    assert agent._agents.calls == [] and agent.llm.prompts == []

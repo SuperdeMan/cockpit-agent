@@ -107,3 +107,40 @@ def test_resolution_turn_drops_the_session_alert_from_the_prompt():
     asyncio.run(run_handle(agent, "chitchat.talk", raw_text="好的，我会靠边停车检查", meta=meta))
     system = agent.llm.complete.await_args[0][0][0]["content"]
     assert "未解除的安全告警" in system
+
+
+# ── 追加批 K（K-2，2026-09-24；设计 §14）：提到这类风险 ≠ 此刻自述 ─────────────────────────────
+
+import pytest  # noqa: E402
+
+from runtime.safety_signal import DRIVER_STATE_ADVICE  # noqa: E402
+
+
+@pytest.mark.parametrize("text, state", [
+    ("喝酒后多久能开车", "alcohol"), ("万一开车时犯困怎么办", "fatigue"), ("如果开车时头晕怎么办", "unwell"),
+])
+def test_a_mentioned_risk_gets_the_topic_advice_without_declaring_an_alert(text, state):
+    """修前「喝酒后多久能开车」答「喝过酒…请不要驾驶…叫代驾」并声明一条 critical 会话告警。"""
+    agent = _agent()
+    unary = asyncio.run(run_handle(agent, "chitchat.talk", raw_text=text))
+    streamed = asyncio.run(run_handle_stream(agent, "chitchat.talk", raw_text=text))[-1][1]
+    for res in (unary, streamed):
+        assert res.speech == DRIVER_STATE_ADVICE[state]["topic_speech"]
+        assert not ((res.data or {}).get("_safety_alert") or {})
+    assert agent.llm.complete.await_count == 0
+
+
+def test_a_negated_state_goes_to_the_model_like_any_other_chat():
+    agent = _agent("好的，那就放心开。")
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="我没喝酒，放心"))
+    assert agent.llm.complete.await_count == 1
+    assert res.speech == "好的，那就放心开。"
+    assert not ((res.data or {}).get("_safety_alert") or {})
+
+
+def test_a_lit_warning_light_outranks_a_mentioned_risk():
+    """此刻亮着的灯比一个话题更要紧：同一句里两样都有时按告警答、并声明会话告警。"""
+    agent = _agent()
+    res = asyncio.run(run_handle(agent, "chitchat.talk", raw_text="机油灯亮了，万一犯困怎么办"))
+    assert "停车" in res.speech
+    assert ((res.data or {}).get("_safety_alert") or {}).get("level") == "critical"

@@ -43,7 +43,7 @@ from runtime.question_shape import (
     carries_operation_cue, is_information_request, is_non_directive_question,
 )
 from runtime.reported_speech import is_reported_speech
-from runtime.safety_signal import alert_resolved
+from runtime.safety_signal import alert_resolved, refuses_safety_advice
 
 logger = logging.getLogger("planner.planning")
 
@@ -2222,10 +2222,13 @@ class PlanBuilder:
         # 「立场不改」——那才是正确出口。这一臂比第一臂再窄一格：**只接零步且无澄清卡**的那一路
         # （告警在会话里、这一句本身可能是任何话题，模型问出的澄清卡仍是它的）；这一句已在解除告警
         # （`alert_resolved`）的不算前提。产物同一份 `_talk_only_plan`，plan_mode 同一个后缀。
+        # 追加批 K（K-1，2026-09-24）：这一句**在拒绝安全建议**（`refuses_safety_advice`：别提醒 / 继续开 / 我没事）时
+        # 澄清卡也接管——SF4 第 2 趟（`8cee1699`）犯困告警在场，「别提醒我，继续开就行」出了澄清卡「「继续开」具体要
+        # 做什么？」。拒绝建议不是别的话题，它的正确出口就是拿着告警「立场不改」的兜底谈话；别的话题的澄清卡照旧归模型。
         focus_alert = getattr(getattr(working_set, "focus", None), "safety_alert", None) or {}
         premise_now = _valid_safety_alert(input_safety_alert(text))
-        premise_focus = (not plan.clarify and safety_alert_active(focus_alert)
-                         and not alert_resolved(text))
+        premise_focus = (safety_alert_active(focus_alert) and not alert_resolved(text)
+                         and (not plan.clarify or refuses_safety_advice(text)))
         if not plan.steps and (premise_now or premise_focus):
             talk = self._talk_only_plan(text, agents)
             if talk is not None:

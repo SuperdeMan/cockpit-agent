@@ -135,3 +135,106 @@ def test_alert_recognition_is_byte_for_byte_unchanged_without_a_resolution():
                              ("大灯亮了", "", ""), ("今天天气怎么样", "", "")):
         assert alert_level(text) == level, text
         assert alert_signal(text) == sig, text
+
+
+# ── 追加批 K（K-2，2026-09-24；设计 §14）：此刻自述 vs 提到这类风险 ───────────────────────────
+# 修前纯词表包含：「我没喝酒」= 饮酒（会话里登记一条 critical、用户听到「喝过酒…请不要驾驶」）、
+# 「疲劳驾驶有什么危害」= 犯困自述、「如果喝了酒还能开车吗」= 此刻饮酒、「我好困」认不出。
+
+import pytest  # noqa: E402
+
+from runtime.safety_signal import driver_state_mentioned  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "我没喝酒", "没有喝酒", "我没熬夜", "别熬夜", "我不头晕", "我不困了", "今天没喝酒，放心",
+])
+def test_negated_states_are_not_states(text):
+    assert driver_state(text) == "", text
+    assert driver_state_mentioned(text) == "", text
+
+
+def test_drinking_a_little_is_still_drinking():
+    """「没怎么喝酒」是喝了一点——否定只看紧前那一个字，不往前扫。"""
+    assert driver_state("我没怎么喝酒") == "alcohol"
+
+
+@pytest.mark.parametrize("text, state", [
+    ("我好困", "fatigue"), ("有点困了", "fatigue"), ("困了怎么办", "fatigue"),
+    ("困得不行了", "fatigue"), ("我喝酒了，还能开吗", "alcohol"),
+    ("我疲劳驾驶了怎么办", "fatigue"), ("喝了酒还能开吗", "alcohol"),
+])
+def test_self_reports_are_states(text, state):
+    assert driver_state(text) == state, text
+
+
+@pytest.mark.parametrize("text, state", [
+    ("疲劳驾驶有什么危害", "fatigue"),       # 话题名词 + 问句 + 无第一人称
+    ("醉驾怎么处罚", "alcohol"),
+    ("酒后驾驶有什么后果", "alcohol"),
+    ("喝酒后多久能开车", "alcohol"),
+    ("熬夜后开车要注意什么", "fatigue"),
+    ("如果喝了酒还能开车吗", "alcohol"),      # 假设框架
+    ("万一开车时犯困怎么办", "fatigue"),
+    ("要是困了怎么办", "fatigue"),
+])
+def test_topics_and_hypotheticals_are_mentioned_not_reported(text, state):
+    assert driver_state(text) == "", text
+    assert driver_state_mentioned(text) == state, text
+
+
+def test_every_state_has_a_topic_speech_that_does_not_claim_the_drivers_state():
+    from runtime.safety_signal import DRIVER_STATE_ADVICE
+    for state, spec in DRIVER_STATE_ADVICE.items():
+        assert spec.get("topic_speech"), state
+        assert "您现在" not in spec["topic_speech"], state
+
+
+# ── 追加批 K（K-1）：拒绝安全建议 ──────────────────────────────────────────────────────────
+
+from runtime.safety_signal import refuses_safety_advice  # noqa: E402
+
+
+@pytest.mark.parametrize("text", [
+    "别提醒我，继续开就行",      # SF4 原句
+    "我没事，继续开", "不用管我", "不用停，我撑得住", "别啰嗦了", "我不休息",
+    "我撑得住", "我真没事",      # 只有自我担保
+])
+def test_refusals_of_safety_advice(text):
+    assert refuses_safety_advice(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "帮我找个地方", "最近的服务区在哪", "好的，我去休息", "那我停一下", "导航去公司", "",
+])
+def test_other_utterances_are_not_refusals(text):
+    assert refuses_safety_advice(text) is False, text
+
+
+@pytest.mark.parametrize("text", [
+    "我不太困了", "没那么困了", "我不怎么困了",      # 否定隔着程度副词（饮酒不跳，见上）
+    "这题好困难", "有点困惑", "被困了",                # 「困」字开头的另一个词 / 被动
+])
+def test_not_sleepy(text):
+    assert driver_state_mentioned(text) == "", text
+
+
+@pytest.mark.parametrize("text, state", [
+    ("开车特别犯困", "fatigue"),                       # 「特别」不是否定
+    ("我主要是太困了", "fatigue"),                     # 「主要是」不是假设框架
+    ("我困了，要是继续开怎么办", "fatigue"),           # 假设框架只管它自己那一分句
+    ("昨晚熬夜，开车要注意什么", "fatigue"),           # 有此刻 / 说话人的锚，话题名词就是在说自己
+    ("熬夜了还能开吗", "fatigue"),                     # 话题名词后面跟「了」= 发生过的事
+    ("要是方便的话陪我聊会儿，我太困了", "fatigue"),   # 假设框架在前一分句
+    ("熬夜加班，开车回家", "fatigue"),                 # 不是问句：话题名词只在问句里当话题
+])
+def test_self_reports_that_look_like_negations_or_topics(text, state):
+    assert driver_state(text) == state, text
+
+
+@pytest.mark.parametrize("text", [
+    "现在还能继续开吗", "我可以不休息吗",      # 问句：在问能不能，不是拒绝
+    "继续开导航", "我不继续开了", "要不休息一下吧", "不用提醒我带伞", "我没事做，陪我聊聊", "我撑不住了",
+])
+def test_near_misses_are_not_refusals(text):
+    assert refuses_safety_advice(text) is False, text
