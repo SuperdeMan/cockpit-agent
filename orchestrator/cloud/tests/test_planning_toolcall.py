@@ -20,7 +20,7 @@ from orchestrator.cloud.context import Focus, WorkingSet
 
 
 class MockAgent:
-    def __init__(self, agent_id, intents):
+    def __init__(self, agent_id, intents, response_only=()):
         self.manifest = MagicMock()
         self.manifest.agent_id = agent_id
         self.manifest.capabilities = []
@@ -37,6 +37,10 @@ class MockAgent:
             cap.examples = []
             cap.heavy = False
             cap.require_confirm = False
+            # `bool(MagicMock())` 恒真：不显式给值，每个 mock 能力都会被装配成「只回答」（真实 manifest 是 proto 布尔）。
+            # 追加批 J 起「全是只回答步的计划不升级成多批」读这一位——查天气这类观察步必须是 False，
+            # 兜底谈话要的 `chitchat.talk` 由调用方显式声明（同 `tests.test_planning.MockAgent`）。
+            cap.response_only = intent in (response_only or ())
             self.manifest.capabilities.append(cap)
         self.manifest.route_hints = []
         self.endpoint = "localhost:50060"
@@ -520,7 +524,7 @@ def test_pure_negation_accepts_first_explicit_no_action(monkeypatch):
                         "arguments": {"addressed": True, "steps": []}}])
     spy = _SpyLLM(text_reply="not json", tool_replies=[no_action])
     agents = [
-        MockAgent("chitchat", ["chitchat.talk"]),
+        MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",)),
         MockAgent("navigation", ["navigation.search_poi"]),
     ]
     builder = PlanBuilder(
@@ -539,7 +543,7 @@ def test_pure_instruction_override_accepts_first_explicit_no_action(monkeypatch)
                         "arguments": {"addressed": True, "steps": []}}])
     spy = _SpyLLM(text_reply="not json", tool_replies=[no_action])
     agents = [
-        MockAgent("chitchat", ["chitchat.talk"]),
+        MockAgent("chitchat", ["chitchat.talk"], response_only=("chitchat.talk",)),
         MockAgent("navigation", ["navigation.search_poi"]),
     ]
     builder = PlanBuilder(

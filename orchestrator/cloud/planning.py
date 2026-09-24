@@ -1142,9 +1142,15 @@ def _preserve_conditional_replan_contract(plan: Plan | None, text: str) -> bool:
 
     This never adds, removes, or reroutes a step.  Heavy capabilities are exempt:
     their manifest says the Agent itself encapsulates the multi-stage workflow.
+    So is a plan made only of answer steps (manifest ``response_only``): the first
+    half of a conditional plan is an observation, and an answer produces none to
+    decide on.  Round 3 follow-up batch J (design §13): 「如果你能去旅行，你想去哪里」
+    planned as a single ``chitchat.talk`` was promoted into T2, streamed past its
+    deadline, re-ran and was re-planned — 13.5 s and a narrated failure.
     """
     if (plan is None or plan.complexity != "simple" or not plan.steps
-            or any(bool(step.heavy) for step in plan.steps)):
+            or any(bool(step.heavy) for step in plan.steps)
+            or all(bool(step.response_only) for step in plan.steps)):
         return False
     semantic_goal = " ".join(part for part in (str(text or ""), plan.goal) if part)
     if not _DEFERRED_CONDITION_RE.search(semantic_goal):

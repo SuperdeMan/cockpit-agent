@@ -32,6 +32,20 @@ _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.y
 # NATS 主题：订阅车辆状态变更
 _STATE_SUBJECT = "vehicle.state.changed"
 
+# ── 知识型安全问法（评审三轮追加批 J，2026-09-24；设计 §13）──────────────────────────────
+# 问的是「怎么做 / 要注意什么 / 有什么讲究」，要的是通用建议，不是此刻的天气。修前「怎么缓解开车时的疲劳」
+# 「开长途前要注意些什么」都落 `_general_advice`，答成当地天气 +「天气状况良好，适合出行」。情境型问法
+# （「还能继续开吗」「适合出行吗」）照旧要当前天气 / 告警；状态自述与告警仍排在它前面（确定性结论不交给模型）。
+_KNOWLEDGE_ASK_RE = re.compile(
+    r"(?:怎么|怎样|如何)(?:才能|才|能|可以|去|来)?(?:缓解|避免|防止|预防|应对|处理|解决|克服|减轻|提神|保持|开|做)"
+    r"|怎么办|注意(?:些)?什么|注意事项|有(?:什么|哪些)(?:建议|技巧|办法|方法|讲究|危害|风险|影响|要注意)"
+    r"|(?:准备|检查)(?:些)?什么")
+_KNOWLEDGE_SYSTEM = (
+    "你是专业的驾驶安全顾问。只回答用户问的驾驶安全常识：给出 2-3 条简洁、可执行的建议，口语化、适合语音播报，"
+    "总共不超过 100 字。不要编当前的天气、路况或车辆状态，不要声称已经为用户做了任何操作。")
+_KNOWLEDGE_FALLBACK = ("通用的安全建议是：保持车距、控制车速；连续开两个小时左右就找服务区歇一歇，"
+                       "感到困倦就尽快停车休息。")
+
 # 驾驶员状态与车辆告警判据的**唯一实现**在 `runtime/safety_signal.py`。
 # 这里曾经有一份本地副本、manual-rag 有第二份，chitchat 还要第三份——
 # 收口发生在第三个消费方出现的**当天**，不是等它错了再收（§4.3 时区族那笔账）。
@@ -281,6 +295,9 @@ class RoadSafetyAgent(BaseAgent):
             # 本能力时，反问「您要去哪里？」会在多步 plan 里吞掉并行天气步的答案。
             # 无目的地 → 按当前位置天气给一般性出行建议（不追问）；真要路线级建议的
             # 用户会带目的地（「开车去上海安全吗」走下方原逻辑）。
+            # 追加批 J：知识型问法（「开长途前要注意些什么」）按问题答，不报天气。
+            if _KNOWLEDGE_ASK_RE.search(intent.raw_text or ""):
+                return await self._knowledge_advice(intent.raw_text or "")
             return await self._general_advice(ctx, meta)
 
         # 并行调用 info.weather + info.forecast + navigation.search_poi
@@ -397,7 +414,23 @@ class RoadSafetyAgent(BaseAgent):
         alert = _focus_safety_alert(meta)
         if alert:
             return self._alert_bound_advice(alert)
+        # 追加批 J：「怎么缓解开车时的疲劳」问的是方法、不是自述——按问题答，不报天气。
+        if _KNOWLEDGE_ASK_RE.search(intent.raw_text or ""):
+            return await self._knowledge_advice(intent.raw_text or "")
         return await self._general_advice(ctx, meta)
+
+    async def _knowledge_advice(self, question: str) -> AgentResult:
+        """知识型安全问句（追加批 J）：按问题给通用驾驶安全建议，不报此刻的天气；模型失败回落一句固定建议。"""
+        try:
+            advice = str(await self.llm.complete([
+                {"role": "system", "content": _KNOWLEDGE_SYSTEM},
+                {"role": "user", "content": f"用户问：{question}"},
+            ], temperature=0.3, max_tokens=200) or "").strip()
+        except Exception as e:
+            logger.debug("road-safety: knowledge advice failed: %s", e)
+            advice = ""
+        advice = advice or _KNOWLEDGE_FALLBACK
+        return AgentResult(speech=advice, ui_card={"type": "safety_advice", "advice": advice})
 
     def _driver_state_advice(self, state: str) -> AgentResult:
         """驾驶员状态的**确定性**安全结论。不调 LLM、不看天气。

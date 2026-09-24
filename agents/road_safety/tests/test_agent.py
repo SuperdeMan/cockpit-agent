@@ -386,3 +386,69 @@ def test_heavy_congestion_gets_a_safety_tip_light_congestion_does_not():
     res = asyncio.run(run_handle(agent, "safety.road_condition", slots={"route": "宝安机场"},
                                  raw_text="去宝安机场堵不堵", ctx=make_context()))
     assert "保持车距" not in res.speech
+
+
+# ── 追加批 J（J-1，2026-09-24；设计 §13）：知识型安全问句按问题给建议，不报天气 ─────────────────────
+# §7：「怎么缓解开车时的疲劳」「开长途前要注意些什么」都落 `_general_advice`，答成当地天气实况 +「天气状况良好，适合出行」。
+
+class _FakeLLM:
+    def __init__(self, reply="", fail=False):
+        self.reply, self.fail, self.prompts = reply, fail, []
+
+    async def complete(self, messages, **_kwargs):
+        self.prompts.append(messages)
+        if self.fail:
+            raise RuntimeError("llm down")
+        return self.reply
+
+
+_TIPS = "开窗通风、就近进服务区休息二十分钟；连续开两小时左右就歇一歇。"
+
+
+@pytest.mark.parametrize("intent, text", [
+    ("safety.driver_state", "怎么缓解开车时的疲劳"),        # §7 原句（修前答天气）
+    ("safety.driving_advice", "开长途前要注意些什么"),      # §7 原句（修前答天气）
+    ("safety.driving_advice", "高速上爆胎怎么办"),
+    ("safety.driving_advice", "下雨天开车有什么技巧"),
+])
+def test_a_knowledge_question_gets_advice_not_the_weather(intent, text):
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, intent, slots={}, raw_text=text, ctx=make_context()))
+    assert res.status == "ok"
+    assert res.speech == _TIPS
+    assert agent._agents.calls == [], "知识型问句不该去查天气"
+    assert text in str(agent.llm.prompts[0])
+
+
+def test_a_knowledge_question_falls_back_to_fixed_advice_when_the_model_fails():
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(fail=True)
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={},
+                                 raw_text="开长途前要注意些什么", ctx=make_context()))
+    assert res.status == "ok" and res.speech
+    assert "多云" not in res.speech and "适合出行" not in res.speech
+    assert agent._agents.calls == []
+
+
+@pytest.mark.parametrize("text", ["今天天气怎么样，适合出行吗", "现在还能继续开吗"])
+def test_a_situational_question_still_gets_the_weather_based_advice(text):
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="ok", speech="深圳当前多云，气温28℃。"))
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={}, raw_text=text,
+                                 ctx=make_context()))
+    assert "多云" in res.speech
+    assert agent.llm.prompts == []
+
+
+def test_a_self_reported_state_still_wins_over_the_knowledge_shape():
+    """「困到睁不开眼了，怎么办」：状态自述仍走确定性的停车休息，不交给模型。"""
+    agent = RoadSafetyAgent()
+    agent.llm = _FakeLLM(_TIPS)
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={},
+                                 raw_text="困到睁不开眼了，怎么办", ctx=make_context()))
+    assert "不适合继续开" in res.speech
+    assert agent.llm.prompts == []
