@@ -15,6 +15,8 @@ from typing import Any
 
 
 PREFIX = "e2e.v1."
+#: 测试身份的命名空间：run / user / session 都以它开头，只能由签名 token 认领（见 `resolve_s2s_identity`）。
+TEST_NAMESPACE = "e2e-"
 MAX_TTL_S = 1920
 MAX_FUTURE_IAT_S = 5
 _B64URL_RE = re.compile(r"[A-Za-z0-9_-]+\Z")
@@ -186,9 +188,18 @@ def resolve_s2s_identity(
     client_vehicle = str(session_start.get("vehicle_id") or "")
     if str(source.get("E2E_IDENTITY_ENABLED") or "").lower() != "true":
         return client_user, client_vehicle, None
-    raw_secret = str(source.get("E2E_IDENTITY_SECRET") or "")
     token = session_start.get("identity_token")
-    if not raw_secret or not isinstance(token, str) or not token:
+    if token is None or token == "":
+        # Android N-04（2026-09-24）：没带签名的会话**不是测试身份**，按开关关着时的行为走——
+        # 与 Edge WS（`gateway/edge/auth.go::resolveSession` 只对 `e2e.v1.` 前缀验签、普通回退不变）
+        # 与设计（M-A「gate 开启时只有裸 user_id 不构成测试身份」）同口径。修前一律拒，真 App 的
+        # 端到端挡位在云端常开的实验开关下全部 1008。测试命名空间只认签名：自称了却没签名 ⇒ 拒。
+        session_id = str(session_start.get("session_id") or "")
+        if client_user.startswith(TEST_NAMESPACE) or session_id.startswith(TEST_NAMESPACE):
+            raise IdentityTokenError("signed E2E identity is required")
+        return client_user, client_vehicle, None
+    raw_secret = str(source.get("E2E_IDENTITY_SECRET") or "")
+    if not raw_secret or not isinstance(token, str):
         raise IdentityTokenError("signed E2E identity is required")
     secret = decode_secret(raw_secret)
     claims = verify_identity(token, secret, now=now)

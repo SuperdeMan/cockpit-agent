@@ -143,3 +143,49 @@ def test_s2s_gate_on_rejects_missing_or_cross_user_token(start):
             },
             now=VECTORS["now"],
         )
+
+
+# ── Android N-04（2026-09-24）：开关开着时，不带签名的普通会话不许被拒 ──────────────────────────
+# 云端 `E2E_IDENTITY_ENABLED=true`（W19-c）之后真 App 的端到端挡位全部 1008：开场帧从不带 token。
+# 设计（M-A 签名身份一节）与 Edge WS（`gateway/edge/auth.go::resolveSession`）的口径：只有**带了**签名 token
+# 才验签；「gate 开启时只有裸 user_id 不构成测试身份」——自称测试命名空间却没签名的照旧拒。
+
+_GATE_ON = {"E2E_IDENTITY_ENABLED": "true", "E2E_IDENTITY_SECRET": VECTORS["secret_b64url"]}
+
+
+@pytest.mark.parametrize("start", [
+    {"user_id": "production-user", "vehicle_id": "production-vehicle", "session_id": "app-7f3a"},
+    {"user_id": "production-user", "vehicle_id": "production-vehicle", "session_id": "app-7f3a",
+     "identity_token": ""},
+])
+def test_s2s_gate_on_keeps_an_unsigned_production_session(start):
+    user, vehicle, claims = identity_module.resolve_s2s_identity(
+        start, environ=_GATE_ON, now=VECTORS["now"])
+    assert (user, vehicle, claims) == ("production-user", "production-vehicle", None)
+
+
+def test_s2s_gate_on_without_a_secret_still_keeps_an_unsigned_session():
+    """密钥缺失只影响带 token 的会话（同 Edge WS：配置错误只在认出前缀之后才硬拒）。"""
+    user, _, claims = identity_module.resolve_s2s_identity(
+        {"user_id": "production-user", "session_id": "app-7f3a"},
+        environ={"E2E_IDENTITY_ENABLED": "true"}, now=VECTORS["now"])
+    assert (user, claims) == ("production-user", None)
+
+
+@pytest.mark.parametrize("start", [
+    {"user_id": "e2e-run-abc-e2e-memory", "session_id": "app-7f3a"},          # 自称测试用户
+    {"user_id": "production-user", "session_id": "e2e-run-abc-e2e-memory-session-1"},  # 借测试会话
+])
+def test_s2s_gate_on_rejects_an_unsigned_claim_on_the_test_namespace(start):
+    with pytest.raises(IdentityTokenError):
+        identity_module.resolve_s2s_identity(start, environ=_GATE_ON, now=VECTORS["now"])
+
+
+def test_s2s_gate_on_rejects_a_supplied_token_even_without_a_secret():
+    """带了 token 就必须验得过：密钥缺失 ⇒ 拒，不回落客户端身份。"""
+    valid = next(v for v in VECTORS["vectors"] if v["name"] == "valid")
+    with pytest.raises(IdentityTokenError):
+        identity_module.resolve_s2s_identity(
+            {"user_id": valid["claims"]["user_id"], "identity_token": valid["token"],
+             "session_id": valid["claims"]["user_id"] + "-session-1"},
+            environ={"E2E_IDENTITY_ENABLED": "true"}, now=VECTORS["now"])

@@ -9,6 +9,17 @@ from cockpit.common.v1 import common_pb2
 from .builtin import ToolInputError, datetime_parse, math_eval, unit_convert
 
 
+#: 工具输入错误的用户话术（Android N-01，2026-09-24）：按工具给一句中文 + 怎么接着说。REJECTED 在 executor 里映射成
+#: FAILED，聚合器对单步失败「Agent 自己的失败话术原样透传」（C11-B）——修前 `speech=str(exc)`，真机上英文问时间听到的是
+#: 「unsupported datetime format」。英文诊断串只进 `error.message`（日志 / 观测）。
+_REJECT_SPEECH = {
+    "datetime.parse": "这个时间我没能换算出来，换个说法再试一次。",
+    "unit.convert": "这两个单位我换算不了，目前支持长度、质量、速度和温度。",
+    "math.eval": "这个算式我算不出来，换成纯数字的加减乘除再试一次。",
+}
+_REJECT_SPEECH_DEFAULT = "这一步没能完成，换个说法再试一次。"
+
+
 def _struct(values: dict) -> struct_pb2.Struct:
     result = struct_pb2.Struct()
     result.update(values)
@@ -67,7 +78,7 @@ class ToolRegistry:
         except ToolInputError as exc:
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.REJECTED,
-                speech=str(exc),
+                speech=_REJECT_SPEECH.get(intent, _REJECT_SPEECH_DEFAULT),
                 error=common_pb2.ErrorInfo(
                     code="invalid_request", message=str(exc)),
             )

@@ -95,3 +95,31 @@ def test_unknown_tool_fails_closed():
 
     assert response.status == agent_pb2.ExecuteResponse.FAILED
     assert response.error.code == "tool_not_found"
+
+
+# ── Android N-01（2026-09-24）：工具输入错误的话术是给用户听的 ──────────────────────────────────
+# 修前 `speech=str(exc)`：REJECTED 在 executor 里映射成 FAILED，聚合器对单步失败「Agent 自己的失败话术原样透传」
+# （C11-B）⇒ 真机上英文问时间听到的是「unsupported datetime format」。诊断串只该进 `error.message`。
+import re
+
+import pytest
+
+
+@pytest.mark.parametrize("intent, slots, diagnostic", [
+    ("datetime.parse", {"text": "what is the time in Shenzhen now"}, "unsupported datetime format"),  # 真机原句
+    ("datetime.parse", {"text": ""}, "missing datetime text"),
+    ("datetime.parse", {"text": "明天25点"}, "invalid time"),
+    ("math.eval", {"expression": "__import__('os')"}, "unsupported expression"),
+    ("math.eval", {"expression": "1/0"}, "division by zero"),
+    ("math.eval", {"expression": "9**9999"}, "exponent is too large"),
+    ("unit.convert", {"value": "abc", "from_unit": "km", "to_unit": "m"}, "value must be numeric"),
+    ("unit.convert", {"value": "1", "from_unit": "km", "to_unit": "kg"}, "incompatible units"),
+    ("unit.convert", {"value": "1", "from_unit": "mile", "to_unit": "km"}, "unsupported unit"),
+])
+def test_tool_input_errors_are_spoken_in_chinese_and_diagnosed_in_the_error(intent, slots, diagnostic):
+    rejected = _call(ToolRegistry(), intent, slots)
+    assert rejected.status == agent_pb2.ExecuteResponse.REJECTED
+    assert rejected.error.code == "invalid_request"
+    assert rejected.error.message == diagnostic
+    assert rejected.speech, "失败话术不能为空（聚合器会换成裸「处理失败」，丢掉恢复指引）"
+    assert not re.search(r"[A-Za-z]{2,}", rejected.speech), rejected.speech

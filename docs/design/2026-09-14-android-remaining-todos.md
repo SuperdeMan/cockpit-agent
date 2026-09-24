@@ -232,3 +232,31 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 | ~~E-26~~ | E | 免唤醒错误行原样打出 Expo 的 `Call to function 'Kws.load' has been rejected. → Caused by: …` 包装（D-08 真机 G-06 引擎分支露出） | **已修 `2ed312fb`**：`nativeErrorText` 只取最里层原因；`5286c3ba5` 起 | `core/voice/nativeErrorText.ts`；`nativeErrorText.test`、`handsFreeEnableError.test` ① |
 | N-04 | H | **端到端挡位在生产上当前不可用**：云端 `E2E_IDENTITY_ENABLED=true`（W19-c 签名身份车道）使 `/api/s2s` 对所有 `session.start` 强制要签名 token，真 App 不带 ⇒ close 1008、App 静默回落三段式 | 09-22 握手探针 `s2s_probe.py` 实测；处置在 cloud 侧（身份闸只该对带 token 的会话生效，或实验完关回去），`.env` 是红线 | `llm-gateway/http_server.py::handle_s2s`、`e2e_identity.resolve_s2s_identity` |
 | ~~G-07~~ | H→E | LISTENING / FOLLOWUP 期要不要持焦点：持了才能在采集时把别人的音乐压低（ASR 听得清）、也才收得到来电 / 闹钟的回调（= 评审 F02 的「采集策略」、D-08 那条「系统占麦事实」）；代价是每次收音都压一次音乐 | **用户 09-21 裁决「都做」，已做 `ec7e0fc0`**：持焦点的理由 = 播放 / 上行采集 / 免唤醒热窗任一；系统抢占 ⇒ FSM `systemInterrupt`（LISTENING / FOLLOWUP 放弃收音不发、回 ARMED）+ PTT 取消。真机 `b08579f6c`：LISTENING 点球 +4ms 持焦点，铃 → `-2` → `fsm:ARMED` 2ms 内，半句不上云；主 TTS 回归 6ms 停声 | remediation §6.15 G-07 落地；`core/voice/audioFocus.ts::setFocusHold`、`hmi/src/voiceLoop.mjs::systemInterrupt` |
+
+## 11. 2026-09-24 追加：N-04 端到端挡位 / N-01 工具错误串（用户「开始修」）
+
+两条都先对 HEAD 复核过根因（不是照抄上表）：
+
+| 条 | 根因（代码事实） | 修法 | 刻意不做 |
+|---|---|---|---|
+| N-04 端到端挡位在生产上不可用 | `llm-gateway/e2e_identity.py::resolve_s2s_identity`：开关一开，**任何**不带签名 token 的 `session.start` 都抛 `IdentityTokenError` ⇒ 1008。真 App 的开场帧只有 `session_id` / `user_id` / 语音参数（`mobile/src/core/voice/handsFree.ts`），永远被拒、静默回落三段式。设计原文（`docs/superpowers/specs/2026-07-28-acceptance-residuals-ma-test-truth-design.md` M-A 签名身份一节）要的是：Edge WS **只对 `e2e.v1.` 前缀的 token** 验签、「普通 AUTH_TOKENS / 匿名回退行为保持不变」；S2S「gate 开启时只有裸 `user_id` 不构成测试身份」。Go 网关 `gateway/edge/auth.go::resolveSession` 正是这么写的，S2S 比它严 | S2S 与 Edge WS 同口径：**带了 token** ⇒ 照旧严格验签（失败 1008、不回落）；**没带 token** ⇒ 只要没自称测试命名空间（`user_id` / `session_id` 以 `e2e-` 开头），按开关关着时的行为用客户端身份；自称测试命名空间却没带签名 ⇒ 照旧拒 | 不动云端 `.env`（开关常开是 W19-c 实验留下的，设计要求跑完恢复关闭态——关不关另请示，`.env` 是红线）；S2S 连接级鉴权本来就没有（靠 tailnet），不在本条加 |
+| N-01 内置工具把英文诊断串当话术 | `orchestrator/cloud/tools/registry.py`：`ToolInputError` ⇒ `REJECTED`、`speech=str(exc)`；executor 把 REJECTED 映射成 FAILED，聚合器对单步失败「Agent 自己的失败话术原样透传」（C11-B）⇒ 用户听到 `unsupported datetime format` / `only numbers are allowed` | 失败话术由工具给中文（按工具：时间 / 换算 / 算式各一句，带恢复提示）；英文诊断串只进 `error.message`（日志 / 观测） | 不在本条扩时间解析的英文支持（「what is the time now」落到时间解析是落域问题，另记） |
+
+验收：离线——S2S 开关开着时，普通会话（无 token）拿到客户端身份、自称 `e2e-` 用户 / 会话却无签名被拒、带合法 token 被覆盖成签名身份、篡改 / 跨用户 token 被拒（既有用例一条不改）；三个工具各种坏输入的话术全是中文、不含诊断串、诊断串留在 `error.message`。变异各自判红；全量 + 四门禁。真栈：部署后用 App 同形的开场帧连 `/api/s2s`（无 token）不再 1008；发一句会让时间工具失败的话，读话术。
+
+### 11.1 落地记录（2026-09-24）
+
+- N-04：`llm-gateway/e2e_identity.py` 加 `TEST_NAMESPACE = "e2e-"`；`resolve_s2s_identity` 在开关开着时，没带 token（缺失或空串）
+  ⇒ 自称测试命名空间（`user_id` / `session_id` 以 `e2e-` 开头）拒、其余用客户端身份；带了 token 照旧严格（密钥缺失也拒、不回落）。
+  既有 9 条身份用例一条不改；新增 6 条；五处变异各判红（又一律拒 / 测试命名空间免签可认领 / 只守 user 不守 session / 空串当 token /
+  带 token 缺密钥回落）。
+- N-01：`orchestrator/cloud/tools/registry.py` 的 `_REJECT_SPEECH`（时间 / 换算 / 算式各一句中文 + 怎么接着说，缺省一句通用）；英文诊断串留在
+  `error.message`。新增 9 条（三个工具九种坏输入：话术非空、无英文、诊断串在 `error.message`）；两处变异各判红（话术退回诊断串 / 话术置空）。
+- 文档：AGENTS §4.2 两处过时说法改正（AR 余项「未推送、未 deploy」、语音采纳「端侧新闻规则误判仍未修」）。
+- 全量固定口径 9436 passed / 0 failed / 32 skipped / 10 warnings（347 s，-n 6）；四门禁 + smoke_edge 13/13。
+- **修前真栈基线**（生产 `b6afd59b`）：App 同形开场帧（无 token）握手 3/3 被 1008 `unauthorized test identity` 关掉
+  （`.artifacts/s2s-handshake-before-1790216774.json`）；「what is the time in Shenzhen now」×5：2 趟落时间工具、用户听到
+  `unsupported datetime format`，1 趟答成深圳天气，2 趟闲聊（1 趟英文回、1 趟说「没有联网，没法给你实时时间」）
+  （`.artifacts/ack-probe-n01before-1790216792.json`）。
+- **顺带发现（记录、未修）**：引擎的系统时钟出口只认中文问法，英文问时间走不到它——修完 N-01 用户也只是不再听到英文报错，
+  拿不到时间。归落域 / 时钟出口的语言覆盖，另立项。
