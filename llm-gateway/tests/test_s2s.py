@@ -924,8 +924,74 @@ async def test_context_summary_renders_recent_turns():
         def __init__(self, role, text):
             self.role, self.text = role, text
     mem.turns = [T("user", "我叫泓舟"), T("assistant", "记住啦")]
-    s = await build_context_summary(mem, "s1", last_n=4)
+    s = await build_context_summary(mem, "s1", exchanges=4)
     assert s == "用户：我叫泓舟\n你：记住啦"
+
+
+# ── 评审四轮 R4-05：重建摘要按完整问答对取、压缩不剪禁止事项 ──────────────────────────
+
+class _TurnRow:
+    def __init__(self, role, text, exchange_id="", actions=()):
+        self.role, self.text, self.exchange_id, self.actions = role, text, exchange_id, list(actions)
+
+
+class _RecordingMem(FakeMemStub):
+    def __init__(self, turns):
+        super().__init__()
+        self.turns = turns
+        self.requests = []
+
+    async def GetSession(self, req, timeout=None):
+        self.requests.append(req)
+        return await super().GetSession(req, timeout)
+
+
+@pytest.mark.asyncio
+async def test_context_summary_keeps_the_trailing_restriction_of_a_long_message():
+    """评审 S3 反例：一条长用户消息末尾是「不要启动导航」——修前每条硬截 120 字，这句被截掉。"""
+    long_user = "我们等会儿要去深圳湾公园散步，" * 8 + "不要启动导航"
+    mem = _RecordingMem([_TurnRow("user", long_user, "x1"), _TurnRow("assistant", "好的，记下了", "x1")])
+    summary = await build_context_summary(mem, "s1")
+    assert "不要启动导航" in summary
+    assert summary.splitlines()[0].startswith("用户：我们等会儿要去深圳湾公园散步")
+
+
+@pytest.mark.asyncio
+async def test_context_summary_takes_whole_exchanges_like_the_planner():
+    turns = []
+    for i in range(6):
+        turns += [_TurnRow("user", f"第{i}问", f"x{i}"), _TurnRow("assistant", f"第{i}答", f"x{i}")]
+    mem = _RecordingMem(turns)
+    summary = await build_context_summary(mem, "s1")
+    assert mem.requests[0].last_n == 10, "4 对要取 2N+2 条（修前只取 4 条 ≈ 2 对）"
+    assert summary.splitlines() == [line for i in range(2, 6) for line in (f"用户：第{i}问", f"你：第{i}答")]
+
+
+@pytest.mark.asyncio
+async def test_context_summary_says_so_when_history_cannot_be_read():
+    """读不到 ≠ 没聊过：RPC 失败 / 服务端自报降级且为空 ⇒ 一句实话，不是空串（空串会让模型以为从没聊过）。"""
+    from s2s.reflux import HISTORY_UNAVAILABLE_NOTE
+
+    class Boom(FakeMemStub):
+        async def GetSession(self, req, timeout=None):
+            raise RuntimeError("memory down")
+
+    class Degraded(FakeMemStub):
+        async def GetSession(self, req, timeout=None):
+            class R:
+                turns, degraded = [], True
+            return R()
+
+    assert await build_context_summary(Boom(), "s1") == HISTORY_UNAVAILABLE_NOTE
+    assert await build_context_summary(Degraded(), "s1") == HISTORY_UNAVAILABLE_NOTE
+    assert await build_context_summary(FakeMemStub(), "s1") == "", "读到了、本来就是空的：什么都不注入"
+
+
+@pytest.mark.asyncio
+async def test_context_summary_carries_what_was_actually_executed():
+    mem = _RecordingMem([_TurnRow("user", "打开副驾车窗", "x1"),
+                         _TurnRow("assistant", "开了", "x1", actions=["window.open"])])
+    assert await build_context_summary(mem, "s1") == "用户：打开副驾车窗\n你：开了（已执行：window.open）"
 
 
 @pytest.mark.asyncio
