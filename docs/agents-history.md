@@ -9549,6 +9549,17 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
 - 装置账：600 s 工具超时把 PowerShell 挪到后台后 WS 传输不稳（首趟 T6 客户端 120 s 收不到服务端 2.2 s 就出的 final），长跑用 `Start-Process -RedirectStandardOutput` 分离；
   `verify` 紧跟 apply 仍会给全空 `-unknown.json`（锁窗口），重跑即 verified；有 `ci_cd` blocker 时才传 `--approve-ci-cd-sha256`，基线已含那笔时传了会 `configuration_rejected`。
 
+### 2026-09-24 — Android N-04 / N-01：S2S 签名身份闸只认带 token 的会话、工具失败话术改中文；AGENTS 两处过时说法改正；release `fc1f5dde`
+
+- 入口：Android 剩余待办总表 §11 / §11.1 / §11.1.1；用户看完待办清单后回「开始修」（清单里的第 1、2、8 条）。
+- N-04：云端 `E2E_IDENTITY_ENABLED` 自 W19-c 常开，`resolve_s2s_identity` 对**所有**不带签名的 `session.start` 抛错 ⇒ 真 App 端到端挡位全部 1008、
+  静默回落三段式。设计（M-A）与 Edge WS（`gateway/edge/auth.go::resolveSession`）的口径是「只对带了签名 token 的验签、普通回退不变」「裸 user_id 不构成测试身份」
+  ⇒ 没带 token 的会话只要没自称 `e2e-` 命名空间就用客户端身份；带了 token 照旧严格。没动云端 `.env`（开关常开本身偏离设计，关不关另请示）。
+- N-01：工具 `ToolInputError` 的 `speech=str(exc)` 经 C11-B「单步失败话术原样透传」到用户耳朵 ⇒ 改为按工具的中文话术，诊断串只进 `error.message`。
+- 读数：全量 **9436 / 0 / 32**（347 s）；七处变异各判红；四门禁 + smoke_edge 13/13。真栈：握手修前 3/3 1008 → 修后 3/3 `ready`、无签名冒充测试命名空间 2/2 仍 1008；
+  英文问时间听到英文诊断串 2/5 → 0/5。
+- 记录不修：英文问时间走不到系统时钟出口（修后仍 1 趟英文闲聊、2 趟答成天气）；S2S 只验到握手，真机完整语音轮次待 OPPO 上重走。
+
 ### 2026-09-24 — 对话评审第三轮追加批 I：纯应答长不出写步；release `b6afd59b`
 
 - 入口：设计文档 §12 / §12.1 / §12.1.1 / §12.2；上一轮报告的待裁决项（「可以，已为您执行」第一轮就被规划成 `reminder.cancel`），用户回「做」。

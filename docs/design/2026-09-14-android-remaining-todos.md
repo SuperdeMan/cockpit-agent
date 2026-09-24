@@ -83,7 +83,7 @@ Android 的工程主干（M0～M4、UX v2 B1–B5、AR01～AR09 工程批、打�
 
 | ID | 事项 | 出处 | 去向 |
 |---|---|---|---|
-| N-01 | 英文问时间「what is the time in Shenzhen now」回 `unsupported datetime format`（内部错误串直出）| §5 包 #2 `probe-follow.log` | 云侧 / 时间类 Agent 的错误话术面；与 AR05「内部错误串不许吐给用户」同族，另立项 |
+| ~~N-01~~ | 英文问时间「what is the time in Shenzhen now」回 `unsupported datetime format`（内部错误串直出）——**已修 `fc1f5dde`（§11）**：工具失败话术改中文、诊断串进 `error.message`；英文问时间走不到时钟出口另记 | §5 包 #2 `probe-follow.log` | 云侧 / 时间类 Agent 的错误话术面；与 AR05「内部错误串不许吐给用户」同族，另立项 |
 | N-02 | 常驻语音层（C 身份）里最后一轮是 error 气泡时，红字在层内容区底部被裁一行 | §5 `chat-driving-tablet-resident-696899b59.png` | 语音层内容区对长错误文案的布局，归下一轮打磨 |
 
 ## 3. 不要再从这些地方找「下一步」
@@ -230,7 +230,7 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
 | ~~E-24~~ | E | **Android 拔耳机 / 蓝牙断开不停播**：react-native-audio-api 0.13.3 的 Android 端从不发 `routeChange`（枚举有、无调用点），M2-4 的 OldDeviceUnavailable 处置在 Android 上是死分支 | **已修 `8df1d117`**：`modules/audioroute` 透传 `ACTION_AUDIO_BECOMING_NOISY`，`audioFocus.ts` 按同一条处置走统一出口；`audioRouteInstalled()` 先看装没装。OS 事件真机未取（无耳机） | `modules/audioroute`、`core/voice/audioFocus.ts`；`audioFocusSystemStop.test` ⑥ |
 | ~~E-25~~ | E | **音频焦点启动时请求一次永久持有**：① 打开 App 就把用户正在放的音乐永久停掉（GAIN 对别人是永久 LOSS）；② 第一次被别的媒体 App 永久抢走后条目移出焦点栈，之后来电 / 闹钟零回调（真机：视频播放器抢走后计时器响铃 App 收到 0 次） | **已修 `6faa3c75`**：焦点跟播放事实走——出声才请求 `gainTransientMayDuck`，收尾过 1s 宽限放掉，每次起播重新请求 | `core/voice/audioFocus.ts::syncFocusToPlayback`；`audioFocusSystemStop.test` ⑦（变异判红） |
 | ~~E-26~~ | E | 免唤醒错误行原样打出 Expo 的 `Call to function 'Kws.load' has been rejected. → Caused by: …` 包装（D-08 真机 G-06 引擎分支露出） | **已修 `2ed312fb`**：`nativeErrorText` 只取最里层原因；`5286c3ba5` 起 | `core/voice/nativeErrorText.ts`；`nativeErrorText.test`、`handsFreeEnableError.test` ① |
-| N-04 | H | **端到端挡位在生产上当前不可用**：云端 `E2E_IDENTITY_ENABLED=true`（W19-c 签名身份车道）使 `/api/s2s` 对所有 `session.start` 强制要签名 token，真 App 不带 ⇒ close 1008、App 静默回落三段式 | 09-22 握手探针 `s2s_probe.py` 实测；处置在 cloud 侧（身份闸只该对带 token 的会话生效，或实验完关回去），`.env` 是红线 | `llm-gateway/http_server.py::handle_s2s`、`e2e_identity.resolve_s2s_identity` |
+| ~~N-04~~ | H | **已修 `fc1f5dde`（§11）**——**端到端挡位在生产上当前不可用**：云端 `E2E_IDENTITY_ENABLED=true`（W19-c 签名身份车道）使 `/api/s2s` 对所有 `session.start` 强制要签名 token，真 App 不带 ⇒ close 1008、App 静默回落三段式 | 09-22 握手探针 `s2s_probe.py` 实测；处置在 cloud 侧（身份闸只该对带 token 的会话生效，或实验完关回去），`.env` 是红线 | `llm-gateway/http_server.py::handle_s2s`、`e2e_identity.resolve_s2s_identity` |
 | ~~G-07~~ | H→E | LISTENING / FOLLOWUP 期要不要持焦点：持了才能在采集时把别人的音乐压低（ASR 听得清）、也才收得到来电 / 闹钟的回调（= 评审 F02 的「采集策略」、D-08 那条「系统占麦事实」）；代价是每次收音都压一次音乐 | **用户 09-21 裁决「都做」，已做 `ec7e0fc0`**：持焦点的理由 = 播放 / 上行采集 / 免唤醒热窗任一；系统抢占 ⇒ FSM `systemInterrupt`（LISTENING / FOLLOWUP 放弃收音不发、回 ARMED）+ PTT 取消。真机 `b08579f6c`：LISTENING 点球 +4ms 持焦点，铃 → `-2` → `fsm:ARMED` 2ms 内，半句不上云；主 TTS 回归 6ms 停声 | remediation §6.15 G-07 落地；`core/voice/audioFocus.ts::setFocusHold`、`hmi/src/voiceLoop.mjs::systemInterrupt` |
 
 ## 11. 2026-09-24 追加：N-04 端到端挡位 / N-01 工具错误串（用户「开始修」）
@@ -260,3 +260,19 @@ OPPO 常驻包现为 `d32f81c23`（2026-09-18 18:11 装机，设备端 SHA-256 �
   （`.artifacts/ack-probe-n01before-1790216792.json`）。
 - **顺带发现（记录、未修）**：引擎的系统时钟出口只认中文问法，英文问时间走不到它——修完 N-01 用户也只是不再听到英文报错，
   拿不到时间。归落域 / 时钟出口的语言覆盖，另立项。
+
+#### 11.1.1 发布与真栈读数（2026-09-24 10:1x–10:4x）
+
+发布链：push `bf213187..fc1f5dde` → dry-run 零阻断 → apply `submitted` → status ok 5/5 零 warning、`release_sha` = `running_release_sha`
+= `fc1f5dde` → verify `verified`（`20260924T023225Z-fc1f5dd.json`）。
+
+| 读数 | 修前 `b6afd59b` | 修后 `fc1f5dde` |
+|---|---|---|
+| App 同形开场帧（无 token）握手 | 3/3 被 1008 `unauthorized test identity` 关掉 | **3/3 收到 `session.state: ready`**（随后 `session.end`，未发音频） |
+| 无签名却自称 `e2e-` 测试用户 / 借测试会话 ID | —（修前一律拒） | 2/2 仍被 1008 关掉 |
+| 「what is the time in Shenzhen now」×5：用户听到英文诊断串 | 2/5 | **0/5**（落到时间工具的两趟改说「这个时间我没能换算出来，换个说法再试一次。」/ 多步合成「当前时间没拿到」） |
+
+（`.artifacts/s2s-handshake-{before,after}-*.json`、`.artifacts/ack-probe-n01{before,after}-*.json`）
+
+仍开着（记录）：英文问时间本身答不上——修后 5 趟里 1 趟英文闲聊、2 趟答成天气；系统时钟出口只认中文问法，另立项。
+S2S 挡位只验了握手（`ready`），完整的语音轮次没在真机上重走——要 OPPO 上切「端到端」说一句，归 D 栏。
