@@ -2,7 +2,9 @@
 
 `2f8f92be` 真栈 RS33：「云岚国际中心」澄清卡 →「附近的咖啡店」列表 →「第二个」，规划器给出 `reminder.cancel {index: 2}`（声明为写、不需确认；
 探针用户恰好没有提醒，否则第二条提醒被静默删掉）；历史上同一句还被规划成 `reminder.cancel {title: 第二个}`。「第 N 个」指的是最新那份候选的
-第 N 项——写步要么点名那一项，要么是那份列表产生方自己的能力，否则去掉；一步不剩就换兜底谈话。只读步不管。
+第 N 项——写步要么点名那一项，要么是那份列表产生方自己的能力，否则去掉；只读步不管。一步不剩时**确定性收尾**：说出选中的是哪一项、
+问要拿它做什么（`8528df0b` 真栈：交给兜底谈话时它拿着候选上下文编了一句「现在为您发起导航到库迪咖啡…」，什么都没执行）；选不中（焦点缺失 /
+序号越界）才走兜底谈话。
 """
 from __future__ import annotations
 
@@ -84,24 +86,34 @@ def _intents(plan):
     return [step.intent for step in plan.steps]
 
 
+def _asks_about_the_second_cafe(plan):
+    assert plan.steps == [], _intents(plan)
+    assert "_ordinal_write_blocked" in plan.plan_mode, plan.plan_mode
+    assert plan.clarify is not None
+    assert "库迪咖啡(海王银河科技大厦店)" in plan.clarify["question"], plan.clarify
+    assert [o["label"] for o in plan.clarify["options"]] == ["看详情", "导航过去"], plan.clarify
+    assert plan.clarify["options"][1]["send_text"] == "导航去库迪咖啡(海王银河科技大厦店)"
+
+
 # ── 与所选那一项无关的写步 ⇒ 去掉 ────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("slots", [{"index": "2"}, {"title": "第二个"}])   # 真栈 `2f8f92be` RS33 / 历史 2026-09-22
 def test_a_bare_ordinal_after_a_list_does_not_cancel_a_reminder(slots):
     plan = _build(_wire(("reminder", "reminder.cancel", slots)), "第二个", _cafe_focus())
-    assert _intents(plan) == ["chitchat.talk"], _intents(plan)
-    assert "_ordinal_write_blocked" in plan.plan_mode, plan.plan_mode
+    _asks_about_the_second_cafe(plan)
 
 
 def test_the_voice_form_with_a_full_stop_is_the_same_reply():
     """真实 App 会话带句号上云（客户端整句锚定的改写没接住）。"""
     plan = _build(_wire(("reminder", "reminder.cancel", {"index": "2"})), "第二个。", _cafe_focus())
-    assert _intents(plan) == ["chitchat.talk"], _intents(plan)
+    _asks_about_the_second_cafe(plan)
 
 
 def test_with_no_list_to_point_at_a_bare_ordinal_authorizes_no_write():
+    """选不中（焦点缺失——没有列表时引擎在规划之前就确定性弃权了）⇒ 兜底谈话。"""
     plan = _build(_wire(("reminder", "reminder.cancel", {"index": "2"})), "第二个", Focus())
     assert _intents(plan) == ["chitchat.talk"], _intents(plan)
+    assert plan.clarify is None
 
 
 def test_an_out_of_range_ordinal_authorizes_no_write():
@@ -122,9 +134,16 @@ def test_a_step_that_depends_on_a_dropped_write_goes_with_it():
     plan = _build(_wire(("reminder", "reminder.cancel", {"index": "2"}),
                         ("chitchat", "chitchat.talk", {"text": "说一下结果"}, ["s1"])),
                   "第二个", _cafe_focus())
-    assert _intents(plan) == ["chitchat.talk"], _intents(plan)
-    assert "_ordinal_write_blocked" in plan.plan_mode, plan.plan_mode   # 整份换兜底谈话，不是留下一个依赖悬空的残步
-    assert all(not step.depends_on for step in plan.steps), [step.depends_on for step in plan.steps]
+    _asks_about_the_second_cafe(plan)            # 整份确定性收尾，不是留下一个依赖悬空的残步
+
+
+def test_an_item_without_coordinates_is_asked_about_without_invented_options():
+    focus = Focus(candidate_sets=[{"source_intent": "shop.menu", "agent_id": "shop", "purpose": "list",
+                                   "ts": time.time(), "is_fallback": False,
+                                   "items": [{"name": "拿铁"}, {"name": "美式"}]}])
+    plan = _build(_wire(("reminder", "reminder.cancel", {"index": "2"})), "第二个", focus)
+    assert plan.steps == [] and plan.clarify is not None
+    assert "美式" in plan.clarify["question"] and plan.clarify["options"] == [], plan.clarify
 
 
 # ── 对照：指向所选那一项的写 / 列表产生方自己的能力 / 只读 / 不是裸序数 ⇒ 照旧 ───────────────────

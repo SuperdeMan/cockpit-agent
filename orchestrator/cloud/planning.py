@@ -3495,12 +3495,36 @@ class PlanBuilder:
             plan.steps = remaining
             plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_trimmed"
             return plan
+        plan.complexity = "simple"
+        plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_blocked"
+        if item is not None:
+            # 确定性收尾，不交给兜底谈话：`8528df0b` 真栈拦下 `reminder.cancel` 之后，兜底谈话拿着候选上下文编了一句
+            # 「现在为您发起导航到库迪咖啡…」——什么都没执行（「现在为您」不在执行声称判据的形态里）
+            plan.steps = []
+            plan.clarify = self._ordinal_selection_clarify(index, item)
+            return plan
         talk = self._talk_only_plan(text, agents)
         plan.steps = list(talk.steps) if talk is not None else []
         plan.clarify = None
-        plan.complexity = "simple"
-        plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_blocked"
         return plan
+
+    @staticmethod
+    def _ordinal_selection_clarify(index: int, item: dict) -> dict:
+        """裸序数选中了一项、却没说要拿它做什么 ⇒ 说出是哪一项并问一句（规划提示里「整句只有一个对象、动词缺失 ⇒ 带选项澄清」同一形态）。
+
+        有坐标的项给两个选项——看详情 / 导航过去，与客户端 `routeSend` 对地点列表的两种改写同一组说法；没有坐标不编选项，只问。
+        """
+        name = str(item.get("name") or "").strip()
+        options = []
+        try:
+            placed = (item.get("lat") is not None and item.get("lng") is not None
+                      and float(item["lat"]) != 0 and float(item["lng"]) != 0)
+        except (TypeError, ValueError):
+            placed = False
+        if placed:
+            options = [{"label": "看详情", "send_text": f"看{name}的详情"},
+                       {"label": "导航过去", "send_text": f"导航去{name}"}]
+        return {"question": f"第{index}个是「{name}」，你想让我拿它做什么？", "options": options}
 
     def _talk_only_plan(self, text: str, agents: list = None) -> Plan | None:
         """把原话交给全局兜底 Agent（默认 chitchat）：**只回一句话，不做任何写操作。**
