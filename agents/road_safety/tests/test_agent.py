@@ -511,9 +511,18 @@ def test_a_mentioned_risk_with_a_destination_still_gets_the_topic_advice():
 @pytest.mark.parametrize("text", [
     "当前高速路段",          # K 批真栈：planner 把「现在在高速还能继续开吗」的 destination 填成它
     "当前路段", "现在在高速", "这段高速", "高速公路", "现在在路上",
+    "当前正在行驶的高速路段", "当前位置",     # M 批首发 `6b7335c0` 真栈漏掉的两种写法
 ])
 def test_route_target_treats_the_road_being_driven_as_active(text):
     assert route_target(text) == ("active", ""), text
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("湾区的万象城", ("destination", "湾区的万象城")),     # 泛称词只用来判「是不是当前路」，目的地名照旧取原词
+    ("高速服务区", ("destination", "高速服务区")),
+])
+def test_route_target_keeps_real_places_that_contain_generic_words(text, expected):
+    assert route_target(text) == expected
 
 
 @pytest.mark.parametrize("state", ["fatigue", "alcohol", "unwell"])
@@ -562,6 +571,17 @@ def test_route_advice_without_any_data_does_not_ask_the_model():
     assert agent.llm.prompts == [], "天气 / 预报 / 路线一样都没拿到，模型手里只有「暂无」"
     assert res.speech.startswith("上海那边的天气和路况暂时没查到"), res.speech
     assert "双闪" not in res.speech
+
+
+def test_a_failed_lookup_is_not_data():
+    """M 批首发真栈：失败话术里也有「天气 / 路线」字样，被当成数据 ⇒ 没数据闸被绕过，模型念「天气与路线信息暂不可用，建议保持当前车速匀速行驶」。"""
+    agent = RoadSafetyAgent()
+    agent._agents = _FakeAgents(AgentResult(status="failed", speech="抱歉，暂时查不到上海的天气和路线。"))
+    agent.llm = _FakeLLM("天气与路线信息暂不可用，建议保持当前车速匀速行驶。")
+    res = asyncio.run(run_handle(agent, "safety.driving_advice", slots={"destination": "上海"},
+                                 raw_text="开车去上海安全吗", ctx=make_context()))
+    assert agent.llm.prompts == []
+    assert res.speech.startswith("上海那边的天气和路况暂时没查到"), res.speech
 
 
 def test_route_advice_with_data_still_asks_the_model():

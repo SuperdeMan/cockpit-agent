@@ -65,9 +65,9 @@ _ROUTE_ACTIVE_WORDS = frozenset({
     "路上", "前面", "前方", "当前", "当前路线", "这条路", "那条路", "沿途", "高速", "高速上",
     "现在的路", "路况", "一路", "路线", "这段路", "高速公路", "高速路",
 })
-#: 追加批 M：「当前高速路段」「现在在高速」「这段高速」——时间 / 指示词 + 泛称 + 「路段」，说的仍是正在走的那条路。
-_ROUTE_DEICTIC_RE = re.compile(r"^(?:当前|现在|目前|眼下|此刻|这会儿|这段|这条|那段|那条)(?:在|所在的?|的)?")
-_ROUTE_SEGMENT_RE = re.compile(r"(?:路段|这段|那段|一段)$")
+#: 追加批 M：「当前高速路段」「当前正在行驶的高速路段」「现在在高速」「这段高速」「当前位置」——去掉时间 / 指示 / 泛称词后只剩泛称
+#: （或什么都不剩），说的仍是正在走的那条路。只用来判「是不是当前路」，目的地名照旧取原词（「湾区的万象城」不被改写）。
+_ROUTE_GENERIC_RE = re.compile(r"当前|现在|目前|眼下|此刻|这会儿|正在|行驶|所在|这段|这条|那段|那条|一段|路段|位置|这里|这儿|的|在")
 _ROUTE_DEST_PREFIX_RE = re.compile(r"^(?:前往|开到|开往|去|到|往|回)")
 _ROUTE_NOISE_RE = re.compile(
     r"(?:的路况|的路上|的路|这条路|那条路|路上|沿途|一路|方向|路况|堵不堵|堵吗|堵车吗|堵车|"
@@ -85,7 +85,7 @@ def route_target(text: str | None) -> tuple[str, str]:
     had_prefix = bool(_ROUTE_DEST_PREFIX_RE.match(t))
     core = _ROUTE_DEST_PREFIX_RE.sub("", t, count=1)
     core = _ROUTE_NOISE_RE.sub("", core).strip()
-    bare = _ROUTE_SEGMENT_RE.sub("", _ROUTE_DEICTIC_RE.sub("", core))
+    bare = _ROUTE_GENERIC_RE.sub("", core)
     if not core or core in _ROUTE_ACTIVE_WORDS or not bare or bare in _ROUTE_ACTIVE_WORDS:
         return "active", ""
     if _ROAD_CODE_RE.match(core) or (not had_prefix and _ROAD_SUFFIX_RE.search(core)):
@@ -336,6 +336,10 @@ class RoadSafetyAgent(BaseAgent):
 
         for r in results:
             if isinstance(r, Exception) or r is None:
+                continue
+            # 追加批 M：只有成功的结果才算数据——查询失败的话术里也有「天气 / 路线」字样（「暂时查不到…的天气」），
+            # 被当成数据时下面那道「没数据不调模型」就被绕过去了（真栈：「天气与路线信息暂不可用，建议保持当前车速匀速行驶」）。
+            if getattr(r, "status", "ok") != "ok":
                 continue
             if hasattr(r, "speech") and r.speech:
                 # 简单分类
