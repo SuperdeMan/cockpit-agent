@@ -3463,14 +3463,22 @@ class PlanBuilder:
         真实客户端大多在发送前按最新一张卡改写序数（HMI / App `routeSend`）；带句号的语音「第二个。」与协议层直发的会走到这里。
         """
         index = reply_position(text)
-        if index is None or not plan.steps:
-            return plan
-        writes = self._write_steps(plan.steps)
-        if not writes:
+        if index is None:
             return plan
         entry, _named = resolve_candidate_scope(text, getattr(working_set, "focus", None))
         items = [it for it in ((entry or {}).get("items") or []) if isinstance(it, dict)]
         item = items[index - 1] if 0 < index <= len(items) else None
+        if item is not None and plan.clarify is None and (
+                bool(getattr(plan, "technical_failure", False))
+                or all(bool(getattr(step, "response_only", False)) for step in plan.steps)):
+            # 规划没交出能落到这一项上的东西（技术失败 / 零步 / 只有谈话步）、也没自己出澄清卡 ⇒ 同一句确定性澄清。
+            # `976f174c` 真栈 RS33：模型两次都没给出可用计划，落到「我听到了「第二个」，但没听清要拿它做什么」，而第二项就在台账里
+            return self._ask_about_selection(plan, index, item, "_ordinal_unplanned")
+        if not plan.steps:
+            return plan
+        writes = self._write_steps(plan.steps)
+        if not writes:
+            return plan
         producer = str((entry or {}).get("agent_id") or "")
         name = str((item or {}).get("name") or "")
         kept = {id(step) for step in writes
@@ -3495,17 +3503,25 @@ class PlanBuilder:
             plan.steps = remaining
             plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_trimmed"
             return plan
-        plan.complexity = "simple"
-        plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_blocked"
         if item is not None:
             # 确定性收尾，不交给兜底谈话：`8528df0b` 真栈拦下 `reminder.cancel` 之后，兜底谈话拿着候选上下文编了一句
             # 「现在为您发起导航到库迪咖啡…」——什么都没执行（「现在为您」不在执行声称判据的形态里）
-            plan.steps = []
-            plan.clarify = self._ordinal_selection_clarify(index, item)
-            return plan
+            return self._ask_about_selection(plan, index, item, "_ordinal_write_blocked")
         talk = self._talk_only_plan(text, agents)
         plan.steps = list(talk.steps) if talk is not None else []
         plan.clarify = None
+        plan.complexity = "simple"
+        plan.plan_mode = f"{plan.plan_mode or ''}_ordinal_write_blocked"
+        return plan
+
+    def _ask_about_selection(self, plan: Plan, index: int, item: dict, mode: str) -> Plan:
+        """空计划 + 选中项澄清；技术失败 / 想澄清两个标记一并清掉（这一轮有了确定的终态，同安全闸二的换兜底）。"""
+        plan.steps = []
+        plan.clarify = self._ordinal_selection_clarify(index, item)
+        plan.complexity = "simple"
+        plan.technical_failure = False
+        plan.clarify_wanted = False
+        plan.plan_mode = f"{plan.plan_mode or ''}{mode}"
         return plan
 
     @staticmethod

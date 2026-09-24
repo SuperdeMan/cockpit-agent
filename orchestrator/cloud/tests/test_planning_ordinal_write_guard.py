@@ -189,3 +189,60 @@ def test_a_sentence_that_says_what_to_do_is_not_a_bare_ordinal():
     ("第二天", None), ("导航去第二家", None), ("取消第二个提醒", None), ("好的", None)])
 def test_reply_position_shapes(text, index):
     assert reply_position(text) == index
+
+
+# ── 规划没交出能落到这一项上的东西（`976f174c` 真栈 RS33：落到「我听到了「第二个」，但没听清要拿它做什么」）──────────
+
+def _catalog_ref(agent_id, intent):
+    return _assemble_capability_catalog(_agents()).pair_to_ref[(agent_id, intent)]
+
+
+@pytest.mark.parametrize("reply", [
+    "这不是一个计划",                                                          # 两次都解析不了 ⇒ 技术失败
+    json.dumps({"addressed": True, "complexity": "simple", "steps": []}),       # 零步
+])
+def test_an_unusable_plan_on_a_bare_ordinal_asks_about_the_selected_item(reply):
+    plan = _build(reply, "第二个", _cafe_focus())
+    _asks_about_the_second_cafe_unplanned(plan)
+
+
+def test_a_talk_only_plan_on_a_bare_ordinal_asks_about_the_selected_item():
+    reply = json.dumps({"addressed": True, "complexity": "simple", "steps": [
+        {"id": "s1", "capability_ref": _catalog_ref("chitchat", "chitchat.talk"), "slots": {"text": "第二个"},
+         "depends_on": [], "slot_refs": {}}]}, ensure_ascii=False)
+    plan = _build(reply, "第二个", _cafe_focus())
+    _asks_about_the_second_cafe_unplanned(plan)
+
+
+def test_the_models_own_clarify_is_kept():
+    reply = json.dumps({"addressed": True, "steps": [], "clarify": {
+        "question": "你想怎么处理第二家库迪咖啡？",
+        "options": [{"label": "看详情", "send_text": "看库迪咖啡(海王银河科技大厦店)的详情"},
+                    {"label": "点单", "send_text": "在库迪咖啡(海王银河科技大厦店)点一杯"}]}}, ensure_ascii=False)
+    plan = _build(reply, "第二个", _cafe_focus())
+    assert plan.clarify is not None and plan.clarify["question"] == "你想怎么处理第二家库迪咖啡？", plan.clarify
+
+
+def test_an_unusable_plan_with_nothing_to_select_is_left_alone():
+    plan = _build("这不是一个计划", "第二个", Focus())
+    assert "_ordinal_" not in (plan.plan_mode or ""), plan.plan_mode
+    assert plan.clarify is None
+
+
+def _asks_about_the_second_cafe_unplanned(plan):
+    assert plan.steps == [], _intents(plan)
+    assert "_ordinal_unplanned" in plan.plan_mode, plan.plan_mode
+    assert plan.technical_failure is False and plan.clarify_wanted is False
+    assert "库迪咖啡(海王银河科技大厦店)" in plan.clarify["question"], plan.clarify
+    assert [o["label"] for o in plan.clarify["options"]] == ["看详情", "导航过去"], plan.clarify
+
+
+def test_a_technical_failure_routed_to_a_non_talk_step_asks_about_the_selected_item():
+    """技术失败的兜底也可能落在语义路由 top-1 的非谈话步上（不是只有兜底谈话一种）——同样问一句。"""
+    from orchestrator.cloud.models import Plan, Step
+    builder = PlanBuilder(llm_fn=None, registry_fn=None)
+    plan = Plan(steps=[Step(id="s1", agent_id="nearby", intent="nearby.search", slots={"keyword": "第二个"})],
+                raw_text="第二个", technical_failure=True)
+    plan = builder._apply_ordinal_write_guard(plan, "第二个", WorkingSet(catalog=_agents(), focus=_cafe_focus()),
+                                              _agents())
+    _asks_about_the_second_cafe_unplanned(plan)
