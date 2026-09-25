@@ -1596,6 +1596,31 @@ CASES = [
          {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
                                         "speech_not": ["没有待确认", "没有正在进行的导航"]}},
      ]},
+    # ── 评审四轮 §5.4.6（用户「接着修」）：挂起轮登记本轮已执行的事实 / T2 循环续接后不追被替换的旧值 ─────────────
+    # RS40：导航执行了、同轮另一步挂起追问（set_place 缺 place，问法不写任何数据）——修前那一轮不写焦点，已发出的导航没进路线会话，
+    # 下一句「取消导航」答「当前没有正在进行的导航」（`4438ea6b` RS39 那一趟 adaptive 读出的同一机制）。
+    {"id": "RS40", "group": "residual", "card": "余项", "issue": "评审四轮 §5.4.6 ②",
+     "why": "导航执行了、同轮另一步挂起追问：下一句「取消导航」要真的结束那一趟",
+     "known": "red",
+     "turns": [
+         {"say": "导航去深圳湾公园，再帮我设置一个常用地点",
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"]}},
+         {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
+                                        "speech_not": ["没有正在进行的导航", "没有待确认"]}},
+     ]},
+    # RS41：「先查再导航」的未知地名更常被声明成 adaptive（`5ca289c7` 取样 3 趟里 1 趟），续接走 T2 循环——补答另一个地方之后不许再追旧地名。
+    # 第 1 轮有已知方差：模型偶尔逐字照抄规划器提示里的澄清示例（探针假地名与示例同名，设计文档 §7）。
+    {"id": "RS41", "group": "residual", "card": "余项", "issue": "评审四轮 §5.4.6 ①",
+     "why": "先查再导航的未知地名：补答另一个地方之后不再追旧地名、取消能结束导航",
+     "known": "red",
+     "turns": [
+         {"say": "先帮我查一下云岚国际中心在哪，然后导航过去", "expect": {"navigate_within_km": 150}},
+         {"say": "深圳湾公园", "source": "voice_followup",
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
+                     "speech_not": ["怎么处理", "云岚国际中心"], "card_type_not": "rejected"}},
+         {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
+                                        "speech_not": ["没有待确认", "没有正在进行的导航"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
