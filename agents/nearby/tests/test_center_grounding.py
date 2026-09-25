@@ -135,6 +135,31 @@ def test_a_provider_without_geocoding_keeps_the_old_path():
     assert len(place.calls) == 2 and place.calls[-1][1].address == "云岚国际中心"
 
 
+# ── location 槽尾巴上的「附近」不是地名 ───────────────────────────────────────────────
+
+def test_a_nearby_tail_on_the_location_slot_is_not_part_of_the_place():
+    """真栈 `ee94c595`：规划写成 `location=霁川国际中心附近` ⇒ 答「没找到「霁川国际中心附近」」。"""
+    place = _Place(_XUANWEI)
+    res = _run(place, {"category": "咖啡店", "location": "霁川国际中心附近"}, "霁川国际中心附近的咖啡店")
+    assert res.speech == "没找到「霁川国际中心」。"
+    assert place.searches[0][0] == "霁川国际中心" and place.geocodes == ["霁川国际中心"]
+
+
+def test_a_real_place_with_a_nearby_tail_still_verifies_by_name():
+    """存在的地名带着「附近」去做名字校验必然不过（「万象城附近」⊄「万象城广场」），剥掉才对得上。"""
+    place = _Place(_XUANWEI, verified="万象城")
+    res = _run(place, {"category": "咖啡店", "location": "万象城的周边"}, "万象城周边的咖啡店")
+    assert res.data["items"] and place.geocodes == []
+
+
+def test_the_tail_strip_keeps_a_too_short_stem():
+    from types import SimpleNamespace
+    slot = NearbyAgent._location_slot
+    assert slot(SimpleNamespace(slots={"location": "科技园一带"})) == "科技园"
+    assert slot(SimpleNamespace(slots={"location": "附近"})) == "附近"          # 剥完不足 2 个字：不剥
+    assert slot(SimpleNamespace(slots={"location": "113.9,22.5"})) == "113.9,22.5"
+
+
 # ── 判据本身 ─────────────────────────────────────────────────────────────────────
 
 def test_names_the_area():

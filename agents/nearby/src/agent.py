@@ -405,6 +405,17 @@ class NearbyAgent(BaseAgent):
         r"(?P<place>[^，,。！？!?\s那这我你咱]{2,15}?)(?:的)?(?:附近|周边|周围|一带|旁边)")
     _NEAR_ALIAS_SLOTS = ("near", "around", "area")   # planner 偶发用的未声明槽名，只作地名别名
 
+    #: `location` 槽尾巴上的「附近 / 周边 / 一带」不是地名的一部分：真栈 `ee94c595` 规划写成 `location=霁川国际中心附近`，
+    #: 答出「没找到「霁川国际中心附近」」；对存在的地名，带着它去做名字校验（「万象城附近」⊄「深圳湾万象城」）也必然不过（评审四轮待办，2026-09-25）。
+    _NEARBY_TAIL_RE = re.compile(r"(?:的)?(?:附近|周边|周围|一带|旁边)$")
+
+    @classmethod
+    def _location_slot(cls, intent) -> str:
+        """`location` 槽值，剥掉尾部的「附近 / 周边 / 一带」（剥完不足 2 个字就不剥）。"""
+        loc = str(intent.slots.get("location") or "").strip()
+        stem = cls._NEARBY_TAIL_RE.sub("", loc).strip()
+        return stem if len(stem) >= 2 else loc
+
     @classmethod
     def _raw_place_anchor(cls, intent) -> str:
         """原话里「X 附近 / 周边 / 一带」的 X；没有 ⇒ 空串。这是用户的原话，不是 planner 的转述。"""
@@ -440,7 +451,7 @@ class NearbyAgent(BaseAgent):
         「科技园那批」命中两组。判据与 `runtime/slot_fidelity` 同一条：planner 改写是不可信通道，地名只信原话。
         坐标槽不在此列（坐标不是名字）；槽与原话只是写法不同（万象城 / 深圳湾万象城）不算陈旧。
         """
-        loc = str(intent.slots.get("location") or "").strip()
+        loc = cls._location_slot(intent)
         raw = cls._raw_place_anchor(intent)
         if not loc or not raw or "," in loc:
             return ""
@@ -456,7 +467,7 @@ class NearbyAgent(BaseAgent):
         绿、8/14 两跑皆红），而同一枚焦点坐标 weather 侧早已确定性消费（B1-2 稳定绿）。
         engine 按 manifest `context_scopes: [location]` 把 `focus_destination_*` 注进
         meta，与 info `_deictic_destination` 同款：LLM 与客户端都写不到这三个键。"""
-        loc = (intent.slots.get("location") or "").strip()
+        loc = cls._location_slot(intent)
         stale_for = cls._stale_location_slot(intent)
         if stale_for:
             logger.info("nearby: location slot %r contradicts the spoken place %r; using the spoken one",
@@ -864,7 +875,7 @@ class NearbyAgent(BaseAgent):
         # center 来源随数据落盘（观测/下游可辨）：slot=用户指定位置 / vehicle=车辆
         # 位置 / none=指名门店按名检索。none 时话术不得出现「附近/为您找到」的
         # 就近暗示——按名找到就说按名找到。
-        center_src = ("slot" if ((intent.slots.get("location") or "").strip()
+        center_src = ("slot" if (self._location_slot(intent)
                                  or self._place_anchor(intent))
                       else "vehicle" if near is not None else "none")
         # 批 7 追加（真栈 continuity T9 → T18，2026-09-22）：这批是在哪一带搜的，**只有产生方知道**。
@@ -874,7 +885,7 @@ class NearbyAgent(BaseAgent):
         # 与 `_candidate_label` 同族：编排优先读它，没有再从槽派生（行为逐字同旧）。坐标不是名字，不声明。
         candidate_place = ""
         if center_src == "slot":
-            loc_slot = (intent.slots.get("location") or "").strip()
+            loc_slot = self._location_slot(intent)
             stale_for = self._stale_location_slot(intent)
             if stale_for:
                 candidate_place = stale_for          # 陈旧槽让路：这批是按原话那个地方搜的

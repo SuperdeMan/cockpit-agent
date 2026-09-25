@@ -1111,12 +1111,15 @@ class NavigationAgent(BaseAgent):
                 who = _person_display(pickup_word)
                 logger.info("pickup destination implausibly far: %s → %s (%dkm)",
                             pickup_word, far.name, km)
+                # 教的说法必须真的有人接：修前写的是「确实要去就说「就去这个」」，全仓没有任何一处消费这句话——续接会把
+                # 「就去这个」当成目的地去搜（评审四轮待办，2026-09-25）。「导航去<名字>」这一句原话里没有接送人称，
+                # 续接时这道闸不再拦，名字又对得上 ⇒ 直接导过去。
                 return AgentResult(
                     status=NEED_SLOT,
                     speech=f"我找到的「{far.name}」离这儿约 {km} 公里，"
                            f"接{who}要去这么远吗？",
                     follow_up="要是就在附近，说个区域或更完整的名字我再找一次；"
-                              "确实要去就说「就去这个」。",
+                              f"确实要去，就说「导航去{far.name}」。",
                     missing_slots=["destination"])
 
         first = results[0]

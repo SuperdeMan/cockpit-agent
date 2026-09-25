@@ -6,6 +6,7 @@
 2. 不知道人在哪时**诚实追问**，绝不用相似度猜——导航到错学校比问一句更糟。
 """
 import asyncio
+import re
 
 import pytest
 
@@ -510,6 +511,28 @@ def test_pickup_to_another_province_asks_instead_of_driving():
     assert res.status == "need_slot"
     assert "济南市南山实验小学" in res.speech and "公里" in res.speech
     assert not [a for a in res.actions if a["type"] == "navigate"]
+
+
+def test_the_far_pickup_question_teaches_a_reply_that_actually_navigates():
+    """评审四轮待办（2026-09-25）：修前追问教的是「确实要去就说「就去这个」」，全仓没有任何一处消费它——续接把「就去这个」
+    当成目的地去搜。现在教「导航去<名字>」：续接那一轮的原话没有接送人称，远距闸不拦，名字对得上 ⇒ 导过去。"""
+    far = _POI(id="j1", name="济南市南山实验小学",
+               category="科教文化服务;学校;小学",
+               lat=36.5109, lng=117.0261)
+    agent, _ = _agent_with_search({"南山实验小学": [far], "济南市南山实验小学": [far]})
+    ask = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": "南山实验小学"},
+        raw_text="带我去接孩子放学，顺便帮我找一家麦当劳。",
+        ctx=_ctx_with(None), meta=_SZ_META))
+    assert "就去这个" not in ask.follow_up
+    taught = re.search(r"「(导航去[^」]+)」", ask.follow_up).group(1)
+    assert taught == "导航去济南市南山实验小学"
+    # 续接：补槽答案是教的那句话里的名字，这一步读的原话就是用户这一轮说的
+    res = asyncio.run(run_handle(
+        agent, "navigation.navigate_to", slots={"destination": taught.removeprefix("导航去")},
+        raw_text=taught, ctx=_ctx_with(None), meta=_SZ_META))
+    assert res.status == "ok"
+    assert [a for a in res.actions if a["type"] == "navigate"]
 
 
 def test_pickup_to_an_unverified_school_in_another_province_is_not_driven_to():
