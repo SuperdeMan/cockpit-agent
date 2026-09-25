@@ -1,7 +1,8 @@
 # 对话评审第四轮：逐条重证与分批落地
 
 - 状态：**已落地**（2026-09-24/25，用户授权提交 / 推送 / 部署 / 真栈验证）：批 A / B / C + 追加批 E 全部发布；R4-07 第一步（确认 / 焦点省略两条出口接受话判定，用户裁决）与第二步（澄清选择 / 补槽也接，取消刻意不接）已发布，判定是轻量调用（§5.3 / §5.4）；
-  真栈逼出的两处追加修复（`search_poi` 的「没找到」改派 `navigate_to`、多步里只有一步有话就直出，§5.4.3）待发布；端侧准入三态这一轮不做（要真机真实音频）。顺序同评审 §8「分阶段实施顺序」：批 A（R4-06 + R4-04 + R4-02）→
+  真栈逼出的两处追加修复（`search_poi` 的「没找到」改派 `navigate_to`、多步里只有一步有话就直出，§5.4.3）已发布（`dabc2e2d`）；它的真栈又逼出
+  「NEED_SLOT 不声明缺哪个槽」一类（§5.4.4，`4438ea6b` 待发布）；端侧准入三态这一轮不做（要真机真实音频）。顺序同评审 §8「分阶段实施顺序」：批 A（R4-06 + R4-04 + R4-02）→
   批 B（R4-01 + R4-03）→ 批 C（R4-05）→ 批 D（R4-07，验证项）；各批落地记录接在方案后面
 - 交付对象：`llm-gateway/s2s`、云侧编排（`orchestrator/cloud`）、端侧执行事实（`orchestrator/edge/server.py`）、探针；HMI / Android 零改动
   （S2S 修在网关，旧 APK 自动受益）
@@ -407,6 +408,30 @@ RS19（R3 语音纯偏好，现在也走轻量判定）3/3；唯一红是 RS35 �
 改派出的 NEED_SLOT 挂在 `esc1`、下一句续接 `esc1`，槽值与 Agent 读到的本轮原话都是这句话）；探针 RS39 第二轮恢复 `actions_include: ["navigate"]`（三种形态都得导航过去）。
 聚合器（`dabc2e2d`）+1（含「两步有话」「有失败步」两组对照）、拒绝步两条契约改用两步有话的材料继续测模型那一侧、「一步有话 + 拒绝步」现在零模型、
 确认用例改成断言订单原话。**变异 5 + 4 处各判红**。四门禁 + smoke_edge 13/13。**全量固定口径（两处修复同一棵树）：9903 passed / 0 failed / 32 skipped / 10 warnings，609 s。**
+
+#### 5.4.4 `dabc2e2d` 发布与真栈；又逼出一条：NEED_SLOT 不声明缺哪个槽（2026-09-25 17:4x–18:1x，MiniMax-M3）
+
+发布链：push `1781dba7..cf1e77b7`（代码 `2ed8f6d6` + `dabc2e2d` + 文档 `cf1e77b7`）→ 隔离工作树 dry-run 零阻断（基线 `f535c654`，磁盘 46.4 GB）→ apply `submitted` →
+status ok 5/5 零 warning、`release_sha` = `running_release_sha` → verify `verified`（`20260925T094206Z-dabc2e2.json`）。
+
+- RS39 / RS35 / RS38 / RS19 / RS34 / RS36 ×3（`.artifacts/probe-round4-rs39-escalate-dabc2e2d.json`）：**18/18**。RS39 三趟第 1 轮都规划成单步 `navigate_to`
+  （改派那条路没走到）；补槽轮 1466 / 698 / 775 ms（判定 729 / 5 / 5 ms），话术是确定性原句。RS35 的「确认」续接两步计划（问答种子 + 后备箱）照常执行。
+- 为逼出 `search_poi` 形态另跑三种导航说法 ×2（`.artifacts/probe-round4-rs39-variants-dabc2e2d.json`）：5/6。两趟落了 `search_poi → navigate_to` 两步形态，
+  补槽续接轮 1489 / 798 ms、**零聚合调用、话术原句**（`f535c654` 同一形态 3293 ms、话术被改写）——② 的真栈证据。红的一趟是第 1 轮模型出澄清卡
+  （「你想让我对云岚国际中心做什么？」，F09-b 已知方差，§7），第 2 轮「深圳湾公园」被答「没听清要拿它做什么」。
+- RS39 ×6（`.artifacts/probe-round4-rs39-x6-dabc2e2d.json`）：5/6。红的一趟规划交出 `navigation.search_poi {destination: 云岚国际中心}`——navigate_to 的槽写在
+  search_poi 上 ⇒ 没有 keyword ⇒「您想找什么类型的地点呢？」，而这一问的 NEED_SLOT **没声明缺哪个槽**：补槽续接只往 `missing_slots` 里的槽写答案，
+  答「深圳湾公园」写不进任何槽，挂起步带原样槽位重跑、同一句原样再问。
+- 单步 `search_poi` 的改派路径这 15 趟一次都没取到（规划方差：`f535c654` 那轮 3 趟里 2 趟、这轮 0 / 15），由契约 i 与导航单测证明。
+
+修法（`4438ea6b`）：
+
+- `search_poi` 没有 keyword / category 时，把 `destination` 当作用户说出的地方去搜。规划器那层刻意不把这种混槽归位成 `navigate_to`（F-1 第 ④ 条：归位永不朝写操作推），
+  这里仍是 search_poi，动作方向不变；找到照旧，导航语境没找到走 ① 的改派。
+- 「NEED_SLOT 不声明缺哪个槽」是一类缺陷：静态扫全部 Agent 源码只有三处——search_poi 那一问、`set_place`「您想设置哪个常用地点？」（同样死循环：续接轮原话只有「家」，
+  `_parse_set_place` 解析不出）、`manual.query`（`response_only` 却挂补槽，违反安全红线 5，执行器本来就会判契约违规、这句发不出去；它的用例钉着 need_slot）。
+  前两处补 `missing_slots`，manual.query 改成普通回答；新增静态契约 `agents/_sdk/tests/test_need_slot_declares_missing.py`（含尺子自检），以后同形态进不来。
+- 读数：导航 +3、manual_rag 1 条改形、静态契约 2；**变异 3 + 3 处各判红**；四门禁 + smoke_edge 13/13；**全量固定口径 9908 passed / 0 failed / 32 skipped / 10 warnings，557 s。**
 
 ## 6. 评审「验收应如何衡量」的处置
 
