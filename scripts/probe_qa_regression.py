@@ -1620,7 +1620,9 @@ CASES = [
      "why": "先查再导航的未知地名：补答另一个地方之后不再追旧地名、取消能结束导航",
      "known": "red",
      "turns": [
-         {"say": "先帮我查一下墨汐国际中心在哪，然后导航过去", "expect": {"navigate_within_km": 150}},
+         # `ee94c595` 一趟：navigate_to 的目的地引用了没产出的第 1 步、槽为空，兜底把整句当地名念回来（「暂时无法确定「先帮我查一下…」」）
+         {"say": "先帮我查一下墨汐国际中心在哪，然后导航过去",
+          "expect": {"navigate_within_km": 150, "speech_not": ["「先帮我"]}},
          {"say": "深圳湾公园", "source": "voice_followup",
           "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
                      "speech_not": ["怎么处理", "墨汐国际中心"], "card_type_not": "rejected"}},
@@ -1657,6 +1659,21 @@ CASES = [
          {"say": "云岚国际中心附近的咖啡店", "sid": 0,
           "expect": {"speech_has": ["没找到「云岚国际中心」"], "speech_not": ["为您找到", "宣威", "数据源"]}},
          {"say": "科技园附近的咖啡店", "sid": 1, "expect": {"card_type": "place_list"}},
+     ]},
+    # ── 评审四轮待办（后视镜加热，2026-09-25）：`commands.yaml` 早就声明了 heating 模式，端侧只有折叠 / 展开 ───────────
+    # 修前：「右侧后视镜加热打开」执行成**展开**（payload `rear_view_mirror.unfold`）；「关闭后视镜加热」执行成**停止媒体**（`media.stop`）。
+    {"id": "RS44", "group": "residual", "card": "余项", "issue": "评审四轮待办 · 后视镜加热",
+     "why": "后视镜加热开 / 关执行的是加热，位置带全，「关掉」反向加热而不是折叠",
+     "known": "red",
+     "turns": [
+         {"say": "打开右侧后视镜加热", "sid": 0,
+          "expect": {"actions_include": ["rear_view_mirror.heating.open"],
+                     "action_positions": {"rear_view_mirror.heating.open": ["右侧"]}}},
+         {"say": "关掉", "sid": 0,
+          "expect": {"actions_include": ["rear_view_mirror.heating.close"],
+                     "action_positions": {"rear_view_mirror.heating.close": ["右侧"]}}},
+         {"say": "打开后视镜加热", "sid": 1, "expect": {"actions_include": ["rear_view_mirror.heating.open"]}},
+         {"say": "关闭后视镜加热", "sid": 1, "expect": {"actions_include": ["rear_view_mirror.heating.close"]}},
      ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
