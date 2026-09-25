@@ -91,6 +91,15 @@ REASON_ASKS = ("为什么", "为啥", "什么原因", "啥原因", "原因", "�
                "怎么会", "咋会", "怎么这么", "咋这么", "怎么那么",
                # 追加批 F（F-4）：「空调怎么不出风」「车窗怎么没关上」——问的是怎么回事，不是怎么做
                "怎么不", "咋不", "怎么没", "咋没")
+#: 定义问（评审四轮待办，2026-09-26）：问的是「X 是什么 / 什么是 X / X 是什么意思 / X 是干嘛的」，要的是**解释**。此前不在任何
+#: 一类里，端侧本地复算：「座椅加热是什么」打开了座椅加热、「空调是什么模式」开了空调、「现在播放的是什么歌」放起了音乐。
+#: 配对同列举问（`_definition_question`）：定义词之后另起的分句带操作动词仍算指令（「座椅加热是什么，打开试试」）；
+#: 「不是什么 / 不是啥」是否定陈述，不算。
+DEFINITION_ASKS = ("是什么", "什么是", "是啥", "啥是", "什么意思", "啥意思",
+                   "是干嘛的", "是干什么的", "是做什么的", "干什么用", "干嘛用", "做什么用")
+#: 取宾动词开头（同一批）：定义词落在这类动词的宾语里——「播放爱是什么」「来一首什么是爱」是点一首歌、「导航去一个叫什么是真的的
+#: 地方」是去一个地方，不是提问。只看定义词所在分句的开头（可带礼貌前缀）。零领域词：全是动词。
+TITLE_OPENERS = ("播放", "放一首", "来一首", "来首", "我想听", "我要听", "听一下", "导航去", "导航到", "搜索", "搜一下")
 #: 求信息的请求（追加批 F，F-2）：要的是一段回答，不是一个动作——「推荐 / 介绍 / 讲讲 / 说说 / 科普 / 解释」开头
 #: （可带礼貌前缀）。与问句、原因问、解释元请求合起来，是规划失败时「兜底谈话就是答案」的那一类（AR05 F09 的例外）。
 INFO_REQUEST_VERBS = ("推荐", "介绍", "讲讲", "说说", "科普", "解释")
@@ -142,6 +151,13 @@ _LOOKUP_REQUEST_RE = re.compile(
 _ENUMERATION_RE = re.compile("|".join(
     (rf"(?<!没){re.escape(word)}" if word.startswith("有") else re.escape(word))
     for word in sorted(ENUMERATION_ASKS, key=len, reverse=True)))
+#: 定义问：「是 …」开头的定义词前面不能紧挨「不」（「这不是什么大问题」是陈述）。
+_DEFINITION_RE = re.compile("|".join(
+    (rf"(?<!不){re.escape(word)}" if word.startswith("是") else re.escape(word))
+    for word in sorted(DEFINITION_ASKS, key=len, reverse=True)))
+_TITLE_OPENER_RE = re.compile(
+    r"^(?:请|麻烦|帮我|帮忙|给我|替我)?\s*(?:" + "|".join(
+        map(re.escape, sorted(TITLE_OPENERS, key=len, reverse=True))) + ")")
 #: 计数问：头（「有」前面不能紧挨「没」）+ 同一分句里至多四个字 + 几 + 量词。
 _COUNT_ASK_RE = re.compile(
     "(?:" + "|".join((rf"(?<!没){re.escape(head)}" if head == "有" else re.escape(head))
@@ -253,6 +269,14 @@ def asks_for_reason(t: str | None) -> bool:
     return any(word in body for word in REASON_ASKS)
 
 
+def asks_for_explanation(t: str | None) -> bool:
+    """要的是解释，不是一个读数：原因问（`asks_for_reason`），或定义问（「胎压报警灯亮了是什么意思」，评审四轮待办 2026-09-26）。
+
+    同样只给**查询**的让路用：修前定义问命中「胎压」秒回「胎压正常」（collector 真实一轮），问的却是那盏灯是什么意思。"""
+    body = strip_ask_prefix(t)
+    return asks_for_reason(body) or _definition_question(body)
+
+
 def is_reference_question(t: str | None) -> bool:
     """问的是**规范 / 注意事项 / 条件**（`REFERENCE_ASKS`），而且每个分句都是提问（评审三轮追加批 L，2026-09-24）。
 
@@ -313,6 +337,8 @@ def is_non_directive_question(t: str) -> bool:
         return True
     if _count_question(t):
         return True
+    if _definition_question(t):
+        return True
     if _reason_question(t):
         return True
     return (any(w in t for w in MANNER_ASKS)
@@ -353,6 +379,21 @@ def _count_question(t: str) -> bool:
     """
     match = _COUNT_ASK_RE.search(t)
     return bool(match) and not _later_clause_operates(t, match.end())
+
+
+def _definition_question(t: str) -> bool:
+    """定义问（「座椅加热是什么」「什么是后视镜加热」「空调是什么模式」），定义词之后**另起的分句**里没有操作动词。
+
+    定义词所在分句以取宾动词开头时，问词在宾语里（「播放爱是什么」是点歌）——不算。配对同 `_enumeration_question`：
+    「空调是什么模式」里「调」在定义词之前、是主语的一部分，只看之后另起的分句（「座椅加热是什么，打开试试」仍是指令）。
+    """
+    match = _DEFINITION_RE.search(t)
+    if not match:
+        return False
+    clause_start = max(t.rfind(mark, 0, match.start()) for mark in "，,；;。！!？?") + 1
+    if _TITLE_OPENER_RE.match(t[clause_start:match.start()].lstrip()):
+        return False
+    return not _later_clause_operates(t, match.end())
 
 
 def _later_clause_operates(t: str, end: int) -> bool:

@@ -80,6 +80,19 @@ def test_question_shaped_write_is_blocked(text):
     assert _GUARD([_step("warning_light.close")], text)
 
 
+@pytest.mark.parametrize("text", [
+    "座椅加热是什么",                    # 评审四轮待办（2026-09-26）：定义问进了问句判据，云侧这道闸同一份
+    "露营模式是什么意思",
+    "说明书里「打开后备箱」这一节讲的是什么",
+])
+def test_definition_question_write_is_blocked(text):
+    assert _GUARD([_step("seat.heating.on")], text)
+
+
+def test_definition_question_with_a_later_directive_is_allowed():
+    assert _GUARD([_step("seat.heating.on")], "座椅加热是什么，打开试试") == []
+
+
 # ── 2. 祈使 + 写车控 = 放（不许误伤正常指令）─────────────────────────────────
 
 @pytest.mark.parametrize("text", [

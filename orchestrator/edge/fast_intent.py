@@ -13,7 +13,7 @@ from runtime.positions import SEAT_IDS, ids_of, position_spans, scan_positions
 from runtime.reported_speech import is_reported_speech
 from runtime.anaphora import has_anaphoric_subject
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
-from runtime.question_shape import asks_for_reason, is_non_directive_question
+from runtime.question_shape import asks_for_explanation, is_non_directive_question
 
 LOCAL_INTENTS = {
     # ⚠ `hvac.inc/dec` 2026-08-04 补入：温度增减此前**只以别名 `aircon.inc/dec` 登记**
@@ -371,7 +371,8 @@ def classify_structured(text: str) -> dict | None:
     # 第五维（评审三轮追加批 E，2026-09-23）：问的是**为什么**，不是**是多少**。端侧手里只有读数——真栈
     # 「给我讲讲新能源车冬天续航为什么会下降」命中「续航」秒回「电量72%」，「胎压为什么报警」读四轮胎压。
     # 同样只盖查询：写操作的问句闸在最上面，「续航还有多少」「胎压多少」要的正是秒回（判据在 question_shape.py）。
-    if result is not None and result.get("intent") == "query" and asks_for_reason(text):
+    # 定义问同族（评审四轮待办，2026-09-26）：「胎压报警灯亮了是什么意思」命中「胎压」秒回「胎压正常」——问的是那盏灯的意思。
+    if result is not None and result.get("intent") == "query" and asks_for_explanation(text):
         return None                       # 整句上云：解释在云端
     if result is not None:
         # Q13：原话随意图走。**不是为了让下游再分类一次**——是因为结构化意图里

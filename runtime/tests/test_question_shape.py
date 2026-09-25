@@ -311,6 +311,69 @@ def test_enumeration_and_reason_tables_are_closed_function_word_classes():
         assert word not in vocab, word
 
 
+# ── 定义问（评审四轮待办，2026-09-26）──────────────────────────────────────────
+# 修前不在任何一类里：端侧「座椅加热是什么」打开了座椅加热、「空调是什么模式」开了空调、「露营模式是什么意思」激活了露营场景、
+# 「说明书里「打开后备箱」这一节讲的是什么」解成 trunk.open。语料 + collector 全量 10 494 句 A/B：翻转 29 句、全是真问句。
+
+@pytest.mark.parametrize("text", [
+    "座椅加热是什么",
+    "方向盘加热是什么",
+    "什么是后视镜加热",
+    "空调是什么模式",               # 「调」在定义词之前、是主语的一部分
+    "现在播放的是什么歌",
+    "露营模式是什么意思",
+    "限速提醒是什么意思",
+    "仪表上有个小人拿雨伞的图标是什么意思",
+    "这个开关是干嘛的",
+    "这个按钮干什么用的",
+    "前边儿那玩意儿是啥",
+    "啥是自适应巡航",
+    "说明书里「打开后备箱」这一节讲的是什么",
+    "请问现在是什么时间",
+])
+def test_definition_asks_are_questions(text):
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "播放爱是什么",                 # 取宾动词开头：问词在歌名里
+    "来一首什么是爱",
+    "我想听幸福是什么",
+    "帮我播放你是什么人",
+    "导航去一个叫什么是真的的地方",
+    "座椅加热是什么，打开试试",      # 定义问 + 另起分句的操作动词：用户同时下了指令
+    "这不是什么大问题，把车窗打开",   # 「不是什么」是否定陈述
+    "没啥事，关掉音乐",
+    "帮我看看这是什么",              # 祈使标记在前
+])
+def test_definition_words_do_not_veto_a_directive(text):
+    assert is_non_directive_question(text) is False, text
+
+
+@pytest.mark.parametrize("text", ["这不是什么大问题", "倒也不是啥难事"])
+def test_a_negated_definition_word_is_a_statement(text):
+    assert is_non_directive_question(text) is False, text
+
+
+def test_definition_and_title_tables_are_closed_function_word_classes():
+    from runtime.question_shape import DEFINITION_ASKS, TITLE_OPENERS
+    vocab = _domain_vocabulary()
+    for word in (*DEFINITION_ASKS, *TITLE_OPENERS):
+        assert word not in vocab, word
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("胎压报警灯亮了是什么意思", True),    # 修前端侧秒回「胎压正常」（collector 真实一轮）
+    ("续航为什么会下降", True),           # 原因问，照旧
+    ("胎压多少", False),                  # 要的就是读数
+    ("电量还有多少", False),
+    ("请问续航还剩多少", False),
+])
+def test_asks_for_explanation(text, expected):
+    from runtime.question_shape import asks_for_explanation
+    assert asks_for_explanation(text) is expected
+
+
 @pytest.mark.parametrize("text", [
     "给我讲讲新能源车冬天续航为什么会下降",
     "为什么续航下降这么快",
