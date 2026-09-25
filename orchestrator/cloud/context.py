@@ -1708,13 +1708,18 @@ def _is_choice_card(card) -> bool:
     return purpose.endswith("_choice") or str(card.get("type") or "") == "merchant_choices"
 
 
-def extract_focus(plan, results) -> "Focus | None":
+def extract_focus(plan, results, *, candidates_from=None) -> "Focus | None":
     """从本轮执行的 plan + 成功结果抽取焦点（best-effort，启发式）。
 
     控制类取最近一个成功控制步的对象/属性/位置；导航/搜索类取目的地与第一个 POI。
-    全空返回 None（不持久、不注入）。绝不抛错——抽取失败由调用方吞掉。"""
+    全空返回 None（不持久、不注入）。绝不抛错——抽取失败由调用方吞掉。
+
+    `candidates_from`（步 id 集合）：给了就**只有这些步**的列表进候选集。挂起轮用它（评审四轮，`4438ea6b` RS39）：
+    那一轮 final 的卡片只是挂起步自己的，兄弟步的列表用户没以卡片看见过——C10-A「第 N 个只许指向用户最后一眼看到的那份」；
+    其余已经执行的事实（路线会话 / 控制目标 / 目的地 / 原话里的告警与约束）照常登记。缺省 None = 今天的行为。"""
     ok = {r.step_id for r in results if getattr(r, "status", None)
           and getattr(r.status, "value", "") == "ok"}
+    listable = None if candidates_from is None else {str(i) for i in candidates_from}
     # I-024（Q10 残余，2026-08-30）：**用户看得见的选择卡，它的候选也要进候选集。**
     # 商户选店卡是 `NEED_SLOT` 的产物（「要在哪家下？」），而本函数原先只扫成功步
     # ⇒ **门店候选集根本不存在** ⇒ 下一句「第一个」无处可解、`say_button` 也没按钮。
@@ -1729,7 +1734,8 @@ def extract_focus(plan, results) -> "Focus | None":
     visible_choice = {
         r.step_id for r in results
         if getattr(getattr(r, "status", None), "value", "") == "need_slot"
-        and _is_choice_card(getattr(r, "ui_card", None))}
+        and _is_choice_card(getattr(r, "ui_card", None))
+        and (listable is None or r.step_id in listable)}
     by_id = {r.step_id: r for r in results}
     focus = Focus()
     for step in getattr(plan, "steps", []):
@@ -1796,7 +1802,7 @@ def extract_focus(plan, results) -> "Focus | None":
         if poi:
             focus.last_poi = poi
         choice_items = data.get("stops") or data.get("items")
-        if isinstance(choice_items, list):
+        if isinstance(choice_items, list) and (listable is None or step.id in listable):
             # Q2：候选集升格成一等对象。名字数组（last_choices）改由它派生，
             # **结构化属性一并留下**——卡片渲染完就丢，是 I-018/I-023 的成因。
             items = _candidate_items(choice_items)
@@ -2056,15 +2062,17 @@ class ContextManager:
             return None
 
     async def update_focus(self, session_id: str, plan, results, *,
-                           user_id: str, exchange_id: str = "", occupant_id: str = ""):
+                           user_id: str, exchange_id: str = "", occupant_id: str = "",
+                           candidates_from=None):
         """每轮成功完成后更新焦点态（供下一轮指代消解）。绝不抛错、不阻塞主链路。
 
         `occupant_id`（评审二轮 R7）：私有那两格写进说话人自己的格子，别人的原样保留。
+        `candidates_from`：见 `extract_focus`（挂起轮只收挂起步自己那张卡的候选）。
         """
         if not self.session:
             return
         try:
-            focus = extract_focus(plan, results)
+            focus = extract_focus(plan, results, candidates_from=candidates_from)
             if focus is not None:
                 focus.origin_exchange_id = str(exchange_id or "").strip()
                 # 门店列表是**粘性**的：只有新的 nearby.search 才该替换它。

@@ -200,7 +200,7 @@ def test_adaptive_interjection_final_carries_the_held_pending_hint():
 
 
 def test_adaptive_suspend_neither_writes_focus_nor_touches_the_new_pending():
-    """挂起轮从来不写焦点（I-024 第二层）：T2 里挂起的那一步同样不落焦点，新挂起也不能被收口误清。"""
+    """T2 里挂起的那一步没做成：它自己带的路线会话不落焦点（挂起轮只登记已执行的事实），新挂起也不能被收口误清。"""
     plan = Plan(steps=[_nav_step(require_confirm=True)], complexity="adaptive",
                 goal="导航去万象城", raw_text="导航去万象城", safety_origin_text="导航去万象城")
     engine, clients, session, planner = _engine(
@@ -216,6 +216,64 @@ def test_adaptive_suspend_neither_writes_focus_nor_touches_the_new_pending():
     state = asyncio.run(session.load("sess-t2", owner_user_id="u1"))
     assert state is not None and state.phase == "wait_confirm"
     assert planner.replans == 0
+
+
+class _GoalRecordingPlanner(_Planner):
+    def __init__(self, plan, decisions=None):
+        super().__init__(plan, decisions)
+        self.goals: list[str] = []
+
+    async def replan(self, goal, *args, **kwargs):
+        self.goals.append(goal)
+        return await super().replan(goal, *args, **kwargs)
+
+
+def test_a_slot_answer_that_replaces_the_destination_is_not_chased_again_by_the_loop():
+    """评审四轮（`4438ea6b` 真栈 RS39）：adaptive 计划的再规划批里 navigate_to 找不到「云岚国际中心」⇒ 追问挂起；用户答「深圳湾公园」。
+    修前：续接导航之后循环按**模型写的旧 goal** 再规划一次，又去搜云岚国际中心、再挂一条追问，话术「…没找到「云岚国际中心」…」，
+    导航动作却已经发出去了。修后：goal 跟着用户改、追旧值的步不跑、路线会话登记、不留新挂起。"""
+    batch = ReplanDecision(done=False, steps=[_nav_step("t1-r1", slots={"destination": "云岚国际中心"})]).to_plan(
+        "解析\"云岚国际中心\"为可导航的具体地点后启动导航", safety_origin_text="导航去云岚国际中心")
+    batch.raw_text = "导航去云岚国际中心"
+    stale = [Step(id="r1", agent_id="navigation", endpoint="nav:1", intent="navigation.search_poi",
+                  slots={"keyword": "云岚国际中心"}),
+             _nav_step("r2", slots={"destination": "云岚国际中心"}, depends_on=["r1"])]
+    clients = _Clients({"navigation.navigate_to": _response(
+        "为您导航到深圳湾公园", {"destination": "深圳湾公园",
+                                "_route_session": {**_ROUTE, "destination": "深圳湾公园"}}, actions=("navigate",)),
+        "navigation.search_poi": _response("没找到「云岚国际中心」。")})
+    planner = _GoalRecordingPlanner(batch, [ReplanDecision(done=False, steps=stale), ReplanDecision(done=True)])
+    session = SessionStore(redis_url="")
+    engine = PlannerEngine(clients=clients, planner=planner,
+                           executor=DagExecutor(call_agent_fn=clients.call_agent),
+                           aggregator=Aggregator(_aggregate), session=session)
+    asyncio.run(session.save("sess-t2", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-slot", pending_step_id="t1-r1",
+        missing_slots=["destination"], pending_plan=PlannerEngine._serialize_plan(batch))))
+
+    events = _run(engine, _request("深圳湾公园"))
+
+    final = events[-1]
+    assert final["kind"] == "final" and not final.get("need_confirm"), final
+    assert [intent for intent, _meta in clients.calls] == ["navigation.navigate_to"], clients.calls
+    assert planner.goals and "深圳湾公园" in planner.goals[0] and "云岚国际中心" not in planner.goals[0], planner.goals
+    assert "云岚国际中心" not in str(final.get("speech") or ""), final
+    assert _focus(session).get("active_route", {}).get("destination") == "深圳湾公园"
+    assert asyncio.run(session.load("sess-t2", owner_user_id="u1")) is None, "不该再留一条追问旧地点的挂起"
+
+
+def test_the_replan_batch_marker_survives_the_pending_round_trip():
+    """`replan_batch` 随挂起持久化（`_serialize_plan` → `_restore`）；旧记录没有这一键 ⇒ False（修前行为）。"""
+    batch = ReplanDecision(done=False, steps=[_nav_step("t1-r1")]).to_plan("导航")
+    record = PlannerEngine._serialize_plan(batch)
+    restored, _ = PlannerEngine._restore(None, SessionState(phase="wait_slot", pending_step_id="t1-r1", pending_plan=record),
+                                         inject_confirmed=False)
+    assert restored.replan_batch is True
+    legacy = dict(record)
+    legacy.pop("replan_batch")
+    restored, _ = PlannerEngine._restore(None, SessionState(phase="wait_slot", pending_step_id="t1-r1", pending_plan=legacy),
+                                         inject_confirmed=False)
+    assert restored.replan_batch is False
 
 
 def test_reactive_upgrade_turn_writes_focus_from_seed_and_loop_results():

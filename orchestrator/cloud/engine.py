@@ -32,6 +32,7 @@ from .clients import set_llm_pin
 from . import candidate_query
 from .reply_position import reply_position
 from .admission import judge_addressed
+from .superseded import rewrite_goal, superseded_values
 from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
@@ -50,7 +51,7 @@ from runtime.session_constraints import (constraint_recall_answer, constraints_i
                                          is_pure_constraint_statement,
                                          merge_constraints, phrase_of)
 from .context import (ContextManager, active_task_live, build_context, candidate_downlink,
-                      candidate_set_for, _is_choice_card,
+                      candidate_set_for,
                       references_a_candidate, resolve_candidate_scope,
                       retired_candidate_hit, safety_alert_active,
                       WEATHER_CONTEXT_INTENTS, normalize_weather_city_slot,
@@ -635,6 +636,8 @@ class PlannerEngine:
         seed_results: list[StepResult] = []
         agents = []
         working_set = None  # 新规划轮由 ContextManager 装配；确认/补槽续接保持 None
+        # 补槽答案替换掉的旧槽值 `{旧: 新}`（判据在 `superseded`）：续接进 T2 循环时不许再追旧值
+        superseded: dict[str, str] = {}
 
         # A. 多轮续接：存在挂起的待确认会话时，判定本轮是否在回应确认
         # R2（中断-恢复，Q1 口径）：插话**不清除**挂起——插话轮正常处理，挂起在 TTL 内
@@ -982,10 +985,15 @@ class PlannerEngine:
                 # Phase 1 简单版：直接用用户原始文本填 slot（Agent LLM 能理解自然语言）
                 for step in plan.steps:
                     if step.id == pending.pending_step_id:
-                        for slot_name in (pending.missing_slots or []):
-                            step.slots[slot_name] = self._slot_answer(
-                                slot_name, text)
+                        answers = {slot_name: self._slot_answer(slot_name, text)
+                                   for slot_name in (pending.missing_slots or [])}
+                        # 评审四轮（`4438ea6b` RS39）：答案替换了 Agent 用不了、才追问的那个旧值 ⇒ 模型写的 goal 跟着用户改，
+                        # 之后这一轮循环不许再追旧值（判据与两处消费见 `superseded` 模块）
+                        superseded = superseded_values(step.slots, answers)
+                        step.slots.update(answers)
                         break
+                if superseded:
+                    plan.goal = rewrite_goal(plan.goal, superseded)
             if pending is not None:
                 logger.info(
                     "Resuming plan for session %s (slot fill step %s, text=%s)",
@@ -1475,7 +1483,7 @@ class PlannerEngine:
                     seed_results=seed_results,
                     working_set=working_set,
                     show_process=show_process, thinking=complex_task,
-                    settle=settled.settle):
+                    settle=settled.settle, superseded=superseded):
                 if event.get("kind") == "final":
                     if settled.done:
                         self._decorate_loop_final(event, plan, held_pending, ctx)
@@ -2298,7 +2306,7 @@ class PlannerEngine:
         挂起 final 又会整体替换 HMI 气泡——不前缀简报，用户就会被凭空追问
         （「查到雨才建提醒」却没听到有雨）。调用方负责剔除确认续接种子与已流式
         播报的结果，防双重播报；挂起步自身不进前缀（trip 确认话术本就是完整叙述）。"""
-        # I-024 第二层（2026-08-30）：**挂起轮从来不写焦点**——三个调用点都是
+        # I-024 第二层（2026-08-30）：修前**挂起轮从来不写焦点**——三个调用点都是
         # `yield await self._suspend(...)` 紧跟 `return`，`update_focus` 在它们**之后**。
         # 于是把「可见选择卡的候选」收进 `extract_focus`（§9.39 C）之后，
         # 那份候选**仍然到不了存储**：真栈实测重列仍答「没有您刚才那页选项的记录」。
@@ -2306,18 +2314,22 @@ class PlannerEngine:
         # （前两次：安全告警登记在 clarify/no_plan 的 return 之后；
         # `_refresh_active` 刷成了用户没看见的那份）。
         #
-        # 判据面刻意窄：**只有挂起步自己出的是选择卡时才写**。那正是 C10-A 说的
-        # 「用户最后一眼看到的那份列表」——不写它，下一句「第几个」「重新列一遍」
-        # 就没有参照系；而普通的确认/补槽挂起**行为逐字不变**（不写焦点）。
-        if (ctx.prefs.get("memory_enabled", "true") != "false"
-                and _is_choice_card(step_result.ui_card)):
+        # 当时判据面刻意窄到「只有挂起步自己出的是选择卡时才写」，普通挂起一概不写。
+        # 评审四轮（`4438ea6b` 真栈 RS39，2026-09-25）证否了「普通挂起不写」：C5-B 让兄弟步的动作随挂起 final 发出去，
+        # 而那一轮的事实一件都没登记——T2 循环续接导航之后又挂起，下一句「取消导航」答「当前没有正在进行的导航」，
+        # 车其实在导航（「导航去公司，顺便提醒我买牛奶」、提醒缺时间也是同形）；同样丢掉的还有已执行的控制目标、原话里的告警与约束。
+        # ⇒ 挂起轮与完成轮用**同一份抽取**登记本轮已执行的事实（挂起步本身不是 OK，抽取不会把它当成做完了）。
+        # 仍然守住 C10-A「第 N 个只许指向用户最后一眼看到的那份列表」：这一轮 final 的卡片只是挂起步自己的，
+        # 候选集**只收挂起步**（它是选择卡时就是原来那条；兄弟步的列表用户没以卡片看见过，不收）。
+        if ctx.prefs.get("memory_enabled", "true") != "false":
             try:
                 await self.context.update_focus(
                     ctx.session_id, plan, results,
                     user_id=ctx.user_id, exchange_id=ctx.request_id,
-                    occupant_id=getattr(ctx, "occupant_id", ""))
+                    occupant_id=getattr(ctx, "occupant_id", ""),
+                    candidates_from={step_result.step_id})
             except Exception as exc:            # 焦点是 best-effort，绝不拖垮挂起
-                logger.debug("focus update on a choice-card suspend failed: %s", exc)
+                logger.debug("focus update on a suspend failed: %s", exc)
         # The pending step is always re-run from ``pending_plan``.  Keeping its
         # full result would create a second persisted copy of merchant checkout
         # tokens, store/specification data and amounts in ``planner:sess:*``
@@ -3479,6 +3491,8 @@ class PlannerEngine:
             restored.skills = list(state.pending_plan.get("skills") or [])
             restored.skill_effects = list(state.pending_plan.get("skill_effects") or [])
             restored.exemplars = list(state.pending_plan.get("exemplars") or [])
+            # 旧记录没有这一键 ⇒ False（与修前行为一致）；只认严格的 True
+            restored.replan_batch = state.pending_plan.get("replan_batch") is True
             return restored, seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
@@ -3527,6 +3541,8 @@ class PlannerEngine:
             "skills": list(plan.skills or []),
             "skill_effects": list(getattr(plan, "skill_effects", []) or []),
             "exemplars": list(getattr(plan, "exemplars", []) or []),   # 同款（M5 P1）
+            # 这一份是不是 T2 再规划出来的一批（续接时循环据此不再套首轮 adaptive 纠偏，见 `Plan.replan_batch`）
+            "replan_batch": bool(getattr(plan, "replan_batch", False)),
         }
 
     async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:

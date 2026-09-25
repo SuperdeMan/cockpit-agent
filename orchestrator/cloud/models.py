@@ -292,6 +292,10 @@ class Plan:
     # 回答「哪条诉求没有步骤承接」——这是评审 F07 要的 goal ledger 的最小形式：goal_id = 序号，
     # source_span = 原话截段。缺省 [] = 模型没填（旧 prompt / 弱模型），系统不猜。
     goals: list[str] = field(default_factory=list)
+    # 评审四轮（`4438ea6b` 真栈 RS39，2026-09-25）：这一份是 T2 **再规划出来的一批**（`ReplanDecision.to_plan`），不是首轮计划。
+    # 随挂起持久化；续接它时循环的第一次再规划不再套「首轮自报 adaptive ⇒ 判 done 要纠偏一次」——这一批本身就是第二阶段，
+    # 修前续接之后模型说「完成了」还会被逼着再补一批。
+    replan_batch: bool = False
 
 
 @dataclass
@@ -309,7 +313,7 @@ class ReplanDecision:
     def to_plan(self, goal: str = "", safety_origin_text: str = "") -> Plan:
         return Plan(steps=self.steps, complexity="adaptive", goal=goal,
                     safety_origin_text=safety_origin_text,
-                    skill_effects=list(self.skill_effects))
+                    skill_effects=list(self.skill_effects), replan_batch=True)
 
 
 @dataclass

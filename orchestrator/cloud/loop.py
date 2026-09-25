@@ -11,6 +11,7 @@ from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
 from .planning import PlanBuilder, assign_runtime_ids
 from .progress import make_progress, phase_label, step_summary
+from .superseded import drop_superseded_steps
 from .stream_state import (
     StreamTracker, allow_unary_fallback, emitted_anything, outcome_uncertain,
 )
@@ -125,6 +126,7 @@ class LoopController:
                   working_set=None,
                   show_process: bool = False, thinking: bool = False,
                   settle=None,
+                  superseded: dict[str, str] | None = None,
                   ) -> AsyncIterator[dict]:
         """`settle(steps, results)`：**完成轮**（不含挂起）合成 final 之前的收口回调（批 8 ①）。
 
@@ -132,7 +134,11 @@ class LoopController:
         出口在本函数之后直接 `return`，一件都没做：候选批、活动路线（continuity T63/T69：两次
         `navigate` 之后「取消导航」答「当前没有正在进行的导航」）、任务帧全部丢失，确认续接进
         T2 的挂起躺到 TTL。回调拿到的是**本轮真正执行过的全部步**（初计划 + 每个再规划批）
-        与全部结果；挂起路径不调它（挂起轮从来不写焦点，I-024 第二层）。"""
+        与全部结果；挂起路径不调它——挂起轮的焦点由 `suspend_fn`（engine `_suspend`）自己登记。
+
+        `superseded`（`{旧值: 用户的新值}`，判据在 `orchestrator.cloud.superseded`）：这一次是补槽续接、用户的答案替换了
+        挂起步里原来的值。再规划出的步槽值里仍含旧值的确定性丢掉（连同依赖它们的下游），全丢光就收场——
+        修前（`4438ea6b` 真栈 RS39）续接导航之后又按旧 goal 去搜「云岚国际中心」、再挂一条追问。"""
         results = list(seed_results or [])
         executed_steps: list = []  # 本轮跑过的全部步（初计划 + 每个再规划批），供 settle 抽焦点
         n_seed = len(results)      # 种子（确认续接带入，上轮已播报）不进挂起前缀
@@ -200,8 +206,10 @@ class LoopController:
                         # **只在第一次 replan 上**认这个声明——那时第二阶段还一步都没出，
                         # 收场才叫自相矛盾。后续 replan 返回 done 是 adaptive 的**正常收尾**，
                         # 在那儿也纠偏等于给每个 adaptive 请求白加一次 LLM 往返。
+                        # 续接的是**再规划出来的一批**（`replan_batch`）时同理：它本身就是第二阶段。
                         adaptive=(getattr(initial_plan, "complexity", "") == "adaptive"
-                                  and replans == 0),
+                                  and replans == 0
+                                  and not getattr(initial_plan, "replan_batch", False)),
                         taken_ids=taken, batch_tag=batch_tag,
                     )
                 except Exception:
@@ -225,8 +233,22 @@ class LoopController:
                         pass
                 if decision.done or not decision.steps:
                     break
+                fresh_steps = list(decision.steps)
+                if superseded:
+                    fresh_steps, stale = drop_superseded_steps(fresh_steps, superseded)
+                    if stale:
+                        logger.info("T2 replan dropped step(s) %s still targeting a value the user replaced: %s",
+                                    stale, sorted(superseded))
+                        try:
+                            await obs_events.get_emitter("cloud").emit_span(
+                                ctx.trace_id, "t2.superseded",
+                                attrs={"dropped": ",".join(stale), "replans": replans})
+                        except Exception:
+                            pass
+                    if not fresh_steps:
+                        break
                 kept, blocked = PlanBuilder._filter_safety_origin_side_effect_steps(
-                    decision.steps, safety_origin_text,
+                    fresh_steps, safety_origin_text,
                 )
                 if blocked:
                     logger.warning(

@@ -751,6 +751,51 @@ def test_a_visible_choice_card_does_not_move_the_control_focus():
     assert not focus.last_destination, "没做成的步不许改写目的地焦点"
 
 
+# ── 评审四轮（`4438ea6b` 真栈 RS39）：挂起轮也登记本轮已执行的事实，候选只收挂起步自己 ────────
+
+_ROUTE_SESSION = {"destination": "深圳湾公园", "lat": 22.5190, "lng": 113.9726,
+                  "waypoints": [], "strategy": "", "arrive_by_ts": 0}
+
+
+def _suspend_turn(pending):
+    """「导航去公司，顺便……」形态：s1 导航做成了（带路线会话、带一份列表），s2 挂起。"""
+    plan = _plan(("s1", "navigation.navigate_to", "navigation"), ("s2", "reminder.create", "reminder"))
+    done = _result("s1", {"destination": "深圳湾公园", "lat": 22.519, "lng": 113.9726,
+                          "_route_session": _ROUTE_SESSION, **_PLACES}, "navigation.navigate_to")
+    return extract_focus(plan, [done, pending], candidates_from={"s2"})
+
+
+def test_a_suspend_turn_still_registers_what_was_executed():
+    """挂起步是 NEED_SLOT（没做成），兄弟步的导航做成了：路线会话 / 目的地照常登记——下一句「取消导航」靠它。"""
+    focus = _suspend_turn(_need_slot_result("s2", {}, None, "reminder.create"))
+
+    assert focus is not None
+    assert focus.active_route.get("destination") == "深圳湾公园"
+    assert focus.last_destination == "深圳湾公园"
+
+
+def test_a_suspend_turn_keeps_the_siblings_list_out_of_the_candidates():
+    """C10-A：挂起 final 的卡片只是挂起步自己的，兄弟步那份列表用户没以卡片看见过 ⇒ 不进候选集；
+    挂起步自己的选择卡照常进（I-024 原来那条）。对照：完成轮（不给 `candidates_from`）兄弟步列表照旧进。"""
+    plain = _suspend_turn(_need_slot_result("s2", {}, None, "reminder.create"))
+    assert not plain.candidate_sets
+
+    card = {"type": "poi_list", "purpose": "dest_choice", "items": _STORES}
+    choice = _suspend_turn(_need_slot_result("s2", {}, card, "reminder.create"))
+    assert [c["items"][0]["name"] for c in choice.candidate_sets] == [_STORES[0]["name"]]
+    # 同层另一个也出了选择卡、但没挂起（只挂第一条）的 NEED_SLOT 步：它的卡没显示出来，同样不收
+    hidden = extract_focus(_plan(("s1", "navigation.navigate_to", "navigation"), ("s2", "reminder.create", "reminder")),
+                           [_need_slot_result("s1", {}, card, "navigation.navigate_to"),
+                            _need_slot_result("s2", {}, None, "reminder.create")],
+                           candidates_from={"s2"})
+    assert hidden is None or not hidden.candidate_sets
+
+    completed = extract_focus(
+        _plan(("s1", "navigation.navigate_to", "navigation")),
+        [_result("s1", {"_route_session": _ROUTE_SESSION, **_PLACES}, "navigation.navigate_to")])
+    assert [c["items"][0]["name"] for c in completed.candidate_sets] == ["川菜·甲"]
+
+
 # ── 评审 2026-09-19 F03 / W08：同能力不同查询共存，同查询是新版本 ───────────
 
 def _turn_with_slots(intent, agent, slots, data):

@@ -1232,7 +1232,7 @@ def _suspend_with_card(card: dict) -> list:
     calls = []
 
     async def _spy_update_focus(session_id, plan, results, **kw):
-        calls.append((session_id, len(results)))
+        calls.append((session_id, len(results), kw.get("candidates_from")))
     engine.context.update_focus = _spy_update_focus
 
     step = Step(id="s1", agent_id="mcp-bridge", endpoint="x",
@@ -1257,19 +1257,18 @@ def test_a_choice_card_suspend_writes_the_focus():
     与「`_refresh_active` 刷成了用户没看见的那份」。
     """
     assert _suspend_with_card(
-        {"type": "merchant_choices", "purpose": "store_choice"}) == [("sess-1", 1)]
+        {"type": "merchant_choices", "purpose": "store_choice"}) == [("sess-1", 1, {"s1"})]
     assert _suspend_with_card(
-        {"type": "poi_list", "purpose": "dest_choice"}) == [("sess-1", 1)]
+        {"type": "poi_list", "purpose": "dest_choice"}) == [("sess-1", 1, {"s1"})]
 
 
-def test_an_ordinary_suspend_still_writes_nothing():
-    """误伤对照：**普通的确认/补槽挂起行为逐字不变**——不写焦点。
-
-    判据窄到「挂起步自己出的是选择卡」，那正是 C10-A 说的
-    「用户最后一眼看到的那份列表」；别的挂起没有这份列表，写它就是给序数指代埋雷。
-    """
-    assert _suspend_with_card({"type": "merchant_order_preview"}) == []
-    assert _suspend_with_card(None) == []
+def test_an_ordinary_suspend_registers_this_turns_facts_but_only_its_own_candidates():
+    """修前这条叫「普通挂起逐字不写焦点」（I-024 当时刻意收窄）。评审四轮（`4438ea6b` 真栈 RS39）证否了它：兄弟步的动作随挂起
+    final 发出去了（C5-B），那一轮的事实却一件没登记——已发出的导航没进路线会话，下一句「取消导航」答「当前没有正在进行的导航」。
+    现在每个挂起轮都登记；C10-A 那条仍守着：**候选只收挂起步自己**（`candidates_from`），兄弟步的列表用户没以卡片看见过。
+    真抽取的正反两面在 `test_candidate_sets.py`。"""
+    assert _suspend_with_card({"type": "merchant_order_preview"}) == [("sess-1", 1, {"s1"})]
+    assert _suspend_with_card(None) == [("sess-1", 1, {"s1"})]
 
 
 def test_a_safety_statement_is_never_a_slot_answer():

@@ -1592,7 +1592,7 @@ CASES = [
          {"say": "深圳湾公园", "source": "voice_followup",
           "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
                      "speech_not": ["怎么处理", "云岚国际中心"], "card_type_not": "rejected"}},
-         # 真的结束了那一趟导航（同一趟：挂起轮不写焦点，已发出的导航没进路线会话 ⇒「当前没有正在进行的导航」）
+         # 真的结束了那一趟导航（同一趟修前：挂起轮不写焦点，已发出的导航没进路线会话 ⇒「当前没有正在进行的导航」）
          {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
                                         "speech_not": ["没有待确认", "没有正在进行的导航"]}},
      ]},

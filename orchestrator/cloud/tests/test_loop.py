@@ -1155,7 +1155,7 @@ def test_settle_receives_every_executed_step_and_every_result_before_the_final()
 
 
 def test_settle_is_not_called_when_the_loop_suspends():
-    """挂起轮从来不写焦点（I-024 第二层）：挂起出口 return 在回调之前。"""
+    """挂起出口 return 在回调之前——挂起轮的焦点由 `suspend_fn`（engine `_suspend`）自己登记，不走完成轮的 settle。"""
     async def suspend(step_result, results, plan, ctx, prior=None):
         return {"kind": "final", "need_confirm": True, "speech": "要确认吗"}
 
@@ -1170,6 +1170,65 @@ def test_settle_is_not_called_when_the_loop_suspends():
         agents=[], ctx=PlanContext(), user_text="导航", settle=settle)
     assert events[-1].get("need_confirm") is True
     assert calls == []
+
+
+# ── 评审四轮（`4438ea6b` 真栈 RS39）：补槽续接之后的循环 ─────────────────────────────────────────
+
+def _resumed_nav_loop(superseded):
+    """续接轮：t1-r1 是被续接的导航（槽已经换成用户答的深圳湾公园）；再规划照旧去追「云岚国际中心」。"""
+    planner = _Planner([
+        ReplanDecision(done=False, steps=[
+            Step(id="r1", agent_id="navigation", intent="navigation.search_poi",
+                 slots={"keyword": "云岚国际中心"}),
+            Step(id="r2", agent_id="navigation", intent="navigation.navigate_to",
+                 slots={"destination": "云岚国际中心"}, depends_on=["r1"]),
+        ]),
+        ReplanDecision(done=True),
+    ])
+    executor = _Executor({
+        "t1-r1": StepResult("t1-r1", StepStatus.OK, speech="为您导航到深圳湾公园"),
+        "r1": StepResult("r1", StepStatus.OK, speech="没找到「云岚国际中心」。"),
+        "r2": StepResult("r2", StepStatus.OK, speech="又导去了云岚国际中心"),
+    })
+    controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000)
+    initial = Plan(steps=[Step(id="t1-r1", agent_id="navigation", intent="navigation.navigate_to",
+                               slots={"destination": "深圳湾公园"})],
+                   complexity="adaptive", replan_batch=True,
+                   goal="解析\"深圳湾公园\"为可导航的具体地点后启动导航")
+    events = _collect(
+        controller, goal=initial.goal, initial_plan=initial, agents=[],
+        ctx=PlanContext(raw_text="深圳湾公园", safety_origin_text="导航去云岚国际中心"),
+        user_text="深圳湾公园", superseded=superseded)
+    return executor, events
+
+
+def test_a_resumed_loop_drops_replanned_steps_that_chase_the_replaced_value():
+    """修前：续接导航到深圳湾公园之后，循环又规划 search_poi / navigate_to「云岚国际中心」、再挂一条追问。
+    追旧值的步（连同依赖它的下游）一步不跑，丢光就收场。"""
+    executor, events = _resumed_nav_loop({"云岚国际中心": "深圳湾公园"})
+    assert executor.runs == [["t1-r1"]], executor.runs
+    assert events[-1]["kind"] == "final"
+
+
+def test_without_a_replacement_the_replanned_steps_still_run():
+    """对照：不是替换（`superseded` 为空）⇒ 再规划出的步照常执行，行为同修前。"""
+    executor, _events = _resumed_nav_loop({})
+    assert executor.runs == [["t1-r1"], ["r1", "r2"]], executor.runs
+
+
+def test_resuming_a_replanned_batch_does_not_reopen_the_first_stage_correction():
+    """`ReplanDecision.to_plan` 出的那一批本身就是第二阶段：续接它之后第一次再规划不再带 `adaptive`（「首轮自报 adaptive、
+    判 done 要纠偏一次」）——修前续接后模型说「完成了」还会被逼着再补一批。对照：首轮的 adaptive 计划照旧带。"""
+    assert ReplanDecision(done=False, steps=[]).to_plan("g").replan_batch is True
+    for batch, expected in ((True, False), (False, True)):
+        planner = _Planner([ReplanDecision(done=True)])
+        executor = _Executor({"s1": StepResult("s1", StepStatus.OK, speech="好")})
+        controller = LoopController(planner, executor, _Aggregator(), None, max_iters=3, budget_ms=5000)
+        _collect(controller, goal="导航",
+                 initial_plan=Plan(steps=[Step(id="s1", agent_id="navigation", intent="navigation.navigate_to")],
+                                   complexity="adaptive", replan_batch=batch),
+                 agents=[], ctx=PlanContext(), user_text="导航")
+        assert planner.adaptive_flags == [expected], (batch, planner.adaptive_flags)
 
 
 def test_settle_still_runs_when_the_replanner_fails():
