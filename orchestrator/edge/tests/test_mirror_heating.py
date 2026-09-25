@@ -101,3 +101,41 @@ def test_fold_and_unfold_are_unchanged(text, name, state):
 def test_windshield_defog_is_unchanged():
     assert _parse("打开前挡除雾")[1][0] == "front_defogger"
     assert _parse("打开后挡风玻璃除雾")[1][0] == "rear_defogger"
+
+
+def _gate():
+    import importlib.util
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    spec = importlib.util.spec_from_file_location("_capability_gate", os.path.join(root, "test", "eval_capability_integrity.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_the_mode_fidelity_lane_is_green_on_the_real_knowledge():
+    gate = _gate()
+    reach, _orphans, _objects = gate._reachable()
+    assert gate.lane_mode_fidelity(reach, {}) == []
+
+
+def test_the_mode_fidelity_lane_catches_the_pre_fix_mirror(monkeypatch):
+    """话术 / 验证两条车道只查键存在：修前加热意图解成 `rear_view_mirror_unfold_success` 与 `rear_view_mirror` 状态，两条都绿。
+    把 VAL 退回修前那两处（加热不单独判），模式保真车道恰好报出这两个意图。"""
+    gate = _gate()
+    real_key, real_sim = VAL._build_response_key, VAL._simulate
+
+    def pre_fix_key(self, obj, operate, data):
+        if obj == "rear_view_mirror" and (data or {}).get("mode") == "heating":
+            return "rear_view_mirror_unfold_success" if operate == "open" else "rear_view_mirror_fold_success"
+        return real_key(self, obj, operate, data)
+
+    def pre_fix_sim(self, obj, operate, data):
+        if obj == "rear_view_mirror" and (data or {}).get("mode") == "heating":
+            return ("rear_view_mirror", "unfolded" if operate == "open" else "folded")
+        return real_sim(self, obj, operate, data)
+
+    monkeypatch.setattr(VAL, "_build_response_key", pre_fix_key)
+    monkeypatch.setattr(VAL, "_simulate", pre_fix_sim)
+    reach, _orphans, _objects = gate._reachable()
+    errs = gate.lane_mode_fidelity(reach, {})
+    assert len(errs) == 2 and all("rear_view_mirror.heating." in e for e in errs), errs

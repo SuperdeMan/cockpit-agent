@@ -30,6 +30,7 @@ nlu_objects.yaml、fast_intent.py、val.py、edge_call.py、vehicle.py、catalog
 | `lane_speech` | 每条可达 intent 的 response key 存在于 responses.yaml 且不是 `generic_success`；需确认的 intent 另有确认问句 `<object>_<operate>_confirm` |
 | `lane_equivalence` | 每个可达对象在 `nlu_objects.yaml` 有归并（或台账登记待裁定） |
 | `lane_verification` | 每条可达 intent 执行不崩，且有专属状态键（走通用兜底 ⇒ Outcome Verifier 无从对账）；`effect: read` 的查询类对象由此机械豁免 |
+| `lane_mode_fidelity` | 意图名带模式 / 属性段（`对象.模式.操作`）时，执行落到的话术键或状态键带着这一段——存在性检查拦不住「落到了另一个模式」 |
 | `lane_adversarial` | **只确认 `--strict` 矩阵入口还在被执行**，不重复实现（唯一入口仍是 B2 的门禁脚本） |
 
 ## 台账
@@ -71,7 +72,7 @@ _EXEMPTIONS = _KNOWLEDGE / "capability_exemptions.yaml"
 _GATE_SCRIPT = _ROOT / "scripts" / "check_intent_gate.py"
 
 #: 台账合法的车道名。写错车道名等于悄悄没豁免到，所以它也要被校验。
-LANES = ("execution", "speech", "equivalence", "verification")
+LANES = ("execution", "speech", "equivalence", "verification", "mode_fidelity")
 
 
 def _yaml(path: Path) -> dict:
@@ -294,6 +295,37 @@ def lane_verification(reach, table, objects_of) -> list[str]:
     return errs
 
 
+def lane_mode_fidelity(reach, table) -> list[str]:
+    """意图名带模式 / 属性段（`对象.模式.操作`）时，执行落到的话术键或状态键要带着这一段。
+
+    话术与验证两条车道只查「键存在、是专属键」，拦不住「落到了**另一个**模式」：评审四轮待办（2026-09-25）给后视镜补
+    `rear_view_mirror.heating.open / .close` 时，只改了 `commands.yaml` 两条车道就全绿——VAL 把它解成现成的
+    `rear_view_mirror_unfold_success` 与 `rear_view_mirror` 状态，执行的其实是**展开**。判据只看名字与键，零领域词。
+    执行崩溃归 `lane_verification` 报，这里跳过。
+    """
+    from val import VAL
+
+    errs = []
+    for obj, items in sorted(reach.items()):
+        if _exempt(table, obj, "mode_fidelity"):
+            continue
+        for intent, data in items:
+            parts = intent.split(".")
+            if len(parts) < 3:
+                continue
+            path = "_".join(parts[1:-1])
+            val = VAL()
+            key = val._build_response_key(obj, data["operate"], data)
+            try:
+                state_key, _ = val._simulate(obj, data["operate"], dict(data))
+            except Exception:
+                continue
+            if path not in str(key) and path not in str(state_key):
+                errs.append(f"`{intent}` 的话术键 `{key}` 与状态键 `{state_key}` 都不带 `{path}`"
+                            "——执行落到了另一个模式 / 属性上（话术与状态都是别的动作的）")
+    return errs
+
+
 #: 探针的三种载荷。**带值/带模式那两次是必要的**——`volume.set`、`scene_mode.set` 这类
 #: 分支要有 value / mode 才走，只探裸的会把它们误判成「没有实现」（第一版就误判了 17 条，
 #: 其中 4 条是探针自己的问题不是被测对象的）。判据同「A/B 之前先证明两臂真的不同」：
@@ -377,6 +409,7 @@ def main() -> int:
         "话术定义": lane_speech(reach, table),
         "等价类": lane_equivalence(reach, table),
         "验证定义": lane_verification(reach, table, objects.get),
+        "模式保真": lane_mode_fidelity(reach, table),
         "对抗覆盖入口": lane_adversarial(),
     }
 
