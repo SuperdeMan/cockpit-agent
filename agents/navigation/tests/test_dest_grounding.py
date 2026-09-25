@@ -571,3 +571,43 @@ def test_a_guess_after_an_unverified_nearby_result_does_not_cross_cities():
         _agent_with_landmarks(poi, ["东方之门"]), "navigation.navigate_to",
         slots={"destination": "第二家"}, raw_text="导航到第二家", meta=SZ))
     assert "东方之门" not in [a["payload"].get("destination") for a in res.actions if a["type"] == "navigate"]
+
+
+# ── 「没找到」要接得住用户的下一句（`f535c654` 真栈 RS39 2/3）──────────────────────────────────────
+#
+# 「导航去云岚国际中心」被规划成 `search_poi` 时，批 E 的「没找到」只回一句话：话术说「请补充城市…我再为您定位」，却没留挂起——
+# 用户接着说「深圳湾公园」成了一句全新的裸地名，被澄清成「你希望我怎么处理深圳湾公园？」。`navigate_to` 那条「没找到」一直是补槽追问，
+# 所以导航语境下的「没找到」改派给它（挂起落在 navigate_to 上，补上的地名续接它、直接导航）。
+
+_ESCALATE_TO_NAVIGATE = {"intent": "navigation.navigate_to", "slots": {"destination": "云岚国际中心"},
+                         "reason": "search_not_found"}
+
+
+def test_search_poi_with_a_navigation_phrase_that_finds_nothing_hands_over_to_navigate_to():
+    poi = _SearchPoi(near_results=[], wide_results=[])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert (res.data or {}).get("_escalate") == _ESCALATE_TO_NAVIGATE, res.data
+    # 话术照留：不消费改派的路径（T2 循环）上仍是一句实话
+    assert res.speech == "没找到「云岚国际中心」。" and "请补充城市" in (res.follow_up or "")
+    assert not res.actions
+
+
+def test_search_poi_refusing_a_far_guess_also_hands_over_to_navigate_to():
+    poi = _SearchPoi(near_results=[_BEIJING_SALON], wide_results=[_BEIJING_SALON])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert (res.data or {}).get("_escalate") == _ESCALATE_TO_NAVIGATE, res.data
+    assert not res.actions
+
+
+def test_a_plain_search_that_finds_nothing_just_says_so():
+    """对照：只是搜（不带导航词）⇒ 说没找到，不改派。"""
+    poi = _SearchPoi(near_results=[], wide_results=[])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"keyword": "云岚国际中心"},
+        raw_text="搜一下云岚国际中心", meta=SZ))
+    assert "_escalate" not in (res.data or {})
+    assert "云岚国际中心" in res.speech

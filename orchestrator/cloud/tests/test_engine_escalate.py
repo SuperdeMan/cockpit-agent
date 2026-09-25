@@ -400,6 +400,55 @@ def test_resumed_escalate_uses_origin_but_agent_keeps_current_slot_answer(intent
     assert sink["results"][0].speech == "请立即安全停车并联系救援。"
 
 
+def _nav_agents():
+    nav = SimpleNamespace(manifest=SimpleNamespace(
+        agent_id="navigation", trust_level="first_party", latency_budget_ms=5000,
+        deployment="cloud", kind="agent", requires_permissions=[], context_scopes=[],
+        capabilities=[_Cap("navigation.search_poi"), _Cap("navigation.navigate_to")], route_hints=[],
+    ), endpoint="stub:50070")
+    return [nav]
+
+
+class _NavSpy(_EscSpy):
+    async def resolve(self, query="", intent="", top_k=1):
+        return _nav_agents()
+
+    async def list_agents(self):
+        return _nav_agents()
+
+
+def test_escalated_need_slot_is_resumed_on_the_escalated_step():
+    """契约 i（评审四轮 RS39，2026-09-25）：改派步带着自己的话术（「没找到 X」，不是零播报）照样改派——final 里的话术
+    不算流出过；目标返回 NEED_SLOT ⇒ 挂起落在 esc1（session 存 mini-plan），改派前那句不重复播；下一句补槽续接的是 esc1：
+    槽值是这句话，Agent 读到的本轮原话也是这句话。"""
+    esc = {"_escalate": {"intent": "navigation.navigate_to", "slots": {"destination": "云岚国际中心"},
+                         "reason": "search_not_found"}}
+    ask = _Resp(status=2, speech="暂时无法确定「云岚国际中心」对应的具体地点。", follow_up="请补充城市或更详细的地址")
+    ask.missing_slots = ["destination"]
+    spy = _NavSpy(
+        plan_json=json.dumps({"steps": [{"id": "s1", "capability_ref": "cap_0002",   # navigation.search_poi
+                                         "slots": {"keyword": "云岚国际中心"}, "depends_on": [], "slot_refs": {}}]}),
+        script=[("final", _Resp(speech="没找到「云岚国际中心」。", data=esc))],
+        unary_seq=[ask, _Resp(speech="为您导航到深圳湾公园。")])
+    engine, session = _make_engine(spy)
+
+    first = _run(engine, _req("导航去云岚国际中心"))[-1]
+    assert first["speech"] == "暂时无法确定「云岚国际中心」对应的具体地点。", first
+    state = asyncio.run(session.load("sess-esc", owner_user_id="u1"))
+    assert state is not None and state.phase == "wait_slot" and state.pending_step_id == "esc1"
+    assert state.missing_slots == ["destination"]
+
+    second = _run(engine, SimpleNamespace(
+        text="深圳湾公园", session_id="sess-esc", request_id="r2", is_confirmation=False,
+        context=SimpleNamespace(user_id="u1", vehicle_id="v1")))[-1]
+    assert [c[1] for c in spy.calls] == [
+        "navigation.search_poi", "navigation.navigate_to", "navigation.navigate_to"]
+    assert spy.calls[-1][2].get("destination") == "深圳湾公园"
+    assert (spy.stream_ctx_raw_texts + spy.unary_ctx_raw_texts)[-1] == "深圳湾公园"
+    assert second["speech"] == "为您导航到深圳湾公园。"
+    assert asyncio.run(session.load("sess-esc", owner_user_id="u1")) is None
+
+
 def test_unknown_legacy_origin_blocks_escalated_write_but_allows_read():
     async def run_target(intent):
         spy = _EscSpy(unary_seq=[_Resp(speech="read result")])

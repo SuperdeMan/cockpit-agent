@@ -708,7 +708,7 @@ class NavigationAgent(BaseAgent):
             # 修前零结果照样套列表模板：「为您找到 0 个云岚国际中心，推荐前三个：。需要导航过去吗？」+「可以说『导航去第一个』」
             if is_category:
                 return AgentResult(speech=f"附近暂时没找到{keyword}，换个类型或换个地方试试？")
-            return AgentResult(speech=f"没找到「{keyword}」。", follow_up=_NOT_FOUND_FOLLOW_UP)
+            return self._search_not_found(keyword, raw_text)
 
         if prefer_highest:
             results = sorted(results, key=lambda item: item.rating or 0, reverse=True)
@@ -730,7 +730,7 @@ class NavigationAgent(BaseAgent):
             if not verified and self._beyond_local_radius(first, near) is not None:
                 logger.info("search_poi: unverified first result beyond the local radius, not navigating: %s → %s",
                             keyword, first.name)
-                return AgentResult(speech=f"没找到「{keyword}」。", follow_up=_NOT_FOUND_FOLLOW_UP)
+                return self._search_not_found(keyword, raw_text)
             # G6 轨迹写入也要挂这条自动导航路径——真栈「圆圆的湖→滴水湖」走的
             # 正是这里，漏挂则「上次去过的那个湖」无数据可召回（挂点枚举教训）。
             await self._remember_visited(ctx, first.name, first.lat, first.lng)
@@ -748,6 +748,22 @@ class NavigationAgent(BaseAgent):
             data={"items": items},  # F3：结构化结果供编排 slot_refs 取值（如 s1.data.items.0.id）
             follow_up="可以说『导航去第一个』",
         )
+
+    @classmethod
+    def _search_not_found(cls, keyword: str, raw_text: str) -> AgentResult:
+        """「没找到 X」。原话带导航词（用户要去一个地方，规划却落成了 search_poi）⇒ 改派 `navigation.navigate_to`：
+        「没找到 → 追问目的地 → 补上就导航」是它那条路，挂起落在它身上，下一句补上的地名续接的也是它。
+        `f535c654` 真栈 RS39：这里只回一句话、没有挂起，用户接着说「深圳湾公园」成了全新的裸地名，被澄清成
+        「你希望我怎么处理深圳湾公园？」。不在这里自己挂补槽：续接轮的 search_poi 读的是本轮原话（槽答案「深圳湾公园」，
+        没有导航词），补上了也只会列结果、不导航。
+        话术照留：T2 循环不消费改派，那条路上至少还有一句实话；final 里的话术不算「流出过」，不挡 D0 改派。
+        只是搜（不带导航词）⇒ 说没找到即可。"""
+        result = AgentResult(speech=f"没找到「{keyword}」。", follow_up=_NOT_FOUND_FOLLOW_UP)
+        if cls._is_navigation_phrase(raw_text):
+            result.data = {"_escalate": {"intent": "navigation.navigate_to",
+                                         "slots": {"destination": keyword},
+                                         "reason": "search_not_found"}}
+        return result
 
     @staticmethod
     def _is_navigation_phrase(text: str) -> bool:

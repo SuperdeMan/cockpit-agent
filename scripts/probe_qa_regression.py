@@ -1584,8 +1584,12 @@ CASES = [
      "known": "green",
      "turns": [
          {"say": "导航去云岚国际中心", "expect": {"follow_up_any": ["请补充城市"], "navigate_within_km": 150}},
+         # 第 1 轮三种规划形态都得在第 2 轮导航过去：落 `navigate_to` ⇒ 补槽续接它；落 `search_poi` ⇒ 它的「没找到」改派
+         # `navigate_to`、挂起落在改派步上；落 `search_poi → navigate_to`（依赖）⇒ 挂起在第二步。`f535c654` 那两趟红是
+         # 单步 `search_poi` 的「没找到」没留挂起，回答被澄清成「你希望我怎么处理深圳湾公园？」
          {"say": "深圳湾公园", "source": "voice_followup",
-          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"], "card_type_not": "rejected"}},
+          "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
+                     "speech_not": ["怎么处理"], "card_type_not": "rejected"}},
          {"say": "取消导航", "expect": {"speech_not": ["没有待确认"]}},
      ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
