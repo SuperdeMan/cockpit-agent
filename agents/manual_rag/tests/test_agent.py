@@ -29,8 +29,10 @@ def test_query_retrieves_and_answers():
 
 
 def test_query_missing_question_asks():
+    """只回答的能力（见下一条）问一句也是普通回答：修前这里钉的是 need_slot，执行器会把它判成 response_only 契约违规。"""
     res = asyncio.run(run_handle(ManualRagAgent(), "manual.query", raw_text=""))
-    assert res.status == "need_slot"
+    assert res.status == "ok" and not res.actions
+    assert res.speech == "您想了解车辆的哪方面？"
 
 
 def test_manual_query_is_declared_response_only():

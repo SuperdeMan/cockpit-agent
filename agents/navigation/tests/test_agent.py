@@ -500,6 +500,23 @@ def test_set_place_parses_alias_and_address_from_raw_text():
     assert "home" in saved
 
 
+def test_set_place_asking_which_place_declares_the_slot_it_asks_for():
+    """「您想设置哪个常用地点？」必须声明缺 `place`：续接轮原话只有「家」，不声明就写不进槽、只会原样再问；
+    补上之后照常追问地址（那一问早就声明了 `address`）。"""
+    agent = NavigationAgent()
+    agent.poi = _ScriptedPoiProvider(default=[_poi("阳光小区")])
+    ask = asyncio.run(run_handle(
+        agent, "navigation.set_place", slots={}, raw_text="帮我设置一个常用地点",
+        ctx=make_context(context_values={})))
+    assert ask.status == "need_slot" and ask.missing_slots == ["place"], (ask.status, ask.missing_slots)
+
+    answered = asyncio.run(run_handle(
+        agent, "navigation.set_place", slots={"place": "家"}, raw_text="家",
+        ctx=make_context(context_values={})))
+    assert answered.status == "need_slot" and answered.missing_slots == ["address"]
+    assert "家" in answered.speech
+
+
 def test_locate_with_gps_reverse_geocodes_current_position():
     """『我现在在哪里』+ GPS → 逆地理编码当前坐标，给出当前所在地址。"""
     agent = NavigationAgent()

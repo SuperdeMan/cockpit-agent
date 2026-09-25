@@ -17,7 +17,7 @@ import logging
 import os
 import re
 
-from agents._sdk import BaseAgent, AgentResult, NEED_SLOT
+from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.provenance import attach
 from runtime.safety_signal import alert_advice, alert_level, alert_signal
 from .providers import build_knowledge_retriever
@@ -233,7 +233,8 @@ class ManualRagAgent(BaseAgent):
     async def handle(self, intent, ctx, meta) -> AgentResult:
         question = intent.raw_text or intent.slots.get("question", "")
         if not question:
-            return AgentResult(status=NEED_SLOT, speech="您想了解车辆的哪方面？")
+            # 只回答的能力不许挂补槽（安全红线 5；执行器会把 NEED_SLOT 判成契约违规、这句根本发不出去）——就是一句普通回答
+            return AgentResult(speech="您想了解车辆的哪方面？")
 
         level = _safety_level(question)
         vehicle_model = str(

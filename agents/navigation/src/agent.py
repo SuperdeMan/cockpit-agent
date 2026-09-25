@@ -654,10 +654,15 @@ class NavigationAgent(BaseAgent):
                                  "traffic_lookup": "road"})
 
     async def _search_poi(self, intent, ctx, meta) -> AgentResult:
-        keyword = intent.slots.get("keyword") or intent.slots.get("category")
+        # 规划偶尔把自家 navigate_to 的 `destination` 写到这一步上（真栈 `dabc2e2d` RS39 1/6：「导航去云岚国际中心」⇒
+        # `navigation.search_poi {destination: 云岚国际中心}`）——那就是用户说出的地方，按它搜。规划器那层刻意不把这种混槽
+        # 归位成 navigate_to（F-1 ④：归位永不朝写操作推）；这里仍是 search_poi，动作方向不变。
+        keyword = (intent.slots.get("keyword") or intent.slots.get("category")
+                   or intent.slots.get("destination"))
         if not keyword:
+            # 必须声明缺的是哪个槽：不声明时补槽答案写不进任何槽，重跑还是这一问（同一真栈那一趟答「深圳湾公园」原样再问）
             return AgentResult(status=NEED_SLOT, speech="您想找什么类型的地点呢？",
-                               follow_up="请提供搜索关键词，如『充电站』『川菜馆』")
+                               follow_up="请提供搜索关键词，如『充电站』『川菜馆』", missing_slots=["keyword"])
 
         # 按引用取车辆当前位置（隐私最小化：只取需要的 scope）
         near = await self._current_position(ctx, meta)
@@ -1280,9 +1285,10 @@ class NavigationAgent(BaseAgent):
             place_key, label = (place_key or pk), (label or lb)
             address = address or addr
         if not place_key:
+            # 声明缺 `place`：续接轮原话只有「家」，`_parse_set_place` 解析不出来，不声明就只会原样再问
             return AgentResult(
                 status=NEED_SLOT, speech="您想设置哪个常用地点？比如家或公司。",
-                follow_up="可以说『把家设成XX地址』")
+                follow_up="可以说『把家设成XX地址』", missing_slots=["place"])
         if not address:
             return AgentResult(
                 status=NEED_SLOT, speech=f"请告诉我{label}的具体地址。",

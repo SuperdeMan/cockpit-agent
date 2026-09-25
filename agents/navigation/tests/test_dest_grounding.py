@@ -603,6 +603,23 @@ def test_search_poi_refusing_a_far_guess_also_hands_over_to_navigate_to():
     assert not res.actions
 
 
+def test_search_poi_carrying_navigate_tos_destination_slot_searches_that_place():
+    """真栈 `dabc2e2d` RS39 1/6：规划交出 `navigation.search_poi {destination: 云岚国际中心}`（自家 navigate_to 的槽）——
+    修前没有 keyword ⇒「您想找什么类型的地点呢？」，而且那一问不声明缺哪个槽，答「深圳湾公园」写不进去、原样再问。"""
+    poi = _SearchPoi(near_results=[], wide_results=[])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={"destination": "云岚国际中心"},
+        raw_text="导航去云岚国际中心", meta=SZ))
+    assert (res.data or {}).get("_escalate") == _ESCALATE_TO_NAVIGATE, (res.status, res.speech, res.data)
+
+
+def test_search_poi_without_any_place_asks_and_declares_the_keyword_slot():
+    poi = _SearchPoi(near_results=[], wide_results=[])
+    res = asyncio.run(run_handle(
+        _agent_with(poi), "navigation.search_poi", slots={}, raw_text="帮我搜个地方", meta=SZ))
+    assert res.status == "need_slot" and res.missing_slots == ["keyword"], (res.status, res.missing_slots)
+
+
 def test_a_plain_search_that_finds_nothing_just_says_so():
     """对照：只是搜（不带导航词）⇒ 说没找到，不改派。"""
     poi = _SearchPoi(near_results=[], wide_results=[])
