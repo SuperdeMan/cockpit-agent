@@ -20,6 +20,7 @@ from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
     is_landmark_description, landmark_candidates, name_matches)
 from agents._sdk.timewindow import fmt_clock, parse_clock_time
+from runtime.clause_split import split_clauses
 from runtime.cntime import SEG_ALT
 from .providers import build_poi_provider
 from .providers.base import GeoPoint, POI
@@ -856,6 +857,19 @@ class NavigationAgent(BaseAgent):
                            follow_up="说个目的地，比如「去世界之窗」",
                            missing_slots=["destination"])
 
+    @staticmethod
+    def _raw_destination(raw: str, *, governed: bool) -> str:
+        """目的地槽为空时，原话里哪一段能当目的地（评审四轮待办，2026-09-25）。
+
+        兜底本来只为「整句就是一个地点描述」的单步请求设计（「导航到上海那个像船一样的建筑」）。多分句计划里这一步的目的地
+        本该引用上一步的结果，上一步没产出时槽是空的，修前把整句原话当地名去搜、再原样念回来——「暂时无法确定「先帮我查一下
+        墨汐国际中心在哪，导航过去」对应的具体地点」（真栈 `ee94c595` RS41）、「暂时无法确定「东部华侨城，沿途帮我找个充电站」…」
+        （collector 历史）。只剩一个分句 ⇒ 它；多个分句 ⇒ 原话以导航动词起头才取动词管的第一句，否则不取（交给「您要去哪里？」）。"""
+        clauses = split_clauses(raw)
+        if len(clauses) <= 1:
+            return raw
+        return clauses[0] if governed else ""
+
     async def _navigate_to(self, intent, ctx, meta) -> AgentResult:
         dest = intent.slots.get("destination", "").strip()
         raw_text = (intent.raw_text or "").strip()
@@ -867,13 +881,14 @@ class NavigationAgent(BaseAgent):
             # 槽位为空时，尝试用 raw_text 做模糊搜索（处理"导航到上海那个像船一样的建筑"）。
             # 批 E：先去掉「从 X 出发」与路线偏好——起点和「不走高速」都不是目的地（修前「不走高速」被拿去搜地名）。
             raw = _without_route_prefs(_origin_named(raw_text)[0]).strip("，。, 、")
+            governed = False
             for prefix in ("导航到", "导航去", "导航", "带我去", "去", "到"):
                 if raw.startswith(prefix):
                     raw = raw[len(prefix):].strip()
+                    governed = True
                     break
             raw = self._WAYPOINT_RE.sub("", raw).strip("，。, 、")  # 去掉"途经X"尾巴，不污染目的地
-            if raw:
-                dest = raw
+            dest = self._raw_destination(raw, governed=governed)
         if not dest:
             return AgentResult(status=NEED_SLOT, speech="您要去哪里？", follow_up="请告诉我目的地",
                                missing_slots=["destination"])

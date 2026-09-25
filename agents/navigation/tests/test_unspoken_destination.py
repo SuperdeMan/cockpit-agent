@@ -170,6 +170,35 @@ def test_empty_destination_fallback_skips_the_origin_part():
     assert nav and nav[0]["payload"]["destination"] == "世界之窗", (res.status, res.speech)
 
 
+_EAST = POI(id="e1", name="东部华侨城", address="大梅沙", lat=22.6110, lng=114.2940)
+
+
+def test_a_multi_clause_utterance_is_not_searched_as_one_place():
+    """评审四轮待办（2026-09-25）：两步计划里 navigate_to 的目的地本该引用上一步，上一步没找到 ⇒ 槽是空的。修前把整句当地名去搜、
+    原样念回来：「暂时无法确定「先帮我查一下墨汐国际中心在哪，导航过去」对应的具体地点」（真栈 `ee94c595` RS41）。"""
+    agent, calls = _agent(_ALL)
+    res = _run(agent, "navigation.navigate_to", {}, "先帮我查一下墨汐国际中心在哪，然后导航过去")
+    assert res.status == "need_slot" and res.missing_slots == ["destination"]
+    assert res.speech == "您要去哪里？"
+    assert calls["search"] == []
+
+
+def test_a_navigation_verb_governs_only_its_first_clause():
+    """collector 历史：「导航去东部华侨城，沿途帮我找个充电站」修前念成「暂时无法确定「东部华侨城，沿途帮我找个充电站」…」。"""
+    agent, calls = _agent({**_ALL, "东部华侨城": [_EAST]})
+    res = _run(agent, "navigation.navigate_to", {}, "导航去东部华侨城，沿途帮我找个充电站")
+    nav = [a for a in res.actions if a["type"] == "navigate"]
+    assert nav and nav[0]["payload"]["destination"] == "东部华侨城", (res.status, res.speech)
+    assert all("充电站" not in keyword for keyword in calls["search"])
+
+
+def test_a_trailing_route_preference_still_leaves_one_clause():
+    agent, calls = _agent(_ALL)
+    res = _run(agent, "navigation.navigate_to", {}, "带我去世界之窗，不走高速")
+    nav = [a for a in res.actions if a["type"] == "navigate"]
+    assert nav and nav[0]["payload"]["destination"] == "世界之窗", (res.status, res.speech)
+
+
 def test_a_route_preference_alone_is_not_a_destination():
     """「不走高速」不是地名：修前拿它去搜，答「暂时无法确定「不走高速」对应的具体地点」。"""
     agent, calls = _agent(_ALL)
