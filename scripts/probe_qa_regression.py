@@ -1500,7 +1500,9 @@ CASES = [
      "why": "「好的」回答的是最近那一问：不确认被插话隔开的危险操作；无挂起时也不被说成没有待确认",
      "known": "red",
      "turns": [
-         {"say": "打开后备箱", "sid": 0, "expect": {"need_confirm": True, "has_operation_id": True}},
+         # 评审四轮 §5.5：确认问句念出这一步真会执行的动作（确定性模板，无措辞漂移）——方向错了、或退回通用句都在这里红
+         {"say": "打开后备箱", "sid": 0, "expect": {"need_confirm": True, "has_operation_id": True,
+                                                  "speech_has": ["要打开后备箱"]}},
          {"say": "先给我讲一个很短的笑话，讲完问我还要不要再听一个", "sid": 0,
           "expect": {"actions_exclude": ["trunk.open"]}},
          {"say": "好的", "sid": 0,
@@ -1510,7 +1512,8 @@ CASES = [
          {"say": "给我讲一个小故事的开头，讲完问我要不要继续听", "sid": 1, "expect": {"no_actions": True}},
          {"say": "好的", "sid": 1, "expect": {"no_actions": True, "speech_not": ["当前没有待确认"]}},
          # 清理：后备箱在第 4 轮被打开（修前在第 3 轮），关回去，免得下一趟答「已经是打开状态」
-         {"say": "关闭后备箱", "sid": 2, "expect": {"need_confirm": True}},
+         # `5ca289c7` 回归：新会话里这一句被规划成 `trunk.open`、确认只念通用句，「好的」开了后备箱（§5.5 a / b 修）
+         {"say": "关闭后备箱", "sid": 2, "expect": {"need_confirm": True, "speech_has": ["要关闭后备箱"]}},
          # 正常对照：确认卡就是最近那一问，「好的」照常授权（关后备箱，顺带完成清理）
          {"say": "好的", "sid": 2, "expect": {"actions_include": ["trunk.close"], "closes_op_from": 7}},
      ]},
