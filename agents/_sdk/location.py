@@ -10,11 +10,27 @@ docs/reviews/2026-09-16-android-e2e-latency-location-wait.md）。判据只在�
 """
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 
 #: 超过这个年龄的坐标不许被当成「此刻」念出去，只能说成「N 分钟前的位置」
 STALE_LOCATION_S = 10 * 60
+
+#: 「本地」半径（km）：裸区县名的心智是本地（接地卡 D2），**名字对不上的弱匹配**也只在这个半径内才当目的地 / 搜索中心。
+#: 评审四轮真栈（`bda5af71`，CL1 / RS33 / RS36）：深圳定位下「云岚国际中心」近侧 / 全国都只捞回北京的「云岚之境美容美体中心」，
+#: 导航兜底照样当目的地、出发去 1940 km 外（E-1）；同一个不存在的地名交给周边检索，被 geocode 到云南宣威照搜不误（`8528df0b`
+#: RS33，评审四轮待办）。导航与周边检索用同一个数，别各写一个。
+LOCAL_RADIUS_KM = 150.0
+#: 「没找到这个地点」的追问——导航、地点搜索、周边检索三条入口共用一句（探针按它判分支，`follow_up_any`）。
+NOT_FOUND_FOLLOW_UP = "请补充城市、所在区域，或附近的地标，我再为您定位。"
+
+
+def rough_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """等距圆柱近似的两点距离（判「本地」的 150km 阈值足够，不求测地精度）。"""
+    dlat = (lat2 - lat1) * 111.0
+    dlng = (lng2 - lng1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
+    return math.hypot(dlat, dlng)
 #: 允许的时钟前置（客户端墙钟略快于服务端），超出即当无效
 _FUTURE_TOLERANCE_S = 5 * 60
 

@@ -7,14 +7,14 @@ Phase 1：使用 Provider 适配层（mock/real 可切换）。
 from __future__ import annotations
 import json
 import logging
-import math
 import os
 import re
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, FAILED
 from agents._sdk.http import ProviderError
-from agents._sdk.location import current_location_from_meta, location_age_s, location_is_stale
+from agents._sdk.location import (LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_location_from_meta,
+                                  location_age_s, location_is_stale, rough_km)
 from agents._sdk.provenance import attach
 from agents._sdk.shared_state import REMINDABLE_ACTIVE
 from agents._sdk.landmark import (
@@ -89,12 +89,9 @@ _PICKUP_RE = re.compile(
 #: 会被问一句而不是被拒绝。可经 env 调，但**默认值本身就是判据**，别当调参旋钮。
 _PICKUP_MAX_KM = float(os.getenv("PICKUP_MAX_KM", "100"))
 
-#: 「本地」半径（km）：裸区县名的心智是本地（接地卡 D2），**名字对不上的弱匹配**也只在这个半径内才当目的地——
-#: 评审四轮真栈（`bda5af71`，CL1 / RS33 / RS36）：深圳定位下「云岚国际中心」近侧 / 全国都只捞回北京的「云岚之境美容美体中心」，
-#: 名字校验不过、地标解析也解不出，兜底照样当目的地，出发去 1940 km 外。两处判据同一个数，别各写一个。
-_LOCAL_RADIUS_KM = 150.0
-#: 「没找到这个地点」的追问——导航与地点搜索两条入口共用一句（探针按它判分支，`follow_up_any`）。
-_NOT_FOUND_FOLLOW_UP = "请补充城市、所在区域，或附近的地标，我再为您定位。"
+#: 「本地」半径与「没找到这个地点」的追问：定义在 `agents._sdk.location`（周边检索用同一个数、同一句），这里保留原名。
+_LOCAL_RADIUS_KM = LOCAL_RADIUS_KM
+_NOT_FOUND_FOLLOW_UP = NOT_FOUND_FOLLOW_UP
 
 
 def _grounded_in_raw(dest: str, raw_text: str) -> bool:
@@ -2197,12 +2194,8 @@ class NavigationAgent(BaseAgent):
         stem = description.strip()[:-len(suffix)]
         return len(stem) >= 2 and cls._dest_matches(stem, poi.name)
 
-    @staticmethod
-    def _rough_km(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
-        """等距圆柱近似的两点距离（判「本地区县」的 150km 阈值足够，不求测地精度）。"""
-        dlat = (lat2 - lat1) * 111.0
-        dlng = (lng2 - lng1) * 111.0 * math.cos(math.radians((lat1 + lat2) / 2))
-        return math.hypot(dlat, dlng)
+    #: 等距圆柱近似的两点距离——实现在 `agents._sdk.location`（周边检索判「本地」用同一份）
+    _rough_km = staticmethod(rough_km)
 
     @classmethod
     def _beyond_local_radius(cls, poi, near) -> int | None:

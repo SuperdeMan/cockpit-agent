@@ -17,6 +17,16 @@ class GeoPoint:
 
 
 @dataclass
+class GeocodeHit:
+    """地理编码结果：坐标 + 行政区（判「落在的是不是用户说出来的那座城」用）。"""
+    lat: float
+    lng: float
+    province: str = ""
+    city: str = ""
+    district: str = ""
+
+
+@dataclass
 class Place:
     """一个周边地点（餐饮/酒店/景点/影院/停车/充电…通用）。"""
     id: str = ""
@@ -60,3 +70,7 @@ class PlaceProvider(ABC):
                      near: GeoPoint | None = None, meta: dict | None = None) -> Place:
         """详情增强。有 place_id 直查详情；否则用 name 搜一个取首个。"""
         ...
+
+    async def geocode(self, address: str, *, meta: dict | None = None) -> GeocodeHit | None:
+        """地名 / 地址 → 坐标 + 行政区；没有结果 ⇒ None。不支持的实现抛 `NotImplementedError`（调用方走原路径）。"""
+        raise NotImplementedError

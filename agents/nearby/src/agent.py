@@ -8,13 +8,14 @@ Provider 适配层（mock/amap 经 env 切换）；真实源运行期失败**诚
 from __future__ import annotations
 import json
 import logging
+from dataclasses import dataclass
 import os
 import re
 import time
 
 from agents._sdk import BaseAgent, AgentResult, NEED_SLOT, NEED_CONFIRM, FAILED
 from agents._sdk.http import ProviderError
-from agents._sdk.location import current_location_from_meta
+from agents._sdk.location import LOCAL_RADIUS_KM, NOT_FOUND_FOLLOW_UP, current_location_from_meta, rough_km
 from agents._sdk.provenance import attach
 from runtime.session_constraints import (NO_QUEUE_RE, NO_SPICY_RE,
                                          SPICY_MARKS, constraints_in,
@@ -22,11 +23,34 @@ from runtime.session_constraints import (NO_QUEUE_RE, NO_SPICY_RE,
 from agents._sdk.timewindow import (
     clock_minutes, dining_window, fmt_clock, parse_event_time)
 from .providers import build_place_provider
-from .providers.base import GeoPoint, Place, is_open_now
+from .providers.base import GeocodeHit, GeoPoint, Place, is_open_now
 
 logger = logging.getLogger("agent.nearby")
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
+
+
+@dataclass(frozen=True)
+class _Unlocated:
+    """说出来的地名在本地定位不到、落点又不是用户说出来的那座城 ⇒ 不拿别处冒充「附近」（评审四轮待办，2026-09-25）。"""
+    place: str
+
+
+#: 行政区名的后缀：比「用户有没有说出这座城」时剥掉（「曲靖市」⇒「曲靖」）。长的在前。
+_ADMIN_SUFFIXES = ("特别行政区", "自治区", "自治州", "自治县", "地区", "省", "市", "区", "县", "盟", "旗")
+
+
+def _names_the_area(hit: GeocodeHit, text: str) -> bool:
+    """geocode 落点的省 / 市 / 区县，有没有一个出现在用户的话里（「北京三里屯」⇒ 北京）。"""
+    for name in (hit.province, hit.city, hit.district):
+        stem = str(name or "").strip()
+        for suffix in _ADMIN_SUFFIXES:
+            if stem.endswith(suffix) and len(stem) - len(suffix) >= 2:
+                stem = stem[: -len(suffix)]
+                break
+        if len(stem) >= 2 and stem in text:
+            return True
+    return False
 
 # 室内组哨兵：类目归一为「室内」时不做单关键词检索，走 _search_indoor 多类目扇出——
 # 高德按名称/类目匹配，「室内景点」这种抽象词只会退化成子串命中（badcase 4799fb1：
@@ -304,7 +328,7 @@ class NearbyAgent(BaseAgent):
         return AgentResult(status=FAILED, speech="周边助手暂不支持该请求。")
 
     # ── 位置 / 类目 / 关键词 ──
-    async def _resolve_center(self, intent, meta) -> GeoPoint | None:
+    async def _resolve_center(self, intent, meta) -> "GeoPoint | _Unlocated | None":
         """搜索中心解析（R3 残余根因，旅程 B1-3）。
 
         location 槽是**地名**时（焦点指代：「那附近有停车场」→ LLM 从焦点填
@@ -329,7 +353,41 @@ class NearbyAgent(BaseAgent):
                 logger.info("center %r resolved to %r (%.4f,%.4f)",
                             near.address, top.name, top.lat, top.lng)
                 return GeoPoint(lat=top.lat, lng=top.lng)
-        return near
+        return await self._unverified_center(near, cur, intent, meta)
+
+    async def _unverified_center(self, near: GeoPoint, cur, intent, meta) -> "GeoPoint | _Unlocated":
+        """名字校验不过的地名：先看它 geocode 到哪，再决定在不在那儿搜（评审四轮待办，2026-09-25）。
+
+        修前直接交给 provider 的全国 geocode：不存在的「云岚国际中心」落到云南宣威，照样搜出一列宣威的咖啡店（真栈
+        `8528df0b` RS33 第 2 趟）；geocode 没结果时 provider 退成全国关键字检索（北京热门 POI 排前）——两种都是拿别的城市冒充
+        「附近」。与导航 E-1 同一道闸：落在本地半径内照旧；半径外只有**用户说出了那座城**（省 / 市 / 区县名在原话里）才算数；
+        没定位判不了远近、provider 不支持地理编码 ⇒ 照旧。
+        """
+        geocode = getattr(self.place, "geocode", None)
+        if cur is None or geocode is None:
+            return near
+        try:
+            hit = await geocode(near.address, meta=meta)
+        except NotImplementedError:
+            return near
+        except ProviderError as e:
+            logger.debug("center geocode failed: %s", e)
+            return near
+        if hit is None:
+            logger.info("nearby: %r cannot be geocoded; not searching nationwide", near.address)
+            return _Unlocated(near.address)
+        km = rough_km(cur.lat, cur.lng, hit.lat, hit.lng)
+        if km <= LOCAL_RADIUS_KM or _names_the_area(hit, f"{near.address} {intent.raw_text or ''}"):
+            return GeoPoint(lat=hit.lat, lng=hit.lng)
+        logger.info("nearby: %r geocoded %.0f km away (%s%s%s) and the user named none of it; not searching there",
+                    near.address, km, hit.province, hit.city, hit.district)
+        return _Unlocated(near.address)
+
+    @staticmethod
+    def _unlocated_result(unlocated: "_Unlocated") -> AgentResult:
+        """地名定位不到：与导航「没找到」同一句追问，不给列表、不编一个中心。"""
+        return AgentResult(speech=f"没找到「{unlocated.place}」。", follow_up=NOT_FOUND_FOLLOW_UP,
+                           data={"items": [], "center": "unlocated"})
 
     # 地点指代词（旅程 B1-3「那附近有停车场」）：与 info 侧 `_DESTINATION_DEICTIC_RE`
     # 同族（那边/那儿/那里/目的地/终点），nearby 再收「那附近」。只有话里带指代时才
@@ -635,6 +693,8 @@ class NearbyAgent(BaseAgent):
         open_now = str(intent.slots.get("open_now") or "").lower() in ("1", "true", "yes") \
             or _parse_open_now(raw)
         near = await self._resolve_center(intent, meta)
+        if isinstance(near, _Unlocated):
+            return self._unlocated_result(near)
         # 话术标签用**净化后**的检索词：cuisine 槽里的约束词（「不辣」）被 _build_keyword
         # 丢掉后，label 若还读原槽，就会播成「为您找到 10 家不辣」（真栈原样复现过）。
         label = brand or keyword
@@ -857,6 +917,8 @@ class NearbyAgent(BaseAgent):
         合并，商场/电影院/博物馆都露脸——比单类目更接近人对「室内去处」的期待。
         话术必须承接天气前提：badcase 三连的根源之一是回答与「下雨」这个语境完全脱节。"""
         near = await self._resolve_center(intent, meta)
+        if isinstance(near, _Unlocated):
+            return self._unlocated_result(near)
         if near is None:
             # 同主路径的诚实降级：没有位置，「附近的室内去处」无从谈起。
             return AgentResult(

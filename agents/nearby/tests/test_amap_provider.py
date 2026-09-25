@@ -119,6 +119,21 @@ def test_geocode_then_around_for_address_near():
     assert len(res) == 2                               # 地名先地理编码→坐标→周边搜索
 
 
+def test_geocode_returns_the_point_and_its_areas():
+    """周边检索的中心接地要知道落点在哪座城（评审四轮待办，2026-09-25）；高德空字段是 []。"""
+    geo = {"status": "1", "info": "OK", "geocodes": [
+        {"location": "104.104,26.219", "province": "云南省", "city": "曲靖市", "district": "宣威市"}]}
+    hit = asyncio.run(_provider({"/v3/geocode/geo": geo}).geocode("云岚国际中心"))
+    assert (hit.lat, hit.lng, hit.province, hit.city, hit.district) == (26.219, 104.104, "云南省", "曲靖市", "宣威市")
+    empty_city = {"status": "1", "info": "OK", "geocodes": [
+        {"location": "116.397,39.908", "province": "北京市", "city": [], "district": "东城区"}]}
+    assert asyncio.run(_provider({"/v3/geocode/geo": empty_city}).geocode("北京东城")).city == ""
+    none = {"status": "1", "info": "OK", "geocodes": []}
+    assert asyncio.run(_provider({"/v3/geocode/geo": none}).geocode("不存在的地方")) is None
+    broken = {"status": "1", "info": "OK", "geocodes": [{"location": []}]}
+    assert asyncio.run(_provider({"/v3/geocode/geo": broken}).geocode("坏坐标")) is None
+
+
 _DETAIL_OK = {
     "status": "1", "info": "OK",
     "pois": [{"id": "B1", "name": "蜀香源川菜馆", "address": "科苑路1号",

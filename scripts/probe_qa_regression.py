@@ -1624,6 +1624,36 @@ CASES = [
          {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
                                         "speech_not": ["没有待确认", "没有正在进行的导航"]}},
      ]},
+    # ── 评审四轮待办（位置词表合一，`runtime/positions.py`）：entities.yaml 里的每个位置词端侧都认得出 ─────────────────
+    # 修前端侧规则 12 个词：「后排左」只认出「后排」⇒ 两扇后窗都开（payload `positions=['后排']`，本条判红）；「右前」认不出位置。
+    # 「关掉」反向的是焦点里记下的那个位置（云侧焦点修前 8 个词，同一个缺口）。
+    {"id": "RS42", "group": "residual", "card": "余项", "issue": "评审四轮待办 · 位置词表",
+     "why": "「后排左 / 前排右 / 右前」只执行那一个位置；「关掉」只反向那一个",
+     "known": "red",
+     "turns": [
+         {"say": "打开后排左车窗", "sid": 0,
+          "expect": {"actions_include": ["window.open"], "action_positions": {"window.open": ["后排左"]}}},
+         {"say": "关掉", "sid": 0,
+          "expect": {"actions_include": ["window.close"], "action_positions": {"window.close": ["后排左"]}}},
+         {"say": "打开前排右座椅加热", "sid": 1,
+          "expect": {"actions_include": ["seat.heating.on"], "action_positions": {"seat.heating.on": ["前排右"]}}},
+         {"say": "关掉", "sid": 1,
+          "expect": {"actions_include": ["seat.heating.off"], "action_positions": {"seat.heating.off": ["前排右"]}}},
+         {"say": "打开右前车窗", "sid": 2,
+          "expect": {"actions_include": ["window.open"], "action_positions": {"window.open": ["右前"]}}},
+         {"say": "关闭车窗", "sid": 2, "expect": {"actions_include": ["window.close"]}},
+     ]},
+    # ── 评审四轮待办（周边中心接地）：说出的地名在本地定位不到 ⇒ 没找到，不拿另一座城冒充「附近」 ─────────────────────
+    # 修前（`8528df0b` RS33 第 2 趟）：「云岚国际中心」经无城市偏置的 geocode 落到云南宣威，播「为您找到 10 家咖啡厅，推荐：瑞幸咖啡
+    # (宣威恒泰城店)…」。第 1 轮模型偶尔把这句规划成澄清（探针假地名与规划器提示里的澄清示例同名，设计文档 §7）——那一趟判红可见。
+    {"id": "RS43", "group": "residual", "card": "余项", "issue": "评审四轮待办 · 周边中心接地",
+     "why": "说出的地名在本地定位不到：答没找到，不播另一座城的店",
+     "known": "red",
+     "turns": [
+         {"say": "云岚国际中心附近的咖啡店", "sid": 0,
+          "expect": {"speech_has": ["没找到「云岚国际中心」"], "speech_not": ["为您找到", "宣威"]}},
+         {"say": "科技园附近的咖啡店", "sid": 1, "expect": {"card_type": "place_list"}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",

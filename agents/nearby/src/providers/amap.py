@@ -12,7 +12,7 @@ import logging
 import re
 
 from agents._sdk.http import AsyncHttpClient, ProviderError
-from .base import PlaceProvider, Place, GeoPoint, is_open_now
+from .base import PlaceProvider, Place, GeoPoint, GeocodeHit, is_open_now
 
 logger = logging.getLogger("agent.nearby.amap")
 
@@ -49,6 +49,21 @@ class AmapPlaceProvider(PlaceProvider):
         data = await self._get("/v3/geocode/geo", {"address": address}, "geocode", meta)
         geocodes = data.get("geocodes") or []
         return (_as_str(geocodes[0].get("location")) or None) if geocodes else None
+
+    async def geocode(self, address: str, *, meta=None) -> GeocodeHit | None:
+        """地址 → 坐标 + 行政区（省 / 市 / 区县）。无结果或坐标坏 ⇒ None。"""
+        data = await self._get("/v3/geocode/geo", {"address": address}, "geocode", meta)
+        geocodes = data.get("geocodes") or []
+        if not geocodes:
+            return None
+        g = geocodes[0]
+        try:
+            lng_s, lat_s = _as_str(g.get("location")).split(",")[:2]
+            lng, lat = float(lng_s), float(lat_s)
+        except ValueError:
+            return None
+        return GeocodeHit(lat=lat, lng=lng, province=_as_str(g.get("province")),
+                          city=_as_str(g.get("city")), district=_as_str(g.get("district")))
 
     async def _resolve_location(self, point: GeoPoint | None, meta) -> str | None:
         """把 GeoPoint 归一成高德的 "lng,lat"；地名经地理编码解析。"""
