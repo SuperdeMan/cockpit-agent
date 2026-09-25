@@ -267,9 +267,11 @@ class EdgeCallExecutor:
             )
         confirmed = call.meta.get("confirmed", "").lower() == "true"
         if self.val._need_confirm(obj) and not confirmed:
+            # 确认问句念出**被派下来的这条 intent** 真会做的事（「要关闭后备箱吗？…」）——修前是通用句，
+            # 规划把「关闭」错成 `trunk.open` 时用户听不出来（评审四轮，`5ca289c7` RS34）
             return agent_pb2.ExecuteResponse(
                 status=agent_pb2.ExecuteResponse.NEED_CONFIRM,
-                speech="这项操作可能影响车辆安全，请确认是否继续。",
+                speech=self.val.confirm_speech(structured),
                 follow_up="说“确认”后我再执行。",
             )
 

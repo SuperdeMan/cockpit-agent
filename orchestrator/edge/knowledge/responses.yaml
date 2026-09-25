@@ -304,6 +304,51 @@ charging_port_close_success:
   - 充电口盖已关闭
   speech_brief:
   - 关了
+# ── 需确认对象的确认问句：`<object>_<operate>_confirm`（评审四轮，2026-09-25）──
+# 念出**这一步真会执行的动作**——它由云侧派下来的 intent 决定，不是用户原话、也不是模型写的 goal。
+# 修前一律是通用句「这项操作可能影响车辆安全，请确认是否继续」：真栈 `5ca289c7` RS34，「关闭后备箱」被规划成
+# `trunk.open`，用户听不出方向、一句「好的」就开了后备箱。只给 speech_full：确认问句不许缩成短答。
+# 能力完整性门禁（lane_speech）逐条核对「需确认的可达 intent 都有这一条」。
+trunk_open_confirm:
+  scene: 确认打开后备箱
+  status: 待确认
+  speech_full:
+  - 要打开后备箱吗？这项操作可能影响车辆安全，请确认是否继续。
+trunk_close_confirm:
+  scene: 确认关闭后备箱
+  status: 待确认
+  speech_full:
+  - 要关闭后备箱吗？这项操作可能影响车辆安全，请确认是否继续。
+door_lock_open_confirm:
+  scene: 确认解锁车门
+  status: 待确认
+  speech_full:
+  - 要解锁{position}车门吗？这项操作可能影响车辆安全，请确认是否继续。
+door_lock_close_confirm:
+  scene: 确认锁上车门
+  status: 待确认
+  speech_full:
+  - 要锁上{position}车门吗？这项操作可能影响车辆安全，请确认是否继续。
+fuel_tank_cover_open_confirm:
+  scene: 确认打开油箱盖
+  status: 待确认
+  speech_full:
+  - 要打开油箱盖吗？这项操作可能影响车辆安全，请确认是否继续。
+fuel_tank_cover_close_confirm:
+  scene: 确认关闭油箱盖
+  status: 待确认
+  speech_full:
+  - 要关闭油箱盖吗？这项操作可能影响车辆安全，请确认是否继续。
+charging_port_open_confirm:
+  scene: 确认打开充电口盖
+  status: 待确认
+  speech_full:
+  - 要打开充电口盖吗？这项操作可能影响车辆安全，请确认是否继续。
+charging_port_close_confirm:
+  scene: 确认关闭充电口盖
+  status: 待确认
+  speech_full:
+  - 要关闭充电口盖吗？这项操作可能影响车辆安全，请确认是否继续。
 rear_view_mirror_fold_success:
   scene: 后视镜已折叠
   status: 成功

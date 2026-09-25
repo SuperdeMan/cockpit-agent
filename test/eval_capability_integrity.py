@@ -27,7 +27,7 @@ nlu_objects.yaml、fast_intent.py、val.py、edge_call.py、vehicle.py、catalog
 | `lane_sources` | 三个声明源都非空（防「门禁只读一个文件」复发） |
 | `lane_execution` | 端侧 intent ↔ commands.yaml 双向一致：intent 无孤儿、对象无不可达（不可达须进台账） |
 | `lane_risk` | 每个对象有**显式** `require_confirm` 与 `effect`（read / write），且 `effect` 与 operates 自洽 |
-| `lane_speech` | 每条可达 intent 的 response key 存在于 responses.yaml 且不是 `generic_success` |
+| `lane_speech` | 每条可达 intent 的 response key 存在于 responses.yaml 且不是 `generic_success`；需确认的 intent 另有确认问句 `<object>_<operate>_confirm` |
 | `lane_equivalence` | 每个可达对象在 `nlu_objects.yaml` 有归并（或台账登记待裁定） |
 | `lane_verification` | 每条可达 intent 执行不崩，且有专属状态键（走通用兜底 ⇒ Outcome Verifier 无从对账）；`effect: read` 的查询类对象由此机械豁免 |
 | `lane_adversarial` | **只确认 `--strict` 矩阵入口还在被执行**，不重复实现（唯一入口仍是 B2 的门禁脚本） |
@@ -231,10 +231,12 @@ def lane_speech(reach, table) -> list[str]:
     from val import VAL
 
     val = VAL()
+    objects = (val.commands or {}).get("objects") or {}
     errs = []
     for obj, items in sorted(reach.items()):
         if _exempt(table, obj, "speech"):
             continue
+        confirm = bool((objects.get(obj) or {}).get("require_confirm"))
         for intent, data in items:
             key = val._build_response_key(obj, data["operate"], data)
             if key not in (val.responses or {}):
@@ -243,6 +245,11 @@ def lane_speech(reach, table) -> list[str]:
             elif key == "generic_success":
                 errs.append(f"`{intent}` 落到通用话术 `generic_success`"
                             "——用户听不出刚才到底做了什么；补 responses 或进台账")
+            # 需确认的 intent 还要有确认问句（评审四轮）：修前一律念通用句，规划把「关闭」错成 `.open` 时用户听不出方向
+            confirm_key = val.confirm_response_key(data)
+            if confirm and confirm_key not in (val.responses or {}):
+                errs.append(f"`{intent}` 需要二次确认，但确认问句 `{confirm_key}` 不在 responses.yaml"
+                            "——确认时只能念通用句，用户听不出要确认的是什么")
     return errs
 
 

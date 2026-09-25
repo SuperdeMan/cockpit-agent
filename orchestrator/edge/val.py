@@ -7,10 +7,13 @@ PoC 为内存模拟；真实实现对接 SOME-IP / AUTOSAR AP / VSOA / CAN。
 """
 from __future__ import annotations
 
+import logging
 import os
 import random
 import yaml
 from typing import Any
+
+logger = logging.getLogger("edge.val")
 
 
 def _load_yaml(path: str) -> dict:
@@ -978,6 +981,29 @@ class VAL:
 
     # 多意图批次要避开的礼貌式开头：堆叠起来重复冗长（「已为您打开空调，已为您打开车窗」）
     _COURTESY_PREFIXES = ("已为您", "已将", "正在为您")
+
+    #: 确认问句取不到模板时的兜底（门禁 lane_speech 保证可达的需确认 intent 都有模板；这里只防运行时缺件时连问都不问）
+    GENERIC_CONFIRM = "这项操作可能影响车辆安全，请确认是否继续。"
+
+    @staticmethod
+    def confirm_response_key(data: dict) -> str:
+        """需确认命令的确认问句 key：`<object>_<operate>_confirm`（唯一一份，`edge_call` 与能力完整性门禁共用）。"""
+        data = data or {}
+        return f"{data.get('object', '')}_{data.get('operate', '')}_confirm"
+
+    def confirm_speech(self, structured: dict) -> str:
+        """需确认命令的确认问句：念出**这一步真会执行的动作**，带位置（评审四轮，2026-09-25）。
+
+        修前 `edge_call` 一律念通用句「这项操作可能影响车辆安全，请确认是否继续」——真栈 `5ca289c7` RS34：
+        「关闭后备箱」被规划成 `trunk.open`，用户听不出方向，一句「好的」就开了后备箱。动作取自**被派下来的 intent**
+        （`structured`），不是用户原话、也不是模型写的 goal：用户听到的就是确认之后真会执行的那件事。"""
+        # 位置与执行时同一份归一（「后排」⇒ 左后 + 右后，念回「后排」）：问的就是待会儿真执行的那几个位置
+        data = self._normalize_entities((structured or {}).get("data") or {})
+        key = self.confirm_response_key(data)
+        if key not in (self.responses or {}):
+            logger.warning("no confirm template %s; asking with the generic sentence", key)
+            return self.GENERIC_CONFIRM
+        return self._pick_response(key, data)
 
     def _pick_response(self, key: str, data: dict | None = None) -> str:
         """从 responses.yaml 选话术。根据 answer_length 选 brief 或 full。

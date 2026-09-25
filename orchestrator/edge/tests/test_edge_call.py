@@ -109,6 +109,37 @@ def test_dangerous_edge_call_requires_confirmation_before_state_change():
     assert val.state["trunk"] == "open"
 
 
+def test_the_confirmation_question_names_the_action_that_would_run():
+    """评审四轮（真栈 `5ca289c7` RS34）：「关闭后备箱」被规划成 `trunk.open`，确认问句只有通用句「这项操作可能影响车辆安全，
+    请确认是否继续」，用户听不出方向，一句「好的」就开了后备箱。问句念的是**被派下来的 intent** 真会做的事——方向与位置都在里面。"""
+    executor = EdgeCallExecutor(VAL())
+
+    opened = executor.execute(_call("trunk.open"))
+    closed = executor.execute(_call("trunk.close"))
+    assert opened.status == closed.status == agent_pb2.ExecuteResponse.NEED_CONFIRM
+    assert opened.speech == "要打开后备箱吗？这项操作可能影响车辆安全，请确认是否继续。"
+    assert closed.speech == "要关闭后备箱吗？这项操作可能影响车辆安全，请确认是否继续。"
+
+    # 位置与执行时同一份归一、同一种念法（执行成功话术也这么念）：「左后」⇒ rear_left ⇒ 词表里它的第一个中文说法
+    unlock = executor.execute(_call("door_lock.open", {"positions": "左后"}))
+    lock_rear = executor.execute(_call("door_lock.close", {"positions": "后排"}))
+    rear_left = VAL()._position_display(["rear_left"])
+    assert rear_left and "rear" not in rear_left
+    assert unlock.speech.startswith(f"要解锁{rear_left}车门吗？"), unlock.speech
+    assert lock_rear.speech.startswith("要锁上后排车门吗？"), lock_rear.speech
+    assert executor.execute(_call("door_lock.open")).speech.startswith("要解锁车门吗？")
+
+
+def test_a_missing_confirm_template_still_asks_rather_than_executing():
+    """缺模板（门禁本该拦下）时退回通用句照样要确认——念不出动作也绝不跳过确认。"""
+    val = VAL()
+    val.responses.pop("trunk_open_confirm")
+    pending = EdgeCallExecutor(val).execute(_call("trunk.open"))
+    assert pending.status == agent_pb2.ExecuteResponse.NEED_CONFIRM
+    assert pending.speech == VAL.GENERIC_CONFIRM
+    assert val.state.get("trunk") != "open"
+
+
 # ── action_to_structured：云端/场景动作（command 串 + 友好 params）→ VAL 结构化 ──
 
 def _objects():
