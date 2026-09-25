@@ -1587,10 +1587,14 @@ CASES = [
          # 第 1 轮三种规划形态都得在第 2 轮导航过去：落 `navigate_to` ⇒ 补槽续接它；落 `search_poi` ⇒ 它的「没找到」改派
          # `navigate_to`、挂起落在改派步上；落 `search_poi → navigate_to`（依赖）⇒ 挂起在第二步。`f535c654` 那两趟红是
          # 单步 `search_poi` 的「没找到」没留挂起，回答被澄清成「你希望我怎么处理深圳湾公园？」
+         # 用户用另一个地方**替换**了没找到的那个：这一轮不许再提旧地名（`4438ea6b` 一趟 adaptive：T2 循环续接导航之后按旧 goal
+         # 又去搜「云岚国际中心」、再挂一次追问，话术「…已按此规划；没找到「云岚国际中心」。暂时无法确定…」，修前的尺子判它 PASS）
          {"say": "深圳湾公园", "source": "voice_followup",
           "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
-                     "speech_not": ["怎么处理"], "card_type_not": "rejected"}},
-         {"say": "取消导航", "expect": {"speech_not": ["没有待确认"]}},
+                     "speech_not": ["怎么处理", "云岚国际中心"], "card_type_not": "rejected"}},
+         # 真的结束了那一趟导航（同一趟：挂起轮不写焦点，已发出的导航没进路线会话 ⇒「当前没有正在进行的导航」）
+         {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
+                                        "speech_not": ["没有待确认", "没有正在进行的导航"]}},
      ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
