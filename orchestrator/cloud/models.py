@@ -205,6 +205,9 @@ class Plan:
     # R4.4 受话判定：False=LLM 判「非对助手说的」（仅 hands-free 语音源 + REJECT 开时被 engine 消费）。
     # 缺省 True = fail-open（弱 LLM/旧 prompt/mock 不输出该字段时行为与今天逐字一致）。
     addressed: bool = True
+    # 评审四轮 R4-07 第一步（2026-09-25）：这份计划的步**没经过受话判定**就定下来了（确定性早退，目前只有焦点省略开关）。
+    # engine 在语音来源 + 拒识开时据此另跑一次受话判定（`PlannerEngine._voice_admitted`），判非受话 ⇒ 拒识零执行。
+    admission_skipped: bool = False
     # R4.4 路由歧义澄清：{"question": str, "options": [{"label","send_text"}]}；与非空 steps 互斥
     # （steps 非空时忽略 clarify，母卡 D6-2>D6-3）。None = 无澄清。
     clarify: dict | None = None

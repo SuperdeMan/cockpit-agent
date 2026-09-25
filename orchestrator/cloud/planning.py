@@ -1787,8 +1787,11 @@ class PlanBuilder:
         return Plan(steps=steps, raw_text=str(text or ""), goal=str(text or ""))
 
     async def build(self, text: str, working_set: WorkingSet, ctx: PlanContext,
-                    granted_permissions: list[str] = None) -> Plan:
+                    granted_permissions: list[str] = None, *, focus_shortcut: bool = True) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
+
+        focus_shortcut=False：跳过焦点省略的确定性早退、照常问模型——engine 的语音受话判定用它取 `addressed`
+        （评审四轮 R4-07 第一步：那条早退不调模型，它交出的计划没有受话判定可言）。
 
         working_set: 由 ContextManager 装配的工作上下文——已语义预筛的 catalog +
         最近对话历史 + 长期记忆召回，统一字符预算渲染（见 context.py）。
@@ -1835,10 +1838,14 @@ class PlanBuilder:
         # ⇒ **确定性成计划，一次 LLM 都不调**（连下面两次检索 embed 也省了）。
         # 真栈证明「把焦点写进 prompt」不够：同一句话三次取样能给出三种结果，
         # 其中一次是 chitchat 声称「已为您关闭天窗」而 action 为空——**说了没做**。
-        focused_plan = self._focused_control_ellipsis_plan(text, working_set, catalog)
+        focused_plan = (self._focused_control_ellipsis_plan(text, working_set, catalog)
+                        if focus_shortcut else None)
         if focused_plan is not None:
             focused_plan.catalog_stats = dict(catalog.catalog_stats)
             focused_plan.plan_mode = "focus_deterministic"
+            # 评审四轮 R4-07 第一步：零 LLM 的计划没有 `addressed` 可言——免唤醒下背景里一句「关掉」会反向执行上一个控制。
+            # 标出来，engine 在语音来源下另问一次受话判定
+            focused_plan.admission_skipped = True
             # shadow 观测照记：这一族正是 B6 最关心的省略/裸对象面，
             # 确定性接管后就不记，会让 shadow 的分母**静默**少掉一块。
             focused_plan.actionability = _actionability.classify(

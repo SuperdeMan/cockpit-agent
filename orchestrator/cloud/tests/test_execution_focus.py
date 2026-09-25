@@ -506,6 +506,40 @@ def test_build_takes_the_deterministic_path_without_calling_the_model():
     assert (calls["llm"], calls["tools"]) == (0, 0)
 
 
+def test_the_deterministic_plan_is_marked_as_never_judged_for_admission():
+    """评审四轮 R4-07 第一步：零 LLM 的计划没有 `addressed` 可言——标出来，engine 在语音来源下另问一次受话判定。"""
+    plan, _calls = _build("不用了，关掉", "sunroof.open")
+    assert plan.admission_skipped is True
+
+
+def test_the_admission_build_skips_the_shortcut_and_asks_the_model():
+    """engine 的受话判定用 `focus_shortcut=False` 调 `build()`：同一句话这次必须问模型（否则取不到 `addressed`）。"""
+    from orchestrator.cloud import planning
+    from orchestrator.cloud.context import WorkingSet
+    from orchestrator.cloud.models import PlanContext
+
+    calls = {"llm": 0, "tools": 0}
+
+    async def llm_fn(_messages):
+        calls["llm"] += 1
+        return '{"addressed": false, "steps": []}'
+
+    async def llm_tool_fn(_messages, _tools):
+        calls["tools"] += 1
+        return '{"addressed": false, "steps": []}', []
+
+    async def registry_fn(_query, _top_k=20):
+        return []
+
+    builder = planning.PlanBuilder(llm_fn, registry_fn, llm_tool_fn)
+    ws = WorkingSet(catalog=[_agent("edge-vehicle", "sunroof.open", "sunroof.close")],
+                    focus=Focus(last_intent="sunroof.open"))
+    plan = asyncio.run(builder.build("不用了，关掉", ws, PlanContext(session_id="s1"), focus_shortcut=False))
+    assert calls["llm"] + calls["tools"] > 0
+    assert plan.plan_mode != "focus_deterministic" and plan.admission_skipped is False
+    assert plan.addressed is False
+
+
 def test_build_still_calls_the_model_when_the_guard_declines():
     """**反向对照**：不该接管的句子必须照常走 LLM——只做「命中即绿」那一半，
     一个恒接管的分支也能骗过上面那条（§4.3「反向验证要两头做」）。"""

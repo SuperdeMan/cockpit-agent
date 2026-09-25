@@ -893,6 +893,14 @@ class PlannerEngine:
             reply = ("yes" if confirm_resolved
                      else self._confirm_reply(text, ctx.is_confirmation))
             if reply == "yes":
+                # 评审四轮 R4-07 第一步：执行挂起步之前，语音说出的确认先过受话判定——修前背景里一句「确认」/ 挂起就是最近提示时
+                # 一句「好的」直接执行挂起的危险操作。判非受话 ⇒ 拒识、挂起原样保留（真用户再说一次照常执行）。
+                # 全局确认条按钮（`is_confirmation`）是一次点击，不问。
+                if not ctx.is_confirmation and not await self._voice_admitted(
+                        ctx, text, exit_name="confirm", mem_on=mem_on):
+                    async for ev in self._reject_not_addressed(ctx):
+                        yield ev
+                    return
                 plan, seed_results = self._restore(pending, inject_confirmed=True)
                 if plan is None:
                     await self._close_pending(ctx, pending)
@@ -1144,14 +1152,11 @@ class PlannerEngine:
                 # 既有的受话判定（planner `addressed`，与其他语音轮同一条路），判非受话 ⇒ 同一条拒识
                 # 出口（零登记、零落库）；受话了才致谢。planner 交出的步 / 技术失败一概不用——短路诞生
                 # 的理由（MiniMax-M3 下 3/4 落技术失败）照旧成立。文字 / 按钮来源没有受话问题，零 LLM。
-                if is_voice_input_source(input_source) and _reject_enabled():
-                    admission = await self.planner.build(
-                        text, working_set, ctx,
-                        granted_permissions=ctx.granted_permissions)
-                    if not admission.addressed:
-                        async for ev in self._reject_not_addressed(ctx):
-                            yield ev
-                        return
+                if not await self._voice_admitted(ctx, text, exit_name="constraint_noted",
+                                                  working_set=working_set):
+                    async for ev in self._reject_not_addressed(ctx):
+                        yield ev
+                    return
                 await self._register_input_facts(ctx, text, mem_on)
                 await _emit_engine_lifecycle(
                     ctx, "cloud.constraint_noted", "system.constraint_noted")
@@ -1179,6 +1184,13 @@ class PlannerEngine:
             # 令拒识失效（母卡实施计划 §0-4）。
             if (is_voice_input_source(input_source)
                     and not plan.addressed and _reject_enabled()):
+                async for ev in self._reject_not_addressed(ctx):
+                    yield ev
+                return
+            # 评审四轮 R4-07 第一步：确定性早退交出的计划没经过受话判定（焦点省略开关，零 LLM）——免唤醒下背景里一句「关掉」
+            # 会反向执行上一个控制。语音来源另问一次；受话了照旧执行这份确定性计划（不换成模型那份）。
+            if getattr(plan, "admission_skipped", False) and not await self._voice_admitted(
+                    ctx, text, exit_name="focus_ellipsis", working_set=working_set):
                 async for ev in self._reject_not_addressed(ctx):
                     yield ev
                 return
@@ -1669,6 +1681,29 @@ class PlannerEngine:
             "aggregate",
         )
         yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+
+    async def _voice_admitted(self, ctx: PlanContext, text: str, *, exit_name: str,
+                              working_set=None, mem_on: bool = True) -> bool:
+        """这句话是不是对助手说的——**规划之前就出口**的确定性分支的受话判定（唯一实现，评审四轮 R4-07 第一步）。
+
+        语音来源 + 拒识开：跑一次 planner（跳过焦点省略早退）只取 `addressed`，与规划轮同一条判定；它交出的步一概不用。
+        其余来源 / 拒识关 ⇒ True，零调用。判定本身技术失败 ⇒ 按受话处理（fail-open，同其余语音轮的缺省）。
+        消费方：纯偏好陈述（评审二轮 R3）、焦点省略开关、确认。每次判定发一个 `cloud.voice_admission` span（出口 + 结果）。
+        """
+        if not (is_voice_input_source(ctx.prefs.get("input_source", "")) and _reject_enabled()):
+            return True
+        if working_set is None:
+            working_set = await self.context.assemble(
+                text, ctx, mem_on=mem_on, granted_permissions=ctx.granted_permissions)
+        admission = await self.planner.build(
+            text, working_set, ctx, granted_permissions=ctx.granted_permissions,
+            focus_shortcut=False)
+        addressed = bool(getattr(admission, "addressed", True))
+        await obs_events.get_emitter("cloud").emit_span(
+            ctx.trace_id, "cloud.voice_admission",
+            attrs={"exit": exit_name, "addressed": "1" if addressed else "0",
+                   "owner": "cloud-engine"})
+        return addressed
 
     @staticmethod
     async def _reject_not_addressed(ctx) -> AsyncIterator[dict]:

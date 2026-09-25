@@ -1558,6 +1558,24 @@ CASES = [
           "expect": {"actions_include": ["window.open"], "action_positions": {"window.open": ["副驾"]}}},
          {"say": "关闭车窗", "sid": 1, "expect": {"actions_include": ["window.close"]}},
      ]},
+    # ── 评审四轮 R4-07 第一步：语音来源的「关掉 / 确认」先过受话判定（设计 §5.2）──────────────────────────
+    # 受话的真指令必须照常执行——这条量的是新判定的**误拒**（判非受话 ⇒ rejected 卡、零动作，本条即红）；「真的非受话」那一支
+    # 真栈造不稳（模型对接在助手问句后面的「好的」多半判受话），由单测与变异证明。修前 / 修后对比这两类回合的服务端耗时（collector）。
+    {"id": "RS38", "group": "residual", "card": "余项", "issue": "评审四轮 R4-07",
+     "why": "语音来源的「关掉」「确认」过了受话判定之后照常执行，不被误拒",
+     "known": "green",
+     "turns": [
+         {"say": "打开副驾车窗", "sid": 0, "expect": {"actions_include": ["window.open"]}},
+         {"say": "关掉", "sid": 0, "source": "voice_followup",
+          "expect": {"actions_include": ["window.close"], "action_positions": {"window.close": ["副驾"]},
+                     "card_type_not": "rejected"}},
+         {"say": "打开后备箱", "sid": 1, "expect": {"need_confirm": True, "has_operation_id": True}},
+         {"say": "确认", "sid": 1, "source": "voice_followup",
+          "expect": {"actions_include": ["trunk.open"], "card_type_not": "rejected"}},
+         # 清理：模拟车态在端侧进程内存里，跨会话共享
+         {"say": "关闭后备箱", "sid": 1, "expect": {"need_confirm": True}},
+         {"say": "确认", "sid": 1, "confirm": True, "op_from": 5, "expect": {"actions_include": ["trunk.close"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
