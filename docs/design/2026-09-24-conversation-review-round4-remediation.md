@@ -508,6 +508,13 @@ collector 全量历史（按「后备箱 / 车门 / 解锁 / 上锁 / 油箱盖 
 ⇒ 口径窄到只剩一种形态：**车端在需确认那条路上盖章的解析**（不是泛化的 `_edge_nlu`）、计划里**同一个对象**的写步**方向不同** ⇒ 换成车端的那条；
 计划里没有这个对象就一个字不动（问句那一轮正是这样），不进 prompt，其余步骤不动，改完仍走确认（问句会念出「要关闭后备箱吗？」）。
 
+落地（`4e8da9dd`）：车端快路径 B 的「需确认 ⇒ 上云」分支盖 `request.meta["_edge_confirm"] = <解析出的 intent>`，入口剥掉客户端同名键（与其余 `_edge_*` 同族）；
+云侧 `PlanContext.edge_confirm`，新计划产出后 `edge_authority.direction_conflicts`（对象 = intent 去掉最后一段、读写 = `runtime.intent_effect.is_write_intent`，零领域词）
+找出同对象、都是写、intent 不同的步，经 `_validated_steps` 整步换成车端那条（能力元数据跟着新 intent 走，承接方不认就不换）；`cloud.planning` span 记 `edge_confirm` 与
+`edge_corrected`；`edge_nlu` 旁那条源码级断言扩到 `edge_confirm`（不进规划 prompt）。探针 RS34 两个确认轮加「问句念出对的方向」（`e39f08d4`）。
+`test_edge_authority` 4（判据 / 引擎端到端 / 两条对照）、`test_edge_confirm_stamp` 2（盖章 / 剥伪造键）；**6 处变异各判红**；四门禁 + smoke_edge 13/13；
+**全量固定口径 9928 passed / 0 failed / 32 skipped / 10 warnings，622 s。** 边界：多分句的混合路径（`route.mixed`）不盖章，那条路照旧只靠 a 的问句兜住。
+
 ## 6. 评审「验收应如何衡量」的处置
 
 评审 §9 的三组统计（机制回归 / 独立组合 / 真实音频）照收：本轮每批的新探针只算**机制回归组**，不当独立留出集；不报生产错误率、不外推零错误。
