@@ -1675,6 +1675,21 @@ CASES = [
          {"say": "打开后视镜加热", "sid": 1, "expect": {"actions_include": ["rear_view_mirror.heating.open"]}},
          {"say": "关闭后视镜加热", "sid": 1, "expect": {"actions_include": ["rear_view_mirror.heating.close"]}},
      ]},
+    # ── 评审四轮待办（定义问，2026-09-26）：「X 是什么 / 什么是 X / X 是什么意思」是提问，不许被执行 ─────────────────────
+    # 修前（语料 + collector A/B）：「座椅加热是什么」开了座椅加热、「露营模式是什么意思」激活露营场景、「说明书里「打开后备箱」这一节讲的是什么」
+    # 解成 trunk.open（需确认 ⇒ 出后备箱确认卡）、「胎压报警灯亮了是什么意思」秒回「胎压正常」。
+    {"id": "RS45", "group": "residual", "card": "余项", "issue": "评审四轮待办 · 定义问",
+     "why": "定义问只作答：零动作、不出确认、不拿读数冒充解释；真指令照常执行",
+     "known": "red",
+     "turns": [
+         {"say": "座椅加热是什么", "sid": 0, "expect": {"no_actions": True}},
+         {"say": "露营模式是什么意思", "sid": 1, "expect": {"no_actions": True}},
+         {"say": "说明书里「打开后备箱」这一节讲的是什么", "sid": 2,
+          "expect": {"no_actions": True, "need_confirm": False}},
+         {"say": "胎压报警灯亮了是什么意思", "sid": 3, "expect": {"no_actions": True, "speech_not": ["胎压正常"]}},
+         {"say": "打开座椅加热", "sid": 4, "expect": {"actions_include": ["seat.heating.on"]}},
+         {"say": "关闭座椅加热", "sid": 4, "expect": {"actions_include": ["seat.heating.off"]}},
+     ]},
     # W18-a 墓碑：台账封顶 3 组，第 4 批把「万象城」那批顶出去之后再点名它 ⇒ 说不在，
     # 绝不用最新那批顶替（修前答南山书城那批的第二家、零方差）；点名还活着的批 ⇒ 仍绑它。
     {"id": "CD9", "group": "candidate", "card": "Q2", "issue": "W18",
