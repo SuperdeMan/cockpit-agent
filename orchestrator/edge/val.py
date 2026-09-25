@@ -13,6 +13,8 @@ import random
 import yaml
 from typing import Any
 
+from runtime.positions import scan_positions
+
 logger = logging.getLogger("edge.val")
 
 
@@ -275,14 +277,15 @@ class VAL:
                 raw_positions = [raw_positions]
             resolved = []
             for p in raw_positions:
-                if p in pos_map:
-                    val = pos_map[p]
+                # 整词不在词表里时按同一份词表扫一遍：云侧规划写来的「主驾和副驾」修前原样当成**一个**位置标识下发
+                # （评审四轮待办，2026-09-25）。扫不出任何词 ⇒ 原样保留（协议标识 front_left 就走这条）。
+                words = [p] if p in pos_map else (scan_positions(str(p), pos_map) or [p])
+                for word in words:
+                    val = pos_map.get(word, word)
                     if isinstance(val, list):
                         resolved.extend(val)
                     else:
                         resolved.append(val)
-                else:
-                    resolved.append(p)
             # 按序去重：「前排和主驾」不再得到两次 front_left（同一个位置执行两次）
             normalized["positions"] = list(dict.fromkeys(resolved))
 

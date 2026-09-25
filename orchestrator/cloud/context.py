@@ -27,6 +27,7 @@ from dataclasses import dataclass, field, fields, asdict
 from .models import PlanContext, step_fingerprint
 from runtime import memory_read
 from runtime.clock import hhmm as clock_hhmm
+from runtime.positions import distinct_positions, scan_positions
 from runtime.safety_signal import (DRIVER_STATE_ADVICE, alert_level,
                                    alert_resolved, alert_signal, driver_state)
 from runtime.session_constraints import constraints_in, merge_constraints, phrase_of
@@ -237,7 +238,6 @@ _CONTROL_FOCUS = {
     "media": ("媒体", ""), "sunroof": ("天窗", "开度"),
     "rear_view_mirror": ("后视镜", "开合"),
 }
-_POSITION_WORDS = ("主驾驶", "副驾驶", "主驾", "副驾", "后排", "左后", "右后", "前排")
 
 
 @dataclass
@@ -936,17 +936,14 @@ def _render_focus(focus, drop_sticky_places: bool = False) -> str:
 
 
 def _scan_positions(slots: dict) -> list[str]:
-    """从槽位值里扫出座位/区域词（主驾/副驾/后排…）。
+    """从槽位值里扫出座位/区域词（主驾/副驾/后排…）。词表与扫描算法都是 `runtime.positions` 那一份（`entities.yaml` 的镜像）。
 
-    长词先认、被已认出的长词包含的短词不再单算（「副驾驶」不会再多出一个「副驾」）——评审四轮 R4-04 起「关掉」按位置
-    逐个反向，同一个位置被数两次就是同一个动作执行两次。"""
+    同一个座位的另一个说法、已被前面的词覆盖的位置不再单算（「副驾驶」不会再多出一个「副驾」）——评审四轮 R4-04 起「关掉」按位置
+    逐个反向，同一个位置被数两次就是同一个动作执行两次。修前这里自己记 8 个词，「后排左」只认出「后排」（评审四轮待办，2026-09-25）。"""
     found: list[str] = []
     for v in (slots or {}).values():
-        s = str(v)
-        for w in _POSITION_WORDS:
-            if w in s and w not in found and not any(w in longer for longer in found):
-                found.append(w)
-    return found
+        found.extend(scan_positions(str(v)))
+    return distinct_positions(found)
 
 
 def _first_poi(data: dict) -> str:
@@ -1584,10 +1581,9 @@ def target_positions(targets, intent: str) -> list[str]:
             continue
         if not target["positions"]:
             return []
-        for position in target["positions"]:
-            if position not in positions:
-                positions.append(position)
-    return positions
+        positions.extend(target["positions"])
+    # 同一个座位的两个说法（「主驾」「驾驶位」）只反向一次——与 `_scan_positions` 同一条去重
+    return distinct_positions(positions)
 
 
 def augment_focus_with_execution(

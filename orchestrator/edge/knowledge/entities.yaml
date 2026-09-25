@@ -2,8 +2,11 @@
 # 自然语言 → 协议标识；主词 + 别称均映射到同一标识
 
 # ── 位置 ──
+# 本节是位置词表的权威；端侧规则与云侧焦点用的镜像在 runtime/positions.py（runtime/tests/test_positions.py 逐条对账）。
+# 先改这里，再改镜像。
 positions:
   主驾: front_left
+  主驾驶: front_left
   主驾位: front_left
   驾驶位: front_left
   左前: front_left

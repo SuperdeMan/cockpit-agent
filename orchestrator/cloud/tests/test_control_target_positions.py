@@ -164,6 +164,31 @@ def test_a_later_control_step_without_positions_does_not_inherit_the_earlier_one
 def test_scan_positions_does_not_count_one_seat_twice():
     assert _scan_positions({"position": "副驾驶"}) == ["副驾驶"]
     assert _scan_positions({"positions": "主驾驶和副驾"}) == ["主驾驶", "副驾"]
+    # 词表合一之后：同一个座位的另一个说法跨槽也只算一次
+    assert _scan_positions({"position": "副驾驶", "positions": "副驾"}) == ["副驾驶"]
+    assert _scan_positions({"positions": "右前和副驾"}) == ["右前"]
+
+
+@pytest.mark.parametrize("value, expected", [
+    ("后排左", ["后排左"]),          # 修前 ['后排'] ⇒ 下一轮「关掉」关两扇
+    ("前排右", ["前排右"]),
+    ("后排中间", ["后排中间"]),
+    ("右前", ["右前"]),              # 修前认不出
+    ("全车", ["全车"]),
+])
+def test_scan_positions_knows_the_whole_entities_table(value, expected):
+    assert _scan_positions({"positions": value}) == expected
+
+
+def test_the_same_seat_named_twice_is_inverted_once():
+    targets = [{"command": "window.open", "positions": ["主驾", "驾驶位"]}]
+    assert target_positions(targets, "window.open") == ["主驾"]
+
+
+def test_the_inverse_of_one_rear_window_is_one_rear_window():
+    plan = _ellipsis("关掉", Focus(last_intent="window.open", positions=_scan_positions({"positions": "后排左"})),
+                     "window.open", "window.close")
+    assert [(s.intent, s.slots) for s in plan.steps] == [("window.close", {"positions": "后排左"})]
 
 
 # ── 「关掉」的确定性计划 ─────────────────────────────────────────────────────────

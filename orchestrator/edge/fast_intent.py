@@ -9,6 +9,7 @@ import re
 
 from runtime.clause_split import SPLIT_MARKERS, SPLIT_MARKERS_CAPTURING
 from runtime.polarity import is_negated_directive, is_withdrawn_directive
+from runtime.positions import SEAT_IDS, ids_of, position_spans, scan_positions
 from runtime.reported_speech import is_reported_speech
 from runtime.anaphora import has_anaphoric_subject
 from runtime.question_shape import OPERATION_VERBS as _OPERATION_VERBS
@@ -565,12 +566,12 @@ def _classify_structured(text: str) -> dict | None:
                   positions=pos, conf=0.9)
 
     # ── 位置+功能简写（后排通风/前排加热/后排灯 等，省略"座椅"/"灯"）──
-    _pos_func = _extract_position(t)
+    _pos_func = _shorthand_positions(t)
     if _pos_func:
         # 位置 + 加热/通风/按摩 → 座椅
         for func_word, mode in [("加热", "heating"), ("通风", "ventilation"), ("按摩", "massage")]:
             if func_word in t:
-                m = re.search(r"(\d)\s*挡", t)
+                m = _LEVEL_RE.search(t)
                 if m:
                     return _s("setting", "control", "set", "seat",
                               mode=mode, value=m.group(1), unit="level", positions=_pos_func, conf=0.88)
@@ -609,7 +610,7 @@ def _classify_structured(text: str) -> dict | None:
             return _s("setting", "control", "dec", "seat",
                       mode=mode, positions=pos, conf=0.9)
         # 挡位
-        m = re.search(r"(\d)\s*挡", t)
+        m = _LEVEL_RE.search(t)
         if m and mode:
             return _s("setting", "control", "set", "seat",
                       mode=mode, value=m.group(1), unit="level",
@@ -637,18 +638,22 @@ def _classify_structured(text: str) -> dict | None:
 
     # ── 氛围灯 ────────────────────────────────────────────
     if "氛围灯" in t or "氛围" in t:
-        # 亮度调节（优先于开/关）
+        # 亮度调节（优先于开/关）。方向词在剥掉「亮度」之后再看、调暗一侧先看：修前「亮度」里的「亮」恒判调亮——
+        # 「氛围灯亮度调低 / 调到最暗」执行成**调高**（评审四轮待办顺带，2026-09-25）
         if "亮度" in t or "亮" in t or "暗" in t:
-            if "高" in t or "亮" in t or "大" in t:
-                return _s("setting", "control", "inc", "ambient_light",
-                          mode="brightness", conf=0.9)
-            if "低" in t or "暗" in t or "小" in t:
+            rest = t.replace("亮度", "")
+            if any(w in rest for w in ("低", "暗", "小", "降")):
                 return _s("setting", "control", "dec", "ambient_light",
                           mode="brightness", conf=0.9)
-            m = re.search(r"(\d)\s*挡", t)
+            if any(w in rest for w in ("高", "亮", "大", "升")):
+                return _s("setting", "control", "inc", "ambient_light",
+                          mode="brightness", conf=0.9)
+            m = _LEVEL_RE.search(t)
             if m:
                 return _s("setting", "control", "set", "ambient_light",
                           mode="brightness", value=m.group(1), unit="level", conf=0.9)
+            if "亮度" in t:
+                return None          # 「亮度调到 50 / 中挡」：端侧解不出目标值，交云端（修前一律当调高）
         if "关" in t:
             return _s("setting", "control", "close", "ambient_light", conf=0.9)
         # 颜色
@@ -668,7 +673,7 @@ def _classify_structured(text: str) -> dict | None:
             if "低" in t or "降" in t:
                 return _s("setting", "control", "dec", "high_beam",
                           mode="height", conf=0.9)
-            m = re.search(r"(\d)\s*挡", t)
+            m = _LEVEL_RE.search(t)
             if m:
                 return _s("setting", "control", "set", "high_beam",
                           mode="height", value=m.group(1), unit="level", conf=0.9)
@@ -723,7 +728,7 @@ def _classify_structured(text: str) -> dict | None:
     if "香氛" in t or "香薰" in t:
         if "关" in t:
             return _s("setting", "control", "close", "fragrance", conf=0.9)
-        m = re.search(r"(\d)\s*挡", t)
+        m = _LEVEL_RE.search(t)
         if m:
             return _s("setting", "control", "set", "fragrance",
                       value=m.group(1), unit="level", conf=0.9)
@@ -833,7 +838,7 @@ def _classify_structured(text: str) -> dict | None:
             return _s("setting", "control", "inc", "energy_recovery", conf=0.9)
         if "低" in t or "小" in t:
             return _s("setting", "control", "dec", "energy_recovery", conf=0.9)
-        m = re.search(r"(\d)\s*挡", t)
+        m = _LEVEL_RE.search(t)
         if m:
             return _s("setting", "control", "set", "energy_recovery",
                       value=m.group(1), unit="level", conf=0.9)
@@ -873,7 +878,7 @@ def _classify_structured(text: str) -> dict | None:
         if "调低" in t or "降低" in t or "低" in t:
             return _s("setting", "control", "dec", "steering_wheel",
                       attr="height", conf=0.9)
-        m = re.search(r"(\d)\s*挡", t)
+        m = _LEVEL_RE.search(t)
         if m:
             return _s("setting", "control", "set", "steering_wheel",
                       attr="height", value=m.group(1), unit="level", conf=0.9)
@@ -1477,36 +1482,41 @@ def _s(domain: str, intent: str, operate: str, obj: str, **kwargs) -> dict:
     return {"domain": domain, "intent": intent, "data": data, "confidence": kwargs.pop("conf", 0.9)}
 
 
-_POSITION_KEYWORDS = (
-    "主驾", "主驾位", "驾驶位",
-    "副驾", "副驾位", "副驾驶", "副驾驶位",
-    "前排", "后排",
-    "左后", "右后",
-    "全车",
-)
-
-
 def _extract_position(t: str) -> list[str] | None:
-    """从文本中提取位置词：**长词优先、互不重叠、按出现顺序全取**（同一个词只记一次）。
+    """从文本中提取位置词（词表与算法都是 `runtime.positions` 那一份：正向最大匹配、互不重叠、按出现顺序全取）。
 
     修前按词表顺序返回第一个命中：「副驾驶位」先撞上排在前面的「驾驶位」⇒ 归一化成主驾那一侧；
-    「主驾和副驾车窗」只留「主驾」（评审四轮顺带发现，2026-09-25）。
+    「主驾和副驾车窗」只留「主驾」（评审四轮顺带发现，2026-09-25）。词表修前是本模块自己的 12 个词，
+    「后排左 / 前排右 / 后排中间」只认出「后排 / 前排」⇒ 两个座位一起执行（评审四轮待办，2026-09-25）。
     """
-    taken = [False] * len(t)
-    hits: list[tuple[int, str]] = []
-    for kw in sorted(_POSITION_KEYWORDS, key=len, reverse=True):
-        start = t.find(kw)
-        while start >= 0:
-            end = start + len(kw)
-            if not any(taken[start:end]):
-                taken[start:end] = [True] * len(kw)
-                hits.append((start, kw))
-            start = t.find(kw, start + 1)
-    found: list[str] = []
-    for _, kw in sorted(hits):
-        if kw not in found:
-            found.append(kw)
-    return found or None
+    return scan_positions(t) or None
+
+
+#: 「N 挡」：多位数整取。修前各分支写的是 `(\d)\s*挡`，只抓挡字前面那一位——「调到20挡」⇒ `0`
+#: （评审四轮待办顺带，2026-09-25；VAL 不校验挡位范围，这个 0 会原样执行）。
+_LEVEL_RE = re.compile(r"(?<!\d)(\d+)\s*挡")
+
+#: 「位置 + 功能」简写里的功能词：省略了「座椅」/「XX灯」的那半。
+_SHORTHAND_FUNCTIONS = ("加热", "通风", "按摩", "灯")
+
+
+def _shorthand_positions(t: str) -> list[str] | None:
+    """「后排通风 / 前排加热 / 主驾的按摩 / 后排灯」：**座位词紧挨着功能词**（中间至多一个「的」）才算简写，返回全句位置。
+
+    修前只看「句子里有没有位置词」，而这条分支排在座椅 / 氛围灯 / 大灯 / 雾灯 / 后视镜各分支之前：「前排座椅按摩调高一些」
+    被接成「打开按摩」（调高丢了），「后排氛围灯调成蓝色」丢了颜色；位置词表补全之后（评审四轮待办，2026-09-25）
+    「打开左侧大灯 / 右侧雾灯」会被接成氛围灯，「右侧后视镜加热」被接成**座椅**加热。点名了对象的句子交给那个对象的分支。
+    只认座位词：「左侧 / 右侧 / 全车」不是座位，「左侧加热」说不出是哪个座椅。
+    """
+    for start, word in position_spans(t):
+        if not ids_of(word) or not set(ids_of(word)) <= SEAT_IDS:
+            continue
+        rest = t[start + len(word):]
+        if rest.startswith("的"):
+            rest = rest[1:]
+        if rest.startswith(_SHORTHAND_FUNCTIONS):
+            return _extract_position(t)
+    return None
 
 
 def _extract_color(t: str) -> str | None:
