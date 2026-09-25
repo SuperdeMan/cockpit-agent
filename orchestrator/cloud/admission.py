@@ -36,6 +36,8 @@ _SYSTEM = (
     + ADDRESSEE_QUESTION + ADDRESSEE_TRUE + ADDRESSEE_FALSE
     + ADDRESSEE_OBJECT_HEAD + "\n"
     + "- 结合助手上一句判断：它是不是在接助手的话（回答助手的问题、确认助手要做的事、接着上一个操作说下去）\n"
+    + "- 助手上一句是在问用户（去哪、要什么、几点、几个、哪一个、怎么处理）时，一个词或一个短语的回答就是在回答它，"
+    "必须输出 true；只有内容明显是在对别人说话（喊别人的名字、问别人问题、播报腔）才输出 false\n"
     + ADDRESSEE_UNSURE
     + "只输出一个 JSON 对象：{\"addressed\": true} 或 {\"addressed\": false}，不要输出其他任何内容。"
 )

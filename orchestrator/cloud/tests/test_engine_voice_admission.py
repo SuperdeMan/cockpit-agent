@@ -353,3 +353,92 @@ def test_a_slow_judgment_is_bounded_and_counts_as_addressed(monkeypatch):
     assert spy.confirmed("trunk.open") == 1
     seen = [(kw.get("attrs") or {}) for _, node, kw in spans if node == "cloud.voice_admission"]
     assert [a.get("verdict") for a in seen] == ["unavailable"], seen
+
+
+# ── 澄清选择 / 补槽（评审四轮 R4-07 第二步，设计 §5.4）──────────────────────────────────────
+#
+# 两条都是「一句短回复就执行动作」：背景里一句「第一个」会执行澄清卡的第一项，补槽窗口里别人说的一句话会被当成槽值去执行。
+# 取消刻意不接：它只丢挂起不执行，误拒一句真「取消」反而把危险操作的挂起留下来。
+
+from orchestrator.cloud.models import SessionState  # noqa: E402
+
+_CLOSE_STEP = {"id": "s1", "agent_id": "vehicle", "intent": "window.close", "slots": {},
+               "depends_on": [], "slot_refs": {}}
+
+
+def _seed_slot(session):
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_slot", owner_user_id="u1", operation_id="op-slot", pending_step_id="s1",
+        missing_slots=["positions"], completed_results={},
+        pending_plan={"steps": [dict(_CLOSE_STEP)], "raw_text": "关闭车窗", "goal": "关闭车窗",
+                      "safety_origin_text": "关闭车窗"})))
+
+
+def _seed_clarify(session):
+    asyncio.run(session.save("sess-1", SessionState(
+        phase="wait_clarify", owner_user_id="u1", operation_id="op-clar", pending_step_id="",
+        missing_slots=[], completed_results={},
+        pending_plan={"steps": [], "raw_text": "车窗", "goal": "车窗", "safety_origin_text": "车窗"},
+        clarify={"question": "车窗要打开还是关上？",
+                 "options": [{"label": "关上", "send_text": "关闭车窗", "step": dict(_CLOSE_STEP)},
+                             {"label": "打开", "send_text": "打开车窗"}]})))
+
+
+def _pending_ids(session):
+    return [s.operation_id for s in asyncio.run(session.load_all("sess-1", owner_user_id="u1"))]
+
+
+def test_a_voice_slot_answer_judged_not_addressed_executes_nothing_and_keeps_the_question():
+    engine, spy, session = _make()
+    _seed_slot(session)
+    spy.verdicts["副驾"] = [False]
+    final = _run(engine, _req("副驾", meta=_VOICE))[-1]
+    assert _rejected(final), final
+    assert spy.executed("window.close") == 0
+    assert _pending_ids(session) == ["op-slot"], "补槽挂起原样保留，也不算一次没接上的重问"
+    state = asyncio.run(session.load("sess-1", owner_user_id="u1", operation_id="op-slot"))
+    assert int(getattr(state, "slot_retry", 0) or 0) == 0
+
+
+def test_a_voice_slot_answer_judged_addressed_fills_and_executes():
+    engine, spy, session = _make()
+    _seed_slot(session)
+    _run(engine, _req("副驾", meta=_VOICE))
+    assert spy.executed("window.close") == 1
+    assert [a["said"] for a in spy.admissions] == ["副驾"]
+
+
+def test_a_text_slot_answer_asks_nobody():
+    engine, spy, session = _make()
+    _seed_slot(session)
+    spy.verdicts["副驾"] = [False]
+    _run(engine, _req("副驾"))
+    assert spy.executed("window.close") == 1
+    assert spy.admissions == []
+
+
+def test_a_voice_clarify_choice_judged_not_addressed_executes_nothing_and_keeps_the_card():
+    engine, spy, session = _make()
+    _seed_clarify(session)
+    spy.verdicts["第一个"] = [False]
+    final = _run(engine, _req("第一个", meta=_VOICE))[-1]
+    assert _rejected(final), final
+    assert spy.executed("window.close") == 0
+    assert _pending_ids(session) == ["op-clar"]
+
+
+def test_a_voice_clarify_choice_judged_addressed_runs_the_option():
+    engine, spy, session = _make()
+    _seed_clarify(session)
+    _run(engine, _req("第一个", meta=_VOICE))
+    assert spy.executed("window.close") == 1
+    assert [a["said"] for a in spy.admissions] == ["第一个"]
+
+
+def test_a_text_or_tapped_clarify_choice_asks_nobody():
+    engine, spy, session = _make()
+    _seed_clarify(session)
+    spy.verdicts["关闭车窗"] = [False]
+    _run(engine, _req("关闭车窗", operation_id="op-clar", meta={"clarify_resume": "1"}))
+    assert spy.executed("window.close") == 1
+    assert spy.admissions == []

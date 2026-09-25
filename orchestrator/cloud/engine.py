@@ -863,6 +863,13 @@ class PlannerEngine:
                 logger.info("Positional reply %r is not for the older clarify %s; a newer prompt owns it",
                             text[:10], (clarify_pending.operation_id or "")[:16])
                 option = None
+            # 评审四轮 R4-07 第二步：选中一项就执行它——背景里一句「第一个」会执行澄清卡的第一项。语音说出的选择先过受话判定，
+            # 判非受话 ⇒ 拒识、澄清原样保留。点卡（没有语音来源）不问。
+            if option is not None and not await self._voice_admitted(
+                    ctx, text, exit_name="clarify_choice", mem_on=mem_on):
+                async for ev in self._reject_not_addressed(ctx):
+                    yield ev
+                return
             if option is not None:
                 await self._close_pending(ctx, clarify_pending)
                 await _emit_engine_lifecycle(
@@ -948,6 +955,12 @@ class PlannerEngine:
                 held_pending = pending
                 plan, seed_results = None, []
             else:
+                # 评审四轮 R4-07 第二步：这句话会被当成槽值去执行——补槽窗口里别人说的一句话不该变成目的地 / 提醒标题。
+                # 语音来源先过受话判定，判非受话 ⇒ 拒识、挂起原样保留（也不算一次没接上的重问）。
+                if not await self._voice_admitted(ctx, text, exit_name="slot_fill", mem_on=mem_on):
+                    async for ev in self._reject_not_addressed(ctx):
+                        yield ev
+                    return
                 # 补槽恢复绝不注入 confirmed——补槽答案不是确认（见 _restore docstring）
                 plan, seed_results = self._restore(pending, inject_confirmed=False)
                 if plan is None:
@@ -1703,7 +1716,8 @@ class PlannerEngine:
         `_ADDRESSED_SECTION` 同一组句子）。`6e64b767` 借的是一次完整规划，语音「确认」23 ms → 3142 ms。护栏与规划器同款：
         「记住…」这类祈使指令恒判受话、不问模型；按住说话（显式输入）判非受话再问一次，两次都否才算。
         其余来源 / 拒识关 ⇒ True，零调用。判定调用失败 / 解析不出 ⇒ 按受话处理（fail-open，同其余语音轮的缺省）。
-        消费方：纯偏好陈述（评审二轮 R3）、焦点省略开关、确认。每次判定发一个 `cloud.voice_admission` span（出口 + 结果 + 耗时）。
+        消费方：纯偏好陈述（评审二轮 R3）、焦点省略开关、确认、澄清选择、补槽。取消刻意不接：它只丢挂起不执行，误拒一句真「取消」
+        反而把危险操作的挂起留下来。每次判定发一个 `cloud.voice_admission` span（出口 + 结果 + 耗时）。
         """
         source = ctx.prefs.get("input_source", "")
         if not (is_voice_input_source(source) and _reject_enabled()):

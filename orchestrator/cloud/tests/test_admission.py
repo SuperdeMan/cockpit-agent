@@ -67,3 +67,9 @@ def test_the_judge_passes_the_built_messages():
         return '{"addressed": false}'
     assert asyncio.run(judge_addressed(llm, "关掉", "好的", "voice_followup")) is False
     assert seen and "受话判定器" in seen[0][0]["content"] and "关掉" in seen[0][1]["content"]
+
+
+def test_a_short_answer_to_the_assistants_question_is_spelled_out():
+    """离线 A/B 里「要提醒你什么事？」之后的「开会」被判成非受话 1/32——提示得明说：助手在问，短答就是回答它。"""
+    system = admission_messages("开会", "要提醒你什么事？")[0]["content"]
+    assert "助手上一句是在问用户" in system and "一个词或一个短语的回答就是在回答它" in system
