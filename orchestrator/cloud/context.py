@@ -2430,6 +2430,8 @@ def build_context(request) -> PlanContext:
         trace_id=meta.get("trace_id", ""),
         prefs=prefs,
         edge_nlu=meta.get("_edge_nlu", ""),   # M5 P2-D2：端侧初判，观测用（不进 prompt）
+        # 评审四轮 §5.5 b：需确认命令的车端确定性解析（只在那条路上盖章），写步方向以它为准
+        edge_confirm=str(meta.get("_edge_confirm", "") or "").strip(),
         # Q7-OR2：本轮端侧已执行的动作名（混合路径的同轮上下文）。逗号分隔，空=没有。
         edge_executed=[a.strip() for a in
                        str(meta.get("_edge_executed", "") or "").split(",") if a.strip()],

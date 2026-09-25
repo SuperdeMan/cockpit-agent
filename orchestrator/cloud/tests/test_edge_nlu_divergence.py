@@ -46,3 +46,5 @@ def test_edge_nlu_never_enters_planner_prompt():
     from orchestrator.cloud.planning import PlanBuilder
     src = inspect.getsource(PlanBuilder._planner_user_msg)
     assert "edge_nlu" not in src
+    # 评审四轮 §5.5 b：需确认命令的车端盖章同一条规矩——它只在计划产出**之后**纠正写步方向（附历史数据），不进 prompt
+    assert "edge_confirm" not in src

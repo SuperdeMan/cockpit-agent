@@ -766,6 +766,8 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             request.meta.pop("_edge_previous_local_exchange", None)
             request.meta.pop("_edge_previous_local_actions", None)
             request.meta.pop("_edge_nlu", None)
+            # 评审四轮 §5.5 b：云侧拿它改写步的方向——只能是端侧在「需确认、整句上云」那条路上自己盖的
+            request.meta.pop("_edge_confirm", None)
             # 评审四轮 R4-04：执行目标（位置）与执行名字同一族——只能是端侧 VAL 真执行过之后自己盖的
             request.meta.pop("_edge_executed_targets", None)
             request.meta.pop("_edge_previous_local_targets", None)
@@ -1125,6 +1127,9 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
                                         actions=[action] if action else [])
                 return
             logger.info("LOCAL confirm-required %s -> route to cloud", intent["name"])
+            # 评审四轮 §5.5 b：把这条确定性解析盖章带上云——云侧计划里同一对象的写步方向与它不同时以它为准
+            # （真栈 `5ca289c7` RS34：「关闭后备箱」被规划成 `trunk.open`）。只在这条路上盖：这里是高置信、且判成了需确认的命令
+            request.meta["_edge_confirm"] = intent["name"]
 
         # 慢路径：上云编排
         turn["path"] = "cloud"

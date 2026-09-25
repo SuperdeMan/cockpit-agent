@@ -33,6 +33,7 @@ from . import candidate_query
 from .reply_position import reply_position
 from .admission import judge_addressed
 from .superseded import rewrite_goal, superseded_values
+from .edge_authority import direction_conflicts
 from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
@@ -1210,6 +1211,8 @@ class PlannerEngine:
             # 只有这份计划挂起后在续接轮跑到的下游步才会真正用到它（`models.step_raw_text`）。
             for s in plan.steps:
                 s.origin_text = text
+            # 评审四轮 §5.5 b：需确认的车端命令，写步方向以车端的确定性解析为准（执行之前、落 span 之前）
+            await self._align_edge_confirm(plan, ctx)
 
             # 语音来源 + LLM 判非受话 → 静默拒识（route_hints 兜底的 steps 一并作废）。
             # Android 手动录音显式带 ptt；按下按钮只授权采集，不代表背景话就是给助手的请求。
@@ -1391,6 +1394,10 @@ class PlannerEngine:
                     # 追加批 F（F-1）：能力编号笔误被校验归位（模型原生选对与归位后选对分开看）
                     **({"ref_rehomed": ",".join(plan.ref_rehomed)}
                        if getattr(plan, "ref_rehomed", None) else {}),
+                    # 评审四轮 §5.5 b：车端在需确认那条路上盖的章（到达了没有，真栈就看这一格）与据它改过的写步方向
+                    **({"edge_confirm": ctx.edge_confirm} if getattr(ctx, "edge_confirm", "") else {}),
+                    **({"edge_corrected": ",".join(plan.edge_corrected)}
+                       if getattr(plan, "edge_corrected", None) else {}),
                     # B6 §2 可执行性 shadow（主链零行为变化）
                     **_actionability_attrs(plan),
                     # 数据飞轮 P0 落域可观测：意图名是系统枚举值（非用户内容），紧凑发射
@@ -1715,6 +1722,34 @@ class PlannerEngine:
             "aggregate",
         )
         yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+
+    async def _align_edge_confirm(self, plan: Plan, ctx: PlanContext) -> None:
+        """需确认的车端命令：计划里同一对象的写步方向与车端确定性解析不同 ⇒ 换成车端那条（判据在 `edge_authority`）。
+
+        真栈 `5ca289c7` RS34：「关闭后备箱」被规划成 `trunk.open`（编号相邻差一位），一句「好的」开了后备箱；车端早就解出了 `trunk.close`。
+        换步走 `_validated_steps`（能力元数据跟着新 intent 走，承接方不认这条 intent 就不换）；没冲突时零额外调用。"""
+        edge_intent = str(getattr(ctx, "edge_confirm", "") or "").strip()
+        hits = direction_conflicts(plan.steps, edge_intent) if edge_intent else []
+        if not hits:
+            return
+        agent_map = {a.manifest.agent_id: a for a in await self.clients.list_agents()}
+        for index in hits:
+            old = plan.steps[index]
+            fixed = self.planner._validated_steps([{
+                "id": old.id, "agent_id": old.agent_id, "intent": edge_intent,
+                "slots": dict(old.slots or {}), "depends_on": list(old.depends_on or []),
+                "slot_refs": dict(old.slot_refs or {}),
+            }], agent_map)
+            if not fixed:
+                logger.warning("edge confirm %s has no serving capability; keeping %s", edge_intent, old.intent)
+                continue
+            new = fixed[0]
+            new.origin_text = old.origin_text
+            new.covers = list(old.covers or [])
+            plan.steps[index] = new
+            plan.edge_corrected.append(f"{old.intent}>{edge_intent}")
+            logger.warning("planned %s contradicts the edge's deterministic parse %s of a confirm-required "
+                           "command; using the edge's", old.intent, edge_intent)
 
     async def _voice_admitted(self, ctx: PlanContext, text: str, *, exit_name: str,
                               working_set=None, mem_on: bool = True) -> bool:

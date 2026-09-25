@@ -296,6 +296,8 @@ class Plan:
     # 随挂起持久化；续接它时循环的第一次再规划不再套「首轮自报 adaptive ⇒ 判 done 要纠偏一次」——这一批本身就是第二阶段，
     # 修前续接之后模型说「完成了」还会被逼着再补一批。
     replan_batch: bool = False
+    # 评审四轮 §5.5 b：写步方向按车端确定性解析改过的记录（"<规划的 intent>><车端的 intent>"），只供 cloud.planning span 观测。
+    edge_corrected: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -364,6 +366,11 @@ class PlanContext:
     # 刻意**不留 env 开关**：那会变成一个没人测过却随时可能被打开的分支；真要开就改代码，
     # 并且必须附 A/B 数据（性质由 test_edge_nlu_divergence.py 源码级断言守住）。
     edge_nlu: str = ""
+    # 评审四轮 §5.5 b（2026-09-25）：车端快路径把这句判成**需确认的命令**（高置信）、整句上云时盖的章——它的 intent 名（`trunk.close`）。
+    # 与 `edge_nlu` 分开：那份是所有上云轮的泛化初判，只作观测；这一份只在需确认那条路上出现，唯一消费方是
+    # `edge_authority.direction_conflicts`——计划里同一对象的写步方向与它不同时以它为准。不进 prompt、不进 prefs；
+    # 客户端同名键在车端入口剥掉。
+    edge_confirm: str = ""
     # QA 卡 Q7-OR2（2026-08-16）**同轮**执行事实：端侧在这一轮已经经 VAL 执行掉的动作名
     # （`hvac.off` 这种）。混合意图路径下端侧先执行本地那半、再把剩下的片段上云，
     # 而剩下那半可能是个**没有对象的碎片**——「关闭空调然后打开，按顺序执行」上云的
