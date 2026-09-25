@@ -118,6 +118,25 @@ describe('途经点 / 充电目的地候选', () => {
   })
 })
 
+describe('语音转写补的句尾标点不挡序号选择（评审四轮待办 2026-09-25，App 会话 app-wyi61a）', () => {
+  test('导航候选「第二个。」→ 导航去第二个', () => {
+    expect(route('第二个。', cand({ poiNames: ['A站', 'B站'] }))).toEqual({
+      kind: 'dispatch', text: '导航去B站', clear: ['poi'],
+    })
+  })
+  test('目的地候选 / 途经点候选同样接住', () => {
+    expect(route('第2个。', cand({ destChoice: ['西湖银泰充电站', '黄龙充电站'] })))
+      .toEqual({ kind: 'dispatch', text: '黄龙充电站', clear: ['dest'] })
+    expect(route('第一个！', cand({ waypointChoice: { destination: '虹桥机场', names: ['服务区餐厅'] } })))
+      .toMatchObject({ text: '导航去虹桥机场途经服务区餐厅' })
+  })
+  test('负：句中带别的内容照旧不是序号选择（原句不改写）', () => {
+    const d = route('第一个充电站怎么走？', cand({ poiNames: ['A站'] }))
+    expect(d).toMatchObject({ text: '第一个充电站怎么走？' })
+    expect(d).not.toHaveProperty('clear')
+  })
+})
+
 describe('周边发现 place_list「第N个」', () => {
   const c = cand({
     poiNames: ['蜀香居', '渝味堂'],

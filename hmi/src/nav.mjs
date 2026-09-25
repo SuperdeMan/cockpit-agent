@@ -7,8 +7,12 @@ const _CN_NUM = {
   一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
 }
 
+// 句尾标点不改变「这是一句纯序号选择」：语音转写会给「第二个」补一个句号，修前「第二个。」过不了整句锚定、
+// 原样上云（真实 App 会话 `app-wyi61a`，评审四轮待办 2026-09-25）。只剥句尾标点，句中内容照旧整句锚定。
+const _TRAILING_PUNCT_RE = /[。．.！!？?，,、；;~～…\s]+$/u
+
 export function poiSelectionIndex(text) {
-  const t = String(text || '').trim()
+  const t = String(text || '').trim().replace(_TRAILING_PUNCT_RE, '')
   const m = t.match(/^(?:去|导航(?:去|到)?)?第\s*([0-9一二两三四五六七八九十]+)\s*个?$/)
   if (m) {
     const raw = m[1]

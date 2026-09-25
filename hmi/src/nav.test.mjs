@@ -19,6 +19,19 @@ test('parses Chinese ordinals to 0-based index', () => {
   assert.equal(poiSelectionIndex('导航去第三个'), 2)
 })
 
+test('a trailing sentence mark from speech-to-text keeps it a pure selection', () => {
+  // 评审四轮待办（2026-09-25）：语音转写给「第二个」补了句号，修前原样上云（App 会话 app-wyi61a）
+  assert.equal(poiSelectionIndex('第二个。'), 1)
+  assert.equal(poiSelectionIndex('第三个！'), 2)
+  assert.equal(poiSelectionIndex('去第一个？'), 0)
+  assert.equal(poiSelectionIndex('2。'), 1)
+  assert.equal(poiSelectionIndex('第二个。 '), 1)
+  // 只剥句尾：句中带内容的照旧不是纯序号选择
+  assert.equal(poiSelectionIndex('第一个充电站怎么走？'), -1)
+  assert.equal(poiSelectionIndex('第二个，再帮我查下天气。'), -1)
+  assert.equal(poiSelectionIndex('。'), -1)
+})
+
 test('parses digit ordinals', () => {
   assert.equal(poiSelectionIndex('第1个'), 0)
   assert.equal(poiSelectionIndex('2'), 1)
