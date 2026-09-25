@@ -103,33 +103,63 @@ def _synth_wav(text: str):
         return None
 
 
-def _wav_to_s16le_16k_mono(wav_bytes: bytes):
-    """Convert provider WAV to 16-kHz mono s16le PCM."""
-    try:
-        import audioop
-    except ImportError as exc:
-        raise AudioConversionUnavailable(
-            "the local runtime does not provide audioop",
-        ) from exc
+def _pcm_to_int16(raw: bytes, width: int) -> list[int]:
+    """Little-endian PCM samples of `width` bytes -> signed 16-bit values (WAV 8-bit is unsigned)."""
+    import array
+    import sys
+    if width == 1:
+        return [(b - 128) << 8 for b in raw]
+    if width == 2:
+        samples = array.array("h", raw[: len(raw) // 2 * 2])
+        if sys.byteorder == "big":
+            samples.byteswap()
+        return samples.tolist()
+    if width in (3, 4):
+        return [int.from_bytes(raw[i:i + width], "little", signed=True) >> (8 * (width - 2))
+                for i in range(0, len(raw) - width + 1, width)]
+    raise InvalidProviderAudio(f"unsupported sample width {width}")
 
+
+def _resample_linear(samples: list[int], src_rate: int, dst_rate: int) -> list[int]:
+    """Linear-interpolation resampling (the same order of filter `audioop.ratecv` used)."""
+    if not samples or src_rate == dst_rate:
+        return samples
+    count = max(1, int(len(samples) * dst_rate / src_rate))
+    step, last = src_rate / dst_rate, len(samples) - 1
+    out = []
+    for i in range(count):
+        pos = i * step
+        j = int(pos)
+        a, b = samples[min(j, last)], samples[min(j + 1, last)]
+        out.append(int(round(a + (b - a) * (pos - j))))
+    return out
+
+
+def _wav_to_s16le_16k_mono(wav_bytes: bytes):
+    """Convert provider WAV to 16-kHz mono s16le PCM.
+
+    Standard library only: `audioop` was deprecated in Python 3.11 and is gone in 3.13 (its import raised a
+    DeprecationWarning in every full-suite run). Width -> 16 bit, channels averaged, linear resampling."""
+    import array
     import io
+    import sys
     import wave
     try:
         with wave.open(io.BytesIO(wav_bytes), "rb") as w:
             ch, sw, fr, n = w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getnframes()
             if n <= 0:
                 raise InvalidProviderAudio("the provider WAV contains no audio frames")
-            pcm = w.readframes(n)
-        if sw != 2:
-            pcm = audioop.lin2lin(pcm, sw, 2)
-            sw = 2
-        if ch == 2:
-            pcm = audioop.tomono(pcm, sw, 0.5, 0.5)
-        if fr != 16000:
-            pcm, _ = audioop.ratecv(pcm, sw, 1, fr, 16000, None)
+            raw = w.readframes(n)
+        samples = _pcm_to_int16(raw, sw)
+        if ch > 1:
+            samples = [sum(samples[i:i + ch]) // ch for i in range(0, len(samples) - ch + 1, ch)]
+        samples = _resample_linear(samples, fr, 16000)
+        pcm = array.array("h", (max(-32768, min(32767, s)) for s in samples))
+        if sys.byteorder == "big":
+            pcm.byteswap()
         if not pcm:
             raise InvalidProviderAudio("the provider WAV converts to empty PCM")
-        return pcm
+        return pcm.tobytes()
     except Exception as exc:
         raise InvalidProviderAudio(
             "the provider response is not a convertible WAV payload",

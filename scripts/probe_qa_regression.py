@@ -1539,11 +1539,14 @@ CASES = [
     # 修前（`bda5af71`，CL1 / RS33 同一处）：「云岚国际中心」近侧 / 全国都只捞回北京的「云岚之境美容美体中心」，名字校验不过、
     # 地标解析也解不出 ⇒ 兜底照样当目的地，出发去全程约 2400 km 的路线。修后：名字对不上的弱匹配只在本地半径内才当目的地，
     # 否则走「没找到」那条追问（固定 follow_up，判分支不判措辞）。名字对得上的长途照常导航的对照是 PU8。
+    # 假地名 2026-09-25 从「云岚国际中心」换成「墨汐国际中心」（评审四轮待办）：前者就是规划器提示里裸对象澄清的示例名，
+    # 明说了「导航去」的请求也会被逐字照抄成「你希望我怎么处理云岚国际中心？」（`4438ea6b` 15 趟里 2 趟）——尺子与被测系统共用了一个假地名。
+    # 新名字 `ee94c595` 真栈核过：导航与周边检索都答「没找到」。CL1 / RS33 第 1 轮本来就要裸地名触发澄清卡、RS43 复现的是宣威那条 geocode，这三条不换。
     {"id": "RS36", "group": "residual", "card": "余项", "issue": "评审四轮真栈顺带发现",
      "why": "名字对不上、只捞回另一座城相近名的目的地：追问，不出发",
      "known": "red",
      "turns": [
-         {"say": "导航去云岚国际中心",
+         {"say": "导航去墨汐国际中心",
           "expect": {"navigate_within_km": 150, "follow_up_any": ["请补充城市"]}},
      ]},
     # ── 评审四轮顺带发现：端侧位置抽取按词表顺序只取第一个 ────────────────────────────────────────
@@ -1586,7 +1589,7 @@ CASES = [
      "why": "语音说出的补槽回答过了受话判定之后照常执行，不被误拒",
      "known": "green",
      "turns": [
-         {"say": "导航去云岚国际中心", "expect": {"follow_up_any": ["请补充城市"], "navigate_within_km": 150}},
+         {"say": "导航去墨汐国际中心", "expect": {"follow_up_any": ["请补充城市"], "navigate_within_km": 150}},
          # 第 1 轮三种规划形态都得在第 2 轮导航过去：落 `navigate_to` ⇒ 补槽续接它；落 `search_poi` ⇒ 它的「没找到」改派
          # `navigate_to`、挂起落在改派步上；落 `search_poi → navigate_to`（依赖）⇒ 挂起在第二步。`f535c654` 那两趟红是
          # 单步 `search_poi` 的「没找到」没留挂起，回答被澄清成「你希望我怎么处理深圳湾公园？」
@@ -1594,7 +1597,7 @@ CASES = [
          # 又去搜「云岚国际中心」、再挂一次追问，话术「…已按此规划；没找到「云岚国际中心」。暂时无法确定…」，修前的尺子判它 PASS）
          {"say": "深圳湾公园", "source": "voice_followup",
           "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
-                     "speech_not": ["怎么处理", "云岚国际中心"], "card_type_not": "rejected"}},
+                     "speech_not": ["怎么处理", "墨汐国际中心"], "card_type_not": "rejected"}},
          # 真的结束了那一趟导航（同一趟修前：挂起轮不写焦点，已发出的导航没进路线会话 ⇒「当前没有正在进行的导航」）
          {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
                                         "speech_not": ["没有待确认", "没有正在进行的导航"]}},
@@ -1617,10 +1620,10 @@ CASES = [
      "why": "先查再导航的未知地名：补答另一个地方之后不再追旧地名、取消能结束导航",
      "known": "red",
      "turns": [
-         {"say": "先帮我查一下云岚国际中心在哪，然后导航过去", "expect": {"navigate_within_km": 150}},
+         {"say": "先帮我查一下墨汐国际中心在哪，然后导航过去", "expect": {"navigate_within_km": 150}},
          {"say": "深圳湾公园", "source": "voice_followup",
           "expect": {"actions_include": ["navigate"], "navigate_named_any": ["深圳湾公园"],
-                     "speech_not": ["怎么处理", "云岚国际中心"], "card_type_not": "rejected"}},
+                     "speech_not": ["怎么处理", "墨汐国际中心"], "card_type_not": "rejected"}},
          {"say": "取消导航", "expect": {"actions_include": ["navigate_cancel"],
                                         "speech_not": ["没有待确认", "没有正在进行的导航"]}},
      ]},

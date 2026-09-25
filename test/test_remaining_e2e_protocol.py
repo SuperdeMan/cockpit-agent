@@ -2620,6 +2620,47 @@ def test_voice_loop_zero_frame_wav_is_provider_protocol_failure(
     ) in recorder.rows
 
 
+def _wav(frames: bytes, *, channels: int, width: int, rate: int) -> bytes:
+    import wave
+
+    payload = io.BytesIO()
+    with wave.open(payload, "wb") as writer:
+        writer.setnchannels(channels)
+        writer.setsampwidth(width)
+        writer.setframerate(rate)
+        writer.writeframes(frames)
+    return payload.getvalue()
+
+
+@pytest.mark.parametrize("channels,width,rate", [(1, 2, 16000), (2, 2, 24000), (1, 2, 32000), (1, 1, 8000), (2, 3, 48000), (1, 4, 22050)])
+def test_voice_loop_wav_conversion_needs_no_audioop(channels, width, rate):
+    """`audioop` 在 Python 3.13 被移除（3.12 上每次全量都报 DeprecationWarning）：转换只用标准库，
+    输出恒为 16 kHz / 单声道 / s16le，时长不变、声道取平均、8 位 WAV 按无符号处理。"""
+    import array
+    import math
+    import warnings
+
+    module = _load("e2e_voice_loop")
+    seconds, freq = 0.25, 440.0
+    n = int(rate * seconds)
+    values = [int(12000 * math.sin(2 * math.pi * freq * i / rate)) for i in range(n)]
+
+    def encode(v: int) -> bytes:
+        if width == 1:
+            return bytes([(v >> 8) + 128])
+        return (v << (8 * (width - 2))).to_bytes(width, "little", signed=True)
+
+    frames = b"".join(encode(v) * channels for v in values)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        pcm = module._wav_to_s16le_16k_mono(_wav(frames, channels=channels, width=width, rate=rate))
+    out = array.array("h", pcm)
+    assert abs(len(out) - int(16000 * seconds)) <= 1
+    peak = max(abs(s) for s in out)
+    assert 11000 <= peak <= 12100, peak           # 幅度保住（线性插值、按位宽缩放、声道平均都不该改变它）
+    assert "audioop" not in module._wav_to_s16le_16k_mono.__code__.co_names
+
+
 def test_loading_an_e2e_script_never_leaks_env_into_the_pytest_process():
     """加载 e2e 脚本不得把 .env 灌进同进程的 os.environ（2026-07-31 CI 红灯根因）。
 
