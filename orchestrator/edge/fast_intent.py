@@ -46,6 +46,8 @@ LOCAL_INTENTS = {
     "headlight.on", "headlight.off",
     "wiper.on", "wiper.off", "wiper.speed.set", "wiper.speed.inc", "wiper.speed.dec",
     "rear_view_mirror.fold", "rear_view_mirror.unfold",
+    # 后视镜加热（评审四轮待办 2026-09-25）：`commands.yaml` 早就在 modes 里声明了 heating，缺的是意图、规则、VAL 与话术
+    "rear_view_mirror.heating.open", "rear_view_mirror.heating.close",
     "fragrance.on", "fragrance.off", "fragrance.set",
     "volume.set", "volume.inc", "volume.dec",
     # 油箱盖 / 充电口盖
@@ -459,6 +461,10 @@ def _classify_structured(text: str) -> dict | None:
         # 与体感入口收窄同一纪律——宁可漏接上云，也不要端侧替用户按下按钮。
         if not ("说明书" in t or "怎么" in t or "如何" in t or "为什么" in t
                 or "什么是" in t or "怎样" in t):
+            if "后视镜" in t:
+                # 后视镜的除雾 / 除霜就是后视镜加热（同一个物理开关）。修前落到前挡除雾——开错了开关（评审四轮待办，2026-09-25）
+                return _s("setting", "control", "close" if "关" in t else "open", "rear_view_mirror",
+                          mode="heating", positions=_extract_position(t), conf=0.9)
             obj = ("rear_defogger" if _REAR_DEFOG_RE.search(t)
                    else "front_defogger")
             return _s("setting", "control",
@@ -717,6 +723,10 @@ def _classify_structured(text: str) -> dict | None:
     # ── 后视镜 ────────────────────────────────────────────
     if "后视镜" in t:
         pos = _extract_position(t)
+        # 加热先判：修前这一支只认 折叠 / 收 / 展开 / 打开，「右侧后视镜加热打开」里的「打开」被接成**展开**（评审四轮待办，2026-09-25）
+        if "加热" in t:
+            return _s("setting", "control", "close" if "关" in t else "open", "rear_view_mirror",
+                      mode="heating", positions=pos, conf=0.9)
         if "折叠" in t or "收" in t:
             return _s("setting", "control", "set", "rear_view_mirror",
                       mode="fold", positions=pos, conf=0.9)
@@ -2037,6 +2047,8 @@ def _to_legacy_name(intent: dict) -> str | None:
         # （val.py `operate == "set" and mode == "fold"`），而 LOCAL_INTENTS 里登记的是
         # rear_view_mirror.fold/unfold。旧实现按 operate 拼名得到 `rear_view_mirror.set`，
         # 不在 LOCAL_INTENTS → 「把后视镜收起来」整句上云（对抗测试 ei.local.mirror）。
+        if mode == "heating" and operate in ("open", "close"):   # 与 VAL 同源：加热先于折叠 / 展开判
+            return f"{obj}.heating.{operate}"
         if mode in ("fold", "unfold"):
             return f"{obj}.{mode}"
         if operate in ("open", "close"):   # 与 VAL 同源：open=展开、close=折叠

@@ -363,6 +363,20 @@ rear_view_mirror_unfold_success:
   - '{position}后视镜已展开'
   speech_brief:
   - 展开了
+rear_view_mirror_heating_on_success:
+  scene: 后视镜加热已打开
+  status: 成功
+  speech_full:
+  - '{position}后视镜加热已打开'
+  speech_brief:
+  - 开了
+rear_view_mirror_heating_off_success:
+  scene: 后视镜加热已关闭
+  status: 成功
+  speech_full:
+  - '{position}后视镜加热已关闭'
+  speech_brief:
+  - 关了
 wiper_on_success:
   scene: 雨刷已开启
   status: 成功

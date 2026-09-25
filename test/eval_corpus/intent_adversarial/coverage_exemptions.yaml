@@ -35,6 +35,18 @@ exemptions:
     reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。⚠ 豁免的是 2+2+1 覆盖矩阵，**不是 ingress 路由**——本条另有 cases/edge_ingress.yaml 的 ei.local.* 语料钉住「必须走端侧」（2026-08-19 之前它正是路由到云被就近误执行的）。
     owner: 泓舟
     reviewed_at: 2026-08-19
+  # ── 2026-09-25（评审四轮待办）新增两条：后视镜加热开 / 关 ──
+  # 与 steering_wheel.heating.open/close、seat.heating.on/off 同族（非危险、非核心开关的端侧原子车控），沿用 2026-08-02 的概括授权判据，不是逐条人裁。
+  - intent: rear_view_mirror.heating.close
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 orchestrator/edge/tests/corpus/ 参数化语料（识别 + VAL 状态）与 test_mirror_heating.py 的五段链路（原话 → 意图 → 对象 / 操作 → VAL → 话术，端侧与云侧两条路）覆盖。与折叠 / 展开共用 open / close 两个 operate，那条区分由单测与变异钉住。
+    owner: 泓舟
+    reviewed_at: 2026-09-25
+  - intent: rear_view_mirror.heating.open
+    requirements: [positive, hard_negative, relation]
+    reason: 端侧原子车控，走端侧确定性快路径不经 LLM 落域；已由 orchestrator/edge/tests/corpus/ 参数化语料（识别 + VAL 状态）与 test_mirror_heating.py 的五段链路（原话 → 意图 → 对象 / 操作 → VAL → 话术，端侧与云侧两条路）覆盖。与折叠 / 展开共用 open / close 两个 operate，那条区分由单测与变异钉住。
+    owner: 泓舟
+    reviewed_at: 2026-09-25
   - intent: accompany_home.close
     requirements: [positive, hard_negative, relation]
     reason: 端侧原子车控/媒体，走端侧确定性快路径不经 LLM 落域；已由 test/eval_fast_intent.py + orchestrator/edge/tests/corpus/ 参数化语料 + VAL 对象矩阵覆盖。对抗套件只覆盖其中的危险动作与核心开关（trunk/door_lock/window/sunroof/charging_port/fuel_tank_cover/hvac/media）。

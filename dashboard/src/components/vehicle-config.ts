@@ -45,6 +45,7 @@ export const META: Record<string, KeyMeta> = {
   fuel_tank_cover: { label: '油箱盖', icon: '⛽', group: 'body', kind: 'openclose' },
   charging_port: { label: '充电口', icon: '🔌', group: 'body', kind: 'openclose' },
   rear_view_mirror: { label: '后视镜', icon: '🪞', group: 'body', kind: 'openclose' },
+  rear_view_mirror_heating: { label: '后视镜加热', icon: '🔥', group: 'body', kind: 'toggle' },
   wiper: { label: '雨刷', icon: '🌧️', group: 'body', kind: 'toggle' },
   wiper_speed: { label: '雨刷档', icon: '🌧️', group: 'body', kind: 'level', max: 5 },
   // ── 灯光 ──

@@ -51,6 +51,7 @@ class VAL:
             # 其他车身
             "wiper": False, "fragrance": False,
             "rear_view_mirror": "unfolded",
+            "rear_view_mirror_heating": False,
             "steering_wheel_heating": False,
             # ws8: 安全相关
             "child_lock": False,
@@ -638,6 +639,11 @@ class VAL:
                 return "charging_port", "closed"
 
         elif obj == "rear_view_mirror":
+            # 加热先判：它和折叠 / 展开共用 open / close 两个 operate（`commands.yaml` 声明 modes 含 heating）。修前这里只认
+            # 折叠 / 展开，「后视镜加热打开」（operate=open, mode=heating）落进下一行执行成**展开**（评审四轮待办，2026-09-25）
+            if mode == "heating" and operate in ("open", "close"):
+                self.state["rear_view_mirror_heating"] = operate == "open"
+                return "rear_view_mirror_heating", operate == "open"
             if operate == "open" or (operate == "set" and mode == "unfold"):
                 self.state["rear_view_mirror"] = "unfolded"
                 return "rear_view_mirror", "unfolded"
@@ -880,6 +886,9 @@ class VAL:
             return "charging_port_open_success" if operate == "open" else "charging_port_close_success"
 
         if obj == "rear_view_mirror":
+            if mode == "heating":
+                return ("rear_view_mirror_heating_on_success" if operate == "open"
+                        else "rear_view_mirror_heating_off_success")
             if operate == "open" or (operate == "set" and mode == "unfold"):
                 return "rear_view_mirror_unfold_success"
             return "rear_view_mirror_fold_success"

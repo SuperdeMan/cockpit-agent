@@ -391,6 +391,8 @@ objects:
     effect: write
     edge_intents:
     - rear_view_mirror.fold
+    - rear_view_mirror.heating.close
+    - rear_view_mirror.heating.open
     - rear_view_mirror.unfold
     voice_forbidden: false
     projects:

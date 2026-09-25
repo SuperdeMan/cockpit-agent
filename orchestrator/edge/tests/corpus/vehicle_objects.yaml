@@ -24,6 +24,11 @@ intent_recognition:
   # 方向盘加热就是在这条缝里活了很久：名字对、对象对，`operate` 知识库不认。
   - {text: 打开方向盘加热, object: steering_wheel}
   - {text: 关掉方向盘加热, object: steering_wheel}
+  # 2026-09-25（评审四轮待办）：后视镜加热。修前「右侧后视镜加热打开」认出的是 rear_view_mirror、执行的却是**展开**
+  # ——对象对、动作错，本组「VAL 收下这条命令」的断言也拦不住；动作由 test_mirror_heating.py 逐条钉。
+  - {text: 右侧后视镜加热打开, object: rear_view_mirror}
+  - {text: 关闭后视镜加热, object: rear_view_mirror}
+  - {text: 打开后视镜除雾, object: rear_view_mirror}
   - {text: 方向盘调高, object: steering_wheel}
   - {text: 打开双闪, object: warning_light}
   - {text: 关闭双闪, object: warning_light}
@@ -72,6 +77,8 @@ val_execution:
   - {object: fuel_tank_cover, operate: open, expect: {fuel_tank_cover: open}}
   - {object: charging_port, operate: open, expect: {charging_port: open}}
   - {object: rear_view_mirror, operate: set, mode: fold, expect: {rear_view_mirror: folded}}
+  - {object: rear_view_mirror, operate: open, mode: heating, expect: {rear_view_mirror_heating: true, rear_view_mirror: unfolded}}
+  - {object: rear_view_mirror, operate: close, mode: heating, expect: {rear_view_mirror_heating: false, rear_view_mirror: unfolded}}
   - {object: wiper, operate: open, expect: {wiper: true}}
   - {object: wiper, operate: close, expect: {wiper: false}}
   - {object: fragrance, operate: open, expect: {fragrance: true}}

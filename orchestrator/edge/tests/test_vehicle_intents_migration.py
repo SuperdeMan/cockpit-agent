@@ -108,6 +108,10 @@ _BEFORE_MIGRATION = {
     # 能力面 +2 是产品决定，在这里显式签收。
     "warning_light.close",
     "warning_light.open",
+    # 2026-09-25（评审四轮待办）新增：后视镜加热。`commands.yaml` 的后视镜 modes 早就声明了 heating，
+    # 端侧却只有折叠 / 展开——「右侧后视镜加热打开」执行成了展开。用户「接着修」授权这一处；能力面 +2 在这里签收。
+    "rear_view_mirror.heating.close",
+    "rear_view_mirror.heating.open",
 }
 
 

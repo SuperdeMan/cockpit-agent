@@ -185,6 +185,14 @@ def test_the_same_seat_named_twice_is_inverted_once():
     assert target_positions(targets, "window.open") == ["主驾"]
 
 
+def test_the_inverse_of_mirror_heating_is_mirror_heating_not_a_fold():
+    """评审四轮待办（2026-09-25）：后视镜加热成了端侧能力之后，「关掉」反向的是加热那一档（位置带回），不是折叠后视镜。"""
+    plan = _ellipsis("关掉", Focus(last_intent="rear_view_mirror.heating.open", positions=["右侧"]),
+                     "rear_view_mirror.heating.open", "rear_view_mirror.heating.close",
+                     "rear_view_mirror.fold", "rear_view_mirror.unfold")
+    assert [(s.intent, s.slots) for s in plan.steps] == [("rear_view_mirror.heating.close", {"positions": "右侧"})]
+
+
 def test_the_inverse_of_one_rear_window_is_one_rear_window():
     plan = _ellipsis("关掉", Focus(last_intent="window.open", positions=_scan_positions({"positions": "后排左"})),
                      "window.open", "window.close")
