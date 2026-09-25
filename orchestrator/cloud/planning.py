@@ -47,6 +47,8 @@ from runtime.question_shape import (
 )
 from .step_grounding import opens_as_instruction, step_naming_score
 from .reply_position import reply_position
+from .admission import (ADDRESSEE_FALSE, ADDRESSEE_OBJECT_HEAD, ADDRESSEE_QUESTION,
+                        ADDRESSEE_TRUE, ADDRESSEE_UNSURE)
 from runtime.reported_speech import is_reported_speech
 from runtime.safety_signal import alert_resolved, refuses_safety_advice
 
@@ -663,21 +665,21 @@ _USER_UTTERANCE_BOUNDARY = (
 # R4.4：受话判定段——恒附在 base 之后（消费端 engine 按 input_source 门控，附着无副作用）。
 # 保守取向：拿不准输出 true（宁可处理不可误丢，母卡 §7 风险缓解）。provider 无关：纯 JSON、
 # 字段可选、fail-open。
+# 评审四轮 R4-07：「什么算对助手说的」那几句住在 `admission`（规划之前就出口的分支用的轻量判定读同一组句子），
+# 这里逐字拼回原段——快照用例钉着这一段一个字不变。
 _ADDRESSED_SECTION = (
     "\n\n== 受话判定（必须输出）==\n"
-    "输出顶层布尔字段 \"addressed\"：这句话是否是对你（车载助手）说的。\n"
-    "- true：请求/问题/指令/情绪表达也需要你回应\n"
-    "- **条件式指示不产生本轮动作步**：「如果找不到就问我」「拿不准别自己猜」这类"
+    + ADDRESSEE_QUESTION
+    + ADDRESSEE_TRUE
+    + "- **条件式指示不产生本轮动作步**：「如果找不到就问我」「拿不准别自己猜」这类"
     "说的是**以后怎么做事**，不是这一轮要做的事——照做即可，不要为它规划任何 step；"
     "- 混合否定句：一个分句否定动作、另一个肯定请求时，必须 addressed=true；"
     "否定只影响 steps，不影响是否受话\n"
-    "- false：明显不是对助手说的——乘客间对话片段（『妈你到哪了』）、自言自语、"
-    "电台/视频/新闻播报腔（『本台记者报道…』『欢迎收听今天的节目』）、"
-    "称呼他人姓名的交谈（『王总我马上发您』）、无法构成请求且并非对助手发出的残句\n"
-    "- 整句只有一个名词或对象名、但明显是用户发给助手时，仍是对助手说的，必须先输出"
-    " addressed=true；动作缺失属于后续路由澄清，不得在受话判定阶段误拒绝\n"
-    "- **拿不准时必须输出 true**（宁可处理，不可误丢）\n"
-    "- addressed 为 false 时输出 {\"addressed\":false,\"steps\":[]}，不要输出其他内容"
+    + ADDRESSEE_FALSE
+    + ADDRESSEE_OBJECT_HEAD
+    + "，必须先输出 addressed=true；动作缺失属于后续路由澄清，不得在受话判定阶段误拒绝\n"
+    + ADDRESSEE_UNSURE
+    + "- addressed 为 false 时输出 {\"addressed\":false,\"steps\":[]}，不要输出其他内容"
 )
 
 # R4.4：路由歧义澄清段——仅当 CLARIFY_ENABLED=on 时拼入（off 时 LLM 不会输出 clarify，
@@ -1787,11 +1789,8 @@ class PlanBuilder:
         return Plan(steps=steps, raw_text=str(text or ""), goal=str(text or ""))
 
     async def build(self, text: str, working_set: WorkingSet, ctx: PlanContext,
-                    granted_permissions: list[str] = None, *, focus_shortcut: bool = True) -> Plan:
+                    granted_permissions: list[str] = None) -> Plan:
         """构建执行计划。最多重试 1 次，失败降级到语义路由。
-
-        focus_shortcut=False：跳过焦点省略的确定性早退、照常问模型——engine 的语音受话判定用它取 `addressed`
-        （评审四轮 R4-07 第一步：那条早退不调模型，它交出的计划没有受话判定可言）。
 
         working_set: 由 ContextManager 装配的工作上下文——已语义预筛的 catalog +
         最近对话历史 + 长期记忆召回，统一字符预算渲染（见 context.py）。
@@ -1838,13 +1837,12 @@ class PlanBuilder:
         # ⇒ **确定性成计划，一次 LLM 都不调**（连下面两次检索 embed 也省了）。
         # 真栈证明「把焦点写进 prompt」不够：同一句话三次取样能给出三种结果，
         # 其中一次是 chitchat 声称「已为您关闭天窗」而 action 为空——**说了没做**。
-        focused_plan = (self._focused_control_ellipsis_plan(text, working_set, catalog)
-                        if focus_shortcut else None)
+        focused_plan = self._focused_control_ellipsis_plan(text, working_set, catalog)
         if focused_plan is not None:
             focused_plan.catalog_stats = dict(catalog.catalog_stats)
             focused_plan.plan_mode = "focus_deterministic"
-            # 评审四轮 R4-07 第一步：零 LLM 的计划没有 `addressed` 可言——免唤醒下背景里一句「关掉」会反向执行上一个控制。
-            # 标出来，engine 在语音来源下另问一次受话判定
+            # 评审四轮 R4-07：零 LLM 的计划没有 `addressed` 可言——免唤醒下背景里一句「关掉」会反向执行上一个控制。
+            # 标出来，engine 在语音来源下另做一次轻量受话判定（`PlannerEngine._voice_admitted`）
             focused_plan.admission_skipped = True
             # shadow 观测照记：这一族正是 B6 最关心的省略/裸对象面，
             # 确定性接管后就不记，会让 shadow 的分母**静默**少掉一块。

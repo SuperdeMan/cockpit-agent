@@ -5,6 +5,7 @@ WS3 §3。串联 planning / executor / aggregator / session。
 且 confirmed 标记严格限定在挂起那一步——后续 require_confirm 步骤各自再走确认（架构 §9.1）。
 """
 from __future__ import annotations
+import asyncio
 import dataclasses
 import json
 import logging
@@ -30,11 +31,13 @@ from .pending_cancel import detect_cancel, is_standalone_cancel
 from .clients import set_llm_pin
 from . import candidate_query
 from .reply_position import reply_position
+from .admission import judge_addressed
 from . import slot_shape
 from runtime import memory_read, session_facts
 from runtime.execution_claim import (
     CLAIM_STRIPPED_SPEECH, ExecutionClaimGate, execution_claim, strip_execution_claims)
 from runtime.affirmation import ACK_WORDS, PARTICLE_RE, consists_of, is_bare_acknowledgment
+from runtime.memory_directive import is_memory_directive
 from runtime.clause_split import split_clauses
 from runtime.cntime import CN_NUM_CHARS, cn_int
 from runtime.outcome import category_of, outcome_of_results
@@ -235,6 +238,16 @@ __all__ = ["PlannerEngine", "_POC_DEFAULT_SCOPES"]
 # （影响所有云端路由，比拒识作用域大，真栈验收后独立 commit 翻 on，母卡 §5）。
 def _reject_enabled() -> bool:
     return os.getenv("REJECT_NON_ADDRESSED", "on").lower() != "off"
+
+
+def _admission_timeout_s() -> float:
+    """轻量受话判定的上限（秒）：它只是一道把关，慢了按判不出处理（受话），不让「确认」干等（A/B 里单次最长 10.5 s）。
+    代码缺省 3.0，不进 `.env.example`（部署闸按路径硬阻断）；非法值回落缺省。"""
+    try:
+        value = float(os.getenv("ADMISSION_TIMEOUT_S", "") or 3.0)
+    except ValueError:
+        return 3.0
+    return value if value > 0 else 3.0
 
 
 def _clarify_enabled() -> bool:
@@ -1684,26 +1697,67 @@ class PlannerEngine:
 
     async def _voice_admitted(self, ctx: PlanContext, text: str, *, exit_name: str,
                               working_set=None, mem_on: bool = True) -> bool:
-        """这句话是不是对助手说的——**规划之前就出口**的确定性分支的受话判定（唯一实现，评审四轮 R4-07 第一步）。
+        """这句话是不是对助手说的——**规划之前就出口**的确定性分支的受话判定（唯一实现，评审四轮 R4-07）。
 
-        语音来源 + 拒识开：跑一次 planner（跳过焦点省略早退）只取 `addressed`，与规划轮同一条判定；它交出的步一概不用。
-        其余来源 / 拒识关 ⇒ True，零调用。判定本身技术失败 ⇒ 按受话处理（fail-open，同其余语音轮的缺省）。
-        消费方：纯偏好陈述（评审二轮 R3）、焦点省略开关、确认。每次判定发一个 `cloud.voice_admission` span（出口 + 结果）。
+        语音来源 + 拒识开：一次**轻量判定**（`admission`：助手上一句 + 这句原话 → `addressed`，快模型档、关思考、判据与规划器
+        `_ADDRESSED_SECTION` 同一组句子）。`6e64b767` 借的是一次完整规划，语音「确认」23 ms → 3142 ms。护栏与规划器同款：
+        「记住…」这类祈使指令恒判受话、不问模型；按住说话（显式输入）判非受话再问一次，两次都否才算。
+        其余来源 / 拒识关 ⇒ True，零调用。判定调用失败 / 解析不出 ⇒ 按受话处理（fail-open，同其余语音轮的缺省）。
+        消费方：纯偏好陈述（评审二轮 R3）、焦点省略开关、确认。每次判定发一个 `cloud.voice_admission` span（出口 + 结果 + 耗时）。
         """
-        if not (is_voice_input_source(ctx.prefs.get("input_source", "")) and _reject_enabled()):
+        source = ctx.prefs.get("input_source", "")
+        if not (is_voice_input_source(source) and _reject_enabled()):
             return True
-        if working_set is None:
-            working_set = await self.context.assemble(
-                text, ctx, mem_on=mem_on, granted_permissions=ctx.granted_permissions)
-        admission = await self.planner.build(
-            text, working_set, ctx, granted_permissions=ctx.granted_permissions,
-            focus_shortcut=False)
-        addressed = bool(getattr(admission, "addressed", True))
+        started = time.monotonic()
+        if is_memory_directive(text):
+            verdict = True
+        else:
+            previous = await self._previous_assistant_text(ctx, working_set, mem_on)
+            verdict = await self._bounded_judgment(text, previous, source)
+            if verdict is False and not str(source).startswith("voice_"):
+                verdict = await self._bounded_judgment(text, previous, source)
+        addressed = verdict is not False
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id, "cloud.voice_admission",
             attrs={"exit": exit_name, "addressed": "1" if addressed else "0",
+                   "verdict": "unavailable" if verdict is None else ("1" if verdict else "0"),
+                   "admission_ms": str(round((time.monotonic() - started) * 1000)),
                    "owner": "cloud-engine"})
         return addressed
+
+    async def _bounded_judgment(self, text: str, previous: str, source: str) -> bool | None:
+        """一次轻量判定，超过 `_admission_timeout_s()` ⇒ None（判不出，按受话处理）。"""
+        try:
+            return await asyncio.wait_for(
+                judge_addressed(self._admission_complete, text, previous, source),
+                timeout=_admission_timeout_s())
+        except asyncio.TimeoutError:
+            logger.warning("admission judgment timed out after %.1fs", _admission_timeout_s())
+            return None
+
+    async def _admission_complete(self, messages: list[dict]) -> str:
+        """轻量判定的模型调用：快档、温度 0、只要一个 JSON 对象。没有 LLM 客户端 ⇒ 空串（判定按不可用处理）。"""
+        complete = getattr(self.clients, "llm_complete", None)
+        if complete is None:
+            return ""
+        return await complete(messages, max_tokens=32, model="@fast", temperature=0.0)
+
+    async def _previous_assistant_text(self, ctx: PlanContext, working_set=None,
+                                       mem_on: bool = True) -> str:
+        """助手上一句：有工作集就从它的历史取，没有（确认那条出口）就读一次最近一对历史；都读不到 ⇒ 空串。"""
+        history = list(getattr(working_set, "history", None) or []) if working_set is not None else None
+        if history is None:
+            if not mem_on:
+                return ""
+            try:
+                history, _state = await self.context._history(ctx, exchanges=1)
+            except Exception as exc:            # 读不到就按「没有上一句」判，判定照做
+                logger.debug("admission: history unavailable (%s)", exc)
+                return ""
+        for message in reversed(history or []):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                return str(message.get("text") or "")
+        return ""
 
     @staticmethod
     async def _reject_not_addressed(ctx) -> AsyncIterator[dict]:

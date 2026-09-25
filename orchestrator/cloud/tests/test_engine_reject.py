@@ -56,6 +56,16 @@ class _Spy:
     async def llm(self, messages, **kwargs):
         return self._plan_json if "任务编排器" in messages[0]["content"] else "今天晴，25度。"
 
+    async def llm_complete(self, messages, max_tokens=800, thinking=False, *, model="", temperature=0.3):
+        """规划之前就出口的分支走轻量受话判定（评审四轮 R4-07）：同一个替身模型，判定与它的规划 JSON 一致。"""
+        if "受话判定器" not in messages[0]["content"]:
+            return await self.llm(messages)
+        try:
+            addressed = json.loads(self._plan_json).get("addressed", True)
+        except ValueError:
+            return self._plan_json                       # 模型吐的不是 JSON ⇒ 判定解析不出
+        return json.dumps({"addressed": bool(addressed)})
+
     async def resolve(self, query="", intent="", top_k=1):
         return [_agent()]
 
@@ -214,7 +224,8 @@ def test_clarify_suppressed_on_resume(monkeypatch):
 #
 # 「我不吃辣」这样的纯偏好陈述有一条确定性出口（W13 F09-a：登记 + 致谢、零 LLM）。它排在
 # planner 之前，于是语音来源的这句话**跳过了受话判定**：乘客对别人说的一句「我不吃辣」被登记
-# 进焦点、被应答、还落进普通历史。语音来源先走既有的受话判定（planner `addressed`），
+# 进焦点、被应答、还落进普通历史。语音来源先过受话判定（评审四轮 R4-07 起是轻量判定
+# `orchestrator/cloud/admission.py`，与焦点省略 / 确认两条出口同一个函数；判据与规划器 `addressed` 同一组句子），
 # 判非受话 ⇒ 与其他非受话轮同一条拒识出口；文字 / 按钮来源没有受话问题，照旧零 LLM。
 
 _ADDRESSED_EMPTY_PLAN = json.dumps({"addressed": True, "steps": []})

@@ -241,13 +241,16 @@ class Clients:
         req.meta["caller_service"] = "cloud-planner"
 
     async def llm_complete(self, messages: list[dict], max_tokens: int = 800,
-                           thinking: bool = False) -> str:
+                           thinking: bool = False, *, model: str = "",
+                           temperature: float = 0.3) -> str:
         """thinking=True 时本次开思考（meta 透传给网关）并抬 token/超时。
         **Planner 调用恒 False**（结构化 JSON 不能被 reasoning 吃空）；Aggregator 由
-        engine 对复杂任务传 True。"""
+        engine 对复杂任务传 True。model：网关档位（`""` = primary、`"@fast"` = 快档，
+        评审四轮 R4-07 的轻量受话判定用快档）；缺省值与此前逐字相同。"""
         req = llm_pb2.CompleteRequest(
             messages=[llm_pb2.Message(role=m["role"], content=m["content"]) for m in messages],
-            temperature=0.3, max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
+            model=model, temperature=temperature,
+            max_tokens=max(max_tokens, 2048) if thinking else max_tokens)
         self._stamp_llm_meta(req, thinking=thinking)
         resp = await self._llm_stub().Complete(req, timeout=60 if thinking else 30)
         self._llm_model_used = str(resp.model_used or "")
