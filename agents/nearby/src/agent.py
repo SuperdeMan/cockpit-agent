@@ -385,9 +385,11 @@ class NearbyAgent(BaseAgent):
 
     @staticmethod
     def _unlocated_result(unlocated: "_Unlocated") -> AgentResult:
-        """地名定位不到：与导航「没找到」同一句追问，不给列表、不编一个中心。"""
-        return AgentResult(speech=f"没找到「{unlocated.place}」。", follow_up=NOT_FOUND_FOLLOW_UP,
-                           data={"items": [], "center": "unlocated"})
+        """地名定位不到：与导航「没找到」同一句追问，不给列表、不编一个中心。
+
+        R9 诚实降级的形态：不出卡、**不带 data**——带了 data，结果校验会把空列表判成「数据源没返回」，再补一句「要不要我再试一次？」
+        （`executor._should_report`；真栈 `684bfeec` RS43 3/3 原样）。"""
+        return AgentResult(speech=f"没找到「{unlocated.place}」。", follow_up=NOT_FOUND_FOLLOW_UP)
 
     # 地点指代词（旅程 B1-3「那附近有停车场」）：与 info 侧 `_DESTINATION_DEICTIC_RE`
     # 同族（那边/那儿/那里/目的地/终点），nearby 再收「那附近」。只有话里带指代时才

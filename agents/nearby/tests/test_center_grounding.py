@@ -59,15 +59,25 @@ def test_rs33_a_place_geocoded_to_another_city_is_not_searched():
     res = _run(place, {"category": "咖啡店", "location": "云岚国际中心"}, "第二个")
     assert res.speech == "没找到「云岚国际中心」。"
     assert res.follow_up == NOT_FOUND_FOLLOW_UP
-    assert res.data == {"items": [], "center": "unlocated"}
+    # R9 诚实降级：不出卡、不带 data——带了 data，结果校验会把空列表念成「数据源没返回，要不要我再试一次」（真栈 `684bfeec` RS43）
+    assert not res.ui_card and not res.data
     assert [k for k, _ in place.searches] == ["云岚国际中心"]      # 只有解析中心那一次，没在宣威搜咖啡
     assert place.geocodes == ["云岚国际中心"]
+
+
+def test_the_unlocated_answer_is_not_reported_as_an_empty_data_source():
+    from orchestrator.cloud.executor import DagExecutor
+    from orchestrator.cloud.models import StepResult, StepStatus
+    res = _run(_Place(_XUANWEI), {"category": "咖啡店", "location": "云岚国际中心"}, "第二个")
+    step_result = StepResult(step_id="s1", status=StepStatus.OK, speech=res.speech, data=res.data or {},
+                             ui_card=res.ui_card)
+    assert DagExecutor._should_report(step_result) is False
 
 
 def test_a_place_that_cannot_be_geocoded_is_not_searched_nationwide():
     place = _Place(None)
     res = _run(place, {"category": "咖啡店"}, "云岚国际中心附近的咖啡店")
-    assert res.speech == "没找到「云岚国际中心」。" and res.data["center"] == "unlocated"
+    assert res.speech == "没找到「云岚国际中心」。" and not res.data
     assert len(place.searches) == 1
 
 
