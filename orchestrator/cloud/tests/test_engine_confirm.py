@@ -172,7 +172,9 @@ def test_confirm_completes_reservation_without_rerunning_done_steps():
     assert spy.count("nearby.order") == 2
     assert spy.metas("nearby.order")[-1].get("confirmed") == "true"
     assert not final.get("need_confirm")
-    assert final["speech"] == _AGG_SPEECH
+    # 续接轮只有订单这一步有话（搜索种子上一轮已播过、不带话术）⇒ 订单话术原样直出，不经聚合 LLM 改写
+    # （评审四轮 R4-07：修前这里是 `_AGG_SPEECH`——订单事实被模型重新措辞一遍，还多一次调用）
+    assert final["speech"] == "已为您订好：川菜·名店1 今晚7点 2位。"
     # 会话清理，确认不可重放
     assert asyncio.run(session.load("sess-1", owner_user_id="u1")) is None
 

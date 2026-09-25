@@ -1,6 +1,6 @@
 """Aggregator：多 Agent 结果 → 口语话术 + 卡片。
 
-WS3 §7。单步直出（省一次 LLM 调用），多步 LLM 改写为连贯口语。
+WS3 §7。单步直出（省一次 LLM 调用），多步 LLM 改写为连贯口语；多步里只有一步有话可说（续接轮的种子不带话术）同单步直出。
 """
 from __future__ import annotations
 import logging
@@ -216,8 +216,16 @@ class Aggregator:
             line = strip_markdown_speech(r.speech).strip()
             if line and line not in refused_lines:
                 refused_lines.append(line)
+        said = [r for r in spoken if r.status == StepStatus.OK and (r.speech or "").strip()]
         if refused and not any((r.speech or "").strip() for r in spoken):
             speech = "".join(self._sentence(line) for line in refused_lines)
+        elif len(said) == 1 and not any(r.status == StepStatus.FAILED for r in spoken):
+            # 多步里只有一步有话可说——最常见的是续接轮：恢复出来的种子不带话术（上一轮已经播过）。没有东西要合并，
+            # 与单步同样直出，不交给模型改写一遍（评审四轮 R4-07 真栈 `f535c654` RS39：补槽续接的导航话术被改写，
+            # 这一轮多花 ~1.9 s，确定性的偏好口径「记得您平时不走高速，已按此规划」也被改了措辞）。
+            speech = strip_markdown_speech(said[0].speech)
+            for line in refused_lines:
+                speech = self._sentence(speech) + line
         else:
             speech = strip_markdown_speech(
                 await self._aggregate_speech(user_text, spoken, thinking,

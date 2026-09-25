@@ -206,15 +206,23 @@ def test_refused_step_speech_survives_aggregation_exactly_once():
                         speech="为您找到 1 家瑞幸", follow_up="说看详情",
                         ui_card={"type": "place_list", "items": [{"name": "x"}],
                                  "display_priority": 1})
+    # 第二个有话的步：让这一轮真的走聚合 LLM（只有一步有话时直出，见 test_a_resumed_plan_…）
+    menu = StepResult(step_id="s3", status=StepStatus.OK, speech="这家店的招牌是生椰拿铁。")
     refused = StepResult(step_id="s2", status=StepStatus.OK,
                          speech="找到的瑞幸门店已打烊，请换一家或稍后再试。",
                          follow_up="可以问「附近哪家瑞幸还营业」。",
                          data={"_refused": True})
-    out = asyncio.run(agg.compose("附近的瑞幸点一杯", [nearby, refused]))
+    out = asyncio.run(agg.compose("附近的瑞幸点一杯", [nearby, menu, refused]))
 
     assert out["speech"].count("已打烊") == 1
     assert out["speech"].endswith("找到的瑞幸门店已打烊，请换一家或稍后再试。")
     assert "已打烊" not in seen_prompts[0], "拒绝句不进 LLM 材料——恰好一次的另一半"
+    assert out["follow_up"] == "可以问「附近哪家瑞幸还营业」。"
+
+    # 只剩一步有话 + 拒绝步 ⇒ 零 LLM：那一步原样 + 拒绝句确定性附加，仍恰好一次
+    out = asyncio.run(agg.compose("附近的瑞幸点一杯", [nearby, refused]))
+    assert len(seen_prompts) == 1
+    assert out["speech"] == "为您找到 1 家瑞幸。找到的瑞幸门店已打烊，请换一家或稍后再试。"
     assert out["follow_up"] == "可以问「附近哪家瑞幸还营业」。"
 
 
@@ -233,18 +241,52 @@ def test_llm_material_says_the_refused_demand_is_answered_elsewhere():
     agg = Aggregator(llm)
     traffic = StepResult(step_id="s1", status=StepStatus.OK,
                          speech="从当前位置到深圳宝安国际机场全程约24.2公里、预计44分钟，沿途基本畅通。")
+    weather = StepResult(step_id="s2", status=StepStatus.OK, speech="深圳今天多云 30℃。")
     refused = StepResult(step_id="r1", status=StepStatus.OK,
                          speech="我只能按时间或地点提醒，还做不到盯着「有堵车」这类变化再来通知你。",
                          data={"_refused": "unsupported"})
-    out = asyncio.run(agg.compose("先看看去宝安机场的路况，要是堵的话，之后只要有堵车就提醒我",
-                                  [traffic, refused]))
+    # 两步有话才走聚合 LLM（只有一步有话时直出、根本没有模型可以替那部分诉求编话）
+    out = asyncio.run(agg.compose("先看看去宝安机场的路况和天气，要是堵的话，之后只要有堵车就提醒我",
+                                  [traffic, weather, refused]))
     assert "已由系统另行直接作答" in seen_prompts[0] and "不要建议用户去确认" in seen_prompts[0]
     assert "做不到" not in seen_prompts[0], "拒绝句本身仍不进材料"
     assert out["speech"].endswith("我只能按时间或地点提醒，还做不到盯着「有堵车」这类变化再来通知你。")
 
-    weather = StepResult(step_id="s2", status=StepStatus.OK, speech="深圳今天多云 30℃。")
     asyncio.run(agg.compose("查路况和天气", [traffic, weather]))
     assert "另行直接作答" not in seen_prompts[1], "没有拒绝步时提示一个字不多"
+
+
+def test_a_resumed_plan_whose_seeds_carry_no_speech_is_not_rewritten():
+    """评审四轮 R4-07（真栈 `f535c654` RS39）：续接轮恢复出来的种子不带话术（上一轮已经播过），多步里只剩一步有话——
+    没有东西要合并，与单步同样直出。修前照样交给聚合 LLM 改写：补槽那一轮多花 ~1.9 s，确定性的偏好口径
+    「记得您平时不走高速，已按此规划」被改成「好嘞，已按您平时不走高速的习惯规划路线」。"""
+    from orchestrator.cloud.models import StepResult, StepStatus
+
+    calls: list = []
+
+    async def llm(messages, **kwargs):
+        calls.append(messages)
+        return "好嘞，已按您平时不走高速的习惯规划路线。"
+
+    agg = Aggregator(llm)
+    seed = StepResult(step_id="s1", status=StepStatus.OK, data={"name": "深圳湾公园"})   # 种子：只有依赖投影
+    nav = StepResult(step_id="s2", status=StepStatus.OK,
+                     speech="记得您平时不走高速，已按此规划。为您导航到深圳湾公园（滨海大道）。",
+                     actions=[{"type": "navigate", "payload": {"destination": "深圳湾公园"}}],
+                     ui_card={"type": "route_plan", "destination": "深圳湾公园"},
+                     follow_up="可以说「取消导航」")
+    out = asyncio.run(agg.compose("深圳湾公园", [seed, nav]))
+    assert not calls
+    assert out["speech"] == nav.speech
+    assert out["actions"] == nav.actions and out["ui_card"] == nav.ui_card
+    assert out["follow_up"] == "可以说「取消导航」"
+
+    # 对照：两步都有话 ⇒ 仍由 LLM 组织；有一步失败 ⇒ 仍交 LLM 如实转述那一步
+    weather = StepResult(step_id="s3", status=StepStatus.OK, speech="深圳今天多云 30℃。")
+    asyncio.run(agg.compose("导航去深圳湾公园，顺便看看天气", [nav, weather]))
+    failed = StepResult(step_id="s4", status=StepStatus.FAILED, error="step_timeout")
+    asyncio.run(agg.compose("导航去深圳湾公园，顺便看看天气", [nav, failed]))
+    assert len(calls) == 2
 
 
 def test_all_refused_multi_step_skips_llm_and_dedupes():
