@@ -436,8 +436,10 @@ class ManualRagAgent(BaseAgent):
             f"\n{c.content}"
             for i, c in enumerate(chunks, start=1)
         )
-        # 检索用的是规划器补全的问题时，把用户原话一并给出：答案要回应的是用户说的那句。
-        asked = (f"【用户原话】{raw}\n【问题】{lookup}" if basis != "raw" and raw
+        # 检索用的是规划器补全的指代问题时，把用户原话一并给出：答案要回应的是用户说的那句。
+        # 按分句取的槽不给整句原话——其余分句是别的步骤的事：「打开后备箱，再告诉我空调有哪些
+        # 模式」的手册步给了整句，模型会去答「后备箱的开启方式，手册里没有查到」（真栈 3 次里 2 次）。
+        asked = (f"【用户原话】{raw}\n【问题】{lookup}" if basis == "anaphora" and raw
                  else f"【问题】{lookup}")
         messages = [                                        # 2) generate
             {"role": "system",

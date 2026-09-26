@@ -90,6 +90,19 @@ def test_vetoed_anaphora_resolution_is_not_undone(tmp_path):
     assert not result.ui_card["sources"]
 
 
+def test_a_clause_slot_is_answered_without_the_other_clauses(tmp_path):
+    """规划器拆步、本步只占一个分句时，答案提示只给本步的问题：其余分句是别的步骤的事。真栈上
+    「打开后备箱，再告诉我空调有哪些模式」的手册步拿到整句后，3 次里 2 次去答了后备箱。"""
+    agent, _ = _agent(tmp_path, "座椅加热可切换 3-2-1-off 三挡。")
+    result = asyncio.run(run_handle(
+        agent, "manual.query", slots={"question": "座椅加热有几个档位"},
+        raw_text="打开后备箱，再告诉我座椅加热有几个档位"))
+    assert result.data["retrieval_basis"] == "clause"
+    prompt = agent.llm.complete.await_args[0][0][1]["content"]
+    assert "【问题】座椅加热有几个档位" in prompt
+    assert "后备箱" not in prompt and "【用户原话】" not in prompt
+
+
 def test_safety_level_stays_on_the_users_words(tmp_path):
     """规划器的槽只参与检索：它写进去的告警词不能凭空把这轮升成安全告警。"""
     agent, _ = _agent(tmp_path, "座椅加热可切换 3-2-1-off 三挡。")
