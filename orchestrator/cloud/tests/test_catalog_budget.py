@@ -258,14 +258,16 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 功能有哪些模式 / 挡位 / 颜色、怎么开启与设置、储物容量与整车规格」；`scene.list` 补反界定
     # 「部件自带的工作模式与挡位不是场景」——collector 57 轮「空调有什么模式」被规划成 scene.list，
     # 答的是回家 / 露营场景。同 safety.driving_advice 那笔：planner 只看得见描述。
-    assert catalog.catalog_stats["chars_full"] == 14009
-    assert catalog.catalog_stats["chars_final"] == 14009
+    # 2026-09-26 +3 → 14012：同一句描述补回一批改写时删掉的打头「胎压」——「胎压黄灯亮了，还能继续开吗？
+    # 应该补到多少？」只规划安全续驾一步的比例 3/27（一批前 collector）→ 12/23（一批后真栈）。条数不变。
+    assert catalog.catalog_stats["chars_full"] == 14012
+    assert catalog.catalog_stats["chars_final"] == 14012
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（14009 → 1991）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（14012 → 1988）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 1991
+    assert 16000 - catalog.catalog_stats["chars_final"] == 1988
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
