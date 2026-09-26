@@ -75,3 +75,19 @@ def test_adjust_directives_still_run(text, operate):
     result = classify_structured(text)
     assert result is not None and result["data"]["operate"] == operate, (text, result)
 
+
+@pytest.mark.parametrize("text", ["只解释怎么打开车窗", "仅告诉我如何打开后备箱", "仅仅解释怎么关闭空调"])
+def test_restricted_explanation_never_becomes_a_local_write(text):
+    assert classify_structured(text) is None
+
+
+def test_negation_then_explanation_has_no_local_write_fragment():
+    from fast_intent import split_and_classify_any
+    parts = split_and_classify_any("别打开车窗，只解释怎么打开车窗") or []
+    assert all(p.get("_needs_cloud") for p in parts)
+
+
+def test_restriction_does_not_turn_a_real_command_into_a_question():
+    result = classify_structured("只打开车窗")
+    assert result is not None and result["data"]["operate"] == "open"
+
