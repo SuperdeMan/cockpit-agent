@@ -122,6 +122,11 @@ cases:
     query: 自适应巡航的跟车距离有几档
     expect_pages_any: [146, 147]
     expect_text_all: ["共有五挡"]
+  # 首批被共用问句判据判成指令、预检拦下；二批「对象 + 怎么调」判为方法问后回收。
+  - id: acc-distance-adjust
+    query: 自适应巡航的跟车距离怎么调
+    expect_pages_any: [146, 147]
+    expect_text_all: ["时距调节按键"]
   - id: sentry-howto
     query: 哨兵模式怎么开启
     expect_pages_any: [53, 54]
