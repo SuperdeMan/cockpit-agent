@@ -30,4 +30,6 @@ visual_query_overrides:
   "warning:胎压监测报警指示灯": "SU7 用户手册：胎压监测报警指示灯亮了怎么处理？"
 natural_corpus: test/eval_corpus/manual_rag_retrieval.yaml
 visual_catalog: agents/manual_rag/resources/visual_assets.yaml
+# 真栈探针 --kind colloquial 的语料（车主口语问法，2026-09-26）；离线整本评测不消费它。
+colloquial_corpus: test/eval_corpus/manual_rag_colloquial.yaml
 natural_corpus: test/eval_corpus/manual_rag_retrieval.yaml

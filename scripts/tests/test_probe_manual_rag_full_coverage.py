@@ -1,6 +1,10 @@
 import json
+from pathlib import Path
+
+import yaml
 
 from scripts.probe_manual_rag_full_coverage import (
+    build_corpus_cases,
     build_natural_cases,
     failure_ids_from_artifact,
     merge_finals,
@@ -47,6 +51,27 @@ def test_build_natural_cases_preserves_positive_and_negative_contracts():
             "expect_empty": True,
         },
     ]
+
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def test_colloquial_corpus_is_live_probe_ready():
+    """口语问法语料是真栈探针的尺子：每条都要能发出去——是问句、端侧不截获——否则探针
+    在联网前整批中止。端侧规则将来吃掉其中哪一句，这里先红。"""
+    config = yaml.safe_load(
+        (_REPO / "test/eval_corpus/manual_rag_full_coverage.yaml").read_text(encoding="utf-8"))
+    corpus = yaml.safe_load(
+        (_REPO / config["colloquial_corpus"]).read_text(encoding="utf-8"))
+    cases = build_corpus_cases(corpus, kind="colloquial")
+
+    assert len(cases) >= 40
+    assert all(case["id"].startswith("colloquial-") and case["kind"] == "colloquial"
+               for case in cases)
+    assert all(case.get("expect_empty") or case.get("expect_pages_any")
+               or case.get("expect_top_page") for case in cases)
+    preflight = validate_live_query_safety(cases)
+    assert preflight["fast_intent_none"] == preflight["total"] == len(cases)
 
 
 def test_merge_finals_preserves_all_actions_cards_and_confirmation():

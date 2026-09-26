@@ -1,0 +1,151 @@
+version: 1
+vehicle_model: xiaomi-su7-2024
+top_k: 4
+# 车主口语问法的手册召回（2026-09-26）。设计与证据：
+# docs/design/2026-09-26-manual-rag-colloquial-recall.md
+#
+# 与 manual_rag_retrieval.yaml（原 36 题，数量钉在 full-coverage 配置里、被严格栈消费）分开维护。
+# 期望页逐条对照手册正文核过；`route: expected` 表示词法层可能零命中、要靠目录路由
+# （LLM 在目录里选章节）才能取到——离线 `eval_manual_rag.py` 只量词法层，这些条目的
+# 权威口径是真栈探针 `probe_manual_rag_full_coverage.py --kind colloquial`。
+# 负例只放规划器确实会落到手册的问法；别家车型的问法可能被合理地交给联网搜索，
+# 它们的零命中由单测与离线评测守。
+cases:
+  # ── A. collector 原句（生产 562 轮手册问答里 488 轮零命中的高频问法）────────
+  - id: seat-adjust-enum
+    query: 座椅有哪些调节功能
+    expect_pages_any: [29, 30, 31, 32, 33]
+  - id: window-open-ways
+    query: 车窗有哪些开启方式
+    expect_pages_any: [20, 21, 22]
+  - id: seat-heat-levels-enum
+    query: 座椅有哪些加热档位
+    expect_top_page: 37
+    expect_text_all: ["3-2-1-off"]
+  - id: seat-heat-levels-count
+    query: 座椅加热有几个档位
+    expect_top_page: 37
+    expect_text_all: ["3-2-1-off"]
+  - id: headlight-modes
+    query: 大灯有几个模式
+    expect_pages_any: [86, 87]
+  - id: ac-modes-enum
+    query: 空调有哪些模式
+    expect_pages_any: [197, 198, 199, 200, 201]
+  - id: ac-modes-what
+    query: 空调有什么模式
+    expect_pages_any: [197, 198, 199, 200, 201]
+  - id: trunk-luggage
+    query: 后备箱能放几个行李箱
+    expect_pages_any: [106, 107]
+  - id: ac-fan-levels
+    query: 空调有几个风量档
+    expect_pages_any: [197, 198, 199, 200, 201]
+  - id: ambient-colors
+    query: 氛围灯有哪些颜色可以选
+    expect_pages_any: [92]
+  - id: seat-heat-where
+    query: 座椅加热在哪里打开
+    expect_top_page: 37
+  - id: window-howto-ba
+    query: 怎么把车窗打开
+    expect_pages_any: [20, 21]
+  - id: cruise-colloquial
+    query: 定速巡航怎么设置
+    expect_pages_any: [144, 145, 146, 147, 148]
+  - id: tpms-light-meaning
+    query: 胎压报警灯亮了是什么意思
+    expect_pages_any: [191, 192, 193, 257]
+  - id: seat-heat-what
+    query: 座椅加热是什么
+    expect_top_page: 37
+  - id: tire-pressure-refill
+    query: 胎压应该补到多少？
+    expect_pages_any: [245, 256]
+    expect_text_all: ["2.9"]
+  - id: adb-howto
+    query: 远光灯自动切换功能怎么打开
+    expect_pages_any: [87]
+  - id: wheel-heat-howto
+    query: 方向盘加热怎么开
+    expect_pages_any: [85]
+  - id: child-lock-where
+    query: 儿童安全锁在哪里
+    expect_pages_any: [47]
+  - id: lka-howto
+    query: 车道保持辅助怎么打开
+    expect_pages_any: [124, 125]
+  - id: parking-howto
+    query: 自动泊车功能怎么开启
+    expect_pages_any: [163, 164]
+  - id: neg-sunroof-use
+    query: 天窗有什么用
+    expect_empty: true
+  - id: neg-sunroof-close
+    query: 天窗为什么关不上
+    expect_empty: true
+  - id: neg-red-oil
+    query: 红色机油灯亮了怎么办
+    expect_empty: true
+
+  # ── B. 规划器补全后的指代追问（collector：「它有几档」→「座椅加热有几档」）────
+  - id: resolved-seat-heat-levels
+    query: 座椅加热有几档
+    expect_top_page: 37
+  - id: resolved-acc-distance
+    query: 自适应巡航跟车距离最多能设几档
+    expect_pages_any: [146, 147]
+  - id: resolved-wireless-case
+    query: 无线充电对手机壳厚度有要求吗
+    expect_pages_any: [117, 118]
+  - id: resolved-lka-speed
+    query: 车道保持辅助在多少速度以下会失效
+    expect_pages_any: [124, 125]
+  - id: resolved-adb-off
+    query: 远光灯自动切换功能在什么条件下会自动关闭
+    expect_pages_any: [87]
+  - id: resolved-parking-vertical
+    query: 自动泊车功能支持垂直车位吗
+    expect_pages_any: [163, 164, 165]
+  - id: resolved-acc-speed
+    query: 自适应巡航能在多少速度以上使用
+    expect_pages_any: [144, 145, 146]
+
+  # ── C. 四类问法补充（有哪些模式 / 怎么开启 / 能放几个 / 有几个挡位）──────────
+  - id: drive-modes-enum
+    query: 驾驶模式有哪些
+    expect_pages_any: [64, 65]
+  - id: ambient-colors-choice
+    query: 氛围灯能换哪些颜色
+    expect_pages_any: [92]
+  - id: acc-distance-levels
+    query: 自适应巡航的跟车距离有几档
+    expect_pages_any: [146, 147]
+    expect_text_all: ["共有五挡"]
+  - id: sentry-howto
+    query: 哨兵模式怎么开启
+    expect_pages_any: [53, 54]
+  - id: rear-seat-fold
+    query: 后排座椅怎么放倒
+    expect_pages_any: [34]
+  - id: frunk-capacity
+    query: 前备箱能放多大的箱子
+    route: expected
+    expect_pages_any: [106]
+  - id: wheel-heat-levels
+    query: 方向盘加热有几个挡位
+    expect_top_page: 85
+    expect_text_all: ["3-2-1-off"]
+  - id: mirror-fold-howto
+    query: 外后视镜怎么折叠
+    expect_pages_any: [98]
+  - id: regen-levels
+    query: 能量回收有几档
+    expect_pages_any: [64, 66, 67]
+  - id: vehicle-length
+    query: 这车有多长
+    expect_top_page: 243
+  - id: sentry-described
+    query: 停车时有人刮车能录下来吗
+    route: expected
+    expect_pages_any: [53, 54]

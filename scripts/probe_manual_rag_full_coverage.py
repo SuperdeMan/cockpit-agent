@@ -88,35 +88,44 @@ def build_live_cases(
     if "natural" in kinds:
         corpus_path = REPO_ROOT / str(config["natural_corpus"])
         result.extend(build_natural_cases(_load_yaml(corpus_path)))
+    if "colloquial" in kinds:
+        corpus_path = REPO_ROOT / str(config["colloquial_corpus"])
+        result.extend(build_corpus_cases(_load_yaml(corpus_path), kind="colloquial"))
     return result
 
 
 def build_natural_cases(corpus: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Normalize the existing controlled retrieval corpus for live probing."""
 
+    return build_corpus_cases(corpus, kind="natural")
+
+
+def build_corpus_cases(corpus: Mapping[str, Any], *, kind: str) -> list[dict[str, Any]]:
+    """Normalize a controlled retrieval corpus (natural / colloquial) for live probing."""
+
     raw_cases = corpus.get("cases")
     if corpus.get("version") != 1 or not isinstance(raw_cases, list):
-        raise ValueError("manual natural corpus is invalid")
+        raise ValueError(f"manual {kind} corpus is invalid")
     result: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     seen_queries: set[str] = set()
     for raw in raw_cases:
         if not isinstance(raw, dict):
-            raise ValueError("manual natural case must be object")
+            raise ValueError(f"manual {kind} case must be object")
         raw_id = str(raw.get("id") or "").strip()
         query = str(raw.get("query") or "").strip()
         if not raw_id or not query:
-            raise ValueError("manual natural case requires id and query")
-        case_id = f"natural-{raw_id}"
+            raise ValueError(f"manual {kind} case requires id and query")
+        case_id = f"{kind}-{raw_id}"
         if case_id in seen_ids or query in seen_queries:
-            raise ValueError("manual natural case id/query must be unique")
+            raise ValueError(f"manual {kind} case id/query must be unique")
         seen_ids.add(case_id)
         seen_queries.add(query)
         case = dict(raw)
         case.update({
             "id": case_id,
-            "kind": "natural",
-            "split": "natural",
+            "kind": kind,
+            "split": kind,
             "corpus_split": str(raw.get("split") or "main"),
             "query": query,
         })
@@ -507,7 +516,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--kind",
         action="append",
-        choices=("section", "visual", "natural"),
+        choices=("section", "visual", "natural", "colloquial"),
         default=[],
     )
     parser.add_argument("--start", type=int, default=0)
