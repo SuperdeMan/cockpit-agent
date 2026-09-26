@@ -1,6 +1,6 @@
 # 车书手册 RAG：车主口语问法召回（2026-09-26）
 
-> 状态：**已实施，待真栈验收回填（§6）**
+> 状态：**已发布 `0a4f626a`，真栈验收通过（§6）**
 > 交付对象：manual-rag Agent、Cloud Planner 知识层（guide / exemplar / 能力描述）
 > 关联：`agents/manual_rag/src/providers/local_index.py`（检索 v3）、`agents/manual_rag/src/toc.py`、
 > `agents/manual_rag/src/toc_router.py`、`agents/manual_rag/src/agent.py`、`agents/manual_rag/resources/retrieval.yaml`（schema v2）、
@@ -184,9 +184,22 @@ ASCII 闸改为逐变体判：受控同义词换掉的专名（NOA → 智能领
 全量固定口径（提交前工作树，`-n 8 --dist worksteal`，TZ=UTC0）：**9908 passed / 0 failed / 32 skipped / 11 warnings**，518.58 s；较 `a7bf3eb1` 的 9843 多出的 65 条即本批新增测试。
 日志 `.artifacts/manual-rag-colloquial/full-suite-pre-commit.log`，SHA-256 `42f1732f…fbe397`。
 
-## 6. 真栈验收（发布后回填）
+## 6. 真栈验收
 
-待回填：release SHA、status / verify、`--kind colloquial` 42 条、多轮指代两段式会话、多步确认句（只取消不确认）、「空调有什么模式」落域 ×3、原 36 题回归。
+release `0a4f626a52ad541b1ab1029bd686202ba9e16415`（2026-09-26 11:1x apply；推送 `d337e62b..0a4f626a` 四个提交）：dry-run `blocking_changes=[]`、bootstrap ready、
+共享模型就绪（索引包未变）；独立 status `ok`、5/5 endpoint healthy、零 warning，`release_sha` = `running_release_sha`；统一 verify `verified`
+（`.artifacts/dev-stack-verifications/20260926T031906Z-0a4f626.json`，provider/model `minimax:MiniMax-M3`）。
+
+| 验收 | 结果 | 说明 |
+|---|---|---|
+| 口语语料 `--kind colloquial`（42 条，每条独立会话，单一手册卡 / 真实出处 / 预期页 / 零动作 / 零确认 / 车态零差异） | **41/42** | 唯一红「方向盘加热怎么开」：规划器两次调用后给 `system.clarify` 意图澄清卡，零动作；同句新会话复跑 **3/3** 落手册第 85 页（合计 3/4，规划器方差）。p50 6.3 s、p95 8.6 s、max 13.2 s |
+| 指代两段式（「座椅加热在哪里打开 → 它有几档」「无线充电板支持多大功率 → 它对手机壳厚度有要求吗」「车道保持辅助怎么打开 → 它在多少速度以下会失效」）×3 | **9/9** | 追问轮均取到补全后的主题页（37 / 117–118 / 124–125） |
+| 「空调有什么模式」×3（修前 57 轮里 56 轮落 `scene.list`） | **3/3** | 单一手册卡，空调控制第 197–201 页 |
+| 「打开后备箱，再告诉我空调有哪些模式」×3，只「取消」不确认 | **3/3** | 首轮话术「根据手册，空调主要包括这些模式：制冷/制热（A/C）、自动模式（AUTO）、吹风模式…、内外循环…。要打开后备箱吗？…请确认是否继续」，确认挂起；「取消」后零动作。脚本按卡片页判 0/3 是尺子错——需确认的混合轮最终消息不带手册卡，答案在话术里（修前这半句 27 次都是「没有查到」） |
+| 原 36 题中能通过发送前预检的子集 | **31/31** | 5 条旧表述被预检拦下、未发送（请查 SU7 用户手册冷态胎压 / 充电口怎么手动打开 / 后备箱怎么应急打开 / 刹车油几年换 / 仪表上小人身上有条斜线一直亮）；负例 7 条均零命中 |
+
+全部轮次车态零差异、零 probe error。工件：`.artifacts/manual-rag-colloquial/live-colloquial-0a4f626a.json`（SHA-256 `5955ba35…f5c0`）、
+`live-extra-0a4f626a.json`（`81e05256…9370`）。真栈整本章节 187 / 视觉 35 本次未重跑（离线逐条不变，§5.2）。
 
 ## 7. 已知边界与未做
 
