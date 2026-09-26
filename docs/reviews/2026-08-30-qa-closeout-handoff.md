@@ -22,7 +22,7 @@ gRPC fixture 债务已修；safety focus 解除时机已裁决为「显式解除
 | 远端 `main` / QA 文档 HEAD | 运行 `git rev-parse origin/main`；允许以纯 docs/test 提交领先生产 release |
 | 生产 release / status / verify | 见 `AGENTS.md` §4.0（唯一维护处）。2026-09-19 收口批发布后：`1eb25a70e4af3741d77a7d5eb20b2b378c330d60`，5/5 healthy、零 warning，`running_release_sha` 对齐，verify `verified` |
 | 本页最后一次 QA 专项绑定 | `f8fd15152d78592e4e5625bab22d4bd5e654738d`（2026-09-11 语音采纳真栈复核；固定该 SHA 全量 8234 passed / 32 skipped / 13 warnings、mobile 962、HMI 333、smoke_edge 13 + 四门禁通过）；之后各 release 的读数不转借 |
-| manual-rag | 2026-09-26 `0a4f626a` 车主口语问法召回：真栈口语语料 41/42、指代 9/9、「空调有什么模式」3/3、多步 3/3、原 36 题可发送子集 31/31（[设计文档](../design/2026-09-26-manual-rag-colloquial-recall.md) §6）；历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3，之后未重跑这两个整批，不作为新 release 的数字 |
+| manual-rag | 2026-09-26 二批 `5a2f4c9d`：真栈整本 章节 187/187、视觉 35/35、胎压复合句 16/20、口语语料 39/43 与 38/43（失败全在规划层）、多步按话术 3/3（[设计文档](../design/2026-09-26-manual-rag-colloquial-recall.md) §8）；此前 2026-09-26 `0a4f626a` 车主口语问法召回：真栈口语语料 41/42、指代 9/9、「空调有什么模式」3/3、多步 3/3、原 36 题可发送子集 31/31（[设计文档](../design/2026-09-26-manual-rag-colloquial-recall.md) §6）；历史 `9a3b6f2f` 已证生产章节187/187、视觉35/35、雨刮/背宝剑各3/3，之后未重跑这两个整批，不作为新 release 的数字 |
 | 证据边界 | T24 复验绑 `1eb25a70`（`minimax:MiniMax-M3`）：干净会话 3/3 `safety.driving_advice` + deterministic 卡，safety 组 `--repeat 3` 15/15（artifact `qa-safety-1eb25a70-repeat3.json`）。OPPO 包见 AGENTS.md §4.0 |
 
 `423ed23` 与 `a406e22` 是 v1 发布历史；`b3a2aed` 是 v2 首次生产 release；`434a046` 闭合
