@@ -43,7 +43,7 @@ from runtime.intent_effect import is_create_intent, is_write_intent
 from runtime.polarity import is_negated_directive
 from runtime.question_shape import (
     HYPOTHETICAL_FRAMES, carries_operation_cue, is_information_request, is_non_directive_question,
-    is_reference_question,
+    is_reference_question, is_definition_only_question,
 )
 from .step_grounding import opens_as_instruction, step_naming_score
 from .reply_position import reply_position
@@ -3267,7 +3267,11 @@ class PlanBuilder:
         """
         if not steps or not is_non_directive_question(text or ""):
             return []
-        candidates = (PlanBuilder._write_steps(steps) if is_reference_question(text or "")
+        # CA2-01: a definition-only question also cannot activate a declared cloud write.
+        # Some Agents request confirmation dynamically, so require_confirm alone misses them.
+        declared_write_question = (is_reference_question(text or "")
+                                   or is_definition_only_question(text or ""))
+        candidates = (PlanBuilder._write_steps(steps) if declared_write_question
                       else PlanBuilder._side_effect_steps(steps))
         # 评审四轮 R4-03：整句判成问句，不等于每一步都出自提问。「打开后备箱，再告诉我空调有哪些模式」修前整句贴一个
         # 「问句」标签、删掉全部写步——明确要求的后备箱连确认卡都不出（真栈 `ecbeed28` RS35 0/3）。拆得开「提问分句 +

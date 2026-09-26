@@ -630,3 +630,16 @@ def test_lookup_request_table_is_a_closed_function_word_class():
     vocab = _domain_vocabulary()
     for word in LOOKUP_REQUESTS:
         assert word not in vocab, word
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("露营模式是什么意思？", True), ("什么是露营模式", True),
+    ("请问座椅加热是干嘛的", True), ("露营模式是什么意思？有哪些功能？", True),
+    ("播放爱是什么", False), ("深入调研什么是固态电池", False),
+    ("请介绍什么是固态电池", False), ("打开后备箱，再告诉我露营模式是什么", False),
+    ("露营模式是什么，打开试试", False), ("如果下雨，就开启露营模式", False),
+    ("去惠州怎么充电", False), ("", False),
+])
+def test_definition_only_guard_keeps_other_speech_acts(text, expected):
+    from runtime.question_shape import is_definition_only_question
+    assert is_definition_only_question(text) is expected

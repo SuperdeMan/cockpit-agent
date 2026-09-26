@@ -302,6 +302,23 @@ def is_reference_question(t: str | None) -> bool:
     return all(is_non_directive_question(clause) for clause in (split_clauses(body) or [body]))
 
 
+def is_definition_only_question(t: str | None) -> bool:
+    """纯定义问，不含另一个操作或显式研究/介绍任务；仅扩云侧声明写的问句闸。
+
+    复用定义句形，保持其它问句与端侧路由逐字不变。显式信息工作仍按原契约处理：
+    目前 effect=write 同时含改状态与创建研究任务，不能把两者一律禁掉。
+    """
+    body = strip_ask_prefix(t)
+    if not body or not _definition_question(body):
+        return False
+    if (_INFO_REQUEST_RE.match(body) or _LOOKUP_REQUEST_RE.match(body)
+            or re.match(r"^(?:深入|深度|全面|系统)?(?:调研|研究|分析|对比|了解)", body)):
+        return False
+    parts = [p for sentence in re.split(r"[。！？!?；;]", body)
+             for p in split_clauses(sentence) if p.strip()]
+    return bool(parts) and all(is_non_directive_question(p) for p in parts)
+
+
 def is_information_request(t: str | None) -> bool:
     """要的是一段回答，不是一个动作：问句 / 原因问 / 解释元请求 /「推荐 · 介绍 · 讲讲…」开头（追加批 F，F-2）。
 

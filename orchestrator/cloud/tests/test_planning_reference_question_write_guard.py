@@ -88,3 +88,24 @@ def test_other_questions_keep_their_declared_writes(text, pair):
     """扩到全部问句会误伤的那几类：它们只受原来的问句闸管（端侧写 / 需确认）。"""
     plan = _build(text, pair)
     assert [s.intent for s in plan.steps] == [pair[1]], plan.steps
+
+
+@pytest.mark.parametrize("text", [
+    "露营模式是什么意思？", "什么是露营模式", "露营模式是干嘛的",
+    "请问自动泊车是什么意思", "座椅加热是什么",
+])
+def test_definition_only_question_cannot_activate_a_cloud_write(text):
+    # CA2-01 真栈 V207: planner's goal said "解释", but scene.activate reached NEED_CONFIRM.
+    plan = _build(text, ("scene-orchestrator", "scene.activate"))
+    assert [s.intent for s in plan.steps] == ["chitchat.talk"]
+
+
+@pytest.mark.parametrize("text,pair", [
+    ("深入调研什么是固态电池", ("deep-research", "research.run")),
+    ("请介绍什么是固态电池", ("deep-research", "research.run")),
+    ("帮我创建一个名叫什么是幸福的场景", ("scene-orchestrator", "scene.create")),
+    ("开启露营模式", ("scene-orchestrator", "scene.activate")),
+])
+def test_explicit_work_is_not_a_definition_only_question(text, pair):
+    plan = _build(text, pair)
+    assert [s.intent for s in plan.steps] == [pair[1]]

@@ -210,6 +210,16 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                          "trace": _redact(detail)})
             print(f"{case['id']} r{repeat} t{n}: {verdict['failures']} {evidence_errors}", flush=True)
             if obs.get("actions") or changed or evidence_errors:
+                # Stop all business sampling. Only cancel a known pending operation;
+                # never confirm it or issue inverse vehicle commands to hide a difference.
+                if pending:
+                    cleanup = await wire._one_turn(
+                        ws, session, "取消", operation_id=pending,
+                        meta_overrides={"llm_provider": manifest["chat"]["provider"],
+                                        "llm_model": manifest["chat"]["model"]})
+                    rows[-1]["stop_cleanup"] = cleanup
+                    if pending in (cleanup.get("closed_operation_ids") or []):
+                        pending = ""
                 return {"id": case["id"], "family": case["family"], "repeat": repeat,
                         "session": session, "rows": rows, "open_operation": bool(pending), "stop": True}
     return {"id": case["id"], "family": case["family"], "repeat": repeat,
