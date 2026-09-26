@@ -19,6 +19,7 @@ from typing import AsyncIterator
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionState,
                      step_call_context, step_record)
 from .step_input import bind_step_inputs
+from .task_identity import bind_task_identity, restore_task_identity, task_record
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
@@ -1450,6 +1451,9 @@ class PlannerEngine:
             # 此处不再做计划级兜底（原 _enforce_permissions 为空壳，已移除）。
 
         bind_step_inputs(plan, origin_exchange_id=plan.origin_exchange_id)
+        if not new_plan and ctx.pending_operation_id and plan.task_id:
+            plan.plan_revision += 1
+        bind_task_identity(plan, ctx)
         # 统一「复杂任务」判据，驱动①动态开思考②过程区。普通车控/闲聊/单条轻查询
         # 不命中——零过程、零额外延迟（需求第 6 条）。
         complex_task = is_complex(plan)
@@ -2120,9 +2124,14 @@ class PlannerEngine:
             mini.safety_origin_text = safety_origin_text
         steps = mini.steps
         for s in steps:
-            s.origin_text = safety_origin_text
-        mini.origin_exchange_id = str(ctx.request_id or "") if ctx.raw_text == safety_origin_text else ""
+            # A handoff during slot filling consumes the current answer. Its
+            # authorization still uses the task origin above; do not replace the
+            # business input with the safety text (existing resume contract).
+            s.origin_text = str(ctx.raw_text or "")
+        mini.origin_exchange_id = str((ctx.task_identity or {}).get("origin_exchange_id") or (
+            ctx.request_id if ctx.raw_text == safety_origin_text else ""))
         bind_step_inputs(mini, origin_exchange_id=mini.origin_exchange_id)
+        bind_task_identity(mini, ctx, continuation=True)
         # W13 / W14：改派后真正执行的是 mini 计划，谈话与否按它算；规划轮的诉求账本不再对应这些步
         ctx.answer_only = bool(steps) and all(
             bool(getattr(s, "response_only", False)) for s in steps)
@@ -2727,7 +2736,9 @@ class PlannerEngine:
                                   if not any(step is kept for kept in merged))
                     try:
                         await engine.context.update_focus(
-                            ctx.session_id, dataclasses.replace(plan, steps=merged), results,
+                            ctx.session_id, dataclasses.replace(plan, steps=merged,
+                                **{k: v for k, v in (ctx.task_identity or {}).items()
+                                   if k in {"task_id", "plan_revision", "goal_refs"}}), results,
                             user_id=ctx.user_id, exchange_id=ctx.request_id,
                             occupant_id=getattr(ctx, "occupant_id", ""))
                     except Exception as exc:        # 焦点是 best-effort，绝不拖垮已完成的回答
@@ -3281,6 +3292,9 @@ class PlannerEngine:
         step.slots = merged
         plan.task_patch = {"task_id": str(task.get("task_id") or ""),
                            "revision": int(task.get("revision") or 1) + 1}
+        if task.get("goal_refs"):
+            plan.task_patch.update(goal_ids=list(task.get("goal_ids") or []),
+                                   goal_refs=list(task["goal_refs"]))
         logger.info("Correction patch on task %s (rev %s): inherited %s",
                     plan.task_patch["task_id"], plan.task_patch["revision"], added)
 
@@ -3536,6 +3550,7 @@ class PlannerEngine:
             # 旧记录没有这一键 ⇒ False（与修前行为一致）；只认严格的 True
             restored.replan_batch = state.pending_plan.get("replan_batch") is True
             restored.origin_exchange_id = str(state.pending_plan.get("origin_exchange_id") or "")
+            restore_task_identity(restored, state.pending_plan)
             return restored, seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
@@ -3587,6 +3602,7 @@ class PlannerEngine:
             # 这一份是不是 T2 再规划出来的一批（续接时循环据此不再套首轮 adaptive 纠偏，见 `Plan.replan_batch`）
             "replan_batch": bool(getattr(plan, "replan_batch", False)),
             **({"origin_exchange_id": plan.origin_exchange_id} if plan.origin_exchange_id else {}),
+            **task_record(plan),
         }
 
     async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:

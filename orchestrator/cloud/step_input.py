@@ -79,25 +79,33 @@ def bind_step_inputs(plan, *, origin_exchange_id: str = "") -> None:
         }
 
 
-def projected_text(step) -> str | None:
-    """Validate at consumption as well: bad/old metadata cannot replace the origin."""
+def valid_scope_spans(step) -> list[dict] | None:
+    """The same validation serves business projection and provenance references."""
     scope = getattr(step, "input_scope", None)
     origin = str(getattr(step, "origin_text", "") or "")
     if (not isinstance(scope, dict) or scope.get("version") != VERSION
-            or scope.get("basis") != "clauses" or not origin
+            or scope.get("basis") not in {"clauses", "utterance"} or not origin
             or scope.get("source_sha256") != source_hash(origin)):
         return None
     spans = scope.get("spans")
     if not isinstance(spans, list) or not spans:
         return None
     end = 0
-    pieces = []
     for span in spans:
         if not isinstance(span, dict):
             return None
         a, b = span.get("start"), span.get("end")
         if type(a) is not int or type(b) is not int or not (end <= a < b <= len(origin)):
             return None
-        pieces.append(origin[a:b])
         end = b
-    return "，".join(pieces)
+    return spans
+
+
+def projected_text(step) -> str | None:
+    """Bad/old metadata cannot replace the origin."""
+    scope = getattr(step, "input_scope", None)
+    if not isinstance(scope, dict) or scope.get("basis") != "clauses":
+        return None
+    spans = valid_scope_spans(step)
+    return ("，".join(step.origin_text[s["start"]:s["end"]] for s in spans)
+            if spans else None)

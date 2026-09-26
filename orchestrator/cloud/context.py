@@ -729,13 +729,16 @@ def _task_frame(plan, step, outcome: str, kind: str) -> dict:
     ——「导航去公园 → 查个天气 → 改成7点半」里用户改的是导航，不是天气。
     """
     patch = getattr(plan, "task_patch", None) or {}
+    from .task_identity import task_record
+    identity = task_record(plan)
     return {
-        "task_id": str(patch.get("task_id") or f"task-{uuid.uuid4().hex[:8]}"),
+        "task_id": str(identity.get("task_id") or patch.get("task_id") or f"task-{uuid.uuid4().hex[:8]}"),
         "intent": str(step.intent or ""),
         "agent_id": str(step.agent_id or ""),
         "slots": {str(k): v for k, v in (step.slots or {}).items()
                   if isinstance(v, (str, int, float)) and not isinstance(v, bool)},
-        "revision": int(patch.get("revision") or 1),
+        "revision": int(identity.get("plan_revision") or patch.get("revision") or 1),
+        **({"goal_refs": identity["goal_refs"], "goal_ids": list(step.goal_ids)} if identity else {}),
         "outcome": outcome,
         "kind": kind,
         "ts": time.time(),

@@ -101,6 +101,7 @@ class Step:
     verification: dict = field(default_factory=dict)
     # CA2-02: server-owned business projection. Never read by safety/permission checks.
     input_scope: dict = field(default_factory=dict)
+    goal_ids: list[str] = field(default_factory=list)
     # Agent manifest 声明需要的敏感上下文片段（location | vehicle_state）；
     # 编排下发时按此最小化（未声明则不下发精确位置/电量）。
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
@@ -133,6 +134,7 @@ def step_record(step: "Step") -> dict:
         # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
         "verification": dict(step.verification or {}),
         **({"input_scope": dict(step.input_scope)} if step.input_scope else {}),
+        **({"goal_ids": list(step.goal_ids)} if step.goal_ids else {}),
     }
 
 
@@ -307,6 +309,9 @@ class Plan:
     edge_corrected: list[str] = field(default_factory=list)
     # Server-stamped provenance; empty on legacy records rather than inventing an old turn.
     origin_exchange_id: str = ""
+    task_id: str = ""
+    plan_revision: int = 1
+    goal_refs: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -428,6 +433,8 @@ class PlanContext:
     # 评测 / 重放 A/B 的单变量入口——此前视窗只能靠改 env 重新部署来比较。预算（`_CTX_BUDGET`）
     # 仍是硬上限，pin 只放宽视窗不放宽预算。**刻意不进 `prefs`**（Agent 不该看见编排自己的实验旋钮）。
     history_exchanges: int = 0
+    # Request-local task provenance carried across T2/escalation; never from client prefs.
+    task_identity: dict = field(default_factory=dict)
 
 
 @dataclass
