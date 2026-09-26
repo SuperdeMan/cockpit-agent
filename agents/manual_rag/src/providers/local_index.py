@@ -2,6 +2,20 @@
 
 单手册语料用中文字符 n-gram BM25 召回，再以章节、短语和 IDF 覆盖率重排。低相关
 查询 fail closed；不依赖网络、数据库或在线 embedding。
+
+## 查询理解（2026-09-26，collector 真实问法驱动）
+
+手册问答的真实问法是「座椅加热有几个档位」「空调有哪些模式」「后备箱能放几个行李箱」。
+v2 只按整句双字算覆盖率：问句壳切出的「有几 / 几个 / 个档」在手册里一次都不存在、IDF
+最高，把正确页（排序第一）的覆盖率压到闸下，collector 562 轮手册问答 488 轮零命中。
+现在每个检索变体拆成三类词，各管各的事：
+
+- **主题词**：用户自己的内容词。闸只看它们的覆盖率——“问的东西在不在这一页”；
+- **证据词**：意图扩展补的「参数 / 定期保养 / 整车尺寸参数」。计入排序覆盖率，
+  不计入闸——否则「比亚迪海豹的电池容量」会被补上的证据词洗成 SU7 参数页；
+- **只排序词**：答案类型词（方式 / 功能…）、症状（关不上 / 打不开）、词间接缝。
+
+问句壳的词表只认 `runtime.question_shape`（问句判据的唯一实现），这里不另抄一份。
 """
 from __future__ import annotations
 
@@ -18,6 +32,8 @@ from typing import Any
 import yaml
 
 from agents.manual_rag.src.index_format import IndexFormatError, load_manual_package
+from agents.manual_rag.src.toc import TocEntry, build_table_of_contents
+from runtime import question_shape
 from .base import Chunk, KnowledgeRetriever, ManualImage
 
 
@@ -36,12 +52,36 @@ _MEASUREMENT_SPACE_RE = re.compile(
 _ASCII_GATE_EXEMPT = frozenset({
     "bar", "km/h", "km", "mm", "cm", "m", "l", "w", "v", "h", "s", "min",
 })
+# 字母 + 数字的两字符型号码（L9 / M9 / P7 / X5）：手册里没有就是别的车型，同三字符以上的
+# 未知专名一样零命中。单字母（P 挡）与纯数字不受影响。
+_MODEL_CODE_RE = re.compile(r"(?=[a-z]*\d)(?=\d*[a-z])[a-z0-9]{2}", re.IGNORECASE)
 _MAX_IMAGE_BYTES = 640 * 1024
 _MAX_IMAGE_TOTAL_BYTES = 768 * 1024
 _MAX_IMAGES = 2
 _VISUAL_CONTEXT_MARKERS = (
     "图标", "指示灯", "仪表", "灯亮", "亮了", "常亮", "闪烁",
 )
+# 闸：主题覆盖率与质量分下限（v2 起的口径不变，变的是覆盖率只算用户自己的词）。
+_MIN_QUALITY = 1.0
+_MIN_TOPIC_COVERAGE = 0.42
+# 排序：质量 = BM25 × 排序覆盖率^1.5。线性乘时，只缺一个关键概念、但主题词重复更多
+# 的页会反超「概念全部在场」的页（充电限值「最低 50%」页压过「建议 80% / 100%」页）。
+_RANK_COVERAGE_EXPONENT = 1.5
+# 词间接缝：夹在两个已知双字之间、df 不到两侧较小者 1/4、且跨它的四字串全书至多出现
+# 一次（「车载冰箱」的「载冰」）。四字串条件排除「车道保持」这种由高频词组成的真复合词。
+_JUNCTION_DF_RATIO = 4
+# 封闭虚字类（零领域词）。含其一、且整本手册一次都没出现过的双字，只可能是分词跨过
+# 虚词的产物（「亮了是」的「了是」、「能开门」的「还能」），不计分也不计覆盖率。
+_FUNCTION_CHARS = frozenset(
+    "了的地得是有在把将对和与或及被给让从向往用以为于都也还就才又再会要能可该"
+    "吗呢吧啊呀嘛么哦这那它他她我你您咱们个些几哪啥谁多很太最更挺不没别")
+# 段首的介词/指代虚字（「把车窗打开」的「把车」）与段尾的语气/助词虚字（「天窗有」的
+# 「窗有」）组成的双字只表达句法、不表达主题，手册里偶然出现过也不计。
+_LEADING_FUNCTION_CHARS = frozenset("的了把将对在从给被让向往和与或及这那它我你您咱该每其")
+_TRAILING_FUNCTION_CHARS = frozenset("了的地得吗呢吧啊呀嘛么哦是有着过")
+# 可能补语的否定式（关不上 / 打不开 / 调不动）说的是“做不到”，是故障问法的答案类型；
+# 手册正文几乎不会原样写出，只参与排序。
+_SYMPTOM_RE = re.compile(r"[\u3400-\u9fff]不[上开了动下掉起出进住来去]")
 
 
 class ManualIndexError(ValueError):
@@ -58,8 +98,43 @@ class _PreparedChunk:
     body_length: int
 
 
+@dataclass(frozen=True)
+class _Expansion:
+    when_any: tuple[str, ...]
+    require_any: tuple[str, ...]
+    unless_any: tuple[str, ...]
+    append: tuple[str, ...]
+    drop_any: tuple[str, ...]
+    standalone: bool
+
+
+@dataclass(frozen=True)
+class _RetrievalConfig:
+    noise_phrases: tuple[str, ...]
+    aliases: dict[str, tuple[str, ...]]
+    expansions: tuple[_Expansion, ...]
+    facet_terms: tuple[str, ...]
+    foreign_vehicle_markers: tuple[str, ...]
+    absent_subject_markers: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _Variant:
+    """一个检索变体：用户内容（已换同义词、剥壳）+ 扩展证据词。`standalone` 的扩展在
+    内容剥空时自己就是问题（「这车有多长」）。"""
+
+    content: str
+    hint: str = ""
+    standalone: bool = False
+
+
+# 档 / 挡 在“挡位”义上通用，手册统一写“挡”；语料与查询走同一次规范化，对称折叠。
+_VARIANT_FOLD = str.maketrans({"档": "挡"})
+
+
 def _normalize(value: str) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    text = text.translate(_VARIANT_FOLD)
     text = _SPACE_RE.sub(" ", text).strip()
     return _MEASUREMENT_SPACE_RE.sub("", text)
 
@@ -86,37 +161,126 @@ def _tokens(value: str) -> list[str]:
     return result
 
 
-def _load_retrieval_config(
-        path: Path,
-) -> tuple[list[str], dict[str, list[str]], list[dict[str, list[str]]]]:
+def _alternation(words) -> str:
+    return "|".join(map(re.escape, sorted({w for w in words if w},
+                                          key=lambda word: (-len(word), word))))
+
+
+def _mask_spans(text: str, phrases, patterns=()) -> str:
+    """去掉任一短语 / 模式命中的全部字符（重叠出现取并集），连续被去掉的一段换成一个空格。
+
+    与剥离顺序无关：「在哪里」=「在哪」∪「哪里」，「是什么意思」=「是什么」∪「什么意思」。
+    逐个 replace 会让先剥的短语吃掉后一个的头（「怎么」吃掉「怎么回事」），而等长短语的
+    先后又取决于集合迭代序——字符串哈希每个进程随机，同一句话会剥出不同结果。"""
+    covered = [False] * len(text)
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            covered[match.start():match.end()] = [True] * (match.end() - match.start())
+    for phrase in phrases:
+        start = text.find(phrase)
+        while start >= 0:
+            covered[start:start + len(phrase)] = [True] * len(phrase)
+            start = text.find(phrase, start + 1)
+    pieces: list[str] = []
+    for char, drop in zip(text, covered):
+        if not drop:
+            pieces.append(char)
+        elif not pieces or pieces[-1] != " ":
+            pieces.append(" ")
+    return _SPACE_RE.sub(" ", "".join(pieces)).strip()
+
+
+# 问句壳：问句判据唯一实现里的封闭虚词类。“多少 / 怎么”这类原本就在检索噪声表里的
+# 词在两处出现是历史（v1 噪声表先于问句判据），以本表为准的部分不在 yaml 里再加。
+_SHELL_PHRASES = tuple(sorted({
+    _normalize(word)
+    for name in ("ENUMERATION_ASKS", "DEFINITION_ASKS", "REASON_ASKS", "CHOICE_ASKS",
+                 "CAPABILITY_ASKS", "PROPERTY_ASKS", "REFERENCE_ASKS", "MANNER_ASKS",
+                 "POLITE_TAILS", "QUESTION_TAILS")
+    for word in getattr(question_shape, name)
+    if _normalize(word)
+}, key=lambda word: (-len(word), word)))
+# 请求开头词（请问 / 告诉我 / 介绍一下 / 查一下…）只在句首成立，同问句判据的用法；全句遮罩
+# 会把章节名词吃掉（「车辆介绍 外部介绍」的「介绍」）。
+_OPENER_RE = re.compile(
+    r"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您)*\s*(?:"
+    + _alternation(_normalize(word) for name in ("ASK_PREFIXES", "EXPLAIN_REQUESTS",
+                                                  "LOOKUP_REQUESTS")
+                   for word in getattr(question_shape, name))
+    + ")")
+# 计数 / 属性问的整段壳：头（有 / 能 / 可以 / 最多…）+ 至多两个字的动词 + 几量词 / 多大多高…
+# 同问句判据的计数问结构（「后备箱能放几个行李箱」「座椅能调多高」「最多能装几个」）。
+# 问句判据为了**认出**计数问允许头与「几」之间隔四个字；剥离要的是紧挨着的那一段——
+# 隔四个字时「能量回收有几档」的头会从「能量」的「能」起跳，把整句吃空。
+_COUNT_SHELL_RE = re.compile(
+    f"(?:{_alternation(question_shape.COUNT_HEADS)})"
+    r"[^，,。；;！!？?\s]{0,2}?几"
+    f"[{''.join(sorted({_normalize(unit) for unit in question_shape.COUNT_UNITS}))}]")
+_PROPERTY_SHELL_RE = re.compile(
+    f"(?:{_alternation(question_shape.COUNT_HEADS)})"
+    r"[^，,。；;！!？?\s]{0,2}?"
+    f"(?:{_alternation(_normalize(word) for word in question_shape.PROPERTY_ASKS)})")
+
+
+def _string_list(rule: dict, key: str, where: str) -> tuple[str, ...]:
+    values = rule.get(key) or []
+    if not isinstance(values, list):
+        raise ManualIndexError(f"{where}.{key} 必须是列表")
+    return tuple(_normalize(item) for item in values if _normalize(item))
+
+
+def _load_retrieval_config(path: Path) -> _RetrievalConfig:
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception as exc:
         raise ManualIndexError(f"检索配置无法读取：{path}：{exc}") from exc
-    if raw.get("schema_version") != 1:
+    # v2（2026-09-26）：意图扩展补的词从“主题”改为“证据”（只计排序覆盖率），并新增
+    # facet_terms / foreign_vehicle_markers / absent_subject_markers 与扩展的
+    # drop_any / standalone。
+    if raw.get("schema_version") != 2:
         raise ManualIndexError(
             f"检索配置 schema_version 非法：{raw.get('schema_version')!r}")
-    noise = [_normalize(item) for item in (raw.get("query_noise_phrases") or [])
-             if _normalize(item)]
-    aliases: dict[str, list[str]] = {}
+    noise = _string_list(raw, "query_noise_phrases", "retrieval")
+    aliases: dict[str, tuple[str, ...]] = {}
     for source, targets in (raw.get("aliases") or {}).items():
         key = _normalize(source)
-        values = [_normalize(item) for item in (targets or []) if _normalize(item)]
+        values = tuple(_normalize(item) for item in (targets or []) if _normalize(item))
         if not key or not values:
             raise ManualIndexError(f"检索同义词声明非法：{source!r}")
         aliases[key] = values
-    expansions: list[dict[str, list[str]]] = []
+    expansions: list[_Expansion] = []
     for pos, rule in enumerate(raw.get("intent_expansions") or []):
+        where = f"检索意图扩展[{pos}]"
         if not isinstance(rule, dict):
-            raise ManualIndexError(f"检索意图扩展[{pos}] 必须是 object")
-        parsed = {
-            key: [_normalize(item) for item in (rule.get(key) or []) if _normalize(item)]
-            for key in ("when_any", "require_any", "unless_any", "append")
-        }
-        if not parsed["when_any"] or not parsed["append"]:
-            raise ManualIndexError(f"检索意图扩展[{pos}] 缺 when_any/append")
-        expansions.append(parsed)
-    return sorted(set(noise), key=len, reverse=True), aliases, expansions
+            raise ManualIndexError(f"{where} 必须是 object")
+        unknown = set(rule) - {"when_any", "require_any", "unless_any", "append",
+                               "drop_any", "standalone"}
+        if unknown:
+            raise ManualIndexError(f"{where} 未知键：{sorted(unknown)}")
+        expansion = _Expansion(
+            when_any=_string_list(rule, "when_any", where),
+            require_any=_string_list(rule, "require_any", where),
+            unless_any=_string_list(rule, "unless_any", where),
+            append=_string_list(rule, "append", where),
+            drop_any=_string_list(rule, "drop_any", where),
+            standalone=bool(rule.get("standalone", False)),
+        )
+        if not expansion.when_any or not expansion.append:
+            raise ManualIndexError(f"{where} 缺 when_any/append")
+        if expansion.standalone and not expansion.require_any:
+            # 单独成立 = 内容剥空也检索；没有主语约束的扩展（“多少”→参数）若单独成立，
+            # 「这个多少钱」就会凭空检出一张参数页。
+            raise ManualIndexError(f"{where} standalone 必须配 require_any")
+        expansions.append(expansion)
+    return _RetrievalConfig(
+        noise_phrases=tuple(sorted(set(noise), key=lambda word: (-len(word), word))),
+        aliases=aliases,
+        expansions=tuple(expansions),
+        facet_terms=tuple(sorted(set(_string_list(raw, "facet_terms", "retrieval")),
+                                 key=lambda word: (-len(word), word))),
+        foreign_vehicle_markers=_string_list(raw, "foreign_vehicle_markers", "retrieval"),
+        absent_subject_markers=_string_list(raw, "absent_subject_markers", "retrieval"),
+    )
 
 
 def _validate_trusted_catalog(path: Path, document: dict[str, Any],
@@ -190,12 +354,15 @@ class ManualIndexRetriever(KnowledgeRetriever):
 
         config_path = (Path(retrieval_config_path) if retrieval_config_path
                        else resources / "retrieval.yaml")
-        (self._noise_phrases, self._aliases,
-         self._intent_expansions) = _load_retrieval_config(config_path)
+        self._config = _load_retrieval_config(config_path)
+        self._strip_phrases = tuple(sorted(
+            {*self._config.noise_phrases, *_SHELL_PHRASES}, key=lambda word: (-len(word), word)))
         self._vehicle_aliases = {
             _normalize(item) for item in self.document["vehicle_aliases"]
             if _normalize(item)
         }
+        self._strip_phrases = tuple(sorted(
+            {*self._strip_phrases, *self._vehicle_aliases}, key=lambda word: (-len(word), word)))
         self._vehicle_ascii_tokens = {
             token for alias in self._vehicle_aliases
             for token in _ASCII_TOKEN_RE.findall(alias)
@@ -245,10 +412,29 @@ class ManualIndexRetriever(KnowledgeRetriever):
             normalized_corpus.extend((content, section))
         self._normalized_corpus = "\n".join(normalized_corpus)
         self._normalized_corpus_compact = _SPACE_RE.sub("", self._normalized_corpus)
+        self._compact_chunks = [
+            _compact(chunk.normalized_section + " " + chunk.normalized_content)
+            for chunk in self._chunks]
+        self._substring_df_cache: dict[str, int] = {}
         self._avg_body_length = max(
             1.0,
             sum(chunk.body_length for chunk in self._chunks) / len(self._chunks),
         )
+        self._validate_scope_markers()
+        self._toc = build_table_of_contents(bundle["chunks"])
+        self._toc_by_id = {entry.entry_id: entry for entry in self._toc}
+        self._chunks_by_page = {chunk.raw["page_start"]: chunk for chunk in self._chunks}
+
+    def _validate_scope_markers(self) -> None:
+        """「别的车型」「本车没有的对象」是对这本手册的断言：若手册里其实写着它，声明就是
+        错的——会把真实内容挡成零命中（「海豚」出现在「qborn 小海豚儿童安全座椅」里）。
+        启动期逐条核对，矛盾即拒绝启动。"""
+        contradicted = sorted(
+            marker for marker in (*self._config.foreign_vehicle_markers,
+                                  *self._config.absent_subject_markers)
+            if _compact(marker) and _compact(marker) in self._normalized_corpus_compact)
+        if contradicted:
+            raise ManualIndexError(f"检索声明与手册矛盾（手册里出现了）：{contradicted}")
 
     @property
     def vehicle_model(self) -> str:
@@ -258,22 +444,24 @@ class ManualIndexRetriever(KnowledgeRetriever):
     def revision(self) -> str:
         return self.document["revision"]
 
-    def _strip_noise(self, value: str) -> str:
-        result = value
-        for alias in sorted(self._vehicle_aliases, key=len, reverse=True):
-            result = result.replace(alias, " ")
-        for phrase in self._noise_phrases:
-            result = result.replace(phrase, " ")
-        return _SPACE_RE.sub(" ", result).strip()
+    def table_of_contents(self) -> list[TocEntry]:
+        """获准索引还原出的目录叶子（供目录路由做封闭集合选择）。"""
+        return list(self._toc)
 
-    def _query_variants(self, query: str) -> list[str]:
+    # ── 查询理解 ────────────────────────────────────────────────────────────
+
+    def _strip_noise(self, value: str) -> str:
+        return _mask_spans(value, self._strip_phrases,
+                           (_OPENER_RE, _COUNT_SHELL_RE, _PROPERTY_SHELL_RE))
+
+    def _query_variants(self, query: str) -> list[_Variant]:
         original = _normalize(query)
         variants = [original]
         # 同义词是受控声明，不让模型动态改写查询。组合只允许原问法中**不重叠**的
         # source spans；这样“刹车油+换”可同时变成“制动液+更换”，而“推荐胎压”与
         # 内含的“胎压”不会级联成畸形词。
         replacements: list[tuple[int, int, str]] = []
-        for source, targets in self._aliases.items():
+        for source, targets in self._config.aliases.items():
             start = original.find(source)
             if start < 0:
                 continue
@@ -296,96 +484,184 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 variants.append(candidate)
             if len(variants) >= 24:
                 break
-        expanded_variants: list[str] = []
-        base_variants = list(variants)
-        for rule in self._intent_expansions:
-            if not any(marker in original for marker in rule["when_any"]):
+        expanded: list[_Variant] = []
+        for rule in self._config.expansions:
+            if not any(marker in original for marker in rule.when_any):
                 continue
-            if rule["require_any"] and not any(
-                    marker in original for marker in rule["require_any"]):
+            if rule.require_any and not any(
+                    marker in original for marker in rule.require_any):
                 continue
-            if any(marker in original for marker in rule["unless_any"]):
+            if any(marker in original for marker in rule.unless_any):
                 continue
-            suffix = " ".join(rule["append"])
-            for variant in base_variants:
-                candidate = f"{variant} {suffix}"
-                if candidate not in expanded_variants:
-                    expanded_variants.append(candidate)
-                if len(expanded_variants) >= 24:
+            hint = " ".join(rule.append)
+            for variant in variants:
+                content = variant
+                for subject in rule.drop_any:
+                    content = content.replace(subject, " ")
+                candidate = _Variant(content, hint, rule.standalone)
+                if candidate not in expanded:
+                    expanded.append(candidate)
+                if len(expanded) >= 24:
                     break
-            if len(expanded_variants) >= 24:
+            if len(expanded) >= 24:
                 break
         # 一旦问法明确要“规格/周期”证据，就只按带意图的变体排；同时保留基础变体
         # 会让高频主题页靠重复词压过真正回答该维度的页。
-        if expanded_variants:
-            variants = expanded_variants
-        cleaned: list[str] = []
-        for variant in variants:
-            candidate = self._strip_noise(variant)
-            if candidate and candidate not in cleaned:
+        planned = expanded or [_Variant(variant) for variant in variants]
+        cleaned: list[_Variant] = []
+        for variant in planned:
+            candidate = _Variant(self._strip_noise(variant.content), variant.hint,
+                                 variant.standalone)
+            if (candidate.content or candidate.standalone) and candidate not in cleaned:
                 cleaned.append(candidate)
         return cleaned
+
+    def _substring_df(self, needle: str) -> int:
+        cached = self._substring_df_cache.get(needle)
+        if cached is None:
+            cached = sum(1 for chunk in self._compact_chunks if needle in chunk)
+            self._substring_df_cache[needle] = cached
+        return cached
+
+    def _content_terms(self, text: str) -> tuple[Counter[str], set[str], set[str]]:
+        """内容双字 + 其中的句法产物 + 词间接缝。
+
+        产物：段首介词虚字 / 段尾语气虚字组成的双字；整本手册不存在且含虚字的双字；
+        整本手册不存在、左字是前一个真实双字之尾、右字是后一个真实双字之头（或句尾悬挂）
+        的双字（「把车窗打开」的「窗打」、「手机壳厚度」的「壳厚」）。整段都不在手册里的
+        双字（机油、油箱、海豹）不是产物——零命中闸靠的正是它们。
+        """
+        terms: Counter[str] = Counter()
+        artifacts: set[str] = set()
+        junctions: set[str] = set()
+        for part in _TOKEN_RE.findall(_normalize(text)):
+            if not _CJK_SEQUENCE_RE.fullmatch(part):
+                terms[part] += 1
+                continue
+            if len(part) == 1:
+                continue
+            grams = [part[i:i + 2] for i in range(len(part) - 1)]
+            df = [self._document_frequency.get(gram, 0) for gram in grams]
+            for i, gram in enumerate(grams):
+                terms[gram] += 1
+                if ((i == 0 and gram[0] in _LEADING_FUNCTION_CHARS)
+                        or (i + 1 == len(grams) and gram[1] in _TRAILING_FUNCTION_CHARS)):
+                    artifacts.add(gram)
+                    continue
+                if df[i]:
+                    if (0 < i < len(grams) - 1 and df[i - 1] and df[i + 1]
+                            and df[i] * _JUNCTION_DF_RATIO < min(df[i - 1], df[i + 1])
+                            and self._substring_df(part[i - 1:i + 3]) <= 1):
+                        junctions.add(gram)
+                    continue
+                if any(char in _FUNCTION_CHARS for char in gram):
+                    artifacts.add(gram)
+                    continue
+                if i > 0 and df[i - 1] and (i + 1 == len(grams) or df[i + 1]):
+                    artifacts.add(gram)
+        if not terms:
+            compact = _compact(text)
+            if len(compact) == 1 and compact not in _FUNCTION_CHARS:
+                terms[compact] += 1
+        return terms, artifacts, junctions
+
+    def _variant_terms(self, variant: _Variant) -> tuple[Counter[str], Counter[str], Counter[str]]:
+        """一个检索变体拆成 主题词 / 扩展证据词 / 只排序词。"""
+        content = variant.content
+        soft_parts: list[str] = []
+        for facet in self._config.facet_terms:
+            if facet in content:
+                soft_parts.append(facet)
+                content = content.replace(facet, " ")
+        soft_parts.extend(match.group(0) for match in _SYMPTOM_RE.finditer(content))
+        content = _SYMPTOM_RE.sub(" ", content)
+        terms, artifacts, junctions = self._content_terms(content)
+        topic = Counter({term: count for term, count in terms.items()
+                         if term not in artifacts and term not in junctions})
+        evidence = Counter(_tokens(variant.hint)) if variant.hint else Counter()
+        soft = Counter(term for part in soft_parts for term in _tokens(part))
+        for junction in junctions:
+            soft[junction] += terms[junction]
+        if not topic and variant.standalone:
+            # 剥掉问法壳后只剩「多长 / 多重」这类整车维度：声明了整车主语的规格扩展
+            # 本身就是问题的主题。「这个多少钱」剥完同样没有主题，不能拿「参数」凑一页。
+            topic, evidence = evidence, Counter()
+        return topic, evidence, soft
+
+    # ── 打分 ────────────────────────────────────────────────────────────────
 
     def _idf(self, term: str) -> float:
         count = self._document_frequency.get(term, 0)
         total = len(self._chunks)
         return math.log(1.0 + (total - count + 0.5) / (count + 0.5))
 
-    def _bm25(self, terms: Counter[str], chunk: _PreparedChunk) -> tuple[float, float]:
+    def _bm25(self, chunk: _PreparedChunk, topic: Counter[str], evidence: Counter[str],
+              soft: Counter[str]) -> tuple[float, float, float]:
+        """BM25 分数 + 主题覆盖率（闸）+ 排序覆盖率（主题 + 证据）。"""
         k1, b = 1.2, 0.75
         body_score = 0.0
         section_score = 0.0
-        matched_weight = 0.0
-        total_weight = 0.0
-        for term, qtf in terms.items():
+        topic_total = topic_matched = rank_total = rank_matched = 0.0
+        merged: dict[str, tuple[int, str]] = {}
+        for kind, bag in (("soft", soft), ("evidence", evidence), ("topic", topic)):
+            for term, qtf in bag.items():
+                merged[term] = (qtf, kind)
+        for term, (qtf, kind) in merged.items():
             idf = self._idf(term)
-            total_weight += idf
             body_tf = chunk.body_terms.get(term, 0)
             section_tf = chunk.section_terms.get(term, 0)
-            if body_tf or section_tf:
-                matched_weight += idf
+            present = bool(body_tf or section_tf)
+            if kind == "topic":
+                topic_total += idf
+                topic_matched += idf if present else 0.0
+            if kind != "soft":
+                rank_total += idf
+                rank_matched += idf if present else 0.0
             if body_tf:
                 denominator = body_tf + k1 * (
                     1.0 - b + b * chunk.body_length / self._avg_body_length)
                 body_score += idf * (body_tf * (k1 + 1.0) / denominator) * min(qtf, 2)
             if section_tf:
                 section_score += idf * min(section_tf, 2) * min(qtf, 2)
-        coverage = matched_weight / total_weight if total_weight else 0.0
-        return body_score + 1.8 * section_score, coverage
+        topic_coverage = topic_matched / topic_total if topic_total else 0.0
+        rank_coverage = rank_matched / rank_total if rank_total else 0.0
+        return body_score + 1.8 * section_score, topic_coverage, rank_coverage
 
-    def _score(self, variants: list[str], chunk: _PreparedChunk) -> tuple[float, float]:
+    def _score(self, variants: list[_Variant], chunk: _PreparedChunk) -> tuple[float, float]:
         best_quality = 0.0
         best_coverage = 0.0
         haystack = _compact(chunk.normalized_section + " " + chunk.normalized_content)
         for variant in variants:
-            terms = Counter(_tokens(variant))
-            if not terms:
+            topic, evidence, soft = self._variant_terms(variant)
+            if not topic:
                 continue
-            raw, coverage = self._bm25(terms, chunk)
-            needle = _compact(variant)
+            raw, coverage, rank_coverage = self._bm25(chunk, topic, evidence, soft)
+            needle = _compact(variant.content)
             if len(needle) >= 2 and needle in haystack:
                 raw += 3.0
-            for phrase in re.findall(r"[\u3400-\u9fff]{3,}", variant):
+            for phrase in re.findall(r"[\u3400-\u9fff]{3,}",
+                                     f"{variant.content} {variant.hint}"):
                 if phrase in chunk.normalized_content:
                     raw += min(5.0, 1.0 + len(phrase) * 0.6)
                 elif phrase in chunk.normalized_section:
                     raw += min(6.0, 1.5 + len(phrase) * 0.7)
             # 重复出现一个局部词不应压过“查询概念全部在场”的页面；覆盖率直接参与
             # 乘法，不留固定底座（刹车油周期问法否则会被高频“检查制动液”页抢走）。
-            quality = raw * coverage
+            quality = raw * rank_coverage ** _RANK_COVERAGE_EXPONENT
             if quality > best_quality:
                 best_quality, best_coverage = quality, coverage
         return best_quality, best_coverage
 
+    # ── 范围闸 ──────────────────────────────────────────────────────────────
+
     def _unknown_ascii_terms(self, query: str) -> set[str]:
         normalized = _normalize(query)
         without_vehicle = normalized
-        for alias in sorted(self._vehicle_aliases, key=len, reverse=True):
+        for alias in sorted(self._vehicle_aliases, key=lambda word: (-len(word), word)):
             without_vehicle = without_vehicle.replace(alias, " ")
-        query_terms = {
-            item.casefold() for item in _ASCII_TOKEN_RE.findall(without_vehicle)
-            if len(item) >= 3
-        }
+        tokens = [item.casefold() for item in _ASCII_TOKEN_RE.findall(without_vehicle)]
+        query_terms = {item for item in tokens
+                       if len(item) >= 3 or _MODEL_CODE_RE.fullmatch(item)}
         unknown = {
             item for item in query_terms
             if item not in self._vehicle_ascii_tokens
@@ -404,6 +680,69 @@ class ManualIndexRetriever(KnowledgeRetriever):
                     and _SPACE_RE.sub("", phrase) not in self._normalized_corpus_compact):
                 unknown.add(phrase)
         return unknown
+
+    def _in_scope_variants(self, query: str) -> tuple[list[_Variant], str]:
+        normalized = _normalize(query)
+        if any(marker in normalized for marker in self._config.foreign_vehicle_markers):
+            return [], "foreign_vehicle"
+        if any(marker in normalized for marker in self._config.absent_subject_markers):
+            return [], "absent_subject"
+        variants = self._query_variants(query)
+        # CarPlay 这类手册没有的专名不得凭“手机连接”近似命中；受控同义词换掉的专名
+        # （NOA → 智能领航辅助）按换过之后的变体判。
+        kept = [variant for variant in variants
+                if not self._unknown_ascii_terms(variant.content)]
+        if variants and not kept:
+            return [], "unknown_term"
+        return kept, ""
+
+    def scope_veto(self, query: str) -> str:
+        """问的明显不是本车手册的东西（别的车型 / 本车没有的对象 / 手册没有的专名）时返回
+        原因，否则空串。"""
+        return self._in_scope_variants(query)[1]
+
+    def unknown_subject_terms(self, query: str) -> list[str]:
+        """用户内容里整本手册都没有、同义词也换不掉的实词双字（句法产物不算）。
+
+        取最好的那个变体：只要有一个同义词变体把它换成了手册用词（尾箱 → 后备箱），它就
+        不算未知。非空说明问的东西手册不认识——可能是车主叫法（刮车、小冰箱），也可能是
+        别家车型（奇骏）；词法覆盖率分不开这两种，交给目录路由判。"""
+        variants, veto = self._in_scope_variants(query)
+        if veto or not variants:
+            return []
+        best: list[str] | None = None
+        for variant in variants:
+            topic, _evidence, _soft = self._variant_terms(variant)
+            unknown = sorted(term for term in topic
+                             if _CJK_SEQUENCE_RE.fullmatch(term)
+                             and not self._document_frequency.get(term, 0))
+            if best is None or len(unknown) < len(best):
+                best = unknown
+            if not best:
+                break
+        return best or []
+
+    def route_block_reason(self, query: str) -> str:
+        """这句话能不能交给目录路由：范围闸拦下的不能（LLM 不越过确定性闸）；没有实词的不能；描述仪表灯 /
+        图标的也不能——认图标只认受控视觉目录，把「黄色感叹号」路由到告警表，等于让生成
+        模型在表格相邻行之间猜（生产曾把「背宝剑小人」猜成安全气囊）。"""
+        variants, veto = self._in_scope_variants(query)
+        if veto:
+            return veto
+        # 剥掉问法壳一个实字都不剩（「这是什么」「怎么回事」）：没有东西可路由，交给模型
+        # 只会凭空挑一节（曾把「这是什么」路由到「外部介绍」）。单字实词（「这车都有哪些挡」
+        # 的「挡」）进不了双字表，但它是内容，照样交给路由。
+        if not any(self._variant_terms(variant)[0]
+                   or any(_CJK_SEQUENCE_RE.fullmatch(char) and char not in _FUNCTION_CHARS
+                          for char in variant.content)
+                   for variant in variants):
+            return "no_content"
+        compact = _compact(query)
+        if any(_compact(marker) in compact for marker in _VISUAL_CONTEXT_MARKERS):
+            return "visual_context"
+        return ""
+
+    # ── 视觉与图片 ──────────────────────────────────────────────────────────
 
     def _matched_visual_assets(self, query: str) -> list[tuple[dict[str, Any], str]]:
         compact = _compact(query)
@@ -447,49 +786,14 @@ class ManualIndexRetriever(KnowledgeRetriever):
             match_kind=match_kind,
         )
 
-    async def retrieve(self, query: str, vehicle_model: str = "",
-                       top_k: int = 4) -> list[Chunk]:
-        if not str(query or "").strip() or top_k <= 0:
-            return []
-        requested_model = _normalize(vehicle_model).replace(" ", "-")
-        indexed_model = _normalize(self.vehicle_model).replace(" ", "-")
-        if requested_model and requested_model != indexed_model:
-            return []
-        # CarPlay 这类手册没有的专名不得凭“手机连接”近似命中。
-        if self._unknown_ascii_terms(query):
-            return []
-        variants = self._query_variants(query)
-        if not variants:
-            return []
-
-        visual_matches = self._matched_visual_assets(query)
-        visual_by_page: dict[int, list[tuple[dict[str, Any], str]]] = {}
-        for asset, kind in visual_matches:
-            visual_by_page.setdefault(asset["page_start"], []).append((asset, kind))
-
-        ranked: list[tuple[float, int, _PreparedChunk]] = []
-        for chunk in self._chunks:
-            quality, coverage = self._score(variants, chunk)
-            page = chunk.raw["page_start"]
-            if page in visual_by_page:
-                # 人工审定别名/正式 caption 是比词法近似更强的证据；只提升其所属物理页，
-                # 不把 caption/答案注入其它页，也不对未知视觉描述做模糊匹配。
-                quality = max(quality, 24.0 + max(
-                    len(_compact(asset["caption"]))
-                    for asset, _ in visual_by_page[page]))
-                coverage = 1.0
-            if quality < 1.0 or coverage < 0.42:
-                continue
-            ranked.append((quality, chunk.raw["page_start"], chunk))
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-
+    def _materialize(self, ranked: list[tuple[float, float, _PreparedChunk]],
+                     visual_by_page: dict[int, list[tuple[dict[str, Any], str]]]) -> list[Chunk]:
         result: list[Chunk] = []
         embedded_bytes = 0
         embedded_count = 0
         embedded_blobs: set[str] = set()
         title = self.document["title"]
-        for rank, (quality, _, prepared) in enumerate(
-                ranked[:min(int(top_k), 10)]):
+        for rank, (quality, coverage, prepared) in enumerate(ranked):
             raw = prepared.raw
             section_path = tuple(raw["section_path"])
             page_start, page_end = raw["page_start"], raw["page_end"]
@@ -535,5 +839,87 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 page_end=page_end,
                 section_path=section_path,
                 images=tuple(images),
+                coverage=round(coverage, 6),
             ))
         return result
+
+    # ── 检索入口 ────────────────────────────────────────────────────────────
+
+    def _model_mismatch(self, vehicle_model: str) -> bool:
+        requested_model = _normalize(vehicle_model).replace(" ", "-")
+        indexed_model = _normalize(self.vehicle_model).replace(" ", "-")
+        return bool(requested_model) and requested_model != indexed_model
+
+    async def retrieve(self, query: str, vehicle_model: str = "",
+                       top_k: int = 4) -> list[Chunk]:
+        if not str(query or "").strip() or top_k <= 0:
+            return []
+        if self._model_mismatch(vehicle_model):
+            return []
+        variants, veto = self._in_scope_variants(query)
+        if veto or not variants:
+            return []
+
+        # 受控视觉目录按原话与同义词换过的内容都匹配（「胎压灯亮了」→ 胎压监测报警指示灯）；
+        # 短 caption 仍要求视觉语境。
+        visual_by_page: dict[int, list[tuple[dict[str, Any], str]]] = {}
+        seen_assets: set[str] = set()
+        for text in [query, *(variant.content for variant in variants)]:
+            for asset, kind in self._matched_visual_assets(text):
+                if asset["asset_id"] in seen_assets:
+                    continue
+                seen_assets.add(asset["asset_id"])
+                visual_by_page.setdefault(asset["page_start"], []).append((asset, kind))
+
+        ranked: list[tuple[float, float, _PreparedChunk]] = []
+        for chunk in self._chunks:
+            quality, coverage = self._score(variants, chunk)
+            page = chunk.raw["page_start"]
+            if page in visual_by_page:
+                # 人工审定别名/正式 caption 是比词法近似更强的证据；只提升其所属物理页，
+                # 不把 caption/答案注入其它页，也不对未知视觉描述做模糊匹配。
+                quality = max(quality, 24.0 + max(
+                    len(_compact(asset["caption"]))
+                    for asset, _ in visual_by_page[page]))
+                coverage = 1.0
+            if quality < _MIN_QUALITY or coverage < _MIN_TOPIC_COVERAGE:
+                continue
+            ranked.append((quality, coverage, chunk))
+        ranked.sort(key=lambda item: (-item[0], item[2].raw["page_start"]))
+        return self._materialize(ranked[:min(int(top_k), 10)], visual_by_page)
+
+    async def retrieve_sections(self, query: str, entry_ids: list[str],
+                                top_k: int = 4) -> list[Chunk]:
+        """目录路由选中的叶子 → 其物理页。每个叶子内部按本问法的词法分排序（不过闸：章节
+        已由路由选定），叶子之间轮转取页——先每节最相关的一页、再每节第二页——保证每个被
+        选中的章节至少进一页，而不是前两节把名额占满。未知编号直接忽略。"""
+        if top_k <= 0:
+            return []
+        variants, veto = self._in_scope_variants(query)
+        if veto:
+            return []
+        per_entry: list[list[_PreparedChunk]] = []
+        claimed: set[int] = set()
+        for entry_id in entry_ids:
+            entry = self._toc_by_id.get(str(entry_id))
+            if entry is None:
+                continue
+            scored = []
+            for page in entry.pages:
+                chunk = self._chunks_by_page.get(page)
+                if chunk is None or page in claimed:
+                    continue
+                quality = self._score(variants, chunk)[0] if variants else 0.0
+                scored.append((quality, chunk))
+            scored.sort(key=lambda item: (-item[0], item[1].raw["page_start"]))
+            pages = [chunk for _quality, chunk in scored[:2]]
+            claimed.update(chunk.raw["page_start"] for chunk in pages)
+            per_entry.append(pages)
+        limit = min(int(top_k), 10)
+        picked: list[tuple[float, float, _PreparedChunk]] = []
+        for depth in range(2):
+            for pages in per_entry:
+                if depth < len(pages) and len(picked) < limit:
+                    # 目录路由的页没有经过词法闸，覆盖率记 0：它们不是词法证据。
+                    picked.append((0.0, 0.0, pages[depth]))
+        return self._materialize(picked, {})

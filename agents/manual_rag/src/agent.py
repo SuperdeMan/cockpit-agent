@@ -4,23 +4,35 @@ Phase 1：使用 Provider 适配层（mock/真实只读手册索引可切换）�
 
 2026-08-15（阶段 1 / 卡 Q9）加了四道**确定性**护栏。它们存在的理由是同一句话：
 **「不要编造」写在 system prompt 里不是护栏，只是一句请求。**
-  ① 检索零命中 → 直接诚实弃权，**一次 LLM 都不调**。
+  ① 检索零命中 → 直接诚实弃权，**不调生成 LLM**（2026-09-26 起真实索引多一次只看目录、
+     不见正文的章节路由；它选不出章节时同样零材料弃权）。
   ② 来源类型（manual/web/mock）随资料一起传到话术层与卡片；
      非真实手册来源**不得**被表述成「本车型手册」。
   ③ 安全信号（警告灯/亮灯/漏气/失灵…）命中 → 先给**确定性分级处置**；
      且在没有真实手册的情况下**不进 LLM**，避免把演示数值说成权威值。
   ④ 卡片盖 `_prov`（此前 manual-rag/road-safety/chitchat 三个 Agent 覆盖为 0）。
+
+2026-09-26 检索前两件事（collector 真实问法）：
+  · 检索用哪句话：原话是权威；只有原话自己解析不出时（指代主语「它有几档」、规划器把
+    多诉求句拆成了多步而本步只占其中一个分句）才用规划器写的 `question` 槽。安全分级
+    始终只看原话。
+  · 词法检索零命中、没把握（主题覆盖率 < 0.7），或问句含手册不认识的实词 → 目录路由
+    （`toc_router.py`）补章节；路由只选目录编号，不见正文、不作答。
 """
 from __future__ import annotations
 from decimal import Decimal, InvalidOperation
+from itertools import zip_longest
 import logging
 import os
 import re
 
 from agents._sdk import BaseAgent, AgentResult
 from agents._sdk.provenance import attach
+from runtime.anaphora import has_anaphoric_subject
+from runtime.clause_split import split_clauses
 from runtime.safety_signal import alert_advice, alert_level, alert_signal
 from .providers import build_knowledge_retriever
+from .toc_router import SCOPE_OTHER_VEHICLE, ManualTocRouter
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
@@ -60,6 +72,45 @@ _NON_RETRYABLE_GENERATION_ERRORS = (
 )
 logger = logging.getLogger(__name__)
 _safety_level = alert_level
+# 词法命中的最高主题覆盖率低于它时，再按目录路由补章节（开发集上错命中 18 条里 12 条
+# 低于 0.7；路由只补不否决，所以对命中的误伤只是多一次调用）。
+_ROUTE_BELOW_COVERAGE = 0.7
+_MAX_CHUNKS = 4
+_BIGRAM_TEXT_RE = re.compile(r"[\u3400-\u9fffA-Za-z0-9]+")
+
+
+def _bigrams(text: str) -> set[str]:
+    grams: set[str] = set()
+    for part in _BIGRAM_TEXT_RE.findall(text or ""):
+        grams.update(part[i:i + 2] for i in range(len(part) - 1))
+    return grams
+
+
+def _retrieval_question(raw: str, slot: str) -> tuple[str, str]:
+    """(检索用的问题, 依据)。原话优先；只有原话自己解析不出时才用规划器写的槽：
+
+    - 指代主语（「它有几档」「那它的续航呢」，判据唯一实现 `runtime.anaphora`）：指代物只在
+      会话历史里，规划器补全的「座椅加热有几档」才可检索；
+    - 规划器把多诉求句拆成了多步、本步的槽只落在其中一个分句里（「打开后备箱，再告诉我
+      空调有哪些模式」→「空调有哪些模式」）：拿整句检索会把另一步的对象也搜进来。
+    槽横跨多个分句（规划器把一个多问句合并成一步）时仍用原话——原话才带全部诉求。
+    """
+    raw, slot = (raw or "").strip(), (slot or "").strip()
+    if not slot or _bigrams(slot) == _bigrams(raw):
+        return raw or slot, "raw"
+    if not raw:
+        return slot, "slot"
+    if has_anaphoric_subject(raw):
+        return slot, "anaphora"
+    clauses = [clause for clause in split_clauses(raw) if clause.strip()]
+    if len(clauses) > 1:
+        wanted = _bigrams(slot)
+        owners = [clause for clause in clauses
+                  if wanted and len(wanted & _bigrams(clause)) * 2 >= len(wanted)]
+        if len(owners) == 1:
+            return slot, "clause"
+    return raw, "raw"
+
 
 _NUMBER_RE = re.compile(
     r"(?<![A-Za-z0-9])(?P<number>\d+(?:[.,]\d+)?)\s*(?P<wan>万)?\s*"
@@ -124,10 +175,64 @@ def _ungrounded_numeric_claims(answer: str, chunks) -> list[str]:
     return missing
 
 
+def _merge_routed(routed: list, lexical: list) -> list:
+    """两路都选中的页最可信、排最前（按路由顺序）；其余路由页与词法页交替，至多四块。
+    路由页一律排前会把原本正确的词法首页挤下去（「三元锂电池平时充到多少」）。"""
+    routed_order = [chunk.page_start for chunk in routed]
+    lexical_pages = {chunk.page_start for chunk in lexical}
+    # 共选页用词法那一块：它带着视觉匹配 / 同页配图与覆盖率。
+    merged = sorted((chunk for chunk in lexical if chunk.page_start in routed_order),
+                    key=lambda chunk: routed_order.index(chunk.page_start))
+    only_routed = [chunk for chunk in routed if chunk.page_start not in lexical_pages]
+    only_lexical = [chunk for chunk in lexical if chunk.page_start not in routed_order]
+    for pair in zip_longest(only_routed, only_lexical):
+        merged.extend(chunk for chunk in pair if chunk is not None)
+    return merged[:_MAX_CHUNKS]
+
+
 class ManualRagAgent(BaseAgent):
     def __init__(self, retriever=None):
         super().__init__(_MANIFEST)
         self.kb = retriever or build_knowledge_retriever()
+        # 只有带目录的真实索引才有路由；mock/web 语料没有章节可选。
+        table_of_contents = getattr(self.kb, "table_of_contents", None)
+        document = getattr(self.kb, "document", None)
+        self._toc_router = (
+            ManualTocRouter(table_of_contents(), title=str(
+                (document or {}).get("title") or "车型用户手册"))
+            if callable(table_of_contents) else None)
+
+    async def _route_if_unsure(self, question: str, chunks) -> tuple[list, str, list[str]]:
+        """词法零命中、没把握，或问句含手册不认识的实词时，按目录补章节：两路都选中的页排前，
+        其余路由页与词法页交替，至多四块（`_merge_routed`）。路由没找到章节时保留原词法结果；只有「手册不认识的实词 +
+        路由明确判别的车型」才作废词法近似。确定性范围闸（别的车型、本车没有的对象、手册
+        没有的专名）、无内容问句与仪表灯 / 图标问法在它之前拦下，LLM 越不过去。"""
+        if self._toc_router is None:
+            return list(chunks), "lexical", []
+        if any(image.match_kind in {"visual_alias", "visual_caption"}
+               for chunk in chunks for image in getattr(chunk, "images", ())):
+            return list(chunks), "lexical", []
+        # 问句里有手册不认识的实词（奇骏 / 刮车 / 小冰箱）时，词法再自信也要问一次路由：
+        # 覆盖率分不开「车主叫法」和「别家车型」，LLM 的常识分得开。
+        unknown = self.kb.unknown_subject_terms(question)
+        if chunks and not unknown and chunks[0].coverage >= _ROUTE_BELOW_COVERAGE:
+            return list(chunks), "lexical", []
+        if self.kb.route_block_reason(question):
+            return list(chunks), "lexical", []
+        verdict = await self._toc_router.route(self.llm, question)
+        sections = list(verdict.sections)
+        if unknown and verdict.scope == SCOPE_OTHER_VEHICLE:
+            # 手册不认识的实词 + 路由明确判「别的车型」→ 词法近似作废（「奇骏的电池容量」
+            # 不能拿本车的储电量作答）。只认这一种：「没找到章节」「不是用车问题」都不作废——
+            # 模型的判断在温度 0 下也有方差，否决面越小误伤越少。
+            return [], "toc_router_rejected", []
+        if not sections:
+            return list(chunks), "lexical", []
+        routed = await self.kb.retrieve_sections(question, sections, top_k=_MAX_CHUNKS)
+        if not routed:
+            return list(chunks), "lexical", sections
+        stage = "toc_router" if not chunks else "lexical+toc_router"
+        return _merge_routed(routed, list(chunks)), stage, sections
 
     @staticmethod
     def _safety_data(level: str, question: str, **extra) -> dict:
@@ -231,7 +336,10 @@ class ManualRagAgent(BaseAgent):
             return None, "degraded"
 
     async def handle(self, intent, ctx, meta) -> AgentResult:
-        question = intent.raw_text or intent.slots.get("question", "")
+        raw = str(intent.raw_text or "").strip()
+        slot = str(intent.slots.get("question", "") or "").strip()
+        # 安全分级与告警信号只认用户原话（安全红线 6）；规划器的槽只可能参与检索。
+        question = raw or slot
         if not question:
             # 只回答的能力不许挂补槽（安全红线 5；执行器会把 NEED_SLOT 判成契约违规、这句根本发不出去）——就是一句普通回答
             return AgentResult(speech="您想了解车辆的哪方面？")
@@ -241,16 +349,23 @@ class ManualRagAgent(BaseAgent):
             intent.slots.get("vehicle_model", "")
             or ((meta or {}).get("vehicle_model", "") if hasattr(meta, "get") else "")
         ).strip()
+        lookup, basis = _retrieval_question(raw, slot)
         chunks = await self.kb.retrieve(                   # 1) retrieve
-            question, vehicle_model=vehicle_model)
+            lookup, vehicle_model=vehicle_model)
+        chunks, stage, sections = await self._route_if_unsure(lookup, chunks)
+        trace = {"retrieval": stage,
+                 **({"retrieval_basis": basis} if basis != "raw" else {}),
+                 **({"toc_sections": sections} if sections else {})}
+        logger.info("manual retrieval stage=%s basis=%s sections=%s chunks=%s",
+                    stage, basis, sections, [chunk.page_start for chunk in chunks])
 
-        # ① 零命中短路：不调 LLM。安全信号仍要给处置建议——**没有资料不等于没有风险**。
+        # ① 零命中短路：不调生成 LLM。安全信号仍要给处置建议——**没有资料不等于没有风险**。
         if not chunks:
             speech = "手册里没有查到这方面的内容，建议联系客服或前往服务点确认。"
             if level:
                 speech = f"{alert_advice(level)}{speech}"
             return AgentResult(speech=speech,
-                               data=self._safety_data(level, question),
+                               data=self._safety_data(level, question, **trace),
                                ui_card=self._card([], ""))
 
         # 来源类型取本轮实际检索到的资料（混合来源时只要有一条不是真手册，
@@ -267,7 +382,7 @@ class ManualRagAgent(BaseAgent):
             advice = alert_advice(level)
             return AgentResult(
                 speech=f"{advice}{_UNVERIFIED_NUMBERS}",
-                data=self._safety_data(level, question, source_type=source_type),
+                data=self._safety_data(level, question, source_type=source_type, **trace),
                 ui_card=self._card(chunks, source_type))
 
         # 受控视觉目录已经把俗称/正式 caption 与 PDF 内具体图片绑定，并在启动时逐 blob
@@ -293,7 +408,7 @@ class ManualRagAgent(BaseAgent):
                 speech=speech,
                 data=self._safety_data(
                     level, question, source_type=source_type,
-                    visual_match=image.caption),
+                    visual_match=image.caption, **trace),
                 ui_card=self._card(chunks, source_type),
             )
 
@@ -303,10 +418,13 @@ class ManualRagAgent(BaseAgent):
             f"\n{c.content}"
             for i, c in enumerate(chunks, start=1)
         )
+        # 检索用的是规划器补全的问题时，把用户原话一并给出：答案要回应的是用户说的那句。
+        asked = (f"【用户原话】{raw}\n【问题】{lookup}" if basis != "raw" and raw
+                 else f"【问题】{lookup}")
         messages = [                                        # 2) generate
             {"role": "system",
              "content": _SYSTEM_MANUAL if authoritative else _SYSTEM_GENERIC},
-            {"role": "user", "content": f"【参考资料】\n{context_block}\n\n【问题】{question}"},
+            {"role": "user", "content": f"【参考资料】\n{context_block}\n\n{asked}"},
         ]
         answer, generation_state = await self._generate_answer(messages)
         if answer is None:
@@ -320,6 +438,7 @@ class ManualRagAgent(BaseAgent):
                     question,
                     source_type=source_type,
                     generation_degraded="llm_runtime_error",
+                    **trace,
                 ),
                 ui_card=self._card(chunks, source_type),
             )
@@ -338,7 +457,7 @@ class ManualRagAgent(BaseAgent):
                 speech=speech,
                 data=self._safety_data(
                     level, question, source_type=source_type,
-                    grounding_rejected="numeric", **generation_data),
+                    grounding_rejected="numeric", **generation_data, **trace),
                 ui_card=self._card(chunks, source_type),
             )
 
@@ -348,6 +467,6 @@ class ManualRagAgent(BaseAgent):
         return AgentResult(
             speech=speech,
             data=self._safety_data(
-                level, question, source_type=source_type, **generation_data),
+                level, question, source_type=source_type, **generation_data, **trace),
             ui_card=self._card(chunks, source_type),
         )

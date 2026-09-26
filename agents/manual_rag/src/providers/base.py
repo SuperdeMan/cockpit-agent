@@ -40,6 +40,9 @@ class Chunk:
     page_end: int = 0
     section_path: tuple[str, ...] = ()
     images: tuple[ManualImage, ...] = ()
+    # 用户自己的词在这一页的覆盖率（0–1，只有真实索引填写）；Agent 据此判断词法命中
+    # 是否可信、要不要再按目录路由补一次。0 = 未知（mock/web）或来自目录路由。
+    coverage: float = 0.0
 
 
 class KnowledgeRetriever(ABC):
