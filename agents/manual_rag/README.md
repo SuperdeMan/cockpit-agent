@@ -4,7 +4,14 @@
 简短回答。v2 同时处理无标点操作方法问句、受控图标俗称和同页原图；mock 只保留给 CI
 和无私有手册资产的离线开发。
 
-生产状态（2026-09-05）：release `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 使用v2
+2026-09-26（0.4.0）：车主口语问法召回——「xxx 有哪些模式 / 怎么开启 / 有几个档位、后备箱能放几个行李」
+这类问法此前在生产上 86.8% 零命中（collector 562 轮里 488 轮）。检索 v3 重写查询理解（问句壳取自
+`runtime.question_shape`、档/挡折叠、主题 / 证据 / 只排序三类词、四道范围闸），并在词法没把握时让 LLM 在
+手册目录（封闭集合）里选章节。设计、证据与读数：
+[`docs/design/2026-09-26-manual-rag-colloquial-recall.md`](../../docs/design/2026-09-26-manual-rag-colloquial-recall.md)。
+索引包与云端模型资产不变。
+
+历史生产状态（2026-09-05）：release `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 使用v2
 shared-model只读图文包，5/5 endpoint healthy、统一verify通过。精确代码全量为
 7861 passed / 34 skipped / 5 warnings / 0 failed。
 
@@ -26,9 +33,15 @@ question-shape/FastIntent安全预检；这7条未发送，也不得把其余结
 ```text
 PDF + resources/visual_assets.yaml
     -> scripts/build_manual_index.py -> models/manual_rag/*.mrag
-    -> ManualIndexRetriever -> 中文 n-gram BM25 + 章节/短语/覆盖率重排
-       + 受控视觉 caption/aliases 精确匹配
-    -> Chunk(source_type=manual, section_path, PDF page, vehicle_model, images)
+    -> 检索用哪句话：原话优先；指代主语 / 规划器已拆出的本步分句才用 question 槽
+    -> ManualIndexRetriever
+         范围闸：外车型 / 本车没有的对象 / 未知专名与型号码 -> 零命中
+         查询理解：问句壳剥离（runtime.question_shape）+ 档挡折叠 + 受控同义词 / 意图扩展
+         中文 n-gram BM25 + 章节/短语重排；闸只看主题词覆盖率，排序再计证据词
+         + 受控视觉 caption/aliases 精确匹配
+    -> 词法零命中 / 主题覆盖率 < 0.7 / 含手册不认识的实词
+         -> 目录路由（LLM 只从目录编号里选 ≤3 节，不见正文）-> 章节轮转取页
+    -> Chunk(source_type=manual, section_path, PDF page, vehicle_model, images, coverage)
     -> grounded prompt / 视觉目录确定性回答 -> speech + 图文 manual card
 ```
 
@@ -45,6 +58,11 @@ PDF + resources/visual_assets.yaml
 - `.mrag` 内每个图片 blob 与视觉 manifest 均有 SHA-256；启动期全量校验，运行期读图复验；
 - 卡片最多 2 张、单图 640 KiB、总计 768 KiB，只允许 PNG/JPEG；图片不进入 LLM prompt；
 - “背宝剑小人”等俗称只接受 `visual_assets.yaml` 的人工审定映射，未知描述不模糊猜测；
+- 检索声明 `resources/retrieval.yaml` 是 schema v2：外车型 / 本车没有的对象两张表启动期逐条核对确实不在
+  手册里，矛盾即拒绝启动；`standalone` 扩展必须配主语约束；
+- 目录路由只产目录编号（代码校验存在、至多 3 个），被范围闸拦下、剥壳后没有实字、带仪表灯 / 图标语境的
+  问法不路由；路由失败即回落词法结果；只有「含手册不认识的实词 + 路由判其他车型」才作废词法近似；
+  零命中（词法与路由都没有材料）不调生成模型；
 - `runtime.question_shape` 保证“雨刮器怎么打开”等无标点方法问句不执行；PlanningGuide/
   exemplar 负责泛化，manifest route hint 只兜生产已复现的高风险窄句形。
 
@@ -118,6 +136,16 @@ python -X utf8 scripts/eval_manual_rag.py `
 python -X utf8 scripts/eval_manual_rag_full_coverage.py `
   --pdf 'D:\path\to\2024-小米SU7-Pro-Max-用户手册.pdf' `
   --output .artifacts/manual-rag-full-coverage/offline-full.json
+```
+
+车主口语问法（collector 真实问法 + 四类补充，42 条；`route: expected` 两条要靠目录路由）：
+
+```powershell
+python -X utf8 scripts/eval_manual_rag.py `
+  --index models/manual_rag/xiaomi-su7-2024.v2.mrag `
+  --cases test/eval_corpus/manual_rag_colloquial.yaml `
+  --output .artifacts/manual-rag/colloquial-lexical.json
+# 真栈（含目录路由）：probe_manual_rag_full_coverage.py --kind colloquial
 ```
 
 真实评测必须同时核对 top 页和关键正文；“页号碰对”不算通过。当前实现与证据边界见
