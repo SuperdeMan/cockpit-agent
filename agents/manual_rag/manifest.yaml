@@ -1,20 +1,25 @@
 agent_id: manual-rag
-version: 0.3.3
+version: 0.4.0
 display_name: 车书助手
 category: ecosystem
 trust_level: first_party
 deployment: cloud
-latency_budget_ms: 2500
+# 多步计划经执行器派发时，这个值就是 Execute 的硬超时。一次作答 = 词法检索（毫秒级）
+# + 目录路由（仅词法没把握时，p50≈1s）+ 答案生成（2–5s，瞬时失败再试一次）。旧值
+# 2500 在检索大多零命中、不调 LLM 时没暴露；命中率上来后「打开后备箱，再告诉我空调有
+# 哪些模式」的手册步会被掐断。
+latency_budget_ms: 15000
 fallback: chitchat
 
 capabilities:
   - intent: manual.query
     response_only: true
-    description: 车型使用手册问答（胎压、保养、充电、功能操作等），基于车型知识库检索作答
+    description: 车型使用手册问答：部件与功能有哪些模式/挡位/颜色、怎么开启与设置、储物容量与整车规格、保养、充电、仪表告警等，按本车手册检索作答
     slots: [question]
     examples: ["胎压多少正常", "怎么开启自动泊车", "多久保养一次", "怎么连CarPlay",
                "雨刮器怎么打开", "仪表上这个故障灯是什么意思",
-               "小人背着宝剑的灯亮了是怎么回事"]
+               "小人背着宝剑的灯亮了是怎么回事", "座椅加热有几个挡位",
+               "空调有哪些模式", "后备箱能放几个行李箱"]
 
 # 生产 MiniMax 在 2026-09-03 将“雨刮器怎么打开？”与“背宝剑的小人灯”都规划成
 # chitchat.talk。这里用 Agent 自声明的窄领域 hint 兜底；编排核心不新增 manual 字面量。

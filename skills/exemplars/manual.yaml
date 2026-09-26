@@ -139,3 +139,27 @@ exemplars:
   added: '2026-09-03'
   tags: [badcase, maintenance, long-storage]
   note: 长期停放的当前车型电池养护必须查手册，不能套燃油车低压电瓶经验
+# 2026-09-26 collector 真实问法的改写样本（不抄原句）：部件自带的模式 / 挡位 / 容量是手册事实。
+- text: 空调能切换哪几种工作模式
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-26'
+  tags: [badcase, feature-modes]
+  note: 原问法「空调有什么模式」57 轮被规划成 scene.list，答的是回家/露营场景
+- text: 副驾的座椅加热一共分几级
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-26'
+  tags: [badcase, feature-levels]
+  note: 计数问是问参数，不是执行 seat.heating.on
+- text: 前备箱塞得下多大的行李箱
+  plan:
+  - agent: manual-rag
+    intent: manual.query
+  source: trace
+  added: '2026-09-26'
+  tags: [badcase, capacity]

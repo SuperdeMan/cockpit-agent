@@ -254,14 +254,18 @@ def test_request_ref_mapping_holds_the_real_live_inventory(monkeypatch):
     # 「本轮原话带告警 ⇒ 按等级给确定性结论」，但 planner **只看得见描述**，于是
     # 「红色机油灯亮了还能继续开吗」被规划成 info.search（information T24）。条数不变。
     # 2026-09-25 +91 → 13946：端侧后视镜加热开 / 关两条（机械生成的短描述「打开 / 关闭后视镜加热」）。有意新增 +2 条，仍零裁剪。
-    assert catalog.catalog_stats["chars_full"] == 13946
-    assert catalog.catalog_stats["chars_final"] == 13946
+    # 2026-09-26 +63 → 14009：手册口语召回批两处判别化描述，条数不变。`manual.query` 写明「部件与
+    # 功能有哪些模式 / 挡位 / 颜色、怎么开启与设置、储物容量与整车规格」；`scene.list` 补反界定
+    # 「部件自带的工作模式与挡位不是场景」——collector 57 轮「空调有什么模式」被规划成 scene.list，
+    # 答的是回家 / 露营场景。同 safety.driving_advice 那笔：planner 只看得见描述。
+    assert catalog.catalog_stats["chars_full"] == 14009
+    assert catalog.catalog_stats["chars_final"] == 14009
     assert catalog.catalog_stats["chars_final"] == len(catalog.semantic_mapping_text)
     assert catalog.catalog_stats["chars_final"] <= 16000
-    # 余量随目录一起走（13946 → 2054）。这行的意义不是「余量是多少」，
+    # 余量随目录一起走（14009 → 1991）。这行的意义不是「余量是多少」，
     # 是**每次加能力都必须把余量重新看一眼**——16k 预算被撑满时该做的是
     # 检索化 catalog，不是悄悄放大预算（§4.2 M5 后续杠杆）。
-    assert 16000 - catalog.catalog_stats["chars_final"] == 2054
+    assert 16000 - catalog.catalog_stats["chars_final"] == 1991
     assert set(catalog.agent_map) == {a.manifest.agent_id for a in agents}
     assert {"parking-payment", "nearby", "manual-rag"} <= set(catalog.agent_map)
     builtin = catalog.agent_map["builtin-tools"].manifest
