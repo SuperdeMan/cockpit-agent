@@ -68,6 +68,11 @@ def _response(agent, intent):
 _GUARD = PlanBuilder._question_side_effect_steps
 
 
+def test_negated_prelude_and_explanation_cannot_authorize_a_write():
+    step = _step("window.open")
+    assert _GUARD([step], "别打开车窗，只解释怎么打开车窗") == [step]
+
+
 # ── 1. 问句 + 写车控 = 拦 ──────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text", [

@@ -209,6 +209,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                          "cleanup": bool(turn.get("cleanup")), "observation": obs,
                          "request_to_final_ms": round(elapsed, 2), "verdict": verdict,
                          "evidence_errors": evidence_errors, "vehicle_diff_keys": sorted(changed),
+                         "vehicle_before": baseline.value, "vehicle_after": after.value,
                          "trace": _redact(detail)})
             print(f"{case['id']} r{repeat} t{n}: {verdict['failures']} {evidence_errors}", flush=True)
             if obs.get("actions") or changed or evidence_errors:

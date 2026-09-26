@@ -60,6 +60,23 @@ V207：“露营模式是什么意思？”（trace `57cbbee135fd48f397df97ebb99
 seed revision `2026-09-26b` 改为回答含主题、零动作、无未请求的确认；其它用例不变。
 探针也将“未请求却出确认卡”单独判红，即使 actions 为空。旧 raw artifact 和旧语料 SHA 保留，不能拼成同一冻结集成绩。
 
+### 2.4 V208：否定前缀之后的“只解释”被端侧执行
+
+`634c2878` 修后测量的 V207 已零动作/零确认；V208
+“别打开车窗，只解释怎么打开车窗”在端侧拆分后将第二段执行成 window.open，模拟 VAL 的 window 发生变化。
+trace `49307834d3c34dc6a92276245a217fcd`，artifact `.artifacts/v2-runtime/baseline-634c2878-01.json`。
+探针立即停止，无挂起，无自动反向车控。该趟不能计为完整基线。
+
+根因是共享解释句形前缀漏“只/仅/仅仅”，混合拆分的第二段因此被当操作。
+修法只扩原解释句形；全句只含否定前缀和解释分句时也按解释处理，含另一条正向指令时保留原行为。
+端侧和云侧继续共用一份判据。五条新增反例在旧代码上全红；改后定向 343 passed。
+本轮全量：9986 passed / 32 skipped / 11 warnings，331.24 s（本测试进程使用 Windows 自带模块路径，未改系统配置）；
+四门禁全过、smoke_edge 13/13。日志 `.artifacts/v2-runtime/r0-explanation-full-suite.log` 与 `r0-explanation-gates.log`。
+
+量尺同时补强：每轮保存完整 vehicle_before/vehicle_after，而非只有差异键。
+旧 artifact 没有保存具体前态值，不声称已精确恢复原态；后续部署重建模拟 VAL 后重新冻结完整状态。
+这里只涉及本项目内存模拟 VAL，没有连接真实车控总线。
+
 ## 3. 第一批契约实施边界
 
 CA2-02 复用现有分句与 step_grounding，步骤业务读取范围与 safety_origin_text 的授权范围分开。

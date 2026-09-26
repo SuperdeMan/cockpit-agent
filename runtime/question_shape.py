@@ -149,7 +149,7 @@ _ASK_PREFIX_RE = re.compile(rf"^(?:{_ASK_PREFIX_ALT})[，,]?\s*")
 _EXPLAIN_ALT = "|".join(sorted(map(re.escape, EXPLAIN_REQUESTS), key=len, reverse=True))
 #: 元请求：句首（礼貌前缀 / 人称 / 「能 / 能不能 / 可以」之后）就是解释动词，其后跟着疑问框架。
 _EXPLAIN_REQUEST_RE = re.compile(
-    rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再)*\s*(?:{_EXPLAIN_ALT})"
+    rf"^(?:请|麻烦|帮我|帮忙|给我|替我|你|您|能|能不能|可以|可不可以|先|再|只|仅|仅仅)*\s*(?:{_EXPLAIN_ALT})"
     r"[，,]?\s*.{0,16}?(?:怎么|怎样|咋|如何|为什么|为啥|什么|哪个|哪种|哪里|哪边|几|多少|多久"
     r"|能不能|可不可以|是不是|有没有|会不会|支不支持)")
 _LOOKUP_ALT = "|".join(sorted(map(re.escape, LOOKUP_REQUESTS), key=len, reverse=True))
@@ -268,7 +268,16 @@ def strip_ask_prefix(t: str | None) -> str:
 
 def is_explanation_request(t: str | None) -> bool:
     """「请告诉我怎么关闭空调」「给我讲讲天窗是怎么开的」——请求解释，不是请求执行。"""
-    return bool(_EXPLAIN_REQUEST_RE.match(strip_ask_prefix(t)))
+    body = strip_ask_prefix(t)
+    if _EXPLAIN_REQUEST_RE.match(body):
+        return True
+    # CA2-01 V208: a negated prelude does not turn the following explanation into
+    # permission to execute. Positive sibling commands retain their old treatment.
+    from runtime.polarity import is_negated_directive
+    parts = split_clauses(body)
+    asks = [bool(_EXPLAIN_REQUEST_RE.match(p)) for p in parts]
+    return (len(parts) > 1 and any(asks)
+            and all(ask or is_negated_directive(p) for p, ask in zip(parts, asks)))
 
 
 def asks_for_reason(t: str | None) -> bool:

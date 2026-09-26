@@ -643,3 +643,15 @@ def test_lookup_request_table_is_a_closed_function_word_class():
 def test_definition_only_guard_keeps_other_speech_acts(text, expected):
     from runtime.question_shape import is_definition_only_question
     assert is_definition_only_question(text) is expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("只解释怎么打开车窗", True), ("仅告诉我如何打开后备箱", True),
+    ("别打开车窗，只解释怎么打开车窗", True),
+    ("不要开车窗，只解释如何打开，再告诉我怎么关闭", True),
+    ("只打开车窗", False), ("别打开车窗，关掉空调", False),
+    ("打开后备箱，再解释空调怎么开", False),
+])
+def test_restricted_explanation_and_negative_prelude(text, expected):
+    from runtime.question_shape import is_explanation_request
+    assert is_explanation_request(text) is expected
