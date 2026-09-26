@@ -68,6 +68,28 @@ def test_anaphoric_follow_up_retrieves_with_the_resolved_question(tmp_path):
     assert "【用户原话】它有几档" in prompt and "【问题】座椅加热有几档" in prompt
 
 
+def test_slot_vetoed_by_words_the_user_never_said_falls_back_to_the_users_words(tmp_path):
+    """规划器拆步时往槽里加了用户没说的词（真栈：「胎压应该补到多少kPa」，手册只写 bar），槽被
+    专名闸否决、原话却没有：否决它的词不是用户的，回到原话检索。"""
+    agent, _ = _agent(tmp_path, json.dumps({"scope": SCOPE_THIS_VEHICLE, "sections": []}),
+                      "座椅加热可切换 3-2-1-off 三挡。")
+    result = asyncio.run(run_handle(
+        agent, "manual.query", slots={"question": "座椅加热有几个档位kPa"},
+        raw_text="打开后备箱，再告诉我座椅加热有几个档位"))
+    assert [chunk["page_start"] for chunk in result.ui_card["chunks"]][:1] == [37]
+    assert result.data["retrieval_basis"] == "raw_slot_vetoed"
+
+
+def test_vetoed_anaphora_resolution_is_not_undone(tmp_path):
+    """指代补全被否决不回退：原话只有代词，补全出来的别家车型正该零命中。"""
+    agent, _ = _agent(tmp_path)
+    result = asyncio.run(run_handle(
+        agent, "manual.query", slots={"question": "理想L9的纯电续航是多少"},
+        raw_text="那它的纯电续航呢"))
+    assert agent.llm.complete.await_count == 0
+    assert not result.ui_card["sources"]
+
+
 def test_safety_level_stays_on_the_users_words(tmp_path):
     """规划器的槽只参与检索：它写进去的告警词不能凭空把这轮升成安全告警。"""
     agent, _ = _agent(tmp_path, "座椅加热可切换 3-2-1-off 三挡。")

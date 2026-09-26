@@ -62,9 +62,21 @@ _MAX_IMAGES = 2
 _VISUAL_CONTEXT_MARKERS = (
     "图标", "指示灯", "仪表", "灯亮", "亮了", "常亮", "闪烁",
 )
-# 灯态词之后还有话，就是前提说完了（「胎压灯亮了应该补到多少」「胎压灯亮起应该补到多少」）：
-# 仪表灯语境承接主语时当分句边界用。规划器把前提并进本步槽时也是这个形态。
-_LAMP_STATE_BOUNDARY_RE = re.compile(r"(?<=亮了|亮起|亮着|常亮|闪烁|闪了)(?=[^，,。；;！!？?\s]{2,})")
+# 灯态短语之后还有话，就是前提说完了（「胎压灯亮了应该补到多少」「胎压黄灯亮应该补到多少」）：
+# 仪表灯语境承接主语时当分句边界用。规划器把前提并进本步槽时也是这个形态。按从左到右、
+# 同一位置取最长的短语切，「灯亮了」不会被切成「灯亮 / 了」。
+_LAMP_STATE_RE = re.compile(
+    r"(?:灯亮了|灯亮起|灯亮着|亮了|亮起|亮着|常亮|闪烁|闪了|灯亮)(?=[^，,。；;！!？?　 ]{2,})")
+
+
+def _split_after_lamp_state(clause: str) -> list[str]:
+    parts: list[str] = []
+    start = 0
+    for match in _LAMP_STATE_RE.finditer(clause):
+        parts.append(clause[start:match.end()])
+        start = match.end()
+    parts.append(clause[start:])
+    return [part for part in parts if part]
 # 闸：主题覆盖率与质量分下限（v2 起的口径不变，变的是覆盖率只算用户自己的词）。
 _MIN_QUALITY = 1.0
 _MIN_TOPIC_COVERAGE = 0.42
@@ -954,7 +966,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
             return []
         clauses: list[str] = []
         for clause in self._question_clauses(query):
-            head, *rest = [part for part in _LAMP_STATE_BOUNDARY_RE.split(clause) if part]
+            head, *rest = _split_after_lamp_state(clause)
             # 灯态词之后的话自己带主题词才是另一问（「…亮了应该补到多少」）；「…亮了怎么办」
             # 「…亮着是什么意思」问的就是这盏灯，整句排序已经照顾到，切开只会承接出旁页。
             if rest and all(self._prepare_variants(self._in_scope_variants(part)[0])

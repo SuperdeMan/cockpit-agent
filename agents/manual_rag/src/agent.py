@@ -358,6 +358,12 @@ class ManualRagAgent(BaseAgent):
             or ((meta or {}).get("vehicle_model", "") if hasattr(meta, "get") else "")
         ).strip()
         lookup, basis = _retrieval_question(raw, slot)
+        # 按分句取的槽被范围闸否决、原话却没有：否决它的词是规划器写进去的（「胎压应该补到
+        # 多少kPa」的 kPa，手册只写 bar），不是用户说的，回到原话。指代补全不回退：那里原话
+        # 只有代词，否决可能正是对的（「那它的纯电续航呢」补全出来是别家车型）。
+        if (basis == "clause" and self._toc_router is not None
+                and self.kb.scope_veto(lookup) and not self.kb.scope_veto(raw)):
+            lookup, basis = raw, "raw_slot_vetoed"
         chunks = await self.kb.retrieve(                   # 1) retrieve
             lookup, vehicle_model=vehicle_model)
         chunks, stage, sections = await self._route_if_unsure(lookup, chunks)
