@@ -13,7 +13,7 @@ import pytest
 import yaml
 
 from runtime.question_shape import (
-    CAPABILITY_ASKS, CHOICE_ASKS, DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
+    ADJUST_ACTIONS, CAPABILITY_ASKS, CHOICE_ASKS, DIRECTIVE_MARKERS, HYPOTHETICAL_FRAMES,
     MANNER_ASKS, HOW_TO_ACTIONS, OPERATION_VERBS, POLITE_TAILS, PROPERTY_ASKS,
     QUESTION_TAILS, REFERENCE_ASKS,
     is_non_directive_question,
@@ -32,6 +32,7 @@ _CLASSES = {
     "HYPOTHETICAL_FRAMES": HYPOTHETICAL_FRAMES,
     "DIRECTIVE_MARKERS": DIRECTIVE_MARKERS,
     "HOW_TO_ACTIONS": HOW_TO_ACTIONS,
+    "ADJUST_ACTIONS": ADJUST_ACTIONS,
     "POLITE_TAILS": POLITE_TAILS,
 }
 
@@ -139,6 +140,32 @@ def test_manner_ask_without_operation_verb_is_a_question():
 def test_object_first_how_to_shape_is_a_question_without_asr_punctuation(text):
     """对象在前的“怎么操作”是方法询问；ASR 没有问号也不得执行成车控。"""
     assert is_non_directive_question(text) is True
+
+
+@pytest.mark.parametrize("text", [
+    "自适应巡航的跟车距离怎么调",      # collector 原句：修前端侧解成 setting.control
+    "空调温度怎么调",                  # 修前端侧执行成开空调
+    "座椅加热怎么调",                  # 修前端侧执行成开座椅
+    "座椅高度怎么调节",
+    "氛围灯亮度如何调整",
+    "空调怎么调",                      # 「空调」自己带「调」字：看的是句末的光杆动词
+    "HUD 高度怎么调呢",
+])
+def test_object_first_adjust_how_to_is_a_question(text):
+    """对象在前、句末是光杆调节动词的方法问（车书口语召回二批，2026-09-26）。"""
+    assert is_non_directive_question(text) is True, text
+
+
+@pytest.mark.parametrize("text", [
+    "温度如何调高",                    # 带方向：既有合同，仍是指令
+    "怎么把温度调高",
+    "空调调到26度怎么弄",              # 带目标
+    "怎么调空调温度",                  # 动作在前：调节类不进 HOW_TO_ACTIONS，维持原判
+    "跟车距离怎么调近一点",
+    "调到三档",
+])
+def test_adjust_with_direction_or_target_stays_a_directive(text):
+    assert is_non_directive_question(text) is False, text
 
 
 @pytest.mark.parametrize("text", [
@@ -426,7 +453,10 @@ def test_reason_questions_are_questions_wherever_the_subject_puts_an_operation_c
     "怎么这么热，空调开大点",
     "温度如何调高",                # 方式问法维持原配对
     "调低一点怎么样",
-    "空调怎么调",
+    # 原来这里是「空调怎么调」。2026-09-26 起对象在前、句末光杆调节动词是方法问（`_OBJECT_FIRST_ADJUST_RE`，
+    # 修前端侧把它执行成开空调）；方式问法配对本身不变，换成仍带方向 / 动作在前的同族句守住。
+    "空调怎么调低一点",
+    "怎么调空调温度",
 ])
 def test_reason_pairing_keeps_the_existing_directive_contracts(text):
     assert is_non_directive_question(text) is False, text

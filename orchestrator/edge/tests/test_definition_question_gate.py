@@ -54,3 +54,24 @@ def test_a_definition_question_is_not_answered_with_a_reading():
 def test_directives_with_definition_words_still_run(text, obj):
     result = classify_structured(text)
     assert result is not None and result["data"]["object"] == obj, (text, result)
+
+
+# ── 调节类方法问（车书口语召回二批，2026-09-26）：「X 怎么调」问的是怎么调，不是去调 ──────────────
+@pytest.mark.parametrize("text", [
+    "空调温度怎么调",                 # 修前 aircon open
+    "座椅加热怎么调",                 # 修前 seat open
+    "座椅高度怎么调节",               # 修前 seat open
+    "自适应巡航的跟车距离怎么调",      # 修前 cruise_following open
+])
+def test_an_adjust_how_to_question_is_not_executed(text):
+    assert classify_structured(text) is None, (text, classify_structured(text))
+
+
+@pytest.mark.parametrize("text, operate", [
+    ("温度如何调高", "inc"),           # 带方向：既有合同照常执行
+    ("把空调调到26度", "set"),
+])
+def test_adjust_directives_still_run(text, operate):
+    result = classify_structured(text)
+    assert result is not None and result["data"]["operate"] == operate, (text, result)
+

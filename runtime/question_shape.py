@@ -125,6 +125,16 @@ _ACTION_FIRST_HOW_TO_RE = re.compile(
     rf"^(?:怎么|咋|如何)(?:才|才能|可以|应该|要|去)?(?:{_HOW_TO_ACTION_ALT}).+"
     r"(?:一下|呢|啊|呀|吧|才行)?$"
 )
+#: 调节类的方法问（2026-09-26，车书口语召回二批）：「空调温度怎么调」「座椅高度怎么调节」「跟车距离怎么调」——
+#: 对象在前、句末就是光杆调节动词，问的是怎么调。修前端侧把「空调温度怎么调」执行成开空调、「座椅加热怎么调」执行成开座椅。
+#: 只收**句末光杆**形态：带方向 / 目标的「温度如何调高」「怎么把温度调高」「空调调到 26 度怎么弄」、动作在前的「怎么调空调温度」
+#: 仍按既有合同是指令（`HOW_TO_ACTIONS` 因此不收调节类动词）。量过：语料 + collector 10 383 句只翻转这一形态的 1 句。
+ADJUST_ACTIONS = ("调节", "调整", "调")
+_OBJECT_FIRST_ADJUST_RE = re.compile(
+    r"^.+(?:怎么|咋|如何)(?:才|才能|可以|应该|要|去)?(?:"
+    + "|".join(sorted(map(re.escape, ADJUST_ACTIONS), key=len, reverse=True))
+    + r")(?:一下|呢|啊|呀|吧|才行)?$"
+)
 #: 评审二轮 R9（2026-09-22）：「怎么把车窗打开」「如何把空调关闭」——方式疑问词 + 「把 / 将」处置式
 #: + 操作动作，是方法询问。manual-rag v2 曾把「怎么把」显式排除（「显式执行框架」），于是端侧直接
 #: 执行成 window.open：**「把」是句法结构，不是授权证据**。礼貌执行句（「帮我把车窗关上好吗」）
@@ -247,6 +257,7 @@ def _is_how_to_question(t: str) -> bool:
         _OBJECT_FIRST_HOW_TO_RE.fullmatch(cleaned)
         or _ACTION_FIRST_HOW_TO_RE.fullmatch(cleaned)
         or _BA_FRAME_HOW_TO_RE.fullmatch(cleaned)
+        or _OBJECT_FIRST_ADJUST_RE.fullmatch(cleaned)
     )
 
 
