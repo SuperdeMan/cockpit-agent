@@ -34,6 +34,7 @@ import yaml
 from agents.manual_rag.src.index_format import IndexFormatError, load_manual_package
 from agents.manual_rag.src.toc import TocEntry, build_table_of_contents
 from runtime import question_shape
+from runtime.clause_split import split_clauses
 from .base import Chunk, KnowledgeRetriever, ManualImage
 
 
@@ -220,6 +221,26 @@ _PROPERTY_SHELL_RE = re.compile(
     f"(?:{_alternation(question_shape.COUNT_HEADS)})"
     r"[^，,。；;！!？?\s]{0,2}?"
     f"(?:{_alternation(_normalize(word) for word in question_shape.PROPERTY_ASKS)})")
+
+
+def _has_visual_context(text: str) -> bool:
+    """描述仪表灯 / 图标的语境（「亮了」「指示灯」「仪表」…）。"""
+    compact = _compact(text)
+    return any(_compact(marker) in compact for marker in _VISUAL_CONTEXT_MARKERS)
+
+
+def _interleave_ranked(lists: list[list[tuple]]) -> list[tuple]:
+    """按名次交替合并几份排序（各份第 1 名、再各份第 2 名…），同一页只留第一次出现。"""
+    merged: list[tuple] = []
+    seen: set[int] = set()
+    for depth in range(max((len(items) for items in lists), default=0)):
+        for items in lists:
+            if depth < len(items):
+                page = items[depth][-1].raw["page_start"]
+                if page not in seen:
+                    seen.add(page)
+                    merged.append(items[depth])
+    return merged
 
 
 def _string_list(rule: dict, key: str, where: str) -> tuple[str, ...]:
@@ -627,20 +648,31 @@ class ManualIndexRetriever(KnowledgeRetriever):
         rank_coverage = rank_matched / rank_total if rank_total else 0.0
         return body_score + 1.8 * section_score, topic_coverage, rank_coverage
 
-    def _score(self, variants: list[_Variant], chunk: _PreparedChunk) -> tuple[float, float]:
-        best_quality = 0.0
-        best_coverage = 0.0
-        haystack = _compact(chunk.normalized_section + " " + chunk.normalized_content)
+    def _prepare_variants(self, variants: list[_Variant]) -> list[tuple]:
+        """每个变体的词集只算一次，不随逐页打分重算；没有主题词的变体不参与。"""
+        prepared = []
         for variant in variants:
             topic, evidence, soft = self._variant_terms(variant)
             if not topic:
                 continue
+            phrases = [part for part in _CJK_SEQUENCE_RE.findall(
+                f"{variant.content} {variant.hint}") if len(part) >= 3]
+            prepared.append((topic, evidence, soft, _compact(variant.content), phrases))
+        return prepared
+
+    def _score(self, prepared: list[tuple], chunk: _PreparedChunk) -> tuple[float, float, bool]:
+        """(质量, 主题覆盖率, 章节命中)。章节命中 = 某个变体的主题词出现在这一页的章节路径里；
+        主题词只在正文里撞上的页（「运动模式到底在哪切换」撞上讲特殊路况的页）不算有把握。"""
+        best_quality = 0.0
+        best_coverage = 0.0
+        section_hit = False
+        haystack = _compact(chunk.normalized_section + " " + chunk.normalized_content)
+        for topic, evidence, soft, needle, phrases in prepared:
+            section_hit = section_hit or any(term in chunk.section_terms for term in topic)
             raw, coverage, rank_coverage = self._bm25(chunk, topic, evidence, soft)
-            needle = _compact(variant.content)
             if len(needle) >= 2 and needle in haystack:
                 raw += 3.0
-            for phrase in re.findall(r"[\u3400-\u9fff]{3,}",
-                                     f"{variant.content} {variant.hint}"):
+            for phrase in phrases:
                 if phrase in chunk.normalized_content:
                     raw += min(5.0, 1.0 + len(phrase) * 0.6)
                 elif phrase in chunk.normalized_section:
@@ -650,7 +682,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
             quality = raw * rank_coverage ** _RANK_COVERAGE_EXPONENT
             if quality > best_quality:
                 best_quality, best_coverage = quality, coverage
-        return best_quality, best_coverage
+        return best_quality, best_coverage, section_hit
 
     # ── 范围闸 ──────────────────────────────────────────────────────────────
 
@@ -737,8 +769,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
                           for char in variant.content)
                    for variant in variants):
             return "no_content"
-        compact = _compact(query)
-        if any(_compact(marker) in compact for marker in _VISUAL_CONTEXT_MARKERS):
+        if _has_visual_context(query):
             return "visual_context"
         return ""
 
@@ -746,8 +777,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
 
     def _matched_visual_assets(self, query: str) -> list[tuple[dict[str, Any], str]]:
         compact = _compact(query)
-        has_visual_context = any(
-            _compact(marker) in compact for marker in _VISUAL_CONTEXT_MARKERS)
+        has_visual_context = _has_visual_context(query)
         matched: list[tuple[dict[str, Any], str]] = []
         seen: set[str] = set()
         for needle, kind, asset in self._visual_needles:
@@ -786,14 +816,14 @@ class ManualIndexRetriever(KnowledgeRetriever):
             match_kind=match_kind,
         )
 
-    def _materialize(self, ranked: list[tuple[float, float, _PreparedChunk]],
+    def _materialize(self, ranked: list[tuple[float, float, bool, _PreparedChunk]],
                      visual_by_page: dict[int, list[tuple[dict[str, Any], str]]]) -> list[Chunk]:
         result: list[Chunk] = []
         embedded_bytes = 0
         embedded_count = 0
         embedded_blobs: set[str] = set()
         title = self.document["title"]
-        for rank, (quality, coverage, prepared) in enumerate(ranked):
+        for rank, (quality, coverage, section_hit, prepared) in enumerate(ranked):
             raw = prepared.raw
             section_path = tuple(raw["section_path"])
             page_start, page_end = raw["page_start"], raw["page_end"]
@@ -840,6 +870,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 section_path=section_path,
                 images=tuple(images),
                 coverage=round(coverage, 6),
+                section_hit=section_hit,
             ))
         return result
 
@@ -849,6 +880,92 @@ class ManualIndexRetriever(KnowledgeRetriever):
         requested_model = _normalize(vehicle_model).replace(" ", "-")
         indexed_model = _normalize(self.vehicle_model).replace(" ", "-")
         return bool(requested_model) and requested_model != indexed_model
+
+    def _rank(self, prepared: list[tuple],
+              visual_by_page: dict[int, list[tuple[dict[str, Any], str]]]) -> list[tuple]:
+        ranked: list[tuple[float, float, bool, _PreparedChunk]] = []
+        for chunk in self._chunks:
+            quality, coverage, section_hit = self._score(prepared, chunk)
+            page = chunk.raw["page_start"]
+            if page in visual_by_page:
+                # 人工审定别名/正式 caption 是比词法近似更强的证据；只提升其所属物理页，
+                # 不把 caption/答案注入其它页，也不对未知视觉描述做模糊匹配。
+                quality = max(quality, 24.0 + max(
+                    len(_compact(asset["caption"]))
+                    for asset, _ in visual_by_page[page]))
+                coverage, section_hit = 1.0, True
+            if quality < _MIN_QUALITY or coverage < _MIN_TOPIC_COVERAGE:
+                continue
+            ranked.append((quality, coverage, section_hit, chunk))
+        ranked.sort(key=lambda item: (-item[0], item[3].raw["page_start"]))
+        return ranked
+
+    @staticmethod
+    def _question_clauses(query: str) -> list[str]:
+        """一句话的各个分句（问句与陈述都在内）：先按问号 / 句号断，再按分句词表
+        （`runtime.clause_split`）断。"""
+        clauses: list[str] = []
+        for sentence in re.split(r"[？?。！!；;]", str(query or "")):
+            clauses.extend(part for part in split_clauses(sentence) if part)
+        return clauses
+
+    def _leading_subject(self, clause: str) -> str:
+        """分句里第一个手册认识的名词串（「胎压黄灯亮了」→「胎压」，「方向盘加热在哪」→
+        「方向盘加热」）：剥掉问句壳后，第一段相邻主题双字（同 `_content_terms` 的产物 / 接缝
+        判法，且手册里出现过）连成的串，至少两个字。"""
+        for part in _CJK_SEQUENCE_RE.findall(self._strip_noise(_normalize(clause))):
+            if len(part) < 2:
+                continue
+            _terms, artifacts, junctions = self._content_terms(part)
+            usable = [gram not in artifacts and gram not in junctions
+                      and bool(self._document_frequency.get(gram, 0))
+                      for gram in (part[i:i + 2] for i in range(len(part) - 1))]
+            if True in usable:
+                begin = usable.index(True)
+                end = begin
+                while end < len(usable) and usable[end]:
+                    end += 1
+                return part[begin:end + 1]
+        return ""
+
+    def _mentions(self, chunk: _PreparedChunk, subject: str) -> bool:
+        haystack = _compact(chunk.normalized_section + " " + chunk.normalized_content)
+        return any(_compact(name) in haystack
+                   for name in (subject, *self._config.aliases.get(subject, ())))
+
+    def _carried_rankings(self, query: str) -> list[list[tuple]]:
+        """仪表灯语境的一句多问（「胎压黄灯亮了，还能继续开吗？应该补到多少？」）：前文有主语时，
+        后续每个问句按「主语 + 问句」再排一次（「应该补到多少」按「胎压应该补到多少」查；问句
+        自己带着这个主语就按原样查），只留提到这个主语（或其受控同义词）的页。主语取第一个
+        分句开头的手册名词串。
+
+        只在仪表灯语境里做：这类句子不交给目录路由（`route_block_reason`），整句排序又被
+        「黄灯亮了」拉向告警页，后半问只能靠这里。别的一句多问由 Agent 的目录路由按章节
+        补（盲写复合问句集 42 条上第一批已 77/84）；在那里承接只添噪声——前提句开头的
+        名词常是顺口带出的（「太阳当头照…咋整」承接成「太阳」），换了主语的问句（「安全带
+        提示音咋设置，后排儿童锁又在哪扳」）承接出来的前一个主语的页会把命中页挤出前四。
+
+        只承接、不让问句自己单独排：「还能继续开吗」的「能继 / 继续 / 续开」在讲电动尾翼的页
+        全在场，自己排只会引入别处的页。"""
+        clauses = self._question_clauses(query)
+        if len(clauses) < 2 or not _has_visual_context(query):
+            return []
+        # 主语本身是显示位置（「仪表盘亮了个红灯，还能开吗」的「仪表盘」）时说明灯没有点名：
+        # 认图标只认受控视觉目录，不承接。
+        subject = self._leading_subject(clauses[0])
+        if not subject or _has_visual_context(subject):
+            return []
+        rankings: list[list[tuple]] = []
+        for clause in clauses[1:]:
+            if not question_shape.is_non_directive_question(clause):
+                continue
+            asked = clause if subject in _normalize(clause) else subject + clause
+            variants = self._in_scope_variants(asked)[0]
+            ranking = [item for item in self._rank(self._prepare_variants(variants), {})
+                       if self._mentions(item[-1], subject)]
+            if ranking:
+                rankings.append(ranking)
+        return rankings
 
     async def retrieve(self, query: str, vehicle_model: str = "",
                        top_k: int = 4) -> list[Chunk]:
@@ -871,21 +988,11 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 seen_assets.add(asset["asset_id"])
                 visual_by_page.setdefault(asset["page_start"], []).append((asset, kind))
 
-        ranked: list[tuple[float, float, _PreparedChunk]] = []
-        for chunk in self._chunks:
-            quality, coverage = self._score(variants, chunk)
-            page = chunk.raw["page_start"]
-            if page in visual_by_page:
-                # 人工审定别名/正式 caption 是比词法近似更强的证据；只提升其所属物理页，
-                # 不把 caption/答案注入其它页，也不对未知视觉描述做模糊匹配。
-                quality = max(quality, 24.0 + max(
-                    len(_compact(asset["caption"]))
-                    for asset, _ in visual_by_page[page]))
-                coverage = 1.0
-            if quality < _MIN_QUALITY or coverage < _MIN_TOPIC_COVERAGE:
-                continue
-            ranked.append((quality, coverage, chunk))
-        ranked.sort(key=lambda item: (-item[0], item[2].raw["page_start"]))
+        ranked = self._rank(self._prepare_variants(variants), visual_by_page)
+        carried = self._carried_rankings(query)
+        if carried:
+            # 整句排序被「亮了」拉向告警页；承接出来的排序按名次与之交替，整句首页不变。
+            ranked = _interleave_ranked([ranked, *carried])
         return self._materialize(ranked[:min(int(top_k), 10)], visual_by_page)
 
     async def retrieve_sections(self, query: str, entry_ids: list[str],
@@ -898,6 +1005,7 @@ class ManualIndexRetriever(KnowledgeRetriever):
         variants, veto = self._in_scope_variants(query)
         if veto:
             return []
+        prepared = self._prepare_variants(variants)
         per_entry: list[list[_PreparedChunk]] = []
         claimed: set[int] = set()
         for entry_id in entry_ids:
@@ -909,17 +1017,17 @@ class ManualIndexRetriever(KnowledgeRetriever):
                 chunk = self._chunks_by_page.get(page)
                 if chunk is None or page in claimed:
                     continue
-                quality = self._score(variants, chunk)[0] if variants else 0.0
+                quality = self._score(prepared, chunk)[0] if prepared else 0.0
                 scored.append((quality, chunk))
             scored.sort(key=lambda item: (-item[0], item[1].raw["page_start"]))
             pages = [chunk for _quality, chunk in scored[:2]]
             claimed.update(chunk.raw["page_start"] for chunk in pages)
             per_entry.append(pages)
         limit = min(int(top_k), 10)
-        picked: list[tuple[float, float, _PreparedChunk]] = []
+        picked: list[tuple[float, float, bool, _PreparedChunk]] = []
         for depth in range(2):
             for pages in per_entry:
                 if depth < len(pages) and len(picked) < limit:
                     # 目录路由的页没有经过词法闸，覆盖率记 0：它们不是词法证据。
-                    picked.append((0.0, 0.0, pages[depth]))
+                    picked.append((0.0, 0.0, False, pages[depth]))
         return self._materialize(picked, {})

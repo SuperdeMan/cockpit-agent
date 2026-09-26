@@ -11,6 +11,10 @@
 [`docs/design/2026-09-26-manual-rag-colloquial-recall.md`](../../docs/design/2026-09-26-manual-rag-colloquial-recall.md)。
 索引包与云端模型资产不变。
 
+2026-09-26（0.4.1）：二批——词法首页的覆盖率够线、主题词却不在它的章节路径里（「运动模式到底在哪切换」
+撞上讲特殊路况的页）也再按目录路由，合并时词法首页钉第一；仪表灯语境的一句多问（「胎压黄灯亮了，还能继续开吗？
+应该补到多少？」）后续问句承接主语再查。同一设计文档 §8。
+
 历史生产状态（2026-09-05）：release `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 使用v2
 shared-model只读图文包，5/5 endpoint healthy、统一verify通过。精确代码全量为
 7861 passed / 34 skipped / 5 warnings / 0 failed。
@@ -39,9 +43,11 @@ PDF + resources/visual_assets.yaml
          查询理解：问句壳剥离（runtime.question_shape）+ 档挡折叠 + 受控同义词 / 意图扩展
          中文 n-gram BM25 + 章节/短语重排；闸只看主题词覆盖率，排序再计证据词
          + 受控视觉 caption/aliases 精确匹配
-    -> 词法零命中 / 主题覆盖率 < 0.7 / 含手册不认识的实词
+         + 仪表灯语境的一句多问：后续问句承接第一个分句的主语再查（只留提到主语的页）
+    -> 词法首页没把握（零命中 / 主题覆盖率 < 0.7 / 主题词不在它的章节路径里）/ 含手册不认识的实词
          -> 目录路由（LLM 只从目录编号里选 ≤3 节，不见正文）-> 章节轮转取页
-    -> Chunk(source_type=manual, section_path, PDF page, vehicle_model, images, coverage)
+         -> 合并：覆盖率够线时词法首页钉第一，其后共选页，再路由页与其余词法页交替
+    -> Chunk(source_type=manual, section_path, PDF page, vehicle_model, images, coverage, section_hit)
     -> grounded prompt / 视觉目录确定性回答 -> speech + 图文 manual card
 ```
 
@@ -138,7 +144,7 @@ python -X utf8 scripts/eval_manual_rag_full_coverage.py `
   --output .artifacts/manual-rag-full-coverage/offline-full.json
 ```
 
-车主口语问法（collector 真实问法 + 四类补充，42 条；`route: expected` 两条要靠目录路由）：
+车主口语问法（collector 真实问法 + 四类补充，43 条；`route: expected` 两条要靠目录路由）：
 
 ```powershell
 python -X utf8 scripts/eval_manual_rag.py `

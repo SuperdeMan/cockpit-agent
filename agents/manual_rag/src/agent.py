@@ -32,6 +32,7 @@ from runtime.anaphora import has_anaphoric_subject
 from runtime.clause_split import split_clauses
 from runtime.safety_signal import alert_advice, alert_level, alert_signal
 from .providers import build_knowledge_retriever
+from .providers.base import CONFIDENT_COVERAGE
 from .toc_router import SCOPE_OTHER_VEHICLE, ManualTocRouter
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
@@ -72,9 +73,6 @@ _NON_RETRYABLE_GENERATION_ERRORS = (
 )
 logger = logging.getLogger(__name__)
 _safety_level = alert_level
-# 词法命中的最高主题覆盖率低于它时，再按目录路由补章节（开发集上错命中 18 条里 12 条
-# 低于 0.7；路由只补不否决，所以对命中的误伤只是多一次调用）。
-_ROUTE_BELOW_COVERAGE = 0.7
 _MAX_CHUNKS = 4
 _BIGRAM_TEXT_RE = re.compile(r"[\u3400-\u9fffA-Za-z0-9]+")
 
@@ -175,16 +173,23 @@ def _ungrounded_numeric_claims(answer: str, chunks) -> list[str]:
     return missing
 
 
-def _merge_routed(routed: list, lexical: list) -> list:
-    """两路都选中的页最可信、排最前（按路由顺序）；其余路由页与词法页交替，至多四块。
-    路由页一律排前会把原本正确的词法首页挤下去（「三元锂电池平时充到多少」）。"""
+def _merge_routed(routed: list, lexical: list, lexical_first: bool = False) -> list:
+    """两路都选中的页最可信、排最前；其余路由页与词法页交替，至多四块。
+    路由页一律排前会把原本正确的词法首页挤下去（「三元锂电池平时充到多少」）。
+
+    `lexical_first`：词法首页覆盖率够线（用户的词都在，只是章节名对不上）时，
+    词法首页钉在第一——章节名不含车主叫法的正确首页（「制动液多久换一次」→ 保养计划页）不让
+    路由的共选页挤下去；其后仍是共选页（按词法顺序）、再路由页与其余词法页交替。"""
     routed_order = [chunk.page_start for chunk in routed]
     lexical_pages = {chunk.page_start for chunk in lexical}
+    pinned, rest = (lexical[:1], lexical[1:]) if lexical_first else ([], lexical)
     # 共选页用词法那一块：它带着视觉匹配 / 同页配图与覆盖率。
-    merged = sorted((chunk for chunk in lexical if chunk.page_start in routed_order),
-                    key=lambda chunk: routed_order.index(chunk.page_start))
+    agreed = [chunk for chunk in rest if chunk.page_start in routed_order]
+    if not lexical_first:
+        agreed.sort(key=lambda chunk: routed_order.index(chunk.page_start))
+    merged = [*pinned, *agreed]
     only_routed = [chunk for chunk in routed if chunk.page_start not in lexical_pages]
-    only_lexical = [chunk for chunk in lexical if chunk.page_start not in routed_order]
+    only_lexical = [chunk for chunk in rest if chunk.page_start not in routed_order]
     for pair in zip_longest(only_routed, only_lexical):
         merged.extend(chunk for chunk in pair if chunk is not None)
     return merged[:_MAX_CHUNKS]
@@ -215,7 +220,9 @@ class ManualRagAgent(BaseAgent):
         # 问句里有手册不认识的实词（奇骏 / 刮车 / 小冰箱）时，词法再自信也要问一次路由：
         # 覆盖率分不开「车主叫法」和「别家车型」，LLM 的常识分得开。
         unknown = self.kb.unknown_subject_terms(question)
-        if chunks and not unknown and chunks[0].coverage >= _ROUTE_BELOW_COVERAGE:
+        # 有把握 = 覆盖率够线且主题词在首页的章节路径里。只在正文里撞上的首页（「运动模式到底
+        # 在哪切换」→ 讲特殊路况的页、「停车监控在哪打开」→ 智能领航）覆盖率再高也要再路由。
+        if chunks and not unknown and chunks[0].confident:
             return list(chunks), "lexical", []
         if self.kb.route_block_reason(question):
             return list(chunks), "lexical", []
@@ -232,7 +239,8 @@ class ManualRagAgent(BaseAgent):
         if not routed:
             return list(chunks), "lexical", sections
         stage = "toc_router" if not chunks else "lexical+toc_router"
-        return _merge_routed(routed, list(chunks)), stage, sections
+        lexical_first = bool(chunks) and not unknown and chunks[0].coverage >= CONFIDENT_COVERAGE
+        return _merge_routed(routed, list(chunks), lexical_first), stage, sections
 
     @staticmethod
     def _safety_data(level: str, question: str, **extra) -> dict:

@@ -310,3 +310,47 @@ def test_retrieve_sections_gives_every_picked_section_a_page(tmp_path):
     assert pages[0] == 53                       # 路由给出的章节顺序保留
     assert all(chunk.coverage == 0.0 for chunk in chunks)   # 不是词法证据
     assert asyncio.run(provider.retrieve_sections("停车监控", ["T999"])) == []
+
+
+# ── 仪表灯语境的一句多问：后半问承接主语（2026-09-26 二批）────────────────────
+
+_TIRE_PAGES = [
+    # 「还能继续开吗」自己的词在这页全在场（真实手册 p80）：承接出来的页必须提到主语。
+    ExtractedPage(80, ("驾驶和操作", "车辆驾驶", "电动尾翼"),
+                  "电动尾翼。车速高于 120 km/h 时尾翼自动升起，低速时收回；也能继续开启手动模式。"),
+    # 「仪表盘」是显示位置，不是灯的名字：不能拿它当主语去承接。
+    ExtractedPage(194, ("信息显示和娱乐", "仪表显示", "仪表盘"),
+                  "仪表盘。仪表盘显示车速、挡位与续航里程，行驶中还能查看驾驶辅助状态。"),
+    ExtractedPage(245, ("车辆规格", "规格与参数", "车轮与轮胎参数"),
+                  "车轮与轮胎参数。轮胎规格 245/45 R19。冷态胎压：前轮 230 kPa，后轮 250 kPa。"),
+    ExtractedPage(257, ("保修和保养", "车辆保养", "轮胎检查与保养"),
+                  "轮胎检查与保养。胎压监测报警指示灯点亮时，请降低车速，避免急转弯和急刹车，"
+                  "尽快检查胎压。"),
+]
+
+
+@pytest.mark.parametrize("query", [
+    "胎压黄灯亮了，还能继续开吗？应该补到多少？",
+    "胎压灯亮了，要打多少气",
+])
+def test_lamp_follow_up_question_carries_the_subject(tmp_path, monkeypatch, query):
+    """「…亮了」不交给目录路由（认图标只认视觉目录），整句排序又被告警词拉向指示灯页：
+    后半问按「胎压应该补到多少」查才取得到规格页；承接出来的页必须提到主语，整句首页不变。"""
+    provider = _provider(tmp_path, pages=[*_PAGES, *_TIRE_PAGES])
+    assert provider.route_block_reason(query) == "visual_context"
+    pages = _pages(provider, query)
+    assert 245 in pages and 80 not in pages
+    monkeypatch.setattr(provider, "_carried_rankings", lambda _query: [])
+    whole = _pages(provider, query)
+    assert 245 not in whole
+    assert pages[:len(whole[:1])] == whole[:1]
+
+
+@pytest.mark.parametrize("query", [
+    "空调有哪些模式，座椅加热在哪打开",   # 不在仪表灯语境：一句多问归目录路由
+    "仪表盘亮了个红灯，还能开吗",         # 主语是显示位置：灯没点名，认图标只认视觉目录
+    "胎压灯亮了",                          # 没有后续问句
+])
+def test_subject_is_carried_only_into_named_lamp_follow_ups(tmp_path, query):
+    provider = _provider(tmp_path, pages=[*_PAGES, *_TIRE_PAGES])
+    assert provider._carried_rankings(query) == []

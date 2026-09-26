@@ -3,6 +3,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
+#: 词法命中「有把握」的覆盖率线（2026-09-26 口语召回批：开发集错命中 18 条里 12 条低于
+#: 0.7；路由只补不否决，对正确命中的代价只是多一次调用）。低于它、或主题词不在该页章节
+#: 路径里，词法结果只算近似，Agent 再按目录路由一次。
+CONFIDENT_COVERAGE = 0.7
+
 
 @dataclass(frozen=True)
 class ManualImage:
@@ -43,6 +48,12 @@ class Chunk:
     # 用户自己的词在这一页的覆盖率（0–1，只有真实索引填写）；Agent 据此判断词法命中
     # 是否可信、要不要再按目录路由补一次。0 = 未知（mock/web）或来自目录路由。
     coverage: float = 0.0
+    # 用户的主题词是否出现在这一页的章节路径里；只在正文里撞上主题词的命中不算有把握。
+    section_hit: bool = False
+
+    @property
+    def confident(self) -> bool:
+        return self.coverage >= CONFIDENT_COVERAGE and self.section_hit
 
 
 class KnowledgeRetriever(ABC):

@@ -155,6 +155,21 @@ def test_blocked_questions_never_reach_the_router(tmp_path, question):
     assert not result.ui_card["sources"]
 
 
+def test_covering_hit_without_a_section_hit_still_routes(tmp_path):
+    """用户的词全在词法首页的正文里、却不在它的章节名里（「吹风模式」只写在「空调控制」页
+    正文里）：覆盖率满也不算有把握，再按目录路由。真实手册上「运动模式到底在哪切换」撞上
+    讲特殊路况的页、「停车监控那个功能在哪打开」撞上智能领航页，覆盖率都在 0.79 以上。
+    词法覆盖率够线，所以词法首页钉在第一、路由页跟在后面。"""
+    agent, provider = _agent(tmp_path)
+    seat = _entry(provider, "座椅和安全 > 座椅 > 座椅加热")
+    agent.llm.complete = AsyncMock(side_effect=[
+        json.dumps({"scope": SCOPE_THIS_VEHICLE, "sections": [seat]}),
+        "吹风模式在空调控制界面里切换。"])
+    result = asyncio.run(run_handle(agent, "manual.query", raw_text="吹风模式在哪调"))
+    assert [chunk["page_start"] for chunk in result.ui_card["chunks"]][:2] == [197, 37]
+    assert result.data["retrieval"] == "lexical+toc_router"
+
+
 def test_mock_corpus_has_no_router(monkeypatch):
     monkeypatch.setenv("KNOWLEDGE_VENDOR", "mock")
     monkeypatch.delenv("REQUIRE_REAL_PROVIDERS", raising=False)
@@ -171,6 +186,17 @@ def test_merge_puts_pages_both_routes_agree_on_first_then_alternates():
     assert [chunk.page_start for chunk in _merge_routed(routed, [])] == [212, 213]
     many = [Chunk(page_start=page) for page in (1, 2, 3)]
     assert [chunk.page_start for chunk in _merge_routed(many, lexical)] == [1, 213, 2, 247]
+
+
+def test_merge_pins_a_covering_lexical_top_page():
+    """词法首页覆盖率够线、只是章节名对不上时，它钉在第一：真实手册「制动液多久换一次」的
+    正确首页是保养计划页，按共选页优先会被路由选中的更换章节页挤到第二。其后仍是共选页，
+    再路由页与其余词法页交替、路由页先（「后备箱都有哪几种打开方式」要的开闭页在路由里）。"""
+    lexical = [Chunk(page_start=page, coverage=0.9) for page in (252, 264, 242)]
+    routed = [Chunk(page_start=page) for page in (264, 265)]
+    pinned = _merge_routed(routed, lexical, lexical_first=True)
+    assert [chunk.page_start for chunk in pinned] == [252, 264, 265, 242]
+    assert [chunk.page_start for chunk in _merge_routed(routed, lexical)] == [264, 265, 252, 242]
 
 
 # ── 路由输出的解析 ────────────────────────────────────────────────────────
