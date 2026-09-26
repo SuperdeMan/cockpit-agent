@@ -1,0 +1,125 @@
+version: 1
+split: regression
+note: 已公开开发种子，不能用作未见 holdout；所有 live 轮禁止确认执行，挂起只取消。
+cases:
+  - id: V201
+    family: mixed_answer_pending
+    turns:
+      - say: 打开后备箱，再告诉我空调有哪些模式
+        expect: {need_confirm: true, manual: true}
+      - say: 取消
+        cancel_pending: true
+      - say: 刚才你说空调有哪些模式？
+        expect: {answer_terms: [空调]}
+  - id: V202
+    family: mixed_answer_pending
+    turns:
+      - say: 告诉我空调有哪些模式，然后打开后备箱
+        expect: {need_confirm: true, manual: true}
+      - say: 取消
+        cancel_pending: true
+  - id: V203
+    family: mixed_answer_pending
+    turns:
+      - say: 打开后备箱，再告诉我雨刮器怎么打开
+        expect: {need_confirm: true, manual: true}
+      - say: 取消
+        cancel_pending: true
+  - id: V204
+    family: pending_addressing
+    turns:
+      - say: 打开后备箱
+        expect: {need_confirm: true}
+      - say: 讲个笑话
+      - say: 取消
+        cancel_pending: true
+  - id: V205
+    family: pending_addressing
+    turns:
+      - say: 打开后备箱
+        expect: {need_confirm: true}
+      - say: 后备箱先别动，告诉我空调有哪些模式
+        expect: {manual: true}
+  - id: V206
+    family: definition_question
+    turns:
+      - say: 座椅加热是什么？
+      - say: 我只是在问原理，不要打开它
+  - id: V207
+    family: definition_question
+    turns:
+      - say: 露营模式是什么意思？
+        expect: {manual: true}
+  - id: V208
+    family: question_scope
+    turns:
+      - say: 别打开车窗，只解释怎么打开车窗
+        expect: {manual: true}
+  - id: V209
+    family: question_scope
+    turns:
+      - say: 说明书里“打开后备箱”这一节讲的是什么？
+        expect: {manual: true}
+  - id: V210
+    family: question_scope
+    turns:
+      - say: 空调温度怎么调？
+        expect: {manual: true}
+  - id: V211
+    family: manual_multi_question
+    turns:
+      - say: 胎压黄灯亮了，还能继续开吗？应该补到多少？
+        expect: {manual: true, answer_terms: ['2.9']}
+  - id: V212
+    family: manual_multi_question
+    turns:
+      - say: 空调有哪些模式？风量分几个档位？
+        expect: {manual: true}
+  - id: V213
+    family: manual_recall
+    turns:
+      - say: 运动模式到底在哪切换？
+        expect: {manual: true}
+  - id: V214
+    family: manual_recall
+    turns:
+      - say: 后备箱能放几个行李箱？
+        expect: {manual: true}
+  - id: V215
+    family: context_reference
+    turns:
+      - say: 座椅加热在哪里打开？
+        expect: {manual: true}
+      - say: 它有几档？
+        expect: {manual: true}
+  - id: V216
+    family: context_reference
+    turns:
+      - say: 空调有哪些模式？
+        expect: {manual: true}
+      - say: 自动模式是什么意思？
+        expect: {manual: true}
+  - id: V217
+    family: correction_scope
+    turns:
+      - say: 深圳今天天气怎么样？
+        expect: {answer_terms: [深圳]}
+      - say: 我问的是广州的天气
+        expect: {answer_terms: [广州]}
+  - id: V218
+    family: correction_scope
+    turns:
+      - say: 空调有哪些模式？
+        expect: {manual: true}
+      - say: 我改问雨刮器有哪些档位
+        expect: {manual: true}
+  - id: V219
+    family: multi_read
+    turns:
+      - say: 深圳今天天气怎么样，再告诉我空调有哪些模式
+        expect: {manual: true, answer_terms: [深圳]}
+  - id: V220
+    family: multi_read
+    turns:
+      - say: 告诉我空调有哪些模式，再解释胎压报警灯是什么意思
+        expect: {manual: true}
