@@ -197,16 +197,19 @@ def test_downstream_step_after_slot_fill_reads_the_origin_utterance():
     assert spy.raw_texts("nearby.order") == [ORIGIN]              # 下游步看起点原话（修前是「川菜」）
 
 
-def test_downstream_step_after_confirm_reads_the_origin_utterance():
-    engine, spy, _ = _make_engine(_CONFIRM_PLAN_JSON)
+def test_downstream_step_after_confirm_reads_its_origin_scope():
+    engine, spy, session = _make_engine(_CONFIRM_PLAN_JSON)
     origin = "订川菜·名店1今晚7点两位，再找几家川菜备选"
 
     first = _run(engine, _req(origin))[-1]
     assert first["need_confirm"] is True
+    saved = asyncio.run(session.load("sess-1", owner_user_id="u1"))
+    assert saved.pending_plan["safety_origin_text"] == origin
+    assert all(s["origin_text"] == origin for s in saved.pending_plan["steps"])
     _run(engine, _req("确认", is_confirmation=True))
 
-    assert spy.raw_texts("nearby.order") == [origin, "确认"]      # 确认的那一步看「确认」
-    assert spy.raw_texts("nearby.search") == [origin]             # 下游步看起点原话（修前是「确认」）
+    assert spy.raw_texts("nearby.order") == ["订川菜·名店1今晚7点两位", "确认"]
+    assert spy.raw_texts("nearby.search") == ["找几家川菜备选"]  # 业务范围变窄，授权原话不变
 
 
 # ─── 旧记录回填：只允许服务端持有的文本 ───

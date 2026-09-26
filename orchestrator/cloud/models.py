@@ -99,6 +99,8 @@ class Step:
     # schema: {"mode","timeout_ms","on_fail","max_attempts","expect":{...}}——**用 dict 不用
     # proto**：Step 会随挂起态序列化进 Redis，且求值器只需读值，dict 免 proto 往返。
     verification: dict = field(default_factory=dict)
+    # CA2-02: server-owned business projection. Never read by safety/permission checks.
+    input_scope: dict = field(default_factory=dict)
     # Agent manifest 声明需要的敏感上下文片段（location | vehicle_state）；
     # 编排下发时按此最小化（未声明则不下发精确位置/电量）。
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
@@ -130,6 +132,7 @@ def step_record(step: "Step") -> dict:
         # M2 Verifier：确认后重跑的正是最该对账的车控步——挂起态不带上它，
         # 「用户确认→执行→没生效」这条最危险的路径反而不验（纯 dict，JSON 安全）
         "verification": dict(step.verification or {}),
+        **({"input_scope": dict(step.input_scope)} if step.input_scope else {}),
     }
 
 
@@ -145,6 +148,10 @@ def step_raw_text(step: "Step", ctx) -> str:
     current = str(getattr(ctx, "raw_text", "") or "")
     if getattr(step, "resumed", False):
         return current
+    from .step_input import projected_text
+    scoped = projected_text(step)
+    if scoped is not None:
+        return scoped
     return str(getattr(step, "origin_text", "") or "") or current
 
 
@@ -298,6 +305,8 @@ class Plan:
     replan_batch: bool = False
     # 评审四轮 §5.5 b：写步方向按车端确定性解析改过的记录（"<规划的 intent>><车端的 intent>"），只供 cloud.planning span 观测。
     edge_corrected: list[str] = field(default_factory=list)
+    # Server-stamped provenance; empty on legacy records rather than inventing an old turn.
+    origin_exchange_id: str = ""
 
 
 @dataclass

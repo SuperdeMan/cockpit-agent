@@ -18,6 +18,7 @@ from typing import AsyncIterator
 
 from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionState,
                      step_call_context, step_record)
+from .step_input import bind_step_inputs
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
@@ -1206,6 +1207,7 @@ class PlannerEngine:
             # 新任务的起点只能由 engine 使用本轮服务端 request.text 盖章。
             # Planner/Agent 给出的 goal/reason 即使看起来更像指令也没有这项权威。
             plan.safety_origin_text = text
+            plan.origin_exchange_id = str(ctx.request_id or "")
             ctx.safety_origin_text = text
             # W16-b：每一步的起点原话也在这里盖（同一权威、同一处）。新计划里它就是本轮原话，
             # 只有这份计划挂起后在续接轮跑到的下游步才会真正用到它（`models.step_raw_text`）。
@@ -1447,6 +1449,7 @@ class PlannerEngine:
             # 权限校验按步在 dispatch 执行期硬拒（与规划期 catalog 过滤同源 check_permission），
             # 此处不再做计划级兜底（原 _enforce_permissions 为空壳，已移除）。
 
+        bind_step_inputs(plan, origin_exchange_id=plan.origin_exchange_id)
         # 统一「复杂任务」判据，驱动①动态开思考②过程区。普通车控/闲聊/单条轻查询
         # 不命中——零过程、零额外延迟（需求第 6 条）。
         complex_task = is_complex(plan)
@@ -2116,6 +2119,10 @@ class PlannerEngine:
                 return
             mini.safety_origin_text = safety_origin_text
         steps = mini.steps
+        for s in steps:
+            s.origin_text = safety_origin_text
+        mini.origin_exchange_id = str(ctx.request_id or "") if ctx.raw_text == safety_origin_text else ""
+        bind_step_inputs(mini, origin_exchange_id=mini.origin_exchange_id)
         # W13 / W14：改派后真正执行的是 mini 计划，谈话与否按它算；规划轮的诉求账本不再对应这些步
         ctx.answer_only = bool(steps) and all(
             bool(getattr(s, "response_only", False)) for s in steps)
@@ -3528,6 +3535,7 @@ class PlannerEngine:
             restored.exemplars = list(state.pending_plan.get("exemplars") or [])
             # 旧记录没有这一键 ⇒ False（与修前行为一致）；只认严格的 True
             restored.replan_batch = state.pending_plan.get("replan_batch") is True
+            restored.origin_exchange_id = str(state.pending_plan.get("origin_exchange_id") or "")
             return restored, seeds
         except Exception as e:
             logger.warning("Failed to restore plan: %s", e)
@@ -3578,6 +3586,7 @@ class PlannerEngine:
             "exemplars": list(getattr(plan, "exemplars", []) or []),   # 同款（M5 P1）
             # 这一份是不是 T2 再规划出来的一批（续接时循环据此不再套首轮 adaptive 纠偏，见 `Plan.replan_batch`）
             "replan_batch": bool(getattr(plan, "replan_batch", False)),
+            **({"origin_exchange_id": plan.origin_exchange_id} if plan.origin_exchange_id else {}),
         }
 
     async def _needs_replan(self, plan: Plan, results: list[StepResult]) -> bool:

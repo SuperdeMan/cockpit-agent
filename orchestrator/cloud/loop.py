@@ -10,6 +10,7 @@ from .executor import DagExecutor
 from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
                      step_call_context)
 from .planning import PlanBuilder, assign_runtime_ids
+from .step_input import bind_step_inputs
 from .progress import make_progress, phase_label, step_summary
 from .superseded import drop_superseded_steps
 from .stream_state import (
@@ -277,6 +278,8 @@ class LoopController:
                 # W16-b：再规划步的起点原话是任务的（续接轮里 ctx.raw_text 是槽答案，不是它们从哪来）
                 for step in current.steps:
                     step.origin_text = safety_origin_text
+                current.origin_exchange_id = initial_plan.origin_exchange_id
+                bind_step_inputs(current, origin_exchange_id=current.origin_exchange_id)
                 # T2 知识继承贯通挂起链（2026-07-27 评审三批）：to_plan 新建的 Plan
                 # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
                 # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。
