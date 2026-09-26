@@ -1,5 +1,6 @@
 """The baseline must expose product failures without confusing missing evidence with success."""
 import json
+import asyncio
 
 import pytest
 
@@ -57,5 +58,19 @@ def test_seed_is_regression_and_never_automatically_confirms():
     cases = probe.load_cases()
     assert len(cases) == 20
     assert len({c["family"] for c in cases}) >= 6
-    assert not {"merchant.write", "payment.invoke", "profile.write", "navigation.control"} & set(probe.SCOPES)
+    assert not {"merchant.write", "payment.invoke"} & set(probe.SCOPES)
     assert all(t["say"] == "取消" for c in cases for t in c["turns"] if t.get("cancel_pending"))
+
+
+def test_full_state_probe_does_not_drop_a_new_vehicle_signal(monkeypatch):
+    state = {"trunk": "closed", "rear_view_mirror_heating": False}
+    async def read(_):
+        return dict(state)
+    monkeypatch.setattr(probe.audit, "_vehicle_state", read)
+    good = asyncio.run(probe.audit._settled_vehicle_state(
+        "stub", attempts=2, expected=state, include_unmanaged=True))
+    assert good.settled and good.value == state
+    wrong = asyncio.run(probe.audit._settled_vehicle_state(
+        "stub", attempts=2, expected={**state, "rear_view_mirror_heating": True}, include_unmanaged=True))
+    assert not wrong.settled
+    assert wrong.reachable and not wrong.missing

@@ -1695,6 +1695,7 @@ async def _settled_vehicle_state(
     attempts: int = 8,
     required_keys: set[str] | tuple[str, ...] = (),
     expected: dict | None = None,
+    include_unmanaged: bool = False,
 ) -> VehicleStateRead:
     """回读车态，并**如实报告失败的种类**。
 
@@ -1708,7 +1709,8 @@ async def _settled_vehicle_state(
     last_missing: tuple = tuple(sorted(required))
     for attempt in range(attempts):
         value = await _vehicle_state(collector)
-        projected = managed_vehicle_state(value, required_keys=required or None)
+        projected = (dict(value) if include_unmanaged else
+                     managed_vehicle_state(value, required_keys=required or None))
         if value:
             last_value = value
             last_missing = tuple(sorted(required - set(projected)))
@@ -1719,7 +1721,7 @@ async def _settled_vehicle_state(
         )
         if matches:
             snapshot = tuple(
-                (key, projected[key]) for key in _MANAGED_VEHICLE_KEYS
+                (key, projected[key]) for key in (sorted(projected) if include_unmanaged else _MANAGED_VEHICLE_KEYS)
                 if key in projected
             )
             stable_reads = stable_reads + 1 if snapshot == previous else 1

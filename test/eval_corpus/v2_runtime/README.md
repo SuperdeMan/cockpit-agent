@@ -4,7 +4,8 @@ CA2-01/JV00 共用 `seed.yaml` 的 20 组、按 family 分组的开发回归种�
 这些用例已经公开，不是 holdout；后续新标注/校准/冻结测试按家族隔离。
 
 `scripts/probe_v2_baseline.py` 复用既有签名 E2E 身份、WS 多 final 收取、collector 稳定回读和 release 对账。
-每组/每次重复使用新的 synthetic user/session，禁止自动确认，挂起只作点名取消；不授予商户写、支付、画像写或导航执行 scope。
+每组/每次重复使用新的 synthetic user/session，禁止自动确认，挂起只作点名取消；不授予商户写或支付 scope。
+普通能力沿既有演示身份权限面（scene 的 Agent 级准入含媒体/导航/画像权限），避免缩权限改变被测规划目录；用例不主动产生这些写入。
 每轮比较完整车态，发生动作/变化/证据缺失立即停；不自动恢复车辆，不删除数据。
 
 冻结包分别登记 runner SHA、部署 SHA、各组代码/知识目录 Git tree OID 与总 SHA-256、语料摘要、

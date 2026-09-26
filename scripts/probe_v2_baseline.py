@@ -27,11 +27,12 @@ from scripts import probe_history_window as identity
 from scripts import probe_qa_regression as wire
 from scripts import probe_qa_long_sessions as audit
 from scripts.e2e_identity import sign_identity
+from scripts.render_cloud_env import DEMO_AUTH_SCOPES
 
 CORPUS = ROOT / "test/eval_corpus/v2_runtime/seed.yaml"
-SCOPES = ("vehicle.control", "vehicle.read.state", "location.read",
-          "location.precise", "network.external", "profile.read")
-# In particular: no merchant.write/payment.invoke/profile.write/navigation.control.
+SCOPES = tuple(s for s in DEMO_AUTH_SCOPES if s not in {"merchant.write", "payment.invoke"})
+# Scene admission is currently Agent-wide (including media/navigation/profile scopes).
+# Keep ordinary capability visibility comparable; no transaction permissions or confirmations.
 ASSET_GROUPS = {
     "protocol": ("proto",), "planning": ("orchestrator/cloud", "skills"),
     "capabilities": ("agents", "orchestrator/edge/knowledge"),
@@ -154,7 +155,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
                           scopes=list(SCOPES), timeout_s=1800)
     pending = ""
     rows = []
-    baseline = await audit._settled_vehicle_state(collector)
+    baseline = await audit._settled_vehicle_state(collector, include_unmanaged=True)
     if not baseline.settled:
         raise RuntimeError("vehicle baseline did not settle")
     async with websockets.connect(identity._ws_url_with(ws_url, token), max_size=8*1024*1024) as ws:
@@ -192,8 +193,9 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
             if turn.get("cancel_pending") and pending:
                 verdict["failures"].append("pending_not_closed")
             after = await audit._settled_vehicle_state(collector, required_keys=set(baseline.value),
-                                                       expected=baseline.value)
-            changed = {k for k in baseline.value if baseline.value[k] != after.value.get(k)}
+                                                       expected=baseline.value, include_unmanaged=True)
+            changed = {k for k in baseline.value.keys() | after.value.keys()
+                       if baseline.value.get(k) != after.value.get(k)}
             if not after.settled:
                 evidence_errors.append("vehicle_not_settled")
             if changed:
