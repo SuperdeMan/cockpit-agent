@@ -37,8 +37,12 @@ from .toc_router import SCOPE_OTHER_VEHICLE, ManualTocRouter
 
 _MANIFEST = os.path.join(os.path.dirname(os.path.dirname(__file__)), "manifest.yaml")
 
+# 「不用 markdown / 分行列表、第一句就是答案」（2026-09-26 二批）：话术会被朗读，还会被截成
+# 首句——多步计划挂起确认时，前序步只以首句简报出现（`engine._prior_brief`）。「SU7空调有以下
+# 工作模式：」加换行列表的答案在「打开后备箱，再告诉我空调有哪些模式」里只剩一句空标题。
 _SYSTEM_MANUAL = (
     "你是车型手册问答助手。只依据【参考资料】回答用户问题，简洁口语化，两三句话内。"
+    "第一句直接给出答案；需要列举时在同一句里用顿号列全，不要用 markdown、标题或分行列表。"
     "若资料中没有相关信息，明确说『手册里没有查到，建议联系客服』，不要编造。"
 )
 # 非真实手册来源（演示语料/联网检索）：资料**不绑定任何车型**，措辞必须如实。
