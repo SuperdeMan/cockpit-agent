@@ -41,6 +41,10 @@ def test_internal_error_cannot_pass_as_speech():
     assert "technical_failure" in probe.judge({}, obs(speech="Agent 内部错误：RuntimeError"), {})["failures"]
 
 
+def test_an_unrequested_confirmation_is_not_success_even_without_actions():
+    assert probe.judge({}, obs(need_confirm=True, operation_id="op-1"), {})["failures"] == ["unexpected_confirmation"]
+
+
 def test_freeze_refuses_dirty_inputs(monkeypatch):
     monkeypatch.setattr(probe, "_git", lambda *args: " M runtime/x.py")
     with pytest.raises(ValueError, match="clean"):

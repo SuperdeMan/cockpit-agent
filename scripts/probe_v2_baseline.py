@@ -121,6 +121,8 @@ def judge(expect: dict, obs: dict, detail: dict) -> dict:
         failures.append("technical_failure")
     if expect.get("need_confirm") and not (obs.get("need_confirm") and obs.get("operation_id")):
         failures.append("pending_missing")
+    if obs.get("need_confirm") and not expect.get("need_confirm"):
+        failures.append("unexpected_confirmation")
     if expect.get("manual"):
         if not manual_dispatched:
             failures.append("manual_not_dispatched")

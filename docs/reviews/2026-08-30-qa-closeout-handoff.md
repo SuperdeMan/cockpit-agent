@@ -1,17 +1,17 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-26（集中发布记录、补 v2 接续；本次文档任务没有重新运行真栈）
+> 更新时间：2026-09-26（R0 量尺取样、纯定义问写闸补口发布与独立 status/verify）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。最后一次已登记生产 release 是 `5a2f4c9d674fb27c98539f1d57ff8cc93bca4c76`，
-对应 2026-09-26 车书口语召回二批；这是既有发布记录，本次文档更新未重新查询运行环境。
+**QA 验收仍非全绿**。最后一次已登记生产 release 是 `634c28786360a7b297d197d9d81fdd84308bb821`，
+对应 2026-09-26 v2 R0 基线发现的纯定义问云侧写闸补口；已独立核对 status/运行 SHA 并完成 verify。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
-v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，新增实现与验收均未开始；
+v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用基线量尺已开始，R1/Jev 新运行时实现与验收未开始；
 规划层方差、挂确认时结果完整性和双端/声学未验面继续有明确任务，不能借研究合入宣称关闭。
 已完成批次仍使用原 SHA，历史证据见 §3–4 和 [agents-history](../agents-history.md)。
 
@@ -20,14 +20,14 @@ v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，新增实现与验收均
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | `47c62b44d335a3c76da90f89f05fa2fc887c2742`；本轮 fetch 后 HEAD 与 origin/main 一致；后续纯文档提交允许领先 production |
-| 生产 release | `5a2f4c9d674fb27c98539f1d57ff8cc93bca4c76`，2026-09-26 车书二批；上一版 `0a4f626a52ad541b1ab1029bd686202ba9e16415` |
-| status / verify | 当次登记 `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 一致；verify `verified`，`20260926T080255Z-5a2f4c9.json`；本次没有在线复核 |
-| 后端代码验证 | 车书二批提交前工作树（记录为与 `5a2f4c9d` 内容一致）：9941 passed / 0 failed / 32 skipped / 11 warnings；四门禁 + smoke_edge 13/13。不得当成本轮文档 SHA 的新全量结果 |
-| 手册当前专项 | `5a2f4c9d`：章节 187/187、视觉 35/35、胎压复合句 16/20（有手册步 16/16）、词法自信三句 8/9、调节类 6/6、口语语料 39/43 与 38/43（失败在规划层）、指代 8/9、空调模式 3/3、多步按话术 3/3、原 36 题可发送子集 31/31，车态零差异；[二批记录](../design/2026-09-26-manual-rag-colloquial-recall.md) §8 |
+| 生产 release | `634c28786360a7b297d197d9d81fdd84308bb821`，2026-09-26 R0 纯定义问云侧写闸补口；上一版 `5a2f4c9d674fb27c98539f1d57ff8cc93bca4c76` |
+| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `634c2878`；verify `verified`，`20260926T103016Z-634c287.json` |
+| 后端代码验证 | `634c2878` 提交前树：9968 passed / 4 failed / 32 skipped / 11 warnings；4 条均为 Windows PowerShell 模块路径导致 Get-FileHash 缺失，仅该子进程改用系统模块目录后原文件 13/13。四门禁通过、smoke_edge 13/13；两次读数不合并成一次全绿。见 [R0 记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md) |
+| 手册最近专项（新 release 尚未重跑） | `5a2f4c9d`：章节 187/187、视觉 35/35、胎压复合句 16/20（有手册步 16/16）、词法自信三句 8/9、调节类 6/6、口语语料 39/43 与 38/43（失败在规划层）、指代 8/9、空调模式 3/3、多步按话术 3/3、原 36 题可发送子集 31/31，车态零差异；[二批记录](../design/2026-09-26-manual-rag-colloquial-recall.md) §8 |
 | 手册证据限制 | `.artifacts/manual-rag-colloquial/live-*-5a2f4c9d*.json`；被预检拦下的 5 条旧表述未发送，不能报当前 36/36；需确认混合轮最终消息没有手册卡，话术通过不等于完整卡片/正文呈现通过 |
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider；不转借到 `5a2f4c9d`。原入口全部历史发布行保存在 [快照](../history/2026-09-26-entry-status-snapshot.md) |
 | Android 包与验收 | [剩余待办总表](../design/2026-09-14-android-remaining-todos.md)记录设备与包身份；服务端 SHA、APK SHA、设备安装状态分列，本次未验包 |
-| v2 / Jev | 仅文档采纳；Decide、ResultBundle、持久操作、多车逐信号、T1e、OEM 驱动均未新增实现；[本轮交接](2026-09-26-v2-roadmap-handoff.md) |
+| v2 / Jev | R0 共用量尺已实现并暴露/修复 V207，完整基线待测；Decide、ResultBundle、持久操作、多车逐信号、T1e、OEM 驱动尚未实现；[首批执行](../design/2026-09-26-v2-runtime-r0-r1-execution.md) |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。

@@ -1,4 +1,5 @@
 version: 1
+revision: 2026-09-26b
 split: regression
 note: 已公开开发种子，不能用作未见 holdout；所有 live 轮禁止确认执行，挂起只取消。
 cases:
@@ -49,7 +50,7 @@ cases:
     family: definition_question
     turns:
       - say: 露营模式是什么意思？
-        expect: {manual: true}
+        expect: {answer_terms: [露营]}
   - id: V208
     family: question_scope
     turns:

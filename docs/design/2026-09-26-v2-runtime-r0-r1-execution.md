@@ -10,7 +10,7 @@
 |---|---|---|
 | CA2-01 / JV00 工具与种子 | 已提交/推送 `81fe1be4`、`fbcc6fa1` | 20 组 regression，独立 synthetic 用户、固定模型和 release、来源树 hash；不是 holdout |
 | R0 初始测量 | 中断，不能称基线完成 | `5a2f4c9d` 第一次样本为量尺诊断；修正后跑到 V207 发现纯定义问触发 scene.activate 确认卡 |
-| R0 问句写闸补口 | 本地验证完成，待发布/复验 | 本页 §2；修好后再完成三次样本 |
+| R0 问句写闸补口 | 已发布 `634c2878`，待专项样本 | dry-run 零阻断、status 5/5、运行 SHA 对齐、verify verified（`20260926T103016Z-634c287.json`） |
 | CA2-02–04 | 待实现 | 按步骤归属、稳定身份、ResultBundle 顺序；不重开 PLANNER_GOALS |
 
 ## 2. R0 必须先修的已重现问题
@@ -44,7 +44,9 @@ V207：“露营模式是什么意思？”（trace `57cbbee135fd48f397df97ebb99
 仅该测试子进程的 PSModulePath 指定 Windows 自带模块目录后，原文件 13/13 通过；没有改测试断言或系统配置。
 不将两次运行合写成一次“全量全绿”。日志 `.artifacts/v2-runtime/r0-definition-full-suite.log`。
 四门禁通过（skills/exemplars/L0 strict/capability integrity），smoke_edge 13/13。
-现有 1179 条语料离线扫描有 34 条命中新定义问范围，端侧原判据未修改。现场证据随后回填。
+现有 1179 条语料离线扫描有 34 条命中新定义问范围，端侧原判据未修改。
+`634c28786360a7b297d197d9d81fdd84308bb821` 已于 2026-09-26 发布，运行 SHA 对齐、status 5/5 零 warning，
+统一 verify `verified`（`20260926T103016Z-634c287.json`）。三次基线样本随后回填。
 
 ### 2.3 量尺修正
 
@@ -53,6 +55,10 @@ V207：“露营模式是什么意思？”（trace `57cbbee135fd48f397df97ebb99
 已恢复普通非交易权限面，仍无 merchant.write/payment.invoke；所有定义用例都禁止自动确认。
 共享 `_settled_vehicle_state` 增 `include_unmanaged` 只读全信号档，原恢复车辆口径不变。
 相关量尺测试 101 passed；新增缺口按失败→仅取消已知挂起→停测，不自动发反向车控。
+
+正式补测前澄清 V207 的业务判据：露营模式也可能指本项目内置场景，不能强制其一定走车书。
+seed revision `2026-09-26b` 改为回答含主题、零动作、无未请求的确认；其它用例不变。
+探针也将“未请求却出确认卡”单独判红，即使 actions 为空。旧 raw artifact 和旧语料 SHA 保留，不能拼成同一冻结集成绩。
 
 ## 3. 第一批契约实施边界
 
