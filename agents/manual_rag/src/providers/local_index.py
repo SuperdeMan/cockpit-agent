@@ -62,6 +62,9 @@ _MAX_IMAGES = 2
 _VISUAL_CONTEXT_MARKERS = (
     "图标", "指示灯", "仪表", "灯亮", "亮了", "常亮", "闪烁",
 )
+# 灯态词之后还有话，就是前提说完了（「胎压灯亮了应该补到多少」「胎压灯亮起应该补到多少」）：
+# 仪表灯语境承接主语时当分句边界用。规划器把前提并进本步槽时也是这个形态。
+_LAMP_STATE_BOUNDARY_RE = re.compile(r"(?<=亮了|亮起|亮着|常亮|闪烁|闪了)(?=[^，,。；;！!？?\s]{2,})")
 # 闸：主题覆盖率与质量分下限（v2 起的口径不变，变的是覆盖率只算用户自己的词）。
 _MIN_QUALITY = 1.0
 _MIN_TOPIC_COVERAGE = 0.42
@@ -947,8 +950,19 @@ class ManualIndexRetriever(KnowledgeRetriever):
 
         只承接、不让问句自己单独排：「还能继续开吗」的「能继 / 继续 / 续开」在讲电动尾翼的页
         全在场，自己排只会引入别处的页。"""
-        clauses = self._question_clauses(query)
-        if len(clauses) < 2 or not _has_visual_context(query):
+        if not _has_visual_context(query):
+            return []
+        clauses: list[str] = []
+        for clause in self._question_clauses(query):
+            head, *rest = [part for part in _LAMP_STATE_BOUNDARY_RE.split(clause) if part]
+            # 灯态词之后的话自己带主题词才是另一问（「…亮了应该补到多少」）；「…亮了怎么办」
+            # 「…亮着是什么意思」问的就是这盏灯，整句排序已经照顾到，切开只会承接出旁页。
+            if rest and all(self._prepare_variants(self._in_scope_variants(part)[0])
+                            for part in rest):
+                clauses.extend([head, *rest])
+            else:
+                clauses.append(clause)
+        if len(clauses) < 2:
             return []
         # 主语本身是显示位置（「仪表盘亮了个红灯，还能开吗」的「仪表盘」）时说明灯没有点名：
         # 认图标只认受控视觉目录，不承接。

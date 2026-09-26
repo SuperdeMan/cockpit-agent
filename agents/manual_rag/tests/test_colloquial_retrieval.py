@@ -332,6 +332,7 @@ _TIRE_PAGES = [
 @pytest.mark.parametrize("query", [
     "胎压黄灯亮了，还能继续开吗？应该补到多少？",
     "胎压灯亮了，要打多少气",
+    "胎压灯亮了应该补到多少",    # 没有逗号：灯态词之后另有主题词，也是另一问（规划器的槽常是这个形态）
 ])
 def test_lamp_follow_up_question_carries_the_subject(tmp_path, monkeypatch, query):
     """「…亮了」不交给目录路由（认图标只认视觉目录），整句排序又被告警词拉向指示灯页：
@@ -350,6 +351,7 @@ def test_lamp_follow_up_question_carries_the_subject(tmp_path, monkeypatch, quer
     "空调有哪些模式，座椅加热在哪打开",   # 不在仪表灯语境：一句多问归目录路由
     "仪表盘亮了个红灯，还能开吗",         # 主语是显示位置：灯没点名，认图标只认视觉目录
     "胎压灯亮了",                          # 没有后续问句
+    "胎压灯亮了怎么办",                    # 灯态之后没有主题词：问的就是这盏灯
 ])
 def test_subject_is_carried_only_into_named_lamp_follow_ups(tmp_path, query):
     provider = _provider(tmp_path, pages=[*_PAGES, *_TIRE_PAGES])
