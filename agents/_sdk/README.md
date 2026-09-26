@@ -2,6 +2,14 @@
 
 让一个 Agent 只需关心"业务逻辑"。gRPC 契约、注册发现、健康检查、LLM/Memory 客户端由 SDK 提供。
 
+## v2 后续边界（未实现）
+
+CA2-05 沿 Manifest loader/Registry/Step 往返扩展能力契约；CA2-08/11 扩展已有 Ledger 的操作身份与持久准入。
+当前 ledger 的 best-effort 不能直接套用到未来承诺可恢复的副作用工作流；新增写档须先具备可靠落账和对账。
+Jev 只通过拟新增的网关 Decide client 访问，Agent 不自行调用供应商或复制权限判据。
+详见 [实施方案](../../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
+
+
 ## 写一个 Agent 只要两步
 
 **1. manifest.yaml** — 声明能力（见架构文档 §4.3）

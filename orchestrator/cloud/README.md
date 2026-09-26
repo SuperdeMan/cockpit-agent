@@ -2,6 +2,15 @@
 
 云侧大脑：复杂/跨域/多轮意图的理解、规划、多 Agent 编排、结果聚合。
 
+## v2 后续边界（未实现）
+
+CA2-02–04 原位扩展 Step/step_record/SessionState 的来源范围、稳定 goal 身份与 ResultBundle；
+CA2-06–11 增强车态、持久操作与对账。WorkingSet 是 View/DecisionSnapshot 的投影来源，不能再读一份历史造第二事实源。
+`PLANNER_GOALS` 保持 off；现有 actionability 仍是纯函数 shadow，Jev 异步建议接点另做、默认不消费。
+T1/D0/T2、提前 dispatch、挂起恢复均须逐出口验收；共用 retry_policy，不增加外层重试。
+领取任务见 [实施方案](../../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
+
+
 ## 核心：规划 / 执行分离（安全要求）
 - **规划**：把云 Agent、车端快能力和确定性工具统一喂给 LLM，输出带复杂度的 JSON DAG。
 - **执行**：由确定性 DagExecutor + UnifiedDispatcher 调度 cloud/edge/tool 三类目标。**LLM 不直接产生副作用**，尤其不直连车控。

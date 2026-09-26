@@ -26,6 +26,14 @@ React Native + **Expo SDK 57**（TypeScript strict，CNG：`android/` 不入库�
 - ⚠ Expo 迭代快，写代码前查**版本对应**文档：<https://docs.expo.dev/versions/v57.0.0/>
   （SDK 版本一轮交付内锁定，不升级）
 
+## v2 后续接续（未实现）
+
+跨模块升级按 [路线图](../docs/roadmap.md)：CA2-04/16 复用共享会话判据，贯通 ResultBundle、确认/取消与语音/视觉时效；
+CA2-22 对齐设备包、兼容矩阵与试点。Android 旧工程/真机/真人/AM5 待办仍以原总表为准，不因 v2 合入而销账。
+账号/车辆绑定与后台投递仍是独立产品前提，手机不能凭 Android 系统直接访问 AAOS VHAL。
+详见 [实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)，新增协议未实现。
+
+
 ## 前置（一次性，详见实施计划 §1）
 
 E1–E6 环境（JDK 17 / Android SDK 命令行工具链 / 环境变量 / Node ≥20 / 真机 USB 调试 /

@@ -2,6 +2,10 @@
 
 防命名漂移、防端口冲突、防重复定义的总表。新增能力/Agent/配置时先查这里、再更新这里（先改文档再改代码，CLAUDE.md 原则）。命名规则原文见 `CLAUDE.md` §4。
 
+> v2/Jev 新字段、事件、开关仍是 [目标架构](architecture/cockpit-agent-v2-target-architecture.md)和
+> [实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)中的草案；尚未加入本页的现有接口/环境变量契约。
+> 实现时按各包冻结 schema、兼容缺省与往返，再同步本页；不可仅凭研究示例设置 DECISION_* 或调用 Decide。
+
 ---
 
 ## 0. E2E 验收契约

@@ -1,6 +1,7 @@
 # CLAUDE.md — 智能座舱 Multi-Agent 项目规则
 
-> 本文件是项目最高工程约定。调整规范时先改本文档，再改实践。
+> 本文件是由 `AGENTS.md` 引用的项目工程细则；全局规则遵循当前生效的 canonical AGENTS.md。
+> 调整项目规则时同步主入口和相关契约，避免两处互相宣称最高权威。
 > 架构唯一真相源：`docs/architecture/cockpit-agent-architecture.md`。
 
 ## 1. 项目是什么
@@ -179,9 +180,14 @@ python scripts/dev_stack.py dashboard
 - 接手与红线：`AGENTS.md`；
 - QA/发布交接：`docs/reviews/2026-08-30-qa-closeout-handoff.md`；
 - 架构：`docs/architecture/cockpit-agent-architecture.md`；
+- 后续排序：`docs/roadmap.md`；v2 目标态：`docs/architecture/cockpit-agent-v2-target-architecture.md`；
+- 可领取工作包：`docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md`（新增实现未开始）；
 - 历史：`docs/agents-history.md`；
 - 设计索引：`docs/design/README.md`；
-- 量产 DoD：`docs/architecture/phase1-implementation-plan.md`。
+- 历史 Phase 1 DoD：`docs/architecture/phase1-implementation-plan.md`；试点与量产分开验收。
+
+v2/Jev 不能改变原话授权、VAL、确认与只响应边界；Decide 是拟新增的独立建议通道，
+网络仅在 llm-gateway，actionability/runtime 仍保持纯函数。稳定目标身份不以开启 PLANNER_GOALS 为前提。
 
 长期质量规则：门禁是规格、知识要 A/B 证伪、输出通道先确认、记录不等于修复、声明源只留
 一份、证据不跨 SHA 转借。`CLAUDE.md` 与 `AGENTS.md` 都不是变更日志；逐批过程只进 history。

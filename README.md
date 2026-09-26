@@ -11,7 +11,15 @@
 
 > 云边协同的智能座舱 AI Agent 系统。喊一声「小舟小舟」，从毫秒级车控到多日行程规划、分钟级深度调研，一个语音入口全部完成。座舱屏上是 HMI，手机上是 Android 陪伴端「小舟随行」——两个用户端、一个后端大脑，同一个人在车里车外接着聊。LLM 只负责理解与规划，确定性系统负责执行——没有任何一条车控指令由 LLM 直接下发。
 
-**2** 个用户端（座舱 HMI + Android 陪伴端 App）· **14** 个领域 Agent · **30** 个服务一键起栈 · **85** 条端侧 capability / **68** 个车控对象 · 后端全量门禁与当前精确计数见 [`AGENTS.md` §4.0](AGENTS.md) · **37** 条旅程级语料 · 流式 TTS 首帧 **469ms** / 端到端语音首音频 **609ms** · 数据源全真实（高德 / 和风 / Exa / Tushare / api-football）· M0a→M4 智能化升级**通过跨阶段组合总体验收**且 13 张验收主卡全部收口 · M5 数据飞轮落地——**修落域 badcase 的标准产物是数据不是正则** · 竞品高阶指令集 25 条语料逐条真栈对标（时间约束 / 真沿途 / 长期记忆消费 / 动态重规划）· 会话真实性走确定性出口——**执行入账本、审计与候选集聚合问答零 LLM，兜底话术不许声称系统做过什么**
+座舱 HMI 与 Android「小舟随行」两端共用后端，具备 T0 / T1 / T2、领域 Agent、真实 Provider、
+语音、记忆、车书和观测链路。**当前仍是 Phase 1 工程化 PoC**，车控由模拟 VAL 验证。
+发布与验证数字见 [QA/发布交接](docs/reviews/2026-08-30-qa-closeout-handoff.md)，不把历史样本成绩当作全场景承诺。
+
+后续方向已整合为 **v2 可验证 Agent Runtime + 可选 Jev 语义判别层**：
+先完成任务/结果契约、可信车态与持久执行，再做端侧有界规划、真实车辆适配和集成试点。
+Jev 先走离线/影子评测，再按任务启用排序建议。**这些新增能力尚未实现**。
+直接从 [路线图](docs/roadmap.md)、[目标架构](docs/architecture/cockpit-agent-v2-target-architecture.md)
+和 [分批实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)接续。
 
 ## 能做什么
 
@@ -23,7 +31,7 @@
 | 「老婆喜欢吃粤菜」…数天后「晚上找地方和老婆吃饭」 | 长期记忆改变的是**结果集**（直接检回粤菜馆），不是一句「已参考您口味」的话术 |
 | 「打开空调，放首林俊杰，导航去公司」 | 混合多意图按语义组分流：本地车控/媒体立即执行，慢意图并行上云，同一请求协同完成 |
 | 「导航去那个像春笋的大楼」 | 视觉地标 → LLM 解析官方名 → 高德真实 POI 校验后导航 |
-| 「帮我规划周末去杭州的两天行程」 | LLM 提议骨架 + 确定性流水线接地真实 POI + 按真实电量沿路线编织充电站 + 校验每日车程 |
+| 「帮我规划周末去杭州的两天行程」 | LLM 提议骨架 + 确定性流水线接地真实 POI + 按可用电量输入沿路线编织充电站（当前车态为模拟） + 校验每日车程 |
 | 「创建钓鱼模式：座椅放平、氛围灯调暗」 | 一句话造场景：LLM 仅创建期编译（过 VAL 词表白名单），激活与执行零 LLM，退出恢复到激活前状态 |
 | 「到公司之前提醒我交周报」 | 按导航 ETA 反算提醒时刻，一轮成单，到点主动触达 |
 | 「明天第一场比赛提醒我观看」 | 赛事 Agent 与提醒 Agent 跨域交接：开赛前自动提醒 |
@@ -153,7 +161,7 @@ Agent 的接入完全声明式：manifest 声明能力与权限、`route_hints` 
 
 ### 端侧：车控与混合多意图
 
-85 条端侧 capability 覆盖 68 个车控/媒体对象（空调 / 座椅 / 车窗 / 氛围灯 / 360 环视 / 蓝牙 / 广播…），知识库驱动归一化、校验、安全门控与话术；混合多意图按语义组分流，本地动作与云端慢意图在同一请求内协同执行。另有 35MB 端侧语义 NLU 以影子模式在线（4.8ms/条给出真概率，只观测不执行——放量是产品决策，数据尺已备好）。
+端侧 capability 覆盖车控/媒体对象（空调 / 座椅 / 车窗 / 氛围灯 / 360 环视 / 蓝牙 / 广播…），知识库驱动归一化、校验、安全门控与话术；混合多意图按语义组分流，本地动作与云端慢意图在同一请求内协同执行。另有 35MB 端侧语义 NLU 以影子模式在线（4.8ms/条给出真概率，只观测不执行——放量是产品决策，数据尺已备好）。
 
 ### 云端：14 个领域 Agent
 
@@ -303,7 +311,10 @@ docs/             架构（真相源）、设计记录、指南
 | 当前 release、QA 证据与剩余活项 | [`docs/reviews/2026-08-30-qa-closeout-handoff.md`](docs/reviews/2026-08-30-qa-closeout-handoff.md) |
 | 工程约定、目录规范、安全红线 | [`CLAUDE.md`](CLAUDE.md) |
 | 为什么这么设计（架构唯一真相源） | [`docs/architecture/cockpit-agent-architecture.md`](docs/architecture/cockpit-agent-architecture.md) |
-| 分期计划与量产 DoD | [`docs/architecture/phase1-implementation-plan.md`](docs/architecture/phase1-implementation-plan.md) |
+| 后续路线图与阶段门 | [docs/roadmap.md](docs/roadmap.md) |
+| v2 / Jev 可领取实施包 | [分批实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md) |
+| 目标架构与两份研究 | [v2 目标分册](docs/architecture/cockpit-agent-v2-target-architecture.md)、[研究索引](docs/research/README.md) |
+| 历史 Phase 1 目标与 DoD | [phase1-implementation-plan.md](docs/architecture/phase1-implementation-plan.md) |
 | 各主题设计与落地记录 | [`docs/design/README.md`](docs/design/README.md) |
 | 怎么接真实 Provider（高德/和风样板） | [`docs/guides/provider-integration.md`](docs/guides/provider-integration.md) |
 | 怎么跑意图落域对抗测试、怎么修落域 badcase | [`docs/guides/intent-adversarial-testing.md`](docs/guides/intent-adversarial-testing.md) |
@@ -321,15 +332,17 @@ docs/             架构（真相源）、设计记录、指南
 当前为 **Phase 1 工程化 PoC**：T0 / T1 / T2 运行模型、云端中枢、语音回路、记忆/上下文、可观测与旅程级验证体系均已落地。距量产的已知边界如实列出：
 
 - **VAL 为 Python 模拟**（`orchestrator/edge/val.py`）：真实 SOME-IP/CAN 对接、车规资源约束与 OTA 属量产阶段。
-- **停车仍为 mock Provider**；手册使用真实Xiaomi SU7 v2图文包，历史`9a3b6f2f`的整本
-  章节187/187、视觉35/35已闭合。原36题完整真栈仍只在旧release`434a046`闭合；`9a3b6f2f`当轮
-  有7条旧表述被联网前安全预检拒绝，本次未重跑整批，不能转借成当前36/36。停车与手册不得混写成同一条mock边界。
+- **停车仍为 mock Provider**；手册使用真实 Xiaomi SU7 图文包。检索/目录路由与当前精确 SHA 的证据见
+  [手册 README](agents/manual_rag/README.md)及 QA 交接；车书 v2 与本次整体运行时 v2 是两个版本概念。
 - **单实例状态**：Cloud Gateway 车辆长连状态在单实例内存；Registry 已有 PostgreSQL 持久化与周期重注册自愈，多实例扩展待做。
 - **安全能力已落地，本地开发档默认关**：两层会话鉴权（`AUTH_REQUIRED`）与服务间 mTLS（`GRPC_TLS`）经 env 门控，开启即全栈生效——云端真栈档已实际开启会话鉴权（`AUTH_TOKENS` 畸形条目 fail-closed）；真实 IdP、证书轮换属后续。
 - **声学层指标**（真麦命中率 / 误唤醒率）属人工验收范畴；浏览器内 KWS / VAD 链路已真机验证。
 - **MCP 生态桥已接真实商户，但仍是 PoC 账号模型**：麦当劳/瑞幸官方复合工作流已打通到“创建未支付订单、展示受控支付入口、查单”，瑞幸可再次确认取消；不执行最终付款，麦当劳官方工具面无远程取消。写工具不可自动重放，支付链接经桥与 payment-gateway 双层 host 白名单。两家凭证当前都是服务级全局 token/账号，只允许网关权威 scope 下的已认证主用户使用；多乘员独立商户账号、token 自动刷新、通用 HTTP 工具面均未产品化。商户与支付 host 必须由运行时安全配置提供，空配置 fail-closed。
 - **Android 陪伴端是 PoC 前台交互档**：不做后台保活与厂商推送，主动消息只在 App 前台送达；账号仍是静态 `AUTH_TOKENS` 条目（引导页手填云栈 FQDN + token，经 Tailscale 接入）、debug 签名（高德 key 绑包名 + 签名指纹）；M5 生产化（推送 / 正式鉴权 / 正式签名与 OTA / 崩溃监控 / 商店合规）未启动，其中公网接入、账号体系、离线投递三项是后端工作。
-- **Android 2026-09-07 完整评审 R01–R15 未全部关闭**：AR01 确认与取消、AR02 采集与隐私、AR03 停播与横屏的客户端修复已合入并在真机取到主证据，但三批都**未整批签收**（完整设备矩阵、多段段链、S2S 自答、主动消息播报、盲听等格仍缺输入通道）；AR04–AR11 未启动。已知边界：ESLint 门禁未闭合；唤醒词真人基线未达既定目标；`driving-landscape` 只有对照机外屏够得到，支持范围待 AR10 裁；设备矩阵只有一台测试机 + 一台折叠屏对照机，无真平板；声纹在手机端刻意不做。
+- **Android 各批工程完成不等于设备/真人验收全部关闭**：剩余工程、真机矩阵、声学、多人 UX 与 AM5
+  以 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md) 为准，不再用早期 AR01–AR11 状态替代当前台账。
+- **v2 仍在规划阶段**：稳定目标与 ResultBundle、逐信号多车视图、持久操作/确认绑定、Jev Decide、T1e 和 OEM 驱动
+  都有明确任务与门槛；本次文档更新没有启用这些行为，也没有改变生产 release。
 
 接手规则以 [`AGENTS.md`](AGENTS.md) 为准；当前 release、QA 证据与活项以
 [`QA 当前交接页`](docs/reviews/2026-08-30-qa-closeout-handoff.md) 为准。

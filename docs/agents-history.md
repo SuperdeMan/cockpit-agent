@@ -10082,3 +10082,13 @@ Maestro 第二次 eraseText 遇设备服务超时/宿主 heartbeat 文件锁，�
   删除脚本的 current 守卫要读 `/opt/car-agent/current`（`releases/current` 不存在）。仍是候选未批：其余 13 个成功发布的暂存目录（~690 M）、110 份 build record（16 G）。
 - 留下：正式基线未重建（§9.2，需切 local 全栈）；planner「接孩子后去万象城」只导航到学校那半、「adaptive 却零步」两种落域方差；chitchat 车辆读数条款等真栈样本；
   「关掉音乐」gold `media.pause` 是否该放开 `media.stop`（案例集裁决）。
+
+
+### 2026-09-26 — v2 / Jev 研究纳入路线图与分批实施（仅文档）
+
+- 用户要求详细阅读两份研究并更新后续路线、架构、AGENTS/README 与落地拆解，授权提交/推送。
+- 审阅起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；新增运行时实现尚未开始，未作部署/真 API 调用。
+- [统一路线图](roadmap.md)收敛 R0–R5 和 Jev 支线；[目标架构](architecture/cockpit-agent-v2-target-architecture.md)区分现状与拟新增契约；[实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)保留 CA2-01–22/JV00–09，补依赖、角色、首轮 PR、兼容/回退和验收。
+- 研究与代码差异：稳定 goal 身份不重开 PLANNER_GOALS；Jev RAG 接点覆盖 09-26 目录路由/首页保留/主语承接；多车状态必须全链迁移。
+- 发布数字集中到 QA 交接 §2；AGENTS 原发布流水迁入 [入口快照](history/2026-09-26-entry-status-snapshot.md)，架构原章节号保留并指向机制/版本分册。
+- 完整变更边界、验证与接续看 [本轮交接](reviews/2026-09-26-v2-roadmap-handoff.md)。历史 PASS 不转借本轮文档提交，不宣称 QA 或 v2 已全绿。

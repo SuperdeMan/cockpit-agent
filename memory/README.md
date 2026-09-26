@@ -5,6 +5,15 @@
 2026-06-25 从 mock KV 重构为分层语义记忆，完整设计见
 [`docs/design/2026-06-25-memory-system-redesign.md`](../docs/design/2026-06-25-memory-system-redesign.md)。
 
+## v2 / Jev 后续边界（未实现）
+
+CA2-15 优先修订消费语义：偏好更新、任务约束失效、多 owner/跨端绑定、未知声纹的隐私投影。
+下面记录的未知声音回 `primary` 是存量行为，不能将“未知声音不读个人敏感记忆”的 v2 目标误报为已完成。
+JV08 仅对通过原抽取/OwnerKey/隐私过滤的候选做异步 review，不能自动 merge/supersede/delete；
+用户显式记住/忘记与撤权失效优先。View/Snapshot 不建立第二记忆数据库。
+任务见 [实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
+
+
 ## 分层
 - **L0 会话**：`AppendTurn` / `GetSession`（Redis，连不上自动降级内存）。**轮次带 OwnerKey**（M-B）。
 - **L1 车辆上下文**：`GetContext(scopes)` 按 scope 返回片段（敏感 scope 脱敏，如 `vehicle.location` 只给城市级）。

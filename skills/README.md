@@ -15,6 +15,13 @@
 > **分工口径（2026-07-27 采样方差实证）**：教科书形态（「去X怎么充电」）用 route_hints
 > 钉死——canonical 不该靠温度采样；skill 知识管 paraphrase 泛化（「补个电」「电够不够」）。
 
+## Jev 后续接续（未实现）
+
+JV04 只重排已召回的可选 guides/exemplars，保留 policy、词法保留项与渲染预算；关闭 Jev 不关闭原 Skills。
+原池/扩池/同池重排分开对照，注入与真正影响计划分开归因。范例选中不能直接执行其 plan。
+见 [实施方案 §5](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md#5-jev-工作包细化)。
+
+
 ## 三型对象与目录
 
 ```

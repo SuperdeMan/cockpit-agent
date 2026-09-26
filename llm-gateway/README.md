@@ -2,9 +2,18 @@
 
 所有 LLM 调用的唯一出口。屏蔽厂商差异，提供多模型路由与降级。
 
+## v2 / Jev 后续边界（未实现）
+
+计划在现有进程与 gRPC 服务增加独立 `Decide`，不放进 chat provider 选择器，也不复用聊天降级链。
+JV01–03 先做显式类型/响应校验、模型 pin、Snapshot/预算/失效、actionability shadow；
+网络仅在本网关，off 包括 shadow 在内零外呼。已有 Complete/CompleteStream/Embed 保持兼容。
+任务与验收见 [v2 实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md) §5；DECISION_* 配置均尚未实现。
+
+
 ## 接口（见 proto/cockpit/llm/v1/llm.proto）
 - `Complete` 同步补全
 - `CompleteStream` 流式补全
+- `Embed` 文本向量化（独立于 chat provider）
 
 ## 多 LLM 源 + 全局运行时切换（`llm_runtime.py`）
 座舱「单一大脑」模型：进程内 provider 注册表持有所有**已配置 key** 的厂商，全局 active 经 HMI 设置页

@@ -1,4 +1,8 @@
-# Phase 1 实施计划（工程化）
+# Phase 1 实施计划（工程化，历史目标基线）
+
+> **2026-09-26 接续关系**：后续排期统一转 [v2 路线图](../roadmap.md)，
+> WS1–10 → CA2 的逐项映射在路线图 §4；本文件保留原目标与验收边界，不再作为当前排期。
+> 当前运行证据看 [QA 交接](../reviews/2026-08-30-qa-closeout-handoff.md)，v2 新实现尚未开始。
 
 > 版本：v1.0
 > 日期：2026-05-29
@@ -85,7 +89,7 @@ proto 契约、Agent SDK、Registry/LLM-Gateway/Planner/Memory/Gateway/Edge 骨�
 - media：接媒体内容源播放控制。
 - info：天气/新闻/日程/提醒真实数据源。
 - food-ordering / parking-payment：接到店/停车平台 + **统一支付网关**（Agent 不持凭证）。
-- manual-rag：✅ 已在生产接入 Xiaomi SU7 v2 真实手册只读图文包；当前release为`9a3b6f2f`
+- manual-rag：✅ 已在生产接入 Xiaomi SU7 v2 真实手册只读图文包；本段历史验收锚为`9a3b6f2f`
   （source/content/visual hash、车型隔离、PDF 页/章节出处、中文 n-gram BM25 + 重排、数值接地闸）；
   无标点方法问句安全落域、PlanningGuide/exemplar 泛化、受控图标俗称与 HMI/Android 图文卡
   均已验证。2026-09-05生产独立章节187/187、视觉35/35、雨刮/“背宝剑”各3/3完成整本闭合；
@@ -157,7 +161,9 @@ proto 契约、Agent SDK、Registry/LLM-Gateway/Planner/Memory/Gateway/Edge 骨�
 
 ---
 
-## 6. 执行建议
+## 6. 历史执行建议
+
+以下为原 WS 组织方式；新工作按 v2 实施方案领取 CA2/JV 包，已完成开发批不重复启动。
 
 - 每个 WS 建独立 spec→plan→实现 循环；本计划是总纲，单 WS 启动前用 brainstorming/writing-plans 细化。
 - M1 是地基（契约/通道/可观测），务必先稳；M2 可大规模并行；M3 收口安全与质量门禁。

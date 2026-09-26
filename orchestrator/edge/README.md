@@ -2,6 +2,14 @@
 
 端侧"快系统"。内含 Fast Intent + 端侧车控/媒体 Agent + 模拟 VAL（单进程简化）。
 
+## v2 后续边界（未实现）
+
+CA2-06 先做车辆身份与逐信号可信事件，CA2-11/12 做本地操作日志和有状态故障仿真，CA2-18 才接一种 OEM 驱动。
+T0 与 VAL 继续确定性执行；CA2-13/14 的 T1e 是可选实验，NLU 当前 off/shadow 不因路线图合入而可执行。
+云端不可用时所需操作准入/状态复核在车端，不把 Jev 或云 PG 变成快路径前提。
+依赖和验收见 [路线图](../../docs/roadmap.md)与 [实施方案](../../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
+
+
 ## 流程
 1. Fast Intent 对单意图或多意图片段做结构化分类。
 2. 完全本地且无需确认的语义组经 `VAL` 秒回；本地轮 best-effort 写共享记忆。
@@ -23,7 +31,7 @@
 场景句整句拦截都留在这里），云侧拆完只问「这一段有没有被计划覆盖」。
 
 ## Phase 1 已落地
-- 端云双向流：Go Cloud Gateway（EdgeCloudChannel bidi）+ Go Edge Gateway（ChannelClient 重连+心跳+多路复用）
+- 端云双向流：Python Edge Orchestrator 的 `cloud_client.py` 持有持久 bidi，连接 Go Cloud Gateway；Go Edge Gateway 承担用户接入
 - `edge_call`→VAL、动作卡回传与防双发
 - 混合意图语义分组、本地/云端分流、危险动作确认
 - 连接状态追踪、端侧轮记忆与降级增强
@@ -31,5 +39,5 @@
 - collector debug 仅允许 `speed_kmh/battery/gear/location` 四类模拟环境量
 
 ## 待办
-- Fast Intent 接端侧小模型、规则/阈值 OTA。
-- TODO(Phase2): VAL 接真实 SOME-IP/CAN；端侧件 C++/Rust 化。
+- 端侧 NLU 已有 shadow；后续执行放量与可选 T1e 按 CA2-13/14 评测，规则/阈值 OTA 仍待验证。
+- 真实车辆适配按 CA2-18；C++/Rust 是否必要以目标板资源测量决定，不预设重写。

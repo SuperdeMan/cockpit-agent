@@ -1,5 +1,13 @@
 # 测试与验证
 
+## v2 / Jev 验收接续（尚未实施）
+
+[实施方案 §7](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md#7-验收矩阵)定义新增的契约/理解/任务/安全/体验五层验证，
+复用本文件既有门禁与探针。CA2-01/JV00 共用冻结基线，CA2-12 故障仿真、CA2-21 失败家族贯穿各批。
+建议的 200 旅程 × 5 次、Jev 中文校准/同池重排指标是未来目标，当前没有这些结果；
+拟新增的 eval_decisions/probe_decisions 未实现。真实副作用不做双臂在线执行，版本/Provider/设备/数据 split 独立登记。
+本轮文档只运行文档守卫与链接/迁移完整性检查，不以之代替后端全量或真栈验收。
+
 ## 1. 端侧纯逻辑 smoke（无需 docker）
 ```bash
 python test/smoke_edge.py
@@ -12,12 +20,10 @@ python -m pytest -q -n auto --dist worksteal    # = make test（需 pytest-xdist
 python -m pytest -q                             # 串行对照档（~25min，排查并行嫌疑时用）
 ```
 `conftest.py` 已配好 PYTHONPATH；`--import-mode=importlib`（解决 test_agent.py 重名）
-已收敛进根 `pytest.ini` 的 addopts——裸 `pytest` 同口径，不再需要手带。并行口径与
-对账法见 [`AGENTS.md` §4.0](../AGENTS.md)「跑全量的固定口径」。
-**当前结果不在本文件维护**——数字变得比这份说明快，抄一份必然陈旧（这一行以前就写着
-一个落后两批的 4601）。唯一真相源是 [`AGENTS.md` §4.0](../AGENTS.md) 的「最新后端全量基线」，
-那里同时给出**较上一个 SHA 的净增量与逐条点号**（§4.3：净增量要跟同一个 SHA 比，
-不能跟文档里那个数比）。skip 含 nightly 真实 LLM 默认跳过。
+已收敛进根 `pytest.ini` 的 addopts——裸 `pytest` 同口径，不再需要手带。并行固定口径看
+[`AGENTS.md` §6](../AGENTS.md)。当前精确 SHA 与测试数字集中维护在
+[QA/发布交接 §2](../docs/reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)，
+本文件不复制计数；skip 含 nightly 真实 LLM 默认跳过。证据不能跨 SHA 或 Provider 转借。
 注意 CI 按分组进程隔离跑（见 `.github/workflows/ci.yml` run_group），本地单命令与 CI
 口径一致；前端不在 `AGENTS.md` 重复维护计数，以本文件对应命令的本次输出为准。
 
