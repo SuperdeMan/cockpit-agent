@@ -7,8 +7,8 @@
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。最后一次已登记生产 release 是 `634c28786360a7b297d197d9d81fdd84308bb821`，
-对应 2026-09-26 v2 R0 基线发现的纯定义问云侧写闸补口；已独立核对 status/运行 SHA 并完成 verify。
+**QA 验收仍非全绿**。最后一次已登记生产 release 是 `d9970d9a5f19507381ff3658c23101e2a84d61c3`，
+对应 2026-09-26 v2 R0 基线发现的限定解释句误执行补口；已独立核对 status/运行 SHA 并完成 verify。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
 v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用基线量尺已开始，R1/Jev 新运行时实现与验收未开始；
@@ -20,9 +20,9 @@ v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用基线量尺已开
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | `47c62b44d335a3c76da90f89f05fa2fc887c2742`；本轮 fetch 后 HEAD 与 origin/main 一致；后续纯文档提交允许领先 production |
-| 生产 release | `634c28786360a7b297d197d9d81fdd84308bb821`，2026-09-26 R0 纯定义问云侧写闸补口；上一版 `5a2f4c9d674fb27c98539f1d57ff8cc93bca4c76` |
-| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `634c2878`；verify `verified`，`20260926T103016Z-634c287.json` |
-| 后端代码验证 | `634c2878` 提交前树：9968 passed / 4 failed / 32 skipped / 11 warnings；4 条均为 Windows PowerShell 模块路径导致 Get-FileHash 缺失，仅该子进程改用系统模块目录后原文件 13/13。四门禁通过、smoke_edge 13/13；两次读数不合并成一次全绿。见 [R0 记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md) |
+| 生产 release | `d9970d9a5f19507381ff3658c23101e2a84d61c3`，2026-09-26 R0 限定解释句补口；上一版 `634c28786360a7b297d197d9d81fdd84308bb821` |
+| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `d9970d9a`；verify `verified`，`20260926T112324Z-d9970d9.json` |
+| 后端代码验证 | `d9970d9a` 提交前树：9986 passed / 32 skipped / 11 warnings（Windows PowerShell 测试子进程使用系统模块目录）；四门禁通过、smoke_edge 13/13；见 [R0 记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md) |
 | 手册最近专项（新 release 尚未重跑） | `5a2f4c9d`：章节 187/187、视觉 35/35、胎压复合句 16/20（有手册步 16/16）、词法自信三句 8/9、调节类 6/6、口语语料 39/43 与 38/43（失败在规划层）、指代 8/9、空调模式 3/3、多步按话术 3/3、原 36 题可发送子集 31/31，车态零差异；[二批记录](../design/2026-09-26-manual-rag-colloquial-recall.md) §8 |
 | 手册证据限制 | `.artifacts/manual-rag-colloquial/live-*-5a2f4c9d*.json`；被预检拦下的 5 条旧表述未发送，不能报当前 36/36；需确认混合轮最终消息没有手册卡，话术通过不等于完整卡片/正文呈现通过 |
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider；不转借到 `5a2f4c9d`。原入口全部历史发布行保存在 [快照](../history/2026-09-26-entry-status-snapshot.md) |

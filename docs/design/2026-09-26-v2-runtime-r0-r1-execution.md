@@ -76,6 +76,8 @@ trace `49307834d3c34dc6a92276245a217fcd`，artifact `.artifacts/v2-runtime/basel
 量尺同时补强：每轮保存完整 vehicle_before/vehicle_after，而非只有差异键。
 旧 artifact 没有保存具体前态值，不声称已精确恢复原态；后续部署重建模拟 VAL 后重新冻结完整状态。
 这里只涉及本项目内存模拟 VAL，没有连接真实车控总线。
+`d9970d9a5f19507381ff3658c23101e2a84d61c3` 已发布；status 5/5、运行 SHA 对齐、
+verify `verified`（`20260926T112324Z-d9970d9.json`）。推送曾遇 GitHub 连接超时，带时限重试后成功；未重复 apply。
 
 ## 3. 第一批契约实施边界
 
