@@ -160,6 +160,11 @@ def pending_closed(state, *, cancelled: bool) -> dict | None:
 
 
 def attach(event: dict, ctx, results, outcome: str) -> None:
+    if outcome == "store_fenced":
+        # The outer engine exit can also attach closed-operation snapshots.
+        # A privacy fence closes that projection too, including source hashes/IDs.
+        event.pop("result_bundles", None)
+        return
     if ctx is None:
         return
     bundles = list(event.get("result_bundles") or [])

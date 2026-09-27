@@ -56,13 +56,17 @@ TTS 仍消费原 speech，不把完整正文自动重新播一遍。
 - 新增五个出口反例先红：改派兄弟结果、存储不可用、D0 话术/动作流中断、执行超时；修后相关 154 passed。
 - 覆盖实际 Python servicer 与 proto round-trip、Go WS 转换、Edge 最终拒绝不复活旧执行声明。
 - 共享选择器 7 项；Android 会话层验证完整上屏、短 TTS 与取消后保留原消息。
-- HMI 正式构建与此前 349 项通过；增加主卡去重后需重新跑正式构建/全套。
+- `f4d3b8d7`：HMI 正式构建与 350 项测试、四个 Go 网关包、四门禁与 smoke_edge 均通过。
 - Android 全套首跑 1156 passed / 1 timeout（diagnosticRoutes 的旧用例）；该文件在主线与本分支各自单跑 28/28。
-  lint 与 typecheck 通过，不能把两次测试写成一次全绿。
+  `f4d3b8d7` 合入后另跑完整 112 suites / 1157 tests 全过，lint 与 typecheck 通过；不改写首跑失败记录。
 - HMI 额外 tsc 检查在未改主线上同样失败：旧 .mjs 声明、音频 BlobPart 与 cardMath 类型欠账；
   本包沿项目正式 `vite build` / Node test 口径验证，没有压掉错误或放宽断言。
 - 本地 `?demo=results` 检查展开阅读、全文与来源；截图在 `.artifacts/v2-runtime/hmi-result-details.png`。
   这是演示夹具的视觉证据，不是线上业务或 Android 设备证据。
+
+`f4d3b8d7` 后端全量首跑 10032 passed / 1 failed / 32 skipped / 11 warnings，585.37 s；
+唯一失败是原商户租约测试固定等待 50 ms 后任务仍在 cancelling。原文件与结果/挂起回归串行 116 passed，未改断言。
+出口复核另发现隐私栅栏时外层可能补旧任务引用：新增反例先红，统一 attach 出口已阻断该投影；候选全量另测。
 
 回退可停止客户端消费新字段，保留既有消息正文；服务端回退保留旧字段/旧数据兼容。
 不迁移数据库、不改运行配置、不启用 PLANNER_GOALS 或 Jev。

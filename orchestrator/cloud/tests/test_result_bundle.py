@@ -102,6 +102,16 @@ def test_cancellation_keeps_completed_references_without_inventing_completion():
     assert all(r["answer_state"] == "reference" and not r["answer"] for r in bundle["results"])
 
 
+def test_privacy_fence_cannot_reintroduce_closed_task_references_at_the_outer_exit():
+    ctx, plan, _, _ = prepared()
+    ctx.pending_result_states = {"op-1": SessionState(
+        phase="wait_confirm", operation_id="op-1", pending_step_id="s2",
+        pending_plan=PlannerEngine._serialize_plan(plan))}
+    event = {"closed_operation_ids": ["op-1"], "speech": "正在清除你的数据"}
+    result_bundle.attach(event, ctx, None, "store_fenced")
+    assert "result_bundles" not in event
+
+
 def test_response_only_false_claim_cannot_reappear_in_details():
     ctx, _, done, _ = prepared()
     done.speech = "已为您打开车窗。空调有自动模式。"
