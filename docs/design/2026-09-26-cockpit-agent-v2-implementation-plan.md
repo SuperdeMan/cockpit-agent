@@ -1,6 +1,6 @@
 # Cockpit Agent v2 与 Jev 分批实施方案
 
-> 更新：2026-09-27。状态：**CA2-01/JV00 小基线已采集，CA2-02–04 首版已实现，合入/真栈验收进行中**。
+> 更新：2026-09-27。状态：**CA2-01/JV00 前后小基线已采集，CA2-02–04 首版已发布并完成小集真栈；设备/扩展验收待补**。
 > 原规划基线：`47c62b44d335a3c76da90f89f05fa2fc887c2742`；进度与精确证据见 [首批执行记录](2026-09-26-v2-runtime-r0-r1-execution.md)。
 > [路线图](../roadmap.md)决定优先级，[目标架构](../architecture/cockpit-agent-v2-target-architecture.md)决定边界。
 > CA2-01–22 与 JV00–09 沿用两份研究编号，是可领取的本地任务，不是已创建的 GitHub Issue。
