@@ -6,7 +6,7 @@
 - port_map 含所有已注册 Agent（含 info=50067）
 - _set_current_meta / _current_meta ContextVar 传递
 
-不走 gRPC（mock 掉 channel），不依赖 proto 生成代码的运行时导入。
+不走 gRPC（mock 掉 channel），Describe 使用真实 manifest/proto，保留版本协商。
 """
 import asyncio
 import pytest
@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 import importlib
 import sys
 import os
+from pathlib import Path
 
 # 确保能导入 agent_client
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -25,6 +26,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 # 绕过 SDK __init__ 的全量 proto 导入，直接导入底层模块
 from agents._sdk.agent_client import AgentClient, MAX_DEPTH
 from agents._sdk.base import _set_current_meta, _current_meta
+from agents._sdk.manifest import load_manifest
+from runtime import capability_contract as cap_contract
+
+
+def _manifest(directory):
+    return load_manifest(str(Path(__file__).resolve().parents[2] / "agents" / directory / "manifest.yaml"))
 
 
 class _MockAgent:
@@ -129,6 +136,7 @@ def test_meta_contains_depth_and_stack():
     async def fake_call():
         with patch("agents._sdk.agent_client.aio_channel", return_value=MagicMock()):
             mock_stub = MagicMock()
+            mock_stub.Describe = AsyncMock(return_value=_manifest("navigation"))
             mock_stub.Execute = AsyncMock(side_effect=Exception("capture meta"))
 
             with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=mock_stub):
@@ -140,6 +148,8 @@ def test_meta_contains_depth_and_stack():
             if mock_stub.Execute.called:
                 req = mock_stub.Execute.call_args[0][0]
                 captured_meta.update(dict(req.meta))
+            mock_stub.Describe.assert_awaited_once()
+            mock_stub.Execute.assert_awaited_once()
 
     asyncio.run(fake_call())
     assert captured_meta.get("call_depth") == "2"  # depth+1
@@ -156,15 +166,19 @@ def test_meta_forwards_parent_session_context():
         "current_lat": "30.2741", "current_lng": "120.1551",
         "vehicle_battery": "72%",
         "call_depth": "0", "call_stack": "stale",  # 应被本层覆盖，不沿用父值
+        cap_contract.HEADER: "parent-capability-version",
     }
     client = AgentClient(caller=agent, call_depth=1, call_stack=["planner"],
                          parent_meta=parent_meta)
 
     captured_meta = {}
+    target = _manifest("charging_planner")
+    capability = next(c for c in target.capabilities if c.intent == "charging.plan")
 
     async def fake_call():
         with patch("agents._sdk.agent_client.aio_channel", return_value=MagicMock()):
             mock_stub = MagicMock()
+            mock_stub.Describe = AsyncMock(return_value=target)
             mock_stub.Execute = AsyncMock(side_effect=Exception("capture meta"))
             with patch("agents._sdk.agent_client.agent_pb2_grpc.AgentStub", return_value=mock_stub):
                 try:
@@ -174,6 +188,8 @@ def test_meta_forwards_parent_session_context():
                     pass
             if mock_stub.Execute.called:
                 captured_meta.update(dict(mock_stub.Execute.call_args[0][0].meta))
+            mock_stub.Describe.assert_awaited_once()
+            mock_stub.Execute.assert_awaited_once()
 
     asyncio.run(fake_call())
     # 会话上下文转发
@@ -183,6 +199,8 @@ def test_meta_forwards_parent_session_context():
     # 护栏键由本层覆盖，不沿用父请求的过期值
     assert captured_meta.get("call_depth") == "2"
     assert captured_meta.get("call_stack") == "planner,trip-planner"
+    assert captured_meta[cap_contract.HEADER] == cap_contract.capability_digest(target, capability)
+    assert parent_meta[cap_contract.HEADER] == "parent-capability-version"
 
 
 # ─── 响应 Struct → 原生 dict（跨 Agent 卡片可用）───
