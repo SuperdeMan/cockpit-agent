@@ -1,7 +1,7 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-26（R0 量尺取样、纯定义问写闸补口发布与独立 status/verify）
+> 更新时间：2026-09-27（CA2-02–04 已合入/推送；容量已按精确授权清理，候选待重试发布，线上未切换）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
@@ -11,7 +11,7 @@
 对应 2026-09-26 v2 R0 基线发现的限定解释句误执行补口；已独立核对 status/运行 SHA 并完成 verify。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
-v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用小基线已采集，CA2-02–04 首版实现进入合入验证；Jev 尚未接入。
+v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用小基线已采集，CA2-02–04 首版已合入/离线通过，首趟发布被容量门槛挡住，已按精确授权清理，候选待重试；Jev 尚未接入。
 规划层方差、挂确认时结果完整性和双端/声学未验面继续有明确任务，不能借研究合入宣称关闭。
 已完成批次仍使用原 SHA，历史证据见 §3–4 和 [agents-history](../agents-history.md)。
 
@@ -28,7 +28,9 @@ v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用小基线已采集
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider；不转借到 `5a2f4c9d`。原入口全部历史发布行保存在 [快照](../history/2026-09-26-entry-status-snapshot.md) |
 | Android 包与验收 | [剩余待办总表](../design/2026-09-14-android-remaining-todos.md)记录设备与包身份；服务端 SHA、APK SHA、设备安装状态分列，本次未验包 |
 | v2 小基线 | `d9970d9a`，runner `9aa5216b`，20×3 / 100 轮，11 个业务失败轮、零证据失败/动作/车态变化/残留挂起；其中 9 轮是挂确认丢手册卡，2 轮是规划/内容方差；[首批执行 §2.5](../design/2026-09-26-v2-runtime-r0-r1-execution.md#25-完整小基线先固定结构性缺口与规划方差) |
-| v2 / Jev | CA2-02–04 首版已实现，待合入全量与精确 release 复验；Decide、持久操作、多车逐信号、T1e、OEM 驱动仍未实现；设备包未验 |
+| 候选（未部署） | `023639328912ffbfd58b5dc3710349be89cb59e3` 已推送；本 SHA 后端 10034 passed / 32 skipped / 11 warnings，657.81 s；客户端/Go/门禁的独立测试 SHA 与相同 tree OID 见 [首批执行 §4](../design/2026-09-26-v2-runtime-r0-r1-execution.md#4-首批合入与部署阻断2026-09-27) |
+| 发布阻断 | 云端约 28.72 GiB，构建要求 30 GiB；apply 失败、未创建目标 release。51 个精确路径已按单独授权清理、空闲约 31.43 GiB，待原 SHA 重试；旧版独立 status 仍 5/5 healthy |
+| v2 / Jev | CA2-02–04 首版已合入/离线通过，真栈与设备未验；Decide、持久操作、多车逐信号、T1e、OEM 驱动仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。

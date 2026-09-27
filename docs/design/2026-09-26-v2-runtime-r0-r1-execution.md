@@ -11,9 +11,9 @@
 | CA2-01 / JV00 工具与种子 | 已提交/推送 `81fe1be4`、`fbcc6fa1` | 20 组 regression，独立 synthetic 用户、固定模型和 release、来源树 hash；不是 holdout |
 | R0 初始测量 | 两次发现并修复误执行边界；完整小基线已采集 | `d9970d9a`，20 组 ×3、100 测量轮、11 个业务失败轮、零误动作/车态变化，见 §2.5 |
 | R0 问句写闸补口 | 已发布并完成三次采样 | `634c2878` 纯定义问、`d9970d9a` 限定解释句；不把旧中断趟拼入完整基线 |
-| CA2-02 | 已合入，待精确 release 真栈 | `e2632e64`；[步骤范围](2026-09-26-v2-step-input-scope.md) |
-| CA2-03 | 已合入，待精确 release 真栈 | `ce3a2632`；[任务身份](2026-09-26-v2-task-identity.md)，云侧全族 2120 passed / 1 skipped |
-| CA2-04 | 已合入，候选全量/真栈验证中 | [结果集合](2026-09-27-v2-result-bundle.md)；原确认授权、最小恢复存储与短 TTS 保持 |
+| CA2-02 | 已合入/推送，待清理后的精确 release 真栈 | `e2632e64`；[步骤范围](2026-09-26-v2-step-input-scope.md) |
+| CA2-03 | 已合入/推送，待清理后的精确 release 真栈 | `ce3a2632`；[任务身份](2026-09-26-v2-task-identity.md)，云侧全族 2120 passed / 1 skipped |
+| CA2-04 | 已合入/推送，全量通过；待清理后的精确 release 真栈 | [结果集合](2026-09-27-v2-result-bundle.md)；原确认授权、最小恢复存储与短 TTS 保持 |
 
 ## 2. R0 必须先修的已重现问题
 
@@ -113,3 +113,36 @@ CA2-04 保留完整已呈现结果、卡片与引用，并将 TTS 摘要作为�
 当前 `_resume_result` 刻意剥离自由文本/旧卡/动作，不能直接撤销这一隐私与防重约束；
 完整答案走正常会话呈现/历史路径，恢复执行只保留必需依赖与事实引用。
 HMI/Android 共用结果选择器与版本规则，各自渲染；旧客户端和旧记录均需明确兼容。
+
+
+## 4. 首批合入与部署阻断（2026-09-27）
+
+候选 `023639328912ffbfd58b5dc3710349be89cb59e3` 已推送 main；其父实现提交为
+`f4d3b8d73ff31a5a6b42b841d41ed5da314d6130`。代码、测试与运行证据分栏：
+
+| 验证面 | 精确版本 / 结果 |
+|---|---|
+| 后端完整测试 | `02363932`，10034 passed / 32 skipped / 11 warnings，657.81 s；工作树全程冻结 |
+| HMI | `f4d3b8d7` 正式构建 + 350/350；与候选 hmi tree 均为 `95d9ed3f6db4c185d0800abb9de1195d14cd2180` |
+| Android | `f4d3b8d7` 112 suites / 1157 tests、typecheck、lint 全过；与候选 mobile tree 均为 `2d6df3f6230b8f59ce8edae8071038051aa996e7` |
+| 网关 | `f4d3b8d7` 四个 gateway 包测试通过；与候选 gateway tree 均为 `29e1b509b358bd514fa2d97ef25a557b4c223a7e` |
+| 四门禁与 edge smoke | `f4d3b8d7` 全过；不转写成候选 SHA 的另一趟测试 |
+| Android 设备 | 预检 16 pass / 2 warn；无 USB 设备、Android Tailnet 设备离线。本批未构建/安装/验收 APK |
+| 云端部署 | 候选 dry-run 无 blocking_changes；apply 返回 runtime failure，独立容量检查复现 insufficient disk capacity，尚未切换 |
+| 线上保持 | 独立 status 仍为 `d9970d9a`，release/running 一致、5/5 healthy、零 warning；不是候选验证结果 |
+
+证据清单 `.artifacts/v2-runtime/r1-verification-manifest-02363932.json`，SHA-256
+`dba29c4c86c822325c943414d1e5ab884da6a8f343cdeccfd9e3418d9702e85c`；各日志摘要在清单内。
+首跑 `f4d3b8d7` 的单条商户租约时序失败与隔离工作树的 Android 超时仍保留，不改写为首次全绿。
+
+云端可用约 28.72 GiB，小于受控构建入口的 30 GiB 门槛；dry-run 的无源码阻断不等于容量门通过。
+已准备固定清单：14 份旧构建的 src/归档、9 份旧上传包，共 51 个路径、2.754 GiB。
+只清理源码/归档，保留所有 release、回滚镜像、当前/前一版构建、构建 manifest/checksum/image inventory、存储和其他项目。
+候选 `.artifacts/v2-runtime/deploy-cleanup-proposal-02363932.json` 的 SHA-256 为
+`a4f2178eb966a0685b46a9236d32a350af7ff1b4e4b3934ba9743af952549adc`；用户已对这 51 个精确路径单独授权；清理完成，72 份保留元数据的 hash 未变，
+current 仍是旧版，磁盘由 30,792,359,936 增至 33,749,192,704 bytes（约 31.43 GiB）。
+结果 `.artifacts/v2-runtime/deploy-cleanup-result-02363932.json`；未删除发布版本、镜像或存储。
+
+已完成授权与 current/占用/路径边界检查、清单内清理；接续：原 SHA dry-run/apply →
+独立 status/verify → 同 20 组语料 repeat 3，并读取新增结果快照与取消前后身份。不能降低容量闸或用旧样本填新 release。
+下一包仍按路线图 CA2-05；只读盘点已有 53 项云侧能力，其中 30 项未显式声明 effect，需结合加载器缺省逐项裁决。
