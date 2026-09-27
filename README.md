@@ -17,7 +17,9 @@
 
 后续方向已整合为 **v2 可验证 Agent Runtime + 可选 Jev 语义判别层**：
 先完成任务/结果契约、可信车态与持久执行，再做端侧有界规划、真实车辆适配和集成试点。
-Jev 先走离线/影子评测，再按任务启用排序建议。**这些新增能力尚未实现**。
+步骤业务范围、服务端任务/来源引用与 ResultBundle 已有首版实现，见
+[首批实施与证据](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)；Jev Decide、可信多车状态与持久操作仍未实现。
+Jev 先走离线/影子评测，再按任务启用排序建议。
 直接从 [路线图](docs/roadmap.md)、[目标架构](docs/architecture/cockpit-agent-v2-target-architecture.md)
 和 [分批实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)接续。
 
@@ -341,8 +343,8 @@ docs/             架构（真相源）、设计记录、指南
 - **Android 陪伴端是 PoC 前台交互档**：不做后台保活与厂商推送，主动消息只在 App 前台送达；账号仍是静态 `AUTH_TOKENS` 条目（引导页手填云栈 FQDN + token，经 Tailscale 接入）、debug 签名（高德 key 绑包名 + 签名指纹）；M5 生产化（推送 / 正式鉴权 / 正式签名与 OTA / 崩溃监控 / 商店合规）未启动，其中公网接入、账号体系、离线投递三项是后端工作。
 - **Android 各批工程完成不等于设备/真人验收全部关闭**：剩余工程、真机矩阵、声学、多人 UX 与 AM5
   以 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md) 为准，不再用早期 AR01–AR11 状态替代当前台账。
-- **v2 仍在规划阶段**：稳定目标与 ResultBundle、逐信号多车视图、持久操作/确认绑定、Jev Decide、T1e 和 OEM 驱动
-  都有明确任务与门槛；本次文档更新没有启用这些行为，也没有改变生产 release。
+- **v2 首批契约开始落地**：步骤输入范围、稳定任务/来源引用与完整结果投影已有实现；来源引用不代表语义覆盖已验证。
+  多车逐信号视图、持久操作/确认绑定、Jev Decide、T1e 和 OEM 驱动仍待后续工作包；部署与设备证据分别查权威交接。
 
 接手规则以 [`AGENTS.md`](AGENTS.md) 为准；当前 release、QA 证据与活项以
 [`QA 当前交接页`](docs/reviews/2026-08-30-qa-closeout-handoff.md) 为准。

@@ -110,6 +110,31 @@ afterEach(() => {
   jest.useRealTimers()
 })
 
+test('完整结果用于屏显，TTS 仍用短简报；取消后原答案仍保留', () => {
+  const speech = new FakeSpeech()
+  const { core, transport } = newCore({ speech })
+  core.send('打开后备箱，再告诉我空调有哪些模式')
+  const first = transport.lastUserFrame().request_id
+  const full = '空调有自动、制冷、制热和通风模式。这里还有完整的使用说明。\n\n要打开后备箱吗？'
+  core.handleFrame({ type: 'final', request_id: first, speech: '空调模式简报。要打开后备箱吗？',
+    need_confirm: true, operation_id: 'op-bundle', actions: [],
+    result_bundles: [{ version: 1, task_id: 'task-bundle', revision: 1, goals: [], cards: {},
+      coverage_status: 'unknown', display_text: full,
+      results: [{ step_id: 's1', goal_ids: [], status: 'ok', answer: '完整的使用说明',
+        answer_state: 'inline', result_ref: 'task-bundle/s1' }] }],
+  })
+  const original = assistants(core).at(-1)!
+  expect(original.text).toBe(full)
+  expect(original.resultBundles?.[0].task_id).toBe('task-bundle')
+  expect(speech.calls.at(-1)).toBe('finish:空调模式简报。要打开后备箱吗？')
+  core.send('取消')
+  core.handleFrame({ type: 'final', request_id: transport.lastUserFrame().request_id,
+    speech: '已取消', closed_operation_ids: ['op-bundle'], actions: [] })
+  expect(msgs(core).find((m) => m.id === original.id)?.text).toBe(full)
+  expect(speech.calls.at(-1)).toBe('finish:已取消')
+  core.dispose()
+})
+
 describe('正常路径（App.tsx:330-607/680-720 对照）', () => {
   test('dispatch：用户气泡 + 思考中占位 + 上行帧形状（meta 经 getMeta 注入、trace_id 挂气泡）', () => {
     const { transport, core } = newCore({

@@ -48,6 +48,26 @@ export const DEMO_MAP: Msg[] = [
   { id: 'm1', role: 'assistant', text: '为你找到 4 个附近的充电站，最近的是特来电·西湖文化广场站，1.2 公里。说“导航去第 2 个”即可。', uiCard: poiCard },
 ]
 
+// ResultBundle 的阅读面夹具；没有真实任务、动作或授权。
+export const DEMO_RESULTS: Msg[] = [
+  { id: 'r0', role: 'user', text: '查一下天气，再介绍一下空调模式' },
+  { id: 'r1', role: 'assistant', text: '天气和空调说明已整理好，可以展开查看各项结果。',
+    uiCard: weatherCard,
+    resultBundles: [{ version: 1, task_id: 'demo-results', revision: 1, goals: [],
+      coverage_status: 'unknown', display_text: '',
+      cards: { manual: { type: 'manual', source_type: 'mock',
+        sources: ['演示手册'], chunks: [{ content: '这是用于验证完整结果展示的演示内容。', source: '演示手册' }] } },
+      results: [
+        { step_id: 'weather', goal_ids: [], intent: 'weather.query', status: 'ok',
+          answer: '杭州今天多云转阵雨，28℃。傍晚出门记得带伞。', answer_state: 'inline',
+          card_ref: 'final:', result_ref: 'demo-results/weather', verification: 'unknown' },
+        { step_id: 'manual', goal_ids: [], intent: 'manual.query', status: 'ok',
+          answer: '空调模式说明示例。\n\n自动模式按设定温度调节；手动模式允许分别调整温度与风量。具体操作以对应车型手册为准。\n\n完整说明和来源保留在这里，语音可以只播报简短摘要。',
+          answer_state: 'inline', card_ref: 'bundle:manual', result_ref: 'demo-results/manual', verification: 'unknown' },
+      ] }],
+  },
+]
+
 // ── 卡片族验证（?demo=cards）：股票/搜索/新闻/深调研/赛事/充电路线 ──
 const stockCard: import('./types').StockCard = {
   type: 'stock_quote', name: '贵州茅台', symbol: '600519', price: '1689.00',

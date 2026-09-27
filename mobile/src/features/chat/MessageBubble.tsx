@@ -23,6 +23,7 @@ import { CardRenderer } from '../cards/CardRenderer'
 import type { SendFn } from '../cards/parts'
 import { ExecutionReceipt } from './ExecutionReceipt'
 import { useRevealedText } from './useRevealedText'
+import { ResultDetailsFold } from './ResultDetailsFold'
 
 // 主动播报标题按**种类**取（hmi ChatView PROACTIVE_LABEL 同款）
 const PROACTIVE_LABEL: Record<string, string> = {
@@ -255,6 +256,7 @@ export function MessageBubble({ p, msg, confirmActive, uncertain, draft, interru
           ) : null
         ) : null}
         {msg.uiCard ? <CardRenderer p={p} card={msg.uiCard} onSend={onSend} /> : null}
+        <ResultDetailsFold p={p} msg={msg} driving={driving} onSend={onSend} />
         {receipt ? <ExecutionReceipt p={p} receipt={receipt} /> : null}
         {msg.followUp ? (
           // 打磨批 A（评审 P14）：可点文字的触控高度 44

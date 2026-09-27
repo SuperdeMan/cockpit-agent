@@ -538,6 +538,13 @@ func eventToMap(ev *orchpb.HandleEvent) map[string]any {
 		if f.UiCard != nil {
 			result["ui_card"] = f.UiCard.AsMap()
 		}
+		if len(f.ResultBundles) > 0 {
+			bundles := make([]any, 0, len(f.ResultBundles))
+			for _, bundle := range f.ResultBundles {
+				bundles = append(bundles, resultBundleToMap(bundle))
+			}
+			result["result_bundles"] = bundles
+		}
 		// AR05 结构化契约：有才带键。客户端要能分辨「旧网关没有这个键」与
 		// 「有这个键但内容为空」——前者回落既有确认流程，后者是服务端说「没有」。
 		if p := f.ConfirmPolicy; p != nil {

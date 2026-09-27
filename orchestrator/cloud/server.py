@@ -167,5 +167,8 @@ class CloudPlannerServicer(orchestrator_pb2_grpc.CloudPlannerServicer):
                 ui_card = event.get("ui_card")
                 if ui_card and isinstance(ui_card, dict):
                     final.ui_card.update(ui_card)
+                from google.protobuf.json_format import ParseDict
+                for bundle in event.get("result_bundles") or []:
+                    ParseDict(bundle, final.result_bundles.add())
                 _fill_contracts(final, event)
                 yield orchestrator_pb2.HandleEvent(final=final)

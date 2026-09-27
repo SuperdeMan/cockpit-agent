@@ -88,7 +88,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 新目标态字段/脚本/开关未实现时明确标注；不把模型概率、仿真或 ACK 当真实执行证明。
 - 每个实现包保留旧数据兼容、实际 dispatch 出口覆盖与回退；schema/配置/CI/CD/生产变更仍按 §3.2 授权。
 
-## 4. 当前真实状态（2026-09-26）
+## 4. 当前真实状态（2026-09-27）
 
 ### 4.0 发布快照
 
@@ -96,7 +96,8 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 [QA/发布交接 §2](docs/reviews/2026-08-30-qa-closeout-handoff.md)。`origin/main` 可因纯文档提交领先生产；
 引用现场状态前重新核对。`5/5 endpoint healthy` 只说明健康度，不能替代业务验收。
 
-- 本仓仍是 Phase 1 工程化 PoC；v2 已纳入规划，新增契约、Jev Decide、T1e 与真实车辆驱动均未实现。
+- 本仓仍是 Phase 1 工程化 PoC；CA2-02–04 的步骤范围、服务端身份与 ResultBundle 首版已实现，
+  验证进度见 [首批记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。Jev Decide、T1e 与真实车辆驱动未实现。
 - Android 包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
 - 历史手册基线 `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 的读数只属该 SHA，
   完整发布流水已迁到 [入口状态快照](docs/history/2026-09-26-entry-status-snapshot.md)，不再往本节堆批次。
@@ -111,7 +112,7 @@ v2 的可重复旅程、故障矩阵与模型收益门槛见 [实施方案](docs
 
 | 主题 | 启动条件 / 唯一接续入口 |
 |---|---|
-| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；先 CA2-01/JV00 共用基线，再步骤归属/结果契约与 Decide 离线契约；新行为默认未启用 |
+| v2 主线与 Jev 支线 | [路线图](docs/roadmap.md)；CA2-01/JV00 小基线与 CA2-02–04 首版按 [实施记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)接续验收；Decide 尚未实现 |
 | 手册口语召回与复合问句 | [2026-09-26 设计](docs/design/2026-09-26-manual-rag-colloquial-recall.md) §8；尚存规划方差与挂确认时结果完整呈现，纳入 R0/R1；Jev 不能代替此修复 |
 | 对话评审四轮 | [逐条重证与分批落地](docs/design/2026-09-24-conversation-review-round4-remediation.md) §7；已修项不重新立项，未触发项保持条件 |
 | 对话评审三轮 | [修复记录](docs/design/2026-09-23-conversation-review-round3-remediation.md)；历史批次与待裁决项按原表追溯 |

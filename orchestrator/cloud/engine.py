@@ -20,6 +20,7 @@ from .models import (Plan, Step, StepResult, StepStatus, PlanContext, SessionSta
                      step_call_context, step_record)
 from .step_input import bind_step_inputs
 from .task_identity import bind_task_identity, restore_task_identity, task_record
+from . import result_bundle
 from .planning import PlanBuilder, clarify_is_progress, is_voice_input_source
 from .executor import DagExecutor
 from .aggregator import Aggregator, MdDeltaSoftener, strip_markdown_speech
@@ -524,8 +525,12 @@ class PlannerEngine:
                 # 差别就是会不会有第三次**（`_deterministic_reply` 那条老账）。
                 await self._emit_execution_claim(ctx, ev, executed_actions)
                 outcome_kind = self._apply_goal_gap(ctx, ev, outcome_kind)
+                result_bundle.attach(ev, ctx, None, outcome_kind)
                 if ev.get("speech"):
-                    assistant_speech = ev["speech"]
+                    # The normal conversation record retains the full public answer.
+                    # Pending execution storage still never persists free-form answers.
+                    full = [b["display_text"] for b in ev.get("result_bundles") or [] if b.get("display_text")]
+                    assistant_speech = "\n\n".join(full) if full else ev["speech"]
                 await self._emit_outcome(ctx, outcome_kind, ev, executed_actions)
             yield ev
 
@@ -650,6 +655,7 @@ class PlannerEngine:
         held_pending = None
         entries, pending_state = await self.session.load_all_result(
             ctx.session_id, owner_user_id=ctx.user_id)
+        ctx.pending_result_states = {s.operation_id: s for s in entries}
         pending = self._address_pending(entries, ctx.operation_id)
 
         # 评审二轮 R8：挂起表**读不到**时，「没有挂起」这句话是假的。带寻址键的确认、裸确认词
@@ -1454,6 +1460,7 @@ class PlannerEngine:
         if not new_plan and ctx.pending_operation_id and plan.task_id:
             plan.plan_revision += 1
         bind_task_identity(plan, ctx)
+        result_bundle.register_plan(ctx, plan)
         # 统一「复杂任务」判据，驱动①动态开思考②过程区。普通车控/闲聊/单条轻查询
         # 不命中——零过程、零额外延迟（需求第 6 条）。
         complex_task = is_complex(plan)
@@ -1579,7 +1586,8 @@ class PlannerEngine:
                     "aggregate",
                     attrs={"path": "stream"},
                 )
-                yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+                yield result_bundle.with_results(
+                    {"kind": "final", **final, "_outcome": outcome_of_results(results)}, ctx, results)
                 return
             if not allow_unary_fallback(stream.state):
                 # 流出过输出却没收到 final：不回退重跑，避免重复播报 / 重复副作用。
@@ -1592,11 +1600,14 @@ class PlannerEngine:
                         step, ctx)
                     final = await self.aggregator.compose(
                         text or plan.raw_text, [uncertain_sr])
-                    yield {"kind": "final", **final, "_outcome": "uncertain"}
+                    yield result_bundle.with_results(
+                        {"kind": "final", **final, "_outcome": "uncertain"}, ctx, [uncertain_sr])
                     return
                 # 只流了话术：话已经说了一半，重跑会播两遍。
-                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH,
-                       "_outcome": "stream_lost"}
+                yield result_bundle.with_results(
+                    {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH, "_outcome": "stream_lost"},
+                    ctx, [StepResult(step.id, StepStatus.FAILED,
+                                     speech=_STREAM_LOST_FINAL_SPEECH, error="stream_lost")])
                 return
             # 无任何流式事件（不支持/连接失败）→ 安全回退到下面的 executor 路径
 
@@ -1728,7 +1739,8 @@ class PlannerEngine:
             ctx.trace_id,
             "aggregate",
         )
-        yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+        yield result_bundle.with_results(
+            {"kind": "final", **final, "_outcome": outcome_of_results(results)}, ctx, results)
 
     async def _align_edge_confirm(self, plan: Plan, ctx: PlanContext) -> None:
         """需确认的车端命令：计划里同一对象的写步方向与车端确定性解析不同 ⇒ 换成车端那条（判据在 `edge_authority`）。
@@ -2132,6 +2144,7 @@ class PlannerEngine:
             ctx.request_id if ctx.raw_text == safety_origin_text else ""))
         bind_step_inputs(mini, origin_exchange_id=mini.origin_exchange_id)
         bind_task_identity(mini, ctx, continuation=True)
+        result_bundle.register_plan(ctx, mini)
         # W13 / W14：改派后真正执行的是 mini 计划，谈话与否按它算；规划轮的诉求账本不再对应这些步
         ctx.answer_only = bool(steps) and all(
             bool(getattr(s, "response_only", False)) for s in steps)
@@ -2175,8 +2188,10 @@ class PlannerEngine:
                     sink["results"] = [await self.executor.stream_uncertain_result(step0, ctx)]
                     sink["plan"] = mini
                     return
-                yield {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH,
-                       "_outcome": "stream_lost"}
+                yield result_bundle.with_results(
+                    {"kind": "final", "speech": _STREAM_LOST_FINAL_SPEECH, "_outcome": "stream_lost"},
+                    ctx, [*(prior or []), StepResult(step0.id, StepStatus.FAILED,
+                                                    speech=_STREAM_LOST_FINAL_SPEECH, error="stream_lost")])
                 sink["suspended"] = True   # 终态已给出，调用方直接 return
                 return
             # 零输出（Agent 不支持流式 / 建连失败）→ 与 D0 同款：安全回退到 executor 路径
@@ -2357,6 +2372,8 @@ class PlannerEngine:
         挂起 final 又会整体替换 HMI 气泡——不前缀简报，用户就会被凭空追问
         （「查到雨才建提醒」却没听到有雨）。调用方负责剔除确认续接种子与已流式
         播报的结果，防双重播报；挂起步自身不进前缀（trip 确认话术本就是完整叙述）。"""
+        result_bundle.register_plan(ctx, plan)
+        public_results = [*(prior or []), *results]
         # I-024 第二层（2026-08-30）：修前**挂起轮从来不写焦点**——三个调用点都是
         # `yield await self._suspend(...)` 紧跟 `return`，`update_focus` 在它们**之后**。
         # 于是把「可见选择卡的候选」收进 `extract_focus`（§9.39 C）之后，
@@ -2464,7 +2481,7 @@ class PlannerEngine:
             # 两种都 fail-closed（不给确认条、不执行），但**说的是不同的事**（评审二轮 R8）：
             # 写栅栏是隐私清理正在进行，连不上后端只是这一步存不下。
             fenced = save_status == SAVE_FENCED
-            return {
+            final = {
                 "kind": "final",
                 "speech": ("正在清除你的数据，这次操作没有保存，请稍后重新发起。" if fenced
                            else "这一步需要等你确认，但会话状态暂时存不下来，"
@@ -2476,6 +2493,9 @@ class PlannerEngine:
                 "need_confirm": False,
                 "_outcome": "store_fenced" if fenced else "store_unavailable",
             }
+            if not fenced:
+                result_bundle.with_results(final, ctx, public_results)
+            return final
         await obs_events.get_emitter("cloud").emit_span(
             ctx.trace_id,
             "suspended",
@@ -2504,7 +2524,7 @@ class PlannerEngine:
             "speech": (brief + (step_result.speech or "")) if brief else step_result.speech,
             "follow_up": follow_up,
             "actions": actions,
-            "ui_card": step_result.ui_card,
+            "ui_card": result_bundle.suspension_cards(step_result.ui_card, public_results),
             "need_confirm": step_result.status == StepStatus.NEED_CONFIRM,
             "operation_id": operation_id,
             "_outcome": ("pending_confirm" if step_result.status == StepStatus.NEED_CONFIRM
@@ -2524,7 +2544,7 @@ class PlannerEngine:
             final_event["slot_request"] = contracts.build_slot_request(
                 operation_id=operation_id, step=pending_step,
                 step_result=step_result, state=pending_state)
-        return final_event
+        return result_bundle.with_results(final_event, ctx, public_results)
 
     @staticmethod
     def _clarify_target(entries: list, operation_id: str, pending):
@@ -3529,7 +3549,7 @@ class PlannerEngine:
                 # 确认后新产出的 payment_qr/mcp_order，造成「业务成功但 HMI 倒退」。
                 # 因此只保留精确 slot_refs 投影、来源与防抖指纹；自由文本、动作和
                 # 旧卡片一律不恢复。
-                seeds.append(StepResult(**d))
+                seeds.append(StepResult(**d, from_history=True))
 
             restored = Plan(
                 steps=steps,

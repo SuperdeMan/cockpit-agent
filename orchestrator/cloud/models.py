@@ -192,6 +192,8 @@ class StepResult:
     # OK 结果写**——T2 放宽后 replan 可能对已完成的副作用步失忆而重复产出（弱模型的
     # 典型失败），指纹随结果走，executor 下一轮撞上即回填不重放。空串=不参与防抖。
     fingerprint: str = ""
+    # Set only by pending restoration; old answers are references, never replayed payloads.
+    from_history: bool = False
 
 
 @dataclass
@@ -435,6 +437,8 @@ class PlanContext:
     history_exchanges: int = 0
     # Request-local task provenance carried across T2/escalation; never from client prefs.
     task_identity: dict = field(default_factory=dict)
+    result_steps: dict = field(default_factory=dict)  # projection index of existing Step objects
+    pending_result_states: dict = field(default_factory=dict)  # request-local, owner-filtered records
 
 
 @dataclass

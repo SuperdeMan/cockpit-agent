@@ -30,6 +30,7 @@ import { HandsFreeController } from './handsFreeController'
 import { needsFrame, captureFrame } from './visionFrame.mjs'
 import { bumpVoiceMetric } from './voiceMetrics.mjs'
 import { RequestRegistry } from './requestRouting.mjs'
+import { projectResultFinal, mergeResultMessage } from './resultBundle.mjs'
 import { openPending, closePendings, prunePendings, isPendingLive } from './pendingOps.mjs'
 
 const GATEWAY = (import.meta.env.VITE_EDGE_GATEWAY_URL as string) || 'http://localhost:8090'
@@ -459,7 +460,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
         pending: false,
         streaming: false,
         processActive: false, // 最终答案出来 → 过程区收尾折叠（process 数组保留供展开）
-        text: data.speech || '',
+        ...projectResultFinal(data),
         actions: data.actions,
         needConfirm: !!data.need_confirm,
         operationId: data.operation_id || undefined,
@@ -468,7 +469,7 @@ export default function App({ seedMessages, openSettings }: { seedMessages?: Msg
       }
       setMessages((m) =>
         id && m.some((x) => x.id === id)
-          ? m.map((msg) => (msg.id === id ? { ...msg, ...final } : msg))
+          ? m.map((msg) => (msg.id === id ? mergeResultMessage(msg, final) : msg))
           : [...m, { id: uid(), role: 'assistant', ...final } as Msg],
       )
       if (isLatest) {

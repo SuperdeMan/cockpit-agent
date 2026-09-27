@@ -22,6 +22,7 @@ export type Msg = {
   error?: boolean
   rejected?: boolean // R4.4：云端判非受话（疑似环境人声）→ 静默忽略，气泡标灰留痕供纠错
   uiCard?: UiCard
+  resultBundles?: ResultBundle[] // immutable server snapshots; never an execution channel
   // 复杂任务过程区（脱敏「步骤+思考摘要」）：进行中默认简短摘要，完成后默认折叠可展开。
   process?: ProcessStep[]
   processActive?: boolean // 过程进行中（未出最终答案）
@@ -34,6 +35,31 @@ export type Msg = {
   // 没有它的话，凡是带卡的主动播报都会被标成「任务完成」（异步深调研的标题）——场景建议顶着
   // 「任务完成」很违和。
   proactiveKind?: string
+}
+
+export type ResultEntry = {
+  step_id: string
+  goal_ids: string[]
+  intent: string
+  status: string
+  answer: string
+  card_ref?: string
+  operation_id?: string
+  answer_state: 'inline' | 'reference' | 'unavailable'
+  result_ref: string
+  verification: string
+  pending_edge?: boolean
+}
+
+export type ResultBundle = {
+  version: 1
+  task_id: string
+  revision: number
+  goals: Array<{ goal_id: string; origin_exchange_id: string; source_sha256: string; start: number; end: number; coverage: string }>
+  results: ResultEntry[]
+  coverage_status: string
+  display_text: string
+  cards: Record<string, UiCard>
 }
 
 // 过程区单步：phase=understand|plan|execute|synthesize；summary 为后端按步骤结果合成的脱敏摘要。

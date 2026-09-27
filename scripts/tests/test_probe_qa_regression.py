@@ -163,6 +163,16 @@ def test_merge_finals_only_fills_empty_primary_semantics():
     assert merged["card_text"] == '{"type":"confirm"}'
 
 
+def test_result_snapshots_survive_wire_observation_and_mixed_finals():
+    old = probe._observe({"speech": "端侧回答"})
+    assert "result_bundles" not in old
+    bundle = {"version": 1, "task_id": "task-1", "revision": 1, "results": []}
+    cloud = probe._observe({"speech": "云侧回答", "result_bundles": [bundle]})
+    assert probe._merge_finals(old, cloud)["result_bundles"] == [bundle]
+    newer = probe._observe({"result_bundles": [{**bundle, "revision": 2}]})
+    assert [b["revision"] for b in probe._merge_finals(cloud, newer)["result_bundles"]] == [1, 2]
+
+
 def test_missing_button_marks_the_sample_failed_without_aborting_the_suite(monkeypatch):
     """运行时卡片缺按钮是被测结果，不该让整个回归进程丢掉已完成证据。"""
     monkeypatch.setattr(probe, "_TAIL_IDLE_S", 0.001)

@@ -12,6 +12,7 @@ from .models import (Plan, PlanContext, ReplanDecision, StepResult, StepStatus,
 from .planning import PlanBuilder, assign_runtime_ids
 from .step_input import bind_step_inputs
 from .task_identity import bind_task_identity
+from . import result_bundle
 from .progress import make_progress, phase_label, step_summary
 from .superseded import drop_superseded_steps
 from .stream_state import (
@@ -285,6 +286,7 @@ class LoopController:
                     (getattr(ctx, "request_id", "") if getattr(ctx, "raw_text", "") == safety_origin_text else ""))
                 bind_step_inputs(current, origin_exchange_id=current.origin_exchange_id)
                 bind_task_identity(current, ctx, continuation=True)
+                result_bundle.register_plan(ctx, current)
                 # T2 知识继承贯通挂起链（2026-07-27 评审三批）：to_plan 新建的 Plan
                 # skills=[]——若这个再规划步 NEED_SLOT/NEED_CONFIRM 挂起，loop 传给
                 # suspend 的正是 current，序列化空 skills → 恢复后再规划失忆。
@@ -523,5 +525,6 @@ class LoopController:
         if exhausted and not final.get("follow_up"):
             final["follow_up"] = "要我继续吗？"
         # W13 终态账本：T2 的执行类 final 也按结果集算（engine `run()` 出口统一发 span）
-        yield {"kind": "final", **final, "_outcome": outcome_of_results(results)}
+        yield result_bundle.with_results(
+            {"kind": "final", **final, "_outcome": outcome_of_results(results)}, ctx, results)
 

@@ -181,7 +181,7 @@ python scripts/dev_stack.py dashboard
 - QA/发布交接：`docs/reviews/2026-08-30-qa-closeout-handoff.md`；
 - 架构：`docs/architecture/cockpit-agent-architecture.md`；
 - 后续排序：`docs/roadmap.md`；v2 目标态：`docs/architecture/cockpit-agent-v2-target-architecture.md`；
-- 可领取工作包：`docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md`（新增实现未开始）；
+- 可领取工作包：`docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md`；首批实现与验证进度看 `docs/design/2026-09-26-v2-runtime-r0-r1-execution.md`；
 - 历史：`docs/agents-history.md`；
 - 设计索引：`docs/design/README.md`；
 - 历史 Phase 1 DoD：`docs/architecture/phase1-implementation-plan.md`；试点与量产分开验收。

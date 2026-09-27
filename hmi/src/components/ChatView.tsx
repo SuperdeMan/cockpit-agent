@@ -13,6 +13,7 @@ import { CardRenderer } from './Cards'
 import { AuroraOrb, type OrbState } from './aurora'
 import type { Action, Msg, ProcessStep } from '../types'
 import { confirmationPresentation } from '../merchantUi.mjs'
+import { ResultDetails } from './ResultDetails'
 
 // ─── 语义色/灰阶（统一走 --au-* token，§3）───
 const FG1 = 'var(--au-text)'
@@ -275,6 +276,7 @@ function AssistantBubble({ msg, onAction }: { msg: Msg; onAction: (t: string) =>
       )}
 
       {msg.uiCard && <div style={{ marginTop: hasText || hasProcess ? 12 : 0 }}><CardRenderer card={msg.uiCard} onAction={onAction} /></div>}
+      <ResultDetails msg={msg} onAction={onAction} />
 
       {msg.actions?.map((a, j) => <ActionChip key={j} action={a} />)}
 
@@ -520,6 +522,7 @@ function ConfirmBubble({ msg, onConfirm, onAction }: { msg: Msg; onConfirm: (r: 
         </div>
       </div>
       {msg.uiCard && <div style={{ marginBottom: 12 }}><CardRenderer card={msg.uiCard} onAction={onAction} /></div>}
+      <ResultDetails msg={msg} onAction={onAction} />
       <div style={{ display: 'flex', gap: 10 }}>
         <button
           onClick={() => onConfirm('取消', msg.operationId)}

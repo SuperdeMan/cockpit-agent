@@ -1,7 +1,7 @@
 # Cockpit Agent v2 与 Jev 分批实施方案
 
-> 日期：2026-09-26。状态：**方案已落盘；下面所有新增实现任务均未开始**。
-> 基线：`47c62b44d335a3c76da90f89f05fa2fc887c2742`，main；本次只改文档。
+> 更新：2026-09-27。状态：**CA2-01/JV00 小基线已采集，CA2-02–04 首版已实现，合入/真栈验收进行中**。
+> 原规划基线：`47c62b44d335a3c76da90f89f05fa2fc887c2742`；进度与精确证据见 [首批执行记录](2026-09-26-v2-runtime-r0-r1-execution.md)。
 > [路线图](../roadmap.md)决定优先级，[目标架构](../architecture/cockpit-agent-v2-target-architecture.md)决定边界。
 > CA2-01–22 与 JV00–09 沿用两份研究编号，是可领取的本地任务，不是已创建的 GitHub Issue。
 
@@ -22,8 +22,8 @@
 | `agents/manual_rag/src/agent.py::_route_if_unsure/_merge_routed`、`toc_router.py` | 09-26 已有目录路由、词法首页保留；复合仪表灯问句承接主语 | 原研究 JV05 必须接最新组合检索链，不能覆盖这些修复 |
 | `agents/mcp_bridge/src/admission.py`、`memory/README.md` | 已有 schema 准入、OwnerKey；未知声纹回 primary 是存量语义 | 复用准入；“未知声音不读敏感个人记忆”是 CA2-15 的待实现变更，不能当现状 |
 
-现有发布记录为 `5a2f4c9d674fb27c98539f1d57ff8cc93bca4c76`，本次没有运行线上 status/verify，
-不作现场仍运行该 SHA 的新证明。手册检索已改善但规划方差仍有红样本；不得用“模型接入”代替现有问题重证。
+上表是原规划基线的代码复核；后续实现以各包记录为准。当前发布统一看 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)。
+手册检索已改善但规划方差仍有红样本；不得用“模型接入”代替现有问题重证。
 
 ## 2. 交付规则与共同完成定义
 

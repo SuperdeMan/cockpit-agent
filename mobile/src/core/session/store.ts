@@ -10,6 +10,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
 
 import { RequestRegistry } from '@shared/requestRouting.mjs'
+import { projectResultFinal, mergeResultMessage } from '@shared/resultBundle.mjs'
 import { PENDING_CAPACITY, PENDING_TTL_MS, closePendings, openPending, prunePendings } from '@shared/pendingOps.mjs'
 
 import {
@@ -1122,7 +1123,7 @@ export class SessionCore {
         pending: false,
         streaming: false,
         processActive: false, // 最终答案出来 → 过程区收尾折叠（process 数组保留供展开）
-        text: data.speech || '',
+        ...projectResultFinal(data),
         actions: data.actions,
         needConfirm: !!data.need_confirm,
         operationId: data.operation_id || undefined,
@@ -1131,7 +1132,7 @@ export class SessionCore {
       }
       this.store.setState((s) => {
         if (id && s.messages.some((x) => x.id === id)) {
-          return { messages: s.messages.map((msg) => (msg.id === id ? { ...msg, ...final } : msg)) }
+          return { messages: s.messages.map((msg) => (msg.id === id ? mergeResultMessage(msg, final) : msg)) }
         }
         const fresh = uid()
         return { messages: [...s.messages, { id: fresh, role: 'assistant', ...final } as Msg], messageAt: this.stampAt(s, fresh) }

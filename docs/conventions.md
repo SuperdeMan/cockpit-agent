@@ -2,8 +2,8 @@
 
 防命名漂移、防端口冲突、防重复定义的总表。新增能力/Agent/配置时先查这里、再更新这里（先改文档再改代码，CLAUDE.md 原则）。命名规则原文见 `CLAUDE.md` §4。
 
-> v2/Jev 新字段、事件、开关仍是 [目标架构](architecture/cockpit-agent-v2-target-architecture.md)和
-> [实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)中的草案；尚未加入本页的现有接口/环境变量契约。
+> CA2-02–04 首版契约见 §9.48；其它 v2/Jev 字段、事件与开关仍以
+> [目标架构](architecture/cockpit-agent-v2-target-architecture.md)和[实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)为目标，不作为现有接口。
 > 实现时按各包冻结 schema、兼容缺省与往返，再同步本页；不可仅凭研究示例设置 DECISION_* 或调用 Decide。
 
 ---
@@ -2932,3 +2932,20 @@ plan_mode 同一个 `_safety_talk` 后缀；chitchat 拿着 `focus_safety_alert`
 问到就如实说看不到并引导去问车辆能力，不编数字；问别的车型不确定时也不猜。修前 W19-c g18「那它的纯电续航呢」落 chitchat 答
 「当前纯电续航335km，满电续航335km」——两个数都是编的（本车电量只有端侧 `battery.query` 读 VAL 才有）。prompt 是弱约束，条款存在性由
 `test_system_forbids_execution_claims_as_a_category_not_a_word_list` 钉。
+
+
+### 9.48 步骤输入、服务端任务身份与 ResultBundle（CA2-02–04，2026-09-27）
+
+- `Step.input_scope` 是服务端生成的来源范围：version/basis/origin_exchange_id/source_sha256/spans。
+  Unicode codepoint 偏移；业务投影不替代完整 origin_text / safety_origin_text。条件、引用、歧义与旧记录回原语义。
+- `Plan.task_id/plan_revision/goal_refs` 与 `Step.goal_ids` 通过唯一 step_record/SessionState 往返。
+  goal_refs 是来源引用、coverage=unknown；身份不证明理解完整，也不能授权。PLANNER_GOALS 仍 off。
+- `FinalResult.result_bundles` 是字段 14、版本 1 的可选公开快照，Go WS 同名。
+  results 中 status 允许 ok/failed/unknown/need_confirm/need_slot/not_run/cancelled，verification 独立 unknown/sat/unsat。
+- 完整 answer/display_text 与短 speech 分开；`card_ref=final:` / `final:0/1` / `bundle:<key>` 只引用本消息资源。
+  `answer_state=reference` 不重播旧正文/卡；同消息旧 revision 不覆盖新版。actions/确认仍走旧权威字段。
+- 未经最终 VAL 的结果不得先报完成；pending_edge 仅为呈现来源标记，不是执行开关。
+  执行超时/流断用 unknown。取消保留完成兄弟引用；存储不可用不放出有效确认，隐私清理栅栏不带旧数据。
+
+具体字段、出口、兼容/回退与验证见 [CA2-04](design/2026-09-27-v2-result-bundle.md)。
+这不是持久操作账本或完整跨端历史恢复协议；当前发布证据仍由 QA 交接维护。

@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 日期：2026-09-26。状态：**规划采用，目标态未实现**。
+> 更新：2026-09-27。状态：**目标态分期实施；CA2-02–04 已有首版，其余按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -20,7 +20,8 @@
 
 ## 2. 目标数据流
 
-下图虚线是可选判别建议；实线表示目标主链。图中新增契约尚未上线。
+下图虚线是可选判别建议；实线表示完整目标主链，不代表已全部实现或上线。
+已实现的步骤范围/任务身份/结果投影见 [首批记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md)，发布状态由 QA 交接管理。
 
 ```mermaid
 flowchart TB
@@ -66,13 +67,15 @@ Jev 和云 PG 不成为快路径依赖。每条写路径必须枚举其实际首
 | Context View | WorkingSet + 现有各权威服务 | 请求级投影、读取状态、逐项来源/时效/权限、pinned 事实；禁止自建事实写入 |
 | DecisionSnapshot | 拟由 Context/WorkingSet 派生 | 当前任务所需的最小只读投影与状态绑定；不额外拉一份历史 |
 
-这些名称是目标语义，尚不是可调用接口；字段号、枚举与兼容默认值须在各任务的契约 PR 冻结。
+上表描述完整目标。CA2-02/03 已冻结 input_scope、Plan task/goal 来源引用；CA2-04 已冻结
+FinalResult 字段 14 的 ResultBundle v1，见 [结果契约](../design/2026-09-27-v2-result-bundle.md)。
+其它字段、枚举与兼容默认值仍须在各自契约包冻结。
 既有 `Step.kind=agent|tool|edge_fast` 与 `deployment` 继续使用，v2 不发明第四种业务调度分支。
 
 ### 3.2 Goal 与授权的边界
 
 当前 `Plan.goals/Step.covers` 是模型可选输出，`covers` 不进 `step_record`，`PLANNER_GOALS` 默认 off。
-CA2-03 先引入服务端稳定 ID 和来源关系；旧记录没有精细分解时按“旧任务/未知覆盖”恢复，
+CA2-03 首版已引入服务端稳定 ID 和来源关系，来源片段不是已证实的语义目标分解；旧记录按未知覆盖恢复，
 不得从已有步骤倒推“用户只要求这些”。涉及语义分解的准确性另外评测，不能用全空/全覆盖骗过完整性指标。
 
 `origin_text` 保留步骤起点；`safety_origin_text` 保留服务端授权原点；`input_scope` 只限定业务读取范围。
@@ -85,6 +88,9 @@ CA2-03 先引入服务端稳定 ID 和来源关系；旧记录没有精细分解
 挂起、重连、下一轮追问与客户端切换都应保留完整答案、证据卡和引用；短 TTS 是投影，不能覆盖完整事实。
 两端共享结果语义与选择器，各自实现 UI；流式 delta/终态按同一任务、步骤和 revision 对齐，
 已发布事实不得被晚到的旧 revision 改写。旧客户端继续收到兼容字段；需要新确认契约的动作对不支持客户端拒绝或升级提示。
+
+首版现状：完整答案随本轮结果到达双端，旧执行种子只保留 result_ref，不扩大 SessionState 的自由文本存储。
+跨端历史卡片恢复、独立持久操作与完整设备重启矩阵尚未验收；不得用本轮 WS 投影宣称目标态全部完成。
 
 ## 4. 可信车辆状态与联邦视图
 

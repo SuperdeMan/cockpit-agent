@@ -11,7 +11,7 @@
 对应 2026-09-26 v2 R0 基线发现的限定解释句误执行补口；已独立核对 status/运行 SHA 并完成 verify。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
-v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用基线量尺已开始，R1/Jev 新运行时实现与验收未开始；
+v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用小基线已采集，CA2-02–04 首版实现进入合入验证；Jev 尚未接入。
 规划层方差、挂确认时结果完整性和双端/声学未验面继续有明确任务，不能借研究合入宣称关闭。
 已完成批次仍使用原 SHA，历史证据见 §3–4 和 [agents-history](../agents-history.md)。
 
@@ -27,7 +27,8 @@ v2 与 Jev 已纳入 [后续路线图](../roadmap.md)，共用基线量尺已开
 | 手册证据限制 | `.artifacts/manual-rag-colloquial/live-*-5a2f4c9d*.json`；被预检拦下的 5 条旧表述未发送，不能报当前 36/36；需确认混合轮最终消息没有手册卡，话术通过不等于完整卡片/正文呈现通过 |
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider；不转借到 `5a2f4c9d`。原入口全部历史发布行保存在 [快照](../history/2026-09-26-entry-status-snapshot.md) |
 | Android 包与验收 | [剩余待办总表](../design/2026-09-14-android-remaining-todos.md)记录设备与包身份；服务端 SHA、APK SHA、设备安装状态分列，本次未验包 |
-| v2 / Jev | R0 共用量尺已实现并暴露/修复 V207，完整基线待测；Decide、ResultBundle、持久操作、多车逐信号、T1e、OEM 驱动尚未实现；[首批执行](../design/2026-09-26-v2-runtime-r0-r1-execution.md) |
+| v2 小基线 | `d9970d9a`，runner `9aa5216b`，20×3 / 100 轮，11 个业务失败轮、零证据失败/动作/车态变化/残留挂起；其中 9 轮是挂确认丢手册卡，2 轮是规划/内容方差；[首批执行 §2.5](../design/2026-09-26-v2-runtime-r0-r1-execution.md#25-完整小基线先固定结构性缺口与规划方差) |
+| v2 / Jev | CA2-02–04 首版已实现，待合入全量与精确 release 复验；Decide、持久操作、多车逐信号、T1e、OEM 驱动仍未实现；设备包未验 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。

@@ -2162,7 +2162,7 @@ def _action_targets(msg: dict) -> list[dict]:
 def _observe(msg: dict) -> dict:
     speech = str(msg.get("speech") or "")
     card = msg.get("ui_card") or {}
-    return {
+    observation = {
         "speech": speech,
         # person-pickup 卡：**分支签名**。speech 会被改写，follow_up 不会——
         # 它是 AgentResult 里那一串固定文案，原样透到 WS final（gateway/edge/main.go:418）。
@@ -2197,6 +2197,9 @@ def _observe(msg: dict) -> dict:
         # person-pickup 卡：本轮真的把车导去了哪（判「接人导到了另一座城」）。
         "nav_targets": _nav_targets(msg),
     }
+    if isinstance(msg.get("result_bundles"), list):
+        observation["result_bundles"] = msg["result_bundles"]
+    return observation
 
 
 def _say_button_failure(case_id: str, turn_no: int, ref_turn: int,
@@ -2939,6 +2942,9 @@ def _merge_finals(first: dict, later: dict) -> dict:
         out["closed_operation_ids"] = later["closed_operation_ids"]
     if first.get("card_text") in (None, "", "{}") and later.get("card_text"):
         out["card_text"] = later["card_text"]
+    if "result_bundles" in first or "result_bundles" in later:
+        # Keep each wire snapshot as evidence; no task-state reconstruction in the probe.
+        out["result_bundles"] = list(first.get("result_bundles") or []) + list(later.get("result_bundles") or [])
     return out
 
 

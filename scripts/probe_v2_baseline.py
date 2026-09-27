@@ -203,7 +203,7 @@ async def run_case(case, repeat, run_id, ws_url, collector, secret, manifest):
             if changed:
                 verdict["failures"].append("vehicle_changed")
             # Store only this synthetic request's trace, never signed URL/token or account config.
-            obs = dict(obs)
+            obs = _redact(obs)
             obs["card_text"] = json.dumps(_redact(json.loads(obs.get("card_text") or "{}")), ensure_ascii=False)
             rows.append({"turn": n, "say": turn["say"], "trace_id": trace,
                          "cleanup": bool(turn.get("cleanup")), "observation": obs,

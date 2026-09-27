@@ -94,6 +94,44 @@ message FinalResult {
   // **必须由服务端说**——客户端猜"用户是不是换话题了"必然猜错，而猜错的两个方向都很贵：
   // 猜早了把还在进行的追问撤了，猜晚了让一条旧追问一直抢占屏幕（方案 §4.3）。
   repeated string held_operation_ids = 13;
+  // CA2-04: immutable per-task result snapshots. Actions/confirmation authorization
+  // remain in the existing fields; these snapshots must never execute anything.
+  repeated ResultBundle result_bundles = 14;
+}
+
+message GoalReference {
+  string goal_id = 1;
+  string origin_exchange_id = 2;
+  string source_sha256 = 3;
+  uint32 start = 4;                    // Unicode codepoint offset, not UTF-16
+  uint32 end = 5;
+  string coverage = 6;                 // unknown; a source reference is not coverage proof
+}
+
+message ResultEntry {
+  string step_id = 1;
+  repeated string goal_ids = 2;
+  string intent = 3;
+  string status = 4;                   // ok/failed/unknown/need_confirm/need_slot/not_run/cancelled
+  string answer = 5;                   // full public answer, independently of short TTS
+  string card_ref = 6;                 // final:<items path> or bundle:<resource key>
+  string operation_id = 7;             // addressing only; never authorization
+  string answer_state = 8;             // inline/reference/unavailable
+  string result_ref = 9;
+  string verification = 10;            // unknown/sat/unsat; OK alone is not verification
+  bool pending_edge = 11;              // presentation provenance only, never an execution flag
+}
+
+message ResultBundle {
+  uint32 version = 1;                  // 1; old clients can ignore the entire field
+  string task_id = 2;
+  uint32 revision = 3;
+  repeated GoalReference goals = 4;
+  repeated ResultEntry results = 5;
+  string coverage_status = 6;          // unknown in CA2-03/04
+  string display_text = 7;             // full pending-turn text; speech remains short TTS
+  // Cards already in FinalResult.ui_card are referenced instead of duplicating image bytes.
+  map<string, google.protobuf.Struct> cards = 8;
 }
 
 // 确认策略（AR05 R10）。用户必须能明确知道**正在确认什么、到什么时候、用什么方式答**。

@@ -4,12 +4,12 @@
 
 > 视觉重构（2026-06-30 已落地）：P0 设计系统 / P1 两栏外壳·舞台 / P2 ~20 卡(A-3~A-5) / P3 对话动态六态(A-6) / P4 设置横屏侧栏(A-7) / P5 浅色主题 / A-4 信息卡按源重建 / A-5 右舞台数据驱动地图 / A-8 图标库（39 设计图标 + 21 补齐，`Icon.tsx`/`icons.gen.ts`/`icons.custom.ts`，**emoji 全替 A-8 线性图标**）/ **语音按钮即小舟光球** / **ASR 流式识别上屏**。**已重建容器 + 真后端全栈 e2e 验证**（天气/POI/股票/新闻/调研/赛事/充电/行程 8 卡族真数据渲染 + 过程区/确认条 + 光球流式上屏）。待做：P5 行车态、P6 Dashboard（均待 Figma 出帧）。本地预览参数：`?aurora` 设计系统沙盒、`?icons` 图标验证台、`?demo[=map|cards|info|states|charge|trip|route]` 卡片/对话态夹具、`?settings[=<分区>]` 设置面板、`?theme=light|dark`。见 `docs/design/2026-06-29-figma-hmi-implementation-plan.md`。
 
-## v2 后续接续（未实现）
+## v2 完整结果阅读（CA2-04）
 
-CA2-04/16 将让 HMI 与 Android 共享 ResultBundle 事实和纯逻辑选择器，分别实现 UI。
-挂确认/取消/重连后仍需保留已完成答案与引用，TTS 摘要不能覆盖完整记录；停播不等于取消任务。
-当前接口未新增 ResultBundle，Jev 不进入设置页聊天模型列表。见 [实施方案](../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
-
+final 可带 ResultBundle v1；`resultBundle.mjs` 与 Android 共用字段选择、旧协议回退和 revision 规则。
+完整答案用于消息正文，原 speech 仍用于短 TTS。隐藏卡片/多项正文通过“查看各项结果”阅读，
+主卡不重复渲染，行车态隐藏详情，确认仍由原 operation_id/confirm_policy 控件处理。
+本地夹具：`?demo=results`；协议和证据见 [结果契约](../docs/design/2026-09-27-v2-result-bundle.md)。
 
 ## 本地运行
 ```bash

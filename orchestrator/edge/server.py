@@ -1416,4 +1416,23 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             reasons = "；".join(dict.fromkeys(rejected))
             final.speech = f"{final.speech}不过{reasons}。" if final.speech else reasons
         # dispatched > 1 且全成功 → 保留云端总结话术；dispatched == 0 → 原样不动
+        if dispatched:
+            # A cloud result can precede this final VAL decision. Do not let the new
+            # details surface resurrect its old execution claim or an outdated card.
+            # The aggregate VAL speech is authoritative; per-step causal attribution
+            # stays unknown until the operation/observation contract is implemented.
+            for bundle in final.result_bundles:
+                affected = [r for r in bundle.results if r.pending_edge]
+                if not affected:
+                    continue
+                for row in affected:
+                    if row.card_ref.startswith("bundle:"):
+                        bundle.cards.pop(row.card_ref[7:], None)
+                    row.pending_edge = False
+                    row.status = "unknown"
+                    row.answer = ""
+                    row.answer_state = "unavailable"
+                    row.card_ref = ""
+                answers = [r.answer for r in bundle.results if r.answer_state == "inline" and r.answer]
+                bundle.display_text = "\n\n".join(dict.fromkeys(answers + [final.speech]))
         return event

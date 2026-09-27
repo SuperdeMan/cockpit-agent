@@ -15,6 +15,23 @@ from cockpit.common.v1 import common_pb2
 from server import EdgeOrchestratorServicer
 
 
+def test_result_details_cannot_override_final_val_denial():
+    srv = EdgeOrchestratorServicer()
+    event = _final_with_action("已打开车窗", {"command": "window.open"})
+    bundle = event.final.result_bundles.add(version=1, task_id="task-1", revision=1,
+                                          display_text="已打开车窗")
+    bundle.results.add(step_id="s1", status="ok", answer="已打开车窗",
+                       answer_state="inline", pending_edge=True)
+    bundle.results.add(step_id="s2", status="ok", answer="深圳今天晴朗", answer_state="inline")
+    out = srv._dispatch_cloud_actions(event, granted=[])
+    assert srv.val.state["window"] == "closed"
+    result = out.final.result_bundles[0]
+    assert "已打开车窗" not in result.display_text
+    assert "深圳今天晴朗" in result.display_text and out.final.speech in result.display_text
+    assert result.results[0].status == "unknown" and result.results[0].answer == ""
+    assert not result.results[0].pending_edge
+
+
 def _struct(d: dict) -> struct_pb2.Struct:
     s = struct_pb2.Struct()
     s.update(d)

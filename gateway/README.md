@@ -13,6 +13,10 @@
   - `{"type":"action","action":{"type":"vehicle.control","payload":{...},"require_confirm":false}}`
   - `{"type":"final","speech":"...","actions":[...],"follow_up":"...","need_confirm":false}`
 
+CA2-04 的 final 可带 `result_bundles`（v1）：同一任务的完整答案、状态和卡片引用。
+它不携带执行授权；actions、operation_id、确认策略继续使用原字段。
+旧客户端可忽略增量，详见 [结果契约](../docs/design/2026-09-27-v2-result-bundle.md)。
+
 ## 构建
 依赖 `gen/go`（先 `make proto`）。`go build ./gateway/...` 或经各自 Dockerfile。
 

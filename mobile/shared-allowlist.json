@@ -10,6 +10,11 @@
   ],
   "modules": [
     {
+      "file": "resultBundle.mjs",
+      "phase": "M4",
+      "purpose": "ResultBundle 只读投影、卡片引用与旧版本回退；不参与动作或确认"
+    },
+    {
       "file": "ws.mjs",
       "phase": "M0",
       "purpose": "主链 WS 重连/有界发送队列（断线不丢消息）",

@@ -2,9 +2,11 @@
 
 云侧大脑：复杂/跨域/多轮意图的理解、规划、多 Agent 编排、结果聚合。
 
-## v2 后续边界（未实现）
+## v2 首批实现与后续边界
 
-CA2-02–04 原位扩展 Step/step_record/SessionState 的来源范围、稳定 goal 身份与 ResultBundle；
+CA2-02–04 已原位扩展 Step/step_record/SessionState 的来源范围、服务端 task/goal 来源引用与 ResultBundle。
+来源片段的语义覆盖保持 unknown；完整公开正文走正常会话呈现，恢复执行不重播旧卡/动作。
+接线与验证见 [首批记录](../../docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。
 CA2-06–11 增强车态、持久操作与对账。WorkingSet 是 View/DecisionSnapshot 的投影来源，不能再读一份历史造第二事实源。
 `PLANNER_GOALS` 保持 off；现有 actionability 仍是纯函数 shadow，Jev 异步建议接点另做、默认不消费。
 T1/D0/T2、提前 dispatch、挂起恢复均须逐出口验收；共用 retry_policy，不增加外层重试。
