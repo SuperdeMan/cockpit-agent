@@ -4,6 +4,11 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import grpc
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -14,16 +19,26 @@ import server as server_module
 from server import EdgeOrchestratorServicer
 
 
-def test_named_other_vehicle_cannot_reach_val_or_cloud():
+@pytest.mark.parametrize("rpc_context", [False, True])
+def test_named_other_vehicle_cannot_reach_val_or_cloud_or_leak_driving(rpc_context):
     service = EdgeOrchestratorServicer()
     request = _request(capability="")
     request.text = "打开空调"
     request.context.vehicle_id = "other-vehicle"
+    service.val.set_env("speed_kmh", 55)
     before = dict(service.val.state)
-    events = asyncio.run(_collect(service, request))
+    service._is_driving = Mock(side_effect=AssertionError("other vehicle driving state was read"))
+    service.obs.emit_turn = AsyncMock()
+    context = SimpleNamespace(abort=AsyncMock(side_effect=PermissionError("vehicle identity mismatch"))) if rpc_context else None
+    async def go():
+        return [event async for event in service.Handle(request, context)]
+    with pytest.raises(PermissionError, match="vehicle identity mismatch"):
+        asyncio.run(go())
     assert service.val.state == before
-    finals = [ev.final for ev in events if ev.WhichOneof("event") == "final"]
-    assert finals and "不匹配" in finals[-1].speech and not finals[-1].actions
+    service._is_driving.assert_not_called()
+    assert service.obs.emit_turn.await_args.kwargs["status"] == "rejected"
+    if context:
+        context.abort.assert_awaited_once_with(grpc.StatusCode.PERMISSION_DENIED, "vehicle identity mismatch")
     assert not service.cloud._started
 
 

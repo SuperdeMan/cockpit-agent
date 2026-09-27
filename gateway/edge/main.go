@@ -19,8 +19,10 @@ import (
 	"github.com/gorilla/websocket"
 	natsgo "github.com/nats-io/nats.go"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 
 	"github.com/cockpit/car-agent/gateway/deployprofile"
 	"github.com/cockpit/car-agent/gateway/tlscfg"
@@ -363,6 +365,11 @@ func handleWS(w http.ResponseWriter, r *http.Request, orch orchpb.EdgeOrchestrat
 			for {
 				ev, err := stream.Recv()
 				if err != nil {
+					// Denial must terminate without a final that invents driving=false.
+					if ctx.Err() == nil && status.Code(err) == codes.PermissionDenied {
+						client.send(stampRequestID(map[string]any{"type": "error",
+							"code": "permission_denied", "message": "当前连接无权访问目标车辆，未执行任何操作。"}, reqID))
+					}
 					// 晚到的 grpc CANCELLED（ctx 已取消）不回发 error；正常 EOF/错误照旧收尾
 					return
 				}

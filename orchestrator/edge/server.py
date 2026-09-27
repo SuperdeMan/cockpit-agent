@@ -722,7 +722,10 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
             status = "cancelled"
             raise
         except Exception as e:
-            status, error = "err", str(e)
+            if turn.get("path") == "vehicle_identity_rejected":
+                status, error = "rejected", "vehicle_identity_mismatch"
+            else:
+                status, error = "err", str(e)
             raise
         finally:
             if not status:
@@ -763,9 +766,11 @@ class EdgeOrchestratorServicer(orchestrator_pb2_grpc.EdgeOrchestratorServicer):
         claimed_vehicle = getattr(getattr(request, "context", None), "vehicle_id", "")
         if claimed_vehicle and claimed_vehicle != self.val.driver.vehicle_id:
             turn["path"] = "vehicle_identity_rejected"
-            yield orchestrator_pb2.HandleEvent(final=orchestrator_pb2.FinalResult(
-                speech="目标车辆与当前连接不匹配，未执行任何操作。"))
-            return
+            # A final would be enriched with this car's driving fact. Merely
+            # skipping enrichment also invents parking through proto3's false.
+            if context is not None:
+                await context.abort(grpc.StatusCode.PERMISSION_DENIED, "vehicle identity mismatch")
+            raise PermissionError("vehicle identity mismatch")
         self._change_source.set("T0")
         # `_edge_executed` 是端侧执行器签发给云侧的内部事实，不是客户端输入。
         # 网关会透传 HMI meta，因此每轮入口必须先剥掉同名键；混合路径只有在 VAL
