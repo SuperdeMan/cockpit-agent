@@ -104,6 +104,7 @@ class ToolSpec:
     # `item`（"点一杯拿铁"），而商户的参数叫 `sku`——硬要求 LLM 用商户词表是自找的
     # 槽位缺失。映射写在准入清单里，桥不含任何领域词。
     arg_map: dict = field(default_factory=dict)
+    contract_effect: str = ""
 
 
 @dataclass
@@ -143,6 +144,7 @@ class WorkflowSpec:
     #: 唯一消费方是 `wait_slot` 续接的换题判定——「这句话长得像不像这个槽的值」。
     #: 落点判据同 `candidate_slot`/`input_schema`：**加一个形状=改表不改主循环**。
     slot_shapes: dict = field(default_factory=dict)
+    contract_effect: str = ""
 
 
 @dataclass(frozen=True)
@@ -156,6 +158,7 @@ class LocalCapabilitySpec:
     slots: list[str] = field(default_factory=list)
     require_confirm: bool = False
     expose: bool = True
+    contract_effect: str = ""
 
 
 @dataclass
@@ -391,7 +394,8 @@ def load_local_capabilities(path: str) -> list[LocalCapabilitySpec]:
             description=str(row.get("description") or "").strip(),
             examples=examples, slots=slots,
             require_confirm=bool(row.get("require_confirm", False)),
-            expose=bool(row.get("expose", True))))
+            expose=bool(row.get("expose", True)),
+            contract_effect=str(row.get("contract_effect") or "")))
         seen.add(intent)
     return out
 
@@ -404,6 +408,7 @@ def load_servers(path: str) -> list:
     for s in data.get("servers", []) or []:
         tools = [ToolSpec(
             name=t["name"], intent=t["intent"], write=bool(t.get("write", False)),
+            contract_effect=str(t.get("contract_effect") or ""),
             require_confirm=bool(t.get("require_confirm", False)),
             expose=bool(t.get("expose", True)),
             forward_owner=bool(t.get("forward_owner", False)),
@@ -435,6 +440,7 @@ def load_servers(path: str) -> list:
         ) for t in (s.get("tools") or [])]
         workflows = [WorkflowSpec(
             intent=str(w["intent"]),
+            contract_effect=str(w.get("contract_effect") or ""),
             handler=str(w.get("handler") or ""),
             required_tools=[str(name) for name in (w.get("required_tools") or [])],
             required_scopes=[str(scope) for scope in

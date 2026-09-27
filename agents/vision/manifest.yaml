@@ -13,6 +13,29 @@ fallback: chitchat
 # v1 只做单帧问答；视频流实时理解是 v2（成本与隐私都另议）。
 capabilities:
   - intent: vision.describe
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        question:
+          type: string
+          unit: ''
+          region: ''
+        frame_id:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: declared
     description: 看摄像头当前画面，回答关于眼前实物的问题——那是什么建筑/什么车/什么花/什么牌子
     slots: [question, frame_id]
     examples: ["那是什么", "这是什么", "前面那个建筑是什么", "这是什么车",

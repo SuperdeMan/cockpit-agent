@@ -9,6 +9,25 @@ fallback: chitchat
 
 capabilities:
   - intent: safety.driving_advice
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        destination:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 2026-09-19（QA 交接页 §5「安全问句偶尔落 info.search」）：描述原来只有
     # 「综合天气+路况」一句。Agent 早在 C1-B（2026-08-26）就实现了「本轮原话带车辆告警 ⇒
     # 按告警等级确定性给出停车/降速结论」（`_spoken_alert` → `_alert_bound_advice`），
@@ -38,6 +57,21 @@ capabilities:
   # 判据（本仓既有）：**改实现不等于加能力——planner 只看得见 manifest。**
   # examples 按「只有本能力答得了」写：这几句除了安全助手没有第二个域该接。
   - intent: safety.driver_state
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters: {}
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 驾驶员自身状态影响能否继续驾驶时的安全判断与处置建议
       （疲劳/困倦/饮酒或服药/身体不适）。**不是**天气路况建议，也不是闲聊安慰
     slots: []
@@ -50,11 +84,49 @@ capabilities:
   # 天然不判别化**；P1 把它们批量导入范例库当金标，冲突就被激活成了判定尺的自相矛盾。
   # 裁定：裸问预警本身归 info.alerts；带驾驶影响/上路注意归本条。
   - intent: safety.weather_alert
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        city:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询天气预警**对驾驶的影响**（能不能上路、路上要注意什么）；
       只问预警本身有没有、几级归 info.alerts
     slots: [city]
     examples: ["这天气预警影响开车吗", "有预警的话路上要注意什么"]
   - intent: safety.road_condition
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        route:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询路况（拥堵/事故/施工）
     slots: [route]
     examples: ["路况怎么样", "高速堵车吗"]

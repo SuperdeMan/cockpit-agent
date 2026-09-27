@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from google.protobuf.struct_pb2 import Struct
 from cockpit.agent.v1 import agent_pb2
 from registry.store import _manifest_to_dict, _dict_to_manifest
+from runtime.capability_contract import declaration as contract_declaration, to_proto as contract_proto
 
 
 def _expect(d: dict) -> Struct:
@@ -168,6 +169,8 @@ def _fully_populated_manifest():
                 whole_utterance=True,
                 response_only=True,
                 effect="write",
+                contract=contract_proto(contract_declaration(
+                    ["when"], "state_change", verification=True, legacy=False)),
                 verification=agent_pb2.Verification(
                     mode="schema", timeout_ms=1500, on_fail="retry", max_attempts=2,
                     expect=_expect({"data_keys": ["items"]})),

@@ -14,12 +14,14 @@ orchestrator/cloud/dispatch.py 校验 step.required_permissions ⊆ granted 并�
 """
 from __future__ import annotations
 import logging
+import time
 from typing import TYPE_CHECKING
 
 import grpc
 from google.protobuf.json_format import MessageToDict
 
 from runtime.grpcio import aio_channel
+from runtime import capability_contract as cap_contract
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 from .result import AgentResult
@@ -119,7 +121,7 @@ class AgentClient:
         # 由本层权威覆盖（护栏跨进程生效）。否则复合 Agent 的子调用会丢定位/电量，
         # 例如 trip-planner 内部调 charging.plan 拿不到当前位置 → 误报"请开启定位"。
         sub_meta = {k: str(v) for k, v in self._parent_meta.items()
-                    if k not in ("call_depth", "call_stack")}
+                    if k not in ("call_depth", "call_stack", cap_contract.HEADER)}
         sub_meta["call_depth"] = str(self._depth + 1)
         sub_meta["call_stack"] = ",".join(self._stack + [caller_id])
 
@@ -140,7 +142,20 @@ class AgentClient:
         try:
             ch = self._channel_for(endpoint)
             stub = agent_pb2_grpc.AgentStub(ch)
-            resp = await stub.Execute(req, timeout=timeout or self._timeout)
+            remaining = timeout or self._timeout
+            # A parent's contract describes another capability. Discover the target
+            # version without sending user context; never retry an Execute here.
+            if hasattr(stub, "Describe"):
+                started = time.monotonic()
+                manifest = await stub.Describe(agent_pb2.DescribeRequest(), timeout=min(remaining, 2.0))
+                remaining = max(0.001, remaining - (time.monotonic() - started))
+                cap = next((c for c in manifest.capabilities if c.intent == intent), None)
+                if cap is not None:
+                    cap_contract.validate_capability(manifest, cap)
+                    digest = cap_contract.capability_digest(manifest, cap)
+                    if digest:
+                        req.meta[cap_contract.HEADER] = digest
+            resp = await stub.Execute(req, timeout=remaining)
         except grpc.aio.AioRpcError as e:
             # grpc.aio 用 AioRpcError(DEADLINE_EXCEEDED) 表达超时，而非 asyncio.TimeoutError。
             if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:

@@ -65,3 +65,13 @@ Runtime Policy / VAL 后续硬层限制。
 - HTTP/MCP 外部工具及网络出口白名单。
 - 真实 token scope 注入、Prometheus/OTel 导出、持久化 trace 与告警。
 - 压测后确定熔断参数，并把关键场景集并入 CI 门禁。
+
+
+## CA2-05 能力契约
+
+Step 从 Registry 绑定能力契约/语义指纹/版本摘要，模型同名字段不采纳；沿 step_record 挂起恢复，
+损坏的新字段拒绝恢复，旧记录保持原语义。普通、D0、T2 和改派均携带服务端版本标记。
+当前 156 项兼容接口不增加 Planner 目录文本；新/变更云能力先 Describe 对版本，端侧通过无执行意图的
+EdgeCall.contract_query 只读探测。不支持的旧节点不会收到真实业务请求，接收端仍再次核对版本与参数。
+细分状态写/外部写加入既有问句副作用闸；信息任务保留原规划流程，不新增重试或授权。
+完整边界见 [CA2-05](../../docs/design/2026-09-27-v2-capability-contract.md)。

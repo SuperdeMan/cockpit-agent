@@ -68,6 +68,9 @@ message EdgeCall {
   string step_id = 1;
   cockpit.common.v1.Intent intent = 2;          // name + slots（车控/媒体/状态查询）
   map<string, string> meta = 3;                 // trace_id, answer_length, confirmed ...
+  // Read-only capability-version probe. Intent must be absent for this variant.
+  // Old receivers see an empty intent and reject without invoking VAL.
+  string contract_query = 4;
 }
 message EdgeCallEnvelope {
   string vehicle_id = 1;

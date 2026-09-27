@@ -11,6 +11,29 @@ fallback: chitchat
 
 capabilities:
   - intent: info.weather
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        city:
+          type: string
+          unit: ''
+          region: ''
+        date:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: declared
     description: 查询指定城市或当前位置的实时天气
     slots: [city, date]
     examples: ["今天天气怎么样", "北京天气如何", "上海现在多少度"]
@@ -23,11 +46,53 @@ capabilities:
       expect: { data_keys: [weather] }
 
   - intent: info.forecast
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        city:
+          type: string
+          unit: ''
+          region: ''
+        days:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询指定城市未来几天天气预报
     slots: [city, days]
     examples: ["明天天气怎么样", "北京未来三天天气", "后天会下雨吗", "这周天气预报"]
 
   - intent: info.alerts
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        city:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 2026-07-30 地盘收口：裸问预警本身（有没有/几级/什么预警）归本条；
     # 「这预警影响开车吗」「路上要注意什么」归 safety.weather_alert（同一批说法此前被两个域
     # 各自声称，见 agents/road_safety/manifest.yaml 同日注释）。
@@ -37,16 +102,77 @@ capabilities:
     examples: ["有没有天气预警", "北京有暴雨预警吗", "今天有极端天气吗", "暴雨预警了吗"]
 
   - intent: info.indices
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        city:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询城市生活指数（运动/洗车/紫外线等）
     slots: [city]
     examples: ["今天适合运动吗", "明天可以洗车吗", "紫外线强不强", "生活指数"]
 
   - intent: info.air_quality
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        city:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询城市实时空气质量（AQI/PM2.5/PM10等）
     slots: [city]
     examples: ["空气质量怎么样", "PM2.5多少", "今天空气好吗", "空气质量"]
 
   - intent: info.search
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        query:
+          type: string
+          unit: ''
+          region: ''
+        limit:
+          type: integer
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 联网搜索实时、最新或你不确定的信息，回答**一个具体问题**：近期事件、价格、
       榜单、发布、事实核查——凡答案会随时间变化的问题都用本能力，不要闲聊直答。
       只想浏览一批资讯用新闻能力；要系统性了解一个主题用深度调研能力
@@ -56,6 +182,29 @@ capabilities:
                "昨晚发布会都发布了什么", "现在油价多少", "帮我搜"]
 
   - intent: info.sports
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        query:
+          type: string
+          unit: ''
+          region: ''
+        league:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询赛事比分、赛程与已结束赛果（足球，结构化真实数据）。
       昨天/前天/昨晚的「那场比赛」等过去赛果，即使没说联赛或球队也归本能力，
       通用联网搜索不是替代路由。仅限**已定事实**；预测/分析/谁会赢/前瞻走联网搜索能力
@@ -63,6 +212,29 @@ capabilities:
     examples: ["今天世界杯赛程", "世界杯比分", "英超赛果", "欧冠今晚有哪些比赛", "西甲对阵"]
 
   - intent: info.news
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        topic:
+          type: string
+          unit: ''
+          region: ''
+        limit:
+          type: integer
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 浏览新闻头条/资讯列表——想**看一批**新闻资讯时用（含「X最新消息/X最新动态」
       这类想了解某主题近况的说法）；对某个具体问题要答案用搜索能力；要系统了解一个主题用
       深度调研能力
@@ -72,6 +244,25 @@ capabilities:
                "来点财经新闻", "英伟达最新消息"]
 
   - intent: info.stock
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        symbol:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询股票或大盘指数实时行情（仅证券——黄金/外汇/加密货币等价格走联网搜索）
     slots: [symbol]
     examples: ["茅台股价", "上证指数多少", "今天大盘怎么样", "查一下苹果股票"]

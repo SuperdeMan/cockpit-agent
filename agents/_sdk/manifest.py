@@ -3,6 +3,7 @@ from __future__ import annotations
 import yaml
 from google.protobuf.struct_pb2 import Struct
 from cockpit.agent.v1 import agent_pb2
+from runtime.capability_contract import to_proto as contract_proto
 
 
 def build_verification(raw) -> agent_pb2.Verification | None:
@@ -68,6 +69,7 @@ def load_manifest(path: str) -> agent_pb2.AgentManifest:
             response_only=bool(c.get("response_only", False)),
             # 能力效果 read / write（评审 W11）：声明在 Agent，中央只消费。
             effect=capability_effect(c.get("effect")),
+            contract=contract_proto(c["contract"]) if c.get("contract") is not None else None,
         )
         for c in (data.get("capabilities") or [])
     ]

@@ -15,6 +15,37 @@ capabilities:
   # 它只能掷硬币，于是 nearby 的两条 replace 正则被拉来当裁判（M5 P2 双臂裸跑坐实）。
   # 判据换成产出形态：本条**定位一个可导航的目标**，nearby.search **列多个候选让用户挑**。
   - intent: navigation.search_poi
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        keyword:
+          type: string
+          unit: ''
+          region: ''
+        category:
+          type: string
+          unit: ''
+          region: ''
+        near:
+          type: string
+          unit: ''
+          region: ''
+        rating_min:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 把一个说法解析成**一个可导航的具体地点**——按名（含官方名/别名）或视觉地标
       描述定位（「像笋一样的大楼」→中国华润大厦），命中即可直接规划路线；也承接多意图里
       「导航去X + 顺路找Y」的子步与加油站/服务区这类沿途设施。用户**已经知道要去哪**时用
@@ -23,6 +54,49 @@ capabilities:
     slots: [keyword, category, near, rating_min]
     examples: ["最近的加油站在哪", "去深圳像笋一样的那栋大楼", "国贸三期在哪个位置"]
   - intent: navigation.navigate_to
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        destination:
+          type: string
+          unit: ''
+          region: ''
+        origin:
+          type: string
+          unit: ''
+          region: ''
+        stop_category:
+          type: string
+          unit: ''
+          region: ''
+        waypoint:
+          type: string
+          unit: ''
+          region: ''
+        place_address:
+          type: string
+          unit: ''
+          region: ''
+        arrive_by:
+          type: string
+          unit: ''
+          region: ''
+        route_pref:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
     effect: write
     description: 导航到指定目的地；支持常用地点别名（家/公司/学校，未设置会反问地址并记住）、
@@ -38,6 +112,33 @@ capabilities:
   # 公里」并前往）。判据是**用户要的是数还是行程**——这两件事在能力面上必须分开，
   # 否则一个纯查询会产生不可逆的副作用（同 Q8 卡的「就近误执行」形态）。
   - intent: navigation.estimate
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        destination:
+          type: string
+          unit: ''
+          region: ''
+        origin:
+          type: string
+          unit: ''
+          region: ''
+        route_pref:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 只算不导——回答「从A到B多远/多久/几点能到」，给出里程、驾车时长
       与预计到达时刻，**不启动导航、不发车控动作**。起点默认当前位置，用户明说
       「从X出发/从X开到Y」时填 origin。用户说「导航去/带我去/走吧/出发」这类**要动身**
@@ -46,6 +147,41 @@ capabilities:
     examples: ["从深圳市民中心到深圳北站开车大概多远、要多久", "到公司还有多远",
                "从家开到宝安机场大概要多久", "去趟世界之窗多长时间"]
   - intent: navigation.reroute
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        remove_waypoint:
+          type: string
+          unit: ''
+          region: ''
+        add_waypoint:
+          type: string
+          unit: ''
+          region: ''
+        destination:
+          type: string
+          unit: ''
+          region: ''
+        origin:
+          type: string
+          unit: ''
+          region: ''
+        route_pref:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 增量调整**当前正在进行的这次导航**（对话焦点里有「当前正在导航」时用本条）——
       去掉/加上途经点（「肯德基不去了」「顺路加个加油站」，remove_waypoint/add_waypoint）、
@@ -62,6 +198,21 @@ capabilities:
   # 「取消导航」不再被前置闸当成「取消挂起」吞掉，**它必须有一个落点**——
   # 放开一条路却不给它落点，是把一个错换成另一个错。
   - intent: navigation.cancel
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters: {}
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 结束/取消**当前正在进行的这次导航**（「取消导航」「别导了」「不去了」
       在有活动路线时）。它是终止不是调整——删途经点/换路线/改目的地归 navigation.reroute；
@@ -69,19 +220,103 @@ capabilities:
     slots: []
     examples: ["取消导航", "结束导航", "别导航了", "不用导航了", "退出导航"]
   - intent: navigation.set_place
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        place:
+          type: string
+          unit: ''
+          region: ''
+        address:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 设置常用地点（家/公司/学校）的地址，记住后可直接『导航去家/公司』。只记录不导航。
     slots: [place, address]
     examples: ["把家设成上海长宁区某某小区", "我家在深圳南山区科技园", "设置公司地址为北京国贸三期", "公司在杭州西湖区某某大厦"]
   - intent: navigation.reverse_geocode
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        lng:
+          type: number
+          unit: degree
+          region: geographic
+          minimum: -180
+          maximum: 180
+        lat:
+          type: number
+          unit: degree
+          region: geographic
+          minimum: -90
+          maximum: 90
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 逆地理编码，根据给定坐标(lng/lat)获取地址信息
     slots: [lng, lat]
     examples: ["这个坐标是什么地方", "121.47,31.23是哪里"]
   - intent: navigation.locate
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters: {}
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 回答用户"我在哪/我现在在哪里/当前位置"，对当前已授权定位做逆地理编码给出当前所在地址。无具体坐标，用当前位置。
     slots: []
     examples: ["我在哪", "我现在在哪里", "我现在在哪", "当前位置", "我在什么地方", "这是哪里"]
   - intent: navigation.poi_detail
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        poi_id:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询某个 POI 的详细信息
     slots: [poi_id]
     examples: ["这个地方的详细信息", "查一下这个地点"]

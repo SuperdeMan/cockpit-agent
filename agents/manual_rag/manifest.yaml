@@ -13,6 +13,25 @@ fallback: chitchat
 
 capabilities:
   - intent: manual.query
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        question:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     response_only: true
     # 「胎压」是 2026-09-26 二批补回的：一批改写这句时把原来打头的「胎压」删了，「胎压黄灯亮了，
     # 还能继续开吗？应该补到多少？」只规划安全续驾一步（后半问无人回答）的比例从一批前 collector

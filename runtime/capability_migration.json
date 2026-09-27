@@ -1,0 +1,787 @@
+{
+  "baseline_source_sha": "b05d9d18afe0ee627f89aa232ae2f4eb4ad5badf",
+  "capabilities": {
+    "builtin-tools/datetime.parse": {
+      "abi_sha256": "45ec621de95dc049a6e6706e06c5dc4c9b4c0bcf7552ba0060050a5dad0f9c5b",
+      "contract_sha256": "158524df405d9450927015afeb92c2f00ab48be4c1749a36cde11a0b52666ee8",
+      "effect": "read"
+    },
+    "builtin-tools/math.eval": {
+      "abi_sha256": "7f00f2184cd580b4329853a5764e60588856c667af585b7517dd936a44cfc005",
+      "contract_sha256": "1a557a37c7b0b299d1edd59712414f23ad2710b9b274e802f6fe4fe580836a65",
+      "effect": "read"
+    },
+    "builtin-tools/unit.convert": {
+      "abi_sha256": "fd836b3157e50bd00ff4998599714289e7c2a8d224c9b33736477a7f2846a3ee",
+      "contract_sha256": "8bef78c293e677fe00b7e592363ff5ec3d73210d87ce1ec5c04464580e119fd6",
+      "effect": "read"
+    },
+    "charging-planner/charging.find": {
+      "abi_sha256": "ec480299f514078852af31b0363ccb6812408933ff96e869aba72120040a4fd6",
+      "contract_sha256": "523e69648752c7d3f79014f7acf3d8e6fb4ecf9cfa6a4154916fbde9843b88bd",
+      "effect": "read"
+    },
+    "charging-planner/charging.plan": {
+      "abi_sha256": "be096417f9c153c70fa9db1e899c3c5866c7ea25d554af2fc9046b7a0e975c87",
+      "contract_sha256": "ba3e9d438fc7688a2abdc83fb39f2d99033ef5eb40ca18ef30eb3f61f2a8704d",
+      "effect": "information_task"
+    },
+    "charging-planner/charging.status": {
+      "abi_sha256": "1a91499d66b5667d45f4d7ef0373dabeb2019fc2824d9589e2831ccabcf4d46c",
+      "contract_sha256": "d953b6821f4ebed42755af53dc0438716824ece6fd87a01f4d600ff1323cd3b0",
+      "effect": "read"
+    },
+    "chitchat/chitchat.talk": {
+      "abi_sha256": "a0930947dc91f25b2bbc432175a68751f9136b4da69601f8fac2875da81213fc",
+      "contract_sha256": "cd5f795f00b6242e41fa62445fb8f33ff732c6d9a632c91b06ace65ab7eee9ad",
+      "effect": "read"
+    },
+    "deep-research/research.cancel": {
+      "abi_sha256": "8d03276200169fa868f935d4d3c436b4730e3de75ac2adf6ce345fda45868067",
+      "contract_sha256": "5c21d010af0f086fa85db628a909293cec0cfd3d4dfe8023904a3eed6ceafd3a",
+      "effect": "information_task"
+    },
+    "deep-research/research.run": {
+      "abi_sha256": "54e061db85062320eeadad011f9039c125a6937111e7acfc0ba23835237a233c",
+      "contract_sha256": "f2f6c60b7d4aac7fb796620ddd1718f9d4819b751e52acf0d5d06040e7c3d9b4",
+      "effect": "information_task"
+    },
+    "deep-research/research.status": {
+      "abi_sha256": "66a002f7aae603740b252f901a04ecb40072daf6345867535d05209fd11d20cc",
+      "contract_sha256": "eeebe29964a93c9495d1847096ce7b31efb5a93853373f867151a3bd40686b1b",
+      "effect": "read"
+    },
+    "edge-media/media.next": {
+      "abi_sha256": "980c48f2548d87147c7efbb163aaec31be3d757c9ea13bd73e78ffa594c0da7d",
+      "contract_sha256": "7244361d6756f5e2407ea40309bc5e67421feea0073d9baf7dc861f64fd8ffa0",
+      "effect": "state_change"
+    },
+    "edge-media/media.pause": {
+      "abi_sha256": "c095baa9895d9b2acd3d832ed3bad2bb66035047c67b731e836c7b0b47f11bae",
+      "contract_sha256": "7ef8085d29109597a37a2420218e6d48efa789697bc22dee9f27fe26f0774cd6",
+      "effect": "state_change"
+    },
+    "edge-media/media.play": {
+      "abi_sha256": "d756508ff05d2029131ea6fcc1d41a7853cfcf9b764c95658b8fdcc34463a4ff",
+      "contract_sha256": "fc3c78aa8392e662faa2f2357d0edca55ede466ff24af0021a13e27597156321",
+      "effect": "state_change"
+    },
+    "edge-media/media.prev": {
+      "abi_sha256": "83291710b7004b398537df98130f88628559c1c4ffeb1cd6c9c8313fa57a952c",
+      "contract_sha256": "93881b9573f12d0d99f3b6169f28e52115abc08ca08c7f2abcb29bda34986cad",
+      "effect": "state_change"
+    },
+    "edge-media/media.stop": {
+      "abi_sha256": "1075c39c77c4d0db35a2e33c560937b6fc9757179e6a6596242c3c60900e935a",
+      "contract_sha256": "fc8884d3ae9b829a620a1aca338fab67a38efabf249b96047e512fecd2f0c288",
+      "effect": "state_change"
+    },
+    "edge-vehicle/accompany_home.close": {
+      "abi_sha256": "968ae38011abd1965ab41c5ee3583d19dc6482bf5903de310b3a195af28a19ae",
+      "contract_sha256": "9af22c433b472eaffee80c970751df40e3663e126cdf3bb4a0881fca9fac5530",
+      "effect": "state_change"
+    },
+    "edge-vehicle/accompany_home.open": {
+      "abi_sha256": "b55236696bc9c6092fabd8d01a8a4ea86d017d4140410f46f25c28964e5cfaec",
+      "contract_sha256": "892f215f5f6c4803d77fc255d9a63f528c14d73b6f7c2833d409cae6641d0e3b",
+      "effect": "state_change"
+    },
+    "edge-vehicle/aircon.wind_speed.dec": {
+      "abi_sha256": "ca8d95136ddde8f89c3967601f1f00c491a95d464b2c592bcd87c7c6d61f9018",
+      "contract_sha256": "05029d91b47f22d19737537a77ac4228f990044c5248208d2c45444c88184cad",
+      "effect": "state_change"
+    },
+    "edge-vehicle/aircon.wind_speed.inc": {
+      "abi_sha256": "98c2b933b0bad88460e16239fcf2464f622229e80f361d06c0eaefe4dc0c5c4b",
+      "contract_sha256": "c605bc62499c5df99d4cdb19e7d18244b693704406e31398b393ac0176e8aece",
+      "effect": "state_change"
+    },
+    "edge-vehicle/aircon.wind_speed.set": {
+      "abi_sha256": "ccde714bc897e8d93910389a959428651229ff6f0322caa2dad7d5b522db9ff2",
+      "contract_sha256": "4b1aa5efb684d4fd670f0dc88f5d271c1680a4c8b76da833fd8ae693372c5830",
+      "effect": "state_change"
+    },
+    "edge-vehicle/ambient_light.off": {
+      "abi_sha256": "1bd38c1e0d4eb1f1b848a702812da5cea81a0891f54271a7ca65094fa62420fc",
+      "contract_sha256": "64cd5fe43a6bb4981b3d9cf91e3d70ac6d2e68f70e998a38e8a345daebac2542",
+      "effect": "state_change"
+    },
+    "edge-vehicle/ambient_light.on": {
+      "abi_sha256": "c28ced00fd6318c299505ab86ea57efd563de030cbf91fe2e167550b647aa441",
+      "contract_sha256": "7182e84047da2f185b3f2827413678def34a7cfcc9fd7d7e2149737dc8b938c1",
+      "effect": "state_change"
+    },
+    "edge-vehicle/charging_port.close": {
+      "abi_sha256": "c51bfd6da0b08016b69288a9def4d75d5632be47b561eb88cba059a068c6ce15",
+      "contract_sha256": "37b618361d0bcf6e87d0e835b45e58a32432cc4d2865427b72fca1415704a883",
+      "effect": "state_change"
+    },
+    "edge-vehicle/charging_port.open": {
+      "abi_sha256": "9a26a152dcbb91a04c54a96f3aeb2ddba89e089f86fdaf10a4893a1714608275",
+      "contract_sha256": "1a2812795dbd04f3814e8770f6027a93baa12515263e11a900881a350a0557d6",
+      "effect": "state_change"
+    },
+    "edge-vehicle/dashcam.close": {
+      "abi_sha256": "1f34b25bd9a7aa999968ae75840b62b70bd589459977d39e466624378fdc0892",
+      "contract_sha256": "5872d81a68fd17ace4372699d2231b2a49e472f399f592f6d2cd1c123c44e3f8",
+      "effect": "state_change"
+    },
+    "edge-vehicle/dashcam.open": {
+      "abi_sha256": "0083c53458afc884eb97daba2f690f55038936d4f7f92a0f137612168bc31b97",
+      "contract_sha256": "cf07ee78c4cd1abb7ea565859556aae3fc167d4474ba4c07744c7f05a632b8b4",
+      "effect": "state_change"
+    },
+    "edge-vehicle/door_lock.close": {
+      "abi_sha256": "8dc22ebdf0794d9abcd3ccbaf5a16e197a3af31caa5ffd73c34d689a394da88a",
+      "contract_sha256": "de887a71aa63c670b4e85141bcc12d8b39efc90bd7495a2bdc806a862ba9b021",
+      "effect": "state_change"
+    },
+    "edge-vehicle/door_lock.open": {
+      "abi_sha256": "215ce31e3673ee91d78fc453a56aa571b6f1d56a750f7930ca225fef71c7c3b7",
+      "contract_sha256": "bc118c4d0d726e614b137305064bd7d11cf20f9fce1baa3d598cf595245be206",
+      "effect": "state_change"
+    },
+    "edge-vehicle/energy_recovery.dec": {
+      "abi_sha256": "0d322e696942db832a08487686c8ecfa4e01d84b332eadf4a77425c62b80dec9",
+      "contract_sha256": "2bd106306d6dac47b6f92d44432a9120a7a6ce3083138f888312c360e71259d6",
+      "effect": "state_change"
+    },
+    "edge-vehicle/energy_recovery.inc": {
+      "abi_sha256": "9558cb0ae2d14e0b763f576d796a8263aa126e29d4d637f469a6c94d26fa55c9",
+      "contract_sha256": "f9f0e7aed86dc0b8182a1b6d1b21aad4166ca85019268dfbef4abc61a099a35c",
+      "effect": "state_change"
+    },
+    "edge-vehicle/energy_recovery.set": {
+      "abi_sha256": "122e12a6ea0d67bffabcadf5af207a35c29bdcf591ea332705e23234a7acd30b",
+      "contract_sha256": "7b0a64f088f628e02f564c173fca64fe1dc50827b4fb328d28b7f559473e6a53",
+      "effect": "state_change"
+    },
+    "edge-vehicle/fragrance.off": {
+      "abi_sha256": "27928d10b0997524b2ad016dc795896fd64ae8ccec12714c3b5f2d9c0716c80c",
+      "contract_sha256": "80c30ef4a80910a4ab17048c15437e7dfe64e9282c17c9b9400430535219d454",
+      "effect": "state_change"
+    },
+    "edge-vehicle/fragrance.on": {
+      "abi_sha256": "7154036ea4f9c331bc184cff347498fbf44ba81e5e3266b113aec32d566c9a23",
+      "contract_sha256": "32a0d62fefe7fa6085d5016940fcd812f022fd2c3070ae59b5e7c1bf736c92eb",
+      "effect": "state_change"
+    },
+    "edge-vehicle/fragrance.set": {
+      "abi_sha256": "3180f923de487da330076f2108cf394b1ba688b7669a9050bcbd89edf91ff9e2",
+      "contract_sha256": "6f05c7c661fad67e4a7e885d74363474a1b9b6d5978dd5914266f48c4aa2fc1a",
+      "effect": "state_change"
+    },
+    "edge-vehicle/front_defogger.close": {
+      "abi_sha256": "64cfc11a84eaf98af29b1c2ad40bda9cf9a66e6ca8ee45639e5d5e0fea30e57b",
+      "contract_sha256": "03c9884f02b370cfb0f68352dbfc1f46089f7b79028b0f19aee58a3670258250",
+      "effect": "state_change"
+    },
+    "edge-vehicle/front_defogger.open": {
+      "abi_sha256": "9fec45bd08c38fcb1e2274be7852d0ad6a5785716f74fbf7a031cc6df23ea016",
+      "contract_sha256": "0ace22514b5fe1374f9796c3ae00a17d7f3dcfb8066b45f01e35d1e8cb6e8876",
+      "effect": "state_change"
+    },
+    "edge-vehicle/fuel_tank_cover.close": {
+      "abi_sha256": "6d4668f62b15c856a713f0dfb1eb9a946ac694b1f9c97149b8204f950135a191",
+      "contract_sha256": "04053738ed7cb03950cf16ca20c2ed4b8f8dfad2e35c784cdb08b696a6452092",
+      "effect": "state_change"
+    },
+    "edge-vehicle/fuel_tank_cover.open": {
+      "abi_sha256": "3b432f5fc5cdfc7de24e84c3a21d4eefe10211dbecf4035367935c1154f2e5f3",
+      "contract_sha256": "b660fa81244fe29b397920785ae064cd2e50c1166f6585120ebd8451bdf4b3f8",
+      "effect": "state_change"
+    },
+    "edge-vehicle/headlight.off": {
+      "abi_sha256": "6b52489bc32ca39e59c2824697b921946f270402022fa77bafd907c9e13f2638",
+      "contract_sha256": "71a965d75fb70d36343ba2094b044e90a5334066c857a24f1e3173e5fee65cdd",
+      "effect": "state_change"
+    },
+    "edge-vehicle/headlight.on": {
+      "abi_sha256": "b0d37a6fdb2b39d6b5b797c00da9b1bac8a72dd8505255b1e94d6a930dfe13fc",
+      "contract_sha256": "c3768728ea4e0d9582510b2504c2a69837b8a167e0db5fe7d05f2a4c94505c11",
+      "effect": "state_change"
+    },
+    "edge-vehicle/hvac.dec": {
+      "abi_sha256": "0f05889d885f93b2fd0d65243d7853ffffab755e2ae03c99c4527f6b852d99e9",
+      "contract_sha256": "47c5078041b1da02ac777bb206b4605aa623c026ac778ba327fbacd6bc36ed26",
+      "effect": "state_change"
+    },
+    "edge-vehicle/hvac.inc": {
+      "abi_sha256": "0f1005471738b9c383fb5bb243bc1d8654b380b49b2867c48cf991b937e7c647",
+      "contract_sha256": "fd1ad075ec6164044a2e41cb445e52805ff1fde165300d0d9b9a723c8ad687b8",
+      "effect": "state_change"
+    },
+    "edge-vehicle/hvac.off": {
+      "abi_sha256": "fb95b5f3f7c3ca97c23ba17b9151fa5e644359119939400d2759779d62b258e3",
+      "contract_sha256": "70691d28b381684d2e59e9c7e6e2dc96ae5837aebcc2fc06d52b943db47e0526",
+      "effect": "state_change"
+    },
+    "edge-vehicle/hvac.on": {
+      "abi_sha256": "80673dd45f9f83c5015bdd578f1ad98f37c507934a038562888195aa5057bc43",
+      "contract_sha256": "27d109e042fd43e72d59402868b07a30ce2fee32af73dd7c8bd72ed30ea3d99a",
+      "effect": "state_change"
+    },
+    "edge-vehicle/hvac.set": {
+      "abi_sha256": "6b26857e70fa9241046ca40bdcaf9898cebff7a7a84c1ba5727d1d620b718b41",
+      "contract_sha256": "45ed6ba61b7bb88cdba2475c33fc50a8146673113e8f4a065e3a1ccede1e1ec5",
+      "effect": "state_change"
+    },
+    "edge-vehicle/lane_assistance.close": {
+      "abi_sha256": "fed06f25bf430f7ece1c4b8ab75c4d8136381b26482354583769c465f2d17a12",
+      "contract_sha256": "931363b71cc03023dc0a60ad271ccdd4bad312aa51149458ff1a5bea677abd3f",
+      "effect": "state_change"
+    },
+    "edge-vehicle/lane_assistance.open": {
+      "abi_sha256": "4581c52802ac0551a768167842de07fdd8d58c2552967e7b2a7027265d96c80b",
+      "contract_sha256": "747ae8b3df8021e7fdebc374cdce1172d8508edef56cccef64ae4cea32b2a1ad",
+      "effect": "state_change"
+    },
+    "edge-vehicle/lane_departure_assistance.close": {
+      "abi_sha256": "3578a054cf9d48bd75351a854aa24025c74a37095711903e0dbe05631ed41975",
+      "contract_sha256": "1606ded198161a98a9cea1a5f038d2ff787370d5ce336ec1fce861e4a004a051",
+      "effect": "state_change"
+    },
+    "edge-vehicle/lane_departure_assistance.open": {
+      "abi_sha256": "1e6c5e99f1c52d3d9cc972a0608f27aac102e0e8afbc83359db73a929b7c034d",
+      "contract_sha256": "ed2e7aba69a1e790fb130cf7645d6aa782c2012cea7184ea821838ebf54aee58",
+      "effect": "state_change"
+    },
+    "edge-vehicle/power_mode.set": {
+      "abi_sha256": "79c572c9b49eab08b9798a23c268b50cc393b0304be028a2152bc66077092eaa",
+      "contract_sha256": "50b17641c6fa39b3814c7d50563948f9b2e614c1fb31e8b55f212e37ec1aa2fa",
+      "effect": "state_change"
+    },
+    "edge-vehicle/rear_defogger.close": {
+      "abi_sha256": "39bde28735475c7745a1412cf126067232fb2328556698559e9a180c3e67570d",
+      "contract_sha256": "164a1254ed732645d460aaa7970204d7c05badf60a0ab6a69f11531d66aa0e54",
+      "effect": "state_change"
+    },
+    "edge-vehicle/rear_defogger.open": {
+      "abi_sha256": "bf07a1378933392d02d7feffda90957ce4d4ae2020db5c6a87a49f59f48435fe",
+      "contract_sha256": "1d44f86160ad02a9b85cf8df687d2f29189c8c1c2b091b4a0b8f878b34267193",
+      "effect": "state_change"
+    },
+    "edge-vehicle/rear_view_mirror.fold": {
+      "abi_sha256": "8b7f7e8a4f56e474cdbb046c43d89298bd44f7c4db367d208965bfab39920c8f",
+      "contract_sha256": "65556437e1a603a9e266649683ed63e6d14b9f81c6028950a53ac542fa975e42",
+      "effect": "state_change"
+    },
+    "edge-vehicle/rear_view_mirror.heating.close": {
+      "abi_sha256": "91b18dddca6e695986cf5a45a4b8cb48a33d5c779a07dbf2eca790ae84ffddf8",
+      "contract_sha256": "e1ea61951d2226b222f734a84cff56315c48dcd41fa565465d7e6cafa178fc35",
+      "effect": "state_change"
+    },
+    "edge-vehicle/rear_view_mirror.heating.open": {
+      "abi_sha256": "8a4ab5111ca73c5570e5bf4682ea81d2434cffb30c131f54b16002a8be7793bc",
+      "contract_sha256": "4f0e9100e70b772057fad6c30806075cd2af90fb814a203499066374f5f4e0d9",
+      "effect": "state_change"
+    },
+    "edge-vehicle/rear_view_mirror.unfold": {
+      "abi_sha256": "56c28e53e99342e76fcba5b75a021a88200b256947399a9126bd19969683d7be",
+      "contract_sha256": "494ca72c3cce7248247d0b14f597c065dd72ee13eca8279f04701dae87c7781e",
+      "effect": "state_change"
+    },
+    "edge-vehicle/scene_mode.set": {
+      "abi_sha256": "e37948c30c8e6dd8fb03b4bea80012cd68b7bc3ea17ff1f315b2a82a87a300ab",
+      "contract_sha256": "509f9784255e66e7f242f43a48fb3257da8f87dd37bd4878e045b2a1c5823774",
+      "effect": "state_change"
+    },
+    "edge-vehicle/screen.brightness.dec": {
+      "abi_sha256": "10ca0253350bce5ad97d3d95f9282069ce71d4094a8c140f4e4e9f8e7c37c423",
+      "contract_sha256": "c98124759fdf1999e477cd12fab0b3a70eebf03744c89017774e75b5073959eb",
+      "effect": "state_change"
+    },
+    "edge-vehicle/screen.brightness.inc": {
+      "abi_sha256": "ee6ad41eb00d0551ca134a7bb18a2b728c104a99b69f0b7de74bf4256448c14d",
+      "contract_sha256": "6d790ef22a213fd02b97d83ea467d2c76c5e6e7cafa3922302455eecf5051183",
+      "effect": "state_change"
+    },
+    "edge-vehicle/screen.brightness.set": {
+      "abi_sha256": "135791d28ac875c1f022b9512df4886526e096d4eb3cf604fc99589d0fd55002",
+      "contract_sha256": "6831dd225bbcefb79d9106cd510bd60ed2878a4e1d348509ef75a4bf60d9b284",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.heating.off": {
+      "abi_sha256": "1a81ac2c1d432e28f1c6778b29ef88a486e239756cab8de9decf443c1bd6ffd0",
+      "contract_sha256": "ed6fe5720710f9823e5bce69ecdbac2ce460ec29146c06130ab3f5e71c0a1aa1",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.heating.on": {
+      "abi_sha256": "0623f3ab9acc8aa675dc9d467cc99f288b11d84d5bf8159a229dafcd60db1a62",
+      "contract_sha256": "4bb2db4b60350fe1ddfefa114e53d4eaf9a5bc28b53462a4dd93f7f21e13f7e6",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.lumbar_support.off": {
+      "abi_sha256": "83b9c63e01c9b146a5eb552e13cb2481e9047aded7caf0d7811aff3ca4135c78",
+      "contract_sha256": "0cfacb44f34475ed443c682dfbf3b76c5c78b14d246596d175fd48f7949b4b24",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.lumbar_support.on": {
+      "abi_sha256": "e67c5942d45f1d00c29a4ec6f862331a871d3bccb1ff5c10cf93a5e93badc5a9",
+      "contract_sha256": "66a8e70c491afb8176ba35168e359f07d5bb7967933cd98525e369d6f6e37045",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.massage.off": {
+      "abi_sha256": "3ea209c2087c23abdfcd53f18db1f91293688c96f80885740e23c7467d74eac6",
+      "contract_sha256": "e1b4a527fe2876b9502184ba5739f2460378c0b308e283c496af9501bbf612e3",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.massage.on": {
+      "abi_sha256": "69da82b6767fad2d5ddf87c3fcece8743e52305d4ca41fb21068f6c3346eb69a",
+      "contract_sha256": "5a13878badbf6ac548271481b047b3f79af13e33c599dc945402ebfab7553394",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.ventilation.off": {
+      "abi_sha256": "bd3ba5b96b940167ce8bd7c734d2695f3cb2db77418d97f7497c96c9e3cf6ff6",
+      "contract_sha256": "3c565486d493425cbcb83f78c450e33147f4e5ec51f27769e293511ff22f2d60",
+      "effect": "state_change"
+    },
+    "edge-vehicle/seat.ventilation.on": {
+      "abi_sha256": "dbb6ed20c8a7403aaf5882c44fcdc78a256dd6ef6baddb116036bc310a8d9955",
+      "contract_sha256": "f80ea6f8dec9bdb87472d5230225d70a1f32ffbb3abcb120ead4fd8e8422d7b3",
+      "effect": "state_change"
+    },
+    "edge-vehicle/steering_wheel.heating.close": {
+      "abi_sha256": "61598cb869765188a3352854cca6d331497641fbf2ab887bba2c2c67f947159e",
+      "contract_sha256": "10fe96f394093d8fc35c4a49cd80f02b9ed9fe890719d6deeac136ae05db2bef",
+      "effect": "state_change"
+    },
+    "edge-vehicle/steering_wheel.heating.open": {
+      "abi_sha256": "0ad0298a06402c23bcfe367d8163d7d96c0189efaca76ab67b926f3bf730160c",
+      "contract_sha256": "bb1afe93b77c833ea0e135d5f9301088c7150dfcb7a9a5567b90c894edcad038",
+      "effect": "state_change"
+    },
+    "edge-vehicle/steering_wheel.height.dec": {
+      "abi_sha256": "621176a2b42dd8d7e487d44baa522ea1cc9526adf1c349ebc87ac148081dcf28",
+      "contract_sha256": "aa675b1499f83299fb1d3d7c3198622d5b16a3428b6c505daac5abefbcf02805",
+      "effect": "state_change"
+    },
+    "edge-vehicle/steering_wheel.height.inc": {
+      "abi_sha256": "fda92a53ed2946eae51d8436de205616aa479c0b41901e1597a5272a450da170",
+      "contract_sha256": "7bbb51789d3ab8ac7ed369164f0b332c48d1925006c76afb4e696610dbc844c2",
+      "effect": "state_change"
+    },
+    "edge-vehicle/steering_wheel.height.set": {
+      "abi_sha256": "5e91dbb0c7d0ab1c4abbe8b3669cfd76a1f76aeeef3aa96a36dd884900f1b834",
+      "contract_sha256": "c382734e8add6f3ee44b9bfe6e07ada5e162082c2ef0863d89a29f0281365bcb",
+      "effect": "state_change"
+    },
+    "edge-vehicle/sunroof.close": {
+      "abi_sha256": "cc124ee9503f9607bf8b0c5ad3d479bac7b5720512f401a7cece09600704421c",
+      "contract_sha256": "0398c64d2d1bc5055693d93e8d99450ec52a5adad04ecb42cff8e1d699e0b7a9",
+      "effect": "state_change"
+    },
+    "edge-vehicle/sunroof.open": {
+      "abi_sha256": "366dc85ef47bd7ea0c3e08fe714af1735dee8c05594281006865c84d6fa29818",
+      "contract_sha256": "97911231a1da414b146a33916a3b020d5628fc3763a2c42d2f48c4fe3344da8c",
+      "effect": "state_change"
+    },
+    "edge-vehicle/sunroof.set": {
+      "abi_sha256": "06873991ec6dbb6f32f28ee4552967ab7258bb8049f0c27f0e1deffff7d710cb",
+      "contract_sha256": "33f25ea2b0167a0a2f5ee927a706f15581bc8fbc22b815ee3d1c6094cb846184",
+      "effect": "state_change"
+    },
+    "edge-vehicle/sunshade.close": {
+      "abi_sha256": "543f2a94358fdc27f364a1d9db6ee04a0c0092e76d76b26b5a2b6622dda21d9a",
+      "contract_sha256": "a42fb569f7d1d6e45385f580ce74ea5dca71eef63f71efa94230ba166a2d3c8a",
+      "effect": "state_change"
+    },
+    "edge-vehicle/sunshade.open": {
+      "abi_sha256": "385091b931278e16f73b94d31b94ca36ef417bfb08a1a24ec594e32fa9cecd4f",
+      "contract_sha256": "f2b16f3f5be8ef8201c7e91745b1cbbae8bbd47ae3fa36174be204d22152d328",
+      "effect": "state_change"
+    },
+    "edge-vehicle/sunshade.set": {
+      "abi_sha256": "8fa9bc99323a790bb781dc9c412dd5322e5a9ec230187f28285b52c332cf5035",
+      "contract_sha256": "6f9906d83482b67337db9840dbdb702c8090236a8614ec9cc8fe048cd248fd72",
+      "effect": "state_change"
+    },
+    "edge-vehicle/tire_pressure.query": {
+      "abi_sha256": "4229a5e054fe023d983fa8b8de0562d8fb4d22311b34c8edde248be2d8036043",
+      "contract_sha256": "26a6aec8962ba8470b5ca2801421624952d405bda1d85a0ba112d30dd7eeed00",
+      "effect": "read"
+    },
+    "edge-vehicle/trunk.close": {
+      "abi_sha256": "81e3f0e3bf98eca55c7053eaeb5b93358a85133def45e9510fac43f76ede834e",
+      "contract_sha256": "84a3767946a7d19065ed1db3a4f52db918b04b975ba8bceb61ae6a6762990c08",
+      "effect": "state_change"
+    },
+    "edge-vehicle/trunk.open": {
+      "abi_sha256": "03467159313f4086f56b33510f66be170dde4f7132bf98e458fa8661f521a7d6",
+      "contract_sha256": "7a837fdf2a2390e9aa7126b9652f386ba58f24f4050374bb0206b75931b1a808",
+      "effect": "state_change"
+    },
+    "edge-vehicle/volume.dec": {
+      "abi_sha256": "d178245a6e79f0714a3e52ab6d18725910256f80a1a5b636394d0727af19411d",
+      "contract_sha256": "94b14f9dde30dc2ece8e97ab2cc09d5fd9e647d0d6ac40862753767754d09c8a",
+      "effect": "state_change"
+    },
+    "edge-vehicle/volume.inc": {
+      "abi_sha256": "77867ed249066179051e3c2cf0ed5f69bace031294f10c7bfb98ba017ce4b113",
+      "contract_sha256": "f87fbf29054e6ef6a2fdbaabc839bf32fee0746ab0b07da99d6162aad1e13a00",
+      "effect": "state_change"
+    },
+    "edge-vehicle/volume.mute": {
+      "abi_sha256": "07e9608296e11827bd191e8c7c5ab43aceed984596e113d01a10934aabbcee84",
+      "contract_sha256": "b1fa13d092325028155e326fb374bacd016a49c4144db2d79472685061ab0111",
+      "effect": "state_change"
+    },
+    "edge-vehicle/volume.set": {
+      "abi_sha256": "49bbe9ec3d1b0fb0d243397bd2b35174cec4c404a61c56cabca64aac6c1c11e7",
+      "contract_sha256": "bf8c4cbb8cad6eaec563c73ff7a8b65ffa15e7742fdd854d787ab75ad4d88805",
+      "effect": "state_change"
+    },
+    "edge-vehicle/volume.unmute": {
+      "abi_sha256": "5107fc77ee638b770968c6b5b831a53d3a5b53e88583c6133af07ab5b6ea7255",
+      "contract_sha256": "a78fa3b4a364a248415e5fd0895a986cd8b6f7c34f14fc79155264fb3079e414",
+      "effect": "state_change"
+    },
+    "edge-vehicle/warning_light.close": {
+      "abi_sha256": "71ee3022250802fdf5a0543f4c0f99344d2ecf6bad0b74e4e9751bae2121ca65",
+      "contract_sha256": "1771801c0640c63811527ad84bc78abc8f567b7fcc3427b4f1bb652f945e054c",
+      "effect": "state_change"
+    },
+    "edge-vehicle/warning_light.open": {
+      "abi_sha256": "64499c887ad510c821e45abfaed28c960b01a02924dc4a9c7c8f7a982dd58d25",
+      "contract_sha256": "b72cad6872ead5617328048c0479a67189c5a005a5dcff36458e8bc01dad50ee",
+      "effect": "state_change"
+    },
+    "edge-vehicle/window.close": {
+      "abi_sha256": "f22e7741e5fd430b7ff3474773ccbf71c3aca2c2540f461a87b4e221042234dd",
+      "contract_sha256": "45dbfaf4e0d334dad006ac1d06c5387a7dcac9fd2e79251168de3ea75a0f76a5",
+      "effect": "state_change"
+    },
+    "edge-vehicle/window.open": {
+      "abi_sha256": "f337deabdd75e29206649b23cf7db51c56d88c833dd74ae724055000e4b6295c",
+      "contract_sha256": "cd26cfe6e510a79d9553a3f1f2c7eadb811fa791b6d0339e713bbb576191d9b2",
+      "effect": "state_change"
+    },
+    "edge-vehicle/window.set": {
+      "abi_sha256": "226c15a20e9e47e1a33e33e048c09af4a5e15d05222d508aa0fab59933992ff8",
+      "contract_sha256": "ee3efda833c17e42e6f8b0509fb1f76bb962e79047ff2930ed9bccf70826c376",
+      "effect": "state_change"
+    },
+    "edge-vehicle/wiper.off": {
+      "abi_sha256": "4ad5549080f4a3ceb88593c1a5eee15857a602d250369433d553bc02037b591b",
+      "contract_sha256": "9368024653a3b93c5de93891169bb2ba068b12d1302ba4c6b40cc503c37bf364",
+      "effect": "state_change"
+    },
+    "edge-vehicle/wiper.on": {
+      "abi_sha256": "142cc332811f6cbf1fb28d3a8e04eec9f09b3f44ded60a8077d703f87ed91560",
+      "contract_sha256": "cb5f6a40ecbd21d2bf38d5a909a22d885cdb08172a5033e1b6b12b4abc0c96d7",
+      "effect": "state_change"
+    },
+    "edge-vehicle/wiper.speed.dec": {
+      "abi_sha256": "0cd9fc6ba28593f5698cad39119d19a9d75529a4de2e0402bbe97ffa52f86ef5",
+      "contract_sha256": "a52c9a0c0de9c1fc1e7323dddc262111674028aadddd3b4d833ce2c6184c5642",
+      "effect": "state_change"
+    },
+    "edge-vehicle/wiper.speed.inc": {
+      "abi_sha256": "7c077a68c941ed123131bdd7cb48f64344ce6fb49287dd6ca295104af29fbf94",
+      "contract_sha256": "59c67ee4d3d6137c6a27e7c230740d8f86ba57c061a774e2c11dd88cb0e92477",
+      "effect": "state_change"
+    },
+    "edge-vehicle/wiper.speed.set": {
+      "abi_sha256": "9cad6b526d4c3669183118ab3fd8557aca9425a255612ea05b9ba2e33cc36d39",
+      "contract_sha256": "ede863c388e8304db239bfdf097697b612852aacb6d5b3d068c55efa69f9ebd8",
+      "effect": "state_change"
+    },
+    "info/info.air_quality": {
+      "abi_sha256": "f8f9b657336be92b6a2e66818b9b1e0088dba2da95b79b62a03055a0cd0c27f2",
+      "contract_sha256": "83a09ca9bbdba70cbe86008c5e40c8be2e5f414f86b30025062a1c0757f46a97",
+      "effect": "read"
+    },
+    "info/info.alerts": {
+      "abi_sha256": "e8ecc8faedd42f552f744c4a6e0bd604e1a5f1356cb9d98bac5e4b91cd0633fe",
+      "contract_sha256": "9bad3f7968a565007c5580644d7255b29473b10dc03bdc9545ab7ab31ca8a5f6",
+      "effect": "read"
+    },
+    "info/info.forecast": {
+      "abi_sha256": "a6b3ffc9bc1b2c54625c0f5ddf304d79051581aafd990ffd825ebb29ee30ed87",
+      "contract_sha256": "92ac04128f12e8d97331e93017991d179b1bd54c5f0b8b7df0699735d3827391",
+      "effect": "read"
+    },
+    "info/info.indices": {
+      "abi_sha256": "014fec7c63bdf6fed9194e37616da9015fa396893f15a2882fa7c9d8ba76b30c",
+      "contract_sha256": "aae878aa273eb2567db7934f8ab52498accdebf7e9721ea66e5460f21017a6cf",
+      "effect": "read"
+    },
+    "info/info.news": {
+      "abi_sha256": "e274f637654b3d247431e91f5ef34638eda5d0d59f7ab947697a3b7f49e624a3",
+      "contract_sha256": "692c015f7d6ba6da28dfa3163bcfffb7d33e2c1619cd827276acd2fda030108d",
+      "effect": "read"
+    },
+    "info/info.search": {
+      "abi_sha256": "f15f735ac279bba9f7fa9991d72e2416a792c7880f952f9dbbf3c2b5a9579a2a",
+      "contract_sha256": "ea07bdd24ceee6c47e8540b4e6ace090bdc904db998f9cdde5402069f072e80c",
+      "effect": "read"
+    },
+    "info/info.sports": {
+      "abi_sha256": "768c46b6642cebca4cc9f474d1e5beaab1eb7056bb5f65b7ef2022727122fb92",
+      "contract_sha256": "8e6fe565d93b1d73a51f2dd95a1b58ee1b75cc4b24ee87c81686435e4bd04a0c",
+      "effect": "read"
+    },
+    "info/info.stock": {
+      "abi_sha256": "61155987642145f281d8f9f8947352b577cffb5e284c03a25b3856d501412886",
+      "contract_sha256": "64e13bbfa7f332f8b0df8f01464a918d876158c8557dde233ba7fc5ab0d5527d",
+      "effect": "read"
+    },
+    "info/info.weather": {
+      "abi_sha256": "617c3ad7a8c85d478eadda9752a87f77ee5f57b65d8155f61c2ae758fc001c4e",
+      "contract_sha256": "f15f5c4c60f42b6812b18cd030f2dc20c80c5b8162a97d56453ff13789eac44c",
+      "effect": "read"
+    },
+    "manual-rag/manual.query": {
+      "abi_sha256": "d45ff11572bdc061d14ac79373eaeec1095aaee0be789624cde7d250558bfb3c",
+      "contract_sha256": "9adfe47fd9049c8b85b98f86e8fbd5c4e6200bad9b7dedab30745f843a5c3b7a",
+      "effect": "read"
+    },
+    "mcp-bridge/luckin.menu": {
+      "abi_sha256": "12b2bf9dbc67aa65948361c1f80b64aa23ad701ba879da7e0e907e20bf851d38",
+      "contract_sha256": "69c75d55c69034869c9e14c44cd8f0216ea2fdbca5545aa73e576eaa3284d53b",
+      "effect": "external_write"
+    },
+    "mcp-bridge/luckin.order": {
+      "abi_sha256": "f91a5bae2f699b29b0ba128e25fd9db9cbea11a8b3fd4092e054f4fd4007771c",
+      "contract_sha256": "b1ba31e821332daa8e99585f759e06f1634d9864f3b53fe658f4139449cd4032",
+      "effect": "external_write"
+    },
+    "mcp-bridge/luckin.order_cancel": {
+      "abi_sha256": "8b62ee11bd4a67b6d9be90a95bb08d5bcea78a3e2ce9b89f2759cf9704533a73",
+      "contract_sha256": "7d2ea1d41bb4f1d6161b4b5a8bdad2ae4a6dbfc9d0ef4186531226634ebfcd5e",
+      "effect": "external_write"
+    },
+    "mcp-bridge/luckin.order_status": {
+      "abi_sha256": "ffc4acd179d5cb48170d700edc828b0f781ff15226cacc5c283d6edb0ae41e9b",
+      "contract_sha256": "4f3ce8320351d554b3966ecefa2397784b234c5318dd2e7cbb0ee85b61aea297",
+      "effect": "read"
+    },
+    "mcp-bridge/mcd.menu": {
+      "abi_sha256": "ccf9c36d42ab31437aa45c722d38ec5b212ac4207be0090bd85ac875e1818555",
+      "contract_sha256": "47dc643a4dcf7e60647cd38e8859f4cc87b9ea0f2e1b264d6134d8144596f1f2",
+      "effect": "external_write"
+    },
+    "mcp-bridge/mcd.nutrition": {
+      "abi_sha256": "5c85166f2b26d8c2742c15b87acb21a88098eb6f88cca1cc892ba120bcdea41b",
+      "contract_sha256": "2e049a18292559ad0d1774fe853d131e3ffdf3a5f6bc8251974c2b63c4fd1ff8",
+      "effect": "read"
+    },
+    "mcp-bridge/mcd.order": {
+      "abi_sha256": "21cd98e68bb783f30cf59e6b3b2c110b98f7c85d89550d47055a831da42b9fcd",
+      "contract_sha256": "fc652cc99770dccaeaf20bc5ad63e3e439655d61302520b9b30afcf169ae72e4",
+      "effect": "external_write"
+    },
+    "mcp-bridge/mcd.order_status": {
+      "abi_sha256": "b15802c06590a394fca70cffab69132fead98d8be903fab441093c585853bbdc",
+      "contract_sha256": "8c1c1c18e00ab664dbf9c3732375e820c4b87f387e5934bc28f4edbab4ea8890",
+      "effect": "read"
+    },
+    "mcp-bridge/shop.menu": {
+      "abi_sha256": "3567a9685f1d60f61e4578b98d95e5d3f4ac4b2a2c91173d9f7afe373ef95d09",
+      "contract_sha256": "a0b46f962aaa7c2e4823141f45fb400776f913bc92f6b669b6db635791826b45",
+      "effect": "read"
+    },
+    "mcp-bridge/shop.order": {
+      "abi_sha256": "40ddede384e131205724a0b34176639c23512991a81c7b1cd7219c01d503ec68",
+      "contract_sha256": "48dba54beebe10041d08570f7c996df33b6322ee8e78a5066bcba8feb40f4537",
+      "effect": "external_write"
+    },
+    "mcp-bridge/shop.order_cancel": {
+      "abi_sha256": "b16060634d02dfadf43520b5105683a274ccc0080ac0a8cb8b6c7f8e006ba5bd",
+      "contract_sha256": "2fdef39e8df9716326c4045af31c02c3cabc0cdbf2ffe9d059ee576562a3693f",
+      "effect": "external_write"
+    },
+    "mcp-bridge/shop.order_status": {
+      "abi_sha256": "ae5962c404b69b392222af08fc12364222d0c8e979d40865e3360af0aa46ce3c",
+      "contract_sha256": "f8e9a80052e7572ceceb67738ecfef5546718f66f0ec1beade06bfa67cf47d18",
+      "effect": "read"
+    },
+    "mcp-bridge/shop.preview_discard": {
+      "abi_sha256": "96bfeb410724d6ed23fa8b28beb7f42d9b3995b6551ac9447c06c92753d7f8a1",
+      "contract_sha256": "bc7f7dff4aadf97f5b6952a43ea88b4ce95ccf94422c7d4cec6a57ede6e083f9",
+      "effect": "state_change"
+    },
+    "navigation/navigation.cancel": {
+      "abi_sha256": "7add808a2fa83686e66e7cbe38357b3a1111b85cd3e19c3a86b46e12daffad16",
+      "contract_sha256": "a274f58cbd3a59a225e38ac0ec8fc569c2384480f988a40308b4556aba3b894b",
+      "effect": "state_change"
+    },
+    "navigation/navigation.estimate": {
+      "abi_sha256": "e6571b90ca136466744665db63a7f77c7b3775ba24b34c1ac481743cf1e22945",
+      "contract_sha256": "731d0ad71b294f5c7bb2d553081845c52385ac514e2dadefa2e8bf2a4027486e",
+      "effect": "read"
+    },
+    "navigation/navigation.locate": {
+      "abi_sha256": "24be9ec0f999aa2ea8ce7c16a7570e3bc992921b61926a551f352fcdaa297d5d",
+      "contract_sha256": "2fa7e5c18fe3c3ee0b1835e25bcc09a64b18b62bc1c40ba03fcb5aba5ee56140",
+      "effect": "read"
+    },
+    "navigation/navigation.navigate_to": {
+      "abi_sha256": "6f13307eb24f09a1a50fae271bf9cd0eb3c1aec6656d9f868de3acc1459ff028",
+      "contract_sha256": "9a9d8fd147c173b7544aff2399efe2497e74e7c8c28c71b5c49216dfcce55090",
+      "effect": "state_change"
+    },
+    "navigation/navigation.poi_detail": {
+      "abi_sha256": "6c8f6e67e6b825944585d074230872a670488492e96395e023c4aa53ac4243f2",
+      "contract_sha256": "1e74f654f5d34f71dc7e9358f2d61156f4f3abc80d45ffc4dcdd7ec673be6a5c",
+      "effect": "read"
+    },
+    "navigation/navigation.reroute": {
+      "abi_sha256": "bf7b6447deb0b4ae297ea59980415e92c09e119b7b3db5fc9d2fb13ba85b6e48",
+      "contract_sha256": "c3e67a09a7728a72991e1d99e982bf38031ce0e57a90faad69a4429ea742a4a5",
+      "effect": "state_change"
+    },
+    "navigation/navigation.reverse_geocode": {
+      "abi_sha256": "4e14f4c94f52d1860d6df3676980b588b5bb942932da8d939082cbf17afe1d6d",
+      "contract_sha256": "9b6a58740eee74fd673d2b83de8aaf223a448a073cef24d5ea24e554179e42db",
+      "effect": "read"
+    },
+    "navigation/navigation.search_poi": {
+      "abi_sha256": "c767f8045c9d96902a6ad17497f42a49ff7531c395902e459ab81479ffe61246",
+      "contract_sha256": "facd55a25ada46ea87abcaf5cdb79750eb4eaf9d3cdff578c249f7806d30a0e0",
+      "effect": "read"
+    },
+    "navigation/navigation.set_place": {
+      "abi_sha256": "29be29429620160c19485873e1a3e4c43ac85eb423f3a5455bd967a30abf3515",
+      "contract_sha256": "d9a36f650611bed9daf3d9885ceed9dc244f55996d91937e2db2d6bb06324a3b",
+      "effect": "state_change"
+    },
+    "nearby/nearby.detail": {
+      "abi_sha256": "7bdf5983bcf1f3f3c489fea4fb9194122dc9aeb1b42b1060d26b1752f50bdfec",
+      "contract_sha256": "ae71142bd18600d267b05231e6d98eea6cb68ab707fab111551959ee904901c9",
+      "effect": "read"
+    },
+    "nearby/nearby.order": {
+      "abi_sha256": "11cc434c8f66d756bf5d56881475a0442ac623b293ec61117a4281d4e957f938",
+      "contract_sha256": "d77b90fd2d04d6acf32a8c3944101e35bebb2285173da80b816742fdea796971",
+      "effect": "external_write"
+    },
+    "nearby/nearby.search": {
+      "abi_sha256": "7a6d4d8354bc163c98fbab325b771a2fa8b71a3b3422e3dbc4fda9102eea552d",
+      "contract_sha256": "e417af450c21904880407a5e5e76e3205ae12a5a0843083a8a0811df22d56e52",
+      "effect": "read"
+    },
+    "parking-payment/parking.pay": {
+      "abi_sha256": "7ee5cb0c377aef0b5e3ae99798adf3b73f33910943ca189ab1a2074b45a1113c",
+      "contract_sha256": "ddc250e85479b570dbec74eef3d8ea7218d3951cc79cf8764a64a5c77568ac13",
+      "effect": "external_write"
+    },
+    "parking-payment/parking.query_fee": {
+      "abi_sha256": "f854daf32a450581d0268e7444622ec571ac642b19760a9ee64423b2254d323f",
+      "contract_sha256": "aa2a8c0d99bbc41f79a25573d99e98c01803c8aa610371467ee5056dab5b5070",
+      "effect": "read"
+    },
+    "reminder/reminder.cancel": {
+      "abi_sha256": "b6edb8238e974d8aa1fa9b7eb78c99043fd793d5d3c1728298f861cd2bb2228f",
+      "contract_sha256": "cdeefbb94566aedb343ddda879e1b33cc79e83fa16dbfbf19c8f2418129e306e",
+      "effect": "state_change"
+    },
+    "reminder/reminder.complete": {
+      "abi_sha256": "2423fcfd6a2b09f92074f4d77645b12a0cdf76ee88b0a0f5fff853c2f90af20b",
+      "contract_sha256": "b42587a03ee0422c5b765a8183f8e1a5a8dd9fd38df70e1ed144dc1328eebbf6",
+      "effect": "state_change"
+    },
+    "reminder/reminder.create": {
+      "abi_sha256": "bca7e5c4592e3850c8f3a9d972d08a0bd6f44bfa8dbfa82bb46ea709a419fb9d",
+      "contract_sha256": "e2355115beaee0085e580bead9ba6cd6c0e1282685fe3436c6d7d1e2e9062ba1",
+      "effect": "state_change"
+    },
+    "reminder/reminder.create_batch": {
+      "abi_sha256": "985ca5682ebdbd7ef4f3a964fff82b7157e8f9efe71bc69eaf380825760263d6",
+      "contract_sha256": "62fde7c5aceab24b189edaf04eeb4fedf3892d7fca2c32bb0eff71236a6aff3a",
+      "effect": "state_change"
+    },
+    "reminder/reminder.list": {
+      "abi_sha256": "495d0a76a9f8705e8154f380a819196275b0559b583ce2916f07db1ea83c5c90",
+      "contract_sha256": "4532c7d91bbeb0294575eda76bfc81b858415e72e67116f33e164a06ca75352a",
+      "effect": "read"
+    },
+    "reminder/reminder.update": {
+      "abi_sha256": "209655cd9190e9b27b801e830f20cb68f70dfc01f8c97e7a65e2ca62b3deefec",
+      "contract_sha256": "06db8c341740e9c8fadfdff9e5a1ab5cb50295792790c16f0493add6d7c97753",
+      "effect": "state_change"
+    },
+    "road-safety/safety.driver_state": {
+      "abi_sha256": "b4bb4c41f9d86a8a4b3c2db1f9171985223bd9d7c23d5ffa3d8b0af191bbfaff",
+      "contract_sha256": "428984c3ae22f8e54fb6c4d4e392a61739279b0737ab807e839a844c0a2a96cf",
+      "effect": "read"
+    },
+    "road-safety/safety.driving_advice": {
+      "abi_sha256": "214dcdfcbba9b525953ff21a8ea8f6cc2e8fd8d069d4116c694b5486fe4d0729",
+      "contract_sha256": "f591f339c8ab8d3b9c04de0bce5f66f47f948e7e51326a2c94714eeacd94d021",
+      "effect": "read"
+    },
+    "road-safety/safety.road_condition": {
+      "abi_sha256": "a0a8728743d8a7d80a3477945e4a20867c2bcdfca4efcc75bcf2b401f8fd3a5c",
+      "contract_sha256": "ba56846fd390220c5e2c6c3214edd4213b9ddfce23b720fd465c8eda58112579",
+      "effect": "read"
+    },
+    "road-safety/safety.weather_alert": {
+      "abi_sha256": "99479fb5fc6a135fc6f8a49c054c03920bcfc945772301d2693dc7bff4d523ad",
+      "contract_sha256": "44adda24fcc28dbd0acb33b828ff290c4e0fa8df7b46533a2aa403a0195e77cd",
+      "effect": "read"
+    },
+    "scene-orchestrator/scene.activate": {
+      "abi_sha256": "de81bb1101aff0e85c7672b0aa8012b86f5e95e77d9f0f88f6c870858392103f",
+      "contract_sha256": "e7b84a1cd54fc28c33bc4632f169f1102b68670372ed7f9b197c3dbee71ba9e7",
+      "effect": "state_change"
+    },
+    "scene-orchestrator/scene.create": {
+      "abi_sha256": "5fbd5fc8775f0ce5bd4f2b6955d78791ae5509e6af7eb5eac8a04f01e4e2b3d3",
+      "contract_sha256": "f46ed8df68294e2cd19bfdc119136ddda2a330421f15d5bdbeb8e57f14695f64",
+      "effect": "state_change"
+    },
+    "scene-orchestrator/scene.deactivate": {
+      "abi_sha256": "04abab53d7ea6a16cd3a6ad4164fa16992761606fb662364c406e4b82b66b23d",
+      "contract_sha256": "84e7c33004ef3d86c6c0029c5cd4553139378dc5375c4f4184f9a932a8edbbdb",
+      "effect": "state_change"
+    },
+    "scene-orchestrator/scene.delete": {
+      "abi_sha256": "c6641a310dcf069db3922ff1e00ce12736376d933fe499f69f7eb55b0c8c0df8",
+      "contract_sha256": "877118081b662ae87e73776579df7e3e3209bcecb7df66353201218eae6f7818",
+      "effect": "state_change"
+    },
+    "scene-orchestrator/scene.list": {
+      "abi_sha256": "9c52da63e0bce74a1accb59b2bcada623d0b841af2244dd3c9057bab2d80d8b3",
+      "contract_sha256": "8bf2506e3e3c8e16361d47423eab325c5092312fa86e4acd6899043487951f38",
+      "effect": "read"
+    },
+    "scene-orchestrator/scene.update": {
+      "abi_sha256": "4bcb8fc680c8fed99ab57bfa7f2d0349e53988293d578b8776db37d7c7c44fd2",
+      "contract_sha256": "1cf1ee5865e0ef3d89e206bea0f7241275ea1fda4d7f4a795f877cb678855558",
+      "effect": "state_change"
+    },
+    "trip-planner/trip.modify": {
+      "abi_sha256": "58e7173fdd078689f16b7121298da4d89c82aad29d1364aa5c6ce7548bc5bfc2",
+      "contract_sha256": "38256a628dcf126551e8bbcdd5139544815605d5e0559aa95bd5c028ad7ef048",
+      "effect": "information_task"
+    },
+    "trip-planner/trip.navigate": {
+      "abi_sha256": "59b4658d2055a1a724d3d5bf7cd7754daff6c304d82f2a590fbc03c2daf3f214",
+      "contract_sha256": "fdae1c90d2ab400f9720d4aef81ffa3d02d04900bbf66ecaae6705d0b612c636",
+      "effect": "state_change"
+    },
+    "trip-planner/trip.plan": {
+      "abi_sha256": "0ffe5b6df0cfda063ec9bf420c0d9ee75661b81ae61c3f8f20cff9b0733f028b",
+      "contract_sha256": "6d5cb37dff5f9f75bde2be5dd37a20f052be56e17bc282a39276955ca16114a2",
+      "effect": "information_task"
+    },
+    "trip-planner/trip.reschedule": {
+      "abi_sha256": "92e7e6c7aa91a495a662b2007e0b9c62cde70ac8cad683ee35817712a1fcafd7",
+      "contract_sha256": "ccdfdaca0d24d1ceddc9fc75911a0a840d935b9f3424182487f99e4250f771ec",
+      "effect": "information_task"
+    },
+    "trip-planner/trip.status": {
+      "abi_sha256": "0ee7a33fed99cb8c5649f45330e5954a669a4c159302982f2624cc2f2639fddb",
+      "contract_sha256": "61de25fade415a5cfe07158effada424a3b13feb6be052cdd8845c0eb62a2b9b",
+      "effect": "read"
+    },
+    "vision/vision.describe": {
+      "abi_sha256": "20f1c004f4d7d65876e3afc699f7f2c670fb3674a0457a4e59fd6f0ac5cd287b",
+      "contract_sha256": "7760b9e41552ab63a173b6f7daedb43da2d8275bf20791ec97e00b7660b4e408",
+      "effect": "read"
+    }
+  },
+  "note": "Frozen compatibility inventory, not current provider availability. ABI excludes descriptions/examples and includes context scopes.",
+  "schema_version": 1
+}

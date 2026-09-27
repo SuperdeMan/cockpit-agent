@@ -32,6 +32,7 @@ from agents._sdk.provenance import attach
 from cockpit.agent.v1 import agent_pb2
 
 from runtime.clock import local_dt
+from runtime.capability_contract import declaration, to_proto as contract_proto, migration_inventory
 
 from . import candidate_ref
 from .admission import (SAFE_MERCHANT_STATUSES, admit, admit_workflow,
@@ -248,6 +249,17 @@ class McpBridgeAgent(BaseAgent):
     def _sync_capabilities(self) -> None:
         """把准入的工具写进 manifest.capabilities——注册中心看到的就是这份。"""
         caps = []
+        def contract(spec, effect, *, keyed=False):
+            legacy = f"{self.manifest.agent_id}/{spec.intent}" in migration_inventory()
+            declared = getattr(spec, "contract_effect", "")
+            if (not legacy and not declared) or (declared and declared != effect):
+                raise ValueError("MCP capability requires an audited contract_effect")
+            return contract_proto(declaration(
+                spec.slots, effect, legacy=legacy,
+                idempotency="keyed" if keyed else "unknown",
+                preconditions=("permission", "handler", "confirmation")
+                if getattr(spec, "require_confirm", False) or getattr(spec, "write", False)
+                else ("permission", "handler")))
         for intent, b in self._bindings.items():
             if not b.tool.expose:
                 continue
@@ -260,6 +272,8 @@ class McpBridgeAgent(BaseAgent):
                 require_confirm=bool(b.tool.require_confirm or b.tool.write),
                 # W11 能力效果：准入清单的 `write` 就是声明本身
                 effect="write" if b.tool.write else "read",
+                contract=contract(b.tool, "external_write" if b.tool.write else "read",
+                                  keyed=b.tool.idempotency_mode in {"upstream", "local_at_most_once"}),
             ))
         for intent, b in self._workflow_bindings.items():
             spec = b.spec
@@ -275,6 +289,7 @@ class McpBridgeAgent(BaseAgent):
                 slot_shapes=dict(spec.slot_shapes or {}),
                 # W11：商户订单工作流建订单 / 出预览，是写
                 effect="write",
+                contract=contract(spec, "external_write"),
             ))
         for spec in self._local_capabilities:
             if not spec.expose:
@@ -283,6 +298,7 @@ class McpBridgeAgent(BaseAgent):
                 intent=spec.intent, description=spec.description,
                 slots=spec.slots, examples=spec.examples,
                 require_confirm=spec.require_confirm,
+                contract=contract(spec, "state_change"),
             ))
         del self.manifest.capabilities[:]
         self.manifest.capabilities.extend(caps)

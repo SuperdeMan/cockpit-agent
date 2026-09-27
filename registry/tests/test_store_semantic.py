@@ -390,10 +390,10 @@ class _FakeStore:
         self._sem = semantic_recs
         self._kw = keyword_recs or []
 
-    def resolve(self, intent, query, top_k, granted):
+    def resolve(self, intent, query, top_k, granted, reader_version=2):
         return list(self._kw)
 
-    async def resolve_semantic(self, query, top_k=3, granted=None):
+    async def resolve_semantic(self, query, top_k=3, granted=None, reader_version=2):
         return self._sem
 
 

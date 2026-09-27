@@ -17,6 +17,33 @@ capabilities:
   # 支持目的地途经点，而 nearby 的评分/人均对充电桩毫无意义。M5 P2 双臂裸跑两档一致：
   # 摘掉 nearby 那条 replace 正则后，模型自己就落这里——是规则在 LLM 之后把对的踩成错的。
   - intent: charging.find
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        destination:
+          type: string
+          unit: ''
+          region: ''
+        soc:
+          type: string
+          unit: ''
+          region: ''
+        prefer:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 给车找充电站/充电桩（含「附近有充电桩吗」这类纯发现）——读车辆真实电量、
       按空闲状态与距离排序，可作为导航途经点；判据：没有询问词（多少/还剩/是否在充电/当前状态）、
       只是陈述车辆电量见底或因电量耗尽无法行驶，就是补能求助，必须归此能力，绝不归 charging.status；
@@ -24,6 +51,29 @@ capabilities:
     slots: [destination, soc, prefer]
     examples: ["找个充电站", "附近有充电桩吗", "快充在哪", "快没电了附近找个快充", "续航见底了帮我找补能点"]
   - intent: charging.plan
+    contract:
+      version: 2
+      revision: '1'
+      effect: information_task
+      parameters:
+        destination:
+          type: string
+          unit: ''
+          region: ''
+        soc:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
     effect: write
     description: 规划车辆长途充能策略（沿途分段充电）；**只出补能建议卡、不发起导航**，
@@ -34,6 +84,21 @@ capabilities:
     heavy: true    # 长途充能沿途分段规划 → 开思考+过程区
     examples: ["去杭州怎么充电", "帮我规划充电"]
   - intent: charging.status
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters: {}
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 仅承接明确询问车辆当前电量百分比、剩余续航或充电状态；补能求助不归此能力；
       没有询问词、只陈述电量耗尽时禁止归此能力
     slots: []

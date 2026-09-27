@@ -9,6 +9,41 @@ fallback: chitchat
 
 capabilities:
   - intent: trip.plan
+    contract:
+      version: 2
+      revision: '1'
+      effect: information_task
+      parameters:
+        destination:
+          type: string
+          unit: ''
+          region: ''
+        days:
+          type: string
+          unit: ''
+          region: ''
+        preferences:
+          type: string
+          unit: ''
+          region: ''
+        theme:
+          type: string
+          unit: ''
+          region: ''
+        must_visit:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
     effect: write
     description: 规划多日自驾行程（目的地、天数、偏好），输出每日要点。凡"去X玩N天/N日游"
@@ -29,18 +64,83 @@ capabilities:
                "周末去杭州两天带老人，顺便看看天气和是否需要中途充电",
                "跟着《太平年》游杭州", "先去杭州再去苏州玩四天"]
   - intent: trip.modify
+    contract:
+      version: 2
+      revision: '1'
+      effect: information_task
+      parameters:
+        modification:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 修改已有行程（结构化局部编辑：换/加/删某个停靠点，只动受影响的天）
     slots: [modification]
     heavy: true    # 局部重规划仍走 LLM → 开思考+过程区
     examples: ["第二天换成宋城", "不去千岛湖了", "加一个西湖", "删掉第三天的奥林匹克公园"]
   - intent: trip.navigate
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        day:
+          type: string
+          unit: ''
+          region: ''
+        stop:
+          type: string
+          unit: ''
+          region: ''
+        target:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 导航到当前行程里的某个停靠点（『下一站』『导航去第二天的西湖』『第三天第一个』）。
       仅在已有规划好的行程时由确定性路由命中，普通导航仍走 navigation。
     slots: [day, stop, target]
     examples: ["下一站", "导航去第二天的西湖", "第三天第一个", "去行程里的故宫"]
   - intent: trip.status
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        day:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询当前行程在途进度（在第几站/下一站/还剩几站/全程需补电几次）。只读，不改行程。
       问「第N天有哪些安排/第二天去哪」时把天号填 day（只读那一天的停靠点，**不改行程**
       ——改某一天归 trip.modify）。
@@ -48,6 +148,25 @@ capabilities:
     examples: ["行程到哪了", "还剩几站", "我在第几站", "还要充几次电",
                "第二天有哪些安排", "第三天去哪几个地方"]
   - intent: trip.reschedule
+    contract:
+      version: 2
+      revision: '1'
+      effect: information_task
+      parameters:
+        hint:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 在途精简剩余行程（时间不够/太累/想提前回）——确定性砍掉靠后的停靠点或最后一天，需二次确认。
     slots: [hint]

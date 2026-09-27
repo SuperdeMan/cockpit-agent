@@ -9,6 +9,7 @@ import grpc
 from google.protobuf import struct_pb2
 
 from runtime.grpcio import aio_server, bind_port, run_aio_server
+from runtime.capability_contract import receiver_error, rejected
 from cockpit.agent.v1 import agent_pb2, agent_pb2_grpc
 from cockpit.common.v1 import common_pb2
 
@@ -77,6 +78,10 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
         return agent_pb2.HealthResponse(status=agent_pb2.HealthResponse.SERVING)
 
     async def Execute(self, request, context):
+        reason = receiver_error(getattr(self.agent, "manifest", None), request.intent.name,
+                                dict(request.meta), dict(request.intent.slots))
+        if reason:
+            return rejected(reason)
         meta = dict(request.meta)
         _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack
         # 观测：agent 进程内的 span/结构化日志自动携带 trace/session（一处设置全 Agent 覆盖）
@@ -96,6 +101,11 @@ class _Servicer(agent_pb2_grpc.AgentServicer):
             _set_current_meta(None)  # 防止意外泄漏到后续 request
 
     async def ExecuteStream(self, request, context):
+        reason = receiver_error(getattr(self.agent, "manifest", None), request.intent.name,
+                                dict(request.meta), dict(request.intent.slots))
+        if reason:
+            yield agent_pb2.ExecuteEvent(final=rejected(reason))
+            return
         iv, ctx = _intent_view(request), _context(request, self.agent.memory)
         meta = dict(request.meta)
         _set_current_meta(meta)  # 护栏：使 AgentClient 读取跨进程 depth/stack

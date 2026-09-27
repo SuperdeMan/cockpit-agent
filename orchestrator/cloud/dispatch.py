@@ -12,6 +12,7 @@ from observability import events as obs_events
 from observability.metrics import metrics
 from security.audit import AuditLogger
 from security.permission import check_permission
+from runtime.capability_contract import argument_error, rejected
 
 from .circuit import CircuitBreakerManager
 from .models import PlanContext, Step, step_call_context
@@ -107,6 +108,9 @@ class UnifiedDispatcher:
         return response
 
     async def dispatch(self, step: Step, ctx: PlanContext):
+        reason = argument_error(step.capability_contract, step.slots)
+        if reason:
+            return await self._finish(step, ctx, rejected(reason))
         # 权限校验（执行期硬拒）：与规划期 catalog 过滤同源 check_permission——
         # third_party/tool 车控硬禁令 + required 父子覆盖判定，越权步在传输前 REJECTED。
         decision = check_permission(

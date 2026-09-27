@@ -15,7 +15,9 @@ import time
 import uuid
 import asyncio
 import logging
-from dataclasses import dataclass, field
+from runtime.capability_contract import (contract_of, raw_contract, visible_manifest, to_proto as contract_proto,
+                                         validate_manifest, ContractError)
+from dataclasses import dataclass, field, replace
 
 logger = logging.getLogger("registry.store")
 
@@ -148,11 +150,16 @@ class Store:
             return 0.5  # 全量列举场景
         return score
 
-    def resolve(self, intent: str, query: str, top_k: int, granted: list[str]):
+    def resolve(self, intent: str, query: str, top_k: int, granted: list[str], reader_version=2):
         scored = []
         for rec in self._agents.values():
             if not rec.healthy:
                 continue
+            view = visible_manifest(rec.manifest, reader_version)
+            if view is None:
+                continue
+            if view is not rec.manifest:
+                rec = replace(rec, manifest=view)
             if not self._permitted(rec.manifest, granted):
                 continue
             s = self._score(rec.manifest, intent, query)
@@ -360,7 +367,12 @@ class PgStore(Store):
         for row in rows:
             manifest_dict = json.loads(row["manifest"]) if isinstance(row["manifest"], str) else row["manifest"]
             # 构造一个轻量 manifest 对象，兼容 Store 的属性访问
-            manifest = _dict_to_manifest(manifest_dict)
+            try:
+                manifest = _dict_to_manifest(manifest_dict)
+                validate_manifest(manifest)
+            except (ContractError, ValueError, TypeError):
+                logger.warning("Registry record rejected: invalid capability contract (%s)", row["agent_id"])
+                continue
             rec = Record(
                 manifest=manifest,
                 endpoint=row["endpoint"],
@@ -542,7 +554,7 @@ class PgStore(Store):
                 logger.debug("PgStore: mark_unhealthy PG update failed: %s", e)
 
     async def resolve_semantic(self, query: str, top_k: int = 3,
-                               granted: list[str] | None = None) -> list[tuple]:
+                               granted: list[str] | None = None, reader_version=2) -> list[tuple]:
         """R4.1 P0 语义路由：query 向量化 → 按 capability 粒度 pgvector cosine 检索，
         按 agent 聚 max(similarity)、过 SEMANTIC_MIN_SIM 下限、返回 top_k。
 
@@ -551,26 +563,40 @@ class PgStore(Store):
         """
         if not self._pg_ok or not query or self._embed_source != "llm":
             return []
+        eligible = None
+        if reader_version < 2:
+            eligible = [f"{r.manifest.agent_id}/{cap.intent}" for r in self._agents.values()
+                        if r.healthy and (view := visible_manifest(r.manifest, reader_version)) is not None
+                        for cap in view.capabilities]
+            if not eligible:
+                return []
         query_embedding = await self._embed_query_cached(query)
         if not query_embedding:
             return []
         try:
             async with self._pool.acquire() as conn:
+                compatibility_filter = " AND (v.agent_id || '/' || v.intent) = ANY($4::text[])" if eligible is not None else ""
                 rows = await conn.fetch("""
                     SELECT v.agent_id, MAX(1 - (v.embedding <=> $1::vector)) AS similarity
                     FROM agent_capability_vec v
                     JOIN agents a ON a.agent_id = v.agent_id
                     WHERE a.status = 'healthy' AND v.embedding IS NOT NULL
+                    """ + compatibility_filter + """
                     GROUP BY v.agent_id
                     HAVING MAX(1 - (v.embedding <=> $1::vector)) >= $2
                     ORDER BY similarity DESC
                     LIMIT $3
-                """, str(query_embedding), SEMANTIC_MIN_SIM, top_k)
+                """, str(query_embedding), SEMANTIC_MIN_SIM, top_k, *([eligible] if eligible is not None else []))
             results = []
             for row in rows:
                 rec = self._agents.get(row["agent_id"])   # 内存权威副本（含 route_hints/heavy）
                 if rec is None or not rec.healthy:
                     continue
+                view = visible_manifest(rec.manifest, reader_version)
+                if view is None:
+                    continue
+                if view is not rec.manifest:
+                    rec = replace(rec, manifest=view)
                 if granted and not self._permitted(rec.manifest, granted):
                     continue
                 results.append((rec, float(row["similarity"])))
@@ -598,6 +624,8 @@ def _manifest_to_dict(manifest) -> dict:
             cap[ck] = getattr(c, ck, None if ck != "examples" else [])
         # W11 能力效果：与 slot_shapes / whole_utterance 同族，丢了它任务帧的 kind 静默退回启发式
         cap["effect"] = str(getattr(c, "effect", "") or "")
+        if raw_contract(c) is not None:
+            cap["contract"] = contract_of(c)
         cap["slots"] = list(getattr(c, "slots", []))
         # C3 槽位形状：与 verification/route_hints 同族——丢了它 registry 重启后
         # wait_slot 的「这句话像不像这个槽的值」判据静默消失（AR05 F08）。
@@ -687,6 +715,7 @@ def _dict_to_manifest(d: dict):
             whole_utterance=bool(c.get("whole_utterance", False)),
             # W11 能力效果（2026-09-20）：同一条 round-trip 纪律
             effect=str(c.get("effect", "") or ""),
+            contract=contract_proto(c["contract"]) if c.get("contract") is not None else None,
             # M2 Verifier：**必须随 round-trip 还原**——R2.1 当年 route_hints 正是在这里丢过，
             # registry 重启恢复后声明静默失效、执行后对账形同虚设（契约测试 test_store_roundtrip）。
             verification=_dict_to_verification(c.get("verification")),

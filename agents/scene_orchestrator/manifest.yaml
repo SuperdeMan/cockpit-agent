@@ -9,6 +9,29 @@ fallback: chitchat
 
 capabilities:
   - intent: scene.create
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        name:
+          type: string
+          unit: ''
+          region: ''
+        spec:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
     effect: write
     description: 用一句话创建自定义场景模式（钓鱼模式/观星模式），说清要做哪些事
@@ -23,6 +46,29 @@ capabilities:
                "自定义一个遛狗模式：车窗开一半，空调外循环",
                "创建省电出行模式：关掉氛围灯、空调26度，电量低于20%的时候提醒我开"]
   - intent: scene.activate
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        scene:
+          type: string
+          unit: ''
+          region: ''
+        custom_params:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 开启场景模式（自建的或内置的）。用户同句给出的温度、灯光等覆盖参数属于
       custom_params，必须与场景激活保留在同一个 scene.activate 步骤里，不要拆成独立车控步骤，
@@ -31,21 +77,97 @@ capabilities:
     examples: ["开启回家模式", "露营模式", "午休模式", "来个钓鱼模式", "打开浪漫模式",
                "开启午休模式，温度26"]
   - intent: scene.deactivate
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        scene:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 退出当前场景模式，把座椅/空调/灯光恢复到开启前的样子
     slots: [scene]
     examples: ["退出露营模式", "关闭午休模式", "退出场景"]
   - intent: scene.update
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        scene:
+          type: string
+          unit: ''
+          region: ''
+        modification:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 修改已有自建场景的动作或参数
     slots: [scene, modification]
     examples: ["把钓鱼模式的温度改成24", "钓鱼模式再加一个开香氛", "观星模式去掉座椅放平"]
   - intent: scene.delete
+    contract:
+      version: 2
+      revision: '1'
+      effect: state_change
+      parameters:
+        scene:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 删除自建场景（需二次确认）
     slots: [scene]
     examples: ["删掉钓鱼模式", "不要观星模式了"]
   - intent: scene.list
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters: {}
+      additional_parameters: legacy
+      applicability:
+        status: unspecified
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 反界定（2026-09-26，collector 57 轮）：「空调有什么模式」被规划成本能力，答的是
     # 回家 / 露营 / 午休这些场景——问的其实是空调自己的工作模式，手册里有。
     description: 列出可用的场景模式（我建的 / 内置的）；空调、大灯、座椅等部件自带的工作模式与挡位不是场景，归车型手册问答

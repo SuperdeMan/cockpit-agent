@@ -355,7 +355,7 @@ class RegistryClient:
     async def resolve(self, intent: str = "", query: str = "", top_k: int = 1) -> list:
         try:
             resp = await self._stub().ResolveAgents(
-                registry_pb2.ResolveRequest(intent=intent, query=query, top_k=top_k),
+                registry_pb2.ResolveRequest(intent=intent, query=query, top_k=top_k, capability_contract_version=2),
                 timeout=DEFAULT_TIMEOUT)
             return list(resp.agents)
         except grpc.aio.AioRpcError as e:
@@ -364,7 +364,7 @@ class RegistryClient:
     async def list_agents(self, category: str = "") -> list:
         try:
             resp = await self._stub().ListAgents(
-                registry_pb2.ListRequest(category=category),
+                registry_pb2.ListRequest(category=category, capability_contract_version=2),
                 timeout=DEFAULT_TIMEOUT)
             return list(resp.agents)
         except grpc.aio.AioRpcError as e:

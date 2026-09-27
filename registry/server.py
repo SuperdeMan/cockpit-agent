@@ -9,6 +9,7 @@ from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
 from registry.store import Store, SEMANTIC_MIN_SIM, SEMANTIC_PROMOTE_SIM
 from runtime import admission
+from runtime.capability_contract import validate_manifest, visible_manifest, ContractError
 
 
 class RegistryServicer(registry_pb2_grpc.RegistryServicer):
@@ -28,6 +29,13 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
                 await context.abort(grpc.StatusCode.PERMISSION_DENIED,
                                     f"registry admission denied: {reason}")
             return registry_pb2.RegisterResponse(ok=False)
+        try:
+            validate_manifest(request.manifest)
+        except (ContractError, ValueError, TypeError):
+            if context is not None:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT,
+                                    "invalid or missing capability contract")
+            return registry_pb2.RegisterResponse(ok=False)
         result = self.store.register(request.manifest, request.endpoint)
         lease = await result if inspect.isawaitable(result) else result
         print(f"[registry] + {request.manifest.agent_id} @ {request.endpoint} "
@@ -44,7 +52,8 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
     async def ResolveAgents(self, request, context):
         granted = list(request.granted_permissions)
         recs = self.store.resolve(
-            request.intent, request.query, request.top_k, granted)
+            request.intent, request.query, request.top_k, granted,
+            reader_version=getattr(request, "capability_contract_version", 0))
 
         # R4.1 语义重排：无精确 intent 命中（关键词 best<1.0）且有 query、store 支持语义时，
         # 总是跑语义（ResolveAgents 是 planning._fallback 降级路径，延迟可接受；query 向量有缓存）。
@@ -56,7 +65,8 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
         if request.query and best_kw < 1.0 and hasattr(self.store, "resolve_semantic"):
             try:
                 sem_recs = await self.store.resolve_semantic(
-                    request.query, top_k=request.top_k or 3, granted=granted)
+                    request.query, top_k=request.top_k or 3, granted=granted,
+                    reader_version=getattr(request, "capability_contract_version", 0))
             except Exception as e:
                 print(f"[registry] semantic resolve failed: {e}", flush=True)
                 sem_recs = []
@@ -80,13 +90,15 @@ class RegistryServicer(registry_pb2_grpc.RegistryServicer):
         if request.top_k:
             recs = recs[:request.top_k]
         return registry_pb2.ResolveResponse(agents=[
-            registry_pb2.ResolvedAgent(manifest=r.manifest, endpoint=r.endpoint, score=s)
+            registry_pb2.ResolvedAgent(manifest=m, endpoint=r.endpoint, score=s)
             for r, s in recs
+            if (m := visible_manifest(r.manifest, getattr(request, "capability_contract_version", 0))) is not None
         ])
 
     async def ListAgents(self, request, context):
         recs = self.store.list(request.category)
         return registry_pb2.ListResponse(agents=[
-            registry_pb2.ResolvedAgent(manifest=r.manifest, endpoint=r.endpoint, score=1.0)
+            registry_pb2.ResolvedAgent(manifest=m, endpoint=r.endpoint, score=1.0)
             for r in recs
+            if (m := visible_manifest(r.manifest, getattr(request, "capability_contract_version", 0))) is not None
         ])

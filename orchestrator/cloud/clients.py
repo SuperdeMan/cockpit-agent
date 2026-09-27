@@ -5,12 +5,14 @@ Phase 1 改进：连接复用、统一超时。
 from __future__ import annotations
 import logging
 import os
+import time
 from contextvars import ContextVar
 
 import grpc
 
 from runtime.grpcio import aio_channel
 from runtime import admission, memory_read
+from runtime import capability_contract as cap_contract
 
 logger = logging.getLogger("planner.clients")
 
@@ -199,7 +201,7 @@ class Clients:
 
     async def list_agents(self):
         resp = await self._registry_stub().ListAgents(
-            registry_pb2.ListRequest(category=""), timeout=_DEFAULT_TIMEOUT)
+            registry_pb2.ListRequest(category="", capability_contract_version=2), timeout=_DEFAULT_TIMEOUT)
         return list(resp.agents)
 
     async def register_manifest(self, manifest, endpoint: str):
@@ -214,7 +216,7 @@ class Clients:
 
     async def resolve(self, query: str = "", intent: str = "", top_k: int = 1):
         resp = await self._registry_stub().ResolveAgents(
-            registry_pb2.ResolveRequest(query=query, intent=intent, top_k=top_k),
+            registry_pb2.ResolveRequest(query=query, intent=intent, top_k=top_k, capability_contract_version=2),
             timeout=_DEFAULT_TIMEOUT)
         return list(resp.agents)
 
@@ -340,6 +342,7 @@ class Clients:
         # granted_scopes 是网关鉴权后进入 PlanContext 的权威权限。prefs 与 step.meta
         # 都可能含客户端/Planner 伪造值，合并前后都必须剥离，再仅从 ctx 重建。
         prefs.pop("granted_scopes", None)
+        prefs.pop(cap_contract.HEADER, None)
         safe_meta = dict(meta or {})
         safe_meta.pop("granted_scopes", None)
         merged = {**prefs, **safe_meta}
@@ -373,6 +376,21 @@ class Clients:
             meta=self._merge_meta(ctx, meta, context_scopes),
         )
 
+    @staticmethod
+    async def _contract_preflight(stub, intent, meta, timeout):
+        expected = (meta or {}).get(cap_contract.HEADER, "")
+        if not expected or cap_contract.known_legacy_digest(expected):
+            return None, timeout
+        start = time.monotonic()
+        try:
+            manifest = await stub.Describe(agent_pb2.DescribeRequest(), timeout=min(timeout, 2.0))
+            cap = next((c for c in manifest.capabilities if c.intent == intent), None)
+            if cap is None or cap_contract.capability_digest(manifest, cap) != expected:
+                return cap_contract.rejected("capability_contract_changed"), timeout
+        except (grpc.aio.AioRpcError, cap_contract.ContractError):
+            return cap_contract.rejected("capability_contract_unavailable"), timeout
+        return None, max(0.001, timeout - (time.monotonic() - start))
+
     async def call_agent(self, endpoint: str, intent: str, slots: dict,
                          ctx=None, meta: dict | None = None,
                          timeout: float = _DEFAULT_TIMEOUT,
@@ -384,6 +402,9 @@ class Clients:
         timeout 由 dispatcher 传 step.latency_budget_ms/1000——慢 Agent（trip-planner 20s+、
         info 调研）需大于默认 10s，否则开思考后会被 10s 卡死。"""
         stub = self._agent_stub(endpoint)
+        denied, timeout = await self._contract_preflight(stub, intent, meta, timeout)
+        if denied is not None:
+            return denied
         req = self._exec_request(intent, slots, ctx, meta, context_scopes)
         return await stub.Execute(req, timeout=timeout)
 
@@ -399,6 +420,10 @@ class Clients:
         if timeout is None:
             timeout = AGENT_STREAM_TIMEOUT_S
         stub = self._agent_stub(endpoint)
+        denied, timeout = await self._contract_preflight(stub, intent, meta, timeout)
+        if denied is not None:
+            yield ("final", denied)
+            return
         req = self._exec_request(intent, slots, ctx, meta)
         async for ev in stub.ExecuteStream(req, timeout=timeout):
             which = ev.WhichOneof("event")
@@ -414,6 +439,17 @@ class Clients:
         logger.info("DispatchToEdge: vehicle=%s step=%s intent=%s",
                     vehicle_id, step.id, step.intent)
         meta = self._merge_meta(ctx, step.meta)
+        expected = meta.get(cap_contract.HEADER, "")
+        budget = step.latency_budget_ms / 1000.0
+        if expected and not cap_contract.known_legacy_digest(expected):
+            started = time.monotonic()
+            probe = channel_pb2.EdgeCallEnvelope(vehicle_id=vehicle_id, call=channel_pb2.EdgeCall(
+                step_id=step.id + "-contract", contract_query=step.intent))
+            observed = await self._edge_stub().DispatchToEdge(probe, timeout=min(budget, 2.0))
+            if (not observed.HasField("result") or observed.result.status != agent_pb2.ExecuteResponse.OK
+                    or dict(observed.result.data).get(cap_contract.HEADER) != expected):
+                return cap_contract.rejected("capability_contract_unavailable")
+            budget = max(0.001, budget - (time.monotonic() - started))
         if getattr(ctx, "trace_id", ""):
             meta.setdefault("trace_id", ctx.trace_id)
         envelope = channel_pb2.EdgeCallEnvelope(
@@ -429,7 +465,7 @@ class Clients:
             ),
         )
         result = await self._edge_stub().DispatchToEdge(
-            envelope, timeout=step.latency_budget_ms / 1000.0)
+            envelope, timeout=budget)
         if not result.HasField("result"):
             raise RuntimeError("edge result missing execute response")
         logger.info("DispatchToEdge result: status=%s speech=%s",

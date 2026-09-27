@@ -64,9 +64,13 @@ message Capability {
   // 声明在 Agent（云侧 manifest 显式写；端侧由 `commands.yaml` 的对象 effect × 操作名派生；
   // MCP 桥由 tool.write / 工作流 require_confirm 派生），中央只消费：W07 活动任务帧的
   // `kind`（写任务只被写任务顶掉）与终态账本。未声明 = 今天的启发式（结果带 actions /
-  // 声明 require_confirm ⇒ 写），旧 manifest 零行为变化。**刻意不接进问句安全闸**
-  // （理由见设计文档 2026-09-19-conversation-review-remediation §5 W11）。
+  // 声明 require_confirm ⇒ 写），旧 manifest 保留原语义。定义/规范问由既有问句闸消费；
+  // CA2-05 细分效果在 contract 中，不把模型字段或效果分类当授权。
   string effect = 11;
+  // CA2-05: versioned declaration validated by runtime.capability_contract.
+  // This is metadata, never authorization. Empty on frozen legacy capabilities.
+  // Existing slots/effect/verification keep their wire semantics for old readers.
+  google.protobuf.Struct contract = 12;
 }
 
 // 执行后对账声明（M2 Outcome Verifier）：解「步骤 OK ≠ 结果达成」——

@@ -833,6 +833,7 @@ def _bootstrap_server(*, drift_write_schema=False, blank_write_pin=False):
         "type": "object", "properties": {"items": {"type": "array"}}}
     read = ToolSpec(
         name="menu", intent="merchant.menu", expose=True,
+        contract_effect="read",
         schema_sha=schema_fingerprint(read_schema),
         required_scopes=["merchant.read"])
     write = ToolSpec(
@@ -844,10 +845,12 @@ def _bootstrap_server(*, drift_write_schema=False, blank_write_pin=False):
         success_predicate={"success": [True], "code": [0]})
     extra = ToolSpec(
         name="status", intent="merchant.status", expose=True,
+        contract_effect="read",
         schema_sha=schema_fingerprint({"type": "object"}),
         required_scopes=["merchant.read"])
     workflow = WorkflowSpec(
         intent="merchant.order", handler="test",
+        contract_effect="external_write",
         required_tools=["menu", "create"],
         required_scopes=["merchant.read", "merchant.write"])
     server = ServerSpec(

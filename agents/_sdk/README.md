@@ -2,9 +2,10 @@
 
 让一个 Agent 只需关心"业务逻辑"。gRPC 契约、注册发现、健康检查、LLM/Memory 客户端由 SDK 提供。
 
-## v2 后续边界（未实现）
+## v2 能力契约与后续边界
 
-CA2-05 沿 Manifest loader/Registry/Step 往返扩展能力契约；CA2-08/11 扩展已有 Ledger 的操作身份与持久准入。
+CA2-05 已接入版本 2 能力契约，声明、准入、版本探测和参数检查见 [实施记录](../../docs/design/2026-09-27-v2-capability-contract.md)。
+CA2-08/11 的持久操作与恢复仍待实现。
 当前 ledger 的 best-effort 不能直接套用到未来承诺可恢复的副作用工作流；新增写档须先具备可靠落账和对账。
 Jev 只通过拟新增的网关 Decide client 访问，Agent 不自行调用供应商或复制权限判据。
 详见 [实施方案](../../docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
@@ -24,6 +25,17 @@ fallback: chitchat
 capabilities:
   - intent: my.do_something
     description: ...
+    effect: read
+    contract:
+      version: 2
+      revision: "1"
+      effect: read
+      parameters: {a: {type: string}, b: {type: string}}
+      additional_parameters: reject
+      applicability: {status: not_vehicle_specific, vehicle_models: [], software_versions: []}
+      preconditions: [permission, handler]
+      idempotency: unknown
+      verification: none
     slots: [a, b]
     examples: ["示例话术1", "示例话术2"]
 requires_permissions: [location.read]
@@ -43,7 +55,7 @@ class MyAgent(BaseAgent):
             return AgentResult(status=NEED_SLOT, follow_up="缺少参数 a")
         data = await ctx.fetch("location")           # 按需取上下文
         reply = await self.llm.complete([...])        # 需要时调 LLM
-        return AgentResult(speech=reply).action("navigate", {"to": "x"})
+        return AgentResult(speech=reply)
 ```
 
 启动：`python agents/my-agent/main.py`（SDK 自动注册到 Registry 并起 gRPC server）。
@@ -60,3 +72,18 @@ class MyAgent(BaseAgent):
 
 ## 测试
 用 `agents/_sdk/testing.py` 的 `run_handle` 直接驱动 `handle`，无需起 server。见各 Agent 的 `tests/`。
+
+
+## 能力契约 v2
+
+新增能力必须声明 `contract`，旧 156 项兼容指纹只用于迁移，不自动扩充。
+旧 `effect` 保留 read/write；细分 `contract.effect` 为 read/information_task/state_change/external_write。
+写能力必须声明权限；契约摘要不是授权，不替代权限、确认、VAL 或幂等账本。
+
+`parameters` 约束现有字符串 wire，不隐式换算单位或替 Agent 填槽。缺参仍由 handle 的 NEED_SLOT 返回；
+单位或区域空值是未明确，不能当作已验证。涉及车型/软件范围的写能力在可信视图接入前拒绝执行。
+`preconditions` 引用原 permission/confirmation/handler/val；`verification` 引用原 Verification。
+
+SDK 在 Execute/ExecuteStream 首个业务事件之前核对契约版本/参数。AgentClient 先读取目标 Describe，
+使用目标摘要并剥掉父能力摘要，读版本和执行共享原超时预算，不自动重试写请求。
+非公开内部 RPC 保持既有 handler 权威；这个契约不是对内部调用的新增授权。

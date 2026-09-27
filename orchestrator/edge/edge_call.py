@@ -206,6 +206,7 @@ class EdgeCallExecutor:
 
     def __init__(self, val: VAL):
         self.val = val
+        self._contract_manifests = None
 
     def _known_objects(self) -> set[str] | None:
         """VAL 知识库声明的对象集（单一真相源）；无知识库时返回 None 走兜底集。"""
@@ -240,6 +241,29 @@ class EdgeCallExecutor:
 
     def execute(self, call) -> agent_pb2.ExecuteResponse:
         from observability.events import change_source
+        from capabilities import build_edge_manifests
+        from runtime.capability_contract import call_error, capability_digest, HEADER, rejected
+
+        if self._contract_manifests is None:
+            self._contract_manifests = build_edge_manifests()
+        manifests = self._contract_manifests
+        query = getattr(call, "contract_query", "")
+        if query:
+            if call.intent.name or call.intent.slots:
+                return rejected("ambiguous_contract_probe")
+            for manifest in manifests:
+                for cap in manifest.capabilities:
+                    if cap.intent == query:
+                        return agent_pb2.ExecuteResponse(status=agent_pb2.ExecuteResponse.OK,
+                            data=_struct({HEADER: capability_digest(manifest, cap), "version": 2}))
+            return rejected("capability_removed")
+        for manifest in manifests:
+            cap = next((c for c in manifest.capabilities if c.intent == call.intent.name), None)
+            if cap is not None:
+                reason = call_error(manifest, cap, dict(call.meta), dict(call.intent.slots))
+                if reason:
+                    return rejected(reason)
+                break
 
         change_source.set("edge_call")
         intent_name = call.intent.name

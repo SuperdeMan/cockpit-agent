@@ -5,6 +5,7 @@ from google.protobuf import struct_pb2
 
 from cockpit.agent.v1 import agent_pb2
 from cockpit.common.v1 import common_pb2
+from runtime.capability_contract import declaration, to_proto as contract_proto
 
 from .builtin import ToolInputError, datetime_parse, math_eval, unit_convert
 
@@ -49,18 +50,24 @@ class ToolRegistry:
                     description="把相对或自然语言时间归一化为 ISO 8601",
                     slots=["text"],
                     examples=["明天19:30", "今晚7点"],
+                    contract=contract_proto(declaration(["text"], "read")),
                 ),
                 agent_pb2.Capability(
                     intent="unit.convert",
                     description="转换长度、质量、速度和温度单位",
                     slots=["value", "from_unit", "to_unit"],
                     examples=["1.5公里等于多少米"],
+                    contract=contract_proto(declaration(
+                        ["value", "from_unit", "to_unit"], "read", parameters={
+                            "value": {"type": "number"}, "from_unit": {"type": "string"},
+                            "to_unit": {"type": "string"}})),
                 ),
                 agent_pb2.Capability(
                     intent="math.eval",
                     description="计算受限的纯算术表达式",
                     slots=["expression"],
                     examples=["2加3乘4"],
+                    contract=contract_proto(declaration(["expression"], "read")),
                 ),
             ],
         )

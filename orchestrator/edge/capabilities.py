@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import logging
 import os
+import hashlib
+import json
 
 import grpc
 
@@ -37,6 +39,7 @@ from cockpit.registry.v1 import registry_pb2, registry_pb2_grpc
 
 from runtime.grpcio import aio_channel
 from runtime import admission
+from runtime.capability_contract import declaration, to_proto as contract_proto, migration_inventory
 from runtime.intent_effect import is_write_intent
 from capability_meta import effect_of
 from edge_agents_mod.media import MEDIA_INTENTS
@@ -205,8 +208,29 @@ def _effect_for(intent: str, objects: dict) -> str:
     return "write" if (object_writes and is_write_intent(intent)) else "read"
 
 
-def _capabilities(intents: set[str], fallback: str):
+def _capabilities(intents: set[str], fallback: str, agent_id=""):
     objects, entities = _knowledge()
+    def contract(intent):
+        decoded = decode_intent(intent, set(objects) or None) or {}
+        obj = objects.get(decoded.get("data", {}).get("object", "")) or {}
+        units = obj.get("units") or []
+        params = {name: {"type": "string"} for name in
+                  ("value", "unit", "attr", "mode", "positions", "position", "tag", "enabled",
+                   "temp", "temperature", "level", "brightness")}
+        # The unit can depend on the chosen attr. Empty means unspecified, not unitless.
+        params["value"]["unit"] = str(units[0]) if len(units) == 1 else ""
+        params["value"]["region"] = "vehicle_positions" if obj.get("positions") else "vehicle_global"
+        ver = _verification_for(intent)
+        result = declaration(
+            [], "state_change" if _effect_for(intent, objects) == "write" else "read",
+            parameters=params, verification=bool(ver and ver.mode),
+            preconditions=("permission", "val"), vehicle_specific=True,
+            legacy=f"{agent_id}/{intent}" in migration_inventory())
+        # Policy changes must invalidate old callers even when the intent name stays.
+        policy = {k: v for k, v in obj.items() if k not in {"display_name", "edge_intents"}}
+        result["revision"] = "knowledge-" + hashlib.sha256(
+            json.dumps(policy, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+        return contract_proto(result)
     return [
         agent_pb2.Capability(
             intent=intent,
@@ -214,6 +238,7 @@ def _capabilities(intents: set[str], fallback: str):
             examples=[],
             verification=_verification_for(intent),
             effect=_effect_for(intent, objects),
+            contract=contract(intent),
         )
         for intent in sorted(intents)
     ]
@@ -267,7 +292,7 @@ def build_edge_manifests() -> list[agent_pb2.AgentManifest]:
             latency_budget_ms=800,
             kind="edge_fast",
             capabilities=_capabilities(
-                VEHICLE_INTENTS, "通过车端 VAL 执行确定性车控意图"),
+                VEHICLE_INTENTS, "通过车端 VAL 执行确定性车控意图", "edge-vehicle"),
             requires_permissions=["vehicle.control"],
             edge_intents=sorted(VEHICLE_INTENTS),
             route_hints=_door_lock_route_hints(),
@@ -282,7 +307,7 @@ def build_edge_manifests() -> list[agent_pb2.AgentManifest]:
             latency_budget_ms=500,
             kind="edge_fast",
             capabilities=_capabilities(
-                MEDIA_INTENTS, "通过车端执行器控制本地媒体"),
+                MEDIA_INTENTS, "通过车端执行器控制本地媒体", "edge-media"),
             requires_permissions=["media.control"],
             edge_intents=sorted(MEDIA_INTENTS),
         ),

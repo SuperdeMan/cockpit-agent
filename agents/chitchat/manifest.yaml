@@ -9,6 +9,25 @@ fallback: ""
 
 capabilities:
   - intent: chitchat.talk
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        depth:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     response_only: true
     description: 开放域闲聊、情绪陪伴、创作，以及**不随时间变化**的常识/原理/定义/历史知识
       （其他 Agent 无法处理时的兜底）。不适用：实时或近期信息（新闻、价格、比分、近期事件）

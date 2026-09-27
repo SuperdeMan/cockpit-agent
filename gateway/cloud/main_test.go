@@ -96,6 +96,31 @@ func TestDispatchEdgeCallHonorsContextDeadline(t *testing.T) {
 	}
 }
 
+func TestContractQueryRemainsReadOnlyAcrossChannel(t *testing.T) {
+	server := &channelServer{}
+	sender := &fakeDownSender{frames: make(chan *channelpb.DownFrame, 1)}
+	server.sessions.Store("v1", &sessionState{vehicleID: "v1", sender: &sendMu{stream: sender}})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	go func() {
+		select {
+		case frame := <-sender.frames:
+			call := frame.GetEdgeCall()
+			if call.GetContractQuery() != "trunk.open" || call.GetIntent() != nil {
+				t.Errorf("probe became an executable call: %v", call)
+			}
+			server.deliverEdgeResult(frame.GetCorrelationId(), &channelpb.EdgeResult{
+				StepId: "contract", Result: &agentpb.ExecuteResponse{Status: agentpb.ExecuteResponse_OK}})
+		case <-ctx.Done():
+		}
+	}()
+	_, err := server.dispatchEdgeCall(ctx, "v1", &channelpb.EdgeCall{
+		StepId: "contract", ContractQuery: "trunk.open"})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBindRequestVehicleRejectsCrossVehicleRequest(t *testing.T) {
 	req := &orchpb.HandleRequest{
 		Context: &commonpb.ContextRef{VehicleId: "v2"},

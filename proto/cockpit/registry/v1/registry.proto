@@ -32,6 +32,7 @@ message ResolveRequest {
   string query = 2;                 // 语义查询（按 capabilities/examples 检索）
   uint32 top_k = 3;
   repeated string granted_permissions = 4; // 调用方已授予权限，用于过滤
+  uint32 capability_contract_version = 5; // 0 = legacy; new/changed contracts need v2 readers
 }
 
 message ResolvedAgent {
@@ -41,5 +42,8 @@ message ResolvedAgent {
 }
 message ResolveResponse { repeated ResolvedAgent agents = 1; }
 
-message ListRequest { string category = 1; } // core | ecosystem | "" 全部
+message ListRequest {
+  string category = 1; // core | ecosystem | "" 全部
+  uint32 capability_contract_version = 2;
+}
 message ListResponse { repeated ResolvedAgent agents = 1; }

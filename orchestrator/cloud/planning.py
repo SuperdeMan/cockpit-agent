@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
 from typing import NamedTuple
 from security.permission import check_permission
+from runtime.capability_contract import step_fields as contract_step_fields, STATE_EFFECTS
 from .models import Plan, Step, PlanContext, ReplanDecision, step_fingerprint, step_record
 from .context import (
     WorkingSet,
@@ -3113,6 +3114,8 @@ class PlanBuilder:
                 capability_description=next(
                     (desc for c in manifest.capabilities if c.intent == intent
                      for desc in [getattr(c, "description", "")] if isinstance(desc, str)), ""),
+                **next((contract_step_fields(manifest, c) for c in manifest.capabilities
+                        if c.intent == intent), {}),
             )
             steps.append(step)
 
@@ -3250,7 +3253,8 @@ class PlanBuilder:
                 (((getattr(step, "deployment", "") == "edge"
                    or getattr(step, "kind", "") == "edge_fast")
                   and is_write_intent(getattr(step, "intent", "")))
-                or bool(getattr(step, "require_confirm", False))))
+                or bool(getattr(step, "require_confirm", False))
+                or (getattr(step, "capability_contract", {}) or {}).get("effect") in STATE_EFFECTS))
         ]
 
     @staticmethod

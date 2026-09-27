@@ -15,6 +15,61 @@ capabilities:
   # ——于是两条 replace 正则被拉来当裁判。判据换成**产出形态**：本条是「给人挑」的发现面
   # （多候选 + 富数据比较），navigation.search_poi 是「给车用」的地点解析（一个目标）。
   - intent: nearby.search
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        category:
+          type: string
+          unit: ''
+          region: ''
+        keyword:
+          type: string
+          unit: ''
+          region: ''
+        cuisine:
+          type: string
+          unit: ''
+          region: ''
+        brand:
+          type: string
+          unit: ''
+          region: ''
+        rating_min:
+          type: string
+          unit: ''
+          region: ''
+        price_max:
+          type: string
+          unit: ''
+          region: ''
+        open_now:
+          type: string
+          unit: ''
+          region: ''
+        sort:
+          type: string
+          unit: ''
+          region: ''
+        location:
+          type: string
+          unit: ''
+          region: ''
+        weather_context:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: declared
     description: 周边**发现与比较**——列出多个候选让用户挑（餐饮/酒店/景点/影院/停车场/超市/
       便利店/药店等生活服务），支持菜系/品牌/评分/人均/排序过滤，返回评分·人均·距离·营业信息。
       「去哪玩/出去逛」类请求也归本条——雨雪/高温等恶劣天气填 category=室内（自动组合
@@ -40,12 +95,59 @@ capabilities:
       max_attempts: 1
       expect: { data_keys: [items] }
   - intent: nearby.detail
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters:
+        poi_id:
+          type: string
+          unit: ''
+          region: ''
+        name:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 仅查看对话中**已选中或已引用**的某一个地点详情——评分、人均、电话、营业时间、
       特色、图片、地址；「附近是否有/附近有哪些 X」仍是多候选发现，必须用 nearby.search，
       不能因为用户只说一个品类就改用 nearby.detail
     slots: [poi_id, name]
     examples: ["看第一个的详情", "这家怎么样", "它家电话多少", "几点关门", "人均多少"]
   - intent: nearby.order
+    contract:
+      version: 2
+      revision: '1'
+      effect: external_write
+      parameters:
+        poi_id:
+          type: string
+          unit: ''
+          region: ''
+        name:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - confirmation
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
     effect: write
     description: 在餐厅等商户点单/订位/预订座位（涉及费用/承诺，需二次确认；当前仅少数连锁接入，预留）

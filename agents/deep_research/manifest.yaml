@@ -11,6 +11,33 @@ fallback: chitchat
 
 capabilities:
   - intent: research.run
+    contract:
+      version: 2
+      revision: '1'
+      effect: information_task
+      parameters:
+        query:
+          type: string
+          unit: ''
+          region: ''
+        topic:
+          type: string
+          unit: ''
+          region: ''
+        question:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     # 能力效果（评审 W11）：改变世界 / 建了记录 ⇒ write；未声明的按纯查询处理。声明在这里，中央只消费（W07 任务帧 kind、终态账本）。
     effect: write
     # 【历史约束已解除，M5 P2-D4】此处原写着「desc 刻意保持原句不加长」——因为 registry
@@ -31,12 +58,46 @@ capabilities:
   # M2 P0（Task Ledger 消费面）：后台异步深调研是分钟级长任务，用户要能问进度、能喊停。
   # 两条都从账本读事实后**确定性作答**，不进 LLM（任务状态是系统持有的事实）。
   - intent: research.status
+    contract:
+      version: 2
+      revision: '1'
+      effect: read
+      parameters: {}
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     description: 查询后台深度调研任务的进度（还在查/查完了/中断了）。用户问「查得怎么样了/那个调研有结果了吗/
       还在查吗」时走本能力；不是发起新调研。
     slots: []
     examples: ["刚才那个调研查得怎么样了", "调研有结果了吗", "还在查吗", "后台那个任务什么进度"]
 
   - intent: research.cancel
+    contract:
+      version: 2
+      revision: '1'
+      effect: information_task
+      parameters:
+        query:
+          type: string
+          unit: ''
+          region: ''
+      additional_parameters: legacy
+      applicability:
+        status: not_vehicle_specific
+        vehicle_models: []
+        software_versions: []
+      preconditions:
+      - handler
+      - permission
+      idempotency: unknown
+      verification: none
     effect: write
     description: 停掉正在跑的后台深度调研任务。用户说「别查了/不用查了/取消那个调研/停下」时走本能力。
     slots: [query]

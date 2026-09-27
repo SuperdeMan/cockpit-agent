@@ -74,6 +74,9 @@ class Step:
     # 能力效果 `""|read|write`（评审 W11，2026-09-20）：从 capability.effect 装配（LLM 字段不读）。
     # 消费方：W07 任务帧的 `kind`、终态账本。未声明 = 启发式（结果带 actions / require_confirm）。
     effect: str = ""
+    capability_contract: dict = field(default_factory=dict)
+    capability_abi: str = ""
+    capability_revision: str = ""
     # W12 诉求账本（评审 F07 / §3.1 goal_id）：这一步**负责哪几条诉求**（`Plan.goals` 的 1 起序号）。
     # 模型自报、校验后只留合法序号；空 = 模型没填（fail-open：系统不据此判漏）。**进程内字段**，
     # 漏诉求的判定在规划轮当场做（`engine.goal_gap`），不随挂起持久化。
@@ -102,6 +105,25 @@ class Step:
     # CA2-02: server-owned business projection. Never read by safety/permission checks.
     input_scope: dict = field(default_factory=dict)
     goal_ids: list[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Meta is transient, so reconstruct this server-owned version marker on restore.
+        # It is not confirmation, authorization or an idempotency key.
+        from runtime.capability_contract import HEADER, normalize, snapshot_digest, ContractError
+        if self.meta is None:
+            self.meta = {}
+        if not isinstance(self.meta, dict):
+            raise ContractError("invalid_step_meta")
+        self.meta.pop(HEADER, None)
+        if self.capability_contract or self.capability_abi or self.capability_revision:
+            if (not isinstance(self.capability_abi, str) or len(self.capability_abi) != 64
+                    or not self.capability_contract):
+                raise ContractError("incomplete_step_contract")
+            self.capability_contract = normalize(self.capability_contract)
+            expected = snapshot_digest(self.capability_abi, self.capability_contract)
+            if expected != self.capability_revision:
+                raise ContractError("corrupt_step_contract")
+            self.meta[HEADER] = expected
     # Agent manifest 声明需要的敏感上下文片段（location | vehicle_state）；
     # 编排下发时按此最小化（未声明则不下发精确位置/电量）。
     # 运行期注入、随 ExecuteRequest.meta 下发给 Agent（如确认续接的 {"confirmed":"true"}）。
@@ -135,6 +157,9 @@ def step_record(step: "Step") -> dict:
         "verification": dict(step.verification or {}),
         **({"input_scope": dict(step.input_scope)} if step.input_scope else {}),
         **({"goal_ids": list(step.goal_ids)} if step.goal_ids else {}),
+        **({"capability_contract": dict(step.capability_contract),
+            "capability_abi": step.capability_abi,
+            "capability_revision": step.capability_revision} if step.capability_contract else {}),
     }
 
 
