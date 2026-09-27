@@ -1,6 +1,6 @@
 # CA2-05：能力契约、兼容准入与调用版本
 
-> 实施中，基于 `b05d9d18`。沿既定 PR-E 推进；提交/推送/必要部署已有授权。
+> 更新：2026-09-27。CA2-05 首版已发布并通过线上契约专项，基于 `b05d9d18`；固定语料三次复验完成，保留一条规划格式失败。
 > 不改变数据库 schema、运行配置或已有确认权威。发布和验收按独立 SHA 登记。
 
 ## 1. 当前问题
@@ -60,8 +60,55 @@ T0 仍经本地 VAL 权威，内部调用不透传父能力的摘要冒充子能
   其余云侧失败随之产生，另有 3 个 MCP 新工具测试缺显式效果声明。已修为检查真实字段存在；
   显式坏字段仍拒绝。MCP 测试补符合新准入规则的声明，原业务断言未放宽。
 - 修后家族回归 4917 passed / 11 skipped，134.00 s；随后补旧读取方 top-k/语义过滤边界，
-  相关 114 passed，Go 网关测试通过。主线全量与精确 release 真栈尚待后续登记。
+  相关 114 passed，Go 网关测试通过。
+- 实现提交 `d0a01af8` 的主线全量为 2 failed / 10076 passed / 32 skipped：两项 SDK 调用测试的
+  MagicMock 未提供异步 Describe，因此没有进入 Execute。没有跳过协议协商或放宽业务断言；
+  `33c2a731` 使用真实 manifest 作为 Describe 响应，保留调用深度/上下文断言，并核对子能力摘要不沿用父摘要。
+  针对性 58 passed。
+- `33c2a73107fda7de49470db4cf7f5f14145a8a05` 全量：10078 passed / 32 skipped / 11 warnings，674.15 s；
+  四道门禁、edge smoke、156 项当前生产者扫描、Go 四包通过。日志在主仓 `.artifacts/capability-v2/33c2a731-*.log`。
+  本轮没有客户端源码改动或设备验包；旧客户端结果不能作为本批新设备验收。
 
 剩余边界：legacy 参数策略保留未结构化的历史槽别名；未明确物理量标未明确；
 前置条件引用既有执行点，未引入新谓词语言；幂等未知不等于可重试，校验声明不等于实际验证结果。
 本包未改数据库 schema、密钥、环境或 CI/CD，也未开放新商户写/支付或真实车控。
+
+## 6. 发布与接续记录
+
+实现和测试提交已推送。首次云构建完成 24/26 个镜像后，执行者查询 BuildKit 构建历史触发 daemon panic；
+原 car-agent 与经单独授权的 7 个 drone-agent 容器均已恢复。原因、影响与规避见
+[事故记录](../reviews/2026-09-27-buildkit-history-incident.md)，不能将首次 apply 计为成功。
+
+容量处置均有精确清单和单独授权：16 项旧模型构建缓存实际释放约 4.18 GiB；
+追加 851 项旧缓存清单中实际清除 271 项，释放约 1.62 GiB，受引用/访问条件保护的其余项保留；
+13 个旧源码/上传包重复路径另释放约 0.70 GiB。发布目录、镜像、数据和构建元数据保留。
+原归档 hash、2,003 个源码文件和 24 个镜像 ID 已逐项复核；剩余 HMI/dashboard 按原发布函数续建和验收，
+仍持有 release 锁、保留 30 GiB/3 GiB 容量门槛、备份及失败回退。
+
+当前发布事实和精确 verify 证据只在 [QA 交接 §2](../reviews/2026-08-30-qa-closeout-handoff.md)维护。
+后续按 [路线图](../roadmap.md)进入 CA2-06+12，再由 CA2-07 汇合权限化上下文。
+
+## 7. 真栈契约证据
+
+发布和 runner 均为 `33c2a73107fda7de49470db4cf7f5f14145a8a05`。
+`.artifacts/capability-v2/33c2a731-live-contract.json` 核对 17 个 Agent、155 项在线能力的完整契约与冻结摘要。
+线上效果分布为 read 39 / information_task 6 / state_change 102 / external_write 8；
+冻结 156 项是可声明目录，`mcp-bridge/mcd.order` 未在线暴露，不能把声明数当可用数。
+旧读取方与 v2 读取方的当前可见集合相等。
+
+普通接收方拒绝错误版本和非法纬度，旧调用方非法数值同样拒绝；流式只产生一个拒绝终态，
+端侧 `media.next` 的 contract_query 无 intent、无 action，返回摘要与 Registry 一致。
+这五项均未执行商户写、付款或实际车控。HMI/dashboard 主模块编译响应通过，浏览器工具未连通，页面/设备未验。
+同一 release/runner 的固定语料 20×3：60/60 case run 完成、100 个测量轮，原始业务判分 1 红。
+226 次观测到的模型调用均为 minimax / MiniMax-M3；零证据错误、零动作、27 个车态键无变化、探针会话零残留挂起，
+release 首尾一致且 runner/tree 未变化。V201–V203 首轮混合回答的手册展示 9/9；这不是完整 QA 签收。
+
+唯一红轮为 V210 r2 t1「空调温度怎么调？」：模型返回结构错误的 JSON（JSONDecodeError，position 110），
+随后 `toolcall_salvage_no_action_info` 退为 chitchat，手册未调用、未呈现，属真实业务失败。
+trace `ed63539121b84aa0aa0fb931f3c6a8ab`；另两次该问题通过。本包未改该解析/salvage 路径，
+也未触发契约接收方拒绝；保留为规划链残余，不靠放宽断言或手动改绿销账。旧 V215 方差本次未复现，不因此宣称已修。
+
+Artifact：`.artifacts/capability-v2/baseline-33c2a731-01.json`，
+SHA-256 `14f0b09f7c721a94a33a694503dc7376a2477b2f6f3e4dcbf48e1f33a31a375a`；
+逐条复核 `baseline-33c2a731-01-review.json`。100 与上一版 99 个测量轮的分母差异来自实际挂起/关闭路径，
+不拿总数相减宣称质量提升。日志与 artifact 均为主仓 ignored 证据，不随 clone 分发。

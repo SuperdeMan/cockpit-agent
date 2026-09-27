@@ -241,6 +241,12 @@ python scripts/check_intent_gate.py          # 意图对抗 L0（strict）——
 python test/eval_capability_integrity.py     # 端侧车控能力完整性（六维逐对象，B4）
 ```
 
+CA2-05 能力声明变更另运行 `python scripts/capability_inventory.py --check` 与
+`python -m pytest -q runtime/tests/test_capability_contract.py test/sdk/test_agent_client.py registry/tests`。
+这项扫描走实际静态/端侧/工具/MCP 生产者，不能通过重写冻结迁移清单来接受新接口；
+它是该工作包的本地验证，不改变上面四道 CI 门禁。协议混部和接收方拒绝覆盖见
+[CA2-05](../docs/design/2026-09-27-v2-capability-contract.md)。
+
 每个 child 必须原子写入结构化结果；退出码只接受 `0`（已执行）或 `77`（整项跳过），runner 不解析
 stdout 里的“PASS/SKIP”。milestone 与 canonical 禁止 `SKIP`/`PASS_WITH_SKIPS`，因此缺凭证、
 缺硬件或 provider 不可用不会被包装成绿灯。`--id` 是局部诊断，不具备 full/canonical 资格。

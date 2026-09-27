@@ -17,8 +17,10 @@
 
 后续方向已整合为 **v2 可验证 Agent Runtime + 可选 Jev 语义判别层**：
 先完成任务/结果契约、可信车态与持久执行，再做端侧有界规划、真实车辆适配和集成试点。
-步骤业务范围、服务端任务/来源引用与 ResultBundle 已有首版实现，见
-[首批实施与证据](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)；Jev Decide、可信多车状态与持久操作仍未实现。
+步骤业务范围、服务端任务/来源引用、ResultBundle 与能力契约已有首版实现，见
+[首批实施](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)与
+[Capability v2](docs/design/2026-09-27-v2-capability-contract.md)；发布验收以 QA 交接为准。
+Jev Decide、可信多车状态与持久操作仍未实现。
 Jev 先走离线/影子评测，再按任务启用排序建议。
 直接从 [路线图](docs/roadmap.md)、[目标架构](docs/architecture/cockpit-agent-v2-target-architecture.md)
 和 [分批实施方案](docs/design/2026-09-26-cockpit-agent-v2-implementation-plan.md)接续。

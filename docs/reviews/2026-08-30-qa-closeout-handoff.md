@@ -1,18 +1,18 @@
 # QA 轮当前交接：已闭合范围、生产证据与剩余活项
 
 > 状态：**开发批与安全主链已闭合，QA 验收仍非全绿**
-> 更新时间：2026-09-27（CA2-02–04 已发布；三次固定语料复验完成，设备与规划残余仍未关闭）
+> 更新时间：2026-09-27（CA2-05 已发布并通过契约专项；固定语料三次复验完成，设备与规划残余未关闭）
 > 受众：接手 QA、Planner、Info、语音/TTS 或发布验证的人
 > 历史流水：[`docs/agents-history.md`](../agents-history.md)（只追加，不在本页复述逐批过程）
 
 ## 1. 一句话结论
 
-**QA 验收仍非全绿**。最后一次已登记生产 release 是 `023639328912ffbfd58b5dc3710349be89cb59e3`，
-包含 CA2-02–04 的步骤范围、服务端身份与完整结果投影；已独立核对 status/运行 SHA、完成 verify 与三次固定语料采样。
+**QA 验收仍非全绿**。最后一次已登记生产 release 是 `33c2a73107fda7de49470db4cf7f5f14145a8a05`，
+包含 CA2-02–05 的步骤范围、服务端身份、结果投影与能力契约；已独立核对 status/运行 SHA、完成 verify 与线上契约专项。
 发布、status、verify 与最新专项证据集中维护在本页 §2；AGENTS.md §4.0 只保留入口。
 
-v2 与 Jev 按 [后续路线图](../roadmap.md)推进。原挂确认丢卡样本已 9/9 通过；仍有一轮指代规划失败，
-关键词量尺也有误报，双端设备/声学未验面继续保留。Jev 尚未接入，不宣称完整 v2 或 QA 已签收。
+v2 与 Jev 按 [后续路线图](../roadmap.md)推进。混合诉求手册展示样本仍为 9/9；本批捕获一轮畸形规划 JSON 导致手册漏答。
+旧指代方差和关键词量尺误报未据此关闭，双端设备/声学未验面继续保留。Jev 尚未接入，不宣称完整 v2 或 QA 已签收。
 已完成批次仍使用原 SHA，历史证据见 §3–4 和 [agents-history](../agents-history.md)。
 
 ## 2. 当前发布与证据边界
@@ -20,18 +20,22 @@ v2 与 Jev 按 [后续路线图](../roadmap.md)推进。原挂确认丢卡样本
 | 项目 | 最后登记事实 / 使用限制 |
 |---|---|
 | 源码与文档起点 | 研究采纳起点 `47c62b44d335a3c76da90f89f05fa2fc887c2742`；运行时首批版本见下行；后续纯文档提交允许领先 production |
-| 生产 release | `023639328912ffbfd58b5dc3710349be89cb59e3`，2026-09-27 CA2-02–04 首版；上一版/回退基线 `d9970d9a5f19507381ff3658c23101e2a84d61c3` |
-| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `02363932`；verify `verified`，`20260927T023202Z-0236393.json`，`e2e_remote_safe` / `minimax:MiniMax-M3` |
-| 后端代码验证 | `02363932`：10034 passed / 32 skipped / 11 warnings，657.81 s；Windows PowerShell 测试子进程使用系统模块目录，工作树全程冻结；[首批记录 §4](../design/2026-09-26-v2-runtime-r0-r1-execution.md#4-首批合入与部署阻断2026-09-27) |
+| 生产 release | `33c2a73107fda7de49470db4cf7f5f14145a8a05`，2026-09-27 CA2-05 首版；上一版/回退基线 `023639328912ffbfd58b5dc3710349be89cb59e3` |
+| status / verify | `ok`、`5/5 endpoint healthy`、零 warning，release/running SHA 均为 `33c2a731`；verify `verified`，`20260927T060202Z-33c2a73.json`，`e2e_remote_safe` / `minimax:MiniMax-M3` |
+| 后端代码验证 | `33c2a731`：10078 passed / 32 skipped / 11 warnings，674.15 s；四道门禁、edge smoke、156 项声明扫描、Go 四包通过；[CA2-05 §5](../design/2026-09-27-v2-capability-contract.md#5-实现与离线证据) |
 | 历史手册专项（本轮未重跑全量） | `5a2f4c9d`：章节 187/187、视觉 35/35、胎压复合句 16/20（有手册步 16/16）、词法自信三句 8/9、调节类 6/6、口语语料 39/43 与 38/43（失败在规划层）、指代 8/9、空调模式 3/3、多步按话术 3/3、原 36 题可发送子集 31/31，车态零差异；[二批记录](../design/2026-09-26-manual-rag-colloquial-recall.md) §8 |
 | 手册证据限制 | `.artifacts/manual-rag-colloquial/live-*-5a2f4c9d*.json` 属旧 release；5 条旧表述被预检拦下，不能报当前 36/36；当时挂确认无手册卡，后续 CA2-04 的 9 个样本闭环不改写旧结论 |
 | 历史 QA 证据 | §3–4、T24/T47 等分别绑定自己的 release/provider，不转借当前 release；旧入口发布行见 [快照](../history/2026-09-26-entry-status-snapshot.md) |
 | Android 包与验收 | [剩余待办总表](../design/2026-09-14-android-remaining-todos.md)记录设备与包身份；服务端 SHA、APK SHA、设备安装状态分列，本次未验包 |
 | v2 小基线 | 前测 `d9970d9a` / runner `9aa5216b`，20×3 / 100 轮，raw 11 个红轮（9 个丢卡、1 个规划失败、1 个关键词误报）；后测同语料见下行，不混合分母 |
 | v2 后测 | `02363932` / runner `845e240e`，60/60 case run、99 测量轮；raw 2 红，逐条复核为 1 个规划失败 + 1 个关键词误报；零动作/车态变化/证据失败/残留挂起，27 键；原丢卡样本 9/9、15 次关闭身份保持、9 份完成引用保留；[首批执行 §5](../design/2026-09-26-v2-runtime-r0-r1-execution.md#5-发布后固定语料复验2026-09-27) |
-| 客户端与门禁证据 | 客户端/Go/门禁实际测试 SHA 为 `f4d3b8d7`；HMI 350、Android 112 suites / 1157 tests + typecheck/lint、Go 四包、四门禁/edge smoke 均过；与 release 相同的客户端 tree OID 见 [首批执行 §4](../design/2026-09-26-v2-runtime-r0-r1-execution.md#4-首批合入与部署阻断2026-09-27) |
-| 发布前容量处置 | 首次 apply 被 30 GiB 门挡住；用户单独授权 51 个精确旧源码/归档路径，清理后 72 份证据元数据 hash 未变、保留全部 release/镜像/存储；原 SHA 重试成功，过程见首批记录 |
-| v2 / Jev | CA2-02–04 已发布并完成固定小集复验；设备/扩展矩阵未验收。Decide、持久操作、多车逐信号、T1e、OEM 驱动仍未实现 |
+| 首批客户端与门禁（历史） | 客户端/Go/门禁实际测试 SHA 为 `f4d3b8d7`；HMI 350、Android 112 suites / 1157 tests + typecheck/lint、Go 四包、四门禁/edge smoke 均过；与 release 相同的客户端 tree OID 见 [首批执行 §4](../design/2026-09-26-v2-runtime-r0-r1-execution.md#4-首批合入与部署阻断2026-09-27) |
+| 首批容量处置（历史） | 首次 apply 被 30 GiB 门挡住；用户单独授权 51 个精确旧源码/归档路径，清理后 72 份证据元数据 hash 未变、保留全部 release/镜像/存储；原 SHA 重试成功，过程见首批记录 |
+| CA2-05 线上契约 | `33c2a731`：17 Agent / 155 在线能力逐项符合冻结摘要；156 项声明中 `mcp-bridge/mcd.order` 未在线暴露；旧/新读取方目录一致；旧版本、非法数值、旧调用方非法参数、流式首事件拒绝及端侧只读查询 5 项通过；`.artifacts/capability-v2/33c2a731-live-contract.json` |
+| CA2-05 固定语料后测 | release/runner `33c2a731`，60/60 case run、100 测量轮，raw 1 红：V210 r2 畸形规划 JSON → salvage 闲聊，手册漏答；226 次模型调用均 MiniMax-M3；零动作/27 键车态变化/证据错误/残留挂起，混合手册展示 9/9；[CA2-05 §7](../design/2026-09-27-v2-capability-contract.md#7-真栈契约证据) |
+| CA2-05 客户端边界 | HMI / dashboard 的主模块返回 200 JavaScript；浏览器工具连接不可用，未完成实际渲染或设备复验；不转借首批客户端测试数 |
+| 本批构建与恢复 | 已授权的 16 项缓存、851 项清单中 271 项、13 个重复源码/上传包路径分别释放约 4.18 / 1.62 / 0.70 GiB；保留发布镜像/数据/证据。构建历史查询触发 daemon panic 后原栈与授权的 7 个 drone-agent 容器已恢复，再续建候选；[事故记录](2026-09-27-buildkit-history-incident.md) |
+| v2 / Jev | CA2-02–05 首版已发布；CA2-05 线上版本/参数拒绝与三次固定语料复验完成，仍有一条真实规划失败；设备/扩展矩阵未验收。Decide、持久操作、多车逐信号、T1e、OEM 驱动仍未实现 |
 
 复核当前现场先运行 `python scripts/dev_stack.py target show`，再按授权范围运行 status/verify 与专项探针。
 `origin/main`、生产 release 和设备包不是一个版本号；5/5 健康也不能证明完整业务正确。

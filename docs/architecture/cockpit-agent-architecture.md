@@ -1,7 +1,7 @@
 # 智能座舱 Multi-Agent 架构设计方案
 
-> 版本：v1.53（步骤输入、任务身份与结果投影首版；版本规则见附录 C）
-> 日期：2026-09-26；源码校准基线 `47c62b44`，本次没有新增运行时实现。
+> 版本：v1.54（能力契约准入、兼容与调用版本；版本规则见附录 C）
+> 日期：2026-09-27；CA2-02–05 首版已有实现，运行与验收证据按独立 SHA 登记。
 > 读者对象：架构师、后端/端侧/算法开发、HMI 开发、测试、项目经理
 > 范围：座舱 AI Agent 系统的整体架构、组件职责、接口契约、数据流、安全、选型、部署、分阶段落地路线
 > 实现说明（2026-07-18 校准）：当前仓库完成的是该架构的工程化 PoC 主干；持久化注册
@@ -9,8 +9,9 @@
 > mTLS 与会话鉴权（env 门控默认关）、Prometheus/OTel 导出均已落地；文中的 K8s、正式
 > 沙箱、真实 VAL（SOME-IP/CAN、车规适配）仍是目标态。实现现状和差距以 `AGENTS.md`
 > 与 [QA/发布交接](../reviews/2026-08-30-qa-closeout-handoff.md)为准。后续排序以 [路线图](../roadmap.md)为准。
-> v2 完整目标写在 [目标分册](cockpit-agent-v2-target-architecture.md)。CA2-02–04 首版见
-> [实施记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md)；Decide、T1e、持久操作与可信多车状态仍未实现。
+> v2 完整目标写在 [目标分册](cockpit-agent-v2-target-architecture.md)。CA2-02–04 见
+> [首批记录](../design/2026-09-26-v2-runtime-r0-r1-execution.md)，CA2-05 见 [能力契约](../design/2026-09-27-v2-capability-contract.md)；
+> Decide、T1e、持久操作与可信多车状态仍未实现。
 
 ---
 
@@ -329,7 +330,7 @@ message ExecuteEvent {     // 流式: 边想边说边做
 每个 Agent 用一份声明式 Manifest 描述自己。注册中心据此建立**能力索引**，Planner 据此做**语义路由**。
 
 ```yaml
-# 教学示意（假想的第三方点餐 Agent，用于展示 require_confirm/支付权限等字段全貌）；
+# 旧字段教学示意（省略 v2 contract，不能直接用于新 Agent 注册）；
 # 真实清单见 agents/<name>/manifest.yaml，接入样板参考 agents/nearby/、agents/navigation/
 agent_id: food-ordering
 version: 1.2.0
@@ -359,7 +360,20 @@ requires_permissions:         # 见 §9 权限模型
 edge_intents: []
 ```
 
-**路由如何用 Manifest**：Planner 把所有已注册 Agent 的 `capabilities`（intent + description + examples）作为可选"工具"提供给 LLM 做工具选择/规划；`trust_level` + `requires_permissions` 决定能否被调用与是否需确认；`latency_budget_ms` 用于超时与降级。
+**路由如何用 Manifest**：Planner 把已注册、可见的 `capabilities`（intent + description + examples）投影给 LLM。
+`trust_level`、`requires_permissions` 和运行时 granted scopes 决定是否准入，确认权威是受控 `require_confirm`；
+`latency_budget_ms` 用于超时与降级。能力存在、当前可用与请求获授权分别判断。
+
+CA2-05 在 `Capability.contract`（proto 字段 12）承载严格的版本 2 声明：
+effect 区分 read / information_task / state_change / external_write；parameters 声明类型、单位、区域和可选界限；
+applicability、preconditions、idempotency、verification 表达适配与已知执行约束。
+未明确单位/车型保持未知，不替 Agent 补槽、不自动换算或重试；带适配限制的写操作须等待可信车辆上下文。
+
+SDK loader、Registry 持久化、Step 与挂起恢复保存同一份契约。Registry 拒绝未知且缺声明的新能力，
+旧读取方只看到兼容能力，过滤在排序/top-k 前完成。已审旧接口按冻结迁移指纹兼容，不能借此登记新接口。
+调用摘要在实际接收方、业务 handle 或流式首事件之前核对；冻结兼容清单之外的新/变更契约先做 Describe/端侧只读查询。
+摘要不是授权，权限/确认/VAL 仍沿原路径检查。接入与兼容细则见 [SDK](../../agents/_sdk/README.md)及
+[CA2-05 设计](../design/2026-09-27-v2-capability-contract.md)。
 
 ### 4.4 Agent 注册与发现
 
@@ -1274,3 +1288,4 @@ Phase 0 的链路骨架与 Phase 1 的工程化主干已形成；完整 Phase 1 
 |---|---|---|
 | v1.52 | 2026-09-26 | 采纳 v2 目标分册和 R0–R5/JV 路线；校准当前边界；详细 Planner 约束与旧版本记录分拆。只有文档变更，v2 尚未实现。 |
 | v1.53 | 2026-09-27 | CA2-02–04 首版：业务范围与授权原话分开、服务端任务与来源引用、完整结果/短 TTS 双投影；不含持久操作或跨端历史卡片恢复。 |
+| v1.54 | 2026-09-27 | CA2-05 首版：能力效果与参数声明、冻结迁移、Registry 兼容视图、调用摘要及接收方拒绝；未实现可信车型绑定、持久操作或新的重试语义。 |

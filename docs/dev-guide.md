@@ -3,7 +3,8 @@
 > 用户入口固定为 `scripts/dev_stack.py`。
 
 > 新升级先从 [路线图](roadmap.md)和 [实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)领取 CA2/JV 包。
-> 本轮只有文档：没有新增可运行的 v2/Jev 命令或配置；数据库、运行配置、CI/CD、真实调用与部署仍分别走既有授权。
+> CA2-02–05 已有首版实现；能力变更增加 `python scripts/capability_inventory.py --check` 本地检查。
+> Jev 尚未实现；数据库、运行配置、CI/CD、真实调用与部署仍分别走既有授权。
 > 当前 release/status/verify 的最后记录维护在 [QA 交接 §2](reviews/2026-08-30-qa-closeout-handoff.md#2-当前发布与证据边界)。
 
 ## 可切换真栈
@@ -49,6 +50,10 @@ merge 或 push；未显式 `remote_safe` 的 E2E 不在 cloud 缺省运行。
 `remote_mutating=true` 仍要精确 `--id` + `--allow-mutating` 与本轮人工红线授权。
 
 ### 日常三条路径
+
+当前共享主机 Docker 29.1.3 的 `docker buildx history` / `ListenBuildHistory` 已触发 daemon panic，
+禁止用于构建诊断；进度读取本次 `image-inventory.tsv` 和构建日志。中断恢复不能重启整个共享 Docker，
+必须核对项目范围与原容器身份。根因、恢复和续建判据见 [2026-09-27 事故记录](reviews/2026-09-27-buildkit-history-incident.md)。
 
 ```powershell
 # A. 纯代码/单测：不需要 Docker

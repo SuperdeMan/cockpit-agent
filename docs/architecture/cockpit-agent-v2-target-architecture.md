@@ -1,6 +1,6 @@
 # Cockpit Agent v2 目标架构与迁移边界
 
-> 更新：2026-09-27。状态：**目标态分期实施；CA2-02–04 已有首版，其余按实施方案推进**。
+> 更新：2026-09-27。状态：**目标态分期实施；CA2-02–05 已有首版，其余按实施方案推进**。
 > 本文是[架构主文](cockpit-agent-architecture.md)的目标态分册；当前事实以代码和 QA 交接为准。
 > 排期只维护在[路线图](../roadmap.md)，任务拆解只维护在[实施方案](../design/2026-09-26-cockpit-agent-v2-implementation-plan.md)。
 > 依据：[v2 RFC](../research/2026-09-26-cockpit-agent-v2-upgrade-rfc.md)、[Jev 研究](../research/2026-09-25-cockpit-agent-jev-integration-plan.md)。
@@ -69,7 +69,8 @@ Jev 和云 PG 不成为快路径依赖。每条写路径必须枚举其实际首
 
 上表描述完整目标。CA2-02/03 已冻结 input_scope、Plan task/goal 来源引用；CA2-04 已冻结
 FinalResult 字段 14 的 ResultBundle v1，见 [结果契约](../design/2026-09-27-v2-result-bundle.md)。
-其它字段、枚举与兼容默认值仍须在各自契约包冻结。
+CA2-05 已冻结 Capability.contract v2 及兼容清单，见 [能力契约](../design/2026-09-27-v2-capability-contract.md)。
+参数声明不等于物理量已归一，适配声明不等于车辆身份已认证；其它目标字段仍须在各自契约包冻结。
 既有 `Step.kind=agent|tool|edge_fast` 与 `deployment` 继续使用，v2 不发明第四种业务调度分支。
 
 ### 3.2 Goal 与授权的边界

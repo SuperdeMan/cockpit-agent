@@ -68,6 +68,8 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - 支付、商户写、真实车控、数据删除、系统配置不因通用 deploy/E2E 授权自动放行。
 - 三存储迁云只用 `scripts/cloud_data_migration.py`；final 必须先取得停写授权。
 - 不修改 `.env`、安全组、Tailscale、CI/CD、systemd、数据库 schema，除非用户逐项授权。
+- 当前共享主机 Docker 29.1.3 已实证构建历史查询可使 daemon 崩溃；禁止调用 `docker buildx history`
+  或 `ListenBuildHistory`。进度读取本次 `image-inventory.tsv` / 构建日志，见 [事故记录](docs/reviews/2026-09-27-buildkit-history-incident.md)。
 
 ### 3.3 架构安全
 
@@ -87,6 +89,8 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 - Jev 仅经拟新增网关 Decide 提供建议；不作为聊天/业务 Agent，off 零外呼、shadow 零副作用。
 - 新目标态字段/脚本/开关未实现时明确标注；不把模型概率、仿真或 ACK 当真实执行证明。
 - 每个实现包保留旧数据兼容、实际 dispatch 出口覆盖与回退；schema/配置/CI/CD/生产变更仍按 §3.2 授权。
+- 新能力必须声明 Capability v2；`runtime/capability_migration.json` 是冻结的历史兼容清单，不能为使新能力通过而扩充。
+  契约摘要仅证明版本一致，不能授予权限或替代确认；具体规则见 [CA2-05](docs/design/2026-09-27-v2-capability-contract.md)。
 
 ## 4. 当前真实状态（2026-09-27）
 
@@ -96,7 +100,7 @@ Planner 处理复杂、多域、多轮任务。Agent 统一使用 gRPC 契约 + 
 [QA/发布交接 §2](docs/reviews/2026-08-30-qa-closeout-handoff.md)。`origin/main` 可因纯文档提交领先生产；
 引用现场状态前重新核对。`5/5 endpoint healthy` 只说明健康度，不能替代业务验收。
 
-- 本仓仍是 Phase 1 工程化 PoC；CA2-02–04 的步骤范围、服务端身份与 ResultBundle 首版已实现，
+- 本仓仍是 Phase 1 工程化 PoC；CA2-02–05 的步骤范围、服务端身份、ResultBundle 与能力契约首版已实现，
   验证进度见 [首批记录](docs/design/2026-09-26-v2-runtime-r0-r1-execution.md)。Jev Decide、T1e 与真实车辆驱动未实现。
 - Android 包身份与设备验收看 [剩余待办总表](docs/design/2026-09-14-android-remaining-todos.md)，不得用服务端 SHA 代替 APK 身份。
 - 历史手册基线 `9a3b6f2f08657464c5049a5abf8f6e989e398bce` 的读数只属该 SHA，
@@ -226,6 +230,7 @@ python scripts/dev_stack.py verify
 - proto 先改真相源，再 codegen；generated 文件 gitignore，不手改、不 force-add；
 - manifest 新字段要检查 YAML loader、Registry 持久化 round-trip、Step 装配、挂起恢复和执行出口；
 - 可选 JSON null 在 map<string,string> 边界视为“未提供”，不得转成 `"None"`。
+- 能力声明变更运行 `python scripts/capability_inventory.py --check`，并验证旧读取方视图、挂起恢复和首次业务事件前的拒绝。
 
 ## 8. 协作与文档
 

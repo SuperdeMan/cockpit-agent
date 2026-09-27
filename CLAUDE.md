@@ -76,6 +76,8 @@ Manifest 约定：
 - 消费整句且一份计划最多一步的能力标 `whole_utterance: true`；
 - 追问自由文本槽时声明 `slot_shapes`；形状名必须存在于 `slot_shape.SHAPES`；
 - 只允许回答、不得动作/挂起的能力标 `response_only: true`；
+- 新能力声明 `contract.version=2`；保留旧 `effect` 字段的兼容含义，详细效果通过受控 contract 区分；
+- 契约判据统一在 `runtime/capability_contract.py`，冻结迁移清单不是能力发现表；接入样例见 `agents/_sdk/README.md`；
 - 主卡用 `display_priority`；需要候选/位置/车态等上下文时显式声明 `context_scopes`；
 - 改派其他能力使用 `AgentResult.data["_escalate"]`，每轮最多一跳。
 

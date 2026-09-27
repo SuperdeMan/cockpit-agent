@@ -2,7 +2,7 @@
 
 防命名漂移、防端口冲突、防重复定义的总表。新增能力/Agent/配置时先查这里、再更新这里（先改文档再改代码，CLAUDE.md 原则）。命名规则原文见 `CLAUDE.md` §4。
 
-> CA2-02–04 首版契约见 §9.48；其它 v2/Jev 字段、事件与开关仍以
+> CA2-02–04 首版契约见 §9.48，CA2-05 见 §9.49；其它 v2/Jev 字段、事件与开关仍以
 > [目标架构](architecture/cockpit-agent-v2-target-architecture.md)和[实施方案](design/2026-09-26-cockpit-agent-v2-implementation-plan.md)为目标，不作为现有接口。
 > 实现时按各包冻结 schema、兼容缺省与往返，再同步本页；不可仅凭研究示例设置 DECISION_* 或调用 Decide。
 
@@ -2949,3 +2949,12 @@ plan_mode 同一个 `_safety_talk` 后缀；chitchat 拿着 `focus_safety_alert`
 
 具体字段、出口、兼容/回退与验证见 [CA2-04](design/2026-09-27-v2-result-bundle.md)。
 这不是持久操作账本或完整跨端历史恢复协议；当前发布证据仍由 QA 交接维护。
+
+### 9.49 能力契约与版本协商（CA2-05，2026-09-27）
+
+`Capability.contract` 为字段 12、严格版本 2；权威校验集中在 `runtime/capability_contract.py`。
+Registry List/Resolve 的 `capability_contract_version=2` 表示读取方支持新字段，旧读取方仅见兼容能力。
+Step 保存契约、ABI 与摘要；`capability_contract_sha256` 由受控声明生成，不采纳模型或客户端同名字段。
+接收方不匹配时返回 `REJECTED / capability_contract_rejected`，在业务 handle/首个流事件前停止。
+`EdgeCall.contract_query` 必须没有执行 intent；摘要不授予权限、确认或重试权。
+完整 schema、迁移和剩余边界见 [CA2-05](design/2026-09-27-v2-capability-contract.md)，可用接入样例见 [SDK](../agents/_sdk/README.md)。
